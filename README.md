@@ -76,7 +76,12 @@ git clone https://github.com/<your>/QuantRabbit.git
 cd QuantRabbit
 python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
-brew install ta-lib   # ← macOS / Ubuntu は apt-get
+brew install ta-lib   # macOS
+# Ubuntu Linux: build from source
+# sudo apt-get update && apt-get install -y build-essential wget
+# wget http://prdownloads.sourceforge.net/ta-lib/ta-lib-0.4.0-src.tar.gz
+# tar xzf ta-lib-0.4.0-src.tar.gz && cd ta-lib
+# ./configure --prefix=/usr && make && sudo make install
 
 # 2. config
 cp config/env.toml config/env.local.toml   # 編集してキーを投入
