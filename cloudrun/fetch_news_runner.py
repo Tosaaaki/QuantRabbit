@@ -8,34 +8,41 @@ Cloud Run – Fetch News
 """
 
 import os, json, uuid, datetime, feedparser
-from flask import Flask, request, abort
 from google.cloud import storage
 
 BUCKET = os.environ["BUCKET"]
 RSS    = os.environ.get("RSS_FEED", "https://news.google.com/rss/search?q=usd+jpy&hl=ja&gl=JP&ceid=JP:ja")
 
-app = Flask(__name__)
 bucket = storage.Client().bucket(BUCKET)
 
-@app.route("/", methods=["POST", "GET"])
-def run():
+def fetch_and_upload():
+    """
+    One‑shot job:
+    * Parse RSS
+    * Upload up to 3 items to gs://<BUCKET>/raw/
+    * Print how many were pushed; exceptions will surface to Cloud Run Job and mark failure.
+    """
     feed = feedparser.parse(RSS)
     if not feed.entries:
-        return abort(500, "no entry")
+        raise RuntimeError("no RSS entries")
 
-    for e in feed.entries[:3]:           # 3 本だけ
-        uid  = str(uuid.uuid4())
+    uploaded = 0
+    for e in feed.entries[:3]:
+        uid = str(uuid.uuid4())
         blob = bucket.blob(f"raw/{uid}.json")
-        raw  = {
-            "uid"  : uid,
+        raw = {
+            "uid": uid,
             "title": e.title,
-            "body" : e.summary,
-            "link" : e.link,
+            "body": getattr(e, "summary", ""),
+            "link": e.link,
             "fetched_at": datetime.datetime.utcnow().isoformat(timespec="seconds")
         }
-        blob.upload_from_string(json.dumps(raw, ensure_ascii=False),
-                                content_type="application/json")
-    return f"uploaded {min(3,len(feed.entries))}", 200
+        blob.upload_from_string(
+            json.dumps(raw, ensure_ascii=False),
+            content_type="application/json"
+        )
+        uploaded += 1
+    print(f"✅ uploaded {uploaded} article(s)")
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=int(os.getenv("PORT", 8080)))
+    fetch_and_upload()
