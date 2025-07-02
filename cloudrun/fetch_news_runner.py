@@ -9,6 +9,9 @@ Cloud Run – Fetch News
 
 import os, json, uuid, datetime, feedparser
 from google.cloud import storage
+from flask import Flask, request
+
+app = Flask(__name__)
 
 BUCKET = os.environ["BUCKET"]
 RSS    = os.environ.get("RSS_FEED", "https://news.google.com/rss/search?q=usd+jpy&hl=ja&gl=JP&ceid=JP:ja")
@@ -17,7 +20,7 @@ bucket = storage.Client().bucket(BUCKET)
 
 def fetch_and_upload():
     """
-    One‑shot job:
+    One-shot job:
     * Parse RSS
     * Upload up to 3 items to gs://<BUCKET>/raw/
     * Print how many were pushed; exceptions will surface to Cloud Run Job and mark failure.
@@ -44,5 +47,29 @@ def fetch_and_upload():
         uploaded += 1
     print(f"✅ uploaded {uploaded} article(s)")
 
+@app.route("/", methods=["POST"])
+def index():
+    envelope = request.get_json()
+    if not envelope:
+        return "no Pub/Sub message received", 400
+    
+    if not isinstance(envelope, dict) or "message" not in envelope:
+        return "invalid Pub/Sub message format", 400
+
+    pubsub_message = envelope["message"]
+
+    # Pub/Subメッセージのデータはbase64エンコードされている場合がある
+    # 今回はデータ自体は使用しないが、形式として受け付ける
+    if "data" in pubsub_message:
+        # data = base64.b64decode(pubsub_message["data"]).decode("utf-8").strip()
+        pass # データは使用しない
+
+    try:
+        fetch_and_upload()
+        return "success", 200
+    except Exception as e:
+        print(f"Error: {e}")
+        return f"Error: {e}", 500
+
 if __name__ == "__main__":
-    fetch_and_upload()
+    app.run(debug=True, host="0.0.0.0", port=int(os.environ.get("PORT", 8080)))
