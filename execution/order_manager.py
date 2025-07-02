@@ -6,10 +6,10 @@ OANDA REST で成行・指値を発注。
 """
 
 from __future__ import annotations
-import requests, tomllib, json, datetime
+import requests, toml, json, datetime
 from typing import Literal
 
-CFG = tomllib.loads(open("config/env.toml","rb").read())
+CFG = toml.load(open("config/env.local.toml","r"))
 TOKEN   = CFG["oanda"]["token"]
 ACCOUNT = CFG["oanda"]["account"]
 PRACT   = CFG["oanda"].get("practice", True)

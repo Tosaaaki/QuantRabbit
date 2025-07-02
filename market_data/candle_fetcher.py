@@ -8,7 +8,7 @@ Tick を受け取り、任意のタイムフレームのローソク足を逐次
 from __future__ import annotations
 import asyncio, datetime
 from collections import defaultdict
-from typing import Callable, Awaitable, Dict, List, Tuple
+from typing import Callable, Awaitable, Dict, List, Tuple, Literal
 from market_data.tick_fetcher import Tick
 
 Candle = dict[str, float]  # open, high, low, close

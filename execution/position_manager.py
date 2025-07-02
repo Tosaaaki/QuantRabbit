@@ -5,11 +5,11 @@ OANDA から決済済み取引を取得し、DB に記録する。
 """
 
 from __future__ import annotations
-import requests, tomllib, sqlite3, pathlib
+import requests, toml, sqlite3, pathlib
 from datetime import datetime, timezone
 
 # --- config ---
-CFG = tomllib.loads(open("config/env.toml", "rb").read())
+CFG = toml.load(open("config/env.local.toml", "r"))
 TOKEN = CFG["oanda"]["token"]
 ACCOUNT = CFG["oanda"]["account"]
 PRACT = CFG["oanda"].get("practice", True)
