@@ -46,5 +46,5 @@ def market_order(
     r = requests.post(url, headers=HEADERS, json=body, timeout=5)
     r.raise_for_status()
     data = r.json()
-    ticket = data["orderFillTransaction"]["id"]
-    return ticket
+    trade_id = data.get("orderFillTransaction", {}).get("tradeOpened", {}).get("tradeID")
+    return trade_id

@@ -21,12 +21,29 @@ DAILYFX = "https://www.dailyfx.com/feeds/most-recent-stories"
 HIGH_WORDS = re.compile("|".join(["BoJ", "FOMC", "Non-Farm", "CPI", "政策金利", "雇用統計"]))
 
 
-def _impact(item) -> str:
+def _impact(item) -> int:
+    impact_str = "low"
     if "impact" in item:
-        return item["impact"].strip().lower()  # forex factory
-    title = item.get("title", "")
-    return "high" if HIGH_WORDS.search(title) else "low"
+        impact_str = item["impact"].strip().lower()  # forex factory
+    elif "title" in item:
+        title = item["title"]
+        if "high impact" in title.lower():
+            impact_str = "high"
+        elif "medium impact" in title.lower():
+            impact_str = "medium"
+    
+    if impact_str == "high": return 3
+    if impact_str == "medium": return 2
+    return 1
 
+def _event_time(item) -> str | None:
+    # Forex Factory の RSS は 'published' に時刻情報があることが多い
+    if hasattr(item, 'published_parsed'):
+        return datetime.datetime(*item.published_parsed[:6]).isoformat()
+    # DailyFX など、他のフィードの 'updated' なども考慮
+    if hasattr(item, 'updated_parsed'):
+        return datetime.datetime(*item.updated_parsed[:6]).isoformat()
+    return None
 
 def _push(blob_name: str, data: dict):
     blob = bucket.blob(blob_name)
@@ -44,17 +61,22 @@ async def _rss_once():
     for url in (FF_URL, FF_NEXT, DAILYFX):
         parsed = feedparser.parse(url)
         for entry in parsed.entries:
-            impact = _impact(entry)
-            if impact not in ("high", "medium"):
+            impact_val = _impact(entry)
+            event_time_val = _event_time(entry)
+
+            # 高インパクトのイベントのみを対象
+            if impact_val < 2: # medium (2) or high (3) のみ
                 continue
+
             uid = entry.get("id") or str(uuid.uuid4())
             data = {
                 "uid": uid,
                 "src": parsed.feed.title,
-                "impact": impact,
+                "impact": impact_val,
+                "event_time": event_time_val,
                 "title": entry.title,
                 "currency": entry.get("currency", ""),
-                "time_utc": entry.get("date", ""),
+                "time_utc": entry.get("date", ""), # これは元のまま残しておく
                 "body": entry.get("summary", ""),
             }
             blob_name = f"raw/{now}_{uid}.json"

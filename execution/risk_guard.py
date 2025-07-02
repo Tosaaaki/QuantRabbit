@@ -14,6 +14,7 @@ from typing import Dict
 MAX_LEVERAGE     = 20.0      # 1:20
 MAX_LOT          = 1.0       # 1 lot = 100k 通貨
 POCKET_DD_LIMITS = {"micro": 0.05, "macro": 0.15}   # equity 比 (%)
+GLOBAL_DD_LIMIT  = 0.20      # 全体ドローダウン 20%
 
 _DB = pathlib.Path("logs/trades.db")
 con = sqlite3.connect(_DB)
@@ -30,6 +31,20 @@ WHERE pocket=? AND date(close_time)>=date('now','-7 day')
     # equity は外部取得だが 10 万 pips = 100% として近似
     return abs(total) / 100000.0
 
+def check_global_drawdown() -> bool:
+    """口座全体のドローダウンが閾値を超えているかチェック"""
+    # 全ての取引の損益合計を取得
+    rows = con.execute("SELECT SUM(pl_pips) FROM trades").fetchone()
+    total_pl_pips = rows[0] or 0.0
+
+    # 損失の場合のみドローダウンとして計算
+    if total_pl_pips >= 0:
+        return False # 利益が出ているか、損失がない場合はドローダウンなし
+    
+    # 10万pips = 100% equity と近似してドローダウン率を計算
+    drawdown_percentage = abs(total_pl_pips) / 100000.0
+    print(f"[RISK] Global Drawdown: {drawdown_percentage:.2%} (Limit: {GLOBAL_DD_LIMIT:.2%})")
+    return drawdown_percentage >= GLOBAL_DD_LIMIT
 
 def can_trade(pocket: str) -> bool:
     return _pocket_dd(pocket) < POCKET_DD_LIMITS[pocket]
