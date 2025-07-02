@@ -6,66 +6,75 @@ indicators.factor_cache
 """
 
 from __future__ import annotations
-
 import asyncio
 import pandas as pd
-from collections import deque
-from typing import Dict
+from collections import deque, defaultdict
+from typing import Dict, Literal
 
 from indicators.calc_core import IndicatorEngine
 
-_CANDLES_MAX = 2000           # 約 33 時間分 (M1)
-_CANDLES: deque = deque(maxlen=_CANDLES_MAX)
-_LATEST: Dict[str, float] = {}
+TimeFrame = Literal["M1", "H4"]
 
-_LOCK = asyncio.Lock()        # 取引ループと別スレッド安全用
+_CANDLES_MAX = {"M1": 2000, "H4": 500} # M1: ~33h, H4: ~83d
+_CANDLES: Dict[TimeFrame, deque] = {
+    "M1": deque(maxlen=_CANDLES_MAX["M1"]),
+    "H4": deque(maxlen=_CANDLES_MAX["H4"]),
+}
+_FACTORS: Dict[TimeFrame, Dict[str, float]] = defaultdict(dict)
 
+_LOCK = asyncio.Lock()
 
-async def on_candle(key: str, candle: Dict[str, float]):
+async def on_candle(tf: TimeFrame, candle: Dict[str, float]):
     """
     market_data.candle_fetcher から呼ばれる想定
-    key    : "YYYY-MM-DDTHH:MM" UTC
-    candle : {"open":..,"high":..,"low":..,"close":..}
     """
     async with _LOCK:
-        _CANDLES.append(
-            {
-                "timestamp": key,
-                "open": candle["open"],
-                "high": candle["high"],
-                "low": candle["low"],
-                "close": candle["close"],
-            }
-        )
-        df = pd.DataFrame(_CANDLES)
-        _LATEST.clear()
-        _LATEST.update(IndicatorEngine.compute(df))
+        q = _CANDLES[tf]
+        q.append({
+            "timestamp": candle["time"].isoformat(),
+            "open": candle["open"],
+            "high": candle["high"],
+            "low": candle["low"],
+            "close": candle["close"],
+        })
+        
+        if len(q) < 20: # 計算に必要な最小限のデータを待つ
+            return
 
+        df = pd.DataFrame(q)
+        factors = IndicatorEngine.compute(df)
+        
+        # Donchian戦略で必要になるため、生ローソクも格納
+        factors["candles"] = list(q)
+        
+        _FACTORS[tf].clear()
+        _FACTORS[tf].update(factors)
 
-def get(name: str, default: float | None = None) -> float | None:
-    """単一指標を取得"""
-    return _LATEST.get(name, default)
-
-
-def all_factors() -> Dict[str, float]:
-    """最新指標 dict を shallow copy で返す"""
-    return dict(_LATEST)
-
+def all_factors() -> Dict[TimeFrame, Dict[str, float]]:
+    """全タイムフレームの指標dictを返す"""
+    return dict(_FACTORS)
 
 # ---------- self-test ----------
 if __name__ == "__main__":
-    # ダミー 20 本のローソクでテスト
     import random, datetime, asyncio
 
     async def main():
         base = 157.00
+        now = datetime.datetime.utcnow()
+        # M1
         for i in range(30):
-            ts = (datetime.datetime.utcnow() + datetime.timedelta(minutes=i)).strftime(
-                "%Y-%m-%dT%H:%M"
-            )
+            ts = now + datetime.timedelta(minutes=i)
             price = base + random.uniform(-0.1, 0.1)
-            await on_candle(ts, {"open": price, "high": price + 0.03,
-                                 "low": price - 0.03, "close": price})
-        print(all_factors())
+            await on_candle("M1", {"open": price, "high": price + 0.03,
+                                 "low": price - 0.03, "close": price, "time": ts})
+        # H4
+        for i in range(30):
+            ts = now + datetime.timedelta(hours=i*4)
+            price = base + random.uniform(-1.0, 1.0)
+            await on_candle("H4", {"open": price, "high": price + 0.3,
+                                 "low": price - 0.3, "close": price, "time": ts})
+        
+        import pprint
+        pprint.pprint(all_factors())
 
     asyncio.run(main())

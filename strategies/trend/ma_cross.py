@@ -1,14 +1,13 @@
 from __future__ import annotations
 from typing import Dict
-from indicators.factor_cache import get
 
 class MovingAverageCross:
     name = "TrendMA"
     pocket = "macro"
 
     @staticmethod
-    def check() -> Dict | None:
-        ma10 = get("ma10"); ma20 = get("ma20")
+    def check(fac: Dict) -> Dict | None:
+        ma10 = fac.get("ma10"); ma20 = fac.get("ma20")
         if not ma10 or not ma20:
             return None
         if ma10 > ma20:        # ゴールデン

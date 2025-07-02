@@ -1,20 +1,20 @@
-from indicators.factor_cache import get
+from typing import Dict
 
 class BBRsi:
     name = "BB_RSI"
     pocket = "micro"
 
     @staticmethod
-    def check():
-        rsi = get("rsi")
-        bbw = get("bbw")
-        ma  = get("ma20")
+    def check(fac: Dict) -> Dict | None:
+        rsi = fac.get("rsi")
+        bbw = fac.get("bbw")
+        ma  = fac.get("ma20")
         if not all([rsi, bbw, ma]):
             return None
 
-        price = get("close", ma)
-        upper = ma * (1 + bbw/2)
-        lower = ma * (1 - bbw/2)
+        price = fac.get("close", ma)
+        upper = ma + (ma * bbw / 2)
+        lower = ma - (ma * bbw / 2)
 
         if price < lower and rsi < 30:
             return {"action":"buy","sl_pips":10,"tp_pips":15}
