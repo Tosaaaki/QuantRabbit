@@ -1,12 +1,16 @@
 # --- Core ---
-openai==1.23.0           # GPT‑4o / GPT‑4o‑mini
-pandas==2.2.2
-numpy==1.26.4
-ta-lib==0.4.28           # ⇢ OS に libta‑lib0 / ta‑lib-devel が必要
+openai==1.78.0           # GPT‑4o / GPT‑4o‑mini
+pandas==2.2.3
+numpy==1.24.4
+pandas_ta
 websockets==12.0
 apscheduler==3.10.4
 PyYAML==6.0.1
 pydantic==2.7.1
+toml
+annotated-types==0.7.0
+anyio==4.9.0
+urllib3==2.4.0
 
 # --- Google Cloud SDKs ---
 google-cloud-storage==2.15.0

@@ -10,13 +10,13 @@ from __future__ import annotations
 import asyncio
 import json
 import openai
-import tomllib
+import toml
 from typing import Dict, Tuple
 
 from utils.cost_guard import add_tokens
 from analysis.gpt_prompter import build_messages
 
-CONF = tomllib.loads(open("config/env.toml", "rb").read())
+CONF = toml.load(open("config/env.local.toml", "r"))
 openai.api_key = CONF["openai"]["api_key"]
 MODEL = CONF["openai"]["model"]
 MAX_TOKENS_MONTH = CONF["openai"]["max_month_tokens"]

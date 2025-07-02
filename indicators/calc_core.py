@@ -15,7 +15,7 @@ from typing import Dict
 
 import numpy as np
 import pandas as pd
-import talib
+import pandas_ta as pta
 
 
 class IndicatorEngine:
@@ -42,29 +42,39 @@ class IndicatorEngine:
               "bbw":  0.26
             }
         """
-        close = df["close"].values.astype(float)
-        high = df["high"].values.astype(float)
-        low = df["low"].values.astype(float)
+        # pandas_ta は DataFrame に直接アクセスできる
+        # df.ta.sma() のように呼び出す
+        df.ta.sma(length=10, append=True)
+        df.ta.ema(length=20, append=True)
+        df.ta.rsi(length=14, append=True)
+        df.ta.atr(length=14, append=True)
+        df.ta.adx(length=14, append=True)
+        df.ta.bbands(length=20, std=2, append=True)
 
         out: Dict[str, float] = {}
 
-        out["ma10"] = float(talib.SMA(close, 10)[-1])
-        out["ma20"] = float(talib.SMA(close, 20)[-1])
-        out["ema20"] = float(talib.EMA(close, 20)[-1])
+        # 最新の値を抽出
+        out["ma10"] = df["SMA_10"].iloc[-1]
+        out["ma20"] = df["SMA_20"].iloc[-1]
+        out["ema20"] = df["EMA_20"].iloc[-1]
 
-        out["rsi"] = float(talib.RSI(close, 14)[-1])
-        out["atr"] = float(talib.ATR(high, low, close, 14)[-1])
-        out["adx"] = float(talib.ADX(high, low, close, 14)[-1])
+        out["rsi"] = df["RSI_14"].iloc[-1]
+        out["atr"] = df["ATR_14"].iloc[-1]
+        out["adx"] = df["ADX_14"].iloc[-1]
 
-        upper, middle, lower = talib.BBANDS(close, 20, 2, 2)
-        if middle[-1] != 0:
-            out["bbw"] = float((upper[-1] - lower[-1]) / middle[-1])
+        # Bollinger Bands の計算
+        upper = df["BBU_20_2.0"].iloc[-1]
+        middle = df["BBM_20_2.0"].iloc[-1]
+        lower = df["BBL_20_2.0"].iloc[-1]
+
+        if middle != 0:
+            out["bbw"] = float((upper - lower) / middle)
         else:
             out["bbw"] = 0.0
 
         # 数値が nan の場合は 0.0 で埋める
         for k, v in out.items():
-            if v is None or np.isnan(v):
+            if pd.isna(v):
                 out[k] = 0.0
 
         return out

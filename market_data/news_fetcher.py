@@ -6,10 +6,10 @@ Cloud Storage `fx-news/raw/*.json` へアップロードする。
 """
 
 from __future__ import annotations
-import asyncio, datetime, json, tomllib, uuid, feedparser, re
+import asyncio, datetime, json, toml, uuid, feedparser, re
 from google.cloud import storage
 
-CFG = tomllib.loads(open("config/env.toml", "rb").read())
+CFG = toml.load(open("config/env.local.toml", "r"))
 BUCKET = CFG["gcp"]["bucket_news"]
 storage_client = storage.Client()
 bucket = storage_client.bucket(BUCKET)

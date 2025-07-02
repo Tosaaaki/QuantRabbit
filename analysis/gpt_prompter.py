@@ -11,10 +11,10 @@ from __future__ import annotations
 
 import datetime
 import json
-import tomllib
+import toml
 from typing import Dict, List
 
-CONF = tomllib.loads(open("config/env.toml", "rb").read())
+CONF = toml.load(open("config/env.local.toml", "r"))
 OPENAI_MODEL = CONF["openai"]["model"]
 
 _SYS = (

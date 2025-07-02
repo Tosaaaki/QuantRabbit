@@ -8,10 +8,10 @@ Cloud Storage bucket `fx-news/summary/` に保存された
 
 from __future__ import annotations
 
-import asyncio, json, sqlite3, tomllib, pathlib, datetime
+import asyncio, json, sqlite3, toml, pathlib, datetime
 from google.cloud import storage
 
-CONF = tomllib.loads(open("config/env.toml", "rb").read())
+CONF = toml.load(open("config/env.local.toml", "r"))
 BUCKET = CONF["gcp"]["bucket_news"]
 
 # DB 初期化 -------------------------------------------------
@@ -38,7 +38,7 @@ conn.commit()
 
 
 # GCS クライアント -----------------------------------------
-storage_client = storage.Client()
+storage_client = storage.Client(project=CONF["gcp"]["project_id"])
 bucket = storage_client.bucket(BUCKET)
 
 SUMMARY_PREFIX = "summary/"

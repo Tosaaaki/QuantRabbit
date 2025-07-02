@@ -19,11 +19,11 @@ import asyncio, json, ssl, datetime
 from dataclasses import dataclass
 from typing import Callable, Awaitable
 import websockets
-import tomllib
+import toml
 import pathlib
 
 # ---------- 読み込み：env.toml ----------
-CONF = tomllib.loads(pathlib.Path("config/env.toml").read_text())
+CONF = toml.load(open(pathlib.Path("config/env.local.toml"), "r"))
 TOKEN: str = CONF["oanda"]["token"]
 ACCOUNT: str = CONF["oanda"]["account"]
 PRACTICE: bool = CONF["oanda"].get("practice", True)
