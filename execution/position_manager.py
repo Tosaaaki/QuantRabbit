@@ -1,25 +1,22 @@
 from __future__ import annotations
-import requests, sqlite3, pathlib
-from datetime import datetime, timezone
-from google.cloud import secretmanager
-
-# --- Secret Managerからシークレットを取得するヘルパー関数 ---
-def access_secret_version(secret_id: str, project_id: str = "quantrabbit", version_id: str = "latest") -> str:
-    """Secret Managerから指定されたシークレットのバージョンにアクセスします。"""
-    client = secretmanager.SecretManagerServiceClient()
-    name = f"projects/{project_id}/secrets/{secret_id}/versions/{version_id}"
-    response = client.access_secret_version(request={"name": name})
-    return response.payload.data.decode("UTF-8")
+import requests
+import sqlite3
+import pathlib
+from datetime import datetime
+from utils.secrets import get_secret
 
 # --- config ---
-# Secret ManagerからOANDAのトークンとアカウントIDを取得
-TOKEN = access_secret_version("oanda_token")
-ACCOUNT = access_secret_version("oanda_account_id")
-PRACT = False # env.tomlから取得しないため、ここでは固定値とする
-REST_HOST = "https://api-fxpractice.oanda.com" if PRACT else "https://api-fxtrade.oanda.com"
+# env.toml から OANDA 設定を取得
+TOKEN = get_secret("oanda_token")
+ACCOUNT = get_secret("oanda_account_id")
+PRACT = False  # env.tomlから取得しないため、ここでは固定値とする
+REST_HOST = (
+    "https://api-fxpractice.oanda.com" if PRACT else "https://api-fxtrade.oanda.com"
+)
 HEADERS = {"Authorization": f"Bearer {TOKEN}"}
 
 _DB = pathlib.Path("logs/trades.db")
+
 
 class PositionManager:
     def __init__(self):
@@ -35,10 +32,7 @@ class PositionManager:
     def _fetch_closed_trades(self):
         """OANDAから決済済みトランザクションを取得"""
         url = f"{REST_HOST}/v3/accounts/{ACCOUNT}/transactions"
-        params = {
-            "sinceID": self._last_tx_id,
-            "type": "ORDER_FILL" #約定した注文のみ
-        }
+        params = {"sinceID": self._last_tx_id, "type": "ORDER_FILL"}  # 約定した注文のみ
         try:
             r = requests.get(url, headers=HEADERS, params=params, timeout=10)
             r.raise_for_status()
@@ -54,13 +48,15 @@ class PositionManager:
             r = requests.get(url, headers=HEADERS, timeout=5)
             r.raise_for_status()
             trade = r.json().get("trade", {})
-            
+
             pocket_tag = trade.get("clientExtensions", {}).get("tag", "pocket=unknown")
             pocket = pocket_tag.split("=")[1] if "=" in pocket_tag else "unknown"
 
             return {
                 "entry_price": float(trade.get("price", 0.0)),
-                "entry_time": datetime.fromisoformat(trade.get("openTime").replace("Z", "+00:00")),
+                "entry_time": datetime.fromisoformat(
+                    trade.get("openTime").replace("Z", "+00:00")
+                ),
                 "units": int(trade.get("initialUnits", 0)),
                 "pocket": pocket,
             }
@@ -89,41 +85,48 @@ class PositionManager:
                     continue
 
                 close_price = float(tx.get("price", 0.0))
-                close_time = datetime.fromisoformat(tx.get("time").replace("Z", "+00:00"))
-                
+                close_time = datetime.fromisoformat(
+                    tx.get("time").replace("Z", "+00:00")
+                )
+
                 # USD/JPY の pips を計算 (1 pip = 0.01 JPY)
                 # OANDAのPLは通貨額なので、価格差からpipsを計算する
                 entry_price = details["entry_price"]
                 units = details["units"]
-                if units > 0: # Buy
+                if units > 0:  # Buy
                     pl_pips = (close_price - entry_price) * 100
-                else: # Sell
+                else:  # Sell
                     pl_pips = (entry_price - close_price) * 100
 
-                trades_to_save.append((
-                    tx["id"],
-                    trade_id,
-                    details["pocket"],
-                    tx.get("instrument"),
-                    units,
-                    entry_price,
-                    close_price,
-                    pl_pips,
-                    details["entry_time"].isoformat(),
-                    close_time.isoformat()
-                ))
-            
+                trades_to_save.append(
+                    (
+                        tx["id"],
+                        trade_id,
+                        details["pocket"],
+                        tx.get("instrument"),
+                        units,
+                        entry_price,
+                        close_price,
+                        pl_pips,
+                        details["entry_time"].isoformat(),
+                        close_time.isoformat(),
+                    )
+                )
+
             processed_tx_ids.add(tx["id"])
 
         if trades_to_save:
             # ticket_id (OANDA tradeID) が重複しないように挿入
-            self.con.executemany("""
+            self.con.executemany(
+                """
                 INSERT OR IGNORE INTO trades (id, ticket_id, pocket, instrument, units, entry_price, close_price, pl_pips, entry_time, close_time)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """, trades_to_save)
+            """,
+                trades_to_save,
+            )
             self.con.commit()
             print(f"[PositionManager] Saved {len(trades_to_save)} new trades.")
-        
+
         if processed_tx_ids:
             self._last_tx_id = max(processed_tx_ids)
 
