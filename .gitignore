@@ -1,3 +1,5 @@
 # Local environment variables
 config/env.toml
 config/env.toml.terraform/
+.ruff_cache/
+.DS_Store

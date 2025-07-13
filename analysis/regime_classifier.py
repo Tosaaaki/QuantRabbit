@@ -12,10 +12,13 @@ from typing import Dict, Literal
 TimeFrame = Literal["M1", "H4"]
 
 THRESH_ADX_TREND = {"M1": 25.0, "H4": 22.0}
-THRESH_MA_SLOPE  = {"M1": 0.0003, "H4": 0.001}
+THRESH_MA_SLOPE = {"M1": 0.0003, "H4": 0.001}
 THRESH_BBW_RANGE = {"M1": 0.25, "H4": 0.35}
 
-def classify(factors: Dict[str, float], tf: TimeFrame, *, event_mode: bool = False) -> str:
+
+def classify(
+    factors: Dict[str, float], tf: TimeFrame, *, event_mode: bool = False
+) -> str:
     """
     Parameters
     ----------
@@ -31,10 +34,10 @@ def classify(factors: Dict[str, float], tf: TimeFrame, *, event_mode: bool = Fal
     if event_mode:
         return "Event"
 
-    adx   = factors.get("adx", 0.0)
-    bbw   = factors.get("bbw", 1.0)   # ボリン幅 / middle
-    ma10  = factors.get("ma10", 0.0)
-    ma20  = factors.get("ma20", 0.0)
+    adx = factors.get("adx", 0.0)
+    bbw = factors.get("bbw", 1.0)  # ボリン幅 / middle
+    ma10 = factors.get("ma10", 0.0)
+    ma20 = factors.get("ma20", 0.0)
 
     ma_slope = abs(ma20 - ma10) / ma10 if ma10 else 0.0
 

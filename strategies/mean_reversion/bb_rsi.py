@@ -1,5 +1,6 @@
 from typing import Dict
 
+
 class BBRsi:
     name = "BB_RSI"
     pocket = "micro"
@@ -8,7 +9,7 @@ class BBRsi:
     def check(fac: Dict) -> Dict | None:
         rsi = fac.get("rsi")
         bbw = fac.get("bbw")
-        ma  = fac.get("ma20")
+        ma = fac.get("ma20")
         if not all([rsi, bbw, ma]):
             return None
 
@@ -17,7 +18,7 @@ class BBRsi:
         lower = ma - (ma * bbw / 2)
 
         if price < lower and rsi < 30:
-            return {"action":"buy","sl_pips":10,"tp_pips":15}
+            return {"action": "buy", "sl_pips": 10, "tp_pips": 15}
         if price > upper and rsi > 70:
-            return {"action":"sell","sl_pips":10,"tp_pips":15}
+            return {"action": "sell", "sl_pips": 10, "tp_pips": 15}
         return None

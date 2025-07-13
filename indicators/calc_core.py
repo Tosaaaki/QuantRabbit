@@ -13,9 +13,7 @@ ta‑lib をラップし、DataFrame（open/high/low/close）から
 from __future__ import annotations
 from typing import Dict
 
-import numpy as np
 import pandas as pd
-import pandas_ta as pta
 
 
 class IndicatorEngine:

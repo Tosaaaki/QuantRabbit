@@ -8,6 +8,7 @@ GPT が返す weight_macro と、risk_guard が計算した
 from __future__ import annotations
 from typing import Dict
 
+
 def alloc(total_lot: float, weight_macro: float) -> Dict[str, float]:
     """
     Parameters
