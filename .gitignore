@@ -1,3 +1,3 @@
 # Local environment variables
-config/env.local.toml
+config/env.toml
 config/env.toml.terraform/
