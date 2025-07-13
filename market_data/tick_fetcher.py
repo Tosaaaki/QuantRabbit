@@ -1,19 +1,3 @@
-"""
-market_data.tick_fetcher
-~~~~~~~~~~~~~~~~~~~~~~~~
-OANDA プライス・ストリーム (v20) を非同期で購読し、
-ティックをコールバックに渡すユーティリティ。
-
-外部モジュール例
-----------------
-from market_data.tick_fetcher import run_price_stream
-
-async def on_tick(tick):
-    print(tick)
-
-asyncio.run(run_price_stream("USD_JPY", on_tick))
-"""
-
 from __future__ import annotations
 import asyncio, json, ssl, datetime
 from dataclasses import dataclass
@@ -21,14 +5,21 @@ from typing import Callable, Awaitable
 import websockets
 import toml
 import pathlib
+from google.cloud import secretmanager
 
-# ---------- 読み込み：env.toml ----------
-CONF = toml.load(open(pathlib.Path("config/env.local.toml"), "r"))
-TOKEN: str = CONF["oanda"]["token"]
-ACCOUNT: str = CONF["oanda"]["account"]
-PRACTICE: bool = CONF["oanda"].get("practice", True)
+# ---------- Secret Manager からシークレットを読み込む関数 ----------
+def access_secret_version(secret_id: str, version_id: str = "latest") -> str:
+    client = secretmanager.SecretManagerServiceClient()
+    name = f"projects/quantrabbit/secrets/{secret_id}/versions/{version_id}"
+    response = client.access_secret_version(request={"name": name})
+    return response.payload.data.decode("UTF-8")
 
-STREAM_HOST = "stream-fxpractice.oanda.com" if PRACTICE else "stream-fxtrade.oanda.com"
+# ---------- 読み込み：Secret Manager ----------
+TOKEN: str = access_secret_version("oanda-api-token")
+ACCOUNT: str = access_secret_version("oanda-account-id")
+PRACTICE: bool = False # 本番口座なので False に設定。必要に応じて True に変更
+
+STREAM_HOST = "stream-fxtrade.oanda.com" if not PRACTICE else "stream-fxpractice.oanda.com"
 STREAM_URL = f"wss://{STREAM_HOST}/v3/accounts/{ACCOUNT}/pricing/stream"
 
 @dataclass

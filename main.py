@@ -1,4 +1,9 @@
-import asyncio, datetime
+import asyncio, datetime, logging, traceback
+
+# Configure logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+
+logging.info("Application started!")
 from market_data.candle_fetcher import start_candle_stream, Candle
 from indicators.factor_cache import on_candle, all_factors, TimeFrame
 from analysis.regime_classifier import classify
@@ -43,7 +48,7 @@ async def logic_loop():
 
             # Heartbeat logging
             if (now - last_heartbeat_time).total_seconds() >= 300: # Every 5 minutes
-                print(f"[HEARTBEAT] System is alive at {now.isoformat(timespec='seconds')}")
+                logging.info(f"[HEARTBEAT] System is alive at {now.isoformat(timespec='seconds')}")
                 last_heartbeat_time = now
 
             # --- 1. 状況分析 ---
@@ -53,7 +58,7 @@ async def logic_loop():
 
             # 両方のタイムフレームのデータが揃うまで待機
             if not fac_m1 or not fac_h4 or not fac_m1.get("close") or not fac_h4.get("close"):
-                print("[WAIT] Waiting for M1/H4 factor data...")
+                logging.info("[WAIT] Waiting for M1/H4 factor data...")
                 await asyncio.sleep(5)
                 continue
 
@@ -62,14 +67,14 @@ async def logic_loop():
                 perf_cache = get_perf()
                 news_cache = get_latest_news()
                 last_update_time = now
-                print(f"[PERF] Updated: {perf_cache}")
-                print(f"[NEWS] Updated: {news_cache}")
+                logging.info(f"[PERF] Updated: {perf_cache}")
+                logging.info(f"[NEWS] Updated: {news_cache}")
 
             event_soon = check_event_soon(within_minutes=30, min_impact=3)
             global_drawdown_exceeded = check_global_drawdown()
 
             if global_drawdown_exceeded:
-                print("[STOP] Global drawdown limit exceeded. Stopping new trades.")
+                logging.warning("[STOP] Global drawdown limit exceeded. Stopping new trades.")
                 await asyncio.sleep(60)
                 continue
 
@@ -114,11 +119,11 @@ async def logic_loop():
                 
                 pocket = cls.pocket
                 if event_soon and pocket == "micro":
-                    print(f"[SKIP] Event soon, skipping micro pocket trade.")
+                    logging.info(f"[SKIP] Event soon, skipping micro pocket trade.")
                     continue
 
                 if not can_trade(pocket):
-                    print(f"[SKIP] DD limit for {pocket} pocket.")
+                    logging.info(f"[SKIP] DD limit for {pocket} pocket.")
                     continue
                 
                 lot = lots.get(pocket, 0)
@@ -134,9 +139,9 @@ async def logic_loop():
                 
                 trade_id = market_order("USD_JPY", units, sl, tp, pocket)
                 if trade_id:
-                    print(f"[ORDER] {trade_id} | {cls.name} | {sig['action']} | {lot} lot | SL={sl}, TP={tp}")
+                    logging.info(f"[ORDER] {trade_id} | {cls.name} | {lot} lot | SL={sl}, TP={tp}")
                 else:
-                    print(f"[ORDER FAILED] {cls.name}")
+                    logging.error(f"[ORDER FAILED] {cls.name}")
                 
                 break # 1取引/ループ
 
@@ -145,12 +150,11 @@ async def logic_loop():
 
             await asyncio.sleep(60)
     except Exception as e:
-        print(f"[ERROR] An unhandled exception occurred: {e}")
-        import traceback
-        traceback.print_exc()
+        logging.error(f"[ERROR] An unhandled exception occurred: {e}")
+        logging.error(traceback.format_exc())
     finally:
         pos_manager.close()
-        print("PositionManager closed.")
+        logging.info("PositionManager closed.")
 
 async def main():
     handlers = [

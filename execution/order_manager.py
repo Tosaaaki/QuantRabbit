@@ -6,13 +6,25 @@ OANDA REST で成行・指値を発注。
 """
 
 from __future__ import annotations
-import requests, toml, json, datetime
+import requests, json, datetime
 from typing import Literal
 
-CFG = toml.load(open("config/env.local.toml","r"))
-TOKEN   = CFG["oanda"]["token"]
-ACCOUNT = CFG["oanda"]["account"]
-PRACT   = CFG["oanda"].get("practice", True)
+import os
+from google.cloud import secretmanager
+
+# ---------- Secret Manager からシークレットを読み込む関数 ----------
+def access_secret_version(secret_id: str, version_id: str = "latest") -> str:
+    client = secretmanager.SecretManagerServiceClient()
+    project_id = os.environ.get("GOOGLE_CLOUD_PROJECT")
+    if not project_id:
+        raise ValueError("GOOGLE_CLOUD_PROJECT environment variable not set.")
+    name = f"projects/{project_id}/secrets/{secret_id}/versions/{version_id}"
+    response = client.access_secret_version(request={"name": name})
+    return response.payload.data.decode("UTF-8")
+
+TOKEN   = access_secret_version("oanda-api-token")
+ACCOUNT = access_secret_version("oanda-account-id")
+PRACT   = False # OANDAのpracticeフラグは常にFalse (本番環境用)
 
 REST_HOST = "https://api-fxpractice.oanda.com" if PRACT else "https://api-fxtrade.oanda.com"
 HEADERS   = {"Authorization": f"Bearer {TOKEN}", "Content-Type": "application/json"}

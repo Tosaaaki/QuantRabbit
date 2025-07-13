@@ -1,18 +1,21 @@
-"""
-analysis.summary_ingestor
-~~~~~~~~~~~~~~~~~~~~~~~~~
-Cloud Storage bucket `fx-news/summary/` に保存された
-ニュース要約 JSON を定期ポーリングし、SQLite `logs/news.db`
-に UPSERT するユーティリティ。
-"""
-
 from __future__ import annotations
 
-import asyncio, json, sqlite3, toml, pathlib, datetime
+import asyncio, json, sqlite3, pathlib, datetime
 from google.cloud import storage
+from google.cloud import secretmanager # 追加
 
-CONF = toml.load(open("config/env.local.toml", "r"))
-BUCKET = CONF["gcp"]["bucket_news"]
+# --- Secret Managerからシークレットを取得するヘルパー関数 ---
+def access_secret_version(secret_id: str, project_id: str = "quantrabbit", version_id: str = "latest") -> str:
+    """Secret Managerから指定されたシークレットのバージョンにアクセスします。"""
+    client = secretmanager.SecretManagerServiceClient()
+    name = f"projects/{project_id}/secrets/{secret_id}/versions/{version_id}"
+    response = client.access_secret_version(request={"name": name})
+    return response.payload.data.decode("UTF-8")
+
+# --- config ---
+# Secret Managerから設定を取得
+PROJECT_ID = access_secret_version("gcp_project_id")
+BUCKET = access_secret_version("news_bucket_name")
 
 # DB 初期化 -------------------------------------------------
 _DB_PATH = pathlib.Path("logs/news.db")
@@ -38,7 +41,7 @@ conn.commit()
 
 
 # GCS クライアント -----------------------------------------
-storage_client = storage.Client(project=CONF["gcp"]["project_id"])
+storage_client = storage.Client(project=PROJECT_ID) # 修正
 bucket = storage_client.bucket(BUCKET)
 
 SUMMARY_PREFIX = "summary/"
@@ -129,7 +132,7 @@ def check_event_soon(within_minutes: int = 30, min_impact: int = 3) -> bool:
 
 
 
-# --------------- CLI self‑test -----------------------------
+# --------------- CLI self-test -----------------------------
 if __name__ == "__main__":
     # # ダミーデータでテスト
     # _upsert({
@@ -139,7 +142,7 @@ if __name__ == "__main__":
     # print(get_latest_news())
 
     import asyncio
-    print("Start ingest loop (Ctrl‑C to stop)…")
+    print("Start ingest loop (Ctrl-C to stop)...")
     try:
         asyncio.run(ingest_loop(10))
     except KeyboardInterrupt:

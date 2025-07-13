@@ -1,18 +1,21 @@
-"""
-execution.position_manager
-~~~~~~~~~~~~~~~~~~~~~~~~~~
-OANDA から決済済み取引を取得し、DB に記録する。
-"""
-
 from __future__ import annotations
-import requests, toml, sqlite3, pathlib
+import requests, sqlite3, pathlib
 from datetime import datetime, timezone
+from google.cloud import secretmanager
+
+# --- Secret Managerからシークレットを取得するヘルパー関数 ---
+def access_secret_version(secret_id: str, project_id: str = "quantrabbit", version_id: str = "latest") -> str:
+    """Secret Managerから指定されたシークレットのバージョンにアクセスします。"""
+    client = secretmanager.SecretManagerServiceClient()
+    name = f"projects/{project_id}/secrets/{secret_id}/versions/{version_id}"
+    response = client.access_secret_version(request={"name": name})
+    return response.payload.data.decode("UTF-8")
 
 # --- config ---
-CFG = toml.load(open("config/env.local.toml", "r"))
-TOKEN = CFG["oanda"]["token"]
-ACCOUNT = CFG["oanda"]["account"]
-PRACT = CFG["oanda"].get("practice", True)
+# Secret ManagerからOANDAのトークンとアカウントIDを取得
+TOKEN = access_secret_version("oanda_token")
+ACCOUNT = access_secret_version("oanda_account_id")
+PRACT = False # env.tomlから取得しないため、ここでは固定値とする
 REST_HOST = "https://api-fxpractice.oanda.com" if PRACT else "https://api-fxtrade.oanda.com"
 HEADERS = {"Authorization": f"Bearer {TOKEN}"}
 
