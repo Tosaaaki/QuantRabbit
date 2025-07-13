@@ -11,12 +11,14 @@ import asyncio
 import json
 import openai
 
-from typing import Dict, Tuple
+from typing import Dict
 
 from utils.cost_guard import add_tokens
-from analysis.gpt_prompter import build_messages, OPENAI_MODEL as MODEL, MAX_TOKENS_MONTH
-
-
+from analysis.gpt_prompter import (
+    build_messages,
+    OPENAI_MODEL as MODEL,
+    MAX_TOKENS_MONTH,
+)
 
 
 _SCHEMA = {
@@ -25,7 +27,9 @@ _SCHEMA = {
     "ranked_strategies": list,
 }
 
+
 class GPTTimeout(Exception): ...
+
 
 async def call_openai(payload: Dict) -> Dict:
     """非同期で GPT を呼ぶ → dict を返す（フォールバック不要値は None）"""
@@ -43,7 +47,7 @@ async def call_openai(payload: Dict) -> Dict:
             max_tokens=120,
             timeout=7,
         )
-    except Exception as e:                      # API 障害や timeout
+    except Exception as e:  # API 障害や timeout
         raise GPTTimeout(str(e)) from e
 
     usage_in = resp.usage.prompt_tokens
@@ -76,6 +80,7 @@ _FALLBACK = {
     "ranked_strategies": ["TrendMA", "Donchian55", "BB_RSI"],
 }
 
+
 async def get_decision(payload: Dict) -> Dict:
     """
     上位ラッパ：GPT 呼び出し + 失敗時にフォールバックを返す
@@ -89,7 +94,9 @@ async def get_decision(payload: Dict) -> Dict:
 
 # ---------- CLI self‑test ----------
 if __name__ == "__main__":
-    import datetime, asyncio, pprint
+    import datetime
+    import asyncio
+    import pprint
 
     dummy = {
         "ts": datetime.datetime.utcnow().isoformat(timespec="seconds"),
