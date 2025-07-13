@@ -1,26 +1,23 @@
 from __future__ import annotations
-import asyncio, json, ssl, datetime
+import asyncio
+import json
+import ssl
+import datetime
 from dataclasses import dataclass
 from typing import Callable, Awaitable
 import websockets
-import toml
-import pathlib
-from google.cloud import secretmanager
+from utils.secrets import get_secret
 
-# ---------- Secret Manager からシークレットを読み込む関数 ----------
-def access_secret_version(secret_id: str, version_id: str = "latest") -> str:
-    client = secretmanager.SecretManagerServiceClient()
-    name = f"projects/quantrabbit/secrets/{secret_id}/versions/{version_id}"
-    response = client.access_secret_version(request={"name": name})
-    return response.payload.data.decode("UTF-8")
+# ---------- 読み込み：env.toml ----------
+TOKEN: str = get_secret("oanda_token")
+ACCOUNT: str = get_secret("oanda_account_id")
+PRACTICE: bool = False  # 本番口座なので False に設定。必要に応じて True に変更
 
-# ---------- 読み込み：Secret Manager ----------
-TOKEN: str = access_secret_version("oanda-api-token")
-ACCOUNT: str = access_secret_version("oanda-account-id")
-PRACTICE: bool = False # 本番口座なので False に設定。必要に応じて True に変更
-
-STREAM_HOST = "stream-fxtrade.oanda.com" if not PRACTICE else "stream-fxpractice.oanda.com"
+STREAM_HOST = (
+    "stream-fxtrade.oanda.com" if not PRACTICE else "stream-fxpractice.oanda.com"
+)
 STREAM_URL = f"wss://{STREAM_HOST}/v3/accounts/{ACCOUNT}/pricing/stream"
+
 
 @dataclass
 class Tick:
@@ -30,7 +27,9 @@ class Tick:
     ask: float
     liquidity: int
 
+
 # ---------- メイン ----------
+
 
 async def _connect(instrument: str, callback: Callable[[Tick], Awaitable[None]]):
     """
@@ -43,14 +42,18 @@ async def _connect(instrument: str, callback: Callable[[Tick], Awaitable[None]])
 
     while True:
         try:
-            async with websockets.connect(uri, ssl=ssl_ctx, extra_headers=headers, ping_interval=20) as ws:
+            async with websockets.connect(
+                uri, ssl=ssl_ctx, extra_headers=headers, ping_interval=20
+            ) as ws:
                 async for raw in ws:
                     msg = json.loads(raw)
-                    if msg["type"] != "PRICE":      # HEARTBEAT などは無視
+                    if msg["type"] != "PRICE":  # HEARTBEAT などは無視
                         continue
                     tick = Tick(
                         instrument=msg["instrument"],
-                        time=datetime.datetime.fromisoformat(msg["time"].replace("Z", "+00:00")),
+                        time=datetime.datetime.fromisoformat(
+                            msg["time"].replace("Z", "+00:00")
+                        ),
                         bid=float(msg["bids"][0]["price"]),
                         ask=float(msg["asks"][0]["price"]),
                         liquidity=int(msg["bids"][0]["liquidity"]),
@@ -58,10 +61,12 @@ async def _connect(instrument: str, callback: Callable[[Tick], Awaitable[None]])
                     await callback(tick)
         except Exception as e:
             print("tick_fetcher reconnect:", e)
-            await asyncio.sleep(3)   # バックオフして再接続
+            await asyncio.sleep(3)  # バックオフして再接続
 
 
-async def run_price_stream(instrument: str, callback: Callable[[Tick], Awaitable[None]]):
+async def run_price_stream(
+    instrument: str, callback: Callable[[Tick], Awaitable[None]]
+):
     """
     Public API
     ----------

@@ -1,21 +1,17 @@
 from __future__ import annotations
 
-import asyncio, json, sqlite3, pathlib, datetime
+import asyncio
+import json
+import sqlite3
+import pathlib
+import datetime
 from google.cloud import storage
-from google.cloud import secretmanager # 追加
-
-# --- Secret Managerからシークレットを取得するヘルパー関数 ---
-def access_secret_version(secret_id: str, project_id: str = "quantrabbit", version_id: str = "latest") -> str:
-    """Secret Managerから指定されたシークレットのバージョンにアクセスします。"""
-    client = secretmanager.SecretManagerServiceClient()
-    name = f"projects/{project_id}/secrets/{secret_id}/versions/{version_id}"
-    response = client.access_secret_version(request={"name": name})
-    return response.payload.data.decode("UTF-8")
+from utils.secrets import get_secret
 
 # --- config ---
-# Secret Managerから設定を取得
-PROJECT_ID = access_secret_version("gcp_project_id")
-BUCKET = access_secret_version("news_bucket_name")
+# env.toml から設定を取得
+PROJECT_ID = get_secret("gcp_project_id")
+BUCKET = get_secret("news_bucket_name")
 
 # DB 初期化 -------------------------------------------------
 _DB_PATH = pathlib.Path("logs/news.db")
@@ -41,13 +37,14 @@ conn.commit()
 
 
 # GCS クライアント -----------------------------------------
-storage_client = storage.Client(project=PROJECT_ID) # 修正
+storage_client = storage.Client(project=PROJECT_ID)  # 修正
 bucket = storage_client.bucket(BUCKET)
 
 SUMMARY_PREFIX = "summary/"
 PROCESSED_PREFIX = "processed/"
 
 # -----------------------------------------------------------
+
 
 async def ingest_loop(interval_sec: int = 30):
     """30 秒ごとに summary/ をチェックして DB に挿入"""
@@ -98,38 +95,39 @@ def _upsert(d: dict):
     )
     conn.commit()
 
+
 def get_latest_news(limit_short: int = 3, limit_long: int = 5) -> dict:
     """DBから最新のニュースを取得して返す"""
     cur.execute("SELECT summary, ts_utc, horizon FROM news ORDER BY ts_utc DESC")
     rows = cur.fetchall()
-    
+
     news_short = []
     news_long = []
-    
+
     for summary, ts, horizon in rows:
         item = {"summary": summary, "ts": ts}
         if horizon == "short" and len(news_short) < limit_short:
             news_short.append(item)
         elif horizon == "long" and len(news_long) < limit_long:
             news_long.append(item)
-        
+
         if len(news_short) >= limit_short and len(news_long) >= limit_long:
             break
-            
+
     return {"short": news_short, "long": news_long}
+
 
 def check_event_soon(within_minutes: int = 30, min_impact: int = 3) -> bool:
     """指定された時間内に指定されたインパクト以上の経済指標があるかチェック"""
     now = datetime.datetime.utcnow()
     future_limit = now + datetime.timedelta(minutes=within_minutes)
-    
+
     cur.execute(
         """SELECT event_time FROM news 
            WHERE impact >= ? AND event_time BETWEEN ? AND ?""",
-        (min_impact, now.isoformat(), future_limit.isoformat())
+        (min_impact, now.isoformat(), future_limit.isoformat()),
     )
     return cur.fetchone() is not None
-
 
 
 # --------------- CLI self-test -----------------------------
@@ -142,6 +140,7 @@ if __name__ == "__main__":
     # print(get_latest_news())
 
     import asyncio
+
     print("Start ingest loop (Ctrl-C to stop)...")
     try:
         asyncio.run(ingest_loop(10))
