@@ -6,7 +6,8 @@ Tick を受け取り、任意のタイムフレームのローソク足を逐次
 """
 
 from __future__ import annotations
-import asyncio, datetime
+import asyncio
+import datetime
 from collections import defaultdict
 from typing import Callable, Awaitable, Dict, List, Tuple, Literal
 from market_data.tick_fetcher import Tick
@@ -14,12 +15,15 @@ from market_data.tick_fetcher import Tick
 Candle = dict[str, float]  # open, high, low, close
 TimeFrame = Literal["M1", "H4"]
 
+
 class CandleAggregator:
     def __init__(self, timeframes: List[TimeFrame]):
         self.timeframes = timeframes
         self.current_candles: Dict[TimeFrame, Candle] = {}
         self.last_keys: Dict[TimeFrame, str] = {}
-        self.subscribers: Dict[TimeFrame, List[Callable[[Candle], Awaitable[None]]]] = defaultdict(list)
+        self.subscribers: Dict[TimeFrame, List[Callable[[Candle], Awaitable[None]]]] = (
+            defaultdict(list)
+        )
 
     def subscribe(self, tf: TimeFrame, coro: Callable[[Candle], Awaitable[None]]):
         if tf in self.timeframes:
@@ -40,7 +44,7 @@ class CandleAggregator:
 
         for tf in self.timeframes:
             key = self._get_key(tf, ts)
-            
+
             # 新しいローソク足か判定
             if self.last_keys.get(tf) != key:
                 # 古い足が確定
@@ -48,9 +52,15 @@ class CandleAggregator:
                     finalized_candle = self.current_candles[tf]
                     for sub in self.subscribers[tf]:
                         await sub(finalized_candle)
-                
+
                 # 新しい足を開始
-                self.current_candles[tf] = {"open": price, "high": price, "low": price, "close": price, "time": ts}
+                self.current_candles[tf] = {
+                    "open": price,
+                    "high": price,
+                    "low": price,
+                    "close": price,
+                    "time": ts,
+                }
                 self.last_keys[tf] = key
             else:
                 # 現在の足を更新
@@ -63,8 +73,11 @@ class CandleAggregator:
 
 # ------ 便利ラッパ ------
 
-async def start_candle_stream(instrument: str,
-                              handlers: List[Tuple[TimeFrame, Callable[[Candle], Awaitable[None]]]]):
+
+async def start_candle_stream(
+    instrument: str,
+    handlers: List[Tuple[TimeFrame, Callable[[Candle], Awaitable[None]]]],
+):
     """
     instrument: 例 "USD_JPY"
     handlers: [(TimeFrame, handler), ...]
@@ -78,11 +91,15 @@ async def start_candle_stream(instrument: str,
         await agg.on_tick(tick)
 
     from market_data.tick_fetcher import run_price_stream
+
     await run_price_stream(instrument, tick_cb)
+
 
 # ---------- self test ----------
 if __name__ == "__main__":
-    import pprint, sys
+    import pprint
+    import sys
+
     async def debug_m1_candle(c):
         print("--- M1 Candle ---")
         pprint.pprint(c)

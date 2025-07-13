@@ -7,7 +7,8 @@ SQLite `logs/trades.db` 内に保存。
 """
 
 from __future__ import annotations
-import sqlite3, pathlib, datetime, math
+import sqlite3
+import pathlib
 import pandas as pd
 from typing import Dict
 
@@ -16,7 +17,8 @@ _DB.parent.mkdir(exist_ok=True)
 con = sqlite3.connect(_DB)
 
 # テーブルが無い場合は作成
-con.execute("""
+con.execute(
+    """
 CREATE TABLE IF NOT EXISTS trades (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   pocket TEXT,            -- 'micro' | 'macro'
@@ -24,11 +26,14 @@ CREATE TABLE IF NOT EXISTS trades (
   close_time TEXT,
   pl_pips REAL
 )
-""")
+"""
+)
 con.commit()
+
 
 def _load_df() -> pd.DataFrame:
     return pd.read_sql_query("SELECT * FROM trades", con, parse_dates=["close_time"])
+
 
 def snapshot() -> Dict[str, Dict[str, float]]:
     """
@@ -45,7 +50,7 @@ def snapshot() -> Dict[str, Dict[str, float]]:
     result: Dict[str, Dict[str, float]] = {}
     for pocket, sub in df.groupby("pocket"):
         profit = sub.loc[sub.pl_pips > 0, "pl_pips"].sum()
-        loss   = abs(sub.loc[sub.pl_pips < 0, "pl_pips"].sum())
+        loss = abs(sub.loc[sub.pl_pips < 0, "pl_pips"].sum())
         pf = profit / loss if loss else float("inf")
         win_rate = (sub.pl_pips > 0).mean()
         avg = sub.pl_pips.mean()
@@ -76,4 +81,5 @@ if __name__ == "__main__":
     )
     con.commit()
     import pprint
+
     pprint.pp(snapshot())
