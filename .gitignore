@@ -1,3 +1,4 @@
 # Local environment variables
 config/env.toml
 config/env.toml.terraform/
+.DS_Store
