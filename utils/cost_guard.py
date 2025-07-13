@@ -8,13 +8,15 @@ True / False を返して呼び出し側で動的にニュース要約等を停�
 """
 
 from __future__ import annotations
-import json, datetime, pathlib
+import json
+import datetime
+import pathlib
 from typing import TypedDict
 
 # 保存パス (プロジェクト直下 .cache)
 _CACHE = pathlib.Path(".cache")
 _CACHE.mkdir(exist_ok=True)
-_JSON  = _CACHE / "token_usage.json"
+_JSON = _CACHE / "token_usage.json"
 
 
 class _State(TypedDict):

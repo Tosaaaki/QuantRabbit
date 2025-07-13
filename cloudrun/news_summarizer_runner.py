@@ -7,17 +7,22 @@ env:
   OPENAI_API_KEY    : OpenAI key (Secret Manager → env var)
 """
 
-import os, json, base64, logging, datetime
+import os
+import json
+import base64
+import logging
+import datetime
 from flask import Flask, request, abort
 from google.cloud import storage
 import openai
 
 openai.api_key = os.getenv("OPENAI_API_KEY", "")
-BUCKET = os.environ["BUCKET"]          # Fail fast if unset
+BUCKET = os.environ["BUCKET"]  # Fail fast if unset
 
 app = Flask(__name__)
 storage_client = storage.Client()
 bucket = storage_client.bucket(BUCKET)
+
 
 def _normalize_result(res: object) -> dict:
     """Return dict with keys 'summary' (str) and 'sentiment' (int)."""
@@ -26,18 +31,14 @@ def _normalize_result(res: object) -> dict:
     if not isinstance(res, dict):
         return {"summary": str(res).strip(), "sentiment": 0}
 
-    summary = (
-        res.get("summary")
-        or res.get("要約")
-        or res.get("title")
-        or ""
-    )
+    summary = res.get("summary") or res.get("要約") or res.get("title") or ""
     sentiment = res.get("sentiment") or res.get("impact") or 0
     try:
         sentiment = int(sentiment)
     except Exception:
         sentiment = 0
     return {"summary": summary.strip(), "sentiment": sentiment}
+
 
 def summarize(text: str) -> dict:
     """GPT‑4o‑mini summarizer → return dict {summary, sentiment}"""
@@ -53,7 +54,10 @@ def summarize(text: str) -> dict:
         response_format={"type": "json_object"},
         temperature=0.3,
         messages=[
-            {"role": "system", "content": "あなたは金融ニュースの要約アシスタントです。"},
+            {
+                "role": "system",
+                "content": "あなたは金融ニュースの要約アシスタントです。",
+            },
             {"role": "user", "content": prompt},
         ],
         max_tokens=120,
@@ -64,6 +68,7 @@ def summarize(text: str) -> dict:
     except Exception:
         data = _normalize_result(resp.choices[0].message.content.strip())
     return data
+
 
 @app.route("/", methods=["POST"])
 def ingest():
@@ -84,7 +89,7 @@ def ingest():
             object_name = ""
 
     if not object_name.startswith("raw/"):
-        return "skip", 200   # heartbeat or non‑raw
+        return "skip", 200  # heartbeat or non‑raw
 
     # download raw news
     blob = bucket.blob(object_name)
@@ -112,6 +117,7 @@ def ingest():
     )
     logging.info("summarized %s", object_name)
     return "OK", 200
+
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 8080)))

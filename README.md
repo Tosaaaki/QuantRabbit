@@ -84,10 +84,32 @@ brew install ta-lib   # macOS
 # ./configure --prefix=/usr && make && sudo make install
 
 # 2. config
-cp config/env.toml config/env.local.toml   # 編集してキーを投入
+cp config/env.toml  config/env.local.toml   # 編集してキーを投入
+cp config/pool.yaml config/pool.local.yaml # 有効戦略を調整
 
 # 3. run (practice account, small lot)
 python main.py
+
+# pool.yaml example
+```yaml
+strategies:
+  - name: TrendMA
+    sl: 30
+    tp: 60
+    enabled: true
+  - name: Donchian55
+    sl: 55
+    tp: 110
+    enabled: true
+  - name: BB_RSI
+    sl: 10
+    tp: 15
+    enabled: true
+  - name: NewsSpikeReversal
+    sl: 10
+    tp: 20
+    enabled: true
+```
 
 Trade Loop Overview
 	1.	Tick → Candle(M1) 生成 → factor_cache 更新
