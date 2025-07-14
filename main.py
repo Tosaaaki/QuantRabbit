@@ -106,6 +106,7 @@ async def logic_loop():
             focus, w_macro = decide_focus(macro_regime, micro_regime, perf=perf_cache)
 
             # --- 2. GPT判断 ---
+            # M1/H4 の移動平均・RSI などの指標をまとめて送信
             payload = {
                 "ts": now.isoformat(timespec="seconds"),
                 "reg_macro": macro_regime,
@@ -162,7 +163,7 @@ async def logic_loop():
                     sig["action"] == "buy",
                 )
 
-                trade_id = market_order("USD_JPY", units, sl, tp, pocket)
+                trade_id = await market_order("USD_JPY", units, sl, tp, pocket)
                 if trade_id:
                     logging.info(
                         f"[ORDER] {trade_id} | {cls.name} | {lot} lot | SL={sl}, TP={tp}"

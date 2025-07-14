@@ -6,7 +6,7 @@ OANDA REST で成行・指値を発注。
 """
 
 from __future__ import annotations
-import requests
+import httpx
 from typing import Literal
 
 from utils.secrets import get_secret
@@ -22,7 +22,7 @@ REST_HOST = (
 HEADERS = {"Authorization": f"Bearer {TOKEN}", "Content-Type": "application/json"}
 
 
-def market_order(
+async def market_order(
     instrument: str,
     units: int,
     sl_price: float,
@@ -48,9 +48,10 @@ def market_order(
         }
     }
 
-    r = requests.post(url, headers=HEADERS, json=body, timeout=5)
-    r.raise_for_status()
-    data = r.json()
+    async with httpx.AsyncClient() as client:
+        r = await client.post(url, headers=HEADERS, json=body, timeout=5)
+        r.raise_for_status()
+        data = r.json()
     trade_id = (
         data.get("orderFillTransaction", {}).get("tradeOpened", {}).get("tradeID")
     )
