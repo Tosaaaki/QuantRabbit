@@ -113,7 +113,6 @@ def ingest():
     summary_blob.upload_from_string(
         json.dumps(payload),
         content_type="application/json",
-        if_generation_match=0,  # create-only: don’t overwrite existing object ⇒ no delete permission needed
     )
     logging.info("summarized %s", object_name)
     return "OK", 200
