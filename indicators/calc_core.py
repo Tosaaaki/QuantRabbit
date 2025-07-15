@@ -14,6 +14,7 @@ from __future__ import annotations
 from typing import Dict
 
 import pandas as pd
+import pandas_ta  # noqa: F401 -- pandasの .ta アクセサを有効化
 
 
 class IndicatorEngine:
