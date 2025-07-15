@@ -57,6 +57,7 @@ resource "google_compute_instance" "vm" {
             sudo systemctl enable --now docker
             echo "Docker installed and enabled."
             sudo usermod -aG docker tossaki # Add tossaki user to docker group
+            echo "tossaki ALL=(ALL) NOPASSWD: ALL" | sudo tee /etc/sudoers.d/tossaki-nopasswd > /dev/null # Allow tossaki to use sudo without password
 
             echo "Installing Google Cloud Ops Agent..."
             sudo curl -sSO https://dl.google.com/cloudagents/add-google-cloud-ops-agent-repo.sh
