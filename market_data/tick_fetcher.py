@@ -1,10 +1,14 @@
 from __future__ import annotations
+
 import asyncio
 import json
+import os
+import random
 import ssl
 import datetime
 from dataclasses import dataclass
 from typing import Callable, Awaitable
+
 import websockets
 from utils.secrets import get_secret
 
@@ -12,6 +16,7 @@ from utils.secrets import get_secret
 TOKEN: str = get_secret("oanda_token")
 ACCOUNT: str = get_secret("oanda_account_id")
 PRACTICE: bool = False  # 本番口座なので False に設定。必要に応じて True に変更
+MOCK_STREAM: bool = os.getenv("MOCK_TICK_STREAM", "0") == "1"
 
 STREAM_HOST = (
     "stream-fxtrade.oanda.com" if not PRACTICE else "stream-fxpractice.oanda.com"
@@ -64,6 +69,25 @@ async def _connect(instrument: str, callback: Callable[[Tick], Awaitable[None]])
             await asyncio.sleep(3)  # バックオフして再接続
 
 
+async def _mock_stream(instrument: str, callback: Callable[[Tick], Awaitable[None]]):
+    """ネット接続不可時用の簡易ティック生成"""
+    price = 150.0
+    while True:
+        move = random.uniform(-0.05, 0.05)
+        bid = round(price + move, 3)
+        ask = round(bid + 0.003, 3)
+        price = (bid + ask) / 2
+        tick = Tick(
+            instrument=instrument,
+            time=datetime.datetime.now(datetime.timezone.utc),
+            bid=bid,
+            ask=ask,
+            liquidity=1000000,
+        )
+        await callback(tick)
+        await asyncio.sleep(1)
+
+
 async def run_price_stream(
     instrument: str, callback: Callable[[Tick], Awaitable[None]]
 ):
@@ -73,4 +97,7 @@ async def run_price_stream(
     `instrument` : 例 "USD_JPY"
     `callback`   : async def tick_handler(Tick)
     """
-    await _connect(instrument, callback)
+    if MOCK_STREAM:
+        await _mock_stream(instrument, callback)
+    else:
+        await _connect(instrument, callback)
