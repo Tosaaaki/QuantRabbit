@@ -93,7 +93,7 @@ EOF
             echo "gcloud CLI path set."
 
             echo "Logging into Docker with gcloud auth token..."
-            sudo /usr/local/google-cloud-sdk/bin/gcloud auth configure-docker asia-northeast1-docker.pkg.dev >> /var/log/docker_startup.log 2>&1
+            sudo -E /usr/local/google-cloud-sdk/bin/gcloud auth configure-docker asia-northeast1-docker.pkg.dev >> /var/log/docker_startup.log 2>&1
             echo "Docker login complete."
             sudo systemctl restart docker
             echo "Docker daemon restarted."
