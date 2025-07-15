@@ -4,12 +4,11 @@ import asyncio
 import json
 import os
 import random
-import ssl
 import datetime
 from dataclasses import dataclass
 from typing import Callable, Awaitable
 
-import websockets
+import httpx
 from utils.secrets import get_secret
 
 # ---------- 読み込み：env.toml ----------
@@ -21,7 +20,7 @@ MOCK_STREAM: bool = os.getenv("MOCK_TICK_STREAM", "0") == "1"
 STREAM_HOST = (
     "stream-fxtrade.oanda.com" if not PRACTICE else "stream-fxpractice.oanda.com"
 )
-STREAM_URL = f"wss://{STREAM_HOST}/v3/accounts/{ACCOUNT}/pricing/stream"
+STREAM_URL = f"https://{STREAM_HOST}/v3/accounts/{ACCOUNT}/pricing/stream"
 
 
 @dataclass
@@ -40,30 +39,35 @@ async def _connect(instrument: str, callback: Callable[[Tick], Awaitable[None]])
     """
     内部：リコネクトループ
     """
-    params = f"instruments={instrument}"
-    uri = f"{STREAM_URL}?{params}"
-    ssl_ctx = ssl.create_default_context()
-    headers = {"Authorization": f"Bearer {TOKEN}"}
+    params = {"instruments": instrument}
+    headers = {
+        "Authorization": f"Bearer {TOKEN}",
+        "Accept-Datetime-Format": "RFC3339",
+    }
 
     while True:
         try:
-            async with websockets.connect(
-                uri, ssl=ssl_ctx, extra_headers=headers, ping_interval=20
-            ) as ws:
-                async for raw in ws:
-                    msg = json.loads(raw)
-                    if msg["type"] != "PRICE":  # HEARTBEAT などは無視
-                        continue
-                    tick = Tick(
-                        instrument=msg["instrument"],
-                        time=datetime.datetime.fromisoformat(
-                            msg["time"].replace("Z", "+00:00")
-                        ),
-                        bid=float(msg["bids"][0]["price"]),
-                        ask=float(msg["asks"][0]["price"]),
-                        liquidity=int(msg["bids"][0]["liquidity"]),
-                    )
-                    await callback(tick)
+            async with httpx.AsyncClient(timeout=None) as client:
+                async with client.stream(
+                    "GET", STREAM_URL, headers=headers, params=params
+                ) as r:
+                    r.raise_for_status()
+                    async for raw in r.aiter_lines():
+                        if not raw:
+                            continue
+                        msg = json.loads(raw)
+                        if msg.get("type") != "PRICE":
+                            continue
+                        tick = Tick(
+                            instrument=msg["instrument"],
+                            time=datetime.datetime.fromisoformat(
+                                msg["time"].replace("Z", "+00:00")
+                            ),
+                            bid=float(msg["bids"][0]["price"]),
+                            ask=float(msg["asks"][0]["price"]),
+                            liquidity=int(msg["bids"][0]["liquidity"]),
+                        )
+                        await callback(tick)
         except Exception as e:
             print("tick_fetcher reconnect:", e)
             await asyncio.sleep(3)  # バックオフして再接続
