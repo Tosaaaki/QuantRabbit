@@ -3,7 +3,11 @@ import datetime
 import logging
 import traceback
 
-from market_data.candle_fetcher import Candle, start_candle_stream
+from market_data.candle_fetcher import (
+    Candle,
+    start_candle_stream,
+    initialize_history,
+)
 from indicators.factor_cache import all_factors, on_candle
 from analysis.regime_classifier import classify
 from analysis.focus_decider import decide_focus
@@ -187,6 +191,7 @@ async def logic_loop():
 
 async def main():
     handlers = [("M1", m1_candle_handler), ("H4", h4_candle_handler)]
+    await initialize_history("USD_JPY")
     await asyncio.gather(start_candle_stream("USD_JPY", handlers), logic_loop())
 
 
