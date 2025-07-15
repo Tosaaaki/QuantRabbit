@@ -17,6 +17,12 @@ def _load() -> dict:
 
 def get_secret(key: str) -> str:
     data = _load()
+    if "_" in key:
+        parts = key.split("_", 1)
+        section = parts[0]
+        real_key = parts[1]
+        if section in data and real_key in data[section]:
+            return str(data[section][real_key])
     if key not in data:
         raise KeyError(f"{key} not found in {_ENV_PATH}")
     return str(data[key])
