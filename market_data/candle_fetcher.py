@@ -6,14 +6,26 @@ Tick を受け取り、任意のタイムフレームのローソク足を逐次
 """
 
 from __future__ import annotations
+
 import asyncio
 import datetime
 from collections import defaultdict
-from typing import Callable, Awaitable, Dict, List, Tuple, Literal
+from typing import Awaitable, Callable, Dict, List, Literal, Tuple
+
+import httpx
+from utils.secrets import get_secret
 from market_data.tick_fetcher import Tick
 
 Candle = dict[str, float]  # open, high, low, close
 TimeFrame = Literal["M1", "H4"]
+
+
+TOKEN = get_secret("oanda_token")
+PRACT = False
+REST_HOST = (
+    "https://api-fxpractice.oanda.com" if PRACT else "https://api-fxtrade.oanda.com"
+)
+HEADERS = {"Authorization": f"Bearer {TOKEN}"}
 
 
 class CandleAggregator:
@@ -93,6 +105,43 @@ async def start_candle_stream(
     from market_data.tick_fetcher import run_price_stream
 
     await run_price_stream(instrument, tick_cb)
+
+
+async def fetch_historical_candles(
+    instrument: str, granularity: TimeFrame, count: int
+) -> List[Candle]:
+    """OANDA REST から過去ローソク足を取得する"""
+    url = f"{REST_HOST}/v3/instruments/{instrument}/candles"
+    params = {"granularity": granularity, "count": count, "price": "M"}
+    async with httpx.AsyncClient() as client:
+        r = await client.get(url, headers=HEADERS, params=params, timeout=5)
+        r.raise_for_status()
+        data = r.json()
+
+    out: List[Candle] = []
+    for c in data.get("candles", []):
+        ts = datetime.datetime.fromisoformat(c["time"].replace("Z", "+00:00"))
+        out.append(
+            {
+                "open": float(c["mid"]["o"]),
+                "high": float(c["mid"]["h"]),
+                "low": float(c["mid"]["l"]),
+                "close": float(c["mid"]["c"]),
+                "time": ts,
+            }
+        )
+    out.sort(key=lambda x: x["time"])
+    return out
+
+
+async def initialize_history(instrument: str):
+    """起動時に過去ローソクを取得し factor_cache を埋める"""
+    from indicators.factor_cache import on_candle
+
+    for tf in ("M1", "H4"):
+        candles = await fetch_historical_candles(instrument, tf, 20)
+        for c in candles:
+            await on_candle(tf, c)
 
 
 # ---------- self test ----------
