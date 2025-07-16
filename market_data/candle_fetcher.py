@@ -120,7 +120,13 @@ async def fetch_historical_candles(
 
     out: List[Candle] = []
     for c in data.get("candles", []):
-        ts = datetime.datetime.fromisoformat(c["time"].replace("Z", "+00:00"))
+        # OANDA API returns nanoseconds, but fromisoformat only supports microseconds.
+        # Truncate to microseconds.
+        time_str = c["time"].replace("Z", "+00:00")
+        if "." in time_str:
+            main_part, frac_part = time_str.split(".")
+            time_str = f"{main_part}.{frac_part[:6]}{frac_part[-6:]}" # Keep only microseconds
+        ts = datetime.datetime.fromisoformat(time_str)
         out.append(
             {
                 "open": float(c["mid"]["o"]),

@@ -44,6 +44,7 @@ class IndicatorEngine:
         # pandas_ta は DataFrame に直接アクセスできる
         # df.ta.sma() のように呼び出す
         df.ta.sma(length=10, append=True)
+        df.ta.sma(length=20, append=True)
         df.ta.ema(length=20, append=True)
         df.ta.rsi(length=14, append=True)
         df.ta.atr(length=14, append=True)
