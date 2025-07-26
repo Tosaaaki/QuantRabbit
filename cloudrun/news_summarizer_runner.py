@@ -45,9 +45,9 @@ def summarize(text: str) -> dict:
     prompt = (
         "以下のニュース本文を最大120字で日本語要約し、"
         "USD/JPYへのインパクトを -2〜+2 の整数で付与し "
-        "次の JSON 形式で返してください。\\n"
-        '{"summary":"...", "sentiment":-2〜+2}\\n'
-        "### 原文\\n" + text[:1500]
+        "次の JSON 形式で返してください。\n"
+        '{"summary":"...", "sentiment":-2〜+2}\n'
+        "### 原文\n" + text[:1500]
     )
     resp = openai.chat.completions.create(
         model="gpt-4o-mini",

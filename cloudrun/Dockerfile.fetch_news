@@ -1,0 +1,5 @@
+FROM python:3.11-slim
+WORKDIR /app
+RUN pip install --no-cache-dir google-cloud-storage feedparser Flask gunicorn
+COPY . .
+CMD ["bash", "-c", "gunicorn --bind 0.0.0.0:$PORT fetch_news_runner:app"]

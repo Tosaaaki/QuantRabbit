@@ -59,7 +59,7 @@ class IndicatorEngine:
         out["ema20"] = df["EMA_20"].iloc[-1]
 
         out["rsi"] = df["RSI_14"].iloc[-1]
-        out["atr"] = df["ATR_14"].iloc[-1]
+        out["atr"] = df["ATRr_14"].iloc[-1]
         out["adx"] = df["ADX_14"].iloc[-1]
 
         # Bollinger Bands の計算
