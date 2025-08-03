@@ -71,6 +71,14 @@ async def logic_loop():
                 )
                 last_heartbeat_time = now
 
+            # 5分ごとにパフォーマンスとニュースを更新
+            if (now - last_update_time).total_seconds() >= 300:
+                perf_cache = get_perf()
+                news_cache = get_latest_news()
+                last_update_time = now
+                logging.info(f"[PERF] Updated: {perf_cache}")
+                logging.info(f"[NEWS] Updated: {news_cache}")
+
             # --- 1. 状況分析 ---
             factors = all_factors()
             fac_m1 = factors.get("M1")
@@ -83,17 +91,9 @@ async def logic_loop():
                 or not fac_m1.get("close")
                 or not fac_h4.get("close")
             ):
-                logging.info("[WAIT] Waiting for M1/H4 factor data...")
+                logging.info("[WAIT] Waiting for M1/H4 factor data for trading logic...")
                 await asyncio.sleep(5)
                 continue
-
-            # 5分ごとにパフォーマンスとニュースを更新
-            if (now - last_update_time).total_seconds() >= 300:
-                perf_cache = get_perf()
-                news_cache = get_latest_news()
-                last_update_time = now
-                logging.info(f"[PERF] Updated: {perf_cache}")
-                logging.info(f"[NEWS] Updated: {news_cache}")
 
             event_soon = check_event_soon(within_minutes=30, min_impact=3)
             global_drawdown_exceeded = check_global_drawdown()

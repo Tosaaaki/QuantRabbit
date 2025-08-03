@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-import openai
+from openai import AsyncOpenAI
 
 from typing import Dict
 
@@ -19,6 +19,8 @@ from analysis.gpt_prompter import (
     OPENAI_MODEL as MODEL,
     MAX_TOKENS_MONTH,
 )
+
+client = AsyncOpenAI()
 
 
 _SCHEMA = {
@@ -40,7 +42,7 @@ async def call_openai(payload: Dict) -> Dict:
     msgs = build_messages(payload)
 
     try:
-        resp = await openai.ChatCompletion.acreate(
+        resp = await client.chat.completions.create(
             model=MODEL,
             messages=msgs,
             temperature=0.2,

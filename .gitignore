@@ -4,3 +4,6 @@ config/env.toml.terraform/
 tmp_*.txt
 .ruff_cache/
 .DS_Store
+__pycache__/
+*.pyc
+.terraform

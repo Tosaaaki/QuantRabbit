@@ -1,10 +1,8 @@
-import openai
 import json
 from typing import Dict, List
 from utils.secrets import get_secret
 
 # ---------- 読み込み：env.toml ----------
-openai.api_key = get_secret("openai_api_key")
 OPENAI_MODEL = get_secret("openai_model")
 MAX_TOKENS_MONTH = int(get_secret("openai_max_month_tokens"))
 

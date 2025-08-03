@@ -59,7 +59,9 @@ class IndicatorEngine:
         out["ema20"] = df["EMA_20"].iloc[-1]
 
         out["rsi"] = df["RSI_14"].iloc[-1]
-        out["atr"] = df["ATR_14"].iloc[-1]
+        # pandas_ta v0.3.14b0 では ATR_14 -> ATRr_14 に名称変更された
+        atr_col_name = "ATRr_14" if "ATRr_14" in df.columns else "ATR_14"
+        out["atr"] = df[atr_col_name].iloc[-1]
         out["adx"] = df["ADX_14"].iloc[-1]
 
         # Bollinger Bands の計算

@@ -6,20 +6,25 @@ OANDA REST で成行・指値を発注。
 """
 
 from __future__ import annotations
-import httpx
 from typing import Literal
+
+from oandapyV20 import API
+from oandapyV20.exceptions import V20Error
+from oandapyV20.endpoints.orders import OrderCreate
 
 from utils.secrets import get_secret
 
 # ---------- 読み込み：env.toml ----------
 TOKEN = get_secret("oanda_token")
 ACCOUNT = get_secret("oanda_account_id")
-PRACT = False  # OANDAのpracticeフラグは常にFalse (本番環境用)
+try:
+    PRACTICE_FLAG = get_secret("oanda_practice").lower() == "true"
+except KeyError:
+    PRACTICE_FLAG = False  # デフォルトは本番環境
 
-REST_HOST = (
-    "https://api-fxpractice.oanda.com" if PRACT else "https://api-fxtrade.oanda.com"
-)
-HEADERS = {"Authorization": f"Bearer {TOKEN}", "Content-Type": "application/json"}
+ENVIRONMENT = "practice" if PRACTICE_FLAG else "live"
+
+api = API(access_token=TOKEN, environment=ENVIRONMENT)
 
 
 async def market_order(
@@ -33,9 +38,7 @@ async def market_order(
     units : +10000 = buy 0.1 lot, ‑10000 = sell 0.1 lot
     returns order ticket id
     """
-    url = f"{REST_HOST}/v3/accounts/{ACCOUNT}/orders"
-
-    body = {
+    order_data = {
         "order": {
             "type": "MARKET",
             "instrument": instrument,
@@ -48,11 +51,14 @@ async def market_order(
         }
     }
 
-    async with httpx.AsyncClient() as client:
-        r = await client.post(url, headers=HEADERS, json=body, timeout=5)
-        r.raise_for_status()
-        data = r.json()
-    trade_id = (
-        data.get("orderFillTransaction", {}).get("tradeOpened", {}).get("tradeID")
-    )
-    return trade_id
+    r = OrderCreate(accountID=ACCOUNT, data=order_data)
+    try:
+        api.request(r)
+        response = r.response
+        trade_id = (
+            response.get("orderFillTransaction", {}).get("tradeOpened", {}).get("tradeID")
+        )
+        return trade_id
+    except V20Error as e:
+        print(f"OANDA API Error in market_order: {e}")
+        return None
