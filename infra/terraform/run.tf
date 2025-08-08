@@ -72,3 +72,35 @@ resource "google_cloud_run_v2_service" "fetch_news_runner" {
     }
   }
 }
+
+# --- Cloud Scheduler for Fetch News Runner ---
+
+resource "google_cloud_scheduler_job" "fetch_news_scheduler" {
+  project   = var.project_id
+  region    = var.region
+  name      = "fetch-news-scheduler"
+  schedule  = "*/15 * * * *"  # Every 15 minutes
+  time_zone = "UTC"
+
+  http_target {
+    uri = google_cloud_run_v2_service.fetch_news_runner.uri
+    http_method = "GET"
+    oidc_token {
+      service_account_email = google_service_account.scheduler_invoker.email
+    }
+  }
+}
+
+resource "google_service_account" "scheduler_invoker" {
+  project      = var.project_id
+  account_id   = "scheduler-invoker"
+  display_name = "Cloud Scheduler Invoker"
+}
+
+resource "google_cloud_run_service_iam_member" "scheduler_invoker_permission" {
+  project  = google_cloud_run_v2_service.fetch_news_runner.project
+  location = google_cloud_run_v2_service.fetch_news_runner.location
+  service  = google_cloud_run_v2_service.fetch_news_runner.name
+  role     = "roles/run.invoker"
+  member   = "serviceAccount:${google_service_account.scheduler_invoker.email}"
+}

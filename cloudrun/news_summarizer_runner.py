@@ -1,12 +1,3 @@
-"""
-Cloud Run – News Summarizer
----------------------------
-expects:  POST  from Pub/Sub push (JSON envelope)
-env:
-  BUCKET            : GCS bucket name  (fx-news)
-  OPENAI_API_KEY    : OpenAI key (Secret Manager → env var)
-"""
-
 import os
 import json
 import base64
@@ -15,8 +6,9 @@ import datetime
 from flask import Flask, request, abort
 from google.cloud import storage
 import openai
+import requests
 
-openai.api_key = os.getenv("OPENAI_API_KEY", "")
+openai.api_key = os.environ.get("OPENAI_API_KEY")
 BUCKET = os.environ["BUCKET"]  # Fail fast if unset
 
 app = Flask(__name__)
@@ -42,26 +34,50 @@ def _normalize_result(res: object) -> dict:
 
 def summarize(text: str) -> dict:
     """GPT‑4o‑mini summarizer → return dict {summary, sentiment}"""
+    try:
+        # Test direct HTTP connection to OpenAI API endpoint
+        test_url = "https://api.openai.com/v1/models"
+        headers = {"Authorization": f"Bearer {openai.api_key}"}
+        test_response = requests.get(test_url, headers=headers, timeout=10)
+        logging.info(f"OpenAI API test response status: {test_response.status_code}")
+        logging.info(f"OpenAI API test response body: {test_response.text[:200]}")
+    except requests.exceptions.RequestException as e:
+        logging.error(f"OpenAI API direct connection test failed: {e}")
+
     prompt = (
         "以下のニュース本文を最大120字で日本語要約し、"
         "USD/JPYへのインパクトを -2〜+2 の整数で付与し "
-        "次の JSON 形式で返してください。\\n"
-        '{"summary":"...", "sentiment":-2〜+2}\\n'
-        "### 原文\\n" + text[:1500]
+        "次の JSON 形式で返してください。\n"
+        '{"summary":"...", "sentiment":-2〜+2}\n' 
+        "### 原文\n" + text[:1500]
     )
-    resp = openai.chat.completions.create(
-        model="gpt-4o-mini",
-        response_format={"type": "json_object"},
-        temperature=0.3,
-        messages=[
-            {
-                "role": "system",
-                "content": "あなたは金融ニュースの要約アシスタントです。",
-            },
-            {"role": "user", "content": prompt},
-        ],
-        max_tokens=120,
-    )
+    try:
+        resp = openai.chat.completions.create(
+            model="gpt-4o-mini",
+            response_format={"type": "json_object"},
+            temperature=0.3,
+            messages=[
+                {
+                    "role": "system",
+                    "content": "あなたは金融ニュースの要約アシスタントです。",
+                },
+                {"role": "user", "content": prompt},
+            ],
+            max_tokens=120,
+        )
+    except openai.APIConnectionError as e:
+        logging.error(f"OpenAI API connection error: {e}")
+        return {"summary": "", "sentiment": 0} # Return empty result on connection error
+    except openai.RateLimitError as e:
+        logging.error(f"OpenAI API rate limit exceeded: {e}")
+        return {"summary": "", "sentiment": 0} # Return empty result on rate limit error
+    except openai.APIStatusError as e:
+        logging.error(f"OpenAI API status error: {e.status_code} - {e.response}")
+        return {"summary": "", "sentiment": 0} # Return empty result on API status error
+    except Exception as e:
+        logging.error(f"An unexpected error occurred with OpenAI API: {e}")
+        return {"summary": "", "sentiment": 0} # Return empty result on other errors
+
     try:
         data = json.loads(resp.choices[0].message.content)
         data = _normalize_result(data)
@@ -72,7 +88,7 @@ def summarize(text: str) -> dict:
 
 @app.route("/", methods=["POST"])
 def ingest():
-    envelope = request.get_json(force=True, silent=True)
+    envelope = json.loads(request.data)
     if not envelope or "message" not in envelope:
         logging.error("Invalid Pub/Sub message")
         return abort(400)
@@ -116,6 +132,7 @@ def ingest():
     )
     logging.info("summarized %s", object_name)
     return "OK", 200
+
 
 
 if __name__ == "__main__":
