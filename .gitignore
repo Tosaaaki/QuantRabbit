@@ -1,9 +1,32 @@
-# Local environment variables
-config/env.toml
-config/env.toml.terraform/
-tmp_*.txt
-.ruff_cache/
-.DS_Store
+# Byte-compiled / optimized / DLL files
 __pycache__/
 *.pyc
-.terraform
+*.pyd
+*.pyo
+*.log
+
+# Virtual environment
+.venv/
+
+# Editor directories and files
+.vscode/
+.idea/
+
+# OS generated files
+.DS_Store
+Thumbs.db
+
+# Logs
+logs/
+
+# Docker
+*.dockerignore
+
+# Terraform
+.terraform/
+*.tfplan
+*.tfstate
+*.tfstate.backup
+
+# Local secrets
+config/env.toml
