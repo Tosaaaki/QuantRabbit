@@ -3,13 +3,14 @@ import json
 import base64
 import logging
 import datetime
-from flask import Flask, request, abort
+from flask import Flask, request
 from google.cloud import storage
 import openai
-import requests
 
 # Basic logging configuration
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logging.basicConfig(
+    level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
+)
 
 openai.api_key = os.environ.get("OPENAI_API_KEY")
 BUCKET = os.environ.get("BUCKET")
@@ -23,6 +24,7 @@ if not BUCKET:
 app = Flask(__name__)
 storage_client = storage.Client()
 bucket = storage_client.bucket(BUCKET)
+
 
 def _normalize_result(res: object) -> dict:
     """Return dict with keys 'summary' (str) and 'sentiment' (int)."""
@@ -39,6 +41,7 @@ def _normalize_result(res: object) -> dict:
         sentiment = 0
     return {"summary": summary.strip(), "sentiment": sentiment}
 
+
 def summarize(text: str) -> dict:
     """GPT‑4o‑mini summarizer → return dict {summary, sentiment}"""
     if not openai.api_key:
@@ -49,7 +52,7 @@ def summarize(text: str) -> dict:
         "以下のニュース本文を最大120字で日本語要約し、"
         "USD/JPYへのインパクトを -2〜+2 の整数で付与し "
         "次の JSON 形式で返してください。\n"
-        '{"summary":"...", "sentiment":-2〜+2}\n' 
+        '{"summary":"...", "sentiment":-2〜+2}\n'
         "### 原文\n" + text[:1500]
     )
     try:
@@ -76,6 +79,7 @@ def summarize(text: str) -> dict:
         logging.error(f"An error occurred with OpenAI API: {e}")
         return {"summary": f"Error during summarization: {e}", "sentiment": 0}
 
+
 @app.route("/", methods=["POST"])
 def ingest():
     logging.info(f"Request headers: {request.headers}")
@@ -92,7 +96,7 @@ def ingest():
 
         if not object_name and "data" in msg:
             try:
-                decoded_data = base64.b64decode(msg["data"]).decode('utf-8')
+                decoded_data = base64.b64decode(msg["data"]).decode("utf-8")
                 logging.info(f"Decoded data: {decoded_data}")
                 data_json = json.loads(decoded_data)
                 object_name = data_json.get("name")
@@ -125,10 +129,12 @@ def ingest():
         payload = {
             "uid": raw.get("uid", object_name),
             "ts_utc": datetime.datetime.utcnow().isoformat(timespec="seconds"),
+            "event_time": raw.get("event_time"),
+            "impact": raw.get("impact", 1),
             "summary": result["summary"],
             "sentiment": int(result.get("sentiment", 0) or 0),
             "horizon": "short",
-            "pair_bias": "USD/JPY",
+            "pair_bias": raw.get("currency", "USD/JPY"),
         }
         logging.info(f"Uploading payload to {summary_blob_name}: {payload}")
         summary_blob = bucket.blob(summary_blob_name)
@@ -142,6 +148,7 @@ def ingest():
     except Exception as e:
         logging.error(f"Unhandled error in ingest: {e}", exc_info=True)
         return "Internal Server Error", 500
+
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 8080)))
