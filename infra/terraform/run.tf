@@ -36,6 +36,23 @@ resource "google_cloud_run_v2_service" "news_summarizer" {
   }
 }
 
+# Pub/SubサービスアカウントにCloud Run Invokerロールを付与
+resource "google_cloud_run_service_iam_member" "pubsub_invoker_permission" {
+  project  = google_cloud_run_v2_service.news_summarizer.project
+  location = google_cloud_run_v2_service.news_summarizer.location
+  service  = google_cloud_run_v2_service.news_summarizer.name
+  role     = "roles/run.invoker"
+  member   = "serviceAccount:service-683569201753@gcp-sa-pubsub.iam.gserviceaccount.com"
+}
+
+resource "google_cloud_run_service_iam_member" "fx_trader_invoker_permission" {
+  project  = google_cloud_run_v2_service.news_summarizer.project
+  location = google_cloud_run_v2_service.news_summarizer.location
+  service  = google_cloud_run_v2_service.news_summarizer.name
+  role     = "roles/run.invoker"
+  member   = "serviceAccount:fx-trader-sa@quantrabbit.iam.gserviceaccount.com"
+}
+
 # --- Fetch News Runner ---
 
 data "google_iam_policy" "fetch_news_runner_sa" {
@@ -79,7 +96,7 @@ resource "google_cloud_scheduler_job" "fetch_news_scheduler" {
   project   = var.project_id
   region    = var.region
   name      = "fetch-news-scheduler"
-  schedule  = "*/15 * * * *"  # Every 15 minutes
+  schedule  = "0 * * * *"  # Every hour
   time_zone = "UTC"
 
   http_target {

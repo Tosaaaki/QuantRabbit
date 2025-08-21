@@ -14,6 +14,9 @@ from analysis.focus_decider import decide_focus
 from analysis.gpt_decider import get_decision
 from analysis.perf_monitor import snapshot as get_perf
 from analysis.summary_ingestor import check_event_soon, get_latest_news
+# バックグラウンドでニュース取得と要約を実行するためのインポート
+from market_data.news_fetcher import fetch_loop as news_fetch_loop
+from analysis.summary_ingestor import ingest_loop as summary_ingest_loop
 from signals.pocket_allocator import alloc
 from execution.risk_guard import (
     allowed_lot,
@@ -192,7 +195,17 @@ async def logic_loop():
 async def main():
     handlers = [("M1", m1_candle_handler), ("H4", h4_candle_handler)]
     await initialize_history("USD_JPY")
-    await asyncio.gather(start_candle_stream("USD_JPY", handlers), logic_loop())
+    # 複数の無限ループを並列で実行する。
+    # - start_candle_stream: Tick データとローソク足生成
+    # - logic_loop: トレーディングロジック
+    # - news_fetch_loop: 経済指標 RSS 取得
+    # - summary_ingest_loop: GCS summary/ から DB への取り込み
+    await asyncio.gather(
+        start_candle_stream("USD_JPY", handlers),
+        logic_loop(),
+        news_fetch_loop(),
+        summary_ingest_loop(),
+    )
 
 
 if __name__ == "__main__":

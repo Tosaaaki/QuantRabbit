@@ -8,13 +8,21 @@ from google.cloud import storage
 import openai
 import requests
 
+# Basic logging configuration
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+
 openai.api_key = os.environ.get("OPENAI_API_KEY")
-BUCKET = os.environ["BUCKET"]  # Fail fast if unset
+BUCKET = os.environ.get("BUCKET")
+
+if not BUCKET:
+    logging.error("BUCKET environment variable is not set.")
+    # You might want to exit or handle this case appropriately
+    # For now, let's try to default it, but this is not ideal
+    BUCKET = "fx-news"
 
 app = Flask(__name__)
 storage_client = storage.Client()
 bucket = storage_client.bucket(BUCKET)
-
 
 def _normalize_result(res: object) -> dict:
     """Return dict with keys 'summary' (str) and 'sentiment' (int)."""
@@ -27,31 +35,25 @@ def _normalize_result(res: object) -> dict:
     sentiment = res.get("sentiment") or res.get("impact") or 0
     try:
         sentiment = int(sentiment)
-    except Exception:
+    except (ValueError, TypeError):
         sentiment = 0
     return {"summary": summary.strip(), "sentiment": sentiment}
 
-
 def summarize(text: str) -> dict:
     """GPT‑4o‑mini summarizer → return dict {summary, sentiment}"""
-    try:
-        # Test direct HTTP connection to OpenAI API endpoint
-        test_url = "https://api.openai.com/v1/models"
-        headers = {"Authorization": f"Bearer {openai.api_key}"}
-        test_response = requests.get(test_url, headers=headers, timeout=10)
-        logging.info(f"OpenAI API test response status: {test_response.status_code}")
-        logging.info(f"OpenAI API test response body: {test_response.text[:200]}")
-    except requests.exceptions.RequestException as e:
-        logging.error(f"OpenAI API direct connection test failed: {e}")
+    if not openai.api_key:
+        logging.error("OPENAI_API_KEY is not set. Cannot summarize.")
+        return {"summary": "Error: API key not configured.", "sentiment": 0}
 
     prompt = (
         "以下のニュース本文を最大120字で日本語要約し、"
         "USD/JPYへのインパクトを -2〜+2 の整数で付与し "
         "次の JSON 形式で返してください。\n"
-        '{"summary":"...", "sentiment":-2〜+2}\n'
+        '{"summary":"...", "sentiment":-2〜+2}\n' 
         "### 原文\n" + text[:1500]
     )
     try:
+        logging.info("Sending request to OpenAI API.")
         resp = openai.chat.completions.create(
             model="gpt-4o-mini",
             response_format={"type": "json_object"},
@@ -65,76 +67,81 @@ def summarize(text: str) -> dict:
             ],
             max_tokens=120,
         )
-    except openai.APIConnectionError as e:
-        logging.error(f"OpenAI API connection error: {e}")
-        return {"summary": "", "sentiment": 0} # Return empty result on connection error
-    except openai.RateLimitError as e:
-        logging.error(f"OpenAI API rate limit exceeded: {e}")
-        return {"summary": "", "sentiment": 0} # Return empty result on rate limit error
-    except openai.APIStatusError as e:
-        logging.error(f"OpenAI API status error: {e.status_code} - {e.response}")
-        return {"summary": "", "sentiment": 0} # Return empty result on API status error
+        logging.info("Received response from OpenAI API.")
+        content = resp.choices[0].message.content
+        logging.info(f"OpenAI response content: {content}")
+        data = json.loads(content)
+        return _normalize_result(data)
     except Exception as e:
-        logging.error(f"An unexpected error occurred with OpenAI API: {e}")
-        return {"summary": "", "sentiment": 0} # Return empty result on other errors
-
-    try:
-        data = json.loads(resp.choices[0].message.content)
-        data = _normalize_result(data)
-    except Exception:
-        data = _normalize_result(resp.choices[0].message.content.strip())
-    return data
-
-
+        logging.error(f"An error occurred with OpenAI API: {e}")
+        return {"summary": f"Error during summarization: {e}", "sentiment": 0}
 
 @app.route("/", methods=["POST"])
 def ingest():
-    envelope = json.loads(request.data)
-    if not envelope or "message" not in envelope:
-        logging.error("Invalid Pub/Sub message")
-        return abort(400)
-
-    msg = envelope["message"]
-    attrs = msg.get("attributes", {})
-    object_name = attrs.get("objectId")
-    # Pub/Sub push without attributes? — fall back to decoding the data field
-    if not object_name and "data" in msg:
-        try:
-            decoded = json.loads(base64.b64decode(msg["data"]))
-            object_name = decoded.get("name", "")
-        except Exception:
-            object_name = ""
-
-    if not object_name.startswith("raw/"):
-        return "skip", 200  # heartbeat or non‑raw
-
-    # download raw news
-    blob = bucket.blob(object_name)
-    raw_text = blob.download_as_text()
+    logging.info(f"Request headers: {request.headers}")
+    logging.info(f"Request data: {request.data}")
     try:
-        raw = json.loads(raw_text)
-    except json.JSONDecodeError:
-        raw = {"body": raw_text}
+        envelope = request.get_json()
+        if not envelope or "message" not in envelope:
+            logging.error(f"Invalid Pub/Sub message format: {request.data}")
+            return "Invalid message format", 400
 
-    result = summarize(raw.get("title", "") + "\n" + raw.get("body", ""))
+        msg = envelope["message"]
+        attrs = msg.get("attributes", {})
+        object_name = attrs.get("objectId")
 
-    summary_blob = bucket.blob(object_name.replace("raw/", "summary/", 1))
-    payload = {
-        "uid": raw.get("uid", object_name),
-        "ts_utc": datetime.datetime.utcnow().isoformat(timespec="seconds"),
-        "summary": result["summary"],
-        "sentiment": int(result.get("sentiment", 0) or 0),
-        "horizon": "short",
-        "pair_bias": "USD/JPY",
-    }
-    summary_blob.upload_from_string(
-        json.dumps(payload),
-        content_type="application/json",
-    )
-    logging.info("summarized %s", object_name)
-    return "OK", 200
+        if not object_name and "data" in msg:
+            try:
+                decoded_data = base64.b64decode(msg["data"]).decode('utf-8')
+                logging.info(f"Decoded data: {decoded_data}")
+                data_json = json.loads(decoded_data)
+                object_name = data_json.get("name")
+            except Exception as e:
+                logging.error(f"Error decoding message data: {e}")
+                object_name = None
 
+        logging.info(f"Extracted object name: {object_name}")
 
+        if not object_name or not object_name.startswith("raw/"):
+            logging.info(f"Skipping non-raw or missing object_name: {object_name}")
+            return "Skipping", 200
+
+        logging.info(f"Processing object: {object_name}")
+        blob = bucket.blob(object_name)
+        try:
+            raw_text = blob.download_as_text()
+            logging.info(f"Downloaded raw text for {object_name}: {raw_text[:200]}...")
+            raw = json.loads(raw_text)
+        except Exception as e:
+            logging.error(f"Failed to download or parse blob {object_name}: {e}")
+            return "Error processing blob", 500
+
+        text_to_summarize = raw.get("title", "") + "\n" + raw.get("body", "")
+        logging.info(f"Text to summarize: {text_to_summarize[:200]}...")
+        result = summarize(text_to_summarize)
+        logging.info(f"Summarization result: {result}")
+
+        summary_blob_name = object_name.replace("raw/", "summary/", 1)
+        payload = {
+            "uid": raw.get("uid", object_name),
+            "ts_utc": datetime.datetime.utcnow().isoformat(timespec="seconds"),
+            "summary": result["summary"],
+            "sentiment": int(result.get("sentiment", 0) or 0),
+            "horizon": "short",
+            "pair_bias": "USD/JPY",
+        }
+        logging.info(f"Uploading payload to {summary_blob_name}: {payload}")
+        summary_blob = bucket.blob(summary_blob_name)
+        summary_blob.upload_from_string(
+            json.dumps(payload),
+            content_type="application/json",
+        )
+        logging.info(f"Successfully summarized and uploaded {object_name}")
+        return "OK", 200
+
+    except Exception as e:
+        logging.error(f"Unhandled error in ingest: {e}", exc_info=True)
+        return "Internal Server Error", 500
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 8080)))
