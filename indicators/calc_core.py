@@ -50,6 +50,8 @@ class IndicatorEngine:
         df.ta.atr(length=14, append=True)
         df.ta.adx(length=14, append=True)
         df.ta.bbands(length=20, std=2, append=True)
+        # MACD (12, 26, 9)
+        df.ta.macd(append=True)
 
         out: Dict[str, float] = {}
 
@@ -63,6 +65,14 @@ class IndicatorEngine:
         atr_col_name = "ATRr_14" if "ATRr_14" in df.columns else "ATR_14"
         out["atr"] = df[atr_col_name].iloc[-1]
         out["adx"] = df["ADX_14"].iloc[-1]
+
+        # MACD 指標
+        macd_col = "MACD_12_26_9"
+        macds_col = "MACDs_12_26_9"  # signal
+        macdh_col = "MACDh_12_26_9"   # histogram
+        out["macd"] = float(df[macd_col].iloc[-1]) if macd_col in df.columns else 0.0
+        out["macd_signal"] = float(df[macds_col].iloc[-1]) if macds_col in df.columns else 0.0
+        out["macd_hist"] = float(df[macdh_col].iloc[-1]) if macdh_col in df.columns else 0.0
 
         # Bollinger Bands の計算
         upper = df["BBU_20_2.0"].iloc[-1]
