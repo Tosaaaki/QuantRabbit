@@ -5,7 +5,10 @@ import json
 import sqlite3
 import pathlib
 import datetime
-from google.cloud import storage
+try:
+    from google.cloud import storage  # type: ignore
+except Exception:  # ImportError or missing credentials
+    storage = None  # type: ignore
 from utils.secrets import get_secret
 
 # --- config ---
@@ -37,8 +40,12 @@ conn.commit()
 
 
 # GCS クライアント -----------------------------------------
-storage_client = storage.Client(project=PROJECT_ID)  # 修正
-bucket = storage_client.bucket(BUCKET)
+if storage:
+    storage_client = storage.Client(project=PROJECT_ID)  # 修正
+    bucket = storage_client.bucket(BUCKET)
+else:
+    storage_client = None  # type: ignore
+    bucket = None  # type: ignore
 
 SUMMARY_PREFIX = "summary/"
 PROCESSED_PREFIX = "processed/"
@@ -48,13 +55,22 @@ PROCESSED_PREFIX = "processed/"
 
 async def ingest_loop(interval_sec: int = 30):
     """30 秒ごとに summary/ をチェックして DB に挿入"""
+    # GCS クライアントが無い環境では何もしない
+    if not bucket:
+        return
     while True:
         await _run_once()
         await asyncio.sleep(interval_sec)
 
 
 async def _run_once():
-    blobs = bucket.list_blobs(prefix=SUMMARY_PREFIX)
+    if not bucket:
+        return
+    try:
+        blobs = bucket.list_blobs(prefix=SUMMARY_PREFIX)
+    except Exception as e:
+        print("summary_ingestor list_blobs error:", e)
+        return
     for blob in blobs:
         if blob.name.endswith("/"):
             continue
@@ -97,15 +113,29 @@ def _upsert(d: dict):
 
 
 def get_latest_news(limit_short: int = 3, limit_long: int = 5) -> dict:
-    """DBから最新のニュースを取得して返す"""
-    cur.execute("SELECT summary, ts_utc, horizon FROM news ORDER BY ts_utc DESC")
+    """DBから最新のニュースを取得して返す。
+
+    戻り値の各アイテムには strategy/GPT で活用できるよう、
+    少なくとも summary, ts, sentiment, impact を含める。
+    """
+    cur.execute(
+        "SELECT summary, ts_utc, horizon, sentiment, impact, pair_bias, event_time "
+        "FROM news ORDER BY ts_utc DESC"
+    )
     rows = cur.fetchall()
 
     news_short = []
     news_long = []
 
-    for summary, ts, horizon in rows:
-        item = {"summary": summary, "ts": ts}
+    for summary, ts, horizon, sentiment, impact, pair_bias, event_time in rows:
+        item = {
+            "summary": summary,
+            "ts": ts,
+            "sentiment": int(sentiment) if sentiment is not None else 0,
+            "impact": int(impact) if impact is not None else 1,
+            "pair_bias": pair_bias,
+            "event_time": event_time,
+        }
         if horizon == "short" and len(news_short) < limit_short:
             news_short.append(item)
         elif horizon == "long" and len(news_long) < limit_long:
