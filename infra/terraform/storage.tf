@@ -1,5 +1,5 @@
 data "google_storage_bucket" "news" {
-  name = "fx-news"
+  name = "quantrabbit-fx-news"
 }
 
 resource "google_storage_notification" "news_notification" {
