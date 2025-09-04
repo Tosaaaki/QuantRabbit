@@ -47,6 +47,13 @@ async def on_candle(tf: TimeFrame, candle: Dict[str, float]):
         df = pd.DataFrame(q)
         factors = IndicatorEngine.compute(df)
 
+        # 直近のOHLCも公開（戦略や発注で利用）
+        latest = q[-1]
+        factors["open"] = float(latest["open"])  # type: ignore[index]
+        factors["high"] = float(latest["high"])  # type: ignore[index]
+        factors["low"] = float(latest["low"])    # type: ignore[index]
+        factors["close"] = float(latest["close"])# type: ignore[index]
+
         # Donchian戦略で必要になるため、生ローソクも格納
         factors["candles"] = list(q)
 
