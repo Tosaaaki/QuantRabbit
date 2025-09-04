@@ -21,7 +21,10 @@ TimeFrame = Literal["M1", "H4"]
 
 
 TOKEN = get_secret("oanda_token")
-PRACT = False
+try:
+    PRACT = get_secret("oanda_practice").lower() == "true"
+except Exception:
+    PRACT = True
 REST_HOST = (
     "https://api-fxpractice.oanda.com" if PRACT else "https://api-fxtrade.oanda.com"
 )
@@ -145,7 +148,12 @@ async def initialize_history(instrument: str):
     from indicators.factor_cache import on_candle
 
     for tf in ("M1", "H4"):
-        candles = await fetch_historical_candles(instrument, tf, 20)
+        try:
+            candles = await fetch_historical_candles(instrument, tf, 20)
+        except Exception as e:
+            # ネットワークや認証が無い環境でも起動継続
+            print(f"initialize_history warning: {e}")
+            candles = []
         for c in candles:
             await on_candle(tf, c)
 
