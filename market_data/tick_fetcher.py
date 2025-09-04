@@ -14,7 +14,10 @@ from utils.secrets import get_secret
 # ---------- 読み込み：env.toml ----------
 TOKEN: str = get_secret("oanda_token")
 ACCOUNT: str = get_secret("oanda_account_id")
-PRACTICE: bool = False  # 本番口座なので False に設定。必要に応じて True に変更
+try:
+    PRACTICE: bool = get_secret("oanda_practice").lower() == "true"
+except Exception:
+    PRACTICE = True  # デフォルトは practice
 MOCK_STREAM: bool = os.getenv("MOCK_TICK_STREAM", "0") == "1"
 
 STREAM_HOST = (
