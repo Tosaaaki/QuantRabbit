@@ -16,15 +16,20 @@ _DB = pathlib.Path("logs/trades.db")
 _DB.parent.mkdir(exist_ok=True)
 con = sqlite3.connect(_DB)
 
-# テーブルが無い場合は作成
+# 統一スキーマ: position_manager に合わせる（id は OANDA の transaction ID）
 con.execute(
     """
 CREATE TABLE IF NOT EXISTS trades (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  pocket TEXT,            -- 'micro' | 'macro'
-  open_time TEXT,
-  close_time TEXT,
-  pl_pips REAL
+  id INTEGER PRIMARY KEY,
+  ticket_id TEXT UNIQUE,
+  pocket TEXT,
+  instrument TEXT,
+  units INTEGER,
+  entry_price REAL,
+  close_price REAL,
+  pl_pips REAL,
+  entry_time TEXT,
+  close_time TEXT
 )
 """
 )
