@@ -1,0 +1,73 @@
+diff --git a/main.py b/main.py
+index 3ebf052..f7659d7 100644
+--- a/main.py
++++ b/main.py
+@@ -14,6 +14,9 @@ from analysis.focus_decider import decide_focus
+ from analysis.gpt_decider import get_decision
+ from analysis.perf_monitor import snapshot as get_perf
+ from analysis.summary_ingestor import check_event_soon, get_latest_news
++# バックグラウンドでニュース取得と要約を実行するためのインポート
++from market_data.news_fetcher import fetch_loop as news_fetch_loop
++from analysis.summary_ingestor import ingest_loop as summary_ingest_loop
+ from signals.pocket_allocator import alloc
+ from execution.risk_guard import (
+     allowed_lot,
+@@ -192,7 +195,17 @@ async def logic_loop():
+ async def main():
+     handlers = [("M1", m1_candle_handler), ("H4", h4_candle_handler)]
+     await initialize_history("USD_JPY")
+-    await asyncio.gather(start_candle_stream("USD_JPY", handlers), logic_loop())
++    # 複数の無限ループを並列で実行する。
++    # - start_candle_stream: Tick データとローソク足生成
++    # - logic_loop: トレーディングロジック
++    # - news_fetch_loop: 経済指標 RSS 取得
++    # - summary_ingest_loop: GCS summary/ から DB への取り込み
++    await asyncio.gather(
++        start_candle_stream("USD_JPY", handlers),
++        logic_loop(),
++        news_fetch_loop(),
++        summary_ingest_loop(),
++    )
+ 
+ 
+ if __name__ == "__main__":
+diff --git a/market_data/news_fetcher.py b/market_data/news_fetcher.py
+index 1ab42f9..8f8d77d 100644
+--- a/market_data/news_fetcher.py
++++ b/market_data/news_fetcher.py
+@@ -15,8 +15,33 @@ import feedparser
+ import re
+ from google.cloud import storage
+ 
+-CFG = toml.load(open("config/env.local.toml", "r"))
+-BUCKET = CFG["gcp"]["bucket_news"]
++import os
++import pathlib
++
++# 環境変数や config からバケット名を読み込む。
++# `env.local.toml` が無い場合は `env.toml` を参照し、
++# それでも取得できないときは環境変数 BUCKET/BUCKET_NEWS にフォールバックする。
++try:
++    cfg = None
++    cfg_path = pathlib.Path("config/env.local.toml")
++    if cfg_path.exists():
++        cfg = toml.load(cfg_path.open("r"))
++    else:
++        toml_path = pathlib.Path("config/env.toml")
++        if toml_path.exists():
++            cfg = toml.load(toml_path.open("r"))
++    if cfg:
++        BUCKET = cfg.get("gcp", {}).get("bucket_news")
++    else:
++        BUCKET = None
++except Exception:
++    # 何らかの理由で TOML が読み込めない場合
++    BUCKET = None
++
++if not BUCKET:
++    # TOML にバケット定義が無い場合は環境変数を参照
++    BUCKET = os.environ.get("BUCKET") or os.environ.get("BUCKET_NEWS") or "fx-news"
++
+ storage_client = storage.Client()
+ bucket = storage_client.bucket(BUCKET)
+ 

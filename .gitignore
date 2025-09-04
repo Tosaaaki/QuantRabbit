@@ -1,0 +1,37 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.pyc
+*.pyd
+*.pyo
+*.log
+
+# Virtual environment
+.venv/
+
+# Editor directories and files
+.vscode/
+.idea/
+
+# OS generated files
+.DS_Store
+Thumbs.db
+
+# Logs
+logs/
+.cache/
+summaries/
+system development/
+.deploy_image
+
+# Docker
+*.dockerignore
+
+# Terraform
+.terraform/
+*.tfplan
+*.tfstate
+*.tfstate.backup
+
+# Local secrets
+config/env.toml
+config/env.local.toml
