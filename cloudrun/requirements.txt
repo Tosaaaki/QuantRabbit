@@ -1,5 +1,13 @@
 flask
 openai
 google-cloud-storage
+google-cloud-firestore
+google-cloud-secret-manager
+google-cloud-logging
 feedparser
+httpx
+pandas
+numpy==1.26.4
 pandas-ta
+oandapyV20
+toml
