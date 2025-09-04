@@ -20,25 +20,27 @@ import pathlib
 
 # --- 設定・定数 ---
 
-# 環境変数や config からバケット名を読み込む
-try:
-    cfg = None
-    cfg_path = pathlib.Path("config/env.local.toml")
-    if cfg_path.exists():
-        cfg = toml.load(cfg_path.open("r"))
-    else:
-        toml_path = pathlib.Path("config/env.toml")
-        if toml_path.exists():
-            cfg = toml.load(toml_path.open("r"))
-    if cfg:
-        BUCKET = cfg.get("gcp", {}).get("bucket_news")
-    else:
+# バケット名の解決順:
+# 1) 環境変数 BUCKET または BUCKET_NEWS
+# 2) config/env.local.toml もしくは config/env.toml の `news_bucket_name`
+# 3) デフォルト "quantrabbit-fx-news"
+BUCKET = os.environ.get("BUCKET") or os.environ.get("BUCKET_NEWS")
+if not BUCKET:
+    try:
+        cfg = None
+        for path in (pathlib.Path("config/env.local.toml"), pathlib.Path("config/env.toml")):
+            if path.exists():
+                cfg = toml.load(path.open("r"))
+                break
+        if cfg:
+            BUCKET = cfg.get("news_bucket_name") or (
+                cfg.get("gcp", {}).get("bucket_news") if isinstance(cfg.get("gcp"), dict) else None
+            )
+    except Exception:
         BUCKET = None
-except Exception:
-    BUCKET = None
 
 if not BUCKET:
-    BUCKET = os.environ.get("BUCKET") or os.environ.get("BUCKET_NEWS") or "fx-news"
+    BUCKET = "quantrabbit-fx-news"
 
 storage_client = storage.Client()
 bucket = storage_client.bucket(BUCKET)
