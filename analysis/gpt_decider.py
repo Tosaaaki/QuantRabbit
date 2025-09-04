@@ -13,14 +13,19 @@ from openai import AsyncOpenAI
 
 from typing import Dict
 
-from utils.cost_guard import add_tokens
+from utils.cost_guard import add_tokens, add_cost, within_budget_usd
 from analysis.gpt_prompter import (
     build_messages,
     OPENAI_MODEL as MODEL,
     MAX_TOKENS_MONTH,
 )
+from utils.secrets import get_secret
 
-client = AsyncOpenAI()
+# Lazy client; avoid import-time failure when OPENAI_API_KEY is missing
+_client: AsyncOpenAI | None = None
+_PRICE_IN_PER_M = None
+_PRICE_OUT_PER_M = None
+_MAX_MONTH_USD = None
 
 
 _SCHEMA = {
@@ -35,26 +40,67 @@ class GPTTimeout(Exception): ...
 
 async def call_openai(payload: Dict) -> Dict:
     """非同期で GPT を呼ぶ → dict を返す（フォールバック不要値は None）"""
-    # コストガード
-    if not add_tokens(0, MAX_TOKENS_MONTH):
-        raise RuntimeError("GPT token limit exceeded")
+    # 価格設定の読込（初回だけ）
+    global _PRICE_IN_PER_M, _PRICE_OUT_PER_M, _MAX_MONTH_USD
+    if _PRICE_IN_PER_M is None:
+        try:
+            _PRICE_IN_PER_M = float(get_secret("openai_cost_per_million_input"))
+        except Exception:
+            _PRICE_IN_PER_M = 0.15  # default for gpt-4o-mini input
+    if _PRICE_OUT_PER_M is None:
+        try:
+            _PRICE_OUT_PER_M = float(get_secret("openai_cost_per_million_output"))
+        except Exception:
+            _PRICE_OUT_PER_M = 0.60  # default for gpt-4o-mini output
+    if _MAX_MONTH_USD is None:
+        try:
+            _MAX_MONTH_USD = float(get_secret("openai_max_month_usd"))
+        except Exception:
+            _MAX_MONTH_USD = 30.0
+
+    # コストガード（USD上限の事前チェック）
+    if not within_budget_usd(_MAX_MONTH_USD):
+        raise RuntimeError("GPT USD budget exceeded")
 
     msgs = build_messages(payload)
 
+    # Lazy init OpenAI client; if key is missing, raise to trigger fallback
+    global _client
+    if _client is None:
+        try:
+            api_key = None
+            try:
+                api_key = get_secret("openai_api_key")
+            except Exception:
+                api_key = None
+            _client = AsyncOpenAI(api_key=api_key) if api_key else AsyncOpenAI()
+        except Exception as e:
+            raise GPTTimeout(f"OPENAI init failed: {e}")
+
     try:
-        resp = await client.chat.completions.create(
+        resp = await _client.chat.completions.create(
             model=MODEL,
             messages=msgs,
             temperature=0.2,
-            max_tokens=120,
+            max_tokens=96,
             timeout=7,
         )
     except Exception as e:  # API 障害や timeout
         raise GPTTimeout(str(e)) from e
 
-    usage_in = resp.usage.prompt_tokens
-    usage_out = resp.usage.completion_tokens
+    usage_in = int(resp.usage.prompt_tokens or 0)
+    usage_out = int(resp.usage.completion_tokens or 0)
+    # 互換：トークン上限の旧ロジックも維持
     add_tokens(usage_in + usage_out, MAX_TOKENS_MONTH)
+    # USD課金を加算
+    add_cost(
+        model=MODEL,
+        prompt_tokens=usage_in,
+        completion_tokens=usage_out,
+        price_in_per_m=_PRICE_IN_PER_M,
+        price_out_per_m=_PRICE_OUT_PER_M,
+        max_month_usd=_MAX_MONTH_USD,
+    )
 
     content = resp.choices[0].message.content.strip()
     # シングル行に余計な ```json``` ブロックが付く場合がある
