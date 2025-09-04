@@ -15,6 +15,15 @@ resource "google_project_iam_member" "gcs_access" {
   member  = "serviceAccount:news-summarizer-sa@quantrabbit.iam.gserviceaccount.com"
 }
 
+# Allow dashboard/summarizer SA to read Firestore
+resource "google_project_iam_member" "firestore_viewer" {
+  project = var.project_id
+  role    = "roles/datastore.user"
+  member  = "serviceAccount:news-summarizer-sa@quantrabbit.iam.gserviceaccount.com"
+}
+
+// Note: roles/firestore.viewer is not supported at project scope; omit.
+
 # Cloud Runサービスの定義
 resource "google_cloud_run_v2_service" "news_summarizer" {
   project  = var.project_id
@@ -27,7 +36,7 @@ resource "google_cloud_run_v2_service" "news_summarizer" {
       image = "gcr.io/${var.project_id}/news-summarizer"
       env {
         name  = "BUCKET"
-        value = "fx-news"
+        value = "quantrabbit-fx-news"
       }
       ports {
         container_port = 8080
@@ -51,6 +60,15 @@ resource "google_cloud_run_service_iam_member" "fx_trader_invoker_permission" {
   service  = google_cloud_run_v2_service.news_summarizer.name
   role     = "roles/run.invoker"
   member   = "serviceAccount:fx-trader-sa@quantrabbit.iam.gserviceaccount.com"
+}
+
+# Allow Cloud Scheduler to invoke news-summarizer (/run)
+resource "google_cloud_run_service_iam_member" "summarizer_scheduler_invoker" {
+  project  = google_cloud_run_v2_service.news_summarizer.project
+  location = google_cloud_run_v2_service.news_summarizer.location
+  service  = google_cloud_run_v2_service.news_summarizer.name
+  role     = "roles/run.invoker"
+  member   = "serviceAccount:${google_service_account.scheduler_invoker.email}"
 }
 
 # --- Fetch News Runner ---
@@ -81,13 +99,151 @@ resource "google_cloud_run_v2_service" "fetch_news_runner" {
       image = "gcr.io/${var.project_id}/fetch-news-runner"
       env {
         name  = "BUCKET"
-        value = "fx-news"
+        value = "quantrabbit-fx-news"
       }
       ports {
         container_port = 8080
       }
     }
   }
+}
+
+# --- Dashboard Service ---
+resource "google_cloud_run_v2_service" "dashboard" {
+  project  = var.project_id
+  name     = "news-dashboard"
+  location = var.region
+
+  template {
+    service_account = "news-summarizer-sa@quantrabbit.iam.gserviceaccount.com"
+    containers {
+      image = "gcr.io/${var.project_id}/news-summarizer"
+      env {
+        name  = "BUCKET"
+        value = "quantrabbit-fx-news"
+      }
+      env {
+        name  = "ENABLE_PNL_TASK"
+        value = "true"
+      }
+      env {
+        name  = "GUNICORN_APP"
+        value = "cloudrun.dashboard_service:app"
+      }
+      # Force a new revision on each apply to pick latest image tag
+      env {
+        name  = "REVISION"
+        value = timestamp()
+      }
+      ports {
+        container_port = 8080
+      }
+    }
+  }
+}
+
+resource "google_cloud_run_service_iam_member" "dashboard_invoker" {
+  project  = google_cloud_run_v2_service.dashboard.project
+  location = google_cloud_run_v2_service.dashboard.location
+  service  = google_cloud_run_v2_service.dashboard.name
+  role     = "roles/run.invoker"
+  member   = "allUsers" # public
+}
+
+# --- Trader Service (runs trading cycle per request) ---
+resource "google_cloud_run_v2_service" "trader" {
+  project  = var.project_id
+  name     = "fx-trader"
+  location = var.region
+
+  template {
+    service_account = "news-summarizer-sa@quantrabbit.iam.gserviceaccount.com"
+    containers {
+      image = "gcr.io/${var.project_id}/news-summarizer"
+      env {
+        name  = "GUNICORN_APP"
+        value = "cloudrun.trader_service:app"
+      }
+      env {
+        name  = "REVISION"
+        value = timestamp()
+      }
+      # Optionally pin instrument; defaults to USD_JPY in code
+      # env { name = "INSTRUMENT" value = "USD_JPY" }
+      ports { container_port = 8080 }
+    }
+  }
+}
+
+resource "google_cloud_run_service_iam_member" "trader_invoker" {
+  project  = google_cloud_run_v2_service.trader.project
+  location = google_cloud_run_v2_service.trader.location
+  service  = google_cloud_run_v2_service.trader.name
+  role     = "roles/run.invoker"
+  member   = "serviceAccount:${google_service_account.scheduler_invoker.email}"
+}
+
+# Schedule the trader to run every minute
+resource "google_cloud_scheduler_job" "trader_scheduler" {
+  project   = var.project_id
+  region    = var.region
+  name      = "trader-scheduler"
+  schedule  = "* * * * *"
+  time_zone = "UTC"
+
+  http_target {
+    uri = google_cloud_run_v2_service.trader.uri
+    http_method = "GET"
+    oidc_token { service_account_email = google_service_account.scheduler_invoker.email }
+  }
+}
+
+# PnL Runner Service
+resource "google_cloud_run_v2_service" "pnl_runner" {
+  project  = var.project_id
+  name     = "pnl-runner"
+  location = var.region
+
+  template {
+    service_account = "news-summarizer-sa@quantrabbit.iam.gserviceaccount.com"
+    containers {
+      image = "gcr.io/${var.project_id}/news-summarizer"
+      env {
+        name  = "GUNICORN_APP"
+        value = "cloudrun.pnl_runner:app"
+      }
+      ports { container_port = 8080 }
+    }
+  }
+}
+
+resource "google_cloud_run_service_iam_member" "pnl_runner_invoker" {
+  project  = google_cloud_run_v2_service.pnl_runner.project
+  location = google_cloud_run_v2_service.pnl_runner.location
+  service  = google_cloud_run_v2_service.pnl_runner.name
+  role     = "roles/run.invoker"
+  member   = "serviceAccount:${google_service_account.scheduler_invoker.email}"
+}
+
+resource "google_cloud_scheduler_job" "pnl_scheduler" {
+  project   = var.project_id
+  region    = var.region
+  name      = "pnl-scheduler"
+  schedule  = "* * * * *"
+  time_zone = "UTC"
+
+  http_target {
+    uri = google_cloud_run_v2_service.pnl_runner.uri
+    http_method = "GET"
+    oidc_token { service_account_email = google_service_account.scheduler_invoker.email }
+  }
+}
+
+# Secret Manager access for dashboard (for OANDA creds in pnl task)
+resource "google_project_iam_member" "secret_accessor_dashboard" {
+  project = var.project_id
+  role    = "roles/secretmanager.secretAccessor"
+  member  = "serviceAccount:news-summarizer-sa@quantrabbit.iam.gserviceaccount.com"
 }
 
 # --- Cloud Scheduler for Fetch News Runner ---
@@ -120,4 +276,108 @@ resource "google_cloud_run_service_iam_member" "scheduler_invoker_permission" {
   service  = google_cloud_run_v2_service.fetch_news_runner.name
   role     = "roles/run.invoker"
   member   = "serviceAccount:${google_service_account.scheduler_invoker.email}"
+}
+
+# Allow Scheduler SA to control the VM (start/stop)
+resource "google_project_iam_member" "scheduler_compute_admin" {
+  project = var.project_id
+  role    = "roles/compute.instanceAdmin.v1"
+  member  = "serviceAccount:${google_service_account.scheduler_invoker.email}"
+}
+
+# Weekend stop: Friday 21:30 UTC (market close)
+resource "google_cloud_scheduler_job" "vm_stop_weekend" {
+  project   = var.project_id
+  region    = var.region
+  name      = "vm-stop-weekend"
+  schedule  = "30 21 * * 5"
+  time_zone = "UTC"
+
+  http_target {
+    uri         = "https://compute.googleapis.com/compute/v1/projects/${var.project_id}/zones/${var.region}-a/instances/fx-trader-vm/stop"
+    http_method = "POST"
+    oauth_token {
+      service_account_email = google_service_account.scheduler_invoker.email
+      scope                  = "https://www.googleapis.com/auth/cloud-platform"
+    }
+  }
+}
+
+# Weekend start: Sunday 21:30 UTC (pre-open)
+resource "google_cloud_scheduler_job" "vm_start_weekend" {
+  project   = var.project_id
+  region    = var.region
+  name      = "vm-start-weekend"
+  schedule  = "30 21 * * 0"
+  time_zone = "UTC"
+
+  http_target {
+    uri         = "https://compute.googleapis.com/compute/v1/projects/${var.project_id}/zones/${var.region}-a/instances/fx-trader-vm/start"
+    http_method = "POST"
+    oauth_token {
+      service_account_email = google_service_account.scheduler_invoker.email
+      scope                  = "https://www.googleapis.com/auth/cloud-platform"
+    }
+  }
+}
+
+# --- News Ingestor service (summary/ -> Firestore) ---
+resource "google_cloud_run_v2_service" "news_ingestor" {
+  project  = var.project_id
+  name     = "news-ingestor"
+  location = var.region
+
+  template {
+    service_account = "news-summarizer-sa@quantrabbit.iam.gserviceaccount.com"
+    containers {
+      image = "gcr.io/${var.project_id}/news-summarizer"
+      env {
+        name  = "BUCKET"
+        value = "quantrabbit-fx-news"
+      }
+      env {
+        name  = "GUNICORN_APP"
+        value = "cloudrun.news_ingestor_service:app"
+      }
+      ports { container_port = 8080 }
+    }
+  }
+}
+
+resource "google_cloud_run_service_iam_member" "news_ingestor_invoker" {
+  project  = google_cloud_run_v2_service.news_ingestor.project
+  location = google_cloud_run_v2_service.news_ingestor.location
+  service  = google_cloud_run_v2_service.news_ingestor.name
+  role     = "roles/run.invoker"
+  member   = "serviceAccount:${google_service_account.scheduler_invoker.email}"
+}
+
+# Summarizer poller（raw -> summary）
+resource "google_cloud_scheduler_job" "summarizer_run_scheduler" {
+  project   = var.project_id
+  region    = var.region
+  name      = "summarizer-run-scheduler"
+  schedule  = "* * * * *"
+  time_zone = "UTC"
+
+  http_target {
+    uri = "${google_cloud_run_v2_service.news_summarizer.uri}/run"
+    http_method = "GET"
+    oidc_token { service_account_email = google_service_account.scheduler_invoker.email }
+  }
+}
+
+# Ingestor poller（summary -> Firestore/news）
+resource "google_cloud_scheduler_job" "ingestor_scheduler" {
+  project   = var.project_id
+  region    = var.region
+  name      = "news-ingestor-scheduler"
+  schedule  = "* * * * *"
+  time_zone = "UTC"
+
+  http_target {
+    uri = google_cloud_run_v2_service.news_ingestor.uri
+    http_method = "GET"
+    oidc_token { service_account_email = google_service_account.scheduler_invoker.email }
+  }
 }
