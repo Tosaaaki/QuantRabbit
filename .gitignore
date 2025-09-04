@@ -30,3 +30,4 @@ logs/
 
 # Local secrets
 config/env.toml
+config/env.local.toml
