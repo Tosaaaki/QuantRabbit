@@ -14,10 +14,31 @@ import pathlib
 MAX_LEVERAGE = 20.0  # 1:20
 MAX_LOT = 1.0  # 1 lot = 100k 通貨
 POCKET_DD_LIMITS = {"micro": 0.05, "macro": 0.15}  # equity 比 (%)
+MAX_LOSS_STREAK = {"micro": 3, "macro": 2}  # 直近の連敗で一時停止
 GLOBAL_DD_LIMIT = 0.20  # 全体ドローダウン 20%
 
 _DB = pathlib.Path("logs/trades.db")
+_DB.parent.mkdir(exist_ok=True)
 con = sqlite3.connect(_DB)
+
+# テーブルを必ず用意（position_manager/ perf_monitor と統一）
+con.execute(
+    """
+CREATE TABLE IF NOT EXISTS trades (
+  id INTEGER PRIMARY KEY,
+  ticket_id TEXT UNIQUE,
+  pocket TEXT,
+  instrument TEXT,
+  units INTEGER,
+  entry_price REAL,
+  close_price REAL,
+  pl_pips REAL,
+  entry_time TEXT,
+  close_time TEXT
+)
+"""
+)
+con.commit()
 
 
 def _pocket_dd(pocket: str) -> float:
@@ -51,12 +72,42 @@ def check_global_drawdown() -> bool:
     return drawdown_percentage >= GLOBAL_DD_LIMIT
 
 
+def _recent_loss_streak(pocket: str, hours: int = 24) -> int:
+    rows = con.execute(
+        """
+SELECT pl_pips FROM trades
+WHERE pocket=? AND datetime(close_time) >= datetime('now', ?)
+ORDER BY datetime(close_time) DESC
+""",
+        (pocket, f"-{hours} hour"),
+    ).fetchall()
+    streak = 0
+    for (pl,) in rows:
+        try:
+            if pl is not None and float(pl) < 0:
+                streak += 1
+            else:
+                break
+        except Exception:
+            break
+    return streak
+
+
+def recent_loss_streak(pocket: str, hours: int = 24) -> int:
+    """公開API: 直近の連敗数を返す（安全側で使用）"""
+    return _recent_loss_streak(pocket, hours)
+
+
 def can_trade(pocket: str) -> bool:
-    return _pocket_dd(pocket) < POCKET_DD_LIMITS[pocket]
+    if _pocket_dd(pocket) >= POCKET_DD_LIMITS[pocket]:
+        return False
+    if _recent_loss_streak(pocket) >= MAX_LOSS_STREAK[pocket]:
+        print(f"[RISK] Loss streak pause for {pocket}")
+        return False
+    return True
 
 
-def allowed_lot(equity: float, sl_pips: float) -> float:
-    risk_pct = 0.02
+def allowed_lot(equity: float, sl_pips: float, *, risk_pct: float = 0.02) -> float:
     lot = (equity * risk_pct) / sl_pips / 10  # $10/pip で 1 lot
     lot = min(lot, MAX_LOT)
     return round(lot, 3)

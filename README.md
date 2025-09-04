@@ -87,6 +87,9 @@ brew install ta-lib   # macOS
 cp config/env.toml  config/env.local.toml   # 編集してキーを投入
 cp config/pool.yaml config/pool.local.yaml # 有効戦略を調整
 
+# 主な設定例（env.local.toml）
+# oanda_practice = "true"  # 安全のためデフォルトは practice を推奨
+
 # 3. run (practice account, small lot)
 python main.py
 
@@ -122,3 +125,56 @@ Trade Loop Overview
 	7.	成績は logs/trades.db に保存 → perf_monitor が PF/Sharpe 更新
 	8.	夜間 cron で DB & ログを GCS へバックアップ
 
+---
+
+## Ops: VM への反映手順（SSH 不可時の代替）
+
+通常は GitHub に PR → Squash Merge → VM 側で `git pull`（`startup-script` が起動時に実行）で反映します。
+ただし、SSH が通らない・一時的に手早く反映したい場合は、GCE インスタンスの `startup-script` メタデータを一時的に差し替え、再起動時に差分ファイルを上書きする「オーバーレイ方式」が使えます。
+
+- 前提: `gcloud` 認証済み、プロジェクトは `quantrabbit`、ゾーンは `asia-northeast1-a`、対象 VM は `fx-trader-vm`。
+- 反映対象: `main.py` と `execution/risk_guard.py`（必要に応じて増減可）。
+
+手順（ローカルで実行）
+
+```bash
+# 1) 現行 startup-script を取得
+gcloud compute instances describe fx-trader-vm \
+  --zone=asia-northeast1-a \
+  --format='get(metadata.items.[key:startup-script].value)' > /tmp/original_startup.sh
+
+# 2) 取得したスクリプト末尾に、ローカルの変更ファイルを書き込む処理を追記
+python3 - <<'PY'
+from pathlib import Path
+orig = Path('/tmp/original_startup.sh').read_text()
+# SecretManager を venv Python で読みつつ、失敗しても続行
+orig = orig.replace("python3 - <<'PY'","PYBIN='/home/quantrabbit/QuantRabbit/.venv/bin/python'\n$PYBIN - <<'PY' || true")
+main = Path('main.py').read_text()
+rg = Path('execution/risk_guard.py').read_text()
+overlay = "\n# ---- Overlay patched files ----\n"
+overlay += "TARGET_DIR=\"/home/quantrabbit/QuantRabbit\"\n"
+overlay += "install -o quantrabbit -g quantrabbit -m 0644 /dev/stdin \"$TARGET_DIR/main.py\" <<'PYMAIN'\n" + main + "\nPYMAIN\n"
+overlay += "install -d -o quantrabbit -g quantrabbit -m 0755 \"$TARGET_DIR/execution\"\n"
+overlay += "install -o quantrabbit -g quantrabbit -m 0644 /dev/stdin \"$TARGET_DIR/execution/risk_guard.py\" <<'PYRG'\n" + rg + "\nPYRG\n"
+overlay += "systemctl restart quantrabbit || true\nsleep 2\nsystemctl status --no-pager --lines=50 quantrabbit || true\n"
+Path('/tmp/patched_startup.sh').write_text(orig + overlay)
+print('Wrote /tmp/patched_startup.sh')
+PY
+
+# 3) startup-script を置換して VM を再起動
+gcloud compute instances add-metadata fx-trader-vm \
+  --zone=asia-northeast1-a \
+  --metadata-from-file startup-script=/tmp/patched_startup.sh
+gcloud compute instances reset fx-trader-vm --zone=asia-northeast1-a
+
+# 4) シリアルポートログで適用を確認
+gcloud compute instances get-serial-port-output fx-trader-vm \
+  --zone=asia-northeast1-a --port=1 | tail -n 200
+```
+
+注意
+- この方式は「即時の暫定反映」を目的とした運用カバーです。最終的には必ず GitHub に変更を push し、通常の GitOps（PR → Merge → 起動時 `git pull`）に戻してください。
+- `startup-script` を元に戻す場合は、上記で生成した追記部分（Overlay セクション）を取り除いて再適用してください。
+
+ポリシー
+- 「VM へ反映したら必ず GitHub にプッシュ」— 直接オーバーレイした変更は、直後にブランチ作成→コミット→PR→マージを実施して、リポジトリと VM の乖離を解消します。
