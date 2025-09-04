@@ -19,8 +19,8 @@ TOKEN = get_secret("oanda_token")
 ACCOUNT = get_secret("oanda_account_id")
 try:
     PRACTICE_FLAG = get_secret("oanda_practice").lower() == "true"
-except KeyError:
-    PRACTICE_FLAG = False  # デフォルトは本番環境
+except Exception:
+    PRACTICE_FLAG = True  # デフォルトは practice を安全側に
 
 ENVIRONMENT = "practice" if PRACTICE_FLAG else "live"
 
@@ -33,11 +33,25 @@ async def market_order(
     sl_price: float,
     tp_price: float,
     pocket: Literal["micro", "macro"],
+    *,
+    strategy: str | None = None,
+    macro_regime: str | None = None,
+    micro_regime: str | None = None,
 ) -> str:
     """
     units : +10000 = buy 0.1 lot, ‑10000 = sell 0.1 lot
     returns order ticket id
     """
+    # Encode strategy/regime metadata for later learning (PositionManagerが回収)
+    comment_parts = []
+    if strategy:
+        comment_parts.append(f"strategy={strategy}")
+    if macro_regime:
+        comment_parts.append(f"macro={macro_regime}")
+    if micro_regime:
+        comment_parts.append(f"micro={micro_regime}")
+    comment = "|".join(comment_parts) if comment_parts else ""
+
     order_data = {
         "order": {
             "type": "MARKET",
@@ -47,7 +61,7 @@ async def market_order(
             "positionFill": "DEFAULT",
             "stopLossOnFill": {"price": f"{sl_price:.3f}"},
             "takeProfitOnFill": {"price": f"{tp_price:.3f}"},
-            "clientExtensions": {"tag": f"pocket={pocket}"},
+            "clientExtensions": {"tag": f"pocket={pocket}", "comment": comment},
         }
     }
 
