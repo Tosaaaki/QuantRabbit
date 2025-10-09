@@ -34,6 +34,38 @@ _SCHEMA = {
     "ranked_strategies": list,
 }
 
+_STRATEGY_KEYS = ("TrendMA", "Donchian55", "BB_RSI", "NewsSpikeReversal")
+_DEFAULT_DIRECTIVE = {"enabled": True, "risk_bias": 1.0}
+
+
+def _normalize_strategy_directives(raw: Dict | None) -> Dict[str, Dict[str, float | bool]]:
+    """Ensure directives cover all known strategies with sane values."""
+
+    directives: Dict[str, Dict[str, float | bool]] = {}
+    if isinstance(raw, dict):
+        for name, cfg in raw.items():
+            if name not in _STRATEGY_KEYS:
+                continue
+            enabled = True
+            risk = 1.0
+            if isinstance(cfg, dict):
+                enabled = bool(cfg.get("enabled", True))
+                try:
+                    risk = float(cfg.get("risk_bias", 1.0))
+                except (TypeError, ValueError):
+                    risk = 1.0
+            elif isinstance(cfg, bool):
+                enabled = cfg
+            elif isinstance(cfg, (int, float)):
+                risk = float(cfg)
+            # clamp risk multiplier to avoid extreme leverage suggestions
+            risk = round(max(0.1, min(risk, 2.0)), 2)
+            directives[name] = {"enabled": enabled, "risk_bias": risk}
+
+    for name in _STRATEGY_KEYS:
+        directives.setdefault(name, dict(_DEFAULT_DIRECTIVE))
+    return directives
+
 
 class GPTTimeout(Exception): ...
 
@@ -117,7 +149,17 @@ async def call_openai(payload: Dict) -> Dict:
             raise ValueError(f"key {k} missing")
         if not isinstance(data[k], typ):
             raise ValueError(f"{k} type error")
+
     data["weight_macro"] = round(float(data["weight_macro"]), 2)
+    directives_raw = data.get("strategy_directives") if isinstance(data, dict) else None
+    data["strategy_directives"] = _normalize_strategy_directives(directives_raw)
+    ranked = []
+    for name in data.get("ranked_strategies", []):
+        if isinstance(name, str) and name in _STRATEGY_KEYS:
+            ranked.append(name)
+    if not ranked:
+        ranked = list(_STRATEGY_KEYS)
+    data["ranked_strategies"] = ranked
     return data
 
 
@@ -126,6 +168,7 @@ _FALLBACK = {
     "focus_tag": "hybrid",
     "weight_macro": 0.5,
     "ranked_strategies": ["TrendMA", "Donchian55", "BB_RSI"],
+    "strategy_directives": _normalize_strategy_directives({}),
 }
 
 

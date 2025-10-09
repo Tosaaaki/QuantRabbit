@@ -17,6 +17,7 @@ from analysis.summary_ingestor import check_event_soon, get_latest_news
 # バックグラウンドでニュース取得と要約を実行するためのインポート
 from market_data.news_fetcher import fetch_loop as news_fetch_loop
 from analysis.summary_ingestor import ingest_loop as summary_ingest_loop
+from analysis.kaizen import audit_loop as kaizen_loop
 from signals.pocket_allocator import alloc
 from execution.risk_guard import (
     allowed_lot,
@@ -26,11 +27,12 @@ from execution.risk_guard import (
 )
 from execution.order_manager import market_order
 from execution.position_manager import PositionManager
+from execution.exit_manager import exit_loop
 from strategies.trend.ma_cross import MovingAverageCross
 from strategies.breakout.donchian55 import Donchian55
 from strategies.mean_reversion.bb_rsi import BBRsi
 from strategies.news.spike_reversal import NewsSpikeReversal
-from analysis.learning import re_rank_strategies
+from analysis.learning import re_rank_strategies, risk_multiplier
 
 # Configure logging
 logging.basicConfig(
@@ -137,10 +139,29 @@ async def logic_loop():
             }
             gpt = await get_decision(payload)
             weight = gpt.get("weight_macro", w_macro)
+            strategy_directives = gpt.get("strategy_directives", {}) or {}
+
+            def _is_enabled(name: str) -> bool:
+                cfg = strategy_directives.get(name) or {}
+                return bool(cfg.get("enabled", True))
+
+            def _risk_bias(name: str) -> float:
+                cfg = strategy_directives.get(name) or {}
+                try:
+                    return float(cfg.get("risk_bias", 1.0))
+                except (TypeError, ValueError):
+                    return 1.0
 
             # GPT 候補から未実装戦略を除外し、学習スコアで再ランク
-            gpt_list = [s for s in gpt.get("ranked_strategies", []) if s in ("TrendMA","Donchian55","BB_RSI","NewsSpikeReversal")]
+            gpt_list = [
+                s
+                for s in gpt.get("ranked_strategies", [])
+                if s in ("TrendMA", "Donchian55", "BB_RSI", "NewsSpikeReversal") and _is_enabled(s)
+            ]
             ranked = re_rank_strategies(gpt_list, macro_regime, micro_regime) if gpt_list else []
+            if not ranked:
+                fallback_order = [s for s in ("TrendMA", "Donchian55", "BB_RSI", "NewsSpikeReversal") if _is_enabled(s)]
+                ranked = fallback_order
 
             # --- 3. 発注準備 ---
             lot_total = allowed_lot(EQUITY, sl_pips=20)  # sl_pipsは仮
@@ -186,6 +207,9 @@ async def logic_loop():
                 cls = STRATEGIES.get(sname)
                 if not cls:
                     continue
+                if not _is_enabled(sname):
+                    logging.info(f"[SKIP] {sname} disabled by GPT directive")
+                    continue
 
                 # 戦略ごとに必要な入力を渡す
                 if sname == "NewsSpikeReversal":
@@ -199,8 +223,9 @@ async def logic_loop():
                     continue
 
                 pocket = cls.pocket
-                if event_soon and pocket == "micro":
-                    logging.info("[SKIP] Event soon, skipping micro pocket trade.")
+                # Event モード中は micro を原則禁止。ただし NewsSpikeReversal は例外で許可。
+                if event_soon and pocket == "micro" and sname != "NewsSpikeReversal":
+                    logging.info("[SKIP] Event soon, skipping non-news micro trade.")
                     continue
 
                 if not can_trade(pocket):
@@ -208,6 +233,14 @@ async def logic_loop():
                     continue
 
                 lot = lots.get(pocket, 0)
+                # 学習済みの戦略成績からリスク係数を適用（0.7x〜1.3x）
+                try:
+                    lot = round(lot * float(risk_multiplier(pocket, cls.name)), 3)
+                except Exception:
+                    pass
+                directive_bias = _risk_bias(sname)
+                if directive_bias != 1.0:
+                    lot = round(lot * directive_bias, 3)
                 if lot <= 0:
                     continue
 
@@ -215,7 +248,7 @@ async def logic_loop():
                 price = float(fac_m1.get("close"))
                 sl, tp = _calc_sl_tp_from_signal(sig, sig["action"], price, pocket)
 
-                trade_id = await market_order(
+                order_result = await market_order(
                     "USD_JPY",
                     units,
                     sl,
@@ -225,12 +258,21 @@ async def logic_loop():
                     macro_regime=macro_regime,
                     micro_regime=micro_regime,
                 )
-                if trade_id:
+                if order_result.get("success"):
                     logging.info(
-                        f"[ORDER] {trade_id} | {cls.name} | {lot} lot | SL={sl}, TP={tp}"
+                        "[ORDER] %s | %s | %s lot | SL=%s TP=%s",
+                        order_result.get("trade_id"),
+                        cls.name,
+                        lot,
+                        sl,
+                        tp,
                     )
                 else:
-                    logging.error(f"[ORDER FAILED] {cls.name}")
+                    logging.error(
+                        "[ORDER FAILED] %s | error=%s",
+                        cls.name,
+                        order_result.get("error"),
+                    )
 
                 break  # 1取引/ループ
 
@@ -257,8 +299,10 @@ async def main():
     await asyncio.gather(
         start_candle_stream("USD_JPY", handlers),
         logic_loop(),
+        exit_loop(),
         news_fetch_loop(),
         summary_ingest_loop(),
+        kaizen_loop(),
     )
 
 

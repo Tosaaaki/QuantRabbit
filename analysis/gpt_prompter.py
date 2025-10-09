@@ -41,6 +41,7 @@ def build_messages(payload: Dict) -> List[Dict]:
         "- Donchian55: Breakout bias; avoid tight ranges.\n"
         "- BB_RSI: Mean-reversion in calm ranges (low ADX, narrow BBW).\n"
         "- NewsSpikeReversal: Only around impactful events; fade overreactions.\n"
+        "For each strategy you may set directives with fields enabled(bool) and risk_bias(0.3-1.7)."
     )
 
     user_content = (
@@ -60,7 +61,8 @@ def build_messages(payload: Dict) -> List[Dict]:
         "Output strictly the following JSON schema with no extra text: {\n"
         "  'focus_tag': 'micro'|'macro'|'hybrid'|'event',\n"
         "  'weight_macro': number in [0,1] rounded to 0.05,\n"
-        "  'ranked_strategies': string[] subset of ['TrendMA','Donchian55','BB_RSI','NewsSpikeReversal']\n"
+        "  'ranked_strategies': string[] subset of ['TrendMA','Donchian55','BB_RSI','NewsSpikeReversal'],\n"
+        "  'strategy_directives': {strategy: {'enabled': bool, 'risk_bias': number}}\n"
         "}."
     )
 

@@ -13,7 +13,7 @@
 | **DataFetcher** | `market_data/*` | + Tick JSON<br>+ Candle dict<br>+ raw News JSON (→ GCS) |
 | **IndicatorEngine** | `indicators/*` | ← Candle deque<br>→ factors dict {ma10, rsi, …} |
 | **Regime & Focus** | `analysis/regime_classifier.py` / `focus_decider.py` | ← factors<br>→ macro/micro レジーム・weight_macro |
-| **GPT Decider** | `analysis/gpt_decider.py` | ← focus + perf + news<br>→ JSON {focus_tag, weight_macro, ranked_strategies} |
+| **GPT Decider** | `analysis/gpt_decider.py` | ← focus + perf + news<br>→ JSON {focus_tag, weight_macro, ranked_strategies, strategy_directives} |
 | **Strategy Plugin** | `strategies/*` | ← factors<br>→ dict {action, sl_pips, tp_pips} or None |
 | **Risk Guard** | `execution/risk_guard.py` | ← lot, SL/TP, pocket<br>→ bool (可否)・調整値 |
 | **Order Manager** | `execution/order_manager.py` | ← units, sl, tp, tag<br>→ OANDA ticket ID |
