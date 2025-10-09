@@ -6,7 +6,10 @@ OANDA REST で成行・指値を発注。
 """
 
 from __future__ import annotations
-from typing import Literal
+
+import logging
+import os
+from typing import Literal, Any, Dict
 
 from oandapyV20 import API
 from oandapyV20.exceptions import V20Error
@@ -14,17 +17,44 @@ from oandapyV20.endpoints.orders import OrderCreate
 
 from utils.secrets import get_secret
 
-# ---------- 読み込み：env.toml ----------
-TOKEN = get_secret("oanda_token")
-ACCOUNT = get_secret("oanda_account_id")
-try:
-    PRACTICE_FLAG = get_secret("oanda_practice").lower() == "true"
-except Exception:
-    PRACTICE_FLAG = True  # デフォルトは practice を安全側に
+_api: API | None = None
+_account_id: str | None = None
+_SYSTEM_VERSION = None
 
-ENVIRONMENT = "practice" if PRACTICE_FLAG else "live"
 
-api = API(access_token=TOKEN, environment=ENVIRONMENT)
+def _get_system_version() -> str:
+    global _SYSTEM_VERSION
+    if _SYSTEM_VERSION is not None:
+        return _SYSTEM_VERSION
+    version = os.environ.get("SYSTEM_VERSION")
+    if not version:
+        try:
+            version = get_secret("system_version")
+        except Exception:
+            version = "V2"
+    _SYSTEM_VERSION = version
+    return _SYSTEM_VERSION
+
+
+def _ensure_api() -> tuple[API | None, str | None]:
+    """API クライアントを遅延初期化。未設定なら (None, None)。"""
+    global _api, _account_id
+    if _api is not None and _account_id is not None:
+        return _api, _account_id
+    try:
+        token = get_secret("oanda_token")
+        account = get_secret("oanda_account_id")
+        try:
+            practice = get_secret("oanda_practice").lower() == "true"
+        except Exception:
+            practice = True
+        env = "practice" if practice else "live"
+        _api = API(access_token=token, environment=env)
+        _account_id = account
+        return _api, _account_id
+    except Exception as exc:
+        logging.error("[order_manager] Failed to initialize OANDA API: %s", exc)
+        return None, None
 
 
 async def market_order(
@@ -37,12 +67,8 @@ async def market_order(
     strategy: str | None = None,
     macro_regime: str | None = None,
     micro_regime: str | None = None,
-) -> str:
-    """
-    units : +10000 = buy 0.1 lot, ‑10000 = sell 0.1 lot
-    returns order ticket id
-    """
-    # Encode strategy/regime metadata for later learning (PositionManagerが回収)
+) -> Dict[str, Any]:
+    """Submit a market order and return rich result dict."""
     comment_parts = []
     if strategy:
         comment_parts.append(f"strategy={strategy}")
@@ -50,6 +76,9 @@ async def market_order(
         comment_parts.append(f"macro={macro_regime}")
     if micro_regime:
         comment_parts.append(f"micro={micro_regime}")
+    version = _get_system_version()
+    if version:
+        comment_parts.append(f"ver={version}")
     comment = "|".join(comment_parts) if comment_parts else ""
 
     order_data = {
@@ -65,14 +94,45 @@ async def market_order(
         }
     }
 
-    r = OrderCreate(accountID=ACCOUNT, data=order_data)
+    api, account = _ensure_api()
+    if not api or not account:
+        logging.error("[order_manager] OANDA credentials missing; order skipped")
+        return {"success": False, "trade_id": None, "error": "missing_credentials"}
+
+    r = OrderCreate(accountID=account, data=order_data)
     try:
         api.request(r)
         response = r.response
-        trade_id = (
-            response.get("orderFillTransaction", {}).get("tradeOpened", {}).get("tradeID")
+        trade_opened = response.get("orderFillTransaction", {}).get("tradeOpened", {})
+        trade_id = trade_opened.get("tradeID")
+        order_id = response.get("orderFillTransaction", {}).get("orderID")
+        logging.info(
+            "[ORDER_SUCCESS] instrument=%s units=%s trade_id=%s order_id=%s",
+            instrument,
+            units,
+            trade_id,
+            order_id,
         )
-        return trade_id
+        return {
+            "success": bool(trade_id),
+            "trade_id": trade_id,
+            "order_id": order_id,
+            "raw": response,
+        }
     except V20Error as e:
-        print(f"OANDA API Error in market_order: {e}")
-        return None
+        err_payload = getattr(e, "response", None)
+        logging.error(
+            "[ORDER_ERROR] code=%s message=%s", getattr(e, "code", None), getattr(e, "msg", e)
+        )
+        if err_payload:
+            logging.error("[ORDER_ERROR_PAYLOAD] %s", err_payload)
+        return {
+            "success": False,
+            "trade_id": None,
+            "error": str(e),
+            "error_code": getattr(e, "code", None),
+            "raw": err_payload,
+        }
+    except Exception as exc:
+        logging.exception("[ORDER_EXCEPTION] %s", exc)
+        return {"success": False, "trade_id": None, "error": str(exc)}
