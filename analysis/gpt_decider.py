@@ -38,6 +38,15 @@ _STRATEGY_KEYS = ("TrendMA", "Donchian55", "BB_RSI", "NewsSpikeReversal")
 _DEFAULT_DIRECTIVE = {"enabled": True, "risk_bias": 1.0}
 
 
+def _get_float_secret(candidates: tuple[str, ...], default: float) -> float:
+    for key in candidates:
+        try:
+            return float(get_secret(key))
+        except Exception:
+            continue
+    return default
+
+
 def _normalize_strategy_directives(raw: Dict | None) -> Dict[str, Dict[str, float | bool]]:
     """Ensure directives cover all known strategies with sane values."""
 
@@ -75,20 +84,20 @@ async def call_openai(payload: Dict) -> Dict:
     # 価格設定の読込（初回だけ）
     global _PRICE_IN_PER_M, _PRICE_OUT_PER_M, _MAX_MONTH_USD
     if _PRICE_IN_PER_M is None:
-        try:
-            _PRICE_IN_PER_M = float(get_secret("openai_cost_per_million_input"))
-        except Exception:
-            _PRICE_IN_PER_M = 0.15  # default for gpt-4o-mini input
+        _PRICE_IN_PER_M = _get_float_secret(
+            ("openai_decider_cost_per_million_input", "openai_cost_per_million_input"),
+            0.25,
+        )  # default aligns with GPT-5 mini pricing
     if _PRICE_OUT_PER_M is None:
-        try:
-            _PRICE_OUT_PER_M = float(get_secret("openai_cost_per_million_output"))
-        except Exception:
-            _PRICE_OUT_PER_M = 0.60  # default for gpt-4o-mini output
+        _PRICE_OUT_PER_M = _get_float_secret(
+            ("openai_decider_cost_per_million_output", "openai_cost_per_million_output"),
+            2.0,
+        )
     if _MAX_MONTH_USD is None:
-        try:
-            _MAX_MONTH_USD = float(get_secret("openai_max_month_usd"))
-        except Exception:
-            _MAX_MONTH_USD = 30.0
+        _MAX_MONTH_USD = _get_float_secret(
+            ("openai_decider_max_month_usd", "openai_max_month_usd"),
+            60.0,
+        )
 
     # コストガード（USD上限の事前チェック）
     if not within_budget_usd(_MAX_MONTH_USD):

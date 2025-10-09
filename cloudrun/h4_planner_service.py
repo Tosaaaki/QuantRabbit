@@ -21,6 +21,11 @@ app = Flask(__name__) if Flask else None
 fs = firestore.Client()
 
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
+OPENAI_PLANNER_MODEL = (
+    os.environ.get("OPENAI_PLANNER_MODEL")
+    or os.environ.get("OPENAI_MODEL")
+    or "gpt-5-mini"
+)
 client = OpenAI(api_key=OPENAI_API_KEY) if OPENAI_API_KEY else None
 
 INSTRUMENT = os.environ.get("INSTRUMENT", "USD_JPY")
@@ -77,7 +82,7 @@ def _call_gpt_plan(payload: dict) -> dict:
         f"Payload: {json.dumps(payload)}"
     )
     res = client.chat.completions.create(
-        model=os.environ.get("OPENAI_MODEL", "gpt-4o-mini"),
+        model=OPENAI_PLANNER_MODEL,
         response_format={"type": "json_object"},
         temperature=0.2,
         max_tokens=180,

@@ -4,9 +4,12 @@ from utils.secrets import get_secret
 
 # ---------- 読み込み：env.toml ----------
 try:
-    OPENAI_MODEL = get_secret("openai_model")
+    OPENAI_MODEL = get_secret("openai_decider_model")
 except Exception:
-    OPENAI_MODEL = "gpt-4o-mini"
+    try:
+        OPENAI_MODEL = get_secret("openai_model")
+    except Exception:
+        OPENAI_MODEL = "gpt-5-mini"
 try:
     MAX_TOKENS_MONTH = int(get_secret("openai_max_month_tokens"))
 except Exception:

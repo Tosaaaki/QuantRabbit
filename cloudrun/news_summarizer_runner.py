@@ -6,6 +6,8 @@ import datetime
 import time
 from flask import Flask, request, abort
 from google.cloud import storage
+from google.cloud.exceptions import NotFound as CloudNotFound
+from google.api_core.exceptions import NotFound as ApiNotFound
 from openai import OpenAI
 import requests
 
@@ -13,6 +15,7 @@ import requests
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
+OPENAI_SUMMARIZER_MODEL = os.environ.get("OPENAI_SUMMARIZER_MODEL") or os.environ.get("OPENAI_MODEL") or "gpt-5-nano"
 BUCKET = os.environ.get("BUCKET")
 
 if not BUCKET:
@@ -61,7 +64,7 @@ def summarize(text: str) -> dict:
     try:
         logging.info("[summarize_start] sending_openai_request")
         resp = client.chat.completions.create(
-            model="gpt-4o-mini",
+            model=OPENAI_SUMMARIZER_MODEL,
             response_format={"type": "json_object"},
             temperature=0.2,
             messages=[
@@ -83,7 +86,11 @@ def _process_one(object_name: str) -> bool:
     try:
         t0 = time.time()
         blob = bucket.blob(object_name)
-        raw_text = blob.download_as_text()
+        try:
+            raw_text = blob.download_as_text()
+        except (CloudNotFound, ApiNotFound):
+            logging.info(f"[summarized_skip] object={object_name} reason=not_found")
+            return True
         raw = json.loads(raw_text)
         title = raw.get("title", "")
         body = raw.get("body", "")
@@ -111,41 +118,56 @@ def _process_one(object_name: str) -> bool:
             f"[summarized_ok] object={object_name} summary_obj={summary_blob_name} ms={elapsed_ms} impact={raw.get('impact',1)}"
         )
         return True
+    except (CloudNotFound, ApiNotFound):
+        logging.info(f"[summarized_skip] object={object_name} reason=not_found_after_download")
+        return True
     except Exception as e:
         logging.error(f"[summarized_err] object={object_name} error={e}")
         return False
 
 
-@app.route("/", methods=["POST"])
+@app.route("/", methods=["POST"]) 
 def ingest():
-    logging.info(f"Request headers: {request.headers}")
-    logging.info(f"Request data: {request.data}")
+    """Accept both Pub/Sub push and CloudEvent (GCS finalize) payloads.
+    - Pub/Sub push: {"message": {"attributes": {objectId}, "data": base64(json)}}
+    - CloudEvent (binary mode): Ce-* headers present, body JSON with {name, bucket}
+    """
     try:
-        envelope = request.get_json()
-        if not envelope or "message" not in envelope:
-            logging.error(f"Invalid Pub/Sub message format: {request.data}")
-            return "Invalid message format", 400
-
-        msg = envelope["message"]
-        attrs = msg.get("attributes", {})
-        object_name = attrs.get("objectId")
-
-        if not object_name and "data" in msg:
+        # 1) CloudEvent (binary mode) detection
+        ce_type = request.headers.get("Ce-Type") or request.headers.get("ce-type")
+        object_name = None
+        if ce_type:
             try:
-                decoded_data = base64.b64decode(msg["data"]).decode('utf-8')
-                logging.info(f"Decoded data: {decoded_data}")
-                data_json = json.loads(decoded_data)
-                object_name = data_json.get("name")
-            except Exception as e:
-                logging.error(f"Error decoding message data: {e}")
+                payload = request.get_json(silent=True) or {}
+                object_name = payload.get("name")
+                logging.info(f"[ingest-ce] Ce-Type={ce_type} bucket={payload.get('bucket')} name={object_name}")
+            except Exception:
                 object_name = None
 
-        logging.info(f"Extracted object name: {object_name}")
+        # 2) Pub/Sub envelope (fallback)
+        if not object_name:
+            envelope = request.get_json(silent=True) or {}
+            msg = envelope.get("message") or {}
+            attrs = msg.get("attributes", {})
+            object_name = attrs.get("objectId")
+            if not object_name and "data" in msg:
+                try:
+                    decoded_data = base64.b64decode(msg["data"]).decode('utf-8')
+                    data_json = json.loads(decoded_data)
+                    object_name = data_json.get("name")
+                    logging.info(f"[ingest-ps] decoded name={object_name}")
+                except Exception as e:
+                    logging.info(f"[ingest-ps] decode failed: {e}")
 
-        if not object_name or not object_name.startswith("raw/"):
-            logging.info(f"Skipping non-raw or missing object_name: {object_name}")
+        if not object_name or not isinstance(object_name, str):
+            logging.info("[ingest] missing object name; skip")
             return "Skipping", 200
-        logging.info(f"Processing object via Pub/Sub: {object_name}")
+
+        # Only handle raw/ objects; ignore processed/ notifications to avoid noise
+        if not object_name.startswith("raw/"):
+            logging.info(f"[ingest] ignore non-raw object: {object_name}")
+            return "Skipping", 200
+
         ok = _process_one(object_name)
         return ("OK", 200) if ok else ("ERROR", 500)
 

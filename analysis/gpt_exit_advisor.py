@@ -32,6 +32,15 @@ class GPTExitAdvisorError(RuntimeError):
     """Raised when GPT exit advice cannot be retrieved."""
 
 
+def _get_float_secret(keys: tuple[str, ...], default: float) -> float:
+    for key in keys:
+        try:
+            return float(get_secret(key))
+        except Exception:
+            continue
+    return default
+
+
 async def _ensure_client() -> AsyncOpenAI:
     global _CLIENT, _MODEL, _MAX_MONTH_USD, _PRICE_IN_PER_M, _PRICE_OUT_PER_M, _MAX_TOKENS_MONTH
     if _MODEL is None:
@@ -41,27 +50,29 @@ async def _ensure_client() -> AsyncOpenAI:
             try:
                 _MODEL = get_secret("openai_model")
             except Exception:
-                _MODEL = "gpt-4o-mini"
+                _MODEL = "gpt-5"
     if _MAX_TOKENS_MONTH is None:
         try:
-            _MAX_TOKENS_MONTH = int(get_secret("openai_max_month_tokens"))
+            _MAX_TOKENS_MONTH = int(get_secret("openai_exit_max_month_tokens"))
         except Exception:
-            _MAX_TOKENS_MONTH = 500_000
+            _MAX_TOKENS_MONTH = int(
+                _get_float_secret(("openai_max_month_tokens",), 500_000.0)
+            )
     if _MAX_MONTH_USD is None:
-        try:
-            _MAX_MONTH_USD = float(get_secret("openai_max_month_usd"))
-        except Exception:
-            _MAX_MONTH_USD = 30.0
+        _MAX_MONTH_USD = _get_float_secret(
+            ("openai_exit_max_month_usd", "openai_max_month_usd"),
+            120.0,
+        )
     if _PRICE_IN_PER_M is None:
-        try:
-            _PRICE_IN_PER_M = float(get_secret("openai_cost_per_million_input"))
-        except Exception:
-            _PRICE_IN_PER_M = 0.15
+        _PRICE_IN_PER_M = _get_float_secret(
+            ("openai_exit_cost_per_million_input", "openai_cost_per_million_input"),
+            1.25,
+        )
     if _PRICE_OUT_PER_M is None:
-        try:
-            _PRICE_OUT_PER_M = float(get_secret("openai_cost_per_million_output"))
-        except Exception:
-            _PRICE_OUT_PER_M = 0.60
+        _PRICE_OUT_PER_M = _get_float_secret(
+            ("openai_exit_cost_per_million_output", "openai_cost_per_million_output"),
+            10.0,
+        )
     if _CLIENT is None:
         try:
             api_key = get_secret("openai_api_key")

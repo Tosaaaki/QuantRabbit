@@ -16,6 +16,7 @@
 | **GPT Decider** | `analysis/gpt_decider.py` | ← focus + perf + news<br>→ JSON {focus_tag, weight_macro, ranked_strategies, strategy_directives} |
 | **Strategy Plugin** | `strategies/*` | ← factors<br>→ dict {action, sl_pips, tp_pips} or None |
 | **GPT Exit Advisor** | `analysis/gpt_exit_advisor.py` / `execution/exit_manager.py` | ← open trades + factors<br>→ JSON {close_now, target_tp_pips, target_sl_pips, confidence} |
+| **News Summarizer** | `cloudrun/news_summarizer_runner.py` | ← RSS/Body<br>→ summary JSON (GPT-5 nano by default) |
 | **Risk Guard** | `execution/risk_guard.py` | ← lot, SL/TP, pocket<br>→ bool (可否)・調整値 |
 | **Order Manager** | `execution/order_manager.py` | ← units, sl, tp, tag<br>→ OANDA ticket ID |
 | **Logger** | `logs/*.db` | 全コンポーネントが INSERT |
