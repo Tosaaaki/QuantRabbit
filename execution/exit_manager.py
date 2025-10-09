@@ -103,6 +103,13 @@ ADVICE_REFRESH_SEC = int(os.environ.get("EXIT_GPT_REFRESH_SEC", "180"))
 ADVICE_CLOSE_CONF = float(os.environ.get("EXIT_GPT_CLOSE_CONF", "0.55"))
 ADVICE_ADJUST_CONF = float(os.environ.get("EXIT_GPT_ADJUST_CONF", "0.35"))
 ADVICE_MAX_WAIT_MIN = int(os.environ.get("EXIT_GPT_MAX_WAIT_MIN", "45"))
+BE_BUFFER_DEFAULT = float(os.environ.get("EXIT_BE_BUFFER_PIPS", "2.0"))
+BE_BUFFER_STRATEGY = {
+    "BB_RSI": float(os.environ.get("EXIT_BE_BUFFER_BB_RSI", "3.0")),
+    "NewsSpikeReversal": float(os.environ.get("EXIT_BE_BUFFER_NEWS", "2.5")),
+    "TrendMA": float(os.environ.get("EXIT_BE_BUFFER_TRENDMA", "2.0")),
+    "Donchian55": float(os.environ.get("EXIT_BE_BUFFER_DONCHIAN", "2.5")),
+}
 
 POCKET_TRIGGER_MULT = {
     "micro": float(os.environ.get("EXIT_GPT_TRIGGER_MULT_MICRO", "0.8")),
@@ -137,6 +144,15 @@ def _should_request_advice(move_pips: float, age_min: float, strategy: str, pock
     if age_min >= ADVICE_MAX_WAIT_MIN and move_pips >= threshold * 0.5:
         return True
     return False
+
+
+def _be_buffer(strategy: str, pocket: str) -> float:
+    val = BE_BUFFER_STRATEGY.get(strategy)
+    if val is None:
+        if pocket == "micro":
+            return max(1.5, BE_BUFFER_DEFAULT * 0.8)
+        return BE_BUFFER_DEFAULT
+    return max(1.0, val)
 
 
 def _log_event(
@@ -297,10 +313,11 @@ async def exit_loop():
 
                 # 1) Break-even move
                 if move_pips >= be_trig:
-                    be_price = entry + direction * (1 * pip)  # BE + 1 pip
+                    buffer = _be_buffer(strategy, pocket)
+                    be_price = entry + direction * (buffer * pip)
                     ok = update_trade_orders(trade_id, sl_price=be_price)
                     if ok:
-                        print(f"[exit_manager] BE set for {trade_id} at {be_price:.3f}")
+                        print(f"[exit_manager] BE set for {trade_id} at {be_price:.3f} buffer={buffer}")
 
                 # 2) Trailing for trend/breakout
                 if strategy in ("TrendMA", "Donchian55"):
@@ -336,7 +353,8 @@ async def exit_loop():
                 if strategy == "NewsSpikeReversal":
                     # quicker BE
                     if move_pips >= 7.0:
-                        be_price = entry + direction * (1 * pip)
+                        buffer = _be_buffer(strategy, pocket)
+                        be_price = entry + direction * (buffer * pip)
                         update_trade_orders(trade_id, sl_price=be_price)
                     # modest trailing
                     dist = 10.0 * pip
