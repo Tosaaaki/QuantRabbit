@@ -7,7 +7,10 @@ import pathlib
 import sqlite3
 from typing import Optional
 
-import pandas as pd
+try:
+    import pandas as pd
+except ImportError as exc:  # pragma: no cover
+    raise SystemExit("pandas is required for gpt_exit_report.py") from exc
 
 DB_PATH = pathlib.Path("logs/trades.db")
 

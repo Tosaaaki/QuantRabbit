@@ -102,8 +102,41 @@ ADVICE_TRIGGER_PIPS = float(os.environ.get("EXIT_GPT_TRIGGER_PIPS", "8.0"))
 ADVICE_REFRESH_SEC = int(os.environ.get("EXIT_GPT_REFRESH_SEC", "180"))
 ADVICE_CLOSE_CONF = float(os.environ.get("EXIT_GPT_CLOSE_CONF", "0.55"))
 ADVICE_ADJUST_CONF = float(os.environ.get("EXIT_GPT_ADJUST_CONF", "0.35"))
+ADVICE_MAX_WAIT_MIN = int(os.environ.get("EXIT_GPT_MAX_WAIT_MIN", "45"))
+
+POCKET_TRIGGER_MULT = {
+    "micro": float(os.environ.get("EXIT_GPT_TRIGGER_MULT_MICRO", "0.8")),
+    "macro": float(os.environ.get("EXIT_GPT_TRIGGER_MULT_MACRO", "1.0")),
+}
+
+STRATEGY_TRIGGER_OVERRIDES = {
+    "BB_RSI": float(os.environ.get("EXIT_GPT_TRIGGER_BB_RSI", "5.0")),
+    "NewsSpikeReversal": float(os.environ.get("EXIT_GPT_TRIGGER_NEWS", "4.0")),
+    "TrendMA": float(os.environ.get("EXIT_GPT_TRIGGER_TRENDMA", str(ADVICE_TRIGGER_PIPS))),
+    "Donchian55": float(os.environ.get("EXIT_GPT_TRIGGER_DONCHIAN", str(ADVICE_TRIGGER_PIPS))),
+}
 
 _ADVICE_CACHE: Dict[str, Dict[str, Any]] = {}
+
+
+def _trigger_threshold(strategy: str, pocket: str, atr_pips: float) -> float:
+    base = ADVICE_TRIGGER_PIPS
+    override = STRATEGY_TRIGGER_OVERRIDES.get(strategy)
+    if override is not None:
+        base = override
+    base *= POCKET_TRIGGER_MULT.get(pocket, 1.0)
+    if atr_pips > 0:
+        base = min(base, max(4.0, atr_pips * 1.2))
+    return max(3.0, base)
+
+
+def _should_request_advice(move_pips: float, age_min: float, strategy: str, pocket: str, atr_pips: float) -> bool:
+    threshold = _trigger_threshold(strategy, pocket, atr_pips)
+    if abs(move_pips) >= threshold:
+        return True
+    if age_min >= ADVICE_MAX_WAIT_MIN and move_pips >= threshold * 0.5:
+        return True
+    return False
 
 
 def _log_event(
@@ -216,7 +249,7 @@ async def exit_loop():
                     meanrev_rsi_exit = 50.0
 
                 advice: Dict[str, Any] | None = None
-                if abs(move_pips) >= ADVICE_TRIGGER_PIPS:
+                if _should_request_advice(move_pips, age_min, strategy, pocket, atr_m1 * 100.0):
                     cache = _ADVICE_CACHE.get(trade_id)
                     too_old = True
                     if cache and cache.get("ts"):

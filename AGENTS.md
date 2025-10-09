@@ -18,6 +18,7 @@
 | **GPT Exit Advisor** | `analysis/gpt_exit_advisor.py` / `execution/exit_manager.py` | ← open trades + factors<br>→ JSON {close_now, target_tp_pips, target_sl_pips, confidence} |
 | **News Summarizer** | `cloudrun/news_summarizer_runner.py` | ← RSS/Body<br>→ summary JSON (GPT-5 nano by default) |
 | **Version Tagger** | `execution/order_manager.py` / `position_manager.py` | ← SYSTEM_VERSION env<br>→ trade version labels (V1/V2) |
+| **Exit Monitor** | `scripts/monitor_exit_logs.py`, `scripts/gpt_exit_report.py` | GPT exit ログ監視と影響レポート |
 | **Risk Guard** | `execution/risk_guard.py` | ← lot, SL/TP, pocket<br>→ bool (可否)・調整値 |
 | **Order Manager** | `execution/order_manager.py` | ← units, sl, tp, tag<br>→ OANDA ticket ID |
 | **Logger** | `logs/*.db` | 全コンポーネントが INSERT |
