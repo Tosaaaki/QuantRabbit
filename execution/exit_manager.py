@@ -160,7 +160,7 @@ async def exit_loop():
             factors = all_factors()
             fac_m1 = factors.get("M1") or {}
             fac_h4 = factors.get("H4") or {}
-            price_now = float(fac_m1.get("close") or 0.0)  # USD/JPY current
+            price_now = float(fac_m1.get("close") or 0.0)  # USD/JPY fallback price
             atr_m1 = float(fac_m1.get("atr") or 0.0)
             atr_h4 = float(fac_h4.get("atr") or 0.0)
             rsi_m1 = float(fac_m1.get("rsi") or 50.0)
@@ -183,7 +183,21 @@ async def exit_loop():
                 direction = 1 if units > 0 else -1
                 pip = _pip()
 
-                move_pips = (price_now - entry) * 100.0 * direction
+                trade_price_now = price_now
+                trade_price = tr.get("currentPrice") or {}
+                mid_price = trade_price.get("mid")
+                try:
+                    if mid_price is not None:
+                        trade_price_now = float(mid_price)
+                    else:
+                        bid = trade_price.get("bid")
+                        ask = trade_price.get("ask")
+                        if bid is not None and ask is not None:
+                            trade_price_now = (float(bid) + float(ask)) / 2.0
+                except (TypeError, ValueError):
+                    pass
+
+                move_pips = (trade_price_now - entry) * direction / pip
                 age_min = _minutes_since(tr.get("openTime", ""))
 
                 # Load per (strategy,pocket) policy
@@ -218,7 +232,7 @@ async def exit_loop():
                             "pocket": pocket,
                             "direction": "long" if direction > 0 else "short",
                             "entry_price": entry,
-                            "current_price": price_now,
+                            "current_price": trade_price_now,
                             "unrealized_pips": round(move_pips, 2),
                             "atr_m1_pips": round(atr_m1 * 100.0, 2),
                             "atr_h4_pips": round(atr_h4 * 100.0, 2),
@@ -242,7 +256,7 @@ async def exit_loop():
                             event_type="advice",
                             action="close_now" if advice.get("close_now") else "hold",
                             advice=advice,
-                            price=price_now,
+                            price=trade_price_now,
                             move_pips=move_pips,
                         )
                     elif cache:
@@ -313,7 +327,7 @@ async def exit_loop():
                                 event_type="close_request",
                                 action="close_now",
                                 advice=advice,
-                                price=price_now,
+                                price=trade_price_now,
                                 move_pips=move_pips,
                             )
                             continue
@@ -348,7 +362,7 @@ async def exit_loop():
                                     event_type="adjust",
                                     action="update_tp_sl",
                                     advice=advice,
-                                    price=price_now,
+                                    price=trade_price_now,
                                     move_pips=move_pips,
                                 )
 

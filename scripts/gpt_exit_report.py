@@ -34,8 +34,11 @@ def load_data(days: int, version: Optional[str]) -> pd.DataFrame:
         )
     finally:
         con.close()
+    for col in ("recorded_at", "entry_time", "close_time"):
+        if col in df.columns and col in df:
+            df[col] = pd.to_datetime(df[col], utc=True, errors="coerce").dt.tz_convert(None)
     if days > 0:
-        cutoff = pd.Timestamp.utcnow() - pd.Timedelta(days=days)
+        cutoff = (pd.Timestamp.utcnow() - pd.Timedelta(days=days)).tz_localize(None)
         df = df[df["recorded_at"] >= cutoff]
     if version:
         df = df[df["version"].str.upper() == version.upper()]
