@@ -68,7 +68,7 @@ USD/JPY で 1 日 +100 pips を狙う完全自動売買システムです。
 
 ---
 
-## Quick Start (Local Demo)
+## Quick Start (Local Demo)
 
 ```bash
 # 1. clone & install
@@ -89,6 +89,28 @@ cp config/pool.yaml config/pool.local.yaml # 有効戦略を調整
 
 # 3. run (practice account, small lot)
 python main.py
+
+## Deploy to Cloud Run
+
+アクティブな gcloud アカウント/プロジェクトが `www.tosakiweb.net@gmail.com / quantrabbit` のままであれば、
+ローカルのコンテキストをそのまま利用してデプロイします。切り替えていない場合でも
+`--project=quantrabbit` 付きの Cloud Build + Cloud Run を自動実行するようになりました。
+
+```bash
+./scripts/deploy_fx_trader.sh          # 取引サービス (cloudrun.trader_service)
+./scripts/deploy_news_pipeline.sh      # ニュース summarizer 群
+./scripts/deploy_exit_manager.sh       # exit_manager_service (GPT exit判定)
+
+# インパーソネーションで実行したいとき
+DEPLOY_IMPERSONATE_SA=event-logger-sa@quantrabbit.iam.gserviceaccount.com ./scripts/deploy_fx_trader.sh
+```
+
+`fx-exit-manager` (Cloud Run) は exit_manager_service を HTTP 起動する常駐サービスです。
+Cloud Scheduler で 1〜2 分ごとに `https://fx-exit-manager-<PROJECT>.asia-northeast1.run.app` を叩くと
+GPT exit ロジックが本番でも継続実行されます。手動テストは `./scripts/trigger_exit_manager.sh`
+で行えます。
+
+ニュース系リソースは `scripts/deploy_news_pipeline.sh` で同じポリシー／手順で更新できます。
 
 # pool.yaml example
 ```yaml
@@ -119,6 +141,44 @@ Trade Loop Overview
 	4.	pocket_allocator で lot を micro/macro に分配
 	5.	Strategy プラグイン (MA クロス / Donchian55 / BB+RSI) がシグナルを返す
 	6.	risk_guard が lot/SL/TP をクランプし OANDA REST 発注
-	7.	成績は logs/trades.db に保存 → perf_monitor が PF/Sharpe 更新
-	8.	夜間 cron で DB & ログを GCS へバックアップ
+	7.	ExitManager が BE（建値）移動・ATR トレーリング・時間/RSI 退出を適用
+	8.	成績は logs/trades.db に保存 → perf_monitor が PF/Sharpe 更新
+	9.	夜間 cron で DB & ログを GCS へバックアップ
 
+---
+
+## GCP マルチアカウント運用メモ
+
+- `gcloud config configurations create <name>` でプロジェクトごとの設定を作成し、作業前に `gcloud config configurations activate <name>` で切り替える。
+- 各設定内で `gcloud config set project <PROJECT_ID>` と `gcloud config set account <ACCOUNT>` を実行しておけば、アクティブアカウントを書き換えても他の設定には影響しない。
+- CLI を混在させたい場合は `gcloud --configuration=<name> <command>` でコマンド単位に指定する。
+- アプリやスクリプトはサービスアカウント鍵を利用し、`export GOOGLE_APPLICATION_CREDENTIALS=/actual/path/service-account.json` を設定したターミナル内だけで権限を切り替える。
+- 異なるプロジェクトを同時に操作する際は、ターミナルを分けてそれぞれの環境変数を保持するのが安全。
+
+### QuantRabbit プロジェクト (www.tosakiweb.net@gmail.com) をアクティブ化する手順
+
+```
+cd /Users/tossaki/Documents/App/QuantRabbit
+gcloud config configurations activate www-tosakiweb
+gcloud config list --format='value(core.account,core.project)'
+```
+
+- 1 行目のディレクトリに移動してから上記 2 コマンドを実行すると、アカウント `www.tosakiweb.net@gmail.com`・プロジェクト `quantrabbit` がアクティブになる。
+- `gcloud auth list` で `* www.tosakiweb.net@gmail.com` が付いているか確認し、必要に応じて `gcloud auth application-default login` または `gcloud auth application-default set-quota-project quantrabbit` で ADC も合わせる。
+- 他プロジェクトへ戻る際は、対応する構成 (`default` など) を再度 `gcloud config configurations activate ...` で切り替える。
+
+---
+
+## Retrospectives / Kaizen
+
+- Daily/Weekly Retro: `python scripts/retro_report.py --days 1` (or `--days 7`).
+  - Prints a concise PF/Sharpe/WinRate summary, pocket and strategy breakdowns.
+  - Also writes a markdown file under `reports/daily/` or `reports/weekly/`.
+- Incident Postmortems: use the GitHub template `.github/ISSUE_TEMPLATE/postmortem.md`.
+  - Capture summary, impact, timeline, root cause, and action items.
+- Continuous Tuning:
+  - `ExitManager` reads per‑strategy/pocket policy from SQLite (`exit_policy`).
+  - `Kaizen` job audits closed trades (MFE/MAE from OANDA M1) and auto‑adjusts:
+    - Earlier BE if many "gave_back" losses, and tighter trailing.
+    - Slight relaxation if exits are too tight with no give‑back.
+  - Policies persist in `logs/trades.db` so they improve over time.

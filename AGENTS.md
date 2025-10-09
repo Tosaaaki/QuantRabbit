@@ -17,6 +17,7 @@
 | **Strategy Plugin** | `strategies/*` | ← factors<br>→ dict {action, sl_pips, tp_pips} or None |
 | **GPT Exit Advisor** | `analysis/gpt_exit_advisor.py` / `execution/exit_manager.py` | ← open trades + factors<br>→ JSON {close_now, target_tp_pips, target_sl_pips, confidence} |
 | **News Summarizer** | `cloudrun/news_summarizer_runner.py` | ← RSS/Body<br>→ summary JSON (GPT-5 nano by default) |
+| **Exit Manager** | `cloudrun/exit_manager_service.py` | ← open trades (HTTP) <br>→ exit調整 + GPT助言 | 
 | **Version Tagger** | `execution/order_manager.py` / `position_manager.py` | ← SYSTEM_VERSION env<br>→ trade version labels (V1/V2) |
 | **Exit Monitor** | `scripts/monitor_exit_logs.py`, `scripts/gpt_exit_report.py` | GPT exit ログ監視と影響レポート |
 | **Risk Guard** | `execution/risk_guard.py` | ← lot, SL/TP, pocket<br>→ bool (可否)・調整値 |
