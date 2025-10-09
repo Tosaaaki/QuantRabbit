@@ -17,7 +17,7 @@ Assumptions:
 import asyncio
 import os
 from datetime import datetime, timezone
-from typing import Dict, Any, Tuple
+from typing import Dict, Any, Tuple, Optional
 
 import requests
 
@@ -25,6 +25,7 @@ from utils.secrets import get_secret
 from indicators.factor_cache import all_factors
 from execution.trade_actions import update_trade_orders, close_trade
 from analysis.kaizen import get_policy
+from utils.exit_events import log_exit_event
 from analysis.gpt_exit_advisor import advise_or_fallback
 
 
@@ -56,7 +57,7 @@ def _parse_meta(ext: Dict[str, Any] | None) -> Dict[str, str]:
     for part in comment.split("|"):
         if "=" in part:
             k, v = part.split("=", 1)
-            out[k.strip()] = v.strip()
+            out[k.strip().lower()] = v.strip()
     tag = (ext.get("tag") or "").strip()
     if tag.startswith("pocket="):
         out.setdefault("pocket", tag.split("=", 1)[1])
@@ -105,6 +106,42 @@ ADVICE_ADJUST_CONF = float(os.environ.get("EXIT_GPT_ADJUST_CONF", "0.35"))
 _ADVICE_CACHE: Dict[str, Dict[str, Any]] = {}
 
 
+def _log_event(
+    *,
+    trade_id: str,
+    strategy: Optional[str],
+    pocket: Optional[str],
+    version: Optional[str],
+    event_type: str,
+    action: str,
+    advice: Optional[Dict[str, Any]] = None,
+    price: Optional[float] = None,
+    move_pips: Optional[float] = None,
+    note: Optional[str] = None,
+) -> None:
+    if not trade_id:
+        return
+    conf = advice.get("confidence") if advice else None
+    tp = advice.get("target_tp_pips") if advice else None
+    sl = advice.get("target_sl_pips") if advice else None
+    note_val = note or (advice.get("note") if advice else None)
+    log_exit_event(
+        trade_id=trade_id,
+        strategy=strategy,
+        pocket=pocket,
+        version=version,
+        event_type=event_type,
+        action=action,
+        confidence=conf,
+        target_tp_pips=tp,
+        target_sl_pips=sl,
+        note=note_val,
+        price=price,
+        move_pips=move_pips,
+        payload=advice,
+    )
+
+
 async def exit_loop():
     """Periodically review open trades and adjust exits."""
     # Default policy fallback if DB unavailable
@@ -141,6 +178,7 @@ async def exit_loop():
                 meta = _parse_meta(ext)
                 strategy = meta.get("strategy") or ""
                 pocket = meta.get("pocket") or ("macro" if abs(units) >= 100000 else "micro")
+                version = meta.get("ver") or meta.get("version")
 
                 direction = 1 if units > 0 else -1
                 pip = _pip()
@@ -188,6 +226,7 @@ async def exit_loop():
                             "micro_regime": meta.get("micro") or "",
                             "age_minutes": round(age_min, 1),
                             "rsi_m1": rsi_m1,
+                            "version": version,
                         }
                         advice = await advise_or_fallback(payload)
                         _ADVICE_CACHE[trade_id] = {
@@ -195,6 +234,17 @@ async def exit_loop():
                             "payload": payload,
                             "advice": advice,
                         }
+                        _log_event(
+                            trade_id=trade_id,
+                            strategy=strategy,
+                            pocket=pocket,
+                            version=version,
+                            event_type="advice",
+                            action="close_now" if advice.get("close_now") else "hold",
+                            advice=advice,
+                            price=price_now,
+                            move_pips=move_pips,
+                        )
                     elif cache:
                         advice = cache.get("advice")
 
@@ -255,6 +305,17 @@ async def exit_loop():
                             print(
                                 f"[exit_manager] GPT close {trade_id} conf={conf:.2f} note={advice.get('note','')}"
                             )
+                            _log_event(
+                                trade_id=trade_id,
+                                strategy=strategy,
+                                pocket=pocket,
+                                version=version,
+                                event_type="close_request",
+                                action="close_now",
+                                advice=advice,
+                                price=price_now,
+                                move_pips=move_pips,
+                            )
                             continue
                     if conf >= ADVICE_ADJUST_CONF:
                         tp_price = None
@@ -278,6 +339,17 @@ async def exit_loop():
                             if ok:
                                 print(
                                     f"[exit_manager] GPT adjust trade={trade_id} tp={tp_price} sl={sl_price} conf={conf:.2f}"
+                                )
+                                _log_event(
+                                    trade_id=trade_id,
+                                    strategy=strategy,
+                                    pocket=pocket,
+                                    version=version,
+                                    event_type="adjust",
+                                    action="update_tp_sl",
+                                    advice=advice,
+                                    price=price_now,
+                                    move_pips=move_pips,
                                 )
 
         except Exception as e:
