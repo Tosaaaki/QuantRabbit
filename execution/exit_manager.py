@@ -48,6 +48,32 @@ def _auth() -> Tuple[str, Dict[str, str]] | None:
         return None
 
 
+def _latest_mid_price() -> float | None:
+    api = _auth()
+    if not api:
+        return None
+    host, headers = api
+    account = get_secret("oanda_account_id")
+    try:
+        resp = requests.get(
+            f"{host}/v3/accounts/{account}/pricing",
+            headers=headers,
+            params={"instruments": "USD_JPY"},
+            timeout=5,
+        )
+        resp.raise_for_status()
+        prices = resp.json().get("prices", [])
+        if not prices:
+            return None
+        bids = prices[0].get("bids") or []
+        asks = prices[0].get("asks") or []
+        if bids and asks:
+            return (float(bids[0]["price"]) + float(asks[0]["price"])) / 2.0
+    except Exception:
+        return None
+    return None
+
+
 def _parse_meta(ext: Dict[str, Any] | None) -> Dict[str, str]:
     """Parse strategy/macro/micro from clientExtensions.comment"""
     out: Dict[str, str] = {}
@@ -209,7 +235,10 @@ async def exit_loop():
             factors = all_factors()
             fac_m1 = factors.get("M1") or {}
             fac_h4 = factors.get("H4") or {}
-            price_now = float(fac_m1.get("close") or 0.0)  # USD/JPY fallback price
+            price_now = float(fac_m1.get("close") or 0.0)
+            mid_live = _latest_mid_price()
+            if mid_live is not None:
+                price_now = mid_live
             atr_m1 = float(fac_m1.get("atr") or 0.0)
             atr_h4 = float(fac_h4.get("atr") or 0.0)
             rsi_m1 = float(fac_m1.get("rsi") or 50.0)
@@ -235,14 +264,13 @@ async def exit_loop():
                 trade_price_now = price_now
                 trade_price = tr.get("currentPrice") or {}
                 mid_price = trade_price.get("mid")
+                bid = trade_price.get("bid")
+                ask = trade_price.get("ask")
                 try:
                     if mid_price is not None:
                         trade_price_now = float(mid_price)
-                    else:
-                        bid = trade_price.get("bid")
-                        ask = trade_price.get("ask")
-                        if bid is not None and ask is not None:
-                            trade_price_now = (float(bid) + float(ask)) / 2.0
+                    elif bid is not None and ask is not None:
+                        trade_price_now = (float(bid) + float(ask)) / 2.0
                 except (TypeError, ValueError):
                     pass
 
