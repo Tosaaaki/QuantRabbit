@@ -4,16 +4,27 @@ import os
 import pathlib
 import sqlite3
 from datetime import datetime
-from typing import Any, Dict, Iterable, List, Optional, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Tuple, Set
 
 import requests
 
 from analysis.learning import record_trade_performance
 from utils.secrets import get_secret
+from strategies.scalp.basic import BasicScalpStrategy
 
 
 _DB = pathlib.Path("logs/trades.db")
 _DB.parent.mkdir(exist_ok=True)
+
+_SCALP_DB_PATH = pathlib.Path("logs/scalp_trades.db")
+try:
+    _SCALP_CONN = sqlite3.connect(_SCALP_DB_PATH, check_same_thread=False)
+    _SCALP_CONN.row_factory = sqlite3.Row
+except Exception:
+    _SCALP_CONN = None
+
+SCALP_STRATEGY_NAME = BasicScalpStrategy.name
+SCALP_POCKET = BasicScalpStrategy.pocket
 
 
 def _resolve_system_version() -> str:
@@ -82,6 +93,35 @@ def _safe_float(value: Any) -> Optional[float]:
 
 def _infer_pocket(units: int) -> str:
     return "macro" if abs(units) >= 100000 else "micro"
+
+
+def _scalp_metadata(trade_id: str) -> Dict[str, Any]:
+    if not trade_id or _SCALP_CONN is None:
+        return {}
+    try:
+        row = _SCALP_CONN.execute(
+            "SELECT ts, price, units FROM scalp_trades WHERE trade_id=? ORDER BY id DESC LIMIT 1",
+            (trade_id,),
+        ).fetchone()
+    except Exception:
+        return {}
+    if not row:
+        return {}
+    entry_time = _normalize_time(row["ts"])
+    info: Dict[str, Any] = {
+        "pocket": SCALP_POCKET,
+        "strategy": SCALP_STRATEGY_NAME,
+        "version": SYSTEM_VERSION,
+    }
+    if entry_time:
+        info["entry_time"] = entry_time
+    price = row["price"]
+    if price is not None:
+        info["entry_price"] = float(price)
+    units = row["units"]
+    if units is not None:
+        info["units"] = _safe_int(units)
+    return info
 
 
 def _parse_client_extensions(
@@ -206,24 +246,38 @@ class PositionManager:
         self.con.commit()
         self._last_tx_id = value
 
-    def _fetch_transactions(self) -> List[Dict[str, Any]]:
+    def _fetch_transactions(self) -> Tuple[List[Dict[str, Any]], Optional[int]]:
         env = _auth()
         if not env:
             print("[PositionManager] OANDA credentials missing; skip fetch transactions")
-            return []
+            return [], None
         host, headers = env
         account = get_secret("oanda_account_id")
-        url = f"{host}/v3/accounts/{account}/transactions"
-        params: Dict[str, Any] = {"type": "ORDER_FILL"}
         if self._last_tx_id:
-            params["sinceID"] = self._last_tx_id
+            url = f"{host}/v3/accounts/{account}/transactions/sinceid"
+            params: Dict[str, Any] = {"id": str(self._last_tx_id), "pageSize": "500"}
+        else:
+            url = f"{host}/v3/accounts/{account}/transactions"
+            params = {"pageSize": "500"}
         try:
             resp = requests.get(url, headers=headers, params=params, timeout=10)
             resp.raise_for_status()
         except requests.RequestException as exc:
             print(f"[PositionManager] Error fetching transactions: {exc}")
-            return []
-        return resp.json().get("transactions", []) or []
+            return [], None
+        payload = resp.json()
+        transactions = payload.get("transactions", []) or []
+        last_id = payload.get("lastTransactionID")
+        if not last_id and transactions:
+            try:
+                last_id = transactions[-1].get("id")
+            except Exception:
+                last_id = None
+        try:
+            last_tx = int(last_id) if last_id is not None else None
+        except (TypeError, ValueError):
+            last_tx = None
+        return transactions, last_tx
 
     def _get_trade_details(self, trade_id: str) -> Optional[Dict[str, Any]]:
         env = _auth()
@@ -286,6 +340,32 @@ class PositionManager:
         )
         return [tuple(row.get(key) for key in order) for row in rows]
 
+    def _existing_trade(self, trade_id: str) -> Dict[str, Any]:
+        cur = self.con.cursor()
+        cur.execute(
+            """
+            SELECT pocket, instrument, units, entry_price, entry_time, strategy,
+                   macro_regime, micro_regime, version
+            FROM trades WHERE ticket_id=?
+            """,
+            (trade_id,),
+        )
+        row = cur.fetchone()
+        if not row:
+            return {}
+        keys = (
+            "pocket",
+            "instrument",
+            "units",
+            "entry_price",
+            "entry_time",
+            "strategy",
+            "macro_regime",
+            "micro_regime",
+            "version",
+        )
+        return {k: v for k, v in zip(keys, row) if v is not None}
+
     def _upsert_trades(self, rows: Iterable[Dict[str, Any]]) -> None:
         data = self._rows_to_tuples(rows)
         if not data:
@@ -306,18 +386,67 @@ class PositionManager:
         self.con.executemany(sql, data)
         self.con.commit()
 
-    def _parse_and_save_transactions(self, transactions: List[Dict[str, Any]]) -> None:
+    def _parse_and_save_transactions(self, transactions: List[Dict[str, Any]]) -> Optional[int]:
         if not transactions:
-            return
+            return None
         rows: List[Dict[str, Any]] = []
         processed: List[int] = []
         now = datetime.utcnow().isoformat(timespec="seconds")
-        detail_cache: Dict[str, Optional[Dict[str, Any]]] = {}
+        detail_cache: Dict[str, Dict[str, Any]] = {}
 
-        def get_detail(tid: str) -> Optional[Dict[str, Any]]:
-            if tid not in detail_cache:
-                detail_cache[tid] = self._get_trade_details(tid)
+        def merge_scalp_metadata(tid: str, data: Dict[str, Any]) -> Dict[str, Any]:
+            info = _scalp_metadata(tid)
+            if not info:
+                return data
+            merged = data.copy()
+            for key, value in info.items():
+                if value in (None, ""):
+                    continue
+                if key == "units":
+                    if not merged.get("units"):
+                        merged["units"] = value
+                    continue
+                if merged.get(key) in (None, ""):
+                    merged[key] = value
+            return merged
+
+        def get_detail(tid: str) -> Dict[str, Any]:
+            cached = detail_cache.get(tid)
+            if cached is not None:
+                detail_cache[tid] = merge_scalp_metadata(tid, cached)
+                return detail_cache[tid]
+            existing = self._existing_trade(tid)
+            detail_cache[tid] = merge_scalp_metadata(tid, existing or {})
             return detail_cache[tid]
+
+        def update_cache(tid: str, data: Dict[str, Any]) -> None:
+            base = detail_cache.get(tid, {}).copy()
+            base.update({k: v for k, v in data.items() if v is not None})
+            detail_cache[tid] = merge_scalp_metadata(tid, base)
+
+        def ensure_entry_detail(tid: str, detail: Dict[str, Any]) -> Dict[str, Any]:
+            detail = merge_scalp_metadata(tid, detail)
+            if detail.get("entry_price") and detail.get("entry_time") and detail.get("units"):
+                return detail
+            remote = self._get_trade_details(tid)
+            if remote:
+                update_cache(tid, remote)
+                return detail_cache.get(tid, remote)
+            return merge_scalp_metadata(tid, detail)
+
+        def resolved_pocket(tid: str, current: Optional[str], units: int) -> str:
+            if current:
+                return current
+            info = _scalp_metadata(tid)
+            if info.get("pocket"):
+                return info["pocket"]
+            return _infer_pocket(units)
+
+        def resolved_strategy(tid: str, current: Optional[str]) -> Optional[str]:
+            if current:
+                return current
+            info = _scalp_metadata(tid)
+            return info.get("strategy")
 
         for tx in transactions:
             tx_type = tx.get("type")
@@ -327,32 +456,29 @@ class PositionManager:
                 tx_id = None
             if tx_id is not None:
                 processed.append(tx_id)
-            if tx_type != "ORDER_FILL":
+            if tx_type not in {"ORDER_FILL", "TRADE_CLOSE"}:
                 continue
             instrument = tx.get("instrument") or "USD_JPY"
             close_price = _safe_float(tx.get("price"))
             close_time = _normalize_time(tx.get("time"))
             reason = tx.get("reason")
+            opened = tx.get("tradeOpened") or {}
             closed_list = tx.get("tradesClosed") or []
-            if not closed_list:
-                continue
-            for closed in closed_list:
-                trade_id = str(closed.get("tradeID") or "")
-                if not trade_id:
-                    continue
-                detail = get_detail(trade_id)
-                if not detail:
-                    continue
-                units = detail.get("units") or _safe_int(closed.get("units"))
-                entry_price = detail.get("entry_price")
-                entry_time = detail.get("entry_time")
-                pocket = detail.get("pocket") or _infer_pocket(units)
-                strategy = detail.get("strategy")
+
+            def _detail_for(tid: str) -> Dict[str, Any]:
+                return get_detail(tid)
+
+            if opened and opened.get("tradeID"):
+                trade_id = str(opened.get("tradeID"))
+                detail = _detail_for(trade_id)
+                units = detail.get("units") or _safe_int(opened.get("units"))
+                entry_price = detail.get("entry_price") or _safe_float(opened.get("price") or close_price)
+                entry_time = detail.get("entry_time") or close_time
+                pocket = resolved_pocket(trade_id, detail.get("pocket"), units)
+                strategy = resolved_strategy(trade_id, detail.get("strategy"))
                 macro = detail.get("macro_regime")
                 micro = detail.get("micro_regime")
                 instrument_detail = detail.get("instrument") or instrument
-                pl_pips = self._calc_pl_pips(entry_price, close_price, units, instrument_detail)
-                realized_pl = _safe_float(closed.get("realizedPL") or tx.get("pl"))
                 rows.append(
                     {
                         "ticket_id": trade_id,
@@ -360,7 +486,65 @@ class PositionManager:
                         "instrument": instrument_detail,
                         "units": units,
                         "entry_price": entry_price,
-                        "close_price": close_price,
+                        "close_price": None,
+                        "pl_pips": None,
+                        "entry_time": entry_time,
+                        "close_time": None,
+                        "strategy": strategy,
+                        "macro_regime": macro,
+                        "micro_regime": micro,
+                        "close_reason": None,
+                        "realized_pl": 0.0,
+                        "unrealized_pl": 0.0,
+                        "state": "OPEN",
+                        "version": detail.get("version") or LEGACY_VERSION,
+                        "updated_at": now,
+                    }
+                )
+                update_cache(
+                    trade_id,
+                    {
+                        "pocket": pocket,
+                        "instrument": instrument_detail,
+                        "units": units,
+                        "entry_price": entry_price,
+                        "entry_time": entry_time,
+                        "strategy": strategy,
+                        "macro_regime": macro,
+                        "micro_regime": micro,
+                        "version": detail.get("version") or LEGACY_VERSION,
+                    },
+                )
+
+            for closed in closed_list:
+                trade_id = str(closed.get("tradeID") or "")
+                if not trade_id:
+                    continue
+                detail = ensure_entry_detail(trade_id, _detail_for(trade_id))
+                units = detail.get("units") or _safe_int(closed.get("units"))
+                entry_price = detail.get("entry_price") or _safe_float(closed.get("price"))
+                entry_time = detail.get("entry_time") or close_time
+                pocket = resolved_pocket(trade_id, detail.get("pocket"), units)
+                strategy = resolved_strategy(trade_id, detail.get("strategy"))
+                macro = detail.get("macro_regime")
+                micro = detail.get("micro_regime")
+                instrument_detail = detail.get("instrument") or instrument
+                c_price = _safe_float(closed.get("price")) or close_price
+                pl_pips = self._calc_pl_pips(entry_price, c_price, units, instrument_detail)
+                realized_pl = _safe_float(closed.get("realizedPL") or tx.get("pl"))
+                if (pl_pips is None or abs(pl_pips) < 1e-6) and realized_pl is not None and units:
+                    pip = _pip_size(instrument_detail)
+                    denom = abs(units) * pip
+                    if denom:
+                        pl_pips = round(realized_pl / denom, 2)
+                rows.append(
+                    {
+                        "ticket_id": trade_id,
+                        "pocket": pocket,
+                        "instrument": instrument_detail,
+                        "units": units,
+                        "entry_price": entry_price,
+                        "close_price": c_price,
                         "pl_pips": pl_pips,
                         "entry_time": entry_time,
                         "close_time": close_time,
@@ -377,13 +561,65 @@ class PositionManager:
                 )
                 if pl_pips is not None:
                     try:
-                        record_trade_performance(strategy, macro, micro, pl_pips)
+                        record_trade_performance(
+                            strategy,
+                            macro,
+                            micro,
+                            pl_pips,
+                            context={
+                                "entry_time": entry_time,
+                                "close_time": close_time,
+                                "units": units,
+                                "pocket": pocket,
+                            },
+                        )
                     except Exception as exc:
                         print(f"[PositionManager] learning update error: {exc}")
+                update_cache(
+                    trade_id,
+                    {
+                        "pocket": pocket,
+                        "instrument": instrument_detail,
+                        "units": 0,
+                        "entry_price": entry_price,
+                        "entry_time": entry_time,
+                        "strategy": strategy,
+                        "macro_regime": macro,
+                        "micro_regime": micro,
+                    },
+                )
         if rows:
             self._upsert_trades(rows)
-        if processed:
-            self._set_last_transaction_id(max(processed))
+        return max(processed) if processed else None
+
+    def _mark_missing_as_closed(self, active_ids: Set[str], timestamp: str) -> None:
+        """Close trades that disappeared from the open snapshot."""
+
+        cur = self.con.cursor()
+        cur.execute(
+            "SELECT ticket_id FROM trades WHERE state IS NULL OR state != 'CLOSED'"
+        )
+        stale = [row[0] for row in cur.fetchall() if row[0]]
+        if not stale:
+            return
+
+        missing = [tid for tid in stale if tid not in active_ids]
+        if not missing:
+            return
+
+        cur.executemany(
+            """
+            UPDATE trades
+            SET state='CLOSED',
+                close_time=COALESCE(close_time, ?),
+                unrealized_pl=0.0,
+                updated_at=?,
+                close_reason=COALESCE(close_reason, 'desync_auto_close')
+            WHERE ticket_id=?
+            """,
+            [(timestamp, timestamp, tid) for tid in missing],
+        )
+        self.con.commit()
 
     def _sync_open_trades(self) -> None:
         env = _auth()
@@ -400,11 +636,13 @@ class PositionManager:
             return
         trades = resp.json().get("trades", []) or []
         now = datetime.utcnow().isoformat(timespec="seconds")
+        active_ids: Set[str] = set()
         rows: List[Dict[str, Any]] = []
         for trade in trades:
             trade_id = str(trade.get("id") or trade.get("tradeID") or "")
             if not trade_id:
                 continue
+            active_ids.add(trade_id)
             instrument = trade.get("instrument") or "USD_JPY"
             units = _safe_int(trade.get("currentUnits") or trade.get("units") or trade.get("initialUnits"))
             entry_price = _safe_float(trade.get("price") or trade.get("averagePrice"))
@@ -437,11 +675,19 @@ class PositionManager:
             )
         if rows:
             self._upsert_trades(rows)
+        # Mark trades that disappeared from the open snapshot as closed.
+        self._mark_missing_as_closed(active_ids, now)
 
     def sync_trades(self) -> None:
-        transactions = self._fetch_transactions()
+        transactions, last_id = self._fetch_transactions()
         if transactions:
-            self._parse_and_save_transactions(transactions)
+            latest_processed = self._parse_and_save_transactions(transactions)
+            if latest_processed is not None:
+                self._set_last_transaction_id(latest_processed)
+            elif last_id is not None:
+                self._set_last_transaction_id(last_id)
+        elif last_id is not None and last_id != self._last_tx_id:
+            self._set_last_transaction_id(last_id)
         # Always refresh open snapshot so local DB mirrors reality.
         self._sync_open_trades()
 

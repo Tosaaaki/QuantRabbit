@@ -16,6 +16,16 @@ resource "google_logging_metric" "openai_error" {
   description = "Count of OpenAI errors in summarizer"
 }
 
+# VM heartbeats from main.py (logs forwarded via Ops Agent)
+resource "google_logging_metric" "vm_trader_heartbeat" {
+  name        = "vm_trader_heartbeat"
+  description = "Heartbeat lines from VM quantrabbit.service"
+  filter      = "resource.type=\"gce_instance\" AND textPayload:(\"[HEARTBEAT] System is alive\")"
+}
+
+// NOTE: アラートポリシーは ops-agent 導入直後は時系列が未生成のため失敗することがある。
+// 安定後に resource.type/labels が確定したタイミングで追加する。
+
 resource "google_monitoring_dashboard" "news_pipeline" {
   dashboard_json = jsonencode({
     displayName = "News Pipeline Overview"
@@ -77,4 +87,3 @@ resource "google_monitoring_dashboard" "news_pipeline" {
     }
   })
 }
-

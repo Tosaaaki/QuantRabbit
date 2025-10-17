@@ -5,9 +5,13 @@ logging.basicConfig(level=logging.INFO)
 import os
 import json
 import feedparser
-import httpx
+try:
+    import httpx
+except ImportError:  # Cloud Run イメージ側の依存欠如を吸収
+    httpx = None  # type: ignore
 import re
 import datetime
+import time
 import uuid
 import pathlib
 import toml  # deprecated here; will avoid if not installed
@@ -45,11 +49,29 @@ bucket = storage_client.bucket(BUCKET)
 FF_URL = "https://nfs.faireconomy.media/ff_calendar_thisweek.xml"
 FF_NEXT = "https://nfs.faireconomy.media/ff_calendar_nextweek.xml"
 DAILYFX = "https://www.dailyfx.com/feeds/most-recent-stories"
-GOOGLE_NEWS = "https://news.google.com/rss/search?q=USD%2FJPY+OR+USDJPY&hl=en-US&gl=US&ceid=US:en"
+# Prefer fresh items in the last few hours for Google News
+GOOGLE_NEWS_RECENT = (
+    "https://news.google.com/rss/search?"
+    "q=(USD%2FJPY%20OR%20USDJPY)%20when%3A3h&hl=en-US&gl=US&ceid=US:en"
+)
+GOOGLE_NEWS_DAY = (
+    "https://news.google.com/rss/search?"
+    "q=(USD%2FJPY%20OR%20USDJPY)%20when%3A24h&hl=en-US&gl=US&ceid=US:en"
+)
 
 HIGH_WORDS = re.compile("|".join(["BoJ", "FOMC", "Non-Farm", "CPI", "政策金利", "雇用統計"]))
 
-NEWS_FEEDS = (FF_URL, FF_NEXT, DAILYFX, GOOGLE_NEWS)
+def _should_fetch_ff_next(today: datetime.date | None = None) -> bool:
+    d = today or datetime.datetime.utcnow().date()
+    # 木(3)〜日(6)のみ nextweek を参照（月〜水は404になりやすい）
+    return d.weekday() in (3, 4, 5, 6)
+
+
+def _news_feeds() -> tuple[str, ...]:
+    feeds: list[str] = [FF_URL, DAILYFX, GOOGLE_NEWS_RECENT, GOOGLE_NEWS_DAY]
+    if _should_fetch_ff_next():
+        feeds.insert(1, FF_NEXT)
+    return tuple(feeds)
 
 # --- ヘルパー関数 ---
 
@@ -93,16 +115,39 @@ def _fetch_feed(url: str) -> feedparser.FeedParserDict:
         "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124 Safari/537.36",
         "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
     }
-    try:
-        with httpx.Client(timeout=8.0, follow_redirects=True, headers=headers) as client:
-            r = client.get(url)
-            r.raise_for_status()
-            return feedparser.parse(r.text)
-    except Exception:
+    if httpx is not None:
+        # 軽量の指数バックオフ（429/5xx/タイムアウト時のみ再試行）
+        backoff = 0.5
+        tries = 3
         try:
-            return feedparser.parse(url)
-        except Exception:
-            return feedparser.parse("")
+            with httpx.Client(timeout=8.0, follow_redirects=True, headers=headers) as client:
+                for attempt in range(tries):
+                    try:
+                        resp = client.get(url)
+                        sc = resp.status_code
+                        if sc == 429 or 500 <= sc:
+                            logging.warning("httpx %s for %s; retry %d/%d", sc, url, attempt + 1, tries)
+                            if attempt < tries - 1:
+                                time.sleep(backoff)
+                                backoff *= 2
+                                continue
+                        if sc >= 400:
+                            logging.warning("httpx status=%s for %s; fallback to feedparser", sc, url)
+                            break
+                        return feedparser.parse(resp.text)
+                    except (Exception,) as e:
+                        # ReadTimeout/ConnectError等
+                        logging.warning("httpx exception for %s: %s (retry %d/%d)", url, str(e), attempt + 1, tries)
+                        if attempt < tries - 1:
+                            time.sleep(backoff)
+                            backoff *= 2
+                            continue
+                        break
+        except Exception as e:
+            logging.warning("httpx client setup failed for %s; fallback: %s", url, str(e))
+    # ネットワーク不調時に feedparser の直接取得でハングしないよう、
+    # フォールバックは空パースに限定
+    return feedparser.parse("")
 
 # --- メイン処理 ---
 
@@ -110,8 +155,8 @@ def _fetch_feed(url: str) -> feedparser.FeedParserDict:
 def run():
     fetched_count = 0
 
-    for url in NEWS_FEEDS:
-        if fetched_count >= 10:  # 最大10件に制限
+    for url in _news_feeds():
+        if fetched_count >= 25:  # 最大件数を引き上げ
             break
         parsed = _fetch_feed(url)
         try:
@@ -120,7 +165,7 @@ def run():
             feed_title = url
         logging.info(f"feed={url} entries={len(parsed.entries) if hasattr(parsed,'entries') else 0}")
         for entry in parsed.entries:
-            if fetched_count >= 10:  # 最大10件に制限
+            if fetched_count >= 25:
                 break
             uid = entry.get("id") or entry.get("link") or _hash_uid(entry.get("title",""), entry.get("published",""))
             uid_safe = _hash_uid(uid)

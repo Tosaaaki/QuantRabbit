@@ -7,6 +7,7 @@ from analysis.regime_classifier import THRESH_ADX_TREND, THRESH_BBW_RANGE
 class Donchian55:
     name = "Donchian55"
     pocket = "macro"
+    requires_h4 = True
 
     @staticmethod
     def check(fac_m1: Dict, fac_h4: Dict) -> Dict | None:

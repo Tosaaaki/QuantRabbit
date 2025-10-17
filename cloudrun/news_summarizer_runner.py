@@ -47,6 +47,9 @@ def summarize(text: str) -> dict:
     """GPT‑4o‑mini summarizer → return dict {summary, sentiment}
     If OPENAI_API_KEY is not set, fall back to a simple truncation summary.
     """
+    if os.environ.get("GPT_DISABLE_ALL") or os.environ.get("DISABLE_GPT_SUMMARIZER"):
+        logging.info("[summarizer] GPT disabled via env; using fallback truncation")
+        client = None
     if not client:
         logging.error("OPENAI_API_KEY is not set. Falling back to title/lead truncation.")
         # naive summary: first 120 chars
@@ -66,17 +69,35 @@ def summarize(text: str) -> dict:
         resp = client.chat.completions.create(
             model=OPENAI_SUMMARIZER_MODEL,
             response_format={"type": "json_object"},
-            temperature=0.2,
             messages=[
                 {"role": "system", "content": "あなたは金融ニュースの要約アシスタントです。"},
                 {"role": "user", "content": prompt},
             ],
-            max_tokens=80,
+            max_completion_tokens=80,
         )
         logging.info("[summarize_done] received_openai_response")
-        content = resp.choices[0].message.content
-        logging.info(f"OpenAI response content: {content}")
-        data = json.loads(content)
+        message = resp.choices[0].message
+        parsed = getattr(message, "parsed", None)
+        if parsed:
+            logging.info("[openai_content] using parsed attribute")
+            data = parsed
+        else:
+            content = message.content
+            if isinstance(content, list):
+                parts = []
+                for item in content:
+                    text = getattr(item, "text", None)
+                    if text:
+                        parts.append(text)
+                    elif isinstance(item, dict) and "text" in item:
+                        parts.append(str(item["text"]))
+                    elif isinstance(item, str):
+                        parts.append(item)
+                content = "".join(parts)
+            if not content:
+                raise ValueError("OpenAI response contained no content")
+            logging.info(f"[openai_content] {content}")
+            data = json.loads(content)
         return _normalize_result(data)
     except Exception as e:
         logging.error(f"[openai_error] An error occurred with OpenAI API: {e}")

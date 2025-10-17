@@ -8,6 +8,7 @@ from flask import Flask
 from google.cloud import firestore
 
 from utils.secrets import get_secret
+from utils.firestore_helpers import apply_filter
 
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
@@ -45,7 +46,7 @@ def _save_tx(tx: Dict[str, Any]):
 
 def _update_trade_open(trade_id: str, fill_price: float, time_iso: str, instrument: str):
     try:
-        q = fs.collection("trades").where("trade_id", "==", str(trade_id)).limit(1)
+        q = apply_filter(fs.collection("trades"), "trade_id", "==", str(trade_id)).limit(1)
         docs = list(q.stream())
         if not docs:
             return
@@ -62,7 +63,7 @@ def _update_trade_open(trade_id: str, fill_price: float, time_iso: str, instrume
 
 def _update_trade_close(trade_id: str, close_price: float, pl: float, time_iso: str):
     try:
-        q = fs.collection("trades").where("trade_id", "==", str(trade_id)).limit(1)
+        q = apply_filter(fs.collection("trades"), "trade_id", "==", str(trade_id)).limit(1)
         docs = list(q.stream())
         if not docs:
             return
@@ -117,8 +118,12 @@ def run_once():
         since_id = st.get("last_tx_id")
 
         headers = {"Authorization": f"Bearer {token}"}
-        url = f"{host}/v3/accounts/{account}/transactions/sinceid"
-        params = {"id": str(since_id)} if since_id else {}
+        if since_id:
+            url = f"{host}/v3/accounts/{account}/transactions/sinceid"
+            params = {"id": str(since_id)}
+        else:
+            url = f"{host}/v3/accounts/{account}/transactions"
+            params = {"pageSize": "50"}
         with httpx.Client(timeout=7.0, follow_redirects=True) as client:
             r = client.get(url, params=params, headers=headers)
             r.raise_for_status()
@@ -148,4 +153,3 @@ def run_once():
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 8080)))
-

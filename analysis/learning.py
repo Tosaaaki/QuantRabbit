@@ -12,7 +12,8 @@ analysis.learning
 import sqlite3
 import pathlib
 import datetime
-from typing import Dict, List, Tuple
+from datetime import datetime as dt, timezone
+from typing import Dict, List, Tuple, Optional
 
 _DB = pathlib.Path("logs/trades.db")
 _DB.parent.mkdir(exist_ok=True)
@@ -59,12 +60,75 @@ def _ensure_tables() -> None:
         """
     )
     con.commit()
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS strategy_meta_perf (
+          strategy TEXT,
+          session TEXT,
+          direction TEXT,
+          pocket TEXT,
+          hold_bucket TEXT,
+          trades INTEGER,
+          wins INTEGER,
+          losses INTEGER,
+          sum_pips REAL,
+          avg_pips REAL,
+          updated_at TEXT,
+          PRIMARY KEY(strategy, session, direction, pocket, hold_bucket)
+        )
+        """
+    )
+    con.commit()
 
 
 _ensure_tables()
 
 
-def record_trade_performance(strategy: str | None, macro_regime: str | None, micro_regime: str | None, pl_pips: float | None) -> None:
+def _parse_iso(ts: Optional[str]) -> Optional[dt]:
+    if not ts:
+        return None
+    ts = ts.replace("Z", "+00:00")
+    try:
+        parsed = dt.fromisoformat(ts)
+        if parsed.tzinfo is not None:
+            return parsed.astimezone(timezone.utc).replace(tzinfo=None)
+        return parsed
+    except ValueError:
+        return None
+
+
+def _session_of(entry: Optional[dt]) -> str:
+    if not entry:
+        return "unknown"
+    hour = entry.hour
+    if 0 <= hour < 7:
+        return "asia"
+    if 7 <= hour < 12:
+        return "europe"
+    if 12 <= hour < 20:
+        return "us"
+    return "late_us"
+
+
+def _hold_bucket(minutes: Optional[float]) -> str:
+    if minutes is None:
+        return "unknown"
+    if minutes < 30:
+        return "<30m"
+    if minutes < 120:
+        return "30-120m"
+    if minutes < 360:
+        return "120-360m"
+    return ">=360m"
+
+
+def record_trade_performance(
+    strategy: str | None,
+    macro_regime: str | None,
+    micro_regime: str | None,
+    pl_pips: float | None,
+    context: Optional[dict] = None,
+) -> None:
     """決済毎に呼び出し、戦略の実績を更新する。"""
     if not strategy or pl_pips is None:
         return
@@ -112,6 +176,65 @@ def record_trade_performance(strategy: str | None, macro_regime: str | None, mic
         ),
     )
     con.commit()
+
+    if context:
+        entry_dt = _parse_iso(context.get("entry_time")) if isinstance(context, dict) else None
+        close_dt = _parse_iso(context.get("close_time")) if isinstance(context, dict) else None
+        session = context.get("session") or _session_of(entry_dt)
+        units = context.get("units") if isinstance(context, dict) else None
+        try:
+            direction = "long" if float(units or 0) > 0 else "short"
+        except (TypeError, ValueError):
+            direction = "unknown"
+        pocket_ctx = context.get("pocket") if isinstance(context, dict) else None
+        pocket_key = pocket_ctx or (macro_regime or "?")
+        hold_minutes = None
+        if entry_dt and close_dt:
+            hold_minutes = (close_dt - entry_dt).total_seconds() / 60.0
+        hold_bucket = _hold_bucket(hold_minutes)
+        meta_row = cur.execute(
+            "SELECT trades, wins, losses, sum_pips FROM strategy_meta_perf WHERE strategy=? AND session=? AND direction=? AND pocket=? AND hold_bucket=?",
+            (strategy, session, direction, pocket_key, hold_bucket),
+        ).fetchone()
+        if meta_row:
+            m_trades, m_wins, m_losses, m_sum = meta_row
+        else:
+            m_trades = m_wins = m_losses = 0
+            m_sum = 0.0
+        m_trades += 1
+        if pl_pips > 0:
+            m_wins += 1
+        elif pl_pips < 0:
+            m_losses += 1
+        m_sum = float(m_sum) + float(pl_pips)
+        m_avg = m_sum / m_trades if m_trades else 0.0
+        cur.execute(
+            """
+            INSERT INTO strategy_meta_perf(strategy, session, direction, pocket, hold_bucket, trades, wins, losses, sum_pips, avg_pips, updated_at)
+            VALUES(?,?,?,?,?,?,?,?,?,?,?)
+            ON CONFLICT(strategy, session, direction, pocket, hold_bucket) DO UPDATE SET
+              trades=excluded.trades,
+              wins=excluded.wins,
+              losses=excluded.losses,
+              sum_pips=excluded.sum_pips,
+              avg_pips=excluded.avg_pips,
+              updated_at=excluded.updated_at
+            """,
+            (
+                strategy,
+                session,
+                direction,
+                pocket_key,
+                hold_bucket,
+                m_trades,
+                m_wins,
+                m_losses,
+                m_sum,
+                m_avg,
+                datetime.datetime.utcnow().isoformat(timespec="seconds"),
+            ),
+        )
+        con.commit()
 
 
 def _score_row(trades: int, wins: int, losses: int, avg_pips: float) -> float:
@@ -194,4 +317,3 @@ def risk_multiplier(pocket: str, strategy: str) -> float:
     if score < -0.1:
         return 0.7
     return 1.0
-

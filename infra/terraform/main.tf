@@ -59,17 +59,68 @@ import os
 from google.cloud import secretmanager
 client = secretmanager.SecretManagerServiceClient()
 proj = os.environ.get('GOOGLE_CLOUD_PROJECT') or os.environ.get('GOOGLE_CLOUD_PROJECT_NUMBER') or '${var.project_id}'
-name = f"projects/{proj}/secrets/openai_api_key/versions/latest"
-try:
-    resp = client.access_secret_version(name=name)
-    key = resp.payload.data.decode('utf-8')
-except Exception:
-    key = ''
+def _get_secret(k):
+    try:
+        name = f"projects/{proj}/secrets/{k}/versions/latest"
+        resp = client.access_secret_version(name=name)
+        return resp.payload.data.decode('utf-8')
+    except Exception:
+        return ''
+
+openai = _get_secret('openai_api_key')
+oanda_token = _get_secret('oanda_token')
+oanda_acct = _get_secret('oanda_account_id')
+oanda_prac = _get_secret('oanda_practice')
+
 with open('/etc/quantrabbit.env','w') as f:
-    if key:
-        f.write(f"OPENAI_API_KEY={key}\n")
+    if openai:
+        f.write(f"OPENAI_API_KEY={openai}\n")
+    if oanda_token:
+        f.write(f"OANDA_TOKEN={oanda_token}\n")
+    if oanda_acct:
+        f.write(f"OANDA_ACCOUNT={oanda_acct}\n")
+    if oanda_prac:
+        f.write(f"OANDA_PRACTICE={oanda_prac}\n")
+    # デフォルト動作用：OANDAシークレットが無ければモックティックを有効化
+    if not (oanda_token and oanda_acct):
+        f.write("MOCK_TICK_STREAM=1\n")
     f.write("LOOP_SEC=10\n")
 PY
+
+    # Install Google Cloud Ops Agent for logging/metrics (journald -> Cloud Logging)
+    if ! dpkg -s google-cloud-ops-agent >/dev/null 2>&1; then
+      curl -sSO https://dl.google.com/cloudagents/add-google-cloud-ops-agent-repo.sh
+      bash add-google-cloud-ops-agent-repo.sh --also-install
+    fi
+
+    # Configure Ops Agent to collect systemd unit logs for quantrabbit
+    cat >/etc/google-cloud-ops-agent/config.yaml <<'CFG'
+logging:
+  receivers:
+    journald_receiver:
+      type: systemd_journald
+      include_units: ["quantrabbit.service"]
+  processors:
+    parse_level:
+      type: parse_json
+      # best-effort; our logs are plain text, this is harmless
+  service:
+    pipelines:
+      journald_pipeline:
+        receivers: [journald_receiver]
+        processors: []
+metrics:
+  receivers:
+    hostmetrics:
+      type: hostmetrics
+  service:
+    pipelines:
+      default_pipeline:
+        receivers: [hostmetrics]
+CFG
+
+    systemctl enable --now google-cloud-ops-agent
+    systemctl restart google-cloud-ops-agent || true
 
     cat >/etc/systemd/system/quantrabbit.service <<SERVICE
     [Unit]

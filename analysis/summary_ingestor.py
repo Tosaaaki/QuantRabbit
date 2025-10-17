@@ -154,14 +154,19 @@ def get_latest_news(limit_short: int = 3, limit_long: int = 5) -> dict:
 
 
 def check_event_soon(within_minutes: int = 30, min_impact: int = 3) -> bool:
-    """指定された時間内に指定されたインパクト以上の経済指標があるかチェック"""
+    """指定された時間内に指定されたインパクト以上の経済指標があるかチェック
+
+    仕様に合わせて「±within_minutes 分」のウィンドウで判定する。
+    例: within_minutes=30 なら、過去30分〜未来30分のイベントが対象。
+    """
     now = datetime.datetime.utcnow()
+    past_limit = now - datetime.timedelta(minutes=within_minutes)
     future_limit = now + datetime.timedelta(minutes=within_minutes)
 
     cur.execute(
         """SELECT event_time FROM news 
            WHERE impact >= ? AND event_time BETWEEN ? AND ?""",
-        (min_impact, now.isoformat(), future_limit.isoformat()),
+        (min_impact, past_limit.isoformat(), future_limit.isoformat()),
     )
     return cur.fetchone() is not None
 

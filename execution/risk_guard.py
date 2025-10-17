@@ -7,28 +7,50 @@ execution.risk_guard
 """
 
 from __future__ import annotations
+import os
 import sqlite3
 import pathlib
+
+from execution.micro_guard import (
+    micro_loss_cooldown_active,
+    micro_recent_loss_guard,
+)
 
 # --- risk params ---
 MAX_LEVERAGE = 20.0  # 1:20
 MAX_LOT = 1.0  # 1 lot = 100k 通貨
-POCKET_DD_LIMITS = {"micro": 0.05, "macro": 0.15}  # equity 比 (%)
+POCKET_DD_LIMITS = {
+    "micro": float(os.getenv("DD_LIMIT_MICRO", "0.05")),
+    "macro": float(os.getenv("DD_LIMIT_MACRO", "0.15")),
+    "scalp": float(os.getenv("DD_LIMIT_SCALP", "0.03")),
+}  # equity 比 (%)
 GLOBAL_DD_LIMIT = 0.20  # 全体ドローダウン 20%
 
 _DB = pathlib.Path("logs/trades.db")
-con = sqlite3.connect(_DB)
+# Cloud Run など読み取り専用FSでは DB が作れない場合があるため、
+# 失敗時は None とし、以降の関数で安全に縮退（DD=0 とみなす）。
+try:
+    _DB.parent.mkdir(exist_ok=True)
+    con = sqlite3.connect(_DB)
+except Exception:
+    con = None  # type: ignore
 
 
 def _pocket_dd(pocket: str) -> float:
-    rows = con.execute(
-        """
+    if con is None:
+        return 0.0
+    try:
+        rows = con.execute(
+            """
 SELECT SUM(pl_pips) FROM trades
 WHERE pocket=? AND date(close_time)>=date('now','-7 day')
 """,
-        (pocket,),
-    ).fetchone()
-    total = rows[0] or 0.0
+            (pocket,),
+        ).fetchone()
+        total = (rows[0] if rows else 0.0) or 0.0
+    except Exception:
+        # テーブル未作成などは DD=0 とみなす
+        return 0.0
     # equity は外部取得だが 10 万 pips = 100% として近似
     return abs(total) / 100000.0
 
@@ -36,8 +58,13 @@ WHERE pocket=? AND date(close_time)>=date('now','-7 day')
 def check_global_drawdown() -> bool:
     """口座全体のドローダウンが閾値を超えているかチェック"""
     # 全ての取引の損益合計を取得
-    rows = con.execute("SELECT SUM(pl_pips) FROM trades").fetchone()
-    total_pl_pips = rows[0] or 0.0
+    if con is None:
+        return False
+    try:
+        rows = con.execute("SELECT SUM(pl_pips) FROM trades").fetchone()
+        total_pl_pips = (rows[0] if rows else 0.0) or 0.0
+    except Exception:
+        return False
 
     # 損失の場合のみドローダウンとして計算
     if total_pl_pips >= 0:
@@ -52,7 +79,15 @@ def check_global_drawdown() -> bool:
 
 
 def can_trade(pocket: str) -> bool:
-    return _pocket_dd(pocket) < POCKET_DD_LIMITS[pocket]
+    limit = POCKET_DD_LIMITS.get(pocket)
+    if limit is not None and _pocket_dd(pocket) >= limit:
+        return False
+
+    if pocket == "micro":
+        if micro_loss_cooldown_active() or micro_recent_loss_guard():
+            return False
+
+    return True
 
 
 def allowed_lot(equity: float, sl_pips: float) -> float:

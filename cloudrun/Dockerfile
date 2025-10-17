@@ -1,6 +1,6 @@
 FROM python:3.11-slim
 WORKDIR /app
-RUN apt-get update && apt-get install -y curl && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y curl git && rm -rf /var/lib/apt/lists/*
 COPY cloudrun/requirements.txt cloudrun/requirements.txt
 RUN pip install --no-cache-dir -r cloudrun/requirements.txt && pip install gunicorn
 COPY . .

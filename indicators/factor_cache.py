@@ -21,14 +21,27 @@ _CANDLES: Dict[TimeFrame, deque] = {
     "H4": deque(maxlen=_CANDLES_MAX["H4"]),
 }
 _FACTORS: Dict[TimeFrame, Dict[str, float]] = defaultdict(dict)
+_LAST_TICK_METRICS: Dict[TimeFrame, Dict[str, float]] = defaultdict(dict)
 
 _LOCK = asyncio.Lock()
 
 
+def _compute_factors(rows: list[dict]) -> dict[str, float]:
+    df = pd.DataFrame(rows)
+    price_df = df[["open", "high", "low", "close"]]
+    factors = IndicatorEngine.compute(price_df)
+
+    latest = rows[-1]
+    factors["open"] = float(latest["open"])
+    factors["high"] = float(latest["high"])
+    factors["low"] = float(latest["low"])
+    factors["close"] = float(latest["close"])
+    factors["candles"] = rows
+    return factors
+
+
 async def on_candle(tf: TimeFrame, candle: Dict[str, float]):
-    """
-    market_data.candle_fetcher から呼ばれる想定
-    """
+    """確定したローソク足を登録し、終値ベースの指標を更新"""
     async with _LOCK:
         q = _CANDLES[tf]
         q.append(
@@ -44,21 +57,46 @@ async def on_candle(tf: TimeFrame, candle: Dict[str, float]):
         if len(q) < 20:  # 計算に必要な最小限のデータを待つ
             return
 
-        df = pd.DataFrame(q)
-        factors = IndicatorEngine.compute(df)
-
-        # 直近のOHLCも公開（戦略や発注で利用）
-        latest = q[-1]
-        factors["open"] = float(latest["open"])  # type: ignore[index]
-        factors["high"] = float(latest["high"])  # type: ignore[index]
-        factors["low"] = float(latest["low"])    # type: ignore[index]
-        factors["close"] = float(latest["close"])# type: ignore[index]
-
-        # Donchian戦略で必要になるため、生ローソクも格納
-        factors["candles"] = list(q)
+        factors = _compute_factors(list(q))
+        factors["is_live"] = False
 
         _FACTORS[tf].clear()
         _FACTORS[tf].update(factors)
+        if _LAST_TICK_METRICS.get(tf):
+            _FACTORS[tf].update(_LAST_TICK_METRICS[tf])
+
+
+async def update_live(
+    tf: TimeFrame,
+    candle: Dict[str, float],
+    tick_metrics: Dict[str, float] | None = None,
+):
+    """進行中のローソク（Tick）で指標を更新"""
+    async with _LOCK:
+        q = _CANDLES[tf]
+        if len(q) < 19:
+            return
+
+        rows = list(q)
+        rows.append(
+            {
+                "timestamp": candle["time"].isoformat(),
+                "open": candle["open"],
+                "high": candle["high"],
+                "low": candle["low"],
+                "close": candle["close"],
+            }
+        )
+        factors = _compute_factors(rows)
+        factors["is_live"] = True
+
+        _FACTORS[tf].clear()
+        _FACTORS[tf].update(factors)
+
+        if tick_metrics:
+            _LAST_TICK_METRICS[tf] = dict(tick_metrics)
+        if _LAST_TICK_METRICS.get(tf):
+            _FACTORS[tf].update(_LAST_TICK_METRICS[tf])
 
 
 def all_factors() -> Dict[TimeFrame, Dict[str, float]]:

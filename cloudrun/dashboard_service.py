@@ -9,6 +9,8 @@ import time
 from google.cloud import storage
 from google.cloud import firestore
 
+from utils.firestore_helpers import apply_filter
+
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 
@@ -42,7 +44,12 @@ def api_stats():
         sum_count = 0
         series = []
         try:
-            qn = fs.collection("news").where("ts_utc", ">=", since.isoformat(timespec="seconds"))
+            qn = apply_filter(
+                fs.collection("news"),
+                "ts_utc",
+                ">=",
+                since.isoformat(timespec="seconds"),
+            )
             docs = list(qn.stream())
             sum_count = len(docs)
             if sum_count > 0:
@@ -169,7 +176,12 @@ def api_events():
         within = int(request.args.get("within", 60))
         now = datetime.utcnow()
         end = now + timedelta(minutes=within)
-        q = fs.collection("news").where("event_time", ">=", now.isoformat(timespec="seconds")).limit(50)
+        q = apply_filter(
+            fs.collection("news"),
+            "event_time",
+            ">=",
+            now.isoformat(timespec="seconds"),
+        ).limit(50)
         items = []
         for d in q.stream():
             x = d.to_dict() or {}
@@ -435,6 +447,7 @@ def index():
     let chartSummaries = null;
     const REFRESH_MS = 5000; // 5s refresh cadence
     window.useSSE = false; // switched on when SSE connects
+    window.targetPctCache = 0.10; // fallback until server provides
     function setClass(el, base, cls) {
       el.className = base + ' ' + cls;
     }
@@ -449,16 +462,29 @@ def index():
       try {
         const t = await fetch('/api/trading-state', {cache:'no-store'}).then(r => r.json());
         document.getElementById('equity').textContent = pct(t.equity);
+        if (t.ts) {
+          try { document.getElementById('updated').textContent = new Date(t.ts).toLocaleString(); } catch(_) {}
+        }
+        // Mode with fallback from weight
         if (t.mode) document.getElementById('mode').textContent = t.mode;
+        else if (t.weight_macro != null) {
+          const w = Number(t.weight_macro);
+          const m = w <= 0.4 ? 'micro' : (w >= 0.6 ? 'macro' : 'hybrid');
+          document.getElementById('mode').textContent = m;
+        }
         if (Array.isArray(t.selected_instruments)) {
           document.getElementById('instruments').textContent = t.selected_instruments.join(', ');
+        } else if (t.instrument) {
+          document.getElementById('instruments').textContent = t.instrument;
         }
         if (t.diversify_slots != null) {
           document.getElementById('divslots').textContent = String(t.diversify_slots);
-        }
+        } else { document.getElementById('divslots').textContent = '1'; }
         if (t.resource_ttl_sec != null) {
           const mins = Math.floor(Number(t.resource_ttl_sec)/60);
           document.getElementById('ttl').textContent = `${mins}m`;
+        } else if (t.cooldown_min != null) {
+          document.getElementById('ttl').textContent = `${Number(t.cooldown_min)}m`;
         }
         document.getElementById('lot').textContent = pct(t.lot_total);
 
@@ -472,11 +498,16 @@ def index():
         setClass(macroEl, 'badge', macro === 'TREND' ? 'badge-blue' : 'badge-gray');
         setClass(microEl, 'badge', micro === 'TREND' ? 'badge-blue' : 'badge-gray');
 
-        // Focus + Weight bar
-        const w = Math.max(0, Math.min(1, Number(t.weight_macro||0)));
-        document.getElementById('focus').textContent = `${t.focus_tag||'-'} (w=${pct(w*100)}%)`;
+        // Focus + Weight bar (macro/micro/scalp)
+        const macroW = Math.max(0, Math.min(1, Number(t.weight_macro ?? (t.weights?.macro ?? 0))));
+        const scalpW = Math.max(0, Math.min(1, Number(t.weight_scalp ?? (t.weights?.scalp ?? 0))));
+        let microW = Number.isFinite(Number(t.weight_micro)) ? Math.max(0, Math.min(1, Number(t.weight_micro))) : (1 - macroW - scalpW);
+        if (microW < 0) microW = 0;
+        const totalW = macroW + microW + scalpW;
+        const normMacro = totalW > 0 ? macroW / totalW : 0;
+        document.getElementById('focus').textContent = `${t.focus_tag||'-'} (macro=${(macroW*100).toFixed(0)}%, micro=${(microW*100).toFixed(0)}%, scalp=${(scalpW*100).toFixed(0)}%)`;
         const wb = document.getElementById('bar-weight');
-        wb.style.width = (w*100).toFixed(0) + '%';
+        wb.style.width = (normMacro * 100).toFixed(0) + '%';
 
         // Event badge
         const ev = !!t.event_soon;
@@ -506,6 +537,7 @@ def index():
         const tb = document.getElementById('bar-target');
         const status = document.getElementById('target-status');
         const tval = (p.target_pct != null) ? Number(p.target_pct) : null;
+        if (tval != null && !Number.isNaN(tval)) window.targetPctCache = tval;
         const tpctEl = document.getElementById('target-pct');
         if (tpctEl && tval != null && !Number.isNaN(tval)) tpctEl.textContent = (tval*100).toFixed(2);
         if (tval != null && p.progress_pct != null) {
@@ -705,6 +737,7 @@ def index():
         es.addEventListener('kpi', (ev) => {
           try {
             const t = JSON.parse(ev.data);
+            if (t.ts) { try { document.getElementById('updated').textContent = new Date(t.ts).toLocaleString(); } catch(_) {} }
             if (t.equity != null) document.getElementById('equity').textContent = Number(t.equity).toFixed(2);
             if (t.lot_total != null) document.getElementById('lot').textContent = Number(t.lot_total).toFixed(2);
             const macro = (t.macro_regime||'-').toString().toUpperCase();
@@ -713,18 +746,52 @@ def index():
             const microEl = document.getElementById('badge-reg-micro');
             if (macroEl) { macroEl.textContent = macro; setClass(macroEl, 'badge', macro === 'TREND' ? 'badge-blue' : 'badge-gray'); }
             if (microEl) { microEl.textContent = micro; setClass(microEl, 'badge', micro === 'TREND' ? 'badge-blue' : 'badge-gray'); }
-            const w = Math.max(0, Math.min(1, Number(t.weight_macro||0)));
-            document.getElementById('focus').textContent = `${t.focus_tag||'-'} (w=${(w*100).toFixed(2)}%)`;
+            const macroW = Math.max(0, Math.min(1, Number(t.weight_macro ?? (t.weights?.macro ?? 0))));
+            const scalpW = Math.max(0, Math.min(1, Number(t.weight_scalp ?? (t.weights?.scalp ?? 0))));
+            let microW = Number.isFinite(Number(t.weight_micro)) ? Math.max(0, Math.min(1, Number(t.weight_micro))) : (1 - macroW - scalpW);
+            if (microW < 0) microW = 0;
+            const totalW = macroW + microW + scalpW;
+            const normMacro = totalW > 0 ? macroW / totalW : 0;
+            document.getElementById('focus').textContent = `${t.focus_tag||'-'} (macro=${(macroW*100).toFixed(0)}%, micro=${(microW*100).toFixed(0)}%, scalp=${(scalpW*100).toFixed(0)}%)`;
             const wb = document.getElementById('bar-weight');
-            if (wb) wb.style.width = (w*100).toFixed(0) + '%';
+            if (wb) wb.style.width = (normMacro*100).toFixed(0) + '%';
             const evSoon = !!t.event_soon;
             const evEl = document.getElementById('badge-event');
             if (evEl) { evEl.textContent = evSoon ? 'EVENT SOON' : 'NO EVENT'; setClass(evEl, 'badge', evSoon ? 'badge-red' : 'badge-green'); }
+            // Real-time progress and PnL from equity baseline
+            try {
+              const dsn = Number(t.day_start_nav);
+              const eq = Number(t.equity);
+              if (dsn && eq) {
+                const prog = (eq - dsn) / dsn;
+                const progPct = prog * 100;
+                document.getElementById('progress').textContent = progPct.toFixed(2)+'%';
+                const pb = document.getElementById('bar-progress');
+                if (pb) { const w = Math.max(0, Math.min(100, Math.abs(progPct))); pb.style.width = w.toFixed(0)+'%'; setClass(pb,'fill', prog>=0?'fill-green':'fill-red'); }
+                // PnL Today from equity delta
+                document.getElementById('pnl').textContent = (eq - dsn).toFixed(2);
+                const bp = document.getElementById('bar-pnl-target');
+                const target = window.targetPctCache || 0.10;
+                if (bp && target>0) { const r = Math.max(0, Math.min(1, prog/target)); bp.style.width = (r*100).toFixed(0)+'%'; setClass(bp,'fill', (eq-dsn)>=0?'fill-green':'fill-red'); }
+                // Daily Target bar
+                const tb = document.getElementById('bar-target');
+                const status = document.getElementById('target-status');
+                const r2 = Math.max(0, Math.min(1, prog/(target||0.10)));
+                if (tb) tb.style.width = (r2*100).toFixed(0)+'%';
+                if (r2 >= 1) { status.textContent = '達成'; setClass(status,'','badge badge-green'); setClass(tb,'fill','fill-green'); }
+                else { const remPct = Math.max(0, (target - prog) * 100); status.textContent = `未達（残 ${remPct.toFixed(2)}%）`; setClass(status,'','badge badge-amber'); setClass(tb,'fill','fill-amber'); }
+              }
+            } catch(_) {}
           } catch(_) {}
         });
         es.addEventListener('perf', (ev) => {
           try {
             const p = JSON.parse(ev.data);
+            if (p.target_pct != null && !Number.isNaN(Number(p.target_pct))) {
+              window.targetPctCache = Number(p.target_pct);
+              const tpctEl = document.getElementById('target-pct');
+              if (tpctEl) tpctEl.textContent = (window.targetPctCache*100).toFixed(2);
+            }
             const prog = Number(p.progress_pct||0);
             const progPct = prog*100;
             document.getElementById('progress').textContent = progPct.toFixed(2)+'%';
@@ -733,9 +800,9 @@ def index():
             if (p.equity != null) document.getElementById('equity').textContent = Number(p.equity).toFixed(2);
             const tb = document.getElementById('bar-target');
             const status = document.getElementById('target-status');
-            const target = (p.target_pct != null) ? Number(p.target_pct) : null;
-            const tpctEl = document.getElementById('target-pct');
-            if (tpctEl && target != null && !Number.isNaN(target)) tpctEl.textContent = (target*100).toFixed(2);
+            const target = (p.target_pct != null) ? Number(p.target_pct) : (window.targetPctCache||0.10);
+            const tpctEl2 = document.getElementById('target-pct');
+            if (tpctEl2 && target != null && !Number.isNaN(target)) tpctEl2.textContent = (target*100).toFixed(2);
             if (target != null && !Number.isNaN(target) && p.progress_pct != null) {
               const ratio = Math.max(0, Math.min(1, Number(p.progress_pct)/target));
               if (tb) tb.style.width = (ratio*100).toFixed(0) + '%';
@@ -846,6 +913,7 @@ def index():
   </header>
   <div class="container">
     <div class="cards kpis">
+      <div class="card"><div class="muted">Updated</div><div id="updated" class="value">-</div></div>
       <div class="card"><div class="muted">Bucket</div><div id="bucket" class="value">-</div></div>
       <div class="card"><div class="muted">Raw Backlog</div><div id="raw" class="value">-</div></div>
       <div class="card"><div class="muted">Summary Objects</div><div id="sum" class="value">-</div></div>
@@ -947,7 +1015,7 @@ def sse_stream():
                         yield _sse_format("perf", out).encode("utf-8")
                 except Exception:
                     pass
-                if i % 5 == 0:
+                if True:
                     # Stats (Firestore first, then GCS fallback)
                     try:
                         raw_count = sum(1 for _ in bucket.list_blobs(prefix="raw/"))
@@ -956,7 +1024,12 @@ def sse_stream():
                         sum_count = 0
                         series = []
                         try:
-                            qn = fs.collection("news").where("ts_utc", ">=", since.isoformat(timespec="seconds"))
+                            qn = apply_filter(
+                                fs.collection("news"),
+                                "ts_utc",
+                                ">=",
+                                since.isoformat(timespec="seconds"),
+                            )
                             docs = list(qn.stream())
                             sum_count = len(docs)
                             if sum_count > 0:
@@ -999,7 +1072,7 @@ def sse_stream():
                         yield _sse_format("stats", {"bucket": BUCKET, "raw_count": raw_count, "summary_count": sum_count, "series": series}).encode("utf-8")
                     except Exception:
                         pass
-                    # News (with GCS fallback when Firestore empty)
+                    # News (with GCS fallback when Firestore empty) — send every loop
                     try:
                         q = fs.collection("news").order_by("ts_utc", direction=firestore.Query.DESCENDING).limit(20)
                         items = []
@@ -1024,7 +1097,7 @@ def sse_stream():
                         yield _sse_format("news", {"items": items}).encode("utf-8")
                     except Exception:
                         pass
-                    # Transactions
+                    # Transactions — send every loop
                     try:
                         from execution.oanda_pnl import fetch_transactions_since, _parse_time
                         start = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)

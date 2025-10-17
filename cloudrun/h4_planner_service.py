@@ -60,6 +60,9 @@ def _build_plan_payload(h4_fac: dict, m1_fac: dict) -> dict:
 
 
 def _call_gpt_plan(payload: dict) -> dict:
+    if os.environ.get("GPT_DISABLE_ALL") or os.environ.get("DISABLE_GPT_PLANNER"):
+        logging.info("[planner] GPT disabled via env; returning rule-based plan")
+        client = None
     if not client:
         return {
             "bias": "hybrid",
@@ -84,8 +87,7 @@ def _call_gpt_plan(payload: dict) -> dict:
     res = client.chat.completions.create(
         model=OPENAI_PLANNER_MODEL,
         response_format={"type": "json_object"},
-        temperature=0.2,
-        max_tokens=180,
+        max_completion_tokens=180,
         messages=[{"role": "system", "content": system}, {"role": "user", "content": user}],
     )
     content = res.choices[0].message.content

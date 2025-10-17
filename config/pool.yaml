@@ -15,3 +15,7 @@ strategies:
     sl: 10
     tp: 20
     enabled: true
+  - name: MicroTrendPullback
+    sl: 12
+    tp: 18
+    enabled: true

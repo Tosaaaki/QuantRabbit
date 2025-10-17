@@ -1,0 +1,20 @@
+# 2025-10-14 JST Trade Summary
+total_closures=150
+valid_pl_trades=57
+desync_auto_closures=93
+pips_sum=-18.9
+realized_pl=-392.95
+win_rate=0.439
+pips_by_hour_jst:
+  hour_00=10.6 (6 trades)
+  hour_01=-25.8 (13 trades)
+  hour_19=-10.4 (1 trades)
+  hour_20=-8.6 (1 trades)
+  hour_21=22.2 (3 trades)
+  hour_22=-2.6 (12 trades)
+  hour_23=-4.3 (21 trades)
+pips_by_direction:
+  long=-14.0 (29 trades)
+  short=-4.9 (28 trades)
+worst_trade_id=3228
+best_trade_id=3235

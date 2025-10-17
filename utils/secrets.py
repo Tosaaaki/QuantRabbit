@@ -7,13 +7,15 @@ try:
 except Exception:
     secretmanager = None  # type: ignore
 
+_LOCAL_ENV_PATH = pathlib.Path("config/env.local.toml")
 _ENV_PATH = pathlib.Path("config/env.toml")
 PROJECT_ID = os.environ.get("GCP_PROJECT") or "quantrabbit"
 
 @lru_cache()
 def _load_toml() -> dict:
-    if _ENV_PATH.exists():
-        return toml.loads(_ENV_PATH.read_text())
+    for path in (_LOCAL_ENV_PATH, _ENV_PATH):
+        if path.exists():
+            return toml.loads(path.read_text())
     example = _ENV_PATH.with_name("env.example.toml")
     if example.exists():
         return toml.loads(example.read_text())

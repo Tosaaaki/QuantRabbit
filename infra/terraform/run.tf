@@ -38,6 +38,11 @@ resource "google_cloud_run_v2_service" "news_summarizer" {
         name  = "BUCKET"
         value = "quantrabbit-fx-news"
       }
+      # Apply latest image tag on each terraform apply
+      env {
+        name  = "REVISION"
+        value = timestamp()
+      }
       # Inject OpenAI API key from Secret Manager
       env {
         name = "OPENAI_API_KEY"
@@ -110,6 +115,11 @@ resource "google_cloud_run_v2_service" "fetch_news_runner" {
       env {
         name  = "BUCKET"
         value = "quantrabbit-fx-news"
+      }
+      # Apply latest image tag on each terraform apply
+      env {
+        name  = "REVISION"
+        value = timestamp()
       }
       ports {
         container_port = 8080
@@ -193,6 +203,100 @@ resource "google_cloud_run_service_iam_member" "trader_invoker" {
   member   = "serviceAccount:${google_service_account.scheduler_invoker.email}"
 }
 
+# Exit Manager Service
+resource "google_cloud_run_v2_service" "exit_manager" {
+  project  = var.project_id
+  name     = "exit-manager"
+  location = var.region
+
+  template {
+    service_account = "news-summarizer-sa@quantrabbit.iam.gserviceaccount.com"
+    containers {
+      image = "gcr.io/${var.project_id}/news-summarizer"
+      env {
+        name  = "GUNICORN_APP"
+        value = "cloudrun.exit_manager_service:app"
+      }
+      env {
+        name  = "REVISION"
+        value = timestamp()
+      }
+      ports { container_port = 8080 }
+    }
+  }
+}
+
+resource "google_cloud_run_service_iam_member" "exit_manager_invoker" {
+  project  = google_cloud_run_v2_service.exit_manager.project
+  location = google_cloud_run_v2_service.exit_manager.location
+  service  = google_cloud_run_v2_service.exit_manager.name
+  role     = "roles/run.invoker"
+  member   = "serviceAccount:${google_service_account.scheduler_invoker.email}"
+}
+
+resource "google_cloud_scheduler_job" "exit_manager_scheduler" {
+  project   = var.project_id
+  region    = var.region
+  name      = "exit-manager-scheduler"
+  schedule  = "* * * * *"
+  time_zone = "UTC"
+
+  http_target {
+    uri         = google_cloud_run_v2_service.exit_manager.uri
+    http_method = "GET"
+    oidc_token {
+      service_account_email = google_service_account.scheduler_invoker.email
+    }
+  }
+}
+
+# OANDA sync service (transactions -> Firestore trades)
+resource "google_cloud_run_v2_service" "oanda_sync" {
+  project  = var.project_id
+  name     = "oanda-sync"
+  location = var.region
+
+  template {
+    service_account = "news-summarizer-sa@quantrabbit.iam.gserviceaccount.com"
+    containers {
+      image = "gcr.io/${var.project_id}/news-summarizer"
+      env {
+        name  = "GUNICORN_APP"
+        value = "cloudrun.oanda_sync_service:app"
+      }
+      env {
+        name  = "REVISION"
+        value = timestamp()
+      }
+      ports { container_port = 8080 }
+    }
+  }
+}
+
+resource "google_cloud_run_service_iam_member" "oanda_sync_invoker" {
+  project  = google_cloud_run_v2_service.oanda_sync.project
+  location = google_cloud_run_v2_service.oanda_sync.location
+  service  = google_cloud_run_v2_service.oanda_sync.name
+  role     = "roles/run.invoker"
+  member   = "serviceAccount:${google_service_account.scheduler_invoker.email}"
+}
+
+resource "google_cloud_scheduler_job" "oanda_sync_scheduler" {
+  project   = var.project_id
+  region    = var.region
+  name      = "oanda-sync-scheduler"
+  schedule  = "* * * * *"
+  time_zone = "UTC"
+
+  http_target {
+    uri         = google_cloud_run_v2_service.oanda_sync.uri
+    http_method = "GET"
+    oidc_token {
+      service_account_email = google_service_account.scheduler_invoker.email
+    }
+  }
+}
+
 # Schedule the trader to run every minute
 resource "google_cloud_scheduler_job" "trader_scheduler" {
   project   = var.project_id
@@ -202,7 +306,7 @@ resource "google_cloud_scheduler_job" "trader_scheduler" {
   time_zone = "UTC"
 
   http_target {
-    uri = google_cloud_run_v2_service.trader.uri
+    uri         = google_cloud_run_v2_service.trader.uri
     http_method = "GET"
     oidc_token { service_account_email = google_service_account.scheduler_invoker.email }
   }
@@ -243,7 +347,7 @@ resource "google_cloud_scheduler_job" "pnl_scheduler" {
   time_zone = "UTC"
 
   http_target {
-    uri = google_cloud_run_v2_service.pnl_runner.uri
+    uri         = google_cloud_run_v2_service.pnl_runner.uri
     http_method = "GET"
     oidc_token { service_account_email = google_service_account.scheduler_invoker.email }
   }
@@ -262,11 +366,11 @@ resource "google_cloud_scheduler_job" "fetch_news_scheduler" {
   project   = var.project_id
   region    = var.region
   name      = "fetch-news-scheduler"
-  schedule  = "0 * * * *"  # Every hour
+  schedule  = "*/5 * * * *" # Every 5 minutes
   time_zone = "UTC"
 
   http_target {
-    uri = google_cloud_run_v2_service.fetch_news_runner.uri
+    uri         = google_cloud_run_v2_service.fetch_news_runner.uri
     http_method = "GET"
     oidc_token {
       service_account_email = google_service_account.scheduler_invoker.email
@@ -308,7 +412,7 @@ resource "google_cloud_scheduler_job" "vm_stop_weekend" {
     http_method = "POST"
     oauth_token {
       service_account_email = google_service_account.scheduler_invoker.email
-      scope                  = "https://www.googleapis.com/auth/cloud-platform"
+      scope                 = "https://www.googleapis.com/auth/cloud-platform"
     }
   }
 }
@@ -326,7 +430,7 @@ resource "google_cloud_scheduler_job" "vm_start_weekend" {
     http_method = "POST"
     oauth_token {
       service_account_email = google_service_account.scheduler_invoker.email
-      scope                  = "https://www.googleapis.com/auth/cloud-platform"
+      scope                 = "https://www.googleapis.com/auth/cloud-platform"
     }
   }
 }
@@ -371,7 +475,7 @@ resource "google_cloud_scheduler_job" "summarizer_run_scheduler" {
   time_zone = "UTC"
 
   http_target {
-    uri = "${google_cloud_run_v2_service.news_summarizer.uri}/run"
+    uri         = "${google_cloud_run_v2_service.news_summarizer.uri}/run"
     http_method = "GET"
     oidc_token { service_account_email = google_service_account.scheduler_invoker.email }
   }
@@ -386,7 +490,7 @@ resource "google_cloud_scheduler_job" "ingestor_scheduler" {
   time_zone = "UTC"
 
   http_target {
-    uri = google_cloud_run_v2_service.news_ingestor.uri
+    uri         = google_cloud_run_v2_service.news_ingestor.uri
     http_method = "GET"
     oidc_token { service_account_email = google_service_account.scheduler_invoker.email }
   }

@@ -37,13 +37,27 @@ def build_messages(payload: Dict) -> List[Dict]:
         f"Event window active: {bool(payload.get('event_soon'))}",
     ]
 
+    baseline_focus = payload.get("focus_baseline")
+    if baseline_focus:
+        lines.append(f"Baseline focus suggestion: {json.dumps(baseline_focus)}")
+
+    noop_streak = payload.get("noop_streak")
+    if noop_streak is not None:
+        lines.append(f"No-trade streak (minutes): {noop_streak}")
+
+    decision_hints = payload.get("decision_hints")
+    if decision_hints:
+        lines.append(f"Decision hints: {json.dumps(decision_hints)}")
+
     # strategy catalog (簡潔に用途と前提を共有)
     strategy_notes = (
         "Available strategies (choose and rank):\n"
         "- TrendMA: Favors strong H4 trend; follows pullbacks.\n"
         "- Donchian55: Breakout bias; avoid tight ranges.\n"
         "- BB_RSI: Mean-reversion in calm ranges (low ADX, narrow BBW).\n"
+        "- MicroTrendPullback: Quick continuation plays after shallow pullbacks.\n"
         "- NewsSpikeReversal: Only around impactful events; fade overreactions.\n"
+        "Scalp pocket trades via rules in parallel; adjust weight_scalp to boost or cap its activity.\n"
         "For each strategy you may set directives with fields enabled(bool) and risk_bias(0.3-1.7)."
     )
 
@@ -53,18 +67,21 @@ def build_messages(payload: Dict) -> List[Dict]:
 
     # instruction: goal, constraints, schema, and deterministic JSON-only output
     system_content = (
-        "You are an FX trading assistant optimizing daily P/L (+100 pips target) "
-        "while minimizing drawdowns. Consider H4 (macro) vs M1 (micro) regimes, "
-        "news/event proximity and recent performance.\n"
-        "Constraints:\n"
-        "- If an impactful event is within ±30 minutes, disallow micro except NewsSpikeReversal.\n"
-        "- Prefer macro weight when H4 shows strong trend; reduce after poor macro PF.\n"
-        "- In tight ranges (low ADX, low BBW), prioritize BB_RSI; avoid breakouts.\n"
-        "- In emerging momentum (rising ADX + expanding BBW), prefer Donchian55.\n"
+        "You are an FX trading assistant targeting +100 pips per day while respecting drawdown guardrails. "
+        "Blend macro (H4) and micro (M1) context, scheduled events and recent performance to deliver proactive trade directives.\n"
+        "Decision policy:\n"
+        "- Lean into decision_hints.regime_bias (e.g. 'macro_trend', 'micro_breakout', 'range_reversion') when ranking strategies and adjusting weight_macro/weight_scalp.\n"
+        "- decision_hints.loss_recovery lists pockets with negative performance; prioritise those pockets and set their risk_bias between 1.1 and 1.3 until recovered.\n"
+        "- noop_streak >= 2 means the system has been idle; never leave ranked_strategies empty and keep at least one macro and one micro strategy enabled unless event_soon blocks micro.\n"
+        "- If an impactful event is within ±30 minutes, only allow NewsSpikeReversal on micro, otherwise focus on macro trend followers.\n"
+        "- Tight ranges (low ADX and narrow BBW) favour BB_RSI or MicroTrendPullback; rising ADX with expanding BBW favours Donchian55 and TrendMA.\n"
+        "- Use focus_baseline as a starting point but shift weight_macro by up to ±0.15 and weight_scalp by ±0.05 to accelerate recovery or express conviction. Round each to the nearest 0.05 and keep weight_macro + weight_scalp ≤ 0.9 so micro retains flow.\n"
+        "- Disable strategies only when clearly unsuitable; otherwise leave them enabled with calibrated risk_bias values (0.7-1.3 typical).\n"
         "Output strictly the following JSON schema with no extra text: {\n"
         "  'focus_tag': 'micro'|'macro'|'hybrid'|'event',\n"
         "  'weight_macro': number in [0,1] rounded to 0.05,\n"
-        "  'ranked_strategies': string[] subset of ['TrendMA','Donchian55','BB_RSI','NewsSpikeReversal'],\n"
+        "  'weight_scalp': number in [0,1] rounded to 0.05,\n"
+        "  'ranked_strategies': string[] subset of ['TrendMA','Donchian55','BB_RSI','NewsSpikeReversal','MicroTrendPullback'],\n"
         "  'strategy_directives': {strategy: {'enabled': bool, 'risk_bias': number}}\n"
         "}."
     )

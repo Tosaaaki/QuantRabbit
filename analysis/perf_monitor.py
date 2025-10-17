@@ -7,6 +7,7 @@ SQLite `logs/trades.db` 内に保存。
 """
 
 from __future__ import annotations
+import math
 import sqlite3
 import pathlib
 import pandas as pd
@@ -74,8 +75,11 @@ def snapshot() -> Dict[str, Dict[str, float]]:
         avg = sub.pl_pips.mean()
 
         # シャープ比：日次換算を簡易に pips/sd
-        sd = sub.pl_pips.std()
-        sharpe = avg / sd if sd else 0.0
+        sd = sub.pl_pips.std(ddof=0)
+        if sd and not math.isnan(sd):
+            sharpe = avg / sd
+        else:
+            sharpe = 0.0
 
         result[pocket] = {
             "pf": round(pf, 2),

@@ -9,26 +9,31 @@ from __future__ import annotations
 
 import asyncio
 import datetime
-from collections import defaultdict
+from collections import defaultdict, deque
 from typing import Awaitable, Callable, Dict, List, Literal, Tuple
 
 import httpx
 from utils.secrets import get_secret
 from market_data.tick_fetcher import Tick
+from indicators.factor_cache import update_live
 
 Candle = dict[str, float]  # open, high, low, close
 TimeFrame = Literal["M1", "H4"]
 
 
-TOKEN = get_secret("oanda_token")
-try:
-    PRACT = get_secret("oanda_practice").lower() == "true"
-except Exception:
-    PRACT = True
-REST_HOST = (
-    "https://api-fxpractice.oanda.com" if PRACT else "https://api-fxtrade.oanda.com"
-)
-HEADERS = {"Authorization": f"Bearer {TOKEN}"}
+def _rest_env() -> tuple[str, dict] | None:
+    """OANDA REST 環境を返す。未設定なら None。"""
+    try:
+        token = get_secret("oanda_token")
+        try:
+            pract = get_secret("oanda_practice").lower() == "true"
+        except Exception:
+            pract = True
+        host = "https://api-fxpractice.oanda.com" if pract else "https://api-fxtrade.oanda.com"
+        headers = {"Authorization": f"Bearer {token}"}
+        return host, headers
+    except Exception:
+        return None
 
 
 class CandleAggregator:
@@ -39,6 +44,9 @@ class CandleAggregator:
         self.subscribers: Dict[TimeFrame, List[Callable[[Candle], Awaitable[None]]]] = (
             defaultdict(list)
         )
+        self._tick_buffers: Dict[TimeFrame, deque] = {
+            tf: deque(maxlen=180) for tf in timeframes
+        }
 
     def subscribe(self, tf: TimeFrame, coro: Callable[[Candle], Awaitable[None]]):
         if tf in self.timeframes:
@@ -52,6 +60,54 @@ class CandleAggregator:
             hour = (ts.hour // 4) * 4
             return ts.strftime(f"%Y-%m-%dT{hour:02d}:00")
         raise ValueError(f"Unsupported timeframe: {tf}")
+
+    def _record_tick(self, tf: TimeFrame, ts: datetime.datetime, price: float, liquidity: int) -> dict[str, float]:
+        buf = self._tick_buffers[tf]
+        buf.append((ts, price, max(liquidity, 1)))
+
+        cutoff = ts - datetime.timedelta(seconds=120)
+        while buf and buf[0][0] < cutoff:
+            buf.popleft()
+
+        pip = 0.01
+        metrics: dict[str, float] = {}
+
+        last_idx = len(buf) - 1
+        for lookback in (5, 10):
+            target_idx = last_idx - lookback
+            if target_idx >= 0:
+                metrics[f"tick_momentum_{lookback}"] = (price - buf[target_idx][1]) / pip
+            else:
+                metrics[f"tick_momentum_{lookback}"] = 0.0
+
+        thirty_cutoff = ts - datetime.timedelta(seconds=30)
+        ref_price = price
+        for t0, p0, _ in reversed(buf):
+            if t0 <= thirty_cutoff:
+                ref_price = p0
+                break
+        else:
+            ref_price = buf[0][1]
+        metrics["tick_velocity_30s"] = (price - ref_price) / pip
+
+        window_prices = [p for t0, p, _ in buf if t0 >= thirty_cutoff]
+        if window_prices:
+            metrics["tick_range_30s"] = (max(window_prices) - min(window_prices)) / pip
+        else:
+            metrics["tick_range_30s"] = 0.0
+
+        weighted_sum = 0.0
+        total_liq = 0
+        for _, p0, liq0 in buf:
+            weighted_sum += p0 * liq0
+            total_liq += liq0
+        if total_liq > 0:
+            vwap = weighted_sum / total_liq
+        else:
+            vwap = price
+        metrics["tick_vwap_delta"] = (price - vwap) / pip
+
+        return metrics
 
     async def on_tick(self, tick: Tick):
         ts = tick.time.replace(tzinfo=datetime.timezone.utc)
@@ -85,6 +141,9 @@ class CandleAggregator:
                 c["close"] = price
                 c["time"] = ts
 
+            metrics = self._record_tick(tf, ts, price, tick.liquidity)
+            await update_live(tf, self.current_candles[tf], metrics)
+
 
 # ------ 便利ラッパ ------
 
@@ -114,6 +173,10 @@ async def fetch_historical_candles(
     instrument: str, granularity: TimeFrame, count: int
 ) -> List[Candle]:
     """OANDA REST から過去ローソク足を取得する"""
+    env = _rest_env()
+    if not env:
+        raise RuntimeError("OANDA credentials missing")
+    REST_HOST, HEADERS = env
     url = f"{REST_HOST}/v3/instruments/{instrument}/candles"
     params = {"granularity": granularity, "count": count, "price": "M"}
     async with httpx.AsyncClient() as client:

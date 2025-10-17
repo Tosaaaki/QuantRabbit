@@ -13,8 +13,8 @@ ta‑lib をラップし、DataFrame（open/high/low/close）から
 from __future__ import annotations
 from typing import Dict
 
+import numpy as np
 import pandas as pd
-import pandas_ta  # noqa: F401 -- pandasの .ta アクセサを有効化
 
 
 class IndicatorEngine:
@@ -41,52 +41,81 @@ class IndicatorEngine:
               "bbw":  0.26
             }
         """
-        # pandas_ta は DataFrame に直接アクセスできる
-        # df.ta.sma() のように呼び出す
-        df.ta.sma(length=10, append=True)
-        df.ta.sma(length=20, append=True)
-        df.ta.ema(length=20, append=True)
-        df.ta.rsi(length=14, append=True)
-        df.ta.atr(length=14, append=True)
-        df.ta.adx(length=14, append=True)
-        df.ta.bbands(length=20, std=2, append=True)
-        # MACD (12, 26, 9)
-        df.ta.macd(append=True)
+        df = df.astype(float).copy()
+        close = df["close"]
+        high = df["high"]
+        low = df["low"]
 
         out: Dict[str, float] = {}
 
-        # 最新の値を抽出
-        out["ma10"] = df["SMA_10"].iloc[-1]
-        out["ma20"] = df["SMA_20"].iloc[-1]
-        out["ema20"] = df["EMA_20"].iloc[-1]
+        # Moving averages
+        out["ma10"] = close.rolling(window=10).mean().iloc[-1]
+        out["ma20"] = close.rolling(window=20).mean().iloc[-1]
+        out["ema20"] = close.ewm(span=20, adjust=False).mean().iloc[-1]
 
-        out["rsi"] = df["RSI_14"].iloc[-1]
-        # pandas_ta v0.3.14b0 では ATR_14 -> ATRr_14 に名称変更された
-        atr_col_name = "ATRr_14" if "ATRr_14" in df.columns else "ATR_14"
-        out["atr"] = df[atr_col_name].iloc[-1]
-        out["adx"] = df["ADX_14"].iloc[-1]
+        # RSI (Wilder's smoothing)
+        delta = close.diff()
+        gain = delta.clip(lower=0.0)
+        loss = -delta.clip(upper=0.0)
+        avg_gain = gain.ewm(alpha=1 / 14, adjust=False).mean()
+        avg_loss = loss.ewm(alpha=1 / 14, adjust=False).mean()
+        rs = avg_gain / avg_loss.replace(0, np.nan)
+        rsi = 100 - (100 / (1 + rs))
+        out["rsi"] = float(rsi.iloc[-1]) if not np.isnan(rsi.iloc[-1]) else 0.0
 
-        # MACD 指標
-        macd_col = "MACD_12_26_9"
-        macds_col = "MACDs_12_26_9"  # signal
-        macdh_col = "MACDh_12_26_9"   # histogram
-        out["macd"] = float(df[macd_col].iloc[-1]) if macd_col in df.columns else 0.0
-        out["macd_signal"] = float(df[macds_col].iloc[-1]) if macds_col in df.columns else 0.0
-        out["macd_hist"] = float(df[macdh_col].iloc[-1]) if macdh_col in df.columns else 0.0
+        # True range & ATR
+        prev_close = close.shift(1)
+        tr_components = pd.concat(
+            [
+                (high - low),
+                (high - prev_close).abs(),
+                (low - prev_close).abs(),
+            ],
+            axis=1,
+        )
+        true_range = tr_components.max(axis=1)
+        atr = true_range.ewm(alpha=1 / 14, adjust=False).mean()
+        out["atr"] = float(atr.iloc[-1]) if not np.isnan(atr.iloc[-1]) else 0.0
 
-        # Bollinger Bands の計算
-        upper = df["BBU_20_2.0"].iloc[-1]
-        middle = df["BBM_20_2.0"].iloc[-1]
-        lower = df["BBL_20_2.0"].iloc[-1]
+        # ADX
+        up_move = high.diff()
+        down_move = -low.diff()
+        plus_dm = np.where((up_move > down_move) & (up_move > 0), up_move, 0.0)
+        minus_dm = np.where((down_move > up_move) & (down_move > 0), down_move, 0.0)
+        plus_di = 100 * pd.Series(plus_dm, index=df.index).ewm(alpha=1 / 14, adjust=False).mean() / atr.replace(0, np.nan)
+        minus_di = 100 * pd.Series(minus_dm, index=df.index).ewm(alpha=1 / 14, adjust=False).mean() / atr.replace(0, np.nan)
+        dx = (plus_di - minus_di).abs() / (plus_di + minus_di).replace(0, np.nan) * 100
+        adx = dx.ewm(alpha=1 / 14, adjust=False).mean()
+        out["adx"] = float(adx.iloc[-1]) if not np.isnan(adx.iloc[-1]) else 0.0
 
-        if middle != 0:
-            out["bbw"] = float((upper - lower) / middle)
+        # Bollinger Bands (20, 2)
+        ma20 = close.rolling(window=20).mean()
+        std20 = close.rolling(window=20).std()
+        upper = ma20 + 2 * std20
+        lower = ma20 - 2 * std20
+        middle = ma20
+        if middle.iloc[-1] != 0 and not np.isnan(middle.iloc[-1]):
+            out["bbw"] = float((upper.iloc[-1] - lower.iloc[-1]) / middle.iloc[-1])
         else:
             out["bbw"] = 0.0
 
-        # 数値が nan の場合は 0.0 で埋める
+        # MACD (12, 26, 9)
+        ema12 = close.ewm(span=12, adjust=False).mean()
+        ema26 = close.ewm(span=26, adjust=False).mean()
+        macd = ema12 - ema26
+        macd_signal = macd.ewm(span=9, adjust=False).mean()
+        macd_hist = macd - macd_signal
+        out["macd"] = float(macd.iloc[-1]) if not np.isnan(macd.iloc[-1]) else 0.0
+        out["macd_signal"] = (
+            float(macd_signal.iloc[-1]) if not np.isnan(macd_signal.iloc[-1]) else 0.0
+        )
+        out["macd_hist"] = (
+            float(macd_hist.iloc[-1]) if not np.isnan(macd_hist.iloc[-1]) else 0.0
+        )
+
+        # Normalize NaNs to 0.0
         for k, v in out.items():
-            if pd.isna(v):
+            if pd.isna(v) or np.isnan(v):
                 out[k] = 0.0
 
         return out

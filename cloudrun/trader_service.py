@@ -1,6 +1,8 @@
 import os
 import logging
+import json
 import asyncio
+import math
 from collections import defaultdict
 from typing import Any, Dict, List
 from datetime import datetime, timedelta, timezone
@@ -16,12 +18,20 @@ from analysis.regime_classifier import (
     THRESH_BBW_RANGE,
     THRESH_MA_SLOPE,
 )
-from analysis.focus_decider import decide_focus
+from analysis.focus_decider import FocusDecision, decide_focus
 from analysis.gpt_decider import get_decision
 from market_data.candle_fetcher import fetch_historical_candles
 from execution.risk_guard import allowed_lot, can_trade, clamp_sl_tp, check_global_drawdown
+from execution.scalp_engine import get_scalp_state, run_scalp_once
 from execution.account_info import get_account_summary
 from execution.order_manager import market_order
+from strategies.trend.ma_cross import MovingAverageCross
+from strategies.breakout.donchian55 import Donchian55
+from strategies.mean_reversion.bb_rsi import BBRsi
+from strategies.news.spike_reversal import NewsSpikeReversal
+from strategies.micro.trend_pullback import MicroTrendPullback
+from strategies.range.range_bounce import RangeBounce
+from signals.pocket_allocator import alloc
 import httpx
 from utils.firestore_helpers import apply_filter
 
@@ -29,6 +39,61 @@ from utils.firestore_helpers import apply_filter
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 
 INSTRUMENT = os.environ.get("INSTRUMENT", "USD_JPY")
+RUN_SCALP_ON_REQUEST = os.environ.get("SCALP_RUN_ON_CLOUDRUN", "true").lower() == "true"
+MARKET_STALE_AFTER_SEC = int(os.environ.get("MARKET_STALE_AFTER_SEC", "600"))
+
+STRONG_TREND_VELOCITY = float(os.environ.get("STRONG_TREND_VELOCITY_30S", "8.0"))
+STRONG_TREND_RANGE = float(os.environ.get("STRONG_TREND_RANGE_30S", "12.0"))
+STRONG_TREND_MACRO_SHARE = float(os.environ.get("STRONG_TREND_MACRO_SHARE", "0.7"))
+MIN_BASELINE_POCKET_LOT = float(os.environ.get("MIN_BASELINE_POCKET_LOT", "0.0001"))
+JST = timezone(timedelta(hours=9))
+
+
+def _env_float(name: str, default: float) -> float:
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    try:
+        return float(raw)
+    except (TypeError, ValueError):
+        return default
+
+
+MIN_SCALP_WEIGHT = max(0.0, _env_float("MIN_SCALP_WEIGHT", 0.04))
+MAX_SCALP_WEIGHT = max(MIN_SCALP_WEIGHT, _env_float("MAX_SCALP_WEIGHT", 0.35))
+MACRO_SCALP_CAP = max(0.6, _env_float("MACRO_SCALP_SUM_CAP", 0.9))
+
+
+def _safe_weight(value, default: float) -> float:
+    try:
+        weight = float(value)
+    except (TypeError, ValueError):
+        weight = default
+    if not math.isfinite(weight):  # type: ignore[name-defined]
+        weight = default
+    return max(0.0, min(1.0, weight))
+
+
+def _safe_scalp_weight(value, default: float) -> float:
+    try:
+        weight = float(value)
+    except (TypeError, ValueError):
+        weight = default
+    if not math.isfinite(weight):  # type: ignore[name-defined]
+        weight = default
+    return max(MIN_SCALP_WEIGHT, min(MAX_SCALP_WEIGHT, weight))
+
+
+def _resolve_regime_bias(macro_regime: str, micro_regime: str, strong_trend: bool) -> str | None:
+    if strong_trend or macro_regime == "Trend":
+        return "macro_trend"
+    if micro_regime == "Breakout":
+        return "micro_breakout"
+    if micro_regime == "Trend":
+        return "micro_trend"
+    if macro_regime in ("Range", "Mixed") and micro_regime in ("Range", "Mixed"):
+        return "range_reversion"
+    return None
 
 app = Flask(__name__)
 fs = firestore.Client()
@@ -46,6 +111,42 @@ def _df_from_candles(candles):
     return pd.DataFrame(
         [{"open": c["open"], "high": c["high"], "low": c["low"], "close": c["close"]} for c in candles]
     )
+
+
+def _session_label(dt_obj: datetime) -> str:
+    hour = dt_obj.hour
+    if 0 <= hour < 7:
+        return "asia"
+    if 7 <= hour < 12:
+        return "europe"
+    if 12 <= hour < 20:
+        return "us"
+    return "late_us"
+
+
+def _hold_bucket(minutes: float | None) -> str:
+    if minutes is None:
+        return "unknown"
+    if minutes < 30:
+        return "<30m"
+    if minutes < 120:
+        return "30-120m"
+    if minutes < 360:
+        return "120-360m"
+    return ">=360m"
+
+
+def _vol_bucket(atr_value: float | None) -> str:
+    if atr_value is None or atr_value <= 0:
+        return "unknown"
+    pip_atr = atr_value * 100  # USDJPY pip ≒0.01
+    if pip_atr < 5:
+        return "low"
+    if pip_atr < 10:
+        return "medium"
+    if pip_atr < 20:
+        return "high"
+    return "extreme"
 
 
 def _get_latest_news(limit_short=3, limit_long=5):
@@ -135,7 +236,19 @@ def _compute_strategy_stats(now: datetime) -> dict[str, dict]:
 
         strat_stat = stats.setdefault(
             strategy,
-            {"trades": 0, "wins": 0, "losses": 0, "sum_pips": 0.0, "pockets": defaultdict(lambda: {"trades": 0, "wins": 0, "losses": 0, "sum_pips": 0.0})},
+            {
+                "trades": 0,
+                "wins": 0,
+                "losses": 0,
+                "sum_pips": 0.0,
+                "pockets": defaultdict(lambda: {"trades": 0, "wins": 0, "losses": 0, "sum_pips": 0.0}),
+                "sessions": defaultdict(lambda: {"trades": 0, "wins": 0, "losses": 0, "sum_pips": 0.0}),
+                "directions": defaultdict(lambda: {"trades": 0, "wins": 0, "losses": 0, "sum_pips": 0.0}),
+                "holds": defaultdict(lambda: {"trades": 0, "wins": 0, "losses": 0, "sum_pips": 0.0}),
+                "volatility": defaultdict(lambda: {"trades": 0, "wins": 0, "losses": 0, "sum_pips": 0.0}),
+                "macro": defaultdict(lambda: {"trades": 0, "wins": 0, "losses": 0, "sum_pips": 0.0}),
+                "micro": defaultdict(lambda: {"trades": 0, "wins": 0, "losses": 0, "sum_pips": 0.0}),
+            },
         )
         strat_stat["trades"] += 1
         strat_stat["sum_pips"] += pl_pips
@@ -144,28 +257,54 @@ def _compute_strategy_stats(now: datetime) -> dict[str, dict]:
         elif pl_pips < 0:
             strat_stat["losses"] += 1
 
-        pocket_stat = strat_stat["pockets"].setdefault(pocket, {"trades": 0, "wins": 0, "losses": 0, "sum_pips": 0.0})
-        pocket_stat["trades"] += 1
-        pocket_stat["sum_pips"] += pl_pips
-        if pl_pips > 0:
-            pocket_stat["wins"] += 1
-        elif pl_pips < 0:
-            pocket_stat["losses"] += 1
+        def _upd(bucket, key):
+            entry = bucket.setdefault(key, {"trades": 0, "wins": 0, "losses": 0, "sum_pips": 0.0})
+            entry["trades"] += 1
+            entry["sum_pips"] += pl_pips
+            if pl_pips > 0:
+                entry["wins"] += 1
+            elif pl_pips < 0:
+                entry["losses"] += 1
+
+        _upd(strat_stat["pockets"], pocket)
+        entry_dt = _parse_close_time(data.get("fill_time") or data.get("entry_time") or data.get("ts"))
+        session = data.get("session") or _session_label(entry_dt or close_dt or now)
+        _upd(strat_stat["sessions"], session)
+        direction_key = "long" if direction > 0 else "short"
+        _upd(strat_stat["directions"], direction_key)
+        macro_key = data.get("macro_regime") or "?"
+        micro_key = data.get("micro_regime") or "?"
+        _upd(strat_stat["macro"], macro_key)
+        _upd(strat_stat["micro"], micro_key)
+        hold_minutes = None
+        entry_for_hold = entry_dt
+        if entry_for_hold and close_dt:
+            hold_minutes = (close_dt - entry_for_hold).total_seconds() / 60.0
+        hold_bucket = _hold_bucket(hold_minutes)
+        _upd(strat_stat["holds"], hold_bucket)
+        atr_val = data.get("atr_m1") or data.get("atr")
+        try:
+            atr_val = float(atr_val)
+        except (TypeError, ValueError):
+            atr_val = None
+        vol_bucket = _vol_bucket(atr_val)
+        _upd(strat_stat["volatility"], vol_bucket)
 
     for strat, stat in stats.items():
         total = stat["trades"]
         avg = stat["sum_pips"] / total if total else 0.0
         stat["avg_pips"] = avg
         stat["score"] = _score_row(total, stat["wins"], stat["losses"], avg)
-        pockets = stat["pockets"]
-        if isinstance(pockets, defaultdict):
-            pockets = dict(pockets)
-            stat["pockets"] = pockets
-        for pocket, pstat in pockets.items():
-            p_total = pstat["trades"]
-            p_avg = pstat["sum_pips"] / p_total if p_total else 0.0
-            pstat["avg_pips"] = p_avg
-            pstat["score"] = _score_row(p_total, pstat["wins"], pstat["losses"], p_avg)
+        for key in ("pockets", "sessions", "directions", "holds", "volatility", "macro", "micro"):
+            bucket = stat[key]
+            if isinstance(bucket, defaultdict):
+                bucket = dict(bucket)
+                stat[key] = bucket
+            for name, bstat in bucket.items():
+                b_total = bstat["trades"]
+                b_avg = bstat["sum_pips"] / b_total if b_total else 0.0
+                bstat["avg_pips"] = b_avg
+                bstat["score"] = _score_row(b_total, bstat["wins"], bstat["losses"], b_avg)
     return stats
 
 
@@ -204,6 +343,12 @@ def _rerank_with_stats(candidates: list[str], stats: dict[str, dict]) -> list[st
         scored.append((-(priors.get(s, 0.0) + score), s))
     scored.sort()
     return [s for _, s in scored]
+
+
+def _log_event(level: int, event: str, **fields: object) -> None:
+    """Emit structured JSON for Cloud Logging."""
+    payload = {"event": event, **fields}
+    logging.log(level, json.dumps(payload, ensure_ascii=False, default=str))
 
 
 def _risk_multiplier_from_stats(stats: dict[str, dict], strategy: str, pocket: str) -> float:
@@ -303,43 +448,106 @@ def _save_state(st):
     fs.collection("state").document("trader").set(st)
 
 
+def _is_weekend_window(now_utc: datetime) -> bool:
+    """Return True during weekend shutdown window (Sat 06:00 JST -> Mon 06:00 JST)."""
+
+    now_jst = now_utc.astimezone(JST)
+    dow = now_jst.weekday()  # Mon=0 ... Sun=6
+    hour = now_jst.hour
+    minute = now_jst.minute
+
+    if dow == 5:  # Saturday
+        return (hour, minute) >= (6, 0)
+    if dow == 6:  # Sunday
+        return True
+    if dow == 0:  # Monday before 06:00
+        return (hour, minute) < (6, 0)
+    return False
+
+
+def _last_candle_time(candles: List[Dict[str, Any]]) -> datetime | None:
+    if not candles:
+        return None
+    ts = candles[-1].get("time")
+    if isinstance(ts, datetime):
+        return ts if ts.tzinfo else ts.replace(tzinfo=timezone.utc)
+    return None
+
+
 @app.route("/", methods=["GET"])  # 1 リクエスト = 1 サイクル
 def run_once():
     try:
-        # Weekend guard (default on). Skip Sat(5)/Sun(6) in UTC to cut costs.
-        if os.environ.get("SKIP_WEEKENDS", "true").lower() == "true":
-            if datetime.utcnow().weekday() >= 5:
-                return "WEEKEND", 200
+        scalp_result: Dict[str, Any] | None = None
+
+        def _status_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
+            data = dict(payload)
+            data["scalp_state"] = get_scalp_state()
+            if scalp_result is not None:
+                data.setdefault("scalp_last", scalp_result)
+            return data
+
+        now_utc = datetime.utcnow().replace(tzinfo=timezone.utc)
+
+        if os.environ.get("SKIP_WEEKENDS", "true").lower() == "true" and _is_weekend_window(now_utc):
+            try:
+                fs.collection("status").document("trader").set(
+                    _status_payload(
+                        {
+                            "ts": now_utc.isoformat(timespec="seconds"),
+                            "instrument": INSTRUMENT,
+                            "macro_regime": None,
+                            "micro_regime": None,
+                            "focus_tag": "weekend",
+                            "weight_macro": 0.0,
+                            "mode": "weekend",
+                            "selected_instruments": [INSTRUMENT],
+                            "diversify_slots": 1,
+                            "resource_ttl_sec": None,
+                            "event_soon": False,
+                        }
+                    )
+                )
+            except Exception:
+                pass
+            return "WEEKEND", 200
 
         st = _load_state() or {}
+        if "last_order_by_strategy" not in st or not isinstance(st.get("last_order_by_strategy"), dict):
+            st["last_order_by_strategy"] = {}
+        if "last_order_by_pocket" not in st or not isinstance(st.get("last_order_by_pocket"), dict):
+            st["last_order_by_pocket"] = {}
         # Daily warm‑up: 初回はWARMUP_MIN分スキップ（流動性/スプレッド対策）
         warmup_min = int(os.environ.get("WARMUP_MIN", "30"))
         today = datetime.utcnow().date().isoformat()
         if st.get("warm_key") != today:
             st["warm_key"] = today
-            st["warm_until"] = (datetime.utcnow() + timedelta(minutes=warmup_min)).isoformat(timespec="seconds")
+            st["warm_until"] = (now_utc + timedelta(minutes=warmup_min)).isoformat(timespec="seconds")
             _save_state(st)
         try:
-            if datetime.utcnow() < datetime.fromisoformat(st.get("warm_until")):
+            if now_utc < datetime.fromisoformat(st.get("warm_until")):
                 # 早期リターンでもダッシュボードに最新時刻とイベント状態を反映
                 try:
-                    ttl = int((datetime.fromisoformat(st.get("warm_until")) - datetime.utcnow()).total_seconds())
+                    ttl = int((datetime.fromisoformat(st.get("warm_until")) - now_utc).total_seconds())
                 except Exception:
                     ttl = None
                 try:
-                    fs.collection("status").document("trader").set({
-                        "ts": datetime.utcnow().isoformat(timespec="seconds"),
-                        "instrument": INSTRUMENT,
-                        "macro_regime": None,
-                        "micro_regime": None,
-                        "focus_tag": "warmup",
-                        "weight_macro": 0.0,
-                        "mode": "warmup",
-                        "selected_instruments": [INSTRUMENT],
-                        "diversify_slots": 1,
-                        "resource_ttl_sec": ttl,
-                        "event_soon": _event_soon(within_minutes=30, min_impact=3),
-                    })
+                    fs.collection("status").document("trader").set(
+                        _status_payload(
+                            {
+                                "ts": now_utc.isoformat(timespec="seconds"),
+                                "instrument": INSTRUMENT,
+                                "macro_regime": None,
+                                "micro_regime": None,
+                                "focus_tag": "warmup",
+                                "weight_macro": 0.0,
+                                "mode": "warmup",
+                                "selected_instruments": [INSTRUMENT],
+                                "diversify_slots": 1,
+                                "resource_ttl_sec": ttl,
+                                "event_soon": _event_soon(within_minutes=30, min_impact=3),
+                            }
+                        )
+                    )
                 except Exception:
                     pass
                 return "WARMUP", 200
@@ -355,28 +563,98 @@ def run_once():
         if len(m1) < 20 or len(h4) < 20:
             logging.info("Not enough candles yet.")
             try:
-                fs.collection("status").document("trader").set({
-                    "ts": datetime.utcnow().isoformat(timespec="seconds"),
-                    "instrument": INSTRUMENT,
-                    "macro_regime": None,
-                    "micro_regime": None,
-                    "focus_tag": None,
-                    "weight_macro": None,
-                    "mode": "init",
-                    "selected_instruments": [INSTRUMENT],
-                    "diversify_slots": 1,
-                    "resource_ttl_sec": None,
-                    "event_soon": event_soon,
-                })
+                fs.collection("status").document("trader").set(
+                    _status_payload(
+                        {
+                            "ts": now_utc.isoformat(timespec="seconds"),
+                            "instrument": INSTRUMENT,
+                            "macro_regime": None,
+                            "micro_regime": None,
+                            "focus_tag": None,
+                            "weight_macro": None,
+                            "mode": "init",
+                            "selected_instruments": [INSTRUMENT],
+                            "diversify_slots": 1,
+                            "resource_ttl_sec": None,
+                            "event_soon": event_soon,
+                        }
+                    )
+                )
             except Exception:
                 pass
             return "WAIT", 200
 
+        last_candle_ts = _last_candle_time(m1)
+        if last_candle_ts is None:
+            last_age = None
+        else:
+            last_age = (now_utc - last_candle_ts).total_seconds()
+
+        if last_age is None or last_age > MARKET_STALE_AFTER_SEC:
+            try:
+                fs.collection("status").document("trader").set(
+                    _status_payload(
+                        {
+                            "ts": now_utc.isoformat(timespec="seconds"),
+                            "instrument": INSTRUMENT,
+                            "macro_regime": None,
+                            "micro_regime": None,
+                            "focus_tag": "stale",
+                            "weight_macro": 0.0,
+                            "mode": "market_closed",
+                            "selected_instruments": [INSTRUMENT],
+                            "diversify_slots": 1,
+                            "resource_ttl_sec": None,
+                            "event_soon": event_soon,
+                            "last_candle_age_sec": last_age,
+                        }
+                    )
+                )
+            except Exception:
+                pass
+            return "MARKET_CLOSED", 200
+
         # 2) 因子計算
         fac_m1 = IndicatorEngine.compute(_df_from_candles(m1))
         fac_h4 = IndicatorEngine.compute(_df_from_candles(h4))
-        fac_m1.update({"close": float(m1[-1]["close"])})
-        fac_h4.update({"close": float(h4[-1]["close"])})
+        fac_m1.update({
+            "close": float(m1[-1]["close"]),
+            "candles": [
+                {
+                    "timestamp": c["time"].isoformat(),
+                    "open": c["open"],
+                    "high": c["high"],
+                    "low": c["low"],
+                    "close": c["close"],
+                }
+                for c in m1
+            ],
+        })
+        fac_h4.update({
+            "close": float(h4[-1]["close"]),
+            "candles": [
+                {
+                    "timestamp": c["time"].isoformat(),
+                    "open": c["open"],
+                    "high": c["high"],
+                    "low": c["low"],
+                    "close": c["close"],
+                }
+                for c in h4
+            ],
+        })
+        try:
+            rsi_m1 = float(fac_m1.get("rsi") or 50.0)
+        except (TypeError, ValueError):
+            rsi_m1 = 50.0
+
+        if RUN_SCALP_ON_REQUEST:
+            try:
+                spread_for_scalp = _get_spread_pips()
+                scalp_result = run_scalp_once(fac_m1, now_utc, spread_pips=spread_for_scalp)
+            except Exception as exc:  # noqa: BLE001
+                logging.exception("[SCALP] Cloud Run execution failed: %s", exc)
+                scalp_result = {"executed": False, "reason": "error", "error": str(exc)}
 
         # 3) ニュース（イベントは事前評価済み）
         news_cache = _get_latest_news()
@@ -384,13 +662,45 @@ def run_once():
         # 4) レジーム・フォーカス
         macro_regime = classify(fac_h4, "H4", event_mode=event_soon)
         micro_regime = classify(fac_m1, "M1", event_mode=event_soon)
-        focus, w_macro = decide_focus(
+        tick_velocity = abs(float(fac_m1.get("tick_velocity_30s") or 0.0))
+        tick_range = float(fac_m1.get("tick_range_30s") or 0.0)
+        recent_range_pips = 0.0
+        candles_m1 = fac_m1.get("candles") or []
+        if len(candles_m1) >= 5:
+            try:
+                window = candles_m1[-5:]
+                high = max(float(c.get("high")) for c in window)
+                low = min(float(c.get("low")) for c in window)
+                recent_range_pips = (high - low) / 0.01
+            except (TypeError, ValueError):
+                recent_range_pips = 0.0
+        strong_trend = (
+            macro_regime == "Trend"
+            and micro_regime in ("Trend", "Breakout")
+            and (
+                tick_velocity >= STRONG_TREND_VELOCITY
+                or tick_range >= STRONG_TREND_RANGE
+                or recent_range_pips >= 4.0
+            )
+        )
+        high_volatility = (
+            tick_velocity >= STRONG_TREND_VELOCITY
+            or tick_range >= STRONG_TREND_RANGE
+            or recent_range_pips >= 4.0
+        )
+        focus_decision = decide_focus(
             macro_regime,
             micro_regime,
             event_soon=event_soon,
             macro_pf=None,
             micro_pf=None,
+            strong_trend=strong_trend,
+            high_volatility=high_volatility,
         )
+        focus = focus_decision.focus_tag
+        w_macro = focus_decision.weight_macro
+        w_micro = focus_decision.weight_micro
+        w_scalp = focus_decision.weight_scalp
 
         # 5) ゲーティング（ヒステリシス + 3バー連続はステートで近似）
         now = datetime.utcnow()
@@ -491,38 +801,90 @@ def run_once():
             })
             _save_state(st)
             try:
-                fs.collection("status").document("trader").set({
-                    "ts": datetime.utcnow().isoformat(timespec="seconds"),
-                    "instrument": INSTRUMENT,
-                    "macro_regime": last_macro,
-                    "micro_regime": last_micro,
-                    "focus_tag": None,
-                    "weight_macro": None,
-                    "mode": "idle",
-                    "selected_instruments": [INSTRUMENT],
-                    "diversify_slots": 1,
-                    "resource_ttl_sec": int(cooldown) if 'cooldown' in locals() else None,
-                    "event_soon": event_soon,
-                })
+                fs.collection("status").document("trader").set(
+                    _status_payload(
+                        {
+                            "ts": datetime.utcnow().isoformat(timespec="seconds"),
+                            "instrument": INSTRUMENT,
+                            "macro_regime": last_macro,
+                            "micro_regime": last_micro,
+                            "focus_tag": None,
+                            "weight_macro": None,
+                            "mode": "idle",
+                            "selected_instruments": [INSTRUMENT],
+                            "diversify_slots": 1,
+                            "resource_ttl_sec": int(cooldown) if 'cooldown' in locals() else None,
+                            "event_soon": event_soon,
+                        }
+                    )
+                )
             except Exception:
                 pass
+            _log_event(
+                logging.INFO,
+                "skip_cooldown",
+                call_due_to_cooldown=call_due_to_cooldown,
+                regime_switched=regime_switched,
+                event_soon=event_soon,
+                last_order_time=st.get("last_order_time"),
+                cooldown_sec=cooldown if "cooldown" in locals() else None,
+            )
             return "SKIP", 200
 
         # 6) GPT 決定
+        learning_stats = _get_strategy_stats(now)
+
+        decision_hints: Dict[str, Any] = {}
+        regime_bias = _resolve_regime_bias(macro_regime, micro_regime, strong_trend)
+        if regime_bias:
+            decision_hints["regime_bias"] = regime_bias
+        context_flags: list[str] = []
+        if strong_trend:
+            context_flags.append("strong_trend")
+        if high_volatility and not strong_trend:
+            context_flags.append("high_volatility")
+        if event_soon:
+            context_flags.append("event_mode")
+        if context_flags:
+            decision_hints["context_flags"] = context_flags
+
         payload = {
             "ts": now.isoformat(timespec="seconds"),
             "reg_macro": macro_regime,
             "reg_micro": micro_regime,
-            "factors_m1": {k: v for k, v in fac_m1.items()},
-            "factors_h4": {k: v for k, v in fac_h4.items()},
+            "factors_m1": {k: v for k, v in fac_m1.items() if k != "candles"},
+            "factors_h4": {k: v for k, v in fac_h4.items() if k != "candles"},
             "perf": {},
             "news_short": news_cache.get("short", []),
             "news_long": news_cache.get("long", []),
             "event_soon": event_soon,
+            "focus_baseline": {
+                "focus": focus,
+                "weight_macro": w_macro,
+                "weight_scalp": w_scalp,
+                "weights": {
+                    "macro": w_macro,
+                    "micro": w_micro,
+                    "scalp": w_scalp,
+                },
+            },
         }
+        if decision_hints:
+            payload["decision_hints"] = decision_hints
         gpt = asyncio.run(get_decision(payload))
-        allowed = ("TrendMA", "Donchian55", "BB_RSI", "NewsSpikeReversal")
+        allowed = ("TrendMA", "Donchian55", "BB_RSI", "NewsSpikeReversal", "MicroTrendPullback")
         directives = gpt.get("strategy_directives", {}) or {}
+
+        try:
+            logging.info(
+                "[GPT_DECISION] focus=%s weight_macro=%.2f weight_scalp=%.2f ranked=%s",
+                gpt.get("focus_tag"),
+                float(gpt.get("weight_macro", 0.5)),
+                float(gpt.get("weight_scalp", 0.12)),
+                gpt.get("ranked_strategies", []),
+            )
+        except Exception:
+            logging.info("[GPT_DECISION] raw=%s", gpt)
 
         def _is_enabled(name: str) -> bool:
             cfg = directives.get(name) or {}
@@ -534,6 +896,15 @@ def run_once():
                 return float(cfg.get("risk_bias", 1.0))
             except (TypeError, ValueError):
                 return 1.0
+
+        def _ensure_directive_enabled(name: str) -> None:
+            cfg = directives.setdefault(name, {"enabled": True, "risk_bias": 1.0})
+            cfg["enabled"] = True
+            try:
+                bias = float(cfg.get("risk_bias", 1.0))
+            except (TypeError, ValueError):
+                bias = 1.0
+            cfg["risk_bias"] = max(0.1, min(bias, 2.0))
 
         ranked_candidates = [s for s in gpt.get("ranked_strategies", []) if s in allowed and _is_enabled(s)]
         for fallback in allowed:
@@ -552,11 +923,51 @@ def run_once():
         ranked = _rerank_with_stats(ranked_candidates, learning_stats) if ranked_candidates else [s for s in allowed if _is_enabled(s)]
         if not ranked:
             ranked = [allowed[0]]
-        weight = gpt.get("weight_macro", 0.5)
-        # Derive human-friendly mode for dashboard
-        if weight <= 0.4:
+
+        def _inject_baseline_strategies(lots: Dict[str, float]) -> None:
+            priority: list[str] = []
+            if lots.get("macro", 0.0) >= MIN_BASELINE_POCKET_LOT:
+                priority.append("TrendMA")
+            if lots.get("micro", 0.0) >= MIN_BASELINE_POCKET_LOT:
+                for candidate in ("MicroTrendPullback", "BB_RSI", "RangeBounce"):
+                    if candidate in allowed:
+                        priority.append(candidate)
+            if not priority:
+                return
+            logging.info("[BASELINE] ensure strategies=%s lots=%s", priority, lots)
+            for name in reversed(priority):
+                _ensure_directive_enabled(name)
+                if name in ranked:
+                    ranked.remove(name)
+                ranked.insert(0, name)
+
+        weight_macro = _safe_weight(gpt.get("weight_macro"), w_macro)
+        weight_scalp = _safe_scalp_weight(gpt.get("weight_scalp"), w_scalp)
+        if strong_trend:
+            weight_scalp = max(MIN_SCALP_WEIGHT, weight_scalp - 0.03)
+        elif high_volatility and not strong_trend:
+            weight_scalp = min(MAX_SCALP_WEIGHT, weight_scalp + 0.02)
+        if event_soon:
+            weight_scalp = min(weight_scalp, w_scalp)
+        if weight_macro + weight_scalp > MACRO_SCALP_CAP:
+            excess = (weight_macro + weight_scalp) - MACRO_SCALP_CAP
+            reduce_macro = min(weight_macro - 0.05, excess * 0.7)
+            if reduce_macro > 0:
+                weight_macro -= reduce_macro
+                excess -= reduce_macro
+            if excess > 0:
+                weight_scalp = max(MIN_SCALP_WEIGHT, weight_scalp - excess)
+        micro_share = max(0.0, 1.0 - weight_macro - weight_scalp)
+        if not event_soon and micro_share < 0.12 and weight_macro > 0.3:
+            uplift = min(0.12 - micro_share, weight_macro * 0.2)
+            micro_share += uplift
+            weight_macro = max(0.0, weight_macro - uplift)
+        # Derive human-friendly mode for dashboard using macro vs (macro+micro)
+        denom = max(1e-6, weight_macro + micro_share)
+        macro_ratio = weight_macro / denom
+        if macro_ratio <= 0.4:
             mode = "micro"
-        elif weight >= 0.6:
+        elif macro_ratio >= 0.6:
             mode = "macro"
         else:
             mode = "hybrid"
@@ -634,19 +1045,36 @@ def run_once():
             top_strategy = ranked[0] if ranked else None
             strategy_bias = _risk_bias(top_strategy) if top_strategy else 1.0
             base_units = int(base_units * news_mult * spread_mult * strategy_bias)
-            min_units = int(os.environ.get("MIN_UNITS", "0"))
-            if base_units and base_units < min_units:
-                logging.info(
-                    "[SKIP] base_units below MIN_UNITS after risk adjustments",
-                    extra={"base_units": base_units, "min_units": min_units},
-                )
-                base_units = 0
+
+            try:
+                min_units_cfg = int(os.environ.get("MIN_UNITS", "0"))
+            except ValueError:
+                min_units_cfg = 0
+            if min_units_cfg > 0 and units_by_margin > 0:
+                forced_units = max(base_units, min_units_cfg)
+                forced_units = min(forced_units, units_by_margin)
+                if forced_units > base_units:
+                    _log_event(
+                        logging.INFO,
+                        "base_units_floor_applied",
+                        base_units=base_units,
+                        forced_units=forced_units,
+                        min_units=min_units_cfg,
+                        units_by_risk=units_by_risk,
+                        units_by_margin=units_by_margin,
+                        risk_pct=risk_pct,
+                        news_mult=news_mult,
+                        spread_mult=spread_mult,
+                        strategy_bias=strategy_bias,
+                    )
+                base_units = forced_units
 
             # Convert to lot fraction for allocator (1 lot = 100k units)
             lot_total = round(base_units / 100000.0, 3)
-            lots = {"micro": lot_total * (1 - weight), "macro": lot_total * weight}
+            lots = alloc(lot_total, weight_macro, weight_scalp)
+            _inject_baseline_strategies(lots)
 
-            # --- Soft gating (never drop signals; scale exposure instead) ---
+            # --- Cooldown / gating (never drop signals; scale exposure instead) ---
             soft_cd_min = int(os.environ.get("SOFT_COOLDOWN_MIN", "60"))
             soft_cd_factor = float(os.environ.get("SOFT_COOLDOWN_FACTOR", "0.25"))
             event_size_factor = float(os.environ.get("EVENT_SIZE_FACTOR", "0.15"))
@@ -654,22 +1082,60 @@ def run_once():
             spread_hard_max = float(os.environ.get("SPREAD_HARD_MAX", "3.0"))
             daily_soft_stop_pct = float(os.environ.get("DAILY_SOFT_STOP_PCT", "-0.01"))  # -1%
             daily_soft_factor = float(os.environ.get("DAILY_SOFT_FACTOR", "0.10"))
+            hard_cd_global = int(os.environ.get("HARD_COOLDOWN_MIN", "15"))
+            hard_cd_macro = int(os.environ.get("HARD_COOLDOWN_MACRO_MIN", str(hard_cd_global)))
+            hard_cd_micro = int(os.environ.get("HARD_COOLDOWN_MICRO_MIN", "5"))
 
-            exposure_factor_base = 1.0
+            last_ot = st.get("last_order_time")
+            last_ot_pocket = st.get("last_order_pocket")
+            hard_cd_threshold = hard_cd_global
+            if last_ot_pocket == "macro":
+                hard_cd_threshold = hard_cd_macro
+            elif last_ot_pocket == "micro":
+                hard_cd_threshold = hard_cd_micro
+
+            hard_cd_active = False
+            try:
+                if last_ot and (now - datetime.fromisoformat(last_ot)).total_seconds() < hard_cd_threshold * 60:
+                    hard_cd_active = True
+            except Exception:
+                last_ot = None
+
+            exposure_factor_base = 0.3 if hard_cd_active else 1.0
+            if hard_cd_active:
+                logging.info(
+                    "[SKIP] Hard cooldown in effect",
+                    extra={"hard_cd_min": hard_cd_threshold, "last_order_time": last_ot, "last_order_pocket": last_ot_pocket},
+                )
+                skip_reasons.append(
+                    {
+                        "strategy": None,
+                        "reason": "hard_cooldown",
+                        "cooldown_min": hard_cd_threshold,
+                    }
+                )
             # Event window: scale down size instead of forbidding
             if event_soon:
                 exposure_factor_base *= max(min(event_size_factor, 1.0), 0.0)
             # Soft cooldown since last actual order
             try:
-                last_ot = st.get("last_order_time")
-                if last_ot and (now - datetime.fromisoformat(last_ot)).total_seconds() < soft_cd_min * 60:
-                    exposure_factor_base *= max(min(soft_cd_factor, 1.0), 0.0)
+                if last_ot:
+                    elapsed = (now - datetime.fromisoformat(last_ot)).total_seconds() / 60.0
+                    if elapsed < soft_cd_min:
+                        decay = max(0.5, 1.0 - (soft_cd_min - elapsed) / max(soft_cd_min, 1.0) * (1.0 - soft_cd_factor))
+                        exposure_factor_base *= decay
+                        logging.info(
+                            "[GATE] soft cooldown",
+                            extra={"elapsed_min": round(elapsed, 2), "factor": round(decay, 3)},
+                        )
             except Exception:
                 pass
             # Daily soft stop by PnL percent from start-of-day NAV
             try:
                 if progress_pct <= daily_soft_stop_pct:
                     exposure_factor_base *= max(min(daily_soft_factor, 1.0), 0.0)
+                elif progress_pct >= 0:
+                    exposure_factor_base *= 1.05
             except Exception:
                 pass
             # Spread-based linear decay between soft_min..hard_max
@@ -684,17 +1150,56 @@ def run_once():
             except Exception:
                 pass
             decision = None
-            # NewsSpikeReversalのみ実装がニュース依存、他はM1のみ
-            from strategies.trend.ma_cross import MovingAverageCross
-            from strategies.breakout.donchian55 import Donchian55
-            from strategies.mean_reversion.bb_rsi import BBRsi
-            from strategies.news.spike_reversal import NewsSpikeReversal
+            decisions: list[str] = []
+            filled_pockets: set[str] = set()
+            micro_executed = False
+
+            def _micro_fallback_signal() -> Dict[str, float] | None:
+                if event_soon:
+                    return None
+                price_raw = fac_m1.get("close")
+                ma20_raw = fac_m1.get("ma20")
+                ma10_raw = fac_m1.get("ma10")
+                atr_raw = fac_m1.get("atr")
+                if price_raw is None:
+                    return None
+                try:
+                    price_val = float(price_raw)
+                    ma20_val = float(ma20_raw) if ma20_raw is not None else price_val
+                    ma10_val = float(ma10_raw) if ma10_raw is not None else price_val
+                    atr_val = float(atr_raw or 0.0)
+                except (TypeError, ValueError):
+                    return None
+
+                atr_pips = max(atr_val * 100.0, 1.0)
+
+                if micro_regime in ("Trend", "Breakout"):
+                    action = "buy" if ma10_val >= ma20_val else "sell"
+                elif micro_regime in ("Range", "Mixed"):
+                    action = "buy" if price_val <= ma20_val else "sell"
+                else:
+                    velocity = float(fac_m1.get("tick_velocity_30s", 0.0) or 0.0)
+                    action = "buy" if velocity >= 0 else "sell"
+
+                sl_pips = max(6.0, atr_pips * 0.9)
+                tp_pips = max(sl_pips * 1.45, sl_pips + 6.0)
+                return {
+                    "action": action,
+                    "sl_pips": round(sl_pips, 1),
+                    "tp_pips": round(tp_pips, 1),
+                }
             STRATS = {
                 "TrendMA": MovingAverageCross,
                 "Donchian55": Donchian55,
                 "BB_RSI": BBRsi,
                 "NewsSpikeReversal": NewsSpikeReversal,
+                "MicroTrendPullback": MicroTrendPullback,
             }
+            hard_strat_cd_global = int(os.environ.get("HARD_STRATEGY_COOLDOWN_MIN", str(hard_cd_global)))
+            hard_strat_cd_macro = int(os.environ.get("HARD_STRATEGY_COOLDOWN_MIN_MACRO", str(hard_strat_cd_global)))
+            hard_strat_cd_micro = int(os.environ.get("HARD_STRATEGY_COOLDOWN_MIN_MICRO", str(hard_cd_micro)))
+            last_by_strategy = st.get("last_order_by_strategy", {}) or {}
+            last_by_pocket = st.get("last_order_by_pocket", {}) or {}
             adx_h4 = float(fac_h4.get("adx") or 0.0)
             adx_m1 = float(fac_m1.get("adx") or 0.0)
             slope_h4 = abs(float(fac_h4.get("ma_slope") or 0.0))
@@ -703,19 +1208,47 @@ def run_once():
                 cls = STRATS.get(sname)
                 if not cls:
                     continue
+                pocket = cls.pocket
+                if pocket in filled_pockets:
+                    logging.info(
+                        "[SKIP] %s pocket %s already filled this request",
+                        sname,
+                        pocket,
+                    )
+                    skip_reasons.append(
+                        {"strategy": sname, "reason": "pocket_filled", "pocket": pocket}
+                    )
+                    continue
+                strategy_key = f"{sname}:{cls.pocket}"
+                last_strat_ts = last_by_strategy.get(strategy_key)
+                strategy_cd = hard_strat_cd_micro if cls.pocket == "micro" else hard_strat_cd_macro
+                if last_strat_ts:
+                    try:
+                        if (now - datetime.fromisoformat(last_strat_ts)).total_seconds() < strategy_cd * 60:
+                            logging.info(
+                                "[SKIP] Strategy cooldown active",
+                                extra={"strategy": sname, "pocket": cls.pocket, "cooldown_min": strategy_cd},
+                            )
+                            skip_reasons.append(
+                                {
+                                    "strategy": sname,
+                                    "pocket": cls.pocket,
+                                    "reason": "strategy_cooldown",
+                                }
+                            )
+                            continue
+                    except Exception:
+                        pass
                 # Event モード中も取引は許可（上でサイズを縮小）
                 if sname == "BB_RSI":
-                    max_adx_h4 = float(os.environ.get("BBRSI_MAX_ADX_H4", "35"))
-                    max_adx_m1 = float(os.environ.get("BBRSI_MAX_ADX_M1", "32"))
-                    max_slope_h4 = float(os.environ.get("BBRSI_MAX_SLOPE_H4", "0.06"))
+                    max_adx_h4 = float(os.environ.get("BBRSI_MAX_ADX_H4", "42"))
+                    max_adx_m1 = float(os.environ.get("BBRSI_MAX_ADX_M1", "38"))
+                    max_slope_h4 = float(os.environ.get("BBRSI_MAX_SLOPE_H4", "0.09"))
                     suppress = False
-                    if macro_regime == "Trend" and micro_regime == "Trend":
+                    trend_stack = macro_regime == "Trend" and micro_regime == "Trend"
+                    if trend_stack and adx_h4 > max_adx_h4 and slope_h4 > max_slope_h4:
                         suppress = True
-                    if adx_h4 > max_adx_h4:
-                        suppress = True
-                    if adx_m1 > max_adx_m1 and micro_regime == "Trend":
-                        suppress = True
-                    if slope_h4 > max_slope_h4 and macro_regime == "Trend":
+                    if adx_m1 > max_adx_m1 and trend_stack:
                         suppress = True
                     if suppress:
                         logging.info(
@@ -731,7 +1264,7 @@ def run_once():
                         continue
                 if sname == "NewsSpikeReversal":
                     sig = cls.check(fac_m1, news_cache.get("short", []))
-                elif cls.pocket == "macro":
+                elif getattr(cls, "requires_h4", False) or cls.pocket == "macro":
                     sig = cls.check(fac_m1, fac_h4)
                 else:
                     sig = cls.check(fac_m1)
@@ -764,6 +1297,13 @@ def run_once():
                 lot = round(lot * float(_risk_multiplier_from_stats(learning_stats, cls.name, pocket)), 3)
                 # Apply soft gating exposure factor (never hard drop the signal here)
                 lot = round(lot * exposure_factor_base, 4)
+                if exposure_factor_base > 0 and lot_total > 0:
+                    if pocket == "micro":
+                        min_lot_cfg = float(os.environ.get("MIN_MICRO_LOT", "0.0"))
+                    else:
+                        min_lot_cfg = float(os.environ.get("MIN_MACRO_LOT", "0.0"))
+                    if min_lot_cfg > 0:
+                        lot = max(lot, min(min_lot_cfg, lot_total))
                 if lot <= 0:
                     logging.info(
                         "[SKIP] lot allocation <= 0",
@@ -775,17 +1315,32 @@ def run_once():
                     continue
                 price = fac_m1.get("close")
                 # 動的SL/TP（ATR倍率）対応
+                pip = 0.01
                 sl_pips = sig.get("sl_pips")
                 tp_pips = sig.get("tp_pips")
                 if sig.get("sl_atr_mult") or sig.get("tp_atr_mult"):
                     atr_src = fac_h4 if pocket == "macro" else fac_m1
                     atr_val = float(atr_src.get("atr", 0.0) or 0.0)
                     if sig.get("sl_atr_mult"):
-                        sl_pips = int(round(atr_val * 100 * float(sig.get("sl_atr_mult", 0.0))))
+                        sl_pips = float(atr_val * 100 * float(sig.get("sl_atr_mult", 0.0)))
                     if sig.get("tp_atr_mult"):
-                        tp_pips = int(round(atr_val * 100 * float(sig.get("tp_atr_mult", 0.0))))
-                if not sl_pips or not tp_pips:
-                    continue
+                        tp_pips = float(atr_val * 100 * float(sig.get("tp_atr_mult", 0.0)))
+                if sl_pips is None or tp_pips is None:
+                    sl_pips = 20.0
+                    tp_pips = 20.0
+                sl_cap = float(sig.get("sl_cap_pips", 0.0) or 0.0)
+                sl_floor = float(sig.get("sl_floor_pips", 0.0) or 0.0)
+                tp_cap = float(sig.get("tp_cap_pips", 0.0) or 0.0)
+                tp_floor = float(sig.get("tp_floor_pips", 0.0) or 0.0)
+                if sl_floor:
+                    sl_pips = max(sl_pips, sl_floor)
+                if sl_cap:
+                    sl_pips = min(sl_pips, sl_cap)
+                if tp_floor:
+                    tp_pips = max(tp_pips, tp_floor)
+                if tp_cap:
+                    tp_pips = min(tp_pips, tp_cap)
+
                 units = int(lot * 100000) * (1 if sig["action"] == "buy" else -1)
                 if units == 0:
                     logging.info(
@@ -796,12 +1351,10 @@ def run_once():
                         {"strategy": sname, "reason": "units_zero", "lot": lot}
                     )
                     continue
-                sl, tp = clamp_sl_tp(
-                    price,
-                    price - sl_pips / 100,
-                    price + tp_pips / 100,
-                    sig["action"] == "buy",
-                )
+                if sig["action"] == "buy":
+                    sl, tp = clamp_sl_tp(price, price - sl_pips * pip, price + tp_pips * pip, True)
+                else:
+                    sl, tp = clamp_sl_tp(price, price + sl_pips * pip, price - tp_pips * pip, False)
                 trade_req = {
                     "ts": now.isoformat(timespec="seconds"),
                     "strategy": sname,
@@ -815,6 +1368,21 @@ def run_once():
                     "lot_total": lot_total,
                     "news_mult": news_mult,
                     "spread_pips": spread,
+                    "macro_regime": macro_regime,
+                    "micro_regime": micro_regime,
+                    "focus_tag": focus,
+                    "weight_macro": weight_macro,
+                    "weight_scalp": weight_scalp,
+                    "mode": mode,
+                    "adx_m1": cur_adx_m1,
+                    "adx_h4": cur_adx_h4,
+                    "bbw_m1": cur_bbw_m1,
+                    "bbw_h4": cur_bbw_h4,
+                    "atr_m1": float(fac_m1.get("atr") or 0.0),
+                    "atr_h4": float(fac_h4.get("atr") or 0.0),
+                    "session": _session_label(now),
+                    "direction": "long" if units > 0 else "short",
+                    "rsi_m1": rsi_m1,
                 }
                 order_result = asyncio.run(
                     market_order(
@@ -833,17 +1401,132 @@ def run_once():
                     trade_req["order_id"] = order_result.get("order_id")
                 if not order_result.get("success"):
                     trade_req["order_error"] = order_result.get("error")
+                    _log_trade(trade_req)
+                    continue
+                logging.info(
+                    "[ORDER_PLACED] %s | %s | pocket=%s | lot=%s | units=%s | SL=%s TP=%s",
+                    trade_req["trade_id"],
+                    sname,
+                    pocket,
+                    lot,
+                    units,
+                    sl,
+                    tp,
+                )
                 _log_trade(trade_req)
                 # mark last_order_time for soft cooldown
                 try:
+                    if "last_order_by_strategy" not in st or not isinstance(st.get("last_order_by_strategy"), dict):
+                        st["last_order_by_strategy"] = {}
+                    if "last_order_by_pocket" not in st or not isinstance(st.get("last_order_by_pocket"), dict):
+                        st["last_order_by_pocket"] = {}
                     st["last_order_time"] = now.isoformat(timespec="seconds")
+                    st["last_order_strategy"] = sname
+                    st["last_order_pocket"] = pocket
+                    st["last_order_by_strategy"][strategy_key] = now.isoformat(timespec="seconds")
+                    st["last_order_by_pocket"][pocket] = now.isoformat(timespec="seconds")
                     _save_state(st)
                 except Exception:
                     pass
-                decision = f"ORDER:{trade_req['trade_id']}:{sname}:{pocket}:{lot}"
-                break
+                decisions.append(f"ORDER:{trade_req['trade_id']}:{sname}:{pocket}:{lot}")
+                if pocket == "micro":
+                    micro_executed = True
+                filled_pockets.add(pocket)
+
+        if (
+            not micro_executed
+            and not hard_cd_active
+            and can_trade("micro")
+            and lots.get("micro", 0.0) >= MIN_BASELINE_POCKET_LOT
+        ):
+            fallback_sig = _micro_fallback_signal()
+            if fallback_sig:
+                lot = lots.get("micro", 0.0)
+                lot = round(lot * float(_risk_multiplier_from_stats(learning_stats, "MicroTrendPullback", "micro")), 3)
+                lot = round(lot * exposure_factor_base, 4)
+                if lot > 0:
+                    units = int(round(lot * 100000))
+                    if units != 0:
+                        pip = 0.01
+                        price = fac_m1.get("close") or 0.0
+                        if fallback_sig["action"] == "sell":
+                            units = -abs(units)
+                            sl, tp = clamp_sl_tp(price, price + fallback_sig["sl_pips"] * pip, price - fallback_sig["tp_pips"] * pip, False)
+                        else:
+                            units = abs(units)
+                            sl, tp = clamp_sl_tp(price, price - fallback_sig["sl_pips"] * pip, price + fallback_sig["tp_pips"] * pip, True)
+                        trade_req = {
+                            "ts": now.isoformat(timespec="seconds"),
+                            "strategy": "MicroFallback",
+                            "pocket": "micro",
+                            "instrument": INSTRUMENT,
+                            "action": "BUY" if units > 0 else "SELL",
+                            "units": units,
+                            "price": price,
+                            "sl": sl,
+                            "tp": tp,
+                            "lot_total": lot_total,
+                            "news_mult": news_mult,
+                            "spread_pips": spread,
+                            "macro_regime": macro_regime,
+                            "micro_regime": micro_regime,
+                            "focus_tag": mode,
+                            "weight_macro": weight_macro,
+                            "mode": mode,
+                            "adx_m1": cur_adx_m1,
+                            "adx_h4": cur_adx_h4,
+                            "bbw_m1": cur_bbw_m1,
+                            "bbw_h4": cur_bbw_h4,
+                            "atr_m1": float(fac_m1.get("atr") or 0.0),
+                            "atr_h4": float(fac_h4.get("atr") or 0.0),
+                            "session": _session_label(now),
+                            "direction": "long" if units > 0 else "short",
+                            "rsi_m1": rsi_m1,
+                        }
+                        result = asyncio.run(
+                            market_order(
+                                INSTRUMENT,
+                                units,
+                                sl,
+                                tp,
+                                "micro",
+                                strategy="MicroFallback",
+                                macro_regime=macro_regime,
+                                micro_regime=micro_regime,
+                            )
+                        )
+                        trade_req["trade_id"] = result.get("trade_id") or "FAIL"
+                        if result.get("order_id"):
+                            trade_req["order_id"] = result.get("order_id")
+                        if not result.get("success"):
+                            trade_req["order_error"] = result.get("error")
+                            _log_trade(trade_req)
+                        else:
+                            logging.info(
+                                "[ORDER_FALLBACK] %s | MicroFallback | pocket=micro | lot=%s | units=%s | SL=%s TP=%s",
+                                trade_req["trade_id"],
+                                lot,
+                                units,
+                                sl,
+                                tp,
+                            )
+                            _log_trade(trade_req)
+                            st.setdefault("last_order_by_strategy", {})["MicroFallback:micro"] = now.isoformat(timespec="seconds")
+                            st.setdefault("last_order_by_pocket", {})["micro"] = now.isoformat(timespec="seconds")
+                            st["last_order_time"] = now.isoformat(timespec="seconds")
+                            st["last_order_strategy"] = "MicroFallback"
+                            st["last_order_pocket"] = "micro"
+                            _save_state(st)
+                            decisions.append(f"ORDER:{trade_req['trade_id']}:MicroFallback:micro:{lot}")
+                            filled_pockets.add("micro")
+                            micro_executed = True
+
+        if decisions:
+            decision = ";".join(decisions)
 
         # 8) 状態保存
+        if decision is None and hard_cd_active:
+            decision = "HARD_COOLDOWN"
         st.update({
             "last_gpt_call_time": now.isoformat(timespec="seconds"),
             "prev_adx_m1": cur_adx_m1, "prev_adx_h4": cur_adx_h4,
@@ -871,7 +1554,7 @@ def run_once():
             except Exception:
                 ttl = None
 
-            status_doc = {
+            status_doc = _status_payload({
                 "ts": now.isoformat(timespec="seconds"),
                 "instrument": INSTRUMENT,
                 "equity": st.get("equity"),
@@ -880,6 +1563,8 @@ def run_once():
                 "micro_regime": micro_regime,
                 "focus_tag": focus,
                 "weight_macro": w_macro,
+                "weight_micro": w_micro,
+                "weight_scalp": w_scalp,
                 "mode": mode,
                 "selected_instruments": [INSTRUMENT],
                 "diversify_slots": 1,
@@ -907,7 +1592,7 @@ def run_once():
                 "day_start_nav": st.get("day_start_nav"),
                 "skip_reasons": skip_reasons[:5] if skip_reasons else [],
                 "learning_scores": learning_snapshot,
-            }
+            })
             fs.collection("status").document("trader").set(status_doc)
         except Exception as _e:
             logging.warning(f"status_write_failed: {_e}")

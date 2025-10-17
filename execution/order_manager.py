@@ -57,12 +57,15 @@ def _ensure_api() -> tuple[API | None, str | None]:
         return None, None
 
 
+Pocket = Literal["micro", "macro", "scalp"]
+
+
 async def market_order(
     instrument: str,
     units: int,
     sl_price: float,
     tp_price: float,
-    pocket: Literal["micro", "macro"],
+    pocket: Pocket,
     *,
     strategy: str | None = None,
     macro_regime: str | None = None,
@@ -103,9 +106,20 @@ async def market_order(
     try:
         api.request(r)
         response = r.response
-        trade_opened = response.get("orderFillTransaction", {}).get("tradeOpened", {})
-        trade_id = trade_opened.get("tradeID")
-        order_id = response.get("orderFillTransaction", {}).get("orderID")
+        fill_tx = response.get("orderFillTransaction", {}) or {}
+        trade_opened = fill_tx.get("tradeOpened") or {}
+        trade_id = (
+            trade_opened.get("tradeID")
+            or trade_opened.get("id")
+            or fill_tx.get("tradeID")
+            or fill_tx.get("id")
+        )
+        order_id = (
+            fill_tx.get("orderID")
+            or response.get("orderCreateTransaction", {}).get("id")
+            or fill_tx.get("id")
+        )
+        success = bool(fill_tx) or bool(trade_id)
         logging.info(
             "[ORDER_SUCCESS] instrument=%s units=%s trade_id=%s order_id=%s",
             instrument,
@@ -114,7 +128,7 @@ async def market_order(
             order_id,
         )
         return {
-            "success": bool(trade_id),
+            "success": success,
             "trade_id": trade_id,
             "order_id": order_id,
             "raw": response,

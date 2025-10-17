@@ -7,9 +7,11 @@ Exit判断を補助する GPT 連携モジュール。
 from __future__ import annotations
 
 import json
-from typing import Dict, Any
+import logging
+import os
+from typing import Dict, Any, Iterable, List
 
-from openai import AsyncOpenAI
+from openai import AsyncOpenAI, BadRequestError
 
 from utils.cost_guard import add_cost, add_tokens, within_budget_usd
 from utils.secrets import get_secret
@@ -20,6 +22,8 @@ _PRICE_IN_PER_M = None
 _PRICE_OUT_PER_M = None
 _MAX_TOKENS_MONTH = None
 _CLIENT: AsyncOpenAI | None = None
+
+logger = logging.getLogger(__name__)
 
 _STR_TEMPLATE = (
     "You are an FX exit advisor for USD/JPY trades.\n"
@@ -135,8 +139,95 @@ def _normalize(resp: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
-async def get_exit_advice(payload: Dict[str, Any]) -> Dict[str, Any]:
+def _model_candidates() -> List[str]:
+    """Return primary model followed by safe fallbacks (deduplicated)."""
+
+    seen: set[str] = set()
+    models: List[str] = []
+
+    def _push(candidate: str | None) -> None:
+        if not candidate:
+            return
+        cand = candidate.strip()
+        if not cand or cand in seen:
+            return
+        seen.add(cand)
+        models.append(cand)
+
+    _push(_MODEL)
+
+    for key in ("openai_exit_fallback_model", "openai_model"):
+        try:
+            _push(get_secret(key))
+        except Exception:
+            continue
+
+    env_chain = os.environ.get("EXIT_GPT_FALLBACK_MODELS")
+    if env_chain:
+        for item in env_chain.split(","):
+            _push(item)
+
+    for default in ("gpt-4o-mini", "gpt-4o", "gpt-4.1-mini"):
+        _push(default)
+
+    return models
+
+
+async def _call_model(model: str, messages: Iterable[Dict[str, Any]]) -> Dict[str, Any]:
+    """Invoke OpenAI chat.completions and return decoded JSON."""
+
     client = await _ensure_client()
+    messages_payload = list(messages)
+    base_kwargs = {
+        "model": model,
+        "messages": messages_payload,
+        "timeout": 7,
+    }
+    try:
+        resp = await client.chat.completions.create(
+            **base_kwargs,
+            max_tokens=180,
+        )
+    except BadRequestError as exc:
+        detail = str(exc).lower()
+        if "max_tokens" not in detail:
+            raise GPTExitAdvisorError(f"{model} call failed: {exc}") from exc
+        try:
+            resp = await client.chat.completions.create(
+                **base_kwargs,
+                max_completion_tokens=180,
+            )
+        except Exception as inner:
+            raise GPTExitAdvisorError(f"{model} call failed after retry: {inner}") from inner
+    except Exception as exc:
+        raise GPTExitAdvisorError(f"{model} call failed: {exc}") from exc
+
+    usage_in = int(resp.usage.prompt_tokens or 0)
+    usage_out = int(resp.usage.completion_tokens or 0)
+    add_tokens(usage_in + usage_out, int(_MAX_TOKENS_MONTH or 500_000))
+    add_cost(
+        model=model,
+        prompt_tokens=usage_in,
+        completion_tokens=usage_out,
+        price_in_per_m=float(_PRICE_IN_PER_M or 0.15),
+        price_out_per_m=float(_PRICE_OUT_PER_M or 0.60),
+        max_month_usd=float(_MAX_MONTH_USD or 30.0),
+    )
+
+    content = resp.choices[0].message.content or ""
+    content = content.strip()
+    if not content:
+        raise GPTExitAdvisorError(f"{model} returned empty content")
+
+    content = content.lstrip("```json").rstrip("```").strip()
+    try:
+        return json.loads(content)
+    except json.JSONDecodeError as exc:
+        raise GPTExitAdvisorError(f"Invalid JSON from {model}: {content}") from exc
+
+
+async def get_exit_advice(payload: Dict[str, Any]) -> Dict[str, Any]:
+    await _ensure_client()
     if not within_budget_usd(_MAX_MONTH_USD):
         raise GPTExitAdvisorError("USD budget exceeded")
 
@@ -145,42 +236,38 @@ async def get_exit_advice(payload: Dict[str, Any]) -> Dict[str, Any]:
         {"role": "system", "content": _STR_TEMPLATE},
         {"role": "user", "content": f"Context JSON: {user_blob}"},
     ]
+    errors: list[str] = []
+    for idx, model in enumerate(_model_candidates()):
+        try:
+            data = await _call_model(model, messages)
+            if idx > 0:
+                logger.warning(
+                    "[GPT_EXIT] primary model %s failed; used fallback %s",
+                    _MODEL,
+                    model,
+                )
+            return _normalize(data)
+        except GPTExitAdvisorError as exc:
+            errors.append(f"{model}: {exc}")
+            logger.warning("[GPT_EXIT] model attempt failed: %s", errors[-1])
+            continue
+    raise GPTExitAdvisorError("; ".join(errors))
+
+
+async def advise_or_fallback(
+    payload: Dict[str, Any], *, force_fallback: bool = False
+) -> Dict[str, Any]:
     try:
-        resp = await client.chat.completions.create(
-            model=_MODEL,
-            messages=messages,
-            temperature=0.2,
-            max_tokens=120,
-            timeout=7,
-        )
-    except Exception as exc:
-        raise GPTExitAdvisorError(str(exc)) from exc
-
-    usage_in = int(resp.usage.prompt_tokens or 0)
-    usage_out = int(resp.usage.completion_tokens or 0)
-    add_tokens(usage_in + usage_out, int(_MAX_TOKENS_MONTH or 500_000))
-    add_cost(
-        model=_MODEL,
-        prompt_tokens=usage_in,
-        completion_tokens=usage_out,
-        price_in_per_m=float(_PRICE_IN_PER_M or 0.15),
-        price_out_per_m=float(_PRICE_OUT_PER_M or 0.60),
-        max_month_usd=float(_MAX_MONTH_USD or 30.0),
-    )
-
-    content = resp.choices[0].message.content.strip()
-    content = content.lstrip("```json").rstrip("```").strip()
-    try:
-        data = json.loads(content)
-    except json.JSONDecodeError as exc:
-        raise GPTExitAdvisorError(f"Invalid JSON from GPT: {content}") from exc
-    return _normalize(data)
-
-
-async def advise_or_fallback(payload: Dict[str, Any]) -> Dict[str, Any]:
-    try:
+        if force_fallback:
+            logger.info("[GPT_EXIT] forced fallback requested; skipping model call")
+            return _fallback(payload)
+        if os.environ.get("GPT_DISABLE_ALL") or os.environ.get("DISABLE_GPT_EXIT"):
+            logging.info("[GPT_EXIT] disabled via env; returning fallback")
+            return _fallback(payload)
         return await get_exit_advice(payload)
-    except GPTExitAdvisorError:
+    except GPTExitAdvisorError as exc:
+        logger.warning("[GPT_EXIT] fallback due to GPT error: %s", exc)
         return _fallback(payload)
-    except Exception:
+    except Exception as exc:
+        logger.exception("[GPT_EXIT] unexpected error -> fallback: %s", exc)
         return _fallback(payload)

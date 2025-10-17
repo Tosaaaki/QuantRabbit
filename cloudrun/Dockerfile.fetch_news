@@ -1,7 +1,17 @@
 FROM python:3.11-slim
+
 WORKDIR /app
 ENV PYTHONPATH=/app
-ENV PYTHONPATH=/app
-RUN pip install --no-cache-dir google-cloud-storage feedparser Flask gunicorn toml
+
+RUN pip install --no-cache-dir --upgrade pip \
+    && pip install --no-cache-dir \
+        Flask \
+        feedparser \
+        gunicorn \
+        httpx \
+        google-cloud-storage \
+        toml
+
 COPY cloudrun/. .
+
 CMD ["sh", "-c", "python -m gunicorn --bind 0.0.0.0:$PORT fetch_news_runner:app"]

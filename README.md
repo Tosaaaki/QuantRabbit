@@ -68,6 +68,24 @@ USD/JPY で 1 日 +100 pips を狙う完全自動売買システムです。
 
 ---
 
+## Manual Trader Assistant
+
+`manual_trader/` houses a GPT-guided helper for discretionary USD/JPY sessions. It reuses the existing candle fetchers and indicator engine to build a macro (H4) + micro (M1) snapshot and asks GPT for a structured trade plan that a human can review before placing orders manually.
+
+### Local Run
+
+```bash
+python -m manual_trader.cli --instrument USD_JPY
+```
+
+The CLI prints the current context, GPT guidance, and (unless `--non-interactive`) lets you jot down the order you intend to place. Each run is appended to `logs/manual_sessions.jsonl` so that decisions and GPT advice can be audited later. Use `--no-log` to skip persistence.
+
+### Notes
+
+- Requires the same OANDA REST credentials as the autonomous bot because it pulls recent candles.
+- GPT usage shares the cost guard (`.cache/token_usage.json`); set `openai_manual_*` keys if you want separate budgets or models.
+- Designed as a separate project: no orders are fired automatically, and nothing touches the main trade loop.
+
 ## Quick Start (Local Demo)
 
 ```bash
