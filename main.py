@@ -1,6 +1,7 @@
 import asyncio
 import datetime
 import logging
+import os
 import traceback
 
 from market_data.candle_fetcher import (
@@ -46,6 +47,26 @@ STRATEGIES = {
 }
 
 EQUITY = 10000.0  # ← 実際は REST から取得
+
+
+def _env_int(name: str, default: int) -> int:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    try:
+        return int(raw)
+    except (TypeError, ValueError):
+        return default
+
+
+MIN_MICRO_UNITS = max(0, _env_int("MIN_MICRO_UNITS", 500))
+MIN_MACRO_UNITS = max(0, _env_int("MIN_MACRO_UNITS", 0))
+MIN_SCALP_UNITS = max(0, _env_int("MIN_SCALP_UNITS", 0))
+MIN_UNITS_BY_POCKET = {
+    "micro": MIN_MICRO_UNITS,
+    "macro": MIN_MACRO_UNITS,
+    "scalp": MIN_SCALP_UNITS,
+}
 
 
 async def m1_candle_handler(cndl: Candle):
@@ -162,6 +183,16 @@ async def logic_loop():
                     continue
 
                 units = int(lot * 100000) * (1 if sig["action"] == "buy" else -1)
+                min_units = MIN_UNITS_BY_POCKET.get(pocket, 0)
+                if min_units > 0 and abs(units) < min_units:
+                    logging.info(
+                        "[SKIP] units below floor pocket=%s floor=%s units=%s strategy=%s",
+                        pocket,
+                        min_units,
+                        units,
+                        cls.name,
+                    )
+                    continue
                 price = fac_m1.get("close")
                 sl, tp = clamp_sl_tp(
                     price,
