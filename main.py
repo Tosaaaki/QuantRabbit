@@ -869,9 +869,9 @@ async def logic_loop():
                     directive_bias = _risk_bias("MicroTrendPullback")
                     if directive_bias != 1.0:
                         lot = round(lot * directive_bias, 3)
-                   if lot > 0:
-                       units = int(round(lot * 100000))
-                       if units != 0:
+                    if lot > 0:
+                        units = int(round(lot * 100000))
+                        if units != 0:
                             min_units = MIN_UNITS_BY_POCKET.get("micro", 0)
                             if min_units > 0 and abs(units) < min_units:
                                 logging.info(
