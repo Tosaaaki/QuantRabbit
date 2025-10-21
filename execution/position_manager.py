@@ -196,6 +196,12 @@ class PositionManager:
         )
         cur.execute("PRAGMA table_info(trades)")
         cols = {row[1] for row in cur.fetchall()}
+        if "ticket_id" not in cols:
+            cur.execute("ALTER TABLE trades ADD COLUMN ticket_id TEXT")
+            cur.execute(
+                "UPDATE trades SET ticket_id = COALESCE(ticket_id, printf('LEGACY_%s', id))"
+            )
+            cols.add("ticket_id")
         for name, typ in (
             ("pocket", "TEXT"),
             ("instrument", "TEXT"),
