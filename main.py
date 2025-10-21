@@ -45,6 +45,7 @@ from strategies.trend.ma_cross import MovingAverageCross
 from strategies.breakout.donchian55 import Donchian55
 from strategies.mean_reversion.bb_rsi import BBRsi
 from strategies.news.spike_reversal import NewsSpikeReversal
+from strategies.scalp.basic import BasicScalpStrategy
 from strategies.micro.trend_pullback import MicroTrendPullback
 from analysis.learning import re_rank_strategies, risk_multiplier
 from utils.market_hours import is_market_open
@@ -62,6 +63,7 @@ STRATEGIES = {
     "Donchian55": Donchian55,
     "BB_RSI": BBRsi,
     "NewsSpikeReversal": NewsSpikeReversal,
+    "ScalpMeanRevert": BasicScalpStrategy,
     "MicroTrendPullback": MicroTrendPullback,
 }
 
@@ -105,6 +107,14 @@ def _env_float(name: str, default: float) -> float:
 MIN_SCALP_WEIGHT = max(0.0, _env_float("MIN_SCALP_WEIGHT", 0.04))
 MAX_SCALP_WEIGHT = max(MIN_SCALP_WEIGHT, _env_float("MAX_SCALP_WEIGHT", 0.35))
 MACRO_SCALP_CAP = max(0.6, _env_float("MACRO_SCALP_SUM_CAP", 0.9))
+MIN_MICRO_UNITS = max(0, _env_int("MIN_MICRO_UNITS", 500))
+MIN_MACRO_UNITS = max(0, _env_int("MIN_MACRO_UNITS", 0))
+MIN_SCALP_UNITS = max(0, _env_int("MIN_SCALP_UNITS", 500))
+MIN_UNITS_BY_POCKET = {
+    "micro": MIN_MICRO_UNITS,
+    "macro": MIN_MACRO_UNITS,
+    "scalp": MIN_SCALP_UNITS,
+}
 
 SUPERVISOR_RESTART_DELAY_SEC = 5.0
 
@@ -736,6 +746,8 @@ async def logic_loop():
                     sig = cls.check(fac_m1, news_cache.get("short", []))
                 elif sname == "BB_RSI":
                     sig = cls.check(fac_m1, fac_h4)
+                elif sname == "ScalpMeanRevert":
+                    sig = cls.check(fac_m1)
                 elif getattr(cls, "requires_h4", False):
                     sig = cls.check(fac_m1, fac_h4)
                 elif sname == "RangeBounce":
@@ -747,8 +759,11 @@ async def logic_loop():
                     continue
 
                 # Event モード中は micro を原則禁止。ただし NewsSpikeReversal は例外で許可。
-                if event_soon and pocket == "micro" and sname != "NewsSpikeReversal":
-                    logging.info("[SKIP] Event soon, skipping non-news micro trade.")
+                if event_soon and pocket in {"micro", "scalp"} and sname != "NewsSpikeReversal":
+                    logging.info(
+                        "[SKIP] Event soon, skipping %s pocket trade.",
+                        pocket,
+                    )
                     continue
 
                 if not trade_allowed.get(pocket, True):
@@ -778,6 +793,16 @@ async def logic_loop():
                     continue
 
                 units = int(lot * 100000) * (1 if sig["action"] == "buy" else -1)
+                min_units = MIN_UNITS_BY_POCKET.get(pocket, 0)
+                if min_units > 0 and abs(units) < min_units:
+                    logging.info(
+                        "[SKIP] units below floor pocket=%s floor=%s units=%s strategy=%s",
+                        pocket,
+                        min_units,
+                        units,
+                        cls.name,
+                    )
+                    continue
                 price = float(fac_m1.get("close"))
                 sl, tp = _calc_sl_tp_from_signal(sig, sig["action"], price, pocket)
 
@@ -844,9 +869,18 @@ async def logic_loop():
                     directive_bias = _risk_bias("MicroTrendPullback")
                     if directive_bias != 1.0:
                         lot = round(lot * directive_bias, 3)
-                    if lot > 0:
-                        units = int(round(lot * 100000))
-                        if units != 0:
+                   if lot > 0:
+                       units = int(round(lot * 100000))
+                       if units != 0:
+                            min_units = MIN_UNITS_BY_POCKET.get("micro", 0)
+                            if min_units > 0 and abs(units) < min_units:
+                                logging.info(
+                                    "[MICRO_FALLBACK_BYPASS] reason=units_floor units=%s floor=%s",
+                                    units,
+                                    min_units,
+                                )
+                                lot = 0.0
+                                continue
                             action = fallback_sig["action"]
                             price = float(fac_m1.get("close"))
                             sl, tp = _calc_sl_tp_from_signal(

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from typing import Any, Dict, Tuple
 
@@ -18,6 +19,39 @@ class BasicScalpStrategy:
 
     name = "ScalpMeanRevert"
     pocket = "scalp"
+
+    _DEFAULTS: Dict[str, Any] = {
+        "max_spread_pips": 0.4,
+        "min_atr_pips": 0.9,
+        "deviation_pips": 1.2,
+        "atr_threshold_mult": 0.1,
+        "min_sl_pips": 6.0,
+        "tp_multiplier": 1.45,
+        "momentum_flip_pips": 0.8,
+        "momentum_confirm_pips": 0.6,
+        "momentum_velocity_cap": 6.5,
+        "momentum_range_min": 1.0,
+        "enable_trend_follow": False,
+        "trend_velocity_min": 8.0,
+        "trend_range_min": 1.6,
+        "trend_momentum_min": 0.8,
+        "trend_rsi_buy": 60.0,
+        "trend_rsi_sell": 40.0,
+        "trend_sl_pips": 7.0,
+        "trend_tp_multiplier": 1.6,
+        "candle_range_pips": 0.0,
+        "revert_range_block_pips": 4.0,
+        "revert_range_widen_pips": 3.0,
+        "revert_range_sl_boost": 1.25,
+        "revert_gap_pips": 0.6,
+        "revert_rsi_long_max": 42.0,
+        "revert_rsi_short_min": 58.0,
+        "revert_sl_atr_k": 2.0,
+        "revert_sl_min_pips": 7.0,
+        "force_trend": False,
+        "forced_direction": None,
+        "allow_mean_revert": True,
+    }
 
     @staticmethod
     def evaluate(
@@ -211,3 +245,24 @@ class BasicScalpStrategy:
             tp_short = max(sl_short * trend_tp_multiplier, sl_short + max(3.0, atr_pips))
             return ScalpSignal(action="sell", sl_pips=sl_short, tp_pips=tp_short), "trend_short"
         return None, "no_pattern"
+
+    @staticmethod
+    def check(fac_m1: Dict[str, Any]) -> Dict[str, float] | None:
+        params = BasicScalpStrategy._DEFAULTS.copy()
+        spread = float(fac_m1.get("spread_pips") or 0.2)
+        # 修正: typo key trend_sl_pipes -> trend_sl_pips
+        trend_sl = params.pop("trend_sl_pips", 7.0)
+        signal, reason = BasicScalpStrategy.evaluate(
+            fac_m1,
+            spread_pips=spread,
+            trend_sl_pips=trend_sl,
+            **params,
+        )
+        if signal:
+            return {
+                "action": signal.action,
+                "sl_pips": round(signal.sl_pips, 1),
+                "tp_pips": round(signal.tp_pips, 1),
+            }
+        logging.debug("[SCALP] filtered: %s", reason)
+        return None
