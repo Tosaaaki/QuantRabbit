@@ -46,15 +46,25 @@ def _ensure_table(client: bigquery.Client, dataset_id: str, table_id: str) -> No
         client.create_table(table)
 
 
+OANDA_GRANULARITY = {
+    "M1": "M1",
+    "M5": "M5",
+    "H1": "H1",
+    "H4": "H4",
+    "D1": "D",
+}
+
+
 def _fetch_and_transform(
     instrument: str,
     timeframe: str,
     count: int,
 ) -> List[dict]:
-    candles = asyncio.run(fetch_historical_candles(instrument, timeframe, count))
+    api_tf = OANDA_GRANULARITY.get(timeframe, timeframe)
+    candles = asyncio.run(fetch_historical_candles(instrument, api_tf, count))
     return [
         {
-            "ts": c["time"],
+            "ts": c["time"].isoformat(),
             "instrument": instrument,
             "timeframe": timeframe,
             "open": c["open"],

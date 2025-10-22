@@ -173,6 +173,20 @@ class OrderIntent(BaseModel):
 - **Exit Manager**: 逆方向シグナルが閾値 (既定 70) を超えた場合やイベントロック、RSI/ADX 劣化などでクローズ。`allow_reentry` が False の場合は当該サイクル内の再参入を禁止する。
 - **Release gate**: PF>1.1, 勝率>52%、最大 DD<5% を 2 週間連続で満たしたら実弾に昇格。
 
+#### 3.5.1 レンジモード強化（2025-10）
+- 判定: `analysis/range_guard.detect_range_mode` が M1 の `ADX<=22`, `BBW<=0.20`, `ATR<=6` の同時充足、または H4 トレンド弱含み＋複合スコア閾値超で `range_mode` を返す。`metrics.composite` と `reason` をログ出力。
+- エントリー制御: `range_mode=True` の間はマクロ新規を抑制し、許可戦略を BB 逆張り（`BB_RSI`）等に限定。`focus_tag` を `micro` へ縮退、`weight_macro` を上限 0.15 に制限。
+- 利確/損切り: レンジ中は TP/SL をタイトに調整（目安 1.5〜2.0 pips の RR≒1:1）。`execution/exit_manager` は含み益が+1.6pips 以上で利確、+0.4pips超はホールド、−1.0pips で早期撤退。
+- 分割利確: `execution/order_manager.plan_partial_reductions` はレンジ中のしきい値を（macro 16/22, micro 10/16, scalp 6/10 pips）に低減し早めにヘッジ。
+- ステージ/再入場: `execution/stage_tracker` が方向別クールダウンとステージ永続化を提供。強制クローズや連続 3 敗で 15 分ブロック。勝ち負けに応じてロット係数を自動縮小（マーチン禁止）。
+
+実装差分の主な入口
+- レンジ判定: `analysis/range_guard.py`
+- エントリー選別/SLTP調整/レンジ抑制: `main.py` のシグナル評価・ロット配分周辺
+- 早期利確/撤退: `execution/exit_manager.py`
+- 分割利確しきい値(レンジ対応): `execution/order_manager.py`
+- ステージ永続化/クールダウン/ロット係数: `execution/stage_tracker.py`
+
 ---
 
 ## 4. 環境変数 / Secret 一覧
@@ -276,10 +290,22 @@ gcloud compute ssh fx-trader-vm --zone asia-northeast1-a \
 - `-b <BRANCH>`: デプロイ対象ブランチ（既定はローカルの現在ブランチ）
 - `-i`: VM の venv で `pip install -r requirements.txt` を実行
 - `-p <PROJECT>` / `-z <ZONE>` / `-m <INSTANCE>` / `-d <REPO_DIR>` / `-s <SERVICE>`: 環境に応じて上書き可能
+- `-k <KEYFILE>`: OS Login 用 SSH 鍵を明示
+- `-t`: IAP トンネルを使用（外部 IP 無しでも SSH）
 
 注意点
 - ローカルの未コミット変更は push されません。必ずコミットしてから実行してください。
 - 直接 SCP での差し替えは緊急時のみ。通常運用は本スクリプト経由の Git ベース反映を推奨します。
+
+OS Login 鍵準備（初回のみ）
+```bash
+ssh-keygen -t ed25519 -f ~/.ssh/gcp_oslogin_qr -N '' -C 'oslogin-quantrabbit'
+gcloud compute os-login ssh-keys add --key-file ~/.ssh/gcp_oslogin_qr.pub --ttl 30d
+```
+デプロイ例（鍵指定/IAP併用）
+```bash
+scripts/deploy_to_vm.sh -i -k ~/.ssh/gcp_oslogin_qr -t
+```
 
 8. チーム運用ルール
 	1.	1 ファイル = 1 PR、Squash Merge、CI green 必須
