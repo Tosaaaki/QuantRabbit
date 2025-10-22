@@ -195,7 +195,12 @@ class StageTracker:
             direction = "long" if units > 0 else "short"
             key = (pocket, direction)
             last_id, lose_streak, win_streak = existing.get(key, (0, 0, 0))
-            trade_id = int(row["id"])
+            try:
+                trade_id = int(row["id"]) if row["id"] is not None else None
+            except (TypeError, ValueError):  # noqa: PERF203
+                trade_id = None
+            if not trade_id:
+                continue
             if trade_id <= last_id:
                 continue
             pl_pips = float(row["pl_pips"] or 0.0)
