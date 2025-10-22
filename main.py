@@ -2,6 +2,8 @@ import asyncio
 import datetime
 import logging
 import traceback
+import time
+from typing import Optional
 
 from market_data.candle_fetcher import (
     Candle,
@@ -17,6 +19,7 @@ from analysis.summary_ingestor import check_event_soon, get_latest_news
 # バックグラウンドでニュース取得と要約を実行するためのインポート
 from market_data.news_fetcher import fetch_loop as news_fetch_loop
 from analysis.summary_ingestor import ingest_loop as summary_ingest_loop
+from analytics.insight_client import InsightClient
 from signals.pocket_allocator import alloc, DEFAULT_SCALP_SHARE
 from execution.risk_guard import (
     allowed_lot,
@@ -25,6 +28,7 @@ from execution.risk_guard import (
     check_global_drawdown,
 )
 from execution.order_manager import market_order
+from execution.exit_manager import ExitManager
 from execution.position_manager import PositionManager
 from strategies.trend.ma_cross import MovingAverageCross
 from strategies.breakout.donchian55 import Donchian55
@@ -56,6 +60,13 @@ STAGE_RATIOS = {
 }
 
 
+def build_client_order_id(focus_tag: Optional[str], strategy_tag: str) -> str:
+    ts_ms = int(time.time() * 1000)
+    focus_part = (focus_tag or "hybrid")[:6]
+    clean_tag = "".join(ch for ch in strategy_tag if ch.isalnum())[:9] or "sig"
+    return f"qr-{ts_ms}-{focus_part}-{clean_tag}"
+
+
 def _stage_conditions_met(
     pocket: str,
     stage_idx: int,
@@ -84,18 +95,18 @@ def _stage_conditions_met(
             )
             return False
         if price is not None and avg_price:
-            if action == "buy" and price < avg_price - 0.02:
+            if action == "OPEN_LONG" and price < avg_price - 0.02:
                 logging.info(
                     "[STAGE] Macro buy gating: price %.3f below avg %.3f.", price, avg_price
                 )
                 return False
-            if action == "sell" and price > avg_price + 0.02:
+            if action == "OPEN_SHORT" and price > avg_price + 0.02:
                 logging.info(
                     "[STAGE] Macro sell gating: price %.3f above avg %.3f.", price, avg_price
                 )
                 return False
         # RSI-based re-entry gates
-        if action == "buy":
+        if action == "OPEN_LONG":
             threshold = 60 - stage_idx * 5
             if rsi > threshold:
                 logging.info(
@@ -119,7 +130,7 @@ def _stage_conditions_met(
 
     if pocket == "micro":
         # mean reversion pocket requires RSI extremes to persist
-        if action == "buy":
+        if action == "OPEN_LONG":
             threshold = 45 - min(stage_idx * 5, 15)
             if rsi > threshold:
                 logging.info(
@@ -147,21 +158,21 @@ def _stage_conditions_met(
             logging.info("[STAGE] Scalp gating: ATR %.2f too low for stage %d.", atr, stage_idx)
             return False
         momentum = (fac_m1.get("close") or 0.0) - (fac_m1.get("ema20") or 0.0)
-        if action == "buy" and momentum > 0:
+        if action == "OPEN_LONG" and momentum > 0:
             logging.info(
                 "[STAGE] Scalp buy gating: momentum %.4f positive (stage %d).",
                 momentum,
                 stage_idx,
             )
             return False
-        if action == "sell" and momentum < 0:
+        if action == "OPEN_SHORT" and momentum < 0:
             logging.info(
                 "[STAGE] Scalp sell gating: momentum %.4f negative (stage %d).",
                 momentum,
                 stage_idx,
             )
             return False
-        if action == "buy":
+        if action == "OPEN_LONG":
             if rsi > 55 - min(stage_idx * 4, 12):
                 logging.info(
                     "[STAGE] Scalp buy gating: RSI %.1f too high (stage %d).",
@@ -233,8 +244,10 @@ async def h4_candle_handler(cndl: Candle):
 
 async def logic_loop():
     pos_manager = PositionManager()
+    exit_manager = ExitManager()
     perf_cache = {}
     news_cache = {}
+    insight = InsightClient()
     last_update_time = datetime.datetime.min
     last_heartbeat_time = datetime.datetime.min  # Add this line
 
@@ -253,6 +266,10 @@ async def logic_loop():
             if (now - last_update_time).total_seconds() >= 300:
                 perf_cache = get_perf()
                 news_cache = get_latest_news()
+                try:
+                    insight.refresh()
+                except Exception:
+                    pass
                 last_update_time = now
                 logging.info(f"[PERF] Updated: {perf_cache}")
                 logging.info(f"[NEWS] Updated: {news_cache}")
@@ -325,10 +342,125 @@ async def logic_loop():
             )
             ranked_strategies = list(gpt.get("ranked_strategies", []))
 
+            atr_pips = (fac_m1.get("atr") or 0.0) * 100
+            ema20 = fac_m1.get("ema20") or fac_m1.get("ma20")
+            close_px = fac_m1.get("close")
+            momentum = 0.0
+            if ema20 is not None and close_px is not None:
+                momentum = close_px - ema20
+
+            scalp_ready = atr_pips >= 2.2 and abs(momentum) >= 0.0015
+            if not scalp_ready and fac_m1.get("vol_5m"):
+                scalp_ready = atr_pips >= 2.0 and fac_m1["vol_5m"] >= 1.2
+            if scalp_ready and "M1Scalper" not in ranked_strategies:
+                ranked_strategies.append("M1Scalper")
+                logging.info(
+                    "[SCALP] Auto-added M1Scalper (ATR %.2f, momentum %.4f, vol5m %.2f).",
+                    atr_pips,
+                    momentum,
+                    fac_m1.get("vol_5m", 0.0),
+                )
+
+            focus_tag = gpt.get("focus_tag") or focus
             weight = gpt.get("weight_macro", w_macro)
 
-            # --- 3. 発注準備 ---
-            lot_total = allowed_lot(EQUITY, sl_pips=20)  # sl_pipsは仮
+            evaluated_signals: list[dict] = []
+            for sname in ranked_strategies:
+                cls = STRATEGIES.get(sname)
+                if not cls:
+                    continue
+                if sname == "NewsSpikeReversal":
+                    raw_signal = cls.check(fac_m1, news_cache.get("short", []))
+                else:
+                    raw_signal = cls.check(fac_m1)
+                if not raw_signal:
+                    continue
+                signal = {
+                    "strategy": sname,
+                    "pocket": cls.pocket,
+                    "action": raw_signal.get("action"),
+                    "confidence": int(raw_signal.get("confidence", 50) or 50),
+                    "sl_pips": raw_signal.get("sl_pips"),
+                    "tp_pips": raw_signal.get("tp_pips"),
+                    "tag": raw_signal.get("tag", cls.name),
+                }
+                evaluated_signals.append(signal)
+                logging.info("[SIGNAL] %s -> %s", cls.name, signal)
+
+            open_positions = pos_manager.get_open_positions()
+            net_units = int(open_positions.get("__net__", {}).get("units", 0))
+
+            exit_decisions = exit_manager.plan_closures(
+                open_positions, evaluated_signals, fac_m1, fac_h4, event_soon
+            )
+
+            executed_pockets: set[str] = set()
+            for decision in exit_decisions:
+                client_id = build_client_order_id(focus_tag, decision.tag)
+                trade_id = await market_order(
+                    "USD_JPY",
+                    decision.units,
+                    None,
+                    None,
+                    decision.pocket,
+                    client_order_id=client_id,
+                )
+                if trade_id:
+                    logging.info(
+                        "[EXIT] %s pocket=%s units=%s reason=%s client_id=%s",
+                        trade_id,
+                        decision.pocket,
+                        decision.units,
+                        decision.reason,
+                        client_id,
+                    )
+                    info = open_positions.setdefault(
+                        decision.pocket,
+                        {
+                            "units": 0,
+                            "avg_price": 0.0,
+                            "trades": 0,
+                            "long_units": 0,
+                            "long_avg_price": 0.0,
+                            "short_units": 0,
+                            "short_avg_price": 0.0,
+                        },
+                    )
+                    info["units"] = info.get("units", 0) + decision.units
+                    if decision.units < 0:
+                        info["long_units"] = max(
+                            0, info.get("long_units", 0) + decision.units
+                        )
+                        if info["long_units"] <= 0:
+                            info["long_avg_price"] = 0.0
+                    else:
+                        info["short_units"] = max(
+                            0, info.get("short_units", 0) - decision.units
+                        )
+                        if info["short_units"] <= 0:
+                            info["short_avg_price"] = 0.0
+                    net_units += decision.units
+                    open_positions.setdefault("__net__", {})["units"] = net_units
+                    if not decision.allow_reentry:
+                        executed_pockets.add(decision.pocket)
+                else:
+                    logging.error(
+                        "[EXIT FAILED] pocket=%s units=%s reason=%s",
+                        decision.pocket,
+                        decision.units,
+                        decision.reason,
+                    )
+
+            if not evaluated_signals:
+                logging.info("[WAIT] No actionable entry signals this cycle.")
+
+            sl_values = [
+                s["sl_pips"] for s in evaluated_signals if s.get("sl_pips") is not None
+            ]
+            avg_sl = (
+                sum(sl_values) / len(sl_values) if sl_values else 20.0
+            )
+            lot_total = allowed_lot(EQUITY, sl_pips=max(1.0, avg_sl))
             requested_pockets = {
                 STRATEGIES[s].pocket
                 for s in ranked_strategies
@@ -336,67 +468,74 @@ async def logic_loop():
             }
             scalp_share = DEFAULT_SCALP_SHARE if "scalp" in requested_pockets else 0.0
             lots = alloc(lot_total, weight, scalp_share=scalp_share)
-            if "micro" not in requested_pockets:
-                lots["micro"] = 0.0
-            if "macro" not in requested_pockets:
-                lots["macro"] = 0.0
-            if "scalp" not in requested_pockets:
-                lots["scalp"] = 0.0
-            open_positions = pos_manager.get_open_positions()
-            net_units = int(open_positions.get("__net__", {}).get("units", 0))
+            active_pockets = {sig["pocket"] for sig in evaluated_signals}
+            for key in list(lots):
+                if key not in active_pockets:
+                    lots[key] = 0.0
 
-            executed_pockets: set[str] = set()
-            # --- 4. 戦略実行ループ ---
-            for sname in ranked_strategies:
-                cls = STRATEGIES.get(sname)
-                if not cls:
+            for signal in evaluated_signals:
+                pocket = signal["pocket"]
+                action = signal.get("action")
+                if action not in {"OPEN_LONG", "OPEN_SHORT"}:
                     continue
-
-                # 全ての戦略はM1の指標で判断
-                # NewsSpikeReversal は news_short も必要
-                if sname == "NewsSpikeReversal":
-                    sig = cls.check(fac_m1, news_cache.get("short", []))
-                else:
-                    sig = cls.check(fac_m1)
-
-                if not sig:
-                    continue
-                logging.info("[SIGNAL] %s -> %s", cls.name, sig)
-
-                pocket = cls.pocket
                 if event_soon and pocket in {"micro", "scalp"}:
                     logging.info("[SKIP] Event soon, skipping %s pocket trade.", pocket)
                     continue
                 if pocket in executed_pockets:
-                    logging.info("[SKIP] %s pocket already traded this loop.", pocket)
+                    logging.info("[SKIP] %s pocket already handled this loop.", pocket)
                     continue
-
                 if not can_trade(pocket):
                     logging.info(f"[SKIP] DD limit for {pocket} pocket.")
                     continue
 
-                total_lot_for_pocket = lots.get(pocket, 0)
+                total_lot_for_pocket = lots.get(pocket, 0.0)
                 if total_lot_for_pocket <= 0:
                     continue
 
+                confidence = max(0, min(100, signal.get("confidence", 50)))
+                confidence_factor = max(0.2, confidence / 100.0)
+                confidence_target = round(total_lot_for_pocket * confidence_factor, 3)
+                if confidence_target <= 0:
+                    continue
+
+                # Apply lot multiplier from insights per pocket side
+                side = "LONG" if action == "OPEN_LONG" else "SHORT"
+                try:
+                    m = float(insight.get_multiplier(pocket, side))
+                except Exception:
+                    m = 1.0
+                if abs(m - 1.0) > 1e-3:
+                    adj = round(confidence_target * m, 3)
+                    logging.info(
+                        "[INSIGHT] pocket=%s side=%s multiplier=%.3f confTarget %.3f -> %.3f",
+                        pocket,
+                        side,
+                        m,
+                        confidence_target,
+                        adj,
+                    )
+                    confidence_target = adj
+
                 open_info = open_positions.get(pocket, {})
                 price = fac_m1.get("close")
-                if sig["action"] == "buy":
+                if action == "OPEN_LONG":
                     open_units = int(open_info.get("long_units", 0))
                     ref_price = open_info.get("long_avg_price")
                 else:
                     open_units = int(open_info.get("short_units", 0))
                     ref_price = open_info.get("short_avg_price")
+
                 stage_context = dict(open_info) if open_info else {}
                 if ref_price is None or (ref_price == 0.0 and open_units == 0):
                     ref_price = price
                 if ref_price is not None:
                     stage_context["avg_price"] = ref_price
+
                 staged_lot = compute_stage_lot(
                     pocket,
-                    total_lot_for_pocket,
+                    confidence_target,
                     open_units,
-                    sig["action"],
+                    action,
                     fac_m1,
                     fac_h4,
                     stage_context,
@@ -405,7 +544,7 @@ async def logic_loop():
                     continue
 
                 units = int(round(staged_lot * 100000)) * (
-                    1 if sig["action"] == "buy" else -1
+                    1 if action == "OPEN_LONG" else -1
                 )
                 if units == 0:
                     logging.info(
@@ -413,20 +552,40 @@ async def logic_loop():
                     )
                     continue
 
-                price = fac_m1.get("close")
+                sl_pips = signal.get("sl_pips")
+                tp_pips = signal.get("tp_pips")
+                if sl_pips is None or tp_pips is None:
+                    logging.info("[SKIP] Missing SL/TP for %s.", signal["strategy"])
+                    continue
+
                 sl, tp = clamp_sl_tp(
                     price,
-                    price - sig["sl_pips"] / 100,
-                    price + sig["tp_pips"] / 100,
-                    sig["action"] == "buy",
+                    price - sl_pips / 100,
+                    price + tp_pips / 100,
+                    action == "OPEN_LONG",
                 )
 
-                trade_id = await market_order("USD_JPY", units, sl, tp, pocket)
+                client_id = build_client_order_id(focus_tag, signal["tag"])
+                trade_id = await market_order(
+                    "USD_JPY",
+                    units,
+                    sl,
+                    tp,
+                    pocket,
+                    client_order_id=client_id,
+                )
                 if trade_id:
                     logging.info(
-                        f"[ORDER] {trade_id} | {cls.name} | {staged_lot} lot | SL={sl}, TP={tp}"
+                        "[ORDER] %s | %s | %.3f lot | SL=%.3f | TP=%.3f | conf=%d | client_id=%s",
+                        trade_id,
+                        signal["tag"],
+                        staged_lot,
+                        sl,
+                        tp,
+                        confidence,
+                        client_id,
                     )
-                    pos_manager.register_open_trade(trade_id, pocket)
+                    pos_manager.register_open_trade(trade_id, pocket, client_id)
                     info = open_positions.setdefault(
                         pocket,
                         {
@@ -472,10 +631,7 @@ async def logic_loop():
                     open_positions.setdefault("__net__", {})["units"] = net_units
                     executed_pockets.add(pocket)
                 else:
-                    logging.error(f"[ORDER FAILED] {cls.name}")
-
-                if len(executed_pockets) >= len(STAGE_RATIOS):
-                    break
+                    logging.error(f"[ORDER FAILED] {signal['strategy']}")
 
             # --- 5. 決済済み取引の同期 ---
             pos_manager.sync_trades()

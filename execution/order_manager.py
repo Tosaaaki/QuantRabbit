@@ -70,9 +70,11 @@ def _extract_trade_id(response: dict) -> Optional[str]:
 async def market_order(
     instrument: str,
     units: int,
-    sl_price: float,
-    tp_price: float,
+    sl_price: Optional[float],
+    tp_price: Optional[float],
     pocket: Literal["micro", "macro", "scalp"],
+    *,
+    client_order_id: Optional[str] = None,
 ) -> Optional[str]:
     """
     units : +10000 = buy 0.1 lot, ‑10000 = sell 0.1 lot
@@ -85,12 +87,17 @@ async def market_order(
             "units": str(units),
             "timeInForce": "FOK",
             "positionFill": POSITION_FILL,
-            "stopLossOnFill": {"price": f"{sl_price:.3f}"},
-            "takeProfitOnFill": {"price": f"{tp_price:.3f}"},
             "clientExtensions": {"tag": f"pocket={pocket}"},
             "tradeClientExtensions": {"tag": f"pocket={pocket}"},
         }
     }
+    if client_order_id:
+        order_data["order"]["clientExtensions"]["id"] = client_order_id
+        order_data["order"]["tradeClientExtensions"]["id"] = client_order_id
+    if sl_price is not None:
+        order_data["order"]["stopLossOnFill"] = {"price": f"{sl_price:.3f}"}
+    if tp_price is not None:
+        order_data["order"]["takeProfitOnFill"] = {"price": f"{tp_price:.3f}"}
 
     units_to_send = units
     for attempt in range(2):

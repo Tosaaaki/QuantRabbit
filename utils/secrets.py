@@ -27,6 +27,7 @@ ENV_MAP = {
     "gcp_project_id": "GCP_PROJECT",
     "news_bucket_name": "GCS_BACKUP_BUCKET",
     "ui_bucket_name": "GCS_UI_BUCKET",
+    "analytics_bucket_name": "GCS_ANALYTICS_BUCKET",
 }
 
 @lru_cache()

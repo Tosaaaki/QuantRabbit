@@ -29,10 +29,13 @@ function _toml() {
   local key="$1"; local default="${2:-}"
   local path="${ROOT}/config/env.toml"
   if [[ ! -f "$path" ]]; then path="${ROOT}/config/env.example.toml"; fi
-  python - <<PY 2>/dev/null || true
+  python3 - <<PY 2>/dev/null || true
 import os
 try:
-  import tomllib
+  try:
+    import tomllib
+  except Exception:
+    import tomli as tomllib  # type: ignore
   with open("$path","rb") as f:
     cfg=tomllib.load(f)
   print(cfg.get("${key}", "${default}"))
@@ -46,6 +49,12 @@ LOCATION="${BQ_LOCATION:-$(_toml gcp_location "asia-northeast1")}"
 DATASET="${BQ_DATASET:-$(_toml BQ_DATASET "quantrabbit")}"
 BUCKET="${UI_BUCKET:-$(_toml ui_bucket_name "fx-ui-realtime")}"
 OBJECT_PATH="$(_toml ui_state_object_path "realtime/ui_state.json")"
+
+# Fallback to gcloud default when tomllib isn't available or placeholder remains
+if [[ -z "$PROJECT" || "$PROJECT" == "your-project-id" ]]; then
+  GCLOUD_PROJ=$(gcloud config get-value project 2>/dev/null || true)
+  if [[ -n "$GCLOUD_PROJ" ]]; then PROJECT="$GCLOUD_PROJ"; fi
+fi
 
 if [[ -z "${UI_SA_EMAIL:-}" ]]; then
   UI_SA_EMAIL="ui-dashboard-sa@${PROJECT}.iam.gserviceaccount.com"
@@ -103,18 +112,31 @@ echo "{}" | gcloud storage cp - "gs://${BUCKET}/${OBJECT_PATH}" >/dev/null || tr
 echo "[GCS] Ensured placeholder at gs://${BUCKET}/${OBJECT_PATH}"
 
 # ------------ BigQuery dataset ------------
-if ! bq --project_id "$PROJECT" ls -d "${PROJECT}:${DATASET}" >/dev/null 2>&1; then
+DATASET_LOC=""
+if DATASET_JSON=$(bq --project_id "$PROJECT" --format=prettyjson show "${PROJECT}:${DATASET}" 2>/dev/null); then
+  DATASET_LOC=$(python3 - <<PY 2>/dev/null
+import json,sys
+try:
+  j=json.loads(sys.stdin.read()); print(j.get('location',''))
+except Exception:
+  print('')
+PY
+  <<<"$DATASET_JSON")
+  echo "[BQ] Dataset exists: ${PROJECT}:${DATASET} (location=${DATASET_LOC:-unknown})"
+else
   echo "[BQ] Creating dataset ${PROJECT}:${DATASET} (${LOCATION})"
   bq --location="$LOCATION" --project_id "$PROJECT" mk -d "$DATASET" >/dev/null
-else
-  echo "[BQ] Dataset exists: ${PROJECT}:${DATASET}"
+  DATASET_LOC="$LOCATION"
 fi
 
 # Views (only if base table exists)
 if bq --project_id "$PROJECT" show "${PROJECT}:${DATASET}.trades_raw" >/dev/null 2>&1; then
   echo "[BQ] Creating views trades_recent_view / trades_daily_features"
-  bq --project_id "$PROJECT" --location="$LOCATION" query --use_legacy_sql=false <<SQL >/dev/null
-CREATE OR REPLACE VIEW `${PROJECT}.${DATASET}.trades_recent_view` AS
+  # Use dataset location if known; otherwise omit --location to avoid mismatch
+  BQ_LOC_ARG=""
+  if [[ -n "${DATASET_LOC:-}" ]]; then BQ_LOC_ARG="--location=${DATASET_LOC}"; fi
+  bq --project_id "$PROJECT" ${BQ_LOC_ARG} query --use_legacy_sql=false <<SQL >/dev/null
+CREATE OR REPLACE VIEW ${PROJECT}.${DATASET}.trades_recent_view AS
 SELECT
   ticket_id,
   entry_time,
@@ -128,13 +150,13 @@ SELECT
   realized_pl,
   state,
   close_reason
-FROM `${PROJECT}.${DATASET}.trades_raw`
+FROM ${PROJECT}.${DATASET}.trades_raw
 WHERE close_time >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 30 DAY)
 ORDER BY close_time DESC;
 SQL
 
-  bq --project_id "$PROJECT" --location="$LOCATION" query --use_legacy_sql=false <<SQL >/dev/null
-CREATE OR REPLACE VIEW `${PROJECT}.${DATASET}.trades_daily_features` AS
+  bq --project_id "$PROJECT" ${BQ_LOC_ARG} query --use_legacy_sql=false <<SQL >/dev/null
+CREATE OR REPLACE VIEW ${PROJECT}.${DATASET}.trades_daily_features AS
 SELECT
   DATE(close_time) AS day,
   COUNTIF(close_time IS NOT NULL) AS trades,
@@ -143,7 +165,7 @@ SELECT
   SAFE_DIVIDE(SUM(CASE WHEN pl_pips > 0 THEN 1 ELSE 0 END), COUNT(*)) AS win_rate,
   SUM(CASE WHEN pocket='micro' THEN pl_pips ELSE 0 END) AS pl_pips_micro,
   SUM(CASE WHEN pocket='macro' THEN pl_pips ELSE 0 END) AS pl_pips_macro
-FROM `${PROJECT}.${DATASET}.trades_raw`
+FROM ${PROJECT}.${DATASET}.trades_raw
 WHERE close_time IS NOT NULL
 GROUP BY day
 ORDER BY day DESC;
@@ -166,4 +188,3 @@ fi
 echo "[Done] Looker Studio data sources are ready."
 echo "       - GCS: gs://${BUCKET}/${OBJECT_PATH}"
 echo "       - BigQuery dataset: ${PROJECT}:${DATASET} (views may require data sync)"
-

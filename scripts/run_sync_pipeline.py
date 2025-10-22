@@ -17,6 +17,7 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from analytics.bq_exporter import BigQueryExporter, _BQ_MAX_EXPORT
 from analytics.gcs_publisher import GCSRealtimePublisher
+from analytics.lot_pattern_analyzer import LotPatternAnalyzer
 from execution.position_manager import PositionManager
 
 LOG_FILE = Path("logs/pipeline.log")
@@ -113,11 +114,17 @@ def main() -> int:
         action="store_true",
         help="GCS へのリアルタイム出力を抑止する。",
     )
+    parser.add_argument(
+        "--disable-lot-insights",
+        action="store_true",
+        help="BigQuery 解析によるロットインサイト生成を無効化する。",
+    )
     args = parser.parse_args()
     _setup_logging(args.verbose)
 
     exporter = BigQueryExporter()
     gcs_publisher = None if args.disable_gcs else GCSRealtimePublisher()
+    analyzer = None if args.disable_lot_insights else LotPatternAnalyzer()
     pm = PositionManager()
     stop_requested = False
     last_bq_export = 0.0
@@ -157,6 +164,15 @@ def main() -> int:
                         stats.exported,
                         stats.last_updated_at,
                     )
+                    if analyzer:
+                        try:
+                            insights = analyzer.run()
+                            logging.info(
+                                "[PIPELINE] lot insights generated=%d",
+                                len(insights),
+                            )
+                        except Exception as exc:  # noqa: BLE001
+                            logging.exception("[PIPELINE] lot insights 生成に失敗: %s", exc)
                     last_bq_export = now
             except Exception as exc:  # noqa: BLE001
                 logging.exception("[PIPELINE] サイクル失敗: %s", exc)

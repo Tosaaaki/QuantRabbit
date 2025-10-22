@@ -14,9 +14,10 @@
 | **IndicatorEngine** | `indicators/*` | ← Candle deque<br>→ factors dict {ma10, rsi, …} |
 | **Regime & Focus** | `analysis/regime_classifier.py` / `focus_decider.py` | ← factors<br>→ macro/micro レジーム・weight_macro |
 | **GPT Decider** | `analysis/gpt_decider.py` | ← focus + perf + news<br>→ JSON {focus_tag, weight_macro, ranked_strategies} |
-| **Strategy Plugin** | `strategies/*` | ← factors<br>→ dict {action, sl_pips, tp_pips} or None |
+| **Strategy Plugin** | `strategies/*` | ← factors<br>→ dict {action, sl_pips, tp_pips, confidence, tag} or None |
+| **Exit Manager** | `execution/exit_manager.py` | ← open positions + signals<br>→ list[{pocket, units, reason, tag}] |
 | **Risk Guard** | `execution/risk_guard.py` | ← lot, SL/TP, pocket<br>→ bool (可否)・調整値 |
-| **Order Manager** | `execution/order_manager.py` | ← units, sl, tp, tag<br>→ OANDA ticket ID |
+| **Order Manager** | `execution/order_manager.py` | ← units, sl, tp, client_order_id, tag<br>→ OANDA ticket ID |
 | **Logger** | `logs/*.db` | 全コンポーネントが INSERT |
 
 ### 2.1 共通データスキーマ
@@ -99,8 +100,9 @@ class OrderIntent(BaseModel):
 - IndicatorEngine: 各 timeframe ごとに `Deque[Candle]` を維持し 300 本以上揃ったときに `Factors` を算出、入力欠損時は `stale=True` を返し Strategy を停止。
 - Regime & Focus: macro=H4/D1, micro=M1 の `Factors` を消費し、`focus_decider` は `FocusDecision`(`focus_tag`,`weight_macro`) を返す。
 - GPT Decider: 過去 15 分のニュース要約 + パフォーマンス指標を入力し `GPTDecision` を返す。JSON Schema 不一致時はフォールバックを Raise。
-- Strategy Plugin: `ranked_strategies` 順に呼び出し `StrategyDecision` または `None` を返す。`None` は「ノートレード」。
-- Risk Guard: `StrategyDecision` と口座情報から `OrderIntent` を生成、拒否理由は `{"allow": False, "reason": ...}` としてロガーへ渡す。
+- Strategy Plugin: `ranked_strategies` 順に呼び出し `StrategyDecision` または `None` を返す。必ず `confidence` と `tag` を含め、`None` は「ノートレード」。
+- Exit Manager: 現在のポジションとシグナルを突き合わせ、逆方向シグナル・イベントロック・指標劣化の各条件でクローズ指示を組み立てる。
+- Risk Guard: エントリー/クローズ双方の `StrategyDecision` と口座情報から `OrderIntent` を生成、拒否理由は `{"allow": False, "reason": ...}` としてロガーへ渡す。
 - Order Manager: `OrderIntent` を OANDA REST へ送信、結果は `ticket_id` と `executed_price` を返し `logs/orders.db` に保存。
 
 ### 2.4 OANDA API マッピング
@@ -109,10 +111,10 @@ class OrderIntent(BaseModel):
 |-----------------|-----------|------------|------------|------|
 | `OPEN_LONG` | `MARKET` | `+abs(units)` | `stopLossOnFill`, `takeProfitOnFill` | `timeInForce=FOK`, `positionFill=DEFAULT` |
 | `OPEN_SHORT` | `MARKET` | `-abs(units)` | 同上 | ask/bid 逆転チェック後に送信 |
-| `CLOSE` | `MARKET` | 既存ポジの反対売買 | `stopLossOnFill` 無し | `OrderCancelReplace` で逆指値を削除 |
+| `CLOSE` | `MARKET` | 既存ポジの反対売買 | SL/TP 指定なし | `OrderCancelReplace` で逆指値を削除 |
 | `HOLD` | 送信なし | 0 | なし | Strategy ループ継続 |
 
-- すべての注文に `clientExtensions = {"id": client_order_id, "tag": pocket}` を付与し、再試行時は同一 ID を再利用する。
+- すべての注文に `clientExtensions = {"id": client_order_id, "tag": pocket}` を付与し、再試行時は同一 ID を再利用する。Exit 指示も同じ ID 命名規則に従い、`qr-{epoch_ms}-{focus_tag}-{strategy_tag}` 形式で 90 日間ユニークにする。
 - OANDA 5xx/timeout 時は 0.5s, 1.5s の指数バックオフをかけ、3 回失敗で `Risk Guard` にエスカレーションする。
 
 ### 2.5 ログと永続化
@@ -131,9 +133,9 @@ class OrderIntent(BaseModel):
 2. **Every 60 s**
    1. 新ローソク → factors 更新  
    2. regime + focus → GPT decision  
-   3. pocket lot 配分 → Strategy loop  
-   4. Risk guard → order_manager 発注  
-   5. trades.db / news.db にログ
+   3. pocket lot 配分 → Strategy loop（confidence スケーリング + ステージ判定）  
+   4. Exit manager → Risk guard → order_manager でクローズ/新規発注  
+   5. trades.db / news.db / metrics.db にログ
 3. **Background Jobs**
    - `news_fetcher` RSS → GCS raw/  
    - Cloud Run `news‑summarizer`  raw → summary/  
@@ -163,6 +165,12 @@ class OrderIntent(BaseModel):
 - **Record**: `DataFetcher` は全 Tick を `logs/replay/*.jsonl` に保存しテストで再生できる状態を担保。
 - **Backtest**: Strategy Plugin は記録データを用い同一 `StrategyDecision` を再現できることを CI で検証。
 - **Shadow**: 本番 tick + 仮想アカウントで `OrderIntent` を生成し、`risk_guard` の拒否理由を比較。
+
+### 3.5 エントリー/クローズ制御
+
+- **Confidence スケーリング**: Strategy の `confidence` (0–100) をポケット割当 lot に掛け、最低 0.2 倍〜最大 1.0 倍のレンジで段階的エントリーを行う。  
+- **ステージ比率**: `STAGE_RATIOS` で定義されたフラクションに従い、各ステージ条件 (`_stage_conditions_met`) を通過した場合のみ追撃。  
+- **Exit Manager**: 逆方向シグナルが閾値 (既定 70) を超えた場合やイベントロック、RSI/ADX 劣化などでクローズ。`allow_reentry` が False の場合は当該サイクル内の再参入を禁止する。
 - **Release gate**: PF>1.1, 勝率>52%、最大 DD<5% を 2 週間連続で満たしたら実弾に昇格。
 
 ---
@@ -240,6 +248,36 @@ gcloud compute ssh fx-trader-vm --command "git pull && ./startup.sh"
 - Cloud Build 成功時に `cosign sign` でイメージ署名、SBOM (`gcloud artifacts sbom export`) を保存。
 - 予算アラート: `GCP Budget Alert ≥ 80%` で Slack 通知、IAP トンネルは `roles/iap.tunnelResourceAccessor` を必須化。
 - ロールバック手順: `gcloud compute ssh fx-trader-vm --command "cd ~/QuantRabbit && git checkout <release-tag> && ./startup.sh --dry-run"` を実行し、検証後に `--apply`。
+
+### 7.1 VM デプロイ（Git フロー標準）
+
+ローカル → リモート（origin）へ push → VM で `git pull` → systemd 再起動の流れをスクリプト化しています。
+
+前提条件
+- OS Login が有効、`roles/compute.osLogin` と（外部 IP 無しの場合）`roles/iap.tunnelResourceAccessor` 付与済み
+- VM 側のリポジトリは `origin` が到達可能（例: GitHub）
+
+コマンド例
+```bash
+# 現在のブランチをデプロイし、VM の venv も依存更新
+scripts/deploy_to_vm.sh -i
+
+# 明示的にブランチを指定
+scripts/deploy_to_vm.sh -b feature/exit-manager -i
+
+# ログの追尾
+gcloud compute ssh fx-trader-vm --zone asia-northeast1-a \
+  --command 'journalctl -u quantrabbit.service -f'
+```
+
+オプション
+- `-b <BRANCH>`: デプロイ対象ブランチ（既定はローカルの現在ブランチ）
+- `-i`: VM の venv で `pip install -r requirements.txt` を実行
+- `-p <PROJECT>` / `-z <ZONE>` / `-m <INSTANCE>` / `-d <REPO_DIR>` / `-s <SERVICE>`: 環境に応じて上書き可能
+
+注意点
+- ローカルの未コミット変更は push されません。必ずコミットしてから実行してください。
+- 直接 SCP での差し替えは緊急時のみ。通常運用は本スクリプト経由の Git ベース反映を推奨します。
 
 8. チーム運用ルール
 	1.	1 ファイル = 1 PR、Squash Merge、CI green 必須

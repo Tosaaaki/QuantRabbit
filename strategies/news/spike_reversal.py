@@ -23,18 +23,36 @@ class NewsSpikeReversal:
 
         close_price = fac.get("close")
         open_price = fac.get("open")
+        atr = fac.get("atr", 0.02)
 
         if close_price is None or open_price is None:
             return None
 
         price_change = close_price - open_price
+        shock = abs(price_change) / max(0.001, atr)
+        confidence = int(
+            max(40.0, min(95.0, 50.0 + shock * 15.0 + abs(news_sentiment) * 15.0))
+        )
+        tag_suffix = "neg" if news_sentiment < 0 else "pos" if news_sentiment > 0 else "flat"
 
         # 強い買いニュースで価格が急騰したら売り (逆張り)
         if news_sentiment > 0 and price_change > 0.05:  # 0.05は仮の閾値
-            return {"action": "sell", "sl_pips": 10, "tp_pips": 20}
+            return {
+                "action": "OPEN_SHORT",
+                "sl_pips": 10,
+                "tp_pips": 20,
+                "confidence": confidence,
+                "tag": f"{NewsSpikeReversal.name}-fade-{tag_suffix}",
+            }
 
         # 強い売りニュースで価格が急落したら買い (逆張り)
         if news_sentiment < 0 and price_change < -0.05:  # 0.05は仮の閾値
-            return {"action": "buy", "sl_pips": 10, "tp_pips": 20}
+            return {
+                "action": "OPEN_LONG",
+                "sl_pips": 10,
+                "tp_pips": 20,
+                "confidence": confidence,
+                "tag": f"{NewsSpikeReversal.name}-fade-{tag_suffix}",
+            }
 
         return None

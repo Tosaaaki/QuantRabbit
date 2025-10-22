@@ -148,7 +148,10 @@ python scripts/run_sync_pipeline.py \
 3. **BigQuery テーブル**  
    スクリプトが起動すると、存在しない場合でも dataset/table を自動作成し、`ticket_id`（OANDA tradeID）をキーにアップサートします。`logs/bq_sync_state.json` には最終同期時刻が保存されるため、監視に利用できます。
 
-4. **systemd への登録例**
+4. **ロット調整インサイト**  
+   `analytics/lot_pattern_analyzer.py` が BigQuery のトレード履歴 (lookback 既定 14 日) を集計し、Pocket × Side 別の勝率 / PF / 標準偏差からロット倍率を提案します。結果は BigQuery `lot_insights` テーブルに追記され、`analytics/lot_insights.json`（GCS UI バケットまたは `GCS_ANALYTICS_BUCKET`）に JSON スナップショットを保存します。手動実行やパラメータ変更は `scripts/generate_lot_insights.py` を利用してください。
+
+5. **systemd への登録例**
 
 ```ini
 [Unit]
@@ -168,6 +171,64 @@ WantedBy=multi-user.target
 タイマーや cron と組み合わせる場合でも、`run_sync_pipeline.py` が `PositionManager.sync_trades()` → BigQuery export を順に実行するため、VM 上で同一スクリプトを呼び出すだけで同期が完了します。
 
 ---
+
+## Dashboards: Looker Studio 接続
+
+Looker Studio から GCS（リアルタイム UI）と BigQuery（履歴集計）へ接続するためのブートストラップを同梱しました。
+
+- 1 回セットアップ: `scripts/setup_looker_sources.sh`
+- 以降は Looker Studio 側でデータソースを追加するだけです。
+
+1) GCS リアルタイム JSON（UI 用）
+- コネクタ: Google Cloud Storage
+- サービスアカウント: `ui-dashboard-sa@<project>.iam.gserviceaccount.com` のキーを使用
+- オブジェクト: `gs://fx-ui-realtime/realtime/ui_state.json`
+- フィールド例:
+  - `generated_at`（DateTime）
+  - `new_trades`（Record → JSON 展開用にカスタム関数）
+  - `recent_trades`（Record → 同上、UNNEST 相当の展開で可視化）
+  - `open_positions`（Record → カスタムフィールドで net units 抽出）
+
+2) BigQuery 集計（履歴向け）
+- コネクタ: BigQuery → プロジェクト `<project>` → データセット `quantrabbit`
+- テーブル/ビュー: `trades_raw` / `trades_recent_view` / `trades_daily_features`
+- 推奨更新間隔: 15 分〜1 時間
+- 可視化例:
+  - 指標カード: 当日 `SUM(pl_pips)`
+  - 円グラフ: ポケット別 `win_rate`
+  - 折れ線: `close_time` の時系列 P/L
+  - ツリーマップ: `strategy × pl_pips`
+
+セットアップ（自動化）
+
+```bash
+# 環境に合わせて上書き可（未指定は config/env(.example).toml から読み取り）
+GCP_PROJECT=quantrabbit \
+UI_BUCKET=fx-ui-realtime \
+BQ_DATASET=quantrabbit \
+BQ_LOCATION=asia-northeast1 \
+UI_SA_EMAIL=ui-dashboard-sa@quantrabbit.iam.gserviceaccount.com \
+KEY_OUT=./ui-dashboard-sa.json \
+./scripts/setup_looker_sources.sh
+```
+
+スクリプトが行うこと:
+- SA 作成（存在すれば skip）とキー発行（`.gitignore` 対応済）
+- GCS バケット `gs://fx-ui-realtime` の作成と `objectViewer` 付与
+- プレースホルダ `realtime/ui_state.json` を配置
+- BigQuery dataset `quantrabbit` の作成
+- `trades_raw` が存在する場合、`trades_recent_view` と `trades_daily_features` を作成
+
+接続前チェックと検証
+- `scripts/run_sync_pipeline.py` が一度以上走り `trades_raw` にデータがある
+- Looker Studio のデータソースプレビューでレコードが表示される
+- 権限エラー時は SA の IAM を再確認（`roles/storage.objectViewer`, `roles/bigquery.dataViewer`, `roles/bigquery.jobUser`）
+
+注意事項
+- サービスアカウントキー（`ui-dashboard-sa.json`）は厳重に保管し、Git にコミットしないでください。
+- GCS 側の UI JSON は `analytics/gcs_publisher.py` が出力します（`ui_bucket_name`, `ui_state_object_path`）。
+- BigQuery への同期は `scripts/run_sync_pipeline.py`（`BQ_*` 環境変数）で制御します。
+
 
 ## Ops: GCE SSH / OS Login
 

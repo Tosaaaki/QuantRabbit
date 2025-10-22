@@ -25,6 +25,7 @@ class PositionManager:
         self._ensure_schema()
         self._last_tx_id = self._get_last_transaction_id()
         self._pocket_cache: dict[str, str] = {}
+        self._client_cache: dict[str, str] = {}
 
     def _ensure_schema(self):
         # trades テーブルが存在しない場合のベース定義
@@ -264,9 +265,11 @@ class PositionManager:
     def close(self):
         self.con.close()
 
-    def register_open_trade(self, trade_id: str, pocket: str):
+    def register_open_trade(self, trade_id: str, pocket: str, client_id: str | None = None):
         if trade_id and pocket:
             self._pocket_cache[str(trade_id)] = pocket
+        if client_id and trade_id:
+            self._client_cache[client_id] = trade_id
 
     def get_open_positions(self) -> dict[str, dict]:
         """現在の保有ポジションを pocket 単位で集計して返す"""
@@ -282,7 +285,8 @@ class PositionManager:
         pockets: dict[str, dict] = {}
         net_units = 0
         for tr in trades:
-            tag = tr.get("clientExtensions", {}).get("tag", "pocket=unknown")
+            client_ext = tr.get("clientExtensions", {}) or {}
+            tag = client_ext.get("tag", "pocket=unknown")
             if "=" in tag:
                 pocket = tag.split("=", 1)[1]
             else:
@@ -291,6 +295,7 @@ class PositionManager:
             units = int(tr.get("currentUnits", 0))
             if units == 0:
                 continue
+            trade_id = tr.get("id") or tr.get("tradeID")
             price = float(tr.get("price", 0.0))
             info = pockets.setdefault(
                 pocket,
@@ -302,7 +307,17 @@ class PositionManager:
                     "long_avg_price": 0.0,
                     "short_units": 0,
                     "short_avg_price": 0.0,
+                    "open_trades": [],
                 },
+            )
+            info["open_trades"].append(
+                {
+                    "trade_id": str(trade_id),
+                    "units": units,
+                    "price": price,
+                    "client_id": client_ext.get("id"),
+                    "side": "long" if units > 0 else "short",
+                }
             )
             prev_total_units = info["units"]
             new_total_units = prev_total_units + units
