@@ -212,12 +212,12 @@ def compute_stage_lot(
 ) -> float:
     """段階的エントリーの次ロットを返す（lot単位）。0 の場合は追加不要。"""
     plan = STAGE_RATIOS.get(pocket, (1.0,))
-    current_lot = round(max(open_units_same_dir, 0) / 100000, 3)
+    current_lot = max(open_units_same_dir, 0) / 100000.0
     cumulative = 0.0
     for stage_idx, fraction in enumerate(plan):
-        cumulative = round(cumulative + fraction, 6)
-        stage_target = round(total_lot * cumulative, 3)
-        if current_lot + 1e-3 < stage_target:
+        cumulative += fraction
+        stage_target = total_lot * cumulative
+        if current_lot + 1e-4 < stage_target:
             if not _stage_conditions_met(
                 pocket, stage_idx, action, fac_m1, fac_h4, open_info
             ):
@@ -232,18 +232,18 @@ def compute_stage_lot(
             logging.info(
                 "[STAGE] %s pocket total=%.3f current=%.3f -> next=%.3f (stage %d)",
                 pocket,
-                stage_target,
-                current_lot,
-                next_lot,
+                round(stage_target, 4),
+                round(current_lot, 4),
+                round(next_lot, 4),
                 stage_idx,
             )
-            return round(next_lot, 3)
+            return round(next_lot, 4)
 
     logging.info(
         "[STAGE] %s pocket already filled %.3f / %.3f lots. No additional entry.",
         pocket,
-        current_lot,
-        total_lot,
+        round(current_lot, 4),
+        round(total_lot, 4),
     )
     return 0.0
 
