@@ -55,11 +55,35 @@ def can_trade(pocket: str) -> bool:
     return _pocket_dd(pocket) < POCKET_DD_LIMITS[pocket]
 
 
-def allowed_lot(equity: float, sl_pips: float) -> float:
-    risk_pct = 0.01
-    lot = (equity * risk_pct) / sl_pips / 10  # $10/pip で 1 lot
+def allowed_lot(
+    equity: float,
+    sl_pips: float,
+    *,
+    margin_available: float | None = None,
+    price: float | None = None,
+    margin_rate: float | None = None,
+) -> float:
+    """
+    口座全体の許容ロットを概算する。
+    sl_pips: 損切り幅（pip単位）
+    margin_available: 利用可能証拠金
+    price: 現在値（USD/JPY mid）
+    margin_rate: OANDA口座の証拠金率
+    """
+    if sl_pips <= 0:
+        return 0.0
+
+    risk_pct = 0.02
+    risk_amount = equity * risk_pct
+    lot = risk_amount / (sl_pips * 1000)  # USD/JPYの1lotは1000JPY/pip ≒ 1000
+
+    if margin_available is not None and price is not None and margin_rate:
+        margin_per_lot = price * margin_rate * 100000
+        if margin_per_lot > 0:
+            lot = min(lot, margin_available / margin_per_lot)
+
     lot = min(lot, MAX_LOT)
-    return round(lot, 3)
+    return round(max(lot, 0.0), 3)
 
 
 def clamp_sl_tp(

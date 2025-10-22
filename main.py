@@ -27,7 +27,11 @@ from execution.risk_guard import (
     clamp_sl_tp,
     check_global_drawdown,
 )
-from execution.order_manager import market_order
+from execution.order_manager import (
+    market_order,
+    close_trade,
+    update_dynamic_protections,
+)
 from execution.exit_manager import ExitManager
 from execution.position_manager import PositionManager
 from strategies.trend.ma_cross import MovingAverageCross
@@ -35,6 +39,7 @@ from strategies.breakout.donchian55 import Donchian55
 from strategies.mean_reversion.bb_rsi import BBRsi
 from strategies.news.spike_reversal import NewsSpikeReversal
 from strategies.scalping.m1_scalper import M1Scalper
+from utils.oanda_account import get_account_snapshot
 
 # Configure logging
 logging.basicConfig(
@@ -51,7 +56,7 @@ STRATEGIES = {
     "M1Scalper": M1Scalper,
 }
 
-EQUITY = 10000.0  # ← 実際は REST から取得
+FALLBACK_EQUITY = 10000.0  # REST失敗時のフォールバック
 
 STAGE_RATIOS = {
     "macro": (0.05, 0.04, 0.04, 0.03, 0.03, 0.03, 0.03, 0.03),
@@ -388,6 +393,10 @@ async def logic_loop():
                 logging.info("[SIGNAL] %s -> %s", cls.name, signal)
 
             open_positions = pos_manager.get_open_positions()
+            try:
+                update_dynamic_protections(open_positions, fac_m1, fac_h4)
+            except Exception as exc:
+                logging.warning("[PROTECTION] update failed: %s", exc)
             net_units = int(open_positions.get("__net__", {}).get("units", 0))
 
             exit_decisions = exit_manager.plan_closures(
@@ -396,60 +405,62 @@ async def logic_loop():
 
             executed_pockets: set[str] = set()
             for decision in exit_decisions:
-                client_id = build_client_order_id(focus_tag, decision.tag)
-                trade_id = await market_order(
-                    "USD_JPY",
-                    decision.units,
-                    None,
-                    None,
-                    decision.pocket,
-                    client_order_id=client_id,
-                )
-                if trade_id:
-                    logging.info(
-                        "[EXIT] %s pocket=%s units=%s reason=%s client_id=%s",
-                        trade_id,
-                        decision.pocket,
-                        decision.units,
-                        decision.reason,
-                        client_id,
-                    )
-                    info = open_positions.setdefault(
-                        decision.pocket,
-                        {
-                            "units": 0,
-                            "avg_price": 0.0,
-                            "trades": 0,
-                            "long_units": 0,
-                            "long_avg_price": 0.0,
-                            "short_units": 0,
-                            "short_avg_price": 0.0,
-                        },
-                    )
-                    info["units"] = info.get("units", 0) + decision.units
-                    if decision.units < 0:
-                        info["long_units"] = max(
-                            0, info.get("long_units", 0) + decision.units
+                pocket = decision.pocket
+                remaining = abs(decision.units)
+                target_side = "long" if decision.units < 0 else "short"
+                trades = (open_positions.get(pocket, {}) or {}).get("open_trades", [])
+                trades = [t for t in trades if t.get("side") == target_side]
+                for tr in trades:
+                    if remaining <= 0:
+                        break
+                    trade_units = abs(int(tr.get("units", 0) or 0))
+                    if trade_units == 0:
+                        continue
+                    close_amount = min(remaining, trade_units)
+                    sign = 1 if target_side == "long" else -1
+                    trade_id = tr.get("trade_id")
+                    if not trade_id:
+                        continue
+                    ok = await close_trade(trade_id, sign * close_amount)
+                    if ok:
+                        logging.info(
+                            "[EXIT] trade=%s pocket=%s units=%s reason=%s",
+                            trade_id,
+                            pocket,
+                            sign * close_amount,
+                            decision.reason,
                         )
-                        if info["long_units"] <= 0:
-                            info["long_avg_price"] = 0.0
+                        remaining -= close_amount
+                if remaining > 0:
+                    client_id = build_client_order_id(focus_tag, decision.tag)
+                    fallback_units = -remaining if decision.units < 0 else remaining
+                    trade_id = await market_order(
+                        "USD_JPY",
+                        fallback_units,
+                        None,
+                        None,
+                        pocket,
+                        client_order_id=client_id,
+                    )
+                    if trade_id:
+                        logging.info(
+                            "[EXIT] %s pocket=%s units=%s reason=%s client_id=%s",
+                            trade_id,
+                            pocket,
+                            fallback_units,
+                            decision.reason,
+                            client_id,
+                        )
+                        remaining = 0
                     else:
-                        info["short_units"] = max(
-                            0, info.get("short_units", 0) - decision.units
+                        logging.error(
+                            "[EXIT FAILED] pocket=%s units=%s reason=%s",
+                            pocket,
+                            decision.units,
+                            decision.reason,
                         )
-                        if info["short_units"] <= 0:
-                            info["short_avg_price"] = 0.0
-                    net_units += decision.units
-                    open_positions.setdefault("__net__", {})["units"] = net_units
-                    if not decision.allow_reentry:
-                        executed_pockets.add(decision.pocket)
-                else:
-                    logging.error(
-                        "[EXIT FAILED] pocket=%s units=%s reason=%s",
-                        decision.pocket,
-                        decision.units,
-                        decision.reason,
-                    )
+                if remaining <= 0 and not decision.allow_reentry:
+                    executed_pockets.add(pocket)
 
             if not evaluated_signals:
                 logging.info("[WAIT] No actionable entry signals this cycle.")
@@ -457,16 +468,61 @@ async def logic_loop():
             sl_values = [
                 s["sl_pips"] for s in evaluated_signals if s.get("sl_pips") is not None
             ]
-            avg_sl = (
-                sum(sl_values) / len(sl_values) if sl_values else 20.0
+            avg_sl = sum(sl_values) / len(sl_values) if sl_values else 20.0
+
+            try:
+                account_snapshot = get_account_snapshot()
+            except Exception as exc:  # noqa: BLE001
+                logging.warning(
+                    "[ACCOUNT] Failed to load snapshot, fallback equity %.0f: %s",
+                    FALLBACK_EQUITY,
+                    exc,
+                )
+                account_snapshot = None
+
+            account_equity = FALLBACK_EQUITY
+            margin_available = None
+            margin_rate = None
+            scalp_buffer = None
+            scalp_free_ratio = None
+
+            if account_snapshot:
+                account_equity = account_snapshot.nav or account_snapshot.balance or FALLBACK_EQUITY
+                margin_available = account_snapshot.margin_available
+                margin_rate = account_snapshot.margin_rate
+                scalp_buffer = account_snapshot.health_buffer
+                scalp_free_ratio = account_snapshot.free_margin_ratio
+                if scalp_buffer is not None and scalp_buffer < 0.06:
+                    logging.warning(
+                        "[ACCOUNT] Margin health critical buffer=%.3f free=%.1f%%",
+                        scalp_buffer,
+                        scalp_free_ratio * 100 if scalp_free_ratio is not None else 0.0,
+                    )
+
+            lot_total = allowed_lot(
+                account_equity,
+                sl_pips=max(1.0, avg_sl),
+                margin_available=margin_available,
+                price=fac_m1.get("close"),
+                margin_rate=margin_rate,
             )
-            lot_total = allowed_lot(EQUITY, sl_pips=max(1.0, avg_sl))
             requested_pockets = {
                 STRATEGIES[s].pocket
                 for s in ranked_strategies
                 if STRATEGIES.get(s)
             }
-            scalp_share = DEFAULT_SCALP_SHARE if "scalp" in requested_pockets else 0.0
+            scalp_share = 0.0
+            if "scalp" in requested_pockets:
+                if account_snapshot:
+                    scalp_share = dynamic_scalp_share(account_snapshot, DEFAULT_SCALP_SHARE)
+                    logging.info(
+                        "[SCALP] share=%.3f buffer=%.3f free=%.1f%%",
+                        scalp_share,
+                        scalp_buffer if scalp_buffer is not None else -1.0,
+                        (scalp_free_ratio * 100) if scalp_free_ratio is not None else -1.0,
+                    )
+                else:
+                    scalp_share = DEFAULT_SCALP_SHARE
             lots = alloc(lot_total, weight, scalp_share=scalp_share)
             active_pockets = {sig["pocket"] for sig in evaluated_signals}
             for key in list(lots):
