@@ -147,17 +147,22 @@ def _log_order(
 _PARTIAL_STAGE: dict[str, int] = {}
 
 _PARTIAL_THRESHOLDS = {
-    "macro": (25.0, 40.0),
-    "micro": (15.0, 25.0),
-    "scalp": (8.0, 12.0),
+    # トレンド場面（通常時）の段階利確トリガー（pip）
+    # 直近の実測では micro/scalp は数 pip の含み益が頻出する一方、macro は伸びが限定的。
+    # 小さめのしきい値で部分利確を優先し、ランナーは trailing に委ねる。
+    "macro": (5.0, 10.0),
+    "micro": (3.0, 6.0),
+    "scalp": (2.0, 4.0),
 }
 _PARTIAL_THRESHOLDS_RANGE = {
-    "macro": (16.0, 22.0),
-    "micro": (10.0, 16.0),
-    "scalp": (6.0, 10.0),
+    # レンジ場面ではさらに早く利確を刻む
+    "macro": (3.0, 5.0),
+    "micro": (2.0, 4.0),
+    "scalp": (1.5, 3.0),
 }
 _PARTIAL_FRACTIONS = (0.4, 0.3)
-_PARTIAL_MIN_UNITS = 400
+# micro の平均建玉（~160u）でも段階利確が動作するよう下限を緩和
+_PARTIAL_MIN_UNITS = 50
 
 
 def _extract_trade_id(response: dict) -> Optional[str]:
@@ -355,9 +360,15 @@ def update_dynamic_protections(
         "micro": (max(8.0, (atr_m1 or 0.0) * 0.9), 1.9),
         "scalp": (max(4.0, (atr_m1 or 0.0) * 0.6), 1.4),
     }
-    trail_trigger = max(6.0, (atr_m1 or 0.0) * 1.2)
+    # ポケット別の BE/トレーリング開始閾値（pip）
+    # micro/scalp は早めに建値超えへ移行し、利確を積み上げる方針
+    per_pocket_triggers = {
+        "macro": max(6.0, (atr_h4 or atr_m1 or 0.0) * 1.2),
+        "micro": max(3.0, (atr_m1 or 0.0) * 0.8),
+        "scalp": max(2.0, (atr_m1 or 0.0) * 0.6),
+    }
     lock_ratio = 0.6
-    min_lock = 3.0
+    per_pocket_min_lock = {"macro": 3.0, "micro": 2.0, "scalp": 1.2}
     pip = 0.01
     for pocket, info in open_positions.items():
         if pocket == "__net__":
@@ -366,6 +377,8 @@ def update_dynamic_protections(
         if not base:
             continue
         base_sl, tp_ratio = base
+        trail_trigger = per_pocket_triggers.get(pocket, per_pocket_triggers["macro"])
+        min_lock = per_pocket_min_lock.get(pocket, 3.0)
         trades = info.get("open_trades") or []
         for tr in trades:
             trade_id = tr.get("trade_id")
