@@ -6,11 +6,12 @@ OANDA REST で成行・指値を発注。
 """
 
 from __future__ import annotations
-from typing import Literal, Optional
+from typing import Literal, Optional, Tuple
 
 from oandapyV20 import API
 from oandapyV20.exceptions import V20Error
 from oandapyV20.endpoints.orders import OrderCreate
+from oandapyV20.endpoints.trades import TradeCRCDO, TradeClose
 
 import logging
 
@@ -36,6 +37,8 @@ api = API(access_token=TOKEN, environment=ENVIRONMENT)
 
 if HEDGING_ENABLED:
     logging.info("[ORDER] Hedging mode enabled (positionFill=OPEN_ONLY).")
+
+_LAST_PROTECTIONS: dict[str, Tuple[Optional[float], Optional[float]]] = {}
 
 
 def _extract_trade_id(response: dict) -> Optional[str]:
@@ -65,6 +68,114 @@ def _extract_trade_id(response: dict) -> Optional[str]:
             return str(trade_id)
 
     return None
+
+
+def _maybe_update_protections(
+    trade_id: str,
+    sl_price: Optional[float],
+    tp_price: Optional[float],
+) -> None:
+    if not trade_id or (sl_price is None and tp_price is None):
+        return
+
+    data: dict[str, dict[str, str]] = {}
+    if sl_price is not None:
+        data["stopLoss"] = {
+            "price": f"{sl_price:.3f}",
+            "timeInForce": "GTC",
+        }
+    if tp_price is not None:
+        data["takeProfit"] = {
+            "price": f"{tp_price:.3f}",
+            "timeInForce": "GTC",
+        }
+
+    if not data:
+        return
+
+    previous = _LAST_PROTECTIONS.get(trade_id)
+    current = (
+        round(sl_price, 3) if sl_price is not None else None,
+        round(tp_price, 3) if tp_price is not None else None,
+    )
+    if previous == current:
+        return
+
+    try:
+        req = TradeCRCDO(accountID=ACCOUNT, tradeID=trade_id, data=data)
+        api.request(req)
+        _LAST_PROTECTIONS[trade_id] = current
+    except Exception as exc:  # noqa: BLE001
+        logging.warning(
+            "[ORDER] Failed to update protections trade=%s sl=%s tp=%s: %s",
+            trade_id,
+            sl_price,
+            tp_price,
+            exc,
+        )
+
+
+async def close_trade(trade_id: str, units: Optional[int] = None) -> bool:
+    data = None
+    if units is not None:
+        if units == 0:
+            return True
+        data = {"units": str(abs(units))}
+    req = TradeClose(accountID=ACCOUNT, tradeID=trade_id, data=data)
+    try:
+        api.request(req)
+        _LAST_PROTECTIONS.pop(trade_id, None)
+        return True
+    except Exception as exc:  # noqa: BLE001
+        logging.warning(
+            "[ORDER] Failed to close trade %s units=%s: %s", trade_id, units, exc
+        )
+        return False
+
+
+def update_dynamic_protections(
+    open_positions: dict,
+    fac_m1: dict,
+    fac_h4: dict,
+) -> None:
+    if not open_positions:
+        return
+    atr_m1 = fac_m1.get("atr_pips")
+    if atr_m1 is None:
+        atr_m1 = (fac_m1.get("atr") or 0.0) * 100
+    atr_h4 = fac_h4.get("atr_pips")
+    if atr_h4 is None:
+        atr_h4 = (fac_h4.get("atr") or atr_m1 or 0.0)
+    defaults = {
+        "macro": (max(25.0, (atr_h4 or atr_m1 or 0.0) * 1.1), 2.1),
+        "micro": (max(8.0, (atr_m1 or 0.0) * 0.9), 1.8),
+        "scalp": (max(4.0, (atr_m1 or 0.0) * 0.6), 1.3),
+    }
+    pip = 0.01
+    for pocket, info in open_positions.items():
+        if pocket == "__net__":
+            continue
+        base = defaults.get(pocket)
+        if not base:
+            continue
+        base_sl, tp_ratio = base
+        trades = info.get("open_trades") or []
+        for tr in trades:
+            trade_id = tr.get("trade_id")
+            price = tr.get("price")
+            side = tr.get("side")
+            if not trade_id or price is None or not side:
+                continue
+            entry = float(price)
+            sl_pips = max(1.0, base_sl)
+            tp_pips = max(sl_pips * tp_ratio, sl_pips + 5.0)
+            if side == "long":
+                sl_price = round(entry - sl_pips * pip, 3)
+                tp_price = round(entry + tp_pips * pip, 3)
+            else:
+                sl_price = round(entry + sl_pips * pip, 3)
+                tp_price = round(entry - tp_pips * pip, 3)
+            _maybe_update_protections(trade_id, sl_price, tp_price)
 
 
 async def market_order(
@@ -139,6 +250,7 @@ async def market_order(
                     logging.info(
                         "OANDA order filled by adjusting existing trade(s): %s", trade_id
                     )
+                _maybe_update_protections(trade_id, sl_price, tp_price)
                 return trade_id
 
             logging.error(
