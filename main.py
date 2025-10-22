@@ -68,8 +68,9 @@ STRATEGIES = {
 FALLBACK_EQUITY = 10000.0  # REST失敗時のフォールバック
 
 STAGE_RATIOS = {
-    "macro": (0.05, 0.04, 0.04, 0.03, 0.03, 0.03, 0.03, 0.03),
-    "micro": (0.025, 0.02, 0.015, 0.015, 0.012, 0.01, 0.008, 0.008),
+    # Fractions per stage sum to 1.0 so pocket lot can fully deploy as conditions allow.
+    "macro": (0.2, 0.18, 0.16, 0.14, 0.12, 0.08, 0.06, 0.06),
+    "micro": (0.22, 0.18, 0.16, 0.14, 0.12, 0.08, 0.05, 0.05),
     "scalp": (0.5, 0.3, 0.15, 0.05),
 }
 
