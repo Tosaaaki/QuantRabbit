@@ -10,6 +10,7 @@ from __future__ import annotations
 import sqlite3
 import pathlib
 from typing import Dict
+from utils.secrets import get_secret
 
 # --- risk params ---
 MAX_LEVERAGE = 20.0  # 1:20
@@ -111,7 +112,15 @@ def allowed_lot(
     if sl_pips <= 0:
         return 0.0
 
-    risk_pct = 0.02
+    # Allow override from config/env or environment: key "risk_pct" (e.g. 0.01 = 1%)
+    try:
+        risk_pct_str = get_secret("risk_pct")
+        risk_pct = float(risk_pct_str)
+        if not (0.0001 <= risk_pct <= 0.05):
+            raise ValueError("out_of_range")
+    except Exception:
+        # safer default under drawdown pressure
+        risk_pct = 0.01
     risk_amount = equity * risk_pct
     lot = risk_amount / (sl_pips * 1000)  # USD/JPYの1lotは1000JPY/pip ≒ 1000
 

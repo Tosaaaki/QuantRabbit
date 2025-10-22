@@ -28,8 +28,6 @@ class StageTracker:
     def __init__(self, db_path: Path | None = None) -> None:
         self._path = db_path or _DB_PATH
         self._con = sqlite3.connect(self._path)
-        self._con.execute("DROP TABLE IF EXISTS stage_state")
-        self._con.execute("DROP TABLE IF EXISTS stage_history")
         self._con.execute(
             """
             CREATE TABLE IF NOT EXISTS stage_cooldown (
