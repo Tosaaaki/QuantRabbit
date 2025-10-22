@@ -142,8 +142,8 @@ class ExitManager:
             reason = "trend_reversal"
         elif pocket == "scalp" and close_price > ema20:
             reason = "scalp_momentum_flip"
-        elif pocket == "macro" and range_mode and adx <= 20:
-            reason = "range_cooldown"
+        # レンジ中でもマクロの既存建玉を一律にクローズしない。
+        # 早期利確/撤退（range_take_profit/range_stop）や逆方向シグナルのみで制御する。
         elif range_mode:
             if profit_pips >= 1.6:
                 reason = "range_take_profit"
@@ -201,8 +201,8 @@ class ExitManager:
             reason = "trend_reversal"
         elif pocket == "scalp" and close_price < ema20:
             reason = "scalp_momentum_flip"
-        elif pocket == "macro" and range_mode and adx <= 20:
-            reason = "range_cooldown"
+        # レンジ中でもマクロの既存建玉を一律にクローズしない。
+        # 早期利確/撤退（range_take_profit/range_stop）や逆方向シグナルのみで制御する。
         elif range_mode:
             if profit_pips >= 1.6:
                 reason = "range_take_profit"

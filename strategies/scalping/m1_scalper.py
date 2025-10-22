@@ -16,10 +16,21 @@ class M1Scalper:
             return None
 
         momentum = close - ema20
-        atr_pips = atr * 100
+        # Prefer explicit atr_pips if provided; otherwise convert ATR (price units) to pips
+        atr_pips = fac.get("atr_pips")
+        if atr_pips is None:
+            atr_pips = (atr or 0.0) * 100
 
         if atr_pips < 2:
             return None
+
+        # Dynamic TP/SL (pips) tuned to recent volatility
+        # - TP ≈ 3x ATR (pips) within [5, 9]
+        # - SL ≈ min(2x ATR, 0.95*TP) with a floor of 4, keeping RR >= ~1.05
+        tp_dyn = max(5.0, min(9.0, atr_pips * 3.0))
+        sl_dyn = max(4.0, min(atr_pips * 2.0, tp_dyn * 0.95))
+        tp_dyn = round(tp_dyn, 2)
+        sl_dyn = round(sl_dyn, 2)
 
         if momentum < -0.0025 and rsi < 54:
             speed = abs(momentum) / max(0.0005, atr)
@@ -29,8 +40,8 @@ class M1Scalper:
             )
             return {
                 "action": "OPEN_LONG",
-                "sl_pips": 6,
-                "tp_pips": 9,
+                "sl_pips": sl_dyn,
+                "tp_pips": tp_dyn,
                 "confidence": confidence,
                 "tag": f"{M1Scalper.name}-buy-dip",
             }
@@ -42,8 +53,8 @@ class M1Scalper:
             )
             return {
                 "action": "OPEN_SHORT",
-                "sl_pips": 6,
-                "tp_pips": 9,
+                "sl_pips": sl_dyn,
+                "tp_pips": tp_dyn,
                 "confidence": confidence,
                 "tag": f"{M1Scalper.name}-sell-rally",
             }
