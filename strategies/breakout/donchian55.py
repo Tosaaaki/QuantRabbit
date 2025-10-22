@@ -16,9 +16,26 @@ class Donchian55:
         high55 = df["high"][:-1].max()
         low55 = df["low"][:-1].min()
         close = df["close"].iloc[-1]
+        if any(val is None for val in (high55, low55, close)):
+            return None
+        range_span = max(1e-6, high55 - low55)
+        breakout_strength = abs(close - (high55 + low55) / 2) / range_span
+        confidence = int(max(45.0, min(95.0, 55.0 + breakout_strength * 45.0)))
 
         if close > high55:
-            return {"action": "buy", "sl_pips": 55, "tp_pips": 110}
+            return {
+                "action": "OPEN_LONG",
+                "sl_pips": 55,
+                "tp_pips": 110,
+                "confidence": confidence,
+                "tag": f"{Donchian55.name}-breakout-up",
+            }
         if close < low55:
-            return {"action": "sell", "sl_pips": 55, "tp_pips": 110}
+            return {
+                "action": "OPEN_SHORT",
+                "sl_pips": 55,
+                "tp_pips": 110,
+                "confidence": confidence,
+                "tag": f"{Donchian55.name}-breakout-down",
+            }
         return None

@@ -14,13 +14,14 @@ from openai import AsyncOpenAI
 from typing import Dict
 
 from utils.cost_guard import add_tokens
+from utils.secrets import get_secret
 from analysis.gpt_prompter import (
     build_messages,
     OPENAI_MODEL as MODEL,
     MAX_TOKENS_MONTH,
 )
 
-client = AsyncOpenAI()
+client = AsyncOpenAI(api_key=get_secret("openai_api_key"))
 
 
 _SCHEMA = {
@@ -28,6 +29,15 @@ _SCHEMA = {
     "weight_macro": float,
     "ranked_strategies": list,
 }
+
+_FOCUS_TAGS = {"micro", "macro", "hybrid", "event"}
+_ALLOWED_STRATEGIES = [
+    "TrendMA",
+    "Donchian55",
+    "BB_RSI",
+    "NewsSpikeReversal",
+    "M1Scalper",
+]
 
 
 class GPTTimeout(Exception): ...
@@ -72,26 +82,34 @@ async def call_openai(payload: Dict) -> Dict:
         if not isinstance(data[k], typ):
             raise ValueError(f"{k} type error")
     data["weight_macro"] = round(float(data["weight_macro"]), 2)
+    focus_tag = data.get("focus_tag")
+    if focus_tag not in _FOCUS_TAGS:
+        data["focus_tag"] = "hybrid"
+
+    weight = data.get("weight_macro", 0.5)
+    data["weight_macro"] = max(0.0, min(1.0, weight))
+
+    ranked = [
+        s for s in data.get("ranked_strategies", []) if s in _ALLOWED_STRATEGIES
+    ]
+    data["ranked_strategies"] = ranked
     return data
-
-
-# ------------ 自前フォールバック ------------
-_FALLBACK = {
-    "focus_tag": "hybrid",
-    "weight_macro": 0.5,
-    "ranked_strategies": ["TrendMA", "Donchian55", "BB_RSI"],
-}
 
 
 async def get_decision(payload: Dict) -> Dict:
     """
-    上位ラッパ：GPT 呼び出し + 失敗時にフォールバックを返す
+    上位ラッパ：GPT 呼び出し（フォールバックなし、リトライあり）
     """
-    try:
-        return await asyncio.wait_for(call_openai(payload), timeout=9)
-    except Exception as e:
-        print("GPT error -> fallback:", e)
-        return _FALLBACK
+    # 最大2回リトライ（合計最大 ~9秒）
+    last_exc: Exception | None = None
+    for attempt in range(2):
+        try:
+            return await asyncio.wait_for(call_openai(payload), timeout=9)
+        except Exception as e:
+            last_exc = e
+            await asyncio.sleep(1.5)
+    # 最後まで失敗したら例外を上位へ
+    raise GPTTimeout(str(last_exc) if last_exc else "unknown error")
 
 
 # ---------- CLI self‑test ----------

@@ -16,19 +16,68 @@ _DB = pathlib.Path("logs/trades.db")
 _DB.parent.mkdir(exist_ok=True)
 con = sqlite3.connect(_DB)
 
-# テーブルが無い場合は作成
-con.execute(
-    """
+
+def _ensure_schema() -> None:
+    """trades テーブルが存在しない / 欠損カラムがある場合に補正する。"""
+    con.execute(
+        """
 CREATE TABLE IF NOT EXISTS trades (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
-  pocket TEXT,            -- 'micro' | 'macro'
+  transaction_id INTEGER,
+  ticket_id TEXT UNIQUE,
+  pocket TEXT,
+  instrument TEXT,
+  units INTEGER,
+  entry_price REAL,
+  close_price REAL,
+  pl_pips REAL,
+  realized_pl REAL,
+  entry_time TEXT,
   open_time TEXT,
   close_time TEXT,
-  pl_pips REAL
+  close_reason TEXT,
+  state TEXT,
+  updated_at TEXT,
+  version TEXT DEFAULT 'v1',
+  unrealized_pl REAL
 )
 """
-)
-con.commit()
+    )
+    existing = {
+        row[1] for row in con.execute("PRAGMA table_info(trades)")  # pragma: no cover
+    }
+    columns: dict[str, str] = {
+        "transaction_id": "INTEGER",
+        "ticket_id": "TEXT",
+        "pocket": "TEXT",
+        "instrument": "TEXT",
+        "units": "INTEGER",
+        "entry_price": "REAL",
+        "close_price": "REAL",
+        "pl_pips": "REAL",
+        "realized_pl": "REAL",
+        "entry_time": "TEXT",
+        "open_time": "TEXT",
+        "close_time": "TEXT",
+        "close_reason": "TEXT",
+        "state": "TEXT",
+        "updated_at": "TEXT",
+        "version": "TEXT DEFAULT 'v1'",
+        "unrealized_pl": "REAL",
+    }
+    for name, ddl in columns.items():
+        if name not in existing:
+            con.execute(f"ALTER TABLE trades ADD COLUMN {name} {ddl}")
+    con.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_trades_ticket ON trades(ticket_id)"
+    )
+    con.execute(
+        "CREATE INDEX IF NOT EXISTS idx_trades_close_time ON trades(close_time)"
+    )
+    con.commit()
+
+
+_ensure_schema()
 
 
 def _load_df() -> pd.DataFrame:

@@ -14,7 +14,10 @@ from utils.secrets import get_secret
 # ---------- 読み込み：env.toml ----------
 TOKEN: str = get_secret("oanda_token")
 ACCOUNT: str = get_secret("oanda_account_id")
-PRACTICE: bool = False  # 本番口座なので False に設定。必要に応じて True に変更
+try:
+    PRACTICE: bool = str(get_secret("oanda_practice")).lower() == "true"
+except Exception:
+    PRACTICE = False
 MOCK_STREAM: bool = os.getenv("MOCK_TICK_STREAM", "0") == "1"
 
 STREAM_HOST = (
@@ -30,9 +33,6 @@ class Tick:
     bid: float
     ask: float
     liquidity: int
-
-
-# ---------- メイン ----------
 
 
 async def _connect(instrument: str, callback: Callable[[Tick], Awaitable[None]]):
@@ -58,11 +58,12 @@ async def _connect(instrument: str, callback: Callable[[Tick], Awaitable[None]])
                         msg = json.loads(raw)
                         if msg.get("type") != "PRICE":
                             continue
+                        iso_raw = msg["time"].replace("Z", "+00:00")
+                        if "." in iso_raw:
+                            iso_raw = iso_raw.split(".")[0] + "+00:00"
                         tick = Tick(
                             instrument=msg["instrument"],
-                            time=datetime.datetime.fromisoformat(
-                                msg["time"].replace("Z", "+00:00")
-                            ),
+                            time=datetime.datetime.fromisoformat(iso_raw),
                             bid=float(msg["bids"][0]["price"]),
                             ask=float(msg["asks"][0]["price"]),
                             liquidity=int(msg["bids"][0]["liquidity"]),
@@ -70,7 +71,7 @@ async def _connect(instrument: str, callback: Callable[[Tick], Awaitable[None]])
                         await callback(tick)
         except Exception as e:
             print("tick_fetcher reconnect:", e)
-            await asyncio.sleep(3)  # バックオフして再接続
+            await asyncio.sleep(3)
 
 
 async def _mock_stream(instrument: str, callback: Callable[[Tick], Awaitable[None]]):

@@ -120,7 +120,7 @@ async def close_trade(trade_id: str, units: Optional[int] = None) -> bool:
     if units is not None:
         if units == 0:
             return True
-        data = {"units": str(abs(units))}
+        data = {"units": str(units)}
     req = TradeClose(accountID=ACCOUNT, tradeID=trade_id, data=data)
     try:
         api.request(req)

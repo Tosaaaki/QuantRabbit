@@ -1,8 +1,8 @@
 # AGENT.me  –  QuantRabbit Agent Specification
 
 ## 1. ミッション
-> **狙い** : USD/JPY で 1 日 +100 pips を実現する、 24/7 無裁量トレーディング・エージェント。  
-> **境界** : 発注・リスクは機械的、曖昧判断とニュース解釈は GPT‑4o‑mini に委譲。
+> **狙い**	: USD/JPY で 1 日 +100 pips を実現する、 24/7 無裁量トレーディング・エージェント。  
+> **境界**	: 発注・リスクは機械的、曖昧判断とニュース解釈は GPT‑4o‑mini に委譲。
 
 ---
 
@@ -14,10 +14,114 @@
 | **IndicatorEngine** | `indicators/*` | ← Candle deque<br>→ factors dict {ma10, rsi, …} |
 | **Regime & Focus** | `analysis/regime_classifier.py` / `focus_decider.py` | ← factors<br>→ macro/micro レジーム・weight_macro |
 | **GPT Decider** | `analysis/gpt_decider.py` | ← focus + perf + news<br>→ JSON {focus_tag, weight_macro, ranked_strategies} |
-| **Strategy Plugin** | `strategies/*` | ← factors<br>→ dict {action, sl_pips, tp_pips} or None |
+| **Strategy Plugin** | `strategies/*` | ← factors<br>→ dict {action, sl_pips, tp_pips, confidence, tag} or None |
+| **Exit Manager** | `execution/exit_manager.py` | ← open positions + signals<br>→ list[{pocket, units, reason, tag}] |
 | **Risk Guard** | `execution/risk_guard.py` | ← lot, SL/TP, pocket<br>→ bool (可否)・調整値 |
-| **Order Manager** | `execution/order_manager.py` | ← units, sl, tp, tag<br>→ OANDA ticket ID |
+| **Order Manager** | `execution/order_manager.py` | ← units, sl, tp, client_order_id, tag<br>→ OANDA ticket ID |
 | **Logger** | `logs/*.db` | 全コンポーネントが INSERT |
+
+### 2.1 共通データスキーマ
+
+```python
+from pydantic import BaseModel, Field
+from typing import Literal, Optional, List
+
+class Tick(BaseModel):
+    ts_ms: int
+    instrument: Literal["USD_JPY"]
+    bid: float
+    ask: float
+    mid: float
+    volume: int
+
+class Candle(BaseModel):
+    ts_ms: int                # epoch ms (UTC)
+    instrument: Literal["USD_JPY"]
+    timeframe: Literal["M1","M5","H1","H4","D1"]
+    o: float; h: float; l: float; c: float
+    volume: int
+    bid_close: Optional[float] = None
+    ask_close: Optional[float] = None
+
+class Factors(BaseModel):
+    instrument: Literal["USD_JPY"]
+    timeframe: Literal["M1","M5","H4","D1"]
+    adx: float
+    ma10: float
+    ma20: float
+    bbw: float
+    atr_pips: float
+    rsi: float
+    vol_5m: float
+
+class GPTDecision(BaseModel):
+    focus_tag: Literal["micro","macro","hybrid","event"]
+    weight_macro: float = Field(ge=0.0, le=1.0)
+    ranked_strategies: List[str]
+    reason: Optional[str] = None
+
+class StrategyDecision(BaseModel):
+    pocket: Literal["micro","macro"]
+    action: Literal["OPEN_LONG","OPEN_SHORT","CLOSE","HOLD"]
+    sl_pips: float = Field(gt=0)
+    tp_pips: float = Field(gt=0)
+    confidence: int = Field(ge=0, le=100)
+    tag: str
+
+class OrderIntent(BaseModel):
+    instrument: Literal["USD_JPY"]
+    units: int                      # +buy / -sell
+    entry_price: float
+    sl_price: float
+    tp_price: float
+    pocket: Literal["micro","macro"]
+    client_order_id: str
+```
+
+> すべてのコンポーネントは上記モデル（もしくは互換 JSON Schema）で通信し、`logs/*.db` にも生 JSON を残す。
+
+### 2.2 単位・用語の定義
+
+| 用語 | 定義 |
+|------|------|
+| `pip` | USD/JPY の 1 pip は 0.01。入力/出力とも pip 単位を明記する。 |
+| `point` | 0.001。OANDA REST 価格の丸め単位。 |
+| `lot` | 1 lot = 100,000 units。`units = round(lot * 100000)`。 |
+| `pocket` | `micro` = 短期テクニカル、`macro` = レジーム/ニュース。口座資金を `pocket_ratio` で按分。 |
+| `weight_macro` | 0.0〜1.0。`pocket_macro = pocket_total * weight_macro` を意味する。 |
+
+- `price_from_pips("BUY", entry, sl_pips)` = `entry - sl_pips * 0.01` を `round(price, 3)`。
+- `price_from_pips("SELL", entry, sl_pips)` = `entry + sl_pips * 0.01` を `round(price, 3)`。
+- `client_order_id = f"qr-{ts_ms}-{focus_tag}-{tag}"`。9 桁以内のハッシュを付けて重複防止。
+
+### 2.3 コンポーネント I/O 詳細
+
+- DataFetcher: OANDA streaming で `Tick` を取得し 60s 終端で `Candle` を確定、欠損 tick は遅延として扱う (`lag_ms` を添付)。
+- IndicatorEngine: 各 timeframe ごとに `Deque[Candle]` を維持し 300 本以上揃ったときに `Factors` を算出、入力欠損時は `stale=True` を返し Strategy を停止。
+- Regime & Focus: macro=H4/D1, micro=M1 の `Factors` を消費し、`focus_decider` は `FocusDecision`(`focus_tag`,`weight_macro`) を返す。
+- GPT Decider: 過去 15 分のニュース要約 + パフォーマンス指標を入力し `GPTDecision` を返す。JSON Schema 不一致時はフォールバックを Raise。
+- Strategy Plugin: `ranked_strategies` 順に呼び出し `StrategyDecision` または `None` を返す。必ず `confidence` と `tag` を含め、`None` は「ノートレード」。
+- Exit Manager: 現在のポジションとシグナルを突き合わせ、逆方向シグナル・イベントロック・指標劣化の各条件でクローズ指示を組み立てる。
+- Risk Guard: エントリー/クローズ双方の `StrategyDecision` と口座情報から `OrderIntent` を生成、拒否理由は `{"allow": False, "reason": ...}` としてロガーへ渡す。
+- Order Manager: `OrderIntent` を OANDA REST へ送信、結果は `ticket_id` と `executed_price` を返し `logs/orders.db` に保存。
+
+### 2.4 OANDA API マッピング
+
+| Strategy action | REST 注文 | units 符号 | SL/TP 指定 | 備考 |
+|-----------------|-----------|------------|------------|------|
+| `OPEN_LONG` | `MARKET` | `+abs(units)` | `stopLossOnFill`, `takeProfitOnFill` | `timeInForce=FOK`, `positionFill=DEFAULT` |
+| `OPEN_SHORT` | `MARKET` | `-abs(units)` | 同上 | ask/bid 逆転チェック後に送信 |
+| `CLOSE` | `MARKET` | 既存ポジの反対売買 | SL/TP 指定なし | `OrderCancelReplace` で逆指値を削除 |
+| `HOLD` | 送信なし | 0 | なし | Strategy ループ継続 |
+
+- すべての注文に `clientExtensions = {"id": client_order_id, "tag": pocket}` を付与し、再試行時は同一 ID を再利用する。Exit 指示も同じ ID 命名規則に従い、`qr-{epoch_ms}-{focus_tag}-{strategy_tag}` 形式で 90 日間ユニークにする。
+- OANDA 5xx/timeout 時は 0.5s, 1.5s の指数バックオフをかけ、3 回失敗で `Risk Guard` にエスカレーションする。
+
+### 2.5 ログと永続化
+
+- `logs/trades.db`: `trade_id`, `pocket`, `entry_ts`, `exit_ts`, `pl_pips`, `sl_pips`, `tp_pips`, `strategy_tag`, `client_order_id`, `event_mode`。
+- `logs/news.db`: `published_at`, `source`, `headline`, `summary`, `url`, `tokens_used`。
+- `logs/metrics.db`: `ts`, `metric`, `value`, `tags`。`decision_latency`, `data_lag`, `order_success_rate` 等を保存。
 
 ---
 
@@ -29,14 +133,45 @@
 2. **Every 60 s**
    1. 新ローソク → factors 更新  
    2. regime + focus → GPT decision  
-   3. pocket lot 配分 → Strategy loop  
-   4. Risk guard → order_manager 発注  
-   5. trades.db / news.db にログ
+   3. pocket lot 配分 → Strategy loop（confidence スケーリング + ステージ判定）  
+   4. Exit manager → Risk guard → order_manager でクローズ/新規発注  
+   5. trades.db / news.db / metrics.db にログ
 3. **Background Jobs**
    - `news_fetcher` RSS → GCS raw/  
-   - Cloud Run `news‑summarizer`  raw → summary/  
+   - Cloud Run `news‑summarizer`  raw → summary/  
    - `summary_ingestor` summary/ → news.db  
    - nightly `backup_to_gcs.sh` logs/ → backup bucket
+
+### 3.1 60 秒タクトの運用要件
+
+- サイクル開始は正秒同期 (`datetime.utcnow().replace(second=0, microsecond=0)`)、許容誤差 ±500 ms。
+- 処理締切は 55 s。締切超過時は当該サイクルを捨て、次のサイクルで再計算する (バックログ禁止)。
+- `monotonic()` ベースで `decision_latency_ms` を測定し、遅延は `logs/metrics.db` に記録する。
+
+### 3.2 データ鮮度と完全性
+
+- `max_data_lag_ms = 3000`。これを超える遅延は `DataFetcher` が `stale=True` を返し `Risk Guard` は発注を拒否する。
+- Candle 確定は `tick.ts_ms // 60000` の変化で判定し、終値は最後の mid。`volume=0` のローソク足は `missing_bar` としてログ。
+- ニュースは `summary_ingestor` が 30 秒毎にポーリング。最新記事が 120 分超なら `news_status=stale` をセット。
+
+### 3.3 発注冪等性とリトライ
+
+- `client_order_id` は 90 日間ユニーク。OANDA `POST /orders` 失敗時は同一 ID で最大 3 回まで再送。
+- REST 429/5xx は指数バックオフ (0.5s→1.5s→3.5s) とジッター 100 ms を加える。
+- 発注中に WebSocket 停止を検知した場合は `Order Manager` が `halt_reason="stream_disconnected"` を残して停止。
+
+### 3.4 検証パイプライン
+
+- **Record**: `DataFetcher` は全 Tick を `logs/replay/*.jsonl` に保存しテストで再生できる状態を担保。
+- **Backtest**: Strategy Plugin は記録データを用い同一 `StrategyDecision` を再現できることを CI で検証。
+- **Shadow**: 本番 tick + 仮想アカウントで `OrderIntent` を生成し、`risk_guard` の拒否理由を比較。
+
+### 3.5 エントリー/クローズ制御
+
+- **Confidence スケーリング**: Strategy の `confidence` (0–100) をポケット割当 lot に掛け、最低 0.2 倍〜最大 1.0 倍のレンジで段階的エントリーを行う。  
+- **ステージ比率**: `STAGE_RATIOS` で定義されたフラクションに従い、各ステージ条件 (`_stage_conditions_met`) を通過した場合のみ追撃。  
+- **Exit Manager**: 逆方向シグナルが閾値 (既定 70) を超えた場合やイベントロック、RSI/ADX 劣化などでクローズ。`allow_reentry` が False の場合は当該サイクル内の再参入を禁止する。
+- **Release gate**: PF>1.1, 勝率>52%、最大 DD<5% を 2 週間連続で満たしたら実弾に昇格。
 
 ---
 
@@ -55,17 +190,49 @@
 
 * `.cache/token_usage.json` に月累計。  
 * `openai.max_month_tokens` (env.toml) で上限設定。  
-* 超過時：`news_fetcher` は継続、`gpt_decider` はフォールバック JSON を返す。
+* 超過時：`news_fetcher` は継続、`gpt_decider` はフォールバック JSON を返す。  
+* フォールバック JSON: `{"focus_tag":"hybrid","weight_macro":0.5,"ranked_strategies":["TrendMA","Donchian55","BB_RSI","NewsSpikeReversal"],"reason":"fallback"}`。  
+* GPT 失敗時は過去 5 分の決定を再利用 (`reason="reuse_previous"`) し、`decision_latency_ms` を 9,000 で固定計上する。
 
 ---
 
 ## 6. 安全装置
 
-* **Pocket DD** : micro 5 %、macro 15 % → 取引停止  
-* **Global DD** : 20 % → プロセス自動終了 (`risk_guard`)  
-* **Event モード** : 指標 ±30 min → micro 新規禁止  
-* **Timeout** : GPT 7 s、OANDA REST 5 s → 再試行 / フォールバック  
-* **Healthbeat** : `main.py` が 5 min ping を Cloud Logging に残す
+* **Pocket DD**	: micro 5 %、macro 15 % → 該当 pocket の新規取引停止  
+* **Global DD**	: 20 % → プロセス自動終了 (`risk_guard`)  
+* **Event モード**	: 指標 ±30 min → micro 新規禁止  
+* **Timeout**	: GPT 7 s、OANDA REST 5 s → 再試行 / フォールバック  
+* **Healthbeat**	: `main.py` が 5 min ping を Cloud Logging に残す
+
+### 6.1 リスク計算とロット配分
+
+- `pocket_equity = account_equity * pocket_ratio`。`pocket_ratio` は `weight_macro` と `pocket` 固有の上限 (`micro<=0.6`, `macro<=0.8`) を掛け合わせる。
+- 1 トレードの許容損失は `risk_pct = 0.02`。`risk_amount = pocket_equity * risk_pct`。
+- USD/JPY の 1 lot 当たり pip 価値は 1000 JPY。従って `lot = min(MAX_LOT, round(risk_amount / (sl_pips * 1000), 3))`。
+- `units = int(round(lot * 100000))`。`abs(units) < 1000` はノイズ扱いで発注しない。
+- `clamp_sl_tp(price, sl, tp, side)` は 0.001 単位で丸め、SL/TP 逆転時は 0.1 のバッファを確保。
+
+### 6.2 状態遷移
+
+| 状態 | 遷移条件 | 動作 |
+|------|----------|------|
+| `NORMAL` | 初期状態 | 全 pocket 取引許可 |
+| `EVENT_LOCK` | 経済指標 ±30 min | `micro` 新規停止、建玉縮小ロジック発動 |
+| `MICRO_STOP` | `micro` pocket DD ≥5% または `news_status=stale` | `micro` 決済のみ、`macro` 継続 |
+| `GLOBAL_STOP` | Global DD ≥20% または `Healthbeat` 欠損>10 min | 全取引停止、プロセス終了 |
+| `RECOVERY` | DD が閾値の 80% 未満、24h 経過 | 新規建玉再開前に `main.py` がドライラン |
+
+### 6.3 ニュース・イベント劣化運転
+
+- `news_age_min > 120` で `focus_tag` を強制的に `micro` / `hybrid` へ縮退、`weight_macro` は指数減衰 (`weight_macro *= 0.5`)。
+- RSS 取得失敗が 5 回連続した場合は `news_fetcher` が削除せずリトライを継続しつつ Slack へ通知。
+- 週末・祝日ギャップは 金曜 21:55Z〜日曜 21:35Z を取引禁止 window とし、自動復帰時に `stale` フラグをクリアする。
+
+### 6.4 観測指標とアラート
+
+- **SLI**: `decision_latency_ms`, `data_lag_ms`, `order_success_rate`, `reject_rate`, `gpt_timeout_rate`, `pnl_day_pips`, `drawdown_pct`。
+- **SLO**: `decision_latency_ms p95 < 2000`, `order_success_rate ≥ 0.995`, `data_lag_ms p95 < 1500`, `drawdown_pct max < 0.18`, `gpt_timeout_rate < 0.05`。
+- **Alert**: SLO 違反、`healthbeat` 欠損 5 分超、`token_usage ≥ 0.8 * max_month_tokens`, `news_status=stale 10 min`, `order reject` 連続 3 件。
 
 ---
 
@@ -75,6 +242,12 @@
 gcloud builds submit --tag gcr.io/$PROJ/news-summarizer
 cd infra/terraform && terraform init && terraform apply
 gcloud compute ssh fx-trader-vm --command "git pull && ./startup.sh"
+```
+
+- デプロイ前に `terraform plan` を CI で実行し差分確認、サービスアカウントは最小権限 (`roles/storage.objectAdmin`, `roles/logging.logWriter`, 必要な Pub/Sub Roles)。
+- Cloud Build 成功時に `cosign sign` でイメージ署名、SBOM (`gcloud artifacts sbom export`) を保存。
+- 予算アラート: `GCP Budget Alert ≥ 80%` で Slack 通知、IAP トンネルは `roles/iap.tunnelResourceAccessor` を必須化。
+- ロールバック手順: `gcloud compute ssh fx-trader-vm --command "cd ~/QuantRabbit && git checkout <release-tag> && ./startup.sh --dry-run"` を実行し、検証後に `--apply`。
 
 8. チーム運用ルール
 	1.	1 ファイル = 1 PR、Squash Merge、CI green 必須
@@ -85,7 +258,53 @@ gcloud compute ssh fx-trader-vm --command "git pull && ./startup.sh"
 ⸻
 
 9. 参考ドキュメント
-	•	README.md             – 🍵 ユーザ向け概観
+	•	README.md				 – 🍵 ユーザ向け概観
 	•	パッチ適用の推奨シーケンス.pdf – 開発手順ガイド
 	•	全体仕様まとめ（最終版）.pdf – アーキテクチャ詳細
 	•	OFL.txt + ZenOldMincho-*.ttf – 付属フォントライセンス
+
+---
+
+## 10. GCE SSH / OS Login ガイド
+
+推奨は OS Login。メタデータ `ssh-keys` は OS Login 有効時に無視されます。
+
+- 事前条件
+  - IAM: `roles/compute.osLogin` もしくは `roles/compute.osAdminLogin`
+  - IAP 経由時は `roles/iap.tunnelResourceAccessor`
+
+- OS Login を有効化（インスタンス）
+  - `gcloud compute instances add-metadata fx-trader-vm \
+    --zone asia-northeast1-b --metadata enable-oslogin=TRUE`
+
+- キー生成と OS Login 登録（30 日 TTL）
+  - `ssh-keygen -t ed25519 -f ~/.ssh/gcp_oslogin_quantrabbit -N '' -C 'oslogin-quantrabbit'`
+  - `gcloud compute os-login ssh-keys add \
+    --key-file ~/.ssh/gcp_oslogin_quantrabbit.pub --ttl 30d`
+
+- 接続（外部 IP あり）
+  - `gcloud compute ssh fx-trader-vm \
+    --project quantrabbit --zone asia-northeast1-b \
+    --ssh-key-file ~/.ssh/gcp_oslogin_quantrabbit`
+  - 直接 SSH する場合（OS Login ユーザ名は `gcloud compute os-login describe-profile` で確認）
+    - `ssh -i ~/.ssh/gcp_oslogin_quantrabbit <oslogin_username>@<EXTERNAL_IP>`
+
+- 接続（外部 IP なし / IAP 経由）
+  - `gcloud compute ssh fx-trader-vm \
+    --project quantrabbit --zone asia-northeast1-b \
+    --tunnel-through-iap \
+    --ssh-key-file ~/.ssh/gcp_oslogin_quantrabbit`
+
+- トラブルシュート
+  - `Permission denied (publickey)` の典型:
+    - OS Login が有効か: `enable-oslogin=TRUE`（プロジェクト/インスタンス）
+    - IAM に osLogin 権限があるか
+    - OS Login に公開鍵が登録されているか（TTL 期限切れに注意）
+    - `gcloud compute ssh ... --ssh-key-file` で鍵を明示
+    - 詳細: `gcloud compute ssh ... --troubleshoot`
+  - 組織ポリシー `compute.requireOsLogin` が強制の場合、メタデータ鍵は使えません。
+
+- 代替（OS Login を使わない場合）
+  - OS Login を無効化: `... add-metadata ... --metadata enable-oslogin=FALSE`
+  - 公開鍵をメタデータに登録: `--metadata-from-file ssh-keys=ssh-keys.txt`
+  - ただしセキュリティ・運用上 OS Login 利用を推奨。

@@ -98,14 +98,28 @@ def _upsert(d: dict):
 
 def get_latest_news(limit_short: int = 3, limit_long: int = 5) -> dict:
     """DBから最新のニュースを取得して返す"""
-    cur.execute("SELECT summary, ts_utc, horizon FROM news ORDER BY ts_utc DESC")
+    cur.execute(
+        """
+        SELECT summary, ts_utc, horizon, sentiment, impact, event_time, pair_bias
+        FROM news
+        ORDER BY ts_utc DESC
+        """
+    )
     rows = cur.fetchall()
 
     news_short = []
     news_long = []
 
-    for summary, ts, horizon in rows:
-        item = {"summary": summary, "ts": ts}
+    for summary, ts, horizon, sentiment, impact, event_time, pair_bias in rows:
+        item = {
+            "summary": summary,
+            "ts": ts,
+            "horizon": horizon,
+            "sentiment": sentiment,
+            "impact": impact,
+            "event_time": event_time,
+            "pair_bias": pair_bias,
+        }
         if horizon == "short" and len(news_short) < limit_short:
             news_short.append(item)
         elif horizon == "long" and len(news_long) < limit_long:

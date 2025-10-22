@@ -1,82 +1,114 @@
-"""
-indicators.calc_core
-~~~~~~~~~~~~~~~~~~~~
-
-ta‑lib をラップし、DataFrame（open/high/low/close）から
-主要テクニカル指標を 1 行 dict で返すエンジン。
-
-・終値ベース SMA10/20, EMA20
-・RSI14, ATR14, ADX14
-・Bollinger 幅 (upper-lower)/middle
-"""
+"""Core indicator calculations without pandas-ta."""
 
 from __future__ import annotations
+
 from typing import Dict
 
+import numpy as np
 import pandas as pd
-import pandas_ta  # noqa: F401 -- pandasの .ta アクセサを有効化
 
 
 class IndicatorEngine:
-    """ローソク足 DataFrame から指標を計算."""
+    """Compute technical indicators from OHLC DataFrame."""
 
     @staticmethod
     def compute(df: pd.DataFrame) -> Dict[str, float]:
-        """
-        Parameters
-        ----------
-        df :  columns = ['open','high','low','close']
-              index は時間順 (昇順)
-
-        Returns
-        -------
-        Dict[str, float]
-            {
-              "ma10": 157.25,
-              "ma20": ...,
-              "ema20": ...,
-              "rsi":  63.2,
-              "atr":  0.35,
-              "adx":  28.4,
-              "bbw":  0.26
+        if df.empty:
+            return {
+                "ma10": 0.0,
+                "ma20": 0.0,
+                "ema20": 0.0,
+                "rsi": 0.0,
+                "atr": 0.0,
+                "adx": 0.0,
+                "bbw": 0.0,
             }
-        """
-        # pandas_ta は DataFrame に直接アクセスできる
-        # df.ta.sma() のように呼び出す
-        df.ta.sma(length=10, append=True)
-        df.ta.sma(length=20, append=True)
-        df.ta.ema(length=20, append=True)
-        df.ta.rsi(length=14, append=True)
-        df.ta.atr(length=14, append=True)
-        df.ta.adx(length=14, append=True)
-        df.ta.bbands(length=20, std=2, append=True)
 
-        out: Dict[str, float] = {}
+        close = df["close"].astype(float)
+        high = df["high"].astype(float)
+        low = df["low"].astype(float)
 
-        # 最新の値を抽出
-        out["ma10"] = df["SMA_10"].iloc[-1]
-        out["ma20"] = df["SMA_20"].iloc[-1]
-        out["ema20"] = df["EMA_20"].iloc[-1]
+        ma10 = close.rolling(window=10, min_periods=10).mean()
+        ma20 = close.rolling(window=20, min_periods=20).mean()
+        ema20 = close.ewm(span=20, adjust=False, min_periods=20).mean()
 
-        out["rsi"] = df["RSI_14"].iloc[-1]
-        # pandas_ta v0.3.14b0 では ATR_14 -> ATRr_14 に名称変更された
-        atr_col_name = "ATRr_14" if "ATRr_14" in df.columns else "ATR_14"
-        out["atr"] = df[atr_col_name].iloc[-1]
-        out["adx"] = df["ADX_14"].iloc[-1]
+        rsi = _rsi(close, period=14)
+        atr = _atr(high, low, close, period=14)
+        adx = _adx(high, low, close, period=14)
 
-        # Bollinger Bands の計算
-        upper = df["BBU_20_2.0"].iloc[-1]
-        middle = df["BBM_20_2.0"].iloc[-1]
-        lower = df["BBL_20_2.0"].iloc[-1]
+        upper, middle, lower = _bollinger(close, period=20, std_mult=2.0)
+        bbw_series = np.where(middle != 0, (upper - lower) / middle, 0.0)
 
-        if middle != 0:
-            out["bbw"] = float((upper - lower) / middle)
-        else:
-            out["bbw"] = 0.0
+        out: Dict[str, float] = {
+            "ma10": float(ma10.iloc[-1]) if not ma10.empty else 0.0,
+            "ma20": float(ma20.iloc[-1]) if not ma20.empty else 0.0,
+            "ema20": float(ema20.iloc[-1]) if not ema20.empty else 0.0,
+            "rsi": float(rsi.iloc[-1]) if not rsi.empty else 0.0,
+            "atr": float(atr.iloc[-1]) if not atr.empty else 0.0,
+            "adx": float(adx.iloc[-1]) if not adx.empty else 0.0,
+            "bbw": float(bbw_series[-1]) if bbw_series.size else 0.0,
+        }
 
-        # 数値が nan の場合は 0.0 で埋める
         for k, v in out.items():
-            if pd.isna(v):
+            if not np.isfinite(v):
                 out[k] = 0.0
-
         return out
+
+
+def _rsi(close: pd.Series, period: int) -> pd.Series:
+    delta = close.diff()
+    gain = delta.clip(lower=0.0)
+    loss = -delta.clip(upper=0.0)
+
+    avg_gain = gain.ewm(alpha=1 / period, adjust=False, min_periods=period).mean()
+    avg_loss = loss.ewm(alpha=1 / period, adjust=False, min_periods=period).mean()
+
+    rs = avg_gain / avg_loss.replace(0.0, np.nan)
+    rsi = 100 - (100 / (1 + rs))
+    return rsi.fillna(0.0)
+
+
+def _true_range(high: pd.Series, low: pd.Series, close: pd.Series) -> pd.Series:
+    prev_close = close.shift(1)
+    ranges = pd.concat(
+        [
+            high - low,
+            (high - prev_close).abs(),
+            (low - prev_close).abs(),
+        ],
+        axis=1,
+    )
+    return ranges.max(axis=1)
+
+
+def _atr(high: pd.Series, low: pd.Series, close: pd.Series, period: int) -> pd.Series:
+    tr = _true_range(high, low, close)
+    return tr.ewm(alpha=1 / period, adjust=False, min_periods=period).mean().fillna(0.0)
+
+
+def _dm(high: pd.Series, low: pd.Series) -> tuple[pd.Series, pd.Series]:
+    up = high.diff().clip(lower=0.0)
+    down = -low.diff().clip(lower=0.0)
+    plus_dm = np.where((up > down) & (up > 0), up, 0.0)
+    minus_dm = np.where((down > up) & (down > 0), down, 0.0)
+    return pd.Series(plus_dm, index=high.index), pd.Series(minus_dm, index=high.index)
+
+
+def _adx(high: pd.Series, low: pd.Series, close: pd.Series, period: int) -> pd.Series:
+    atr = _atr(high, low, close, period)
+    plus_dm, minus_dm = _dm(high, low)
+
+    plus_di = 100 * plus_dm.ewm(alpha=1 / period, adjust=False).mean() / atr.replace(0.0, np.nan)
+    minus_di = 100 * minus_dm.ewm(alpha=1 / period, adjust=False).mean() / atr.replace(0.0, np.nan)
+
+    dx = ((plus_di - minus_di).abs() / (plus_di + minus_di).abs()) * 100
+    adx = dx.ewm(alpha=1 / period, adjust=False, min_periods=period).mean()
+    return adx.fillna(0.0)
+
+
+def _bollinger(close: pd.Series, period: int, std_mult: float):
+    middle = close.rolling(window=period, min_periods=period).mean()
+    std = close.rolling(window=period, min_periods=period).std(ddof=0)
+    upper = middle + std_mult * std
+    lower = middle - std_mult * std
+    return upper.fillna(0.0), middle.fillna(0.0), lower.fillna(0.0)
