@@ -15,6 +15,7 @@ from typing import Awaitable, Callable, Dict, List, Literal, Tuple
 import httpx
 from utils.secrets import get_secret
 from market_data.tick_fetcher import Tick, _parse_time
+from market_data.replay_logger import log_candle
 
 Candle = dict[str, float]  # open, high, low, close
 TimeFrame = Literal["M1", "H4"]
@@ -33,8 +34,9 @@ HEADERS = {"Authorization": f"Bearer {TOKEN}"}
 
 
 class CandleAggregator:
-    def __init__(self, timeframes: List[TimeFrame]):
+    def __init__(self, timeframes: List[TimeFrame], instrument: str):
         self.timeframes = timeframes
+        self.instrument = instrument
         self.current_candles: Dict[TimeFrame, Candle] = {}
         self.last_keys: Dict[TimeFrame, str] = {}
         self.subscribers: Dict[TimeFrame, List[Callable[[Candle], Awaitable[None]]]] = (
@@ -65,7 +67,11 @@ class CandleAggregator:
             if self.last_keys.get(tf) != key:
                 # 古い足が確定
                 if tf in self.current_candles:
-                    finalized_candle = self.current_candles[tf]
+                    finalized_candle = dict(self.current_candles[tf])
+                    try:
+                        log_candle(self.instrument, tf, finalized_candle)
+                    except Exception as exc:  # noqa: BLE001
+                        print(f"[replay] failed to log candle: {exc}")
                     for sub in self.subscribers[tf]:
                         await sub(finalized_candle)
 
@@ -99,7 +105,7 @@ async def start_candle_stream(
     handlers: [(TimeFrame, handler), ...]
     """
     timeframes = [tf for tf, _ in handlers]
-    agg = CandleAggregator(timeframes)
+    agg = CandleAggregator(timeframes, instrument)
     for tf, handler in handlers:
         agg.subscribe(tf, handler)
 

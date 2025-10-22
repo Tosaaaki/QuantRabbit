@@ -26,7 +26,14 @@ class _State(TypedDict):
 
 def _load_state() -> _State:
     if _JSON.exists():
-        return json.loads(_JSON.read_text())
+        try:
+            return json.loads(_JSON.read_text())
+        except FileNotFoundError:
+            # ファイルが他プロセスにより削除された場合は新規作成
+            pass
+        except json.JSONDecodeError:
+            # 破損した場合はリセット
+            pass
     ym = datetime.datetime.utcnow().strftime("%Y-%m")
     return {"year_month": ym, "total_tokens": 0}
 

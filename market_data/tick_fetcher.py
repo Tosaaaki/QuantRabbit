@@ -10,6 +10,7 @@ from typing import Callable, Awaitable
 
 import httpx
 from utils.secrets import get_secret
+from market_data.replay_logger import log_tick
 
 # ---------- 読み込み：env.toml ----------
 TOKEN: str = get_secret("oanda_token")
@@ -90,6 +91,10 @@ async def _connect(instrument: str, callback: Callable[[Tick], Awaitable[None]])
                             ask=float(msg["asks"][0]["price"]),
                             liquidity=int(msg["bids"][0]["liquidity"]),
                         )
+                        try:
+                            log_tick(tick)
+                        except Exception as exc:  # noqa: BLE001
+                            print(f"[replay] failed to log tick: {exc}")
                         await callback(tick)
         except Exception as e:
             print("tick_fetcher reconnect:", e)
@@ -111,6 +116,10 @@ async def _mock_stream(instrument: str, callback: Callable[[Tick], Awaitable[Non
             ask=ask,
             liquidity=1000000,
         )
+        try:
+            log_tick(tick)
+        except Exception as exc:  # noqa: BLE001
+            print(f"[replay] failed to log tick: {exc}")
         await callback(tick)
         await asyncio.sleep(1)
 

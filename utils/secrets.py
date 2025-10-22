@@ -23,6 +23,8 @@ ENV_MAP = {
     "oanda_hedging_enabled": "OANDA_HEDGING_ENABLED",
     "openai_api_key": "OPENAI_API_KEY",
     "openai_model": "OPENAI_MODEL",
+    "openai_model_decider": "OPENAI_DECIDER_MODEL",
+    "openai_model_summarizer": "OPENAI_SUMMARIZER_MODEL",
     "openai_max_month_tokens": "OPENAI_MAX_MONTH_TOKENS",
     "gcp_project_id": "GCP_PROJECT",
     "news_bucket_name": "GCS_BACKUP_BUCKET",

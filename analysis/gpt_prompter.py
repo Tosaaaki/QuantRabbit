@@ -2,8 +2,25 @@ import json
 from typing import Dict, List
 from utils.secrets import get_secret
 
+
+def _resolve_model() -> str:
+    """
+    Allow dedicated model override for GPT decider while remaining
+    backward compatible with the legacy openai_model key.
+    """
+    for key in ("openai_model_decider", "openai_model"):
+        try:
+            value = get_secret(key)
+            if value:
+                return value
+        except KeyError:
+            continue
+    # Final fallback to GPT-5 mini so fresh installs default to the new tier.
+    return "gpt-5-mini"
+
+
 # ---------- 読み込み：env.toml ----------
-OPENAI_MODEL = get_secret("openai_model")
+OPENAI_MODEL = _resolve_model()
 MAX_TOKENS_MONTH = int(get_secret("openai_max_month_tokens"))
 
 

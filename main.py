@@ -26,6 +26,7 @@ from execution.risk_guard import (
     can_trade,
     clamp_sl_tp,
     check_global_drawdown,
+    update_dd_context,
 )
 from execution.order_manager import (
     market_order,
@@ -35,6 +36,11 @@ from execution.order_manager import (
 )
 from execution.exit_manager import ExitManager
 from execution.position_manager import PositionManager
+from analytics.realtime_metrics_client import (
+    ConfidencePolicy,
+    RealtimeMetricsClient,
+    StrategyHealth,
+)
 from strategies.trend.ma_cross import MovingAverageCross
 from strategies.breakout.donchian55 import Donchian55
 from strategies.mean_reversion.bb_rsi import BBRsi
@@ -93,6 +99,67 @@ def _stage_conditions_met(
     slope_h4 = abs(fac_h4.get("ma20", 0.0) - fac_h4.get("ma10", 0.0))
 
     if pocket == "macro":
+        ma10_h4 = fac_h4.get("ma10")
+        ma20_h4 = fac_h4.get("ma20")
+        ma10_m1 = fac_m1.get("ma10")
+        ma20_m1 = fac_m1.get("ma20")
+        ema20_m1 = fac_m1.get("ema20") or ma20_m1
+        close_m1 = fac_m1.get("close")
+
+        if action == "OPEN_LONG":
+            if ma10_h4 is not None and ma20_h4 is not None and ma10_h4 < ma20_h4:
+                logging.info(
+                    "[STAGE] Macro buy gating: H4 trend down (ma10 %.3f < ma20 %.3f).",
+                    ma10_h4,
+                    ma20_h4,
+                )
+                return False
+            if (
+                close_m1 is not None
+                and ema20_m1 is not None
+                and close_m1 < ema20_m1 - 0.005
+            ):
+                logging.info(
+                    "[STAGE] Macro buy gating: M1 close %.3f below ema20 %.3f.",
+                    close_m1,
+                    ema20_m1,
+                )
+                return False
+            if ma10_m1 is not None and ma20_m1 is not None and ma10_m1 < ma20_m1:
+                logging.info(
+                    "[STAGE] Macro buy gating: M1 ma10 %.3f < ma20 %.3f.",
+                    ma10_m1,
+                    ma20_m1,
+                )
+                return False
+
+        if action == "OPEN_SHORT":
+            if ma10_h4 is not None and ma20_h4 is not None and ma10_h4 > ma20_h4:
+                logging.info(
+                    "[STAGE] Macro sell gating: H4 trend up (ma10 %.3f > ma20 %.3f).",
+                    ma10_h4,
+                    ma20_h4,
+                )
+                return False
+            if (
+                close_m1 is not None
+                and ema20_m1 is not None
+                and close_m1 > ema20_m1 + 0.005
+            ):
+                logging.info(
+                    "[STAGE] Macro sell gating: M1 close %.3f above ema20 %.3f.",
+                    close_m1,
+                    ema20_m1,
+                )
+                return False
+            if ma10_m1 is not None and ma20_m1 is not None and ma10_m1 > ma20_m1:
+                logging.info(
+                    "[STAGE] Macro sell gating: M1 ma10 %.3f > ma20 %.3f.",
+                    ma10_m1,
+                    ma20_m1,
+                )
+                return False
+
         # Require trend strength to increase with each stage
         if adx_h4 < 20 + stage_idx * 2 or slope_h4 < 0.0005:
             logging.info(
@@ -258,12 +325,16 @@ async def h4_candle_handler(cndl: Candle):
 
 async def logic_loop():
     pos_manager = PositionManager()
+    metrics_client = RealtimeMetricsClient()
+    confidence_policy = ConfidencePolicy()
     exit_manager = ExitManager()
     perf_cache = {}
     news_cache = {}
     insight = InsightClient()
     last_update_time = datetime.datetime.min
     last_heartbeat_time = datetime.datetime.min  # Add this line
+    last_metrics_refresh = datetime.datetime.min
+    strategy_health_cache: dict[str, StrategyHealth] = {}
 
     try:
         while True:
@@ -356,6 +427,15 @@ async def logic_loop():
             )
             ranked_strategies = list(gpt.get("ranked_strategies", []))
 
+            # Update realtime metrics cache every few minutes
+            if (now - last_metrics_refresh).total_seconds() >= 240:
+                try:
+                    metrics_client.refresh()
+                    strategy_health_cache.clear()
+                    last_metrics_refresh = now
+                except Exception as exc:  # pragma: no cover - defensive
+                    logging.warning("[REALTIME] metrics refresh failed: %s", exc)
+
             atr_pips = (fac_m1.get("atr") or 0.0) * 100
             ema20 = fac_m1.get("ema20") or fac_m1.get("ma20")
             close_px = fac_m1.get("close")
@@ -389,6 +469,21 @@ async def logic_loop():
                     raw_signal = cls.check(fac_m1)
                 if not raw_signal:
                     continue
+
+                health = strategy_health_cache.get(sname)
+                if not health:
+                    health = metrics_client.evaluate(sname, cls.pocket)
+                    health = confidence_policy.apply(health)
+                    strategy_health_cache[sname] = health
+
+                if not health.allowed:
+                    logging.info(
+                        "[HEALTH] skip %s pocket=%s reason=%s",
+                        sname,
+                        cls.pocket,
+                        health.reason,
+                    )
+                    continue
                 signal = {
                     "strategy": sname,
                     "pocket": cls.pocket,
@@ -397,6 +492,15 @@ async def logic_loop():
                     "sl_pips": raw_signal.get("sl_pips"),
                     "tp_pips": raw_signal.get("tp_pips"),
                     "tag": raw_signal.get("tag", cls.name),
+                }
+                scaled_conf = int(signal["confidence"] * health.confidence_scale)
+                signal["confidence"] = max(0, min(100, scaled_conf))
+                signal["health"] = {
+                    "win_rate": health.win_rate,
+                    "pf": health.profit_factor,
+                    "confidence_scale": health.confidence_scale,
+                    "drawdown": health.max_drawdown_pips,
+                    "losing_streak": health.losing_streak,
                 }
                 evaluated_signals.append(signal)
                 logging.info("[SIGNAL] %s -> %s", cls.name, signal)
@@ -551,6 +655,7 @@ async def logic_loop():
                     )
                 else:
                     scalp_share = DEFAULT_SCALP_SHARE
+            update_dd_context(account_equity, weight, scalp_share)
             lots = alloc(lot_total, weight, scalp_share=scalp_share)
             active_pockets = {sig["pocket"] for sig in evaluated_signals}
             for key in list(lots):
@@ -726,6 +831,7 @@ async def logic_loop():
         logging.error(traceback.format_exc())
     finally:
         pos_manager.close()
+        metrics_client.close()
         logging.info("PositionManager closed.")
 
 

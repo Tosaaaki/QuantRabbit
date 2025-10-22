@@ -14,6 +14,12 @@ logging.basicConfig(
 
 openai.api_key = os.environ.get("OPENAI_API_KEY")
 BUCKET = os.environ.get("BUCKET")
+SUMMARIZER_MODEL = (
+    os.environ.get("OPENAI_SUMMARIZER_MODEL")
+    or os.environ.get("OPENAI_MODEL")
+    or "gpt-5-nano"
+)
+logging.info("Configured OpenAI summarizer model: %s", SUMMARIZER_MODEL)
 
 if not BUCKET:
     logging.error("BUCKET environment variable is not set.")
@@ -43,7 +49,7 @@ def _normalize_result(res: object) -> dict:
 
 
 def summarize(text: str) -> dict:
-    """GPT‑4o‑mini summarizer → return dict {summary, sentiment}"""
+    """OpenAI summarizer → return dict {summary, sentiment}"""
     if not openai.api_key:
         logging.error("OPENAI_API_KEY is not set. Cannot summarize.")
         return {"summary": "Error: API key not configured.", "sentiment": 0}
@@ -55,21 +61,43 @@ def summarize(text: str) -> dict:
         '{"summary":"...", "sentiment":-2〜+2}\n'
         "### 原文\n" + text[:1500]
     )
+    base_kwargs = {
+        "model": SUMMARIZER_MODEL,
+        "response_format": {"type": "json_object"},
+        "messages": [
+            {
+                "role": "system",
+                "content": "あなたは金融ニュースの要約アシスタントです。",
+            },
+            {"role": "user", "content": prompt},
+        ],
+    }
+    if "gpt-5" not in SUMMARIZER_MODEL:
+        base_kwargs["temperature"] = 0.3
+    token_kwargs_order = [
+        {"max_completion_tokens": 120},
+        {"max_tokens": 120},
+    ]
+
     try:
+        resp = None
         logging.info("Sending request to OpenAI API.")
-        resp = openai.chat.completions.create(
-            model="gpt-4o-mini",
-            response_format={"type": "json_object"},
-            temperature=0.3,
-            messages=[
-                {
-                    "role": "system",
-                    "content": "あなたは金融ニュースの要約アシスタントです。",
-                },
-                {"role": "user", "content": prompt},
-            ],
-            max_tokens=120,
-        )
+        last_error = None
+        for token_kwargs in token_kwargs_order:
+            try:
+                resp = openai.chat.completions.create(**base_kwargs, **token_kwargs)
+                break
+            except Exception as exc:  # noqa: BLE001
+                msg = str(exc)
+                param_name = next(iter(token_kwargs))
+                if "Unsupported parameter" in msg and param_name in msg:
+                    last_error = exc
+                    continue
+                raise
+        else:
+            raise RuntimeError(
+                str(last_error) if last_error else "Unable to call OpenAI"
+            )
         logging.info("Received response from OpenAI API.")
         content = resp.choices[0].message.content
         logging.info(f"OpenAI response content: {content}")

@@ -2,7 +2,7 @@
 
 ## 1. ミッション
 > **狙い**	: USD/JPY で 1 日 +100 pips を実現する、 24/7 無裁量トレーディング・エージェント。  
-> **境界**	: 発注・リスクは機械的、曖昧判断とニュース解釈は GPT‑4o‑mini に委譲。
+> **境界**	: 発注・リスクは機械的、曖昧判断とニュース解釈は GPT‑5 系 (既定 gpt‑5‑mini) に委譲。
 
 ---
 
@@ -179,7 +179,9 @@ class OrderIntent(BaseModel):
 
 | Key | 説明 |
 |-----|------|
-| `OPENAI_API_KEY` | GPT‑4o‑mini 用 |
+| `OPENAI_API_KEY` | GPT 呼び出し用 (Decider / Summarizer 共通) |
+| `OPENAI_MODEL_DECIDER` | GPT デシジョン用モデル (例: gpt-5-mini) |
+| `OPENAI_MODEL_SUMMARIZER` | ニュース要約用モデル (例: gpt-5-nano) |
 | `OANDA_TOKEN` / `OANDA_ACCOUNT` | REST / Stream |
 | `GCP_PROJECT` / `GOOGLE_APPLICATION_CREDENTIALS` | GCS・Pub/Sub |
 | `GCS_BACKUP_BUCKET` | logs バックアップ先 |

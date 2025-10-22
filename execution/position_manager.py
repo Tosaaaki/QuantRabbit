@@ -1,4 +1,5 @@
 from __future__ import annotations
+import os
 import requests
 import sqlite3
 import pathlib
@@ -16,6 +17,39 @@ REST_HOST = (
 HEADERS = {"Authorization": f"Bearer {TOKEN}"}
 
 _DB = pathlib.Path("logs/trades.db")
+_CHUNK_SIZE = 100
+_MAX_FETCH = int(os.getenv("POSITION_MANAGER_MAX_FETCH", "1000"))
+
+
+def _tx_sort_key(tx: dict) -> int:
+    try:
+        return int(tx.get("id") or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _parse_timestamp(ts: str) -> datetime:
+    """OANDAのISO文字列（ナノ秒精度）をPythonのdatetimeに変換する。"""
+    if not ts:
+        return datetime.now(timezone.utc)
+
+    ts = ts.replace("Z", "+00:00")
+    if "." not in ts:
+        return datetime.fromisoformat(ts)
+
+    head, tail = ts.split(".", 1)
+    tz = ""
+    if "+" in tail:
+        frac, tz = tail.split("+", 1)
+        tz = "+" + tz
+    elif "-" in tail[6:]:
+        frac, tz = tail.split("-", 1)
+        tz = "-" + tz
+    else:
+        frac, tz = tail, ""
+
+    frac = frac[:6].ljust(6, "0")
+    return datetime.fromisoformat(f"{head}.{frac}{tz}")
 
 
 class PositionManager:
@@ -103,15 +137,69 @@ class PositionManager:
 
     def _fetch_closed_trades(self):
         """OANDAから決済済みトランザクションを取得"""
-        url = f"{REST_HOST}/v3/accounts/{ACCOUNT}/transactions"
-        params = {"sinceID": self._last_tx_id, "type": "ORDER_FILL"}  # 約定した注文のみ
+        summary_url = f"{REST_HOST}/v3/accounts/{ACCOUNT}/transactions"
         try:
-            r = requests.get(url, headers=HEADERS, params=params, timeout=10)
-            r.raise_for_status()
-            return r.json().get("transactions", [])
+            summary_resp = requests.get(
+                summary_url,
+                headers=HEADERS,
+                params={"sinceID": self._last_tx_id},
+                timeout=10,
+            )
+            summary_resp.raise_for_status()
+            summary = summary_resp.json() or {}
         except requests.RequestException as e:
-            print(f"[PositionManager] Error fetching transactions: {e}")
+            print(f"[PositionManager] Error fetching transactions summary: {e}")
             return []
+
+        try:
+            last_tx_id = int(summary.get("lastTransactionID") or 0)
+        except (TypeError, ValueError):
+            last_tx_id = 0
+
+        if last_tx_id <= self._last_tx_id:
+            return []
+
+        fetch_from = self._last_tx_id + 1
+        min_allowed = max(1, last_tx_id - _MAX_FETCH + 1)
+        if fetch_from < min_allowed:
+            fetch_from = min_allowed
+
+        transactions: list[dict] = []
+        chunk_from = fetch_from
+        chunk_url = f"{REST_HOST}/v3/accounts/{ACCOUNT}/transactions/idrange"
+
+        while chunk_from <= last_tx_id:
+            chunk_to = min(chunk_from + _CHUNK_SIZE - 1, last_tx_id)
+            params = {"from": chunk_from, "to": chunk_to}
+            try:
+                resp = requests.get(
+                    chunk_url,
+                    headers=HEADERS,
+                    params=params,
+                    timeout=10,
+                )
+                resp.raise_for_status()
+            except requests.RequestException as e:
+                print(
+                    "[PositionManager] Error fetching transaction chunk "
+                    f"{chunk_from}-{chunk_to}: {e}"
+                )
+                break
+
+            data = resp.json() or {}
+            for tx in data.get("transactions") or []:
+                try:
+                    tx_id = int(tx.get("id"))
+                except (TypeError, ValueError):
+                    continue
+                if tx_id <= self._last_tx_id:
+                    continue
+                transactions.append(tx)
+
+            chunk_from = chunk_to + 1
+
+        transactions.sort(key=_tx_sort_key)
+        return transactions
 
     def _get_trade_details(self, trade_id: str) -> dict | None:
         """tradeIDを使ってOANDAから取引詳細を取得する"""
@@ -126,9 +214,7 @@ class PositionManager:
 
             return {
                 "entry_price": float(trade.get("price", 0.0)),
-                "entry_time": datetime.fromisoformat(
-                    trade.get("openTime").replace("Z", "+00:00")
-                ),
+                "entry_time": _parse_timestamp(trade.get("openTime")),
                 "units": int(trade.get("initialUnits", 0)),
                 "pocket": pocket,
             }
@@ -143,9 +229,14 @@ class PositionManager:
         processed_tx_ids = set()
 
         for tx in transactions:
+            tx_id_raw = tx.get("id")
+            try:
+                tx_id = int(tx_id_raw)
+            except (TypeError, ValueError):
+                continue
             # ORDER_FILLかつ、ポジションを閉じる取引のみ対象
             if tx.get("type") != "ORDER_FILL" or "tradesClosed" not in tx:
-                processed_tx_ids.add(tx["id"])
+                processed_tx_ids.add(tx_id)
                 continue
 
             for closed_trade in tx.get("tradesClosed", []):
@@ -158,9 +249,7 @@ class PositionManager:
                     continue
 
                 close_price = float(tx.get("price", 0.0))
-                close_time = datetime.fromisoformat(
-                    tx.get("time").replace("Z", "+00:00")
-                )
+                close_time = _parse_timestamp(tx.get("time"))
 
                 # USD/JPY の pips を計算 (1 pip = 0.01 JPY)
                 # OANDAのPLは通貨額なので、価格差からpipsを計算する
@@ -219,7 +308,7 @@ class PositionManager:
                 if details["pocket"]:
                     self._pocket_cache[trade_id] = details["pocket"]
 
-            processed_tx_ids.add(int(tx["id"]))
+                processed_tx_ids.add(tx_id)
 
         if trades_to_save:
             # ticket_id (OANDA tradeID) が重複しないように挿入

@@ -85,6 +85,7 @@ brew install ta-lib   # macOS
 
 # 2. config
 cp config/env.toml  config/env.local.toml   # 編集してキーを投入
+#   openai_api_key / openai_model_decider / openai_model_summarizer を必要に応じて設定
 cp config/pool.yaml config/pool.local.yaml # 有効戦略を調整
 
 # 3. run (practice account, small lot)
@@ -114,8 +115,8 @@ strategies:
 Trade Loop Overview
 	1.	Tick → Candle(M1) 生成 → factor_cache 更新
 	2.	regime_classifier で Macro/Micro レジーム判定
-	3.	GPT (4o‑mini) に指標 + ニュース + 成績を渡し
-→ focus_tag + weight_macro + 戦略順位 を受け取る
+	3.	GPT デシジョン（既定は gpt-5-mini、env で切り替え）に指標 + ニュース + 成績を渡し
+	→ focus_tag + weight_macro + 戦略順位 を受け取る
 	4.	pocket_allocator で lot を micro/macro に分配
 	5.	Strategy プラグイン (MA クロス / Donchian55 / BB+RSI) がシグナルを返す
 	6.	risk_guard が lot/SL/TP をクランプし OANDA REST 発注

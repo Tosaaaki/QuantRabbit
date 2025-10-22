@@ -9,28 +9,66 @@ execution.risk_guard
 from __future__ import annotations
 import sqlite3
 import pathlib
+from typing import Dict
 
 # --- risk params ---
 MAX_LEVERAGE = 20.0  # 1:20
 MAX_LOT = 1.0  # 1 lot = 100k 通貨
 POCKET_DD_LIMITS = {"micro": 0.05, "macro": 0.15, "scalp": 0.03}  # equity 比 (%)
 GLOBAL_DD_LIMIT = 0.20  # 全体ドローダウン 20%
+POCKET_MAX_RATIOS = {"macro": 0.8, "micro": 0.6, "scalp": 0.25}
+_DEFAULT_BASE_EQUITY = {"macro": 8000.0, "micro": 6000.0, "scalp": 2500.0}
+_LOOKBACK_DAYS = 7
 
 _DB = pathlib.Path("logs/trades.db")
 con = sqlite3.connect(_DB)
+con.row_factory = sqlite3.Row
+
+_POCKET_EQUITY_HINT: Dict[str, float] = {
+    pocket: _DEFAULT_BASE_EQUITY[pocket] for pocket in _DEFAULT_BASE_EQUITY
+}
+
+
+def update_dd_context(account_equity: float, weight_macro: float, scalp_share: float) -> None:
+    """最新の口座残高とポケット配分ヒントを共有し、DD 判定の母数を更新する。"""
+    if account_equity <= 0:
+        return
+
+    macro_ratio = min(max(weight_macro, 0.0), POCKET_MAX_RATIOS["macro"])
+    remainder = max(1.0 - macro_ratio, 0.0)
+    scalp_ratio = min(max(scalp_share, 0.0) * remainder, POCKET_MAX_RATIOS["scalp"])
+    micro_ratio = max(remainder - scalp_ratio, 0.0)
+    micro_ratio = min(micro_ratio, POCKET_MAX_RATIOS["micro"])
+
+    ratios = {
+        "macro": macro_ratio,
+        "micro": micro_ratio,
+        "scalp": scalp_ratio,
+    }
+
+    for pocket, ratio in ratios.items():
+        if ratio <= 0:
+            # 直近で配分ゼロなら既存値を維持（オープンポジションがある可能性がある）
+            continue
+        _POCKET_EQUITY_HINT[pocket] = max(account_equity * ratio, 1.0)
 
 
 def _pocket_dd(pocket: str) -> float:
     rows = con.execute(
         """
-SELECT SUM(pl_pips) FROM trades
-WHERE pocket=? AND date(close_time)>=date('now','-7 day')
-""",
-        (pocket,),
+        SELECT COALESCE(SUM(realized_pl), 0) AS loss_sum
+        FROM trades
+        WHERE pocket = ?
+          AND realized_pl < 0
+          AND substr(close_time, 1, 10) >= date('now', ?)
+        """,
+        (pocket, f"-{_LOOKBACK_DAYS} day"),
     ).fetchone()
-    total = rows[0] or 0.0
-    # equity は外部取得だが 10 万 pips = 100% として近似
-    return abs(total) / 100000.0
+    loss_jpy = abs(rows["loss_sum"]) if rows else 0.0
+    equity = _POCKET_EQUITY_HINT.get(pocket, _DEFAULT_BASE_EQUITY[pocket])
+    if equity <= 0:
+        return 1.0
+    return loss_jpy / equity
 
 
 def check_global_drawdown() -> bool:
