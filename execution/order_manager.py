@@ -7,6 +7,10 @@ OANDA REST で成行・指値を発注。
 
 from __future__ import annotations
 from typing import Literal, Optional, Tuple
+import sqlite3
+import json
+import pathlib
+from datetime import datetime, timezone
 
 from oandapyV20 import API
 from oandapyV20.exceptions import V20Error
@@ -39,6 +43,116 @@ if HEDGING_ENABLED:
     logging.info("[ORDER] Hedging mode enabled (positionFill=OPEN_ONLY).")
 
 _LAST_PROTECTIONS: dict[str, Tuple[Optional[float], Optional[float]]] = {}
+
+# ---------- orders logger (logs/orders.db) ----------
+_ORDERS_DB_PATH = pathlib.Path("logs/orders.db")
+
+
+def _ensure_orders_schema() -> sqlite3.Connection:
+    _ORDERS_DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+    con = sqlite3.connect(_ORDERS_DB_PATH)
+    con.execute(
+        """
+        CREATE TABLE IF NOT EXISTS orders (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          ts TEXT,
+          pocket TEXT,
+          instrument TEXT,
+          side TEXT,
+          units INTEGER,
+          sl_price REAL,
+          tp_price REAL,
+          client_order_id TEXT,
+          status TEXT,
+          attempt INTEGER,
+          ticket_id TEXT,
+          executed_price REAL,
+          error_code TEXT,
+          error_message TEXT,
+          request_json TEXT,
+          response_json TEXT
+        )
+        """
+    )
+    # Useful indexes
+    con.execute(
+        "CREATE INDEX IF NOT EXISTS idx_orders_client ON orders(client_order_id)"
+    )
+    con.execute("CREATE INDEX IF NOT EXISTS idx_orders_ts ON orders(ts)")
+    con.commit()
+    return con
+
+
+def _orders_con() -> sqlite3.Connection:
+    # Singleton-ish connection
+    global _ORDERS_CON
+    try:
+        return _ORDERS_CON
+    except NameError:
+        _ORDERS_CON = _ensure_orders_schema()
+        return _ORDERS_CON
+
+
+def _log_order(
+    *,
+    pocket: Optional[str],
+    instrument: Optional[str],
+    side: Optional[str],
+    units: Optional[int],
+    sl_price: Optional[float],
+    tp_price: Optional[float],
+    client_order_id: Optional[str],
+    status: str,
+    attempt: int,
+    ticket_id: Optional[str] = None,
+    executed_price: Optional[float] = None,
+    error_code: Optional[str] = None,
+    error_message: Optional[str] = None,
+    request_payload: Optional[dict] = None,
+    response_payload: Optional[dict] = None,
+) -> None:
+    try:
+        con = _orders_con()
+        ts = datetime.now(timezone.utc).isoformat()
+        con.execute(
+            """
+            INSERT INTO orders (
+              ts, pocket, instrument, side, units, sl_price, tp_price,
+              client_order_id, status, attempt, ticket_id, executed_price,
+              error_code, error_message, request_json, response_json
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                ts,
+                pocket,
+                instrument,
+                side,
+                int(units) if units is not None else None,
+                float(sl_price) if sl_price is not None else None,
+                float(tp_price) if tp_price is not None else None,
+                client_order_id,
+                status,
+                int(attempt),
+                ticket_id,
+                float(executed_price) if executed_price is not None else None,
+                error_code,
+                error_message,
+                json.dumps(request_payload, ensure_ascii=False) if request_payload else None,
+                json.dumps(response_payload, ensure_ascii=False) if response_payload else None,
+            ),
+        )
+        con.commit()
+    except Exception as exc:  # noqa: BLE001
+        logging.warning("[ORDER][LOG] failed to persist orders log: %s", exc)
+_PARTIAL_STAGE: dict[str, int] = {}
+
+_PARTIAL_THRESHOLDS = {
+    "macro": (25.0, 40.0),
+    "micro": (15.0, 25.0),
+    "scalp": (8.0, 12.0),
+}
+_PARTIAL_FRACTIONS = (0.4, 0.3)
+_PARTIAL_MIN_UNITS = 400
 
 
 def _extract_trade_id(response: dict) -> Optional[str]:
@@ -120,15 +234,58 @@ async def close_trade(trade_id: str, units: Optional[int] = None) -> bool:
     if units is not None:
         if units == 0:
             return True
-        data = {"units": str(abs(units))}
+        # OANDA expects positive units or "ALL" for trade close
+        data = {"units": str(abs(int(units)))}
     req = TradeClose(accountID=ACCOUNT, tradeID=trade_id, data=data)
     try:
+        _log_order(
+            pocket=None,
+            instrument=None,
+            side=None,
+            units=units,
+            sl_price=None,
+            tp_price=None,
+            client_order_id=None,
+            status="close_request",
+            attempt=1,
+            ticket_id=str(trade_id),
+            executed_price=None,
+            request_payload={"trade_id": trade_id, "data": data or {}},
+        )
         api.request(req)
         _LAST_PROTECTIONS.pop(trade_id, None)
+        _PARTIAL_STAGE.pop(trade_id, None)
+        _log_order(
+            pocket=None,
+            instrument=None,
+            side=None,
+            units=units,
+            sl_price=None,
+            tp_price=None,
+            client_order_id=None,
+            status="close_ok",
+            attempt=1,
+            ticket_id=str(trade_id),
+            executed_price=None,
+        )
         return True
     except Exception as exc:  # noqa: BLE001
         logging.warning(
             "[ORDER] Failed to close trade %s units=%s: %s", trade_id, units, exc
+        )
+        _log_order(
+            pocket=None,
+            instrument=None,
+            side=None,
+            units=units,
+            sl_price=None,
+            tp_price=None,
+            client_order_id=None,
+            status="close_failed",
+            attempt=1,
+            ticket_id=str(trade_id),
+            executed_price=None,
+            error_message=str(exc),
         )
         return False
 
@@ -146,11 +303,15 @@ def update_dynamic_protections(
     atr_h4 = fac_h4.get("atr_pips")
     if atr_h4 is None:
         atr_h4 = (fac_h4.get("atr") or atr_m1 or 0.0)
+    current_price = fac_m1.get("close")
     defaults = {
-        "macro": (max(25.0, (atr_h4 or atr_m1 or 0.0) * 1.1), 2.1),
-        "micro": (max(8.0, (atr_m1 or 0.0) * 0.9), 1.8),
-        "scalp": (max(4.0, (atr_m1 or 0.0) * 0.6), 1.3),
+        "macro": (max(25.0, (atr_h4 or atr_m1 or 0.0) * 1.1), 2.2),
+        "micro": (max(8.0, (atr_m1 or 0.0) * 0.9), 1.9),
+        "scalp": (max(4.0, (atr_m1 or 0.0) * 0.6), 1.4),
     }
+    trail_trigger = max(6.0, (atr_m1 or 0.0) * 1.2)
+    lock_ratio = 0.6
+    min_lock = 3.0
     pip = 0.01
     for pocket, info in open_positions.items():
         if pocket == "__net__":
@@ -169,13 +330,86 @@ def update_dynamic_protections(
             entry = float(price)
             sl_pips = max(1.0, base_sl)
             tp_pips = max(sl_pips * tp_ratio, sl_pips + 5.0)
+            gain_pips = 0.0
             if side == "long":
+                gain_pips = (current_price or entry) - entry
+                gain_pips *= 100
                 sl_price = round(entry - sl_pips * pip, 3)
                 tp_price = round(entry + tp_pips * pip, 3)
+                if gain_pips > trail_trigger:
+                    lock_pips = max(min_lock, gain_pips * lock_ratio)
+                    be_price = entry + lock_pips * pip
+                    sl_price = max(sl_price, round(be_price, 3))
+                    tp_price = round(entry + max(gain_pips + sl_pips, tp_pips) * pip, 3)
+                    if tp_price <= sl_price + 0.002:
+                        tp_price = round(sl_price + max(0.004, tp_pips * pip), 3)
+                if current_price is not None and sl_price >= current_price:
+                    sl_price = round(current_price - 0.003, 3)
             else:
+                gain_pips = entry - (current_price or entry)
+                gain_pips *= 100
                 sl_price = round(entry + sl_pips * pip, 3)
                 tp_price = round(entry - tp_pips * pip, 3)
+                if gain_pips > trail_trigger:
+                    lock_pips = max(min_lock, gain_pips * lock_ratio)
+                    be_price = entry - lock_pips * pip
+                    sl_price = min(sl_price, round(be_price, 3))
+                    tp_price = round(entry - max(gain_pips + sl_pips, tp_pips) * pip, 3)
+                    if tp_price >= sl_price - 0.002:
+                        tp_price = round(sl_price - max(0.004, tp_pips * pip), 3)
+                if current_price is not None and sl_price <= current_price:
+                    sl_price = round(current_price + 0.003, 3)
             _maybe_update_protections(trade_id, sl_price, tp_price)
+
+
+def plan_partial_reductions(
+    open_positions: dict,
+    fac_m1: dict,
+) -> list[tuple[str, str, int]]:
+    price = fac_m1.get("close")
+    if price is None:
+        return []
+    pip_scale = 100
+    actions: list[tuple[str, str, int]] = []
+
+    for pocket, info in open_positions.items():
+        if pocket == "__net__":
+            continue
+        thresholds = _PARTIAL_THRESHOLDS.get(pocket)
+        if not thresholds:
+            continue
+        trades = info.get("open_trades") or []
+        for tr in trades:
+            trade_id = tr.get("trade_id")
+            side = tr.get("side")
+            entry = tr.get("price")
+            units = int(tr.get("units", 0) or 0)
+            if not trade_id or not side or entry is None or units == 0:
+                continue
+            current_stage = _PARTIAL_STAGE.get(trade_id, 0)
+            gain_pips = 0.0
+            if side == "long":
+                gain_pips = (price - entry) * pip_scale
+            else:
+                gain_pips = (entry - price) * pip_scale
+            if gain_pips <= thresholds[0]:
+                continue
+            stage = 0
+            for idx, threshold in enumerate(thresholds, start=1):
+                if gain_pips >= threshold:
+                    stage = idx
+            if stage <= current_stage:
+                continue
+            fraction_idx = min(stage - 1, len(_PARTIAL_FRACTIONS) - 1)
+            fraction = _PARTIAL_FRACTIONS[fraction_idx]
+            reduce_units = int(abs(units) * fraction)
+            if reduce_units < _PARTIAL_MIN_UNITS:
+                continue
+            reduce_units = min(reduce_units, abs(units))
+            sign = 1 if units > 0 else -1
+            actions.append((pocket, trade_id, sign * reduce_units))
+            _PARTIAL_STAGE[trade_id] = stage
+    return actions
 
 
 async def market_order(
@@ -186,6 +420,7 @@ async def market_order(
     pocket: Literal["micro", "macro", "scalp"],
     *,
     client_order_id: Optional[str] = None,
+    reduce_only: bool = False,
 ) -> Optional[str]:
     """
     units : +10000 = buy 0.1 lot, ‑10000 = sell 0.1 lot
@@ -197,7 +432,7 @@ async def market_order(
             "instrument": instrument,
             "units": str(units),
             "timeInForce": "FOK",
-            "positionFill": POSITION_FILL,
+            "positionFill": "REDUCE_ONLY" if reduce_only else POSITION_FILL,
             "clientExtensions": {"tag": f"pocket={pocket}"},
             "tradeClientExtensions": {"tag": f"pocket={pocket}"},
         }
@@ -210,10 +445,24 @@ async def market_order(
     if tp_price is not None:
         order_data["order"]["takeProfitOnFill"] = {"price": f"{tp_price:.3f}"}
 
+    side = "buy" if units > 0 else "sell"
     units_to_send = units
     for attempt in range(2):
         payload = order_data.copy()
         payload["order"] = dict(order_data["order"], units=str(units_to_send))
+        # Log attempt payload
+        _log_order(
+            pocket=pocket,
+            instrument=instrument,
+            side=side,
+            units=units_to_send,
+            sl_price=sl_price,
+            tp_price=tp_price,
+            client_order_id=client_order_id,
+            status="submit_attempt",
+            attempt=attempt + 1,
+            request_payload=payload,
+        )
         r = OrderCreate(accountID=ACCOUNT, data=payload)
         try:
             api.request(r)
@@ -231,6 +480,20 @@ async def market_order(
                     reason,
                 )
                 logging.error("Reject payload: %s", reject)
+                _log_order(
+                    pocket=pocket,
+                    instrument=instrument,
+                    side=side,
+                    units=units_to_send,
+                    sl_price=sl_price,
+                    tp_price=tp_price,
+                    client_order_id=client_order_id,
+                    status="rejected",
+                    attempt=attempt + 1,
+                    error_code=reject.get("errorCode"),
+                    error_message=reject.get("errorMessage") or reason,
+                    response_payload=response,
+                )
                 if attempt == 0 and abs(units_to_send) >= 2000:
                     units_to_send = int(units_to_send * 0.5)
                     if units_to_send == 0:
@@ -250,6 +513,28 @@ async def market_order(
                     logging.info(
                         "OANDA order filled by adjusting existing trade(s): %s", trade_id
                     )
+                # Extract executed_price if present
+                executed_price = None
+                ofill = response.get("orderFillTransaction") or {}
+                if ofill.get("price"):
+                    try:
+                        executed_price = float(ofill.get("price"))
+                    except Exception:
+                        executed_price = None
+                _log_order(
+                    pocket=pocket,
+                    instrument=instrument,
+                    side=side,
+                    units=units_to_send,
+                    sl_price=sl_price,
+                    tp_price=tp_price,
+                    client_order_id=client_order_id,
+                    status="filled",
+                    attempt=attempt + 1,
+                    ticket_id=trade_id,
+                    executed_price=executed_price,
+                    response_payload=response,
+                )
                 _maybe_update_protections(trade_id, sl_price, tp_price)
                 return trade_id
 
@@ -257,6 +542,18 @@ async def market_order(
                 "OANDA order fill lacked trade identifiers (attempt %d): %s",
                 attempt + 1,
                 response,
+            )
+            _log_order(
+                pocket=pocket,
+                instrument=instrument,
+                side=side,
+                units=units_to_send,
+                sl_price=sl_price,
+                tp_price=tp_price,
+                client_order_id=client_order_id,
+                status="fill_no_tradeid",
+                attempt=attempt + 1,
+                response_payload=response,
             )
             return None
         except V20Error as e:
@@ -270,6 +567,19 @@ async def market_order(
             resp = getattr(e, "response", None)
             if resp:
                 logging.error("OANDA response: %s", resp)
+            _log_order(
+                pocket=pocket,
+                instrument=instrument,
+                side=side,
+                units=units_to_send,
+                sl_price=sl_price,
+                tp_price=tp_price,
+                client_order_id=client_order_id,
+                status="api_error",
+                attempt=attempt + 1,
+                error_message=str(e),
+                response_payload=resp if isinstance(resp, dict) else None,
+            )
 
             if attempt == 0 and abs(units_to_send) >= 2000:
                 units_to_send = int(units_to_send * 0.5)
@@ -285,6 +595,18 @@ async def market_order(
                 "Unexpected error submitting order (attempt %d): %s",
                 attempt + 1,
                 exc,
+            )
+            _log_order(
+                pocket=pocket,
+                instrument=instrument,
+                side=side,
+                units=units_to_send,
+                sl_price=sl_price,
+                tp_price=tp_price,
+                client_order_id=client_order_id,
+                status="unexpected_error",
+                attempt=attempt + 1,
+                error_message=str(exc),
             )
             return None
     return None

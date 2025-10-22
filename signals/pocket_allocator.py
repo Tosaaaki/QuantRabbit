@@ -9,6 +9,8 @@ from __future__ import annotations
 from typing import Dict
 
 DEFAULT_SCALP_SHARE = 0.3
+MIN_SCALP_FRACTION = 0.05  # floor share of total lot reserved for scalping
+MAX_SCALP_REALLOC_FRACTION = 0.35  # cap per-pocket reallocation toward the scalp bucket
 
 
 def alloc(
@@ -30,7 +32,53 @@ def alloc(
     share = max(min(scalp_share, 0.9), 0.0)
     scalp = round(remainder * share, 3)
     micro = round(remainder - scalp, 3)
-    return {"micro": micro, "macro": macro, "scalp": scalp}
+    dist = {"micro": micro, "macro": macro, "scalp": scalp}
+
+    if total_lot <= 0:
+        return dist
+
+    min_scalp = round(min(total_lot * MIN_SCALP_FRACTION, total_lot), 3)
+    if dist["scalp"] + 1e-6 < min_scalp:
+        shortfall = round(min_scalp - dist["scalp"], 3)
+        for donor in sorted(("micro", "macro"), key=lambda k: dist[k], reverse=True):
+            if shortfall <= 0 or dist[donor] <= 0:
+                continue
+            give_cap = round(dist[donor] * MAX_SCALP_REALLOC_FRACTION, 3)
+            give_cap = max(give_cap, 0.0)
+            transfer = min(shortfall, give_cap if give_cap > 0 else dist[donor])
+            if transfer <= 0:
+                continue
+            dist[donor] = round(dist[donor] - transfer, 3)
+            dist["scalp"] = round(dist["scalp"] + transfer, 3)
+            shortfall = round(shortfall - transfer, 3)
+        if shortfall > 0:
+            donor = "macro" if dist["macro"] >= dist["micro"] else "micro"
+            transfer = min(shortfall, dist[donor])
+            if transfer > 0:
+                dist[donor] = round(dist[donor] - transfer, 3)
+                dist["scalp"] = round(dist["scalp"] + transfer, 3)
+
+    total_alloc = round(dist["micro"] + dist["macro"] + dist["scalp"], 3)
+    target_total = round(total_lot, 3)
+    if total_alloc != target_total:
+        diff = round(target_total - total_alloc, 3)
+        if diff > 0:
+            dist["micro"] = round(dist["micro"] + diff, 3)
+        elif diff < 0:
+            deficit = -diff
+            for key in ("micro", "macro"):
+                available = max(dist[key], 0.0)
+                if available <= 0:
+                    continue
+                take = min(deficit, available)
+                dist[key] = round(dist[key] - take, 3)
+                deficit = round(deficit - take, 3)
+                if deficit <= 0:
+                    break
+            if deficit > 0 and dist["scalp"] > 0:
+                take = min(deficit, dist["scalp"])
+                dist["scalp"] = round(dist["scalp"] - take, 3)
+    return dist
 
 
 def dynamic_scalp_share(

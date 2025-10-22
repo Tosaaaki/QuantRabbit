@@ -31,6 +31,7 @@ from execution.order_manager import (
     market_order,
     close_trade,
     update_dynamic_protections,
+    plan_partial_reductions,
 )
 from execution.exit_manager import ExitManager
 from execution.position_manager import PositionManager
@@ -61,8 +62,10 @@ FALLBACK_EQUITY = 10000.0  # REST失敗時のフォールバック
 STAGE_RATIOS = {
     "macro": (0.05, 0.04, 0.04, 0.03, 0.03, 0.03, 0.03, 0.03),
     "micro": (0.025, 0.02, 0.015, 0.015, 0.012, 0.01, 0.008, 0.008),
-    "scalp": (0.02, 0.015, 0.012, 0.01, 0.008, 0.006),
+    "scalp": (0.5, 0.3, 0.15, 0.05),
 }
+
+MIN_SCALP_STAGE_LOT = 0.01  # 1000 units baseline so micro/macro bias does not null scalps
 
 
 def build_client_order_id(focus_tag: Optional[str], strategy_tag: str) -> str:
@@ -220,6 +223,12 @@ def compute_stage_lot(
             ):
                 return 0.0
             next_lot = max(stage_target - current_lot, 0.0)
+            remaining = max(total_lot - current_lot, 0.0)
+            if pocket == "scalp" and remaining > 0:
+                floor = min(MIN_SCALP_STAGE_LOT, remaining)
+                next_lot = max(next_lot, floor)
+            if remaining > 0:
+                next_lot = min(next_lot, remaining)
             logging.info(
                 "[STAGE] %s pocket total=%.3f current=%.3f -> next=%.3f (stage %d)",
                 pocket,
@@ -397,6 +406,24 @@ async def logic_loop():
                 update_dynamic_protections(open_positions, fac_m1, fac_h4)
             except Exception as exc:
                 logging.warning("[PROTECTION] update failed: %s", exc)
+            try:
+                partials = plan_partial_reductions(open_positions, fac_m1)
+            except Exception as exc:
+                logging.warning("[PARTIAL] planning failed: %s", exc)
+                partials = []
+            partial_closed = False
+            for pocket, trade_id, reduce_units in partials:
+                ok = await close_trade(trade_id, reduce_units)
+                if ok:
+                    logging.info(
+                        "[PARTIAL] trade=%s pocket=%s units=%s",
+                        trade_id,
+                        pocket,
+                        reduce_units,
+                    )
+                    partial_closed = True
+            if partial_closed:
+                open_positions = pos_manager.get_open_positions()
             net_units = int(open_positions.get("__net__", {}).get("units", 0))
 
             exit_decisions = exit_manager.plan_closures(
@@ -441,6 +468,7 @@ async def logic_loop():
                         None,
                         pocket,
                         client_order_id=client_id,
+                        reduce_only=True,
                     )
                     if trade_id:
                         logging.info(
