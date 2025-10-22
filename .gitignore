@@ -30,3 +30,7 @@ logs/
 
 # Local secrets
 config/env.toml
+*.sa.json
+*sa-key*.json
+*service-account*.json
+ui-dashboard-sa.json

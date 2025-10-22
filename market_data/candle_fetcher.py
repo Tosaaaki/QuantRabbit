@@ -14,14 +14,18 @@ from typing import Awaitable, Callable, Dict, List, Literal, Tuple
 
 import httpx
 from utils.secrets import get_secret
-from market_data.tick_fetcher import Tick
+from market_data.tick_fetcher import Tick, _parse_time
 
 Candle = dict[str, float]  # open, high, low, close
 TimeFrame = Literal["M1", "H4"]
 
 
 TOKEN = get_secret("oanda_token")
-PRACT = False
+# Secret Manager または env.toml の `oanda_practice` を参照（未設定なら本番）
+try:
+    PRACT = str(get_secret("oanda_practice")).lower() == "true"
+except Exception:
+    PRACT = False
 REST_HOST = (
     "https://api-fxpractice.oanda.com" if PRACT else "https://api-fxtrade.oanda.com"
 )
@@ -110,23 +114,22 @@ async def start_candle_stream(
 async def fetch_historical_candles(
     instrument: str, granularity: TimeFrame, count: int
 ) -> List[Candle]:
-    """OANDA REST から過去ローソク足を取得する"""
+    """OANDA REST から過去ローソク足を取得する（失敗時は空配列）。"""
     url = f"{REST_HOST}/v3/instruments/{instrument}/candles"
     params = {"granularity": granularity, "count": count, "price": "M"}
-    async with httpx.AsyncClient() as client:
-        r = await client.get(url, headers=HEADERS, params=params, timeout=5)
-        r.raise_for_status()
-        data = r.json()
+    try:
+        async with httpx.AsyncClient() as client:
+            r = await client.get(url, headers=HEADERS, params=params, timeout=7)
+            r.raise_for_status()
+            data = r.json()
+    except Exception:
+        return []
 
     out: List[Candle] = []
     for c in data.get("candles", []):
         # OANDA API returns nanoseconds, but fromisoformat only supports microseconds.
         # Truncate to microseconds.
-        time_str = c["time"].replace("Z", "+00:00")
-        if "." in time_str:
-            main_part, frac_part = time_str.split(".")
-            time_str = f"{main_part}.{frac_part[:6]}{frac_part[-6:]}" # Keep only microseconds
-        ts = datetime.datetime.fromisoformat(time_str)
+        ts = _parse_time(c["time"])
         out.append(
             {
                 "open": float(c["mid"]["o"]),

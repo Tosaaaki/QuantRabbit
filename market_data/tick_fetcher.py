@@ -14,7 +14,11 @@ from utils.secrets import get_secret
 # ---------- 読み込み：env.toml ----------
 TOKEN: str = get_secret("oanda_token")
 ACCOUNT: str = get_secret("oanda_account_id")
-PRACTICE: bool = False  # 本番口座なので False に設定。必要に応じて True に変更
+# Secret Manager または env.toml の `oanda_practice` を参照（未設定なら本番）
+try:
+    PRACTICE: bool = str(get_secret("oanda_practice")).lower() == "true"
+except Exception:
+    PRACTICE = False
 MOCK_STREAM: bool = os.getenv("MOCK_TICK_STREAM", "0") == "1"
 
 STREAM_HOST = (
@@ -33,6 +37,27 @@ class Tick:
 
 
 # ---------- メイン ----------
+
+
+def _parse_time(value: str) -> datetime.datetime:
+    """Convert OANDA timestamp (nanosecond precision) into datetime."""
+    iso = value.replace("Z", "+00:00")
+    if "." not in iso:
+        return datetime.datetime.fromisoformat(iso)
+
+    head, frac_and_tz = iso.split(".", 1)
+    tz = "+00:00"
+    if "+" in frac_and_tz:
+        frac, tz_tail = frac_and_tz.split("+", 1)
+        tz = "+" + tz_tail
+    elif "-" in frac_and_tz:
+        frac, tz_tail = frac_and_tz.split("-", 1)
+        tz = "-" + tz_tail
+    else:
+        frac = frac_and_tz
+
+    frac = (frac[:6]).ljust(6, "0")
+    return datetime.datetime.fromisoformat(f"{head}.{frac}{tz}")
 
 
 async def _connect(instrument: str, callback: Callable[[Tick], Awaitable[None]]):
@@ -60,9 +85,7 @@ async def _connect(instrument: str, callback: Callable[[Tick], Awaitable[None]])
                             continue
                         tick = Tick(
                             instrument=msg["instrument"],
-                            time=datetime.datetime.fromisoformat(
-                                msg["time"].replace("Z", "+00:00")
-                            ),
+                            time=_parse_time(msg["time"]),
                             bid=float(msg["bids"][0]["price"]),
                             ask=float(msg["asks"][0]["price"]),
                             liquidity=int(msg["bids"][0]["liquidity"]),

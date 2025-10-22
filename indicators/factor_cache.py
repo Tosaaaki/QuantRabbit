@@ -49,6 +49,16 @@ async def on_candle(tf: TimeFrame, candle: Dict[str, float]):
 
         # Donchian戦略で必要になるため、生ローソクも格納
         factors["candles"] = list(q)
+        last = q[-1]
+        factors.update(
+            {
+                "close": last["close"],
+                "open": last["open"],
+                "high": last["high"],
+                "low": last["low"],
+                "timestamp": last["timestamp"],
+            }
+        )
 
         _FACTORS[tf].clear()
         _FACTORS[tf].update(factors)

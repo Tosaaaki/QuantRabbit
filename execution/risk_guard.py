@@ -13,7 +13,7 @@ import pathlib
 # --- risk params ---
 MAX_LEVERAGE = 20.0  # 1:20
 MAX_LOT = 1.0  # 1 lot = 100k 通貨
-POCKET_DD_LIMITS = {"micro": 0.05, "macro": 0.15}  # equity 比 (%)
+POCKET_DD_LIMITS = {"micro": 0.05, "macro": 0.15, "scalp": 0.03}  # equity 比 (%)
 GLOBAL_DD_LIMIT = 0.20  # 全体ドローダウン 20%
 
 _DB = pathlib.Path("logs/trades.db")
@@ -56,7 +56,7 @@ def can_trade(pocket: str) -> bool:
 
 
 def allowed_lot(equity: float, sl_pips: float) -> float:
-    risk_pct = 0.02
+    risk_pct = 0.01
     lot = (equity * risk_pct) / sl_pips / 10  # $10/pip で 1 lot
     lot = min(lot, MAX_LOT)
     return round(lot, 3)
