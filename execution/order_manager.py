@@ -230,12 +230,14 @@ def _maybe_update_protections(
 
 
 async def close_trade(trade_id: str, units: Optional[int] = None) -> bool:
-    data = None
-    if units is not None:
-        if units == 0:
+    if units is None:
+        data: Optional[dict[str, str]] = {"units": "ALL"}
+    else:
+        rounded_units = int(units)
+        if rounded_units == 0:
             return True
-        # OANDA expects positive units or "ALL" for trade close
-        data = {"units": str(abs(int(units)))}
+        # OANDA expects the absolute size; the trade side is derived from trade_id.
+        data = {"units": str(abs(rounded_units))}
     req = TradeClose(accountID=ACCOUNT, tradeID=trade_id, data=data)
     try:
         _log_order(
@@ -269,6 +271,45 @@ async def close_trade(trade_id: str, units: Optional[int] = None) -> bool:
             executed_price=None,
         )
         return True
+    except V20Error as exc:
+        error_payload = {}
+        try:
+            error_payload = json.loads(exc.msg or "{}")
+        except json.JSONDecodeError:
+            error_payload = {"errorMessage": exc.msg}
+        error_code = error_payload.get("errorCode")
+        logging.warning(
+            "[ORDER] TradeClose rejected trade=%s units=%s code=%s",
+            trade_id,
+            units,
+            error_code or exc.code,
+        )
+        log_error_code = (
+            str(error_code) if error_code is not None else str(exc.code)
+        )
+        _log_order(
+            pocket=None,
+            instrument=None,
+            side=None,
+            units=units,
+            sl_price=None,
+            tp_price=None,
+            client_order_id=None,
+            status="close_failed",
+            attempt=1,
+            ticket_id=str(trade_id),
+            executed_price=None,
+            error_code=log_error_code,
+            error_message=error_payload.get("errorMessage") or str(exc),
+            response_payload=error_payload if error_payload else None,
+        )
+        if error_code in {"TRADE_DOES_NOT_EXIST", "NOT_FOUND"}:
+            logging.info(
+                "[ORDER] Trade %s already closed upstream, skipping fallback.",
+                trade_id,
+            )
+            return True
+        return False
     except Exception as exc:  # noqa: BLE001
         logging.warning(
             "[ORDER] Failed to close trade %s units=%s: %s", trade_id, units, exc
