@@ -20,6 +20,7 @@ from analysis.summary_ingestor import check_event_soon, get_latest_news
 from market_data.news_fetcher import fetch_loop as news_fetch_loop
 from analysis.summary_ingestor import ingest_loop as summary_ingest_loop
 from analytics.insight_client import InsightClient
+from analysis.range_guard import detect_range_mode
 from signals.pocket_allocator import alloc, DEFAULT_SCALP_SHARE, dynamic_scalp_share
 from execution.risk_guard import (
     allowed_lot,
@@ -36,6 +37,7 @@ from execution.order_manager import (
 )
 from execution.exit_manager import ExitManager
 from execution.position_manager import PositionManager
+from execution.stage_tracker import StageTracker
 from analytics.realtime_metrics_client import (
     ConfidencePolicy,
     RealtimeMetricsClient,
@@ -72,6 +74,9 @@ STAGE_RATIOS = {
 }
 
 MIN_SCALP_STAGE_LOT = 0.01  # 1000 units baseline so micro/macro bias does not null scalps
+DEFAULT_COOLDOWN_SECONDS = 180
+RANGE_COOLDOWN_SECONDS = 420
+ALLOWED_RANGE_STRATEGIES = {"BB_RSI"}
 
 
 def build_client_order_id(focus_tag: Optional[str], strategy_tag: str) -> str:
@@ -276,8 +281,8 @@ def compute_stage_lot(
     fac_m1: dict[str, float],
     fac_h4: dict[str, float],
     open_info: dict[str, float],
-) -> float:
-    """段階的エントリーの次ロットを返す（lot単位）。0 の場合は追加不要。"""
+) -> tuple[float, int]:
+    """段階的エントリーの次ロットとステージ番号を返す。"""
     plan = STAGE_RATIOS.get(pocket, (1.0,))
     current_lot = max(open_units_same_dir, 0) / 100000.0
     cumulative = 0.0
@@ -288,7 +293,7 @@ def compute_stage_lot(
             if not _stage_conditions_met(
                 pocket, stage_idx, action, fac_m1, fac_h4, open_info
             ):
-                return 0.0
+                return 0.0, stage_idx
             next_lot = max(stage_target - current_lot, 0.0)
             remaining = max(total_lot - current_lot, 0.0)
             if pocket == "scalp" and remaining > 0:
@@ -304,7 +309,7 @@ def compute_stage_lot(
                 round(next_lot, 4),
                 stage_idx,
             )
-            return round(next_lot, 4)
+            return round(next_lot, 4), stage_idx
 
     logging.info(
         "[STAGE] %s pocket already filled %.3f / %.3f lots. No additional entry.",
@@ -312,7 +317,7 @@ def compute_stage_lot(
         round(current_lot, 4),
         round(total_lot, 4),
     )
-    return 0.0
+    return 0.0, -1
 
 
 async def m1_candle_handler(cndl: Candle):
@@ -328,6 +333,7 @@ async def logic_loop():
     metrics_client = RealtimeMetricsClient()
     confidence_policy = ConfidencePolicy()
     exit_manager = ExitManager()
+    stage_tracker = StageTracker()
     perf_cache = {}
     news_cache = {}
     insight = InsightClient()
@@ -335,10 +341,14 @@ async def logic_loop():
     last_heartbeat_time = datetime.datetime.min  # Add this line
     last_metrics_refresh = datetime.datetime.min
     strategy_health_cache: dict[str, StrategyHealth] = {}
+    range_active = False
+    last_range_reason = ""
 
     try:
         while True:
             now = datetime.datetime.utcnow()
+            stage_tracker.clear_expired(now)
+            stage_tracker.update_loss_streaks(now=now)
 
             # Heartbeat logging
             if (now - last_heartbeat_time).total_seconds() >= 300:  # Every 5 minutes
@@ -398,6 +408,17 @@ async def logic_loop():
                 if perf_cache
                 else None,
             )
+            range_ctx = detect_range_mode(fac_m1, fac_h4)
+            if range_ctx.active != range_active or range_ctx.reason != last_range_reason:
+                logging.info(
+                    "[RANGE] active=%s reason=%s score=%.2f metrics=%s",
+                    range_ctx.active,
+                    range_ctx.reason,
+                    range_ctx.score,
+                    range_ctx.metrics,
+                )
+            range_active = range_ctx.active
+            last_range_reason = range_ctx.reason
 
             # --- 2. GPT判断 ---
             # M1/H4 の移動平均・RSI などの指標をまとめて送信
@@ -443,25 +464,32 @@ async def logic_loop():
             if ema20 is not None and close_px is not None:
                 momentum = close_px - ema20
 
-            scalp_ready = atr_pips >= 2.2 and abs(momentum) >= 0.0015
-            if not scalp_ready and fac_m1.get("vol_5m"):
-                scalp_ready = atr_pips >= 2.0 and fac_m1["vol_5m"] >= 1.2
-            if scalp_ready and "M1Scalper" not in ranked_strategies:
-                ranked_strategies.append("M1Scalper")
-                logging.info(
-                    "[SCALP] Auto-added M1Scalper (ATR %.2f, momentum %.4f, vol5m %.2f).",
-                    atr_pips,
-                    momentum,
-                    fac_m1.get("vol_5m", 0.0),
-                )
+            if not range_active:
+                scalp_ready = atr_pips >= 2.2 and abs(momentum) >= 0.0015
+                if not scalp_ready and fac_m1.get("vol_5m"):
+                    scalp_ready = atr_pips >= 2.0 and fac_m1["vol_5m"] >= 1.2
+                if scalp_ready and "M1Scalper" not in ranked_strategies:
+                    ranked_strategies.append("M1Scalper")
+                    logging.info(
+                        "[SCALP] Auto-added M1Scalper (ATR %.2f, momentum %.4f, vol5m %.2f).",
+                        atr_pips,
+                        momentum,
+                        fac_m1.get("vol_5m", 0.0),
+                    )
 
             focus_tag = gpt.get("focus_tag") or focus
             weight = gpt.get("weight_macro", w_macro)
+            if range_active:
+                focus_tag = "micro"
+                weight = min(weight, 0.15)
 
             evaluated_signals: list[dict] = []
             for sname in ranked_strategies:
                 cls = STRATEGIES.get(sname)
                 if not cls:
+                    continue
+                if range_active and cls.name not in ALLOWED_RANGE_STRATEGIES:
+                    logging.info("[RANGE] skip %s in range mode.", sname)
                     continue
                 if sname == "NewsSpikeReversal":
                     raw_signal = cls.check(fac_m1, news_cache.get("short", []))
@@ -495,6 +523,21 @@ async def logic_loop():
                 }
                 scaled_conf = int(signal["confidence"] * health.confidence_scale)
                 signal["confidence"] = max(0, min(100, scaled_conf))
+                if range_active:
+                    atr_hint = (
+                        fac_m1.get("atr_pips")
+                        or ((fac_m1.get("atr") or 0.0) * 100)
+                        or 6.0
+                    )
+                    if signal["pocket"] == "macro":
+                        tp_cap = min(2.0, max(1.6, atr_hint * 1.05))
+                        signal["tp_pips"] = round(tp_cap, 2)
+                        signal["sl_pips"] = round(tp_cap, 2)
+                        signal["confidence"] = int(signal["confidence"] * 0.55)
+                    else:
+                        tp_default = min(1.8, max(1.3, atr_hint * 1.1))
+                        signal["tp_pips"] = round(tp_default, 2)
+                        signal["sl_pips"] = round(max(1.2, min(tp_default * 1.05, 1.9)), 2)
                 signal["health"] = {
                     "win_rate": health.win_rate,
                     "pf": health.profit_factor,
@@ -511,7 +554,7 @@ async def logic_loop():
             except Exception as exc:
                 logging.warning("[PROTECTION] update failed: %s", exc)
             try:
-                partials = plan_partial_reductions(open_positions, fac_m1)
+                partials = plan_partial_reductions(open_positions, fac_m1, range_mode=range_active)
             except Exception as exc:
                 logging.warning("[PARTIAL] planning failed: %s", exc)
                 partials = []
@@ -530,8 +573,16 @@ async def logic_loop():
                 open_positions = pos_manager.get_open_positions()
             net_units = int(open_positions.get("__net__", {}).get("units", 0))
 
+            for pocket, info in open_positions.items():
+                if pocket == "__net__":
+                    continue
+                if int(info.get("long_units", 0) or 0) == 0 and stage_tracker.get_stage(pocket, "long") > 0:
+                    stage_tracker.reset_stage(pocket, "long", now=now)
+                if int(info.get("short_units", 0) or 0) == 0 and stage_tracker.get_stage(pocket, "short") > 0:
+                    stage_tracker.reset_stage(pocket, "short", now=now)
+
             exit_decisions = exit_manager.plan_closures(
-                open_positions, evaluated_signals, fac_m1, fac_h4, event_soon
+                open_positions, evaluated_signals, fac_m1, fac_h4, event_soon, range_active
             )
 
             executed_pockets: set[str] = set()
@@ -591,8 +642,19 @@ async def logic_loop():
                             decision.units,
                             decision.reason,
                         )
-                if remaining <= 0 and not decision.allow_reentry:
-                    executed_pockets.add(pocket)
+                if remaining <= 0:
+                    if not decision.allow_reentry or decision.reason == "range_cooldown":
+                        executed_pockets.add(pocket)
+                        cooldown_seconds = (
+                            RANGE_COOLDOWN_SECONDS if range_active else DEFAULT_COOLDOWN_SECONDS
+                        )
+                        stage_tracker.set_cooldown(
+                            pocket,
+                            target_side,
+                            reason=decision.reason,
+                            seconds=cooldown_seconds,
+                            now=now,
+                        )
 
             if not evaluated_signals:
                 logging.info("[WAIT] No actionable entry signals this cycle.")
@@ -661,6 +723,8 @@ async def logic_loop():
             for key in list(lots):
                 if key not in active_pockets:
                     lots[key] = 0.0
+            if range_active and "macro" in lots:
+                lots["macro"] = 0.0
 
             for signal in evaluated_signals:
                 pocket = signal["pocket"]
@@ -672,6 +736,9 @@ async def logic_loop():
                     continue
                 if pocket in executed_pockets:
                     logging.info("[SKIP] %s pocket already handled this loop.", pocket)
+                    continue
+                if range_active and pocket == "macro":
+                    logging.info("[SKIP] Range mode active, skipping macro entry.")
                     continue
                 if not can_trade(pocket):
                     logging.info(f"[SKIP] DD limit for {pocket} pocket.")
@@ -710,9 +777,31 @@ async def logic_loop():
                 if action == "OPEN_LONG":
                     open_units = int(open_info.get("long_units", 0))
                     ref_price = open_info.get("long_avg_price")
+                    direction = "long"
                 else:
                     open_units = int(open_info.get("short_units", 0))
                     ref_price = open_info.get("short_avg_price")
+                    direction = "short"
+
+                size_factor = stage_tracker.size_multiplier(pocket, direction)
+                if size_factor < 0.999:
+                    logging.info("[SIZE] %s %s factor=%.2f due to streaks", pocket, direction, size_factor)
+                confidence_target = round(confidence_target * size_factor, 3)
+                if confidence_target <= 0:
+                    continue
+
+                blocked, remain_sec, block_reason = stage_tracker.is_blocked(
+                    pocket, direction, now
+                )
+                if blocked:
+                    logging.info(
+                        "[COOLDOWN] Skip %s %s entry (%ss remaining reason=%s)",
+                        pocket,
+                        direction,
+                        remain_sec,
+                        block_reason,
+                    )
+                    continue
 
                 stage_context = dict(open_info) if open_info else {}
                 if ref_price is None or (ref_price == 0.0 and open_units == 0):
@@ -720,7 +809,7 @@ async def logic_loop():
                 if ref_price is not None:
                     stage_context["avg_price"] = ref_price
 
-                staged_lot = compute_stage_lot(
+                staged_lot, stage_idx = compute_stage_lot(
                     pocket,
                     confidence_target,
                     open_units,
@@ -774,6 +863,8 @@ async def logic_loop():
                         confidence,
                         client_id,
                     )
+                    if stage_idx >= 0:
+                        stage_tracker.set_stage(pocket, direction, stage_idx + 1, now=now)
                     pos_manager.register_open_trade(trade_id, pocket, client_id)
                     info = open_positions.setdefault(
                         pocket,
@@ -832,6 +923,7 @@ async def logic_loop():
     finally:
         pos_manager.close()
         metrics_client.close()
+        stage_tracker.close()
         logging.info("PositionManager closed.")
 
 

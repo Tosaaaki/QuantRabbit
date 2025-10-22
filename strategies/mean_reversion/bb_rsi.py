@@ -21,6 +21,10 @@ class BBRsi:
         if band_width <= 0:
             return None
 
+        atr_hint = fac.get("atr_pips") or (fac.get("atr") or 0.0) * 100 or 6.0
+        tp_dynamic = max(1.4, min(atr_hint * 1.4, 6.0))
+        sl_dynamic = max(1.2, min(atr_hint * 1.1, tp_dynamic * 1.05))
+
         if price < lower and rsi < 30:
             distance = (lower - price) / band_width if band_width else 0.0
             rsi_gap = max(0.0, 30 - rsi) / 30
@@ -29,8 +33,8 @@ class BBRsi:
             )
             return {
                 "action": "OPEN_LONG",
-                "sl_pips": 10,
-                "tp_pips": 15,
+                "sl_pips": sl_dynamic,
+                "tp_pips": tp_dynamic,
                 "confidence": confidence,
                 "tag": f"{BBRsi.name}-long",
             }
@@ -42,8 +46,8 @@ class BBRsi:
             )
             return {
                 "action": "OPEN_SHORT",
-                "sl_pips": 10,
-                "tp_pips": 15,
+                "sl_pips": sl_dynamic,
+                "tp_pips": tp_dynamic,
                 "confidence": confidence,
                 "tag": f"{BBRsi.name}-short",
             }

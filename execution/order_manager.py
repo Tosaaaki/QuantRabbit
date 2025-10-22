@@ -151,6 +151,11 @@ _PARTIAL_THRESHOLDS = {
     "micro": (15.0, 25.0),
     "scalp": (8.0, 12.0),
 }
+_PARTIAL_THRESHOLDS_RANGE = {
+    "macro": (16.0, 22.0),
+    "micro": (10.0, 16.0),
+    "scalp": (6.0, 10.0),
+}
 _PARTIAL_FRACTIONS = (0.4, 0.3)
 _PARTIAL_MIN_UNITS = 400
 
@@ -406,6 +411,8 @@ def update_dynamic_protections(
 def plan_partial_reductions(
     open_positions: dict,
     fac_m1: dict,
+    *,
+    range_mode: bool = False,
 ) -> list[tuple[str, str, int]]:
     price = fac_m1.get("close")
     if price is None:
@@ -417,6 +424,8 @@ def plan_partial_reductions(
         if pocket == "__net__":
             continue
         thresholds = _PARTIAL_THRESHOLDS.get(pocket)
+        if range_mode:
+            thresholds = _PARTIAL_THRESHOLDS_RANGE.get(pocket, thresholds)
         if not thresholds:
             continue
         trades = info.get("open_trades") or []

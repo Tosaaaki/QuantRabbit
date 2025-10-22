@@ -32,6 +32,7 @@ class ExitManager:
         fac_m1: Dict,
         fac_h4: Dict,
         event_soon: bool,
+        range_mode: bool = False,
     ) -> List[ExitDecision]:
         decisions: List[ExitDecision] = []
         for pocket, info in open_positions.items():
@@ -56,6 +57,7 @@ class ExitManager:
             if long_units > 0:
                 decision = self._evaluate_long(
                     pocket,
+                    info,
                     long_units,
                     reverse_short,
                     event_soon,
@@ -65,6 +67,7 @@ class ExitManager:
                     adx,
                     close_price,
                     ema20,
+                    range_mode,
                 )
                 if decision:
                     decisions.append(decision)
@@ -72,6 +75,7 @@ class ExitManager:
             if short_units > 0:
                 decision = self._evaluate_short(
                     pocket,
+                    info,
                     short_units,
                     reverse_long,
                     event_soon,
@@ -81,6 +85,7 @@ class ExitManager:
                     adx,
                     close_price,
                     ema20,
+                    range_mode,
                 )
                 if decision:
                     decisions.append(decision)
@@ -105,6 +110,7 @@ class ExitManager:
     def _evaluate_long(
         self,
         pocket: str,
+        open_info: Dict,
         units: int,
         reverse_signal: Optional[Dict],
         event_soon: bool,
@@ -114,10 +120,15 @@ class ExitManager:
         adx: float,
         close_price: float,
         ema20: float,
+        range_mode: bool,
     ) -> Optional[ExitDecision]:
         allow_reentry = False
         reason = ""
         tag = f"{pocket}-long"
+        avg_price = open_info.get("long_avg_price") or open_info.get("avg_price")
+        profit_pips = 0.0
+        if avg_price and close_price:
+            profit_pips = (close_price - avg_price) / 0.01
 
         if event_soon and pocket in {"micro", "scalp"}:
             reason = "event_lock"
@@ -131,7 +142,19 @@ class ExitManager:
             reason = "trend_reversal"
         elif pocket == "scalp" and close_price > ema20:
             reason = "scalp_momentum_flip"
+        elif pocket == "macro" and range_mode and adx <= 20:
+            reason = "range_cooldown"
+        elif range_mode:
+            if profit_pips >= 1.6:
+                reason = "range_take_profit"
+                allow_reentry = False
+            elif profit_pips > 0.4:
+                return None
+            elif profit_pips <= -1.0:
+                reason = "range_stop"
 
+        if range_mode and reason == "reverse_signal":
+            allow_reentry = False
         if not reason:
             return None
 
@@ -146,6 +169,7 @@ class ExitManager:
     def _evaluate_short(
         self,
         pocket: str,
+        open_info: Dict,
         units: int,
         reverse_signal: Optional[Dict],
         event_soon: bool,
@@ -155,10 +179,15 @@ class ExitManager:
         adx: float,
         close_price: float,
         ema20: float,
+        range_mode: bool,
     ) -> Optional[ExitDecision]:
         allow_reentry = False
         reason = ""
         tag = f"{pocket}-short"
+        avg_price = open_info.get("short_avg_price") or open_info.get("avg_price")
+        profit_pips = 0.0
+        if avg_price and close_price:
+            profit_pips = (avg_price - close_price) / 0.01
 
         if event_soon and pocket in {"micro", "scalp"}:
             reason = "event_lock"
@@ -172,7 +201,19 @@ class ExitManager:
             reason = "trend_reversal"
         elif pocket == "scalp" and close_price < ema20:
             reason = "scalp_momentum_flip"
+        elif pocket == "macro" and range_mode and adx <= 20:
+            reason = "range_cooldown"
+        elif range_mode:
+            if profit_pips >= 1.6:
+                reason = "range_take_profit"
+                allow_reentry = False
+            elif profit_pips > 0.4:
+                return None
+            elif profit_pips <= -1.0:
+                reason = "range_stop"
 
+        if range_mode and reason == "reverse_signal":
+            allow_reentry = False
         if not reason:
             return None
 
