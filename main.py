@@ -110,6 +110,11 @@ ALLOWED_RANGE_STRATEGIES = {"BB_RSI", "RangeFader"}
 LOW_TREND_ADX_THRESHOLD = 18.0
 LOW_TREND_SLOPE_THRESHOLD = 0.00035
 LOW_TREND_WEIGHT_CAP = 0.35
+SOFT_RANGE_SCORE_MIN = 0.58
+SOFT_RANGE_COMPRESSION_MIN = 0.55
+SOFT_RANGE_VOL_MIN = 0.40
+SOFT_RANGE_WEIGHT_CAP = 0.32
+SOFT_RANGE_ADX_BUFFER = 6.0
 
 
 def build_client_order_id(focus_tag: Optional[str], strategy_tag: str) -> str:
@@ -382,6 +387,7 @@ async def logic_loop():
     last_metrics_refresh = datetime.datetime.min
     strategy_health_cache: dict[str, StrategyHealth] = {}
     range_active = False
+    range_soft_active = False
     last_range_reason = ""
 
     try:
@@ -448,6 +454,7 @@ async def logic_loop():
                 if perf_cache
                 else None,
             )
+            soft_range_just_activated = False
             range_ctx = detect_range_mode(fac_m1, fac_h4)
             if range_ctx.active != range_active or range_ctx.reason != last_range_reason:
                 logging.info(
@@ -457,6 +464,36 @@ async def logic_loop():
                     range_ctx.score,
                     range_ctx.metrics,
                 )
+            metrics = range_ctx.metrics or {}
+            compression_ratio = float(metrics.get("compression_ratio", 0.0) or 0.0)
+            volatility_ratio = float(metrics.get("volatility_ratio", 0.0) or 0.0)
+            effective_adx_m1 = float(
+                metrics.get("effective_adx_m1", fac_m1.get("adx", 0.0) or 0.0)
+            )
+            adx_threshold = float(metrics.get("adx_threshold", 22.0) or 22.0)
+            soft_range_prev = range_soft_active
+            soft_range_candidate = (
+                not range_ctx.active
+                and range_ctx.score >= SOFT_RANGE_SCORE_MIN
+                and compression_ratio >= SOFT_RANGE_COMPRESSION_MIN
+                and volatility_ratio >= SOFT_RANGE_VOL_MIN
+                and effective_adx_m1 <= (adx_threshold + SOFT_RANGE_ADX_BUFFER)
+            )
+            if soft_range_candidate != soft_range_prev and not range_ctx.active:
+                logging.info(
+                    "[RANGE] soft=%s score=%.2f eff_adx=%.2f comp=%.2f vol=%.2f",
+                    soft_range_candidate,
+                    range_ctx.score,
+                    effective_adx_m1,
+                    compression_ratio,
+                    volatility_ratio,
+                )
+            range_soft_active = (
+                soft_range_candidate if not range_ctx.active else False
+            )
+            soft_range_just_activated = (
+                range_soft_active and not soft_range_prev and not range_ctx.active
+            )
             range_active = range_ctx.active
             last_range_reason = range_ctx.reason
 
@@ -514,6 +551,24 @@ async def logic_loop():
             if range_active:
                 focus_tag = "micro"
                 weight = min(weight, 0.15)
+            elif range_soft_active and focus_tag == "macro":
+                if soft_range_just_activated:
+                    logging.info(
+                        "[FOCUS] Soft range compression forcing hybrid focus (score=%.2f).",
+                        range_ctx.score,
+                    )
+                focus_tag = "hybrid"
+            if not range_active and range_soft_active and weight > SOFT_RANGE_WEIGHT_CAP:
+                prev_weight = weight
+                weight = min(weight, SOFT_RANGE_WEIGHT_CAP)
+                if prev_weight != weight:
+                    logging.info(
+                        "[MACRO] Soft range compression (score=%.2f eff_adx=%.2f) weight_macro %.2f -> %.2f",
+                        range_ctx.score,
+                        effective_adx_m1,
+                        prev_weight,
+                        weight,
+                    )
             focus_pockets = set(FOCUS_POCKETS.get(focus_tag, ("macro", "micro", "scalp")))
             if not focus_pockets:
                 focus_pockets = {"micro"}

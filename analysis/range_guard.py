@@ -68,29 +68,72 @@ def detect_range_mode(
     adx_h4 = _safe_get(fac_h4, "adx", 0.0)
     slope_h4 = abs(_safe_get(fac_h4, "ma20", 0.0) - _safe_get(fac_h4, "ma10", 0.0))
 
+    compression_ratio = 0.0
+    if bbw_threshold > 0.0:
+        compression_ratio = max(
+            0.0,
+            min(
+                1.0,
+                1.0 - (bbw_m1 / max(bbw_threshold, 1e-6)),
+            ),
+        )
+    volatility_ratio = 0.0
+    if atr_threshold > 0.0:
+        volatility_ratio = max(
+            0.0,
+            min(
+                1.0,
+                1.0 - (atr_m1 / max(atr_threshold, 1e-6)),
+            ),
+        )
+
+    relax_mix_m1 = (compression_ratio * 0.7) + (volatility_ratio * 0.5)
+    relax_factor_m1 = max(0.18, 1.0 - min(0.9, relax_mix_m1))
+    effective_adx_m1 = adx_m1 * relax_factor_m1
+
+    relax_factor_h4 = max(0.3, 1.0 - min(0.6, compression_ratio * 0.4))
+    effective_adx_h4 = adx_h4 * relax_factor_h4
+
     is_low_adx = adx_m1 <= adx_threshold
     is_narrow_band = bbw_m1 <= bbw_threshold
     is_low_atr = atr_m1 <= atr_threshold
-    h4_trend_weak = adx_h4 <= (adx_threshold + 3.0) and slope_h4 <= 0.00045
+    if not is_low_adx:
+        is_low_adx = effective_adx_m1 <= adx_threshold
+        if not is_low_adx and volatility_ratio >= 0.6:
+            is_low_adx = effective_adx_m1 <= (adx_threshold + 4.0)
+    h4_trend_weak = (
+        effective_adx_h4 <= (adx_threshold + 3.0) and slope_h4 <= 0.00045
+    )
 
     components = [
-        _score_component(adx_m1, adx_threshold),
+        _score_component(effective_adx_m1, adx_threshold),
         _score_component(bbw_m1, bbw_threshold),
         _score_component(atr_m1, atr_threshold),
-        _score_component(adx_h4, adx_threshold + 3.0),
+        _score_component(effective_adx_h4, adx_threshold + 3.0),
         min(1.0, (0.00045 / slope_h4) if slope_h4 else 1.0),
+        compression_ratio,
+        volatility_ratio,
     ]
     composite = sum(components) / len(components)
 
-    active = (is_low_adx and is_narrow_band and is_low_atr) or (
-        composite >= 0.65 and h4_trend_weak
+    compression_trigger = (
+        compression_ratio >= 0.6
+        and volatility_ratio >= 0.45
+        and effective_adx_m1 <= (adx_threshold + 4.0)
     )
+    active = (is_low_adx and is_narrow_band and is_low_atr) or (
+        composite >= 0.62 and h4_trend_weak
+    )
+    if not active and compression_trigger:
+        active = True
 
     if active:
         if is_low_atr and is_narrow_band:
             reason = "volatility_compression"
         elif is_low_adx:
             reason = "adx_squeeze"
+        elif compression_trigger:
+            reason = "compression_override"
         else:
             reason = "trend_weaken"
     else:
@@ -106,6 +149,14 @@ def detect_range_mode(
         "low_adx": float(is_low_adx),
         "narrow_band": float(is_narrow_band),
         "low_atr": float(is_low_atr),
+        "effective_adx_m1": effective_adx_m1,
+        "effective_adx_h4": effective_adx_h4,
+        "relax_factor_m1": relax_factor_m1,
+        "relax_factor_h4": relax_factor_h4,
+        "compression_ratio": compression_ratio,
+        "volatility_ratio": volatility_ratio,
+        "compression_trigger": float(compression_trigger),
+        "adx_threshold": adx_threshold,
     }
 
     return RangeContext(active=active, reason=reason, score=composite, metrics=metrics)
