@@ -10,6 +10,7 @@ from market_data.candle_fetcher import (
     start_candle_stream,
     initialize_history,
 )
+from market_data import spread_monitor
 from indicators.factor_cache import all_factors, on_candle
 from analysis.regime_classifier import classify
 from analysis.focus_decider import decide_focus
@@ -446,6 +447,8 @@ async def logic_loop():
     raw_range_reason = ""
     stage_empty_since: dict[tuple[str, str], datetime.datetime] = {}
     last_risk_pct: float | None = None
+    last_spread_gate = False
+    last_spread_gate_reason = ""
 
     try:
         while True:
@@ -497,6 +500,63 @@ async def logic_loop():
                 )
                 await asyncio.sleep(60)
                 continue
+
+            spread_blocked, spread_remain, spread_snapshot, spread_reason = spread_monitor.is_blocked()
+            spread_gate_reason = ""
+            if spread_blocked:
+                remain_txt = f"{spread_remain}s"
+                base_reason = spread_reason or "spread_threshold"
+                spread_gate_reason = f"{base_reason} (remain {remain_txt})"
+            elif spread_snapshot:
+                if spread_snapshot["age_ms"] > spread_snapshot["max_age_ms"]:
+                    spread_gate_reason = (
+                        f"spread_stale age={spread_snapshot['age_ms']}ms "
+                        f"> {spread_snapshot['max_age_ms']}ms"
+                    )
+                elif spread_snapshot["spread_pips"] >= spread_snapshot["limit_pips"]:
+                    spread_gate_reason = (
+                        f"spread_hot {spread_snapshot['spread_pips']:.2f}p "
+                        f">= {spread_snapshot['limit_pips']:.2f}p"
+                    )
+            spread_gate_active = bool(spread_gate_reason)
+            if spread_snapshot:
+                def _fmt(v: object) -> str:
+                    return f"{float(v):.2f}" if isinstance(v, (int, float)) else "NA"
+
+                last_txt = _fmt(spread_snapshot.get("spread_pips"))
+                avg_txt = _fmt(spread_snapshot.get("avg_pips"))
+                age_ms = spread_snapshot.get("age_ms")
+                if spread_snapshot.get("baseline_ready"):
+                    baseline_avg = spread_snapshot.get("baseline_avg_pips")
+                    baseline_p95 = spread_snapshot.get("baseline_p95_pips")
+                    baseline_txt = (
+                        f"baseline≈{_fmt(baseline_avg)}p p95={_fmt(baseline_p95)}p"
+                        if baseline_avg is not None and baseline_p95 is not None
+                        else "baseline_ready"
+                    )
+                else:
+                    baseline_txt = (
+                        f"baseline_warmup samples={spread_snapshot.get('baseline_samples', 0)}"
+                    )
+                spread_log_context = (
+                    f"last={last_txt}p avg={avg_txt}p age={age_ms}ms {baseline_txt}"
+                )
+            else:
+                spread_log_context = "no_snapshot"
+            if spread_gate_active:
+                if (
+                    not last_spread_gate
+                    or spread_gate_reason != last_spread_gate_reason
+                ):
+                    logging.info(
+                        "[SPREAD] gating entries (%s, %s)",
+                        spread_gate_reason,
+                        spread_log_context,
+                    )
+            elif last_spread_gate:
+                logging.info("[SPREAD] entries re-enabled (%s)", spread_log_context)
+            last_spread_gate = spread_gate_active
+            last_spread_gate_reason = spread_gate_reason
 
             macro_regime = classify(fac_h4, "H4", event_mode=event_soon)
             micro_regime = classify(fac_m1, "M1", event_mode=event_soon)
@@ -1017,10 +1077,20 @@ async def logic_loop():
             if range_active and "macro" in lots:
                 lots["macro"] = 0.0
 
+            spread_skip_logged = False
             for signal in evaluated_signals:
                 pocket = signal["pocket"]
                 action = signal.get("action")
                 if action not in {"OPEN_LONG", "OPEN_SHORT"}:
+                    continue
+                if spread_gate_active:
+                    if not spread_skip_logged:
+                        logging.info(
+                            "[SKIP] Spread guard active (%s, %s).",
+                            spread_gate_reason,
+                            spread_log_context,
+                        )
+                        spread_skip_logged = True
                     continue
                 if event_soon and pocket in {"micro", "scalp"}:
                     logging.info("[SKIP] Event soon, skipping %s pocket trade.", pocket)
