@@ -72,10 +72,14 @@ class PositionManager:
               pocket TEXT,
               instrument TEXT,
               units INTEGER,
+              closed_units INTEGER,
               entry_price REAL,
               close_price REAL,
+              fill_price REAL,
               pl_pips REAL,
               realized_pl REAL,
+              commission REAL,
+              financing REAL,
               entry_time TEXT,
               open_time TEXT,
               close_time TEXT,
@@ -96,10 +100,14 @@ class PositionManager:
             "pocket": "TEXT",
             "instrument": "TEXT",
             "units": "INTEGER",
+            "closed_units": "INTEGER",
             "entry_price": "REAL",
             "close_price": "REAL",
+            "fill_price": "REAL",
             "pl_pips": "REAL",
             "realized_pl": "REAL",
+            "commission": "REAL",
+            "financing": "REAL",
             "entry_time": "TEXT",
             "open_time": "TEXT",
             "close_time": "TEXT",
@@ -113,8 +121,17 @@ class PositionManager:
             if name not in existing:
                 self.con.execute(f"ALTER TABLE trades ADD COLUMN {name} {ddl}")
 
+        # 旧ユニークインデックス（ticket_id 単独）は部分決済を上書きしてしまうため削除し、
+        # (transaction_id, ticket_id) の複合ユニークへ移行、ticket_id は非ユニーク索引に変更
+        try:
+            self.con.execute("DROP INDEX IF EXISTS idx_trades_ticket")
+        except Exception:
+            pass
         self.con.execute(
-            "CREATE UNIQUE INDEX IF NOT EXISTS idx_trades_ticket ON trades(ticket_id)"
+            "CREATE UNIQUE INDEX IF NOT EXISTS uniq_trades_tx_trade ON trades(transaction_id, ticket_id)"
+        )
+        self.con.execute(
+            "CREATE INDEX IF NOT EXISTS idx_trades_ticket ON trades(ticket_id)"
         )
         self.con.execute(
             "CREATE INDEX IF NOT EXISTS idx_trades_close_time ON trades(close_time)"
@@ -255,12 +272,27 @@ class PositionManager:
                 # OANDAのPLは通貨額なので、価格差からpipsを計算する
                 entry_price = details["entry_price"]
                 units = details["units"]
+                # 実際にクローズされたユニット（部分決済対応）
+                try:
+                    closed_units_raw = closed_trade.get("units")
+                    closed_units = int(float(closed_units_raw)) if closed_units_raw is not None else 0
+                except Exception:
+                    closed_units = 0
                 if units > 0:  # Buy
                     pl_pips = (close_price - entry_price) * 100
                 else:  # Sell
                     pl_pips = (entry_price - close_price) * 100
 
                 realized_pl = float(closed_trade.get("realizedPL", 0.0) or 0.0)
+                # 取引コスト類（存在すれば保存）
+                try:
+                    commission = float(tx.get("commission", 0.0) or 0.0)
+                except Exception:
+                    commission = 0.0
+                try:
+                    financing = float(tx.get("financing", 0.0) or 0.0)
+                except Exception:
+                    financing = 0.0
                 transaction_id = int(tx.get("id", 0) or 0)
                 updated_at = datetime.now(timezone.utc).isoformat()
                 close_reason = tx.get("reason") or tx.get("type") or "UNKNOWN"
@@ -271,17 +303,21 @@ class PositionManager:
                     details["pocket"],
                     tx.get("instrument"),
                     units,
+                    closed_units,
                     entry_price,
+                    close_price,
                     close_price,
                     pl_pips,
                     realized_pl,
+                    commission,
+                    financing,
                     details["entry_time"].isoformat(),
                     details["entry_time"].isoformat(),
                     close_time.isoformat(),
                     close_reason,
                     "CLOSED",
                     updated_at,
-                    "v2",
+                    "v3",
                     0.0,
                 )
                 trades_to_save.append(record_tuple)
@@ -292,16 +328,20 @@ class PositionManager:
                         "pocket": details["pocket"],
                         "instrument": tx.get("instrument"),
                         "units": units,
+                        "closed_units": closed_units,
                         "entry_price": entry_price,
                         "close_price": close_price,
+                        "fill_price": close_price,
                         "pl_pips": pl_pips,
                         "realized_pl": realized_pl,
+                        "commission": commission,
+                        "financing": financing,
                         "entry_time": details["entry_time"].isoformat(),
                         "close_time": close_time.isoformat(),
                         "close_reason": close_reason,
                         "state": "CLOSED",
                         "updated_at": updated_at,
-                        "version": "v2",
+                        "version": "v3",
                         "unrealized_pl": 0.0,
                     }
                 )
@@ -320,10 +360,14 @@ class PositionManager:
                     pocket,
                     instrument,
                     units,
+                    closed_units,
                     entry_price,
                     close_price,
+                    fill_price,
                     pl_pips,
                     realized_pl,
+                    commission,
+                    financing,
                     entry_time,
                     open_time,
                     close_time,
@@ -333,7 +377,7 @@ class PositionManager:
                     version,
                     unrealized_pl
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
                 trades_to_save,
             )
@@ -453,8 +497,9 @@ class PositionManager:
         """UI 表示用に最新のトレードを取得"""
         cursor = self.con.execute(
             """
-            SELECT ticket_id, pocket, instrument, units, entry_price, close_price,
-                   pl_pips, realized_pl, entry_time, close_time, close_reason,
+            SELECT ticket_id, pocket, instrument, units, closed_units, entry_price, close_price,
+                   fill_price, pl_pips, realized_pl, commission, financing,
+                   entry_time, close_time, close_reason,
                    state, updated_at
             FROM trades
             ORDER BY datetime(updated_at) DESC
@@ -469,10 +514,14 @@ class PositionManager:
                 "pocket": row["pocket"],
                 "instrument": row["instrument"],
                 "units": row["units"],
+                "closed_units": row["closed_units"],
                 "entry_price": row["entry_price"],
                 "close_price": row["close_price"],
+                "fill_price": row["fill_price"],
                 "pl_pips": row["pl_pips"],
                 "realized_pl": row["realized_pl"],
+                "commission": row["commission"],
+                "financing": row["financing"],
                 "entry_time": row["entry_time"],
                 "close_time": row["close_time"],
                 "close_reason": row["close_reason"],

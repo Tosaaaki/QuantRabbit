@@ -175,7 +175,7 @@ class StageTracker:
         conn = sqlite3.connect(trades_path)
         conn.row_factory = sqlite3.Row
         rows = conn.execute(
-            "SELECT id, pocket, units, pl_pips FROM trades WHERE close_time IS NOT NULL ORDER BY id ASC"
+            "SELECT id, pocket, units, pl_pips, realized_pl FROM trades WHERE close_time IS NOT NULL ORDER BY id ASC"
         ).fetchall()
         conn.close()
         if not rows:
@@ -202,11 +202,12 @@ class StageTracker:
                 continue
             if trade_id <= last_id:
                 continue
-            pl_pips = float(row["pl_pips"] or 0.0)
-            if pl_pips < -0.05:
+            # 判定は円ベースの実現損益を優先（ロット不均一時の誤判定を防ぐ）
+            pl_jpy = float(row["realized_pl"] or 0.0)
+            if pl_jpy < -1.0:
                 lose_streak += 1
                 win_streak = 0
-            elif pl_pips > 0.05:
+            elif pl_jpy > 1.0:
                 win_streak += 1
                 lose_streak = 0
             else:
@@ -249,12 +250,26 @@ class StageTracker:
         return int(row[0] or 0), int(row[1] or 0)
 
     def size_multiplier(self, pocket: str, direction: str) -> float:
+        """連敗時はより強くサイズを縮小し、連勝時はゆるやかに抑制。
+
+        例:
+          - 1連敗: 0.6x
+          - 2連敗: 0.4x
+          - 3連敗以上: 0.3x（下限）
+          - 2連勝: 0.85x, 3連勝: 0.75x
+        """
         lose_streak, win_streak = self.get_loss_profile(pocket, direction)
         factor = 1.0
-        if lose_streak > 0:
-            factor *= max(0.4, 1.0 - lose_streak * 0.25)
-        if win_streak >= 2:
-            factor *= 0.8
+        if lose_streak >= 3:
+            factor *= 0.3
+        elif lose_streak == 2:
+            factor *= 0.4
+        elif lose_streak == 1:
+            factor *= 0.6
+
         if win_streak >= 3:
-            factor *= 0.7
-        return max(0.3, round(factor, 3))
+            factor *= 0.75
+        elif win_streak >= 2:
+            factor *= 0.85
+
+        return max(0.2, round(factor, 3))
