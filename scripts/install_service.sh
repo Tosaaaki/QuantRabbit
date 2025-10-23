@@ -69,7 +69,7 @@ After=network.target
 [Service]
 Type=simple
 WorkingDirectory=${REPO_DIR}
-ExecStart=/usr/bin/env uvicorn apps.autotune_ui:app --host 0.0.0.0 --port 8088
+ExecStart=${REPO_DIR}/.venv/bin/uvicorn apps.autotune_ui:app --host 0.0.0.0 --port 8088
 Restart=on-failure
 RestartSec=5
 User=${LINUX_USER}
