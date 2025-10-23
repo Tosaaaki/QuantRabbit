@@ -35,6 +35,7 @@ from strategies.scalping.m1_scalper import M1Scalper
 from strategies.scalping.range_fader import RangeFader
 from strategies.scalping.pulse_break import PulseBreak
 from strategies.mean_reversion.bb_rsi import BBRsi
+from analysis.ma_projection import compute_ma_projection
 from strategies.trend.ma_cross import MovingAverageCross
 from strategies.breakout.donchian55 import Donchian55
 
@@ -290,15 +291,42 @@ def should_skip_by_params(
     if "adx_max" in params and adx is not None and adx > float(params["adx_max"]):
         return True
 
+    ma10 = fac.get("ma10")
+    ma20 = fac.get("ma20")
+    ma_gap_pips = None
+    if ma10 is not None and ma20 is not None:
+        ma_gap_pips = abs(ma10 - ma20) / PIP_VALUE
+
+    if "ma_gap_min_pips" in params:
+        if ma_gap_pips is None or ma_gap_pips < float(params["ma_gap_min_pips"]):
+            return True
+    if "ma_gap_max_pips" in params:
+        if ma_gap_pips is None or ma_gap_pips > float(params["ma_gap_max_pips"]):
+            return True
+
     if "ma_spread_min" in params or "ma_spread_max" in params:
-        ma10 = fac.get("ma10")
-        ma20 = fac.get("ma20")
         if ma10 is None or ma20 is None or ma20 == 0:
             return True
         spread = abs(ma10 - ma20) / abs(ma20)
         if "ma_spread_min" in params and spread < float(params["ma_spread_min"]):
             return True
         if "ma_spread_max" in params and spread > float(params["ma_spread_max"]):
+            return True
+
+    price_to_fast = fac.get("price_to_fast_pips")
+    if "price_to_fast_max_pips" in params and price_to_fast is not None:
+        if abs(price_to_fast) > float(params["price_to_fast_max_pips"]):
+            return True
+
+    projected_cross = fac.get("projected_cross_minutes")
+    if "projected_cross_minutes_max" in params and projected_cross is not None:
+        if projected_cross <= 0 or projected_cross < float(params["projected_cross_minutes_max"]):
+            return True
+
+    gap_slope = fac.get("gap_slope_pips")
+    min_slope = params.get("gap_slope_min_pips")
+    if min_slope is not None and gap_slope is not None:
+        if gap_slope < float(min_slope):
             return True
 
     return False
@@ -477,6 +505,15 @@ def simulate(
         else:
             fac["donchian_high"] = None
             fac["donchian_low"] = None
+
+        projection = compute_ma_projection({"candles": fac["candles"]}, timeframe_minutes=1.0)
+        if projection:
+            fac["ma_gap_pips"] = projection.gap_pips
+            fac["gap_slope_pips"] = projection.gap_slope_pips
+            fac["price_to_fast_pips"] = projection.price_to_fast_pips
+            fac["price_to_slow_pips"] = projection.price_to_slow_pips
+            fac["projected_cross_minutes"] = projection.projected_cross_minutes
+            fac["macd_cross_minutes"] = projection.macd_cross_minutes
 
         for cls in strategies:
             strat_name = cls.name

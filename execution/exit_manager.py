@@ -350,6 +350,22 @@ class ExitManager:
         macd_cross_minutes = self._macd_cross_minutes(projection_fast, "short")
 
         if (
+            reverse_signal
+            and pocket == "macro"
+            and profit_pips >= 4.0
+            and close_price is not None
+            and ema20 is not None
+            and close_price <= ema20 - 0.002
+        ):
+            if (
+                adx >= self._macro_trend_adx + 4
+                or ma_gap_pips <= self._macro_ma_gap
+                or slope_support
+                or cross_support
+            ):
+                reverse_signal = None
+
+        if (
             pocket == "micro"
             and profit_pips <= -4.0
             and close_price is not None
@@ -434,6 +450,90 @@ class ExitManager:
             tag=tag,
             allow_reentry=allow_reentry,
         )
+
+    def _should_exit_for_cross(
+        self,
+        pocket: str,
+        side: str,
+        open_info: Dict,
+        projection_primary: Optional[MACrossProjection],
+        projection_fast: Optional[MACrossProjection],
+        profit_pips: float,
+        now: datetime,
+        macd_cross_minutes: Optional[float],
+    ) -> bool:
+        projection = projection_fast or projection_primary
+        if projection is None:
+            return False
+
+        gap = projection.gap_pips
+        if side == "long" and gap < 0.0:
+            return True
+        if side == "short" and gap > 0.0:
+            return True
+
+        candidates: List[float] = []
+        if projection.projected_cross_minutes is not None:
+            candidates.append(projection.projected_cross_minutes)
+        if macd_cross_minutes is not None:
+            candidates.append(macd_cross_minutes)
+        if not candidates:
+            return False
+        cross_minutes = min(candidates)
+
+        slope_source = projection_fast or projection_primary
+        slope = slope_source.gap_slope_pips if slope_source else 0.0
+        if macd_cross_minutes is None:
+            if side == "long" and slope >= 0.0:
+                return False
+            if side == "short" and slope <= 0.0:
+                return False
+
+        threshold = 3.5
+        if pocket == "macro":
+            threshold = 9.0
+            if not self._has_mature_trade(open_info, side, now, self._macro_min_hold_minutes):
+                threshold = 5.0
+        elif pocket == "scalp":
+            threshold = 2.2
+
+        if cross_minutes > threshold:
+            return False
+
+        if pocket == "macro" and profit_pips <= -self._macro_loss_buffer:
+            return True
+        if profit_pips >= 0.8:
+            return True
+        if cross_minutes <= threshold / 2.0:
+            return True
+        if macd_cross_minutes is not None and macd_cross_minutes <= threshold / 2.0:
+            return True
+        return False
+
+    @staticmethod
+    def _macd_cross_minutes(
+        projection: Optional[MACrossProjection],
+        side: str,
+    ) -> Optional[float]:
+        if (
+            projection is None
+            or projection.macd_pips is None
+            or projection.macd_slope_pips is None
+        ):
+            return None
+        macd = projection.macd_pips
+        slope = projection.macd_slope_pips
+        if side == "long":
+            if macd <= 0.0 and slope <= 0.0:
+                return 0.0
+            if macd > 0.0 and slope < 0.0 and projection.macd_cross_minutes is not None:
+                return projection.macd_cross_minutes
+        else:
+            if macd >= 0.0 and slope >= 0.0:
+                return 0.0
+            if macd < 0.0 and slope > 0.0 and projection.macd_cross_minutes is not None:
+                return projection.macd_cross_minutes
+        return None
 
     def _confirm_reverse_signal(
         self,

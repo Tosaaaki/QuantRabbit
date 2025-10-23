@@ -8,7 +8,7 @@ class MovingAverageCross:
     name = "TrendMA"
     pocket = "macro"
 
-    _MIN_GAP_PIPS = 0.75
+    _MIN_GAP_PIPS = 0.30
     _MAX_FAST_DISTANCE = 7.0
     _CROSS_MINUTES_STOP = 6.0
 

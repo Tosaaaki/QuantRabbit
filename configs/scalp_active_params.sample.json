@@ -31,12 +31,12 @@
     "rsi_upper": 65
   },
   "TrendMA": {
-    "sl_pips": 30,
-    "tp_pips": 76,
-    "timeout_sec": 50400,
-    "adx_min": 21.5,
-    "ma_spread_min": 0.0022,
-    "ma_spread_scale": 0.7
+    "timeout_sec": 45600,
+    "adx_min": 22.5,
+    "ma_gap_min_pips": 0.45,
+    "ma_spread_scale": 0.4,
+    "price_to_fast_max_pips": 7.9,
+    "projected_cross_minutes_max": 10.0
   },
   "Donchian55": {
     "sl_pips": 58,
