@@ -44,6 +44,7 @@
         <div class="stat-label">Open positions</div>
         <div class="stat-value">{{ dashboard.performance.open_positions }}</div>
         <div class="stat-sub">Net units {{ "%+.0f"|format(dashboard.performance.net_units) }}</div>
+        <div class="stat-sub">未実現 {{ "%+.1f"|format(dashboard.performance.unrealized_pl_pips) }}p / {{ "%+.0f"|format(dashboard.performance.unrealized_pl_jpy) }} 円（上段は確定損益）</div>
       </div>
       <div class="stat-card">
         <div class="stat-label">New trades (snapshot)</div>
@@ -88,21 +89,24 @@
         <thead>
           <tr>
             <th>Pocket</th>
-            <th>Net Units</th>
-            <th>Long</th>
-            <th>Short</th>
+            <th>Direction</th>
+            <th>Units</th>
             <th>Avg Price</th>
+            <th>Unrealized (pips)</th>
+            <th>Unrealized (JPY)</th>
             <th>Positions</th>
           </tr>
         </thead>
         <tbody>
         {% for row in dashboard.open_summary.pockets %}
+          {% set pill_class = 'pill gain' if row.unrealized_pips > 0 else 'pill loss' if row.unrealized_pips < 0 else 'pill neutral' %}
           <tr>
             <td>{{ row.pocket }}</td>
-            <td>{{ "%+.0f"|format(row.units) }}</td>
-            <td>{{ "%+.0f"|format(row.long_units) }}</td>
-            <td>{{ "%+.0f"|format(-row.short_units) }}</td>
+            <td>{{ row.direction }}</td>
+            <td>{{ "{:,}".format(row.units_abs) }}</td>
             <td>{{ "%.3f"|format(row.avg_price) }}</td>
+            <td><span class="{{ pill_class }}">{{ "%+.2f"|format(row.unrealized_pips) }}p</span></td>
+            <td>{{ "%+.0f"|format(row.unrealized_jpy) }}</td>
             <td>{{ row.trades }}</td>
           </tr>
         {% endfor %}
@@ -112,8 +116,10 @@
       <p class="tagline">現在オープンポジションはありません。</p>
     {% endif %}
 
-    <div class="section-title">最近のトレードハイライト</div>
-    {% if dashboard.highlights %}
+    <div class="section-title">トレードハイライト</div>
+
+    <h3 class="section-subtitle">トップ勝ち／負け</h3>
+    {% if dashboard.highlights_top %}
       <table>
         <thead>
           <tr>
@@ -125,7 +131,7 @@
           </tr>
         </thead>
         <tbody>
-        {% for row in dashboard.highlights %}
+        {% for row in dashboard.highlights_top %}
           {% set pill_class = 'pill gain' if row.kind == 'gain' else 'pill loss' %}
           <tr>
             <td>{{ row.ticket_id }}</td>
@@ -138,7 +144,36 @@
         </tbody>
       </table>
     {% else %}
-      <p class="tagline">表示できるトレードがまだありません。</p>
+      <p class="tagline">十分なトレード実績がありません。</p>
+    {% endif %}
+
+    <h3 class="section-subtitle">最新トレード</h3>
+    {% if dashboard.highlights_recent %}
+      <table>
+        <thead>
+          <tr>
+            <th>Ticket</th>
+            <th>Pocket</th>
+            <th>P/L (pips)</th>
+            <th>P/L (JPY)</th>
+            <th>Closed</th>
+          </tr>
+        </thead>
+        <tbody>
+        {% for row in dashboard.highlights_recent %}
+          {% set pill_class = 'pill gain' if row.kind == 'gain' else 'pill loss' if row.kind == 'loss' else 'pill neutral' %}
+          <tr>
+            <td>{{ row.ticket_id }}</td>
+            <td>{{ row.pocket }}</td>
+            <td><span class="{{ pill_class }}">{{ "%+.1f"|format(row.pl_pips) }}</span></td>
+            <td>{{ "%+.0f"|format(row.pl_jpy) }}</td>
+            <td>{{ row.closed_at or '-' }}</td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    {% else %}
+      <p class="tagline">最新トレード情報がまだありません。</p>
     {% endif %}
   </div>
 

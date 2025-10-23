@@ -9,7 +9,10 @@ execution.exit_manager
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Dict, List, Optional
+from datetime import datetime, timedelta
+from typing import Dict, List, Optional, Tuple
+
+from analysis.ma_projection import MACrossProjection, compute_ma_projection
 
 
 @dataclass
@@ -28,6 +31,13 @@ class ExitManager:
         self._macro_trend_adx = 16
         self._macro_loss_buffer = 4.0
         self._macro_ma_gap = 3.0
+        # Macro-specific stability controls
+        self._macro_min_hold_minutes = 7.0  # minimum age before acting on reversals
+        self._macro_hysteresis_pips = 3.0   # widen no-close band to avoid jitter
+        self._reverse_confirmations = 2
+        self._reverse_decay = timedelta(seconds=180)
+        self._reverse_hits: Dict[Tuple[str, str], Dict[str, object]] = {}
+        self._range_macro_grace_minutes = 8.0
 
     def plan_closures(
         self,
@@ -37,18 +47,36 @@ class ExitManager:
         fac_h4: Dict,
         event_soon: bool,
         range_mode: bool = False,
+        now: Optional[datetime] = None,
     ) -> List[ExitDecision]:
+        current_time = now or datetime.utcnow()
         decisions: List[ExitDecision] = []
+        projection_m1 = compute_ma_projection(fac_m1, timeframe_minutes=1.0)
+        projection_h4 = compute_ma_projection(fac_h4, timeframe_minutes=240.0)
         for pocket, info in open_positions.items():
             if pocket == "__net__":
                 continue
             long_units = int(info.get("long_units", 0) or 0)
             short_units = int(info.get("short_units", 0) or 0)
+            if long_units == 0:
+                self._reset_reverse_counter(pocket, "long")
+            if short_units == 0:
+                self._reset_reverse_counter(pocket, "short")
             if long_units == 0 and short_units == 0:
                 continue
 
-            reverse_short = self._strong_signal(signals, pocket, "OPEN_SHORT")
-            reverse_long = self._strong_signal(signals, pocket, "OPEN_LONG")
+            reverse_short = self._confirm_reverse_signal(
+                self._strong_signal(signals, pocket, "OPEN_SHORT"),
+                pocket,
+                "long",
+                current_time,
+            )
+            reverse_long = self._confirm_reverse_signal(
+                self._strong_signal(signals, pocket, "OPEN_LONG"),
+                pocket,
+                "short",
+                current_time,
+            )
 
             pocket_fac = fac_h4 if pocket == "macro" else fac_m1
             rsi = pocket_fac.get("rsi", fac_m1.get("rsi", 50.0))
@@ -57,6 +85,8 @@ class ExitManager:
             adx = pocket_fac.get("adx", 0.0)
             ema20 = fac_m1.get("ema20", 0.0)
             close_price = fac_m1.get("close", 0.0)
+            projection_primary = projection_h4 if pocket == "macro" else projection_m1
+            projection_fast = projection_m1
 
             if long_units > 0:
                 decision = self._evaluate_long(
@@ -72,6 +102,9 @@ class ExitManager:
                     close_price,
                     ema20,
                     range_mode,
+                    current_time,
+                    projection_primary,
+                    projection_fast,
                 )
                 if decision:
                     decisions.append(decision)
@@ -90,6 +123,9 @@ class ExitManager:
                     close_price,
                     ema20,
                     range_mode,
+                    current_time,
+                    projection_primary,
+                    projection_fast,
                 )
                 if decision:
                     decisions.append(decision)
@@ -128,6 +164,9 @@ class ExitManager:
         close_price: float,
         ema20: float,
         range_mode: bool,
+        now: datetime,
+        projection_primary: Optional[MACrossProjection],
+        projection_fast: Optional[MACrossProjection],
     ) -> Optional[ExitDecision]:
         allow_reentry = False
         reason = ""
@@ -141,6 +180,18 @@ class ExitManager:
         if ma10 is not None and ma20 is not None:
             ma_gap_pips = abs(ma10 - ma20) / 0.01
 
+        slope_support = (
+            projection_fast is not None
+            and projection_fast.gap_pips > 0.0
+            and projection_fast.gap_slope_pips > 0.12
+        )
+        cross_support = (
+            projection_primary is not None
+            and projection_primary.gap_pips > 0.0
+            and projection_primary.gap_slope_pips > 0.05
+        )
+        macd_cross_minutes = self._macd_cross_minutes(projection_fast, "long")
+
         if (
             reverse_signal
             and pocket == "macro"
@@ -149,8 +200,30 @@ class ExitManager:
             and ema20 is not None
             and close_price >= ema20 + 0.002
         ):
-            if adx >= self._macro_trend_adx + 4 or ma_gap_pips <= self._macro_ma_gap:
+            if (
+                adx >= self._macro_trend_adx + 4
+                or ma_gap_pips <= self._macro_ma_gap
+                or slope_support
+                or cross_support
+            ):
                 reverse_signal = None
+
+        # Do not act on fresh macro trades unless conditions are clearly adverse
+        if reverse_signal and pocket == "macro" and not range_mode:
+            is_mature = self._has_mature_trade(
+                open_info, "long", now, self._macro_min_hold_minutes
+            )
+            if not is_mature:
+                early_exit_ok = (
+                    profit_pips <= -self._macro_loss_buffer
+                    or (
+                        (ma10 is not None and ma20 is not None and ma10 < ma20)
+                        and adx <= (self._macro_trend_adx - 2)
+                        and ma_gap_pips >= (self._macro_ma_gap + 1.0)
+                    )
+                )
+                if not early_exit_ok:
+                    reverse_signal = None
 
         if event_soon and pocket in {"micro", "scalp"}:
             reason = "event_lock"
@@ -163,11 +236,13 @@ class ExitManager:
             if not macro_skip:
                 # ヒステリシス: 小幅の含み損益域では逆方向シグナルだけでクローズしない
                 micro_guard = (pocket == "micro" and -1.2 < profit_pips < 1.2)
-                macro_guard = (pocket == "macro" and -2.0 < profit_pips < 2.0)
+                macro_guard = (
+                    pocket == "macro"
+                    and -self._macro_hysteresis_pips < profit_pips < self._macro_hysteresis_pips
+                )
                 if micro_guard or macro_guard:
                     return None
                 reason = "reverse_signal"
-                allow_reentry = True
                 tag = reverse_signal.get("tag", tag)
         elif pocket == "micro" and rsi >= 65:
             reason = "rsi_overbought"
@@ -183,6 +258,17 @@ class ExitManager:
             reason = "trend_reversal"
         elif pocket == "scalp" and close_price > ema20:
             reason = "scalp_momentum_flip"
+        elif self._should_exit_for_cross(
+            pocket,
+            "long",
+            open_info,
+            projection_primary,
+            projection_fast,
+            profit_pips,
+            now,
+            macd_cross_minutes,
+        ):
+            reason = "ma_cross_imminent"
         elif (
             pocket == "macro"
             and profit_pips >= 6.0
@@ -194,15 +280,21 @@ class ExitManager:
         # レンジ中でもマクロの既存建玉を一律にクローズしない。
         # 早期利確/撤退（range_take_profit/range_stop）や逆方向シグナルのみで制御する。
         elif range_mode:
+            if (
+                pocket == "macro"
+                and self._has_mature_trade(open_info, "long", now, self._range_macro_grace_minutes)
+            ):
+                return None
             if profit_pips >= 1.6:
                 reason = "range_take_profit"
-                allow_reentry = False
             elif profit_pips > 0.4:
                 return None
             elif profit_pips <= -1.0:
                 reason = "range_stop"
 
         if range_mode and reason == "reverse_signal":
+            allow_reentry = False
+        if reason == "reverse_signal":
             allow_reentry = False
         if not reason:
             return None
@@ -229,6 +321,9 @@ class ExitManager:
         close_price: float,
         ema20: float,
         range_mode: bool,
+        now: datetime,
+        projection_primary: Optional[MACrossProjection],
+        projection_fast: Optional[MACrossProjection],
     ) -> Optional[ExitDecision]:
         allow_reentry = False
         reason = ""
@@ -241,6 +336,18 @@ class ExitManager:
         ma_gap_pips = 0.0
         if ma10 is not None and ma20 is not None:
             ma_gap_pips = abs(ma10 - ma20) / 0.01
+
+        slope_support = (
+            projection_fast is not None
+            and projection_fast.gap_pips < 0.0
+            and projection_fast.gap_slope_pips < -0.12
+        )
+        cross_support = (
+            projection_primary is not None
+            and projection_primary.gap_pips < 0.0
+            and projection_primary.gap_slope_pips < -0.05
+        )
+        macd_cross_minutes = self._macd_cross_minutes(projection_fast, "short")
 
         if (
             pocket == "micro"
@@ -265,11 +372,13 @@ class ExitManager:
             if not macro_skip:
                 # ヒステリシス: 小幅の含み損益域では逆方向シグナルだけでクローズしない
                 micro_guard = (pocket == "micro" and -1.2 < profit_pips < 1.2)
-                macro_guard = (pocket == "macro" and -2.0 < profit_pips < 2.0)
+                macro_guard = (
+                    pocket == "macro"
+                    and -self._macro_hysteresis_pips < profit_pips < self._macro_hysteresis_pips
+                )
                 if micro_guard or macro_guard:
                     return None
                 reason = "reverse_signal"
-                allow_reentry = True
                 tag = reverse_signal.get("tag", tag)
         elif pocket == "micro" and rsi <= 35:
             reason = "rsi_oversold"
@@ -285,18 +394,35 @@ class ExitManager:
             reason = "trend_reversal"
         elif pocket == "scalp" and close_price < ema20:
             reason = "scalp_momentum_flip"
+        elif self._should_exit_for_cross(
+            pocket,
+            "short",
+            open_info,
+            projection_primary,
+            projection_fast,
+            profit_pips,
+            now,
+            macd_cross_minutes,
+        ):
+            reason = "ma_cross_imminent"
         # レンジ中でもマクロの既存建玉を一律にクローズしない。
         # 早期利確/撤退（range_take_profit/range_stop）や逆方向シグナルのみで制御する。
         elif range_mode:
+            if (
+                pocket == "macro"
+                and self._has_mature_trade(open_info, "short", now, self._range_macro_grace_minutes)
+            ):
+                return None
             if profit_pips >= 1.6:
                 reason = "range_take_profit"
-                allow_reentry = False
             elif profit_pips > 0.4:
                 return None
             elif profit_pips <= -1.0:
                 reason = "range_stop"
 
         if range_mode and reason == "reverse_signal":
+            allow_reentry = False
+        if reason == "reverse_signal":
             allow_reentry = False
         if not reason:
             return None
@@ -308,3 +434,89 @@ class ExitManager:
             tag=tag,
             allow_reentry=allow_reentry,
         )
+
+    def _confirm_reverse_signal(
+        self,
+        signal: Optional[Dict],
+        pocket: str,
+        direction: str,
+        now: datetime,
+    ) -> Optional[Dict]:
+        key = (pocket, direction)
+        state = self._reverse_hits.get(key)
+        if signal:
+            if state:
+                ts = state.get("ts")
+                if isinstance(ts, datetime) and now - ts > self._reverse_decay:
+                    state = None
+            count = 0
+            if state:
+                count = int(state.get("count", 0) or 0)
+            count += 1
+            self._reverse_hits[key] = {"count": count, "ts": now}
+            needed = self._reverse_confirmations + (1 if pocket == "macro" else 0)
+            if count >= needed:
+                return signal
+            return None
+        if state:
+            ts = state.get("ts")
+            if isinstance(ts, datetime) and now - ts > self._reverse_decay:
+                self._reverse_hits.pop(key, None)
+            else:
+                self._reverse_hits[key] = {"count": 0, "ts": now}
+        return None
+
+    def _reset_reverse_counter(self, pocket: str, direction: str) -> None:
+        self._reverse_hits.pop((pocket, direction), None)
+
+    def _has_mature_trade(
+        self,
+        open_info: Dict,
+        side: str,
+        now: datetime,
+        threshold_minutes: float,
+    ) -> bool:
+        trades = open_info.get("open_trades") or []
+        for tr in trades:
+            if tr.get("side") != side:
+                continue
+            opened_at = self._parse_open_time(tr.get("open_time"))
+            if opened_at is None:
+                continue
+            age_minutes = (now - opened_at).total_seconds() / 60.0
+            if age_minutes >= threshold_minutes:
+                return True
+        return False
+
+    @staticmethod
+    def _parse_open_time(value: Optional[str]) -> Optional[datetime]:
+        if not value:
+            return None
+        raw = value.strip()
+        try:
+            if raw.endswith("Z"):
+                raw = raw[:-1] + "+00:00"
+            if "." in raw:
+                head, frac = raw.split(".", 1)
+                frac_digits = "".join(ch for ch in frac if ch.isdigit())
+                if len(frac_digits) > 6:
+                    frac_digits = frac_digits[:6]
+                tz_part = ""
+                if "+" in raw:
+                    tz_part = raw[raw.rfind("+") :]
+                if not tz_part:
+                    tz_part = "+00:00"
+                raw = f"{head}.{frac_digits}{tz_part}"
+            elif "+" not in raw:
+                raw = f"{raw}+00:00"
+            return datetime.fromisoformat(raw)
+        except ValueError:
+            try:
+                trimmed = raw
+                if "." in trimmed:
+                    trimmed = trimmed.split(".", 1)[0]
+                if not trimmed.endswith("+00:00"):
+                    trimmed = trimmed.rstrip("Z") + "+00:00"
+                return datetime.fromisoformat(trimmed)
+            except ValueError:
+                return None

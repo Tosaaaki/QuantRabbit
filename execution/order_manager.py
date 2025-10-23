@@ -155,14 +155,15 @@ _PARTIAL_THRESHOLDS = {
     "scalp": (2.0, 4.0),
 }
 _PARTIAL_THRESHOLDS_RANGE = {
-    # レンジ場面ではさらに早く利確を刻む
-    "macro": (3.0, 5.0),
+    # レンジ場面ではマクロのみ利確幅をやや引き上げ、慌てた縮小を防ぐ
+    "macro": (4.0, 7.0),
     "micro": (2.0, 4.0),
     "scalp": (1.5, 3.0),
 }
 _PARTIAL_FRACTIONS = (0.4, 0.3)
 # micro の平均建玉（~160u）でも段階利確が動作するよう下限を緩和
 _PARTIAL_MIN_UNITS = 50
+_PARTIAL_RANGE_MACRO_MIN_AGE_MIN = 6.0
 
 
 def _extract_trade_id(response: dict) -> Optional[str]:
@@ -192,6 +193,37 @@ def _extract_trade_id(response: dict) -> Optional[str]:
             return str(trade_id)
 
     return None
+
+
+def _parse_trade_open_time(value: Optional[str]) -> Optional[datetime]:
+    if not value:
+        return None
+    candidate = value.strip()
+    try:
+        if candidate.endswith("Z"):
+            candidate = candidate[:-1] + "+00:00"
+        if "." in candidate:
+            head, frac = candidate.split(".", 1)
+            frac_digits = "".join(ch for ch in frac if ch.isdigit())
+            if len(frac_digits) > 6:
+                frac_digits = frac_digits[:6]
+            tz_part = ""
+            if "+" in candidate:
+                tz_part = candidate[candidate.rfind("+") :]
+            if not tz_part:
+                tz_part = "+00:00"
+            candidate = f"{head}.{frac_digits}{tz_part}"
+        elif "+" not in candidate:
+            candidate = f"{candidate}+00:00"
+        return datetime.fromisoformat(candidate)
+    except ValueError:
+        try:
+            trimmed = candidate.split(".", 1)[0]
+            if not trimmed.endswith("+00:00"):
+                trimmed = trimmed.rstrip("Z") + "+00:00"
+            return datetime.fromisoformat(trimmed)
+        except ValueError:
+            return None
 
 
 def _maybe_update_protections(
@@ -426,11 +458,13 @@ def plan_partial_reductions(
     fac_m1: dict,
     *,
     range_mode: bool = False,
+    now: Optional[datetime] = None,
 ) -> list[tuple[str, str, int]]:
     price = fac_m1.get("close")
     if price is None:
         return []
     pip_scale = 100
+    current_time = now or datetime.utcnow()
     actions: list[tuple[str, str, int]] = []
 
     for pocket, info in open_positions.items():
@@ -449,6 +483,13 @@ def plan_partial_reductions(
             units = int(tr.get("units", 0) or 0)
             if not trade_id or not side or entry is None or units == 0:
                 continue
+            opened_at = _parse_trade_open_time(tr.get("open_time"))
+            age_minutes = None
+            if opened_at:
+                age_minutes = max(0.0, (current_time - opened_at).total_seconds() / 60.0)
+            if range_mode and pocket == "macro":
+                if age_minutes is None or age_minutes < _PARTIAL_RANGE_MACRO_MIN_AGE_MIN:
+                    continue
             current_stage = _PARTIAL_STAGE.get(trade_id, 0)
             gain_pips = 0.0
             if side == "long":

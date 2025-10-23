@@ -557,6 +557,7 @@ class PositionManager:
                 continue
             trade_id = tr.get("id") or tr.get("tradeID")
             price = float(tr.get("price", 0.0))
+            open_time = tr.get("openTime")
             info = pockets.setdefault(
                 pocket,
                 {
@@ -588,6 +589,7 @@ class PositionManager:
                     "side": "long" if units > 0 else "short",
                     "unrealized_pl": unrealized_pl,
                     "unrealized_pl_pips": unrealized_pl_pips,
+                    "open_time": open_time,
                 }
             )
             prev_total_units = info["units"]
