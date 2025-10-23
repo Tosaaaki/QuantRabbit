@@ -21,17 +21,20 @@ class RangeFader:
             atr = fac.get("atr")
             atr_pips = (atr or 0.0) * 100
 
-        if atr_pips < 1.6 or vol_5m < 0.8:
+        if atr_pips < 1.2 or atr_pips > 3.2:
+            return None
+        if vol_5m < 0.6 or vol_5m > 2.0:
             return None
 
-        momentum = close - ema20
-        if abs(momentum) > 0.008:
+        momentum_pips = abs(close - ema20) / 0.01
+        drift_cap = max(2.0, min(4.0, atr_pips * 1.05))
+        if momentum_pips > drift_cap:
             return None
 
-        if rsi <= 34:
-            sl = max(3.2, min(4.8, atr_pips * 1.6))
-            tp = max(3.0, min(4.4, atr_pips * 1.5))
-            confidence = int(min(90, max(45, (36 - rsi) * 3.2 + vol_5m * 5)))
+        if rsi <= 36:
+            sl = max(3.0, min(4.8, atr_pips * 1.5))
+            tp = max(2.8, min(4.2, atr_pips * 1.35))
+            confidence = int(min(90, max(45, (38 - rsi) * 2.8 + vol_5m * 6)))
             return {
                 "action": "OPEN_LONG",
                 "sl_pips": round(sl, 2),
@@ -40,10 +43,10 @@ class RangeFader:
                 "tag": f"{RangeFader.name}-buy-fade",
             }
 
-        if rsi >= 66:
-            sl = max(3.2, min(4.8, atr_pips * 1.6))
-            tp = max(3.0, min(4.4, atr_pips * 1.5))
-            confidence = int(min(90, max(45, (rsi - 64) * 3.2 + vol_5m * 5)))
+        if rsi >= 64:
+            sl = max(3.0, min(4.8, atr_pips * 1.5))
+            tp = max(2.8, min(4.2, atr_pips * 1.35))
+            confidence = int(min(90, max(45, (rsi - 62) * 2.8 + vol_5m * 6)))
             return {
                 "action": "OPEN_SHORT",
                 "sl_pips": round(sl, 2),
