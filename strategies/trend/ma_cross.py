@@ -9,6 +9,10 @@ class MovingAverageCross:
     pocket = "macro"
 
     _MIN_GAP_PIPS = 0.30
+    _MIN_TREND_ADX = 24.0
+    _MIN_GAP_IN_WEAK_TREND = 0.55
+    _MIN_SLOPE_IN_WEAK_TREND = 0.05
+    _NARROW_BBW_LIMIT = 0.28
     _MAX_FAST_DISTANCE = 7.0
     _CROSS_MINUTES_STOP = 6.0
 
@@ -21,8 +25,26 @@ class MovingAverageCross:
         ma10 = projection.fast_ma
         ma20 = projection.slow_ma
         adx = fac.get("adx", 0.0)
+        try:
+            adx = float(adx)
+        except (TypeError, ValueError):
+            adx = 0.0
         if not ma10 or not ma20:
             return None
+        bbw = fac.get("bbw")
+        if isinstance(bbw, str):
+            try:
+                bbw = float(bbw)
+            except ValueError:
+                bbw = None
+        weak_trend = adx < MovingAverageCross._MIN_TREND_ADX
+        if weak_trend:
+            if abs(projection.gap_pips) < MovingAverageCross._MIN_GAP_IN_WEAK_TREND:
+                return None
+            if abs(projection.gap_slope_pips) < MovingAverageCross._MIN_SLOPE_IN_WEAK_TREND:
+                return None
+            if isinstance(bbw, (int, float)) and bbw <= MovingAverageCross._NARROW_BBW_LIMIT:
+                return None
         if abs(projection.gap_pips) < MovingAverageCross._MIN_GAP_PIPS:
             return None
         if (

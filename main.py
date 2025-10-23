@@ -116,6 +116,7 @@ MIN_SCALP_STAGE_LOT = 0.01  # 1000 units baseline so micro/macro bias does not n
 DEFAULT_COOLDOWN_SECONDS = 180
 RANGE_COOLDOWN_SECONDS = 420
 ALLOWED_RANGE_STRATEGIES = {"BB_RSI", "RangeFader"}
+SOFT_RANGE_SUPPRESS_STRATEGIES = {"TrendMA", "Donchian55"}
 LOW_TREND_ADX_THRESHOLD = 18.0
 LOW_TREND_SLOPE_THRESHOLD = 0.00035
 LOW_TREND_WEIGHT_CAP = 0.35
@@ -772,6 +773,17 @@ async def logic_loop():
                 if not cls:
                     continue
                 pocket = cls.pocket
+                if (
+                    range_soft_active
+                    and not range_active
+                    and pocket == "macro"
+                    and getattr(cls, "name", sname) in SOFT_RANGE_SUPPRESS_STRATEGIES
+                ):
+                    logging.info(
+                        "[RANGE] Soft compression: skip %s until trend strength returns.",
+                        sname,
+                    )
+                    continue
                 if pocket not in focus_pockets:
                     logging.info(
                         "[FOCUS] skip %s pocket=%s focus=%s",
