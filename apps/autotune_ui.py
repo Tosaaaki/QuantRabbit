@@ -48,6 +48,62 @@ def _normalize_settings(settings: Optional[dict]) -> dict:
     return result
 
 
+def _build_summary(run: dict) -> str:
+    lines: list[str] = []
+    score = run.get("score")
+    if score is not None:
+        lines.append(f"スコアは {score:.3f} でした。")
+
+    train = run.get("train") or {}
+    valid = run.get("valid") or {}
+    def describe(metrics: dict, label: str) -> None:
+        if not metrics:
+            return
+        pf = metrics.get("profit_factor")
+        trades = metrics.get("trades")
+        dd = metrics.get("max_dd_pips")
+        profit = metrics.get("profit_pips")
+        parts = []
+        if pf is not None:
+            if pf >= 1.5:
+                parts.append(f"PF {pf:.2f} と十分な利益率です")
+            elif pf >= 1.1:
+                parts.append(f"PF {pf:.2f} と安定しています")
+            else:
+                parts.append(f"PF {pf:.2f} と低いため再調整が必要です")
+        if trades is not None and trades < 10:
+            parts.append(f"検証件数が {trades} 件と少ない点に注意してください")
+        if dd is not None and dd > 12:
+            parts.append(f"最大ドローダウンは {dd:.1f} pips と大きめです")
+        if profit is not None:
+            if profit >= 0:
+                parts.append(f"総利益は {profit:.1f} pips でした")
+            else:
+                parts.append(f"総損失は {abs(profit):.1f} pips でした")
+        if parts:
+            lines.append(f"{label}: " + "、".join(parts) + "。")
+
+    describe(train, "学習期間")
+    describe(valid, "検証期間")
+
+    params = run.get("params") or {}
+    if params:
+        sl = params.get("sl_pips")
+        tp = params.get("tp_pips")
+        timeout = params.get("timeout_sec")
+        extras = []
+        if sl is not None and tp is not None:
+            extras.append(f"SL {sl} pips / TP {tp} pips")
+        if timeout is not None:
+            extras.append(f"タイムアウト {timeout//60} 分")
+        if extras:
+            lines.append("提案パラメータ: " + "、".join(extras) + "。")
+
+    if not lines:
+        lines.append("メトリクス情報が不足しているため、詳細評価はありません。")
+    return "\n".join(lines)
+
+
 @app.get("/")
 def dashboard(request: Request):
     pending = [dump_dict(row) for row in list_runs(status="pending", limit=50)]
@@ -76,6 +132,7 @@ def run_detail(request: Request, run_id: str, strategy: str):
     run["params_pretty"] = json.dumps(run.get("params", {}), ensure_ascii=False, indent=2)
     run["train_pretty"] = json.dumps(run.get("train", {}), ensure_ascii=False, indent=2)
     run["valid_pretty"] = json.dumps(run.get("valid", {}), ensure_ascii=False, indent=2)
+    run["summary_jp"] = _build_summary(run)
     return templates.TemplateResponse(
         "detail.html",
         {

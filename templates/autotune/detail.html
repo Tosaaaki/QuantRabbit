@@ -26,6 +26,11 @@
     <pre>{{ run.valid_pretty }}</pre>
   </div>
 
+  <div class="card">
+    <h3>評価サマリー</h3>
+    <p style="white-space: pre-line;">{{ run.summary_jp }}</p>
+  </div>
+
   {% if run.status != "approved" %}
   <div class="card">
     <h3>Decision</h3>

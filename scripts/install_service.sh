@@ -35,6 +35,10 @@ Restart=on-failure
 RestartSec=10
 User=${LINUX_USER}
 Environment=PYTHONUNBUFFERED=1
+Environment=AUTOTUNE_BQ_TABLE=${AUTOTUNE_BQ_TABLE:-quantrabbit.autotune_runs}
+Environment=AUTOTUNE_BQ_SETTINGS_TABLE=${AUTOTUNE_BQ_SETTINGS_TABLE:-quantrabbit.autotune_settings}
+Environment=AUTOTUNE_BQ_TABLE=${AUTOTUNE_BQ_TABLE:-quantrabbit.autotune_runs}
+Environment=AUTOTUNE_BQ_SETTINGS_TABLE=${AUTOTUNE_BQ_SETTINGS_TABLE:-quantrabbit.autotune_settings}
 
 [Install]
 WantedBy=default.target
