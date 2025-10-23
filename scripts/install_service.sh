@@ -30,7 +30,7 @@ After=network-online.target
 [Service]
 Type=simple
 WorkingDirectory=${REPO_DIR}
-ExecStart=/usr/bin/env python3 scripts/continuous_backtest.py --trials 40 --strategies M1Scalper,PulseBreak,RangeFader --write-best
+ExecStart=/usr/bin/env python3 scripts/continuous_backtest.py --trials 40 --strategies M1Scalper,PulseBreak,RangeFader
 Restart=on-failure
 RestartSec=10
 User=${LINUX_USER}

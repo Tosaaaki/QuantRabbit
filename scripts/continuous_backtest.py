@@ -55,10 +55,11 @@ def main():
             sys.executable, str(REPO_ROOT/"scripts"/"tune_scalp.py"),
             "--trials-per-strategy", str(args.trials),
             "--strategies", args.strategies,
-            "--write-best"
-        ]
-        if args.dry_run:
-            tune_cmd.append("--dry-run")
+    ]
+    if args.dry_run:
+        tune_cmd.append("--dry-run")
+    if args.write_best:
+        tune_cmd.append("--write-best")
         print("[INFO] run:", " ".join(tune_cmd))
         r = subprocess.run(tune_cmd, capture_output=True, text=True)
         print(r.stdout)
