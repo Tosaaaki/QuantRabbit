@@ -167,6 +167,7 @@ class StageTracker:
         trades_db: Path | None = None,
         now: Optional[datetime] = None,
         cooldown_seconds: int = 900,
+        cooldown_map: Optional[Dict[str, int]] = None,
     ) -> None:
         trades_path = trades_db or _TRADES_DB
         if not trades_path.exists():
@@ -226,11 +227,14 @@ class StageTracker:
             )
             existing[key] = (trade_id, lose_streak, win_streak)
             if lose_streak >= 3:
+                pocket_cooldown = (
+                    (cooldown_map or {}).get(pocket, cooldown_seconds)
+                )
                 self.set_cooldown(
                     pocket,
                     direction,
                     reason="loss_streak",
-                    seconds=cooldown_seconds,
+                    seconds=pocket_cooldown,
                     now=now,
                 )
         self._con.commit()

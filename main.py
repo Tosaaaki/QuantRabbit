@@ -65,6 +65,31 @@ STRATEGIES = {
     "M1Scalper": M1Scalper,
 }
 
+POCKET_STRATEGY_MAP = {
+    "macro": {"TrendMA", "Donchian55"},
+    "micro": {"BB_RSI", "NewsSpikeReversal"},
+    "scalp": {"M1Scalper"},
+}
+
+FOCUS_POCKETS = {
+    "macro": ("macro",),
+    "micro": ("micro", "scalp"),
+    "hybrid": ("macro", "micro", "scalp"),
+    "event": ("macro", "micro"),
+}
+
+POCKET_EXIT_COOLDOWNS = {
+    "macro": 540,
+    "micro": 240,
+    "scalp": 180,
+}
+
+POCKET_LOSS_COOLDOWNS = {
+    "macro": 960,
+    "micro": 600,
+    "scalp": 360,
+}
+
 FALLBACK_EQUITY = 10000.0  # REST失敗時のフォールバック
 
 STAGE_RATIOS = {
@@ -78,6 +103,9 @@ MIN_SCALP_STAGE_LOT = 0.01  # 1000 units baseline so micro/macro bias does not n
 DEFAULT_COOLDOWN_SECONDS = 180
 RANGE_COOLDOWN_SECONDS = 420
 ALLOWED_RANGE_STRATEGIES = {"BB_RSI"}
+LOW_TREND_ADX_THRESHOLD = 18.0
+LOW_TREND_SLOPE_THRESHOLD = 0.00035
+LOW_TREND_WEIGHT_CAP = 0.35
 
 
 def build_client_order_id(focus_tag: Optional[str], strategy_tag: str) -> str:
@@ -85,6 +113,13 @@ def build_client_order_id(focus_tag: Optional[str], strategy_tag: str) -> str:
     focus_part = (focus_tag or "hybrid")[:6]
     clean_tag = "".join(ch for ch in strategy_tag if ch.isalnum())[:9] or "sig"
     return f"qr-{ts_ms}-{focus_part}-{clean_tag}"
+
+
+def _cooldown_for_pocket(pocket: str, range_mode: bool) -> int:
+    base = POCKET_EXIT_COOLDOWNS.get(pocket, DEFAULT_COOLDOWN_SECONDS)
+    if range_mode:
+        base = max(base, RANGE_COOLDOWN_SECONDS)
+    return base
 
 
 def _stage_conditions_met(
@@ -349,7 +384,7 @@ async def logic_loop():
         while True:
             now = datetime.datetime.utcnow()
             stage_tracker.clear_expired(now)
-            stage_tracker.update_loss_streaks(now=now)
+            stage_tracker.update_loss_streaks(now=now, cooldown_map=POCKET_LOSS_COOLDOWNS)
 
             # Heartbeat logging
             if (now - last_heartbeat_time).total_seconds() >= 300:  # Every 5 minutes
@@ -464,30 +499,78 @@ async def logic_loop():
             momentum = 0.0
             if ema20 is not None and close_px is not None:
                 momentum = close_px - ema20
-
+            scalp_ready = False
             if not range_active:
                 scalp_ready = atr_pips >= 2.2 and abs(momentum) >= 0.0015
                 if not scalp_ready and fac_m1.get("vol_5m"):
                     scalp_ready = atr_pips >= 2.0 and fac_m1["vol_5m"] >= 1.2
-                if scalp_ready and "M1Scalper" not in ranked_strategies:
-                    ranked_strategies.append("M1Scalper")
-                    logging.info(
-                        "[SCALP] Auto-added M1Scalper (ATR %.2f, momentum %.4f, vol5m %.2f).",
-                        atr_pips,
-                        momentum,
-                        fac_m1.get("vol_5m", 0.0),
-                    )
 
             focus_tag = gpt.get("focus_tag") or focus
             weight = gpt.get("weight_macro", w_macro)
             if range_active:
                 focus_tag = "micro"
                 weight = min(weight, 0.15)
+            focus_pockets = set(FOCUS_POCKETS.get(focus_tag, ("macro", "micro", "scalp")))
+            if not focus_pockets:
+                focus_pockets = {"micro"}
+            if range_active and "macro" in focus_pockets:
+                focus_pockets.discard("macro")
+
+            ma10_h4 = fac_h4.get("ma10")
+            ma20_h4 = fac_h4.get("ma20")
+            adx_h4 = fac_h4.get("adx", 0.0)
+            slope_gap = abs((ma10_h4 or 0.0) - (ma20_h4 or 0.0))
+            low_trend = (
+                adx_h4 <= LOW_TREND_ADX_THRESHOLD
+                and slope_gap <= LOW_TREND_SLOPE_THRESHOLD
+            )
+            if low_trend and "macro" in focus_pockets:
+                prev_weight = weight
+                weight = min(weight, LOW_TREND_WEIGHT_CAP)
+                logging.info(
+                    "[MACRO] H4 trend weak (ADX %.2f gap %.5f). weight_macro %.2f -> %.2f",
+                    adx_h4,
+                    slope_gap,
+                    prev_weight,
+                    weight,
+                )
+
+            if (
+                scalp_ready
+                and not range_active
+                and "scalp" in focus_pockets
+                and "M1Scalper" not in ranked_strategies
+            ):
+                ranked_strategies.append("M1Scalper")
+                logging.info(
+                    "[SCALP] Auto-added M1Scalper (ATR %.2f, momentum %.4f, vol5m %.2f).",
+                    atr_pips,
+                    momentum,
+                    fac_m1.get("vol_5m", 0.0),
+                )
 
             evaluated_signals: list[dict] = []
             for sname in ranked_strategies:
                 cls = STRATEGIES.get(sname)
                 if not cls:
+                    continue
+                pocket = cls.pocket
+                if pocket not in focus_pockets:
+                    logging.info(
+                        "[FOCUS] skip %s pocket=%s focus=%s",
+                        sname,
+                        pocket,
+                        focus_tag,
+                    )
+                    continue
+                allowed_names = POCKET_STRATEGY_MAP.get(pocket)
+                if allowed_names and sname not in allowed_names:
+                    logging.info(
+                        "[POCKET] skip %s (pocket=%s) not in whitelist %s",
+                        sname,
+                        pocket,
+                        sorted(allowed_names),
+                    )
                     continue
                 if range_active and cls.name not in ALLOWED_RANGE_STRATEGIES:
                     logging.info("[RANGE] skip %s in range mode.", sname)
@@ -646,9 +729,7 @@ async def logic_loop():
                 if remaining <= 0:
                     if not decision.allow_reentry or decision.reason == "range_cooldown":
                         executed_pockets.add(pocket)
-                        cooldown_seconds = (
-                            RANGE_COOLDOWN_SECONDS if range_active else DEFAULT_COOLDOWN_SECONDS
-                        )
+                        cooldown_seconds = _cooldown_for_pocket(pocket, range_active)
                         stage_tracker.set_cooldown(
                             pocket,
                             target_side,
@@ -720,6 +801,9 @@ async def logic_loop():
                     scalp_share = DEFAULT_SCALP_SHARE
             update_dd_context(account_equity, weight, scalp_share)
             lots = alloc(lot_total, weight, scalp_share=scalp_share)
+            for pocket_key in list(lots.keys()):
+                if pocket_key not in focus_pockets:
+                    lots[pocket_key] = 0.0
             active_pockets = {sig["pocket"] for sig in evaluated_signals}
             for key in list(lots):
                 if key not in active_pockets:
