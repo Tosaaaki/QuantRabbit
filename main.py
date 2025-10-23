@@ -48,6 +48,8 @@ from strategies.breakout.donchian55 import Donchian55
 from strategies.mean_reversion.bb_rsi import BBRsi
 from strategies.news.spike_reversal import NewsSpikeReversal
 from strategies.scalping.m1_scalper import M1Scalper
+from strategies.scalping.range_fader import RangeFader
+from strategies.scalping.pulse_break import PulseBreak
 from utils.oanda_account import get_account_snapshot
 
 # Configure logging
@@ -63,12 +65,14 @@ STRATEGIES = {
     "BB_RSI": BBRsi,
     "NewsSpikeReversal": NewsSpikeReversal,
     "M1Scalper": M1Scalper,
+    "RangeFader": RangeFader,
+    "PulseBreak": PulseBreak,
 }
 
 POCKET_STRATEGY_MAP = {
     "macro": {"TrendMA", "Donchian55"},
     "micro": {"BB_RSI", "NewsSpikeReversal"},
-    "scalp": {"M1Scalper"},
+    "scalp": {"M1Scalper", "RangeFader", "PulseBreak"},
 }
 
 FOCUS_POCKETS = {
@@ -102,7 +106,7 @@ STAGE_RATIOS = {
 MIN_SCALP_STAGE_LOT = 0.01  # 1000 units baseline so micro/macro bias does not null scalps
 DEFAULT_COOLDOWN_SECONDS = 180
 RANGE_COOLDOWN_SECONDS = 420
-ALLOWED_RANGE_STRATEGIES = {"BB_RSI"}
+ALLOWED_RANGE_STRATEGIES = {"BB_RSI", "RangeFader"}
 LOW_TREND_ADX_THRESHOLD = 18.0
 LOW_TREND_SLOPE_THRESHOLD = 0.00035
 LOW_TREND_WEIGHT_CAP = 0.35
