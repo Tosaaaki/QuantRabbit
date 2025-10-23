@@ -22,10 +22,19 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 try:
-    from autotune.database import get_connection, record_run
+    from autotune.database import (
+        AUTOTUNE_BQ_TABLE,
+        USE_BIGQUERY,
+        get_connection,
+        record_run,
+        record_run_bigquery,
+    )
 except Exception:  # pragma: no cover - optional dependency during bootstrap
+    AUTOTUNE_BQ_TABLE = os.getenv("AUTOTUNE_BQ_TABLE", "")
+    USE_BIGQUERY = bool(AUTOTUNE_BQ_TABLE)
     get_connection = None  # type: ignore
     record_run = None  # type: ignore
+    record_run_bigquery = None  # type: ignore
 
 StrategyParams = Dict[str, Dict[str, Any]]
 ResultDict = Dict[str, Any]
@@ -197,7 +206,14 @@ def main():
         default=str(DEFAULT_DB_PATH),
         help="結果を記録する SQLite DB パス。空文字で無効化",
     )
+    ap.add_argument(
+        "--bq-table",
+        default="",
+        help="結果を BigQuery に記録するテーブル (project.dataset.table)。空文字で無効化",
+    )
     args = ap.parse_args()
+
+    bq_table = args.bq_table or AUTOTUNE_BQ_TABLE
 
     candles_dir = pathlib.Path(args.candles_dir)
     all_files = list_candle_files(candles_dir, args.glob)
@@ -297,6 +313,23 @@ def main():
             print(f"[INFO] recorded tuning results into {args.record_db}")
         except Exception as exc:  # pragma: no cover
             print(f"[WARN] failed to record tuning result: {exc}", file=sys.stderr)
+
+    if best_by_strategy and record_run_bigquery and bq_table:
+        try:
+            for strat, rec in best_by_strategy.items():
+                record_run_bigquery(
+                    run_id=ts,
+                    strategy=strat,
+                    params=rec["params"],
+                    train=rec["train"],
+                    valid=rec["valid"],
+                    score=rec["score"],
+                    source_file=str(out_path),
+                    table_override=bq_table,
+                )
+            print(f"[INFO] recorded tuning results into BigQuery table {bq_table}")
+        except Exception as exc:  # pragma: no cover
+            print(f"[WARN] failed to record tuning result to BigQuery: {exc}", file=sys.stderr)
 
     if args.write_best and best_by_strategy:
         # 既存 active を読み込み、更新（存在しない場合は新規作成）

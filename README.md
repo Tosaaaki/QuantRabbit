@@ -173,6 +173,41 @@ WantedBy=multi-user.target
 
 ---
 
+## オートチューニング ダッシュボード（ウェブ UI）
+
+FastAPI 製の承認 UI を Cloud Run 上で公開し、チューニング結果の確認・承認をブラウザから行えます。バックエンドは BigQuery `autotune_runs` テーブルを参照します。
+
+1. **BigQuery テーブル作成**  
+   例: `cloudrun/autotune_ui/bq_autotune_runs.sql` を実行
+   ```bash
+   bq query --use_legacy_sql=false < cloudrun/autotune_ui/bq_autotune_runs.sql
+   ```
+
+2. **チューニング結果を BigQuery へ記録**  
+   `scripts/tune_scalp.py` に `--bq-table` を渡すか、環境変数 `AUTOTUNE_BQ_TABLE` を設定します。
+   ```bash
+   AUTOTUNE_BQ_TABLE=quantrabbit.autotune_runs \
+   python scripts/tune_scalp.py --trials-per-strategy 20 --bq-table quantrabbit.autotune_runs
+   ```
+
+3. **Cloud Run へデプロイ**  
+   ```bash
+   gcloud builds submit --tag gcr.io/$PROJECT/autotune-ui .
+   gcloud run deploy autotune-ui \
+     --image gcr.io/$PROJECT/autotune-ui \
+     --region asia-northeast1 \
+     --platform managed \
+     --allow-unauthenticated \
+     --set-env-vars AUTOTUNE_BQ_TABLE=quantrabbit.autotune_runs
+   ```
+
+4. **アクセス**  
+   デプロイ後に表示される `https://autotune-ui-xxxx.run.app` が承認ダッシュボードの URL です。テーブルの `status` を更新すると、VM が参照する `configs/scalp_active_params.json` を人手で戻す前にレビュー履歴を残せます。
+
+BigQuery では `status` 列が `pending/approved/rejected` を保持し、UI からの承認・却下操作で更新されます。VM 上の FastAPI UI も同じテーブルを参照するため、ブラウザからの操作でどちらも同期します。
+
+---
+
 ## Dashboards: Looker Studio 接続
 
 Looker Studio から GCS（リアルタイム UI）と BigQuery（履歴集計）へ接続するためのブートストラップを同梱しました。

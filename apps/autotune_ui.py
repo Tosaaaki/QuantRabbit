@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from decimal import Decimal
 from pathlib import Path
 from typing import Optional
 
@@ -9,11 +10,11 @@ from fastapi.responses import RedirectResponse
 from fastapi.templating import Jinja2Templates
 
 from autotune.database import (
-    DEFAULT_DB_PATH,
+    USE_BIGQUERY,
     dump_dict,
-    get_connection,
-    list_runs,
     get_run,
+    get_stats,
+    list_runs,
     update_status,
 )
 
@@ -24,27 +25,38 @@ app = FastAPI(title="QuantRabbit Autotune Review")
 templates = Jinja2Templates(directory=str(TEMPLATE_DIR))
 
 
+def _normalize_numbers(payload: Optional[dict]) -> dict:
+    if not payload:
+        return {}
+    converted = {}
+    for key, value in payload.items():
+        if isinstance(value, Decimal):
+            converted[key] = int(value) if value == int(value) else float(value)
+        else:
+            converted[key] = value
+    return converted
+
+
 @app.get("/")
 def dashboard(request: Request):
-    conn = get_connection(DEFAULT_DB_PATH)
-    pending = [dump_dict(row) for row in list_runs(conn, status="pending", limit=50)]
-    recent = [dump_dict(row) for row in list_runs(conn, status=None, limit=10)]
-    conn.close()
+    pending = [dump_dict(row) for row in list_runs(status="pending", limit=50)]
+    recent = [dump_dict(row) for row in list_runs(status=None, limit=10)]
+    stats = _normalize_numbers(get_stats())
     return templates.TemplateResponse(
         "index.html",
         {
             "request": request,
             "pending": pending,
             "recent": recent,
+            "stats": stats,
+            "using_bigquery": USE_BIGQUERY,
         },
     )
 
 
 @app.get("/runs/{run_id}/{strategy}")
 def run_detail(request: Request, run_id: str, strategy: str):
-    conn = get_connection(DEFAULT_DB_PATH)
-    row = get_run(conn, run_id, strategy)
-    conn.close()
+    row = get_run(None, run_id, strategy)
     if not row:
         raise HTTPException(status_code=404, detail="Run not found")
     run = dump_dict(row)
@@ -71,10 +83,7 @@ def set_decision(
     if action not in {"approve", "reject"}:
         raise HTTPException(status_code=400, detail="Invalid action")
     status = "approved" if action == "approve" else "rejected"
-    conn = get_connection(DEFAULT_DB_PATH)
-    if not get_run(conn, run_id, strategy):
-        conn.close()
+    if not get_run(None, run_id, strategy):
         raise HTTPException(status_code=404, detail="Run not found")
-    update_status(conn, run_id, strategy, status, reviewer or None, comment or None)
-    conn.close()
+    update_status(None, run_id, strategy, status, reviewer or None, comment or None)
     return RedirectResponse(url=f"/runs/{run_id}/{strategy}", status_code=303)
