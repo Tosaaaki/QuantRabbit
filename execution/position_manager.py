@@ -275,7 +275,8 @@ class PositionManager:
                 # 実際にクローズされたユニット（部分決済対応）
                 try:
                     closed_units_raw = closed_trade.get("units")
-                    closed_units = int(float(closed_units_raw)) if closed_units_raw is not None else 0
+                    # OANDAの tradesClosed[].units は方向に応じて符号が付く場合があるため、絶対値で保存
+                    closed_units = abs(int(float(closed_units_raw))) if closed_units_raw is not None else 0
                 except Exception:
                     closed_units = 0
                 if units > 0:  # Buy
