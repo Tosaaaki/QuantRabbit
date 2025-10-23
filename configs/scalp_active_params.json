@@ -7,11 +7,11 @@
     "rsi_entry_high": 57
   },
   "PulseBreak": {
-    "sl_pips": 5,
-    "tp_pips": 7,
     "timeout_sec": 900,
     "vol_5m_max": 2.5,
-    "trend_ema": 30
+    "trend_ema": 30,
+    "adx_max": 24.0,
+    "atr_pips_min": 3.0
   },
   "RangeFader": {
     "atr_pips_max": 3.2,
