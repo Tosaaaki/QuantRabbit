@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 from decimal import Decimal
 from pathlib import Path
 from typing import Optional
@@ -20,6 +21,7 @@ from autotune.database import (
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 TEMPLATE_DIR = REPO_ROOT / "templates" / "autotune"
+CONFIG_PATH = REPO_ROOT / "configs" / "scalp_active_params.json"
 
 app = FastAPI(title="QuantRabbit Autotune Review")
 templates = Jinja2Templates(directory=str(TEMPLATE_DIR))
@@ -83,7 +85,35 @@ def set_decision(
     if action not in {"approve", "reject"}:
         raise HTTPException(status_code=400, detail="Invalid action")
     status = "approved" if action == "approve" else "rejected"
-    if not get_run(None, run_id, strategy):
+    run_record = get_run(None, run_id, strategy)
+    if not run_record:
         raise HTTPException(status_code=404, detail="Run not found")
+    run = dump_dict(run_record)
     update_status(None, run_id, strategy, status, reviewer or None, comment or None)
+    if status == "approved":
+        _apply_params_to_config(run)
     return RedirectResponse(url=f"/runs/{run_id}/{strategy}", status_code=303)
+
+
+def _apply_params_to_config(run: dict) -> None:
+    params = run.get("params") or {}
+    strategy = run.get("strategy")
+    if not params or not strategy:
+        return
+
+    try:
+        if CONFIG_PATH.exists():
+            with CONFIG_PATH.open("r", encoding="utf-8") as f:
+                current = json.load(f)
+        else:
+            current = {}
+    except Exception:
+        current = {}
+
+    current[strategy] = params
+
+    tmp_path = CONFIG_PATH.with_suffix(".json.tmp")
+    tmp_path.parent.mkdir(parents=True, exist_ok=True)
+    with tmp_path.open("w", encoding="utf-8") as f:
+        json.dump(current, f, ensure_ascii=False, indent=2)
+    os.replace(tmp_path, CONFIG_PATH)
