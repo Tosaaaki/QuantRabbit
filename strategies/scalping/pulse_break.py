@@ -29,11 +29,20 @@ class PulseBreak:
         if abs(momentum) < 0.003 or abs(bias) < 0.002:
             return None
 
-        tp = max(4.8, min(7.5, atr_pips * 2.4))
-        sl = max(3.6, min(tp * 0.75, atr_pips * 1.8))
+        # 先行シグナル補強：ADX/ATR の傾きが伸び方向なら加点
+        adx_slope = fac.get("adx_slope_per_bar", 0.0) or 0.0
+        atr_slope = fac.get("atr_slope_pips", 0.0) or 0.0
+        slope_ok = adx_slope > 0 or atr_slope > 0
+        if not slope_ok:
+            # 伸びていない環境では見送り（過度なフィルタを避けるため弱め）
+            return None
+
+        tp = max(4.8, min(7.5, atr_pips * 2.3))
+        sl = max(3.6, min(tp * 0.78, atr_pips * 1.7))
 
         if momentum > 0 and bias > 0:
-            confidence = int(min(95, max(55, (momentum + bias) * 7500 + vol_5m * 6)))
+            slope_bonus = max(0.0, min(8.0, (adx_slope * 40.0) + (atr_slope * 1.5)))
+            confidence = int(min(95, max(55, (momentum + bias) * 7400 + vol_5m * 6 + slope_bonus)))
             return {
                 "action": "OPEN_LONG",
                 "sl_pips": round(sl, 2),
@@ -43,7 +52,8 @@ class PulseBreak:
             }
 
         if momentum < 0 and bias < 0:
-            confidence = int(min(95, max(55, abs(momentum + bias) * 7500 + vol_5m * 6)))
+            slope_bonus = max(0.0, min(8.0, (abs(adx_slope) * 40.0) + (abs(atr_slope) * 1.5)))
+            confidence = int(min(95, max(55, abs(momentum + bias) * 7400 + vol_5m * 6 + slope_bonus)))
             return {
                 "action": "OPEN_SHORT",
                 "sl_pips": round(sl, 2),

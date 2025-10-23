@@ -14,7 +14,7 @@ from utils.secrets import get_secret
 
 # --- risk params ---
 MAX_LEVERAGE = 20.0  # 1:20
-MAX_LOT = 1.0  # 1 lot = 100k 通貨
+MAX_LOT = 3.0  # 1 lot = 100k 通貨
 POCKET_DD_LIMITS = {"micro": 0.05, "macro": 0.15, "scalp": 0.03}  # equity 比 (%)
 GLOBAL_DD_LIMIT = 0.20  # 全体ドローダウン 20%
 POCKET_MAX_RATIOS = {"macro": 0.8, "micro": 0.6, "scalp": 0.25}
@@ -101,6 +101,7 @@ def allowed_lot(
     margin_available: float | None = None,
     price: float | None = None,
     margin_rate: float | None = None,
+    risk_pct_override: float | None = None,
 ) -> float:
     """
     口座全体の許容ロットを概算する。
@@ -116,18 +117,27 @@ def allowed_lot(
     try:
         risk_pct_str = get_secret("risk_pct")
         risk_pct = float(risk_pct_str)
-        if not (0.0001 <= risk_pct <= 0.05):
+        if not (0.0001 <= risk_pct <= 0.2):
             raise ValueError("out_of_range")
     except Exception:
         # safer default under drawdown pressure
         risk_pct = 0.01
+    if risk_pct_override is not None:
+        risk_pct = max(0.0005, min(risk_pct_override, 0.25))
     risk_amount = equity * risk_pct
     lot = risk_amount / (sl_pips * 1000)  # USD/JPYの1lotは1000JPY/pip ≒ 1000
 
     if margin_available is not None and price is not None and margin_rate:
         margin_per_lot = price * margin_rate * 100000
         if margin_per_lot > 0:
-            lot = min(lot, margin_available / margin_per_lot)
+            margin_budget = margin_available
+            try:
+                usage_cap = float(get_secret("max_margin_usage"))
+                if 0.0 < usage_cap <= 1.0:
+                    margin_budget = margin_available * usage_cap
+            except Exception:
+                pass
+            lot = min(lot, margin_budget / margin_per_lot)
 
     lot = min(lot, MAX_LOT)
     return round(max(lot, 0.0), 3)

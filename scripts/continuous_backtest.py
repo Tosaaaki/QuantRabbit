@@ -7,9 +7,13 @@ continuous_backtest.py
 """
 import argparse, os, pathlib, sys, subprocess
 
+REPO_ROOT = pathlib.Path(__file__).resolve().parents[1]
+# Ensure repo root is importable when launched by systemd/cron without PYTHONPATH.
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
 from autotune.database import AUTOTUNE_BQ_TABLE, get_settings
 
-REPO_ROOT = pathlib.Path(__file__).resolve().parents[1]
 LOCK = REPO_ROOT / "logs" / ".autotune.lock"
 CANDLES_DIR = REPO_ROOT / "logs"
 DEFAULT_GLOB = "candles_M1_*.json"

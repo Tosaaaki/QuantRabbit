@@ -10,6 +10,7 @@ from market_data.candle_fetcher import (
     start_candle_stream,
     initialize_history,
 )
+from market_data import spread_monitor
 from indicators.factor_cache import all_factors, on_candle
 from analysis.regime_classifier import classify
 from analysis.focus_decider import decide_focus
@@ -51,6 +52,7 @@ from strategies.scalping.m1_scalper import M1Scalper
 from strategies.scalping.range_fader import RangeFader
 from strategies.scalping.pulse_break import PulseBreak
 from utils.oanda_account import get_account_snapshot
+from utils.secrets import get_secret
 
 # Configure logging
 logging.basicConfig(
@@ -114,6 +116,7 @@ MIN_SCALP_STAGE_LOT = 0.01  # 1000 units baseline so micro/macro bias does not n
 DEFAULT_COOLDOWN_SECONDS = 180
 RANGE_COOLDOWN_SECONDS = 420
 ALLOWED_RANGE_STRATEGIES = {"BB_RSI", "RangeFader"}
+SOFT_RANGE_SUPPRESS_STRATEGIES = {"TrendMA", "Donchian55"}
 LOW_TREND_ADX_THRESHOLD = 18.0
 LOW_TREND_SLOPE_THRESHOLD = 0.00035
 LOW_TREND_WEIGHT_CAP = 0.35
@@ -122,6 +125,48 @@ SOFT_RANGE_COMPRESSION_MIN = 0.55
 SOFT_RANGE_VOL_MIN = 0.40
 SOFT_RANGE_WEIGHT_CAP = 0.32
 SOFT_RANGE_ADX_BUFFER = 6.0
+RANGE_ENTRY_CONFIRMATIONS = 2
+RANGE_EXIT_CONFIRMATIONS = 3
+RANGE_MIN_ACTIVE_SECONDS = 240
+RANGE_ENTRY_SCORE_FLOOR = 0.62
+RANGE_EXIT_SCORE_CEIL = 0.56
+STAGE_RESET_GRACE_SECONDS = 180
+
+try:
+    _BASE_RISK_PCT = float(get_secret("risk_pct"))
+    if _BASE_RISK_PCT <= 0:
+        _BASE_RISK_PCT = 0.02
+except Exception:
+    _BASE_RISK_PCT = 0.02
+try:
+    _MAX_RISK_PCT = float(get_secret("risk_pct_max"))
+    if _MAX_RISK_PCT < _BASE_RISK_PCT:
+        _MAX_RISK_PCT = _BASE_RISK_PCT
+    elif _MAX_RISK_PCT > 0.3:
+        _MAX_RISK_PCT = 0.3
+except Exception:
+    _MAX_RISK_PCT = _BASE_RISK_PCT
+
+
+def _dynamic_risk_pct(signals: list[dict], range_mode: bool, weight_macro: float | None) -> float:
+    if range_mode or not signals or _MAX_RISK_PCT <= _BASE_RISK_PCT:
+        return _BASE_RISK_PCT
+    actionable = [
+        s
+        for s in signals
+        if s.get("action") in {"OPEN_LONG", "OPEN_SHORT"} and s.get("pocket")
+    ]
+    if not actionable:
+        return _BASE_RISK_PCT
+    pocket_factor = min(len({s["pocket"] for s in actionable}) / 3.0, 1.0)
+    avg_conf = sum(max(0, min(100, s.get("confidence", 0))) for s in actionable)
+    avg_conf = (avg_conf / len(actionable)) / 100.0
+    bias = 0.0
+    if isinstance(weight_macro, (int, float)):
+        bias = min(1.0, abs(weight_macro - 0.5) * 2.0)
+    score = 0.45 * pocket_factor + 0.45 * avg_conf + 0.1 * bias
+    score = max(0.0, min(score, 1.0))
+    return _BASE_RISK_PCT + (_MAX_RISK_PCT - _BASE_RISK_PCT) * score
 
 
 def build_client_order_id(focus_tag: Optional[str], strategy_tag: str) -> str:
@@ -396,6 +441,15 @@ async def logic_loop():
     range_active = False
     range_soft_active = False
     last_range_reason = ""
+    range_state_since = datetime.datetime.min
+    range_entry_counter = 0
+    range_exit_counter = 0
+    raw_range_active = False
+    raw_range_reason = ""
+    stage_empty_since: dict[tuple[str, str], datetime.datetime] = {}
+    last_risk_pct: float | None = None
+    last_spread_gate = False
+    last_spread_gate_reason = ""
 
     try:
         while True:
@@ -448,6 +502,63 @@ async def logic_loop():
                 await asyncio.sleep(60)
                 continue
 
+            spread_blocked, spread_remain, spread_snapshot, spread_reason = spread_monitor.is_blocked()
+            spread_gate_reason = ""
+            if spread_blocked:
+                remain_txt = f"{spread_remain}s"
+                base_reason = spread_reason or "spread_threshold"
+                spread_gate_reason = f"{base_reason} (remain {remain_txt})"
+            elif spread_snapshot:
+                if spread_snapshot["age_ms"] > spread_snapshot["max_age_ms"]:
+                    spread_gate_reason = (
+                        f"spread_stale age={spread_snapshot['age_ms']}ms "
+                        f"> {spread_snapshot['max_age_ms']}ms"
+                    )
+                elif spread_snapshot["spread_pips"] >= spread_snapshot["limit_pips"]:
+                    spread_gate_reason = (
+                        f"spread_hot {spread_snapshot['spread_pips']:.2f}p "
+                        f">= {spread_snapshot['limit_pips']:.2f}p"
+                    )
+            spread_gate_active = bool(spread_gate_reason)
+            if spread_snapshot:
+                def _fmt(v: object) -> str:
+                    return f"{float(v):.2f}" if isinstance(v, (int, float)) else "NA"
+
+                last_txt = _fmt(spread_snapshot.get("spread_pips"))
+                avg_txt = _fmt(spread_snapshot.get("avg_pips"))
+                age_ms = spread_snapshot.get("age_ms")
+                if spread_snapshot.get("baseline_ready"):
+                    baseline_avg = spread_snapshot.get("baseline_avg_pips")
+                    baseline_p95 = spread_snapshot.get("baseline_p95_pips")
+                    baseline_txt = (
+                        f"baseline≈{_fmt(baseline_avg)}p p95={_fmt(baseline_p95)}p"
+                        if baseline_avg is not None and baseline_p95 is not None
+                        else "baseline_ready"
+                    )
+                else:
+                    baseline_txt = (
+                        f"baseline_warmup samples={spread_snapshot.get('baseline_samples', 0)}"
+                    )
+                spread_log_context = (
+                    f"last={last_txt}p avg={avg_txt}p age={age_ms}ms {baseline_txt}"
+                )
+            else:
+                spread_log_context = "no_snapshot"
+            if spread_gate_active:
+                if (
+                    not last_spread_gate
+                    or spread_gate_reason != last_spread_gate_reason
+                ):
+                    logging.info(
+                        "[SPREAD] gating entries (%s, %s)",
+                        spread_gate_reason,
+                        spread_log_context,
+                    )
+            elif last_spread_gate:
+                logging.info("[SPREAD] entries re-enabled (%s)", spread_log_context)
+            last_spread_gate = spread_gate_active
+            last_spread_gate_reason = spread_gate_reason
+
             macro_regime = classify(fac_h4, "H4", event_mode=event_soon)
             micro_regime = classify(fac_m1, "M1", event_mode=event_soon)
             focus, w_macro = decide_focus(
@@ -463,14 +574,16 @@ async def logic_loop():
             )
             soft_range_just_activated = False
             range_ctx = detect_range_mode(fac_m1, fac_h4)
-            if range_ctx.active != range_active or range_ctx.reason != last_range_reason:
+            if range_ctx.active != raw_range_active or range_ctx.reason != raw_range_reason:
                 logging.info(
-                    "[RANGE] active=%s reason=%s score=%.2f metrics=%s",
+                    "[RANGE] detected active=%s reason=%s score=%.2f metrics=%s",
                     range_ctx.active,
                     range_ctx.reason,
                     range_ctx.score,
                     range_ctx.metrics,
                 )
+            raw_range_active = range_ctx.active
+            raw_range_reason = range_ctx.reason
             metrics = range_ctx.metrics or {}
             compression_ratio = float(metrics.get("compression_ratio", 0.0) or 0.0)
             volatility_ratio = float(metrics.get("volatility_ratio", 0.0) or 0.0)
@@ -480,13 +593,13 @@ async def logic_loop():
             adx_threshold = float(metrics.get("adx_threshold", 22.0) or 22.0)
             soft_range_prev = range_soft_active
             soft_range_candidate = (
-                not range_ctx.active
+                not raw_range_active
                 and range_ctx.score >= SOFT_RANGE_SCORE_MIN
                 and compression_ratio >= SOFT_RANGE_COMPRESSION_MIN
                 and volatility_ratio >= SOFT_RANGE_VOL_MIN
                 and effective_adx_m1 <= (adx_threshold + SOFT_RANGE_ADX_BUFFER)
             )
-            if soft_range_candidate != soft_range_prev and not range_ctx.active:
+            if soft_range_candidate != soft_range_prev and not raw_range_active:
                 logging.info(
                     "[RANGE] soft=%s score=%.2f eff_adx=%.2f comp=%.2f vol=%.2f",
                     soft_range_candidate,
@@ -496,13 +609,52 @@ async def logic_loop():
                     volatility_ratio,
                 )
             range_soft_active = (
-                soft_range_candidate if not range_ctx.active else False
+                soft_range_candidate if not raw_range_active else False
             )
             soft_range_just_activated = (
-                range_soft_active and not soft_range_prev and not range_ctx.active
+                range_soft_active and not soft_range_prev and not raw_range_active
             )
-            range_active = range_ctx.active
-            last_range_reason = range_ctx.reason
+            entry_ready = raw_range_active
+            exit_ready = (not raw_range_active) and (range_ctx.score <= RANGE_EXIT_SCORE_CEIL)
+            if entry_ready:
+                range_entry_counter += 1
+            else:
+                range_entry_counter = 0
+            if exit_ready:
+                range_exit_counter += 1
+            else:
+                range_exit_counter = 0
+            prev_range_state = range_active
+            if (
+                not range_active
+                and entry_ready
+                and range_entry_counter >= RANGE_ENTRY_CONFIRMATIONS
+            ):
+                range_active = True
+                range_state_since = now
+                last_range_reason = range_ctx.reason
+                range_exit_counter = 0
+                logging.info(
+                    "[RANGE] latched active (score=%.2f reason=%s)",
+                    range_ctx.score,
+                    range_ctx.reason,
+                )
+            elif range_active:
+                held = (now - range_state_since).total_seconds() >= RANGE_MIN_ACTIVE_SECONDS
+                if exit_ready and held and range_exit_counter >= RANGE_EXIT_CONFIRMATIONS:
+                    range_active = False
+                    range_state_since = now
+                    range_entry_counter = 0
+                    last_range_reason = range_ctx.reason
+                    logging.info(
+                        "[RANGE] released (score=%.2f reason=%s)",
+                        range_ctx.score,
+                        range_ctx.reason,
+                    )
+            if prev_range_state and not range_active:
+                range_exit_counter = 0
+            elif not prev_range_state and range_active:
+                range_entry_counter = 0
 
             # --- 2. GPT判断 ---
             # M1/H4 の移動平均・RSI などの指標をまとめて送信
@@ -621,6 +773,17 @@ async def logic_loop():
                 if not cls:
                     continue
                 pocket = cls.pocket
+                if (
+                    range_soft_active
+                    and not range_active
+                    and pocket == "macro"
+                    and getattr(cls, "name", sname) in SOFT_RANGE_SUPPRESS_STRATEGIES
+                ):
+                    logging.info(
+                        "[RANGE] Soft compression: skip %s until trend strength returns.",
+                        sname,
+                    )
+                    continue
                 if pocket not in focus_pockets:
                     logging.info(
                         "[FOCUS] skip %s pocket=%s focus=%s",
@@ -704,7 +867,9 @@ async def logic_loop():
             except Exception as exc:
                 logging.warning("[PROTECTION] update failed: %s", exc)
             try:
-                partials = plan_partial_reductions(open_positions, fac_m1, range_mode=range_active)
+                partials = plan_partial_reductions(
+                    open_positions, fac_m1, range_mode=range_active, now=now
+                )
             except Exception as exc:
                 logging.warning("[PARTIAL] planning failed: %s", exc)
                 partials = []
@@ -726,13 +891,34 @@ async def logic_loop():
             for pocket, info in open_positions.items():
                 if pocket == "__net__":
                     continue
-                if int(info.get("long_units", 0) or 0) == 0 and stage_tracker.get_stage(pocket, "long") > 0:
-                    stage_tracker.reset_stage(pocket, "long", now=now)
-                if int(info.get("short_units", 0) or 0) == 0 and stage_tracker.get_stage(pocket, "short") > 0:
-                    stage_tracker.reset_stage(pocket, "short", now=now)
+                for direction, key_units in (("long", "long_units"), ("short", "short_units")):
+                    units_value = int(info.get(key_units, 0) or 0)
+                    tracker_stage = stage_tracker.get_stage(pocket, direction)
+                    key = (pocket, direction)
+                    if units_value == 0 and tracker_stage > 0:
+                        empty_since = stage_empty_since.get(key)
+                        if empty_since is None:
+                            stage_empty_since[key] = now
+                        elif (now - empty_since).total_seconds() >= STAGE_RESET_GRACE_SECONDS:
+                            logging.info(
+                                "[STAGE] reset pocket=%s direction=%s after %.0fs flat",
+                                pocket,
+                                direction,
+                                (now - empty_since).total_seconds(),
+                            )
+                            stage_tracker.reset_stage(pocket, direction, now=now)
+                            stage_empty_since.pop(key, None)
+                    elif units_value != 0:
+                        stage_empty_since.pop(key, None)
 
             exit_decisions = exit_manager.plan_closures(
-                open_positions, evaluated_signals, fac_m1, fac_h4, event_soon, range_active
+                open_positions,
+                evaluated_signals,
+                fac_m1,
+                fac_h4,
+                event_soon,
+                range_active,
+                now=now,
             )
 
             executed_pockets: set[str] = set()
@@ -803,6 +989,17 @@ async def logic_loop():
                             seconds=cooldown_seconds,
                             now=now,
                         )
+                        # Flip guard: avoid immediate opposite-direction flip after reverse exit
+                        if decision.reason == "reverse_signal":
+                            opposite = "short" if target_side == "long" else "long"
+                            flip_cd = min(240, max(60, cooldown_seconds // 2))
+                            stage_tracker.set_cooldown(
+                                pocket,
+                                opposite,
+                                reason="flip_guard",
+                                seconds=flip_cd,
+                                now=now,
+                            )
 
             if not evaluated_signals:
                 logging.info("[WAIT] No actionable entry signals this cycle.")
@@ -841,12 +1038,27 @@ async def logic_loop():
                         scalp_free_ratio * 100 if scalp_free_ratio is not None else 0.0,
                     )
 
+            risk_override = _dynamic_risk_pct(evaluated_signals, range_active, weight)
+            if (
+                _MAX_RISK_PCT > _BASE_RISK_PCT
+                and (last_risk_pct is None or abs(risk_override - last_risk_pct) > 0.001)
+            ):
+                logging.info(
+                    "[RISK] dynamic risk pct=%.3f (base=%.3f, max=%.3f, pockets=%d)",
+                    risk_override,
+                    _BASE_RISK_PCT,
+                    _MAX_RISK_PCT,
+                    len({s.get('pocket') for s in evaluated_signals if s.get('action') in {'OPEN_LONG', 'OPEN_SHORT'}}),
+                )
+            last_risk_pct = risk_override
+
             lot_total = allowed_lot(
                 account_equity,
                 sl_pips=max(1.0, avg_sl),
                 margin_available=margin_available,
                 price=fac_m1.get("close"),
                 margin_rate=margin_rate,
+                risk_pct_override=risk_override,
             )
             requested_pockets = {
                 STRATEGIES[s].pocket
@@ -877,10 +1089,20 @@ async def logic_loop():
             if range_active and "macro" in lots:
                 lots["macro"] = 0.0
 
+            spread_skip_logged = False
             for signal in evaluated_signals:
                 pocket = signal["pocket"]
                 action = signal.get("action")
                 if action not in {"OPEN_LONG", "OPEN_SHORT"}:
+                    continue
+                if spread_gate_active:
+                    if not spread_skip_logged:
+                        logging.info(
+                            "[SKIP] Spread guard active (%s, %s).",
+                            spread_gate_reason,
+                            spread_log_context,
+                        )
+                        spread_skip_logged = True
                     continue
                 if event_soon and pocket in {"micro", "scalp"}:
                     logging.info("[SKIP] Event soon, skipping %s pocket trade.", pocket)

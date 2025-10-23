@@ -8,18 +8,21 @@ OpenAI API を呼び出し、JSON スキーマ検証・
 from __future__ import annotations
 
 import asyncio
+import datetime as dt
 import json
-from openai import AsyncOpenAI
-
+import logging
 from typing import Dict
 
-from utils.cost_guard import add_tokens
-from utils.secrets import get_secret
+from openai import AsyncOpenAI
+
 from analysis.gpt_prompter import (
     build_messages,
     OPENAI_MODEL as MODEL,
     MAX_TOKENS_MONTH,
 )
+from analysis.local_decider import heuristic_decision
+from utils.cost_guard import add_tokens
+from utils.secrets import get_secret
 
 client = AsyncOpenAI(api_key=get_secret("openai_api_key"))
 
@@ -41,6 +44,24 @@ _ALLOWED_STRATEGIES = [
 
 _MAX_COMPLETION_TOKENS = 320
 _GPT5_MAX_OUTPUT_TOKENS = 800
+
+_REUSE_WINDOW_SECONDS = 300
+_FALLBACK_DECISION = {
+    "focus_tag": "hybrid",
+    "weight_macro": 0.5,
+    "ranked_strategies": [
+        "TrendMA",
+        "Donchian55",
+        "BB_RSI",
+        "NewsSpikeReversal",
+    ],
+    "reason": "fallback",
+}
+
+_LAST_DECISION_TS: dt.datetime | None = None
+_LAST_DECISION_DATA: Dict[str, object] | None = None
+
+logger = logging.getLogger(__name__)
 
 
 class GPTTimeout(Exception): ...
@@ -154,18 +175,58 @@ async def call_openai(payload: Dict) -> Dict:
 
 async def get_decision(payload: Dict) -> Dict:
     """
-    上位ラッパ：GPT 呼び出し（フォールバックなし、リトライあり）
+    上位ラッパ：GPT 呼び出し（リトライあり、失敗時は再利用/フォールバック決定）
     """
     # 最大2回リトライ（合計最大 ~9秒）
+    global _LAST_DECISION_TS, _LAST_DECISION_DATA
     last_exc: Exception | None = None
     for attempt in range(2):
         try:
-            return await asyncio.wait_for(call_openai(payload), timeout=9)
+            fresh = await asyncio.wait_for(call_openai(payload), timeout=9)
+            if not isinstance(fresh, dict):
+                raise ValueError("GPT response must be dict")
+            # 決定情報を保持（reasonは揮発値なので除外）
+            _LAST_DECISION_TS = dt.datetime.utcnow()
+            _LAST_DECISION_DATA = {k: v for k, v in fresh.items() if k != "reason"}
+            return fresh
         except Exception as e:
             last_exc = e
             await asyncio.sleep(1.5)
-    # 最後まで失敗したら例外を上位へ
-    raise GPTTimeout(str(last_exc) if last_exc else "unknown error")
+    # フォールバック：直近 5 分以内の決定を再利用、なければデフォルト構成を返す
+    now = dt.datetime.utcnow()
+    if _LAST_DECISION_TS and _LAST_DECISION_DATA:
+        age = (now - _LAST_DECISION_TS).total_seconds()
+        if age <= _REUSE_WINDOW_SECONDS:
+            reused = dict(_LAST_DECISION_DATA)
+            reused["reason"] = "reuse_previous"
+            logger.warning(
+                "GPT decision failed (%s); reusing previous decision from %.0fs ago.",
+                str(last_exc),
+                age,
+            )
+            return reused
+
+    try:
+        heuristic = heuristic_decision(payload, _LAST_DECISION_DATA)
+    except Exception as heur_exc:  # pragma: no cover - defensive path
+        logger.error(
+            "GPT decision failed (%s) and heuristic fallback errored (%s); "
+            "falling back to static configuration.",
+            str(last_exc),
+            heur_exc,
+        )
+        result = dict(_FALLBACK_DECISION)
+        _LAST_DECISION_TS = now
+        _LAST_DECISION_DATA = {k: v for k, v in result.items() if k != "reason"}
+        return result
+
+    logger.warning(
+        "GPT decision failed (%s); using heuristic fallback decision.",
+        str(last_exc),
+    )
+    _LAST_DECISION_TS = now
+    _LAST_DECISION_DATA = {k: v for k, v in heuristic.items() if k != "reason"}
+    return heuristic
 
 
 # ---------- CLI self‑test ----------

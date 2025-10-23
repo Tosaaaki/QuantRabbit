@@ -147,13 +147,19 @@ def _dashboard_defaults(error: Optional[str] = None) -> Dict[str, Any]:
             "net_units": 0.0,
             "new_trades": 0,
             "last_trade_at": None,
+            "unrealized_pl_pips": 0.0,
+            "unrealized_pl_jpy": 0.0,
         },
         "open_summary": {
             "total_positions": 0,
             "net_units": 0.0,
+            "unrealized_pl_pips": 0.0,
+            "unrealized_pl_jpy": 0.0,
             "pockets": [],
         },
-        "highlights": [],
+        "highlights": [],  # backward compatibility (top winners / losers)
+        "highlights_top": [],
+        "highlights_recent": [],
     }
 
 
@@ -223,6 +229,7 @@ def _summarise_snapshot(snapshot: Dict[str, Any]) -> Dict[str, Any]:
         )
 
     closed_trades = [t for t in parsed_trades if t["close_time"]]
+    closed_trades.sort(key=lambda t: t["close_time"], reverse=True)
     week_cutoff = now - timedelta(days=7)
     today_date = now.date()
 
@@ -306,18 +313,29 @@ def _summarise_snapshot(snapshot: Dict[str, Any]) -> Dict[str, Any]:
     open_positions = snapshot.get("open_positions") or {}
     open_entries: list[Dict[str, Any]] = []
     total_positions = 0
+    total_unrealized_pips = 0.0
+    total_unrealized_jpy = 0.0
     for name, info in open_positions.items():
         if name == "__net__":
             continue
         trades = info.get("open_trades") or []
         total_positions += len(trades)
+        units_val = _safe_float(info.get("units"))
+        direction = "Long" if units_val > 0 else "Short" if units_val < 0 else "Flat"
+        unrealized_pips = round(_safe_float(info.get("unrealized_pl_pips")), 2)
+        unrealized_jpy = round(_safe_float(info.get("unrealized_pl")), 2)
+        total_unrealized_pips += unrealized_pips
+        total_unrealized_jpy += unrealized_jpy
+        units_abs = abs(units_val)
         open_entries.append(
             {
                 "pocket": name,
-                "units": _safe_float(info.get("units")),
+                "direction": direction,
+                "units": units_val,
+                "units_abs": int(round(units_abs)),
                 "avg_price": _safe_float(info.get("avg_price")),
-                "long_units": _safe_float(info.get("long_units")),
-                "short_units": _safe_float(info.get("short_units")),
+                "unrealized_pips": unrealized_pips,
+                "unrealized_jpy": unrealized_jpy,
                 "trades": len(trades),
             }
         )
@@ -328,9 +346,13 @@ def _summarise_snapshot(snapshot: Dict[str, Any]) -> Dict[str, Any]:
         "pockets": open_entries,
         "total_positions": total_positions,
         "net_units": net_units,
+        "unrealized_pl_pips": round(total_unrealized_pips, 2),
+        "unrealized_pl_jpy": round(total_unrealized_jpy, 2),
     }
     perf["open_positions"] = total_positions
     perf["net_units"] = net_units
+    perf["unrealized_pl_pips"] = round(total_unrealized_pips, 2)
+    perf["unrealized_pl_jpy"] = round(total_unrealized_jpy, 2)
 
     winners = sorted(closed_trades, key=lambda t: t["pl_pips"], reverse=True)[:3]
     losers = sorted(closed_trades, key=lambda t: t["pl_pips"])[:3]
@@ -368,7 +390,24 @@ def _summarise_snapshot(snapshot: Dict[str, Any]) -> Dict[str, Any]:
             }
         )
         seen.add(tr["ticket_id"])
+
+    latest_highlights: list[Dict[str, Any]] = []
+    for tr in closed_trades[:6]:
+        kind = "gain" if tr["pl_pips"] > 0 else "loss" if tr["pl_pips"] < 0 else "flat"
+        latest_highlights.append(
+            {
+                "ticket_id": tr["ticket_id"],
+                "pocket": tr["pocket"],
+                "pl_pips": round(tr["pl_pips"], 2),
+                "pl_jpy": round(tr["pl_jpy"], 2),
+                "closed_at": tr["close_label"],
+                "kind": kind,
+            }
+        )
+
     base["highlights"] = highlights
+    base["highlights_top"] = highlights
+    base["highlights_recent"] = latest_highlights
 
     gen_dt = _parse_dt(snapshot.get("generated_at"))
     base["generated_at"] = snapshot.get("generated_at")

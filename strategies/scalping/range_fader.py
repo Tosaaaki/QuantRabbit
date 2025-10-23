@@ -26,6 +26,14 @@ class RangeFader:
         if vol_5m < 0.6 or vol_5m > 2.0:
             return None
 
+        bbw = fac.get("bbw", 0.0) or 0.0
+        bbw_eta = fac.get("bbw_squeeze_eta_min")
+        # レンジ確度：BBW が小さい／またはさらに縮小方向
+        if bbw > 0.32:
+            return None
+        if bbw_eta is not None and bbw_eta > 10.0:
+            return None
+
         momentum_pips = abs(close - ema20) / 0.01
         drift_cap = max(2.0, min(4.0, atr_pips * 1.05))
         if momentum_pips > drift_cap:
@@ -34,7 +42,11 @@ class RangeFader:
         if rsi <= 36:
             sl = max(3.0, min(4.8, atr_pips * 1.5))
             tp = max(2.8, min(4.2, atr_pips * 1.35))
-            confidence = int(min(90, max(45, (38 - rsi) * 2.8 + vol_5m * 6)))
+            eta_bonus = 0.0
+            rsi_eta_up = fac.get("rsi_eta_upper_min")
+            if rsi_eta_up is not None:
+                eta_bonus = max(0.0, min(8.0, (6.0 - min(6.0, rsi_eta_up)) * 1.0))
+            confidence = int(min(90, max(45, (38 - rsi) * 2.6 + vol_5m * 5.5 + eta_bonus)))
             return {
                 "action": "OPEN_LONG",
                 "sl_pips": round(sl, 2),
@@ -46,7 +58,11 @@ class RangeFader:
         if rsi >= 64:
             sl = max(3.0, min(4.8, atr_pips * 1.5))
             tp = max(2.8, min(4.2, atr_pips * 1.35))
-            confidence = int(min(90, max(45, (rsi - 62) * 2.8 + vol_5m * 6)))
+            eta_bonus = 0.0
+            rsi_eta_dn = fac.get("rsi_eta_lower_min")
+            if rsi_eta_dn is not None:
+                eta_bonus = max(0.0, min(8.0, (6.0 - min(6.0, rsi_eta_dn)) * 1.0))
+            confidence = int(min(90, max(45, (rsi - 62) * 2.6 + vol_5m * 5.5 + eta_bonus)))
             return {
                 "action": "OPEN_SHORT",
                 "sl_pips": round(sl, 2),

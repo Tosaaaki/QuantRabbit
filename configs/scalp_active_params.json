@@ -7,11 +7,11 @@
     "rsi_entry_high": 57
   },
   "PulseBreak": {
-    "sl_pips": 5,
-    "tp_pips": 7,
     "timeout_sec": 900,
     "vol_5m_max": 2.5,
-    "trend_ema": 30
+    "trend_ema": 30,
+    "adx_max": 24.0,
+    "atr_pips_min": 3.0
   },
   "RangeFader": {
     "atr_pips_max": 3.2,
@@ -31,12 +31,12 @@
     "rsi_upper": 64
   },
   "TrendMA": {
-    "sl_pips": 32,
-    "tp_pips": 70,
-    "timeout_sec": 43200,
-    "adx_min": 20.0,
-    "ma_spread_min": 0.0018,
-    "ma_spread_scale": 0.6
+    "timeout_sec": 44610,
+    "adx_min": 23.9,
+    "ma_gap_min_pips": 0.47,
+    "ma_spread_scale": 0.35,
+    "price_to_fast_max_pips": 7.52,
+    "projected_cross_minutes_max": 10.35
   },
   "Donchian55": {
     "sl_pips": 60,

@@ -36,7 +36,8 @@ def _parse_timestamp(ts: str) -> datetime:
 
     ts = ts.replace("Z", "+00:00")
     if "." not in ts:
-        return datetime.fromisoformat(ts)
+        dt = datetime.fromisoformat(ts)
+        return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
 
     head, tail = ts.split(".", 1)
     tz = ""
@@ -50,7 +51,8 @@ def _parse_timestamp(ts: str) -> datetime:
         frac, tz = tail, ""
 
     frac = frac[:6].ljust(6, "0")
-    return datetime.fromisoformat(f"{head}.{frac}{tz}")
+    dt = datetime.fromisoformat(f"{head}.{frac}{tz}")
+    return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
 
 
 class PositionManager:
@@ -343,6 +345,10 @@ class PositionManager:
         ts = row["ts"]
         try:
             entry_time = datetime.fromisoformat(ts)
+            if entry_time.tzinfo is None:
+                entry_time = entry_time.replace(tzinfo=timezone.utc)
+            else:
+                entry_time = entry_time.astimezone(timezone.utc)
         except Exception:
             entry_time = datetime.now(timezone.utc)
         return {
@@ -557,6 +563,14 @@ class PositionManager:
                 continue
             trade_id = tr.get("id") or tr.get("tradeID")
             price = float(tr.get("price", 0.0))
+            open_time_raw = tr.get("openTime")
+            open_time_iso: str | None = None
+            if open_time_raw:
+                try:
+                    opened_dt = _parse_timestamp(open_time_raw).astimezone(timezone.utc)
+                    open_time_iso = opened_dt.isoformat()
+                except Exception:
+                    open_time_iso = open_time_raw
             info = pockets.setdefault(
                 pocket,
                 {
@@ -588,6 +602,7 @@ class PositionManager:
                     "side": "long" if units > 0 else "short",
                     "unrealized_pl": unrealized_pl,
                     "unrealized_pl_pips": unrealized_pl_pips,
+                    "open_time": open_time_iso or open_time_raw,
                 }
             )
             prev_total_units = info["units"]
