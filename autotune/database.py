@@ -159,6 +159,7 @@ def record_run_bigquery(
     project, dataset, table = _parse_table(table_id)
     table_fqn = f"{project}.{dataset}.{table}"
     now = _utc_now()
+    now_dt = datetime.fromisoformat(now)
     params_json = json.dumps(params, ensure_ascii=False)
     train_json = json.dumps(train, ensure_ascii=False)
     valid_json = json.dumps(valid, ensure_ascii=False)
@@ -203,8 +204,8 @@ def record_run_bigquery(
             bigquery.ScalarQueryParameter("train_json", "STRING", train_json),
             bigquery.ScalarQueryParameter("valid_json", "STRING", valid_json),
             bigquery.ScalarQueryParameter("source_file", "STRING", source_file),
-            bigquery.ScalarQueryParameter("created_at", "STRING", now),
-            bigquery.ScalarQueryParameter("updated_at", "STRING", now),
+            bigquery.ScalarQueryParameter("created_at", "TIMESTAMP", now_dt),
+            bigquery.ScalarQueryParameter("updated_at", "TIMESTAMP", now_dt),
         ]
     )
     client.query(query, job_config=job_config).result()
@@ -420,10 +421,9 @@ def dump_dict(row: Dict[str, Any]) -> Dict[str, Any]:
     out = dict(row)
     for key, value in list(out.items()):
         if isinstance(value, Decimal):
-            if value == int(value):
-                out[key] = int(value)
-            else:
-                out[key] = float(value)
+            out[key] = int(value) if value == int(value) else float(value)
+        elif isinstance(value, datetime):
+            out[key] = value.isoformat()
     for key in ("params_json", "train_json", "valid_json"):
         if key in out and out[key]:
             out[key[:-5]] = json.loads(out[key])
