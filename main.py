@@ -51,6 +51,7 @@ from strategies.scalping.m1_scalper import M1Scalper
 from strategies.scalping.range_fader import RangeFader
 from strategies.scalping.pulse_break import PulseBreak
 from utils.oanda_account import get_account_snapshot
+from utils.secrets import get_secret
 
 # Configure logging
 logging.basicConfig(
@@ -128,6 +129,42 @@ RANGE_MIN_ACTIVE_SECONDS = 240
 RANGE_ENTRY_SCORE_FLOOR = 0.62
 RANGE_EXIT_SCORE_CEIL = 0.56
 STAGE_RESET_GRACE_SECONDS = 180
+
+try:
+    _BASE_RISK_PCT = float(get_secret("risk_pct"))
+    if _BASE_RISK_PCT <= 0:
+        _BASE_RISK_PCT = 0.02
+except Exception:
+    _BASE_RISK_PCT = 0.02
+try:
+    _MAX_RISK_PCT = float(get_secret("risk_pct_max"))
+    if _MAX_RISK_PCT < _BASE_RISK_PCT:
+        _MAX_RISK_PCT = _BASE_RISK_PCT
+    elif _MAX_RISK_PCT > 0.3:
+        _MAX_RISK_PCT = 0.3
+except Exception:
+    _MAX_RISK_PCT = _BASE_RISK_PCT
+
+
+def _dynamic_risk_pct(signals: list[dict], range_mode: bool, weight_macro: float | None) -> float:
+    if range_mode or not signals or _MAX_RISK_PCT <= _BASE_RISK_PCT:
+        return _BASE_RISK_PCT
+    actionable = [
+        s
+        for s in signals
+        if s.get("action") in {"OPEN_LONG", "OPEN_SHORT"} and s.get("pocket")
+    ]
+    if not actionable:
+        return _BASE_RISK_PCT
+    pocket_factor = min(len({s["pocket"] for s in actionable}) / 3.0, 1.0)
+    avg_conf = sum(max(0, min(100, s.get("confidence", 0))) for s in actionable)
+    avg_conf = (avg_conf / len(actionable)) / 100.0
+    bias = 0.0
+    if isinstance(weight_macro, (int, float)):
+        bias = min(1.0, abs(weight_macro - 0.5) * 2.0)
+    score = 0.45 * pocket_factor + 0.45 * avg_conf + 0.1 * bias
+    score = max(0.0, min(score, 1.0))
+    return _BASE_RISK_PCT + (_MAX_RISK_PCT - _BASE_RISK_PCT) * score
 
 
 def build_client_order_id(focus_tag: Optional[str], strategy_tag: str) -> str:
@@ -408,6 +445,7 @@ async def logic_loop():
     raw_range_active = False
     raw_range_reason = ""
     stage_empty_since: dict[tuple[str, str], datetime.datetime] = {}
+    last_risk_pct: float | None = None
 
     try:
         while True:
@@ -928,12 +966,27 @@ async def logic_loop():
                         scalp_free_ratio * 100 if scalp_free_ratio is not None else 0.0,
                     )
 
+            risk_override = _dynamic_risk_pct(evaluated_signals, range_active, weight)
+            if (
+                _MAX_RISK_PCT > _BASE_RISK_PCT
+                and (last_risk_pct is None or abs(risk_override - last_risk_pct) > 0.001)
+            ):
+                logging.info(
+                    "[RISK] dynamic risk pct=%.3f (base=%.3f, max=%.3f, pockets=%d)",
+                    risk_override,
+                    _BASE_RISK_PCT,
+                    _MAX_RISK_PCT,
+                    len({s.get('pocket') for s in evaluated_signals if s.get('action') in {'OPEN_LONG', 'OPEN_SHORT'}}),
+                )
+            last_risk_pct = risk_override
+
             lot_total = allowed_lot(
                 account_equity,
                 sl_pips=max(1.0, avg_sl),
                 margin_available=margin_available,
                 price=fac_m1.get("close"),
                 margin_rate=margin_rate,
+                risk_pct_override=risk_override,
             )
             requested_pockets = {
                 STRATEGIES[s].pocket
