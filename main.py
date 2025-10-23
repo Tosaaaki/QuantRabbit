@@ -94,6 +94,13 @@ POCKET_LOSS_COOLDOWNS = {
     "scalp": 360,
 }
 
+# 新規エントリー後のクールダウン（再エントリー抑制）
+POCKET_ENTRY_MIN_INTERVAL = {
+    "macro": 180,  # 3分
+    "micro": 120,  # 2分
+    "scalp": 60,
+}
+
 FALLBACK_EQUITY = 10000.0  # REST失敗時のフォールバック
 
 STAGE_RATIOS = {
@@ -1054,6 +1061,15 @@ async def logic_loop():
                     net_units += units
                     open_positions.setdefault("__net__", {})["units"] = net_units
                     executed_pockets.add(pocket)
+                    # 直後の再エントリーを抑制（気迷いトレード対策）
+                    entry_cd = POCKET_ENTRY_MIN_INTERVAL.get(pocket, 120)
+                    stage_tracker.set_cooldown(
+                        pocket,
+                        direction,
+                        reason="entry_rate_limit",
+                        seconds=entry_cd,
+                        now=now,
+                    )
                 else:
                     logging.error(f"[ORDER FAILED] {signal['strategy']}")
 

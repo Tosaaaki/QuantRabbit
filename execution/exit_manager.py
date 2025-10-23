@@ -161,6 +161,11 @@ class ExitManager:
                 and profit_pips > -self._macro_loss_buffer
             )
             if not macro_skip:
+                # ヒステリシス: 小幅の含み損益域では逆方向シグナルだけでクローズしない
+                micro_guard = (pocket == "micro" and -1.2 < profit_pips < 1.2)
+                macro_guard = (pocket == "macro" and -2.0 < profit_pips < 2.0)
+                if micro_guard or macro_guard:
+                    return None
                 reason = "reverse_signal"
                 allow_reentry = True
                 tag = reverse_signal.get("tag", tag)
@@ -258,6 +263,11 @@ class ExitManager:
                 and profit_pips > -self._macro_loss_buffer
             )
             if not macro_skip:
+                # ヒステリシス: 小幅の含み損益域では逆方向シグナルだけでクローズしない
+                micro_guard = (pocket == "micro" and -1.2 < profit_pips < 1.2)
+                macro_guard = (pocket == "macro" and -2.0 < profit_pips < 2.0)
+                if micro_guard or macro_guard:
+                    return None
                 reason = "reverse_signal"
                 allow_reentry = True
                 tag = reverse_signal.get("tag", tag)
