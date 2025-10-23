@@ -17,6 +17,7 @@ REST_HOST = (
 HEADERS = {"Authorization": f"Bearer {TOKEN}"}
 
 _DB = pathlib.Path("logs/trades.db")
+_ORDERS_DB = pathlib.Path("logs/orders.db")
 _CHUNK_SIZE = 100
 _MAX_FETCH = int(os.getenv("POSITION_MANAGER_MAX_FETCH", "1000"))
 
@@ -68,7 +69,7 @@ class PositionManager:
             CREATE TABLE IF NOT EXISTS trades (
               id INTEGER PRIMARY KEY AUTOINCREMENT,
               transaction_id INTEGER,
-              ticket_id TEXT UNIQUE,
+              ticket_id TEXT,
               pocket TEXT,
               instrument TEXT,
               units INTEGER,
@@ -121,6 +122,9 @@ class PositionManager:
             if name not in existing:
                 self.con.execute(f"ALTER TABLE trades ADD COLUMN {name} {ddl}")
 
+        if self._has_ticket_unique_constraint():
+            self._migrate_remove_ticket_unique()
+
         # 旧ユニークインデックス（ticket_id 単独）は部分決済を上書きしてしまうため削除し、
         # (transaction_id, ticket_id) の複合ユニークへ移行、ticket_id は非ユニーク索引に変更
         try:
@@ -151,6 +155,73 @@ class PositionManager:
 
         row = cursor.execute("SELECT MAX(id) FROM trades").fetchone()
         return int(row[0]) if row and row[0] else 0
+
+    def _has_ticket_unique_constraint(self) -> bool:
+        try:
+            indexes = list(self.con.execute("PRAGMA index_list(trades)"))
+        except sqlite3.Error:
+            return False
+        for idx in indexes:
+            name = idx[1]
+            unique = idx[2]
+            if not unique:
+                continue
+            if name.startswith("sqlite_autoindex_trades"):
+                try:
+                    cols = list(self.con.execute(f"PRAGMA index_info('{name}')"))
+                except sqlite3.Error:
+                    continue
+                if len(cols) == 1 and cols[0][2] == "ticket_id":
+                    return True
+        return False
+
+    def _migrate_remove_ticket_unique(self) -> None:
+        try:
+            self.con.execute("BEGIN")
+            self.con.execute(
+                """
+                CREATE TABLE IF NOT EXISTS trades_migrated (
+                  id INTEGER PRIMARY KEY AUTOINCREMENT,
+                  transaction_id INTEGER,
+                  ticket_id TEXT,
+                  pocket TEXT,
+                  instrument TEXT,
+                  units INTEGER,
+                  closed_units INTEGER,
+                  entry_price REAL,
+                  close_price REAL,
+                  fill_price REAL,
+                  pl_pips REAL,
+                  realized_pl REAL,
+                  commission REAL,
+                  financing REAL,
+                  entry_time TEXT,
+                  open_time TEXT,
+                  close_time TEXT,
+                  close_reason TEXT,
+                  state TEXT,
+                  updated_at TEXT,
+                  version TEXT DEFAULT 'v1',
+                  unrealized_pl REAL
+                )
+                """
+            )
+            columns = (
+                "id, transaction_id, ticket_id, pocket, instrument, units, closed_units, "
+                "entry_price, close_price, fill_price, pl_pips, realized_pl, commission, "
+                "financing, entry_time, open_time, close_time, close_reason, state, "
+                "updated_at, version, unrealized_pl"
+            )
+            self.con.execute(
+                f"INSERT OR IGNORE INTO trades_migrated ({columns}) "
+                f"SELECT {columns} FROM trades"
+            )
+            self.con.execute("DROP TABLE trades")
+            self.con.execute("ALTER TABLE trades_migrated RENAME TO trades")
+            self.con.commit()
+        except sqlite3.Error as exc:
+            self.con.rollback()
+            print(f"[PositionManager] Failed to migrate trades table: {exc}")
 
     def _fetch_closed_trades(self):
         """OANDAから決済済みトランザクションを取得"""
@@ -235,9 +306,51 @@ class PositionManager:
                 "units": int(trade.get("initialUnits", 0)),
                 "pocket": pocket,
             }
+        except requests.HTTPError as exc:
+            if exc.response is not None and exc.response.status_code == 404:
+                fallback = self._get_trade_details_from_orders(trade_id)
+                if fallback:
+                    return fallback
+            print(f"[PositionManager] Error fetching trade details for {trade_id}: {exc}")
+            return self._get_trade_details_from_orders(trade_id)
         except requests.RequestException as e:
             print(f"[PositionManager] Error fetching trade details for {trade_id}: {e}")
+            return self._get_trade_details_from_orders(trade_id)
+
+    def _get_trade_details_from_orders(self, trade_id: str) -> dict | None:
+        if not _ORDERS_DB.exists():
             return None
+        try:
+            con = sqlite3.connect(_ORDERS_DB)
+            con.row_factory = sqlite3.Row
+            row = con.execute(
+                """
+                SELECT pocket, instrument, units, executed_price, ts
+                FROM orders
+                WHERE ticket_id = ?
+                  AND status = 'filled'
+                ORDER BY id ASC
+                LIMIT 1
+                """,
+                (trade_id,),
+            ).fetchone()
+            con.close()
+        except sqlite3.Error as exc:
+            print(f"[PositionManager] orders.db lookup failed for trade {trade_id}: {exc}")
+            return None
+        if not row:
+            return None
+        ts = row["ts"]
+        try:
+            entry_time = datetime.fromisoformat(ts)
+        except Exception:
+            entry_time = datetime.now(timezone.utc)
+        return {
+            "entry_price": float(row["executed_price"] or 0.0),
+            "entry_time": entry_time,
+            "units": int(row["units"] or 0),
+            "pocket": row["pocket"] or "unknown",
+        }
 
     def _parse_and_save_trades(self, transactions: list[dict]):
         """トランザクションを解析し、DBに保存"""
@@ -251,12 +364,25 @@ class PositionManager:
                 tx_id = int(tx_id_raw)
             except (TypeError, ValueError):
                 continue
-            # ORDER_FILLかつ、ポジションを閉じる取引のみ対象
-            if tx.get("type") != "ORDER_FILL" or "tradesClosed" not in tx:
+            # ORDER_FILLのみ処理（クローズ/部分約定両対応）
+            if tx.get("type") != "ORDER_FILL":
                 processed_tx_ids.add(tx_id)
                 continue
 
-            for closed_trade in tx.get("tradesClosed", []):
+            closures: list[tuple[str, dict]] = []
+            for closed_trade in tx.get("tradesClosed") or []:
+                closures.append(("CLOSED", closed_trade))
+            trade_reduced = tx.get("tradeReduced")
+            if trade_reduced:
+                closures.append(("PARTIAL", trade_reduced))
+            for reduced in tx.get("tradesReduced") or []:
+                closures.append(("PARTIAL", reduced))
+
+            if not closures:
+                processed_tx_ids.add(tx_id)
+                continue
+
+            for state_label, closed_trade in closures:
                 trade_id = closed_trade.get("tradeID")
                 if not trade_id:
                     continue
@@ -316,7 +442,7 @@ class PositionManager:
                     details["entry_time"].isoformat(),
                     close_time.isoformat(),
                     close_reason,
-                    "CLOSED",
+                    "CLOSED" if state_label == "CLOSED" else "PARTIAL",
                     updated_at,
                     "v3",
                     0.0,
@@ -442,8 +568,17 @@ class PositionManager:
                     "short_units": 0,
                     "short_avg_price": 0.0,
                     "open_trades": [],
+                    "unrealized_pl": 0.0,
+                    "unrealized_pl_pips": 0.0,
                 },
             )
+            try:
+                unrealized_pl = float(tr.get("unrealizedPL", 0.0) or 0.0)
+            except Exception:
+                unrealized_pl = 0.0
+            abs_units = abs(units)
+            pip_value = abs_units * 0.01
+            unrealized_pl_pips = unrealized_pl / pip_value if pip_value else 0.0
             info["open_trades"].append(
                 {
                     "trade_id": str(trade_id),
@@ -451,6 +586,8 @@ class PositionManager:
                     "price": price,
                     "client_id": client_ext.get("id"),
                     "side": "long" if units > 0 else "short",
+                    "unrealized_pl": unrealized_pl,
+                    "unrealized_pl_pips": unrealized_pl_pips,
                 }
             )
             prev_total_units = info["units"]
@@ -488,6 +625,8 @@ class PositionManager:
                         ) / new_units
                 info["short_units"] = new_units
 
+            info["unrealized_pl"] = info.get("unrealized_pl", 0.0) + unrealized_pl
+            info["unrealized_pl_pips"] = info.get("unrealized_pl_pips", 0.0) + unrealized_pl_pips
             net_units += units
 
         pockets["__net__"] = {"units": net_units}
