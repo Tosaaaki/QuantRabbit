@@ -9,7 +9,7 @@ execution.exit_manager
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Optional, Tuple
 
 from analysis.ma_projection import MACrossProjection, compute_ma_projection
@@ -49,7 +49,7 @@ class ExitManager:
         range_mode: bool = False,
         now: Optional[datetime] = None,
     ) -> List[ExitDecision]:
-        current_time = now or datetime.utcnow()
+        current_time = self._ensure_utc(now)
         decisions: List[ExitDecision] = []
         projection_m1 = compute_ma_projection(fac_m1, timeframe_minutes=1.0)
         projection_h4 = compute_ma_projection(fac_h4, timeframe_minutes=240.0)
@@ -609,7 +609,8 @@ class ExitManager:
                 raw = f"{head}.{frac_digits}{tz_part}"
             elif "+" not in raw:
                 raw = f"{raw}+00:00"
-            return datetime.fromisoformat(raw)
+            dt = datetime.fromisoformat(raw)
+            return dt.astimezone(timezone.utc)
         except ValueError:
             try:
                 trimmed = raw
@@ -617,6 +618,15 @@ class ExitManager:
                     trimmed = trimmed.split(".", 1)[0]
                 if not trimmed.endswith("+00:00"):
                     trimmed = trimmed.rstrip("Z") + "+00:00"
-                return datetime.fromisoformat(trimmed)
+                dt = datetime.fromisoformat(trimmed)
+                return dt.astimezone(timezone.utc)
             except ValueError:
                 return None
+
+    @staticmethod
+    def _ensure_utc(candidate: Optional[datetime]) -> datetime:
+        if candidate is None:
+            return datetime.now(timezone.utc)
+        if candidate.tzinfo is None:
+            return candidate.replace(tzinfo=timezone.utc)
+        return candidate.astimezone(timezone.utc)

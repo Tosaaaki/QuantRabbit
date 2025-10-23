@@ -93,6 +93,14 @@ def _orders_con() -> sqlite3.Connection:
         return _ORDERS_CON
 
 
+def _ensure_utc(candidate: Optional[datetime]) -> datetime:
+    if candidate is None:
+        return datetime.now(timezone.utc)
+    if candidate.tzinfo is None:
+        return candidate.replace(tzinfo=timezone.utc)
+    return candidate.astimezone(timezone.utc)
+
+
 def _log_order(
     *,
     pocket: Optional[str],
@@ -215,13 +223,15 @@ def _parse_trade_open_time(value: Optional[str]) -> Optional[datetime]:
             candidate = f"{head}.{frac_digits}{tz_part}"
         elif "+" not in candidate:
             candidate = f"{candidate}+00:00"
-        return datetime.fromisoformat(candidate)
+        dt = datetime.fromisoformat(candidate)
+        return dt.astimezone(timezone.utc)
     except ValueError:
         try:
             trimmed = candidate.split(".", 1)[0]
             if not trimmed.endswith("+00:00"):
                 trimmed = trimmed.rstrip("Z") + "+00:00"
-            return datetime.fromisoformat(trimmed)
+            dt = datetime.fromisoformat(trimmed)
+            return dt.astimezone(timezone.utc)
         except ValueError:
             return None
 
@@ -464,7 +474,7 @@ def plan_partial_reductions(
     if price is None:
         return []
     pip_scale = 100
-    current_time = now or datetime.utcnow()
+    current_time = _ensure_utc(now)
     actions: list[tuple[str, str, int]] = []
 
     for pocket, info in open_positions.items():
