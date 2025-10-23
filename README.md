@@ -178,9 +178,15 @@ WantedBy=multi-user.target
 FastAPI 製の承認 UI を Cloud Run 上で公開し、チューニング結果の確認・承認をブラウザから行えます。バックエンドは BigQuery `autotune_runs` テーブルを参照します。
 
 1. **BigQuery テーブル作成**  
-   例: `cloudrun/autotune_ui/bq_autotune_runs.sql` を実行
+   例: `cloudrun/autotune_ui/bq_autotune_runs.sql` を実行（`autotune_runs` と `autotune_settings`）
    ```bash
    bq query --use_legacy_sql=false < cloudrun/autotune_ui/bq_autotune_runs.sql
+   bq query --use_legacy_sql=false "CREATE TABLE IF NOT EXISTS \`quantrabbit.autotune_settings\` (
+     id STRING NOT NULL,
+     enabled BOOL DEFAULT TRUE,
+     updated_at TIMESTAMP,
+     updated_by STRING
+   )"
    ```
 
 2. **チューニング結果を BigQuery へ記録**  
@@ -205,6 +211,27 @@ FastAPI 製の承認 UI を Cloud Run 上で公開し、チューニング結果
    デプロイ後に表示される `https://autotune-ui-xxxx.run.app` が承認ダッシュボードの URL です。テーブルの `status` を更新すると、VM が参照する `configs/scalp_active_params.json` を人手で戻す前にレビュー履歴を残せます。
 
 BigQuery では `status` 列が `pending/approved/rejected` を保持し、UI からの承認・却下操作で更新されます。VM 上の FastAPI UI も同じテーブルを参照するため、ブラウザからの操作でどちらも同期します。
+
+**オートチューニング停止スイッチ**
+
+- Cloud Run / VM UI の上部に「Autotune control」を追加し、オン／オフを切り替えられるようにしました。
+- 状態は `autotune_settings` テーブル（または SQLite `autotune_settings`）に保存され、`quant-autotune.service` はこの値を見てジョブ実行をスキップします。
+- CLI からも制御可能です：
+  ```bash
+  python - <<'PY'
+  from autotune.database import set_settings
+  set_settings(None, enabled=False, updated_by="cli")
+  PY
+  ```
+
+**既存データの移行**
+
+- ローカルの SQLite (`logs/autotune.db`) に残っている履歴は、次のスクリプトで BigQuery にコピー可能です：
+  ```bash
+  AUTOTUNE_BQ_TABLE=quantrabbit.autotune_runs \
+  python scripts/sync_autotune_runs.py --limit 1000
+  ```
+- 1 回実行すれば Cloud Run / VM 両方の UI にデータが表示されます。
 
 ---
 

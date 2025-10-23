@@ -29,6 +29,23 @@
   </div>
 
   <div class="card">
+    <h2>Autotune control</h2>
+    <p>現在の状態: <strong>{{ '有効' if settings.enabled else '停止中' }}</strong></p>
+    <form method="post" action="/settings/autotune">
+      <label>更新者</label>
+      <input type="text" name="reviewer" value="" style="padding:0.4rem; width: 50%; margin-bottom:0.6rem;">
+      {% if settings.enabled %}
+        <button class="reject" type="submit" name="action" value="disable">オートチューニングを停止</button>
+      {% else %}
+        <button class="approve" type="submit" name="action" value="enable">オートチューニングを再開</button>
+      {% endif %}
+    </form>
+    {% if settings.updated_at %}
+      <p class="stat-sub">最終更新: {{ settings.updated_at }} / {{ settings.updated_by or 'システム' }}</p>
+    {% endif %}
+  </div>
+
+  <div class="card">
     <h2>Pending approvals</h2>
     {% if pending %}
       <table>

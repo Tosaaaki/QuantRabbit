@@ -17,6 +17,7 @@ except Exception:  # pragma: no cover - bigquery optional
 REPO_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_DB_PATH = REPO_ROOT / "logs" / "autotune.db"
 AUTOTUNE_BQ_TABLE = os.getenv("AUTOTUNE_BQ_TABLE", "")
+AUTOTUNE_BQ_SETTINGS_TABLE = os.getenv("AUTOTUNE_BQ_SETTINGS_TABLE", "")
 USE_BIGQUERY = bool(AUTOTUNE_BQ_TABLE) and bigquery is not None
 
 
@@ -52,6 +53,23 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
         )
         """
     )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS autotune_settings (
+            id TEXT PRIMARY KEY,
+            enabled INTEGER NOT NULL,
+            updated_at TEXT NOT NULL,
+            updated_by TEXT
+        )
+        """
+    )
+    # ensure default row
+    cur = conn.execute("SELECT COUNT(*) FROM autotune_settings WHERE id='default'")
+    if cur.fetchone()[0] == 0:
+        conn.execute(
+            "INSERT INTO autotune_settings(id, enabled, updated_at) VALUES('default', 1, ?)",
+            (_utc_now(),),
+        )
     conn.commit()
 
 
@@ -131,7 +149,7 @@ def _parse_table(table: str) -> Tuple[str, str, str]:
         )
         return project, parts[0], parts[1]
     raise ValueError(
-        f"AUTOTUNE_BQ_TABLE must be <project>.<dataset>.<table> or <dataset>.<table>, got: {table}"
+        f"BigQuery table must be <project>.<dataset>.<table> or <dataset>.<table>, got: {table}"
     )
 
 
@@ -318,7 +336,80 @@ def get_stats_bigquery(table_override: Optional[str] = None) -> Dict[str, Any]:
     FROM `{table_fqn}`
     """
     row = list(client.query(query).result())[0]
-    return dict(row)
+    data = dict(row)
+    if data.get("last_approved_at") is not None:
+        data["last_approved_at"] = data["last_approved_at"].isoformat()
+    return data
+
+
+def _settings_table_id(table_override: Optional[str] = None) -> str:
+    if table_override:
+        return table_override
+    if AUTOTUNE_BQ_SETTINGS_TABLE:
+        return AUTOTUNE_BQ_SETTINGS_TABLE
+    if AUTOTUNE_BQ_TABLE:
+        project, dataset, _ = _parse_table(AUTOTUNE_BQ_TABLE)
+        return f"{project}.{dataset}.autotune_settings"
+    raise ValueError("AUTOTUNE_BQ_TABLE or AUTOTUNE_BQ_SETTINGS_TABLE must be set")
+
+
+def get_settings_bigquery(table_override: Optional[str] = None) -> Dict[str, Any]:
+    table_id = _settings_table_id(table_override)
+    client = _get_bq_client()
+    project, dataset, table = _parse_table(table_id)
+    table_fqn = f"{project}.{dataset}.{table}"
+    query = f"""
+    SELECT id, enabled, updated_at, updated_by
+    FROM `{table_fqn}`
+    WHERE id = 'default'
+    LIMIT 1
+    """
+    rows = list(client.query(query).result())
+    if not rows:
+        return {"id": "default", "enabled": True, "updated_at": None, "updated_by": None}
+    row = dict(rows[0])
+    return {
+        "id": row.get("id", "default"),
+        "enabled": bool(row.get("enabled", True)),
+        "updated_at": row.get("updated_at").isoformat() if row.get("updated_at") else None,
+        "updated_by": row.get("updated_by"),
+    }
+
+
+def set_settings_bigquery(
+    enabled: bool,
+    updated_by: Optional[str] = None,
+    table_override: Optional[str] = None,
+) -> None:
+    table_id = _settings_table_id(table_override)
+    client = _get_bq_client()
+    project, dataset, table = _parse_table(table_id)
+    table_fqn = f"{project}.{dataset}.{table}"
+    now = datetime.utcnow()
+    query = f"""
+    MERGE `{table_fqn}` T
+    USING (
+      SELECT 'default' AS id,
+             @enabled AS enabled,
+             @updated_at AS updated_at,
+             @updated_by AS updated_by
+    ) S
+    ON T.id = S.id
+    WHEN MATCHED THEN UPDATE SET
+      enabled = S.enabled,
+      updated_at = S.updated_at,
+      updated_by = S.updated_by
+    WHEN NOT MATCHED THEN INSERT(id, enabled, updated_at, updated_by)
+      VALUES(S.id, S.enabled, S.updated_at, S.updated_by)
+    """
+    job_config = bigquery.QueryJobConfig(
+        query_parameters=[
+            bigquery.ScalarQueryParameter("enabled", "BOOL", bool(enabled)),
+            bigquery.ScalarQueryParameter("updated_at", "TIMESTAMP", now),
+            bigquery.ScalarQueryParameter("updated_by", "STRING", updated_by),
+        ]
+    )
+    client.query(query, job_config=job_config).result()
 
 
 def list_runs(
@@ -417,6 +508,64 @@ def get_stats(conn: Optional[sqlite3.Connection] = None) -> Dict[str, Any]:
     return stats
 
 
+def get_settings(conn: Optional[sqlite3.Connection] = None) -> Dict[str, Any]:
+    if USE_BIGQUERY and conn is None:
+        try:
+            return get_settings_bigquery()
+        except ValueError:
+            pass
+    close_after = False
+    if conn is None:
+        conn = get_connection()
+        close_after = True
+    row = conn.execute(
+        "SELECT id, enabled, updated_at, updated_by FROM autotune_settings WHERE id='default'"
+    ).fetchone()
+    if close_after:
+        conn.close()
+    if not row:
+        return {"id": "default", "enabled": True, "updated_at": None, "updated_by": None}
+    return {
+        "id": row["id"],
+        "enabled": bool(row["enabled"]),
+        "updated_at": row["updated_at"],
+        "updated_by": row["updated_by"],
+    }
+
+
+def set_settings(
+    conn: Optional[sqlite3.Connection],
+    enabled: bool,
+    updated_by: Optional[str] = None,
+) -> None:
+    if USE_BIGQUERY and conn is None:
+        try:
+            set_settings_bigquery(enabled, updated_by)
+            return
+        except ValueError:
+            pass
+        return
+    if conn is None:
+        conn = get_connection()
+        close_after = True
+    else:
+        close_after = False
+    conn.execute(
+        """
+        INSERT INTO autotune_settings(id, enabled, updated_at, updated_by)
+        VALUES('default', ?, ?, ?)
+        ON CONFLICT(id) DO UPDATE SET
+            enabled = excluded.enabled,
+            updated_at = excluded.updated_at,
+            updated_by = excluded.updated_by
+        """,
+        (1 if enabled else 0, _utc_now(), updated_by),
+    )
+    conn.commit()
+    if close_after:
+        conn.close()
+
+
 def dump_dict(row: Dict[str, Any]) -> Dict[str, Any]:
     out = dict(row)
     for key, value in list(out.items()):
@@ -433,6 +582,7 @@ def dump_dict(row: Dict[str, Any]) -> Dict[str, Any]:
 
 __all__ = [
     "AUTOTUNE_BQ_TABLE",
+    "AUTOTUNE_BQ_SETTINGS_TABLE",
     "USE_BIGQUERY",
     "DEFAULT_DB_PATH",
     "get_connection",
@@ -443,5 +593,7 @@ __all__ = [
     "get_run",
     "update_status",
     "get_stats",
+    "get_settings",
+    "set_settings",
     "dump_dict",
 ]

@@ -5,7 +5,9 @@ continuous_backtest.py
 - 1 回の起動で「直近 N 日のローソクを拾って backtest + tuning」を実行
 - systemd timer（hourly/daily）で定期実行する想定。重複起動を避けるためロックファイルを使用。
 """
-import argparse, json, os, pathlib, sys, time, datetime, subprocess
+import argparse, os, pathlib, sys, subprocess
+
+from autotune.database import get_settings
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[1]
 LOCK = REPO_ROOT / "logs" / ".autotune.lock"
@@ -45,31 +47,34 @@ def main():
         sys.exit(0)
 
     try:
+        settings = get_settings()
+        if not settings.get("enabled", True):
+            print("[INFO] autotune disabled via settings. skipping.")
+            return
+
         files = list_candles()
         if not files:
             print("[WARN] no candles found. nothing to do.")
             return
 
-        # tune
         tune_cmd = [
-            sys.executable, str(REPO_ROOT/"scripts"/"tune_scalp.py"),
-            "--trials-per-strategy", str(args.trials),
-            "--strategies", args.strategies,
-    ]
-    if args.dry_run:
-        tune_cmd.append("--dry-run")
-    if args.write_best:
-        tune_cmd.append("--write-best")
+            sys.executable,
+            str(REPO_ROOT / "scripts" / "tune_scalp.py"),
+            "--trials-per-strategy",
+            str(args.trials),
+            "--strategies",
+            args.strategies,
+        ]
+        if args.dry_run:
+            tune_cmd.append("--dry-run")
+        if args.write_best:
+            tune_cmd.append("--write-best")
         print("[INFO] run:", " ".join(tune_cmd))
         r = subprocess.run(tune_cmd, capture_output=True, text=True)
         print(r.stdout)
         if r.returncode != 0:
             print(r.stderr, file=sys.stderr)
             raise SystemExit(r.returncode)
-
-        # （任意）ここで本番プロセスにシグナル送信 or reload を行う
-        # 例: subprocess.run(["systemctl","--user","reload","quant-live.service"])
-
     finally:
         release_lock()
 

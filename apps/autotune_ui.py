@@ -15,7 +15,9 @@ from autotune.database import (
     dump_dict,
     get_run,
     get_stats,
+    get_settings,
     list_runs,
+    set_settings,
     update_status,
 )
 
@@ -39,11 +41,19 @@ def _normalize_numbers(payload: Optional[dict]) -> dict:
     return converted
 
 
+def _normalize_settings(settings: Optional[dict]) -> dict:
+    base = settings or {"enabled": True}
+    result = dict(base)
+    result["enabled"] = bool(base.get("enabled", True))
+    return result
+
+
 @app.get("/")
 def dashboard(request: Request):
     pending = [dump_dict(row) for row in list_runs(status="pending", limit=50)]
     recent = [dump_dict(row) for row in list_runs(status=None, limit=10)]
     stats = _normalize_numbers(get_stats())
+    settings = _normalize_settings(get_settings())
     return templates.TemplateResponse(
         "index.html",
         {
@@ -52,6 +62,7 @@ def dashboard(request: Request):
             "recent": recent,
             "stats": stats,
             "using_bigquery": USE_BIGQUERY,
+            "settings": settings,
         },
     )
 
@@ -93,6 +104,15 @@ def set_decision(
     if status == "approved":
         _apply_params_to_config(run)
     return RedirectResponse(url=f"/runs/{run_id}/{strategy}", status_code=303)
+
+
+@app.post("/settings/autotune")
+def update_settings(action: str = Form(...), reviewer: str = Form("")):
+    if action not in {"enable", "disable"}:
+        raise HTTPException(status_code=400, detail="Invalid action")
+    enabled = action == "enable"
+    set_settings(None, enabled=enabled, updated_by=reviewer or None)
+    return RedirectResponse(url="/", status_code=303)
 
 
 def _apply_params_to_config(run: dict) -> None:
