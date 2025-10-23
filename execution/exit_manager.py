@@ -141,6 +141,17 @@ class ExitManager:
         if ma10 is not None and ma20 is not None:
             ma_gap_pips = abs(ma10 - ma20) / 0.01
 
+        if (
+            reverse_signal
+            and pocket == "macro"
+            and profit_pips >= 4.0
+            and close_price is not None
+            and ema20 is not None
+            and close_price >= ema20 + 0.002
+        ):
+            if adx >= self._macro_trend_adx + 4 or ma_gap_pips <= self._macro_ma_gap:
+                reverse_signal = None
+
         if event_soon and pocket in {"micro", "scalp"}:
             reason = "event_lock"
         elif reverse_signal:
@@ -167,6 +178,14 @@ class ExitManager:
             reason = "trend_reversal"
         elif pocket == "scalp" and close_price > ema20:
             reason = "scalp_momentum_flip"
+        elif (
+            pocket == "macro"
+            and profit_pips >= 6.0
+            and close_price is not None
+            and ema20 is not None
+            and close_price <= ema20 - 0.0015
+        ):
+            reason = "macro_trail_hit"
         # レンジ中でもマクロの既存建玉を一律にクローズしない。
         # 早期利確/撤退（range_take_profit/range_stop）や逆方向シグナルのみで制御する。
         elif range_mode:
@@ -218,7 +237,19 @@ class ExitManager:
         if ma10 is not None and ma20 is not None:
             ma_gap_pips = abs(ma10 - ma20) / 0.01
 
-        if event_soon and pocket in {"micro", "scalp"}:
+        if (
+            pocket == "micro"
+            and profit_pips <= -4.0
+            and close_price is not None
+            and ema20 is not None
+            and (
+                close_price >= ema20 + 0.0015
+                or rsi >= 55
+                or (ma10 is not None and ma20 is not None and ma10 > ma20)
+            )
+        ):
+            reason = "micro_momentum_stop"
+        elif event_soon and pocket in {"micro", "scalp"}:
             reason = "event_lock"
         elif reverse_signal:
             macro_skip = (
