@@ -1,5 +1,6 @@
 import pandas as pd
 from typing import Dict
+from analysis.ma_projection import compute_donchian_projection
 
 
 class Donchian55:
@@ -20,7 +21,13 @@ class Donchian55:
             return None
         range_span = max(1e-6, high55 - low55)
         breakout_strength = abs(close - (high55 + low55) / 2) / range_span
-        confidence = int(max(45.0, min(95.0, 55.0 + breakout_strength * 45.0)))
+        # ブレイクへの近さ（pips）で発火加減を調整
+        proj = compute_donchian_projection(candles, lookback=55)
+        near_pips = proj.nearest_pips if proj else None
+        distance_bonus = 0.0
+        if near_pips is not None:
+            distance_bonus = max(0.0, min(10.0, (8.0 - min(8.0, near_pips)) * 1.2))
+        confidence = int(max(45.0, min(95.0, 54.0 + breakout_strength * 42.0 + distance_bonus)))
 
         if close > high55:
             return {
