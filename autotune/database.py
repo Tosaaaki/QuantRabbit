@@ -14,10 +14,33 @@ try:
 except Exception:  # pragma: no cover - bigquery optional
     bigquery = None
 
+try:
+    from utils.secrets import get_secret
+except Exception:  # pragma: no cover - optional secret manager integration
+    get_secret = None  # type: ignore
+
 REPO_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_DB_PATH = REPO_ROOT / "logs" / "autotune.db"
-AUTOTUNE_BQ_TABLE = os.getenv("AUTOTUNE_BQ_TABLE", "")
-AUTOTUNE_BQ_SETTINGS_TABLE = os.getenv("AUTOTUNE_BQ_SETTINGS_TABLE", "")
+
+def _load_autotune_env(name: str) -> str:
+    """Fetch AUTOTUNE_* settings with fallback to env.toml / Secret Manager."""
+    value = os.getenv(name, "").strip()
+    if value:
+        return value
+    if get_secret is None:
+        return ""
+    for key in (name, name.lower()):
+        try:
+            candidate = get_secret(key)
+        except Exception:
+            continue
+        if candidate:
+            return str(candidate).strip()
+    return ""
+
+
+AUTOTUNE_BQ_TABLE = _load_autotune_env("AUTOTUNE_BQ_TABLE")
+AUTOTUNE_BQ_SETTINGS_TABLE = _load_autotune_env("AUTOTUNE_BQ_SETTINGS_TABLE")
 USE_BIGQUERY = bool(AUTOTUNE_BQ_TABLE) and bigquery is not None
 
 

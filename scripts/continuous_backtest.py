@@ -7,7 +7,7 @@ continuous_backtest.py
 """
 import argparse, os, pathlib, sys, subprocess
 
-from autotune.database import get_settings
+from autotune.database import AUTOTUNE_BQ_TABLE, get_settings
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[1]
 LOCK = REPO_ROOT / "logs" / ".autotune.lock"
@@ -68,7 +68,7 @@ def main():
             tune_cmd.extend(["--trials-per-strategy", str(args.trials)])
         if args.strategies:
             tune_cmd.extend(["--strategies", args.strategies])
-        bq_table = os.environ.get("AUTOTUNE_BQ_TABLE", "").strip()
+        bq_table = AUTOTUNE_BQ_TABLE.strip()
         if bq_table:
             tune_cmd.extend(["--bq-table", bq_table])
         if args.dry_run:

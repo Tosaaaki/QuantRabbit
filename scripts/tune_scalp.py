@@ -23,6 +23,25 @@ DEFAULT_DB_PATH = REPO_ROOT / "logs" / "autotune.db"
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
+
+def _load_autotune_env(name: str) -> str:
+    value = os.getenv(name, "").strip()
+    if value:
+        return value
+    try:
+        from utils.secrets import get_secret
+    except Exception:
+        return ""
+    for key in (name, name.lower()):
+        try:
+            candidate = get_secret(key)
+        except Exception:
+            continue
+        if candidate:
+            return str(candidate).strip()
+    return ""
+
+
 try:
     from autotune.database import (
         AUTOTUNE_BQ_TABLE,
@@ -32,7 +51,7 @@ try:
         record_run_bigquery,
     )
 except Exception:  # pragma: no cover - optional dependency during bootstrap
-    AUTOTUNE_BQ_TABLE = os.getenv("AUTOTUNE_BQ_TABLE", "")
+    AUTOTUNE_BQ_TABLE = _load_autotune_env("AUTOTUNE_BQ_TABLE")
     USE_BIGQUERY = bool(AUTOTUNE_BQ_TABLE)
     get_connection = None  # type: ignore
     record_run = None  # type: ignore
