@@ -30,14 +30,15 @@ def release_lock():
     except FileNotFoundError:
         pass
 
-def list_candles():
-    files = sorted(CANDLES_DIR.glob(DEFAULT_GLOB))
-    return files[-14:]  # 直近 2 週間ぶん程度
+def list_candles(pattern: str = DEFAULT_GLOB):
+    files = sorted(CANDLES_DIR.glob(pattern))
+    return files[-14:]
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--trials", type=int, default=40)
-    ap.add_argument("--strategies", default="M1Scalper,PulseBreak,RangeFader")
+    ap.add_argument("--profile", default="all", help="tuning profile (scalp|micro|macro|all)")
+    ap.add_argument("--trials", type=int, default=0, help="override trials-per-strategy (0 = profile default)")
+    ap.add_argument("--strategies", default="", help="explicit strategy list (single profile only)")
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--write-best", action="store_true")
     args = ap.parse_args()
@@ -60,11 +61,16 @@ def main():
         tune_cmd = [
             sys.executable,
             str(REPO_ROOT / "scripts" / "tune_scalp.py"),
-            "--trials-per-strategy",
-            str(args.trials),
-            "--strategies",
-            args.strategies,
+            "--profile",
+            args.profile,
         ]
+        if args.trials:
+            tune_cmd.extend(["--trials-per-strategy", str(args.trials)])
+        if args.strategies:
+            tune_cmd.extend(["--strategies", args.strategies])
+        bq_table = os.environ.get("AUTOTUNE_BQ_TABLE", "").strip()
+        if bq_table:
+            tune_cmd.extend(["--bq-table", bq_table])
         if args.dry_run:
             tune_cmd.append("--dry-run")
         if args.write_best:

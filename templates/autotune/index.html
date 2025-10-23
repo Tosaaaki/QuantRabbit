@@ -1,31 +1,145 @@
 {% extends "base.html" %}
 {% block content %}
   <div class="card">
-    <h2>Autotune overview</h2>
+    <h2>Operations Dashboard</h2>
+    {% if dashboard.available %}
+      {% if dashboard.generated_label %}
+        <p class="stat-sub">最終更新: {{ dashboard.generated_label }}</p>
+      {% endif %}
+    {% else %}
+      <p class="stat-sub warning">
+        リアルタイムスナップショットを取得できませんでした{% if dashboard.error %}: {{ dashboard.error }}{% endif %}。
+        GCS の設定と `run_sync_pipeline.py` の動作を確認してください。
+      </p>
+    {% endif %}
     <div class="stats-grid">
+      {% set daily_class = 'stat-positive' if dashboard.performance.daily_pl_pips >= 0 else 'stat-negative' %}
       <div class="stat-card">
-        <div class="stat-label">Total runs</div>
-        <div class="stat-value">{{ stats.total or 0 }}</div>
+        <div class="stat-label">Daily P/L</div>
+        <div class="stat-value {{ daily_class }}">{{ "%+.1f"|format(dashboard.performance.daily_pl_pips) }}p</div>
+        <div class="stat-sub">{{ "%+.0f"|format(dashboard.performance.daily_pl_jpy) }} 円</div>
       </div>
+      {% set weekly_class = 'stat-positive' if dashboard.performance.weekly_pl_pips >= 0 else 'stat-negative' %}
+      <div class="stat-card">
+        <div class="stat-label">Weekly P/L</div>
+        <div class="stat-value {{ weekly_class }}">{{ "%+.1f"|format(dashboard.performance.weekly_pl_pips) }}p</div>
+        <div class="stat-sub">{{ "%+.0f"|format(dashboard.performance.weekly_pl_jpy) }} 円</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">Win Rate</div>
+        {% if dashboard.performance.recent_closed %}
+          <div class="stat-value">{{ "%.1f"|format(dashboard.performance.win_rate_percent) }}%</div>
+          <div class="stat-sub">{{ dashboard.performance.wins }} 勝 / {{ dashboard.performance.losses }} 敗</div>
+        {% else %}
+          <div class="stat-value">-</div>
+          <div class="stat-sub">十分な検証データがありません</div>
+        {% endif %}
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">Closed trades (7d)</div>
+        <div class="stat-value">{{ dashboard.performance.recent_closed }}</div>
+        <div class="stat-sub">累積 {{ dashboard.performance.total_trades }} 件</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">Open positions</div>
+        <div class="stat-value">{{ dashboard.performance.open_positions }}</div>
+        <div class="stat-sub">Net units {{ "%+.0f"|format(dashboard.performance.net_units) }}</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">New trades (snapshot)</div>
+        <div class="stat-value">{{ dashboard.performance.new_trades }}</div>
+        <div class="stat-sub">last trade {{ dashboard.performance.last_trade_at or '-' }}</div>
+      </div>
+    </div>
+
+    <div class="section-title">Autotune セクション</div>
+    <div class="stats-grid">
       <div class="stat-card">
         <div class="stat-label">Pending</div>
         <div class="stat-value">{{ stats.pending or 0 }}</div>
+        <div class="stat-sub">総件数 {{ stats.total or 0 }}</div>
       </div>
       <div class="stat-card">
         <div class="stat-label">Approved</div>
         <div class="stat-value">{{ stats.approved or 0 }}</div>
+        <div class="stat-sub">Rejected {{ stats.rejected or 0 }}</div>
       </div>
       <div class="stat-card">
-        <div class="stat-label">Rejected</div>
-        <div class="stat-value">{{ stats.rejected or 0 }}</div>
+        <div class="stat-label">データソース</div>
+        <div class="stat-value">{{ "BigQuery" if using_bigquery else "SQLite" }}</div>
+        <div class="stat-sub">UI sync pipeline</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">Autotune state</div>
+        <div class="stat-value {{ 'stat-positive' if settings.enabled else 'stat-negative' }}">{{ 'ON' if settings.enabled else 'OFF' }}</div>
+        <div class="stat-sub">
+          {% if stats.last_approved_at %}
+            最終承認 {{ stats.last_approved_at }}
+          {% else %}
+            最終承認履歴なし
+          {% endif %}
+        </div>
       </div>
     </div>
-    <div class="stat-sub" style="margin-top:1rem;">
-      データソース: {{ "BigQuery" if using_bigquery else "SQLite" }}
-      {% if stats.last_approved_at %}
-        ・最終承認: {{ stats.last_approved_at }}
-      {% endif %}
-    </div>
+
+    <div class="section-title">オープンポジション</div>
+    {% if dashboard.open_summary.pockets %}
+      <table>
+        <thead>
+          <tr>
+            <th>Pocket</th>
+            <th>Net Units</th>
+            <th>Long</th>
+            <th>Short</th>
+            <th>Avg Price</th>
+            <th>Positions</th>
+          </tr>
+        </thead>
+        <tbody>
+        {% for row in dashboard.open_summary.pockets %}
+          <tr>
+            <td>{{ row.pocket }}</td>
+            <td>{{ "%+.0f"|format(row.units) }}</td>
+            <td>{{ "%+.0f"|format(row.long_units) }}</td>
+            <td>{{ "%+.0f"|format(-row.short_units) }}</td>
+            <td>{{ "%.3f"|format(row.avg_price) }}</td>
+            <td>{{ row.trades }}</td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    {% else %}
+      <p class="tagline">現在オープンポジションはありません。</p>
+    {% endif %}
+
+    <div class="section-title">最近のトレードハイライト</div>
+    {% if dashboard.highlights %}
+      <table>
+        <thead>
+          <tr>
+            <th>Ticket</th>
+            <th>Pocket</th>
+            <th>P/L (pips)</th>
+            <th>P/L (JPY)</th>
+            <th>Closed</th>
+          </tr>
+        </thead>
+        <tbody>
+        {% for row in dashboard.highlights %}
+          {% set pill_class = 'pill gain' if row.kind == 'gain' else 'pill loss' %}
+          <tr>
+            <td>{{ row.ticket_id }}</td>
+            <td>{{ row.pocket }}</td>
+            <td><span class="{{ pill_class }}">{{ "%+.1f"|format(row.pl_pips) }}</span></td>
+            <td>{{ "%+.0f"|format(row.pl_jpy) }}</td>
+            <td>{{ row.closed_at or '-' }}</td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    {% else %}
+      <p class="tagline">表示できるトレードがまだありません。</p>
+    {% endif %}
   </div>
 
   <div class="card">

@@ -20,5 +20,30 @@
     "rsi_upper": 64,
     "ema_length": 20,
     "band_type": "ema"
+  },
+  "BB_RSI": {
+    "tp_scale": 0.98,
+    "sl_scale": 1.05,
+    "bbw_min": 0.11,
+    "bbw_max": 0.30,
+    "atr_pips_max": 10.5,
+    "rsi_lower": 35,
+    "rsi_upper": 65
+  },
+  "TrendMA": {
+    "sl_pips": 30,
+    "tp_pips": 76,
+    "timeout_sec": 50400,
+    "adx_min": 21.5,
+    "ma_spread_min": 0.0022,
+    "ma_spread_scale": 0.7
+  },
+  "Donchian55": {
+    "sl_pips": 58,
+    "tp_factor": 1.9,
+    "breakout_buffer_pips": 0.8,
+    "atr_pips_max": 150.0,
+    "atr_pips_min": 32.0,
+    "timeout_sec": 172800
   }
 }

@@ -30,13 +30,11 @@ After=network-online.target
 [Service]
 Type=simple
 WorkingDirectory=${REPO_DIR}
-ExecStart=/usr/bin/env python3 scripts/continuous_backtest.py --trials 40 --strategies M1Scalper,PulseBreak,RangeFader
+ExecStart=/usr/bin/env python3 scripts/continuous_backtest.py --profile all --write-best
 Restart=on-failure
 RestartSec=10
 User=${LINUX_USER}
 Environment=PYTHONUNBUFFERED=1
-Environment=AUTOTUNE_BQ_TABLE=${AUTOTUNE_BQ_TABLE:-quantrabbit.autotune_runs}
-Environment=AUTOTUNE_BQ_SETTINGS_TABLE=${AUTOTUNE_BQ_SETTINGS_TABLE:-quantrabbit.autotune_settings}
 Environment=AUTOTUNE_BQ_TABLE=${AUTOTUNE_BQ_TABLE:-quantrabbit.autotune_runs}
 Environment=AUTOTUNE_BQ_SETTINGS_TABLE=${AUTOTUNE_BQ_SETTINGS_TABLE:-quantrabbit.autotune_settings}
 

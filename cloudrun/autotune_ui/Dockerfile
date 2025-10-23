@@ -9,6 +9,7 @@ RUN pip install --no-cache-dir -r /tmp/requirements.txt && rm /tmp/requirements.
 
 COPY apps /app/apps
 COPY autotune /app/autotune
+COPY utils /app/utils
 COPY templates /app/templates
 COPY configs /app/configs
 COPY cloudrun/autotune_ui /app/cloudrun/autotune_ui

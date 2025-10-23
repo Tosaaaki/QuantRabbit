@@ -34,16 +34,31 @@ if str(REPO_ROOT) not in sys.path:
 from strategies.scalping.m1_scalper import M1Scalper
 from strategies.scalping.range_fader import RangeFader
 from strategies.scalping.pulse_break import PulseBreak
+from strategies.mean_reversion.bb_rsi import BBRsi
+from strategies.trend.ma_cross import MovingAverageCross
+from strategies.breakout.donchian55 import Donchian55
 
 
 PIP_VALUE = 0.01
 DEFAULT_TIMEOUT_SEC = 30 * 60  # 30 minutes
 DEFAULT_PARAM_FILE = REPO_ROOT / "configs" / "scalp_active_params.json"
 
+TIMEFRAME_RULES = {
+    "M1": None,
+    "M5": "5min",
+    "M15": "15min",
+    "H1": "1h",
+    "H4": "4h",
+    "D1": "1d",
+}
+
 STRATEGY_MAP = {
     M1Scalper.name: M1Scalper,
     RangeFader.name: RangeFader,
     PulseBreak.name: PulseBreak,
+    BBRsi.name: BBRsi,
+    MovingAverageCross.name: MovingAverageCross,
+    Donchian55.name: Donchian55,
 }
 
 
@@ -58,7 +73,25 @@ def parse_time(ts: str) -> datetime:
     return datetime.fromisoformat(ts)
 
 
-def load_candles(path: Path) -> pd.DataFrame:
+def _resample_dataframe(df: pd.DataFrame, timeframe: str) -> pd.DataFrame:
+    rule = TIMEFRAME_RULES.get(timeframe)
+    if not rule:
+        return df
+
+    if "time" not in df.columns:
+        return df
+
+    resampled = (
+        df.set_index("time")
+        .resample(rule)
+        .agg({"open": "first", "high": "max", "low": "min", "close": "last"})
+    )
+    resampled = resampled.dropna(subset=["open", "high", "low", "close"])
+    resampled.reset_index(inplace=True)
+    return resampled
+
+
+def load_candles(path: Path, timeframe: str = "M1") -> pd.DataFrame:
     with path.open() as f:
         payload = json.load(f)
 
@@ -79,14 +112,23 @@ def load_candles(path: Path) -> pd.DataFrame:
     df = pd.DataFrame(rows)
     df.sort_values("time", inplace=True)
     df.reset_index(drop=True, inplace=True)
-    return df
+    return _resample_dataframe(df, timeframe)
 
 
-def compute_indicators(df: pd.DataFrame) -> pd.DataFrame:
+def compute_indicators(df: pd.DataFrame, *, timeframe: str = "M1") -> pd.DataFrame:
     prices = df["close"]
     df["ema20"] = prices.ewm(span=20, adjust=False, min_periods=20).mean()
     df["ema50"] = prices.ewm(span=50, adjust=False, min_periods=50).mean()
+    df["ema100"] = prices.ewm(span=100, adjust=False, min_periods=100).mean()
+    df["ma10"] = prices.rolling(window=10, min_periods=10).mean()
     df["ma20"] = prices.rolling(window=20, min_periods=20).mean()
+    df["ma50"] = prices.rolling(window=50, min_periods=50).mean()
+
+    std20 = prices.rolling(window=20, min_periods=20).std()
+    # Bollinger band width relative to moving average
+    df["bbw"] = (
+        (std20 * 4).div(df["ma20"].abs().replace(0.0, np.nan))
+    ).replace([np.inf, -np.inf], np.nan).fillna(0.0)
 
     delta = prices.diff()
     gain = delta.clip(lower=0.0)
@@ -105,13 +147,49 @@ def compute_indicators(df: pd.DataFrame) -> pd.DataFrame:
         ],
         axis=1,
     ).max(axis=1)
-    df["atr"] = tr.ewm(alpha=1 / 14, adjust=False, min_periods=14).mean().fillna(0.0)
+    atr = tr.ewm(alpha=1 / 14, adjust=False, min_periods=14).mean().fillna(0.0)
+    df["atr"] = atr
     df["atr_pips"] = df["atr"] / PIP_VALUE
+
+    df["adx"] = _compute_adx(df["high"], df["low"], prices)
 
     pip_move = prices.diff().abs() / PIP_VALUE
     df["vol_5m"] = pip_move.rolling(window=5, min_periods=5).mean().fillna(0.0)
 
     return df
+
+
+def _compute_adx(high: pd.Series, low: pd.Series, close: pd.Series, period: int = 14) -> pd.Series:
+    up_move = high.diff()
+    down_move = low.shift(1) - low
+
+    plus_dm = np.where((up_move > down_move) & (up_move > 0), up_move, 0.0)
+    minus_dm = np.where((down_move > up_move) & (down_move > 0), down_move, 0.0)
+
+    tr1 = (high - low).abs()
+    tr2 = (high - close.shift(1)).abs()
+    tr3 = (low - close.shift(1)).abs()
+    tr = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
+    atr = tr.ewm(alpha=1 / period, adjust=False, min_periods=period).mean()
+
+    plus_di = (
+        pd.Series(plus_dm, index=high.index)
+        .ewm(alpha=1 / period, adjust=False, min_periods=period)
+        .mean()
+    )
+    minus_di = (
+        pd.Series(minus_dm, index=low.index)
+        .ewm(alpha=1 / period, adjust=False, min_periods=period)
+        .mean()
+    )
+    atr_safe = atr.replace(0.0, np.nan)
+    plus_di = 100 * (plus_di / atr_safe)
+    minus_di = 100 * (minus_di / atr_safe)
+
+    dx = (plus_di - minus_di).abs() / (plus_di + minus_di).replace(0.0, np.nan)
+    dx = dx.fillna(0.0) * 100
+    adx = dx.ewm(alpha=1 / period, adjust=False, min_periods=period).mean()
+    return adx.fillna(0.0)
 
 
 def ensure_ema(df: pd.DataFrame, periods: Iterable[int]) -> None:
@@ -135,6 +213,7 @@ class Trade:
     tp_price: float
     sl_price: float
     timeout_sec: int
+    timeframe: str
     outcome: Optional[str] = None
     exit_index: Optional[int] = None
     exit_time: Optional[datetime] = None
@@ -186,6 +265,8 @@ def should_skip_by_params(
     atr_pips = fac.get("atr_pips")
     if "atr_pips_max" in params and atr_pips is not None and atr_pips > float(params["atr_pips_max"]):
         return True
+    if "atr_pips_min" in params and atr_pips is not None and atr_pips < float(params["atr_pips_min"]):
+        return True
 
     # trend_ema parameter (mainly for PulseBreak)
     if "trend_ema" in params:
@@ -196,6 +277,29 @@ def should_skip_by_params(
             ema_trend = float(row[col])
             if abs(ema_short - ema_trend) < 0.0008:
                 return True
+
+    bbw = fac.get("bbw")
+    if "bbw_min" in params and bbw is not None and bbw < float(params["bbw_min"]):
+        return True
+    if "bbw_max" in params and bbw is not None and bbw > float(params["bbw_max"]):
+        return True
+
+    adx = fac.get("adx")
+    if "adx_min" in params and adx is not None and adx < float(params["adx_min"]):
+        return True
+    if "adx_max" in params and adx is not None and adx > float(params["adx_max"]):
+        return True
+
+    if "ma_spread_min" in params or "ma_spread_max" in params:
+        ma10 = fac.get("ma10")
+        ma20 = fac.get("ma20")
+        if ma10 is None or ma20 is None or ma20 == 0:
+            return True
+        spread = abs(ma10 - ma20) / abs(ma20)
+        if "ma_spread_min" in params and spread < float(params["ma_spread_min"]):
+            return True
+        if "ma_spread_max" in params and spread > float(params["ma_spread_max"]):
+            return True
 
     return False
 
@@ -219,23 +323,58 @@ def apply_signal_overrides(
 
     # Strategy specific filters
     rsi = fac.get("rsi")
+    action = signal.get("action")
     if strat_name == M1Scalper.name and rsi is not None:
         low = params.get("rsi_entry_low")
         high = params.get("rsi_entry_high")
-        if signal.get("action") == "OPEN_LONG" and low is not None and rsi > float(low):
+        if action == "OPEN_LONG" and low is not None and rsi > float(low):
             return None
-        if signal.get("action") == "OPEN_SHORT" and high is not None and rsi < float(high):
+        if action == "OPEN_SHORT" and high is not None and rsi < float(high):
             return None
 
-    # RangeFader specific RSI bounds
-    if strat_name == RangeFader.name:
+    if strat_name == RangeFader.name and rsi is not None:
+        lower = params.get("rsi_lower")
+        upper = params.get("rsi_upper")
+        if action == "OPEN_LONG" and lower is not None and rsi > float(lower):
+            return None
+        if action == "OPEN_SHORT" and upper is not None and rsi < float(upper):
+            return None
+
+    if strat_name == BBRsi.name:
+        tp *= float(params.get("tp_scale", 1.0))
+        sl *= float(params.get("sl_scale", 1.0))
         if rsi is not None:
             lower = params.get("rsi_lower")
             upper = params.get("rsi_upper")
-            if signal.get("action") == "OPEN_LONG" and lower is not None and rsi > float(lower):
+            if action == "OPEN_LONG" and lower is not None and rsi > float(lower):
                 return None
-            if signal.get("action") == "OPEN_SHORT" and upper is not None and rsi < float(upper):
+            if action == "OPEN_SHORT" and upper is not None and rsi < float(upper):
                 return None
+
+    if strat_name == Donchian55.name:
+        buffer = params.get("breakout_buffer_pips")
+        price = fac.get("close")
+        if buffer is not None and price is not None:
+            high_val = fac.get("donchian_high")
+            low_val = fac.get("donchian_low")
+            buffer_px = float(buffer) * PIP_VALUE
+            if action == "OPEN_LONG" and high_val is not None and price < high_val + buffer_px:
+                return None
+            if action == "OPEN_SHORT" and low_val is not None and price > low_val - buffer_px:
+                return None
+        tp_factor = params.get("tp_factor")
+        if tp_factor is not None and sl > 0:
+            tp = float(tp_factor) * sl
+
+    if strat_name == MovingAverageCross.name:
+        spread_boost = params.get("ma_spread_scale")
+        if spread_boost is not None:
+            ma10 = fac.get("ma10")
+            ma20 = fac.get("ma20")
+            if ma10 is not None and ma20 is not None and ma20 != 0:
+                spread = abs(ma10 - ma20) / abs(ma20)
+                tp *= 1.0 + spread * float(spread_boost)
+
     return sl, tp, timeout_sec
 
 
@@ -243,14 +382,22 @@ def simulate(
     df: pd.DataFrame,
     strategies: List[Any],
     params_per_strategy: Dict[str, Dict[str, Any]],
+    *,
+    timeframe: str,
 ) -> Dict[str, List[Trade]]:
     open_trades: Dict[str, List[Trade]] = defaultdict(list)
     closed_trades: Dict[str, List[Trade]] = defaultdict(list)
     fac_keys = [
+        "open",
         "close",
         "ema20",
         "ema50",
+        "ema100",
+        "ma10",
         "ma20",
+        "ma50",
+        "bbw",
+        "adx",
         "rsi",
         "atr",
         "atr_pips",
@@ -307,6 +454,29 @@ def simulate(
         fac = {k: float(row[k]) for k in fac_keys if k in row and not pd.isna(row[k])}
         fac.setdefault("atr_pips", float(row.get("atr_pips", 0.0)))
         fac.setdefault("vol_5m", float(row.get("vol_5m", 0.0)))
+        fac.setdefault("timeframe", timeframe)
+
+        context_window = 120 if timeframe in {"H1", "H4", "D1"} else 80
+        start_idx = max(0, idx - context_window + 1)
+        ctx_df = df.iloc[start_idx : idx + 1]
+        candles_list: List[Dict[str, float]] = []
+        for item in ctx_df.itertuples(index=False):
+            candles_list.append(
+                {
+                    "open": float(item.open),
+                    "high": float(item.high),
+                    "low": float(item.low),
+                    "close": float(item.close),
+                }
+            )
+        fac["candles"] = candles_list[-60:]
+        if len(candles_list) >= 56:
+            history = candles_list[:-1]
+            fac["donchian_high"] = max(c["high"] for c in history)
+            fac["donchian_low"] = min(c["low"] for c in history)
+        else:
+            fac["donchian_high"] = None
+            fac["donchian_low"] = None
 
         for cls in strategies:
             strat_name = cls.name
@@ -351,6 +521,7 @@ def simulate(
                 tp_price=tp_price,
                 sl_price=sl_price,
                 timeout_sec=timeout_sec,
+                timeframe=timeframe,
             )
             open_trades[strat_name].append(trade)
 
@@ -446,10 +617,11 @@ def run_backtest(
     candles_path: str,
     params_overrides: Optional[Dict[str, Dict[str, Any]]] = None,
     strategies: Optional[List[str]] = None,
+    timeframe: str = "M1",
 ) -> Dict[str, Any]:
     candles_file = Path(candles_path)
-    df = load_candles(candles_file)
-    df = compute_indicators(df)
+    df = load_candles(candles_file, timeframe=timeframe)
+    df = compute_indicators(df, timeframe=timeframe)
 
     active_params = load_params(DEFAULT_PARAM_FILE if DEFAULT_PARAM_FILE.exists() else None)
     overrides = params_overrides or {}
@@ -465,11 +637,16 @@ def run_backtest(
             ema_periods.append(int(params["trend_ema"]))
     ensure_ema(df, ema_periods)
 
-    trades = simulate(df, selected_strategies, merged_params)
+    trades = simulate(df, selected_strategies, merged_params, timeframe=timeframe)
     metrics = summarise_trades(trades)
-    candle_date = candles_file.stem.replace("candles_M1_", "")
+    stem = candles_file.stem
+    if stem.startswith("candles_"):
+        candle_date = stem.split("_", 2)[-1]
+    else:
+        candle_date = stem
     result = {
         "date": candle_date,
+        "timeframe": timeframe,
         "summary": metrics["summary"],
         "by_strategy": metrics["by_strategy"],
         "params_used": {k: merged_params.get(k, {}) for k in metrics["by_strategy"].keys()},
@@ -488,11 +665,17 @@ def main() -> None:
         help="Comma separated strategy names (e.g. M1Scalper,PulseBreak)",
     )
     parser.add_argument("--json-out", default="", help="Output JSON path")
+    parser.add_argument(
+        "--timeframe",
+        default="M1",
+        choices=sorted(TIMEFRAME_RULES.keys()),
+        help="Timeframe to evaluate (default: M1)",
+    )
     args = parser.parse_args()
 
     overrides = load_params(Path(args.params_json)) if args.params_json else {}
     strat_list = [s for s in args.strategies.split(",") if s] if args.strategies else None
-    result = run_backtest(args.candles, overrides, strat_list)
+    result = run_backtest(args.candles, overrides, strat_list, timeframe=args.timeframe)
 
     if args.json_out:
         out_path = Path(args.json_out)

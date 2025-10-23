@@ -1,10 +1,10 @@
 {
   "M1Scalper": {
-    "sl_pips": 3,
-    "tp_pips": 3,
-    "timeout_sec": 1163,
-    "rsi_entry_low": 37,
-    "rsi_entry_high": 59
+    "sl_pips": 5,
+    "tp_pips": 6,
+    "timeout_sec": 1599,
+    "rsi_entry_low": 38,
+    "rsi_entry_high": 57
   },
   "PulseBreak": {
     "sl_pips": 5,
@@ -20,5 +20,30 @@
     "rsi_upper": 64,
     "ema_length": 20,
     "band_type": "ema"
+  },
+  "BB_RSI": {
+    "tp_scale": 1.0,
+    "sl_scale": 1.0,
+    "bbw_min": 0.12,
+    "bbw_max": 0.28,
+    "atr_pips_max": 9.0,
+    "rsi_lower": 36,
+    "rsi_upper": 64
+  },
+  "TrendMA": {
+    "sl_pips": 32,
+    "tp_pips": 70,
+    "timeout_sec": 43200,
+    "adx_min": 20.0,
+    "ma_spread_min": 0.0018,
+    "ma_spread_scale": 0.6
+  },
+  "Donchian55": {
+    "sl_pips": 60,
+    "tp_factor": 2.0,
+    "breakout_buffer_pips": 1.0,
+    "atr_pips_max": 140.0,
+    "atr_pips_min": 35.0,
+    "timeout_sec": 172800
   }
 }

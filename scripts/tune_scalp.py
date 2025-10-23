@@ -7,6 +7,8 @@ tune_scalp.py
 - 既存の backtest_scalp.py を import できる場合は run_backtest() を直接呼ぶが、
   そうでなければサブプロセスで backtest_scalp.py を起動して JSON を拾う
 """
+from __future__ import annotations
+
 import argparse, json, os, random, subprocess, sys, time, pathlib, datetime
 from typing import Dict, List, Any, Tuple
 
@@ -39,6 +41,54 @@ except Exception:  # pragma: no cover - optional dependency during bootstrap
 StrategyParams = Dict[str, Dict[str, Any]]
 ResultDict = Dict[str, Any]
 
+PROFILE_CONFIGS: Dict[str, Dict[str, Any]] = {
+    "scalp": {
+        "label": "Scalping (M1)",
+        "timeframe": "M1",
+        "strategies": ["M1Scalper", "PulseBreak", "RangeFader"],
+        "candles_glob": "candles_M1_*.json",
+        "valid_ratio": 0.3,
+        "trials_per_strategy": 40,
+        "min_trades": 8,
+        "profit_factor_min": 1.05,
+        "max_dd_pips": 12.0,
+        "file_lookback": 12,
+        "dd_penalty": 0.02,
+        "pf_cap": 1.6,
+        "dd_anchor_pips": 6.0,
+    },
+    "micro": {
+        "label": "Micro (M5)",
+        "timeframe": "M5",
+        "strategies": ["BB_RSI"],
+        "candles_glob": "candles_M1_*.json",
+        "valid_ratio": 0.3,
+        "trials_per_strategy": 35,
+        "min_trades": 6,
+        "profit_factor_min": 1.05,
+        "max_dd_pips": 18.0,
+        "file_lookback": 14,
+        "dd_penalty": 0.015,
+        "pf_cap": 1.7,
+        "dd_anchor_pips": 10.0,
+    },
+    "macro": {
+        "label": "Macro (H4)",
+        "timeframe": "H4",
+        "strategies": ["TrendMA", "Donchian55"],
+        "candles_glob": "candles_M1_*.json",
+        "valid_ratio": 0.4,
+        "trials_per_strategy": 28,
+        "min_trades": 4,
+        "profit_factor_min": 1.08,
+        "max_dd_pips": 240.0,
+        "file_lookback": 20,
+        "dd_penalty": 0.01,
+        "pf_cap": 1.8,
+        "dd_anchor_pips": 120.0,
+    },
+}
+
 def _load_param_space(path: pathlib.Path) -> Dict[str, Any]:
     with open(path, "r") as f:
         return json.load(f)
@@ -62,16 +112,22 @@ def sample_params_for_strategy(space: Dict[str, Any], seed=None) -> Dict[str, An
             params[k] = rng.randint(int(spec["min"]), int(spec["max"]))
         elif t == "float":
             lo, hi = float(spec["min"]), float(spec["max"])
-            params[k] = round(rng.uniform(lo, hi), 2)
+            precision = int(spec.get("precision", 2))
+            params[k] = round(rng.uniform(lo, hi), precision)
         elif t == "choice":
             params[k] = rng.choice(list(spec["choices"]))
         else:
             raise ValueError(f"Unsupported type in param space: {t}")
     return params
 
-def list_candle_files(candles_dir: pathlib.Path, pattern: str) -> List[pathlib.Path]:
+def list_candle_files(
+    candles_dir: pathlib.Path, pattern: str, limit: int | None = None
+) -> List[pathlib.Path]:
     files = sorted(candles_dir.glob(pattern))
-    return [p for p in files if p.is_file()]
+    filtered = [p for p in files if p.is_file()]
+    if limit is not None and limit > 0:
+        return filtered[-limit:]
+    return filtered
 
 def _try_import_backtester():
     # 可能なら import して直接呼び出す（パッチ適用後の run_backtest を期待）
@@ -84,7 +140,13 @@ def _try_import_backtester():
         return None
     return None
 
-def run_backtest_once(candles_path: pathlib.Path, strategies_params: StrategyParams, strategies: List[str]) -> ResultDict:
+def run_backtest_once(
+    candles_path: pathlib.Path,
+    strategies_params: StrategyParams,
+    strategies: List[str],
+    *,
+    timeframe: str,
+) -> ResultDict:
     """
     backtest_scalp.py を 1 回実行して JSON 結果を取得
     """
@@ -95,7 +157,8 @@ def run_backtest_once(candles_path: pathlib.Path, strategies_params: StrategyPar
             return backtester.run_backtest(
                 candles_path=str(candles_path),
                 params_overrides=strategies_params,
-                strategies=strategies
+                strategies=strategies,
+                timeframe=timeframe,
             )
         except Exception as e:
             print(f"[WARN] run_backtest() direct call failed -> fallback to subprocess: {e}", file=sys.stderr)
@@ -109,11 +172,18 @@ def run_backtest_once(candles_path: pathlib.Path, strategies_params: StrategyPar
         json.dump(strategies_params, f, ensure_ascii=False)
     try:
         cmd = [
-            sys.executable, str(BACKTEST_SCRIPT),
-            "--candles", str(candles_path),
-            "--strategies", ",".join(strategies),
-            "--params-json", str(params_json_path),
-            "--json-out", str(tmp_json)
+            sys.executable,
+            str(BACKTEST_SCRIPT),
+            "--candles",
+            str(candles_path),
+            "--strategies",
+            ",".join(strategies),
+            "--params-json",
+            str(params_json_path),
+            "--json-out",
+            str(tmp_json),
+            "--timeframe",
+            timeframe,
         ]
         r = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
         if r.returncode != 0:
@@ -164,24 +234,31 @@ def merge_metrics(metrics_list: List[Dict[str, Any]]) -> Dict[str, Any]:
         "max_dd_pips": round(max_dd, 2)
     }
 
-def passes_gates(agg: Dict[str, Any]) -> bool:
-    # 最低限のゲート（保守的）
-    if agg["trades"] < 8:  # 試行回数が少なすぎると信用しない
+def passes_gates(agg: Dict[str, Any], profile_cfg: Dict[str, Any]) -> bool:
+    min_trades = int(profile_cfg.get("min_trades", 8))
+    pf_min = float(profile_cfg.get("profit_factor_min", 1.05))
+    dd_limit = float(profile_cfg.get("max_dd_pips", 12.0))
+
+    if agg["trades"] < min_trades:
         return False
-    if agg["profit_factor"] < 1.05:
+    if agg["profit_factor"] < pf_min:
         return False
-    if agg["max_dd_pips"] > 12.0:
+    if agg["max_dd_pips"] > dd_limit:
         return False
     return True
 
-def score(agg: Dict[str, Any]) -> float:
-    # ゲートを超えた上でのスコアリング（PF 重視、過度の DD にペナルティ）
-    pf = min(agg["profit_factor"], 1.6)
+
+def score(agg: Dict[str, Any], profile_cfg: Dict[str, Any]) -> float:
+    pf_cap = float(profile_cfg.get("pf_cap", 1.6))
+    dd_penalty = float(profile_cfg.get("dd_penalty", 0.02))
+    dd_anchor = float(profile_cfg.get("dd_anchor_pips", 6.0))
+
+    pf = min(agg["profit_factor"], pf_cap)
     wr = agg["win_rate"]
     dd = agg["max_dd_pips"]
     base = pf
-    bonus = 0.15 * max(0.0, wr - 0.5)  # 50%超から加点
-    penalty = 0.02 * max(0.0, dd - 6.0)  # DD>6pips から緩やかに減点
+    bonus = 0.15 * max(0.0, wr - 0.5)
+    penalty = dd_penalty * max(0.0, dd - dd_anchor)
     return base + bonus - penalty
 
 def walk_forward_split(files: List[pathlib.Path], valid_ratio: float = 0.3) -> Tuple[List[pathlib.Path], List[pathlib.Path]]:
@@ -192,12 +269,14 @@ def walk_forward_split(files: List[pathlib.Path], valid_ratio: float = 0.3) -> T
     return files[:k], files[k:]
 
 def main():
+    profile_choices = ", ".join(PROFILE_CONFIGS.keys())
     ap = argparse.ArgumentParser()
     ap.add_argument("--candles-dir", default=str(DEFAULT_LOG_DIR), help="logs ディレクトリのパス")
-    ap.add_argument("--glob", default=DEFAULT_CANDLES_GLOB, help="candles ファイルの glob")
-    ap.add_argument("--dates", default="", help="'20251020,20251021' のように日付指定。空なら全て")
-    ap.add_argument("--strategies", default="M1Scalper,PulseBreak,RangeFader")
-    ap.add_argument("--trials-per-strategy", type=int, default=40)
+    ap.add_argument("--profile", default="scalp", help=f"対象プロファイル（{profile_choices} または 'all'）")
+    ap.add_argument("--glob", default="", help="candles ファイルの glob。空ならプロファイル既定を使用")
+    ap.add_argument("--dates", default="", help="'20251020,20251021' のように日付指定。空なら最新を自動選択")
+    ap.add_argument("--strategies", default="", help="カンマ区切りで明示指定（単一プロファイル時のみ有効）")
+    ap.add_argument("--trials-per-strategy", type=int, default=0, help="各ストラテジーの試行数。0 ならプロファイル既定")
     ap.add_argument("--seed", type=int, default=42)
     ap.add_argument("--write-best", action="store_true", help="改善あれば configs/scalp_active_params.json を上書き")
     ap.add_argument("--outdir", default=str(REPO_ROOT / "logs" / "tuning"))
@@ -214,94 +293,161 @@ def main():
     args = ap.parse_args()
 
     bq_table = args.bq_table or AUTOTUNE_BQ_TABLE
-
     candles_dir = pathlib.Path(args.candles_dir)
-    all_files = list_candle_files(candles_dir, args.glob)
-    if args.dates:
-        target_dates = set(args.dates.split(","))
-        files = [p for p in all_files if any(d in p.name for d in target_dates)]
-    else:
-        files = all_files[-10:]  # 直近 10 日ぶん程度
-
-    if not files:
-        print("[ERR] candles ファイルが見つかりません。", file=sys.stderr)
-        sys.exit(2)
-
-    strategies = [s.strip() for s in args.strategies.split(",") if s.strip()]
-    random.seed(args.seed)
-
-    space_all = _load_param_space(PARAM_SPACE_PATH)
     outdir = pathlib.Path(args.outdir)
     outdir.mkdir(parents=True, exist_ok=True)
 
-    train_files, valid_files = walk_forward_split(files, valid_ratio=0.3)
+    space_all = _load_param_space(PARAM_SPACE_PATH)
 
-    best_by_strategy = {}
-    logs = []
+    profile_input = args.profile.lower().strip()
+    if profile_input == "all":
+        profile_names = list(PROFILE_CONFIGS.keys())
+    else:
+        profile_names = [name.strip() for name in args.profile.split(",") if name.strip()]
+    if not profile_names:
+        print("[ERR] プロファイルが指定されていません", file=sys.stderr)
+        sys.exit(2)
+    for name in profile_names:
+        if name not in PROFILE_CONFIGS:
+            print(f"[ERR] 未知のプロファイルです: {name}", file=sys.stderr)
+            sys.exit(2)
 
-    for strat in strategies:
-        space = space_all.get(strat)
-        if not space:
-            print(f"[WARN] パラメータ空間が未定義: {strat}", file=sys.stderr)
+    user_strategies = [s.strip() for s in args.strategies.split(",") if s.strip()]
+    if user_strategies and len(profile_names) > 1:
+        print("[ERR] --strategies は単一プロファイル指定時のみ利用できます", file=sys.stderr)
+        sys.exit(2)
+
+    ts = datetime.datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+    aggregated_best: Dict[str, Dict[str, Any]] = {}
+    profile_results: Dict[str, Dict[str, Any]] = {}
+
+    for idx, profile_name in enumerate(profile_names):
+        cfg = PROFILE_CONFIGS[profile_name]
+        pattern = args.glob or cfg.get("candles_glob", DEFAULT_CANDLES_GLOB)
+        files_all = list_candle_files(candles_dir, pattern)
+        if args.dates:
+            target_dates = set(d.strip() for d in args.dates.split(",") if d.strip())
+            files = [p for p in files_all if any(d in p.name for d in target_dates)]
+        else:
+            lookback = cfg.get("file_lookback")
+            files = files_all[-int(lookback) :] if lookback else files_all
+
+        if not files:
+            print(f"[WARN] profile={profile_name}: candles が見つかりません (pattern={pattern})", file=sys.stderr)
             continue
 
-        best = None
-        for t in range(args.trials_per_strategy):
-            params = sample_params_for_strategy(space, seed=(args.seed + t))
-            # 全ストラテジの params 辞書に載せる
-            merged_params = {strat: params}
+        valid_ratio = float(cfg.get("valid_ratio", 0.3))
+        train_files, valid_files = walk_forward_split(files, valid_ratio=valid_ratio)
 
-            # 学習期間で評価
-            train_metrics = []
-            for cp in train_files:
-                r = run_backtest_once(cp, merged_params, [strat])
-                m = compute_metrics(r)
-                train_metrics.append(m)
-            agg_train = merge_metrics(train_metrics)
+        selected_strategies = user_strategies or cfg.get("strategies", [])
+        if not selected_strategies:
+            print(f"[WARN] profile={profile_name}: strategies が未設定のためスキップします", file=sys.stderr)
+            continue
 
-            if not passes_gates(agg_train):
-                logs.append({"strategy": strat, "trial": t, "phase": "train", "params": params, "agg": agg_train, "status":"reject_gate"})
+        trials = args.trials_per_strategy or int(cfg.get("trials_per_strategy", 40))
+        best_by_strategy: Dict[str, Dict[str, Any]] = {}
+        logs: List[Dict[str, Any]] = []
+
+        for strat in selected_strategies:
+            space = space_all.get(strat)
+            if not space:
+                print(f"[WARN] パラメータ空間が未定義: {strat}", file=sys.stderr)
                 continue
 
-            # 検証期間で確認
-            valid_metrics = []
-            for cp in valid_files:
-                r = run_backtest_once(cp, merged_params, [strat])
-                m = compute_metrics(r)
-                valid_metrics.append(m)
-            agg_valid = merge_metrics(valid_metrics) if valid_metrics else agg_train
+            best: Dict[str, Any] | None = None
+            for t in range(trials):
+                seed_val = args.seed + idx * 1000 + t
+                params = sample_params_for_strategy(space, seed=seed_val)
+                merged_params = {strat: params}
 
-            sc = score(agg_valid)
-            rec = {"strategy": strat, "trial": t, "params": params, "train": agg_train, "valid": agg_valid, "score": sc}
-            logs.append({**rec, "status":"accepted"})
+                train_metrics = []
+                for cp in train_files:
+                    result = run_backtest_once(cp, merged_params, [strat], timeframe=cfg["timeframe"])
+                    train_metrics.append(compute_metrics(result))
+                agg_train = merge_metrics(train_metrics)
 
-            if best is None or sc > best["score"]:
-                best = rec
+                if not passes_gates(agg_train, cfg):
+                    logs.append(
+                        {
+                            "profile": profile_name,
+                            "timeframe": cfg["timeframe"],
+                            "strategy": strat,
+                            "trial": t,
+                            "phase": "train",
+                            "params": params,
+                            "agg": agg_train,
+                            "status": "reject_gate",
+                        }
+                    )
+                    continue
 
-        if best:
-            best_by_strategy[strat] = best
+                valid_metrics = []
+                for cp in valid_files:
+                    result = run_backtest_once(cp, merged_params, [strat], timeframe=cfg["timeframe"])
+                    valid_metrics.append(compute_metrics(result))
+                agg_valid_raw = merge_metrics(valid_metrics) if valid_metrics else dict(agg_train)
 
-    # 出力
-    ts = datetime.datetime.utcnow().strftime("%Y%m%d_%H%M%S")
-    out_path = outdir / f"tuning_{ts}.json"
-    with open(out_path, "w") as f:
-        json.dump({
-            "timestamp_utc": ts,
+                train_payload = dict(agg_train)
+                train_payload.update({"profile": profile_name, "timeframe": cfg["timeframe"], "window": "train"})
+                valid_payload = dict(agg_valid_raw)
+                valid_payload.update({"profile": profile_name, "timeframe": cfg["timeframe"], "window": "valid"})
+
+                sc = score(agg_valid_raw, cfg)
+                rec = {
+                    "strategy": strat,
+                    "trial": t,
+                    "params": params,
+                    "train": train_payload,
+                    "valid": valid_payload,
+                    "score": sc,
+                    "profile": profile_name,
+                    "timeframe": cfg["timeframe"],
+                }
+                logs.append({**rec, "status": "accepted"})
+
+                if best is None or sc > best["score"]:
+                    best = rec
+
+            if best:
+                best_by_strategy[strat] = best
+
+        profile_results[profile_name] = {
+            "timeframe": cfg["timeframe"],
             "files_train": [p.name for p in train_files],
             "files_valid": [p.name for p in valid_files],
             "best_by_strategy": best_by_strategy,
-            "logs": logs[-500:]  # ログは直近 500 件だけ
-        }, f, ensure_ascii=False, indent=2)
+            "logs": logs[-500:],
+        }
+
+        for strat, rec in best_by_strategy.items():
+            existing = aggregated_best.get(strat)
+            if not existing or rec["score"] > existing["score"]:
+                aggregated_best[strat] = rec
+
+    if not aggregated_best:
+        print("[ERR] 有効なチューニング結果が得られませんでした", file=sys.stderr)
+        sys.exit(3)
+
+    out_payload = {
+        "timestamp_utc": ts,
+        "profiles": profile_results,
+        "best_by_strategy": aggregated_best,
+    }
+
+    out_path = outdir / f"tuning_{ts}.json"
+    with open(out_path, "w") as f:
+        json.dump(out_payload, f, ensure_ascii=False, indent=2)
 
     print(f"[INFO] tuning result saved: {out_path}")
 
-    if args.record_db and best_by_strategy and get_connection and record_run:
+    if args.record_db and get_connection and record_run:
         try:
             conn = get_connection(pathlib.Path(args.record_db))
-            for strat, rec in best_by_strategy.items():
+            for strat, rec in aggregated_best.items():
+                run_id = f"{rec['profile']}-{ts}"
                 record_run(
                     conn,
-                    run_id=ts,
+                    run_id=run_id,
                     strategy=strat,
                     params=rec["params"],
                     train=rec["train"],
@@ -314,11 +460,12 @@ def main():
         except Exception as exc:  # pragma: no cover
             print(f"[WARN] failed to record tuning result: {exc}", file=sys.stderr)
 
-    if best_by_strategy and record_run_bigquery and bq_table:
+    if record_run_bigquery and bq_table:
         try:
-            for strat, rec in best_by_strategy.items():
+            for strat, rec in aggregated_best.items():
+                run_id = f"{rec['profile']}-{ts}"
                 record_run_bigquery(
-                    run_id=ts,
+                    run_id=run_id,
                     strategy=strat,
                     params=rec["params"],
                     train=rec["train"],
@@ -331,22 +478,22 @@ def main():
         except Exception as exc:  # pragma: no cover
             print(f"[WARN] failed to record tuning result to BigQuery: {exc}", file=sys.stderr)
 
-    if args.write_best and best_by_strategy:
-        # 既存 active を読み込み、更新（存在しない場合は新規作成）
-        active = {}
+    if args.write_best:
+        active: Dict[str, Any] = {}
         if ACTIVE_PARAMS_PATH.exists():
             try:
                 with open(ACTIVE_PARAMS_PATH, "r") as f:
                     active = json.load(f)
             except Exception:
                 active = {}
-        for strat, rec in best_by_strategy.items():
+        for strat, rec in aggregated_best.items():
             active[strat] = rec["params"]
         tmp = ACTIVE_PARAMS_PATH.with_suffix(".json.tmp")
         with open(tmp, "w") as f:
             json.dump(active, f, ensure_ascii=False, indent=2)
         os.replace(tmp, ACTIVE_PARAMS_PATH)
         print(f"[INFO] updated active params -> {ACTIVE_PARAMS_PATH}")
+
 
 if __name__ == "__main__":
     main()
