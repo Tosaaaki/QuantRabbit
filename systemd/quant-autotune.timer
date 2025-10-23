@@ -1,0 +1,10 @@
+[Unit]
+Description=Run quant-autotune.service every hour
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=1h
+Unit=quant-autotune.service
+
+[Install]
+WantedBy=timers.target

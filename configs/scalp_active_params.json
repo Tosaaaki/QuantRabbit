@@ -1,0 +1,24 @@
+{
+  "M1Scalper": {
+    "sl_pips": 3,
+    "tp_pips": 3,
+    "timeout_sec": 1163,
+    "rsi_entry_low": 37,
+    "rsi_entry_high": 59
+  },
+  "PulseBreak": {
+    "sl_pips": 5,
+    "tp_pips": 7,
+    "timeout_sec": 900,
+    "vol_5m_max": 2.5,
+    "trend_ema": 30
+  },
+  "RangeFader": {
+    "atr_pips_max": 3.2,
+    "vol_5m_max": 2.0,
+    "rsi_lower": 36,
+    "rsi_upper": 64,
+    "ema_length": 20,
+    "band_type": "ema"
+  }
+}

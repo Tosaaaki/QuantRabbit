@@ -1,0 +1,66 @@
+{% extends "autotune/base.html" %}
+{% block content %}
+  <div class="card">
+    <h2>Pending approvals</h2>
+    {% if pending %}
+      <table>
+        <thead>
+          <tr>
+            <th>Run ID</th>
+            <th>Strategy</th>
+            <th>Score</th>
+            <th>PF</th>
+            <th>Trades</th>
+            <th>Max DD (pips)</th>
+            <th>Created</th>
+          </tr>
+        </thead>
+        <tbody>
+        {% for run in pending %}
+          <tr>
+            <td><a href="/runs/{{ run.run_id }}/{{ run.strategy }}">{{ run.run_id }}</a></td>
+            <td>{{ run.strategy }}</td>
+            <td>{{ "%.4f"|format(run.score or 0) }}</td>
+            <td>{{ "%.2f"|format(run.train.profit_factor) if run.train and run.train.profit_factor is not none else "-" }}</td>
+            <td>{{ run.train.trades if run.train else "-" }}</td>
+            <td>{{ run.train.max_dd_pips if run.train else "-" }}</td>
+            <td>{{ run.created_at }}</td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    {% else %}
+      <p>No pending runs 🎉</p>
+    {% endif %}
+  </div>
+
+  <div class="card">
+    <h2>Recent activity</h2>
+    {% if recent %}
+      <table>
+        <thead>
+          <tr>
+            <th>Run ID</th>
+            <th>Strategy</th>
+            <th>Status</th>
+            <th>Score</th>
+            <th>Updated</th>
+          </tr>
+        </thead>
+        <tbody>
+        {% for run in recent %}
+          <tr>
+            <td><a href="/runs/{{ run.run_id }}/{{ run.strategy }}">{{ run.run_id }}</a></td>
+            <td>{{ run.strategy }}</td>
+            <td><span class="badge {{ run.status }}">{{ run.status }}</span></td>
+            <td>{{ "%.4f"|format(run.score or 0) }}</td>
+            <td>{{ run.updated_at }}</td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    {% else %}
+      <p>No runs recorded yet.</p>
+    {% endif %}
+  </div>
+{% endblock %}

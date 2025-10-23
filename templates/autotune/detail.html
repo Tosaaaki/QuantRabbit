@@ -1,0 +1,46 @@
+{% extends "autotune/base.html" %}
+{% block content %}
+  <div class="card">
+    <h2>Run {{ run.run_id }} &middot; {{ run.strategy }}</h2>
+    <p>Status: <span class="badge {{ run.status }}">{{ run.status }}</span></p>
+    <p>Score: {{ "%.4f"|format(run.score or 0) }}</p>
+    <p>Source file: {{ run.source_file or "-" }}</p>
+    <p>Created: {{ run.created_at }} &nbsp; Updated: {{ run.updated_at }}</p>
+    {% if run.reviewer %}
+      <p>Reviewer: {{ run.reviewer }} ({{ run.comment or "no comment" }})</p>
+    {% endif %}
+  </div>
+
+  <div class="card">
+    <h3>Parameters</h3>
+    <pre>{{ run.params_pretty }}</pre>
+  </div>
+
+  <div class="card">
+    <h3>Training metrics</h3>
+    <pre>{{ run.train_pretty }}</pre>
+  </div>
+
+  <div class="card">
+    <h3>Validation metrics</h3>
+    <pre>{{ run.valid_pretty }}</pre>
+  </div>
+
+  {% if run.status != "approved" %}
+  <div class="card">
+    <h3>Decision</h3>
+    <form method="post" action="/runs/{{ run.run_id }}/{{ run.strategy }}/decision">
+      <label>Reviewer</label>
+      <input type="text" name="reviewer" value="{{ run.reviewer or '' }}" style="width: 100%; padding: 0.5rem;">
+      <label>Comment</label>
+      <textarea name="comment">{{ run.comment or '' }}</textarea>
+      <div class="buttons">
+        <button class="approve" type="submit" name="action" value="approve">Approve</button>
+        <button class="reject" type="submit" name="action" value="reject">Reject</button>
+      </div>
+    </form>
+  </div>
+  {% endif %}
+
+  <p><a href="/">← back to list</a></p>
+{% endblock %}

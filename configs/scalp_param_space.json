@@ -1,0 +1,91 @@
+{
+  "M1Scalper": {
+    "sl_pips": {
+      "type": "int",
+      "min": 3,
+      "max": 6
+    },
+    "tp_pips": {
+      "type": "int",
+      "min": 3,
+      "max": 8
+    },
+    "timeout_sec": {
+      "type": "int",
+      "min": 600,
+      "max": 1800
+    },
+    "rsi_entry_low": {
+      "type": "int",
+      "min": 34,
+      "max": 44
+    },
+    "rsi_entry_high": {
+      "type": "int",
+      "min": 56,
+      "max": 66
+    }
+  },
+  "PulseBreak": {
+    "sl_pips": {
+      "type": "int",
+      "min": 4,
+      "max": 6
+    },
+    "tp_pips": {
+      "type": "int",
+      "min": 4,
+      "max": 9
+    },
+    "timeout_sec": {
+      "type": "int",
+      "min": 600,
+      "max": 1200
+    },
+    "vol_5m_max": {
+      "type": "float",
+      "min": 2.0,
+      "max": 2.6
+    },
+    "trend_ema": {
+      "type": "int",
+      "min": 20,
+      "max": 40
+    }
+  },
+  "RangeFader": {
+    "atr_pips_max": {
+      "type": "float",
+      "min": 2.8,
+      "max": 3.4
+    },
+    "vol_5m_max": {
+      "type": "float",
+      "min": 1.8,
+      "max": 2.2
+    },
+    "rsi_lower": {
+      "type": "int",
+      "min": 36,
+      "max": 40
+    },
+    "rsi_upper": {
+      "type": "int",
+      "min": 60,
+      "max": 64
+    },
+    "ema_length": {
+      "type": "int",
+      "min": 18,
+      "max": 22
+    },
+    "band_type": {
+      "type": "choice",
+      "choices": [
+        "ema",
+        "bb",
+        "vwap"
+      ]
+    }
+  }
+}

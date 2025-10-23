@@ -1,0 +1,15 @@
+[Unit]
+Description=QuantRabbit Autotune Review UI
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/quantrabbit
+ExecStart=/usr/bin/env uvicorn apps.autotune_ui:app --host 0.0.0.0 --port 8088
+Restart=on-failure
+RestartSec=5
+User=%i
+Environment=PYTHONUNBUFFERED=1
+
+[Install]
+WantedBy=default.target
