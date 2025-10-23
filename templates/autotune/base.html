@@ -17,6 +17,12 @@
     .pending { background: #e0f2fe; color: #1d4ed8; }
     .approved { background: #dcfce7; color: #15803d; }
     .rejected { background: #fee2e2; color: #b91c1c; }
+    .score-high { background:#16a34a; color:#fff; padding: 0.1rem 0.4rem; border-radius: 0.4rem; }
+    .score-mid { background:#f59e0b; color:#111; padding: 0.1rem 0.4rem; border-radius: 0.4rem; }
+    .score-low { background:#ef4444; color:#fff; padding: 0.1rem 0.4rem; border-radius: 0.4rem; }
+    .pf-good { color:#065f46; font-weight:700; }
+    .pf-warn { color:#92400e; font-weight:700; }
+    .pf-bad { color:#991b1b; font-weight:700; }
     form { margin: 0; }
     textarea { width: 100%; min-height: 80px; }
     .card { background: #fff; padding: 1.5rem; border-radius: 0.75rem; box-shadow: 0 10px 30px rgba(15,23,42,0.08); margin-bottom: 1.5rem; }
@@ -24,16 +30,35 @@
     button { padding: 0.6rem 1.2rem; border: none; border-radius: 0.5rem; cursor: pointer; font-weight: 600; }
     button.approve { background: #16a34a; color: #fff; }
     button.reject { background: #dc2626; color: #fff; }
+    .toolbar { display:flex; gap:0.6rem; align-items:center; flex-wrap:wrap; margin-bottom:0.8rem; }
+    .toolbar input, .toolbar select { padding:0.4rem 0.5rem; }
+    .actions { display:flex; gap:0.45rem; align-items:center; flex-wrap:wrap; }
+    .actions form { margin:0; }
+    .actions a.detail-link { color:#2563eb; font-weight:600; }
+    .summary-row td { background:#f8fafc; font-size:0.9rem; color:#475569; }
     .stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 1rem; margin-top: 1rem; }
     .stat-card { background: #f8fafc; padding: 1rem; border-radius: 0.75rem; box-shadow: inset 0 0 0 1px rgba(15,23,42,0.05); }
     .stat-label { font-size: 0.85rem; color: #64748b; text-transform: uppercase; letter-spacing: 0.04em; }
     .stat-value { font-size: 1.75rem; font-weight: 700; color: #111827; margin-top: 0.3rem; }
     .stat-sub { font-size: 0.8rem; color: #475569; margin-top: 0.2rem; }
+    .stat-positive { color: #047857; }
+    .stat-negative { color: #b91c1c; }
+    .section-title { margin-top: 1.8rem; margin-bottom: 0.8rem; font-size: 1.15rem; font-weight: 700; color: #0f172a; }
+    .tagline { font-size: 0.85rem; color: #475569; margin-bottom: 0.5rem; }
+    .pill { display: inline-block; padding: 0.2rem 0.6rem; border-radius: 999px; font-size: 0.75rem; font-weight: 600; }
+    .pill.gain { background: #dcfce7; color: #166534; }
+    .pill.loss { background: #fee2e2; color: #b91c1c; }
+    .pill.neutral { background: #e2e8f0; color: #1f2937; }
+    .warning { color: #b45309; }
   </style>
 </head>
 <body>
   <header>
-    <h1>QuantRabbit Autotune Review</h1>
+    <h1>QuantRabbit Console</h1>
+    <nav style="margin-top:0.5rem;">
+      <a href="/dashboard" class="nav-link" style="margin-right:1rem; color: {{ 'white' if active_tab == 'dashboard' else '#a7c0d6' }}; font-weight: {{ '700' if active_tab == 'dashboard' else '500' }};">Dashboard</a>
+      <a href="/autotune" class="nav-link" style="margin-right:1rem; color: {{ 'white' if active_tab == 'autotune' else '#a7c0d6' }}; font-weight: {{ '700' if active_tab == 'autotune' else '500' }};">Autotune</a>
+    </nav>
   </header>
   <main>
     {% block content %}{% endblock %}

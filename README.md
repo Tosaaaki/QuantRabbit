@@ -212,11 +212,17 @@ FastAPI 製の承認 UI を Cloud Run 上で公開し、チューニング結果
 
 BigQuery では `status` 列が `pending/approved/rejected` を保持し、UI からの承認・却下操作で更新されます。VM 上の FastAPI UI も同じテーブルを参照するため、ブラウザからの操作でどちらも同期します。
 
-**オートチューニング停止スイッチ**
+**オートチューニング自動運用**
 
-- Cloud Run / VM UI の上部に「Autotune control」を追加し、オン／オフを切り替えられるようにしました。
-- 状態は `autotune_settings` テーブル（または SQLite `autotune_settings`）に保存され、`quant-autotune.service` はこの値を見てジョブ実行をスキップします。
-- CLI からも制御可能です：
+- `scripts/install_service.sh` を使うと VM に systemd タイマーを展開でき、1 時間毎に `scripts/continuous_backtest.py --profile all --write-best` を実行しながら BigQuery (`AUTOTUNE_BQ_TABLE`) へ提案をアップロードします。
+  ```bash
+  sudo bash scripts/install_service.sh /home/tossaki/QuantRabbit tossaki --with-ui
+  ```
+  - `quant-autotune.timer` が 1 時間毎に起動します。環境変数 `AUTOTUNE_BQ_TABLE=quantrabbit.autotune_runs` を自動で設定済みです。
+  - UI サービス (`quant-autotune-ui.service`) も同時に有効化され、8088 ポートで承認ダッシュボードが待ち受けます（IAP トンネル経由で閲覧可能）。
+- Cloud Run UI でも同じ BigQuery テーブルを参照するため、Pending/Approved の一覧がリアルタイムに共有されます。
+- Cloud Run / VM UI の上部には「Autotune control」があり、Enabled/Disabled を切り替えると次回実行がスキップされます。
+- コマンドラインからも制御可能です：
   ```bash
   python - <<'PY'
   from autotune.database import set_settings
@@ -232,6 +238,7 @@ BigQuery では `status` 列が `pending/approved/rejected` を保持し、UI �
   python scripts/sync_autotune_runs.py --limit 1000
   ```
 - 1 回実行すれば Cloud Run / VM 両方の UI にデータが表示されます。
+- 既存の SQLite のみで運用していた場合は、Cloud Run を参照させるために `AUTOTUNE_BQ_TABLE` を設定して `scripts/tune_scalp.py --profile all --bq-table quantrabbit.autotune_runs --write-best` を実行してください。
 
 ---
 
@@ -283,6 +290,7 @@ KEY_OUT=./ui-dashboard-sa.json \
 - `trades_raw` が存在する場合、`trades_recent_view` と `trades_daily_features` を作成
 
 接続前チェックと検証
+- `scripts/run_sync_pipeline.py` を定期実行する（例: `python scripts/run_sync_pipeline.py --once` で GCS `realtime/ui_state.json` を更新）。ダッシュボードはこの GCS スナップショットをリアルタイム表示に利用します。
 - `scripts/run_sync_pipeline.py` が一度以上走り `trades_raw` にデータがある
 - Looker Studio のデータソースプレビューでレコードが表示される
 - 権限エラー時は SA の IAM を再確認（`roles/storage.objectViewer`, `roles/bigquery.dataViewer`, `roles/bigquery.jobUser`）

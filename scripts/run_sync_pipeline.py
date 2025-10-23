@@ -56,11 +56,13 @@ def _run_cycle(
             logging.exception("[PIPELINE] open positions 取得に失敗: %s", exc)
             open_positions = {}
         recent_trades = pm.fetch_recent_trades(limit=ui_recent)
+        metrics = pm.get_performance_summary()
         try:
             gcs_publisher.publish_snapshot(
                 new_trades=new_trades,
                 recent_trades=recent_trades,
                 open_positions=open_positions,
+                metrics=metrics,
             )
         except Exception as exc:  # noqa: BLE001
             logging.exception("[PIPELINE] GCS スナップショット更新に失敗: %s", exc)

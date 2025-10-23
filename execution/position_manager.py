@@ -3,7 +3,7 @@ import os
 import requests
 import sqlite3
 import pathlib
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from utils.secrets import get_secret
 
 # --- config ---
@@ -492,6 +492,83 @@ class PositionManager:
         pockets["__net__"] = {"units": net_units}
 
         return pockets
+
+    def get_performance_summary(self, now: datetime | None = None) -> dict:
+        now = now or datetime.now(timezone.utc)
+        today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+        week_start = today_start - timedelta(days=6)
+
+        buckets = {
+            "daily": {
+                "pips": 0.0,
+                "jpy": 0.0,
+                "trades": 0,
+                "wins": 0,
+                "losses": 0,
+            },
+            "weekly": {
+                "pips": 0.0,
+                "jpy": 0.0,
+                "trades": 0,
+                "wins": 0,
+                "losses": 0,
+            },
+            "total": {
+                "pips": 0.0,
+                "jpy": 0.0,
+                "trades": 0,
+                "wins": 0,
+                "losses": 0,
+            },
+        }
+        latest_close: datetime | None = None
+
+        rows = self.con.execute(
+            "SELECT pl_pips, realized_pl, close_time FROM trades WHERE close_time IS NOT NULL"
+        ).fetchall()
+        for row in rows:
+            try:
+                close_dt = _parse_timestamp(row["close_time"])
+            except Exception:
+                continue
+            if latest_close is None or close_dt > latest_close:
+                latest_close = close_dt
+            pl_pips = float(row["pl_pips"] or 0.0)
+            pl_jpy = float(row["realized_pl"] or 0.0)
+
+            def _apply(bucket: dict) -> None:
+                bucket["pips"] += pl_pips
+                bucket["jpy"] += pl_jpy
+                bucket["trades"] += 1
+                if pl_pips > 0:
+                    bucket["wins"] += 1
+                elif pl_pips < 0:
+                    bucket["losses"] += 1
+
+            _apply(buckets["total"])
+            if close_dt >= week_start:
+                _apply(buckets["weekly"])
+            if close_dt >= today_start:
+                _apply(buckets["daily"])
+
+        def _finalise(data: dict) -> dict:
+            trades = data["trades"]
+            win_rate = (data["wins"] / trades) if trades else 0.0
+            return {
+                "pips": round(data["pips"], 2),
+                "jpy": round(data["jpy"], 2),
+                "trades": trades,
+                "wins": data["wins"],
+                "losses": data["losses"],
+                "win_rate": win_rate,
+            }
+
+        return {
+            "daily": _finalise(buckets["daily"]),
+            "weekly": _finalise(buckets["weekly"]),
+            "total": _finalise(buckets["total"]),
+            "last_trade_at": latest_close.isoformat() if latest_close else None,
+        }
 
     def fetch_recent_trades(self, limit: int = 50) -> list[dict]:
         """UI 表示用に最新のトレードを取得"""

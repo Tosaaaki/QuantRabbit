@@ -57,6 +57,7 @@ class GCSRealtimePublisher:
         new_trades: Sequence[Mapping[str, Any]],
         recent_trades: Sequence[Mapping[str, Any]],
         open_positions: Mapping[str, Any],
+        metrics: Mapping[str, Any] | None = None,
         generated_at: str | None = None,
     ) -> None:
         """UI が参照するスナップショットを GCS に保存する。"""
@@ -68,6 +69,7 @@ class GCSRealtimePublisher:
             "new_trades": list(new_trades),
             "recent_trades": list(recent_trades),
             "open_positions": dict(open_positions),
+            "metrics": dict(metrics) if metrics else {},
         }
 
         serialized = json.dumps(payload, ensure_ascii=True, separators=(",", ":"))

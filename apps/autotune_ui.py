@@ -206,6 +206,7 @@ def _summarise_snapshot(snapshot: Dict[str, Any]) -> Dict[str, Any]:
     base = _dashboard_defaults()
     now = datetime.now(timezone.utc)
 
+    metrics_snapshot = snapshot.get("metrics") or {}
     trades_raw = snapshot.get("recent_trades") or []
     parsed_trades: list[Dict[str, Any]] = []
     for item in trades_raw:
@@ -232,43 +233,75 @@ def _summarise_snapshot(snapshot: Dict[str, Any]) -> Dict[str, Any]:
         return sum(t["pl_jpy"] for t in closed_trades if predicate(t))
 
     perf = base["performance"]
-    perf["recent_closed"] = len(closed_trades)
-    perf["total_trades"] = len(parsed_trades)
-    perf["daily_pl_pips"] = round(
-        _sum_if(lambda t: t["close_time"].date() == today_date), 2
-    ) if closed_trades else 0.0
-    perf["daily_pl_jpy"] = round(
-        _sum_jpy(lambda t: t["close_time"].date() == today_date), 2
-    ) if closed_trades else 0.0
-    # 1ロット換算 pips（USD/JPY: 1lot=1000JPY/pip）
-    perf["daily_pl_eq1l"] = round(
-        (perf["daily_pl_jpy"] / 1000.0) if closed_trades else 0.0,
-        2,
-    )
-    perf["weekly_pl_pips"] = round(
-        _sum_if(lambda t: t["close_time"] >= week_cutoff), 2
-    ) if closed_trades else 0.0
-    perf["weekly_pl_jpy"] = round(
-        _sum_jpy(lambda t: t["close_time"] >= week_cutoff), 2
-    ) if closed_trades else 0.0
-    perf["weekly_pl_eq1l"] = round(
-        (perf["weekly_pl_jpy"] / 1000.0) if closed_trades else 0.0,
-        2,
-    )
-    perf["total_pips"] = round(sum(t["pl_pips"] for t in closed_trades), 2)
-    perf["total_jpy"] = round(sum(t["pl_jpy"] for t in closed_trades), 2)
-    perf["total_eq1l"] = round(perf["total_jpy"] / 1000.0, 2)
-
-    wins = sum(1 for t in closed_trades if t["pl_pips"] > 0)
-    losses = sum(1 for t in closed_trades if t["pl_pips"] < 0)
-    perf["wins"] = wins
-    perf["losses"] = losses
-    perf["win_rate"] = (wins / perf["recent_closed"]) if perf["recent_closed"] else 0.0
-    perf["win_rate_percent"] = round(perf["win_rate"] * 100.0, 1)
     perf["new_trades"] = len(snapshot.get("new_trades") or [])
-    if closed_trades:
-        latest = max(closed_trades, key=lambda t: t["close_time"])["close_time"]
-        perf["last_trade_at"] = _format_dt(latest)
+
+    def _apply_metrics(data: dict | None, *, target: str) -> None:
+        if not data:
+            return
+        if target == "daily":
+            perf["daily_pl_pips"] = data.get("pips", 0.0)
+            perf["daily_pl_jpy"] = data.get("jpy", 0.0)
+            perf["recent_closed"] = data.get("trades", 0)
+        elif target == "weekly":
+            perf["weekly_pl_pips"] = data.get("pips", 0.0)
+            perf["weekly_pl_jpy"] = data.get("jpy", 0.0)
+        elif target == "total":
+            perf["total_pips"] = data.get("pips", 0.0)
+            perf["total_jpy"] = data.get("jpy", 0.0)
+            perf["wins"] = data.get("wins", 0)
+            perf["losses"] = data.get("losses", 0)
+            wr = data.get("win_rate", 0.0)
+            perf["win_rate"] = wr
+            perf["win_rate_percent"] = round(wr * 100.0, 1)
+            perf["total_trades"] = data.get("trades", 0)
+
+    _apply_metrics(metrics_snapshot.get("daily"), target="daily")
+    _apply_metrics(metrics_snapshot.get("weekly"), target="weekly")
+    _apply_metrics(metrics_snapshot.get("total"), target="total")
+
+    if perf.get("recent_closed", 0) == 0:
+        perf["recent_closed"] = len(closed_trades)
+    if perf.get("total_trades") in (None, 0):
+        perf["total_trades"] = len(parsed_trades)
+
+    if perf.get("daily_pl_pips") is None:
+        perf["daily_pl_pips"] = round(
+            _sum_if(lambda t: t["close_time"].date() == today_date), 2
+        ) if closed_trades else 0.0
+    if perf.get("daily_pl_jpy") is None:
+        perf["daily_pl_jpy"] = round(
+            _sum_jpy(lambda t: t["close_time"].date() == today_date), 2
+        ) if closed_trades else 0.0
+    if perf.get("weekly_pl_pips") is None:
+        perf["weekly_pl_pips"] = round(
+            _sum_if(lambda t: t["close_time"] >= week_cutoff), 2
+        ) if closed_trades else 0.0
+    if perf.get("weekly_pl_jpy") is None:
+        perf["weekly_pl_jpy"] = round(
+            _sum_jpy(lambda t: t["close_time"] >= week_cutoff), 2
+        ) if closed_trades else 0.0
+    if perf.get("total_pips") is None:
+        perf["total_pips"] = round(sum(t["pl_pips"] for t in closed_trades), 2)
+    if perf.get("total_jpy") is None:
+        perf["total_jpy"] = round(sum(t["pl_jpy"] for t in closed_trades), 2)
+
+    perf["daily_pl_eq1l"] = round((perf.get("daily_pl_jpy", 0.0) or 0.0) / 1000.0, 2)
+    perf["weekly_pl_eq1l"] = round((perf.get("weekly_pl_jpy", 0.0) or 0.0) / 1000.0, 2)
+    perf["total_eq1l"] = round((perf.get("total_jpy", 0.0) or 0.0) / 1000.0, 2)
+
+    if perf.get("wins") is None or perf.get("losses") is None:
+        wins = sum(1 for t in closed_trades if t["pl_pips"] > 0)
+        losses = sum(1 for t in closed_trades if t["pl_pips"] < 0)
+        perf["wins"] = wins
+        perf["losses"] = losses
+        perf["win_rate"] = (wins / perf["recent_closed"]) if perf["recent_closed"] else 0.0
+        perf["win_rate_percent"] = round(perf["win_rate"] * 100.0, 1)
+
+    if perf.get("last_trade_at") is None:
+        last_trade = metrics_snapshot.get("last_trade_at")
+        if not last_trade and closed_trades:
+            last_trade = max(closed_trades, key=lambda t: t["close_time"])["close_time"]
+        perf["last_trade_at"] = _format_dt(_parse_dt(last_trade)) if last_trade else None
 
     open_positions = snapshot.get("open_positions") or {}
     open_entries: list[Dict[str, Any]] = []
