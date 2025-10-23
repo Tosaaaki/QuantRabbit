@@ -85,8 +85,7 @@ def compute_indicators(df: pd.DataFrame) -> pd.DataFrame:
     avg_gain = gain.ewm(alpha=1 / 14, adjust=False, min_periods=14).mean()
     avg_loss = loss.ewm(alpha=1 / 14, adjust=False, min_periods=14).mean()
     rs = avg_gain / avg_loss.replace(0.0, np.nan)
-    df["rsi"] = 100 - (100 / (1 + rs))
-    df["rsi"].fillna(50.0, inplace=True)
+    df["rsi"] = (100 - (100 / (1 + rs))).fillna(50.0)
 
     prev_close = prices.shift(1)
     tr = pd.concat(
