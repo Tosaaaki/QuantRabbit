@@ -2232,17 +2232,27 @@ async def logic_loop():
 async def main():
     handlers = [("M1", m1_candle_handler), ("H4", h4_candle_handler)]
     await initialize_history("USD_JPY")
-    # 複数の無限ループを並列で実行する。
-    # - start_candle_stream: Tick データとローソク足生成
-    # - logic_loop: トレーディングロジック
-    # - news_fetch_loop: 経済指標 RSS 取得
-    # - summary_ingest_loop: GCS summary/ から DB への取り込み
-    await asyncio.gather(
-        start_candle_stream("USD_JPY", handlers),
-        logic_loop(),
-        news_fetch_loop(),
-        summary_ingest_loop(),
-    )
+    while True:
+        tasks = [
+            asyncio.create_task(start_candle_stream("USD_JPY", handlers)),
+            asyncio.create_task(logic_loop()),
+            asyncio.create_task(news_fetch_loop()),
+            asyncio.create_task(summary_ingest_loop()),
+        ]
+        try:
+            await asyncio.gather(*tasks)
+            logging.error("[SUPERVISOR] Task group exited cleanly; restarting in 5s.")
+        except asyncio.CancelledError:
+            for task in tasks:
+                task.cancel()
+            raise
+        except Exception:
+            logging.exception("[SUPERVISOR] Task group crashed; restarting in 5s.")
+        finally:
+            for task in tasks:
+                task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
+        await asyncio.sleep(5)
 
 
 if __name__ == "__main__":
