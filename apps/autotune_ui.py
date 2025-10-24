@@ -509,8 +509,7 @@ def dashboard(request: Request):
                 obj_path = "excursion/latest.txt"
             client = storage.Client()
             blob = client.bucket(bucket_name).blob(obj_path)
-            if blob.exists():
-                excursion_content = blob.download_as_text(timeout=5)
+            excursion_content = blob.download_as_text(timeout=5)
     except Exception:
         excursion_content = ""
     # 2) ローカル（VM）にファイルがあればフォールバック
