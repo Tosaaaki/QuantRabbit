@@ -9,7 +9,7 @@ from __future__ import annotations
 import logging
 import sqlite3
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
@@ -520,6 +520,9 @@ class StageTracker:
         if not raw:
             return fallback
         try:
-            return datetime.fromisoformat(raw.replace("Z", "+00:00"))
+            dt = datetime.fromisoformat(raw.replace("Z", "+00:00"))
         except ValueError:
             return fallback
+        if dt.tzinfo is not None:
+            return dt.astimezone(timezone.utc).replace(tzinfo=None)
+        return dt
