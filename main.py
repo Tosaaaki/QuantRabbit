@@ -85,22 +85,22 @@ FOCUS_POCKETS = {
 }
 
 POCKET_EXIT_COOLDOWNS = {
-    "macro": 540,
-    "micro": 240,
-    "scalp": 180,
+    "macro": 720,
+    "micro": 360,
+    "scalp": 240,
 }
 
 POCKET_LOSS_COOLDOWNS = {
-    "macro": 960,
+    "macro": 900,
     "micro": 600,
     "scalp": 360,
 }
 
 # 新規エントリー後のクールダウン（再エントリー抑制）
 POCKET_ENTRY_MIN_INTERVAL = {
-    "macro": 180,  # 3分
-    "micro": 120,  # 2分
-    "scalp": 60,
+    "macro": 240,  # 4分
+    "micro": 150,  # 2.5分
+    "scalp": 75,
 }
 
 FALLBACK_EQUITY = 10000.0  # REST失敗時のフォールバック
@@ -121,14 +121,14 @@ SOFT_RANGE_SUPPRESS_STRATEGIES = {"TrendMA", "Donchian55"}
 LOW_TREND_ADX_THRESHOLD = 18.0
 LOW_TREND_SLOPE_THRESHOLD = 0.00035
 LOW_TREND_WEIGHT_CAP = 0.35
-SOFT_RANGE_SCORE_MIN = 0.58
-SOFT_RANGE_COMPRESSION_MIN = 0.55
-SOFT_RANGE_VOL_MIN = 0.40
-SOFT_RANGE_WEIGHT_CAP = 0.32
+SOFT_RANGE_SCORE_MIN = 0.52
+SOFT_RANGE_COMPRESSION_MIN = 0.50
+SOFT_RANGE_VOL_MIN = 0.35
+SOFT_RANGE_WEIGHT_CAP = 0.25
 SOFT_RANGE_ADX_BUFFER = 6.0
-RANGE_ENTRY_CONFIRMATIONS = 2
+RANGE_ENTRY_CONFIRMATIONS = 1
 RANGE_EXIT_CONFIRMATIONS = 3
-RANGE_MIN_ACTIVE_SECONDS = 240
+RANGE_MIN_ACTIVE_SECONDS = 120
 RANGE_ENTRY_SCORE_FLOOR = 0.62
 RANGE_EXIT_SCORE_CEIL = 0.56
 STAGE_RESET_GRACE_SECONDS = 180
@@ -264,12 +264,14 @@ def _stage_conditions_met(
                 return False
 
         # Require trend strength to increase with each stage
-        if adx_h4 < 20 + stage_idx * 2 or slope_h4 < 0.0005:
+        trend_floor = 18.0 + stage_idx * 1.5
+        if adx_h4 < trend_floor or slope_h4 < 0.0004:
             logging.info(
-                "[STAGE] Macro gating failed (ADX %.2f, slope %.5f) for stage %d.",
-                adx_h4,
-                slope_h4,
+                "[STAGE] Macro gating failed stage %d (ADX %.2f<%.2f, slope %.5f).",
                 stage_idx,
+                adx_h4,
+                trend_floor,
+                slope_h4,
             )
             return False
         if price is not None and avg_price:
@@ -285,7 +287,7 @@ def _stage_conditions_met(
                 return False
         # RSI-based re-entry gates
         if action == "OPEN_LONG":
-            threshold = 60 - stage_idx * 5
+            threshold = 65 - stage_idx * 4
             if rsi > threshold:
                 logging.info(
                     "[STAGE] Macro buy gating: RSI %.1f > %.1f for stage %d.",
@@ -295,7 +297,7 @@ def _stage_conditions_met(
                 )
                 return False
         else:
-            threshold = 40 + stage_idx * 5
+            threshold = 35 + stage_idx * 4
             if rsi < threshold:
                 logging.info(
                     "[STAGE] Macro sell gating: RSI %.1f < %.1f for stage %d.",
@@ -309,7 +311,7 @@ def _stage_conditions_met(
     if pocket == "micro":
         # mean reversion pocket requires RSI extremes to persist
         if action == "OPEN_LONG":
-            threshold = 45 - min(stage_idx * 5, 15)
+            threshold = 48 - min(stage_idx * 4, 12)
             if rsi > threshold:
                 logging.info(
                     "[STAGE] Micro buy gating: RSI %.1f > %.1f for stage %d.",
@@ -319,7 +321,7 @@ def _stage_conditions_met(
                 )
                 return False
         else:
-            threshold = 55 + min(stage_idx * 5, 15)
+            threshold = 52 + min(stage_idx * 4, 12)
             if rsi < threshold:
                 logging.info(
                     "[STAGE] Micro sell gating: RSI %.1f < %.1f for stage %d.",
@@ -332,18 +334,18 @@ def _stage_conditions_met(
 
     if pocket == "scalp":
         atr = fac_m1.get("atr", 0.0) * 100
-        if atr < 1.5:
+        if atr < 1.2:
             logging.info("[STAGE] Scalp gating: ATR %.2f too low for stage %d.", atr, stage_idx)
             return False
         momentum = (fac_m1.get("close") or 0.0) - (fac_m1.get("ema20") or 0.0)
-        if action == "OPEN_LONG" and momentum > 0:
+        if action == "OPEN_LONG" and momentum > 0.0004:
             logging.info(
                 "[STAGE] Scalp buy gating: momentum %.4f positive (stage %d).",
                 momentum,
                 stage_idx,
             )
             return False
-        if action == "OPEN_SHORT" and momentum < 0:
+        if action == "OPEN_SHORT" and momentum < -0.0004:
             logging.info(
                 "[STAGE] Scalp sell gating: momentum %.4f negative (stage %d).",
                 momentum,
@@ -351,7 +353,7 @@ def _stage_conditions_met(
             )
             return False
         if action == "OPEN_LONG":
-            if rsi > 55 - min(stage_idx * 4, 12):
+            if rsi > 57 - min(stage_idx * 4, 12):
                 logging.info(
                     "[STAGE] Scalp buy gating: RSI %.1f too high (stage %d).",
                     rsi,
@@ -359,7 +361,7 @@ def _stage_conditions_met(
                 )
                 return False
         else:
-            if rsi < 45 + min(stage_idx * 4, 12):
+            if rsi < 43 + min(stage_idx * 4, 12):
                 logging.info(
                     "[STAGE] Scalp sell gating: RSI %.1f too low (stage %d).",
                     rsi,
@@ -729,9 +731,24 @@ async def logic_loop():
                         prev_weight,
                         weight,
                     )
-            focus_pockets = set(FOCUS_POCKETS.get(focus_tag, ("macro", "micro", "scalp")))
-            if not focus_pockets:
-                focus_pockets = {"micro"}
+            focus_candidates = set(FOCUS_POCKETS.get(focus_tag, ("macro", "micro", "scalp")))
+            if not focus_candidates:
+                focus_candidates = {"micro"}
+            strategy_pockets = {
+                STRATEGIES[s].pocket
+                for s in ranked_strategies
+                if STRATEGIES.get(s)
+            }
+            macro_hint = max(min(weight, 1.0), 0.0)
+            micro_hint = max(1.0 - macro_hint, 0.0)
+            focus_pockets = set(focus_candidates)
+            if macro_hint >= 0.05:
+                focus_pockets.add("macro")
+            if micro_hint >= 0.08:
+                focus_pockets.add("micro")
+            if scalp_ready or focus_tag in {"micro", "hybrid"} or micro_hint >= 0.05:
+                focus_pockets.add("scalp")
+            focus_pockets.update(strategy_pockets)
             if range_active and "macro" in focus_pockets:
                 focus_pockets.discard("macro")
 
@@ -1137,7 +1154,7 @@ async def logic_loop():
                     continue
 
                 confidence = max(0, min(100, signal.get("confidence", 50)))
-                confidence_factor = max(0.2, confidence / 100.0)
+                confidence_factor = max(0.3, confidence / 100.0)
                 confidence_target = round(total_lot_for_pocket * confidence_factor, 3)
                 if confidence_target <= 0:
                     continue

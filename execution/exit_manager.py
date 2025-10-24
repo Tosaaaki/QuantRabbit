@@ -32,17 +32,17 @@ class ExitManager:
         self._macro_loss_buffer = 4.0
         self._macro_ma_gap = 3.0
         # Macro-specific stability controls
-        self._macro_min_hold_minutes = 11.0  # more patience before acting on reversals
-        self._macro_hysteresis_pips = 4.5    # wider no-close band to avoid jitter
+        self._macro_min_hold_minutes = 12.0  # more patience before acting on reversals
+        self._macro_hysteresis_pips = 5.0    # wider no-close band to avoid jitter
         # Micro-specific minimum hold
-        self._micro_min_hold_minutes = 5.0
+        self._micro_min_hold_minutes = 6.0
         # MFE guard: if we have achieved decent MFE, allow deeper pullbacks before exiting
         self._mfe_guard_pips = 1.6
         self._mfe_guard_retrace_ratio = 0.62
-        self._reverse_confirmations = 2
-        self._reverse_decay = timedelta(seconds=180)
+        self._reverse_confirmations = 3
+        self._reverse_decay = timedelta(seconds=300)
         self._reverse_hits: Dict[Tuple[str, str], Dict[str, object]] = {}
-        self._range_macro_grace_minutes = 8.0
+        self._range_macro_grace_minutes = 10.0
 
     def plan_closures(
         self,
@@ -526,7 +526,7 @@ class ExitManager:
 
         threshold = 3.5
         if pocket == "macro":
-            threshold = 9.0
+            threshold = 10.0
             if not self._has_mature_trade(open_info, side, now, self._macro_min_hold_minutes):
                 threshold = 5.0
         elif pocket == "scalp":
