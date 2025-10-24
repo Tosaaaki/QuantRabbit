@@ -130,6 +130,13 @@ POCKET_MAX_DIRECTIONAL_TRADES_RANGE = {
     "scalp": 1,
 }
 
+try:
+    HEDGING_ENABLED = get_secret("oanda_hedging_enabled").lower() == "true"
+except Exception:
+    HEDGING_ENABLED = False
+if HEDGING_ENABLED:
+    logging.info("[CONFIG] Hedging enabled; allowing offsetting positions.")
+
 FALLBACK_EQUITY = 10000.0  # REST失敗時のフォールバック
 
 RSI_LONG_FLOOR = {
@@ -148,6 +155,19 @@ POCKET_ATR_MIN_PIPS = {
     "micro": 2.5,
     "scalp": 2.5,
 }
+
+PIP = 0.01
+_MACRO_PULLBACK_MIN_RETRACE_PIPS = {
+    1: 3.2,
+    2: 4.8,
+    3: 6.4,
+    4: 8.2,
+    5: 9.8,
+}
+_MACRO_PULLBACK_MAX_RETRACE_PIPS = 16.0
+_MACRO_PULLBACK_MAX_EMA_GAP_PIPS = 6.5
+_MACRO_PULLBACK_MAX_MA_SLACK_PIPS = 2.1
+_MACRO_PULLBACK_MIN_ADX = 17.0
 
 _BASE_STAGE_RATIOS = {
     # Front-load a higher fraction in stage 0 so a valid signal deploys meaningful size sooner.
@@ -1700,30 +1720,7 @@ async def logic_loop():
                 per_direction_limits = (
                     POCKET_MAX_DIRECTIONAL_TRADES_RANGE if range_active else POCKET_MAX_DIRECTIONAL_TRADES
                 )
-                max_trades_allowed = pocket_limits.get(pocket, 1)
-                current_trades = int(open_info.get("trades", 0) or 0)
-                if current_trades >= max_trades_allowed:
-                    logging.info(
-                        "[SKIP] Pocket %s has %d/%d active trades. Skipping new entry.",
-                        pocket,
-                        current_trades,
-                        max_trades_allowed,
-                    )
-                    continue
-
-                try:
-                    price = float(mid_price) if mid_price > 0 else float(fac_m1.get("close") or 0.0)
-                except (TypeError, ValueError):
-                    price = 0.0
-                if action == "OPEN_LONG":
-                    open_units = int(open_info.get("long_units", 0))
-                    ref_price = open_info.get("long_avg_price")
-                    direction = "long"
-                else:
-                    open_units = int(open_info.get("short_units", 0))
-                    ref_price = open_info.get("short_avg_price")
-                    direction = "short"
-
+                direction = "long" if action == "OPEN_LONG" else "short"
                 direction_limit = per_direction_limits.get(pocket, 1)
                 if direction_limit <= 0:
                     logging.info(
@@ -1734,20 +1731,60 @@ async def logic_loop():
                     continue
                 open_trades = open_info.get("open_trades", []) or []
                 direction_units_positive = direction == "long"
-                current_direction_trades = sum(
+                same_direction_trades = sum(
                     1
                     for trade in open_trades
                     if (trade.get("units", 0) > 0) == direction_units_positive and trade.get("units", 0) != 0
                 )
-                if current_direction_trades >= direction_limit:
+                opposite_direction_trades = sum(
+                    1
+                    for trade in open_trades
+                    if (trade.get("units", 0) > 0) != direction_units_positive and trade.get("units", 0) != 0
+                )
+                max_trades_allowed = pocket_limits.get(pocket, 1)
+                current_trades = int(open_info.get("trades", 0) or 0)
+                hedging_override = False
+                if HEDGING_ENABLED and current_trades >= max_trades_allowed:
+                    if (
+                        current_trades == max_trades_allowed
+                        and same_direction_trades == 0
+                        and opposite_direction_trades > 0
+                    ):
+                        hedging_override = True
+                        logging.info(
+                            "[HEDGE] Allowing %s entry in %s pocket beyond cap (%d).",
+                            direction,
+                            pocket,
+                            max_trades_allowed,
+                        )
+                if not hedging_override and current_trades >= max_trades_allowed:
+                    logging.info(
+                        "[SKIP] Pocket %s has %d/%d active trades. Skipping new entry.",
+                        pocket,
+                        current_trades,
+                        max_trades_allowed,
+                    )
+                    continue
+                if same_direction_trades >= direction_limit:
                     logging.info(
                         "[SKIP] Pocket %s %s has %d/%d open trades. Skipping.",
                         pocket,
                         direction,
-                        current_direction_trades,
+                        same_direction_trades,
                         direction_limit,
                     )
                     continue
+
+                try:
+                    price = float(mid_price) if mid_price > 0 else float(fac_m1.get("close") or 0.0)
+                except (TypeError, ValueError):
+                    price = 0.0
+                if action == "OPEN_LONG":
+                    open_units = int(open_info.get("long_units", 0))
+                    ref_price = open_info.get("long_avg_price")
+                else:
+                    open_units = int(open_info.get("short_units", 0))
+                    ref_price = open_info.get("short_avg_price")
 
                 is_buy = action == "OPEN_LONG"
                 entry_price = price
