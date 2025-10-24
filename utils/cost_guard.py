@@ -48,6 +48,8 @@ def add_tokens(n: int, max_month_tokens: int) -> bool:
     max_month_tokens: 月上限 (env.toml)
     return: True = 上限内, False = 超過
     """
+    if max_month_tokens <= 0:
+        return True
     state = _load_state()
     ym_now = datetime.datetime.utcnow().strftime("%Y-%m")
 

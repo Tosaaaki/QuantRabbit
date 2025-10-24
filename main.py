@@ -5,6 +5,7 @@ import traceback
 import time
 import hashlib
 import json
+import contextlib
 from typing import Optional, Tuple
 
 from market_data.candle_fetcher import (
@@ -465,6 +466,64 @@ async def gpt_worker(
             )
         finally:
             await gpt_requests.task_done(signature)
+
+
+async def prime_gpt_decision(
+    gpt_state: GPTDecisionState,
+    gpt_requests: GPTRequestManager,
+    *,
+    timeout: float = 45.0,
+) -> None:
+    """Ensure an initial GPT decision is ready before strategy loop starts."""
+    start_time = datetime.datetime.utcnow()
+    while True:
+        factors = all_factors()
+        fac_m1 = factors.get("M1")
+        fac_h4 = factors.get("H4")
+        if (
+            not fac_m1
+            or not fac_h4
+            or not fac_m1.get("close")
+            or not fac_h4.get("close")
+        ):
+            await asyncio.sleep(1.0)
+            if (datetime.datetime.utcnow() - start_time).total_seconds() > timeout:
+                logging.warning("[GPT PRIME] waiting for factors timed out; retrying")
+                start_time = datetime.datetime.utcnow()
+            continue
+
+        perf_cache = get_perf()
+        news_cache = get_latest_news()
+        event_soon = check_event_soon(within_minutes=30, min_impact=3)
+        payload = {
+            "ts": datetime.datetime.utcnow().isoformat(timespec="seconds"),
+            "reg_macro": classify(fac_h4, "H4", event_mode=event_soon),
+            "reg_micro": classify(fac_m1, "M1", event_mode=event_soon),
+            "factors_m1": {k: v for k, v in fac_m1.items() if k != "candles"},
+            "factors_h4": {k: v for k, v in fac_h4.items() if k != "candles"},
+            "perf": perf_cache,
+            "news_short": news_cache.get("short", []),
+            "news_long": news_cache.get("long", []),
+            "event_soon": event_soon,
+        }
+        signature = _gpt_payload_signature(
+            payload,
+            range_active=False,
+            range_reason=None,
+            soft_range=False,
+        )
+        logging.info("[GPT PRIME] submitting initial decision signature=%s", signature[:10])
+        await gpt_requests.submit(signature, payload)
+        try:
+            decision = await gpt_state.wait_for_signature(signature, timeout=timeout)
+            logging.info(
+                "[GPT PRIME] initial decision ready model=%s",
+                decision.get("model_used", "unknown"),
+            )
+            return
+        except asyncio.TimeoutError:
+            logging.warning("[GPT PRIME] timeout waiting for initial decision; retrying")
+            await asyncio.sleep(5.0)
 
 
 def build_client_order_id(focus_tag: Optional[str], strategy_tag: str) -> str:
@@ -2308,28 +2367,38 @@ async def main():
     await initialize_history("USD_JPY")
     gpt_state = GPTDecisionState()
     gpt_requests = GPTRequestManager()
-    while True:
-        tasks = [
-            asyncio.create_task(start_candle_stream("USD_JPY", handlers)),
-            asyncio.create_task(logic_loop(gpt_state, gpt_requests)),
-            asyncio.create_task(gpt_worker(gpt_state, gpt_requests)),
-            asyncio.create_task(news_fetch_loop()),
-            asyncio.create_task(summary_ingest_loop()),
-        ]
-        try:
-            await asyncio.gather(*tasks)
-            logging.error("[SUPERVISOR] Task group exited cleanly; restarting in 5s.")
-        except asyncio.CancelledError:
-            for task in tasks:
-                task.cancel()
-            raise
-        except Exception:
-            logging.exception("[SUPERVISOR] Task group crashed; restarting in 5s.")
-        finally:
-            for task in tasks:
-                task.cancel()
-            await asyncio.gather(*tasks, return_exceptions=True)
-        await asyncio.sleep(5)
+    worker_task = asyncio.create_task(gpt_worker(gpt_state, gpt_requests))
+    try:
+        await prime_gpt_decision(gpt_state, gpt_requests)
+        while True:
+            tasks = [
+                asyncio.create_task(start_candle_stream("USD_JPY", handlers)),
+                asyncio.create_task(logic_loop(gpt_state, gpt_requests)),
+                asyncio.create_task(news_fetch_loop()),
+                asyncio.create_task(summary_ingest_loop()),
+            ]
+            try:
+                await asyncio.gather(*tasks)
+                logging.error("[SUPERVISOR] Task group exited cleanly; restarting in 5s.")
+            except asyncio.CancelledError:
+                for task in tasks:
+                    task.cancel()
+                raise
+            except Exception:
+                logging.exception("[SUPERVISOR] Task group crashed; restarting in 5s.")
+            finally:
+                for task in tasks:
+                    task.cancel()
+                await asyncio.gather(*tasks, return_exceptions=True)
+            if worker_task.done():
+                logging.error("[SUPERVISOR] GPT worker terminated; restarting service")
+                worker_task = asyncio.create_task(gpt_worker(gpt_state, gpt_requests))
+                await prime_gpt_decision(gpt_state, gpt_requests)
+            await asyncio.sleep(5)
+    finally:
+        worker_task.cancel()
+        with contextlib.suppress(Exception):
+            await worker_task
 
 
 if __name__ == "__main__":
