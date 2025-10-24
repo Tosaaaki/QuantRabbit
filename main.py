@@ -947,7 +947,7 @@ async def h4_candle_handler(cndl: Candle):
     await on_candle("H4", cndl)
 
 
-async def logic_loop(gpt_state: GPTDecisionState, gpt_requests: GPTRequestManager):
+async def logic_loop(gpt_state: GPTDecisionState, gpt_requests: GPTRequestManager, news_cache_supplier=None):
     pos_manager = PositionManager()
     metrics_client = RealtimeMetricsClient()
     confidence_policy = ConfidencePolicy()
@@ -2374,8 +2374,6 @@ async def main():
             tasks = [
                 asyncio.create_task(start_candle_stream("USD_JPY", handlers)),
                 asyncio.create_task(logic_loop(gpt_state, gpt_requests)),
-                asyncio.create_task(news_fetch_loop()),
-                asyncio.create_task(summary_ingest_loop()),
             ]
             try:
                 await asyncio.gather(*tasks)
