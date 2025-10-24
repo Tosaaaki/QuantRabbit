@@ -1129,6 +1129,24 @@ async def logic_loop():
                             signal.get("tp_pips"),
                             rr_logged,
                         )
+                if signal["strategy"] == "PulseBreak":
+                    rr = 0.0
+                    sl_val = float(signal.get("sl_pips") or 0.0)
+                    tp_val = float(signal.get("tp_pips") or 0.0)
+                    if sl_val > 0:
+                        rr = tp_val / sl_val
+                    log_metric(
+                        "pulse_break_confidence",
+                        float(signal["confidence"]),
+                        tags={"range_active": str(range_active)},
+                        ts=now,
+                    )
+                    log_metric(
+                        "pulse_break_rr",
+                        float(rr),
+                        tags={"range_active": str(range_active)},
+                        ts=now,
+                    )
                 signal["health"] = {
                     "win_rate": health.win_rate,
                     "pf": health.profit_factor,
