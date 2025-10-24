@@ -106,10 +106,10 @@ POCKET_ENTRY_MIN_INTERVAL = {
 FALLBACK_EQUITY = 10000.0  # REST失敗時のフォールバック
 
 STAGE_RATIOS = {
-    # Fractions per stage sum to 1.0 so pocket lot can fully deploy as conditions allow.
-    "macro": (0.2, 0.18, 0.16, 0.14, 0.12, 0.08, 0.06, 0.06),
-    "micro": (0.22, 0.18, 0.16, 0.14, 0.12, 0.08, 0.05, 0.05),
-    "scalp": (0.5, 0.3, 0.15, 0.05),
+    # Front-load a higher fraction in stage 0 so a valid signal deploys meaningful size sooner.
+    "macro": (0.35, 0.23, 0.17, 0.12, 0.08, 0.05),
+    "micro": (0.38, 0.24, 0.17, 0.11, 0.06, 0.04),
+    "scalp": (0.6, 0.2, 0.12, 0.08),
 }
 
 MIN_SCALP_STAGE_LOT = 0.01  # 1000 units baseline so micro/macro bias does not null scalps

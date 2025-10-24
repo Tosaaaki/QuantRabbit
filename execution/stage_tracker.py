@@ -227,7 +227,7 @@ class StageTracker:
                 (pocket, direction, trade_id, lose_streak, win_streak, ts),
             )
             existing[key] = (trade_id, lose_streak, win_streak)
-            if lose_streak >= 3:
+            if lose_streak >= 4:
                 pocket_cooldown = (
                     (cooldown_map or {}).get(pocket, cooldown_seconds)
                 )
@@ -250,26 +250,29 @@ class StageTracker:
         return int(row[0] or 0), int(row[1] or 0)
 
     def size_multiplier(self, pocket: str, direction: str) -> float:
-        """連敗時はより強くサイズを縮小し、連勝時はゆるやかに抑制。
+        """連敗時は徐々に縮小しつつも再起ペースを維持する。
 
         例:
-          - 1連敗: 0.6x
-          - 2連敗: 0.4x
-          - 3連敗以上: 0.3x（下限）
-          - 2連勝: 0.85x, 3連勝: 0.75x
+          - 1連敗: 0.75x
+          - 2連敗: 0.6x
+          - 3連敗: 0.5x
+          - 4連敗以上: 0.4x（下限 0.35）
+          - 2連勝: 0.9x, 4連勝: 0.8x
         """
         lose_streak, win_streak = self.get_loss_profile(pocket, direction)
         factor = 1.0
-        if lose_streak >= 3:
-            factor *= 0.3
-        elif lose_streak == 2:
+        if lose_streak >= 4:
             factor *= 0.4
-        elif lose_streak == 1:
+        elif lose_streak == 3:
+            factor *= 0.5
+        elif lose_streak == 2:
             factor *= 0.6
-
-        if win_streak >= 3:
+        elif lose_streak == 1:
             factor *= 0.75
-        elif win_streak >= 2:
-            factor *= 0.85
 
-        return max(0.2, round(factor, 3))
+        if win_streak >= 4:
+            factor *= 0.8
+        elif win_streak >= 2:
+            factor *= 0.9
+
+        return max(0.35, round(factor, 3))
