@@ -881,7 +881,7 @@ async def h4_candle_handler(cndl: Candle):
     await on_candle("H4", cndl)
 
 
-async def logic_loop():
+async def logic_loop(gpt_state: GPTDecisionState, gpt_requests: GPTRequestManager):
     pos_manager = PositionManager()
     metrics_client = RealtimeMetricsClient()
     confidence_policy = ConfidencePolicy()
