@@ -126,6 +126,11 @@ class ReplaySample:
     vol_high_ratio: float
     volatility_state: str
     h4_fallback: bool
+    story_state: str
+    macro_trend: str
+    micro_trend: str
+    higher_trend: str
+    structure_bias: float
 
     def to_csv_row(self) -> str:
         return ",".join(
@@ -140,6 +145,33 @@ class ReplaySample:
                 f"{self.vol_high_ratio:.3f}",
                 self.volatility_state,
                 "1" if self.h4_fallback else "0",
+                self.story_state,
+                self.macro_trend,
+                self.micro_trend,
+                self.higher_trend,
+                f"{self.structure_bias:.2f}",
+            ]
+        )
+
+
+@dataclass(slots=True)
+class GateEvent:
+    ts: datetime
+    pocket: str
+    action: str
+    rsi: float
+    atr_pips: float
+    reasons: str
+
+    def to_csv_row(self) -> str:
+        return ",".join(
+            [
+                self.ts.isoformat(),
+                self.pocket,
+                self.action,
+                f"{self.rsi:.2f}",
+                f"{self.atr_pips:.2f}",
+                self.reasons,
             ]
         )
 
@@ -209,7 +241,7 @@ async def replay_day(
     lot_cap: Optional[float],
     start_ts: Optional[datetime] = None,
     end_ts: Optional[datetime] = None,
-) -> List[ReplaySample]:
+) -> tuple[List[ReplaySample], List[GateEvent]]:
     importlib.reload(factor_cache_module)
     on_candle = factor_cache_module.on_candle
     all_factors = factor_cache_module.all_factors
@@ -221,7 +253,9 @@ async def replay_day(
         raise RuntimeError(f"No M1 candles found in {m1_path}")
 
     param_ctx = ParamContext()
+    chart_story = main_mod.ChartStory()
     results: List[ReplaySample] = []
+    gate_events: List[GateEvent] = []
 
     # まず H4 を流し込んでベース指標を準備
     await _feed_candles("H4", h4_candles, on_candle)
@@ -253,6 +287,18 @@ async def replay_day(
             continue
         if end_ts and ts > end_ts:
             break
+        story_state = "missing"
+        story_snapshot = chart_story.update(fac_m1, fac_h4)
+        if story_snapshot:
+            story_state = "fresh"
+        else:
+            story_snapshot = chart_story.last_snapshot
+            if story_snapshot:
+                story_state = "reuse"
+        macro_trend = story_snapshot.macro_trend if story_snapshot else ""
+        micro_trend = story_snapshot.micro_trend if story_snapshot else ""
+        higher_trend = story_snapshot.higher_trend if story_snapshot else ""
+        structure_bias = story_snapshot.structure_bias if story_snapshot else 0.0
         range_ctx = detect_range_mode(fac_m1, fac_h4)
         ranked = _simple_ranked_strategies(range_ctx.active)
         signals = _evaluate_strategies(ranked, fac_m1, news_cache, range_active=range_ctx.active)
@@ -304,9 +350,46 @@ async def replay_day(
                 vol_high_ratio=param_snapshot.vol_high_ratio,
                 volatility_state=param_snapshot.volatility_state,
                 h4_fallback=h4_fallback,
+                story_state=story_state,
+                macro_trend=macro_trend,
+                micro_trend=micro_trend,
+                higher_trend=higher_trend,
+                structure_bias=structure_bias,
             )
         )
-    return results
+        # collect gate hits for diagnostics (micro long focus)
+        try:
+            rsi = float(fac_m1.get("rsi", 50.0) or 0.0)
+        except (TypeError, ValueError):
+            rsi = 50.0
+        atr_raw = fac_m1.get("atr_pips")
+        if atr_raw is None:
+            atr_raw = (fac_m1.get("atr") or 0.0) * 100
+        try:
+            atr_pips = float(atr_raw or 0.0)
+        except (TypeError, ValueError):
+            atr_pips = 0.0
+
+        reasons: list[str] = []
+        micro_rsi_floor = main_mod.RSI_LONG_FLOOR.get("micro")
+        if micro_rsi_floor is not None and rsi < micro_rsi_floor:
+            reasons.append(f"rsi<{micro_rsi_floor:.1f}")
+        micro_atr_floor = main_mod.POCKET_ATR_MIN_PIPS.get("micro")
+        if micro_atr_floor is not None and atr_pips < micro_atr_floor:
+            reasons.append(f"atr<{micro_atr_floor:.1f}")
+        if reasons:
+            gate_events.append(
+                GateEvent(
+                    ts=ts,
+                    pocket="micro",
+                    action="OPEN_LONG",
+                    rsi=rsi,
+                    atr_pips=atr_pips,
+                    reasons=";".join(reasons),
+                )
+            )
+
+    return results, gate_events
 
 
 def summarize(samples: List[ReplaySample], *, vol_threshold: float) -> Dict[str, Dict[str, float]]:
@@ -390,6 +473,11 @@ def main() -> None:
         default="",
         help="再生の終了 UTC 時刻 (例: 2025-10-24T12:15:00Z)",
     )
+    parser.add_argument(
+        "--dump-gates",
+        action="store_true",
+        help="RSI/ATR ゲートヒットを CSV (tmp/replay_gate_hits.csv) に書き出す",
+    )
     args = parser.parse_args()
 
     out_dir = Path(args.out_dir)
@@ -397,6 +485,7 @@ def main() -> None:
 
     per_day_summary: Dict[str, Dict[str, Dict[str, float]]] = {}
     global_samples: List[ReplaySample] = []
+    global_gates: List[GateEvent] = []
 
     start_ts = _parse_time(args.start) if args.start else None
     end_ts = _parse_time(args.end) if args.end else None
@@ -412,7 +501,7 @@ def main() -> None:
         display_h4 = explicit_h4 or inferred_h4 or "auto-history"
         print(f"[INFO] replay {base_name} (H4={display_h4})")
 
-        samples = asyncio.run(
+        samples, gate_events = asyncio.run(
             replay_day(
                 m1_path,
                 h4_path=explicit_h4,
@@ -427,13 +516,15 @@ def main() -> None:
         print(f"[INFO] generated {len(samples)} samples for {base_name}")
         if samples:
             global_samples.extend(samples)
+        if gate_events:
+            global_gates.extend(gate_events)
         summary = summarize(samples, vol_threshold=args.vol_threshold)
         per_day_summary[base_name] = summary
 
         csv_path = out_dir / f"replay_metrics_{base_name}.csv"
         with csv_path.open("w", encoding="utf-8") as fh:
             fh.write(
-                "timestamp,risk_pct,lot,avg_sl,stage_macro_first,stage_micro_first,stage_scalp_first,vol_high_ratio,vol_state,h4_fallback\n"
+                "timestamp,risk_pct,lot,avg_sl,stage_macro_first,stage_micro_first,stage_scalp_first,vol_high_ratio,vol_state,h4_fallback,story_state,macro_trend,micro_trend,higher_trend,structure_bias\n"
             )
             for sample in samples:
                 fh.write(sample.to_csv_row() + "\n")
@@ -446,6 +537,14 @@ def main() -> None:
     global_summary = summarize(global_samples, vol_threshold=args.vol_threshold)
     if global_summary:
         print(f"[SUMMARY] GLOBAL -> {json.dumps(global_summary, ensure_ascii=False)}")
+
+    if args.dump_gates and global_gates:
+        gate_path = out_dir / "replay_gate_hits.csv"
+        with gate_path.open("w", encoding="utf-8") as fh:
+            fh.write("timestamp,pocket,action,rsi,atr_pips,reasons\n")
+            for event in global_gates:
+                fh.write(event.to_csv_row() + "\n")
+        print(f"[INFO] Gate hits exported to {gate_path}")
 
     if args.summary_json:
         summary_path = Path(args.summary_json)

@@ -47,6 +47,30 @@ class ExitManager:
         self._reverse_decay = timedelta(seconds=300)
         self._reverse_hits: Dict[Tuple[str, str], Dict[str, object]] = {}
         self._range_macro_grace_minutes = 10.0
+        self._pip = 0.01
+        self._mfe_sensitive_reasons = {
+            "reverse_signal",
+            "ma_cross",
+            "ma_cross_imminent",
+            "trend_reversal",
+            "macro_trail_hit",
+        }
+        self._partial_eligible_reasons = {
+            "reverse_signal",
+            "ma_cross",
+            "ma_cross_imminent",
+            "trend_reversal",
+            "macro_trail_hit",
+        }
+        self._force_exit_reasons = {
+            "range_stop",
+            "stop_loss_order",
+            "macro_stop",
+            "macro_stop_loss",
+            "micro_momentum_stop",
+            "event_lock",
+        }
+        self._min_partial_units = 600
 
     def plan_closures(
         self,
@@ -56,6 +80,8 @@ class ExitManager:
         fac_h4: Dict,
         event_soon: bool,
         range_mode: bool = False,
+        stage_state: Optional[Dict[str, Dict[str, int]]] = None,
+        pocket_profiles: Optional[Dict[str, Dict[str, float]]] = None,
         now: Optional[datetime] = None,
         story: Optional[ChartStorySnapshot] = None,
     ) -> List[ExitDecision]:
@@ -64,6 +90,8 @@ class ExitManager:
         projection_m1 = compute_ma_projection(fac_m1, timeframe_minutes=1.0)
         projection_h4 = compute_ma_projection(fac_h4, timeframe_minutes=240.0)
         m1_candles = fac_m1.get("candles") or []
+        atr_m1 = self._safe_float(fac_m1.get("atr_pips"))
+        atr_h4 = self._safe_float(fac_h4.get("atr_pips"))
         for pocket, info in open_positions.items():
             if pocket == "__net__":
                 continue
@@ -98,6 +126,9 @@ class ExitManager:
             close_price = fac_m1.get("close", 0.0)
             projection_primary = projection_h4 if pocket == "macro" else projection_m1
             projection_fast = projection_m1
+            stage_long = ((stage_state or {}).get(pocket) or {}).get("long", 0)
+            stage_short = ((stage_state or {}).get(pocket) or {}).get("short", 0)
+            profile = (pocket_profiles or {}).get(pocket, {})
 
             if long_units > 0:
                 decision = self._evaluate_long(
@@ -118,6 +149,10 @@ class ExitManager:
                     projection_fast,
                     m1_candles,
                     story,
+                    stage_level=stage_long,
+                    pocket_profile=profile,
+                    atr_primary=atr_h4 if pocket == "macro" else atr_m1,
+                    atr_m1=atr_m1,
                 )
                 if decision:
                     decisions.append(decision)
@@ -141,6 +176,10 @@ class ExitManager:
                     projection_fast,
                     m1_candles,
                     story,
+                    stage_level=stage_short,
+                    pocket_profile=profile,
+                    atr_primary=atr_h4 if pocket == "macro" else atr_m1,
+                    atr_m1=atr_m1,
                 )
                 if decision:
                     decisions.append(decision)
@@ -184,6 +223,11 @@ class ExitManager:
         projection_fast: Optional[MACrossProjection],
         m1_candles: List[Dict],
         story: Optional[ChartStorySnapshot],
+        *,
+        stage_level: int = 0,
+        pocket_profile: Optional[Dict[str, float]] = None,
+        atr_primary: Optional[float] = None,
+        atr_m1: Optional[float] = None,
     ) -> Optional[ExitDecision]:
         allow_reentry = False
         reason = ""
@@ -192,6 +236,7 @@ class ExitManager:
         profit_pips = 0.0
         if avg_price and close_price:
             profit_pips = (close_price - avg_price) / 0.01
+        profile = pocket_profile or {}
 
         ma_gap_pips = 0.0
         if ma10 is not None and ma20 is not None:
@@ -316,12 +361,36 @@ class ExitManager:
 
         # MFE-based patience: if we've achieved decent favorable excursion,
         # avoid exiting on a mild pullback unless strong invalidation.
-        if reason == "reverse_signal" and not range_mode:
+        if reason in self._mfe_sensitive_reasons and not range_mode:
             max_mfe = self._max_mfe_for_side(open_info, "long", m1_candles, now)
             if max_mfe is not None and max_mfe >= self._mfe_guard_pips:
                 retrace = max(0.0, max_mfe - max(0.0, profit_pips))
                 if retrace <= self._mfe_guard_retrace_ratio * max_mfe and profit_pips > -self._macro_loss_buffer:
                     return None
+
+        if reason == "trend_reversal":
+            if not self._validate_trend_reversal(
+                pocket,
+                "long",
+                story,
+                close_price,
+                m1_candles,
+                atr_primary=atr_primary,
+                atr_m1=atr_m1,
+            ):
+                reason = ""
+        elif reason == "macro_trail_hit":
+            if not self._validate_trend_reversal(
+                pocket,
+                "long",
+                story,
+                close_price,
+                m1_candles,
+                atr_primary=atr_primary,
+                atr_m1=atr_m1,
+                bias_only=True,
+            ):
+                reason = ""
 
         if range_mode and reason == "reverse_signal":
             allow_reentry = False
@@ -341,6 +410,18 @@ class ExitManager:
         if not reason:
             return None
 
+        close_units = self._compute_exit_units(
+            pocket,
+            "long",
+            reason,
+            units,
+            stage_level,
+            profile,
+            range_mode=range_mode,
+        )
+        if close_units <= 0:
+            return None
+
         self._record_exit_metric(
             pocket,
             "long",
@@ -353,7 +434,7 @@ class ExitManager:
 
         return ExitDecision(
             pocket=pocket,
-            units=-abs(units),
+            units=-abs(close_units),
             reason=reason,
             tag=tag,
             allow_reentry=allow_reentry,
@@ -378,6 +459,11 @@ class ExitManager:
         projection_fast: Optional[MACrossProjection],
         m1_candles: List[Dict],
         story: Optional[ChartStorySnapshot],
+        *,
+        stage_level: int = 0,
+        pocket_profile: Optional[Dict[str, float]] = None,
+        atr_primary: Optional[float] = None,
+        atr_m1: Optional[float] = None,
     ) -> Optional[ExitDecision]:
         allow_reentry = False
         reason = ""
@@ -386,6 +472,7 @@ class ExitManager:
         profit_pips = 0.0
         if avg_price and close_price:
             profit_pips = (avg_price - close_price) / 0.01
+        profile = pocket_profile or {}
 
         ma_gap_pips = 0.0
         if ma10 is not None and ma20 is not None:
@@ -494,12 +581,36 @@ class ExitManager:
             elif profit_pips <= -1.0:
                 reason = "range_stop"
 
-        if reason == "reverse_signal" and not range_mode:
+        if reason in self._mfe_sensitive_reasons and not range_mode:
             max_mfe = self._max_mfe_for_side(open_info, "short", m1_candles, now)
             if max_mfe is not None and max_mfe >= self._mfe_guard_pips:
-                retrace = max(0.0, max_mfe - max(0.0, profit_pips))
-                if retrace <= self._mfe_guard_retrace_ratio * max_mfe and profit_pips > -self._macro_loss_buffer:
+                retrace = max(0.0, max_mfe - max(0.0, -profit_pips))
+                if retrace <= self._mfe_guard_retrace_ratio * max_mfe and profit_pips < self._macro_loss_buffer:
                     return None
+
+        if reason == "trend_reversal":
+            if not self._validate_trend_reversal(
+                pocket,
+                "short",
+                story,
+                close_price,
+                m1_candles,
+                atr_primary=atr_primary,
+                atr_m1=atr_m1,
+            ):
+                reason = ""
+        elif reason == "macro_trail_hit":
+            if not self._validate_trend_reversal(
+                pocket,
+                "short",
+                story,
+                close_price,
+                m1_candles,
+                atr_primary=atr_primary,
+                atr_m1=atr_m1,
+                bias_only=True,
+            ):
+                reason = ""
 
         if range_mode and reason == "reverse_signal":
             allow_reentry = False
@@ -519,6 +630,18 @@ class ExitManager:
         if not reason:
             return None
 
+        close_units = self._compute_exit_units(
+            pocket,
+            "short",
+            reason,
+            units,
+            stage_level,
+            profile,
+            range_mode=range_mode,
+        )
+        if close_units <= 0:
+            return None
+
         self._record_exit_metric(
             pocket,
             "short",
@@ -531,7 +654,7 @@ class ExitManager:
 
         return ExitDecision(
             pocket=pocket,
-            units=abs(units),
+            units=abs(close_units),
             reason=reason,
             tag=tag,
             allow_reentry=allow_reentry,
@@ -812,6 +935,121 @@ class ExitManager:
             tags=tags,
             ts=now,
         )
+
+    def _validate_trend_reversal(
+        self,
+        pocket: str,
+        side: str,
+        story: Optional[ChartStorySnapshot],
+        close_price: Optional[float],
+        m1_candles: List[Dict],
+        *,
+        atr_primary: Optional[float],
+        atr_m1: Optional[float],
+        bias_only: bool = False,
+    ) -> bool:
+        if close_price is None:
+            return False
+        trend = self._story_trend(story, pocket)
+        higher = getattr(story, "higher_trend", None) if story else None
+        structure_bias = getattr(story, "structure_bias", 0.0) if story else 0.0
+        if side == "long":
+            if trend == "down" or higher == "down" or structure_bias <= -4.0:
+                return True
+        else:
+            if trend == "up" or higher == "up" or structure_bias >= 4.0:
+                return True
+        if bias_only:
+            return False
+        atr = atr_primary or atr_m1 or 0.0
+        return self._is_structural_break(side, close_price, m1_candles, atr_pips=atr)
+
+    def _is_structural_break(
+        self,
+        side: str,
+        close_price: float,
+        candles: List[Dict],
+        *,
+        atr_pips: float = 0.0,
+        lookback: int = 12,
+    ) -> bool:
+        if not candles or len(candles) < lookback + 2:
+            return False
+        lows: List[float] = []
+        highs: List[float] = []
+        for c in candles[-(lookback + 2) : -1]:
+            try:
+                lows.append(float(c.get("low")))
+                highs.append(float(c.get("high")))
+            except (TypeError, ValueError):
+                continue
+        if not lows or not highs:
+            return False
+        atr_buffer = max(0.15, (atr_pips or 0.0) * 0.28)
+        buffer_price = atr_buffer * self._pip
+        if side == "long":
+            swing_low = min(lows)
+            return close_price <= swing_low - buffer_price
+        swing_high = max(highs)
+        return close_price >= swing_high + buffer_price
+
+    def _compute_exit_units(
+        self,
+        pocket: str,
+        side: str,
+        reason: str,
+        total_units: int,
+        stage_level: int,
+        pocket_profile: Dict[str, float],
+        *,
+        range_mode: bool,
+    ) -> int:
+        base = abs(total_units)
+        if base == 0:
+            return 0
+        if base <= self._min_partial_units:
+            return base
+        if reason not in self._partial_eligible_reasons:
+            return base
+        if reason in self._force_exit_reasons:
+            return base
+        fraction = 0.7
+        if reason == "trend_reversal":
+            fraction = 0.6
+        elif reason in {"reverse_signal", "ma_cross_imminent", "ma_cross"}:
+            fraction = 0.55
+        if stage_level >= 4:
+            fraction *= 0.6
+        elif stage_level == 3:
+            fraction *= 0.7
+        elif stage_level == 2:
+            fraction *= 0.8
+        win_rate = pocket_profile.get("win_rate", 0.0)
+        avg_loss = pocket_profile.get("avg_loss_pips", 0.0)
+        if win_rate >= 0.58:
+            fraction *= 0.85
+        if avg_loss and avg_loss <= 3.5:
+            fraction *= 0.85
+        if range_mode:
+            fraction = min(0.9, fraction * 1.1)
+        fraction = max(0.35, min(0.9, fraction))
+        units_to_close = int(round(base * fraction))
+        if units_to_close <= 0:
+            units_to_close = 1
+        if units_to_close >= base:
+            units_to_close = base - max(1, int(base * 0.1))
+        if units_to_close <= 0:
+            units_to_close = base
+        return min(base, units_to_close)
+
+    @staticmethod
+    def _safe_float(value: object, default: float = 0.0) -> float:
+        try:
+            if value is None:
+                return default
+            return float(value)
+        except (TypeError, ValueError):
+            return default
 
     def _reset_reverse_counter(self, pocket: str, direction: str) -> None:
         self._reverse_hits.pop((pocket, direction), None)

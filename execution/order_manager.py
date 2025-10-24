@@ -469,6 +469,8 @@ def plan_partial_reductions(
     fac_m1: dict,
     *,
     range_mode: bool = False,
+    stage_state: Optional[dict[str, dict[str, int]]] = None,
+    pocket_profiles: Optional[dict[str, dict[str, float]]] = None,
     now: Optional[datetime] = None,
 ) -> list[tuple[str, str, int]]:
     price = fac_m1.get("close")
@@ -486,6 +488,8 @@ def plan_partial_reductions(
             thresholds = _PARTIAL_THRESHOLDS_RANGE.get(pocket, thresholds)
         if not thresholds:
             continue
+        pocket_stage = (stage_state or {}).get(pocket, {})
+        pocket_profile = (pocket_profiles or {}).get(pocket, {})
         trades = info.get("open_trades") or []
         for tr in trades:
             trade_id = tr.get("trade_id")
@@ -503,20 +507,38 @@ def plan_partial_reductions(
                     continue
             current_stage = _PARTIAL_STAGE.get(trade_id, 0)
             gain_pips = 0.0
+            stage_level = (pocket_stage or {}).get(side, 0)
+            profile = pocket_profile or {}
+            effective_thresholds = list(thresholds)
+            if stage_level >= 3:
+                effective_thresholds = [max(2.0, t * 0.75) for t in effective_thresholds]
+            elif stage_level >= 1:
+                effective_thresholds = [max(2.0, t * 0.85) for t in effective_thresholds]
+            if profile.get("win_rate", 0.0) >= 0.55:
+                effective_thresholds = [max(2.0, t * 0.9) for t in effective_thresholds]
+            if profile.get("avg_loss_pips", 0.0) > 5.0:
+                effective_thresholds = [max(1.5, t * 0.8) for t in effective_thresholds]
+            thresholds_eff = tuple(effective_thresholds)
             if side == "long":
                 gain_pips = (price - entry) * pip_scale
             else:
                 gain_pips = (entry - price) * pip_scale
-            if gain_pips <= thresholds[0]:
+            if gain_pips <= thresholds_eff[0]:
                 continue
             stage = 0
-            for idx, threshold in enumerate(thresholds, start=1):
+            for idx, threshold in enumerate(thresholds_eff, start=1):
                 if gain_pips >= threshold:
                     stage = idx
             if stage <= current_stage:
                 continue
             fraction_idx = min(stage - 1, len(_PARTIAL_FRACTIONS) - 1)
             fraction = _PARTIAL_FRACTIONS[fraction_idx]
+            if stage_level >= 3:
+                fraction = min(0.65, fraction + 0.15)
+            elif stage_level == 2:
+                fraction = min(0.6, fraction + 0.1)
+            if profile.get("win_rate", 0.0) >= 0.55:
+                fraction = min(0.6, fraction + 0.05)
             reduce_units = int(abs(units) * fraction)
             if reduce_units < _PARTIAL_MIN_UNITS:
                 continue

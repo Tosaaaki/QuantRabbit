@@ -677,6 +677,18 @@ async def logic_loop():
                 )
             else:
                 spread_log_context = "no_snapshot"
+            tick_bid = None
+            tick_ask = None
+            if spread_snapshot:
+                try:
+                    raw_bid = spread_snapshot.get("bid")
+                    if raw_bid is not None:
+                        tick_bid = float(raw_bid)
+                    raw_ask = spread_snapshot.get("ask")
+                    if raw_ask is not None:
+                        tick_ask = float(raw_ask)
+                except (TypeError, ValueError):
+                    tick_bid = tick_ask = None
             if spread_gate_active:
                 if (
                     not last_spread_gate
@@ -1258,6 +1270,14 @@ async def logic_loop():
                 logging.info("[SIGNAL] %s -> %s", cls.name, signal)
 
             open_positions = pos_manager.get_open_positions()
+            stage_snapshot: dict[str, dict[str, int]] = {}
+            for pocket_name, position_info in open_positions.items():
+                if pocket_name == "__net__":
+                    continue
+                stage_snapshot[pocket_name] = {
+                    "long": stage_tracker.get_stage(pocket_name, "long"),
+                    "short": stage_tracker.get_stage(pocket_name, "short"),
+                }
             try:
                 update_dynamic_protections(open_positions, fac_m1, fac_h4)
             except Exception as exc:
@@ -1267,6 +1287,8 @@ async def logic_loop():
                     open_positions,
                     fac_m1,
                     range_mode=range_active,
+                    stage_state=stage_snapshot,
+                    pocket_profiles=recent_profiles,
                     now=now,
                 )
             except Exception as exc:
@@ -1285,6 +1307,14 @@ async def logic_loop():
                     partial_closed = True
             if partial_closed:
                 open_positions = pos_manager.get_open_positions()
+                stage_snapshot = {}
+                for pocket_name, position_info in open_positions.items():
+                    if pocket_name == "__net__":
+                        continue
+                    stage_snapshot[pocket_name] = {
+                        "long": stage_tracker.get_stage(pocket_name, "long"),
+                        "short": stage_tracker.get_stage(pocket_name, "short"),
+                    }
             net_units = int(open_positions.get("__net__", {}).get("units", 0))
 
             for pocket, info in open_positions.items():
@@ -1292,7 +1322,10 @@ async def logic_loop():
                     continue
                 for direction, key_units in (("long", "long_units"), ("short", "short_units")):
                     units_value = int(info.get(key_units, 0) or 0)
-                    tracker_stage = stage_tracker.get_stage(pocket, direction)
+                    tracker_stage = stage_snapshot.get(pocket, {}).get(direction)
+                    if tracker_stage is None:
+                        tracker_stage = stage_tracker.get_stage(pocket, direction)
+                        stage_snapshot.setdefault(pocket, {})[direction] = tracker_stage
                     key = (pocket, direction)
                     if units_value == 0 and tracker_stage > 0:
                         empty_since = stage_empty_since.get(key)
@@ -1306,6 +1339,7 @@ async def logic_loop():
                                 (now - empty_since).total_seconds(),
                             )
                             stage_tracker.reset_stage(pocket, direction, now=now)
+                            stage_snapshot.setdefault(pocket, {})[direction] = 0
                             stage_empty_since.pop(key, None)
                     elif units_value != 0:
                         stage_empty_since.pop(key, None)
@@ -1317,6 +1351,8 @@ async def logic_loop():
                 fac_h4,
                 event_soon,
                 range_active,
+                stage_state=stage_snapshot,
+                pocket_profiles=recent_profiles,
                 now=now,
                 story=story_snapshot,
             )
@@ -1457,11 +1493,19 @@ async def logic_loop():
                 )
             last_risk_pct = risk_override
 
+            base_price_val = fac_m1.get("close")
+            try:
+                mid_price = float(base_price_val or 0.0)
+            except (TypeError, ValueError):
+                mid_price = 0.0
+            if tick_bid is not None and tick_ask is not None:
+                mid_price = round((tick_bid + tick_ask) / 2, 3)
+
             lot_total = allowed_lot(
                 account_equity,
                 sl_pips=max(1.0, avg_sl),
                 margin_available=margin_available,
-                price=fac_m1.get("close"),
+                price=mid_price if mid_price > 0 else None,
                 margin_rate=margin_rate,
                 risk_pct_override=risk_override,
             )
@@ -1560,7 +1604,10 @@ async def logic_loop():
                     confidence_target = adj
 
                 open_info = open_positions.get(pocket, {})
-                price = fac_m1.get("close")
+                try:
+                    price = float(mid_price) if mid_price > 0 else float(fac_m1.get("close") or 0.0)
+                except (TypeError, ValueError):
+                    price = 0.0
                 if action == "OPEN_LONG":
                     open_units = int(open_info.get("long_units", 0))
                     ref_price = open_info.get("long_avg_price")
@@ -1569,6 +1616,13 @@ async def logic_loop():
                     open_units = int(open_info.get("short_units", 0))
                     ref_price = open_info.get("short_avg_price")
                     direction = "short"
+
+                is_buy = action == "OPEN_LONG"
+                entry_price = price
+                if is_buy and tick_ask is not None:
+                    entry_price = float(tick_ask)
+                elif not is_buy and tick_bid is not None:
+                    entry_price = float(tick_bid)
 
                 size_factor = stage_tracker.size_multiplier(pocket, direction)
                 if size_factor < 0.999:
@@ -1592,7 +1646,7 @@ async def logic_loop():
 
                 stage_context = dict(open_info) if open_info else {}
                 if ref_price is None or (ref_price == 0.0 and open_units == 0):
-                    ref_price = price
+                    ref_price = entry_price
                 if ref_price is not None:
                     stage_context["avg_price"] = ref_price
 
@@ -1623,11 +1677,14 @@ async def logic_loop():
                     logging.info("[SKIP] Missing SL/TP for %s.", signal["strategy"])
                     continue
 
+                base_sl = entry_price - (sl_pips / 100) if is_buy else entry_price + (sl_pips / 100)
+                base_tp = entry_price + (tp_pips / 100) if is_buy else entry_price - (tp_pips / 100)
+
                 sl, tp = clamp_sl_tp(
-                    price,
-                    price - sl_pips / 100,
-                    price + tp_pips / 100,
-                    action == "OPEN_LONG",
+                    entry_price,
+                    base_sl,
+                    base_tp,
+                    is_buy,
                 )
 
                 client_id = build_client_order_id(focus_tag, signal["tag"])
@@ -1699,7 +1756,7 @@ async def logic_loop():
                         pocket,
                         {
                             "units": 0,
-                            "avg_price": price or 0.0,
+                            "avg_price": entry_price or price or 0.0,
                             "trades": 0,
                             "long_units": 0,
                             "long_avg_price": 0.0,
@@ -1709,18 +1766,18 @@ async def logic_loop():
                     )
                     info["units"] = info.get("units", 0) + units
                     info["trades"] = info.get("trades", 0) + 1
-                    if price is not None:
-                        info["avg_price"] = price
+                    if entry_price is not None:
+                        info["avg_price"] = entry_price
                         if units > 0:
                             prev_units = info.get("long_units", 0)
                             new_units = prev_units + units
                             if new_units > 0:
                                 if prev_units == 0:
-                                    info["long_avg_price"] = price
+                                    info["long_avg_price"] = entry_price
                                 else:
                                     info["long_avg_price"] = (
-                                        info.get("long_avg_price", price) * prev_units
-                                        + price * units
+                                        info.get("long_avg_price", entry_price) * prev_units
+                                        + entry_price * units
                                     ) / new_units
                             info["long_units"] = new_units
                         else:
@@ -1729,11 +1786,11 @@ async def logic_loop():
                             new_units = prev_units + trade_size
                             if new_units > 0:
                                 if prev_units == 0:
-                                    info["short_avg_price"] = price
+                                    info["short_avg_price"] = entry_price
                                 else:
                                     info["short_avg_price"] = (
-                                        info.get("short_avg_price", price) * prev_units
-                                        + price * trade_size
+                                        info.get("short_avg_price", entry_price) * prev_units
+                                        + entry_price * trade_size
                                     ) / new_units
                             info["short_units"] = new_units
                     net_units += units
