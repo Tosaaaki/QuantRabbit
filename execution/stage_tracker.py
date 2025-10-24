@@ -6,14 +6,21 @@ execution.stage_tracker
 
 from __future__ import annotations
 
+import logging
 import sqlite3
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Dict, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
 _DB_PATH = Path("logs/stage_state.db")
 _TRADES_DB = Path("logs/trades.db")
+_LOSS_WINDOW_MINUTES = 12
+_MIN_LOSS_JPY = 1.0
+
+
+def _ensure_row_factory(con: sqlite3.Connection) -> None:
+    con.row_factory = sqlite3.Row
 
 
 @dataclass(slots=True)
@@ -28,6 +35,7 @@ class StageTracker:
     def __init__(self, db_path: Path | None = None) -> None:
         self._path = db_path or _DB_PATH
         self._con = sqlite3.connect(self._path)
+        _ensure_row_factory(self._con)
         self._con.execute(
             """
             CREATE TABLE IF NOT EXISTS stage_cooldown (
@@ -63,7 +71,27 @@ class StageTracker:
             )
             """
         )
+        self._con.execute(
+            """
+            CREATE TABLE IF NOT EXISTS pocket_loss_window (
+                pocket TEXT NOT NULL,
+                trade_id INTEGER PRIMARY KEY,
+                closed_at TEXT NOT NULL,
+                loss_jpy REAL NOT NULL,
+                loss_pips REAL NOT NULL
+            )
+            """
+        )
         self._con.commit()
+        self._loss_window_minutes = _LOSS_WINDOW_MINUTES
+        self._cluster_last_trade_id: Dict[str, int] = {}
+        for row in self._con.execute(
+            "SELECT pocket, MAX(trade_id) AS last_id FROM pocket_loss_window GROUP BY pocket"
+        ):
+            pocket = row["pocket"]
+            if pocket:
+                self._cluster_last_trade_id[pocket] = int(row["last_id"] or 0)
+        self._recent_profile: Dict[str, Dict[str, float]] = {}
 
     def close(self) -> None:
         self._con.close()
@@ -139,7 +167,7 @@ class StageTracker:
         ).fetchone()
         if not row:
             return None
-        limit = datetime.fromisoformat(row[1])
+        limit = datetime.fromisoformat(row["cooldown_until"])
         current = now or datetime.utcnow()
         if current >= limit:
             self._con.execute(
@@ -149,7 +177,7 @@ class StageTracker:
             self._con.commit()
             return None
         return CooldownInfo(
-            pocket=pocket, direction=direction, reason=row[0] or "", cooldown_until=limit
+            pocket=pocket, direction=direction, reason=row["reason"] or "", cooldown_until=limit
         )
 
     def is_blocked(
@@ -168,24 +196,37 @@ class StageTracker:
         now: Optional[datetime] = None,
         cooldown_seconds: int = 900,
         cooldown_map: Optional[Dict[str, int]] = None,
+        range_active: bool = False,
+        atr_pips: Optional[float] = None,
+        vol_5m: Optional[float] = None,
     ) -> None:
         trades_path = trades_db or _TRADES_DB
         if not trades_path.exists():
             return
         conn = sqlite3.connect(trades_path)
-        conn.row_factory = sqlite3.Row
+        _ensure_row_factory(conn)
         rows = conn.execute(
-            "SELECT id, pocket, units, pl_pips, realized_pl FROM trades WHERE close_time IS NOT NULL ORDER BY id ASC"
+            "SELECT id, pocket, units, pl_pips, realized_pl, close_time FROM trades WHERE close_time IS NOT NULL ORDER BY id ASC"
         ).fetchall()
         conn.close()
         if not rows:
             return
+        rows = list(rows)
 
         existing: Dict[Tuple[str, str], Tuple[int, int, int]] = {}
-        for row in self._con.execute("SELECT pocket, direction, last_trade_id, lose_streak, win_streak FROM stage_history"):
-            existing[(row[0], row[1])] = (int(row[2] or 0), int(row[3] or 0), int(row[4] or 0))
+        for row in self._con.execute(
+            "SELECT pocket, direction, last_trade_id, lose_streak, win_streak FROM stage_history"
+        ):
+            existing[(row["pocket"], row["direction"])] = (
+                int(row["last_trade_id"] or 0),
+                int(row["lose_streak"] or 0),
+                int(row["win_streak"] or 0),
+            )
 
-        ts = (now or datetime.utcnow()).isoformat()
+        now_dt = now or datetime.utcnow()
+        ts = now_dt.isoformat()
+        new_losses: List[Tuple[str, int, datetime, float, float]] = []
+
         for row in rows:
             pocket = row["pocket"] or ""
             units = int(row["units"] or 0)
@@ -195,19 +236,16 @@ class StageTracker:
             key = (pocket, direction)
             last_id, lose_streak, win_streak = existing.get(key, (0, 0, 0))
             try:
-                trade_id = int(row["id"]) if row["id"] is not None else None
-            except (TypeError, ValueError):  # noqa: PERF203
-                trade_id = None
-            if not trade_id:
+                trade_id = int(row["id"])
+            except (TypeError, ValueError):
                 continue
             if trade_id <= last_id:
                 continue
-            # 判定は円ベースの実現損益を優先（ロット不均一時の誤判定を防ぐ）
             pl_jpy = float(row["realized_pl"] or 0.0)
-            if pl_jpy < -1.0:
+            if pl_jpy < -_MIN_LOSS_JPY:
                 lose_streak += 1
                 win_streak = 0
-            elif pl_jpy > 1.0:
+            elif pl_jpy > _MIN_LOSS_JPY:
                 win_streak += 1
                 lose_streak = 0
             else:
@@ -227,17 +265,68 @@ class StageTracker:
                 (pocket, direction, trade_id, lose_streak, win_streak, ts),
             )
             existing[key] = (trade_id, lose_streak, win_streak)
-            if lose_streak >= 4:
-                pocket_cooldown = (
-                    (cooldown_map or {}).get(pocket, cooldown_seconds)
+            if pl_jpy < -_MIN_LOSS_JPY:
+                close_dt = self._parse_iso(row["close_time"], now_dt)
+                loss_jpy = abs(pl_jpy)
+                loss_pips = abs(float(row["pl_pips"] or 0.0))
+                new_losses.append((pocket, trade_id, close_dt, loss_jpy, loss_pips))
+
+        self._con.commit()
+
+        cooldown_lookup: Dict[str, int] = dict(cooldown_map or {})
+        if cooldown_lookup:
+            fallback_cd = int(min(cooldown_lookup.values()))
+        else:
+            fallback_cd = cooldown_seconds
+
+        if new_losses:
+            payload = []
+            for pocket, trade_id, closed_at, loss_jpy, loss_pips in new_losses:
+                last_cluster = self._cluster_last_trade_id.get(pocket, 0)
+                if trade_id <= last_cluster:
+                    continue
+                payload.append(
+                    (pocket, trade_id, closed_at.isoformat(), loss_jpy, loss_pips)
                 )
-                self.set_cooldown(
-                    pocket,
-                    direction,
-                    reason="loss_streak",
-                    seconds=pocket_cooldown,
-                    now=now,
+                self._cluster_last_trade_id[pocket] = max(last_cluster, trade_id)
+            if payload:
+                self._con.executemany(
+                    """
+                    INSERT OR IGNORE INTO pocket_loss_window(pocket, trade_id, closed_at, loss_jpy, loss_pips)
+                    VALUES (?, ?, ?, ?, ?)
+                    """,
+                    payload,
                 )
+
+        cutoff = (now_dt - timedelta(minutes=self._loss_window_minutes)).isoformat()
+        self._con.execute(
+            "DELETE FROM pocket_loss_window WHERE closed_at < ?", (cutoff,)
+        )
+
+        cluster_stats: Dict[str, Dict[str, float]] = {}
+        for row in self._con.execute(
+            "SELECT pocket, COUNT(*) AS cnt, SUM(loss_jpy) AS total_jpy, SUM(loss_pips) AS total_pips FROM pocket_loss_window GROUP BY pocket"
+        ):
+            pocket = row["pocket"]
+            if not pocket:
+                continue
+            cluster_stats[pocket] = {
+                "count": float(row["cnt"] or 0.0),
+                "loss_jpy": float(row["total_jpy"] or 0.0),
+                "loss_pips": float(row["total_pips"] or 0.0),
+                "cooldown": int(cooldown_lookup.get(pocket, fallback_cd)),
+            }
+
+        if cluster_stats:
+            self._apply_loss_clusters(
+                cluster_stats,
+                range_active=range_active,
+                atr_pips=atr_pips,
+                vol_5m=vol_5m,
+                now=now_dt,
+            )
+
+        self._recent_profile = self._build_recent_profile(rows, now_dt)
         self._con.commit()
 
     def get_loss_profile(self, pocket: str, direction: str) -> Tuple[int, int]:
@@ -247,7 +336,7 @@ class StageTracker:
         ).fetchone()
         if not row:
             return 0, 0
-        return int(row[0] or 0), int(row[1] or 0)
+        return int(row["lose_streak"] or 0), int(row["win_streak"] or 0)
 
     def size_multiplier(self, pocket: str, direction: str) -> float:
         """連敗時は徐々に縮小しつつも再起ペースを維持する。
@@ -276,3 +365,161 @@ class StageTracker:
             factor *= 0.9
 
         return max(0.35, round(factor, 3))
+
+    def get_recent_profile(self, pocket: str) -> Dict[str, float]:
+        return dict(self._recent_profile.get(pocket, {}))
+
+    def get_recent_profiles(self) -> Dict[str, Dict[str, float]]:
+        return {key: dict(val) for key, val in self._recent_profile.items()}
+
+    def _apply_loss_clusters(
+        self,
+        cluster_stats: Dict[str, Dict[str, float]],
+        *,
+        range_active: bool,
+        atr_pips: Optional[float],
+        vol_5m: Optional[float],
+        now: datetime,
+    ) -> None:
+        for pocket, stats in cluster_stats.items():
+            thresholds = self._compute_cluster_thresholds(
+                pocket,
+                base_cooldown=int(stats.get("cooldown", 900) or 900),
+                range_active=range_active,
+                atr_pips=atr_pips,
+                vol_5m=vol_5m,
+            )
+            count = int(stats.get("count", 0))
+            loss_pips = float(stats.get("loss_pips", 0.0))
+            if count < thresholds["count"] and loss_pips < thresholds["pips"]:
+                continue
+            seconds = thresholds["cooldown"]
+            applied = False
+            for direction in ("long", "short"):
+                info = self.get_cooldown(pocket, direction, now)
+                if info and info.reason == "loss_cluster":
+                    remaining = int((info.cooldown_until - now).total_seconds())
+                    if remaining >= seconds * 0.6:
+                        continue
+                self.set_cooldown(
+                    pocket,
+                    direction,
+                    reason="loss_cluster",
+                    seconds=seconds,
+                    now=now,
+                )
+                applied = True
+            if applied:
+                logging.info(
+                    "[STAGE] loss cluster cooldown pocket=%s count=%d loss_pips=%.2f cooldown=%ds",
+                    pocket,
+                    count,
+                    loss_pips,
+                    seconds,
+                )
+
+    def _compute_cluster_thresholds(
+        self,
+        pocket: str,
+        *,
+        base_cooldown: int,
+        range_active: bool,
+        atr_pips: Optional[float],
+        vol_5m: Optional[float],
+    ) -> Dict[str, float]:
+        count = 3
+        pips = 6.0
+        cooldown = max(120, base_cooldown)
+
+        if pocket == "micro":
+            count = 2
+            pips = 4.0
+        elif pocket == "scalp":
+            count = 2
+            pips = 3.0
+
+        if range_active:
+            count = max(1, count - 1)
+            pips *= 0.7
+            cooldown = int(cooldown * 1.2)
+
+        atr = atr_pips or 0.0
+        if pocket == "macro":
+            if atr and atr < 9.5:
+                count = max(1, count - 1)
+                pips *= 0.85
+                cooldown = int(cooldown * 1.1)
+            elif atr and atr > 14:
+                count += 1
+                pips *= 1.1
+                cooldown = max(int(cooldown * 0.9), 300)
+        else:
+            if atr and atr < 6.5:
+                count = max(1, count - 1)
+                pips *= 0.8
+                cooldown = int(cooldown * 1.15)
+            elif atr and atr > 11.5:
+                count += 1
+                pips *= 1.15
+                cooldown = max(int(cooldown * 0.85), 180)
+
+        if vol_5m is not None:
+            if vol_5m < 0.8:
+                cooldown = int(cooldown * 1.1)
+            elif vol_5m > 1.6:
+                cooldown = max(int(cooldown * 0.9), 150)
+                pips *= 1.05
+
+        return {"count": count, "pips": pips, "cooldown": max(120, cooldown)}
+
+    def _build_recent_profile(
+        self, rows: List[sqlite3.Row], now: datetime
+    ) -> Dict[str, Dict[str, float]]:
+        result: Dict[str, Dict[str, float]] = {}
+        if not rows:
+            return result
+        recent = rows[-150:]
+        stats: Dict[str, Dict[str, List[float]]] = {}
+        cutoff = now - timedelta(days=3)
+        for row in recent:
+            pocket = row["pocket"] or ""
+            if not pocket:
+                continue
+            pl_pips = float(row["pl_pips"] or 0.0)
+            if abs(pl_pips) < 0.05:
+                continue
+            close_dt = self._parse_iso(row["close_time"], now)
+            if close_dt < cutoff:
+                continue
+            bucket = stats.setdefault(pocket, {"wins": [], "losses": [], "all": []})
+            bucket["all"].append(pl_pips)
+            if pl_pips > 0:
+                bucket["wins"].append(pl_pips)
+            elif pl_pips < 0:
+                bucket["losses"].append(abs(pl_pips))
+
+        for pocket, data in stats.items():
+            total = len(data["all"])
+            if total == 0:
+                continue
+            wins = data["wins"]
+            losses = data["losses"]
+            win_rate = len(wins) / total
+            avg_win = sum(wins) / len(wins) if wins else 0.0
+            avg_loss = sum(losses) / len(losses) if losses else 0.0
+            result[pocket] = {
+                "win_rate": round(win_rate, 4),
+                "avg_win_pips": round(avg_win, 3),
+                "avg_loss_pips": round(avg_loss, 3),
+                "sample_size": total,
+            }
+        return result
+
+    @staticmethod
+    def _parse_iso(raw: Optional[str], fallback: datetime) -> datetime:
+        if not raw:
+            return fallback
+        try:
+            return datetime.fromisoformat(raw.replace("Z", "+00:00"))
+        except ValueError:
+            return fallback
