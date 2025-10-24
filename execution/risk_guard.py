@@ -9,7 +9,7 @@ execution.risk_guard
 from __future__ import annotations
 import sqlite3
 import pathlib
-from typing import Dict
+from typing import Dict, Optional
 from utils.secrets import get_secret
 
 # --- risk params ---
@@ -30,16 +30,28 @@ _POCKET_EQUITY_HINT: Dict[str, float] = {
 }
 
 
-def update_dd_context(account_equity: float, weight_macro: float, scalp_share: float) -> None:
+def update_dd_context(
+    account_equity: float,
+    weight_macro: float,
+    weight_scalp: Optional[float] = None,
+    scalp_share: float = 0.0,
+) -> None:
     """最新の口座残高とポケット配分ヒントを共有し、DD 判定の母数を更新する。"""
     if account_equity <= 0:
         return
 
     macro_ratio = min(max(weight_macro, 0.0), POCKET_MAX_RATIOS["macro"])
-    remainder = max(1.0 - macro_ratio, 0.0)
-    scalp_ratio = min(max(scalp_share, 0.0) * remainder, POCKET_MAX_RATIOS["scalp"])
-    micro_ratio = max(remainder - scalp_ratio, 0.0)
-    micro_ratio = min(micro_ratio, POCKET_MAX_RATIOS["micro"])
+    scalp_ratio = 0.0
+    if weight_scalp is not None:
+        scalp_ratio = min(max(weight_scalp, 0.0), POCKET_MAX_RATIOS["scalp"])
+        remainder = max(1.0 - macro_ratio - scalp_ratio, 0.0)
+    else:
+        remainder = max(1.0 - macro_ratio, 0.0)
+        share = max(scalp_share, 0.0)
+        scalp_ratio = min(share * remainder, POCKET_MAX_RATIOS["scalp"])
+        remainder = max(remainder - scalp_ratio, 0.0)
+
+    micro_ratio = min(remainder, POCKET_MAX_RATIOS["micro"])
 
     ratios = {
         "macro": macro_ratio,

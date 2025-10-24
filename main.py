@@ -106,6 +106,30 @@ POCKET_ENTRY_MIN_INTERVAL = {
     "scalp": 75,
 }
 
+POCKET_MAX_ACTIVE_TRADES = {
+    "macro": 1,
+    "micro": 2,
+    "scalp": 3,
+}
+
+POCKET_MAX_ACTIVE_TRADES_RANGE = {
+    "macro": 0,
+    "micro": 1,
+    "scalp": 1,
+}
+
+POCKET_MAX_DIRECTIONAL_TRADES = {
+    "macro": 1,
+    "micro": 1,
+    "scalp": 2,
+}
+
+POCKET_MAX_DIRECTIONAL_TRADES_RANGE = {
+    "macro": 0,
+    "micro": 1,
+    "scalp": 1,
+}
+
 FALLBACK_EQUITY = 10000.0  # REST失敗時のフォールバック
 
 RSI_LONG_FLOOR = {
@@ -174,6 +198,11 @@ RANGE_FADER_MIN_RR = 1.12
 RANGE_FADER_MAX_RR = 1.32
 RANGE_FADER_RANGE_CONF_SCALE = 0.82
 
+_HARD_BASE_RISK_CAP = 0.012  # 1.2%
+_HARD_MAX_RISK_CAP = 0.018   # 1.8%
+_RANGE_RISK_CAP = 0.008      # 0.8%
+_SQUEEZE_RISK_CAP = 0.006    # 0.6% 個別ドローダウン時
+
 try:
     _BASE_RISK_PCT = float(get_secret("risk_pct"))
     if _BASE_RISK_PCT <= 0:
@@ -188,6 +217,9 @@ try:
         _MAX_RISK_PCT = 0.3
 except Exception:
     _MAX_RISK_PCT = _BASE_RISK_PCT
+
+_BASE_RISK_PCT = min(_BASE_RISK_PCT, _HARD_BASE_RISK_CAP)
+_MAX_RISK_PCT = max(_BASE_RISK_PCT, min(_MAX_RISK_PCT, _HARD_MAX_RISK_CAP))
 
 
 def _dynamic_risk_pct(
@@ -205,8 +237,10 @@ def _dynamic_risk_pct(
             if context.vol_high_ratio >= 0.3:
                 dampen = min(dampen, 0.35)
             dampen = max(0.25, min(dampen, 0.75))
-            return max(0.0, _BASE_RISK_PCT * dampen)
-        return _BASE_RISK_PCT * 0.5
+            range_risk = _BASE_RISK_PCT * dampen
+        else:
+            range_risk = _BASE_RISK_PCT * 0.5
+        return max(0.0005, min(range_risk, _RANGE_RISK_CAP))
     actionable = [
         s
         for s in signals
@@ -237,9 +271,10 @@ def _dynamic_risk_pct(
     risk_pct = _BASE_RISK_PCT + (_MAX_RISK_PCT - _BASE_RISK_PCT) * score
     if context:
         if context.risk_appetite < 0.25:
-            risk_pct = min(risk_pct, _BASE_RISK_PCT * 0.35)
+            risk_pct = min(risk_pct, _BASE_RISK_PCT * 0.35, _SQUEEZE_RISK_CAP)
         if context.vol_high_ratio >= 0.3:
             risk_pct = min(risk_pct, _BASE_RISK_PCT * 0.4)
+    risk_pct = min(risk_pct, _HARD_MAX_RISK_CAP)
     return max(0.0005, risk_pct)
 
 
@@ -571,6 +606,7 @@ async def logic_loop():
     last_logged_range_state: Optional[bool] = None
     last_logged_focus: Optional[str] = None
     last_logged_weight: Optional[float] = None
+    last_logged_scalp_weight: Optional[float] = None
     recent_profiles: dict[str, dict[str, float]] = {}
     param_snapshot: Optional[ParamSnapshot] = None
     last_volatility_state: Optional[str] = None
@@ -954,13 +990,28 @@ async def logic_loop():
                 logging.warning(f"[SKIP] GPT decision unavailable: {e}")
                 await asyncio.sleep(5)
                 continue
+            raw_weight_scalp = gpt.get("weight_scalp")
+            if raw_weight_scalp is None:
+                weight_scalp_display = "n/a"
+            else:
+                try:
+                    weight_scalp_display = f"{float(raw_weight_scalp):.2f}"
+                except (TypeError, ValueError):
+                    weight_scalp_display = "invalid"
             logging.info(
-                "[GPT] focus=%s weight_macro=%.2f strategies=%s",
+                "[GPT] focus=%s weight_macro=%.2f weight_scalp=%s strategies=%s",
                 gpt.get("focus_tag"),
                 gpt.get("weight_macro", 0.0),
+                weight_scalp_display,
                 gpt.get("ranked_strategies"),
             )
             ranked_strategies = list(gpt.get("ranked_strategies", []))
+            weight_scalp = None
+            if raw_weight_scalp is not None:
+                try:
+                    weight_scalp = max(0.0, min(1.0, float(raw_weight_scalp)))
+                except (TypeError, ValueError):
+                    weight_scalp = None
 
             # Update realtime metrics cache every few minutes
             if (now - last_metrics_refresh).total_seconds() >= 240:
@@ -996,10 +1047,12 @@ async def logic_loop():
                     scalp_ready = atr_pips >= 2.0 and vol_5m >= 1.2
 
             focus_tag = gpt.get("focus_tag") or focus
-            weight = gpt.get("weight_macro", w_macro)
+            weight_macro = gpt.get("weight_macro", w_macro)
             if range_active:
                 focus_tag = "micro"
-                weight = min(weight, 0.15)
+                weight_macro = min(weight_macro, 0.15)
+                if weight_scalp is not None:
+                    weight_scalp = min(weight_scalp, 0.2)
             elif range_soft_active and focus_tag == "macro":
                 if soft_range_just_activated:
                     logging.info(
@@ -1007,16 +1060,16 @@ async def logic_loop():
                         range_ctx.score,
                     )
                 focus_tag = "hybrid"
-            if not range_active and range_soft_active and weight > SOFT_RANGE_WEIGHT_CAP:
-                prev_weight = weight
-                weight = min(weight, SOFT_RANGE_WEIGHT_CAP)
-                if prev_weight != weight:
+            if not range_active and range_soft_active and weight_macro > SOFT_RANGE_WEIGHT_CAP:
+                prev_weight = weight_macro
+                weight_macro = min(weight_macro, SOFT_RANGE_WEIGHT_CAP)
+                if prev_weight != weight_macro:
                     logging.info(
                         "[MACRO] Soft range compression (score=%.2f eff_adx=%.2f) weight_macro %.2f -> %.2f",
                         range_ctx.score,
                         effective_adx_m1,
                         prev_weight,
-                        weight,
+                        weight_macro,
                     )
             focus_candidates = set(FOCUS_POCKETS.get(focus_tag, ("macro", "micro", "scalp")))
             if not focus_candidates:
@@ -1026,14 +1079,24 @@ async def logic_loop():
                 for s in ranked_strategies
                 if STRATEGIES.get(s)
             }
-            macro_hint = max(min(weight, 1.0), 0.0)
-            micro_hint = max(1.0 - macro_hint, 0.0)
+            macro_hint = max(min(weight_macro, 1.0), 0.0)
+            scalp_hint = 0.0
+            if weight_scalp is not None:
+                scalp_hint = max(min(weight_scalp, 1.0), 0.0)
+            micro_hint = max(1.0 - macro_hint - scalp_hint, 0.0)
             focus_pockets = set(focus_candidates)
             if macro_hint >= 0.05:
                 focus_pockets.add("macro")
             if micro_hint >= 0.08:
                 focus_pockets.add("micro")
-            if scalp_ready or focus_tag in {"micro", "hybrid"} or micro_hint >= 0.05:
+            if scalp_hint >= 0.02:
+                focus_pockets.add("scalp")
+            if (
+                scalp_ready
+                or focus_tag in {"micro", "hybrid"}
+                or micro_hint >= 0.05
+                or scalp_hint >= 0.05
+            ):
                 focus_pockets.add("scalp")
             focus_pockets.update(strategy_pockets)
             if range_active and "macro" in focus_pockets:
@@ -1042,11 +1105,11 @@ async def logic_loop():
             if (
                 last_logged_focus != focus_tag
                 or last_logged_weight is None
-                or abs((last_logged_weight or 0.0) - float(weight or 0.0)) >= 0.05
+                or abs((last_logged_weight or 0.0) - float(weight_macro or 0.0)) >= 0.05
             ):
                 log_metric(
                     "weight_macro",
-                    float(weight or 0.0),
+                    float(weight_macro or 0.0),
                     tags={
                         "focus_tag": focus_tag,
                         "range_active": str(range_active),
@@ -1054,7 +1117,22 @@ async def logic_loop():
                     ts=now,
                 )
                 last_logged_focus = focus_tag
-                last_logged_weight = float(weight or 0.0)
+                last_logged_weight = float(weight_macro or 0.0)
+            if weight_scalp is not None:
+                if (
+                    last_logged_scalp_weight is None
+                    or abs(last_logged_scalp_weight - float(weight_scalp or 0.0)) >= 0.05
+                ):
+                    log_metric(
+                        "weight_scalp",
+                        float(weight_scalp or 0.0),
+                        tags={
+                            "focus_tag": focus_tag,
+                            "range_active": str(range_active),
+                        },
+                        ts=now,
+                    )
+                    last_logged_scalp_weight = float(weight_scalp or 0.0)
 
             ma10_h4 = fac_h4.get("ma10")
             ma20_h4 = fac_h4.get("ma20")
@@ -1065,20 +1143,21 @@ async def logic_loop():
                 and slope_gap <= LOW_TREND_SLOPE_THRESHOLD
             )
             if low_trend and "macro" in focus_pockets:
-                prev_weight = weight
-                weight = min(weight, LOW_TREND_WEIGHT_CAP)
+                prev_weight = weight_macro
+                weight_macro = min(weight_macro, LOW_TREND_WEIGHT_CAP)
                 logging.info(
                     "[MACRO] H4 trend weak (ADX %.2f gap %.5f). weight_macro %.2f -> %.2f",
                     adx_h4,
                     slope_gap,
                     prev_weight,
-                    weight,
+                    weight_macro,
                 )
 
             if (
                 scalp_ready
                 and "scalp" in focus_pockets
                 and "M1Scalper" not in ranked_strategies
+                and (weight_scalp is None or weight_scalp >= 0.04)
             ):
                 ranked_strategies.append("M1Scalper")
                 logging.info(
@@ -1090,7 +1169,12 @@ async def logic_loop():
                 )
 
             # Range mode: prefer mean-reversion scalping. Ensure RangeFader is present.
-            if range_active and "scalp" in focus_pockets and "RangeFader" not in ranked_strategies:
+            if (
+                range_active
+                and "scalp" in focus_pockets
+                and "RangeFader" not in ranked_strategies
+                and (weight_scalp is None or weight_scalp >= 0.04)
+            ):
                 ranked_strategies.append("RangeFader")
                 logging.info(
                     "[SCALP] Range mode: auto-added RangeFader (score=%.2f bbw=%.2f atr=%.2f).",
@@ -1477,7 +1561,7 @@ async def logic_loop():
             risk_override = _dynamic_risk_pct(
                 evaluated_signals,
                 range_active,
-                weight,
+                weight_macro,
                 context=param_snapshot,
             )
             if (
@@ -1515,7 +1599,7 @@ async def logic_loop():
                 if STRATEGIES.get(s)
             }
             scalp_share = 0.0
-            if "scalp" in requested_pockets:
+            if "scalp" in requested_pockets and weight_scalp is None:
                 if account_snapshot:
                     scalp_share = dynamic_scalp_share(account_snapshot, DEFAULT_SCALP_SHARE)
                     logging.info(
@@ -1526,8 +1610,13 @@ async def logic_loop():
                     )
                 else:
                     scalp_share = DEFAULT_SCALP_SHARE
-            update_dd_context(account_equity, weight, scalp_share)
-            lots = alloc(lot_total, weight, scalp_share=scalp_share)
+            update_dd_context(account_equity, weight_macro, weight_scalp, scalp_share)
+            lots = alloc(
+                lot_total,
+                weight_macro,
+                weight_scalp=weight_scalp,
+                scalp_share=scalp_share,
+            )
             for pocket_key in list(lots.keys()):
                 if pocket_key not in focus_pockets:
                     lots[pocket_key] = 0.0
@@ -1604,6 +1693,21 @@ async def logic_loop():
                     confidence_target = adj
 
                 open_info = open_positions.get(pocket, {})
+                pocket_limits = POCKET_MAX_ACTIVE_TRADES_RANGE if range_active else POCKET_MAX_ACTIVE_TRADES
+                per_direction_limits = (
+                    POCKET_MAX_DIRECTIONAL_TRADES_RANGE if range_active else POCKET_MAX_DIRECTIONAL_TRADES
+                )
+                max_trades_allowed = pocket_limits.get(pocket, 1)
+                current_trades = int(open_info.get("trades", 0) or 0)
+                if current_trades >= max_trades_allowed:
+                    logging.info(
+                        "[SKIP] Pocket %s has %d/%d active trades. Skipping new entry.",
+                        pocket,
+                        current_trades,
+                        max_trades_allowed,
+                    )
+                    continue
+
                 try:
                     price = float(mid_price) if mid_price > 0 else float(fac_m1.get("close") or 0.0)
                 except (TypeError, ValueError):
@@ -1616,6 +1720,31 @@ async def logic_loop():
                     open_units = int(open_info.get("short_units", 0))
                     ref_price = open_info.get("short_avg_price")
                     direction = "short"
+
+                direction_limit = per_direction_limits.get(pocket, 1)
+                if direction_limit <= 0:
+                    logging.info(
+                        "[SKIP] Pocket %s direction %s blocked by directional limit.",
+                        pocket,
+                        direction,
+                    )
+                    continue
+                open_trades = open_info.get("open_trades", []) or []
+                direction_units_positive = direction == "long"
+                current_direction_trades = sum(
+                    1
+                    for trade in open_trades
+                    if (trade.get("units", 0) > 0) == direction_units_positive and trade.get("units", 0) != 0
+                )
+                if current_direction_trades >= direction_limit:
+                    logging.info(
+                        "[SKIP] Pocket %s %s has %d/%d open trades. Skipping.",
+                        pocket,
+                        direction,
+                        current_direction_trades,
+                        direction_limit,
+                    )
+                    continue
 
                 is_buy = action == "OPEN_LONG"
                 entry_price = price

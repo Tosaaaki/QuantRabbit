@@ -6,57 +6,85 @@ GPT が返す weight_macro と、risk_guard が計算した
 """
 
 from __future__ import annotations
-from typing import Dict
+from typing import Dict, Optional
 
 DEFAULT_SCALP_SHARE = 0.3
 MIN_SCALP_FRACTION = 0.05  # floor share of total lot reserved for scalping
 MAX_SCALP_REALLOC_FRACTION = 0.35  # cap per-pocket reallocation toward the scalp bucket
 
 
+def _clamp(value: float, minimum: float, maximum: float) -> float:
+    return max(minimum, min(maximum, value))
+
+
 def alloc(
-    total_lot: float, weight_macro: float, scalp_share: float = DEFAULT_SCALP_SHARE
+    total_lot: float,
+    weight_macro: float,
+    *,
+    weight_scalp: Optional[float] = None,
+    scalp_share: float = DEFAULT_SCALP_SHARE,
 ) -> Dict[str, float]:
     """
     Parameters
     ----------
-    total_lot   : 口座全体で許容される lot
-    weight_macro: 0‑1
+    total_lot    : 口座全体で許容される lot
+    weight_macro : 0‑1
+    weight_scalp : 0‑1（省略時は scalp_share を用いた従来ロジック）
+    scalp_share  : macro を除いた残りからスキャル pocket に割り当てる割合
 
     Returns
     -------
     {"micro": 0.02, "macro": 0.04, "scalp": 0.01}
     """
+    total_lot = round(max(total_lot, 0.0), 3)
+    weight_macro = _clamp(float(weight_macro), 0.0, 1.0)
+
     macro = round(total_lot * weight_macro, 3)
-    remainder = round(total_lot - macro, 3)
-    remainder = max(remainder, 0.0)
-    share = max(min(scalp_share, 0.9), 0.0)
-    scalp = round(remainder * share, 3)
-    micro = round(remainder - scalp, 3)
+    scalp = 0.0
+    micro = 0.0
+
+    if weight_scalp is not None:
+        weight_scalp = _clamp(float(weight_scalp), 0.0, 1.0)
+        total_assigned = weight_macro + weight_scalp
+        if total_assigned > 1.0:
+            excess = total_assigned - 1.0
+            # 優先的にスキャル重みを削り、残ればマクロを調整
+            trim = min(excess, weight_scalp)
+            weight_scalp = _clamp(weight_scalp - trim, 0.0, 1.0)
+            excess -= trim
+            if excess > 0:
+                weight_macro = _clamp(weight_macro - excess, 0.0, 1.0)
+        scalp = round(total_lot * weight_scalp, 3)
+        micro = round(max(total_lot - macro - scalp, 0.0), 3)
+    else:
+        remainder = round(max(total_lot - macro, 0.0), 3)
+        share = _clamp(float(scalp_share), 0.0, 0.9)
+        scalp = round(remainder * share, 3)
+        micro = round(max(remainder - scalp, 0.0), 3)
+
     dist = {"micro": micro, "macro": macro, "scalp": scalp}
 
-    if total_lot <= 0:
-        return dist
-
-    min_scalp = round(min(total_lot * MIN_SCALP_FRACTION, total_lot), 3)
-    if dist["scalp"] + 1e-6 < min_scalp:
-        shortfall = round(min_scalp - dist["scalp"], 3)
-        for donor in sorted(("micro", "macro"), key=lambda k: dist[k], reverse=True):
-            if shortfall <= 0 or dist[donor] <= 0:
-                continue
-            give_cap = round(dist[donor] * MAX_SCALP_REALLOC_FRACTION, 3)
-            give_cap = max(give_cap, 0.0)
-            transfer = min(shortfall, give_cap if give_cap > 0 else dist[donor])
-            if transfer <= 0:
-                continue
-            dist[donor] = round(dist[donor] - transfer, 3)
-            dist["scalp"] = round(dist["scalp"] + transfer, 3)
-            shortfall = round(shortfall - transfer, 3)
-        if shortfall > 0:
-            donor = "macro" if dist["macro"] >= dist["micro"] else "micro"
-            transfer = min(shortfall, dist[donor])
-            if transfer > 0:
+    if total_lot > 0 and weight_scalp is None:
+        min_scalp = round(min(total_lot * MIN_SCALP_FRACTION, total_lot), 3)
+        if dist["scalp"] + 1e-6 < min_scalp:
+            shortfall = round(min_scalp - dist["scalp"], 3)
+            for donor in sorted(("micro", "macro"), key=lambda k: dist[k], reverse=True):
+                if shortfall <= 0 or dist[donor] <= 0:
+                    continue
+                give_cap = round(dist[donor] * MAX_SCALP_REALLOC_FRACTION, 3)
+                give_cap = max(give_cap, 0.0)
+                transfer = min(shortfall, give_cap if give_cap > 0 else dist[donor])
+                if transfer <= 0:
+                    continue
                 dist[donor] = round(dist[donor] - transfer, 3)
                 dist["scalp"] = round(dist["scalp"] + transfer, 3)
+                shortfall = round(shortfall - transfer, 3)
+            if shortfall > 0:
+                donor = "macro" if dist["macro"] >= dist["micro"] else "micro"
+                transfer = min(shortfall, dist[donor])
+                if transfer > 0:
+                    dist[donor] = round(dist[donor] - transfer, 3)
+                    dist["scalp"] = round(dist["scalp"] + transfer, 3)
 
     total_alloc = round(dist["micro"] + dist["macro"] + dist["scalp"], 3)
     target_total = round(total_lot, 3)

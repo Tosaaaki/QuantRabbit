@@ -31,7 +31,10 @@ if str(REPO_ROOT) not in sys.path:
 from utils.secrets import get_secret
 DEFAULT_REPLAY_DIR = REPO_ROOT / "logs" / "replay"
 DEFAULT_OUTPUT_DIR = REPO_ROOT / "logs"
-SUPPORTED_TIMEFRAMES = {"M1", "H4"}
+SUPPORTED_TIMEFRAMES = {"M1", "M5", "H1", "H4", "D1"}
+OANDA_GRANULARITY_MAP = {
+    "D1": "D",
+}
 
 
 @dataclass(frozen=True)
@@ -149,10 +152,11 @@ def _fetch_oanda_candles(
     start_dt: datetime,
     end_dt: datetime,
 ) -> Optional[List[Dict[str, object]]]:
+    granularity = OANDA_GRANULARITY_MAP.get(timeframe, timeframe)
     base_url, token = _oanda_host()
     url = f"{base_url}/v3/instruments/{instrument}/candles"
     params = {
-        "granularity": timeframe,
+        "granularity": granularity,
         "price": "M",
         "from": start_dt.replace(tzinfo=timezone.utc).isoformat().replace("+00:00", "Z"),
         "to": end_dt.replace(tzinfo=timezone.utc).isoformat().replace("+00:00", "Z"),

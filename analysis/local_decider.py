@@ -43,6 +43,16 @@ def _enqueue_unique(seq: List[str], names: Iterable[str]) -> None:
             seq.append(name)
 
 
+def _pocket_pf(perf: Dict, pocket: str, default: float = 1.0) -> float:
+    """Accepts nested ({'macro': {'pf':1.2}}) or flattened ('macro_pf':1.2) layouts."""
+    if not perf:
+        return default
+    direct = perf.get(pocket)
+    if isinstance(direct, dict):
+        return _safe_float(direct.get("pf"), default)
+    return _safe_float(perf.get(f"{pocket}_pf"), default)
+
+
 def heuristic_decision(
     payload: Dict,
     last_decision: Optional[Dict[str, object]] = None,
@@ -87,8 +97,9 @@ def heuristic_decision(
         weight_macro = min(0.7, 0.4 + max(0.0, (macro_adx - 20) / 120))
 
     # パフォーマンスが悪化している pocket は重みを抑える
-    macro_pf = _safe_float(perf.get("macro_pf"), 1.0)
-    micro_pf = _safe_float(perf.get("micro_pf"), 1.0)
+    macro_pf = _pocket_pf(perf, "macro", 1.0)
+    micro_pf = _pocket_pf(perf, "micro", 1.0)
+    scalp_pf = _pocket_pf(perf, "scalp", 1.0)
     if focus_tag in {"macro", "hybrid"} and macro_pf < 0.9:
         weight_macro = min(weight_macro, 0.4)
     if focus_tag in {"micro", "hybrid"} and micro_pf < 0.9:
@@ -99,7 +110,39 @@ def heuristic_decision(
     elif focus_tag == "macro":
         weight_macro = max(weight_macro, 0.34)
 
+    # スキャル pocket の重みを決定
+    weight_scalp = 0.1
+    if atr_pips >= 7.0 or vol_5m >= 1.35:
+        weight_scalp = 0.18
+    elif atr_pips <= 3.4 or vol_5m <= 0.85:
+        weight_scalp = 0.06
+    if atr_pips <= 2.2 or vol_5m <= 0.7:
+        weight_scalp = 0.0
+    if event_soon:
+        weight_scalp = min(weight_scalp, 0.05)
+    if focus_tag == "macro":
+        weight_scalp = min(weight_scalp, 0.08)
+    elif focus_tag == "event":
+        weight_scalp = min(weight_scalp, 0.04)
+
+    if scalp_pf < 0.85:
+        weight_scalp = min(weight_scalp, 0.06)
+    elif scalp_pf > 1.15:
+        weight_scalp = max(weight_scalp, 0.14)
+
+    max_total = 0.9
+    total_weight = weight_macro + weight_scalp
+    if total_weight > max_total:
+        excess = total_weight - max_total
+        if weight_scalp >= excess:
+            weight_scalp -= excess
+        else:
+            remainder = excess - weight_scalp
+            weight_scalp = 0.0
+            weight_macro = max(0.0, weight_macro - remainder)
+
     weight_macro = max(0.0, min(1.0, round(weight_macro, 2)))
+    weight_scalp = max(0.0, min(0.3, round(weight_scalp, 2)))
 
     ranked: List[str] = []
 
@@ -134,6 +177,7 @@ def heuristic_decision(
     return {
         "focus_tag": focus_tag,
         "weight_macro": weight_macro,
+        "weight_scalp": weight_scalp,
         "ranked_strategies": ranked,
         "reason": "heuristic_fallback",
     }

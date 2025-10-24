@@ -44,11 +44,13 @@ def build_messages(payload: Dict) -> List[Dict]:
     # GPT への指示は英語で、JSON 形式の回答のみを求める
     system_content = (
         "You are an FX trading assistant for USD/JPY. Respond only with a JSON "
-        "object that contains the keys 'focus_tag', 'weight_macro', and "
-        "'ranked_strategies'. "
+        "object that contains the keys 'focus_tag', 'weight_macro', "
+        "'weight_scalp', and 'ranked_strategies'. "
         "Constraints:\n"
         "- focus_tag must be one of ['micro', 'macro', 'hybrid', 'event'].\n"
         "- weight_macro must be a float between 0 and 1 inclusive.\n"
+        "- weight_scalp must be a float between 0 and 1 inclusive (set to 0 when scalping should be disabled).\n"
+        "- The sum of weight_macro and weight_scalp must not exceed 1.0. Remaining weight implicitly belongs to the micro pocket.\n"
         "- ranked_strategies must be an array containing zero or more of "
         "['TrendMA', 'Donchian55', 'BB_RSI', 'NewsSpikeReversal', 'M1Scalper', 'RangeFader', 'PulseBreak'] ordered from "
         "highest to lowest priority. Never invent other strategy names."

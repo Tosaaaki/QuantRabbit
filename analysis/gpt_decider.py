@@ -27,11 +27,7 @@ from utils.secrets import get_secret
 client = AsyncOpenAI(api_key=get_secret("openai_api_key"))
 
 
-_SCHEMA = {
-    "focus_tag": str,
-    "weight_macro": float,
-    "ranked_strategies": list,
-}
+_REQUIRED_KEYS = ("focus_tag", "weight_macro", "ranked_strategies")
 
 _FOCUS_TAGS = {"micro", "macro", "hybrid", "event"}
 _ALLOWED_STRATEGIES = [
@@ -51,6 +47,7 @@ _REUSE_WINDOW_SECONDS = 300
 _FALLBACK_DECISION = {
     "focus_tag": "hybrid",
     "weight_macro": 0.5,
+    "weight_scalp": 0.15,
     "ranked_strategies": [
         "TrendMA",
         "Donchian55",
@@ -155,18 +152,38 @@ async def call_openai(payload: Dict) -> Dict:
         raise ValueError(f"Invalid JSON: {content}") from e
 
     # スキーマ簡易検証
-    for k, typ in _SCHEMA.items():
-        if k not in data:
-            raise ValueError(f"key {k} missing")
-        if not isinstance(data[k], typ):
-            raise ValueError(f"{k} type error")
-    data["weight_macro"] = round(float(data["weight_macro"]), 2)
-    focus_tag = data.get("focus_tag")
-    if focus_tag not in _FOCUS_TAGS:
-        data["focus_tag"] = "hybrid"
+    for key in _REQUIRED_KEYS:
+        if key not in data:
+            raise ValueError(f"key {key} missing")
+    if not isinstance(data["ranked_strategies"], list):
+        raise ValueError("ranked_strategies type error")
 
-    weight = data.get("weight_macro", 0.5)
-    data["weight_macro"] = max(0.0, min(1.0, weight))
+    try:
+        weight_macro = float(data["weight_macro"])
+    except (TypeError, ValueError) as exc:
+        raise ValueError("weight_macro type error") from exc
+    weight_macro = max(0.0, min(1.0, weight_macro))
+    data["weight_macro"] = round(weight_macro, 2)
+
+    focus_tag = data.get("focus_tag")
+    if not isinstance(focus_tag, str) or focus_tag not in _FOCUS_TAGS:
+        focus_tag = "hybrid"
+    data["focus_tag"] = focus_tag
+
+    weight_scalp_raw = data.get("weight_scalp")
+    weight_scalp: float | None = None
+    if weight_scalp_raw is not None:
+        try:
+            weight_scalp = float(weight_scalp_raw)
+        except (TypeError, ValueError):
+            weight_scalp = None
+    if weight_scalp is not None:
+        weight_scalp = max(0.0, min(1.0, weight_scalp))
+        if weight_scalp + weight_macro > 1.0:
+            weight_scalp = max(0.0, 1.0 - weight_macro)
+        data["weight_scalp"] = round(weight_scalp, 2)
+    else:
+        data["weight_scalp"] = None
 
     ranked = [
         s for s in data.get("ranked_strategies", []) if s in _ALLOWED_STRATEGIES
