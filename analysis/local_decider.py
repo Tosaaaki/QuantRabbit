@@ -2,7 +2,7 @@
 analysis.local_decider
 ~~~~~~~~~~~~~~~~~~~~~~
 OpenAI が利用できない場合に備えたフォールバック用ヒューリスティック判定。
-市場レジームとテクニカル指標から簡易的に focus / weight / strategies を生成する。
+市場レジームとテクニカル指標から簡易的に focus / macro/micro/scalp の重み / strategies を生成する。
 """
 
 from __future__ import annotations
@@ -64,7 +64,7 @@ def heuristic_decision(
         payload: main ループから渡される GPT 入力データ
         last_decision: 前回の決定（存在すればバイアスの維持に使用）
     Returns:
-        focus_tag / weight_macro / ranked_strategies を含む dict
+        focus_tag / weight_macro / weight_scalp / ranked_strategies を含む dict
     """
     factors_m1 = payload.get("factors_m1") or {}
     factors_h4 = payload.get("factors_h4") or {}

@@ -13,7 +13,7 @@
 | **DataFetcher** | `market_data/*` | + Tick JSON<br>+ Candle dict<br>+ raw News JSON (→ GCS) |
 | **IndicatorEngine** | `indicators/*` | ← Candle deque<br>→ factors dict {ma10, rsi, …} |
 | **Regime & Focus** | `analysis/regime_classifier.py` / `focus_decider.py` | ← factors<br>→ macro/micro レジーム・weight_macro |
-| **GPT Decider** | `analysis/gpt_decider.py` | ← focus + perf + news<br>→ JSON {focus_tag, weight_macro, ranked_strategies} |
+| **GPT Decider** | `analysis/gpt_decider.py` | ← focus + perf + news<br>→ JSON {focus_tag, weight_macro, weight_scalp, ranked_strategies} |
 | **Strategy Plugin** | `strategies/*` | ← factors<br>→ dict {action, sl_pips, tp_pips, confidence, tag} or None |
 | **Exit Manager** | `execution/exit_manager.py` | ← open positions + signals<br>→ list[{pocket, units, reason, tag}] |
 | **Risk Guard** | `execution/risk_guard.py` | ← lot, SL/TP, pocket<br>→ bool (可否)・調整値 |
@@ -57,11 +57,12 @@ class Factors(BaseModel):
 class GPTDecision(BaseModel):
     focus_tag: Literal["micro","macro","hybrid","event"]
     weight_macro: float = Field(ge=0.0, le=1.0)
+    weight_scalp: float = Field(ge=0.0, le=1.0)  # macro + scalp <= 1.0, remainder = micro
     ranked_strategies: List[str]
     reason: Optional[str] = None
 
 class StrategyDecision(BaseModel):
-    pocket: Literal["micro","macro"]
+    pocket: Literal["micro","macro","scalp"]
     action: Literal["OPEN_LONG","OPEN_SHORT","CLOSE","HOLD"]
     sl_pips: float = Field(gt=0)
     tp_pips: float = Field(gt=0)
@@ -74,7 +75,7 @@ class OrderIntent(BaseModel):
     entry_price: float
     sl_price: float
     tp_price: float
-    pocket: Literal["micro","macro"]
+    pocket: Literal["micro","macro","scalp"]
     client_order_id: str
 ```
 
@@ -87,8 +88,9 @@ class OrderIntent(BaseModel):
 | `pip` | USD/JPY の 1 pip は 0.01。入力/出力とも pip 単位を明記する。 |
 | `point` | 0.001。OANDA REST 価格の丸め単位。 |
 | `lot` | 1 lot = 100,000 units。`units = round(lot * 100000)`。 |
-| `pocket` | `micro` = 短期テクニカル、`macro` = レジーム/ニュース。口座資金を `pocket_ratio` で按分。 |
+| `pocket` | `micro` = 短期テクニカル、`macro` = レジーム/ニュース、`scalp` = 超短期・ボラ依存スキャル。口座資金を `pocket_ratio` で按分。 |
 | `weight_macro` | 0.0〜1.0。`pocket_macro = pocket_total * weight_macro` を意味する。 |
+| `weight_scalp` | 0.0〜1.0。`pocket_scalp = pocket_total * weight_scalp`、残りが micro に配分される。 |
 
 - `price_from_pips("BUY", entry, sl_pips)` = `entry - sl_pips * 0.01` を `round(price, 3)`。
 - `price_from_pips("SELL", entry, sl_pips)` = `entry + sl_pips * 0.01` を `round(price, 3)`。
@@ -99,7 +101,7 @@ class OrderIntent(BaseModel):
 - DataFetcher: OANDA streaming で `Tick` を取得し 60s 終端で `Candle` を確定、欠損 tick は遅延として扱う (`lag_ms` を添付)。
 - IndicatorEngine: 各 timeframe ごとに `Deque[Candle]` を維持し 300 本以上揃ったときに `Factors` を算出、入力欠損時は `stale=True` を返し Strategy を停止。
 - Regime & Focus: macro=H4/D1, micro=M1 の `Factors` を消費し、`focus_decider` は `FocusDecision`(`focus_tag`,`weight_macro`) を返す。
-- GPT Decider: 過去 15 分のニュース要約 + パフォーマンス指標を入力し `GPTDecision` を返す。JSON Schema 不一致時はフォールバックを Raise。
+- GPT Decider: 過去 15 分のニュース要約 + パフォーマンス指標を入力し `GPTDecision` を返す（`weight_macro` と `weight_scalp` を明示）。JSON Schema 不一致時はフォールバックを Raise。
 - Strategy Plugin: `ranked_strategies` 順に呼び出し `StrategyDecision` または `None` を返す。必ず `confidence` と `tag` を含め、`None` は「ノートレード」。
 - Exit Manager: 現在のポジションとシグナルを突き合わせ、逆方向シグナル・イベントロック・指標劣化の各条件でクローズ指示を組み立てる。
 - Risk Guard: エントリー/クローズ双方の `StrategyDecision` と口座情報から `OrderIntent` を生成、拒否理由は `{"allow": False, "reason": ...}` としてロガーへ渡す。
@@ -215,7 +217,7 @@ class OrderIntent(BaseModel):
 * `.cache/token_usage.json` に月累計。  
 * `openai.max_month_tokens` (env.toml) で上限設定。  
 * 超過時：`news_fetcher` は継続、`gpt_decider` はフォールバック JSON を返す。  
-* フォールバック JSON: `{"focus_tag":"hybrid","weight_macro":0.5,"ranked_strategies":["TrendMA","Donchian55","BB_RSI","NewsSpikeReversal"],"reason":"fallback"}`。  
+* フォールバック JSON: `{"focus_tag":"hybrid","weight_macro":0.5,"weight_scalp":0.15,"ranked_strategies":["TrendMA","Donchian55","BB_RSI","NewsSpikeReversal"],"reason":"fallback"}`。  
 * GPT 失敗時は過去 5 分の決定を再利用 (`reason="reuse_previous"`) し、`decision_latency_ms` を 9,000 で固定計上する。
 
 ---
@@ -230,7 +232,7 @@ class OrderIntent(BaseModel):
 
 ### 6.1 リスク計算とロット配分
 
-- `pocket_equity = account_equity * pocket_ratio`。`pocket_ratio` は `weight_macro` と `pocket` 固有の上限 (`micro<=0.6`, `macro<=0.8`) を掛け合わせる。
+- `pocket_equity = account_equity * pocket_ratio`。`pocket_ratio` は `weight_macro` / `weight_scalp` と `pocket` 固有の上限 (`micro<=0.6`, `macro<=0.8`, `scalp<=0.25`) を掛け合わせる。
 - 1 トレードの許容損失は `risk_pct = 0.02`。`risk_amount = pocket_equity * risk_pct`。
 - USD/JPY の 1 lot 当たり pip 価値は 1000 JPY。従って `lot = min(MAX_LOT, round(risk_amount / (sl_pips * 1000), 3))`。
 - `units = int(round(lot * 100000))`。`abs(units) < 1000` はノイズ扱いで発注しない。

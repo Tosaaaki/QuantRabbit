@@ -89,12 +89,13 @@ def snapshot() -> Dict[str, Dict[str, float]]:
     戻り値:
     {
       'micro': {'pf':1.3,'sharpe':0.9,'win_rate':0.6,'avg_pips':8.2},
-      'macro': {...}
+      'macro': {...},
+      'scalp': {...}
     }
     """
     df = _load_df()
     if df.empty:
-        return {"micro": {}, "macro": {}}
+        return {"micro": {}, "macro": {}, "scalp": {}}
 
     result: Dict[str, Dict[str, float]] = {}
     for pocket, sub in df.groupby("pocket"):
@@ -114,6 +115,8 @@ def snapshot() -> Dict[str, Dict[str, float]]:
             "win_rate": round(win_rate, 2),
             "avg_pips": round(avg, 2),
         }
+    for key in ("micro", "macro", "scalp"):
+        result.setdefault(key, {})
     return result
 
 
@@ -126,6 +129,7 @@ if __name__ == "__main__":
             ("micro", "2025-06-23T12:00", "2025-06-23T12:05", 8.5),
             ("micro", "2025-06-23T12:10", "2025-06-23T12:15", -6.0),
             ("macro", "2025-06-23T12:00", "2025-06-23T13:30", 42.0),
+            ("scalp", "2025-06-23T12:02", "2025-06-23T12:03", 2.1),
         ],
     )
     con.commit()
