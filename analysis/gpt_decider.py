@@ -44,6 +44,7 @@ _MAX_COMPLETION_TOKENS = 320
 _GPT5_MAX_OUTPUT_TOKENS = 800
 
 _REUSE_WINDOW_SECONDS = 300
+_GPT_TIMEOUT_SECONDS = 18 if "gpt-5" in MODEL else 9
 _FALLBACK_DECISION = {
     "focus_tag": "hybrid",
     "weight_macro": 0.5,
@@ -201,7 +202,7 @@ async def get_decision(payload: Dict) -> Dict:
     last_exc: Exception | None = None
     for attempt in range(2):
         try:
-            fresh = await asyncio.wait_for(call_openai(payload), timeout=9)
+            fresh = await asyncio.wait_for(call_openai(payload), timeout=_GPT_TIMEOUT_SECONDS)
             if not isinstance(fresh, dict):
                 raise ValueError("GPT response must be dict")
             # 決定情報を保持（reasonは揮発値なので除外）
@@ -210,6 +211,12 @@ async def get_decision(payload: Dict) -> Dict:
             return fresh
         except Exception as e:
             last_exc = e
+            logger.warning(
+                "GPT decision attempt %d failed (%s: %s)",
+                attempt + 1,
+                type(e).__name__,
+                str(e) or "no message",
+            )
             await asyncio.sleep(1.5)
     # フォールバック：直近 5 分以内の決定を再利用、なければデフォルト構成を返す
     now = dt.datetime.utcnow()
