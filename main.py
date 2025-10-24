@@ -272,7 +272,7 @@ def _gpt_payload_signature(
             latest_news = {
                 "source": top.get("source"),
                 "headline": top.get("headline"),
-                "published_at": top.get("published_at"),
+                "published_at": str(top.get("published_at")),
             }
     perf_snapshot = {}
     for key, value in perf.items():
