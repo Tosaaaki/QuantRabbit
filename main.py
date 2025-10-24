@@ -3,6 +3,8 @@ import datetime
 import logging
 import traceback
 import time
+import hashlib
+import json
 from typing import Optional
 
 from market_data.candle_fetcher import (
@@ -194,6 +196,7 @@ def _stage_plan(pocket: str) -> tuple[float, ...]:
 MIN_SCALP_STAGE_LOT = 0.01  # 1000 units baseline so micro/macro bias does not null scalps
 DEFAULT_COOLDOWN_SECONDS = 180
 RANGE_COOLDOWN_SECONDS = 420
+GPT_MIN_INTERVAL_SECONDS = 180
 # In range mode, allow mean‑reversion and light scalping entries
 ALLOWED_RANGE_STRATEGIES = {"BB_RSI", "RangeFader", "M1Scalper"}
 SOFT_RANGE_SUPPRESS_STRATEGIES = {"TrendMA", "Donchian55"}
@@ -240,6 +243,75 @@ except Exception:
 
 _BASE_RISK_PCT = min(_BASE_RISK_PCT, _HARD_BASE_RISK_CAP)
 _MAX_RISK_PCT = max(_BASE_RISK_PCT, min(_MAX_RISK_PCT, _HARD_MAX_RISK_CAP))
+
+
+def _hashable_float(value: Optional[float], digits: int = 4) -> Optional[float]:
+    if value is None:
+        return None
+    try:
+        return round(float(value), digits)
+    except (TypeError, ValueError):
+        return None
+
+
+def _gpt_payload_signature(
+    payload: dict,
+    *,
+    range_active: bool,
+    range_reason: Optional[str],
+    soft_range: bool,
+) -> str:
+    factors_m1 = payload.get("factors_m1") or {}
+    factors_h4 = payload.get("factors_h4") or {}
+    perf = payload.get("perf") or {}
+    news_short = payload.get("news_short") or []
+    latest_news = None
+    if isinstance(news_short, list) and news_short:
+        top = news_short[0]
+        if isinstance(top, dict):
+            latest_news = {
+                "source": top.get("source"),
+                "headline": top.get("headline"),
+                "published_at": top.get("published_at"),
+            }
+    perf_snapshot = {}
+    for key, value in perf.items():
+        if isinstance(value, (int, float)):
+            perf_snapshot[key] = _hashable_float(value, 3)
+        elif isinstance(value, dict):
+            win = value.get("win_rate")
+            pf = value.get("pf")
+            perf_snapshot[key] = {
+                "win_rate": _hashable_float(win, 3),
+                "pf": _hashable_float(pf, 3),
+            }
+    key_data = {
+        "reg_macro": payload.get("reg_macro"),
+        "reg_micro": payload.get("reg_micro"),
+        "event": payload.get("event_soon"),
+        "range_active": range_active,
+        "range_reason": range_reason,
+        "soft_range": soft_range,
+        "m1": {
+            "close": _hashable_float(factors_m1.get("close"), 4),
+            "adx": _hashable_float(factors_m1.get("adx"), 3),
+            "rsi": _hashable_float(factors_m1.get("rsi"), 3),
+            "atr": _hashable_float(factors_m1.get("atr_pips"), 3),
+            "vol": _hashable_float(factors_m1.get("vol_5m"), 3),
+            "ma10": _hashable_float(factors_m1.get("ma10"), 4),
+            "ma20": _hashable_float(factors_m1.get("ma20"), 4),
+        },
+        "h4": {
+            "close": _hashable_float(factors_h4.get("close"), 4),
+            "adx": _hashable_float(factors_h4.get("adx"), 3),
+            "ma10": _hashable_float(factors_h4.get("ma10"), 4),
+            "ma20": _hashable_float(factors_h4.get("ma20"), 4),
+        },
+        "perf": perf_snapshot,
+        "news": latest_news,
+    }
+    serialized = json.dumps(key_data, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha1(serialized.encode("utf-8")).hexdigest()
 
 
 def _dynamic_risk_pct(
@@ -758,6 +830,9 @@ async def logic_loop():
     last_vol_high_ratio: Optional[float] = None
     last_stage_biases: dict[str, float] = {}
     last_story_summary: Optional[dict] = None
+    last_gpt_signature: Optional[str] = None
+    last_gpt_decision: Optional[dict] = None
+    last_gpt_ts: Optional[datetime.datetime] = None
 
     try:
         while True:
@@ -1126,13 +1201,43 @@ async def logic_loop():
                 "news_long": news_cache.get("long", []),
                 "event_soon": event_soon,
             }
-            # GPT判断（フォールバックなし）。失敗時はこのループをスキップ。
-            try:
-                gpt = await get_decision(payload)
-            except Exception as e:
-                logging.warning(f"[SKIP] GPT decision unavailable: {e}")
-                await asyncio.sleep(5)
-                continue
+            payload_signature = _gpt_payload_signature(
+                payload,
+                range_active=range_active,
+                range_reason=last_range_reason or range_ctx.reason,
+                soft_range=range_soft_active,
+            )
+            should_call_gpt = True
+            if (
+                last_gpt_decision
+                and last_gpt_signature == payload_signature
+                and last_gpt_ts
+                and (now - last_gpt_ts).total_seconds() < GPT_MIN_INTERVAL_SECONDS
+            ):
+                should_call_gpt = False
+
+            if should_call_gpt:
+                try:
+                    gpt = await get_decision(payload)
+                except Exception as e:
+                    logging.warning(f"[SKIP] GPT decision unavailable: {e}")
+                    await asyncio.sleep(5)
+                    continue
+                last_gpt_decision = dict(gpt)
+                last_gpt_signature = payload_signature
+                last_gpt_ts = now
+                reuse_reason = gpt.get("reason") or "live_call"
+            else:
+                gpt = dict(last_gpt_decision)
+                reuse_reason = gpt.get("reason") or "cached"
+                gpt["reason"] = reuse_reason
+                logging.info(
+                    "[GPT] reuse cached decision focus=%s weight_macro=%.2f weight_scalp=%s (age=%.0fs)",
+                    gpt.get("focus_tag"),
+                    gpt.get("weight_macro", 0.0),
+                    gpt.get("weight_scalp"),
+                    (now - (last_gpt_ts or now)).total_seconds(),
+                )
             raw_weight_scalp = gpt.get("weight_scalp")
             if raw_weight_scalp is None:
                 weight_scalp_display = "n/a"
@@ -1142,11 +1247,12 @@ async def logic_loop():
                 except (TypeError, ValueError):
                     weight_scalp_display = "invalid"
             logging.info(
-                "[GPT] focus=%s weight_macro=%.2f weight_scalp=%s strategies=%s",
+                "[GPT] focus=%s weight_macro=%.2f weight_scalp=%s strategies=%s reason=%s",
                 gpt.get("focus_tag"),
                 gpt.get("weight_macro", 0.0),
                 weight_scalp_display,
                 gpt.get("ranked_strategies"),
+                reuse_reason,
             )
             ranked_strategies = list(gpt.get("ranked_strategies", []))
             weight_scalp = None
