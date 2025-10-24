@@ -92,6 +92,7 @@ class StageTracker:
             if pocket:
                 self._cluster_last_trade_id[pocket] = int(row["last_id"] or 0)
         self._recent_profile: Dict[str, Dict[str, float]] = {}
+        self._weight_hint: Dict[str, float] = {}
 
     def close(self) -> None:
         self._con.close()
@@ -346,38 +347,65 @@ class StageTracker:
         return int(row["lose_streak"] or 0), int(row["win_streak"] or 0)
 
     def size_multiplier(self, pocket: str, direction: str) -> float:
-        """連敗時は徐々に縮小しつつも再起ペースを維持する。
-
-        例:
-          - 1連敗: 0.75x
-          - 2連敗: 0.6x
-          - 3連敗: 0.5x
-          - 4連敗以上: 0.4x（下限 0.35）
-          - 2連勝: 0.9x, 4連勝: 0.8x
-        """
+        """連敗での縮小と、直近パフォーマンスに基づく緩やかな拡大を両立させる。"""
         lose_streak, win_streak = self.get_loss_profile(pocket, direction)
         factor = 1.0
         if lose_streak >= 4:
-            factor *= 0.4
-        elif lose_streak == 3:
             factor *= 0.5
+        elif lose_streak == 3:
+            factor *= 0.55
         elif lose_streak == 2:
-            factor *= 0.6
+            factor *= 0.65
         elif lose_streak == 1:
-            factor *= 0.75
-
-        if win_streak >= 4:
             factor *= 0.8
-        elif win_streak >= 2:
-            factor *= 0.9
 
-        return max(0.35, round(factor, 3))
+        # ストリークが続く場合の軽い調整（縮小し過ぎないよう控えめにする）
+        if win_streak >= 4:
+            factor *= 1.04
+        elif win_streak >= 2:
+            factor *= 1.02
+
+        profile = self._recent_profile.get(pocket, {}) or {}
+        weight_hint = self._weight_hint.get(pocket, 0.0)
+        win_rate = float(profile.get("win_rate", 0.0) or 0.0)
+        sample_size = int(profile.get("sample_size", 0) or 0)
+        avg_win = float(profile.get("avg_win_pips", 0.0) or 0.0)
+        avg_loss = float(profile.get("avg_loss_pips", 0.0) or 0.0)
+        rr = avg_win / avg_loss if avg_loss > 0 else avg_win
+
+        hot_sample = sample_size >= 6 and win_rate >= 0.58 and rr >= 1.05
+        elite_sample = sample_size >= 10 and win_rate >= 0.62 and rr >= 1.15
+        if hot_sample:
+            boost = 1.05
+            if elite_sample:
+                boost = 1.1
+            if pocket == "scalp" and weight_hint <= 0.05:
+                boost = min(boost, 1.04)
+            factor *= boost
+        else:
+            # スキャル pocket はフォーカスから外れている場合に微縮小する
+            if pocket == "scalp" and weight_hint < 0.02:
+                factor *= 0.9
+
+        return max(0.5, min(1.1, round(factor, 3)))
 
     def get_recent_profile(self, pocket: str) -> Dict[str, float]:
         return dict(self._recent_profile.get(pocket, {}))
 
     def get_recent_profiles(self) -> Dict[str, Dict[str, float]]:
         return {key: dict(val) for key, val in self._recent_profile.items()}
+
+    def set_weight_hint(self, pocket: str, weight: Optional[float]) -> None:
+        if weight is None:
+            self._weight_hint.pop(pocket, None)
+            return
+        try:
+            value = float(weight)
+        except (TypeError, ValueError):
+            return
+        if value < 0:
+            value = 0.0
+        self._weight_hint[pocket] = value
 
     def _apply_loss_clusters(
         self,

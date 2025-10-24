@@ -1084,6 +1084,9 @@ async def logic_loop():
             if weight_scalp is not None:
                 scalp_hint = max(min(weight_scalp, 1.0), 0.0)
             micro_hint = max(1.0 - macro_hint - scalp_hint, 0.0)
+            stage_tracker.set_weight_hint("macro", macro_hint)
+            stage_tracker.set_weight_hint("micro", micro_hint)
+            stage_tracker.set_weight_hint("scalp", scalp_hint if weight_scalp is not None else None)
             focus_pockets = set(focus_candidates)
             if macro_hint >= 0.05:
                 focus_pockets.add("macro")
