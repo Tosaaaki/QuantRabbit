@@ -16,6 +16,7 @@ from typing import Dict, List, Optional, Tuple
 from analysis.chart_story import ChartStorySnapshot
 
 from analysis.ma_projection import MACrossProjection, compute_ma_projection
+from utils.metrics_logger import log_metric
 
 
 @dataclass
@@ -325,12 +326,30 @@ class ExitManager:
         if range_mode and reason == "reverse_signal":
             allow_reentry = False
         if reason:
-            if not self._story_allows_exit(story, pocket, "long", reason, profit_pips):
+            if not self._story_allows_exit(
+                story,
+                pocket,
+                "long",
+                reason,
+                profit_pips,
+                now,
+                range_mode=range_mode,
+            ):
                 return None
         if reason == "reverse_signal":
             allow_reentry = False
         if not reason:
             return None
+
+        self._record_exit_metric(
+            pocket,
+            "long",
+            reason,
+            profit_pips,
+            story,
+            range_mode,
+            now,
+        )
 
         return ExitDecision(
             pocket=pocket,
@@ -485,12 +504,30 @@ class ExitManager:
         if range_mode and reason == "reverse_signal":
             allow_reentry = False
         if reason:
-            if not self._story_allows_exit(story, pocket, "short", reason, profit_pips):
+            if not self._story_allows_exit(
+                story,
+                pocket,
+                "short",
+                reason,
+                profit_pips,
+                now,
+                range_mode=range_mode,
+            ):
                 return None
         if reason == "reverse_signal":
             allow_reentry = False
         if not reason:
             return None
+
+        self._record_exit_metric(
+            pocket,
+            "short",
+            reason,
+            profit_pips,
+            story,
+            range_mode,
+            now,
+        )
 
         return ExitDecision(
             pocket=pocket,
@@ -687,18 +724,16 @@ class ExitManager:
         side: str,
         reason: str,
         profit_pips: float,
+        now: datetime,
+        *,
+        range_mode: bool,
     ) -> bool:
         if story is None:
             return True
         if reason in {"range_stop", "stop_loss_order"}:
             return True
 
-        trend = story.higher_trend
-        if pocket == "macro":
-            trend = story.macro_trend
-        elif pocket == "micro":
-            trend = story.micro_trend
-
+        trend = self._story_trend(story, pocket)
         supportive = False
         if side == "long" and trend == "up":
             supportive = True
@@ -718,8 +753,65 @@ class ExitManager:
                     trend,
                     profit_pips,
                 )
+                log_metric(
+                    "exit_story_blocked",
+                    float(profit_pips),
+                    tags={
+                        "pocket": pocket,
+                        "side": side,
+                        "reason": reason,
+                        "trend": trend or "",
+                        "volatility": getattr(story, "volatility_state", None) or "",
+                        "range_mode": str(range_mode),
+                    },
+                    ts=now,
+                )
                 return False
         return True
+
+    @staticmethod
+    def _story_trend(
+        story: Optional[ChartStorySnapshot],
+        pocket: str,
+    ) -> Optional[str]:
+        if story is None:
+            return None
+        if pocket == "macro":
+            return story.macro_trend
+        if pocket == "micro":
+            return story.micro_trend
+        return story.higher_trend
+
+    def _record_exit_metric(
+        self,
+        pocket: str,
+        side: str,
+        reason: str,
+        profit_pips: float,
+        story: Optional[ChartStorySnapshot],
+        range_mode: bool,
+        now: datetime,
+    ) -> None:
+        trend = self._story_trend(story, pocket) if story else None
+        volatility = story.volatility_state if story else None
+        summary_state = None
+        if story and story.summary:
+            summary_state = story.summary.get("H1")
+        tags = {
+            "pocket": pocket,
+            "side": side,
+            "reason": reason,
+            "trend": trend or "",
+            "volatility": volatility or "",
+            "summary_h1": summary_state or "",
+            "range_mode": str(range_mode),
+        }
+        log_metric(
+            "exit_decision",
+            float(profit_pips),
+            tags=tags,
+            ts=now,
+        )
 
     def _reset_reverse_counter(self, pocket: str, direction: str) -> None:
         self._reverse_hits.pop((pocket, direction), None)

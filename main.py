@@ -108,6 +108,23 @@ POCKET_ENTRY_MIN_INTERVAL = {
 
 FALLBACK_EQUITY = 10000.0  # REST失敗時のフォールバック
 
+RSI_LONG_FLOOR = {
+    "macro": 40.0,
+    "micro": 40.0,
+    "scalp": 42.0,
+}
+
+RSI_SHORT_CEILING = {
+    "macro": 60.0,
+    "micro": 60.0,
+    "scalp": 58.0,
+}
+
+POCKET_ATR_MIN_PIPS = {
+    "micro": 2.5,
+    "scalp": 2.5,
+}
+
 _BASE_STAGE_RATIOS = {
     # Front-load a higher fraction in stage 0 so a valid signal deploys meaningful size sooner.
     "macro": (0.35, 0.23, 0.17, 0.12, 0.08, 0.05),
@@ -248,14 +265,54 @@ def _stage_conditions_met(
     fac_h4: dict[str, float],
     open_info: dict[str, float],
 ) -> bool:
-    if stage_idx == 0:
-        return True
-
     price = fac_m1.get("close")
     avg_price = open_info.get("avg_price", price or 0.0)
     rsi = fac_m1.get("rsi", 50.0)
     adx_h4 = fac_h4.get("adx", 0.0)
     slope_h4 = abs(fac_h4.get("ma20", 0.0) - fac_h4.get("ma10", 0.0))
+    atr_raw = fac_m1.get("atr_pips")
+    if atr_raw is None:
+        atr_raw = (fac_m1.get("atr") or 0.0) * 100
+    try:
+        atr_pips = float(atr_raw or 0.0)
+    except (TypeError, ValueError):
+        atr_pips = 0.0
+
+    buy_floor = RSI_LONG_FLOOR.get(pocket)
+    if action == "OPEN_LONG" and buy_floor is not None and rsi < buy_floor:
+        logging.info(
+            "[STAGE] %s buy gating: RSI %.1f below floor %.1f (stage %d).",
+            pocket,
+            rsi,
+            buy_floor,
+            stage_idx,
+        )
+        return False
+
+    sell_cap = RSI_SHORT_CEILING.get(pocket)
+    if action == "OPEN_SHORT" and sell_cap is not None and rsi > sell_cap:
+        logging.info(
+            "[STAGE] %s sell gating: RSI %.1f above ceiling %.1f (stage %d).",
+            pocket,
+            rsi,
+            sell_cap,
+            stage_idx,
+        )
+        return False
+
+    min_atr = POCKET_ATR_MIN_PIPS.get(pocket)
+    if min_atr is not None and atr_pips < min_atr:
+        logging.info(
+            "[STAGE] %s gating: ATR %.2f pips below %.2f (stage %d).",
+            pocket,
+            atr_pips,
+            min_atr,
+            stage_idx,
+        )
+        return False
+
+    if stage_idx == 0:
+        return True
 
     if pocket == "macro":
         ma10_h4 = fac_h4.get("ma10")
@@ -680,8 +737,10 @@ async def logic_loop():
                 )
                 last_vol_high_ratio = param_snapshot.vol_high_ratio
 
+            story_state = "missing"
             story_snapshot = chart_story.update(fac_m1, fac_h4)
             if story_snapshot:
+                story_state = "fresh"
                 if last_story_summary != story_snapshot.summary:
                     logging.info(
                         "[STORY] macro=%s micro=%s higher=%s volatility=%s summary=%s",
@@ -694,6 +753,29 @@ async def logic_loop():
                     last_story_summary = dict(story_snapshot.summary)
             else:
                 story_snapshot = chart_story.last_snapshot
+                if story_snapshot:
+                    story_state = "reuse"
+
+            if story_snapshot:
+                log_metric(
+                    "chart_story_snapshot",
+                    1.0 if story_state == "fresh" else 0.5,
+                    tags={
+                        "state": story_state,
+                        "macro": story_snapshot.macro_trend,
+                        "micro": story_snapshot.micro_trend,
+                        "higher": story_snapshot.higher_trend,
+                        "volatility": story_snapshot.volatility_state,
+                    },
+                    ts=now,
+                )
+            else:
+                log_metric(
+                    "chart_story_snapshot",
+                    0.0,
+                    tags={"state": "missing"},
+                    ts=now,
+                )
 
             macro_regime = classify(fac_h4, "H4", event_mode=event_soon)
             micro_regime = classify(fac_m1, "M1", event_mode=event_soon)

@@ -207,6 +207,8 @@ async def replay_day(
     margin_available: float,
     margin_rate: float,
     lot_cap: Optional[float],
+    start_ts: Optional[datetime] = None,
+    end_ts: Optional[datetime] = None,
 ) -> List[ReplaySample]:
     importlib.reload(factor_cache_module)
     on_candle = factor_cache_module.on_candle
@@ -247,6 +249,10 @@ async def replay_day(
             continue
 
         ts = candle["time"]
+        if start_ts and ts < start_ts:
+            continue
+        if end_ts and ts > end_ts:
+            break
         range_ctx = detect_range_mode(fac_m1, fac_h4)
         ranked = _simple_ranked_strategies(range_ctx.active)
         signals = _evaluate_strategies(ranked, fac_m1, news_cache, range_active=range_ctx.active)
@@ -374,6 +380,16 @@ def main() -> None:
         default="",
         help="日次・全体サマリを書き出す JSON パス",
     )
+    parser.add_argument(
+        "--start",
+        default="",
+        help="再生の開始 UTC 時刻 (例: 2025-10-24T11:20:00Z)",
+    )
+    parser.add_argument(
+        "--end",
+        default="",
+        help="再生の終了 UTC 時刻 (例: 2025-10-24T12:15:00Z)",
+    )
     args = parser.parse_args()
 
     out_dir = Path(args.out_dir)
@@ -381,6 +397,9 @@ def main() -> None:
 
     per_day_summary: Dict[str, Dict[str, Dict[str, float]]] = {}
     global_samples: List[ReplaySample] = []
+
+    start_ts = _parse_time(args.start) if args.start else None
+    end_ts = _parse_time(args.end) if args.end else None
 
     for candle_path_str in args.candles:
         m1_path = Path(candle_path_str)
@@ -401,6 +420,8 @@ def main() -> None:
                 margin_available=args.margin_available,
                 margin_rate=args.margin_rate,
                 lot_cap=args.lot_cap,
+                start_ts=start_ts,
+                end_ts=end_ts,
             )
         )
         print(f"[INFO] generated {len(samples)} samples for {base_name}")
