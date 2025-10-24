@@ -165,10 +165,13 @@ def _dashboard_defaults(error: Optional[str] = None) -> Dict[str, Any]:
         "performance": {
             "daily_pl_pips": 0.0,
             "daily_pl_jpy": 0.0,
+            "daily_pl_eq1l": 0.0,
             "weekly_pl_pips": 0.0,
             "weekly_pl_jpy": 0.0,
+            "weekly_pl_eq1l": 0.0,
             "total_pips": 0.0,
             "total_jpy": 0.0,
+            "total_eq1l": 0.0,
             "total_trades": 0,
             "recent_closed": 0,
             "win_rate": 0.0,
@@ -482,12 +485,32 @@ def root_redirect():
 @app.get("/dashboard")
 def dashboard(request: Request):
     dashboard_data = _load_dashboard_data()
+    # Excursion latest and recent list for inline dashboard panel
+    base = _excursion_base_dir()
+    hourly_dir = base / "hourly"
+    latest_path = base / "latest.txt"
+    excursion_hours: list[dict] = []
+    if hourly_dir.exists():
+        files = sorted(hourly_dir.glob("*.txt"), key=lambda p: p.name, reverse=True)[:12]
+        for p in files:
+            try:
+                size = p.stat().st_size
+            except Exception:
+                size = 0
+            excursion_hours.append({"name": p.name, "size": size})
+    excursion_content = ""
+    if latest_path.exists():
+        excursion_content = _read_text(latest_path, limit_bytes=256_000)
+    elif excursion_hours:
+        excursion_content = _read_text(hourly_dir / excursion_hours[0]["name"], limit_bytes=256_000)
     return templates.TemplateResponse(
         "dashboard.html",
         {
             "request": request,
             "dashboard": dashboard_data,
             "active_tab": "dashboard",
+            "excursion_hours": excursion_hours,
+            "excursion_content": excursion_content,
         },
     )
 

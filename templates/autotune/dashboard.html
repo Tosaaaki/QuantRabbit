@@ -148,4 +148,13 @@
       <p class="tagline">最新トレード情報がまだありません。</p>
     {% endif %}
   </div>
+  <div class="card">
+    <h2 class="section-title">エクスカージョン（毎時）</h2>
+    <div class="tagline">最新の毎時レポート（直近12件は /excursion から一覧参照可能）</div>
+    <div style="display:grid; grid-template-columns: 1fr; gap: 1rem;">
+      <div class="stat-card" style="max-height:50vh; overflow:auto; white-space:pre; font-family:ui-monospace, SFMono-Regular, Menlo, monospace; font-size:13px;">
+        {{ excursion_content or 'レポートが見つかりません。' }}
+      </div>
+    </div>
+  </div>
 {% endblock %}
