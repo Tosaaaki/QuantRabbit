@@ -107,7 +107,7 @@ POCKET_ENTRY_MIN_INTERVAL = {
 }
 
 POCKET_MAX_ACTIVE_TRADES = {
-    "macro": 1,
+    "macro": 6,
     "micro": 2,
     "scalp": 3,
 }
@@ -119,7 +119,7 @@ POCKET_MAX_ACTIVE_TRADES_RANGE = {
 }
 
 POCKET_MAX_DIRECTIONAL_TRADES = {
-    "macro": 1,
+    "macro": 6,
     "micro": 1,
     "scalp": 2,
 }
@@ -312,6 +312,83 @@ def _cooldown_for_pocket(pocket: str, range_mode: bool) -> int:
     return base
 
 
+def _macro_pullback_threshold(stage_idx: int, atr_pips: Optional[float] = None) -> tuple[float, float]:
+    base = _MACRO_PULLBACK_MIN_RETRACE_PIPS.get(
+        stage_idx,
+        _MACRO_PULLBACK_MIN_RETRACE_PIPS[max(_MACRO_PULLBACK_MIN_RETRACE_PIPS)],
+    )
+    atr = float(atr_pips or 0.0)
+    if atr > 0.0:
+        base = max(base, min(base + 2.0, atr * 0.6 + 2.0))
+    max_depth = max(base + 4.0, min(_MACRO_PULLBACK_MAX_RETRACE_PIPS, atr * 1.7 + 5.0))
+    return round(base, 2), round(max_depth, 2)
+
+
+def _macro_pullback_ready(
+    action: str,
+    stage_idx: int,
+    fac_m1: dict[str, float],
+    fac_h4: dict[str, float],
+    open_info: dict[str, float],
+    atr_pips: Optional[float],
+) -> Optional[float]:
+    if action not in {"OPEN_LONG", "OPEN_SHORT"}:
+        return None
+    price = fac_m1.get("close")
+    if price is None:
+        return None
+    min_retrace, max_retrace = _macro_pullback_threshold(stage_idx, atr_pips)
+    ema20_m1 = fac_m1.get("ema20")
+    if ema20_m1 is None:
+        ema20_m1 = fac_m1.get("ma20")
+    ma10_h4 = fac_h4.get("ma10")
+    ma20_h4 = fac_h4.get("ma20")
+    adx_h4 = float(fac_h4.get("adx", 0.0) or 0.0)
+    ma10_m1 = fac_m1.get("ma10")
+    ma20_m1 = fac_m1.get("ma20")
+
+    if action == "OPEN_LONG":
+        avg_price = open_info.get("long_avg_price") or open_info.get("avg_price")
+        if not avg_price:
+            return None
+        retrace = (avg_price - price) / PIP
+        if retrace < min_retrace or retrace > max_retrace:
+            return None
+        if ma10_h4 is not None and ma20_h4 is not None and ma10_h4 <= ma20_h4:
+            return None
+        if adx_h4 < _MACRO_PULLBACK_MIN_ADX:
+            return None
+        if ema20_m1 is not None:
+            ema_gap = max(0.0, (ema20_m1 - price) / PIP)
+            if ema_gap > _MACRO_PULLBACK_MAX_EMA_GAP_PIPS:
+                return None
+        if ma10_m1 is not None and ma20_m1 is not None:
+            ma_gap = (ma20_m1 - ma10_m1) / PIP
+            if ma_gap > _MACRO_PULLBACK_MAX_MA_SLACK_PIPS:
+                return None
+        return round(retrace, 2)
+
+    avg_price = open_info.get("short_avg_price") or open_info.get("avg_price")
+    if not avg_price:
+        return None
+    retrace = (price - avg_price) / PIP
+    if retrace < min_retrace or retrace > max_retrace:
+        return None
+    if ma10_h4 is not None and ma20_h4 is not None and ma10_h4 >= ma20_h4:
+        return None
+    if adx_h4 < _MACRO_PULLBACK_MIN_ADX:
+        return None
+    if ema20_m1 is not None:
+        ema_gap = max(0.0, (price - ema20_m1) / PIP)
+        if ema_gap > _MACRO_PULLBACK_MAX_EMA_GAP_PIPS:
+            return None
+    if ma10_m1 is not None and ma20_m1 is not None:
+        ma_gap = (ma10_m1 - ma20_m1) / PIP
+        if ma_gap > _MACRO_PULLBACK_MAX_MA_SLACK_PIPS:
+            return None
+    return round(retrace, 2)
+
+
 def _stage_conditions_met(
     pocket: str,
     stage_idx: int,
@@ -333,8 +410,24 @@ def _stage_conditions_met(
     except (TypeError, ValueError):
         atr_pips = 0.0
 
+    macro_pullback_retrace: Optional[float] = None
+    if pocket == "macro" and stage_idx >= 1:
+        macro_pullback_retrace = _macro_pullback_ready(
+            action,
+            stage_idx,
+            fac_m1,
+            fac_h4,
+            open_info,
+            atr_pips,
+        )
+
     buy_floor = RSI_LONG_FLOOR.get(pocket)
-    if action == "OPEN_LONG" and buy_floor is not None and rsi < buy_floor:
+    if (
+        action == "OPEN_LONG"
+        and buy_floor is not None
+        and rsi < buy_floor
+        and not (pocket == "macro" and macro_pullback_retrace is not None)
+    ):
         logging.info(
             "[STAGE] %s buy gating: RSI %.1f below floor %.1f (stage %d).",
             pocket,
@@ -345,7 +438,12 @@ def _stage_conditions_met(
         return False
 
     sell_cap = RSI_SHORT_CEILING.get(pocket)
-    if action == "OPEN_SHORT" and sell_cap is not None and rsi > sell_cap:
+    if (
+        action == "OPEN_SHORT"
+        and sell_cap is not None
+        and rsi > sell_cap
+        and not (pocket == "macro" and macro_pullback_retrace is not None)
+    ):
         logging.info(
             "[STAGE] %s sell gating: RSI %.1f above ceiling %.1f (stage %d).",
             pocket,
@@ -374,10 +472,21 @@ def _stage_conditions_met(
         ma20_h4 = fac_h4.get("ma20")
         ma10_m1 = fac_m1.get("ma10")
         ma20_m1 = fac_m1.get("ma20")
-        ema20_m1 = fac_m1.get("ema20") or ma20_m1
+        ema20_m1 = fac_m1.get("ema20")
+        if ema20_m1 is None:
+            ema20_m1 = ma20_m1
         close_m1 = fac_m1.get("close")
 
         if action == "OPEN_LONG":
+            if macro_pullback_retrace is not None:
+                min_req, _ = _macro_pullback_threshold(stage_idx, atr_pips)
+                logging.info(
+                    "[STAGE] Macro pullback buy allowed: stage %d retrace=%.1fp (min %.1fp).",
+                    stage_idx,
+                    macro_pullback_retrace,
+                    min_req,
+                )
+                return True
             if ma10_h4 is not None and ma20_h4 is not None and ma10_h4 < ma20_h4:
                 logging.info(
                     "[STAGE] Macro buy gating: H4 trend down (ma10 %.3f < ma20 %.3f).",
@@ -405,6 +514,15 @@ def _stage_conditions_met(
                 return False
 
         if action == "OPEN_SHORT":
+            if macro_pullback_retrace is not None:
+                min_req, _ = _macro_pullback_threshold(stage_idx, atr_pips)
+                logging.info(
+                    "[STAGE] Macro pullback sell allowed: stage %d retrace=%.1fp (min %.1fp).",
+                    stage_idx,
+                    macro_pullback_retrace,
+                    min_req,
+                )
+                return True
             if ma10_h4 is not None and ma20_h4 is not None and ma10_h4 > ma20_h4:
                 logging.info(
                     "[STAGE] Macro sell gating: H4 trend up (ma10 %.3f > ma20 %.3f).",
@@ -432,27 +550,32 @@ def _stage_conditions_met(
                 return False
 
         # Require trend strength to increase with each stage
-        trend_floor = 18.0 + stage_idx * 1.5
-        if adx_h4 < trend_floor or slope_h4 < 0.0004:
-            logging.info(
-                "[STAGE] Macro gating failed stage %d (ADX %.2f<%.2f, slope %.5f).",
-                stage_idx,
-                adx_h4,
-                trend_floor,
-                slope_h4,
-            )
-            return False
-        if price is not None and avg_price:
-            if action == "OPEN_LONG" and price < avg_price - 0.02:
+        if macro_pullback_retrace is None:
+            trend_floor = 18.0 + stage_idx * 1.5
+            if adx_h4 < trend_floor or slope_h4 < 0.0004:
                 logging.info(
-                    "[STAGE] Macro buy gating: price %.3f below avg %.3f.", price, avg_price
+                    "[STAGE] Macro gating failed stage %d (ADX %.2f<%.2f, slope %.5f).",
+                    stage_idx,
+                    adx_h4,
+                    trend_floor,
+                    slope_h4,
                 )
                 return False
-            if action == "OPEN_SHORT" and price > avg_price + 0.02:
-                logging.info(
-                    "[STAGE] Macro sell gating: price %.3f above avg %.3f.", price, avg_price
-                )
-                return False
+            if price is not None and avg_price:
+                if action == "OPEN_LONG" and price < avg_price - 0.02:
+                    logging.info(
+                        "[STAGE] Macro buy gating: price %.3f below avg %.3f.",
+                        price,
+                        avg_price,
+                    )
+                    return False
+                if action == "OPEN_SHORT" and price > avg_price + 0.02:
+                    logging.info(
+                        "[STAGE] Macro sell gating: price %.3f above avg %.3f.",
+                        price,
+                        avg_price,
+                    )
+                    return False
         # RSI-based re-entry gates
         if action == "OPEN_LONG":
             threshold = 65 - stage_idx * 4

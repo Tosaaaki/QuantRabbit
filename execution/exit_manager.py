@@ -40,14 +40,17 @@ class ExitManager:
         self._macro_hysteresis_pips = 5.0    # wider no-close band to avoid jitter
         # Micro-specific minimum hold
         self._micro_min_hold_minutes = 6.0
-        # MFE guard: if we have achieved decent MFE, allow deeper pullbacks before exiting
-        self._mfe_guard_pips = 1.6
-        self._mfe_guard_retrace_ratio = 0.62
         self._reverse_confirmations = 3
         self._reverse_decay = timedelta(seconds=300)
         self._reverse_hits: Dict[Tuple[str, str], Dict[str, object]] = {}
         self._range_macro_grace_minutes = 10.0
+        self._range_macro_take_profit = 2.4
+        self._range_macro_hold = 0.8
+        self._range_macro_stop = 1.4
         self._pip = 0.01
+        self._mfe_guard_base_default = 1.0
+        self._mfe_guard_base = {"macro": 1.2, "micro": 1.0, "scalp": 0.85}
+        self._mfe_guard_ratio = {"macro": 0.72, "micro": 0.6, "scalp": 0.55}
         self._mfe_sensitive_reasons = {
             "reverse_signal",
             "ma_cross",
@@ -122,7 +125,8 @@ class ExitManager:
             ma10 = pocket_fac.get("ma10", 0.0)
             ma20 = pocket_fac.get("ma20", 0.0)
             adx = pocket_fac.get("adx", 0.0)
-            ema20 = fac_m1.get("ema20", 0.0)
+            ema_m1 = fac_m1.get("ema20")
+            ema_h4 = fac_h4.get("ema20")
             close_price = fac_m1.get("close", 0.0)
             projection_primary = projection_h4 if pocket == "macro" else projection_m1
             projection_fast = projection_m1
@@ -142,7 +146,8 @@ class ExitManager:
                     ma20,
                     adx,
                     close_price,
-                    ema20,
+                    ema_m1,
+                    ema_h4 if pocket == "macro" else None,
                     range_mode,
                     current_time,
                     projection_primary,
@@ -169,7 +174,8 @@ class ExitManager:
                     ma20,
                     adx,
                     close_price,
-                    ema20,
+                    ema_m1,
+                    ema_h4 if pocket == "macro" else None,
                     range_mode,
                     current_time,
                     projection_primary,
@@ -216,7 +222,8 @@ class ExitManager:
         ma20: float,
         adx: float,
         close_price: float,
-        ema20: float,
+        ema_fast: float,
+        ema_primary: Optional[float],
         range_mode: bool,
         now: datetime,
         projection_primary: Optional[MACrossProjection],
@@ -237,6 +244,11 @@ class ExitManager:
         if avg_price and close_price:
             profit_pips = (close_price - avg_price) / 0.01
         profile = pocket_profile or {}
+        ema_ref = (
+            ema_primary
+            if pocket == "macro" and ema_primary is not None
+            else ema_fast
+        )
 
         ma_gap_pips = 0.0
         if ma10 is not None and ma20 is not None:
@@ -259,8 +271,8 @@ class ExitManager:
             and pocket == "macro"
             and profit_pips >= 4.0
             and close_price is not None
-            and ema20 is not None
-            and close_price >= ema20 + 0.002
+            and ema_ref is not None
+            and close_price >= ema_ref + 0.002
         ):
             if (
                 adx >= self._macro_trend_adx + 4
@@ -323,7 +335,7 @@ class ExitManager:
             and ma_gap_pips >= self._macro_ma_gap
         ):
             reason = "trend_reversal"
-        elif pocket == "scalp" and close_price > ema20:
+        elif pocket == "scalp" and ema_fast is not None and close_price > ema_fast:
             reason = "scalp_momentum_flip"
         elif self._should_exit_for_cross(
             pocket,
@@ -340,32 +352,41 @@ class ExitManager:
             pocket == "macro"
             and profit_pips >= 6.0
             and close_price is not None
-            and ema20 is not None
-            and close_price <= ema20 - 0.0015
+            and ema_ref is not None
+            and close_price <= ema_ref - 0.0015
         ):
             reason = "macro_trail_hit"
         # レンジ中でもマクロの既存建玉を一律にクローズしない。
         # 早期利確/撤退（range_take_profit/range_stop）や逆方向シグナルのみで制御する。
         elif range_mode:
-            if (
-                pocket == "macro"
-                and self._has_mature_trade(open_info, "long", now, self._range_macro_grace_minutes)
-            ):
-                return None
-            if profit_pips >= 1.6:
-                reason = "range_take_profit"
-            elif profit_pips > 0.4:
-                return None
-            elif profit_pips <= -1.0:
-                reason = "range_stop"
+            if pocket == "macro":
+                if self._has_mature_trade(open_info, "long", now, self._range_macro_grace_minutes):
+                    return None
+                tp = self._range_macro_take_profit
+                hold = self._range_macro_hold
+                stop = self._range_macro_stop
+                if profit_pips >= tp:
+                    reason = "range_take_profit"
+                elif profit_pips > hold:
+                    return None
+                elif profit_pips <= -stop:
+                    reason = "range_stop"
+            else:
+                if profit_pips >= 1.6:
+                    reason = "range_take_profit"
+                elif profit_pips > 0.4:
+                    return None
+                elif profit_pips <= -1.0:
+                    reason = "range_stop"
 
         # MFE-based patience: if we've achieved decent favorable excursion,
         # avoid exiting on a mild pullback unless strong invalidation.
         if reason in self._mfe_sensitive_reasons and not range_mode:
+            guard_threshold, guard_ratio = self._get_mfe_guard(pocket, atr_primary)
             max_mfe = self._max_mfe_for_side(open_info, "long", m1_candles, now)
-            if max_mfe is not None and max_mfe >= self._mfe_guard_pips:
+            if max_mfe is not None and max_mfe >= guard_threshold:
                 retrace = max(0.0, max_mfe - max(0.0, profit_pips))
-                if retrace <= self._mfe_guard_retrace_ratio * max_mfe and profit_pips > -self._macro_loss_buffer:
+                if retrace <= guard_ratio * max_mfe and profit_pips > -self._macro_loss_buffer:
                     return None
 
         if reason == "trend_reversal":
@@ -452,7 +473,8 @@ class ExitManager:
         ma20: float,
         adx: float,
         close_price: float,
-        ema20: float,
+        ema_fast: float,
+        ema_primary: Optional[float],
         range_mode: bool,
         now: datetime,
         projection_primary: Optional[MACrossProjection],
@@ -473,6 +495,11 @@ class ExitManager:
         if avg_price and close_price:
             profit_pips = (avg_price - close_price) / 0.01
         profile = pocket_profile or {}
+        ema_ref = (
+            ema_primary
+            if pocket == "macro" and ema_primary is not None
+            else ema_fast
+        )
 
         ma_gap_pips = 0.0
         if ma10 is not None and ma20 is not None:
@@ -495,8 +522,8 @@ class ExitManager:
             and pocket == "macro"
             and profit_pips >= 4.0
             and close_price is not None
-            and ema20 is not None
-            and close_price <= ema20 - 0.002
+            and ema_ref is not None
+            and close_price <= ema_ref - 0.002
         ):
             if (
                 adx >= self._macro_trend_adx + 4
@@ -510,9 +537,9 @@ class ExitManager:
             pocket == "micro"
             and profit_pips <= -4.0
             and close_price is not None
-            and ema20 is not None
+            and ema_fast is not None
             and (
-                close_price >= ema20 + 0.0015
+                close_price >= ema_fast + 0.0015
                 or rsi >= 55
                 or (ma10 is not None and ma20 is not None and ma10 > ma20)
             )
@@ -553,7 +580,7 @@ class ExitManager:
             and ma_gap_pips >= self._macro_ma_gap
         ):
             reason = "trend_reversal"
-        elif pocket == "scalp" and close_price < ema20:
+        elif pocket == "scalp" and ema_fast is not None and close_price < ema_fast:
             reason = "scalp_momentum_flip"
         elif self._should_exit_for_cross(
             pocket,
@@ -569,23 +596,32 @@ class ExitManager:
         # レンジ中でもマクロの既存建玉を一律にクローズしない。
         # 早期利確/撤退（range_take_profit/range_stop）や逆方向シグナルのみで制御する。
         elif range_mode:
-            if (
-                pocket == "macro"
-                and self._has_mature_trade(open_info, "short", now, self._range_macro_grace_minutes)
-            ):
-                return None
-            if profit_pips >= 1.6:
-                reason = "range_take_profit"
-            elif profit_pips > 0.4:
-                return None
-            elif profit_pips <= -1.0:
-                reason = "range_stop"
+            if pocket == "macro":
+                if self._has_mature_trade(open_info, "short", now, self._range_macro_grace_minutes):
+                    return None
+                tp = self._range_macro_take_profit
+                hold = self._range_macro_hold
+                stop = self._range_macro_stop
+                if profit_pips >= tp:
+                    reason = "range_take_profit"
+                elif profit_pips > hold:
+                    return None
+                elif profit_pips <= -stop:
+                    reason = "range_stop"
+            else:
+                if profit_pips >= 1.6:
+                    reason = "range_take_profit"
+                elif profit_pips > 0.4:
+                    return None
+                elif profit_pips <= -1.0:
+                    reason = "range_stop"
 
         if reason in self._mfe_sensitive_reasons and not range_mode:
+            guard_threshold, guard_ratio = self._get_mfe_guard(pocket, atr_primary)
             max_mfe = self._max_mfe_for_side(open_info, "short", m1_candles, now)
-            if max_mfe is not None and max_mfe >= self._mfe_guard_pips:
+            if max_mfe is not None and max_mfe >= guard_threshold:
                 retrace = max(0.0, max_mfe - max(0.0, -profit_pips))
-                if retrace <= self._mfe_guard_retrace_ratio * max_mfe and profit_pips < self._macro_loss_buffer:
+                if retrace <= guard_ratio * max_mfe and profit_pips < self._macro_loss_buffer:
                     return None
 
         if reason == "trend_reversal":
@@ -905,6 +941,23 @@ class ExitManager:
             return story.micro_trend
         return story.higher_trend
 
+    def _get_mfe_guard(
+        self,
+        pocket: str,
+        atr_primary: Optional[float],
+    ) -> Tuple[float, float]:
+        base = self._mfe_guard_base.get(pocket, self._mfe_guard_base_default)
+        atr = self._safe_float(atr_primary)
+        if atr > 0.0:
+            if pocket == "macro":
+                base = max(base, min(base + 0.9, 0.9 + atr * 0.28))
+            elif pocket == "micro":
+                base = max(base, min(base + 0.6, 0.7 + atr * 0.22))
+            elif pocket == "scalp":
+                base = max(base, min(base + 0.4, 0.6 + atr * 0.18))
+        ratio = self._mfe_guard_ratio.get(pocket, 0.6)
+        return round(base, 2), ratio
+
     def _record_exit_metric(
         self,
         pocket: str,
@@ -932,6 +985,12 @@ class ExitManager:
         log_metric(
             "exit_decision",
             float(profit_pips),
+            tags=tags,
+            ts=now,
+        )
+        log_metric(
+            "exit_decision_count",
+            1.0,
             tags=tags,
             ts=now,
         )
@@ -1031,15 +1090,19 @@ class ExitManager:
         if avg_loss and avg_loss <= 3.5:
             fraction *= 0.85
         if range_mode:
-            fraction = min(0.9, fraction * 1.1)
-        fraction = max(0.35, min(0.9, fraction))
+            fraction = min(0.85, fraction * 1.05)
+        fraction = max(0.25, min(0.75, fraction))
         units_to_close = int(round(base * fraction))
         if units_to_close <= 0:
             units_to_close = 1
+        preserve_floor = max(1, int(round(base * 0.25)))
+        max_close = max(1, base - preserve_floor)
         if units_to_close >= base:
-            units_to_close = base - max(1, int(base * 0.1))
+            units_to_close = max_close
+        elif units_to_close > max_close:
+            units_to_close = max_close
         if units_to_close <= 0:
-            units_to_close = base
+            units_to_close = max_close
         return min(base, units_to_close)
 
     @staticmethod
