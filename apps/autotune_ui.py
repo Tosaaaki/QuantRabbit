@@ -561,7 +561,22 @@ def excursion_report(request: Request, file: Optional[str] = None):
                 content = _read_text(target)
                 selected_name = hours[0]["name"]
             else:
-                content = "レポートが見つかりません。ジョブが稼働しているか確認してください。"
+                # GCS からの取得（Cloud Run 用）
+                try:
+                    if storage is not None:
+                        bucket_name = get_secret("ui_bucket_name")
+                        try:
+                            obj_path = get_secret("excursion_latest_object_path")
+                        except Exception:
+                            obj_path = "excursion/latest.txt"
+                        client = storage.Client()
+                        blob = client.bucket(bucket_name).blob(obj_path)
+                        content = blob.download_as_text(timeout=5)
+                        selected_name = obj_path
+                    else:
+                        content = "レポートが見つかりません。ジョブが稼働しているか確認してください。"
+                except Exception:
+                    content = "レポートが見つかりません。ジョブが稼働しているか確認してください。"
     return templates.TemplateResponse(
         "excursion.html",
         {
