@@ -22,6 +22,7 @@ from market_data.news_fetcher import fetch_loop as news_fetch_loop
 from analysis.summary_ingestor import ingest_loop as summary_ingest_loop
 from analytics.insight_client import InsightClient
 from analysis.range_guard import detect_range_mode
+from analysis.param_context import ParamContext, ParamSnapshot
 from signals.pocket_allocator import alloc, DEFAULT_SCALP_SHARE, dynamic_scalp_share
 from execution.risk_guard import (
     allowed_lot,
@@ -53,6 +54,7 @@ from strategies.scalping.range_fader import RangeFader
 from strategies.scalping.pulse_break import PulseBreak
 from utils.oanda_account import get_account_snapshot
 from utils.secrets import get_secret
+from utils.metrics_logger import log_metric
 
 # Configure logging
 logging.basicConfig(
@@ -105,12 +107,27 @@ POCKET_ENTRY_MIN_INTERVAL = {
 
 FALLBACK_EQUITY = 10000.0  # REST失敗時のフォールバック
 
-STAGE_RATIOS = {
+_BASE_STAGE_RATIOS = {
     # Front-load a higher fraction in stage 0 so a valid signal deploys meaningful size sooner.
     "macro": (0.35, 0.23, 0.17, 0.12, 0.08, 0.05),
     "micro": (0.38, 0.24, 0.17, 0.11, 0.06, 0.04),
     "scalp": (0.6, 0.2, 0.12, 0.08),
 }
+
+_STAGE_PLAN_OVERRIDES: dict[str, tuple[float, ...]] = {}
+
+
+def _set_stage_plan_overrides(overrides: dict[str, tuple[float, ...]]) -> None:
+    global _STAGE_PLAN_OVERRIDES
+    _STAGE_PLAN_OVERRIDES = {k: tuple(v) for k, v in overrides.items()}
+
+
+def _stage_plan(pocket: str) -> tuple[float, ...]:
+    if pocket in _STAGE_PLAN_OVERRIDES:
+        return _STAGE_PLAN_OVERRIDES[pocket]
+    if pocket in _BASE_STAGE_RATIOS:
+        return _BASE_STAGE_RATIOS[pocket]
+    return (1.0,)
 
 MIN_SCALP_STAGE_LOT = 0.01  # 1000 units baseline so micro/macro bias does not null scalps
 DEFAULT_COOLDOWN_SECONDS = 180
@@ -135,6 +152,9 @@ STAGE_RESET_GRACE_SECONDS = 180
 RANGE_SCALP_ATR_MIN = 1.35
 RANGE_SCALP_VOL_MIN = 0.75
 RANGE_SCALP_MAX_MOMENTUM = 0.0012
+RANGE_FADER_MIN_RR = 1.12
+RANGE_FADER_MAX_RR = 1.32
+RANGE_FADER_RANGE_CONF_SCALE = 0.82
 
 try:
     _BASE_RISK_PCT = float(get_secret("risk_pct"))
@@ -152,9 +172,23 @@ except Exception:
     _MAX_RISK_PCT = _BASE_RISK_PCT
 
 
-def _dynamic_risk_pct(signals: list[dict], range_mode: bool, weight_macro: float | None) -> float:
-    if range_mode or not signals or _MAX_RISK_PCT <= _BASE_RISK_PCT:
+def _dynamic_risk_pct(
+    signals: list[dict],
+    range_mode: bool,
+    weight_macro: float | None,
+    *,
+    context: ParamSnapshot | None = None,
+) -> float:
+    if not signals or _MAX_RISK_PCT <= _BASE_RISK_PCT:
         return _BASE_RISK_PCT
+    if range_mode:
+        if context:
+            dampen = 0.45 + context.risk_appetite * 0.3
+            if context.vol_high_ratio >= 0.3:
+                dampen = min(dampen, 0.35)
+            dampen = max(0.25, min(dampen, 0.75))
+            return max(0.0, _BASE_RISK_PCT * dampen)
+        return _BASE_RISK_PCT * 0.5
     actionable = [
         s
         for s in signals
@@ -170,7 +204,25 @@ def _dynamic_risk_pct(signals: list[dict], range_mode: bool, weight_macro: float
         bias = min(1.0, abs(weight_macro - 0.5) * 2.0)
     score = 0.45 * pocket_factor + 0.45 * avg_conf + 0.1 * bias
     score = max(0.0, min(score, 1.0))
-    return _BASE_RISK_PCT + (_MAX_RISK_PCT - _BASE_RISK_PCT) * score
+    if context:
+        env_score = context.risk_appetite
+        score = (score * 0.65) + (env_score * 0.35)
+        if context.volatility_state == "high":
+            score -= 0.08
+        elif context.volatility_state == "low":
+            score += 0.05
+        if context.liquidity_state == "wide":
+            score -= 0.08
+        if context.vol_high_ratio >= 0.3:
+            score -= 0.12
+        score = max(0.0, min(score, 1.0))
+    risk_pct = _BASE_RISK_PCT + (_MAX_RISK_PCT - _BASE_RISK_PCT) * score
+    if context:
+        if context.risk_appetite < 0.25:
+            risk_pct = min(risk_pct, _BASE_RISK_PCT * 0.35)
+        if context.vol_high_ratio >= 0.3:
+            risk_pct = min(risk_pct, _BASE_RISK_PCT * 0.4)
+    return max(0.0005, risk_pct)
 
 
 def build_client_order_id(focus_tag: Optional[str], strategy_tag: str) -> str:
@@ -386,7 +438,7 @@ def compute_stage_lot(
     open_info: dict[str, float],
 ) -> tuple[float, int]:
     """段階的エントリーの次ロットとステージ番号を返す。"""
-    plan = STAGE_RATIOS.get(pocket, (1.0,))
+    plan = _stage_plan(pocket)
     current_lot = max(open_units_same_dir, 0) / 100000.0
     cumulative = 0.0
     for stage_idx, fraction in enumerate(plan):
@@ -437,6 +489,7 @@ async def logic_loop():
     confidence_policy = ConfidencePolicy()
     exit_manager = ExitManager()
     stage_tracker = StageTracker()
+    param_context = ParamContext()
     perf_cache = {}
     news_cache = {}
     insight = InsightClient()
@@ -456,13 +509,21 @@ async def logic_loop():
     last_risk_pct: float | None = None
     last_spread_gate = False
     last_spread_gate_reason = ""
+    last_logged_range_state: Optional[bool] = None
+    last_logged_focus: Optional[str] = None
+    last_logged_weight: Optional[float] = None
+    recent_profiles: dict[str, dict[str, float]] = {}
+    param_snapshot: Optional[ParamSnapshot] = None
+    last_volatility_state: Optional[str] = None
+    last_liquidity_state: Optional[str] = None
+    last_risk_appetite: Optional[float] = None
+    last_vol_high_ratio: Optional[float] = None
+    last_stage_biases: dict[str, float] = {}
 
     try:
         while True:
             now = datetime.datetime.utcnow()
             stage_tracker.clear_expired(now)
-            stage_tracker.update_loss_streaks(now=now, cooldown_map=POCKET_LOSS_COOLDOWNS)
-
             # Heartbeat logging
             if (now - last_heartbeat_time).total_seconds() >= 300:  # Every 5 minutes
                 logging.info(
@@ -497,6 +558,12 @@ async def logic_loop():
                 logging.info("[WAIT] Waiting for M1/H4 factor data for trading logic...")
                 await asyncio.sleep(5)
                 continue
+
+            atr_pips = fac_m1.get("atr_pips")
+            if atr_pips is None:
+                atr_pips = (fac_m1.get("atr") or 0.0) * 100
+            atr_pips = float(atr_pips or 0.0)
+            vol_5m = float(fac_m1.get("vol_5m", 0.0) or 0.0)
 
             event_soon = check_event_soon(within_minutes=30, min_impact=3)
             global_drawdown_exceeded = check_global_drawdown()
@@ -564,6 +631,51 @@ async def logic_loop():
                 logging.info("[SPREAD] entries re-enabled (%s)", spread_log_context)
             last_spread_gate = spread_gate_active
             last_spread_gate_reason = spread_gate_reason
+
+            param_snapshot = param_context.update(
+                now=now,
+                fac_m1=fac_m1,
+                fac_h4=fac_h4,
+                spread_snapshot=spread_snapshot,
+            )
+            if param_snapshot.volatility_state != last_volatility_state:
+                logging.info(
+                    "[PARAM] volatility_state=%s atr=%.2fp score=%.2f",
+                    param_snapshot.volatility_state,
+                    param_snapshot.atr_pips,
+                    param_snapshot.atr_score,
+                )
+                last_volatility_state = param_snapshot.volatility_state
+            if param_snapshot.liquidity_state != last_liquidity_state:
+                logging.info(
+                    "[PARAM] liquidity_state=%s spread=%.2fp score=%.2f",
+                    param_snapshot.liquidity_state,
+                    param_snapshot.spread_pips,
+                    param_snapshot.spread_score,
+                )
+                last_liquidity_state = param_snapshot.liquidity_state
+            if (
+                last_risk_appetite is None
+                or abs(param_snapshot.risk_appetite - last_risk_appetite) >= 0.12
+            ):
+                logging.info(
+                    "[PARAM] risk_appetite=%.2f trend=%.2f vol=%.2f spread=%.2f",
+                    param_snapshot.risk_appetite,
+                    param_snapshot.notes.get("trend_score", 0.0),
+                    param_snapshot.notes.get("vol_state_score", 0.0),
+                    param_snapshot.notes.get("spread_state_score", 0.0),
+                )
+                last_risk_appetite = param_snapshot.risk_appetite
+            if (
+                last_vol_high_ratio is None
+                or abs(param_snapshot.vol_high_ratio - last_vol_high_ratio) >= 0.08
+            ):
+                logging.info(
+                    "[PARAM] vol_high_ratio=%.2f state=%s",
+                    param_snapshot.vol_high_ratio,
+                    param_snapshot.volatility_state,
+                )
+                last_vol_high_ratio = param_snapshot.vol_high_ratio
 
             macro_regime = classify(fac_h4, "H4", event_mode=event_soon)
             micro_regime = classify(fac_m1, "M1", event_mode=event_soon)
@@ -662,6 +774,54 @@ async def logic_loop():
             elif not prev_range_state and range_active:
                 range_entry_counter = 0
 
+            stage_overrides, stage_changed, stage_biases = param_context.stage_overrides(
+                _BASE_STAGE_RATIOS,
+                range_active=range_active,
+            )
+            _set_stage_plan_overrides(stage_overrides)
+            vol_ratio = param_snapshot.vol_high_ratio if param_snapshot else -1.0
+            if stage_changed:
+                log_bias = {k: round(v, 2) for k, v in stage_biases.items()}
+                logging.info(
+                    "[STAGE] dynamic_plan=%s bias=%s range=%s vol_high=%.2f",
+                    stage_overrides,
+                    log_bias,
+                    range_active,
+                    vol_ratio,
+                )
+            elif any(
+                abs(stage_biases.get(k, 1.0) - last_stage_biases.get(k, 1.0)) >= 0.08
+                for k in stage_biases
+            ):
+                log_bias = {k: round(v, 2) for k, v in stage_biases.items()}
+                logging.info(
+                    "[STAGE] bias_adjust drift=%s range=%s vol_high=%.2f",
+                    log_bias,
+                    range_active,
+                    vol_ratio,
+                )
+            last_stage_biases = dict(stage_biases)
+
+            stage_tracker.update_loss_streaks(
+                now=now,
+                cooldown_map=POCKET_LOSS_COOLDOWNS,
+                range_active=range_active,
+                atr_pips=atr_pips,
+                vol_5m=vol_5m,
+            )
+            recent_profiles = stage_tracker.get_recent_profiles()
+            if last_logged_range_state is None or last_logged_range_state != range_active:
+                log_metric(
+                    "range_mode_active",
+                    1.0 if range_active else 0.0,
+                    tags={
+                        "reason": last_range_reason or range_ctx.reason or "unknown",
+                        "score": round(range_ctx.score, 3),
+                    },
+                    ts=now,
+                )
+                last_logged_range_state = range_active
+
             # --- 2. GPT判断 ---
             # M1/H4 の移動平均・RSI などの指標をまとめて送信
             payload = {
@@ -699,13 +859,11 @@ async def logic_loop():
                 except Exception as exc:  # pragma: no cover - defensive
                     logging.warning("[REALTIME] metrics refresh failed: %s", exc)
 
-            atr_pips = (fac_m1.get("atr") or 0.0) * 100
             ema20 = fac_m1.get("ema20") or fac_m1.get("ma20")
             close_px = fac_m1.get("close")
             momentum = 0.0
             if ema20 is not None and close_px is not None:
                 momentum = close_px - ema20
-            vol_5m = fac_m1.get("vol_5m", 0.0) or 0.0
             scalp_ready = False
             if range_active:
                 scalp_ready = (
@@ -769,6 +927,23 @@ async def logic_loop():
             if range_active and "macro" in focus_pockets:
                 focus_pockets.discard("macro")
 
+            if (
+                last_logged_focus != focus_tag
+                or last_logged_weight is None
+                or abs((last_logged_weight or 0.0) - float(weight or 0.0)) >= 0.05
+            ):
+                log_metric(
+                    "weight_macro",
+                    float(weight or 0.0),
+                    tags={
+                        "focus_tag": focus_tag,
+                        "range_active": str(range_active),
+                    },
+                    ts=now,
+                )
+                last_logged_focus = focus_tag
+                last_logged_weight = float(weight or 0.0)
+
             ma10_h4 = fac_h4.get("ma10")
             ma20_h4 = fac_h4.get("ma20")
             adx_h4 = fac_h4.get("adx", 0.0)
@@ -805,15 +980,11 @@ async def logic_loop():
             # Range mode: prefer mean-reversion scalping. Ensure RangeFader is present.
             if range_active and "scalp" in focus_pockets and "RangeFader" not in ranked_strategies:
                 ranked_strategies.append("RangeFader")
-                try:
-                    atr_hint = fac_m1.get("atr_pips") or ((fac_m1.get("atr") or 0.0) * 100)
-                except Exception:
-                    atr_hint = 0.0
                 logging.info(
                     "[SCALP] Range mode: auto-added RangeFader (score=%.2f bbw=%.2f atr=%.2f).",
                     range_ctx.score,
                     fac_m1.get("bbw", 0.0) or 0.0,
-                    atr_hint,
+                    atr_pips,
                 )
 
             evaluated_signals: list[dict] = []
@@ -886,20 +1057,78 @@ async def logic_loop():
                 scaled_conf = int(signal["confidence"] * health.confidence_scale)
                 signal["confidence"] = max(0, min(100, scaled_conf))
                 if range_active:
-                    atr_hint = (
-                        fac_m1.get("atr_pips")
-                        or ((fac_m1.get("atr") or 0.0) * 100)
-                        or 6.0
-                    )
+                    profile = recent_profiles.get(signal["pocket"], {})
+                    sample_size = int(profile.get("sample_size", 0) or 0)
+                    use_profile = sample_size >= 5
+                    avg_win = float(profile.get("avg_win_pips", 0.0) or 0.0) if use_profile else 0.0
+                    avg_loss = float(profile.get("avg_loss_pips", 0.0) or 0.0) if use_profile else 0.0
+                    atr_hint = max(atr_pips, 0.5)
                     if signal["pocket"] == "macro":
-                        tp_cap = min(2.0, max(1.6, atr_hint * 1.05))
-                        signal["tp_pips"] = round(tp_cap, 2)
-                        signal["sl_pips"] = round(tp_cap, 2)
-                        signal["confidence"] = int(signal["confidence"] * 0.55)
+                        base_sl = avg_loss * 0.9 if avg_loss > 0.2 else atr_hint * 0.85
+                        base_sl = max(1.0, min(base_sl, 2.2))
+                        base_tp = avg_win * 0.95 if avg_win > 0.2 else atr_hint * 1.2
+                        base_tp = max(base_sl * 1.15, min(base_tp, 2.6))
+                        signal["confidence"] = int(signal["confidence"] * 0.6)
                     else:
-                        tp_default = min(1.8, max(1.3, atr_hint * 1.1))
-                        signal["tp_pips"] = round(tp_default, 2)
-                        signal["sl_pips"] = round(max(1.2, min(tp_default * 1.05, 1.9)), 2)
+                        base_sl = avg_loss * 0.85 if avg_loss > 0.15 else atr_hint * 0.65
+                        base_sl = max(0.8, min(base_sl, 1.6))
+                        base_tp = avg_win * 0.9 if avg_win > 0.15 else atr_hint * 0.95
+                        base_tp = max(base_sl * 1.2, min(base_tp, 2.1))
+                        signal["confidence"] = int(signal["confidence"] * 0.75)
+                    if base_tp <= base_sl:
+                        base_tp = base_sl * 1.2
+                    signal["sl_pips"] = round(base_sl, 2)
+                    signal["tp_pips"] = round(base_tp, 2)
+                    signal["confidence"] = max(0, min(100, signal["confidence"]))
+                    if use_profile:
+                        logging.info(
+                            "[RANGE] RR tuned via profile pocket=%s avg_win=%.2f avg_loss=%.2f samples=%d",
+                            signal["pocket"],
+                            avg_win,
+                            avg_loss,
+                            sample_size,
+                        )
+                if range_active and signal["strategy"] == "RangeFader":
+                    sl_val = float(signal.get("sl_pips") or 0.0)
+                    tp_val = float(signal.get("tp_pips") or 0.0)
+                    rr_before = tp_val / sl_val if sl_val > 0 else 0.0
+                    tp_adj = tp_val
+                    if sl_val > 0 and tp_val > 0:
+                        if rr_before > RANGE_FADER_MAX_RR:
+                            tp_adj = sl_val * RANGE_FADER_MAX_RR
+                        elif rr_before < RANGE_FADER_MIN_RR:
+                            tp_adj = sl_val * RANGE_FADER_MIN_RR
+                        if tp_adj != tp_val:
+                            tp_val = round(tp_adj, 2)
+                            signal["tp_pips"] = tp_val
+                        rr_after = tp_val / sl_val if sl_val > 0 else 0.0
+                        log_metric(
+                            "range_fader_rr",
+                            rr_after,
+                            tags={"range_active": "true"},
+                            ts=now,
+                        )
+                    prev_conf = signal["confidence"]
+                    scaled_conf = int(prev_conf * RANGE_FADER_RANGE_CONF_SCALE)
+                    signal["confidence"] = max(35, min(80, scaled_conf))
+                    log_metric(
+                        "range_fader_confidence",
+                        float(signal["confidence"]),
+                        tags={"range_active": "true"},
+                        ts=now,
+                    )
+                    if prev_conf != signal["confidence"]:
+                        rr_logged = (
+                            (signal.get("tp_pips") or 0.0) / sl_val if sl_val > 0 else 0.0
+                        )
+                        logging.info(
+                            "[RANGE] RangeFader confidence %d -> %d (SL=%.2f TP=%.2f rr=%.2f)",
+                            prev_conf,
+                            signal["confidence"],
+                            sl_val,
+                            signal.get("tp_pips"),
+                            rr_logged,
+                        )
                 signal["health"] = {
                     "win_rate": health.win_rate,
                     "pf": health.profit_factor,
@@ -917,7 +1146,11 @@ async def logic_loop():
                 logging.warning("[PROTECTION] update failed: %s", exc)
             try:
                 partials = plan_partial_reductions(
-                    open_positions, fac_m1, range_mode=range_active, now=now
+                    open_positions,
+                    fac_m1,
+                    range_mode=range_active,
+                    now=now,
+                    pocket_profiles=recent_profiles,
                 )
             except Exception as exc:
                 logging.warning("[PARTIAL] planning failed: %s", exc)
@@ -1087,7 +1320,12 @@ async def logic_loop():
                         scalp_free_ratio * 100 if scalp_free_ratio is not None else 0.0,
                     )
 
-            risk_override = _dynamic_risk_pct(evaluated_signals, range_active, weight)
+            risk_override = _dynamic_risk_pct(
+                evaluated_signals,
+                range_active,
+                weight,
+                context=param_snapshot,
+            )
             if (
                 _MAX_RISK_PCT > _BASE_RISK_PCT
                 and (last_risk_pct is None or abs(risk_override - last_risk_pct) > 0.001)
