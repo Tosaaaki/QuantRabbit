@@ -31,3 +31,31 @@ OUT_FILE="$OUT_DIR/${TS_JST}.txt"
 cp -f "$OUT_FILE" "logs/reports/excursion/latest.txt"
 echo "[excursion_report] wrote $OUT_FILE"
 
+# Optional: publish to GCS for Cloud Run UI consumption
+# Resolve bucket via secrets (ui_bucket_name) or env (GCS_UI_BUCKET)
+BUCKET=""
+if [[ -x ".venv/bin/python" ]]; then
+  BUCKET="$($PY - <<'PY'
+from utils.secrets import get_secret
+try:
+    print(get_secret('ui_bucket_name'))
+except Exception:
+    pass
+PY
+)"
+fi
+if [[ -z "$BUCKET" && -n "${GCS_UI_BUCKET:-}" ]]; then
+  BUCKET="$GCS_UI_BUCKET"
+fi
+
+if [[ -n "$BUCKET" ]]; then
+  DEST_LATEST="gs://$BUCKET/excursion/latest.txt"
+  DEST_HOURLY="gs://$BUCKET/excursion/hourly/${TS_JST}.txt"
+  if command -v gsutil >/dev/null 2>&1; then
+    gsutil -q cp "logs/reports/excursion/latest.txt" "$DEST_LATEST" || true
+    gsutil -q cp "$OUT_FILE" "$DEST_HOURLY" || true
+    echo "[excursion_report] uploaded to $DEST_LATEST and $DEST_HOURLY"
+  else
+    echo "[excursion_report] gsutil not found; skip upload"
+  fi
+fi

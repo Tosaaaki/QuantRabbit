@@ -503,6 +503,21 @@ def dashboard(request: Request):
         excursion_content = _read_text(latest_path, limit_bytes=256_000)
     elif excursion_hours:
         excursion_content = _read_text(hourly_dir / excursion_hours[0]["name"], limit_bytes=256_000)
+    # Cloud Run 環境などローカルにファイルが無い場合は GCS を参照
+    if not excursion_content:
+        try:
+            if storage is not None:
+                bucket_name = get_secret("ui_bucket_name")
+                # 既定オブジェクトパス（必要なら secret で上書き: excursion_latest_object_path）
+                try:
+                    obj_path = get_secret("excursion_latest_object_path")
+                except Exception:
+                    obj_path = "excursion/latest.txt"
+                client = storage.Client()
+                blob = client.bucket(bucket_name).blob(obj_path)
+                excursion_content = blob.download_as_text(timeout=5)
+        except Exception:
+            excursion_content = excursion_content or ""
     return templates.TemplateResponse(
         "dashboard.html",
         {
