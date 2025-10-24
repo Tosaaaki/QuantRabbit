@@ -1301,9 +1301,10 @@ async def logic_loop(gpt_state: GPTDecisionState, gpt_requests: GPTRequestManage
                 soft_range=range_soft_active,
             )
             logging.info(
-                "[GPT] decision_trigger signature=%s", payload_signature[:10]
+                "[GPT] decision_trigger signature=%s range=%s", payload_signature[:10], range_active
             )
             if await gpt_state.needs_refresh(payload_signature, GPT_MIN_INTERVAL_SECONDS):
+                logging.info("[GPT] enqueue signature=%s", payload_signature[:10])
                 await gpt_requests.submit(payload_signature, payload)
                 try:
                     gpt = await gpt_state.wait_for_signature(payload_signature, timeout=30)
