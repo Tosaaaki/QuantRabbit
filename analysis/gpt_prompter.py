@@ -50,7 +50,7 @@ def build_messages(payload: Dict) -> List[Dict]:
         "- focus_tag must be one of ['micro', 'macro', 'hybrid', 'event'].\n"
         "- weight_macro must be a float between 0 and 1 inclusive.\n"
         "- ranked_strategies must be an array containing zero or more of "
-        "['TrendMA', 'Donchian55', 'BB_RSI', 'NewsSpikeReversal', 'M1Scalper'] ordered from "
+        "['TrendMA', 'Donchian55', 'BB_RSI', 'NewsSpikeReversal', 'M1Scalper', 'RangeFader', 'PulseBreak'] ordered from "
         "highest to lowest priority. Never invent other strategy names."
     )
 

@@ -767,6 +767,20 @@ async def logic_loop():
                     fac_m1.get("vol_5m", 0.0),
                 )
 
+            # Range mode: prefer mean-reversion scalping. Ensure RangeFader is present.
+            if range_active and "scalp" in focus_pockets and "RangeFader" not in ranked_strategies:
+                ranked_strategies.append("RangeFader")
+                try:
+                    atr_hint = fac_m1.get("atr_pips") or ((fac_m1.get("atr") or 0.0) * 100)
+                except Exception:
+                    atr_hint = 0.0
+                logging.info(
+                    "[SCALP] Range mode: auto-added RangeFader (score=%.2f bbw=%.2f atr=%.2f).",
+                    range_ctx.score,
+                    fac_m1.get("bbw", 0.0) or 0.0,
+                    atr_hint,
+                )
+
             evaluated_signals: list[dict] = []
             for sname in ranked_strategies:
                 cls = STRATEGIES.get(sname)

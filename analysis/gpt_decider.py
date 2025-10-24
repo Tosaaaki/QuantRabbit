@@ -40,6 +40,8 @@ _ALLOWED_STRATEGIES = [
     "BB_RSI",
     "NewsSpikeReversal",
     "M1Scalper",
+    "RangeFader",
+    "PulseBreak",
 ]
 
 _MAX_COMPLETION_TOKENS = 320
