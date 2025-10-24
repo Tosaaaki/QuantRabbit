@@ -223,7 +223,14 @@ class StageTracker:
                 int(row["win_streak"] or 0),
             )
 
-        now_dt = now or datetime.utcnow()
+        # 正規化: now が timezone-aware なら UTC に変換して tzinfo を外す
+        if now is not None:
+            if isinstance(now, datetime) and now.tzinfo is not None:
+                now_dt = now.astimezone(timezone.utc).replace(tzinfo=None)
+            else:
+                now_dt = now
+        else:
+            now_dt = datetime.utcnow()
         ts = now_dt.isoformat()
         new_losses: List[Tuple[str, int, datetime, float, float]] = []
 
