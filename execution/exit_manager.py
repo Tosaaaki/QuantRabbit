@@ -12,6 +12,8 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Optional, Tuple
 
+from analysis.chart_story import ChartStorySnapshot
+
 from analysis.ma_projection import MACrossProjection, compute_ma_projection
 
 
@@ -53,6 +55,7 @@ class ExitManager:
         event_soon: bool,
         range_mode: bool = False,
         now: Optional[datetime] = None,
+        story: Optional[ChartStorySnapshot] = None,
     ) -> List[ExitDecision]:
         current_time = self._ensure_utc(now)
         decisions: List[ExitDecision] = []
@@ -112,6 +115,7 @@ class ExitManager:
                     projection_primary,
                     projection_fast,
                     m1_candles,
+                    story,
                 )
                 if decision:
                     decisions.append(decision)
@@ -134,6 +138,7 @@ class ExitManager:
                     projection_primary,
                     projection_fast,
                     m1_candles,
+                    story,
                 )
                 if decision:
                     decisions.append(decision)
@@ -176,6 +181,7 @@ class ExitManager:
         projection_primary: Optional[MACrossProjection],
         projection_fast: Optional[MACrossProjection],
         m1_candles: List[Dict],
+        story: Optional[ChartStorySnapshot],
     ) -> Optional[ExitDecision]:
         allow_reentry = False
         reason = ""
@@ -317,6 +323,9 @@ class ExitManager:
 
         if range_mode and reason == "reverse_signal":
             allow_reentry = False
+        if reason:
+            if not self._story_allows_exit(story, pocket, "long", reason, profit_pips):
+                return None
         if reason == "reverse_signal":
             allow_reentry = False
         if not reason:
@@ -348,6 +357,7 @@ class ExitManager:
         projection_primary: Optional[MACrossProjection],
         projection_fast: Optional[MACrossProjection],
         m1_candles: List[Dict],
+        story: Optional[ChartStorySnapshot],
     ) -> Optional[ExitDecision]:
         allow_reentry = False
         reason = ""
@@ -473,6 +483,9 @@ class ExitManager:
 
         if range_mode and reason == "reverse_signal":
             allow_reentry = False
+        if reason:
+            if not self._story_allows_exit(story, pocket, "short", reason, profit_pips):
+                return None
         if reason == "reverse_signal":
             allow_reentry = False
         if not reason:
@@ -665,6 +678,47 @@ class ExitManager:
             else:
                 self._reverse_hits[key] = {"count": 0, "ts": now}
         return None
+
+    def _story_allows_exit(
+        self,
+        story: Optional[ChartStorySnapshot],
+        pocket: str,
+        side: str,
+        reason: str,
+        profit_pips: float,
+    ) -> bool:
+        if story is None:
+            return True
+        if reason in {"range_stop", "stop_loss_order"}:
+            return True
+
+        trend = story.higher_trend
+        if pocket == "macro":
+            trend = story.macro_trend
+        elif pocket == "micro":
+            trend = story.micro_trend
+
+        supportive = False
+        if side == "long" and trend == "up":
+            supportive = True
+        if side == "short" and trend == "down":
+            supportive = True
+
+        if not supportive:
+            return True
+
+        if reason in {"reverse_signal", "ma_cross_imminent", "ma_cross"}:
+            if profit_pips > -self._macro_loss_buffer:
+                logging.info(
+                    "[STORY] sustain exit defer pocket=%s side=%s reason=%s trend=%s profit=%.2f",
+                    pocket,
+                    side,
+                    reason,
+                    trend,
+                    profit_pips,
+                )
+                return False
+        return True
 
     def _reset_reverse_counter(self, pocket: str, direction: str) -> None:
         self._reverse_hits.pop((pocket, direction), None)

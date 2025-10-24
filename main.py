@@ -23,6 +23,7 @@ from analysis.summary_ingestor import ingest_loop as summary_ingest_loop
 from analytics.insight_client import InsightClient
 from analysis.range_guard import detect_range_mode
 from analysis.param_context import ParamContext, ParamSnapshot
+from analysis.chart_story import ChartStory, ChartStorySnapshot
 from signals.pocket_allocator import alloc, DEFAULT_SCALP_SHARE, dynamic_scalp_share
 from execution.risk_guard import (
     allowed_lot,
@@ -490,6 +491,7 @@ async def logic_loop():
     exit_manager = ExitManager()
     stage_tracker = StageTracker()
     param_context = ParamContext()
+    chart_story = ChartStory()
     perf_cache = {}
     news_cache = {}
     insight = InsightClient()
@@ -519,6 +521,7 @@ async def logic_loop():
     last_risk_appetite: Optional[float] = None
     last_vol_high_ratio: Optional[float] = None
     last_stage_biases: dict[str, float] = {}
+    last_story_summary: Optional[dict] = None
 
     try:
         while True:
@@ -676,6 +679,21 @@ async def logic_loop():
                     param_snapshot.volatility_state,
                 )
                 last_vol_high_ratio = param_snapshot.vol_high_ratio
+
+            story_snapshot = chart_story.update(fac_m1, fac_h4)
+            if story_snapshot:
+                if last_story_summary != story_snapshot.summary:
+                    logging.info(
+                        "[STORY] macro=%s micro=%s higher=%s volatility=%s summary=%s",
+                        story_snapshot.macro_trend,
+                        story_snapshot.micro_trend,
+                        story_snapshot.higher_trend,
+                        story_snapshot.volatility_state,
+                        story_snapshot.summary,
+                    )
+                    last_story_summary = dict(story_snapshot.summary)
+            else:
+                story_snapshot = chart_story.last_snapshot
 
             macro_regime = classify(fac_h4, "H4", event_mode=event_soon)
             micro_regime = classify(fac_m1, "M1", event_mode=event_soon)
@@ -1218,6 +1236,7 @@ async def logic_loop():
                 event_soon,
                 range_active,
                 now=now,
+                story=story_snapshot,
             )
 
             executed_pockets: set[str] = set()
@@ -1399,6 +1418,15 @@ async def logic_loop():
                 action = signal.get("action")
                 if action not in {"OPEN_LONG", "OPEN_SHORT"}:
                     continue
+                if story_snapshot and not story_snapshot.is_aligned(pocket, action):
+                    logging.info(
+                        "[STORY] skip pocket=%s action=%s trend macro=%s micro=%s",
+                        pocket,
+                        action,
+                        story_snapshot.macro_trend,
+                        story_snapshot.micro_trend,
+                    )
+                    continue
                 if spread_gate_active:
                     if not spread_skip_logged:
                         logging.info(
@@ -1555,6 +1583,12 @@ async def logic_loop():
                         if pocket == "macro"
                         else (["rsi_revert", "bb_exit"] if pocket == "micro" else ["momentum_flip"])
                     ),
+                    "story": {
+                        "macro": story_snapshot.macro_trend if story_snapshot else None,
+                        "micro": story_snapshot.micro_trend if story_snapshot else None,
+                        "higher": story_snapshot.higher_trend if story_snapshot else None,
+                        "volatility": story_snapshot.volatility_state if story_snapshot else None,
+                    },
                 }
                 trade_id = await market_order(
                     "USD_JPY",
