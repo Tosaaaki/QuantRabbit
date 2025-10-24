@@ -447,8 +447,14 @@ async def gpt_worker(
     while True:
         signature, payload = await gpt_requests.get()
         try:
+            logging.info("[GPT WORKER] processing signature=%s", signature[:10])
             decision = await get_decision(payload)
             await gpt_state.update(signature, decision)
+            logging.info(
+                "[GPT WORKER] decision ready signature=%s model=%s",
+                signature[:10],
+                decision.get("model_used", "unknown"),
+            )
         except Exception as exc:  # pragma: no cover - defensive
             logging.warning(
                 "[GPT WORKER] failed for signature %s (%s: %s)",
