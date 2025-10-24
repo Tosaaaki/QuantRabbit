@@ -1168,7 +1168,6 @@ async def logic_loop():
                     fac_m1,
                     range_mode=range_active,
                     now=now,
-                    pocket_profiles=recent_profiles,
                 )
             except Exception as exc:
                 logging.warning("[PARTIAL] planning failed: %s", exc)
