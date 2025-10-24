@@ -6,7 +6,7 @@ import time
 import hashlib
 import json
 import contextlib
-from typing import Optional, Tuple
+from typing import Optional, Tuple, Coroutine, Any
 
 from market_data.candle_fetcher import (
     Candle,
@@ -524,6 +524,19 @@ async def prime_gpt_decision(
         except asyncio.TimeoutError:
             logging.warning("[GPT PRIME] timeout waiting for initial decision; retrying")
             await asyncio.sleep(5.0)
+
+
+async def supervised_runner(name: str, coro: asyncio.coroutines.coroutine) -> None:
+    logging.info("[SUPERVISOR] %s started", name)
+    try:
+        await coro
+        raise RuntimeError(f"{name} completed unexpectedly")
+    except asyncio.CancelledError:
+        logging.info("[SUPERVISOR] %s cancelled", name)
+        raise
+    except Exception:
+        logging.exception("[SUPERVISOR] %s crashed", name)
+        raise
 
 
 def build_client_order_id(focus_tag: Optional[str], strategy_tag: str) -> str:
@@ -2372,8 +2385,18 @@ async def main():
         await prime_gpt_decision(gpt_state, gpt_requests)
         while True:
             tasks = [
-                asyncio.create_task(start_candle_stream("USD_JPY", handlers)),
-                asyncio.create_task(logic_loop(gpt_state, gpt_requests)),
+                asyncio.create_task(
+                    supervised_runner(
+                        "candle_stream",
+                        start_candle_stream("USD_JPY", handlers),
+                    )
+                ),
+                asyncio.create_task(
+                    supervised_runner(
+                        "logic_loop",
+                        logic_loop(gpt_state, gpt_requests),
+                    )
+                ),
             ]
             try:
                 await asyncio.gather(*tasks)
