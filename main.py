@@ -444,6 +444,7 @@ async def gpt_worker(
     gpt_state: GPTDecisionState,
     gpt_requests: GPTRequestManager,
 ) -> None:
+    logging.info("[GPT WORKER] started")
     while True:
         signature, payload = await gpt_requests.get()
         try:
