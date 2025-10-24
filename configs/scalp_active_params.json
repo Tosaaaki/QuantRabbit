@@ -17,8 +17,8 @@
     "price_to_fast_max_pips": 4.2
   },
   "RangeFader": {
-    "atr_pips_max": 3.2,
-    "vol_5m_max": 2.0,
+    "atr_pips_max": 3.6,
+    "vol_5m_max": 2.3,
     "rsi_lower": 36,
     "rsi_upper": 64,
     "ema_length": 20,

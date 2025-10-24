@@ -21,9 +21,9 @@ class RangeFader:
             atr = fac.get("atr")
             atr_pips = (atr or 0.0) * 100
 
-        if atr_pips < 1.2 or atr_pips > 3.2:
+        if atr_pips < 1.2 or atr_pips > 3.6:
             return None
-        if vol_5m < 0.6 or vol_5m > 2.0:
+        if vol_5m < 0.6 or vol_5m > 2.3:
             return None
 
         bbw = fac.get("bbw", 0.0) or 0.0
@@ -35,7 +35,7 @@ class RangeFader:
             return None
 
         momentum_pips = abs(close - ema20) / 0.01
-        drift_cap = max(2.0, min(4.0, atr_pips * 1.05))
+        drift_cap = max(2.0, min(4.5, atr_pips * 1.08))
         if momentum_pips > drift_cap:
             return None
 
