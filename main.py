@@ -5,7 +5,7 @@ import traceback
 import time
 import hashlib
 import json
-from typing import Optional
+from typing import Optional, Tuple
 
 from market_data.candle_fetcher import (
     Candle,
@@ -197,6 +197,76 @@ MIN_SCALP_STAGE_LOT = 0.01  # 1000 units baseline so micro/macro bias does not n
 DEFAULT_COOLDOWN_SECONDS = 180
 RANGE_COOLDOWN_SECONDS = 420
 GPT_MIN_INTERVAL_SECONDS = 180
+
+
+class GPTDecisionState:
+    def __init__(self) -> None:
+        self._cond = asyncio.Condition()
+        self._latest: Optional[dict] = None
+        self._signature: Optional[str] = None
+        self._updated_at: Optional[datetime.datetime] = None
+
+    async def update(self, signature: str, decision: dict) -> None:
+        async with self._cond:
+            self._latest = dict(decision)
+            self._latest["model_used"] = decision.get("model_used")
+            self._signature = signature
+            self._updated_at = datetime.datetime.utcnow()
+            self._cond.notify_all()
+
+    async def get_latest(self) -> Tuple[dict, Optional[str], Optional[datetime.datetime]]:
+        async with self._cond:
+            while self._latest is None:
+                await self._cond.wait()
+            return dict(self._latest), self._signature, self._updated_at
+
+    async def needs_refresh(self, signature: str, min_interval: int) -> bool:
+        async with self._cond:
+            if self._signature is None:
+                return True
+            if self._signature != signature:
+                return True
+            if not self._updated_at:
+                return True
+            if (datetime.datetime.utcnow() - self._updated_at).total_seconds() >= min_interval:
+                return True
+            return False
+
+    async def wait_for_signature(self, signature: str, timeout: Optional[float]) -> dict:
+        deadline = None if timeout is None else datetime.datetime.utcnow() + datetime.timedelta(seconds=timeout)
+        async with self._cond:
+            while True:
+                if self._signature == signature and self._latest is not None:
+                    return dict(self._latest)
+                if deadline is not None:
+                    remaining = (deadline - datetime.datetime.utcnow()).total_seconds()
+                    if remaining <= 0:
+                        raise asyncio.TimeoutError()
+                    await asyncio.wait_for(self._cond.wait(), timeout=remaining)
+                else:
+                    await self._cond.wait()
+
+
+class GPTRequestManager:
+    def __init__(self) -> None:
+        self._queue: asyncio.Queue[Tuple[str, dict]] = asyncio.Queue()
+        self._pending: set[str] = set()
+        self._lock = asyncio.Lock()
+
+    async def submit(self, signature: str, payload: dict) -> None:
+        async with self._lock:
+            if signature in self._pending:
+                return
+            self._pending.add(signature)
+        await self._queue.put((signature, payload))
+
+    async def get(self) -> Tuple[str, dict]:
+        return await self._queue.get()
+
+    async def task_done(self, signature: str) -> None:
+        async with self._lock:
+            self._pending.discard(signature)
+        self._queue.task_done()
 # In range mode, allow mean‑reversion and light scalping entries
 ALLOWED_RANGE_STRATEGIES = {"BB_RSI", "RangeFader", "M1Scalper"}
 SOFT_RANGE_SUPPRESS_STRATEGIES = {"TrendMA", "Donchian55"}
@@ -368,6 +438,26 @@ def _dynamic_risk_pct(
             risk_pct = min(risk_pct, _BASE_RISK_PCT * 0.4)
     risk_pct = min(risk_pct, _HARD_MAX_RISK_CAP)
     return max(0.0005, risk_pct)
+
+
+async def gpt_worker(
+    gpt_state: GPTDecisionState,
+    gpt_requests: GPTRequestManager,
+) -> None:
+    while True:
+        signature, payload = await gpt_requests.get()
+        try:
+            decision = await get_decision(payload)
+            await gpt_state.update(signature, decision)
+        except Exception as exc:  # pragma: no cover - defensive
+            logging.warning(
+                "[GPT WORKER] failed for signature %s (%s: %s)",
+                signature[:10],
+                type(exc).__name__,
+                str(exc) or "no message",
+            )
+        finally:
+            await gpt_requests.task_done(signature)
 
 
 def build_client_order_id(focus_tag: Optional[str], strategy_tag: str) -> str:
@@ -830,9 +920,6 @@ async def logic_loop():
     last_vol_high_ratio: Optional[float] = None
     last_stage_biases: dict[str, float] = {}
     last_story_summary: Optional[dict] = None
-    last_gpt_signature: Optional[str] = None
-    last_gpt_decision: Optional[dict] = None
-    last_gpt_ts: Optional[datetime.datetime] = None
 
     try:
         while True:
@@ -1207,45 +1294,24 @@ async def logic_loop():
                 range_reason=last_range_reason or range_ctx.reason,
                 soft_range=range_soft_active,
             )
-            should_call_gpt = True
-            if (
-                last_gpt_decision
-                and last_gpt_signature == payload_signature
-                and last_gpt_ts
-                and (now - last_gpt_ts).total_seconds() < GPT_MIN_INTERVAL_SECONDS
-            ):
-                should_call_gpt = False
-
             logging.info(
-                "[GPT] decision_trigger signature=%s call=%s age=%.0fs",
-                payload_signature[:10],
-                should_call_gpt,
-                (now - last_gpt_ts).total_seconds() if last_gpt_ts else -1.0,
+                "[GPT] decision_trigger signature=%s", payload_signature[:10]
             )
-
-            if should_call_gpt:
+            if await gpt_state.needs_refresh(payload_signature, GPT_MIN_INTERVAL_SECONDS):
+                await gpt_requests.submit(payload_signature, payload)
                 try:
-                    gpt = await get_decision(payload)
-                except Exception as e:
-                    logging.warning(f"[SKIP] GPT decision unavailable: {e}")
-                    await asyncio.sleep(5)
-                    continue
-                last_gpt_decision = dict(gpt)
-                last_gpt_signature = payload_signature
-                last_gpt_ts = now
-                reuse_reason = gpt.get("reason") or "live_call"
+                    gpt = await gpt_state.wait_for_signature(payload_signature, timeout=30)
+                    reuse_reason = gpt.get("reason") or "live_call"
+                except asyncio.TimeoutError:
+                    logging.warning(
+                        "[GPT] wait for signature %s timed out; using previous decision",
+                        payload_signature[:10],
+                    )
+                    gpt, _, _ = await gpt_state.get_latest()
+                    reuse_reason = gpt.get("reason") or "cached_timeout"
             else:
-                gpt = dict(last_gpt_decision)
+                gpt, _, _ = await gpt_state.get_latest()
                 reuse_reason = gpt.get("reason") or "cached"
-                gpt["reason"] = reuse_reason
-                logging.info(
-                    "[GPT] reuse cached decision focus=%s weight_macro=%.2f weight_scalp=%s model=%s (age=%.0fs)",
-                    gpt.get("focus_tag"),
-                    gpt.get("weight_macro", 0.0),
-                    gpt.get("weight_scalp"),
-                    gpt.get("model_used", "unknown"),
-                    (now - (last_gpt_ts or now)).total_seconds(),
-                )
             raw_weight_scalp = gpt.get("weight_scalp")
             if raw_weight_scalp is None:
                 weight_scalp_display = "n/a"
@@ -2232,10 +2298,13 @@ async def logic_loop():
 async def main():
     handlers = [("M1", m1_candle_handler), ("H4", h4_candle_handler)]
     await initialize_history("USD_JPY")
+    gpt_state = GPTDecisionState()
+    gpt_requests = GPTRequestManager()
     while True:
         tasks = [
             asyncio.create_task(start_candle_stream("USD_JPY", handlers)),
-            asyncio.create_task(logic_loop()),
+            asyncio.create_task(logic_loop(gpt_state, gpt_requests)),
+            asyncio.create_task(gpt_worker(gpt_state, gpt_requests)),
             asyncio.create_task(news_fetch_loop()),
             asyncio.create_task(summary_ingest_loop()),
         ]
