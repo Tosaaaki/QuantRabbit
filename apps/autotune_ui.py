@@ -499,25 +499,26 @@ def dashboard(request: Request):
                 size = 0
             excursion_hours.append({"name": p.name, "size": size})
     excursion_content = ""
-    if latest_path.exists():
-        excursion_content = _read_text(latest_path, limit_bytes=256_000)
-    elif excursion_hours:
-        excursion_content = _read_text(hourly_dir / excursion_hours[0]["name"], limit_bytes=256_000)
-    # Cloud Run 環境などローカルにファイルが無い場合は GCS を参照
-    if not excursion_content:
-        try:
-            if storage is not None:
-                bucket_name = get_secret("ui_bucket_name")
-                # 既定オブジェクトパス（必要なら secret で上書き: excursion_latest_object_path）
-                try:
-                    obj_path = get_secret("excursion_latest_object_path")
-                except Exception:
-                    obj_path = "excursion/latest.txt"
-                client = storage.Client()
-                blob = client.bucket(bucket_name).blob(obj_path)
+    # 1) まず GCS を試す（Cloud Run での利用を優先）
+    try:
+        if storage is not None:
+            bucket_name = get_secret("ui_bucket_name")
+            try:
+                obj_path = get_secret("excursion_latest_object_path")
+            except Exception:
+                obj_path = "excursion/latest.txt"
+            client = storage.Client()
+            blob = client.bucket(bucket_name).blob(obj_path)
+            if blob.exists():
                 excursion_content = blob.download_as_text(timeout=5)
-        except Exception:
-            excursion_content = excursion_content or ""
+    except Exception:
+        excursion_content = ""
+    # 2) ローカル（VM）にファイルがあればフォールバック
+    if not excursion_content:
+        if latest_path.exists():
+            excursion_content = _read_text(latest_path, limit_bytes=256_000)
+        elif excursion_hours:
+            excursion_content = _read_text(hourly_dir / excursion_hours[0]["name"], limit_bytes=256_000)
     return templates.TemplateResponse(
         "dashboard.html",
         {
