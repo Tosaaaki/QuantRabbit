@@ -115,7 +115,8 @@ STAGE_RATIOS = {
 MIN_SCALP_STAGE_LOT = 0.01  # 1000 units baseline so micro/macro bias does not null scalps
 DEFAULT_COOLDOWN_SECONDS = 180
 RANGE_COOLDOWN_SECONDS = 420
-ALLOWED_RANGE_STRATEGIES = {"BB_RSI", "RangeFader"}
+# In range mode, allow mean‑reversion and light scalping entries
+ALLOWED_RANGE_STRATEGIES = {"BB_RSI", "RangeFader", "M1Scalper"}
 SOFT_RANGE_SUPPRESS_STRATEGIES = {"TrendMA", "Donchian55"}
 LOW_TREND_ADX_THRESHOLD = 18.0
 LOW_TREND_SLOPE_THRESHOLD = 0.00035
