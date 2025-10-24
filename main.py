@@ -132,6 +132,9 @@ RANGE_MIN_ACTIVE_SECONDS = 120
 RANGE_ENTRY_SCORE_FLOOR = 0.62
 RANGE_EXIT_SCORE_CEIL = 0.56
 STAGE_RESET_GRACE_SECONDS = 180
+RANGE_SCALP_ATR_MIN = 1.35
+RANGE_SCALP_VOL_MIN = 0.75
+RANGE_SCALP_MAX_MOMENTUM = 0.0012
 
 try:
     _BASE_RISK_PCT = float(get_secret("risk_pct"))
@@ -702,11 +705,25 @@ async def logic_loop():
             momentum = 0.0
             if ema20 is not None and close_px is not None:
                 momentum = close_px - ema20
+            vol_5m = fac_m1.get("vol_5m", 0.0) or 0.0
             scalp_ready = False
-            if not range_active:
+            if range_active:
+                scalp_ready = (
+                    atr_pips >= RANGE_SCALP_ATR_MIN
+                    and vol_5m >= RANGE_SCALP_VOL_MIN
+                    and abs(momentum) <= RANGE_SCALP_MAX_MOMENTUM
+                )
+                if scalp_ready:
+                    logging.info(
+                        "[SCALP] Range scalp ready (ATR %.2f vol5m %.2f momentum %.4f).",
+                        atr_pips,
+                        vol_5m,
+                        momentum,
+                    )
+            else:
                 scalp_ready = atr_pips >= 2.2 and abs(momentum) >= 0.0015
-                if not scalp_ready and fac_m1.get("vol_5m"):
-                    scalp_ready = atr_pips >= 2.0 and fac_m1["vol_5m"] >= 1.2
+                if not scalp_ready and vol_5m:
+                    scalp_ready = atr_pips >= 2.0 and vol_5m >= 1.2
 
             focus_tag = gpt.get("focus_tag") or focus
             weight = gpt.get("weight_macro", w_macro)
@@ -773,16 +790,16 @@ async def logic_loop():
 
             if (
                 scalp_ready
-                and not range_active
                 and "scalp" in focus_pockets
                 and "M1Scalper" not in ranked_strategies
             ):
                 ranked_strategies.append("M1Scalper")
                 logging.info(
-                    "[SCALP] Auto-added M1Scalper (ATR %.2f, momentum %.4f, vol5m %.2f).",
+                    "[SCALP] Auto-added M1Scalper (mode=%s ATR %.2f momentum %.4f vol5m %.2f).",
+                    "range" if range_active else "trend",
                     atr_pips,
                     momentum,
-                    fac_m1.get("vol_5m", 0.0),
+                    vol_5m,
                 )
 
             # Range mode: prefer mean-reversion scalping. Ensure RangeFader is present.
