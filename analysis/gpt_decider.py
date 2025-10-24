@@ -11,7 +11,7 @@ import asyncio
 import datetime as dt
 import json
 import logging
-from typing import Dict
+from typing import Dict, List
 
 from openai import AsyncOpenAI
 
@@ -42,6 +42,26 @@ _ALLOWED_STRATEGIES = [
 
 _MAX_COMPLETION_TOKENS = 320
 _GPT5_MAX_OUTPUT_TOKENS = 800
+_MODEL_OUTPUT_LIMITS = {
+    "gpt-5-mini": 800,
+    "gpt-5-mini-2025-08-07": 800,
+    "gpt-5.1-mini": 800,
+    "gpt-4o-mini": 384,
+    "gpt-4o-mini-2024-08-06": 384,
+}
+
+_MODEL_TIMEOUT_SECONDS = {
+    "gpt-5-mini": 18,
+    "gpt-5-mini-2025-08-07": 18,
+    "gpt-5.1-mini": 18,
+    "gpt-4o-mini": 12,
+    "gpt-4o-mini-2024-08-06": 12,
+}
+
+_FALLBACK_MODELS = [
+    "gpt-4o-mini",
+    "gpt-4o-mini-2024-08-06",
+]
 
 _REUSE_WINDOW_SECONDS = 300
 _GPT_TIMEOUT_SECONDS = 18 if "gpt-5" in MODEL else 9
@@ -67,34 +87,27 @@ logger = logging.getLogger(__name__)
 class GPTTimeout(Exception): ...
 
 
-async def call_openai(payload: Dict) -> Dict:
-    """非同期で GPT を呼ぶ → dict を返す（フォールバック不要値は None）"""
-    # コストガード
-    if not add_tokens(0, MAX_TOKENS_MONTH):
-        raise RuntimeError("GPT token limit exceeded")
-
-    msgs = build_messages(payload)
-
-    is_gpt5 = "gpt-5" in MODEL
-
-    if is_gpt5:
-        inputs = [{"role": msg["role"], "content": msg["content"]} for msg in msgs]
+async def _call_model(payload: Dict, messages: List[Dict], model: str) -> Dict:
+    use_responses = "gpt-5" in model or "gpt-4" in model
+    timeout = _MODEL_TIMEOUT_SECONDS.get(model, 12)
+    if use_responses:
+        inputs = [{"role": msg["role"], "content": msg["content"]} for msg in messages]
+        kwargs: Dict[str, object] = {
+            "model": model,
+            "input": inputs,
+            "max_output_tokens": _MODEL_OUTPUT_LIMITS.get(model, _GPT5_MAX_OUTPUT_TOKENS),
+            "timeout": timeout,
+        }
+        if "gpt-5" in model:
+            kwargs["reasoning"] = {"effort": "low"}
         try:
-            resp = await client.responses.create(
-                model=MODEL,
-                input=inputs,
-                reasoning={"effort": "low"},
-                max_output_tokens=_GPT5_MAX_OUTPUT_TOKENS,
-                timeout=15,
-            )
+            resp = await client.responses.create(**kwargs)
         except Exception as exc:
             raise GPTTimeout(str(exc)) from exc
-
         usage = getattr(resp, "usage", None)
         usage_in = getattr(usage, "input_tokens", 0) if usage else 0
         usage_out = getattr(usage, "output_tokens", 0) if usage else 0
         add_tokens(usage_in + usage_out, MAX_TOKENS_MONTH)
-
         content_parts: list[str] = []
         for item in resp.output or []:
             if getattr(item, "type", "") != "message":
@@ -106,9 +119,9 @@ async def call_openai(payload: Dict) -> Dict:
         content = "".join(content_parts).strip()
     else:
         base_kwargs = {
-            "model": MODEL,
-            "messages": msgs,
-            "timeout": 7,
+            "model": model,
+            "messages": messages,
+            "timeout": timeout,
             "response_format": {"type": "json_object"},
             "temperature": 0.2,
         }
@@ -116,7 +129,6 @@ async def call_openai(payload: Dict) -> Dict:
             {"max_completion_tokens": _MAX_COMPLETION_TOKENS},
             {"max_tokens": _MAX_COMPLETION_TOKENS},
         ]
-
         resp = None
         last_error: Exception | None = None
         for token_kwargs in token_kwargs_order:
@@ -136,11 +148,9 @@ async def call_openai(payload: Dict) -> Dict:
             raise GPTTimeout(
                 str(last_error) if last_error else "unable to call OpenAI"
             )
-
         usage_in = resp.usage.prompt_tokens
         usage_out = resp.usage.completion_tokens
         add_tokens(usage_in + usage_out, MAX_TOKENS_MONTH)
-
         content = resp.choices[0].message.content.strip()
         content = content.lstrip("```json").rstrip("```").strip()
 
@@ -152,7 +162,6 @@ async def call_openai(payload: Dict) -> Dict:
     except json.JSONDecodeError as e:
         raise ValueError(f"Invalid JSON: {content}") from e
 
-    # スキーマ簡易検証
     for key in _REQUIRED_KEYS:
         if key not in data:
             raise ValueError(f"key {key} missing")
@@ -190,7 +199,36 @@ async def call_openai(payload: Dict) -> Dict:
         s for s in data.get("ranked_strategies", []) if s in _ALLOWED_STRATEGIES
     ]
     data["ranked_strategies"] = ranked
+    data["model_used"] = model
     return data
+
+
+async def call_openai(payload: Dict) -> Dict:
+    """非同期で GPT を呼ぶ → dict を返す（フォールバック不要値は None）"""
+    if not add_tokens(0, MAX_TOKENS_MONTH):
+        raise RuntimeError("GPT token limit exceeded")
+
+    messages = build_messages(payload)
+    models_to_try = [MODEL] + [m for m in _FALLBACK_MODELS if m != MODEL]
+    last_exc: Exception | None = None
+    for idx, model in enumerate(models_to_try, start=1):
+        try:
+            result = await _call_model(payload, messages, model)
+            if model != MODEL:
+                logger.warning("GPT decision succeeded via fallback model %s", model)
+            return result
+        except Exception as exc:
+            last_exc = exc
+            logger.warning(
+                "GPT model %s failed attempt %d (%s: %s)",
+                model,
+                idx,
+                type(exc).__name__,
+                str(exc) or "no message",
+            )
+            continue
+
+    raise GPTTimeout(str(last_exc) if last_exc else "all GPT models failed")
 
 
 async def get_decision(payload: Dict) -> Dict:

@@ -1239,10 +1239,11 @@ async def logic_loop():
                 reuse_reason = gpt.get("reason") or "cached"
                 gpt["reason"] = reuse_reason
                 logging.info(
-                    "[GPT] reuse cached decision focus=%s weight_macro=%.2f weight_scalp=%s (age=%.0fs)",
+                    "[GPT] reuse cached decision focus=%s weight_macro=%.2f weight_scalp=%s model=%s (age=%.0fs)",
                     gpt.get("focus_tag"),
                     gpt.get("weight_macro", 0.0),
                     gpt.get("weight_scalp"),
+                    gpt.get("model_used", "unknown"),
                     (now - (last_gpt_ts or now)).total_seconds(),
                 )
             raw_weight_scalp = gpt.get("weight_scalp")
@@ -1254,10 +1255,11 @@ async def logic_loop():
                 except (TypeError, ValueError):
                     weight_scalp_display = "invalid"
             logging.info(
-                "[GPT] focus=%s weight_macro=%.2f weight_scalp=%s strategies=%s reason=%s",
+                "[GPT] focus=%s weight_macro=%.2f weight_scalp=%s model=%s strategies=%s reason=%s",
                 gpt.get("focus_tag"),
                 gpt.get("weight_macro", 0.0),
                 weight_scalp_display,
+                gpt.get("model_used", "unknown"),
                 gpt.get("ranked_strategies"),
                 reuse_reason,
             )
