@@ -1216,6 +1216,13 @@ async def logic_loop():
             ):
                 should_call_gpt = False
 
+            logging.info(
+                "[GPT] decision_trigger signature=%s call=%s age=%.0fs",
+                payload_signature[:10],
+                should_call_gpt,
+                (now - last_gpt_ts).total_seconds() if last_gpt_ts else -1.0,
+            )
+
             if should_call_gpt:
                 try:
                     gpt = await get_decision(payload)
