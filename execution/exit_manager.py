@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+import logging
 from typing import Dict, List, Optional, Tuple
 
 from analysis.chart_story import ChartStorySnapshot
