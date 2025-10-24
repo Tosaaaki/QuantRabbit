@@ -158,8 +158,10 @@ async def initialize_history(instrument: str):
     """起動時に過去ローソクを取得し factor_cache を埋める"""
     from indicators.factor_cache import on_candle
 
+    preload_counts = {"M1": 60, "H4": 30}
     for tf in ("M1", "H4"):
-        candles = await fetch_historical_candles(instrument, tf, 20)
+        count = preload_counts.get(tf, 20)
+        candles = await fetch_historical_candles(instrument, tf, count)
         for c in candles:
             await on_candle(tf, c)
 
