@@ -32,8 +32,13 @@ class ExitManager:
         self._macro_loss_buffer = 4.0
         self._macro_ma_gap = 3.0
         # Macro-specific stability controls
-        self._macro_min_hold_minutes = 7.0  # minimum age before acting on reversals
-        self._macro_hysteresis_pips = 3.0   # widen no-close band to avoid jitter
+        self._macro_min_hold_minutes = 11.0  # more patience before acting on reversals
+        self._macro_hysteresis_pips = 4.5    # wider no-close band to avoid jitter
+        # Micro-specific minimum hold
+        self._micro_min_hold_minutes = 5.0
+        # MFE guard: if we have achieved decent MFE, allow deeper pullbacks before exiting
+        self._mfe_guard_pips = 1.6
+        self._mfe_guard_retrace_ratio = 0.62
         self._reverse_confirmations = 2
         self._reverse_decay = timedelta(seconds=180)
         self._reverse_hits: Dict[Tuple[str, str], Dict[str, object]] = {}
@@ -53,6 +58,7 @@ class ExitManager:
         decisions: List[ExitDecision] = []
         projection_m1 = compute_ma_projection(fac_m1, timeframe_minutes=1.0)
         projection_h4 = compute_ma_projection(fac_h4, timeframe_minutes=240.0)
+        m1_candles = fac_m1.get("candles") or []
         for pocket, info in open_positions.items():
             if pocket == "__net__":
                 continue
@@ -105,6 +111,7 @@ class ExitManager:
                     current_time,
                     projection_primary,
                     projection_fast,
+                    m1_candles,
                 )
                 if decision:
                     decisions.append(decision)
@@ -126,6 +133,7 @@ class ExitManager:
                     current_time,
                     projection_primary,
                     projection_fast,
+                    m1_candles,
                 )
                 if decision:
                     decisions.append(decision)
@@ -167,6 +175,7 @@ class ExitManager:
         now: datetime,
         projection_primary: Optional[MACrossProjection],
         projection_fast: Optional[MACrossProjection],
+        m1_candles: List[Dict],
     ) -> Optional[ExitDecision]:
         allow_reentry = False
         reason = ""
@@ -225,6 +234,7 @@ class ExitManager:
                 if not early_exit_ok:
                     reverse_signal = None
 
+        # Night/event guard for short-lived pockets
         if event_soon and pocket in {"micro", "scalp"}:
             reason = "event_lock"
         elif reverse_signal:
@@ -235,11 +245,15 @@ class ExitManager:
             )
             if not macro_skip:
                 # ヒステリシス: 小幅の含み損益域では逆方向シグナルだけでクローズしない
-                micro_guard = (pocket == "micro" and -1.2 < profit_pips < 1.2)
+                micro_guard = (pocket == "micro" and -1.6 < profit_pips < 1.6)
                 macro_guard = (
                     pocket == "macro"
                     and -self._macro_hysteresis_pips < profit_pips < self._macro_hysteresis_pips
                 )
+                # Micro pocket: enforce a minimum hold before obeying reverse
+                if pocket == "micro" and not range_mode:
+                    if not self._has_mature_trade(open_info, "long", now, self._micro_min_hold_minutes):
+                        return None
                 if micro_guard or macro_guard:
                     return None
                 reason = "reverse_signal"
@@ -292,6 +306,15 @@ class ExitManager:
             elif profit_pips <= -1.0:
                 reason = "range_stop"
 
+        # MFE-based patience: if we've achieved decent favorable excursion,
+        # avoid exiting on a mild pullback unless strong invalidation.
+        if reason == "reverse_signal" and not range_mode:
+            max_mfe = self._max_mfe_for_side(open_info, "long", m1_candles, now)
+            if max_mfe is not None and max_mfe >= self._mfe_guard_pips:
+                retrace = max(0.0, max_mfe - max(0.0, profit_pips))
+                if retrace <= self._mfe_guard_retrace_ratio * max_mfe and profit_pips > -self._macro_loss_buffer:
+                    return None
+
         if range_mode and reason == "reverse_signal":
             allow_reentry = False
         if reason == "reverse_signal":
@@ -324,6 +347,7 @@ class ExitManager:
         now: datetime,
         projection_primary: Optional[MACrossProjection],
         projection_fast: Optional[MACrossProjection],
+        m1_candles: List[Dict],
     ) -> Optional[ExitDecision]:
         allow_reentry = False
         reason = ""
@@ -387,11 +411,15 @@ class ExitManager:
             )
             if not macro_skip:
                 # ヒステリシス: 小幅の含み損益域では逆方向シグナルだけでクローズしない
-                micro_guard = (pocket == "micro" and -1.2 < profit_pips < 1.2)
+                micro_guard = (pocket == "micro" and -1.6 < profit_pips < 1.6)
                 macro_guard = (
                     pocket == "macro"
                     and -self._macro_hysteresis_pips < profit_pips < self._macro_hysteresis_pips
                 )
+                # Micro pocket: enforce a minimum hold before obeying reverse
+                if pocket == "micro" and not range_mode:
+                    if not self._has_mature_trade(open_info, "short", now, self._micro_min_hold_minutes):
+                        return None
                 if micro_guard or macro_guard:
                     return None
                 reason = "reverse_signal"
@@ -435,6 +463,13 @@ class ExitManager:
                 return None
             elif profit_pips <= -1.0:
                 reason = "range_stop"
+
+        if reason == "reverse_signal" and not range_mode:
+            max_mfe = self._max_mfe_for_side(open_info, "short", m1_candles, now)
+            if max_mfe is not None and max_mfe >= self._mfe_guard_pips:
+                retrace = max(0.0, max_mfe - max(0.0, profit_pips))
+                if retrace <= self._mfe_guard_retrace_ratio * max_mfe and profit_pips > -self._macro_loss_buffer:
+                    return None
 
         if range_mode and reason == "reverse_signal":
             allow_reentry = False
@@ -534,6 +569,71 @@ class ExitManager:
             if macd < 0.0 and slope > 0.0 and projection.macd_cross_minutes is not None:
                 return projection.macd_cross_minutes
         return None
+
+    @staticmethod
+    def _parse_candle_time(raw: Optional[str]) -> Optional[datetime]:
+        if not raw:
+            return None
+        t = raw.strip()
+        try:
+            if t.endswith("Z"):
+                t = t[:-1] + "+00:00"
+            if "." in t and "+" not in t:
+                head, frac = t.split(".", 1)
+                frac = "".join(ch for ch in frac if ch.isdigit())[:6]
+                t = f"{head}.{frac}+00:00"
+            elif "+" not in t:
+                t = f"{t}+00:00"
+            return datetime.fromisoformat(t)
+        except Exception:
+            try:
+                base = t.split(".", 1)[0].rstrip("Z") + "+00:00"
+                return datetime.fromisoformat(base)
+            except Exception:
+                return None
+
+    def _max_mfe_for_side(
+        self,
+        open_info: Dict,
+        side: str,
+        m1_candles: List[Dict],
+        now: datetime,
+    ) -> Optional[float]:
+        trades = [
+            tr for tr in (open_info.get("open_trades") or []) if tr.get("side") == side
+        ]
+        if not trades or not m1_candles:
+            return None
+        # Prepare candle tuples (ts, h, l)
+        candles: List[Tuple[datetime, float, float]] = []
+        for c in m1_candles:
+            ts = self._parse_candle_time(c.get("timestamp"))
+            if not ts:
+                continue
+            try:
+                h = float(c.get("high"))
+                l = float(c.get("low"))
+            except Exception:
+                continue
+            candles.append((ts, h, l))
+        if not candles:
+            return None
+        max_mfe = 0.0
+        for tr in trades:
+            ep = tr.get("price")
+            ot = self._parse_open_time(tr.get("open_time"))
+            if ep is None or ot is None:
+                continue
+            for ts, h, l in candles:
+                if ts < ot or ts > now:
+                    continue
+                if side == "long":
+                    fav = (h - ep) / 0.01
+                else:
+                    fav = (ep - l) / 0.01
+                if fav > max_mfe:
+                    max_mfe = fav
+        return round(max_mfe, 2)
 
     def _confirm_reverse_signal(
         self,

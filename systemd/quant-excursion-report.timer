@@ -1,0 +1,11 @@
+[Unit]
+Description=Run quant-excursion-report.service hourly (on the hour)
+
+[Timer]
+OnBootSec=3min
+OnCalendar=hourly
+Unit=quant-excursion-report.service
+
+[Install]
+WantedBy=timers.target
+

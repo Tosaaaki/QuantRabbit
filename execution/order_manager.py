@@ -163,10 +163,11 @@ _PARTIAL_THRESHOLDS = {
     "scalp": (2.0, 4.0),
 }
 _PARTIAL_THRESHOLDS_RANGE = {
-    # レンジ場面ではマクロのみ利確幅をやや引き上げ、慌てた縮小を防ぐ
-    "macro": (4.0, 7.0),
-    "micro": (2.0, 4.0),
-    "scalp": (1.5, 3.0),
+    # AGENT.me 仕様（3.5.1）に合わせ、レンジ時は段階利確を引き延ばしすぎず早期ヘッジ。
+    # macro 16/22, micro 10/16, scalp 6/10 pips
+    "macro": (16.0, 22.0),
+    "micro": (10.0, 16.0),
+    "scalp": (6.0, 10.0),
 }
 _PARTIAL_FRACTIONS = (0.4, 0.3)
 # micro の平均建玉（~160u）でも段階利確が動作するよう下限を緩和
@@ -535,6 +536,7 @@ async def market_order(
     *,
     client_order_id: Optional[str] = None,
     reduce_only: bool = False,
+    entry_thesis: Optional[dict] = None,
 ) -> Optional[str]:
     """
     units : +10000 = buy 0.1 lot, ‑10000 = sell 0.1 lot
@@ -564,7 +566,10 @@ async def market_order(
     for attempt in range(2):
         payload = order_data.copy()
         payload["order"] = dict(order_data["order"], units=str(units_to_send))
-        # Log attempt payload
+        # Log attempt payload (append meta with entry_thesis if provided)
+        log_payload = payload
+        if entry_thesis is not None:
+            log_payload = {"order": payload.get("order"), "meta": {"entry_thesis": entry_thesis}}
         _log_order(
             pocket=pocket,
             instrument=instrument,
@@ -575,7 +580,7 @@ async def market_order(
             client_order_id=client_order_id,
             status="submit_attempt",
             attempt=attempt + 1,
-            request_payload=payload,
+            request_payload=log_payload,
         )
         r = OrderCreate(accountID=ACCOUNT, data=payload)
         try:

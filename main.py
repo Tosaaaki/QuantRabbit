@@ -1217,6 +1217,41 @@ async def logic_loop():
                 )
 
                 client_id = build_client_order_id(focus_tag, signal["tag"])
+                # Build a lightweight entry thesis for contextual exits
+                thesis_type = (
+                    "trend_follow" if pocket == "macro" else ("mean_reversion" if pocket == "micro" else "scalp")
+                )
+                h4_ma10 = fac_h4.get("ma10")
+                h4_ma20 = fac_h4.get("ma20")
+                entry_thesis = {
+                    "type": thesis_type,
+                    "strategy": signal.get("strategy"),
+                    "tag": signal.get("tag"),
+                    "pocket": pocket,
+                    "action": action,
+                    "entry_ts": now.isoformat(timespec="seconds"),
+                    "min_hold_min": 11.0 if pocket == "macro" else (5.0 if pocket == "micro" else 3.0),
+                    "factors": {
+                        "m1": {
+                            "rsi": fac_m1.get("rsi"),
+                            "adx": fac_m1.get("adx"),
+                            "ema20": fac_m1.get("ema20") or fac_m1.get("ma20"),
+                            "ma10": fac_m1.get("ma10"),
+                            "ma20": fac_m1.get("ma20"),
+                            "atr_pips": fac_m1.get("atr_pips") or ((fac_m1.get("atr") or 0.0) * 100),
+                        },
+                        "h4": {
+                            "ma10": h4_ma10,
+                            "ma20": h4_ma20,
+                            "adx": fac_h4.get("adx"),
+                        },
+                    },
+                    "invalidation_hints": (
+                        ["ema20_cross", "h4_trend_weaken"]
+                        if pocket == "macro"
+                        else (["rsi_revert", "bb_exit"] if pocket == "micro" else ["momentum_flip"])
+                    ),
+                }
                 trade_id = await market_order(
                     "USD_JPY",
                     units,
@@ -1224,6 +1259,7 @@ async def logic_loop():
                     tp,
                     pocket,
                     client_order_id=client_id,
+                    entry_thesis=entry_thesis,
                 )
                 if trade_id:
                     logging.info(
