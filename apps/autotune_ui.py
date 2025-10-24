@@ -36,6 +36,38 @@ app = FastAPI(title="QuantRabbit Console")
 templates = Jinja2Templates(directory=str(TEMPLATE_DIR))
 
 
+def _excursion_base_dir() -> Path:
+    """エクスカージョン・レポートのベースディレクトリを解決する。
+    優先順: secret(exursion_reports_dir) -> REPO_ROOT/logs/reports/excursion -> /home/tossaki/QuantRabbit/logs/reports/excursion
+    """
+    # Secret 優先
+    try:
+        secret_path = get_secret("excursion_reports_dir")
+        if secret_path:
+            p = Path(secret_path)
+            if p.exists():
+                return p
+    except Exception:
+        pass
+    # リポ内ログ
+    local = REPO_ROOT / "logs" / "reports" / "excursion"
+    if local.exists():
+        return local
+    # VM 既定パス
+    vm_default = Path("/home/tossaki/QuantRabbit/logs/reports/excursion")
+    return vm_default
+
+
+def _read_text(path: Path, limit_bytes: int = 512_000) -> str:
+    try:
+        data = path.read_bytes()
+        if len(data) > limit_bytes:
+            data = data[-limit_bytes:]
+        return data.decode("utf-8", errors="replace")
+    except Exception as exc:
+        return f"[read_error] {exc}"
+
+
 def _normalize_numbers(payload: Optional[dict]) -> dict:
     if not payload:
         return {}
@@ -456,6 +488,50 @@ def dashboard(request: Request):
             "request": request,
             "dashboard": dashboard_data,
             "active_tab": "dashboard",
+        },
+    )
+
+
+@app.get("/excursion")
+def excursion_report(request: Request, file: Optional[str] = None):
+    base = _excursion_base_dir()
+    hourly_dir = base / "hourly"
+    latest_path = base / "latest.txt"
+    # 一覧（最新順）
+    hours: list[dict] = []
+    if hourly_dir.exists():
+        for p in sorted(hourly_dir.glob("*.txt"), key=lambda x: x.name, reverse=True):
+            hours.append({
+                "name": p.name,
+                "size": p.stat().st_size if p.exists() else 0,
+            })
+    selected_name = (file or "").strip()
+    content = ""
+    if selected_name:
+        target = hourly_dir / Path(selected_name).name
+        if target.exists():
+            content = _read_text(target)
+        else:
+            content = f"[not_found] {target}"
+    else:
+        if latest_path.exists():
+            content = _read_text(latest_path)
+        else:
+            # フォールバック: 最新ファイルを選択
+            if hours:
+                target = hourly_dir / hours[0]["name"]
+                content = _read_text(target)
+                selected_name = hours[0]["name"]
+            else:
+                content = "レポートが見つかりません。ジョブが稼働しているか確認してください。"
+    return templates.TemplateResponse(
+        "excursion.html",
+        {
+            "request": request,
+            "active_tab": "excursion",
+            "hours": hours,
+            "selected": selected_name,
+            "content": content,
         },
     )
 
