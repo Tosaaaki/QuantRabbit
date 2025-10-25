@@ -10,7 +10,10 @@ from utils.secrets import get_secret
 
 # --- config ---
 # env.toml から設定を取得
-PROJECT_ID = get_secret("gcp_project_id")
+try:
+    PROJECT_ID = get_secret("gcp_project_id")
+except Exception:
+    PROJECT_ID = None
 BUCKET = get_secret("news_bucket_name")
 
 # DB 初期化 -------------------------------------------------
@@ -37,7 +40,10 @@ conn.commit()
 
 
 # GCS クライアント -----------------------------------------
-storage_client = storage.Client(project=PROJECT_ID)  # 修正
+if PROJECT_ID and PROJECT_ID not in {"your-project-id", ""}:
+    storage_client = storage.Client(project=PROJECT_ID)
+else:
+    storage_client = storage.Client()
 bucket = storage_client.bucket(BUCKET)
 
 SUMMARY_PREFIX = "summary/"
