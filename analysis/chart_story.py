@@ -65,6 +65,20 @@ def _slope(candles: Sequence[Tuple[float, float, float, float]]) -> float:
     return (end - start) / _PIP
 
 
+def _blended_slope(
+    candles: Sequence[Tuple[float, float, float, float]],
+    short_count: int,
+    long_count: int,
+    short_weight: float = 0.6,
+) -> float:
+    if not candles:
+        return 0.0
+    short = _slope(candles[-max(short_count, 2):])
+    long = _slope(candles[-max(long_count, 3):])
+    weight = max(0.0, min(1.0, short_weight))
+    return short * weight + long * (1.0 - weight)
+
+
 def _volatility(candles: Sequence[Tuple[float, float, float, float]]) -> float:
     if not candles:
         return 0.0
@@ -72,10 +86,19 @@ def _volatility(candles: Sequence[Tuple[float, float, float, float]]) -> float:
     return mean(ranges) if ranges else 0.0
 
 
-def _trend_state(slope_pips: float, vol_pips: float, slope_threshold: float = 4.0) -> str:
-    if slope_pips >= slope_threshold:
+def _trend_state(
+    slope_pips: float,
+    vol_pips: float,
+    slope_threshold: float = 4.0,
+    *,
+    vol_sensitivity: float = 0.0,
+) -> str:
+    dynamic_threshold = slope_threshold
+    if vol_sensitivity > 0.0:
+        dynamic_threshold += max(0.0, vol_pips - 6.0) * vol_sensitivity
+    if slope_pips >= dynamic_threshold:
         return "up"
-    if slope_pips <= -slope_threshold:
+    if slope_pips <= -dynamic_threshold:
         return "down"
     if vol_pips <= 3.0:
         return "quiet"
@@ -98,6 +121,8 @@ class ChartStorySnapshot:
             ref = self.micro_trend
         else:
             ref = self.higher_trend
+        if not ref or ref in {"range", "quiet"}:
+            return True
         if action == "OPEN_LONG":
             return ref == "up"
         if action == "OPEN_SHORT":
@@ -127,26 +152,29 @@ class ChartStory:
 
         slope_m5 = _slope(m5[-12:])
         slope_m15 = _slope(m15[-8:])
-        slope_h1 = _slope(h1[-6:])
-        slope_h4 = _slope(candles_h4[-5:])
-        slope_d1 = _slope(d1[-3:])
+        slope_h1 = _blended_slope(h1, short_count=4, long_count=12, short_weight=0.65)
+        slope_h4 = _blended_slope(candles_h4, short_count=3, long_count=8, short_weight=0.55)
+        slope_d1 = _blended_slope(d1, short_count=3, long_count=8, short_weight=0.5)
 
         vol_m5 = _volatility(m5[-12:])
         vol_h1 = _volatility(h1[-6:])
 
-        micro_trend = _trend_state(slope_m5, vol_m5, slope_threshold=2.5)
-        macro_trend = _trend_state((slope_h1 + slope_h4) / 2.0, vol_h1, slope_threshold=5.0)
-        higher_trend = _trend_state((slope_h4 + slope_d1) / 2.0, vol_h1, slope_threshold=6.0)
+        macro_mix = (slope_h1 + slope_h4) / 2.0
+        higher_mix = (slope_h4 + slope_d1) / 2.0
 
-        structure_bias = (slope_h1 + slope_h4 + slope_d1) / 3.0
+        micro_trend = _trend_state(slope_m5, vol_m5, slope_threshold=2.5, vol_sensitivity=0.25)
+        macro_trend = _trend_state(macro_mix, vol_h1, slope_threshold=5.0, vol_sensitivity=0.35)
+        higher_trend = _trend_state(higher_mix, vol_h1, slope_threshold=6.0, vol_sensitivity=0.35)
+
+        structure_bias = (macro_mix + higher_mix) / 2.0
         volatility_state = "high" if vol_h1 > 8.0 else ("low" if vol_h1 < 3.0 else "normal")
 
         summary = {
             "M5": micro_trend,
-            "M15": _trend_state(slope_m15, vol_m5, slope_threshold=3.5),
-            "H1": _trend_state(slope_h1, vol_h1, slope_threshold=5.0),
-            "H4": _trend_state(slope_h4, vol_h1, slope_threshold=6.0),
-            "D1": _trend_state(slope_d1, vol_h1, slope_threshold=6.5),
+            "M15": _trend_state(slope_m15, vol_m5, slope_threshold=3.5, vol_sensitivity=0.2),
+            "H1": _trend_state(slope_h1, vol_h1, slope_threshold=5.0, vol_sensitivity=0.3),
+            "H4": _trend_state(slope_h4, vol_h1, slope_threshold=6.0, vol_sensitivity=0.35),
+            "D1": _trend_state(slope_d1, vol_h1, slope_threshold=6.5, vol_sensitivity=0.35),
         }
 
         snapshot = ChartStorySnapshot(
@@ -163,4 +191,3 @@ class ChartStory:
     @property
     def last_snapshot(self) -> Optional[ChartStorySnapshot]:
         return self._last_snapshot
-

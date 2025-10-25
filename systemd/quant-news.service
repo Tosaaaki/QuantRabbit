@@ -1,0 +1,16 @@
+[Unit]
+Description=QuantRabbit News Worker
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=tossaki
+WorkingDirectory=/home/tossaki/QuantRabbit
+ExecStart=/bin/bash -lc '. .venv/bin/activate && python scripts/news_workers.py'
+Restart=on-failure
+RestartSec=5
+EnvironmentFile=-/home/tossaki/QuantRabbit/config/.service.env
+
+[Install]
+WantedBy=multi-user.target
