@@ -17,7 +17,7 @@ BUCKET = os.environ.get("BUCKET")
 SUMMARIZER_MODEL = (
     os.environ.get("OPENAI_SUMMARIZER_MODEL")
     or os.environ.get("OPENAI_MODEL")
-    or "gpt-5-nano"
+    or "gpt-4o-mini"
 )
 logging.info("Configured OpenAI summarizer model: %s", SUMMARIZER_MODEL)
 
