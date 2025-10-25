@@ -2,19 +2,55 @@ from __future__ import annotations
 
 import asyncio
 import json
-import sqlite3
+import os
 import pathlib
+import sqlite3
 import datetime
+import toml
 from google.cloud import storage
 from utils.secrets import get_secret
 
 # --- config ---
-# env.toml から設定を取得
-try:
-    PROJECT_ID = get_secret("gcp_project_id")
-except Exception:
-    PROJECT_ID = None
-BUCKET = get_secret("news_bucket_name")
+cfg = None
+cfg_path = pathlib.Path("config/env.local.toml")
+if cfg_path.exists():
+    cfg = toml.load(cfg_path.open("r"))
+else:
+    toml_path = pathlib.Path("config/env.toml")
+    if toml_path.exists():
+        cfg = toml.load(toml_path.open("r"))
+
+
+def _cfg_lookup(*keys: str):
+    cur = cfg
+    if not cur:
+        return None
+    for key in keys:
+        if isinstance(cur, dict) and key in cur:
+            cur = cur[key]
+        else:
+            return None
+    return cur
+
+
+PROJECT_ID = (
+    os.environ.get("GCP_PROJECT")
+    or os.environ.get("GOOGLE_CLOUD_PROJECT")
+    or os.environ.get("GOOGLE_CLOUD_PROJECT_NUMBER")
+)
+if not PROJECT_ID:
+    try:
+        PROJECT_ID = get_secret("gcp_project_id")
+    except Exception:
+        PROJECT_ID = None
+
+BUCKET = (
+    os.environ.get("NEWS_BUCKET_NAME")
+    or os.environ.get("BUCKET")
+    or _cfg_lookup("news_bucket_name")
+)
+if not BUCKET:
+    BUCKET = get_secret("news_bucket_name")
 
 # DB 初期化 -------------------------------------------------
 _DB_PATH = pathlib.Path("logs/news.db")
