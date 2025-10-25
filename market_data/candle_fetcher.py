@@ -19,7 +19,7 @@ from market_data.replay_logger import log_candle
 from market_data import spread_monitor
 
 Candle = dict[str, float]  # open, high, low, close
-TimeFrame = Literal["M1", "H4"]
+TimeFrame = Literal["M1", "M5", "H1", "H4", "D1"]
 
 
 TOKEN = get_secret("oanda_token")
@@ -51,10 +51,17 @@ class CandleAggregator:
     def _get_key(self, tf: TimeFrame, ts: datetime.datetime) -> str:
         if tf == "M1":
             return ts.strftime("%Y-%m-%dT%H:%M")
+        if tf == "M5":
+            minute = (ts.minute // 5) * 5
+            return ts.strftime(f"%Y-%m-%dT%H:{minute:02d}")
+        if tf == "H1":
+            return ts.strftime("%Y-%m-%dT%H:00")
         if tf == "H4":
             # 4時間足の区切り (0, 4, 8, 12, 16, 20時 UTC)
             hour = (ts.hour // 4) * 4
             return ts.strftime(f"%Y-%m-%dT{hour:02d}:00")
+        if tf == "D1":
+            return ts.strftime("%Y-%m-%dT00:00")
         raise ValueError(f"Unsupported timeframe: {tf}")
 
     async def on_tick(self, tick: Tick):
@@ -127,7 +134,11 @@ async def fetch_historical_candles(
 ) -> List[Candle]:
     """OANDA REST から過去ローソク足を取得する（失敗時は空配列）。"""
     url = f"{REST_HOST}/v3/instruments/{instrument}/candles"
-    params = {"granularity": granularity, "count": count, "price": "M"}
+    # Map internal TF to OANDA API granularity
+    gran = granularity
+    if granularity == "D1":
+        gran = "D"
+    params = {"granularity": gran, "count": count, "price": "M"}
     try:
         async with httpx.AsyncClient() as client:
             r = await client.get(url, headers=HEADERS, params=params, timeout=7)
@@ -158,8 +169,8 @@ async def initialize_history(instrument: str):
     """起動時に過去ローソクを取得し factor_cache を埋める"""
     from indicators.factor_cache import on_candle
 
-    preload_counts = {"M1": 60, "H4": 30}
-    for tf in ("M1", "H4"):
+    preload_counts = {"M1": 60, "M5": 120, "H1": 120, "H4": 30, "D1": 120}
+    for tf in ("M1", "M5", "H1", "H4", "D1"):
         count = preload_counts.get(tf, 20)
         candles = await fetch_historical_candles(instrument, tf, count)
         for c in candles:

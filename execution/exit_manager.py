@@ -17,6 +17,7 @@ from analysis.chart_story import ChartStorySnapshot
 
 from analysis.ma_projection import MACrossProjection, compute_ma_projection
 from utils.metrics_logger import log_metric
+from advisors.exit_advisor import ExitHint
 
 
 @dataclass
@@ -87,6 +88,7 @@ class ExitManager:
         pocket_profiles: Optional[Dict[str, Dict[str, float]]] = None,
         now: Optional[datetime] = None,
         story: Optional[ChartStorySnapshot] = None,
+        advisor_hints: Optional[Dict[str, ExitHint]] = None,
     ) -> List[ExitDecision]:
         current_time = self._ensure_utc(now)
         decisions: List[ExitDecision] = []
@@ -158,6 +160,7 @@ class ExitManager:
                     pocket_profile=profile,
                     atr_primary=atr_h4 if pocket == "macro" else atr_m1,
                     atr_m1=atr_m1,
+                    advisor_hints=advisor_hints,
                 )
                 if decision:
                     decisions.append(decision)
@@ -186,6 +189,7 @@ class ExitManager:
                     pocket_profile=profile,
                     atr_primary=atr_h4 if pocket == "macro" else atr_m1,
                     atr_m1=atr_m1,
+                    advisor_hints=advisor_hints,
                 )
                 if decision:
                     decisions.append(decision)
@@ -235,6 +239,7 @@ class ExitManager:
         pocket_profile: Optional[Dict[str, float]] = None,
         atr_primary: Optional[float] = None,
         atr_m1: Optional[float] = None,
+        advisor_hints: Optional[Dict[str, ExitHint]] = None,
     ) -> Optional[ExitDecision]:
         allow_reentry = False
         reason = ""
@@ -249,6 +254,24 @@ class ExitManager:
             if pocket == "macro" and ema_primary is not None
             else ema_fast
         )
+
+        advisor_hint = None
+        if advisor_hints:
+            advisor_hint = advisor_hints.get(f"{pocket}:long")
+        if advisor_hint:
+            advisor_decision = self._apply_advisor_hint(
+                advisor_hint,
+                pocket,
+                "long",
+                units,
+                profit_pips,
+                tag,
+                story,
+                range_mode,
+                now,
+            )
+            if advisor_decision:
+                return advisor_decision
 
         ma_gap_pips = 0.0
         if ma10 is not None and ma20 is not None:
@@ -486,6 +509,7 @@ class ExitManager:
         pocket_profile: Optional[Dict[str, float]] = None,
         atr_primary: Optional[float] = None,
         atr_m1: Optional[float] = None,
+        advisor_hints: Optional[Dict[str, ExitHint]] = None,
     ) -> Optional[ExitDecision]:
         allow_reentry = False
         reason = ""
@@ -500,6 +524,24 @@ class ExitManager:
             if pocket == "macro" and ema_primary is not None
             else ema_fast
         )
+
+        advisor_hint = None
+        if advisor_hints:
+            advisor_hint = advisor_hints.get(f"{pocket}:short")
+        if advisor_hint:
+            advisor_decision = self._apply_advisor_hint(
+                advisor_hint,
+                pocket,
+                "short",
+                units,
+                profit_pips,
+                tag,
+                story,
+                range_mode,
+                now,
+            )
+            if advisor_decision:
+                return advisor_decision
 
         ma_gap_pips = 0.0
         if ma10 is not None and ma20 is not None:
@@ -993,6 +1035,59 @@ class ExitManager:
             1.0,
             tags=tags,
             ts=now,
+        )
+
+    def _apply_advisor_hint(
+        self,
+        hint: ExitHint,
+        pocket: str,
+        side: str,
+        units: int,
+        profit_pips: float,
+        tag: str,
+        story: Optional[ChartStorySnapshot],
+        range_mode: bool,
+        now: datetime,
+    ) -> Optional[ExitDecision]:
+        reason = None
+        if hint.max_drawdown_pips is not None and profit_pips <= -abs(hint.max_drawdown_pips):
+            reason = "advisor_drawdown"
+        elif hint.min_takeprofit_pips is not None and profit_pips >= abs(hint.min_takeprofit_pips):
+            reason = "advisor_takeprofit"
+        if not reason:
+            return None
+        units_to_close = abs(units)
+        signed_units = -units_to_close if side == "long" else units_to_close
+        final_reason = reason
+        if hint.reason:
+            final_reason = f"{reason}:{hint.reason}"
+        allow_reentry = hint.confidence >= 0.7
+        self._record_exit_metric(
+            pocket,
+            side,
+            final_reason,
+            profit_pips,
+            story,
+            range_mode,
+            now,
+        )
+        log_metric(
+            "exit_advisor_trigger",
+            float(profit_pips),
+            tags={
+                "pocket": pocket,
+                "side": side,
+                "reason": reason,
+                "model": hint.model_used or "unknown",
+            },
+            ts=now,
+        )
+        return ExitDecision(
+            pocket=pocket,
+            units=signed_units,
+            reason=final_reason,
+            tag=tag,
+            allow_reentry=allow_reentry,
         )
 
     def _validate_trend_reversal(

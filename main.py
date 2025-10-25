@@ -6,7 +6,7 @@ import time
 import hashlib
 import json
 import contextlib
-from typing import Optional, Tuple, Coroutine, Any
+from typing import Optional, Tuple, Coroutine, Any, Dict
 
 from market_data.candle_fetcher import (
     Candle,
@@ -59,6 +59,8 @@ from strategies.scalping.pulse_break import PulseBreak
 from utils.oanda_account import get_account_snapshot
 from utils.secrets import get_secret
 from utils.metrics_logger import log_metric
+from advisors.rr_ratio import RRRatioAdvisor
+from advisors.exit_advisor import ExitAdvisor
 
 # Configure logging
 logging.basicConfig(
@@ -158,6 +160,18 @@ POCKET_ATR_MIN_PIPS = {
     "micro": 2.5,
     "scalp": 2.5,
 }
+
+try:
+    RR_ADVISOR = RRRatioAdvisor()
+except Exception as exc:  # pragma: no cover - defensive
+    logging.warning("[RR_ADVISOR] init failed: %s", exc)
+    RR_ADVISOR = None
+
+try:
+    EXIT_ADVISOR = ExitAdvisor()
+except Exception as exc:  # pragma: no cover - defensive
+    logging.warning("[EXIT_ADVISOR] init failed: %s", exc)
+    EXIT_ADVISOR = None
 
 PIP = 0.01
 _MACRO_PULLBACK_MIN_RETRACE_PIPS = {
@@ -333,7 +347,10 @@ def _gpt_payload_signature(
     soft_range: bool,
 ) -> str:
     factors_m1 = payload.get("factors_m1") or {}
+    factors_m5 = payload.get("factors_m5") or {}
+    factors_h1 = payload.get("factors_h1") or {}
     factors_h4 = payload.get("factors_h4") or {}
+    factors_d1 = payload.get("factors_d1") or {}
     perf = payload.get("perf") or {}
     news_short = payload.get("news_short") or []
     latest_news = None
@@ -372,11 +389,30 @@ def _gpt_payload_signature(
             "ma10": _hashable_float(factors_m1.get("ma10"), 4),
             "ma20": _hashable_float(factors_m1.get("ma20"), 4),
         },
+        "m5": {
+            "close": _hashable_float(factors_m5.get("close"), 4),
+            "adx": _hashable_float(factors_m5.get("adx"), 3),
+            "rsi": _hashable_float(factors_m5.get("rsi"), 3),
+            "ma10": _hashable_float(factors_m5.get("ma10"), 4),
+            "ma20": _hashable_float(factors_m5.get("ma20"), 4),
+        },
+        "h1": {
+            "close": _hashable_float(factors_h1.get("close"), 4),
+            "adx": _hashable_float(factors_h1.get("adx"), 3),
+            "ma10": _hashable_float(factors_h1.get("ma10"), 4),
+            "ma20": _hashable_float(factors_h1.get("ma20"), 4),
+        },
         "h4": {
             "close": _hashable_float(factors_h4.get("close"), 4),
             "adx": _hashable_float(factors_h4.get("adx"), 3),
             "ma10": _hashable_float(factors_h4.get("ma10"), 4),
             "ma20": _hashable_float(factors_h4.get("ma20"), 4),
+        },
+        "d1": {
+            "close": _hashable_float(factors_d1.get("close"), 4),
+            "adx": _hashable_float(factors_d1.get("adx"), 3),
+            "ma10": _hashable_float(factors_d1.get("ma10"), 4),
+            "ma20": _hashable_float(factors_d1.get("ma20"), 4),
         },
         "perf": perf_snapshot,
         "news": latest_news,
@@ -479,7 +515,10 @@ async def prime_gpt_decision(
     while True:
         factors = all_factors()
         fac_m1 = factors.get("M1")
+        fac_m5 = factors.get("M5")
+        fac_h1 = factors.get("H1")
         fac_h4 = factors.get("H4")
+        fac_d1 = factors.get("D1")
         if (
             not fac_m1
             or not fac_h4
@@ -500,7 +539,10 @@ async def prime_gpt_decision(
             "reg_macro": classify(fac_h4, "H4", event_mode=event_soon),
             "reg_micro": classify(fac_m1, "M1", event_mode=event_soon),
             "factors_m1": {k: v for k, v in fac_m1.items() if k != "candles"},
+            "factors_m5": {k: v for k, v in (fac_m5 or {}).items() if k != "candles"},
+            "factors_h1": {k: v for k, v in (fac_h1 or {}).items() if k != "candles"},
             "factors_h4": {k: v for k, v in fac_h4.items() if k != "candles"},
+            "factors_d1": {k: v for k, v in (fac_d1 or {}).items() if k != "candles"},
             "perf": perf_cache,
             "news_short": news_cache.get("short", []),
             "news_long": news_cache.get("long", []),
@@ -960,7 +1002,26 @@ async def h4_candle_handler(cndl: Candle):
     await on_candle("H4", cndl)
 
 
-async def logic_loop(gpt_state: GPTDecisionState, gpt_requests: GPTRequestManager, news_cache_supplier=None):
+async def m5_candle_handler(cndl: Candle):
+    await on_candle("M5", cndl)
+
+
+async def h1_candle_handler(cndl: Candle):
+    await on_candle("H1", cndl)
+
+
+async def d1_candle_handler(cndl: Candle):
+    await on_candle("D1", cndl)
+
+
+async def logic_loop(
+    gpt_state: GPTDecisionState,
+    gpt_requests: GPTRequestManager,
+    news_cache_supplier=None,
+    *,
+    rr_advisor: RRRatioAdvisor | None = None,
+    exit_advisor: ExitAdvisor | None = None,
+):
     pos_manager = PositionManager()
     metrics_client = RealtimeMetricsClient()
     confidence_policy = ConfidencePolicy()
@@ -993,6 +1054,20 @@ async def logic_loop(gpt_state: GPTDecisionState, gpt_requests: GPTRequestManage
     last_logged_scalp_weight: Optional[float] = None
     recent_profiles: dict[str, dict[str, float]] = {}
     param_snapshot: Optional[ParamSnapshot] = None
+
+    def _factor_snapshot(data: Optional[Dict[str, float]]) -> Dict[str, float]:
+        if not data:
+            return {}
+        snapshot: Dict[str, float] = {}
+        for key in ("adx", "rsi", "ma10", "ma20", "atr_pips", "close"):
+            val = data.get(key)
+            if val is None:
+                continue
+            try:
+                snapshot[key] = round(float(val), 6)
+            except (TypeError, ValueError):
+                continue
+        return snapshot
     last_volatility_state: Optional[str] = None
     last_liquidity_state: Optional[str] = None
     last_risk_appetite: Optional[float] = None
@@ -1026,7 +1101,10 @@ async def logic_loop(gpt_state: GPTDecisionState, gpt_requests: GPTRequestManage
             # --- 1. 状況分析 ---
             factors = all_factors()
             fac_m1 = factors.get("M1")
+            fac_m5 = factors.get("M5")
+            fac_h1 = factors.get("H1")
             fac_h4 = factors.get("H4")
+            fac_d1 = factors.get("D1")
 
             # 両方のタイムフレームのデータが揃うまで待機
             if (
@@ -1361,7 +1439,10 @@ async def logic_loop(gpt_state: GPTDecisionState, gpt_requests: GPTRequestManage
                 "reg_macro": macro_regime,
                 "reg_micro": micro_regime,
                 "factors_m1": {k: v for k, v in fac_m1.items() if k != "candles"},
+                "factors_m5": {k: v for k, v in (factors.get("M5") or {}).items() if k != "candles"},
+                "factors_h1": {k: v for k, v in (factors.get("H1") or {}).items() if k != "candles"},
                 "factors_h4": {k: v for k, v in fac_h4.items() if k != "candles"},
+                "factors_d1": {k: v for k, v in (factors.get("D1") or {}).items() if k != "candles"},
                 "perf": perf_cache,
                 "news_short": news_cache.get("short", []),
                 "news_long": news_cache.get("long", []),
@@ -1757,6 +1838,49 @@ async def logic_loop(gpt_state: GPTDecisionState, gpt_requests: GPTRequestManage
                     "drawdown": health.max_drawdown_pips,
                     "losing_streak": health.losing_streak,
                 }
+
+                if (
+                    rr_advisor
+                    and rr_advisor.enabled
+                    and signal.get("sl_pips")
+                    and signal.get("tp_pips")
+                ):
+                    try:
+                        rr_context = {
+                            "pocket": signal["pocket"],
+                            "strategy": signal["strategy"],
+                            "sl_pips": float(signal["sl_pips"] or 0.0),
+                            "tp_pips": float(signal["tp_pips"] or 0.0),
+                            "reg_macro": macro_regime,
+                            "reg_micro": micro_regime,
+                            "range_active": range_active,
+                            "atr_m1": float(atr_pips),
+                            "atr_h4": float(fac_h4.get("atr_pips", 0.0) or 0.0),
+                            "atr_h1": float((fac_h1 or {}).get("atr_pips", 0.0) or 0.0),
+                            "factors_h1": _factor_snapshot(fac_h1),
+                            "factors_h4": _factor_snapshot(fac_h4),
+                            "factors_d1": _factor_snapshot(fac_d1),
+                            "news_short": (news_cache.get("short", []) if news_cache else [])[:2],
+                            "news_long": (news_cache.get("long", []) if news_cache else [])[:1],
+                        }
+                        rr_hint = await rr_advisor.advise(rr_context)
+                    except Exception as exc:  # pragma: no cover - defensive
+                        logging.debug("[RR_ADVISOR] failed: %s", exc)
+                        rr_hint = None
+                    if rr_hint:
+                        sl_val = float(signal["sl_pips"] or 0.0)
+                        target_tp = round(max(sl_val * rr_hint.ratio, sl_val * rr_advisor.min_ratio), 2)
+                        if target_tp > 0.0:
+                            signal["tp_pips"] = target_tp
+                            log_metric(
+                                "rr_advisor_ratio",
+                                float(rr_hint.ratio),
+                                tags={
+                                    "pocket": signal["pocket"],
+                                    "strategy": signal["strategy"],
+                                },
+                                ts=now,
+                            )
                 evaluated_signals.append(signal)
                 logging.info("[SIGNAL] %s -> %s", cls.name, signal)
 
@@ -1835,6 +1959,23 @@ async def logic_loop(gpt_state: GPTDecisionState, gpt_requests: GPTRequestManage
                     elif units_value != 0:
                         stage_empty_since.pop(key, None)
 
+            advisor_hints = None
+            if exit_advisor and exit_advisor.enabled:
+                try:
+                    advisor_hints = await exit_advisor.build_hints(
+                        open_positions,
+                        fac_m1=fac_m1,
+                        fac_h4=fac_h4,
+                        fac_h1=fac_h1,
+                        fac_d1=fac_d1,
+                        news_cache=news_cache,
+                        range_active=range_active,
+                        now=now,
+                    )
+                except Exception as exc:  # pragma: no cover - defensive
+                    logging.warning("[EXIT_ADVISOR] build_hints failed: %s", exc)
+                    advisor_hints = None
+
             exit_decisions = exit_manager.plan_closures(
                 open_positions,
                 evaluated_signals,
@@ -1846,6 +1987,7 @@ async def logic_loop(gpt_state: GPTDecisionState, gpt_requests: GPTRequestManage
                 pocket_profiles=recent_profiles,
                 now=now,
                 story=story_snapshot,
+                advisor_hints=advisor_hints,
             )
 
             executed_pockets: set[str] = set()
@@ -2376,7 +2518,13 @@ async def logic_loop(gpt_state: GPTDecisionState, gpt_requests: GPTRequestManage
 
 
 async def main():
-    handlers = [("M1", m1_candle_handler), ("H4", h4_candle_handler)]
+    handlers = [
+        ("M1", m1_candle_handler),
+        ("M5", m5_candle_handler),
+        ("H1", h1_candle_handler),
+        ("H4", h4_candle_handler),
+        ("D1", d1_candle_handler),
+    ]
     await initialize_history("USD_JPY")
     gpt_state = GPTDecisionState()
     gpt_requests = GPTRequestManager()
@@ -2394,7 +2542,12 @@ async def main():
                 asyncio.create_task(
                     supervised_runner(
                         "logic_loop",
-                        logic_loop(gpt_state, gpt_requests),
+                        logic_loop(
+                            gpt_state,
+                            gpt_requests,
+                            rr_advisor=RR_ADVISOR,
+                            exit_advisor=EXIT_ADVISOR,
+                        ),
                     )
                 ),
             ]
