@@ -472,6 +472,7 @@ def plan_partial_reductions(
     stage_state: Optional[dict[str, dict[str, int]]] = None,
     pocket_profiles: Optional[dict[str, dict[str, float]]] = None,
     now: Optional[datetime] = None,
+    threshold_overrides: Optional[dict[str, tuple[float, float]]] = None,
 ) -> list[tuple[str, str, int]]:
     price = fac_m1.get("close")
     if price is None:
@@ -483,7 +484,11 @@ def plan_partial_reductions(
     for pocket, info in open_positions.items():
         if pocket == "__net__":
             continue
-        thresholds = _PARTIAL_THRESHOLDS.get(pocket)
+        thresholds = None
+        if threshold_overrides and pocket in threshold_overrides:
+            thresholds = threshold_overrides[pocket]
+        if thresholds is None:
+            thresholds = _PARTIAL_THRESHOLDS.get(pocket)
         if range_mode:
             thresholds = _PARTIAL_THRESHOLDS_RANGE.get(pocket, thresholds)
         if not thresholds:

@@ -61,6 +61,12 @@ from utils.secrets import get_secret
 from utils.metrics_logger import log_metric
 from advisors.rr_ratio import RRRatioAdvisor
 from advisors.exit_advisor import ExitAdvisor
+from advisors.strategy_confidence import StrategyConfidenceAdvisor
+from advisors.focus_override import FocusOverrideAdvisor
+from advisors.volatility_bias import VolatilityBiasAdvisor
+from advisors.stage_plan import StagePlanAdvisor
+from advisors.partial_reduction import PartialReductionAdvisor
+from advisors.news_bias import NewsBiasAdvisor
 
 # Configure logging
 logging.basicConfig(
@@ -172,6 +178,42 @@ try:
 except Exception as exc:  # pragma: no cover - defensive
     logging.warning("[EXIT_ADVISOR] init failed: %s", exc)
     EXIT_ADVISOR = None
+
+try:
+    STRATEGY_CONF_ADVISOR = StrategyConfidenceAdvisor()
+except Exception as exc:  # pragma: no cover - defensive
+    logging.warning("[STRAT_CONF] init failed: %s", exc)
+    STRATEGY_CONF_ADVISOR = None
+
+try:
+    FOCUS_ADVISOR = FocusOverrideAdvisor()
+except Exception as exc:  # pragma: no cover - defensive
+    logging.warning("[FOCUS_ADVISOR] init failed: %s", exc)
+    FOCUS_ADVISOR = None
+
+try:
+    VOLATILITY_ADVISOR = VolatilityBiasAdvisor()
+except Exception as exc:  # pragma: no cover - defensive
+    logging.warning("[VOL_ADVISOR] init failed: %s", exc)
+    VOLATILITY_ADVISOR = None
+
+try:
+    STAGE_PLAN_ADVISOR = StagePlanAdvisor()
+except Exception as exc:  # pragma: no cover - defensive
+    logging.warning("[STAGE_PLAN_ADVISOR] init failed: %s", exc)
+    STAGE_PLAN_ADVISOR = None
+
+try:
+    PARTIAL_ADVISOR = PartialReductionAdvisor()
+except Exception as exc:  # pragma: no cover - defensive
+    logging.warning("[PARTIAL_ADVISOR] init failed: %s", exc)
+    PARTIAL_ADVISOR = None
+
+try:
+    NEWS_BIAS_ADVISOR = NewsBiasAdvisor()
+except Exception as exc:  # pragma: no cover - defensive
+    logging.warning("[NEWS_BIAS_ADVISOR] init failed: %s", exc)
+    NEWS_BIAS_ADVISOR = None
 
 PIP = 0.01
 _MACRO_PULLBACK_MIN_RETRACE_PIPS = {
@@ -337,6 +379,10 @@ def _hashable_float(value: Optional[float], digits: int = 4) -> Optional[float]:
         return round(float(value), digits)
     except (TypeError, ValueError):
         return None
+
+
+def _clamp(value: float, low: float, high: float) -> float:
+    return max(low, min(high, value))
 
 
 def _gpt_payload_signature(
@@ -1021,6 +1067,12 @@ async def logic_loop(
     *,
     rr_advisor: RRRatioAdvisor | None = None,
     exit_advisor: ExitAdvisor | None = None,
+    strategy_conf_advisor: StrategyConfidenceAdvisor | None = None,
+    focus_advisor: FocusOverrideAdvisor | None = None,
+    volatility_advisor: VolatilityBiasAdvisor | None = None,
+    stage_plan_advisor: StagePlanAdvisor | None = None,
+    partial_advisor: PartialReductionAdvisor | None = None,
+    news_bias_advisor: NewsBiasAdvisor | None = None,
 ):
     pos_manager = PositionManager()
     metrics_client = RealtimeMetricsClient()
@@ -1208,6 +1260,31 @@ async def logic_loop(
                 fac_h4=fac_h4,
                 spread_snapshot=spread_snapshot,
             )
+            if volatility_advisor and volatility_advisor.enabled:
+                vol_context = param_snapshot.to_dict()
+                vol_context.update(
+                    {
+                        "range_active": range_active,
+                        "event_soon": event_soon,
+                        "spread_gate": spread_gate_active,
+                    }
+                )
+                try:
+                    vol_hint = await volatility_advisor.advise(vol_context)
+                except Exception as exc:  # pragma: no cover
+                    logging.debug("[VOL_ADVISOR] failed: %s", exc)
+                    vol_hint = None
+                if vol_hint and vol_hint.confidence >= 0.35:
+                    new_risk = _clamp(param_snapshot.risk_appetite + vol_hint.bias, 0.0, 1.0)
+                    if new_risk != param_snapshot.risk_appetite:
+                        param_snapshot.risk_appetite = new_risk
+                        param_snapshot.notes["vol_bias"] = vol_hint.bias
+                        log_metric(
+                            "volatility_bias",
+                            float(vol_hint.bias),
+                            tags={"reason": vol_hint.reason or ""},
+                            ts=now,
+                        )
             if param_snapshot.volatility_state != last_volatility_state:
                 logging.info(
                     "[PARAM] volatility_state=%s atr=%.2fp score=%.2f",
@@ -1388,6 +1465,22 @@ async def logic_loop(
                 _BASE_STAGE_RATIOS,
                 range_active=range_active,
             )
+            if stage_plan_advisor and stage_plan_advisor.enabled:
+                stage_context = {
+                    "range_active": range_active,
+                    "risk_appetite": param_snapshot.risk_appetite,
+                    "stage_bias": stage_biases,
+                    "weight_macro": weight_macro,
+                    "weight_scalp": weight_scalp if weight_scalp is not None else 0.0,
+                }
+                try:
+                    stage_hint = await stage_plan_advisor.advise(stage_context)
+                except Exception as exc:  # pragma: no cover
+                    logging.debug("[STAGE_PLAN] failed: %s", exc)
+                    stage_hint = None
+                if stage_hint and stage_hint.confidence >= 0.4:
+                    stage_overrides.update(stage_hint.plans)
+                    stage_changed = True
             _set_stage_plan_overrides(stage_overrides)
             vol_ratio = param_snapshot.vol_high_ratio if param_snapshot else -1.0
             if stage_changed:
@@ -1498,6 +1591,28 @@ async def logic_loop(
                 except (TypeError, ValueError):
                     weight_scalp = None
 
+            focus_override_hint = None
+            if focus_advisor and focus_advisor.enabled:
+                focus_context = {
+                    "reg_macro": macro_regime,
+                    "reg_micro": micro_regime,
+                    "range_active": range_active,
+                    "range_reason": last_range_reason or range_ctx.reason,
+                    "event_soon": event_soon,
+                    "d1": _factor_snapshot(fac_d1),
+                    "h4": _factor_snapshot(fac_h4),
+                    "news_short": (news_cache.get("short", []) if news_cache else [])[:3],
+                    "news_long": (news_cache.get("long", []) if news_cache else [])[:2],
+                    "gpt_focus": gpt.get("focus_tag"),
+                    "gpt_weight_macro": gpt.get("weight_macro"),
+                    "gpt_weight_scalp": gpt.get("weight_scalp"),
+                }
+                try:
+                    focus_override_hint = await focus_advisor.advise(focus_context)
+                except Exception as exc:  # pragma: no cover - defensive
+                    logging.debug("[FOCUS_ADVISOR] failed: %s", exc)
+                    focus_override_hint = None
+
             # Update realtime metrics cache every few minutes
             if (now - last_metrics_refresh).total_seconds() >= 240:
                 try:
@@ -1556,6 +1671,13 @@ async def logic_loop(
                         prev_weight,
                         weight_macro,
                     )
+            if focus_override_hint and focus_override_hint.confidence >= 0.4:
+                if focus_override_hint.focus_tag:
+                    focus_tag = focus_override_hint.focus_tag
+                if focus_override_hint.weight_macro is not None:
+                    weight_macro = _clamp(float(focus_override_hint.weight_macro), 0.0, 1.0)
+                if focus_override_hint.weight_scalp is not None:
+                    weight_scalp = _clamp(float(focus_override_hint.weight_scalp), 0.0, 1.0)
             focus_candidates = set(FOCUS_POCKETS.get(focus_tag, ("macro", "micro", "scalp")))
             if not focus_candidates:
                 focus_candidates = {"micro"}
@@ -1569,6 +1691,33 @@ async def logic_loop(
             if weight_scalp is not None:
                 scalp_hint = max(min(weight_scalp, 1.0), 0.0)
             micro_hint = max(1.0 - macro_hint - scalp_hint, 0.0)
+
+            news_bias_hint = None
+            if news_bias_advisor and news_bias_advisor.enabled:
+                bias_context = {
+                    "reg_macro": macro_regime,
+                    "reg_micro": micro_regime,
+                    "range_active": range_active,
+                    "event_soon": event_soon,
+                    "news_short": (news_cache.get("short", []) if news_cache else [])[:5],
+                    "news_long": (news_cache.get("long", []) if news_cache else [])[:3],
+                }
+                try:
+                    news_bias_hint = await news_bias_advisor.advise(bias_context)
+                except Exception as exc:  # pragma: no cover
+                    logging.debug("[NEWS_BIAS] failed: %s", exc)
+                    news_bias_hint = None
+                if news_bias_hint and news_bias_hint.confidence >= 0.4:
+                    macro_hint = _clamp(macro_hint + news_bias_hint.biases.get("macro", 0.0), 0.0, 1.0)
+                    micro_hint = _clamp(micro_hint + news_bias_hint.biases.get("micro", 0.0), 0.0, 1.0)
+                    scalp_hint = _clamp(scalp_hint + news_bias_hint.biases.get("scalp", 0.0), 0.0, 1.0)
+                    log_metric(
+                        "news_bias_hint",
+                        float(news_bias_hint.biases.get("macro", 0.0)),
+                        tags={"confidence": f"{news_bias_hint.confidence:.2f}"},
+                        ts=now,
+                    )
+
             stage_tracker.set_weight_hint("macro", macro_hint)
             stage_tracker.set_weight_hint("micro", micro_hint)
             stage_tracker.set_weight_hint("scalp", scalp_hint if weight_scalp is not None else None)
@@ -1813,6 +1962,37 @@ async def logic_loop(
                             signal.get("tp_pips"),
                             rr_logged,
                         )
+
+                if strategy_conf_advisor and strategy_conf_advisor.enabled:
+                    conf_context = {
+                        "strategy": sname,
+                        "pocket": cls.pocket,
+                        "reg_macro": macro_regime,
+                        "reg_micro": micro_regime,
+                        "range_active": range_active,
+                        "weight_macro": weight_macro,
+                        "health_pf": health.profit_factor,
+                        "health_win_rate": health.win_rate,
+                        "health_dd": health.max_drawdown_pips,
+                    }
+                    try:
+                        conf_hint = await strategy_conf_advisor.advise(sname, conf_context)
+                    except Exception as exc:  # pragma: no cover
+                        logging.debug("[STRAT_CONF] failed: %s", exc)
+                        conf_hint = None
+                    if conf_hint and conf_hint.confidence >= 0.35:
+                        prev_conf = signal["confidence"]
+                        signal["confidence"] = max(
+                            0,
+                            min(100, int(signal["confidence"] * conf_hint.scale)),
+                        )
+                        if prev_conf != signal["confidence"]:
+                            log_metric(
+                                "strategy_conf_scale",
+                                float(conf_hint.scale),
+                                tags={"strategy": sname},
+                                ts=now,
+                            )
                 if signal["strategy"] == "PulseBreak":
                     rr = 0.0
                     sl_val = float(signal.get("sl_pips") or 0.0)
@@ -1897,6 +2077,25 @@ async def logic_loop(
                 update_dynamic_protections(open_positions, fac_m1, fac_h4)
             except Exception as exc:
                 logging.warning("[PROTECTION] update failed: %s", exc)
+            partial_threshold_overrides = None
+            if partial_advisor and partial_advisor.enabled:
+                partial_context = {
+                    "range_active": range_active,
+                    "atr_pips": atr_pips,
+                    "risk_appetite": param_snapshot.risk_appetite,
+                    "profile_samples": {
+                        pocket: profile.get("sample_size", 0)
+                        for pocket, profile in recent_profiles.items()
+                    },
+                }
+                try:
+                    partial_hint = await partial_advisor.advise(partial_context)
+                except Exception as exc:  # pragma: no cover
+                    logging.debug("[PARTIAL_ADVISOR] failed: %s", exc)
+                    partial_hint = None
+                if partial_hint and partial_hint.confidence >= 0.35:
+                    partial_threshold_overrides = partial_hint.thresholds
+
             try:
                 partials = plan_partial_reductions(
                     open_positions,
@@ -1905,6 +2104,7 @@ async def logic_loop(
                     stage_state=stage_snapshot,
                     pocket_profiles=recent_profiles,
                     now=now,
+                    threshold_overrides=partial_threshold_overrides,
                 )
             except Exception as exc:
                 logging.warning("[PARTIAL] planning failed: %s", exc)
@@ -2547,6 +2747,12 @@ async def main():
                             gpt_requests,
                             rr_advisor=RR_ADVISOR,
                             exit_advisor=EXIT_ADVISOR,
+                            strategy_conf_advisor=STRATEGY_CONF_ADVISOR,
+                            focus_advisor=FOCUS_ADVISOR,
+                            volatility_advisor=VOLATILITY_ADVISOR,
+                            stage_plan_advisor=STAGE_PLAN_ADVISOR,
+                            partial_advisor=PARTIAL_ADVISOR,
+                            news_bias_advisor=NEWS_BIAS_ADVISOR,
                         ),
                     )
                 ),
