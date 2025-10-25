@@ -47,7 +47,7 @@ except Exception:
     cfg = None
 
 if cfg:
-    BUCKET = cfg.get("gcp", {}).get("bucket_news")
+    BUCKET = cfg.get("gcp", {}).get("bucket_news") or cfg.get("news_bucket_name")
 else:
     BUCKET = None
 
