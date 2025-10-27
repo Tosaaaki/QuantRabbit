@@ -11,6 +11,7 @@ from typing import Any, Dict, Optional
 from openai import AsyncOpenAI
 
 from utils.cost_guard import add_tokens
+from utils.gpt_monitor import track_gpt_call
 from utils.secrets import get_secret
 
 
@@ -144,35 +145,39 @@ class VolatilityBiasAdvisor:
             },
             {"role": "user", "content": json.dumps(payload)},
         ]
-        resp = await self._client.responses.create(  # type: ignore[union-attr]
-            model=self._model,
-            input=messages,
-            max_output_tokens=160,
-            temperature=0.1,
-        )
-        usage = getattr(resp, "usage", None)
-        used_tokens = 0
-        if usage is not None:
-            used_tokens = getattr(usage, "input_tokens", 0) + getattr(usage, "output_tokens", 0)
-        if used_tokens:
-            add_tokens(used_tokens, self._max_month_tokens)
-        content_parts: list[str] = []
-        for item in resp.output or []:
-            if getattr(item, "type", "") != "message":
-                continue
-            for block in getattr(item, "content", []) or []:
-                text = getattr(block, "text", None)
-                if text:
-                    content_parts.append(text)
-        content = "".join(content_parts).strip()
-        if content.startswith("```"):
-            content = content.strip("`")
-            content = content.replace("json", "", 1).strip()
-        try:
-            data = json.loads(content)
-        except json.JSONDecodeError:
-            logging.warning("[VOL_ADVISOR] invalid JSON response: %s", content)
-            data = {}
-        data["model_used"] = getattr(resp, "model", self._model)
+        with track_gpt_call("volatility_bias_advisor") as tracker:
+            resp = await self._client.responses.create(  # type: ignore[union-attr]
+                model=self._model,
+                input=messages,
+                max_output_tokens=160,
+                temperature=0.1,
+            )
+            usage = getattr(resp, "usage", None)
+            used_tokens = 0
+            if usage is not None:
+                used_tokens = getattr(usage, "input_tokens", 0) + getattr(usage, "output_tokens", 0)
+            if used_tokens:
+                tracker.add_tag("tokens", used_tokens)
+                add_tokens(used_tokens, self._max_month_tokens)
+            content_parts: list[str] = []
+            for item in resp.output or []:
+                if getattr(item, "type", "") != "message":
+                    continue
+                for block in getattr(item, "content", []) or []:
+                    text = getattr(block, "text", None)
+                    if text:
+                        content_parts.append(text)
+            content = "".join(content_parts).strip()
+            if content.startswith("```"):
+                content = content.strip("`")
+                content = content.replace("json", "", 1).strip()
+            try:
+                data = json.loads(content)
+            except json.JSONDecodeError:
+                logging.warning("[VOL_ADVISOR] invalid JSON response: %s", content)
+                tracker.mark_status("invalid_json")
+                data = {}
+            model_used = getattr(resp, "model", self._model)
+            tracker.set_model(model_used)
+        data["model_used"] = model_used
         return data
-

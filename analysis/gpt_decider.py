@@ -22,6 +22,7 @@ from analysis.gpt_prompter import (
 )
 from analysis.local_decider import heuristic_decision
 from utils.cost_guard import add_tokens
+from utils.gpt_monitor import log_gpt_fallback, track_gpt_call
 from utils.secrets import get_secret
 
 client = AsyncOpenAI(api_key=get_secret("openai_api_key"))
@@ -88,119 +89,126 @@ class GPTTimeout(Exception): ...
 
 
 async def _call_model(payload: Dict, messages: List[Dict], model: str) -> Dict:
-    use_responses = "gpt-5" in model or "gpt-4" in model
-    timeout = _MODEL_TIMEOUT_SECONDS.get(model, 12)
-    if use_responses:
-        inputs = [{"role": msg["role"], "content": msg["content"]} for msg in messages]
-        kwargs: Dict[str, object] = {
-            "model": model,
-            "input": inputs,
-            "max_output_tokens": _MODEL_OUTPUT_LIMITS.get(model, _GPT5_MAX_OUTPUT_TOKENS),
-            "timeout": timeout,
-        }
-        if "gpt-5" in model:
-            kwargs["reasoning"] = {"effort": "low"}
-        try:
-            resp = await client.responses.create(**kwargs)
-        except Exception as exc:
-            raise GPTTimeout(str(exc)) from exc
-        usage = getattr(resp, "usage", None)
-        usage_in = getattr(usage, "input_tokens", 0) if usage else 0
-        usage_out = getattr(usage, "output_tokens", 0) if usage else 0
-        add_tokens(usage_in + usage_out, MAX_TOKENS_MONTH)
-        content_parts: list[str] = []
-        for item in resp.output or []:
-            if getattr(item, "type", "") != "message":
-                continue
-            for block in getattr(item, "content", []) or []:
-                text = getattr(block, "text", None)
-                if text:
-                    content_parts.append(text)
-        content = "".join(content_parts).strip()
-    else:
-        base_kwargs = {
-            "model": model,
-            "messages": messages,
-            "timeout": timeout,
-            "response_format": {"type": "json_object"},
-            "temperature": 0.2,
-        }
-        token_kwargs_order = [
-            {"max_completion_tokens": _MAX_COMPLETION_TOKENS},
-            {"max_tokens": _MAX_COMPLETION_TOKENS},
-        ]
-        resp = None
-        last_error: Exception | None = None
-        for token_kwargs in token_kwargs_order:
+    tier = "primary" if model == MODEL else "fallback"
+    with track_gpt_call(
+        "gpt_decider",
+        extra_tags={"tier": tier, "model": model},
+    ) as tracker:
+        use_responses = "gpt-5" in model or "gpt-4" in model
+        timeout = _MODEL_TIMEOUT_SECONDS.get(model, 12)
+        if use_responses:
+            inputs = [{"role": msg["role"], "content": msg["content"]} for msg in messages]
+            kwargs: Dict[str, object] = {
+                "model": model,
+                "input": inputs,
+                "max_output_tokens": _MODEL_OUTPUT_LIMITS.get(model, _GPT5_MAX_OUTPUT_TOKENS),
+                "timeout": timeout,
+            }
+            if "gpt-5" in model:
+                kwargs["reasoning"] = {"effort": "low"}
             try:
-                resp = await client.chat.completions.create(
-                    **base_kwargs, **token_kwargs
-                )
-                break
+                resp = await client.responses.create(**kwargs)
             except Exception as exc:
-                msg = str(exc)
-                param_name = next(iter(token_kwargs))
-                if "Unsupported parameter" in msg and param_name in msg:
-                    last_error = exc
+                raise GPTTimeout(str(exc)) from exc
+            usage = getattr(resp, "usage", None)
+            usage_in = getattr(usage, "input_tokens", 0) if usage else 0
+            usage_out = getattr(usage, "output_tokens", 0) if usage else 0
+            tracker.add_tag("tokens", usage_in + usage_out)
+            add_tokens(usage_in + usage_out, MAX_TOKENS_MONTH)
+            content_parts: list[str] = []
+            for item in resp.output or []:
+                if getattr(item, "type", "") != "message":
                     continue
-                raise GPTTimeout(msg) from exc
+                for block in getattr(item, "content", []) or []:
+                    text = getattr(block, "text", None)
+                    if text:
+                        content_parts.append(text)
+            content = "".join(content_parts).strip()
         else:
-            raise GPTTimeout(
-                str(last_error) if last_error else "unable to call OpenAI"
-            )
-        usage_in = resp.usage.prompt_tokens
-        usage_out = resp.usage.completion_tokens
-        add_tokens(usage_in + usage_out, MAX_TOKENS_MONTH)
-        content = resp.choices[0].message.content.strip()
-        content = content.lstrip("```json").rstrip("```").strip()
+            base_kwargs = {
+                "model": model,
+                "messages": messages,
+                "timeout": timeout,
+                "response_format": {"type": "json_object"},
+                "temperature": 0.2,
+            }
+            token_kwargs_order = [
+                {"max_completion_tokens": _MAX_COMPLETION_TOKENS},
+                {"max_tokens": _MAX_COMPLETION_TOKENS},
+            ]
+            resp = None
+            last_error: Exception | None = None
+            for token_kwargs in token_kwargs_order:
+                try:
+                    resp = await client.chat.completions.create(
+                        **base_kwargs, **token_kwargs
+                    )
+                    break
+                except Exception as exc:
+                    msg = str(exc)
+                    param_name = next(iter(token_kwargs))
+                    if "Unsupported parameter" in msg and param_name in msg:
+                        last_error = exc
+                        continue
+                    raise GPTTimeout(msg) from exc
+            else:
+                raise GPTTimeout(
+                    str(last_error) if last_error else "unable to call OpenAI"
+                )
+            usage_in = resp.usage.prompt_tokens
+            usage_out = resp.usage.completion_tokens
+            tracker.add_tag("tokens", usage_in + usage_out)
+            add_tokens(usage_in + usage_out, MAX_TOKENS_MONTH)
+            content = resp.choices[0].message.content.strip()
+            content = content.lstrip("```json").rstrip("```").strip()
 
-    if not content:
-        raise ValueError("Invalid JSON: (empty string)")
+        if not content:
+            raise ValueError("Invalid JSON: (empty string)")
 
-    try:
-        data = json.loads(content)
-    except json.JSONDecodeError as e:
-        raise ValueError(f"Invalid JSON: {content}") from e
-
-    for key in _REQUIRED_KEYS:
-        if key not in data:
-            raise ValueError(f"key {key} missing")
-    if not isinstance(data["ranked_strategies"], list):
-        raise ValueError("ranked_strategies type error")
-
-    try:
-        weight_macro = float(data["weight_macro"])
-    except (TypeError, ValueError) as exc:
-        raise ValueError("weight_macro type error") from exc
-    weight_macro = max(0.0, min(1.0, weight_macro))
-    data["weight_macro"] = round(weight_macro, 2)
-
-    focus_tag = data.get("focus_tag")
-    if not isinstance(focus_tag, str) or focus_tag not in _FOCUS_TAGS:
-        focus_tag = "hybrid"
-    data["focus_tag"] = focus_tag
-
-    weight_scalp_raw = data.get("weight_scalp")
-    weight_scalp: float | None = None
-    if weight_scalp_raw is not None:
         try:
-            weight_scalp = float(weight_scalp_raw)
-        except (TypeError, ValueError):
-            weight_scalp = None
-    if weight_scalp is not None:
-        weight_scalp = max(0.0, min(1.0, weight_scalp))
-        if weight_scalp + weight_macro > 1.0:
-            weight_scalp = max(0.0, 1.0 - weight_macro)
-        data["weight_scalp"] = round(weight_scalp, 2)
-    else:
-        data["weight_scalp"] = None
+            data = json.loads(content)
+        except json.JSONDecodeError as e:
+            raise ValueError(f"Invalid JSON: {content}") from e
 
-    ranked = [
-        s for s in data.get("ranked_strategies", []) if s in _ALLOWED_STRATEGIES
-    ]
-    data["ranked_strategies"] = ranked
-    data["model_used"] = model
-    return data
+        for key in _REQUIRED_KEYS:
+            if key not in data:
+                raise ValueError(f"key {key} missing")
+        if not isinstance(data["ranked_strategies"], list):
+            raise ValueError("ranked_strategies type error")
+
+        try:
+            weight_macro = float(data["weight_macro"])
+        except (TypeError, ValueError) as exc:
+            raise ValueError("weight_macro type error") from exc
+        weight_macro = max(0.0, min(1.0, weight_macro))
+        data["weight_macro"] = round(weight_macro, 2)
+
+        focus_tag = data.get("focus_tag")
+        if not isinstance(focus_tag, str) or focus_tag not in _FOCUS_TAGS:
+            focus_tag = "hybrid"
+        data["focus_tag"] = focus_tag
+
+        weight_scalp_raw = data.get("weight_scalp")
+        weight_scalp: float | None = None
+        if weight_scalp_raw is not None:
+            try:
+                weight_scalp = float(weight_scalp_raw)
+            except (TypeError, ValueError):
+                weight_scalp = None
+        if weight_scalp is not None:
+            weight_scalp = max(0.0, min(1.0, weight_scalp))
+            if weight_scalp + weight_macro > 1.0:
+                weight_scalp = max(0.0, 1.0 - weight_macro)
+            data["weight_scalp"] = round(weight_scalp, 2)
+        else:
+            data["weight_scalp"] = None
+
+        ranked = [
+            s for s in data.get("ranked_strategies", []) if s in _ALLOWED_STRATEGIES
+        ]
+        data["ranked_strategies"] = ranked
+        data["model_used"] = model
+        return data
 
 
 async def call_openai(payload: Dict) -> Dict:
@@ -263,6 +271,11 @@ async def get_decision(payload: Dict) -> Dict:
         if age <= _REUSE_WINDOW_SECONDS:
             reused = dict(_LAST_DECISION_DATA)
             reused["reason"] = "reuse_previous"
+            log_gpt_fallback(
+                "gpt_decider",
+                "reuse_previous",
+                extra_tags={"age_seconds": round(age, 1)},
+            )
             logger.warning(
                 "GPT decision failed (%s); reusing previous decision from %.0fs ago.",
                 str(last_exc),
@@ -279,6 +292,7 @@ async def get_decision(payload: Dict) -> Dict:
             str(last_exc),
             heur_exc,
         )
+        log_gpt_fallback("gpt_decider", "static_config")
         result = dict(_FALLBACK_DECISION)
         _LAST_DECISION_TS = now
         _LAST_DECISION_DATA = {k: v for k, v in result.items() if k != "reason"}
@@ -288,6 +302,7 @@ async def get_decision(payload: Dict) -> Dict:
         "GPT decision failed (%s); using heuristic fallback decision.",
         str(last_exc),
     )
+    log_gpt_fallback("gpt_decider", "heuristic")
     _LAST_DECISION_TS = now
     _LAST_DECISION_DATA = {k: v for k, v in heuristic.items() if k != "reason"}
     return heuristic
