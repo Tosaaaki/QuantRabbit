@@ -1461,70 +1461,6 @@ async def logic_loop(
             elif not prev_range_state and range_active:
                 range_entry_counter = 0
 
-            stage_overrides, stage_changed, stage_biases = param_context.stage_overrides(
-                _BASE_STAGE_RATIOS,
-                range_active=range_active,
-            )
-            if stage_plan_advisor and stage_plan_advisor.enabled:
-                stage_context = {
-                    "range_active": range_active,
-                    "risk_appetite": param_snapshot.risk_appetite,
-                    "stage_bias": stage_biases,
-                    "weight_macro": weight_macro,
-                    "weight_scalp": weight_scalp if weight_scalp is not None else 0.0,
-                }
-                try:
-                    stage_hint = await stage_plan_advisor.advise(stage_context)
-                except Exception as exc:  # pragma: no cover
-                    logging.debug("[STAGE_PLAN] failed: %s", exc)
-                    stage_hint = None
-                if stage_hint and stage_hint.confidence >= 0.4:
-                    stage_overrides.update(stage_hint.plans)
-                    stage_changed = True
-            _set_stage_plan_overrides(stage_overrides)
-            vol_ratio = param_snapshot.vol_high_ratio if param_snapshot else -1.0
-            if stage_changed:
-                log_bias = {k: round(v, 2) for k, v in stage_biases.items()}
-                logging.info(
-                    "[STAGE] dynamic_plan=%s bias=%s range=%s vol_high=%.2f",
-                    stage_overrides,
-                    log_bias,
-                    range_active,
-                    vol_ratio,
-                )
-            elif any(
-                abs(stage_biases.get(k, 1.0) - last_stage_biases.get(k, 1.0)) >= 0.08
-                for k in stage_biases
-            ):
-                log_bias = {k: round(v, 2) for k, v in stage_biases.items()}
-                logging.info(
-                    "[STAGE] bias_adjust drift=%s range=%s vol_high=%.2f",
-                    log_bias,
-                    range_active,
-                    vol_ratio,
-                )
-            last_stage_biases = dict(stage_biases)
-
-            stage_tracker.update_loss_streaks(
-                now=now,
-                cooldown_map=POCKET_LOSS_COOLDOWNS,
-                range_active=range_active,
-                atr_pips=atr_pips,
-                vol_5m=vol_5m,
-            )
-            recent_profiles = stage_tracker.get_recent_profiles()
-            if last_logged_range_state is None or last_logged_range_state != range_active:
-                log_metric(
-                    "range_mode_active",
-                    1.0 if range_active else 0.0,
-                    tags={
-                        "reason": last_range_reason or range_ctx.reason or "unknown",
-                        "score": round(range_ctx.score, 3),
-                    },
-                    ts=now,
-                )
-                last_logged_range_state = range_active
-
             # --- 2. GPT判断 ---
             # M1/H4 の移動平均・RSI などの指標をまとめて送信
             payload = {
@@ -1678,6 +1614,69 @@ async def logic_loop(
                     weight_macro = _clamp(float(focus_override_hint.weight_macro), 0.0, 1.0)
                 if focus_override_hint.weight_scalp is not None:
                     weight_scalp = _clamp(float(focus_override_hint.weight_scalp), 0.0, 1.0)
+            stage_overrides, stage_changed, stage_biases = param_context.stage_overrides(
+                _BASE_STAGE_RATIOS,
+                range_active=range_active,
+            )
+            if stage_plan_advisor and stage_plan_advisor.enabled:
+                stage_context = {
+                    "range_active": range_active,
+                    "risk_appetite": param_snapshot.risk_appetite,
+                    "stage_bias": stage_biases,
+                    "weight_macro": weight_macro,
+                    "weight_scalp": weight_scalp if weight_scalp is not None else 0.0,
+                }
+                try:
+                    stage_hint = await stage_plan_advisor.advise(stage_context)
+                except Exception as exc:  # pragma: no cover
+                    logging.debug("[STAGE_PLAN] failed: %s", exc)
+                    stage_hint = None
+                if stage_hint and stage_hint.confidence >= 0.4:
+                    stage_overrides.update(stage_hint.plans)
+                    stage_changed = True
+            _set_stage_plan_overrides(stage_overrides)
+            vol_ratio = param_snapshot.vol_high_ratio if param_snapshot else -1.0
+            if stage_changed:
+                log_bias = {k: round(v, 2) for k, v in stage_biases.items()}
+                logging.info(
+                    "[STAGE] dynamic_plan=%s bias=%s range=%s vol_high=%.2f",
+                    stage_overrides,
+                    log_bias,
+                    range_active,
+                    vol_ratio,
+                )
+            elif any(
+                abs(stage_biases.get(k, 1.0) - last_stage_biases.get(k, 1.0)) >= 0.08
+                for k in stage_biases
+            ):
+                log_bias = {k: round(v, 2) for k, v in stage_biases.items()}
+                logging.info(
+                    "[STAGE] bias_adjust drift=%s range=%s vol_high=%.2f",
+                    log_bias,
+                    range_active,
+                    vol_ratio,
+                )
+            last_stage_biases = dict(stage_biases)
+
+            stage_tracker.update_loss_streaks(
+                now=now,
+                cooldown_map=POCKET_LOSS_COOLDOWNS,
+                range_active=range_active,
+                atr_pips=atr_pips,
+                vol_5m=vol_5m,
+            )
+            recent_profiles = stage_tracker.get_recent_profiles()
+            if last_logged_range_state is None or last_logged_range_state != range_active:
+                log_metric(
+                    "range_mode_active",
+                    1.0 if range_active else 0.0,
+                    tags={
+                        "reason": last_range_reason or range_ctx.reason or "unknown",
+                        "score": round(range_ctx.score, 3),
+                    },
+                    ts=now,
+                )
+                last_logged_range_state = range_active
             focus_candidates = set(FOCUS_POCKETS.get(focus_tag, ("macro", "micro", "scalp")))
             if not focus_candidates:
                 focus_candidates = {"micro"}
