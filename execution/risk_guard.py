@@ -7,6 +7,7 @@ execution.risk_guard
 """
 
 from __future__ import annotations
+import os
 import sqlite3
 import pathlib
 from typing import Dict, Optional
@@ -24,6 +25,11 @@ _LOOKBACK_DAYS = 7
 _DB = pathlib.Path("logs/trades.db")
 con = sqlite3.connect(_DB)
 con.row_factory = sqlite3.Row
+
+
+def _guard_enabled() -> bool:
+    flag = os.getenv("ENABLE_DRAWDOWN_GUARD", "0").strip().lower()
+    return flag not in {"", "0", "false", "off"}
 
 _POCKET_EQUITY_HINT: Dict[str, float] = {
     pocket: _DEFAULT_BASE_EQUITY[pocket] for pocket in _DEFAULT_BASE_EQUITY
@@ -86,6 +92,8 @@ def _pocket_dd(pocket: str) -> float:
 
 def check_global_drawdown() -> bool:
     """口座全体のドローダウンが閾値を超えているかチェック"""
+    if not _guard_enabled():
+        return False
     # 全ての取引の損益合計を取得
     rows = con.execute("SELECT SUM(pl_pips) FROM trades").fetchone()
     total_pl_pips = rows[0] or 0.0
@@ -103,6 +111,8 @@ def check_global_drawdown() -> bool:
 
 
 def can_trade(pocket: str) -> bool:
+    if not _guard_enabled():
+        return True
     return _pocket_dd(pocket) < POCKET_DD_LIMITS[pocket]
 
 
