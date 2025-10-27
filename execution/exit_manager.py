@@ -462,6 +462,7 @@ class ExitManager:
             stage_level,
             profile,
             range_mode=range_mode,
+            profit_pips=profit_pips,
         )
         if close_units <= 0:
             return None
@@ -716,6 +717,7 @@ class ExitManager:
             stage_level,
             profile,
             range_mode=range_mode,
+            profit_pips=profit_pips,
         )
         if close_units <= 0:
             return None
@@ -1157,11 +1159,15 @@ class ExitManager:
         pocket_profile: Dict[str, float],
         *,
         range_mode: bool,
+        profit_pips: Optional[float] = None,
     ) -> int:
         base = abs(total_units)
         if base == 0:
             return 0
         if base <= self._min_partial_units:
+            return base
+        # 負けているポジションでは段階的クローズを避け、即時にまとめて縮小/クローズする
+        if profit_pips is not None and profit_pips <= 0.0:
             return base
         if reason not in self._partial_eligible_reasons:
             return base
