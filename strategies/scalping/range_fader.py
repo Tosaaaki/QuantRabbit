@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from typing import Dict
+import os
 
 
 class RangeFader:
@@ -21,7 +22,11 @@ class RangeFader:
             atr = fac.get("atr")
             atr_pips = (atr or 0.0) * 100
 
-        if atr_pips < 1.2 or atr_pips > 3.6:
+        scalp_tactical = os.getenv("SCALP_TACTICAL", "0").strip().lower() not in {"", "0", "false", "no"}
+        # In tactical mode broaden acceptance slightly on the low side and cap top-end volatility
+        low_atr = 1.0 if scalp_tactical else 1.2
+        high_atr = 3.6
+        if atr_pips < low_atr or atr_pips > high_atr:
             return None
         if vol_5m < 0.6 or vol_5m > 2.3:
             return None
@@ -39,9 +44,13 @@ class RangeFader:
         if momentum_pips > drift_cap:
             return None
 
-        if rsi <= 36:
-            sl = max(3.0, min(4.8, atr_pips * 1.5))
-            tp = max(2.8, min(4.2, atr_pips * 1.35))
+        if rsi <= (38 if scalp_tactical else 36):
+            if scalp_tactical:
+                sl = max(2.0, min(3.2, atr_pips * 1.2))
+                tp = max(2.0, min(3.4, atr_pips * 1.25))
+            else:
+                sl = max(3.0, min(4.8, atr_pips * 1.5))
+                tp = max(2.8, min(4.2, atr_pips * 1.35))
             eta_bonus = 0.0
             rsi_eta_up = fac.get("rsi_eta_upper_min")
             if rsi_eta_up is not None:
@@ -55,9 +64,13 @@ class RangeFader:
                 "tag": f"{RangeFader.name}-buy-fade",
             }
 
-        if rsi >= 64:
-            sl = max(3.0, min(4.8, atr_pips * 1.5))
-            tp = max(2.8, min(4.2, atr_pips * 1.35))
+        if rsi >= (62 if scalp_tactical else 64):
+            if scalp_tactical:
+                sl = max(2.0, min(3.2, atr_pips * 1.2))
+                tp = max(2.0, min(3.4, atr_pips * 1.25))
+            else:
+                sl = max(3.0, min(4.8, atr_pips * 1.5))
+                tp = max(2.8, min(4.2, atr_pips * 1.35))
             eta_bonus = 0.0
             rsi_eta_dn = fac.get("rsi_eta_lower_min")
             if rsi_eta_dn is not None:

@@ -1,5 +1,6 @@
 from __future__ import annotations
 from typing import Dict
+import os
 
 
 class M1Scalper:
@@ -25,10 +26,16 @@ class M1Scalper:
             return None
 
         # Dynamic TP/SL (pips) tuned to recent volatility
-        # - TP ≈ 3x ATR (pips) within [5, 9]
-        # - SL ≈ min(2x ATR, 0.95*TP) with a floor of 4, keeping RR >= ~1.05
-        tp_dyn = max(5.0, min(9.0, atr_pips * 3.0))
-        sl_dyn = max(4.0, min(atr_pips * 2.0, tp_dyn * 0.95))
+        # Tactical scalp mode prefers narrower targets with a small emergency SL.
+        scalp_tactical = os.getenv("SCALP_TACTICAL", "0").strip().lower() not in {"", "0", "false", "no"}
+        if scalp_tactical:
+            tp_dyn = max(2.2, min(3.6, atr_pips * 1.3))
+            sl_dyn = max(2.0, min(3.4, atr_pips * 1.2, tp_dyn * 0.95))
+        else:
+            # - TP ≈ 3x ATR (pips) within [5, 9]
+            # - SL ≈ min(2x ATR, 0.95*TP) with a floor of 4, keeping RR >= ~1.05
+            tp_dyn = max(5.0, min(9.0, atr_pips * 3.0))
+            sl_dyn = max(4.0, min(atr_pips * 2.0, tp_dyn * 0.95))
         tp_dyn = round(tp_dyn, 2)
         sl_dyn = round(sl_dyn, 2)
 

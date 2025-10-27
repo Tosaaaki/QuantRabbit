@@ -7,6 +7,7 @@ GPT が返す weight_macro と、risk_guard が計算した
 
 from __future__ import annotations
 from typing import Dict, Optional
+import os
 
 DEFAULT_SCALP_SHARE = 0.3
 MIN_SCALP_FRACTION = 0.05  # floor share of total lot reserved for scalping
@@ -39,12 +40,21 @@ def alloc(
     total_lot = round(max(total_lot, 0.0), 3)
     weight_macro = _clamp(float(weight_macro), 0.0, 1.0)
 
+    # Tactical override: prioritize scalp in choppy/late-trend conditions
+    # Set env SCALP_TACTICAL=1 to cap macro and floor scalp allocation.
+    scalp_tactical = os.getenv("SCALP_TACTICAL", "0").strip().lower() not in {"", "0", "false", "no"}
+    tactical_macro_cap = 0.15 if scalp_tactical else None
+    tactical_scalp_floor = 0.2 if scalp_tactical else None
+
     macro = round(total_lot * weight_macro, 3)
     scalp = 0.0
     micro = 0.0
 
     if weight_scalp is not None:
         weight_scalp = _clamp(float(weight_scalp), 0.0, 1.0)
+        # Apply macro cap under tactical mode
+        if tactical_macro_cap is not None:
+            weight_macro = min(weight_macro, tactical_macro_cap)
         total_assigned = weight_macro + weight_scalp
         if total_assigned > 1.0:
             excess = total_assigned - 1.0
@@ -85,6 +95,22 @@ def alloc(
                 if transfer > 0:
                     dist[donor] = round(dist[donor] - transfer, 3)
                     dist["scalp"] = round(dist["scalp"] + transfer, 3)
+
+    # Enforce tactical scalp floor after distribution, if requested
+    if scalp_tactical and total_lot > 0:
+        # Cap macro and boost scalp minimally, taking from the larger of micro/macro
+        if tactical_macro_cap is not None and dist["macro"] > total_lot * tactical_macro_cap:
+            excess = dist["macro"] - round(total_lot * tactical_macro_cap, 3)
+            dist["macro"] = round(dist["macro"] - excess, 3)
+            dist["micro"] = round(dist["micro"] + excess, 3)
+        if tactical_scalp_floor is not None:
+            target = round(total_lot * tactical_scalp_floor, 3)
+            if dist["scalp"] + 1e-6 < target:
+                need = round(target - dist["scalp"], 3)
+                donor = "micro" if dist["micro"] >= dist["macro"] else "macro"
+                take = min(need, dist[donor])
+                dist[donor] = round(dist[donor] - take, 3)
+                dist["scalp"] = round(dist["scalp"] + take, 3)
 
     total_alloc = round(dist["micro"] + dist["macro"] + dist["scalp"], 3)
     target_total = round(total_lot, 3)
