@@ -132,6 +132,12 @@ class OrderIntent(BaseModel):
     --ssh-key-file ~/.ssh/gcp_oslogin_quantrabbit \
     --command "sudo -u tossaki sqlite3 /home/tossaki/QuantRabbit/logs/trades.db \"SELECT DATE(close_time), COUNT(*), ROUND(SUM(pl_pips),2) FROM trades WHERE DATE(close_time)=DATE('now') GROUP BY 1;\""
   ```
+  推奨（デフォルト設定不要のヘルパ）:
+  ```bash
+  scripts/vm.sh -p quantrabbit -z asia-northeast1-a -m fx-trader-vm \
+    sql -f /home/tossaki/QuantRabbit/logs/trades.db \
+    -q "SELECT DATE(close_time), COUNT(*), ROUND(SUM(pl_pips),2) FROM trades WHERE DATE(close_time)=DATE('now') GROUP BY 1;" -t
+  ```
 
 ---
 
@@ -262,18 +268,25 @@ class OrderIntent(BaseModel):
 
 ---
 
-## 7. デプロイ手順 (要約)
+## 7. デプロイ手順（更新版 / 要約）
 
 ```bash
-gcloud builds submit --tag gcr.io/$PROJ/news-summarizer
+# Cloud Run ニュース要約のビルド（プロジェクトを明示）
+gcloud --project=quantrabbit builds submit --tag gcr.io/quantrabbit/news-summarizer
+
+# IaC（必要に応じて）
 cd infra/terraform && terraform init && terraform apply
-gcloud compute ssh fx-trader-vm --command "git pull && ./startup.sh"
+
+# VM へアプリをデプロイ（IAP 経由）
+scripts/vm.sh -p quantrabbit -z asia-northeast1-a -m fx-trader-vm \
+  deploy -b main -i --restart quantrabbit.service -t
 ```
 
 - デプロイ前に `terraform plan` を CI で実行し差分確認、サービスアカウントは最小権限 (`roles/storage.objectAdmin`, `roles/logging.logWriter`, 必要な Pub/Sub Roles)。
 - Cloud Build 成功時に `cosign sign` でイメージ署名、SBOM (`gcloud artifacts sbom export`) を保存。
 - 予算アラート: `GCP Budget Alert ≥ 80%` で Slack 通知、IAP トンネルは `roles/iap.tunnelResourceAccessor` を必須化。
-- ロールバック手順: `gcloud compute ssh fx-trader-vm --command "cd ~/QuantRabbit && git checkout <release-tag> && ./startup.sh --dry-run"` を実行し、検証後に `--apply`。
+- ロールバック: `scripts/vm.sh ... exec -- 'cd ~/QuantRabbit && git checkout <release-tag> && ./startup.sh --dry-run'` を実施し、検証後に `--apply`。
+  - 旧 `gcloud compute ssh ... --command` でも可だが、`vm.sh` でプロジェクト/ゾーン/IAP を一元化することを推奨。
 
 ### 7.1 VM デプロイ（Git フロー標準）
 
@@ -283,17 +296,24 @@ gcloud compute ssh fx-trader-vm --command "git pull && ./startup.sh"
 - OS Login が有効、`roles/compute.osLogin` と（外部 IP 無しの場合）`roles/iap.tunnelResourceAccessor` 付与済み
 - VM 側のリポジトリは `origin` が到達可能（例: GitHub）
 
-コマンド例
+コマンド例（新標準）
 ```bash
 # 現在のブランチをデプロイし、VM の venv も依存更新
-scripts/deploy_to_vm.sh -i
+scripts/vm.sh -p quantrabbit -z asia-northeast1-a -m fx-trader-vm deploy -i -t
 
 # 明示的にブランチを指定
-scripts/deploy_to_vm.sh -b feature/exit-manager -i
+scripts/vm.sh -p quantrabbit -z asia-northeast1-a -m fx-trader-vm deploy -b feature/exit-manager -i -t
 
-# ログの追尾
-gcloud compute ssh fx-trader-vm --zone asia-northeast1-a \
-  --command 'journalctl -u quantrabbit.service -f'
+# ログの追尾（systemd）
+scripts/vm.sh -p quantrabbit -z asia-northeast1-a -m fx-trader-vm tail -s quantrabbit.service -t
+```
+
+Makefile ショートカット（`scripts/vm.env` を設定すると便利）
+```bash
+make vm-deploy BRANCH=main
+make vm-tail VM_SERVICE=quantrabbit.service
+make vm-logs
+make vm-sql Q="SELECT COUNT(*) FROM trades;"
 ```
 
 オプション
@@ -309,13 +329,65 @@ gcloud compute ssh fx-trader-vm --zone asia-northeast1-a \
 
 OS Login 鍵準備（初回のみ）
 ```bash
-ssh-keygen -t ed25519 -f ~/.ssh/gcp_oslogin_qr -N '' -C 'oslogin-quantrabbit'
-gcloud compute os-login ssh-keys add --key-file ~/.ssh/gcp_oslogin_qr.pub --ttl 30d
+ssh-keygen -t ed25519 -f ~/.ssh/gcp_oslogin_quantrabbit -N '' -C 'oslogin-quantrabbit'
+gcloud compute os-login ssh-keys add --key-file ~/.ssh/gcp_oslogin_quantrabbit.pub --ttl 30d
 ```
 デプロイ例（鍵指定/IAP併用）
 ```bash
-scripts/deploy_to_vm.sh -i -k ~/.ssh/gcp_oslogin_qr -t
+scripts/vm.sh -p quantrabbit -z asia-northeast1-a -m fx-trader-vm deploy -i -k ~/.ssh/gcp_oslogin_quantrabbit -t
 ```
+
+## 7.2 デプロイトラブルシュート（OS Login / 権限 / systemd）
+
+- 症状
+  - IAP/OS Login で VM には入れるが、`sudo` 不可・`/home/tossaki/QuantRabbit` へアクセス不可・`systemctl` での再起動ができない。
+  - `scripts/vm.sh ... deploy -i --restart ...` が `sudo` 権限不足で停止。
+
+- 原因
+  - 対象の OS Login ユーザに `roles/compute.osAdminLogin` が付与されていない。
+
+- 解決（プロジェクト IAM に 1 コマンドで付与）
+  - 実行者: プロジェクト IAM 管理者
+  - 例:
+    - `gcloud projects add-iam-policy-binding quantrabbit \
+       --member="user:www.tosakiweb.net@gmail.com" \
+       --role="roles/compute.osAdminLogin"`
+
+- 検証
+  - `gcloud compute ssh fx-trader-vm --project=quantrabbit --zone=asia-northeast1-a \
+     --tunnel-through-iap --ssh-key-file ~/.ssh/gcp_oslogin_quantrabbit \
+     --command "sudo -n true && echo SUDO_OK || echo NO_SUDO"`
+  - `SUDO_OK` が出れば権限 OK。
+
+- デプロイ実行（標準）
+  - `scripts/vm.sh -p quantrabbit -z asia-northeast1-a -m fx-trader-vm -t \
+     -k ~/.ssh/gcp_oslogin_quantrabbit -d /home/tossaki/QuantRabbit \
+     deploy -i --restart quantrabbit.service`
+
+- デプロイ実行（フォールバック直書き）
+  - vm.sh の remote 実行でシェルの quoting 事情により失敗する場合は、下記の直接実行に退避:
+    - `gcloud compute ssh fx-trader-vm --project quantrabbit --zone asia-northeast1-a \
+       --tunnel-through-iap --ssh-key-file ~/.ssh/gcp_oslogin_quantrabbit \
+       --command "sudo -u tossaki -H bash -lc 'cd /home/tossaki/QuantRabbit && git fetch --all -q || true && git checkout -q main || git checkout -b main origin/main || true && git pull --ff-only && if [ -d .venv ]; then source .venv/bin/activate && pip install -r requirements.txt; fi'"`
+    - `gcloud compute ssh fx-trader-vm --project quantrabbit --zone asia-northeast1-a \
+       --tunnel-through-iap --ssh-key-file ~/.ssh/gcp_oslogin_quantrabbit \
+       --command "sudo systemctl daemon-reload && sudo systemctl restart quantrabbit.service && sudo systemctl status --no-pager -l quantrabbit.service || true"`
+
+- 稼働確認
+  - ステータス: `scripts/vm.sh ... tail -s quantrabbit.service -t`
+  - 直接: `gcloud compute ssh ... --command "journalctl -u quantrabbit.service -n 200 -f --output=short-iso"`
+
+### 7.2.1 既知事象: vm.sh の remote コマンド quoting
+- まれに `scripts/vm.sh deploy` の内部で base64+eval を用いたリモート実行の quoting が壊れ、
+  期待通りに複数行コマンドが評価されないことがあります（`set` の出力が流れる等）。
+- その場合は上記「フォールバック直書き」を用いるか、単純な `--command` で小さな単位に分けて実行してください。
+
+### 7.2.2 直近のエラー履歴（参考）
+- 旧ビルドで `main.py` に SyntaxError があり、`journalctl` に以下が記録されました。
+  - `File "/home/tossaki/QuantRabbit/main.py", line 349` の `if os.getenv(SCALP_TACTICAL, 0).strip().lower() not in {, 0, false, no}:`
+- 現行ブランチでは修正済み。類似箇所では以下を推奨します。
+  - `if str(os.getenv("SCALP_TACTICAL", "0")).strip().lower() not in {"", "0", "false", "no"}: ...`
+
 
 8. チーム運用ルール
 	1.	1 ファイル = 1 PR、Squash Merge、CI green 必須
