@@ -70,6 +70,7 @@ def _ensure_orders_schema() -> sqlite3.Connection:
           client_order_id TEXT,
           status TEXT,
           attempt INTEGER,
+          stage_index INTEGER,
           ticket_id TEXT,
           executed_price REAL,
           error_code TEXT,
@@ -79,6 +80,9 @@ def _ensure_orders_schema() -> sqlite3.Connection:
         )
         """
     )
+    cols = {row[1] for row in con.execute("PRAGMA table_info(orders)")}
+    if "stage_index" not in cols:
+        con.execute("ALTER TABLE orders ADD COLUMN stage_index INTEGER")
     # Useful indexes
     con.execute(
         "CREATE INDEX IF NOT EXISTS idx_orders_client ON orders(client_order_id)"
@@ -117,6 +121,7 @@ def _log_order(
     client_order_id: Optional[str],
     status: str,
     attempt: int,
+    stage_index: Optional[int] = None,
     ticket_id: Optional[str] = None,
     executed_price: Optional[float] = None,
     error_code: Optional[str] = None,
@@ -131,9 +136,9 @@ def _log_order(
             """
             INSERT INTO orders (
               ts, pocket, instrument, side, units, sl_price, tp_price,
-              client_order_id, status, attempt, ticket_id, executed_price,
+              client_order_id, status, attempt, stage_index, ticket_id, executed_price,
               error_code, error_message, request_json, response_json
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 ts,
@@ -146,6 +151,7 @@ def _log_order(
                 client_order_id,
                 status,
                 int(attempt),
+                int(stage_index) if stage_index is not None else None,
                 ticket_id,
                 float(executed_price) if executed_price is not None else None,
                 error_code,
@@ -569,6 +575,7 @@ async def market_order(
     client_order_id: Optional[str] = None,
     reduce_only: bool = False,
     entry_thesis: Optional[dict] = None,
+    stage_index: Optional[int] = None,
 ) -> Optional[str]:
     """
     units : +10000 = buy 0.1 lot, ‑10000 = sell 0.1 lot
@@ -586,6 +593,7 @@ async def market_order(
             client_order_id=client_order_id,
             status="skipped_tiny_units",
             attempt=0,
+            stage_index=stage_index,
             request_payload={
                 "reason": "units_below_min",
                 "min_units": _MIN_ORDER_UNITS,
@@ -638,6 +646,7 @@ async def market_order(
             client_order_id=client_order_id,
             status="submit_attempt",
             attempt=attempt + 1,
+            stage_index=stage_index,
             request_payload=log_payload,
         )
         r = OrderCreate(accountID=ACCOUNT, data=payload)
@@ -667,6 +676,7 @@ async def market_order(
                     client_order_id=client_order_id,
                     status="rejected",
                     attempt=attempt + 1,
+                    stage_index=stage_index,
                     error_code=reject.get("errorCode"),
                     error_message=reject.get("errorMessage") or reason,
                     response_payload=response,
@@ -708,6 +718,7 @@ async def market_order(
                     client_order_id=client_order_id,
                     status="filled",
                     attempt=attempt + 1,
+                    stage_index=stage_index,
                     ticket_id=trade_id,
                     executed_price=executed_price,
                     response_payload=response,
@@ -730,6 +741,7 @@ async def market_order(
                 client_order_id=client_order_id,
                 status="fill_no_tradeid",
                 attempt=attempt + 1,
+                stage_index=stage_index,
                 response_payload=response,
             )
             return None
@@ -754,6 +766,7 @@ async def market_order(
                 client_order_id=client_order_id,
                 status="api_error",
                 attempt=attempt + 1,
+                stage_index=stage_index,
                 error_message=str(e),
                 response_payload=resp if isinstance(resp, dict) else None,
             )
@@ -783,6 +796,7 @@ async def market_order(
                 client_order_id=client_order_id,
                 status="unexpected_error",
                 attempt=attempt + 1,
+                stage_index=stage_index,
                 error_message=str(exc),
             )
             return None

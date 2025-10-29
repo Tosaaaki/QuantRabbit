@@ -57,6 +57,69 @@ class MovingAverageCross:
         if direction is None:
             return None
 
+        ema12 = fac.get("ema12")
+        ema24 = fac.get("ema24")
+        rsi = fac.get("rsi")
+        close_price = fac.get("close")
+        ema20 = fac.get("ema20") or fac.get("ma20")
+        try:
+            ema12_val = float(ema12) if ema12 is not None else None
+        except (TypeError, ValueError):
+            ema12_val = None
+        try:
+            ema24_val = float(ema24) if ema24 is not None else None
+        except (TypeError, ValueError):
+            ema24_val = None
+        try:
+            rsi_val = float(rsi) if rsi is not None else None
+        except (TypeError, ValueError):
+            rsi_val = None
+        try:
+            close_val = float(close_price) if close_price is not None else None
+        except (TypeError, ValueError):
+            close_val = None
+        try:
+            ema20_val = float(ema20) if ema20 is not None else None
+        except (TypeError, ValueError):
+            ema20_val = None
+
+        momentum_gap = 0.0
+        if close_val is not None and ema20_val is not None:
+            momentum_gap = close_val - ema20_val
+
+        ema_ok = False
+        if ema12_val is not None and ema24_val is not None:
+            if direction == "long":
+                ema_ok = ema12_val > ema24_val - 0.01
+            else:
+                ema_ok = ema12_val < ema24_val + 0.01
+
+        rsi_ok = False
+        if rsi_val is not None:
+            if direction == "long":
+                rsi_ok = rsi_val >= 55.0
+            else:
+                rsi_ok = rsi_val <= 45.0
+
+        strong_momentum = False
+        macd_slope = projection.macd_slope_pips or 0.0
+        gap_slope = projection.gap_slope_pips or 0.0
+        if direction == "long":
+            strong_momentum = (
+                gap_slope >= 0.16
+                and macd_slope >= 0.08
+                and momentum_gap >= 0.006
+            )
+        else:
+            strong_momentum = (
+                gap_slope <= -0.16
+                and macd_slope <= -0.08
+                and momentum_gap <= -0.006
+            )
+
+        if not ((ema_ok and rsi_ok) or strong_momentum):
+            return None
+
         macd_adjust = MovingAverageCross._macd_adjust(projection, direction)
         if macd_adjust is None:
             return None
@@ -67,17 +130,62 @@ class MovingAverageCross:
         confidence = MovingAverageCross._confidence(projection, direction, adx, macd_adjust)
         sl_pips, tp_pips = MovingAverageCross._targets(projection, direction, macd_adjust)
 
+        entry_type: Optional[str] = None
+        entry_price: Optional[float] = None
+        entry_tolerance: Optional[float] = None
+        close_price = fac.get("close")
+        atr_hint = fac.get("atr_pips")
+        if atr_hint is None:
+            atr_hint = (fac.get("atr") or 0.0) * 100
+        try:
+            atr_value = float(atr_hint or 0.0)
+        except (TypeError, ValueError):
+            atr_value = 0.0
+        pullback = None
+        if close_val is not None:
+            pullback = 1.1 + atr_value * 0.35
+            if atr_value <= 1.6:
+                pullback = 1.05 + atr_value * 0.32
+            elif atr_value <= 3.0:
+                pullback = 1.35 + atr_value * 0.38
+            elif atr_value <= 5.0:
+                pullback = 1.55 + atr_value * 0.4
+            else:
+                pullback = 1.85 + atr_value * 0.42
+            if strong_momentum:
+                pullback *= 0.85
+            pullback = max(1.2, min(6.5, round(pullback, 2)))
+            tolerance = max(0.35, min(1.2, pullback * 0.32 + (0.18 if atr_value <= 2.0 else 0.1)))
+            if direction == "long":
+                entry_price = round(close_val - pullback * 0.01, 3)
+            else:
+                entry_price = round(close_val + pullback * 0.01, 3)
+            entry_type = "limit"
+            entry_tolerance = tolerance
+
         if tp_pips <= 0 or sl_pips <= 0:
             return None
         tag_suffix = "bull" if direction == "long" else "bear"
         action = "OPEN_LONG" if direction == "long" else "OPEN_SHORT"
-        return {
+        payload = {
             "action": action,
             "sl_pips": sl_pips,
             "tp_pips": tp_pips,
             "confidence": confidence,
             "tag": f"{MovingAverageCross.name}-{tag_suffix}",
         }
+        if entry_type and entry_price is not None:
+            payload["entry_type"] = entry_type
+            payload["entry_price"] = entry_price
+            payload["entry_tolerance_pips"] = entry_tolerance or 0.6
+            payload["meta"] = {
+                "pullback_pips": pullback,
+                "gap_slope_pips": projection.gap_slope_pips,
+                "gap_pips": projection.gap_pips,
+                "momentum_gap": momentum_gap,
+                "macd_slope": macd_slope,
+            }
+        return payload
 
     @staticmethod
     def _confidence(

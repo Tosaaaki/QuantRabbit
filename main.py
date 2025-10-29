@@ -703,6 +703,28 @@ def _macro_pullback_threshold(stage_idx: int, atr_pips: Optional[float] = None) 
     return round(base, 2), round(max_depth, 2)
 
 
+def _dynamic_macro_pullback_pips(
+    atr_pips: float,
+    momentum: float,
+    pullback_floor: float,
+    pullback_cap: float,
+) -> float:
+    atr = max(0.0, atr_pips)
+    if atr <= 1.6:
+        base = 1.05 + atr * 0.35
+    elif atr <= 3.2:
+        base = 1.35 + atr * 0.4
+    elif atr <= 5.5:
+        base = pullback_floor + atr * 0.42
+    else:
+        base = pullback_floor + atr * 0.48
+    if abs(momentum) >= 0.012:
+        base *= 0.88
+    if abs(momentum) >= 0.02:
+        base *= 0.82
+    return max(1.15, min(pullback_cap, round(base, 2)))
+
+
 def _macro_pullback_ready(
     action: str,
     stage_idx: int,
@@ -1166,6 +1188,9 @@ async def logic_loop(
     last_logged_scalp_weight: Optional[float] = None
     recent_profiles: dict[str, dict[str, float]] = {}
     param_snapshot: Optional[ParamSnapshot] = None
+    scalp_default_applied = False
+    macro_clip_logged = False
+    scalp_ready_forced = False
 
     def _factor_snapshot(data: Optional[Dict[str, float]]) -> Dict[str, float]:
         if not data:
@@ -2996,9 +3021,44 @@ async def logic_loop(
                     )
                     continue
 
+                pullback_note = None
                 entry_type = signal.get("entry_type", "market")
                 target_price = signal.get("entry_price")
                 tolerance_pips = float(signal.get("entry_tolerance_pips", 0.25))
+                if (
+                    pocket == "macro"
+                    and stage_idx == 0
+                    and entry_type == "market"
+                    and not reduce_only
+                ):
+                    atr_hint = fac_m1.get("atr_pips")
+                    if atr_hint is None:
+                        atr_hint = (fac_m1.get("atr") or 0.0) * 100
+                    try:
+                        atr_hint = float(atr_hint or 0.0)
+                    except (TypeError, ValueError):
+                        atr_hint = 0.0
+                    pullback_min, pullback_max = _macro_pullback_threshold(1, atr_hint)
+                    pullback_pips = _dynamic_macro_pullback_pips(
+                        atr_hint,
+                        momentum,
+                        pullback_min,
+                        pullback_max,
+                    )
+                    if is_buy:
+                        target_price = round(entry_price - pullback_pips * PIP, 3)
+                    else:
+                        target_price = round(entry_price + pullback_pips * PIP, 3)
+                    entry_type = "limit"
+                    tolerance_pips = max(
+                        0.35,
+                        min(
+                            1.25,
+                            pullback_pips * (0.28 if atr_hint <= 2.0 else 0.33)
+                            + (0.18 if abs(momentum) <= 0.008 else 0.08),
+                        ),
+                    )
+                    pullback_note = pullback_pips
                 tolerance_price = tolerance_pips * PIP
                 reference_price = entry_price
                 if entry_type == "limit":
@@ -3110,6 +3170,10 @@ async def logic_loop(
                 note = signal.get("notes")
                 if note:
                     entry_thesis["note"] = note
+                if pullback_note is not None:
+                    entry_thesis.setdefault("notes_auto", {})[
+                        "macro_pullback_pips"
+                    ] = pullback_note
                 trade_id = await market_order(
                     "USD_JPY",
                     units,

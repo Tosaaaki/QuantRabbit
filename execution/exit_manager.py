@@ -78,6 +78,25 @@ class ExitManager:
         }
         self._min_partial_units = 600
 
+    def _macro_trend_supports(
+        self,
+        direction: str,
+        ma10: Optional[float],
+        ma20: Optional[float],
+        adx: float,
+        slope_support: bool,
+        cross_support: bool,
+    ) -> bool:
+        if ma10 is None or ma20 is None:
+            return False
+        if direction == "long":
+            trend_ok = ma10 >= ma20
+        else:
+            trend_ok = ma10 <= ma20
+        adx_ok = adx >= (self._macro_trend_adx - 1.5)
+        momentum_ok = slope_support or cross_support
+        return trend_ok and (adx_ok or momentum_ok)
+
     def plan_closures(
         self,
         open_positions: Dict[str, Dict],
@@ -438,6 +457,26 @@ class ExitManager:
             ):
                 reason = ""
 
+        if (
+            pocket == "macro"
+            and reason
+            and not range_mode
+            and profit_pips > -self._macro_loss_buffer
+        ):
+            trend_supports = self._macro_trend_supports(
+                "long", ma10, ma20, adx, slope_support, cross_support
+            )
+            mature = self._has_mature_trade(
+                open_info, "long", now, self._macro_min_hold_minutes
+            )
+            if trend_supports and not mature and reason in {
+                "reverse_signal",
+                "trend_reversal",
+                "ma_cross",
+                "ma_cross_imminent",
+            }:
+                return None
+
         if range_mode and reason == "reverse_signal":
             allow_reentry = False
         if reason:
@@ -700,6 +739,26 @@ class ExitManager:
                 bias_only=True,
             ):
                 reason = ""
+
+        if (
+            pocket == "macro"
+            and reason
+            and not range_mode
+            and profit_pips > -self._macro_loss_buffer
+        ):
+            trend_supports = self._macro_trend_supports(
+                "short", ma10, ma20, adx, slope_support, cross_support
+            )
+            mature = self._has_mature_trade(
+                open_info, "short", now, self._macro_min_hold_minutes
+            )
+            if trend_supports and not mature and reason in {
+                "reverse_signal",
+                "trend_reversal",
+                "ma_cross",
+                "ma_cross_imminent",
+            }:
+                return None
 
         if range_mode and reason == "reverse_signal":
             allow_reentry = False

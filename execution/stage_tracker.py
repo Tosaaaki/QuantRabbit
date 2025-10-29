@@ -34,6 +34,7 @@ class CooldownInfo:
 class StageTracker:
     def __init__(self, db_path: Path | None = None) -> None:
         self._path = db_path or _DB_PATH
+        self._path.parent.mkdir(parents=True, exist_ok=True)
         self._con = sqlite3.connect(self._path)
         _ensure_row_factory(self._con)
         self._con.execute(
@@ -435,17 +436,44 @@ class StageTracker:
         vol_5m: Optional[float],
         now: datetime,
     ) -> None:
+        fallback_cd = 900
+        if cluster_stats:
+            try:
+                fallback_cd = int(
+                    min(
+                        stats.get("cooldown", 900) or 900
+                        for stats in cluster_stats.values()
+                    )
+                )
+            except Exception:
+                fallback_cd = 900
+
         for pocket, stats in cluster_stats.items():
             thresholds = self._compute_cluster_thresholds(
                 pocket,
-                base_cooldown=int(stats.get("cooldown", 900) or 900),
+                base_cooldown=int(stats.get("cooldown", fallback_cd) or fallback_cd),
                 range_active=range_active,
                 atr_pips=atr_pips,
                 vol_5m=vol_5m,
             )
             count = int(stats.get("count", 0))
             loss_pips = float(stats.get("loss_pips", 0.0))
-            if count < thresholds["count"] and loss_pips < thresholds["pips"]:
+            apply_needed = count >= thresholds["count"] or loss_pips >= thresholds["pips"]
+            if not apply_needed:
+                recovery_count = max(0, thresholds["count"] * 0.2)
+                recovery_pips = thresholds["pips"] * 0.2
+                if count <= recovery_count and loss_pips <= recovery_pips:
+                    for direction in ("long", "short"):
+                        info = self.get_cooldown(pocket, direction, now)
+                        if info and info.reason == "loss_cluster":
+                            self.clear_cooldown(pocket, direction, reason="loss_cluster")
+                            logging.info(
+                                "[STAGE] loss cluster recovery pocket=%s direction=%s remaining_count=%d loss_pips=%.2f",
+                                pocket,
+                                direction,
+                                count,
+                                loss_pips,
+                            )
                 continue
             seconds = thresholds["cooldown"]
             applicable_dirs: List[str] = []
