@@ -19,26 +19,10 @@
   "M1Scalper": {
     "timeout_sec": 960,
     "nwave": {
-      "min_leg_pips": 2.0,
-      "pullback_mult": 1.6,
-      "target_scale": 0.45,
-      "target_floor": 0.9,
-      "target_cap": 1.4,
-      "tolerance_default": 0.24,
-      "tolerance_tactical": 0.32,
-      "hard_sl_floor": 6.6,
-      "hard_sl_atr_mult": 2.6
+      "min_leg_pips": "bad"
     },
     "fallback": {
-      "momentum_thresh": 0.0010,
-      "wick_min": 0.00075,
-      "sl_floor": 6.8,
-      "sl_atr_mult": 2.7,
-      "tp_floor": 0.9,
-      "tp_cap": 1.4,
-      "tp_atr_mult": 0.6,
-      "atr_floor_tactical": 0.85,
-      "atr_floor": 1.15
+      "momentum_thresh": "bad"
     }
   },
   "PulseBreak": {
