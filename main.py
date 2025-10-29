@@ -25,9 +25,16 @@ from market_data.news_fetcher import fetch_loop as news_fetch_loop
 from analysis.summary_ingestor import ingest_loop as summary_ingest_loop
 from analytics.insight_client import InsightClient
 from analysis.range_guard import detect_range_mode
+import os
 from analysis.param_context import ParamContext, ParamSnapshot
 from analysis.chart_story import ChartStory, ChartStorySnapshot
-from signals.pocket_allocator import alloc, DEFAULT_SCALP_SHARE, dynamic_scalp_share
+from signals.pocket_allocator import (
+    alloc,
+    DEFAULT_SCALP_SHARE,
+    dynamic_scalp_share,
+    MIN_MICRO_WEIGHT,
+    MIN_SCALP_WEIGHT,
+)
 from execution.risk_guard import (
     allowed_lot,
     can_trade,
@@ -67,6 +74,7 @@ from advisors.volatility_bias import VolatilityBiasAdvisor
 from advisors.stage_plan import StagePlanAdvisor
 from advisors.partial_reduction import PartialReductionAdvisor
 from advisors.news_bias import NewsBiasAdvisor
+from autotune.scalp_trainer import start_background_autotune
 
 # Configure logging
 logging.basicConfig(
@@ -116,6 +124,12 @@ POCKET_ENTRY_MIN_INTERVAL = {
     "micro": 150,  # 2.5分
     "scalp": 75,
 }
+
+if os.getenv("SCALP_TACTICAL", "0").strip().lower() not in {"", "0", "false", "no"}:
+    POCKET_LOSS_COOLDOWNS["scalp"] = 120
+    POCKET_ENTRY_MIN_INTERVAL["scalp"] = 45
+
+PIP = 0.01
 
 POCKET_MAX_ACTIVE_TRADES = {
     "macro": 6,
@@ -217,25 +231,47 @@ except Exception as exc:  # pragma: no cover - defensive
 
 PIP = 0.01
 _MACRO_PULLBACK_MIN_RETRACE_PIPS = {
-    1: 3.2,
-    2: 4.8,
-    3: 6.4,
-    4: 8.2,
-    5: 9.8,
+    1: 4.8,
+    2: 6.4,
+    3: 8.0,
+    4: 9.2,
+    5: 10.5,
 }
 _MACRO_PULLBACK_MAX_RETRACE_PIPS = 16.0
 _MACRO_PULLBACK_MAX_EMA_GAP_PIPS = 6.5
 _MACRO_PULLBACK_MAX_MA_SLACK_PIPS = 2.1
-_MACRO_PULLBACK_MIN_ADX = 17.0
+_MACRO_PULLBACK_MIN_ADX = 19.0
 
 _BASE_STAGE_RATIOS = {
     # Front-load a higher fraction in stage 0 so a valid signal deploys meaningful size sooner.
-    "macro": (0.35, 0.23, 0.17, 0.12, 0.08, 0.05),
-    "micro": (0.38, 0.24, 0.17, 0.11, 0.06, 0.04),
+    "macro": (0.5, 0.2, 0.12, 0.08, 0.06, 0.04),
+    "micro": (0.22, 0.19, 0.17, 0.15, 0.14, 0.13),
     "scalp": (0.6, 0.2, 0.12, 0.08),
 }
 
 _STAGE_PLAN_OVERRIDES: dict[str, tuple[float, ...]] = {}
+
+def _safe_env_float(key: str, default: float, *, low: float, high: float) -> float:
+    value = default
+    raw = os.getenv(key)
+    if raw is not None:
+        try:
+            value = float(raw)
+        except (TypeError, ValueError):
+            value = default
+    return max(low, min(high, value))
+
+
+SCALP_WEIGHT_FLOOR = _safe_env_float("SCALP_WEIGHT_FLOOR", 0.08, low=0.0, high=0.3)
+SCALP_WEIGHT_READY_FLOOR = _safe_env_float(
+    "SCALP_WEIGHT_READY_FLOOR", 0.12, low=SCALP_WEIGHT_FLOOR, high=0.4
+)
+SCALP_AUTO_MIN_WEIGHT = _safe_env_float("SCALP_AUTO_MIN_WEIGHT", 0.01, low=0.0, high=0.25)
+PULSEBREAK_AUTO_MOM_MIN = _safe_env_float("PULSEBREAK_AUTO_MOM_MIN", 0.0018, low=0.0, high=0.02)
+PULSEBREAK_AUTO_ATR_MIN = _safe_env_float("PULSEBREAK_AUTO_ATR_MIN", 2.4, low=0.0, high=15.0)
+PULSEBREAK_AUTO_VOL_MIN = _safe_env_float("PULSEBREAK_AUTO_VOL_MIN", 1.3, low=0.0, high=5.0)
+MACRO_LOT_SHARE_FLOOR = _safe_env_float("MACRO_LOT_SHARE_FLOOR", 0.7, low=0.0, high=0.95)
+MACRO_CONFIDENCE_FLOOR = _safe_env_float("MACRO_CONFIDENCE_FLOOR", 1.0, low=0.3, high=1.0)
 
 
 def _set_stage_plan_overrides(overrides: dict[str, tuple[float, ...]]) -> None:
@@ -250,10 +286,15 @@ def _stage_plan(pocket: str) -> tuple[float, ...]:
         return _BASE_STAGE_RATIOS[pocket]
     return (1.0,)
 
+MIN_MACRO_STAGE_LOT = 0.05  # 5000 units baseline keeps macro entries meaningful
+MAX_MICRO_STAGE_LOT = 0.02  # cap micro scaling when momentum signals fire repeatedly
 MIN_SCALP_STAGE_LOT = 0.01  # 1000 units baseline so micro/macro bias does not null scalps
 DEFAULT_COOLDOWN_SECONDS = 180
 RANGE_COOLDOWN_SECONDS = 420
 GPT_MIN_INTERVAL_SECONDS = 180
+MIN_MACRO_TOTAL_LOT = _safe_env_float("MIN_MACRO_TOTAL_LOT", 0.05, low=0.0, high=3.0)
+TARGET_MACRO_MARGIN_RATIO = _safe_env_float("TARGET_MACRO_MARGIN_RATIO", 0.7, low=0.0, high=0.95)
+MACRO_MARGIN_SAFETY_BUFFER = _safe_env_float("MACRO_MARGIN_SAFETY_BUFFER", 0.1, low=0.0, high=0.5)
 
 
 class GPTDecisionState:
@@ -340,7 +381,15 @@ RANGE_EXIT_CONFIRMATIONS = 3
 RANGE_MIN_ACTIVE_SECONDS = 120
 RANGE_ENTRY_SCORE_FLOOR = 0.62
 RANGE_EXIT_SCORE_CEIL = 0.56
+RANGE_BREAK_MOMENTUM_RELEASE = 0.015  # 1.5 pips
+RANGE_BREAK_ATR_MIN = 3.6
+RANGE_BREAK_VOL_SPIKE = 1.35
+RANGE_BREAK_RELEASE_SECONDS = 90
+RANGE_BREAK_MACRO_HOLD_SECONDS = 180
+MICRO_BREAKOUT_WEIGHT_FLOOR = 0.45
 STAGE_RESET_GRACE_SECONDS = 180
+if os.getenv("SCALP_TACTICAL", "0").strip().lower() not in {"", "0", "false", "no"}:
+    STAGE_RESET_GRACE_SECONDS = 60
 RANGE_SCALP_ATR_MIN = 1.35
 RANGE_SCALP_VOL_MIN = 0.75
 RANGE_SCALP_MAX_MOMENTUM = 0.0012
@@ -348,17 +397,18 @@ RANGE_FADER_MIN_RR = 1.12
 RANGE_FADER_MAX_RR = 1.32
 RANGE_FADER_RANGE_CONF_SCALE = 0.82
 
-_HARD_BASE_RISK_CAP = 0.012  # 1.2%
-_HARD_MAX_RISK_CAP = 0.018   # 1.8%
+_HARD_BASE_RISK_CAP = 0.03  # 3.0%
+_HARD_MAX_RISK_CAP = 0.05   # 1.8%
 _RANGE_RISK_CAP = 0.008      # 0.8%
 _SQUEEZE_RISK_CAP = 0.006    # 0.6% 個別ドローダウン時
 
 try:
     _BASE_RISK_PCT = float(get_secret("risk_pct"))
     if _BASE_RISK_PCT <= 0:
-        _BASE_RISK_PCT = 0.02
+        _BASE_RISK_PCT = 0.025
 except Exception:
-    _BASE_RISK_PCT = 0.02
+    _BASE_RISK_PCT = 0.025
+_BASE_RISK_PCT = max(_BASE_RISK_PCT, 0.025)
 try:
     _MAX_RISK_PCT = float(get_secret("risk_pct_max"))
     if _MAX_RISK_PCT < _BASE_RISK_PCT:
@@ -1016,6 +1066,11 @@ def compute_stage_lot(
                 return 0.0, stage_idx
             next_lot = max(stage_target - current_lot, 0.0)
             remaining = max(total_lot - current_lot, 0.0)
+            if pocket == "macro" and remaining > 0:
+                floor = min(MIN_MACRO_STAGE_LOT, remaining)
+                next_lot = max(next_lot, floor)
+            if pocket == "micro" and remaining > 0:
+                next_lot = min(next_lot, MAX_MICRO_STAGE_LOT, remaining)
             if pocket == "scalp" and remaining > 0:
                 floor = min(MIN_SCALP_STAGE_LOT, remaining)
                 next_lot = max(next_lot, floor)
@@ -1096,6 +1151,11 @@ async def logic_loop(
     range_exit_counter = 0
     raw_range_active = False
     raw_range_reason = ""
+    range_breakout_release_until = datetime.datetime.min
+    range_breakout_reason = ""
+    range_override_active_prev = False
+    last_range_scalp_ready: Optional[bool] = None
+    range_macro_hold_until = datetime.datetime.min
     stage_empty_since: dict[tuple[str, str], datetime.datetime] = {}
     last_risk_pct: float | None = None
     last_spread_gate = False
@@ -1152,7 +1212,7 @@ async def logic_loop(
 
             # --- 1. 状況分析 ---
             factors = all_factors()
-            fac_m1 = factors.get("M1")
+            fac_m1_raw = factors.get("M1")
             fac_m5 = factors.get("M5")
             fac_h1 = factors.get("H1")
             fac_h4 = factors.get("H4")
@@ -1160,20 +1220,37 @@ async def logic_loop(
 
             # 両方のタイムフレームのデータが揃うまで待機
             if (
-                not fac_m1
+                not fac_m1_raw
                 or not fac_h4
-                or not fac_m1.get("close")
+                or not fac_m1_raw.get("close")
                 or not fac_h4.get("close")
             ):
                 logging.info("[WAIT] Waiting for M1/H4 factor data for trading logic...")
                 await asyncio.sleep(5)
                 continue
 
+            fac_m1 = dict(fac_m1_raw)
+
             atr_pips = fac_m1.get("atr_pips")
             if atr_pips is None:
                 atr_pips = (fac_m1.get("atr") or 0.0) * 100
             atr_pips = float(atr_pips or 0.0)
             vol_5m = float(fac_m1.get("vol_5m", 0.0) or 0.0)
+            ema20_raw = fac_m1.get("ema20")
+            if ema20_raw is None:
+                ema20_raw = fac_m1.get("ma20")
+            try:
+                ema20_value = float(ema20_raw) if ema20_raw is not None else None
+            except (TypeError, ValueError):
+                ema20_value = None
+            close_raw = fac_m1.get("close")
+            try:
+                close_px_value = float(close_raw) if close_raw is not None else None
+            except (TypeError, ValueError):
+                close_px_value = None
+            momentum = 0.0
+            if close_px_value is not None and ema20_value is not None:
+                momentum = close_px_value - ema20_value
 
             event_soon = check_event_soon(within_minutes=30, min_impact=3)
             global_drawdown_exceeded = check_global_drawdown()
@@ -1239,16 +1316,16 @@ async def logic_loop(
                         tick_ask = float(raw_ask)
                 except (TypeError, ValueError):
                     tick_bid = tick_ask = None
-            if spread_gate_active:
-                if (
-                    not last_spread_gate
-                    or spread_gate_reason != last_spread_gate_reason
-                ):
-                    logging.info(
-                        "[SPREAD] gating entries (%s, %s)",
-                        spread_gate_reason,
-                        spread_log_context,
-                    )
+                if spread_gate_active:
+                    if (
+                        not last_spread_gate
+                        or spread_gate_reason != last_spread_gate_reason
+                    ):
+                        logging.info(
+                            "[SPREAD] gating entries (%s, %s)",
+                            spread_gate_reason,
+                            spread_log_context,
+                        )
             elif last_spread_gate:
                 logging.info("[SPREAD] entries re-enabled (%s)", spread_log_context)
             last_spread_gate = spread_gate_active
@@ -1327,6 +1404,8 @@ async def logic_loop(
             story_state = "missing"
             story_snapshot = chart_story.update(fac_m1, fac_h4)
             if story_snapshot:
+                fac_m1["story_levels"] = story_snapshot.major_levels
+            if story_snapshot:
                 story_state = "fresh"
                 if last_story_summary != story_snapshot.summary:
                     logging.info(
@@ -1396,6 +1475,54 @@ async def logic_loop(
                 metrics.get("effective_adx_m1", fac_m1.get("adx", 0.0) or 0.0)
             )
             adx_threshold = float(metrics.get("adx_threshold", 22.0) or 22.0)
+            override_release_active = now < range_breakout_release_until
+            breakout_reason = None
+            if raw_range_active:
+                if abs(momentum) >= RANGE_BREAK_MOMENTUM_RELEASE and atr_pips >= RANGE_BREAK_ATR_MIN:
+                    breakout_reason = "momentum_spike"
+                elif vol_5m >= RANGE_BREAK_VOL_SPIKE and atr_pips >= max(2.5, RANGE_BREAK_ATR_MIN * 0.85):
+                    breakout_reason = "volume_spike"
+            if breakout_reason:
+                new_until = now + datetime.timedelta(seconds=RANGE_BREAK_RELEASE_SECONDS)
+                triggered_now = not override_release_active
+                if new_until > range_breakout_release_until:
+                    range_breakout_release_until = new_until
+                hold_until_candidate = now + datetime.timedelta(seconds=RANGE_BREAK_MACRO_HOLD_SECONDS)
+                if hold_until_candidate > range_macro_hold_until:
+                    range_macro_hold_until = hold_until_candidate
+                override_release_active = True
+                if range_breakout_reason != breakout_reason:
+                    range_breakout_reason = breakout_reason
+                    triggered_now = True
+                if triggered_now:
+                    logging.info(
+                        "[RANGE] breakout override armed reason=%s momentum=%.4f atr=%.2f vol5m=%.2f",
+                        range_breakout_reason,
+                        momentum,
+                        atr_pips,
+                        vol_5m,
+                    )
+                    range_entry_counter = 0
+                    range_exit_counter = 0
+                    if range_active:
+                        range_active = False
+                        range_state_since = now
+                        last_range_reason = range_breakout_reason
+            if override_release_active and not range_override_active_prev:
+                logging.info(
+                    "[RANGE] breakout override active reason=%s until=%s",
+                    range_breakout_reason or raw_range_reason or "unknown",
+                    range_breakout_release_until.isoformat(timespec="seconds"),
+                )
+            elif not override_release_active and range_override_active_prev:
+                logging.info(
+                    "[RANGE] breakout override expired (reason=%s)",
+                    range_breakout_reason or raw_range_reason or "unknown",
+                )
+                range_breakout_reason = ""
+                range_macro_hold_until = datetime.datetime.min
+                range_breakout_release_until = datetime.datetime.min
+            range_override_active_prev = override_release_active
             soft_range_prev = range_soft_active
             soft_range_candidate = (
                 not raw_range_active
@@ -1419,7 +1546,7 @@ async def logic_loop(
             soft_range_just_activated = (
                 range_soft_active and not soft_range_prev and not raw_range_active
             )
-            entry_ready = raw_range_active
+            entry_ready = raw_range_active and not override_release_active
             exit_ready = (not raw_range_active) and (range_ctx.score <= RANGE_EXIT_SCORE_CEIL)
             if entry_ready:
                 range_entry_counter += 1
@@ -1429,6 +1556,19 @@ async def logic_loop(
                 range_exit_counter += 1
             else:
                 range_exit_counter = 0
+            if override_release_active and range_active:
+                range_active = False
+                range_state_since = now
+                range_entry_counter = 0
+                range_exit_counter = 0
+                last_range_reason = range_breakout_reason or range_ctx.reason
+                logging.info(
+                    "[RANGE] forced release (override reason=%s momentum=%.4f atr=%.2f vol5m=%.2f)",
+                    range_breakout_reason or range_ctx.reason,
+                    momentum,
+                    atr_pips,
+                    vol_5m,
+                )
             prev_range_state = range_active
             if (
                 not range_active
@@ -1520,6 +1660,7 @@ async def logic_loop(
                 reuse_reason,
             )
             ranked_strategies = list(gpt.get("ranked_strategies", []))
+            ranked_strategies = list(gpt.get("ranked_strategies", []))
             weight_scalp = None
             if raw_weight_scalp is not None:
                 try:
@@ -1558,29 +1699,44 @@ async def logic_loop(
                 except Exception as exc:  # pragma: no cover - defensive
                     logging.warning("[REALTIME] metrics refresh failed: %s", exc)
 
-            ema20 = fac_m1.get("ema20") or fac_m1.get("ma20")
-            close_px = fac_m1.get("close")
-            momentum = 0.0
-            if ema20 is not None and close_px is not None:
-                momentum = close_px - ema20
+            if close_px_value is None:
+                try:
+                    close_px_value = float(fac_m1.get("close") or 0.0)
+                except (TypeError, ValueError):
+                    close_px_value = None
+            if ema20_value is None:
+                try:
+                    ema_fallback = fac_m1.get("ema20") or fac_m1.get("ma20")
+                    ema20_value = float(ema_fallback) if ema_fallback is not None else None
+                except (TypeError, ValueError):
+                    ema20_value = None
+            if (close_px_value is not None and ema20_value is not None) and abs(momentum) < 1e-6:
+                momentum = close_px_value - ema20_value
+            momentum_abs = abs(momentum)
             scalp_ready = False
             if range_active:
                 scalp_ready = (
                     atr_pips >= RANGE_SCALP_ATR_MIN
                     and vol_5m >= RANGE_SCALP_VOL_MIN
-                    and abs(momentum) <= RANGE_SCALP_MAX_MOMENTUM
+                    and momentum_abs <= RANGE_SCALP_MAX_MOMENTUM
                 )
-                if scalp_ready:
+                if last_range_scalp_ready is None or scalp_ready != last_range_scalp_ready:
                     logging.info(
-                        "[SCALP] Range scalp ready (ATR %.2f vol5m %.2f momentum %.4f).",
-                        atr_pips,
-                        vol_5m,
+                        "[SCALP] Range scalp %s momentum=%.4f (≤%.4f) atr=%.2f (≥%.2f) vol5m=%.2f (≥%.2f)",
+                        "ready" if scalp_ready else "blocked",
                         momentum,
+                        RANGE_SCALP_MAX_MOMENTUM,
+                        atr_pips,
+                        RANGE_SCALP_ATR_MIN,
+                        vol_5m,
+                        RANGE_SCALP_VOL_MIN,
                     )
+                last_range_scalp_ready = scalp_ready
             else:
-                scalp_ready = atr_pips >= 2.2 and abs(momentum) >= 0.0015
+                scalp_ready = atr_pips >= 2.2 and momentum_abs >= 0.0015
                 if not scalp_ready and vol_5m:
                     scalp_ready = atr_pips >= 2.0 and vol_5m >= 1.2
+                last_range_scalp_ready = None
 
             focus_tag = gpt.get("focus_tag") or focus
             weight_macro = gpt.get("weight_macro", w_macro)
@@ -1614,6 +1770,51 @@ async def logic_loop(
                     weight_macro = _clamp(float(focus_override_hint.weight_macro), 0.0, 1.0)
                 if focus_override_hint.weight_scalp is not None:
                     weight_scalp = _clamp(float(focus_override_hint.weight_scalp), 0.0, 1.0)
+            override_macro_hold_active = now < range_macro_hold_until
+            if override_macro_hold_active:
+                prev_focus = focus_tag
+                if focus_tag == "macro":
+                    focus_tag = "micro"
+                prev_macro_weight = weight_macro
+                weight_macro = min(weight_macro, 0.18)
+                if weight_scalp is not None:
+                    weight_scalp = min(max(weight_scalp, 0.0), 0.25)
+                micro_weight_est = 1.0 - (weight_macro + (weight_scalp or 0.0))
+                if micro_weight_est < MICRO_BREAKOUT_WEIGHT_FLOOR:
+                    shortfall = MICRO_BREAKOUT_WEIGHT_FLOOR - micro_weight_est
+                    if weight_scalp is not None and weight_scalp > 0.1:
+                        give = min(shortfall, weight_scalp - 0.1)
+                        if give > 0:
+                            weight_scalp = round(weight_scalp - give, 3)
+                            shortfall = round(shortfall - give, 3)
+                    if shortfall > 0:
+                        weight_macro = round(max(0.0, weight_macro - shortfall), 3)
+                if weight_macro != prev_macro_weight or focus_tag != prev_focus:
+                    logging.info(
+                        "[FOCUS] Macro hold active -> focus=%s weight_macro=%.2f (was %.2f) weight_scalp=%s",
+                        focus_tag,
+                        weight_macro,
+                        prev_macro_weight,
+                        f"{weight_scalp:.2f}" if weight_scalp is not None else "n/a",
+                    )
+            if weight_scalp is not None:
+                scalp_floor = SCALP_WEIGHT_FLOOR
+                if scalp_ready:
+                    scalp_floor = max(scalp_floor, SCALP_WEIGHT_READY_FLOOR)
+                if focus_tag in {"micro", "hybrid"} or scalp_ready:
+                    cap = max(0.0, 1.0 - weight_macro)
+                    target = min(cap, scalp_floor)
+                    if target > 0 and weight_scalp + 1e-6 < target:
+                        prev_weight_scalp = weight_scalp
+                        weight_scalp = round(target, 3)
+                        logging.info(
+                            "[FOCUS] Scalp weight floor %.2f -> %.2f (cap=%.2f focus=%s ready=%s)",
+                            prev_weight_scalp,
+                            weight_scalp,
+                            cap,
+                            focus_tag,
+                            scalp_ready,
+                        )
             stage_overrides, stage_changed, stage_biases = param_context.stage_overrides(
                 _BASE_STAGE_RATIOS,
                 range_active=range_active,
@@ -1789,13 +1990,21 @@ async def logic_loop(
                     weight_macro,
                 )
 
+            scalp_weight_ok = weight_scalp is None or weight_scalp >= SCALP_AUTO_MIN_WEIGHT
             if (
                 scalp_ready
                 and "scalp" in focus_pockets
                 and "M1Scalper" not in ranked_strategies
-                and (weight_scalp is None or weight_scalp >= 0.04)
+                and scalp_weight_ok
             ):
                 ranked_strategies.append("M1Scalper")
+            if os.getenv("SCALP_TACTICAL", "0").strip().lower() not in {"","0","false","no"}:
+                focus_pockets.add("scalp")
+                if "M1Scalper" not in ranked_strategies:
+                    ranked_strategies.append("M1Scalper")
+                if "BB_RSI" not in ranked_strategies:
+                    ranked_strategies.append("BB_RSI")
+
                 logging.info(
                     "[SCALP] Auto-added M1Scalper (mode=%s ATR %.2f momentum %.4f vol5m %.2f).",
                     "range" if range_active else "trend",
@@ -1809,7 +2018,7 @@ async def logic_loop(
                 range_active
                 and "scalp" in focus_pockets
                 and "RangeFader" not in ranked_strategies
-                and (weight_scalp is None or weight_scalp >= 0.04)
+                and scalp_weight_ok
             ):
                 ranked_strategies.append("RangeFader")
                 logging.info(
@@ -1817,6 +2026,23 @@ async def logic_loop(
                     range_ctx.score,
                     fac_m1.get("bbw", 0.0) or 0.0,
                     atr_pips,
+                )
+            if (
+                not range_active
+                and scalp_ready
+                and "scalp" in focus_pockets
+                and "PulseBreak" not in ranked_strategies
+                and scalp_weight_ok
+                and momentum_abs >= PULSEBREAK_AUTO_MOM_MIN
+                and atr_pips >= PULSEBREAK_AUTO_ATR_MIN
+                and (vol_5m or 0.0) >= PULSEBREAK_AUTO_VOL_MIN
+            ):
+                ranked_strategies.append("PulseBreak")
+                logging.info(
+                    "[SCALP] Auto-added PulseBreak (mom=%.4f atr=%.2f vol5m=%.2f).",
+                    momentum,
+                    atr_pips,
+                    vol_5m,
                 )
 
             evaluated_signals: list[dict] = []
@@ -1886,6 +2112,16 @@ async def logic_loop(
                     "tp_pips": raw_signal.get("tp_pips"),
                     "tag": raw_signal.get("tag", cls.name),
                 }
+                for extra_key in (
+                    "entry_type",
+                    "entry_price",
+                    "entry_tolerance_pips",
+                    "limit_expiry_seconds",
+                    "hard_stop_pips",
+                    "notes",
+                ):
+                    if extra_key in raw_signal:
+                        signal[extra_key] = raw_signal[extra_key]
                 scaled_conf = int(signal["confidence"] * health.confidence_scale)
                 signal["confidence"] = max(0, min(100, scaled_conf))
                 if range_active:
@@ -2375,6 +2611,161 @@ async def logic_loop(
             if range_active and "macro" in lots:
                 lots["macro"] = 0.0
 
+            signal_counts: dict[str, int] = {}
+            for sig in evaluated_signals:
+                pocket_name = sig["pocket"]
+                signal_counts[pocket_name] = signal_counts.get(pocket_name, 0) + 1
+
+            if lot_total > 0 and signal_counts:
+                min_targets: dict[str, float] = {}
+                if signal_counts.get("micro"):
+                    min_targets["micro"] = round(lot_total * MIN_MICRO_WEIGHT, 3)
+                if signal_counts.get("scalp"):
+                    min_targets["scalp"] = round(lot_total * MIN_SCALP_WEIGHT, 3)
+
+                def _boost_lot(pocket: str, target: float) -> None:
+                    deficit = round(target - lots.get(pocket, 0.0), 3)
+                    if deficit <= 0:
+                        return
+                    donors = ("macro", "scalp" if pocket == "micro" else "micro")
+                    for donor in donors:
+                        if donor == pocket or donor not in lots:
+                            continue
+                        available = round(max(lots[donor], 0.0), 3)
+                        if available <= 0:
+                            continue
+                        give = min(deficit, available)
+                        if give <= 0:
+                            continue
+                        lots[pocket] = round(lots.get(pocket, 0.0) + give, 3)
+                        lots[donor] = round(lots[donor] - give, 3)
+                        deficit = round(target - lots[pocket], 3)
+                        if deficit <= 1e-6:
+                            break
+
+                for pocket_name, target in min_targets.items():
+                    _boost_lot(pocket_name, target)
+
+            if (
+                not range_active
+                and lot_total > 0
+                and signal_counts.get("macro")
+                and "macro" in lots
+            ):
+                desired_macro_lot = round(
+                    min(
+                        lot_total,
+                        max(MIN_MACRO_TOTAL_LOT, lot_total * MACRO_LOT_SHARE_FLOOR),
+                    ),
+                    3,
+                )
+                current_macro_lot = round(max(lots.get("macro", 0.0), 0.0), 3)
+                macro_deficit = round(desired_macro_lot - current_macro_lot, 3)
+                reallocated = 0.0
+                if macro_deficit > 0:
+                    donor_candidates = [
+                        pocket_name
+                        for pocket_name in ("micro", "scalp")
+                        if lots.get(pocket_name, 0.0) > 0
+                    ]
+                    for donor in sorted(
+                        donor_candidates,
+                        key=lambda name: lots.get(name, 0.0),
+                        reverse=True,
+                    ):
+                        available = round(max(lots.get(donor, 0.0), 0.0), 3)
+                        if available <= 0:
+                            continue
+                        transfer = min(available, macro_deficit)
+                        if transfer <= 0:
+                            continue
+                        lots[donor] = round(lots[donor] - transfer, 3)
+                        if lots[donor] < 1e-6:
+                            lots[donor] = 0.0
+                        lots["macro"] = round(lots["macro"] + transfer, 3)
+                        reallocated = round(reallocated + transfer, 3)
+                        macro_deficit = round(desired_macro_lot - lots["macro"], 3)
+                        if macro_deficit <= 1e-6:
+                            break
+                macro_deficit = max(0.0, round(desired_macro_lot - lots["macro"], 3))
+                if reallocated > 0:
+                    share_pct = (lots["macro"] / lot_total) * 100 if lot_total > 0 else 0.0
+                    logging.info(
+                        "[ALLOCATION] Macro lot boosted %.3f -> %.3f (target=%.3f share=%.1f%% reallocated=%.3f)",
+                        current_macro_lot,
+                        lots["macro"],
+                        desired_macro_lot,
+                        share_pct,
+                        reallocated,
+                    )
+                if macro_deficit > 0:
+                    logging.debug(
+                        "[ALLOCATION] Macro target unmet: desired=%.3f current=%.3f donors=%s",
+                        desired_macro_lot,
+                        lots.get("macro", 0.0),
+                        {
+                            key: round(max(lots.get(key, 0.0), 0.0), 3)
+                            for key in ("micro", "scalp")
+                        },
+                    )
+
+            if account_snapshot and margin_rate and margin_rate > 0:
+                if MIN_MACRO_TOTAL_LOT > 0 and "macro" in lots:
+                    macro_lot = round(max(lots.get("macro", 0.0), 0.0), 3)
+                    if macro_lot + 1e-6 < MIN_MACRO_TOTAL_LOT:
+                        shortfall = round(MIN_MACRO_TOTAL_LOT - macro_lot, 3)
+                        for donor in ("micro", "scalp"):
+                            available = round(max(lots.get(donor, 0.0), 0.0), 3)
+                            if available <= 0:
+                                continue
+                            give = min(available, shortfall)
+                            if give <= 0:
+                                continue
+                            lots[donor] = round(lots.get(donor, 0.0) - give, 3)
+                            lots["macro"] = round(lots["macro"] + give, 3)
+                            shortfall = round(shortfall - give, 3)
+                            if shortfall <= 1e-6:
+                                break
+
+                if TARGET_MACRO_MARGIN_RATIO > 0 and "macro" in lots:
+                    try:
+                        margin_available_val = float(account_snapshot.margin_available)
+                        margin_used_val = float(account_snapshot.margin_used)
+                    except Exception:
+                        margin_available_val = account_snapshot.margin_available or 0.0
+                        margin_used_val = account_snapshot.margin_used or 0.0
+                    total_margin_capacity = max(0.0, margin_available_val + margin_used_val)
+                    if total_margin_capacity > 0.0:
+                        macro_open_margin = 0.0
+                        macro_trades = (open_positions.get("macro", {}) or {}).get("open_trades", [])
+                        ref_price = mid_price if mid_price > 0 else base_price_val or 0.0
+                        if ref_price <= 0:
+                            ref_price = 152.0
+                        for tr in macro_trades:
+                            try:
+                                units_val = abs(float(tr.get("units") or 0.0))
+                                price_val = float(tr.get("price") or 0.0) or ref_price
+                            except Exception:
+                                continue
+                            if units_val <= 0 or price_val <= 0:
+                                continue
+                            macro_open_margin += units_val * price_val * margin_rate
+
+                        target_margin = total_margin_capacity * TARGET_MACRO_MARGIN_RATIO
+                        extra_margin_needed = target_margin - macro_open_margin
+                        if extra_margin_needed > 0:
+                            safety_cap = total_margin_capacity * (1.0 - MACRO_MARGIN_SAFETY_BUFFER)
+                            remaining_capacity = max(0.0, safety_cap - margin_used_val)
+                            available_margin_headroom = max(0.0, min(margin_available_val, remaining_capacity))
+                            extra_margin_needed = min(extra_margin_needed, available_margin_headroom)
+                            if extra_margin_needed > 0:
+                                desired_units = extra_margin_needed / (margin_rate * max(ref_price, 1e-6))
+                                desired_lot = round(desired_units / 100000.0, 3)
+                                if desired_lot > 0:
+                                    lots["macro"] = round(max(lots.get("macro", 0.0), desired_lot), 3)
+
+            lot_total = round(sum(max(value, 0.0) for value in lots.values()), 3)
+
             spread_skip_logged = False
             for signal in evaluated_signals:
                 pocket = signal["pocket"]
@@ -2382,15 +2773,26 @@ async def logic_loop(
                 if action not in {"OPEN_LONG", "OPEN_SHORT"}:
                     continue
                 if story_snapshot and not story_snapshot.is_aligned(pocket, action):
-                    logging.info(
-                        "[STORY] skip pocket=%s action=%s trend macro=%s micro=%s",
-                        pocket,
-                        action,
-                        story_snapshot.macro_trend,
-                        story_snapshot.micro_trend,
-                    )
-                    continue
-                if spread_gate_active:
+                    if pocket == "micro":
+                        logging.info(
+                            "[STORY] micro override pocket=%s action=%s macro_trend=%s micro_trend=%s higher_trend=%s",
+                            pocket,
+                            action,
+                            story_snapshot.macro_trend,
+                            story_snapshot.micro_trend,
+                            story_snapshot.higher_trend,
+                        )
+                    else:
+                        logging.info(
+                            "[STORY] skip pocket=%s action=%s trend macro=%s micro=%s",
+                            pocket,
+                            action,
+                            story_snapshot.macro_trend,
+                            story_snapshot.micro_trend,
+                        )
+                        continue
+                is_tactical = os.getenv('SCALP_TACTICAL','0').strip().lower() not in ('','0','false','no')
+                if spread_gate_active and not (is_tactical and pocket=='scalp'):
                     if not spread_skip_logged:
                         logging.info(
                             "[SKIP] Spread guard active (%s, %s).",
@@ -2399,14 +2801,29 @@ async def logic_loop(
                         )
                         spread_skip_logged = True
                     continue
-                if event_soon and pocket in {"micro", "scalp"}:
+                if event_soon and pocket in {"micro", "scalp"} and not is_tactical:
                     logging.info("[SKIP] Event soon, skipping %s pocket trade.", pocket)
                     continue
                 if pocket in executed_pockets:
                     logging.info("[SKIP] %s pocket already handled this loop.", pocket)
                     continue
-                if range_active and pocket == "macro":
-                    logging.info("[SKIP] Range mode active, skipping macro entry.")
+                if (range_active or override_macro_hold_active) and pocket == "macro":
+                    reason = "range_active" if range_active else "macro_hold_after_breakout"
+                    logging.info(
+                        "[SKIP] %s, skipping macro entry (score=%.2f momentum=%.4f atr=%.2f vol5m=%.2f override=%s reason=%s hold_until=%s)",
+                        reason,
+                        range_ctx.score,
+                        momentum,
+                        atr_pips,
+                        vol_5m,
+                        override_release_active,
+                        range_breakout_reason or range_ctx.reason,
+                        (
+                            range_macro_hold_until.isoformat(timespec="seconds")
+                            if override_macro_hold_active
+                            else "n/a"
+                        ),
+                    )
                     continue
                 if not can_trade(pocket):
                     logging.info(f"[SKIP] DD limit for {pocket} pocket.")
@@ -2417,7 +2834,21 @@ async def logic_loop(
                     continue
 
                 confidence = max(0, min(100, signal.get("confidence", 50)))
-                confidence_factor = max(0.3, confidence / 100.0)
+                base_conf_factor = max(0.3, confidence / 100.0)
+                confidence_factor = base_conf_factor
+                if pocket == "macro":
+                    boosted_factor = max(confidence_factor, MACRO_CONFIDENCE_FLOOR)
+                    if boosted_factor > 1.0:
+                        boosted_factor = 1.0
+                    if boosted_factor > confidence_factor + 1e-6:
+                        logging.info(
+                            "[ALLOCATION] Macro confidence factor boost %.2f -> %.2f (conf=%d)",
+                            confidence_factor,
+                            boosted_factor,
+                            confidence,
+                        )
+                    confidence_factor = boosted_factor
+                confidence_factor = min(confidence_factor, 1.0)
                 confidence_target = round(total_lot_for_pocket * confidence_factor, 3)
                 if confidence_target <= 0:
                     continue
@@ -2565,17 +2996,66 @@ async def logic_loop(
                     )
                     continue
 
+                entry_type = signal.get("entry_type", "market")
+                target_price = signal.get("entry_price")
+                tolerance_pips = float(signal.get("entry_tolerance_pips", 0.25))
+                tolerance_price = tolerance_pips * PIP
+                reference_price = entry_price
+                if entry_type == "limit":
+                    if target_price is None:
+                        logging.info("[LIMIT] Missing entry_price for %s.", signal["strategy"])
+                        continue
+                    try:
+                        reference_price = float(target_price)
+                    except (TypeError, ValueError):
+                        logging.info("[LIMIT] Invalid entry_price for %s.", signal["strategy"])
+                        continue
+                    else:
+                        target_price = reference_price
+                    if is_buy:
+                        if price > reference_price + tolerance_price:
+                            logging.info(
+                                "[LIMIT] Waiting for pullback (target=%.3f cur=%.3f tol=%.2fp)",
+                                reference_price,
+                                price,
+                                tolerance_pips,
+                            )
+                            continue
+                    else:
+                        if price < reference_price - tolerance_price:
+                            logging.info(
+                                "[LIMIT] Waiting for bounce (target=%.3f cur=%.3f tol=%.2fp)",
+                                reference_price,
+                                price,
+                                tolerance_pips,
+                            )
+                            continue
+
                 sl_pips = signal.get("sl_pips")
+                if sl_pips is None:
+                    hard_stop = signal.get("hard_stop_pips")
+                    if hard_stop is not None:
+                        sl_pips = hard_stop
                 tp_pips = signal.get("tp_pips")
-                if sl_pips is None or tp_pips is None:
-                    logging.info("[SKIP] Missing SL/TP for %s.", signal["strategy"])
+                if tp_pips is None:
+                    logging.info("[SKIP] Missing TP for %s.", signal["strategy"])
                     continue
 
-                base_sl = entry_price - (sl_pips / 100) if is_buy else entry_price + (sl_pips / 100)
-                base_tp = entry_price + (tp_pips / 100) if is_buy else entry_price - (tp_pips / 100)
+                base_sl = None
+                if sl_pips is not None:
+                    base_sl = (
+                        reference_price - (sl_pips / 100)
+                        if is_buy
+                        else reference_price + (sl_pips / 100)
+                    )
+                base_tp = (
+                    reference_price + (tp_pips / 100)
+                    if is_buy
+                    else reference_price - (tp_pips / 100)
+                )
 
                 sl, tp = clamp_sl_tp(
-                    entry_price,
+                    reference_price,
                     base_sl,
                     base_tp,
                     is_buy,
@@ -2594,6 +3074,9 @@ async def logic_loop(
                     "tag": signal.get("tag"),
                     "pocket": pocket,
                     "action": action,
+                    "entry_type": entry_type,
+                    "entry_ref": reference_price,
+                    "limit_target": target_price,
                     "entry_ts": now.isoformat(timespec="seconds"),
                     "min_hold_min": 11.0 if pocket == "macro" else (5.0 if pocket == "micro" else 3.0),
                     "factors": {
@@ -2622,7 +3105,11 @@ async def logic_loop(
                         "higher": story_snapshot.higher_trend if story_snapshot else None,
                         "volatility": story_snapshot.volatility_state if story_snapshot else None,
                     },
+                    "levels": story_snapshot.major_levels if story_snapshot else None,
                 }
+                note = signal.get("notes")
+                if note:
+                    entry_thesis["note"] = note
                 trade_id = await market_order(
                     "USD_JPY",
                     units,
@@ -2728,6 +3215,7 @@ async def main():
     gpt_state = GPTDecisionState()
     gpt_requests = GPTRequestManager()
     worker_task = asyncio.create_task(gpt_worker(gpt_state, gpt_requests))
+    autotune_task = start_background_autotune(asyncio.get_running_loop())
     try:
         await prime_gpt_decision(gpt_state, gpt_requests)
         while True:
@@ -2778,6 +3266,9 @@ async def main():
         worker_task.cancel()
         with contextlib.suppress(Exception):
             await worker_task
+        autotune_task.cancel()
+        with contextlib.suppress(Exception):
+            await autotune_task
 
 
 if __name__ == "__main__":
