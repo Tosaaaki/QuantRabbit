@@ -10,8 +10,23 @@ from typing import Dict, Optional
 import os
 
 DEFAULT_SCALP_SHARE = 0.3
-MIN_SCALP_FRACTION = 0.05  # floor share of total lot reserved for scalping
-MAX_SCALP_REALLOC_FRACTION = 0.35  # cap per-pocket reallocation toward the scalp bucket
+
+
+def _env_float(name: str, default: float, minimum: float, maximum: float) -> float:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        return default
+    return max(minimum, min(maximum, value))
+
+
+MIN_MICRO_WEIGHT = _env_float("POCKET_MIN_MICRO_WEIGHT", 0.0, 0.0, 0.4)
+MIN_SCALP_WEIGHT = _env_float("POCKET_MIN_SCALP_WEIGHT", 0.06, 0.0, 0.3)
+MIN_SCALP_FRACTION = MIN_SCALP_WEIGHT  # legacy name retained for fallback branch
+MAX_SCALP_REALLOC_FRACTION = 0.25  # cap per-pocket reallocation toward the scalp bucket
 
 
 def _clamp(value: float, minimum: float, maximum: float) -> float:
@@ -44,7 +59,7 @@ def alloc(
     # Set env SCALP_TACTICAL=1 to cap macro and floor scalp allocation.
     scalp_tactical = os.getenv("SCALP_TACTICAL", "0").strip().lower() not in {"", "0", "false", "no"}
     tactical_macro_cap = 0.15 if scalp_tactical else None
-    tactical_scalp_floor = 0.2 if scalp_tactical else None
+    tactical_scalp_floor = 0.22 if scalp_tactical else None
 
     macro = round(total_lot * weight_macro, 3)
     scalp = 0.0
@@ -111,6 +126,37 @@ def alloc(
                 take = min(need, dist[donor])
                 dist[donor] = round(dist[donor] - take, 3)
                 dist["scalp"] = round(dist["scalp"] + take, 3)
+
+    if total_lot > 0:
+        min_micro_lot = round(total_lot * MIN_MICRO_WEIGHT, 3)
+        min_scalp_lot = round(total_lot * MIN_SCALP_WEIGHT, 3)
+        min_sum = round(min_micro_lot + min_scalp_lot, 3)
+        if min_sum > total_lot and min_sum > 0:
+            scale = round(total_lot / min_sum, 6)
+            min_micro_lot = round(min_micro_lot * scale, 3)
+            min_scalp_lot = round(min_scalp_lot * scale, 3)
+
+        def _prop_up(pocket: str, target: float, donors: tuple[str, ...]) -> None:
+            deficit = round(target - dist.get(pocket, 0.0), 3)
+            if deficit <= 0:
+                return
+            for donor in donors:
+                if donor == pocket or donor not in dist:
+                    continue
+                available = round(max(dist[donor], 0.0), 3)
+                if available <= 0:
+                    continue
+                give = min(deficit, available)
+                if give <= 0:
+                    continue
+                dist[donor] = round(dist[donor] - give, 3)
+                dist[pocket] = round(dist.get(pocket, 0.0) + give, 3)
+                deficit = round(target - dist[pocket], 3)
+                if deficit <= 1e-6:
+                    break
+
+        _prop_up("micro", min_micro_lot, ("macro", "scalp"))
+        _prop_up("scalp", min_scalp_lot, ("macro", "micro"))
 
     total_alloc = round(dist["micro"] + dist["macro"] + dist["scalp"], 3)
     target_total = round(total_lot, 3)

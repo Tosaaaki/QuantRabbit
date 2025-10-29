@@ -10,7 +10,7 @@ analysis.chart_story
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from statistics import mean
 from typing import Dict, Iterable, List, Optional, Sequence, Tuple
 
@@ -86,6 +86,199 @@ def _volatility(candles: Sequence[Tuple[float, float, float, float]]) -> float:
     return mean(ranges) if ranges else 0.0
 
 
+def _pivot_levels(
+    candles: Sequence[Tuple[float, float, float, float]]
+) -> Dict[str, float]:
+    if len(candles) < 2:
+        return {}
+    prev = candles[-2]
+    high = prev[1]
+    low = prev[2]
+    close = prev[3]
+    pivot = (high + low + close) / 3.0
+    r1 = 2 * pivot - low
+    s1 = 2 * pivot - high
+    range_span = max(high - low, 0.0001)
+    fib50 = low + range_span * 0.5
+    fib618 = low + range_span * 0.618
+    return {
+        "pivot": round(pivot, 3),
+        "r1": round(r1, 3),
+        "s1": round(s1, 3),
+        "fib50": round(fib50, 3),
+        "fib61": round(fib618, 3),
+    }
+
+
+def _recent_extremes(
+    candles: Sequence[Tuple[float, float, float, float]],
+    count: int,
+) -> Dict[str, float]:
+    if not candles:
+        return {}
+    window = candles[-min(count, len(candles)) :]
+    highs = [c[1] for c in window]
+    lows = [c[2] for c in window]
+    return {"recent_high": round(max(highs), 3), "recent_low": round(min(lows), 3)}
+
+
+def _swing_points(
+    candles: Sequence[Tuple[float, float, float, float]],
+    lookback: int = 3,
+    min_gap_pips: float = 8.0,
+) -> List[Dict[str, float]]:
+    if len(candles) < lookback * 2 + 1:
+        return []
+    swings: List[Dict[str, float]] = []
+    price_gap = min_gap_pips * _PIP
+
+    def _append(kind: str, price: float, idx: int) -> None:
+        if swings:
+            prev = swings[-1]
+            if prev["kind"] == kind:
+                if (kind == "high" and price > prev["price"]) or (
+                    kind == "low" and price < prev["price"]
+                ):
+                    swings[-1] = {"kind": kind, "price": price, "index": idx}
+                return
+            if abs(price - prev["price"]) < price_gap:
+                return
+        swings.append({"kind": kind, "price": price, "index": idx})
+
+    for i in range(lookback, len(candles) - lookback):
+        segment = candles[i - lookback : i + lookback + 1]
+        high = max(c[1] for c in segment)
+        low = min(c[2] for c in segment)
+        current_high = candles[i][1]
+        current_low = candles[i][2]
+        if current_high >= high:
+            _append("high", current_high, i)
+            continue
+        if current_low <= low:
+            _append("low", current_low, i)
+    return swings[-12:]
+
+
+def _detect_n_wave(
+    candles: Sequence[Tuple[float, float, float, float]],
+) -> Optional[Dict[str, object]]:
+    swings = _swing_points(candles, lookback=3, min_gap_pips=10.0)
+    if len(swings) < 4:
+        return None
+    last = swings[-4:]
+    pattern = None
+    confidence = 0.0
+
+    def _summarize(sw) -> List[Dict[str, float]]:
+        return [
+            {"kind": s["kind"], "price": round(s["price"], 3), "index": s["index"]}
+            for s in sw
+        ]
+
+    if (
+        last[0]["kind"] == "low"
+        and last[1]["kind"] == "high"
+        and last[2]["kind"] == "low"
+        and last[3]["kind"] == "high"
+    ):
+        higher_low = last[2]["price"] > last[0]["price"]
+        higher_high = last[3]["price"] > last[1]["price"]
+        if higher_low and higher_high:
+            leg_a = (last[1]["price"] - last[0]["price"]) / _PIP
+            leg_b = (last[3]["price"] - last[2]["price"]) / _PIP
+            swing_depth = (last[1]["price"] - last[2]["price"]) / _PIP
+            confidence = min(1.0, max(leg_a, leg_b) / 18.0)
+            confidence = max(confidence, min(1.0, swing_depth / 12.0))
+            pattern = {
+                "bias": "up",
+                "confidence": round(confidence, 3),
+                "structure": {
+                    "legs": [round(leg_a, 1), round(swing_depth, 1), round(leg_b, 1)],
+                    "higher_high": True,
+                    "higher_low": True,
+                },
+                "swings": _summarize(last),
+            }
+    elif (
+        last[0]["kind"] == "high"
+        and last[1]["kind"] == "low"
+        and last[2]["kind"] == "high"
+        and last[3]["kind"] == "low"
+    ):
+        lower_high = last[2]["price"] < last[0]["price"]
+        lower_low = last[3]["price"] < last[1]["price"]
+        if lower_high and lower_low:
+            leg_a = (last[0]["price"] - last[1]["price"]) / _PIP
+            leg_b = (last[2]["price"] - last[3]["price"]) / _PIP
+            swing_depth = (last[2]["price"] - last[1]["price"]) / _PIP
+            confidence = min(1.0, max(leg_a, leg_b) / 18.0)
+            confidence = max(confidence, min(1.0, swing_depth / 12.0))
+            pattern = {
+                "bias": "down",
+                "confidence": round(confidence, 3),
+                "structure": {
+                    "legs": [round(leg_a, 1), round(swing_depth, 1), round(leg_b, 1)],
+                    "lower_high": True,
+                    "lower_low": True,
+                },
+                "swings": _summarize(last),
+            }
+    if pattern:
+        pattern["timeframe"] = "H4"
+        return pattern
+    return None
+
+
+def _detect_candlestick_pattern(
+    candles: Sequence[Tuple[float, float, float, float]],
+) -> Optional[Dict[str, object]]:
+    if len(candles) < 2:
+        return None
+    o0, h0, l0, c0 = candles[-2]
+    o1, h1, l1, c1 = candles[-1]
+    body0 = abs(c0 - o0)
+    body1 = abs(c1 - o1)
+    range1 = max(h1 - l1, _PIP * 0.1)
+    upper_wick = h1 - max(o1, c1)
+    lower_wick = min(o1, c1) - l1
+    pattern_type: Optional[str] = None
+    confidence = 0.0
+
+    if (
+        c1 > o1
+        and c0 < o0
+        and c1 >= max(o0, c0)
+        and o1 <= min(o0, c0)
+        and body1 > body0
+    ):
+        pattern_type = "bullish_engulfing"
+        confidence = min(1.0, body1 / range1 + 0.3)
+    elif (
+        c1 < o1
+        and c0 > o0
+        and o1 >= min(o0, c0)
+        and c1 <= max(o0, c0)
+        and body1 > body0
+    ):
+        pattern_type = "bearish_engulfing"
+        confidence = min(1.0, body1 / range1 + 0.3)
+    elif lower_wick > body1 * 2.5 and upper_wick <= body1 * 0.6:
+        pattern_type = "hammer" if c1 >= o1 else "inverted_hammer"
+        confidence = min(1.0, lower_wick / range1 + 0.25)
+    elif upper_wick > body1 * 2.5 and lower_wick <= body1 * 0.6:
+        pattern_type = "shooting_star" if c1 <= o1 else "hanging_man"
+        confidence = min(1.0, upper_wick / range1 + 0.25)
+
+    if pattern_type:
+        return {
+            "timeframe": "H1",
+            "type": pattern_type,
+            "confidence": round(min(confidence, 1.0), 3),
+            "body_pips": round(body1 / _PIP, 2),
+        }
+    return None
+
+
 def _trend_state(
     slope_pips: float,
     vol_pips: float,
@@ -113,6 +306,8 @@ class ChartStorySnapshot:
     structure_bias: float
     volatility_state: str
     summary: Dict[str, str]
+    major_levels: Dict[str, Dict[str, float]]
+    pattern_summary: Dict[str, object] = field(default_factory=dict)
 
     def is_aligned(self, pocket: str, action: str) -> bool:
         if pocket == "macro":
@@ -177,6 +372,27 @@ class ChartStory:
             "D1": _trend_state(slope_d1, vol_h1, slope_threshold=6.5, vol_sensitivity=0.35),
         }
 
+        levels = {
+            "h4": {},
+            "d1": {},
+        }
+        h4_levels = _pivot_levels(candles_h4)
+        d1_levels = _pivot_levels(d1)
+        if h4_levels:
+            h4_levels.update(_recent_extremes(candles_h4, 12))
+            levels["h4"] = h4_levels
+        if d1_levels:
+            d1_levels.update(_recent_extremes(d1, 6))
+            levels["d1"] = d1_levels
+
+        pattern_summary: Dict[str, object] = {}
+        n_wave = _detect_n_wave(candles_h4 or h1)
+        if n_wave:
+            pattern_summary["n_wave"] = n_wave
+        candle_pattern = _detect_candlestick_pattern(h1)
+        if candle_pattern:
+            pattern_summary["candlestick"] = candle_pattern
+
         snapshot = ChartStorySnapshot(
             macro_trend=macro_trend,
             micro_trend=micro_trend,
@@ -184,6 +400,8 @@ class ChartStory:
             structure_bias=structure_bias,
             volatility_state=volatility_state,
             summary=summary,
+            major_levels=levels,
+            pattern_summary=pattern_summary,
         )
         self._last_snapshot = snapshot
         return snapshot
