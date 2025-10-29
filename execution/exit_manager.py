@@ -34,11 +34,13 @@ class ExitManager:
         self.confidence_threshold = confidence_threshold
         self._macro_signal_threshold = max(confidence_threshold + 10, 80)
         self._macro_trend_adx = 16
-        self._macro_loss_buffer = 4.0
+        self._macro_loss_buffer = 8.0
         self._macro_ma_gap = 3.0
         # Macro-specific stability controls
-        self._macro_min_hold_minutes = 12.0  # more patience before acting on reversals
-        self._macro_hysteresis_pips = 5.0    # wider no-close band to avoid jitter
+        self._macro_min_hold_minutes = 60.0  # insist on true H4-sized holding periods
+        self._macro_hysteresis_pips = 12.0   # avoid reacting to M1 noise
+        self._macro_trail_trigger_pips = 12.0
+        self._macro_trail_offset = 0.0015
         # Micro-specific minimum hold
         self._micro_min_hold_minutes = 6.0
         self._reverse_confirmations = 3
@@ -373,10 +375,10 @@ class ExitManager:
             reason = "ma_cross_imminent"
         elif (
             pocket == "macro"
-            and profit_pips >= 6.0
+            and profit_pips >= self._macro_trail_trigger_pips
             and close_price is not None
             and ema_ref is not None
-            and close_price <= ema_ref - 0.0015
+            and close_price <= ema_ref - self._macro_trail_offset
         ):
             reason = "macro_trail_hit"
         # レンジ中でもマクロの既存建玉を一律にクローズしない。
@@ -439,6 +441,14 @@ class ExitManager:
         if range_mode and reason == "reverse_signal":
             allow_reentry = False
         if reason:
+            if not self._pattern_supports_exit(
+                story,
+                pocket,
+                "long",
+                reason,
+                profit_pips,
+            ):
+                return None
             if not self._story_allows_exit(
                 story,
                 pocket,
@@ -694,6 +704,14 @@ class ExitManager:
         if range_mode and reason == "reverse_signal":
             allow_reentry = False
         if reason:
+            if not self._pattern_supports_exit(
+                story,
+                pocket,
+                "short",
+                reason,
+                profit_pips,
+            ):
+                return None
             if not self._story_allows_exit(
                 story,
                 pocket,
@@ -779,9 +797,13 @@ class ExitManager:
                 return False
 
         threshold = 3.5
+        mature_macro_trade = False
         if pocket == "macro":
             threshold = 10.0
-            if not self._has_mature_trade(open_info, side, now, self._macro_min_hold_minutes):
+            mature_macro_trade = self._has_mature_trade(
+                open_info, side, now, self._macro_min_hold_minutes
+            )
+            if not mature_macro_trade:
                 threshold = 5.0
         elif pocket == "scalp":
             threshold = 2.2
@@ -789,8 +811,22 @@ class ExitManager:
         if cross_minutes > threshold:
             return False
 
-        if pocket == "macro" and profit_pips <= -self._macro_loss_buffer:
-            return True
+        if pocket == "macro":
+            if not mature_macro_trade and profit_pips > -self._macro_loss_buffer:
+                return False
+            if profit_pips <= -self._macro_loss_buffer:
+                return True
+            if cross_minutes <= threshold / 2.0:
+                return True
+            if macd_cross_minutes is not None and macd_cross_minutes <= threshold / 2.0:
+                return True
+            slope_check = slope_source.gap_slope_pips if slope_source else 0.0
+            if profit_pips < 2.0 and cross_minutes <= threshold:
+                return True
+            if slope_check < -0.08 and cross_minutes <= threshold:
+                return True
+            return False
+
         if profit_pips >= 0.8:
             return True
         if cross_minutes <= threshold / 2.0:
@@ -970,6 +1006,58 @@ class ExitManager:
                     ts=now,
                 )
                 return False
+        return True
+
+    def _pattern_supports_exit(
+        self,
+        story: Optional[ChartStorySnapshot],
+        pocket: str,
+        side: str,
+        reason: str,
+        profit_pips: float,
+    ) -> bool:
+        if story is None:
+            return True
+        patterns = getattr(story, "pattern_summary", None) or {}
+        if not patterns or pocket != "macro":
+            return True
+
+        n_wave = patterns.get("n_wave") or {}
+        bias = n_wave.get("bias")
+        confidence = float(n_wave.get("confidence", 0.0) or 0.0)
+        # Reasons that are soft / pattern-driven for macro exits
+        pattern_reasons = {
+            "reverse_signal",
+            "ma_cross",
+            "ma_cross_imminent",
+            "trend_reversal",
+            "macro_trail_hit",
+        }
+        if reason not in pattern_reasons:
+            return True
+
+        if side == "long":
+            if bias == "up" and confidence >= 0.55 and profit_pips > -self._macro_loss_buffer:
+                logging.info(
+                    "[PATTERN] veto macro exit: bias=%s conf=%.2f profit=%.2f",
+                    bias,
+                    confidence,
+                    profit_pips,
+                )
+                return False
+            if bias == "down" and confidence >= 0.5:
+                return True
+        else:
+            if bias == "down" and confidence >= 0.55 and profit_pips > -self._macro_loss_buffer:
+                logging.info(
+                    "[PATTERN] veto macro exit: bias=%s conf=%.2f profit=%.2f",
+                    bias,
+                    confidence,
+                    profit_pips,
+                )
+                return False
+            if bias == "up" and confidence >= 0.5:
+                return True
         return True
 
     @staticmethod

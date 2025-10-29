@@ -159,6 +159,25 @@ class StageTracker:
         )
         self._con.commit()
 
+    def clear_cooldown(
+        self,
+        pocket: str,
+        direction: str,
+        *,
+        reason: Optional[str] = None,
+    ) -> None:
+        if reason:
+            self._con.execute(
+                "DELETE FROM stage_cooldown WHERE pocket=? AND direction=? AND reason=?",
+                (pocket, direction, reason),
+            )
+        else:
+            self._con.execute(
+                "DELETE FROM stage_cooldown WHERE pocket=? AND direction=?",
+                (pocket, direction),
+            )
+        self._con.commit()
+
     def get_cooldown(
         self, pocket: str, direction: str, now: Optional[datetime] = None
     ) -> Optional[CooldownInfo]:
@@ -353,11 +372,11 @@ class StageTracker:
         if lose_streak >= 4:
             factor *= 0.5
         elif lose_streak == 3:
-            factor *= 0.55
+            factor *= 0.6
         elif lose_streak == 2:
-            factor *= 0.65
-        elif lose_streak == 1:
             factor *= 0.8
+        elif lose_streak == 1:
+            factor *= 0.95
 
         # ストリークが続く場合の軽い調整（縮小し過ぎないよう控えめにする）
         if win_streak >= 4:
@@ -429,8 +448,20 @@ class StageTracker:
             if count < thresholds["count"] and loss_pips < thresholds["pips"]:
                 continue
             seconds = thresholds["cooldown"]
-            applied = False
+            applicable_dirs: List[str] = []
             for direction in ("long", "short"):
+                lose_streak, _ = self.get_loss_profile(pocket, direction)
+                if lose_streak > 0:
+                    applicable_dirs.append(direction)
+            if not applicable_dirs:
+                applicable_dirs = ["long", "short"]
+
+            for direction in ("long", "short"):
+                if direction not in applicable_dirs:
+                    self.clear_cooldown(pocket, direction, reason="loss_cluster")
+
+            applied = False
+            for direction in applicable_dirs:
                 info = self.get_cooldown(pocket, direction, now)
                 if info and info.reason == "loss_cluster":
                     remaining = int((info.cooldown_until - now).total_seconds())

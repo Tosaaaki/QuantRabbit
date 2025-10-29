@@ -10,7 +10,7 @@ from __future__ import annotations
 import os
 import sqlite3
 import pathlib
-from typing import Dict, Optional
+from typing import Dict, Optional, Tuple
 from utils.secrets import get_secret
 
 # --- risk params ---
@@ -165,20 +165,31 @@ def allowed_lot(
     return round(max(lot, 0.0), 3)
 
 
+from typing import Optional, Tuple
+
+
 def clamp_sl_tp(
-    price: float, sl: float, tp: float, is_buy: bool
-) -> tuple[float, float]:
+    price: float,
+    sl: Optional[float],
+    tp: Optional[float],
+    is_buy: bool,
+) -> Tuple[Optional[float], Optional[float]]:
     """
     SL/TP が逆転していないかチェックし妥当な値を返す
     """
-    if is_buy:
-        if sl >= price:  # 異常
-            sl = price - 0.1
-        if tp <= price:
-            tp = price + 0.1
-    else:
-        if sl <= price:
-            sl = price + 0.1
-        if tp >= price:
-            tp = price - 0.1
-    return round(sl, 3), round(tp, 3)
+    adj_sl = sl
+    adj_tp = tp
+    if adj_tp is not None:
+        if is_buy and adj_tp <= price:
+            adj_tp = price + 0.1
+        if not is_buy and adj_tp >= price:
+            adj_tp = price - 0.1
+    if adj_sl is not None:
+        if is_buy and adj_sl >= price:
+            adj_sl = price - 0.1
+        if not is_buy and adj_sl <= price:
+            adj_sl = price + 0.1
+    return (
+        round(adj_sl, 3) if adj_sl is not None else None,
+        round(adj_tp, 3) if adj_tp is not None else None,
+    )

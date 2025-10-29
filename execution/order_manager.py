@@ -44,6 +44,11 @@ if HEDGING_ENABLED:
 
 _LAST_PROTECTIONS: dict[str, Tuple[Optional[float], Optional[float]]] = {}
 
+# 最低発注単位（AGENT.me 6.1 に準拠）。
+# リスク計算・ステージ係数適用後の“最終 units”に対して適用する最終ゲート。
+# reduce_only（決済）では適用しない。
+_MIN_ORDER_UNITS = 1000
+
 # ---------- orders logger (logs/orders.db) ----------
 _ORDERS_DB_PATH = pathlib.Path("logs/orders.db")
 
@@ -569,6 +574,32 @@ async def market_order(
     units : +10000 = buy 0.1 lot, ‑10000 = sell 0.1 lot
     returns order ticket id（決済のみの fill でも tradeID を返却）
     """
+    # 最終ゲート: エントリー（reduce_only=False）で units の絶対値が下限未満の場合は発注しない
+    if not reduce_only and abs(int(units)) < _MIN_ORDER_UNITS:
+        _log_order(
+            pocket=pocket,
+            instrument=instrument,
+            side=("buy" if units > 0 else "sell"),
+            units=units,
+            sl_price=sl_price,
+            tp_price=tp_price,
+            client_order_id=client_order_id,
+            status="skipped_tiny_units",
+            attempt=0,
+            request_payload={
+                "reason": "units_below_min",
+                "min_units": _MIN_ORDER_UNITS,
+                "entry_thesis": entry_thesis or {},
+            },
+        )
+        logging.info(
+            "[ORDER] Skip entry due to tiny units=%s (<%s), pocket=%s",
+            units,
+            _MIN_ORDER_UNITS,
+            pocket,
+        )
+        return None
+
     order_data = {
         "order": {
             "type": "MARKET",
