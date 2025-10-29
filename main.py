@@ -13,11 +13,11 @@ from market_data.candle_fetcher import (
     start_candle_stream,
     initialize_history,
 )
-from market_data import spread_monitor
+from market_data import spread_monitor, tick_window
 from indicators.factor_cache import all_factors, on_candle
 from analysis.regime_classifier import classify
 from analysis.focus_decider import decide_focus
-from analysis.gpt_decider import get_decision
+from analysis.gpt_decider import get_decision, fallback_decision
 from analysis.perf_monitor import snapshot as get_perf
 from analysis.summary_ingestor import check_event_soon, get_latest_news
 # バックグラウンドでニュース取得と要約を実行するためのインポート
@@ -33,6 +33,7 @@ from signals.pocket_allocator import (
     DEFAULT_SCALP_SHARE,
     dynamic_scalp_share,
     MIN_MICRO_WEIGHT,
+    MIN_MACRO_WEIGHT,
     MIN_SCALP_WEIGHT,
 )
 from execution.risk_guard import (
@@ -243,10 +244,10 @@ _MACRO_PULLBACK_MAX_MA_SLACK_PIPS = 2.1
 _MACRO_PULLBACK_MIN_ADX = 19.0
 
 _BASE_STAGE_RATIOS = {
-    # Front-load a higher fraction in stage 0 so a valid signal deploys meaningful size sooner.
-    "macro": (0.5, 0.2, 0.12, 0.08, 0.06, 0.04),
+    # Spread staging to smooth adverse price moves while preserving total exposure.
+    "macro": (0.32, 0.22, 0.18, 0.14, 0.09, 0.05),
     "micro": (0.22, 0.19, 0.17, 0.15, 0.14, 0.13),
-    "scalp": (0.6, 0.2, 0.12, 0.08),
+    "scalp": (1.0, 0.35, 0.2),
 }
 
 _STAGE_PLAN_OVERRIDES: dict[str, tuple[float, ...]] = {}
@@ -262,11 +263,13 @@ def _safe_env_float(key: str, default: float, *, low: float, high: float) -> flo
     return max(low, min(high, value))
 
 
-SCALP_WEIGHT_FLOOR = _safe_env_float("SCALP_WEIGHT_FLOOR", 0.08, low=0.0, high=0.3)
+SCALP_WEIGHT_FLOOR = _safe_env_float("SCALP_WEIGHT_FLOOR", 0.18, low=0.0, high=0.4)
 SCALP_WEIGHT_READY_FLOOR = _safe_env_float(
-    "SCALP_WEIGHT_READY_FLOOR", 0.12, low=SCALP_WEIGHT_FLOOR, high=0.4
+    "SCALP_WEIGHT_READY_FLOOR", 0.26, low=SCALP_WEIGHT_FLOOR, high=0.45
 )
-SCALP_AUTO_MIN_WEIGHT = _safe_env_float("SCALP_AUTO_MIN_WEIGHT", 0.01, low=0.0, high=0.25)
+SCALP_AUTO_MIN_WEIGHT = _safe_env_float("SCALP_AUTO_MIN_WEIGHT", 0.08, low=0.0, high=0.3)
+SCALP_CONFIDENCE_FLOOR = _safe_env_float("SCALP_CONFIDENCE_FLOOR", 0.74, low=0.4, high=1.0)
+SCALP_MIN_ABS_LOT = _safe_env_float("SCALP_MIN_ABS_LOT", 0.14, low=0.0, high=0.6)
 PULSEBREAK_AUTO_MOM_MIN = _safe_env_float("PULSEBREAK_AUTO_MOM_MIN", 0.0018, low=0.0, high=0.02)
 PULSEBREAK_AUTO_ATR_MIN = _safe_env_float("PULSEBREAK_AUTO_ATR_MIN", 2.4, low=0.0, high=15.0)
 PULSEBREAK_AUTO_VOL_MIN = _safe_env_float("PULSEBREAK_AUTO_VOL_MIN", 1.3, low=0.0, high=5.0)
@@ -286,9 +289,9 @@ def _stage_plan(pocket: str) -> tuple[float, ...]:
         return _BASE_STAGE_RATIOS[pocket]
     return (1.0,)
 
-MIN_MACRO_STAGE_LOT = 0.05  # 5000 units baseline keeps macro entries meaningful
+MIN_MACRO_STAGE_LOT = 0.03  # 3000 units baseline keeps macro entries meaningful
 MAX_MICRO_STAGE_LOT = 0.02  # cap micro scaling when momentum signals fire repeatedly
-MIN_SCALP_STAGE_LOT = 0.01  # 1000 units baseline so micro/macro bias does not null scalps
+MIN_SCALP_STAGE_LOT = 0.1  # 10k units baseline to keep scalp entries meaningful
 DEFAULT_COOLDOWN_SECONDS = 180
 RANGE_COOLDOWN_SECONDS = 420
 GPT_MIN_INTERVAL_SECONDS = 180
@@ -390,9 +393,9 @@ MICRO_BREAKOUT_WEIGHT_FLOOR = 0.45
 STAGE_RESET_GRACE_SECONDS = 180
 if os.getenv("SCALP_TACTICAL", "0").strip().lower() not in {"", "0", "false", "no"}:
     STAGE_RESET_GRACE_SECONDS = 60
-RANGE_SCALP_ATR_MIN = 1.35
-RANGE_SCALP_VOL_MIN = 0.75
-RANGE_SCALP_MAX_MOMENTUM = 0.0012
+RANGE_SCALP_ATR_MIN = 0.7
+RANGE_SCALP_VOL_MIN = 0.4
+RANGE_SCALP_MAX_MOMENTUM = 0.0022
 RANGE_FADER_MIN_RR = 1.12
 RANGE_FADER_MAX_RR = 1.32
 RANGE_FADER_RANGE_CONF_SCALE = 0.82
@@ -595,6 +598,16 @@ async def gpt_worker(
                 signature[:10],
                 type(exc).__name__,
                 str(exc) or "no message",
+            )
+            fallback = fallback_decision(
+                payload,
+                reason="worker_fallback",
+                last_exception=exc,
+                log_reason=True,
+            )
+            await gpt_state.update(signature, fallback)
+            logging.info(
+                "[GPT WORKER] applied fallback decision signature=%s", signature[:10]
             )
         finally:
             await gpt_requests.task_done(signature)
@@ -1026,18 +1039,18 @@ def _stage_conditions_met(
 
     if pocket == "scalp":
         atr = fac_m1.get("atr", 0.0) * 100
-        if atr < 1.2:
+        if atr < 0.6:
             logging.info("[STAGE] Scalp gating: ATR %.2f too low for stage %d.", atr, stage_idx)
             return False
         momentum = (fac_m1.get("close") or 0.0) - (fac_m1.get("ema20") or 0.0)
-        if action == "OPEN_LONG" and momentum > 0.0004:
+        if action == "OPEN_LONG" and momentum > 0.00012:
             logging.info(
                 "[STAGE] Scalp buy gating: momentum %.4f positive (stage %d).",
                 momentum,
                 stage_idx,
             )
             return False
-        if action == "OPEN_SHORT" and momentum < -0.0004:
+        if action == "OPEN_SHORT" and momentum < -0.00012:
             logging.info(
                 "[STAGE] Scalp sell gating: momentum %.4f negative (stage %d).",
                 momentum,
@@ -1045,7 +1058,7 @@ def _stage_conditions_met(
             )
             return False
         if action == "OPEN_LONG":
-            if rsi > 57 - min(stage_idx * 4, 12):
+            if rsi > 67 - min(stage_idx * 2, 8):
                 logging.info(
                     "[STAGE] Scalp buy gating: RSI %.1f too high (stage %d).",
                     rsi,
@@ -1053,7 +1066,7 @@ def _stage_conditions_met(
                 )
                 return False
         else:
-            if rsi < 43 + min(stage_idx * 4, 12):
+            if rsi < 33 + min(stage_idx * 2, 8):
                 logging.info(
                     "[STAGE] Scalp sell gating: RSI %.1f too low (stage %d).",
                     rsi,
@@ -1115,6 +1128,30 @@ def compute_stage_lot(
         round(total_lot, 4),
     )
     return 0.0, -1
+
+
+def _cluster_directional_units(
+    direction: str,
+    open_positions: dict[str, dict[str, object]],
+    pockets: tuple[str, ...] = ("macro", "micro", "scalp"),
+) -> int:
+    """
+    Aggregate existing exposure for averaging logic.
+    Returns gross units in the requested direction across specified pockets.
+    """
+    key = "long_units" if direction == "long" else "short_units"
+    total = 0
+    for name in pockets:
+        info = open_positions.get(name)
+        if not info:
+            continue
+        try:
+            units_val = int(info.get(key, 0) or 0)
+        except (TypeError, ValueError):
+            continue
+        if units_val > 0:
+            total += units_val
+    return total
 
 
 async def m1_candle_handler(cndl: Candle):
@@ -1188,8 +1225,6 @@ async def logic_loop(
     last_logged_scalp_weight: Optional[float] = None
     recent_profiles: dict[str, dict[str, float]] = {}
     param_snapshot: Optional[ParamSnapshot] = None
-    scalp_default_applied = False
-    macro_clip_logged = False
     scalp_ready_forced = False
 
     def _factor_snapshot(data: Optional[Dict[str, float]]) -> Dict[str, float]:
@@ -1215,6 +1250,7 @@ async def logic_loop(
     try:
         while True:
             now = datetime.datetime.utcnow()
+            scalp_ready_forced = False
             stage_tracker.clear_expired(now)
             # Heartbeat logging
             if (now - last_heartbeat_time).total_seconds() >= 300:  # Every 5 minutes
@@ -1255,6 +1291,10 @@ async def logic_loop(
                 continue
 
             fac_m1 = dict(fac_m1_raw)
+            recent_tick_rows = tick_window.recent_ticks(75.0, limit=180)
+            if recent_tick_rows:
+                fac_m1["recent_ticks"] = recent_tick_rows
+                fac_m1["recent_tick_summary"] = tick_window.summarize(75.0)
 
             atr_pips = fac_m1.get("atr_pips")
             if atr_pips is None:
@@ -1289,21 +1329,42 @@ async def logic_loop(
 
             spread_blocked, spread_remain, spread_snapshot, spread_reason = spread_monitor.is_blocked()
             spread_gate_reason = ""
+            spread_gate_type = ""
+            spread_gate_soft_scalp = False
+            spread_stale_for = 0.0
+            stale_grace = 0.0
+            stale_flag = False
+            if spread_snapshot:
+                try:
+                    stale_flag = bool(spread_snapshot.get("stale"))
+                    spread_stale_for = float(spread_snapshot.get("stale_for_sec") or 0.0)
+                    stale_grace = float(spread_snapshot.get("stale_grace_sec") or 0.0)
+                except (TypeError, ValueError):
+                    stale_flag = False
+                    spread_stale_for = 0.0
+                    stale_grace = 0.0
             if spread_blocked:
                 remain_txt = f"{spread_remain}s"
                 base_reason = spread_reason or "spread_threshold"
                 spread_gate_reason = f"{base_reason} (remain {remain_txt})"
+                spread_gate_type = "blocked"
             elif spread_snapshot:
-                if spread_snapshot["age_ms"] > spread_snapshot["max_age_ms"]:
-                    spread_gate_reason = (
-                        f"spread_stale age={spread_snapshot['age_ms']}ms "
-                        f"> {spread_snapshot['max_age_ms']}ms"
-                    )
+                if stale_flag:
+                    if stale_grace <= 0.0 or spread_stale_for >= stale_grace:
+                        spread_gate_reason = (
+                            f"spread_stale age={spread_snapshot['age_ms']}ms "
+                            f"> {spread_snapshot['max_age_ms']}ms"
+                        )
+                        spread_gate_type = "stale"
+                        spread_gate_soft_scalp = True
+                    else:
+                        spread_gate_type = "stale_grace"
                 elif spread_snapshot["spread_pips"] >= spread_snapshot["limit_pips"]:
                     spread_gate_reason = (
                         f"spread_hot {spread_snapshot['spread_pips']:.2f}p "
                         f">= {spread_snapshot['limit_pips']:.2f}p"
                     )
+                    spread_gate_type = "hot"
             spread_gate_active = bool(spread_gate_reason)
             if spread_snapshot:
                 def _fmt(v: object) -> str:
@@ -1324,8 +1385,15 @@ async def logic_loop(
                     baseline_txt = (
                         f"baseline_warmup samples={spread_snapshot.get('baseline_samples', 0)}"
                     )
+                if stale_flag:
+                    stale_txt = (
+                        f" stale_for={spread_stale_for:.1f}s"
+                        + (f"/{stale_grace:.1f}s" if stale_grace else "")
+                    )
+                else:
+                    stale_txt = ""
                 spread_log_context = (
-                    f"last={last_txt}p avg={avg_txt}p age={age_ms}ms {baseline_txt}"
+                    f"last={last_txt}p avg={avg_txt}p age={age_ms}ms {baseline_txt}{stale_txt}"
                 )
             else:
                 spread_log_context = "no_snapshot"
@@ -1347,9 +1415,10 @@ async def logic_loop(
                         or spread_gate_reason != last_spread_gate_reason
                     ):
                         logging.info(
-                            "[SPREAD] gating entries (%s, %s)",
+                            "[SPREAD] gating entries (%s, %s type=%s)",
                             spread_gate_reason,
                             spread_log_context,
+                            spread_gate_type or "n/a",
                         )
             elif last_spread_gate:
                 logging.info("[SPREAD] entries re-enabled (%s)", spread_log_context)
@@ -1758,10 +1827,28 @@ async def logic_loop(
                     )
                 last_range_scalp_ready = scalp_ready
             else:
-                scalp_ready = atr_pips >= 2.2 and momentum_abs >= 0.0015
-                if not scalp_ready and vol_5m:
-                    scalp_ready = atr_pips >= 2.0 and vol_5m >= 1.2
+                scalp_ready = (
+                    (atr_pips >= 1.0 and momentum_abs >= 0.0006)
+                    or (atr_pips >= 0.85 and vol_5m and vol_5m >= 0.7)
+                )
+                if not scalp_ready and momentum_abs >= 0.0012:
+                    scalp_ready = atr_pips >= 0.7
                 last_range_scalp_ready = None
+            if (
+                not scalp_ready
+                and weight_scalp is not None
+                and weight_scalp >= SCALP_WEIGHT_FLOOR
+            ):
+                scalp_ready = True
+                scalp_ready_forced = True
+                logging.info(
+                    "[SCALP] Forcing readiness (weight=%.2f floor=%.2f atr=%.2f vol5m=%s momentum=%.4f)",
+                    weight_scalp,
+                    SCALP_WEIGHT_FLOOR,
+                    atr_pips,
+                    f"{vol_5m:.2f}" if vol_5m is not None else "n/a",
+                    momentum,
+                )
 
             focus_tag = gpt.get("focus_tag") or focus
             weight_macro = gpt.get("weight_macro", w_macro)
@@ -1961,8 +2048,32 @@ async def logic_loop(
             ):
                 focus_pockets.add("scalp")
             focus_pockets.update(strategy_pockets)
-            if range_active and "macro" in focus_pockets:
-                focus_pockets.discard("macro")
+            diag_fields = {
+                "ready": int(bool(scalp_ready)),
+                "forced": int(bool(scalp_ready_forced)),
+                "focus": focus_tag,
+                "range": range_active,
+                "soft": range_soft_active,
+                "atr": round(atr_pips, 2) if atr_pips is not None else "n/a",
+                "vol5": round(vol_5m, 2) if vol_5m is not None else "n/a",
+                "momentum": round(momentum, 4),
+                "weight": round(weight_scalp, 3) if weight_scalp is not None else "n/a",
+                "pockets": ",".join(sorted(focus_pockets)),
+                "strategies": ",".join(ranked_strategies[:4]) if ranked_strategies else "-",
+            }
+            logging.info(
+                "[SCALP_READY] %s",
+                " ".join(f"{k}={v}" for k, v in diag_fields.items()),
+            )
+            if "scalp" in focus_pockets and "M1Scalper" not in ranked_strategies:
+                logging.info(
+                    "[SCALP_FLOW] missing_strategy ready=%s weight=%s strategies=%s",
+                    scalp_ready,
+                    f"{weight_scalp:.3f}" if weight_scalp is not None else "n/a",
+                    ranked_strategies,
+                )
+        if range_active and "macro" in focus_pockets:
+            focus_pockets.discard("macro")
 
             if (
                 last_logged_focus != focus_tag
@@ -2643,6 +2754,8 @@ async def logic_loop(
 
             if lot_total > 0 and signal_counts:
                 min_targets: dict[str, float] = {}
+                if signal_counts.get("macro"):
+                    min_targets["macro"] = round(lot_total * MIN_MACRO_WEIGHT, 3)
                 if signal_counts.get("micro"):
                     min_targets["micro"] = round(lot_total * MIN_MICRO_WEIGHT, 3)
                 if signal_counts.get("scalp"):
@@ -2652,7 +2765,12 @@ async def logic_loop(
                     deficit = round(target - lots.get(pocket, 0.0), 3)
                     if deficit <= 0:
                         return
-                    donors = ("macro", "scalp" if pocket == "micro" else "micro")
+                    if pocket == "macro":
+                        donors = ("micro", "scalp")
+                    elif pocket == "micro":
+                        donors = ("macro", "scalp")
+                    else:
+                        donors = ("macro", "micro")
                     for donor in donors:
                         if donor == pocket or donor not in lots:
                             continue
@@ -2670,6 +2788,32 @@ async def logic_loop(
 
                 for pocket_name, target in min_targets.items():
                     _boost_lot(pocket_name, target)
+
+                if signal_counts.get("scalp"):
+                    lots.setdefault("scalp", 0.0)
+                    scalp_target_abs = round(min(lot_total, SCALP_MIN_ABS_LOT), 3)
+                    if scalp_target_abs > 0 and lots["scalp"] + 1e-6 < scalp_target_abs:
+                        deficit = round(scalp_target_abs - lots["scalp"], 3)
+                        for donor in ("macro", "micro"):
+                            if deficit <= 0:
+                                break
+                            if donor not in lots:
+                                continue
+                            available = round(max(lots.get(donor, 0.0), 0.0), 3)
+                            if available <= 0:
+                                continue
+                            give = min(deficit, available)
+                            if give <= 0:
+                                continue
+                            lots["scalp"] = round(lots["scalp"] + give, 3)
+                            lots[donor] = round(lots[donor] - give, 3)
+                            deficit = round(deficit - give, 3)
+                        if deficit > 0:
+                            logging.info(
+                                "[SCALP] Unable to reach absolute lot floor %.3f (remaining=%.3f).",
+                                scalp_target_abs,
+                                deficit,
+                        )
 
             if (
                 not range_active
@@ -2734,6 +2878,19 @@ async def logic_loop(
                         },
                     )
 
+            if lot_total > 0:
+                macro_lot = round(max(lots.get("macro", 0.0), 0.0), 3)
+                micro_lot = round(max(lots.get("micro", 0.0), 0.0), 3)
+                scalp_lot = round(max(lots.get("scalp", 0.0), 0.0), 3)
+                macro_share = (macro_lot / lot_total) * 100 if lot_total > 0 else 0.0
+                logging.info(
+                    "[LOTS] total=%.3f macro=%.3f (%.1f%%) micro=%.3f scalp=%.3f",
+                    lot_total,
+                    macro_lot,
+                    macro_share,
+                    micro_lot,
+                    scalp_lot,
+                )
             if account_snapshot and margin_rate and margin_rate > 0:
                 if MIN_MACRO_TOTAL_LOT > 0 and "macro" in lots:
                     macro_lot = round(max(lots.get("macro", 0.0), 0.0), 3)
@@ -2817,15 +2974,25 @@ async def logic_loop(
                         )
                         continue
                 is_tactical = os.getenv('SCALP_TACTICAL','0').strip().lower() not in ('','0','false','no')
-                if spread_gate_active and not (is_tactical and pocket=='scalp'):
-                    if not spread_skip_logged:
-                        logging.info(
-                            "[SKIP] Spread guard active (%s, %s).",
-                            spread_gate_reason,
-                            spread_log_context,
-                        )
-                        spread_skip_logged = True
-                    continue
+                allow_spread_bypass = False
+                if spread_gate_active:
+                    if pocket == 'scalp' and (is_tactical or spread_gate_soft_scalp):
+                        allow_spread_bypass = True
+                        if spread_gate_soft_scalp:
+                            logging.info(
+                                "[SPREAD] stale gating bypassed for scalp (reason=%s context=%s)",
+                                spread_gate_reason,
+                                spread_log_context,
+                            )
+                    if not allow_spread_bypass:
+                        if not spread_skip_logged:
+                            logging.info(
+                                "[SKIP] Spread guard active (%s, %s).",
+                                spread_gate_reason,
+                                spread_log_context,
+                            )
+                            spread_skip_logged = True
+                        continue
                 if event_soon and pocket in {"micro", "scalp"} and not is_tactical:
                     logging.info("[SKIP] Event soon, skipping %s pocket trade.", pocket)
                     continue
@@ -2873,6 +3040,15 @@ async def logic_loop(
                             confidence,
                         )
                     confidence_factor = boosted_factor
+                if pocket == "scalp":
+                    if confidence_factor + 1e-6 < SCALP_CONFIDENCE_FLOOR:
+                        logging.info(
+                            "[ALLOCATION] Scalp confidence factor floor %.2f -> %.2f (conf=%d)",
+                            confidence_factor,
+                            SCALP_CONFIDENCE_FLOOR,
+                            confidence,
+                        )
+                    confidence_factor = min(1.0, max(confidence_factor, SCALP_CONFIDENCE_FLOOR))
                 confidence_factor = min(confidence_factor, 1.0)
                 confidence_target = round(total_lot_for_pocket * confidence_factor, 3)
                 if confidence_target <= 0:
@@ -2967,6 +3143,10 @@ async def logic_loop(
                     open_units = int(open_info.get("short_units", 0))
                     ref_price = open_info.get("short_avg_price")
 
+                cluster_units = open_units
+                if pocket == "macro":
+                    cluster_units = _cluster_directional_units(direction, open_positions)
+
                 is_buy = action == "OPEN_LONG"
                 entry_price = price
                 if is_buy and tick_ask is not None:
@@ -2999,17 +3179,29 @@ async def logic_loop(
                     ref_price = entry_price
                 if ref_price is not None:
                     stage_context["avg_price"] = ref_price
+                if pocket == "macro":
+                    stage_context["cluster_units"] = cluster_units
+                    stage_context["cluster_direction"] = direction
 
                 staged_lot, stage_idx = compute_stage_lot(
                     pocket,
                     confidence_target,
-                    open_units,
+                    cluster_units,
                     action,
                     fac_m1,
                     fac_h4,
                     stage_context,
                 )
                 if staged_lot <= 0:
+                    if pocket == "scalp":
+                        logging.info(
+                            "[SCALP_STAGE] lot_zero stage=%s confidence=%.3f open_units=%s plan=%s ready=%s",
+                            stage_idx,
+                            confidence_target,
+                            open_units,
+                            _stage_plan(pocket),
+                            scalp_ready,
+                        )
                     continue
 
                 units = int(round(staged_lot * 100000)) * (

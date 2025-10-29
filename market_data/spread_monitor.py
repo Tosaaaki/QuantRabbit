@@ -56,6 +56,7 @@ BASELINE_WINDOW_SECONDS = _load_float(
 BASELINE_MIN_SAMPLES = _load_int(
     "spread_guard_baseline_min_samples", 60, minimum=5
 )
+STALE_GRACE_SECONDS = _load_float("spread_guard_stale_grace_sec", 12.0, minimum=0.0)
 
 # 上限を設け過去履歴が無限に伸びるのを防ぐ
 _HISTORY_MAX_LEN = 180
@@ -76,6 +77,7 @@ _baseline_history: Deque[Tuple[float, float]] = deque(maxlen=4 * _HISTORY_MAX_LE
 _blocked_until: float = 0.0
 _blocked_reason: str = ""
 _last_logged_blocked: bool = False
+_stale_since: Optional[float] = None
 
 
 def _percentile(values: list[float], pct: float) -> float:
@@ -98,7 +100,7 @@ def update_from_tick(tick) -> None:  # type: ignore[no-untyped-def]
     """
     Tick からスプレッド情報を更新する。tick は market_data.tick_fetcher.Tick 型想定。
     """
-    global _snapshot, _blocked_until, _blocked_reason, _last_logged_blocked
+    global _snapshot, _blocked_until, _blocked_reason, _last_logged_blocked, _stale_since
 
     try:
         bid = float(tick.bid)
@@ -122,6 +124,7 @@ def update_from_tick(tick) -> None:  # type: ignore[no-untyped-def]
         ask=ask,
         spread_pips=spread_pips,
     )
+    _stale_since = None
 
     _history.append((now, spread_pips))
     # 古い履歴を window 秒より前のものは削除
@@ -194,6 +197,13 @@ def get_state() -> Optional[dict]:
     min_spread = min(values)
     avg_spread = sum(values) / len(values)
     high_count = sum(1 for val in values if val >= MAX_SPREAD_PIPS)
+    stale = age_ms > MAX_AGE_MS
+    if stale:
+        if _stale_since is None:
+            _stale_since = now
+    else:
+        _stale_since = None
+    stale_for = max(0.0, now - _stale_since) if _stale_since is not None else 0.0
 
     baseline_values = [val for _, val in _baseline_history]
     baseline_ready = len(baseline_values) >= BASELINE_MIN_SAMPLES
@@ -215,6 +225,9 @@ def get_state() -> Optional[dict]:
         "limit_pips": MAX_SPREAD_PIPS,
         "release_pips": RELEASE_SPREAD_PIPS,
         "max_age_ms": MAX_AGE_MS,
+        "stale": stale,
+        "stale_for_sec": round(stale_for, 3),
+        "stale_grace_sec": STALE_GRACE_SECONDS,
         "high_samples": high_count,
         "min_high_samples": MIN_HIGH_SAMPLES,
         "window_seconds": WINDOW_SECONDS,

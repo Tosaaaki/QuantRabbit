@@ -301,11 +301,10 @@ class StageTracker:
 
         self._con.commit()
 
+        fallback_cd = cooldown_seconds
         cooldown_lookup: Dict[str, int] = dict(cooldown_map or {})
         if cooldown_lookup:
             fallback_cd = int(min(cooldown_lookup.values()))
-        else:
-            fallback_cd = cooldown_seconds
 
         if new_losses:
             payload = []

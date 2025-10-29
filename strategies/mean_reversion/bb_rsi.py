@@ -82,6 +82,27 @@ def _squeeze_bias(bbw_eta: Optional[float], bbw_slope: float) -> float:
     return squeeze
 
 
+def _sl_tp_profile(atr_pips: float, range_mode: bool) -> Tuple[float, float]:
+    """
+    Micro pocket は SL を広めに取り、TP は保険的にタイトへ倒す。
+    Exit manager がフォローする前提で RR≒0.4〜0.6 を意図する。
+    """
+    atr_pips = max(0.0, float(atr_pips))
+    if range_mode:
+        sl_raw = atr_pips * 2.7
+        tp_raw = atr_pips * 0.62
+        tp_cap = 1.9
+    else:
+        sl_raw = atr_pips * 3.05
+        tp_raw = atr_pips * 0.58
+        tp_cap = 2.3
+    sl = max(7.0, min(18.0, sl_raw))
+    tp = max(0.9, min(tp_cap, sl * 0.6, tp_raw))
+    if tp >= sl:
+        tp = max(0.9, sl * 0.55)
+    return round(sl, 2), round(tp, 2)
+
+
 class BBRsi:
     name = "BB_RSI"
     pocket = "micro"
@@ -237,13 +258,12 @@ class BBRsi:
                 conf += max(0.0, min(5.0, (vol_5m - 0.6) * 4.0))
             conf = max(38.0, min(92.0, conf))
 
-            sl = max(4.8, min(12.5, atr_pips * (2.15 if range_active else 2.45)))
-            tp = min(3.2, max(1.0, atr_pips * (0.7 if range_active else 0.8)))
+            sl, tp = _sl_tp_profile(atr_pips, range_active)
 
             return {
                 'action': 'OPEN_LONG',
-                'sl_pips': round(sl, 2),
-                'tp_pips': round(tp, 2),
+                'sl_pips': sl,
+                'tp_pips': tp,
                 'confidence': int(round(conf)),
                 'tag': f"{BBRsi.name}-long",
                 'notes': {
@@ -261,13 +281,12 @@ class BBRsi:
             conf += max(0.0, min(5.0, (vol_5m - 0.6) * 4.0))
         conf = max(38.0, min(92.0, conf))
 
-        sl = max(4.8, min(12.5, atr_pips * (2.15 if range_active else 2.45)))
-        tp = min(3.2, max(1.0, atr_pips * (0.7 if range_active else 0.8)))
+        sl, tp = _sl_tp_profile(atr_pips, range_active)
 
         return {
             'action': 'OPEN_SHORT',
-            'sl_pips': round(sl, 2),
-            'tp_pips': round(tp, 2),
+            'sl_pips': sl,
+            'tp_pips': tp,
             'confidence': int(round(conf)),
             'tag': f"{BBRsi.name}-short",
             'notes': {

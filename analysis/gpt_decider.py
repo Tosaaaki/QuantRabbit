@@ -68,8 +68,8 @@ _REUSE_WINDOW_SECONDS = 300
 _GPT_TIMEOUT_SECONDS = 18 if "gpt-5" in MODEL else 9
 _FALLBACK_DECISION = {
     "focus_tag": "hybrid",
-    "weight_macro": 0.5,
-    "weight_scalp": 0.15,
+    "weight_macro": 0.7,
+    "weight_scalp": 0.1,
     "ranked_strategies": [
         "TrendMA",
         "Donchian55",
@@ -269,43 +269,61 @@ async def get_decision(payload: Dict) -> Dict:
     if _LAST_DECISION_TS and _LAST_DECISION_DATA:
         age = (now - _LAST_DECISION_TS).total_seconds()
         if age <= _REUSE_WINDOW_SECONDS:
-            reused = dict(_LAST_DECISION_DATA)
-            reused["reason"] = "reuse_previous"
-            log_gpt_fallback(
-                "gpt_decider",
-                "reuse_previous",
-                extra_tags={"age_seconds": round(age, 1)},
-            )
-            logger.warning(
-                "GPT decision failed (%s); reusing previous decision from %.0fs ago.",
-                str(last_exc),
-                age,
+            reused = fallback_decision(
+                payload,
+                last_decision=_LAST_DECISION_DATA,
+                reason="reuse_previous",
+                now=now,
+                log_reason=True,
+                last_exception=last_exc,
             )
             return reused
 
-    try:
-        heuristic = heuristic_decision(payload, _LAST_DECISION_DATA)
-    except Exception as heur_exc:  # pragma: no cover - defensive path
-        logger.error(
-            "GPT decision failed (%s) and heuristic fallback errored (%s); "
-            "falling back to static configuration.",
-            str(last_exc),
-            heur_exc,
-        )
-        log_gpt_fallback("gpt_decider", "static_config")
-        result = dict(_FALLBACK_DECISION)
-        _LAST_DECISION_TS = now
-        _LAST_DECISION_DATA = {k: v for k, v in result.items() if k != "reason"}
-        return result
-
-    logger.warning(
-        "GPT decision failed (%s); using heuristic fallback decision.",
-        str(last_exc),
+    return fallback_decision(
+        payload,
+        last_decision=_LAST_DECISION_DATA,
+        reason="heuristic",
+        now=now,
+        log_reason=True,
+        last_exception=last_exc,
     )
-    log_gpt_fallback("gpt_decider", "heuristic")
-    _LAST_DECISION_TS = now
-    _LAST_DECISION_DATA = {k: v for k, v in heuristic.items() if k != "reason"}
-    return heuristic
+
+
+def fallback_decision(
+    payload: Dict,
+    *,
+    last_decision: Dict[str, object] | None = None,
+    reason: str = "fallback",
+    now: dt.datetime | None = None,
+    log_reason: bool = False,
+    last_exception: Exception | None = None,
+) -> Dict:
+    global _LAST_DECISION_TS, _LAST_DECISION_DATA
+    use_now = now or dt.datetime.utcnow()
+    decision: Dict[str, object]
+    try:
+        decision = heuristic_decision(payload, last_decision)
+        decision["reason"] = reason
+        if log_reason:
+            log_gpt_fallback("gpt_decider", "heuristic")
+            if last_exception is not None:
+                logger.warning(
+                    "GPT decision failed (%s); using heuristic fallback decision.",
+                    str(last_exception),
+                )
+    except Exception as heur_exc:  # pragma: no cover - defensive path
+        decision = dict(_FALLBACK_DECISION)
+        decision["reason"] = reason
+        if log_reason:
+            log_gpt_fallback("gpt_decider", "static_config")
+            logger.error(
+                "GPT decision fallback to static config (%s -> %s)",
+                str(last_exception),
+                heur_exc,
+            )
+    _LAST_DECISION_TS = use_now
+    _LAST_DECISION_DATA = {k: v for k, v in decision.items() if k != "reason"}
+    return decision
 
 
 # ---------- CLI self‑test ----------

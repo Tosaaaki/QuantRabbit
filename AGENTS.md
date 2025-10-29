@@ -4,6 +4,20 @@
 > **狙い**	: USD/JPY で 1 日 +100 pips を実現する、 24/7 無裁量トレーディング・エージェント。  
 > **境界**	: 発注・リスクは機械的、曖昧判断とニュース解釈は GPT‑5 系 (既定 gpt‑5‑mini) に委譲。
 
+補助資料: 運用/デプロイの手順面は `README.md` と `docs/` 配下を参照する。
+
+## 目次
+- [1. ミッション](#1-ミッション)
+- [2. コンポーネント間の契約](#2-コンポーネント間の契約)
+- [3. ライフサイクル](#3-ライフサイクル)
+- [4. 環境変数 / Secret 一覧](#4-環境変数--secret-一覧)
+- [5. トークン & コストガード](#5-トークン--コストガード)
+- [6. 安全装置](#6-安全装置)
+- [7. デプロイ手順（更新版 / 要約）](#7-デプロイ手順更新版--要約)
+- [8. チーム運用ルール](#8-チーム運用ルール)
+- [9. 参考ドキュメント](#9-参考ドキュメント)
+- [10. GCE SSH / OS Login ガイド](#10-gce-ssh--os-login-ガイド)
+
 ---
 
 ## 2. コンポーネント間の契約
@@ -390,18 +404,18 @@ scripts/vm.sh -p quantrabbit -z asia-northeast1-a -m fx-trader-vm deploy -i -k ~
 
 
 8. チーム運用ルール
-	1.	1 ファイル = 1 PR、Squash Merge、CI green 必須
-	2.	コード規約：black / ruff / mypy (optional)
-	3.	秘匿情報は 絶対に Git に push しない
-	4.	不具合・改善は GitHub Issue で管理（ラベル: bug/feat/doc/ops）
+    1. 1 ファイル = 1 PR、Squash Merge、CI green 必須
+    2. コード規約：black / ruff / mypy (optional)
+    3. 秘匿情報は 絶対に Git に push しない
+    4. 不具合・改善は GitHub Issue で管理（ラベル: bug/feat/doc/ops）
 
 ⸻
 
 9. 参考ドキュメント
-	•	README.md				 – 🍵 ユーザ向け概観
-	•	パッチ適用の推奨シーケンス.pdf – 開発手順ガイド
-	•	全体仕様まとめ（最終版）.pdf – アーキテクチャ詳細
-	•	OFL.txt + ZenOldMincho-*.ttf – 付属フォントライセンス
+    - README.md – 🍵 ユーザ向け概観
+    - パッチ適用の推奨シーケンス.pdf – 開発手順ガイド
+    - 全体仕様まとめ（最終版）.pdf – アーキテクチャ詳細
+    - OFL.txt + ZenOldMincho-*.ttf – 付属フォントライセンス
 
 ---
 

@@ -39,8 +39,8 @@ class NewsSpikeReversal:
         if news_sentiment > 0 and price_change > 0.05:  # 0.05は仮の閾値
             return {
                 "action": "OPEN_SHORT",
-                "sl_pips": 10,
-                "tp_pips": 20,
+                "sl_pips": 18,
+                "tp_pips": 6,
                 "confidence": confidence,
                 "tag": f"{NewsSpikeReversal.name}-fade-{tag_suffix}",
             }
@@ -49,8 +49,8 @@ class NewsSpikeReversal:
         if news_sentiment < 0 and price_change < -0.05:  # 0.05は仮の閾値
             return {
                 "action": "OPEN_LONG",
-                "sl_pips": 10,
-                "tp_pips": 20,
+                "sl_pips": 18,
+                "tp_pips": 6,
                 "confidence": confidence,
                 "tag": f"{NewsSpikeReversal.name}-fade-{tag_suffix}",
             }

@@ -23,8 +23,9 @@ def _env_float(name: str, default: float, minimum: float, maximum: float) -> flo
     return max(minimum, min(maximum, value))
 
 
-MIN_MICRO_WEIGHT = _env_float("POCKET_MIN_MICRO_WEIGHT", 0.0, 0.0, 0.4)
-MIN_SCALP_WEIGHT = _env_float("POCKET_MIN_SCALP_WEIGHT", 0.06, 0.0, 0.3)
+MIN_MICRO_WEIGHT = _env_float("POCKET_MIN_MICRO_WEIGHT", 0.05, 0.0, 0.4)
+MIN_SCALP_WEIGHT = _env_float("POCKET_MIN_SCALP_WEIGHT", 0.10, 0.0, 0.35)
+MIN_MACRO_WEIGHT = _env_float("POCKET_MIN_MACRO_WEIGHT", 0.70, 0.0, 1.0)
 MIN_SCALP_FRACTION = MIN_SCALP_WEIGHT  # legacy name retained for fallback branch
 MAX_SCALP_REALLOC_FRACTION = 0.25  # cap per-pocket reallocation toward the scalp bucket
 
@@ -130,11 +131,13 @@ def alloc(
     if total_lot > 0:
         min_micro_lot = round(total_lot * MIN_MICRO_WEIGHT, 3)
         min_scalp_lot = round(total_lot * MIN_SCALP_WEIGHT, 3)
-        min_sum = round(min_micro_lot + min_scalp_lot, 3)
+        min_macro_lot = round(total_lot * MIN_MACRO_WEIGHT, 3)
+        min_sum = round(min_micro_lot + min_scalp_lot + min_macro_lot, 3)
         if min_sum > total_lot and min_sum > 0:
             scale = round(total_lot / min_sum, 6)
             min_micro_lot = round(min_micro_lot * scale, 3)
             min_scalp_lot = round(min_scalp_lot * scale, 3)
+            min_macro_lot = round(min_macro_lot * scale, 3)
 
         def _prop_up(pocket: str, target: float, donors: tuple[str, ...]) -> None:
             deficit = round(target - dist.get(pocket, 0.0), 3)
@@ -155,6 +158,8 @@ def alloc(
                 if deficit <= 1e-6:
                     break
 
+        if "macro" in dist:
+            _prop_up("macro", min_macro_lot, ("micro", "scalp"))
         _prop_up("micro", min_micro_lot, ("macro", "scalp"))
         _prop_up("scalp", min_scalp_lot, ("macro", "micro"))
 

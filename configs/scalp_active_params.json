@@ -19,26 +19,29 @@
   "M1Scalper": {
     "timeout_sec": 960,
     "nwave": {
-      "min_leg_pips": 2.0,
+      "min_leg_pips": 1.8,
       "pullback_mult": 1.6,
-      "target_scale": 0.45,
-      "target_floor": 0.9,
-      "target_cap": 1.4,
+      "target_scale": 0.55,
+      "target_floor": 1.1,
+      "target_cap": 1.8,
       "tolerance_default": 0.24,
       "tolerance_tactical": 0.32,
-      "hard_sl_floor": 6.6,
-      "hard_sl_atr_mult": 2.6
+      "hard_sl_floor": 4.0,
+      "hard_sl_atr_mult": 1.8
     },
     "fallback": {
-      "momentum_thresh": 0.0010,
-      "wick_min": 0.00075,
-      "sl_floor": 6.8,
-      "sl_atr_mult": 2.7,
-      "tp_floor": 0.9,
-      "tp_cap": 1.4,
-      "tp_atr_mult": 0.6,
-      "atr_floor_tactical": 0.85,
-      "atr_floor": 1.15
+      "atr_floor": 0.7,
+      "atr_floor_tactical": 0.55,
+      "tp_floor": 1.2,
+      "tp_floor_tactical": 1.0,
+      "tp_cap": 1.9,
+      "tp_cap_tactical": 2.1,
+      "sl_floor": 8.5,
+      "sl_floor_tactical": 7.2,
+      "sl_cap": 13.0,
+      "sl_cap_tactical": 12.0,
+      "sl_atr_mult": 3.2,
+      "sl_atr_mult_tactical": 2.8
     }
   },
   "PulseBreak": {
