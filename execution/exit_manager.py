@@ -77,6 +77,9 @@ class ExitManager:
             "event_lock",
         }
         self._min_partial_units = 600
+        self._scalp_time_close_sec = 55.0
+        self._scalp_time_target_pips = 0.95
+        self._scalp_time_max_loss_pips = 4.0
 
     def _macro_trend_supports(
         self,
@@ -275,6 +278,12 @@ class ExitManager:
             if pocket == "macro" and ema_primary is not None
             else ema_fast
         )
+        hold_seconds: Optional[float] = None
+        if pocket == "scalp":
+            hold_seconds = self._trade_age_seconds(open_info, "short", now)
+        hold_seconds: Optional[float] = None
+        if pocket == "scalp":
+            hold_seconds = self._trade_age_seconds(open_info, "long", now)
 
         advisor_hint = None
         if advisor_hints:
@@ -379,8 +388,18 @@ class ExitManager:
             and ma_gap_pips >= self._macro_ma_gap
         ):
             reason = "trend_reversal"
-        elif pocket == "scalp" and ema_fast is not None and close_price > ema_fast:
-            reason = "scalp_momentum_flip"
+        elif pocket == "scalp":
+            if hold_seconds is not None:
+                if profit_pips <= -self._scalp_time_max_loss_pips:
+                    reason = "scalp_time_stop"
+                elif (
+                    hold_seconds >= self._scalp_time_close_sec
+                    and profit_pips < self._scalp_time_target_pips
+                ):
+                    reason = "scalp_time_exit"
+                    allow_reentry = True
+            if not reason and ema_fast is not None and close_price > ema_fast:
+                reason = "scalp_momentum_flip"
         elif self._should_exit_for_cross(
             pocket,
             "long",
@@ -672,8 +691,18 @@ class ExitManager:
             and ma_gap_pips >= self._macro_ma_gap
         ):
             reason = "trend_reversal"
-        elif pocket == "scalp" and ema_fast is not None and close_price < ema_fast:
-            reason = "scalp_momentum_flip"
+        elif pocket == "scalp":
+            if hold_seconds is not None:
+                if profit_pips <= -self._scalp_time_max_loss_pips:
+                    reason = "scalp_time_stop"
+                elif (
+                    hold_seconds >= self._scalp_time_close_sec
+                    and profit_pips < self._scalp_time_target_pips
+                ):
+                    reason = "scalp_time_exit"
+                    allow_reentry = True
+            if not reason and ema_fast is not None and close_price < ema_fast:
+                reason = "scalp_momentum_flip"
         elif self._should_exit_for_cross(
             pocket,
             "short",
@@ -1383,6 +1412,25 @@ class ExitManager:
             if age_minutes >= threshold_minutes:
                 return True
         return False
+
+    def _trade_age_seconds(
+        self,
+        open_info: Dict,
+        side: str,
+        now: datetime,
+    ) -> Optional[float]:
+        trades = open_info.get("open_trades") or []
+        ages: list[float] = []
+        for tr in trades:
+            if tr.get("side") != side:
+                continue
+            opened_at = self._parse_open_time(tr.get("open_time"))
+            if opened_at is None:
+                continue
+            ages.append((now - opened_at).total_seconds())
+        if not ages:
+            return None
+        return max(ages)
 
     @staticmethod
     def _parse_open_time(value: Optional[str]) -> Optional[datetime]:
