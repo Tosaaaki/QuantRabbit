@@ -34,3 +34,10 @@ config/env.toml
 *sa-key*.json
 *service-account*.json
 ui-dashboard-sa.json
+
+# Runtime caches & local artifacts
+.cache/
+tmp/
+remote_logs/
+remote_logs_vm/
+scripts/vm.env
