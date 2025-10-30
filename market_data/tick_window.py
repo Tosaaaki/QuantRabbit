@@ -9,11 +9,16 @@ from __future__ import annotations
 
 import time
 from collections import deque
+import json
+from pathlib import Path
 from dataclasses import dataclass
 from typing import Deque, Dict, Iterable, List, Tuple
 
 _MAX_SECONDS = 180  # 3 分あれば十分
 _MAX_TICKS = 1800   # 10tick/sec を見込んだ上限
+_CACHE_PATH = Path("logs/tick_cache.json")
+_CACHE_LIMIT = 400  # persist a slim view to keep file light
+_FLUSH_INTERVAL_SEC = 5.0
 
 
 @dataclass(slots=True)
@@ -25,6 +30,57 @@ class _TickRow:
 
 
 _TICKS: Deque[_TickRow] = deque(maxlen=_MAX_TICKS)
+_last_flush_ts: float = 0.0
+
+
+def _load_cache() -> None:
+    if not _CACHE_PATH.exists():
+        return
+    try:
+        payload = json.loads(_CACHE_PATH.read_text(encoding="utf-8"))
+    except Exception:
+        return
+    if not isinstance(payload, list):
+        return
+    rows: List[_TickRow] = []
+    for entry in payload[-_MAX_TICKS:]:
+        if not isinstance(entry, dict):
+            continue
+        try:
+            epoch = float(entry["epoch"])
+            bid = float(entry["bid"])
+            ask = float(entry["ask"])
+            mid = float(entry["mid"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        rows.append(_TickRow(epoch=epoch, bid=bid, ask=ask, mid=mid))
+    if rows:
+        for row in rows[-_MAX_TICKS:]:
+            _TICKS.append(row)
+
+
+def _persist_cache() -> None:
+    global _last_flush_ts
+    now = time.time()
+    if now - _last_flush_ts < _FLUSH_INTERVAL_SEC:
+        return
+    _last_flush_ts = now
+    try:
+        _CACHE_PATH.parent.mkdir(parents=True, exist_ok=True)
+        window = list(_TICKS)[-min(len(_TICKS), _CACHE_LIMIT) :]
+        data = [
+            {"epoch": row.epoch, "bid": row.bid, "ask": row.ask, "mid": row.mid}
+            for row in window
+        ]
+        tmp_path = _CACHE_PATH.with_suffix(".tmp")
+        tmp_path.write_text(json.dumps(data, separators=(",", ":")), encoding="utf-8")
+        tmp_path.replace(_CACHE_PATH)
+    except Exception:
+        # Persistence best-effort; ignore failures
+        pass
+
+
+_load_cache()
 
 
 def record(tick) -> None:  # type: ignore[no-untyped-def]
@@ -39,6 +95,7 @@ def record(tick) -> None:  # type: ignore[no-untyped-def]
         return
     mid = round((bid + ask) / 2.0, 5)
     _TICKS.append(_TickRow(epoch=ts, bid=bid, ask=ask, mid=mid))
+    _persist_cache()
 
 
 def _iter_recent(seconds: float) -> Iterable[_TickRow]:
@@ -86,4 +143,3 @@ def summarize(seconds: float = 60.0) -> Dict[str, float]:
         "span_seconds": span,
         "tick_count": float(len(rows)),
     }
-

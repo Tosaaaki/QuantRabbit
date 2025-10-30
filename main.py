@@ -1915,19 +1915,54 @@ async def logic_loop(
                 if scalp_ready:
                     scalp_floor = max(scalp_floor, SCALP_WEIGHT_READY_FLOOR)
                 if focus_tag in {"micro", "hybrid"} or scalp_ready:
-                    cap = max(0.0, 1.0 - weight_macro)
-                    target = min(cap, scalp_floor)
-                    if target > 0 and weight_scalp + 1e-6 < target:
-                        prev_weight_scalp = weight_scalp
-                        weight_scalp = round(target, 3)
+                    desired_min = scalp_floor
+                else:
+                    desired_min = max(SCALP_WEIGHT_FLOOR * 0.5, 0.05)
+                cap = max(0.0, 1.0 - weight_macro)
+                if desired_min > 0 and desired_min > cap + 1e-6:
+                    reduction = min(weight_macro, desired_min - cap)
+                    if reduction > 0:
+                        prev_macro_weight = weight_macro
+                        weight_macro = round(max(0.0, weight_macro - reduction), 3)
+                        cap = max(0.0, 1.0 - weight_macro)
                         logging.info(
-                            "[FOCUS] Scalp weight floor %.2f -> %.2f (cap=%.2f focus=%s ready=%s)",
-                            prev_weight_scalp,
-                            weight_scalp,
-                            cap,
+                            "[FOCUS] Reduced macro weight %.2f -> %.2f to honor scalp floor %.2f (focus=%s)",
+                            prev_macro_weight,
+                            weight_macro,
+                            desired_min,
                             focus_tag,
-                            scalp_ready,
                         )
+                target = min(cap, desired_min)
+                if target > 0 and weight_scalp + 1e-6 < target:
+                    prev_weight_scalp = weight_scalp
+                    weight_scalp = round(target, 3)
+                    logging.info(
+                        "[FOCUS] Scalp weight floor %.2f -> %.2f (cap=%.2f focus=%s ready=%s)",
+                        prev_weight_scalp,
+                        weight_scalp,
+                        cap,
+                        focus_tag,
+                        scalp_ready,
+                    )
+            if weight_scalp is None and "scalp" in focus_pockets:
+                default_scalp = SCALP_WEIGHT_READY_FLOOR if scalp_ready else SCALP_WEIGHT_FLOOR
+                weight_scalp = round(default_scalp, 3)
+                if weight_macro + weight_scalp > 1.0:
+                    excess = weight_macro + weight_scalp - 1.0
+                    prev_macro = weight_macro
+                    weight_macro = round(max(0.0, weight_macro - excess), 3)
+                    logging.info(
+                        "[FOCUS] Trimmed macro weight %.2f -> %.2f to fit scalp default %.2f",
+                        prev_macro,
+                        weight_macro,
+                        weight_scalp,
+                    )
+                logging.info(
+                    "[FOCUS] Applied default scalp weight %.2f (ready=%s focus=%s)",
+                    weight_scalp,
+                    scalp_ready,
+                    focus_tag,
+                )
             stage_overrides, stage_changed, stage_biases = param_context.stage_overrides(
                 _BASE_STAGE_RATIOS,
                 range_active=range_active,
