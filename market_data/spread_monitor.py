@@ -199,12 +199,15 @@ def get_state() -> Optional[dict]:
     avg_spread = sum(values) / len(values)
     high_count = sum(1 for val in values if val >= MAX_SPREAD_PIPS)
     stale = age_ms > MAX_AGE_MS
+    stale_since = _stale_since
     if stale:
-        if _stale_since is None:
-            _stale_since = now
+        if stale_since is None:
+            stale_since = now
     else:
-        _stale_since = None
-    stale_for = max(0.0, now - _stale_since) if _stale_since is not None else 0.0
+        stale_since = None
+
+    _stale_since = stale_since
+    stale_for = max(0.0, now - stale_since) if stale_since is not None else 0.0
 
     baseline_values = [val for _, val in _baseline_history]
     baseline_ready = len(baseline_values) >= BASELINE_MIN_SAMPLES

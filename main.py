@@ -1192,6 +1192,8 @@ async def logic_loop(
     recent_profiles: dict[str, dict[str, float]] = {}
     param_snapshot: Optional[ParamSnapshot] = None
     scalp_ready_forced = False
+    loop_counter = 0
+    tick_empty_counter = 0
 
     def _factor_snapshot(data: Optional[Dict[str, float]]) -> Dict[str, float]:
         if not data:
@@ -1216,6 +1218,7 @@ async def logic_loop(
     try:
         while True:
             now = datetime.datetime.utcnow()
+            loop_counter += 1
             scalp_ready_forced = False
             stage_tracker.clear_expired(now)
             # Heartbeat logging
@@ -1258,9 +1261,28 @@ async def logic_loop(
 
             fac_m1 = dict(fac_m1_raw)
             recent_tick_rows = tick_window.recent_ticks(75.0, limit=180)
+            tick_count = len(recent_tick_rows)
+            if tick_count == 0:
+                tick_empty_counter += 1
+                if tick_empty_counter in {1, 6, 12} or tick_empty_counter % 30 == 0:
+                    logging.warning(
+                        "[TICK] No recent ticks available (empty_count=%d)",
+                        tick_empty_counter,
+                    )
+            else:
+                if tick_empty_counter:
+                    logging.info(
+                        "[TICK] Recent ticks restored count=%d after %d empty cycles",
+                        tick_count,
+                        tick_empty_counter,
+                    )
+                    tick_empty_counter = 0
             if recent_tick_rows:
                 fac_m1["recent_ticks"] = recent_tick_rows
                 fac_m1["recent_tick_summary"] = tick_window.summarize(75.0)
+            else:
+                fac_m1["recent_ticks"] = []
+                fac_m1["recent_tick_summary"] = {}
 
             atr_pips = fac_m1.get("atr_pips")
             if atr_pips is None:

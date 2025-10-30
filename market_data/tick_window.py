@@ -14,11 +14,14 @@ from pathlib import Path
 from dataclasses import dataclass
 from typing import Deque, Dict, Iterable, List, Tuple
 
+import logging
+
 _MAX_SECONDS = 180  # 3 分あれば十分
 _MAX_TICKS = 1800   # 10tick/sec を見込んだ上限
 _CACHE_PATH = Path("logs/tick_cache.json")
 _CACHE_LIMIT = 400  # persist a slim view to keep file light
 _FLUSH_INTERVAL_SEC = 5.0
+_LOGGER = logging.getLogger(__name__)
 
 
 @dataclass(slots=True)
@@ -57,6 +60,9 @@ def _load_cache() -> None:
     if rows:
         for row in rows[-_MAX_TICKS:]:
             _TICKS.append(row)
+        _LOGGER.info("[TICK_CACHE] restored ticks=%d", len(rows))
+    else:
+        _LOGGER.info("[TICK_CACHE] no cached ticks found")
 
 
 def _persist_cache() -> None:
@@ -75,6 +81,7 @@ def _persist_cache() -> None:
         tmp_path = _CACHE_PATH.with_suffix(".tmp")
         tmp_path.write_text(json.dumps(data, separators=(",", ":")), encoding="utf-8")
         tmp_path.replace(_CACHE_PATH)
+        _LOGGER.debug("[TICK_CACHE] persisted=%d path=%s", len(window), _CACHE_PATH)
     except Exception:
         # Persistence best-effort; ignore failures
         pass
