@@ -17,34 +17,35 @@
     "tp_factor": 2.0
   },
   "M1Scalper": {
-    "timeout_sec": 960,
-    "nwave": {
-      "min_leg_pips": 1.8,
-      "pullback_mult": 1.6,
-      "target_scale": 0.55,
-      "target_floor": 1.1,
-      "target_cap": 1.8,
-      "tolerance_default": 0.24,
-      "tolerance_tactical": 0.32,
-      "hard_sl_floor": 4.0,
-      "hard_sl_atr_mult": 1.8
-    },
     "fallback": {
-      "atr_floor": 0.7,
-      "atr_floor_tactical": 0.55,
-      "tp_floor": 1.0,
-      "tp_floor_tactical": 0.9,
-      "tp_cap": 1.9,
-      "tp_cap_tactical": 2.1,
-      "sl_floor": 6.0,
-      "sl_floor_tactical": 5.2,
+      "atr_floor": 1.4,
+      "atr_floor_tactical": 1.08,
+      "momentum_thresh": 0.0013,
+      "sl_atr_mult": 2.3,
+      "sl_atr_mult_tactical": 2.8,
       "sl_cap": 13.0,
       "sl_cap_tactical": 12.0,
-      "sl_atr_mult": 2.2,
-      "sl_atr_mult_tactical": 1.8,
-      "tp_atr_mult": 0.5,
-      "tp_atr_mult_tactical": 0.45
-    }
+      "sl_floor": 7.2,
+      "sl_floor_tactical": 7.2,
+      "tp_atr_mult": 0.95,
+      "tp_cap": 1.9,
+      "tp_cap_tactical": 2.1,
+      "tp_floor": 2.2,
+      "tp_floor_tactical": 1.0,
+      "wick_min": 0.00088
+    },
+    "nwave": {
+      "hard_sl_atr_mult": 1.8,
+      "hard_sl_floor": 7.2,
+      "min_leg_pips": 1.9,
+      "pullback_mult": 1.65,
+      "target_cap": 1.8,
+      "target_floor": 1.1,
+      "target_scale": 0.66,
+      "tolerance_default": 0.24,
+      "tolerance_tactical": 0.32
+    },
+    "timeout_sec": 600
   },
   "PulseBreak": {
     "adx_min": 24.0,
