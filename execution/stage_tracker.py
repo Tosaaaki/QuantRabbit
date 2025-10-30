@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
+import os
 
 _DB_PATH = Path("logs/stage_state.db")
 _TRADES_DB = Path("logs/trades.db")
@@ -84,7 +85,10 @@ class StageTracker:
             """
         )
         self._con.commit()
-        self._loss_window_minutes = _LOSS_WINDOW_MINUTES
+        self._loss_window_minutes = int(
+            os.getenv("LOSS_CLUSTER_WINDOW_MIN", str(_LOSS_WINDOW_MINUTES)) or _LOSS_WINDOW_MINUTES
+        )
+        self._loss_decay_minutes = int(os.getenv("LOSS_STREAK_DECAY_MINUTES", "120") or 120)
         self._cluster_last_trade_id: Dict[str, int] = {}
         for row in self._con.execute(
             "SELECT pocket, MAX(trade_id) AS last_id FROM pocket_loss_window GROUP BY pocket"
@@ -252,6 +256,8 @@ class StageTracker:
                 now_dt = now
         else:
             now_dt = datetime.utcnow()
+        if self._loss_decay_minutes > 0:
+            self._decay_loss_streaks(now_dt)
         ts = now_dt.isoformat()
         new_losses: List[Tuple[str, int, datetime, float, float]] = []
 
@@ -356,6 +362,43 @@ class StageTracker:
         self._recent_profile = self._build_recent_profile(rows, now_dt)
         self._con.commit()
 
+    def _decay_loss_streaks(self, now: datetime) -> None:
+        try:
+            threshold = now - timedelta(minutes=self._loss_decay_minutes)
+        except Exception:
+            return
+        rows = self._con.execute(
+            "SELECT pocket, direction, lose_streak, updated_at FROM stage_history"
+        ).fetchall()
+        changed = False
+        for row in rows:
+            lose_streak = int(row["lose_streak"] or 0)
+            if lose_streak <= 0:
+                continue
+            try:
+                updated_at = datetime.fromisoformat(row["updated_at"])
+            except Exception:
+                updated_at = threshold - timedelta(minutes=1)
+            if updated_at > threshold:
+                continue
+            new_lose = max(0, lose_streak - 1)
+            self._con.execute(
+                """
+                UPDATE stage_history
+                SET lose_streak=?, updated_at=?
+                WHERE pocket=? AND direction=?
+                """,
+                (
+                    new_lose,
+                    now.isoformat(),
+                    row["pocket"],
+                    row["direction"],
+                ),
+            )
+            changed = True
+        if changed:
+            self._con.commit()
+
     def get_loss_profile(self, pocket: str, direction: str) -> Tuple[int, int]:
         row = self._con.execute(
             "SELECT lose_streak, win_streak FROM stage_history WHERE pocket=? AND direction=?",
@@ -370,11 +413,11 @@ class StageTracker:
         lose_streak, win_streak = self.get_loss_profile(pocket, direction)
         factor = 1.0
         if lose_streak >= 4:
-            factor *= 0.5
+            factor *= 0.65
         elif lose_streak == 3:
-            factor *= 0.6
+            factor *= 0.75
         elif lose_streak == 2:
-            factor *= 0.8
+            factor *= 0.85
         elif lose_streak == 1:
             factor *= 0.95
 
@@ -406,7 +449,7 @@ class StageTracker:
             if pocket == "scalp" and weight_hint < 0.02:
                 factor *= 0.9
 
-        return max(0.5, min(1.1, round(factor, 3)))
+        return max(0.55, min(1.1, round(factor, 3)))
 
     def get_recent_profile(self, pocket: str) -> Dict[str, float]:
         return dict(self._recent_profile.get(pocket, {}))

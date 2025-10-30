@@ -3338,6 +3338,22 @@ async def logic_loop(
                         )
                         continue
                 is_tactical = os.getenv('SCALP_TACTICAL','0').strip().lower() not in ('','0','false','no')
+                direction = "long" if action == "OPEN_LONG" else "short"
+                lose_streak, win_streak = stage_tracker.get_loss_profile(pocket, direction)
+                high_impact_context = _evaluate_high_impact_context(
+                    pocket=pocket,
+                    direction=direction,
+                    lose_streak=lose_streak,
+                    win_streak=win_streak,
+                    fac_m1=fac_m1,
+                    fac_h4=fac_h4,
+                    story_snapshot=story_snapshot,
+                    news_bias_hint=news_bias_hint,
+                    macro_regime=macro_regime,
+                    momentum=momentum,
+                    atr_pips=atr_pips,
+                    range_active=range_active,
+                )
                 allow_spread_bypass = False
                 if spread_gate_active:
                     if pocket == 'scalp' and (is_tactical or spread_gate_soft_scalp):
@@ -3348,6 +3364,30 @@ async def logic_loop(
                                 spread_gate_reason,
                                 spread_log_context,
                             )
+                    if not allow_spread_bypass:
+                        if (
+                            pocket == "macro"
+                            and high_impact_context
+                            and high_impact_context.get("enabled")
+                        ):
+                            allow_spread_bypass = True
+                            reason = str(high_impact_context.get("reason", "high_impact"))
+                            logging.info(
+                                "[SPREAD] high-impact macro bypass (reason=%s, gate=%s)",
+                                reason,
+                                spread_gate_reason,
+                            )
+                            try:
+                                log_metric(
+                                    "spread_override_high_impact",
+                                    1.0,
+                                    tags={
+                                        "direction": direction,
+                                        "reason": reason,
+                                    },
+                                )
+                            except Exception:
+                                pass
                     if not allow_spread_bypass:
                         if (
                             pocket == "macro"
@@ -3464,7 +3504,6 @@ async def logic_loop(
                 per_direction_limits = (
                     POCKET_MAX_DIRECTIONAL_TRADES_RANGE if range_active else POCKET_MAX_DIRECTIONAL_TRADES
                 )
-                direction = "long" if action == "OPEN_LONG" else "short"
                 direction_limit = per_direction_limits.get(pocket, 1)
                 if direction_limit <= 0:
                     logging.info(
@@ -3540,8 +3579,6 @@ async def logic_loop(
                     entry_price = float(tick_ask)
                 elif not is_buy and tick_bid is not None:
                     entry_price = float(tick_bid)
-
-                lose_streak, win_streak = stage_tracker.get_loss_profile(pocket, direction)
 
                 size_factor = stage_tracker.size_multiplier(pocket, direction)
                 if size_factor < 0.999:
