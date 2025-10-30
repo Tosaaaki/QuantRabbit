@@ -50,7 +50,7 @@ _MODEL_OUTPUT_LIMITS = {
     "gpt-5.1-mini": 256,
     "gpt-4o-mini": 220,
     "gpt-4o-mini-latest": 220,
-    "gpt-4o-mini-2024-08-06": 220,
+    "gpt-4o-mini-2024-07-18": 220,
 }
 
 _MODEL_TIMEOUT_SECONDS = {
@@ -59,12 +59,13 @@ _MODEL_TIMEOUT_SECONDS = {
     "gpt-5.1-mini": 18,
     "gpt-4o-mini": 12,
     "gpt-4o-mini-latest": 12,
-    "gpt-4o-mini-2024-08-06": 12,
+    "gpt-4o-mini-2024-07-18": 12,
 }
 
 _FALLBACK_MODELS = [
     "gpt-4o-mini-latest",
     "gpt-4o-mini",
+    "gpt-4o-mini-2024-07-18",
 ]
 
 _REUSE_WINDOW_SECONDS = 300
