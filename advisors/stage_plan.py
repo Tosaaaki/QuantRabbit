@@ -53,18 +53,12 @@ class StagePlanAdvisor:
         self.enabled = _read_bool("STAGE_PLAN_ADVISOR_ENABLED", True) if enabled is None else enabled
         self._ttl = cache_ttl_seconds
         self._cache: Dict[str, tuple[StagePlanHint, dt.datetime]] = {}
-        self._model = (
-            os.environ.get("OPENAI_MODEL_STAGE_PLAN")
-            or os.environ.get("OPENAI_MODEL")
-        )
+        self._model = os.environ.get("OPENAI_MODEL_STAGE_PLAN")
         if not self._model:
             try:
                 self._model = get_secret("openai_model_stage_plan")
             except KeyError:
-                try:
-                    self._model = get_secret("openai_model")
-                except KeyError:
-                    self._model = "gpt-4o-mini"
+                self._model = "gpt-4o-mini"
         try:
             api_key = get_secret("openai_api_key")
         except KeyError:

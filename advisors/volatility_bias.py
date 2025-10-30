@@ -57,18 +57,12 @@ class VolatilityBiasAdvisor:
         self.min_bias = min_bias
         self.max_bias = max_bias
         self._cache: Dict[str, tuple[VolatilityHint, dt.datetime]] = {}
-        self._model = (
-            os.environ.get("OPENAI_MODEL_VOLATILITY")
-            or os.environ.get("OPENAI_MODEL")
-        )
+        self._model = os.environ.get("OPENAI_MODEL_VOLATILITY")
         if not self._model:
             try:
                 self._model = get_secret("openai_model_volatility")
             except KeyError:
-                try:
-                    self._model = get_secret("openai_model")
-                except KeyError:
-                    self._model = "gpt-4o-mini"
+                self._model = "gpt-4o-mini"
         try:
             api_key = get_secret("openai_api_key")
         except KeyError:

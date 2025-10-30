@@ -57,18 +57,12 @@ class StrategyConfidenceAdvisor:
         self.min_scale = min_scale
         self.max_scale = max_scale
         self._cache: Dict[str, tuple[ConfidenceHint, dt.datetime]] = {}
-        self._model = (
-            os.environ.get("OPENAI_MODEL_STRATEGY_CONF")
-            or os.environ.get("OPENAI_MODEL")
-        )
+        self._model = os.environ.get("OPENAI_MODEL_STRATEGY_CONF")
         if not self._model:
             try:
                 self._model = get_secret("openai_model_strategy_conf")
             except KeyError:
-                try:
-                    self._model = get_secret("openai_model")
-                except KeyError:
-                    self._model = "gpt-4o-mini"
+                self._model = "gpt-4o-mini"
         try:
             api_key = get_secret("openai_api_key")
         except KeyError:
