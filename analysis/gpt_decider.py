@@ -42,14 +42,14 @@ _ALLOWED_STRATEGIES = [
     "PulseBreak",
 ]
 
-_MAX_COMPLETION_TOKENS = 320
-_GPT5_MAX_OUTPUT_TOKENS = 800
+_MAX_COMPLETION_TOKENS = 200
+_GPT5_MAX_OUTPUT_TOKENS = 256
 _MODEL_OUTPUT_LIMITS = {
-    "gpt-5-mini": 800,
-    "gpt-5-mini-2025-08-07": 800,
-    "gpt-5.1-mini": 800,
-    "gpt-4o-mini": 384,
-    "gpt-4o-mini-2024-08-06": 384,
+    "gpt-5-mini": 256,
+    "gpt-5-mini-2025-08-07": 256,
+    "gpt-5.1-mini": 256,
+    "gpt-4o-mini": 220,
+    "gpt-4o-mini-2024-08-06": 220,
 }
 
 _MODEL_TIMEOUT_SECONDS = {
