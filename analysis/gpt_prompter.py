@@ -15,8 +15,8 @@ def _resolve_model() -> str:
                 return value
         except KeyError:
             continue
-    # Final fallback to GPT-5 mini so fresh installs default to the new tier.
-    return "gpt-5-mini"
+    # Final fallback to a lightweight model to keep latency/token costs low.
+    return "gpt-4o-mini"
 
 
 OPENAI_MODEL = _resolve_model()
@@ -58,14 +58,6 @@ def build_messages(payload: Dict) -> List[Dict]:
         if data:
             factors[label] = data
 
-    news: Dict[str, Any] = {}
-    for horizon, items in (
-        ("short", payload.get("news_short")),
-        ("long", payload.get("news_long")),
-    ):
-        if items:
-            news[horizon] = items
-
     compact_payload = _prune(
         {
             "ts": payload.get("ts"),
@@ -75,7 +67,7 @@ def build_messages(payload: Dict) -> List[Dict]:
             },
             "factors": factors,
             "perf": payload.get("perf") or {},
-            "news": news,
+            "news_features": payload.get("news_features") or {},
             "event_soon": payload.get("event_soon", False),
         }
     )

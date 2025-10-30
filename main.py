@@ -20,6 +20,7 @@ from analysis.focus_decider import decide_focus
 from analysis.gpt_decider import get_decision, fallback_decision
 from analysis.perf_monitor import snapshot as get_perf
 from analysis.summary_ingestor import check_event_soon, get_latest_news
+from analysis.news_features import build_news_features
 # バックグラウンドでニュース取得と要約を実行するためのインポート
 from market_data.news_fetcher import fetch_loop as news_fetch_loop
 from analysis.summary_ingestor import ingest_loop as summary_ingest_loop
@@ -495,16 +496,14 @@ def _gpt_payload_signature(
     factors_h4 = payload.get("factors_h4") or {}
     factors_d1 = payload.get("factors_d1") or {}
     perf = payload.get("perf") or {}
-    news_short = payload.get("news_short") or []
-    latest_news = None
-    if isinstance(news_short, list) and news_short:
-        top = news_short[0]
-        if isinstance(top, dict):
-            latest_news = {
-                "source": top.get("source"),
-                "headline": top.get("headline"),
-                "published_at": str(top.get("published_at")),
-            }
+    news_features = payload.get("news_features") or {}
+    news_summary = None
+    if isinstance(news_features, dict) and news_features:
+        news_summary = {
+            "age": _hashable_float(news_features.get("news_latest_age_minutes"), 2),
+            "impact": _hashable_float(news_features.get("news_impact_max"), 3),
+            "sentiment": _hashable_float(news_features.get("news_sentiment_mean"), 3),
+        }
     perf_snapshot = {}
     for key, value in perf.items():
         if isinstance(value, (int, float)):
@@ -558,7 +557,7 @@ def _gpt_payload_signature(
             "ma20": _hashable_float(factors_d1.get("ma20"), 4),
         },
         "perf": perf_snapshot,
-        "news": latest_news,
+        "news": news_summary,
     }
     serialized = json.dumps(key_data, sort_keys=True, separators=(",", ":"))
     return hashlib.sha1(serialized.encode("utf-8")).hexdigest()
@@ -681,14 +680,16 @@ async def prime_gpt_decision(
                 start_time = datetime.datetime.utcnow()
             continue
 
+        now = datetime.datetime.utcnow()
         perf_cache = get_perf()
         news_cache = get_latest_news(
             limit_short=NEWS_LIMITS["short"],
             limit_long=NEWS_LIMITS["long"],
         )
         event_soon = check_event_soon(within_minutes=30, min_impact=3)
+        news_features = build_news_features(news_cache, now=now)
         payload = {
-            "ts": datetime.datetime.utcnow().isoformat(timespec="seconds"),
+            "ts": now.isoformat(timespec="seconds"),
             "reg_macro": classify(fac_h4, "H4", event_mode=event_soon),
             "reg_micro": classify(fac_m1, "M1", event_mode=event_soon),
             "factors_m1": _compact_factors(fac_m1, GPT_FACTOR_KEYS["M1"]),
@@ -702,8 +703,7 @@ async def prime_gpt_decision(
                 for pocket, metrics in (perf_cache or {}).items()
                 if metrics
             },
-            "news_short": news_cache.get("short", []),
-            "news_long": news_cache.get("long", []),
+            "news_features": news_features,
             "event_soon": event_soon,
         }
         signature = _gpt_payload_signature(
@@ -2035,6 +2035,7 @@ async def logic_loop(
             if FORCE_SCALP_MODE:
                 logging.warning("[FORCE_SCALP] entering GPT stage loop=%d", loop_counter)
             # M1/H4 の移動平均・RSI などの指標をまとめて送信
+            news_features = build_news_features(news_cache, now=now)
             payload = {
                 "ts": now.isoformat(timespec="seconds"),
                 "reg_macro": macro_regime,
@@ -2050,8 +2051,7 @@ async def logic_loop(
                     for pocket, metrics in (perf_cache or {}).items()
                     if metrics
                 },
-                "news_short": news_cache.get("short", []),
-                "news_long": news_cache.get("long", []),
+                "news_features": news_features,
                 "event_soon": event_soon,
             }
             payload_signature = _gpt_payload_signature(

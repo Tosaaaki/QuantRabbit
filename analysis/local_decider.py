@@ -70,7 +70,11 @@ def heuristic_decision(
     factors_h4 = payload.get("factors_h4") or {}
 
     event_soon = bool(payload.get("event_soon"))
-    news_short = payload.get("news_short") or []
+    news_features = payload.get("news_features") or {}
+    news_count = _safe_float(news_features.get("news_count_total"), 0.0)
+    news_age = _safe_float(news_features.get("news_latest_age_minutes"), 9999.0)
+    news_bias = _safe_float(news_features.get("news_sentiment_mean"), 0.0)
+    recent_news = news_count > 0.0 and news_age <= 45.0
     perf = payload.get("perf") or {}
 
     macro_adx = _safe_float(factors_h4.get("adx"))
@@ -83,7 +87,7 @@ def heuristic_decision(
     focus_tag = "hybrid"
     weight_macro = 0.5
 
-    if event_soon or any(news_short):
+    if event_soon or recent_news:
         focus_tag = "event"
         weight_macro = 0.35
     elif macro_adx >= 24 and macro_gap >= 0.045:
