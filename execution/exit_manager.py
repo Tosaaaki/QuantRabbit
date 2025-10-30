@@ -545,6 +545,19 @@ class ExitManager:
             now,
         )
 
+        age_seconds = self._trade_age_seconds(open_info, "long", now)
+        hold_minutes = round(age_seconds / 60.0, 2) if age_seconds is not None else None
+        logging.info(
+            "[EXIT] pocket=%s side=long reason=%s profit=%.2fp hold=%smin close_units=%s range=%s stage=%d",
+            pocket,
+            reason,
+            profit_pips,
+            f"{hold_minutes:.2f}" if hold_minutes is not None else "n/a",
+            close_units,
+            range_mode,
+            stage_level,
+        )
+
         return ExitDecision(
             pocket=pocket,
             units=-abs(close_units),
@@ -836,6 +849,19 @@ class ExitManager:
             story,
             range_mode,
             now,
+        )
+
+        age_seconds = self._trade_age_seconds(open_info, "short", now)
+        hold_minutes = round(age_seconds / 60.0, 2) if age_seconds is not None else None
+        logging.info(
+            "[EXIT] pocket=%s side=short reason=%s profit=%.2fp hold=%smin close_units=%s range=%s stage=%d",
+            pocket,
+            reason,
+            profit_pips,
+            f"{hold_minutes:.2f}" if hold_minutes is not None else "n/a",
+            close_units,
+            range_mode,
+            stage_level,
         )
 
         return ExitDecision(
