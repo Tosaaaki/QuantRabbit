@@ -1,3 +1,4 @@
+import asyncio
 import pathlib
 import sys
 
@@ -12,6 +13,7 @@ from analysis.gpt_decider import (
     _get_responses_output_text,
     _normalize_json_content,
     _load_json_payload,
+    _is_timeout_error,
 )
 
 
@@ -76,3 +78,11 @@ def test_get_responses_output_text(resp, expected):
 def test_get_responses_output_text_empty_returns_blank():
     resp = _DummyResponse()
     assert _get_responses_output_text(resp, "dummy-model") == ""
+
+
+def test_is_timeout_error_handles_various_messages():
+    assert _is_timeout_error(asyncio.TimeoutError())
+    class DummyExc(Exception):
+        pass
+    assert _is_timeout_error(DummyExc("Request timeout after 10s")) is True
+    assert _is_timeout_error(DummyExc("no issue")) is False

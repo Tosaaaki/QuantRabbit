@@ -29,6 +29,11 @@ from utils.secrets import get_secret
 
 client = AsyncOpenAI(api_key=get_secret("openai_api_key"))
 
+try:  # pragma: no cover - optional dependency used for timeout detection
+    import httpx
+except Exception:  # pragma: no cover
+    httpx = None
+
 
 _REQUIRED_KEYS = ("focus_tag", "weight_macro", "ranked_strategies")
 
@@ -54,11 +59,11 @@ _MODEL_OUTPUT_LIMITS = {
 }
 
 _MODEL_TIMEOUT_SECONDS = {
-    "gpt-5-mini": 18,
-    "gpt-5-mini-2025-08-07": 18,
-    "gpt-5.1-mini": 18,
-    "gpt-4o-mini": 12,
-    "gpt-4o-mini-2024-07-18": 12,
+    "gpt-5-mini": 22,
+    "gpt-5-mini-2025-08-07": 22,
+    "gpt-5.1-mini": 22,
+    "gpt-4o-mini": 18,
+    "gpt-4o-mini-2024-07-18": 18,
 }
 
 _FALLBACK_MODELS = [
@@ -67,7 +72,6 @@ _FALLBACK_MODELS = [
 ]
 
 _REUSE_WINDOW_SECONDS = 300
-_GPT_TIMEOUT_SECONDS = 18 if "gpt-5" in MODEL else 9
 _FAIL_OPEN_SECONDS = int(os.getenv("GPT_FAIL_OPEN_SECONDS", "120") or 120)
 _FALLBACK_DECISION = {
     "focus_tag": "hybrid",
@@ -174,6 +178,18 @@ def _get_responses_output_text(resp, model: str) -> str:
     return combined
 
 
+def _is_timeout_error(exc: Exception) -> bool:
+    if isinstance(exc, (asyncio.TimeoutError, TimeoutError)):
+        return True
+    if httpx is not None and isinstance(exc, httpx.TimeoutException):  # pragma: no cover
+        return True
+    message = str(exc).lower()
+    if not message:
+        return False
+    keywords = ("timeout", "timed out", "deadline", "504", "gateway time-out")
+    return any(word in message for word in keywords)
+
+
 async def _call_model(payload: Dict, messages: List[Dict], model: str) -> Dict:
     tier = "primary" if model == MODEL else "fallback"
     with track_gpt_call(
@@ -181,7 +197,9 @@ async def _call_model(payload: Dict, messages: List[Dict], model: str) -> Dict:
         extra_tags={"tier": tier, "model": model},
     ) as tracker:
         use_responses = "gpt-5" in model or "gpt-4" in model
-        timeout = _MODEL_TIMEOUT_SECONDS.get(model, 12)
+        timeout = _MODEL_TIMEOUT_SECONDS.get(model, 18)
+        usage_in = usage_out = 0
+        content_raw: str | None = None
         if use_responses:
             inputs = [{"role": msg["role"], "content": msg["content"]} for msg in messages]
             kwargs: Dict[str, object] = {
@@ -195,14 +213,20 @@ async def _call_model(payload: Dict, messages: List[Dict], model: str) -> Dict:
             try:
                 resp = await client.responses.create(**kwargs)
             except Exception as exc:
-                raise GPTTimeout(str(exc)) from exc
-            usage = getattr(resp, "usage", None)
-            usage_in = getattr(usage, "input_tokens", 0) if usage else 0
-            usage_out = getattr(usage, "output_tokens", 0) if usage else 0
-            tracker.add_tag("tokens", usage_in + usage_out)
-            add_tokens(usage_in + usage_out, MAX_TOKENS_MONTH)
-            content = _normalize_json_content(_get_responses_output_text(resp, model) or "")
-        else:
+                if _is_timeout_error(exc):
+                    logger.warning(
+                        "GPT responses model %s timed out; retrying via chat completions.",
+                        model,
+                    )
+                    use_responses = False
+                else:
+                    raise GPTTimeout(str(exc)) from exc
+            else:
+                usage = getattr(resp, "usage", None)
+                usage_in = getattr(usage, "input_tokens", 0) if usage else 0
+                usage_out = getattr(usage, "output_tokens", 0) if usage else 0
+                content_raw = _get_responses_output_text(resp, model)
+        if not use_responses or content_raw is None:
             base_kwargs = {
                 "model": model,
                 "messages": messages,
@@ -235,10 +259,12 @@ async def _call_model(payload: Dict, messages: List[Dict], model: str) -> Dict:
                 )
             usage_in = resp.usage.prompt_tokens
             usage_out = resp.usage.completion_tokens
-            tracker.add_tag("tokens", usage_in + usage_out)
-            add_tokens(usage_in + usage_out, MAX_TOKENS_MONTH)
             content = _normalize_json_content(resp.choices[0].message.content or "")
+        else:
+            content = _normalize_json_content(content_raw or "")
 
+        tracker.add_tag("tokens", usage_in + usage_out)
+        add_tokens(usage_in + usage_out, MAX_TOKENS_MONTH)
         data = _load_json_payload(content)
 
         for key in _REQUIRED_KEYS:
@@ -332,11 +358,11 @@ async def get_decision(payload: Dict) -> Dict:
                 log_reason=True,
                 last_exception=None,
             )
-    # 最大2回リトライ（合計最大 ~9秒）
+    # 最大2回リトライ（Responses→Chat のフォールバック込み）
     last_exc: Exception | None = None
     for attempt in range(2):
         try:
-            fresh = await asyncio.wait_for(call_openai(payload), timeout=_GPT_TIMEOUT_SECONDS)
+            fresh = await call_openai(payload)
             if not isinstance(fresh, dict):
                 raise ValueError("GPT response must be dict")
             # 決定情報を保持（reasonは揮発値なので除外）
