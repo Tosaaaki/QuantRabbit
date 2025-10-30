@@ -1039,41 +1039,6 @@ def _stage_conditions_met(
         return True
 
     if pocket == "scalp":
-        atr = fac_m1.get("atr", 0.0) * 100
-        if atr < 0.6:
-            logging.info("[STAGE] Scalp gating: ATR %.2f too low for stage %d.", atr, stage_idx)
-            return False
-        momentum = (fac_m1.get("close") or 0.0) - (fac_m1.get("ema20") or 0.0)
-        if action == "OPEN_LONG" and momentum > 0.00012:
-            logging.info(
-                "[STAGE] Scalp buy gating: momentum %.4f positive (stage %d).",
-                momentum,
-                stage_idx,
-            )
-            return False
-        if action == "OPEN_SHORT" and momentum < -0.00012:
-            logging.info(
-                "[STAGE] Scalp sell gating: momentum %.4f negative (stage %d).",
-                momentum,
-                stage_idx,
-            )
-            return False
-        if action == "OPEN_LONG":
-            if rsi > 67 - min(stage_idx * 2, 8):
-                logging.info(
-                    "[STAGE] Scalp buy gating: RSI %.1f too high (stage %d).",
-                    rsi,
-                    stage_idx,
-                )
-                return False
-        else:
-            if rsi < 33 + min(stage_idx * 2, 8):
-                logging.info(
-                    "[STAGE] Scalp sell gating: RSI %.1f too low (stage %d).",
-                    rsi,
-                    stage_idx,
-                )
-                return False
         return True
 
     return True
@@ -2084,6 +2049,7 @@ async def logic_loop(
             ):
                 focus_pockets.add("scalp")
             focus_pockets.update(strategy_pockets)
+            focus_pockets.add("scalp")
             diag_fields = {
                 "ready": int(bool(scalp_ready)),
                 "forced": int(bool(scalp_ready_forced)),

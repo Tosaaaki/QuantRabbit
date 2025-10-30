@@ -282,58 +282,45 @@ class M1Scalper:
             dist_high_pips = max((high_mid - mid_latest) / _PIP, 0.05)
             dist_low_pips = max((mid_latest - low_mid) / _PIP, 0.05)
 
-            base_tp_floor = _fallback_float("tp_floor", 1.2)
+            base_tp_floor = _fallback_float("tp_floor", 1.0)
             tp_cap = _fallback_float("tp_cap", 1.9)
             if scalp_tactical:
                 tp_cap = _fallback_float("tp_cap_tactical", tp_cap)
-            tp_dyn = max(
-                base_tp_floor,
-                min(tp_cap, (span_pips * 0.8) + 0.6),
-            )
+            tp_dyn = max(base_tp_floor, min(tp_cap, (span_pips * 0.5) + 0.5))
             if scalp_tactical:
-                tp_dyn = min(tp_cap, max(1.0, tp_dyn * 0.9))
+                tp_dyn = min(tp_cap, max(0.9, tp_dyn * 0.9))
 
-            sl_floor = _fallback_float("sl_floor", 8.5)
+            sl_floor = _fallback_float("sl_floor", 6.0)
             if scalp_tactical:
                 sl_floor = _fallback_float("sl_floor_tactical", sl_floor)
             sl_cap = _fallback_float("sl_cap", 13.0)
             if scalp_tactical:
                 sl_cap = _fallback_float("sl_cap_tactical", sl_cap)
-            sl_mult = _fallback_float("sl_atr_mult", 3.2)
+            sl_mult = _fallback_float("sl_atr_mult", 2.2)
             if scalp_tactical:
                 sl_mult = _fallback_float("sl_atr_mult_tactical", sl_mult)
             sl_dyn = max(sl_floor, atr_pips * sl_mult)
             sl_dyn = min(sl_cap, sl_dyn)
 
-            entry_base = span_pips * 0.45
-            entry_offset_pips = max(0.08, min(0.32, entry_base))
-            tolerance_pips = max(0.14, min(0.52, entry_offset_pips * 1.6))
+            entry_base = span_pips * 0.35
+            entry_offset_pips = max(0.05, min(0.28, entry_base))
+            tolerance_pips = max(0.05, min(0.35, entry_offset_pips * 1.2))
 
-            direction = None
-            if rsi >= 58 or momentum >= 0.00018:
+            if dist_low_pips <= dist_high_pips:
                 direction = "long"
-            elif rsi <= 42 or momentum <= -0.00018:
-                direction = "short"
             else:
-                # どちらか近い側に吸い寄せる
-                direction = "long" if dist_low_pips <= dist_high_pips else "short"
+                direction = "short"
 
             if direction == "long":
                 entry_price = round(mid_latest - entry_offset_pips * _PIP, 3)
                 floor_price = round(low_mid + 0.0004, 3)
                 if entry_price < floor_price:
                     entry_price = floor_price
-                if not _alignment_ok("long"):
-                    _log("skip_fallback_long_alignment", momentum=round(momentum, 5))
-                    return None
             else:
                 entry_price = round(mid_latest + entry_offset_pips * _PIP, 3)
                 cap_price = round(high_mid - 0.0004, 3)
                 if entry_price > cap_price:
                     entry_price = cap_price
-                if not _alignment_ok("short"):
-                    _log("skip_fallback_short_alignment", momentum=round(momentum, 5))
-                    return None
 
             mom_norm = abs(momentum) / max(0.0001, atr or 0.0001)
             rsi_bias = abs(rsi - 50.0) / 25.0
