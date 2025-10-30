@@ -11,6 +11,7 @@ import asyncio
 import datetime as dt
 import json
 import logging
+import os
 from typing import Dict, List
 
 from openai import AsyncOpenAI
@@ -66,6 +67,7 @@ _FALLBACK_MODELS = [
 
 _REUSE_WINDOW_SECONDS = 300
 _GPT_TIMEOUT_SECONDS = 18 if "gpt-5" in MODEL else 9
+_FAIL_OPEN_SECONDS = int(os.getenv("GPT_FAIL_OPEN_SECONDS", "120") or 120)
 _FALLBACK_DECISION = {
     "focus_tag": "hybrid",
     "weight_macro": 0.7,
@@ -81,6 +83,7 @@ _FALLBACK_DECISION = {
 
 _LAST_DECISION_TS: dt.datetime | None = None
 _LAST_DECISION_DATA: Dict[str, object] | None = None
+_LAST_FAILURE_TS: dt.datetime | None = None
 
 logger = logging.getLogger(__name__)
 
@@ -243,8 +246,25 @@ async def get_decision(payload: Dict) -> Dict:
     """
     上位ラッパ：GPT 呼び出し（リトライあり、失敗時は再利用/フォールバック決定）
     """
+    global _LAST_DECISION_TS, _LAST_DECISION_DATA, _LAST_FAILURE_TS
+    now = dt.datetime.utcnow()
+    if _LAST_FAILURE_TS:
+        elapsed = (now - _LAST_FAILURE_TS).total_seconds()
+        if elapsed <= _FAIL_OPEN_SECONDS:
+            remaining = max(0, _FAIL_OPEN_SECONDS - int(elapsed))
+            logger.warning(
+                "GPT fail-open active (remaining %ss); using fallback decision.",
+                remaining,
+            )
+            return fallback_decision(
+                payload,
+                last_decision=_LAST_DECISION_DATA,
+                reason="fail_open",
+                now=now,
+                log_reason=True,
+                last_exception=None,
+            )
     # 最大2回リトライ（合計最大 ~9秒）
-    global _LAST_DECISION_TS, _LAST_DECISION_DATA
     last_exc: Exception | None = None
     for attempt in range(2):
         try:
@@ -254,6 +274,7 @@ async def get_decision(payload: Dict) -> Dict:
             # 決定情報を保持（reasonは揮発値なので除外）
             _LAST_DECISION_TS = dt.datetime.utcnow()
             _LAST_DECISION_DATA = {k: v for k, v in fresh.items() if k != "reason"}
+            _LAST_FAILURE_TS = None
             return fresh
         except Exception as e:
             last_exc = e
@@ -266,6 +287,7 @@ async def get_decision(payload: Dict) -> Dict:
             await asyncio.sleep(1.5)
     # フォールバック：直近 5 分以内の決定を再利用、なければデフォルト構成を返す
     now = dt.datetime.utcnow()
+    _LAST_FAILURE_TS = now
     if _LAST_DECISION_TS and _LAST_DECISION_DATA:
         age = (now - _LAST_DECISION_TS).total_seconds()
         if age <= _REUSE_WINDOW_SECONDS:
