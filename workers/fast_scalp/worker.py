@@ -177,6 +177,10 @@ async def fast_scalp_worker(shared_state: FastScalpState) -> None:
             loop_start = time.monotonic()
             now = _now_utc()
             loop_counter += 1
+            if loop_counter % 200 == 0:
+                logger.warning(
+                    "%s loop=%d active=%d", config.LOG_PREFIX_TICK, loop_counter, len(active_trades)
+                )
 
             if _is_off_hours(now):
                 if not off_hours_logged:
