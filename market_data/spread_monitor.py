@@ -38,7 +38,7 @@ def _load_int(key: str, default: int, *, minimum: Optional[int] = None) -> int:
     return value
 
 
-MAX_SPREAD_PIPS = _load_float("spread_guard_max_pips", 1.4, minimum=0.1)
+MAX_SPREAD_PIPS = _load_float("spread_guard_max_pips", 1.3, minimum=0.1)
 RELEASE_SPREAD_PIPS = _load_float(
     "spread_guard_release_pips", max(0.8 * MAX_SPREAD_PIPS, MAX_SPREAD_PIPS - 0.3)
 )
