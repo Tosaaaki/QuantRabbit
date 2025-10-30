@@ -6,6 +6,7 @@ import time
 import hashlib
 import json
 import contextlib
+from dataclasses import dataclass
 from typing import Optional, Tuple, Coroutine, Any, Dict
 
 from market_data.candle_fetcher import (
@@ -113,12 +114,14 @@ POCKET_EXIT_COOLDOWNS = {
     "macro": 720,
     "micro": 360,
     "scalp": 240,
+    "scalp_fast": 90,
 }
 
 POCKET_LOSS_COOLDOWNS = {
     "macro": 900,
     "micro": 600,
     "scalp": 360,
+    "scalp_fast": 240,
 }
 
 # 新規エントリー後のクールダウン（再エントリー抑制）
@@ -126,6 +129,7 @@ POCKET_ENTRY_MIN_INTERVAL = {
     "macro": 240,  # 4分
     "micro": 150,  # 2.5分
     "scalp": 75,
+    "scalp_fast": 30,
 }
 
 if os.getenv("SCALP_TACTICAL", "0").strip().lower() not in {"", "0", "false", "no"}:
@@ -138,24 +142,28 @@ POCKET_MAX_ACTIVE_TRADES = {
     "macro": 6,
     "micro": 2,
     "scalp": 3,
+    "scalp_fast": 2,
 }
 
 POCKET_MAX_ACTIVE_TRADES_RANGE = {
     "macro": 0,
     "micro": 1,
     "scalp": 1,
+    "scalp_fast": 1,
 }
 
 POCKET_MAX_DIRECTIONAL_TRADES = {
     "macro": 6,
     "micro": 1,
     "scalp": 2,
+    "scalp_fast": 1,
 }
 
 POCKET_MAX_DIRECTIONAL_TRADES_RANGE = {
     "macro": 0,
     "micro": 1,
     "scalp": 1,
+    "scalp_fast": 1,
 }
 
 try:
@@ -279,6 +287,81 @@ MACRO_LOT_SHARE_FLOOR = _safe_env_float("MACRO_LOT_SHARE_FLOOR", 0.7, low=0.0, h
 MACRO_CONFIDENCE_FLOOR = _safe_env_float("MACRO_CONFIDENCE_FLOOR", 1.0, low=0.3, high=1.0)
 MACRO_SPREAD_OVERRIDE = _safe_env_float("MACRO_SPREAD_OVERRIDE", 1.4, low=1.0, high=3.0)
 
+
+@dataclass
+class FactorWarmupState:
+    in_progress: bool = False
+    last_attempt: Optional[datetime.datetime] = None
+    last_success: Optional[datetime.datetime] = None
+
+
+_FACTOR_STALE_SECONDS = 60 * 60 * 4  # 4 hours
+_FACTOR_RETRY_SECONDS = 300  # 5 minutes
+
+
+def _parse_factor_timestamp(value: object) -> Optional[datetime.datetime]:
+    if isinstance(value, datetime.datetime):
+        dt = value
+    elif isinstance(value, str):
+        try:
+            dt = datetime.datetime.fromisoformat(value)
+        except ValueError:
+            return None
+    else:
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=datetime.timezone.utc)
+    return dt.astimezone(datetime.timezone.utc)
+
+
+def _to_utc(dt: datetime.datetime) -> datetime.datetime:
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=datetime.timezone.utc)
+    return dt.astimezone(datetime.timezone.utc)
+
+
+async def ensure_factor_history_ready(
+    state: FactorWarmupState,
+    *,
+    instrument: str = "USD_JPY",
+) -> None:
+    """
+    Ensure indicator cache has recent H4 (and M1) factors. Re-fetch history if stale.
+    """
+    now = datetime.datetime.now(datetime.timezone.utc)
+    factors = all_factors()
+    h4 = factors.get("H4") or {}
+    timestamp = _parse_factor_timestamp(h4.get("timestamp"))
+    if timestamp and (now - timestamp).total_seconds() <= _FACTOR_STALE_SECONDS:
+        state.last_success = timestamp
+        return
+
+    if state.in_progress:
+        return
+    last_attempt = state.last_attempt and _to_utc(state.last_attempt)
+    if last_attempt and (now - last_attempt).total_seconds() < _FACTOR_RETRY_SECONDS:
+        return
+
+    state.in_progress = True
+    state.last_attempt = now
+    try:
+        logging.info("[FACTOR] warming up historical candles (instrument=%s)", instrument)
+        await initialize_history(instrument)
+    except Exception as exc:  # pragma: no cover - defensive
+        logging.warning("[FACTOR] initialize_history failed: %s", exc)
+    else:
+        refreshed = all_factors().get("H4") or {}
+        ts_new = _parse_factor_timestamp(refreshed.get("timestamp"))
+        if ts_new:
+            logging.info("[FACTOR] history warmup completed at %s", ts_new.isoformat())
+            state.last_success = ts_new
+        else:
+            logging.warning("[FACTOR] warmup completed but H4 factors still missing; will retry.")
+            state.last_success = None
+    finally:
+        state.in_progress = False
+
+
 GPT_FACTOR_KEYS: Dict[str, tuple[str, ...]] = {
     "M1": (
         "close",
@@ -291,7 +374,6 @@ GPT_FACTOR_KEYS: Dict[str, tuple[str, ...]] = {
         "bbw",
     ),
     "H4": (
-        "timestamp",
         "close",
         "ma10",
         "ma20",
@@ -1389,6 +1471,7 @@ async def logic_loop(
     gpt_requests: GPTRequestManager,
     news_cache_supplier=None,
     fast_scalp_state: FastScalpState | None = None,
+    factor_warmup_state: FactorWarmupState | None = None,
     *,
     rr_advisor: RRRatioAdvisor | None = None,
     exit_advisor: ExitAdvisor | None = None,
@@ -1472,6 +1555,9 @@ async def logic_loop(
             scalp_ready_forced = False
             if FORCE_SCALP_MODE and loop_counter % 5 == 0:
                 logging.warning("[FORCE_SCALP] loop=%d", loop_counter)
+
+            if factor_warmup_state is not None:
+                await ensure_factor_history_ready(factor_warmup_state)
             stage_tracker.clear_expired(now)
             # Heartbeat logging
             if (now - last_heartbeat_time).total_seconds() >= 300:  # Every 5 minutes
@@ -3149,6 +3235,19 @@ async def logic_loop(
             last_risk_pct = risk_override
 
             if fast_scalp_state:
+                m1_rsi = None
+                m1_rsi_age = None
+                try:
+                    m1_rsi = float(fac_m1.get("rsi")) if fac_m1 and fac_m1.get("rsi") is not None else None
+                except (TypeError, ValueError):
+                    m1_rsi = None
+                if fac_m1:
+                    age_val = fac_m1.get("stale_seconds") or fac_m1.get("stale")
+                    try:
+                        if age_val is not None:
+                            m1_rsi_age = float(age_val)
+                    except (TypeError, ValueError):
+                        m1_rsi_age = None
                 fast_scalp_state.update_from_main(
                     account_equity=account_equity,
                     margin_available=float(margin_available or 0.0),
@@ -3157,6 +3256,8 @@ async def logic_loop(
                     focus_tag=focus_tag,
                     risk_pct_override=risk_override,
                     range_active=range_active,
+                    m1_rsi=m1_rsi,
+                    m1_rsi_age_sec=m1_rsi_age,
                 )
 
             base_price_val = fac_m1.get("close")
@@ -4084,6 +4185,7 @@ async def main():
     worker_task = asyncio.create_task(gpt_worker(gpt_state, gpt_requests))
     autotune_task = start_background_autotune(asyncio.get_running_loop())
     fast_scalp_state = FastScalpState()
+    factor_warmup_state = FactorWarmupState()
     try:
         await prime_gpt_decision(gpt_state, gpt_requests)
         while True:
@@ -4101,6 +4203,7 @@ async def main():
                             gpt_state,
                             gpt_requests,
                             fast_scalp_state=fast_scalp_state,
+                            factor_warmup_state=factor_warmup_state,
                             rr_advisor=RR_ADVISOR,
                             exit_advisor=EXIT_ADVISOR,
                             strategy_conf_advisor=STRATEGY_CONF_ADVISOR,
