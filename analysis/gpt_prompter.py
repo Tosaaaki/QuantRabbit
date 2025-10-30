@@ -58,6 +58,20 @@ def build_messages(payload: Dict) -> List[Dict]:
         if data:
             factors[label] = data
 
+    news_features = payload.get("news_features") or {}
+    if isinstance(news_features, dict):
+        keys = (
+            "news_count_total",
+            "news_latest_age_minutes",
+            "news_sentiment_mean",
+            "news_impact_max",
+        )
+        news_features = {
+            key: news_features.get(key)
+            for key in keys
+            if news_features.get(key) not in (None, "", [])
+        }
+
     compact_payload = _prune(
         {
             "ts": payload.get("ts"),
@@ -67,7 +81,7 @@ def build_messages(payload: Dict) -> List[Dict]:
             },
             "factors": factors,
             "perf": payload.get("perf") or {},
-            "news_features": payload.get("news_features") or {},
+            "news_features": news_features,
             "event_soon": payload.get("event_soon", False),
         }
     )
