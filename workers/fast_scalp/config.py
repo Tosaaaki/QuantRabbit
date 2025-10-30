@@ -27,12 +27,12 @@ SL_PIPS: float = max(10.0, float(os.getenv("FAST_SCALP_SL_PIPS", "60.0")))
 SL_POST_ADJUST_BUFFER_PIPS: float = max(
     0.0, float(os.getenv("FAST_SCALP_SL_POST_ADJUST_BUFFER_PIPS", "5.0"))
 )
-MAX_SPREAD_PIPS: float = max(0.1, float(os.getenv("FAST_SCALP_MAX_SPREAD_PIPS", "0.55")))
-ENTRY_THRESHOLD_PIPS: float = max(0.015, float(os.getenv("FAST_SCALP_ENTRY_MOM_PIPS", "0.1")))
+MAX_SPREAD_PIPS: float = max(0.1, float(os.getenv("FAST_SCALP_MAX_SPREAD_PIPS", "0.6")))
+ENTRY_THRESHOLD_PIPS: float = max(0.01, float(os.getenv("FAST_SCALP_ENTRY_MOM_PIPS", "0.05")))
 ENTRY_SHORT_THRESHOLD_PIPS: float = max(
-    0.01, float(os.getenv("FAST_SCALP_ENTRY_SHORT_MOM_PIPS", "0.06"))
+    0.008, float(os.getenv("FAST_SCALP_ENTRY_SHORT_MOM_PIPS", "0.035"))
 )
-ENTRY_RANGE_FLOOR_PIPS: float = max(0.02, float(os.getenv("FAST_SCALP_RANGE_FLOOR_PIPS", "0.2")))
+ENTRY_RANGE_FLOOR_PIPS: float = max(0.01, float(os.getenv("FAST_SCALP_RANGE_FLOOR_PIPS", "0.15")))
 ENTRY_COOLDOWN_SEC: float = max(0.25, float(os.getenv("FAST_SCALP_ENTRY_COOLDOWN_SEC", "1.0")))
 MAX_ORDERS_PER_MINUTE: int = max(1, int(float(os.getenv("FAST_SCALP_MAX_ORDERS_PER_MIN", "40"))))
 MIN_ORDER_SPACING_SEC: float = max(
