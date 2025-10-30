@@ -148,6 +148,32 @@ def _load_json_payload(content: str) -> Dict:
         raise ValueError(f"Invalid JSON: {content}") from exc
 
 
+def _get_responses_output_text(resp, model: str) -> str:
+    """
+    Normalize output from the Responses API into a plain string.
+    The SDK exposes both output_text and structured output lists;
+    we aggregate everything while tolerating partial objects.
+    """
+    content_text = getattr(resp, "output_text", None)
+    if content_text and isinstance(content_text, str):
+        return content_text.strip()
+
+    content_parts: list[str] = []
+    for item in getattr(resp, "output", []) or []:
+        text_attr = getattr(item, "text", None)
+        if isinstance(text_attr, str) and text_attr.strip():
+            content_parts.append(text_attr)
+            continue
+        for block in getattr(item, "content", []) or []:
+            block_text = getattr(block, "text", None)
+            if isinstance(block_text, str) and block_text.strip():
+                content_parts.append(block_text)
+    combined = "".join(content_parts).strip()
+    if not combined:
+        logger.warning("GPT responses model %s returned empty output payload", model)
+    return combined
+
+
 async def _call_model(payload: Dict, messages: List[Dict], model: str) -> Dict:
     tier = "primary" if model == MODEL else "fallback"
     with track_gpt_call(
@@ -163,7 +189,6 @@ async def _call_model(payload: Dict, messages: List[Dict], model: str) -> Dict:
                 "input": inputs,
                 "max_output_tokens": _MODEL_OUTPUT_LIMITS.get(model, _GPT5_MAX_OUTPUT_TOKENS),
                 "timeout": timeout,
-                "response_format": {"type": "json_object"},
             }
             if "gpt-5" in model:
                 kwargs["reasoning"] = {"effort": "low"}
@@ -176,15 +201,7 @@ async def _call_model(payload: Dict, messages: List[Dict], model: str) -> Dict:
             usage_out = getattr(usage, "output_tokens", 0) if usage else 0
             tracker.add_tag("tokens", usage_in + usage_out)
             add_tokens(usage_in + usage_out, MAX_TOKENS_MONTH)
-            content_parts: list[str] = []
-            for item in resp.output or []:
-                if getattr(item, "type", "") != "message":
-                    continue
-                for block in getattr(item, "content", []) or []:
-                    text = getattr(block, "text", None)
-                    if text:
-                        content_parts.append(text)
-            content = _normalize_json_content("".join(content_parts))
+            content = _normalize_json_content(_get_responses_output_text(resp, model) or "")
         else:
             base_kwargs = {
                 "model": model,
