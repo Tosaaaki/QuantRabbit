@@ -28,9 +28,9 @@ SL_POST_ADJUST_BUFFER_PIPS: float = max(
     0.0, float(os.getenv("FAST_SCALP_SL_POST_ADJUST_BUFFER_PIPS", "5.0"))
 )
 MAX_SPREAD_PIPS: float = max(0.1, float(os.getenv("FAST_SCALP_MAX_SPREAD_PIPS", "0.6")))
-ENTRY_THRESHOLD_PIPS: float = max(0.01, float(os.getenv("FAST_SCALP_ENTRY_MOM_PIPS", "0.05")))
+ENTRY_THRESHOLD_PIPS: float = max(0.005, float(os.getenv("FAST_SCALP_ENTRY_MOM_PIPS", "0.02")))
 ENTRY_SHORT_THRESHOLD_PIPS: float = max(
-    0.008, float(os.getenv("FAST_SCALP_ENTRY_SHORT_MOM_PIPS", "0.035"))
+    0.004, float(os.getenv("FAST_SCALP_ENTRY_SHORT_MOM_PIPS", "0.015"))
 )
 ENTRY_RANGE_FLOOR_PIPS: float = max(0.01, float(os.getenv("FAST_SCALP_RANGE_FLOOR_PIPS", "0.15")))
 ENTRY_COOLDOWN_SEC: float = max(0.25, float(os.getenv("FAST_SCALP_ENTRY_COOLDOWN_SEC", "1.0")))
