@@ -50,7 +50,6 @@ _MODEL_OUTPUT_LIMITS = {
     "gpt-5-mini-2025-08-07": 256,
     "gpt-5.1-mini": 256,
     "gpt-4o-mini": 220,
-    "gpt-4o-mini-latest": 220,
     "gpt-4o-mini-2024-07-18": 220,
 }
 
@@ -59,12 +58,10 @@ _MODEL_TIMEOUT_SECONDS = {
     "gpt-5-mini-2025-08-07": 18,
     "gpt-5.1-mini": 18,
     "gpt-4o-mini": 12,
-    "gpt-4o-mini-latest": 12,
     "gpt-4o-mini-2024-07-18": 12,
 }
 
 _FALLBACK_MODELS = [
-    "gpt-4o-mini-latest",
     "gpt-4o-mini",
     "gpt-4o-mini-2024-07-18",
 ]
@@ -166,6 +163,7 @@ async def _call_model(payload: Dict, messages: List[Dict], model: str) -> Dict:
                 "input": inputs,
                 "max_output_tokens": _MODEL_OUTPUT_LIMITS.get(model, _GPT5_MAX_OUTPUT_TOKENS),
                 "timeout": timeout,
+                "response_format": {"type": "json_object"},
             }
             if "gpt-5" in model:
                 kwargs["reasoning"] = {"effort": "low"}
