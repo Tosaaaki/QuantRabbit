@@ -12,6 +12,7 @@ import datetime as dt
 import json
 import logging
 import os
+import re
 from typing import Dict, List
 
 from openai import AsyncOpenAI
@@ -94,6 +95,21 @@ logger = logging.getLogger(__name__)
 class GPTTimeout(Exception): ...
 
 
+_FENCE_PREFIX_RE = re.compile(r"^```[a-zA-Z0-9_-]*\s*")
+
+
+def _normalize_json_content(raw: str) -> str:
+    """Remove Markdown fences / whitespace around JSON payloads."""
+    text = raw.strip()
+    if text.startswith("```"):
+        # Drop opening fence (with optional language tag)
+        text = _FENCE_PREFIX_RE.sub("", text, count=1)
+        # Drop trailing fence if present
+        if text.endswith("```"):
+            text = text[: -3]
+    return text.strip()
+
+
 async def _call_model(payload: Dict, messages: List[Dict], model: str) -> Dict:
     tier = "primary" if model == MODEL else "fallback"
     with track_gpt_call(
@@ -129,7 +145,7 @@ async def _call_model(payload: Dict, messages: List[Dict], model: str) -> Dict:
                     text = getattr(block, "text", None)
                     if text:
                         content_parts.append(text)
-            content = "".join(content_parts).strip()
+            content = _normalize_json_content("".join(content_parts))
         else:
             base_kwargs = {
                 "model": model,
@@ -165,8 +181,7 @@ async def _call_model(payload: Dict, messages: List[Dict], model: str) -> Dict:
             usage_out = resp.usage.completion_tokens
             tracker.add_tag("tokens", usage_in + usage_out)
             add_tokens(usage_in + usage_out, MAX_TOKENS_MONTH)
-            content = resp.choices[0].message.content.strip()
-            content = content.lstrip("```json").rstrip("```").strip()
+            content = _normalize_json_content(resp.choices[0].message.content or "")
 
         if not content:
             raise ValueError("Invalid JSON: (empty string)")
