@@ -36,7 +36,7 @@ class StageTracker:
     def __init__(self, db_path: Path | None = None) -> None:
         self._path = db_path or _DB_PATH
         self._path.parent.mkdir(parents=True, exist_ok=True)
-        self._con = sqlite3.connect(self._path)
+        self._con = sqlite3.connect(self._path, timeout=5.0, check_same_thread=False)
         _ensure_row_factory(self._con)
         self._con.execute(
             """

@@ -7,19 +7,35 @@ execution.risk_guard
 """
 
 from __future__ import annotations
-import os
 import sqlite3
 import pathlib
 from typing import Dict, Optional, Tuple
+import os
+
 from utils.secrets import get_secret
 
 # --- risk params ---
 MAX_LEVERAGE = 20.0  # 1:20
 MAX_LOT = 3.0  # 1 lot = 100k 通貨
-POCKET_DD_LIMITS = {"micro": 0.05, "macro": 0.15, "scalp": 0.03}  # equity 比 (%)
+POCKET_DD_LIMITS = {
+    "micro": 0.05,
+    "macro": 0.15,
+    "scalp": 0.03,
+    "scalp_fast": 0.02,
+}  # equity 比 (%)
 GLOBAL_DD_LIMIT = 0.20  # 全体ドローダウン 20%
-POCKET_MAX_RATIOS = {"macro": 0.8, "micro": 0.6, "scalp": 0.25}
-_DEFAULT_BASE_EQUITY = {"macro": 8000.0, "micro": 6000.0, "scalp": 2500.0}
+POCKET_MAX_RATIOS = {
+    "macro": 0.8,
+    "micro": 0.6,
+    "scalp": 0.25,
+    "scalp_fast": 0.12,
+}
+_DEFAULT_BASE_EQUITY = {
+    "macro": 8000.0,
+    "micro": 6000.0,
+    "scalp": 2500.0,
+    "scalp_fast": 1500.0,
+}
 _LOOKBACK_DAYS = 7
 
 _DB = pathlib.Path("logs/trades.db")
@@ -30,6 +46,14 @@ con.row_factory = sqlite3.Row
 def _guard_enabled() -> bool:
     flag = os.getenv("ENABLE_DRAWDOWN_GUARD", "0").strip().lower()
     return flag not in {"", "0", "false", "off"}
+
+_FAST_SCALP_SHARE = 0.35
+try:
+    _FAST_SCALP_SHARE = max(
+        0.0, min(1.0, float(os.getenv("FAST_SCALP_SHARE_HINT", "0.35")))
+    )
+except Exception:
+    _FAST_SCALP_SHARE = 0.35
 
 _POCKET_EQUITY_HINT: Dict[str, float] = {
     pocket: _DEFAULT_BASE_EQUITY[pocket] for pocket in _DEFAULT_BASE_EQUITY
@@ -59,10 +83,17 @@ def update_dd_context(
 
     micro_ratio = min(remainder, POCKET_MAX_RATIOS["micro"])
 
+    scalp_fast_ratio = min(
+        max(scalp_ratio * _FAST_SCALP_SHARE, 0.0),
+        POCKET_MAX_RATIOS["scalp_fast"],
+    )
+    scalp_ratio = max(0.0, min(POCKET_MAX_RATIOS["scalp"], scalp_ratio - scalp_fast_ratio))
+
     ratios = {
         "macro": macro_ratio,
         "micro": micro_ratio,
         "scalp": scalp_ratio,
+        "scalp_fast": scalp_fast_ratio,
     }
 
     for pocket, ratio in ratios.items():
