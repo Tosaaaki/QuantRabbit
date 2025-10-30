@@ -341,6 +341,8 @@ FORCE_SCALP_MODE = os.getenv("SCALP_FORCE_ALWAYS", "0").strip().lower() not in {
 if FORCE_SCALP_MODE:
     logging.warning("[FORCE_SCALP] mode enabled")
 
+FORCE_SCALP_STALE_FALLBACK_SEC = int(os.getenv("SCALP_FORCE_STALE_MAX_SEC", "180"))
+
 
 class GPTDecisionState:
     def __init__(self) -> None:
@@ -1462,6 +1464,11 @@ async def logic_loop(
     last_vol_high_ratio: Optional[float] = None
     last_stage_biases: dict[str, float] = {}
     last_story_summary: Optional[dict] = None
+    last_valid_fac_m1: Optional[dict] = None
+    last_valid_fac_h4: Optional[dict] = None
+    last_valid_m1_time: Optional[datetime.datetime] = None
+    last_valid_h4_time: Optional[datetime.datetime] = None
+    missing_factor_counter = 0
 
     try:
         while True:
@@ -1501,22 +1508,82 @@ async def logic_loop(
             fac_h4 = factors.get("H4")
             fac_d1 = factors.get("D1")
 
-            # 両方のタイムフレームのデータが揃うまで待機
-            if (
-                not fac_m1_raw
-                or not fac_h4
-                or not fac_m1_raw.get("close")
-                or not fac_h4.get("close")
-            ):
-                logging.info("[WAIT] Waiting for M1/H4 factor data for trading logic...")
-                if FORCE_SCALP_MODE:
+            have_m1 = bool(fac_m1_raw and fac_m1_raw.get("close") is not None)
+            have_h4 = bool(fac_h4 and fac_h4.get("close") is not None)
+            fallback_notes: list[str] = []
+            if have_m1:
+                last_valid_fac_m1 = dict(fac_m1_raw)
+                last_valid_m1_time = now
+            if have_h4:
+                last_valid_fac_h4 = dict(fac_h4)
+                last_valid_h4_time = now
+
+            if FORCE_SCALP_MODE:
+                if not have_m1 and last_valid_fac_m1 and last_valid_m1_time:
+                    age = (now - last_valid_m1_time).total_seconds()
+                    if age <= max(10.0, float(FORCE_SCALP_STALE_FALLBACK_SEC)):
+                        fac_m1_raw = dict(last_valid_fac_m1)
+                        fac_m1_raw.setdefault("stale_seconds", int(age))
+                        have_m1 = True
+                        fallback_notes.append(f"m1_stale={int(age)}s")
+                if not have_h4 and last_valid_fac_h4 and last_valid_h4_time:
+                    age = (now - last_valid_h4_time).total_seconds()
+                    if age <= max(30.0, float(FORCE_SCALP_STALE_FALLBACK_SEC * 3)):
+                        fac_h4 = dict(last_valid_fac_h4)
+                        fac_h4.setdefault("stale_seconds", int(age))
+                        have_h4 = True
+                        fallback_notes.append(f"h4_stale={int(age)}s")
+
+            if fallback_notes and FORCE_SCALP_MODE and loop_counter % 5 == 0:
+                logging.warning(
+                    "[FORCE_SCALP] using stale factors %s",
+                    ";".join(fallback_notes),
+                )
+
+            if not (have_m1 and have_h4):
+                missing_factor_counter += 1
+                reason_bits = []
+                if not have_m1:
+                    if not fac_m1_raw:
+                        reason_bits.append("m1_none")
+                    elif fac_m1_raw.get("close") is None:
+                        reason_bits.append("m1_no_close")
+                    else:
+                        reason_bits.append("m1_partial")
+                if not have_h4:
+                    if not fac_h4:
+                        reason_bits.append("h4_none")
+                    elif fac_h4.get("close") is None:
+                        reason_bits.append("h4_no_close")
+                    else:
+                        reason_bits.append("h4_partial")
+                reason_txt = ",".join(reason_bits) if reason_bits else "unknown"
+                if missing_factor_counter in {1, 5, 10} or missing_factor_counter % 20 == 0:
                     logging.warning(
-                        "[FORCE_SCALP] factors missing m1=%s h4=%s",
-                        bool(fac_m1_raw),
-                        bool(fac_h4),
+                        "[WAIT] Missing factors reason=%s fallback=%s counter=%d",
+                        reason_txt,
+                        ";".join(fallback_notes) if fallback_notes else "none",
+                        missing_factor_counter,
                     )
+                log_metric(
+                    "factor_missing",
+                    1.0,
+                    tags={
+                        "m1": str(have_m1).lower(),
+                        "h4": str(have_h4).lower(),
+                        "reason": reason_txt or "unknown",
+                        "forced": str(FORCE_SCALP_MODE).lower(),
+                    },
+                    ts=now,
+                )
                 await asyncio.sleep(5)
                 continue
+            if missing_factor_counter:
+                logging.info(
+                    "[FACTOR] M1/H4 factors restored after %d missing cycles",
+                    missing_factor_counter,
+                )
+                missing_factor_counter = 0
 
             fac_m1 = dict(fac_m1_raw)
             recent_tick_rows = tick_window.recent_ticks(75.0, limit=180)
@@ -2971,7 +3038,7 @@ async def logic_loop(
                 if remaining > 0:
                     client_id = build_client_order_id(focus_tag, decision.tag)
                     fallback_units = -remaining if decision.units < 0 else remaining
-                    trade_id = await market_order(
+                    trade_id, _ = await market_order(
                         "USD_JPY",
                         fallback_units,
                         None,
@@ -3915,7 +3982,7 @@ async def logic_loop(
                     entry_thesis.setdefault("notes_auto", {})[
                         "macro_pullback_pips"
                     ] = pullback_note
-                trade_id = await market_order(
+                trade_id, executed_price = await market_order(
                     "USD_JPY",
                     units,
                     sl,

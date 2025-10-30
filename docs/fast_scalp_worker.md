@@ -31,10 +31,12 @@ wide emergency stops (≈30 pips). The component co‑exists with the current
 5. **Order path** — The worker submits orders through `execution.order_manager.market_order`
    with `pocket="scalp_fast"`, `client_order_id` prefix `qr-fast-`, and attaches
    `takeProfitOnFill` / `stopLossOnFill`.
-   - `tp_pips = 1.0 + max(spread, 0.2)` and an additional safety margin
-     (`FAST_SCALP_TP_SAFE_MARGIN_PIPS`, default 0.4) plus half the observed
-     spread are applied so that the `takeProfitOnFill` always remains on the
-     profitable side of the expected fill price.
+   - 最新の `spread_monitor` / tick_window から Bid/Ask を参照し、想定約定
+     価格を基に SL/TP を計算する。成行後は `TradeCRCDO` で実 fill に合わせて
+     再設定し、`FAST_SCALP_SL_PIPS`（既定 60pips）＋バッファ分だけ確保する。
+   - `tp_pips = 1.0 + max(spread, 0.2)` に安全マージン
+     (`FAST_SCALP_TP_SAFE_MARGIN_PIPS`, 既定 0.4) と観測スプレッドの半分を
+     追加し、`takeProfitOnFill` が確実に利益側へ寄るよう調整する。
    - `sl_pips = 30.0`
    - Min unit guard: abort if computed units < 10 k.
 6. **Rate limiting** — A dedicated limiter enforces:
@@ -42,6 +44,8 @@ wide emergency stops (≈30 pips). The component co‑exists with the current
    - `min_order_spacing = 2.5 s`
    - Exponential backoff when an order fails (0.3 s, 0.9 s, 2.7 s).
    Trade intents violating the limit are skipped with a log entry.
+   - `FAST_SCALP_MAX_ACTIVE` (既定 2) で同時保有数を制御し、建玉がその枠内で
+     ある限りは新規エントリーを許可する。
 7. **Position tracking** — The worker keeps an in‑memory registry keyed by
    trade id for orders it opened. Every `FAST_SCALP_SYNC_INTERVAL` (≈45 s) it
    reconciles against `PositionManager.get_open_positions()` to avoid drift.

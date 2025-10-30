@@ -293,6 +293,77 @@ def _maybe_update_protections(
         )
 
 
+async def set_trade_protections(
+    trade_id: str,
+    *,
+    sl_price: Optional[float],
+    tp_price: Optional[float],
+) -> bool:
+    if not trade_id or (sl_price is None and tp_price is None):
+        return False
+    data: dict[str, dict[str, str]] = {}
+    if sl_price is not None:
+        data["stopLoss"] = {
+            "price": f"{sl_price:.3f}",
+            "timeInForce": "GTC",
+        }
+    if tp_price is not None:
+        data["takeProfit"] = {
+            "price": f"{tp_price:.3f}",
+            "timeInForce": "GTC",
+        }
+    if not data:
+        return False
+    try:
+        req = TradeCRCDO(accountID=ACCOUNT, tradeID=trade_id, data=data)
+        api.request(req)
+        _LAST_PROTECTIONS[trade_id] = (
+            round(sl_price, 3) if sl_price is not None else None,
+            round(tp_price, 3) if tp_price is not None else None,
+        )
+        _log_order(
+            pocket=None,
+            instrument=None,
+            side=None,
+            units=None,
+            sl_price=sl_price,
+            tp_price=tp_price,
+            client_order_id=None,
+            status="protection_update",
+            attempt=1,
+            stage_index=None,
+            ticket_id=trade_id,
+            executed_price=None,
+            request_payload={"trade_id": trade_id, "data": data},
+        )
+        return True
+    except Exception as exc:  # noqa: BLE001
+        logging.warning(
+            "[ORDER] protection update failed trade=%s sl=%s tp=%s: %s",
+            trade_id,
+            sl_price,
+            tp_price,
+            exc,
+        )
+        _log_order(
+            pocket=None,
+            instrument=None,
+            side=None,
+            units=None,
+            sl_price=sl_price,
+            tp_price=tp_price,
+            client_order_id=None,
+            status="protection_update_failed",
+            attempt=1,
+            stage_index=None,
+            ticket_id=trade_id,
+            executed_price=None,
+            error_message=str(exc),
+            request_payload={"trade_id": trade_id, "data": data},
+        )
+        return False
+
+
 async def close_trade(trade_id: str, units: Optional[int] = None) -> bool:
     if units is None:
         data: Optional[dict[str, str]] = {"units": "ALL"}
@@ -576,7 +647,7 @@ async def market_order(
     reduce_only: bool = False,
     entry_thesis: Optional[dict] = None,
     stage_index: Optional[int] = None,
-) -> Optional[str]:
+) -> tuple[Optional[str], Optional[float]]:
     """
     units : +10000 = buy 0.1 lot, ‑10000 = sell 0.1 lot
     returns order ticket id（決済のみの fill でも tradeID を返却）
@@ -606,7 +677,7 @@ async def market_order(
             _MIN_ORDER_UNITS,
             pocket,
         )
-        return None
+        return None, None
 
     order_data = {
         "order": {
@@ -724,7 +795,7 @@ async def market_order(
                     response_payload=response,
                 )
                 _maybe_update_protections(trade_id, sl_price, tp_price)
-                return trade_id
+            return trade_id, executed_price
 
             logging.error(
                 "OANDA order fill lacked trade identifiers (attempt %d): %s",
@@ -744,7 +815,7 @@ async def market_order(
                 stage_index=stage_index,
                 response_payload=response,
             )
-            return None
+            return None, None
         except V20Error as e:
             logging.error(
                 "OANDA API Error (attempt %d) pocket=%s units=%s: %s",
@@ -779,7 +850,7 @@ async def market_order(
                     "Retrying order with reduced units=%s (half).", units_to_send
                 )
                 continue
-            return None
+            return None, None
         except Exception as exc:
             logging.exception(
                 "Unexpected error submitting order (attempt %d): %s",
@@ -799,5 +870,5 @@ async def market_order(
                 stage_index=stage_index,
                 error_message=str(exc),
             )
-            return None
-    return None
+            return None, None
+    return None, None

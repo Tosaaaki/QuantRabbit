@@ -10,13 +10,13 @@ import logging
 import time
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
-from typing import Optional
+from typing import Dict, Optional
 
-from execution.order_manager import close_trade, market_order
+from execution.order_manager import close_trade, market_order, set_trade_protections
 from execution.risk_guard import allowed_lot, can_trade, clamp_sl_tp
 from execution.stage_tracker import StageTracker
 from execution.position_manager import PositionManager
-from market_data import spread_monitor
+from market_data import spread_monitor, tick_window
 from utils.metrics_logger import log_metric
 
 from . import config
@@ -34,6 +34,8 @@ class ActiveTrade:
     opened_at: datetime
     opened_monotonic: float
     client_order_id: str
+    sl_price: float
+    tp_price: float
 
 
 def _now_utc() -> datetime:
@@ -71,7 +73,7 @@ async def fast_scalp_worker(shared_state: FastScalpState) -> None:
     )
     stage_tracker = StageTracker()
     pos_manager = PositionManager()
-    active: Optional[ActiveTrade] = None
+    active_trades: dict[str, ActiveTrade] = {}
     last_sync = time.monotonic()
     spread_block_logged = False
     dd_block_logged = False
@@ -132,8 +134,8 @@ async def fast_scalp_worker(shared_state: FastScalpState) -> None:
                 await asyncio.sleep(config.LOOP_INTERVAL_SEC)
                 continue
 
-            # Manage existing active trade (time-stop / protection)
-            if active:
+            skip_new_entry = False
+            for trade_id, active in list(active_trades.items()):
                 pips_gain = _pips(features.latest_mid - active.entry_price)
                 if active.side == "short":
                     pips_gain = -pips_gain
@@ -142,20 +144,23 @@ async def fast_scalp_worker(shared_state: FastScalpState) -> None:
                     elapsed >= config.TIMEOUT_SEC and pips_gain < config.TIMEOUT_MIN_GAIN_PIPS
                 ):
                     if rate_limiter.allow():
+                        reason_txt = (
+                            "drawdown"
+                            if pips_gain <= -config.MAX_DRAWDOWN_CLOSE_PIPS
+                            else "timeout"
+                        )
                         logger.info(
                             "%s close trade=%s side=%s reason=%s pnl=%.2fp elapsed=%.1fs",
                             config.LOG_PREFIX_TICK,
-                            active.trade_id,
+                            trade_id,
                             active.side,
-                            "drawdown"
-                            if pips_gain <= -config.MAX_DRAWDOWN_CLOSE_PIPS
-                            else "timeout",
+                            reason_txt,
                             pips_gain,
                             elapsed,
                         )
                         rate_limiter.record()
                         try:
-                            await close_trade(active.trade_id)
+                            await close_trade(trade_id)
                         finally:
                             stage_tracker.set_cooldown(
                                 "scalp_fast",
@@ -164,9 +169,13 @@ async def fast_scalp_worker(shared_state: FastScalpState) -> None:
                                 seconds=int(config.ENTRY_COOLDOWN_SEC),
                                 now=now,
                             )
-                            active = None
-                    await asyncio.sleep(config.LOOP_INTERVAL_SEC)
-                    continue
+                            active_trades.pop(trade_id, None)
+                        skip_new_entry = True
+                    else:
+                        skip_new_entry = True
+            if skip_new_entry:
+                await asyncio.sleep(config.LOOP_INTERVAL_SEC)
+                continue
 
             # Periodic reconciliation with live positions
             now_monotonic = time.monotonic()
@@ -179,25 +188,33 @@ async def fast_scalp_worker(shared_state: FastScalpState) -> None:
                 else:
                     pocket = positions.get("scalp_fast")
                     open_trades = (pocket or {}).get("open_trades") or []
-                    if not open_trades:
-                        active = None
-                    else:
-                        first = open_trades[0]
-                        trade_id = str(first.get("trade_id"))
-                        if not active or active.trade_id != trade_id:
-                            direction = first.get("side") or ("long" if first.get("units", 0) > 0 else "short")
-                            active = ActiveTrade(
-                                trade_id=trade_id,
-                                side=direction,
-                                units=int(first.get("units", 0)),
-                                entry_price=float(first.get("price", features.latest_mid)),
-                                opened_at=_now_utc(),
-                                opened_monotonic=time.monotonic(),
-                                client_order_id=str(first.get("client_id") or ""),
-                            )
+                    updated: dict[str, ActiveTrade] = {}
+                    for tr in open_trades:
+                        trade_id = str(tr.get("trade_id"))
+                        if not trade_id:
+                            continue
+                        direction = tr.get("side") or ("long" if tr.get("units", 0) > 0 else "short")
+                        units = int(tr.get("units", 0) or 0)
+                        entry_price = float(tr.get("price", features.latest_mid))
+                        client_id = str(tr.get("client_id") or "")
+                        existing = active_trades.get(trade_id)
+                        opened_monotonic = existing.opened_monotonic if existing else time.monotonic()
+                        opened_at = existing.opened_at if existing else _now_utc()
+                        updated[trade_id] = ActiveTrade(
+                            trade_id=trade_id,
+                            side=direction,
+                            units=units,
+                            entry_price=entry_price,
+                            opened_at=opened_at,
+                            opened_monotonic=opened_monotonic,
+                            client_order_id=client_id,
+                            sl_price=existing.sl_price if existing else entry_price,
+                            tp_price=existing.tp_price if existing else entry_price,
+                        )
+                    active_trades = updated
 
-            # If trade still active skip new entries
-            if active:
+            # Max concurrent trades guard
+            if len(active_trades) >= config.MAX_ACTIVE_TRADES:
                 await asyncio.sleep(config.LOOP_INTERVAL_SEC)
                 continue
 
@@ -277,11 +294,22 @@ async def fast_scalp_worker(shared_state: FastScalpState) -> None:
 
             client_id = _build_client_order_id(direction)
 
+            state = spread_monitor.get_state()
+            bid_quote = float(state.get("bid") or 0.0) if state else 0.0
+            ask_quote = float(state.get("ask") or 0.0) if state else 0.0
+            last_ticks = tick_window.recent_ticks(3.0, limit=1)
+            if last_ticks:
+                last_tick = last_ticks[-1]
+                bid_quote = float(last_tick.get("bid") or bid_quote or features.latest_mid)
+                ask_quote = float(last_tick.get("ask") or ask_quote or features.latest_mid)
+            expected_entry_price = (
+                ask_quote if direction == "long" else bid_quote
+            ) or features.latest_mid
             spread_padding = max(features.spread_pips, config.TP_SPREAD_BUFFER_PIPS)
             tp_margin = max(config.TP_SAFE_MARGIN_PIPS, features.spread_pips * 0.5)
             tp_pips = config.TP_BASE_PIPS + spread_padding + tp_margin
             sl_pips = config.SL_PIPS
-            entry_price = features.latest_mid
+            entry_price = expected_entry_price
             if direction == "long":
                 sl_price = entry_price - sl_pips * config.PIP_VALUE
                 tp_price = entry_price + tp_pips * config.PIP_VALUE
@@ -298,10 +326,13 @@ async def fast_scalp_worker(shared_state: FastScalpState) -> None:
                 "tick_count": features.tick_count,
                 "weight_scalp": snapshot.weight_scalp,
                 "tp_pips": round(tp_pips, 3),
+                "entry_price_expect": round(entry_price, 5),
+                "sl_price_initial": round(sl_price, 5),
+                "tp_price_initial": round(tp_price, 5),
             }
 
             try:
-                trade_id = await market_order(
+                trade_id, executed_price = await market_order(
                     "USD_JPY",
                     units,
                     sl_price,
@@ -337,14 +368,33 @@ async def fast_scalp_worker(shared_state: FastScalpState) -> None:
                 seconds=int(config.ENTRY_COOLDOWN_SEC),
                 now=now,
             )
-            active = ActiveTrade(
+            actual_entry_price = executed_price if executed_price is not None else entry_price
+            sl_adjust_pips = config.SL_PIPS + config.SL_POST_ADJUST_BUFFER_PIPS
+            if direction == "long":
+                actual_sl_price = round(actual_entry_price - sl_adjust_pips * config.PIP_VALUE, 3)
+                actual_tp_price = round(actual_entry_price + tp_pips * config.PIP_VALUE, 3)
+            else:
+                actual_sl_price = round(actual_entry_price + sl_adjust_pips * config.PIP_VALUE, 3)
+                actual_tp_price = round(actual_entry_price - tp_pips * config.PIP_VALUE, 3)
+            set_ok = await set_trade_protections(
+                trade_id,
+                sl_price=actual_sl_price,
+                tp_price=actual_tp_price,
+            )
+            if not set_ok:
+                logger.warning(
+                    "%s protection update failed trade=%s", config.LOG_PREFIX_TICK, trade_id
+                )
+            active_trades[trade_id] = ActiveTrade(
                 trade_id=trade_id,
                 side=direction,
                 units=units,
-                entry_price=entry_price,
+                entry_price=actual_entry_price,
                 opened_at=now,
                 opened_monotonic=monotonic_now,
                 client_order_id=client_id,
+                sl_price=actual_sl_price,
+                tp_price=actual_tp_price,
             )
             log_metric(
                 "fast_scalp_signal",
