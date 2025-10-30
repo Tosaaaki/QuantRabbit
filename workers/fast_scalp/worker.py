@@ -129,7 +129,7 @@ async def _fetch_price_snapshot(logger: logging.Logger) -> Optional[_SnapshotTic
         logger.warning("%s pricing snapshot parse error: %s", config.LOG_PREFIX_TICK, exc)
         return None
     tick = _SnapshotTick(bid=bid, ask=ask, time_val=ts)
-    logger.info(
+    logger.warning(
         "%s snapshot bid=%.3f ask=%.3f", config.LOG_PREFIX_TICK, bid, ask
     )
     try:
