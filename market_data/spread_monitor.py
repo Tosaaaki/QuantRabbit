@@ -186,6 +186,7 @@ def get_state() -> Optional[dict]:
     """
     最新スプレッドと統計情報を返す。Tick が未取得の場合は None。
     """
+    global _stale_since
     if _snapshot is None:
         return None
 
