@@ -81,10 +81,12 @@ async def fast_scalp_worker(shared_state: FastScalpState) -> None:
     order_backoff: float = 0.0
     next_order_after: float = 0.0
 
+    loop_counter = 0
     try:
         while True:
             loop_start = time.monotonic()
             now = _now_utc()
+            loop_counter += 1
 
             if _is_off_hours(now):
                 if not off_hours_logged:
@@ -131,6 +133,13 @@ async def fast_scalp_worker(shared_state: FastScalpState) -> None:
 
             features = extract_features(spread_pips)
             if not features:
+                if loop_counter % 40 == 0:
+                    logger.debug(
+                        "%s insufficient features spread=%.3f ticks=%d",
+                        config.LOG_PREFIX_TICK,
+                        spread_pips,
+                        len(tick_window.recent_ticks(config.LONG_WINDOW_SEC, limit=10)),
+                    )
                 await asyncio.sleep(config.LOOP_INTERVAL_SEC)
                 continue
 
