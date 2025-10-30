@@ -263,11 +263,11 @@ def _safe_env_float(key: str, default: float, *, low: float, high: float) -> flo
     return max(low, min(high, value))
 
 
-SCALP_WEIGHT_FLOOR = _safe_env_float("SCALP_WEIGHT_FLOOR", 0.18, low=0.0, high=0.4)
+SCALP_WEIGHT_FLOOR = _safe_env_float("SCALP_WEIGHT_FLOOR", 0.22, low=0.0, high=0.4)
 SCALP_WEIGHT_READY_FLOOR = _safe_env_float(
-    "SCALP_WEIGHT_READY_FLOOR", 0.26, low=SCALP_WEIGHT_FLOOR, high=0.45
+    "SCALP_WEIGHT_READY_FLOOR", 0.32, low=SCALP_WEIGHT_FLOOR, high=0.45
 )
-SCALP_AUTO_MIN_WEIGHT = _safe_env_float("SCALP_AUTO_MIN_WEIGHT", 0.08, low=0.0, high=0.3)
+SCALP_AUTO_MIN_WEIGHT = _safe_env_float("SCALP_AUTO_MIN_WEIGHT", 0.12, low=0.0, high=0.3)
 SCALP_CONFIDENCE_FLOOR = _safe_env_float("SCALP_CONFIDENCE_FLOOR", 0.74, low=0.4, high=1.0)
 SCALP_MIN_ABS_LOT = _safe_env_float("SCALP_MIN_ABS_LOT", 0.14, low=0.0, high=0.6)
 PULSEBREAK_AUTO_MOM_MIN = _safe_env_float("PULSEBREAK_AUTO_MOM_MIN", 0.0018, low=0.0, high=0.02)
@@ -299,6 +299,10 @@ GPT_MIN_INTERVAL_SECONDS = 180
 MIN_MACRO_TOTAL_LOT = _safe_env_float("MIN_MACRO_TOTAL_LOT", 0.05, low=0.0, high=3.0)
 TARGET_MACRO_MARGIN_RATIO = _safe_env_float("TARGET_MACRO_MARGIN_RATIO", 0.7, low=0.0, high=0.95)
 MACRO_MARGIN_SAFETY_BUFFER = _safe_env_float("MACRO_MARGIN_SAFETY_BUFFER", 0.1, low=0.0, high=0.5)
+
+FORCE_SCALP_MODE = os.getenv("SCALP_FORCE_ALWAYS", "0").strip().lower() not in {"", "0", "false", "no"}
+if FORCE_SCALP_MODE:
+    logging.warning("[FORCE_SCALP] mode enabled")
 
 
 class GPTDecisionState:
@@ -1044,6 +1048,151 @@ def _stage_conditions_met(
     return True
 
 
+def _evaluate_high_impact_context(
+    *,
+    pocket: str,
+    direction: str,
+    lose_streak: int,
+    win_streak: int,
+    fac_m1: dict[str, float],
+    fac_h4: dict[str, float],
+    story_snapshot: Optional[ChartStorySnapshot],
+    news_bias_hint,
+    macro_regime: Optional[str],
+    momentum: float,
+    atr_pips: float,
+    range_active: bool,
+) -> Optional[dict[str, object]]:
+    if pocket != "macro":
+        return None
+    if range_active:
+        return None
+    if lose_streak < 3:
+        return None
+
+    try:
+        adx_h4 = float(fac_h4.get("adx", 0.0) or 0.0)
+    except (TypeError, ValueError):
+        adx_h4 = 0.0
+    try:
+        slope_h4 = abs(
+            float(fac_h4.get("ma20", 0.0) or 0.0)
+            - float(fac_h4.get("ma10", 0.0) or 0.0)
+        )
+    except (TypeError, ValueError):
+        slope_h4 = 0.0
+
+    news_bias = None
+    news_conf = None
+    try:
+        if news_bias_hint and getattr(news_bias_hint, "biases", None):
+            news_bias = float(news_bias_hint.biases.get("macro", 0.0))
+            news_conf = float(getattr(news_bias_hint, "confidence", None) or 0.0)
+    except (TypeError, ValueError):
+        news_bias = None
+        news_conf = None
+
+    direction_sign = 1.0 if direction == "long" else -1.0
+    directional_momentum = direction_sign * float(momentum)
+
+    macro_story = getattr(story_snapshot, "macro_trend", None) if story_snapshot else None
+    higher_story = getattr(story_snapshot, "higher_trend", None) if story_snapshot else None
+
+    strong_trend = adx_h4 >= 27.0 and slope_h4 >= 0.00035
+    momentum_ok = directional_momentum >= 0.006
+    story_ok = (
+        (direction == "long" and macro_story == "up")
+        or (direction == "short" and macro_story == "down")
+    )
+    higher_ok = (
+        higher_story is None
+        or (direction == "long" and higher_story == "up")
+        or (direction == "short" and higher_story == "down")
+    )
+    news_ok = news_bias is None or (direction == "long" and news_bias >= -0.05) or (
+        direction == "short" and news_bias <= 0.05
+    )
+
+    if not (strong_trend and momentum_ok and story_ok and higher_ok and news_ok):
+        return None
+
+    reason_parts = []
+    if strong_trend:
+        reason_parts.append(f"adx={adx_h4:.1f}")
+    if momentum_ok:
+        reason_parts.append(f"momentum={directional_momentum:.4f}")
+    if news_bias is not None:
+        reason_parts.append(f"news={news_bias:.2f}")
+    if win_streak > 0:
+        reason_parts.append(f"win_streak={win_streak}")
+    if macro_regime:
+        reason_parts.append(f"regime={macro_regime}")
+
+    return {
+        "enabled": True,
+        "reason": ", ".join(reason_parts) or "trend_breakout",
+        "lose_streak": lose_streak,
+        "win_streak": win_streak,
+        "adx_h4": adx_h4,
+        "momentum": directional_momentum,
+        "news_bias_macro": news_bias,
+        "news_bias_confidence": news_conf,
+        "atr_pips": atr_pips,
+    }
+
+
+def _build_entry_context(
+    *,
+    pocket: str,
+    direction: str,
+    stage_index: int,
+    size_factor: float,
+    confidence_target: float,
+    range_active: bool,
+    macro_regime: Optional[str],
+    micro_regime: Optional[str],
+    momentum: float,
+    atr_pips: float,
+    vol_5m: float,
+    lose_streak: int,
+    win_streak: int,
+    news_bias_hint,
+    high_impact_enabled: bool,
+    high_impact_reason: Optional[str],
+) -> Dict[str, object]:
+    news_bias = None
+    news_conf = None
+    try:
+        if news_bias_hint and getattr(news_bias_hint, "biases", None):
+            news_bias = float(news_bias_hint.biases.get("macro", 0.0))
+            news_conf = float(getattr(news_bias_hint, "confidence", None) or 0.0)
+    except (TypeError, ValueError):
+        news_bias = None
+        news_conf = None
+
+    context: Dict[str, object] = {
+        "pocket": pocket,
+        "direction": direction,
+        "stage_index": int(stage_index),
+        "size_factor": round(float(size_factor), 4),
+        "confidence_target": round(float(confidence_target), 3),
+        "range_active": bool(range_active),
+        "macro_regime": macro_regime,
+        "micro_regime": micro_regime,
+        "momentum": round(float(momentum), 6),
+        "atr_pips": round(float(atr_pips), 4),
+        "vol_5m": round(float(vol_5m), 4),
+        "lose_streak": int(lose_streak),
+        "win_streak": int(win_streak),
+        "news_bias_macro": news_bias,
+        "news_bias_confidence": news_conf,
+        "high_impact_override": bool(high_impact_enabled),
+    }
+    if high_impact_reason:
+        context["high_impact_reason"] = high_impact_reason
+    return context
+
+
 def compute_stage_lot(
     pocket: str,
     total_lot: float,
@@ -1052,8 +1201,15 @@ def compute_stage_lot(
     fac_m1: dict[str, float],
     fac_h4: dict[str, float],
     open_info: dict[str, float],
+    *,
+    high_impact_context: Optional[dict[str, object]] = None,
 ) -> tuple[float, int]:
     """段階的エントリーの次ロットとステージ番号を返す。"""
+    override_enabled = bool(high_impact_context and high_impact_context.get("enabled"))
+    override_reason = None
+    if override_enabled:
+        override_reason = str(high_impact_context.get("reason", "high_impact"))
+    direction = "long" if action == "OPEN_LONG" else "short"
     plan = _stage_plan(pocket)
     current_lot = max(open_units_same_dir, 0) / 100000.0
     cumulative = 0.0
@@ -1061,10 +1217,40 @@ def compute_stage_lot(
         cumulative += fraction
         stage_target = total_lot * cumulative
         if current_lot + 1e-4 < stage_target:
-            if not _stage_conditions_met(
+            allow_override = (
+                override_enabled
+                and pocket == "macro"
+                and stage_idx == 0
+            )
+            stage_ok = _stage_conditions_met(
                 pocket, stage_idx, action, fac_m1, fac_h4, open_info
-            ):
-                return 0.0, stage_idx
+            )
+            if not stage_ok:
+                if allow_override:
+                    logging.info(
+                        "[STAGE_OVERRIDE] macro high-impact stage=%d direction=%s reason=%s",
+                        stage_idx,
+                        direction,
+                        override_reason,
+                    )
+                    try:
+                        log_metric(
+                            "stage_override_high_impact",
+                            1.0,
+                            tags={
+                                "direction": direction,
+                                "reason": override_reason or "high_impact",
+                                "lose_streak": str(
+                                    high_impact_context.get("lose_streak")
+                                    if high_impact_context
+                                    else ""
+                                ),
+                            },
+                        )
+                    except Exception:
+                        pass
+                else:
+                    return 0.0, stage_idx
             next_lot = max(stage_target - current_lot, 0.0)
             remaining = max(total_lot - current_lot, 0.0)
             if pocket == "macro" and remaining > 0:
@@ -1220,6 +1406,8 @@ async def logic_loop(
             now = datetime.datetime.utcnow()
             loop_counter += 1
             scalp_ready_forced = False
+            if FORCE_SCALP_MODE and loop_counter % 5 == 0:
+                logging.warning("[FORCE_SCALP] loop=%d", loop_counter)
             stage_tracker.clear_expired(now)
             # Heartbeat logging
             if (now - last_heartbeat_time).total_seconds() >= 300:  # Every 5 minutes
@@ -1256,6 +1444,12 @@ async def logic_loop(
                 or not fac_h4.get("close")
             ):
                 logging.info("[WAIT] Waiting for M1/H4 factor data for trading logic...")
+                if FORCE_SCALP_MODE:
+                    logging.warning(
+                        "[FORCE_SCALP] factors missing m1=%s h4=%s",
+                        bool(fac_m1_raw),
+                        bool(fac_h4),
+                    )
                 await asyncio.sleep(5)
                 continue
 
@@ -1283,6 +1477,19 @@ async def logic_loop(
             else:
                 fac_m1["recent_ticks"] = []
                 fac_m1["recent_tick_summary"] = {}
+            if loop_counter % 5 == 0:
+                latest_epoch = None
+                if recent_tick_rows:
+                    latest_epoch = float(recent_tick_rows[-1].get("epoch", 0.0) or 0.0)
+                age_ms = None
+                if latest_epoch:
+                    age_ms = max(0, int((now.timestamp() - latest_epoch) * 1000))
+                log_metric(
+                    "tick_window_recent_count",
+                    float(tick_count),
+                    tags={"age_ms": age_ms if age_ms is not None else "n/a"},
+                    ts=now,
+                )
 
             atr_pips = fac_m1.get("atr_pips")
             if atr_pips is None:
@@ -1538,6 +1745,15 @@ async def logic_loop(
                 if perf_cache
                 else None,
             )
+            focus_tag = focus
+            try:
+                weight_macro = float(w_macro)
+            except (TypeError, ValueError):
+                logging.warning(
+                    "[FOCUS] invalid macro weight from focus_decider (%s); defaulting to 0.0",
+                    w_macro,
+                )
+                weight_macro = 0.0
             soft_range_just_activated = False
             range_ctx = detect_range_mode(fac_m1, fac_h4)
             if range_ctx.active != raw_range_active or range_ctx.reason != raw_range_reason:
@@ -1684,6 +1900,8 @@ async def logic_loop(
                 range_entry_counter = 0
 
             # --- 2. GPT判断 ---
+            if FORCE_SCALP_MODE:
+                logging.warning("[FORCE_SCALP] entering GPT stage loop=%d", loop_counter)
             # M1/H4 の移動平均・RSI などの指標をまとめて送信
             payload = {
                 "ts": now.isoformat(timespec="seconds"),
@@ -1724,6 +1942,9 @@ async def logic_loop(
             else:
                 gpt, _, _ = await gpt_state.get_latest()
                 reuse_reason = gpt.get("reason") or "cached"
+            if not isinstance(gpt, dict):
+                logging.warning("[GPT] invalid decision payload type=%s; using empty dict", type(gpt))
+                gpt = {}
             raw_weight_scalp = gpt.get("weight_scalp")
             if raw_weight_scalp is None:
                 weight_scalp_display = "n/a"
@@ -1732,16 +1953,27 @@ async def logic_loop(
                     weight_scalp_display = f"{float(raw_weight_scalp):.2f}"
                 except (TypeError, ValueError):
                     weight_scalp_display = "invalid"
+            raw_weight_macro = gpt.get("weight_macro")
+            weight_macro_override: Optional[float] = None
+            if raw_weight_macro is not None:
+                try:
+                    weight_macro_override = max(0.0, min(1.0, float(raw_weight_macro)))
+                except (TypeError, ValueError):
+                    logging.warning(
+                        "[GPT] invalid weight_macro=%s; keeping focus_decider value %.2f",
+                        raw_weight_macro,
+                        weight_macro,
+                    )
+                    weight_macro_override = None
             logging.info(
                 "[GPT] focus=%s weight_macro=%.2f weight_scalp=%s model=%s strategies=%s reason=%s",
                 gpt.get("focus_tag"),
-                gpt.get("weight_macro", 0.0),
+                weight_macro_override if weight_macro_override is not None else weight_macro,
                 weight_scalp_display,
                 gpt.get("model_used", "unknown"),
                 gpt.get("ranked_strategies"),
                 reuse_reason,
             )
-            ranked_strategies = list(gpt.get("ranked_strategies", []))
             ranked_strategies = list(gpt.get("ranked_strategies", []))
             weight_scalp = None
             if raw_weight_scalp is not None:
@@ -1749,7 +1981,9 @@ async def logic_loop(
                     weight_scalp = max(0.0, min(1.0, float(raw_weight_scalp)))
                 except (TypeError, ValueError):
                     weight_scalp = None
-
+            if weight_macro_override is not None:
+                weight_macro = weight_macro_override
+            focus_tag = gpt.get("focus_tag") or focus_tag
             focus_override_hint = None
             if focus_advisor and focus_advisor.enabled:
                 focus_context = {
@@ -1837,9 +2071,35 @@ async def logic_loop(
                     f"{vol_5m:.2f}" if vol_5m is not None else "n/a",
                     momentum,
                 )
+            if FORCE_SCALP_MODE:
+                if not scalp_ready:
+                    scalp_ready = True
+                    scalp_ready_forced = True
+                    logging.info(
+                        "[SCALP] Force mode -> readiness enabled (atr=%.2f vol5m=%s momentum=%.4f)",
+                        atr_pips,
+                        f"{vol_5m:.2f}" if vol_5m is not None else "n/a",
+                        momentum,
+                    )
+                target_force_weight = max(SCALP_WEIGHT_READY_FLOOR, SCALP_WEIGHT_FLOOR)
+                if weight_scalp is None or weight_scalp < target_force_weight:
+                    prev_weight_scalp = weight_scalp
+                    weight_scalp = target_force_weight
+                    logging.info(
+                        "[SCALP] Force mode -> weight uplift %s -> %.2f",
+                        f"{prev_weight_scalp:.2f}" if prev_weight_scalp is not None else "None",
+                        weight_scalp,
+                    )
+                if weight_macro + (weight_scalp or 0.0) > 1.0:
+                    excess = weight_macro + (weight_scalp or 0.0) - 1.0
+                    prev_macro = weight_macro
+                    weight_macro = max(0.0, round(weight_macro - excess, 3))
+                    logging.info(
+                        "[SCALP] Force mode -> macro weight trimmed %.2f -> %.2f to balance shares",
+                        prev_macro,
+                        weight_macro,
+                    )
 
-            focus_tag = gpt.get("focus_tag") or focus
-            weight_macro = gpt.get("weight_macro", w_macro)
             if range_active:
                 focus_tag = "micro"
                 weight_macro = min(weight_macro, 0.15)
@@ -2151,6 +2411,8 @@ async def logic_loop(
                 )
 
             scalp_weight_ok = weight_scalp is None or weight_scalp >= SCALP_AUTO_MIN_WEIGHT
+            if FORCE_SCALP_MODE:
+                scalp_weight_ok = True
             if (
                 scalp_ready
                 and "scalp" in focus_pockets
@@ -2206,6 +2468,14 @@ async def logic_loop(
                 )
 
             evaluated_signals: list[dict] = []
+            if FORCE_SCALP_MODE:
+                logging.warning(
+                    "[FORCE_SCALP] ranked_strategies=%s focus=%s pockets=%s ready=%s",
+                    ranked_strategies,
+                    focus_tag,
+                    sorted(focus_pockets),
+                    scalp_ready,
+                )
             for sname in ranked_strategies:
                 cls = STRATEGIES.get(sname)
                 if not cls:
@@ -2247,6 +2517,8 @@ async def logic_loop(
                 else:
                     raw_signal = cls.check(fac_m1)
                 if not raw_signal:
+                    if FORCE_SCALP_MODE and pocket == "scalp":
+                        logging.warning("[FORCE_SCALP] %s returned None", sname)
                     continue
 
                 health = strategy_health_cache.get(sname)
@@ -2256,13 +2528,24 @@ async def logic_loop(
                     strategy_health_cache[sname] = health
 
                 if not health.allowed:
-                    logging.info(
-                        "[HEALTH] skip %s pocket=%s reason=%s",
-                        sname,
-                        cls.pocket,
-                        health.reason,
-                    )
-                    continue
+                    if FORCE_SCALP_MODE and pocket == "scalp":
+                        logging.warning(
+                            "[FORCE_SCALP] overriding health block %s reason=%s",
+                            sname,
+                            health.reason,
+                        )
+                        health.allowed = True
+                        health.reason = None
+                        if health.confidence_scale < 0.75:
+                            health.confidence_scale = 0.75
+                    else:
+                        logging.info(
+                            "[HEALTH] skip %s pocket=%s reason=%s",
+                            sname,
+                            cls.pocket,
+                            health.reason,
+                        )
+                        continue
                 signal = {
                     "strategy": sname,
                     "pocket": cls.pocket,
@@ -2284,6 +2567,8 @@ async def logic_loop(
                         signal[extra_key] = raw_signal[extra_key]
                 scaled_conf = int(signal["confidence"] * health.confidence_scale)
                 signal["confidence"] = max(0, min(100, scaled_conf))
+                if FORCE_SCALP_MODE:
+                    logging.warning("[FORCE_SCALP] signal=%s", signal)
                 if range_active:
                     profile = recent_profiles.get(signal["pocket"], {})
                     sample_size = int(profile.get("sample_size", 0) or 0)
@@ -2667,7 +2952,17 @@ async def logic_loop(
 
             if not evaluated_signals:
                 logging.info("[WAIT] No actionable entry signals this cycle.")
+                if FORCE_SCALP_MODE:
+                    logging.warning("[FORCE_SCALP] evaluated_signals empty")
 
+            if FORCE_SCALP_MODE:
+                logging.warning("[FORCE_SCALP] evaluated_signals_raw=%s", evaluated_signals)
+                log_metric(
+                    "force_scalp_signal_count",
+                    float(len(evaluated_signals)),
+                    tags={"stage": "pre_lot"},
+                    ts=now,
+                )
             sl_values = [
                 s["sl_pips"] for s in evaluated_signals if s.get("sl_pips") is not None
             ]
@@ -2737,6 +3032,13 @@ async def logic_loop(
                 margin_rate=margin_rate,
                 risk_pct_override=risk_override,
             )
+            if FORCE_SCALP_MODE and lot_total <= 0:
+                logging.warning(
+                    "[FORCE_SCALP] lot_total %.3f -> forcing floor %.3f",
+                    lot_total,
+                    MIN_SCALP_STAGE_LOT,
+                )
+                lot_total = MIN_SCALP_STAGE_LOT
             requested_pockets = {
                 STRATEGIES[s].pocket
                 for s in ranked_strategies
@@ -2761,6 +3063,40 @@ async def logic_loop(
                 weight_scalp=weight_scalp,
                 scalp_share=scalp_share,
             )
+            if FORCE_SCALP_MODE and lot_total > 0:
+                scalp_target = round(
+                    max(
+                        SCALP_MIN_ABS_LOT,
+                        MIN_SCALP_STAGE_LOT,
+                        lot_total * max(weight_scalp or SCALP_WEIGHT_READY_FLOOR, SCALP_WEIGHT_READY_FLOOR),
+                    ),
+                    3,
+                )
+                current_scalp = lots.get("scalp", 0.0)
+                if current_scalp + 1e-6 < scalp_target:
+                    shortfall = round(scalp_target - current_scalp, 3)
+                    lots["scalp"] = round(scalp_target, 3)
+                    for donor in ("macro", "micro"):
+                        available = max(lots.get(donor, 0.0), 0.0)
+                        if available <= 0:
+                            continue
+                        take = min(shortfall, available)
+                        if take <= 0:
+                            continue
+                        lots[donor] = round(lots.get(donor, 0.0) - take, 3)
+                        lots[donor] = max(lots[donor], 0.0)
+                        shortfall = round(shortfall - take, 3)
+                        if shortfall <= 0:
+                            break
+                    if shortfall > 0:
+                        lots["micro"] = max(round(lots.get("micro", 0.0) - shortfall, 3), 0.0)
+                logging.warning("[FORCE_SCALP] lots_alloc=%s total_lot=%.3f", lots, lot_total)
+                log_metric(
+                    "force_scalp_lot",
+                    float(lots.get("scalp", 0.0)),
+                    tags={"total": f"{lot_total:.3f}"},
+                    ts=now,
+                )
             for pocket_key in list(lots.keys()):
                 if pocket_key not in focus_pockets:
                     lots[pocket_key] = 0.0
@@ -2978,7 +3314,11 @@ async def logic_loop(
                 action = signal.get("action")
                 if action not in {"OPEN_LONG", "OPEN_SHORT"}:
                     continue
-                if story_snapshot and not story_snapshot.is_aligned(pocket, action):
+                if (
+                    story_snapshot
+                    and not story_snapshot.is_aligned(pocket, action)
+                    and not (FORCE_SCALP_MODE and pocket == "scalp")
+                ):
                     if pocket == "micro":
                         logging.info(
                             "[STORY] micro override pocket=%s action=%s macro_trend=%s micro_trend=%s higher_trend=%s",
@@ -3201,6 +3541,8 @@ async def logic_loop(
                 elif not is_buy and tick_bid is not None:
                     entry_price = float(tick_bid)
 
+                lose_streak, win_streak = stage_tracker.get_loss_profile(pocket, direction)
+
                 size_factor = stage_tracker.size_multiplier(pocket, direction)
                 if size_factor < 0.999:
                     logging.info("[SIZE] %s %s factor=%.2f due to streaks", pocket, direction, size_factor)
@@ -3230,6 +3572,21 @@ async def logic_loop(
                     stage_context["cluster_units"] = cluster_units
                     stage_context["cluster_direction"] = direction
 
+                high_impact_context = _evaluate_high_impact_context(
+                    pocket=pocket,
+                    direction=direction,
+                    lose_streak=lose_streak,
+                    win_streak=win_streak,
+                    fac_m1=fac_m1,
+                    fac_h4=fac_h4,
+                    story_snapshot=story_snapshot,
+                    news_bias_hint=news_bias_hint,
+                    macro_regime=macro_regime,
+                    momentum=momentum,
+                    atr_pips=atr_pips,
+                    range_active=range_active,
+                )
+
                 staged_lot, stage_idx = compute_stage_lot(
                     pocket,
                     confidence_target,
@@ -3238,6 +3595,7 @@ async def logic_loop(
                     fac_m1,
                     fac_h4,
                     stage_context,
+                    high_impact_context=high_impact_context,
                 )
                 if staged_lot <= 0:
                     if pocket == "scalp":
@@ -3259,6 +3617,31 @@ async def logic_loop(
                         "[SKIP] Stage lot %.3f produced 0 units. Skipping.", staged_lot
                     )
                     continue
+
+                entry_context_payload = _build_entry_context(
+                    pocket=pocket,
+                    direction=direction,
+                    stage_index=stage_idx,
+                    size_factor=size_factor,
+                    confidence_target=confidence_target,
+                    range_active=range_active,
+                    macro_regime=macro_regime,
+                    micro_regime=micro_regime,
+                    momentum=momentum,
+                    atr_pips=atr_pips,
+                    vol_5m=vol_5m,
+                    lose_streak=lose_streak,
+                    win_streak=win_streak,
+                    news_bias_hint=news_bias_hint,
+                    high_impact_enabled=bool(
+                        high_impact_context and high_impact_context.get("enabled")
+                    ),
+                    high_impact_reason=(
+                        str(high_impact_context.get("reason"))
+                        if high_impact_context and high_impact_context.get("enabled")
+                        else None
+                    ),
+                )
 
                 pullback_note = None
                 entry_type = signal.get("entry_type", "market")
@@ -3405,6 +3788,7 @@ async def logic_loop(
                         "volatility": story_snapshot.volatility_state if story_snapshot else None,
                     },
                     "levels": story_snapshot.major_levels if story_snapshot else None,
+                    "context": entry_context_payload,
                 }
                 note = signal.get("notes")
                 if note:
