@@ -21,7 +21,7 @@ from utils.metrics_logger import log_metric
 
 from . import config
 from .rate_limiter import SlidingWindowRateLimiter
-from .signal import evaluate_signal, extract_features
+from .signal import SignalFeatures, evaluate_signal, extract_features
 from .state import FastScalpState
 
 
@@ -133,15 +133,34 @@ async def fast_scalp_worker(shared_state: FastScalpState) -> None:
 
             features = extract_features(spread_pips)
             if not features:
-                if loop_counter % 40 == 0:
-                    logger.debug(
-                        "%s insufficient features spread=%.3f ticks=%d",
-                        config.LOG_PREFIX_TICK,
-                        spread_pips,
-                        len(tick_window.recent_ticks(config.LONG_WINDOW_SEC, limit=10)),
+                recent = tick_window.recent_ticks(10.0, limit=5)
+                if recent:
+                    latest = recent[-1]
+                    first = recent[0]
+                    latest_mid = float(latest.get("mid") or 0.0)
+                    first_mid = float(first.get("mid") or latest_mid)
+                    span = float(latest.get("epoch", 0.0)) - float(first.get("epoch", 0.0))
+                    momentum = (latest_mid - first_mid) / config.PIP_VALUE if span != 0 else 0.0
+                    range_pips = abs(latest_mid - first_mid) / config.PIP_VALUE
+                    features = SignalFeatures(
+                        latest_mid=latest_mid,
+                        spread_pips=spread_pips,
+                        momentum_pips=momentum,
+                        short_momentum_pips=momentum,
+                        range_pips=range_pips,
+                        tick_count=len(recent),
+                        span_seconds=span,
                     )
-                await asyncio.sleep(config.LOOP_INTERVAL_SEC)
-                continue
+                if not features:
+                    if loop_counter % 40 == 0:
+                        logger.debug(
+                            "%s insufficient features spread=%.3f ticks=%d",
+                            config.LOG_PREFIX_TICK,
+                            spread_pips,
+                            len(tick_window.recent_ticks(config.LONG_WINDOW_SEC, limit=10)),
+                        )
+                    await asyncio.sleep(config.LOOP_INTERVAL_SEC)
+                    continue
 
             skip_new_entry = False
             for trade_id, active in list(active_trades.items()):
