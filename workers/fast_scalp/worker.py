@@ -12,12 +12,15 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Dict, Optional
 
+import httpx
+
 from execution.order_manager import close_trade, market_order, set_trade_protections
 from execution.risk_guard import allowed_lot, can_trade, clamp_sl_tp
 from execution.stage_tracker import StageTracker
 from execution.position_manager import PositionManager
 from market_data import spread_monitor, tick_window
 from utils.metrics_logger import log_metric
+from utils.secrets import get_secret
 
 from . import config
 from .rate_limiter import SlidingWindowRateLimiter
@@ -42,6 +45,53 @@ def _now_utc() -> datetime:
     return datetime.now(timezone.utc)
 
 
+def _parse_time(value: str) -> datetime:
+    iso = value.replace("Z", "+00:00")
+    if "." not in iso:
+        return datetime.fromisoformat(iso)
+    head, frac_and_tz = iso.split(".", 1)
+    tz = "+00:00"
+    if "+" in frac_and_tz:
+        frac, tz_tail = frac_and_tz.split("+", 1)
+        tz = "+" + tz_tail
+    elif "-" in frac_and_tz[6:]:
+        frac, tz_tail = frac_and_tz.split("-", 1)
+        tz = "-" + tz_tail
+    else:
+        frac = frac_and_tz
+    frac = (''.join(ch for ch in frac if ch.isdigit())[:6]).ljust(6, "0")
+    return datetime.fromisoformat(f"{head}.{frac}{tz}")
+
+
+class _SnapshotTick:
+    __slots__ = ("bid", "ask", "time")
+
+    def __init__(self, bid: float, ask: float, time_val: datetime) -> None:
+        self.bid = bid
+        self.ask = ask
+        self.time = time_val
+
+
+try:
+    _OANDA_TOKEN = get_secret("oanda_token")
+    _OANDA_ACCOUNT = get_secret("oanda_account_id")
+    try:
+        _OANDA_PRACTICE = get_secret("oanda_practice").lower() == "true"
+    except KeyError:
+        _OANDA_PRACTICE = False
+except Exception as exc:  # pragma: no cover - secrets must be present
+    logging.error("%s failed to load OANDA secrets: %s", config.LOG_PREFIX_TICK, exc)
+    _OANDA_TOKEN = ""
+    _OANDA_ACCOUNT = ""
+    _OANDA_PRACTICE = False
+
+_PRICING_HOST = (
+    "https://api-fxpractice.oanda.com" if _OANDA_PRACTICE else "https://api-fxtrade.oanda.com"
+)
+_PRICING_URL = f"{_PRICING_HOST}/v3/accounts/{_OANDA_ACCOUNT}/pricing"
+_PRICING_HEADERS = {"Authorization": f"Bearer {_OANDA_TOKEN}"} if _OANDA_TOKEN else {}
+
+
 def _is_off_hours(now_utc: datetime) -> bool:
     jst = now_utc + timedelta(hours=9)
     start = config.JST_OFF_HOURS_START
@@ -49,6 +99,42 @@ def _is_off_hours(now_utc: datetime) -> bool:
     if start <= end:
         return start <= jst.hour < end
     return jst.hour >= start or jst.hour < end
+
+
+async def _fetch_price_snapshot(logger: logging.Logger) -> Optional[_SnapshotTick]:
+    if not _OANDA_TOKEN or not _OANDA_ACCOUNT:
+        return None
+    params = {"instruments": "USD_JPY"}
+    try:
+        async with httpx.AsyncClient(timeout=3.0) as client:
+            resp = await client.get(_PRICING_URL, headers=_PRICING_HEADERS, params=params)
+            resp.raise_for_status()
+            payload = resp.json()
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("%s pricing snapshot failed: %s", config.LOG_PREFIX_TICK, exc)
+        return None
+    prices = payload.get("prices") or []
+    if not prices:
+        return None
+    price = prices[0]
+    bids = price.get("bids") or []
+    asks = price.get("asks") or []
+    if not bids or not asks:
+        return None
+    try:
+        bid = float(bids[0]["price"])
+        ask = float(asks[0]["price"])
+        ts = _parse_time(price.get("time", datetime.utcnow().isoformat() + "Z"))
+    except Exception as exc:
+        logger.warning("%s pricing snapshot parse error: %s", config.LOG_PREFIX_TICK, exc)
+        return None
+    tick = _SnapshotTick(bid=bid, ask=ask, time_val=ts)
+    try:
+        spread_monitor.update_from_tick(tick)
+        tick_window.record(tick)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("%s failed to record snapshot tick: %s", config.LOG_PREFIX_TICK, exc)
+    return tick
 
 
 def _build_client_order_id(side: str) -> str:
@@ -80,6 +166,7 @@ async def fast_scalp_worker(shared_state: FastScalpState) -> None:
     off_hours_logged = False
     order_backoff: float = 0.0
     next_order_after: float = 0.0
+    last_snapshot_fetch: float = 0.0
 
     loop_counter = 0
     try:
@@ -130,6 +217,27 @@ async def fast_scalp_worker(shared_state: FastScalpState) -> None:
             spread_block_logged = False
 
             snapshot = shared_state.snapshot()
+
+            snapshot_needed = False
+            age_ms = None
+            if spread_state:
+                age_ms = spread_state.get("age_ms")
+                if spread_state.get("stale"):
+                    snapshot_needed = True
+                elif age_ms is not None and age_ms > config.STALE_TICK_MAX_SEC * 1000:
+                    snapshot_needed = True
+            else:
+                snapshot_needed = True
+
+            monotonic_now = time.monotonic()
+            if snapshot_needed and monotonic_now - last_snapshot_fetch >= config.SNAPSHOT_MIN_INTERVAL_SEC:
+                fetched_tick = await _fetch_price_snapshot(logger)
+                last_snapshot_fetch = monotonic_now
+                if fetched_tick:
+                    spread_state = spread_monitor.get_state()
+                    spread_pips = (
+                        spread_state.get("spread_pips") if spread_state else spread_pips
+                    )
 
             features = extract_features(spread_pips)
             if not features:
