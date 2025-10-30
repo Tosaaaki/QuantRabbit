@@ -275,6 +275,7 @@ PULSEBREAK_AUTO_ATR_MIN = _safe_env_float("PULSEBREAK_AUTO_ATR_MIN", 2.4, low=0.
 PULSEBREAK_AUTO_VOL_MIN = _safe_env_float("PULSEBREAK_AUTO_VOL_MIN", 1.3, low=0.0, high=5.0)
 MACRO_LOT_SHARE_FLOOR = _safe_env_float("MACRO_LOT_SHARE_FLOOR", 0.7, low=0.0, high=0.95)
 MACRO_CONFIDENCE_FLOOR = _safe_env_float("MACRO_CONFIDENCE_FLOOR", 1.0, low=0.3, high=1.0)
+MACRO_SPREAD_OVERRIDE = _safe_env_float("MACRO_SPREAD_OVERRIDE", 1.4, low=1.0, high=3.0)
 
 
 def _set_stage_plan_overrides(overrides: dict[str, tuple[float, ...]]) -> None:
@@ -2985,11 +2986,34 @@ async def logic_loop(
                                 spread_log_context,
                             )
                     if not allow_spread_bypass:
-                        if not spread_skip_logged:
-                            logging.info(
-                                "[SKIP] Spread guard active (%s, %s).",
-                                spread_gate_reason,
-                                spread_log_context,
+                        if (
+                            pocket == "macro"
+                            and spread_gate_type == "hot"
+                            and spread_snapshot
+                        ):
+                            try:
+                                current_spread = float(spread_snapshot.get("spread_pips") or 0.0)
+                            except (TypeError, ValueError):
+                                current_spread = 0.0
+                            if (
+                                current_spread > 0.0
+                                and current_spread <= MACRO_SPREAD_OVERRIDE
+                                and weight_macro >= MIN_MACRO_WEIGHT
+                            ):
+                                allow_spread_bypass = True
+                                logging.info(
+                                    "[SPREAD] macro override enabled (spread=%.2fp <= %.2fp weight=%.2f focus=%s)",
+                                    current_spread,
+                                    MACRO_SPREAD_OVERRIDE,
+                                    weight_macro,
+                                    focus_tag,
+                                )
+                        if not allow_spread_bypass:
+                            if not spread_skip_logged:
+                                logging.info(
+                                    "[SKIP] Spread guard active (%s, %s).",
+                                    spread_gate_reason,
+                                    spread_log_context,
                             )
                             spread_skip_logged = True
                         continue
