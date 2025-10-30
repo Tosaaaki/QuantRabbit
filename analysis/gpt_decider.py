@@ -102,12 +102,53 @@ def _normalize_json_content(raw: str) -> str:
     """Remove Markdown fences / whitespace around JSON payloads."""
     text = raw.strip()
     if text.startswith("```"):
-        # Drop opening fence (with optional language tag)
         text = _FENCE_PREFIX_RE.sub("", text, count=1)
-        # Drop trailing fence if present
         if text.endswith("```"):
             text = text[: -3]
     return text.strip()
+
+
+def _extract_json_object(text: str) -> Optional[str]:
+    start = text.find("{")
+    if start == -1:
+        return None
+    depth = 0
+    in_string = False
+    escape = False
+    for idx in range(start, len(text)):
+        ch = text[idx]
+        if in_string:
+            if escape:
+                escape = False
+            elif ch == "\\":
+                escape = True
+            elif ch == '"':
+                in_string = False
+            continue
+        if ch == '"':
+            in_string = True
+        elif ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                return text[start : idx + 1]
+    return None
+
+
+def _load_json_payload(content: str) -> Dict:
+    if not content:
+        raise ValueError("Invalid JSON: (empty string)")
+    try:
+        return json.loads(content)
+    except json.JSONDecodeError as exc:
+        candidate = _extract_json_object(content)
+        if candidate:
+            try:
+                return json.loads(candidate)
+            except json.JSONDecodeError:
+                pass
+        raise ValueError(f"Invalid JSON: {content}") from exc
 
 
 async def _call_model(payload: Dict, messages: List[Dict], model: str) -> Dict:
@@ -183,13 +224,7 @@ async def _call_model(payload: Dict, messages: List[Dict], model: str) -> Dict:
             add_tokens(usage_in + usage_out, MAX_TOKENS_MONTH)
             content = _normalize_json_content(resp.choices[0].message.content or "")
 
-        if not content:
-            raise ValueError("Invalid JSON: (empty string)")
-
-        try:
-            data = json.loads(content)
-        except json.JSONDecodeError as e:
-            raise ValueError(f"Invalid JSON: {content}") from e
+        data = _load_json_payload(content)
 
         for key in _REQUIRED_KEYS:
             if key not in data:
