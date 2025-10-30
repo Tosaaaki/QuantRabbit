@@ -45,6 +45,9 @@ LONG_WINDOW_SEC: float = max(
     SHORT_WINDOW_SEC + 0.2, float(os.getenv("FAST_SCALP_LONG_WINDOW_SEC", "5.5"))
 )
 MIN_TICK_COUNT: int = max(5, int(float(os.getenv("FAST_SCALP_MIN_TICK_COUNT", "15"))))
+TP_SAFE_MARGIN_PIPS: float = max(
+    0.1, float(os.getenv("FAST_SCALP_TP_SAFE_MARGIN_PIPS", "0.4"))
+)
 JST_OFF_HOURS_START: int = min(23, max(0, int(float(os.getenv("FAST_SCALP_OFF_HOURS_START_JST", "3")))))
 JST_OFF_HOURS_END: int = min(23, max(0, int(float(os.getenv("FAST_SCALP_OFF_HOURS_END_JST", "5")))))
 LOG_PREFIX_TICK = "[SCALP-TICK]"

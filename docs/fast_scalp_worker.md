@@ -31,7 +31,10 @@ wide emergency stops (≈30 pips). The component co‑exists with the current
 5. **Order path** — The worker submits orders through `execution.order_manager.market_order`
    with `pocket="scalp_fast"`, `client_order_id` prefix `qr-fast-`, and attaches
    `takeProfitOnFill` / `stopLossOnFill`.
-   - `tp_pips = 1.0 + max(spread, 0.2)`
+   - `tp_pips = 1.0 + max(spread, 0.2)` and an additional safety margin
+     (`FAST_SCALP_TP_SAFE_MARGIN_PIPS`, default 0.4) plus half the observed
+     spread are applied so that the `takeProfitOnFill` always remains on the
+     profitable side of the expected fill price.
    - `sl_pips = 30.0`
    - Min unit guard: abort if computed units < 10 k.
 6. **Rate limiting** — A dedicated limiter enforces:

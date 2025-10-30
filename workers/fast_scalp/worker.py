@@ -277,7 +277,9 @@ async def fast_scalp_worker(shared_state: FastScalpState) -> None:
 
             client_id = _build_client_order_id(direction)
 
-            tp_pips = config.TP_BASE_PIPS + max(features.spread_pips, config.TP_SPREAD_BUFFER_PIPS)
+            spread_padding = max(features.spread_pips, config.TP_SPREAD_BUFFER_PIPS)
+            tp_margin = max(config.TP_SAFE_MARGIN_PIPS, features.spread_pips * 0.5)
+            tp_pips = config.TP_BASE_PIPS + spread_padding + tp_margin
             sl_pips = config.SL_PIPS
             entry_price = features.latest_mid
             if direction == "long":
@@ -295,6 +297,7 @@ async def fast_scalp_worker(shared_state: FastScalpState) -> None:
                 "spread_pips": round(features.spread_pips, 3),
                 "tick_count": features.tick_count,
                 "weight_scalp": snapshot.weight_scalp,
+                "tp_pips": round(tp_pips, 3),
             }
 
             try:
