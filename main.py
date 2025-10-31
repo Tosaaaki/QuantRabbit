@@ -80,16 +80,18 @@ from advisors.partial_reduction import PartialReductionAdvisor
 from advisors.news_bias import NewsBiasAdvisor
 from autotune.scalp_trainer import start_background_autotune
 from workers.fast_scalp import FastScalpState, fast_scalp_worker
-from workers.manual_spike import manual_spike_worker
+from workers.mirror_spike import mirror_spike_worker
 from workers.pullback_scalp import pullback_scalp_worker
 from workers.scalp_exit import scalp_exit_worker
 
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
-)
-
-logging.info("Application started!")
+# Configure logging with runtime override
+_LOG_LEVEL_NAME = os.getenv("LOG_LEVEL", "INFO").upper().strip()
+try:
+    _LOG_LEVEL = getattr(logging, _LOG_LEVEL_NAME, logging.INFO)
+except Exception:  # pragma: no cover - defensive
+    _LOG_LEVEL = logging.INFO
+logging.basicConfig(level=_LOG_LEVEL, format="%(asctime)s - %(levelname)s - %(message)s")
+logging.info("Application started! (log_level=%s)", logging.getLevelName(_LOG_LEVEL))
 
 STRATEGIES = {
     "TrendMA": MovingAverageCross,
@@ -436,12 +438,19 @@ def _stage_plan(pocket: str) -> tuple[float, ...]:
 MIN_MACRO_STAGE_LOT = 0.03  # 3000 units baseline keeps macro entries meaningful
 MAX_MICRO_STAGE_LOT = 0.02  # cap micro scaling when momentum signals fire repeatedly
 MIN_SCALP_STAGE_LOT = 0.1  # 10k units baseline to keep scalp entries meaningful
+MIN_MICRO_STAGE_LOT = 0.01  # keep micro entries above minimum order size
 DEFAULT_COOLDOWN_SECONDS = 180
 RANGE_COOLDOWN_SECONDS = 420
 GPT_MIN_INTERVAL_SECONDS = 180
 MIN_MACRO_TOTAL_LOT = _safe_env_float("MIN_MACRO_TOTAL_LOT", 0.05, low=0.0, high=3.0)
 TARGET_MACRO_MARGIN_RATIO = _safe_env_float("TARGET_MACRO_MARGIN_RATIO", 0.7, low=0.0, high=0.95)
 MACRO_MARGIN_SAFETY_BUFFER = _safe_env_float("MACRO_MARGIN_SAFETY_BUFFER", 0.1, low=0.0, high=0.5)
+FORCED_MACRO_GAP_PIPS_MIN = _safe_env_float("FORCED_MACRO_GAP_PIPS_MIN", 3.6, low=0.0, high=20.0)
+FORCED_MACRO_ADX_MIN = _safe_env_float("FORCED_MACRO_ADX_MIN", 21.0, low=5.0, high=60.0)
+FORCED_MACRO_WEIGHT_FLOOR = _safe_env_float("FORCED_MACRO_WEIGHT_FLOOR", 0.28, low=0.0, high=0.9)
+FORCED_MACRO_OVERSTRETCH_BUFFER = _safe_env_float("FORCED_MACRO_OVERSTRETCH_BUFFER", 0.035, low=0.0, high=0.2)
+FORCED_MACRO_RSI_CEIL = _safe_env_float("FORCED_MACRO_RSI_CEIL", 68.0, low=40.0, high=80.0)
+FORCED_MACRO_RSI_FLOOR = _safe_env_float("FORCED_MACRO_RSI_FLOOR", 32.0, low=20.0, high=60.0)
 
 FORCE_SCALP_MODE = os.getenv("SCALP_FORCE_ALWAYS", "0").strip().lower() not in {"", "0", "false", "no"}
 if FORCE_SCALP_MODE:
@@ -1453,6 +1462,8 @@ def compute_stage_lot(
                 floor = min(MIN_MACRO_STAGE_LOT, remaining)
                 next_lot = max(next_lot, floor)
             if pocket == "micro" and remaining > 0:
+                floor = min(MIN_MICRO_STAGE_LOT, remaining)
+                next_lot = max(next_lot, floor)
                 next_lot = min(next_lot, MAX_MICRO_STAGE_LOT, remaining)
             if pocket == "scalp" and remaining > 0:
                 floor = min(MIN_SCALP_STAGE_LOT, remaining)
@@ -2611,6 +2622,104 @@ async def logic_loop(
             focus_pockets.update(strategy_pockets)
             focus_pockets.add("scalp")
 
+            forced_macro_dir: Optional[str] = None
+            forced_macro_reason: Optional[str] = None
+            forced_macro_gap = 0.0
+            forced_macro_ctx: Optional[dict[str, object]] = None
+            if not range_active and fac_h4 and fac_m1:
+                try:
+                    ma10_h4_val = float(fac_h4.get("ma10") or 0.0)
+                    ma20_h4_val = float(fac_h4.get("ma20") or 0.0)
+                    adx_h4_val = float(fac_h4.get("adx") or 0.0)
+                    rsi_m1_val = float(fac_m1.get("rsi") or 50.0)
+                    ema20_m1_val = float(fac_m1.get("ema20") or (fac_m1.get("ma20") or 0.0))
+                    close_m1_val = float(fac_m1.get("close") or 0.0)
+                except Exception:
+                    ma10_h4_val = ma20_h4_val = adx_h4_val = rsi_m1_val = ema20_m1_val = close_m1_val = 0.0
+                gap_pips_h4 = abs(ma10_h4_val - ma20_h4_val) / PIP
+                trending_up = ma10_h4_val > ma20_h4_val and gap_pips_h4 >= FORCED_MACRO_GAP_PIPS_MIN
+                trending_down = ma10_h4_val < ma20_h4_val and gap_pips_h4 >= FORCED_MACRO_GAP_PIPS_MIN
+                adx_ok = adx_h4_val >= FORCED_MACRO_ADX_MIN
+                not_overstretched_up = (
+                    trending_up
+                    and ema20_m1_val
+                    and close_m1_val >= ema20_m1_val - FORCED_MACRO_OVERSTRETCH_BUFFER
+                    and rsi_m1_val <= FORCED_MACRO_RSI_CEIL
+                )
+                not_overstretched_down = (
+                    trending_down
+                    and ema20_m1_val
+                    and close_m1_val <= ema20_m1_val + FORCED_MACRO_OVERSTRETCH_BUFFER
+                    and rsi_m1_val >= FORCED_MACRO_RSI_FLOOR
+                )
+                if adx_ok and not range_soft_active:
+                    if trending_up and not_overstretched_up:
+                        forced_macro_dir = DIRECTION_LONG
+                        forced_macro_reason = "trend_long"
+                        forced_macro_gap = gap_pips_h4
+                        forced_macro_ctx = {
+                            "direction": DIRECTION_LONG,
+                            "gap_pips": gap_pips_h4,
+                            "adx": adx_h4_val,
+                            "rsi_m1": rsi_m1_val,
+                            "ema20_m1": ema20_m1_val,
+                            "close_m1": close_m1_val,
+                        }
+                    elif trending_down and not_overstretched_down:
+                        forced_macro_dir = DIRECTION_SHORT
+                        forced_macro_reason = "trend_short"
+                        forced_macro_gap = gap_pips_h4
+                        forced_macro_ctx = {
+                            "direction": DIRECTION_SHORT,
+                            "gap_pips": gap_pips_h4,
+                            "adx": adx_h4_val,
+                            "rsi_m1": rsi_m1_val,
+                            "ema20_m1": ema20_m1_val,
+                            "close_m1": close_m1_val,
+                        }
+            if forced_macro_dir:
+                if "macro" not in focus_pockets:
+                    focus_pockets.add("macro")
+                prev_focus_tag = focus_tag
+                if focus_tag not in {"macro", "hybrid"}:
+                    focus_tag = "hybrid"
+                prev_weight_macro = weight_macro
+                if weight_macro < FORCED_MACRO_WEIGHT_FLOOR:
+                    weight_macro = round(min(1.0, FORCED_MACRO_WEIGHT_FLOOR), 3)
+                    if weight_scalp is not None and weight_macro + weight_scalp > 1.0:
+                        overflow = weight_macro + weight_scalp - 1.0
+                        if overflow > 0:
+                            weight_scalp = round(max(0.0, weight_scalp - overflow), 3)
+                logging.info(
+                    "[FOCUS] Forced macro focus dir=%s reason=%s weight=%.2f(from %.2f) focus_tag=%s->%s gap=%.2f adx>=%.1f",
+                    forced_macro_dir,
+                    forced_macro_reason,
+                    weight_macro,
+                    prev_weight_macro,
+                    prev_focus_tag,
+                    focus_tag,
+                    forced_macro_gap,
+                    FORCED_MACRO_ADX_MIN,
+                )
+                try:
+                    log_metric(
+                        "macro_focus_forced",
+                        1.0,
+                        tags={
+                            "reason": forced_macro_reason or "trend",
+                            "direction": forced_macro_dir,
+                            "gap": f"{forced_macro_gap:.2f}",
+                            "adx_floor": f"{FORCED_MACRO_ADX_MIN:.1f}",
+                        },
+                        ts=now,
+                    )
+                except Exception:
+                    pass
+                if forced_macro_dir and "H1Momentum" not in ranked_strategies:
+                    ranked_strategies.insert(0, "H1Momentum")
+                if forced_macro_dir and "TrendMA" not in ranked_strategies:
+                    ranked_strategies.insert(1 if "H1Momentum" in ranked_strategies else 0, "TrendMA")
+
             range_macro_bias_dir: Optional[str] = None
             if range_active and fac_h4 and fac_m1:
                 try:
@@ -3215,6 +3324,51 @@ async def logic_loop(
                                 reason,
                                 detail,
                             )
+            if forced_macro_ctx and not any(sig.get("pocket") == "macro" for sig in evaluated_signals):
+                try:
+                    fallback = H1MomentumSwing.check(fac_m1)
+                except Exception as exc:  # pragma: no cover - defensive
+                    logging.warning("[MACRO] forced fallback build failed: %s", exc)
+                    fallback = None
+                if fallback and fallback.get("action") == forced_macro_ctx.get("direction"):
+                    injected = {
+                        "strategy": "H1Momentum",
+                        "pocket": "macro",
+                        "action": fallback.get("action"),
+                        "confidence": int(fallback.get("confidence", 60) or 60),
+                        "sl_pips": fallback.get("sl_pips"),
+                        "tp_pips": fallback.get("tp_pips"),
+                        "tag": fallback.get("tag", "H1Momentum"),
+                        "hard_stop_pips": fallback.get("hard_stop_pips"),
+                        "notes": {
+                            "reason": "forced_macro_focus",
+                            "source": "H1MomentumFallback",
+                            "gap_pips": round(float(forced_macro_ctx.get("gap_pips") or 0.0), 2),
+                            "adx_h4": round(float(forced_macro_ctx.get("adx") or 0.0), 1),
+                            "rsi_m1": round(float(forced_macro_ctx.get("rsi_m1") or 0.0), 1),
+                        },
+                    }
+                    injected["range_bias_dir"] = fallback.get("action")
+                    evaluated_signals.append(injected)
+                    logging.info(
+                        "[FOCUS] Injected fallback macro signal dir=%s conf=%s sl=%.2f tp=%.2f",
+                        injected["action"],
+                        injected["confidence"],
+                        float(injected.get("sl_pips") or 0.0),
+                        float(injected.get("tp_pips") or 0.0),
+                    )
+                    try:
+                        log_metric(
+                            "macro_signal_injected",
+                            1.0,
+                            tags={
+                                "source": "forced_macro_focus",
+                                "direction": str(forced_macro_ctx.get("direction") or "unknown"),
+                            },
+                            ts=now,
+                        )
+                    except Exception:
+                        pass
             partial_threshold_overrides = None
             if partial_advisor and partial_advisor.enabled:
                 partial_context = {
@@ -4507,7 +4661,7 @@ async def main():
                 asyncio.create_task(
                     supervised_runner(
                         "spike_scalp",
-                        manual_spike_worker(),
+                        mirror_spike_worker(),
                     )
                 ),
                 asyncio.create_task(

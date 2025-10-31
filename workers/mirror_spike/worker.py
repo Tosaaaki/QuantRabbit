@@ -36,7 +36,7 @@ class SpikeSignal:
 def _build_client_order_id(side: str) -> str:
     ts_ms = int(time.time() * 1000)
     digest = hashlib.sha1(f"{ts_ms}-{side}".encode("utf-8")).hexdigest()[:6]
-    return f"qr-manual-{ts_ms}-{side[0]}{digest}"
+    return f"qr-mirror-{ts_ms}-{side[0]}{digest}"
 
 
 def _detect_short_signal(
@@ -153,7 +153,7 @@ def _detect_signal(
     return _detect_long_signal(ticks, features)
 
 
-async def manual_spike_worker() -> None:
+async def mirror_spike_worker() -> None:
     """
     Separate loop from FastScalp that imitates the discretionary spike fade.
     """
@@ -173,25 +173,26 @@ async def manual_spike_worker() -> None:
             if now_monotonic < cooldown_until:
                 continue
 
-            # Skip if manual pocket already has open trades (avoid stacking).
+            # Skip if mirror spike trades are already stacked in the scalp pocket.
             pockets = pos_manager.get_open_positions()
-            manual_pos = pockets.get("manual")
-            open_trades = (manual_pos or {}).get("open_trades") or []
+            scalp_pos = pockets.get("scalp")
+            open_trades = (scalp_pos or {}).get("open_trades") or []
+            tracked_trades = [
+                tr
+                for tr in open_trades
+                if (tr.get("entry_thesis") or {}).get("strategy_tag") == "mirror_spike"
+            ]
             existing_side: Optional[str] = None
             latest_trade: Optional[dict] = None
-            if open_trades:
-                open_trades_sorted = sorted(
-                    open_trades,
-                    key=lambda tr: tr.get("open_time") or "",
-                    reverse=True,
-                )
-                latest_trade = open_trades_sorted[0]
+            if tracked_trades:
+                tracked_trades.sort(key=lambda tr: tr.get("open_time") or "", reverse=True)
+                latest_trade = tracked_trades[0]
                 candidate_side = latest_trade.get("side")
                 if not candidate_side:
                     units_val = latest_trade.get("units", 0)
                     candidate_side = "long" if units_val > 0 else "short"
                 existing_side = candidate_side
-                if len(open_trades) >= config.MAX_ACTIVE_TRADES:
+                if len(tracked_trades) >= config.MAX_ACTIVE_TRADES:
                     continue
 
             blocked, _, spread_state, spread_reason = spread_monitor.is_blocked()
@@ -252,6 +253,7 @@ async def manual_spike_worker() -> None:
             units = -config.ENTRY_UNITS if signal.side == "short" else config.ENTRY_UNITS
             client_id = _build_client_order_id(signal.side)
             entry_thesis = {
+                "strategy_tag": "mirror_spike",
                 "pattern": f"spike_reversal_{signal.side}",
                 "spike_height_pips": round(signal.spike_height_pips, 3),
                 "retrace_pips": round(signal.retrace_pips, 3),
@@ -274,7 +276,7 @@ async def manual_spike_worker() -> None:
                     units,
                     sl_price=None,
                     tp_price=tp_price,
-                    pocket="manual",
+                    pocket="scalp",
                     client_order_id=client_id,
                     entry_thesis=entry_thesis,
                 )
