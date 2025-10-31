@@ -8,7 +8,7 @@ import asyncio
 import hashlib
 import logging
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import Dict, Optional
 
@@ -24,8 +24,16 @@ from utils.secrets import get_secret
 
 from . import config
 from .rate_limiter import SlidingWindowRateLimiter
+from .patterns import pattern_score
 from .signal import SignalFeatures, evaluate_signal, extract_features
 from .state import FastScalpState
+from .profiles import (
+    DEFAULT_PROFILE,
+    StrategyProfile,
+    get_profile,
+    resolve_timeout,
+    select_profile,
+)
 
 
 @dataclass
@@ -39,6 +47,10 @@ class ActiveTrade:
     client_order_id: str
     sl_price: float
     tp_price: float
+    profile: StrategyProfile = field(default=DEFAULT_PROFILE)
+    timeout_limit: Optional[float] = field(default=DEFAULT_PROFILE.timeout_sec)
+    timeout_min_gain: float = field(default=DEFAULT_PROFILE.timeout_min_gain_pips)
+    max_drawdown_close_pips: float = field(default=DEFAULT_PROFILE.drawdown_close_pips)
 
 
 def _now_utc() -> datetime:
@@ -150,6 +162,45 @@ def _pips(delta_price: float) -> float:
     return delta_price / config.PIP_VALUE
 
 
+async def _collect_features(
+    logger: logging.Logger,
+    spread_pips: float,
+    last_snapshot_fetch: float,
+) -> tuple[Optional[SignalFeatures], float, float]:
+    """
+    Try to assemble a complete SignalFeatures payload by sampling additional
+    pricing snapshots when tick depth is insufficient.
+    """
+    attempts = 0
+    updated_spread = spread_pips
+    last_fetch = last_snapshot_fetch
+
+    while attempts <= config.SNAPSHOT_BURST_MAX_ATTEMPTS:
+        ticks = tick_window.recent_ticks(seconds=config.LONG_WINDOW_SEC, limit=180)
+        if len(ticks) >= config.MIN_TICK_COUNT:
+            features = extract_features(updated_spread, ticks=ticks)
+            if features and features.rsi is not None and features.atr_pips is not None:
+                return features, updated_spread, last_fetch
+        if attempts == config.SNAPSHOT_BURST_MAX_ATTEMPTS:
+            break
+        wait = config.SNAPSHOT_MIN_INTERVAL_SEC - (time.monotonic() - last_fetch)
+        if wait > 0:
+            await asyncio.sleep(wait)
+        fetched_tick = await _fetch_price_snapshot(logger)
+        last_fetch = time.monotonic()
+        attempts += 1
+        if fetched_tick is None:
+            await asyncio.sleep(config.SNAPSHOT_BURST_INTERVAL_SEC)
+        state = spread_monitor.get_state()
+        if state:
+            try:
+                updated_spread = float(state.get("spread_pips", updated_spread))
+            except (TypeError, ValueError):
+                pass
+
+    return None, updated_spread, last_fetch
+
+
 async def fast_scalp_worker(shared_state: FastScalpState) -> None:
     logger = logging.getLogger(__name__)
     if not config.FAST_SCALP_ENABLED:
@@ -170,6 +221,7 @@ async def fast_scalp_worker(shared_state: FastScalpState) -> None:
     order_backoff: float = 0.0
     next_order_after: float = 0.0
     last_snapshot_fetch: float = 0.0
+    low_vol_counter = 0
 
     loop_counter = 0
     try:
@@ -224,6 +276,12 @@ async def fast_scalp_worker(shared_state: FastScalpState) -> None:
             spread_block_logged = False
 
             snapshot = shared_state.snapshot()
+            range_active_flag = bool(getattr(snapshot, "range_active", False))
+            m1_rsi_snapshot = getattr(snapshot, "m1_rsi", None)
+            if m1_rsi_snapshot is not None:
+                age_limit = getattr(snapshot, "m1_rsi_age_sec", None)
+                if age_limit is not None and age_limit > config.M1_RSI_CONFIRM_SPAN_SEC:
+                    m1_rsi_snapshot = None
 
             snapshot_needed = False
             age_ms = None
@@ -246,58 +304,95 @@ async def fast_scalp_worker(shared_state: FastScalpState) -> None:
                         spread_state.get("spread_pips") if spread_state else spread_pips
                     )
 
-            features = extract_features(spread_pips)
+            features, spread_pips, last_snapshot_fetch = await _collect_features(
+                logger, spread_pips, last_snapshot_fetch
+            )
             if not features:
-                recent = tick_window.recent_ticks(10.0, limit=5)
-                if recent:
-                    latest = recent[-1]
-                    first = recent[0]
-                    latest_mid = float(latest.get("mid") or 0.0)
-                    first_mid = float(first.get("mid") or latest_mid)
-                    span = float(latest.get("epoch", 0.0)) - float(first.get("epoch", 0.0))
-                    momentum = (latest_mid - first_mid) / config.PIP_VALUE if span != 0 else 0.0
-                    range_pips = abs(latest_mid - first_mid) / config.PIP_VALUE
-                    features = SignalFeatures(
-                        latest_mid=latest_mid,
-                        spread_pips=spread_pips,
-                        momentum_pips=momentum,
-                        short_momentum_pips=momentum,
-                        range_pips=range_pips,
-                        tick_count=len(recent),
-                        span_seconds=span,
+                if loop_counter % 40 == 0:
+                    logger.debug(
+                        "%s unable to resolve indicators spread=%.3f attempts=%d",
+                        config.LOG_PREFIX_TICK,
+                        spread_pips,
+                        config.SNAPSHOT_BURST_MAX_ATTEMPTS,
                     )
-                if not features:
-                    if loop_counter % 40 == 0:
-                        logger.debug(
-                            "%s insufficient features spread=%.3f ticks=%d",
-                            config.LOG_PREFIX_TICK,
-                            spread_pips,
-                            len(tick_window.recent_ticks(config.LONG_WINDOW_SEC, limit=10)),
+                await asyncio.sleep(config.LOOP_INTERVAL_SEC)
+                continue
+
+            # Quality gating: ensure volatility and sampling density are sufficient
+            low_quality = False
+            if features.atr_pips is None or features.atr_pips < config.MIN_ENTRY_ATR_PIPS:
+                low_quality = True
+            elif features.tick_count < config.MIN_ENTRY_TICK_COUNT:
+                low_quality = True
+            elif features.span_seconds < config.MIN_ENTRY_TICK_SPAN_SEC:
+                low_quality = True
+
+            if low_quality:
+                low_vol_counter += 1
+                if (
+                    config.LOW_VOL_COOLDOWN_SEC > 0
+                    and low_vol_counter >= config.LOW_VOL_MAX_CONSECUTIVE
+                ):
+                    logger.info(
+                        "%s low-volatility cooldown triggered atr=%.3f ticks=%d span=%.2fs",
+                        config.LOG_PREFIX_TICK,
+                        features.atr_pips if features.atr_pips is not None else -1.0,
+                        features.tick_count,
+                        features.span_seconds,
+                    )
+                    for direction in ("long", "short"):
+                        stage_tracker.set_cooldown(
+                            "scalp_fast",
+                            direction,
+                            reason="low_volatility",
+                            seconds=int(config.LOW_VOL_COOLDOWN_SEC),
+                            now=now,
                         )
-                    await asyncio.sleep(config.LOOP_INTERVAL_SEC)
-                    continue
+                    low_vol_counter = 0
+                await asyncio.sleep(config.LOOP_INTERVAL_SEC)
+                continue
+            low_vol_counter = 0
 
             skip_new_entry = False
+            pattern_prob: Optional[float] = None
+            atr_value = features.atr_pips if features.atr_pips is not None else 0.0
+
             for trade_id, active in list(active_trades.items()):
                 pips_gain = _pips(features.latest_mid - active.entry_price)
                 if active.side == "short":
                     pips_gain = -pips_gain
                 elapsed = time.monotonic() - active.opened_monotonic
-                if pips_gain <= -config.MAX_DRAWDOWN_CLOSE_PIPS or (
-                    elapsed >= config.TIMEOUT_SEC and pips_gain < config.TIMEOUT_MIN_GAIN_PIPS
-                ):
+                close_reason: Optional[str] = None
+                profile_timeout = resolve_timeout(active.profile, features.atr_pips)
+                timeout_limit = profile_timeout if profile_timeout is not None else active.timeout_limit
+                timeout_min_gain = active.timeout_min_gain
+                max_drawdown_close = active.max_drawdown_close_pips
+                if features.rsi is not None and pips_gain < 0:
+                    if active.side == "long" and features.rsi < config.RSI_EXIT_LONG:
+                        close_reason = "rsi_fade"
+                    elif active.side == "short" and features.rsi > config.RSI_EXIT_SHORT:
+                        close_reason = "rsi_fade"
+                if close_reason is None and features.atr_pips is not None and pips_gain < 0:
+                    if features.atr_pips >= config.ATR_HIGH_VOL_PIPS:
+                        close_reason = "atr_spike"
+                if close_reason is None:
+                    drawdown_hit = pips_gain <= -max_drawdown_close
+                    timeout_hit = (
+                        timeout_limit is not None
+                        and elapsed >= timeout_limit
+                        and pips_gain < timeout_min_gain
+                    )
+                    if drawdown_hit or timeout_hit:
+                        close_reason = "drawdown" if drawdown_hit else "timeout"
+                if close_reason is not None:
                     if rate_limiter.allow():
-                        reason_txt = (
-                            "drawdown"
-                            if pips_gain <= -config.MAX_DRAWDOWN_CLOSE_PIPS
-                            else "timeout"
-                        )
                         logger.info(
-                            "%s close trade=%s side=%s reason=%s pnl=%.2fp elapsed=%.1fs",
+                            "%s close trade=%s side=%s reason=%s profile=%s pnl=%.2fp elapsed=%.1fs",
                             config.LOG_PREFIX_TICK,
                             trade_id,
                             active.side,
-                            reason_txt,
+                            close_reason,
+                            active.profile.name,
                             pips_gain,
                             elapsed,
                         )
@@ -341,6 +436,27 @@ async def fast_scalp_worker(shared_state: FastScalpState) -> None:
                         entry_price = float(tr.get("price", features.latest_mid))
                         client_id = str(tr.get("client_id") or "")
                         existing = active_trades.get(trade_id)
+                        entry_meta = tr.get("entry_thesis") or {}
+                        profile_name = str(entry_meta.get("profile") or (existing.profile.name if existing else ""))
+                        profile = get_profile(profile_name)
+                        timeout_raw = entry_meta.get("profile_timeout_sec")
+                        timeout_min_gain_raw = entry_meta.get("profile_timeout_min_gain_pips")
+                        drawdown_close_raw = entry_meta.get("profile_drawdown_close_pips")
+                        timeout_limit = (
+                            float(timeout_raw)
+                            if timeout_raw not in (None, "")
+                            else (existing.timeout_limit if existing else profile.timeout_sec)
+                        )
+                        timeout_min_gain = (
+                            float(timeout_min_gain_raw)
+                            if timeout_min_gain_raw not in (None, "")
+                            else (existing.timeout_min_gain if existing else profile.timeout_min_gain_pips)
+                        )
+                        drawdown_close = (
+                            float(drawdown_close_raw)
+                            if drawdown_close_raw not in (None, "")
+                            else (existing.max_drawdown_close_pips if existing else profile.drawdown_close_pips)
+                        )
                         opened_monotonic = existing.opened_monotonic if existing else time.monotonic()
                         opened_at = existing.opened_at if existing else _now_utc()
                         updated[trade_id] = ActiveTrade(
@@ -353,6 +469,10 @@ async def fast_scalp_worker(shared_state: FastScalpState) -> None:
                             client_order_id=client_id,
                             sl_price=existing.sl_price if existing else entry_price,
                             tp_price=existing.tp_price if existing else entry_price,
+                            profile=profile,
+                            timeout_limit=timeout_limit,
+                            timeout_min_gain=timeout_min_gain,
+                            max_drawdown_close_pips=drawdown_close,
                         )
                     active_trades = updated
 
@@ -361,14 +481,44 @@ async def fast_scalp_worker(shared_state: FastScalpState) -> None:
                 await asyncio.sleep(config.LOOP_INTERVAL_SEC)
                 continue
 
-            action = evaluate_signal(features)
+            action = evaluate_signal(
+                features,
+                m1_rsi=m1_rsi_snapshot,
+                range_active=range_active_flag,
+            )
             if not action:
+                # 強制エントリー（検証用）: スプレッドが許容内であれば短期モメンタム方向に入る
+                if config.FORCE_ENTRIES and spread_pips <= config.MAX_SPREAD_PIPS:
+                    action = "OPEN_LONG" if features.short_momentum_pips >= 0 else "OPEN_SHORT"
+                else:
+                    await asyncio.sleep(config.LOOP_INTERVAL_SEC)
+                    continue
+
+            reversal = action.startswith("REVERSAL")
+            direction = "long" if action.endswith("LONG") else "short"
+
+            if features.pattern_features is not None:
+                pattern_prob = pattern_score(features.pattern_features, direction)
+                if (
+                    pattern_prob is not None
+                    and pattern_prob < config.PATTERN_MIN_PROB
+                ):
+                    logger.debug(
+                        "%s pattern model veto side=%s score=%.3f",
+                        config.LOG_PREFIX_TICK,
+                        direction,
+                        pattern_prob,
+                    )
+                    await asyncio.sleep(config.LOOP_INTERVAL_SEC)
+                    continue
+
+            directional_count = sum(1 for tr in active_trades.values() if tr.side == direction)
+            if directional_count >= config.MAX_PER_DIRECTION:
                 await asyncio.sleep(config.LOOP_INTERVAL_SEC)
                 continue
 
-            direction = "long" if action == "OPEN_LONG" else "short"
             cooldown = stage_tracker.get_cooldown("scalp_fast", direction, now=now)
-            if cooldown:
+            if cooldown and not reversal:
                 logger.debug(
                     "%s cooldown active pocket=scalp_fast dir=%s until=%s reason=%s",
                     config.LOG_PREFIX_TICK,
@@ -378,11 +528,15 @@ async def fast_scalp_worker(shared_state: FastScalpState) -> None:
                 )
                 await asyncio.sleep(config.LOOP_INTERVAL_SEC)
                 continue
+            if cooldown and reversal:
+                stage_tracker.clear_cooldown("scalp_fast", direction, reason=cooldown.reason)
 
             monotonic_now = time.monotonic()
             if monotonic_now < next_order_after:
                 await asyncio.sleep(config.LOOP_INTERVAL_SEC)
                 continue
+
+            profile = select_profile(action, features, range_active=range_active_flag)
 
             if not rate_limiter.allow():
                 logger.info(
@@ -400,15 +554,16 @@ async def fast_scalp_worker(shared_state: FastScalpState) -> None:
                 await asyncio.sleep(config.LOOP_INTERVAL_SEC)
                 continue
 
-            lot = allowed_lot(
+            profile_sl_pips = profile.sl_pips if profile.sl_pips is not None else config.SL_PIPS
+            allowed_lot_raw = allowed_lot(
                 snapshot.account_equity,
-                sl_pips=config.SL_PIPS,
+                sl_pips=profile_sl_pips,
                 margin_available=snapshot.margin_available,
                 price=features.latest_mid,
                 margin_rate=snapshot.margin_rate,
                 risk_pct_override=snapshot.risk_pct_override,
             )
-            lot = min(lot, config.MAX_LOT)
+            lot = min(allowed_lot_raw, config.MAX_LOT)
             if lot <= 0.0:
                 await asyncio.sleep(config.LOOP_INTERVAL_SEC)
                 continue
@@ -418,6 +573,21 @@ async def fast_scalp_worker(shared_state: FastScalpState) -> None:
                 lot = min(config.MAX_LOT, min_lot)
                 adjusted_lot = True
             units = int(round(lot * 100000.0))
+            if (
+                snapshot.margin_rate > 0.0
+                and snapshot.margin_available > 0.0
+                and 0.0 < config.MAX_MARGIN_USAGE < 1.0
+            ):
+                margin_budget = snapshot.margin_available * config.MAX_MARGIN_USAGE
+                margin_per_unit = features.latest_mid * snapshot.margin_rate
+                if margin_per_unit > 0:
+                    max_units_margin = int(margin_budget / margin_per_unit)
+                    if max_units_margin < config.MIN_UNITS:
+                        await asyncio.sleep(config.LOOP_INTERVAL_SEC)
+                        continue
+                    if abs(units) > max_units_margin:
+                        units = max_units_margin if units > 0 else -max_units_margin
+                        adjusted_lot = True
             if units < config.MIN_UNITS:
                 units = config.MIN_UNITS
                 adjusted_lot = True
@@ -426,6 +596,18 @@ async def fast_scalp_worker(shared_state: FastScalpState) -> None:
             if abs(units) < config.MIN_UNITS:
                 await asyncio.sleep(config.LOOP_INTERVAL_SEC)
                 continue
+            logger.info(
+                "%s sizing action=%s side=%s profile=%s allowed_lot=%.3f final_lot=%.3f units=%d min_units=%d adj=%s",
+                config.LOG_PREFIX_TICK,
+                action,
+                direction,
+                profile.name,
+                allowed_lot_raw,
+                lot,
+                units,
+                config.MIN_UNITS,
+                adjusted_lot,
+            )
             if adjusted_lot:
                 logger.debug(
                     "%s adjusted lot to %.3f units=%d (min=%d)",
@@ -450,8 +632,10 @@ async def fast_scalp_worker(shared_state: FastScalpState) -> None:
             ) or features.latest_mid
             spread_padding = max(features.spread_pips, config.TP_SPREAD_BUFFER_PIPS)
             tp_margin = max(config.TP_SAFE_MARGIN_PIPS, features.spread_pips * 0.5)
-            tp_pips = config.TP_BASE_PIPS + spread_padding + tp_margin
-            sl_pips = config.SL_PIPS
+            base_tp = config.TP_BASE_PIPS + spread_padding + tp_margin
+            tp_pips = max(0.2, base_tp * profile.tp_margin_multiplier + profile.tp_adjust)
+            sl_pips = profile_sl_pips
+            timeout_limit_initial = resolve_timeout(profile, features.atr_pips)
             entry_price = expected_entry_price
             if direction == "long":
                 sl_price = entry_price - sl_pips * config.PIP_VALUE
@@ -467,11 +651,30 @@ async def fast_scalp_worker(shared_state: FastScalpState) -> None:
                 "range_pips": round(features.range_pips, 3),
                 "spread_pips": round(features.spread_pips, 3),
                 "tick_count": features.tick_count,
+                "tick_span_sec": round(features.span_seconds, 3),
                 "weight_scalp": snapshot.weight_scalp,
                 "tp_pips": round(tp_pips, 3),
                 "entry_price_expect": round(entry_price, 5),
                 "sl_price_initial": round(sl_price, 5),
                 "tp_price_initial": round(tp_price, 5),
+                "signal": action,
+                "profile": profile.name,
+                "profile_tp_pips": round(tp_pips, 3),
+                "profile_sl_pips": round(sl_pips, 3),
+                "profile_timeout_sec": None if timeout_limit_initial is None else float(timeout_limit_initial),
+                "profile_timeout_min_gain_pips": profile.timeout_min_gain_pips,
+                "profile_drawdown_close_pips": profile.drawdown_close_pips,
+                "range_active_entry": range_active_flag,
+                "m1_rsi": None if snapshot.m1_rsi is None else round(snapshot.m1_rsi, 2),
+                "tick_rsi": None if features.rsi is None else round(features.rsi, 2),
+                "tick_rsi_source": features.rsi_source,
+                "tick_atr": None if features.atr_pips is None else round(features.atr_pips, 3),
+                "tick_atr_source": features.atr_source,
+                "pattern_tag": features.pattern_tag,
+                "pattern_features": list(features.pattern_features)
+                if features.pattern_features is not None
+                else None,
+                "pattern_score": None if pattern_prob is None else round(pattern_prob, 3),
             }
 
             try:
@@ -497,6 +700,13 @@ async def fast_scalp_worker(shared_state: FastScalpState) -> None:
                 continue
 
             if not trade_id:
+                logger.warning(
+                    "%s order did not return trade id side=%s units=%d client_id=%s",
+                    config.LOG_PREFIX_TICK,
+                    direction,
+                    units,
+                    client_id,
+                )
                 order_backoff = max(order_backoff * 1.8, 0.3) if order_backoff else 0.3
                 next_order_after = monotonic_now + order_backoff
                 await asyncio.sleep(config.LOOP_INTERVAL_SEC)
@@ -507,12 +717,12 @@ async def fast_scalp_worker(shared_state: FastScalpState) -> None:
             stage_tracker.set_cooldown(
                 "scalp_fast",
                 direction,
-                reason="entry",
+                reason="reversal_entry" if reversal else "entry",
                 seconds=int(config.ENTRY_COOLDOWN_SEC),
                 now=now,
             )
             actual_entry_price = executed_price if executed_price is not None else entry_price
-            sl_adjust_pips = config.SL_PIPS + config.SL_POST_ADJUST_BUFFER_PIPS
+            sl_adjust_pips = sl_pips + config.SL_POST_ADJUST_BUFFER_PIPS
             if direction == "long":
                 actual_sl_price = round(actual_entry_price - sl_adjust_pips * config.PIP_VALUE, 3)
                 actual_tp_price = round(actual_entry_price + tp_pips * config.PIP_VALUE, 3)
@@ -538,21 +748,32 @@ async def fast_scalp_worker(shared_state: FastScalpState) -> None:
                 client_order_id=client_id,
                 sl_price=actual_sl_price,
                 tp_price=actual_tp_price,
+                profile=profile,
+                timeout_limit=timeout_limit_initial if timeout_limit_initial is not None else profile.timeout_sec,
+                timeout_min_gain=profile.timeout_min_gain_pips,
+                max_drawdown_close_pips=profile.drawdown_close_pips,
             )
             log_metric(
                 "fast_scalp_signal",
                 features.momentum_pips,
-                tags={"side": direction, "range_pips": f"{features.range_pips:.2f}"},
+                tags={
+                    "side": direction,
+                    "action": action,
+                    "range_pips": f"{features.range_pips:.2f}",
+                    "profile": profile.name,
+                },
                 ts=now,
             )
             logger.info(
-                "%s open trade=%s side=%s units=%d tp=%.3f sl=%.3f mom=%.2fp range=%.2fp spread=%.2fp",
+                "%s open trade=%s signal=%s side=%s profile=%s units=%d tp=%.3f sl=%.3f mom=%.2fp range=%.2fp spread=%.2fp",
                 config.LOG_PREFIX_TICK,
                 trade_id,
+                action,
                 direction,
+                profile.name,
                 units,
-                tp_price or 0.0,
-                sl_price or 0.0,
+                actual_tp_price or 0.0,
+                actual_sl_price or 0.0,
                 features.momentum_pips,
                 features.range_pips,
                 features.spread_pips,
