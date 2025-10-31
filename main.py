@@ -517,6 +517,16 @@ class GPTRequestManager:
         self._queue.task_done()
 # In range mode, allow mean‑reversion and light scalping entries
 ALLOWED_RANGE_STRATEGIES = {"BB_RSI", "RangeFader", "M1Scalper"}
+ALLOWED_RANGE_MACRO_STRATEGIES = {"TrendMA", "Donchian55", "H1Momentum", "OpportunisticMacro"}
+DIRECTION_LONG = "OPEN_LONG"
+DIRECTION_SHORT = "OPEN_SHORT"
+
+RANGE_MACRO_BIAS_GAP = _safe_env_float("RANGE_MACRO_BIAS_GAP", 2.6, low=0.0, high=12.0)
+RANGE_MACRO_BIAS_ADX = _safe_env_float("RANGE_MACRO_BIAS_ADX", 14.0, low=0.0, high=60.0)
+RANGE_MACRO_BIAS_WEIGHT = _safe_env_float("RANGE_MACRO_BIAS_WEIGHT", 0.35, low=0.0, high=1.0)
+RANGE_MACRO_BIAS_RSI_LOW = _safe_env_float("RANGE_MACRO_BIAS_RSI_LOW", 32.0, low=0.0, high=70.0)
+RANGE_MACRO_BIAS_RSI_HIGH = _safe_env_float("RANGE_MACRO_BIAS_RSI_HIGH", 68.0, low=30.0, high=100.0)
+RANGE_MACRO_BIAS_EMA_SLACK = _safe_env_float("RANGE_MACRO_BIAS_EMA_SLACK", 0.04, low=0.0, high=0.2)
 SOFT_RANGE_SUPPRESS_STRATEGIES = {"TrendMA", "Donchian55"}
 LOW_TREND_ADX_THRESHOLD = 18.0
 LOW_TREND_SLOPE_THRESHOLD = 0.00035
@@ -2597,6 +2607,54 @@ async def logic_loop(
                 focus_pockets.add("scalp")
             focus_pockets.update(strategy_pockets)
             focus_pockets.add("scalp")
+
+            range_macro_bias_dir: Optional[str] = None
+            if range_active and fac_h4 and fac_m1:
+                try:
+                    ma10_h4_val = float(fac_h4.get("ma10") or 0.0)
+                    ma20_h4_val = float(fac_h4.get("ma20") or 0.0)
+                    adx_h4_val = float(fac_h4.get("adx") or 0.0)
+                    gap_pips_h4 = abs(ma10_h4_val - ma20_h4_val) / PIP
+                    rsi_m1_val = float(fac_m1.get("rsi") or 50.0)
+                    ema20_m1_val = float(fac_m1.get("ema20") or (fac_m1.get("ma20") or 0.0))
+                    close_m1_val = float(fac_m1.get("close") or 0.0)
+                except Exception:
+                    ma10_h4_val = ma20_h4_val = adx_h4_val = gap_pips_h4 = rsi_m1_val = ema20_m1_val = close_m1_val = 0.0
+                direction_hint: Optional[str] = None
+                if ma10_h4_val > ma20_h4_val + 1e-6:
+                    direction_hint = DIRECTION_LONG
+                elif ma10_h4_val < ma20_h4_val - 1e-6:
+                    direction_hint = DIRECTION_SHORT
+                weight_bias = max(float(weight_macro or 0.0), float(macro_hint or 0.0))
+                if (
+                    direction_hint
+                    and gap_pips_h4 >= RANGE_MACRO_BIAS_GAP
+                    and adx_h4_val >= RANGE_MACRO_BIAS_ADX
+                    and weight_bias >= RANGE_MACRO_BIAS_WEIGHT
+                ):
+                    slack = RANGE_MACRO_BIAS_EMA_SLACK
+                    if direction_hint == DIRECTION_LONG:
+                        rsi_ok = rsi_m1_val <= RANGE_MACRO_BIAS_RSI_HIGH
+                        overstretched = bool(ema20_m1_val and close_m1_val > ema20_m1_val + slack)
+                    else:
+                        rsi_ok = rsi_m1_val >= RANGE_MACRO_BIAS_RSI_LOW
+                        overstretched = bool(ema20_m1_val and close_m1_val < ema20_m1_val - slack)
+                    if rsi_ok and not overstretched:
+                        range_macro_bias_dir = direction_hint
+                        logging.info(
+                            "[RANGE_BIAS] macro bias detected dir=%s gap=%.2f adx=%.1f weight=%.2f rsi=%.1f close=%.3f ema=%.3f",
+                            direction_hint,
+                            gap_pips_h4,
+                            adx_h4_val,
+                            weight_bias,
+                            rsi_m1_val,
+                            close_m1_val,
+                            ema20_m1_val,
+                        )
+                if range_macro_bias_dir:
+                    focus_pockets.add("macro")
+            else:
+                range_macro_bias_dir = None
             diag_fields = {
                 "ready": int(bool(scalp_ready)),
                 "forced": int(bool(scalp_ready_forced)),
@@ -2622,7 +2680,14 @@ async def logic_loop(
                     ranked_strategies,
                 )
         if range_active and "macro" in focus_pockets:
-            focus_pockets.discard("macro")
+            if range_macro_bias_dir:
+                logging.info(
+                    "[RANGE] retaining macro pocket due to bias dir=%s",
+                    range_macro_bias_dir,
+                )
+            else:
+                focus_pockets.discard("macro")
+                logging.info("[RANGE] removing macro pocket during range mode (no bias)")
 
             if (
                 last_logged_focus != focus_tag
@@ -2775,8 +2840,15 @@ async def logic_loop(
                     )
                     continue
                 if range_active and cls.name not in ALLOWED_RANGE_STRATEGIES:
-                    logging.info("[RANGE] skip %s in range mode.", sname)
-                    continue
+                    if range_macro_bias_dir and cls.name in ALLOWED_RANGE_MACRO_STRATEGIES and pocket == "macro":
+                        logging.info(
+                            "[RANGE] allowing %s due to macro bias dir=%s",
+                            sname,
+                            range_macro_bias_dir,
+                        )
+                    else:
+                        logging.info("[RANGE] skip %s in range mode.", sname)
+                        continue
                 if sname == "NewsSpikeReversal":
                     raw_signal = cls.check(fac_m1, news_cache.get("short", []))
                 else:
@@ -3025,8 +3097,10 @@ async def logic_loop(
 
             # Opportunistic macro probe: trendが整っているが戦略が沈黙のときに小さく試す
             opportunistic_enabled = os.getenv("OPPORTUNISTIC_MACRO", "0").strip().lower() not in {"", "0", "false", "no"}
-            if opportunistic_enabled and not range_active:
-                if "macro" not in focus_pockets:
+            if opportunistic_enabled:
+                if range_active and not range_macro_bias_dir:
+                    logging.info("[OPP] macro probe skipped: range mode without directional bias")
+                elif "macro" not in focus_pockets:
                     logging.info(
                         "[OPP] macro probe skipped: macro not in focus pockets (focus=%s pockets=%s)",
                         focus_tag,
@@ -3058,13 +3132,15 @@ async def logic_loop(
                         direction = None
                         overstretched = True
                         if ma10_h4 > ma20_h4:
-                            direction = "OPEN_LONG"
+                            direction = DIRECTION_LONG
                             overstretched = bool(ema20_m1_val and close_m1_val < ema20_m1_val - 0.03)
                         elif ma10_h4 < ma20_h4:
-                            direction = "OPEN_SHORT"
+                            direction = DIRECTION_SHORT
                             overstretched = bool(ema20_m1_val and close_m1_val > ema20_m1_val + 0.03)
                         near_trend = (gap_pips_h4 >= 3.0 and adx_h4 >= 15.0)
                         rsi_ok = (35.0 <= rsi_m1_val <= 65.0)
+                        if range_active and range_macro_bias_dir:
+                            direction = range_macro_bias_dir
                         if direction and near_trend and rsi_ok and not overstretched:
                             atr_hint = fac_m1.get("atr_pips")
                             if atr_hint is None:
