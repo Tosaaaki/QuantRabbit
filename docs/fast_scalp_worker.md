@@ -27,7 +27,7 @@ wide emergency stops (≈30 pips). The component co‑exists with the current
      `margin_rate`, and last `weight_scalp`.
    - The worker clamps exposure per trade to `FAST_SCALP_MAX_LOT` (default 0.05
      lot) while enforcing a **minimum** of `FAST_SCALP_MIN_UNITS` (default
-     10 k units ≒ 0.1 lot) and a single concurrent FastScalp position.
+     5 k units ≒ 0.05 lot) and a single concurrent FastScalp position.
 5. **Order path** — The worker submits orders through `execution.order_manager.market_order`
    with `pocket="scalp_fast"`, `client_order_id` prefix `qr-fast-`, and attaches
    `takeProfitOnFill` / `stopLossOnFill`.
