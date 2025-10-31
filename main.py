@@ -81,6 +81,8 @@ from advisors.news_bias import NewsBiasAdvisor
 from autotune.scalp_trainer import start_background_autotune
 from workers.fast_scalp import FastScalpState, fast_scalp_worker
 from workers.manual_spike import manual_spike_worker
+from workers.pullback_scalp import pullback_scalp_worker
+from workers.scalp_exit import scalp_exit_worker
 
 # Configure logging
 logging.basicConfig(
@@ -3023,65 +3025,100 @@ async def logic_loop(
 
             # Opportunistic macro probe: trendが整っているが戦略が沈黙のときに小さく試す
             opportunistic_enabled = os.getenv("OPPORTUNISTIC_MACRO", "0").strip().lower() not in {"", "0", "false", "no"}
-            if opportunistic_enabled and not range_active and "macro" in focus_pockets:
-                has_macro_signal = any(
-                    sig for sig in evaluated_signals if sig.get("pocket") == "macro" and sig.get("action") in {"OPEN_LONG", "OPEN_SHORT"}
-                )
-                if not has_macro_signal and fac_h4 and fac_m1:
-                    try:
-                        ma10_h4 = float(fac_h4.get("ma10") or 0.0)
-                        ma20_h4 = float(fac_h4.get("ma20") or 0.0)
-                        adx_h4 = float(fac_h4.get("adx") or 0.0)
-                        gap_pips_h4 = abs(ma10_h4 - ma20_h4) / PIP
-                        rsi_m1_val = float(fac_m1.get("rsi") or 50.0)
-                        ema20_m1_val = float(fac_m1.get("ema20") or (fac_m1.get("ma20") or 0.0))
-                        close_m1_val = float(fac_m1.get("close") or 0.0)
-                    except Exception:
-                        ma10_h4 = ma20_h4 = adx_h4 = gap_pips_h4 = rsi_m1_val = ema20_m1_val = close_m1_val = 0.0
-                    direction = None
-                    overstretched = True
-                    if ma10_h4 > ma20_h4:
-                        direction = "OPEN_LONG"
-                        overstretched = bool(ema20_m1_val and close_m1_val < ema20_m1_val - 0.03)
-                    elif ma10_h4 < ma20_h4:
-                        direction = "OPEN_SHORT"
-                        overstretched = bool(ema20_m1_val and close_m1_val > ema20_m1_val + 0.03)
-                    near_trend = (gap_pips_h4 >= 3.0 and adx_h4 >= 15.0)
-                    rsi_ok = (35.0 <= rsi_m1_val <= 65.0)
-                    if direction and near_trend and rsi_ok and not overstretched:
-                        atr_hint = fac_m1.get("atr_pips")
-                        if atr_hint is None:
-                            atr_hint = (fac_m1.get("atr") or 0.0) * 100
-                        try:
-                            atr_val = float(atr_hint or 0.0)
-                        except (TypeError, ValueError):
-                            atr_val = 0.0
-                        hard_stop = max(18.0, min(36.0, (atr_val or 10.0) * 2.1))
-                        tp_soft = max(20.0, min(34.0, hard_stop * 1.05))
-                        opp_sig = {
-                            "strategy": "OpportunisticMacro",
-                            "pocket": "macro",
-                            "action": direction,
-                            "confidence": 52,
-                            # omit sl_pips -> order uses hard_stop_pips; sizing uses capped hard_stop
-                            "tp_pips": round(tp_soft, 2),
-                            "hard_stop_pips": round(hard_stop, 2),
-                            "tag": f"OppMacro-{'bull' if direction=='OPEN_LONG' else 'bear'}",
-                            "notes": {
-                                "reason": "opportunistic_trend_probe",
-                                "gap_h4": round(gap_pips_h4, 2),
-                                "adx_h4": round(adx_h4, 2),
-                                "rsi_m1": round(rsi_m1_val, 1),
-                            },
-                        }
-                        evaluated_signals.append(opp_sig)
+            if opportunistic_enabled and not range_active:
+                if "macro" not in focus_pockets:
+                    logging.info(
+                        "[OPP] macro probe skipped: macro not in focus pockets (focus=%s pockets=%s)",
+                        focus_tag,
+                        ",".join(sorted(focus_pockets)),
+                    )
+                else:
+                    has_macro_signal = any(
+                        sig for sig in evaluated_signals if sig.get("pocket") == "macro" and sig.get("action") in {"OPEN_LONG", "OPEN_SHORT"}
+                    )
+                    if has_macro_signal:
+                        logging.info("[OPP] macro probe skipped: evaluated signal already present")
+                    elif not (fac_h4 and fac_m1):
                         logging.info(
-                            "[OPP] macro probe added dir=%s gap=%.2f adx=%.1f rsi=%.1f",
-                            direction,
-                            gap_pips_h4,
-                            adx_h4,
-                            rsi_m1_val,
+                            "[OPP] macro probe skipped: factors missing (H4=%s M1=%s)",
+                            bool(fac_h4),
+                            bool(fac_m1),
                         )
+                    else:
+                        try:
+                            ma10_h4 = float(fac_h4.get("ma10") or 0.0)
+                            ma20_h4 = float(fac_h4.get("ma20") or 0.0)
+                            adx_h4 = float(fac_h4.get("adx") or 0.0)
+                            gap_pips_h4 = abs(ma10_h4 - ma20_h4) / PIP
+                            rsi_m1_val = float(fac_m1.get("rsi") or 50.0)
+                            ema20_m1_val = float(fac_m1.get("ema20") or (fac_m1.get("ma20") or 0.0))
+                            close_m1_val = float(fac_m1.get("close") or 0.0)
+                        except Exception:
+                            ma10_h4 = ma20_h4 = adx_h4 = gap_pips_h4 = rsi_m1_val = ema20_m1_val = close_m1_val = 0.0
+                        direction = None
+                        overstretched = True
+                        if ma10_h4 > ma20_h4:
+                            direction = "OPEN_LONG"
+                            overstretched = bool(ema20_m1_val and close_m1_val < ema20_m1_val - 0.03)
+                        elif ma10_h4 < ma20_h4:
+                            direction = "OPEN_SHORT"
+                            overstretched = bool(ema20_m1_val and close_m1_val > ema20_m1_val + 0.03)
+                        near_trend = (gap_pips_h4 >= 3.0 and adx_h4 >= 15.0)
+                        rsi_ok = (35.0 <= rsi_m1_val <= 65.0)
+                        if direction and near_trend and rsi_ok and not overstretched:
+                            atr_hint = fac_m1.get("atr_pips")
+                            if atr_hint is None:
+                                atr_hint = (fac_m1.get("atr") or 0.0) * 100
+                            try:
+                                atr_val = float(atr_hint or 0.0)
+                            except (TypeError, ValueError):
+                                atr_val = 0.0
+                            hard_stop = max(18.0, min(36.0, (atr_val or 10.0) * 2.1))
+                            tp_soft = max(20.0, min(34.0, hard_stop * 1.05))
+                            opp_sig = {
+                                "strategy": "OpportunisticMacro",
+                                "pocket": "macro",
+                                "action": direction,
+                                "confidence": 52,
+                                # omit sl_pips -> order uses hard_stop_pips; sizing uses capped hard_stop
+                                "tp_pips": round(tp_soft, 2),
+                                "hard_stop_pips": round(hard_stop, 2),
+                                "tag": f"OppMacro-{'bull' if direction=='OPEN_LONG' else 'bear'}",
+                                "notes": {
+                                    "reason": "opportunistic_trend_probe",
+                                    "gap_h4": round(gap_pips_h4, 2),
+                                    "adx_h4": round(adx_h4, 2),
+                                    "rsi_m1": round(rsi_m1_val, 1),
+                                },
+                            }
+                            evaluated_signals.append(opp_sig)
+                            logging.info(
+                                "[OPP] macro probe added dir=%s gap=%.2f adx=%.1f rsi=%.1f",
+                                direction,
+                                gap_pips_h4,
+                                adx_h4,
+                                rsi_m1_val,
+                            )
+                        else:
+                            reason = "unknown"
+                            detail = ""
+                            if direction is None:
+                                reason = "trend_alignment"
+                                detail = f"ma10={ma10_h4:.4f} ma20={ma20_h4:.4f}"
+                            elif not near_trend:
+                                reason = "trend_strength"
+                                detail = f"gap={gap_pips_h4:.2f} adx={adx_h4:.1f}"
+                            elif not rsi_ok:
+                                reason = "rsi_window"
+                                detail = f"rsi_m1={rsi_m1_val:.1f}"
+                            elif overstretched:
+                                reason = "overstretched"
+                                detail = f"close={close_m1_val:.3f} ema20={ema20_m1_val:.3f}"
+                            logging.info(
+                                "[OPP] macro probe skipped: %s (%s)",
+                                reason,
+                                detail,
+                            )
             partial_threshold_overrides = None
             if partial_advisor and partial_advisor.enabled:
                 partial_context = {
@@ -4355,8 +4392,20 @@ async def main():
                 ),
                 asyncio.create_task(
                     supervised_runner(
-                        "manual_spike",
+                        "spike_scalp",
                         manual_spike_worker(),
+                    )
+                ),
+                asyncio.create_task(
+                    supervised_runner(
+                        "pullback_scalp",
+                        pullback_scalp_worker(),
+                    )
+                ),
+                asyncio.create_task(
+                    supervised_runner(
+                        "scalp_exit",
+                        scalp_exit_worker(),
                     )
                 ),
             ]
