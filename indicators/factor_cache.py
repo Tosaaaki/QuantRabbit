@@ -6,10 +6,15 @@ indicators.factor_cache
 """
 
 from __future__ import annotations
+
 import asyncio
-import pandas as pd
+import json
+import logging
 from collections import deque, defaultdict
+from pathlib import Path
 from typing import Dict, Literal
+
+import pandas as pd
 
 from indicators.calc_core import IndicatorEngine
 
@@ -17,11 +22,11 @@ TimeFrame = Literal["M1", "M5", "H1", "H4", "D1"]
 
 # Reasonable history windows for indicator stability per TF
 _CANDLES_MAX = {
-    "M1": 2000,   # ~33h
-    "M5": 2400,   # ~8.3d
-    "H1": 1200,   # ~50d
-    "H4": 500,    # ~83d
-    "D1": 400,    # ~1.1y
+    "M1": 2000,  # ~33h
+    "M5": 2400,  # ~8.3d
+    "H1": 1200,  # ~50d
+    "H4": 500,   # ~83d
+    "D1": 400,   # ~1.1y
 }
 _CANDLES: Dict[TimeFrame, deque] = {
     "M1": deque(maxlen=_CANDLES_MAX["M1"]),
@@ -31,8 +36,118 @@ _CANDLES: Dict[TimeFrame, deque] = {
     "D1": deque(maxlen=_CANDLES_MAX["D1"]),
 }
 _FACTORS: Dict[TimeFrame, Dict[str, float]] = defaultdict(dict)
+_CACHE_PATH = Path("logs/factor_cache.json")
 
 _LOCK = asyncio.Lock()
+
+
+def _persist_cache() -> None:
+    """Persist factor snapshot to disk so restart can reuse warm data."""
+    try:
+        payload: Dict[str, Dict[str, object]] = {}
+        for tf, factors in _FACTORS.items():
+            if not factors:
+                continue
+            snapshot: Dict[str, object] = {}
+            for key, value in factors.items():
+                if key == "candles":
+                    continue
+                snapshot[key] = _serialize(value)
+
+            # Attach candles separately after serialization to avoid numpy leakage
+            raw_candles = factors.get("candles")
+            if isinstance(raw_candles, list):
+                serial_candles = []
+                limit = _CANDLES_MAX.get(tf, len(raw_candles))
+                for cndl in raw_candles[-limit:]:
+                    if not isinstance(cndl, dict):
+                        continue
+                    serial_candles.append(
+                        {
+                            "timestamp": cndl.get("timestamp"),
+                            "open": _serialize(cndl.get("open")),
+                            "high": _serialize(cndl.get("high")),
+                            "low": _serialize(cndl.get("low")),
+                            "close": _serialize(cndl.get("close")),
+                        }
+                    )
+                snapshot["candles"] = serial_candles
+
+            payload[tf] = snapshot
+        if not payload:
+            return
+        _CACHE_PATH.parent.mkdir(parents=True, exist_ok=True)
+        _CACHE_PATH.write_text(json.dumps(payload), encoding="utf-8")
+    except Exception as exc:  # noqa: BLE001
+        logging.warning("[FACTOR_CACHE] persist failed: %s", exc)
+
+
+def _restore_cache() -> None:
+    """Load persisted factors (if any) back into memory."""
+    if not _CACHE_PATH.exists():
+        return
+    try:
+        data = json.loads(_CACHE_PATH.read_text(encoding="utf-8"))
+    except Exception as exc:  # noqa: BLE001
+        logging.warning("[FACTOR_CACHE] restore failed: %s", exc)
+        return
+
+    for tf, snapshot in data.items():
+        if tf not in _CANDLES:
+            continue
+        try:
+            candles = snapshot.get("candles") or []
+            dq = _CANDLES[tf]
+            dq.clear()
+            for cndl in candles[-_CANDLES_MAX[tf]:]:
+                if not isinstance(cndl, dict):
+                    continue
+                dq.append(
+                    {
+                        "timestamp": cndl.get("timestamp"),
+                        "open": cndl.get("open"),
+                        "high": cndl.get("high"),
+                        "low": cndl.get("low"),
+                        "close": cndl.get("close"),
+                    }
+                )
+            factors = dict(snapshot)
+            if "candles" in factors:
+                factors["candles"] = list(dq)
+            if dq:
+                last = dq[-1]
+                factors.setdefault("close", last.get("close"))
+                factors.setdefault("open", last.get("open"))
+                factors.setdefault("high", last.get("high"))
+                factors.setdefault("low", last.get("low"))
+                factors.setdefault("timestamp", last.get("timestamp"))
+            _FACTORS[tf].clear()
+            _FACTORS[tf].update(factors)
+        except Exception as exc:  # noqa: BLE001
+            logging.warning("[FACTOR_CACHE] failed to restore timeframe %s: %s", tf, exc)
+
+
+_restore_cache()
+
+
+def _serialize(value: object) -> object:
+    """Convert numpy/pandas scalars into plain Python types."""
+    try:
+        import numpy as np  # local import to avoid hard dependency if missing
+    except ImportError:  # pragma: no cover
+        np = None  # type: ignore[assignment]
+
+    if np is not None:
+        if isinstance(value, (np.floating, np.integer)):
+            return value.item()
+        if isinstance(value, np.bool_):
+            return bool(value)
+    if hasattr(value, "item"):
+        try:
+            return value.item()
+        except Exception:  # pragma: no cover - defensive
+            pass
+    return value
 
 
 async def on_candle(tf: TimeFrame, candle: Dict[str, float]):
@@ -72,6 +187,7 @@ async def on_candle(tf: TimeFrame, candle: Dict[str, float]):
 
         _FACTORS[tf].clear()
         _FACTORS[tf].update(factors)
+        _persist_cache()
 
 
 def all_factors() -> Dict[TimeFrame, Dict[str, float]]:
@@ -81,9 +197,9 @@ def all_factors() -> Dict[TimeFrame, Dict[str, float]]:
 
 # ---------- self-test ----------
 if __name__ == "__main__":
-    import random
-    import datetime
     import asyncio
+    import datetime
+    import random
 
     async def main():
         base = 157.00

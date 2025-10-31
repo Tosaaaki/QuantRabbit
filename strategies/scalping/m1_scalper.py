@@ -4,6 +4,7 @@ import json
 import os
 import logging
 from pathlib import Path
+import time
 
 try:
     from analysis.patterns import NWaveStructure, detect_latest_n_wave
@@ -17,6 +18,8 @@ _PIP = 0.01
 _CONFIG_PATH = Path(__file__).resolve().parents[2] / "configs" / "scalp_active_params.json"
 _PARAM_CACHE: Dict[str, Dict] = {"mtime": None, "data": {}}
 _LOGGER = logging.getLogger(__name__)
+_EMPTY_TICK_LOG_DEBOUNCE_SEC = 20.0
+_last_no_tick_log_ts = 0.0
 
 
 def _log(reason: str, **kwargs: object) -> None:
@@ -266,6 +269,25 @@ class M1Scalper:
         if fallback_enabled:
             ticks = fac.get("recent_ticks") or []
             summary = fac.get("recent_tick_summary") or {}
+            if not ticks:
+                global _last_no_tick_log_ts
+                now_ts = time.time()
+                if now_ts - _last_no_tick_log_ts >= _EMPTY_TICK_LOG_DEBOUNCE_SEC:
+                    msg = "no_recent_ticks"
+                    if _force_mode():
+                        _LOGGER.warning(
+                            "[FORCE_SCALP] M1Scalper %s atr=%.2f rsi=%.2f",
+                            msg,
+                            round(atr_pips, 2),
+                            round(rsi, 2),
+                        )
+                    else:
+                        _log(
+                            msg,
+                            atr=round(atr_pips, 2),
+                            rsi=round(rsi, 2),
+                        )
+                    _last_no_tick_log_ts = now_ts
             if ticks:
                 try:
                     mid_latest = float(ticks[-1]["mid"])

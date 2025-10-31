@@ -27,18 +27,18 @@ SL_PIPS: float = max(10.0, float(os.getenv("FAST_SCALP_SL_PIPS", "60.0")))
 SL_POST_ADJUST_BUFFER_PIPS: float = max(
     0.0, float(os.getenv("FAST_SCALP_SL_POST_ADJUST_BUFFER_PIPS", "5.0"))
 )
-MAX_SPREAD_PIPS: float = max(0.1, float(os.getenv("FAST_SCALP_MAX_SPREAD_PIPS", "0.6")))
-ENTRY_THRESHOLD_PIPS: float = max(0.005, float(os.getenv("FAST_SCALP_ENTRY_MOM_PIPS", "0.02")))
+MAX_SPREAD_PIPS: float = max(0.1, float(os.getenv("FAST_SCALP_MAX_SPREAD_PIPS", "0.85")))
+ENTRY_THRESHOLD_PIPS: float = max(0.003, float(os.getenv("FAST_SCALP_ENTRY_MOM_PIPS", "0.008")))
 ENTRY_SHORT_THRESHOLD_PIPS: float = max(
-    0.004, float(os.getenv("FAST_SCALP_ENTRY_SHORT_MOM_PIPS", "0.015"))
+    0.003, float(os.getenv("FAST_SCALP_ENTRY_SHORT_MOM_PIPS", "0.008"))
 )
-ENTRY_RANGE_FLOOR_PIPS: float = max(0.01, float(os.getenv("FAST_SCALP_RANGE_FLOOR_PIPS", "0.15")))
-ENTRY_COOLDOWN_SEC: float = max(0.25, float(os.getenv("FAST_SCALP_ENTRY_COOLDOWN_SEC", "1.0")))
+ENTRY_RANGE_FLOOR_PIPS: float = max(0.005, float(os.getenv("FAST_SCALP_RANGE_FLOOR_PIPS", "0.04")))
+ENTRY_COOLDOWN_SEC: float = max(0.2, float(os.getenv("FAST_SCALP_ENTRY_COOLDOWN_SEC", "0.75")))
 MAX_ORDERS_PER_MINUTE: int = max(1, int(float(os.getenv("FAST_SCALP_MAX_ORDERS_PER_MIN", "40"))))
 MIN_ORDER_SPACING_SEC: float = max(
-    0.25, float(os.getenv("FAST_SCALP_MIN_ORDER_SPACING_SEC", "1.0"))
+    0.2, float(os.getenv("FAST_SCALP_MIN_ORDER_SPACING_SEC", "0.75"))
 )
-MAX_LOT: float = max(0.001, float(os.getenv("FAST_SCALP_MAX_LOT", "0.05")))
+MAX_LOT: float = max(0.001, float(os.getenv("FAST_SCALP_MAX_LOT", "0.1")))
 SYNC_INTERVAL_SEC: float = max(5.0, float(os.getenv("FAST_SCALP_SYNC_INTERVAL_SEC", "45.0")))
 TIMEOUT_SEC: float = max(10.0, float(os.getenv("FAST_SCALP_TIMEOUT_SEC", "65.0")))
 TIMEOUT_MIN_GAIN_PIPS: float = float(os.getenv("FAST_SCALP_TIMEOUT_MIN_GAIN_PIPS", "0.4"))
@@ -48,15 +48,66 @@ MAX_DRAWDOWN_CLOSE_PIPS: float = max(
 FAST_SHARE_HINT: float = max(0.0, min(1.0, float(os.getenv("FAST_SCALP_SHARE_HINT", "0.35"))))
 SHORT_WINDOW_SEC: float = max(0.2, float(os.getenv("FAST_SCALP_SHORT_WINDOW_SEC", "0.8")))
 LONG_WINDOW_SEC: float = max(
-    SHORT_WINDOW_SEC + 0.2, float(os.getenv("FAST_SCALP_LONG_WINDOW_SEC", "3.5"))
+    SHORT_WINDOW_SEC + 0.2, float(os.getenv("FAST_SCALP_LONG_WINDOW_SEC", "5.0"))
 )
-MIN_TICK_COUNT: int = max(3, int(float(os.getenv("FAST_SCALP_MIN_TICK_COUNT", "5"))))
 JST_OFF_HOURS_START: int = min(23, max(0, int(float(os.getenv("FAST_SCALP_OFF_HOURS_START_JST", "3")))))
 JST_OFF_HOURS_END: int = min(23, max(0, int(float(os.getenv("FAST_SCALP_OFF_HOURS_END_JST", "5")))))
 LOG_PREFIX_TICK = "[SCALP-TICK]"
 MIN_UNITS: int = max(1000, int(float(os.getenv("FAST_SCALP_MIN_UNITS", "10000"))))
-MAX_ACTIVE_TRADES: int = max(1, int(float(os.getenv("FAST_SCALP_MAX_ACTIVE", "3"))))
+MAX_ACTIVE_TRADES: int = max(1, int(float(os.getenv("FAST_SCALP_MAX_ACTIVE", "2"))))
+MAX_PER_DIRECTION: int = max(1, int(float(os.getenv("FAST_SCALP_MAX_PER_DIRECTION", "2"))))
 STALE_TICK_MAX_SEC: float = max(0.5, float(os.getenv("FAST_SCALP_STALE_TICK_MAX_SEC", "3.0")))
 SNAPSHOT_MIN_INTERVAL_SEC: float = max(
     0.25, float(os.getenv("FAST_SCALP_SNAPSHOT_MIN_INTERVAL_SEC", "1.0"))
 )
+SNAPSHOT_BURST_MAX_ATTEMPTS: int = max(
+    1, int(float(os.getenv("FAST_SCALP_SNAPSHOT_BURST_ATTEMPTS", "12")))
+)
+SNAPSHOT_BURST_INTERVAL_SEC: float = max(
+    0.02, float(os.getenv("FAST_SCALP_SNAPSHOT_BURST_INTERVAL_SEC", "0.12"))
+)
+
+# --- entry gating / quality thresholds ---
+MIN_ENTRY_ATR_PIPS: float = max(0.0, float(os.getenv("FAST_SCALP_MIN_ENTRY_ATR_PIPS", "0.18")))
+MIN_ENTRY_TICK_COUNT: int = max(2, int(float(os.getenv("FAST_SCALP_MIN_ENTRY_TICK_COUNT", "18"))))
+MIN_ENTRY_TICK_SPAN_SEC: float = max(0.0, float(os.getenv("FAST_SCALP_MIN_ENTRY_TICK_SPAN_SEC", "6.0")))
+RSI_ENTRY_OVERBOUGHT: float = float(os.getenv("FAST_SCALP_RSI_ENTRY_OVERBOUGHT", "70"))
+RSI_ENTRY_OVERSOLD: float = float(os.getenv("FAST_SCALP_RSI_ENTRY_OVERSOLD", "30"))
+LOW_VOL_COOLDOWN_SEC: float = max(0.0, float(os.getenv("FAST_SCALP_LOW_VOL_COOLDOWN_SEC", "30.0")))
+LOW_VOL_MAX_CONSECUTIVE: int = max(1, int(float(os.getenv("FAST_SCALP_LOW_VOL_MAX_CONSECUTIVE", "3"))))
+PATTERN_MODEL_PATH: str = os.getenv("FAST_SCALP_PATTERN_MODEL_PATH", "").strip()
+PATTERN_MIN_PROB: float = max(0.0, min(1.0, float(os.getenv("FAST_SCALP_PATTERN_MIN_PROB", "0.55"))))
+
+# --- technical thresholds ---
+RSI_PERIOD: int = max(3, int(float(os.getenv("FAST_SCALP_RSI_PERIOD", "6"))))
+RSI_LONG_MIN: float = float(os.getenv("FAST_SCALP_RSI_LONG_MIN", "38"))
+RSI_LONG_MAX: float = float(os.getenv("FAST_SCALP_RSI_LONG_MAX", "72"))
+RSI_SHORT_MAX: float = float(os.getenv("FAST_SCALP_RSI_SHORT_MAX", "62"))
+RSI_SHORT_MIN: float = float(os.getenv("FAST_SCALP_RSI_SHORT_MIN", "32"))
+RSI_EXIT_LONG: float = float(os.getenv("FAST_SCALP_RSI_EXIT_LONG", "42"))
+RSI_EXIT_SHORT: float = float(os.getenv("FAST_SCALP_RSI_EXIT_SHORT", "58"))
+
+ATR_PERIOD: int = max(2, int(float(os.getenv("FAST_SCALP_ATR_PERIOD", "8"))))
+ATR_LOW_VOL_PIPS: float = max(0.0, float(os.getenv("FAST_SCALP_ATR_LOW_VOL_PIPS", "1.4")))
+ATR_HIGH_VOL_PIPS: float = max(0.0, float(os.getenv("FAST_SCALP_ATR_HIGH_VOL_PIPS", "4.0")))
+
+_MIN_TICK_ENV = int(float(os.getenv("FAST_SCALP_MIN_TICK_COUNT", "14")))
+MIN_TICK_COUNT: int = max(RSI_PERIOD + 2, ATR_PERIOD + 1, _MIN_TICK_ENV)
+
+MAX_MARGIN_USAGE: float = max(0.1, min(1.0, float(os.getenv("FAST_SCALP_MAX_MARGIN_USAGE", "0.6"))))
+TIMEOUT_SEC_BASE: float = max(5.0, float(os.getenv("FAST_SCALP_TIMEOUT_SEC_BASE", str(TIMEOUT_SEC))))
+TIMEOUT_LOW_VOL_MULT: float = max(0.0, float(os.getenv("FAST_SCALP_TIMEOUT_LOW_VOL_MULT", "0")))
+TIMEOUT_HIGH_VOL_MULT: float = max(0.1, float(os.getenv("FAST_SCALP_TIMEOUT_HIGH_VOL_MULT", "0.6")))
+
+M1_RSI_LONG_MIN: float = float(os.getenv("FAST_SCALP_M1_RSI_LONG_MIN", "45"))
+M1_RSI_SHORT_MAX: float = float(os.getenv("FAST_SCALP_M1_RSI_SHORT_MAX", "55"))
+M1_RSI_CONFIRM_SPAN_SEC: float = max(5.0, float(os.getenv("FAST_SCALP_M1_RSI_CONFIRM_SPAN_SEC", "30.0")))
+
+# --- dynamic entry tuning ---
+# エントリー閾値を ATR/スプレッドに応じて可変化
+ENTRY_MOM_ATR_COEF: float = max(0.0, float(os.getenv("FAST_SCALP_ENTRY_MOM_ATR_COEF", "0.16")))
+ENTRY_MOM_SPREAD_COEF: float = max(0.0, float(os.getenv("FAST_SCALP_ENTRY_MOM_SPREAD_COEF", "0.4")))
+ENTRY_RANGE_SPREAD_COEF: float = max(0.0, float(os.getenv("FAST_SCALP_ENTRY_RANGE_SPREAD_COEF", "0.35")))
+
+# テスト/検証用（広いスプレッド時は無効）
+FORCE_ENTRIES: bool = _bool_env("FAST_SCALP_FORCE_ENTRIES", False)

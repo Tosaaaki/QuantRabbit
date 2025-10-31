@@ -18,6 +18,7 @@ from analysis.chart_story import ChartStorySnapshot
 from analysis.ma_projection import MACrossProjection, compute_ma_projection
 from utils.metrics_logger import log_metric
 from advisors.exit_advisor import ExitHint
+from workers.fast_scalp import config as fast_scalp_config
 
 
 @dataclass
@@ -131,6 +132,19 @@ class ExitManager:
             if short_units == 0:
                 self._reset_reverse_counter(pocket, "short")
             if long_units == 0 and short_units == 0:
+                continue
+
+            if pocket == "scalp_fast":
+                decisions.extend(
+                    self._evaluate_scalp_fast(
+                        pocket=pocket,
+                        open_info=info,
+                        event_soon=event_soon,
+                        now=current_time,
+                        story=story,
+                        range_mode=range_mode,
+                    )
+                )
                 continue
 
             reverse_short = self._confirm_reverse_signal(
@@ -871,6 +885,127 @@ class ExitManager:
             tag=tag,
             allow_reentry=allow_reentry,
         )
+
+    def _evaluate_scalp_fast(
+        self,
+        pocket: str,
+        open_info: Dict,
+        event_soon: bool,
+        now: datetime,
+        story: Optional[ChartStorySnapshot],
+        range_mode: bool,
+    ) -> List[ExitDecision]:
+        decisions: List[ExitDecision] = []
+        trades = open_info.get("open_trades") or []
+        for tr in trades:
+            units = abs(int(tr.get("units", 0) or 0))
+            if units == 0:
+                continue
+            side = tr.get("side", "long")
+            profit_pips = float(tr.get("unrealized_pl_pips") or 0.0)
+            entry_meta = tr.get("entry_thesis") or {}
+            pattern_score = entry_meta.get("pattern_score")
+            try:
+                pattern_score = float(pattern_score)
+            except (TypeError, ValueError):
+                pattern_score = None
+            pattern_tag = entry_meta.get("pattern_tag")
+            hold_seconds = None
+            opened_at = self._parse_open_time(tr.get("open_time"))
+            if opened_at is not None:
+                hold_seconds = (now - opened_at).total_seconds()
+
+            target = 1.6
+            timeout = 40.0
+            max_loss = 1.8
+            if pattern_score is not None:
+                if pattern_score >= 0.8:
+                    target = 2.4
+                    timeout = 60.0
+                    max_loss = 2.4
+                elif pattern_score >= fast_scalp_config.PATTERN_MIN_PROB:
+                    target = 1.8
+                    timeout = 50.0
+                else:
+                    target = 1.3
+                    timeout = 35.0
+                    max_loss = 1.4
+
+            reason = ""
+            allow_reentry = False
+
+            if event_soon:
+                reason = "scalp_fast_event_exit"
+                allow_reentry = True
+            elif profit_pips >= target and (hold_seconds or 0.0) >= 8.0:
+                reason = "scalp_fast_target_hit"
+            elif profit_pips <= -max_loss:
+                reason = "scalp_fast_stop"
+            elif hold_seconds is not None and hold_seconds >= timeout and profit_pips < target:
+                reason = "scalp_fast_timeout"
+                allow_reentry = True
+            elif (
+                pattern_score is not None
+                and pattern_score < fast_scalp_config.PATTERN_MIN_PROB
+                and profit_pips < 0.3
+                and (hold_seconds or 0.0) >= 12.0
+            ):
+                reason = "scalp_fast_pattern_veto"
+                allow_reentry = True
+            elif (
+                pattern_score is not None
+                and pattern_score >= 0.7
+                and profit_pips >= 1.0
+                and (hold_seconds or 0.0) >= 12.0
+            ):
+                reason = "scalp_fast_secure"
+            elif (
+                pattern_tag in {"flat_chop", "narrow_range", "broad_range_stall"}
+                and (hold_seconds or 0.0) >= 20.0
+                and profit_pips < 0.6
+            ):
+                reason = "scalp_fast_chop_exit"
+                allow_reentry = True
+
+            if not reason and range_mode:
+                if profit_pips >= 1.4:
+                    reason = "scalp_fast_range_tp"
+                elif profit_pips <= -1.0:
+                    reason = "scalp_fast_range_stop"
+
+            if not reason:
+                continue
+
+            side_units = -units if side == "long" else units
+            self._record_exit_metric(
+                pocket,
+                side,
+                reason,
+                profit_pips,
+                story,
+                range_mode,
+                now,
+            )
+            logging.info(
+                "[EXIT] pocket=%s side=%s reason=%s profit=%.2fp pattern=%.3f tag=%s",
+                pocket,
+                side,
+                reason,
+                profit_pips,
+                pattern_score if pattern_score is not None else float("nan"),
+                pattern_tag or "",
+            )
+            decisions.append(
+                ExitDecision(
+                    pocket=pocket,
+                    units=side_units,
+                    reason=reason,
+                    tag=f"{pocket}-{side}",
+                    allow_reentry=allow_reentry,
+                )
+            )
+        return decisions
+
 
     def _should_exit_for_cross(
         self,

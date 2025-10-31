@@ -752,7 +752,11 @@ async def market_order(
                     error_message=reject.get("errorMessage") or reason,
                     response_payload=response,
                 )
-                if attempt == 0 and abs(units_to_send) >= 2000:
+                if (
+                    attempt == 0
+                    and abs(units_to_send) >= 2000
+                    and pocket != "scalp_fast"
+                ):
                     units_to_send = int(units_to_send * 0.5)
                     if units_to_send == 0:
                         break
@@ -842,7 +846,11 @@ async def market_order(
                 response_payload=resp if isinstance(resp, dict) else None,
             )
 
-            if attempt == 0 and abs(units_to_send) >= 2000:
+            if (
+                attempt == 0
+                and abs(units_to_send) >= 2000
+                and pocket != "scalp_fast"
+            ):
                 units_to_send = int(units_to_send * 0.5)
                 if units_to_send == 0:
                     break
