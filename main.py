@@ -3042,12 +3042,12 @@ async def logic_loop(
                     overstretched = True
                     if ma10_h4 > ma20_h4:
                         direction = "OPEN_LONG"
-                        overstretched = bool(ema20_m1_val and close_m1_val < ema20_m1_val - 0.01)
+                        overstretched = bool(ema20_m1_val and close_m1_val < ema20_m1_val - 0.03)
                     elif ma10_h4 < ma20_h4:
                         direction = "OPEN_SHORT"
-                        overstretched = bool(ema20_m1_val and close_m1_val > ema20_m1_val + 0.01)
-                    near_trend = (gap_pips_h4 >= 3.2 and adx_h4 >= 16.0)
-                    rsi_ok = (40.0 <= rsi_m1_val <= 60.0)
+                        overstretched = bool(ema20_m1_val and close_m1_val > ema20_m1_val + 0.03)
+                    near_trend = (gap_pips_h4 >= 3.0 and adx_h4 >= 15.0)
+                    rsi_ok = (35.0 <= rsi_m1_val <= 65.0)
                     if direction and near_trend and rsi_ok and not overstretched:
                         atr_hint = fac_m1.get("atr_pips")
                         if atr_hint is None:
