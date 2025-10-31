@@ -412,7 +412,7 @@ class ExitManager:
                 ):
                     reason = "scalp_time_exit"
                     allow_reentry = True
-            if not reason and ema_fast is not None and close_price > ema_fast:
+            if not reason and ema_fast is not None and close_price < ema_fast:
                 reason = "scalp_momentum_flip"
         elif self._should_exit_for_cross(
             pocket,
@@ -728,7 +728,7 @@ class ExitManager:
                 ):
                     reason = "scalp_time_exit"
                     allow_reentry = True
-            if not reason and ema_fast is not None and close_price < ema_fast:
+            if not reason and ema_fast is not None and close_price > ema_fast:
                 reason = "scalp_momentum_flip"
         elif self._should_exit_for_cross(
             pocket,
