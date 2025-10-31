@@ -11,6 +11,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 import logging
+import statistics
 from typing import Dict, List, Optional, Tuple
 
 from analysis.chart_story import ChartStorySnapshot
@@ -28,6 +29,9 @@ class ExitDecision:
     reason: str
     tag: str
     allow_reentry: bool = False
+
+
+MANAGED_POCKETS = {"macro", "micro", "scalp", "scalp_fast"}
 
 
 class ExitManager:
@@ -76,11 +80,17 @@ class ExitManager:
             "macro_stop_loss",
             "micro_momentum_stop",
             "event_lock",
+            "macro_profit_lock",
         }
         self._min_partial_units = 600
         self._scalp_time_close_sec = 55.0
         self._scalp_time_target_pips = 0.95
         self._scalp_time_max_loss_pips = 4.0
+        self._h1_lock_trigger_ratio = 0.55
+        self._h1_lock_buffer_ratio = 0.35
+        self._h1_lock_min_trigger = 12.0
+        self._h1_lock_min_buffer = 6.0
+        self._h1_lock_min_hold_minutes = 28.0
 
     def _macro_trend_supports(
         self,
@@ -123,7 +133,7 @@ class ExitManager:
         atr_m1 = self._safe_float(fac_m1.get("atr_pips"))
         atr_h4 = self._safe_float(fac_h4.get("atr_pips"))
         for pocket, info in open_positions.items():
-            if pocket == "__net__":
+            if pocket == "__net__" or pocket not in MANAGED_POCKETS:
                 continue
             long_units = int(info.get("long_units", 0) or 0)
             short_units = int(info.get("short_units", 0) or 0)
@@ -292,6 +302,8 @@ class ExitManager:
             if pocket == "macro" and ema_primary is not None
             else ema_fast
         )
+        max_mfe_short = self._max_mfe_for_side(open_info, "short", m1_candles, now)
+        max_mfe_long = self._max_mfe_for_side(open_info, "long", m1_candles, now)
         hold_seconds: Optional[float] = None
         if pocket == "scalp":
             hold_seconds = self._trade_age_seconds(open_info, "short", now)
@@ -433,6 +445,17 @@ class ExitManager:
             and close_price <= ema_ref - self._macro_trail_offset
         ):
             reason = "macro_trail_hit"
+        elif pocket == "macro" and not range_mode:
+            lock_reason = self._macro_profit_capture(
+                open_info,
+                "long",
+                profit_pips,
+                max_mfe_long,
+                now,
+            )
+            if lock_reason:
+                reason = lock_reason
+                allow_reentry = False
         # レンジ中でもマクロの既存建玉を一律にクローズしない。
         # 早期利確/撤退（range_take_profit/range_stop）や逆方向シグナルのみで制御する。
         elif range_mode:
@@ -741,6 +764,17 @@ class ExitManager:
             macd_cross_minutes,
         ):
             reason = "ma_cross_imminent"
+        elif pocket == "macro" and not range_mode:
+            lock_reason = self._macro_profit_capture(
+                open_info,
+                "short",
+                profit_pips,
+                max_mfe_short,
+                now,
+            )
+            if lock_reason:
+                reason = lock_reason
+                allow_reentry = False
         # レンジ中でもマクロの既存建玉を一律にクローズしない。
         # 早期利確/撤退（range_take_profit/range_stop）や逆方向シグナルのみで制御する。
         elif range_mode:
@@ -1321,6 +1355,66 @@ class ExitManager:
         if pocket == "micro":
             return story.micro_trend
         return story.higher_trend
+
+    def _macro_profit_capture(
+        self,
+        open_info: Dict,
+        side: str,
+        profit_pips: float,
+        max_mfe: Optional[float],
+        now: datetime,
+    ) -> Optional[str]:
+        if profit_pips is None or profit_pips <= 0.0:
+            return None
+        if max_mfe is None or max_mfe < self._h1_lock_min_trigger:
+            return None
+        hold_seconds = self._trade_age_seconds(open_info, side, now)
+        hold_minutes = (hold_seconds or 0.0) / 60.0 if hold_seconds is not None else 0.0
+        if hold_minutes < self._h1_lock_min_hold_minutes:
+            return None
+
+        theses = []
+        for tr in open_info.get("open_trades") or []:
+            if tr.get("side") != side:
+                continue
+            thesis = tr.get("entry_thesis") or {}
+            if thesis.get("strategy") == "H1Momentum":
+                theses.append(thesis)
+        if not theses:
+            return None
+
+        insurance_values: List[float] = []
+        for thesis in theses:
+            note = thesis.get("note")
+            if isinstance(note, dict):
+                raw = note.get("insurance_sl")
+                try:
+                    value = float(raw)
+                except (TypeError, ValueError):
+                    continue
+                if value > 0.0:
+                    insurance_values.append(value)
+        insurance_sl = statistics.median(insurance_values) if insurance_values else 24.0
+        trigger = max(self._h1_lock_min_trigger, insurance_sl * self._h1_lock_trigger_ratio)
+        if max_mfe < trigger:
+            return None
+        buffer = max(self._h1_lock_min_buffer, insurance_sl * self._h1_lock_buffer_ratio)
+        if profit_pips > max_mfe - buffer:
+            return None
+
+        log_metric(
+            "macro_profit_lock",
+            float(profit_pips),
+            tags={
+                "strategy": "H1Momentum",
+                "side": side,
+                "max_mfe": f"{max_mfe:.2f}",
+                "insurance_sl": f"{insurance_sl:.2f}",
+                "hold_min": f"{hold_minutes:.1f}",
+            },
+            ts=now,
+        )
+        return "macro_profit_lock"
 
     def _get_mfe_guard(
         self,

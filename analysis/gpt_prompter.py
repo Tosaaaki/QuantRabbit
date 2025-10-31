@@ -53,7 +53,7 @@ def build_messages(payload: Dict) -> List[Dict]:
         return json.dumps(value, separators=(",", ":"), ensure_ascii=False)
 
     factors: Dict[str, Any] = {}
-    for key, label in (("factors_m1", "M1"), ("factors_h4", "H4")):
+    for key, label in (("factors_m1", "M1"), ("factors_h1", "H1"), ("factors_h4", "H4")):
         data = payload.get(key)
         if data:
             factors[label] = data
@@ -97,7 +97,7 @@ def build_messages(payload: Dict) -> List[Dict]:
         "focus_tag must be one of [micro, macro, hybrid, event]. "
         "weight_macro and weight_scalp are floats in [0,1] and must sum to at most 1. "
         "ranked_strategies is an array ordered by priority, using only "
-        "[TrendMA, Donchian55, BB_RSI, NewsSpikeReversal, M1Scalper, RangeFader, PulseBreak]."
+        "[TrendMA, H1Momentum, Donchian55, BB_RSI, NewsSpikeReversal, M1Scalper, RangeFader, PulseBreak]."
     )
 
     messages = [

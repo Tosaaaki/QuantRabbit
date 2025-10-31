@@ -70,7 +70,6 @@ SNAPSHOT_BURST_INTERVAL_SEC: float = max(
 # --- entry gating / quality thresholds ---
 MIN_ENTRY_ATR_PIPS: float = max(0.0, float(os.getenv("FAST_SCALP_MIN_ENTRY_ATR_PIPS", "0.18")))
 MIN_ENTRY_TICK_COUNT: int = max(2, int(float(os.getenv("FAST_SCALP_MIN_ENTRY_TICK_COUNT", "18"))))
-MIN_ENTRY_TICK_SPAN_SEC: float = max(0.0, float(os.getenv("FAST_SCALP_MIN_ENTRY_TICK_SPAN_SEC", "6.0")))
 RSI_ENTRY_OVERBOUGHT: float = float(os.getenv("FAST_SCALP_RSI_ENTRY_OVERBOUGHT", "70"))
 RSI_ENTRY_OVERSOLD: float = float(os.getenv("FAST_SCALP_RSI_ENTRY_OVERSOLD", "30"))
 LOW_VOL_COOLDOWN_SEC: float = max(0.0, float(os.getenv("FAST_SCALP_LOW_VOL_COOLDOWN_SEC", "30.0")))
@@ -94,6 +93,30 @@ ATR_HIGH_VOL_PIPS: float = max(0.0, float(os.getenv("FAST_SCALP_ATR_HIGH_VOL_PIP
 _MIN_TICK_ENV = int(float(os.getenv("FAST_SCALP_MIN_TICK_COUNT", "14")))
 MIN_TICK_COUNT: int = max(RSI_PERIOD + 2, ATR_PERIOD + 1, _MIN_TICK_ENV)
 
+# Require at least ~70% of the sampling window so we avoid gating ourselves out entirely.
+_min_span_env = os.getenv("FAST_SCALP_MIN_ENTRY_TICK_SPAN_SEC")
+if _min_span_env is None:
+    MIN_ENTRY_TICK_SPAN_SEC: float = max(2.0, LONG_WINDOW_SEC * 0.7)
+else:
+    try:
+        MIN_ENTRY_TICK_SPAN_SEC = max(0.0, float(_min_span_env))
+    except ValueError:
+        MIN_ENTRY_TICK_SPAN_SEC = max(2.0, LONG_WINDOW_SEC * 0.7)
+if MIN_ENTRY_TICK_SPAN_SEC >= LONG_WINDOW_SEC:
+    MIN_ENTRY_TICK_SPAN_SEC = max(0.0, min(LONG_WINDOW_SEC * 0.95, LONG_WINDOW_SEC - 0.2))
+
+_relax_buffer_env = os.getenv("FAST_SCALP_MIN_SPAN_RELAX_TICK_BUFFER", "6")
+try:
+    MIN_SPAN_RELAX_TICK_BUFFER: int = max(0, int(float(_relax_buffer_env)))
+except ValueError:
+    MIN_SPAN_RELAX_TICK_BUFFER = 6
+_relax_ratio_env = os.getenv("FAST_SCALP_MIN_SPAN_RELAX_RATIO", "0.55")
+try:
+    MIN_SPAN_RELAX_RATIO: float = float(_relax_ratio_env)
+except ValueError:
+    MIN_SPAN_RELAX_RATIO = 0.55
+MIN_SPAN_RELAX_RATIO = max(0.1, min(0.95, MIN_SPAN_RELAX_RATIO))
+
 MAX_MARGIN_USAGE: float = max(0.1, min(1.0, float(os.getenv("FAST_SCALP_MAX_MARGIN_USAGE", "0.6"))))
 TIMEOUT_SEC_BASE: float = max(5.0, float(os.getenv("FAST_SCALP_TIMEOUT_SEC_BASE", str(TIMEOUT_SEC))))
 TIMEOUT_LOW_VOL_MULT: float = max(0.0, float(os.getenv("FAST_SCALP_TIMEOUT_LOW_VOL_MULT", "0")))
@@ -111,3 +134,59 @@ ENTRY_RANGE_SPREAD_COEF: float = max(0.0, float(os.getenv("FAST_SCALP_ENTRY_RANG
 
 # テスト/検証用（広いスプレッド時は無効）
 FORCE_ENTRIES: bool = _bool_env("FAST_SCALP_FORCE_ENTRIES", False)
+
+# --- advanced timeout control ---
+TIMEOUT_EVENT_BUDGET: int = max(1, int(float(os.getenv("FAST_SCALP_TIMEOUT_EVENT_BUDGET", "12"))))
+TIMEOUT_EVENT_BUDGET_MAX: int = max(
+    TIMEOUT_EVENT_BUDGET, int(float(os.getenv("FAST_SCALP_TIMEOUT_EVENT_BUDGET_MAX", "18")))
+)
+TIMEOUT_EVENT_HEALTH_EXIT: float = float(
+    os.getenv("FAST_SCALP_TIMEOUT_EVENT_HEALTH_EXIT", "0.2")
+)
+TIMEOUT_HEALTH_KILL_THRESHOLD: float = float(
+    os.getenv("FAST_SCALP_TIMEOUT_HEALTH_KILL_THRESHOLD", "0.0")
+)
+TIMEOUT_HEALTH_EXTEND_THRESHOLD: float = float(
+    os.getenv("FAST_SCALP_TIMEOUT_HEALTH_EXTEND_THRESHOLD", "0.5")
+)
+TIMEOUT_EVENT_EXTEND_EVENTS: int = max(
+    0, int(float(os.getenv("FAST_SCALP_TIMEOUT_EVENT_EXTEND_EVENTS", "2")))
+)
+TIMEOUT_EVENT_EXTEND_SEC: float = max(
+    0.0, float(os.getenv("FAST_SCALP_TIMEOUT_EVENT_EXTEND_SEC", "0.3"))
+)
+TIMEOUT_GRACE_MS: float = max(
+    0.0, float(os.getenv("FAST_SCALP_TIMEOUT_GRACE_MS", "250.0"))
+)
+SCRATCH_MOMENTUM_MIN: float = float(os.getenv("FAST_SCALP_SCRATCH_MOMENTUM_MIN", "0.15"))
+SCRATCH_IMBALANCE_MIN: float = float(os.getenv("FAST_SCALP_SCRATCH_IMBALANCE_MIN", "0.12"))
+SCRATCH_MAX_SPREAD: float = float(os.getenv("FAST_SCALP_SCRATCH_MAX_SPREAD", "0.40"))
+HAZARD_INTERCEPT: float = float(os.getenv("FAST_SCALP_HAZARD_INTERCEPT", "0.25"))
+HAZARD_MOMENTUM_COEF: float = float(os.getenv("FAST_SCALP_HAZARD_MOMENTUM_COEF", "1.6"))
+HAZARD_IMBALANCE_COEF: float = float(os.getenv("FAST_SCALP_HAZARD_IMBALANCE_COEF", "1.1"))
+HAZARD_SPREAD_COEF: float = float(os.getenv("FAST_SCALP_HAZARD_SPREAD_COEF", "1.2"))
+HAZARD_LATENCY_COEF: float = float(os.getenv("FAST_SCALP_HAZARD_LATENCY_COEF", "0.0025"))
+HAZARD_DEBOUNCE_EVENTS: int = max(
+    1, int(float(os.getenv("FAST_SCALP_HAZARD_DEBOUNCE_EVENTS", "2")))
+)
+TIMEOUT_ADAPTIVE_MIN_SEC: float = max(
+    0.5, float(os.getenv("FAST_SCALP_TIMEOUT_ADAPTIVE_MIN_SEC", "1.6"))
+)
+TIMEOUT_ADAPTIVE_MAX_SEC: float = max(
+    TIMEOUT_ADAPTIVE_MIN_SEC, float(os.getenv("FAST_SCALP_TIMEOUT_ADAPTIVE_MAX_SEC", "4.8"))
+)
+TIMEOUT_FLAT_PIPS_THRESHOLD: float = float(
+    os.getenv("FAST_SCALP_TIMEOUT_FLAT_PIPS_THRESHOLD", "0.3")
+)
+TIMEOUT_FLAT_TICKRATE_THRESHOLD: float = float(
+    os.getenv("FAST_SCALP_TIMEOUT_FLAT_TICKRATE_THRESHOLD", "6.0")
+)
+TIMEOUT_ADVERSE_PIPS_THRESHOLD: float = float(
+    os.getenv("FAST_SCALP_TIMEOUT_ADVERSE_PIPS_THRESHOLD", "0.5")
+)
+TIMEOUT_SLIP_PIPS_THRESHOLD: float = float(
+    os.getenv("FAST_SCALP_TIMEOUT_SLIP_PIPS_THRESHOLD", "0.25")
+)
+TIMEOUT_SPREAD_SPIKE_PIPS: float = float(
+    os.getenv("FAST_SCALP_TIMEOUT_SPREAD_SPIKE_PIPS", "0.55")
+)

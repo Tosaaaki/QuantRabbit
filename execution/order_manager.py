@@ -641,7 +641,7 @@ async def market_order(
     units: int,
     sl_price: Optional[float],
     tp_price: Optional[float],
-    pocket: Literal["micro", "macro", "scalp", "scalp_fast"],
+    pocket: Literal["micro", "macro", "scalp", "scalp_fast", "manual"],
     *,
     client_order_id: Optional[str] = None,
     reduce_only: bool = False,

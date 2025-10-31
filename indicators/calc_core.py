@@ -17,7 +17,9 @@ class IndicatorEngine:
             return {
                 "ma10": 0.0,
                 "ma20": 0.0,
+                "ema12": 0.0,
                 "ema20": 0.0,
+                "ema24": 0.0,
                 "rsi": 0.0,
                 "atr": 0.0,
                 "adx": 0.0,
@@ -30,7 +32,9 @@ class IndicatorEngine:
 
         ma10 = close.rolling(window=10, min_periods=10).mean()
         ma20 = close.rolling(window=20, min_periods=20).mean()
+        ema12 = close.ewm(span=12, adjust=False, min_periods=12).mean()
         ema20 = close.ewm(span=20, adjust=False, min_periods=20).mean()
+        ema24 = close.ewm(span=24, adjust=False, min_periods=24).mean()
 
         rsi = _rsi(close, period=14)
         atr = _atr(high, low, close, period=14)
@@ -42,7 +46,9 @@ class IndicatorEngine:
         out: Dict[str, float] = {
             "ma10": float(ma10.iloc[-1]) if not ma10.empty else 0.0,
             "ma20": float(ma20.iloc[-1]) if not ma20.empty else 0.0,
+            "ema12": float(ema12.iloc[-1]) if not ema12.empty else 0.0,
             "ema20": float(ema20.iloc[-1]) if not ema20.empty else 0.0,
+            "ema24": float(ema24.iloc[-1]) if not ema24.empty else 0.0,
             "rsi": float(rsi.iloc[-1]) if not rsi.empty else 0.0,
             "atr": float(atr.iloc[-1]) if not atr.empty else 0.0,
             "adx": float(adx.iloc[-1]) if not adx.empty else 0.0,

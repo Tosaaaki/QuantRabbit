@@ -36,6 +36,7 @@ _FOCUS_TAGS = {"micro", "macro", "hybrid", "event"}
 _ALLOWED_STRATEGIES = [
     "TrendMA",
     "Donchian55",
+    "H1Momentum",
     "BB_RSI",
     "NewsSpikeReversal",
     "M1Scalper",
@@ -74,6 +75,7 @@ _FALLBACK_DECISION = {
     "weight_scalp": 0.1,
     "ranked_strategies": [
         "TrendMA",
+        "H1Momentum",
         "Donchian55",
         "BB_RSI",
         "NewsSpikeReversal",

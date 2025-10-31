@@ -237,7 +237,7 @@ class OrderIntent(BaseModel):
 * `.cache/token_usage.json` に月累計。  
 * `openai.max_month_tokens` (env.toml) で上限設定。  
 * 超過時：`news_fetcher` は継続、`gpt_decider` はフォールバック JSON を返す。  
-* フォールバック JSON: `{"focus_tag":"hybrid","weight_macro":0.5,"weight_scalp":0.15,"ranked_strategies":["TrendMA","Donchian55","BB_RSI","NewsSpikeReversal"],"reason":"fallback"}`。  
+* フォールバック JSON: `{"focus_tag":"hybrid","weight_macro":0.5,"weight_scalp":0.15,"ranked_strategies":["TrendMA","H1Momentum","Donchian55","BB_RSI","NewsSpikeReversal"],"reason":"fallback"}`。  
 * GPT 失敗時は過去 5 分の決定を再利用 (`reason="reuse_previous"`) し、`decision_latency_ms` を 9,000 で固定計上する。
 
 ---

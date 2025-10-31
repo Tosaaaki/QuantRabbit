@@ -129,6 +129,28 @@ def _restore_cache() -> None:
 
 _restore_cache()
 
+for tf, dq in _CANDLES.items():
+    if not dq:
+        continue
+    try:
+        df = pd.DataFrame(list(dq))
+        factors = IndicatorEngine.compute(df)
+        factors["candles"] = list(dq)
+        last = dq[-1]
+        factors.update(
+            {
+                "close": last.get("close"),
+                "open": last.get("open"),
+                "high": last.get("high"),
+                "low": last.get("low"),
+                "timestamp": last.get("timestamp"),
+            }
+        )
+        _FACTORS[tf].clear()
+        _FACTORS[tf].update(factors)
+    except Exception as exc:  # noqa: BLE001
+        logging.warning("[FACTOR_CACHE] warm recompute failed tf=%s: %s", tf, exc)
+
 
 def _serialize(value: object) -> object:
     """Convert numpy/pandas scalars into plain Python types."""

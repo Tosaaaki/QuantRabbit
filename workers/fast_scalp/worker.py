@@ -25,8 +25,14 @@ from utils.secrets import get_secret
 from . import config
 from .rate_limiter import SlidingWindowRateLimiter
 from .patterns import pattern_score
-from .signal import SignalFeatures, evaluate_signal, extract_features
+from .signal import (
+    SignalFeatures,
+    evaluate_signal,
+    extract_features,
+    span_requirement_ok,
+)
 from .state import FastScalpState
+from .timeout_controller import TimeoutController
 from .profiles import (
     DEFAULT_PROFILE,
     StrategyProfile,
@@ -213,6 +219,7 @@ async def fast_scalp_worker(shared_state: FastScalpState) -> None:
     )
     stage_tracker = StageTracker()
     pos_manager = PositionManager()
+    timeout_controller = TimeoutController()
     active_trades: dict[str, ActiveTrade] = {}
     last_sync = time.monotonic()
     spread_block_logged = False
@@ -320,11 +327,12 @@ async def fast_scalp_worker(shared_state: FastScalpState) -> None:
 
             # Quality gating: ensure volatility and sampling density are sufficient
             low_quality = False
+            span_ok = span_requirement_ok(features.span_seconds, features.tick_count)
             if features.atr_pips is None or features.atr_pips < config.MIN_ENTRY_ATR_PIPS:
                 low_quality = True
             elif features.tick_count < config.MIN_ENTRY_TICK_COUNT:
                 low_quality = True
-            elif features.span_seconds < config.MIN_ENTRY_TICK_SPAN_SEC:
+            elif not span_ok:
                 low_quality = True
 
             if low_quality:
@@ -353,6 +361,12 @@ async def fast_scalp_worker(shared_state: FastScalpState) -> None:
                 continue
             low_vol_counter = 0
 
+            tick_rate = (
+                features.tick_count / max(features.span_seconds, 0.5)
+                if features.span_seconds > 0.0
+                else float(features.tick_count)
+            )
+
             skip_new_entry = False
             pattern_prob: Optional[float] = None
             atr_value = features.atr_pips if features.atr_pips is not None else 0.0
@@ -362,10 +376,18 @@ async def fast_scalp_worker(shared_state: FastScalpState) -> None:
                 if active.side == "short":
                     pips_gain = -pips_gain
                 elapsed = time.monotonic() - active.opened_monotonic
+                latency_ms_val = float(age_ms) if isinstance(age_ms, (int, float)) else None
+
+                decision = timeout_controller.update(
+                    trade_id,
+                    elapsed_sec=elapsed,
+                    pips_gain=pips_gain,
+                    features=features,
+                    tick_rate=tick_rate,
+                    latency_ms=latency_ms_val,
+                )
+
                 close_reason: Optional[str] = None
-                profile_timeout = resolve_timeout(active.profile, features.atr_pips)
-                timeout_limit = profile_timeout if profile_timeout is not None else active.timeout_limit
-                timeout_min_gain = active.timeout_min_gain
                 max_drawdown_close = active.max_drawdown_close_pips
                 if features.rsi is not None and pips_gain < 0:
                     if active.side == "long" and features.rsi < config.RSI_EXIT_LONG:
@@ -377,29 +399,25 @@ async def fast_scalp_worker(shared_state: FastScalpState) -> None:
                         close_reason = "atr_spike"
                 if close_reason is None:
                     drawdown_hit = pips_gain <= -max_drawdown_close
-                    timeout_hit = (
-                        timeout_limit is not None
-                        and elapsed >= timeout_limit
-                        and pips_gain < timeout_min_gain
-                    )
-                    if drawdown_hit or timeout_hit:
-                        close_reason = "drawdown" if drawdown_hit else "timeout"
+                    if drawdown_hit:
+                        close_reason = "drawdown"
+                if close_reason is None and decision.action == "close":
+                    close_reason = decision.reason or "timeout_controller"
+
                 if close_reason is not None:
                     if rate_limiter.allow():
-                        logger.info(
-                            "%s close trade=%s side=%s reason=%s profile=%s pnl=%.2fp elapsed=%.1fs",
-                            config.LOG_PREFIX_TICK,
-                            trade_id,
-                            active.side,
-                            close_reason,
-                            active.profile.name,
-                            pips_gain,
-                            elapsed,
-                        )
                         rate_limiter.record()
+                        summary_payload: dict[str, float | str | bool] = {}
                         try:
                             await close_trade(trade_id)
                         finally:
+                            summary_payload = timeout_controller.finalize(
+                                trade_id,
+                                reason=close_reason,
+                                pips_gain=pips_gain,
+                                tick_rate=tick_rate,
+                                spread_pips=features.spread_pips,
+                            )
                             stage_tracker.set_cooldown(
                                 "scalp_fast",
                                 active.side,
@@ -408,6 +426,27 @@ async def fast_scalp_worker(shared_state: FastScalpState) -> None:
                                 now=now,
                             )
                             active_trades.pop(trade_id, None)
+                        logger.info(
+                            "%s close trade=%s side=%s reason=%s profile=%s pnl=%.2fp elapsed=%.1fs meta=%s",
+                            config.LOG_PREFIX_TICK,
+                            trade_id,
+                            active.side,
+                            close_reason,
+                            active.profile.name,
+                            pips_gain,
+                            elapsed,
+                            summary_payload if summary_payload else "{}",
+                        )
+                        log_metric(
+                            "fast_scalp_exit",
+                            pips_gain,
+                            tags={
+                                "reason": close_reason,
+                                "profile": active.profile.name,
+                                "timeout_type": str(summary_payload.get("timeout_type", "")),
+                            },
+                            ts=now,
+                        )
                         skip_new_entry = True
                     else:
                         skip_new_entry = True
@@ -473,6 +512,35 @@ async def fast_scalp_worker(shared_state: FastScalpState) -> None:
                             timeout_limit=timeout_limit,
                             timeout_min_gain=timeout_min_gain,
                             max_drawdown_close_pips=drawdown_close,
+                        )
+                        if not timeout_controller.has_trade(trade_id):
+                            timeout_controller.register_trade(
+                                trade_id,
+                                side=direction,
+                                entry_price=entry_price,
+                                entry_monotonic=opened_monotonic,
+                                features=features,
+                                spread_pips=spread_pips,
+                                tick_rate=tick_rate,
+                                latency_ms=float(age_ms)
+                                if isinstance(age_ms, (int, float))
+                                else None,
+                            )
+                    removed_ids = set(active_trades.keys()) - set(updated.keys())
+                    for removed_id in removed_ids:
+                        removed_trade = active_trades.get(removed_id)
+                        if removed_trade is not None:
+                            removed_pips = _pips(features.latest_mid - removed_trade.entry_price)
+                            if removed_trade.side == "short":
+                                removed_pips = -removed_pips
+                        else:
+                            removed_pips = 0.0
+                        timeout_controller.finalize(
+                            removed_id,
+                            reason="sync_prune",
+                            pips_gain=removed_pips,
+                            tick_rate=tick_rate,
+                            spread_pips=features.spread_pips,
                         )
                     active_trades = updated
 
@@ -752,6 +820,16 @@ async def fast_scalp_worker(shared_state: FastScalpState) -> None:
                 timeout_limit=timeout_limit_initial if timeout_limit_initial is not None else profile.timeout_sec,
                 timeout_min_gain=profile.timeout_min_gain_pips,
                 max_drawdown_close_pips=profile.drawdown_close_pips,
+            )
+            timeout_controller.register_trade(
+                trade_id,
+                side=direction,
+                entry_price=actual_entry_price,
+                entry_monotonic=monotonic_now,
+                features=features,
+                spread_pips=features.spread_pips,
+                tick_rate=tick_rate,
+                latency_ms=float(age_ms) if isinstance(age_ms, (int, float)) else None,
             )
             log_metric(
                 "fast_scalp_signal",

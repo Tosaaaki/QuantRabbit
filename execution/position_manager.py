@@ -553,18 +553,37 @@ class PositionManager:
         pockets: dict[str, dict] = {}
         net_units = 0
         client_ids: list[str] = []
+        agent_pockets = {"macro", "micro", "scalp", "scalp_fast"}
+        agent_client_prefixes = ("qr-", "qr-fast-")
+
         for tr in trades:
             client_ext = tr.get("clientExtensions", {}) or {}
-            tag = client_ext.get("tag", "pocket=unknown")
-            if "=" in tag:
-                pocket = tag.split("=", 1)[1]
+            client_id_raw = client_ext.get("id")
+            client_id = str(client_id_raw or "")
+            tag_raw = client_ext.get("tag") or ""
+            tag = str(tag_raw)
+            trade_id = tr.get("id") or tr.get("tradeID")
+            cached_pocket = self._pocket_cache.get(str(trade_id), "") if trade_id else ""
+
+            pocket: str
+            if client_id.startswith(agent_client_prefixes):
+                if tag.startswith("pocket="):
+                    pocket = tag.split("=", 1)[1]
+                elif cached_pocket in agent_pockets:
+                    pocket = cached_pocket
+                else:
+                    pocket = "unknown"
+            elif cached_pocket in agent_pockets:
+                pocket = cached_pocket
+            elif tag.startswith("pocket="):
+                candidate = tag.split("=", 1)[1]
+                pocket = candidate if candidate in agent_pockets else "manual"
             else:
-                trade_id = tr.get("id") or tr.get("tradeID")
-                pocket = self._pocket_cache.get(str(trade_id), "unknown")
+                pocket = "manual"
+
             units = int(tr.get("currentUnits", 0))
             if units == 0:
                 continue
-            trade_id = tr.get("id") or tr.get("tradeID")
             price = float(tr.get("price", 0.0))
             open_time_raw = tr.get("openTime")
             open_time_iso: str | None = None
@@ -589,6 +608,8 @@ class PositionManager:
                     "unrealized_pl_pips": 0.0,
                 },
             )
+            if pocket == "manual":
+                info["manual"] = True
             try:
                 unrealized_pl = float(tr.get("unrealizedPL", 0.0) or 0.0)
             except Exception:

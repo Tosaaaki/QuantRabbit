@@ -60,6 +60,7 @@ from analytics.realtime_metrics_client import (
     StrategyHealth,
 )
 from strategies.trend.ma_cross import MovingAverageCross
+from strategies.trend.h1_momentum import H1MomentumSwing
 from strategies.breakout.donchian55 import Donchian55
 from strategies.mean_reversion.bb_rsi import BBRsi
 from strategies.news.spike_reversal import NewsSpikeReversal
@@ -79,6 +80,7 @@ from advisors.partial_reduction import PartialReductionAdvisor
 from advisors.news_bias import NewsBiasAdvisor
 from autotune.scalp_trainer import start_background_autotune
 from workers.fast_scalp import FastScalpState, fast_scalp_worker
+from workers.manual_spike import manual_spike_worker
 
 # Configure logging
 logging.basicConfig(
@@ -90,6 +92,7 @@ logging.info("Application started!")
 STRATEGIES = {
     "TrendMA": MovingAverageCross,
     "Donchian55": Donchian55,
+    "H1Momentum": H1MomentumSwing,
     "BB_RSI": BBRsi,
     "NewsSpikeReversal": NewsSpikeReversal,
     "M1Scalper": M1Scalper,
@@ -98,10 +101,12 @@ STRATEGIES = {
 }
 
 POCKET_STRATEGY_MAP = {
-    "macro": {"TrendMA", "Donchian55"},
+    "macro": {"TrendMA", "Donchian55", "H1Momentum"},
     "micro": {"BB_RSI", "NewsSpikeReversal"},
     "scalp": {"M1Scalper", "RangeFader", "PulseBreak"},
 }
+
+MANAGED_POCKETS = {"macro", "micro", "scalp", "scalp_fast"}
 
 FOCUS_POCKETS = {
     "macro": ("macro",),
@@ -380,6 +385,15 @@ GPT_FACTOR_KEYS: Dict[str, tuple[str, ...]] = {
         "rsi",
         "atr_pips",
         "vol_5m",
+        "bbw",
+    ),
+    "H1": (
+        "close",
+        "ma10",
+        "ma20",
+        "adx",
+        "rsi",
+        "atr_pips",
         "bbw",
     ),
     "H4": (
@@ -2145,6 +2159,7 @@ async def logic_loop(
                 "reg_macro": macro_regime,
                 "reg_micro": micro_regime,
                 "factors_m1": _compact_factors(fac_m1, GPT_FACTOR_KEYS["M1"]),
+                "factors_h1": _compact_factors(fac_h1, GPT_FACTOR_KEYS["H1"]),
                 "factors_h4": _compact_factors(fac_h4, GPT_FACTOR_KEYS["H4"]),
                 "perf": {
                     pocket: {
@@ -2988,7 +3003,7 @@ async def logic_loop(
             open_positions = pos_manager.get_open_positions()
             stage_snapshot: dict[str, dict[str, int]] = {}
             for pocket_name, position_info in open_positions.items():
-                if pocket_name == "__net__":
+                if pocket_name == "__net__" or pocket_name not in MANAGED_POCKETS:
                     continue
                 stage_snapshot[pocket_name] = {
                     "long": stage_tracker.get_stage(pocket_name, "long"),
@@ -3045,7 +3060,7 @@ async def logic_loop(
                 open_positions = pos_manager.get_open_positions()
                 stage_snapshot = {}
                 for pocket_name, position_info in open_positions.items():
-                    if pocket_name == "__net__":
+                    if pocket_name == "__net__" or pocket_name not in MANAGED_POCKETS:
                         continue
                     stage_snapshot[pocket_name] = {
                         "long": stage_tracker.get_stage(pocket_name, "long"),
@@ -3054,7 +3069,7 @@ async def logic_loop(
             net_units = int(open_positions.get("__net__", {}).get("units", 0))
 
             for pocket, info in open_positions.items():
-                if pocket == "__net__":
+                if pocket == "__net__" or pocket not in MANAGED_POCKETS:
                     continue
                 for direction, key_units in (("long", "long_units"), ("short", "short_units")):
                     units_value = int(info.get(key_units, 0) or 0)
@@ -4242,6 +4257,12 @@ async def main():
                     supervised_runner(
                         "fast_scalp",
                         fast_scalp_worker(fast_scalp_state),
+                    )
+                ),
+                asyncio.create_task(
+                    supervised_runner(
+                        "manual_spike",
+                        manual_spike_worker(),
                     )
                 ),
             ]

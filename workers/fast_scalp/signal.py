@@ -40,6 +40,21 @@ def _window_mean(values: list[float]) -> float:
     return mean(values)
 
 
+def span_requirement_ok(span_seconds: float, tick_count: int) -> bool:
+    span_required = config.MIN_ENTRY_TICK_SPAN_SEC
+    span_ok = span_seconds >= span_required
+    if span_ok:
+        return True
+    relaxed_floor = span_required * config.MIN_SPAN_RELAX_RATIO
+    tick_buffer = config.MIN_SPAN_RELAX_TICK_BUFFER
+    if (
+        span_seconds >= relaxed_floor
+        and tick_count >= config.MIN_ENTRY_TICK_COUNT + tick_buffer
+    ):
+        return True
+    return False
+
+
 def _compute_rsi(prices: list[float], period: int) -> Optional[float]:
     if len(prices) < 2:
         return None
@@ -266,7 +281,7 @@ def evaluate_signal(
         return None
     if features.tick_count < config.MIN_ENTRY_TICK_COUNT:
         return None
-    if features.span_seconds < config.MIN_ENTRY_TICK_SPAN_SEC:
+    if not span_requirement_ok(features.span_seconds, features.tick_count):
         return None
     if features.range_pips < dyn_range_floor:
         return None
