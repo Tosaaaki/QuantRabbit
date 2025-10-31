@@ -72,6 +72,10 @@ def _candle_body_pips(candle: Dict[str, float]) -> Optional[float]:
     return (close_px - open_px) / _PIP
 
 
+def _force_mode() -> bool:
+    return os.getenv("SCALP_FORCE_ALWAYS", "0").strip().lower() not in {"", "0", "false", "no"}
+
+
 class M1Scalper:
     name = "M1Scalper"
     pocket = "scalp"
@@ -115,7 +119,7 @@ class M1Scalper:
         )
         atr_floor_tactical = max(0.55, min(atr_floor_tactical, 1.05))
         atr_floor = atr_floor_tactical if scalp_tactical else max(0.85, atr_floor_default)
-        if atr_pips < atr_floor:
+        if atr_pips < atr_floor and not _force_mode():
             _log(
                 "skip_atr_floor",
                 atr=round(atr_pips, 3),
@@ -123,6 +127,13 @@ class M1Scalper:
                 tactical=scalp_tactical,
             )
             return None
+        if atr_pips < atr_floor and _force_mode():
+            _log(
+                "force_override_atr",
+                atr=round(atr_pips, 3),
+                floor=round(atr_floor, 3),
+            )
+            atr_pips = atr_floor
 
         candles = fac.get("candles") or []
         nwave: Optional[NWaveStructure] = None
@@ -251,7 +262,7 @@ class M1Scalper:
             return signal
 
         # Fallback microstructure scalp (limit entry every cycle)
-        fallback_enabled = _to_bool(fallback_cfg.get("enabled", True), True)
+        fallback_enabled = _to_bool(fallback_cfg.get("enabled", True), True) or _force_mode()
         if fallback_enabled:
             ticks = fac.get("recent_ticks") or []
             summary = fac.get("recent_tick_summary") or {}
@@ -331,12 +342,21 @@ class M1Scalper:
             confidence = int(max(48.0, min(96.0, conf_base)))
 
             action = "OPEN_LONG" if direction == "long" else "OPEN_SHORT"
+            entry_type = "limit"
+            limit_expiry = 35 if scalp_tactical else 50
+            entry_price_out = entry_price
+            if _force_mode():
+                entry_type = "market"
+                entry_price_out = round(mid_latest, 3)
+                tolerance_pips = 0.0
+                limit_expiry = 0
+                confidence = max(confidence, 72)
             signal = {
                 "action": action,
-                "entry_type": "limit",
-                "entry_price": entry_price,
+                "entry_type": entry_type,
+                "entry_price": entry_price_out,
                 "entry_tolerance_pips": round(tolerance_pips, 2),
-                "limit_expiry_seconds": 35 if scalp_tactical else 50,
+                "limit_expiry_seconds": limit_expiry,
                 "sl_pips": round(sl_dyn, 2),
                 "tp_pips": round(tp_dyn, 2),
                 "confidence": confidence,
@@ -347,6 +367,8 @@ class M1Scalper:
                     "dist_low": round(dist_low_pips, 2),
                 },
             }
+            if _force_mode():
+                _LOGGER.warning("[FORCE_SCALP] issuing market signal %s", signal)
             _log(
                 "signal_micro_limit",
                 direction=direction,

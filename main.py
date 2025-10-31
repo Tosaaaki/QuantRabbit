@@ -6,6 +6,7 @@ import time
 import hashlib
 import json
 import contextlib
+from dataclasses import dataclass
 from typing import Optional, Tuple, Coroutine, Any, Dict
 
 from market_data.candle_fetcher import (
@@ -20,6 +21,7 @@ from analysis.focus_decider import decide_focus
 from analysis.gpt_decider import get_decision, fallback_decision
 from analysis.perf_monitor import snapshot as get_perf
 from analysis.summary_ingestor import check_event_soon, get_latest_news
+from analysis.news_features import build_news_features
 # バックグラウンドでニュース取得と要約を実行するためのインポート
 from market_data.news_fetcher import fetch_loop as news_fetch_loop
 from analysis.summary_ingestor import ingest_loop as summary_ingest_loop
@@ -76,6 +78,7 @@ from advisors.stage_plan import StagePlanAdvisor
 from advisors.partial_reduction import PartialReductionAdvisor
 from advisors.news_bias import NewsBiasAdvisor
 from autotune.scalp_trainer import start_background_autotune
+from workers.fast_scalp import FastScalpState, fast_scalp_worker
 
 # Configure logging
 logging.basicConfig(
@@ -111,12 +114,14 @@ POCKET_EXIT_COOLDOWNS = {
     "macro": 720,
     "micro": 360,
     "scalp": 240,
+    "scalp_fast": 90,
 }
 
 POCKET_LOSS_COOLDOWNS = {
     "macro": 900,
     "micro": 600,
     "scalp": 360,
+    "scalp_fast": 240,
 }
 
 # 新規エントリー後のクールダウン（再エントリー抑制）
@@ -124,6 +129,7 @@ POCKET_ENTRY_MIN_INTERVAL = {
     "macro": 240,  # 4分
     "micro": 150,  # 2.5分
     "scalp": 75,
+    "scalp_fast": 30,
 }
 
 if os.getenv("SCALP_TACTICAL", "0").strip().lower() not in {"", "0", "false", "no"}:
@@ -136,24 +142,28 @@ POCKET_MAX_ACTIVE_TRADES = {
     "macro": 6,
     "micro": 2,
     "scalp": 3,
+    "scalp_fast": 2,
 }
 
 POCKET_MAX_ACTIVE_TRADES_RANGE = {
     "macro": 0,
     "micro": 1,
     "scalp": 1,
+    "scalp_fast": 1,
 }
 
 POCKET_MAX_DIRECTIONAL_TRADES = {
     "macro": 6,
     "micro": 1,
     "scalp": 2,
+    "scalp_fast": 1,
 }
 
 POCKET_MAX_DIRECTIONAL_TRADES_RANGE = {
     "macro": 0,
     "micro": 1,
     "scalp": 1,
+    "scalp_fast": 1,
 }
 
 try:
@@ -278,6 +288,111 @@ MACRO_CONFIDENCE_FLOOR = _safe_env_float("MACRO_CONFIDENCE_FLOOR", 1.0, low=0.3,
 MACRO_SPREAD_OVERRIDE = _safe_env_float("MACRO_SPREAD_OVERRIDE", 1.4, low=1.0, high=3.0)
 
 
+@dataclass
+class FactorWarmupState:
+    in_progress: bool = False
+    last_attempt: Optional[datetime.datetime] = None
+    last_success: Optional[datetime.datetime] = None
+
+
+_FACTOR_STALE_SECONDS = 60 * 60 * 4  # 4 hours
+_FACTOR_RETRY_SECONDS = 300  # 5 minutes
+
+
+def _parse_factor_timestamp(value: object) -> Optional[datetime.datetime]:
+    if isinstance(value, datetime.datetime):
+        dt = value
+    elif isinstance(value, str):
+        try:
+            dt = datetime.datetime.fromisoformat(value)
+        except ValueError:
+            return None
+    else:
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=datetime.timezone.utc)
+    return dt.astimezone(datetime.timezone.utc)
+
+
+def _to_utc(dt: datetime.datetime) -> datetime.datetime:
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=datetime.timezone.utc)
+    return dt.astimezone(datetime.timezone.utc)
+
+
+async def ensure_factor_history_ready(
+    state: FactorWarmupState,
+    *,
+    instrument: str = "USD_JPY",
+) -> None:
+    """
+    Ensure indicator cache has recent H4 (and M1) factors. Re-fetch history if stale.
+    """
+    now = datetime.datetime.now(datetime.timezone.utc)
+    factors = all_factors()
+    h4 = factors.get("H4") or {}
+    timestamp = _parse_factor_timestamp(h4.get("timestamp"))
+    if timestamp and (now - timestamp).total_seconds() <= _FACTOR_STALE_SECONDS:
+        state.last_success = timestamp
+        return
+
+    if state.in_progress:
+        return
+    last_attempt = state.last_attempt and _to_utc(state.last_attempt)
+    if last_attempt and (now - last_attempt).total_seconds() < _FACTOR_RETRY_SECONDS:
+        return
+
+    state.in_progress = True
+    state.last_attempt = now
+    try:
+        logging.info("[FACTOR] warming up historical candles (instrument=%s)", instrument)
+        await initialize_history(instrument)
+    except Exception as exc:  # pragma: no cover - defensive
+        logging.warning("[FACTOR] initialize_history failed: %s", exc)
+    else:
+        refreshed = all_factors().get("H4") or {}
+        ts_new = _parse_factor_timestamp(refreshed.get("timestamp"))
+        if ts_new:
+            logging.info("[FACTOR] history warmup completed at %s", ts_new.isoformat())
+            state.last_success = ts_new
+        else:
+            logging.warning("[FACTOR] warmup completed but H4 factors still missing; will retry.")
+            state.last_success = None
+    finally:
+        state.in_progress = False
+
+
+GPT_FACTOR_KEYS: Dict[str, tuple[str, ...]] = {
+    "M1": (
+        "close",
+        "ma10",
+        "ma20",
+        "adx",
+        "rsi",
+        "atr_pips",
+        "vol_5m",
+        "bbw",
+    ),
+    "H4": (
+        "close",
+        "ma10",
+        "ma20",
+        "adx",
+        "atr_pips",
+        "rsi",
+    ),
+}
+NEWS_LIMITS = {"short": 2, "long": 2}
+GPT_PERF_KEYS = ("pf", "win_rate", "avg_pips", "sharpe", "sample")
+_GPT_FACTOR_PRECISION = {
+    "adx": 2,
+    "rsi": 2,
+    "atr_pips": 3,
+    "vol_5m": 3,
+    "bbw": 3,
+}
+
+
 def _set_stage_plan_overrides(overrides: dict[str, tuple[float, ...]]) -> None:
     global _STAGE_PLAN_OVERRIDES
     _STAGE_PLAN_OVERRIDES = {k: tuple(v) for k, v in overrides.items()}
@@ -303,6 +418,8 @@ MACRO_MARGIN_SAFETY_BUFFER = _safe_env_float("MACRO_MARGIN_SAFETY_BUFFER", 0.1, 
 FORCE_SCALP_MODE = os.getenv("SCALP_FORCE_ALWAYS", "0").strip().lower() not in {"", "0", "false", "no"}
 if FORCE_SCALP_MODE:
     logging.warning("[FORCE_SCALP] mode enabled")
+
+FORCE_SCALP_STALE_FALLBACK_SEC = int(os.getenv("SCALP_FORCE_STALE_MAX_SEC", "180"))
 
 
 class GPTDecisionState:
@@ -456,16 +573,14 @@ def _gpt_payload_signature(
     factors_h4 = payload.get("factors_h4") or {}
     factors_d1 = payload.get("factors_d1") or {}
     perf = payload.get("perf") or {}
-    news_short = payload.get("news_short") or []
-    latest_news = None
-    if isinstance(news_short, list) and news_short:
-        top = news_short[0]
-        if isinstance(top, dict):
-            latest_news = {
-                "source": top.get("source"),
-                "headline": top.get("headline"),
-                "published_at": str(top.get("published_at")),
-            }
+    news_features = payload.get("news_features") or {}
+    news_summary = None
+    if isinstance(news_features, dict) and news_features:
+        news_summary = {
+            "age": _hashable_float(news_features.get("news_latest_age_minutes"), 2),
+            "impact": _hashable_float(news_features.get("news_impact_max"), 3),
+            "sentiment": _hashable_float(news_features.get("news_sentiment_mean"), 3),
+        }
     perf_snapshot = {}
     for key, value in perf.items():
         if isinstance(value, (int, float)):
@@ -519,7 +634,7 @@ def _gpt_payload_signature(
             "ma20": _hashable_float(factors_d1.get("ma20"), 4),
         },
         "perf": perf_snapshot,
-        "news": latest_news,
+        "news": news_summary,
     }
     serialized = json.dumps(key_data, sort_keys=True, separators=(",", ":"))
     return hashlib.sha1(serialized.encode("utf-8")).hexdigest()
@@ -629,10 +744,7 @@ async def prime_gpt_decision(
     while True:
         factors = all_factors()
         fac_m1 = factors.get("M1")
-        fac_m5 = factors.get("M5")
-        fac_h1 = factors.get("H1")
         fac_h4 = factors.get("H4")
-        fac_d1 = factors.get("D1")
         if (
             not fac_m1
             or not fac_h4
@@ -645,21 +757,30 @@ async def prime_gpt_decision(
                 start_time = datetime.datetime.utcnow()
             continue
 
+        now = datetime.datetime.utcnow()
         perf_cache = get_perf()
-        news_cache = get_latest_news()
+        news_cache = get_latest_news(
+            limit_short=NEWS_LIMITS["short"],
+            limit_long=NEWS_LIMITS["long"],
+        )
         event_soon = check_event_soon(within_minutes=30, min_impact=3)
+        news_features = build_news_features(news_cache, now=now)
         payload = {
-            "ts": datetime.datetime.utcnow().isoformat(timespec="seconds"),
+            "ts": now.isoformat(timespec="seconds"),
             "reg_macro": classify(fac_h4, "H4", event_mode=event_soon),
             "reg_micro": classify(fac_m1, "M1", event_mode=event_soon),
-            "factors_m1": {k: v for k, v in fac_m1.items() if k != "candles"},
-            "factors_m5": {k: v for k, v in (fac_m5 or {}).items() if k != "candles"},
-            "factors_h1": {k: v for k, v in (fac_h1 or {}).items() if k != "candles"},
-            "factors_h4": {k: v for k, v in fac_h4.items() if k != "candles"},
-            "factors_d1": {k: v for k, v in (fac_d1 or {}).items() if k != "candles"},
-            "perf": perf_cache,
-            "news_short": news_cache.get("short", []),
-            "news_long": news_cache.get("long", []),
+            "factors_m1": _compact_factors(fac_m1, GPT_FACTOR_KEYS["M1"]),
+            "factors_h4": _compact_factors(fac_h4, GPT_FACTOR_KEYS["H4"]),
+            "perf": {
+                pocket: {
+                    key: val
+                    for key, val in (metrics or {}).items()
+                    if key in GPT_PERF_KEYS and val not in (None, "")
+                }
+                for pocket, metrics in (perf_cache or {}).items()
+                if metrics
+            },
+            "news_features": news_features,
             "event_soon": event_soon,
         }
         signature = _gpt_payload_signature(
@@ -741,6 +862,25 @@ def _dynamic_macro_pullback_pips(
     if abs(momentum) >= 0.02:
         base *= 0.82
     return max(1.15, min(pullback_cap, round(base, 2)))
+
+
+def _compact_factors(data: Optional[Dict[str, Any]], keys: tuple[str, ...]) -> Dict[str, Any]:
+    if not data:
+        return {}
+    compact: Dict[str, Any] = {}
+    for key in keys:
+        if key not in data:
+            continue
+        value = data[key]
+        if isinstance(value, (int, float)):
+            precision = _GPT_FACTOR_PRECISION.get(key, 4)
+            try:
+                compact[key] = round(float(value), precision)
+            except (TypeError, ValueError):
+                continue
+        else:
+            compact[key] = value
+    return compact
 
 
 def _macro_pullback_ready(
@@ -1330,6 +1470,8 @@ async def logic_loop(
     gpt_state: GPTDecisionState,
     gpt_requests: GPTRequestManager,
     news_cache_supplier=None,
+    fast_scalp_state: FastScalpState | None = None,
+    factor_warmup_state: FactorWarmupState | None = None,
     *,
     rr_advisor: RRRatioAdvisor | None = None,
     exit_advisor: ExitAdvisor | None = None,
@@ -1400,6 +1542,11 @@ async def logic_loop(
     last_vol_high_ratio: Optional[float] = None
     last_stage_biases: dict[str, float] = {}
     last_story_summary: Optional[dict] = None
+    last_valid_fac_m1: Optional[dict] = None
+    last_valid_fac_h4: Optional[dict] = None
+    last_valid_m1_time: Optional[datetime.datetime] = None
+    last_valid_h4_time: Optional[datetime.datetime] = None
+    missing_factor_counter = 0
 
     try:
         while True:
@@ -1408,6 +1555,9 @@ async def logic_loop(
             scalp_ready_forced = False
             if FORCE_SCALP_MODE and loop_counter % 5 == 0:
                 logging.warning("[FORCE_SCALP] loop=%d", loop_counter)
+
+            if factor_warmup_state is not None:
+                await ensure_factor_history_ready(factor_warmup_state)
             stage_tracker.clear_expired(now)
             # Heartbeat logging
             if (now - last_heartbeat_time).total_seconds() >= 300:  # Every 5 minutes
@@ -1419,7 +1569,10 @@ async def logic_loop(
             # 5分ごとにパフォーマンスとニュースを更新
             if (now - last_update_time).total_seconds() >= 300:
                 perf_cache = get_perf()
-                news_cache = get_latest_news()
+                news_cache = get_latest_news(
+                    limit_short=NEWS_LIMITS["short"],
+                    limit_long=NEWS_LIMITS["long"],
+                )
                 try:
                     insight.refresh()
                 except Exception:
@@ -1436,22 +1589,82 @@ async def logic_loop(
             fac_h4 = factors.get("H4")
             fac_d1 = factors.get("D1")
 
-            # 両方のタイムフレームのデータが揃うまで待機
-            if (
-                not fac_m1_raw
-                or not fac_h4
-                or not fac_m1_raw.get("close")
-                or not fac_h4.get("close")
-            ):
-                logging.info("[WAIT] Waiting for M1/H4 factor data for trading logic...")
-                if FORCE_SCALP_MODE:
+            have_m1 = bool(fac_m1_raw and fac_m1_raw.get("close") is not None)
+            have_h4 = bool(fac_h4 and fac_h4.get("close") is not None)
+            fallback_notes: list[str] = []
+            if have_m1:
+                last_valid_fac_m1 = dict(fac_m1_raw)
+                last_valid_m1_time = now
+            if have_h4:
+                last_valid_fac_h4 = dict(fac_h4)
+                last_valid_h4_time = now
+
+            if FORCE_SCALP_MODE:
+                if not have_m1 and last_valid_fac_m1 and last_valid_m1_time:
+                    age = (now - last_valid_m1_time).total_seconds()
+                    if age <= max(10.0, float(FORCE_SCALP_STALE_FALLBACK_SEC)):
+                        fac_m1_raw = dict(last_valid_fac_m1)
+                        fac_m1_raw.setdefault("stale_seconds", int(age))
+                        have_m1 = True
+                        fallback_notes.append(f"m1_stale={int(age)}s")
+                if not have_h4 and last_valid_fac_h4 and last_valid_h4_time:
+                    age = (now - last_valid_h4_time).total_seconds()
+                    if age <= max(30.0, float(FORCE_SCALP_STALE_FALLBACK_SEC * 3)):
+                        fac_h4 = dict(last_valid_fac_h4)
+                        fac_h4.setdefault("stale_seconds", int(age))
+                        have_h4 = True
+                        fallback_notes.append(f"h4_stale={int(age)}s")
+
+            if fallback_notes and FORCE_SCALP_MODE and loop_counter % 5 == 0:
+                logging.warning(
+                    "[FORCE_SCALP] using stale factors %s",
+                    ";".join(fallback_notes),
+                )
+
+            if not (have_m1 and have_h4):
+                missing_factor_counter += 1
+                reason_bits = []
+                if not have_m1:
+                    if not fac_m1_raw:
+                        reason_bits.append("m1_none")
+                    elif fac_m1_raw.get("close") is None:
+                        reason_bits.append("m1_no_close")
+                    else:
+                        reason_bits.append("m1_partial")
+                if not have_h4:
+                    if not fac_h4:
+                        reason_bits.append("h4_none")
+                    elif fac_h4.get("close") is None:
+                        reason_bits.append("h4_no_close")
+                    else:
+                        reason_bits.append("h4_partial")
+                reason_txt = ",".join(reason_bits) if reason_bits else "unknown"
+                if missing_factor_counter in {1, 5, 10} or missing_factor_counter % 20 == 0:
                     logging.warning(
-                        "[FORCE_SCALP] factors missing m1=%s h4=%s",
-                        bool(fac_m1_raw),
-                        bool(fac_h4),
+                        "[WAIT] Missing factors reason=%s fallback=%s counter=%d",
+                        reason_txt,
+                        ";".join(fallback_notes) if fallback_notes else "none",
+                        missing_factor_counter,
                     )
+                log_metric(
+                    "factor_missing",
+                    1.0,
+                    tags={
+                        "m1": str(have_m1).lower(),
+                        "h4": str(have_h4).lower(),
+                        "reason": reason_txt or "unknown",
+                        "forced": str(FORCE_SCALP_MODE).lower(),
+                    },
+                    ts=now,
+                )
                 await asyncio.sleep(5)
                 continue
+            if missing_factor_counter:
+                logging.info(
+                    "[FACTOR] M1/H4 factors restored after %d missing cycles",
+                    missing_factor_counter,
+                )
+                missing_factor_counter = 0
 
             fac_m1 = dict(fac_m1_raw)
             recent_tick_rows = tick_window.recent_ticks(75.0, limit=180)
@@ -1903,18 +2116,23 @@ async def logic_loop(
             if FORCE_SCALP_MODE:
                 logging.warning("[FORCE_SCALP] entering GPT stage loop=%d", loop_counter)
             # M1/H4 の移動平均・RSI などの指標をまとめて送信
+            news_features = build_news_features(news_cache, now=now)
             payload = {
                 "ts": now.isoformat(timespec="seconds"),
                 "reg_macro": macro_regime,
                 "reg_micro": micro_regime,
-                "factors_m1": {k: v for k, v in fac_m1.items() if k != "candles"},
-                "factors_m5": {k: v for k, v in (factors.get("M5") or {}).items() if k != "candles"},
-                "factors_h1": {k: v for k, v in (factors.get("H1") or {}).items() if k != "candles"},
-                "factors_h4": {k: v for k, v in fac_h4.items() if k != "candles"},
-                "factors_d1": {k: v for k, v in (factors.get("D1") or {}).items() if k != "candles"},
-                "perf": perf_cache,
-                "news_short": news_cache.get("short", []),
-                "news_long": news_cache.get("long", []),
+                "factors_m1": _compact_factors(fac_m1, GPT_FACTOR_KEYS["M1"]),
+                "factors_h4": _compact_factors(fac_h4, GPT_FACTOR_KEYS["H4"]),
+                "perf": {
+                    pocket: {
+                        key: val
+                        for key, val in (metrics or {}).items()
+                        if key in GPT_PERF_KEYS and val not in (None, "")
+                    }
+                    for pocket, metrics in (perf_cache or {}).items()
+                    if metrics
+                },
+                "news_features": news_features,
                 "event_soon": event_soon,
             }
             payload_signature = _gpt_payload_signature(
@@ -2038,7 +2256,7 @@ async def logic_loop(
                 )
                 if last_range_scalp_ready is None or scalp_ready != last_range_scalp_ready:
                     logging.info(
-                        "[SCALP] Range scalp %s momentum=%.4f (≤%.4f) atr=%.2f (≥%.2f) vol5m=%.2f (≥%.2f)",
+                        "[SCALP-MAIN] Range scalp %s momentum=%.4f (≤%.4f) atr=%.2f (≥%.2f) vol5m=%.2f (≥%.2f)",
                         "ready" if scalp_ready else "blocked",
                         momentum,
                         RANGE_SCALP_MAX_MOMENTUM,
@@ -2064,7 +2282,7 @@ async def logic_loop(
                 scalp_ready = True
                 scalp_ready_forced = True
                 logging.info(
-                    "[SCALP] Forcing readiness (weight=%.2f floor=%.2f atr=%.2f vol5m=%s momentum=%.4f)",
+                    "[SCALP-MAIN] Forcing readiness (weight=%.2f floor=%.2f atr=%.2f vol5m=%s momentum=%.4f)",
                     weight_scalp,
                     SCALP_WEIGHT_FLOOR,
                     atr_pips,
@@ -2076,7 +2294,7 @@ async def logic_loop(
                     scalp_ready = True
                     scalp_ready_forced = True
                     logging.info(
-                        "[SCALP] Force mode -> readiness enabled (atr=%.2f vol5m=%s momentum=%.4f)",
+                        "[SCALP-MAIN] Force mode -> readiness enabled (atr=%.2f vol5m=%s momentum=%.4f)",
                         atr_pips,
                         f"{vol_5m:.2f}" if vol_5m is not None else "n/a",
                         momentum,
@@ -2086,7 +2304,7 @@ async def logic_loop(
                     prev_weight_scalp = weight_scalp
                     weight_scalp = target_force_weight
                     logging.info(
-                        "[SCALP] Force mode -> weight uplift %s -> %.2f",
+                        "[SCALP-MAIN] Force mode -> weight uplift %s -> %.2f",
                         f"{prev_weight_scalp:.2f}" if prev_weight_scalp is not None else "None",
                         weight_scalp,
                     )
@@ -2095,7 +2313,7 @@ async def logic_loop(
                     prev_macro = weight_macro
                     weight_macro = max(0.0, round(weight_macro - excess, 3))
                     logging.info(
-                        "[SCALP] Force mode -> macro weight trimmed %.2f -> %.2f to balance shares",
+                        "[SCALP-MAIN] Force mode -> macro weight trimmed %.2f -> %.2f to balance shares",
                         prev_macro,
                         weight_macro,
                     )
@@ -2428,7 +2646,7 @@ async def logic_loop(
                     ranked_strategies.append("BB_RSI")
 
                 logging.info(
-                    "[SCALP] Auto-added M1Scalper (mode=%s ATR %.2f momentum %.4f vol5m %.2f).",
+                    "[SCALP-MAIN] Auto-added M1Scalper (mode=%s ATR %.2f momentum %.4f vol5m %.2f).",
                     "range" if range_active else "trend",
                     atr_pips,
                     momentum,
@@ -2444,7 +2662,7 @@ async def logic_loop(
             ):
                 ranked_strategies.append("RangeFader")
                 logging.info(
-                    "[SCALP] Range mode: auto-added RangeFader (score=%.2f bbw=%.2f atr=%.2f).",
+                    "[SCALP-MAIN] Range mode: auto-added RangeFader (score=%.2f bbw=%.2f atr=%.2f).",
                     range_ctx.score,
                     fac_m1.get("bbw", 0.0) or 0.0,
                     atr_pips,
@@ -2461,7 +2679,7 @@ async def logic_loop(
             ):
                 ranked_strategies.append("PulseBreak")
                 logging.info(
-                    "[SCALP] Auto-added PulseBreak (mom=%.4f atr=%.2f vol5m=%.2f).",
+                    "[SCALP-MAIN] Auto-added PulseBreak (mom=%.4f atr=%.2f vol5m=%.2f).",
                     momentum,
                     atr_pips,
                     vol_5m,
@@ -2901,7 +3119,7 @@ async def logic_loop(
                 if remaining > 0:
                     client_id = build_client_order_id(focus_tag, decision.tag)
                     fallback_units = -remaining if decision.units < 0 else remaining
-                    trade_id = await market_order(
+                    trade_id, _ = await market_order(
                         "USD_JPY",
                         fallback_units,
                         None,
@@ -3016,6 +3234,32 @@ async def logic_loop(
                 )
             last_risk_pct = risk_override
 
+            if fast_scalp_state:
+                m1_rsi = None
+                m1_rsi_age = None
+                try:
+                    m1_rsi = float(fac_m1.get("rsi")) if fac_m1 and fac_m1.get("rsi") is not None else None
+                except (TypeError, ValueError):
+                    m1_rsi = None
+                if fac_m1:
+                    age_val = fac_m1.get("stale_seconds") or fac_m1.get("stale")
+                    try:
+                        if age_val is not None:
+                            m1_rsi_age = float(age_val)
+                    except (TypeError, ValueError):
+                        m1_rsi_age = None
+                fast_scalp_state.update_from_main(
+                    account_equity=account_equity,
+                    margin_available=float(margin_available or 0.0),
+                    margin_rate=float(margin_rate or 0.0),
+                    weight_scalp=weight_scalp,
+                    focus_tag=focus_tag,
+                    risk_pct_override=risk_override,
+                    range_active=range_active,
+                    m1_rsi=m1_rsi,
+                    m1_rsi_age_sec=m1_rsi_age,
+                )
+
             base_price_val = fac_m1.get("close")
             try:
                 mid_price = float(base_price_val or 0.0)
@@ -3049,7 +3293,7 @@ async def logic_loop(
                 if account_snapshot:
                     scalp_share = dynamic_scalp_share(account_snapshot, DEFAULT_SCALP_SHARE)
                     logging.info(
-                        "[SCALP] share=%.3f buffer=%.3f free=%.1f%%",
+                        "[SCALP-MAIN] share=%.3f buffer=%.3f free=%.1f%%",
                         scalp_share,
                         scalp_buffer if scalp_buffer is not None else -1.0,
                         (scalp_free_ratio * 100) if scalp_free_ratio is not None else -1.0,
@@ -3170,7 +3414,7 @@ async def logic_loop(
                             deficit = round(deficit - give, 3)
                         if deficit > 0:
                             logging.info(
-                                "[SCALP] Unable to reach absolute lot floor %.3f (remaining=%.3f).",
+                                "[SCALP-MAIN] Unable to reach absolute lot floor %.3f (remaining=%.3f).",
                                 scalp_target_abs,
                                 deficit,
                         )
@@ -3834,7 +4078,7 @@ async def logic_loop(
                     entry_thesis.setdefault("notes_auto", {})[
                         "macro_pullback_pips"
                     ] = pullback_note
-                trade_id = await market_order(
+                trade_id, executed_price = await market_order(
                     "USD_JPY",
                     units,
                     sl,
@@ -3940,6 +4184,8 @@ async def main():
     gpt_requests = GPTRequestManager()
     worker_task = asyncio.create_task(gpt_worker(gpt_state, gpt_requests))
     autotune_task = start_background_autotune(asyncio.get_running_loop())
+    fast_scalp_state = FastScalpState()
+    factor_warmup_state = FactorWarmupState()
     try:
         await prime_gpt_decision(gpt_state, gpt_requests)
         while True:
@@ -3956,6 +4202,8 @@ async def main():
                         logic_loop(
                             gpt_state,
                             gpt_requests,
+                            fast_scalp_state=fast_scalp_state,
+                            factor_warmup_state=factor_warmup_state,
                             rr_advisor=RR_ADVISOR,
                             exit_advisor=EXIT_ADVISOR,
                             strategy_conf_advisor=STRATEGY_CONF_ADVISOR,
@@ -3965,6 +4213,12 @@ async def main():
                             partial_advisor=PARTIAL_ADVISOR,
                             news_bias_advisor=NEWS_BIAS_ADVISOR,
                         ),
+                    )
+                ),
+                asyncio.create_task(
+                    supervised_runner(
+                        "fast_scalp",
+                        fast_scalp_worker(fast_scalp_state),
                     )
                 ),
             ]

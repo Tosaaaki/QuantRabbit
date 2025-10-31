@@ -12,6 +12,7 @@ import datetime as dt
 import json
 import logging
 import os
+import re
 from typing import Dict, List
 
 from openai import AsyncOpenAI
@@ -42,31 +43,30 @@ _ALLOWED_STRATEGIES = [
     "PulseBreak",
 ]
 
-_MAX_COMPLETION_TOKENS = 320
-_GPT5_MAX_OUTPUT_TOKENS = 800
+_MAX_COMPLETION_TOKENS = 200
+_GPT5_MAX_OUTPUT_TOKENS = 256
 _MODEL_OUTPUT_LIMITS = {
-    "gpt-5-mini": 800,
-    "gpt-5-mini-2025-08-07": 800,
-    "gpt-5.1-mini": 800,
-    "gpt-4o-mini": 384,
-    "gpt-4o-mini-2024-08-06": 384,
+    "gpt-5-mini": 256,
+    "gpt-5-mini-2025-08-07": 256,
+    "gpt-5.1-mini": 256,
+    "gpt-4o-mini": 220,
+    "gpt-4o-mini-2024-07-18": 220,
 }
 
 _MODEL_TIMEOUT_SECONDS = {
-    "gpt-5-mini": 18,
-    "gpt-5-mini-2025-08-07": 18,
-    "gpt-5.1-mini": 18,
-    "gpt-4o-mini": 12,
-    "gpt-4o-mini-2024-08-06": 12,
+    "gpt-5-mini": 20,
+    "gpt-5-mini-2025-08-07": 20,
+    "gpt-5.1-mini": 20,
+    "gpt-4o-mini": 15,
+    "gpt-4o-mini-2024-07-18": 15,
 }
 
 _FALLBACK_MODELS = [
     "gpt-4o-mini",
-    "gpt-4o-mini-2024-08-06",
+    "gpt-4o-mini-2024-07-18",
 ]
 
 _REUSE_WINDOW_SECONDS = 300
-_GPT_TIMEOUT_SECONDS = 18 if "gpt-5" in MODEL else 9
 _FAIL_OPEN_SECONDS = int(os.getenv("GPT_FAIL_OPEN_SECONDS", "120") or 120)
 _FALLBACK_DECISION = {
     "focus_tag": "hybrid",
@@ -91,87 +91,106 @@ logger = logging.getLogger(__name__)
 class GPTTimeout(Exception): ...
 
 
+_FENCE_PREFIX_RE = re.compile(r"^```[a-zA-Z0-9_-]*\s*")
+
+
+def _normalize_json_content(raw: str) -> str:
+    """Remove Markdown fences / whitespace around JSON payloads."""
+    text = raw.strip()
+    if text.startswith("```"):
+        text = _FENCE_PREFIX_RE.sub("", text, count=1)
+        if text.endswith("```"):
+            text = text[: -3]
+    return text.strip()
+
+
+def _extract_json_object(text: str) -> Optional[str]:
+    start = text.find("{")
+    if start == -1:
+        return None
+    depth = 0
+    in_string = False
+    escape = False
+    for idx in range(start, len(text)):
+        ch = text[idx]
+        if in_string:
+            if escape:
+                escape = False
+            elif ch == "\\":
+                escape = True
+            elif ch == '"':
+                in_string = False
+            continue
+        if ch == '"':
+            in_string = True
+        elif ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                return text[start : idx + 1]
+    return None
+
+
+def _load_json_payload(content: str) -> Dict:
+    if not content:
+        raise ValueError("Invalid JSON: (empty string)")
+    try:
+        return json.loads(content)
+    except json.JSONDecodeError as exc:
+        candidate = _extract_json_object(content)
+        if candidate:
+            try:
+                return json.loads(candidate)
+            except json.JSONDecodeError:
+                pass
+        raise ValueError(f"Invalid JSON: {content}") from exc
+
+
 async def _call_model(payload: Dict, messages: List[Dict], model: str) -> Dict:
     tier = "primary" if model == MODEL else "fallback"
     with track_gpt_call(
         "gpt_decider",
         extra_tags={"tier": tier, "model": model},
     ) as tracker:
-        use_responses = "gpt-5" in model or "gpt-4" in model
-        timeout = _MODEL_TIMEOUT_SECONDS.get(model, 12)
-        if use_responses:
-            inputs = [{"role": msg["role"], "content": msg["content"]} for msg in messages]
-            kwargs: Dict[str, object] = {
-                "model": model,
-                "input": inputs,
-                "max_output_tokens": _MODEL_OUTPUT_LIMITS.get(model, _GPT5_MAX_OUTPUT_TOKENS),
-                "timeout": timeout,
-            }
-            if "gpt-5" in model:
-                kwargs["reasoning"] = {"effort": "low"}
+        timeout = _MODEL_TIMEOUT_SECONDS.get(model, 15)
+        base_kwargs = {
+            "model": model,
+            "messages": messages,
+            "timeout": timeout,
+            "response_format": {"type": "json_object"},
+            "temperature": 0.2,
+        }
+        token_kwargs_order = [
+            {"max_completion_tokens": _MAX_COMPLETION_TOKENS},
+            {"max_tokens": _MAX_COMPLETION_TOKENS},
+        ]
+        usage_in = usage_out = 0
+        resp = None
+        last_error: Exception | None = None
+        for token_kwargs in token_kwargs_order:
             try:
-                resp = await client.responses.create(**kwargs)
-            except Exception as exc:
-                raise GPTTimeout(str(exc)) from exc
-            usage = getattr(resp, "usage", None)
-            usage_in = getattr(usage, "input_tokens", 0) if usage else 0
-            usage_out = getattr(usage, "output_tokens", 0) if usage else 0
-            tracker.add_tag("tokens", usage_in + usage_out)
-            add_tokens(usage_in + usage_out, MAX_TOKENS_MONTH)
-            content_parts: list[str] = []
-            for item in resp.output or []:
-                if getattr(item, "type", "") != "message":
-                    continue
-                for block in getattr(item, "content", []) or []:
-                    text = getattr(block, "text", None)
-                    if text:
-                        content_parts.append(text)
-            content = "".join(content_parts).strip()
-        else:
-            base_kwargs = {
-                "model": model,
-                "messages": messages,
-                "timeout": timeout,
-                "response_format": {"type": "json_object"},
-                "temperature": 0.2,
-            }
-            token_kwargs_order = [
-                {"max_completion_tokens": _MAX_COMPLETION_TOKENS},
-                {"max_tokens": _MAX_COMPLETION_TOKENS},
-            ]
-            resp = None
-            last_error: Exception | None = None
-            for token_kwargs in token_kwargs_order:
-                try:
-                    resp = await client.chat.completions.create(
-                        **base_kwargs, **token_kwargs
-                    )
-                    break
-                except Exception as exc:
-                    msg = str(exc)
-                    param_name = next(iter(token_kwargs))
-                    if "Unsupported parameter" in msg and param_name in msg:
-                        last_error = exc
-                        continue
-                    raise GPTTimeout(msg) from exc
-            else:
-                raise GPTTimeout(
-                    str(last_error) if last_error else "unable to call OpenAI"
+                resp = await client.chat.completions.create(
+                    **base_kwargs, **token_kwargs
                 )
-            usage_in = resp.usage.prompt_tokens
-            usage_out = resp.usage.completion_tokens
-            tracker.add_tag("tokens", usage_in + usage_out)
-            add_tokens(usage_in + usage_out, MAX_TOKENS_MONTH)
-            content = resp.choices[0].message.content.strip()
-            content = content.lstrip("```json").rstrip("```").strip()
+                break
+            except Exception as exc:
+                msg = str(exc)
+                param_name = next(iter(token_kwargs))
+                if "Unsupported parameter" in msg and param_name in msg:
+                    last_error = exc
+                    continue
+                raise GPTTimeout(msg) from exc
+        else:
+            raise GPTTimeout(str(last_error) if last_error else "unable to call OpenAI")
 
-        if not content:
-            raise ValueError("Invalid JSON: (empty string)")
+        usage_in = resp.usage.prompt_tokens
+        usage_out = resp.usage.completion_tokens
+        content = _normalize_json_content(resp.choices[0].message.content or "")
 
-        try:
-            data = json.loads(content)
-        except json.JSONDecodeError as e:
-            raise ValueError(f"Invalid JSON: {content}") from e
+        tracker.add_tag("tokens", usage_in + usage_out)
+        add_tokens(usage_in + usage_out, MAX_TOKENS_MONTH)
+        data = _load_json_payload(content)
 
         for key in _REQUIRED_KEYS:
             if key not in data:
@@ -264,11 +283,11 @@ async def get_decision(payload: Dict) -> Dict:
                 log_reason=True,
                 last_exception=None,
             )
-    # 最大2回リトライ（合計最大 ~9秒）
+    # 最大2回リトライ（Responses→Chat のフォールバック込み）
     last_exc: Exception | None = None
     for attempt in range(2):
         try:
-            fresh = await asyncio.wait_for(call_openai(payload), timeout=_GPT_TIMEOUT_SECONDS)
+            fresh = await call_openai(payload)
             if not isinstance(fresh, dict):
                 raise ValueError("GPT response must be dict")
             # 決定情報を保持（reasonは揮発値なので除外）
@@ -360,8 +379,7 @@ if __name__ == "__main__":
         "reg_micro": "Range",
         "factors_m1": {"ma10": 157.2, "ma20": 157.1, "adx": 30},
         "factors_h4": {"ma10": 157.0, "ma20": 156.8, "adx": 25},
-        "news_short": [],
-        "news_long": [],
+        "news_features": {"news_count_total": 1.0, "news_latest_age_minutes": 5.0},
         "perf": {"macro_pf": 1.3, "micro_pf": 1.1},
     }
 

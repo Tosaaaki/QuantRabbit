@@ -138,7 +138,18 @@ def _upsert(d: dict):
     conn.commit()
 
 
-def get_latest_news(limit_short: int = 3, limit_long: int = 5) -> dict:
+MAX_SUMMARY_CHARS = 280
+
+
+def _trim_summary(text: str) -> str:
+    if not text:
+        return ""
+    if len(text) <= MAX_SUMMARY_CHARS:
+        return text
+    return text[: MAX_SUMMARY_CHARS - 1].rstrip() + "…"
+
+
+def get_latest_news(limit_short: int = 2, limit_long: int = 2) -> dict:
     """DBから最新のニュースを取得して返す"""
     cur.execute(
         """
@@ -162,6 +173,7 @@ def get_latest_news(limit_short: int = 3, limit_long: int = 5) -> dict:
             "event_time": event_time,
             "pair_bias": pair_bias,
         }
+        item["summary"] = _trim_summary(summary)
         if horizon == "short" and len(news_short) < limit_short:
             news_short.append(item)
         elif horizon == "long" and len(news_long) < limit_long:

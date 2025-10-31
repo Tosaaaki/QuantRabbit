@@ -20,6 +20,13 @@ _LOSS_WINDOW_MINUTES = 12
 _MIN_LOSS_JPY = 1.0
 
 
+def _normalize_utc(dt: datetime) -> datetime:
+    """Return a naive UTC datetime, stripping tzinfo when necessary."""
+    if dt.tzinfo is None:
+        return dt
+    return dt.astimezone(timezone.utc).replace(tzinfo=None)
+
+
 def _ensure_row_factory(con: sqlite3.Connection) -> None:
     con.row_factory = sqlite3.Row
 
@@ -36,7 +43,7 @@ class StageTracker:
     def __init__(self, db_path: Path | None = None) -> None:
         self._path = db_path or _DB_PATH
         self._path.parent.mkdir(parents=True, exist_ok=True)
-        self._con = sqlite3.connect(self._path)
+        self._con = sqlite3.connect(self._path, timeout=5.0, check_same_thread=False)
         _ensure_row_factory(self._con)
         self._con.execute(
             """
@@ -103,7 +110,7 @@ class StageTracker:
         self._con.close()
 
     def clear_expired(self, now: datetime) -> None:
-        ts = now.isoformat()
+        ts = _normalize_utc(now).isoformat()
         self._con.execute(
             "DELETE FROM stage_cooldown WHERE cooldown_until <= ?", (ts,)
         )
@@ -117,7 +124,7 @@ class StageTracker:
         *,
         now: Optional[datetime] = None,
     ) -> None:
-        ts = (now or datetime.utcnow()).isoformat()
+        ts = (_normalize_utc(now).isoformat() if now is not None else datetime.utcnow().isoformat())
         self._con.execute(
             """
             INSERT INTO stage_state(pocket, direction, stage, updated_at)
@@ -150,7 +157,7 @@ class StageTracker:
         seconds: int,
         now: Optional[datetime] = None,
     ) -> None:
-        base = now or datetime.utcnow()
+        base = _normalize_utc(now) if now is not None else datetime.utcnow()
         cooldown_until = base + timedelta(seconds=max(1, seconds))
         self._con.execute(
             """
@@ -192,8 +199,8 @@ class StageTracker:
         ).fetchone()
         if not row:
             return None
-        limit = datetime.fromisoformat(row["cooldown_until"])
-        current = now or datetime.utcnow()
+        limit = self._parse_iso(row["cooldown_until"], datetime.utcnow())
+        current = _normalize_utc(now) if now is not None else datetime.utcnow()
         if current >= limit:
             self._con.execute(
                 "DELETE FROM stage_cooldown WHERE pocket=? AND direction=?",
