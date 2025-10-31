@@ -46,9 +46,9 @@ MAX_DRAWDOWN_CLOSE_PIPS: float = max(
     0.5, float(os.getenv("FAST_SCALP_MAX_DRAWDOWN_CLOSE_PIPS", "5.0"))
 )
 FAST_SHARE_HINT: float = max(0.0, min(1.0, float(os.getenv("FAST_SCALP_SHARE_HINT", "0.35"))))
-SHORT_WINDOW_SEC: float = max(0.2, float(os.getenv("FAST_SCALP_SHORT_WINDOW_SEC", "0.8")))
+SHORT_WINDOW_SEC: float = max(0.2, float(os.getenv("FAST_SCALP_SHORT_WINDOW_SEC", "0.9")))
 LONG_WINDOW_SEC: float = max(
-    SHORT_WINDOW_SEC + 0.2, float(os.getenv("FAST_SCALP_LONG_WINDOW_SEC", "5.0"))
+    SHORT_WINDOW_SEC + 0.2, float(os.getenv("FAST_SCALP_LONG_WINDOW_SEC", "9.0"))
 )
 JST_OFF_HOURS_START: int = min(23, max(0, int(float(os.getenv("FAST_SCALP_OFF_HOURS_START_JST", "3")))))
 JST_OFF_HOURS_END: int = min(23, max(0, int(float(os.getenv("FAST_SCALP_OFF_HOURS_END_JST", "5")))))

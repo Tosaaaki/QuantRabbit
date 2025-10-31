@@ -176,9 +176,23 @@ async def manual_spike_worker() -> None:
             # Skip if manual pocket already has open trades (avoid stacking).
             pockets = pos_manager.get_open_positions()
             manual_pos = pockets.get("manual")
-            if manual_pos and manual_pos.get("open_trades"):
-                post_exit_cooldown_until = now_monotonic + config.POST_EXIT_COOLDOWN_SEC
-                continue
+            open_trades = (manual_pos or {}).get("open_trades") or []
+            existing_side: Optional[str] = None
+            latest_trade: Optional[dict] = None
+            if open_trades:
+                open_trades_sorted = sorted(
+                    open_trades,
+                    key=lambda tr: tr.get("open_time") or "",
+                    reverse=True,
+                )
+                latest_trade = open_trades_sorted[0]
+                candidate_side = latest_trade.get("side")
+                if not candidate_side:
+                    units_val = latest_trade.get("units", 0)
+                    candidate_side = "long" if units_val > 0 else "short"
+                existing_side = candidate_side
+                if len(open_trades) >= config.MAX_ACTIVE_TRADES:
+                    continue
 
             blocked, _, spread_state, spread_reason = spread_monitor.is_blocked()
             spread_pips = 0.0
@@ -209,6 +223,8 @@ async def manual_spike_worker() -> None:
             signal = _detect_signal(ticks, features)
             if not signal:
                 continue
+            if existing_side and signal.side != existing_side:
+                continue
 
             latest_tick = ticks[-1]
             try:
@@ -226,6 +242,12 @@ async def manual_spike_worker() -> None:
                 tp_price = round(entry_price + config.TP_PIPS * config.PIP_VALUE, 3)
             if tp_price is not None and tp_price <= 0:
                 tp_price = None
+
+            if latest_trade is not None:
+                prev_price = float(latest_trade.get("price") or entry_price)
+                delta_pips = abs(prev_price - entry_price) / config.PIP_VALUE
+                if delta_pips < config.STAGE_MIN_DELTA_PIPS:
+                    continue
 
             units = -config.ENTRY_UNITS if signal.side == "short" else config.ENTRY_UNITS
             client_id = _build_client_order_id(signal.side)

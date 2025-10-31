@@ -3020,6 +3020,68 @@ async def logic_loop(
                 update_dynamic_protections(open_positions, fac_m1, fac_h4)
             except Exception as exc:
                 logging.warning("[PROTECTION] update failed: %s", exc)
+
+            # Opportunistic macro probe: trendが整っているが戦略が沈黙のときに小さく試す
+            opportunistic_enabled = os.getenv("OPPORTUNISTIC_MACRO", "0").strip().lower() not in {"", "0", "false", "no"}
+            if opportunistic_enabled and not range_active and "macro" in focus_pockets:
+                has_macro_signal = any(
+                    sig for sig in evaluated_signals if sig.get("pocket") == "macro" and sig.get("action") in {"OPEN_LONG", "OPEN_SHORT"}
+                )
+                if not has_macro_signal and fac_h4 and fac_m1:
+                    try:
+                        ma10_h4 = float(fac_h4.get("ma10") or 0.0)
+                        ma20_h4 = float(fac_h4.get("ma20") or 0.0)
+                        adx_h4 = float(fac_h4.get("adx") or 0.0)
+                        gap_pips_h4 = abs(ma10_h4 - ma20_h4) / PIP
+                        rsi_m1_val = float(fac_m1.get("rsi") or 50.0)
+                        ema20_m1_val = float(fac_m1.get("ema20") or (fac_m1.get("ma20") or 0.0))
+                        close_m1_val = float(fac_m1.get("close") or 0.0)
+                    except Exception:
+                        ma10_h4 = ma20_h4 = adx_h4 = gap_pips_h4 = rsi_m1_val = ema20_m1_val = close_m1_val = 0.0
+                    direction = None
+                    overstretched = True
+                    if ma10_h4 > ma20_h4:
+                        direction = "OPEN_LONG"
+                        overstretched = bool(ema20_m1_val and close_m1_val < ema20_m1_val - 0.01)
+                    elif ma10_h4 < ma20_h4:
+                        direction = "OPEN_SHORT"
+                        overstretched = bool(ema20_m1_val and close_m1_val > ema20_m1_val + 0.01)
+                    near_trend = (gap_pips_h4 >= 3.2 and adx_h4 >= 16.0)
+                    rsi_ok = (40.0 <= rsi_m1_val <= 60.0)
+                    if direction and near_trend and rsi_ok and not overstretched:
+                        atr_hint = fac_m1.get("atr_pips")
+                        if atr_hint is None:
+                            atr_hint = (fac_m1.get("atr") or 0.0) * 100
+                        try:
+                            atr_val = float(atr_hint or 0.0)
+                        except (TypeError, ValueError):
+                            atr_val = 0.0
+                        hard_stop = max(18.0, min(36.0, (atr_val or 10.0) * 2.1))
+                        tp_soft = max(20.0, min(34.0, hard_stop * 1.05))
+                        opp_sig = {
+                            "strategy": "OpportunisticMacro",
+                            "pocket": "macro",
+                            "action": direction,
+                            "confidence": 52,
+                            # omit sl_pips -> order uses hard_stop_pips; sizing uses capped hard_stop
+                            "tp_pips": round(tp_soft, 2),
+                            "hard_stop_pips": round(hard_stop, 2),
+                            "tag": f"OppMacro-{'bull' if direction=='OPEN_LONG' else 'bear'}",
+                            "notes": {
+                                "reason": "opportunistic_trend_probe",
+                                "gap_h4": round(gap_pips_h4, 2),
+                                "adx_h4": round(adx_h4, 2),
+                                "rsi_m1": round(rsi_m1_val, 1),
+                            },
+                        }
+                        evaluated_signals.append(opp_sig)
+                        logging.info(
+                            "[OPP] macro probe added dir=%s gap=%.2f adx=%.1f rsi=%.1f",
+                            direction,
+                            gap_pips_h4,
+                            adx_h4,
+                            rsi_m1_val,
+                        )
             partial_threshold_overrides = None
             if partial_advisor and partial_advisor.enabled:
                 partial_context = {

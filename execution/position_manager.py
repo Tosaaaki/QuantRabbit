@@ -66,6 +66,21 @@ class PositionManager:
         self._pocket_cache: dict[str, str] = {}
         self._client_cache: dict[str, str] = {}
 
+    @staticmethod
+    def _normalize_pocket(pocket: str | None) -> str:
+        """Map pocket values to a canonical set.
+
+        Business rule (2025-10): any "unknown" or empty pocket is treated as
+        manual. Agent-managed pockets remain unchanged.
+        """
+        allowed = {"macro", "micro", "scalp", "scalp_fast", "manual"}
+        if not pocket:
+            return "manual"
+        p = str(pocket).strip().lower()
+        if p in ("", "unknown"):
+            return "manual"
+        return p if p in allowed else "manual"
+
     def _ensure_schema(self):
         # trades テーブルが存在しない場合のベース定義
         self.con.execute(
@@ -302,7 +317,8 @@ class PositionManager:
             trade = r.json().get("trade", {})
 
             pocket_tag = trade.get("clientExtensions", {}).get("tag", "pocket=unknown")
-            pocket = pocket_tag.split("=")[1] if "=" in pocket_tag else "unknown"
+            pocket_raw = pocket_tag.split("=")[1] if "=" in pocket_tag else "unknown"
+            pocket = self._normalize_pocket(pocket_raw)
 
             return {
                 "entry_price": float(trade.get("price", 0.0)),
@@ -357,7 +373,7 @@ class PositionManager:
             "entry_price": float(row["executed_price"] or 0.0),
             "entry_time": entry_time,
             "units": int(row["units"] or 0),
-            "pocket": row["pocket"] or "unknown",
+            "pocket": self._normalize_pocket(row["pocket"]),
         }
 
     def _parse_and_save_trades(self, transactions: list[dict]):
@@ -580,6 +596,9 @@ class PositionManager:
                 pocket = candidate if candidate in agent_pockets else "manual"
             else:
                 pocket = "manual"
+
+            # Canonicalize: treat unknown/empty as manual per policy
+            pocket = self._normalize_pocket(pocket)
 
             units = int(tr.get("currentUnits", 0))
             if units == 0:
