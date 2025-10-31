@@ -550,6 +550,13 @@ _HARD_MAX_RISK_CAP = 0.05   # 1.8%
 _RANGE_RISK_CAP = 0.008      # 0.8%
 _SQUEEZE_RISK_CAP = 0.006    # 0.6% 個別ドローダウン時
 
+# Sizing uses a capped SL for macro entries to avoid vanishing lot sizes
+# while the ExitManager manages real exits with wider insurance stops.
+try:
+    SIZING_SL_CAP_MACRO = float(os.getenv("SIZING_SL_CAP_MACRO", "18.0") or 18.0)
+except Exception:
+    SIZING_SL_CAP_MACRO = 18.0
+
 try:
     _BASE_RISK_PCT = float(get_secret("risk_pct"))
     if _BASE_RISK_PCT <= 0:
@@ -3219,10 +3226,35 @@ async def logic_loop(
                     tags={"stage": "pre_lot"},
                     ts=now,
                 )
-            sl_values = [
-                s["sl_pips"] for s in evaluated_signals if s.get("sl_pips") is not None
-            ]
-            avg_sl = sum(sl_values) / len(sl_values) if sl_values else 20.0
+            # Use a sizing SL that prefers hard_stop_pips (insurance) but caps macro at SIZING_SL_CAP_MACRO
+            sizing_list: list[float] = []
+            capped_count = 0
+            for s in evaluated_signals:
+                raw_sl = s.get("hard_stop_pips")
+                if raw_sl is None:
+                    raw_sl = s.get("sl_pips")
+                if raw_sl is None:
+                    continue
+                try:
+                    val = float(raw_sl)
+                except (TypeError, ValueError):
+                    continue
+                strat_name = s.get("strategy")
+                pocket_name = STRATEGIES.get(strat_name).pocket if strat_name in STRATEGIES else s.get("pocket")
+                if pocket_name == "macro":
+                    capped = min(val, float(SIZING_SL_CAP_MACRO))
+                    if capped < val - 1e-9:
+                        capped_count += 1
+                    val = capped
+                sizing_list.append(max(0.5, val))
+            avg_sl = sum(sizing_list) / len(sizing_list) if sizing_list else 20.0
+            if capped_count:
+                logging.info(
+                    "[SIZING] capped %d macro SL values at %.2f pips for lot sizing (avg=%.2f)",
+                    capped_count,
+                    SIZING_SL_CAP_MACRO,
+                    avg_sl,
+                )
 
             try:
                 account_snapshot = get_account_snapshot()

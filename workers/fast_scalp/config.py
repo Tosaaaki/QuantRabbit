@@ -28,9 +28,9 @@ SL_POST_ADJUST_BUFFER_PIPS: float = max(
     0.0, float(os.getenv("FAST_SCALP_SL_POST_ADJUST_BUFFER_PIPS", "5.0"))
 )
 MAX_SPREAD_PIPS: float = max(0.1, float(os.getenv("FAST_SCALP_MAX_SPREAD_PIPS", "0.85")))
-ENTRY_THRESHOLD_PIPS: float = max(0.003, float(os.getenv("FAST_SCALP_ENTRY_MOM_PIPS", "0.008")))
+ENTRY_THRESHOLD_PIPS: float = max(0.002, float(os.getenv("FAST_SCALP_ENTRY_MOM_PIPS", "0.004")))
 ENTRY_SHORT_THRESHOLD_PIPS: float = max(
-    0.003, float(os.getenv("FAST_SCALP_ENTRY_SHORT_MOM_PIPS", "0.008"))
+    0.002, float(os.getenv("FAST_SCALP_ENTRY_SHORT_MOM_PIPS", "0.004"))
 )
 ENTRY_RANGE_FLOOR_PIPS: float = max(0.005, float(os.getenv("FAST_SCALP_RANGE_FLOOR_PIPS", "0.04")))
 ENTRY_COOLDOWN_SEC: float = max(0.2, float(os.getenv("FAST_SCALP_ENTRY_COOLDOWN_SEC", "0.75")))
@@ -68,8 +68,8 @@ SNAPSHOT_BURST_INTERVAL_SEC: float = max(
 )
 
 # --- entry gating / quality thresholds ---
-MIN_ENTRY_ATR_PIPS: float = max(0.0, float(os.getenv("FAST_SCALP_MIN_ENTRY_ATR_PIPS", "0.18")))
-MIN_ENTRY_TICK_COUNT: int = max(2, int(float(os.getenv("FAST_SCALP_MIN_ENTRY_TICK_COUNT", "18"))))
+MIN_ENTRY_ATR_PIPS: float = max(0.0, float(os.getenv("FAST_SCALP_MIN_ENTRY_ATR_PIPS", "0.12")))
+MIN_ENTRY_TICK_COUNT: int = max(2, int(float(os.getenv("FAST_SCALP_MIN_ENTRY_TICK_COUNT", "16"))))
 RSI_ENTRY_OVERBOUGHT: float = float(os.getenv("FAST_SCALP_RSI_ENTRY_OVERBOUGHT", "70"))
 RSI_ENTRY_OVERSOLD: float = float(os.getenv("FAST_SCALP_RSI_ENTRY_OVERSOLD", "30"))
 LOW_VOL_COOLDOWN_SEC: float = max(0.0, float(os.getenv("FAST_SCALP_LOW_VOL_COOLDOWN_SEC", "30.0")))
@@ -96,12 +96,12 @@ MIN_TICK_COUNT: int = max(RSI_PERIOD + 2, ATR_PERIOD + 1, _MIN_TICK_ENV)
 # Require at least ~70% of the sampling window so we avoid gating ourselves out entirely.
 _min_span_env = os.getenv("FAST_SCALP_MIN_ENTRY_TICK_SPAN_SEC")
 if _min_span_env is None:
-    MIN_ENTRY_TICK_SPAN_SEC: float = max(2.0, LONG_WINDOW_SEC * 0.7)
+    MIN_ENTRY_TICK_SPAN_SEC: float = max(1.0, LONG_WINDOW_SEC * 0.5)
 else:
     try:
         MIN_ENTRY_TICK_SPAN_SEC = max(0.0, float(_min_span_env))
     except ValueError:
-        MIN_ENTRY_TICK_SPAN_SEC = max(2.0, LONG_WINDOW_SEC * 0.7)
+        MIN_ENTRY_TICK_SPAN_SEC = max(1.0, LONG_WINDOW_SEC * 0.5)
 if MIN_ENTRY_TICK_SPAN_SEC >= LONG_WINDOW_SEC:
     MIN_ENTRY_TICK_SPAN_SEC = max(0.0, min(LONG_WINDOW_SEC * 0.95, LONG_WINDOW_SEC - 0.2))
 
