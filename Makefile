@@ -1,4 +1,4 @@
-.PHONY: help vm-deploy vm-tail vm-logs vm-sql vm-exec
+.PHONY: help vm-deploy vm-tail vm-logs vm-sql vm-exec gcp-bootstrap
 
 -include scripts/vm.env
 
@@ -28,6 +28,7 @@ help:
 	@echo "  vm-logs     Pull remote logs to ./remote_logs"
 	@echo "  vm-sql      Run SQL on remote trades.db"
 	@echo "  vm-exec     Run CMD='...' on VM"
+	@echo "  gcp-bootstrap  Enable project IAM/APIs/OS Login (set GCP_USER and BILLING)"
 	@echo ""
 	@echo "Tip: copy scripts/vm.env.example to scripts/vm.env and edit."
 
@@ -53,3 +54,9 @@ vm-exec:
 	@[ -n "$(CMD)" ] || { echo "Usage: make vm-exec CMD='hostnamectl'"; exit 1; }
 	@./scripts/vm.sh $(GCLOUD_FLAGS) exec -- $(CMD)
 
+# Enable project for Quantrabbit (dry-run by default)
+# Usage:
+#   make gcp-bootstrap PROJECT=quantrabbit GCP_USER=www.tosakiweb.net@gmail.com BILLING=0000-AAAAAA-BBBBBB APPLY=1
+gcp-bootstrap:
+	@[ -n "$(PROJECT)" ] && [ -n "$(GCP_USER)" ] || { echo "Set PROJECT and GCP_USER. Optional: BILLING, APPLY=1"; exit 1; }
+	@./scripts/gcp_enable_project.sh -p $(PROJECT) -u $(GCP_USER) $(if $(BILLING),-b $(BILLING),) $(if $(APPLY),--apply,)

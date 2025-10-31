@@ -462,3 +462,23 @@ scripts/vm.sh -p quantrabbit -z asia-northeast1-a -m fx-trader-vm deploy -i -k ~
   - OS Login を無効化: `... add-metadata ... --metadata enable-oslogin=FALSE`
   - 公開鍵をメタデータに登録: `--metadata-from-file ssh-keys=ssh-keys.txt`
   - ただしセキュリティ・運用上 OS Login 利用を推奨。
+
+### 10.3 常時アクセス（IAP + OS Login ベースライン）
+
+「毎回アカウントを有効化」せずに運用できるよう、以下を一度セットアップしておく。
+
+- 必要ロール（プロジェクト単位で付与）
+  - `roles/compute.osAdminLogin`（OS Login + sudo）
+  - `roles/iap.tunnelResourceAccessor`（IAP 経由 SSH）
+  - `roles/compute.viewer`（`compute.instances.get` などの参照権限）
+    - 代替: 管理者は `roles/compute.instanceAdmin.v1` でも可
+- インスタンス/プロジェクト メタデータ
+  - `enable-oslogin=TRUE` を有効化（既定推奨）
+- OS Login 用 SSH 鍵の登録（30 日 TTL）
+  - `ssh-keygen -t ed25519 -f ~/.ssh/gcp_oslogin_quantrabbit -N '' -C 'oslogin-qr'`
+  - `gcloud compute os-login ssh-keys add --key-file ~/.ssh/gcp_oslogin_quantrabbit.pub --ttl 30d`
+- 動作確認（IAP 経由）
+  - `gcloud compute ssh fx-trader-vm --project=quantrabbit --zone=asia-northeast1-a \
+     --tunnel-through-iap --ssh-key-file ~/.ssh/gcp_oslogin_quantrabbit --command "sudo -n true && echo SUDO_OK"`
+
+上記が整っていれば、日常運用で追加の「アカウント有効化」作業は不要。`scripts/vm.sh` でデプロイ・ログ確認・DB 照会を実施できる。

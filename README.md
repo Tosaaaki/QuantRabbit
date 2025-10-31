@@ -13,6 +13,15 @@ QuantRabbit は USD/JPY で 24/7 自律運用する無裁量トレーディン�
 
 Make を使わない場合は `scripts/vm.sh -p <PROJECT> -z <ZONE> -m <INSTANCE> deploy -b main -i --restart quantrabbit.service -t` を直接呼び出す。`-t` は IAP トンネル、`-k` は OS Login 用 SSH 鍵、必要に応じて `-A` で gcloud アカウントを指定する。
 
+## Always‑on VM Access (IAP + OS Login)
+- 1回の初期設定で、以後「アカウント有効化」不要の常時アクセスを実現。
+  - 付与ロール（プロジェクト）: `roles/compute.osAdminLogin`, `roles/iap.tunnelResourceAccessor`, `roles/compute.viewer`
+  - インスタンス/プロジェクト メタデータ: `enable-oslogin=TRUE`
+  - SSH 鍵登録（30 日 TTL）: `gcloud compute os-login ssh-keys add --key-file ~/.ssh/gcp_oslogin_quantrabbit.pub --ttl 30d`
+- 接続テスト（IAP 経由）:
+  - `gcloud compute ssh fx-trader-vm --project=quantrabbit --zone=asia-northeast1-a --tunnel-through-iap --ssh-key-file ~/.ssh/gcp_oslogin_quantrabbit --command "sudo -n true && echo SUDO_OK"`
+- 運用は `scripts/vm.sh` 経由（deploy/tail/sql/pull-logs）を推奨。詳細は AGENTS.md の「10. GCE SSH / OS Login ガイド」を参照。
+
 ## Architecture Snapshot
 - Tick/Candle 取得は `market_data/*` が担当し、`indicators/*` でテクニカル要因を集計する
 - レジーム判定とフォーカス決定 (`analysis/regime_classifier.py` / `focus_decider.py`) を経由し、`analysis/gpt_decider.py` が GPT 系モデルで戦略配分を指示

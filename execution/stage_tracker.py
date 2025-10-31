@@ -218,7 +218,8 @@ class StageTracker:
         info = self.get_cooldown(pocket, direction, now)
         if not info:
             return False, None, None
-        remaining = int((info.cooldown_until - (now or datetime.utcnow())).total_seconds())
+        base_now = _normalize_utc(now) if now is not None else datetime.utcnow()
+        remaining = int((info.cooldown_until - base_now).total_seconds())
         return True, max(1, remaining), info.reason
 
     def update_loss_streaks(

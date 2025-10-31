@@ -56,7 +56,9 @@ def _load_model(path: str) -> Optional[_PatternModel]:
     return _PatternModel(model)
 
 
-PATTERN_MODEL = _load_model(config.PATTERN_MODEL_PATH)
+# Be defensive in case the runtime config is older and lacks the attribute.
+_MODEL_PATH = getattr(config, "PATTERN_MODEL_PATH", "")
+PATTERN_MODEL = _load_model(_MODEL_PATH)
 
 
 def pattern_score(features: Optional[Sequence[float]], direction: str) -> Optional[float]:
@@ -64,4 +66,3 @@ def pattern_score(features: Optional[Sequence[float]], direction: str) -> Option
     if PATTERN_MODEL is None or not features:
         return None
     return PATTERN_MODEL.score(features, direction)
-

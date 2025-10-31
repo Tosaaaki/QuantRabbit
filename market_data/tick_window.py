@@ -18,7 +18,8 @@ import logging
 
 _MAX_SECONDS = 180  # 3 分あれば十分
 _MAX_TICKS = 1800   # 10tick/sec を見込んだ上限
-_CACHE_PATH = Path("logs/tick_cache.json")
+_BASE_DIR = Path(__file__).resolve().parents[1]
+_CACHE_PATH = (_BASE_DIR / "logs" / "tick_cache.json").resolve()
 _CACHE_LIMIT = 400  # persist a slim view to keep file light
 _FLUSH_INTERVAL_SEC = 5.0
 _LOGGER = logging.getLogger(__name__)
@@ -34,6 +35,7 @@ class _TickRow:
 
 _TICKS: Deque[_TickRow] = deque(maxlen=_MAX_TICKS)
 _last_flush_ts: float = 0.0
+_last_persist_error_ts: float = 0.0
 
 
 def _load_cache() -> None:
@@ -66,7 +68,7 @@ def _load_cache() -> None:
 
 
 def _persist_cache() -> None:
-    global _last_flush_ts
+    global _last_flush_ts, _last_persist_error_ts
     now = time.time()
     if now - _last_flush_ts < _FLUSH_INTERVAL_SEC:
         return
@@ -82,9 +84,12 @@ def _persist_cache() -> None:
         tmp_path.write_text(json.dumps(data, separators=(",", ":")), encoding="utf-8")
         tmp_path.replace(_CACHE_PATH)
         _LOGGER.debug("[TICK_CACHE] persisted=%d path=%s", len(window), _CACHE_PATH)
-    except Exception:
+    except Exception as exc:
+        if time.time() - _last_persist_error_ts >= 30.0:
+            _LOGGER.warning("[TICK_CACHE] persist failed: %s", exc)
+            _last_persist_error_ts = time.time()
         # Persistence best-effort; ignore failures
-        pass
+        return
 
 
 _load_cache()

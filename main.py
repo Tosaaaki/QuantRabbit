@@ -300,18 +300,25 @@ _FACTOR_RETRY_SECONDS = 300  # 5 minutes
 
 
 def _parse_factor_timestamp(value: object) -> Optional[datetime.datetime]:
+    if value is None:
+        return None
     if isinstance(value, datetime.datetime):
         dt = value
     elif isinstance(value, str):
+        cleaned = value.strip()
+        if cleaned.endswith("Z"):
+            cleaned = f"{cleaned[:-1]}+00:00"
         try:
-            dt = datetime.datetime.fromisoformat(value)
+            dt = datetime.datetime.fromisoformat(cleaned)
         except ValueError:
             return None
     else:
         return None
     if dt.tzinfo is None:
         dt = dt.replace(tzinfo=datetime.timezone.utc)
-    return dt.astimezone(datetime.timezone.utc)
+    else:
+        dt = dt.astimezone(datetime.timezone.utc)
+    return dt
 
 
 def _to_utc(dt: datetime.datetime) -> datetime.datetime:
@@ -329,18 +336,20 @@ async def ensure_factor_history_ready(
     Ensure indicator cache has recent H4 (and M1) factors. Re-fetch history if stale.
     """
     now = datetime.datetime.now(datetime.timezone.utc)
+    now_epoch = now.timestamp()
     factors = all_factors()
     h4 = factors.get("H4") or {}
     timestamp = _parse_factor_timestamp(h4.get("timestamp"))
-    if timestamp and (now - timestamp).total_seconds() <= _FACTOR_STALE_SECONDS:
-        state.last_success = timestamp
-        return
-
-    if state.in_progress:
-        return
+    if timestamp:
+        ts_epoch = _to_utc(timestamp).timestamp()
+        if now_epoch - ts_epoch <= _FACTOR_STALE_SECONDS:
+            state.last_success = _to_utc(timestamp)
+            return
     last_attempt = state.last_attempt and _to_utc(state.last_attempt)
-    if last_attempt and (now - last_attempt).total_seconds() < _FACTOR_RETRY_SECONDS:
-        return
+    if last_attempt:
+        last_attempt_epoch = last_attempt.timestamp()
+        if now_epoch - last_attempt_epoch < _FACTOR_RETRY_SECONDS:
+            return
 
     state.in_progress = True
     state.last_attempt = now
@@ -354,7 +363,7 @@ async def ensure_factor_history_ready(
         ts_new = _parse_factor_timestamp(refreshed.get("timestamp"))
         if ts_new:
             logging.info("[FACTOR] history warmup completed at %s", ts_new.isoformat())
-            state.last_success = ts_new
+            state.last_success = _to_utc(ts_new)
         else:
             logging.warning("[FACTOR] warmup completed but H4 factors still missing; will retry.")
             state.last_success = None
@@ -956,6 +965,15 @@ def _stage_conditions_met(
     fac_h4: dict[str, float],
     open_info: dict[str, float],
 ) -> bool:
+    try:
+        current_units = abs(int(open_info.get("units", 0) or 0))
+    except (TypeError, ValueError):
+        current_units = 0
+    effective_stage = stage_idx
+    if current_units == 0 and stage_idx > 0:
+        effective_stage = 0
+    stage_idx = effective_stage
+
     price = fac_m1.get("close")
     avg_price = open_info.get("avg_price", price or 0.0)
     rsi = fac_m1.get("rsi", 50.0)
@@ -981,10 +999,12 @@ def _stage_conditions_met(
         )
 
     buy_floor = RSI_LONG_FLOOR.get(pocket)
+    is_macro_stage0 = pocket == "macro" and stage_idx == 0
     if (
         action == "OPEN_LONG"
         and buy_floor is not None
         and rsi < buy_floor
+        and not is_macro_stage0
         and not (pocket == "macro" and macro_pullback_retrace is not None)
     ):
         logging.info(
@@ -1557,7 +1577,10 @@ async def logic_loop(
                 logging.warning("[FORCE_SCALP] loop=%d", loop_counter)
 
             if factor_warmup_state is not None:
-                await ensure_factor_history_ready(factor_warmup_state)
+                try:
+                    await ensure_factor_history_ready(factor_warmup_state)
+                except Exception as exc:  # pragma: no cover - defensive
+                    logging.exception("[FACTOR] warmup check failed; continuing")
             stage_tracker.clear_expired(now)
             # Heartbeat logging
             if (now - last_heartbeat_time).total_seconds() >= 300:  # Every 5 minutes

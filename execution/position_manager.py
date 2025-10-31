@@ -1,9 +1,11 @@
 from __future__ import annotations
+import json
 import os
 import requests
 import sqlite3
 import pathlib
 from datetime import datetime, timezone, timedelta
+from typing import Dict
 from utils.secrets import get_secret
 
 # --- config ---
@@ -550,6 +552,7 @@ class PositionManager:
 
         pockets: dict[str, dict] = {}
         net_units = 0
+        client_ids: list[str] = []
         for tr in trades:
             client_ext = tr.get("clientExtensions", {}) or {}
             tag = client_ext.get("tag", "pocket=unknown")
@@ -605,6 +608,8 @@ class PositionManager:
                     "open_time": open_time_iso or open_time_raw,
                 }
             )
+            if client_ext.get("id"):
+                client_ids.append(client_ext.get("id"))
             prev_total_units = info["units"]
             new_total_units = prev_total_units + units
             if new_total_units != 0:
@@ -644,9 +649,63 @@ class PositionManager:
             info["unrealized_pl_pips"] = info.get("unrealized_pl_pips", 0.0) + unrealized_pl_pips
             net_units += units
 
+        if client_ids:
+            entry_map = self._load_entry_thesis(client_ids)
+            for pocket_info in pockets.values():
+                trades_list = pocket_info.get("open_trades") if isinstance(pocket_info, dict) else None
+                if not trades_list:
+                    continue
+                for trade in trades_list:
+                    cid = trade.get("client_id")
+                    if cid and cid in entry_map:
+                        trade["entry_thesis"] = entry_map[cid]
+
         pockets["__net__"] = {"units": net_units}
 
         return pockets
+
+    def _load_entry_thesis(self, client_ids: list[str]) -> Dict[str, dict]:
+        unique_ids = tuple(dict.fromkeys(cid for cid in client_ids if cid))
+        if not unique_ids:
+            return {}
+        try:
+            con = sqlite3.connect(_ORDERS_DB)
+            con.row_factory = sqlite3.Row
+        except sqlite3.Error as exc:
+            print(f"[PositionManager] Failed to open orders.db: {exc}")
+            return {}
+        placeholders = ",".join("?" for _ in unique_ids)
+        try:
+            rows = con.execute(
+                f"""
+                SELECT client_order_id, request_json
+                FROM orders
+                WHERE client_order_id IN ({placeholders})
+                  AND status='submit_attempt'
+                ORDER BY id DESC
+                """,
+                unique_ids,
+            ).fetchall()
+        except sqlite3.Error as exc:
+            print(f"[PositionManager] orders.db query failed: {exc}")
+            con.close()
+            return {}
+        con.close()
+        result: Dict[str, dict] = {}
+        for row in rows:
+            cid = row["client_order_id"]
+            if cid in result:
+                continue
+            payload_raw = row["request_json"]
+            if not payload_raw:
+                continue
+            try:
+                payload = json.loads(payload_raw)
+            except json.JSONDecodeError:
+                continue
+            thesis = (payload.get("meta") or {}).get("entry_thesis") or {}
+            result[cid] = thesis
+        return result
 
     def get_performance_summary(self, now: datetime | None = None) -> dict:
         now = now or datetime.now(timezone.utc)

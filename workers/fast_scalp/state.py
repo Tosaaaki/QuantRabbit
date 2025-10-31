@@ -19,6 +19,8 @@ class FastScalpSnapshot:
     focus_tag: str = "micro"
     risk_pct_override: Optional[float] = None
     range_active: bool = False
+    m1_rsi: Optional[float] = None
+    m1_rsi_age_sec: Optional[float] = None
     updated_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
 
 
@@ -37,6 +39,8 @@ class FastScalpState:
         focus_tag: str,
         risk_pct_override: Optional[float],
         range_active: bool,
+        m1_rsi: Optional[float],
+        m1_rsi_age_sec: Optional[float],
     ) -> None:
         snap = FastScalpSnapshot(
             account_equity=max(1.0, float(account_equity or 0.0)),
@@ -46,6 +50,8 @@ class FastScalpState:
             focus_tag=focus_tag,
             risk_pct_override=risk_pct_override,
             range_active=range_active,
+            m1_rsi=None if m1_rsi is None else float(m1_rsi),
+            m1_rsi_age_sec=None if m1_rsi_age_sec is None else max(0.0, float(m1_rsi_age_sec)),
         )
         with self._lock:
             self._snapshot = snap
@@ -53,4 +59,3 @@ class FastScalpState:
     def snapshot(self) -> FastScalpSnapshot:
         with self._lock:
             return self._snapshot
-
