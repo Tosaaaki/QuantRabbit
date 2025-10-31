@@ -173,6 +173,9 @@ POCKET_MAX_DIRECTIONAL_TRADES_RANGE = {
     "scalp_fast": 1,
 }
 
+RANGE_MACRO_BIAS_MAX_ACTIVE_TRADES = 2
+RANGE_MACRO_BIAS_MAX_DIRECTIONAL_TRADES = 2
+
 try:
     HEDGING_ENABLED = get_secret("oanda_hedging_enabled").lower() == "true"
 except Exception:
@@ -2902,6 +2905,19 @@ async def logic_loop(
                 ):
                     if extra_key in raw_signal:
                         signal[extra_key] = raw_signal[extra_key]
+                if (
+                    range_active
+                    and range_macro_bias_dir
+                    and signal["pocket"] == "macro"
+                    and cls.name in ALLOWED_RANGE_MACRO_STRATEGIES
+                ):
+                    notes = signal.get("notes")
+                    if not isinstance(notes, dict):
+                        notes = {}
+                    notes.setdefault("range_bias_dir", range_macro_bias_dir)
+                    notes.setdefault("range_bias_source", cls.name)
+                    signal["notes"] = notes
+                    signal["range_bias_dir"] = range_macro_bias_dir
                 scaled_conf = int(signal["confidence"] * health.confidence_scale)
                 signal["confidence"] = max(0, min(100, scaled_conf))
                 if FORCE_SCALP_MODE:
@@ -3167,6 +3183,10 @@ async def logic_loop(
                                     "rsi_m1": round(rsi_m1_val, 1),
                                 },
                             }
+                            if range_active and range_macro_bias_dir:
+                                opp_sig["range_bias_dir"] = range_macro_bias_dir
+                                opp_sig["notes"]["range_bias_dir"] = range_macro_bias_dir
+                                opp_sig["notes"]["range_bias_source"] = "opportunistic_probe"
                             evaluated_signals.append(opp_sig)
                             logging.info(
                                 "[OPP] macro probe added dir=%s gap=%.2f adx=%.1f rsi=%.1f",
@@ -3915,11 +3935,10 @@ async def logic_loop(
                 if pocket in executed_pockets:
                     logging.info("[SKIP] %s pocket already handled this loop.", pocket)
                     continue
-                if (range_active or override_macro_hold_active) and pocket == "macro":
-                    reason = "range_active" if range_active else "macro_hold_after_breakout"
+                macro_bias_dir = signal.get("range_bias_dir")
+                if override_macro_hold_active and pocket == "macro":
                     logging.info(
-                        "[SKIP] %s, skipping macro entry (score=%.2f momentum=%.4f atr=%.2f vol5m=%.2f override=%s reason=%s hold_until=%s)",
-                        reason,
+                        "[SKIP] macro_hold_after_breakout, skipping macro entry (score=%.2f momentum=%.4f atr=%.2f vol5m=%.2f override=%s reason=%s hold_until=%s)",
                         range_ctx.score,
                         momentum,
                         atr_pips,
@@ -3928,11 +3947,25 @@ async def logic_loop(
                         range_breakout_reason or range_ctx.reason,
                         (
                             range_macro_hold_until.isoformat(timespec="seconds")
-                            if override_macro_hold_active
-                            else "n/a"
+                            if override_macro_hold_active else "n/a"
                         ),
                     )
                     continue
+                if range_active and pocket == "macro" and not macro_bias_dir:
+                    logging.info(
+                        "[SKIP] range_active, no macro bias -> skip macro entry (score=%.2f reason=%s)",
+                        range_ctx.score,
+                        range_ctx.reason,
+                    )
+                    continue
+                if range_active and pocket == "macro" and macro_bias_dir:
+                    logging.info(
+                        "[RANGE] macro bias entry allowed dir=%s score=%.2f momentum=%.4f atr=%.2f",
+                        macro_bias_dir,
+                        range_ctx.score,
+                        momentum,
+                        atr_pips,
+                    )
                 if not can_trade(pocket):
                     logging.info(f"[SKIP] DD limit for {pocket} pocket.")
                     continue
@@ -3989,10 +4022,15 @@ async def logic_loop(
                     confidence_target = adj
 
                 open_info = open_positions.get(pocket, {})
-                pocket_limits = POCKET_MAX_ACTIVE_TRADES_RANGE if range_active else POCKET_MAX_ACTIVE_TRADES
-                per_direction_limits = (
-                    POCKET_MAX_DIRECTIONAL_TRADES_RANGE if range_active else POCKET_MAX_DIRECTIONAL_TRADES
-                )
+                if range_active:
+                    pocket_limits = dict(POCKET_MAX_ACTIVE_TRADES_RANGE)
+                    per_direction_limits = dict(POCKET_MAX_DIRECTIONAL_TRADES_RANGE)
+                    if macro_bias_dir:
+                        pocket_limits["macro"] = RANGE_MACRO_BIAS_MAX_ACTIVE_TRADES
+                        per_direction_limits["macro"] = RANGE_MACRO_BIAS_MAX_DIRECTIONAL_TRADES
+                else:
+                    pocket_limits = POCKET_MAX_ACTIVE_TRADES
+                    per_direction_limits = POCKET_MAX_DIRECTIONAL_TRADES
                 direction_limit = per_direction_limits.get(pocket, 1)
                 if direction_limit <= 0:
                     logging.info(
