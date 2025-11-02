@@ -2,4 +2,5 @@ flask
 openai
 google-cloud-storage
 feedparser
-pandas-ta
+pandas
+numpy

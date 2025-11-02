@@ -1,0 +1,19 @@
+[Unit]
+Description=QuantRabbit Trader (main.py)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=quantrabbit
+WorkingDirectory=/home/quantrabbit/QuantRabbit
+Environment=PYTHONUNBUFFERED=1
+EnvironmentFile=/etc/quantrabbit.env
+ExecStart=/home/quantrabbit/QuantRabbit/.venv/bin/python /home/quantrabbit/QuantRabbit/main.py
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

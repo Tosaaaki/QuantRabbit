@@ -30,3 +30,25 @@ logs/
 
 # Local secrets
 config/env.toml
+
+# Local artifacts & caches
+.cache/
+.deploy_image
+google-cloud-sdk/
+summaries/
+system development/
+infra/terraform/archive/
+config/env.local.toml
+trades*.db
+
+# Finder duplicate copies
+* 2.py
+* 3.py
+* 2.sh
+* 3.sh
+* 2.md
+* 3.md
+* 2.csv
+* 3.csv
+* 2.json
+* 3.json

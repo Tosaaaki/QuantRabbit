@@ -26,6 +26,7 @@ from execution.risk_guard import (
 )
 from execution.order_manager import market_order
 from execution.position_manager import PositionManager
+from execution.exit_manager import exit_loop
 from strategies.trend.ma_cross import MovingAverageCross
 from strategies.breakout.donchian55 import Donchian55
 from strategies.mean_reversion.bb_rsi import BBRsi
@@ -170,13 +171,28 @@ async def logic_loop():
                     sig["action"] == "buy",
                 )
 
-                trade_id = await market_order("USD_JPY", units, sl, tp, pocket)
-                if trade_id:
+                order_result = await market_order(
+                    "USD_JPY",
+                    units,
+                    sl,
+                    tp,
+                    pocket,
+                    price_anchor=price,
+                    strategy=cls.name,
+                    macro_regime=macro_regime,
+                    micro_regime=micro_regime,
+                )
+                if order_result.get("success"):
+                    trade_id = order_result.get("trade_id")
                     logging.info(
                         f"[ORDER] {trade_id} | {cls.name} | {lot} lot | SL={sl}, TP={tp}"
                     )
                 else:
-                    logging.error(f"[ORDER FAILED] {cls.name}")
+                    logging.error(
+                        "[ORDER FAILED] %s | reason=%s",
+                        cls.name,
+                        order_result.get("error"),
+                    )
 
                 break  # 1取引/ループ
 
@@ -198,11 +214,13 @@ async def main():
     # 複数の無限ループを並列で実行する。
     # - start_candle_stream: Tick データとローソク足生成
     # - logic_loop: トレーディングロジック
+    # - exit_loop: Exit マネージャ（SL/TP 調整・強制決済）
     # - news_fetch_loop: 経済指標 RSS 取得
     # - summary_ingest_loop: GCS summary/ から DB への取り込み
     await asyncio.gather(
         start_candle_stream("USD_JPY", handlers),
         logic_loop(),
+        exit_loop(),
         news_fetch_loop(),
         summary_ingest_loop(),
     )
