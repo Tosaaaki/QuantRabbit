@@ -463,6 +463,31 @@ def update_dynamic_protections(
             _maybe_update_protections(trade_id, sl_price, tp_price)
 
 
+async def set_trade_protections(
+    trade_id: str,
+    *,
+    sl_price: Optional[float],
+    tp_price: Optional[float],
+) -> bool:
+    """
+    Legacy compatibility layer – update SL/TP for an open trade and report success.
+    """
+    if not trade_id:
+        return False
+    try:
+        _maybe_update_protections(trade_id, sl_price, tp_price)
+        return True
+    except Exception as exc:  # noqa: BLE001
+        logging.warning(
+            "[ORDER] set_trade_protections failed trade=%s sl=%s tp=%s exc=%s",
+            trade_id,
+            sl_price,
+            tp_price,
+            exc,
+        )
+        return False
+
+
 def plan_partial_reductions(
     open_positions: dict,
     fac_m1: dict,

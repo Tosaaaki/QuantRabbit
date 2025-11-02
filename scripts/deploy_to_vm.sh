@@ -2,7 +2,8 @@
 # Deploy helper: Local git push -> VM git pull -> service restart
 #
 # Usage:
-#   scripts/deploy_to_vm.sh [-b BRANCH] [-i] [-p PROJECT] [-z ZONE] [-m INSTANCE] [-d REPO_DIR] [-s SERVICE] [-k KEYFILE] [-t]
+#   scripts/deploy_to_vm.sh [-b BRANCH] [-i] [-p PROJECT] [-z ZONE] [-m INSTANCE] [-d REPO_DIR] [-s SERVICE] \
+#                           [-k SSH_KEYFILE] [-t] [-K SA_KEYFILE] [-A SA_ACCOUNT]
 #
 # Options:
 #   -b BRANCH    Git branch to deploy (default: current branch)
@@ -12,12 +13,22 @@
 #   -m INSTANCE  VM instance name (default: fx-trader-vm)
 #   -d REPO_DIR  Repo path on VM (default: /home/tossaki/QuantRabbit)
 #   -s SERVICE   systemd service name (default: quantrabbit.service)
+#   -k SSH_KEYFILE  SSH private key for OS Login (optional)
+#   -t           Use IAP tunnel
+#   -K SA_KEYFILE Service Account JSON key; auto-activate if no active account
+#   -A SA_ACCOUNT Service Account email to impersonate for gcloud commands
 #
 # Requirements:
 #   - gcloud CLI logged in and able to SSH to the VM (OS Login or SSH keys)
 #   - VM repo remote 'origin' is reachable (public GitHub OK)
 
 set -euo pipefail
+
+# Preflight: ensure gcloud exists with basic config
+if ! command -v gcloud >/dev/null 2>&1; then
+  echo "[deploy] gcloud が見つかりません。まず 'scripts/install_gcloud.sh' を実行してください。" >&2
+  exit 2
+fi
 
 BRANCH=""
 INSTALL_DEPS=0
@@ -29,7 +40,9 @@ SERVICE="quantrabbit.service"
 
 USE_IAP=0
 SSH_KEYFILE=""
-while getopts ":b:ip:z:m:d:s:k:t" opt; do
+SA_KEYFILE=""
+SA_IMPERSONATE=""
+while getopts ":b:ip:z:m:d:s:k:tK:A:" opt; do
   case "$opt" in
     b) BRANCH="$OPTARG" ;;
     i) INSTALL_DEPS=1 ;;
@@ -40,6 +53,8 @@ while getopts ":b:ip:z:m:d:s:k:t" opt; do
     s) SERVICE="$OPTARG" ;;
     k) SSH_KEYFILE="$OPTARG" ;;
     t) USE_IAP=1 ;;
+    K) SA_KEYFILE="$OPTARG" ;;
+    A) SA_IMPERSONATE="$OPTARG" ;;
     *) echo "Usage: $0 [-b BRANCH] [-i] [-p PROJECT] [-z ZONE] [-m INSTANCE] [-d REPO_DIR] [-s SERVICE]" >&2; exit 2 ;;
   esac
 done
@@ -51,6 +66,27 @@ fi
 if [[ -z "$PROJECT" ]]; then
   echo "[deploy] GCP project is not set. Use -p or 'gcloud config set project ...'" >&2
   exit 2
+fi
+
+# If no active account and SA keyfile provided, activate
+ACTIVE_ACCOUNT=$(gcloud auth list --filter=status:ACTIVE --format='value(account)' || true)
+if [[ -z "$ACTIVE_ACCOUNT" && -n "$SA_KEYFILE" ]]; then
+  echo "[deploy] No active account; activating service account from key: $SA_KEYFILE"
+  gcloud auth activate-service-account --key-file "$SA_KEYFILE"
+fi
+
+# gcloud common args (impersonation)
+GCLOUD_ARGS=()
+if [[ -n "$SA_IMPERSONATE" ]]; then
+  GCLOUD_ARGS+=("--impersonate-service-account=$SA_IMPERSONATE")
+fi
+
+# Run doctor for early failure (non-destructive, no SSH attempt here)
+if [[ -x scripts/gcloud_doctor.sh ]]; then
+  scripts/gcloud_doctor.sh -p "$PROJECT" -z "$ZONE" -m "$INSTANCE" ${SA_KEYFILE:+-K "$SA_KEYFILE"} ${SA_IMPERSONATE:+-A "$SA_IMPERSONATE"} || {
+    echo "[deploy] gcloud preflight failed. See messages above." >&2
+    exit 2
+  }
 fi
 
 echo "[deploy] Project=$PROJECT Zone=$ZONE Instance=$INSTANCE Branch=$BRANCH"
@@ -71,6 +107,9 @@ echo "[deploy] Connecting to VM and updating repo..."
 REPO_OWNER="$(basename "$(dirname "$REPO_DIR")")"
 
 ssh_args=("--project" "$PROJECT" "--zone" "$ZONE")
+if [[ ${#GCLOUD_ARGS[@]} -gt 0 ]]; then
+  ssh_args+=("${GCLOUD_ARGS[@]}")
+fi
 if [[ -n "$SSH_KEYFILE" ]]; then
   ssh_args+=("--ssh-key-file" "$SSH_KEYFILE")
 fi

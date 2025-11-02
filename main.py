@@ -1,9 +1,10 @@
 import asyncio
 import datetime
 import logging
+import os
+import subprocess
 import traceback
 import time
-import os
 from pathlib import Path
 from typing import Optional
 
@@ -154,6 +155,16 @@ def _env_float(key: str, default: float) -> float:
         return default
 
 
+def _env_int(key: str, default: int) -> int:
+    raw = os.getenv(key)
+    if raw is None:
+        return default
+    try:
+        return int(raw)
+    except (TypeError, ValueError):
+        return default
+
+
 _MACRO_STATE_PATH = (
     os.getenv("MACRO_STATE_SNAPSHOT_PATH")
     or os.getenv("MACRO_STATE_PATH")
@@ -171,6 +182,7 @@ _MACRO_STATE_STALE_WARN_SEC = _env_float("MACRO_STATE_STALE_WARN_SEC", 900.0)
 _macro_state_cache: MacroState | None = None
 _macro_state_mtime: float | None = None
 _macro_state_stale_warned = False
+_TUNER_LAST_RUN_TS = 0.0
 
 
 def _parse_iso8601(ts: str) -> datetime.datetime | None:
@@ -265,6 +277,56 @@ def _dynamic_risk_pct(
     ):
         pct *= max(0.0, min(1.0, _EVENT_WINDOW_RISK_MULTIPLIER))
     return pct
+
+
+def _maybe_run_online_tuner(now: datetime.datetime) -> None:
+    """Trigger the online tuner helper on a slow cadence."""
+    global _TUNER_LAST_RUN_TS
+
+    if not _env_bool("TUNER_ENABLE", False):
+        return
+
+    interval_sec = max(60, _env_int("TUNER_INTERVAL_SEC", 600))
+    elapsed = now.timestamp() - _TUNER_LAST_RUN_TS
+    if _TUNER_LAST_RUN_TS and elapsed < interval_sec:
+        return
+
+    logs_glob = os.getenv("TUNER_LOGS_GLOB", "tmp/exit_eval*.csv")
+    presets_path = os.getenv("TUNER_PRESETS", "config/tuning_presets.yaml")
+    overrides_path = os.getenv("TUNER_OVERRIDES", "config/tuning_overrides.yaml")
+    window_min = max(1, _env_int("TUNER_WINDOW_MINUTES", 15))
+    shadow_raw = os.getenv("TUNER_SHADOW_MODE", "true") or "true"
+    shadow_mode = shadow_raw.strip().lower() in {"1", "true", "yes", "on"}
+
+    cmd = [
+        "python3",
+        "scripts/run_online_tuner.py",
+        "--logs-glob",
+        logs_glob,
+        "--presets",
+        presets_path,
+        "--overrides-out",
+        overrides_path,
+        "--minutes",
+        str(window_min),
+    ]
+    if shadow_mode:
+        cmd.append("--shadow")
+
+    try:
+        logging.info(
+            "[TUNER] run (logs=%s presets=%s shadow=%s minutes=%d)",
+            logs_glob,
+            presets_path,
+            shadow_mode,
+            window_min,
+        )
+        result = subprocess.run(cmd, check=False, timeout=20)
+        if result.returncode != 0:
+            logging.warning("[TUNER] command exit code %s", result.returncode)
+        _TUNER_LAST_RUN_TS = now.timestamp()
+    except Exception as exc:  # noqa: BLE001
+        logging.warning("[TUNER] skipped: %s", exc)
 
 
 def build_client_order_id(focus_tag: Optional[str], strategy_tag: str) -> str:
@@ -809,6 +871,8 @@ async def logic_loop():
                     last_metrics_refresh = now
                 except Exception as exc:  # pragma: no cover - defensive
                     logging.warning("[REALTIME] metrics refresh failed: %s", exc)
+
+            _maybe_run_online_tuner(now)
 
             atr_pips = (fac_m1.get("atr") or 0.0) * 100
             ema20 = fac_m1.get("ema20") or fac_m1.get("ma20")

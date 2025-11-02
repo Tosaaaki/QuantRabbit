@@ -7,9 +7,13 @@ execution.risk_guard
 """
 
 from __future__ import annotations
+
 import sqlite3
 import pathlib
+import time
+from datetime import datetime, timedelta, timezone
 from typing import Dict
+
 from utils.secrets import get_secret
 
 # --- risk params ---
@@ -28,6 +32,37 @@ con.row_factory = sqlite3.Row
 _POCKET_EQUITY_HINT: Dict[str, float] = {
     pocket: _DEFAULT_BASE_EQUITY[pocket] for pocket in _DEFAULT_BASE_EQUITY
 }
+
+_LOSS_COOLDOWN_CACHE: Dict[str, float] = {}
+
+
+def _parse_close_time(value: str | None) -> datetime | None:
+    if not value:
+        return None
+    candidate = value.strip()
+    if not candidate:
+        return None
+    candidate = candidate.replace("Z", "+00:00")
+    try:
+        return datetime.fromisoformat(candidate).astimezone(timezone.utc)
+    except ValueError:
+        # Try trimming fractional seconds
+        try:
+            if "." in candidate:
+                head, tail = candidate.split(".", 1)
+                if "+" in tail:
+                    frac, tz = tail.split("+", 1)
+                    tz = "+" + tz
+                elif "-" in tail[6:]:
+                    frac, tz = tail.split("-", 1)
+                    tz = "-" + tz
+                else:
+                    frac, tz = tail, "+00:00"
+                frac = frac[:6].ljust(6, "0")
+                return datetime.fromisoformat(f"{head}.{frac}{tz}").astimezone(timezone.utc)
+        except Exception:
+            return None
+    return None
 
 
 def update_dd_context(account_equity: float, weight_macro: float, scalp_share: float) -> None:
@@ -141,6 +176,71 @@ def allowed_lot(
 
     lot = min(lot, MAX_LOT)
     return round(max(lot, 0.0), 3)
+
+
+def loss_cooldown_status(
+    pocket: str, *, max_losses: int, cooldown_minutes: float
+) -> tuple[bool, float]:
+    """
+    Evaluate whether the given pocket should be temporarily blocked because of a
+    consecutive loss streak.
+
+    Returns (blocked_flag, remaining_seconds).
+    """
+    if max_losses <= 0 or cooldown_minutes <= 0:
+        return False, 0.0
+
+    key = f"{pocket}:{max_losses}:{cooldown_minutes}"
+    expiry_mono = _LOSS_COOLDOWN_CACHE.get(key)
+    now_mono = time.monotonic()
+    if expiry_mono:
+        if now_mono < expiry_mono:
+            remaining = max(0.0, expiry_mono - now_mono)
+            return True, remaining
+        _LOSS_COOLDOWN_CACHE.pop(key, None)
+
+    rows = con.execute(
+        """
+        SELECT pl_pips, close_time
+        FROM trades
+        WHERE pocket = ?
+          AND close_time IS NOT NULL
+        ORDER BY datetime(close_time) DESC
+        LIMIT ?
+        """,
+        (pocket, max_losses),
+    ).fetchall()
+
+    if not rows:
+        return False, 0.0
+
+    streak = 0
+    latest_time: datetime | None = None
+    latest_raw: str | None = None
+    for row in rows:
+        try:
+            pl = float(row["pl_pips"] or 0.0)
+        except Exception:
+            pl = 0.0
+        if pl < 0:
+            streak += 1
+            if latest_time is None:
+                latest_raw = row["close_time"]
+                latest_time = _parse_close_time(latest_raw)
+        else:
+            break
+
+    if streak < max_losses or latest_time is None:
+        return False, 0.0
+
+    expiry_dt = latest_time + timedelta(minutes=cooldown_minutes)
+    remaining = (expiry_dt - datetime.now(timezone.utc)).total_seconds()
+    if remaining <= 0:
+        return False, 0.0
+
+    expiry_mono = now_mono + remaining
+    _LOSS_COOLDOWN_CACHE[key] = expiry_mono
+    return True, remaining
 
 
 def clamp_sl_tp(

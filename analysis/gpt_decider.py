@@ -7,6 +7,7 @@ OpenAI API を呼び出し、JSON スキーマ検証・
 
 from __future__ import annotations
 
+import os
 import asyncio
 import datetime as dt
 import json
@@ -24,7 +25,20 @@ from analysis.local_decider import heuristic_decision
 from utils.cost_guard import add_tokens
 from utils.secrets import get_secret
 
-client = AsyncOpenAI(api_key=get_secret("openai_api_key"))
+logger = logging.getLogger(__name__)
+
+_LLM_MODE = os.getenv("LLM_MODE", "").strip().lower()
+_DUMMY_MODES = {"dummy", "mock", "offline", "test"}
+
+_CLIENT: AsyncOpenAI | None = None
+
+
+def _get_openai_client() -> AsyncOpenAI:
+    global _CLIENT
+    if _CLIENT is None:
+        api_key = get_secret("openai_api_key")
+        _CLIENT = AsyncOpenAI(api_key=api_key)
+    return _CLIENT
 
 
 _SCHEMA = {
@@ -61,14 +75,20 @@ _FALLBACK_DECISION = {
 _LAST_DECISION_TS: dt.datetime | None = None
 _LAST_DECISION_DATA: Dict[str, object] | None = None
 
-logger = logging.getLogger(__name__)
-
 
 class GPTTimeout(Exception): ...
 
 
 async def call_openai(payload: Dict) -> Dict:
     """非同期で GPT を呼ぶ → dict を返す（フォールバック不要値は None）"""
+    if _LLM_MODE in _DUMMY_MODES:
+        logger.info("[GPT] dummy mode active (LLM_MODE=%s)", _LLM_MODE or "dummy")
+        decision = heuristic_decision(
+            payload, _LAST_DECISION_DATA or _FALLBACK_DECISION
+        )
+        decision["reason"] = "dummy_mode"
+        return decision
+
     # コストガード
     if not add_tokens(0, MAX_TOKENS_MONTH):
         raise RuntimeError("GPT token limit exceeded")
@@ -80,6 +100,7 @@ async def call_openai(payload: Dict) -> Dict:
     if is_gpt5:
         inputs = [{"role": msg["role"], "content": msg["content"]} for msg in msgs]
         try:
+            client = _get_openai_client()
             resp = await client.responses.create(
                 model=MODEL,
                 input=inputs,
@@ -121,6 +142,7 @@ async def call_openai(payload: Dict) -> Dict:
         last_error: Exception | None = None
         for token_kwargs in token_kwargs_order:
             try:
+                client = _get_openai_client()
                 resp = await client.chat.completions.create(
                     **base_kwargs, **token_kwargs
                 )

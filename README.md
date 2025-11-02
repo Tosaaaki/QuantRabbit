@@ -61,6 +61,12 @@ USD/JPY で 1 日 +100 pips を狙う完全自動売買システムです。
 │   ├── trades.db
 │   └── news.db
 │
+├── docs/
+│   ├── ONLINE_TUNER.md       # オンラインチューナの導入方法
+│   ├── autotune_taskboard.md # 現行タスク・検証状況のサマリ
+│   ├── GCP_DEPLOY_SETUP.md   # gcloud/OS Login/IAP のゼロトラブル手順
+│   └── TASKS.md              # リポ内タスク台帳（Open/Archive）
+│
 └── infra/terraform/         # ⇢ IaC
 ├── main.tf   (VM)
 ├── run.tf    (Cloud Run)
@@ -122,6 +128,13 @@ Trade Loop Overview
 	6.	risk_guard が lot/SL/TP をクランプし OANDA REST 発注
 	7.	成績は logs/trades.db に保存 → perf_monitor が PF/Sharpe 更新
 	8.	夜間 cron で DB & ログを GCS へバックアップ
+
+## オンラインチューナ影運用
+- `scripts/run_online_tuner.py` が 5〜15 分間隔で低リスクなノブ（Exit 感度・入口ゲート・quiet_low_vol 配分）だけを微調整します。  
+- 既定は **シャドウモード**（`TUNER_ENABLE=true`, `TUNER_SHADOW_MODE=true`）で、`config/tuning_history/` に提案を記録するだけ。本番パラメータは変更されません。  
+- 本適用時は `TUNER_SHADOW_MODE=false` に切り替え、`scripts/apply_override.py` で `config/tuning_overlay.yaml` を生成して読み込ませます。  
+- 進行中の検証タスク・レビュー項目は `docs/autotune_taskboard.md` に集約しているので、運用状況の確認や ToDo 更新はここを参照してください。  
+- 詳細な導入手順・設計方針は `docs/ONLINE_TUNER.md` を参照。
 
 ---
 

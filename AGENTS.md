@@ -195,6 +195,13 @@ class OrderIntent(BaseModel):
 - 分割利確しきい値(レンジ対応): `execution/order_manager.py`
 - ステージ永続化/クールダウン/ロット係数: `execution/stage_tracker.py`
 
+### 3.6 オンライン自動チューニング運用
+- 5〜15 分間隔で `scripts/run_online_tuner.py` を呼び出し、Exit 感度や入口ゲート、quiet_low_vol の配分を**小幅**に調整する。リスクのあるホットパス（tick 判定・即時 Exit）は対象外。
+- 既定はシャドウ運用（`TUNER_ENABLE=true`, `TUNER_SHADOW_MODE=true`）。`config/tuning_history/` に履歴だけを残し、本番パラメータ (`config/tuning_overrides.yaml`) は書き換えない。
+- 本適用時は `TUNER_SHADOW_MODE=false` に切り替え、`scripts/apply_override.py` で `config/tuning_overlay.yaml` を生成してランタイムへ読み込ませる。
+- 現在の検証タスクと実行手順は `docs/autotune_taskboard.md` に集約。定期実行の有無・評価観点（EV, hazard 比率, decision_latency）もここで管理する。
+- オンラインチューニング関連の ToDo は必ず `docs/autotune_taskboard.md` に追記し、対応中はここを参照しながら進める。完了後は同ファイル内で状態をアーカイブ（チェック済み / メモ欄）として残す。
+
 ---
 
 ## 4. 環境変数 / Secret 一覧
@@ -374,3 +381,71 @@ scripts/deploy_to_vm.sh -i -k ~/.ssh/gcp_oslogin_qr -t
   - OS Login を無効化: `... add-metadata ... --metadata enable-oslogin=FALSE`
   - 公開鍵をメタデータに登録: `--metadata-from-file ssh-keys=ssh-keys.txt`
   - ただしセキュリティ・運用上 OS Login 利用を推奨。
+
+### 10.1 事前健診（Doctor）
+
+- gcloud 未導入時は `scripts/install_gcloud.sh` でインストール。
+- 主要チェックは `scripts/gcloud_doctor.sh -p <PROJECT> -z asia-northeast1-a -m fx-trader-vm -c`（IAP 利用時は `-t -k ~/.ssh/gcp_oslogin_qr`）。
+- `scripts/deploy_to_vm.sh` は内部で Doctor を実行し、前提不備があれば早期に失敗して案内します。
+- 詳細は `docs/GCP_DEPLOY_SETUP.md` を参照。
+
+### 10.2 ヘッドレス（サービスアカウント）運用
+
+- アクティブなユーザーアカウントが無い環境でも、Service Account(SA) で gcloud を操作できる。
+- `scripts/gcloud_doctor.sh` は `-K <SA_KEYFILE>` 指定時、アカウント不在なら SA キーで自動有効化する。
+- `scripts/deploy_to_vm.sh` は `-K <SA_KEYFILE> / -A <SA_ACCOUNT>` を受け取り、Compute/IAP/OS Login を SA で実行可能。
+- 必須ロール例: `roles/compute.osAdminLogin`, `roles/compute.instanceAdmin.v1`, （IAP利用時）`roles/iap.tunnelResourceAccessor`。
+
+---
+
+## 11. タスク運用ルール（共通）
+
+- タスクファイル: 本リポの全タスクは `docs/TASKS.md` を単一の台帳として管理する（正本）。
+- 適用範囲: 機能開発/バグ修正/運用改善/ドキュメント更新など、すべての作業タスク。
+- 位置付け: オンライン自動チューニング関連は従来どおり `docs/autotune_taskboard.md` を使用しつつ、必要に応じて `docs/TASKS.md` からリンクする。
+
+### 11.1 運用フロー
+
+1. タスク発生時: `docs/TASKS.md` の「Open Tasks」に新規エントリを追加する。
+2. 作業中: 当該エントリを逐次更新し、進め方は同ファイルの計画（Plan）を参照しながら進行する。
+3. 完了時: エントリを「Archive」に移し、完了日・対応 PR/コミット・要約を追記してアーカイブする。
+
+### 11.2 記載項目（推奨）
+
+- ID（例: `T-YYYYMMDD-###`）
+- Title（簡潔な件名）
+- Status（`todo | in-progress | review | done`）
+- Priority（`P1 | P2 | P3`）
+- Owner（担当）
+- Scope/Paths（対象ファイルやディレクトリ）
+- Context（関連 Issue/PR、参考リンク、仕様箇所）
+- Acceptance Criteria（受入条件）
+- Plan（主要ステップ。エージェントの `update_plan` と整合）
+- Notes（補足、決定メモ）
+
+### 11.3 テンプレート
+
+以下テンプレートを `docs/TASKS.md` に記載済み。新規タスクはこれを複製して使用する。
+
+```md
+- [ ] ID: T-YYYYMMDD-001
+  Title: <短い件名>
+  Status: todo | in-progress | review | done
+  Priority: P1 | P2 | P3
+  Owner: <担当>
+  Scope/Paths: <例> AGENTS.md, docs/TASKS.md
+  Context: <Issue/PR/仕様リンク>
+  Acceptance:
+    - <受入条件1>
+    - <受入条件2>
+  Plan:
+    - <主要ステップ1>
+    - <主要ステップ2>
+  Notes:
+    - <補足>
+```
+
+運用メモ
+- `docs/TASKS.md` は頻繁に更新されるため、コミットメッセージに `[Task:<ID>]` を含めて追跡性を確保する。
+- 1 ファイル = 1 PR の原則は維持するが、台帳更新（`docs/TASKS.md`）は同時反映可。
+- 自動チューニング関連 ToDo は引き続き `docs/autotune_taskboard.md` に追記し、完了後は同ファイル内で状態をアーカイブする。
