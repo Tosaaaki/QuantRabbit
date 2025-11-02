@@ -181,14 +181,20 @@ EOF
   tail)
     SERVICE="quantrabbit.service"
     N=300
+    GREP=""
     while [[ $# -gt 0 ]]; do
       case "$1" in
         -s|--service) SERVICE="$2"; shift 2 ;;
         -n) N="$2"; shift 2 ;;
+        --grep) GREP="$2"; shift 2 ;;
         *) die "Unknown tail option: $1" ;;
       esac
     done
-    remote_bash "journalctl -u '$SERVICE' -n $N -f --output=short-iso"
+    if [[ -n "$GREP" ]]; then
+      remote_bash "journalctl -u '$SERVICE' -n $N -f --output=short-iso | grep -E $GREP"
+    else
+      remote_bash "journalctl -u '$SERVICE' -n $N -f --output=short-iso"
+    fi
     ;;
 
   pull-logs)

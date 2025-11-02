@@ -181,8 +181,15 @@ class StagePlanAdvisor:
                         content_parts.append(text)
             content = "".join(content_parts).strip()
             if content.startswith("```"):
-                content = content.strip("`")
-                content = content.replace("json", "", 1).strip()
+                content = content.strip("`\n\r ")
+                if content.lower().startswith("json"):
+                    content = content[4:].strip()
+            if "```" in content:
+                # Some model versions repeat the payload with ```json fences mid-stream.
+                segments = [seg.strip() for seg in content.split("```") if seg.strip()]
+                brace_segments = [seg for seg in segments if "{" in seg and "}" in seg]
+                if brace_segments:
+                    content = brace_segments[0]
             try:
                 data = json.loads(content)
             except json.JSONDecodeError:

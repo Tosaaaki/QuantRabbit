@@ -229,6 +229,7 @@ async def fast_scalp_worker(shared_state: FastScalpState) -> None:
     next_order_after: float = 0.0
     last_snapshot_fetch: float = 0.0
     low_vol_counter = 0
+    next_exit_review = time.monotonic() + config.REVIEW_INTERVAL_SEC
 
     loop_counter = 0
     try:
@@ -249,16 +250,16 @@ async def fast_scalp_worker(shared_state: FastScalpState) -> None:
                 continue
             off_hours_logged = False
 
+            # Drawdown guard is monitored externally; keep warnings but do not block entries.
             if not can_trade("scalp_fast"):
                 if not dd_block_logged:
                     logger.warning(
-                        "%s drawdown guard prevents trading; waiting.",
+                        "%s drawdown guard triggered, proceeding without block (external override).",
                         config.LOG_PREFIX_TICK,
                     )
                     dd_block_logged = True
-                await asyncio.sleep(config.LOOP_INTERVAL_SEC)
-                continue
-            dd_block_logged = False
+            else:
+                dd_block_logged = False
 
             blocked, remain, spread_state, spread_reason = spread_monitor.is_blocked()
             spread_pips = spread_state["spread_pips"] if spread_state else 0.0
@@ -371,85 +372,119 @@ async def fast_scalp_worker(shared_state: FastScalpState) -> None:
             pattern_prob: Optional[float] = None
             atr_value = features.atr_pips if features.atr_pips is not None else 0.0
 
-            for trade_id, active in list(active_trades.items()):
-                pips_gain = _pips(features.latest_mid - active.entry_price)
-                if active.side == "short":
-                    pips_gain = -pips_gain
-                elapsed = time.monotonic() - active.opened_monotonic
-                latency_ms_val = float(age_ms) if isinstance(age_ms, (int, float)) else None
+            forced_exit_reasons = {"drawdown", "health_exit"}
+            exit_review_due = False
+            review_now = time.monotonic()
+            if review_now >= next_exit_review:
+                exit_review_due = True
+                next_exit_review = review_now + config.REVIEW_INTERVAL_SEC
 
-                decision = timeout_controller.update(
-                    trade_id,
-                    elapsed_sec=elapsed,
-                    pips_gain=pips_gain,
-                    features=features,
-                    tick_rate=tick_rate,
-                    latency_ms=latency_ms_val,
-                )
+            if exit_review_due:
+                for trade_id, active in list(active_trades.items()):
+                    pips_gain = _pips(features.latest_mid - active.entry_price)
+                    if active.side == "short":
+                        pips_gain = -pips_gain
+                    elapsed = time.monotonic() - active.opened_monotonic
+                    latency_ms_val = float(age_ms) if isinstance(age_ms, (int, float)) else None
 
-                close_reason: Optional[str] = None
-                max_drawdown_close = active.max_drawdown_close_pips
-                if features.rsi is not None and pips_gain < 0:
-                    if active.side == "long" and features.rsi < config.RSI_EXIT_LONG:
-                        close_reason = "rsi_fade"
-                    elif active.side == "short" and features.rsi > config.RSI_EXIT_SHORT:
-                        close_reason = "rsi_fade"
-                if close_reason is None and features.atr_pips is not None and pips_gain < 0:
-                    if features.atr_pips >= config.ATR_HIGH_VOL_PIPS:
-                        close_reason = "atr_spike"
-                if close_reason is None:
-                    drawdown_hit = pips_gain <= -max_drawdown_close
-                    if drawdown_hit:
-                        close_reason = "drawdown"
-                if close_reason is None and decision.action == "close":
-                    close_reason = decision.reason or "timeout_controller"
+                    decision = timeout_controller.update(
+                        trade_id,
+                        elapsed_sec=elapsed,
+                        pips_gain=pips_gain,
+                        features=features,
+                        tick_rate=tick_rate,
+                        latency_ms=latency_ms_val,
+                    )
 
-                if close_reason is not None:
-                    if rate_limiter.allow():
-                        rate_limiter.record()
-                        summary_payload: dict[str, float | str | bool] = {}
-                        try:
-                            await close_trade(trade_id)
-                        finally:
-                            summary_payload = timeout_controller.finalize(
-                                trade_id,
-                                reason=close_reason,
-                                pips_gain=pips_gain,
-                                tick_rate=tick_rate,
-                                spread_pips=features.spread_pips,
+                    close_reason: Optional[str] = None
+                    max_drawdown_close = active.max_drawdown_close_pips
+                    if features.rsi is not None and pips_gain < 0:
+                        if active.side == "long" and features.rsi < config.RSI_EXIT_LONG:
+                            close_reason = "rsi_fade"
+                        elif active.side == "short" and features.rsi > config.RSI_EXIT_SHORT:
+                            close_reason = "rsi_fade"
+                    if close_reason is None and features.atr_pips is not None and pips_gain < 0:
+                        if features.atr_pips >= config.ATR_HIGH_VOL_PIPS:
+                            close_reason = "atr_spike"
+                    if close_reason is None:
+                        drawdown_hit = pips_gain <= -max_drawdown_close
+                        if drawdown_hit:
+                            close_reason = "drawdown"
+                    if close_reason is None and decision.action == "close":
+                        close_reason = decision.reason or "timeout_controller"
+
+                    if (
+                        elapsed < config.MIN_HOLD_SEC
+                        and close_reason
+                        and close_reason not in forced_exit_reasons
+                        and pips_gain > -max_drawdown_close
+                    ):
+                        close_reason = None
+
+                    if close_reason is not None:
+                        # "損切り禁止" が有効な場合、含み損では決済せず見送り
+                        if config.NO_LOSS_CLOSE and pips_gain < 0:
+                            log_metric(
+                                "fast_scalp_skip",
+                                float(pips_gain),
+                                tags={"reason": "no_loss_close", "side": active.side},
+                                ts=now,
                             )
+                            # 短いクールダウンで再エントリーを抑制
                             stage_tracker.set_cooldown(
                                 "scalp_fast",
                                 active.side,
-                                reason="manual_exit",
+                                reason="no_loss_close",
                                 seconds=int(config.ENTRY_COOLDOWN_SEC),
                                 now=now,
                             )
-                            active_trades.pop(trade_id, None)
-                        logger.info(
-                            "%s close trade=%s side=%s reason=%s profile=%s pnl=%.2fp elapsed=%.1fs meta=%s",
-                            config.LOG_PREFIX_TICK,
-                            trade_id,
-                            active.side,
-                            close_reason,
-                            active.profile.name,
-                            pips_gain,
-                            elapsed,
-                            summary_payload if summary_payload else "{}",
-                        )
-                        log_metric(
-                            "fast_scalp_exit",
-                            pips_gain,
-                            tags={
-                                "reason": close_reason,
-                                "profile": active.profile.name,
-                                "timeout_type": str(summary_payload.get("timeout_type", "")),
-                            },
-                            ts=now,
-                        )
-                        skip_new_entry = True
-                    else:
-                        skip_new_entry = True
+                            skip_new_entry = True
+                            continue
+                        if rate_limiter.allow():
+                            rate_limiter.record()
+                            summary_payload: dict[str, float | str | bool] = {}
+                            try:
+                                await close_trade(trade_id)
+                            finally:
+                                summary_payload = timeout_controller.finalize(
+                                    trade_id,
+                                    reason=close_reason,
+                                    pips_gain=pips_gain,
+                                    tick_rate=tick_rate,
+                                    spread_pips=features.spread_pips,
+                                )
+                                stage_tracker.set_cooldown(
+                                    "scalp_fast",
+                                    active.side,
+                                    reason="manual_exit",
+                                    seconds=int(config.ENTRY_COOLDOWN_SEC),
+                                    now=now,
+                                )
+                                active_trades.pop(trade_id, None)
+                            logger.info(
+                                "%s close trade=%s side=%s reason=%s profile=%s pnl=%.2fp elapsed=%.1fs meta=%s",
+                                config.LOG_PREFIX_TICK,
+                                trade_id,
+                                active.side,
+                                close_reason,
+                                active.profile.name,
+                                pips_gain,
+                                elapsed,
+                                summary_payload if summary_payload else "{}",
+                            )
+                            log_metric(
+                                "fast_scalp_exit",
+                                pips_gain,
+                                tags={
+                                    "reason": close_reason,
+                                    "profile": active.profile.name,
+                                    "timeout_type": str(summary_payload.get("timeout_type", "")),
+                                },
+                                ts=now,
+                            )
+                            skip_new_entry = True
+                        else:
+                            skip_new_entry = True
             if skip_new_entry:
                 await asyncio.sleep(config.LOOP_INTERVAL_SEC)
                 continue
@@ -623,24 +658,30 @@ async def fast_scalp_worker(shared_state: FastScalpState) -> None:
                 continue
 
             profile_sl_pips = profile.sl_pips if profile.sl_pips is not None else config.SL_PIPS
-            allowed_lot_raw = allowed_lot(
-                snapshot.account_equity,
-                sl_pips=profile_sl_pips,
-                margin_available=snapshot.margin_available,
-                price=features.latest_mid,
-                margin_rate=snapshot.margin_rate,
-                risk_pct_override=snapshot.risk_pct_override,
-            )
-            lot = min(allowed_lot_raw, config.MAX_LOT)
-            if lot <= 0.0:
-                await asyncio.sleep(config.LOOP_INTERVAL_SEC)
-                continue
-            min_lot = config.MIN_UNITS / 100000.0
             adjusted_lot = False
-            if 0.0 < lot < min_lot:
-                lot = min(config.MAX_LOT, min_lot)
-                adjusted_lot = True
-            units = int(round(lot * 100000.0))
+            if config.FIXED_UNITS and abs(config.FIXED_UNITS) >= config.MIN_UNITS:
+                units = abs(int(config.FIXED_UNITS))
+                units = units if direction == "long" else -units
+                allowed_lot_raw = units / 100000.0
+                lot = allowed_lot_raw
+            else:
+                allowed_lot_raw = allowed_lot(
+                    snapshot.account_equity,
+                    sl_pips=profile_sl_pips,
+                    margin_available=snapshot.margin_available,
+                    price=features.latest_mid,
+                    margin_rate=snapshot.margin_rate,
+                    risk_pct_override=snapshot.risk_pct_override,
+                )
+                lot = min(allowed_lot_raw, config.MAX_LOT)
+                if lot <= 0.0:
+                    await asyncio.sleep(config.LOOP_INTERVAL_SEC)
+                    continue
+                min_lot = config.MIN_UNITS / 100000.0
+                if 0.0 < lot < min_lot:
+                    lot = min(config.MAX_LOT, min_lot)
+                    adjusted_lot = True
+                units = int(round(lot * 100000.0))
             if (
                 snapshot.margin_rate > 0.0
                 and snapshot.margin_available > 0.0
@@ -659,8 +700,9 @@ async def fast_scalp_worker(shared_state: FastScalpState) -> None:
             if units < config.MIN_UNITS:
                 units = config.MIN_UNITS
                 adjusted_lot = True
-            if direction == "short":
-                units = -units
+            if not config.FIXED_UNITS:
+                if direction == "short":
+                    units = -units
             if abs(units) < config.MIN_UNITS:
                 await asyncio.sleep(config.LOOP_INTERVAL_SEC)
                 continue
@@ -702,14 +744,26 @@ async def fast_scalp_worker(shared_state: FastScalpState) -> None:
             tp_margin = max(config.TP_SAFE_MARGIN_PIPS, features.spread_pips * 0.5)
             base_tp = config.TP_BASE_PIPS + spread_padding + tp_margin
             tp_pips = max(0.2, base_tp * profile.tp_margin_multiplier + profile.tp_adjust)
+            # Ensure TP nets out spread cost by at least TP_NET_MIN_PIPS
+            tp_floor = max(features.spread_pips, config.TP_SPREAD_BUFFER_PIPS) + config.TP_NET_MIN_PIPS
+            if tp_pips < tp_floor:
+                logger.debug(
+                    "%s tp_floor applied tp=%.2f -> %.2f (spread=%.2f floor=%.2f)",
+                    config.LOG_PREFIX_TICK,
+                    tp_pips,
+                    tp_floor,
+                    features.spread_pips,
+                    tp_floor,
+                )
+                tp_pips = tp_floor
             sl_pips = profile_sl_pips
             timeout_limit_initial = resolve_timeout(profile, features.atr_pips)
             entry_price = expected_entry_price
             if direction == "long":
-                sl_price = entry_price - sl_pips * config.PIP_VALUE
+                sl_price = None if not config.USE_SL else entry_price - sl_pips * config.PIP_VALUE
                 tp_price = entry_price + tp_pips * config.PIP_VALUE
             else:
-                sl_price = entry_price + sl_pips * config.PIP_VALUE
+                sl_price = None if not config.USE_SL else entry_price + sl_pips * config.PIP_VALUE
                 tp_price = entry_price - tp_pips * config.PIP_VALUE
             sl_price, tp_price = clamp_sl_tp(entry_price, sl_price, tp_price, direction == "long")
 
@@ -792,10 +846,10 @@ async def fast_scalp_worker(shared_state: FastScalpState) -> None:
             actual_entry_price = executed_price if executed_price is not None else entry_price
             sl_adjust_pips = sl_pips + config.SL_POST_ADJUST_BUFFER_PIPS
             if direction == "long":
-                actual_sl_price = round(actual_entry_price - sl_adjust_pips * config.PIP_VALUE, 3)
+                actual_sl_price = None if not config.USE_SL else round(actual_entry_price - sl_adjust_pips * config.PIP_VALUE, 3)
                 actual_tp_price = round(actual_entry_price + tp_pips * config.PIP_VALUE, 3)
             else:
-                actual_sl_price = round(actual_entry_price + sl_adjust_pips * config.PIP_VALUE, 3)
+                actual_sl_price = None if not config.USE_SL else round(actual_entry_price + sl_adjust_pips * config.PIP_VALUE, 3)
                 actual_tp_price = round(actual_entry_price - tp_pips * config.PIP_VALUE, 3)
             set_ok = await set_trade_protections(
                 trade_id,

@@ -38,10 +38,14 @@ _ALLOWED_STRATEGIES = [
     "Donchian55",
     "H1Momentum",
     "BB_RSI",
+    "BB_RSI_Fast",
     "NewsSpikeReversal",
     "M1Scalper",
     "RangeFader",
     "PulseBreak",
+    "MomentumPulse",
+    "VolCompressionBreak",
+    "MicroVWAPRevert",
 ]
 
 _MAX_COMPLETION_TOKENS = 200
@@ -78,6 +82,10 @@ _FALLBACK_DECISION = {
         "H1Momentum",
         "Donchian55",
         "BB_RSI",
+        "BB_RSI_Fast",
+        "MomentumPulse",
+        "VolCompressionBreak",
+        "MicroVWAPRevert",
         "NewsSpikeReversal",
     ],
     "reason": "fallback",

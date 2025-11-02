@@ -16,6 +16,10 @@ _ALLOWED_STRATEGIES = (
     "BB_RSI",
     "NewsSpikeReversal",
     "M1Scalper",
+    "MomentumPulse",
+    "VolCompressionBreak",
+    "BB_RSI_Fast",
+    "MicroVWAPRevert",
 )
 
 
@@ -167,6 +171,16 @@ def heuristic_decision(
             _enqueue_unique(ranked, ("BB_RSI",))
         if atr_pips >= 6.0 or vol_5m >= 1.15:
             _enqueue_unique(ranked, ("M1Scalper",))
+        if atr_pips <= 3.8 and vol_5m <= 1.3:
+            _enqueue_unique(
+                ranked,
+                (
+                    "MomentumPulse",
+                    "VolCompressionBreak",
+                    "BB_RSI_Fast",
+                    "MicroVWAPRevert",
+                ),
+            )
 
     # 低ボラ時はスキャル戦略を抑制
     if atr_pips < 4.0 and "M1Scalper" in ranked:

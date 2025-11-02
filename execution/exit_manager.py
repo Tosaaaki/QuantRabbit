@@ -11,6 +11,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 import logging
+import os
 import statistics
 from typing import Dict, List, Optional, Tuple
 
@@ -32,6 +33,33 @@ class ExitDecision:
 
 
 MANAGED_POCKETS = {"macro", "micro", "scalp", "scalp_fast"}
+
+
+def _env_flag(name: str, default: bool = False) -> bool:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() not in {"", "0", "false", "no"}
+
+
+def _env_float(name: str, default: float) -> float:
+    raw = os.getenv(name)
+    if raw is None or raw.strip() == "":
+        return default
+    try:
+        return float(raw)
+    except ValueError:
+        return default
+
+
+def _env_int(name: str, default: int) -> int:
+    raw = os.getenv(name)
+    if raw is None or raw.strip() == "":
+        return default
+    try:
+        return int(float(raw))
+    except ValueError:
+        return default
 
 
 class ExitManager:
@@ -91,6 +119,46 @@ class ExitManager:
         self._h1_lock_min_trigger = 12.0
         self._h1_lock_min_buffer = 6.0
         self._h1_lock_min_hold_minutes = 28.0
+        self._micro_low_vol_event_budget_sec = 3.6
+        self._micro_low_vol_grace_sec = 0.25
+        self._micro_low_vol_hazard_loss = 0.45
+        self._micro_low_vol_hazard_ratio = 0.25
+        self._low_vol_hazard_hits: Dict[Tuple[str, str], int] = {}
+        self._low_vol_enabled = _env_flag("LOWVOL_ENABLE", True)
+        self._hazard_exit_enabled = _env_flag("HAZARD_EXIT_ENABLE", True)
+        # Soft-TP/Upper bound (low-vol only)
+        self._upper_bound_max_sec = _env_float("UPPER_BOUND_MAX_SEC", 4.2)
+        self._timeout_soft_tp_frac = _env_float("TIMEOUT_SOFT_TP_FRAC", 0.7)
+        self._soft_tp_pips = _env_float("SOFT_TP_PIPS", 0.3)
+        raw_grace_ms = os.getenv("GRACE_MS")
+        if raw_grace_ms:
+            try:
+                self._micro_low_vol_grace_sec = max(0.05, float(raw_grace_ms) / 1000.0)
+            except ValueError:
+                pass
+        raw_event_ticks = os.getenv("EVENT_BUDGET_TICKS")
+        raw_event_seconds = os.getenv("EVENT_BUDGET_SECONDS")
+        if raw_event_ticks:
+            try:
+                ticks_value = float(raw_event_ticks)
+                # assume ~4 ticks/sec if ticks specified
+                self._micro_low_vol_event_budget_sec = max(0.2, ticks_value * 0.25)
+            except ValueError:
+                pass
+        elif raw_event_seconds:
+            try:
+                self._micro_low_vol_event_budget_sec = max(0.2, float(raw_event_seconds))
+            except ValueError:
+                pass
+        raw_hazard_loss = os.getenv("HAZARD_LOSS_PIPS")
+        if raw_hazard_loss:
+            try:
+                self._micro_low_vol_hazard_loss = max(0.1, float(raw_hazard_loss))
+            except ValueError:
+                pass
+        self._hazard_debounce_ticks = max(1, _env_int("HAZARD_DEBOUNCE_TICKS", 2))
+        self._hazard_cost_spread_base = max(0.01, _env_float("HAZARD_COST_SPREAD_BASE", 0.3))
+        self._hazard_cost_latency_base = max(1.0, _env_float("HAZARD_COST_LATENCY_BASE_MS", 300.0))
 
     def _macro_trend_supports(
         self,
@@ -124,6 +192,9 @@ class ExitManager:
         now: Optional[datetime] = None,
         story: Optional[ChartStorySnapshot] = None,
         advisor_hints: Optional[Dict[str, ExitHint]] = None,
+        low_vol_profile: Optional[Dict[str, float]] = None,
+        low_vol_quiet: bool = False,
+        news_status: str = "normal",
     ) -> List[ExitDecision]:
         current_time = self._ensure_utc(now)
         decisions: List[ExitDecision] = []
@@ -139,8 +210,10 @@ class ExitManager:
             short_units = int(info.get("short_units", 0) or 0)
             if long_units == 0:
                 self._reset_reverse_counter(pocket, "long")
+                self._low_vol_hazard_hits.pop((pocket, "long"), None)
             if short_units == 0:
                 self._reset_reverse_counter(pocket, "short")
+                self._low_vol_hazard_hits.pop((pocket, "short"), None)
             if long_units == 0 and short_units == 0:
                 continue
 
@@ -209,6 +282,9 @@ class ExitManager:
                     atr_primary=atr_h4 if pocket == "macro" else atr_m1,
                     atr_m1=atr_m1,
                     advisor_hints=advisor_hints,
+                    low_vol_profile=low_vol_profile,
+                    low_vol_quiet=low_vol_quiet,
+                    news_status=news_status,
                 )
                 if decision:
                     decisions.append(decision)
@@ -238,6 +314,9 @@ class ExitManager:
                     atr_primary=atr_h4 if pocket == "macro" else atr_m1,
                     atr_m1=atr_m1,
                     advisor_hints=advisor_hints,
+                    low_vol_profile=low_vol_profile,
+                    low_vol_quiet=low_vol_quiet,
+                    news_status=news_status,
                 )
                 if decision:
                     decisions.append(decision)
@@ -288,6 +367,9 @@ class ExitManager:
         atr_primary: Optional[float] = None,
         atr_m1: Optional[float] = None,
         advisor_hints: Optional[Dict[str, ExitHint]] = None,
+        low_vol_profile: Optional[Dict[str, float]] = None,
+        low_vol_quiet: bool = False,
+        news_status: str = "normal",
     ) -> Optional[ExitDecision]:
         allow_reentry = False
         reason = ""
@@ -479,6 +561,23 @@ class ExitManager:
                 elif profit_pips <= -1.0:
                     reason = "range_stop"
 
+        if not reason:
+            low_reason, low_allow = self._micro_low_vol_exit_check(
+                pocket,
+                "long",
+                open_info,
+                profit_pips,
+                max_mfe_long,
+                atr_m1 or atr_primary,
+                now,
+                low_vol_profile,
+                low_vol_quiet,
+                news_status,
+            )
+            if low_reason:
+                reason = low_reason
+                allow_reentry = low_allow
+
         # MFE-based patience: if we've achieved decent favorable excursion,
         # avoid exiting on a mild pullback unless strong invalidation.
         if reason in self._mfe_sensitive_reasons and not range_mode:
@@ -629,6 +728,9 @@ class ExitManager:
         atr_primary: Optional[float] = None,
         atr_m1: Optional[float] = None,
         advisor_hints: Optional[Dict[str, ExitHint]] = None,
+        low_vol_profile: Optional[Dict[str, float]] = None,
+        low_vol_quiet: bool = False,
+        news_status: str = "normal",
     ) -> Optional[ExitDecision]:
         allow_reentry = False
         reason = ""
@@ -643,6 +745,7 @@ class ExitManager:
             if pocket == "macro" and ema_primary is not None
             else ema_fast
         )
+        max_mfe_short = self._max_mfe_for_side(open_info, "short", m1_candles, now)
 
         advisor_hint = None
         if advisor_hints:
@@ -797,6 +900,23 @@ class ExitManager:
                     return None
                 elif profit_pips <= -1.0:
                     reason = "range_stop"
+
+        if not reason:
+            low_reason, low_allow = self._micro_low_vol_exit_check(
+                pocket,
+                "short",
+                open_info,
+                profit_pips,
+                max_mfe_short,
+                atr_m1 or atr_primary,
+                now,
+                low_vol_profile,
+                low_vol_quiet,
+                news_status,
+            )
+            if low_reason:
+                reason = low_reason
+                allow_reentry = low_allow
 
         if reason in self._mfe_sensitive_reasons and not range_mode:
             guard_threshold, guard_ratio = self._get_mfe_guard(pocket, atr_primary)
@@ -1010,6 +1130,14 @@ class ExitManager:
             if not reason:
                 continue
 
+            # "損切り禁止" が有効な場合は、含み損では exit 指示を出さない
+            try:
+                no_loss = bool(getattr(fast_scalp_config, "NO_LOSS_CLOSE", False))
+            except Exception:
+                no_loss = False
+            if no_loss and profit_pips < 0.0:
+                continue
+
             side_units = -units if side == "long" else units
             self._record_exit_metric(
                 pocket,
@@ -1207,6 +1335,92 @@ class ExitManager:
                 if fav > max_mfe:
                     max_mfe = fav
         return round(max_mfe, 2)
+
+    def _micro_low_vol_exit_check(
+        self,
+        pocket: str,
+        side: str,
+        open_info: Dict,
+        profit_pips: float,
+        max_mfe: Optional[float],
+        atr_hint: Optional[float],
+        now: datetime,
+        low_vol_profile: Optional[Dict[str, float]],
+        low_vol_quiet: bool,
+        news_status: str,
+    ) -> tuple[Optional[str], bool]:
+        if not self._low_vol_enabled:
+            return None, False
+        if pocket != "micro":
+            return None, False
+        profile = low_vol_profile or {}
+        low_active = bool(profile.get("low_vol"))
+        low_like = bool(profile.get("low_vol_like"))
+        if not (low_active or low_like or low_vol_quiet):
+            return None, False
+        if news_status == "active":
+            return None, False
+        atr = max(0.6, float(atr_hint or profile.get("atr") or 2.0))
+        age_sec = self._trade_age_seconds(open_info, side, now)
+        if age_sec is None:
+            return None, False
+        score = float(profile.get("score", 0.0) or 0.0)
+        health = 0.0
+        if max_mfe is not None:
+            denom = max(0.45, atr)
+            health = max(0.0, min(1.0, max_mfe / denom))
+        grace = self._micro_low_vol_grace_sec
+        key = (pocket, side)
+        if age_sec <= grace and profit_pips <= -0.25 and (max_mfe is None or max_mfe <= 0.45):
+            self._low_vol_hazard_hits[key] = 0
+            log_metric(
+                "low_vol_exit",
+                1.0,
+                tags={"reason": "low_vol_early_scratch", "side": side, "score": f"{score:.2f}"},
+            )
+            return "low_vol_early_scratch", True
+        budget = self._micro_low_vol_event_budget_sec
+        if age_sec >= budget and health < 0.22 and profit_pips <= 0.6:
+            self._low_vol_hazard_hits[key] = 0
+            log_metric(
+                "low_vol_exit",
+                1.0,
+                tags={"reason": "low_vol_event_budget", "side": side, "score": f"{score:.2f}"},
+            )
+            return "low_vol_event_budget", True
+        # Soft TP before hard timeout (low-vol only)
+        if (
+            self._upper_bound_max_sec > 0
+            and age_sec >= self._timeout_soft_tp_frac * self._upper_bound_max_sec
+            and profit_pips >= self._soft_tp_pips
+        ):
+            self._low_vol_hazard_hits[key] = 0
+            log_metric(
+                "low_vol_exit",
+                1.0,
+                tags={"reason": "soft_tp_timeout", "side": side, "score": f"{score:.2f}"},
+            )
+            return "soft_tp_timeout", True
+        hazard_met = (
+            profit_pips <= -self._micro_low_vol_hazard_loss
+            and age_sec >= budget * 0.7
+            and health < (0.3 if low_vol_quiet else 0.4)
+        )
+        if hazard_met and self._hazard_exit_enabled:
+            debounce = 1 if low_vol_quiet else self._hazard_debounce_ticks
+            hits = self._low_vol_hazard_hits.get(key, 0) + 1
+            self._low_vol_hazard_hits[key] = hits
+            if hits >= debounce:
+                log_metric(
+                    "low_vol_exit",
+                    1.0,
+                    tags={"reason": "low_vol_hazard_exit", "side": side, "score": f"{score:.2f}"},
+                )
+                return "low_vol_hazard_exit", True
+        else:
+            if key in self._low_vol_hazard_hits and self._low_vol_hazard_hits[key] != 0:
+                self._low_vol_hazard_hits[key] = 0
+        return None, False
 
     def _confirm_reverse_signal(
         self,

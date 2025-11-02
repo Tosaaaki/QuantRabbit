@@ -31,6 +31,7 @@ class SpikeSignal:
     retrace_pips: float
     extreme_age_sec: float
     features: SignalFeatures
+    tick_rate: float
 
 
 def _build_client_order_id(side: str) -> str:
@@ -57,6 +58,15 @@ def _detect_short_signal(
     epochs = [float(t["epoch"]) for t in ticks]
 
     latest_epoch = epochs[-1]
+    span_seconds = max(float(features.span_seconds or 0.0), 0.1)
+    tick_rate = float(features.tick_count) / span_seconds if span_seconds > 0 else 0.0
+    atr_val = features.atr_pips
+    if config.MIN_ATR_PIPS > 0.0 and atr_val is not None and atr_val < config.MIN_ATR_PIPS:
+        return None
+    if tick_rate < config.MIN_TICK_RATE:
+        return None
+    if features.rsi is None or features.rsi < config.RSI_OVERBOUGHT:
+        return None
     peak_idx = max(range(len(mids)), key=mids.__getitem__)
     peak_price = mids[peak_idx]
     peak_epoch = epochs[peak_idx]
@@ -77,9 +87,6 @@ def _detect_short_signal(
     if retrace_pips < config.MIN_RETRACE_PIPS:
         return None
 
-    if features.rsi is not None and features.rsi < config.RSI_OVERBOUGHT:
-        return None
-
     # Price should still be above trough to avoid chasing a complete reversal.
     if features.latest_mid <= trough_price:
         return None
@@ -93,6 +100,7 @@ def _detect_short_signal(
         retrace_pips=retrace_pips,
         extreme_age_sec=peak_age_sec,
         features=features,
+        tick_rate=tick_rate,
     )
 
 
@@ -106,6 +114,16 @@ def _detect_long_signal(
     epochs = [float(t["epoch"]) for t in ticks]
 
     latest_epoch = epochs[-1]
+    span_seconds = max(float(features.span_seconds or 0.0), 0.1)
+    tick_rate = float(features.tick_count) / span_seconds if span_seconds > 0 else 0.0
+    atr_val = features.atr_pips
+    if config.MIN_ATR_PIPS > 0.0 and atr_val is not None and atr_val < config.MIN_ATR_PIPS:
+        return None
+    if tick_rate < config.MIN_TICK_RATE:
+        return None
+    if features.rsi is None or features.rsi > config.RSI_OVERSOLD:
+        return None
+
     trough_idx = min(range(len(mids)), key=mids.__getitem__)
     trough_price = mids[trough_idx]
     trough_epoch = epochs[trough_idx]
@@ -126,9 +144,6 @@ def _detect_long_signal(
     if retrace_pips < config.MIN_RETRACE_PIPS:
         return None
 
-    if features.rsi is not None and features.rsi > config.RSI_OVERSOLD:
-        return None
-
     if features.latest_mid >= peak_price:
         return None
 
@@ -141,6 +156,7 @@ def _detect_long_signal(
         retrace_pips=retrace_pips,
         extreme_age_sec=trough_age_sec,
         features=features,
+        tick_rate=tick_rate,
     )
 
 
@@ -243,6 +259,12 @@ async def mirror_spike_worker() -> None:
                 tp_price = round(entry_price + config.TP_PIPS * config.PIP_VALUE, 3)
             if tp_price is not None and tp_price <= 0:
                 tp_price = None
+            if signal.side == "short":
+                sl_price = round(entry_price + config.SL_PIPS * config.PIP_VALUE, 3)
+            else:
+                sl_price = round(entry_price - config.SL_PIPS * config.PIP_VALUE, 3)
+            if sl_price is not None and sl_price <= 0:
+                sl_price = None
 
             if latest_trade is not None:
                 prev_price = float(latest_trade.get("price") or entry_price)
@@ -264,6 +286,7 @@ async def mirror_spike_worker() -> None:
                 "latest_mid": round(signal.entry_price, 5),
                 "spread_pips": round(spread_pips, 3),
                 "tick_count": len(ticks),
+                "tick_rate": round(signal.tick_rate, 2),
                 "rsi": None if signal.features.rsi is None else round(signal.features.rsi, 2),
                 "atr_pips": None
                 if signal.features.atr_pips is None
@@ -274,7 +297,7 @@ async def mirror_spike_worker() -> None:
                 trade_id, executed_price = await market_order(
                     "USD_JPY",
                     units,
-                    sl_price=None,
+                    sl_price=sl_price,
                     tp_price=tp_price,
                     pocket="scalp",
                     client_order_id=client_id,
@@ -304,6 +327,7 @@ async def mirror_spike_worker() -> None:
                     signal.retrace_pips,
                 )
                 cooldown_until = now_monotonic + config.COOLDOWN_SEC
+                post_exit_cooldown_until = now_monotonic + config.POST_EXIT_COOLDOWN_SEC
             else:
                 cooldown_until = now_monotonic + 10.0
     except asyncio.CancelledError:

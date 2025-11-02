@@ -145,3 +145,135 @@ def test_macro_profit_lock_triggers_for_h1momentum():
     decision = decisions[0]
     assert decision.reason == "macro_profit_lock"
     assert decision.units < 0
+
+
+def test_micro_low_vol_event_budget_exit():
+    manager = ExitManager()
+    base_time = datetime.now(timezone.utc)
+    open_positions = {
+        "micro": {
+            "long_units": 1000,
+            "short_units": 0,
+            "avg_price": 150.000,
+            "long_avg_price": 150.000,
+            "open_trades": [
+                {
+                    "side": "long",
+                    "units": 1000,
+                    "price": 150.000,
+                    "open_time": (base_time - timedelta(seconds=4.2)).isoformat(),
+                }
+            ],
+        }
+    }
+    fac_m1 = {
+        "close": 149.997,
+        "ema20": 150.000,
+        "atr_pips": 2.1,
+        "vol_5m": 0.83,
+        "candles": [
+            {
+                "timestamp": (base_time - timedelta(seconds=3.0)).isoformat(),
+                "high": 150.001,
+                "low": 149.996,
+            },
+            {
+                "timestamp": (base_time - timedelta(seconds=1.0)).isoformat(),
+                "high": 149.999,
+                "low": 149.995,
+            },
+        ],
+    }
+    fac_h4 = {"atr_pips": 8.0}
+    low_vol_profile = {"low_vol": True, "low_vol_like": True, "score": 0.74, "atr": 2.1}
+
+    decisions = manager.plan_closures(
+        open_positions=open_positions,
+        signals=[],
+        fac_m1=fac_m1,
+        fac_h4=fac_h4,
+        event_soon=False,
+        range_mode=False,
+        now=base_time,
+        low_vol_profile=low_vol_profile,
+        low_vol_quiet=True,
+        news_status="quiet",
+    )
+
+    assert decisions, "Expected event budget exit decision"
+    reason = decisions[0].reason
+    assert reason == "low_vol_event_budget"
+
+
+def test_micro_low_vol_hazard_exit_requires_two_observations():
+    manager = ExitManager()
+    base_time = datetime.now(timezone.utc)
+    open_trade = {
+        "side": "long",
+        "units": 1000,
+        "price": 150.000,
+        "open_time": (base_time - timedelta(seconds=3.0)).isoformat(),
+    }
+    open_positions = {
+        "micro": {
+            "long_units": 1000,
+            "short_units": 0,
+            "avg_price": 150.000,
+            "long_avg_price": 150.000,
+            "open_trades": [open_trade],
+        }
+    }
+    low_vol_profile = {"low_vol": True, "low_vol_like": True, "score": 0.7, "atr": 2.0}
+
+    def fac_snapshot(now_time: datetime, close_px: float) -> dict:
+        return {
+            "close": close_px,
+            "ema20": 150.002,
+            "atr_pips": 2.0,
+            "vol_5m": 0.82,
+            "candles": [
+                {
+                    "timestamp": (now_time - timedelta(seconds=3.0)).isoformat(),
+                    "high": 150.0056,
+                    "low": 149.996,
+                },
+                {
+                    "timestamp": (now_time - timedelta(seconds=0.5)).isoformat(),
+                    "high": 150.004,
+                    "low": 149.994,
+                },
+            ],
+        }
+
+    fac_h4 = {"atr_pips": 8.0}
+
+    first_decisions = manager.plan_closures(
+        open_positions=open_positions,
+        signals=[],
+        fac_m1=fac_snapshot(base_time, 149.995),
+        fac_h4=fac_h4,
+        event_soon=False,
+        range_mode=False,
+        now=base_time,
+        low_vol_profile=low_vol_profile,
+        low_vol_quiet=True,
+        news_status="quiet",
+    )
+    assert first_decisions == []
+
+    later_time = base_time + timedelta(seconds=0.8)
+    second_decisions = manager.plan_closures(
+        open_positions=open_positions,
+        signals=[],
+        fac_m1=fac_snapshot(later_time, 149.994),
+        fac_h4=fac_h4,
+        event_soon=False,
+        range_mode=False,
+        now=later_time,
+        low_vol_profile=low_vol_profile,
+        low_vol_quiet=True,
+        news_status="quiet",
+    )
+
+    assert second_decisions, "Hazard exit should trigger on second observation"
+    assert second_decisions[0].reason == "low_vol_hazard_exit"

@@ -63,8 +63,8 @@ IMPULSE_PROFILE = StrategyProfile(
 
 RANGE_PROFILE = StrategyProfile(
     name="range_reversion",
-    tp_adjust=-0.05,
-    tp_margin_multiplier=0.65,
+    tp_adjust=0.0,
+    tp_margin_multiplier=0.8,
     drawdown_close_pips=1.1,
     timeout_sec=_BASE_TIMEOUT * 1.3,
     timeout_min_gain_pips=0.2,

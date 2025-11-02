@@ -202,7 +202,18 @@ def synth_ticks_from_candles(
     ticks: List[ReplayTick] = []
     spread_price = spread_pips * PIP_VALUE
     half_spread = spread_price / 2.0
-    for ts, o, h, l, c in candles:
+    total = len(candles)
+    for idx, (ts, o, h, l, c) in enumerate(candles):
+        if total > 1:
+            if idx + 1 < total:
+                frame_seconds = (candles[idx + 1][0] - ts).total_seconds()
+            else:
+                frame_seconds = (ts - candles[idx - 1][0]).total_seconds()
+        else:
+            frame_seconds = 60.0
+        if frame_seconds is None or frame_seconds <= 0:
+            frame_seconds = 60.0
+        frame_seconds = max(0.5, min(frame_seconds, 3600.0))
         if h < l:
             h, l = max(h, l), min(h, l)
         if c >= o:
@@ -218,7 +229,7 @@ def synth_ticks_from_candles(
         if segments <= 0:
             segments = 1
             unique_vals = [o, c]
-        segment_duration = 60.0 / float(segments)
+        segment_duration = frame_seconds / float(segments)
         for seg_idx in range(segments):
             start_price = unique_vals[seg_idx]
             end_price = unique_vals[seg_idx + 1]
@@ -240,7 +251,7 @@ def synth_ticks_from_candles(
                     )
                 )
         # Ensure final close tick is included
-        close_dt = ts + timedelta(seconds=60.0)
+        close_dt = ts + timedelta(seconds=frame_seconds)
         bid = c - half_spread
         ask = c + half_spread
         ticks.append(

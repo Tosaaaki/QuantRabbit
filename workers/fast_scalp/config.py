@@ -18,25 +18,28 @@ def _bool_env(key: str, default: bool) -> bool:
 
 FAST_SCALP_ENABLED: bool = _bool_env("FAST_SCALP_ENABLED", True)
 LOOP_INTERVAL_SEC: float = max(0.1, float(os.getenv("FAST_SCALP_LOOP_INTERVAL_SEC", "0.25")))
-TP_BASE_PIPS: float = max(0.2, float(os.getenv("FAST_SCALP_TP_BASE_PIPS", "1.0")))
+TP_BASE_PIPS: float = max(0.2, float(os.getenv("FAST_SCALP_TP_BASE_PIPS", "0.6")))
 TP_SPREAD_BUFFER_PIPS: float = max(0.05, float(os.getenv("FAST_SCALP_SPREAD_BUFFER_PIPS", "0.2")))
 TP_SAFE_MARGIN_PIPS: float = max(
     0.1, float(os.getenv("FAST_SCALP_TP_SAFE_MARGIN_PIPS", "0.4"))
+)
+TP_NET_MIN_PIPS: float = max(
+    0.2, float(os.getenv("FAST_SCALP_TP_NET_MIN_PIPS", "0.6"))
 )
 SL_PIPS: float = max(10.0, float(os.getenv("FAST_SCALP_SL_PIPS", "60.0")))
 SL_POST_ADJUST_BUFFER_PIPS: float = max(
     0.0, float(os.getenv("FAST_SCALP_SL_POST_ADJUST_BUFFER_PIPS", "5.0"))
 )
-MAX_SPREAD_PIPS: float = max(0.1, float(os.getenv("FAST_SCALP_MAX_SPREAD_PIPS", "0.85")))
+MAX_SPREAD_PIPS: float = max(0.1, float(os.getenv("FAST_SCALP_MAX_SPREAD_PIPS", "0.65")))
 ENTRY_THRESHOLD_PIPS: float = max(0.002, float(os.getenv("FAST_SCALP_ENTRY_MOM_PIPS", "0.004")))
 ENTRY_SHORT_THRESHOLD_PIPS: float = max(
     0.002, float(os.getenv("FAST_SCALP_ENTRY_SHORT_MOM_PIPS", "0.004"))
 )
 ENTRY_RANGE_FLOOR_PIPS: float = max(0.005, float(os.getenv("FAST_SCALP_RANGE_FLOOR_PIPS", "0.04")))
-ENTRY_COOLDOWN_SEC: float = max(0.2, float(os.getenv("FAST_SCALP_ENTRY_COOLDOWN_SEC", "0.75")))
-MAX_ORDERS_PER_MINUTE: int = max(1, int(float(os.getenv("FAST_SCALP_MAX_ORDERS_PER_MIN", "40"))))
+ENTRY_COOLDOWN_SEC: float = max(0.2, float(os.getenv("FAST_SCALP_ENTRY_COOLDOWN_SEC", "1.0")))
+MAX_ORDERS_PER_MINUTE: int = max(1, int(float(os.getenv("FAST_SCALP_MAX_ORDERS_PER_MIN", "24"))))
 MIN_ORDER_SPACING_SEC: float = max(
-    0.2, float(os.getenv("FAST_SCALP_MIN_ORDER_SPACING_SEC", "0.75"))
+    0.2, float(os.getenv("FAST_SCALP_MIN_ORDER_SPACING_SEC", "1.0"))
 )
 MAX_LOT: float = max(0.001, float(os.getenv("FAST_SCALP_MAX_LOT", "0.05")))
 SYNC_INTERVAL_SEC: float = max(5.0, float(os.getenv("FAST_SCALP_SYNC_INTERVAL_SEC", "45.0")))
@@ -67,15 +70,20 @@ SNAPSHOT_BURST_INTERVAL_SEC: float = max(
     0.02, float(os.getenv("FAST_SCALP_SNAPSHOT_BURST_INTERVAL_SEC", "0.12"))
 )
 
+# 禁止: 損失での自動クローズ（ブローカー側SLは既定で無効）
+# True の場合、scalp_fast は含み損の間は worker/exit_manager による決済を行わず、
+# 利益確定条件のみでクローズする（グローバルDDや手動クローズは別扱い）。
+NO_LOSS_CLOSE: bool = _bool_env("FAST_SCALP_NO_LOSS_CLOSE", False)
+
 # --- entry gating / quality thresholds ---
-MIN_ENTRY_ATR_PIPS: float = max(0.0, float(os.getenv("FAST_SCALP_MIN_ENTRY_ATR_PIPS", "0.12")))
-MIN_ENTRY_TICK_COUNT: int = max(2, int(float(os.getenv("FAST_SCALP_MIN_ENTRY_TICK_COUNT", "16"))))
+MIN_ENTRY_ATR_PIPS: float = max(0.0, float(os.getenv("FAST_SCALP_MIN_ENTRY_ATR_PIPS", "0.16")))
+MIN_ENTRY_TICK_COUNT: int = max(2, int(float(os.getenv("FAST_SCALP_MIN_ENTRY_TICK_COUNT", "22"))))
 RSI_ENTRY_OVERBOUGHT: float = float(os.getenv("FAST_SCALP_RSI_ENTRY_OVERBOUGHT", "70"))
 RSI_ENTRY_OVERSOLD: float = float(os.getenv("FAST_SCALP_RSI_ENTRY_OVERSOLD", "30"))
-LOW_VOL_COOLDOWN_SEC: float = max(0.0, float(os.getenv("FAST_SCALP_LOW_VOL_COOLDOWN_SEC", "30.0")))
-LOW_VOL_MAX_CONSECUTIVE: int = max(1, int(float(os.getenv("FAST_SCALP_LOW_VOL_MAX_CONSECUTIVE", "3"))))
+LOW_VOL_COOLDOWN_SEC: float = max(0.0, float(os.getenv("FAST_SCALP_LOW_VOL_COOLDOWN_SEC", "120.0")))
+LOW_VOL_MAX_CONSECUTIVE: int = max(1, int(float(os.getenv("FAST_SCALP_LOW_VOL_MAX_CONSECUTIVE", "2"))))
 PATTERN_MODEL_PATH: str = os.getenv("FAST_SCALP_PATTERN_MODEL_PATH", "").strip()
-PATTERN_MIN_PROB: float = max(0.0, min(1.0, float(os.getenv("FAST_SCALP_PATTERN_MIN_PROB", "0.55"))))
+PATTERN_MIN_PROB: float = max(0.0, min(1.0, float(os.getenv("FAST_SCALP_PATTERN_MIN_PROB", "0.62"))))
 
 # --- technical thresholds ---
 RSI_PERIOD: int = max(3, int(float(os.getenv("FAST_SCALP_RSI_PERIOD", "6"))))
@@ -117,7 +125,16 @@ except ValueError:
     MIN_SPAN_RELAX_RATIO = 0.55
 MIN_SPAN_RELAX_RATIO = max(0.1, min(0.95, MIN_SPAN_RELAX_RATIO))
 
-MAX_MARGIN_USAGE: float = max(0.1, min(1.0, float(os.getenv("FAST_SCALP_MAX_MARGIN_USAGE", "0.6"))))
+REVIEW_INTERVAL_SEC: float = max(
+    0.2, float(os.getenv("FAST_SCALP_REVIEW_INTERVAL_SEC", "1.2"))
+)
+MIN_HOLD_SEC: float = max(0.0, float(os.getenv("FAST_SCALP_MIN_HOLD_SEC", "2.5")))
+
+# Fixed sizing / protections
+FIXED_UNITS: int = int(float(os.getenv("FAST_SCALP_FIXED_UNITS", "0")))
+USE_SL: bool = _bool_env("FAST_SCALP_USE_SL", False)
+
+MAX_MARGIN_USAGE: float = max(0.1, min(1.0, float(os.getenv("FAST_SCALP_MAX_MARGIN_USAGE", "0.4"))))
 TIMEOUT_SEC_BASE: float = max(5.0, float(os.getenv("FAST_SCALP_TIMEOUT_SEC_BASE", str(TIMEOUT_SEC))))
 TIMEOUT_LOW_VOL_MULT: float = max(0.0, float(os.getenv("FAST_SCALP_TIMEOUT_LOW_VOL_MULT", "0")))
 TIMEOUT_HIGH_VOL_MULT: float = max(0.1, float(os.getenv("FAST_SCALP_TIMEOUT_HIGH_VOL_MULT", "0.6")))
@@ -144,7 +161,7 @@ TIMEOUT_EVENT_HEALTH_EXIT: float = float(
     os.getenv("FAST_SCALP_TIMEOUT_EVENT_HEALTH_EXIT", "0.2")
 )
 TIMEOUT_HEALTH_KILL_THRESHOLD: float = float(
-    os.getenv("FAST_SCALP_TIMEOUT_HEALTH_KILL_THRESHOLD", "0.0")
+    os.getenv("FAST_SCALP_TIMEOUT_HEALTH_KILL_THRESHOLD", "0.1")
 )
 TIMEOUT_HEALTH_EXTEND_THRESHOLD: float = float(
     os.getenv("FAST_SCALP_TIMEOUT_HEALTH_EXTEND_THRESHOLD", "0.5")
@@ -156,7 +173,7 @@ TIMEOUT_EVENT_EXTEND_SEC: float = max(
     0.0, float(os.getenv("FAST_SCALP_TIMEOUT_EVENT_EXTEND_SEC", "0.3"))
 )
 TIMEOUT_GRACE_MS: float = max(
-    0.0, float(os.getenv("FAST_SCALP_TIMEOUT_GRACE_MS", "250.0"))
+    0.0, float(os.getenv("FAST_SCALP_TIMEOUT_GRACE_MS", "600.0"))
 )
 SCRATCH_MOMENTUM_MIN: float = float(os.getenv("FAST_SCALP_SCRATCH_MOMENTUM_MIN", "0.15"))
 SCRATCH_IMBALANCE_MIN: float = float(os.getenv("FAST_SCALP_SCRATCH_IMBALANCE_MIN", "0.12"))
@@ -167,7 +184,7 @@ HAZARD_IMBALANCE_COEF: float = float(os.getenv("FAST_SCALP_HAZARD_IMBALANCE_COEF
 HAZARD_SPREAD_COEF: float = float(os.getenv("FAST_SCALP_HAZARD_SPREAD_COEF", "1.2"))
 HAZARD_LATENCY_COEF: float = float(os.getenv("FAST_SCALP_HAZARD_LATENCY_COEF", "0.0025"))
 HAZARD_DEBOUNCE_EVENTS: int = max(
-    1, int(float(os.getenv("FAST_SCALP_HAZARD_DEBOUNCE_EVENTS", "2")))
+    1, int(float(os.getenv("FAST_SCALP_HAZARD_DEBOUNCE_EVENTS", "4")))
 )
 TIMEOUT_ADAPTIVE_MIN_SEC: float = max(
     0.5, float(os.getenv("FAST_SCALP_TIMEOUT_ADAPTIVE_MIN_SEC", "1.6"))

@@ -172,6 +172,9 @@ _PARTIAL_THRESHOLDS = {
     "macro": (5.0, 10.0),
     "micro": (3.0, 6.0),
     "scalp": (2.0, 4.0),
+    # 超短期（fast scalp）は利幅が小さいため閾値も縮小
+    # まずは小刻みにヘッジしてランナーのみを残す方針
+    "scalp_fast": (1.2, 2.0),
 }
 _PARTIAL_THRESHOLDS_RANGE = {
     # AGENT.me 仕様（3.5.1）に合わせ、レンジ時は段階利確を引き延ばしすぎず早期ヘッジ。
@@ -179,6 +182,8 @@ _PARTIAL_THRESHOLDS_RANGE = {
     "macro": (16.0, 22.0),
     "micro": (10.0, 16.0),
     "scalp": (6.0, 10.0),
+    # fast scalp はさらに近い利確で早めに在庫を薄くする
+    "scalp_fast": (0.9, 1.4),
 }
 _PARTIAL_FRACTIONS = (0.4, 0.3)
 # micro の平均建玉（~160u）でも段階利確が動作するよう下限を緩和

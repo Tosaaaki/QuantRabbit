@@ -1,0 +1,25 @@
+presets:
+  safe:
+    grace_ms: 200
+    min_grace_before_scratch_ms: 120
+    scratch_requires_events: 1
+    event_budget: 18
+    hazard_debounce: 2
+    hazard_cost_spread_base: 0.25
+    hazard_cost_latency_base_ms: 240
+    upper_bound_sec: 3.6
+    tp_pips: 0.8
+    sl_pips: 1.0
+  balanced:
+    grace_ms: 200
+    min_grace_before_scratch_ms: 120
+    scratch_requires_events: 1
+    event_budget: 16
+    hazard_debounce: 1
+    hazard_cost_spread_base: 0.22
+    hazard_cost_latency_base_ms: 220
+    upper_bound_sec: 3.2
+    timeout_soft_tp_frac: 0.7
+    soft_tp_pips: 0.3
+    tp_pips: 0.8
+    sl_pips: 1.0

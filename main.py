@@ -19,6 +19,7 @@ from indicators.factor_cache import all_factors, on_candle
 from analysis.regime_classifier import classify
 from analysis.focus_decider import decide_focus
 from analysis.gpt_decider import get_decision, fallback_decision
+from analysis.local_decider import heuristic_decision
 from analysis.perf_monitor import snapshot as get_perf
 from analysis.summary_ingestor import check_event_soon, get_latest_news
 from analysis.news_features import build_news_features
@@ -67,6 +68,12 @@ from strategies.news.spike_reversal import NewsSpikeReversal
 from strategies.scalping.m1_scalper import M1Scalper
 from strategies.scalping.range_fader import RangeFader
 from strategies.scalping.pulse_break import PulseBreak
+from strategies.micro_lowvol import (
+    MomentumPulse,
+    VolCompressionBreak,
+    BBRsiFast,
+    MicroVWAPRevert,
+)
 from utils.oanda_account import get_account_snapshot
 from utils.secrets import get_secret
 from utils.metrics_logger import log_metric
@@ -82,6 +89,8 @@ from autotune.scalp_trainer import start_background_autotune
 from workers.fast_scalp import FastScalpState, fast_scalp_worker
 from workers.mirror_spike import mirror_spike_worker
 from workers.pullback_scalp import pullback_scalp_worker
+from workers.pullback_s5 import pullback_s5_worker
+from workers.mirror_spike_s5 import mirror_spike_s5_worker
 from workers.scalp_exit import scalp_exit_worker
 
 # Configure logging with runtime override
@@ -102,11 +111,22 @@ STRATEGIES = {
     "M1Scalper": M1Scalper,
     "RangeFader": RangeFader,
     "PulseBreak": PulseBreak,
+    "MomentumPulse": MomentumPulse,
+    "VolCompressionBreak": VolCompressionBreak,
+    "BB_RSI_Fast": BBRsiFast,
+    "MicroVWAPRevert": MicroVWAPRevert,
 }
 
 POCKET_STRATEGY_MAP = {
     "macro": {"TrendMA", "Donchian55", "H1Momentum"},
-    "micro": {"BB_RSI", "NewsSpikeReversal"},
+    "micro": {
+        "BB_RSI",
+        "BB_RSI_Fast",
+        "MomentumPulse",
+        "VolCompressionBreak",
+        "MicroVWAPRevert",
+        "NewsSpikeReversal",
+    },
     "scalp": {"M1Scalper", "RangeFader", "PulseBreak"},
 }
 
@@ -285,6 +305,45 @@ def _safe_env_float(key: str, default: float, *, low: float, high: float) -> flo
     return max(low, min(high, value))
 
 
+def _env_flag(name: str, default: bool = False) -> bool:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() not in {"", "0", "false", "no"}
+
+
+def _env_csv(name: str) -> list[str]:
+    raw = os.getenv(name)
+    if not raw:
+        return []
+    return [item.strip() for item in raw.split(",") if item.strip()]
+
+
+def _within_canary_hours(spec: Optional[str], current: datetime.datetime) -> bool:
+    if not spec:
+        return True
+    now_time = current.astimezone(datetime.timezone.utc).time()
+    for block in spec.split(","):
+        block = block.strip()
+        if not block or "-" not in block:
+            continue
+        start_txt, end_txt = [part.strip() for part in block.split("-", 1)]
+        try:
+            start_h, start_m = map(int, start_txt.split(":"))
+            end_h, end_m = map(int, end_txt.split(":"))
+        except ValueError:
+            continue
+        start_time = datetime.time(start_h, start_m)
+        end_time = datetime.time(end_h, end_m)
+        if start_time <= end_time:
+            if start_time <= now_time <= end_time:
+                return True
+        else:
+            if now_time >= start_time or now_time <= end_time:
+                return True
+    return False
+
+
 SCALP_WEIGHT_FLOOR = _safe_env_float("SCALP_WEIGHT_FLOOR", 0.22, low=0.0, high=0.4)
 SCALP_WEIGHT_READY_FLOOR = _safe_env_float(
     "SCALP_WEIGHT_READY_FLOOR", 0.32, low=SCALP_WEIGHT_FLOOR, high=0.45
@@ -298,6 +357,7 @@ PULSEBREAK_AUTO_VOL_MIN = _safe_env_float("PULSEBREAK_AUTO_VOL_MIN", 1.3, low=0.
 MACRO_LOT_SHARE_FLOOR = _safe_env_float("MACRO_LOT_SHARE_FLOOR", 0.7, low=0.0, high=0.95)
 MACRO_CONFIDENCE_FLOOR = _safe_env_float("MACRO_CONFIDENCE_FLOOR", 1.0, low=0.3, high=1.0)
 MACRO_SPREAD_OVERRIDE = _safe_env_float("MACRO_SPREAD_OVERRIDE", 1.4, low=1.0, high=3.0)
+PRIMARY_SYMBOL = (os.getenv("PRIMARY_SYMBOL") or "USD_JPY").strip() or "USD_JPY"
 
 
 @dataclass
@@ -528,7 +588,14 @@ class GPTRequestManager:
             self._pending.discard(signature)
         self._queue.task_done()
 # In range mode, allow mean‑reversion and light scalping entries
-ALLOWED_RANGE_STRATEGIES = {"BB_RSI", "RangeFader", "M1Scalper"}
+ALLOWED_RANGE_STRATEGIES = {
+    "BB_RSI",
+    "BB_RSI_Fast",
+    "RangeFader",
+    "M1Scalper",
+    "MicroVWAPRevert",
+    "VolCompressionBreak",
+}
 ALLOWED_RANGE_MACRO_STRATEGIES = {"TrendMA", "Donchian55", "H1Momentum", "OpportunisticMacro"}
 DIRECTION_LONG = "OPEN_LONG"
 DIRECTION_SHORT = "OPEN_SHORT"
@@ -612,6 +679,147 @@ def _hashable_float(value: Optional[float], digits: int = 4) -> Optional[float]:
 
 def _clamp(value: float, low: float, high: float) -> float:
     return max(low, min(high, value))
+
+
+def _safe_float(value: object, default: float = 0.0) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _resolve_news_status(features: Optional[dict]) -> tuple[str, float, float, float]:
+    data = features or {}
+    age = _safe_float(data.get("news_latest_age_minutes"), 9999.0)
+    count = _safe_float(data.get("news_count_total"), 0.0)
+    impact = _safe_float(data.get("news_impact_max"), 0.0)
+    sentiment_span = _safe_float(data.get("news_sentiment_abs_mean"), 0.0)
+    status = "normal"
+    if age >= 160.0 or count == 0.0:
+        status = "stale"
+    elif age >= 80.0 and count <= 1.0 and impact < 2.5 and sentiment_span <= 0.6:
+        status = "quiet"
+    elif count >= 2.0 and age <= 55.0 and impact >= 2.5:
+        status = "active"
+    elif age <= 45.0 and impact >= 2.0:
+        status = "elevated"
+    return status, age, count, impact
+
+
+def _low_vol_profile(fac_m1: dict, fac_h4: dict) -> dict[str, float | bool]:
+    atr = max(0.0, _safe_float(fac_m1.get("atr_pips"), 0.0))
+    bbw = max(0.0, _safe_float(fac_m1.get("bbw"), 1.0))
+    adx = max(0.0, _safe_float(fac_m1.get("adx"), 0.0))
+    vol_5m = max(0.0, _safe_float(fac_m1.get("vol_5m"), 1.2))
+    h4_adx = max(0.0, _safe_float((fac_h4 or {}).get("adx"), 0.0))
+
+    atr_norm = max(0.0, min(1.0, 1.0 - atr / 4.2))
+    bbw_norm = max(0.0, min(1.0, 1.0 - bbw / 0.32))
+    adx_norm = max(0.0, min(1.0, 1.0 - adx / 30.0))
+    vol_norm = max(0.0, min(1.0, 1.0 - vol_5m / 1.5))
+    score = max(
+        0.0,
+        min(
+            1.0,
+            (atr_norm * 0.34) + (bbw_norm * 0.28) + (adx_norm * 0.22) + (vol_norm * 0.16),
+        ),
+    )
+
+    low_vol = atr <= 3.4 and bbw <= 0.28 and adx <= 28.0 and vol_5m <= 1.35
+    tight_vol = atr <= 2.8 and bbw <= 0.24 and vol_5m <= 1.15
+    low_vol_like = atr <= 4.0 and bbw <= 0.32 and vol_5m <= 1.45 and adx <= 30.0
+
+    return {
+        "low_vol": low_vol,
+        "tight_vol": tight_vol,
+        "low_vol_like": low_vol_like,
+        "score": score,
+        "atr": atr,
+        "bbw": bbw,
+        "vol_5m": vol_5m,
+        "adx": adx,
+        "h4_adx": h4_adx,
+        "vol_norm": vol_norm,
+    }
+
+
+def _prioritise_strategies(current: list[str], preferred: list[str]) -> list[str]:
+    seen: set[str] = set()
+    ordered: list[str] = []
+    for name in preferred:
+        if name in seen or name not in STRATEGIES:
+            continue
+        ordered.append(name)
+        seen.add(name)
+    for name in current:
+        if name in seen or name not in STRATEGIES:
+            continue
+        ordered.append(name)
+        seen.add(name)
+    return ordered
+
+
+# ---- GPT rank merge helpers (low-vol quiet, conservative) ----
+_LOWVOL_ALLOW = {
+    "MomentumPulse",
+    "VolCompressionBreak",
+    "BB_RSI_Fast",
+    "MicroVWAPRevert",
+}
+
+
+def _top2_order(seq: list[str], allow: set[str]) -> tuple[str | None, str | None]:
+    picks = [name for name in seq if name in allow]
+    a = picks[0] if len(picks) > 0 else None
+    b = picks[1] if len(picks) > 1 else None
+    return a, b
+
+
+def _conservative_merge_rank(local_list: list[str], gpt_list: list[str], *, allow: set[str] = _LOWVOL_ALLOW, clamp: float = 0.15) -> list[str]:
+    """Merge order conservatively for allowed names only.
+    - Start from local order (baseline)
+    - Compute simple positional weights for allowed names from both lists
+    - Adjust local weights toward GPT by ±clamp, then reinsert back
+    """
+    if not local_list:
+        return local_list
+    base = list(local_list)
+    allowed_in_base = [n for n in base if n in allow]
+    if not allowed_in_base:
+        return base
+
+    # Positional weights: higher = earlier
+    def _weights(names: list[str]) -> dict[str, float]:
+        if not names:
+            return {}
+        m = len(names)
+        # e.g., [1.0, 0.8, 0.6, ...]
+        return {n: (m - i) / m for i, n in enumerate(names)}
+
+    Lw = _weights([n for n in base if n in allow])
+    Gw = _weights([n for n in gpt_list if n in allow])
+
+    merged_weights: dict[str, float] = {}
+    for n in allowed_in_base:
+        wl = Lw.get(n, 0.0)
+        wg = Gw.get(n, wl)
+        delta = wg - wl
+        if delta > clamp:
+            delta = clamp
+        elif delta < -clamp:
+            delta = -clamp
+        merged_weights[n] = wl + delta
+
+    ordered_allowed = sorted(allowed_in_base, key=lambda n: merged_weights.get(n, 0.0), reverse=True)
+    # Reinsert: replace allowed entries in the baseline sequence by new ordered_allowed
+    out: list[str] = []
+    it = iter(ordered_allowed)
+    for n in base:
+        if n in allow:
+            out.append(next(it))
+        else:
+            out.append(n)
+    return out
 
 
 def _gpt_payload_signature(
@@ -857,7 +1065,10 @@ async def prime_gpt_decision(
             await asyncio.sleep(5.0)
 
 
-async def supervised_runner(name: str, coro: asyncio.coroutines.coroutine) -> None:
+from typing import Any, Coroutine as _Coroutine
+
+
+async def supervised_runner(name: str, coro: _Coroutine[Any, Any, Any]) -> None:
     logging.info("[SUPERVISOR] %s started", name)
     try:
         await coro
@@ -2187,6 +2398,36 @@ async def logic_loop(
                 logging.warning("[FORCE_SCALP] entering GPT stage loop=%d", loop_counter)
             # M1/H4 の移動平均・RSI などの指標をまとめて送信
             news_features = build_news_features(news_cache, now=now)
+            news_status, news_age_min, news_count_total, news_impact_max = _resolve_news_status(news_features)
+            low_vol_ctx = _low_vol_profile(fac_m1, fac_h4)
+            low_vol_active = bool(low_vol_ctx["low_vol"])
+            low_vol_like = bool(low_vol_ctx["low_vol_like"])
+            quiet_low_vol = bool(low_vol_ctx["tight_vol"]) and news_status in {"quiet", "stale"}
+            low_vol_enabled = _env_flag("LOWVOL_ENABLE", True)
+            canary_ok = low_vol_enabled
+            if low_vol_enabled:
+                canary_symbols = set(_env_csv("LOWVOL_CANAIRY_SYMBOLS"))
+                if canary_symbols and PRIMARY_SYMBOL not in canary_symbols:
+                    canary_ok = False
+                if canary_ok:
+                    hours_spec = os.getenv("LOWVOL_CANAIRY_HOURS")
+                    if hours_spec and not _within_canary_hours(hours_spec, now):
+                        canary_ok = False
+            if not canary_ok:
+                low_vol_active = False
+                low_vol_like = False
+                quiet_low_vol = False
+            apply_low_vol = low_vol_enabled and canary_ok
+            if apply_low_vol and (low_vol_active or quiet_low_vol):
+                log_metric(
+                    "low_volatility_score",
+                    float(low_vol_ctx["score"]),
+                    tags={
+                        "news_status": news_status,
+                        "quiet": str(quiet_low_vol).lower(),
+                    },
+                    ts=now,
+                )
             payload = {
                 "ts": now.isoformat(timespec="seconds"),
                 "reg_macro": macro_regime,
@@ -2263,7 +2504,81 @@ async def logic_loop(
                 gpt.get("ranked_strategies"),
                 reuse_reason,
             )
-            ranked_strategies = list(gpt.get("ranked_strategies", []))
+            # Baseline order: local heuristic ranking
+            try:
+                local_dec = heuristic_decision(payload, last_decision=gpt if isinstance(gpt, dict) else None)
+                local_ranked = list(local_dec.get("ranked_strategies", []) or [])
+            except Exception:
+                local_ranked = []
+
+            gpt_ranked = list(gpt.get("ranked_strategies", []))
+            ranked_strategies = list(local_ranked or gpt_ranked)
+
+            # Conservative GPT rank merge for low-vol quiet regime only
+            did_gpt_rank_merge = False
+            try:
+                gpt_rank_enable = _env_flag("GPT_DECIDER_ENABLE", True)
+                gpt_shadow_mode = _env_flag("GPT_SHADOW_MODE", False)
+                # Range-band gate (0.45–0.55 by default)
+                band_raw = os.getenv("GPT_RANGE_BAND", "0.45,0.55")
+                try:
+                    lo_txt, hi_txt = (band_raw or "").split(",", 1)
+                    band_lo = float(lo_txt)
+                    band_hi = float(hi_txt)
+                except Exception:
+                    band_lo, band_hi = 0.45, 0.55
+                score_ok = True
+                try:
+                    score_val = float(range_ctx.score)
+                    score_ok = (band_lo <= score_val <= band_hi)
+                except Exception:
+                    pass
+                # Eligibility gate
+                use_gpt_rank = (
+                    gpt_rank_enable
+                    and (quiet_low_vol or low_vol_active)
+                    and news_status in {"quiet", "stale"}
+                    and score_ok
+                )
+
+                if use_gpt_rank and local_ranked:
+                    merged = _conservative_merge_rank(local_ranked, gpt_ranked, allow=_LOWVOL_ALLOW, clamp=0.15)
+                    # Shadow: log but keep local order
+                    a1, b1 = _top2_order(local_ranked, _LOWVOL_ALLOW)
+                    a2, b2 = _top2_order(merged, _LOWVOL_ALLOW)
+                    disagree = int((a1, b1) != (a2, b2))
+                    log_metric(
+                        "gpt_rank_disagree_top2",
+                        float(disagree),
+                        tags={"quiet": str(quiet_low_vol), "band": f"{band_lo:.2f}-{band_hi:.2f}", "shadow": str(gpt_shadow_mode)},
+                        ts=now,
+                    )
+                    if not gpt_shadow_mode:
+                        ranked_strategies = merged
+                        did_gpt_rank_merge = True
+                        log_metric(
+                            "gpt_rank_used",
+                            1.0,
+                            tags={"quiet": str(quiet_low_vol), "band": f"{band_lo:.2f}-{band_hi:.2f}"},
+                            ts=now,
+                        )
+                    else:
+                        log_metric(
+                            "gpt_rank_shadow",
+                            1.0,
+                            tags={"quiet": str(quiet_low_vol), "band": f"{band_lo:.2f}-{band_hi:.2f}"},
+                            ts=now,
+                        )
+                else:
+                    if gpt_rank_enable:
+                        log_metric(
+                            "gpt_rank_skipped",
+                            1.0,
+                            tags={"quiet": str(quiet_low_vol), "score_ok": str(score_ok)},
+                            ts=now,
+                        )
+            except Exception as exc:
+                logging.debug("[GPT-RANK] merge skipped due to error: %s", exc)
             weight_scalp = None
             if raw_weight_scalp is not None:
                 try:
@@ -2294,6 +2609,21 @@ async def logic_loop(
                 except Exception as exc:  # pragma: no cover - defensive
                     logging.debug("[FOCUS_ADVISOR] failed: %s", exc)
                     focus_override_hint = None
+
+            if apply_low_vol and quiet_low_vol and not did_gpt_rank_merge:
+                ranked_strategies = _prioritise_strategies(
+                    ranked_strategies,
+                    ["VolCompressionBreak", "MomentumPulse", "MicroVWAPRevert", "BB_RSI_Fast", "BB_RSI"],
+                )
+                if "NewsSpikeReversal" in ranked_strategies and news_status != "active":
+                    ranked_strategies = [
+                        s for s in ranked_strategies if s != "NewsSpikeReversal"
+                    ] + ["NewsSpikeReversal"]
+            elif apply_low_vol and (low_vol_active or low_vol_like) and not did_gpt_rank_merge:
+                ranked_strategies = _prioritise_strategies(
+                    ranked_strategies,
+                    ["MomentumPulse", "VolCompressionBreak", "BB_RSI_Fast", "MicroVWAPRevert"],
+                )
 
             # Update realtime metrics cache every few minutes
             if (now - last_metrics_refresh).total_seconds() >= 240:
@@ -2412,6 +2742,42 @@ async def logic_loop(
                         prev_weight,
                         weight_macro,
                     )
+            if apply_low_vol and quiet_low_vol:
+                prev_macro = weight_macro
+                weight_macro = min(weight_macro, 0.22)
+                if prev_macro != weight_macro:
+                    logging.info(
+                        "[LOWVOL] Quiet mode micro bias -> weight_macro %.2f -> %.2f",
+                        prev_macro,
+                        weight_macro,
+                    )
+                if weight_scalp is not None:
+                    prev_scalp = weight_scalp
+                    weight_scalp = min(weight_scalp, 0.08)
+                    if prev_scalp != weight_scalp:
+                        logging.info(
+                            "[LOWVOL] Quiet mode trimming scalp weight %.2f -> %.2f",
+                            prev_scalp,
+                            weight_scalp,
+                        )
+            elif apply_low_vol and low_vol_active:
+                prev_macro = weight_macro
+                weight_macro = min(weight_macro, 0.3)
+                if prev_macro != weight_macro:
+                    logging.info(
+                        "[LOWVOL] Low volatility bias -> weight_macro %.2f -> %.2f",
+                        prev_macro,
+                        weight_macro,
+                    )
+                if weight_scalp is not None:
+                    prev_scalp = weight_scalp
+                    weight_scalp = min(weight_scalp, 0.12)
+                    if prev_scalp != weight_scalp:
+                        logging.info(
+                            "[LOWVOL] Low volatility scalp trim %.2f -> %.2f",
+                            prev_scalp,
+                            weight_scalp,
+                        )
             if focus_override_hint and focus_override_hint.confidence >= 0.4:
                 if focus_override_hint.focus_tag:
                     focus_tag = focus_override_hint.focus_tag
@@ -3480,6 +3846,9 @@ async def logic_loop(
                 now=now,
                 story=story_snapshot,
                 advisor_hints=advisor_hints,
+                low_vol_profile=low_vol_ctx,
+                low_vol_quiet=quiet_low_vol,
+                news_status=news_status,
             )
 
             executed_pockets: set[str] = set()
@@ -3719,6 +4088,12 @@ async def logic_loop(
                     )
                 else:
                     scalp_share = DEFAULT_SCALP_SHARE
+            # Gentle clamp of macro share in low‑vol quiet regime
+            if apply_low_vol and quiet_low_vol and weight_macro is not None:
+                try:
+                    weight_macro = max(0.2, min(0.8, float(weight_macro)))
+                except Exception:
+                    pass
             update_dd_context(account_equity, weight_macro, weight_scalp, scalp_share)
             lots = alloc(
                 lot_total,
@@ -4668,6 +5043,18 @@ async def main():
                     supervised_runner(
                         "pullback_scalp",
                         pullback_scalp_worker(),
+                    )
+                ),
+                asyncio.create_task(
+                    supervised_runner(
+                        "pullback_s5",
+                        pullback_s5_worker(),
+                    )
+                ),
+                asyncio.create_task(
+                    supervised_runner(
+                        "mirror_spike_s5",
+                        mirror_spike_s5_worker(),
                     )
                 ),
                 asyncio.create_task(

@@ -112,8 +112,12 @@ async def pullback_scalp_worker() -> None:
             z_m5 = _z_score(mids_m5)
             if z_m1 is None or z_m5 is None:
                 continue
+            if getattr(config, "M1_Z_TRIGGER", 0.0) > 0.0 and abs(z_m1) < config.M1_Z_TRIGGER:
+                continue
             rsi_m1 = _rsi(mids_m1, config.RSI_PERIOD)
             atr_m1 = _atr(mids_m1, min(12, max(6, config.RSI_PERIOD)))
+            if config.MIN_ATR_PIPS > 0.0 and atr_m1 < config.MIN_ATR_PIPS:
+                continue
 
             side: Optional[str] = None
             if config.M1_Z_MIN <= z_m1 <= config.M1_Z_MAX and z_m5 <= config.M5_Z_SHORT_MAX:
