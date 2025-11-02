@@ -138,8 +138,8 @@ STAGE_RESET_GRACE_SECONDS = 180
 TARGET_INSTRUMENT = "USD_JPY"
 
 # 総合的な Macro 配分上限（lot 按分に直接適用）
-# 環境変数 MACRO_WEIGHT_CAP で上書き可能。既定 0.30 (=30%)。
-GLOBAL_MACRO_WEIGHT_CAP = _env_float("MACRO_WEIGHT_CAP", 0.30)
+# 初期値は 0.30 (=30%)。環境変数による上書きは下段で適用。
+GLOBAL_MACRO_WEIGHT_CAP = 0.30
 
 
 def _env_bool(key: str, default: bool = False) -> bool:
@@ -167,6 +167,9 @@ def _env_int(key: str, default: int) -> int:
         return int(raw)
     except (TypeError, ValueError):
         return default
+
+# 環境変数 MACRO_WEIGHT_CAP で上書き可能。
+GLOBAL_MACRO_WEIGHT_CAP = _env_float("MACRO_WEIGHT_CAP", GLOBAL_MACRO_WEIGHT_CAP)
 
 
 _MACRO_STATE_PATH = (
