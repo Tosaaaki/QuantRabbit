@@ -21,7 +21,9 @@ MAX_LEVERAGE = 20.0  # 1:20
 MAX_LOT = 3.0  # 1 lot = 100k 通貨
 POCKET_DD_LIMITS = {"micro": 0.05, "macro": 0.15, "scalp": 0.03}  # equity 比 (%)
 GLOBAL_DD_LIMIT = 0.20  # 全体ドローダウン 20%
-POCKET_MAX_RATIOS = {"macro": 0.8, "micro": 0.6, "scalp": 0.25}
+# Pocketごとの口座配分上限（DD母数の推定に使用）
+# Macro は 30% に制限（以前は 80%）。
+POCKET_MAX_RATIOS = {"macro": 0.3, "micro": 0.6, "scalp": 0.25}
 _DEFAULT_BASE_EQUITY = {"macro": 8000.0, "micro": 6000.0, "scalp": 2500.0}
 _LOOKBACK_DAYS = 7
 

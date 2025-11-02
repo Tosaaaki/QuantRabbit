@@ -88,7 +88,7 @@ class OrderIntent(BaseModel):
 | `point` | 0.001。OANDA REST 価格の丸め単位。 |
 | `lot` | 1 lot = 100,000 units。`units = round(lot * 100000)`。 |
 | `pocket` | `micro` = 短期テクニカル、`macro` = レジーム/ニュース。口座資金を `pocket_ratio` で按分。 |
-| `weight_macro` | 0.0〜1.0。`pocket_macro = pocket_total * weight_macro` を意味する。 |
+| `weight_macro` | 0.0〜1.0。`pocket_macro = pocket_total * weight_macro` を意味する（運用では Macro を最大 30% に制限）。 |
 
 - `price_from_pips("BUY", entry, sl_pips)` = `entry - sl_pips * 0.01` を `round(price, 3)`。
 - `price_from_pips("SELL", entry, sl_pips)` = `entry + sl_pips * 0.01` を `round(price, 3)`。
@@ -237,7 +237,7 @@ class OrderIntent(BaseModel):
 
 ### 6.1 リスク計算とロット配分
 
-- `pocket_equity = account_equity * pocket_ratio`。`pocket_ratio` は `weight_macro` と `pocket` 固有の上限 (`micro<=0.6`, `macro<=0.8`) を掛け合わせる。
+- `pocket_equity = account_equity * pocket_ratio`。`pocket_ratio` は `weight_macro` と `pocket` 固有の上限 (`micro<=0.6`, `macro<=0.3`) を掛け合わせる。
 - 1 トレードの許容損失は `risk_pct = 0.02`。`risk_amount = pocket_equity * risk_pct`。
 - USD/JPY の 1 lot 当たり pip 価値は 1000 JPY。従って `lot = min(MAX_LOT, round(risk_amount / (sl_pips * 1000), 3))`。
 - `units = int(round(lot * 100000))`。`abs(units) < 1000` はノイズ扱いで発注しない。
@@ -338,55 +338,21 @@ scripts/deploy_to_vm.sh -i -k ~/.ssh/gcp_oslogin_qr -t
 
 ---
 
-## 10. GCE SSH / OS Login ガイド
+## 10. GCP アクセス / デプロイ指針（最新版）
 
-推奨は OS Login。メタデータ `ssh-keys` は OS Login 有効時に無視されます。
-
-- 事前条件
-  - IAM: `roles/compute.osLogin` もしくは `roles/compute.osAdminLogin`
-  - IAP 経由時は `roles/iap.tunnelResourceAccessor`
-
-- OS Login を有効化（インスタンス）
-  - `gcloud compute instances add-metadata fx-trader-vm \
-    --zone asia-northeast1-b --metadata enable-oslogin=TRUE`
-
-- キー生成と OS Login 登録（30 日 TTL）
-  - `ssh-keygen -t ed25519 -f ~/.ssh/gcp_oslogin_quantrabbit -N '' -C 'oslogin-quantrabbit'`
-  - `gcloud compute os-login ssh-keys add \
-    --key-file ~/.ssh/gcp_oslogin_quantrabbit.pub --ttl 30d`
-
-- 接続（外部 IP あり）
-  - `gcloud compute ssh fx-trader-vm \
-    --project quantrabbit --zone asia-northeast1-b \
-    --ssh-key-file ~/.ssh/gcp_oslogin_quantrabbit`
-  - 直接 SSH する場合（OS Login ユーザ名は `gcloud compute os-login describe-profile` で確認）
-    - `ssh -i ~/.ssh/gcp_oslogin_quantrabbit <oslogin_username>@<EXTERNAL_IP>`
-
-- 接続（外部 IP なし / IAP 経由）
-  - `gcloud compute ssh fx-trader-vm \
-    --project quantrabbit --zone asia-northeast1-b \
-    --tunnel-through-iap \
-    --ssh-key-file ~/.ssh/gcp_oslogin_quantrabbit`
-
-- トラブルシュート
-  - `Permission denied (publickey)` の典型:
-    - OS Login が有効か: `enable-oslogin=TRUE`（プロジェクト/インスタンス）
-    - IAM に osLogin 権限があるか
-    - OS Login に公開鍵が登録されているか（TTL 期限切れに注意）
-    - `gcloud compute ssh ... --ssh-key-file` で鍵を明示
-    - 詳細: `gcloud compute ssh ... --troubleshoot`
-  - 組織ポリシー `compute.requireOsLogin` が強制の場合、メタデータ鍵は使えません。
-
-- 代替（OS Login を使わない場合）
-  - OS Login を無効化: `... add-metadata ... --metadata enable-oslogin=FALSE`
-  - 公開鍵をメタデータに登録: `--metadata-from-file ssh-keys=ssh-keys.txt`
-  - ただしセキュリティ・運用上 OS Login 利用を推奨。
+- 原則 OS Login + IAP を使用（メタデータ `ssh-keys` は OS Login 有効時に無視）。
+- まずは Doctor で前提を自動検診し、鍵の生成/登録まで一括実施：
+  - `scripts/gcloud_doctor.sh -p <PROJECT> -z asia-northeast1-a -m fx-trader-vm -E -S -G [-t -k ~/.ssh/gcp_oslogin_qr] -c`
+- デプロイは `scripts/deploy_to_vm.sh` を使用：
+  - 例（IAP 経由/依存更新込み）: `scripts/deploy_to_vm.sh -i -t -k ~/.ssh/gcp_oslogin_qr -p <PROJECT>`
+- 詳細手順・背景は `docs/GCP_DEPLOY_SETUP.md` を参照。
 
 ### 10.1 事前健診（Doctor）
 
-- gcloud 未導入時は `scripts/install_gcloud.sh` でインストール。
-- 主要チェックは `scripts/gcloud_doctor.sh -p <PROJECT> -z asia-northeast1-a -m fx-trader-vm -c`（IAP 利用時は `-t -k ~/.ssh/gcp_oslogin_qr`）。
-- `scripts/deploy_to_vm.sh` は内部で Doctor を実行し、前提不備があれば早期に失敗して案内します。
+- gcloud 未導入時は `scripts/install_gcloud.sh` で導入。
+- 推奨実行: `scripts/gcloud_doctor.sh -p <PROJECT> -z asia-northeast1-a -m fx-trader-vm -E -S -G [-t -k ~/.ssh/gcp_oslogin_qr] -c`
+  - `-E`: Compute API 自動有効化、`-S`: OS Login 鍵登録、`-G`: SSH鍵が無い場合に生成。
+- `scripts/deploy_to_vm.sh` は内部で Doctor を呼び出し、前提不備は早期失敗＋対処ガイドを表示。
 - 詳細は `docs/GCP_DEPLOY_SETUP.md` を参照。
 
 ### 10.2 ヘッドレス（サービスアカウント）運用
@@ -395,6 +361,47 @@ scripts/deploy_to_vm.sh -i -k ~/.ssh/gcp_oslogin_qr -t
 - `scripts/gcloud_doctor.sh` は `-K <SA_KEYFILE>` 指定時、アカウント不在なら SA キーで自動有効化する。
 - `scripts/deploy_to_vm.sh` は `-K <SA_KEYFILE> / -A <SA_ACCOUNT>` を受け取り、Compute/IAP/OS Login を SA で実行可能。
 - 必須ロール例: `roles/compute.osAdminLogin`, `roles/compute.instanceAdmin.v1`, （IAP利用時）`roles/iap.tunnelResourceAccessor`。
+
+### 10.3 クイックコマンド（quantrabbit 固定）
+
+```bash
+# プロジェクト/ゾーン/インスタンス（実値）
+export PROJ=quantrabbit
+export ZONE=asia-northeast1-a
+export INST=fx-trader-vm
+
+# 0) gcloud が無い場合の導入
+scripts/install_gcloud.sh
+
+# 1) 事前健診（Compute API / OS Login / IAP / SSH 検証と鍵登録まで）
+scripts/gcloud_doctor.sh -p "$PROJ" -z "$ZONE" -m "$INST" \
+  -E -S -G -t -k ~/.ssh/gcp_oslogin_qr -c
+
+# 2) IAP 経由の疎通確認（単体）
+gcloud compute ssh "$INST" --project "$PROJ" --zone "$ZONE" \
+  --tunnel-through-iap --ssh-key-file ~/.ssh/gcp_oslogin_qr \
+  --command 'echo [vm] hello'
+
+# 3) デプロイ（venv 依存更新あり / IAP 経由）
+scripts/deploy_to_vm.sh -i -t -k ~/.ssh/gcp_oslogin_qr -p "$PROJ"
+
+# 4) ログ追尾（IAP 経由）
+gcloud compute ssh "$INST" --project "$PROJ" --zone "$ZONE" \
+  --tunnel-through-iap --ssh-key-file ~/.ssh/gcp_oslogin_qr \
+  --command 'journalctl -u quantrabbit.service -f'
+
+# 5) ヘッドレス（サービスアカウント）で診断/デプロイ
+export SA=qr-deployer@${PROJ}.iam.gserviceaccount.com
+export SA_KEY=~/.gcp/qr-deployer.json
+
+# 診断（ユーザー非アクティブでも可）
+scripts/gcloud_doctor.sh -p "$PROJ" -z "$ZONE" -m "$INST" \
+  -K "$SA_KEY" -A "$SA" -E -S -G -t -k ~/.ssh/gcp_oslogin_qr -c
+
+# デプロイ（SA インパーソネート）
+scripts/deploy_to_vm.sh -p "$PROJ" -t -k ~/.ssh/gcp_oslogin_qr \
+  -K "$SA_KEY" -A "$SA" -i
+```
 
 ---
 

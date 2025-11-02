@@ -137,6 +137,10 @@ RANGE_EXIT_SCORE_CEIL = 0.56
 STAGE_RESET_GRACE_SECONDS = 180
 TARGET_INSTRUMENT = "USD_JPY"
 
+# 総合的な Macro 配分上限（lot 按分に直接適用）
+# 環境変数 MACRO_WEIGHT_CAP で上書き可能。既定 0.30 (=30%)。
+GLOBAL_MACRO_WEIGHT_CAP = _env_float("MACRO_WEIGHT_CAP", 0.30)
+
 
 def _env_bool(key: str, default: bool = False) -> bool:
     raw = os.getenv(key)
@@ -888,6 +892,13 @@ async def logic_loop():
 
             focus_tag = gpt.get("focus_tag") or focus
             weight = gpt.get("weight_macro", w_macro)
+            if weight > GLOBAL_MACRO_WEIGHT_CAP:
+                logging.info(
+                    "[MACRO] Hard cap applied: weight_macro %.2f -> %.2f",
+                    weight,
+                    GLOBAL_MACRO_WEIGHT_CAP,
+                )
+                weight = GLOBAL_MACRO_WEIGHT_CAP
             if range_active:
                 focus_tag = "micro"
                 weight = min(weight, 0.15)
