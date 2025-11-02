@@ -3,6 +3,8 @@ import datetime
 import logging
 import traceback
 import time
+import os
+from pathlib import Path
 from typing import Optional
 
 from market_data.candle_fetcher import (
@@ -17,6 +19,7 @@ from analysis.focus_decider import decide_focus
 from analysis.gpt_decider import get_decision
 from analysis.perf_monitor import snapshot as get_perf
 from analysis.summary_ingestor import check_event_soon, get_latest_news
+from analysis.macro_state import MacroState
 # バックグラウンドでニュース取得と要約を実行するためのインポート
 from market_data.news_fetcher import fetch_loop as news_fetch_loop
 from analysis.summary_ingestor import ingest_loop as summary_ingest_loop
@@ -131,6 +134,81 @@ RANGE_MIN_ACTIVE_SECONDS = 240
 RANGE_ENTRY_SCORE_FLOOR = 0.62
 RANGE_EXIT_SCORE_CEIL = 0.56
 STAGE_RESET_GRACE_SECONDS = 180
+TARGET_INSTRUMENT = "USD_JPY"
+
+
+def _env_bool(key: str, default: bool = False) -> bool:
+    raw = os.getenv(key)
+    if raw is None:
+        return default
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _env_float(key: str, default: float) -> float:
+    raw = os.getenv(key)
+    if raw is None:
+        return default
+    try:
+        return float(raw)
+    except (TypeError, ValueError):
+        return default
+
+
+_MACRO_STATE_PATH = (
+    os.getenv("MACRO_STATE_SNAPSHOT_PATH")
+    or os.getenv("MACRO_STATE_PATH")
+    or os.getenv("MACRO_STATE_SNAPSHOT")
+)
+_MACRO_STATE_DEADZONE = _env_float("MACRO_STATE_DEADZONE", 0.25)
+_MACRO_STATE_GATE_ENABLED = _env_bool("MACRO_STATE_GATE_ENABLED", False)
+_EVENT_WINDOW_ENABLED = _env_bool("EVENT_WINDOW_ENABLED", True)
+_EVENT_WINDOW_BEFORE = _env_float("EVENT_WINDOW_BEFORE_HOURS", 2.0)
+_EVENT_WINDOW_AFTER = _env_float("EVENT_WINDOW_AFTER_HOURS", 1.0)
+_EVENT_WINDOW_RISK_MULTIPLIER = _env_float("EVENT_WINDOW_RISK_MULTIPLIER", 0.3)
+_EXPOSURE_USD_LONG_MAX_LOT = _env_float("EXPOSURE_USD_LONG_MAX_LOT", 2.5)
+_MACRO_STATE_STALE_WARN_SEC = _env_float("MACRO_STATE_STALE_WARN_SEC", 900.0)
+
+_macro_state_cache: MacroState | None = None
+_macro_state_mtime: float | None = None
+_macro_state_stale_warned = False
+
+
+def _parse_iso8601(ts: str) -> datetime.datetime | None:
+    if not ts:
+        return None
+    try:
+        return datetime.datetime.fromisoformat(ts.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+
+
+def _refresh_macro_state() -> MacroState | None:
+    global _macro_state_cache, _macro_state_mtime
+    if not _MACRO_STATE_PATH:
+        return None
+    path = Path(_MACRO_STATE_PATH)
+    try:
+        mtime = path.stat().st_mtime
+    except FileNotFoundError:
+        if _macro_state_cache is None:
+            logging.warning("[MACRO] snapshot path missing: %s", path)
+        return _macro_state_cache
+    if _macro_state_cache is None or mtime != _macro_state_mtime:
+        try:
+            _macro_state_cache = MacroState.load_json(
+                path, deadzone=_MACRO_STATE_DEADZONE
+            )
+            _macro_state_mtime = mtime
+            logging.info(
+                "[MACRO] snapshot refreshed (asof=%s deadzone=%.2f)",
+                _macro_state_cache.snapshot.asof,
+                _MACRO_STATE_DEADZONE,
+            )
+            globals()["_macro_state_stale_warned"] = False
+        except Exception as exc:  # noqa: BLE001
+            logging.warning("[MACRO] failed to load snapshot: %s", exc)
+            return _macro_state_cache
+    return _macro_state_cache
 
 try:
     _BASE_RISK_PCT = float(get_secret("risk_pct"))
@@ -148,7 +226,14 @@ except Exception:
     _MAX_RISK_PCT = _BASE_RISK_PCT
 
 
-def _dynamic_risk_pct(signals: list[dict], range_mode: bool, weight_macro: float | None) -> float:
+def _dynamic_risk_pct(
+    signals: list[dict],
+    range_mode: bool,
+    weight_macro: float | None,
+    macro_state: MacroState | None = None,
+    *,
+    now: datetime.datetime | None = None,
+) -> float:
     if range_mode or not signals or _MAX_RISK_PCT <= _BASE_RISK_PCT:
         return _BASE_RISK_PCT
     actionable = [
@@ -166,7 +251,20 @@ def _dynamic_risk_pct(signals: list[dict], range_mode: bool, weight_macro: float
         bias = min(1.0, abs(weight_macro - 0.5) * 2.0)
     score = 0.45 * pocket_factor + 0.45 * avg_conf + 0.1 * bias
     score = max(0.0, min(score, 1.0))
-    return _BASE_RISK_PCT + (_MAX_RISK_PCT - _BASE_RISK_PCT) * score
+    pct = _BASE_RISK_PCT + (_MAX_RISK_PCT - _BASE_RISK_PCT) * score
+    if (
+        pct > 0.0
+        and macro_state
+        and _EVENT_WINDOW_ENABLED
+        and macro_state.in_event_window(
+            TARGET_INSTRUMENT,
+            before_hours=_EVENT_WINDOW_BEFORE,
+            after_hours=_EVENT_WINDOW_AFTER,
+            now=now or datetime.datetime.utcnow().replace(tzinfo=datetime.timezone.utc),
+        )
+    ):
+        pct *= max(0.0, min(1.0, _EVENT_WINDOW_RISK_MULTIPLIER))
+    return pct
 
 
 def build_client_order_id(focus_tag: Optional[str], strategy_tag: str) -> str:
@@ -492,7 +590,26 @@ async def logic_loop():
                 await asyncio.sleep(5)
                 continue
 
+            macro_state = _refresh_macro_state()
             event_soon = check_event_soon(within_minutes=30, min_impact=3)
+
+            if macro_state and _MACRO_STATE_STALE_WARN_SEC > 0:
+                snap_ts = _parse_iso8601(macro_state.snapshot.asof)
+                if snap_ts:
+                    age_sec = (
+                        now.replace(tzinfo=datetime.timezone.utc) - snap_ts
+                    ).total_seconds()
+                    if age_sec >= _MACRO_STATE_STALE_WARN_SEC:
+                        if not _macro_state_stale_warned:
+                            logging.warning(
+                                "[MACRO] snapshot stale (age=%.1fs threshold=%.1fs)",
+                                age_sec,
+                                _MACRO_STATE_STALE_WARN_SEC,
+                            )
+                            globals()["_macro_state_stale_warned"] = True
+                    elif _macro_state_stale_warned:
+                        logging.info("[MACRO] snapshot freshness restored (age=%.1fs)", age_sec)
+                        globals()["_macro_state_stale_warned"] = False
             global_drawdown_exceeded = check_global_drawdown()
 
             if global_drawdown_exceeded:
@@ -836,6 +953,22 @@ async def logic_loop():
                 }
                 scaled_conf = int(signal["confidence"] * health.confidence_scale)
                 signal["confidence"] = max(0, min(100, scaled_conf))
+                if (
+                    _MACRO_STATE_GATE_ENABLED
+                    and macro_state
+                    and signal["action"] in {"OPEN_LONG", "OPEN_SHORT"}
+                ):
+                    bias_val = macro_state.bias(TARGET_INSTRUMENT)
+                    if abs(bias_val) >= macro_state.deadzone:
+                        is_long = signal["action"] == "OPEN_LONG"
+                        if (bias_val > 0 and not is_long) or (bias_val < 0 and is_long):
+                            logging.info(
+                                "[MACRO] gate skip %s action=%s bias=%.2f",
+                                sname,
+                                signal["action"],
+                                bias_val,
+                            )
+                            continue
                 if range_active:
                     atr_hint = (
                         fac_m1.get("atr_pips")
@@ -1038,7 +1171,13 @@ async def logic_loop():
                         scalp_free_ratio * 100 if scalp_free_ratio is not None else 0.0,
                     )
 
-            risk_override = _dynamic_risk_pct(evaluated_signals, range_active, weight)
+            risk_override = _dynamic_risk_pct(
+                evaluated_signals,
+                range_active,
+                weight,
+                macro_state,
+                now=now,
+            )
             if (
                 _MAX_RISK_PCT > _BASE_RISK_PCT
                 and (last_risk_pct is None or abs(risk_override - last_risk_pct) > 0.001)
@@ -1090,6 +1229,8 @@ async def logic_loop():
                 lots["macro"] = 0.0
 
             spread_skip_logged = False
+            usd_long_cap_units = int(_EXPOSURE_USD_LONG_MAX_LOT * 100000)
+            projected_usd_long_units = max(0, net_units)
             for signal in evaluated_signals:
                 pocket = signal["pocket"]
                 action = signal.get("action")
@@ -1202,6 +1343,18 @@ async def logic_loop():
                         "[SKIP] Stage lot %.3f produced 0 units. Skipping.", staged_lot
                     )
                     continue
+                if (
+                    usd_long_cap_units > 0
+                    and action == "OPEN_LONG"
+                    and (projected_usd_long_units + max(0, units)) > usd_long_cap_units
+                ):
+                    logging.info(
+                        "[EXPOSURE] USD long cap %.2f lot reached (projected %.2f). Skip %s.",
+                        _EXPOSURE_USD_LONG_MAX_LOT,
+                        (projected_usd_long_units + max(0, units)) / 100000.0,
+                        signal["strategy"],
+                    )
+                    continue
 
                 sl_pips = signal.get("sl_pips")
                 tp_pips = signal.get("tp_pips")
@@ -1283,6 +1436,7 @@ async def logic_loop():
                     net_units += units
                     open_positions.setdefault("__net__", {})["units"] = net_units
                     executed_pockets.add(pocket)
+                    projected_usd_long_units = max(0, net_units)
                     # 直後の再エントリーを抑制（気迷いトレード対策）
                     entry_cd = POCKET_ENTRY_MIN_INTERVAL.get(pocket, 120)
                     stage_tracker.set_cooldown(

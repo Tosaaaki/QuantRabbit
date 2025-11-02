@@ -34,3 +34,13 @@ config/env.toml
 *sa-key*.json
 *service-account*.json
 ui-dashboard-sa.json
+
+# Local caches / artifacts
+.cache/
+.gcloud/
+remote_logs_vm/
+tmp/
+summaries/
+.google-cloud-sdk/
+trades*.db
+config/env.local.toml
