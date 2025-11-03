@@ -29,11 +29,11 @@ class ExitManager:
         self.confidence_threshold = confidence_threshold
         self._macro_signal_threshold = max(confidence_threshold + 10, 80)
         self._macro_trend_adx = 16
-        self._macro_loss_buffer = 4.0
+        self._macro_loss_buffer = 0.8
         self._macro_ma_gap = 3.0
         # Macro-specific stability controls
-        self._macro_min_hold_minutes = 7.0  # minimum age before acting on reversals
-        self._macro_hysteresis_pips = 3.0   # widen no-close band to avoid jitter
+        self._macro_min_hold_minutes = 4.0  # minimum age before acting on reversals
+        self._macro_hysteresis_pips = 1.2   # tighten band so small reversals are addressed
         self._reverse_confirmations = 2
         self._reverse_decay = timedelta(seconds=180)
         self._reverse_hits: Dict[Tuple[str, str], Dict[str, object]] = {}
@@ -53,6 +53,9 @@ class ExitManager:
         decisions: List[ExitDecision] = []
         projection_m1 = compute_ma_projection(fac_m1, timeframe_minutes=1.0)
         projection_h4 = compute_ma_projection(fac_h4, timeframe_minutes=240.0)
+        atr_pips = fac_m1.get("atr_pips")
+        if atr_pips is None:
+            atr_pips = (fac_m1.get("atr") or 0.0) * 100.0
         for pocket, info in open_positions.items():
             if pocket == "__net__":
                 continue
@@ -105,6 +108,7 @@ class ExitManager:
                     current_time,
                     projection_primary,
                     projection_fast,
+                    atr_pips,
                 )
                 if decision:
                     decisions.append(decision)
@@ -126,6 +130,7 @@ class ExitManager:
                     current_time,
                     projection_primary,
                     projection_fast,
+                    atr_pips,
                 )
                 if decision:
                     decisions.append(decision)
@@ -167,6 +172,7 @@ class ExitManager:
         now: datetime,
         projection_primary: Optional[MACrossProjection],
         projection_fast: Optional[MACrossProjection],
+        atr_pips: float,
     ) -> Optional[ExitDecision]:
         allow_reentry = False
         reason = ""
@@ -258,6 +264,16 @@ class ExitManager:
             reason = "trend_reversal"
         elif pocket == "scalp" and close_price > ema20:
             reason = "scalp_momentum_flip"
+        elif (
+            pocket == "macro"
+            and avg_price
+            and atr_pips is not None
+            and profit_pips >= max(3.5, atr_pips * 0.9)
+        ):
+            trail_back = max(1.6, atr_pips * 0.45)
+            trail_floor = avg_price + (profit_pips - trail_back) * 0.01
+            if close_price is not None and close_price <= trail_floor:
+                reason = "macro_atr_trail"
         elif self._should_exit_for_cross(
             pocket,
             "long",
@@ -271,12 +287,12 @@ class ExitManager:
             reason = "ma_cross_imminent"
         elif (
             pocket == "macro"
-            and profit_pips >= 6.0
+            and profit_pips >= max(4.2, atr_pips * 1.0)
             and close_price is not None
             and ema20 is not None
-            and close_price <= ema20 - 0.0015
+            and close_price <= ema20 - max(0.0010, (atr_pips * 0.25) / 100)
         ):
-            reason = "macro_trail_hit"
+            reason = "macro_trend_fade"
         # レンジ中でもマクロの既存建玉を一律にクローズしない。
         # 早期利確/撤退（range_take_profit/range_stop）や逆方向シグナルのみで制御する。
         elif range_mode:
@@ -324,6 +340,7 @@ class ExitManager:
         now: datetime,
         projection_primary: Optional[MACrossProjection],
         projection_fast: Optional[MACrossProjection],
+        atr_pips: float,
     ) -> Optional[ExitDecision]:
         allow_reentry = False
         reason = ""
@@ -410,6 +427,15 @@ class ExitManager:
             reason = "trend_reversal"
         elif pocket == "scalp" and close_price < ema20:
             reason = "scalp_momentum_flip"
+        elif (
+            pocket == "macro"
+            and avg_price
+            and profit_pips >= max(6.0, atr_pips * 1.05)
+        ):
+            trail_back = max(2.8, atr_pips * 0.55)
+            trail_ceiling = avg_price - (profit_pips - trail_back) * 0.01
+            if close_price is not None and close_price >= trail_ceiling:
+                reason = "macro_atr_trail"
         elif self._should_exit_for_cross(
             pocket,
             "short",
@@ -423,6 +449,14 @@ class ExitManager:
             reason = "ma_cross_imminent"
         # レンジ中でもマクロの既存建玉を一律にクローズしない。
         # 早期利確/撤退（range_take_profit/range_stop）や逆方向シグナルのみで制御する。
+        elif (
+            pocket == "macro"
+            and profit_pips >= max(6.5, atr_pips * 1.1)
+            and close_price is not None
+            and ema20 is not None
+            and close_price >= ema20 + max(0.0012, (atr_pips * 0.3) / 100)
+        ):
+            reason = "macro_trend_fade"
         elif range_mode:
             if (
                 pocket == "macro"
@@ -500,8 +534,9 @@ class ExitManager:
         if cross_minutes > threshold:
             return False
 
-        if pocket == "macro" and profit_pips <= -self._macro_loss_buffer:
-            return True
+        if pocket == "macro":
+            return profit_pips <= -6.0
+
         if profit_pips >= 0.8:
             return True
         if cross_minutes <= threshold / 2.0:

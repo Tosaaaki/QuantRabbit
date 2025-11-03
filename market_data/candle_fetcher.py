@@ -2,7 +2,7 @@
 market_data.candle_fetcher
 ~~~~~~~~~~~~~~~~~~~~~~~~~~
 Tick を受け取り、任意のタイムフレームのローソク足を逐次生成する。
-現在は **M1** 固定。必要に応じて dict 内に他 TF を追加可。
+現在は M1 / H1 / H4 をサポート。必要に応じて dict 内に他 TF を追加可。
 """
 
 from __future__ import annotations
@@ -19,8 +19,9 @@ from market_data.replay_logger import log_candle
 from market_data import spread_monitor
 from market_data import tick_window
 
+#
 Candle = dict[str, float]  # open, high, low, close
-TimeFrame = Literal["M1", "H4"]
+TimeFrame = Literal["M1", "H1", "H4"]
 
 
 TOKEN = get_secret("oanda_token")
@@ -52,6 +53,8 @@ class CandleAggregator:
     def _get_key(self, tf: TimeFrame, ts: datetime.datetime) -> str:
         if tf == "M1":
             return ts.strftime("%Y-%m-%dT%H:%M")
+        if tf == "H1":
+            return ts.strftime("%Y-%m-%dT%H:00")
         if tf == "H4":
             # 4時間足の区切り (0, 4, 8, 12, 16, 20時 UTC)
             hour = (ts.hour // 4) * 4
@@ -165,7 +168,7 @@ async def initialize_history(instrument: str):
     """起動時に過去ローソクを取得し factor_cache を埋める"""
     from indicators.factor_cache import on_candle
 
-    for tf in ("M1", "H4"):
+    for tf in ("M1", "H1", "H4"):
         candles = await fetch_historical_candles(instrument, tf, 20)
         for c in candles:
             await on_candle(tf, c)

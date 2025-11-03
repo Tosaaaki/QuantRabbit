@@ -44,6 +44,7 @@ if HEDGING_ENABLED:
     logging.info("[ORDER] Hedging mode enabled (positionFill=OPEN_ONLY).")
 
 _LAST_PROTECTIONS: dict[str, Tuple[Optional[float], Optional[float]]] = {}
+MACRO_BE_GRACE_SECONDS = 360
 
 # ---------- orders logger (logs/orders.db) ----------
 _ORDERS_DB_PATH = pathlib.Path("logs/orders.db")
@@ -406,13 +407,14 @@ def update_dynamic_protections(
     # ポケット別の BE/トレーリング開始閾値（pip）
     # micro/scalp は早めに建値超えへ移行し、利確を積み上げる方針
     per_pocket_triggers = {
-        "macro": max(6.0, (atr_h4 or atr_m1 or 0.0) * 1.2),
+        "macro": max(8.0, (atr_h4 or atr_m1 or 0.0) * 1.5),
         "micro": max(3.0, (atr_m1 or 0.0) * 0.8),
         "scalp": max(2.0, (atr_m1 or 0.0) * 0.6),
     }
     lock_ratio = 0.6
     per_pocket_min_lock = {"macro": 3.0, "micro": 2.0, "scalp": 1.2}
     pip = 0.01
+    now_ts = datetime.now(timezone.utc)
     for pocket, info in open_positions.items():
         if pocket == "__net__":
             continue
@@ -432,13 +434,27 @@ def update_dynamic_protections(
             entry = float(price)
             sl_pips = max(1.0, base_sl)
             tp_pips = max(sl_pips * tp_ratio, sl_pips + 5.0)
+            opened_at = _parse_trade_open_time(tr.get("open_time"))
+            hold_seconds = 0.0
+            if opened_at:
+                hold_seconds = max(0.0, (now_ts - opened_at).total_seconds())
             gain_pips = 0.0
             if side == "long":
                 gain_pips = (current_price or entry) - entry
                 gain_pips *= 100
                 sl_price = round(entry - sl_pips * pip, 3)
                 tp_price = round(entry + tp_pips * pip, 3)
-                if gain_pips > trail_trigger:
+                allow_lock = True
+                if (
+                    pocket == "macro"
+                    and hold_seconds < MACRO_BE_GRACE_SECONDS
+                ):
+                    momentum = (fac_m1.get("close") or 0.0) - (
+                        fac_m1.get("ema20") or fac_m1.get("ma20") or 0.0
+                    )
+                    if momentum >= 0.0:
+                        allow_lock = False
+                if gain_pips > trail_trigger and allow_lock:
                     lock_pips = max(min_lock, gain_pips * lock_ratio)
                     be_price = entry + lock_pips * pip
                     sl_price = max(sl_price, round(be_price, 3))
@@ -452,7 +468,17 @@ def update_dynamic_protections(
                 gain_pips *= 100
                 sl_price = round(entry + sl_pips * pip, 3)
                 tp_price = round(entry - tp_pips * pip, 3)
-                if gain_pips > trail_trigger:
+                allow_lock = True
+                if (
+                    pocket == "macro"
+                    and hold_seconds < MACRO_BE_GRACE_SECONDS
+                ):
+                    momentum = (fac_m1.get("close") or 0.0) - (
+                        fac_m1.get("ema20") or fac_m1.get("ma20") or 0.0
+                    )
+                    if momentum <= 0.0:
+                        allow_lock = False
+                if gain_pips > trail_trigger and allow_lock:
                     lock_pips = max(min_lock, gain_pips * lock_ratio)
                     be_price = entry - lock_pips * pip
                     sl_price = min(sl_price, round(be_price, 3))
@@ -489,9 +515,32 @@ async def set_trade_protections(
         return False
 
 
+def _macro_partial_profile(
+    fac_h4: Optional[dict],
+    range_mode: bool,
+) -> tuple[Tuple[float, float], Tuple[float, float]]:
+    if range_mode:
+        return (3.0, 5.2), (0.85, 0.10)
+    if not fac_h4:
+        return (3.2, 5.4), (0.85, 0.10)
+    adx = float(fac_h4.get("adx", 0.0) or 0.0)
+    ma10 = fac_h4.get("ma10", 0.0) or 0.0
+    ma20 = fac_h4.get("ma20", 0.0) or 0.0
+    atr_raw = fac_h4.get("atr") or 0.0
+    atr_pips = atr_raw * 100.0
+    gap_pips = abs(ma10 - ma20) * 100.0
+    strength_ratio = gap_pips / atr_pips if atr_pips > 1e-6 else 0.0
+    if strength_ratio >= 0.9 or adx >= 28.0:
+        return (3.8, 6.0), (0.90, 0.08)
+    if strength_ratio >= 0.6 or adx >= 24.0:
+        return (3.4, 5.6), (0.88, 0.10)
+    return (3.0, 4.8), (0.85, 0.10)
+
+
 def plan_partial_reductions(
     open_positions: dict,
     fac_m1: dict,
+    fac_h4: Optional[dict] = None,
     *,
     range_mode: bool = False,
     now: Optional[datetime] = None,
@@ -507,7 +556,10 @@ def plan_partial_reductions(
         if pocket == "__net__":
             continue
         thresholds = _PARTIAL_THRESHOLDS.get(pocket)
-        if range_mode:
+        fractions = _PARTIAL_FRACTIONS
+        if pocket == "macro":
+            thresholds, fractions = _macro_partial_profile(fac_h4, range_mode)
+        elif range_mode:
             thresholds = _PARTIAL_THRESHOLDS_RANGE.get(pocket, thresholds)
         if not thresholds:
             continue
@@ -540,8 +592,8 @@ def plan_partial_reductions(
                     stage = idx
             if stage <= current_stage:
                 continue
-            fraction_idx = min(stage - 1, len(_PARTIAL_FRACTIONS) - 1)
-            fraction = _PARTIAL_FRACTIONS[fraction_idx]
+            fraction_idx = min(stage - 1, len(fractions) - 1)
+            fraction = fractions[fraction_idx]
             reduce_units = int(abs(units) * fraction)
             if reduce_units < _PARTIAL_MIN_UNITS:
                 continue

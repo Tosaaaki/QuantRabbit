@@ -13,6 +13,7 @@ from execution.order_manager import market_order
 from execution.position_manager import PositionManager
 from execution.risk_guard import loss_cooldown_status
 from market_data import spread_monitor, tick_window
+from workers.common import env_guard
 from workers.common.quality_gate import current_regime, news_block_active
 from utils.market_hours import is_market_open
 
@@ -111,6 +112,7 @@ async def squeeze_break_s5_worker() -> None:
     news_block_logged = False
     regime_block_logged: Optional[str] = None
     loss_block_logged = False
+    env_block_logged = False
     try:
         while True:
             await asyncio.sleep(config.LOOP_INTERVAL_SEC)
@@ -194,6 +196,22 @@ async def squeeze_break_s5_worker() -> None:
             ticks = tick_window.recent_ticks(seconds=config.WINDOW_SEC, limit=3600)
             if len(ticks) < config.MIN_DENSITY_TICKS:
                 continue
+
+            allowed_env, env_reason = env_guard.mean_reversion_allowed(
+                spread_p50_limit=config.SPREAD_P50_LIMIT,
+                return_pips_limit=config.RETURN_PIPS_LIMIT,
+                return_window_sec=config.RETURN_WINDOW_SEC,
+                instant_move_limit=config.INSTANT_MOVE_PIPS_LIMIT,
+                tick_gap_ms_limit=config.TICK_GAP_MS_LIMIT,
+                tick_gap_move_pips=config.TICK_GAP_MOVE_PIPS,
+                ticks=ticks,
+            )
+            if not allowed_env:
+                if not env_block_logged:
+                    LOG.info("%s env guard blocked (%s)", config.LOG_PREFIX, env_reason)
+                    env_block_logged = True
+                continue
+            env_block_logged = False
             candles = _bucket_ticks(ticks)
             if len(candles) < config.MIN_BUCKETS:
                 continue

@@ -13,11 +13,12 @@ from typing import Dict, Literal
 
 from indicators.calc_core import IndicatorEngine
 
-TimeFrame = Literal["M1", "H4"]
+TimeFrame = Literal["M1", "H1", "H4"]
 
-_CANDLES_MAX = {"M1": 2000, "H4": 500}  # M1: ~33h, H4: ~83d
+_CANDLES_MAX = {"M1": 2000, "H1": 1000, "H4": 500}  # M1: ~33h, H1: ~41d, H4: ~83d
 _CANDLES: Dict[TimeFrame, deque] = {
     "M1": deque(maxlen=_CANDLES_MAX["M1"]),
+    "H1": deque(maxlen=_CANDLES_MAX["H1"]),
     "H4": deque(maxlen=_CANDLES_MAX["H4"]),
 }
 _FACTORS: Dict[TimeFrame, Dict[str, float]] = defaultdict(dict)

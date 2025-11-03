@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import datetime
 import hashlib
 import logging
 import time
@@ -12,6 +13,7 @@ from typing import Dict, List, Optional, Sequence
 from execution.order_manager import market_order, set_trade_protections
 from execution.position_manager import PositionManager
 from execution.risk_guard import loss_cooldown_status
+from indicators.factor_cache import all_factors
 from market_data import spread_monitor, tick_window
 from workers.common.quality_gate import current_regime, news_block_active
 
@@ -128,9 +130,18 @@ async def impulse_break_s5_worker() -> None:
     news_block_logged = False
     regime_block_logged: Optional[str] = None
     loss_block_logged = False
-    last_hour_log = 0.0
     last_manage = 0.0
     managed_state: Dict[str, ManagedTradeState] = {}
+    blocked_weekdays = {
+        int(day)
+        for day in config.BLOCKED_WEEKDAYS
+        if day.strip().isdigit() and 0 <= int(day) <= 6
+    }
+    kill_switch_triggered = False
+    kill_switch_reason = ""
+    last_perf_sync = 0.0
+    perf_cached_day: Optional[datetime.date] = None
+    last_kill_log = 0.0
     try:
         while True:
             await asyncio.sleep(config.LOOP_INTERVAL_SEC)
@@ -138,14 +149,65 @@ async def impulse_break_s5_worker() -> None:
             if now_monotonic < cooldown_until or now_monotonic < post_exit_until:
                 continue
 
-            if config.ACTIVE_HOURS_UTC:
-                current_hour = time.gmtime().tm_hour
-                if current_hour not in config.ACTIVE_HOURS_UTC:
-                    if now_monotonic - last_hour_log > 300.0:
-                        LOG.info("%s outside active hours hour=%02d", config.LOG_PREFIX, current_hour)
-                        last_hour_log = now_monotonic
-                    continue
-                last_hour_log = now_monotonic
+            now_utc = datetime.datetime.utcnow()
+            current_day = now_utc.date()
+            if perf_cached_day != current_day:
+                kill_switch_triggered = False
+                kill_switch_reason = ""
+                perf_cached_day = current_day
+
+            if config.ALLOWED_HOURS_UTC and now_utc.hour not in config.ALLOWED_HOURS_UTC:
+                continue
+            if blocked_weekdays and now_utc.weekday() in blocked_weekdays:
+                continue
+
+            if not kill_switch_triggered and now_monotonic - last_perf_sync >= config.PERFORMANCE_REFRESH_SEC:
+                last_perf_sync = now_monotonic
+                try:
+                    pos_manager.sync_trades()
+                except Exception as exc:  # pragma: no cover - network operations
+                    LOG.debug("%s sync_trades error: %s", config.LOG_PREFIX, exc)
+                try:
+                    summary = pos_manager.get_performance_summary()
+                except Exception as exc:  # pragma: no cover
+                    LOG.debug("%s performance summary error: %s", config.LOG_PREFIX, exc)
+                    summary = {}
+                daily = summary.get("daily", {}) if isinstance(summary, dict) else {}
+                daily_pips = float(daily.get("pips", 0.0) or 0.0)
+                if config.DAILY_PNL_STOP_PIPS > 0.0 and daily_pips <= -config.DAILY_PNL_STOP_PIPS:
+                    kill_switch_triggered = True
+                    kill_switch_reason = f"daily_pnl={daily_pips:.1f}"
+                elif config.MAX_CONSEC_LOSSES > 0:
+                    try:
+                        recent = pos_manager.fetch_recent_trades(limit=config.MAX_CONSEC_LOSSES)
+                    except Exception as exc:  # pragma: no cover
+                        LOG.debug("%s fetch_recent_trades error: %s", config.LOG_PREFIX, exc)
+                        recent = []
+                    consecutive_losses = 0
+                    for row in recent:
+                        pl_val = row.get("pl_pips")
+                        try:
+                            pl_pips = float(pl_val)
+                        except (TypeError, ValueError):
+                            pl_pips = 0.0
+                        if pl_pips < 0:
+                            consecutive_losses += 1
+                        else:
+                            break
+                    if consecutive_losses >= config.MAX_CONSEC_LOSSES:
+                        kill_switch_triggered = True
+                        kill_switch_reason = f"consecutive_losses={consecutive_losses}"
+
+            if kill_switch_triggered:
+                if now_monotonic - last_kill_log > 60.0:
+                    LOG.info(
+                        "%s kill switch active (reason=%s, day=%s)",
+                        config.LOG_PREFIX,
+                        kill_switch_reason or "unknown",
+                        perf_cached_day,
+                    )
+                    last_kill_log = now_monotonic
+                continue
 
             blocked, _, spread_state, spread_reason = spread_monitor.is_blocked()
             spread_pips = float((spread_state or {}).get("spread_pips", 0.0) or 0.0)
@@ -278,8 +340,34 @@ async def impulse_break_s5_worker() -> None:
 
             if direction is None:
                 continue
+            if direction == "long" and not config.ALLOW_LONG:
+                continue
+            if direction == "short" and not config.ALLOW_SHORT:
+                continue
             if existing_side and existing_side != direction:
                 continue
+
+            trend_bias: Optional[str] = None
+            trend_adx: Optional[float] = None
+            try:
+                factors = all_factors()
+            except Exception:
+                factors = {}
+            for fac in (factors.get("H4") or {}, factors.get("M1") or {}):
+                ma10 = fac.get("ma10")
+                ma20 = fac.get("ma20")
+                if ma10 is None or ma20 is None:
+                    continue
+                diff = float(ma10) - float(ma20)
+                diff_pips = abs(diff) / config.PIP_VALUE
+                if diff_pips >= config.TREND_ALIGN_BUFFER_PIPS:
+                    trend_bias = "long" if diff > 0 else "short"
+                    break
+            for fac in (factors.get("H4") or {}, factors.get("M1") or {}):
+                adx = fac.get("adx")
+                if adx is not None:
+                    trend_adx = float(adx)
+                    break
 
             latest_tick = ticks[-1]
             try:
@@ -294,14 +382,23 @@ async def impulse_break_s5_worker() -> None:
             tp_pips = min(tp_pips, config.TP_ATR_MAX_PIPS)
             sl_pips = max(config.SL_ATR_MIN_PIPS, atr * config.SL_ATR_MULT)
 
+            size_scale = 1.0
+            if trend_bias == direction and (
+                trend_adx is None or trend_adx >= config.TREND_ADX_MIN
+            ):
+                size_scale = config.TREND_SIZE_MULT
+            scaled_units = int(round(config.ENTRY_UNITS * size_scale))
+            if scaled_units < 1000:
+                scaled_units = 1000
+
             if direction == "long":
                 tp_price = round(entry_price + tp_pips * config.PIP_VALUE, 3)
                 sl_price = round(entry_price - sl_pips * config.PIP_VALUE, 3)
-                units = config.ENTRY_UNITS
+                units = scaled_units
             else:
                 tp_price = round(entry_price - tp_pips * config.PIP_VALUE, 3)
                 sl_price = round(entry_price + sl_pips * config.PIP_VALUE, 3)
-                units = -config.ENTRY_UNITS
+                units = -scaled_units
 
             client_id = _client_id(direction)
             entry_thesis = {
@@ -314,6 +411,9 @@ async def impulse_break_s5_worker() -> None:
                 "recent_high": round(recent_high, 5),
                 "recent_low": round(recent_low, 5),
                 "spread_pips": round(spread_pips, 3),
+                "trend_bias": trend_bias,
+                "trend_adx": None if trend_adx is None else round(trend_adx, 1),
+                "unit_scale": round(size_scale, 2),
             }
 
             try:

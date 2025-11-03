@@ -65,7 +65,8 @@ def _parse_hours(key: str, default: str) -> Set[int]:
 
 
 LOG_PREFIX = "[SQUEEZE-S5]"
-ENABLED: bool = _bool("SQUEEZE_BREAK_S5_ENABLED", True)
+# Hard stop: keep squeeze break worker disabled regardless of environment.
+ENABLED: bool = False
 LOOP_INTERVAL_SEC: float = max(0.2, _float("SQUEEZE_BREAK_S5_LOOP_INTERVAL_SEC", 0.45))
 
 ACTIVE_HOURS_UTC = frozenset(
@@ -112,3 +113,10 @@ NEWS_BLOCK_MINUTES: float = max(0.0, _float("SQUEEZE_BREAK_S5_NEWS_BLOCK_MINUTES
 NEWS_BLOCK_MIN_IMPACT: int = max(1, _int("SQUEEZE_BREAK_S5_NEWS_BLOCK_MIN_IMPACT", 2))
 LOSS_STREAK_MAX: int = max(0, _int("SQUEEZE_BREAK_S5_MAX_CONSEC_LOSSES", 2))
 LOSS_STREAK_COOLDOWN_MIN: float = max(0.0, _float("SQUEEZE_BREAK_S5_LOSS_COOLDOWN_MIN", 20.0))
+
+SPREAD_P50_LIMIT: float = max(0.0, _float("SQUEEZE_BREAK_S5_SPREAD_P50_LIMIT", 0.2))
+RETURN_WINDOW_SEC: float = max(5.0, _float("SQUEEZE_BREAK_S5_RETURN_WINDOW_SEC", 18.0))
+RETURN_PIPS_LIMIT: float = max(0.0, _float("SQUEEZE_BREAK_S5_RETURN_PIPS_LIMIT", 1.3))
+INSTANT_MOVE_PIPS_LIMIT: float = max(0.0, _float("SQUEEZE_BREAK_S5_INSTANT_MOVE_PIPS_LIMIT", 1.3))
+TICK_GAP_MS_LIMIT: float = max(0.0, _float("SQUEEZE_BREAK_S5_TICK_GAP_MS_LIMIT", 150.0))
+TICK_GAP_MOVE_PIPS: float = max(0.0, _float("SQUEEZE_BREAK_S5_TICK_GAP_MOVE_PIPS", 0.6))

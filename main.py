@@ -127,11 +127,14 @@ TRENDMA_FLIP_ADX_MIN = 18.0
 FALLBACK_EQUITY = 10000.0  # REST失敗時のフォールバック
 
 STAGE_RATIOS = {
-    # Fractions per stage sum to 1.0 so pocket lot can fully deploy as conditions allow.
-    "macro": (0.2, 0.18, 0.16, 0.14, 0.12, 0.08, 0.06, 0.06),
+    # Fractions per stage sum to <=1.0 so pocket lot can deploy gradually.
+    "macro": (0.30,),
     "micro": (0.22, 0.18, 0.16, 0.14, 0.12, 0.08, 0.05, 0.05),
     "scalp": (0.5, 0.3, 0.15, 0.05),
 }
+
+MACRO_MAX_TOTAL_LOT = 0.0035
+MACRO_MIN_TOTAL_LOT = 0.001
 
 MIN_SCALP_STAGE_LOT = 0.01  # 1000 units baseline so micro/macro bias does not null scalps
 DEFAULT_COOLDOWN_SECONDS = 180
@@ -533,6 +536,33 @@ def _apply_trade_cooldowns(
     return freeze_until, last_exit
 
 
+def _macro_direction_allowed(
+    action: str,
+    fac_m1: dict[str, float],
+    fac_h4: dict[str, float],
+) -> bool:
+    ma10_h4 = fac_h4.get("ma10")
+    ma20_h4 = fac_h4.get("ma20")
+    if ma10_h4 is None or ma20_h4 is None:
+        return True
+    close_m1 = fac_m1.get("close")
+    ema20_m1 = fac_m1.get("ema20") or fac_m1.get("ma20")
+    if close_m1 is None or ema20_m1 is None:
+        return True
+
+    if action == "OPEN_LONG":
+        if ma10_h4 <= ma20_h4 - 0.0002:
+            return False
+        if close_m1 < ema20_m1 - 0.002:
+            return False
+    else:
+        if ma10_h4 >= ma20_h4 + 0.0002:
+            return False
+        if close_m1 > ema20_m1 + 0.002:
+            return False
+    return True
+
+
 def _stage_conditions_met(
     pocket: str,
     stage_idx: int,
@@ -549,6 +579,10 @@ def _stage_conditions_met(
     rsi = fac_m1.get("rsi", 50.0)
     adx_h4 = fac_h4.get("adx", 0.0)
     slope_h4 = abs(fac_h4.get("ma20", 0.0) - fac_h4.get("ma10", 0.0))
+    atr_h4_raw = fac_h4.get("atr")
+    atr_h4_pips = (atr_h4_raw or 0.0) * 100.0
+    gap_h4_pips = abs((fac_h4.get("ma10", 0.0) or 0.0) - (fac_h4.get("ma20", 0.0) or 0.0)) * 100.0
+    strength_ratio = gap_h4_pips / atr_h4_pips if atr_h4_pips > 1e-6 else 0.0
 
     if pocket == "macro":
         ma10_h4 = fac_h4.get("ma10")
@@ -613,14 +647,24 @@ def _stage_conditions_met(
                 return False
 
         # Require trend strength to increase with each stage
-        if adx_h4 < 20 + stage_idx * 2 or slope_h4 < 0.0005:
-            logging.info(
-                "[STAGE] Macro gating failed (ADX %.2f, slope %.5f) for stage %d.",
-                adx_h4,
-                slope_h4,
-                stage_idx,
-            )
-            return False
+        if stage_idx >= 2:
+            if strength_ratio < 0.9 or adx_h4 < 27 or slope_h4 < 0.0006:
+                logging.info(
+                    "[STAGE] Macro gating failed (strength %.2f, ADX %.2f) for stage %d.",
+                    strength_ratio,
+                    adx_h4,
+                    stage_idx,
+                )
+                return False
+        elif stage_idx == 1:
+            if strength_ratio < 0.55 or adx_h4 < 22 or slope_h4 < 0.00045:
+                logging.info(
+                    "[STAGE] Macro gating weak (strength %.2f, ADX %.2f) for stage %d.",
+                    strength_ratio,
+                    adx_h4,
+                    stage_idx,
+                )
+                return False
         if price is not None and avg_price:
             if action == "OPEN_LONG" and price < avg_price - 0.02:
                 logging.info(
@@ -733,6 +777,14 @@ def compute_stage_lot(
     plan = STAGE_RATIOS.get(pocket, (1.0,))
     current_lot = max(open_units_same_dir, 0) / 100000.0
     cumulative = 0.0
+    if pocket == "macro" and not _macro_direction_allowed(action, fac_m1, fac_h4):
+        logging.info(
+            "[STAGE] Macro entry gated by H4 alignment (action=%s).", action
+        )
+        return 0.0, 0
+    if pocket == "macro":
+        total_lot = min(total_lot, MACRO_MAX_TOTAL_LOT)
+        total_lot = max(total_lot, MACRO_MIN_TOTAL_LOT)
     for stage_idx, fraction in enumerate(plan):
         cumulative += fraction
         stage_target = total_lot * cumulative
@@ -769,6 +821,10 @@ def compute_stage_lot(
 
 async def m1_candle_handler(cndl: Candle):
     await on_candle("M1", cndl)
+
+
+async def h1_candle_handler(cndl: Candle):
+    await on_candle("H1", cndl)
 
 
 async def h4_candle_handler(cndl: Candle):
@@ -1302,7 +1358,11 @@ async def logic_loop():
                 logging.warning("[PROTECTION] update failed: %s", exc)
             try:
                 partials = plan_partial_reductions(
-                    open_positions, fac_m1, range_mode=range_active, now=now
+                    open_positions,
+                    fac_m1,
+                    fac_h4,
+                    range_mode=range_active,
+                    now=now,
                 )
             except Exception as exc:
                 logging.warning("[PARTIAL] planning failed: %s", exc)
@@ -1777,7 +1837,11 @@ async def logic_loop():
 
 
 async def main():
-    handlers = [("M1", m1_candle_handler), ("H4", h4_candle_handler)]
+    handlers = [
+        ("M1", m1_candle_handler),
+        ("H1", h1_candle_handler),
+        ("H4", h4_candle_handler),
+    ]
     await initialize_history("USD_JPY")
     tasks = [
         start_candle_stream("USD_JPY", handlers),

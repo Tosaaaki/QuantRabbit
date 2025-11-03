@@ -13,7 +13,9 @@ from typing import Dict, List, Optional, Sequence
 from execution.order_manager import market_order
 from execution.position_manager import PositionManager
 from execution.risk_guard import loss_cooldown_status
+from indicators.factor_cache import all_factors
 from market_data import spread_monitor, tick_window
+from workers.common import env_guard
 from workers.common.quality_gate import current_regime, news_block_active
 from utils.market_hours import is_market_open
 
@@ -134,6 +136,17 @@ async def vwap_magnet_s5_worker() -> None:
     news_block_logged = False
     regime_block_logged: Optional[str] = None
     loss_block_logged = False
+    env_block_logged = False
+    blocked_weekdays = {
+        int(day)
+        for day in config.BLOCKED_WEEKDAYS
+        if day.strip().isdigit() and 0 <= int(day) <= 6
+    }
+    kill_switch_triggered = False
+    kill_switch_reason = ""
+    last_perf_sync = 0.0
+    last_kill_log = 0.0
+    managed_day: Optional[datetime.date] = None
     try:
         while True:
             await asyncio.sleep(config.LOOP_INTERVAL_SEC)
@@ -141,8 +154,21 @@ async def vwap_magnet_s5_worker() -> None:
             if now_monotonic < cooldown_until or now_monotonic < post_exit_until:
                 continue
 
+            now_utc = datetime.datetime.utcnow()
+            current_day = now_utc.date()
+            if managed_day != current_day:
+                kill_switch_triggered = False
+                kill_switch_reason = ""
+                managed_day = current_day
+
+            if config.ALLOWED_HOURS_UTC and now_utc.hour not in config.ALLOWED_HOURS_UTC:
+                continue
+
+            if blocked_weekdays and now_utc.weekday() in blocked_weekdays:
+                continue
+
             if config.ACTIVE_HOURS_UTC:
-                current_hour = time.gmtime().tm_hour
+                current_hour = now_utc.hour
                 if current_hour not in config.ACTIVE_HOURS_UTC:
                     if now_monotonic - last_hour_log > 300.0:
                         LOG.info("%s outside active hours hour=%02d", config.LOG_PREFIX, current_hour)
@@ -154,6 +180,53 @@ async def vwap_magnet_s5_worker() -> None:
                 if now_monotonic - last_market_log > 300.0:
                     LOG.info("%s market closed (weekend window). Skipping iteration.", config.LOG_PREFIX)
                     last_market_log = now_monotonic
+                continue
+
+            if not kill_switch_triggered and now_monotonic - last_perf_sync >= config.PERFORMANCE_REFRESH_SEC:
+                last_perf_sync = now_monotonic
+                try:
+                    pos_manager.sync_trades()
+                except Exception as exc:  # pragma: no cover - defensive network path
+                    LOG.debug("%s sync_trades error: %s", config.LOG_PREFIX, exc)
+                try:
+                    summary = pos_manager.get_performance_summary()
+                except Exception as exc:  # pragma: no cover
+                    LOG.debug("%s performance summary error: %s", config.LOG_PREFIX, exc)
+                    summary = {}
+                daily = summary.get("daily", {}) if isinstance(summary, dict) else {}
+                daily_pips = float(daily.get("pips", 0.0) or 0.0)
+                if config.DAILY_PNL_STOP_PIPS > 0.0 and daily_pips <= -config.DAILY_PNL_STOP_PIPS:
+                    kill_switch_triggered = True
+                    kill_switch_reason = f"daily_pnl={daily_pips:.1f}"
+                elif config.MAX_CONSEC_LOSSES > 0:
+                    try:
+                        recent = pos_manager.fetch_recent_trades(limit=config.MAX_CONSEC_LOSSES)
+                    except Exception as exc:  # pragma: no cover
+                        LOG.debug("%s fetch_recent_trades error: %s", config.LOG_PREFIX, exc)
+                        recent = []
+                    consecutive_losses = 0
+                    for row in recent:
+                        try:
+                            pl_val = float(row.get("pl_pips") or 0.0)
+                        except (TypeError, ValueError):
+                            pl_val = 0.0
+                        if pl_val < 0:
+                            consecutive_losses += 1
+                        else:
+                            break
+                    if consecutive_losses >= config.MAX_CONSEC_LOSSES:
+                        kill_switch_triggered = True
+                        kill_switch_reason = f"consecutive_losses={consecutive_losses}"
+
+            if kill_switch_triggered:
+                if now_monotonic - last_kill_log > 60.0:
+                    LOG.info(
+                        "%s kill switch active (reason=%s day=%s)",
+                        config.LOG_PREFIX,
+                        kill_switch_reason or "unknown",
+                        managed_day,
+                    )
+                    last_kill_log = now_monotonic
                 continue
 
             blocked, _, spread_state, spread_reason = spread_monitor.is_blocked()
@@ -212,6 +285,23 @@ async def vwap_magnet_s5_worker() -> None:
             ticks = tick_window.recent_ticks(seconds=config.WINDOW_SEC, limit=3600)
             if len(ticks) < config.MIN_DENSITY_TICKS:
                 continue
+
+            allowed_env, env_reason = env_guard.mean_reversion_allowed(
+                spread_p50_limit=config.SPREAD_P50_LIMIT,
+                return_pips_limit=config.RETURN_PIPS_LIMIT,
+                return_window_sec=config.RETURN_WINDOW_SEC,
+                instant_move_limit=config.INSTANT_MOVE_PIPS_LIMIT,
+                tick_gap_ms_limit=config.TICK_GAP_MS_LIMIT,
+                tick_gap_move_pips=config.TICK_GAP_MOVE_PIPS,
+                ticks=ticks,
+            )
+            if not allowed_env:
+                if not env_block_logged:
+                    LOG.info("%s env guard blocked (%s)", config.LOG_PREFIX, env_reason)
+                    env_block_logged = True
+                continue
+            env_block_logged = False
+
             candles = _bucket_ticks_with_counts(ticks)
             if len(candles) < config.MIN_BUCKETS:
                 continue
@@ -237,14 +327,17 @@ async def vwap_magnet_s5_worker() -> None:
                 for tr in trades
                 if (tr.get("entry_thesis") or {}).get("strategy_tag") == "vwap_magnet_s5"
             ]
-            if current_tagged and not config.ALLOW_DUPLICATE_ENTRIES:
+            stage_idx = len(current_tagged)
+            if stage_idx >= config.MAX_ACTIVE_TRADES or stage_idx >= len(config.ENTRY_STAGE_RATIOS):
+                continue
+            if current_tagged:
                 last_price = float(current_tagged[-1].get("price") or 0.0)
                 latest_close = closes[-1]
                 delta = abs(latest_close - last_price) / config.PIP_VALUE
                 if delta < config.STAGE_MIN_DELTA_PIPS:
                     continue
-            if len(current_tagged) >= config.MAX_ACTIVE_TRADES:
-                continue
+                if not config.ALLOW_DUPLICATE_ENTRIES and stage_idx > 0:
+                    continue
 
             latest_close = closes[-1]
             prev_vwap = _wma(closes[-(config.VWAP_WINDOW_BUCKETS + 1):-1], counts[-(config.VWAP_WINDOW_BUCKETS + 1):-1])
@@ -266,6 +359,60 @@ async def vwap_magnet_s5_worker() -> None:
             if side is None:
                 continue
 
+            if side == "long" and not config.ALLOW_LONG:
+                continue
+            if side == "short" and not config.ALLOW_SHORT:
+                continue
+
+            fast_len = min(len(closes), config.MA_FAST_BUCKETS)
+            slow_len = min(len(closes), config.MA_SLOW_BUCKETS)
+            if fast_len < config.MA_FAST_BUCKETS or slow_len < config.MA_SLOW_BUCKETS:
+                continue
+            fast_ma = sum(closes[-fast_len:]) / fast_len
+            slow_ma = sum(closes[-slow_len:]) / slow_len
+            ma_diff_pips = (fast_ma - slow_ma) / config.PIP_VALUE
+            if side == "long" and ma_diff_pips < config.MA_DIFF_PIPS:
+                continue
+            if side == "short" and ma_diff_pips > -config.MA_DIFF_PIPS:
+                continue
+
+            trend_bias: Optional[str] = None
+            trend_adx: Optional[float] = None
+            try:
+                factors = all_factors()
+            except Exception:
+                factors = {}
+            for fac in (factors.get("H4") or {}, factors.get("M1") or {}):
+                ma10 = fac.get("ma10")
+                ma20 = fac.get("ma20")
+                if ma10 is None or ma20 is None:
+                    continue
+                diff = float(ma10) - float(ma20)
+                diff_pips = abs(diff) / config.PIP_VALUE
+                if diff_pips >= config.TREND_ALIGN_BUFFER_PIPS:
+                    trend_bias = "long" if diff > 0 else "short"
+                    break
+            for fac in (factors.get("H4") or {}, factors.get("M1") or {}):
+                adx = fac.get("adx")
+                if adx is not None:
+                    trend_adx = float(adx)
+                    break
+
+            if trend_bias and trend_bias != side:
+                continue
+            if trend_adx is not None and trend_adx < config.TREND_ADX_MIN:
+                continue
+
+            if stage_idx > 0 and config.STAGE_FAVORABLE_PIPS > 0:
+                last_price = float(current_tagged[-1].get("price") or latest_close)
+                move_pips = (latest_close - last_price) / config.PIP_VALUE
+                if side == "long":
+                    if move_pips < config.STAGE_FAVORABLE_PIPS:
+                        continue
+                else:
+                    if move_pips > -config.STAGE_FAVORABLE_PIPS:
+                        continue
+
             latest_tick = ticks[-1]
             try:
                 last_bid = float(latest_tick.get("bid") or latest_close)
@@ -280,12 +427,12 @@ async def vwap_magnet_s5_worker() -> None:
                 else entry_price - config.TP_PIPS * config.PIP_VALUE
             )
             sl_pips = max(config.SL_MIN_PIPS, atr * config.SL_ATR_MULT)
+            sl_pips = min(sl_pips, config.TP_PIPS * 1.1)
             sl_price = (
                 entry_price - sl_pips * config.PIP_VALUE
                 if side == "long"
                 else entry_price + sl_pips * config.PIP_VALUE
             )
-            stage_idx = len(current_tagged)
             stage_ratio = _stage_ratio(stage_idx)
             staged_units = int(round(config.ENTRY_UNITS * stage_ratio))
             if staged_units < 1000:
@@ -301,6 +448,9 @@ async def vwap_magnet_s5_worker() -> None:
                 "spread_pips": round(spread_pips, 3),
                 "stage_index": stage_idx + 1,
                 "stage_ratio": round(stage_ratio, 3),
+                "trend_bias": trend_bias,
+                "trend_adx": None if trend_adx is None else round(trend_adx, 1),
+                "ma_diff_pips": round(ma_diff_pips, 3),
             }
             client_id = _client_id(side)
 

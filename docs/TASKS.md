@@ -35,7 +35,24 @@
 
 （ここに新規タスクを追加）
 
-> 現在、オープンなタスクはありません。
+- [ ] ID: T-20251103-001
+  Title: H1トレンドワーカーの追加実装
+  Status: in-progress
+  Priority: P1
+  Owner: tossaki
+  Scope/Paths: market_data/candle_fetcher.py, indicators/factor_cache.py, workers/trend_h1/, main.py, docs/TASKS.md
+  Context: 中期トレンド用の常時稼働ワーカー不足（AGENT.me 仕様 §3.5, 提案メモ 2025-11-03）
+  Acceptance:
+    - H1足の因子が取得・キャッシュされ、ワーカーが利用できる
+    - TrendH1ワーカーがMovingAverageCrossを用いて売買指示を生成し、Risk/Exit連携済み
+    - main.py からワーカーの起動制御が可能で、環境変数でON/OFFできる
+    - リプレイ/紙上テスト手順を README or コメントで案内
+  Plan:
+    - H1 timeframe を candle/factor パイプラインに追加
+    - workers/trend_h1/ に worker.py, config.py, __init__.py を整備
+    - main.py での起動・設定導線を追加
+  Notes:
+    - 既存のTrendMAロジックを再利用し、シンプルなステージ配分で初期運用
 
 ## Archive
 
