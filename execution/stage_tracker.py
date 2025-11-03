@@ -130,6 +130,33 @@ class StageTracker:
         )
         self._con.commit()
 
+    def ensure_cooldown(
+        self,
+        pocket: str,
+        direction: str,
+        *,
+        reason: str,
+        seconds: int,
+        now: Optional[datetime] = None,
+    ) -> bool:
+        """
+        Ensure the cooldown for (pocket, direction) is at least the requested duration.
+        Returns True if the cooldown was extended or set, False if existing cooldown was longer.
+        """
+        current = now or datetime.utcnow()
+        desired_until = current + timedelta(seconds=max(1, seconds))
+        info = self.get_cooldown(pocket, direction, now=current)
+        if info and info.cooldown_until >= desired_until:
+            return False
+        self.set_cooldown(
+            pocket,
+            direction,
+            reason=reason,
+            seconds=seconds,
+            now=current,
+        )
+        return True
+
     def get_cooldown(
         self, pocket: str, direction: str, now: Optional[datetime] = None
     ) -> Optional[CooldownInfo]:

@@ -40,6 +40,14 @@ USD_LONG_CAP="2.5"
 DRY_RUN=false
 DO_RESTART=false
 
+# Ensure gcloud is available when the shell didn't preload PATH
+if ! command -v gcloud >/dev/null 2>&1; then
+  SDK_BIN="$HOME/google-cloud-sdk/bin"
+  if [[ -d "$SDK_BIN" ]]; then
+    export PATH="$SDK_BIN:$PATH"
+  fi
+fi
+
 while [[ $# -gt 0 ]]; do
   case "$1" in
     -p|--project) PROJECT="$2"; shift 2;;

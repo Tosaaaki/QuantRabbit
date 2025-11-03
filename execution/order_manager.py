@@ -20,6 +20,7 @@ from oandapyV20.endpoints.trades import TradeCRCDO, TradeClose
 import logging
 
 from utils.secrets import get_secret
+from utils.market_hours import is_market_open
 
 # ---------- 読み込み：env.toml ----------
 TOKEN = get_secret("oanda_token")
@@ -560,11 +561,39 @@ async def market_order(
     *,
     client_order_id: Optional[str] = None,
     reduce_only: bool = False,
+    entry_thesis: Optional[dict] = None,
+    meta: Optional[dict] = None,
 ) -> Optional[str]:
     """
     units : +10000 = buy 0.1 lot, ‑10000 = sell 0.1 lot
     returns order ticket id（決済のみの fill でも tradeID を返却）
     """
+    if not is_market_open():
+        logging.info(
+            "[ORDER] Market closed window. Skip order pocket=%s units=%s client_id=%s",
+            pocket,
+            units,
+            client_order_id,
+        )
+        attempt_payload: dict = {"reason": "market_closed"}
+        if entry_thesis is not None:
+            attempt_payload["entry_thesis"] = entry_thesis
+        if meta is not None:
+            attempt_payload["meta"] = meta
+        _log_order(
+            pocket=pocket,
+            instrument=instrument,
+            side="buy" if units > 0 else "sell",
+            units=units,
+            sl_price=sl_price,
+            tp_price=tp_price,
+            client_order_id=client_order_id,
+            status="market_closed",
+            attempt=0,
+            request_payload=attempt_payload,
+        )
+        return None
+
     order_data = {
         "order": {
             "type": "MARKET",
@@ -589,7 +618,12 @@ async def market_order(
     for attempt in range(2):
         payload = order_data.copy()
         payload["order"] = dict(order_data["order"], units=str(units_to_send))
-        # Log attempt payload
+        # Log attempt payload (include non-OANDA context for analytics)
+        attempt_payload: dict = {"oanda": payload}
+        if entry_thesis is not None:
+            attempt_payload["entry_thesis"] = entry_thesis
+        if meta is not None:
+            attempt_payload["meta"] = meta
         _log_order(
             pocket=pocket,
             instrument=instrument,
@@ -600,7 +634,7 @@ async def market_order(
             client_order_id=client_order_id,
             status="submit_attempt",
             attempt=attempt + 1,
-            request_payload=payload,
+            request_payload=attempt_payload,
         )
         r = OrderCreate(accountID=ACCOUNT, data=payload)
         try:

@@ -122,6 +122,14 @@ scripts/gcloud_doctor.sh -p <PROJECT_ID> -z asia-northeast1-a -m fx-trader-vm -K
 scripts/deploy_to_vm.sh -p <PROJECT_ID> -t -k ~/.ssh/gcp_oslogin_qr \
   -K ~/.gcp/qr-deployer.json \
   -A qr-deployer@<PROJECT_ID>.iam.gserviceaccount.com
+
+4) OS Login 鍵（SA 用）を登録（必要時）
+
+```bash
+# SA をインパーソネートしつつ、OS Login に公開鍵を登録（鍵が無ければ -G で作成）
+scripts/gcloud_doctor.sh -p <PROJECT_ID> -A qr-deployer@<PROJECT_ID>.iam.gserviceaccount.com \
+  -S -G -k ~/.ssh/gcp_oslogin_qr.pub
+```
 ```
 
 注記

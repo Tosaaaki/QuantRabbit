@@ -179,6 +179,7 @@ async def mirror_spike_worker() -> None:
     cooldown_until = 0.0
     post_exit_cooldown_until = 0.0
     last_spread_block_log = 0.0
+    last_hour_log = 0.0
     try:
         while True:
             await asyncio.sleep(0.6)
@@ -188,6 +189,18 @@ async def mirror_spike_worker() -> None:
                 continue
             if now_monotonic < cooldown_until:
                 continue
+            if config.ACTIVE_HOURS_UTC:
+                current_hour = time.gmtime().tm_hour
+                if current_hour not in config.ACTIVE_HOURS_UTC:
+                    if now_monotonic - last_hour_log > 300.0:
+                        logger.info(
+                            "%s outside active hours hour=%02d",
+                            config.LOG_PREFIX,
+                            current_hour,
+                        )
+                        last_hour_log = now_monotonic
+                    continue
+                last_hour_log = now_monotonic
 
             # Skip if mirror spike trades are already stacked in the scalp pocket.
             pockets = pos_manager.get_open_positions()

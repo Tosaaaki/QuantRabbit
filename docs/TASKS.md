@@ -88,3 +88,17 @@
   Completed: 2025-11-02
   PR: <pending>
   Summary: doctor/deploy に SA キー自動有効化とインパーソネートを追加し、ヘッドレス運用手順を docs に追記しました。
+
+- [x] ID: T-20251102-003
+  Title: AGENTS.md に quantrabbit クイックコマンドを追加
+  Status: done
+  Priority: P3
+  Owner: maint
+  Scope/Paths: AGENTS.md
+  Context: 実運用の即時参照用に、Doctor/Deploy/IAP/SA の実値例を集約
+  Acceptance:
+    - AGENTS.md 10.3 に quantrabbit 固定のコマンド例がある
+    - 旧来の冗長/重複手順は削除済み
+  Completed: 2025-11-02
+  PR: <pending>
+  Summary: プロジェクト/ゾーン/インスタンス実値のクイックコマンドを AGENTS.md に追記。

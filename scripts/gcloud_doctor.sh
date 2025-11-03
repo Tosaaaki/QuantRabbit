@@ -2,18 +2,20 @@
 # gcloud doctor: preflight checks for deployment via gcloud/Compute Engine.
 #
 # Usage:
-#   scripts/gcloud_doctor.sh [-p PROJECT] [-z ZONE] [-m INSTANCE] [-t] [-k SSH_KEYFILE] [-c] [-K SA_KEYFILE] [-A SA_ACCOUNT] [-E]
+#   scripts/gcloud_doctor.sh [-p PROJECT] [-z ZONE] [-m INSTANCE] [-t] [-k SSH_KEYFILE] [-c] [-K SA_KEYFILE] [-A SA_ACCOUNT] [-E] [-S] [-G]
 #
 # Options:
 #   -p PROJECT   GCP project (default: gcloud config get-value project)
 #   -z ZONE      GCE zone (default: asia-northeast1-a)
 #   -m INSTANCE  VM instance name (default: fx-trader-vm)
 #   -t           Use IAP tunneling checks
-#   -k SSH_KEYFILE  SSH key file to use (optional)
+#   -k SSH_KEYFILE  SSH key file to use for SSH/OS Login (default: ~/.ssh/gcp_oslogin_qr)
 #   -c           Attempt SSH connectivity check (non-destructive)
 #   -K SA_KEYFILE Service Account JSON key; auto-activate if no active account
 #   -A SA_ACCOUNT Service Account email to impersonate for gcloud commands
 #   -E           Enable required APIs automatically (compute.googleapis.com)
+#   -S           Ensure OS Login has the provided public key (adds if missing)
+#   -G           Generate SSH key pair at default path if missing (~/.ssh/gcp_oslogin_qr)
 
 set -euo pipefail
 
@@ -45,7 +47,8 @@ ensure_gcloud_in_path() {
 
 PROJECT=""; ZONE="asia-northeast1-a"; INSTANCE="fx-trader-vm"; USE_IAP=0; SSH_KEYFILE=""; CHECK_SSH=0
 SA_KEYFILE=""; SA_IMPERSONATE=""; ENABLE_APIS=0
-while getopts ":p:z:m:k:tcK:A:E" opt; do
+ENSURE_OSLOGIN_KEY=0; GENERATE_KEY=0
+while getopts ":p:z:m:k:tcK:A:ESG" opt; do
   case "$opt" in
     p) PROJECT="$OPTARG" ;;
     z) ZONE="$OPTARG" ;;
@@ -56,6 +59,8 @@ while getopts ":p:z:m:k:tcK:A:E" opt; do
     K) SA_KEYFILE="$OPTARG" ;;
     A) SA_IMPERSONATE="$OPTARG" ;;
     E) ENABLE_APIS=1 ;;
+    S) ENSURE_OSLOGIN_KEY=1 ;;
+    G) GENERATE_KEY=1 ;;
     *) echo "Usage: $0 [-p PROJECT] [-z ZONE] [-m INSTANCE] [-t] [-k KEYFILE] [-c] [-K SA_KEYFILE] [-A SA_ACCOUNT] [-E]" >&2; exit 2 ;;
   esac
 done
@@ -106,6 +111,14 @@ fi
 grn "Project: $PROJECT"
 grn "Zone:    $ZONE"
 
+if [[ -z "$SSH_KEYFILE" ]]; then
+  SSH_KEYFILE="$HOME/.ssh/gcp_oslogin_qr"
+fi
+PUBKEYFILE="$SSH_KEYFILE"
+if [[ "$PUBKEYFILE" != *.pub ]]; then
+  PUBKEYFILE="${SSH_KEYFILE}.pub"
+fi
+
 step "Checking APIs enabled (compute.googleapis.com)"
 if ! g services list --enabled --project "$PROJECT" --format="value(config.name)" | grep -q '^compute.googleapis.com$'; then
   if [[ $ENABLE_APIS -eq 1 ]]; then
@@ -151,6 +164,23 @@ if [[ $CHECK_SSH -eq 1 ]]; then
     grn "SSH connectivity OK"
   else
     fail "SSH 接続に失敗しました。OS Login 有効化/IAP 権限/SSH鍵/ファイアウォール設定を確認してください。"
+  fi
+fi
+
+if [[ $ENSURE_OSLOGIN_KEY -eq 1 ]]; then
+  step "Ensuring OS Login public key registered"
+  if [[ ! -f "$PUBKEYFILE" ]]; then
+    if [[ $GENERATE_KEY -eq 1 ]]; then
+      ylw "公開鍵が見つかりません。新規に鍵を作成します: $SSH_KEYFILE"
+      ssh-keygen -t ed25519 -f "$SSH_KEYFILE" -N '' -C "oslogin-$PROJECT" >/dev/null
+    else
+      fail "公開鍵が見つかりません: $PUBKEYFILE（'-G' で鍵を生成します）"
+    fi
+  fi
+  if g compute os-login ssh-keys add --key-file "$PUBKEYFILE" --ttl 30d >/dev/null 2>&1; then
+    grn "OS Login key registered for principal"
+  else
+    fail "OS Login への鍵登録に失敗しました。権限（roles/compute.osLogin）と IAP/プロジェクト設定を確認してください。"
   fi
 fi
 

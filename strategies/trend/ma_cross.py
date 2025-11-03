@@ -15,6 +15,8 @@ class MovingAverageCross:
     _NARROW_BBW_LIMIT = 0.28
     _MAX_FAST_DISTANCE = 7.0
     _CROSS_MINUTES_STOP = 6.0
+    _MIN_ATR_PIPS = 0.55
+    _MIN_GAP_ATR_RATIO = 0.35
 
     @staticmethod
     def check(fac: Dict) -> Dict | None:
@@ -53,6 +55,19 @@ class MovingAverageCross:
         ):
             return None
 
+        atr_pips = fac.get("atr_pips")
+        try:
+            atr_pips_val = float(atr_pips)
+        except (TypeError, ValueError):
+            atr_pips_val = None
+        strength_ratio = None
+        if atr_pips_val is not None and atr_pips_val > 0:
+            strength_ratio = abs(projection.gap_pips) / max(atr_pips_val, 0.01)
+            if atr_pips_val < MovingAverageCross._MIN_ATR_PIPS:
+                return None
+            if strength_ratio < MovingAverageCross._MIN_GAP_ATR_RATIO:
+                return None
+
         direction = "long" if ma10 > ma20 else "short" if ma10 < ma20 else None
         if direction is None:
             return None
@@ -71,12 +86,21 @@ class MovingAverageCross:
             return None
         tag_suffix = "bull" if direction == "long" else "bear"
         action = "OPEN_LONG" if direction == "long" else "OPEN_SHORT"
+        meta = {
+            "gap_pips": projection.gap_pips,
+            "gap_slope_pips": projection.gap_slope_pips,
+            "price_to_fast_pips": projection.price_to_fast_pips,
+            "strength_ratio": strength_ratio,
+            "atr_pips": atr_pips_val,
+            "adx": adx,
+        }
         return {
             "action": action,
             "sl_pips": sl_pips,
             "tp_pips": tp_pips,
             "confidence": confidence,
             "tag": f"{MovingAverageCross.name}-{tag_suffix}",
+            "_meta": meta,
         }
 
     @staticmethod

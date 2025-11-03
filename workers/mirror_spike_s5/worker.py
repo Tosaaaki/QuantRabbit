@@ -114,12 +114,26 @@ async def mirror_spike_s5_worker() -> None:
     news_block_logged = False
     regime_block_logged: Optional[str] = None
     loss_block_logged = False
+    last_hour_log = 0.0
     try:
         while True:
             await asyncio.sleep(config.LOOP_INTERVAL_SEC)
             now = time.monotonic()
             if now < cooldown_until or now < post_exit_until:
                 continue
+
+            if config.ACTIVE_HOURS_UTC:
+                current_hour = time.gmtime().tm_hour
+                if current_hour not in config.ACTIVE_HOURS_UTC:
+                    if now - last_hour_log > 300.0:
+                        LOG.info(
+                            "%s outside active hours hour=%02d",
+                            config.LOG_PREFIX,
+                            current_hour,
+                        )
+                        last_hour_log = now
+                    continue
+                last_hour_log = now
 
             blocked, _, spread_state, spread_reason = spread_monitor.is_blocked()
             spread_pips = float((spread_state or {}).get("spread_pips", 0.0) or 0.0)

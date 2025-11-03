@@ -22,6 +22,13 @@ from . import config
 LOG = logging.getLogger(__name__)
 
 
+def _stage_ratio(idx: int) -> float:
+    ratios = config.ENTRY_STAGE_RATIOS
+    if idx < len(ratios):
+        return ratios[idx]
+    return ratios[-1]
+
+
 def _client_id(side: str) -> str:
     ts_ms = int(time.time() * 1000)
     digest = hashlib.sha1(f"{ts_ms}-{side}".encode("utf-8")).hexdigest()[:6]
@@ -117,12 +124,27 @@ async def pullback_s5_worker() -> None:
     news_block_logged = False
     regime_block_logged: Optional[str] = None
     loss_block_logged = False
+    last_hour_log = 0.0
+    last_density_log = 0.0
     try:
         while True:
             await asyncio.sleep(config.LOOP_INTERVAL_SEC)
             now_monotonic = time.monotonic()
             if now_monotonic < cooldown_until:
                 continue
+
+            if config.ACTIVE_HOURS_UTC:
+                current_hour = time.gmtime().tm_hour
+                if current_hour not in config.ACTIVE_HOURS_UTC:
+                    if now_monotonic - last_hour_log > 300.0:
+                        LOG.info(
+                            "%s outside active hours hour=%02d",
+                            config.LOG_PREFIX,
+                            current_hour,
+                        )
+                        last_hour_log = now_monotonic
+                    continue
+                last_hour_log = now_monotonic
 
             blocked, _, spread_state, spread_reason = spread_monitor.is_blocked()
             spread_pips = float((spread_state or {}).get("spread_pips", 0.0) or 0.0)
@@ -150,6 +172,19 @@ async def pullback_s5_worker() -> None:
                     news_block_logged = True
                 continue
             news_block_logged = False
+
+            if getattr(config, "MIN_DENSITY_TICKS", 0):
+                density_ticks = tick_window.recent_ticks(seconds=30.0, limit=1200)
+                if len(density_ticks) < config.MIN_DENSITY_TICKS:
+                    if now_monotonic - last_density_log > 30.0:
+                        LOG.info(
+                            "%s density gate active ticks=%d",
+                            config.LOG_PREFIX,
+                            len(density_ticks),
+                        )
+                        last_density_log = now_monotonic
+                    continue
+                last_density_log = now_monotonic
 
             regime_label = current_regime("M1", event_mode=False)
             if regime_label and regime_label in config.BLOCK_REGIMES:
@@ -240,7 +275,7 @@ async def pullback_s5_worker() -> None:
                 thesis = trade.get("entry_thesis") or {}
                 if thesis.get("strategy_tag") == "pullback_s5":
                     tagged.append(trade)
-            if tagged:
+            if tagged and not config.ALLOW_DUPLICATE_ENTRIES:
                 last_price = float(tagged[-1].get("price") or 0.0)
                 if last_price:
                     delta = abs(last_price - closes[-1]) / config.PIP_VALUE
@@ -278,7 +313,12 @@ async def pullback_s5_worker() -> None:
                 3,
             )
 
-            units = config.ENTRY_UNITS if side == "long" else -config.ENTRY_UNITS
+            stage_idx = len(tagged)
+            stage_ratio = _stage_ratio(stage_idx)
+            staged_units = int(round(config.ENTRY_UNITS * stage_ratio))
+            if staged_units < 1000:
+                staged_units = 1000
+            units = staged_units if side == "long" else -staged_units
             thesis = {
                 "strategy_tag": "pullback_s5",
                 "z_fast": round(z_fast, 2),
@@ -290,6 +330,8 @@ async def pullback_s5_worker() -> None:
                 "trend_adx": None if adx_value is None else round(adx_value, 1),
                 "tp_pips": round(tp_pips, 2),
                 "sl_pips": round(sl_base, 2),
+                "stage_index": stage_idx + 1,
+                "stage_ratio": round(stage_ratio, 3),
             }
 
             try:

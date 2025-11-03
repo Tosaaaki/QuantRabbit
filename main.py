@@ -2,11 +2,12 @@ import asyncio
 import datetime
 import logging
 import os
+import sqlite3
 import subprocess
 import traceback
 import time
 from pathlib import Path
-from typing import Optional
+from typing import Dict, Optional, Tuple
 
 from market_data.candle_fetcher import (
     Candle,
@@ -57,6 +58,13 @@ from strategies.scalping.range_fader import RangeFader
 from strategies.scalping.pulse_break import PulseBreak
 from utils.oanda_account import get_account_snapshot
 from utils.secrets import get_secret
+from utils.market_hours import is_market_open
+import workers.vwap_magnet_s5.config as vwap_magnet_s5_config
+import workers.squeeze_break_s5.config as squeeze_break_s5_config
+import workers.impulse_retest_s5.config as impulse_retest_s5_config
+from workers.vwap_magnet_s5 import vwap_magnet_s5_worker
+from workers.squeeze_break_s5 import squeeze_break_s5_worker
+from workers.impulse_retest_s5 import impulse_retest_s5_worker
 
 # Configure logging
 logging.basicConfig(
@@ -106,6 +114,15 @@ POCKET_ENTRY_MIN_INTERVAL = {
     "micro": 120,  # 2分
     "scalp": 60,
 }
+
+TRENDMA_FAST_LOSS_THRESHOLD_SEC = 300
+TRENDMA_FAST_LOSS_BASE_COOLDOWN = 600
+TRENDMA_FAST_LOSS_STREAK_STEP = 60
+TRENDMA_NEWS_FREEZE_SECONDS = 420
+TRENDMA_FLIP_LOOKBACK_SEC = 600
+TRENDMA_FLIP_STRENGTH_RATIO = 0.5
+TRENDMA_FLIP_SLOPE_MIN = 0.05
+TRENDMA_FLIP_ADX_MIN = 18.0
 
 FALLBACK_EQUITY = 10000.0  # REST失敗時のフォールバック
 
@@ -348,6 +365,172 @@ def _cooldown_for_pocket(pocket: str, range_mode: bool) -> int:
     if range_mode:
         base = max(base, RANGE_COOLDOWN_SECONDS)
     return base
+
+
+_ORDERS_DB_PATH = Path("logs/orders.db")
+
+
+def _parse_trade_ts(value: Optional[str]) -> datetime.datetime:
+    if not value:
+        return datetime.datetime.utcnow()
+    try:
+        ts = value.replace("Z", "+00:00")
+        dt = datetime.datetime.fromisoformat(ts)
+    except ValueError:
+        return datetime.datetime.utcnow()
+    if dt.tzinfo is not None:
+        dt = dt.astimezone(datetime.timezone.utc)
+        dt = dt.replace(tzinfo=None)
+    return dt
+
+
+def _lookup_client_id(ticket_id: str) -> Optional[str]:
+    if not ticket_id or not _ORDERS_DB_PATH.exists():
+        return None
+    con: Optional[sqlite3.Connection] = None
+    try:
+        con = sqlite3.connect(_ORDERS_DB_PATH)
+        con.row_factory = sqlite3.Row
+        row = con.execute(
+            """
+            SELECT client_order_id
+            FROM orders
+            WHERE ticket_id = ?
+              AND status = 'filled'
+            ORDER BY id ASC
+            LIMIT 1
+            """,
+            (ticket_id,),
+        ).fetchone()
+    except sqlite3.Error as exc:
+        logging.debug("[ORDERS] lookup failed for %s: %s", ticket_id, exc)
+        return None
+    finally:
+        if con is not None:
+            try:
+                con.close()
+            except Exception:
+                pass
+    if not row:
+        return None
+    client_id = row["client_order_id"] if "client_order_id" in row.keys() else row[0]
+    return client_id or None
+
+
+def _trendma_signal_allowed(
+    raw_signal: Dict,
+    meta: Dict,
+    now: datetime.datetime,
+    last_exit: Optional[Dict[str, object]],
+) -> bool:
+    action = raw_signal.get("action")
+    if action not in {"OPEN_LONG", "OPEN_SHORT"}:
+        return True
+    direction = "long" if action == "OPEN_LONG" else "short"
+    if last_exit and last_exit.get("side") and last_exit["side"] != direction:
+        since_exit = max(0.0, (now - last_exit["time"]).total_seconds())
+        if since_exit < TRENDMA_FLIP_LOOKBACK_SEC:
+            strength_ratio = meta.get("strength_ratio")
+            if strength_ratio is not None and strength_ratio < TRENDMA_FLIP_STRENGTH_RATIO:
+                logging.info(
+                    "[TRENDMA] skip flip %s (strength %.2f < %.2f, %.0fs since exit)",
+                    direction,
+                    strength_ratio,
+                    TRENDMA_FLIP_STRENGTH_RATIO,
+                    since_exit,
+                )
+                return False
+            slope = abs(meta.get("gap_slope_pips") or 0.0)
+            if slope < TRENDMA_FLIP_SLOPE_MIN:
+                logging.info(
+                    "[TRENDMA] skip flip %s (slope %.3f < %.3f, %.0fs since exit)",
+                    direction,
+                    slope,
+                    TRENDMA_FLIP_SLOPE_MIN,
+                    since_exit,
+                )
+                return False
+            adx_val = meta.get("adx")
+            if adx_val is not None and adx_val < TRENDMA_FLIP_ADX_MIN:
+                logging.info(
+                    "[TRENDMA] skip flip %s (ADX %.1f < %.1f, %.0fs since exit)",
+                    direction,
+                    adx_val,
+                    TRENDMA_FLIP_ADX_MIN,
+                    since_exit,
+                )
+                return False
+    return True
+
+
+def _apply_trade_cooldowns(
+    trades: list,
+    stage_tracker: StageTracker,
+    now: datetime.datetime,
+) -> Tuple[Optional[datetime.datetime], Optional[Dict[str, object]]]:
+    freeze_until: Optional[datetime.datetime] = None
+    last_exit: Optional[Dict[str, object]] = None
+    for record in trades or []:
+        if not isinstance(record, dict):
+            continue
+        pocket = record.get("pocket") or ""
+        ticket_id = str(record.get("ticket_id") or "")
+        try:
+            units_val = int(record.get("units") or 0)
+        except (TypeError, ValueError):
+            units_val = 0
+        if not ticket_id:
+            continue
+        if units_val == 0:
+            continue
+        client_id = _lookup_client_id(ticket_id)
+        if client_id and "NewsSpike" in client_id:
+            candidate = now + datetime.timedelta(seconds=TRENDMA_NEWS_FREEZE_SECONDS)
+            if not freeze_until or candidate > freeze_until:
+                freeze_until = candidate
+        if not client_id or "TrendMA" not in client_id:
+            continue
+        entry_ts = _parse_trade_ts(record.get("entry_time"))
+        close_ts = _parse_trade_ts(record.get("close_time"))
+        hold_seconds = max(0.0, (close_ts - entry_ts).total_seconds())
+        pnl = float(record.get("pl_pips") or 0.0)
+        direction = "long" if units_val > 0 else "short"
+        last_exit = {
+            "side": direction,
+            "time": close_ts,
+            "pnl": pnl,
+            "hold_seconds": hold_seconds,
+        }
+        if pocket != "macro":
+            continue
+        if pnl < 0 and hold_seconds < TRENDMA_FAST_LOSS_THRESHOLD_SEC:
+            lose_streak, _ = stage_tracker.get_loss_profile(pocket, direction)
+            extra_seconds = TRENDMA_FAST_LOSS_BASE_COOLDOWN + max(0, lose_streak) * TRENDMA_FAST_LOSS_STREAK_STEP
+            applied = stage_tracker.ensure_cooldown(
+                pocket,
+                direction,
+                reason="fast_loss",
+                seconds=extra_seconds,
+                now=now,
+            )
+            if applied:
+                logging.info(
+                    "[TRENDMA] Fast-loss cooldown applied pocket=%s dir=%s sec=%d streak=%d",
+                    pocket,
+                    direction,
+                    extra_seconds,
+                    lose_streak,
+                )
+            opp_dir = "short" if direction == "long" else "long"
+            opp_seconds = max(240, extra_seconds // 2)
+            stage_tracker.ensure_cooldown(
+                pocket,
+                opp_dir,
+                reason="flip_guard_fast_loss",
+                seconds=opp_seconds,
+                now=now,
+            )
+    return freeze_until, last_exit
 
 
 def _stage_conditions_met(
@@ -617,6 +800,10 @@ async def logic_loop():
     last_risk_pct: float | None = None
     last_spread_gate = False
     last_spread_gate_reason = ""
+    market_closed_logged = False
+    last_market_closed_log = datetime.datetime.min
+    trendma_news_cooldown_until = datetime.datetime.min
+    trendma_last_exit: Optional[Dict[str, object]] = None
 
     try:
         while True:
@@ -842,6 +1029,22 @@ async def logic_loop():
             elif not prev_range_state and range_active:
                 range_entry_counter = 0
 
+            # --- Market hours gate (skip full cycle when closed) ---
+            if not is_market_open(now):
+                if (
+                    not market_closed_logged
+                    or (now - last_market_closed_log).total_seconds() >= 600
+                ):
+                    logging.info(
+                        "[MARKET] Closed (UTC=%s). Sleeping until reopen window.",
+                        now.isoformat(timespec="seconds"),
+                    )
+                    last_market_closed_log = now
+                    market_closed_logged = True
+                await asyncio.sleep(30)
+                continue
+            market_closed_logged = False
+
             # --- 2. GPT判断 ---
             # M1/H4 の移動平均・RSI などの指標をまとめて送信
             payload = {
@@ -1005,6 +1208,17 @@ async def logic_loop():
                     raw_signal = cls.check(fac_m1)
                 if not raw_signal:
                     continue
+                meta = raw_signal.pop("_meta", None)
+                if sname == "TrendMA":
+                    if now < trendma_news_cooldown_until:
+                        remaining = (trendma_news_cooldown_until - now).total_seconds()
+                        logging.info(
+                            "[TRENDMA] skip TrendMA during news freeze (%.0fs remaining).",
+                            max(1, remaining),
+                        )
+                        continue
+                    if not _trendma_signal_allowed(raw_signal, meta or {}, now, trendma_last_exit):
+                        continue
 
                 health = strategy_health_cache.get(sname)
                 if not health:
@@ -1073,6 +1287,15 @@ async def logic_loop():
                 logging.info("[SIGNAL] %s -> %s", cls.name, signal)
 
             open_positions = pos_manager.get_open_positions()
+            micro_trades = (open_positions.get("micro") or {}).get("open_trades", [])
+            if any("NewsSpike" in (tr.get("client_id") or "") for tr in micro_trades):
+                candidate = now + datetime.timedelta(seconds=TRENDMA_NEWS_FREEZE_SECONDS)
+                if candidate > trendma_news_cooldown_until:
+                    trendma_news_cooldown_until = candidate
+                    logging.info(
+                        "[TRENDMA] Active NewsSpike trade detected; freeze TrendMA for %.0fs.",
+                        (trendma_news_cooldown_until - now).total_seconds(),
+                    )
             try:
                 update_dynamic_protections(open_positions, fac_m1, fac_h4)
             except Exception as exc:
@@ -1528,7 +1751,19 @@ async def logic_loop():
                     logging.error(f"[ORDER FAILED] {signal['strategy']}")
 
             # --- 5. 決済済み取引の同期 ---
-            pos_manager.sync_trades()
+            recent_trades = pos_manager.sync_trades()
+            if recent_trades:
+                freeze_candidate, last_exit_info = _apply_trade_cooldowns(
+                    recent_trades, stage_tracker, now
+                )
+                if freeze_candidate and freeze_candidate > trendma_news_cooldown_until:
+                    trendma_news_cooldown_until = freeze_candidate
+                    logging.info(
+                        "[TRENDMA] News freeze extended via recent trades for %.0fs.",
+                        (trendma_news_cooldown_until - now).total_seconds(),
+                    )
+                if last_exit_info:
+                    trendma_last_exit = last_exit_info
 
             await asyncio.sleep(60)
     except Exception as e:
@@ -1544,17 +1779,24 @@ async def logic_loop():
 async def main():
     handlers = [("M1", m1_candle_handler), ("H4", h4_candle_handler)]
     await initialize_history("USD_JPY")
-    # 複数の無限ループを並列で実行する。
-    # - start_candle_stream: Tick データとローソク足生成
-    # - logic_loop: トレーディングロジック
-    # - news_fetch_loop: 経済指標 RSS 取得
-    # - summary_ingest_loop: GCS summary/ から DB への取り込み
-    await asyncio.gather(
+    tasks = [
         start_candle_stream("USD_JPY", handlers),
         logic_loop(),
         news_fetch_loop(),
         summary_ingest_loop(),
-    )
+    ]
+    scalp_workers = [
+        (vwap_magnet_s5_config.ENABLED, vwap_magnet_s5_worker, vwap_magnet_s5_config.LOG_PREFIX),
+        (squeeze_break_s5_config.ENABLED, squeeze_break_s5_worker, squeeze_break_s5_config.LOG_PREFIX),
+        (impulse_retest_s5_config.ENABLED, impulse_retest_s5_worker, impulse_retest_s5_config.LOG_PREFIX),
+    ]
+    for enabled, worker_fn, prefix in scalp_workers:
+        if enabled:
+            logging.info("%s bootstrapping worker loop", prefix)
+            tasks.append(worker_fn())
+        else:
+            logging.info("%s worker disabled by configuration", prefix)
+    await asyncio.gather(*tasks)
 
 
 if __name__ == "__main__":

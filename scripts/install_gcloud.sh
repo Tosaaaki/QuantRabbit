@@ -16,13 +16,30 @@ fi
 
 case "$OS" in
   Darwin)
-    if ! has brew; then
-      echo "[install_gcloud] Homebrew 未検出。https://brew.sh/ を参照してインストールしてください。" >&2
-      exit 2
+    if has brew; then
+      echo "[install_gcloud] Installing via Homebrew (google-cloud-sdk)..."
+      brew install --cask google-cloud-sdk || brew install google-cloud-sdk
+      echo "[install_gcloud] Installed. Initialize with: gcloud init"
+    else
+      echo "[install_gcloud] Homebrew 未検出。公式アーカイブから導入します..."
+      tmpdir="$(mktemp -d)"; trap 'rm -rf "$tmpdir"' EXIT
+      cd "$tmpdir"
+      arch_tag="$(uname -m)"
+      case "$arch_tag" in
+        x86_64) arch_tag="x86_64" ;;
+        arm64|aarch64) arch_tag="arm" ;;
+        *) echo "[install_gcloud] 未対応アーキテクチャ: $(uname -m)" >&2; exit 2 ;;
+      esac
+      url="https://dl.google.com/dl/cloudsdk/channels/rapid/downloads/google-cloud-cli-darwin-${arch_tag}.tar.gz"
+      echo "[install_gcloud] Downloading: $url"
+      curl -fsSLO "$url"
+      tarball=$(basename "$url")
+      tar xf "$tarball"
+      ./google-cloud-sdk/install.sh -q
+      echo "export PATH=\"$HOME/google-cloud-sdk/bin:$PATH\"" >> "$HOME/.bashrc"
+      echo "export PATH=\"$HOME/google-cloud-sdk/bin:$PATH\"" >> "$HOME/.zshrc"
+      echo "[install_gcloud] Installed. Restart shell and run: gcloud init"
     fi
-    echo "[install_gcloud] Installing via Homebrew (google-cloud-sdk)..."
-    brew install --cask google-cloud-sdk || brew install google-cloud-sdk
-    echo "[install_gcloud] Installed. Initialize with: gcloud init"
     ;;
   Linux)
     # Prefer Debian/Ubuntu apt installation. Fallback to official tar if apt is unavailable.
@@ -60,4 +77,3 @@ case "$OS" in
     exit 2
     ;;
 esac
-

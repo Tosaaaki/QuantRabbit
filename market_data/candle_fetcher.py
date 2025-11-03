@@ -17,6 +17,7 @@ from utils.secrets import get_secret
 from market_data.tick_fetcher import Tick, _parse_time
 from market_data.replay_logger import log_candle
 from market_data import spread_monitor
+from market_data import tick_window
 
 Candle = dict[str, float]  # open, high, low, close
 TimeFrame = Literal["M1", "H4"]
@@ -115,6 +116,12 @@ async def start_candle_stream(
             spread_monitor.update_from_tick(tick)
         except Exception as exc:  # noqa: BLE001
             print(f"[spread] failed to update monitor: {exc}")
+        try:
+            # Persist latest tick for cross-process scalp workers
+            tick_window.record(tick)
+        except Exception as exc:  # noqa: BLE001
+            # best-effort; do not break the streaming loop
+            print(f"[tick_cache] failed to record tick: {exc}")
         await agg.on_tick(tick)
 
     from market_data.tick_fetcher import run_price_stream

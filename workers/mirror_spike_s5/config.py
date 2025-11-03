@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+from typing import Set
 
 PIP_VALUE = 0.01
 
@@ -34,11 +35,42 @@ def _bool(key: str, default: bool) -> bool:
     return raw.strip().lower() not in {"", "0", "false", "no", "off"}
 
 
+def _parse_hours(key: str, default: str) -> Set[int]:
+    raw = os.getenv(key, default)
+    hours: Set[int] = set()
+    for token in raw.split(","):
+        token = token.strip()
+        if not token:
+            continue
+        if "-" in token:
+            bounds = token.split("-", 1)
+            try:
+                start = int(float(bounds[0]))
+                end = int(float(bounds[1]))
+            except ValueError:
+                continue
+            if start > end:
+                start, end = end, start
+            for hour in range(start, end + 1):
+                if 0 <= hour <= 23:
+                    hours.add(hour)
+            continue
+        try:
+            hour_val = int(float(token))
+        except ValueError:
+            continue
+        if 0 <= hour_val <= 23:
+            hours.add(hour_val)
+    return hours
+
+
 LOG_PREFIX = "[MIRROR-S5]"
 ENABLED: bool = _bool("MIRROR_SPIKE_S5_ENABLED", True)
 LOOP_INTERVAL_SEC: float = max(0.2, _float("MIRROR_SPIKE_S5_LOOP_INTERVAL_SEC", 0.45))
 
-MAX_SPREAD_PIPS: float = max(0.1, _float("MIRROR_SPIKE_S5_MAX_SPREAD_PIPS", 0.9))
+ACTIVE_HOURS_UTC = frozenset(_parse_hours("MIRROR_SPIKE_S5_ACTIVE_HOURS", "1,3,6-7,9,17"))
+
+MAX_SPREAD_PIPS: float = max(0.1, _float("MIRROR_SPIKE_S5_MAX_SPREAD_PIPS", 0.75))
 
 WINDOW_SEC: float = max(60.0, _float("MIRROR_SPIKE_S5_WINDOW_SEC", 360.0))
 BUCKET_SECONDS: float = max(1.0, _float("MIRROR_SPIKE_S5_BUCKET_SECONDS", 5.0))
@@ -47,7 +79,7 @@ LOOKBACK_BUCKETS: int = max(MIN_BUCKETS, _int("MIRROR_SPIKE_S5_LOOKBACK_BUCKETS"
 PEAK_WINDOW_BUCKETS: int = max(6, _int("MIRROR_SPIKE_S5_PEAK_WINDOW_BUCKETS", 18))
 
 SPIKE_THRESHOLD_PIPS: float = max(2.0, _float("MIRROR_SPIKE_S5_THRESHOLD_PIPS", 4.0))
-RETRACE_TRIGGER_PIPS: float = max(0.3, _float("MIRROR_SPIKE_S5_RETRACE_PIPS", 1.1))
+RETRACE_TRIGGER_PIPS: float = max(0.3, _float("MIRROR_SPIKE_S5_RETRACE_PIPS", 1.3))
 MIN_RETRACE_PIPS: float = max(0.2, _float("MIRROR_SPIKE_S5_MIN_RETRACE_PIPS", 0.6))
 
 RSI_PERIOD: int = max(5, _int("MIRROR_SPIKE_S5_RSI_PERIOD", 14))
@@ -67,7 +99,7 @@ TP_MIN_PIPS: float = max(0.5, _float("MIRROR_SPIKE_S5_TP_MIN_PIPS", 2.0))
 TP_MAX_PIPS: float = max(TP_MIN_PIPS, _float("MIRROR_SPIKE_S5_TP_MAX_PIPS", 5.5))
 SL_ATR_MULT: float = max(0.0, _float("MIRROR_SPIKE_S5_SL_ATR_MULT", 1.2))
 
-MIN_ATR_PIPS: float = max(0.0, _float("MIRROR_SPIKE_S5_MIN_ATR_PIPS", 0.5))
+MIN_ATR_PIPS: float = max(0.0, _float("MIRROR_SPIKE_S5_MIN_ATR_PIPS", 0.8))
 
 COOLDOWN_SEC: float = max(30.0, _float("MIRROR_SPIKE_S5_COOLDOWN_SEC", 360.0))
 POST_EXIT_COOLDOWN_SEC: float = max(30.0, _float("MIRROR_SPIKE_S5_POST_EXIT_COOLDOWN_SEC", 900.0))

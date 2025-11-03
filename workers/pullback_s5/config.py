@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+from typing import Set
 
 PIP_VALUE = 0.01
 
@@ -34,9 +35,61 @@ def _bool(key: str, default: bool) -> bool:
     return raw.strip().lower() not in {"", "0", "false", "no", "off"}
 
 
+def _parse_hours(key: str, default: str) -> Set[int]:
+    raw = os.getenv(key, default)
+    hours: Set[int] = set()
+    for token in raw.split(","):
+        token = token.strip()
+        if not token:
+            continue
+        if "-" in token:
+            bounds = token.split("-", 1)
+            try:
+                start = int(float(bounds[0]))
+                end = int(float(bounds[1]))
+            except ValueError:
+                continue
+            if start > end:
+                start, end = end, start
+            for hour in range(start, end + 1):
+                if 0 <= hour <= 23:
+                    hours.add(hour)
+            continue
+        try:
+            hour_val = int(float(token))
+        except ValueError:
+            continue
+        if 0 <= hour_val <= 23:
+            hours.add(hour_val)
+    return hours
+
+
+def _parse_float_list(key: str, default: str) -> tuple[float, ...]:
+    raw = os.getenv(key, default)
+    values = []
+    for token in raw.split(","):
+        token = token.strip()
+        if not token:
+            continue
+        try:
+            val = float(token)
+        except ValueError:
+            continue
+        if val <= 0.0:
+            continue
+        values.append(val)
+    if not values:
+        values = [1.0]
+    return tuple(values)
+
+
 LOG_PREFIX = "[PULLBACK-S5]"
 ENABLED: bool = _bool("PULLBACK_S5_ENABLED", True)
 LOOP_INTERVAL_SEC: float = max(0.2, _float("PULLBACK_S5_LOOP_INTERVAL_SEC", 0.45))
+
+ACTIVE_HOURS_UTC = frozenset(
+    _parse_hours("PULLBACK_S5_ACTIVE_HOURS", "1,5-8,11,13,15,17-18")
+)
 
 WINDOW_SEC: float = max(60.0, _float("PULLBACK_S5_WINDOW_SEC", 360.0))
 BUCKET_SECONDS: float = max(1.0, _float("PULLBACK_S5_BUCKET_SECONDS", 5.0))
@@ -45,8 +98,14 @@ SLOW_BUCKETS: int = max(FAST_BUCKETS + 8, _int("PULLBACK_S5_SLOW_BUCKETS", 72))
 MIN_BUCKETS: int = max(FAST_BUCKETS, _int("PULLBACK_S5_MIN_BUCKETS", 60))
 
 MAX_SPREAD_PIPS: float = max(0.1, _float("PULLBACK_S5_MAX_SPREAD_PIPS", 0.85))
-ENTRY_UNITS: int = max(1000, _int("PULLBACK_S5_ENTRY_UNITS", 6000))
-MAX_ACTIVE_TRADES: int = max(1, _int("PULLBACK_S5_MAX_ACTIVE_TRADES", 1))
+ENTRY_UNITS: int = max(1000, _int("PULLBACK_S5_ENTRY_UNITS", 10000))
+ENTRY_STAGE_RATIOS: tuple[float, ...] = _parse_float_list(
+    "PULLBACK_S5_ENTRY_STAGE_RATIOS", "0.4,0.35,0.25"
+)
+ALLOW_DUPLICATE_ENTRIES: bool = _bool(
+    "PULLBACK_S5_ALLOW_DUPLICATE_ENTRIES", True
+)
+MAX_ACTIVE_TRADES: int = max(1, _int("PULLBACK_S5_MAX_ACTIVE_TRADES", 9))
 STAGE_MIN_DELTA_PIPS: float = max(0.05, _float("PULLBACK_S5_STAGE_MIN_DELTA_PIPS", 0.22))
 COOLDOWN_SEC: float = max(20.0, _float("PULLBACK_S5_COOLDOWN_SEC", 120.0))
 
@@ -80,7 +139,7 @@ TP_ATR_MAX_PIPS: float = max(
     _float("PULLBACK_S5_TP_ATR_MAX_PIPS", 3.4),
 )
 
-MIN_ATR_PIPS: float = max(0.0, _float("PULLBACK_S5_MIN_ATR_PIPS", 0.4))
+MIN_ATR_PIPS: float = max(0.0, _float("PULLBACK_S5_MIN_ATR_PIPS", 0.8))
 MIN_DENSITY_TICKS: int = max(10, _int("PULLBACK_S5_MIN_DENSITY_TICKS", 50))
 
 # --- quality gates ---
@@ -95,7 +154,7 @@ NEWS_BLOCK_MINUTES: float = max(
 NEWS_BLOCK_MIN_IMPACT: int = max(
     1, _int("PULLBACK_S5_NEWS_BLOCK_MIN_IMPACT", 3)
 )
-LOSS_STREAK_MAX: int = max(0, _int("PULLBACK_S5_MAX_CONSEC_LOSSES", 2))
+LOSS_STREAK_MAX: int = max(0, _int("PULLBACK_S5_MAX_CONSEC_LOSSES", 3))
 LOSS_STREAK_COOLDOWN_MIN: float = max(
-    0.0, _float("PULLBACK_S5_LOSS_COOLDOWN_MIN", 15.0)
+    0.0, _float("PULLBACK_S5_LOSS_COOLDOWN_MIN", 20.0)
 )

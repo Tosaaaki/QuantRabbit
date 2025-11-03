@@ -81,12 +81,40 @@ async def pullback_scalp_worker() -> None:
     pos_manager = PositionManager()
     cooldown_until = 0.0
     last_spread_log = 0.0
+    last_density_log = 0.0
+    last_hour_log = 0.0
     try:
         while True:
             await asyncio.sleep(config.LOOP_INTERVAL_SEC)
             now_monotonic = time.monotonic()
             if now_monotonic < cooldown_until:
                 continue
+
+            if config.ACTIVE_HOURS_UTC:
+                current_hour = time.gmtime().tm_hour
+                if current_hour not in config.ACTIVE_HOURS_UTC:
+                    if now_monotonic - last_hour_log > 300.0:
+                        LOG.info(
+                            "%s outside active hours hour=%02d",
+                            config.LOG_PREFIX,
+                            current_hour,
+                        )
+                        last_hour_log = now_monotonic
+                    continue
+                last_hour_log = now_monotonic
+
+            if getattr(config, "MIN_DENSITY_TICKS", 0):
+                density_ticks = tick_window.recent_ticks(seconds=30.0, limit=1200)
+                if len(density_ticks) < config.MIN_DENSITY_TICKS:
+                    if now_monotonic - last_density_log > 30.0:
+                        LOG.info(
+                            "%s density gate active ticks=%d",
+                            config.LOG_PREFIX,
+                            len(density_ticks),
+                        )
+                        last_density_log = now_monotonic
+                    continue
+                last_density_log = now_monotonic
 
             blocked, _, spread_state, spread_reason = spread_monitor.is_blocked()
             spread_pips = float((spread_state or {}).get("spread_pips", 0.0) or 0.0)

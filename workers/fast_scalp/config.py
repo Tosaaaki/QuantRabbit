@@ -16,7 +16,9 @@ def _bool_env(key: str, default: bool) -> bool:
     return raw.strip().lower() not in {"", "0", "false", "off", "no"}
 
 
-FAST_SCALP_ENABLED: bool = _bool_env("FAST_SCALP_ENABLED", True)
+# Default OFF in production unless explicitly enabled via env.
+# To re-enable locally: export FAST_SCALP_ENABLED=true
+FAST_SCALP_ENABLED: bool = _bool_env("FAST_SCALP_ENABLED", False)
 LOOP_INTERVAL_SEC: float = max(0.1, float(os.getenv("FAST_SCALP_LOOP_INTERVAL_SEC", "0.25")))
 TP_BASE_PIPS: float = max(0.2, float(os.getenv("FAST_SCALP_TP_BASE_PIPS", "0.6")))
 TP_SPREAD_BUFFER_PIPS: float = max(0.05, float(os.getenv("FAST_SCALP_SPREAD_BUFFER_PIPS", "0.2")))

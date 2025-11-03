@@ -24,6 +24,14 @@
 
 set -euo pipefail
 
+# Ensure gcloud is reachable even in non-interactive shells
+if ! command -v gcloud >/dev/null 2>&1; then
+  SDK_BIN="$HOME/google-cloud-sdk/bin"
+  if [[ -d "$SDK_BIN" ]]; then
+    export PATH="$SDK_BIN:$PATH"
+  fi
+fi
+
 # Preflight: ensure gcloud exists with basic config
 if ! command -v gcloud >/dev/null 2>&1; then
   echo "[deploy] gcloud が見つかりません。まず 'scripts/install_gcloud.sh' を実行してください。" >&2
