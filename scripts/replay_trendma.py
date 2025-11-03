@@ -16,6 +16,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Sequence, Tuple
+from collections import Counter
 
 import numpy as np
 import pandas as pd
@@ -29,6 +30,9 @@ if str(REPO_ROOT) not in sys.path:
 from execution.exit_manager import ExitManager
 from execution.order_manager import plan_partial_reductions, _PARTIAL_STAGE
 from strategies.trend.ma_cross import MovingAverageCross
+from analysis.regime_classifier import classify
+from workers.trend_h1 import config as trend_cfg
+from workers.trend_h1.worker import _confidence_scale
 
 
 UTC = timezone.utc
@@ -147,6 +151,46 @@ class H4Aggregator:
             self._current_key = None
 
 
+class H1Aggregator:
+    def __init__(self) -> None:
+        self._current_key: Optional[datetime] = None
+        self._current: Optional[Dict[str, object]] = None
+        self.history: List[Dict[str, object]] = []
+
+    def update(self, candle: Dict[str, object]) -> bool:
+        dt = candle["time"]
+        if not isinstance(dt, datetime):
+            raise ValueError("candle['time'] must be datetime")
+        key = dt.replace(minute=0, second=0, microsecond=0)
+        new_closed = False
+        if self._current_key is None:
+            self._current_key = key
+            self._current = dict(candle)
+            return False
+        if key != self._current_key:
+            if self._current:
+                self.history.append(dict(self._current))
+                self.history = self.history[-900:]
+                new_closed = True
+            self._current_key = key
+            self._current = dict(candle)
+        else:
+            cur = self._current or dict(candle)
+            cur["high"] = max(cur["high"], candle["high"])
+            cur["low"] = min(cur["low"], candle["low"])
+            cur["close"] = candle["close"]
+            cur["time"] = candle["time"]
+            self._current = cur
+        return new_closed
+
+    def finalize(self) -> None:
+        if self._current:
+            self.history.append(dict(self._current))
+            self.history = self.history[-900:]
+            self._current = None
+            self._current_key = None
+
+
 def compute_factors(
     candles: List[Dict[str, object]], *, min_bars: int = 20
 ) -> Optional[Dict[str, object]]:
@@ -187,12 +231,12 @@ def pips_between(entry: float, exit_price: float, side: str) -> float:
     return (entry - exit_price) * 100.0
 
 
-STAGE_RATIOS_MACRO = (0.30,)
+STAGE_RATIOS_MACRO = (0.35,)
 
 
 class TrendMAReplayer:
-    BASE_POCKET_LOT = 0.0035  # mirror live macro sizing cap (~0.0035 lot total)
-    MIN_UNITS = 80
+    BASE_POCKET_LOT = 0.003  # mirror live macro sizing cap (~0.003 lot total)
+    MIN_UNITS = 70
 
     def __init__(self) -> None:
         self.exit_manager = ExitManager()
@@ -201,7 +245,9 @@ class TrendMAReplayer:
     def reset(self) -> None:
         self.m1_history: List[Dict[str, object]] = []
         self.h4_history: List[Dict[str, object]] = []
+        self.h1_history: List[Dict[str, object]] = []
         self.h4_agg = H4Aggregator()
+        self.h1_agg = H1Aggregator()
         self.open_positions = {
             "macro": {
                 "units": 0,
@@ -215,13 +261,20 @@ class TrendMAReplayer:
             "__net__": {"units": 0},
         }
         self.stage_state = {"long": 0, "short": 0}
+        epoch0 = datetime(1970, 1, 1, tzinfo=UTC)
+        self.cooldown_until = epoch0
+        self.direction_block_until = {"long": epoch0, "short": epoch0}
+        self.recent_signal_gate: Dict[str, datetime] = {}
+        self.last_signal: Optional[Dict[str, object]] = None
+        self.latest_fac_h1: Optional[Dict[str, object]] = None
         self.trade_seq = 1
         self.closed_trades: List[Dict[str, object]] = []
         _PARTIAL_STAGE.clear()
         self.latest_fac_h4: Optional[Dict[str, object]] = None
+        self.equity = 10000.0
+        self.debug_counts: Counter[str] = Counter()
 
     def run_on_ticks(self, ticks: Sequence[Tick]) -> None:
-        self.reset()
         m1_candles = build_m1_candles(ticks)
         for candle in m1_candles:
             self._on_m1_candle(candle)
@@ -232,12 +285,25 @@ class TrendMAReplayer:
             self._close_all(last_price, end_time)
         # finalize h4 aggregator (optional)
         self.h4_agg.finalize()
+        self.h1_agg.finalize()
 
     def _on_m1_candle(self, candle: Dict[str, object]) -> None:
         price = candle["close"]
         ctime = candle["time"]
         self.m1_history.append(candle)
         self.h4_agg.update(candle)
+        h1_closed = self.h1_agg.update(candle)
+        if h1_closed and self.h1_agg.history:
+            self.h1_history = self.h1_agg.history[-900:]
+            fac_h1 = compute_factors(
+                self.h1_history,
+                min_bars=max(trend_cfg.MIN_CANDLES, 40),
+            )
+            if fac_h1:
+                fac_h1["atr_pips"] = fac_h1.get("atr", 0.0) * 100.0
+                self.latest_fac_h1 = fac_h1
+                latest_h1 = self.h1_history[-1]
+                self._handle_h1_signal(fac_h1, latest_h1["time"], latest_h1["close"])
         if self.h4_agg.history:
             self.h4_history = self.h4_agg.history[-500:]
             self.latest_fac_h4 = compute_factors(self.h4_history, min_bars=5)
@@ -253,6 +319,10 @@ class TrendMAReplayer:
 
         self._update_unrealized(price)
 
+        signals: List[Dict[str, object]] = []
+        if self.last_signal:
+            signals.append(self.last_signal)
+
         partials = plan_partial_reductions(
             self.open_positions,
             fac_m1,
@@ -263,22 +333,6 @@ class TrendMAReplayer:
         if partials:
             for _, trade_id, reduce_units in partials:
                 self._apply_partial(trade_id, reduce_units, price, ctime)
-
-        raw_signal = MovingAverageCross.check(fac_m1)
-        signals: List[Dict[str, object]] = []
-        if raw_signal:
-            signals.append(
-                {
-                    "strategy": "TrendMA",
-                    "pocket": "macro",
-                    "action": raw_signal["action"],
-                    "confidence": raw_signal.get("confidence", 50),
-                    "sl_pips": raw_signal.get("sl_pips"),
-                    "tp_pips": raw_signal.get("tp_pips"),
-                    "tag": raw_signal.get("tag", "TrendMA"),
-                }
-            )
-            self._maybe_enter(raw_signal, price, ctime, fac_m1)
 
         exit_decisions = self.exit_manager.plan_closures(
             self.open_positions,
@@ -292,12 +346,86 @@ class TrendMAReplayer:
         if exit_decisions:
             self._process_exit_decisions(exit_decisions, price, ctime)
 
+    def _handle_h1_signal(
+        self, fac_h1: Dict[str, object], ts: datetime, price: float
+    ) -> None:
+        regime = classify(fac_h1, "H1")
+        decision = MovingAverageCross.check(fac_h1)
+        if decision is None:
+            self.debug_counts["no_signal"] += 1
+        else:
+            self.debug_counts["raw_signal"] += 1
+        if decision:
+            self.last_signal = {
+                "strategy": "TrendMA",
+                "pocket": "macro",
+                "action": decision["action"],
+                "confidence": decision.get("confidence", 50),
+                "sl_pips": decision.get("sl_pips"),
+                "tp_pips": decision.get("tp_pips"),
+                "tag": decision.get("tag", "TrendMA"),
+                "_meta": decision.get("_meta"),
+            }
+        else:
+            self.last_signal = None
+
+        if decision is None:
+            return
+
+        confidence = int(decision.get("confidence", 0))
+        if confidence < trend_cfg.MIN_CONFIDENCE:
+            self.debug_counts["confidence_low"] += 1
+            return
+
+        atr_pips = fac_h1.get("atr_pips") or fac_h1.get("atr", 0.0) * 100.0
+        if (
+            atr_pips < trend_cfg.MIN_ATR_PIPS
+            or atr_pips > trend_cfg.MAX_ATR_PIPS
+        ):
+            self.debug_counts["atr_block"] += 1
+            return
+
+        if trend_cfg.REQUIRE_REGIME and regime not in trend_cfg.REQUIRE_REGIME:
+            self.debug_counts[f"regime_block:{regime or 'none'}"] += 1
+            return
+        if trend_cfg.BLOCK_REGIME and regime in trend_cfg.BLOCK_REGIME:
+            self.debug_counts[f"block_regime:{regime}"] += 1
+            return
+
+        action = decision.get("action")
+        if action not in {"OPEN_LONG", "OPEN_SHORT"}:
+            self.debug_counts["unsupported_action"] += 1
+            return
+
+        direction = "long" if action == "OPEN_LONG" else "short"
+        allowed_dirs = {d.lower() for d in trend_cfg.ALLOWED_DIRECTIONS} or {"long", "short"}
+        if direction not in allowed_dirs:
+            self.debug_counts[f"direction_block:{direction}"] += 1
+            return
+
+        if ts < self.cooldown_until:
+            self.debug_counts["global_cooldown"] += 1
+            return
+        if ts < self.direction_block_until[direction]:
+            self.debug_counts[f"direction_cooldown:{direction}"] += 1
+            return
+
+        tag = decision.get("tag") or "TrendMA"
+        gate_key = f"{tag}:{direction}"
+        last_ts = self.recent_signal_gate.get(gate_key)
+        if last_ts and (ts - last_ts).total_seconds() < trend_cfg.REPEAT_BLOCK_SEC:
+            self.debug_counts["repeat_gate"] += 1
+            return
+
+        self._maybe_enter(decision, price, ts, fac_h1)
+        self.recent_signal_gate[gate_key] = ts
+
     def _maybe_enter(
         self,
         raw_signal: Dict[str, object],
         price: float,
         ts: datetime,
-        fac_m1: Dict[str, object],
+        fac_h1: Dict[str, object],
     ) -> None:
         action = raw_signal.get("action")
         if action not in {"OPEN_LONG", "OPEN_SHORT"}:
@@ -309,20 +437,36 @@ class TrendMAReplayer:
         else:
             if self.open_positions["macro"]["long_units"] > 0:
                 return
-        if not self._macro_direction_allowed(action, fac_m1):
+        meta = raw_signal.get("_meta") or {}
+        fast_gap = float(meta.get("price_to_fast_pips", 0.0) or 0.0)
+        if direction == "long" and fast_gap < trend_cfg.MIN_FAST_GAP_PIPS:
+            return
+        if direction == "short" and fast_gap > -trend_cfg.MIN_FAST_GAP_PIPS:
+            return
+        if not self._macro_direction_allowed(action, fac_h1):
             return
         stage_idx = self.stage_state[direction]
         if stage_idx >= len(STAGE_RATIOS_MACRO):
             return
+        confidence = int(raw_signal.get("confidence", 0))
+        sl_pips = float(raw_signal.get("sl_pips", 0.0) or 0.0)
+        tp_pips = float(raw_signal.get("tp_pips", 0.0) or 0.0)
+        if sl_pips <= 0.0 or tp_pips <= 0.0:
+            return
+        if (ts - self.direction_block_until[direction]).total_seconds() < trend_cfg.REENTRY_COOLDOWN_SEC:
+            return
+        base_lot = self._risk_lot(sl_pips)
+        lot = max(trend_cfg.MIN_LOT, min(trend_cfg.MAX_LOT, base_lot))
+        lot *= _confidence_scale(confidence)
+        lot = max(trend_cfg.MIN_LOT, min(trend_cfg.MAX_LOT, lot))
         next_fraction = STAGE_RATIOS_MACRO[stage_idx]
-        lot = self.BASE_POCKET_LOT * next_fraction
+        lot *= next_fraction
         units = int(round(lot * 100000))
         if units < self.MIN_UNITS:
             return
         if direction == "short":
             units = -units
-        sl_pips = raw_signal.get("sl_pips", 20.0)
-        tp_pips = raw_signal.get("tp_pips", 30.0)
+        atr_pips = float(fac_h1.get("atr_pips") or fac_h1.get("atr", 0.0) * 100.0)
         trade_id = f"T{self.trade_seq:05d}"
         self.trade_seq += 1
         trade = {
@@ -334,6 +478,10 @@ class TrendMAReplayer:
             "stage_index": stage_idx,
             "entry_sl_pips": sl_pips,
             "entry_tp_pips": tp_pips,
+            "entry_meta": raw_signal.get("_meta"),
+            "signal_confidence": confidence,
+            "signal_atr_pips": atr_pips,
+            "signal_gap_pips": (raw_signal.get("_meta") or {}).get("gap_pips"),
             "sl_price": round(price - sl_pips * 0.01, 3)
             if direction == "long"
             else round(price + sl_pips * 0.01, 3),
@@ -344,24 +492,39 @@ class TrendMAReplayer:
         self.open_positions["macro"]["open_trades"].append(trade)
         self.stage_state[direction] += 1
         self._recalc_position()
+        cooldown = max(trend_cfg.ENTRY_COOLDOWN_SEC, 60.0)
+        self.cooldown_until = ts + timedelta(seconds=cooldown)
+        self.direction_block_until[direction] = ts + timedelta(seconds=trend_cfg.REENTRY_COOLDOWN_SEC)
 
-    def _macro_direction_allowed(self, action: str, fac_m1: Dict[str, object]) -> bool:
+    def _macro_direction_allowed(self, action: str, fac_h1: Dict[str, object]) -> bool:
         fac_h4 = self.latest_fac_h4 or {}
         ma10_h4 = fac_h4.get("ma10")
         ma20_h4 = fac_h4.get("ma20")
         if ma10_h4 is None or ma20_h4 is None:
             return True
-        close = fac_m1.get("close")
-        ema20 = fac_m1.get("ema20") or fac_m1.get("ma20")
-        if close is None or ema20 is None:
-            return True
-        if action == "OPEN_LONG":
-            if ma10_h4 <= ma20_h4 - 0.0002:
-                return False
-            return close >= ema20 - 0.002
-        if ma10_h4 >= ma20_h4 + 0.0002:
+        gap_h4 = float(ma10_h4) - float(ma20_h4)
+        bias_buffer = 0.00018
+        if action == "OPEN_LONG" and gap_h4 < -bias_buffer:
             return False
-        return close <= ema20 + 0.002
+        if action == "OPEN_SHORT" and gap_h4 > bias_buffer:
+            return False
+        ma10_h1 = fac_h1.get("ma10")
+        ma20_h1 = fac_h1.get("ma20")
+        if ma10_h1 is None or ma20_h1 is None:
+            return True
+        gap_h1 = float(ma10_h1) - float(ma20_h1)
+        micro_buffer = 0.00006
+        if action == "OPEN_LONG" and gap_h1 < -micro_buffer:
+            return False
+        if action == "OPEN_SHORT" and gap_h1 > micro_buffer:
+            return False
+        return True
+
+    def _risk_lot(self, sl_pips: float) -> float:
+        if sl_pips <= 0.0:
+            return 0.0
+        risk_amount = self.equity * trend_cfg.RISK_PCT
+        return max(0.0, risk_amount / (sl_pips * 1000.0))
 
     def _apply_partial(
         self, trade_id: str, reduce_units: int, price: float, ts: datetime
@@ -420,6 +583,10 @@ class TrendMAReplayer:
             "exit_price": price,
             "reason": reason,
             "stage_index": trade.get("stage_index", 0),
+            "signal_confidence": trade.get("signal_confidence"),
+            "signal_atr_pips": trade.get("signal_atr_pips"),
+            "signal_gap_pips": trade.get("signal_gap_pips"),
+            "entry_meta": trade.get("entry_meta"),
         }
         self.closed_trades.append(record)
         signed = quantity if trade["units"] > 0 else -quantity
@@ -530,24 +697,32 @@ def main() -> None:
         raise SystemExit(f"No tick files matched pattern: {args.ticks_glob}")
 
     replayer = TrendMAReplayer()
+    replayer.reset()
     all_trades: List[Dict[str, object]] = []
     per_file_summary: Dict[str, Dict[str, object]] = {}
+    per_file_debug: Dict[str, Dict[str, int]] = {}
 
     for path_str in files:
         path = Path(path_str)
         ticks = load_ticks(path)
         if not ticks:
             continue
+        closed_start = len(replayer.closed_trades)
+        debug_start = Counter(replayer.debug_counts)
         replayer.run_on_ticks(ticks)
+        new_trades = replayer.closed_trades[closed_start:]
         trades = [
-            dict(t, source_file=path.name) for t in replayer.closed_trades
+            dict(t, source_file=path.name) for t in new_trades
         ]
         all_trades.extend(trades)
         per_file_summary[path.name] = summarize(trades)
+        debug_delta = Counter(replayer.debug_counts) - debug_start
+        per_file_debug[path.name] = dict(debug_delta)
 
     output = {
         "summary": summarize(all_trades),
         "files": per_file_summary,
+        "debug": per_file_debug,
         "trades": all_trades,
     }
     Path(args.out).write_text(json.dumps(output, indent=2, default=str))

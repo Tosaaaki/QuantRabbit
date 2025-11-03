@@ -23,7 +23,7 @@ def classify(
     Parameters
     ----------
     factors : 指標 dict (calc_core.compute の戻り値)
-    tf: "M1" or "H4"
+    tf: "M1", "H1" or "H4"
     event_mode : 経済指標 30 分前後なら True
 
     Returns

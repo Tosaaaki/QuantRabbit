@@ -44,7 +44,7 @@ if HEDGING_ENABLED:
     logging.info("[ORDER] Hedging mode enabled (positionFill=OPEN_ONLY).")
 
 _LAST_PROTECTIONS: dict[str, Tuple[Optional[float], Optional[float]]] = {}
-MACRO_BE_GRACE_SECONDS = 360
+MACRO_BE_GRACE_SECONDS = 45
 
 # ---------- orders logger (logs/orders.db) ----------
 _ORDERS_DB_PATH = pathlib.Path("logs/orders.db")
@@ -520,9 +520,9 @@ def _macro_partial_profile(
     range_mode: bool,
 ) -> tuple[Tuple[float, float], Tuple[float, float]]:
     if range_mode:
-        return (3.0, 5.2), (0.85, 0.10)
+        return (2.8, 4.6), (0.75, 0.18)
     if not fac_h4:
-        return (3.2, 5.4), (0.85, 0.10)
+        return (3.2, 5.6), (0.78, 0.12)
     adx = float(fac_h4.get("adx", 0.0) or 0.0)
     ma10 = fac_h4.get("ma10", 0.0) or 0.0
     ma20 = fac_h4.get("ma20", 0.0) or 0.0
@@ -531,10 +531,10 @@ def _macro_partial_profile(
     gap_pips = abs(ma10 - ma20) * 100.0
     strength_ratio = gap_pips / atr_pips if atr_pips > 1e-6 else 0.0
     if strength_ratio >= 0.9 or adx >= 28.0:
-        return (3.8, 6.0), (0.90, 0.08)
+        return (4.0, 6.8), (0.85, 0.10)
     if strength_ratio >= 0.6 or adx >= 24.0:
-        return (3.4, 5.6), (0.88, 0.10)
-    return (3.0, 4.8), (0.85, 0.10)
+        return (3.6, 6.2), (0.82, 0.12)
+    return (3.2, 5.2), (0.8, 0.12)
 
 
 def plan_partial_reductions(

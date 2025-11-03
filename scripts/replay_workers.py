@@ -1192,8 +1192,12 @@ def replay_squeeze_break_s5(ticks: List[Tick]) -> Dict[str, object]:
 # ---------------------------------------------------------------------------
 
 
-def replay_impulse_break_s5(ticks: List[Tick]) -> Dict[str, object]:
-    cfg = __import__("workers.impulse_break_s5.config", fromlist=["config"])
+def _replay_impulse_style(
+    ticks: List[Tick],
+    cfg_module: str,
+    tag: str,
+) -> Dict[str, object]:
+    cfg = __import__(cfg_module, fromlist=["config"])
 
     bucket_span = cfg.BUCKET_SECONDS
     trades: List[Dict[str, object]] = []
@@ -1319,8 +1323,11 @@ def replay_impulse_break_s5(ticks: List[Tick]) -> Dict[str, object]:
             breakout_gap = cfg.MIN_BREAKOUT_PIPS * cfg.PIP_VALUE
             retrace_gap = cfg.MIN_RETRACE_GAP_PIPS * cfg.PIP_VALUE
             direction: Optional[str] = None
+            allow_long = getattr(cfg, "ALLOW_LONG", True)
+            allow_short = getattr(cfg, "ALLOW_SHORT", True)
             if (
-                latest["close"] >= recent_high + breakout_gap
+                allow_long
+                and latest["close"] >= recent_high + breakout_gap
                 and fast_z >= cfg.FAST_Z_LONG_MIN
                 and slow_z >= cfg.SLOW_Z_LONG_MIN
                 and (rsi is None or rsi <= cfg.RSI_LONG_MAX)
@@ -1328,7 +1335,8 @@ def replay_impulse_break_s5(ticks: List[Tick]) -> Dict[str, object]:
             ):
                 direction = "long"
             elif (
-                latest["close"] <= recent_low - breakout_gap
+                allow_short
+                and latest["close"] <= recent_low - breakout_gap
                 and fast_z <= cfg.FAST_Z_SHORT_MAX
                 and slow_z <= cfg.SLOW_Z_SHORT_MAX
                 and (rsi is None or rsi >= cfg.RSI_SHORT_MIN)
@@ -1351,7 +1359,7 @@ def replay_impulse_break_s5(ticks: List[Tick]) -> Dict[str, object]:
                 if direction == "long"
                 else entry_price + atr_sl * cfg.PIP_VALUE
             )
-            trade_id = f"impulse-{len(trades)}-{int(tick.epoch)}"
+            trade_id = f"{tag}-{len(trades)}-{int(tick.epoch)}"
             open_trade = {
                 "id": trade_id,
                 "side": direction,
@@ -1394,6 +1402,22 @@ def replay_impulse_break_s5(ticks: List[Tick]) -> Dict[str, object]:
         "win_rate": round(wins / len(trades), 4) if trades else 0.0,
     }
     return {"summary": summary, "trades": trades}
+
+
+def replay_impulse_break_s5(ticks: List[Tick]) -> Dict[str, object]:
+    return _replay_impulse_style(
+        ticks,
+        "workers.impulse_break_s5.config",
+        "impulse",
+    )
+
+
+def replay_impulse_momentum_s5(ticks: List[Tick]) -> Dict[str, object]:
+    return _replay_impulse_style(
+        ticks,
+        "workers.impulse_momentum_s5.config",
+        "impulse-momo",
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -1694,6 +1718,143 @@ def replay_mirror_spike_s5(ticks: List[Tick]) -> Dict[str, object]:
         )
         if trades
         else 0.0,
+    }
+    return {"summary": summary, "trades": trades}
+
+
+def replay_mirror_spike_tight(ticks: List[Tick]) -> Dict[str, object]:
+    cfg = __import__("workers.mirror_spike_tight.config", fromlist=["config"])
+    trades: List[Dict[str, object]] = []
+    open_trade: Optional[Dict[str, object]] = None
+    window: Deque[Tick] = deque(maxlen=max(cfg.MIRROR_LOOKBACK_BUCKETS * 5, 20))
+    cooldown_end = ticks[0].epoch - cfg.COOLDOWN_SEC
+    timeout_sec = 240.0
+    per_day_counts: Dict[str, int] = {}
+
+    for tick in ticks:
+        if cfg.ALLOWED_HOURS_UTC and tick.dt.hour not in cfg.ALLOWED_HOURS_UTC:
+            continue
+        window.append(tick)
+
+        if open_trade:
+            side = open_trade["side"]
+            entry_tick = open_trade["entry_tick"]
+            if side == "long":
+                if tick.bid <= open_trade["sl_price"]:
+                    reason = "sl"
+                elif tick.bid >= open_trade["tp_price"]:
+                    reason = "tp"
+                else:
+                    reason = ""
+            else:
+                if tick.ask >= open_trade["sl_price"]:
+                    reason = "sl"
+                elif tick.ask <= open_trade["tp_price"]:
+                    reason = "tp"
+                else:
+                    reason = ""
+            if not reason and tick.epoch - entry_tick.epoch >= timeout_sec:
+                reason = "timeout"
+            if reason:
+                entry_mid = entry_tick.mid
+                exit_mid = tick.mid
+                pnl = (exit_mid - entry_mid) / cfg.PIP_VALUE
+                if side == "short":
+                    pnl = -pnl
+                trades.append(
+                    {
+                        "direction": side,
+                        "entry_time": entry_tick.dt.isoformat(),
+                        "exit_time": tick.dt.isoformat(),
+                        "entry_price": round(entry_mid, 5),
+                        "exit_price": round(exit_mid, 5),
+                        "tp_price": round(open_trade["tp_price"], 5),
+                        "sl_price": round(open_trade["sl_price"], 5),
+                        "pnl_pips": round(pnl, 3),
+                        "reason": reason,
+                    }
+                )
+                open_trade = None
+                cooldown_end = tick.epoch
+            continue
+
+        day_key = tick.dt.date().isoformat()
+        if cfg.MAX_TRADES_PER_DAY > 0 and per_day_counts.get(day_key, 0) >= cfg.MAX_TRADES_PER_DAY:
+            continue
+
+        if tick.epoch - cooldown_end < cfg.COOLDOWN_SEC:
+            continue
+        if len(window) < cfg.MIRROR_LOOKBACK_BUCKETS:
+            continue
+
+        highs = max(x.mid for x in window)
+        lows = min(x.mid for x in window)
+        range_pips = (highs - lows) / cfg.PIP_VALUE
+        if range_pips < cfg.SPIKE_THRESHOLD_PIPS:
+            continue
+
+        upper_trigger = highs - cfg.CONFIRM_RANGE_PIPS * cfg.PIP_VALUE
+        lower_trigger = lows + cfg.CONFIRM_RANGE_PIPS * cfg.PIP_VALUE
+        side: Optional[str] = None
+        if tick.mid >= upper_trigger:
+            side = "short"
+        elif tick.mid <= lower_trigger:
+            side = "long"
+        if side is None:
+            continue
+
+        slope = (window[-1].mid - window[0].mid) / cfg.PIP_VALUE
+        if side == "long" and slope < cfg.TREND_SLOPE_MIN_PIPS:
+            continue
+        if side == "short" and -slope < cfg.TREND_SLOPE_MIN_PIPS:
+            continue
+
+        entry_price = tick.ask if side == "long" else tick.bid
+        tp_price = (
+            entry_price + cfg.TP_PIPS * cfg.PIP_VALUE
+            if side == "long"
+            else entry_price - cfg.TP_PIPS * cfg.PIP_VALUE
+        )
+        sl_price = (
+            entry_price - cfg.SL_PIPS * cfg.PIP_VALUE
+            if side == "long"
+            else entry_price + cfg.SL_PIPS * cfg.PIP_VALUE
+        )
+        open_trade = {
+            "side": side,
+            "entry_tick": tick,
+            "tp_price": tp_price,
+            "sl_price": sl_price,
+        }
+        per_day_counts[day_key] = per_day_counts.get(day_key, 0) + 1
+
+    if open_trade:
+        exit_tick = ticks[-1]
+        entry_mid = open_trade["entry_tick"].mid
+        pnl = (exit_tick.mid - entry_mid) / cfg.PIP_VALUE
+        if open_trade["side"] == "short":
+            pnl = -pnl
+        trades.append(
+            {
+                "direction": open_trade["side"],
+                "entry_time": open_trade["entry_tick"].dt.isoformat(),
+                "exit_time": exit_tick.dt.isoformat(),
+                "entry_price": round(entry_mid, 5),
+                "exit_price": round(exit_tick.mid, 5),
+                "tp_price": round(open_trade["tp_price"], 5),
+                "sl_price": round(open_trade["sl_price"], 5),
+                "pnl_pips": round(pnl, 3),
+                "reason": "eod",
+            }
+        )
+
+    total_pnl = sum(t["pnl_pips"] for t in trades)
+    wins = sum(1 for t in trades if t["pnl_pips"] > 0)
+    summary = {
+        "trades": len(trades),
+        "total_pnl_pips": round(total_pnl, 3),
+        "total_pnl_jpy": round(total_pnl * 100, 3),
+        "win_rate": round(wins / len(trades), 4) if trades else 0.0,
     }
     return {"summary": summary, "trades": trades}
 
@@ -2079,9 +2240,11 @@ def main() -> None:
             "pullback_s5",
             "vwap_magnet_s5",
             "impulse_break_s5",
+            "impulse_momentum_s5",
             "squeeze_break_s5",
             "impulse_retest_s5",
             "mirror_spike_s5",
+            "mirror_spike_tight",
             "pullback_scalp",
             "mirror_spike",
             "scalp_exit",
@@ -2283,12 +2446,16 @@ def main() -> None:
         result = replay_vwap_magnet_s5(ticks)
     elif args.worker == "impulse_break_s5":
         result = replay_impulse_break_s5(ticks)
+    elif args.worker == "impulse_momentum_s5":
+        result = replay_impulse_momentum_s5(ticks)
     elif args.worker == "squeeze_break_s5":
         result = replay_squeeze_break_s5(ticks)
     elif args.worker == "impulse_retest_s5":
         result = replay_impulse_retest_s5(ticks)
     elif args.worker == "mirror_spike_s5":
         result = replay_mirror_spike_s5(ticks)
+    elif args.worker == "mirror_spike_tight":
+        result = replay_mirror_spike_tight(ticks)
     elif args.worker == "pullback_scalp":
         result = replay_pullback_scalp(ticks)
     elif args.worker == "mirror_spike":

@@ -29,7 +29,7 @@ class ExitManager:
         self.confidence_threshold = confidence_threshold
         self._macro_signal_threshold = max(confidence_threshold + 10, 80)
         self._macro_trend_adx = 16
-        self._macro_loss_buffer = 0.8
+        self._macro_loss_buffer = 0.85
         self._macro_ma_gap = 3.0
         # Macro-specific stability controls
         self._macro_min_hold_minutes = 4.0  # minimum age before acting on reversals
@@ -155,6 +155,13 @@ class ExitManager:
             return best
         return None
 
+    def _macro_loss_cap(self, atr_pips: float, matured: bool) -> float:
+        atr_ref = float(atr_pips or 0.0)
+        if atr_ref <= 0.0:
+            atr_ref = 8.0
+        value = atr_ref * (0.16 if matured else 0.12)
+        return max(1.6, min(2.6, value))
+
     def _evaluate_long(
         self,
         pocket: str,
@@ -198,28 +205,31 @@ class ExitManager:
         )
         macd_cross_minutes = self._macd_cross_minutes(projection_fast, "long")
 
-        if (
-            reverse_signal
-            and pocket == "macro"
-            and profit_pips >= 4.0
-            and close_price is not None
-            and ema20 is not None
-            and close_price >= ema20 + 0.002
-        ):
+        matured_macro = False
+        loss_cap = None
+        if pocket == "macro":
             if (
-                adx >= self._macro_trend_adx + 4
-                or ma_gap_pips <= self._macro_ma_gap
-                or slope_support
-                or cross_support
+                reverse_signal
+                and profit_pips >= 4.0
+                and close_price is not None
+                and ema20 is not None
+                and close_price >= ema20 + 0.002
             ):
-                reverse_signal = None
+                if (
+                    adx >= self._macro_trend_adx + 4
+                    or ma_gap_pips <= self._macro_ma_gap
+                    or slope_support
+                    or cross_support
+                ):
+                    reverse_signal = None
+            matured_macro = self._has_mature_trade(
+                open_info, "long", now, self._macro_min_hold_minutes
+            )
+            loss_cap = self._macro_loss_cap(atr_pips, matured_macro)
 
         # Do not act on fresh macro trades unless conditions are clearly adverse
         if reverse_signal and pocket == "macro" and not range_mode:
-            is_mature = self._has_mature_trade(
-                open_info, "long", now, self._macro_min_hold_minutes
-            )
-            if not is_mature:
+            if not matured_macro:
                 early_exit_ok = (
                     profit_pips <= -self._macro_loss_buffer
                     or (
@@ -264,6 +274,8 @@ class ExitManager:
             reason = "trend_reversal"
         elif pocket == "scalp" and close_price > ema20:
             reason = "scalp_momentum_flip"
+        elif pocket == "macro" and loss_cap is not None and profit_pips <= -loss_cap:
+            reason = "macro_loss_cap"
         elif (
             pocket == "macro"
             and avg_price
@@ -283,6 +295,7 @@ class ExitManager:
             profit_pips,
             now,
             macd_cross_minutes,
+            atr_pips,
         ):
             reason = "ma_cross_imminent"
         elif (
@@ -366,21 +379,27 @@ class ExitManager:
         )
         macd_cross_minutes = self._macd_cross_minutes(projection_fast, "short")
 
-        if (
-            reverse_signal
-            and pocket == "macro"
-            and profit_pips >= 4.0
-            and close_price is not None
-            and ema20 is not None
-            and close_price <= ema20 - 0.002
-        ):
+        matured_macro = False
+        loss_cap = None
+        if pocket == "macro":
             if (
-                adx >= self._macro_trend_adx + 4
-                or ma_gap_pips <= self._macro_ma_gap
-                or slope_support
-                or cross_support
+                reverse_signal
+                and profit_pips >= 4.0
+                and close_price is not None
+                and ema20 is not None
+                and close_price <= ema20 - 0.002
             ):
-                reverse_signal = None
+                if (
+                    adx >= self._macro_trend_adx + 4
+                    or ma_gap_pips <= self._macro_ma_gap
+                    or slope_support
+                    or cross_support
+                ):
+                    reverse_signal = None
+            matured_macro = self._has_mature_trade(
+                open_info, "short", now, self._macro_min_hold_minutes
+            )
+            loss_cap = self._macro_loss_cap(atr_pips, matured_macro)
 
         if (
             pocket == "micro"
@@ -425,6 +444,8 @@ class ExitManager:
             and ma_gap_pips >= self._macro_ma_gap
         ):
             reason = "trend_reversal"
+        elif pocket == "macro" and loss_cap is not None and profit_pips <= -loss_cap:
+            reason = "macro_loss_cap"
         elif pocket == "scalp" and close_price < ema20:
             reason = "scalp_momentum_flip"
         elif (
@@ -445,6 +466,7 @@ class ExitManager:
             profit_pips,
             now,
             macd_cross_minutes,
+            atr_pips,
         ):
             reason = "ma_cross_imminent"
         # レンジ中でもマクロの既存建玉を一律にクローズしない。
@@ -495,6 +517,7 @@ class ExitManager:
         profit_pips: float,
         now: datetime,
         macd_cross_minutes: Optional[float],
+        atr_pips: float,
     ) -> bool:
         projection = projection_fast or projection_primary
         if projection is None:
@@ -506,15 +529,6 @@ class ExitManager:
         if side == "short" and gap > 0.0:
             return True
 
-        candidates: List[float] = []
-        if projection.projected_cross_minutes is not None:
-            candidates.append(projection.projected_cross_minutes)
-        if macd_cross_minutes is not None:
-            candidates.append(macd_cross_minutes)
-        if not candidates:
-            return False
-        cross_minutes = min(candidates)
-
         slope_source = projection_fast or projection_primary
         slope = slope_source.gap_slope_pips if slope_source else 0.0
         if macd_cross_minutes is None:
@@ -524,24 +538,62 @@ class ExitManager:
                 return False
 
         threshold = 3.5
+        matured = False
+        loss_guard = 0.0
+        small_profit_guard = 0.0
         if pocket == "macro":
-            threshold = 9.0
-            if not self._has_mature_trade(open_info, side, now, self._macro_min_hold_minutes):
-                threshold = 5.0
+            matured = self._has_mature_trade(
+                open_info, side, now, self._macro_min_hold_minutes
+            )
+            threshold = 7.0 if matured else 4.8
+            atr_ref = float(atr_pips or 0.0)
+            if atr_ref <= 0.0:
+                atr_ref = 8.0
+            loss_guard = atr_ref * (0.16 if matured else 0.12)
+            loss_guard = max(0.9, min(1.8, loss_guard))
+            small_profit_guard = max(0.5, min(1.4, loss_guard * 0.75))
         elif pocket == "scalp":
             threshold = 2.2
 
+        candidates: List[float] = []
+        if projection.projected_cross_minutes is not None:
+            candidates.append(projection.projected_cross_minutes)
+        if macd_cross_minutes is not None:
+            candidates.append(macd_cross_minutes)
+        if not candidates:
+            if pocket == "macro":
+                if profit_pips <= -loss_guard or profit_pips <= small_profit_guard:
+                    return True
+            return False
+        cross_minutes = min(candidates)
+
         if cross_minutes > threshold:
+            if pocket == "macro" and (
+                profit_pips <= -loss_guard or profit_pips <= small_profit_guard
+            ):
+                return True
             return False
 
         if pocket == "macro":
-            return profit_pips <= -6.0
+            if not matured:
+                return profit_pips <= -(loss_guard * 1.1)
+            if profit_pips <= -loss_guard:
+                return True
+            if profit_pips <= small_profit_guard:
+                return True
+            return False
 
         if profit_pips >= 0.8:
             return True
+        if pocket == "macro" and not matured and cross_minutes <= threshold / 2.0:
+            return False
         if cross_minutes <= threshold / 2.0:
             return True
-        if macd_cross_minutes is not None and macd_cross_minutes <= threshold / 2.0:
+        if (
+            macd_cross_minutes is not None
+            and macd_cross_minutes <= threshold / 2.0
+            and not (pocket == "macro" and not matured)
+        ):
             return True
         return False
 

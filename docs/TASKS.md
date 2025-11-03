@@ -53,6 +53,48 @@
     - main.py での起動・設定導線を追加
   Notes:
     - 既存のTrendMAロジックを再利用し、シンプルなステージ配分で初期運用
+    - リプレイ実行例: `python3 scripts/replay_trendma.py --ticks-glob 'tmp/ticks_USDJPY_202510*.jsonl' --out tmp/replay_trend_h1.json`
+    - 上記データセットで +4.4pips / 3 trades（win率 66.7%）を確認
+
+- [ ] ID: T-20251104-001
+  Title: Impulse Momentum S5 派生ワーカーの実装
+  Status: todo
+  Priority: P1
+  Owner: tossaki
+  Scope/Paths: workers/impulse_momentum_s5/, main.py, scripts/replay_workers.py, docs/TASKS.md
+  Context: impulse_break_s5 の好成績部分（強トレンド＋瞬間変動）を抽出した派生ワーカーで期待値を引き上げる
+  Acceptance:
+    - impulse_momentum_s5 の config/worker が追加され、環境変数で ON/OFF 可能
+    - main.py から起動され、PositionManager/Risk/Exit 連携が整合
+    - 瞬間変動・スプレッド・方向整合ガードが実装され、RR>1 の利確/損切りが設定されている
+    - scripts/replay_workers.py で実ティックリプレイが可能になり、10月データで検証ログを取得
+  Plan:
+    - config.py を作成し、時間帯・瞬間変動・トレンド整合のデフォルト値を定義
+    - worker.py を実装し、単段エントリ＋BE/トレール制御を組み込む
+    - main.py にワーカー起動ルートと環境変数を追加
+    - リプレイスクリプトに worker 名を追加し、実ティックで検証
+  Notes:
+    - 曜日フィルタは導入せず、ボラティリティとレジーム整合で制御する
+
+- [ ] ID: T-20251104-002
+  Title: Mirror Spike Tight 派生ワーカーの実装
+  Status: todo
+  Priority: P2
+  Owner: tossaki
+  Scope/Paths: workers/mirror_spike_tight/, main.py, scripts/replay_workers.py, docs/TASKS.md
+  Context: mirror_spike_s5 の薄利傾向を、トレンド整合＋高ボラ条件のみで狙う派生を作り平均損益を改善
+  Acceptance:
+    - mirror_spike_tight の config/worker が追加され、stage=1 固定で RR>1 設定
+    - H1/M1 トレンド整合と瞬間変動・スプレッド閾値ガードが組み込まれている
+    - main.py から起動制御でき、env で切替可能
+    - リプレイスクリプトで再生でき、10月実ティックで検証結果を得る
+  Plan:
+    - config.py にガード閾値とステージ設定を定義
+    - worker.py を実装し、条件を満たす高精度スパイクのみエントリ
+    - main.py に登録し、環境変数フラグを追加
+    - scripts/replay_workers.py に worker 名を追加し、実ティックでA/B検証
+  Notes:
+    - ステージ拡張やナンピンは許可せず、BE移行と部分利確を組み合わせる
 
 ## Archive
 

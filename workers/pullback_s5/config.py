@@ -171,7 +171,8 @@ LOSS_STREAK_COOLDOWN_MIN: float = max(
     0.0, _float("PULLBACK_S5_LOSS_COOLDOWN_MIN", 20.0)
 )
 
-SPREAD_P50_LIMIT: float = max(0.0, _float("PULLBACK_S5_SPREAD_P50_LIMIT", 0.18))
+# Tokyo時間帯は板スプレッドが0.8p付近で推移するため、既定を広げて環境ガードを通過しやすくする
+SPREAD_P50_LIMIT: float = max(0.0, _float("PULLBACK_S5_SPREAD_P50_LIMIT", 0.9))
 RETURN_WINDOW_SEC: float = max(5.0, _float("PULLBACK_S5_RETURN_WINDOW_SEC", 18.0))
 RETURN_PIPS_LIMIT: float = max(0.0, _float("PULLBACK_S5_RETURN_PIPS_LIMIT", 1.2))
 INSTANT_MOVE_PIPS_LIMIT: float = max(0.0, _float("PULLBACK_S5_INSTANT_MOVE_PIPS_LIMIT", 0.8))

@@ -183,6 +183,10 @@ if __name__ == "__main__":
         print("--- M1 Candle ---")
         pprint.pprint(c)
 
+    async def debug_h1_candle(c):
+        print("--- H1 Candle ---")
+        pprint.pprint(c)
+
     async def debug_h4_candle(c):
         print("--- H4 Candle ---")
         pprint.pprint(c)
@@ -190,6 +194,7 @@ if __name__ == "__main__":
     try:
         handlers_to_run = [
             ("M1", debug_m1_candle),
+            ("H1", debug_h1_candle),
             ("H4", debug_h4_candle),
         ]
         asyncio.run(start_candle_stream("USD_JPY", handlers_to_run))

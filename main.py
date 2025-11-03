@@ -62,9 +62,15 @@ from utils.market_hours import is_market_open
 import workers.vwap_magnet_s5.config as vwap_magnet_s5_config
 import workers.squeeze_break_s5.config as squeeze_break_s5_config
 import workers.impulse_retest_s5.config as impulse_retest_s5_config
+import workers.impulse_momentum_s5.config as impulse_momentum_s5_config
+import workers.trend_h1.config as trend_h1_config
+import workers.mirror_spike_tight.config as mirror_spike_tight_config
 from workers.vwap_magnet_s5 import vwap_magnet_s5_worker
 from workers.squeeze_break_s5 import squeeze_break_s5_worker
 from workers.impulse_retest_s5 import impulse_retest_s5_worker
+from workers.impulse_momentum_s5 import impulse_momentum_s5_worker
+from workers.mirror_spike_tight import mirror_spike_tight_worker
+from workers.trend_h1 import trend_h1_worker
 
 # Configure logging
 logging.basicConfig(
@@ -128,12 +134,12 @@ FALLBACK_EQUITY = 10000.0  # REST失敗時のフォールバック
 
 STAGE_RATIOS = {
     # Fractions per stage sum to <=1.0 so pocket lot can deploy gradually.
-    "macro": (0.30,),
+    "macro": (0.35,),
     "micro": (0.22, 0.18, 0.16, 0.14, 0.12, 0.08, 0.05, 0.05),
     "scalp": (0.5, 0.3, 0.15, 0.05),
 }
 
-MACRO_MAX_TOTAL_LOT = 0.0035
+MACRO_MAX_TOTAL_LOT = 0.003
 MACRO_MIN_TOTAL_LOT = 0.001
 
 MIN_SCALP_STAGE_LOT = 0.01  # 1000 units baseline so micro/macro bias does not null scalps
@@ -543,8 +549,16 @@ def _macro_direction_allowed(
 ) -> bool:
     ma10_h4 = fac_h4.get("ma10")
     ma20_h4 = fac_h4.get("ma20")
+    atr_h4 = fac_h4.get("atr")
+    adx_h4 = fac_h4.get("adx")
     if ma10_h4 is None or ma20_h4 is None:
         return True
+    if adx_h4 is not None and adx_h4 < 18.0:
+        return False
+    if atr_h4:
+        gap_ratio = abs(ma10_h4 - ma20_h4) / max(atr_h4, 1e-6)
+        if gap_ratio < 0.25:
+            return False
     close_m1 = fac_m1.get("close")
     ema20_m1 = fac_m1.get("ema20") or fac_m1.get("ma20")
     if close_m1 is None or ema20_m1 is None:
@@ -1853,8 +1867,13 @@ async def main():
         (vwap_magnet_s5_config.ENABLED, vwap_magnet_s5_worker, vwap_magnet_s5_config.LOG_PREFIX),
         (squeeze_break_s5_config.ENABLED, squeeze_break_s5_worker, squeeze_break_s5_config.LOG_PREFIX),
         (impulse_retest_s5_config.ENABLED, impulse_retest_s5_worker, impulse_retest_s5_config.LOG_PREFIX),
+        (impulse_momentum_s5_config.ENABLED, impulse_momentum_s5_worker, impulse_momentum_s5_config.LOG_PREFIX),
+        (mirror_spike_tight_config.ENABLED, mirror_spike_tight_worker, mirror_spike_tight_config.LOG_PREFIX),
     ]
-    for enabled, worker_fn, prefix in scalp_workers:
+    macro_workers = [
+        (trend_h1_config.ENABLED, trend_h1_worker, trend_h1_config.LOG_PREFIX),
+    ]
+    for enabled, worker_fn, prefix in scalp_workers + macro_workers:
         if enabled:
             logging.info("%s bootstrapping worker loop", prefix)
             tasks.append(worker_fn())
