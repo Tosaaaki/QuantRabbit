@@ -22,6 +22,10 @@ from analysis.gpt_decider import get_decision
 from analysis.perf_monitor import snapshot as get_perf
 from analysis.summary_ingestor import check_event_soon, get_latest_news
 from analysis.macro_state import MacroState
+try:
+    from analysis.kaizen import audit_loop as kaizen_loop  # type: ignore
+except ModuleNotFoundError:
+    kaizen_loop = None
 # バックグラウンドでニュース取得と要約を実行するためのインポート
 from market_data.news_fetcher import fetch_loop as news_fetch_loop
 from analysis.summary_ingestor import ingest_loop as summary_ingest_loop
@@ -1894,6 +1898,11 @@ async def main():
         news_fetch_loop(),
         summary_ingest_loop(),
     ]
+    if kaizen_loop is not None:
+        logging.info("[KAIZEN] audit loop enabled")
+        tasks.append(kaizen_loop())
+    else:
+        logging.info("[KAIZEN] audit loop unavailable (module not found)")
     scalp_workers = [
         (vwap_magnet_s5_config.ENABLED, vwap_magnet_s5_worker, vwap_magnet_s5_config.LOG_PREFIX),
         (squeeze_break_s5_config.ENABLED, squeeze_break_s5_worker, squeeze_break_s5_config.LOG_PREFIX),
