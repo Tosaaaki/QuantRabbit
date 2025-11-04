@@ -531,10 +531,10 @@ def _macro_partial_profile(
     gap_pips = abs(ma10 - ma20) * 100.0
     strength_ratio = gap_pips / atr_pips if atr_pips > 1e-6 else 0.0
     if strength_ratio >= 0.9 or adx >= 28.0:
-        return (4.0, 6.8), (0.85, 0.10)
+        return (4.0, 6.8), (0.95, 0.05)
     if strength_ratio >= 0.6 or adx >= 24.0:
-        return (3.6, 6.2), (0.82, 0.12)
-    return (3.2, 5.2), (0.8, 0.12)
+        return (3.6, 6.2), (0.92, 0.06)
+    return (3.2, 5.2), (0.9, 0.08)
 
 
 def plan_partial_reductions(
