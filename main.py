@@ -866,6 +866,7 @@ async def logic_loop():
     perf_cache = {}
     news_cache = {}
     insight = InsightClient()
+    missing_factor_cycles = 0
     last_update_time = datetime.datetime.min
     last_heartbeat_time = datetime.datetime.min  # Add this line
     last_metrics_refresh = datetime.datetime.min
@@ -924,9 +925,21 @@ async def logic_loop():
                 or not fac_m1.get("close")
                 or not fac_h4.get("close")
             ):
-                logging.info("[WAIT] Waiting for M1/H4 factor data for trading logic...")
+                missing_factor_cycles += 1
+                if missing_factor_cycles % 12 == 0:
+                    logging.warning(
+                        "[WAIT] Factor data unavailable for %d cycles; reloading history.",
+                        missing_factor_cycles,
+                    )
+                    try:
+                        await initialize_history(TARGET_INSTRUMENT)
+                    except Exception as exc:  # pragma: no cover - defensive
+                        logging.warning("[WAIT] initialize_history retry failed: %s", exc)
+                else:
+                    logging.info("[WAIT] Waiting for M1/H4 factor data for trading logic...")
                 await asyncio.sleep(5)
                 continue
+            missing_factor_cycles = 0
 
             macro_state = _refresh_macro_state()
             event_soon = check_event_soon(within_minutes=30, min_impact=3)
