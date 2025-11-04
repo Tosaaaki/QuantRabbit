@@ -39,8 +39,16 @@ ui-dashboard-sa.json
 .cache/
 .gcloud/
 remote_logs_vm/
+remote_logs/
+remote_logs_current/
+remote_logs_long/
+remote_tmp/
 tmp/
 summaries/
 .google-cloud-sdk/
 trades*.db
 config/env.local.toml
+
+# Ad-hoc local artifacts
+pipeline.log
+tick_sample.json
