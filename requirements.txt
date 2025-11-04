@@ -5,7 +5,6 @@ pytest==8.3.2            # tests
 pytest-asyncio==0.23.8   # async tests (future use)
 pandas==2.2.3
 numpy==1.24.4
-pandas_ta
 websockets==12.0
 apscheduler==3.10.4
 PyYAML==6.0.1

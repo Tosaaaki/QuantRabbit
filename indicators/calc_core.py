@@ -2,91 +2,172 @@
 indicators.calc_core
 ~~~~~~~~~~~~~~~~~~~~
 
-ta‑lib をラップし、DataFrame（open/high/low/close）から
-主要テクニカル指標を 1 行 dict で返すエンジン。
-
-・終値ベース SMA10/20, EMA20
-・RSI14, ATR14, ADX14
-・Bollinger 幅 (upper-lower)/middle
+ローソク足 DataFrame（open/high/low/close）から主要テクニカル指標を算出する。
+外部依存に頼らず pandas だけで再計算する実装。
 """
 
 from __future__ import annotations
+
 from typing import Dict
 
+import numpy as np
 import pandas as pd
-import pandas_ta  # noqa: F401 -- pandasの .ta アクセサを有効化
+
+
+def _ensure_length(series: pd.Series, length: int) -> bool:
+    return len(series.dropna()) >= length
+
+
+def _sma(series: pd.Series, length: int) -> float:
+    if not _ensure_length(series, length):
+        return 0.0
+    return float(series.rolling(window=length).mean().iloc[-1])
+
+
+def _ema(series: pd.Series, span: int) -> float:
+    if not _ensure_length(series, span):
+        return 0.0
+    return float(series.ewm(span=span, adjust=False).mean().iloc[-1])
+
+
+def _rsi(series: pd.Series, period: int) -> float:
+    if not _ensure_length(series, period + 1):
+        return 0.0
+    delta = series.diff()
+    gain = delta.clip(lower=0.0)
+    loss = -delta.clip(upper=0.0)
+    avg_gain = gain.rolling(window=period, min_periods=period).mean()
+    avg_loss = loss.rolling(window=period, min_periods=period).mean()
+    if avg_loss.iloc[-1] == 0:
+        return 100.0
+    rs = avg_gain.iloc[-1] / avg_loss.iloc[-1]
+    return float(100.0 - (100.0 / (1.0 + rs)))
+
+
+def _atr(high: pd.Series, low: pd.Series, close: pd.Series, period: int) -> float:
+    if len(close) < period + 1:
+        return 0.0
+    prev_close = close.shift(1)
+    tr = pd.concat(
+        [
+            (high - low),
+            (high - prev_close).abs(),
+            (low - prev_close).abs(),
+        ],
+        axis=1,
+    ).max(axis=1)
+    atr = tr.rolling(window=period, min_periods=period).mean()
+    return float(atr.iloc[-1])
+
+
+def _adx(high: pd.Series, low: pd.Series, close: pd.Series, period: int) -> float:
+    if len(close) < period * 2:
+        return 0.0
+
+    up_move = high.diff()
+    down_move = -low.diff()
+
+    plus_dm = np.where((up_move > down_move) & (up_move > 0), up_move, 0.0)
+    minus_dm = np.where((down_move > up_move) & (down_move > 0), down_move, 0.0)
+
+    prev_close = close.shift(1)
+    tr = pd.concat(
+        [
+            (high - low),
+            (high - prev_close).abs(),
+            (low - prev_close).abs(),
+        ],
+        axis=1,
+    ).max(axis=1)
+
+    atr = pd.Series(tr).rolling(window=period, min_periods=period).mean()
+    atr = atr.replace(0, np.nan)
+
+    plus_di = 100 * pd.Series(plus_dm).rolling(window=period, min_periods=period).mean() / atr
+    minus_di = 100 * pd.Series(minus_dm).rolling(window=period, min_periods=period).mean() / atr
+
+    dx = (plus_di - minus_di).abs() / (plus_di + minus_di)
+    dx = dx.replace([np.inf, -np.inf], np.nan).fillna(0.0) * 100
+
+    adx = dx.rolling(window=period, min_periods=period).mean()
+    return float(adx.iloc[-1]) if not adx.empty else 0.0
+
+
+def _bollinger_width(series: pd.Series, length: int, std_mult: float) -> tuple[float, float, float, float]:
+    if not _ensure_length(series, length):
+        return 0.0, 0.0, 0.0, 0.0
+    middle = series.rolling(window=length).mean().iloc[-1]
+    std = series.rolling(window=length).std(ddof=0).iloc[-1]
+    upper = middle + std_mult * std
+    lower = middle - std_mult * std
+    bbw = float((upper - lower) / middle) if middle else 0.0
+    return float(upper), float(middle), float(lower), bbw
+
+
+def _macd(series: pd.Series, fast: int, slow: int, signal: int) -> tuple[float, float, float]:
+    if len(series.dropna()) < slow:
+        return 0.0, 0.0, 0.0
+    ema_fast = series.ewm(span=fast, adjust=False).mean()
+    ema_slow = series.ewm(span=slow, adjust=False).mean()
+    macd_line = ema_fast - ema_slow
+    signal_line = macd_line.ewm(span=signal, adjust=False).mean()
+    hist = macd_line - signal_line
+    return (
+        float(macd_line.iloc[-1]),
+        float(signal_line.iloc[-1]),
+        float(hist.iloc[-1]),
+    )
 
 
 class IndicatorEngine:
-    """ローソク足 DataFrame から指標を計算."""
+    """ローソク足 DataFrame から指標を計算するユーティリティ."""
 
     @staticmethod
     def compute(df: pd.DataFrame) -> Dict[str, float]:
-        """
-        Parameters
-        ----------
-        df :  columns = ['open','high','low','close']
-              index は時間順 (昇順)
-
-        Returns
-        -------
-        Dict[str, float]
-            {
-              "ma10": 157.25,
-              "ma20": ...,
-              "ema20": ...,
-              "rsi":  63.2,
-              "atr":  0.35,
-              "adx":  28.4,
-              "bbw":  0.26
+        if df.empty:
+            return {
+                "ma10": 0.0,
+                "ma20": 0.0,
+                "ema20": 0.0,
+                "rsi": 0.0,
+                "atr": 0.0,
+                "adx": 0.0,
+                "bbw": 0.0,
+                "macd": 0.0,
+                "macd_signal": 0.0,
+                "macd_hist": 0.0,
             }
-        """
-        # pandas_ta は DataFrame に直接アクセスできる
-        # df.ta.sma() のように呼び出す
-        df.ta.sma(length=10, append=True)
-        df.ta.sma(length=20, append=True)
-        df.ta.ema(length=20, append=True)
-        df.ta.rsi(length=14, append=True)
-        df.ta.atr(length=14, append=True)
-        df.ta.adx(length=14, append=True)
-        df.ta.bbands(length=20, std=2, append=True)
-        # MACD (12, 26, 9)
-        df.ta.macd(append=True)
 
-        out: Dict[str, float] = {}
+        df = df.astype(float).copy()
+        closes = df["close"]
+        highs = df["high"]
+        lows = df["low"]
 
-        # 最新の値を抽出
-        out["ma10"] = df["SMA_10"].iloc[-1]
-        out["ma20"] = df["SMA_20"].iloc[-1]
-        out["ema20"] = df["EMA_20"].iloc[-1]
+        ma10 = _sma(closes, 10)
+        ma20 = _sma(closes, 20)
+        ema20 = _ema(closes, 20)
+        rsi = _rsi(closes, 14)
+        atr = _atr(highs, lows, closes, 14)
+        adx = _adx(highs, lows, closes, 14)
+        upper, middle, lower, bbw = _bollinger_width(closes, 20, 2.0)
+        macd_line, macd_signal, macd_hist = _macd(closes, 12, 26, 9)
 
-        out["rsi"] = df["RSI_14"].iloc[-1]
-        # pandas_ta v0.3.14b0 では ATR_14 -> ATRr_14 に名称変更された
-        atr_col_name = "ATRr_14" if "ATRr_14" in df.columns else "ATR_14"
-        out["atr"] = df[atr_col_name].iloc[-1]
-        out["adx"] = df["ADX_14"].iloc[-1]
+        out: Dict[str, float] = {
+            "ma10": ma10,
+            "ma20": ma20,
+            "ema20": ema20,
+            "rsi": rsi,
+            "atr": atr,
+            "adx": adx,
+            "bbw": bbw,
+            "macd": macd_line,
+            "macd_signal": macd_signal,
+            "macd_hist": macd_hist,
+        }
 
-        # MACD 指標
-        macd_col = "MACD_12_26_9"
-        macds_col = "MACDs_12_26_9"  # signal
-        macdh_col = "MACDh_12_26_9"   # histogram
-        out["macd"] = float(df[macd_col].iloc[-1]) if macd_col in df.columns else 0.0
-        out["macd_signal"] = float(df[macds_col].iloc[-1]) if macds_col in df.columns else 0.0
-        out["macd_hist"] = float(df[macdh_col].iloc[-1]) if macdh_col in df.columns else 0.0
-
-        # Bollinger Bands の計算
-        upper = df["BBU_20_2.0"].iloc[-1]
-        middle = df["BBM_20_2.0"].iloc[-1]
-        lower = df["BBL_20_2.0"].iloc[-1]
-
-        if middle != 0:
-            out["bbw"] = float((upper - lower) / middle)
-        else:
-            out["bbw"] = 0.0
-
-        # 数値が nan の場合は 0.0 で埋める
+        # fallback for NaNs
         for k, v in out.items():
-            if pd.isna(v):
+            if pd.isna(v) or np.isinf(v):
                 out[k] = 0.0
 
         return out
