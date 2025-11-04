@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import datetime
 from collections import defaultdict
+import logging
 from typing import Awaitable, Callable, Dict, List, Literal, Tuple
 
 import httpx
@@ -143,7 +144,10 @@ async def fetch_historical_candles(
             r = await client.get(url, headers=HEADERS, params=params, timeout=7)
             r.raise_for_status()
             data = r.json()
-    except Exception:
+    except Exception as exc:
+        logging.warning(
+            "[HISTORY] failed to fetch %s %s candles: %s", instrument, granularity, exc
+        )
         return []
 
     out: List[Candle] = []
@@ -165,13 +169,47 @@ async def fetch_historical_candles(
 
 
 async def initialize_history(instrument: str):
-    """起動時に過去ローソクを取得し factor_cache を埋める"""
+    """起動時に過去ローソクを取得し factor_cache を埋める。
+
+    ネットワーク断や API 失敗を考慮し、一定回数リトライして最低限の本数を確保する。
+    """
     from indicators.factor_cache import on_candle
 
+    min_required = {"M1": 60, "H1": 60, "H4": 40}
+    max_attempts = 6
+    base_delay = 2.0
+
     for tf in ("M1", "H1", "H4"):
-        candles = await fetch_historical_candles(instrument, tf, 20)
-        for c in candles:
-            await on_candle(tf, c)
+        required = max(20, min_required.get(tf, 20))
+        attempts = 0
+        while True:
+            attempts += 1
+            candles = await fetch_historical_candles(instrument, tf, required)
+            if len(candles) >= 20:
+                for c in candles:
+                    await on_candle(tf, c)
+                logging.info(
+                    "[HISTORY] Seeded %s %s timeframe with %d candles (attempt %d).",
+                    instrument,
+                    tf,
+                    len(candles),
+                    attempts,
+                )
+                break
+
+            logging.warning(
+                "[HISTORY] Insufficient %s %s candles (got %d, need >=20) attempt %d/%d.",
+                instrument,
+                tf,
+                len(candles),
+                attempts,
+                max_attempts,
+            )
+            if attempts >= max_attempts:
+                raise RuntimeError(
+                    f"Failed to seed {tf} history for {instrument} after {max_attempts} attempts"
+                )
+            await asyncio.sleep(min(30.0, base_delay * attempts))
 
 
 # ---------- self test ----------

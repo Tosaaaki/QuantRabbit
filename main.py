@@ -118,6 +118,79 @@ POCKET_LOSS_COOLDOWNS = {
     "scalp": 360,
 }
 
+# Manual-trade guard: by default, do not let the bot exit or partially close
+# trades that were entered manually (i.e. trades without a QuantRabbit
+# clientOrderID like "qr-..."). This only affects exit/partial logic and
+# dynamic protection updates; exposure accounting still includes all trades.
+_IGNORE_MANUAL_TRADES = os.getenv("IGNORE_MANUAL_TRADES", "true").strip().lower() in {
+    "1",
+    "true",
+    "yes",
+    "on",
+}
+
+
+def _filter_positions_to_managed(open_positions: dict) -> dict:
+    """Return a copy of positions that includes only bot-managed trades.
+
+    A bot-managed trade is identified by client_id starting with "qr-".
+    Pockets with no remaining managed trades are omitted. The special
+    "__net__" bucket is not included in the filtered view because exit
+    decisions operate per-pocket and per-trade.
+    """
+    if not _IGNORE_MANUAL_TRADES:
+        return open_positions
+    managed: dict = {}
+    for pocket, info in (open_positions or {}).items():
+        if pocket == "__net__":
+            # Exclude from filtered view used for exits; exposure is handled
+            # separately using the unfiltered positions.
+            continue
+        trades = list((info or {}).get("open_trades") or [])
+        kept = [
+            tr
+            for tr in trades
+            if str(tr.get("client_id") or "").startswith("qr-")
+        ]
+        if not kept:
+            continue
+        # Re-aggregate pocket stats based on kept trades
+        long_units = 0
+        short_units = 0
+        long_weighted_price = 0.0
+        short_weighted_price = 0.0
+        total_units = 0
+        weighted_price = 0.0
+        for tr in kept:
+            units = int(tr.get("units", 0) or 0)
+            price = float(tr.get("price", 0.0) or 0.0)
+            total_units += units
+            weighted_price += price * units
+            if units > 0:
+                long_weighted_price += price * units
+                long_units += units
+            elif units < 0:
+                absu = abs(units)
+                short_weighted_price += price * absu
+                short_units += absu
+        avg_price = (weighted_price / total_units) if total_units != 0 else info.get("avg_price", 0.0)
+        long_avg = (long_weighted_price / long_units) if long_units > 0 else 0.0
+        short_avg = (short_weighted_price / short_units) if short_units > 0 else 0.0
+        managed[pocket] = {
+            "units": total_units,
+            "avg_price": avg_price,
+            "trades": len(kept),
+            "long_units": long_units,
+            "long_avg_price": long_avg,
+            "short_units": short_units,
+            "short_avg_price": short_avg,
+            "open_trades": kept,
+            # Keep unrealized fields if present for compatibility (best-effort)
+            "unrealized_pl": (info or {}).get("unrealized_pl", 0.0),
+            "unrealized_pl_pips": (info or {}).get("unrealized_pl_pips", 0.0),
+        }
+    return managed
+
 # 新規エントリー後のクールダウン（再エントリー抑制）
 POCKET_ENTRY_MIN_INTERVAL = {
     "macro": 180,  # 3分
@@ -939,7 +1012,11 @@ async def logic_loop():
                     logging.info("[WAIT] Waiting for M1/H4 factor data for trading logic...")
                 await asyncio.sleep(5)
                 continue
-            missing_factor_cycles = 0
+            if missing_factor_cycles:
+                logging.info(
+                    "[WAIT] Factor data restored after %d cycles.", missing_factor_cycles
+                )
+                missing_factor_cycles = 0
 
             macro_state = _refresh_macro_state()
             event_soon = check_event_soon(within_minutes=30, min_impact=3)
@@ -1405,7 +1482,9 @@ async def logic_loop():
                 logging.info("[SIGNAL] %s -> %s", cls.name, signal)
 
             open_positions = pos_manager.get_open_positions()
-            micro_trades = (open_positions.get("micro") or {}).get("open_trades", [])
+            # Use filtered positions for bot-controlled actions
+            managed_positions = _filter_positions_to_managed(open_positions)
+            micro_trades = (managed_positions.get("micro") or {}).get("open_trades", [])
             if any("NewsSpike" in (tr.get("client_id") or "") for tr in micro_trades):
                 candidate = now + datetime.timedelta(seconds=TRENDMA_NEWS_FREEZE_SECONDS)
                 if candidate > trendma_news_cooldown_until:
@@ -1415,12 +1494,12 @@ async def logic_loop():
                         (trendma_news_cooldown_until - now).total_seconds(),
                     )
             try:
-                update_dynamic_protections(open_positions, fac_m1, fac_h4)
+                update_dynamic_protections(managed_positions, fac_m1, fac_h4)
             except Exception as exc:
                 logging.warning("[PROTECTION] update failed: %s", exc)
             try:
                 partials = plan_partial_reductions(
-                    open_positions,
+                    managed_positions,
                     fac_m1,
                     fac_h4,
                     range_mode=range_active,
@@ -1442,9 +1521,10 @@ async def logic_loop():
                     partial_closed = True
             if partial_closed:
                 open_positions = pos_manager.get_open_positions()
+                managed_positions = _filter_positions_to_managed(open_positions)
             net_units = int(open_positions.get("__net__", {}).get("units", 0))
 
-            for pocket, info in open_positions.items():
+            for pocket, info in managed_positions.items():
                 if pocket == "__net__":
                     continue
                 for direction, key_units in (("long", "long_units"), ("short", "short_units")):
@@ -1468,7 +1548,7 @@ async def logic_loop():
                         stage_empty_since.pop(key, None)
 
             exit_decisions = exit_manager.plan_closures(
-                open_positions,
+                managed_positions,
                 evaluated_signals,
                 fac_m1,
                 fac_h4,
@@ -1482,7 +1562,7 @@ async def logic_loop():
                 pocket = decision.pocket
                 remaining = abs(decision.units)
                 target_side = "long" if decision.units < 0 else "short"
-                trades = (open_positions.get(pocket, {}) or {}).get("open_trades", [])
+                trades = (managed_positions.get(pocket, {}) or {}).get("open_trades", [])
                 trades = [t for t in trades if t.get("side") == target_side]
                 for tr in trades:
                     if remaining <= 0:
