@@ -689,6 +689,8 @@ def replay_pullback_s5(ticks: List[Tick]) -> Dict[str, object]:
         return max(1000, units)
 
     candles: List[Dict[str, float]] = []
+    allowed_hours = getattr(cfg, "ALLOWED_HOURS_UTC", frozenset())
+    active_hours = getattr(cfg, "ACTIVE_HOURS_UTC", frozenset())
 
     for tick in ticks:
         bucket.append({"epoch": tick.epoch, "mid": tick.mid})
@@ -746,6 +748,12 @@ def replay_pullback_s5(ticks: List[Tick]) -> Dict[str, object]:
         if tick.epoch - last_entry_epoch < cfg.COOLDOWN_SEC:
             continue
         if len(candles) < max(cfg.FAST_BUCKETS, cfg.SLOW_BUCKETS):
+            continue
+
+        tick_hour = tick.dt.hour
+        if allowed_hours and tick_hour not in allowed_hours:
+            continue
+        if active_hours and tick_hour not in active_hours:
             continue
 
         closes = [c["close"] for c in candles]
