@@ -17,7 +17,12 @@ from analysis.summary_ingestor import check_event_soon, get_latest_news
 # バックグラウンドでニュース取得と要約を実行するためのインポート
 from market_data.news_fetcher import fetch_loop as news_fetch_loop
 from analysis.summary_ingestor import ingest_loop as summary_ingest_loop
-from analysis.kaizen import audit_loop as kaizen_loop
+
+try:
+    from analysis.kaizen import audit_loop as kaizen_loop  # type: ignore
+except ImportError:  # pragma: no cover - optional module
+    kaizen_loop = None
+
 from signals.pocket_allocator import alloc
 from execution.risk_guard import (
     allowed_lot,
@@ -296,14 +301,16 @@ async def main():
     # - logic_loop: トレーディングロジック
     # - news_fetch_loop: 経済指標 RSS 取得
     # - summary_ingest_loop: GCS summary/ から DB への取り込み
-    await asyncio.gather(
+    tasks = [
         start_candle_stream("USD_JPY", handlers),
         logic_loop(),
         exit_loop(),
         news_fetch_loop(),
         summary_ingest_loop(),
-        kaizen_loop(),
-    )
+    ]
+    if kaizen_loop is not None:
+        tasks.append(kaizen_loop())
+    await asyncio.gather(*tasks)
 
 
 if __name__ == "__main__":
