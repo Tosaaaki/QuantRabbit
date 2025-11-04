@@ -36,6 +36,7 @@ from workers.trend_h1.worker import _confidence_scale
 
 
 UTC = timezone.utc
+PIP = 0.01
 
 
 @dataclass
@@ -231,7 +232,7 @@ def pips_between(entry: float, exit_price: float, side: str) -> float:
     return (entry - exit_price) * 100.0
 
 
-STAGE_RATIOS_MACRO = (0.35,)
+STAGE_RATIOS_MACRO = trend_cfg.STAGE_RATIOS
 
 
 class TrendMAReplayer:
@@ -275,19 +276,46 @@ class TrendMAReplayer:
         self.debug_counts: Counter[str] = Counter()
 
     def run_on_ticks(self, ticks: Sequence[Tick]) -> None:
+        self.reset()
+        self._process_ticks(ticks, allow_entries=True, finalize=True)
+
+    def run_with_warmup(
+        self,
+        warmup_ticks: Sequence[Tick],
+        main_ticks: Sequence[Tick],
+    ) -> None:
+        """Run evaluation ticks after seeding factor state with warmup ticks."""
+        self.reset()
+        if warmup_ticks:
+            self._process_ticks(warmup_ticks, allow_entries=False, finalize=False)
+        self._process_ticks(main_ticks, allow_entries=True, finalize=True)
+
+    def _process_ticks(
+        self,
+        ticks: Sequence[Tick],
+        *,
+        allow_entries: bool,
+        finalize: bool,
+    ) -> None:
+        if not ticks:
+            return
         m1_candles = build_m1_candles(ticks)
         for candle in m1_candles:
-            self._on_m1_candle(candle)
-        # close leftover trades at last price
-        if self.open_positions["macro"]["open_trades"]:
+            self._on_m1_candle(candle, allow_entries=allow_entries)
+        if finalize and self.m1_history:
             last_price = self.m1_history[-1]["close"]
             end_time = self.m1_history[-1]["time"]
-            self._close_all(last_price, end_time)
-        # finalize h4 aggregator (optional)
-        self.h4_agg.finalize()
-        self.h1_agg.finalize()
+            if self.open_positions["macro"]["open_trades"]:
+                self._close_all(last_price, end_time)
+            self.h4_agg.finalize()
+            self.h1_agg.finalize()
 
-    def _on_m1_candle(self, candle: Dict[str, object]) -> None:
+    def _on_m1_candle(
+        self,
+        candle: Dict[str, object],
+        *,
+        allow_entries: bool = True,
+    ) -> None:
         price = candle["close"]
         ctime = candle["time"]
         self.m1_history.append(candle)
@@ -303,7 +331,12 @@ class TrendMAReplayer:
                 fac_h1["atr_pips"] = fac_h1.get("atr", 0.0) * 100.0
                 self.latest_fac_h1 = fac_h1
                 latest_h1 = self.h1_history[-1]
-                self._handle_h1_signal(fac_h1, latest_h1["time"], latest_h1["close"])
+                self._handle_h1_signal(
+                    fac_h1,
+                    latest_h1["time"],
+                    latest_h1["close"],
+                    allow_entries=allow_entries,
+                )
         if self.h4_agg.history:
             self.h4_history = self.h4_agg.history[-500:]
             self.latest_fac_h4 = compute_factors(self.h4_history, min_bars=5)
@@ -347,7 +380,12 @@ class TrendMAReplayer:
             self._process_exit_decisions(exit_decisions, price, ctime)
 
     def _handle_h1_signal(
-        self, fac_h1: Dict[str, object], ts: datetime, price: float
+        self,
+        fac_h1: Dict[str, object],
+        ts: datetime,
+        price: float,
+        *,
+        allow_entries: bool = True,
     ) -> None:
         regime = classify(fac_h1, "H1")
         decision = MovingAverageCross.check(fac_h1)
@@ -417,7 +455,8 @@ class TrendMAReplayer:
             self.debug_counts["repeat_gate"] += 1
             return
 
-        self._maybe_enter(decision, price, ts, fac_h1)
+        if allow_entries:
+            self._maybe_enter(decision, price, ts, fac_h1)
         self.recent_signal_gate[gate_key] = ts
 
     def _maybe_enter(
@@ -505,9 +544,29 @@ class TrendMAReplayer:
         gap_h4 = float(ma10_h4) - float(ma20_h4)
         bias_buffer = 0.00018
         if action == "OPEN_LONG" and gap_h4 < -bias_buffer:
-            return False
-        if action == "OPEN_SHORT" and gap_h4 > bias_buffer:
-            return False
+            ma10_h1 = fac_h1.get("ma10")
+            ma20_h1 = fac_h1.get("ma20")
+            atr_pips = float(fac_h1.get("atr_pips") or 0.0)
+            if ma10_h1 is None or ma20_h1 is None:
+                return False
+            gap_h1_pips = (float(ma10_h1) - float(ma20_h1)) / PIP
+            if not (
+                gap_h1_pips >= trend_cfg.H1_OVERRIDE_GAP_PIPS
+                and atr_pips >= trend_cfg.H1_OVERRIDE_ATR_PIPS
+            ):
+                return False
+        elif action == "OPEN_SHORT" and gap_h4 > bias_buffer:
+            ma10_h1 = fac_h1.get("ma10")
+            ma20_h1 = fac_h1.get("ma20")
+            atr_pips = float(fac_h1.get("atr_pips") or 0.0)
+            if ma10_h1 is None or ma20_h1 is None:
+                return False
+            gap_h1_pips = (float(ma10_h1) - float(ma20_h1)) / PIP
+            if not (
+                gap_h1_pips <= -trend_cfg.H1_OVERRIDE_GAP_PIPS
+                and atr_pips >= trend_cfg.H1_OVERRIDE_ATR_PIPS
+            ):
+                return False
         ma10_h1 = fac_h1.get("ma10")
         ma20_h1 = fac_h1.get("ma20")
         if ma10_h1 is None or ma20_h1 is None:
@@ -690,6 +749,12 @@ def main() -> None:
         help="Glob pattern for tick files (e.g. tmp/ticks_USDJPY_202510*.jsonl)",
     )
     parser.add_argument("--out", required=True, help="Output JSON file path.")
+    parser.add_argument(
+        "--warmup-files",
+        type=int,
+        default=0,
+        help="Number of preceding files to use as warmup (entries disabled).",
+    )
     args = parser.parse_args()
 
     files = sorted(glob.glob(args.ticks_glob))
@@ -697,27 +762,41 @@ def main() -> None:
         raise SystemExit(f"No tick files matched pattern: {args.ticks_glob}")
 
     replayer = TrendMAReplayer()
-    replayer.reset()
     all_trades: List[Dict[str, object]] = []
     per_file_summary: Dict[str, Dict[str, object]] = {}
     per_file_debug: Dict[str, Dict[str, int]] = {}
+    tick_cache: Dict[str, List[Tick]] = {}
 
-    for path_str in files:
+    def _get_ticks(path_str: str) -> List[Tick]:
+        cached = tick_cache.get(path_str)
+        if cached is not None:
+            return cached
+        payload = load_ticks(Path(path_str))
+        tick_cache[path_str] = payload
+        return payload
+
+    warmup_span = max(0, args.warmup_files)
+
+    for idx, path_str in enumerate(files):
         path = Path(path_str)
-        ticks = load_ticks(path)
-        if not ticks:
+        eval_ticks = _get_ticks(path_str)
+        if not eval_ticks:
             continue
-        closed_start = len(replayer.closed_trades)
-        debug_start = Counter(replayer.debug_counts)
-        replayer.run_on_ticks(ticks)
-        new_trades = replayer.closed_trades[closed_start:]
+        warmup_ticks: List[Tick] = []
+        if warmup_span > 0 and idx > 0:
+            warmup_paths = files[max(0, idx - warmup_span) : idx]
+            for warm_path in warmup_paths:
+                warmup_ticks.extend(_get_ticks(warm_path))
+        if warmup_ticks:
+            replayer.run_with_warmup(warmup_ticks, eval_ticks)
+        else:
+            replayer.run_on_ticks(eval_ticks)
         trades = [
-            dict(t, source_file=path.name) for t in new_trades
+            dict(t, source_file=path.name) for t in replayer.closed_trades
         ]
         all_trades.extend(trades)
         per_file_summary[path.name] = summarize(trades)
-        debug_delta = Counter(replayer.debug_counts) - debug_start
-        per_file_debug[path.name] = dict(debug_delta)
+        per_file_debug[path.name] = dict(replayer.debug_counts)
 
     output = {
         "summary": summarize(all_trades),

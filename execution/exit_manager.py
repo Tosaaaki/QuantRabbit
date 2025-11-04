@@ -159,8 +159,8 @@ class ExitManager:
         atr_ref = float(atr_pips or 0.0)
         if atr_ref <= 0.0:
             atr_ref = 8.0
-        value = atr_ref * (0.16 if matured else 0.12)
-        return max(1.6, min(2.6, value))
+        value = atr_ref * (0.18 if matured else 0.13)
+        return max(1.8, min(3.2, value))
 
     def _evaluate_long(
         self,
