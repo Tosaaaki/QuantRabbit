@@ -12,6 +12,7 @@ import sqlite3
 import pathlib
 import time
 from datetime import datetime, timedelta, timezone
+import os
 from typing import Dict
 
 from utils.secrets import get_secret
@@ -26,6 +27,19 @@ GLOBAL_DD_LIMIT = 0.20  # 全体ドローダウン 20%
 POCKET_MAX_RATIOS = {"macro": 0.3, "micro": 0.6, "scalp": 0.25}
 _DEFAULT_BASE_EQUITY = {"macro": 8000.0, "micro": 6000.0, "scalp": 2500.0}
 _LOOKBACK_DAYS = 7
+
+_DISABLE_POCKET_DD = os.getenv("DISABLE_POCKET_DD", "false").lower() in {
+    "1",
+    "true",
+    "yes",
+    "on",
+}
+_DISABLE_GLOBAL_DD = os.getenv("DISABLE_GLOBAL_DD", "false").lower() in {
+    "1",
+    "true",
+    "yes",
+    "on",
+}
 
 _DB = pathlib.Path("logs/trades.db")
 con = sqlite3.connect(_DB)
@@ -111,6 +125,8 @@ def _pocket_dd(pocket: str) -> float:
 
 def check_global_drawdown() -> bool:
     """口座全体のドローダウンが閾値を超えているかチェック"""
+    if _DISABLE_GLOBAL_DD:
+        return False
     # 全ての取引の損益合計を取得
     rows = con.execute("SELECT SUM(pl_pips) FROM trades").fetchone()
     total_pl_pips = rows[0] or 0.0
@@ -128,6 +144,8 @@ def check_global_drawdown() -> bool:
 
 
 def can_trade(pocket: str) -> bool:
+    if _DISABLE_POCKET_DD:
+        return True
     return _pocket_dd(pocket) < POCKET_DD_LIMITS[pocket]
 
 
