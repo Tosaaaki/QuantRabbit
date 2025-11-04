@@ -145,7 +145,15 @@ MACRO_MIN_TOTAL_LOT = 0.001
 MIN_SCALP_STAGE_LOT = 0.01  # 1000 units baseline so micro/macro bias does not null scalps
 DEFAULT_COOLDOWN_SECONDS = 180
 RANGE_COOLDOWN_SECONDS = 420
-ALLOWED_RANGE_STRATEGIES = {"BB_RSI", "RangeFader"}
+RANGE_MACRO_WEIGHT_CAP = 0.22
+RANGE_CONFIDENCE_SCALE = {
+    "macro": 0.65,
+    "micro": 0.85,
+    "scalp": 0.75,
+}
+RANGE_SCALP_ATR_MIN = 1.8
+RANGE_SCALP_MOMENTUM_MIN = 0.001
+RANGE_SCALP_VOL_MIN = 0.9
 SOFT_RANGE_SUPPRESS_STRATEGIES = {"TrendMA", "Donchian55"}
 LOW_TREND_ADX_THRESHOLD = 18.0
 LOW_TREND_SLOPE_THRESHOLD = 0.00035
@@ -1161,10 +1169,14 @@ async def logic_loop():
             if ema20 is not None and close_px is not None:
                 momentum = close_px - ema20
             scalp_ready = False
-            if not range_active:
-                scalp_ready = atr_pips >= 2.2 and abs(momentum) >= 0.0015
-                if not scalp_ready and fac_m1.get("vol_5m"):
-                    scalp_ready = atr_pips >= 2.0 and fac_m1["vol_5m"] >= 1.2
+            scalp_atr_min = RANGE_SCALP_ATR_MIN if range_active else 2.2
+            scalp_momentum_min = RANGE_SCALP_MOMENTUM_MIN if range_active else 0.0015
+            if atr_pips >= scalp_atr_min and abs(momentum) >= scalp_momentum_min:
+                scalp_ready = True
+            elif fac_m1.get("vol_5m"):
+                vol_floor = RANGE_SCALP_VOL_MIN if range_active else 1.2
+                atr_floor = RANGE_SCALP_ATR_MIN if range_active else 2.0
+                scalp_ready = atr_pips >= atr_floor and fac_m1["vol_5m"] >= vol_floor
 
             focus_tag = gpt.get("focus_tag") or focus
             weight = gpt.get("weight_macro", w_macro)
@@ -1176,8 +1188,16 @@ async def logic_loop():
                 )
                 weight = GLOBAL_MACRO_WEIGHT_CAP
             if range_active:
-                focus_tag = "micro"
-                weight = min(weight, 0.15)
+                if focus_tag == "macro":
+                    focus_tag = "hybrid"
+                prev_weight = weight
+                weight = min(weight, RANGE_MACRO_WEIGHT_CAP)
+                if prev_weight != weight:
+                    logging.info(
+                        "[MACRO] Range compression cap applied: weight_macro %.2f -> %.2f",
+                        prev_weight,
+                        weight,
+                    )
             elif range_soft_active and focus_tag == "macro":
                 if soft_range_just_activated:
                     logging.info(
@@ -1199,8 +1219,6 @@ async def logic_loop():
             focus_pockets = set(FOCUS_POCKETS.get(focus_tag, ("macro", "micro", "scalp")))
             if not focus_pockets:
                 focus_pockets = {"micro"}
-            if range_active and "macro" in focus_pockets:
-                focus_pockets.discard("macro")
 
             ma10_h4 = fac_h4.get("ma10")
             ma20_h4 = fac_h4.get("ma20")
@@ -1223,13 +1241,13 @@ async def logic_loop():
 
             if (
                 scalp_ready
-                and not range_active
                 and "scalp" in focus_pockets
                 and "M1Scalper" not in ranked_strategies
             ):
                 ranked_strategies.append("M1Scalper")
                 logging.info(
-                    "[SCALP] Auto-added M1Scalper (ATR %.2f, momentum %.4f, vol5m %.2f).",
+                    "[SCALP] Auto-added M1Scalper (range=%s ATR %.2f, momentum %.4f, vol5m %.2f).",
+                    range_active,
                     atr_pips,
                     momentum,
                     fac_m1.get("vol_5m", 0.0),
@@ -1268,9 +1286,6 @@ async def logic_loop():
                         pocket,
                         sorted(allowed_names),
                     )
-                    continue
-                if range_active and cls.name not in ALLOWED_RANGE_STRATEGIES:
-                    logging.info("[RANGE] skip %s in range mode.", sname)
                     continue
                 if sname == "NewsSpikeReversal":
                     raw_signal = cls.check(fac_m1, news_cache.get("short", []))
@@ -1337,15 +1352,31 @@ async def logic_loop():
                         or ((fac_m1.get("atr") or 0.0) * 100)
                         or 6.0
                     )
-                    if signal["pocket"] == "macro":
-                        tp_cap = min(2.0, max(1.6, atr_hint * 1.05))
+                    pocket = signal["pocket"]
+                    if pocket == "macro":
+                        tp_cap = min(5.0, max(2.2, atr_hint * 1.4))
+                        sl_cap = max(1.8, min(tp_cap * 1.1, atr_hint * 1.6))
                         signal["tp_pips"] = round(tp_cap, 2)
-                        signal["sl_pips"] = round(tp_cap, 2)
-                        signal["confidence"] = int(signal["confidence"] * 0.55)
+                        signal["sl_pips"] = round(sl_cap, 2)
+                    elif pocket == "scalp":
+                        tp_existing = signal.get("tp_pips") or max(6.0, atr_hint * 2.8)
+                        sl_existing = signal.get("sl_pips") or max(4.5, atr_hint * 1.9)
+                        signal["tp_pips"] = round(
+                            min(max(5.2, tp_existing), max(8.5, atr_hint * 3.3)), 2
+                        )
+                        signal["sl_pips"] = round(
+                            min(max(3.8, sl_existing), max(6.5, atr_hint * 2.3)), 2
+                        )
                     else:
-                        tp_default = min(1.8, max(1.3, atr_hint * 1.1))
+                        tp_default = min(2.4, max(1.4, atr_hint * 1.25))
                         signal["tp_pips"] = round(tp_default, 2)
-                        signal["sl_pips"] = round(max(1.2, min(tp_default * 1.05, 1.9)), 2)
+                        signal["sl_pips"] = round(
+                            max(1.2, min(tp_default * 1.08, 2.1)), 2
+                        )
+                    conf_scale = RANGE_CONFIDENCE_SCALE.get(pocket)
+                    if conf_scale is not None:
+                        scaled_conf = int(signal["confidence"] * conf_scale)
+                        signal["confidence"] = max(15, min(100, scaled_conf))
                 signal["health"] = {
                     "win_rate": health.win_rate,
                     "pf": health.profit_factor,
