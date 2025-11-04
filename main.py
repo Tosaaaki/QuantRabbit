@@ -300,6 +300,7 @@ _MACRO_STATE_STALE_WARN_SEC = _env_float("MACRO_STATE_STALE_WARN_SEC", 900.0)
 _macro_state_cache: MacroState | None = None
 _macro_state_mtime: float | None = None
 _macro_state_stale_warned = False
+_macro_state_missing_warned = False
 _TUNER_LAST_RUN_TS = 0.0
 
 
@@ -320,8 +321,13 @@ def _refresh_macro_state() -> MacroState | None:
     try:
         mtime = path.stat().st_mtime
     except FileNotFoundError:
+        globals_dict = globals()
         if _macro_state_cache is None:
-            logging.warning("[MACRO] snapshot path missing: %s", path)
+            logging.warning("[MACRO] snapshot path missing: %s; using neutral fallback.", path)
+            _macro_state_cache = MacroState.neutral(deadzone=_MACRO_STATE_DEADZONE)
+        if not globals_dict.get("_macro_state_missing_warned", False):
+            logging.warning("[MACRO] snapshot still missing; continuing with fallback.")
+            globals_dict["_macro_state_missing_warned"] = True
         return _macro_state_cache
     if _macro_state_cache is None or mtime != _macro_state_mtime:
         try:
@@ -335,6 +341,7 @@ def _refresh_macro_state() -> MacroState | None:
                 _MACRO_STATE_DEADZONE,
             )
             globals()["_macro_state_stale_warned"] = False
+            globals()["_macro_state_missing_warned"] = False
         except Exception as exc:  # noqa: BLE001
             logging.warning("[MACRO] failed to load snapshot: %s", exc)
             return _macro_state_cache

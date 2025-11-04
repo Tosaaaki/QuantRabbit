@@ -38,6 +38,20 @@ class MacroState:
         snap = MacroSnapshot(**data)
         return MacroState(snap, deadzone=deadzone)
 
+    @staticmethod
+    def neutral(*, deadzone: float = 0.25, asof: dt.datetime | None = None) -> "MacroState":
+        """Return a neutral snapshot when external data is unavailable."""
+        now = asof or dt.datetime.utcnow().replace(tzinfo=dt.timezone.utc)
+        snap = MacroSnapshot(
+            asof=now.isoformat(),
+            vix=20.0,
+            dxy=0.0,
+            yield2y={},
+            news_ccy_score={},
+            events=[],
+        )
+        return MacroState(snap, deadzone=deadzone)
+
     @property
     def snapshot(self) -> MacroSnapshot:
         return self._snap
