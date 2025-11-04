@@ -22,6 +22,10 @@ from analysis.gpt_decider import get_decision
 from analysis.perf_monitor import snapshot as get_perf
 from analysis.summary_ingestor import check_event_soon, get_latest_news
 from analysis.macro_state import MacroState
+from analysis.macro_snapshot_builder import (
+    DEFAULT_SNAPSHOT_PATH as MACRO_SNAPSHOT_DEFAULT_PATH,
+    refresh_macro_snapshot,
+)
 try:
     from analysis.kaizen import audit_loop as kaizen_loop  # type: ignore
 except ModuleNotFoundError:
@@ -302,6 +306,13 @@ _macro_state_mtime: float | None = None
 _macro_state_stale_warned = False
 _macro_state_missing_warned = False
 _TUNER_LAST_RUN_TS = 0.0
+
+
+def _macro_snapshot_path() -> Path:
+    raw = _MACRO_STATE_PATH
+    if raw:
+        return Path(raw)
+    return MACRO_SNAPSHOT_DEFAULT_PATH
 
 
 def _parse_iso8601(ts: str) -> datetime.datetime | None:
@@ -950,6 +961,7 @@ async def logic_loop():
     last_update_time = datetime.datetime.min
     last_heartbeat_time = datetime.datetime.min  # Add this line
     last_metrics_refresh = datetime.datetime.min
+    last_macro_snapshot_refresh = datetime.datetime.min
     strategy_health_cache: dict[str, StrategyHealth] = {}
     range_active = False
     range_soft_active = False
@@ -1024,6 +1036,17 @@ async def logic_loop():
                     "[WAIT] Factor data restored after %d cycles.", missing_factor_cycles
                 )
                 missing_factor_cycles = 0
+
+            if (now - last_macro_snapshot_refresh).total_seconds() >= 900:
+                try:
+                    await asyncio.to_thread(
+                        refresh_macro_snapshot,
+                        snapshot_path=_macro_snapshot_path(),
+                        deadzone=_MACRO_STATE_DEADZONE,
+                    )
+                    last_macro_snapshot_refresh = now
+                except Exception as exc:  # pragma: no cover - defensive
+                    logging.warning("[MACRO] snapshot rebuild failed: %s", exc)
 
             macro_state = _refresh_macro_state()
             event_soon = check_event_soon(within_minutes=30, min_impact=3)
@@ -1992,6 +2015,14 @@ async def main():
         ("H4", h4_candle_handler),
     ]
     await initialize_history("USD_JPY")
+    try:
+        await asyncio.to_thread(
+            refresh_macro_snapshot,
+            snapshot_path=_macro_snapshot_path(),
+            deadzone=_MACRO_STATE_DEADZONE,
+        )
+    except Exception as exc:  # pragma: no cover - defensive
+        logging.warning("[MACRO] initial snapshot build failed: %s", exc)
     tasks = [
         start_candle_stream("USD_JPY", handlers),
         logic_loop(),
