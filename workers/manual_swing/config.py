@@ -79,7 +79,7 @@ def _parse_int_list(key: str, default: str) -> List[int]:
 
 
 LOG_PREFIX = "[MANUAL-SWING]"
-ENABLED: bool = _bool("MANUAL_SWING_ENABLED", False)
+ENABLED: bool = _bool("MANUAL_SWING_ENABLED", True)
 
 LOOP_INTERVAL_SEC: float = max(5.0, _float("MANUAL_SWING_LOOP_INTERVAL_SEC", 15.0))
 
@@ -108,7 +108,7 @@ REFERENCE_EQUITY: float = max(1.0, _float("MANUAL_SWING_REFERENCE_EQUITY", 50000
 MAX_ACTIVE_STAGES: int = max(1, _int("MANUAL_SWING_MAX_STAGES", 4))
 STAGE_UNITS_BASE = _parse_int_list(
     "MANUAL_SWING_STAGE_UNITS_BASE",
-    "12000,12000,12000,12000",
+    "5000,5000,5000,5000",
 )
 if not STAGE_UNITS_BASE:
     STAGE_UNITS_BASE = [12000]

@@ -65,7 +65,7 @@ def _parse_hours(key: str, default: str) -> Set[int]:
 
 
 LOG_PREFIX = "[MIRROR-TIGHT]"
-ENABLED: bool = _bool("MIRROR_SPIKE_TIGHT_ENABLED", False)
+ENABLED: bool = _bool("MIRROR_SPIKE_TIGHT_ENABLED", True)
 LOOP_INTERVAL_SEC: float = max(0.25, _float("MIRROR_SPIKE_TIGHT_LOOP_INTERVAL_SEC", 0.5))
 
 ALLOWED_HOURS_UTC = frozenset(

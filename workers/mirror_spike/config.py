@@ -37,6 +37,13 @@ def _int_env(key: str, default: int, *, legacy_key: str | None = None) -> int:
         return default
 
 
+def _bool_env(key: str, default: bool, *, legacy_key: str | None = None) -> bool:
+    raw = _read_env(key, legacy_key)
+    if raw is None:
+        return default
+    return raw.strip().lower() not in {"", "0", "false", "no", "off"}
+
+
 def _parse_hours(key: str, default: str) -> Set[int]:
     raw = _read_env(key, None) or default
     hours: Set[int] = set()
@@ -139,7 +146,7 @@ ENTRY_UNITS: int = max(
     1000,
     _int_env(
         "MIRROR_SPIKE_ENTRY_UNITS",
-        4000,
+        5000,
         legacy_key="MANUAL_SPIKE_ENTRY_UNITS",
     ),
 )
@@ -214,6 +221,11 @@ MAX_HOLD_SEC: float = max(
         75.0,
         legacy_key=None,
     ),
+)
+ENABLED: bool = _bool_env(
+    "MIRROR_SPIKE_ENABLED",
+    True,
+    legacy_key="MANUAL_SPIKE_ENABLED",
 )
 ACTIVE_HOURS_UTC = frozenset(_parse_hours("MIRROR_SPIKE_ACTIVE_HOURS", "6,10,12,16-17,22"))
 LOG_PREFIX = "[MIRROR-SPIKE]"

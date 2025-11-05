@@ -65,8 +65,7 @@ def _parse_hours(key: str, default: str) -> Set[int]:
 
 
 LOG_PREFIX = "[SQUEEZE-S5]"
-# Hard stop: keep squeeze break worker disabled regardless of environment.
-ENABLED: bool = False
+ENABLED: bool = _bool("SQUEEZE_BREAK_S5_ENABLED", True)
 LOOP_INTERVAL_SEC: float = max(0.2, _float("SQUEEZE_BREAK_S5_LOOP_INTERVAL_SEC", 0.45))
 
 ACTIVE_HOURS_UTC = frozenset(
