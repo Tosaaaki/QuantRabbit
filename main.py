@@ -75,7 +75,6 @@ import workers.mirror_spike.config as mirror_spike_config
 import workers.mirror_spike_s5.config as mirror_spike_s5_config
 import workers.trend_h1.config as trend_h1_config
 import workers.mirror_spike_tight.config as mirror_spike_tight_config
-import workers.onepip_maker_s1.config as onepip_maker_s1_config
 import workers.pullback_s5.config as pullback_s5_config
 import workers.pullback_scalp.config as pullback_scalp_config
 import workers.scalp_exit.config as scalp_exit_config
@@ -88,7 +87,6 @@ from workers.manual_swing import manual_swing_worker
 from workers.mirror_spike import mirror_spike_worker
 from workers.mirror_spike_s5 import mirror_spike_s5_worker
 from workers.mirror_spike_tight import mirror_spike_tight_worker
-from workers.onepip_maker_s1 import onepip_maker_s1_worker
 from workers.pullback_s5 import pullback_s5_worker
 from workers.pullback_scalp import pullback_scalp_worker
 from workers.scalp_exit import scalp_exit_worker
@@ -2061,7 +2059,6 @@ async def main():
         (mirror_spike_config.ENABLED, mirror_spike_worker, mirror_spike_config.LOG_PREFIX),
         (mirror_spike_s5_config.ENABLED, mirror_spike_s5_worker, mirror_spike_s5_config.LOG_PREFIX),
         (mirror_spike_tight_config.ENABLED, mirror_spike_tight_worker, mirror_spike_tight_config.LOG_PREFIX),
-        (onepip_maker_s1_config.ENABLED, onepip_maker_s1_worker, onepip_maker_s1_config.LOG_PREFIX),
         (scalp_exit_config.ENABLED, scalp_exit_worker, scalp_exit_config.LOG_PREFIX),
     ]
     macro_workers = [
