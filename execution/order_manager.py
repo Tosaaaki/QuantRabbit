@@ -6,18 +6,20 @@ OANDA REST で成行・指値を発注。
 """
 
 from __future__ import annotations
-from typing import Literal, Optional, Tuple
-import sqlite3
+
+import asyncio
+import time
 import json
+import logging
+import sqlite3
 import pathlib
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
+from typing import Literal, Optional, Tuple
 
 from oandapyV20 import API
 from oandapyV20.exceptions import V20Error
-from oandapyV20.endpoints.orders import OrderCreate
+from oandapyV20.endpoints.orders import OrderCancel, OrderCreate
 from oandapyV20.endpoints.trades import TradeCRCDO, TradeClose
-
-import logging
 
 from utils.secrets import get_secret
 from utils.market_hours import is_market_open
@@ -45,6 +47,7 @@ if HEDGING_ENABLED:
 
 _LAST_PROTECTIONS: dict[str, Tuple[Optional[float], Optional[float]]] = {}
 MACRO_BE_GRACE_SECONDS = 45
+_MARGIN_REJECT_UNTIL: dict[str, float] = {}
 
 # ---------- orders logger (logs/orders.db) ----------
 _ORDERS_DB_PATH = pathlib.Path("logs/orders.db")
@@ -154,6 +157,86 @@ def _log_order(
         con.commit()
     except Exception as exc:  # noqa: BLE001
         logging.warning("[ORDER][LOG] failed to persist orders log: %s", exc)
+
+
+def _estimate_entry_price(
+    *, units: int, sl_price: Optional[float], tp_price: Optional[float], meta: Optional[dict]
+) -> Optional[float]:
+    """Estimate entry price for margin preflight.
+
+    Prefer caller-provided meta['entry_price']. As a fallback, try a naive
+    inference from SL/TP if片方のみ与えられている場合は精度が落ちるため None を返す。
+    """
+    try:
+        if meta and isinstance(meta, dict) and meta.get("entry_price"):
+            return float(meta["entry_price"])
+    except Exception:
+        pass
+    # Heuristic fallback (avoid guessing if insufficient data)
+    if sl_price is not None and tp_price is not None:
+        # Mid between SL and TP as a last resort
+        return float((sl_price + tp_price) / 2.0)
+    return None
+
+
+def _preflight_units(
+    *,
+    estimated_price: float,
+    requested_units: int,
+    margin_buffer: float = 0.92,
+) -> Tuple[int, float]:
+    """Return (allowed_units, required_margin_estimate).
+
+    allowed_units may be 0 if margin is insufficient even for minimum size.
+    """
+    try:
+        from utils.oanda_account import get_account_snapshot  # lazy import
+
+        snap = get_account_snapshot()
+        margin_avail = float(getattr(snap, "margin_available", 0.0) or 0.0)
+        margin_rate = float(getattr(snap, "margin_rate", 0.0) or 0.0)
+    except Exception:
+        # If snapshot fails, do not block the order here.
+        return (requested_units, 0.0)
+
+    if margin_rate <= 0.0 or estimated_price <= 0.0:
+        return (requested_units, 0.0)
+
+    # Required margin ≈ |units| * price * marginRate (JPY)
+    req = abs(requested_units) * estimated_price * margin_rate
+    if req * 1.0 <= margin_avail * margin_buffer:
+        return (requested_units, req)
+
+    max_units = int((margin_avail * margin_buffer) / (estimated_price * margin_rate))
+    if max_units <= 0:
+        return (0, req)
+    # Keep sign
+    allowed = max_units if requested_units > 0 else -max_units
+    # Round to nearest 100 units (OANDA accepts 1, but we prefer coarse steps)
+    if allowed > 0:
+        allowed = int((allowed // 100) * 100)
+    else:
+        allowed = -int((abs(allowed) // 100) * 100)
+    return (allowed, req)
+
+
+def _is_passive_price(
+    *,
+    units: int,
+    price: float,
+    current_bid: Optional[float],
+    current_ask: Optional[float],
+    min_buffer: float = 0.0001,
+) -> bool:
+    if units == 0:
+        return False
+    if units > 0:
+        if current_ask is None:
+            return False
+        return price <= (current_ask - min_buffer)
+    if current_bid is None:
+        return False
+    return price >= (current_bid + min_buffer)
 _PARTIAL_STAGE: dict[str, int] = {}
 
 _PARTIAL_THRESHOLDS = {
@@ -203,6 +286,38 @@ def _extract_trade_id(response: dict) -> Optional[str]:
             return str(trade_id)
 
     return None
+
+
+async def cancel_order(
+    *,
+    order_id: str,
+    pocket: Optional[str] = None,
+    client_order_id: Optional[str] = None,
+    reason: str = "user_cancel",
+) -> bool:
+    try:
+        endpoint = OrderCancel(accountID=ACCOUNT, orderID=order_id)
+        api.request(endpoint)
+        _log_order(
+            pocket=pocket,
+            instrument=None,
+            side=None,
+            units=None,
+            sl_price=None,
+            tp_price=None,
+            client_order_id=client_order_id,
+            status=reason,
+            attempt=0,
+            request_payload={"order_id": order_id},
+            response_payload=endpoint.response,
+        )
+        logging.info("[ORDER] Cancelled order %s (%s).", order_id, reason)
+        return True
+    except V20Error as exc:
+        logging.warning("[ORDER] Cancel failed for %s: %s", order_id, exc)
+    except Exception as exc:  # noqa: BLE001
+        logging.warning("[ORDER] Cancel exception for %s: %s", order_id, exc)
+    return False
 
 
 def _parse_trade_open_time(value: Optional[str]) -> Optional[datetime]:
@@ -357,10 +472,18 @@ async def close_trade(trade_id: str, units: Optional[int] = None) -> bool:
             error_message=error_payload.get("errorMessage") or str(exc),
             response_payload=error_payload if error_payload else None,
         )
-        if error_code in {"TRADE_DOES_NOT_EXIST", "NOT_FOUND"}:
+        # OANDA returns a few variants for missing/closed trades; treat as idempotent success
+        benign_missing = {
+            "TRADE_DOES_NOT_EXIST",
+            "TRADE_DOESNT_EXIST",
+            "NOT_FOUND",
+        }
+        benign_reduce_only = {"NO_POSITION_TO_REDUCE"}
+        if error_code in benign_missing or error_code in benign_reduce_only:
             logging.info(
-                "[ORDER] Trade %s already closed upstream, skipping fallback.",
+                "[ORDER] Close benign rejection for trade %s (code=%s) – treating as success.",
                 trade_id,
+                error_code,
             )
             return True
         return False
@@ -402,17 +525,20 @@ def update_dynamic_protections(
     defaults = {
         "macro": (max(25.0, (atr_h4 or atr_m1 or 0.0) * 1.1), 2.2),
         "micro": (max(8.0, (atr_m1 or 0.0) * 0.9), 1.9),
-        "scalp": (max(4.0, (atr_m1 or 0.0) * 0.6), 1.4),
+        # Scalpは原則として建玉時のSL/TPを尊重する。
+        # 必要最小限の安全網のみ。mirror-s5 等のスキャル戦略では広げない。
+        "scalp": (max(6.0, (atr_m1 or 0.0) * 1.2), 1.0),
     }
     # ポケット別の BE/トレーリング開始閾値（pip）
     # micro/scalp は早めに建値超えへ移行し、利確を積み上げる方針
     per_pocket_triggers = {
         "macro": max(8.0, (atr_h4 or atr_m1 or 0.0) * 1.5),
         "micro": max(3.0, (atr_m1 or 0.0) * 0.8),
-        "scalp": max(2.0, (atr_m1 or 0.0) * 0.6),
+        # スキャルは break-even を行わない
+        "scalp": float("inf"),
     }
     lock_ratio = 0.6
-    per_pocket_min_lock = {"macro": 3.0, "micro": 2.0, "scalp": 1.2}
+    per_pocket_min_lock = {"macro": 3.0, "micro": 2.0, "scalp": 0.9}
     pip = 0.01
     now_ts = datetime.now(timezone.utc)
     for pocket, info in open_positions.items():
@@ -431,9 +557,15 @@ def update_dynamic_protections(
             side = tr.get("side")
             if not trade_id or price is None or not side:
                 continue
+            # mirror-s5（client_id が 'qr-mirror-s5-' プレフィクス）については
+            # ここでの動的SL更新をスキップし、エントリー時のSL/TPを維持する。
+            if pocket == "scalp":
+                client_id = str(tr.get("client_id") or "")
+                if client_id.startswith("qr-mirror-s5-"):
+                    continue
             entry = float(price)
             sl_pips = max(1.0, base_sl)
-            tp_pips = max(sl_pips * tp_ratio, sl_pips + 5.0)
+            tp_pips = max(sl_pips * tp_ratio, sl_pips + 5.0) if pocket != "scalp" else None
             opened_at = _parse_trade_open_time(tr.get("open_time"))
             hold_seconds = 0.0
             if opened_at:
@@ -443,7 +575,7 @@ def update_dynamic_protections(
                 gain_pips = (current_price or entry) - entry
                 gain_pips *= 100
                 sl_price = round(entry - sl_pips * pip, 3)
-                tp_price = round(entry + tp_pips * pip, 3)
+                tp_price = round(entry + tp_pips * pip, 3) if tp_pips is not None else None
                 allow_lock = True
                 if (
                     pocket == "macro"
@@ -454,7 +586,7 @@ def update_dynamic_protections(
                     )
                     if momentum >= 0.0:
                         allow_lock = False
-                if gain_pips > trail_trigger and allow_lock:
+                if gain_pips > trail_trigger and allow_lock and pocket != "scalp":
                     lock_pips = max(min_lock, gain_pips * lock_ratio)
                     be_price = entry + lock_pips * pip
                     sl_price = max(sl_price, round(be_price, 3))
@@ -467,7 +599,7 @@ def update_dynamic_protections(
                 gain_pips = entry - (current_price or entry)
                 gain_pips *= 100
                 sl_price = round(entry + sl_pips * pip, 3)
-                tp_price = round(entry - tp_pips * pip, 3)
+                tp_price = round(entry - tp_pips * pip, 3) if tp_pips is not None else None
                 allow_lock = True
                 if (
                     pocket == "macro"
@@ -478,7 +610,7 @@ def update_dynamic_protections(
                     )
                     if momentum <= 0.0:
                         allow_lock = False
-                if gain_pips > trail_trigger and allow_lock:
+                if gain_pips > trail_trigger and allow_lock and pocket != "scalp":
                     lock_pips = max(min_lock, gain_pips * lock_ratio)
                     be_price = entry - lock_pips * pip
                     sl_price = min(sl_price, round(be_price, 3))
@@ -620,6 +752,25 @@ async def market_order(
     units : +10000 = buy 0.1 lot, ‑10000 = sell 0.1 lot
     returns order ticket id（決済のみの fill でも tradeID を返却）
     """
+    # Pocket-level cooldown after margin rejection
+    try:
+        if pocket and _MARGIN_REJECT_UNTIL.get(pocket, 0.0) > time.monotonic():
+            _log_order(
+                pocket=pocket,
+                instrument=instrument,
+                side="buy" if units > 0 else "sell",
+                units=units,
+                sl_price=sl_price,
+                tp_price=tp_price,
+                client_order_id=client_order_id,
+                status="margin_cooldown",
+                attempt=0,
+                request_payload={"cooldown_until": _MARGIN_REJECT_UNTIL.get(pocket)},
+            )
+            return None
+    except Exception:
+        pass
+
     if not is_market_open():
         logging.info(
             "[ORDER] Market closed window. Skip order pocket=%s units=%s client_id=%s",
@@ -646,11 +797,47 @@ async def market_order(
         )
         return None
 
+    # Margin preflight (new entriesのみ)
+    preflight_units = units
+    if not reduce_only:
+        est_price = _estimate_entry_price(
+            units=units, sl_price=sl_price, tp_price=tp_price, meta=meta
+        )
+        if est_price is not None:
+            allowed_units, req_margin = _preflight_units(
+                estimated_price=est_price, requested_units=units
+            )
+            if allowed_units == 0:
+                _log_order(
+                    pocket=pocket,
+                    instrument=instrument,
+                    side="buy" if units > 0 else "sell",
+                    units=units,
+                    sl_price=sl_price,
+                    tp_price=tp_price,
+                    client_order_id=client_order_id,
+                    status="insufficient_margin_skip",
+                    attempt=0,
+                    request_payload={
+                        "estimated_price": est_price,
+                        "required_margin": req_margin,
+                    },
+                )
+                return None
+            if allowed_units != units:
+                logging.info(
+                    "[ORDER] Preflight scaled units %s -> %s (pocket=%s)",
+                    units,
+                    allowed_units,
+                    pocket,
+                )
+                preflight_units = allowed_units
+
     order_data = {
         "order": {
             "type": "MARKET",
             "instrument": instrument,
-            "units": str(units),
+            "units": str(preflight_units),
             "timeInForce": "FOK",
             "positionFill": "REDUCE_ONLY" if reduce_only else POSITION_FILL,
             "clientExtensions": {"tag": f"pocket={pocket}"},
@@ -665,8 +852,8 @@ async def market_order(
     if tp_price is not None:
         order_data["order"]["takeProfitOnFill"] = {"price": f"{tp_price:.3f}"}
 
-    side = "buy" if units > 0 else "sell"
-    units_to_send = units
+    side = "buy" if preflight_units > 0 else "sell"
+    units_to_send = preflight_units
     for attempt in range(2):
         payload = order_data.copy()
         payload["order"] = dict(order_data["order"], units=str(units_to_send))
@@ -719,6 +906,8 @@ async def market_order(
                     error_message=reject.get("errorMessage") or reason,
                     response_payload=response,
                 )
+                if str(reason).upper() == "INSUFFICIENT_MARGIN" and pocket:
+                    _MARGIN_REJECT_UNTIL[pocket] = time.monotonic() + 120.0
                 if attempt == 0 and abs(units_to_send) >= 2000:
                     units_to_send = int(units_to_send * 0.5)
                     if units_to_send == 0:
@@ -835,3 +1024,203 @@ async def market_order(
             )
             return None
     return None
+
+
+async def limit_order(
+    instrument: str,
+    units: int,
+    price: float,
+    sl_price: Optional[float],
+    tp_price: Optional[float],
+    pocket: Literal["micro", "macro", "scalp"],
+    *,
+    current_bid: Optional[float] = None,
+    current_ask: Optional[float] = None,
+    require_passive: bool = True,
+    client_order_id: Optional[str] = None,
+    reduce_only: bool = False,
+    ttl_ms: float = 800.0,
+    entry_thesis: Optional[dict] = None,
+    meta: Optional[dict] = None,
+) -> tuple[Optional[str], Optional[str]]:
+    """Place a passive limit order. Returns (trade_id, order_id)."""
+
+    if units == 0:
+        return None, None
+
+    if require_passive and not _is_passive_price(
+        units=units,
+        price=price,
+        current_bid=current_bid,
+        current_ask=current_ask,
+    ):
+        logging.info(
+            "[ORDER] Passive guard blocked limit order pocket=%s units=%s price=%.3f bid=%s ask=%s",
+            pocket,
+            units,
+            price,
+            f"{current_bid:.3f}" if current_bid is not None else "NA",
+            f"{current_ask:.3f}" if current_ask is not None else "NA",
+        )
+        return None, None
+
+    if not is_market_open():
+        _log_order(
+            pocket=pocket,
+            instrument=instrument,
+            side="buy" if units > 0 else "sell",
+            units=units,
+            sl_price=sl_price,
+            tp_price=tp_price,
+            client_order_id=client_order_id,
+            status="market_closed",
+            attempt=0,
+            request_payload={"price": price, "reason": "market_closed"},
+        )
+        return None, None
+
+    ttl_sec = max(0.0, ttl_ms / 1000.0)
+    time_in_force = "GTC"
+    gtd_time = None
+    if ttl_sec >= 1.0:
+        expiry = datetime.now(timezone.utc) + timedelta(seconds=ttl_sec)
+        gtd_time = expiry.strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+        time_in_force = "GTD"
+
+    payload = {
+        "order": {
+            "type": "LIMIT",
+            "instrument": instrument,
+            "units": str(units),
+            "price": f"{price:.3f}",
+            "timeInForce": time_in_force,
+            "positionFill": "REDUCE_ONLY" if reduce_only else POSITION_FILL,
+            "clientExtensions": {"tag": f"pocket={pocket}"},
+            "tradeClientExtensions": {"tag": f"pocket={pocket}"},
+        }
+    }
+    if gtd_time:
+        payload["order"]["gtdTime"] = gtd_time
+    if client_order_id:
+        payload["order"]["clientExtensions"]["id"] = client_order_id
+        payload["order"]["tradeClientExtensions"]["id"] = client_order_id
+    if sl_price is not None:
+        payload["order"]["stopLossOnFill"] = {"price": f"{sl_price:.3f}"}
+    if tp_price is not None:
+        payload["order"]["takeProfitOnFill"] = {"price": f"{tp_price:.3f}"}
+
+    attempt_payload: dict = {"oanda": payload}
+    if entry_thesis is not None:
+        attempt_payload["entry_thesis"] = entry_thesis
+    if meta is not None:
+        attempt_payload["meta"] = meta
+
+    _log_order(
+        pocket=pocket,
+        instrument=instrument,
+        side="buy" if units > 0 else "sell",
+        units=units,
+        sl_price=sl_price,
+        tp_price=tp_price,
+        client_order_id=client_order_id,
+        status="submit_attempt",
+        attempt=1,
+        request_payload=attempt_payload,
+    )
+
+    endpoint = OrderCreate(accountID=ACCOUNT, data=payload)
+    try:
+        api.request(endpoint)
+    except V20Error as exc:
+        logging.error("[ORDER] Limit order error: %s", exc)
+        _log_order(
+            pocket=pocket,
+            instrument=instrument,
+            side="buy" if units > 0 else "sell",
+            units=units,
+            sl_price=sl_price,
+            tp_price=tp_price,
+            client_order_id=client_order_id,
+            status="api_error",
+            attempt=1,
+            error_code=getattr(exc, "code", None),
+            error_message=str(exc),
+            request_payload=attempt_payload,
+        )
+        return None, None
+    except Exception as exc:  # noqa: BLE001
+        logging.exception("[ORDER] Limit order unexpected error: %s", exc)
+        _log_order(
+            pocket=pocket,
+            instrument=instrument,
+            side="buy" if units > 0 else "sell",
+            units=units,
+            sl_price=sl_price,
+            tp_price=tp_price,
+            client_order_id=client_order_id,
+            status="unexpected_error",
+            attempt=1,
+            error_message=str(exc),
+            request_payload=attempt_payload,
+        )
+        return None, None
+
+    response = endpoint.response
+    reject = response.get("orderRejectTransaction")
+    if reject:
+        reason = reject.get("rejectReason") or reject.get("reason")
+        logging.error("[ORDER] Limit order rejected: %s", reason)
+        _log_order(
+            pocket=pocket,
+            instrument=instrument,
+            side="buy" if units > 0 else "sell",
+            units=units,
+            sl_price=sl_price,
+            tp_price=tp_price,
+            client_order_id=client_order_id,
+            status="rejected",
+            attempt=1,
+            error_code=reject.get("errorCode"),
+            error_message=reject.get("errorMessage") or reason,
+            response_payload=response,
+        )
+        return None, None
+
+    trade_id = _extract_trade_id(response)
+    executed_price = None
+    if response.get("orderFillTransaction") and response["orderFillTransaction"].get(
+        "price"
+    ):
+        try:
+            executed_price = float(response["orderFillTransaction"]["price"])
+        except Exception:
+            executed_price = None
+
+    order_id = None
+    create_tx = response.get("orderCreateTransaction")
+    if create_tx and create_tx.get("id") is not None:
+        order_id = str(create_tx["id"])
+
+    status = "submitted"
+    if trade_id:
+        status = "filled"
+
+    _log_order(
+        pocket=pocket,
+        instrument=instrument,
+        side="buy" if units > 0 else "sell",
+        units=units,
+        sl_price=sl_price,
+        tp_price=tp_price,
+        client_order_id=client_order_id,
+        status=status,
+        attempt=1,
+        ticket_id=trade_id,
+        executed_price=executed_price,
+        response_payload=response,
+    )
+
+    if trade_id:
+        return trade_id, order_id
+
+    return None, order_id

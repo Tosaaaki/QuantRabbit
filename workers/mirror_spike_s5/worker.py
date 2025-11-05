@@ -10,6 +10,7 @@ from collections import deque
 from typing import Dict, List, Optional
 
 from execution.order_manager import market_order
+from utils.oanda_account import get_account_snapshot
 from execution.position_manager import PositionManager
 from execution.risk_guard import loss_cooldown_status
 from market_data import spread_monitor, tick_window
@@ -267,7 +268,8 @@ async def mirror_spike_s5_worker() -> None:
             if fast_z is None or slow_z is None:
                 continue
             rsi = _rsi(closes[-config.PEAK_WINDOW_BUCKETS :], config.RSI_PERIOD)
-            if direction == "short" and rsi is not None and rsi < config.RSI_OVERBOUGHT:
+            # ショート側はより強いオーバーボートを要求
+            if direction == "short" and rsi is not None and rsi < max(config.SELL_RSI_OVERBOUGHT, config.RSI_OVERBOUGHT):
                 continue
             if direction == "long" and rsi is not None and rsi > config.RSI_OVERSOLD:
                 continue
@@ -294,7 +296,11 @@ async def mirror_spike_s5_worker() -> None:
                     config.TP_MAX_PIPS,
                     max(config.TP_MIN_PIPS, atr * config.TP_ATR_MULT),
                 )
-                sl_pips = max(config.SL_PIPS, atr * config.SL_ATR_MULT)
+                base_sl = max(config.SL_PIPS, atr * config.SL_ATR_MULT)
+                if direction == "short":
+                    # ショートはSLを少しタイトに、かつ上限を設ける
+                    base_sl = min(base_sl * config.SELL_SL_ATR_BIAS, config.SELL_SL_MAX_PIPS)
+                sl_pips = base_sl
             if direction == "long":
                 entry_price = float(ticks[-1].get("ask") or entry_price)
                 tp_price = round(entry_price + tp_pips * config.PIP_VALUE, 3)
@@ -320,7 +326,24 @@ async def mirror_spike_s5_worker() -> None:
                 "sl_pips": round(sl_pips, 2),
             }
 
-            units = config.ENTRY_UNITS if direction == "long" else -config.ENTRY_UNITS
+            # 余力に応じた単位のクランプ
+            abs_units = int(config.ENTRY_UNITS)
+            try:
+                snap = get_account_snapshot()
+                margin_avail = float(getattr(snap, "margin_available", 0.0) or 0.0)
+                margin_rate = float(getattr(snap, "margin_rate", 0.0) or 0.0)
+            except Exception:
+                # スナップショット取得不可時は安全側で見送り
+                continue
+            if margin_avail > 0.0 and margin_rate > 0.0 and entry_price > 0.0:
+                budget = margin_avail * config.MAX_MARGIN_USAGE
+                per_unit = entry_price * margin_rate
+                if per_unit > 0.0:
+                    cap = int(budget / per_unit)
+                    abs_units = min(abs_units, cap)
+            if abs_units < config.MIN_UNITS:
+                continue
+            units = abs_units if direction == "long" else -abs_units
             try:
                 trade_id, executed_price = await market_order(
                     "USD_JPY",
@@ -330,6 +353,7 @@ async def mirror_spike_s5_worker() -> None:
                     pocket="scalp",
                     client_order_id=_client_id(direction),
                     entry_thesis=entry_thesis,
+                    meta={"entry_price": float(entry_price)},
                 )
             except Exception as exc:  # pragma: no cover - network path
                 LOG.error("%s order error side=%s exc=%s", config.LOG_PREFIX, direction, exc)
