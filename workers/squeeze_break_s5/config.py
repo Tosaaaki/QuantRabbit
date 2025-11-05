@@ -68,9 +68,7 @@ LOG_PREFIX = "[SQUEEZE-S5]"
 ENABLED: bool = _bool("SQUEEZE_BREAK_S5_ENABLED", True)
 LOOP_INTERVAL_SEC: float = max(0.2, _float("SQUEEZE_BREAK_S5_LOOP_INTERVAL_SEC", 0.45))
 
-ACTIVE_HOURS_UTC = frozenset(
-    _parse_hours("SQUEEZE_BREAK_S5_ACTIVE_HOURS", "1,3,7-11,14-18")
-)
+ACTIVE_HOURS_UTC = frozenset(range(24))
 
 WINDOW_SEC: float = max(60.0, _float("SQUEEZE_BREAK_S5_WINDOW_SEC", 360.0))
 BUCKET_SECONDS: float = max(1.0, _float("SQUEEZE_BREAK_S5_BUCKET_SECONDS", 5.0))

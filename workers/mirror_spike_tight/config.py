@@ -68,9 +68,7 @@ LOG_PREFIX = "[MIRROR-TIGHT]"
 ENABLED: bool = _bool("MIRROR_SPIKE_TIGHT_ENABLED", True)
 LOOP_INTERVAL_SEC: float = max(0.25, _float("MIRROR_SPIKE_TIGHT_LOOP_INTERVAL_SEC", 0.5))
 
-ALLOWED_HOURS_UTC = frozenset(
-    _parse_hours("MIRROR_SPIKE_TIGHT_ALLOWED_HOURS", "6-18")
-)
+ALLOWED_HOURS_UTC = frozenset(range(24))
 BLOCKED_WEEKDAYS = tuple(
     token
     for token in os.getenv("MIRROR_SPIKE_TIGHT_BLOCKED_WEEKDAYS", "5").split(",")

@@ -68,9 +68,7 @@ LOG_PREFIX = "[IMPULSE-S5]"
 ENABLED: bool = _bool("IMPULSE_BREAK_S5_ENABLED", True)
 LOOP_INTERVAL_SEC: float = max(0.2, _float("IMPULSE_BREAK_S5_LOOP_INTERVAL_SEC", 0.45))
 
-ALLOWED_HOURS_UTC = frozenset(
-    _parse_hours("IMPULSE_BREAK_S5_ALLOWED_HOURS", "3-6,9,12-15")
-)
+ALLOWED_HOURS_UTC = frozenset(range(24))
 BLOCKED_WEEKDAYS = tuple(
     day for day in os.getenv("IMPULSE_BREAK_S5_BLOCKED_WEEKDAYS", "4").split(",") if day.strip()
 )

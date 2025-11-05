@@ -87,9 +87,7 @@ POCKET: str = os.getenv("MANUAL_SWING_POCKET", "macro")
 ALLOW_LONG: bool = _bool("MANUAL_SWING_ALLOW_LONG", True)
 ALLOW_SHORT: bool = _bool("MANUAL_SWING_ALLOW_SHORT", True)
 
-ALLOWED_HOURS_UTC = frozenset(
-    _parse_hours("MANUAL_SWING_ALLOWED_HOURS", "0-23")
-)
+ALLOWED_HOURS_UTC = frozenset(range(24))
 BLOCKED_WEEKDAYS = tuple(
     day.strip()
     for day in os.getenv("MANUAL_SWING_BLOCKED_WEEKDAYS", "").split(",")

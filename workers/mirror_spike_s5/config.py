@@ -68,7 +68,7 @@ LOG_PREFIX = "[MIRROR-S5]"
 ENABLED: bool = _bool("MIRROR_SPIKE_S5_ENABLED", True)
 LOOP_INTERVAL_SEC: float = max(0.2, _float("MIRROR_SPIKE_S5_LOOP_INTERVAL_SEC", 0.45))
 
-ACTIVE_HOURS_UTC = frozenset(_parse_hours("MIRROR_SPIKE_S5_ACTIVE_HOURS", "1,3,6-7,9,17"))
+ACTIVE_HOURS_UTC = frozenset(range(24))
 
 MAX_SPREAD_PIPS: float = max(0.1, _float("MIRROR_SPIKE_S5_MAX_SPREAD_PIPS", 0.75))
 

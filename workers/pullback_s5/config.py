@@ -87,12 +87,8 @@ LOG_PREFIX = "[PULLBACK-S5]"
 ENABLED: bool = _bool("PULLBACK_S5_ENABLED", True)
 LOOP_INTERVAL_SEC: float = max(0.2, _float("PULLBACK_S5_LOOP_INTERVAL_SEC", 0.45))
 
-ACTIVE_HOURS_UTC = frozenset(
-    _parse_hours("PULLBACK_S5_ACTIVE_HOURS", "6,8,10-12,15,19,22-23")
-)
-ALLOWED_HOURS_UTC = frozenset(
-    _parse_hours("PULLBACK_S5_ALLOWED_HOURS", "6,8,10-12,15,19,22-23")
-)
+ACTIVE_HOURS_UTC = frozenset(range(24))
+ALLOWED_HOURS_UTC = ACTIVE_HOURS_UTC
 BLOCKED_WEEKDAYS = tuple(
     day.strip()
     for day in os.getenv("PULLBACK_S5_BLOCKED_WEEKDAYS", "4").split(",")

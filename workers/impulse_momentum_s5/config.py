@@ -68,9 +68,7 @@ LOG_PREFIX = "[IMPULSE-MOMO]"
 ENABLED: bool = _bool("IMPULSE_MOMENTUM_S5_ENABLED", True)
 LOOP_INTERVAL_SEC: float = max(0.2, _float("IMPULSE_MOMENTUM_S5_LOOP_INTERVAL_SEC", 0.4))
 
-ALLOWED_HOURS_UTC = frozenset(
-    _parse_hours("IMPULSE_MOMENTUM_S5_ALLOWED_HOURS", "7-13,18-21")
-)
+ALLOWED_HOURS_UTC = frozenset(range(24))
 BLOCKED_WEEKDAYS = tuple(
     token for token in os.getenv("IMPULSE_MOMENTUM_S5_BLOCKED_WEEKDAYS", "").split(",") if token.strip()
 )

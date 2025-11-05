@@ -87,12 +87,8 @@ LOG_PREFIX = "[VWAP-S5]"
 ENABLED: bool = _bool("VWAP_MAGNET_S5_ENABLED", True)
 LOOP_INTERVAL_SEC: float = max(0.2, _float("VWAP_MAGNET_S5_LOOP_INTERVAL_SEC", 0.45))
 
-ACTIVE_HOURS_UTC = frozenset(
-    _parse_hours("VWAP_MAGNET_S5_ACTIVE_HOURS", "1,4-8,12,17,19")
-)
-ALLOWED_HOURS_UTC = frozenset(
-    _parse_hours("VWAP_MAGNET_S5_ALLOWED_HOURS", "2-6,9,12-14")
-)
+ACTIVE_HOURS_UTC = frozenset(range(24))
+ALLOWED_HOURS_UTC = ACTIVE_HOURS_UTC
 BLOCKED_WEEKDAYS = tuple(
     day.strip()
     for day in os.getenv("VWAP_MAGNET_S5_BLOCKED_WEEKDAYS", "4").split(",")
