@@ -12,6 +12,9 @@ class M1Scalper:
         ema20 = fac.get("ema20")
         rsi = fac.get("rsi")
         atr = fac.get("atr", 0.02)
+        adx = fac.get("adx", 0.0) or 0.0
+        vol5 = fac.get("vol_5m", 0.0) or 0.0
+        bbw = fac.get("bbw") or 0.0
         if close is None or ema20 is None or rsi is None:
             return None
 
@@ -21,7 +24,14 @@ class M1Scalper:
         if atr_pips is None:
             atr_pips = (atr or 0.0) * 100
 
-        if atr_pips < 2:
+        if atr_pips < 2.5:
+            return None
+        # Avoid tight range compression; prefer moderate activity
+        if bbw and bbw <= 0.20:
+            return None
+        if vol5 < 1.2:
+            return None
+        if adx < 18.0:
             return None
 
         # Dynamic TP/SL (pips) tuned to recent volatility
@@ -32,7 +42,7 @@ class M1Scalper:
         tp_dyn = round(tp_dyn, 2)
         sl_dyn = round(sl_dyn, 2)
 
-        if momentum < -0.0025 and rsi < 54:
+        if momentum < -0.0030 and rsi < 54:
             speed = abs(momentum) / max(0.0005, atr)
             rsi_gap = max(0.0, 54 - rsi) / 10
             confidence = int(
@@ -45,7 +55,7 @@ class M1Scalper:
                 "confidence": confidence,
                 "tag": f"{M1Scalper.name}-buy-dip",
             }
-        if momentum > 0.0025 and rsi > 46:
+        if momentum > 0.0030 and rsi > 46:
             speed = abs(momentum) / max(0.0005, atr)
             rsi_gap = max(0.0, rsi - 46) / 10
             confidence = int(
