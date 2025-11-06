@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import time
 from collections import deque
+import os
 import json
 from pathlib import Path
 from dataclasses import dataclass
@@ -16,11 +17,13 @@ from typing import Deque, Dict, Iterable, List, Tuple
 
 import logging
 
-_MAX_SECONDS = 180  # 3 分あれば十分
-_MAX_TICKS = 1800   # 10tick/sec を見込んだ上限
+# 保持ウィンドウを戦略要件（最大で ~6 分〜10 分）に合わせて拡張
+_MAX_SECONDS = 600  # 10 分保持（S5×60本などの要件に対応）
+_MAX_TICKS = 6000   # 10 tick/sec を想定した上限
 _BASE_DIR = Path(__file__).resolve().parents[1]
 _CACHE_PATH = (_BASE_DIR / "logs" / "tick_cache.json").resolve()
-_CACHE_LIMIT = 400  # persist a slim view to keep file light
+# ディスクキャッシュに含める最大件数（ワーカーが十分な窓幅を再構成できるよう拡張）
+_CACHE_LIMIT = 3000  # およそ 5〜10 分分（tick/sec に依存）
 _FLUSH_INTERVAL_SEC = 5.0
 _LOGGER = logging.getLogger(__name__)
 
@@ -36,6 +39,9 @@ class _TickRow:
 _TICKS: Deque[_TickRow] = deque(maxlen=_MAX_TICKS)
 _last_flush_ts: float = 0.0
 _last_persist_error_ts: float = 0.0
+_cache_mtime: float = 0.0
+_last_reload_ts: float = 0.0
+_MIN_RELOAD_INTERVAL_SEC: float = 0.4
 
 
 def _load_cache() -> None:
@@ -62,6 +68,11 @@ def _load_cache() -> None:
     if rows:
         for row in rows[-_MAX_TICKS:]:
             _TICKS.append(row)
+        try:
+            stat = _CACHE_PATH.stat()
+            globals()["_cache_mtime"] = float(stat.st_mtime)
+        except Exception:
+            globals()["_cache_mtime"] = 0.0
         _LOGGER.info("[TICK_CACHE] restored ticks=%d", len(rows))
     else:
         _LOGGER.info("[TICK_CACHE] no cached ticks found")
@@ -95,6 +106,54 @@ def _persist_cache() -> None:
 _load_cache()
 
 
+def _reload_cache_if_updated() -> None:
+    """Reload on-disk cache if it changed since last load.
+
+    This enables cross-process workers to receive fresh ticks that were
+    persisted by the main process without maintaining their own stream.
+    Rate-limited to avoid excessive filesystem I/O.
+    """
+    global _cache_mtime, _last_reload_ts
+    now = time.time()
+    if now - _last_reload_ts < _MIN_RELOAD_INTERVAL_SEC:
+        return
+    _last_reload_ts = now
+    try:
+        stat = _CACHE_PATH.stat()
+    except FileNotFoundError:
+        return
+    except Exception:
+        return
+    mtime = float(stat.st_mtime)
+    if mtime <= _cache_mtime:
+        return
+    # Cache updated by another process – reload a slim view
+    try:
+        payload = json.loads(_CACHE_PATH.read_text(encoding="utf-8"))
+        if not isinstance(payload, list):
+            return
+        rows: list[_TickRow] = []
+        for entry in payload[-_CACHE_LIMIT:]:
+            if not isinstance(entry, dict):
+                continue
+            try:
+                epoch = float(entry["epoch"])
+                bid = float(entry["bid"])
+                ask = float(entry["ask"])
+                mid = float(entry["mid"])
+            except (KeyError, TypeError, ValueError):
+                continue
+            rows.append(_TickRow(epoch=epoch, bid=bid, ask=ask, mid=mid))
+        if rows:
+            _TICKS.clear()
+            for row in rows[-_MAX_TICKS:]:
+                _TICKS.append(row)
+            _cache_mtime = mtime
+    except Exception:
+        # Ignore reload failures; next iteration will retry
+        return
+
+
 def record(tick) -> None:  # type: ignore[no-untyped-def]
     """
     market_data.tick_fetcher.Tick を想定。
@@ -111,6 +170,8 @@ def record(tick) -> None:  # type: ignore[no-untyped-def]
 
 
 def _iter_recent(seconds: float) -> Iterable[_TickRow]:
+    # Ensure we see new ticks written by other processes.
+    _reload_cache_if_updated()
     if not _TICKS:
         return ()
     cutoff = _TICKS[-1].epoch - max(0.0, seconds)
@@ -121,6 +182,8 @@ def recent_ticks(seconds: float = 60.0, *, limit: int | None = None) -> List[Dic
     """
     直近 seconds 秒以内のティックを新しい順で返す。
     """
+    # Pull in any fresh cache before serving reads
+    _reload_cache_if_updated()
     rows = []
     for idx, row in enumerate(_iter_recent(seconds)):
         rows.append({"epoch": row.epoch, "bid": row.bid, "ask": row.ask, "mid": row.mid})
@@ -135,6 +198,7 @@ def summarize(seconds: float = 60.0) -> Dict[str, float]:
     直近 seconds 秒の簡易サマリ。スキャルエントリーの
     指値位置を決める際の参考値を返す。
     """
+    _reload_cache_if_updated()
     rows = list(_iter_recent(seconds))
     if not rows:
         return {}

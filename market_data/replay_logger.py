@@ -53,6 +53,8 @@ def log_tick(tick) -> None:
         if getattr(tick, "bid", None) is not None and getattr(tick, "ask", None) is not None
         else None,
         "liquidity": getattr(tick, "liquidity", None),
+        "bids": list(getattr(tick, "bids", ())[:5]) if getattr(tick, "bids", ()) else None,
+        "asks": list(getattr(tick, "asks", ())[:5]) if getattr(tick, "asks", ()) else None,
     }
     _write_jsonl(path, payload)
 

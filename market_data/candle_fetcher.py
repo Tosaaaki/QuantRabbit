@@ -19,6 +19,7 @@ from market_data.tick_fetcher import Tick, _parse_time
 from market_data.replay_logger import log_candle
 from market_data import spread_monitor
 from market_data import tick_window
+from market_data import orderbook_state
 
 #
 Candle = dict[str, float]  # open, high, low, close
@@ -126,6 +127,20 @@ async def start_candle_stream(
         except Exception as exc:  # noqa: BLE001
             # best-effort; do not break the streaming loop
             print(f"[tick_cache] failed to record tick: {exc}")
+        try:
+            bids = tick.bids or ((tick.bid, float(tick.liquidity or 0)),)
+            asks = tick.asks or ((tick.ask, float(tick.liquidity or 0)),)
+            now_utc = datetime.datetime.utcnow().replace(tzinfo=datetime.timezone.utc)
+            latency_ms = abs((now_utc - tick.time).total_seconds()) * 1000.0
+            orderbook_state.update_snapshot(
+                epoch_ts=tick.time.timestamp(),
+                bids=bids,
+                asks=asks,
+                provider="oanda-stream",
+                latency_ms=latency_ms,
+            )
+        except Exception as exc:  # noqa: BLE001
+            print(f"[orderbook] failed to update snapshot: {exc}")
         await agg.on_tick(tick)
 
     from market_data.tick_fetcher import run_price_stream

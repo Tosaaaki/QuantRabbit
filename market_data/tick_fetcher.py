@@ -6,7 +6,7 @@ import os
 import random
 import datetime
 from dataclasses import dataclass
-from typing import Callable, Awaitable
+from typing import Callable, Awaitable, Tuple
 
 import httpx
 from utils.secrets import get_secret
@@ -28,6 +28,9 @@ STREAM_HOST = (
 STREAM_URL = f"https://{STREAM_HOST}/v3/accounts/{ACCOUNT}/pricing/stream"
 
 
+DepthLevels = Tuple[Tuple[float, float], ...]
+
+
 @dataclass
 class Tick:
     instrument: str
@@ -35,6 +38,8 @@ class Tick:
     bid: float
     ask: float
     liquidity: int
+    bids: DepthLevels = tuple()
+    asks: DepthLevels = tuple()
 
 
 # ---------- メイン ----------
@@ -84,12 +89,35 @@ async def _connect(instrument: str, callback: Callable[[Tick], Awaitable[None]])
                         msg = json.loads(raw)
                         if msg.get("type") != "PRICE":
                             continue
+                        raw_bids = msg.get("bids", [])
+                        raw_asks = msg.get("asks", [])
+                        bids = tuple(
+                            (
+                                float(entry.get("price")),
+                                float(entry.get("liquidity", 0.0)),
+                            )
+                            for entry in raw_bids
+                            if entry.get("price") is not None
+                        )
+                        asks = tuple(
+                            (
+                                float(entry.get("price")),
+                                float(entry.get("liquidity", 0.0)),
+                            )
+                            for entry in raw_asks
+                            if entry.get("price") is not None
+                        )
+                        top_bid = bids[0][0] if bids else float(raw_bids[0]["price"]) if raw_bids else 0.0
+                        top_ask = asks[0][0] if asks else float(raw_asks[0]["price"]) if raw_asks else 0.0
+                        top_liquidity = int(raw_bids[0].get("liquidity", 0)) if raw_bids else 0
                         tick = Tick(
                             instrument=msg["instrument"],
                             time=_parse_time(msg["time"]),
-                            bid=float(msg["bids"][0]["price"]),
-                            ask=float(msg["asks"][0]["price"]),
-                            liquidity=int(msg["bids"][0]["liquidity"]),
+                            bid=top_bid,
+                            ask=top_ask,
+                            liquidity=top_liquidity,
+                            bids=bids,
+                            asks=asks,
                         )
                         try:
                             log_tick(tick)
@@ -115,6 +143,8 @@ async def _mock_stream(instrument: str, callback: Callable[[Tick], Awaitable[Non
             bid=bid,
             ask=ask,
             liquidity=1000000,
+            bids=((bid, 1000000.0),),
+            asks=((ask, 1000000.0),),
         )
         try:
             log_tick(tick)
