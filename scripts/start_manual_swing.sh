@@ -5,6 +5,10 @@ ROOT=$(cd "$(dirname "$0")/.." && pwd)
 LOG_DIR="$ROOT/logs"
 mkdir -p "$LOG_DIR"
 
+# Enable the worker by default unless the caller explicitly overrides.
+export MANUAL_SWING_ENABLED="${MANUAL_SWING_ENABLED:-true}"
+export PYTHONUNBUFFERED=1
+
 # 1. 最新の NAV を取得（ログ用）
 python3 "$ROOT/scripts/show_account_nav.py" || true
 
@@ -28,4 +32,4 @@ python3 "$ROOT/scripts/replay_manual_swing.py" \
   --out "$ROOT/tmp/replay_manual_swing_latest.json" || true
 
 # 4. 実トレードワーカー起動
-exec python3 -m workers.manual_swing.worker
+exec python3 -u -c "import asyncio; from workers.manual_swing.worker import manual_swing_worker as W; asyncio.run(W())"

@@ -20,6 +20,7 @@ import math
 import statistics
 
 import sys
+import re
 from collections import deque
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -40,8 +41,39 @@ class Candle:
     close: float
 
 
+_ISO_TZ_SPLIT = re.compile(r"([+-])")
+
+
+def _truncate_fractional(ts: str) -> str:
+    """
+    Normalize OANDA timestamps that ship with 9 fractional digits.
+    Python's datetime.fromisoformat supports up to microseconds (6 digits),
+    so trim or pad as necessary before parsing.
+    """
+    if "." not in ts:
+        return ts
+    head, tail = ts.split(".", 1)
+    match = _ISO_TZ_SPLIT.search(tail)
+    if match:
+        sep_index = match.start()
+        frac = tail[:sep_index]
+        tz = tail[sep_index:]
+    else:
+        frac = tail
+        tz = ""
+    digits = "".join(ch for ch in frac if ch.isdigit())
+    if not digits:
+        normalized_frac = ""
+    else:
+        normalized_frac = (digits + "000000")[:6]
+    if normalized_frac:
+        return f"{head}.{normalized_frac}{tz}"
+    return f"{head}{tz}"
+
+
 def parse_iso(ts: str) -> datetime:
-    return datetime.fromisoformat(ts.replace("Z", "+00:00")).astimezone(timezone.utc)
+    normalized = _truncate_fractional(ts.strip().replace("Z", "+00:00"))
+    return datetime.fromisoformat(normalized).astimezone(timezone.utc)
 
 
 def load_candles(candle_dir: Path, start: date, end: date) -> List[Candle]:
