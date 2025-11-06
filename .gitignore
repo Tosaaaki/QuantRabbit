@@ -52,3 +52,9 @@ config/env.local.toml
 # Ad-hoc local artifacts
 pipeline.log
 tick_sample.json
+
+# Accidental local files (avoid committing secrets or placeholders)
+$HOME/
+$KEY
+$KEY.pub
+=
