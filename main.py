@@ -7,7 +7,8 @@ import subprocess
 import traceback
 import time
 from pathlib import Path
-from typing import Dict, Optional, Tuple
+from typing import Any, Dict, Optional, Tuple
+from collections import defaultdict
 
 from market_data.candle_fetcher import (
     Candle,
@@ -57,6 +58,7 @@ from analytics.realtime_metrics_client import (
     RealtimeMetricsClient,
     StrategyHealth,
 )
+from analysis import policy_bus
 from strategies.trend.ma_cross import MovingAverageCross
 from strategies.breakout.donchian55 import Donchian55
 from strategies.mean_reversion.bb_rsi import BBRsi
@@ -76,11 +78,22 @@ import workers.mirror_spike_s5.config as mirror_spike_s5_config
 import workers.trend_h1.config as trend_h1_config
 import workers.mirror_spike_tight.config as mirror_spike_tight_config
 import workers.pullback_s5.config as pullback_s5_config
-import workers.pullback_runner_s5.config as pullback_runner_s5_config
+try:
+    import workers.pullback_runner_s5.config as pullback_runner_s5_config
+    from workers.pullback_runner_s5 import pullback_runner_s5_worker
+except ModuleNotFoundError:
+    import asyncio as _pr_asyncio
+    class _PRDummy:
+        ENABLED = False
+        LOG_PREFIX = "[PULLBACK-RUNNER-S5]"
+    pullback_runner_s5_config = _PRDummy()
+    async def pullback_runner_s5_worker():
+        await _pr_asyncio.sleep(0.0)
 import workers.pullback_scalp.config as pullback_scalp_config
 import workers.scalp_exit.config as scalp_exit_config
 import workers.squeeze_break_s5.config as squeeze_break_s5_config
 import workers.vwap_magnet_s5.config as vwap_magnet_s5_config
+import workers.micro_core.config as micro_core_config
 from workers.impulse_break_s5 import impulse_break_s5_worker
 from workers.impulse_momentum_s5 import impulse_momentum_s5_worker
 from workers.impulse_retest_s5 import impulse_retest_s5_worker
@@ -89,12 +102,14 @@ from workers.mirror_spike import mirror_spike_worker
 from workers.mirror_spike_s5 import mirror_spike_s5_worker
 from workers.mirror_spike_tight import mirror_spike_tight_worker
 from workers.pullback_s5 import pullback_s5_worker
-from workers.pullback_runner_s5 import pullback_runner_s5_worker
 from workers.pullback_scalp import pullback_scalp_worker
 from workers.scalp_exit import scalp_exit_worker
 from workers.squeeze_break_s5 import squeeze_break_s5_worker
 from workers.trend_h1 import trend_h1_worker
 from workers.vwap_magnet_s5 import vwap_magnet_s5_worker
+import workers.onepip_maker_s1.config as onepip_maker_s1_config
+from workers.onepip_maker_s1 import onepip_maker_s1_worker
+from workers.micro_core import micro_core_worker
 
 # Configure logging
 logging.basicConfig(
@@ -322,6 +337,8 @@ _macro_state_mtime: float | None = None
 _macro_state_stale_warned = False
 _macro_state_missing_warned = False
 _TUNER_LAST_RUN_TS = 0.0
+_DELEGATE_MICRO = _env_bool("MICRO_DELEGATE_TO_WORKER", True)
+_POLICY_VERSION = 0
 
 
 def _macro_snapshot_path() -> Path:
@@ -505,6 +522,200 @@ def _cooldown_for_pocket(pocket: str, range_mode: bool) -> int:
     if range_mode:
         base = max(base, RANGE_COOLDOWN_SECONDS)
     return base
+
+
+def _ma_bias(factors: Optional[dict], *, pip_threshold: float = 0.002) -> str:
+    if not factors:
+        return "neutral"
+    try:
+        ma10 = float(factors.get("ma10"))
+        ma20 = float(factors.get("ma20"))
+    except (TypeError, ValueError):
+        return "neutral"
+    diff = ma10 - ma20
+    if diff > pip_threshold:
+        return "long"
+    if diff < -pip_threshold:
+        return "short"
+    return "neutral"
+
+
+def _confidence_from_perf(perf: Optional[dict]) -> float:
+    if not perf:
+        return 0.5
+    try:
+        pf = float(perf.get("pf"))
+    except (TypeError, ValueError):
+        pf = None
+    if pf is None:
+        return 0.5
+    # Map pf range [0.6, 2.0] -> [0, 1]
+    normalised = (pf - 0.6) / 1.4
+    return max(0.0, min(1.0, normalised))
+
+
+def _be_profile_for(pocket: str, *, range_mode: bool) -> dict:
+    if pocket == "macro":
+        trigger = 6.8 if not range_mode else 5.0
+        return {
+            "enabled": True,
+            "trigger_pips": trigger,
+            "cooldown_sec": 90.0,
+            "lock_ratio": 0.55,
+            "min_lock_pips": 2.6 if not range_mode else 2.0,
+        }
+    if pocket == "micro":
+        trigger = 2.4 if not range_mode else 2.0
+        return {
+            "enabled": True,
+            "trigger_pips": trigger,
+            "cooldown_sec": 45.0,
+            "lock_ratio": 0.5,
+            "min_lock_pips": 0.35,
+        }
+    # scalp
+    trigger = 1.3 if not range_mode else 1.1
+    return {
+        "enabled": True,
+        "trigger_pips": trigger,
+        "cooldown_sec": 20.0,
+        "lock_ratio": 0.45,
+        "min_lock_pips": 0.2,
+    }
+
+
+def _partial_profile_for(pocket: str, *, range_mode: bool) -> dict:
+    if pocket == "macro":
+        thresholds = [4.2, 6.8] if not range_mode else [3.6, 5.2]
+        fractions = [0.4, 0.3]
+        return {"thresholds_pips": thresholds, "fractions": fractions, "min_units": 80}
+    if pocket == "micro":
+        thresholds = [1.6, 3.0] if not range_mode else [1.3, 2.4]
+        fractions = [0.45, 0.3]
+        return {"thresholds_pips": thresholds, "fractions": fractions, "min_units": 40}
+    thresholds = [1.2, 2.2] if not range_mode else [1.0, 1.8]
+    fractions = [0.5, 0.3]
+    return {"thresholds_pips": thresholds, "fractions": fractions, "min_units": 20}
+
+
+def _publish_policy_snapshot(
+    *,
+    focus_tag: str,
+    focus_pockets: set[str],
+    weight_macro: float,
+    macro_regime: str,
+    micro_regime: str,
+    range_ctx,
+    range_active: bool,
+    event_soon: bool,
+    spread_gate_active: bool,
+    spread_gate_reason: str,
+    lots: dict[str, float],
+    perf_cache: dict,
+    managed_positions: dict,
+    scalp_share: float,
+    risk_pct: float,
+    fac_m1: dict,
+    fac_h4: dict,
+    strategies_by_pocket: Dict[str, list[str]] | None = None,
+    micro_hint: list[str] | None = None,
+) -> None:
+    global _POLICY_VERSION
+    _POLICY_VERSION += 1
+
+    strategies_by_pocket = strategies_by_pocket or {}
+
+    existing_snapshot = policy_bus.latest()
+    existing_data: dict[str, Any] = {}
+    existing_pockets: dict[str, Any] = {}
+    if existing_snapshot:
+        existing_data = existing_snapshot.to_dict()
+        existing_pockets = existing_data.get("pockets") or {}
+
+    notes = {
+        "focus_tag": focus_tag,
+        "macro_regime": macro_regime,
+        "micro_regime": micro_regime,
+        "range_reason": getattr(range_ctx, "reason", ""),
+        "range_score": getattr(range_ctx, "score", 0.0),
+        "spread_reason": spread_gate_reason,
+        "scalp_share": scalp_share,
+        "risk_pct": risk_pct,
+    }
+    if micro_hint:
+        notes["micro_hint"] = list(micro_hint)
+    pockets: dict[str, dict] = {}
+    for pocket in ("macro", "micro", "scalp"):
+        bias = "neutral"
+        if pocket == "macro":
+            bias = _ma_bias(fac_h4)
+        else:
+            bias = _ma_bias(fac_m1)
+
+        perf = perf_cache.get(pocket, {})
+        current_units = 0
+        pos_info = managed_positions.get(pocket) or {}
+        try:
+            current_units = int(pos_info.get("units") or 0)
+        except (TypeError, ValueError):
+            current_units = 0
+        units_cap = int(round(max(0.0, lots.get(pocket, 0.0)) * 100000))
+        entry_allow = (
+            pocket in focus_pockets
+            and (pocket != "macro" or not range_active)
+            and not spread_gate_active
+        )
+        if pocket in {"micro", "scalp"} and event_soon:
+            entry_allow = False
+        entry_gates = {
+            "allow_new": entry_allow,
+            "require_retest": range_active and pocket != "macro",
+            "spread_ok": not spread_gate_active,
+            "event_ok": not event_soon or pocket == "macro",
+        }
+        exit_profile = {
+            "reverse_threshold": 80 if pocket == "macro" else 70 if pocket == "micro" else 65,
+            "allow_negative_exit": False,
+        }
+
+        if pocket == "micro" and _DELEGATE_MICRO:
+            entry = existing_pockets.get("micro") or {}
+            entry = dict(entry)
+            if "bias" not in entry:
+                entry["bias"] = bias
+            entry.setdefault("confidence", _confidence_from_perf(perf))
+            entry.setdefault("strategies", [])
+            if strategies_by_pocket.get(pocket):
+                entry["strategies"] = list(strategies_by_pocket[pocket])
+            if micro_hint and not entry.get("strategies"):
+                entry["strategies"] = list(micro_hint)
+            pockets[pocket] = entry
+            continue
+
+        pockets[pocket] = {
+            "enabled": pocket in focus_pockets,
+            "bias": bias,
+            "confidence": _confidence_from_perf(perf),
+            "units_cap": units_cap or None,
+            "current_units": current_units,
+            "entry_gates": entry_gates,
+            "exit_profile": exit_profile,
+            "be_profile": _be_profile_for(pocket, range_mode=range_active),
+            "partial_profile": _partial_profile_for(pocket, range_mode=range_active),
+            "strategies": list(strategies_by_pocket.get(pocket, [])),
+        }
+
+    snapshot = policy_bus.PolicySnapshot(
+        version=_POLICY_VERSION,
+        generated_ts=time.time(),
+        air_score=getattr(range_ctx, "score", 0.0),
+        uncertainty=1.0 if event_soon else 0.0,
+        event_lock=event_soon,
+        range_mode=range_active,
+        notes=notes,
+        pockets=pockets,
+    )
+    policy_bus.publish(snapshot)
 
 
 _ORDERS_DB_PATH = Path("logs/orders.db")
@@ -1296,13 +1507,25 @@ async def logic_loop():
                 logging.warning(f"[SKIP] GPT decision unavailable: {e}")
                 await asyncio.sleep(5)
                 continue
+            gpt_strategies_raw = list(gpt.get("ranked_strategies", []))
             logging.info(
                 "[GPT] focus=%s weight_macro=%.2f strategies=%s",
                 gpt.get("focus_tag"),
                 gpt.get("weight_macro", 0.0),
-                gpt.get("ranked_strategies"),
+                gpt_strategies_raw,
             )
-            ranked_strategies = list(gpt.get("ranked_strategies", []))
+            micro_gpt_hint = [
+                s
+                for s in gpt_strategies_raw
+                if STRATEGIES.get(s) and STRATEGIES[s].pocket == "micro"
+            ]
+            ranked_strategies = list(gpt_strategies_raw)
+            if _DELEGATE_MICRO:
+                ranked_strategies = [
+                    s
+                    for s in ranked_strategies
+                    if STRATEGIES.get(s) and STRATEGIES[s].pocket != "micro"
+                ]
 
             # Update realtime metrics cache every few minutes
             if (now - last_metrics_refresh).total_seconds() >= 240:
@@ -1407,6 +1630,9 @@ async def logic_loop():
                 )
 
             evaluated_signals: list[dict] = []
+            strategies_by_pocket: dict[str, list[str]] = defaultdict(list)
+            if _DELEGATE_MICRO and micro_gpt_hint:
+                strategies_by_pocket["micro"].extend(micro_gpt_hint)
             for sname in ranked_strategies:
                 cls = STRATEGIES.get(sname)
                 if not cls:
@@ -1439,6 +1665,9 @@ async def logic_loop():
                         pocket,
                         sorted(allowed_names),
                     )
+                    continue
+                strategies_by_pocket[pocket].append(sname)
+                if pocket == "micro" and _DELEGATE_MICRO:
                     continue
                 if sname == "NewsSpikeReversal":
                     raw_signal = cls.check(fac_m1, news_cache.get("short", []))
@@ -2059,6 +2288,28 @@ async def logic_loop():
                 else:
                     logging.error(f"[ORDER FAILED] {signal['strategy']}")
 
+            _publish_policy_snapshot(
+                focus_tag=focus,
+                focus_pockets=focus_pockets,
+                weight_macro=weight,
+                macro_regime=macro_regime,
+                micro_regime=micro_regime,
+                range_ctx=range_ctx,
+                range_active=range_active,
+                event_soon=event_soon,
+                spread_gate_active=spread_gate_active,
+                spread_gate_reason=spread_gate_reason,
+                lots=lots,
+                perf_cache=perf_cache or {},
+                managed_positions=managed_positions,
+                scalp_share=scalp_share,
+                risk_pct=risk_override,
+                fac_m1=fac_m1,
+                fac_h4=fac_h4,
+                strategies_by_pocket={k: list(v) for k, v in strategies_by_pocket.items()},
+                micro_hint=micro_gpt_hint,
+            )
+
             # --- 5. 決済済み取引の同期 ---
             recent_trades = pos_manager.sync_trades()
             if recent_trades:
@@ -2136,18 +2387,49 @@ async def main():
         (mirror_spike_config.ENABLED, mirror_spike_worker, mirror_spike_config.LOG_PREFIX),
         (mirror_spike_s5_config.ENABLED, mirror_spike_s5_worker, mirror_spike_s5_config.LOG_PREFIX),
         (mirror_spike_tight_config.ENABLED, mirror_spike_tight_worker, mirror_spike_tight_config.LOG_PREFIX),
+        (onepip_maker_s1_config.ENABLED, onepip_maker_s1_worker, onepip_maker_s1_config.LOG_PREFIX),
         (scalp_exit_config.ENABLED, scalp_exit_worker, scalp_exit_config.LOG_PREFIX),
+    ]
+    micro_workers = [
+        (micro_core_config.ENABLED, micro_core_worker, micro_core_config.LOG_PREFIX),
     ]
     macro_workers = [
         (trend_h1_config.ENABLED, trend_h1_worker, trend_h1_config.LOG_PREFIX),
         (manual_swing_config.ENABLED, manual_swing_worker, manual_swing_config.LOG_PREFIX),
     ]
-    for enabled, worker_fn, prefix in scalp_workers + macro_workers:
-        if enabled:
-            logging.info("%s bootstrapping worker loop", prefix)
-            tasks.append(worker_fn())
-        else:
-            logging.info("%s worker disabled by configuration", prefix)
+    scalp_group_enabled = _env_bool("SCALP_WORKERS_ENABLED", True)
+    micro_group_enabled = _env_bool("MICRO_WORKERS_ENABLED", True)
+    macro_group_enabled = _env_bool("MACRO_WORKERS_ENABLED", True)
+
+    if scalp_group_enabled:
+        for enabled, worker_fn, prefix in scalp_workers:
+            if enabled:
+                logging.info("%s bootstrapping worker loop", prefix)
+                tasks.append(worker_fn())
+            else:
+                logging.info("%s worker disabled by configuration", prefix)
+    else:
+        logging.info("[GROUP] Scalp workers group disabled by configuration")
+
+    if micro_group_enabled:
+        for enabled, worker_fn, prefix in micro_workers:
+            if enabled:
+                logging.info("%s bootstrapping worker loop", prefix)
+                tasks.append(worker_fn())
+            else:
+                logging.info("%s worker disabled by configuration", prefix)
+    else:
+        logging.info("[GROUP] Micro workers group disabled by configuration")
+
+    if macro_group_enabled:
+        for enabled, worker_fn, prefix in macro_workers:
+            if enabled:
+                logging.info("%s bootstrapping worker loop", prefix)
+                tasks.append(worker_fn())
+            else:
+                logging.info("%s worker disabled by configuration", prefix)
+    else:
+        logging.info("[GROUP] Macro workers group disabled by configuration")
     await asyncio.gather(*tasks)
 
 
