@@ -498,7 +498,12 @@ async def fast_scalp_worker(shared_state: FastScalpState) -> None:
 
                     if close_reason is not None:
                         # "損切り禁止" が有効な場合、含み損では決済せず見送り
-                        if config.NO_LOSS_CLOSE and pips_gain < 0:
+                        # ただし強制理由（ドローダウン/ヘルス）は例外として許容
+                        if (
+                            config.NO_LOSS_CLOSE
+                            and pips_gain < 0
+                            and close_reason not in forced_exit_reasons
+                        ):
                             log_metric(
                                 "fast_scalp_skip",
                                 float(pips_gain),
@@ -844,6 +849,7 @@ async def fast_scalp_worker(shared_state: FastScalpState) -> None:
             sl_price, tp_price = clamp_sl_tp(entry_price, sl_price, tp_price, direction == "long")
 
             thesis = {
+                "strategy_tag": "fast_scalp",
                 "momentum_pips": round(features.momentum_pips, 3),
                 "short_momentum_pips": round(features.short_momentum_pips, 3),
                 "range_pips": round(features.range_pips, 3),
@@ -890,7 +896,7 @@ async def fast_scalp_worker(shared_state: FastScalpState) -> None:
                     tp_price,
                     "scalp_fast",
                     client_order_id=client_id,
-                    entry_thesis=thesis,
+                    entry_thesis={**thesis, "strategy_tag": "fast_scalp"},
                 )
             except Exception as exc:
                 logger.error(

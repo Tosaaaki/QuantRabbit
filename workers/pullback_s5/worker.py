@@ -12,6 +12,7 @@ from collections import deque
 from typing import Dict, List, Optional, Sequence
 
 from execution.order_manager import market_order
+from workers.common.dyn_size import compute_units
 from execution.position_manager import PositionManager
 from market_data import spread_monitor, tick_window
 from indicators.factor_cache import all_factors
@@ -75,14 +76,30 @@ def _rsi(values: Sequence[float], period: int) -> Optional[float]:
     return 100.0 - (100.0 / (1.0 + rs))
 
 
-def _atr_from_closes(values: Sequence[float], period: int) -> float:
-    if len(values) <= 1:
+def _atr_from_candles(candles: Sequence[Dict[str, float]], period: int) -> float:
+    """Compute a responsive ATR (in pips) from bucketed candles."""
+    if len(candles) <= 1:
         return 0.0
-    true_ranges = [abs(values[i] - values[i - 1]) for i in range(1, len(values))]
+
+    true_ranges: List[float] = []
+    prev_close = float(candles[0]["close"])
+    for candle in candles[1:]:
+        high = float(candle["high"])
+        low = float(candle["low"])
+        close = float(candle["close"])
+        tr = max(high - low, abs(high - prev_close), abs(low - prev_close))
+        true_ranges.append(tr)
+        prev_close = close
+
+    if not true_ranges:
+        return 0.0
+
     period = min(period, len(true_ranges))
     if period <= 0:
         return 0.0
-    return (sum(true_ranges[-period:]) / period) / config.PIP_VALUE
+
+    recent = true_ranges[-period:]
+    return (sum(recent) / len(recent)) / config.PIP_VALUE
 
 
 def _bucket_ticks(ticks: Sequence[Dict[str, float]]) -> List[Dict[str, float]]:
@@ -302,14 +319,17 @@ async def pullback_s5_worker() -> None:
                 continue
 
             closes = [c["close"] for c in candles]
+            fast_candles = candles[-config.FAST_BUCKETS :]
             fast_series = closes[-config.FAST_BUCKETS :]
             slow_series = closes[-config.SLOW_BUCKETS :]
             z_fast = _z_score(fast_series)
             z_slow = _z_score(slow_series)
             if z_fast is None or z_slow is None:
                 continue
-            atr_fast = _atr_from_closes(fast_series, config.RSI_PERIOD)
+            atr_fast = _atr_from_candles(fast_candles, config.RSI_PERIOD)
             if atr_fast < config.MIN_ATR_PIPS:
+                continue
+            if spread_pips > max(0.18, atr_fast * 0.35):
                 continue
             rsi_fast = _rsi(fast_series, config.RSI_PERIOD)
 
@@ -398,10 +418,34 @@ async def pullback_s5_worker() -> None:
 
             stage_idx = len(tagged)
             stage_ratio = _stage_ratio(stage_idx)
-            staged_units = int(round(config.ENTRY_UNITS * stage_ratio))
-            if staged_units < 1000:
-                staged_units = 1000
-            units = staged_units if side == "long" else -staged_units
+            base_units = int(round(config.ENTRY_UNITS * stage_ratio))
+            # シグナル強度を 0..1 に正規化
+            sig_strength = None
+            try:
+                span = max(1e-6, config.FAST_Z_MAX - config.FAST_Z_MIN)
+                if side == "short":
+                    sig_strength = (z_fast - config.FAST_Z_MIN) / span
+                else:
+                    sig_strength = ((-z_fast) - config.FAST_Z_MIN) / span
+                sig_strength = max(0.0, min(1.0, sig_strength))
+            except Exception:
+                sig_strength = None
+
+            # 柔軟なユニット計算（リスク/スプレッド/ADX/余力）
+            sizing = compute_units(
+                entry_price=entry_price,
+                sl_pips=float(sl_base),
+                base_entry_units=base_units,
+                min_units=int(config.MIN_UNITS),
+                max_margin_usage=float(config.MAX_MARGIN_USAGE),
+                spread_pips=float(spread_pips),
+                spread_soft_cap=float(config.MAX_SPREAD_PIPS),
+                adx=adx_value,
+                signal_score=sig_strength,
+            )
+            if sizing.units <= 0:
+                continue
+            units = sizing.units if side == "long" else -sizing.units
             thesis = {
                 "strategy_tag": "pullback_s5",
                 "z_fast": round(z_fast, 2),
@@ -418,7 +462,7 @@ async def pullback_s5_worker() -> None:
             }
 
             try:
-                trade_id, _ = await market_order(
+                trade_id = await market_order(
                     "USD_JPY",
                     units,
                     sl_price=sl_price,
@@ -426,6 +470,7 @@ async def pullback_s5_worker() -> None:
                     pocket="scalp",
                     client_order_id=_client_id(side),
                     entry_thesis=thesis,
+                    meta={"entry_price": entry_price},
                 )
             except Exception as exc:  # pragma: no cover - network path
                 LOG.error("%s order error side=%s exc=%s", config.LOG_PREFIX, side, exc)

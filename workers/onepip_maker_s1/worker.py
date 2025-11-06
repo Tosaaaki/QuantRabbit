@@ -217,6 +217,23 @@ async def onepip_maker_s1_worker() -> None:
                     last_spread_warn = now_mono
                 continue
 
+            # ベースラインスプレッド（移動窓）での適応ゲート
+            if spread_state and spread_state.get("baseline_ready"):
+                b_avg = spread_state.get("baseline_avg_pips")
+                b_p95 = spread_state.get("baseline_p95_pips")
+                bad = False
+                reason = None
+                try:
+                    if b_avg is not None and float(b_avg) > config.BASELINE_SPREAD_P50_MAX:
+                        bad = True; reason = f"baseline_p50>{config.BASELINE_SPREAD_P50_MAX:.2f}"
+                    if b_p95 is not None and float(b_p95) > config.BASELINE_SPREAD_P95_MAX:
+                        bad = True; reason = (reason or "") + ",baseline_p95"
+                except Exception:
+                    bad = False
+                if bad:
+                    log_metric("onepip_maker_skip", 1.0, tags={"reason": reason or "baseline_spread"})
+                    continue
+
             imbalance = orderbook_state.queue_imbalance(
                 snapshot, depth=config.QUEUE_IMBALANCE_DEPTH
             )
@@ -337,6 +354,22 @@ async def onepip_maker_s1_worker() -> None:
                 )
                 continue
 
+            # Margin free guard – block entries when free margin is too low
+            free_ratio = getattr(account_snapshot, "free_margin_ratio", None)
+            try:
+                free_ratio_val = float(free_ratio) if free_ratio is not None else None
+            except Exception:
+                free_ratio_val = None
+            if free_ratio_val is not None and free_ratio_val < config.MARGIN_FREE_MIN:
+                log_metric(
+                    "onepip_maker_skip",
+                    1.0,
+                    tags={"reason": "margin_low", "free": free_ratio_val},
+                )
+                # Apply a cooldown to avoid busy-loop when margin is constrained
+                cooldown_until = now_mono + max(2.0, config.COOLDOWN_AFTER_CANCEL_MS / 2000.0)
+                continue
+
             lot_allowed = allowed_lot(
                 equity,
                 config.SL_PIPS,
@@ -356,12 +389,16 @@ async def onepip_maker_s1_worker() -> None:
 
             sl_price = tp_price = None
             if config.SL_PIPS > 0.0 and config.TP_PIPS > 0.0:
+                # 実コストに合わせて TP を引き上げ（net + MIN_NET_GAIN_PIPS を確保）
+                avg_cost = float(cost_snapshot.get("avg_cost_pips") or 0.0)
+                tp_eff = max(config.TP_PIPS, avg_cost + config.MIN_NET_GAIN_PIPS)
+                tp_eff = min(tp_eff, config.TP_PIPS_MAX)
                 if direction == "BUY":
                     sl_candidate = price - config.SL_PIPS * config.PIP_VALUE
-                    tp_candidate = price + config.TP_PIPS * config.PIP_VALUE
+                    tp_candidate = price + tp_eff * config.PIP_VALUE
                 else:
                     sl_candidate = price + config.SL_PIPS * config.PIP_VALUE
-                    tp_candidate = price - config.TP_PIPS * config.PIP_VALUE
+                    tp_candidate = price - tp_eff * config.PIP_VALUE
                 sl_price, tp_price = clamp_sl_tp(
                     price,
                     sl_candidate,

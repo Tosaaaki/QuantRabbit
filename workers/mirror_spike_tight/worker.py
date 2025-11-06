@@ -17,6 +17,7 @@ from indicators.factor_cache import all_factors
 from market_data import spread_monitor, tick_window
 from workers.common import env_guard
 from workers.common.quality_gate import current_regime, news_block_active
+from analysis import policy_bus
 
 from . import config
 
@@ -157,6 +158,23 @@ async def mirror_spike_tight_worker() -> None:
                     last_kill_log = now_monotonic
                 continue
 
+            plan_snapshot = policy_bus.latest()
+            plan_scalp = {}
+            if plan_snapshot and getattr(plan_snapshot, "pockets", None):
+                plan_scalp = plan_snapshot.pockets.get("scalp") or {}
+            entry_plan = plan_scalp.get("entry_gates", {}) if isinstance(plan_scalp, dict) else {}
+            allow_new_plan = bool(entry_plan.get("allow_new", True))
+            policy_units_cap = plan_scalp.get("units_cap") if isinstance(plan_scalp, dict) else None
+            try:
+                policy_units_cap = int(policy_units_cap) if policy_units_cap is not None else None
+            except (TypeError, ValueError):
+                policy_units_cap = None
+            current_units_plan = plan_scalp.get("current_units") if isinstance(plan_scalp, dict) else None
+            try:
+                current_units_plan = abs(int(current_units_plan)) if current_units_plan is not None else 0
+            except (TypeError, ValueError):
+                current_units_plan = 0
+
             blocked, _, spread_state, spread_reason = spread_monitor.is_blocked()
             spread_pips = float((spread_state or {}).get("spread_pips", 0.0) or 0.0)
             if blocked or spread_pips > config.MAX_SPREAD_PIPS:
@@ -225,6 +243,10 @@ async def mirror_spike_tight_worker() -> None:
                         config.MAX_TRADES_PER_DAY,
                     )
                     daily_limit_logged = True
+                continue
+
+            if not allow_new_plan:
+                await _manage_trades(pos_manager, managed_state, time.monotonic())
                 continue
 
             allowed_env, reason = env_guard.mean_reversion_allowed(
@@ -348,7 +370,14 @@ async def mirror_spike_tight_worker() -> None:
                 3,
             )
 
-            units = config.ENTRY_UNITS if direction == "long" else -config.ENTRY_UNITS
+            units_abs = config.ENTRY_UNITS
+            if policy_units_cap is not None:
+                remaining_cap = max(0, policy_units_cap - current_units_plan)
+                units_abs = min(units_abs, remaining_cap)
+            if units_abs <= 0:
+                await _manage_trades(pos_manager, managed_state, time.monotonic())
+                continue
+            units = units_abs if direction == "long" else -units_abs
             client_id = _client_id(direction)
             thesis = {
                 "strategy_tag": "mirror_spike_tight",

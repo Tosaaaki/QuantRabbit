@@ -10,6 +10,7 @@ from collections import deque
 from typing import Dict, List, Optional
 
 from execution.order_manager import market_order
+from workers.common.dyn_size import compute_units
 from utils.oanda_account import get_account_snapshot
 from execution.position_manager import PositionManager
 from execution.risk_guard import loss_cooldown_status
@@ -263,6 +264,8 @@ async def mirror_spike_s5_worker() -> None:
             atr = _atr_from_closes(closes[-config.LOOKBACK_BUCKETS :], config.RSI_PERIOD)
             if atr < config.MIN_ATR_PIPS:
                 continue
+            if spread_pips > max(0.16, atr * 0.35):
+                continue
             fast_z = _z_score(closes, config.PEAK_WINDOW_BUCKETS + 6)
             slow_z = _z_score(closes, config.LOOKBACK_BUCKETS)
             if fast_z is None or slow_z is None:
@@ -326,24 +329,26 @@ async def mirror_spike_s5_worker() -> None:
                 "sl_pips": round(sl_pips, 2),
             }
 
-            # 余力に応じた単位のクランプ
-            abs_units = int(config.ENTRY_UNITS)
+            # 柔軟サイズ決定（スプレッド/ATR/余力/シグナル強度）
+            sig_strength = None
             try:
-                snap = get_account_snapshot()
-                margin_avail = float(getattr(snap, "margin_available", 0.0) or 0.0)
-                margin_rate = float(getattr(snap, "margin_rate", 0.0) or 0.0)
+                sig_strength = min(1.0, max(0.0, abs(float(fast_z)) / 2.0))
             except Exception:
-                # スナップショット取得不可時は安全側で見送り
+                sig_strength = None
+            sizing = compute_units(
+                entry_price=float(entry_price),
+                sl_pips=float(sl_pips),
+                base_entry_units=int(config.ENTRY_UNITS),
+                min_units=int(config.MIN_UNITS),
+                max_margin_usage=float(config.MAX_MARGIN_USAGE),
+                spread_pips=float(spread_pips),
+                spread_soft_cap=float(config.MAX_SPREAD_PIPS),
+                adx=None,
+                signal_score=sig_strength,
+            )
+            if sizing.units <= 0:
                 continue
-            if margin_avail > 0.0 and margin_rate > 0.0 and entry_price > 0.0:
-                budget = margin_avail * config.MAX_MARGIN_USAGE
-                per_unit = entry_price * margin_rate
-                if per_unit > 0.0:
-                    cap = int(budget / per_unit)
-                    abs_units = min(abs_units, cap)
-            if abs_units < config.MIN_UNITS:
-                continue
-            units = abs_units if direction == "long" else -abs_units
+            units = sizing.units if direction == "long" else -sizing.units
             try:
                 trade_id, executed_price = await market_order(
                     "USD_JPY",
