@@ -96,6 +96,29 @@
   Notes:
     - ステージ拡張やナンピンは許可せず、BE移行と部分利確を組み合わせる
 
+- [ ] ID: T-20251104-003
+  Title: Maker型1pipスカルパーワーカーの実装
+  Status: in-progress
+  Priority: P1
+  Owner: tossaki
+  Scope/Paths: market_data/orderbook_state.py, analytics/cost_guard.py, workers/onepip_maker_s1/, main.py, docs/TASKS.md
+  Context: 1pip利確多数回の実装方針（板主導メイカー戦略）を別ワーカーとして実装する（AGENT.me 仕様 §3.5.1、提案メモ 2025-11-04）
+  Acceptance:
+    - L2板情報キャッシュとレイテンシ推定を扱う orderbook_state モジュールが追加され、最新スナップショットを参照できる
+    - 取引コスト c を推定するコストガードが実装され、latest fill から c を更新・参照できる
+    - workers/onepip_maker_s1 worker が shadow モードで稼働し、post-only・TTLロジックの骨組みとメトリクス出力が揃う
+    - main.py にワーカー起動導線が追加され、環境変数で有効化/シャドウ切替が可能
+  Plan:
+    - orderbook_state/cost_guard の土台を実装し、将来のL2ストリームから更新できるようにする
+    - onepip_maker_s1 worker を shadow モードで実装し、条件ログとシグナルカウントを記録
+    - main.py へワーカー登録と環境変数フラグを追加し、既存スプレッド・レンジガードと連携
+  Notes:
+    - 実オーダー発注は post-only 対応と L2遅延監視が整ってから enable する想定
+    - シャドウ結果を `logs/onepip_maker_s1_shadow.jsonl` に出力し、EV/コスト検証に活用する
+    - 2025-11-04: tick stream から top-of-book を orderbook_state へ自動投入し、コストガードはログから定期リフレッシュする構成を追加済み
+    - 2025-11-04: `execution/order_manager.limit_order` を追加し、env で shadow を切った際に post-only limit を即時発注できる骨組みまで実装済み（SL/TP/TTL は env 係数で制御、TTL<1s 時は自動キャンセルタスクが動く）
+    - 2025-11-04: Risk Guard/口座スナップショット連携と `onepip_maker_*` メトリクス記録を追加し、ライブ化チェックリストを README へ記載済み
+
 ## Archive
 
 完了タスクを以下形式で移動・記録:
