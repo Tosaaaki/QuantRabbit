@@ -14,6 +14,7 @@ import logging
 import sqlite3
 import pathlib
 from datetime import datetime, timezone, timedelta
+import os
 from typing import Literal, Optional, Tuple
 
 from oandapyV20 import API
@@ -48,6 +49,12 @@ if HEDGING_ENABLED:
 _LAST_PROTECTIONS: dict[str, Tuple[Optional[float], Optional[float]]] = {}
 MACRO_BE_GRACE_SECONDS = 45
 _MARGIN_REJECT_UNTIL: dict[str, float] = {}
+
+# Max units per new entry order (reduce_only orders are exempt)
+try:
+    _MAX_ORDER_UNITS = int(os.getenv("MAX_ORDER_UNITS", "10000"))
+except Exception:
+    _MAX_ORDER_UNITS = 10000
 
 # ---------- orders logger (logs/orders.db) ----------
 _ORDERS_DB_PATH = pathlib.Path("logs/orders.db")
@@ -255,7 +262,7 @@ _PARTIAL_THRESHOLDS_RANGE = {
 }
 _PARTIAL_FRACTIONS = (0.4, 0.3)
 # micro の平均建玉（~160u）でも段階利確が動作するよう下限を緩和
-_PARTIAL_MIN_UNITS = 50
+_PARTIAL_MIN_UNITS = 20
 _PARTIAL_RANGE_MACRO_MIN_AGE_MIN = 6.0
 
 
@@ -534,11 +541,11 @@ def update_dynamic_protections(
     per_pocket_triggers = {
         "macro": max(8.0, (atr_h4 or atr_m1 or 0.0) * 1.5),
         "micro": max(3.0, (atr_m1 or 0.0) * 0.8),
-        # スキャルは break-even を行わない
-        "scalp": float("inf"),
+        # スキャルも一定の含み益で建値超えに移行（戻り負けの抑制）
+        "scalp": max(2.4, (atr_m1 or 0.0) * 1.2),
     }
     lock_ratio = 0.6
-    per_pocket_min_lock = {"macro": 3.0, "micro": 2.0, "scalp": 0.9}
+    per_pocket_min_lock = {"macro": 3.0, "micro": 2.0, "scalp": 0.6}
     pip = 0.01
     now_ts = datetime.now(timezone.utc)
     for pocket, info in open_positions.items():
@@ -556,6 +563,10 @@ def update_dynamic_protections(
             price = tr.get("price")
             side = tr.get("side")
             if not trade_id or price is None or not side:
+                continue
+            client_id = str(tr.get("client_id") or "")
+            # Safety: skip manual/unknown trades unless explicitly managed by the bot
+            if not client_id.startswith("qr-"):
                 continue
             # mirror-s5（client_id が 'qr-mirror-s5-' プレフィクス）については
             # ここでの動的SL更新をスキップし、エントリー時のSL/TPを維持する。
@@ -703,6 +714,9 @@ def plan_partial_reductions(
             units = int(tr.get("units", 0) or 0)
             if not trade_id or not side or entry is None or units == 0:
                 continue
+            client_id = str(tr.get("client_id") or "")
+            if not client_id.startswith("qr-"):
+                continue
             opened_at = _parse_trade_open_time(tr.get("open_time"))
             age_minutes = None
             if opened_at:
@@ -752,6 +766,26 @@ async def market_order(
     units : +10000 = buy 0.1 lot, ‑10000 = sell 0.1 lot
     returns order ticket id（決済のみの fill でも tradeID を返却）
     """
+    # Reject trivially small entries per spec (abs(units) < 1000 => noise)
+    try:
+        if not reduce_only and abs(int(units)) < 1000:
+            _log_order(
+                pocket=pocket,
+                instrument=instrument,
+                side="buy" if units > 0 else "sell",
+                units=units,
+                sl_price=sl_price,
+                tp_price=tp_price,
+                client_order_id=client_order_id,
+                status="too_small_units_skip",
+                attempt=0,
+                request_payload={"reason": "abs(units) < 1000"},
+            )
+            return None
+    except Exception:
+        # Be defensive; do not break ordering flow on logging failure
+        return None
+
     # Pocket-level cooldown after margin rejection
     try:
         if pocket and _MARGIN_REJECT_UNTIL.get(pocket, 0.0) > time.monotonic():
@@ -832,6 +866,25 @@ async def market_order(
                     pocket,
                 )
                 preflight_units = allowed_units
+
+    # Cap new-entry order size to _MAX_ORDER_UNITS
+    if not reduce_only:
+        abs_units = abs(int(preflight_units))
+        if abs_units > _MAX_ORDER_UNITS:
+            capped = (1 if preflight_units > 0 else -1) * _MAX_ORDER_UNITS
+            _log_order(
+                pocket=pocket,
+                instrument=instrument,
+                side="buy" if preflight_units > 0 else "sell",
+                units=preflight_units,
+                sl_price=sl_price,
+                tp_price=tp_price,
+                client_order_id=client_order_id,
+                status="units_cap_applied",
+                attempt=0,
+                request_payload={"from_units": preflight_units, "to_units": capped},
+            )
+            preflight_units = capped
 
     order_data = {
         "order": {

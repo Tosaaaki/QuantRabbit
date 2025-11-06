@@ -12,7 +12,10 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Optional, Tuple
 
+import logging
+
 from analysis.ma_projection import MACrossProjection, compute_ma_projection
+from analysis.mtf_utils import resample_candles_from_m1
 
 
 @dataclass
@@ -29,11 +32,19 @@ class ExitManager:
         self.confidence_threshold = confidence_threshold
         self._macro_signal_threshold = max(confidence_threshold + 10, 80)
         self._macro_trend_adx = 16
-        self._macro_loss_buffer = 0.85
+        self._macro_loss_buffer = 1.10
         self._macro_ma_gap = 3.0
         # Macro-specific stability controls
-        self._macro_min_hold_minutes = 4.0  # minimum age before acting on reversals
-        self._macro_hysteresis_pips = 1.2   # tighten band so small reversals are addressed
+        self._macro_min_hold_minutes = 6.0  # hold a bit longer to reduce churn
+        self._macro_hysteresis_pips = 1.6   # wider deadband; avoid near-flat exits
+        # Pattern-aware retest handling (macro only)
+        self._macro_retest_band_base = 1.2  # pips around fast MA treated as retest zone
+        self._macro_retest_m5_slope = 0.06  # min M5 slope (pips/bar) aligning with position
+        self._macro_retest_m10_slope = 0.04 # min M10 slope (pips/bar)
+        self._macro_struct_cushion = 0.22   # ATR fraction for pivot kill-line cushion
+        # Scalp-specific stability controls
+        self._scalp_loss_guard = 1.15
+        self._scalp_take_profit = 2.4
         self._reverse_confirmations = 2
         self._reverse_decay = timedelta(seconds=180)
         self._reverse_hits: Dict[Tuple[str, str], Dict[str, object]] = {}
@@ -109,6 +120,7 @@ class ExitManager:
                     projection_primary,
                     projection_fast,
                     atr_pips,
+                    fac_m1,
                 )
                 if decision:
                     decisions.append(decision)
@@ -131,6 +143,7 @@ class ExitManager:
                     projection_primary,
                     projection_fast,
                     atr_pips,
+                    fac_m1,
                 )
                 if decision:
                     decisions.append(decision)
@@ -180,7 +193,11 @@ class ExitManager:
         projection_primary: Optional[MACrossProjection],
         projection_fast: Optional[MACrossProjection],
         atr_pips: float,
+        fac_m1: Dict,
     ) -> Optional[ExitDecision]:
+        if pocket == "scalp":
+            return None
+
         allow_reentry = False
         reason = ""
         tag = f"{pocket}-long"
@@ -250,6 +267,17 @@ class ExitManager:
                 and profit_pips > -self._macro_loss_buffer
             )
             if not macro_skip:
+                # Pattern-aware retest guard for macro: if price sits near fast MA
+                # on lower TFs and M5/M10 slopes support a bounce, defer exit.
+                if pocket == "macro":
+                    if self._should_delay_macro_exit_for_retest(
+                        side="long",
+                        close_price=close_price,
+                        ema20=ema20,
+                        atr_pips=atr_pips,
+                        fac_m1=fac_m1,
+                    ):
+                        return None
                 # ヒステリシス: 小幅の含み損益域では逆方向シグナルだけでクローズしない
                 micro_guard = (pocket == "micro" and -1.2 < profit_pips < 1.2)
                 macro_guard = (
@@ -321,6 +349,14 @@ class ExitManager:
             elif profit_pips <= -1.0:
                 reason = "range_stop"
 
+        # Structure-based kill-line: if macro and M5 pivot breaks beyond cushion, exit decisively
+        if pocket == "macro" and not reason:
+            kill_reason = self._structure_break_if_any(
+                side="long", fac_m1=fac_m1, price=close_price, atr_pips=atr_pips
+            )
+            if kill_reason:
+                reason = kill_reason
+
         if range_mode and reason == "reverse_signal":
             allow_reentry = False
         if reason == "reverse_signal":
@@ -354,7 +390,11 @@ class ExitManager:
         projection_primary: Optional[MACrossProjection],
         projection_fast: Optional[MACrossProjection],
         atr_pips: float,
+        fac_m1: Dict,
     ) -> Optional[ExitDecision]:
+        if pocket == "scalp":
+            return None
+
         allow_reentry = False
         reason = ""
         tag = f"{pocket}-short"
@@ -422,6 +462,15 @@ class ExitManager:
                 and profit_pips > -self._macro_loss_buffer
             )
             if not macro_skip:
+                if pocket == "macro":
+                    if self._should_delay_macro_exit_for_retest(
+                        side="short",
+                        close_price=close_price,
+                        ema20=ema20,
+                        atr_pips=atr_pips,
+                        fac_m1=fac_m1,
+                    ):
+                        return None
                 # ヒステリシス: 小幅の含み損益域では逆方向シグナルだけでクローズしない
                 micro_guard = (pocket == "micro" and -1.2 < profit_pips < 1.2)
                 macro_guard = (
@@ -492,6 +541,13 @@ class ExitManager:
             elif profit_pips <= -1.0:
                 reason = "range_stop"
 
+        if pocket == "macro" and not reason:
+            kill_reason = self._structure_break_if_any(
+                side="short", fac_m1=fac_m1, price=close_price, atr_pips=atr_pips
+            )
+            if kill_reason:
+                reason = kill_reason
+
         if range_mode and reason == "reverse_signal":
             allow_reentry = False
         if reason == "reverse_signal":
@@ -507,6 +563,109 @@ class ExitManager:
             allow_reentry=allow_reentry,
         )
 
+    # --- Pattern-aware helpers (macro) ---
+    def _should_delay_macro_exit_for_retest(
+        self,
+        *,
+        side: str,
+        close_price: float,
+        ema20: float,
+        atr_pips: float,
+        fac_m1: Dict,
+    ) -> bool:
+        """Return True to defer macro exit for a potential retest/bounce.
+
+        Logic:
+        - If price sits near fast MA band (M5/M10 via projection fast MA),
+          and the corresponding slopes align with the position, hold.
+        - Band width scales with ATR.
+        """
+        try:
+            candles_m1 = fac_m1.get("candles") or []
+            c5 = resample_candles_from_m1(candles_m1, 5)
+            c10 = resample_candles_from_m1(candles_m1, 10)
+            p5 = compute_ma_projection({"candles": c5}, timeframe_minutes=5.0) if len(c5) >= 30 else None
+            p10 = compute_ma_projection({"candles": c10}, timeframe_minutes=10.0) if len(c10) >= 30 else None
+        except Exception:
+            return False
+
+        dir_sign = 1.0 if side == "long" else -1.0
+        slope_ok_5 = p5 and (p5.gap_slope_pips or 0.0) * dir_sign >= self._macro_retest_m5_slope
+        slope_ok_10 = p10 and (p10.gap_slope_pips or 0.0) * dir_sign >= self._macro_retest_m10_slope
+        if not (slope_ok_5 or slope_ok_10):
+            return False
+
+        band = max(self._macro_retest_band_base, (atr_pips or 0.0) * 0.25)
+        # Prefer M5 fast MA proximity when available; fall back to ema20 (M1)
+        near_fast_ok = False
+        try:
+            fast_approx = (p5.fast_ma if p5 and p5.fast_ma is not None else None)
+            ref = fast_approx if fast_approx is not None else ema20
+            near_fast_ok = abs(close_price - ref) / 0.01 <= band
+        except Exception:
+            near_fast_ok = abs(close_price - ema20) / 0.01 <= band
+        return bool(near_fast_ok)
+
+    def _structure_break_if_any(
+        self,
+        *,
+        side: str,
+        fac_m1: Dict,
+        price: float,
+        atr_pips: float,
+    ) -> Optional[str]:
+        """Detect recent M5 pivot break as decisive structure failure.
+
+        Returns reason string when broken; otherwise None.
+        """
+        try:
+            candles_m1 = fac_m1.get("candles") or []
+            c5 = resample_candles_from_m1(candles_m1, 5)
+        except Exception:
+            return None
+        if len(c5) < 9:
+            return None
+
+        low_key, high_key = ("low", "high")
+        def _last_pivot(arr: List[Dict[str, float]], is_low: bool, width: int = 2, lookback: int = 14) -> Optional[float]:
+            n = len(arr)
+            start = max(2, n - lookback)
+            for i in range(n - 3, start - 1, -1):
+                try:
+                    center = float(arr[i][low_key if is_low else high_key])
+                except Exception:
+                    continue
+                ok = True
+                for k in range(1, width + 1):
+                    try:
+                        left = float(arr[i - k][low_key if is_low else high_key])
+                        right = float(arr[i + k][low_key if is_low else high_key])
+                    except Exception:
+                        ok = False
+                        break
+                    if is_low:
+                        if not (center <= left and center <= right):
+                            ok = False
+                            break
+                    else:
+                        if not (center >= left and center >= right):
+                            ok = False
+                            break
+                if ok:
+                    return center
+            return None
+
+        cushion = max(0.6, (atr_pips or 0.0) * self._macro_struct_cushion)
+        if side == "long":
+            pivot = _last_pivot(c5, is_low=True)
+            if pivot is not None and price <= pivot - cushion * 0.01:
+                return "macro_struct_break"
+        else:
+            pivot = _last_pivot(c5, is_low=False)
+            if pivot is not None and price >= pivot + cushion * 0.01:
+                return "macro_struct_break"
+        return None
+
     def _should_exit_for_cross(
         self,
         pocket: str,
@@ -519,7 +678,12 @@ class ExitManager:
         macd_cross_minutes: Optional[float],
         atr_pips: float,
     ) -> bool:
-        projection = projection_fast or projection_primary
+        # For macro positions, prefer primary (H4) projection to avoid
+        # churning exits on transient M1 flickers. For other pockets,
+        # keep fast (M1) responsive.
+        projection = (
+            projection_primary if pocket == "macro" else (projection_fast or projection_primary)
+        )
         if projection is None:
             return False
 
@@ -529,7 +693,9 @@ class ExitManager:
         if side == "short" and gap > 0.0:
             return True
 
-        slope_source = projection_fast or projection_primary
+        slope_source = (
+            projection_primary if pocket == "macro" else (projection_fast or projection_primary)
+        )
         slope = slope_source.gap_slope_pips if slope_source else 0.0
         if macd_cross_minutes is None:
             if side == "long" and slope >= 0.0:
@@ -560,16 +726,23 @@ class ExitManager:
             candidates.append(projection.projected_cross_minutes)
         if macd_cross_minutes is not None:
             candidates.append(macd_cross_minutes)
+        # When no reliable cross projection is available, fall back to
+        # simple loss/take-profit guards. For macro positions, only stop
+        # on loss beyond the guard, or realize a small profit when it
+        # exceeds the small_profit_guard. Do NOT exit simply because the
+        # profit is small or slightly negative.
         if not candidates:
             if pocket == "macro":
-                if profit_pips <= -loss_guard or profit_pips <= small_profit_guard:
-                    return True
+                if profit_pips <= -loss_guard:
+                    return True  # stop loss guard
+                if profit_pips >= small_profit_guard:
+                    return True  # small take-profit
             return False
         cross_minutes = min(candidates)
 
         if cross_minutes > threshold:
             if pocket == "macro" and (
-                profit_pips <= -loss_guard or profit_pips <= small_profit_guard
+                profit_pips <= -loss_guard or profit_pips >= small_profit_guard
             ):
                 return True
             return False
@@ -578,9 +751,9 @@ class ExitManager:
             if not matured:
                 return profit_pips <= -(loss_guard * 1.1)
             if profit_pips <= -loss_guard:
-                return True
-            if profit_pips <= small_profit_guard:
-                return True
+                return True  # stop loss
+            if profit_pips >= small_profit_guard:
+                return True  # small take-profit once threshold reached
             return False
 
         if profit_pips >= 0.8:

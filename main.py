@@ -76,6 +76,7 @@ import workers.mirror_spike_s5.config as mirror_spike_s5_config
 import workers.trend_h1.config as trend_h1_config
 import workers.mirror_spike_tight.config as mirror_spike_tight_config
 import workers.pullback_s5.config as pullback_s5_config
+import workers.pullback_runner_s5.config as pullback_runner_s5_config
 import workers.pullback_scalp.config as pullback_scalp_config
 import workers.scalp_exit.config as scalp_exit_config
 import workers.squeeze_break_s5.config as squeeze_break_s5_config
@@ -88,6 +89,7 @@ from workers.mirror_spike import mirror_spike_worker
 from workers.mirror_spike_s5 import mirror_spike_s5_worker
 from workers.mirror_spike_tight import mirror_spike_tight_worker
 from workers.pullback_s5 import pullback_s5_worker
+from workers.pullback_runner_s5 import pullback_runner_s5_worker
 from workers.pullback_scalp import pullback_scalp_worker
 from workers.scalp_exit import scalp_exit_worker
 from workers.squeeze_break_s5 import squeeze_break_s5_worker
@@ -480,10 +482,22 @@ def _maybe_run_online_tuner(now: datetime.datetime) -> None:
 
 
 def build_client_order_id(focus_tag: Optional[str], strategy_tag: str) -> str:
+    """Build a mostly-unique client order id.
+
+    Spec requires: qr-{ts_ms}-{focus_tag}-{tag}-{hash9}
+    Add a short hash to avoid rare collisions when multiple orders are
+    created within the same millisecond.
+    """
+    import hashlib
+    import os
+
     ts_ms = int(time.time() * 1000)
     focus_part = (focus_tag or "hybrid")[:6]
     clean_tag = "".join(ch for ch in strategy_tag if ch.isalnum())[:9] or "sig"
-    return f"qr-{ts_ms}-{focus_part}-{clean_tag}"
+    # 9-char hex digest from ts + tag + a little entropy
+    seed = f"{ts_ms}-{focus_part}-{clean_tag}-{os.getpid()}-{time.monotonic_ns()}".encode()
+    digest = hashlib.sha1(seed).hexdigest()[:9]
+    return f"qr-{ts_ms}-{focus_part}-{clean_tag}-{digest}"
 
 
 def _cooldown_for_pocket(pocket: str, range_mode: bool) -> int:
@@ -856,7 +870,8 @@ def _stage_conditions_met(
 
     if pocket == "scalp":
         atr = fac_m1.get("atr", 0.0) * 100
-        if atr < 1.5:
+        # Require higher intraday volatility for scalp entries to avoid churn
+        if atr < 2.2:
             logging.info("[STAGE] Scalp gating: ATR %.2f too low for stage %d.", atr, stage_idx)
             return False
         momentum = (fac_m1.get("close") or 0.0) - (fac_m1.get("ema20") or 0.0)
@@ -1428,7 +1443,29 @@ async def logic_loop():
                 if sname == "NewsSpikeReversal":
                     raw_signal = cls.check(fac_m1, news_cache.get("short", []))
                 else:
-                    raw_signal = cls.check(fac_m1)
+                    # Use H4 factors for macro strategies to enforce H4 perspective,
+                    # but pass lower-TF aggregates (H1/M10/M5) for prediction confluence.
+                    if pocket == "macro":
+                        try:
+                            from analysis.mtf_utils import resample_candles_from_m1
+                            c_m1 = fac_m1.get("candles") or []
+                            # H1 comes from factor cache if available; otherwise build from M1
+                            factors_all = all_factors()
+                            fac_h1 = factors_all.get("H1") or {}
+                            c_h1 = fac_h1.get("candles") or resample_candles_from_m1(c_m1, 60)
+                            c_m10 = resample_candles_from_m1(c_m1, 10)
+                            c_m5 = resample_candles_from_m1(c_m1, 5)
+                            fac_h4_mtf = dict(fac_h4)
+                            fac_h4_mtf["mtf"] = {
+                                "candles_h1": c_h1,
+                                "candles_m10": c_m10,
+                                "candles_m5": c_m5,
+                            }
+                            raw_signal = cls.check(fac_h4_mtf)
+                        except Exception:
+                            raw_signal = cls.check(fac_h4)
+                    else:
+                        raw_signal = cls.check(fac_m1)
                 if not raw_signal:
                     continue
                 meta = raw_signal.pop("_meta", None)
@@ -1538,10 +1575,12 @@ async def logic_loop():
                         (trendma_news_cooldown_until - now).total_seconds(),
                     )
             try:
+                # Only protect bot-managed trades; do not touch manual/unknown
                 update_dynamic_protections(managed_positions, fac_m1, fac_h4)
             except Exception as exc:
                 logging.warning("[PROTECTION] update failed: %s", exc)
             try:
+                # Only for bot-managed trades; do not touch manual/unknown
                 partials = plan_partial_reductions(
                     managed_positions,
                     fac_m1,
@@ -1608,6 +1647,15 @@ async def logic_loop():
                 target_side = "long" if decision.units < 0 else "short"
                 trades = (managed_positions.get(pocket, {}) or {}).get("open_trades", [])
                 trades = [t for t in trades if t.get("side") == target_side]
+                # Clamp requested close units to what's actually available to avoid
+                # issuing reduce_only MARKET orders that OANDA will reject with
+                # NO_POSITION_TO_REDUCE after we already closed everything.
+                try:
+                    available = sum(abs(int(t.get("units", 0) or 0)) for t in trades)
+                    if available >= 0:
+                        remaining = min(remaining, available)
+                except Exception:
+                    pass
                 for tr in trades:
                     if remaining <= 0:
                         break
@@ -1629,6 +1677,21 @@ async def logic_loop():
                             decision.reason,
                         )
                         remaining -= close_amount
+                if remaining > 0:
+                    # Re-check live positions to avoid stale overshoot
+                    try:
+                        latest_positions = pos_manager.get_open_positions()
+                        latest_trades = (
+                            (latest_positions.get(pocket, {}) or {}).get("open_trades", [])
+                        )
+                        latest_trades = [t for t in latest_trades if t.get("side") == target_side]
+                        live_available = sum(abs(int(t.get("units", 0) or 0)) for t in latest_trades)
+                        if live_available <= 0:
+                            remaining = 0
+                        else:
+                            remaining = min(remaining, live_available)
+                    except Exception:
+                        pass
                 if remaining > 0:
                     client_id = build_client_order_id(focus_tag, decision.tag)
                     fallback_units = -remaining if decision.units < 0 else remaining
@@ -2037,11 +2100,24 @@ async def main():
         )
     except Exception as exc:  # pragma: no cover - defensive
         logging.warning("[MACRO] initial snapshot build failed: %s", exc)
+    async def _macro_refresher(interval_sec: float = 600.0) -> None:
+        while True:
+            try:
+                await asyncio.to_thread(
+                    refresh_macro_snapshot,
+                    snapshot_path=_macro_snapshot_path(),
+                    deadzone=_MACRO_STATE_DEADZONE,
+                )
+            except Exception as exc:  # pragma: no cover - defensive
+                logging.warning("[MACRO] periodic snapshot refresh failed: %s", exc)
+            await asyncio.sleep(max(120.0, interval_sec))
+
     tasks = [
         start_candle_stream("USD_JPY", handlers),
         logic_loop(),
         news_fetch_loop(),
         summary_ingest_loop(),
+        _macro_refresher(),
     ]
     if kaizen_loop is not None:
         logging.info("[KAIZEN] audit loop enabled")
@@ -2051,6 +2127,7 @@ async def main():
     scalp_workers = [
         (pullback_scalp_config.ENABLED, pullback_scalp_worker, pullback_scalp_config.LOG_PREFIX),
         (pullback_s5_config.ENABLED, pullback_s5_worker, pullback_s5_config.LOG_PREFIX),
+        (pullback_runner_s5_config.ENABLED, pullback_runner_s5_worker, pullback_runner_s5_config.LOG_PREFIX),
         (impulse_break_s5_config.ENABLED, impulse_break_s5_worker, impulse_break_s5_config.LOG_PREFIX),
         (impulse_retest_s5_config.ENABLED, impulse_retest_s5_worker, impulse_retest_s5_config.LOG_PREFIX),
         (impulse_momentum_s5_config.ENABLED, impulse_momentum_s5_worker, impulse_momentum_s5_config.LOG_PREFIX),
