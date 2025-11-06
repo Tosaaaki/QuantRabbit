@@ -1,5 +1,6 @@
 from __future__ import annotations
 import os
+import json
 import requests
 import sqlite3
 import pathlib
@@ -119,6 +120,10 @@ class PositionManager:
             "updated_at": "TEXT",
             "version": "TEXT DEFAULT 'v1'",
             "unrealized_pl": "REAL",
+            # strategy attribution
+            "client_order_id": "TEXT",
+            "strategy_tag": "TEXT",
+            "entry_thesis": "TEXT",
         }
         for name, ddl in columns.items():
             if name not in existing:
@@ -299,15 +304,48 @@ class PositionManager:
             r.raise_for_status()
             trade = r.json().get("trade", {})
 
-            pocket_tag = trade.get("clientExtensions", {}).get("tag", "pocket=unknown")
+            client_ext = trade.get("clientExtensions", {}) or {}
+            pocket_tag = client_ext.get("tag", "pocket=unknown")
             pocket = pocket_tag.split("=")[1] if "=" in pocket_tag else "unknown"
+            client_id = client_ext.get("id")
 
-            return {
+            details = {
                 "entry_price": float(trade.get("price", 0.0)),
                 "entry_time": _parse_timestamp(trade.get("openTime")),
                 "units": int(trade.get("initialUnits", 0)),
                 "pocket": pocket,
+                "client_order_id": client_id,
+                "strategy_tag": None,
+                "entry_thesis": None,
             }
+            # Heuristic mapping from client id prefix
+            try:
+                if client_id:
+                    if client_id.startswith("qr-fast-"):
+                        details["strategy_tag"] = "fast_scalp"
+                    elif client_id.startswith("qr-pullback-s5-"):
+                        details["strategy_tag"] = "pullback_s5"
+                    elif client_id.startswith("qr-pullback-"):
+                        details["strategy_tag"] = "pullback_scalp"
+                    elif client_id.startswith("qr-mirror-s5-"):
+                        details["strategy_tag"] = "mirror_spike_s5"
+                    elif client_id.startswith("qr-"):
+                        import re
+                        m = re.match(r"^qr-\d+-(micro|macro|event|hybrid)-(.*)$", client_id)
+                        if m:
+                            details["strategy_tag"] = m.group(2)
+            except Exception:
+                pass
+            # Augment with local orders log for strategy_tag/thesis if possible
+            try:
+                from_orders = self._get_trade_details_from_orders(trade_id)
+                if from_orders:
+                    for key in ("client_order_id", "strategy_tag", "entry_thesis"):
+                        if from_orders.get(key) and not details.get(key):
+                            details[key] = from_orders.get(key)
+            except Exception:
+                pass
+            return details
         except requests.HTTPError as exc:
             if exc.response is not None and exc.response.status_code == 404:
                 fallback = self._get_trade_details_from_orders(trade_id)
@@ -327,7 +365,7 @@ class PositionManager:
             con.row_factory = sqlite3.Row
             row = con.execute(
                 """
-                SELECT pocket, instrument, units, executed_price, ts
+                SELECT pocket, instrument, units, executed_price, ts, client_order_id
                 FROM orders
                 WHERE ticket_id = ?
                   AND status = 'filled'
@@ -351,11 +389,41 @@ class PositionManager:
                 entry_time = entry_time.astimezone(timezone.utc)
         except Exception:
             entry_time = datetime.now(timezone.utc)
+        client_id = row["client_order_id"]
+        strategy_tag = None
+        thesis_obj = None
+        if client_id:
+            try:
+                con2 = sqlite3.connect(_ORDERS_DB)
+                con2.row_factory = sqlite3.Row
+                att = con2.execute(
+                    """
+                    SELECT request_json FROM orders
+                    WHERE client_order_id = ? AND status = 'submit_attempt'
+                    ORDER BY id ASC
+                    LIMIT 1
+                    """,
+                    (client_id,),
+                ).fetchone()
+                con2.close()
+                if att and att["request_json"]:
+                    try:
+                        payload = json.loads(att["request_json"]) or {}
+                        thesis_obj = payload.get("entry_thesis") or {}
+                        if isinstance(thesis_obj, dict):
+                            strategy_tag = thesis_obj.get("strategy_tag")
+                    except Exception:
+                        thesis_obj = None
+            except sqlite3.Error:
+                pass
         return {
             "entry_price": float(row["executed_price"] or 0.0),
             "entry_time": entry_time,
             "units": int(row["units"] or 0),
             "pocket": row["pocket"] or "unknown",
+            "client_order_id": client_id,
+            "strategy_tag": strategy_tag,
+            "entry_thesis": thesis_obj,
         }
 
     def _parse_and_save_trades(self, transactions: list[dict]):
@@ -452,6 +520,10 @@ class PositionManager:
                     updated_at,
                     "v3",
                     0.0,
+                    # attribution
+                    details.get("client_order_id"),
+                    details.get("strategy_tag"),
+                    json.dumps(details.get("entry_thesis"), ensure_ascii=False)
                 )
                 trades_to_save.append(record_tuple)
                 saved_records.append(
@@ -476,6 +548,8 @@ class PositionManager:
                         "updated_at": updated_at,
                         "version": "v3",
                         "unrealized_pl": 0.0,
+                        "client_order_id": details.get("client_order_id"),
+                        "strategy_tag": details.get("strategy_tag"),
                     }
                 )
                 if details["pocket"]:
@@ -508,9 +582,12 @@ class PositionManager:
                     state,
                     updated_at,
                     version,
-                    unrealized_pl
+                    unrealized_pl,
+                    client_order_id,
+                    strategy_tag,
+                    entry_thesis
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
                 trades_to_save,
             )

@@ -15,13 +15,14 @@ import sqlite3
 import pathlib
 from datetime import datetime, timezone, timedelta
 import os
-from typing import Literal, Optional, Tuple
+from typing import Any, Literal, Optional, Tuple
 
 from oandapyV20 import API
 from oandapyV20.exceptions import V20Error
 from oandapyV20.endpoints.orders import OrderCancel, OrderCreate
 from oandapyV20.endpoints.trades import TradeCRCDO, TradeClose
 
+from analysis import policy_bus
 from utils.secrets import get_secret
 from utils.market_hours import is_market_open
 
@@ -46,7 +47,7 @@ api = API(access_token=TOKEN, environment=ENVIRONMENT)
 if HEDGING_ENABLED:
     logging.info("[ORDER] Hedging mode enabled (positionFill=OPEN_ONLY).")
 
-_LAST_PROTECTIONS: dict[str, Tuple[Optional[float], Optional[float]]] = {}
+_LAST_PROTECTIONS: dict[str, dict[str, float | None]] = {}
 MACRO_BE_GRACE_SECONDS = 45
 _MARGIN_REJECT_UNTIL: dict[str, float] = {}
 
@@ -383,18 +384,22 @@ def _maybe_update_protections(
     if not data:
         return
 
-    previous = _LAST_PROTECTIONS.get(trade_id)
-    current = (
-        round(sl_price, 3) if sl_price is not None else None,
-        round(tp_price, 3) if tp_price is not None else None,
-    )
-    if previous == current:
+    previous = _LAST_PROTECTIONS.get(trade_id) or {}
+    prev_sl = previous.get("sl")
+    prev_tp = previous.get("tp")
+    current_sl = round(sl_price, 3) if sl_price is not None else None
+    current_tp = round(tp_price, 3) if tp_price is not None else None
+    if prev_sl == current_sl and prev_tp == current_tp:
         return
 
     try:
         req = TradeCRCDO(accountID=ACCOUNT, tradeID=trade_id, data=data)
         api.request(req)
-        _LAST_PROTECTIONS[trade_id] = current
+        _LAST_PROTECTIONS[trade_id] = {
+            "sl": current_sl,
+            "tp": current_tp,
+            "ts": time.time(),
+        }
     except Exception as exc:  # noqa: BLE001
         logging.warning(
             "[ORDER] Failed to update protections trade=%s sl=%s tp=%s: %s",
@@ -522,6 +527,8 @@ def update_dynamic_protections(
 ) -> None:
     if not open_positions:
         return
+    _apply_dynamic_protections_v2(open_positions, fac_m1, fac_h4)
+    return
     atr_m1 = fac_m1.get("atr_pips")
     if atr_m1 is None:
         atr_m1 = (fac_m1.get("atr") or 0.0) * 100
@@ -633,6 +640,102 @@ def update_dynamic_protections(
             _maybe_update_protections(trade_id, sl_price, tp_price)
 
 
+def _apply_dynamic_protections_v2(
+    open_positions: dict,
+    fac_m1: dict,
+    fac_h4: dict,
+) -> None:
+    policy = policy_bus.latest()
+    pockets_policy = policy.pockets if policy else {}
+    now_ts = time.time()
+    current_price = fac_m1.get("close")
+    pip = 0.01
+
+    def _coerce(value: Any, default: float) -> float:
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return default
+
+    defaults = {
+        "macro": {"trigger": 6.8, "lock_ratio": 0.55, "min_lock": 2.6, "cooldown": 90.0},
+        "micro": {"trigger": 2.4, "lock_ratio": 0.50, "min_lock": 0.35, "cooldown": 45.0},
+        "scalp": {"trigger": 1.3, "lock_ratio": 0.45, "min_lock": 0.20, "cooldown": 20.0},
+    }
+
+    for pocket, info in open_positions.items():
+        if pocket == "__net__":
+            continue
+        trades = info.get("open_trades") or []
+        if not trades:
+            continue
+
+        plan = pockets_policy.get(pocket) if isinstance(pockets_policy, dict) else {}
+        be_profile = plan.get("be_profile", {}) if isinstance(plan, dict) else {}
+        default_cfg = defaults.get(pocket, defaults["macro"])
+        trigger = _coerce(be_profile.get("trigger_pips"), default_cfg["trigger"])
+        lock_ratio = max(0.0, min(1.0, _coerce(be_profile.get("lock_ratio"), default_cfg["lock_ratio"])))
+        min_lock = max(0.0, _coerce(be_profile.get("min_lock_pips"), default_cfg["min_lock"]))
+        cooldown_sec = max(0.0, _coerce(be_profile.get("cooldown_sec"), default_cfg["cooldown"]))
+
+        for tr in trades:
+            trade_id = tr.get("trade_id")
+            price = tr.get("price")
+            side = tr.get("side")
+            if not trade_id or price is None or not side:
+                continue
+
+            client_id = str(tr.get("client_id") or "")
+            if not client_id.startswith("qr-"):
+                continue
+            if pocket == "scalp" and client_id.startswith("qr-mirror-s5-"):
+                continue
+
+            entry = float(price)
+            trade_tp_info = tr.get("take_profit") or {}
+            try:
+                trade_tp = float(trade_tp_info.get("price"))
+            except (TypeError, ValueError):
+                trade_tp = None
+            trade_sl_info = tr.get("stop_loss") or {}
+            try:
+                trade_sl = float(trade_sl_info.get("price"))
+            except (TypeError, ValueError):
+                trade_sl = None
+
+            if side == "long":
+                gain_pips = ((current_price or entry) - entry) * 100.0
+            else:
+                gain_pips = (entry - (current_price or entry)) * 100.0
+
+            if gain_pips < trigger:
+                continue
+
+            last_record = _LAST_PROTECTIONS.get(trade_id) or {}
+            last_ts = float(last_record.get("ts") or 0.0)
+            if cooldown_sec > 0.0 and (now_ts - last_ts) < cooldown_sec:
+                continue
+
+            lock_pips = max(min_lock, gain_pips * lock_ratio)
+            if side == "long":
+                desired_sl = entry + lock_pips * pip
+                if current_price is not None:
+                    desired_sl = min(desired_sl, float(current_price) - 0.003)
+                if trade_sl is not None and desired_sl <= trade_sl + 1e-6:
+                    continue
+            else:
+                desired_sl = entry - lock_pips * pip
+                if current_price is not None:
+                    desired_sl = max(desired_sl, float(current_price) + 0.003)
+                if trade_sl is not None and desired_sl >= trade_sl - 1e-6:
+                    continue
+
+            desired_sl = round(desired_sl, 3)
+            tp_price = trade_tp
+
+            _maybe_update_protections(trade_id, desired_sl, tp_price)
+
+
 async def set_trade_protections(
     trade_id: str,
     *,
@@ -694,6 +797,8 @@ def plan_partial_reductions(
     pip_scale = 100
     current_time = _ensure_utc(now)
     actions: list[tuple[str, str, int]] = []
+    policy = policy_bus.latest()
+    pockets_policy = policy.pockets if policy else {}
 
     for pocket, info in open_positions.items():
         if pocket == "__net__":
@@ -704,6 +809,27 @@ def plan_partial_reductions(
             thresholds, fractions = _macro_partial_profile(fac_h4, range_mode)
         elif range_mode:
             thresholds = _PARTIAL_THRESHOLDS_RANGE.get(pocket, thresholds)
+        plan = pockets_policy.get(pocket) if isinstance(pockets_policy, dict) else {}
+        partial_plan = plan.get("partial_profile", {}) if isinstance(plan, dict) else {}
+        min_units_override: Optional[int] = None
+        if isinstance(partial_plan, dict):
+            plan_thresholds = partial_plan.get("thresholds_pips")
+            if isinstance(plan_thresholds, (list, tuple)) and plan_thresholds:
+                try:
+                    thresholds = [float(x) for x in plan_thresholds]
+                except (TypeError, ValueError):
+                    pass
+            plan_fractions = partial_plan.get("fractions")
+            if isinstance(plan_fractions, (list, tuple)) and plan_fractions:
+                try:
+                    fractions = tuple(float(x) for x in plan_fractions)
+                except (TypeError, ValueError):
+                    pass
+            override_units = partial_plan.get("min_units")
+            try:
+                min_units_override = int(override_units) if override_units is not None else None
+            except (TypeError, ValueError):
+                min_units_override = None
         if not thresholds:
             continue
         trades = info.get("open_trades") or []
@@ -741,7 +867,8 @@ def plan_partial_reductions(
             fraction_idx = min(stage - 1, len(fractions) - 1)
             fraction = fractions[fraction_idx]
             reduce_units = int(abs(units) * fraction)
-            if reduce_units < _PARTIAL_MIN_UNITS:
+            min_units_threshold = min_units_override if min_units_override is not None else _PARTIAL_MIN_UNITS
+            if reduce_units < min_units_threshold:
                 continue
             reduce_units = min(reduce_units, abs(units))
             sign = 1 if units > 0 else -1
