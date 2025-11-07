@@ -129,6 +129,16 @@ from workers.common.pocket_plan import PocketPlan
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
 )
+# Optional file logging (set FILE_LOG_PATH to enable)
+try:
+    _file_log = os.getenv("FILE_LOG_PATH")
+    if _file_log:
+        _fh = logging.FileHandler(_file_log)
+        _fh.setLevel(logging.INFO)
+        _fh.setFormatter(logging.Formatter("%(asctime)s - %(levelname)s - %(message)s"))
+        logging.getLogger().addHandler(_fh)
+except Exception:
+    pass
 
 logging.info("Application started!")
 
