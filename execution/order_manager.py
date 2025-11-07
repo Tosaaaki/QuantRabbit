@@ -25,6 +25,7 @@ from oandapyV20.endpoints.trades import TradeCRCDO, TradeClose
 from analysis import policy_bus
 from utils.secrets import get_secret
 from utils.market_hours import is_market_open
+from execution import strategy_guard
 
 # ---------- 読み込み：env.toml ----------
 TOKEN = get_secret("oanda_token")
@@ -893,6 +894,12 @@ async def market_order(
     units : +10000 = buy 0.1 lot, ‑10000 = sell 0.1 lot
     returns order ticket id（決済のみの fill でも tradeID を返却）
     """
+    strategy_tag = None
+    if isinstance(entry_thesis, dict):
+        raw_tag = entry_thesis.get("strategy_tag") or entry_thesis.get("strategy")
+        if raw_tag:
+            strategy_tag = str(raw_tag)
+
     # Reject trivially small entries per spec (abs(units) < 1000 => noise)
     try:
         if not reduce_only and abs(int(units)) < 1000:
@@ -912,6 +919,27 @@ async def market_order(
     except Exception:
         # Be defensive; do not break ordering flow on logging failure
         return None
+
+    if strategy_tag and not reduce_only:
+        blocked, remain, reason = strategy_guard.is_blocked(strategy_tag)
+        if blocked:
+            _log_order(
+                pocket=pocket,
+                instrument=instrument,
+                side="buy" if units > 0 else "sell",
+                units=units,
+                sl_price=sl_price,
+                tp_price=tp_price,
+                client_order_id=client_order_id,
+                status="strategy_cooldown",
+                attempt=0,
+                request_payload={
+                    "strategy_tag": strategy_tag,
+                    "cooldown_reason": reason,
+                    "cooldown_remaining_sec": remain,
+                },
+            )
+            return None
 
     # Pocket-level cooldown after margin rejection
     try:
