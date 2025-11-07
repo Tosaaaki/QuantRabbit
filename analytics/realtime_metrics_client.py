@@ -202,3 +202,7 @@ class ConfidencePolicy:
             health.confidence_scale = max(health.confidence_scale, 1.1)
 
         return health
+
+    def reset(self) -> None:
+        """Maintain compatibility with callers that expect a reset() hook."""
+        return None
