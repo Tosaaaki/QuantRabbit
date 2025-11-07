@@ -96,6 +96,42 @@
   Notes:
     - ステージ拡張やナンピンは許可せず、BE移行と部分利確を組み合わせる
 
+- [ ] ID: T-20251105-003
+  Title: Macro/Scalp コア実行の切り出し
+  Status: review
+  Priority: P1
+  Owner: tossaki
+  Scope/Paths: main.py, execution/, workers/common/, analysis/plan_bus.py, docs/TASKS.md
+  Context: AGENT.me §3.5 / 3.5.1 に沿って macro/scalp の発注・Exit をワーカーへ委譲する前段として、main.py の依存ヘルパーを共通化してプラン参照を標準化する
+  Acceptance:
+    - client_order_id やステージ計算など macro/scalp 固有ヘルパーが共通モジュール化され、main とワーカーの両方から利用できる
+    - PocketPlan/plan_bus がワーカー向けに最新プランの取得・鮮度判定を提供し、Plan 生成側から必要メタを埋め込む
+    - docs/TASKS.md で移行計画が追跡され、影響パスが明示されている
+  Plan:
+    - order_id / stage 計算 / managed position フィルタの切り出し
+    - PlanBus / PocketPlan の API 拡張と main 側のメタ追加
+    - 影響箇所の差分確認とログ整備
+  Notes:
+    - StageTracker / ExitManager 周辺は後続ワーカー実装で利用する前提
+
+- [ ] ID: T-20251105-004
+  Title: Macro/Scalp コアワーカー実装
+  Status: in-progress
+  Priority: P1
+  Owner: tossaki
+  Scope/Paths: workers/macro_core/, workers/scalp_core/, execution/, main.py, docs/TASKS.md
+  Context: macro/scalp Plan を消費する専用ワーカーを追加し、ステージ制御→発注→Exit までを main から切り出す（AGENT.me §3.5, range 強化仕様）
+  Acceptance:
+    - workers/macro_core/worker.py および workers/scalp_core/worker.py にプランポーリング〜Stage/Exit/Order の実処理ループが実装されている（ログ・メトリクス含む）
+    - StageTracker / ExitManager / PositionManager をワーカー内で保有し、main 側との競合なく PocketPlan を消費できる
+    - main.py 側から新ワーカーを起動できる設定項目が用意され（既定は安全側で無効）、実装メモが docs/TASKS.md に反映されている
+  Plan:
+    - Plan 消費ループと実行コンテキストの実装
+    - macro/scalp それぞれのガード・発注ロジックの移植
+    - main.py からの起動導線と実機テストログの確認
+  Notes:
+    - 安定化までは main の既存ロジックと二重発注しないようデフォルト無効で運用
+
 - [ ] ID: T-20251104-003
   Title: Maker型1pipスカルパーワーカーの実装
   Status: in-progress

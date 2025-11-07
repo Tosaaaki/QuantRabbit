@@ -53,12 +53,21 @@ from execution.order_manager import (
 from execution.exit_manager import ExitManager
 from execution.position_manager import PositionManager
 from execution.stage_tracker import StageTracker
+from execution.stage_rules import compute_stage_lot
+from execution.order_ids import build_client_order_id
+from execution.managed_positions import filter_bot_managed_positions
+from execution.pocket_limits import (
+    POCKET_ENTRY_MIN_INTERVAL,
+    POCKET_EXIT_COOLDOWNS,
+    POCKET_LOSS_COOLDOWNS,
+    cooldown_for_pocket,
+)
 from analytics.realtime_metrics_client import (
     ConfidencePolicy,
     RealtimeMetricsClient,
     StrategyHealth,
 )
-from analysis import policy_bus
+from analysis import policy_bus, plan_bus
 from strategies.trend.ma_cross import MovingAverageCross
 from strategies.breakout.donchian55 import Donchian55
 from strategies.mean_reversion.bb_rsi import BBRsi
@@ -78,6 +87,7 @@ import workers.mirror_spike_s5.config as mirror_spike_s5_config
 import workers.trend_h1.config as trend_h1_config
 import workers.mirror_spike_tight.config as mirror_spike_tight_config
 import workers.pullback_s5.config as pullback_s5_config
+import workers.macro_core.config as macro_core_config
 try:
     import workers.pullback_runner_s5.config as pullback_runner_s5_config
     from workers.pullback_runner_s5 import pullback_runner_s5_worker
@@ -91,6 +101,7 @@ except ModuleNotFoundError:
         await _pr_asyncio.sleep(0.0)
 import workers.pullback_scalp.config as pullback_scalp_config
 import workers.scalp_exit.config as scalp_exit_config
+import workers.scalp_core.config as scalp_core_config
 import workers.squeeze_break_s5.config as squeeze_break_s5_config
 import workers.vwap_magnet_s5.config as vwap_magnet_s5_config
 import workers.micro_core.config as micro_core_config
@@ -110,6 +121,9 @@ from workers.vwap_magnet_s5 import vwap_magnet_s5_worker
 import workers.onepip_maker_s1.config as onepip_maker_s1_config
 from workers.onepip_maker_s1 import onepip_maker_s1_worker
 from workers.micro_core import micro_core_worker
+from workers.macro_core import macro_core_worker
+from workers.scalp_core import scalp_core_worker
+from workers.common.pocket_plan import PocketPlan
 
 # Configure logging
 logging.basicConfig(
@@ -141,98 +155,10 @@ FOCUS_POCKETS = {
     "event": ("macro", "micro"),
 }
 
-POCKET_EXIT_COOLDOWNS = {
-    "macro": 540,
-    "micro": 240,
-    "scalp": 180,
-}
-
-POCKET_LOSS_COOLDOWNS = {
-    "macro": 960,
-    "micro": 600,
-    "scalp": 360,
-}
-
 # Manual-trade guard: by default, do not let the bot exit or partially close
 # trades that were entered manually (i.e. trades without a QuantRabbit
 # clientOrderID like "qr-..."). This only affects exit/partial logic and
 # dynamic protection updates; exposure accounting still includes all trades.
-_IGNORE_MANUAL_TRADES = os.getenv("IGNORE_MANUAL_TRADES", "true").strip().lower() in {
-    "1",
-    "true",
-    "yes",
-    "on",
-}
-
-
-def _filter_positions_to_managed(open_positions: dict) -> dict:
-    """Return a copy of positions that includes only bot-managed trades.
-
-    A bot-managed trade is identified by client_id starting with "qr-".
-    Pockets with no remaining managed trades are omitted. The special
-    "__net__" bucket is not included in the filtered view because exit
-    decisions operate per-pocket and per-trade.
-    """
-    if not _IGNORE_MANUAL_TRADES:
-        return open_positions
-    managed: dict = {}
-    for pocket, info in (open_positions or {}).items():
-        if pocket == "__net__":
-            # Exclude from filtered view used for exits; exposure is handled
-            # separately using the unfiltered positions.
-            continue
-        trades = list((info or {}).get("open_trades") or [])
-        kept = [
-            tr
-            for tr in trades
-            if str(tr.get("client_id") or "").startswith("qr-")
-        ]
-        if not kept:
-            continue
-        # Re-aggregate pocket stats based on kept trades
-        long_units = 0
-        short_units = 0
-        long_weighted_price = 0.0
-        short_weighted_price = 0.0
-        total_units = 0
-        weighted_price = 0.0
-        for tr in kept:
-            units = int(tr.get("units", 0) or 0)
-            price = float(tr.get("price", 0.0) or 0.0)
-            total_units += units
-            weighted_price += price * units
-            if units > 0:
-                long_weighted_price += price * units
-                long_units += units
-            elif units < 0:
-                absu = abs(units)
-                short_weighted_price += price * absu
-                short_units += absu
-        avg_price = (weighted_price / total_units) if total_units != 0 else info.get("avg_price", 0.0)
-        long_avg = (long_weighted_price / long_units) if long_units > 0 else 0.0
-        short_avg = (short_weighted_price / short_units) if short_units > 0 else 0.0
-        managed[pocket] = {
-            "units": total_units,
-            "avg_price": avg_price,
-            "trades": len(kept),
-            "long_units": long_units,
-            "long_avg_price": long_avg,
-            "short_units": short_units,
-            "short_avg_price": short_avg,
-            "open_trades": kept,
-            # Keep unrealized fields if present for compatibility (best-effort)
-            "unrealized_pl": (info or {}).get("unrealized_pl", 0.0),
-            "unrealized_pl_pips": (info or {}).get("unrealized_pl_pips", 0.0),
-        }
-    return managed
-
-# 新規エントリー後のクールダウン（再エントリー抑制）
-POCKET_ENTRY_MIN_INTERVAL = {
-    "macro": 180,  # 3分
-    "micro": 120,  # 2分
-    "scalp": 60,
-}
-
 TRENDMA_FAST_LOSS_THRESHOLD_SEC = 300
 TRENDMA_FAST_LOSS_BASE_COOLDOWN = 600
 TRENDMA_FAST_LOSS_STREAK_STEP = 60
@@ -244,19 +170,6 @@ TRENDMA_FLIP_ADX_MIN = 18.0
 
 FALLBACK_EQUITY = 10000.0  # REST失敗時のフォールバック
 
-STAGE_RATIOS = {
-    # Fractions per stage sum to <=1.0 so pocket lot can deploy gradually.
-    "macro": (0.35,),
-    "micro": (0.22, 0.18, 0.16, 0.14, 0.12, 0.08, 0.05, 0.05),
-    "scalp": (0.5, 0.3, 0.15, 0.05),
-}
-
-MACRO_MAX_TOTAL_LOT = 0.003
-MACRO_MIN_TOTAL_LOT = 0.001
-
-MIN_SCALP_STAGE_LOT = 0.01  # 1000 units baseline so micro/macro bias does not null scalps
-DEFAULT_COOLDOWN_SECONDS = 180
-RANGE_COOLDOWN_SECONDS = 420
 RANGE_MACRO_WEIGHT_CAP = 0.22
 RANGE_CONFIDENCE_SCALE = {
     "macro": 0.65,
@@ -338,6 +251,26 @@ _macro_state_stale_warned = False
 _macro_state_missing_warned = False
 _TUNER_LAST_RUN_TS = 0.0
 _DELEGATE_MICRO = _env_bool("MICRO_DELEGATE_TO_WORKER", True)
+_DELEGATE_MACRO = _env_bool("MACRO_DELEGATE_TO_WORKER", True)
+_DELEGATE_SCALP = _env_bool("SCALP_DELEGATE_TO_WORKER", True)
+
+
+def _pocket_delegated(pocket: str) -> bool:
+    if pocket == "micro":
+        return _DELEGATE_MICRO
+    if pocket == "macro":
+        return _DELEGATE_MACRO
+    if pocket == "scalp":
+        return _DELEGATE_SCALP
+    return False
+
+
+def _pocket_worker_owns_orders(pocket: str) -> bool:
+    if pocket == "macro":
+        return _DELEGATE_MACRO
+    if pocket == "scalp":
+        return _DELEGATE_SCALP
+    return False
 _POLICY_VERSION = 0
 
 
@@ -496,32 +429,6 @@ def _maybe_run_online_tuner(now: datetime.datetime) -> None:
         _TUNER_LAST_RUN_TS = now.timestamp()
     except Exception as exc:  # noqa: BLE001
         logging.warning("[TUNER] skipped: %s", exc)
-
-
-def build_client_order_id(focus_tag: Optional[str], strategy_tag: str) -> str:
-    """Build a mostly-unique client order id.
-
-    Spec requires: qr-{ts_ms}-{focus_tag}-{tag}-{hash9}
-    Add a short hash to avoid rare collisions when multiple orders are
-    created within the same millisecond.
-    """
-    import hashlib
-    import os
-
-    ts_ms = int(time.time() * 1000)
-    focus_part = (focus_tag or "hybrid")[:6]
-    clean_tag = "".join(ch for ch in strategy_tag if ch.isalnum())[:9] or "sig"
-    # 9-char hex digest from ts + tag + a little entropy
-    seed = f"{ts_ms}-{focus_part}-{clean_tag}-{os.getpid()}-{time.monotonic_ns()}".encode()
-    digest = hashlib.sha1(seed).hexdigest()[:9]
-    return f"qr-{ts_ms}-{focus_part}-{clean_tag}-{digest}"
-
-
-def _cooldown_for_pocket(pocket: str, range_mode: bool) -> int:
-    base = POCKET_EXIT_COOLDOWNS.get(pocket, DEFAULT_COOLDOWN_SECONDS)
-    if range_mode:
-        base = max(base, RANGE_COOLDOWN_SECONDS)
-    return base
 
 
 def _ma_bias(factors: Optional[dict], *, pip_threshold: float = 0.002) -> str:
@@ -718,6 +625,69 @@ def _publish_policy_snapshot(
     policy_bus.publish(snapshot)
 
 
+def _build_pocket_plan(
+    *,
+    now: datetime.datetime,
+    pocket: str,
+    focus_tag: str,
+    focus_pockets: set[str],
+    range_active: bool,
+    range_soft_active: bool,
+    range_ctx,
+    event_soon: bool,
+    spread_gate_active: bool,
+    spread_gate_reason: str,
+    spread_log_context: str,
+    lot_allocation: float,
+    risk_override: float,
+    weight_macro: float,
+    scalp_share: float,
+    signals: list[dict],
+    perf_cache: dict,
+    fac_m1: dict,
+    fac_h4: dict,
+    notes: dict | None = None,
+) -> PocketPlan:
+    range_ctx_info = {
+        "active": getattr(range_ctx, "active", False),
+        "score": getattr(range_ctx, "score", 0.0),
+        "reason": getattr(range_ctx, "reason", ""),
+        "metrics": getattr(range_ctx, "metrics", {}),
+    }
+    plan_notes = dict(notes or {})
+    plan_notes.setdefault("range_reason", range_ctx_info["reason"])
+    plan_notes.setdefault("range_score", range_ctx_info["score"])
+    plan_notes.setdefault("usd_long_cap_lot", _EXPOSURE_USD_LONG_MAX_LOT)
+    factors_m1_view = {
+        k: v for k, v in (fac_m1 or {}).items() if k != "candles"
+    }
+    factors_h4_view = {
+        k: v for k, v in (fac_h4 or {}).items() if k != "candles"
+    }
+    return PocketPlan(
+        generated_at=now,
+        pocket=pocket,  # type: ignore[arg-type]
+        focus_tag=focus_tag,
+        focus_pockets=sorted(focus_pockets),
+        range_active=range_active,
+        range_soft_active=range_soft_active,
+        range_ctx=range_ctx_info,
+        event_soon=event_soon,
+        spread_gate_active=spread_gate_active,
+        spread_gate_reason=spread_gate_reason,
+        spread_log_context=spread_log_context,
+        lot_allocation=round(float(lot_allocation or 0.0), 4),
+        risk_override=float(risk_override or 0.0),
+        weight_macro=float(weight_macro or 0.0),
+        scalp_share=float(scalp_share or 0.0),
+        signals=list(signals or []),
+        perf_snapshot=dict(perf_cache or {}),
+        factors_m1=factors_m1_view,
+        factors_h4=factors_h4_view,
+        notes=plan_notes,
+    )
+
+
 _ORDERS_DB_PATH = Path("logs/orders.db")
 
 
@@ -882,298 +852,6 @@ def _apply_trade_cooldowns(
                 now=now,
             )
     return freeze_until, last_exit
-
-
-def _macro_direction_allowed(
-    action: str,
-    fac_m1: dict[str, float],
-    fac_h4: dict[str, float],
-) -> bool:
-    ma10_h4 = fac_h4.get("ma10")
-    ma20_h4 = fac_h4.get("ma20")
-    atr_h4 = fac_h4.get("atr")
-    adx_h4 = fac_h4.get("adx")
-    if ma10_h4 is None or ma20_h4 is None:
-        return True
-    if adx_h4 is not None and adx_h4 < 18.0:
-        return False
-    if atr_h4:
-        gap_ratio = abs(ma10_h4 - ma20_h4) / max(atr_h4, 1e-6)
-        if gap_ratio < 0.25:
-            return False
-    close_m1 = fac_m1.get("close")
-    ema20_m1 = fac_m1.get("ema20") or fac_m1.get("ma20")
-    if close_m1 is None or ema20_m1 is None:
-        return True
-
-    if action == "OPEN_LONG":
-        if ma10_h4 <= ma20_h4 - 0.0002:
-            return False
-        if close_m1 < ema20_m1 - 0.002:
-            return False
-    else:
-        if ma10_h4 >= ma20_h4 + 0.0002:
-            return False
-        if close_m1 > ema20_m1 + 0.002:
-            return False
-    return True
-
-
-def _stage_conditions_met(
-    pocket: str,
-    stage_idx: int,
-    action: str,
-    fac_m1: dict[str, float],
-    fac_h4: dict[str, float],
-    open_info: dict[str, float],
-) -> bool:
-    if stage_idx == 0:
-        return True
-
-    price = fac_m1.get("close")
-    avg_price = open_info.get("avg_price", price or 0.0)
-    rsi = fac_m1.get("rsi", 50.0)
-    adx_h4 = fac_h4.get("adx", 0.0)
-    slope_h4 = abs(fac_h4.get("ma20", 0.0) - fac_h4.get("ma10", 0.0))
-    atr_h4_raw = fac_h4.get("atr")
-    atr_h4_pips = (atr_h4_raw or 0.0) * 100.0
-    gap_h4_pips = abs((fac_h4.get("ma10", 0.0) or 0.0) - (fac_h4.get("ma20", 0.0) or 0.0)) * 100.0
-    strength_ratio = gap_h4_pips / atr_h4_pips if atr_h4_pips > 1e-6 else 0.0
-
-    if pocket == "macro":
-        ma10_h4 = fac_h4.get("ma10")
-        ma20_h4 = fac_h4.get("ma20")
-        ma10_m1 = fac_m1.get("ma10")
-        ma20_m1 = fac_m1.get("ma20")
-        ema20_m1 = fac_m1.get("ema20") or ma20_m1
-        close_m1 = fac_m1.get("close")
-
-        if action == "OPEN_LONG":
-            if ma10_h4 is not None and ma20_h4 is not None and ma10_h4 < ma20_h4:
-                logging.info(
-                    "[STAGE] Macro buy gating: H4 trend down (ma10 %.3f < ma20 %.3f).",
-                    ma10_h4,
-                    ma20_h4,
-                )
-                return False
-            if (
-                close_m1 is not None
-                and ema20_m1 is not None
-                and close_m1 < ema20_m1 - 0.005
-            ):
-                logging.info(
-                    "[STAGE] Macro buy gating: M1 close %.3f below ema20 %.3f.",
-                    close_m1,
-                    ema20_m1,
-                )
-                return False
-            if ma10_m1 is not None and ma20_m1 is not None and ma10_m1 < ma20_m1:
-                logging.info(
-                    "[STAGE] Macro buy gating: M1 ma10 %.3f < ma20 %.3f.",
-                    ma10_m1,
-                    ma20_m1,
-                )
-                return False
-
-        if action == "OPEN_SHORT":
-            if ma10_h4 is not None and ma20_h4 is not None and ma10_h4 > ma20_h4:
-                logging.info(
-                    "[STAGE] Macro sell gating: H4 trend up (ma10 %.3f > ma20 %.3f).",
-                    ma10_h4,
-                    ma20_h4,
-                )
-                return False
-            if (
-                close_m1 is not None
-                and ema20_m1 is not None
-                and close_m1 > ema20_m1 + 0.005
-            ):
-                logging.info(
-                    "[STAGE] Macro sell gating: M1 close %.3f above ema20 %.3f.",
-                    close_m1,
-                    ema20_m1,
-                )
-                return False
-            if ma10_m1 is not None and ma20_m1 is not None and ma10_m1 > ma20_m1:
-                logging.info(
-                    "[STAGE] Macro sell gating: M1 ma10 %.3f > ma20 %.3f.",
-                    ma10_m1,
-                    ma20_m1,
-                )
-                return False
-
-        # Require trend strength to increase with each stage
-        if stage_idx >= 2:
-            if strength_ratio < 0.9 or adx_h4 < 27 or slope_h4 < 0.0006:
-                logging.info(
-                    "[STAGE] Macro gating failed (strength %.2f, ADX %.2f) for stage %d.",
-                    strength_ratio,
-                    adx_h4,
-                    stage_idx,
-                )
-                return False
-        elif stage_idx == 1:
-            if strength_ratio < 0.55 or adx_h4 < 22 or slope_h4 < 0.00045:
-                logging.info(
-                    "[STAGE] Macro gating weak (strength %.2f, ADX %.2f) for stage %d.",
-                    strength_ratio,
-                    adx_h4,
-                    stage_idx,
-                )
-                return False
-        if price is not None and avg_price:
-            if action == "OPEN_LONG" and price < avg_price - 0.02:
-                logging.info(
-                    "[STAGE] Macro buy gating: price %.3f below avg %.3f.", price, avg_price
-                )
-                return False
-            if action == "OPEN_SHORT" and price > avg_price + 0.02:
-                logging.info(
-                    "[STAGE] Macro sell gating: price %.3f above avg %.3f.", price, avg_price
-                )
-                return False
-        # RSI-based re-entry gates
-        if action == "OPEN_LONG":
-            threshold = 60 - stage_idx * 5
-            if rsi > threshold:
-                logging.info(
-                    "[STAGE] Macro buy gating: RSI %.1f > %.1f for stage %d.",
-                    rsi,
-                    threshold,
-                    stage_idx,
-                )
-                return False
-        else:
-            threshold = 40 + stage_idx * 5
-            if rsi < threshold:
-                logging.info(
-                    "[STAGE] Macro sell gating: RSI %.1f < %.1f for stage %d.",
-                    rsi,
-                    threshold,
-                    stage_idx,
-                )
-                return False
-        return True
-
-    if pocket == "micro":
-        # mean reversion pocket requires RSI extremes to persist
-        if action == "OPEN_LONG":
-            threshold = 45 - min(stage_idx * 5, 15)
-            if rsi > threshold:
-                logging.info(
-                    "[STAGE] Micro buy gating: RSI %.1f > %.1f for stage %d.",
-                    rsi,
-                    threshold,
-                    stage_idx,
-                )
-                return False
-        else:
-            threshold = 55 + min(stage_idx * 5, 15)
-            if rsi < threshold:
-                logging.info(
-                    "[STAGE] Micro sell gating: RSI %.1f < %.1f for stage %d.",
-                    rsi,
-                    threshold,
-                    stage_idx,
-                )
-                return False
-        return True
-
-    if pocket == "scalp":
-        atr = fac_m1.get("atr", 0.0) * 100
-        # Require higher intraday volatility for scalp entries to avoid churn
-        if atr < 2.2:
-            logging.info("[STAGE] Scalp gating: ATR %.2f too low for stage %d.", atr, stage_idx)
-            return False
-        momentum = (fac_m1.get("close") or 0.0) - (fac_m1.get("ema20") or 0.0)
-        if action == "OPEN_LONG" and momentum > 0:
-            logging.info(
-                "[STAGE] Scalp buy gating: momentum %.4f positive (stage %d).",
-                momentum,
-                stage_idx,
-            )
-            return False
-        if action == "OPEN_SHORT" and momentum < 0:
-            logging.info(
-                "[STAGE] Scalp sell gating: momentum %.4f negative (stage %d).",
-                momentum,
-                stage_idx,
-            )
-            return False
-        if action == "OPEN_LONG":
-            if rsi > 55 - min(stage_idx * 4, 12):
-                logging.info(
-                    "[STAGE] Scalp buy gating: RSI %.1f too high (stage %d).",
-                    rsi,
-                    stage_idx,
-                )
-                return False
-        else:
-            if rsi < 45 + min(stage_idx * 4, 12):
-                logging.info(
-                    "[STAGE] Scalp sell gating: RSI %.1f too low (stage %d).",
-                    rsi,
-                    stage_idx,
-                )
-                return False
-        return True
-
-    return True
-
-
-def compute_stage_lot(
-    pocket: str,
-    total_lot: float,
-    open_units_same_dir: int,
-    action: str,
-    fac_m1: dict[str, float],
-    fac_h4: dict[str, float],
-    open_info: dict[str, float],
-) -> tuple[float, int]:
-    """段階的エントリーの次ロットとステージ番号を返す。"""
-    plan = STAGE_RATIOS.get(pocket, (1.0,))
-    current_lot = max(open_units_same_dir, 0) / 100000.0
-    cumulative = 0.0
-    if pocket == "macro" and not _macro_direction_allowed(action, fac_m1, fac_h4):
-        logging.info(
-            "[STAGE] Macro entry gated by H4 alignment (action=%s).", action
-        )
-        return 0.0, 0
-    if pocket == "macro":
-        total_lot = min(total_lot, MACRO_MAX_TOTAL_LOT)
-        total_lot = max(total_lot, MACRO_MIN_TOTAL_LOT)
-    for stage_idx, fraction in enumerate(plan):
-        cumulative += fraction
-        stage_target = total_lot * cumulative
-        if current_lot + 1e-4 < stage_target:
-            if not _stage_conditions_met(
-                pocket, stage_idx, action, fac_m1, fac_h4, open_info
-            ):
-                return 0.0, stage_idx
-            next_lot = max(stage_target - current_lot, 0.0)
-            remaining = max(total_lot - current_lot, 0.0)
-            if pocket == "scalp" and remaining > 0:
-                floor = min(MIN_SCALP_STAGE_LOT, remaining)
-                next_lot = max(next_lot, floor)
-            if remaining > 0:
-                next_lot = min(next_lot, remaining)
-            logging.info(
-                "[STAGE] %s pocket total=%.3f current=%.3f -> next=%.3f (stage %d)",
-                pocket,
-                round(stage_target, 4),
-                round(current_lot, 4),
-                round(next_lot, 4),
-                stage_idx,
-            )
-            return round(next_lot, 4), stage_idx
-
-    logging.info(
-        "[STAGE] %s pocket already filled %.3f / %.3f lots. No additional entry.",
-        pocket,
-        round(current_lot, 4),
-        round(total_lot, 4),
-    )
-    return 0.0, -1
 
 
 async def m1_candle_handler(cndl: Candle):
@@ -1793,7 +1471,12 @@ async def logic_loop():
 
             open_positions = pos_manager.get_open_positions()
             # Use filtered positions for bot-controlled actions
-            managed_positions = _filter_positions_to_managed(open_positions)
+            managed_positions = filter_bot_managed_positions(open_positions)
+            managed_for_main = {
+                pocket: info
+                for pocket, info in managed_positions.items()
+                if not _pocket_worker_owns_orders(pocket)
+            }
             micro_trades = (managed_positions.get("micro") or {}).get("open_trades", [])
             if any("NewsSpike" in (tr.get("client_id") or "") for tr in micro_trades):
                 candidate = now + datetime.timedelta(seconds=TRENDMA_NEWS_FREEZE_SECONDS)
@@ -1804,14 +1487,14 @@ async def logic_loop():
                         (trendma_news_cooldown_until - now).total_seconds(),
                     )
             try:
-                # Only protect bot-managed trades; do not touch manual/unknown
-                update_dynamic_protections(managed_positions, fac_m1, fac_h4)
+                # Only protect bot-managed trades handled by main
+                update_dynamic_protections(managed_for_main, fac_m1, fac_h4)
             except Exception as exc:
                 logging.warning("[PROTECTION] update failed: %s", exc)
             try:
                 # Only for bot-managed trades; do not touch manual/unknown
                 partials = plan_partial_reductions(
-                    managed_positions,
+                    managed_for_main,
                     fac_m1,
                     fac_h4,
                     range_mode=range_active,
@@ -1833,10 +1516,15 @@ async def logic_loop():
                     partial_closed = True
             if partial_closed:
                 open_positions = pos_manager.get_open_positions()
-                managed_positions = _filter_positions_to_managed(open_positions)
+                managed_positions = filter_bot_managed_positions(open_positions)
+                managed_for_main = {
+                    pocket: info
+                    for pocket, info in managed_positions.items()
+                    if not _pocket_worker_owns_orders(pocket)
+                }
             net_units = int(open_positions.get("__net__", {}).get("units", 0))
 
-            for pocket, info in managed_positions.items():
+            for pocket, info in managed_for_main.items():
                 if pocket == "__net__":
                     continue
                 for direction, key_units in (("long", "long_units"), ("short", "short_units")):
@@ -1860,7 +1548,7 @@ async def logic_loop():
                         stage_empty_since.pop(key, None)
 
             exit_decisions = exit_manager.plan_closures(
-                managed_positions,
+                managed_for_main,
                 evaluated_signals,
                 fac_m1,
                 fac_h4,
@@ -1953,7 +1641,7 @@ async def logic_loop():
                 if remaining <= 0:
                     if not decision.allow_reentry or decision.reason == "range_cooldown":
                         executed_pockets.add(pocket)
-                        cooldown_seconds = _cooldown_for_pocket(pocket, range_active)
+                        cooldown_seconds = cooldown_for_pocket(pocket, range_mode=range_active)
                         stage_tracker.set_cooldown(
                             pocket,
                             target_side,
@@ -2074,6 +1762,8 @@ async def logic_loop():
                 pocket = signal["pocket"]
                 action = signal.get("action")
                 if action not in {"OPEN_LONG", "OPEN_SHORT"}:
+                    continue
+                if _pocket_delegated(pocket):
                     continue
                 if spread_gate_active:
                     if not spread_skip_logged:
@@ -2336,6 +2026,7 @@ async def logic_loop():
         logging.info("PositionManager closed.")
 
 
+
 async def main():
     handlers = [
         ("M1", m1_candle_handler),
@@ -2376,6 +2067,7 @@ async def main():
     else:
         logging.info("[KAIZEN] audit loop unavailable (module not found)")
     scalp_workers = [
+        (scalp_core_config.ENABLED, scalp_core_worker, scalp_core_config.LOG_PREFIX),
         (pullback_scalp_config.ENABLED, pullback_scalp_worker, pullback_scalp_config.LOG_PREFIX),
         (pullback_s5_config.ENABLED, pullback_s5_worker, pullback_s5_config.LOG_PREFIX),
         (pullback_runner_s5_config.ENABLED, pullback_runner_s5_worker, pullback_runner_s5_config.LOG_PREFIX),
@@ -2394,6 +2086,7 @@ async def main():
         (micro_core_config.ENABLED, micro_core_worker, micro_core_config.LOG_PREFIX),
     ]
     macro_workers = [
+        (macro_core_config.ENABLED, macro_core_worker, macro_core_config.LOG_PREFIX),
         (trend_h1_config.ENABLED, trend_h1_worker, trend_h1_config.LOG_PREFIX),
         (manual_swing_config.ENABLED, manual_swing_worker, manual_swing_config.LOG_PREFIX),
     ]

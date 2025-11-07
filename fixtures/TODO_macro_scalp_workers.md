@@ -1,0 +1,1 @@
+- macro_core / scalp_core 移譲は skeleton のみ (2025-11-05)

@@ -133,6 +133,7 @@ strategies:
 - `MACRO_WORKERS_ENABLED` (`true` default): H1/H4 ベースのマクロワーカー（`trend_h1`, `manual_swing` 等）の起動可否をまとめて制御します。
 - 個別の戦略スイッチは従来どおり `workers/<name>/config.py` の `ENABLED` で制御できます。グループ旗を `false` にすると、負荷確認や検証時に特定レンジだけを動かす/止める運用が容易になります。
 - `MICRO_DELEGATE_TO_WORKER` (`true` default): main からのミクロ発注を停止し、Plan 経由で `micro_core` ワーカーへ委譲します。`MICRO_CORE_ENABLED` と組み合わせて利用します。
+- `analysis.plan_bus.latest("macro" | "scalp")` で直近サイクルの Plan（lot 配分・シグナル・レンジ情報など）を取得できます。macro/scalp のコアワーカーを実装する際に利用してください。
 
 Trade Loop Overview
 	1.	Tick → Candle(M1) 生成 → factor_cache 更新
