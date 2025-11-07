@@ -85,7 +85,7 @@ class ScalpExitManager:
             # shallow copy to avoid caller mutations
             self._policy = dict(policy)
 
-    def evaluate(self, trade: dict, m1_factors: dict, now: datetime) -> Optional[str]:
+    def evaluate(self, trade: dict, m1_factors: dict, context_factors: dict, now: datetime) -> Optional[str]:
         trade_id = str(trade.get("trade_id"))
         if not trade_id:
             return None
@@ -120,6 +120,15 @@ class ScalpExitManager:
             rsi = float(m1_factors.get("rsi", 50.0))
         except (TypeError, ValueError):
             rsi = 50.0
+        atr_m1 = float(m1_factors.get("atr", 0.0) or 0.0) * 100.0
+
+        m5 = context_factors.get("M5") or {}
+        h1 = context_factors.get("H1") or {}
+        atr_m5 = float(m5.get("atr", 0.0) or 0.0) * 100.0
+        adx_m5 = float(m5.get("adx", 0.0) or 0.0)
+        adx_h1 = float(h1.get("adx", 0.0) or 0.0)
+        strong_trend = max(adx_m5, adx_h1) >= config.ADX_STRONG_THRESHOLD
+        elevated_vol = max(atr_m1, atr_m5) >= config.ATR_MOMENTUM_MIN_PIPS
 
         policy = self._policy or {}
         exit_policy = policy.get("exit_profile", {}) if isinstance(policy, dict) else {}
@@ -161,10 +170,16 @@ class ScalpExitManager:
             if allow_negative_exit:
                 return "scalp_hard_stop"
             return None
-        if hold_sec >= config.NEGATIVE_HOLD_TIMEOUT_SEC and pnl_pips < 0.0:
-            if allow_negative_exit:
-                return "scalp_time_stop"
-            return None
+
+        if pnl_pips < 0.0:
+            negative_hold = max(config.MIN_NEGATIVE_HOLD_SEC, config.NEGATIVE_HOLD_TIMEOUT_SEC if strong_trend else config.MIN_NEGATIVE_HOLD_SEC)
+            if hold_sec < negative_hold and not strong_trend and not elevated_vol:
+                return None
+            if hold_sec >= config.NEGATIVE_HOLD_TIMEOUT_SEC and allow_negative_exit:
+                if strong_trend or elevated_vol:
+                    return "scalp_time_stop"
+            elif not allow_negative_exit:
+                return None
         if hold_sec >= config.MAX_HOLD_SEC:
             return "scalp_max_hold"
 
@@ -217,10 +232,15 @@ async def scalp_exit_worker() -> None:
             if not trades:
                 continue
 
-            factors = all_factors().get("M1", {})
+            all_fac = all_factors()
+            factors = all_fac.get("M1", {})
+            context = {
+                "M5": all_fac.get("M5") or {},
+                "H1": all_fac.get("H1") or {},
+            }
             now = _utc_now()
             for tr in trades:
-                reason = manager.evaluate(tr, m1_factors=factors, now=now)
+                reason = manager.evaluate(tr, m1_factors=factors, context_factors=context, now=now)
                 if not reason:
                     continue
                 trade_id = str(tr.get("trade_id"))
