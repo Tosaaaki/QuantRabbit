@@ -254,6 +254,8 @@ _EVENT_WINDOW_AFTER = _env_float("EVENT_WINDOW_AFTER_HOURS", 1.0)
 _EVENT_WINDOW_RISK_MULTIPLIER = _env_float("EVENT_WINDOW_RISK_MULTIPLIER", 0.3)
 _EXPOSURE_USD_LONG_MAX_LOT = _env_float("EXPOSURE_USD_LONG_MAX_LOT", 2.5)
 _MACRO_STATE_STALE_WARN_SEC = _env_float("MACRO_STATE_STALE_WARN_SEC", 900.0)
+_MACRO_STALE_WEIGHT_CAP = _env_float("MACRO_STALE_WEIGHT_CAP", 0.18)
+_MACRO_STALE_WEIGHT_DECAY = _env_float("MACRO_STALE_WEIGHT_DECAY", 0.5)
 
 _macro_state_cache: MacroState | None = None
 _macro_state_mtime: float | None = None
@@ -977,6 +979,8 @@ async def logic_loop():
                     logging.warning("[MACRO] snapshot rebuild failed: %s", exc)
 
             macro_state = _refresh_macro_state()
+            macro_snapshot_stale = False
+            macro_snapshot_age = 0.0
             event_soon = check_event_soon(within_minutes=30, min_impact=3)
 
             if macro_state and _MACRO_STATE_STALE_WARN_SEC > 0:
@@ -985,7 +989,9 @@ async def logic_loop():
                     age_sec = (
                         now.replace(tzinfo=datetime.timezone.utc) - snap_ts
                     ).total_seconds()
+                    macro_snapshot_age = age_sec
                     if age_sec >= _MACRO_STATE_STALE_WARN_SEC:
+                        macro_snapshot_stale = True
                         if not _macro_state_stale_warned:
                             logging.warning(
                                 "[MACRO] snapshot stale (age=%.1fs threshold=%.1fs)",
@@ -1249,6 +1255,18 @@ async def logic_loop():
 
             focus_tag = gpt.get("focus_tag") or focus
             weight = gpt.get("weight_macro", w_macro)
+            if macro_snapshot_stale:
+                if focus_tag == "macro":
+                    focus_tag = "hybrid"
+                prev_weight = weight
+                weight = min(prev_weight * _MACRO_STALE_WEIGHT_DECAY, _MACRO_STALE_WEIGHT_CAP)
+                logging.warning(
+                    "[MACRO] Snapshot stale (age=%.1fs). weight_macro %.2f -> %.2f and focus=%s",
+                    macro_snapshot_age,
+                    prev_weight,
+                    weight,
+                    focus_tag,
+                )
             if weight > GLOBAL_MACRO_WEIGHT_CAP:
                 logging.info(
                     "[MACRO] Hard cap applied: weight_macro %.2f -> %.2f",
@@ -1286,6 +1304,12 @@ async def logic_loop():
                         weight,
                     )
             focus_pockets = set(FOCUS_POCKETS.get(focus_tag, ("macro", "micro", "scalp")))
+            if macro_snapshot_stale and "macro" in focus_pockets:
+                focus_pockets.discard("macro")
+                logging.info(
+                    "[MACRO] Disabled macro pocket until snapshot refresh (age=%.1fs).",
+                    macro_snapshot_age,
+                )
             if not focus_pockets:
                 focus_pockets = {"micro"}
 
