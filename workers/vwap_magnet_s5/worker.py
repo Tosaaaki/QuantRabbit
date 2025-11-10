@@ -455,7 +455,7 @@ async def vwap_magnet_s5_worker() -> None:
             client_id = _client_id(side)
 
             try:
-                trade_id, executed_price = await market_order(
+                trade_id = await market_order(
                     "USD_JPY",
                     units,
                     sl_price=sl_price,
@@ -470,13 +470,14 @@ async def vwap_magnet_s5_worker() -> None:
                 continue
 
             if trade_id:
+                fill_price = entry_price
                 LOG.info(
                     "%s entry trade=%s side=%s units=%s price=%.3f tp=%.3f sl=%.3f",
                     config.LOG_PREFIX,
                     trade_id,
                     side,
                     units,
-                    executed_price if executed_price is not None else entry_price,
+                    fill_price,
                     tp_price,
                     sl_price,
                 )

@@ -307,7 +307,7 @@ async def mirror_spike_worker() -> None:
             }
 
             try:
-                trade_id, executed_price = await market_order(
+                trade_id = await market_order(
                     "USD_JPY",
                     units,
                     sl_price=sl_price,
@@ -328,13 +328,14 @@ async def mirror_spike_worker() -> None:
                 continue
 
             if trade_id:
+                fill_price = entry_price
                 logger.info(
                     "%s entry trade_id=%s side=%s units=%s exec=%.3f tp=%s spike=%.2fp retrace=%.2fp",
                     config.LOG_PREFIX,
                     trade_id,
                     signal.side,
                     units,
-                    executed_price if executed_price is not None else entry_price,
+                    fill_price,
                     f"{tp_price:.3f}" if tp_price is not None else "n/a",
                     signal.spike_height_pips,
                     signal.retrace_pips,

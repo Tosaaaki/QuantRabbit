@@ -302,7 +302,7 @@ async def impulse_retest_s5_worker() -> None:
 
             client_id = _client_id(direction)
             try:
-                trade_id, executed_price = await market_order(
+                trade_id = await market_order(
                     "USD_JPY",
                     units,
                     sl_price=round(sl_price, 3),
@@ -325,7 +325,7 @@ async def impulse_retest_s5_worker() -> None:
                     trade_id,
                     direction,
                     units,
-                    executed_price if executed_price is not None else entry_price,
+                    entry_price,
                 )
                 cooldown_until = now_monotonic + config.COOLDOWN_SEC
                 post_exit_until = now_monotonic + config.POST_EXIT_COOLDOWN_SEC

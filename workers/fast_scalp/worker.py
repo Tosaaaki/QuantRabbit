@@ -889,7 +889,7 @@ async def fast_scalp_worker(shared_state: FastScalpState) -> None:
             }
 
             try:
-                trade_id, executed_price = await market_order(
+                trade_id = await market_order(
                     "USD_JPY",
                     units,
                     sl_price,
@@ -936,7 +936,7 @@ async def fast_scalp_worker(shared_state: FastScalpState) -> None:
                 next_order_after,
                 time.monotonic() + config.REENTRY_MIN_GAP_SEC,
             )
-            actual_entry_price = executed_price if executed_price is not None else entry_price
+            actual_entry_price = entry_price
             sl_adjust_pips = sl_pips + config.SL_POST_ADJUST_BUFFER_PIPS
             if direction == "long":
                 actual_sl_price = None if not config.USE_SL else round(actual_entry_price - sl_adjust_pips * config.PIP_VALUE, 3)

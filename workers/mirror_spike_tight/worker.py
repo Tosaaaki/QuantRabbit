@@ -392,7 +392,7 @@ async def mirror_spike_tight_worker() -> None:
             }
 
             try:
-                trade_id, executed_price = await market_order(
+                trade_id = await market_order(
                     "USD_JPY",
                     units,
                     sl_price=sl_price,
@@ -413,7 +413,7 @@ async def mirror_spike_tight_worker() -> None:
                     trade_id,
                     direction,
                     units,
-                    executed_price if executed_price is not None else entry_price,
+                    entry_price,
                     tp_price,
                     sl_price,
                 )

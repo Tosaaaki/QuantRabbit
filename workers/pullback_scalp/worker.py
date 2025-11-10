@@ -202,7 +202,7 @@ async def pullback_scalp_worker() -> None:
             }
 
             try:
-                trade_id, _ = await market_order(
+                trade_id = await market_order(
                     "USD_JPY",
                     units,
                     sl_price=sl_price,
