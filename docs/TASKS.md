@@ -35,6 +35,25 @@
 
 （ここに新規タスクを追加）
 
+- [ ] ID: T-20251110-001
+  Title: Restore macro snapshot freshness & widen entry coverage
+  Status: todo
+  Priority: P1
+  Owner: maint
+  Scope/Paths: analysis/macro_snapshot_builder.py, main.py, scripts/run_sync_pipeline.py, docs/TASKS.md
+  Context: Macro snapshot has been stale for >24h causing macro pocket shutdown and reducing trade opportunities; data sync also stops at 00:22 so battle report is incomplete.
+  Acceptance:
+    - Macro snapshot refresh automatically updates when file asof is stale, and VM loads the latest snapshot (verified via logs without `[MACRO] Snapshot stale` spam)
+    - `run_sync_pipeline.py` can sync trades/candles to remote_logs even without BigQuery credentials (lot insights optional)
+    - Manual evaluation identifies missed trade windows and documents next strategy additions (momentum/London session)
+  Plan:
+    - Ensure macro snapshot refresh is triggered by asof, not just mtime, and verify on VM
+    - Adjust sync pipeline to allow local runs without BQ/GCS (flags/defaults) and pull latest trades
+    - Analyze 2025-11-10 candles vs trades to highlight missed moves and propose strategy/gate adjustments
+  Notes:
+    - Entry coverage focus: London 07:16–07:35 UTC drop, afternoon volatility blocks
+
+
 - [ ] ID: T-20251103-001
   Title: H1トレンドワーカーの追加実装
   Status: in-progress
@@ -113,6 +132,24 @@
     - 影響箇所の差分確認とログ整備
   Notes:
     - StageTracker / ExitManager 周辺は後続ワーカー実装で利用する前提
+
+- [ ] ID: T-20251108-001
+  Title: Macro 戦略のスプレッド考慮 SL/TP 反映
+  Status: in-progress
+  Priority: P1
+  Owner: maint
+  Scope/Paths: main.py, strategies/trend/ma_cross.py, strategies/breakout/donchian55.py, workers/common/
+  Context: micro/scalp は spread-aware SL/TP を導入済みだが、macro pocket (TrendMA, Donchian55) は未対応のため矛盾している。PocketPlan 経由で最新スプレッド値を全 executor に渡し、macro 戦略でもコスト込みの最低 SL/TP を保証する。
+  Acceptance:
+    - main から生成される PocketPlan/factors に `spread_pips` が含まれ、macro/scalp executor から参照できる
+    - TrendMA / Donchian55 の SL/TP 算出がスプレッドを加味し、RR >= 1.2 + spread buffer を満たす
+    - 既存の spread gate ログと矛盾しない
+  Plan:
+    - fac_m1 をコピーし spread_snapshot から `spread_pips` を注入する
+    - macro 戦略（TrendMA, Donchian55）のターゲット計算を spread-aware に修正
+    - 必要に応じて PocketPlanExecutor での参照を確認し、テストを実行
+  Notes:
+    - 未来のステップで macro_core worker 側の追加ガードを検討する
 
 - [ ] ID: T-20251105-004
   Title: Macro/Scalp コアワーカー実装
