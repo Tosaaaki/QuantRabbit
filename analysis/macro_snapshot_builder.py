@@ -152,7 +152,7 @@ def refresh_macro_snapshot(
     snapshot_path: Path = DEFAULT_SNAPSHOT_PATH,
     deadzone: float = 0.25,
     now: Optional[dt.datetime] = None,
-    refresh_if_older_than_minutes: int = 30,
+    refresh_if_older_than_minutes: int = 10,
 ) -> Path:
     """
     Ensure the macro snapshot JSON exists and is reasonably recent.

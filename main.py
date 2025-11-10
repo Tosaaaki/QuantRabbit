@@ -256,6 +256,8 @@ _EXPOSURE_USD_LONG_MAX_LOT = _env_float("EXPOSURE_USD_LONG_MAX_LOT", 2.5)
 _MACRO_STATE_STALE_WARN_SEC = _env_float("MACRO_STATE_STALE_WARN_SEC", 900.0)
 _MACRO_STALE_WEIGHT_CAP = _env_float("MACRO_STALE_WEIGHT_CAP", 0.18)
 _MACRO_STALE_WEIGHT_DECAY = _env_float("MACRO_STALE_WEIGHT_DECAY", 0.5)
+_MACRO_SNAPSHOT_REFRESH_MINUTES = _env_float("MACRO_SNAPSHOT_REFRESH_MINUTES", 10.0)
+_MACRO_AUTO_REFRESH_ON_STALE = _env_bool("MACRO_AUTO_REFRESH_ON_STALE", True)
 
 _macro_state_cache: MacroState | None = None
 _macro_state_mtime: float | None = None
@@ -973,6 +975,7 @@ async def logic_loop():
                         refresh_macro_snapshot,
                         snapshot_path=_macro_snapshot_path(),
                         deadzone=_MACRO_STATE_DEADZONE,
+                        refresh_if_older_than_minutes=int(_MACRO_SNAPSHOT_REFRESH_MINUTES),
                     )
                     last_macro_snapshot_refresh = now
                 except Exception as exc:  # pragma: no cover - defensive
@@ -999,6 +1002,21 @@ async def logic_loop():
                                 _MACRO_STATE_STALE_WARN_SEC,
                             )
                             globals()["_macro_state_stale_warned"] = True
+                        if _MACRO_AUTO_REFRESH_ON_STALE:
+                            try:
+                                await asyncio.to_thread(
+                                    refresh_macro_snapshot,
+                                    snapshot_path=_macro_snapshot_path(),
+                                    deadzone=_MACRO_STATE_DEADZONE,
+                                    refresh_if_older_than_minutes=int(_MACRO_SNAPSHOT_REFRESH_MINUTES),
+                                )
+                                last_macro_snapshot_refresh = now
+                                logging.info(
+                                    "[MACRO] snapshot refreshed on stale detect (age=%.1fs)",
+                                    age_sec,
+                                )
+                            except Exception as exc:  # pragma: no cover
+                                logging.warning("[MACRO] auto refresh failed: %s", exc)
                     elif _macro_state_stale_warned:
                         logging.info("[MACRO] snapshot freshness restored (age=%.1fs)", age_sec)
                         globals()["_macro_state_stale_warned"] = False
@@ -2101,6 +2119,7 @@ async def main():
             refresh_macro_snapshot,
             snapshot_path=_macro_snapshot_path(),
             deadzone=_MACRO_STATE_DEADZONE,
+            refresh_if_older_than_minutes=int(_MACRO_SNAPSHOT_REFRESH_MINUTES),
         )
     except Exception as exc:  # pragma: no cover - defensive
         logging.warning("[MACRO] initial snapshot build failed: %s", exc)
@@ -2111,6 +2130,7 @@ async def main():
                     refresh_macro_snapshot,
                     snapshot_path=_macro_snapshot_path(),
                     deadzone=_MACRO_STATE_DEADZONE,
+                    refresh_if_older_than_minutes=int(_MACRO_SNAPSHOT_REFRESH_MINUTES),
                 )
             except Exception as exc:  # pragma: no cover - defensive
                 logging.warning("[MACRO] periodic snapshot refresh failed: %s", exc)

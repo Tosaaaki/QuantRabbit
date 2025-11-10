@@ -121,12 +121,32 @@ def main() -> int:
         action="store_true",
         help="BigQuery 解析によるロットインサイト生成を無効化する。",
     )
+    parser.add_argument(
+        "--disable-bq",
+        action="store_true",
+        help="BigQuery エクスポートを完全に無効化する。Lot insights もスキップ。",
+    )
     args = parser.parse_args()
     _setup_logging(args.verbose)
 
-    exporter = BigQueryExporter()
+    exporter = None
+    if not args.disable_bq:
+        try:
+            exporter = BigQueryExporter()
+        except Exception as exc:  # pragma: no cover - defensive
+            logging.warning(
+                "[PIPELINE] BigQuery exporter unavailable (%s). disable-bq fallback.",
+                exc,
+            )
+            args.disable_bq = True
     gcs_publisher = None if args.disable_gcs else GCSRealtimePublisher()
-    analyzer = None if args.disable_lot_insights else LotPatternAnalyzer()
+    analyzer = None
+    if (not args.disable_bq) and (not args.disable_lot_insights) and exporter:
+        try:
+            analyzer = LotPatternAnalyzer()
+        except Exception as exc:  # pragma: no cover - defensive
+            logging.warning("[PIPELINE] Lot insights disabled (%s).", exc)
+            analyzer = None
     pm = PositionManager()
     stop_requested = False
     last_bq_export = 0.0
@@ -159,7 +179,9 @@ def main() -> int:
                         # 新規トレードがあり、最後の export から短時間経過した場合でも水平分散
                         run_bq = True
 
-                if run_bq:
+                if run_bq and exporter is None:
+                    run_bq = False
+                if run_bq and exporter:
                     stats = exporter.export(limit=args.limit or _BQ_MAX_EXPORT)
                     logging.info(
                         "[PIPELINE] export done rows=%s last_updated=%s",
