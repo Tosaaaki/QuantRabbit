@@ -935,8 +935,8 @@ async def logic_loop():
 
             # --- 1. 状況分析 ---
             factors = all_factors()
-            fac_m1 = factors.get("M1")
-            fac_h4 = factors.get("H4")
+            fac_m1 = dict(factors.get("M1") or {})
+            fac_h4 = dict(factors.get("H4") or {})
 
             # 両方のタイムフレームのデータが揃うまで待機
             if (
@@ -1023,6 +1023,11 @@ async def logic_loop():
                         f">= {spread_snapshot['limit_pips']:.2f}p"
                     )
             spread_gate_active = bool(spread_gate_reason)
+            if spread_snapshot and spread_snapshot.get("spread_pips") is not None:
+                try:
+                    fac_m1["spread_pips"] = float(spread_snapshot["spread_pips"])
+                except (TypeError, ValueError):
+                    pass
             if spread_snapshot:
                 def _fmt(v: object) -> str:
                     return f"{float(v):.2f}" if isinstance(v, (int, float)) else "NA"
@@ -1826,7 +1831,22 @@ async def logic_loop():
                     confidence_target = adj
 
                 open_info = open_positions.get(pocket, {})
-                price = fac_m1.get("close")
+                try:
+                    price = float(fac_m1.get("close"))
+                except (TypeError, ValueError):
+                    logging.debug("[SKIP] Invalid M1 close price: %s", fac_m1.get("close"))
+                    continue
+                quote_bid = None
+                quote_ask = None
+                if spread_state:
+                    try:
+                        quote_bid = float(spread_state.get("bid") or 0.0)
+                    except (TypeError, ValueError):
+                        quote_bid = None
+                    try:
+                        quote_ask = float(spread_state.get("ask") or 0.0)
+                    except (TypeError, ValueError):
+                        quote_ask = None
                 if action == "OPEN_LONG":
                     open_units = int(open_info.get("long_units", 0))
                     ref_price = open_info.get("long_avg_price")
@@ -1901,12 +1921,20 @@ async def logic_loop():
                     logging.info("[SKIP] Missing SL/TP for %s.", signal["strategy"])
                     continue
 
-                sl, tp = clamp_sl_tp(
-                    price,
-                    price - sl_pips / 100,
-                    price + tp_pips / 100,
-                    action == "OPEN_LONG",
-                )
+                entry_price = price
+                if action == "OPEN_LONG":
+                    if quote_ask:
+                        entry_price = quote_ask
+                    elif quote_bid:
+                        entry_price = quote_bid
+                else:
+                    if quote_bid:
+                        entry_price = quote_bid
+                    elif quote_ask:
+                        entry_price = quote_ask
+                sl_base = entry_price - sl_pips / 100 if action == "OPEN_LONG" else entry_price + sl_pips / 100
+                tp_base = entry_price + tp_pips / 100 if action == "OPEN_LONG" else entry_price - tp_pips / 100
+                sl, tp = clamp_sl_tp(entry_price, sl_base, tp_base, action == "OPEN_LONG")
 
                 client_id = build_client_order_id(focus_tag, signal["tag"])
                 trade_id = await market_order(
