@@ -161,11 +161,29 @@ def refresh_macro_snapshot(
     """
     snapshot_path = snapshot_path.expanduser().resolve()
     now = now or dt.datetime.utcnow().replace(tzinfo=dt.timezone.utc)
+    needs_refresh = True
     if snapshot_path.exists():
-        mtime = dt.datetime.fromtimestamp(snapshot_path.stat().st_mtime, tz=dt.timezone.utc)
-        age_minutes = (now - mtime).total_seconds() / 60.0
-        if age_minutes <= refresh_if_older_than_minutes:
-            return snapshot_path
+        try:
+            mtime = dt.datetime.fromtimestamp(snapshot_path.stat().st_mtime, tz=dt.timezone.utc)
+            mtime_age_min = (now - mtime).total_seconds() / 60.0
+        except Exception:
+            mtime_age_min = refresh_if_older_than_minutes + 1
+        asof_age_min = refresh_if_older_than_minutes + 1
+        try:
+            existing = json.loads(snapshot_path.read_text(encoding="utf-8"))
+            asof_raw = existing.get("asof")
+            if asof_raw:
+                asof_dt = dt.datetime.fromisoformat(asof_raw.replace("Z", "+00:00"))
+                asof_age_min = (now - asof_dt).total_seconds() / 60.0
+        except Exception:
+            asof_age_min = refresh_if_older_than_minutes + 1
+        if (
+            mtime_age_min <= refresh_if_older_than_minutes
+            and asof_age_min <= refresh_if_older_than_minutes
+        ):
+            needs_refresh = False
+    if not needs_refresh:
+        return snapshot_path
 
     factors = all_factors()
     vix, dxy = _derive_vix_and_dxy(factors)
