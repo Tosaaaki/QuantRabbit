@@ -241,11 +241,12 @@ def _env_int(key: str, default: int) -> int:
 GLOBAL_MACRO_WEIGHT_CAP = _env_float("MACRO_WEIGHT_CAP", GLOBAL_MACRO_WEIGHT_CAP)
 
 
-_MACRO_STATE_PATH = (
+_MACRO_STATE_PATH_RAW = (
     os.getenv("MACRO_STATE_SNAPSHOT_PATH")
     or os.getenv("MACRO_STATE_PATH")
     or os.getenv("MACRO_STATE_SNAPSHOT")
 )
+_MACRO_STATE_PATH = _MACRO_STATE_PATH_RAW or str(MACRO_SNAPSHOT_DEFAULT_PATH)
 _MACRO_STATE_DEADZONE = _env_float("MACRO_STATE_DEADZONE", 0.25)
 _MACRO_STATE_GATE_ENABLED = _env_bool("MACRO_STATE_GATE_ENABLED", False)
 _EVENT_WINDOW_ENABLED = _env_bool("EVENT_WINDOW_ENABLED", True)
@@ -289,10 +290,7 @@ _POLICY_VERSION = 0
 
 
 def _macro_snapshot_path() -> Path:
-    raw = _MACRO_STATE_PATH
-    if raw:
-        return Path(raw)
-    return MACRO_SNAPSHOT_DEFAULT_PATH
+    return Path(_MACRO_STATE_PATH).expanduser().resolve()
 
 
 def _parse_iso8601(ts: str) -> datetime.datetime | None:
@@ -306,9 +304,7 @@ def _parse_iso8601(ts: str) -> datetime.datetime | None:
 
 def _refresh_macro_state() -> MacroState | None:
     global _macro_state_cache, _macro_state_mtime
-    if not _MACRO_STATE_PATH:
-        return None
-    path = Path(_MACRO_STATE_PATH)
+    path = _macro_snapshot_path()
     try:
         mtime = path.stat().st_mtime
     except FileNotFoundError:
@@ -1011,6 +1007,8 @@ async def logic_loop():
                                     refresh_if_older_than_minutes=int(_MACRO_SNAPSHOT_REFRESH_MINUTES),
                                 )
                                 last_macro_snapshot_refresh = now
+                                _macro_state_cache = None
+                                macro_state = _refresh_macro_state()
                                 logging.info(
                                     "[MACRO] snapshot refreshed on stale detect (age=%.1fs)",
                                     age_sec,
@@ -2132,6 +2130,8 @@ async def main():
                     deadzone=_MACRO_STATE_DEADZONE,
                     refresh_if_older_than_minutes=int(_MACRO_SNAPSHOT_REFRESH_MINUTES),
                 )
+                globals()["_macro_state_cache"] = None
+                _refresh_macro_state()
             except Exception as exc:  # pragma: no cover - defensive
                 logging.warning("[MACRO] periodic snapshot refresh failed: %s", exc)
             await asyncio.sleep(max(120.0, interval_sec))
