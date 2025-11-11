@@ -288,6 +288,16 @@ def _pocket_worker_owns_orders(pocket: str) -> bool:
     if pocket == "scalp":
         return _DELEGATE_SCALP
     return False
+
+
+def _macro_weight_cap(perf_cache: dict) -> float:
+    stats = perf_cache.get("macro") or {}
+    win_rate = stats.get("win_rate")
+    if win_rate is None:
+        return GLOBAL_MACRO_WEIGHT_CAP
+    cap = 0.18 + 0.04 * (win_rate - 0.5)
+    cap = max(0.18, min(float(GLOBAL_MACRO_WEIGHT_CAP), cap))
+    return cap
 _POLICY_VERSION = 0
 
 
@@ -1273,6 +1283,15 @@ async def logic_loop():
 
             focus_tag = gpt.get("focus_tag") or focus
             weight = gpt.get("weight_macro", w_macro)
+            cap = _macro_weight_cap(perf_cache)
+            if weight > cap:
+                logging.info(
+                    "[MACRO] Performance cap applied: weight_macro %.2f -> %.2f (win_rate=%s)",
+                    weight,
+                    cap,
+                    (perf_cache.get("macro") or {}).get("win_rate"),
+                )
+                weight = cap
             if macro_snapshot_stale:
                 if focus_tag == "macro":
                     focus_tag = "hybrid"
