@@ -105,9 +105,11 @@ import workers.scalp_core.config as scalp_core_config
 import workers.squeeze_break_s5.config as squeeze_break_s5_config
 import workers.vwap_magnet_s5.config as vwap_magnet_s5_config
 import workers.micro_core.config as micro_core_config
+import workers.london_momentum.config as london_momentum_config
 from workers.impulse_break_s5 import impulse_break_s5_worker
 from workers.impulse_momentum_s5 import impulse_momentum_s5_worker
 from workers.impulse_retest_s5 import impulse_retest_s5_worker
+from workers.london_momentum import london_momentum_worker
 from workers.manual_swing import manual_swing_worker
 from workers.mirror_spike import mirror_spike_worker
 from workers.mirror_spike_s5 import mirror_spike_s5_worker
@@ -2172,9 +2174,13 @@ async def main():
         (trend_h1_config.ENABLED, trend_h1_worker, trend_h1_config.LOG_PREFIX),
         (manual_swing_config.ENABLED, manual_swing_worker, manual_swing_config.LOG_PREFIX),
     ]
+    session_workers = [
+        (london_momentum_config.ENABLED, london_momentum_worker, london_momentum_config.LOG_PREFIX),
+    ]
     scalp_group_enabled = _env_bool("SCALP_WORKERS_ENABLED", True)
     micro_group_enabled = _env_bool("MICRO_WORKERS_ENABLED", True)
     macro_group_enabled = _env_bool("MACRO_WORKERS_ENABLED", True)
+    session_group_enabled = _env_bool("SESSION_WORKERS_ENABLED", True)
 
     if scalp_group_enabled:
         for enabled, worker_fn, prefix in scalp_workers:
@@ -2205,6 +2211,16 @@ async def main():
                 logging.info("%s worker disabled by configuration", prefix)
     else:
         logging.info("[GROUP] Macro workers group disabled by configuration")
+
+    if session_group_enabled:
+        for enabled, worker_fn, prefix in session_workers:
+            if enabled:
+                logging.info("%s bootstrapping worker loop", prefix)
+                tasks.append(worker_fn())
+            else:
+                logging.info("%s worker disabled by configuration", prefix)
+    else:
+        logging.info("[GROUP] Session workers group disabled by configuration")
     await asyncio.gather(*tasks)
 
 
