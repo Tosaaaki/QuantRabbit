@@ -38,8 +38,7 @@ DEFAULT_STRATEGIES = ["BB_RSI", "NewsSpikeReversal"]
 POCKET_STRATEGY_MAP = {"micro": {"BB_RSI", "NewsSpikeReversal"}}
 BASE_RISK_PCT = 0.02
 FALLBACK_EQUITY = 10_000.0
-ENTRY_COOLDOWN_SEC = 120
-
+ENTRY_COOLDOWN_SEC = config.COOLDOWN_BASE_SEC
 STRATEGY_CLASSES = {
     "BB_RSI": BBRsi,
     "NewsSpikeReversal": NewsSpikeReversal,
@@ -113,20 +112,22 @@ async def micro_core_worker() -> None:
     metrics_client = RealtimeMetricsClient()
     confidence_policy = ConfidencePolicy()
     last_published_version = 0
+    cooldown_rsi: Dict[str, float] = {}
 
     try:
         while True:
             factors = all_factors()
-            fac_m1 = factors.get("M1") or {}
+            fac_m1 = dict(factors.get("M1") or {})
             fac_h4 = factors.get("H4") or {}
             if not fac_m1.get("close"):
                 await asyncio.sleep(config.LOOP_INTERVAL_SEC)
                 continue
 
             try:
-                blocked, _, _, reason = spread_monitor.is_blocked()
+                blocked, _, spread_state, reason = spread_monitor.is_blocked()
             except Exception:
                 blocked = False
+                spread_state = None
                 reason = ""
             if blocked:
                 LOG.info(
@@ -136,6 +137,13 @@ async def micro_core_worker() -> None:
                 )
                 await asyncio.sleep(config.LOOP_INTERVAL_SEC)
                 continue
+            spread_pips = 0.0
+            if spread_state and isinstance(spread_state, dict):
+                try:
+                    spread_pips = float(spread_state.get("spread_pips") or 0.0)
+                except (TypeError, ValueError):
+                    spread_pips = 0.0
+            fac_m1["spread_pips"] = spread_pips
 
             plan_snapshot = policy_bus.latest()
             strategies_hint: List[str] = []
@@ -200,6 +208,20 @@ async def micro_core_worker() -> None:
             executed_ids: Set[str] = set()
             executed_any = False
             now = datetime.datetime.utcnow()
+            atr_pips = fac_m1.get("atr_pips")
+            if atr_pips is None:
+                atr_raw = fac_m1.get("atr")
+                atr_pips = (atr_raw or 0.0) * 100.0
+            try:
+                atr_pips = float(atr_pips or 0.0)
+            except (TypeError, ValueError):
+                atr_pips = 0.0
+            atr_ratio = atr_pips / config.COOLDOWN_ATR_REF_PIPS if config.COOLDOWN_ATR_REF_PIPS else 1.0
+            atr_ratio = max(config.COOLDOWN_ATR_MIN_FACTOR, min(config.COOLDOWN_ATR_MAX_FACTOR, atr_ratio or 0.0))
+            dynamic_cooldown = max(
+                5,
+                int(round(config.COOLDOWN_BASE_SEC * atr_ratio)),
+            )
 
             for signal in signals:
                 strategy = signal["strategy"]
@@ -216,15 +238,44 @@ async def micro_core_worker() -> None:
                     POCKET, direction, now
                 )
                 if blocked_cd:
-                    LOG.info(
-                        "%s cooldown pocket=%s dir=%s remain=%s reason=%s",
-                        config.LOG_PREFIX,
-                        POCKET,
-                        direction,
-                        remain,
-                        reason or "cooldown",
-                    )
-                    continue
+                    key = f"{POCKET}:{direction}"
+                    rsi_val = fac_m1.get("rsi")
+                    release = False
+                    if (
+                        remain
+                        and remain >= config.COOLDOWN_RELEASE_MIN_REMAIN_SEC
+                        and rsi_val is not None
+                        and key in cooldown_rsi
+                        and spread_pips <= config.COOLDOWN_RELEASE_MAX_SPREAD
+                    ):
+                        try:
+                            current_rsi = float(rsi_val)
+                        except (TypeError, ValueError):
+                            current_rsi = None
+                        if current_rsi is not None:
+                            prev_rsi = cooldown_rsi.get(key)
+                            if prev_rsi is not None and abs(current_rsi - prev_rsi) >= config.COOLDOWN_RELEASE_RSI_DELTA:
+                                if stage_tracker.clear_cooldown(POCKET, direction):
+                                    cooldown_rsi.pop(key, None)
+                                    LOG.info(
+                                        "%s cooldown cleared due to RSI reversal dir=%s delta=%.2f",
+                                        config.LOG_PREFIX,
+                                        direction,
+                                        current_rsi - prev_rsi,
+                                    )
+                                    blocked_cd = False
+                                else:
+                                    LOG.debug("%s cooldown clear requested but no record found", config.LOG_PREFIX)
+                    if blocked_cd:
+                        LOG.info(
+                            "%s cooldown pocket=%s dir=%s remain=%s reason=%s",
+                            config.LOG_PREFIX,
+                            POCKET,
+                            direction,
+                            remain,
+                            reason or "cooldown",
+                        )
+                        continue
 
                 if open_trades:
                     LOG.debug(
@@ -294,9 +345,13 @@ async def micro_core_worker() -> None:
                     POCKET,
                     direction,
                     reason="entry_rate_limit",
-                    seconds=ENTRY_COOLDOWN_SEC,
+                    seconds=dynamic_cooldown,
                     now=now,
                 )
+                try:
+                    cooldown_rsi[f"{POCKET}:{direction}"] = float(fac_m1.get("rsi") or 50.0)
+                except (TypeError, ValueError):
+                    cooldown_rsi[f"{POCKET}:{direction}"] = 50.0
                 executed_ids.add(client_id)
                 executed_any = True
                 break

@@ -181,6 +181,14 @@ class StageTracker:
         )
         return True
 
+    def clear_cooldown(self, pocket: str, direction: str) -> bool:
+        cur = self._con.execute(
+            "DELETE FROM stage_cooldown WHERE pocket=? AND direction=?",
+            (pocket, direction),
+        )
+        self._con.commit()
+        return cur.rowcount > 0
+
     def set_strategy_cooldown(
         self,
         strategy: str,
