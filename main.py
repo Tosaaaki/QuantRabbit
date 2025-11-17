@@ -4,6 +4,7 @@ import logging
 import os
 import sqlite3
 import subprocess
+import sys
 import traceback
 import time
 from pathlib import Path
@@ -254,7 +255,14 @@ DEFAULT_LOSS_GUARD_PIPS = {
 }
 MANUAL_SENTINEL_POCKETS = {"manual", "unknown"}
 MANUAL_SENTINEL_MIN_UNITS = int(os.getenv("MANUAL_SENTINEL_MIN_UNITS", "4000"))
-MANUAL_SENTINEL_BLOCK_POCKETS = {"micro", "scalp"}
+
+def _env_set(name: str, default: str = "") -> set[str]:
+    raw = os.getenv(name)
+    if raw is None:
+        raw = default
+    return {item.strip() for item in raw.split(",") if item.strip()}
+
+MANUAL_SENTINEL_BLOCK_POCKETS = _env_set("MANUAL_SENTINEL_BLOCK_POCKETS", "")
 MANUAL_SENTINEL_RELEASE_CYCLES = max(
     1, int(os.getenv("MANUAL_SENTINEL_RELEASE_CYCLES", "2"))
 )
@@ -575,7 +583,7 @@ def _maybe_run_online_tuner(now: datetime.datetime) -> None:
     shadow_mode = _env_bool("TUNER_SHADOW_MODE", False)
 
     cmd = [
-        "python3",
+        sys.executable or "python3",
         "scripts/run_online_tuner.py",
         "--logs-glob",
         logs_glob,

@@ -75,11 +75,18 @@ STRATEGY_CLASSES = {
     "MicroPullbackEMA": MicroPullbackEMA,
     "NewsSpikeReversal": NewsSpikeReversal,
 }
+def _env_set(name: str, default: str = "") -> set[str]:
+    raw = os.getenv(name)
+    if raw is None:
+        raw = default
+    return {item.strip() for item in raw.split(",") if item.strip()}
+
 MANUAL_SENTINEL_POCKETS = {"manual", "unknown"}
 MANUAL_SENTINEL_MIN_UNITS = int(os.getenv("MANUAL_SENTINEL_MIN_UNITS", "4000"))
 MANUAL_SENTINEL_RELEASE_CYCLES = max(
     1, int(os.getenv("MANUAL_SENTINEL_RELEASE_CYCLES", "2"))
 )
+MANUAL_SENTINEL_BLOCK_POCKETS = _env_set("MANUAL_SENTINEL_BLOCK_POCKETS", "")
 HOLD_RATIO_LOOKBACK_HOURS = float(os.getenv("HOLD_RATIO_LOOKBACK_HOURS", "6.0"))
 HOLD_RATIO_MIN_SAMPLES = int(os.getenv("HOLD_RATIO_MIN_SAMPLES", "80"))
 HOLD_RATIO_MAX = float(os.getenv("HOLD_RATIO_MAX", "0.30"))
@@ -639,22 +646,12 @@ async def micro_core_worker() -> None:
                         tags={"scope": "micro_worker", "units": str(manual_units)},
                     )
                     LOG.warning(
-                        "%s manual/unknown exposure detected (units=%s detail=%s); halt new entries.",
+                        "%s manual/unknown exposure detected (units=%s detail=%s); continuing with reduced headroom.",
                         config.LOG_PREFIX,
                         manual_units,
                         manual_details or "-",
                     )
-                await _publish_micro_policy(
-                    fac_m1,
-                    range_ctx,
-                    strategies=ranked_strategies,
-                    confidence=0.0,
-                    open_trades=open_trades,
-                    base_version=last_published_version,
-                )
-                await asyncio.sleep(config.LOOP_INTERVAL_SEC)
-                continue
-            if manual_guard_active:
+            if manual_guard_active and not manual_block:
                 manual_clear_cycles += 1
                 if manual_clear_cycles >= MANUAL_SENTINEL_RELEASE_CYCLES:
                     manual_guard_active = False
@@ -664,7 +661,7 @@ async def micro_core_worker() -> None:
                         tags={"scope": "micro_worker", "units": "0"},
                     )
                     LOG.info("%s manual/unknown exposure cleared", config.LOG_PREFIX)
-            else:
+            elif not manual_guard_active:
                 manual_clear_cycles = min(
                     manual_clear_cycles + 1, MANUAL_SENTINEL_RELEASE_CYCLES
                 )

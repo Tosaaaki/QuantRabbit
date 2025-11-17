@@ -44,7 +44,7 @@ _DISABLE_GLOBAL_DD = os.getenv("DISABLE_GLOBAL_DD", "false").lower() in {
     "yes",
     "on",
 }
-EXPOSURE_MAX_RATIO = float(os.getenv("EXPOSURE_MAX_RATIO", "0.92"))
+EXPOSURE_MAX_RATIO = float(os.getenv("EXPOSURE_MAX_RATIO", "0.93"))
 
 _DB = pathlib.Path("logs/trades.db")
 con = sqlite3.connect(_DB)
