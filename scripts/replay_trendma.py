@@ -375,6 +375,7 @@ class TrendMAReplayer:
             event_soon=False,
             range_mode=False,
             now=ctime,
+            stage_tracker=None,
         )
         if exit_decisions:
             self._process_exit_decisions(exit_decisions, price, ctime)

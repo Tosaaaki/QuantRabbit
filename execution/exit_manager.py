@@ -8,14 +8,20 @@ execution.exit_manager
 
 from __future__ import annotations
 
+import json
+import os
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple, TYPE_CHECKING
 
 import logging
 
 from analysis.ma_projection import MACrossProjection, compute_ma_projection
 from analysis.mtf_utils import resample_candles_from_m1
+from utils.metrics_logger import log_metric
+
+if TYPE_CHECKING:
+    from execution.stage_tracker import StageTracker
 
 
 @dataclass
@@ -49,6 +55,19 @@ class ExitManager:
         self._reverse_decay = timedelta(seconds=180)
         self._reverse_hits: Dict[Tuple[str, str], Dict[str, object]] = {}
         self._range_macro_grace_minutes = 8.0
+        # Micro-specific stability controls
+        self._micro_min_hold_seconds = float(os.getenv("EXIT_MICRO_MIN_HOLD_SEC", "75"))
+        self._micro_loss_grace_pips = float(os.getenv("EXIT_MICRO_GUARD_LOSS_PIPS", "1.6"))
+        self._micro_loss_hold_seconds = float(os.getenv("EXIT_MICRO_LOSS_HOLD_SEC", "75"))
+        self._micro_profit_hard = float(os.getenv("EXIT_MICRO_PROFIT_TAKE_PIPS", "1.60"))
+        self._micro_profit_soft = float(os.getenv("EXIT_MICRO_PROFIT_SOFT_PIPS", "1.00"))
+        self._micro_profit_rsi_release_long = float(os.getenv("EXIT_MICRO_PROFIT_RSI_LONG", "53"))
+        self._micro_profit_rsi_release_short = float(os.getenv("EXIT_MICRO_PROFIT_RSI_SHORT", "47"))
+        self._micro_profit_ema_buffer = float(os.getenv("EXIT_MICRO_PROFIT_EMA_BUFFER", "0.0005"))
+        self._micro_profit_slope_min = float(os.getenv("EXIT_MICRO_PROFIT_SLOPE_MIN", "0.05"))
+        # Scalp pocket guard rails
+        self._scalp_min_hold_seconds = float(os.getenv("EXIT_SCALP_MIN_HOLD_SEC", "45"))
+        self._scalp_loss_grace_pips = float(os.getenv("EXIT_SCALP_GUARD_LOSS_PIPS", "2.0"))
 
     def plan_closures(
         self,
@@ -59,6 +78,7 @@ class ExitManager:
         event_soon: bool,
         range_mode: bool = False,
         now: Optional[datetime] = None,
+        stage_tracker: Optional["StageTracker"] = None,
     ) -> List[ExitDecision]:
         current_time = self._ensure_utc(now)
         decisions: List[ExitDecision] = []
@@ -121,6 +141,7 @@ class ExitManager:
                     projection_fast,
                     atr_pips,
                     fac_m1,
+                    stage_tracker,
                 )
                 if decision:
                     decisions.append(decision)
@@ -144,6 +165,7 @@ class ExitManager:
                     projection_fast,
                     atr_pips,
                     fac_m1,
+                    stage_tracker,
                 )
                 if decision:
                     decisions.append(decision)
@@ -194,6 +216,7 @@ class ExitManager:
         projection_fast: Optional[MACrossProjection],
         atr_pips: float,
         fac_m1: Dict,
+        stage_tracker: Optional["StageTracker"],
     ) -> Optional[ExitDecision]:
         if pocket == "scalp":
             return None
@@ -205,6 +228,25 @@ class ExitManager:
         profit_pips = 0.0
         if avg_price and close_price:
             profit_pips = (close_price - avg_price) / 0.01
+        neg_exit_blocked = self._negative_exit_blocked(
+            pocket, open_info, "long", now, profit_pips, stage_tracker
+        )
+        target_bounds = self._entry_target_bounds(open_info, "long")
+        if (
+            reverse_signal
+            and target_bounds
+            and profit_pips is not None
+            and profit_pips >= 0.0
+            and profit_pips < target_bounds[0] * 0.75
+        ):
+            self._record_target_guard(
+                pocket,
+                "long",
+                profit_pips,
+                target_bounds,
+                reverse_signal.get("tag") if reverse_signal else None,
+            )
+            reverse_signal = None
 
         ma_gap_pips = 0.0
         if ma10 is not None and ma20 is not None:
@@ -302,6 +344,12 @@ class ExitManager:
             reason = "trend_reversal"
         elif pocket == "scalp" and close_price > ema20:
             reason = "scalp_momentum_flip"
+        elif (
+            pocket == "micro"
+            and profit_pips <= -self._micro_loss_grace_pips
+            and self._micro_loss_ready(open_info, "long", now)
+        ):
+            reason = "micro_loss_guard"
         elif pocket == "macro" and loss_cap is not None and profit_pips <= -loss_cap:
             reason = "macro_loss_cap"
         elif (
@@ -334,6 +382,15 @@ class ExitManager:
             and close_price <= ema20 - max(0.0010, (atr_pips * 0.25) / 100)
         ):
             reason = "macro_trend_fade"
+        elif pocket == "micro" and self._micro_profit_exit_ready(
+            side="long",
+            profit_pips=profit_pips,
+            rsi=rsi,
+            close_price=close_price,
+            ema20=ema20,
+            projection_fast=projection_fast,
+        ):
+            reason = "micro_profit_guard"
         # レンジ中でもマクロの既存建玉を一律にクローズしない。
         # 早期利確/撤退（range_take_profit/range_stop）や逆方向シグナルのみで制御する。
         elif range_mode:
@@ -356,6 +413,10 @@ class ExitManager:
             )
             if kill_reason:
                 reason = kill_reason
+
+        if reason and pocket in {"micro", "scalp"} and reason != "event_lock":
+            if neg_exit_blocked:
+                return None
 
         if range_mode and reason == "reverse_signal":
             allow_reentry = False
@@ -391,6 +452,7 @@ class ExitManager:
         projection_fast: Optional[MACrossProjection],
         atr_pips: float,
         fac_m1: Dict,
+        stage_tracker: Optional["StageTracker"],
     ) -> Optional[ExitDecision]:
         if pocket == "scalp":
             return None
@@ -402,6 +464,25 @@ class ExitManager:
         profit_pips = 0.0
         if avg_price and close_price:
             profit_pips = (avg_price - close_price) / 0.01
+        neg_exit_blocked = self._negative_exit_blocked(
+            pocket, open_info, "short", now, profit_pips, stage_tracker
+        )
+        target_bounds = self._entry_target_bounds(open_info, "short")
+        if (
+            reverse_signal
+            and target_bounds
+            and profit_pips is not None
+            and profit_pips >= 0.0
+            and profit_pips < target_bounds[0] * 0.75
+        ):
+            self._record_target_guard(
+                pocket,
+                "short",
+                profit_pips,
+                target_bounds,
+                reverse_signal.get("tag") if reverse_signal else None,
+            )
+            reverse_signal = None
 
         ma_gap_pips = 0.0
         if ma10 is not None and ma20 is not None:
@@ -493,6 +574,12 @@ class ExitManager:
             and ma_gap_pips >= self._macro_ma_gap
         ):
             reason = "trend_reversal"
+        elif (
+            pocket == "micro"
+            and profit_pips <= -self._micro_loss_grace_pips
+            and self._micro_loss_ready(open_info, "short", now)
+        ):
+            reason = "micro_loss_guard"
         elif pocket == "macro" and loss_cap is not None and profit_pips <= -loss_cap:
             reason = "macro_loss_cap"
         elif pocket == "scalp" and close_price < ema20:
@@ -528,6 +615,15 @@ class ExitManager:
             and close_price >= ema20 + max(0.0012, (atr_pips * 0.3) / 100)
         ):
             reason = "macro_trend_fade"
+        elif pocket == "micro" and self._micro_profit_exit_ready(
+            side="short",
+            profit_pips=profit_pips,
+            rsi=rsi,
+            close_price=close_price,
+            ema20=ema20,
+            projection_fast=projection_fast,
+        ):
+            reason = "micro_profit_guard"
         elif range_mode:
             if (
                 pocket == "macro"
@@ -547,6 +643,10 @@ class ExitManager:
             )
             if kill_reason:
                 reason = kill_reason
+
+        if reason and pocket in {"micro", "scalp"} and reason != "event_lock":
+            if neg_exit_blocked:
+                return None
 
         if range_mode and reason == "reverse_signal":
             allow_reentry = False
@@ -665,6 +765,72 @@ class ExitManager:
             if pivot is not None and price >= pivot + cushion * 0.01:
                 return "macro_struct_break"
         return None
+
+    def _micro_loss_ready(
+        self,
+        open_info: Dict,
+        side: str,
+        now: datetime,
+    ) -> bool:
+        if self._micro_loss_hold_seconds <= 0:
+            return True
+        youngest = self._youngest_trade_age_seconds(open_info, side, now) or 0.0
+        return youngest >= self._micro_loss_hold_seconds
+
+    def _micro_profit_exit_ready(
+        self,
+        *,
+        side: str,
+        profit_pips: float,
+        rsi: float,
+        close_price: float,
+        ema20: float,
+        projection_fast: Optional[MACrossProjection],
+    ) -> bool:
+        if profit_pips is None:
+            return False
+        hard = profit_pips >= self._micro_profit_hard
+        soft = profit_pips >= self._micro_profit_soft
+        if not (hard or soft):
+            return False
+
+        ema_trigger = False
+        if close_price is not None and ema20 is not None and self._micro_profit_ema_buffer > 0:
+            gap = close_price - ema20
+            if side == "long" and gap <= -self._micro_profit_ema_buffer:
+                ema_trigger = True
+            elif side == "short" and gap >= self._micro_profit_ema_buffer:
+                ema_trigger = True
+
+        rsi_trigger = False
+        try:
+            rsi_val = float(rsi)
+        except (TypeError, ValueError):
+            rsi_val = None
+        if rsi_val is not None:
+            if side == "long" and rsi_val <= self._micro_profit_rsi_release_long:
+                rsi_trigger = True
+            elif side == "short" and rsi_val >= self._micro_profit_rsi_release_short:
+                rsi_trigger = True
+
+        slope_trigger = False
+        slope = None
+        if projection_fast is not None:
+            try:
+                slope = float(projection_fast.gap_slope_pips or 0.0)
+            except Exception:
+                slope = None
+        if slope is not None and self._micro_profit_slope_min > 0:
+            if side == "long" and slope <= -self._micro_profit_slope_min:
+                slope_trigger = True
+            elif side == "short" and slope >= self._micro_profit_slope_min:
+                slope_trigger = True
+
+        if hard and (ema_trigger or rsi_trigger or slope_trigger):
+            return True
+        if soft and ema_trigger and (rsi_trigger or slope_trigger):
+            return True
+        return False
 
     def _should_exit_for_cross(
         self,
@@ -847,6 +1013,219 @@ class ExitManager:
             if age_minutes >= threshold_minutes:
                 return True
         return False
+
+    def _youngest_trade_age_seconds(
+        self,
+        open_info: Dict,
+        side: str,
+        now: datetime,
+    ) -> Optional[float]:
+        trades = open_info.get("open_trades") or []
+        youngest: Optional[float] = None
+        for tr in trades:
+            if tr.get("side") != side:
+                continue
+            opened_at = self._parse_open_time(tr.get("open_time"))
+            if opened_at is None:
+                continue
+            age = (now - opened_at).total_seconds()
+            if age < 0:
+                continue
+            if youngest is None or age < youngest:
+                youngest = age
+        return youngest
+
+    def _trade_age_seconds(self, trade: Dict, now: datetime) -> Optional[float]:
+        opened_at = self._parse_open_time(trade.get("open_time"))
+        if opened_at is None:
+            return None
+        age = (now - opened_at).total_seconds()
+        if age < 0:
+            return 0.0
+        return age
+
+    def _negative_exit_blocked(
+        self,
+        pocket: str,
+        open_info: Dict,
+        side: str,
+        now: datetime,
+        profit_pips: float,
+        stage_tracker: Optional["StageTracker"],
+    ) -> bool:
+        if profit_pips is None or profit_pips >= 0.0:
+            return False
+        default_loss, default_hold = self._default_loss_hold(pocket)
+        trades = [
+            tr
+            for tr in (open_info.get("open_trades") or [])
+            if tr.get("side") == side
+        ]
+        if not trades:
+            return False
+        blocked = False
+        for tr in trades:
+            thesis = self._parse_entry_thesis(tr)
+            strategy_tag = thesis.get("strategy_tag") or tr.get("strategy_tag")
+            loss_guard, hold_req = self._trade_guard_requirements(
+                thesis, pocket, default_loss, default_hold
+            )
+            if loss_guard <= 0.0 or hold_req <= 0.0:
+                continue
+            if profit_pips <= -loss_guard:
+                continue
+            age = self._trade_age_seconds(tr, now)
+            if age is None:
+                continue
+            if age < hold_req:
+                trade_id = tr.get("trade_id")
+                logging.info(
+                    "[EXIT] hold_guard block pocket=%s side=%s trade=%s age=%.1fs req=%.1fs loss_guard=%.2fp profit=%.2fp",
+                    pocket,
+                    side,
+                    trade_id,
+                    age,
+                    hold_req,
+                    loss_guard,
+                    profit_pips,
+                )
+                self._record_hold_violation(
+                    pocket,
+                    side,
+                    strategy_tag,
+                    hold_req,
+                    age,
+                    now,
+                    stage_tracker,
+                )
+                blocked = True
+                break
+        return blocked
+
+    def _default_loss_hold(self, pocket: str) -> tuple[float, float]:
+        guard_map = {
+            "micro": (self._micro_loss_grace_pips, self._micro_min_hold_seconds),
+            "scalp": (self._scalp_loss_grace_pips, self._scalp_min_hold_seconds),
+        }
+        return guard_map.get(pocket, (0.0, 0.0))
+
+    def _trade_guard_requirements(
+        self,
+        thesis: Dict,
+        pocket: str,
+        default_loss: float,
+        default_hold: float,
+    ) -> tuple[float, float]:
+        loss_guard = thesis.get("loss_guard_pips") or thesis.get("loss_grace_pips")
+        hold_req = thesis.get("min_hold_sec") or thesis.get("min_hold_seconds")
+        try:
+            loss_val = float(loss_guard)
+        except (TypeError, ValueError):
+            loss_val = default_loss
+        if loss_val <= 0.0:
+            loss_val = default_loss
+        try:
+            hold_val = float(hold_req)
+        except (TypeError, ValueError):
+            hold_val = default_hold
+        if hold_val <= 0.0:
+            hold_val = default_hold
+        return max(0.0, loss_val), max(0.0, hold_val)
+
+    def _record_hold_violation(
+        self,
+        pocket: str,
+        direction: str,
+        strategy_tag: Optional[str],
+        required_sec: float,
+        actual_sec: float,
+        now: datetime,
+        stage_tracker: Optional["StageTracker"],
+    ) -> None:
+        tags = {
+            "pocket": pocket,
+            "direction": direction,
+        }
+        if strategy_tag:
+            tags["strategy"] = strategy_tag
+        log_metric("exit_hold_violation", 1.0, tags=tags)
+        if stage_tracker:
+            stage_tracker.log_hold_violation(
+                pocket,
+                direction,
+                required_sec=required_sec,
+                actual_sec=actual_sec,
+                reason="hold_guard_block",
+                cooldown_seconds=self._hold_violation_cooldown(pocket),
+                now=now,
+            )
+
+    @staticmethod
+    def _hold_violation_cooldown(pocket: str) -> int:
+        if pocket == "macro":
+            return 420
+        if pocket == "micro":
+            return 240
+        return 180
+
+    def _entry_target_bounds(
+        self,
+        open_info: Dict,
+        side: str,
+    ) -> Optional[tuple[float, float]]:
+        trades = open_info.get("open_trades") or []
+        targets: list[float] = []
+        for tr in trades:
+            if tr.get("side") != side:
+                continue
+            thesis = self._parse_entry_thesis(tr)
+            target = thesis.get("target_tp_pips") or thesis.get("tp_hint_pips")
+            try:
+                if target is not None:
+                    targets.append(float(target))
+            except (TypeError, ValueError):
+                continue
+        if not targets:
+            return None
+        targets.sort()
+        return targets[0], sum(targets) / len(targets)
+
+    def _record_target_guard(
+        self,
+        pocket: str,
+        direction: str,
+        profit_pips: float,
+        target_bounds: tuple[float, float],
+        signal_tag: Optional[str],
+    ) -> None:
+        log_metric(
+            "exit_target_guard",
+            1.0,
+            tags={
+                "pocket": pocket,
+                "direction": direction,
+                "signal": signal_tag or "reverse",
+            },
+        )
+        logging.info(
+            "[EXIT] target_guard pocket=%s dir=%s profit=%.2fp guard<=%.2fp",
+            pocket,
+            direction,
+            profit_pips,
+            target_bounds[0],
+        )
+
+    @staticmethod
+    def _parse_entry_thesis(trade: Dict) -> Dict:
+        thesis = trade.get("entry_thesis") or {}
+        if isinstance(thesis, str):
+            try:
+                thesis = json.loads(thesis)
+            except Exception:
+                thesis = {}
+        if not isinstance(thesis, dict):
+            thesis = {}
+        return thesis
 
     @staticmethod
     def _parse_open_time(value: Optional[str]) -> Optional[datetime]:

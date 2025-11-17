@@ -4,17 +4,21 @@ execution.risk_guard
 • 許容 lot 計算
 • SL/TP クランプ
 • Pocket 別ドローダウン監視
+• グローバルエクスポージャ（手動玉＋bot）を 92% 以下へ抑制
 """
 
 from __future__ import annotations
 
-import sqlite3
-import pathlib
-import time
-from datetime import datetime, timedelta, timezone
+import logging
 import os
-from typing import Dict
+import pathlib
+import sqlite3
+import time
+from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
+from typing import Dict, Optional
 
+from utils.metrics_logger import log_metric
 from utils.secrets import get_secret
 
 # --- risk params ---
@@ -40,6 +44,7 @@ _DISABLE_GLOBAL_DD = os.getenv("DISABLE_GLOBAL_DD", "false").lower() in {
     "yes",
     "on",
 }
+EXPOSURE_MAX_RATIO = float(os.getenv("EXPOSURE_MAX_RATIO", "0.92"))
 
 _DB = pathlib.Path("logs/trades.db")
 con = sqlite3.connect(_DB)
@@ -196,6 +201,133 @@ def allowed_lot(
 
     lot = min(lot, MAX_LOT)
     return round(max(lot, 0.0), 3)
+
+
+def _max_notional_units(equity: float | None, price: float | None) -> float:
+    if equity is None or price is None:
+        return 0.0
+    try:
+        equity_val = float(equity)
+        price_val = float(price)
+        if equity_val <= 0.0 or price_val <= 0.0:
+            return 0.0
+        return (equity_val / price_val) * MAX_LEVERAGE
+    except (TypeError, ValueError, ZeroDivisionError):
+        return 0.0
+
+
+def _abs_units(info: Dict) -> int:
+    if not info:
+        return 0
+    trades = info.get("open_trades") or []
+    total = 0
+    if trades:
+        for tr in trades:
+            try:
+                total += abs(int(tr.get("units", 0) or 0))
+            except (TypeError, ValueError):
+                continue
+        return total
+    try:
+        return abs(int(info.get("units", 0) or 0))
+    except (TypeError, ValueError):
+        return 0
+
+
+@dataclass(slots=True)
+class ExposureState:
+    cap_ratio: float
+    max_units: float
+    manual_units: float
+    bot_units: float
+
+    def limit_units(self) -> float:
+        return max(0.0, self.cap_ratio * self.max_units)
+
+    def ratio(self) -> float:
+        limit = self.limit_units()
+        if limit <= 0:
+            return 0.0
+        return min(2.0, (self.manual_units + self.bot_units) / limit)
+
+    def manual_ratio(self) -> float:
+        if self.max_units <= 0:
+            return 0.0
+        return min(2.0, self.manual_units / self.max_units)
+
+    def bot_ratio(self) -> float:
+        if self.max_units <= 0:
+            return 0.0
+        return min(2.0, self.bot_units / self.max_units)
+
+    def available_units(self) -> float:
+        used = self.manual_units + self.bot_units
+        return max(0.0, self.limit_units() - used)
+
+    def would_exceed(self, units: int) -> bool:
+        if units == 0:
+            return False
+        future = self.manual_units + self.bot_units + abs(units)
+        return future > self.limit_units()
+
+    def allocate(self, units: int) -> None:
+        if units == 0:
+            return
+        self.bot_units += abs(units)
+
+
+def build_exposure_state(
+    open_positions: Dict[str, Dict],
+    *,
+    equity: float | None,
+    price: float | None,
+    cap_ratio: float | None = None,
+) -> Optional[ExposureState]:
+    """現在の手動玉＋bot玉の使用率を計算し、追加エントリー可否を判定する。"""
+    cap = float(cap_ratio or EXPOSURE_MAX_RATIO)
+    if cap <= 0:
+        return None
+    max_units = _max_notional_units(equity, price)
+    if max_units <= 0:
+        return None
+    manual_units = 0
+    bot_units = 0
+    for pocket, info in (open_positions or {}).items():
+        if pocket in {"__net__", "__meta__"}:
+            continue
+        units = _abs_units(info or {})
+        if units <= 0:
+            continue
+        if pocket.startswith("manual") or pocket in {"manual", "unknown"}:
+            manual_units += units
+        else:
+            bot_units += units
+    state = ExposureState(
+        cap_ratio=cap,
+        max_units=max_units,
+        manual_units=float(manual_units),
+        bot_units=float(bot_units),
+    )
+    _log_exposure_metrics(state)
+    return state
+
+
+def _log_exposure_metrics(state: ExposureState) -> None:
+    ratio = state.ratio()
+    tags = {
+        "cap": f"{state.cap_ratio:.2f}",
+        "manual_ratio": f"{state.manual_ratio():.3f}",
+        "bot_ratio": f"{state.bot_ratio():.3f}",
+    }
+    log_metric("exposure_ratio", ratio, tags=tags)
+    if ratio >= 1.0:
+        logging.warning(
+            "[EXPOSURE] ratio=%.3f manual=%.2f%% bot=%.2f%% cap=%.2f%%",
+            ratio,
+            state.manual_ratio() * 100,
+            state.bot_ratio() * 100,
+            state.cap_ratio * 100,
+        )
 
 
 def loss_cooldown_status(

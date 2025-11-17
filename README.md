@@ -3,12 +3,28 @@
 QuantRabbit は **テクニカル × ニュース × GPT 裁量判断** を組み合わせ、  
 USD/JPY で 1 日 +100 pips を狙う完全自動売買システムです。  
 
+> **運用ミッション**: 口座資金を長期的に最大化することだけを目的とし、  
+> どの変更でも資本成長のために最善を尽くす（守りではなく勝ちにいく）方針を明記しています。
+
 * **テクニカル** : ta‑lib で計算した MA / BB / RSI / ADX …  
 * **ニュース** : Forex Factory / DailyFX RSS → VM fetcher → Cloud Run summarizer (GPT‑4o‑mini)  
 * **GPT** : レジーム補足 + 戦略順位 + lot 配分を 60 秒ごとに判断  
 * **Pocket 方式** : 同じ口座内で _micro_（スキャル）／_macro_（順張り）を tag 管理  
 * **インフラ** : GCE VM + Cloud Storage + Pub/Sub + Cloud Run (news summarizer)  
 * **月額コスト** : VM ≈ $19 + Cloud Run ≈ $0.6 + GPT ≈ $4.5 ＝ **$ <25**  
+
+### VM ログの確認
+
+IAP + OS Login 環境では `scripts/tail_vm_logs.sh` を使うと、systemd ログや任意コマンドを簡単に追尾できます。
+
+```bash
+export VM_SSH_KEY=~/.ssh/gcp_oslogin_qr
+scripts/tail_vm_logs.sh -c "sudo journalctl -u quantrabbit.service -f"
+```
+
+オプションで `-p/-z/-m` でプロジェクトやゾーン、インスタンス名、`-c` でリモートコマンドを変更可能です。
+
+`journalctl` 上では `[ORDER][OPEN_REQ] pocket=... strategy=...` の形式で発注ログが出るので、どの戦略がエントリー／クローズしたかを即時に確認できます。
 
 ---
 

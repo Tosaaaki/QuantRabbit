@@ -317,6 +317,7 @@ def simulate_day(
             event_soon=False,
             range_mode=range_active,
             now=t,
+            stage_tracker=None,
         )
         for decision in exit_decisions:
             if decision.pocket != "macro":

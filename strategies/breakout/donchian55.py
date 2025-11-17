@@ -6,6 +6,7 @@ from analysis.ma_projection import compute_donchian_projection
 class Donchian55:
     name = "Donchian55"
     pocket = "macro"
+    profile = "macro_breakout_donchian"
 
     @staticmethod
     def check(fac: Dict) -> Dict | None:
@@ -20,6 +21,10 @@ class Donchian55:
         if any(val is None for val in (high55, low55, close)):
             return None
         range_span = max(1e-6, high55 - low55)
+        try:
+            spread_pips = float(fac.get("spread_pips") or 0.0)
+        except (TypeError, ValueError):
+            spread_pips = 0.0
         breakout_strength = abs(close - (high55 + low55) / 2) / range_span
         # ブレイクへの近さ（pips）で発火加減を調整
         proj = compute_donchian_projection(candles, lookback=55)
@@ -29,20 +34,42 @@ class Donchian55:
             distance_bonus = max(0.0, min(10.0, (8.0 - min(8.0, near_pips)) * 1.2))
         confidence = int(max(45.0, min(95.0, 54.0 + breakout_strength * 42.0 + distance_bonus)))
 
+        def _targets() -> tuple[float, float]:
+            base_sl = 55.0
+            base_tp = 110.0
+            spread_floor = max(20.0, spread_pips * 2.5 + 12.0)
+            sl = max(base_sl, spread_floor)
+            tp = max(base_tp, sl * 1.35 + spread_pips)
+            return round(sl, 2), round(tp, 2)
+
         if close > high55:
+            sl, tp = _targets()
             return {
                 "action": "OPEN_LONG",
-                "sl_pips": 55,
-                "tp_pips": 110,
+                "sl_pips": sl,
+                "tp_pips": tp,
                 "confidence": confidence,
+                "profile": Donchian55.profile,
+                "loss_guard_pips": round(sl * 0.7, 2),
+                "target_tp_pips": tp,
+                "min_hold_sec": Donchian55._min_hold_seconds(tp),
                 "tag": f"{Donchian55.name}-breakout-up",
             }
         if close < low55:
+            sl, tp = _targets()
             return {
                 "action": "OPEN_SHORT",
-                "sl_pips": 55,
-                "tp_pips": 110,
+                "sl_pips": sl,
+                "tp_pips": tp,
                 "confidence": confidence,
+                "profile": Donchian55.profile,
+                "loss_guard_pips": round(sl * 0.7, 2),
+                "target_tp_pips": tp,
+                "min_hold_sec": Donchian55._min_hold_seconds(tp),
                 "tag": f"{Donchian55.name}-breakout-down",
             }
         return None
+
+    @staticmethod
+    def _min_hold_seconds(tp_pips: float) -> float:
+        return round(max(420.0, min(1800.0, tp_pips * 8.5)), 1)

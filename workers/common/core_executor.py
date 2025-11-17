@@ -151,6 +151,7 @@ class PocketPlanExecutor:
             plan.event_soon,
             plan.range_active,
             now=now,
+            stage_tracker=self.stage_tracker,
         )
         for decision in exit_decisions:
             if decision.pocket != self.pocket:
@@ -377,6 +378,17 @@ class PocketPlanExecutor:
                 action == "OPEN_LONG",
             )
             client_id = build_client_order_id(plan.focus_tag, signal.get("tag", "plan"))
+            entry_thesis = {
+                "strategy_tag": signal.get("tag"),
+                "strategy": signal.get("strategy"),
+                "pocket": self.pocket,
+                "profile": signal.get("profile"),
+                "min_hold_sec": signal.get("min_hold_sec"),
+                "loss_guard_pips": signal.get("loss_guard_pips"),
+                "target_tp_pips": signal.get("target_tp_pips") or tp_pips,
+                "sl_pips": sl_pips,
+                "tp_pips": tp_pips,
+            }
             trade_id = await market_order(
                 "USD_JPY",
                 units,
@@ -384,6 +396,9 @@ class PocketPlanExecutor:
                 tp,
                 self.pocket,
                 client_order_id=client_id,
+                strategy_tag=signal.get("tag"),
+                entry_thesis=entry_thesis,
+                meta={"entry_price": price},
             )
             if not trade_id:
                 LOG.error("%s order failed strategy=%s", self.log_prefix, signal.get("strategy"))

@@ -229,7 +229,16 @@ def simulate_day(df_m1: pd.DataFrame) -> Dict[str, float]:
         open_positions = {"macro": open_info, "__net__": {"units": open_info["units"]}}
 
         # Plan exits
-        exit_decisions = em.plan_closures(open_positions, signals, fac_m1, fac_h4, event_soon=False, range_mode=range_active, now=t)
+        exit_decisions = em.plan_closures(
+            open_positions,
+            signals,
+            fac_m1,
+            fac_h4,
+            event_soon=False,
+            range_mode=range_active,
+            now=t,
+            stage_tracker=None,
+        )
         for decision in exit_decisions:
             if decision.pocket != "macro":
                 continue

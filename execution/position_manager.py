@@ -4,12 +4,14 @@ import json
 import logging
 import time
 import copy
-import requests
-from requests.adapters import HTTPAdapter
-from urllib3.util.retry import Retry
 import sqlite3
 import pathlib
 from datetime import datetime, timezone, timedelta
+from typing import Dict, Tuple
+
+import requests
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 from utils.secrets import get_secret
 
 # --- config ---
@@ -115,6 +117,7 @@ class PositionManager:
         self._open_trade_failures: int = 0
         self._next_open_fetch_after: float = 0.0
         self._last_positions_meta: dict | None = None
+        self._entry_meta_cache: dict[str, dict] = {}
 
     def _ensure_schema(self):
         # trades テーブルが存在しない場合のベース定義
@@ -466,6 +469,17 @@ class PositionManager:
             "entry_thesis": thesis_obj,
         }
 
+    def _resolve_entry_meta(self, trade_id: str) -> dict | None:
+        if not trade_id:
+            return None
+        cached = self._entry_meta_cache.get(trade_id)
+        if cached:
+            return cached
+        details = self._get_trade_details_from_orders(trade_id)
+        if details:
+            self._entry_meta_cache[trade_id] = details
+        return details
+
     def _parse_and_save_trades(self, transactions: list[dict]):
         """トランザクションを解析し、DBに保存"""
         trades_to_save = []
@@ -739,7 +753,8 @@ class PositionManager:
             units = int(tr.get("currentUnits", 0))
             if units == 0:
                 continue
-            trade_id = tr.get("id") or tr.get("tradeID")
+            trade_id_raw = tr.get("id") or tr.get("tradeID")
+            trade_id = str(trade_id_raw)
             price = float(tr.get("price", 0.0))
             open_time_raw = tr.get("openTime")
             open_time_iso: str | None = None
@@ -771,18 +786,30 @@ class PositionManager:
             abs_units = abs(units)
             pip_value = abs_units * 0.01
             unrealized_pl_pips = unrealized_pl / pip_value if pip_value else 0.0
-            info["open_trades"].append(
-                {
-                    "trade_id": str(trade_id),
-                    "units": units,
-                    "price": price,
-                    "client_id": client_ext.get("id"),
-                    "side": "long" if units > 0 else "short",
-                    "unrealized_pl": unrealized_pl,
-                    "unrealized_pl_pips": unrealized_pl_pips,
-                    "open_time": open_time_iso or open_time_raw,
-                }
-            )
+            trade_entry = {
+                "trade_id": trade_id,
+                "units": units,
+                "price": price,
+                "client_id": client_ext.get("id"),
+                "side": "long" if units > 0 else "short",
+                "unrealized_pl": unrealized_pl,
+                "unrealized_pl_pips": unrealized_pl_pips,
+                "open_time": open_time_iso or open_time_raw,
+            }
+            meta = self._resolve_entry_meta(trade_id)
+            if meta:
+                thesis = meta.get("entry_thesis")
+                if isinstance(thesis, str):
+                    try:
+                        thesis = json.loads(thesis)
+                    except Exception:
+                        thesis = None
+                if isinstance(thesis, dict):
+                    trade_entry["entry_thesis"] = thesis
+                strategy_tag = meta.get("strategy_tag")
+                if strategy_tag:
+                    trade_entry["strategy_tag"] = strategy_tag
+            info["open_trades"].append(trade_entry)
             prev_total_units = info["units"]
             new_total_units = prev_total_units + units
             if new_total_units != 0:
@@ -860,6 +887,56 @@ class PositionManager:
         if extra_meta:
             meta.update(extra_meta)
         return snapshot
+
+    def manual_exposure(
+        self,
+        positions: Dict[str, Dict] | None = None,
+    ) -> Dict[str, float]:
+        """
+        Return a lightweight snapshot of manual/unknown exposure.
+        """
+        snapshot = positions or self.get_open_positions()
+        units = 0
+        unrealized = 0.0
+
+        def _sum(info: Dict) -> Tuple[int, float]:
+            if not info:
+                return 0, 0.0
+            trades = info.get("open_trades") or []
+            total_units = 0
+            unreal = 0.0
+            if trades:
+                for tr in trades:
+                    try:
+                        total_units += abs(int(tr.get("units", 0) or 0))
+                    except (TypeError, ValueError):
+                        continue
+                    try:
+                        unreal += float(tr.get("unrealized_pl", 0.0) or 0.0)
+                    except (TypeError, ValueError):
+                        continue
+                return total_units, unreal
+            try:
+                total_units = abs(int(info.get("units", 0) or 0))
+            except (TypeError, ValueError):
+                total_units = 0
+            try:
+                unreal = float(info.get("unrealized_pl", 0.0) or 0.0)
+            except (TypeError, ValueError):
+                unreal = 0.0
+            return total_units, unreal
+
+        for pocket in (_MANUAL_POCKET_NAME, "unknown"):
+            info = snapshot.get(pocket) or {}
+            pocket_units, pocket_unreal = _sum(info)
+            units += pocket_units
+            unrealized += pocket_unreal
+
+        return {
+            "units": float(units),
+            "lots": units / 100000.0,
+            "unrealized_pl": float(unrealized),
+        }
 
     def get_performance_summary(self, now: datetime | None = None) -> dict:
         now = now or datetime.now(timezone.utc)

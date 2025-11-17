@@ -8,6 +8,7 @@ from typing import List, Dict, Optional as _Optional
 class MovingAverageCross:
     name = "TrendMA"
     pocket = "macro"
+    profile = "macro_trend_ma"
 
     # Entry quality baselines (pips are 0.01 for USD/JPY)
     _MIN_GAP_PIPS = 0.90            # require >= ~1 pip MA10/MA20 separation
@@ -52,6 +53,11 @@ class MovingAverageCross:
                     tf_minutes = max(1.0, min(240.0, delta_min))
         except Exception:
             tf_minutes = 1.0
+
+        try:
+            spread_pips = float(fac.get("spread_pips") or 0.0)
+        except (TypeError, ValueError):
+            spread_pips = 0.0
 
         projection = compute_ma_projection(fac, timeframe_minutes=tf_minutes)
         if not projection:
@@ -190,7 +196,7 @@ class MovingAverageCross:
         )
         confidence = int(max(40.0, min(96.0, confidence + conf_adj)))
         sl_pips, tp_pips = MovingAverageCross._targets(
-            projection, direction, macd_adjust, atr_pips_val
+            projection, direction, macd_adjust, atr_pips_val, spread_pips
         )
         if sl_adj:
             sl_pips = round(max(10.0, sl_pips + sl_adj), 2)
@@ -216,6 +222,10 @@ class MovingAverageCross:
             "sl_pips": sl_pips,
             "tp_pips": tp_pips,
             "confidence": confidence,
+            "profile": MovingAverageCross.profile,
+            "loss_guard_pips": round(sl_pips * 0.75, 2),
+            "target_tp_pips": tp_pips,
+            "min_hold_sec": MovingAverageCross._min_hold_seconds(tp_pips, tf_minutes),
             "tag": f"{MovingAverageCross.name}-{tag_suffix}",
             "_meta": meta,
         }
@@ -248,6 +258,7 @@ class MovingAverageCross:
         direction: str,
         macd_adjust: float,
         atr_pips: Optional[float],
+        spread_pips: float = 0.0,
     ) -> tuple[float, float]:
         slope = projection.gap_slope_pips if direction == "long" else -projection.gap_slope_pips
         slope = max(-3.5, min(3.5, slope))
@@ -270,8 +281,18 @@ class MovingAverageCross:
         rr = max(1.30, min(2.20, rr))
         tp = base_sl * rr
         sl_rounded = round(base_sl, 2)
-        tp_rounded = round(max(sl_rounded * 1.08, tp), 2)
+        spread_floor = max(10.0, spread_pips * 2.4 + 6.0)
+        sl_rounded = max(sl_rounded, spread_floor)
+        tp_floor = sl_rounded * 1.2 + spread_pips * 0.8
+        tp_rounded = round(max(sl_rounded * 1.08, tp, tp_floor), 2)
         return sl_rounded, tp_rounded
+
+    @staticmethod
+    def _min_hold_seconds(tp_pips: float, timeframe_minutes: float) -> float:
+        base = 300.0 if timeframe_minutes <= 5 else 480.0
+        scale = max(1.0, timeframe_minutes / 5.0)
+        hold = max(base, tp_pips * 5.5 * scale)
+        return round(min(2400.0, hold), 1)
 
     @staticmethod
     def _macd_adjust(projection: MACrossProjection, direction: str) -> Optional[float]:

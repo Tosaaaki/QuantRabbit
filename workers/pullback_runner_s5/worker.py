@@ -231,8 +231,12 @@ async def pullback_runner_s5_worker() -> None:
                 tp_pips = config.TP_PIPS
                 sl_base = max(config.MIN_SL_PIPS, atr_fast * config.SL_ATR_MULT)
                 sl_base = min(sl_base, config.MAX_SL_PIPS)
+                spread_floor = spread_pips * config.SL_SPREAD_MULT + config.SL_SPREAD_MIN_PIPS
+                sl_base = max(sl_base, spread_floor)
                 if atr_fast > 0.0:
                     tp_pips = min(config.TP_ATR_MAX_PIPS, max(config.TP_ATR_MIN_PIPS, atr_fast * config.TP_ATR_MULT))
+                min_tp = sl_base * config.MIN_RR + spread_pips * config.TP_SPREAD_BUFFER_PIPS
+                tp_pips = max(tp_pips, min_tp)
                 tp_price = round(entry_price + (tp_pips * config.PIP_VALUE if side == "long" else -tp_pips * config.PIP_VALUE), 3)
                 sl_price = round(entry_price - (sl_base * config.PIP_VALUE if side == "long" else -sl_base * config.PIP_VALUE), 3)
 

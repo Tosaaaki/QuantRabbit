@@ -83,6 +83,19 @@ class StageTracker:
             )
             """
         )
+        self._con.execute(
+            """
+            CREATE TABLE IF NOT EXISTS hold_violation_log (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                ts TEXT NOT NULL,
+                pocket TEXT NOT NULL,
+                direction TEXT NOT NULL,
+                required_sec REAL,
+                actual_sec REAL,
+                reason TEXT
+            )
+            """
+        )
         self._con.commit()
 
     def close(self) -> None:
@@ -188,6 +201,35 @@ class StageTracker:
         )
         self._con.commit()
         return cur.rowcount > 0
+
+    def log_hold_violation(
+        self,
+        pocket: str,
+        direction: str,
+        *,
+        required_sec: float,
+        actual_sec: float,
+        reason: str = "hold_violation",
+        cooldown_seconds: int = 180,
+        now: Optional[datetime] = None,
+    ) -> None:
+        ts = (now or datetime.utcnow()).isoformat()
+        self._con.execute(
+            """
+            INSERT INTO hold_violation_log(ts, pocket, direction, required_sec, actual_sec, reason)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (ts, pocket, direction, float(required_sec), float(actual_sec), reason),
+        )
+        self._con.commit()
+        if cooldown_seconds > 0:
+            self.ensure_cooldown(
+                pocket,
+                direction,
+                reason=reason,
+                seconds=cooldown_seconds,
+                now=now or datetime.utcnow(),
+            )
 
     def set_strategy_cooldown(
         self,

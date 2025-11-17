@@ -1,28 +1,28 @@
 # オンラインチューナ影運用タスクボード
 
-更新日時: 2025-11-02 02:18Z
+更新日時: 2025-11-17 07:10Z
 
 ## 進捗サマリ
-- 現在は **シャドウ運用**でオンラインチューナを稼働中 (`TUNER_SHADOW_MODE=true`)。
-- 直近の実行履歴: `config/tuning_history/tuning_20251102_021731.yaml`
-- 生成された提案は Exit（lowvol）と quiet_low_vol 配分の微調整。まだ本番適用は行っていない。
+- **本番モード**（`TUNER_SHADOW_MODE=false`）に切り替え済み。ループが直接 `config/tuning_overrides.yaml` を更新する。
+- 直近の昇格パッチ: `config/tuning_history/tuning_20251102_021731.yaml` → `config/tuning_overrides.yaml` → `config/tuning_overlay.yaml` を生成。
+- 適用内容は Exit（lowvol）のタイムアウト・ハザード感度、quiet_low_vol の `micro_share=0.30`。今後は本番ループで継続更新される。
 
 ## 現在検証中
-- [ ] シャドウ履歴の妥当性確認  
- チューナ出力の `upper_bound_max_sec`, `hazard_debounce_ticks`, `micro_share` が想定レンジ内で推移するかレビューする。
-- [ ] 入力ログの鮮度チェック  
- `tmp/exit_eval_*_v2.csv` の更新が 15 分以内か、欠損がないか確認する。
+- [ ] 初回本番ループの監視  
+ `logs/metrics.db` の `decision_latency` と `hazard_exit` 閾値が想定範囲 (p95<2s, hazard 0.05–0.30) に収まるかを 3 サイクル確認。
+- [ ] オーバーレイ読込の検証  
+ `config/tuning_overlay.yaml` が起動時に読み込まれているか、ログ（`[TUNER] run`）と `config/tuning_overrides.yaml` の更新時刻で確認。
 
 ## 次に実行すべきアクション
-1. シャドウ期間の評価  
- - [ ] `config/tuning_history/` を1–2セッション分レビューし、指標（EV、hazard比率）の改善方向か確認。  
- - [ ] 必要なら `docs/ONLINE_TUNER.md` のガイドに沿ってパラメータのクランプ範囲を調整。
-2. 本適用への移行判断  
- - [ ] 影運用で問題なければ `TUNER_SHADOW_MODE=false` に切り替える。  
- - [ ] `scripts/apply_override.py` を実行して `config/tuning_overlay.yaml` を生成し、ロジックで読み込むか検討。
-3. 定期実行の自動化  
- - [ ] `PYTHONPATH=.` を付与した上で cron / systemd タイマーへ登録。  
- - [ ] 実行ログとエラー通知の経路（例: Cloud Logging / Slack）を決める。
+1. 本番モードの定常化  
+ - [ ] `scripts/run_online_tuner.py` の 2 回目以降の実行で `config/tuning_overrides.yaml` が追記更新されるかを確認。  
+ - [ ] `scripts/apply_override.py` を nightly で実行する仕組み (cron/systemd) を検討し、自動的に `config/tuning_overlay.yaml` を更新。
+2. ガードレンジの再評価  
+ - [ ] 本番パラメータが上下限へ寄っていないか `docs/ONLINE_TUNER.md` の基準に照らしてレビュー。  
+ - [ ] 逸脱時は `tuning_presets.yaml` 側のクランプを調整。
+3. 運用モニタリング  
+ - [ ] `PYTHONPATH=.` 付きで `scripts/run_online_tuner.py` を 5–15 分間隔で回す cron/systemd タイマーを有効化。  
+ - [ ] 実行ログとエラー通知の経路（Cloud Logging / Slack）を確定し、失敗時に自動リトライする。
 
 ## 参考コマンド
 ```bash
@@ -30,17 +30,17 @@ PYTHONPATH=. python3 scripts/run_online_tuner.py \
   --logs-glob "tmp/exit_eval_*_v2.csv" \
   --presets config/tuning_presets.yaml \
   --overrides-out config/tuning_overrides.yaml \
-  --minutes 15 --shadow
+  --minutes 15
 ```
 
 ```bash
-python3 scripts/apply_override.py \
+PYTHONPATH=. python3 scripts/apply_override.py \
   --base config/tuning_presets.yaml \
   --over config/tuning_overrides.yaml \
   --out  config/tuning_overlay.yaml
 ```
 
 ## メモ
-- シャドウ運用中は `config/tuning_overrides.yaml` が書き換わらないため、履歴だけで差分を追跡できる。
-- 本適用前に `decision_latency`・`fallback率` がガードライン内かを必ずダッシュボードで確認する。
-- 影運用の提案が急変した場合は `tmp/exit_eval_*.csv` の入力内容（特に `reason`, `pips`, `strategy` 列）を確認する。
+- 本番モードでは `config/tuning_overrides.yaml` がそのまま上書きされるため、履歴との差分は `config/tuning_history/` で追跡する。
+- `decision_latency`・`fallback率` がガードライン外になった場合は即座に `TUNER_SHADOW_MODE=true` へ戻し、原因を切り分ける。
+- 提案が急変した場合は `tmp/exit_eval_*.csv` の入力内容（特に `reason`, `pips`, `strategy` 列）と `alloc.regime` のフェーズを確認する。

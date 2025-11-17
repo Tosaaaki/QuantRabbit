@@ -39,6 +39,7 @@ from analysis.range_guard import detect_range_mode
 from signals.pocket_allocator import alloc, DEFAULT_SCALP_SHARE, dynamic_scalp_share
 from execution.risk_guard import (
     allowed_lot,
+    build_exposure_state,
     can_trade,
     clamp_sl_tp,
     check_global_drawdown,
@@ -78,6 +79,8 @@ from strategies.scalping.pulse_break import PulseBreak
 from utils.oanda_account import get_account_snapshot
 from utils.secrets import get_secret
 from utils.market_hours import is_market_open
+from utils.hold_monitor import HoldMonitor
+from utils.metrics_logger import log_metric
 import workers.impulse_break_s5.config as impulse_break_s5_config
 import workers.impulse_retest_s5.config as impulse_retest_s5_config
 import workers.impulse_momentum_s5.config as impulse_momentum_s5_config
@@ -167,6 +170,29 @@ FOCUS_POCKETS = {
     "event": ("macro", "micro"),
 }
 
+
+def _micro_flow_factor(
+    spread_pips: Optional[float],
+    margin_buffer: Optional[float],
+) -> float:
+    factor = 1.0
+    try:
+        spread_val = float(spread_pips) if spread_pips is not None else None
+    except (TypeError, ValueError):
+        spread_val = None
+    if spread_val is not None:
+        warn, alert, block = MICRO_SPREAD_DAMP_PIPS
+        warn_factor, alert_factor, block_factor = MICRO_SPREAD_DAMP_FACTORS
+        if spread_val >= block:
+            factor *= block_factor
+        elif spread_val >= alert:
+            factor *= alert_factor
+        elif spread_val >= warn:
+            factor *= warn_factor
+    if margin_buffer is not None and margin_buffer < MICRO_MARGIN_BUFFER_LIMIT:
+        factor *= MICRO_MARGIN_BUFFER_FACTOR
+    return max(0.0, min(1.0, factor))
+
 # Manual-trade guard: by default, do not let the bot exit or partially close
 # trades that were entered manually (i.e. trades without a QuantRabbit
 # clientOrderID like "qr-..."). This only affects exit/partial logic and
@@ -195,9 +221,136 @@ SOFT_RANGE_SUPPRESS_STRATEGIES = {"TrendMA", "Donchian55"}
 LOW_TREND_ADX_THRESHOLD = 18.0
 LOW_TREND_SLOPE_THRESHOLD = 0.00035
 LOW_TREND_WEIGHT_CAP = 0.35
+MICRO_SPREAD_DAMP_PIPS = (
+    float(os.getenv("MICRO_SPREAD_WARN_PIPS", "0.80")),
+    float(os.getenv("MICRO_SPREAD_ALERT_PIPS", "1.00")),
+    float(os.getenv("MICRO_SPREAD_BLOCK_PIPS", "1.20")),
+)
+MICRO_SPREAD_DAMP_FACTORS = (
+    float(os.getenv("MICRO_SPREAD_WARN_FACTOR", "0.75")),
+    float(os.getenv("MICRO_SPREAD_ALERT_FACTOR", "0.50")),
+    float(os.getenv("MICRO_SPREAD_BLOCK_FACTOR", "0.30")),
+)
+MICRO_MARGIN_BUFFER_LIMIT = float(os.getenv("MICRO_MARGIN_BUFFER_LIMIT", "0.04"))
+MICRO_MARGIN_BUFFER_FACTOR = float(os.getenv("MICRO_MARGIN_BUFFER_FACTOR", "0.50"))
+MICRO_MARGIN_GUARD_BUFFER = float(os.getenv("MICRO_MARGIN_GUARD_BUFFER", "0.025"))
+MICRO_MARGIN_GUARD_RELEASE = float(
+    os.getenv("MICRO_MARGIN_GUARD_RELEASE", "0.035")
+)
+MICRO_MARGIN_GUARD_STOP = float(os.getenv("MICRO_MARGIN_GUARD_STOP", "0.018"))
 SOFT_RANGE_SCORE_MIN = 0.58
 SOFT_RANGE_COMPRESSION_MIN = 0.55
 SOFT_RANGE_VOL_MIN = 0.40
+
+DEFAULT_MIN_HOLD_SEC = {
+    "macro": 360.0,  # 6 min baseline for swing legs
+    "micro": 150.0,  # 2.5 min baseline for pullback setups
+    "scalp": 75.0,   # legacy scalps still need >1 min to settle
+}
+DEFAULT_LOSS_GUARD_PIPS = {
+    "macro": 3.6,
+    "micro": 1.4,
+    "scalp": 2.0,
+}
+MANUAL_SENTINEL_POCKETS = {"manual", "unknown"}
+MANUAL_SENTINEL_MIN_UNITS = int(os.getenv("MANUAL_SENTINEL_MIN_UNITS", "4000"))
+MANUAL_SENTINEL_BLOCK_POCKETS = {"micro", "scalp"}
+MANUAL_SENTINEL_RELEASE_CYCLES = max(
+    1, int(os.getenv("MANUAL_SENTINEL_RELEASE_CYCLES", "2"))
+)
+_MANUAL_SENTINEL_ACTIVE = False
+_MANUAL_SENTINEL_CLEAR_STREAK = 0
+HOLD_RATIO_LOOKBACK_HOURS = float(os.getenv("HOLD_RATIO_LOOKBACK_HOURS", "6.0"))
+HOLD_RATIO_MIN_SAMPLES = int(os.getenv("HOLD_RATIO_MIN_SAMPLES", "80"))
+HOLD_RATIO_MAX = float(os.getenv("HOLD_RATIO_MAX", "0.30"))
+HOLD_RATIO_RELEASE_FACTOR = float(os.getenv("HOLD_RATIO_RELEASE_FACTOR", "0.8"))
+HOLD_RATIO_CHECK_INTERVAL_SEC = float(os.getenv("HOLD_RATIO_CHECK_INTERVAL_SEC", "900"))
+HOLD_RATIO_BLOCK_POCKETS = {"micro", "scalp"}
+_HOLD_RATIO_GUARD_ACTIVE = False
+_HOLD_MONITOR = HoldMonitor(
+    db_path=Path(os.getenv("HOLD_RATIO_DB", "logs/trades.db")),
+    lookback_hours=HOLD_RATIO_LOOKBACK_HOURS,
+    min_samples=HOLD_RATIO_MIN_SAMPLES,
+)
+
+
+def _to_float(value: Any) -> Optional[float]:
+    if value is None:
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _atr_hint_pips(fac_m1: Dict[str, Any]) -> float:
+    atr = fac_m1.get("atr_pips")
+    if atr is None:
+        raw = fac_m1.get("atr")
+        if raw is not None:
+            try:
+                atr = float(raw) * 100.0
+            except (TypeError, ValueError):
+                atr = None
+    return float(atr or 6.0)
+
+
+def _derive_min_hold_seconds(
+    signal: Dict[str, Any],
+    pocket: str,
+    fac_m1: Dict[str, Any],
+) -> float:
+    explicit = signal.get("min_hold_sec") or signal.get("min_hold_seconds")
+    val = _to_float(explicit)
+    if val is not None:
+        return max(0.0, val)
+    base = DEFAULT_MIN_HOLD_SEC.get(pocket, 90.0)
+    tp = _to_float(signal.get("tp_pips")) or 0.0
+    atr_hint = _atr_hint_pips(fac_m1)
+    # Scale baseline by TP demand and prevailing ATR so larger swings get more time.
+    scaled = base
+    if tp > 0:
+        scaled = max(scaled, min(600.0, tp * 45.0))
+    if atr_hint > 0:
+        scaled = max(scaled, min(600.0, atr_hint * 15.0))
+    return round(scaled, 1)
+
+
+def _derive_loss_guard_pips(signal: Dict[str, Any], pocket: str) -> float:
+    explicit = signal.get("loss_guard_pips") or signal.get("loss_grace_pips")
+    val = _to_float(explicit)
+    if val is not None:
+        return max(0.1, val)
+    baseline = DEFAULT_LOSS_GUARD_PIPS.get(pocket, 1.0)
+    tp = _to_float(signal.get("tp_pips")) or 0.0
+    sl = _to_float(signal.get("sl_pips")) or 0.0
+    guard = baseline
+    if tp > 0:
+        guard = max(guard, tp * 0.35)
+    if sl > 0:
+        guard = min(guard, sl * 0.7)
+    return round(max(0.3, guard), 2)
+
+
+def _extract_profile_name(raw_signal: Dict[str, Any], strategy_name: str) -> str:
+    profile = raw_signal.get("profile")
+    if isinstance(profile, str) and profile.strip():
+        return profile.strip()
+    return strategy_name
+
+
+def _manual_sentinel_state(open_positions: Dict[str, Dict]) -> tuple[bool, int, str]:
+    total_units = 0
+    pockets: list[str] = []
+    for name in MANUAL_SENTINEL_POCKETS:
+        info = open_positions.get(name) or {}
+        units = int(abs(info.get("units", 0) or 0))
+        if units > 0:
+            total_units += units
+            pockets.append(f"{name}:{units}")
+    active = total_units >= MANUAL_SENTINEL_MIN_UNITS
+    details = ",".join(pockets)
+    return active, total_units, details
 SOFT_RANGE_WEIGHT_CAP = 0.32
 SOFT_RANGE_ADX_BUFFER = 6.0
 RANGE_ENTRY_CONFIRMATIONS = 2
@@ -419,8 +572,7 @@ def _maybe_run_online_tuner(now: datetime.datetime) -> None:
     presets_path = os.getenv("TUNER_PRESETS", "config/tuning_presets.yaml")
     overrides_path = os.getenv("TUNER_OVERRIDES", "config/tuning_overrides.yaml")
     window_min = max(1, _env_int("TUNER_WINDOW_MINUTES", 15))
-    shadow_raw = os.getenv("TUNER_SHADOW_MODE", "true") or "true"
-    shadow_mode = shadow_raw.strip().lower() in {"1", "true", "yes", "on"}
+    shadow_mode = _env_bool("TUNER_SHADOW_MODE", False)
 
     cmd = [
         "python3",
@@ -710,6 +862,59 @@ def _build_pocket_plan(
     )
 
 
+def _publish_pocket_plans(
+    *,
+    now: datetime.datetime,
+    focus_tag: str,
+    focus_pockets: set[str],
+    range_active: bool,
+    range_soft_active: bool,
+    range_ctx,
+    event_soon: bool,
+    spread_gate_active: bool,
+    spread_gate_reason: str,
+    spread_log_context: str,
+    lots: dict[str, float],
+    risk_override: float,
+    weight_macro: float,
+    scalp_share: float,
+    evaluated_signals: list[dict],
+    perf_cache: dict,
+    fac_m1: dict,
+    fac_h4: dict,
+    notes: dict[str, float],
+) -> None:
+    for pocket in ("macro", "scalp"):
+        if not _pocket_worker_owns_orders(pocket):
+            continue
+        plan_signals = [
+            dict(sig) for sig in evaluated_signals if sig.get("pocket") == pocket
+        ]
+        plan = _build_pocket_plan(
+            now=now,
+            pocket=pocket,
+            focus_tag=focus_tag,
+            focus_pockets=focus_pockets,
+            range_active=range_active,
+            range_soft_active=range_soft_active,
+            range_ctx=range_ctx,
+            event_soon=event_soon,
+            spread_gate_active=spread_gate_active,
+            spread_gate_reason=spread_gate_reason,
+            spread_log_context=spread_log_context,
+            lot_allocation=lots.get(pocket, 0.0),
+            risk_override=risk_override,
+            weight_macro=weight_macro,
+            scalp_share=scalp_share,
+            signals=plan_signals,
+            perf_cache=perf_cache,
+            fac_m1=fac_m1,
+            fac_h4=fac_h4,
+            notes=notes,
+        )
+        plan_bus.publish(plan)
+
+
 _ORDERS_DB_PATH = Path("logs/orders.db")
 
 
@@ -889,6 +1094,7 @@ async def h4_candle_handler(cndl: Candle):
 
 
 async def logic_loop():
+    global _MANUAL_SENTINEL_ACTIVE, _MANUAL_SENTINEL_CLEAR_STREAK, _HOLD_RATIO_GUARD_ACTIVE
     pos_manager = PositionManager()
     metrics_client = RealtimeMetricsClient()
     confidence_policy = ConfidencePolicy()
@@ -919,12 +1125,43 @@ async def logic_loop():
     last_market_closed_log = datetime.datetime.min
     trendma_news_cooldown_until = datetime.datetime.min
     trendma_last_exit: Optional[Dict[str, object]] = None
+    last_hold_ratio_check = datetime.datetime.min
 
     try:
         while True:
             now = datetime.datetime.utcnow()
             stage_tracker.clear_expired(now)
             stage_tracker.update_loss_streaks(now=now, cooldown_map=POCKET_LOSS_COOLDOWNS)
+
+            if (now - last_hold_ratio_check).total_seconds() >= HOLD_RATIO_CHECK_INTERVAL_SEC:
+                ratio, total, lt60 = _HOLD_MONITOR.sample()
+                last_hold_ratio_check = now
+                if ratio is not None:
+                    if (not _HOLD_RATIO_GUARD_ACTIVE) and ratio > HOLD_RATIO_MAX:
+                        _HOLD_RATIO_GUARD_ACTIVE = True
+                        log_metric(
+                            "hold_ratio_guard",
+                            1.0,
+                            tags={"ratio": f"{ratio:.3f}", "samples": str(total)},
+                        )
+                        logging.warning(
+                            "[HOLD] ratio guard activated (ratio=%.1f%%, total=%s, lt60=%s)",
+                            ratio * 100,
+                            total,
+                            lt60,
+                        )
+                    elif _HOLD_RATIO_GUARD_ACTIVE and ratio < HOLD_RATIO_MAX * HOLD_RATIO_RELEASE_FACTOR:
+                        _HOLD_RATIO_GUARD_ACTIVE = False
+                        log_metric(
+                            "hold_ratio_guard",
+                            0.0,
+                            tags={"ratio": f"{ratio:.3f}", "samples": str(total)},
+                        )
+                        logging.info(
+                            "[HOLD] ratio guard released (ratio=%.1f%%, total=%s)",
+                            ratio * 100,
+                            total,
+                        )
 
             # Heartbeat logging
             if (now - last_heartbeat_time).total_seconds() >= 300:  # Every 5 minutes
@@ -1040,6 +1277,12 @@ async def logic_loop():
                 continue
 
             spread_blocked, spread_remain, spread_snapshot, spread_reason = spread_monitor.is_blocked()
+            spread_live_pips: Optional[float] = None
+            if spread_snapshot and spread_snapshot.get("spread_pips") is not None:
+                try:
+                    spread_live_pips = float(spread_snapshot.get("spread_pips"))
+                except (TypeError, ValueError):
+                    spread_live_pips = None
             spread_gate_reason = ""
             if spread_blocked:
                 remain_txt = f"{spread_remain}s"
@@ -1057,11 +1300,9 @@ async def logic_loop():
                         f">= {spread_snapshot['limit_pips']:.2f}p"
                     )
             spread_gate_active = bool(spread_gate_reason)
-            if spread_snapshot and spread_snapshot.get("spread_pips") is not None:
-                try:
-                    fac_m1["spread_pips"] = float(spread_snapshot["spread_pips"])
-                except (TypeError, ValueError):
-                    pass
+            if spread_live_pips is not None:
+                fac_m1["spread_pips"] = spread_live_pips
+                fac_h4["spread_pips"] = spread_live_pips
             if spread_snapshot:
                 def _fmt(v: object) -> str:
                     return f"{float(v):.2f}" if isinstance(v, (int, float)) else "NA"
@@ -1393,6 +1634,22 @@ async def logic_loop():
                     continue
                 pocket = cls.pocket
                 if (
+                    (manual_block_active and pocket in MANUAL_SENTINEL_BLOCK_POCKETS)
+                    or (hold_guard_active and pocket in HOLD_RATIO_BLOCK_POCKETS)
+                ):
+                    reason = (
+                        "manual exposure"
+                        if manual_block_active and pocket in MANUAL_SENTINEL_BLOCK_POCKETS
+                        else "hold_ratio_guard"
+                    )
+                    logging.info(
+                        "[GUARD] skip %s pocket=%s reason=%s",
+                        sname,
+                        pocket,
+                        reason,
+                    )
+                    continue
+                if (
                     range_soft_active
                     and not range_active
                     and pocket == "macro"
@@ -1485,6 +1742,7 @@ async def logic_loop():
                     "sl_pips": raw_signal.get("sl_pips"),
                     "tp_pips": raw_signal.get("tp_pips"),
                     "tag": raw_signal.get("tag", cls.name),
+                    "profile": _extract_profile_name(raw_signal, getattr(cls, "name", sname)),
                 }
                 scaled_conf = int(signal["confidence"] * health.confidence_scale)
                 signal["confidence"] = max(0, min(100, scaled_conf))
@@ -1535,6 +1793,10 @@ async def logic_loop():
                     if conf_scale is not None:
                         scaled_conf = int(signal["confidence"] * conf_scale)
                         signal["confidence"] = max(15, min(100, scaled_conf))
+                signal["min_hold_sec"] = _derive_min_hold_seconds(
+                    signal, cls.pocket, fac_m1
+                )
+                signal["loss_guard_pips"] = _derive_loss_guard_pips(signal, cls.pocket)
                 signal["health"] = {
                     "win_rate": health.win_rate,
                     "pf": health.profit_factor,
@@ -1548,11 +1810,46 @@ async def logic_loop():
             open_positions = pos_manager.get_open_positions()
             # Use filtered positions for bot-controlled actions
             managed_positions = filter_bot_managed_positions(open_positions)
+            manual_block_active, manual_units, manual_details = _manual_sentinel_state(
+                open_positions
+            )
+            if manual_block_active:
+                _MANUAL_SENTINEL_CLEAR_STREAK = 0
+                if not _MANUAL_SENTINEL_ACTIVE:
+                    _MANUAL_SENTINEL_ACTIVE = True
+                    log_metric(
+                        "manual_halt_active",
+                        1.0,
+                        tags={"units": str(manual_units)},
+                    )
+                    logging.warning(
+                        "[MANUAL] Manual/unknown exposure detected (units=%s detail=%s); "
+                        "micro/scalp entries halted.",
+                        manual_units,
+                        manual_details or "-",
+                    )
+            else:
+                if _MANUAL_SENTINEL_ACTIVE:
+                    _MANUAL_SENTINEL_CLEAR_STREAK += 1
+                    if _MANUAL_SENTINEL_CLEAR_STREAK >= MANUAL_SENTINEL_RELEASE_CYCLES:
+                        _MANUAL_SENTINEL_ACTIVE = False
+                        log_metric(
+                            "manual_halt_active",
+                            0.0,
+                            tags={"units": "0"},
+                        )
+                        logging.info("[MANUAL] Manual/unknown exposure cleared.")
+                else:
+                    _MANUAL_SENTINEL_CLEAR_STREAK = min(
+                        _MANUAL_SENTINEL_CLEAR_STREAK + 1,
+                        MANUAL_SENTINEL_RELEASE_CYCLES,
+                    )
             managed_for_main = {
                 pocket: info
                 for pocket, info in managed_positions.items()
                 if not _pocket_worker_owns_orders(pocket)
             }
+            hold_guard_active = _HOLD_RATIO_GUARD_ACTIVE
             micro_trades = (managed_positions.get("micro") or {}).get("open_trades", [])
             if any("NewsSpike" in (tr.get("client_id") or "") for tr in micro_trades):
                 candidate = now + datetime.timedelta(seconds=TRENDMA_NEWS_FREEZE_SECONDS)
@@ -1631,9 +1928,10 @@ async def logic_loop():
                 event_soon,
                 range_active,
                 now=now,
+                stage_tracker=stage_tracker,
             )
 
-            executed_pockets: set[str] = set()
+            executed_entries: set[tuple[str, str]] = set()
             for decision in exit_decisions:
                 pocket = decision.pocket
                 remaining = abs(decision.units)
@@ -1716,7 +2014,8 @@ async def logic_loop():
                         )
                 if remaining <= 0:
                     if not decision.allow_reentry or decision.reason == "range_cooldown":
-                        executed_pockets.add(pocket)
+                        execute_tag = decision.tag or decision.reason or "exit"
+                        executed_entries.add((pocket, execute_tag))
                         cooldown_seconds = cooldown_for_pocket(pocket, range_mode=range_active)
                         stage_tracker.set_cooldown(
                             pocket,
@@ -1760,6 +2059,8 @@ async def logic_loop():
             margin_rate = None
             scalp_buffer = None
             scalp_free_ratio = None
+            margin_guard_micro = False
+            margin_micro_factor = 1.0
 
             if account_snapshot:
                 account_equity = account_snapshot.nav or account_snapshot.balance or FALLBACK_EQUITY
@@ -1773,6 +2074,25 @@ async def logic_loop():
                         scalp_buffer,
                         scalp_free_ratio * 100 if scalp_free_ratio is not None else 0.0,
                     )
+                if (
+                    scalp_buffer is not None
+                    and MICRO_MARGIN_GUARD_BUFFER > 0.0
+                ):
+                    if scalp_buffer < MICRO_MARGIN_GUARD_BUFFER:
+                        margin_micro_factor = max(
+                            0.25,
+                            min(1.0, scalp_buffer / max(MICRO_MARGIN_GUARD_BUFFER, 1e-6)),
+                        )
+                    if scalp_buffer < MICRO_MARGIN_GUARD_STOP:
+                        margin_guard_micro = True
+            exposure_state = build_exposure_state(
+                open_positions,
+                equity=account_equity,
+                price=fac_m1.get("close"),
+            )
+            exposure_cap_lot = None
+            if exposure_state:
+                exposure_cap_lot = max(0.0, exposure_state.available_units() / 100000.0)
 
             risk_override = _dynamic_risk_pct(
                 evaluated_signals,
@@ -1802,6 +2122,8 @@ async def logic_loop():
                 margin_rate=margin_rate,
                 risk_pct_override=risk_override,
             )
+            if exposure_cap_lot is not None:
+                lot_total = min(lot_total, exposure_cap_lot)
             requested_pockets = {
                 STRATEGIES[s].pocket
                 for s in ranked_strategies
@@ -1830,10 +2152,39 @@ async def logic_loop():
                     lots[key] = 0.0
             if range_active and "macro" in lots:
                 lots["macro"] = 0.0
+            pocket_plan_notes = {
+                "net_units": net_units,
+                "spread_live_pips": spread_live_pips,
+                "margin_buffer": scalp_buffer,
+                "risk_pct": risk_override,
+                "macro_snapshot_age": macro_snapshot_age,
+            }
+            _publish_pocket_plans(
+                now=now,
+                focus_tag=focus_tag,
+                focus_pockets=focus_pockets,
+                range_active=range_active,
+                range_soft_active=range_soft_active,
+                range_ctx=range_ctx,
+                event_soon=event_soon,
+                spread_gate_active=spread_blocked,
+                spread_gate_reason=spread_gate_reason,
+                spread_log_context=spread_log_context,
+                lots=lots,
+                risk_override=risk_override,
+                weight_macro=weight,
+                scalp_share=scalp_share,
+                evaluated_signals=evaluated_signals,
+                perf_cache=perf_cache,
+                fac_m1=fac_m1,
+                fac_h4=fac_h4,
+                notes=pocket_plan_notes,
+            )
 
             spread_skip_logged = False
             usd_long_cap_units = int(_EXPOSURE_USD_LONG_MAX_LOT * 100000)
             projected_usd_long_units = max(0, net_units)
+            margin_guard_logged = False
             for signal in evaluated_signals:
                 pocket = signal["pocket"]
                 action = signal.get("action")
@@ -1853,8 +2204,18 @@ async def logic_loop():
                 if event_soon and pocket in {"micro", "scalp"}:
                     logging.info("[SKIP] Event soon, skipping %s pocket trade.", pocket)
                     continue
-                if pocket in executed_pockets:
-                    logging.info("[SKIP] %s pocket already handled this loop.", pocket)
+                if margin_guard_micro and pocket == "micro":
+                    if not margin_guard_logged:
+                        logging.warning(
+                            "[MARGIN] Micro guard active buffer=%.3f (stop=%.3f)",
+                            scalp_buffer if scalp_buffer is not None else -1.0,
+                            MICRO_MARGIN_GUARD_STOP,
+                        )
+                        margin_guard_logged = True
+                    continue
+                strategy_name = signal.get("tag") or signal.get("strategy") or "signal"
+                if (pocket, strategy_name) in executed_entries:
+                    logging.info("[SKIP] %s/%s already handled this loop.", pocket, strategy_name)
                     continue
                 if range_active and pocket == "macro":
                     logging.info("[SKIP] Range mode active, skipping macro entry.")
@@ -1864,6 +2225,48 @@ async def logic_loop():
                     continue
 
                 total_lot_for_pocket = lots.get(pocket, 0.0)
+                if pocket == "micro":
+                    flow_factor = _micro_flow_factor(spread_live_pips, scalp_buffer)
+                    if flow_factor < 0.999:
+                        adjusted_lot = round(total_lot_for_pocket * flow_factor, 4)
+                        reasons: list[str] = []
+                        if spread_live_pips is not None:
+                            reasons.append(f"spread={spread_live_pips:.2f}p")
+                        if (
+                            scalp_buffer is not None
+                            and scalp_buffer < MICRO_MARGIN_BUFFER_LIMIT
+                        ):
+                            reasons.append(f"buffer={scalp_buffer:.3f}")
+                        if adjusted_lot <= 0:
+                            logging.info(
+                                "[MICRO] Lot scaled to zero (factor=%.2f, %s); skip entry.",
+                                flow_factor,
+                                ", ".join(reasons) or "pressure",
+                            )
+                            continue
+                        logging.info(
+                            "[MICRO] Lot scaled %.4f -> %.4f (factor=%.2f, %s)",
+                            total_lot_for_pocket,
+                            adjusted_lot,
+                            flow_factor,
+                            ", ".join(reasons) or "pressure",
+                        )
+                        total_lot_for_pocket = adjusted_lot
+                    if margin_micro_factor < 0.999 and total_lot_for_pocket > 0:
+                        adjusted_lot = round(total_lot_for_pocket * margin_micro_factor, 4)
+                        logging.info(
+                            "[MICRO] Lot margin scaling %.4f -> %.4f (buffer=%.3f)",
+                            total_lot_for_pocket,
+                            adjusted_lot,
+                            scalp_buffer if scalp_buffer is not None else -1.0,
+                        )
+                        total_lot_for_pocket = adjusted_lot
+                    if margin_guard_micro:
+                        logging.info(
+                            "[MICRO] Lot forced to zero due to margin guard (buffer=%.3f)",
+                            scalp_buffer if scalp_buffer is not None else -1.0,
+                        )
+                        continue
                 if total_lot_for_pocket <= 0:
                     continue
 
@@ -1963,6 +2366,14 @@ async def logic_loop():
                         "[SKIP] Stage lot %.3f produced 0 units. Skipping.", staged_lot
                     )
                     continue
+                if exposure_state and exposure_state.would_exceed(units):
+                    logging.info(
+                        "[EXPOSURE] cap reached ratio=%.3f limit_lot=%.2f; skip %s",
+                        exposure_state.ratio(),
+                        exposure_state.limit_units() / 100000.0,
+                        signal["strategy"],
+                    )
+                    continue
                 if (
                     usd_long_cap_units > 0
                     and action == "OPEN_LONG"
@@ -1998,6 +2409,17 @@ async def logic_loop():
                 sl, tp = clamp_sl_tp(entry_price, sl_base, tp_base, action == "OPEN_LONG")
 
                 client_id = build_client_order_id(focus_tag, signal["tag"])
+                entry_thesis = {
+                    "strategy_tag": signal.get("tag"),
+                    "strategy": signal.get("strategy"),
+                    "pocket": pocket,
+                    "profile": signal.get("profile"),
+                    "min_hold_sec": signal.get("min_hold_sec"),
+                    "loss_guard_pips": signal.get("loss_guard_pips"),
+                    "target_tp_pips": tp_pips,
+                    "sl_pips": sl_pips,
+                    "tp_pips": tp_pips,
+                }
                 trade_id = await market_order(
                     "USD_JPY",
                     units,
@@ -2005,8 +2427,12 @@ async def logic_loop():
                     tp,
                     pocket,
                     client_order_id=client_id,
+                    entry_thesis=entry_thesis,
+                    meta={"entry_price": entry_price},
                 )
                 if trade_id:
+                    if exposure_state:
+                        exposure_state.allocate(units)
                     logging.info(
                         "[ORDER] %s | %s | %.3f lot | SL=%.3f | TP=%.3f | conf=%d | client_id=%s",
                         trade_id,
@@ -2063,7 +2489,7 @@ async def logic_loop():
                             info["short_units"] = new_units
                     net_units += units
                     open_positions.setdefault("__net__", {})["units"] = net_units
-                    executed_pockets.add(pocket)
+                    executed_entries.add((pocket, strategy_name))
                     projected_usd_long_units = max(0, net_units)
                     # 直後の再エントリーを抑制（気迷いトレード対策）
                     entry_cd = POCKET_ENTRY_MIN_INTERVAL.get(pocket, 120)

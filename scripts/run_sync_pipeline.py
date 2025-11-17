@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import shutil
 import signal
 import sys
 import time
@@ -70,6 +71,39 @@ def _run_cycle(
     return new_trades
 
 
+def _sync_remote_logs(dest_dir: Path) -> None:
+    """Copy key SQLite/log snapshots to a remote_logs directory."""
+
+    target = dest_dir.expanduser()
+    target.mkdir(parents=True, exist_ok=True)
+    files = [
+        Path("logs/trades.db"),
+        Path("logs/orders.db"),
+        Path("logs/metrics.db"),
+        Path("logs/news.db"),
+        Path("logs/oanda/candles_M1_latest.json"),
+        Path("logs/oanda/candles_H1_latest.json"),
+        Path("logs/oanda/candles_H4_latest.json"),
+    ]
+    copied = 0
+    for src in files:
+        if src.exists():
+            shutil.copy2(src, target / src.name)
+            copied += 1
+    oanda_dir = Path("logs/oanda")
+    if oanda_dir.exists():
+        txns = sorted(oanda_dir.glob("transactions_*.jsonl"))
+        if txns:
+            latest = txns[-1]
+            shutil.copy2(latest, target / latest.name)
+            copied += 1
+            meta = latest.with_name(f"{latest.stem}_meta.json")
+            if meta.exists():
+                shutil.copy2(meta, target / meta.name)
+                copied += 1
+    logging.info("[REMOTE] synced %d files to %s", copied, target)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -126,8 +160,21 @@ def main() -> int:
         action="store_true",
         help="BigQuery エクスポートを完全に無効化する。Lot insights もスキップ。",
     )
+    parser.add_argument(
+        "--remote-dir",
+        type=Path,
+        default=None,
+        help="Sync trades/candles snapshots to the given directory (e.g. remote_logs_current).",
+    )
+    parser.add_argument(
+        "--remote-sync-interval",
+        type=float,
+        default=300.0,
+        help="Minimum seconds between remote log syncs (default: 300).",
+    )
     args = parser.parse_args()
     _setup_logging(args.verbose)
+    remote_dir = args.remote_dir.expanduser() if args.remote_dir else None
 
     exporter = None
     if not args.disable_bq:
@@ -152,6 +199,7 @@ def main() -> int:
     last_bq_export = 0.0
     bq_interval = args.bq_interval
     bq_on_new = not args.no_bq_on_new
+    last_remote_sync = 0.0
 
     def _handle_signal(signum: int, _frame: Optional[object]) -> None:
         nonlocal stop_requested
@@ -167,6 +215,13 @@ def main() -> int:
                 new_trades = _run_cycle(pm, gcs_publisher, args.ui_recent)
 
                 now = time.monotonic()
+                if remote_dir and args.remote_sync_interval > 0:
+                    if now - last_remote_sync >= args.remote_sync_interval:
+                        try:
+                            _sync_remote_logs(remote_dir)
+                            last_remote_sync = now
+                        except Exception as exc:  # noqa: BLE001
+                            logging.exception("[REMOTE] sync failed: %s", exc)
                 run_bq = False
                 if args.once:
                     run_bq = True

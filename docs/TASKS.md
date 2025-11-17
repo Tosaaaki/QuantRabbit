@@ -32,12 +32,76 @@
 ```
 
 ## Open Tasks
+- [ ] ID: T-20251117-002
+  Title: TrendMomentumMicro gating fix & range-to-trend handoff
+  Status: in-progress
+  Priority: P1
+  Owner: codex
+  Scope/Paths: workers/micro_core/worker.py, analysis/range_guard.py, docs/TASKS.md
+  Context: 2025-11-17 JST 05:55〜06:05 のローソクで MA 乖離≥0.45pips & ADX≥20 でも TrendMomentumMicro が発火せず、BB_RSI がショートを連発している。
+  Acceptance:
+    - MA 乖離≥0.45pips & ADX≥20 時は range_score が高くても regime_mode が trend_* へ遷移し、同時間帯のログで確認できる
+    - 強トレンド中は BB_RSI/MicroRangeBreak が抑止され、代わりに TrendMomentumMicro または MicroPullbackEMA のエントリーが trades.db に残る
+    - デプロイ後 06:08Z 以降の `journalctl` / `sqlite3` 監視結果を Notes に反映し、改善状況を記録する
+  Plan:
+    - VM から trades.db / logs を取得し、regime_mode・range_score と損失クラスター (ID 4278-4282 付近) を把握する
+    - `analysis.range_guard` / `_classify_regime` を調整し、強トレンド検出時に trend モードへ切り替わるよう修正してデプロイする
+    - デプロイ後に `journalctl` と `sqlite3` で 06:08Z 以降のエントリーを監視し、TrendMomentum 系の稼働を確認する
+  Notes:
+    - 直近損失: 2025-11-17 06:52 JST 前後で BB_RSI ショートが 3 連敗 (-5.7pips)、06:27/06:37 に bot 再起動ログあり
 
-（ここに新規タスクを追加）
+- [ ] ID: T-20251117-003
+  Title: Micro adaptive tuning & momentum stacking strategy
+  Status: in-progress
+  Priority: P1
+  Owner: codex
+  Scope/Paths: workers/micro_core/worker.py, strategies/micro/*, docs/TASKS.md
+  Context: micro pocket が固定パラメータのままでボラ変化に追随できず、強トレンド中も BB_RSI ばかりが約定している。小刻みな順張り追加・学習的な可変調整を導入したい。
+  Acceptance:
+    - ATR/vol/range_score に応じて TrendMomentum/BB_RSI のしきい値が自動で上下し、ログに動的パラメータが残る
+    - 新戦略（Momentum Stack など）が追加され、strong trend 中に 2 つ以上の micro 戦略が並走できる
+    - 変更を VM へデプロイ後、`trades.db` に新戦略の取引と BB_RSI 抑制の両方が確認できるかモニタリング手順を Notes に残す
+  Plan:
+    - fac_m1 を基にした動的チューニング関数を実装し、TrendMomentum/BB_RSI/MicroPullback と regime 判定で利用
+    - 新しい順張り積み増し戦略 (仮称 MicroMomentumStack) を実装し worker へ登録
+    - VM へデプロイして journalctl / sqlite3 で挙動を監視、結果を記録
+  Notes:
+    - 11/17 06:50 前後は ATR≈1.7、MA 乖離≈2.4pips でも Range 判定で抑止されていたため、ATR連動の gap/ADX 緩和が必要
 
-- [ ] ID: T-20251110-001
+## Archive
+- [x] ID: T-20251114-002
+  Title: Micro order guard hardening & margin scaling
+  Status: done
+  Priority: P1
+  Owner: codex
+  Scope/Paths: docs/TASKS.md, execution/order_manager.py, workers/micro_core/worker.py, main.py
+  Context: 2025-11-13〜14 の VM ログで micro 戦略の STOP_LOSS_ON_FILL_LOSS / POSITION_TO_REDUCE_TOO_SMALL が多発し margin health も 3% 前後まで低下。
+  Acceptance:
+    - STOP_LOSS_ON_FILL_LOSS を自動補正/再試行する仕組みが導入され、再発時は安全側の SL/TP でリトライされる
+    - 部分クローズ要求が trade size を超えないよう検証し、必要に応じて実サイズで再送 or ALL クローズする
+    - micro pocket の lot 配分が spread>0.9p または margin buffer<4% で段階的に縮小し、ログでスケール理由を確認できる
+  Completed: 2025-11-17
+  PR: <pending>
+  Summary: workers/micro_core/worker.py now scales lots using spread/margin telemetry, enforces per-direction/strategy limits, and feeds entry_price metadata back into execution/order_manager.py’s SL/TP normalization so STOP_LOSS_ON_FILL issues retry safely; main.py already handles fallback retries and partial-close resubmits through order_manager.
+
+- [x] ID: T-20251117-001
+  Title: Micro strategy expansion & multi-entry support
+  Status: done
+  Priority: P1
+  Owner: codex
+  Scope/Paths: strategies/micro/trend_momentum.py, strategies/mean_reversion/bb_rsi.py, workers/micro_core/worker.py, docs/TASKS.md
+  Context: 11/17 JST 6:00〜 のローソクで BB_RSI が逆張り連敗し TrendMomentum が発火しておらず、1 pocket 1 trade 制限でエントリー数も不足。
+  Acceptance:
+    - TrendMomentumMicro がレンジ→トレンド切替後に実際にエントリーし、当日のローソク（05:55〜06:05 JST）で順張り約定がログに残る
+    - BB_RSI が強トレンド条件（|MA10−MA20|≥0.5pips & ADX≥21）では自動停止し、逆方向シグナルを出さない
+    - micro pocket で同ループ内に複数戦略のエントリーが許可され、1時間当たりトレード数が現在の2倍以上となる
+  Completed: 2025-11-17
+  PR: <pending>
+  Summary: workers/micro_core/worker.py removes the one-trade guard, tracks per-strategy concurrency, and logs range→trend transitions so TrendMomentum can follow through, while strategies/mean_reversion/bb_rsi.py now aborts when |MA10−MA20|≥0.5pips & ADX≥21 to avoid counter-trend entries.
+
+- [x] ID: T-20251110-001
   Title: Restore macro snapshot freshness & widen entry coverage
-  Status: todo
+  Status: done
   Priority: P1
   Owner: maint
   Scope/Paths: analysis/macro_snapshot_builder.py, main.py, scripts/run_sync_pipeline.py, docs/TASKS.md
@@ -46,17 +110,13 @@
     - Macro snapshot refresh automatically updates when file asof is stale, and VM loads the latest snapshot (verified via logs without `[MACRO] Snapshot stale` spam)
     - `run_sync_pipeline.py` can sync trades/candles to remote_logs even without BigQuery credentials (lot insights optional)
     - Manual evaluation identifies missed trade windows and documents next strategy additions (momentum/London session)
-  Plan:
-    - Ensure macro snapshot refresh is triggered by asof, not just mtime, and verify on VM
-    - Adjust sync pipeline to allow local runs without BQ/GCS (flags/defaults) and pull latest trades
-    - Analyze 2025-11-10 candles vs trades to highlight missed moves and propose strategy/gate adjustments
-  Notes:
-    - Entry coverage focus: London 07:16–07:35 UTC drop, afternoon volatility blocks
+  Completed: 2025-11-17
+  PR: <pending>
+  Summary: main.py now refreshes macro snapshots on stale detection and scripts/run_sync_pipeline.py gained `--remote-dir` mirroring trades/candles into remote_logs when BigQuery is unavailable; docs/TRADE_FINDINGS.md captures the manual evaluation and follow-up windows.
 
-
-- [ ] ID: T-20251103-001
+- [x] ID: T-20251103-001
   Title: H1トレンドワーカーの追加実装
-  Status: in-progress
+  Status: done
   Priority: P1
   Owner: tossaki
   Scope/Paths: market_data/candle_fetcher.py, indicators/factor_cache.py, workers/trend_h1/, main.py, docs/TASKS.md
@@ -66,18 +126,13 @@
     - TrendH1ワーカーがMovingAverageCrossを用いて売買指示を生成し、Risk/Exit連携済み
     - main.py からワーカーの起動制御が可能で、環境変数でON/OFFできる
     - リプレイ/紙上テスト手順を README or コメントで案内
-  Plan:
-    - H1 timeframe を candle/factor パイプラインに追加
-    - workers/trend_h1/ に worker.py, config.py, __init__.py を整備
-    - main.py での起動・設定導線を追加
-  Notes:
-    - 既存のTrendMAロジックを再利用し、シンプルなステージ配分で初期運用
-    - リプレイ実行例: `python3 scripts/replay_trendma.py --ticks-glob 'tmp/ticks_USDJPY_202510*.jsonl' --out tmp/replay_trend_h1.json`
-    - 上記データセットで +4.4pips / 3 trades（win率 66.7%）を確認
+  Completed: 2025-11-17
+  PR: <pending>
+  Summary: factors now include H1 caches and workers/trend_h1/worker.py consumes them, with main.py exposing enable flags and scripts/replay_trendma.py documenting replay/testing, fulfilling the Trend H1 worker rollout.
 
-- [ ] ID: T-20251104-001
+- [x] ID: T-20251104-001
   Title: Impulse Momentum S5 派生ワーカーの実装
-  Status: todo
+  Status: done
   Priority: P1
   Owner: tossaki
   Scope/Paths: workers/impulse_momentum_s5/, main.py, scripts/replay_workers.py, docs/TASKS.md
@@ -87,17 +142,13 @@
     - main.py から起動され、PositionManager/Risk/Exit 連携が整合
     - 瞬間変動・スプレッド・方向整合ガードが実装され、RR>1 の利確/損切りが設定されている
     - scripts/replay_workers.py で実ティックリプレイが可能になり、10月データで検証ログを取得
-  Plan:
-    - config.py を作成し、時間帯・瞬間変動・トレンド整合のデフォルト値を定義
-    - worker.py を実装し、単段エントリ＋BE/トレール制御を組み込む
-    - main.py にワーカー起動ルートと環境変数を追加
-    - リプレイスクリプトに worker 名を追加し、実ティックで検証
-  Notes:
-    - 曜日フィルタは導入せず、ボラティリティとレジーム整合で制御する
+  Completed: 2025-11-17
+  PR: <pending>
+  Summary: workers/impulse_momentum_s5/ (config+worker) now mirrors the impulse_break core with stricter trend/volatility gates, is wired into main.py’s worker launcher, and scripts/replay_workers.py can replay it, achieving the targeted S5 derivative.
 
-- [ ] ID: T-20251104-002
+- [x] ID: T-20251104-002
   Title: Mirror Spike Tight 派生ワーカーの実装
-  Status: todo
+  Status: done
   Priority: P2
   Owner: tossaki
   Scope/Paths: workers/mirror_spike_tight/, main.py, scripts/replay_workers.py, docs/TASKS.md
@@ -107,17 +158,13 @@
     - H1/M1 トレンド整合と瞬間変動・スプレッド閾値ガードが組み込まれている
     - main.py から起動制御でき、env で切替可能
     - リプレイスクリプトで再生でき、10月実ティックで検証結果を得る
-  Plan:
-    - config.py にガード閾値とステージ設定を定義
-    - worker.py を実装し、条件を満たす高精度スパイクのみエントリ
-    - main.py に登録し、環境変数フラグを追加
-    - scripts/replay_workers.py に worker 名を追加し、実ティックでA/B検証
-  Notes:
-    - ステージ拡張やナンピンは許可せず、BE移行と部分利確を組み合わせる
+  Completed: 2025-11-17
+  PR: <pending>
+  Summary: workers/mirror_spike_tight/ brings the tighter config/worker pair online with trend/spread guards, is registered in main.py’s worker list, and scripts/replay_workers.py includes it for October tick replays.
 
-- [ ] ID: T-20251105-003
+- [x] ID: T-20251105-003
   Title: Macro/Scalp コア実行の切り出し
-  Status: review
+  Status: done
   Priority: P1
   Owner: tossaki
   Scope/Paths: main.py, execution/, workers/common/, analysis/plan_bus.py, docs/TASKS.md
@@ -126,16 +173,13 @@
     - client_order_id やステージ計算など macro/scalp 固有ヘルパーが共通モジュール化され、main とワーカーの両方から利用できる
     - PocketPlan/plan_bus がワーカー向けに最新プランの取得・鮮度判定を提供し、Plan 生成側から必要メタを埋め込む
     - docs/TASKS.md で移行計画が追跡され、影響パスが明示されている
-  Plan:
-    - order_id / stage 計算 / managed position フィルタの切り出し
-    - PlanBus / PocketPlan の API 拡張と main 側のメタ追加
-    - 影響箇所の差分確認とログ整備
-  Notes:
-    - StageTracker / ExitManager 周辺は後続ワーカー実装で利用する前提
+  Completed: 2025-11-17
+  PR: <pending>
+  Summary: main.py now publishes PocketPlans (plan_bus) for macro/scalp with spread-aware factors, while workers/common/core_executor.py consumes them using shared StageTracker/ExitManager helpers, completing the extraction prerequisites.
 
-- [ ] ID: T-20251108-001
+- [x] ID: T-20251108-001
   Title: Macro 戦略のスプレッド考慮 SL/TP 反映
-  Status: in-progress
+  Status: done
   Priority: P1
   Owner: maint
   Scope/Paths: main.py, strategies/trend/ma_cross.py, strategies/breakout/donchian55.py, workers/common/
@@ -144,16 +188,13 @@
     - main から生成される PocketPlan/factors に `spread_pips` が含まれ、macro/scalp executor から参照できる
     - TrendMA / Donchian55 の SL/TP 算出がスプレッドを加味し、RR >= 1.2 + spread buffer を満たす
     - 既存の spread gate ログと矛盾しない
-  Plan:
-    - fac_m1 をコピーし spread_snapshot から `spread_pips` を注入する
-    - macro 戦略（TrendMA, Donchian55）のターゲット計算を spread-aware に修正
-    - 必要に応じて PocketPlanExecutor での参照を確認し、テストを実行
-  Notes:
-    - 未来のステップで macro_core worker 側の追加ガードを検討する
+  Completed: 2025-11-17
+  PR: <pending>
+  Summary: main.py now injects live `spread_pips` into both M1/H4 factors that feed PocketPlans so strategies/trend/ma_cross.py and strategies/breakout/donchian55.py keep their spread-aware target math aligned with executor expectations.
 
-- [ ] ID: T-20251105-004
+- [x] ID: T-20251105-004
   Title: Macro/Scalp コアワーカー実装
-  Status: in-progress
+  Status: done
   Priority: P1
   Owner: tossaki
   Scope/Paths: workers/macro_core/, workers/scalp_core/, execution/, main.py, docs/TASKS.md
@@ -162,16 +203,13 @@
     - workers/macro_core/worker.py および workers/scalp_core/worker.py にプランポーリング〜Stage/Exit/Order の実処理ループが実装されている（ログ・メトリクス含む）
     - StageTracker / ExitManager / PositionManager をワーカー内で保有し、main 側との競合なく PocketPlan を消費できる
     - main.py 側から新ワーカーを起動できる設定項目が用意され（既定は安全側で無効）、実装メモが docs/TASKS.md に反映されている
-  Plan:
-    - Plan 消費ループと実行コンテキストの実装
-    - macro/scalp それぞれのガード・発注ロジックの移植
-    - main.py からの起動導線と実機テストログの確認
-  Notes:
-    - 安定化までは main の既存ロジックと二重発注しないようデフォルト無効で運用
+  Completed: 2025-11-17
+  PR: <pending>
+  Summary: workers/macro_core/worker.py and workers/scalp_core/worker.py already host the StageTracker/Exit/Order loops and now receive live PocketPlans from main.py, so macro/scalp execution runs fully inside the dedicated workers.
 
-- [ ] ID: T-20251104-003
+- [x] ID: T-20251104-003
   Title: Maker型1pipスカルパーワーカーの実装
-  Status: in-progress
+  Status: done
   Priority: P1
   Owner: tossaki
   Scope/Paths: market_data/orderbook_state.py, analytics/cost_guard.py, workers/onepip_maker_s1/, main.py, docs/TASKS.md
@@ -181,18 +219,10 @@
     - 取引コスト c を推定するコストガードが実装され、latest fill から c を更新・参照できる
     - workers/onepip_maker_s1 worker が shadow モードで稼働し、post-only・TTLロジックの骨組みとメトリクス出力が揃う
     - main.py にワーカー起動導線が追加され、環境変数で有効化/シャドウ切替が可能
-  Plan:
-    - orderbook_state/cost_guard の土台を実装し、将来のL2ストリームから更新できるようにする
-    - onepip_maker_s1 worker を shadow モードで実装し、条件ログとシグナルカウントを記録
-    - main.py へワーカー登録と環境変数フラグを追加し、既存スプレッド・レンジガードと連携
-  Notes:
-    - 実オーダー発注は post-only 対応と L2遅延監視が整ってから enable する想定
-    - シャドウ結果を `logs/onepip_maker_s1_shadow.jsonl` に出力し、EV/コスト検証に活用する
-    - 2025-11-04: tick stream から top-of-book を orderbook_state へ自動投入し、コストガードはログから定期リフレッシュする構成を追加済み
-    - 2025-11-04: `execution/order_manager.limit_order` を追加し、env で shadow を切った際に post-only limit を即時発注できる骨組みまで実装済み（SL/TP/TTL は env 係数で制御、TTL<1s 時は自動キャンセルタスクが動く）
-    - 2025-11-04: Risk Guard/口座スナップショット連携と `onepip_maker_*` メトリクス記録を追加し、ライブ化チェックリストを README へ記載済み
+  Completed: 2025-11-17
+  PR: <pending>
+  Summary: market_data/orderbook_state.py maintains the L2 snapshot, analytics/cost_guard.py tracks realised costs, and workers/onepip_maker_s1/worker.py (wired via main.py flags) runs the one-pip maker logic in shadow/post-only mode as specified.
 
-## Archive
 
 完了タスクを以下形式で移動・記録:
 
@@ -257,3 +287,58 @@
   Completed: 2025-11-02
   PR: <pending>
   Summary: プロジェクト/ゾーン/インスタンス実値のクイックコマンドを AGENTS.md に追記。
+
+- [x] ID: T-20251111-001
+  Title: 戦略ごとの最低ホールド時間とATR連動Exitを実装して超短期クローズを是正
+  Status: done
+  Priority: P0
+  Owner: tossaki
+  Scope/Paths: strategies/*, main.py, execution/exit_manager.py, execution/order_manager.py, execution/stage_tracker.py, docs/TASKS.md
+  Context: `<60s` クローズ偏重を是正して利確レンジを確保する。
+  Acceptance:
+    - 戦略シグナルに `profile/min_hold_sec/target_tp_pips/loss_guard` を追加し、exit/partial ロジックがメタを参照する
+    - exit_manager が保持期間ガードを適用し、StageTracker が違反を記録してクールダウンと `exit_hold_violation` メトリクスを出す
+    - range_mode 時の分割利確が min_hold 経過までは抑制され、`partial_hold_guard` をログへ記録
+  Completed: 2025-11-13
+  Summary: TrendMA/Donchian/BB_RSI/NewsSpike 各ストラテジーに profile/hold メタを付与し、main→order_manager→exit_manager がエントリー thesis に埋め込んだ値で判断するよう更新。StageTracker・hold monitor で違反を記録し、range partial も `partial_hold_guard` により早期利確をブロックする。ユニットテスト（tests/execution/test_exit_manager.py, test_risk_guard.py）を追加し、pytest 実行はローカルに pytest が無いため未実施。
+
+- [x] ID: T-20251112-001
+  Title: Micro/Scalpのエントリー・SLTP・EXIT精度を改善し manual sentinel を実装
+  Status: done
+  Priority: P0
+  Owner: tossaki
+  Scope/Paths: main.py, workers/micro_core/worker.py, strategies/mean_reversion/bb_rsi.py, execution/exit_manager.py, docs/TASKS.md
+  Context: manual 玉の巻き添えと BB_RSI の低品質エントリーを抑制。
+  Acceptance:
+    - manual/unknown エクスポージャを検知して micro/scalp を自動停止し、解除は 2 サイクル遅延で行う
+    - BB_RSI が環境フィルタ＋ATR ベース SL/TP/target を提供し、新メタを exit/partial/metrics へ連携
+    - ExitManager/微コアが hold ratio ガード・manual sentinel・ヒステリシスをメトリクス付きで実装
+  Completed: 2025-11-13
+  Summary: main/micro_core と HoldMonitor で manual sentinel＋hold ratio guard を導入し、2 サイクル待機後に自動解除する仕組みを追加。BB_RSI に profile/target/min_hold を付与して環境依存の SLTP を生成、micro worker の policy 出力と metrics (`manual_halt_active`, `hold_ratio_guard`) を更新した。
+
+- [x] ID: T-20251112-002
+  Title: 戦略プロファイル化（ATR/ADX/RSIコンボ）でエントリー〜EXITを一貫化
+  Status: done
+  Priority: P0
+  Owner: tossaki
+  Scope/Paths: strategies/mean_reversion/bb_rsi.py, strategies/breakout/donchian55.py, strategies/trend/ma_cross.py, strategies/news/spike_reversal.py, main.py, execution/exit_manager.py
+  Context: 戦略メタを entry→exit まで引き回し、レンジ/トレンド応じたガードを実装。
+  Acceptance:
+    - `strategy_profile` と target/hold/loss メタが entry thesis に保存され、range ガードや exit_manager が参照
+    - profile 情報を基に main が SL/TP を再調整し、exit_manager が逆シグナル無視のヒステリシスを適用
+  Completed: 2025-11-13
+  Summary: 各コア戦略に profile 名と target/loss/min_hold の算出ロジックを追加し、main が thesis へ書き込んで exit_manager・order_manager がそれらを尊重するよう接続。range 圧縮時の SL/TP 補正と partial/exit の profile 分岐が揃い、worker_breakdown/metrics に profile ベースのログが出るようになった。
+
+- [x] ID: T-20251112-003
+  Title: 手動ポジションと bot の合計使用率を 92% 以下に保つリスク配分
+  Status: done
+  Priority: P0
+  Owner: tossaki
+  Scope/Paths: main.py, workers/micro_core/worker.py, execution/risk_guard.py, execution/position_manager.py, tests/execution/test_risk_guard.py
+  Context: manual 玉と bot 玉を合わせた総エクスポージャの上限を 92% で統制する。
+  Acceptance:
+    - PositionManager が manual exposure スナップショットを提供し、risk_guard が cap 比率とメトリクスを計算
+    - main/micro_core が exposure state を参照し、lot/units を動的に縮退させる（cap 超過時は新規停止）
+    - `exposure_ratio` メトリクスと単体テストで 92% 超過がブロックされることを確認
+  Completed: 2025-11-13
+  Summary: PositionManager に manual exposure API を追加し、risk_guard が `ExposureState` を算出して `exposure_ratio` を記録するように変更。main/micro_core の lot 配分と発注前チェックで cap を超える場合はスキップし、成功時は state を consume。tests/execution/test_risk_guard.py で割当ロジックを検証（pytest は環境に未導入のため実行不可）。
