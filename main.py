@@ -1634,12 +1634,12 @@ async def logic_loop():
                     continue
                 pocket = cls.pocket
                 if (
-                    (manual_block_active and pocket in MANUAL_SENTINEL_BLOCK_POCKETS)
-                    or (hold_guard_active and pocket in HOLD_RATIO_BLOCK_POCKETS)
+                    (_MANUAL_SENTINEL_ACTIVE and pocket in MANUAL_SENTINEL_BLOCK_POCKETS)
+                    or (_HOLD_RATIO_GUARD_ACTIVE and pocket in HOLD_RATIO_BLOCK_POCKETS)
                 ):
                     reason = (
                         "manual exposure"
-                        if manual_block_active and pocket in MANUAL_SENTINEL_BLOCK_POCKETS
+                        if _MANUAL_SENTINEL_ACTIVE and pocket in MANUAL_SENTINEL_BLOCK_POCKETS
                         else "hold_ratio_guard"
                     )
                     logging.info(
@@ -1849,7 +1849,6 @@ async def logic_loop():
                 for pocket, info in managed_positions.items()
                 if not _pocket_worker_owns_orders(pocket)
             }
-            hold_guard_active = _HOLD_RATIO_GUARD_ACTIVE
             micro_trades = (managed_positions.get("micro") or {}).get("open_trades", [])
             if any("NewsSpike" in (tr.get("client_id") or "") for tr in micro_trades):
                 candidate = now + datetime.timedelta(seconds=TRENDMA_NEWS_FREEZE_SECONDS)
