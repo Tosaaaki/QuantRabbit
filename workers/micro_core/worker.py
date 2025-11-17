@@ -386,13 +386,13 @@ async def micro_core_worker() -> None:
         lookback_hours=HOLD_RATIO_LOOKBACK_HOURS,
         min_samples=HOLD_RATIO_MIN_SAMPLES,
     )
-    last_hold_ratio_check = datetime.datetime.min
+    last_hold_ratio_check = datetime.datetime.min.replace(tzinfo=datetime.timezone.utc)
     hold_ratio_guard_active = False
     manual_guard_active = False
     manual_clear_cycles = 0
     margin_guard_active = False
     margin_guard_buffer: Optional[float] = None
-    last_margin_guard_check = datetime.datetime.min
+    last_margin_guard_check = datetime.datetime.min.replace(tzinfo=datetime.timezone.utc)
     last_regime_mode: Optional[str] = None
 
     last_dyn_profile: Optional[dict] = None
