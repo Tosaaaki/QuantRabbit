@@ -708,10 +708,12 @@ async def micro_core_worker() -> None:
                 equity = snapshot.nav or snapshot.balance or FALLBACK_EQUITY
                 margin_available = snapshot.margin_available
                 margin_rate = snapshot.margin_rate
+                margin_used = snapshot.margin_used
             except Exception:
                 equity = FALLBACK_EQUITY
                 margin_available = None
                 margin_rate = None
+                margin_used = None
 
             avg_sl = max(1.0, sum(s["sl_pips"] for s in signals) / len(signals))
             lot_total = allowed_lot(
@@ -726,6 +728,9 @@ async def micro_core_worker() -> None:
                 positions,
                 equity=equity,
                 price=fac_m1.get("close"),
+                margin_used=margin_used,
+                margin_available=margin_available,
+                margin_rate=margin_rate,
             )
             if exposure_state:
                 lot_total = min(

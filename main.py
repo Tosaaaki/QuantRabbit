@@ -2096,6 +2096,9 @@ async def logic_loop():
                 open_positions,
                 equity=account_equity,
                 price=fac_m1.get("close"),
+                margin_used=account_snapshot.margin_used if account_snapshot else None,
+                margin_available=account_snapshot.margin_available if account_snapshot else None,
+                margin_rate=account_snapshot.margin_rate if account_snapshot else None,
             )
             exposure_cap_lot = None
             if exposure_state:

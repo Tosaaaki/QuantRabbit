@@ -45,6 +45,7 @@ _DISABLE_GLOBAL_DD = os.getenv("DISABLE_GLOBAL_DD", "false").lower() in {
     "on",
 }
 EXPOSURE_MAX_RATIO = float(os.getenv("EXPOSURE_MAX_RATIO", "0.93"))
+EXPOSURE_WARN_THRESHOLD = float(os.getenv("EXPOSURE_WARN_THRESHOLD", "1.05"))
 
 _DB = pathlib.Path("logs/trades.db")
 con = sqlite3.connect(_DB)
@@ -240,33 +241,70 @@ class ExposureState:
     max_units: float
     manual_units: float
     bot_units: float
+    margin_pool: float | None = None
+    manual_margin: float | None = None
+    bot_margin: float | None = None
+    unit_margin_cost: float | None = None
 
     def limit_units(self) -> float:
         return max(0.0, self.cap_ratio * self.max_units)
 
+    def limit_margin(self) -> float | None:
+        return self.margin_pool
+
     def ratio(self) -> float:
+        if self.margin_pool and self.margin_pool > 0 and self.manual_margin is not None:
+            return min(
+                2.0,
+                ((self.manual_margin or 0.0) + (self.bot_margin or 0.0))
+                / self.margin_pool,
+            )
         limit = self.limit_units()
         if limit <= 0:
             return 0.0
         return min(2.0, (self.manual_units + self.bot_units) / limit)
 
     def manual_ratio(self) -> float:
+        if self.margin_pool and self.margin_pool > 0 and self.manual_margin is not None:
+            return min(2.0, (self.manual_margin or 0.0) / self.margin_pool)
         if self.max_units <= 0:
             return 0.0
         return min(2.0, self.manual_units / self.max_units)
 
     def bot_ratio(self) -> float:
+        if self.margin_pool and self.margin_pool > 0 and self.bot_margin is not None:
+            return min(2.0, (self.bot_margin or 0.0) / self.margin_pool)
         if self.max_units <= 0:
             return 0.0
         return min(2.0, self.bot_units / self.max_units)
 
     def available_units(self) -> float:
+        if (
+            self.margin_pool
+            and self.unit_margin_cost
+            and self.manual_margin is not None
+        ):
+            remaining = self.margin_pool - (
+                (self.manual_margin or 0.0) + (self.bot_margin or 0.0)
+            )
+            return max(0.0, remaining / self.unit_margin_cost)
         used = self.manual_units + self.bot_units
         return max(0.0, self.limit_units() - used)
 
     def would_exceed(self, units: int) -> bool:
         if units == 0:
             return False
+        if (
+            self.margin_pool
+            and self.unit_margin_cost
+            and self.manual_margin is not None
+        ):
+            projected = (
+                (self.manual_margin or 0.0)
+                + (self.bot_margin or 0.0)
+                + abs(units) * self.unit_margin_cost
+            )
+            return projected > self.margin_pool
         future = self.manual_units + self.bot_units + abs(units)
         return future > self.limit_units()
 
@@ -274,6 +312,8 @@ class ExposureState:
         if units == 0:
             return
         self.bot_units += abs(units)
+        if self.bot_margin is not None and self.unit_margin_cost:
+            self.bot_margin += abs(units) * self.unit_margin_cost
 
 
 def build_exposure_state(
@@ -281,6 +321,9 @@ def build_exposure_state(
     *,
     equity: float | None,
     price: float | None,
+    margin_used: float | None = None,
+    margin_available: float | None = None,
+    margin_rate: float | None = None,
     cap_ratio: float | None = None,
 ) -> Optional[ExposureState]:
     """現在の手動玉＋bot玉の使用率を計算し、追加エントリー可否を判定する。"""
@@ -302,11 +345,31 @@ def build_exposure_state(
             manual_units += units
         else:
             bot_units += units
+    unit_margin_cost = None
+    margin_pool = None
+    manual_margin = None
+    bot_margin = None
+    if (
+        price is not None
+        and margin_rate is not None
+        and margin_rate > 0
+        and margin_used is not None
+        and margin_available is not None
+    ):
+        unit_margin_cost = price * margin_rate
+        manual_margin = manual_units * unit_margin_cost
+        bot_margin = bot_units * unit_margin_cost
+        margin_pool = cap * (margin_used + margin_available)
+
     state = ExposureState(
         cap_ratio=cap,
         max_units=max_units,
         manual_units=float(manual_units),
         bot_units=float(bot_units),
+        margin_pool=margin_pool,
+        manual_margin=manual_margin,
+        bot_margin=bot_margin,
+        unit_margin_cost=unit_margin_cost,
     )
     _log_exposure_metrics(state)
     return state
@@ -320,8 +383,16 @@ def _log_exposure_metrics(state: ExposureState) -> None:
         "bot_ratio": f"{state.bot_ratio():.3f}",
     }
     log_metric("exposure_ratio", ratio, tags=tags)
-    if ratio >= 1.0:
+    if ratio >= EXPOSURE_WARN_THRESHOLD:
         logging.warning(
+            "[EXPOSURE] ratio=%.3f manual=%.2f%% bot=%.2f%% cap=%.2f%%",
+            ratio,
+            state.manual_ratio() * 100,
+            state.bot_ratio() * 100,
+            state.cap_ratio * 100,
+        )
+    else:
+        logging.info(
             "[EXPOSURE] ratio=%.3f manual=%.2f%% bot=%.2f%% cap=%.2f%%",
             ratio,
             state.manual_ratio() * 100,
