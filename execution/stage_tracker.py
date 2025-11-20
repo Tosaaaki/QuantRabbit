@@ -6,14 +6,52 @@ execution.stage_tracker
 
 from __future__ import annotations
 
+import os
 import sqlite3
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Dict, Optional, Tuple
 
 _DB_PATH = Path("logs/stage_state.db")
 _TRADES_DB = Path("logs/trades.db")
+_POCKET_SIZE_FLOOR = {
+    "macro": float(os.getenv("SIZE_FLOOR_MACRO", "0.6")),
+    "micro": float(os.getenv("SIZE_FLOOR_MICRO", "0.4")),
+    "scalp": float(os.getenv("SIZE_FLOOR_SCALP", "0.35")),
+}
+_STAGE_REVERSE_JST_START = int(os.getenv("STAGE_REVERSE_JST_START", "10")) % 24
+_STAGE_REVERSE_JST_END = int(os.getenv("STAGE_REVERSE_JST_END", "12")) % 24
+_STAGE_REVERSE_LOSS_FLOOR = float(os.getenv("STAGE_REVERSE_LOSS_FLOOR", "0.3"))
+_STAGE_REVERSE_FLIP_GUARD_SEC = int(os.getenv("STAGE_REVERSE_FLIP_GUARD_SEC", "90"))
+
+
+def _utcnow() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def _coerce_utc(value: Optional[datetime]) -> datetime:
+    if value is None:
+        return _utcnow()
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
+
+
+def _parse_timestamp(value: str) -> datetime:
+    dt = datetime.fromisoformat(value)
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc)
+
+
+def _in_jst_reverse_window(now: Optional[datetime] = None) -> bool:
+    current = _coerce_utc(now)
+    jst = current + timedelta(hours=9)
+    hour = jst.hour
+    if _STAGE_REVERSE_JST_START <= _STAGE_REVERSE_JST_END:
+        return _STAGE_REVERSE_JST_START <= hour < _STAGE_REVERSE_JST_END
+    return hour >= _STAGE_REVERSE_JST_START or hour < _STAGE_REVERSE_JST_END
 
 
 @dataclass(slots=True)
@@ -102,6 +140,7 @@ class StageTracker:
         self._con.close()
 
     def clear_expired(self, now: datetime) -> None:
+        now = _coerce_utc(now)
         ts = now.isoformat()
         self._con.execute(
             "DELETE FROM stage_cooldown WHERE cooldown_until <= ?", (ts,)
@@ -120,7 +159,7 @@ class StageTracker:
         *,
         now: Optional[datetime] = None,
     ) -> None:
-        ts = (now or datetime.utcnow()).isoformat()
+        ts = _coerce_utc(now).isoformat()
         self._con.execute(
             """
             INSERT INTO stage_state(pocket, direction, stage, updated_at)
@@ -153,7 +192,7 @@ class StageTracker:
         seconds: int,
         now: Optional[datetime] = None,
     ) -> None:
-        base = now or datetime.utcnow()
+        base = _coerce_utc(now)
         cooldown_until = base + timedelta(seconds=max(1, seconds))
         self._con.execute(
             """
@@ -180,7 +219,7 @@ class StageTracker:
         Ensure the cooldown for (pocket, direction) is at least the requested duration.
         Returns True if the cooldown was extended or set, False if existing cooldown was longer.
         """
-        current = now or datetime.utcnow()
+        current = _coerce_utc(now)
         desired_until = current + timedelta(seconds=max(1, seconds))
         info = self.get_cooldown(pocket, direction, now=current)
         if info and info.cooldown_until >= desired_until:
@@ -213,7 +252,7 @@ class StageTracker:
         cooldown_seconds: int = 180,
         now: Optional[datetime] = None,
     ) -> None:
-        ts = (now or datetime.utcnow()).isoformat()
+        ts = _coerce_utc(now).isoformat()
         self._con.execute(
             """
             INSERT INTO hold_violation_log(ts, pocket, direction, required_sec, actual_sec, reason)
@@ -223,12 +262,13 @@ class StageTracker:
         )
         self._con.commit()
         if cooldown_seconds > 0:
+            current = _coerce_utc(now)
             self.ensure_cooldown(
                 pocket,
                 direction,
                 reason=reason,
                 seconds=cooldown_seconds,
-                now=now or datetime.utcnow(),
+                now=current,
             )
 
     def set_strategy_cooldown(
@@ -241,7 +281,7 @@ class StageTracker:
     ) -> None:
         if not strategy:
             return
-        base = now or datetime.utcnow()
+        base = _coerce_utc(now)
         cooldown_until = base + timedelta(seconds=max(1, seconds))
         self._con.execute(
             """
@@ -266,8 +306,8 @@ class StageTracker:
         ).fetchone()
         if not row:
             return False, None, None
-        limit = datetime.fromisoformat(row[1])
-        current = now or datetime.utcnow()
+        limit = _parse_timestamp(row[1])
+        current = _coerce_utc(now)
         if current >= limit:
             self._con.execute(
                 "DELETE FROM strategy_cooldown WHERE strategy=?",
@@ -287,8 +327,8 @@ class StageTracker:
         ).fetchone()
         if not row:
             return None
-        limit = datetime.fromisoformat(row[1])
-        current = now or datetime.utcnow()
+        limit = _parse_timestamp(row[1])
+        current = _coerce_utc(now)
         if current >= limit:
             self._con.execute(
                 "DELETE FROM stage_cooldown WHERE pocket=? AND direction=?",
@@ -306,7 +346,8 @@ class StageTracker:
         info = self.get_cooldown(pocket, direction, now)
         if not info:
             return False, None, None
-        remaining = int((info.cooldown_until - (now or datetime.utcnow())).total_seconds())
+        current = _coerce_utc(now)
+        remaining = int((info.cooldown_until - current).total_seconds())
         return True, max(1, remaining), info.reason
 
     def update_loss_streaks(
@@ -350,7 +391,8 @@ class StageTracker:
                 int(row[3] or 0),
             )
 
-        ts = (now or datetime.utcnow()).isoformat()
+        ts = _coerce_utc(now).isoformat()
+        reverse_window = _in_jst_reverse_window(now)
         for row in rows:
             pocket = row["pocket"] or ""
             units = int(row["units"] or 0)
@@ -406,6 +448,12 @@ class StageTracker:
                     )
                     opp_dir = "short" if direction == "long" else "long"
                     opp_seconds = max(240, pocket_cooldown // 2)
+                    if pocket == "macro" and reverse_window:
+                        reduced = max(
+                            _STAGE_REVERSE_FLIP_GUARD_SEC,
+                            int(opp_seconds * 0.4),
+                        )
+                        opp_seconds = reduced
                     self.set_cooldown(
                         pocket,
                         opp_dir,
@@ -469,23 +517,30 @@ class StageTracker:
         """連敗時はより強くサイズを縮小し、連勝時はゆるやかに抑制。
 
         例:
-          - 1連敗: 0.6x
-          - 2連敗: 0.4x
-          - 3連敗以上: 0.3x（下限）
-          - 2連勝: 0.85x, 3連勝: 0.75x
+          - 1連敗: 0.75x
+          - 2連敗: 0.6x
+          - 3連敗以上: 0.5x（Pocket別の下限あり）
+          - 2連勝: 0.9x, 3連勝: 0.8x
         """
         lose_streak, win_streak = self.get_loss_profile(pocket, direction)
         factor = 1.0
         if lose_streak >= 3:
-            factor *= 0.3
+            factor *= 0.5
         elif lose_streak == 2:
-            factor *= 0.4
-        elif lose_streak == 1:
             factor *= 0.6
+        elif lose_streak == 1:
+            factor *= 0.75
 
         if win_streak >= 3:
-            factor *= 0.75
+            factor *= 0.8
         elif win_streak >= 2:
-            factor *= 0.85
+            factor *= 0.9
 
-        return max(0.2, round(factor, 3))
+        reverse_brake = pocket == "macro" and lose_streak > 0 and _in_jst_reverse_window()
+        if reverse_brake:
+            factor = min(factor, _STAGE_REVERSE_LOSS_FLOOR)
+
+        floor = max(0.3, _POCKET_SIZE_FLOOR.get(pocket, 0.4))
+        if reverse_brake:
+            floor = min(floor, _STAGE_REVERSE_LOSS_FLOOR)
+        return max(floor, round(factor, 3))

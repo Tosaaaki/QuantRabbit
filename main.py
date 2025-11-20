@@ -222,6 +222,18 @@ SOFT_RANGE_SUPPRESS_STRATEGIES = {"TrendMA", "Donchian55"}
 LOW_TREND_ADX_THRESHOLD = 18.0
 LOW_TREND_SLOPE_THRESHOLD = 0.00035
 LOW_TREND_WEIGHT_CAP = 0.35
+MACRO_LOT_BOOST = float(os.getenv("MACRO_LOT_BOOST", "1.25"))
+MACRO_LOT_BOOST_WEIGHT = float(os.getenv("MACRO_LOT_BOOST_WEIGHT", "0.15"))
+MACRO_LOT_BIAS_MIN = float(os.getenv("MACRO_LOT_BIAS_MIN", "0.2"))
+MACRO_LOT_REDUCTION_FACTOR = float(os.getenv("MACRO_LOT_REDUCTION_FACTOR", "0.75"))
+MACRO_LOT_MIN_FRACTION = float(os.getenv("MACRO_LOT_MIN_FRACTION", "0.12"))
+MACRO_LOT_DISABLE_THRESHOLD = float(os.getenv("MACRO_LOT_DISABLE_THRESHOLD", "0.05"))
+LOSS_GUARD_COMPRESS_ATR = float(os.getenv("LOSS_GUARD_COMPRESS_ATR", "2.0"))
+LOSS_GUARD_COMPRESS_VOL = float(os.getenv("LOSS_GUARD_COMPRESS_VOL", "1.5"))
+LOSS_GUARD_COMPRESS_RATIO = float(os.getenv("LOSS_GUARD_COMPRESS_RATIO", "0.7"))
+SPREAD_OVERRIDE_MACRO_PIPS = float(os.getenv("SPREAD_OVERRIDE_MACRO_PIPS", "1.40"))
+SPREAD_OVERRIDE_MICRO_PIPS = float(os.getenv("SPREAD_OVERRIDE_MICRO_PIPS", "1.15"))
+MACRO_STALE_DISABLE_SEC = float(os.getenv("MACRO_STALE_DISABLE_SEC", "2400"))
 MICRO_SPREAD_DAMP_PIPS = (
     float(os.getenv("MICRO_SPREAD_WARN_PIPS", "0.80")),
     float(os.getenv("MICRO_SPREAD_ALERT_PIPS", "1.00")),
@@ -265,6 +277,9 @@ def _env_set(name: str, default: str = "") -> set[str]:
 MANUAL_SENTINEL_BLOCK_POCKETS = _env_set("MANUAL_SENTINEL_BLOCK_POCKETS", "")
 MANUAL_SENTINEL_RELEASE_CYCLES = max(
     1, int(os.getenv("MANUAL_SENTINEL_RELEASE_CYCLES", "2"))
+)
+MANUAL_SENTINEL_STALE_RELEASE_SEC = max(
+    0.0, float(os.getenv("MANUAL_SENTINEL_STALE_RELEASE_SEC", "90"))
 )
 _MANUAL_SENTINEL_ACTIVE = False
 _MANUAL_SENTINEL_CLEAR_STREAK = 0
@@ -324,7 +339,7 @@ def _derive_min_hold_seconds(
     return round(scaled, 1)
 
 
-def _derive_loss_guard_pips(signal: Dict[str, Any], pocket: str) -> float:
+def _derive_loss_guard_pips(signal: Dict[str, Any], pocket: str, fac_m1: Dict[str, Any]) -> float:
     explicit = signal.get("loss_guard_pips") or signal.get("loss_grace_pips")
     val = _to_float(explicit)
     if val is not None:
@@ -337,7 +352,19 @@ def _derive_loss_guard_pips(signal: Dict[str, Any], pocket: str) -> float:
         guard = max(guard, tp * 0.35)
     if sl > 0:
         guard = min(guard, sl * 0.7)
-    return round(max(0.3, guard), 2)
+    guard = max(0.3, guard)
+    if pocket in {"macro", "micro"}:
+        atr_hint = _atr_hint_pips(fac_m1)
+        vol_raw = fac_m1.get("vol_5m")
+        try:
+            vol_recent = float(vol_raw) if vol_raw is not None else None
+        except (TypeError, ValueError):
+            vol_recent = None
+        if atr_hint >= LOSS_GUARD_COMPRESS_ATR and (
+            vol_recent is None or vol_recent >= LOSS_GUARD_COMPRESS_VOL
+        ):
+            guard = max(0.25, guard * LOSS_GUARD_COMPRESS_RATIO)
+    return round(guard, 2)
 
 
 def _extract_profile_name(raw_signal: Dict[str, Any], strategy_name: str) -> str:
@@ -348,6 +375,15 @@ def _extract_profile_name(raw_signal: Dict[str, Any], strategy_name: str) -> str
 
 
 def _manual_sentinel_state(open_positions: Dict[str, Dict]) -> tuple[bool, int, str]:
+    meta = open_positions.get("__meta__", {}) if open_positions else {}
+    stale = bool(meta.get("stale"))
+    age = float(meta.get("age_sec") or 0.0)
+    if (
+        stale
+        and MANUAL_SENTINEL_STALE_RELEASE_SEC > 0.0
+        and age >= MANUAL_SENTINEL_STALE_RELEASE_SEC
+    ):
+        return False, 0, f"stale:{age:.0f}s"
     total_units = 0
     pockets: list[str] = []
     for name in MANUAL_SENTINEL_POCKETS:
@@ -752,14 +788,21 @@ def _publish_policy_snapshot(
         entry_allow = (
             pocket in focus_pockets
             and (pocket != "macro" or not range_active)
-            and not spread_gate_active
         )
+        spread_override = False
+        if spread_gate_active:
+            if pocket == "macro" and spread_macro_relaxed:
+                spread_override = True
+            elif pocket in {"micro", "scalp"} and spread_micro_relaxed:
+                spread_override = True
+            if not spread_override:
+                entry_allow = False
         if pocket in {"micro", "scalp"} and event_soon:
             entry_allow = False
         entry_gates = {
             "allow_new": entry_allow,
             "require_retest": range_active and pocket != "macro",
-            "spread_ok": not spread_gate_active,
+            "spread_ok": (not spread_gate_active) or spread_override,
             "event_ok": not event_soon or pocket == "macro",
         }
         exit_profile = {
@@ -1308,6 +1351,28 @@ async def logic_loop():
                         f">= {spread_snapshot['limit_pips']:.2f}p"
                     )
             spread_gate_active = bool(spread_gate_reason)
+            spread_macro_relaxed = (
+                spread_gate_active
+                and spread_live_pips is not None
+                and spread_live_pips <= SPREAD_OVERRIDE_MACRO_PIPS
+            )
+            spread_micro_relaxed = (
+                spread_gate_active
+                and spread_live_pips is not None
+                and spread_live_pips <= SPREAD_OVERRIDE_MICRO_PIPS
+            )
+            if spread_macro_relaxed and spread_gate_active:
+                logging.info(
+                    "[SPREAD] macro override active (%.2fp <= %.2fp)",
+                    spread_live_pips or -1.0,
+                    SPREAD_OVERRIDE_MACRO_PIPS,
+                )
+            if spread_micro_relaxed and spread_gate_active:
+                logging.info(
+                    "[SPREAD] micro override active (%.2fp <= %.2fp)",
+                    spread_live_pips or -1.0,
+                    SPREAD_OVERRIDE_MICRO_PIPS,
+                )
             if spread_live_pips is not None:
                 fac_m1["spread_pips"] = spread_live_pips
                 fac_h4["spread_pips"] = spread_live_pips
@@ -1590,7 +1655,11 @@ async def logic_loop():
                         weight,
                     )
             focus_pockets = set(FOCUS_POCKETS.get(focus_tag, ("macro", "micro", "scalp")))
-            if macro_snapshot_stale and "macro" in focus_pockets:
+            if (
+                macro_snapshot_stale
+                and macro_snapshot_age >= MACRO_STALE_DISABLE_SEC
+                and "macro" in focus_pockets
+            ):
                 focus_pockets.discard("macro")
                 logging.info(
                     "[MACRO] Disabled macro pocket until snapshot refresh (age=%.1fs).",
@@ -1804,7 +1873,7 @@ async def logic_loop():
                 signal["min_hold_sec"] = _derive_min_hold_seconds(
                     signal, cls.pocket, fac_m1
                 )
-                signal["loss_guard_pips"] = _derive_loss_guard_pips(signal, cls.pocket)
+                signal["loss_guard_pips"] = _derive_loss_guard_pips(signal, cls.pocket, fac_m1)
                 signal["health"] = {
                     "win_rate": health.win_rate,
                     "pf": health.profit_factor,
@@ -2153,6 +2222,45 @@ async def logic_loop():
                     scalp_share = DEFAULT_SCALP_SHARE
             update_dd_context(account_equity, weight, scalp_share)
             lots = alloc(lot_total, weight, scalp_share=scalp_share)
+            macro_bias = macro_state.bias(TARGET_INSTRUMENT)
+            if (
+                MACRO_LOT_BOOST > 1.0
+                and lots.get("macro", 0.0) > 0.0
+                and weight >= MACRO_LOT_BOOST_WEIGHT
+                and abs(macro_bias) >= MACRO_LOT_BIAS_MIN
+            ):
+                boosted = round(lots["macro"] * MACRO_LOT_BOOST, 3)
+                lots["macro"] = boosted
+                total_alloc = round(sum(lots.values()), 3)
+                target_total = round(lot_total, 3)
+                if target_total > 0 and total_alloc > target_total:
+                    scale = target_total / total_alloc
+                    for key in list(lots.keys()):
+                        lots[key] = round(lots[key] * scale, 3)
+                logging.info(
+                    "[MACRO] boosted pocket bias=%.2f weight=%.2f lot=%.3f",
+                    macro_bias,
+                    weight,
+                    lots["macro"],
+                )
+            elif lots.get("macro", 0.0) > 0.0:
+                bias_strength = abs(macro_bias)
+                if bias_strength <= MACRO_LOT_DISABLE_THRESHOLD:
+                    logging.info(
+                        "[MACRO] bias %.2f neutral; disabling macro pocket for this cycle",
+                        macro_bias,
+                    )
+                    lots["macro"] = 0.0
+                elif bias_strength < MACRO_LOT_BIAS_MIN and MACRO_LOT_REDUCTION_FACTOR < 1.0:
+                    reduced = round(lots["macro"] * MACRO_LOT_REDUCTION_FACTOR, 3)
+                    floor_hint = round(max(0.0, lot_total * MACRO_LOT_MIN_FRACTION), 3)
+                    logging.info(
+                        "[MACRO] reducing lot due to weak bias %.2f => %.3f (floor %.3f)",
+                        macro_bias,
+                        reduced,
+                        floor_hint,
+                    )
+                    lots["macro"] = max(floor_hint, reduced)
             for pocket_key in list(lots.keys()):
                 if pocket_key not in focus_pockets:
                     lots[pocket_key] = 0.0

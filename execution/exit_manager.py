@@ -24,6 +24,18 @@ if TYPE_CHECKING:
     from execution.stage_tracker import StageTracker
 
 
+def _in_jst_window(now: datetime, start_hour: int, end_hour: int) -> bool:
+    """Return True when UTC time falls within the specified JST window."""
+    start = start_hour % 24
+    end = end_hour % 24
+    current = now if now.tzinfo else now.replace(tzinfo=timezone.utc)
+    jst = current + timedelta(hours=9)
+    hour = jst.hour
+    if start <= end:
+        return start <= hour < end
+    return hour >= start or hour < end
+
+
 @dataclass
 class ExitDecision:
     pocket: str
@@ -68,6 +80,21 @@ class ExitManager:
         # Scalp pocket guard rails
         self._scalp_min_hold_seconds = float(os.getenv("EXIT_SCALP_MIN_HOLD_SEC", "45"))
         self._scalp_loss_grace_pips = float(os.getenv("EXIT_SCALP_GUARD_LOSS_PIPS", "2.0"))
+        # TrendMA / volatility-specific garde rails
+        self._trendma_partial_fraction = float(os.getenv("EXIT_TRENDMA_PARTIAL_FRACTION", "0.5"))
+        self._trendma_partial_profit_cap = float(os.getenv("EXIT_TRENDMA_PARTIAL_PROFIT_CAP", "3.4"))
+        self._vol_partial_atr_min = float(os.getenv("EXIT_VOL_PARTIAL_ATR_MIN", "1.5"))
+        self._vol_partial_atr_max = float(os.getenv("EXIT_VOL_PARTIAL_ATR_MAX", "2.6"))
+        self._vol_partial_fraction = float(os.getenv("EXIT_VOL_PARTIAL_FRACTION", "0.66"))
+        self._vol_partial_profit_floor = float(os.getenv("EXIT_VOL_PARTIAL_PROFIT_FLOOR", "2.4"))
+        self._vol_ema_release_gap = float(os.getenv("EXIT_VOL_EMA_RELEASE_GAP", "1.0"))
+        self._profit_snatch_min = float(os.getenv("EXIT_SNATCH_MIN_PROFIT_PIPS", "0.3"))
+        self._profit_snatch_max = float(os.getenv("EXIT_SNATCH_MAX_PROFIT_PIPS", "0.8"))
+        self._profit_snatch_hold = float(os.getenv("EXIT_SNATCH_MIN_HOLD_SEC", "70"))
+        self._profit_snatch_atr_min = float(os.getenv("EXIT_SNATCH_ATR_MIN", "1.6"))
+        self._profit_snatch_vol_min = float(os.getenv("EXIT_SNATCH_VOL5M_MIN", "1.2"))
+        self._profit_snatch_jst_start = int(os.getenv("EXIT_SNATCH_JST_START", "0")) % 24
+        self._profit_snatch_jst_end = int(os.getenv("EXIT_SNATCH_JST_END", "6")) % 24
 
     def plan_closures(
         self,
@@ -197,6 +224,30 @@ class ExitManager:
         value = atr_ref * (0.08 if matured else 0.06)
         return max(0.8, min(1.6, value))
 
+    def _macro_slowdown_detected(
+        self,
+        *,
+        profit_pips: float,
+        adx: float,
+        rsi: float,
+        projection_fast: Optional[MACrossProjection],
+        close_price: float,
+        ema20: float,
+        atr_pips: float,
+    ) -> bool:
+        if profit_pips < 1.2 or close_price is None or ema20 is None:
+            return False
+        buffer = max(0.8, (atr_pips or 6.0) * 0.35)
+        momentum_band = (profit_pips <= max(8.0, (atr_pips or 6.0) * 1.2))
+        ema_gap_pips = (close_price - ema20) / 0.01
+        ema_cooling = ema_gap_pips <= buffer
+        adx_fade = adx <= self._macro_trend_adx
+        rsi_fade = rsi <= 58.0
+        slope_fade = True
+        if projection_fast is not None:
+            slope_fade = projection_fast.gap_slope_pips < 0.08
+        return momentum_band and ema_cooling and slope_fade and (adx_fade or rsi_fade)
+
     def _evaluate_long(
         self,
         pocket: str,
@@ -285,6 +336,69 @@ class ExitManager:
                 open_info, "long", now, self._macro_min_hold_minutes
             )
             loss_cap = self._macro_loss_cap(atr_pips, matured_macro)
+
+        ema_gap_pips = None
+        if close_price is not None and ema20 is not None:
+            ema_gap_pips = (close_price - ema20) / 0.01
+
+        if pocket == "macro":
+            partial_units = self._trendma_partial_exit_units(
+                open_info=open_info,
+                side="long",
+                units=units,
+                profit_pips=profit_pips,
+                adx=adx,
+                rsi=rsi,
+                projection_fast=projection_fast,
+                atr_pips=atr_pips,
+                loss_cap=loss_cap,
+            )
+            if partial_units:
+                return ExitDecision(
+                    pocket=pocket,
+                    units=partial_units,
+                    reason="trendma_partial",
+                    tag="trendma-decay",
+                    allow_reentry=True,
+                )
+            if (
+                close_price is not None
+                and ema20 is not None
+                and self._macro_slowdown_detected(
+                    profit_pips=profit_pips,
+                    adx=adx,
+                    rsi=rsi,
+                    projection_fast=projection_fast,
+                    close_price=close_price,
+                    ema20=ema20,
+                    atr_pips=atr_pips,
+                )
+            ):
+                partial_units = max(1000, (units // 2))
+                if partial_units < units:
+                    return ExitDecision(
+                        pocket=pocket,
+                        units=-partial_units,
+                        reason="macro_slowdown",
+                        tag="macro-slowdown",
+                        allow_reentry=True,
+                    )
+            vol_partial = self._vol_partial_exit_units(
+                pocket=pocket,
+                side="long",
+                units=units,
+                profit_pips=profit_pips,
+                atr_pips=atr_pips,
+                ema_gap_pips=ema_gap_pips,
+            )
+            if vol_partial:
+                return ExitDecision(
+                    pocket=pocket,
+                    units=vol_partial,
+                    reason="macro_vol_partial",
+                    tag="macro-vol-partial",
+                    allow_reentry=True,
+                )
 
         # Do not act on fresh macro trades unless conditions are clearly adverse
         if reverse_signal and pocket == "macro" and not range_mode:
@@ -405,6 +519,25 @@ class ExitManager:
                 return None
             elif profit_pips <= -1.0:
                 reason = "range_stop"
+        elif self._ema_release_ready(
+            pocket=pocket,
+            profit_pips=profit_pips,
+            atr_pips=atr_pips,
+            close_price=close_price,
+            ema20=ema20,
+        ):
+            reason = "macro_ema_release"
+        elif self._profit_snatch_ready(
+            pocket=pocket,
+            side="long",
+            open_info=open_info,
+            profit_pips=profit_pips,
+            atr_pips=atr_pips,
+            fac_m1=fac_m1,
+            now=now,
+        ):
+            reason = "micro_profit_snatch"
+            allow_reentry = True
 
         # Structure-based kill-line: if macro and M5 pivot breaks beyond cushion, exit decisively
         if pocket == "macro" and not reason:
@@ -522,6 +655,47 @@ class ExitManager:
             )
             loss_cap = self._macro_loss_cap(atr_pips, matured_macro)
 
+        ema_gap_pips = None
+        if close_price is not None and ema20 is not None:
+            ema_gap_pips = (close_price - ema20) / 0.01
+
+        if pocket == "macro":
+            partial_units = self._trendma_partial_exit_units(
+                open_info=open_info,
+                side="short",
+                units=units,
+                profit_pips=profit_pips,
+                adx=adx,
+                rsi=rsi,
+                projection_fast=projection_fast,
+                atr_pips=atr_pips,
+                loss_cap=loss_cap,
+            )
+            if partial_units:
+                return ExitDecision(
+                    pocket=pocket,
+                    units=partial_units,
+                    reason="trendma_partial",
+                    tag="trendma-decay",
+                    allow_reentry=True,
+                )
+            vol_partial = self._vol_partial_exit_units(
+                pocket=pocket,
+                side="short",
+                units=units,
+                profit_pips=profit_pips,
+                atr_pips=atr_pips,
+                ema_gap_pips=ema_gap_pips,
+            )
+            if vol_partial:
+                return ExitDecision(
+                    pocket=pocket,
+                    units=vol_partial,
+                    reason="macro_vol_partial",
+                    tag="macro-vol-partial",
+                    allow_reentry=True,
+                )
+
         if (
             pocket == "micro"
             and profit_pips <= -4.0
@@ -636,6 +810,25 @@ class ExitManager:
                 return None
             elif profit_pips <= -1.0:
                 reason = "range_stop"
+        elif self._ema_release_ready(
+            pocket=pocket,
+            profit_pips=profit_pips,
+            atr_pips=atr_pips,
+            close_price=close_price,
+            ema20=ema20,
+        ):
+            reason = "macro_ema_release"
+        elif self._profit_snatch_ready(
+            pocket=pocket,
+            side="short",
+            open_info=open_info,
+            profit_pips=profit_pips,
+            atr_pips=atr_pips,
+            fac_m1=fac_m1,
+            now=now,
+        ):
+            reason = "micro_profit_snatch"
+            allow_reentry = True
 
         if pocket == "macro" and not reason:
             kill_reason = self._structure_break_if_any(
@@ -1226,6 +1419,156 @@ class ExitManager:
         if not isinstance(thesis, dict):
             thesis = {}
         return thesis
+
+    def _has_strategy(
+        self,
+        open_info: Dict,
+        strategy_keyword: str,
+        side: Optional[str] = None,
+    ) -> bool:
+        trades = open_info.get("open_trades") or []
+        for tr in trades:
+            if side and tr.get("side") != side:
+                continue
+            tag = tr.get("strategy_tag")
+            if isinstance(tag, str) and strategy_keyword in tag:
+                return True
+            thesis = self._parse_entry_thesis(tr)
+            strat = thesis.get("strategy_tag") or thesis.get("strategy")
+            if isinstance(strat, str) and strategy_keyword in strat:
+                return True
+        return False
+
+    def _trendma_partial_exit_units(
+        self,
+        *,
+        open_info: Dict,
+        side: str,
+        units: int,
+        profit_pips: float,
+        adx: float,
+        rsi: float,
+        projection_fast: Optional[MACrossProjection],
+        atr_pips: float,
+        loss_cap: Optional[float],
+    ) -> Optional[int]:
+        if not self._has_strategy(open_info, "TrendMA", side):
+            return None
+        if profit_pips is None or profit_pips <= 0.25:
+            return None
+        atr_val = float(atr_pips or 0.0)
+        cap = loss_cap or max(1.8, atr_val * 0.8)
+        profit_ceiling = max(self._trendma_partial_profit_cap, cap * 1.25)
+        if profit_pips > profit_ceiling:
+            return None
+        slope = None
+        if projection_fast is not None:
+            try:
+                slope = float(projection_fast.gap_slope_pips or 0.0)
+            except Exception:
+                slope = None
+        slope_fade = False
+        if slope is not None:
+            if side == "long":
+                slope_fade = slope <= 0.02
+            else:
+                slope_fade = slope >= -0.02
+        adx_fade = adx <= self._macro_trend_adx + 1.5
+        if side == "long":
+            rsi_fade = rsi <= 56.0
+        else:
+            rsi_fade = rsi >= 44.0
+        if not (slope_fade or (adx_fade and rsi_fade)):
+            return None
+        reduce_units = max(1000, int(abs(units) * self._trendma_partial_fraction))
+        if reduce_units >= abs(units):
+            reduce_units = abs(units) - 1000
+        if reduce_units <= 0:
+            return None
+        return -reduce_units if side == "long" else reduce_units
+
+    def _vol_partial_exit_units(
+        self,
+        *,
+        pocket: str,
+        side: str,
+        units: int,
+        profit_pips: float,
+        atr_pips: float,
+        ema_gap_pips: Optional[float],
+    ) -> Optional[int]:
+        if pocket != "macro":
+            return None
+        atr_val = float(atr_pips or 0.0)
+        if atr_val < self._vol_partial_atr_min:
+            return None
+        profit_floor = max(self._vol_partial_profit_floor, atr_val * 1.6)
+        if profit_pips is None or profit_pips < profit_floor:
+            return None
+        if ema_gap_pips is not None and abs(ema_gap_pips) > atr_val * 2.5:
+            return None
+        fraction = self._vol_partial_fraction
+        if atr_val >= self._vol_partial_atr_max:
+            fraction = max(0.5, fraction * 0.85)
+        reduce_units = max(1000, int(abs(units) * fraction))
+        if reduce_units >= abs(units):
+            reduce_units = abs(units) - 1000
+        if reduce_units <= 0:
+            return None
+        return -reduce_units if side == "long" else reduce_units
+
+    def _ema_release_ready(
+        self,
+        *,
+        pocket: str,
+        profit_pips: float,
+        atr_pips: float,
+        close_price: float,
+        ema20: float,
+    ) -> bool:
+        if pocket != "macro":
+            return False
+        if profit_pips is None or profit_pips <= 0.0:
+            return False
+        atr_val = float(atr_pips or 0.0)
+        if atr_val < self._vol_partial_atr_min:
+            return False
+        if close_price is None or ema20 is None:
+            return False
+        ema_gap = (close_price - ema20) / 0.01
+        return abs(ema_gap) <= self._vol_ema_release_gap
+
+    def _profit_snatch_ready(
+        self,
+        *,
+        pocket: str,
+        side: str,
+        open_info: Dict,
+        profit_pips: float,
+        atr_pips: float,
+        fac_m1: Dict,
+        now: datetime,
+    ) -> bool:
+        if pocket not in {"macro", "micro"}:
+            return False
+        if profit_pips is None:
+            return False
+        if not (self._profit_snatch_min <= profit_pips <= self._profit_snatch_max):
+            return False
+        atr_val = float(atr_pips or 0.0)
+        if atr_val < self._profit_snatch_atr_min:
+            return False
+        vol = fac_m1.get("vol_5m")
+        try:
+            vol_val = float(vol) if vol is not None else None
+        except (TypeError, ValueError):
+            vol_val = None
+        if vol_val is not None and vol_val < self._profit_snatch_vol_min:
+            return False
+        if not _in_jst_window(now, self._profit_snatch_jst_start, self._profit_snatch_jst_end):
+            return False
+        age = self._youngest_trade_age_seconds(open_info, side, now) or 0.0
+        return age >= self._profit_snatch_hold
 
     @staticmethod
     def _parse_open_time(value: Optional[str]) -> Optional[datetime]:
