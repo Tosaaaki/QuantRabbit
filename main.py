@@ -935,6 +935,8 @@ def _build_pocket_plan(
     event_soon: bool,
     spread_gate_active: bool,
     spread_gate_reason: str,
+    spread_macro_relaxed: bool = False,
+    spread_micro_relaxed: bool = False,
     spread_log_context: str,
     lot_allocation: float,
     risk_override: float,
@@ -956,6 +958,8 @@ def _build_pocket_plan(
     plan_notes.setdefault("range_reason", range_ctx_info["reason"])
     plan_notes.setdefault("range_score", range_ctx_info["score"])
     plan_notes.setdefault("usd_long_cap_lot", _EXPOSURE_USD_LONG_MAX_LOT)
+    plan_notes.setdefault("spread_macro_relaxed", spread_macro_relaxed)
+    plan_notes.setdefault("spread_micro_relaxed", spread_micro_relaxed)
     factors_m1_view = {
         k: v for k, v in (fac_m1 or {}).items() if k != "candles"
     }
@@ -997,6 +1001,8 @@ def _publish_pocket_plans(
     event_soon: bool,
     spread_gate_active: bool,
     spread_gate_reason: str,
+    spread_macro_relaxed: bool = False,
+    spread_micro_relaxed: bool = False,
     spread_log_context: str,
     lots: dict[str, float],
     risk_override: float,
@@ -1025,6 +1031,8 @@ def _publish_pocket_plans(
             event_soon=event_soon,
             spread_gate_active=spread_gate_active,
             spread_gate_reason=spread_gate_reason,
+            spread_macro_relaxed=spread_macro_relaxed if pocket == "macro" else False,
+            spread_micro_relaxed=spread_micro_relaxed if pocket != "macro" else False,
             spread_log_context=spread_log_context,
             lot_allocation=lots.get(pocket, 0.0),
             risk_override=risk_override,
