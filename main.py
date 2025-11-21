@@ -7,6 +7,7 @@ import subprocess
 import sys
 import traceback
 import time
+import json
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
 from collections import defaultdict
@@ -228,6 +229,11 @@ MACRO_LOT_BIAS_MIN = float(os.getenv("MACRO_LOT_BIAS_MIN", "0.2"))
 MACRO_LOT_REDUCTION_FACTOR = float(os.getenv("MACRO_LOT_REDUCTION_FACTOR", "0.75"))
 MACRO_LOT_MIN_FRACTION = float(os.getenv("MACRO_LOT_MIN_FRACTION", "0.12"))
 MACRO_LOT_DISABLE_THRESHOLD = float(os.getenv("MACRO_LOT_DISABLE_THRESHOLD", "0.05"))
+MICRO_BIAS_REDUCTION_THRESHOLD = float(os.getenv("MICRO_BIAS_REDUCTION_THRESHOLD", "0.2"))
+MICRO_BIAS_DISABLE_THRESHOLD = float(os.getenv("MICRO_BIAS_DISABLE_THRESHOLD", "0.08"))
+MICRO_BIAS_REDUCTION_FACTOR = float(os.getenv("MICRO_BIAS_REDUCTION_FACTOR", "0.4"))
+TARGET_MARGIN_USAGE = float(os.getenv("TARGET_MARGIN_USAGE", "0.92"))
+MAX_MARGIN_USAGE_BOOST = float(os.getenv("MAX_MARGIN_USAGE_BOOST", "1.35"))
 LOSS_GUARD_COMPRESS_ATR = float(os.getenv("LOSS_GUARD_COMPRESS_ATR", "2.0"))
 LOSS_GUARD_COMPRESS_VOL = float(os.getenv("LOSS_GUARD_COMPRESS_VOL", "1.5"))
 LOSS_GUARD_COMPRESS_RATIO = float(os.getenv("LOSS_GUARD_COMPRESS_RATIO", "0.7"))
@@ -365,6 +371,71 @@ def _derive_loss_guard_pips(signal: Dict[str, Any], pocket: str, fac_m1: Dict[st
         ):
             guard = max(0.25, guard * LOSS_GUARD_COMPRESS_RATIO)
     return round(guard, 2)
+
+
+def _parse_trade_entry_thesis(trade: Dict[str, Any]) -> Dict[str, Any]:
+    thesis = trade.get("entry_thesis")
+    if isinstance(thesis, str):
+        try:
+            thesis = json.loads(thesis)
+        except Exception:
+            thesis = {}
+    if not isinstance(thesis, dict):
+        thesis = {}
+    return thesis
+
+
+def _strategy_position_snapshot(
+    open_info: Dict[str, Any] | None,
+    direction: str,
+    strategy_tag: Optional[str],
+    fallback_price: Optional[float],
+) -> tuple[int, Optional[float]]:
+    if not open_info:
+        return 0, fallback_price
+    key_units = "long_units" if direction == "long" else "short_units"
+    key_avg = "long_avg_price" if direction == "long" else "short_avg_price"
+    if not strategy_tag:
+        try:
+            units = int(open_info.get(key_units, 0) or 0)
+        except (TypeError, ValueError):
+            units = 0
+        avg = open_info.get(key_avg)
+        if avg is None:
+            avg = fallback_price
+        return max(units, 0), avg
+    trades = open_info.get("open_trades") or []
+    total_units = 0
+    weighted_price = 0.0
+    for tr in trades:
+        if tr.get("side") != direction:
+            continue
+        tag = tr.get("strategy_tag")
+        if not tag:
+            thesis = _parse_trade_entry_thesis(tr)
+            tag = thesis.get("strategy_tag") or thesis.get("strategy")
+        if tag != strategy_tag:
+            continue
+        try:
+            units = abs(int(tr.get("units", 0) or 0))
+        except (TypeError, ValueError):
+            units = 0
+        if units <= 0:
+            continue
+        total_units += units
+        price_raw = tr.get("price")
+        try:
+            price_val = float(price_raw)
+        except (TypeError, ValueError):
+            price_val = fallback_price
+        if price_val is not None:
+            weighted_price += price_val * units
+    avg_price = fallback_price
+    if total_units and weighted_price > 0.0:
+        avg_price = weighted_price / total_units
+    elif total_units and avg_price is None:
+        avg_price = fallback_price
+    return total_units, avg_price
 
 
 def _extract_profile_name(raw_signal: Dict[str, Any], strategy_name: str) -> str:
@@ -2203,6 +2274,27 @@ async def logic_loop():
             )
             if exposure_cap_lot is not None:
                 lot_total = min(lot_total, exposure_cap_lot)
+            if (
+                exposure_state
+                and exposure_cap_lot is not None
+                and TARGET_MARGIN_USAGE > 0.0
+            ):
+                current_usage = max(exposure_state.ratio(), 0.0)
+                if current_usage + 1e-6 < TARGET_MARGIN_USAGE:
+                    deficit = TARGET_MARGIN_USAGE - current_usage
+                    boost = min(
+                        MAX_MARGIN_USAGE_BOOST,
+                        1.0 + deficit / max(TARGET_MARGIN_USAGE, 1e-3),
+                    )
+                    boosted_lot = lot_total * boost
+                    lot_total = min(boosted_lot, exposure_cap_lot)
+                    logging.info(
+                        "[EXPOSURE] boosted lot %.3f (ratio %.3f target %.2f boost=%.2f)",
+                        lot_total,
+                        current_usage,
+                        TARGET_MARGIN_USAGE,
+                        boost,
+                    )
             requested_pockets = {
                 STRATEGIES[s].pocket
                 for s in ranked_strategies
@@ -2261,6 +2353,22 @@ async def logic_loop():
                         floor_hint,
                     )
                     lots["macro"] = max(floor_hint, reduced)
+            if lots.get("micro", 0.0) > 0.0:
+                bias_strength = abs(macro_bias)
+                if bias_strength <= MICRO_BIAS_DISABLE_THRESHOLD:
+                    logging.info(
+                        "[MICRO] bias %.2f neutral; suppressing micro entries",
+                        macro_bias,
+                    )
+                    lots["micro"] = 0.0
+                elif bias_strength < MICRO_BIAS_REDUCTION_THRESHOLD and MICRO_BIAS_REDUCTION_FACTOR < 1.0:
+                    reduced = round(lots["micro"] * MICRO_BIAS_REDUCTION_FACTOR, 3)
+                    logging.info(
+                        "[MICRO] reducing lot due to weak bias %.2f => %.3f",
+                        macro_bias,
+                        reduced,
+                    )
+                    lots["micro"] = reduced
             for pocket_key in list(lots.keys()):
                 if pocket_key not in focus_pockets:
                     lots[pocket_key] = 0.0
@@ -2303,6 +2411,7 @@ async def logic_loop():
             usd_long_cap_units = int(_EXPOSURE_USD_LONG_MAX_LOT * 100000)
             projected_usd_long_units = max(0, net_units)
             margin_guard_logged = False
+            pocket_allocations: dict[str, dict[str, float]] = defaultdict(lambda: {"long": 0.0, "short": 0.0})
             for signal in evaluated_signals:
                 pocket = signal["pocket"]
                 action = signal.get("action")
@@ -2388,9 +2497,26 @@ async def logic_loop():
                 if total_lot_for_pocket <= 0:
                     continue
 
+                dir_key = "long" if action == "OPEN_LONG" else "short"
+                allocated_lot = pocket_allocations[pocket][dir_key]
+                remaining_lot = max(0.0, total_lot_for_pocket - allocated_lot)
+                if remaining_lot <= 0.0:
+                    logging.info(
+                        "[POCKET] %s %s allocation exhausted (%.3f lot). Skip %s.",
+                        pocket,
+                        dir_key,
+                        allocated_lot,
+                        signal["strategy"],
+                    )
+                    continue
+
                 confidence = max(0, min(100, signal.get("confidence", 50)))
                 confidence_factor = max(0.2, confidence / 100.0)
                 confidence_target = round(total_lot_for_pocket * confidence_factor, 3)
+                if confidence_target <= 0:
+                    continue
+                if confidence_target > remaining_lot:
+                    confidence_target = round(remaining_lot, 3)
                 if confidence_target <= 0:
                     continue
 
@@ -2429,14 +2555,21 @@ async def logic_loop():
                         quote_ask = float(spread_state.get("ask") or 0.0)
                     except (TypeError, ValueError):
                         quote_ask = None
-                if action == "OPEN_LONG":
-                    open_units = int(open_info.get("long_units", 0))
-                    ref_price = open_info.get("long_avg_price")
-                    direction = "long"
-                else:
-                    open_units = int(open_info.get("short_units", 0))
-                    ref_price = open_info.get("short_avg_price")
-                    direction = "short"
+                direction = "long" if action == "OPEN_LONG" else "short"
+                ref_price = (
+                    open_info.get("long_avg_price")
+                    if direction == "long"
+                    else open_info.get("short_avg_price")
+                ) if open_info else None
+                strategy_tag = signal.get("tag") or signal.get("strategy")
+                open_units, strategy_avg_price = _strategy_position_snapshot(
+                    open_info,
+                    direction,
+                    strategy_tag,
+                    price,
+                )
+                if strategy_avg_price is not None:
+                    ref_price = strategy_avg_price
 
                 size_factor = stage_tracker.size_multiplier(pocket, direction)
                 if size_factor < 0.999:
@@ -2538,6 +2671,7 @@ async def logic_loop():
                     "sl_pips": sl_pips,
                     "tp_pips": tp_pips,
                 }
+                pocket_allocations[pocket][dir_key] += staged_lot
                 trade_id = await market_order(
                     "USD_JPY",
                     units,
