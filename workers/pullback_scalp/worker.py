@@ -62,14 +62,30 @@ def _rsi(values: list[float], period: int) -> Optional[float]:
     return 100.0 - (100.0 / (1.0 + rs))
 
 
-def _atr(values: list[float], period: int) -> float:
-    if len(values) <= 1:
+def _atr_from_ticks(ticks: list[dict], window_seconds: float) -> float:
+    if len(ticks) < 2:
         return 0.0
-    true_ranges = [abs(values[i] - values[i - 1]) for i in range(1, len(values))]
-    period = min(period, len(true_ranges))
-    if period <= 0:
-        return 0.0
-    return (sum(true_ranges[-period:]) / period) / config.PIP_VALUE
+    now_epoch = float(ticks[-1].get("epoch") or 0.0)
+    cutoff = now_epoch - max(10.0, window_seconds)
+    filtered: list[float] = []
+    for row in reversed(ticks):
+        try:
+            epoch = float(row.get("epoch") or 0.0)
+            mid = float(row.get("mid") or 0.0)
+        except (TypeError, ValueError):
+            continue
+        if epoch < cutoff and filtered:
+            break
+        filtered.append(mid)
+    filtered.reverse()
+    if len(filtered) < 2:
+        filtered = [float(ticks[-2].get("mid") or 0.0), float(ticks[-1].get("mid") or 0.0)]
+    tr_sum = 0.0
+    prev = filtered[0]
+    for mid in filtered[1:]:
+        tr_sum += abs(mid - prev) / config.PIP_VALUE
+        prev = mid
+    return tr_sum / max(len(filtered) - 1, 1)
 
 
 async def pullback_scalp_worker() -> None:
@@ -143,8 +159,10 @@ async def pullback_scalp_worker() -> None:
             if getattr(config, "M1_Z_TRIGGER", 0.0) > 0.0 and abs(z_m1) < config.M1_Z_TRIGGER:
                 continue
             rsi_m1 = _rsi(mids_m1, config.RSI_PERIOD)
-            atr_m1 = _atr(mids_m1, min(12, max(6, config.RSI_PERIOD)))
-            if config.MIN_ATR_PIPS > 0.0 and atr_m1 < config.MIN_ATR_PIPS:
+            atr_fast = _atr_from_ticks(ticks_m1, config.ATR_FAST_WINDOW_SEC)
+            atr_slow = _atr_from_ticks(ticks_m5, config.ATR_SLOW_WINDOW_SEC)
+            atr_ref = max(atr_fast, atr_slow * config.ATR_SLOW_WEIGHT)
+            if config.MIN_ATR_PIPS > 0.0 and atr_ref < config.MIN_ATR_PIPS:
                 continue
 
             side: Optional[str] = None
@@ -177,27 +195,40 @@ async def pullback_scalp_worker() -> None:
             latest_tick = ticks_m1[-1]
             entry_price = float(latest_tick.get("ask")) if side == "long" else float(latest_tick.get("bid"))
 
+            high_vol = bool(
+                config.HIGH_VOL_ATR_PIPS > 0.0 and atr_ref >= config.HIGH_VOL_ATR_PIPS
+            )
             tp_pips = config.TP_PIPS
+            if high_vol:
+                tp_pips = min(tp_pips, config.HIGH_VOL_TP_PIPS)
             tp_price = round(
                 entry_price + tp_pips * config.PIP_VALUE if side == "long" else entry_price - tp_pips * config.PIP_VALUE,
                 3,
             )
             sl_price = None
             if config.USE_INITIAL_SL:
-                sl_pips = max(config.MIN_SL_PIPS, atr_m1 * config.SL_ATR_MULT)
+                sl_pips = max(config.SL_MIN_FLOOR_PIPS, atr_ref * config.SL_ATR_MULT)
+                if high_vol:
+                    sl_pips = min(sl_pips, config.HIGH_VOL_SL_CAP_PIPS)
                 sl_price = round(
                     entry_price - sl_pips * config.PIP_VALUE if side == "long" else entry_price + sl_pips * config.PIP_VALUE,
                     3,
                 )
 
-            units = config.ENTRY_UNITS if side == "long" else -config.ENTRY_UNITS
+            base_units = config.ENTRY_UNITS
+            if high_vol and config.HIGH_VOL_UNIT_FACTOR < 0.999:
+                scaled = int(round(base_units * config.HIGH_VOL_UNIT_FACTOR / 1000.0) * 1000)
+                base_units = max(1000, scaled)
+            units = base_units if side == "long" else -base_units
             client_id = _client_id(side)
             thesis = {
                 "strategy_tag": "pullback_scalp",
                 "z_m1": None if z_m1 is None else round(z_m1, 2),
                 "z_m5": None if z_m5 is None else round(z_m5, 2),
                 "rsi_m1": None if rsi_m1 is None else round(rsi_m1, 1),
-                "atr_m1_pips": round(atr_m1, 2),
+                "atr_fast_pips": round(atr_fast, 2),
+                "atr_slow_pips": round(atr_slow, 2),
+                "atr_ref_pips": round(atr_ref, 2),
                 "spread_pips": round(spread_pips, 2),
             }
 
