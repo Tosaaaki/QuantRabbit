@@ -9,6 +9,9 @@ MIN_DISLOCATION = 1.4  # pips away from ema20
 RSI_LONG_MAX = 38
 RSI_SHORT_MIN = 62
 VOL_MIN = 0.6
+MIN_SL_FLOOR = 1.05
+SL_ATR_MULT = 1.2
+TP_RATIO_MIN = 1.55
 
 
 class ImpulseRetraceScalp:
@@ -72,8 +75,9 @@ class ImpulseRetraceScalp:
         ) -> Dict | None:
             if dist < MIN_DISLOCATION:
                 return None
-            sl = max(0.75, min(atr_pips * 0.9, dist * 0.55))
-            tp = max(sl * 1.35, min(atr_pips * 1.7, sl + dist * 0.65))
+            base_sl = dist * 0.7 + 0.35
+            sl = max(MIN_SL_FLOOR, min(atr_pips * SL_ATR_MULT, base_sl))
+            tp = max(sl * TP_RATIO_MIN, min(atr_pips * 1.9, sl + dist * 0.8))
             confidence = int(
                 max(
                     48,
