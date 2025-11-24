@@ -16,6 +16,7 @@ import pathlib
 from datetime import datetime, timezone, timedelta
 import os
 from typing import Any, Literal, Optional, Tuple
+import requests
 
 from oandapyV20 import API
 from oandapyV20.exceptions import V20Error
@@ -110,6 +111,7 @@ _PARTIAL_CLOSE_RETRY_CODES = {
     "CLOSE_TRADE_UNITS_EXCEED_TRADE_SIZE",
     "POSITION_TO_REDUCE_TOO_SMALL",
 }
+_ORDER_SPREAD_BLOCK_PIPS = float(os.getenv("ORDER_SPREAD_BLOCK_PIPS", "1.2"))
 
 # Max units per new entry order (reduce_only orders are exempt)
 try:
@@ -178,6 +180,36 @@ def _ensure_utc(candidate: Optional[datetime]) -> datetime:
     if candidate.tzinfo is None:
         return candidate.replace(tzinfo=timezone.utc)
     return candidate.astimezone(timezone.utc)
+
+
+def _fetch_quote(instrument: str) -> dict[str, float] | None:
+    """Fetch a single pricing snapshot to derive bid/ask/spread."""
+    try:
+        url = f"https://api-fxtrade.oanda.com/v3/accounts/{ACCOUNT}/pricing"
+        headers = {"Authorization": f"Bearer {TOKEN}"}
+        resp = requests.get(
+            url,
+            params={"instruments": instrument},
+            headers=headers,
+            timeout=5,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        price = (data.get("prices") or [{}])[0]
+        bid = _as_float(price.get("bids", [{}])[0].get("price"))
+        ask = _as_float(price.get("asks", [{}])[0].get("price"))
+        if bid is None or ask is None:
+            return None
+        spread_pips = (ask - bid) / 0.01
+        return {
+            "bid": bid,
+            "ask": ask,
+            "mid": (bid + ask) / 2.0,
+            "spread_pips": spread_pips,
+            "ts": price.get("time") or datetime.now(timezone.utc).isoformat(),
+        }
+    except Exception:
+        return None
 
 
 def _log_order(
@@ -1427,9 +1459,57 @@ async def market_order(
         )
         return None
 
+    quote = _fetch_quote(instrument)
+    if quote and quote.get("spread_pips") is not None:
+        if quote["spread_pips"] >= _ORDER_SPREAD_BLOCK_PIPS and not reduce_only:
+            note = f"spread_block:{quote['spread_pips']:.2f}p"
+            _console_order_log(
+                "OPEN_SKIP",
+                pocket=pocket,
+                strategy_tag=strategy_tag,
+                side=side_label,
+                units=units,
+                sl_price=sl_price,
+                tp_price=tp_price,
+                client_order_id=client_order_id,
+                note=note,
+            )
+            _log_order(
+                pocket=pocket,
+                instrument=instrument,
+                side="buy" if units > 0 else "sell",
+                units=units,
+                sl_price=sl_price,
+                tp_price=tp_price,
+                client_order_id=client_order_id,
+                status="spread_block",
+                attempt=0,
+                request_payload={"quote": quote, "threshold": _ORDER_SPREAD_BLOCK_PIPS},
+            )
+            return None
+
     estimated_entry = _estimate_entry_price(
         units=units, sl_price=sl_price, tp_price=tp_price, meta=meta
     )
+    entry_basis = None
+    if quote:
+        entry_basis = quote["ask"] if units > 0 else quote["bid"]
+        estimated_entry = entry_basis
+    if entry_basis is None and entry_price_meta is not None:
+        entry_basis = entry_price_meta
+
+    # Recalculate SL/TP from thesis gaps using live quote to preserve intended RR
+    if entry_basis is not None:
+        if thesis_sl_pips is not None:
+            if units > 0:
+                sl_price = round(entry_basis - thesis_sl_pips * 0.01, 3)
+            else:
+                sl_price = round(entry_basis + thesis_sl_pips * 0.01, 3)
+        if thesis_tp_pips is not None:
+            if units > 0:
+                tp_price = round(entry_basis + thesis_tp_pips * 0.01, 3)
+            else:
+                tp_price = round(entry_basis - thesis_tp_pips * 0.01, 3)
 
     # Margin preflight (new entriesのみ)
     preflight_units = units
@@ -1610,6 +1690,8 @@ async def market_order(
             attempt_payload["entry_thesis"] = entry_thesis
         if meta is not None:
             attempt_payload["meta"] = meta
+        if quote:
+            attempt_payload["quote"] = quote
         _log_order(
             pocket=pocket,
             instrument=instrument,
