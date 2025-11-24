@@ -241,6 +241,37 @@ class StageTracker:
         self._con.commit()
         return cur.rowcount > 0
 
+    def expire_stages_if_flat(
+        self,
+        positions: Dict[str, Dict],
+        *,
+        now: Optional[datetime] = None,
+        grace_seconds: int = 180,
+    ) -> int:
+        """
+        Reset stale stage states when the direction has been flat for a while.
+        Returns the number of resets performed.
+        """
+        now = _coerce_utc(now)
+        threshold = now - timedelta(seconds=max(1, grace_seconds))
+        resets = 0
+        for pocket, direction, stage, updated_at in self._con.execute(
+            "SELECT pocket, direction, stage, updated_at FROM stage_state WHERE stage>0"
+        ):
+            info = positions.get(pocket) or {}
+            units = int(info.get("long_units" if direction == "long" else "short_units", 0) or 0)
+            if units != 0:
+                continue
+            try:
+                updated_dt = _parse_timestamp(updated_at) if updated_at else None
+            except Exception:
+                updated_dt = None
+            if updated_dt and updated_dt > threshold:
+                continue
+            self.reset_stage(pocket, direction, now=now)
+            resets += 1
+        return resets
+
     def log_hold_violation(
         self,
         pocket: str,

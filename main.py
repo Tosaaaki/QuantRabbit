@@ -2116,6 +2116,18 @@ async def logic_loop():
             open_positions = pos_manager.get_open_positions()
             # Use filtered positions for bot-controlled actions
             managed_positions = filter_bot_managed_positions(open_positions)
+            try:
+                resets = stage_tracker.expire_stages_if_flat(
+                    open_positions, now=now, grace_seconds=STAGE_RESET_GRACE_SECONDS
+                )
+                if resets:
+                    logging.info(
+                        "[STAGE] auto-reset %d stale stages after %.0fs flat",
+                        resets,
+                        STAGE_RESET_GRACE_SECONDS,
+                    )
+            except Exception as exc:  # pragma: no cover - defensive
+                logging.debug("[STAGE] auto-reset failed: %s", exc)
             manual_block_active, manual_units, manual_details = _manual_sentinel_state(
                 open_positions
             )

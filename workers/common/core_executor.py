@@ -95,6 +95,15 @@ class PocketPlanExecutor:
             open_positions = self.pos_manager.get_open_positions()
             managed_positions = filter_bot_managed_positions(open_positions)
 
+        try:
+            resets = self.stage_tracker.expire_stages_if_flat(
+                open_positions, now=now, grace_seconds=180
+            )
+            if resets:
+                LOG.info("%s auto-reset %d stale stages", self.log_prefix, resets)
+        except Exception as exc:  # pragma: no cover - defensive
+            LOG.debug("%s stage reset check failed: %s", self.log_prefix, exc)
+
         self._update_stage_resets(managed_positions, now)
         block_entries = await self._handle_exits(managed_positions, plan, now)
         await self._handle_entries(open_positions, managed_positions, plan, now, block_entries)

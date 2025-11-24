@@ -46,11 +46,18 @@ def _build_client_id(direction: str) -> str:
     return f"qr-onepip-s1-{ts_ms}-{direction.lower()[0]}"
 
 
+def _safe_log_metric(metric: str, value: float, *, tags: Optional[dict] = None) -> None:
+    try:
+        log_metric(metric, value, tags=tags)
+    except Exception as exc:  # pragma: no cover - defensive
+        LOG.debug("%s metric drop %s: %s", config.LOG_PREFIX, metric, exc)
+
+
 async def _cancel_after(order_id: str, ttl_ms: float, pocket: str, client_id: str) -> None:
     await asyncio.sleep(max(ttl_ms, 100.0) / 1000.0)
     success = await cancel_order(order_id=order_id, pocket=pocket, client_order_id=client_id, reason="ttl_cancel")
     if success:
-        log_metric(
+        _safe_log_metric(
             "onepip_maker_ttl_cancel",
             1.0,
             tags={"order_id": order_id, "pocket": pocket},
@@ -174,7 +181,7 @@ async def onepip_maker_s1_worker() -> None:
                         config.MAX_SNAPSHOT_LATENCY_MS,
                     )
                     last_latency_warn = now_mono
-                log_metric(
+                _safe_log_metric(
                     "onepip_maker_skip",
                     1.0,
                     tags={"reason": "latency", "latency_ms": snapshot.latency_ms},
@@ -194,7 +201,7 @@ async def onepip_maker_s1_worker() -> None:
                         config.MIN_TOP_LIQUIDITY,
                     )
                     last_depth_warn = now_mono
-                log_metric(
+                _safe_log_metric(
                     "onepip_maker_skip",
                     1.0,
                     tags={"reason": "depth"},
@@ -231,7 +238,7 @@ async def onepip_maker_s1_worker() -> None:
                 except Exception:
                     bad = False
                 if bad:
-                    log_metric("onepip_maker_skip", 1.0, tags={"reason": reason or "baseline_spread"})
+                    _safe_log_metric("onepip_maker_skip", 1.0, tags={"reason": reason or "baseline_spread"})
                     continue
 
             imbalance = orderbook_state.queue_imbalance(
@@ -261,7 +268,7 @@ async def onepip_maker_s1_worker() -> None:
 
             cost_snapshot = cost_guard.snapshot(window_sec=config.COST_WINDOW_SEC)
             if cost_snapshot.get("count", 0) < config.MIN_COST_SAMPLES:
-                log_metric(
+                _safe_log_metric(
                     "onepip_maker_skip",
                     1.0,
                     tags={"reason": "cost_samples"},
@@ -319,7 +326,7 @@ async def onepip_maker_s1_worker() -> None:
                 if now_mono - last_risk_warn > 20.0:
                     LOG.info("%s pocket risk guard blocked pocket=%s", config.LOG_PREFIX, config.POCKET)
                     last_risk_warn = now_mono
-                log_metric(
+                _safe_log_metric(
                     "onepip_maker_skip",
                     1.0,
                     tags={"reason": "risk_guard", "pocket": config.POCKET},
@@ -330,14 +337,14 @@ async def onepip_maker_s1_worker() -> None:
                 try:
                     account_snapshot = get_account_snapshot()
                     last_account_refresh = now_mono
-                    log_metric(
+                    _safe_log_metric(
                         "onepip_maker_account_nav",
                         float(account_snapshot.nav),
                         tags={"pocket": config.POCKET},
                     )
                 except Exception as exc:  # noqa: BLE001
                     LOG.warning("%s account snapshot failed: %s", config.LOG_PREFIX, exc)
-                    log_metric(
+                    _safe_log_metric(
                         "onepip_maker_account_snapshot_fail",
                         1.0,
                         tags={"error": type(exc).__name__},
@@ -347,7 +354,7 @@ async def onepip_maker_s1_worker() -> None:
 
             equity = float(getattr(account_snapshot, "nav", 0.0) or getattr(account_snapshot, "balance", 0.0))
             if equity <= 0.0:
-                log_metric(
+                _safe_log_metric(
                     "onepip_maker_skip",
                     1.0,
                     tags={"reason": "equity_zero"},
@@ -361,7 +368,7 @@ async def onepip_maker_s1_worker() -> None:
             except Exception:
                 free_ratio_val = None
             if free_ratio_val is not None and free_ratio_val < config.MARGIN_FREE_MIN:
-                log_metric(
+                _safe_log_metric(
                     "onepip_maker_skip",
                     1.0,
                     tags={"reason": "margin_low", "free": free_ratio_val},
@@ -381,7 +388,7 @@ async def onepip_maker_s1_worker() -> None:
             units_allowed = int(round(lot_allowed * 100000))
             units_allowed = min(units_allowed, config.MAX_UNITS, config.ENTRY_UNITS)
             if units_allowed < config.MIN_UNITS:
-                log_metric(
+                _safe_log_metric(
                     "onepip_maker_skip",
                     1.0,
                     tags={"reason": "units_low", "units": units_allowed},
@@ -441,7 +448,7 @@ async def onepip_maker_s1_worker() -> None:
                         "units": units,
                     }
                 )
-                log_metric(
+                _safe_log_metric(
                     "onepip_maker_order_submitted",
                     1.0,
                     tags={"result": "filled", "units": abs(units)},
@@ -462,7 +469,7 @@ async def onepip_maker_s1_worker() -> None:
                         "units": units,
                     }
                 )
-                log_metric(
+                _safe_log_metric(
                     "onepip_maker_order_submitted",
                     1.0,
                     tags={"result": "pending", "units": abs(units)},
@@ -475,7 +482,7 @@ async def onepip_maker_s1_worker() -> None:
                 continue
 
             LOG.warning("%s limit order submission returned no identifiers; entering shadow mode.", config.LOG_PREFIX)
-            log_metric(
+            _safe_log_metric(
                 "onepip_maker_skip",
                 1.0,
                 tags={"reason": "submit_failed"},
@@ -485,3 +492,8 @@ async def onepip_maker_s1_worker() -> None:
         raise
     except Exception as exc:  # noqa: BLE001
         LOG.exception("%s worker crashed: %s", config.LOG_PREFIX, exc)
+        _safe_log_metric(
+            "onepip_maker_worker_exit",
+            1.0,
+            tags={"reason": "unexpected", "error": str(exc)},
+        )
