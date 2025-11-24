@@ -68,9 +68,10 @@ class ExitManager:
         self._reverse_hits: Dict[Tuple[str, str], Dict[str, object]] = {}
         self._range_macro_grace_minutes = 8.0
         # Micro-specific stability controls
-        self._micro_min_hold_seconds = float(os.getenv("EXIT_MICRO_MIN_HOLD_SEC", "75"))
-        self._micro_loss_grace_pips = float(os.getenv("EXIT_MICRO_GUARD_LOSS_PIPS", "1.6"))
-        self._micro_loss_hold_seconds = float(os.getenv("EXIT_MICRO_LOSS_HOLD_SEC", "75"))
+        # Guard against premature exits on noisy micro trades: enforce longer holds and wider grace
+        self._micro_min_hold_seconds = float(os.getenv("EXIT_MICRO_MIN_HOLD_SEC", "180"))
+        self._micro_loss_grace_pips = float(os.getenv("EXIT_MICRO_GUARD_LOSS_PIPS", "2.5"))
+        self._micro_loss_hold_seconds = float(os.getenv("EXIT_MICRO_LOSS_HOLD_SEC", "180"))
         self._micro_profit_hard = float(os.getenv("EXIT_MICRO_PROFIT_TAKE_PIPS", "1.60"))
         self._micro_profit_soft = float(os.getenv("EXIT_MICRO_PROFIT_SOFT_PIPS", "1.00"))
         self._micro_profit_rsi_release_long = float(os.getenv("EXIT_MICRO_PROFIT_RSI_LONG", "53"))
