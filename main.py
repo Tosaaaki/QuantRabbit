@@ -1408,6 +1408,9 @@ async def logic_loop():
                                 last_macro_snapshot_refresh = now
                                 _macro_state_cache = None
                                 macro_state = _refresh_macro_state()
+                                # リフレッシュ成功なら縮退を解除
+                                macro_snapshot_stale = False
+                                macro_snapshot_age = 0.0
                                 logging.info(
                                     "[MACRO] snapshot refreshed on stale detect (age=%.1fs)",
                                     age_sec,
