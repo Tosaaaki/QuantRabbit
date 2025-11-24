@@ -51,6 +51,49 @@ api = API(access_token=TOKEN, environment=ENVIRONMENT)
 if HEDGING_ENABLED:
     logging.info("[ORDER] Hedging mode enabled (positionFill=OPEN_ONLY).")
 
+def _env_int(name: str, default: int) -> int:
+    try:
+        return int(os.getenv(name, str(default)))
+    except Exception:
+        return default
+
+
+def _as_float(value: object, default: float | None = None) -> float | None:
+    if value is None:
+        return default
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+_DEFAULT_MIN_UNITS = _env_int("ORDER_MIN_UNITS_DEFAULT", 1000)
+_MACRO_MIN_UNITS_DEFAULT = max(_DEFAULT_MIN_UNITS * 4, 10000)
+_MIN_UNITS_BY_POCKET: dict[str, int] = {
+    "micro": _env_int("ORDER_MIN_UNITS_MICRO", _DEFAULT_MIN_UNITS),
+    "macro": _env_int("ORDER_MIN_UNITS_MACRO", _MACRO_MIN_UNITS_DEFAULT),
+    "scalp": _env_int("ORDER_MIN_UNITS_SCALP", _DEFAULT_MIN_UNITS),
+}
+
+
+def min_units_for_pocket(pocket: Optional[str]) -> int:
+    if not pocket:
+        return _DEFAULT_MIN_UNITS
+    return int(_MIN_UNITS_BY_POCKET.get(pocket, _DEFAULT_MIN_UNITS))
+
+
+_DYNAMIC_SL_ENABLE = os.getenv("ORDER_DYNAMIC_SL_ENABLE", "true").lower() in {
+    "1",
+    "true",
+    "yes",
+}
+_DYNAMIC_SL_POCKETS = {
+    token.strip().lower()
+    for token in os.getenv("ORDER_DYNAMIC_SL_POCKETS", "micro,macro").split(",")
+    if token.strip()
+}
+_DYNAMIC_SL_RATIO = float(os.getenv("ORDER_DYNAMIC_SL_RATIO", "1.2"))
+_DYNAMIC_SL_MAX_PIPS = float(os.getenv("ORDER_DYNAMIC_SL_MAX_PIPS", "8.0"))
+
 _LAST_PROTECTIONS: dict[str, dict[str, float | None]] = {}
 MACRO_BE_GRACE_SECONDS = 45
 _MARGIN_REJECT_UNTIL: dict[str, float] = {}
@@ -1205,6 +1248,7 @@ async def market_order(
     pocket: Literal["micro", "macro", "scalp"],
     *,
     client_order_id: Optional[str] = None,
+    strategy_tag: Optional[str] = None,
     reduce_only: bool = False,
     entry_thesis: Optional[dict] = None,
     meta: Optional[dict] = None,
@@ -1213,12 +1257,17 @@ async def market_order(
     units : +10000 = buy 0.1 lot, ‑10000 = sell 0.1 lot
     returns order ticket id（決済のみの fill でも tradeID を返却）
     """
-    strategy_tag = None
+    if strategy_tag is not None:
+        strategy_tag = str(strategy_tag)
+        if not strategy_tag:
+            strategy_tag = None
+    else:
+        strategy_tag = None
     thesis_sl_pips: Optional[float] = None
     thesis_tp_pips: Optional[float] = None
     if isinstance(entry_thesis, dict):
         raw_tag = entry_thesis.get("strategy_tag") or entry_thesis.get("strategy")
-        if raw_tag:
+        if raw_tag and not strategy_tag:
             strategy_tag = str(raw_tag)
         try:
             value = entry_thesis.get("sl_pips")
@@ -1233,37 +1282,6 @@ async def market_order(
         except (TypeError, ValueError):
             thesis_tp_pips = None
     side_label = "buy" if units > 0 else "sell"
-
-    # Reject trivially small entries per spec (abs(units) < 1000 => noise)
-    try:
-        if not reduce_only and abs(int(units)) < 1000:
-            _console_order_log(
-                "OPEN_SKIP",
-                pocket=pocket,
-                strategy_tag=strategy_tag,
-                side=side_label,
-                units=units,
-                sl_price=sl_price,
-                tp_price=tp_price,
-                client_order_id=client_order_id,
-                note="abs(units)<1000",
-            )
-            _log_order(
-                pocket=pocket,
-                instrument=instrument,
-                side="buy" if units > 0 else "sell",
-                units=units,
-                sl_price=sl_price,
-                tp_price=tp_price,
-                client_order_id=client_order_id,
-                status="too_small_units_skip",
-                attempt=0,
-                request_payload={"reason": "abs(units) < 1000"},
-            )
-            return None
-    except Exception:
-        # Be defensive; do not break ordering flow on logging failure
-        return None
 
     generated_client_id = False
     if not client_order_id:
@@ -1281,6 +1299,8 @@ async def market_order(
             pocket,
             strategy_hint or strategy_tag or "unknown",
         )
+
+    entry_price_meta = _as_float((meta or {}).get("entry_price"))
 
     if strategy_tag and not reduce_only:
         blocked, remain, reason = strategy_guard.is_blocked(strategy_tag)
@@ -1344,6 +1364,32 @@ async def market_order(
     except Exception:
         pass
 
+    if (
+        _DYNAMIC_SL_ENABLE
+        and (pocket or "").lower() in _DYNAMIC_SL_POCKETS
+        and not reduce_only
+        and entry_price_meta is not None
+    ):
+        loss_guard = None
+        sl_hint = None
+        if isinstance(entry_thesis, dict):
+            loss_guard = _as_float(entry_thesis.get("loss_guard_pips"))
+            if loss_guard is None:
+                loss_guard = _as_float(entry_thesis.get("loss_guard"))
+            sl_hint = _as_float(entry_thesis.get("sl_pips"))
+        target_pips = 0.0
+        for cand in (sl_hint, loss_guard):
+            if cand and cand > target_pips:
+                target_pips = cand
+        if target_pips > 0.0:
+            dynamic_pips = min(_DYNAMIC_SL_MAX_PIPS, target_pips * _DYNAMIC_SL_RATIO)
+            target_pips = max(target_pips, dynamic_pips)
+            offset = round(target_pips * 0.01, 3)
+            if units > 0:
+                sl_price = round(entry_price_meta - offset, 3)
+            else:
+                sl_price = round(entry_price_meta + offset, 3)
+
     if not is_market_open():
         logging.info(
             "[ORDER] Market closed window. Skip order pocket=%s units=%s client_id=%s",
@@ -1387,9 +1433,27 @@ async def market_order(
 
     # Margin preflight (new entriesのみ)
     preflight_units = units
+    min_allowed_units = min_units_for_pocket(pocket)
+    requested_units = units
+    clamped_to_minimum = False
+    if (
+        not reduce_only
+        and min_allowed_units > 0
+        and 0 < abs(requested_units) < min_allowed_units
+    ):
+        requested_units = min_allowed_units if requested_units > 0 else -min_allowed_units
+        clamped_to_minimum = True
+        units = requested_units
+        logging.info(
+            "[ORDER] units clamped to pocket minimum pocket=%s requested=%s -> %s",
+            pocket,
+            preflight_units,
+            requested_units,
+        )
+
     if not reduce_only and estimated_entry is not None:
         allowed_units, req_margin = _preflight_units(
-            estimated_price=estimated_entry, requested_units=units
+            estimated_price=estimated_entry, requested_units=requested_units
         )
         if allowed_units == 0:
             _console_order_log(
@@ -1419,6 +1483,40 @@ async def market_order(
                 },
             )
             return None
+        if (
+            min_allowed_units > 0
+            and 0 < abs(allowed_units) < min_allowed_units
+            and not reduce_only
+        ):
+            _console_order_log(
+                "OPEN_SKIP",
+                pocket=pocket,
+                strategy_tag=strategy_tag,
+                side=side_label,
+                units=allowed_units,
+                sl_price=sl_price,
+                tp_price=tp_price,
+                client_order_id=client_order_id,
+                note="insufficient_margin_min_units",
+            )
+            _log_order(
+                pocket=pocket,
+                instrument=instrument,
+                side="buy" if allowed_units > 0 else "sell",
+                units=allowed_units,
+                sl_price=sl_price,
+                tp_price=tp_price,
+                client_order_id=client_order_id,
+                status="min_unit_margin_skip",
+                attempt=0,
+                request_payload={
+                    "requested_units": requested_units,
+                    "min_units": min_allowed_units,
+                    "estimated_price": estimated_entry,
+                    "required_margin": req_margin,
+                },
+            )
+            return None
         if allowed_units != units:
             logging.info(
                 "[ORDER] Preflight scaled units %s -> %s (pocket=%s)",
@@ -1427,6 +1525,13 @@ async def market_order(
                 pocket,
             )
             preflight_units = allowed_units
+        if clamped_to_minimum and abs(preflight_units) >= min_allowed_units:
+            logging.info(
+                "[ORDER] Raised %s pocket units to minimum %s from %s",
+                pocket,
+                min_allowed_units,
+                units,
+            )
 
     if not reduce_only and estimated_entry is not None:
         sl_price, tp_price, normalized = _normalize_protections(

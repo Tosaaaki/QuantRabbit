@@ -684,6 +684,8 @@ User=tossaki
 WorkingDirectory=/home/tossaki/QuantRabbit
 Environment=PYTHONUNBUFFERED=1
 Environment=HOME=/home/tossaki
+Environment=TUNER_ENABLE=1
+Environment=TUNER_SHADOW_MODE=false
 ExecStart=/home/tossaki/QuantRabbit/.venv/bin/python /home/tossaki/QuantRabbit/main.py
 Restart=always
 RestartSec=5

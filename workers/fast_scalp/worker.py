@@ -753,6 +753,7 @@ async def fast_scalp_worker(shared_state: FastScalpState) -> None:
                     price=features.latest_mid,
                     margin_rate=snapshot.margin_rate,
                     risk_pct_override=snapshot.risk_pct_override,
+                    pocket="scalp",
                 )
                 lot = min(allowed_lot_raw, config.MAX_LOT)
                 if lot <= 0.0:

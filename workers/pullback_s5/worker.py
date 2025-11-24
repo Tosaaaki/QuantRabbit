@@ -442,6 +442,7 @@ async def pullback_s5_worker() -> None:
                 spread_soft_cap=float(config.MAX_SPREAD_PIPS),
                 adx=adx_value,
                 signal_score=sig_strength,
+                pocket="scalp",
             )
             if sizing.units <= 0:
                 continue

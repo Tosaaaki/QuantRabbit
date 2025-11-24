@@ -24,15 +24,15 @@ POCKET_EXIT_COOLDOWNS = {
 _SCALP_LOSS_COOLDOWN = max(60, _int_env("SCALP_LOSS_COOLDOWN_SEC", 150))
 
 POCKET_LOSS_COOLDOWNS = {
-    "macro": 960,
-    "micro": 600,
+    "macro": _int_env("MACRO_LOSS_COOLDOWN_SEC", 720),
+    "micro": _int_env("MICRO_LOSS_COOLDOWN_SEC", 480),
     "scalp": _SCALP_LOSS_COOLDOWN,
 }
 
 POCKET_ENTRY_MIN_INTERVAL = {
-    "macro": 180,
-    "micro": 120,
-    "scalp": 60,
+    "macro": _int_env("MACRO_ENTRY_MIN_INTERVAL_SEC", 90),
+    "micro": _int_env("MICRO_ENTRY_MIN_INTERVAL_SEC", 90),
+    "scalp": _int_env("SCALP_ENTRY_MIN_INTERVAL_SEC", 45),
 }
 
 DEFAULT_COOLDOWN_SECONDS = 180

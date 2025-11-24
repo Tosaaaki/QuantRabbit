@@ -10,7 +10,7 @@ import time
 import json
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
-from collections import defaultdict
+from collections import defaultdict, deque
 
 from market_data.candle_fetcher import (
     Candle,
@@ -78,6 +78,8 @@ from strategies.news.spike_reversal import NewsSpikeReversal
 from strategies.scalping.m1_scalper import M1Scalper
 from strategies.scalping.range_fader import RangeFader
 from strategies.scalping.pulse_break import PulseBreak
+from strategies.scalping.impulse_retrace import ImpulseRetraceScalp
+from strategies.micro.momentum_burst import MomentumBurstMicro
 from utils.oanda_account import get_account_snapshot
 from utils.secrets import get_secret
 from utils.market_hours import is_market_open
@@ -157,12 +159,14 @@ STRATEGIES = {
     "M1Scalper": M1Scalper,
     "RangeFader": RangeFader,
     "PulseBreak": PulseBreak,
+    "ImpulseRetrace": ImpulseRetraceScalp,
+    "MomentumBurst": MomentumBurstMicro,
 }
 
 POCKET_STRATEGY_MAP = {
     "macro": {"TrendMA", "Donchian55"},
-    "micro": {"BB_RSI", "NewsSpikeReversal"},
-    "scalp": {"M1Scalper", "RangeFader", "PulseBreak"},
+    "micro": {"BB_RSI", "NewsSpikeReversal", "MomentumBurst"},
+    "scalp": {"M1Scalper", "RangeFader", "PulseBreak", "ImpulseRetrace"},
 }
 
 FOCUS_POCKETS = {
@@ -234,9 +238,19 @@ MICRO_BIAS_DISABLE_THRESHOLD = float(os.getenv("MICRO_BIAS_DISABLE_THRESHOLD", "
 MICRO_BIAS_REDUCTION_FACTOR = float(os.getenv("MICRO_BIAS_REDUCTION_FACTOR", "0.4"))
 TARGET_MARGIN_USAGE = float(os.getenv("TARGET_MARGIN_USAGE", "0.92"))
 MAX_MARGIN_USAGE_BOOST = float(os.getenv("MAX_MARGIN_USAGE_BOOST", "1.35"))
-LOSS_GUARD_COMPRESS_ATR = float(os.getenv("LOSS_GUARD_COMPRESS_ATR", "2.0"))
-LOSS_GUARD_COMPRESS_VOL = float(os.getenv("LOSS_GUARD_COMPRESS_VOL", "1.5"))
-LOSS_GUARD_COMPRESS_RATIO = float(os.getenv("LOSS_GUARD_COMPRESS_RATIO", "0.7"))
+LOSS_GUARD_EXPAND_ATR_MIN = float(os.getenv("LOSS_GUARD_EXPAND_ATR_MIN", "1.2"))
+LOSS_GUARD_EXPAND_RATIO = float(os.getenv("LOSS_GUARD_EXPAND_RATIO", "1.2"))
+LOSS_GUARD_MAX_PIPS = float(os.getenv("LOSS_GUARD_MAX_PIPS", "6.0"))
+MIN_HOLD_SEC_PER_ATR = float(os.getenv("MIN_HOLD_SEC_PER_ATR", "30.0"))
+PRICE_SURGE_WINDOW_SEC = int(os.getenv("PRICE_SURGE_WINDOW_SEC", "600"))
+PRICE_SURGE_MIN_MOVE = float(os.getenv("PRICE_SURGE_MIN_MOVE", "0.30"))
+PRICE_SURGE_ATR_MIN = float(os.getenv("PRICE_SURGE_ATR_MIN", "1.5"))
+PRICE_SURGE_VOL_MIN = float(os.getenv("PRICE_SURGE_VOL_MIN", "1.0"))
+PRICE_SURGE_COOLDOWN_SEC = int(os.getenv("PRICE_SURGE_COOLDOWN_SEC", "180"))
+PRICE_SURGE_BLOCK_SEC = int(os.getenv("PRICE_SURGE_BLOCK_SEC", "900"))
+# 長めの監視窓（Acceptance: 30分±20pips）も検知対象にする
+PRICE_SURGE_LONG_WINDOW_SEC = int(os.getenv("PRICE_SURGE_LONG_WINDOW_SEC", "1800"))
+PRICE_SURGE_LONG_MIN_MOVE = float(os.getenv("PRICE_SURGE_LONG_MIN_MOVE", "0.20"))
 SPREAD_OVERRIDE_MACRO_PIPS = float(os.getenv("SPREAD_OVERRIDE_MACRO_PIPS", "1.40"))
 SPREAD_OVERRIDE_MICRO_PIPS = float(os.getenv("SPREAD_OVERRIDE_MICRO_PIPS", "1.15"))
 MACRO_STALE_DISABLE_SEC = float(os.getenv("MACRO_STALE_DISABLE_SEC", "2400"))
@@ -340,8 +354,8 @@ def _derive_min_hold_seconds(
     scaled = base
     if tp > 0:
         scaled = max(scaled, min(600.0, tp * 45.0))
-    if atr_hint > 0:
-        scaled = max(scaled, min(600.0, atr_hint * 15.0))
+    if atr_hint > 0 and MIN_HOLD_SEC_PER_ATR > 0:
+        scaled = max(scaled, min(600.0, atr_hint * MIN_HOLD_SEC_PER_ATR))
     return round(scaled, 1)
 
 
@@ -366,10 +380,10 @@ def _derive_loss_guard_pips(signal: Dict[str, Any], pocket: str, fac_m1: Dict[st
             vol_recent = float(vol_raw) if vol_raw is not None else None
         except (TypeError, ValueError):
             vol_recent = None
-        if atr_hint >= LOSS_GUARD_COMPRESS_ATR and (
-            vol_recent is None or vol_recent >= LOSS_GUARD_COMPRESS_VOL
-        ):
-            guard = max(0.25, guard * LOSS_GUARD_COMPRESS_RATIO)
+    if pocket in {"macro", "micro"}:
+        if atr_hint and atr_hint >= LOSS_GUARD_EXPAND_ATR_MIN:
+            expanded = min(LOSS_GUARD_MAX_PIPS, atr_hint * LOSS_GUARD_EXPAND_RATIO)
+            guard = max(guard, expanded)
     return round(guard, 2)
 
 
@@ -839,6 +853,8 @@ def _publish_policy_snapshot(
         "spread_reason": spread_gate_reason,
         "scalp_share": scalp_share,
         "risk_pct": risk_pct,
+        "spread_macro_relaxed": spread_macro_relaxed,
+        "spread_micro_relaxed": spread_micro_relaxed,
     }
     if micro_hint:
         notes["micro_hint"] = list(micro_hint)
@@ -935,8 +951,6 @@ def _build_pocket_plan(
     event_soon: bool,
     spread_gate_active: bool,
     spread_gate_reason: str,
-    spread_macro_relaxed: bool = False,
-    spread_micro_relaxed: bool = False,
     spread_log_context: str,
     lot_allocation: float,
     risk_override: float,
@@ -947,6 +961,8 @@ def _build_pocket_plan(
     fac_m1: dict,
     fac_h4: dict,
     notes: dict | None = None,
+    spread_macro_relaxed: bool = False,
+    spread_micro_relaxed: bool = False,
 ) -> PocketPlan:
     range_ctx_info = {
         "active": getattr(range_ctx, "active", False),
@@ -1001,8 +1017,6 @@ def _publish_pocket_plans(
     event_soon: bool,
     spread_gate_active: bool,
     spread_gate_reason: str,
-    spread_macro_relaxed: bool = False,
-    spread_micro_relaxed: bool = False,
     spread_log_context: str,
     lots: dict[str, float],
     risk_override: float,
@@ -1013,6 +1027,8 @@ def _publish_pocket_plans(
     fac_m1: dict,
     fac_h4: dict,
     notes: dict[str, float],
+    spread_macro_relaxed: bool = False,
+    spread_micro_relaxed: bool = False,
 ) -> None:
     for pocket in ("macro", "scalp"):
         if not _pocket_worker_owns_orders(pocket):
@@ -1031,8 +1047,6 @@ def _publish_pocket_plans(
             event_soon=event_soon,
             spread_gate_active=spread_gate_active,
             spread_gate_reason=spread_gate_reason,
-            spread_macro_relaxed=spread_macro_relaxed if pocket == "macro" else False,
-            spread_micro_relaxed=spread_micro_relaxed if pocket != "macro" else False,
             spread_log_context=spread_log_context,
             lot_allocation=lots.get(pocket, 0.0),
             risk_override=risk_override,
@@ -1043,6 +1057,8 @@ def _publish_pocket_plans(
             fac_m1=fac_m1,
             fac_h4=fac_h4,
             notes=notes,
+            spread_macro_relaxed=spread_macro_relaxed if pocket == "macro" else False,
+            spread_micro_relaxed=spread_micro_relaxed if pocket != "macro" else False,
         )
         plan_bus.publish(plan)
 
@@ -1258,6 +1274,8 @@ async def logic_loop():
     trendma_news_cooldown_until = datetime.datetime.min
     trendma_last_exit: Optional[Dict[str, object]] = None
     last_hold_ratio_check = datetime.datetime.min
+    price_window: deque[tuple[datetime.datetime, float]] = deque(maxlen=128)
+    last_surge_trigger = datetime.datetime.min
 
     try:
         while True:
@@ -1666,6 +1684,86 @@ async def logic_loop():
             momentum = 0.0
             if ema20 is not None and close_px is not None:
                 momentum = close_px - ema20
+            surge_triggered = False
+            surge_move = None
+            surge_long_move = None
+            if close_px is not None:
+                price_window.append((now, close_px))
+                cutoff_short = now - datetime.timedelta(seconds=PRICE_SURGE_WINDOW_SEC)
+                cutoff_long = now - datetime.timedelta(seconds=PRICE_SURGE_LONG_WINDOW_SEC)
+                window_cap = max(PRICE_SURGE_LONG_WINDOW_SEC, PRICE_SURGE_WINDOW_SEC) * 2
+                while price_window and (now - price_window[0][0]).total_seconds() > window_cap:
+                    price_window.popleft()
+                # 最も古い価格（短窓/長窓）を使って変化量を算出
+                short_px = None
+                long_px = None
+                for ts, px in price_window:
+                    if ts <= cutoff_long and long_px is None:
+                        long_px = px
+                    if ts <= cutoff_short and short_px is None:
+                        short_px = px
+                if short_px is not None:
+                    surge_move = close_px - short_px
+                if long_px is not None:
+                    surge_long_move = close_px - long_px
+            vol_recent = 0.0
+            try:
+                vol_raw = fac_m1.get("vol_5m")
+                if vol_raw is not None:
+                    vol_recent = float(vol_raw)
+            except (TypeError, ValueError):
+                vol_recent = 0.0
+            surge_hit = False
+            surge_val = None
+            surge_window = None
+            if surge_move is not None and abs(surge_move) >= PRICE_SURGE_MIN_MOVE:
+                surge_hit = True
+                surge_val = surge_move
+                surge_window = PRICE_SURGE_WINDOW_SEC
+            if (
+                surge_long_move is not None
+                and abs(surge_long_move) >= PRICE_SURGE_LONG_MIN_MOVE
+            ):
+                # 長窓の方が大きければそちらを優先
+                if not surge_hit or abs(surge_long_move) > abs(surge_move or 0.0):
+                    surge_hit = True
+                    surge_val = surge_long_move
+                    surge_window = PRICE_SURGE_LONG_WINDOW_SEC
+            if (
+                surge_hit
+                and atr_pips >= PRICE_SURGE_ATR_MIN
+                and vol_recent >= PRICE_SURGE_VOL_MIN
+                and (now - last_surge_trigger).total_seconds() >= PRICE_SURGE_COOLDOWN_SEC
+            ):
+                surge_triggered = True
+                last_surge_trigger = now
+                surge_dir = "long" if surge_val > 0 else "short"
+                logging.info(
+                    "[SURGE] %.0fs move %.3f (ATR %.2f vol5m %.2f)",
+                    surge_window or PRICE_SURGE_WINDOW_SEC,
+                    surge_val,
+                    atr_pips,
+                    vol_recent,
+                )
+                try:
+                    for pocket in ("macro", "micro"):
+                        applied = stage_tracker.ensure_cooldown(
+                            pocket,
+                            surge_dir,
+                            reason="surge_guard",
+                            seconds=PRICE_SURGE_BLOCK_SEC,
+                            now=now,
+                        )
+                        if applied:
+                            logging.info(
+                                "[SURGE] Block %s %s for %ss after %.2fp move.",
+                                pocket,
+                                surge_dir,
+                                PRICE_SURGE_BLOCK_SEC,
+                                surge_val / 0.01,
+                            )
+                except Exception as exc:  # pragma: no cover - defensive
+                    logging.warning("[SURGE] cooldown set failed: %s", exc)
             scalp_ready = False
             scalp_atr_min = RANGE_SCALP_ATR_MIN if range_active else 2.2
             scalp_momentum_min = RANGE_SCALP_MOMENTUM_MIN if range_active else 0.0015
@@ -1748,6 +1846,24 @@ async def logic_loop():
                 )
             if not focus_pockets:
                 focus_pockets = {"micro"}
+
+            if surge_triggered:
+                momentum_added = False
+                if _DELEGATE_MICRO:
+                    if "MomentumBurst" not in micro_gpt_hint:
+                        micro_gpt_hint.append("MomentumBurst")
+                        momentum_added = True
+                else:
+                    if "MomentumBurst" not in ranked_strategies:
+                        ranked_strategies.append("MomentumBurst")
+                        momentum_added = True
+                if momentum_added:
+                    logging.info("[SURGE] MomentumBurst boost via 10m move.")
+                if "ImpulseRetrace" not in ranked_strategies:
+                    ranked_strategies.append("ImpulseRetrace")
+                    logging.info("[SURGE] Added ImpulseRetrace due to surge.")
+                if "scalp" in focus_pockets:
+                    scalp_ready = True
 
             ma10_h4 = fac_h4.get("ma10")
             ma20_h4 = fac_h4.get("ma20")
@@ -1833,6 +1949,11 @@ async def logic_loop():
                         sname,
                         pocket,
                         sorted(allowed_names),
+                    )
+                    continue
+                if range_active and pocket in {"macro", "micro"} and sname in {"TrendMA", "MomentumBurst"}:
+                    logging.info(
+                        "[RANGE] skip trend strategy %s during active range mode.", sname
                     )
                     continue
                 strategies_by_pocket[pocket].append(sname)
@@ -1951,6 +2072,30 @@ async def logic_loop():
                     if conf_scale is not None:
                         scaled_conf = int(signal["confidence"] * conf_scale)
                         signal["confidence"] = max(15, min(100, scaled_conf))
+                elif range_soft_active and pocket in {"macro", "micro"}:
+                    # ソフト圧縮時も軽めにタイト化してレンジ捕捉寄りに寄せる
+                    atr_hint = (
+                        fac_m1.get("atr_pips")
+                        or ((fac_m1.get("atr") or 0.0) * 100)
+                        or 6.0
+                    )
+                    tp_existing = signal.get("tp_pips")
+                    sl_existing = signal.get("sl_pips")
+                    tp_target = tp_existing if tp_existing is not None else max(2.4, atr_hint * 1.4)
+                    sl_target = sl_existing if sl_existing is not None else max(1.8, atr_hint * 0.9)
+                    signal["tp_pips"] = round(tp_target * 0.9, 2)
+                    signal["sl_pips"] = round(max(sl_target * 0.9, 1.2), 2)
+                    conf_scale = RANGE_CONFIDENCE_SCALE.get(pocket)
+                    if conf_scale is not None:
+                        scaled_conf = int(signal["confidence"] * ((conf_scale + 1.0) / 2.0))
+                        signal["confidence"] = max(20, min(100, scaled_conf))
+                elif pocket in {"macro", "micro"}:
+                    # ブレイク/プルバック系の初期SLを最低5〜6pipsに揃えて深掘り逆行を抑制
+                    if signal.get("sl_pips") is None:
+                        signal["sl_pips"] = round(6.0 if pocket == "macro" else 5.0, 2)
+                    else:
+                        floor = 6.0 if pocket == "macro" else 5.0
+                        signal["sl_pips"] = round(max(signal["sl_pips"], floor), 2)
                 signal["min_hold_sec"] = _derive_min_hold_seconds(
                     signal, cls.pocket, fac_m1
                 )
@@ -2296,8 +2441,8 @@ async def logic_loop():
                         MAX_MARGIN_USAGE_BOOST,
                         1.0 + deficit / max(TARGET_MARGIN_USAGE, 1e-3),
                     )
-                    boosted_lot = lot_total * boost
-                    lot_total = min(boosted_lot, exposure_cap_lot)
+                    boosted = lot_total * boost
+                    lot_total = min(boosted, exposure_cap_lot)
                     logging.info(
                         "[EXPOSURE] boosted lot %.3f (ratio %.3f target %.2f boost=%.2f)",
                         lot_total,
@@ -2374,7 +2519,7 @@ async def logic_loop():
                 elif bias_strength < MICRO_BIAS_REDUCTION_THRESHOLD and MICRO_BIAS_REDUCTION_FACTOR < 1.0:
                     reduced = round(lots["micro"] * MICRO_BIAS_REDUCTION_FACTOR, 3)
                     logging.info(
-                        "[MICRO] reducing lot due to weak bias %.2f => %.3f",
+                        "[MICRO] reducing lot due to weak macro bias %.2f => %.3f",
                         macro_bias,
                         reduced,
                     )
@@ -2394,6 +2539,8 @@ async def logic_loop():
                 "margin_buffer": scalp_buffer,
                 "risk_pct": risk_override,
                 "macro_snapshot_age": macro_snapshot_age,
+                "spread_macro_relaxed": spread_macro_relaxed,
+                "spread_micro_relaxed": spread_micro_relaxed,
             }
             _publish_pocket_plans(
                 now=now,
@@ -2405,8 +2552,6 @@ async def logic_loop():
                 event_soon=event_soon,
                 spread_gate_active=spread_blocked,
                 spread_gate_reason=spread_gate_reason,
-                spread_macro_relaxed=spread_macro_relaxed,
-                spread_micro_relaxed=spread_micro_relaxed,
                 spread_log_context=spread_log_context,
                 lots=lots,
                 risk_override=risk_override,
@@ -2417,6 +2562,8 @@ async def logic_loop():
                 fac_m1=fac_m1,
                 fac_h4=fac_h4,
                 notes=pocket_plan_notes,
+                spread_macro_relaxed=spread_macro_relaxed,
+                spread_micro_relaxed=spread_micro_relaxed,
             )
 
             spread_skip_logged = False
@@ -2567,19 +2714,20 @@ async def logic_loop():
                         quote_ask = float(spread_state.get("ask") or 0.0)
                     except (TypeError, ValueError):
                         quote_ask = None
-                direction = "long" if action == "OPEN_LONG" else "short"
-                ref_price = (
-                    open_info.get("long_avg_price")
-                    if direction == "long"
-                    else open_info.get("short_avg_price")
-                ) if open_info else None
+                if action == "OPEN_LONG":
+                    direction = "long"
+                    ref_price = open_info.get("long_avg_price") if open_info else None
+                else:
+                    direction = "short"
+                    ref_price = open_info.get("short_avg_price") if open_info else None
                 strategy_tag = signal.get("tag") or signal.get("strategy")
-                open_units, strategy_avg_price = _strategy_position_snapshot(
+                strategy_units, strategy_avg_price = _strategy_position_snapshot(
                     open_info,
                     direction,
                     strategy_tag,
                     price,
                 )
+                open_units = strategy_units
                 if strategy_avg_price is not None:
                     ref_price = strategy_avg_price
 
@@ -2778,6 +2926,8 @@ async def logic_loop():
                 event_soon=event_soon,
                 spread_gate_active=spread_gate_active,
                 spread_gate_reason=spread_gate_reason,
+                spread_macro_relaxed=spread_macro_relaxed,
+                spread_micro_relaxed=spread_micro_relaxed,
                 lots=lots,
                 perf_cache=perf_cache or {},
                 managed_positions=managed_positions,

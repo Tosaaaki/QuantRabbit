@@ -132,6 +132,7 @@ async def london_momentum_worker() -> None:
                 price=price,
                 margin_rate=margin_rate,
                 risk_pct_override=config.RISK_PCT,
+                pocket=config.POCKET,
             )
             units = int(round(lot * 100000))
             if units < config.MIN_UNITS:

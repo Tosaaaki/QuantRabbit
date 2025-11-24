@@ -86,7 +86,8 @@ class ExitManager:
         self._vol_partial_atr_min = float(os.getenv("EXIT_VOL_PARTIAL_ATR_MIN", "1.5"))
         self._vol_partial_atr_max = float(os.getenv("EXIT_VOL_PARTIAL_ATR_MAX", "2.6"))
         self._vol_partial_fraction = float(os.getenv("EXIT_VOL_PARTIAL_FRACTION", "0.66"))
-        self._vol_partial_profit_floor = float(os.getenv("EXIT_VOL_PARTIAL_PROFIT_FLOOR", "2.4"))
+        self._vol_partial_profit_floor = float(os.getenv("EXIT_VOL_PARTIAL_PROFIT_FLOOR", "2.5"))
+        self._vol_partial_profit_cap = float(os.getenv("EXIT_VOL_PARTIAL_PROFIT_CAP", "3.0"))
         self._vol_ema_release_gap = float(os.getenv("EXIT_VOL_EMA_RELEASE_GAP", "1.0"))
         self._profit_snatch_min = float(os.getenv("EXIT_SNATCH_MIN_PROFIT_PIPS", "0.3"))
         self._profit_snatch_max = float(os.getenv("EXIT_SNATCH_MAX_PROFIT_PIPS", "0.8"))
@@ -95,6 +96,14 @@ class ExitManager:
         self._profit_snatch_vol_min = float(os.getenv("EXIT_SNATCH_VOL5M_MIN", "1.2"))
         self._profit_snatch_jst_start = int(os.getenv("EXIT_SNATCH_JST_START", "0")) % 24
         self._profit_snatch_jst_end = int(os.getenv("EXIT_SNATCH_JST_END", "6")) % 24
+        self._loss_guard_atr_trigger = float(os.getenv("EXIT_LOSS_GUARD_ATR_TRIGGER", "2.0"))
+        self._loss_guard_vol_trigger = float(os.getenv("EXIT_LOSS_GUARD_VOL_TRIGGER", "1.5"))
+        self._loss_guard_compress_ratio = float(os.getenv("EXIT_LOSS_GUARD_COMPRESS_RATIO", "0.7"))
+        # MFE-based trail/partials for breakout・pullback系の尻尾切り
+        self._mfe_partial_macro = float(os.getenv("EXIT_MFE_PARTIAL_MACRO", "8.0"))
+        self._mfe_partial_micro = float(os.getenv("EXIT_MFE_PARTIAL_MICRO", "5.0"))
+        self._mfe_trail_floor = float(os.getenv("EXIT_MFE_TRAIL_FLOOR", "3.5"))
+        self._mfe_trail_gap = float(os.getenv("EXIT_MFE_TRAIL_GAP", "4.0"))
 
     def plan_closures(
         self,
@@ -248,6 +257,42 @@ class ExitManager:
             slope_fade = projection_fast.gap_slope_pips < 0.08
         return momentum_band and ema_cooling and slope_fade and (adx_fade or rsi_fade)
 
+    def _mfe_partial_units(self, pocket: str, units: int, profit_pips: float) -> int:
+        """Return partial units when MFEが一定以上に達したときに利益を確定する。"""
+        if units <= 0:
+            return 0
+        threshold = self._mfe_partial_macro if pocket == "macro" else self._mfe_partial_micro
+        if profit_pips >= threshold:
+            # take half but keep at least 1000 units
+            partial = max(1000, units // 2)
+            if partial < units:
+                return partial
+        return 0
+
+    def _mfe_trail_hit(
+        self,
+        *,
+        side: str,
+        avg_price: Optional[float],
+        close_price: Optional[float],
+        profit_pips: float,
+    ) -> bool:
+        """Simple BE+ trail: once profit exceeds trail_gap, do not give back more than trail_floor."""
+        if avg_price is None or close_price is None:
+            return False
+        # only arm when profit already healthy
+        if profit_pips < self._mfe_trail_gap:
+            return False
+        cushion = max(1.0, self._mfe_trail_floor)
+        give_back = profit_pips - cushion
+        if give_back <= 0:
+            return False
+        if side == "long":
+            trail_floor = avg_price + give_back * 0.01
+            return close_price <= trail_floor
+        trail_floor = avg_price - give_back * 0.01
+        return close_price >= trail_floor
+
     def _evaluate_long(
         self,
         pocket: str,
@@ -280,7 +325,7 @@ class ExitManager:
         if avg_price and close_price:
             profit_pips = (close_price - avg_price) / 0.01
         neg_exit_blocked = self._negative_exit_blocked(
-            pocket, open_info, "long", now, profit_pips, stage_tracker
+            pocket, open_info, "long", now, profit_pips, stage_tracker, atr_pips, fac_m1
         )
         target_bounds = self._entry_target_bounds(open_info, "long")
         if (
@@ -399,6 +444,30 @@ class ExitManager:
                     tag="macro-vol-partial",
                     allow_reentry=True,
                 )
+
+        # Generic MFE-based partial/trail for breakout/pullback styles
+        mfe_partial = self._mfe_partial_units(pocket, units, profit_pips)
+        if mfe_partial:
+            return ExitDecision(
+                pocket=pocket,
+                units=mfe_partial,
+                reason="mfe_partial",
+                tag=f"{pocket}-mfe-partial",
+                allow_reentry=True,
+            )
+        if self._mfe_trail_hit(
+            side="long",
+            avg_price=avg_price,
+            close_price=close_price,
+            profit_pips=profit_pips,
+        ):
+            return ExitDecision(
+                pocket=pocket,
+                units=units,
+                reason="mfe_trail",
+                tag=f"{pocket}-mfe-trail",
+                allow_reentry=False,
+            )
 
         # Do not act on fresh macro trades unless conditions are clearly adverse
         if reverse_signal and pocket == "macro" and not range_mode:
@@ -598,7 +667,7 @@ class ExitManager:
         if avg_price and close_price:
             profit_pips = (avg_price - close_price) / 0.01
         neg_exit_blocked = self._negative_exit_blocked(
-            pocket, open_info, "short", now, profit_pips, stage_tracker
+            pocket, open_info, "short", now, profit_pips, stage_tracker, atr_pips, fac_m1
         )
         target_bounds = self._entry_target_bounds(open_info, "short")
         if (
@@ -695,6 +764,29 @@ class ExitManager:
                     tag="macro-vol-partial",
                     allow_reentry=True,
                 )
+
+        mfe_partial = self._mfe_partial_units(pocket, units, profit_pips)
+        if mfe_partial:
+            return ExitDecision(
+                pocket=pocket,
+                units=mfe_partial,
+                reason="mfe_partial",
+                tag=f"{pocket}-mfe-partial",
+                allow_reentry=True,
+            )
+        if self._mfe_trail_hit(
+            side="short",
+            avg_price=avg_price,
+            close_price=close_price,
+            profit_pips=profit_pips,
+        ):
+            return ExitDecision(
+                pocket=pocket,
+                units=units,
+                reason="mfe_trail",
+                tag=f"{pocket}-mfe-trail",
+                allow_reentry=False,
+            )
 
         if (
             pocket == "micro"
@@ -1245,6 +1337,8 @@ class ExitManager:
         now: datetime,
         profit_pips: float,
         stage_tracker: Optional["StageTracker"],
+        atr_pips: float,
+        fac_m1: Dict,
     ) -> bool:
         if profit_pips is None or profit_pips >= 0.0:
             return False
@@ -1262,6 +1356,12 @@ class ExitManager:
             strategy_tag = thesis.get("strategy_tag") or tr.get("strategy_tag")
             loss_guard, hold_req = self._trade_guard_requirements(
                 thesis, pocket, default_loss, default_hold
+            )
+            loss_guard = self._volatility_loss_clamp(
+                pocket=pocket,
+                loss_guard=loss_guard,
+                atr_pips=atr_pips,
+                fac_m1=fac_m1,
             )
             if loss_guard <= 0.0 or hold_req <= 0.0:
                 continue
@@ -1324,6 +1424,35 @@ class ExitManager:
         if hold_val <= 0.0:
             hold_val = default_hold
         return max(0.0, loss_val), max(0.0, hold_val)
+
+    def _volatility_loss_clamp(
+        self,
+        *,
+        pocket: str,
+        loss_guard: float,
+        atr_pips: float,
+        fac_m1: Dict,
+    ) -> float:
+        if loss_guard <= 0.0 or pocket not in {"micro", "scalp"}:
+            return loss_guard
+        atr_val = float(atr_pips or 0.0)
+        try:
+            vol_val = float(fac_m1.get("vol_5m") or 0.0)
+        except (TypeError, ValueError):
+            vol_val = 0.0
+        if atr_val < self._loss_guard_atr_trigger and (vol_val <= 0.0 or vol_val < self._loss_guard_vol_trigger):
+            return loss_guard
+        clamped = max(0.2, loss_guard * self._loss_guard_compress_ratio)
+        if clamped < loss_guard:
+            logging.info(
+                "[EXIT] loss_guard clamp pocket=%s atr=%.2f vol=%.2f %.2f->%.2f",
+                pocket,
+                atr_val,
+                vol_val,
+                loss_guard,
+                clamped,
+            )
+        return clamped
 
     def _record_hold_violation(
         self,
@@ -1502,7 +1631,9 @@ class ExitManager:
         atr_val = float(atr_pips or 0.0)
         if atr_val < self._vol_partial_atr_min:
             return None
-        profit_floor = max(self._vol_partial_profit_floor, atr_val * 1.6)
+        profit_floor = max(self._vol_partial_profit_floor, atr_val * 1.5)
+        if self._vol_partial_profit_cap > 0:
+            profit_floor = min(profit_floor, self._vol_partial_profit_cap)
         if profit_pips is None or profit_pips < profit_floor:
             return None
         if ema_gap_pips is not None and abs(ema_gap_pips) > atr_val * 2.5:

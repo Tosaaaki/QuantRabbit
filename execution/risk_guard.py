@@ -46,6 +46,16 @@ _DISABLE_GLOBAL_DD = os.getenv("DISABLE_GLOBAL_DD", "false").lower() in {
 }
 EXPOSURE_MAX_RATIO = float(os.getenv("EXPOSURE_MAX_RATIO", "0.93"))
 EXPOSURE_WARN_THRESHOLD = float(os.getenv("EXPOSURE_WARN_THRESHOLD", "1.05"))
+_MIN_LOT_BY_POCKET = {
+    "macro": max(0.0, float(os.getenv("RISK_MIN_LOT_MACRO", "0.1"))),
+    "micro": max(0.0, float(os.getenv("RISK_MIN_LOT_MICRO", "0.0"))),
+    "scalp": max(0.0, float(os.getenv("RISK_MIN_LOT_SCALP", "0.0"))),
+}
+_EXPOSURE_IGNORE_POCKETS = {
+    token.strip().lower()
+    for token in os.getenv("EXPOSURE_IGNORE_POCKETS", "manual,unknown").split(",")
+    if token.strip()
+}
 
 _DB = pathlib.Path("logs/trades.db")
 con = sqlite3.connect(_DB)
@@ -163,6 +173,7 @@ def allowed_lot(
     price: float | None = None,
     margin_rate: float | None = None,
     risk_pct_override: float | None = None,
+    pocket: str | None = None,
 ) -> float:
     """
     口座全体の許容ロットを概算する。
@@ -201,6 +212,15 @@ def allowed_lot(
             lot = min(lot, margin_budget / margin_per_lot)
 
     lot = min(lot, MAX_LOT)
+    min_lot = _MIN_LOT_BY_POCKET.get((pocket or "").lower(), 0.0)
+    if min_lot > 0.0 and lot > 0.0 and lot < min_lot:
+        logging.debug(
+            "[RISK] min lot clamp pocket=%s lot=%.3f -> %.3f",
+            pocket,
+            lot,
+            min_lot,
+        )
+        lot = min(min_lot, MAX_LOT)
     return round(max(lot, 0.0), 3)
 
 
@@ -335,13 +355,21 @@ def build_exposure_state(
         return None
     manual_units = 0
     bot_units = 0
+    ignore_manual = "manual" in _EXPOSURE_IGNORE_POCKETS
     for pocket, info in (open_positions or {}).items():
         if pocket in {"__net__", "__meta__"}:
             continue
         units = _abs_units(info or {})
         if units <= 0:
             continue
-        if pocket.startswith("manual") or pocket in {"manual", "unknown"}:
+        pocket_key = (pocket or "").lower()
+        if pocket_key in _EXPOSURE_IGNORE_POCKETS:
+            logging.debug("[EXPOSURE] ignoring pocket=%s units=%s per config", pocket, units)
+            continue
+        if pocket_key.startswith("manual") and ignore_manual:
+            logging.debug("[EXPOSURE] ignoring manual pocket=%s units=%s", pocket, units)
+            continue
+        if pocket_key.startswith("manual") or pocket_key == "manual":
             manual_units += units
         else:
             bot_units += units

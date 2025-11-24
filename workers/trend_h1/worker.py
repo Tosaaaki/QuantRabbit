@@ -361,6 +361,7 @@ async def trend_h1_worker() -> None:
                 price=entry_price,
                 margin_rate=getattr(snapshot, "margin_rate", None),
                 risk_pct_override=config.RISK_PCT,
+                pocket=config.POCKET,
             )
             if lot <= 0.0:
                 _log_skip("lot_zero", skip_state)

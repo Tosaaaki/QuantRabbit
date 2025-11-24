@@ -11,7 +11,13 @@ from analytics.insight_client import InsightClient
 from execution.exit_manager import ExitManager, ExitDecision
 from execution.managed_positions import filter_bot_managed_positions
 from execution.order_ids import build_client_order_id
-from execution.order_manager import close_trade, market_order, plan_partial_reductions, update_dynamic_protections
+from execution.order_manager import (
+    close_trade,
+    market_order,
+    min_units_for_pocket,
+    plan_partial_reductions,
+    update_dynamic_protections,
+)
 from execution.pocket_limits import POCKET_ENTRY_MIN_INTERVAL, POCKET_LOSS_COOLDOWNS, cooldown_for_pocket
 from execution.risk_guard import can_trade, clamp_sl_tp
 from execution.stage_rules import compute_stage_lot
@@ -353,6 +359,32 @@ class PocketPlanExecutor:
             units = int(round(staged_lot * 100000)) * (1 if action == "OPEN_LONG" else -1)
             if units == 0:
                 continue
+            min_units_required = max(0, min_units_for_pocket(self.pocket))
+            if min_units_required > 0 and 0 < abs(units) < min_units_required:
+                clamped_units = min_units_required if units > 0 else -min_units_required
+                LOG.info(
+                    "%s units clamped to pocket minimum pocket=%s requested=%d -> %d stage=%s",
+                    self.log_prefix,
+                    self.pocket,
+                    units,
+                    clamped_units,
+                    stage_idx + 1,
+                )
+                units = clamped_units
+                staged_lot = abs(units) / 100000.0
+            min_units_required = max(0, min_units_for_pocket(self.pocket))
+            if min_units_required > 0 and 0 < abs(units) < min_units_required:
+                clamped_units = min_units_required if units > 0 else -min_units_required
+                LOG.info(
+                    "%s units below pocket minimum pocket=%s requested=%d -> %d stage=%s",
+                    self.log_prefix,
+                    self.pocket,
+                    units,
+                    clamped_units,
+                    stage_idx + 1,
+                )
+                units = clamped_units
+                staged_lot = abs(units) / 100000.0
             if (
                 usd_long_cap_units > 0
                 and action == "OPEN_LONG"

@@ -50,6 +50,27 @@
   Notes:
     - 直近損失: 2025-11-17 06:52 JST 前後で BB_RSI ショートが 3 連敗 (-5.7pips)、06:27/06:37 に bot 再起動ログあり
 
+- [ ] ID: T-20251123-001
+  Title: 11/21 急変・レンジ損失抑止とチャンス捕捉の強化
+  Status: in-progress
+  Priority: P1
+  Owner: codex
+  Scope/Paths: main.py, execution/exit_manager.py, execution/stage_tracker.py, analysis/range_guard.py, docs/TASKS.md
+  Context: 2025-11-21 の日次 -17pips（-1,716 JPY）。15:03Z の pullback ショート -10.9pips が致命傷、04–05Z に micro 逆行小負けが積み上がり、07:00Z の大幅下落(58pipsレンジ)は未参戦。レンジ追随ショートと急変後の逆行に弱い。
+  Acceptance:
+    - 30分±20pips超の片道を検知したら同方向エントリーをブロックし、保有同方向ポジは即トレイル/部分利確を実行したログが残る（理由タグ付き）
+    - ブレイク/プルバック系で初期SLを5–7pipsに自動設定し、MFE+4〜5pips未達はBE付近へトレイル、MFE+8pipsで部分利確が実行され trades.db に残る
+    - range_guard の判定を micro/pullback/mirror に適用し、レンジ中はTrend/Mirror系の発火が抑制され、代わりにタイトSL/TP設定が付くことをログで確認できる
+    - 07–08Z のような大きなトレンド開始を time-band優先で許可し、07:00Z帯のバックテスト/リプレイでエントリーが1件以上生じている
+  Plan:
+    - 11/21 OANDAログ/ローソクをもとに急変閾値・MFE/MAE分布を抽出し、各戦略への適用設計をまとめる
+    - `exit_manager` に MFEトレイル＋部分利確、`main.py/stage_tracker` に急変クールダウンと時間帯優先ゲート、`range_guard` に適用範囲拡大を実装
+    - 11/21データでリプレイ/回帰を流し、15:03Zの損失縮小と07:00Z帯のエントリー発生を確認して Notes に記録
+  Notes:
+    - ソースデータ: logs/oanda/transactions_20251121T20251123T090935Z.jsonl, logs/oanda_candles/candles_M1_20251121.json（M1 134pips 日レンジ）
+    - 進捗(2025-11-23): main.py に急変検知クールダウンを追加（10分±0.30円 + 30分±0.20円で方向別に約15分ブロック）。range_active 時に TrendMA/MomentumBurst を抑制し、非レンジでも macro/micro のSL下限を6p/5pに統一。exit_manager に MFE 部分利確（macro 8p / micro 5p）と簡易トレイルを追加。range_soft_active でも軽いSL/TPタイト化・信頼度減衰を適用。残: range_guard適用範囲の精緻化/リプレイ検証/ログ記録。
+    - 追加検証: `scripts/backtest_exit_manager.py --candles logs/oanda_candles/candles_M1_20251121.json` を実行し、macroシグナルのエグジット挙動を簡易確認（closed 99/ under5min 85 / under2pips 37 / profit_pips -32.1）。tickリプレイ/real trades が無いため、詳細な MFE/MAE 検証は未実施。
+
 - [ ] ID: T-20251117-003
   Title: Micro adaptive tuning & momentum stacking strategy
   Status: in-progress
@@ -69,6 +90,43 @@
     - 11/17 06:50 前後は ATR≈1.7、MA 乖離≈2.4pips でも Range 判定で抑止されていたため、ATR連動の gap/ADX 緩和が必要
 
 ## Archive
+- [x] ID: T-20251121-004
+  Title: ボラ急変時の並列戦略トリガとキャンドル機会の補完
+  Status: done
+  Priority: P2
+  Owner: codex
+  Scope/Paths: main.py, strategies/micro/momentum_burst.py, strategies/scalping/impulse_retrace.py
+  Context: 11/20〜21 の ±0.30 円級ムーブでエントリーゼロ。spread gate・macro snapshot stale・戦略不足が重なってチャンスを逃していた。
+  Completed: 2025-11-21
+  Summary: 10 分窓の価格急変 (≥0.30円) を検出する deque バッファを logic_loop に追加し、発火時に MomentumBurst を micro hint へ、ImpulseRetrace を scalp ランキングへ強制追加して M1Scalper 以外の並列エントリーを許可した。spread override フラグと plan snapshot の notes も公開し、ログで surge 検出理由を確認できるようにした。
+
+- [x] ID: T-20251121-003
+  Title: ATR 連動 partial exit・SL 圧縮・微益回収の実装
+  Status: done
+  Priority: P1
+  Owner: codex
+  Scope/Paths: execution/exit_manager.py, execution/order_manager.py
+  Completed: 2025-11-21
+  Summary: ExitManager に ATR/vol_5m を用いた loss_guard 圧縮と TrendMA/Vol partial exit 強化を加え、2.5〜3.0p で 2/3 クローズ→ EMA gap 1.0p で残りを解放するフローを実装。注文生成側でも pocket 最小単位を clamp し、TAKE_PROFIT_ON_FILL_LOSS の再発時はログに理由が残るよう修正した。
+
+- [x] ID: T-20251121-002
+  Title: Macro lot 下限 & exposure 推定の是正
+  Status: done
+  Priority: P1
+  Owner: codex
+  Scope/Paths: execution/risk_guard.py, execution/order_manager.py, workers/common/core_executor.py
+  Completed: 2025-11-21
+  Summary: risk_guard.allowed_lot に pocket 別最小ロット (macro=0.1) と手動玉の除外リストを追加、order_manager/StageExecutor が 10k 未満の注文を clamp & ログ出力するようにした。ExposureState は `manual/unknown` を無視するため margin 使用率が実態どおり 0.8 以上まで伸びる。
+
+- [x] ID: T-20251121-001
+  Title: main.py 再適用と spread gate / macro snapshot エラー潰し
+  Status: done
+  Priority: P1
+  Owner: codex
+  Scope/Paths: main.py, scripts/deploy_to_vm.sh
+  Completed: 2025-11-21
+  Summary: spread gate オーバーライド引数をすべての PocketPlan/Snapshot 経路に伝播させ、VM へ push & `deploy_to_vm.sh` で再デプロイ。journalctl で NameError/TypeError の連鎖が消え、`policy_bus` notes に relax フラグが出力されることを確認済み。
+
 - [x] ID: T-20251114-002
   Title: Micro order guard hardening & margin scaling
   Status: done

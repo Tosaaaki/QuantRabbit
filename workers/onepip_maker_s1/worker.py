@@ -376,6 +376,7 @@ async def onepip_maker_s1_worker() -> None:
                 margin_available=getattr(account_snapshot, "margin_available", None),
                 price=price,
                 margin_rate=getattr(account_snapshot, "margin_rate", None),
+                pocket=config.POCKET,
             )
             units_allowed = int(round(lot_allowed * 100000))
             units_allowed = min(units_allowed, config.MAX_UNITS, config.ENTRY_UNITS)

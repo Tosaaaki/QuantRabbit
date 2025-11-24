@@ -251,6 +251,7 @@ async def pullback_runner_s5_worker() -> None:
                     spread_soft_cap=float(config.MAX_SPREAD_PIPS),
                     adx=adx_value,
                     signal_score=None,
+                    pocket="scalp",
                 )
                 if sizing.units >= int(config.MIN_UNITS):
                     units = sizing.units if side == "long" else -sizing.units

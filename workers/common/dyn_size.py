@@ -31,6 +31,7 @@ def compute_units(
     spread_soft_cap: float,
     adx: Optional[float] = None,
     signal_score: Optional[float] = None,  # 0..1 (confidence-like)
+    pocket: Optional[str] = None,
 ) -> SizingContext:
     """Flexible unit sizing with risk/volatility/margin awareness.
 
@@ -68,6 +69,7 @@ def compute_units(
         price=entry_price,
         margin_rate=margin_rate,
         risk_pct_override=risk_pct,
+        pocket=pocket,
     )
     units_risk = int(round(lot * 100000))
 

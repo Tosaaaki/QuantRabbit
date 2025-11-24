@@ -69,6 +69,11 @@ with open("/etc/quantrabbit.env", "w") as fh:
     if not (pairs["OANDA_TOKEN"] and pairs["OANDA_ACCOUNT"]):
         fh.write("MOCK_TICK_STREAM=1\n")
     fh.write("LOOP_SEC=10\n")
+    fh.write("TUNER_ENABLE=1\n")
+    fh.write("TUNER_SHADOW_MODE=false\n")
+    fh.write("TUNER_INTERVAL_SEC=600\n")
+    fh.write("TUNER_WINDOW_MINUTES=15\n")
+    fh.write("TUNER_LOGS_GLOB=tmp/exit_eval_*_v2.csv\n")
 PY
 
 cat >/etc/google-cloud-ops-agent/config.yaml <<'CFG'
