@@ -25,7 +25,7 @@ _SCALP_LOSS_COOLDOWN = max(60, _int_env("SCALP_LOSS_COOLDOWN_SEC", 150))
 
 POCKET_LOSS_COOLDOWNS = {
     "macro": _int_env("MACRO_LOSS_COOLDOWN_SEC", 720),
-    "micro": _int_env("MICRO_LOSS_COOLDOWN_SEC", 180),
+    "micro": _int_env("MICRO_LOSS_COOLDOWN_SEC", 60),
     "scalp": _SCALP_LOSS_COOLDOWN,
 }
 

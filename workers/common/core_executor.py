@@ -354,17 +354,9 @@ class PocketPlanExecutor:
                     rsi_val = None
                 if close_price is not None and ema20 is not None:
                     trend_gap = close_price - ema20
-                    strong_thr = 0.010 if pocket in {"micro", "scalp"} else 0.012
-                    soft_thr = 0.008 if pocket in {"micro", "scalp"} else 0.010
-                    surge_mode = False
-                    try:
-                        surge_mode = (
-                            abs(trend_gap) >= strong_thr * 1.2
-                            or (vol_5m is not None and vol_5m >= 0.85)
-                            or (atr_pips is not None and atr_pips >= 1.5)
-                        )
-                    except Exception:
-                        surge_mode = False
+                    strong_thr = 0.05  # 実質スキップを抑制するため大きめに設定
+                    soft_thr = 0.02
+                    surge_mode = True  # サージ扱いで逆張り抑制を緩める
                     is_long = action == "OPEN_LONG"
                     counter_ok = False
                     if rsi_val is not None:
@@ -390,16 +382,7 @@ class PocketPlanExecutor:
                             rsi_val,
                         )
                         continue
-                # ADX/BBW による抑制はサージ緩和後は緩くする（極端な停滞のみ除外）
-                if not surge_mode and adx_val is not None and adx_val < 5.0 and bbw_val is not None and bbw_val > 0.35:
-                    LOG.info(
-                        "%s skip %s entry due to ultra-low ADX=%.1f bbw=%.2f",
-                        self.log_prefix,
-                        pocket,
-                        adx_val,
-                        bbw_val,
-                    )
-                    continue
+                # ADX/BBW の抑制はオフ（超停滞でも流す）
             # 強制下限: micro は SL/TP と min_hold を底上げして即死・即利確を避ける
             if self.pocket == "micro":
                 fac_m1 = plan.factors_m1 or {}
