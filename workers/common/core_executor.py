@@ -313,26 +313,48 @@ class PocketPlanExecutor:
             if action not in {"OPEN_LONG", "OPEN_SHORT"}:
                 LOG.info("%s skip non-entry action=%s", self.log_prefix, action)
                 continue
-            if self.pocket == "micro":
-                close_price = plan.factors_m1.get("close")
-                ema20 = plan.factors_m1.get("ema20")
+            pocket = signal.get("pocket") or self.pocket
+            factors = plan.factors_m1 if pocket in {"micro", "scalp"} else plan.factors_h4
+            if factors:
+                try:
+                    close_price = float(factors.get("close"))
+                    ema20 = float(factors.get("ema20") or factors.get("ma20"))
+                except Exception:
+                    close_price = None
+                    ema20 = None
+                rsi_val = None
+                try:
+                    rsi_raw = factors.get("rsi")
+                    rsi_val = float(rsi_raw) if rsi_raw is not None else None
+                except Exception:
+                    rsi_val = None
                 if close_price is not None and ema20 is not None:
                     trend_gap = close_price - ema20
-                    # 0.5p 以上の乖離があれば流れに逆らう方向はスキップ
-                    if trend_gap >= 0.005 and action == "OPEN_SHORT":
+                    strong_thr = 0.007 if pocket in {"micro", "scalp"} else 0.015
+                    soft_thr = 0.003 if pocket in {"micro", "scalp"} else 0.006
+                    is_long = action == "OPEN_LONG"
+                    counter_ok = False
+                    if rsi_val is not None:
+                        if (not is_long and rsi_val >= 70) or (is_long and rsi_val <= 30):
+                            counter_ok = True
+                    if abs(trend_gap) <= soft_thr:
+                        counter_ok = True
+                    if trend_gap >= strong_thr and not is_long and not counter_ok:
                         LOG.info(
-                            "%s skip micro short vs uptrend (close %.3f > ema20 %.3f)",
+                            "%s skip %s short vs uptrend (close-ema=%.3f rsi=%s)",
                             self.log_prefix,
-                            close_price,
-                            ema20,
+                            pocket,
+                            trend_gap,
+                            rsi_val,
                         )
                         continue
-                    if trend_gap <= -0.005 and action == "OPEN_LONG":
+                    if trend_gap <= -strong_thr and is_long and not counter_ok:
                         LOG.info(
-                            "%s skip micro long vs downtrend (close %.3f < ema20 %.3f)",
+                            "%s skip %s long vs downtrend (close-ema=%.3f rsi=%s)",
                             self.log_prefix,
-                            close_price,
-                            ema20,
+                            pocket,
+                            trend_gap,
+                            rsi_val,
                         )
                         continue
             # 強制下限: micro は SL/TP と min_hold を底上げして即死・即利確を避ける
