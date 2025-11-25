@@ -38,23 +38,23 @@ def _load_int(key: str, default: int, *, minimum: Optional[int] = None) -> int:
     return value
 
 
-MAX_SPREAD_PIPS = _load_float("spread_guard_max_pips", 1.2, minimum=0.1)
+MAX_SPREAD_PIPS = _load_float("spread_guard_max_pips", 1.5, minimum=0.1)
 RELEASE_SPREAD_PIPS = _load_float(
-    "spread_guard_release_pips", max(0.75 * MAX_SPREAD_PIPS, MAX_SPREAD_PIPS - 0.3)
+    "spread_guard_release_pips", max(0.7 * MAX_SPREAD_PIPS, MAX_SPREAD_PIPS - 0.4)
 )
 if RELEASE_SPREAD_PIPS >= MAX_SPREAD_PIPS:
-    RELEASE_SPREAD_PIPS = max(MAX_SPREAD_PIPS * 0.8, MAX_SPREAD_PIPS - 0.25)
+    RELEASE_SPREAD_PIPS = max(MAX_SPREAD_PIPS * 0.75, MAX_SPREAD_PIPS - 0.35)
 
-WINDOW_SECONDS = _load_float("spread_guard_window_sec", 4.5, minimum=0.5)
-COOLDOWN_SECONDS = _load_float("spread_guard_cooldown_sec", 15.0, minimum=5.0)
+WINDOW_SECONDS = _load_float("spread_guard_window_sec", 3.5, minimum=0.5)
+COOLDOWN_SECONDS = _load_float("spread_guard_cooldown_sec", 12.0, minimum=5.0)
 MAX_AGE_MS = _load_int("spread_guard_max_age_ms", 4000, minimum=1000)
-MIN_HIGH_SAMPLES = _load_int("spread_guard_min_high_samples", 4, minimum=1)
-RELEASE_SAMPLES = _load_int("spread_guard_release_samples", 6, minimum=1)
+MIN_HIGH_SAMPLES = _load_int("spread_guard_min_high_samples", 3, minimum=1)
+RELEASE_SAMPLES = _load_int("spread_guard_release_samples", 4, minimum=1)
 BASELINE_WINDOW_SECONDS = _load_float(
-    "spread_guard_baseline_window_sec", 180.0, minimum=10.0
+    "spread_guard_baseline_window_sec", 120.0, minimum=10.0
 )
 BASELINE_MIN_SAMPLES = _load_int(
-    "spread_guard_baseline_min_samples", 40, minimum=5
+    "spread_guard_baseline_min_samples", 30, minimum=5
 )
 
 # 上限を設け過去履歴が無限に伸びるのを防ぐ
