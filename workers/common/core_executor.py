@@ -412,6 +412,19 @@ class PocketPlanExecutor:
                 continue
             if price is None:
                 continue
+            LOG.info(
+                "%s entry plan strategy=%s pocket=%s action=%s units=%d sl=%.2fp tp=%.2fp price=%.3f conf=%d%% stage=%s",
+                self.log_prefix,
+                signal.get("strategy") or signal.get("tag"),
+                self.pocket,
+                action,
+                units,
+                sl_pips,
+                tp_pips,
+                price,
+                confidence,
+                stage_idx + 1,
+            )
             sl, tp = clamp_sl_tp(
                 price,
                 price - sl_pips / 100,
