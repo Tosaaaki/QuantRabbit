@@ -354,14 +354,14 @@ class PocketPlanExecutor:
                     rsi_val = None
                 if close_price is not None and ema20 is not None:
                     trend_gap = close_price - ema20
-                    strong_thr = 0.007 if pocket in {"micro", "scalp"} else 0.015
-                    soft_thr = 0.003 if pocket in {"micro", "scalp"} else 0.006
+                    strong_thr = 0.010 if pocket in {"micro", "scalp"} else 0.012
+                    soft_thr = 0.008 if pocket in {"micro", "scalp"} else 0.010
                     surge_mode = False
                     try:
                         surge_mode = (
-                            abs(trend_gap) >= strong_thr * 1.5
-                            or (vol_5m is not None and vol_5m >= 1.15)
-                            or (atr_pips is not None and atr_pips >= 2.2)
+                            abs(trend_gap) >= strong_thr * 1.2
+                            or (vol_5m is not None and vol_5m >= 0.85)
+                            or (atr_pips is not None and atr_pips >= 1.5)
                         )
                     except Exception:
                         surge_mode = False
@@ -390,16 +390,10 @@ class PocketPlanExecutor:
                             rsi_val,
                         )
                         continue
-                # ADXが極端に低い（レンジ弱）かつBBW広めならトレンド系を抑制
-                if (
-                    not surge_mode
-                    and adx_val is not None
-                    and adx_val < 8.0
-                    and bbw_val is not None
-                    and bbw_val > 0.25
-                ):
+                # ADX/BBW による抑制はサージ緩和後は緩くする（極端な停滞のみ除外）
+                if not surge_mode and adx_val is not None and adx_val < 5.0 and bbw_val is not None and bbw_val > 0.35:
                     LOG.info(
-                        "%s skip %s entry due to low ADX=%.1f bbw=%.2f",
+                        "%s skip %s entry due to ultra-low ADX=%.1f bbw=%.2f",
                         self.log_prefix,
                         pocket,
                         adx_val,
