@@ -313,6 +313,27 @@ class PocketPlanExecutor:
             if action not in {"OPEN_LONG", "OPEN_SHORT"}:
                 LOG.info("%s skip non-entry action=%s", self.log_prefix, action)
                 continue
+            # 強制下限: micro は SL/TP と min_hold を底上げして即死・即利確を避ける
+            if self.pocket == "micro":
+                fac_m1 = plan.factors_m1 or {}
+                atr_raw = fac_m1.get("atr_pips") or ((fac_m1.get("atr") or 0.0) * 100)
+                try:
+                    atr_pips = float(atr_raw)
+                except Exception:
+                    atr_pips = 0.0
+                min_sl = max(5.0, atr_pips * 1.2) if atr_pips > 0 else 5.0
+                min_tp = 3.5
+                if signal.get("sl_pips") is None or signal["sl_pips"] < min_sl:
+                    signal["sl_pips"] = round(min_sl, 2)
+                if signal.get("tp_pips") is None or signal["tp_pips"] < min_tp:
+                    signal["tp_pips"] = round(min_tp, 2)
+                hold = signal.get("min_hold_sec") or signal.get("min_hold_seconds")
+                try:
+                    hold_val = float(hold) if hold is not None else 0.0
+                except Exception:
+                    hold_val = 0.0
+                if hold_val < 120.0:
+                    signal["min_hold_sec"] = 120.0
             confidence = max(0, min(100, signal.get("confidence", 50)))
             confidence_factor = max(0.2, confidence / 100.0)
             confidence_target = round(total_lot * confidence_factor, 3)
