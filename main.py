@@ -347,7 +347,7 @@ def _derive_min_hold_seconds(
     val = _to_float(explicit)
     if val is not None:
         return max(0.0, val)
-    base = DEFAULT_MIN_HOLD_SEC.get(pocket, 90.0)
+    base = DEFAULT_MIN_HOLD_SEC.get(pocket, 120.0 if pocket == "micro" else 90.0)
     tp = _to_float(signal.get("tp_pips")) or 0.0
     atr_hint = _atr_hint_pips(fac_m1)
     # Scale baseline by TP demand and prevailing ATR so larger swings get more time.
@@ -2102,7 +2102,7 @@ async def logic_loop():
                 # ATRに応じて micro のSLを底上げし、極端にタイトな初期SLによる即損切りを防ぐ
                 if pocket == "micro" and fac_m1.get("atr_pips"):
                     atr_pips = max(0.1, float(fac_m1["atr_pips"]))
-                    min_sl = max(4.0, atr_pips * 1.2)
+                    min_sl = max(5.0, atr_pips * 1.2)
                     if signal.get("sl_pips") is None or signal["sl_pips"] < min_sl:
                         signal["sl_pips"] = round(min_sl, 2)
                 signal["min_hold_sec"] = _derive_min_hold_seconds(
