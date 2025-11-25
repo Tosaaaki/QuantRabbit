@@ -2611,15 +2611,8 @@ async def logic_loop():
                 if event_soon and pocket in {"micro", "scalp"}:
                     logging.info("[SKIP] Event soon, skipping %s pocket trade.", pocket)
                     continue
-                if margin_guard_micro and pocket == "micro":
-                    if not margin_guard_logged:
-                        logging.warning(
-                            "[MARGIN] Micro guard active buffer=%.3f (stop=%.3f)",
-                            scalp_buffer if scalp_buffer is not None else -1.0,
-                            MICRO_MARGIN_GUARD_STOP,
-                        )
-                        margin_guard_logged = True
-                    continue
+                # 強制でマージンガードを無効化し、エントリーを優先
+                margin_guard_micro = False
                 strategy_name = signal.get("tag") or signal.get("strategy") or "signal"
                 if (pocket, strategy_name) in executed_entries:
                     logging.info("[SKIP] %s/%s already handled this loop.", pocket, strategy_name)
@@ -2633,47 +2626,9 @@ async def logic_loop():
 
                 total_lot_for_pocket = lots.get(pocket, 0.0)
                 if pocket == "micro":
-                    flow_factor = _micro_flow_factor(spread_live_pips, scalp_buffer)
-                    if flow_factor < 0.999:
-                        adjusted_lot = round(total_lot_for_pocket * flow_factor, 4)
-                        reasons: list[str] = []
-                        if spread_live_pips is not None:
-                            reasons.append(f"spread={spread_live_pips:.2f}p")
-                        if (
-                            scalp_buffer is not None
-                            and scalp_buffer < MICRO_MARGIN_BUFFER_LIMIT
-                        ):
-                            reasons.append(f"buffer={scalp_buffer:.3f}")
-                        if adjusted_lot <= 0:
-                            logging.info(
-                                "[MICRO] Lot scaled to zero (factor=%.2f, %s); skip entry.",
-                                flow_factor,
-                                ", ".join(reasons) or "pressure",
-                            )
-                            continue
-                        logging.info(
-                            "[MICRO] Lot scaled %.4f -> %.4f (factor=%.2f, %s)",
-                            total_lot_for_pocket,
-                            adjusted_lot,
-                            flow_factor,
-                            ", ".join(reasons) or "pressure",
-                        )
-                        total_lot_for_pocket = adjusted_lot
-                    if margin_micro_factor < 0.999 and total_lot_for_pocket > 0:
-                        adjusted_lot = round(total_lot_for_pocket * margin_micro_factor, 4)
-                        logging.info(
-                            "[MICRO] Lot margin scaling %.4f -> %.4f (buffer=%.3f)",
-                            total_lot_for_pocket,
-                            adjusted_lot,
-                            scalp_buffer if scalp_buffer is not None else -1.0,
-                        )
-                        total_lot_for_pocket = adjusted_lot
-                    if margin_guard_micro:
-                        logging.info(
-                            "[MICRO] Lot forced to zero due to margin guard (buffer=%.3f)",
-                            scalp_buffer if scalp_buffer is not None else -1.0,
-                        )
-                        continue
+                    # エントリー優先のため flow/margin スケールを無効化
+                    margin_micro_factor = 1.0
+                    total_lot_for_pocket = lots.get(pocket, 0.0)
                 if total_lot_for_pocket <= 0:
                     continue
 
