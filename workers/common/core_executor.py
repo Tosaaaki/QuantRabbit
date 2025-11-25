@@ -357,6 +357,10 @@ class PocketPlanExecutor:
                             rsi_val,
                         )
                         continue
+                # ADXが極端に低い（レンジ弱）かつBBW広めならトレンド系を抑制
+                if adx_val is not None and adx_val < 10 and bbw_val is not None and bbw_val > 0.20:
+                    LOG.info("%s skip %s entry due to low ADX=%.1f bbw=%.2f", self.log_prefix, pocket, adx_val, bbw_val)
+                    continue
             # 強制下限: micro は SL/TP と min_hold を底上げして即死・即利確を避ける
             if self.pocket == "micro":
                 fac_m1 = plan.factors_m1 or {}
