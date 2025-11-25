@@ -316,6 +316,30 @@ class PocketPlanExecutor:
             pocket = signal.get("pocket") or self.pocket
             factors = plan.factors_m1 if pocket in {"micro", "scalp"} else plan.factors_h4
             if factors:
+                adx_val = None
+                bbw_val = None
+                vol_5m = None
+                atr_pips = None
+                try:
+                    raw_adx = factors.get("adx")
+                    adx_val = float(raw_adx) if raw_adx is not None else None
+                except Exception:
+                    adx_val = None
+                try:
+                    raw_bbw = factors.get("bbw") or factors.get("bb_width")
+                    bbw_val = float(raw_bbw) if raw_bbw is not None else None
+                except Exception:
+                    bbw_val = None
+                try:
+                    raw_vol = factors.get("vol_5m")
+                    vol_5m = float(raw_vol) if raw_vol is not None else None
+                except Exception:
+                    vol_5m = None
+                try:
+                    raw_atr = factors.get("atr_pips") or ((factors.get("atr") or 0.0) * 100)
+                    atr_pips = float(raw_atr) if raw_atr is not None else None
+                except Exception:
+                    atr_pips = None
                 try:
                     close_price = float(factors.get("close"))
                     ema20 = float(factors.get("ema20") or factors.get("ma20"))
@@ -332,6 +356,15 @@ class PocketPlanExecutor:
                     trend_gap = close_price - ema20
                     strong_thr = 0.007 if pocket in {"micro", "scalp"} else 0.015
                     soft_thr = 0.003 if pocket in {"micro", "scalp"} else 0.006
+                    surge_mode = False
+                    try:
+                        surge_mode = (
+                            abs(trend_gap) >= strong_thr * 1.5
+                            or (vol_5m is not None and vol_5m >= 1.15)
+                            or (atr_pips is not None and atr_pips >= 2.2)
+                        )
+                    except Exception:
+                        surge_mode = False
                     is_long = action == "OPEN_LONG"
                     counter_ok = False
                     if rsi_val is not None:
@@ -339,7 +372,7 @@ class PocketPlanExecutor:
                             counter_ok = True
                     if abs(trend_gap) <= soft_thr:
                         counter_ok = True
-                    if trend_gap >= strong_thr and not is_long and not counter_ok:
+                    if trend_gap >= strong_thr and not is_long and not counter_ok and not surge_mode:
                         LOG.info(
                             "%s skip %s short vs uptrend (close-ema=%.3f rsi=%s)",
                             self.log_prefix,
@@ -348,7 +381,7 @@ class PocketPlanExecutor:
                             rsi_val,
                         )
                         continue
-                    if trend_gap <= -strong_thr and is_long and not counter_ok:
+                    if trend_gap <= -strong_thr and is_long and not counter_ok and not surge_mode:
                         LOG.info(
                             "%s skip %s long vs downtrend (close-ema=%.3f rsi=%s)",
                             self.log_prefix,
@@ -358,8 +391,20 @@ class PocketPlanExecutor:
                         )
                         continue
                 # ADXが極端に低い（レンジ弱）かつBBW広めならトレンド系を抑制
-                if adx_val is not None and adx_val < 10 and bbw_val is not None and bbw_val > 0.20:
-                    LOG.info("%s skip %s entry due to low ADX=%.1f bbw=%.2f", self.log_prefix, pocket, adx_val, bbw_val)
+                if (
+                    not surge_mode
+                    and adx_val is not None
+                    and adx_val < 8.0
+                    and bbw_val is not None
+                    and bbw_val > 0.25
+                ):
+                    LOG.info(
+                        "%s skip %s entry due to low ADX=%.1f bbw=%.2f",
+                        self.log_prefix,
+                        pocket,
+                        adx_val,
+                        bbw_val,
+                    )
                     continue
             # 強制下限: micro は SL/TP と min_hold を底上げして即死・即利確を避ける
             if self.pocket == "micro":

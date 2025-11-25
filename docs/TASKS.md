@@ -71,6 +71,7 @@
     - 進捗(2025-11-23): main.py に急変検知クールダウンを追加（10分±0.30円 + 30分±0.20円で方向別に約15分ブロック）。range_active 時に TrendMA/MomentumBurst を抑制し、非レンジでも macro/micro のSL下限を6p/5pに統一。exit_manager に MFE 部分利確（macro 8p / micro 5p）と簡易トレイルを追加。range_soft_active でも軽いSL/TPタイト化・信頼度減衰を適用。残: range_guard適用範囲の精緻化/リプレイ検証/ログ記録。
     - 進捗(2025-11-24): micro の最短保有/損失ガードを 180s/-2.5p へ延長して即損切りを抑制。spread_guard デフォルトを緩和（max 1.2p / release 0.9p / min_high 4 / release_samples 6 / cooldown 15s）し、ブロックからの解除を早めた。
     - 進捗(2025-11-24夕): macro snapshot stale 検知時に即リフレッシュするよう main.py を修正し、13:48Z 再起動後は stale ログなし。スプレッドガードのブロックは未発生で、直近は 11:58Z の TrendMomentumMicro ロング (-1.3p) のみ約定。
+    - 進捗(2025-11-26): 11/21 M1 ローソクと OANDA 取引 17 件を突合。日次 -19.5p、保有中央値 31s、14:31Z〜16:23Z の ±40〜63p 片道ムーブを未捕捉。MFE10>8p なのに早期決済/逆行損切りが 6 件（例: 01:50Z +12.9p 潜在/2.3p 決済, 04:45Z +7.9p 潜在/-2.6p, 15:03Z -10.9p 即死）。ADX/EMA 乖離ゲートの抑止がチャンス欠落要因と推定。次対応: (1) 急変帯は EMA/ADX スキップしてエントリー優先、(2) micro/scalp は最短保有 120s と BE トレイル強化、(3) 30–60s での逆行ストップ幅を ATR*1.2+5p へ拡大し、(4) MFE>6p で部分利確+トレイルを必須化。
     - 追加検証: `scripts/backtest_exit_manager.py --candles logs/oanda_candles/candles_M1_20251121.json` を実行し、macroシグナルのエグジット挙動を簡易確認（closed 99/ under5min 85 / under2pips 37 / profit_pips -32.1）。tickリプレイ/real trades が無いため、詳細な MFE/MAE 検証は未実施。
 
 - [ ] ID: T-20251117-003
