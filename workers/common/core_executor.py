@@ -311,11 +311,18 @@ class PocketPlanExecutor:
                 break
             action = signal.get("action")
             if action not in {"OPEN_LONG", "OPEN_SHORT"}:
+                LOG.info("%s skip non-entry action=%s", self.log_prefix, action)
                 continue
             confidence = max(0, min(100, signal.get("confidence", 50)))
             confidence_factor = max(0.2, confidence / 100.0)
             confidence_target = round(total_lot * confidence_factor, 3)
             if confidence_target <= 0:
+                LOG.info(
+                    "%s skip signal=%s reason=confidence_zero target=%.3f",
+                    self.log_prefix,
+                    signal.get("tag") or signal.get("strategy"),
+                    confidence_target,
+                )
                 continue
             side = "LONG" if action == "OPEN_LONG" else "SHORT"
             try:
@@ -409,8 +416,10 @@ class PocketPlanExecutor:
             sl_pips = signal.get("sl_pips")
             tp_pips = signal.get("tp_pips")
             if sl_pips is None or tp_pips is None:
+                LOG.info("%s skip signal=%s reason=missing_sl_tp", self.log_prefix, signal.get("tag"))
                 continue
             if price is None:
+                LOG.info("%s skip signal=%s reason=no_price", self.log_prefix, signal.get("tag"))
                 continue
             LOG.info(
                 "%s entry plan strategy=%s pocket=%s action=%s units=%d sl=%.2fp tp=%.2fp price=%.3f conf=%d%% stage=%s",
