@@ -2099,6 +2099,12 @@ async def logic_loop():
                     else:
                         floor = 6.0 if pocket == "macro" else 5.0
                         signal["sl_pips"] = round(max(signal["sl_pips"], floor), 2)
+                # ATRに応じて micro のSLを底上げし、極端にタイトな初期SLによる即損切りを防ぐ
+                if pocket == "micro" and fac_m1.get("atr_pips"):
+                    atr_pips = max(0.1, float(fac_m1["atr_pips"]))
+                    min_sl = max(4.0, atr_pips * 1.2)
+                    if signal.get("sl_pips") is None or signal["sl_pips"] < min_sl:
+                        signal["sl_pips"] = round(min_sl, 2)
                 signal["min_hold_sec"] = _derive_min_hold_seconds(
                     signal, cls.pocket, fac_m1
                 )
