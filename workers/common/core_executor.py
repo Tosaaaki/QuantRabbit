@@ -313,6 +313,28 @@ class PocketPlanExecutor:
             if action not in {"OPEN_LONG", "OPEN_SHORT"}:
                 LOG.info("%s skip non-entry action=%s", self.log_prefix, action)
                 continue
+            if self.pocket == "micro":
+                close_price = plan.factors_m1.get("close")
+                ema20 = plan.factors_m1.get("ema20")
+                if close_price is not None and ema20 is not None:
+                    trend_gap = close_price - ema20
+                    # 0.5p 以上の乖離があれば流れに逆らう方向はスキップ
+                    if trend_gap >= 0.005 and action == "OPEN_SHORT":
+                        LOG.info(
+                            "%s skip micro short vs uptrend (close %.3f > ema20 %.3f)",
+                            self.log_prefix,
+                            close_price,
+                            ema20,
+                        )
+                        continue
+                    if trend_gap <= -0.005 and action == "OPEN_LONG":
+                        LOG.info(
+                            "%s skip micro long vs downtrend (close %.3f < ema20 %.3f)",
+                            self.log_prefix,
+                            close_price,
+                            ema20,
+                        )
+                        continue
             # 強制下限: micro は SL/TP と min_hold を底上げして即死・即利確を避ける
             if self.pocket == "micro":
                 fac_m1 = plan.factors_m1 or {}
