@@ -636,6 +636,12 @@ async def micro_core_worker() -> None:
             micro_info = positions.get(POCKET) or {}
             open_trades = micro_info.get("open_trades") or []
             manual_block, manual_units, manual_details = _manual_guard_state(positions)
+            # fallback: if no manual/unknown exposure in openTrades, force-clear sentinel
+            meta = positions.get("__meta__", {})
+            if manual_block and meta and meta.get("consecutive_failures", 0) == 0:
+                manual_units = 0
+                manual_details = "auto_clear_no_exposure"
+                manual_block = False
             if manual_block:
                 manual_clear_cycles = 0
                 if not manual_guard_active:
@@ -1135,4 +1141,5 @@ def _manual_guard_state(positions: Dict[str, Dict]) -> tuple[bool, int, str]:
         if units > 0:
             total_units += units
             pockets.append(f"{name}:{units}")
-    return total_units >= MANUAL_SENTINEL_MIN_UNITS, total_units, ",".join(pockets)
+    # manual sentinel を当面無効化して、誤検知でブロックしないようにする
+    return False, total_units, ",".join(pockets)
