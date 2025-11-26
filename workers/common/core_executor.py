@@ -305,10 +305,7 @@ class PocketPlanExecutor:
         usd_long_cap_units = int(usd_long_cap_lot * 100000)
         net_units = int(plan.notes.get("net_units") or open_positions.get("__net__", {}).get("units", 0) or 0)
         projected_usd_long_units = max(0, net_units)
-        executed = False
         for signal in plan.signals:
-            if executed:
-                break
             action = signal.get("action")
             if action not in {"OPEN_LONG", "OPEN_SHORT"}:
                 LOG.info("%s skip non-entry action=%s", self.log_prefix, action)
@@ -621,4 +618,3 @@ class PocketPlanExecutor:
                     info["short_units"] = new_units
             open_positions.setdefault("__net__", {})["units"] = open_positions.get("__net__", {}).get("units", 0) + units
             projected_usd_long_units += max(0, units)
-            executed = True
