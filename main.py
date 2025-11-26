@@ -2093,11 +2093,11 @@ async def logic_loop():
                         scaled_conf = int(signal["confidence"] * ((conf_scale + 1.0) / 2.0))
                         signal["confidence"] = max(20, min(100, scaled_conf))
                 elif pocket in {"macro", "micro"}:
-                    # ブレイク/プルバック系の初期SLを最低5〜6pipsに揃えて深掘り逆行を抑制
+                    # ブレイク/プルバック系の初期SLを底上げして深掘り逆行を抑制
                     if signal.get("sl_pips") is None:
-                        signal["sl_pips"] = round(6.0 if pocket == "macro" else 5.0, 2)
+                        signal["sl_pips"] = round(8.0 if pocket == "macro" else 12.0, 2)
                     else:
-                        floor = 6.0 if pocket == "macro" else 5.0
+                        floor = 8.0 if pocket == "macro" else 12.0
                         signal["sl_pips"] = round(max(signal["sl_pips"], floor), 2)
                 # ATRに応じて micro のSLを底上げし、極端にタイトな初期SLによる即損切りを防ぐ
                 if pocket == "micro" and fac_m1.get("atr_pips"):

@@ -389,10 +389,10 @@ class PocketPlanExecutor:
                     atr_pips = float(atr_raw)
                 except Exception:
                     atr_pips = 0.0
-                # SLはより広めに確保（ATR連動 + 8p 下限）して即時損切りを防ぐ
-                min_sl = max(8.0, atr_pips * 1.8) if atr_pips > 0 else 8.0
+                # SLはさらに広めに確保（ATR連動 + 12p 下限）して即時損切りを防ぐ
+                min_sl = max(12.0, atr_pips * 2.0) if atr_pips > 0 else 12.0
                 # TPも相応に引き上げ、過剰なタイト利確を避ける
-                min_tp = 6.0
+                min_tp = 8.0
                 if signal.get("sl_pips") is None or signal["sl_pips"] < min_sl:
                     signal["sl_pips"] = round(min_sl, 2)
                 if signal.get("tp_pips") is None or signal["tp_pips"] < min_tp:
