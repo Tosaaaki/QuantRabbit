@@ -39,6 +39,12 @@ def _env_float(key: str, default: float) -> float:
 
 
 _USD_LONG_CAP_LOT = _env_float("EXPOSURE_USD_LONG_MAX_LOT", 2.5)
+DISABLE_STOP_LOSS = os.getenv("DISABLE_STOP_LOSS", "true").strip().lower() in {
+    "1",
+    "true",
+    "yes",
+    "on",
+}
 
 
 class PocketPlanExecutor:
@@ -389,12 +395,15 @@ class PocketPlanExecutor:
                     atr_pips = float(atr_raw)
                 except Exception:
                     atr_pips = 0.0
-                # SLはさらに広めに確保（ATR連動 + 12p 下限）して即時損切りを防ぐ
-                min_sl = max(12.0, atr_pips * 2.0) if atr_pips > 0 else 12.0
+                if DISABLE_STOP_LOSS:
+                    signal["sl_pips"] = None
+                else:
+                    # SLはさらに広めに確保（ATR連動 + 12p 下限）して即時損切りを防ぐ
+                    min_sl = max(12.0, atr_pips * 2.0) if atr_pips > 0 else 12.0
+                    if signal.get("sl_pips") is None or signal["sl_pips"] < min_sl:
+                        signal["sl_pips"] = round(min_sl, 2)
                 # TPも相応に引き上げ、過剰なタイト利確を避ける
                 min_tp = 8.0
-                if signal.get("sl_pips") is None or signal["sl_pips"] < min_sl:
-                    signal["sl_pips"] = round(min_sl, 2)
                 if signal.get("tp_pips") is None or signal["tp_pips"] < min_tp:
                     signal["tp_pips"] = round(min_tp, 2)
                 hold = signal.get("min_hold_sec") or signal.get("min_hold_seconds")
@@ -506,8 +515,8 @@ class PocketPlanExecutor:
                 continue
             sl_pips = signal.get("sl_pips")
             tp_pips = signal.get("tp_pips")
-            if sl_pips is None or tp_pips is None:
-                LOG.info("%s skip signal=%s reason=missing_sl_tp", self.log_prefix, signal.get("tag"))
+            if tp_pips is None:
+                LOG.info("%s skip signal=%s reason=missing_tp", self.log_prefix, signal.get("tag"))
                 continue
             if price is None:
                 LOG.info("%s skip signal=%s reason=no_price", self.log_prefix, signal.get("tag"))
@@ -525,12 +534,15 @@ class PocketPlanExecutor:
                 confidence,
                 stage_idx + 1,
             )
-            sl, tp = clamp_sl_tp(
-                price,
-                price - sl_pips / 100,
-                price + tp_pips / 100,
-                action == "OPEN_LONG",
-            )
+            sl = None if sl_pips is None else price - sl_pips / 100
+            tp = price + tp_pips / 100
+            if sl is not None:
+                sl, tp = clamp_sl_tp(
+                    price,
+                    sl,
+                    tp,
+                    action == "OPEN_LONG",
+                )
             client_id = build_client_order_id(plan.focus_tag, signal.get("tag", "plan"))
             entry_thesis = {
                 "strategy_tag": signal.get("tag"),
