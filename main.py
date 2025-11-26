@@ -460,26 +460,8 @@ def _extract_profile_name(raw_signal: Dict[str, Any], strategy_name: str) -> str
 
 
 def _manual_sentinel_state(open_positions: Dict[str, Dict]) -> tuple[bool, int, str]:
-    meta = open_positions.get("__meta__", {}) if open_positions else {}
-    stale = bool(meta.get("stale"))
-    age = float(meta.get("age_sec") or 0.0)
-    if (
-        stale
-        and MANUAL_SENTINEL_STALE_RELEASE_SEC > 0.0
-        and age >= MANUAL_SENTINEL_STALE_RELEASE_SEC
-    ):
-        return False, 0, f"stale:{age:.0f}s"
-    total_units = 0
-    pockets: list[str] = []
-    for name in MANUAL_SENTINEL_POCKETS:
-        info = open_positions.get(name) or {}
-        units = int(abs(info.get("units", 0) or 0))
-        if units > 0:
-            total_units += units
-            pockets.append(f"{name}:{units}")
-    active = total_units >= MANUAL_SENTINEL_MIN_UNITS
-    details = ",".join(pockets)
-    return active, total_units, details
+    # Manual sentinel is fully disabled per user request.
+    return False, 0, ""
 SOFT_RANGE_WEIGHT_CAP = 0.32
 SOFT_RANGE_ADX_BUFFER = 6.0
 RANGE_ENTRY_CONFIRMATIONS = 2

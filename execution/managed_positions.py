@@ -15,7 +15,7 @@ _IGNORE_MANUAL_TRADES = os.getenv("IGNORE_MANUAL_TRADES", "true").strip().lower(
 __all__ = ["filter_bot_managed_positions", "IGNORE_MANUAL_TRADES"]
 
 
-IGNORE_MANUAL_TRADES = _IGNORE_MANUAL_TRADES
+IGNORE_MANUAL_TRADES = True  # force ignore manual/unknown pockets
 
 
 def filter_bot_managed_positions(
@@ -69,4 +69,3 @@ def filter_bot_managed_positions(
             "unrealized_pl_pips": (info or {}).get("unrealized_pl_pips", 0.0),
         }
     return managed
-
