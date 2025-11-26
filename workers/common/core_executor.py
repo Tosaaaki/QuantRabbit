@@ -39,6 +39,7 @@ def _env_float(key: str, default: float) -> float:
 
 
 _USD_LONG_CAP_LOT = _env_float("EXPOSURE_USD_LONG_MAX_LOT", 2.5)
+STARTUP_GRACE_SECONDS = _env_float("STARTUP_GRACE_SECONDS", 120.0)
 DISABLE_STOP_LOSS = os.getenv("DISABLE_STOP_LOSS", "true").strip().lower() in {
     "1",
     "true",
@@ -57,6 +58,7 @@ class PocketPlanExecutor:
         self.insight = InsightClient()
         self._last_insight_refresh = datetime.datetime.min
         self._stage_empty_since: Dict[Tuple[str, str], datetime.datetime] = {}
+        self._started_at = datetime.datetime.utcnow()
 
     async def process_plan(self, plan: PocketPlan) -> None:
         now = datetime.datetime.utcnow()
@@ -278,6 +280,14 @@ class PocketPlanExecutor:
         now: datetime.datetime,
         block_entries: bool,
     ) -> None:
+        now = datetime.datetime.utcnow()
+        if STARTUP_GRACE_SECONDS > 0 and (now - self._started_at).total_seconds() < STARTUP_GRACE_SECONDS:
+            LOG.info(
+                "%s startup grace active (%.0fs remaining)",
+                self.log_prefix,
+                STARTUP_GRACE_SECONDS - (now - self._started_at).total_seconds(),
+            )
+            return
         if not plan.signals:
             LOG.info("%s no entry signals", self.log_prefix)
             return
