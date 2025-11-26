@@ -357,10 +357,11 @@ class PocketPlanExecutor:
                     rsi_val = None
                 if close_price is not None and ema20 is not None:
                     trend_gap = close_price - ema20
-                    # エントリー阻害を極力避けるため、乖離ゲートを実質無効化
-                    strong_thr = 999.0
-                    soft_thr = 999.0
-                    surge_mode = True
+                    # 方向フィルタ: EMA20 との乖離が大きい方向を優先。
+                    # 逆張りは乖離が小さいかRSI極端時のみ許可。
+                    strong_thr = 0.010 if pocket in {"micro", "scalp"} else 0.015  # 1.0p / 1.5p
+                    soft_thr = 0.004 if pocket in {"micro", "scalp"} else 0.008  # 0.4p / 0.8p
+                    surge_mode = False
                     is_long = action == "OPEN_LONG"
                     counter_ok = False
                     if rsi_val is not None:
