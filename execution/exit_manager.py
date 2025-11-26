@@ -129,6 +129,15 @@ class ExitManager:
                 continue
             long_units = int(info.get("long_units", 0) or 0)
             short_units = int(info.get("short_units", 0) or 0)
+            avg_long = info.get("long_avg_price") or info.get("avg_price")
+            avg_short = info.get("short_avg_price") or info.get("avg_price")
+            close_price = fac_m1.get("close", 0.0)
+            long_profit = None
+            short_profit = None
+            if avg_long and close_price:
+                long_profit = (close_price - avg_long) / 0.01
+            if avg_short and close_price:
+                short_profit = (avg_short - close_price) / 0.01
             if long_units == 0:
                 self._reset_reverse_counter(pocket, "long")
             if short_units == 0:
@@ -155,11 +164,12 @@ class ExitManager:
             ma20 = pocket_fac.get("ma20", 0.0)
             adx = pocket_fac.get("adx", 0.0)
             ema20 = fac_m1.get("ema20", 0.0)
-            close_price = fac_m1.get("close", 0.0)
             projection_primary = projection_h4 if pocket == "macro" else projection_m1
             projection_fast = projection_m1
 
             if long_units > 0:
+                if long_profit is not None and long_profit < 0:
+                    continue  # 明示要求: マイナス時はEXITしない
                 decision = self._evaluate_long(
                     pocket,
                     info,
@@ -184,6 +194,8 @@ class ExitManager:
                     decisions.append(decision)
 
             if short_units > 0:
+                if short_profit is not None and short_profit < 0:
+                    continue  # 明示要求: マイナス時はEXITしない
                 decision = self._evaluate_short(
                     pocket,
                     info,
