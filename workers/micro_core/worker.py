@@ -81,10 +81,10 @@ def _env_set(name: str, default: str = "") -> set[str]:
         raw = default
     return {item.strip() for item in raw.split(",") if item.strip()}
 
-MANUAL_SENTINEL_POCKETS = {"manual", "unknown"}
-MANUAL_SENTINEL_MIN_UNITS = int(os.getenv("MANUAL_SENTINEL_MIN_UNITS", "4000"))
+MANUAL_SENTINEL_POCKETS = set()
+MANUAL_SENTINEL_MIN_UNITS = int(os.getenv("MANUAL_SENTINEL_MIN_UNITS", "0"))
 MANUAL_SENTINEL_RELEASE_CYCLES = max(
-    1, int(os.getenv("MANUAL_SENTINEL_RELEASE_CYCLES", "2"))
+    1, int(os.getenv("MANUAL_SENTINEL_RELEASE_CYCLES", "1"))
 )
 MANUAL_SENTINEL_BLOCK_POCKETS = _env_set("MANUAL_SENTINEL_BLOCK_POCKETS", "")
 HOLD_RATIO_LOOKBACK_HOURS = float(os.getenv("HOLD_RATIO_LOOKBACK_HOURS", "6.0"))
