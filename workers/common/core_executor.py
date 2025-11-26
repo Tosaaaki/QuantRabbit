@@ -354,9 +354,10 @@ class PocketPlanExecutor:
                     rsi_val = None
                 if close_price is not None and ema20 is not None:
                     trend_gap = close_price - ema20
-                    strong_thr = 0.05  # 実質スキップを抑制するため大きめに設定
-                    soft_thr = 0.02
-                    surge_mode = True  # サージ扱いで逆張り抑制を緩める
+                    # エントリー阻害を極力避けるため、乖離ゲートを実質無効化
+                    strong_thr = 999.0
+                    soft_thr = 999.0
+                    surge_mode = True
                     is_long = action == "OPEN_LONG"
                     counter_ok = False
                     if rsi_val is not None:
