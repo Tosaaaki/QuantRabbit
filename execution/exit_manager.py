@@ -323,6 +323,9 @@ class ExitManager:
         profit_pips = 0.0
         if avg_price and close_price:
             profit_pips = (close_price - avg_price) / 0.01
+        # ユーザー指定: マイナス時はEXITしない（SLなし運用のため、逆行中はホールド）
+        if profit_pips < 0:
+            return None
         neg_exit_blocked = self._negative_exit_blocked(
             pocket, open_info, "long", now, profit_pips, stage_tracker, atr_pips, fac_m1
         )
@@ -663,6 +666,9 @@ class ExitManager:
         profit_pips = 0.0
         if avg_price and close_price:
             profit_pips = (avg_price - close_price) / 0.01
+        # ユーザー指定: マイナス時はEXITしない（SLなし運用のため、逆行中はホールド）
+        if profit_pips < 0:
+            return None
         neg_exit_blocked = self._negative_exit_blocked(
             pocket, open_info, "short", now, profit_pips, stage_tracker, atr_pips, fac_m1
         )
