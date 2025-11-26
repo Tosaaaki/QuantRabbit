@@ -93,8 +93,8 @@ class ExitManager:
         self._profit_snatch_min = float(os.getenv("EXIT_SNATCH_MIN_PROFIT_PIPS", "0.3"))
         self._profit_snatch_max = float(os.getenv("EXIT_SNATCH_MAX_PROFIT_PIPS", "0.8"))
         self._profit_snatch_hold = float(os.getenv("EXIT_SNATCH_MIN_HOLD_SEC", "70"))
-        self._profit_snatch_atr_min = float(os.getenv("EXIT_SNATCH_ATR_MIN", "1.6"))
-        self._profit_snatch_vol_min = float(os.getenv("EXIT_SNATCH_VOL5M_MIN", "1.2"))
+        self._profit_snatch_atr_min = float(os.getenv("EXIT_SNATCH_ATR_MIN", "1.0"))
+        self._profit_snatch_vol_min = float(os.getenv("EXIT_SNATCH_VOL5M_MIN", "0.8"))
         self._profit_snatch_jst_start = int(os.getenv("EXIT_SNATCH_JST_START", "0")) % 24
         self._profit_snatch_jst_end = int(os.getenv("EXIT_SNATCH_JST_END", "6")) % 24
         self._loss_guard_atr_trigger = float(os.getenv("EXIT_LOSS_GUARD_ATR_TRIGGER", "2.0"))
@@ -315,8 +315,6 @@ class ExitManager:
         fac_m1: Dict,
         stage_tracker: Optional["StageTracker"],
     ) -> Optional[ExitDecision]:
-        if pocket == "scalp":
-            return None
 
         allow_reentry = False
         reason = ""
@@ -657,8 +655,6 @@ class ExitManager:
         fac_m1: Dict,
         stage_tracker: Optional["StageTracker"],
     ) -> Optional[ExitDecision]:
-        if pocket == "scalp":
-            return None
 
         allow_reentry = False
         reason = ""
