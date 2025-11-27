@@ -48,6 +48,15 @@ _OPEN_TRADES_FAIL_BACKOFF_MAX = float(
 )
 _MANUAL_POCKET_NAME = os.getenv("POSITION_MANAGER_MANUAL_POCKET", "manual")
 _KNOWN_POCKETS = {"micro", "macro", "scalp"}
+# Agent-generated client order ID prefixes (qr-...), used to classify pockets.
+agent_client_prefixes = tuple(
+    os.getenv("AGENT_CLIENT_PREFIXES", "qr-,qs-").split(",")
+)
+agent_client_prefixes = tuple(p for p in agent_client_prefixes if p)
+if not agent_client_prefixes:
+    agent_client_prefixes = ("qr-",)
+# pockets that belong to this agent
+agent_pockets = {"micro", "macro", "scalp"}
 
 
 def _build_http_session() -> requests.Session:
