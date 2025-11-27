@@ -305,6 +305,17 @@ GPT_FACTOR_KEYS: Dict[str, tuple[str, ...]] = {
     ),
 }
 NEWS_LIMITS = {"short": 2, "long": 2}
+# systemd service mapping for auxiliary workers (optional; may fail if units are absent)
+WORKER_SERVICES = {
+    "macro_core": "qr-macro-core.service",
+    "micro_core": "qr-micro-core.service",
+    "fast_scalp": "qr-fast-scalp.service",
+    "mtf_breakout": "qr-mtf-breakout.service",
+    "scalp_exit": "qr-scalp-exit.service",
+    "pullback_scalp": "qr-pullback-scalp.service",
+    "london_momentum": "qr-london-momentum.service",
+}
+WORKER_AUTOCONTROL_ENABLED = os.getenv("WORKER_AUTOCONTROL", "1").strip() not in {"", "0", "false", "no"}
 GPT_PERF_KEYS = ("pf", "win_rate", "avg_pips", "sharpe", "sample")
 _GPT_FACTOR_PRECISION = {
     "adx": 2,
@@ -340,6 +351,75 @@ MACRO_MARGIN_SAFETY_BUFFER = _safe_env_float("MACRO_MARGIN_SAFETY_BUFFER", 0.1, 
 FORCE_SCALP_MODE = os.getenv("SCALP_FORCE_ALWAYS", "0").strip().lower() not in {"", "0", "false", "no"}
 if FORCE_SCALP_MODE:
     logging.warning("[FORCE_SCALP] mode enabled")
+
+
+def _session_bucket(now: datetime.datetime) -> str:
+    """Rough session bucket in UTC."""
+    hour = now.hour
+    if 7 <= hour < 17:
+        return "london"
+    if 17 <= hour < 23:
+        return "ny"
+    return "asia"
+
+
+def _select_worker_targets(fac_m1: dict, fac_h4: dict, now: datetime.datetime) -> set[str]:
+    atr_pips = float(fac_m1.get("atr_pips") or 0.0)
+    vol_5m = float(fac_m1.get("vol_5m") or 0.0)
+    session = _session_bucket(now)
+    high_vol = atr_pips >= 2.0 or vol_5m >= 1.5
+    low_vol = atr_pips <= 1.0 and vol_5m <= 0.7
+    targets: set[str] = {"macro_core", "micro_core", "fast_scalp", "scalp_exit"}
+    if high_vol:
+        targets.add("mtf_breakout")
+        if session in {"london", "ny"}:
+            targets.add("london_momentum")
+    if low_vol:
+        targets.add("pullback_scalp")
+    return targets
+
+
+async def _systemctl(action: str, service: str) -> bool:
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            "sudo",
+            "systemctl",
+            action,
+            service,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        await proc.communicate()
+        return proc.returncode == 0
+    except Exception as exc:  # pragma: no cover - defensive
+        logging.warning("[WORKER_CTL] %s %s failed: %s", action, service, exc)
+        return False
+
+
+async def _reconcile_worker_services(previous: set[str], desired: set[str]) -> None:
+    to_start = desired - previous
+    to_stop = previous - desired
+    if not to_start and not to_stop:
+        return
+    for svc in to_start:
+        unit = WORKER_SERVICES.get(svc)
+        if not unit:
+            logging.debug("[WORKER_CTL] no unit for %s", svc)
+            continue
+        ok = await _systemctl("start", unit)
+        if ok:
+            logging.info("[WORKER_CTL] started %s (%s)", svc, unit)
+        else:
+            logging.warning("[WORKER_CTL] failed to start %s (%s)", svc, unit)
+    for svc in to_stop:
+        unit = WORKER_SERVICES.get(svc)
+        if not unit:
+            continue
+        ok = await _systemctl("stop", unit)
+        if ok:
+            logging.info("[WORKER_CTL] stopped %s (%s)", svc, unit)
+        else:
+            logging.warning("[WORKER_CTL] failed to stop %s (%s)", svc, unit)
 
 
 class GPTDecisionState:
@@ -1462,6 +1542,7 @@ async def logic_loop(
     last_vol_high_ratio: Optional[float] = None
     last_stage_biases: dict[str, float] = {}
     last_story_summary: Optional[dict] = None
+    last_worker_plan: set[str] = set()
 
     try:
         while True:
@@ -1542,6 +1623,14 @@ async def logic_loop(
             else:
                 fac_m1["recent_ticks"] = []
                 fac_m1["recent_tick_summary"] = {}
+            if WORKER_AUTOCONTROL_ENABLED:
+                try:
+                    desired_workers = _select_worker_targets(fac_m1, fac_h4, now)
+                    if desired_workers != last_worker_plan:
+                        await _reconcile_worker_services(last_worker_plan, desired_workers)
+                        last_worker_plan = desired_workers
+                except Exception as exc:  # pragma: no cover - defensive
+                    logging.debug("[WORKER_CTL] reconcile failed: %s", exc)
             if loop_counter % 5 == 0:
                 latest_epoch = None
                 if recent_tick_rows:
