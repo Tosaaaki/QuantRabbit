@@ -55,6 +55,10 @@ def _in_jst_reverse_window(now: Optional[datetime] = None) -> bool:
     return hour >= _STAGE_REVERSE_JST_START or hour < _STAGE_REVERSE_JST_END
 
 
+def _ensure_row_factory(conn: sqlite3.Connection) -> None:
+    conn.row_factory = sqlite3.Row
+
+
 @dataclass(slots=True)
 class CooldownInfo:
     pocket: str
