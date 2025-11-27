@@ -38,6 +38,7 @@ from market_data.news_fetcher import fetch_loop as news_fetch_loop
 from analysis.summary_ingestor import ingest_loop as summary_ingest_loop
 from analytics.insight_client import InsightClient
 from analysis.range_guard import detect_range_mode
+from analysis.pattern_stats import PatternStats, derive_pattern_signature
 from signals.pocket_allocator import alloc, DEFAULT_SCALP_SHARE, dynamic_scalp_share
 from execution.risk_guard import (
     allowed_lot,
@@ -471,6 +472,10 @@ RANGE_ENTRY_SCORE_FLOOR = 0.62
 RANGE_EXIT_SCORE_CEIL = 0.56
 STAGE_RESET_GRACE_SECONDS = 180
 TARGET_INSTRUMENT = "USD_JPY"
+# 再起動直後の暴発を避ける猶予時間（秒）
+COLD_START_GRACE_SEC = int(os.getenv("COLD_START_GRACE_SEC", "90"))
+IDLE_REFRESH_THRESHOLD_SEC = int(os.getenv("IDLE_REFRESH_THRESHOLD_SEC", "1800"))
+IDLE_REFRESH_CHECK_SEC = int(os.getenv("IDLE_REFRESH_CHECK_SEC", "180"))
 
 # 総合的な Macro 配分上限（lot 按分に直接適用）
 # 初期値は 0.30 (=30%)。環境変数による上書きは下段で適用。
@@ -505,6 +510,9 @@ def _env_int(key: str, default: int) -> int:
 
 # 環境変数 MACRO_WEIGHT_CAP で上書き可能。
 GLOBAL_MACRO_WEIGHT_CAP = _env_float("MACRO_WEIGHT_CAP", GLOBAL_MACRO_WEIGHT_CAP)
+
+# Disable sending broker-level stop loss (risk sizing may still use SL pips)
+DISABLE_STOP_LOSS = _env_bool("DISABLE_STOP_LOSS", False)
 
 
 _MACRO_STATE_PATH_RAW = (
@@ -1046,6 +1054,7 @@ def _publish_pocket_plans(
 
 
 _ORDERS_DB_PATH = Path("logs/orders.db")
+_TRADES_DB_PATH = Path("logs/trades.db")
 
 
 def _parse_trade_ts(value: Optional[str]) -> datetime.datetime:
@@ -1093,6 +1102,34 @@ def _lookup_client_id(ticket_id: str) -> Optional[str]:
         return None
     client_id = row["client_order_id"] if "client_order_id" in row.keys() else row[0]
     return client_id or None
+
+
+def _latest_trade_entry_time(trades_db: Path = _TRADES_DB_PATH) -> datetime.datetime | None:
+    if not trades_db.exists():
+        return None
+    con: Optional[sqlite3.Connection] = None
+    try:
+        con = sqlite3.connect(trades_db)
+        row = con.execute(
+            "SELECT entry_time FROM trades WHERE entry_time IS NOT NULL ORDER BY id DESC LIMIT 1"
+        ).fetchone()
+    except sqlite3.Error as exc:
+        logging.debug("[IDLE] last trade lookup failed: %s", exc)
+        return None
+    finally:
+        if con is not None:
+            try:
+                con.close()
+            except Exception:
+                pass
+    if not row:
+        return None
+    dt = _parse_iso8601(str(row[0])) if row[0] else None
+    if dt is None:
+        return None
+    if dt.tzinfo is not None:
+        dt = dt.astimezone(datetime.timezone.utc).replace(tzinfo=None)
+    return dt
 
 
 def _trendma_signal_allowed(
@@ -1230,6 +1267,7 @@ async def logic_loop():
     confidence_policy = ConfidencePolicy()
     exit_manager = ExitManager()
     stage_tracker = StageTracker()
+    pattern_stats = PatternStats()
     perf_cache = {}
     news_cache = {}
     insight = InsightClient()
@@ -1238,6 +1276,10 @@ async def logic_loop():
     last_heartbeat_time = datetime.datetime.min  # Add this line
     last_metrics_refresh = datetime.datetime.min
     last_macro_snapshot_refresh = datetime.datetime.min
+    last_trade_check_time = datetime.datetime.min
+    last_trade_entry: Optional[datetime.datetime] = _latest_trade_entry_time()
+    idle_refresh_notified = False
+    idle_refresh_last = datetime.datetime.min
     strategy_health_cache: dict[str, StrategyHealth] = {}
     range_active = False
     range_soft_active = False
@@ -1258,12 +1300,70 @@ async def logic_loop():
     last_hold_ratio_check = datetime.datetime.min
     price_window: deque[tuple[datetime.datetime, float]] = deque(maxlen=128)
     last_surge_trigger = datetime.datetime.min
+    start_time = datetime.datetime.utcnow()
+    cold_start_logged = False
 
     try:
         while True:
             now = datetime.datetime.utcnow()
+            elapsed_since_start = (now - start_time).total_seconds()
+            if elapsed_since_start < COLD_START_GRACE_SEC:
+                if not cold_start_logged:
+                    logging.info(
+                        "[COLD-START] Grace period %.0fs (elapsed %.0fs); skipping entries.",
+                        COLD_START_GRACE_SEC,
+                        elapsed_since_start,
+                    )
+                    cold_start_logged = True
+                await asyncio.sleep(5)
+                continue
             stage_tracker.clear_expired(now)
             stage_tracker.update_loss_streaks(now=now, cooldown_map=POCKET_LOSS_COOLDOWNS)
+            if (now - last_trade_check_time).total_seconds() >= IDLE_REFRESH_CHECK_SEC:
+                last_trade_check_time = now
+                try:
+                    latest_entry = _latest_trade_entry_time()
+                except Exception as exc:  # pragma: no cover - defensive
+                    logging.debug("[IDLE] trade lookup failed: %s", exc)
+                    latest_entry = None
+                if latest_entry:
+                    last_trade_entry = latest_entry
+                idle_gap = (
+                    (now - last_trade_entry).total_seconds()
+                    if last_trade_entry is not None
+                    else None
+                )
+                if idle_gap is not None and idle_gap >= IDLE_REFRESH_THRESHOLD_SEC:
+                    if not idle_refresh_notified:
+                        logging.warning(
+                            "[IDLE] No trades for %.1f minutes; refreshing factors and macro snapshot.",
+                            idle_gap / 60.0,
+                        )
+                        idle_refresh_notified = True
+                    if (now - idle_refresh_last).total_seconds() >= max(60.0, IDLE_REFRESH_CHECK_SEC):
+                        try:
+                            await initialize_history(TARGET_INSTRUMENT)
+                        except Exception as exc:  # pragma: no cover - defensive
+                            logging.warning("[IDLE] history refresh failed: %s", exc)
+                        try:
+                            await asyncio.to_thread(
+                                refresh_macro_snapshot,
+                                snapshot_path=_macro_snapshot_path(),
+                                deadzone=_MACRO_STATE_DEADZONE,
+                                refresh_if_older_than_minutes=int(_MACRO_SNAPSHOT_REFRESH_MINUTES),
+                            )
+                            globals()["_macro_state_cache"] = None
+                            _refresh_macro_state()
+                        except Exception as exc:  # pragma: no cover - defensive
+                            logging.warning("[IDLE] macro snapshot refresh failed: %s", exc)
+                        idle_refresh_last = now
+                else:
+                    if idle_refresh_notified and idle_gap is not None:
+                        logging.info(
+                            "[IDLE] Activity detected after %.1f minutes gap.",
+                            idle_gap / 60.0,
+                        )
+                    idle_refresh_notified = False
 
             if (now - last_hold_ratio_check).total_seconds() >= HOLD_RATIO_CHECK_INTERVAL_SEC:
                 ratio, total, lt60 = _HOLD_MONITOR.sample()
@@ -1310,6 +1410,10 @@ async def logic_loop():
                     insight.refresh()
                 except Exception:
                     pass
+                try:
+                    pattern_stats.refresh(now=now)
+                except Exception as exc:
+                    logging.warning("[PATTERN] refresh failed: %s", exc)
                 last_update_time = now
                 logging.info(f"[PERF] Updated: {perf_cache}")
                 logging.info(f"[NEWS] Updated: {news_cache}")
@@ -2074,11 +2178,11 @@ async def logic_loop():
                     if conf_scale is not None:
                         scaled_conf = int(signal["confidence"] * ((conf_scale + 1.0) / 2.0))
                         signal["confidence"] = max(20, min(100, scaled_conf))
-                elif pocket in {"macro", "micro"}:
-                    # ユーザー要求により SL は付けず、TP だけを残す
+                # DISABLE_STOP_LOSS=true のときは broker 側にSLを置かない
+                if DISABLE_STOP_LOSS:
                     signal["sl_pips"] = None
                 # ATRに応じて micro のSLを底上げし、極端にタイトな初期SLによる即損切りを防ぐ
-                if pocket == "micro" and fac_m1.get("atr_pips"):
+                if (not DISABLE_STOP_LOSS) and pocket == "micro" and fac_m1.get("atr_pips"):
                     atr_pips = max(0.1, float(fac_m1["atr_pips"]))
                     min_sl = max(5.0, atr_pips * 1.2)
                     if signal.get("sl_pips") is None or signal["sl_pips"] < min_sl:
@@ -2087,6 +2191,14 @@ async def logic_loop():
                     signal, cls.pocket, fac_m1
                 )
                 signal["loss_guard_pips"] = _derive_loss_guard_pips(signal, cls.pocket, fac_m1)
+                if signal["action"] in {"OPEN_LONG", "OPEN_SHORT"}:
+                    pattern_tag, pattern_meta = derive_pattern_signature(
+                        fac_m1,
+                        action=signal["action"],
+                    )
+                    if pattern_tag:
+                        signal["pattern_tag"] = pattern_tag
+                        signal["pattern_meta"] = pattern_meta
                 signal["health"] = {
                     "win_rate": health.win_rate,
                     "pf": health.profit_factor,
@@ -2692,6 +2804,54 @@ async def logic_loop():
                 if confidence_target <= 0:
                     continue
 
+                pattern_eval = None
+                pattern_tag = signal.get("pattern_tag")
+                if pattern_tag:
+                    try:
+                        pattern_eval = pattern_stats.evaluate(
+                            pattern_tag=pattern_tag,
+                            pocket=pocket,
+                            direction=dir_key,
+                            range_mode=range_active,
+                            now=now,
+                        )
+                    except Exception as exc:
+                        logging.debug("[PATTERN] evaluate failed tag=%s err=%s", pattern_tag, exc)
+                        pattern_eval = None
+                if pattern_eval and pattern_eval.factor > 1.0:
+                    boosted = round(confidence_target * pattern_eval.factor, 3)
+                    boosted = min(boosted, remaining_lot)
+                    if boosted > confidence_target:
+                        confidence_target = boosted
+                        try:
+                            log_metric(
+                                "pattern_boost",
+                                pattern_eval.factor,
+                                tags={
+                                    "pattern": pattern_tag[:48],
+                                    "pocket": pocket,
+                                    "dir": dir_key,
+                                    "samples": str(pattern_eval.sample_size),
+                                    "wr": f"{pattern_eval.win_rate:.3f}",
+                                },
+                            )
+                        except Exception:
+                            pass
+                        logging.info(
+                            "[PATTERN] boost %s pocket=%s dir=%s factor=%.2f wr=%.3f pf=%.3f n=%d",
+                            pattern_tag,
+                            pocket,
+                            dir_key,
+                            pattern_eval.factor,
+                            pattern_eval.win_rate,
+                            pattern_eval.profit_factor,
+                            pattern_eval.sample_size,
+                        )
+                if confidence_target > remaining_lot:
+                    confidence_target = round(remaining_lot, 3)
+                if confidence_target <= 0:
+                    continue
+
                 blocked, remain_sec, block_reason = stage_tracker.is_blocked(
                     pocket, direction, now
                 )
@@ -2754,8 +2914,11 @@ async def logic_loop():
 
                 sl_pips = signal.get("sl_pips")
                 tp_pips = signal.get("tp_pips")
-                if sl_pips is None or tp_pips is None:
-                    logging.info("[SKIP] Missing SL/TP for %s.", signal["strategy"])
+                if tp_pips is None:
+                    logging.info("[SKIP] Missing TP for %s.", signal["strategy"])
+                    continue
+                if (not DISABLE_STOP_LOSS) and sl_pips is None:
+                    logging.info("[SKIP] Missing SL for %s (SL required when DISABLE_STOP_LOSS=false).", signal["strategy"])
                     continue
 
                 entry_price = price
@@ -2769,33 +2932,44 @@ async def logic_loop():
                         entry_price = quote_bid
                     elif quote_ask:
                         entry_price = quote_ask
-                sl_base = entry_price - sl_pips / 100 if action == "OPEN_LONG" else entry_price + sl_pips / 100
                 tp_base = entry_price + tp_pips / 100 if action == "OPEN_LONG" else entry_price - tp_pips / 100
-                sl, tp = clamp_sl_tp(entry_price, sl_base, tp_base, action == "OPEN_LONG")
+                if DISABLE_STOP_LOSS:
+                    sl = None
+                    tp = round(tp_base, 3)
+                else:
+                    sl_base = entry_price - sl_pips / 100 if action == "OPEN_LONG" else entry_price + sl_pips / 100
+                    sl, tp = clamp_sl_tp(entry_price, sl_base, tp_base, action == "OPEN_LONG")
 
-                client_id = build_client_order_id(focus_tag, signal["tag"])
-                entry_thesis = {
-                    "strategy_tag": signal.get("tag"),
-                    "strategy": signal.get("strategy"),
-                    "pocket": pocket,
-                    "profile": signal.get("profile"),
-                    "min_hold_sec": signal.get("min_hold_sec"),
-                    "loss_guard_pips": signal.get("loss_guard_pips"),
-                    "target_tp_pips": tp_pips,
-                    "sl_pips": sl_pips,
-                    "tp_pips": tp_pips,
-                }
-                pocket_allocations[pocket][dir_key] += staged_lot
-                trade_id = await market_order(
-                    "USD_JPY",
-                    units,
-                    sl,
-                    tp,
-                    pocket,
-                    client_order_id=client_id,
-                    entry_thesis=entry_thesis,
-                    meta={"entry_price": entry_price},
-                )
+                    client_id = build_client_order_id(focus_tag, signal["tag"])
+                    entry_thesis = {
+                        "strategy_tag": signal.get("tag"),
+                        "strategy": signal.get("strategy"),
+                        "pocket": pocket,
+                        "profile": signal.get("profile"),
+                        "min_hold_sec": signal.get("min_hold_sec"),
+                        "loss_guard_pips": signal.get("loss_guard_pips"),
+                        "target_tp_pips": tp_pips,
+                        "sl_pips": sl_pips,
+                        "tp_pips": tp_pips,
+                        "confidence": confidence,
+                        "pattern_tag": signal.get("pattern_tag"),
+                        "pattern_meta": signal.get("pattern_meta"),
+                        "pattern_boost_factor": pattern_eval.factor if pattern_eval else 1.0,
+                        "pattern_sample_size": pattern_eval.sample_size if pattern_eval else 0,
+                        "pattern_win_rate": pattern_eval.win_rate if pattern_eval else 0.0,
+                    }
+                    pocket_allocations[pocket][dir_key] += staged_lot
+                    trade_id = await market_order(
+                        "USD_JPY",
+                        units,
+                        sl,
+                        tp,
+                        pocket,
+                        client_order_id=client_id,
+                        entry_thesis=entry_thesis,
+                        meta={"entry_price": entry_price},
+                        confidence=confidence,
+                    )
                 if trade_id:
                     if exposure_state:
                         exposure_state.allocate(units)
