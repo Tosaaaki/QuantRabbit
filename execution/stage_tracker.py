@@ -27,6 +27,8 @@ _STAGE_REVERSE_LOSS_FLOOR = float(os.getenv("STAGE_REVERSE_LOSS_FLOOR", "0.3"))
 _STAGE_REVERSE_FLIP_GUARD_SEC = int(os.getenv("STAGE_REVERSE_FLIP_GUARD_SEC", "90"))
 # Loss cluster window default (minutes)
 _LOSS_WINDOW_MINUTES = int(os.getenv("LOSS_CLUSTER_WINDOW_MIN", "480"))
+# Loss judgment floor (JPY). Trades with |pl_jpy| <= this are treated as flat.
+_MIN_LOSS_JPY = float(os.getenv("LOSS_CLUSTER_MIN_JPY", "50"))
 
 
 def _utcnow() -> datetime:
