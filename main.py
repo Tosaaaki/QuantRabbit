@@ -699,6 +699,10 @@ def _refresh_macro_state() -> MacroState | None:
             return _macro_state_cache
     return _macro_state_cache
 
+# Hard caps to keep risk bounded even with misconfigured secrets
+_HARD_BASE_RISK_CAP = 0.03
+_HARD_MAX_RISK_CAP = 0.30
+
 try:
     _BASE_RISK_PCT = float(get_secret("risk_pct"))
     if _BASE_RISK_PCT <= 0:
