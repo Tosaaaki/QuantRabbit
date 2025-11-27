@@ -334,6 +334,7 @@ WORKER_SERVICES = {
     "onepip_maker_s1": "qr-onepip_maker_s1.service",
 }
 WORKER_AUTOCONTROL_ENABLED = os.getenv("WORKER_AUTOCONTROL", "1").strip() not in {"", "0", "false", "no"}
+WORKER_AUTOCONTROL_LIMIT = int(os.getenv("WORKER_AUTOCONTROL_LIMIT", "4") or "4")
 GPT_PERF_KEYS = ("pf", "win_rate", "avg_pips", "sharpe", "sample")
 _GPT_FACTOR_PRECISION = {
     "adx": 2,
@@ -382,19 +383,61 @@ def _session_bucket(now: datetime.datetime) -> str:
 
 
 def _select_worker_targets(fac_m1: dict, fac_h4: dict, now: datetime.datetime) -> set[str]:
+    """Score workers based on市況 and pick top-N."""
     atr_pips = float(fac_m1.get("atr_pips") or 0.0)
     vol_5m = float(fac_m1.get("vol_5m") or 0.0)
+    adx_h4 = float(fac_h4.get("adx") or 0.0)
+    ma_gap_h4 = abs(float(fac_h4.get("ma10") or 0.0) - float(fac_h4.get("ma20") or 0.0))
     session = _session_bucket(now)
     high_vol = atr_pips >= 2.0 or vol_5m >= 1.5
+    mid_vol = atr_pips >= 1.3 or vol_5m >= 1.0
     low_vol = atr_pips <= 1.0 and vol_5m <= 0.7
-    targets: set[str] = {"macro_core", "micro_core", "fast_scalp", "scalp_exit"}
-    if high_vol:
-        targets.add("mtf_breakout")
-        if session in {"london", "ny"}:
-            targets.add("london_momentum")
-    if low_vol:
-        targets.add("pullback_scalp")
-    return targets
+    trending = adx_h4 >= 18.0 or ma_gap_h4 >= 0.12
+    range_like = adx_h4 <= 15.0 and vol_5m <= 0.9
+
+    scores: dict[str, float] = {}
+    reasons: dict[str, str] = {}
+
+    def bump(name: str, score: float, reason: str) -> None:
+        if name not in WORKER_SERVICES:
+            return
+        prev = scores.get(name, 0.0)
+        scores[name] = prev + score
+        if prev < score:
+            reasons[name] = reason
+
+    # Baseline set
+    bump("micro_core", 1.0, "baseline_micro")
+    bump("fast_scalp", 0.9, "baseline_scalp")
+    bump("scalp_exit", 0.8, "exit_guard")
+
+    # Macro/trend
+    if trending:
+        bump("macro_core", 0.9, "h4_trend")
+    if high_vol and trending:
+        bump("mtf_breakout", 0.8, "high_vol_trend")
+    if session in {"london", "ny"} and mid_vol:
+        bump("london_momentum", 0.7, f"session_{session}")
+
+    # Range/低ボラ
+    if low_vol or range_like:
+        bump("pullback_scalp", 0.8, "range_low_vol")
+        bump("vol_squeeze", 0.4, "range_compression")
+
+    # Safety: avoid overloading tiny VM
+    limit = max(1, min(8, WORKER_AUTOCONTROL_LIMIT))
+    picked = sorted(scores.items(), key=lambda x: x[1], reverse=True)[:limit]
+    selected = {name for name, _ in picked}
+    logging.info(
+        "[WORKER_CTL] plan session=%s atr=%.2f vol5m=%.2f trend=%.2f selected=%s reasons=%s",
+        session,
+        atr_pips,
+        vol_5m,
+        adx_h4,
+        ",".join(sorted(selected)),
+        {k: reasons.get(k, "") for k in selected},
+    )
+    return selected
 
 
 async def _systemctl(action: str, service: str) -> bool:
