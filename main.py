@@ -74,6 +74,12 @@ from strategies.micro_lowvol import (
     BBRsiFast,
     MicroVWAPRevert,
 )
+from strategies.micro.momentum_burst import MomentumBurstMicro
+from strategies.micro.trend_momentum import TrendMomentumMicro
+from strategies.micro.momentum_stack import MicroMomentumStack
+from strategies.micro.pullback_ema import MicroPullbackEMA
+from strategies.micro.range_break import MicroRangeBreak
+from strategies.micro.level_reactor import MicroLevelReactor
 from utils.oanda_account import get_account_snapshot
 from utils.secrets import get_secret
 from utils.metrics_logger import log_metric
@@ -115,6 +121,12 @@ STRATEGIES = {
     "VolCompressionBreak": VolCompressionBreak,
     "BB_RSI_Fast": BBRsiFast,
     "MicroVWAPRevert": MicroVWAPRevert,
+    "MomentumBurst": MomentumBurstMicro,
+    "TrendMomentumMicro": TrendMomentumMicro,
+    "MicroMomentumStack": MicroMomentumStack,
+    "MicroPullbackEMA": MicroPullbackEMA,
+    "MicroRangeBreak": MicroRangeBreak,
+    "MicroLevelReactor": MicroLevelReactor,
 }
 
 POCKET_STRATEGY_MAP = {
@@ -126,6 +138,12 @@ POCKET_STRATEGY_MAP = {
         "VolCompressionBreak",
         "MicroVWAPRevert",
         "NewsSpikeReversal",
+        "MomentumBurst",
+        "TrendMomentumMicro",
+        "MicroMomentumStack",
+        "MicroPullbackEMA",
+        "MicroRangeBreak",
+        "MicroLevelReactor",
     },
     "scalp": {"M1Scalper", "RangeFader", "PulseBreak"},
 }
@@ -155,37 +173,37 @@ POCKET_LOSS_COOLDOWNS = {
 
 # 新規エントリー後のクールダウン（再エントリー抑制）
 POCKET_ENTRY_MIN_INTERVAL = {
-    "macro": 240,  # 4分
-    "micro": 150,  # 2.5分
-    "scalp": 75,
-    "scalp_fast": 30,
+    "macro": 180,  # 3分
+    "micro": 30,
+    "scalp": 30,
+    "scalp_fast": 15,
 }
 
 if os.getenv("SCALP_TACTICAL", "0").strip().lower() not in {"", "0", "false", "no"}:
     POCKET_LOSS_COOLDOWNS["scalp"] = 120
-    POCKET_ENTRY_MIN_INTERVAL["scalp"] = 45
+    POCKET_ENTRY_MIN_INTERVAL["scalp"] = 25
 
 PIP = 0.01
 
 POCKET_MAX_ACTIVE_TRADES = {
     "macro": 6,
-    "micro": 2,
-    "scalp": 3,
-    "scalp_fast": 2,
+    "micro": 6,
+    "scalp": 4,
+    "scalp_fast": 3,
 }
 
 POCKET_MAX_ACTIVE_TRADES_RANGE = {
     "macro": 0,
-    "micro": 1,
-    "scalp": 1,
+    "micro": 2,
+    "scalp": 2,
     "scalp_fast": 1,
 }
 
 POCKET_MAX_DIRECTIONAL_TRADES = {
     "macro": 6,
-    "micro": 1,
+    "micro": 3,
     "scalp": 2,
-    "scalp_fast": 1,
+    "scalp_fast": 2,
 }
 
 POCKET_MAX_DIRECTIONAL_TRADES_RANGE = {

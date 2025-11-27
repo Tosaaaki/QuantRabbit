@@ -98,7 +98,9 @@ def build_messages(payload: Dict) -> List[Dict]:
         "weight_macro and weight_scalp are floats in [0,1] and must sum to at most 1. "
         "ranked_strategies is an array ordered by priority, using only "
         "[TrendMA, H1Momentum, Donchian55, BB_RSI, BB_RSI_Fast, NewsSpikeReversal, "
-        "M1Scalper, RangeFader, PulseBreak, MomentumPulse, VolCompressionBreak, MicroVWAPRevert]."
+        "M1Scalper, RangeFader, PulseBreak, MomentumPulse, VolCompressionBreak, MicroVWAPRevert, "
+        "MomentumBurst, TrendMomentumMicro, MicroMomentumStack, MicroPullbackEMA, MicroRangeBreak, "
+        "MicroLevelReactor]."
     )
 
     messages = [

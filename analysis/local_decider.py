@@ -20,6 +20,12 @@ _ALLOWED_STRATEGIES = (
     "VolCompressionBreak",
     "BB_RSI_Fast",
     "MicroVWAPRevert",
+    "MomentumBurst",
+    "TrendMomentumMicro",
+    "MicroMomentumStack",
+    "MicroPullbackEMA",
+    "MicroRangeBreak",
+    "MicroLevelReactor",
 )
 
 
@@ -88,6 +94,9 @@ def heuristic_decision(
     micro_rsi = _safe_float(factors_m1.get("rsi"), 50.0)
     atr_pips = _atr_pips(factors_m1)
     vol_5m = _safe_float(factors_m1.get("vol_5m"), 1.0)
+    ma10_m1 = _safe_float(factors_m1.get("ma10"))
+    ma20_m1 = _safe_float(factors_m1.get("ma20"))
+    ma_gap_pips = abs(ma10_m1 - ma20_m1) / 0.01 if ma10_m1 or ma20_m1 else 0.0
 
     focus_tag = "hybrid"
     weight_macro = 0.5
@@ -181,6 +190,19 @@ def heuristic_decision(
                     "MicroVWAPRevert",
                 ),
             )
+        if micro_adx >= 20 and ma_gap_pips >= 0.45:
+            _enqueue_unique(
+                ranked,
+                (
+                    "TrendMomentumMicro",
+                    "MicroMomentumStack",
+                    "MomentumBurst",
+                ),
+            )
+        if micro_adx <= 26 and vol_5m <= 1.2:
+            _enqueue_unique(ranked, ("MicroRangeBreak", "MicroPullbackEMA"))
+        if micro_adx <= 26 and vol_5m <= 1.1:
+            _enqueue_unique(ranked, ("MicroLevelReactor",))
 
     # 低ボラ時はスキャル戦略を抑制
     if atr_pips < 4.0 and "M1Scalper" in ranked:
