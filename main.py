@@ -281,6 +281,9 @@ POCKET_MAX_DIRECTIONAL_TRADES_RANGE = {
 RANGE_MACRO_BIAS_MAX_ACTIVE_TRADES = 2
 RANGE_MACRO_BIAS_MAX_DIRECTIONAL_TRADES = 2
 
+# News cache fetch limits (short/long list)
+NEWS_LIMITS = {"short": 2, "long": 2}
+
 try:
     HEDGING_ENABLED = get_secret("oanda_hedging_enabled").lower() == "true"
 except Exception:
