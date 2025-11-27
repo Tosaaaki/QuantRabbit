@@ -2701,8 +2701,14 @@ async def logic_loop():
                 if event_soon and pocket in {"micro", "scalp"}:
                     logging.info("[SKIP] Event soon, skipping %s pocket trade.", pocket)
                     continue
-                # 強制でマージンガードを無効化し、エントリーを優先
-                margin_guard_micro = False
+                if pocket == "micro" and margin_guard_micro:
+                    if not margin_guard_logged:
+                        logging.info(
+                            "[SKIP] Margin guard active (buffer=%.3f), blocking micro entry.",
+                            scalp_buffer if scalp_buffer is not None else -1.0,
+                        )
+                        margin_guard_logged = True
+                    continue
                 strategy_name = signal.get("tag") or signal.get("strategy") or "signal"
                 if (pocket, strategy_name) in executed_entries:
                     logging.info("[SKIP] %s/%s already handled this loop.", pocket, strategy_name)

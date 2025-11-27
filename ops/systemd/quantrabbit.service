@@ -1,0 +1,24 @@
+[Unit]
+Description=QuantRabbit Trading Bot
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=tossaki
+WorkingDirectory=/home/tossaki/QuantRabbit
+Environment=PYTHONUNBUFFERED=1
+Environment=HOME=/home/tossaki
+EnvironmentFile=-/etc/quantrabbit.env
+ExecStart=/home/tossaki/QuantRabbit/.venv/bin/python /home/tossaki/QuantRabbit/main.py
+Restart=always
+RestartSec=5
+TimeoutStartSec=60
+TimeoutStopSec=30
+KillMode=mixed
+KillSignal=SIGINT
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

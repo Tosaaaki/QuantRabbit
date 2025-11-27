@@ -280,7 +280,7 @@ class StageTracker:
         required_sec: float,
         actual_sec: float,
         reason: str = "hold_violation",
-        cooldown_seconds: int = 180,
+        cooldown_seconds: int = 90,
         now: Optional[datetime] = None,
     ) -> None:
         ts = _coerce_utc(now).isoformat()
@@ -478,7 +478,10 @@ class StageTracker:
                         now=now,
                     )
                     opp_dir = "short" if direction == "long" else "long"
-                    opp_seconds = max(240, pocket_cooldown // 2)
+                    if pocket == "micro":
+                        opp_seconds = max(90, pocket_cooldown // 3)
+                    else:
+                        opp_seconds = max(240, pocket_cooldown // 2)
                     if pocket == "macro" and reverse_window:
                         reduced = max(
                             _STAGE_REVERSE_FLIP_GUARD_SEC,

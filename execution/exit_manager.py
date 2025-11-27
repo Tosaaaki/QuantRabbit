@@ -69,9 +69,9 @@ class ExitManager:
         self._range_macro_grace_minutes = 8.0
         # Micro-specific stability controls
         # Guard against premature exits on noisy micro trades: enforce longer holds and wider grace
-        self._micro_min_hold_seconds = float(os.getenv("EXIT_MICRO_MIN_HOLD_SEC", "180"))
+        self._micro_min_hold_seconds = float(os.getenv("EXIT_MICRO_MIN_HOLD_SEC", "90"))
         self._micro_loss_grace_pips = float(os.getenv("EXIT_MICRO_GUARD_LOSS_PIPS", "2.5"))
-        self._micro_loss_hold_seconds = float(os.getenv("EXIT_MICRO_LOSS_HOLD_SEC", "180"))
+        self._micro_loss_hold_seconds = float(os.getenv("EXIT_MICRO_LOSS_HOLD_SEC", "90"))
         self._micro_profit_hard = float(os.getenv("EXIT_MICRO_PROFIT_TAKE_PIPS", "1.60"))
         self._micro_profit_soft = float(os.getenv("EXIT_MICRO_PROFIT_SOFT_PIPS", "1.00"))
         self._micro_profit_rsi_release_long = float(os.getenv("EXIT_MICRO_PROFIT_RSI_LONG", "53"))
@@ -119,11 +119,19 @@ class ExitManager:
     ) -> List[ExitDecision]:
         current_time = self._ensure_utc(now)
         decisions: List[ExitDecision] = []
+        try:
+            close_price = float(fac_m1.get("close"))
+        except (TypeError, ValueError):
+            close_price = None
+        if close_price is None:
+            # Price不明なら安全側でスキップ
+            return decisions
         projection_m1 = compute_ma_projection(fac_m1, timeframe_minutes=1.0)
         projection_h4 = compute_ma_projection(fac_h4, timeframe_minutes=240.0)
         atr_pips = fac_m1.get("atr_pips")
         if atr_pips is None:
             atr_pips = (fac_m1.get("atr") or 0.0) * 100.0
+        close_price = float(fac_m1.get("close") or 0.0)
         for pocket, info in open_positions.items():
             if pocket == "__net__":
                 continue
@@ -131,7 +139,6 @@ class ExitManager:
             short_units = int(info.get("short_units", 0) or 0)
             avg_long = info.get("long_avg_price") or info.get("avg_price")
             avg_short = info.get("short_avg_price") or info.get("avg_price")
-            close_price = fac_m1.get("close", 0.0)
             long_profit = None
             short_profit = None
             if avg_long and close_price:

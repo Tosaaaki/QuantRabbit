@@ -34,6 +34,7 @@ from strategies.micro.trend_momentum import TrendMomentumMicro
 from strategies.micro.range_break import MicroRangeBreak
 from strategies.micro.pullback_ema import MicroPullbackEMA
 from strategies.micro.momentum_stack import MicroMomentumStack
+from strategies.micro.level_reactor import MicroLevelReactor
 from strategies.news.spike_reversal import NewsSpikeReversal
 from utils.metrics_logger import log_metric
 from utils.oanda_account import get_account_snapshot
@@ -52,6 +53,7 @@ DEFAULT_STRATEGIES = [
     "TrendMomentumMicro",
     "MicroMomentumStack",
     "MicroPullbackEMA",
+    "MicroLevelReactor",
     "NewsSpikeReversal",
 ]
 POCKET_STRATEGY_MAP = {
@@ -61,6 +63,7 @@ POCKET_STRATEGY_MAP = {
         "TrendMomentumMicro",
         "MicroMomentumStack",
         "MicroPullbackEMA",
+        "MicroLevelReactor",
         "NewsSpikeReversal",
     }
 }
@@ -73,6 +76,7 @@ STRATEGY_CLASSES = {
     "TrendMomentumMicro": TrendMomentumMicro,
     "MicroMomentumStack": MicroMomentumStack,
     "MicroPullbackEMA": MicroPullbackEMA,
+    "MicroLevelReactor": MicroLevelReactor,
     "NewsSpikeReversal": NewsSpikeReversal,
 }
 def _env_set(name: str, default: str = "") -> set[str]:

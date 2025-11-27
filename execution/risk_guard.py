@@ -192,8 +192,8 @@ def allowed_lot(
         if not (0.0001 <= risk_pct <= 0.2):
             raise ValueError("out_of_range")
     except Exception:
-        # safer default under drawdown pressure
-        risk_pct = 0.01
+        # safer default under drawdown pressure; slightly more assertive sizing
+        risk_pct = 0.02
     if risk_pct_override is not None:
         risk_pct = max(0.0005, min(risk_pct_override, 0.25))
     risk_amount = equity * risk_pct

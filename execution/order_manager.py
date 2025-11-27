@@ -74,6 +74,13 @@ _MIN_UNITS_BY_POCKET: dict[str, int] = {
     "macro": _env_int("ORDER_MIN_UNITS_MACRO", _MACRO_MIN_UNITS_DEFAULT),
     "scalp": _env_int("ORDER_MIN_UNITS_SCALP", _DEFAULT_MIN_UNITS),
 }
+# If true, do not attach stopLossOnFill (TP is still sent). Honors either
+# ORDER_DISABLE_STOP_LOSS or DISABLE_STOP_LOSS env var.
+_DISABLE_STOP_LOSS = (
+    os.getenv("ORDER_DISABLE_STOP_LOSS")
+    or os.getenv("DISABLE_STOP_LOSS")
+    or "false"
+).lower() in {"1", "true", "yes", "on"}
 
 
 def min_units_for_pocket(pocket: Optional[str]) -> int:
@@ -111,13 +118,18 @@ _PARTIAL_CLOSE_RETRY_CODES = {
     "CLOSE_TRADE_UNITS_EXCEED_TRADE_SIZE",
     "POSITION_TO_REDUCE_TOO_SMALL",
 }
-_ORDER_SPREAD_BLOCK_PIPS = float(os.getenv("ORDER_SPREAD_BLOCK_PIPS", "1.2"))
+_ORDER_SPREAD_BLOCK_PIPS = float(os.getenv("ORDER_SPREAD_BLOCK_PIPS", "1.6"))
 
 # Max units per new entry order (reduce_only orders are exempt)
 try:
-    _MAX_ORDER_UNITS = int(os.getenv("MAX_ORDER_UNITS", "10000"))
+    _MAX_ORDER_UNITS = int(os.getenv("MAX_ORDER_UNITS", "20000"))
 except Exception:
-    _MAX_ORDER_UNITS = 10000
+    _MAX_ORDER_UNITS = 20000
+# Hard safety cap even after dynamic boosts
+try:
+    _MAX_ORDER_UNITS_HARD = int(os.getenv("MAX_ORDER_UNITS_HARD", "40000"))
+except Exception:
+    _MAX_ORDER_UNITS_HARD = 40000
 
 # ---------- orders logger (logs/orders.db) ----------
 _ORDERS_DB_PATH = pathlib.Path("logs/orders.db")
@@ -747,14 +759,29 @@ def _maybe_update_protections(
 
 
 async def close_trade(trade_id: str, units: Optional[int] = None) -> bool:
+    data: Optional[dict[str, str]] = None
     if units is None:
-        data: Optional[dict[str, str]] = {"units": "ALL"}
+        data = {"units": "ALL"}
     else:
         rounded_units = int(units)
         if rounded_units == 0:
             return True
+        target_units = abs(rounded_units)
+        actual_units = _current_trade_units(trade_id)
+        if actual_units is not None:
+            if actual_units <= 0:
+                logging.info("[ORDER] Close skipped trade=%s already flat.", trade_id)
+                return True
+            if target_units > actual_units:
+                logging.info(
+                    "[ORDER] Clamping close units trade=%s requested=%s available=%s",
+                    trade_id,
+                    target_units,
+                    actual_units,
+                )
+                target_units = actual_units
         # OANDA expects the absolute size; the trade side is derived from trade_id.
-        data = {"units": str(abs(rounded_units))}
+        data = {"units": str(target_units)}
     req = TradeClose(accountID=ACCOUNT, tradeID=trade_id, data=data)
     _console_order_log(
         "CLOSE_REQ",
@@ -908,6 +935,8 @@ def update_dynamic_protections(
     fac_m1: dict,
     fac_h4: dict,
 ) -> None:
+    if _DISABLE_STOP_LOSS:
+        return
     if not open_positions:
         return
     _apply_dynamic_protections_v2(open_positions, fac_m1, fac_h4)
@@ -1284,6 +1313,7 @@ async def market_order(
     reduce_only: bool = False,
     entry_thesis: Optional[dict] = None,
     meta: Optional[dict] = None,
+    confidence: Optional[int] = None,
 ) -> Optional[str]:
     """
     units : +10000 = buy 0.1 lot, ‑10000 = sell 0.1 lot
@@ -1396,11 +1426,15 @@ async def market_order(
     except Exception:
         pass
 
+    if _DISABLE_STOP_LOSS:
+        sl_price = None
+
     if (
         _DYNAMIC_SL_ENABLE
         and (pocket or "").lower() in _DYNAMIC_SL_POCKETS
         and not reduce_only
         and entry_price_meta is not None
+        and not _DISABLE_STOP_LOSS
     ):
         loss_guard = None
         sl_hint = None
@@ -1614,26 +1648,54 @@ async def market_order(
             )
 
     if not reduce_only and estimated_entry is not None:
-        sl_price, tp_price, normalized = _normalize_protections(
+        norm_sl = None if _DISABLE_STOP_LOSS else sl_price
+        norm_tp = tp_price
+        norm_sl, norm_tp, normalized = _normalize_protections(
             estimated_entry,
-            sl_price,
-            tp_price,
+            norm_sl,
+            norm_tp,
             units > 0,
         )
+        sl_price = None if _DISABLE_STOP_LOSS else norm_sl
+        tp_price = norm_tp
         if normalized:
             logging.debug(
-                "[ORDER] normalized SL/TP client=%s sl=%.3f tp=%.3f entry=%.3f",
+                "[ORDER] normalized SL/TP client=%s sl=%s tp=%s entry=%.3f",
                 client_order_id,
-                sl_price if sl_price is not None else float("nan"),
-                tp_price if tp_price is not None else float("nan"),
+                f"{sl_price:.3f}" if sl_price is not None else "None",
+                f"{tp_price:.3f}" if tp_price is not None else "None",
                 estimated_entry,
             )
 
-    # Cap new-entry order size to _MAX_ORDER_UNITS
+    # Cap new-entry order size with dynamic boost for high-confidence profiles
     if not reduce_only:
+        cap_multiplier = 1.0
+        try:
+            if confidence is None and isinstance(entry_thesis, dict):
+                confidence_val = entry_thesis.get("confidence")
+            else:
+                confidence_val = confidence
+            if confidence_val is not None:
+                c = float(confidence_val)
+                if c >= 90:
+                    cap_multiplier = 1.6
+                elif c >= 80:
+                    cap_multiplier = max(cap_multiplier, 1.3)
+        except Exception:
+            pass
+        try:
+            profile = None
+            if isinstance(entry_thesis, dict):
+                profile = entry_thesis.get("profile") or entry_thesis.get("pocket_profile")
+            if profile and str(profile).lower() in {"aggressive", "momentum"}:
+                cap_multiplier = max(cap_multiplier, 1.4)
+        except Exception:
+            pass
+        dynamic_cap = int(_MAX_ORDER_UNITS * cap_multiplier)
+        dynamic_cap = min(max(_MAX_ORDER_UNITS, dynamic_cap), _MAX_ORDER_UNITS_HARD)
         abs_units = abs(int(preflight_units))
-        if abs_units > _MAX_ORDER_UNITS:
-            capped = (1 if preflight_units > 0 else -1) * _MAX_ORDER_UNITS
+        if abs_units > dynamic_cap:
+            capped = (1 if preflight_units > 0 else -1) * dynamic_cap
             _log_order(
                 pocket=pocket,
                 instrument=instrument,
@@ -1644,7 +1706,13 @@ async def market_order(
                 client_order_id=client_order_id,
                 status="units_cap_applied",
                 attempt=0,
-                request_payload={"from_units": preflight_units, "to_units": capped},
+                request_payload={
+                    "from_units": preflight_units,
+                    "to_units": capped,
+                    "cap_multiplier": cap_multiplier,
+                    "max_order_units": _MAX_ORDER_UNITS,
+                    "hard_cap": _MAX_ORDER_UNITS_HARD,
+                },
             )
             preflight_units = capped
 
@@ -1662,7 +1730,7 @@ async def market_order(
     if client_order_id:
         order_data["order"]["clientExtensions"]["id"] = client_order_id
         order_data["order"]["tradeClientExtensions"]["id"] = client_order_id
-    if sl_price is not None:
+    if (not _DISABLE_STOP_LOSS) and sl_price is not None:
         order_data["order"]["stopLossOnFill"] = {"price": f"{sl_price:.3f}"}
     if tp_price is not None:
         order_data["order"]["takeProfitOnFill"] = {"price": f"{tp_price:.3f}"}
@@ -1834,7 +1902,8 @@ async def market_order(
                     ticket_id=trade_id,
                     note=f"attempt={attempt+1}",
                 )
-                _maybe_update_protections(trade_id, sl_price, tp_price)
+                target_sl = None if _DISABLE_STOP_LOSS else sl_price
+                _maybe_update_protections(trade_id, target_sl, tp_price)
                 return trade_id
 
             logging.error(
