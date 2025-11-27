@@ -94,7 +94,8 @@ def _atr(high: pd.Series, low: pd.Series, close: pd.Series, period: int) -> pd.S
 
 def _dm(high: pd.Series, low: pd.Series) -> tuple[pd.Series, pd.Series]:
     up = high.diff().clip(lower=0.0)
-    down = -low.diff().clip(lower=0.0)
+    # Down move is the magnitude of lower lows (positive when price moves down)
+    down = (-low.diff()).clip(lower=0.0)
     plus_dm = np.where((up > down) & (up > 0), up, 0.0)
     minus_dm = np.where((down > up) & (down > 0), down, 0.0)
     return pd.Series(plus_dm, index=high.index), pd.Series(minus_dm, index=high.index)

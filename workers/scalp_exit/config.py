@@ -39,10 +39,15 @@ LOCK_BUFFER_PIPS: float = max(0.1, _float("SCALP_EXIT_LOCK_BUFFER_PIPS", 0.6))
 
 HARD_STOP_PIPS: float = max(2.0, _float("SCALP_EXIT_HARD_STOP_PIPS", 7.0))
 NEGATIVE_HOLD_TIMEOUT_SEC: float = max(60.0, _float("SCALP_EXIT_NEGATIVE_HOLD_TIMEOUT_SEC", 300.0))
+MIN_NEGATIVE_HOLD_SEC: float = max(15.0, _float("SCALP_EXIT_MIN_NEGATIVE_HOLD_SEC", 45.0))
 MAX_HOLD_SEC: float = max(120.0, _float("SCALP_EXIT_MAX_HOLD_SEC", 1800.0))
 
+ATR_MOMENTUM_MIN_PIPS: float = max(0.3, _float("SCALP_EXIT_ATR_MOMENTUM_MIN_PIPS", 0.8))
+ADX_STRONG_THRESHOLD: float = max(5.0, _float("SCALP_EXIT_ADX_STRONG_THRESHOLD", 24.0))
+
+# Default whitelist excludes fast_scalp to avoid interacting with disabled worker by default.
 STRATEGY_WHITELIST = {
     tag.strip()
-    for tag in os.getenv("SCALP_EXIT_STRATEGIES", "pullback_scalp,spike_scalp,fast_scalp").split(",")
+    for tag in os.getenv("SCALP_EXIT_STRATEGIES", "pullback_scalp,spike_scalp").split(",")
     if tag.strip()
 }

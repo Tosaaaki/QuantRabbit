@@ -15,12 +15,18 @@ from typing import Dict, Optional
 import httpx
 
 from execution.order_manager import close_trade, market_order, set_trade_protections
-from execution.risk_guard import allowed_lot, can_trade, clamp_sl_tp
+from execution.risk_guard import (
+    allowed_lot,
+    can_trade,
+    clamp_sl_tp,
+    loss_cooldown_status,
+)
 from execution.stage_tracker import StageTracker
 from execution.position_manager import PositionManager
 from market_data import spread_monitor, tick_window
 from utils.metrics_logger import log_metric
 from utils.secrets import get_secret
+from workers.common.quality_gate import current_regime, news_block_active
 
 from . import config
 from .rate_limiter import SlidingWindowRateLimiter
@@ -36,6 +42,7 @@ from .timeout_controller import TimeoutController
 from .profiles import (
     DEFAULT_PROFILE,
     StrategyProfile,
+    current_session,
     get_profile,
     resolve_timeout,
     select_profile,
@@ -225,6 +232,9 @@ async def fast_scalp_worker(shared_state: FastScalpState) -> None:
     spread_block_logged = False
     dd_block_logged = False
     off_hours_logged = False
+    news_block_logged = False
+    regime_block_logged: Optional[str] = None
+    loss_block_logged = False
     order_backoff: float = 0.0
     next_order_after: float = 0.0
     last_snapshot_fetch: float = 0.0
@@ -282,6 +292,71 @@ async def fast_scalp_worker(shared_state: FastScalpState) -> None:
                 await asyncio.sleep(config.LOOP_INTERVAL_SEC)
                 continue
             spread_block_logged = False
+
+            if config.NEWS_BLOCK_MINUTES > 0 and news_block_active(
+                config.NEWS_BLOCK_MINUTES, min_impact=config.NEWS_BLOCK_MIN_IMPACT
+            ):
+                if not news_block_logged:
+                    logger.info(
+                        "%s pause due to upcoming news (impact≥%s within %.0f min)",
+                        config.LOG_PREFIX_TICK,
+                        config.NEWS_BLOCK_MIN_IMPACT,
+                        config.NEWS_BLOCK_MINUTES,
+                    )
+                    log_metric(
+                        "fast_scalp_skip",
+                        config.NEWS_BLOCK_MINUTES,
+                        tags={"reason": "news"},
+                        ts=now,
+                    )
+                    news_block_logged = True
+                await asyncio.sleep(config.LOOP_INTERVAL_SEC)
+                continue
+            news_block_logged = False
+
+            regime_label = current_regime("M1", event_mode=False)
+            if regime_label and regime_label in config.BLOCK_REGIMES:
+                if regime_block_logged != regime_label:
+                    logger.info(
+                        "%s regime=%s blocked via config",
+                        config.LOG_PREFIX_TICK,
+                        regime_label,
+                    )
+                    log_metric(
+                        "fast_scalp_skip",
+                        1.0,
+                        tags={"reason": "regime", "regime": regime_label},
+                        ts=now,
+                    )
+                    regime_block_logged = regime_label
+                await asyncio.sleep(config.LOOP_INTERVAL_SEC)
+                continue
+            regime_block_logged = None
+
+            if config.LOSS_STREAK_MAX > 0 and config.LOSS_STREAK_COOLDOWN_MIN > 0:
+                loss_block, remain_sec = loss_cooldown_status(
+                    "scalp",
+                    max_losses=config.LOSS_STREAK_MAX,
+                    cooldown_minutes=config.LOSS_STREAK_COOLDOWN_MIN,
+                )
+                if loss_block:
+                    if not loss_block_logged:
+                        logger.warning(
+                            "%s cooldown after %d consecutive losses (%.0fs remain)",
+                            config.LOG_PREFIX_TICK,
+                            config.LOSS_STREAK_MAX,
+                            remain_sec,
+                        )
+                        log_metric(
+                            "fast_scalp_skip",
+                            float(remain_sec),
+                            tags={"reason": "loss_cooldown"},
+                            ts=now,
+                        )
+                        loss_block_logged = True
+                    await asyncio.sleep(config.LOOP_INTERVAL_SEC)
+                    continue
+            loss_block_logged = False
 
             snapshot = shared_state.snapshot()
             range_active_flag = bool(getattr(snapshot, "range_active", False))
@@ -423,7 +498,12 @@ async def fast_scalp_worker(shared_state: FastScalpState) -> None:
 
                     if close_reason is not None:
                         # "損切り禁止" が有効な場合、含み損では決済せず見送り
-                        if config.NO_LOSS_CLOSE and pips_gain < 0:
+                        # ただし強制理由（ドローダウン/ヘルス）は例外として許容
+                        if (
+                            config.NO_LOSS_CLOSE
+                            and pips_gain < 0
+                            and close_reason not in forced_exit_reasons
+                        ):
                             log_metric(
                                 "fast_scalp_skip",
                                 float(pips_gain),
@@ -640,6 +720,7 @@ async def fast_scalp_worker(shared_state: FastScalpState) -> None:
                 continue
 
             profile = select_profile(action, features, range_active=range_active_flag)
+            session_tag = current_session()
 
             if not rate_limiter.allow():
                 logger.info(
@@ -672,6 +753,7 @@ async def fast_scalp_worker(shared_state: FastScalpState) -> None:
                     price=features.latest_mid,
                     margin_rate=snapshot.margin_rate,
                     risk_pct_override=snapshot.risk_pct_override,
+                    pocket="scalp",
                 )
                 lot = min(allowed_lot_raw, config.MAX_LOT)
                 if lot <= 0.0:
@@ -768,9 +850,16 @@ async def fast_scalp_worker(shared_state: FastScalpState) -> None:
             sl_price, tp_price = clamp_sl_tp(entry_price, sl_price, tp_price, direction == "long")
 
             thesis = {
+                "strategy_tag": "fast_scalp",
                 "momentum_pips": round(features.momentum_pips, 3),
                 "short_momentum_pips": round(features.short_momentum_pips, 3),
                 "range_pips": round(features.range_pips, 3),
+                "impulse_pips": round(features.impulse_pips, 3),
+                "impulse_span_sec": round(features.impulse_span_sec, 3),
+                "impulse_direction": features.impulse_direction,
+                "consolidation_range_pips": round(features.consolidation_range_pips, 3),
+                "consolidation_span_sec": round(features.consolidation_span_sec, 3),
+                "consolidation_ok": features.consolidation_ok,
                 "spread_pips": round(features.spread_pips, 3),
                 "tick_count": features.tick_count,
                 "tick_span_sec": round(features.span_seconds, 3),
@@ -781,6 +870,7 @@ async def fast_scalp_worker(shared_state: FastScalpState) -> None:
                 "tp_price_initial": round(tp_price, 5),
                 "signal": action,
                 "profile": profile.name,
+                "session": session_tag,
                 "profile_tp_pips": round(tp_pips, 3),
                 "profile_sl_pips": round(sl_pips, 3),
                 "profile_timeout_sec": None if timeout_limit_initial is None else float(timeout_limit_initial),
@@ -800,14 +890,14 @@ async def fast_scalp_worker(shared_state: FastScalpState) -> None:
             }
 
             try:
-                trade_id, executed_price = await market_order(
+                trade_id = await market_order(
                     "USD_JPY",
                     units,
                     sl_price,
                     tp_price,
                     "scalp_fast",
                     client_order_id=client_id,
-                    entry_thesis=thesis,
+                    entry_thesis={**thesis, "strategy_tag": "fast_scalp"},
                 )
             except Exception as exc:
                 logger.error(
@@ -843,7 +933,11 @@ async def fast_scalp_worker(shared_state: FastScalpState) -> None:
                 seconds=int(config.ENTRY_COOLDOWN_SEC),
                 now=now,
             )
-            actual_entry_price = executed_price if executed_price is not None else entry_price
+            next_order_after = max(
+                next_order_after,
+                time.monotonic() + config.REENTRY_MIN_GAP_SEC,
+            )
+            actual_entry_price = entry_price
             sl_adjust_pips = sl_pips + config.SL_POST_ADJUST_BUFFER_PIPS
             if direction == "long":
                 actual_sl_price = None if not config.USE_SL else round(actual_entry_price - sl_adjust_pips * config.PIP_VALUE, 3)

@@ -85,14 +85,13 @@ class M1Scalper:
 
     @staticmethod
     def check(fac: Dict) -> Dict | None:
-        params = _load_scalper_config()
-        fallback_cfg = params.get("fallback", {})
-        nwave_cfg = params.get("nwave", {})
-
-        close = _to_float(fac.get("close"))
-        ema20 = _to_float(fac.get("ema20"))
-        rsi = _to_float(fac.get("rsi"))
-        atr = _to_float(fac.get("atr"), 0.02)
+        close = fac.get("close")
+        ema20 = fac.get("ema20")
+        rsi = fac.get("rsi")
+        atr = fac.get("atr", 0.02)
+        adx = fac.get("adx", 0.0) or 0.0
+        vol5 = fac.get("vol_5m", 0.0) or 0.0
+        bbw = fac.get("bbw") or 0.0
         if close is None or ema20 is None or rsi is None:
             return None
 
@@ -102,49 +101,42 @@ class M1Scalper:
         if atr_pips is None:
             atr_pips = (atr or 0.0) * 100
 
-        # Tactical mode lowers the ATR floor slightly to allow more triggers
-        scalp_tactical = os.getenv("SCALP_TACTICAL", "0").strip().lower() not in {"", "0", "false", "no"}
-
-        def _fallback_float(name: str, default: float) -> float:
-            value = fallback_cfg.get(name, default)
-            converted = _to_float(value, default)
-            return default if converted is None else float(converted)
-
-        def _nwave_float(name: str, default: float) -> float:
-            value = nwave_cfg.get(name, default)
-            converted = _to_float(value, default)
-            return default if converted is None else float(converted)
-
-        atr_floor_default = _fallback_float("atr_floor", 0.95)
-        atr_floor_tactical = _fallback_float(
-            "atr_floor_tactical",
-            max(0.65, atr_floor_default - 0.25),
-        )
-        atr_floor_tactical = max(0.55, min(atr_floor_tactical, 1.05))
-        atr_floor = atr_floor_tactical if scalp_tactical else max(0.85, atr_floor_default)
-        if atr_pips < atr_floor and not _force_mode():
-            _log(
-                "skip_atr_floor",
-                atr=round(atr_pips, 3),
-                floor=round(atr_floor, 3),
-                tactical=scalp_tactical,
-            )
+        if atr_pips < 2.5:
             return None
-        if atr_pips < atr_floor and _force_mode():
-            _log(
-                "force_override_atr",
-                atr=round(atr_pips, 3),
-                floor=round(atr_floor, 3),
-            )
-            atr_pips = atr_floor
+        # Avoid tight range compression; prefer moderate activity
+        if bbw and bbw <= 0.20:
+            return None
+        if vol5 < 1.2:
+            return None
+        if adx < 18.0:
+            return None
 
-        candles = fac.get("candles") or []
-        nwave: Optional[NWaveStructure] = None
-        min_leg_pips = _nwave_float("min_leg_pips", 1.8)
-        max_points = int(nwave_cfg.get("max_points", 140))
-        if len(candles) >= 40:
-            nwave = detect_latest_n_wave(
-                candles, window=3, min_leg_pips=min_leg_pips, max_points=max_points
+        # Dynamic TP/SL (pips) tuned to recent volatility
+        # - TP ≈ 3x ATR (pips) within [5, 9]
+        # - SL ≈ min(2x ATR, 0.95*TP) with a floor of 4, keeping RR >= ~1.05
+        tp_dyn = max(5.0, min(9.0, atr_pips * 3.0))
+        sl_dyn = max(4.0, min(atr_pips * 2.0, tp_dyn * 0.95))
+        tp_dyn = round(tp_dyn, 2)
+        sl_dyn = round(sl_dyn, 2)
+
+        if momentum < -0.0030 and rsi < 54:
+            speed = abs(momentum) / max(0.0005, atr)
+            rsi_gap = max(0.0, 54 - rsi) / 10
+            confidence = int(
+                max(40.0, min(95.0, 45.0 + speed * 30.0 + rsi_gap * 25.0))
+            )
+            return {
+                "action": "OPEN_LONG",
+                "sl_pips": sl_dyn,
+                "tp_pips": tp_dyn,
+                "confidence": confidence,
+                "tag": f"{M1Scalper.name}-buy-dip",
+            }
+        if momentum > 0.0030 and rsi > 46:
+            speed = abs(momentum) / max(0.0005, atr)
+            rsi_gap = max(0.0, rsi - 46) / 10
+            confidence = int(
+                max(40.0, min(95.0, 45.0 + speed * 30.0 + rsi_gap * 25.0))
             )
 
         def _alignment_ok(side: str) -> bool:

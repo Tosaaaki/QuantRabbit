@@ -9,6 +9,7 @@ reversal, range mode, volatility bands).
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from typing import Optional
 
 from . import config
@@ -83,6 +84,16 @@ LOW_VOL_PROFILE = StrategyProfile(
     high_vol_timeout_override=_BASE_TIMEOUT * max(1.0, config.TIMEOUT_HIGH_VOL_MULT),
 )
 
+def current_session(now: Optional[datetime] = None) -> str:
+    """Rough session classifier based on UTC hour."""
+    ref = now or datetime.now(timezone.utc)
+    hour = ref.hour
+    if 22 <= hour or hour < 6:
+        return "asia"
+    if 6 <= hour < 12:
+        return "london"
+    return "newyork"
+
 
 def select_profile(
     action: str,
@@ -92,15 +103,28 @@ def select_profile(
 ) -> StrategyProfile:
     pattern = (features.pattern_tag or "").lower()
     atr = features.atr_pips or 0.0
+    session = current_session()
 
     if range_active:
         return RANGE_PROFILE
     if action.startswith("REVERSAL") or pattern.startswith("spike_reversal"):
         return REVERSAL_PROFILE
+    if config.SESSION_BIAS_ENABLED and session == "asia" and not action.startswith("REVERSAL"):
+        if atr <= config.ATR_HIGH_VOL_PIPS * 0.8:
+            return LOW_VOL_PROFILE
     if atr <= config.ATR_LOW_VOL_PIPS * 0.95:
         return LOW_VOL_PROFILE
-    if pattern in {"impulse_up", "impulse_down"} or (
-        abs(features.momentum_pips) >= 1.25 and features.range_pips >= 0.6
+    if (
+        pattern in {"impulse_up", "impulse_down"}
+        or (
+            abs(features.momentum_pips) >= 1.25
+            and features.range_pips >= 0.6
+        )
+        or (
+            config.SESSION_BIAS_ENABLED
+            and session in {"london", "newyork"}
+            and abs(features.impulse_pips) >= max(1.0, config.MIN_IMPULSE_PIPS)
+        )
     ):
         return IMPULSE_PROFILE
     return DEFAULT_PROFILE

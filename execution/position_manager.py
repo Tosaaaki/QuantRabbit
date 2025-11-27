@@ -1,11 +1,18 @@
 from __future__ import annotations
 import json
 import os
-import requests
+import json
+import logging
+import time
+import copy
 import sqlite3
 import pathlib
 from datetime import datetime, timezone, timedelta
-from typing import Dict
+from typing import Dict, Tuple
+
+import requests
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 from utils.secrets import get_secret
 
 # --- config ---
@@ -22,6 +29,46 @@ _DB = pathlib.Path("logs/trades.db")
 _ORDERS_DB = pathlib.Path("logs/orders.db")
 _CHUNK_SIZE = 100
 _MAX_FETCH = int(os.getenv("POSITION_MANAGER_MAX_FETCH", "1000"))
+_REQUEST_TIMEOUT = float(os.getenv("POSITION_MANAGER_HTTP_TIMEOUT", "7.0"))
+_RETRY_STATUS_CODES = tuple(
+    int(code.strip())
+    for code in os.getenv(
+        "POSITION_MANAGER_HTTP_RETRY_CODES", "408,409,425,429,500,502,503,504,520,522"
+    ).split(",")
+    if code.strip().isdigit()
+)
+_OPEN_TRADES_CACHE_TTL = float(
+    os.getenv("POSITION_MANAGER_OPEN_TRADES_CACHE_TTL", "2.0")
+)
+_OPEN_TRADES_FAIL_BACKOFF_BASE = float(
+    os.getenv("POSITION_MANAGER_OPEN_TRADES_BACKOFF_BASE", "2.5")
+)
+_OPEN_TRADES_FAIL_BACKOFF_MAX = float(
+    os.getenv("POSITION_MANAGER_OPEN_TRADES_BACKOFF_MAX", "60.0")
+)
+_MANUAL_POCKET_NAME = os.getenv("POSITION_MANAGER_MANUAL_POCKET", "manual")
+_KNOWN_POCKETS = {"micro", "macro", "scalp"}
+
+
+def _build_http_session() -> requests.Session:
+    total = int(os.getenv("POSITION_MANAGER_HTTP_RETRY_TOTAL", "3"))
+    backoff = float(os.getenv("POSITION_MANAGER_HTTP_BACKOFF", "0.6"))
+    retry = Retry(
+        total=total,
+        status_forcelist=_RETRY_STATUS_CODES,
+        allowed_methods=frozenset({"GET", "POST"}),
+        backoff_factor=backoff,
+        raise_on_status=False,
+    )
+    adapter = HTTPAdapter(
+        max_retries=retry,
+        pool_connections=4,
+        pool_maxsize=8,
+    )
+    session = requests.Session()
+    session.mount("https://", adapter)
+    session.mount("http://", adapter)
+    return session
 
 
 def _tx_sort_key(tx: dict) -> int:
@@ -65,6 +112,13 @@ class PositionManager:
         self._last_tx_id = self._get_last_transaction_id()
         self._pocket_cache: dict[str, str] = {}
         self._client_cache: dict[str, str] = {}
+        self._http = _build_http_session()
+        self._last_positions: dict[str, dict] = {}
+        self._last_positions_ts: float = 0.0
+        self._open_trade_failures: int = 0
+        self._next_open_fetch_after: float = 0.0
+        self._last_positions_meta: dict | None = None
+        self._entry_meta_cache: dict[str, dict] = {}
 
     @staticmethod
     def _normalize_pocket(pocket: str | None) -> str:
@@ -136,6 +190,10 @@ class PositionManager:
             "updated_at": "TEXT",
             "version": "TEXT DEFAULT 'v1'",
             "unrealized_pl": "REAL",
+            # strategy attribution
+            "client_order_id": "TEXT",
+            "strategy_tag": "TEXT",
+            "entry_thesis": "TEXT",
         }
         for name, ddl in columns.items():
             if name not in existing:
@@ -246,16 +304,13 @@ class PositionManager:
         """OANDAから決済済みトランザクションを取得"""
         summary_url = f"{REST_HOST}/v3/accounts/{ACCOUNT}/transactions"
         try:
-            summary_resp = requests.get(
+            summary = self._request_json(
                 summary_url,
-                headers=HEADERS,
                 params={"sinceID": self._last_tx_id},
-                timeout=10,
-            )
-            summary_resp.raise_for_status()
-            summary = summary_resp.json() or {}
+            ) or {}
         except requests.RequestException as e:
             print(f"[PositionManager] Error fetching transactions summary: {e}")
+            self._reset_http_if_needed(e)
             return []
 
         try:
@@ -279,21 +334,14 @@ class PositionManager:
             chunk_to = min(chunk_from + _CHUNK_SIZE - 1, last_tx_id)
             params = {"from": chunk_from, "to": chunk_to}
             try:
-                resp = requests.get(
-                    chunk_url,
-                    headers=HEADERS,
-                    params=params,
-                    timeout=10,
-                )
-                resp.raise_for_status()
+                data = self._request_json(chunk_url, params=params) or {}
             except requests.RequestException as e:
                 print(
                     "[PositionManager] Error fetching transaction chunk "
                     f"{chunk_from}-{chunk_to}: {e}"
                 )
+                self._reset_http_if_needed(e)
                 break
-
-            data = resp.json() or {}
             for tx in data.get("transactions") or []:
                 try:
                     tx_id = int(tx.get("id"))
@@ -312,20 +360,50 @@ class PositionManager:
         """tradeIDを使ってOANDAから取引詳細を取得する"""
         url = f"{REST_HOST}/v3/accounts/{ACCOUNT}/trades/{trade_id}"
         try:
-            r = requests.get(url, headers=HEADERS, timeout=5)
-            r.raise_for_status()
-            trade = r.json().get("trade", {})
+            payload = self._request_json(url) or {}
+            trade = payload.get("trade", {})
+            client_ext = trade.get("clientExtensions", {}) or {}
+            pocket_tag = client_ext.get("tag", "pocket=unknown")
+            pocket = pocket_tag.split("=")[1] if "=" in pocket_tag else "unknown"
+            client_id = client_ext.get("id")
 
-            pocket_tag = trade.get("clientExtensions", {}).get("tag", "pocket=unknown")
-            pocket_raw = pocket_tag.split("=")[1] if "=" in pocket_tag else "unknown"
-            pocket = self._normalize_pocket(pocket_raw)
-
-            return {
+            details = {
                 "entry_price": float(trade.get("price", 0.0)),
                 "entry_time": _parse_timestamp(trade.get("openTime")),
                 "units": int(trade.get("initialUnits", 0)),
                 "pocket": pocket,
+                "client_order_id": client_id,
+                "strategy_tag": None,
+                "entry_thesis": None,
             }
+            # Heuristic mapping from client id prefix
+            try:
+                if client_id:
+                    if client_id.startswith("qr-fast-"):
+                        details["strategy_tag"] = "fast_scalp"
+                    elif client_id.startswith("qr-pullback-s5-"):
+                        details["strategy_tag"] = "pullback_s5"
+                    elif client_id.startswith("qr-pullback-"):
+                        details["strategy_tag"] = "pullback_scalp"
+                    elif client_id.startswith("qr-mirror-s5-"):
+                        details["strategy_tag"] = "mirror_spike_s5"
+                    elif client_id.startswith("qr-"):
+                        import re
+                        m = re.match(r"^qr-\d+-(micro|macro|event|hybrid)-(.*)$", client_id)
+                        if m:
+                            details["strategy_tag"] = m.group(2)
+            except Exception:
+                pass
+            # Augment with local orders log for strategy_tag/thesis if possible
+            try:
+                from_orders = self._get_trade_details_from_orders(trade_id)
+                if from_orders:
+                    for key in ("client_order_id", "strategy_tag", "entry_thesis"):
+                        if from_orders.get(key) and not details.get(key):
+                            details[key] = from_orders.get(key)
+            except Exception:
+                pass
+            return details
         except requests.HTTPError as exc:
             if exc.response is not None and exc.response.status_code == 404:
                 fallback = self._get_trade_details_from_orders(trade_id)
@@ -335,6 +413,7 @@ class PositionManager:
             return self._get_trade_details_from_orders(trade_id)
         except requests.RequestException as e:
             print(f"[PositionManager] Error fetching trade details for {trade_id}: {e}")
+            self._reset_http_if_needed(e)
             return self._get_trade_details_from_orders(trade_id)
 
     def _get_trade_details_from_orders(self, trade_id: str) -> dict | None:
@@ -345,7 +424,7 @@ class PositionManager:
             con.row_factory = sqlite3.Row
             row = con.execute(
                 """
-                SELECT pocket, instrument, units, executed_price, ts
+                SELECT pocket, instrument, units, executed_price, ts, client_order_id
                 FROM orders
                 WHERE ticket_id = ?
                   AND status = 'filled'
@@ -369,12 +448,53 @@ class PositionManager:
                 entry_time = entry_time.astimezone(timezone.utc)
         except Exception:
             entry_time = datetime.now(timezone.utc)
+        client_id = row["client_order_id"]
+        strategy_tag = None
+        thesis_obj = None
+        if client_id:
+            try:
+                con2 = sqlite3.connect(_ORDERS_DB)
+                con2.row_factory = sqlite3.Row
+                att = con2.execute(
+                    """
+                    SELECT request_json FROM orders
+                    WHERE client_order_id = ? AND status = 'submit_attempt'
+                    ORDER BY id ASC
+                    LIMIT 1
+                    """,
+                    (client_id,),
+                ).fetchone()
+                con2.close()
+                if att and att["request_json"]:
+                    try:
+                        payload = json.loads(att["request_json"]) or {}
+                        thesis_obj = payload.get("entry_thesis") or {}
+                        if isinstance(thesis_obj, dict):
+                            strategy_tag = thesis_obj.get("strategy_tag")
+                    except Exception:
+                        thesis_obj = None
+            except sqlite3.Error:
+                pass
         return {
             "entry_price": float(row["executed_price"] or 0.0),
             "entry_time": entry_time,
             "units": int(row["units"] or 0),
-            "pocket": self._normalize_pocket(row["pocket"]),
+            "pocket": row["pocket"] or "unknown",
+            "client_order_id": client_id,
+            "strategy_tag": strategy_tag,
+            "entry_thesis": thesis_obj,
         }
+
+    def _resolve_entry_meta(self, trade_id: str) -> dict | None:
+        if not trade_id:
+            return None
+        cached = self._entry_meta_cache.get(trade_id)
+        if cached:
+            return cached
+        details = self._get_trade_details_from_orders(trade_id)
+        if details:
+            self._entry_meta_cache[trade_id] = details
+        return details
 
     def _parse_and_save_trades(self, transactions: list[dict]):
         """トランザクションを解析し、DBに保存"""
@@ -470,6 +590,10 @@ class PositionManager:
                     updated_at,
                     "v3",
                     0.0,
+                    # attribution
+                    details.get("client_order_id"),
+                    details.get("strategy_tag"),
+                    json.dumps(details.get("entry_thesis"), ensure_ascii=False)
                 )
                 trades_to_save.append(record_tuple)
                 saved_records.append(
@@ -494,6 +618,8 @@ class PositionManager:
                         "updated_at": updated_at,
                         "version": "v3",
                         "unrealized_pl": 0.0,
+                        "client_order_id": details.get("client_order_id"),
+                        "strategy_tag": details.get("strategy_tag"),
                     }
                 )
                 if details["pocket"]:
@@ -526,9 +652,12 @@ class PositionManager:
                     state,
                     updated_at,
                     version,
-                    unrealized_pl
+                    unrealized_pl,
+                    client_order_id,
+                    strategy_tag,
+                    entry_thesis
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
                 trades_to_save,
             )
@@ -546,6 +675,35 @@ class PositionManager:
             return []
         return self._parse_and_save_trades(transactions)
 
+    def _request_json(self, url: str, params: dict | None = None) -> dict:
+        resp = self._http.get(
+            url,
+            headers=HEADERS,
+            params=params,
+            timeout=_REQUEST_TIMEOUT,
+        )
+        resp.raise_for_status()
+        try:
+            return resp.json()
+        except ValueError:
+            logging.warning("[PositionManager] Non-JSON response from %s", url)
+            return {}
+
+    def _reset_http_if_needed(self, exc: requests.RequestException) -> None:
+        if isinstance(
+            exc,
+            (
+                requests.exceptions.ConnectionError,
+                requests.exceptions.ChunkedEncodingError,
+                requests.exceptions.Timeout,
+            ),
+        ):
+            try:
+                self._http.close()
+            except Exception:
+                pass
+            self._http = _build_http_session()
+
     def close(self):
         self.con.close()
 
@@ -557,21 +715,47 @@ class PositionManager:
 
     def get_open_positions(self) -> dict[str, dict]:
         """現在の保有ポジションを pocket 単位で集計して返す"""
+        now_mono = time.monotonic()
+        if self._last_positions and now_mono < self._next_open_fetch_after:
+            age = max(0.0, now_mono - self._last_positions_ts)
+            stale = self._open_trade_failures > 0
+            return self._package_positions(
+                self._last_positions,
+                stale=stale,
+                age_sec=age,
+                extra_meta=self._last_positions_meta,
+            )
+
         url = f"{REST_HOST}/v3/accounts/{ACCOUNT}/openTrades"
         try:
-            r = requests.get(url, headers=HEADERS, timeout=5)
-            r.raise_for_status()
-            trades = r.json().get("trades", [])
+            payload = self._request_json(url) or {}
+            trades = payload.get("trades", [])
+            self._open_trade_failures = 0
+            self._next_open_fetch_after = now_mono + _OPEN_TRADES_CACHE_TTL
         except requests.RequestException as e:
-            print(f"[PositionManager] Error fetching open trades: {e}")
+            logging.warning("[PositionManager] Error fetching open trades: %s", e)
+            self._reset_http_if_needed(e)
+            self._open_trade_failures += 1
+            backoff = min(
+                _OPEN_TRADES_FAIL_BACKOFF_BASE * (2 ** (self._open_trade_failures - 1)),
+                _OPEN_TRADES_FAIL_BACKOFF_MAX,
+            )
+            self._next_open_fetch_after = now_mono + backoff
+            if self._last_positions:
+                age = max(0.0, now_mono - self._last_positions_ts)
+                return self._package_positions(
+                    self._last_positions,
+                    stale=True,
+                    age_sec=age,
+                    extra_meta=self._last_positions_meta,
+                )
             return {}
 
         pockets: dict[str, dict] = {}
         net_units = 0
-        client_ids: list[str] = []
-        agent_pockets = {"macro", "micro", "scalp", "scalp_fast"}
-        agent_client_prefixes = ("qr-", "qr-fast-")
-
+        manual_trades = 0
+        manual_units = 0
+        manual_unrealized = 0.0
         for tr in trades:
             client_ext = tr.get("clientExtensions", {}) or {}
             client_id_raw = client_ext.get("id")
@@ -595,14 +779,15 @@ class PositionManager:
                 candidate = tag.split("=", 1)[1]
                 pocket = candidate if candidate in agent_pockets else "manual"
             else:
-                pocket = "manual"
-
-            # Canonicalize: treat unknown/empty as manual per policy
-            pocket = self._normalize_pocket(pocket)
-
+                trade_id = tr.get("id") or tr.get("tradeID")
+                pocket = self._pocket_cache.get(str(trade_id), _MANUAL_POCKET_NAME)
+            if pocket not in _KNOWN_POCKETS:
+                pocket = _MANUAL_POCKET_NAME
             units = int(tr.get("currentUnits", 0))
             if units == 0:
                 continue
+            trade_id_raw = tr.get("id") or tr.get("tradeID")
+            trade_id = str(trade_id_raw)
             price = float(tr.get("price", 0.0))
             open_time_raw = tr.get("openTime")
             open_time_iso: str | None = None
@@ -636,20 +821,30 @@ class PositionManager:
             abs_units = abs(units)
             pip_value = abs_units * 0.01
             unrealized_pl_pips = unrealized_pl / pip_value if pip_value else 0.0
-            info["open_trades"].append(
-                {
-                    "trade_id": str(trade_id),
-                    "units": units,
-                    "price": price,
-                    "client_id": client_ext.get("id"),
-                    "side": "long" if units > 0 else "short",
-                    "unrealized_pl": unrealized_pl,
-                    "unrealized_pl_pips": unrealized_pl_pips,
-                    "open_time": open_time_iso or open_time_raw,
-                }
-            )
-            if client_ext.get("id"):
-                client_ids.append(client_ext.get("id"))
+            trade_entry = {
+                "trade_id": trade_id,
+                "units": units,
+                "price": price,
+                "client_id": client_ext.get("id"),
+                "side": "long" if units > 0 else "short",
+                "unrealized_pl": unrealized_pl,
+                "unrealized_pl_pips": unrealized_pl_pips,
+                "open_time": open_time_iso or open_time_raw,
+            }
+            meta = self._resolve_entry_meta(trade_id)
+            if meta:
+                thesis = meta.get("entry_thesis")
+                if isinstance(thesis, str):
+                    try:
+                        thesis = json.loads(thesis)
+                    except Exception:
+                        thesis = None
+                if isinstance(thesis, dict):
+                    trade_entry["entry_thesis"] = thesis
+                strategy_tag = meta.get("strategy_tag")
+                if strategy_tag:
+                    trade_entry["strategy_tag"] = strategy_tag
+            info["open_trades"].append(trade_entry)
             prev_total_units = info["units"]
             new_total_units = prev_total_units + units
             if new_total_units != 0:
@@ -688,6 +883,10 @@ class PositionManager:
             info["unrealized_pl"] = info.get("unrealized_pl", 0.0) + unrealized_pl
             info["unrealized_pl_pips"] = info.get("unrealized_pl_pips", 0.0) + unrealized_pl_pips
             net_units += units
+            if pocket == _MANUAL_POCKET_NAME:
+                manual_trades += 1
+                manual_units += units
+                manual_unrealized += unrealized_pl
 
         if client_ids:
             entry_map = self._load_entry_thesis(client_ids)
@@ -701,8 +900,89 @@ class PositionManager:
                         trade["entry_thesis"] = entry_map[cid]
 
         pockets["__net__"] = {"units": net_units}
+        self._last_positions = copy.deepcopy(pockets)
+        self._last_positions_ts = now_mono
 
-        return pockets
+        extra_meta = {}
+        if manual_trades:
+            extra_meta = {
+                "manual_trades": manual_trades,
+                "manual_units": manual_units,
+                "manual_unrealized_pl": manual_unrealized,
+            }
+        self._last_positions_meta = dict(extra_meta)
+        return self._package_positions(pockets, stale=False, age_sec=0.0, extra_meta=extra_meta)
+
+    def _package_positions(
+        self,
+        pockets: dict[str, dict],
+        *,
+        stale: bool,
+        age_sec: float,
+        extra_meta: dict | None = None,
+    ) -> dict[str, dict]:
+        snapshot = copy.deepcopy(pockets)
+        meta = snapshot.setdefault("__meta__", {})
+        meta.update(
+            {
+                "stale": bool(stale),
+                "age_sec": round(max(age_sec, 0.0), 2),
+                "consecutive_failures": self._open_trade_failures if stale else 0,
+            }
+        )
+        if extra_meta:
+            meta.update(extra_meta)
+        return snapshot
+
+    def manual_exposure(
+        self,
+        positions: Dict[str, Dict] | None = None,
+    ) -> Dict[str, float]:
+        """
+        Return a lightweight snapshot of manual/unknown exposure.
+        """
+        snapshot = positions or self.get_open_positions()
+        units = 0
+        unrealized = 0.0
+
+        def _sum(info: Dict) -> Tuple[int, float]:
+            if not info:
+                return 0, 0.0
+            trades = info.get("open_trades") or []
+            total_units = 0
+            unreal = 0.0
+            if trades:
+                for tr in trades:
+                    try:
+                        total_units += abs(int(tr.get("units", 0) or 0))
+                    except (TypeError, ValueError):
+                        continue
+                    try:
+                        unreal += float(tr.get("unrealized_pl", 0.0) or 0.0)
+                    except (TypeError, ValueError):
+                        continue
+                return total_units, unreal
+            try:
+                total_units = abs(int(info.get("units", 0) or 0))
+            except (TypeError, ValueError):
+                total_units = 0
+            try:
+                unreal = float(info.get("unrealized_pl", 0.0) or 0.0)
+            except (TypeError, ValueError):
+                unreal = 0.0
+            return total_units, unreal
+
+        for pocket in (_MANUAL_POCKET_NAME, "unknown"):
+            info = snapshot.get(pocket) or {}
+            pocket_units, pocket_unreal = _sum(info)
+            units += pocket_units
+            unrealized += pocket_unreal
+
+        return {
+            "units": float(units),
+            "lots": units / 100000.0,
+            "unrealized_pl": float(unrealized),
+        }
 
     def _load_entry_thesis(self, client_ids: list[str]) -> Dict[str, dict]:
         unique_ids = tuple(dict.fromkeys(cid for cid in client_ids if cid))

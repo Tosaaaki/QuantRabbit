@@ -1,0 +1,112 @@
+from __future__ import annotations
+from typing import Any, Dict, List, Optional, Protocol, Tuple
+import math, time
+
+class DataFeed(Protocol):
+    def get_bars(self, symbol: str, tf: str, n: int) -> Any: ...
+    def last(self, symbol: str) -> float: ...
+    def best_bid_ask(self, symbol: str) -> Optional[Tuple[float, float]]: ...  # optional
+
+class Broker(Protocol):
+    def send(self, order: Dict[str, Any]) -> Any: ...
+    def cancel(self, order_id: str) -> Any: ...
+
+class EventFlagSource(Protocol):
+    def is_event_now(self) -> bool: ...  # e.g., macro news window
+
+def _as_bars(bars: Any):
+    if not bars: return []
+    if isinstance(bars, list) and bars and isinstance(bars[0], dict):
+        return [{"open":float(x.get("open", x.get("o",0))),
+                 "high":float(x.get("high", x.get("h",0))),
+                 "low": float(x.get("low",  x.get("l",0))),
+                 "close":float(x.get("close",x.get("c",0)))} for x in bars]
+    return []
+
+def _atr(b, n=14):
+    if len(b) < n+1: return 0.0
+    trs = []
+    for i in range(1, n+1):
+        h, l = b[-i]["high"], b[-i]["low"]
+        pc = b[-i-1]["close"]
+        trs.append(max(h-l, abs(h-pc), abs(l-pc)))
+    return sum(trs)/len(trs)
+
+def _round_tick(px: float, tick: float) -> float:
+    if tick and tick > 0:
+        return round(px / tick) * tick
+    return px
+
+class MMLiteWorker:
+    """
+    Extremely simple maker that places symmetric quotes around mid and manages small inventory.
+    - Spread: base_spread_bp + spread_k_atr * (ATR/price)*1e4
+    - Inventory: bounded by +/- inventory_r (R is risk unit defined by user)
+    - Event window: optional kill switch via external flag
+    NOTE: This is a placeholder that assumes presence of a broker that supports limit GTC orders.
+    """
+    def __init__(self, cfg: Dict[str, Any], broker: Broker, datafeed: DataFeed,
+                 event_flags: Optional[EventFlagSource] = None, logger=None):
+        self.c = cfg; self.b = broker; self.d = datafeed; self.ev = event_flags; self.log = logger
+        self.tf = "5m"
+        self.orders = {}       # sym -> {"bid_id":..., "ask_id":...}
+        self.inv = {}          # sym -> position size (signed)
+        self.risk_unit = 1.0   # user-defined; for demo we treat size in notional fractions
+        self.place_orders = bool(self.c.get("place_orders", False))
+
+    def run_once(self):
+        intents = []
+        for sym in self.c.get("universe", []):
+            it = self._quote(sym)
+            if it: intents.append(it)
+        return intents
+
+    def _quote(self, sym: str):
+        if self.c.get("disable_on_event") and self.ev and self.ev.is_event_now():
+            # cancel existing
+            pair = self.orders.get(sym, {})
+            for oid in [pair.get("bid_id"), pair.get("ask_id")]:
+                if oid: 
+                    try: self.b.cancel(oid)
+                    except Exception: pass
+            self.orders[sym] = {}
+            return None
+
+        bars = _as_bars(self.d.get_bars(sym, self.tf, 100))
+        if not bars: return None
+        last = self.d.last(sym) if hasattr(self.d, "last") else bars[-1]["close"]
+        atr = _atr(bars, n=int(self.c.get("atr_len", 14)))
+        atr_bp = (atr / max(1e-9, last)) * 1e4
+
+        base_bp = float(self.c.get("base_spread_bp", 2.0))
+        add_bp = float(self.c.get("spread_k_atr", 0.6)) * atr_bp
+        half_bp = 0.5 * (base_bp + add_bp)
+
+        mid = last
+        bid = mid * (1 - half_bp/1e4)
+        ask = mid * (1 + half_bp/1e4)
+        tick = float(self.c.get("tick_size", 0.0))
+        bid = _round_tick(bid, tick); ask = _round_tick(ask, tick)
+
+        # inventory skew
+        pos = float(self.inv.get(sym, 0.0))
+        inv_r = float(self.c.get("inventory_r", 1.0))
+        skew = max(-inv_r, min(inv_r, -pos))  # negative pos -> skew bid up to attract buys, etc.
+        bid *= (1 + 0.05 * skew / max(1e-9, inv_r))
+        ask *= (1 - 0.05 * skew / max(1e-9, inv_r))
+
+        notional = float(self.c.get("size_bps", 10))/1e4  # toy sizing
+        if self.place_orders:
+            # Cancel & replace strategy (simplified)
+            pair = self.orders.get(sym, {})
+            for oid in [pair.get("bid_id"), pair.get("ask_id")]:
+                if oid:
+                    try: self.b.cancel(oid)
+                    except Exception: pass
+            bid_id = f"{sym}-bid-{time.time()}"
+            ask_id = f"{sym}-ask-{time.time()}"
+            self.b.send({"id": bid_id, "symbol": sym, "side": "buy", "type": "limit", "price": bid, "size": notional})
+            self.b.send({"id": ask_id, "symbol": sym, "side": "sell","type": "limit", "price": ask, "size": notional})
+            self.orders[sym] = {"bid_id": bid_id, "ask_id": ask_id}
+
+        return {"symbol": sym, "bid": bid, "ask": ask, "mid": mid, "atr_bp": atr_bp, "half_spread_bp": half_bp}

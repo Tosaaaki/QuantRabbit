@@ -1,0 +1,24 @@
+exit:
+  lowvol:
+    upper_bound_max_sec: 3.4
+    hazard_cost_spread_base: 0.23
+    hazard_cost_latency_base_ms: 220
+    hazard_debounce_ticks: 1
+    min_grace_before_scratch_ms: 120
+    scratch_requires_events: 1
+strategies:
+  MomentumPulse:
+    min_confidence: 0.65
+  MicroVWAPRevert:
+    vwap_z_min: 2.2
+  VolCompressionBreak:
+    accel_pctile: 75
+  BB_RSI_Fast:
+    reentry_block_s: 15
+alloc:
+  regime:
+    quiet_low_vol:
+      micro_share: 0.3
+meta:
+  promoted_from_shadow: '2025-11-02T02:17:31.817667Z'
+  window_min: 15

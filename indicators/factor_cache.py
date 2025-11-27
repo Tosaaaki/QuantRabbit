@@ -18,19 +18,11 @@ import pandas as pd
 
 from indicators.calc_core import IndicatorEngine
 
-TimeFrame = Literal["M1", "M5", "H1", "H4", "D1"]
+TimeFrame = Literal["M1", "H1", "H4"]
 
-# Reasonable history windows for indicator stability per TF
-_CANDLES_MAX = {
-    "M1": 2000,  # ~33h
-    "M5": 2400,  # ~8.3d
-    "H1": 1200,  # ~50d
-    "H4": 500,   # ~83d
-    "D1": 400,   # ~1.1y
-}
+_CANDLES_MAX = {"M1": 2000, "H1": 1000, "H4": 500}  # M1: ~33h, H1: ~41d, H4: ~83d
 _CANDLES: Dict[TimeFrame, deque] = {
     "M1": deque(maxlen=_CANDLES_MAX["M1"]),
-    "M5": deque(maxlen=_CANDLES_MAX["M5"]),
     "H1": deque(maxlen=_CANDLES_MAX["H1"]),
     "H4": deque(maxlen=_CANDLES_MAX["H4"]),
     "D1": deque(maxlen=_CANDLES_MAX["D1"]),

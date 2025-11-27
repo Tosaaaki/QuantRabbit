@@ -10,8 +10,13 @@ from collections import deque
 from typing import Dict, List, Optional
 
 from execution.order_manager import market_order
+from workers.common.dyn_size import compute_units
+from utils.oanda_account import get_account_snapshot
 from execution.position_manager import PositionManager
+from execution.risk_guard import loss_cooldown_status
 from market_data import spread_monitor, tick_window
+from workers.common import env_guard
+from workers.common.quality_gate import current_regime, news_block_active
 
 from . import config
 
@@ -109,12 +114,30 @@ async def mirror_spike_s5_worker() -> None:
     cooldown_until = 0.0
     post_exit_until = 0.0
     last_spread_log = 0.0
+    news_block_logged = False
+    regime_block_logged: Optional[str] = None
+    loss_block_logged = False
+    last_hour_log = 0.0
+    env_block_logged = False
     try:
         while True:
             await asyncio.sleep(config.LOOP_INTERVAL_SEC)
             now = time.monotonic()
             if now < cooldown_until or now < post_exit_until:
                 continue
+
+            if config.ACTIVE_HOURS_UTC:
+                current_hour = time.gmtime().tm_hour
+                if current_hour not in config.ACTIVE_HOURS_UTC:
+                    if now - last_hour_log > 300.0:
+                        LOG.info(
+                            "%s outside active hours hour=%02d",
+                            config.LOG_PREFIX,
+                            current_hour,
+                        )
+                        last_hour_log = now
+                    continue
+                last_hour_log = now
 
             blocked, _, spread_state, spread_reason = spread_monitor.is_blocked()
             spread_pips = float((spread_state or {}).get("spread_pips", 0.0) or 0.0)
@@ -129,9 +152,70 @@ async def mirror_spike_s5_worker() -> None:
                     last_spread_log = now
                 continue
 
+            if config.NEWS_BLOCK_MINUTES > 0 and news_block_active(
+                config.NEWS_BLOCK_MINUTES, min_impact=config.NEWS_BLOCK_MIN_IMPACT
+            ):
+                if not news_block_logged:
+                    LOG.info(
+                        "%s paused by news guard (impact≥%s / %.0f min)",
+                        config.LOG_PREFIX,
+                        config.NEWS_BLOCK_MIN_IMPACT,
+                        config.NEWS_BLOCK_MINUTES,
+                    )
+                    news_block_logged = True
+                continue
+            news_block_logged = False
+
+            regime_label = current_regime("M1", event_mode=False)
+            if regime_label and regime_label in config.BLOCK_REGIMES:
+                if regime_block_logged != regime_label:
+                    LOG.info(
+                        "%s blocked by regime=%s",
+                        config.LOG_PREFIX,
+                        regime_label,
+                    )
+                    regime_block_logged = regime_label
+                continue
+            regime_block_logged = None
+
+            if config.LOSS_STREAK_MAX > 0 and config.LOSS_STREAK_COOLDOWN_MIN > 0:
+                loss_block, remain_sec = loss_cooldown_status(
+                    "scalp",
+                    max_losses=config.LOSS_STREAK_MAX,
+                    cooldown_minutes=config.LOSS_STREAK_COOLDOWN_MIN,
+                )
+                if loss_block:
+                    if not loss_block_logged:
+                        LOG.warning(
+                            "%s cooling down after %d consecutive losses (%.0fs remain)",
+                            config.LOG_PREFIX,
+                            config.LOSS_STREAK_MAX,
+                            remain_sec,
+                        )
+                        loss_block_logged = True
+                    continue
+            loss_block_logged = False
+
             ticks = tick_window.recent_ticks(seconds=config.WINDOW_SEC, limit=3600)
             if len(ticks) < config.MIN_BUCKETS:
                 continue
+
+            allowed_env, env_reason = env_guard.mean_reversion_allowed(
+                spread_p50_limit=config.SPREAD_P50_LIMIT,
+                return_pips_limit=config.RETURN_PIPS_LIMIT,
+                return_window_sec=config.RETURN_WINDOW_SEC,
+                instant_move_limit=config.INSTANT_MOVE_PIPS_LIMIT,
+                tick_gap_ms_limit=config.TICK_GAP_MS_LIMIT,
+                tick_gap_move_pips=config.TICK_GAP_MOVE_PIPS,
+                ticks=ticks,
+            )
+            if not allowed_env:
+                if not env_block_logged:
+                    LOG.info("%s env guard blocked (%s)", config.LOG_PREFIX, env_reason)
+                    env_block_logged = True
+                continue
+            env_block_logged = False
+
             candles = _bucket_ticks(ticks)
             if len(candles) < config.MIN_BUCKETS:
                 continue
@@ -166,15 +250,29 @@ async def mirror_spike_s5_worker() -> None:
             if direction is None:
                 continue
 
+            prev_close = closes[-2] if len(closes) >= 2 else closes[-1]
+            body_pips = abs(latest["close"] - prev_close) / config.PIP_VALUE
+            if body_pips < 0.1:
+                body_pips = 0.1
+            if direction == "short":
+                wick_pips = (peak["high"] - latest["close"]) / config.PIP_VALUE
+            else:
+                wick_pips = (latest["close"] - trough["low"]) / config.PIP_VALUE
+            if wick_pips <= 0.0 or (wick_pips / body_pips) < config.MIN_WICK_RATIO:
+                continue
+
             atr = _atr_from_closes(closes[-config.LOOKBACK_BUCKETS :], config.RSI_PERIOD)
             if atr < config.MIN_ATR_PIPS:
+                continue
+            if spread_pips > max(0.16, atr * 0.35):
                 continue
             fast_z = _z_score(closes, config.PEAK_WINDOW_BUCKETS + 6)
             slow_z = _z_score(closes, config.LOOKBACK_BUCKETS)
             if fast_z is None or slow_z is None:
                 continue
             rsi = _rsi(closes[-config.PEAK_WINDOW_BUCKETS :], config.RSI_PERIOD)
-            if direction == "short" and rsi is not None and rsi < config.RSI_OVERBOUGHT:
+            # ショート側はより強いオーバーボートを要求
+            if direction == "short" and rsi is not None and rsi < max(config.SELL_RSI_OVERBOUGHT, config.RSI_OVERBOUGHT):
                 continue
             if direction == "long" and rsi is not None and rsi > config.RSI_OVERSOLD:
                 continue
@@ -194,14 +292,26 @@ async def mirror_spike_s5_worker() -> None:
                 continue
 
             entry_price = latest["close"]
+            tp_pips = config.TP_PIPS
+            sl_pips = config.SL_PIPS
+            if atr > 0.0:
+                tp_pips = min(
+                    config.TP_MAX_PIPS,
+                    max(config.TP_MIN_PIPS, atr * config.TP_ATR_MULT),
+                )
+                base_sl = max(config.SL_PIPS, atr * config.SL_ATR_MULT)
+                if direction == "short":
+                    # ショートはSLを少しタイトに、かつ上限を設ける
+                    base_sl = min(base_sl * config.SELL_SL_ATR_BIAS, config.SELL_SL_MAX_PIPS)
+                sl_pips = base_sl
             if direction == "long":
                 entry_price = float(ticks[-1].get("ask") or entry_price)
-                tp_price = round(entry_price + config.TP_PIPS * config.PIP_VALUE, 3)
-                sl_price = round(entry_price - config.SL_PIPS * config.PIP_VALUE, 3)
+                tp_price = round(entry_price + tp_pips * config.PIP_VALUE, 3)
+                sl_price = round(entry_price - sl_pips * config.PIP_VALUE, 3)
             else:
                 entry_price = float(ticks[-1].get("bid") or entry_price)
-                tp_price = round(entry_price - config.TP_PIPS * config.PIP_VALUE, 3)
-                sl_price = round(entry_price + config.SL_PIPS * config.PIP_VALUE, 3)
+                tp_price = round(entry_price - tp_pips * config.PIP_VALUE, 3)
+                sl_price = round(entry_price + sl_pips * config.PIP_VALUE, 3)
 
             entry_thesis = {
                 "strategy_tag": "mirror_spike_s5",
@@ -214,11 +324,34 @@ async def mirror_spike_s5_worker() -> None:
                 "rsi": None if rsi is None else round(rsi, 1),
                 "spread_pips": round(spread_pips, 2),
                 "atr_pips": round(atr, 2),
+                "wick_to_body": round(wick_pips / body_pips, 2),
+                "tp_pips": round(tp_pips, 2),
+                "sl_pips": round(sl_pips, 2),
             }
 
-            units = config.ENTRY_UNITS if direction == "long" else -config.ENTRY_UNITS
+            # 柔軟サイズ決定（スプレッド/ATR/余力/シグナル強度）
+            sig_strength = None
             try:
-                trade_id, executed_price = await market_order(
+                sig_strength = min(1.0, max(0.0, abs(float(fast_z)) / 2.0))
+            except Exception:
+                sig_strength = None
+            sizing = compute_units(
+                entry_price=float(entry_price),
+                sl_pips=float(sl_pips),
+                base_entry_units=int(config.ENTRY_UNITS),
+                min_units=int(config.MIN_UNITS),
+                max_margin_usage=float(config.MAX_MARGIN_USAGE),
+                spread_pips=float(spread_pips),
+                spread_soft_cap=float(config.MAX_SPREAD_PIPS),
+                adx=None,
+                signal_score=sig_strength,
+                pocket="scalp",
+            )
+            if sizing.units <= 0:
+                continue
+            units = sizing.units if direction == "long" else -sizing.units
+            try:
+                trade_id = await market_order(
                     "USD_JPY",
                     units,
                     sl_price=sl_price,
@@ -226,6 +359,7 @@ async def mirror_spike_s5_worker() -> None:
                     pocket="scalp",
                     client_order_id=_client_id(direction),
                     entry_thesis=entry_thesis,
+                    meta={"entry_price": float(entry_price)},
                 )
             except Exception as exc:  # pragma: no cover - network path
                 LOG.error("%s order error side=%s exc=%s", config.LOG_PREFIX, direction, exc)
@@ -239,7 +373,7 @@ async def mirror_spike_s5_worker() -> None:
                     trade_id,
                     direction,
                     units,
-                    executed_price if executed_price is not None else entry_price,
+                    entry_price,
                     tp_price,
                     sl_price,
                     spike_height,

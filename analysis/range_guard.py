@@ -94,13 +94,23 @@ def detect_range_mode(
     relax_factor_h4 = max(0.3, 1.0 - min(0.6, compression_ratio * 0.4))
     effective_adx_h4 = adx_h4 * relax_factor_h4
 
-    is_low_adx = adx_m1 <= adx_threshold
+    relax_cap = 1.6  # raw ADX が閾値から大きく乖離している場合は緩和を抑制
+    is_low_adx_raw = adx_m1 <= adx_threshold
+    is_low_adx_relaxed = (
+        not is_low_adx_raw
+        and adx_m1 <= (adx_threshold * relax_cap)
+        and effective_adx_m1 <= adx_threshold
+    )
+    # 極端な圧縮時は やや緩めに許容するが、生ADXが高止まりならトレンド継続とみなす
+    is_low_adx = is_low_adx_raw or is_low_adx_relaxed
     is_narrow_band = bbw_m1 <= bbw_threshold
     is_low_atr = atr_m1 <= atr_threshold
-    if not is_low_adx:
-        is_low_adx = effective_adx_m1 <= adx_threshold
-        if not is_low_adx and volatility_ratio >= 0.6:
-            is_low_adx = effective_adx_m1 <= (adx_threshold + 4.0)
+    if (
+        not is_low_adx
+        and volatility_ratio >= 0.6
+        and adx_m1 <= (adx_threshold * (relax_cap + 0.2))
+    ):
+        is_low_adx = effective_adx_m1 <= (adx_threshold + 2.0)
     h4_trend_weak = (
         effective_adx_h4 <= (adx_threshold + 3.0) and slope_h4 <= 0.00045
     )
@@ -153,10 +163,13 @@ def detect_range_mode(
         "effective_adx_h4": effective_adx_h4,
         "relax_factor_m1": relax_factor_m1,
         "relax_factor_h4": relax_factor_h4,
+        "relax_cap": relax_cap,
         "compression_ratio": compression_ratio,
         "volatility_ratio": volatility_ratio,
         "compression_trigger": float(compression_trigger),
         "adx_threshold": adx_threshold,
+        "adx_m1_raw_low": float(is_low_adx_raw),
+        "adx_m1_relaxed_low": float(is_low_adx_relaxed),
     }
 
     return RangeContext(active=active, reason=reason, score=composite, metrics=metrics)

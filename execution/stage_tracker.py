@@ -6,7 +6,7 @@ execution.stage_tracker
 
 from __future__ import annotations
 
-import logging
+import os
 import sqlite3
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -16,19 +16,43 @@ import os
 
 _DB_PATH = Path("logs/stage_state.db")
 _TRADES_DB = Path("logs/trades.db")
-_LOSS_WINDOW_MINUTES = 12
-_MIN_LOSS_JPY = 1.0
+_POCKET_SIZE_FLOOR = {
+    "macro": float(os.getenv("SIZE_FLOOR_MACRO", "0.6")),
+    "micro": float(os.getenv("SIZE_FLOOR_MICRO", "0.4")),
+    "scalp": float(os.getenv("SIZE_FLOOR_SCALP", "0.35")),
+}
+_STAGE_REVERSE_JST_START = int(os.getenv("STAGE_REVERSE_JST_START", "10")) % 24
+_STAGE_REVERSE_JST_END = int(os.getenv("STAGE_REVERSE_JST_END", "12")) % 24
+_STAGE_REVERSE_LOSS_FLOOR = float(os.getenv("STAGE_REVERSE_LOSS_FLOOR", "0.3"))
+_STAGE_REVERSE_FLIP_GUARD_SEC = int(os.getenv("STAGE_REVERSE_FLIP_GUARD_SEC", "90"))
 
 
-def _normalize_utc(dt: datetime) -> datetime:
-    """Return a naive UTC datetime, stripping tzinfo when necessary."""
+def _utcnow() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def _coerce_utc(value: Optional[datetime]) -> datetime:
+    if value is None:
+        return _utcnow()
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
+
+
+def _parse_timestamp(value: str) -> datetime:
+    dt = datetime.fromisoformat(value)
     if dt.tzinfo is None:
-        return dt
-    return dt.astimezone(timezone.utc).replace(tzinfo=None)
+        return dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc)
 
 
-def _ensure_row_factory(con: sqlite3.Connection) -> None:
-    con.row_factory = sqlite3.Row
+def _in_jst_reverse_window(now: Optional[datetime] = None) -> bool:
+    current = _coerce_utc(now)
+    jst = current + timedelta(hours=9)
+    hour = jst.hour
+    if _STAGE_REVERSE_JST_START <= _STAGE_REVERSE_JST_END:
+        return _STAGE_REVERSE_JST_START <= hour < _STAGE_REVERSE_JST_END
+    return hour >= _STAGE_REVERSE_JST_START or hour < _STAGE_REVERSE_JST_END
 
 
 @dataclass(slots=True)
@@ -82,12 +106,34 @@ class StageTracker:
         )
         self._con.execute(
             """
-            CREATE TABLE IF NOT EXISTS pocket_loss_window (
+            CREATE TABLE IF NOT EXISTS strategy_cooldown (
+                strategy TEXT PRIMARY KEY,
+                reason TEXT,
+                cooldown_until TEXT NOT NULL
+            )
+            """
+        )
+        self._con.execute(
+            """
+            CREATE TABLE IF NOT EXISTS strategy_history (
+                strategy TEXT PRIMARY KEY,
+                last_trade_id INTEGER DEFAULT 0,
+                lose_streak INTEGER DEFAULT 0,
+                win_streak INTEGER DEFAULT 0,
+                updated_at TEXT
+            )
+            """
+        )
+        self._con.execute(
+            """
+            CREATE TABLE IF NOT EXISTS hold_violation_log (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                ts TEXT NOT NULL,
                 pocket TEXT NOT NULL,
-                trade_id INTEGER PRIMARY KEY,
-                closed_at TEXT NOT NULL,
-                loss_jpy REAL NOT NULL,
-                loss_pips REAL NOT NULL
+                direction TEXT NOT NULL,
+                required_sec REAL,
+                actual_sec REAL,
+                reason TEXT
             )
             """
         )
@@ -110,9 +156,14 @@ class StageTracker:
         self._con.close()
 
     def clear_expired(self, now: datetime) -> None:
-        ts = _normalize_utc(now).isoformat()
+        now = _coerce_utc(now)
+        ts = now.isoformat()
         self._con.execute(
             "DELETE FROM stage_cooldown WHERE cooldown_until <= ?", (ts,)
+        )
+        self._con.execute(
+            "DELETE FROM strategy_cooldown WHERE cooldown_until <= ?",
+            (ts,),
         )
         self._con.commit()
 
@@ -124,7 +175,7 @@ class StageTracker:
         *,
         now: Optional[datetime] = None,
     ) -> None:
-        ts = (_normalize_utc(now).isoformat() if now is not None else datetime.utcnow().isoformat())
+        ts = _coerce_utc(now).isoformat()
         self._con.execute(
             """
             INSERT INTO stage_state(pocket, direction, stage, updated_at)
@@ -157,7 +208,7 @@ class StageTracker:
         seconds: int,
         now: Optional[datetime] = None,
     ) -> None:
-        base = _normalize_utc(now) if now is not None else datetime.utcnow()
+        base = _coerce_utc(now)
         cooldown_until = base + timedelta(seconds=max(1, seconds))
         self._con.execute(
             """
@@ -171,24 +222,148 @@ class StageTracker:
         )
         self._con.commit()
 
-    def clear_cooldown(
+    def ensure_cooldown(
         self,
         pocket: str,
         direction: str,
         *,
-        reason: Optional[str] = None,
-    ) -> None:
-        if reason:
-            self._con.execute(
-                "DELETE FROM stage_cooldown WHERE pocket=? AND direction=? AND reason=?",
-                (pocket, direction, reason),
-            )
-        else:
-            self._con.execute(
-                "DELETE FROM stage_cooldown WHERE pocket=? AND direction=?",
-                (pocket, direction),
-            )
+        reason: str,
+        seconds: int,
+        now: Optional[datetime] = None,
+    ) -> bool:
+        """
+        Ensure the cooldown for (pocket, direction) is at least the requested duration.
+        Returns True if the cooldown was extended or set, False if existing cooldown was longer.
+        """
+        current = _coerce_utc(now)
+        desired_until = current + timedelta(seconds=max(1, seconds))
+        info = self.get_cooldown(pocket, direction, now=current)
+        if info and info.cooldown_until >= desired_until:
+            return False
+        self.set_cooldown(
+            pocket,
+            direction,
+            reason=reason,
+            seconds=seconds,
+            now=current,
+        )
+        return True
+
+    def clear_cooldown(self, pocket: str, direction: str) -> bool:
+        cur = self._con.execute(
+            "DELETE FROM stage_cooldown WHERE pocket=? AND direction=?",
+            (pocket, direction),
+        )
         self._con.commit()
+        return cur.rowcount > 0
+
+    def expire_stages_if_flat(
+        self,
+        positions: Dict[str, Dict],
+        *,
+        now: Optional[datetime] = None,
+        grace_seconds: int = 180,
+    ) -> int:
+        """
+        Reset stale stage states when the direction has been flat for a while.
+        Returns the number of resets performed.
+        """
+        now = _coerce_utc(now)
+        threshold = now - timedelta(seconds=max(1, grace_seconds))
+        resets = 0
+        for pocket, direction, stage, updated_at in self._con.execute(
+            "SELECT pocket, direction, stage, updated_at FROM stage_state WHERE stage>0"
+        ):
+            info = positions.get(pocket) or {}
+            units = int(info.get("long_units" if direction == "long" else "short_units", 0) or 0)
+            if units != 0:
+                continue
+            try:
+                updated_dt = _parse_timestamp(updated_at) if updated_at else None
+            except Exception:
+                updated_dt = None
+            if updated_dt and updated_dt > threshold:
+                continue
+            self.reset_stage(pocket, direction, now=now)
+            resets += 1
+        return resets
+
+    def log_hold_violation(
+        self,
+        pocket: str,
+        direction: str,
+        *,
+        required_sec: float,
+        actual_sec: float,
+        reason: str = "hold_violation",
+        cooldown_seconds: int = 90,
+        now: Optional[datetime] = None,
+    ) -> None:
+        ts = _coerce_utc(now).isoformat()
+        self._con.execute(
+            """
+            INSERT INTO hold_violation_log(ts, pocket, direction, required_sec, actual_sec, reason)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (ts, pocket, direction, float(required_sec), float(actual_sec), reason),
+        )
+        self._con.commit()
+        if cooldown_seconds > 0:
+            current = _coerce_utc(now)
+            self.ensure_cooldown(
+                pocket,
+                direction,
+                reason=reason,
+                seconds=cooldown_seconds,
+                now=current,
+            )
+
+    def set_strategy_cooldown(
+        self,
+        strategy: str,
+        *,
+        reason: str,
+        seconds: int,
+        now: Optional[datetime] = None,
+    ) -> None:
+        if not strategy:
+            return
+        base = _coerce_utc(now)
+        cooldown_until = base + timedelta(seconds=max(1, seconds))
+        self._con.execute(
+            """
+            INSERT INTO strategy_cooldown(strategy, reason, cooldown_until)
+            VALUES (?, ?, ?)
+            ON CONFLICT(strategy)
+            DO UPDATE SET reason=excluded.reason,
+                          cooldown_until=excluded.cooldown_until
+            """,
+            (strategy, reason, cooldown_until.isoformat()),
+        )
+        self._con.commit()
+
+    def is_strategy_blocked(
+        self, strategy: str, now: Optional[datetime] = None
+    ) -> Tuple[bool, Optional[int], Optional[str]]:
+        if not strategy:
+            return False, None, None
+        row = self._con.execute(
+            "SELECT reason, cooldown_until FROM strategy_cooldown WHERE strategy=?",
+            (strategy,),
+        ).fetchone()
+        if not row:
+            return False, None, None
+        limit = _parse_timestamp(row[1])
+        current = _coerce_utc(now)
+        if current >= limit:
+            self._con.execute(
+                "DELETE FROM strategy_cooldown WHERE strategy=?",
+                (strategy,),
+            )
+            self._con.commit()
+            return False, None, None
+        remaining = int((limit - current).total_seconds())
+        return True, max(1, remaining), row[0] or ""
 
     def get_cooldown(
         self, pocket: str, direction: str, now: Optional[datetime] = None
@@ -199,8 +374,8 @@ class StageTracker:
         ).fetchone()
         if not row:
             return None
-        limit = self._parse_iso(row["cooldown_until"], datetime.utcnow())
-        current = _normalize_utc(now) if now is not None else datetime.utcnow()
+        limit = _parse_timestamp(row[1])
+        current = _coerce_utc(now)
         if current >= limit:
             self._con.execute(
                 "DELETE FROM stage_cooldown WHERE pocket=? AND direction=?",
@@ -218,8 +393,8 @@ class StageTracker:
         info = self.get_cooldown(pocket, direction, now)
         if not info:
             return False, None, None
-        base_now = _normalize_utc(now) if now is not None else datetime.utcnow()
-        remaining = int((info.cooldown_until - base_now).total_seconds())
+        current = _coerce_utc(now)
+        remaining = int((info.cooldown_until - current).total_seconds())
         return True, max(1, remaining), info.reason
 
     def update_loss_streaks(
@@ -229,9 +404,7 @@ class StageTracker:
         now: Optional[datetime] = None,
         cooldown_seconds: int = 900,
         cooldown_map: Optional[Dict[str, int]] = None,
-        range_active: bool = False,
-        atr_pips: Optional[float] = None,
-        vol_5m: Optional[float] = None,
+        strategy_loss_threshold: int = 3,
     ) -> None:
         trades_path = trades_db or _TRADES_DB
         if not trades_path.exists():
@@ -239,7 +412,7 @@ class StageTracker:
         conn = sqlite3.connect(trades_path)
         _ensure_row_factory(conn)
         rows = conn.execute(
-            "SELECT id, pocket, units, pl_pips, realized_pl, close_time FROM trades WHERE close_time IS NOT NULL ORDER BY id ASC"
+            "SELECT id, pocket, units, pl_pips, realized_pl, strategy_tag FROM trades WHERE close_time IS NOT NULL ORDER BY id ASC"
         ).fetchall()
         conn.close()
         if not rows:
@@ -250,25 +423,24 @@ class StageTracker:
         for row in self._con.execute(
             "SELECT pocket, direction, last_trade_id, lose_streak, win_streak FROM stage_history"
         ):
-            existing[(row["pocket"], row["direction"])] = (
-                int(row["last_trade_id"] or 0),
-                int(row["lose_streak"] or 0),
-                int(row["win_streak"] or 0),
+            existing[(row[0], row[1])] = (
+                int(row[2] or 0),
+                int(row[3] or 0),
+                int(row[4] or 0),
             )
 
-        # 正規化: now が timezone-aware なら UTC に変換して tzinfo を外す
-        if now is not None:
-            if isinstance(now, datetime) and now.tzinfo is not None:
-                now_dt = now.astimezone(timezone.utc).replace(tzinfo=None)
-            else:
-                now_dt = now
-        else:
-            now_dt = datetime.utcnow()
-        if self._loss_decay_minutes > 0:
-            self._decay_loss_streaks(now_dt)
-        ts = now_dt.isoformat()
-        new_losses: List[Tuple[str, int, datetime, float, float]] = []
+        strategy_existing: Dict[str, Tuple[int, int, int]] = {}
+        for row in self._con.execute(
+            "SELECT strategy, last_trade_id, lose_streak, win_streak FROM strategy_history"
+        ):
+            strategy_existing[row[0]] = (
+                int(row[1] or 0),
+                int(row[2] or 0),
+                int(row[3] or 0),
+            )
 
+        ts = _coerce_utc(now).isoformat()
+        reverse_window = _in_jst_reverse_window(now)
         for row in rows:
             pocket = row["pocket"] or ""
             units = int(row["units"] or 0)
@@ -307,12 +479,77 @@ class StageTracker:
                 (pocket, direction, trade_id, lose_streak, win_streak, ts),
             )
             existing[key] = (trade_id, lose_streak, win_streak)
-            if pl_jpy < -_MIN_LOSS_JPY:
-                close_dt = self._parse_iso(row["close_time"], now_dt)
-                loss_jpy = abs(pl_jpy)
-                loss_pips = abs(float(row["pl_pips"] or 0.0))
-                new_losses.append((pocket, trade_id, close_dt, loss_jpy, loss_pips))
+            if lose_streak >= 3:
+                pocket_cooldown = (
+                    (cooldown_map or {}).get(pocket, cooldown_seconds)
+                )
+                if pocket != "scalp":
+                    self.set_cooldown(
+                        pocket,
+                        direction,
+                        reason="loss_streak",
+                        seconds=pocket_cooldown,
+                        now=now,
+                    )
+                    opp_dir = "short" if direction == "long" else "long"
+                    if pocket == "micro":
+                        opp_seconds = max(90, pocket_cooldown // 3)
+                    else:
+                        opp_seconds = max(240, pocket_cooldown // 2)
+                    if pocket == "macro" and reverse_window:
+                        reduced = max(
+                            _STAGE_REVERSE_FLIP_GUARD_SEC,
+                            int(opp_seconds * 0.4),
+                        )
+                        opp_seconds = reduced
+                    self.set_cooldown(
+                        pocket,
+                        opp_dir,
+                        reason="flip_guard",
+                        seconds=opp_seconds,
+                        now=now,
+                    )
 
+            strategy_tag = row["strategy_tag"] if "strategy_tag" in row.keys() else None
+            if strategy_tag:
+                strat_last, strat_lose, strat_win = strategy_existing.get(strategy_tag, (0, 0, 0))
+                if trade_id > strat_last:
+                    if pl_jpy < -1.0:
+                        strat_lose += 1
+                        strat_win = 0
+                    elif pl_jpy > 1.0:
+                        strat_win += 1
+                        strat_lose = 0
+                    else:
+                        strat_win = 0
+                        strat_lose = 0
+
+                    self._con.execute(
+                        """
+                        INSERT INTO strategy_history(strategy, last_trade_id, lose_streak, win_streak, updated_at)
+                        VALUES (?, ?, ?, ?, ?)
+                        ON CONFLICT(strategy)
+                        DO UPDATE SET last_trade_id=excluded.last_trade_id,
+                                      lose_streak=excluded.lose_streak,
+                                      win_streak=excluded.win_streak,
+                                      updated_at=excluded.updated_at
+                        """,
+                        (strategy_tag, trade_id, strat_lose, strat_win, ts),
+                    )
+                    strategy_existing[strategy_tag] = (trade_id, strat_lose, strat_win)
+                    if strat_lose >= strategy_loss_threshold:
+                        strat_seconds = (cooldown_map or {}).get(pocket, cooldown_seconds)
+                        self.set_strategy_cooldown(
+                            strategy_tag,
+                            reason="loss_streak",
+                            seconds=strat_seconds,
+                            now=now,
+                        )
+                        strat_lose = 0
+                        self._con.execute(
+                            "UPDATE strategy_history SET lose_streak=? WHERE strategy=?",
+                            (strat_lose, strategy_tag),
+                        )
         self._con.commit()
 
         fallback_cd = cooldown_seconds
@@ -420,256 +657,33 @@ class StageTracker:
         return int(row["lose_streak"] or 0), int(row["win_streak"] or 0)
 
     def size_multiplier(self, pocket: str, direction: str) -> float:
-        """連敗での縮小と、直近パフォーマンスに基づく緩やかな拡大を両立させる。"""
+        """連敗時はより強くサイズを縮小し、連勝時はゆるやかに抑制。
+
+        例:
+          - 1連敗: 0.75x
+          - 2連敗: 0.6x
+          - 3連敗以上: 0.5x（Pocket別の下限あり）
+          - 2連勝: 0.9x, 3連勝: 0.8x
+        """
         lose_streak, win_streak = self.get_loss_profile(pocket, direction)
         factor = 1.0
-        if lose_streak >= 4:
-            factor *= 0.65
-        elif lose_streak == 3:
-            factor *= 0.75
+        if lose_streak >= 3:
+            factor *= 0.5
         elif lose_streak == 2:
-            factor *= 0.85
+            factor *= 0.6
         elif lose_streak == 1:
-            factor *= 0.95
+            factor *= 0.75
 
-        # ストリークが続く場合の軽い調整（縮小し過ぎないよう控えめにする）
-        if win_streak >= 4:
-            factor *= 1.04
+        if win_streak >= 3:
+            factor *= 0.8
         elif win_streak >= 2:
-            factor *= 1.02
+            factor *= 0.9
 
-        profile = self._recent_profile.get(pocket, {}) or {}
-        weight_hint = self._weight_hint.get(pocket, 0.0)
-        win_rate = float(profile.get("win_rate", 0.0) or 0.0)
-        sample_size = int(profile.get("sample_size", 0) or 0)
-        avg_win = float(profile.get("avg_win_pips", 0.0) or 0.0)
-        avg_loss = float(profile.get("avg_loss_pips", 0.0) or 0.0)
-        rr = avg_win / avg_loss if avg_loss > 0 else avg_win
+        reverse_brake = pocket == "macro" and lose_streak > 0 and _in_jst_reverse_window()
+        if reverse_brake:
+            factor = min(factor, _STAGE_REVERSE_LOSS_FLOOR)
 
-        hot_sample = sample_size >= 6 and win_rate >= 0.58 and rr >= 1.05
-        elite_sample = sample_size >= 10 and win_rate >= 0.62 and rr >= 1.15
-        if hot_sample:
-            boost = 1.05
-            if elite_sample:
-                boost = 1.1
-            if pocket == "scalp" and weight_hint <= 0.05:
-                boost = min(boost, 1.04)
-            factor *= boost
-        else:
-            # スキャル pocket はフォーカスから外れている場合に微縮小する
-            if pocket == "scalp" and weight_hint < 0.02:
-                factor *= 0.9
-
-        return max(0.55, min(1.1, round(factor, 3)))
-
-    def get_recent_profile(self, pocket: str) -> Dict[str, float]:
-        return dict(self._recent_profile.get(pocket, {}))
-
-    def get_recent_profiles(self) -> Dict[str, Dict[str, float]]:
-        return {key: dict(val) for key, val in self._recent_profile.items()}
-
-    def set_weight_hint(self, pocket: str, weight: Optional[float]) -> None:
-        if weight is None:
-            self._weight_hint.pop(pocket, None)
-            return
-        try:
-            value = float(weight)
-        except (TypeError, ValueError):
-            return
-        if value < 0:
-            value = 0.0
-        self._weight_hint[pocket] = value
-
-    def _apply_loss_clusters(
-        self,
-        cluster_stats: Dict[str, Dict[str, float]],
-        *,
-        range_active: bool,
-        atr_pips: Optional[float],
-        vol_5m: Optional[float],
-        now: datetime,
-    ) -> None:
-        fallback_cd = 900
-        if cluster_stats:
-            try:
-                fallback_cd = int(
-                    min(
-                        stats.get("cooldown", 900) or 900
-                        for stats in cluster_stats.values()
-                    )
-                )
-            except Exception:
-                fallback_cd = 900
-
-        for pocket, stats in cluster_stats.items():
-            thresholds = self._compute_cluster_thresholds(
-                pocket,
-                base_cooldown=int(stats.get("cooldown", fallback_cd) or fallback_cd),
-                range_active=range_active,
-                atr_pips=atr_pips,
-                vol_5m=vol_5m,
-            )
-            count = int(stats.get("count", 0))
-            loss_pips = float(stats.get("loss_pips", 0.0))
-            apply_needed = count >= thresholds["count"] or loss_pips >= thresholds["pips"]
-            if not apply_needed:
-                recovery_count = max(0, thresholds["count"] * 0.2)
-                recovery_pips = thresholds["pips"] * 0.2
-                if count <= recovery_count and loss_pips <= recovery_pips:
-                    for direction in ("long", "short"):
-                        info = self.get_cooldown(pocket, direction, now)
-                        if info and info.reason == "loss_cluster":
-                            self.clear_cooldown(pocket, direction, reason="loss_cluster")
-                            logging.info(
-                                "[STAGE] loss cluster recovery pocket=%s direction=%s remaining_count=%d loss_pips=%.2f",
-                                pocket,
-                                direction,
-                                count,
-                                loss_pips,
-                            )
-                continue
-            seconds = thresholds["cooldown"]
-            applicable_dirs: List[str] = []
-            for direction in ("long", "short"):
-                lose_streak, _ = self.get_loss_profile(pocket, direction)
-                if lose_streak > 0:
-                    applicable_dirs.append(direction)
-            if not applicable_dirs:
-                applicable_dirs = ["long", "short"]
-
-            for direction in ("long", "short"):
-                if direction not in applicable_dirs:
-                    self.clear_cooldown(pocket, direction, reason="loss_cluster")
-
-            applied = False
-            for direction in applicable_dirs:
-                info = self.get_cooldown(pocket, direction, now)
-                if info and info.reason == "loss_cluster":
-                    remaining = int((info.cooldown_until - now).total_seconds())
-                    if remaining >= seconds * 0.6:
-                        continue
-                self.set_cooldown(
-                    pocket,
-                    direction,
-                    reason="loss_cluster",
-                    seconds=seconds,
-                    now=now,
-                )
-                applied = True
-            if applied:
-                logging.info(
-                    "[STAGE] loss cluster cooldown pocket=%s count=%d loss_pips=%.2f cooldown=%ds",
-                    pocket,
-                    count,
-                    loss_pips,
-                    seconds,
-                )
-
-    def _compute_cluster_thresholds(
-        self,
-        pocket: str,
-        *,
-        base_cooldown: int,
-        range_active: bool,
-        atr_pips: Optional[float],
-        vol_5m: Optional[float],
-    ) -> Dict[str, float]:
-        count = 3
-        pips = 6.0
-        cooldown = max(120, base_cooldown)
-
-        if pocket == "micro":
-            count = 2
-            pips = 4.0
-        elif pocket == "scalp":
-            count = 2
-            pips = 3.0
-
-        if range_active:
-            count = max(1, count - 1)
-            pips *= 0.7
-            cooldown = int(cooldown * 1.2)
-
-        atr = atr_pips or 0.0
-        if pocket == "macro":
-            if atr and atr < 9.5:
-                count = max(1, count - 1)
-                pips *= 0.85
-                cooldown = int(cooldown * 1.1)
-            elif atr and atr > 14:
-                count += 1
-                pips *= 1.1
-                cooldown = max(int(cooldown * 0.9), 300)
-        else:
-            if atr and atr < 6.5:
-                count = max(1, count - 1)
-                pips *= 0.8
-                cooldown = int(cooldown * 1.15)
-            elif atr and atr > 11.5:
-                count += 1
-                pips *= 1.15
-                cooldown = max(int(cooldown * 0.85), 180)
-
-        if vol_5m is not None:
-            if vol_5m < 0.8:
-                cooldown = int(cooldown * 1.1)
-            elif vol_5m > 1.6:
-                cooldown = max(int(cooldown * 0.9), 150)
-                pips *= 1.05
-
-        return {"count": count, "pips": pips, "cooldown": max(120, cooldown)}
-
-    def _build_recent_profile(
-        self, rows: List[sqlite3.Row], now: datetime
-    ) -> Dict[str, Dict[str, float]]:
-        result: Dict[str, Dict[str, float]] = {}
-        if not rows:
-            return result
-        recent = rows[-150:]
-        stats: Dict[str, Dict[str, List[float]]] = {}
-        cutoff = now - timedelta(days=3)
-        for row in recent:
-            pocket = row["pocket"] or ""
-            if not pocket:
-                continue
-            pl_pips = float(row["pl_pips"] or 0.0)
-            if abs(pl_pips) < 0.05:
-                continue
-            close_dt = self._parse_iso(row["close_time"], now)
-            if close_dt < cutoff:
-                continue
-            bucket = stats.setdefault(pocket, {"wins": [], "losses": [], "all": []})
-            bucket["all"].append(pl_pips)
-            if pl_pips > 0:
-                bucket["wins"].append(pl_pips)
-            elif pl_pips < 0:
-                bucket["losses"].append(abs(pl_pips))
-
-        for pocket, data in stats.items():
-            total = len(data["all"])
-            if total == 0:
-                continue
-            wins = data["wins"]
-            losses = data["losses"]
-            win_rate = len(wins) / total
-            avg_win = sum(wins) / len(wins) if wins else 0.0
-            avg_loss = sum(losses) / len(losses) if losses else 0.0
-            result[pocket] = {
-                "win_rate": round(win_rate, 4),
-                "avg_win_pips": round(avg_win, 3),
-                "avg_loss_pips": round(avg_loss, 3),
-                "sample_size": total,
-            }
-        return result
-
-    @staticmethod
-    def _parse_iso(raw: Optional[str], fallback: datetime) -> datetime:
-        if not raw:
-            return fallback
-        try:
-            dt = datetime.fromisoformat(raw.replace("Z", "+00:00"))
-        except ValueError:
-            return fallback
-        if dt.tzinfo is not None:
-            return dt.astimezone(timezone.utc).replace(tzinfo=None)
-        return dt
+        floor = max(0.3, _POCKET_SIZE_FLOOR.get(pocket, 0.4))
+        if reverse_brake:
+            floor = min(floor, _STAGE_REVERSE_LOSS_FLOOR)
+        return max(floor, round(factor, 3))

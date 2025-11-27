@@ -2,7 +2,7 @@
 market_data.candle_fetcher
 ~~~~~~~~~~~~~~~~~~~~~~~~~~
 Tick を受け取り、任意のタイムフレームのローソク足を逐次生成する。
-現在は **M1** 固定。必要に応じて dict 内に他 TF を追加可。
+現在は M1 / H1 / H4 をサポート。必要に応じて dict 内に他 TF を追加可。
 """
 
 from __future__ import annotations
@@ -10,16 +10,20 @@ from __future__ import annotations
 import asyncio
 import datetime
 from collections import defaultdict
+import logging
 from typing import Awaitable, Callable, Dict, List, Literal, Tuple
 
 import httpx
 from utils.secrets import get_secret
 from market_data.tick_fetcher import Tick, _parse_time
 from market_data.replay_logger import log_candle
-from market_data import spread_monitor, tick_window
+from market_data import spread_monitor
+from market_data import tick_window
+from market_data import orderbook_state
 
+#
 Candle = dict[str, float]  # open, high, low, close
-TimeFrame = Literal["M1", "M5", "H1", "H4", "D1"]
+TimeFrame = Literal["M1", "H1", "H4"]
 
 
 TOKEN = get_secret("oanda_token")
@@ -51,9 +55,6 @@ class CandleAggregator:
     def _get_key(self, tf: TimeFrame, ts: datetime.datetime) -> str:
         if tf == "M1":
             return ts.strftime("%Y-%m-%dT%H:%M")
-        if tf == "M5":
-            minute = (ts.minute // 5) * 5
-            return ts.strftime(f"%Y-%m-%dT%H:{minute:02d}")
         if tf == "H1":
             return ts.strftime("%Y-%m-%dT%H:00")
         if tf == "H4":
@@ -123,9 +124,25 @@ async def start_candle_stream(
         except Exception as exc:  # noqa: BLE001
             print(f"[spread] failed to update monitor: {exc}")
         try:
+            # Persist latest tick for cross-process scalp workers
             tick_window.record(tick)
         except Exception as exc:  # noqa: BLE001
-            print(f"[tick_window] failed to record tick: {exc}")
+            # best-effort; do not break the streaming loop
+            print(f"[tick_cache] failed to record tick: {exc}")
+        try:
+            bids = tick.bids or ((tick.bid, float(tick.liquidity or 0)),)
+            asks = tick.asks or ((tick.ask, float(tick.liquidity or 0)),)
+            now_utc = datetime.datetime.utcnow().replace(tzinfo=datetime.timezone.utc)
+            latency_ms = abs((now_utc - tick.time).total_seconds()) * 1000.0
+            orderbook_state.update_snapshot(
+                epoch_ts=tick.time.timestamp(),
+                bids=bids,
+                asks=asks,
+                provider="oanda-stream",
+                latency_ms=latency_ms,
+            )
+        except Exception as exc:  # noqa: BLE001
+            print(f"[orderbook] failed to update snapshot: {exc}")
         await agg.on_tick(tick)
 
     from market_data.tick_fetcher import run_price_stream
@@ -148,7 +165,10 @@ async def fetch_historical_candles(
             r = await client.get(url, headers=HEADERS, params=params, timeout=7)
             r.raise_for_status()
             data = r.json()
-    except Exception:
+    except Exception as exc:
+        logging.warning(
+            "[HISTORY] failed to fetch %s %s candles: %s", instrument, granularity, exc
+        )
         return []
 
     out: List[Candle] = []
@@ -170,15 +190,47 @@ async def fetch_historical_candles(
 
 
 async def initialize_history(instrument: str):
-    """起動時に過去ローソクを取得し factor_cache を埋める"""
+    """起動時に過去ローソクを取得し factor_cache を埋める。
+
+    ネットワーク断や API 失敗を考慮し、一定回数リトライして最低限の本数を確保する。
+    """
     from indicators.factor_cache import on_candle
 
-    preload_counts = {"M1": 60, "M5": 120, "H1": 120, "H4": 30, "D1": 120}
-    for tf in ("M1", "M5", "H1", "H4", "D1"):
-        count = preload_counts.get(tf, 20)
-        candles = await fetch_historical_candles(instrument, tf, count)
-        for c in candles:
-            await on_candle(tf, c)
+    min_required = {"M1": 60, "H1": 60, "H4": 40}
+    max_attempts = 6
+    base_delay = 2.0
+
+    for tf in ("M1", "H1", "H4"):
+        required = max(20, min_required.get(tf, 20))
+        attempts = 0
+        while True:
+            attempts += 1
+            candles = await fetch_historical_candles(instrument, tf, required)
+            if len(candles) >= 20:
+                for c in candles:
+                    await on_candle(tf, c)
+                logging.info(
+                    "[HISTORY] Seeded %s %s timeframe with %d candles (attempt %d).",
+                    instrument,
+                    tf,
+                    len(candles),
+                    attempts,
+                )
+                break
+
+            logging.warning(
+                "[HISTORY] Insufficient %s %s candles (got %d, need >=20) attempt %d/%d.",
+                instrument,
+                tf,
+                len(candles),
+                attempts,
+                max_attempts,
+            )
+            if attempts >= max_attempts:
+                raise RuntimeError(
+                    f"Failed to seed {tf} history for {instrument} after {max_attempts} attempts"
+                )
+            await asyncio.sleep(min(30.0, base_delay * attempts))
 
 
 # ---------- self test ----------
@@ -190,6 +242,10 @@ if __name__ == "__main__":
         print("--- M1 Candle ---")
         pprint.pprint(c)
 
+    async def debug_h1_candle(c):
+        print("--- H1 Candle ---")
+        pprint.pprint(c)
+
     async def debug_h4_candle(c):
         print("--- H4 Candle ---")
         pprint.pprint(c)
@@ -197,6 +253,7 @@ if __name__ == "__main__":
     try:
         handlers_to_run = [
             ("M1", debug_m1_candle),
+            ("H1", debug_h1_candle),
             ("H4", debug_h4_candle),
         ]
         asyncio.run(start_candle_stream("USD_JPY", handlers_to_run))

@@ -22,6 +22,12 @@ class SignalFeatures:
     range_pips: float
     tick_count: int
     span_seconds: float
+    impulse_pips: float = 0.0
+    impulse_span_sec: float = 0.0
+    impulse_direction: int = 0
+    consolidation_range_pips: float = 0.0
+    consolidation_span_sec: float = 0.0
+    consolidation_ok: bool = False
     rsi: Optional[float] = None
     atr_pips: Optional[float] = None
     rsi_source: str = "tick"
@@ -216,7 +222,9 @@ def extract_features(
         return None
 
     mids = [float(t["mid"]) for t in ticks]
+    epochs = [float(t.get("epoch", 0.0)) for t in ticks]
     latest_mid = mids[-1]
+    latest_epoch = epochs[-1]
     long_mean = _window_mean(mids)
 
     short_window = max(5, int(len(mids) * config.SHORT_WINDOW_SEC / config.LONG_WINDOW_SEC))
@@ -226,7 +234,7 @@ def extract_features(
     high_mid = max(mids)
     low_mid = min(mids)
 
-    span_seconds = float(ticks[-1]["epoch"] - ticks[0]["epoch"])
+    span_seconds = float(latest_epoch - epochs[0])
 
     momentum = _as_pips(latest_mid - long_mean)
     short_momentum = _as_pips(latest_mid - short_mean)
@@ -234,6 +242,37 @@ def extract_features(
     rsi, rsi_source, atr_pips, atr_source = _resolve_indicators(mids)
     pattern_tag = _classify_pattern(mids)
     pattern_features = _pattern_feature_vector(ticks, mids)
+
+    impulse_cutoff = latest_epoch - config.IMPULSE_LOOKBACK_SEC
+    impulse_indices = [i for i, epoch in enumerate(epochs) if epoch >= impulse_cutoff]
+    impulse_pips = 0.0
+    impulse_span_sec = 0.0
+    impulse_direction = 0
+    if len(impulse_indices) >= config.IMPULSE_MIN_TICKS:
+        start_idx = impulse_indices[0]
+        impulse_delta = mids[-1] - mids[start_idx]
+        impulse_pips = abs(_as_pips(impulse_delta))
+        impulse_span_sec = max(0.0, latest_epoch - epochs[start_idx])
+        if impulse_delta > 0:
+            impulse_direction = 1
+        elif impulse_delta < 0:
+            impulse_direction = -1
+
+    consolidation_cutoff = latest_epoch - config.CONSOLIDATION_WINDOW_SEC
+    consolidation_indices = [
+        i for i, epoch in enumerate(epochs) if epoch >= consolidation_cutoff
+    ]
+    consolidation_range_pips = 0.0
+    consolidation_span_sec = 0.0
+    consolidation_ok = False
+    if len(consolidation_indices) >= config.CONSOLIDATION_MIN_TICKS:
+        subset = [mids[i] for i in consolidation_indices]
+        consolidation_range_pips = _as_pips(max(subset) - min(subset))
+        consolidation_span_sec = max(
+            0.0,
+            epochs[consolidation_indices[-1]] - epochs[consolidation_indices[0]],
+        )
+        consolidation_ok = consolidation_range_pips <= config.CONSOLIDATION_MAX_RANGE_PIPS
 
     return SignalFeatures(
         latest_mid=latest_mid,
@@ -243,6 +282,12 @@ def extract_features(
         range_pips=range_pips,
         tick_count=len(ticks),
         span_seconds=span_seconds,
+        impulse_pips=impulse_pips,
+        impulse_span_sec=impulse_span_sec,
+        impulse_direction=impulse_direction,
+        consolidation_range_pips=consolidation_range_pips,
+        consolidation_span_sec=consolidation_span_sec,
+        consolidation_ok=consolidation_ok,
         rsi=rsi,
         atr_pips=atr_pips,
         rsi_source=rsi_source,
@@ -294,10 +339,23 @@ def evaluate_signal(
     if features.span_seconds <= 0.0:
         return None
 
+    if not config.FORCE_ENTRIES:
+        if config.MIN_IMPULSE_PIPS > 0.0 and features.impulse_pips < config.MIN_IMPULSE_PIPS:
+            return None
+        if features.impulse_direction == 0:
+            return None
+        if config.REQUIRE_CONSOLIDATION and not features.consolidation_ok:
+            return None
+
     momentum = features.momentum_pips
     short_momentum = features.short_momentum_pips
     abs_momentum = abs(momentum)
     action: Optional[str] = None
+
+    if features.impulse_direction > 0 and momentum < 0:
+        return None
+    if features.impulse_direction < 0 and momentum > 0:
+        return None
 
     tick_rsi = features.rsi
     effective_rsi = tick_rsi

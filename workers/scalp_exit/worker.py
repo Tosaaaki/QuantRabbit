@@ -12,6 +12,7 @@ from execution.order_manager import close_trade
 from execution.position_manager import PositionManager
 from indicators.factor_cache import all_factors
 from market_data import tick_window
+from analysis import policy_bus
 
 from . import config
 
@@ -70,13 +71,21 @@ class _TradeState:
 class ScalpExitManager:
     def __init__(self) -> None:
         self._states: Dict[str, _TradeState] = {}
+        self._policy: Dict[str, dict] = {}
 
     def cleanup(self, active_ids: set[str]) -> None:
         for tid in list(self._states.keys()):
             if tid not in active_ids:
                 self._states.pop(tid, None)
 
-    def evaluate(self, trade: dict, m1_factors: dict, now: datetime) -> Optional[str]:
+    def update_policy(self, policy: Optional[dict]) -> None:
+        if policy is None:
+            self._policy = {}
+        else:
+            # shallow copy to avoid caller mutations
+            self._policy = dict(policy)
+
+    def evaluate(self, trade: dict, m1_factors: dict, context_factors: dict, now: datetime) -> Optional[str]:
         trade_id = str(trade.get("trade_id"))
         if not trade_id:
             return None
@@ -111,28 +120,83 @@ class ScalpExitManager:
             rsi = float(m1_factors.get("rsi", 50.0))
         except (TypeError, ValueError):
             rsi = 50.0
+        atr_m1 = float(m1_factors.get("atr", 0.0) or 0.0) * 100.0
 
-        if pnl_pips <= -config.HARD_STOP_PIPS:
-            return "scalp_hard_stop"
-        if hold_sec >= config.NEGATIVE_HOLD_TIMEOUT_SEC and pnl_pips < 0.0:
-            return "scalp_time_stop"
+        m5 = context_factors.get("M5") or {}
+        h1 = context_factors.get("H1") or {}
+        atr_m5 = float(m5.get("atr", 0.0) or 0.0) * 100.0
+        adx_m5 = float(m5.get("adx", 0.0) or 0.0)
+        adx_h1 = float(h1.get("adx", 0.0) or 0.0)
+        strong_trend = max(adx_m5, adx_h1) >= config.ADX_STRONG_THRESHOLD
+        elevated_vol = max(atr_m1, atr_m5) >= config.ATR_MOMENTUM_MIN_PIPS
+
+        policy = self._policy or {}
+        exit_policy = policy.get("exit_profile", {}) if isinstance(policy, dict) else {}
+        allow_negative_exit = bool(exit_policy.get("allow_negative_exit", True))
+        be_profile = policy.get("be_profile", {}) if isinstance(policy, dict) else {}
+        partial_profile = policy.get("partial_profile", {}) if isinstance(policy, dict) else {}
+        thresholds = partial_profile.get("thresholds_pips") if isinstance(partial_profile, dict) else None
+        base_profit_pips = config.BASE_PROFIT_PIPS
+        if thresholds:
+            try:
+                base_profit_pips = max(config.BASE_PROFIT_PIPS, float(thresholds[0]))
+            except (TypeError, ValueError):
+                base_profit_pips = config.BASE_PROFIT_PIPS
+        hard_profit_pips = max(base_profit_pips + 0.5, config.HARD_PROFIT_PIPS)
+        lock_trigger_pips = be_profile.get("trigger_pips") if isinstance(be_profile, dict) else None
+        try:
+            lock_trigger_pips = float(lock_trigger_pips) if lock_trigger_pips is not None else None
+        except (TypeError, ValueError):
+            lock_trigger_pips = None
+        if lock_trigger_pips is None:
+            lock_trigger_pips = max(base_profit_pips, config.LOCK_AT_PROFIT_PIPS)
+        lock_buffer_pips = be_profile.get("min_lock_pips") if isinstance(be_profile, dict) else None
+        try:
+            lock_buffer_pips = float(lock_buffer_pips) if lock_buffer_pips is not None else None
+        except (TypeError, ValueError):
+            lock_buffer_pips = None
+        if lock_buffer_pips is None:
+            lock_buffer_pips = config.LOCK_BUFFER_PIPS
+        trail_start_pips = config.TRAIL_START_PIPS
+        if thresholds and len(thresholds) > 1:
+            try:
+                trail_start_pips = max(config.TRAIL_START_PIPS, float(thresholds[1]))
+            except (TypeError, ValueError):
+                trail_start_pips = config.TRAIL_START_PIPS
+
+        hard_stop_pips = config.HARD_STOP_PIPS
+
+        if pnl_pips <= -hard_stop_pips:
+            if allow_negative_exit:
+                return "scalp_hard_stop"
+            return None
+
+        if pnl_pips < 0.0:
+            negative_hold = max(config.MIN_NEGATIVE_HOLD_SEC, config.NEGATIVE_HOLD_TIMEOUT_SEC if strong_trend else config.MIN_NEGATIVE_HOLD_SEC)
+            if hold_sec < negative_hold and not strong_trend and not elevated_vol:
+                return None
+            if hold_sec >= config.NEGATIVE_HOLD_TIMEOUT_SEC and allow_negative_exit:
+                if strong_trend or elevated_vol:
+                    return "scalp_time_stop"
+            elif not allow_negative_exit:
+                return None
         if hold_sec >= config.MAX_HOLD_SEC:
             return "scalp_max_hold"
 
-        if pnl_pips >= config.LOCK_AT_PROFIT_PIPS and state.lock_floor is None:
-            state.lock_floor = max(0.4, pnl_pips - config.LOCK_BUFFER_PIPS)
+        if pnl_pips >= lock_trigger_pips and state.lock_floor is None:
+            state.lock_floor = max(0.2, pnl_pips - lock_buffer_pips)
         if state.lock_floor is not None and pnl_pips <= state.lock_floor:
             return "scalp_lock_release"
 
-        if state.peak >= config.TRAIL_START_PIPS and pnl_pips <= state.peak - config.TRAIL_BACKOFF_PIPS:
+        if state.peak >= trail_start_pips and pnl_pips <= state.peak - config.TRAIL_BACKOFF_PIPS:
             return "scalp_trail_take"
 
-        profit_ready = pnl_pips >= config.BASE_PROFIT_PIPS
+        profit_ready = pnl_pips >= base_profit_pips
         z_signal = False
         if z_m1 is not None:
             z_signal = z_m1 <= -config.PROFIT_Z_THRESHOLD if side == "short" else z_m1 >= config.PROFIT_Z_THRESHOLD
         rsi_signal = rsi <= config.RSI_EXIT_SHORT if side == "short" else rsi >= config.RSI_EXIT_LONG
-        if (profit_ready and (z_signal or rsi_signal)) or pnl_pips >= config.HARD_PROFIT_PIPS:
+        if (profit_ready and (z_signal or rsi_signal)) or pnl_pips >= hard_profit_pips:
             return "scalp_take_profit"
 
         return None
@@ -155,6 +219,12 @@ async def scalp_exit_worker() -> None:
                 LOG.warning("%s position fetch failed: %s", config.LOG_PREFIX, exc)
                 continue
 
+            plan_snapshot = policy_bus.latest()
+            scalp_policy = None
+            if plan_snapshot and getattr(plan_snapshot, "pockets", None):
+                scalp_policy = plan_snapshot.pockets.get("scalp")
+            manager.update_policy(scalp_policy)
+
             scalp_info = positions.get("scalp") or {}
             trades = scalp_info.get("open_trades") or []
             active_ids = {str(tr.get("trade_id")) for tr in trades if tr.get("trade_id")}
@@ -162,10 +232,15 @@ async def scalp_exit_worker() -> None:
             if not trades:
                 continue
 
-            factors = all_factors().get("M1", {})
+            all_fac = all_factors()
+            factors = all_fac.get("M1", {})
+            context = {
+                "M5": all_fac.get("M5") or {},
+                "H1": all_fac.get("H1") or {},
+            }
             now = _utc_now()
             for tr in trades:
-                reason = manager.evaluate(tr, m1_factors=factors, now=now)
+                reason = manager.evaluate(tr, m1_factors=factors, context_factors=context, now=now)
                 if not reason:
                     continue
                 trade_id = str(tr.get("trade_id"))

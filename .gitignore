@@ -35,9 +35,26 @@ config/env.toml
 *service-account*.json
 ui-dashboard-sa.json
 
-# Runtime caches & local artifacts
+# Local caches / artifacts
 .cache/
-tmp/
-remote_logs/
+.gcloud/
 remote_logs_vm/
-scripts/vm.env
+remote_logs/
+remote_logs_current/
+remote_logs_long/
+remote_tmp/
+tmp/
+summaries/
+.google-cloud-sdk/
+trades*.db
+config/env.local.toml
+
+# Ad-hoc local artifacts
+pipeline.log
+tick_sample.json
+
+# Accidental local files (avoid committing secrets or placeholders)
+$HOME/
+$KEY
+$KEY.pub
+=

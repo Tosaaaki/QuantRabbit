@@ -92,15 +92,18 @@ def build_messages(payload: Dict) -> List[Dict]:
     )
 
     system_content = (
-        "You are an FX trading assistant for USD/JPY. Respond only with JSON "
-        "containing keys focus_tag, weight_macro, weight_scalp, ranked_strategies. "
-        "focus_tag must be one of [micro, macro, hybrid, event]. "
-        "weight_macro and weight_scalp are floats in [0,1] and must sum to at most 1. "
-        "ranked_strategies is an array ordered by priority, using only "
-        "[TrendMA, H1Momentum, Donchian55, BB_RSI, BB_RSI_Fast, NewsSpikeReversal, "
-        "M1Scalper, RangeFader, PulseBreak, MomentumPulse, VolCompressionBreak, MicroVWAPRevert, "
-        "MomentumBurst, TrendMomentumMicro, MicroMomentumStack, MicroPullbackEMA, MicroRangeBreak, "
-        "MicroLevelReactor]."
+        "You are an FX trading assistant for USD/JPY. Respond only with a JSON "
+        "object that contains the keys 'focus_tag', 'weight_macro', and "
+        "'ranked_strategies'. "
+        "Constraints:\n"
+        "- focus_tag must be one of ['micro', 'macro', 'hybrid', 'event'].\n"
+        "- weight_macro must be a float between 0 and 1 inclusive.\n"
+        "- ranked_strategies must be an array containing zero or more of "
+        "['TrendMA', 'Donchian55', 'BB_RSI', 'NewsSpikeReversal', 'M1Scalper', "
+        "'RangeFader', 'PulseBreak', 'ImpulseRetrace', 'MomentumBurst', "
+        "'TrendMomentumMicro', 'MicroMomentumStack', 'MicroPullbackEMA', "
+        "'MicroRangeBreak', 'MicroLevelReactor'] ordered from highest to lowest priority. "
+        "Never invent other strategy names."
     )
 
     messages = [

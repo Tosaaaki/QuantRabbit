@@ -7,6 +7,7 @@ OpenAI API を呼び出し、JSON スキーマ検証・
 
 from __future__ import annotations
 
+import os
 import asyncio
 import datetime as dt
 import json
@@ -27,7 +28,20 @@ from utils.cost_guard import add_tokens
 from utils.gpt_monitor import log_gpt_fallback, track_gpt_call
 from utils.secrets import get_secret
 
-client = AsyncOpenAI(api_key=get_secret("openai_api_key"))
+logger = logging.getLogger(__name__)
+
+_LLM_MODE = os.getenv("LLM_MODE", "").strip().lower()
+_DUMMY_MODES = {"dummy", "mock", "offline", "test"}
+
+_CLIENT: AsyncOpenAI | None = None
+
+
+def _get_openai_client() -> AsyncOpenAI:
+    global _CLIENT
+    if _CLIENT is None:
+        api_key = get_secret("openai_api_key")
+        _CLIENT = AsyncOpenAI(api_key=api_key)
+    return _CLIENT
 
 
 _REQUIRED_KEYS = ("focus_tag", "weight_macro", "ranked_strategies")
@@ -43,9 +57,7 @@ _ALLOWED_STRATEGIES = [
     "M1Scalper",
     "RangeFader",
     "PulseBreak",
-    "MomentumPulse",
-    "VolCompressionBreak",
-    "MicroVWAPRevert",
+    "ImpulseRetrace",
     "MomentumBurst",
     "TrendMomentumMicro",
     "MicroMomentumStack",
@@ -87,6 +99,7 @@ _FALLBACK_DECISION = {
         "TrendMA",
         "H1Momentum",
         "Donchian55",
+        "MomentumBurst",
         "BB_RSI",
         "BB_RSI_Fast",
         "MomentumBurst",
@@ -102,6 +115,8 @@ _FALLBACK_DECISION = {
         "PulseBreak",
         "M1Scalper",
         "NewsSpikeReversal",
+        "M1Scalper",
+        "RangeFader",
     ],
     "reason": "fallback",
 }
@@ -110,13 +125,23 @@ _LAST_DECISION_TS: dt.datetime | None = None
 _LAST_DECISION_DATA: Dict[str, object] | None = None
 _LAST_FAILURE_TS: dt.datetime | None = None
 
-logger = logging.getLogger(__name__)
-
 
 class GPTTimeout(Exception): ...
 
 
-_FENCE_PREFIX_RE = re.compile(r"^```[a-zA-Z0-9_-]*\s*")
+async def call_openai(payload: Dict) -> Dict:
+    """非同期で GPT を呼ぶ → dict を返す（フォールバック不要値は None）"""
+    if _LLM_MODE in _DUMMY_MODES:
+        logger.info("[GPT] dummy mode active (LLM_MODE=%s)", _LLM_MODE or "dummy")
+        decision = heuristic_decision(
+            payload, _LAST_DECISION_DATA or _FALLBACK_DECISION
+        )
+        decision["reason"] = "dummy_mode"
+        return decision
+
+    # コストガード
+    if not add_tokens(0, MAX_TOKENS_MONTH):
+        raise RuntimeError("GPT token limit exceeded")
 
 
 def _normalize_json_content(raw: str) -> str:
@@ -128,6 +153,19 @@ def _normalize_json_content(raw: str) -> str:
             text = text[: -3]
     return text.strip()
 
+    if is_gpt5:
+        inputs = [{"role": msg["role"], "content": msg["content"]} for msg in msgs]
+        try:
+            client = _get_openai_client()
+            resp = await client.responses.create(
+                model=MODEL,
+                input=inputs,
+                reasoning={"effort": "low"},
+                max_output_tokens=_GPT5_MAX_OUTPUT_TOKENS,
+                timeout=15,
+            )
+        except Exception as exc:
+            raise GPTTimeout(str(exc)) from exc
 
 def _extract_json_object(text: str) -> Optional[str]:
     start = text.find("{")
@@ -195,6 +233,7 @@ async def _call_model(payload: Dict, messages: List[Dict], model: str) -> Dict:
         last_error: Exception | None = None
         for token_kwargs in token_kwargs_order:
             try:
+                client = _get_openai_client()
                 resp = await client.chat.completions.create(
                     **base_kwargs, **token_kwargs
                 )

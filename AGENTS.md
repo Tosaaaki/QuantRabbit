@@ -102,9 +102,8 @@ class OrderIntent(BaseModel):
 | `pip` | USD/JPY の 1 pip は 0.01。入力/出力とも pip 単位を明記する。 |
 | `point` | 0.001。OANDA REST 価格の丸め単位。 |
 | `lot` | 1 lot = 100,000 units。`units = round(lot * 100000)`。 |
-| `pocket` | `micro` = 短期テクニカル、`macro` = レジーム/ニュース、`scalp` = 超短期・ボラ依存スキャル。口座資金を `pocket_ratio` で按分。 |
-| `weight_macro` | 0.0〜1.0。`pocket_macro = pocket_total * weight_macro` を意味する。 |
-| `weight_scalp` | 0.0〜1.0。`pocket_scalp = pocket_total * weight_scalp`、残りが micro に配分される。 |
+| `pocket` | `micro` = 短期テクニカル、`macro` = レジーム/ニュース。口座資金を `pocket_ratio` で按分。 |
+| `weight_macro` | 0.0〜1.0。`pocket_macro = pocket_total * weight_macro` を意味する（運用では Macro を最大 30% に制限）。 |
 
 - `price_from_pips("BUY", entry, sl_pips)` = `entry - sl_pips * 0.01` を `round(price, 3)`。
 - `price_from_pips("SELL", entry, sl_pips)` = `entry + sl_pips * 0.01` を `round(price, 3)`。
@@ -217,6 +216,13 @@ class OrderIntent(BaseModel):
 - 分割利確しきい値(レンジ対応): `execution/order_manager.py`
 - ステージ永続化/クールダウン/ロット係数: `execution/stage_tracker.py`
 
+### 3.6 オンライン自動チューニング運用
+- 5〜15 分間隔で `scripts/run_online_tuner.py` を呼び出し、Exit 感度や入口ゲート、quiet_low_vol の配分を**小幅**に調整する。リスクのあるホットパス（tick 判定・即時 Exit）は対象外。
+- 既定はシャドウ運用（`TUNER_ENABLE=true`, `TUNER_SHADOW_MODE=true`）。`config/tuning_history/` に履歴だけを残し、本番パラメータ (`config/tuning_overrides.yaml`) は書き換えない。
+- 本適用時は `TUNER_SHADOW_MODE=false` に切り替え、`scripts/apply_override.py` で `config/tuning_overlay.yaml` を生成してランタイムへ読み込ませる。
+- 現在の検証タスクと実行手順は `docs/autotune_taskboard.md` に集約。定期実行の有無・評価観点（EV, hazard 比率, decision_latency）もここで管理する。
+- オンラインチューニング関連の ToDo は必ず `docs/autotune_taskboard.md` に追記し、対応中はここを参照しながら進める。完了後は同ファイル内で状態をアーカイブ（チェック済み / メモ欄）として残す。
+
 ---
 
 ## 4. 環境変数 / Secret 一覧
@@ -252,7 +258,7 @@ class OrderIntent(BaseModel):
 
 ### 6.1 リスク計算とロット配分
 
-- `pocket_equity = account_equity * pocket_ratio`。`pocket_ratio` は `weight_macro` / `weight_scalp` と `pocket` 固有の上限 (`micro<=0.6`, `macro<=0.8`, `scalp<=0.25`) を掛け合わせる。
+- `pocket_equity = account_equity * pocket_ratio`。`pocket_ratio` は `weight_macro` と `pocket` 固有の上限 (`micro<=0.6`, `macro<=0.3`) を掛け合わせる。
 - 1 トレードの許容損失は `risk_pct = 0.02`。`risk_amount = pocket_equity * risk_pct`。
 - USD/JPY の 1 lot 当たり pip 価値は 1000 JPY。従って `lot = min(MAX_LOT, round(risk_amount / (sl_pips * 1000), 3))`。
 - `units = int(round(lot * 100000))`。`abs(units) < 1000` はノイズ扱いで発注しない。
@@ -419,66 +425,129 @@ scripts/vm.sh -p quantrabbit -z asia-northeast1-a -m fx-trader-vm deploy -i -k ~
 
 ---
 
-## 10. GCE SSH / OS Login ガイド
+## 10. GCP アクセス / デプロイ指針（最新版）
 
-推奨は OS Login。メタデータ `ssh-keys` は OS Login 有効時に無視されます。
+- 原則 OS Login + IAP を使用（メタデータ `ssh-keys` は OS Login 有効時に無視）。
+- まずは Doctor で前提を自動検診し、鍵の生成/登録まで一括実施：
+  - `scripts/gcloud_doctor.sh -p <PROJECT> -z asia-northeast1-a -m fx-trader-vm -E -S -G [-t -k ~/.ssh/gcp_oslogin_qr] -c`
+- デプロイは `scripts/deploy_to_vm.sh` を使用：
+  - 例（IAP 経由/依存更新込み）: `scripts/deploy_to_vm.sh -i -t -k ~/.ssh/gcp_oslogin_qr -p <PROJECT>`
+- 詳細手順・背景は `docs/GCP_DEPLOY_SETUP.md` を参照。
 
-- 事前条件
-  - IAM: `roles/compute.osLogin` もしくは `roles/compute.osAdminLogin`
-  - IAP 経由時は `roles/iap.tunnelResourceAccessor`
+### 10.1 事前健診（Doctor）
 
-- OS Login を有効化（インスタンス）
-  - `gcloud compute instances add-metadata fx-trader-vm \
-    --zone asia-northeast1-b --metadata enable-oslogin=TRUE`
+- gcloud 未導入時は `scripts/install_gcloud.sh` で導入。
+- 推奨実行: `scripts/gcloud_doctor.sh -p <PROJECT> -z asia-northeast1-a -m fx-trader-vm -E -S -G [-t -k ~/.ssh/gcp_oslogin_qr] -c`
+  - `-E`: Compute API 自動有効化、`-S`: OS Login 鍵登録、`-G`: SSH鍵が無い場合に生成。
+- `scripts/deploy_to_vm.sh` は内部で Doctor を呼び出し、前提不備は早期失敗＋対処ガイドを表示。
+- 詳細は `docs/GCP_DEPLOY_SETUP.md` を参照。
 
-- キー生成と OS Login 登録（30 日 TTL）
-  - `ssh-keygen -t ed25519 -f ~/.ssh/gcp_oslogin_quantrabbit -N '' -C 'oslogin-quantrabbit'`
-  - `gcloud compute os-login ssh-keys add \
-    --key-file ~/.ssh/gcp_oslogin_quantrabbit.pub --ttl 30d`
+### 10.2 ヘッドレス（サービスアカウント）運用
 
-- 接続（外部 IP あり）
-  - `gcloud compute ssh fx-trader-vm \
-    --project quantrabbit --zone asia-northeast1-b \
-    --ssh-key-file ~/.ssh/gcp_oslogin_quantrabbit`
-  - 直接 SSH する場合（OS Login ユーザ名は `gcloud compute os-login describe-profile` で確認）
-    - `ssh -i ~/.ssh/gcp_oslogin_quantrabbit <oslogin_username>@<EXTERNAL_IP>`
+- アクティブなユーザーアカウントが無い環境でも、Service Account(SA) で gcloud を操作できる。
+- `scripts/gcloud_doctor.sh` は `-K <SA_KEYFILE>` 指定時、アカウント不在なら SA キーで自動有効化する。
+- `scripts/deploy_to_vm.sh` は `-K <SA_KEYFILE> / -A <SA_ACCOUNT>` を受け取り、Compute/IAP/OS Login を SA で実行可能。
+- 必須ロール例: `roles/compute.osAdminLogin`, `roles/compute.instanceAdmin.v1`, （IAP利用時）`roles/iap.tunnelResourceAccessor`。
 
-- 接続（外部 IP なし / IAP 経由）
-  - `gcloud compute ssh fx-trader-vm \
-    --project quantrabbit --zone asia-northeast1-b \
-    --tunnel-through-iap \
-    --ssh-key-file ~/.ssh/gcp_oslogin_quantrabbit`
+### 10.3 クイックコマンド（quantrabbit 固定）
 
-- トラブルシュート
-  - `Permission denied (publickey)` の典型:
-    - OS Login が有効か: `enable-oslogin=TRUE`（プロジェクト/インスタンス）
-    - IAM に osLogin 権限があるか
-    - OS Login に公開鍵が登録されているか（TTL 期限切れに注意）
-    - `gcloud compute ssh ... --ssh-key-file` で鍵を明示
-    - 詳細: `gcloud compute ssh ... --troubleshoot`
-  - 組織ポリシー `compute.requireOsLogin` が強制の場合、メタデータ鍵は使えません。
+```bash
+# プロジェクト/ゾーン/インスタンス（実値）
+export PROJ=quantrabbit
+export ZONE=asia-northeast1-a
+export INST=fx-trader-vm
 
-- 代替（OS Login を使わない場合）
-  - OS Login を無効化: `... add-metadata ... --metadata enable-oslogin=FALSE`
-  - 公開鍵をメタデータに登録: `--metadata-from-file ssh-keys=ssh-keys.txt`
-  - ただしセキュリティ・運用上 OS Login 利用を推奨。
+# 0) gcloud が無い場合の導入
+scripts/install_gcloud.sh
 
-### 10.3 常時アクセス（IAP + OS Login ベースライン）
+# 1) 事前健診（Compute API / OS Login / IAP / SSH 検証と鍵登録まで）
+scripts/gcloud_doctor.sh -p "$PROJ" -z "$ZONE" -m "$INST" \
+  -E -S -G -t -k ~/.ssh/gcp_oslogin_qr -c
 
-「毎回アカウントを有効化」せずに運用できるよう、以下を一度セットアップしておく。
+# 2) IAP 経由の疎通確認（単体）
+gcloud compute ssh "$INST" --project "$PROJ" --zone "$ZONE" \
+  --tunnel-through-iap --ssh-key-file ~/.ssh/gcp_oslogin_qr \
+  --command 'echo [vm] hello'
 
-- 必要ロール（プロジェクト単位で付与）
-  - `roles/compute.osAdminLogin`（OS Login + sudo）
-  - `roles/iap.tunnelResourceAccessor`（IAP 経由 SSH）
-  - `roles/compute.viewer`（`compute.instances.get` などの参照権限）
-    - 代替: 管理者は `roles/compute.instanceAdmin.v1` でも可
-- インスタンス/プロジェクト メタデータ
-  - `enable-oslogin=TRUE` を有効化（既定推奨）
-- OS Login 用 SSH 鍵の登録（30 日 TTL）
-  - `ssh-keygen -t ed25519 -f ~/.ssh/gcp_oslogin_quantrabbit -N '' -C 'oslogin-qr'`
-  - `gcloud compute os-login ssh-keys add --key-file ~/.ssh/gcp_oslogin_quantrabbit.pub --ttl 30d`
-- 動作確認（IAP 経由）
-  - `gcloud compute ssh fx-trader-vm --project=quantrabbit --zone=asia-northeast1-a \
-     --tunnel-through-iap --ssh-key-file ~/.ssh/gcp_oslogin_quantrabbit --command "sudo -n true && echo SUDO_OK"`
+# 3) デプロイ（venv 依存更新あり / IAP 経由）
+scripts/deploy_to_vm.sh -i -t -k ~/.ssh/gcp_oslogin_qr -p "$PROJ"
 
-上記が整っていれば、日常運用で追加の「アカウント有効化」作業は不要。`scripts/vm.sh` でデプロイ・ログ確認・DB 照会を実施できる。
+# 4) ログ追尾（IAP 経由）
+gcloud compute ssh "$INST" --project "$PROJ" --zone "$ZONE" \
+  --tunnel-through-iap --ssh-key-file ~/.ssh/gcp_oslogin_qr \
+  --command 'journalctl -u quantrabbit.service -f'
+
+# 5) ヘッドレス（サービスアカウント）で診断/デプロイ
+export SA=qr-deployer@${PROJ}.iam.gserviceaccount.com
+export SA_KEY=~/.gcp/qr-deployer.json
+
+# 診断（ユーザー非アクティブでも可）
+scripts/gcloud_doctor.sh -p "$PROJ" -z "$ZONE" -m "$INST" \
+  -K "$SA_KEY" -A "$SA" -E -S -G -t -k ~/.ssh/gcp_oslogin_qr -c
+
+# デプロイ（SA インパーソネート）
+scripts/deploy_to_vm.sh -p "$PROJ" -t -k ~/.ssh/gcp_oslogin_qr \
+  -K "$SA_KEY" -A "$SA" -i
+```
+
+### 10.4 VM ブランチ運用と再起動ガイド
+- 本番 VM (`fx-trader-vm`) は原則 `main` を稼働ブランチとする。検証や一時対応で別ブランチを動かす場合は必ず記録し、元に戻すときも明示する。SL/TP などの挙動差分はブランチ依存なので、切替時に注意。
+- 稼働中のコードは「作業ツリーのブランチ＋最後に `systemctl restart quantrabbit` を実行した時点の内容」。`git checkout` だけではプロセスは変わらない。
+- ブランチ切替前に `git status` でクリーンを確認し、未コミット・未 stash のまま切替えない。`scripts/deploy_to_vm.sh -b <branch>` を使うと自動 stash 付きで安全。
+- 再起動前に `git rev-parse --abbrev-ref HEAD && git rev-parse --short HEAD` でブランチ/HEAD を確認し、journal にも再起動時のブランチをメモする。
+- スタッシュが溜まると意図しないロールバックや SL/TP 設定の再旧化を招くため、不要になったら `git stash drop` で整理する。
+- config/tuning_overrides.yaml・fixtures/*.json などのローカル調整を維持したい場合は stash/commit で保全し、ブランチ切替後に明示的に `git stash pop` してから再起動する。
+
+---
+
+## 11. タスク運用ルール（共通）
+
+- タスクファイル: 本リポの全タスクは `docs/TASKS.md` を単一の台帳として管理する（正本）。
+- 適用範囲: 機能開発/バグ修正/運用改善/ドキュメント更新など、すべての作業タスク。
+- 位置付け: オンライン自動チューニング関連は従来どおり `docs/autotune_taskboard.md` を使用しつつ、必要に応じて `docs/TASKS.md` からリンクする。
+
+### 11.1 運用フロー
+
+1. タスク発生時: `docs/TASKS.md` の「Open Tasks」に新規エントリを追加する。
+2. 作業中: 当該エントリを逐次更新し、進め方は同ファイルの計画（Plan）を参照しながら進行する。
+3. 完了時: エントリを「Archive」に移し、完了日・対応 PR/コミット・要約を追記してアーカイブする。
+
+### 11.2 記載項目（推奨）
+
+- ID（例: `T-YYYYMMDD-###`）
+- Title（簡潔な件名）
+- Status（`todo | in-progress | review | done`）
+- Priority（`P1 | P2 | P3`）
+- Owner（担当）
+- Scope/Paths（対象ファイルやディレクトリ）
+- Context（関連 Issue/PR、参考リンク、仕様箇所）
+- Acceptance Criteria（受入条件）
+- Plan（主要ステップ。エージェントの `update_plan` と整合）
+- Notes（補足、決定メモ）
+
+### 11.3 テンプレート
+
+以下テンプレートを `docs/TASKS.md` に記載済み。新規タスクはこれを複製して使用する。
+
+```md
+- [ ] ID: T-YYYYMMDD-001
+  Title: <短い件名>
+  Status: todo | in-progress | review | done
+  Priority: P1 | P2 | P3
+  Owner: <担当>
+  Scope/Paths: <例> AGENTS.md, docs/TASKS.md
+  Context: <Issue/PR/仕様リンク>
+  Acceptance:
+    - <受入条件1>
+    - <受入条件2>
+  Plan:
+    - <主要ステップ1>
+    - <主要ステップ2>
+  Notes:
+    - <補足>
+```
+
+運用メモ
+- `docs/TASKS.md` は頻繁に更新されるため、コミットメッセージに `[Task:<ID>]` を含めて追跡性を確保する。
+- 1 ファイル = 1 PR の原則は維持するが、台帳更新（`docs/TASKS.md`）は同時反映可。
+- 自動チューニング関連 ToDo は引き続き `docs/autotune_taskboard.md` に追記し、完了後は同ファイル内で状態をアーカイブする。

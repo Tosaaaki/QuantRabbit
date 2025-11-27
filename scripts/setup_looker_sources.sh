@@ -21,6 +21,14 @@ set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(cd "${HERE}/.." && pwd)"
 
+# Ensure gcloud/bq are on PATH for non-interactive shells
+if ! command -v gcloud >/dev/null 2>&1; then
+  SDK_BIN="$HOME/google-cloud-sdk/bin"
+  if [[ -d "$SDK_BIN" ]]; then
+    export PATH="$SDK_BIN:$PATH"
+  fi
+fi
+
 command -v gcloud >/dev/null 2>&1 || { echo "gcloud not found"; exit 1; }
 command -v bq >/dev/null 2>&1 || { echo "bq not found"; exit 1; }
 

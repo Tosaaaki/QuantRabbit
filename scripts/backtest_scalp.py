@@ -46,8 +46,11 @@ from analysis.ma_projection import (
 from strategies.trend.ma_cross import MovingAverageCross
 from strategies.breakout.donchian55 import Donchian55
 
+from utils.pips import CostBreakdown, apply_costs, from_pips, to_pips
 
-PIP_VALUE = 0.01
+
+INSTRUMENT = "USD_JPY"
+PIP_VALUE = from_pips(INSTRUMENT, 1.0)
 DEFAULT_TIMEOUT_SEC = 30 * 60  # 30 minutes
 DEFAULT_PARAM_FILE = REPO_ROOT / "configs" / "scalp_active_params.json"
 
@@ -226,6 +229,8 @@ class Trade:
     exit_index: Optional[int] = None
     exit_time: Optional[datetime] = None
     exit_price: Optional[float] = None
+    gross_pips: float = 0.0
+    cost_pips: float = 0.0
     pnl_pips: float = 0.0
 
 
@@ -419,7 +424,9 @@ def simulate(
     params_per_strategy: Dict[str, Dict[str, Any]],
     *,
     timeframe: str,
+    cost_profile: Optional[CostBreakdown] = None,
 ) -> Dict[str, List[Trade]]:
+    cost_profile = cost_profile or CostBreakdown()
     open_trades: Dict[str, List[Trade]] = defaultdict(list)
     closed_trades: Dict[str, List[Trade]] = defaultdict(list)
     fac_keys = [
@@ -481,7 +488,14 @@ def simulate(
                 trd.exit_price = exit_price
                 trd.outcome = exit_reason
                 direction = 1 if trd.side == "LONG" else -1
-                trd.pnl_pips = (exit_price - trd.entry_price) * direction / PIP_VALUE
+                raw_delta = (exit_price - trd.entry_price) * direction
+                gross_pips = to_pips(INSTRUMENT, raw_delta)
+                net_pips, cost_pips = apply_costs(
+                    INSTRUMENT, gross_pips, costs=cost_profile
+                )
+                trd.gross_pips = gross_pips
+                trd.cost_pips = cost_pips
+                trd.pnl_pips = net_pips
                 closed_trades[strat_name].append(trd)
             open_trades[strat_name] = remaining
 
@@ -575,12 +589,12 @@ def simulate(
 
             entry_price = float(row["close"])
             if action == "OPEN_LONG":
-                sl_price = entry_price - sl * PIP_VALUE
-                tp_price = entry_price + tp * PIP_VALUE
+                sl_price = entry_price - from_pips(INSTRUMENT, sl)
+                tp_price = entry_price + from_pips(INSTRUMENT, tp)
                 side = "LONG"
             else:
-                sl_price = entry_price + sl * PIP_VALUE
-                tp_price = entry_price - tp * PIP_VALUE
+                sl_price = entry_price + from_pips(INSTRUMENT, sl)
+                tp_price = entry_price - from_pips(INSTRUMENT, tp)
                 side = "SHORT"
 
             trade = Trade(
@@ -606,7 +620,12 @@ def simulate(
             trd.exit_price = final_close
             trd.outcome = "EOD"
             direction = 1 if trd.side == "LONG" else -1
-            trd.pnl_pips = (final_close - trd.entry_price) * direction / PIP_VALUE
+            raw_delta = (final_close - trd.entry_price) * direction
+            gross_pips = to_pips(INSTRUMENT, raw_delta)
+            net_pips, cost_pips = apply_costs(INSTRUMENT, gross_pips, costs=cost_profile)
+            trd.gross_pips = gross_pips
+            trd.cost_pips = cost_pips
+            trd.pnl_pips = net_pips
             closed_trades[strat].append(trd)
 
     return closed_trades
@@ -640,13 +659,19 @@ def calc_max_drawdown(trades: List[Trade]) -> float:
 def summarise_trades(trades: Dict[str, List[Trade]]) -> Dict[str, Any]:
     all_trades = [trade for items in trades.values() for trade in items]
     pnl = [tr.pnl_pips for tr in all_trades]
+    gross_pnl = [tr.gross_pips for tr in all_trades]
+    cost_pnl = [tr.cost_pips for tr in all_trades]
     pf = calc_profit_factor(pnl)
     def _pf_value(pf_val: float) -> float:
         if pf_val == float("inf") or math.isinf(pf_val):
             return float("inf")
         return round(pf_val, 4)
 
+    gross_total = round(sum(gross_pnl), 2)
+    cost_total = round(sum(cost_pnl), 2)
     summary = {
+        "gross_pips": gross_total,
+        "cost_pips": cost_total,
         "profit_pips": round(sum(pnl), 2),
         "trades": len(all_trades),
         "win_rate": round(sum(1 for p in pnl if p > 0) / len(pnl), 4) if pnl else 0.0,
@@ -657,8 +682,12 @@ def summarise_trades(trades: Dict[str, List[Trade]]) -> Dict[str, Any]:
     by_strategy = {}
     for strat, items in trades.items():
         strat_pnl = [tr.pnl_pips for tr in items]
+        strat_gross = [tr.gross_pips for tr in items]
+        strat_cost = [tr.cost_pips for tr in items]
         pf_strat = calc_profit_factor(strat_pnl)
         by_strategy[strat] = {
+            "gross_pips": round(sum(strat_gross), 2),
+            "cost_pips": round(sum(strat_cost), 2),
             "profit_pips": round(sum(strat_pnl), 2),
             "trades": len(items),
             "win_rate": round(
@@ -689,6 +718,7 @@ def run_backtest(
     params_overrides: Optional[Dict[str, Dict[str, Any]]] = None,
     strategies: Optional[List[str]] = None,
     timeframe: str = "M1",
+    cost_profile: Optional[CostBreakdown] = None,
 ) -> Dict[str, Any]:
     candles_file = Path(candles_path)
     df = load_candles(candles_file, timeframe=timeframe)
@@ -708,7 +738,13 @@ def run_backtest(
             ema_periods.append(int(params["trend_ema"]))
     ensure_ema(df, ema_periods)
 
-    trades = simulate(df, selected_strategies, merged_params, timeframe=timeframe)
+    trades = simulate(
+        df,
+        selected_strategies,
+        merged_params,
+        timeframe=timeframe,
+        cost_profile=cost_profile,
+    )
     metrics = summarise_trades(trades)
     stem = candles_file.stem
     if stem.startswith("candles_"):
@@ -737,6 +773,24 @@ def main() -> None:
     )
     parser.add_argument("--json-out", default="", help="Output JSON path")
     parser.add_argument(
+        "--cost-entry-spread",
+        type=float,
+        default=0.0,
+        help="Entry spread cost in pips (default: 0.0).",
+    )
+    parser.add_argument(
+        "--cost-exit-spread",
+        type=float,
+        default=None,
+        help="Exit spread cost in pips. Defaults to entry spread if omitted.",
+    )
+    parser.add_argument(
+        "--cost-slippage",
+        type=float,
+        default=0.0,
+        help="Round-trip slippage cost in pips to subtract from every trade.",
+    )
+    parser.add_argument(
         "--timeframe",
         default="M1",
         choices=sorted(TIMEFRAME_RULES.keys()),
@@ -746,7 +800,18 @@ def main() -> None:
 
     overrides = load_params(Path(args.params_json)) if args.params_json else {}
     strat_list = [s for s in args.strategies.split(",") if s] if args.strategies else None
-    result = run_backtest(args.candles, overrides, strat_list, timeframe=args.timeframe)
+    cost_profile = CostBreakdown(
+        entry_spread_pips=args.cost_entry_spread,
+        exit_spread_pips=args.cost_exit_spread,
+        slippage_pips=args.cost_slippage,
+    )
+    result = run_backtest(
+        args.candles,
+        overrides,
+        strat_list,
+        timeframe=args.timeframe,
+        cost_profile=cost_profile,
+    )
 
     if args.json_out:
         out_path = Path(args.json_out)
@@ -760,6 +825,8 @@ def main() -> None:
             {
                 "date": result["date"],
                 "profit_pips": summary["profit_pips"],
+                "gross_pips": summary["gross_pips"],
+                "cost_pips": summary["cost_pips"],
                 "trades": summary["trades"],
                 "win_rate": summary["win_rate"],
                 "profit_factor": summary["profit_factor"],

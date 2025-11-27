@@ -5,6 +5,7 @@ Configuration values for the mirror spike-reversal worker.
 from __future__ import annotations
 
 import os
+from typing import Set
 
 PIP_VALUE = 0.01
 
@@ -36,11 +37,47 @@ def _int_env(key: str, default: int, *, legacy_key: str | None = None) -> int:
         return default
 
 
+def _bool_env(key: str, default: bool, *, legacy_key: str | None = None) -> bool:
+    raw = _read_env(key, legacy_key)
+    if raw is None:
+        return default
+    return raw.strip().lower() not in {"", "0", "false", "no", "off"}
+
+
+def _parse_hours(key: str, default: str) -> Set[int]:
+    raw = _read_env(key, None) or default
+    hours: Set[int] = set()
+    for token in raw.split(","):
+        token = token.strip()
+        if not token:
+            continue
+        if "-" in token:
+            bounds = token.split("-", 1)
+            try:
+                start = int(float(bounds[0]))
+                end = int(float(bounds[1]))
+            except ValueError:
+                continue
+            if start > end:
+                start, end = end, start
+            for hour in range(start, end + 1):
+                if 0 <= hour <= 23:
+                    hours.add(hour)
+            continue
+        try:
+            hour_val = int(float(token))
+        except ValueError:
+            continue
+        if 0 <= hour_val <= 23:
+            hours.add(hour_val)
+    return hours
+
+
 SPREAD_MAX_PIPS: float = max(
     0.1,
     _float_env(
         "MIRROR_SPIKE_MAX_SPREAD_PIPS",
-        0.9,
+        0.70,
         legacy_key="MANUAL_SPIKE_MAX_SPREAD_PIPS",
     ),
 )
@@ -75,7 +112,7 @@ RETRACE_TRIGGER_PIPS: float = max(
     0.3,
     _float_env(
         "MIRROR_SPIKE_RETRACE_PIPS",
-        1.1,
+        1.5,
         legacy_key="MANUAL_SPIKE_RETRACE_PIPS",
     ),
 )
@@ -109,7 +146,7 @@ ENTRY_UNITS: int = max(
     1000,
     _int_env(
         "MIRROR_SPIKE_ENTRY_UNITS",
-        4000,
+        5000,
         legacy_key="MANUAL_SPIKE_ENTRY_UNITS",
     ),
 )
@@ -133,7 +170,7 @@ MIN_ATR_PIPS: float = max(
     0.0,
     _float_env(
         "MIRROR_SPIKE_MIN_ATR_PIPS",
-        0.0,
+        0.5,
         legacy_key=None,
     ),
 )
@@ -141,7 +178,7 @@ MIN_TICK_RATE: float = max(
     0.0,
     _float_env(
         "MIRROR_SPIKE_MIN_TICK_RATE",
-        0.8,
+        1.2,
         legacy_key=None,
     ),
 )
@@ -181,8 +218,14 @@ MAX_HOLD_SEC: float = max(
     30.0,
     _float_env(
         "MIRROR_SPIKE_MAX_HOLD_SEC",
-        90.0,
+        75.0,
         legacy_key=None,
     ),
 )
+ENABLED: bool = _bool_env(
+    "MIRROR_SPIKE_ENABLED",
+    True,
+    legacy_key="MANUAL_SPIKE_ENABLED",
+)
+ACTIVE_HOURS_UTC = frozenset(range(24))
 LOG_PREFIX = "[MIRROR-SPIKE]"

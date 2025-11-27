@@ -67,26 +67,83 @@ def _gcp_disabled() -> bool:
     return os.environ.get("DISABLE_GCP_SECRET_MANAGER", "").lower() in {"1", "true", "yes"}
 
 
+def _prefer_gcp(key: str) -> bool:
+    """
+    Decide whether to consult Secret Manager before local sources.
+    - Always prefer for sensitive keys we want centralized (e.g., OpenAI keys)
+    - Or when PREFER_GCP_SECRET_MANAGER is explicitly set.
+    """
+    prefer_env = os.environ.get("PREFER_GCP_SECRET_MANAGER", "").lower() in {
+        "1",
+        "true",
+        "yes",
+    }
+    centralized_keys = {"openai_api_key"}
+    return prefer_env or key in centralized_keys
+
+
+def _fetch_from_gcp(key: str) -> Optional[str]:
+    if _gcp_disabled():
+        return None
+    try:
+        client = secretmanager.SecretManagerServiceClient()
+        secret_name = f"projects/{PROJECT_ID}/secrets/{key}/versions/latest"
+        response = client.access_secret_version(name=secret_name, timeout=2.0)
+        return response.payload.data.decode("UTF-8")
+    except Exception:
+        return None
+
+
+def _is_placeholder(key: str, value: str) -> bool:
+    """Detect obvious placeholder values to allow falling back to Secret Manager."""
+    val = str(value).strip()
+    low = val.lower()
+    if "placeholder" in low:
+        return True
+    if key.startswith("openai_") and low.startswith("sk-test"):
+        return True
+    return False
+
+
 def get_secret(key: str) -> str:
+    prefer_gcp = _prefer_gcp(key)
+    placeholder_value: Optional[str] = None
+
+    # 0) Prefer GCP first for centralized keys (with fallback to local)
+    if prefer_gcp:
+        v = _fetch_from_gcp(key)
+        if v is not None:
+            if _is_placeholder(key, v):
+                placeholder_value = v
+            else:
+                return v
+
     # 1) OS 環境変数
     v = _from_env(key)
     if v is not None:
-        return v
+        if _is_placeholder(key, v):
+            placeholder_value = placeholder_value or v
+        else:
+            return v
 
     # 2) TOML
     v = _from_toml(key)
     if v is not None:
-        return v
+        if _is_placeholder(key, v):
+            placeholder_value = placeholder_value or v
+        else:
+            return v
 
     # 3) GCP Secret Manager（常に短いタイムアウトで試行。明示的に無効化も可）
-    if not _gcp_disabled():
-        try:
-            client = secretmanager.SecretManagerServiceClient()
-            secret_name = f"projects/{PROJECT_ID}/secrets/{key}/versions/latest"
-            response = client.access_secret_version(name=secret_name, timeout=2.0)
-            return response.payload.data.decode("UTF-8")
-        except Exception:
-            pass
+    v = _fetch_from_gcp(key)
+    if v is not None:
+        if _is_placeholder(key, v):
+            placeholder_value = placeholder_value or v
+        else:
+            return v
+
+    if placeholder_value is not None:
+        return placeholder_value
 
     raise KeyError(
         f"Secret '{key}' not found in env vars, {_ENV_PATH}, or GCP Secret Manager"

@@ -9,11 +9,11 @@ analysis.regime_classifier
 from __future__ import annotations
 from typing import Dict, Literal
 
-TimeFrame = Literal["M1", "H4"]
+TimeFrame = Literal["M1", "H1", "H4"]
 
-THRESH_ADX_TREND = {"M1": 25.0, "H4": 22.0}
-THRESH_MA_SLOPE = {"M1": 0.0003, "H4": 0.001}
-THRESH_BBW_RANGE = {"M1": 0.25, "H4": 0.35}
+THRESH_ADX_TREND = {"M1": 25.0, "H1": 24.0, "H4": 22.0}
+THRESH_MA_SLOPE = {"M1": 0.0003, "H1": 0.00055, "H4": 0.001}
+THRESH_BBW_RANGE = {"M1": 0.25, "H1": 0.30, "H4": 0.35}
 
 
 def classify(
@@ -23,7 +23,7 @@ def classify(
     Parameters
     ----------
     factors : 指標 dict (calc_core.compute の戻り値)
-    tf: "M1" or "H4"
+    tf: "M1", "H1" or "H4"
     event_mode : 経済指標 30 分前後なら True
 
     Returns
