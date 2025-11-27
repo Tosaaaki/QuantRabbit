@@ -121,29 +121,6 @@ _FALLBACK_DECISION = {
     "reason": "fallback",
 }
 
-_LAST_DECISION_TS: dt.datetime | None = None
-_LAST_DECISION_DATA: Dict[str, object] | None = None
-_LAST_FAILURE_TS: dt.datetime | None = None
-
-
-class GPTTimeout(Exception): ...
-
-
-async def call_openai(payload: Dict) -> Dict:
-    """非同期で GPT を呼ぶ → dict を返す（フォールバック不要値は None）"""
-    if _LLM_MODE in _DUMMY_MODES:
-        logger.info("[GPT] dummy mode active (LLM_MODE=%s)", _LLM_MODE or "dummy")
-        decision = heuristic_decision(
-            payload, _LAST_DECISION_DATA or _FALLBACK_DECISION
-        )
-        decision["reason"] = "dummy_mode"
-        return decision
-
-    # コストガード
-    if not add_tokens(0, MAX_TOKENS_MONTH):
-        raise RuntimeError("GPT token limit exceeded")
-
-
 def _normalize_json_content(raw: str) -> str:
     """Remove Markdown fences / whitespace around JSON payloads."""
     text = raw.strip()
@@ -153,19 +130,12 @@ def _normalize_json_content(raw: str) -> str:
             text = text[: -3]
     return text.strip()
 
-    if is_gpt5:
-        inputs = [{"role": msg["role"], "content": msg["content"]} for msg in msgs]
-        try:
-            client = _get_openai_client()
-            resp = await client.responses.create(
-                model=MODEL,
-                input=inputs,
-                reasoning={"effort": "low"},
-                max_output_tokens=_GPT5_MAX_OUTPUT_TOKENS,
-                timeout=15,
-            )
-        except Exception as exc:
-            raise GPTTimeout(str(exc)) from exc
+_LAST_DECISION_TS: dt.datetime | None = None
+_LAST_DECISION_DATA: Dict[str, object] | None = None
+_LAST_FAILURE_TS: dt.datetime | None = None
+
+
+class GPTTimeout(Exception): ...
 
 def _extract_json_object(text: str) -> Optional[str]:
     start = text.find("{")
@@ -299,6 +269,14 @@ async def _call_model(payload: Dict, messages: List[Dict], model: str) -> Dict:
 
 async def call_openai(payload: Dict) -> Dict:
     """非同期で GPT を呼ぶ → dict を返す（フォールバック不要値は None）"""
+    if _LLM_MODE in _DUMMY_MODES:
+        logger.info("[GPT] dummy mode active (LLM_MODE=%s)", _LLM_MODE or "dummy")
+        decision = heuristic_decision(
+            payload, _LAST_DECISION_DATA or _FALLBACK_DECISION
+        )
+        decision["reason"] = "dummy_mode"
+        return decision
+
     if not add_tokens(0, MAX_TOKENS_MONTH):
         raise RuntimeError("GPT token limit exceeded")
 
