@@ -21,9 +21,9 @@ from market_data import spread_monitor
 from market_data import tick_window
 from market_data import orderbook_state
 
-#
+# 
 Candle = dict[str, float]  # open, high, low, close
-TimeFrame = Literal["M1", "H1", "H4"]
+TimeFrame = Literal["M1", "M5", "H1", "H4", "D1"]
 
 
 TOKEN = get_secret("oanda_token")
@@ -55,6 +55,10 @@ class CandleAggregator:
     def _get_key(self, tf: TimeFrame, ts: datetime.datetime) -> str:
         if tf == "M1":
             return ts.strftime("%Y-%m-%dT%H:%M")
+        if tf == "M5":
+            minute = (ts.minute // 5) * 5
+            ts5 = ts.replace(minute=minute, second=0, microsecond=0)
+            return ts5.strftime("%Y-%m-%dT%H:%M")
         if tf == "H1":
             return ts.strftime("%Y-%m-%dT%H:00")
         if tf == "H4":
