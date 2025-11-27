@@ -592,7 +592,8 @@ def _env_int(key: str, default: int) -> int:
 GLOBAL_MACRO_WEIGHT_CAP = _env_float("MACRO_WEIGHT_CAP", GLOBAL_MACRO_WEIGHT_CAP)
 
 # Disable sending broker-level stop loss (risk sizing may still use SL pips)
-DISABLE_STOP_LOSS = _env_bool("DISABLE_STOP_LOSS", False)
+# Default true so all new orders go out without broker SL unless explicitly re-enabled.
+DISABLE_STOP_LOSS = _env_bool("DISABLE_STOP_LOSS", True)
 
 
 _MACRO_STATE_PATH_RAW = (

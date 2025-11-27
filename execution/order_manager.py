@@ -79,7 +79,7 @@ _MIN_UNITS_BY_POCKET: dict[str, int] = {
 _DISABLE_STOP_LOSS = (
     os.getenv("ORDER_DISABLE_STOP_LOSS")
     or os.getenv("DISABLE_STOP_LOSS")
-    or "false"
+    or "true"
 ).lower() in {"1", "true", "yes", "on"}
 
 
