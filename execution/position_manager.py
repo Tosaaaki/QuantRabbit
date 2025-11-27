@@ -765,6 +765,7 @@ class PositionManager:
         manual_trades = 0
         manual_units = 0
         manual_unrealized = 0.0
+        client_ids: set[str] = set()
         for tr in trades:
             client_ext = tr.get("clientExtensions", {}) or {}
             client_id_raw = client_ext.get("id")
@@ -798,6 +799,8 @@ class PositionManager:
             trade_id_raw = tr.get("id") or tr.get("tradeID")
             trade_id = str(trade_id_raw)
             price = float(tr.get("price", 0.0))
+            if client_id:
+                client_ids.add(client_id)
             open_time_raw = tr.get("openTime")
             open_time_iso: str | None = None
             if open_time_raw:
