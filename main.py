@@ -30,6 +30,7 @@ from analysis.macro_snapshot_builder import (
     DEFAULT_SNAPSHOT_PATH as MACRO_SNAPSHOT_DEFAULT_PATH,
     refresh_macro_snapshot,
 )
+from analysis.param_context import ParamContext
 try:
     from analysis.kaizen import audit_loop as kaizen_loop  # type: ignore
 except ModuleNotFoundError:
@@ -1401,6 +1402,7 @@ async def logic_loop():
     stage_tracker = StageTracker()
     pattern_stats = PatternStats()
     factor_warmup_state: Optional[dict] = None
+    param_context = ParamContext()
     perf_cache = {}
     news_cache = {}
     insight = InsightClient()
@@ -1431,6 +1433,10 @@ async def logic_loop():
     last_risk_pct: float | None = None
     last_spread_gate = False
     last_spread_gate_reason = ""
+    last_volatility_state: Optional[str] = None
+    last_liquidity_state: Optional[str] = None
+    last_risk_appetite: Optional[float] = None
+    last_vol_high_ratio: Optional[float] = None
     market_closed_logged = False
     last_market_closed_log = datetime.datetime.min
     trendma_news_cooldown_until = datetime.datetime.min
