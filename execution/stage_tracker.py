@@ -622,6 +622,48 @@ class StageTracker:
         self._recent_profile = self._build_recent_profile(rows, now_dt)
         self._con.commit()
 
+    def _build_recent_profile(
+        self, rows: List[sqlite3.Row], now_dt: datetime
+    ) -> Dict[str, Dict[str, float]]:
+        """直近の勝ち負け分布をシンプルに集計する。"""
+        profile: Dict[str, Dict[str, float]] = {}
+        window_sec = 6 * 3600  # last 6h
+        threshold_ts = now_dt - timedelta(seconds=window_sec)
+        for row in rows:
+            try:
+                trade_id = int(row["id"])
+                pocket = str(row["pocket"] or "")
+                units = int(row["units"] or 0)
+                pl_jpy = float(row["realized_pl"] or 0.0)
+                pl_pips = float(row["pl_pips"] or 0.0)
+            except Exception:
+                continue
+            if not pocket or units == 0:
+                continue
+            # trades table doesn't include close_time here; approximate recency by id ordering
+            # and assume IDs are roughly monotonic in time; this is a lightweight sanity metric.
+            key = pocket
+            stats = profile.setdefault(
+                key,
+                {
+                    "win_count": 0.0,
+                    "loss_count": 0.0,
+                    "win_jpy": 0.0,
+                    "loss_jpy": 0.0,
+                    "win_pips": 0.0,
+                    "loss_pips": 0.0,
+                },
+            )
+            if pl_jpy > _MIN_LOSS_JPY:
+                stats["win_count"] += 1.0
+                stats["win_jpy"] += pl_jpy
+                stats["win_pips"] += pl_pips
+            elif pl_jpy < -_MIN_LOSS_JPY:
+                stats["loss_count"] += 1.0
+                stats["loss_jpy"] += abs(pl_jpy)
+                stats["loss_pips"] += abs(pl_pips)
+        return profile
+
     def _decay_loss_streaks(self, now: datetime) -> None:
         try:
             threshold = now - timedelta(minutes=self._loss_decay_minutes)
