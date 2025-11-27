@@ -1437,6 +1437,7 @@ async def logic_loop():
     last_liquidity_state: Optional[str] = None
     last_risk_appetite: Optional[float] = None
     last_vol_high_ratio: Optional[float] = None
+    volatility_advisor = None
     market_closed_logged = False
     last_market_closed_log = datetime.datetime.min
     trendma_news_cooldown_until = datetime.datetime.min
