@@ -81,6 +81,11 @@ from strategies.scalping.range_fader import RangeFader
 from strategies.scalping.pulse_break import PulseBreak
 from strategies.scalping.impulse_retrace import ImpulseRetraceScalp
 from strategies.micro.momentum_burst import MomentumBurstMicro
+from strategies.micro.trend_momentum import TrendMomentumMicro
+from strategies.micro.momentum_stack import MicroMomentumStack
+from strategies.micro.pullback_ema import MicroPullbackEMA
+from strategies.micro.range_break import MicroRangeBreak
+from strategies.micro.level_reactor import MicroLevelReactor
 from utils.oanda_account import get_account_snapshot
 from utils.secrets import get_secret
 from utils.market_hours import is_market_open
@@ -162,11 +167,25 @@ STRATEGIES = {
     "PulseBreak": PulseBreak,
     "ImpulseRetrace": ImpulseRetraceScalp,
     "MomentumBurst": MomentumBurstMicro,
+    "TrendMomentumMicro": TrendMomentumMicro,
+    "MicroMomentumStack": MicroMomentumStack,
+    "MicroPullbackEMA": MicroPullbackEMA,
+    "MicroRangeBreak": MicroRangeBreak,
+    "MicroLevelReactor": MicroLevelReactor,
 }
 
 POCKET_STRATEGY_MAP = {
     "macro": {"TrendMA", "Donchian55"},
-    "micro": {"BB_RSI", "NewsSpikeReversal", "MomentumBurst"},
+    "micro": {
+        "BB_RSI",
+        "NewsSpikeReversal",
+        "MomentumBurst",
+        "TrendMomentumMicro",
+        "MicroMomentumStack",
+        "MicroPullbackEMA",
+        "MicroRangeBreak",
+        "MicroLevelReactor",
+    },
     "scalp": {"M1Scalper", "RangeFader", "PulseBreak", "ImpulseRetrace"},
 }
 
@@ -220,6 +239,12 @@ RANGE_CONFIDENCE_SCALE = {
     "macro": 0.65,
     "micro": 0.85,
     "scalp": 0.75,
+}
+RANGE_TREND_CONFIDENCE_DAMP = {
+    "TrendMA": 0.65,
+    "MomentumBurst": 0.75,
+    "TrendMomentumMicro": 0.75,
+    "MicroMomentumStack": 0.8,
 }
 RANGE_SCALP_ATR_MIN = 1.8
 RANGE_SCALP_MOMENTUM_MIN = 0.001
@@ -478,8 +503,8 @@ IDLE_REFRESH_THRESHOLD_SEC = int(os.getenv("IDLE_REFRESH_THRESHOLD_SEC", "1800")
 IDLE_REFRESH_CHECK_SEC = int(os.getenv("IDLE_REFRESH_CHECK_SEC", "180"))
 
 # 総合的な Macro 配分上限（lot 按分に直接適用）
-# 初期値は 0.30 (=30%)。環境変数による上書きは下段で適用。
-GLOBAL_MACRO_WEIGHT_CAP = 0.30
+# 初期値は 0.38 (=38%)。環境変数による上書きは下段で適用。
+GLOBAL_MACRO_WEIGHT_CAP = 0.38
 
 
 def _env_bool(key: str, default: bool = False) -> bool:
@@ -2040,11 +2065,6 @@ async def logic_loop():
                         sorted(allowed_names),
                     )
                     continue
-                if range_active and pocket in {"macro", "micro"} and sname in {"TrendMA", "MomentumBurst"}:
-                    logging.info(
-                        "[RANGE] skip trend strategy %s during active range mode.", sname
-                    )
-                    continue
                 strategies_by_pocket[pocket].append(sname)
                 if pocket == "micro" and _DELEGATE_MICRO:
                     continue
@@ -2160,6 +2180,11 @@ async def logic_loop():
                     conf_scale = RANGE_CONFIDENCE_SCALE.get(pocket)
                     if conf_scale is not None:
                         scaled_conf = int(signal["confidence"] * conf_scale)
+                        signal["confidence"] = max(15, min(100, scaled_conf))
+                    strat_name = signal.get("strategy")
+                    damp = RANGE_TREND_CONFIDENCE_DAMP.get(strat_name)
+                    if damp is not None:
+                        scaled_conf = int(signal["confidence"] * damp)
                         signal["confidence"] = max(15, min(100, scaled_conf))
                 elif range_soft_active and pocket in {"macro", "micro"}:
                     # ソフト圧縮時も軽めにタイト化してレンジ捕捉寄りに寄せる

@@ -127,12 +127,12 @@ def detect_range_mode(
     composite = sum(components) / len(components)
 
     compression_trigger = (
-        compression_ratio >= 0.6
-        and volatility_ratio >= 0.45
-        and effective_adx_m1 <= (adx_threshold + 4.0)
+        compression_ratio >= 0.65
+        and volatility_ratio >= 0.50
+        and effective_adx_m1 <= (adx_threshold + 3.0)
     )
     active = (is_low_adx and is_narrow_band and is_low_atr) or (
-        composite >= 0.62 and h4_trend_weak
+        composite >= 0.66 and h4_trend_weak
     )
     if not active and compression_trigger:
         active = True

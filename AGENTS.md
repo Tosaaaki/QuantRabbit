@@ -403,6 +403,14 @@ scripts/deploy_to_vm.sh -p "$PROJ" -t -k ~/.ssh/gcp_oslogin_qr \
   -K "$SA_KEY" -A "$SA" -i
 ```
 
+### 10.4 VM ブランチ運用と再起動ガイド
+- 本番 VM (`fx-trader-vm`) は原則 `deploy/pulsebreak-filters` を稼働ブランチとする（`main` や別ブランチで動かす場合は必ず記録）。SL/TP などの挙動差分はブランチ依存なので、切替時に注意。
+- 稼働中のコードは「作業ツリーのブランチ＋最後に `systemctl restart quantrabbit` を実行した時点の内容」。`git checkout` だけではプロセスは変わらない。
+- ブランチ切替前に `git status` でクリーンを確認し、未コミット・未 stash のまま切替えない。`scripts/deploy_to_vm.sh -b <branch>` を使うと自動 stash 付きで安全。
+- 再起動前に `git rev-parse --abbrev-ref HEAD && git rev-parse --short HEAD` でブランチ/HEAD を確認し、journal にも再起動時のブランチをメモする。
+- スタッシュが溜まると意図しないロールバックや SL/TP 設定の再旧化を招くため、不要になったら `git stash drop` で整理する。
+- config/tuning_overrides.yaml・fixtures/*.json などのローカル調整を維持したい場合は stash/commit で保全し、ブランチ切替後に明示的に `git stash pop` してから再起動する。
+
 ---
 
 ## 11. タスク運用ルール（共通）

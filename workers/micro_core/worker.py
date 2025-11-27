@@ -31,6 +31,7 @@ from indicators.factor_cache import all_factors
 from market_data import spread_monitor
 from strategies.mean_reversion.bb_rsi import BBRsi
 from strategies.micro.trend_momentum import TrendMomentumMicro
+from strategies.micro.momentum_burst import MomentumBurstMicro
 from strategies.micro.range_break import MicroRangeBreak
 from strategies.micro.pullback_ema import MicroPullbackEMA
 from strategies.micro.momentum_stack import MicroMomentumStack
@@ -54,6 +55,7 @@ DEFAULT_STRATEGIES = [
     "MicroMomentumStack",
     "MicroPullbackEMA",
     "MicroLevelReactor",
+    "MomentumBurst",
     "NewsSpikeReversal",
 ]
 POCKET_STRATEGY_MAP = {
@@ -64,6 +66,7 @@ POCKET_STRATEGY_MAP = {
         "MicroMomentumStack",
         "MicroPullbackEMA",
         "MicroLevelReactor",
+        "MomentumBurst",
         "NewsSpikeReversal",
     }
 }
@@ -77,6 +80,7 @@ STRATEGY_CLASSES = {
     "MicroMomentumStack": MicroMomentumStack,
     "MicroPullbackEMA": MicroPullbackEMA,
     "MicroLevelReactor": MicroLevelReactor,
+    "MomentumBurst": MomentumBurstMicro,
     "NewsSpikeReversal": NewsSpikeReversal,
 }
 def _env_set(name: str, default: str = "") -> set[str]:
@@ -114,12 +118,12 @@ MICRO_SPREAD_DAMP_FACTORS = (
 )
 MICRO_MARGIN_BUFFER_LIMIT = float(os.getenv("MICRO_MARGIN_BUFFER_LIMIT", "0.04"))
 MICRO_MARGIN_BUFFER_FACTOR = float(os.getenv("MICRO_MARGIN_BUFFER_FACTOR", "0.50"))
-MICRO_MAX_ACTIVE_TRADES = max(0, int(os.getenv("MICRO_MAX_ACTIVE_TRADES", "4")))
+MICRO_MAX_ACTIVE_TRADES = max(0, int(os.getenv("MICRO_MAX_ACTIVE_TRADES", "6")))
 MICRO_MAX_TRADES_PER_DIRECTION = max(
-    0, int(os.getenv("MICRO_MAX_TRADES_PER_DIRECTION", "3"))
+    0, int(os.getenv("MICRO_MAX_TRADES_PER_DIRECTION", "4"))
 )
 MICRO_MAX_TRADES_PER_STRATEGY = max(
-    0, int(os.getenv("MICRO_MAX_TRADES_PER_STRATEGY", "2"))
+    0, int(os.getenv("MICRO_MAX_TRADES_PER_STRATEGY", "3"))
 )
 RANGE_STRONG_THRESHOLD = float(os.getenv("MICRO_RANGE_STRONG_THRESHOLD", "0.5"))
 RANGE_WEAK_THRESHOLD = float(os.getenv("MICRO_RANGE_WEAK_THRESHOLD", "0.35"))

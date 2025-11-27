@@ -54,6 +54,15 @@ _ALLOWED_STRATEGIES = [
     "BB_RSI",
     "NewsSpikeReversal",
     "M1Scalper",
+    "RangeFader",
+    "PulseBreak",
+    "ImpulseRetrace",
+    "MomentumBurst",
+    "TrendMomentumMicro",
+    "MicroMomentumStack",
+    "MicroPullbackEMA",
+    "MicroRangeBreak",
+    "MicroLevelReactor",
 ]
 
 _MAX_COMPLETION_TOKENS = 320
@@ -66,8 +75,11 @@ _FALLBACK_DECISION = {
     "ranked_strategies": [
         "TrendMA",
         "Donchian55",
+        "MomentumBurst",
         "BB_RSI",
         "NewsSpikeReversal",
+        "M1Scalper",
+        "RangeFader",
     ],
     "reason": "fallback",
 }
