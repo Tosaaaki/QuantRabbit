@@ -60,7 +60,7 @@ def add_tokens(n: int, max_month_tokens: int) -> bool:
     n: 今回消費したトークン数
     max_month_tokens: 月上限 (env.toml)
                       <=0 なら無制限
-    return: True = 上限内, False = 超過
+    return: True = 上限内（超過時もソフト制限のため True を返す）
     """
     guard_off = _guard_disabled() or max_month_tokens <= 0
 
@@ -75,9 +75,21 @@ def add_tokens(n: int, max_month_tokens: int) -> bool:
     _save_state(state)
 
     if guard_off:
+        return True  # ハード制限なし
+
+    if state["total_tokens"] <= max_month_tokens:
         return True
 
-    return state["total_tokens"] <= max_month_tokens
+    # 上限超過時もブロックせず警告のみ（ソフト制限）
+    try:
+        logger.warning(
+            "OpenAI token soft-limit exceeded: %s > %s",
+            state["total_tokens"],
+            max_month_tokens,
+        )
+    except Exception:
+        pass
+    return True
 
 
 if __name__ == "__main__":
