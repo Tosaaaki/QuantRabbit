@@ -842,6 +842,16 @@ class StageTracker:
     def recent_profiles(self) -> Dict[str, Dict[str, float]]:
         return {pocket: dict(stats) for pocket, stats in self._recent_profile.items()}
 
+    def get_recent_profiles(self) -> Dict[str, Dict[str, float]]:
+        # Backward compat helper for callers expecting a method.
+        return self.recent_profiles
+
     @property
     def weight_hints(self) -> Dict[str, float]:
         return dict(self._weight_hint)
+
+    def set_weight_hint(self, pocket: str, value: Optional[float]) -> None:
+        if value is None:
+            self._weight_hint.pop(pocket, None)
+        else:
+            self._weight_hint[pocket] = float(value)
