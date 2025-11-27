@@ -447,8 +447,10 @@ class StageTracker:
                 int(row[3] or 0),
             )
 
-        ts = _coerce_utc(now).isoformat()
+        now_dt = _coerce_utc(now)
+        ts = now_dt.isoformat()
         reverse_window = _in_jst_reverse_window(now)
+        new_losses: List[Tuple[str, int, datetime, float, float]] = []
         for row in rows:
             pocket = row["pocket"] or ""
             units = int(row["units"] or 0)
@@ -467,6 +469,11 @@ class StageTracker:
             if pl_jpy < -_MIN_LOSS_JPY:
                 lose_streak += 1
                 win_streak = 0
+                try:
+                    pl_pips = float(row["pl_pips"] or 0.0)
+                except Exception:
+                    pl_pips = 0.0
+                new_losses.append((pocket, trade_id, now_dt, abs(pl_jpy), abs(pl_pips)))
             elif pl_jpy > _MIN_LOSS_JPY:
                 win_streak += 1
                 lose_streak = 0
