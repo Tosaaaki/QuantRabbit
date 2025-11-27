@@ -4024,8 +4024,15 @@ async def main():
     worker_task = asyncio.create_task(gpt_worker(gpt_state, gpt_requests))
     autotune_task = start_background_autotune(asyncio.get_running_loop())
     fast_scalp_state = FastScalpState()
+    fast_scalp_task = None
     try:
         await prime_gpt_decision(gpt_state, gpt_requests)
+        fast_scalp_task = asyncio.create_task(
+            supervised_runner(
+                "fast_scalp",
+                fast_scalp_worker(fast_scalp_state),
+            )
+        )
         while True:
             tasks = [
                 asyncio.create_task(
@@ -4052,12 +4059,6 @@ async def main():
                         ),
                     )
                 ),
-                asyncio.create_task(
-                    supervised_runner(
-                        "fast_scalp",
-                        fast_scalp_worker(fast_scalp_state),
-                    )
-                ),
             ]
             try:
                 await asyncio.gather(*tasks)
@@ -4076,11 +4077,23 @@ async def main():
                 logging.error("[SUPERVISOR] GPT worker terminated; restarting service")
                 worker_task = asyncio.create_task(gpt_worker(gpt_state, gpt_requests))
                 await prime_gpt_decision(gpt_state, gpt_requests)
+            if fast_scalp_task and fast_scalp_task.done():
+                logging.error("[SUPERVISOR] fast_scalp worker terminated; restarting")
+                fast_scalp_task = asyncio.create_task(
+                    supervised_runner(
+                        "fast_scalp",
+                        fast_scalp_worker(fast_scalp_state),
+                    )
+                )
             await asyncio.sleep(5)
     finally:
         worker_task.cancel()
         with contextlib.suppress(Exception):
             await worker_task
+        if fast_scalp_task:
+            fast_scalp_task.cancel()
+            with contextlib.suppress(Exception):
+                await fast_scalp_task
         autotune_task.cancel()
         with contextlib.suppress(Exception):
             await autotune_task
