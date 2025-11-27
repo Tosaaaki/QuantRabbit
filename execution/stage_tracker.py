@@ -385,6 +385,9 @@ class StageTracker:
                 continue
             try:
                 updated_at = datetime.fromisoformat(row["updated_at"])
+                if updated_at.tzinfo is not None:
+                    # Normalize to naive UTC for consistent comparison
+                    updated_at = updated_at.astimezone(timezone.utc).replace(tzinfo=None)
             except Exception:
                 updated_at = threshold - timedelta(minutes=1)
             if updated_at > threshold:
