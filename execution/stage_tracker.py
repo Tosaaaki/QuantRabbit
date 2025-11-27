@@ -6,13 +6,13 @@ execution.stage_tracker
 
 from __future__ import annotations
 
+import logging
 import os
 import sqlite3
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
-import os
 
 _DB_PATH = Path("logs/stage_state.db")
 _TRADES_DB = Path("logs/trades.db")
@@ -142,6 +142,18 @@ class StageTracker:
                 required_sec REAL,
                 actual_sec REAL,
                 reason TEXT
+            )
+            """
+        )
+        self._con.execute(
+            """
+            CREATE TABLE IF NOT EXISTS pocket_loss_window (
+                pocket TEXT NOT NULL,
+                trade_id INTEGER NOT NULL,
+                closed_at TEXT NOT NULL,
+                loss_jpy REAL NOT NULL,
+                loss_pips REAL NOT NULL,
+                PRIMARY KEY (pocket, trade_id)
             )
             """
         )
@@ -413,6 +425,9 @@ class StageTracker:
         cooldown_seconds: int = 900,
         cooldown_map: Optional[Dict[str, int]] = None,
         strategy_loss_threshold: int = 3,
+        range_active: bool = False,
+        atr_pips: Optional[float] = None,
+        vol_5m: Optional[float] = None,
     ) -> None:
         trades_path = trades_db or _TRADES_DB
         if not trades_path.exists():
@@ -426,6 +441,9 @@ class StageTracker:
         if not rows:
             return
         rows = list(rows)
+
+        now_dt = _coerce_utc(now)
+        self._decay_loss_streaks(now_dt)
 
         existing: Dict[Tuple[str, str], Tuple[int, int, int]] = {}
         for row in self._con.execute(
@@ -447,9 +465,8 @@ class StageTracker:
                 int(row[3] or 0),
             )
 
-        now_dt = _coerce_utc(now)
         ts = now_dt.isoformat()
-        reverse_window = _in_jst_reverse_window(now)
+        reverse_window = _in_jst_reverse_window(now_dt)
         new_losses: List[Tuple[str, int, datetime, float, float]] = []
         for row in rows:
             pocket = row["pocket"] or ""
@@ -495,16 +512,14 @@ class StageTracker:
             )
             existing[key] = (trade_id, lose_streak, win_streak)
             if lose_streak >= 3:
-                pocket_cooldown = (
-                    (cooldown_map or {}).get(pocket, cooldown_seconds)
-                )
+                pocket_cooldown = (cooldown_map or {}).get(pocket, cooldown_seconds)
                 if pocket != "scalp":
                     self.set_cooldown(
                         pocket,
                         direction,
                         reason="loss_streak",
                         seconds=pocket_cooldown,
-                        now=now,
+                        now=now_dt,
                     )
                     opp_dir = "short" if direction == "long" else "long"
                     if pocket == "micro":
@@ -522,7 +537,7 @@ class StageTracker:
                         opp_dir,
                         reason="flip_guard",
                         seconds=opp_seconds,
-                        now=now,
+                        now=now_dt,
                     )
 
             strategy_tag = row["strategy_tag"] if "strategy_tag" in row.keys() else None
@@ -558,7 +573,7 @@ class StageTracker:
                             strategy_tag,
                             reason="loss_streak",
                             seconds=strat_seconds,
-                            now=now,
+                            now=now_dt,
                         )
                         strat_lose = 0
                         self._con.execute(
@@ -610,6 +625,7 @@ class StageTracker:
                 "cooldown": int(cooldown_lookup.get(pocket, fallback_cd)),
             }
 
+        self._weight_hint = {}
         if cluster_stats:
             self._apply_loss_clusters(
                 cluster_stats,
@@ -621,6 +637,79 @@ class StageTracker:
 
         self._recent_profile = self._build_recent_profile(rows, now_dt)
         self._con.commit()
+
+    def _apply_loss_clusters(
+        self,
+        cluster_stats: Dict[str, Dict[str, float]],
+        *,
+        range_active: bool = False,
+        atr_pips: Optional[float] = None,
+        vol_5m: Optional[float] = None,
+        now: Optional[datetime] = None,
+    ) -> None:
+        if not cluster_stats:
+            return
+        now_dt = _coerce_utc(now)
+        atr_val = float(atr_pips or 0.0)
+        vol_val = float(vol_5m or 0.0)
+
+        for pocket, stats in cluster_stats.items():
+            count = int(stats.get("count", 0) or 0)
+            loss_jpy = float(stats.get("loss_jpy", 0.0) or 0.0)
+            loss_pips = float(stats.get("loss_pips", 0.0) or 0.0)
+            base_cd = int(stats.get("cooldown", 0) or 0)
+            if base_cd <= 0:
+                base_cd = 900
+
+            severity = 0.0
+            if count >= 3:
+                severity += 0.6
+            elif count == 2:
+                severity += 0.3
+            if loss_pips >= 40 or loss_jpy >= 5000:
+                severity += 0.6
+            elif loss_pips >= 20 or loss_jpy >= 2500:
+                severity += 0.4
+            elif loss_pips >= 10 or loss_jpy >= 1200:
+                severity += 0.2
+            if range_active:
+                severity += 0.2
+            if atr_val >= 2.8:
+                severity += 0.1
+            if vol_val >= 1.6:
+                severity += 0.1
+
+            if severity <= 0:
+                self._weight_hint.pop(pocket, None)
+                continue
+
+            seconds = int(base_cd * (1.0 + severity))
+            seconds = max(seconds, base_cd)
+            seconds = min(seconds, 4 * base_cd)
+            reason = f"loss_cluster_{count or 1}"
+            self.ensure_cooldown(
+                pocket,
+                "long",
+                reason=reason,
+                seconds=seconds,
+                now=now_dt,
+            )
+            self.ensure_cooldown(
+                pocket,
+                "short",
+                reason=reason,
+                seconds=seconds,
+                now=now_dt,
+            )
+            self._weight_hint[pocket] = max(0.3, round(1.0 - min(severity * 0.25, 0.6), 3))
+            logging.info(
+                "[STAGE] cluster cooldown pocket=%s count=%s loss_pips=%.1f jpy=%.1f sec=%s",
+                pocket,
+                count,
+                loss_pips,
+                loss_jpy,
+                seconds,
+            )
 
     def _build_recent_profile(
         self, rows: List[sqlite3.Row], now_dt: datetime
@@ -662,6 +751,8 @@ class StageTracker:
                 stats["loss_count"] += 1.0
                 stats["loss_jpy"] += abs(pl_jpy)
                 stats["loss_pips"] += abs(pl_pips)
+        for stats in profile.values():
+            stats["sample_size"] = float(stats.get("win_count", 0.0) + stats.get("loss_count", 0.0))
         return profile
 
     def _decay_loss_streaks(self, now: datetime) -> None:
@@ -744,3 +835,11 @@ class StageTracker:
         if reverse_brake:
             floor = min(floor, _STAGE_REVERSE_LOSS_FLOOR)
         return max(floor, round(factor, 3))
+
+    @property
+    def recent_profiles(self) -> Dict[str, Dict[str, float]]:
+        return {pocket: dict(stats) for pocket, stats in self._recent_profile.items()}
+
+    @property
+    def weight_hints(self) -> Dict[str, float]:
+        return dict(self._weight_hint)

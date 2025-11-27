@@ -1445,7 +1445,15 @@ async def logic_loop():
                 await asyncio.sleep(5)
                 continue
             stage_tracker.clear_expired(now)
-            stage_tracker.update_loss_streaks(now=now, cooldown_map=POCKET_LOSS_COOLDOWNS)
+            recent_profiles: dict[str, dict[str, float]] = {}
+            try:
+                stage_tracker.update_loss_streaks(now=now, cooldown_map=POCKET_LOSS_COOLDOWNS)
+            except Exception as exc:  # pragma: no cover - defensive
+                logging.warning("[STAGE] loss streak update failed: %s", exc)
+            else:
+                recent_profiles = stage_tracker.recent_profiles
+            if not recent_profiles:
+                recent_profiles = stage_tracker.recent_profiles
             if (now - last_trade_check_time).total_seconds() >= IDLE_REFRESH_CHECK_SEC:
                 last_trade_check_time = now
                 try:
