@@ -224,6 +224,13 @@ def _micro_flow_factor(
         factor *= MICRO_MARGIN_BUFFER_FACTOR
     return max(0.0, min(1.0, factor))
 
+
+async def ensure_factor_history_ready(state: Optional[dict]) -> None:
+    """Placeholder warmup hook; returns immediately if no warmup is configured."""
+    if not state:
+        return None
+    return None
+
 # Manual-trade guard: by default, do not let the bot exit or partially close
 # trades that were entered manually (i.e. trades without a QuantRabbit
 # clientOrderID like "qr-..."). This only affects exit/partial logic and
@@ -1390,6 +1397,7 @@ async def logic_loop():
     exit_manager = ExitManager()
     stage_tracker = StageTracker()
     pattern_stats = PatternStats()
+    factor_warmup_state: Optional[dict] = None
     perf_cache = {}
     news_cache = {}
     insight = InsightClient()

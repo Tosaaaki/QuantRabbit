@@ -756,8 +756,9 @@ class StageTracker:
         return profile
 
     def _decay_loss_streaks(self, now: datetime) -> None:
+        current = _coerce_utc(now)
         try:
-            threshold = now - timedelta(minutes=self._loss_decay_minutes)
+            threshold = current - timedelta(minutes=self._loss_decay_minutes)
         except Exception:
             return
         rows = self._con.execute(
@@ -770,9 +771,10 @@ class StageTracker:
                 continue
             try:
                 updated_at = datetime.fromisoformat(row["updated_at"])
-                if updated_at.tzinfo is not None:
-                    # Normalize to naive UTC for consistent comparison
-                    updated_at = updated_at.astimezone(timezone.utc).replace(tzinfo=None)
+                if updated_at.tzinfo is None:
+                    updated_at = updated_at.replace(tzinfo=timezone.utc)
+                else:
+                    updated_at = updated_at.astimezone(timezone.utc)
             except Exception:
                 updated_at = threshold - timedelta(minutes=1)
             if updated_at > threshold:
