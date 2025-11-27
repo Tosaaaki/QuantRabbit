@@ -18,9 +18,14 @@ import pandas as pd
 
 from indicators.calc_core import IndicatorEngine
 
-TimeFrame = Literal["M1", "H1", "H4"]
+TimeFrame = Literal["M1", "H1", "H4", "D1"]
 
-_CANDLES_MAX = {"M1": 2000, "H1": 1000, "H4": 500}  # M1: ~33h, H1: ~41d, H4: ~83d
+_CANDLES_MAX = {
+    "M1": 2000,
+    "H1": 1000,
+    "H4": 500,
+    "D1": 400,  # ~1.5y of daily bars for long-term factors
+}
 _CANDLES: Dict[TimeFrame, deque] = {
     "M1": deque(maxlen=_CANDLES_MAX["M1"]),
     "H1": deque(maxlen=_CANDLES_MAX["H1"]),
