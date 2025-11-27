@@ -32,6 +32,24 @@
 ```
 
 ## Open Tasks
+- [ ] ID: T-20251127-004
+  Title: Pattern-based lot boost from candle/tech win-rate
+  Status: in-progress
+  Priority: P1
+  Owner: codex
+  Scope/Paths: analysis/pattern_stats.py, main.py, docs/TASKS.md
+  Context: Scale lots up when historically strongローソク/テクニカルパターンが出現した際に信頼度を反映したい。trades.db のエントリー履歴からパターン別勝率を学習し、rangeモードでは抑制する。
+  Acceptance:
+    - 新規トレードの entry_thesis に candle/indicator 由来の `pattern_tag` / `pattern_meta` が保存される
+    - trades.db を集計した pattern stats からサンプル数閾値以上でのみブースト係数を返し、rangeモード時は上限を縮小する
+    - main ループで係数が適用され pocket 配分を超えずにロットが拡張され、metric/log で factor・pattern・samples が確認できる
+  Plan:
+    - pattern signature builder と trades.db 集計キャッシュを実装し、lookback/サンプル数ガードを付ける
+    - main のロット計算に pattern boost を組み込み、range 上限を守りつつ entry_thesis にメタ情報を保存する
+    - ドライラン/ログで係数と clamp を確認し、しきい値を微調整 or 無効化できるようにする
+  Notes:
+    - refresh 間隔は perf/news 更新と同じ 5 分で、ホットパスに負荷を掛けない
+
 - [ ] ID: T-20251117-002
   Title: TrendMomentumMicro gating fix & range-to-trend handoff
   Status: in-progress

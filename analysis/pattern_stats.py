@@ -205,7 +205,13 @@ class PatternStats:
         self._cache: dict[tuple[str, str, str], PatternSummary] = {}
 
     def refresh(self, now: Optional[datetime] = None) -> None:
-        now = now or datetime.now(timezone.utc)
+        if now is None:
+            now = datetime.now(timezone.utc)
+        else:
+            if now.tzinfo is None:
+                now = now.replace(tzinfo=timezone.utc)
+            else:
+                now = now.astimezone(timezone.utc)
         if (now - self._last_refresh).total_seconds() < self._refresh_seconds:
             return
         self._last_refresh = now
