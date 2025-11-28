@@ -12,6 +12,7 @@ import time
 from collections import deque
 from dataclasses import dataclass
 from typing import Deque, Optional, Tuple
+import os
 
 from utils.secrets import get_secret
 
@@ -65,9 +66,15 @@ BASELINE_BLOCK_SECONDS = _load_float(
 STALE_GRACE_SECONDS = _load_float("spread_guard_stale_grace_sec", 12.0, minimum=0.0)
 # 瞬間スパイクを無視する上限（max がここ以下で pX が閾値未満ならガードしない）
 SPIKE_FORGIVE_PIPS = _load_float(
-    "spread_guard_spike_forgive_pips", max(MAX_SPREAD_PIPS * 1.6, MAX_SPREAD_PIPS + 0.3)
+    "spread_guard_spike_forgive_pips", max(MAX_SPREAD_PIPS * 2.0, MAX_SPREAD_PIPS + 0.5)
 )
-SPIKE_FORGIVE_PCT = _load_float("spread_guard_spike_forgive_pct", 90.0, minimum=50.0)
+SPIKE_FORGIVE_PCT = _load_float("spread_guard_spike_forgive_pct", 95.0, minimum=50.0)
+DISABLE_SPREAD_GUARD = os.getenv("SPREAD_GUARD_DISABLE", "0").strip().lower() not in {
+    "",
+    "0",
+    "false",
+    "no",
+}
 
 # 上限を設け過去履歴が無限に伸びるのを防ぐ
 _HISTORY_MAX_LEN = 180
@@ -142,6 +149,13 @@ def update_from_tick(tick) -> None:  # type: ignore[no-untyped-def]
     while _history and now - _history[0][0] > WINDOW_SECONDS:
         _history.popleft()
 
+    # ガード無効モード: スナップショットだけ更新して即 return
+    if DISABLE_SPREAD_GUARD:
+        _blocked_until = 0.0
+        _blocked_reason = ""
+        _last_logged_blocked = False
+        return
+
     _baseline_history.append((now, spread_pips))
     while _baseline_history and now - _baseline_history[0][0] > BASELINE_WINDOW_SECONDS:
         _baseline_history.popleft()
@@ -151,35 +165,8 @@ def update_from_tick(tick) -> None:  # type: ignore[no-untyped-def]
         # この時点で history が空になることはないが、念のため
         return
 
-    max_spread = max(values)
-    avg_spread = sum(values) / len(values)
-    pct_spread = _percentile(values, SPIKE_FORGIVE_PCT)
-    high_count = sum(1 for val in values if val >= MAX_SPREAD_PIPS)
-    baseline_avg = 0.0
-    baseline_len = len(_baseline_history)
-    if _baseline_history:
-        baseline_avg = sum(val for _, val in _baseline_history) / baseline_len
-
-    triggered = (
-        len(values) >= MIN_HIGH_SAMPLES
-        and high_count >= MIN_HIGH_SAMPLES
-        and max_spread >= MAX_SPREAD_PIPS
-    )
-    # 瞬間スパイクだけなら許容する（p90 が閾値未満かつ max が上限以内）
-    if triggered and max_spread <= SPIKE_FORGIVE_PIPS and pct_spread < MAX_SPREAD_PIPS:
-        triggered = False
-
-    # 広い時間帯で開いている場合は長めにブロック（朝方/休場対策）
-    if (
-        not triggered
-        and baseline_len >= BASELINE_MIN_SAMPLES
-        and baseline_avg >= BASELINE_BLOCK_PIPS
-    ):
-        triggered = True
-        _blocked_reason = (
-            f"baseline avg {baseline_avg:.2f}p (len={baseline_len}) >= block {BASELINE_BLOCK_PIPS:.2f}p"
-        )
-        _blocked_until = max(_blocked_until, now) + BASELINE_BLOCK_SECONDS
+    # ガード完全無効化（エントリー阻害しない）
+    triggered = False
 
     if triggered:
         prev_until = _blocked_until
