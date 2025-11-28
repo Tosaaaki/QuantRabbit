@@ -1419,6 +1419,7 @@ async def market_order(
     entry_thesis: Optional[dict] = None,
     meta: Optional[dict] = None,
     confidence: Optional[int] = None,
+    stage_index: Optional[int] = None,
 ) -> Optional[str]:
     """
     units : +10000 = buy 0.1 lot, ‑10000 = sell 0.1 lot
@@ -1432,6 +1433,13 @@ async def market_order(
         strategy_tag = None
     thesis_sl_pips: Optional[float] = None
     thesis_tp_pips: Optional[float] = None
+    if stage_index is None and isinstance(entry_thesis, dict):
+        try:
+            raw_stage = entry_thesis.get("stage_index")
+            if raw_stage is not None:
+                stage_index = int(raw_stage)
+        except Exception:
+            stage_index = None
     if isinstance(entry_thesis, dict):
         raw_tag = entry_thesis.get("strategy_tag") or entry_thesis.get("strategy")
         if raw_tag and not strategy_tag:

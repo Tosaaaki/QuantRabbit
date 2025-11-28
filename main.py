@@ -307,13 +307,14 @@ GPT_FACTOR_KEYS: Dict[str, tuple[str, ...]] = {
 NEWS_LIMITS = {"short": 2, "long": 2}
 # systemd service mapping for auxiliary workers (optional; may fail if units are absent)
 WORKER_SERVICES = {
-    "macro_core": "qr-macro-core.service",
-    "micro_core": "qr-micro-core.service",
-    "fast_scalp": "qr-fast-scalp.service",
-    "mtf_breakout": "qr-mtf-breakout.service",
-    "scalp_exit": "qr-scalp-exit.service",
-    "pullback_scalp": "qr-pullback-scalp.service",
-    "london_momentum": "qr-london-momentum.service",
+    # names must match actual systemd unit filenames (underscores)
+    "macro_core": "qr-macro_core.service",
+    "micro_core": "qr-micro_core.service",
+    "fast_scalp": "qr-fast_scalp.service",
+    "mtf_breakout": "qr-mtf_breakout.service",
+    "scalp_exit": "qr-scalp_exit.service",
+    "pullback_scalp": "qr-pullback_scalp.service",
+    "london_momentum": "qr-london_momentum.service",
     "pullback_runner_s5": "qr-pullback_runner_s5.service",
     "mirror_spike": "qr-mirror_spike.service",
     "vol_squeeze": "qr-vol_squeeze.service",

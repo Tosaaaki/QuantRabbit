@@ -214,8 +214,9 @@ async def _collect_features(
     return None, updated_spread, last_fetch
 
 
-async def fast_scalp_worker(shared_state: FastScalpState) -> None:
+async def fast_scalp_worker(shared_state: Optional[FastScalpState] = None) -> None:
     logger = logging.getLogger(__name__)
+    shared_state = shared_state or FastScalpState()
     if not config.FAST_SCALP_ENABLED:
         logger.info("%s disabled via env, worker idling.", config.LOG_PREFIX_TICK)
         while True:
@@ -1014,4 +1015,4 @@ async def fast_scalp_worker(shared_state: FastScalpState) -> None:
 
 
 if __name__ == "__main__":  # pragma: no cover
-    asyncio.run(fast_scalp_worker())
+    asyncio.run(fast_scalp_worker(None))
