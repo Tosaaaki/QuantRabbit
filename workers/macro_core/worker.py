@@ -41,3 +41,7 @@ async def macro_core_worker() -> None:
         raise
     finally:
         executor.close()
+
+
+if __name__ == "__main__":  # pragma: no cover
+    asyncio.run(macro_core_worker())

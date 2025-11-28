@@ -1151,3 +1151,7 @@ def _manual_guard_state(positions: Dict[str, Dict]) -> tuple[bool, int, str]:
             pockets.append(f"{name}:{units}")
     # manual sentinel を当面無効化して、誤検知でブロックしないようにする
     return False, total_units, ",".join(pockets)
+
+
+if __name__ == "__main__":  # pragma: no cover
+    asyncio.run(micro_core_worker())

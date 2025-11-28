@@ -1011,3 +1011,7 @@ async def fast_scalp_worker(shared_state: FastScalpState) -> None:
         stage_tracker.close()
         pos_manager.close()
         logger.info("%s worker shutdown", config.LOG_PREFIX_TICK)
+
+
+if __name__ == "__main__":  # pragma: no cover
+    asyncio.run(fast_scalp_worker())

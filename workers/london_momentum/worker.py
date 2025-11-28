@@ -207,3 +207,7 @@ async def london_momentum_worker() -> None:
             pos_manager.close()
         except Exception:  # pragma: no cover
             pass
+
+
+if __name__ == "__main__":  # pragma: no cover
+    asyncio.run(london_momentum_worker())
