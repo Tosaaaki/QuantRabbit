@@ -705,7 +705,26 @@ async def micro_core_worker() -> None:
                 regime_direction,
             )
 
-            if not signals or not can_trade(POCKET):
+            trade_allowed = can_trade(POCKET)
+            if not signals or not trade_allowed:
+                if not signals:
+                    LOG.info(
+                        "%s no signals (regime=%s dir=%s spread=%.2fp adx=%.1f rsi=%.1f atr=%.2f)",
+                        config.LOG_PREFIX,
+                        getattr(regime_mode, "name", regime_mode),
+                        getattr(regime_direction, "name", regime_direction),
+                        spread_pips,
+                        float(fac_m1.get("adx") or 0.0),
+                        float(fac_m1.get("rsi") or 0.0),
+                        float(fac_m1.get("atr_pips") or 0.0),
+                    )
+                if not trade_allowed:
+                    LOG.warning(
+                        "%s pocket drawdown guard blocks entries (open_trades=%d units=%d)",
+                        config.LOG_PREFIX,
+                        len(open_trades),
+                        int(abs(micro_info.get("units", 0) or 0)),
+                    )
                 await _publish_micro_policy(
                     fac_m1,
                     range_ctx,
@@ -1153,5 +1172,19 @@ def _manual_guard_state(positions: Dict[str, Dict]) -> tuple[bool, int, str]:
     return False, total_units, ",".join(pockets)
 
 
-if __name__ == "__main__":  # pragma: no cover
+def _configure_logging() -> None:
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s - %(levelname)s - %(message)s",
+        force=True,
+    )
+
+
+def _main() -> None:  # pragma: no cover
+    _configure_logging()
+    LOG.info("%s worker starting", config.LOG_PREFIX)
     asyncio.run(micro_core_worker())
+
+
+if __name__ == "__main__":  # pragma: no cover
+    _main()

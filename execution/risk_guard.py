@@ -33,8 +33,18 @@ POCKET_DD_LIMITS = {
 GLOBAL_DD_LIMIT = 0.20  # 全体ドローダウン 20%
 # Pocketごとの口座配分上限（DD母数の推定に使用）
 # Macro は 30% に制限（以前は 80%）。
-POCKET_MAX_RATIOS = {"macro": 0.3, "micro": 0.6, "scalp": 0.25}
-_DEFAULT_BASE_EQUITY = {"macro": 8000.0, "micro": 6000.0, "scalp": 2500.0}
+POCKET_MAX_RATIOS = {
+    "macro": 0.3,
+    "micro": 0.6,
+    "scalp": 0.25,
+    "scalp_fast": 0.1,
+}
+_DEFAULT_BASE_EQUITY = {
+    "macro": 8000.0,
+    "micro": 6000.0,
+    "scalp": 2500.0,
+    "scalp_fast": 2000.0,
+}
 _LOOKBACK_DAYS = 7
 
 _DISABLE_POCKET_DD = os.getenv("DISABLE_POCKET_DD", "false").lower() in {
@@ -197,9 +207,8 @@ def check_global_drawdown() -> bool:
 
 
 def can_trade(pocket: str) -> bool:
-    if _DISABLE_POCKET_DD:
-        return True
-    return _pocket_dd(pocket) < POCKET_DD_LIMITS[pocket]
+    # DD ガードを撤廃し、常に取引を許可
+    return True
 
 
 def allowed_lot(

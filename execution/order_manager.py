@@ -24,6 +24,7 @@ from oandapyV20.endpoints.orders import OrderCancel, OrderCreate
 from oandapyV20.endpoints.trades import TradeCRCDO, TradeClose, TradeDetails
 
 from execution.order_ids import build_client_order_id
+from execution.stop_loss_policy import stop_loss_disabled, trailing_sl_allowed
 
 from analysis import policy_bus
 from utils.secrets import get_secret
@@ -74,13 +75,9 @@ _MIN_UNITS_BY_POCKET: dict[str, int] = {
     "macro": _env_int("ORDER_MIN_UNITS_MACRO", _MACRO_MIN_UNITS_DEFAULT),
     "scalp": _env_int("ORDER_MIN_UNITS_SCALP", _DEFAULT_MIN_UNITS),
 }
-# If true, do not attach stopLossOnFill (TP is still sent). Honors either
-# ORDER_DISABLE_STOP_LOSS or DISABLE_STOP_LOSS env var.
-_DISABLE_STOP_LOSS = (
-    os.getenv("ORDER_DISABLE_STOP_LOSS")
-    or os.getenv("DISABLE_STOP_LOSS")
-    or "true"
-).lower() in {"1", "true", "yes", "on"}
+# If true, do not attach stopLossOnFill (TP is still sent).
+STOP_LOSS_DISABLED = stop_loss_disabled()
+TRAILING_SL_ALLOWED = trailing_sl_allowed()
 
 
 def min_units_for_pocket(pocket: Optional[str]) -> int:
@@ -1023,7 +1020,7 @@ def update_dynamic_protections(
     fac_m1: dict,
     fac_h4: dict,
 ) -> None:
-    if _DISABLE_STOP_LOSS:
+    if not TRAILING_SL_ALLOWED:
         return
     if not open_positions:
         return
@@ -1245,6 +1242,8 @@ async def set_trade_protections(
     """
     Legacy compatibility layer – update SL/TP for an open trade and report success.
     """
+    if not TRAILING_SL_ALLOWED and sl_price is not None:
+        return False
     if not trade_id:
         return False
     try:
@@ -1539,7 +1538,7 @@ async def market_order(
     except Exception:
         pass
 
-    if _DISABLE_STOP_LOSS:
+    if STOP_LOSS_DISABLED:
         sl_price = None
 
     if (
@@ -1547,7 +1546,7 @@ async def market_order(
         and (pocket or "").lower() in _DYNAMIC_SL_POCKETS
         and not reduce_only
         and entry_price_meta is not None
-        and not _DISABLE_STOP_LOSS
+        and not STOP_LOSS_DISABLED
     ):
         loss_guard = None
         sl_hint = None
@@ -1761,7 +1760,7 @@ async def market_order(
             )
 
     if not reduce_only and estimated_entry is not None:
-        norm_sl = None if _DISABLE_STOP_LOSS else sl_price
+        norm_sl = None if STOP_LOSS_DISABLED else sl_price
         norm_tp = tp_price
         norm_sl, norm_tp, normalized = _normalize_protections(
             estimated_entry,
@@ -1769,7 +1768,7 @@ async def market_order(
             norm_tp,
             units > 0,
         )
-        sl_price = None if _DISABLE_STOP_LOSS else norm_sl
+        sl_price = None if STOP_LOSS_DISABLED else norm_sl
         tp_price = norm_tp
         if normalized:
             logging.debug(
@@ -1843,7 +1842,7 @@ async def market_order(
     if client_order_id:
         order_data["order"]["clientExtensions"]["id"] = client_order_id
         order_data["order"]["tradeClientExtensions"]["id"] = client_order_id
-    if (not _DISABLE_STOP_LOSS) and sl_price is not None:
+    if (not STOP_LOSS_DISABLED) and sl_price is not None:
         order_data["order"]["stopLossOnFill"] = {"price": f"{sl_price:.3f}"}
     if tp_price is not None:
         order_data["order"]["takeProfitOnFill"] = {"price": f"{tp_price:.3f}"}
@@ -1946,7 +1945,7 @@ async def market_order(
                             order_data["order"]["stopLossOnFill"] = {
                                 "price": f"{fallback_sl:.3f}"
                             }
-                            sl_price = fallback_sl
+                    sl_price = fallback_sl
                         elif "stopLossOnFill" in order_data["order"]:
                             order_data["order"].pop("stopLossOnFill", None)
                         if fallback_tp is not None:
@@ -2017,7 +2016,7 @@ async def market_order(
                     ticket_id=trade_id,
                     note=f"attempt={attempt+1}",
                 )
-                target_sl = None if _DISABLE_STOP_LOSS else sl_price
+                target_sl = None if STOP_LOSS_DISABLED else sl_price
                 _maybe_update_protections(trade_id, target_sl, tp_price)
                 return trade_id
 

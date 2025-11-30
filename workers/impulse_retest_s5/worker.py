@@ -340,3 +340,13 @@ async def impulse_retest_s5_worker() -> None:
             pos_manager.close()
         except Exception:  # noqa: BLE001
             LOG.exception("%s failed to close PositionManager", config.LOG_PREFIX)
+
+
+if __name__ == "__main__":  # pragma: no cover
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s - %(levelname)s - %(message)s",
+        force=True,
+    )
+    LOG.info("%s worker boot (loop %.2fs)", config.LOG_PREFIX, config.LOOP_INTERVAL_SEC)
+    asyncio.run(impulse_retest_s5_worker())

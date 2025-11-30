@@ -18,6 +18,7 @@ from execution.order_manager import (
     plan_partial_reductions,
     update_dynamic_protections,
 )
+from execution.stop_loss_policy import stop_loss_disabled
 from execution.pocket_limits import POCKET_ENTRY_MIN_INTERVAL, POCKET_LOSS_COOLDOWNS, cooldown_for_pocket
 from execution.risk_guard import can_trade, clamp_sl_tp
 from execution.stage_rules import compute_stage_lot
@@ -40,12 +41,7 @@ def _env_float(key: str, default: float) -> float:
 
 _USD_LONG_CAP_LOT = _env_float("EXPOSURE_USD_LONG_MAX_LOT", 2.5)
 STARTUP_GRACE_SECONDS = _env_float("STARTUP_GRACE_SECONDS", 120.0)
-DISABLE_STOP_LOSS = os.getenv("DISABLE_STOP_LOSS", "true").strip().lower() in {
-    "1",
-    "true",
-    "yes",
-    "on",
-}
+STOP_LOSS_DISABLED = stop_loss_disabled()
 
 
 class PocketPlanExecutor:
@@ -406,7 +402,7 @@ class PocketPlanExecutor:
                     atr_pips = float(atr_raw)
                 except Exception:
                     atr_pips = 0.0
-                if DISABLE_STOP_LOSS:
+                if STOP_LOSS_DISABLED:
                     signal["sl_pips"] = None
                 else:
                     # SLはさらに広めに確保（ATR連動 + 12p 下限）して即時損切りを防ぐ

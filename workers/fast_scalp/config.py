@@ -6,7 +6,10 @@ from __future__ import annotations
 
 import os
 
+from execution.stop_loss_policy import stop_loss_disabled
+
 PIP_VALUE = 0.01
+STOP_LOSS_DISABLED = stop_loss_disabled()
 
 
 def _bool_env(key: str, default: bool) -> bool:
@@ -17,7 +20,7 @@ def _bool_env(key: str, default: bool) -> bool:
 
 
 # Hard stop: disable fast scalp worker regardless of environment.
-FAST_SCALP_ENABLED: bool = False
+FAST_SCALP_ENABLED: bool = _bool_env("FAST_SCALP_ENABLED", False)
 LOOP_INTERVAL_SEC: float = max(0.1, float(os.getenv("FAST_SCALP_LOOP_INTERVAL_SEC", "0.25")))
 TP_BASE_PIPS: float = max(0.2, float(os.getenv("FAST_SCALP_TP_BASE_PIPS", "0.6")))
 TP_SPREAD_BUFFER_PIPS: float = max(0.05, float(os.getenv("FAST_SCALP_SPREAD_BUFFER_PIPS", "0.2")))
@@ -152,7 +155,7 @@ MIN_HOLD_SEC: float = max(0.0, float(os.getenv("FAST_SCALP_MIN_HOLD_SEC", "2.5")
 
 # Fixed sizing / protections
 FIXED_UNITS: int = int(float(os.getenv("FAST_SCALP_FIXED_UNITS", "0")))
-USE_SL: bool = _bool_env("FAST_SCALP_USE_SL", False)
+USE_SL: bool = False if STOP_LOSS_DISABLED else _bool_env("FAST_SCALP_USE_SL", False)
 
 MAX_MARGIN_USAGE: float = max(0.1, min(1.0, float(os.getenv("FAST_SCALP_MAX_MARGIN_USAGE", "0.4"))))
 TIMEOUT_SEC_BASE: float = max(5.0, float(os.getenv("FAST_SCALP_TIMEOUT_SEC_BASE", str(TIMEOUT_SEC))))

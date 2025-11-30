@@ -1014,5 +1014,24 @@ async def fast_scalp_worker(shared_state: Optional[FastScalpState] = None) -> No
         logger.info("%s worker shutdown", config.LOG_PREFIX_TICK)
 
 
+def _configure_logging() -> None:
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s - %(levelname)s - %(message)s",
+        force=True,
+    )
+
+
+def _main() -> None:  # pragma: no cover
+    _configure_logging()
+    logger = logging.getLogger(__name__)
+    try:
+        asyncio.run(fast_scalp_worker(shared_state=None))
+    except TypeError as exc:
+        # 再発防止のため、引数不足で失敗した場合はデフォルト state を明示して再実行する
+        logger.exception("fast_scalp_worker entry failed: %s; retrying with default state", exc)
+        asyncio.run(fast_scalp_worker(shared_state=FastScalpState()))
+
+
 if __name__ == "__main__":  # pragma: no cover
-    asyncio.run(fast_scalp_worker(None))
+    _main()

@@ -355,3 +355,13 @@ async def mirror_spike_worker() -> None:
             pos_manager.close()
         except Exception:
             logger.exception("%s failed to close PositionManager", config.LOG_PREFIX)
+
+
+if __name__ == "__main__":  # pragma: no cover
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s - %(levelname)s - %(message)s",
+        force=True,
+    )
+    logger.info("%s worker boot (loop %.2fs)", config.LOG_PREFIX, config.LOOP_INTERVAL_SEC)
+    asyncio.run(mirror_spike_worker())

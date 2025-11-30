@@ -80,7 +80,9 @@ from workers.fast_scalp import FastScalpState, fast_scalp_worker
 
 # Configure logging
 logging.basicConfig(
-    level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
+    level=logging.INFO,
+    format="%(asctime)s - %(levelname)s - %(message)s",
+    force=True,  # enforce INFO even if another logger configured earlier
 )
 
 logging.info("Application started!")
@@ -383,18 +385,98 @@ def _session_bucket(now: datetime.datetime) -> str:
     return "asia"
 
 
-def _select_worker_targets(fac_m1: dict, fac_h4: dict, now: datetime.datetime) -> set[str]:
-    """Score workers based on市況 and pick top-N."""
-    atr_pips = float(fac_m1.get("atr_pips") or 0.0)
-    vol_5m = float(fac_m1.get("vol_5m") or 0.0)
+def _select_worker_targets(
+    fac_m1: dict,
+    fac_m5: Optional[dict],
+    fac_h1: Optional[dict],
+    fac_h4: dict,
+    now: datetime.datetime,
+) -> set[str]:
+    """Score workers based on市況 (multi-TF) and pick top-N."""
+
+    def _atr_pips(factors: Optional[dict]) -> float:
+        if not factors:
+            return 0.0
+        atr_val = factors.get("atr_pips")
+        if atr_val is None:
+            atr_val = (factors.get("atr") or 0.0) * 100.0  # fallback from raw ATR
+        try:
+            return float(atr_val or 0.0)
+        except (TypeError, ValueError):
+            return 0.0
+
+    def _vol_5m(factors: Optional[dict]) -> float:
+        if not factors:
+            return 0.0
+        # prefer precomputed value if present
+        try:
+            vol = float(factors.get("vol_5m") or 0.0)
+        except (TypeError, ValueError):
+            vol = 0.0
+        if vol > 0:
+            return vol
+        # fallback: compute simple high/low range over last ~5 M1 candles
+        candles = factors.get("candles")
+        if isinstance(candles, list) and len(candles) >= 5:
+            highs = []
+            lows = []
+            for entry in candles[-5:]:
+                try:
+                    highs.append(float(entry.get("high")))
+                    lows.append(float(entry.get("low")))
+                except Exception:
+                    continue
+            if highs and lows:
+                return (max(highs) - min(lows)) * 100.0
+        # fallback: use recent tick summary (range over recent window)
+        summary = factors.get("recent_tick_summary") or {}
+        try:
+            high_mid = float(summary.get("high_mid") or 0.0)
+            low_mid = float(summary.get("low_mid") or 0.0)
+            if high_mid and low_mid:
+                return (high_mid - low_mid) * 100.0
+        except Exception:
+            pass
+        return 0.0
+
+    def _ma_gap(factors: Optional[dict]) -> float:
+        if not factors:
+            return 0.0
+        try:
+            return abs(float(factors.get("ma10") or 0.0) - float(factors.get("ma20") or 0.0))
+        except Exception:
+            return 0.0
+
+    atr_m1 = _atr_pips(fac_m1)
+    atr_m5 = _atr_pips(fac_m5)
+    atr_h1 = _atr_pips(fac_h1)
+    atr_pips = atr_m1 or atr_m5 or atr_h1 or 0.0
+    vol_5m = _vol_5m(fac_m1)
+    vol_m5 = _vol_5m(fac_m5)
     adx_h4 = float(fac_h4.get("adx") or 0.0)
-    ma_gap_h4 = abs(float(fac_h4.get("ma10") or 0.0) - float(fac_h4.get("ma20") or 0.0))
+    adx_h1 = float((fac_h1 or {}).get("adx") or 0.0)
+    ma_gap_h4 = _ma_gap(fac_h4)
+    ma_gap_h1 = _ma_gap(fac_h1)
     session = _session_bucket(now)
-    high_vol = atr_pips >= 2.0 or vol_5m >= 1.5
-    mid_vol = atr_pips >= 1.3 or vol_5m >= 1.0
-    low_vol = atr_pips <= 1.0 and vol_5m <= 0.7
-    trending = adx_h4 >= 18.0 or ma_gap_h4 >= 0.12
-    range_like = adx_h4 <= 15.0 and vol_5m <= 0.9
+    rsi_m1 = float(fac_m1.get("rsi") or 50.0)
+    bbw_m1 = float(fac_m1.get("bbw") or 0.0)
+    try:
+        close_m1 = float(fac_m1.get("close")) if fac_m1.get("close") is not None else None
+        ma20_m1 = float(fac_m1.get("ma20")) if fac_m1.get("ma20") is not None else None
+    except (TypeError, ValueError):
+        close_m1 = None
+        ma20_m1 = None
+    momentum_m1 = 0.0
+    if close_m1 is not None and ma20_m1 is not None:
+        momentum_m1 = close_m1 - ma20_m1
+
+    high_vol = max(atr_m1, atr_m5, atr_h1) >= 2.0 or max(vol_5m, vol_m5) >= 1.5
+    mid_vol = max(atr_m1, atr_m5, atr_h1) >= 1.3 or max(vol_5m, vol_m5) >= 1.0
+    low_vol = max(atr_m1, atr_m5, atr_h1) <= 1.0 and max(vol_5m, vol_m5) <= 0.7
+    trending = (adx_h4 >= 18.0 or ma_gap_h4 >= 0.12) or (adx_h1 >= 16.0 or ma_gap_h1 >= 0.07)
+    range_like = (adx_h4 <= 15.0 and max(vol_5m, vol_m5) <= 0.9) and adx_h1 <= 14.0
+    compression = bbw_m1 <= 0.002 or (vol_5m <= 0.6 and atr_pips <= 1.2)
+    spike_like = high_vol or abs(momentum_m1) >= 0.015
 
     scores: dict[str, float] = {}
     reasons: dict[str, str] = {}
@@ -411,10 +493,13 @@ def _select_worker_targets(fac_m1: dict, fac_h4: dict, now: datetime.datetime) -
     bump("micro_core", 1.0, "baseline_micro")
     bump("fast_scalp", 0.9, "baseline_scalp")
     bump("scalp_exit", 0.8, "exit_guard")
+    bump("scalp_core", 0.6, "baseline_scalp_core")
+    bump("mm_lite", 0.3, "baseline_mm_lite")
 
     # Macro/trend
     if trending:
         bump("macro_core", 0.9, "h4_trend")
+        bump("trend_h1", 0.5, "trend_confirmed")
     if high_vol and trending:
         bump("mtf_breakout", 0.8, "high_vol_trend")
     if session in {"london", "ny"} and mid_vol:
@@ -424,17 +509,41 @@ def _select_worker_targets(fac_m1: dict, fac_h4: dict, now: datetime.datetime) -
     if low_vol or range_like:
         bump("pullback_scalp", 0.8, "range_low_vol")
         bump("vol_squeeze", 0.4, "range_compression")
+        bump("pullback_s5", 0.45, "range_s5")
+        bump("pullback_runner_s5", 0.4, "range_runner")
+        bump("vwap_magnet_s5", 0.35, "vwap_range")
+        bump("onepip_maker_s1", 0.4, "low_vol_onepip")
+        if compression:
+            bump("squeeze_break_s5", 0.35, "compression_break")
+
+    # Spike/impulse style entries
+    if spike_like:
+        bump("impulse_break_s5", 0.45, "impulse_break")
+        bump("impulse_momentum_s5", 0.4, "impulse_momentum")
+        bump("impulse_retest_s5", 0.35, "impulse_retest")
+        bump("stop_run_reversal", 0.35, "stop_run")
+        bump("mirror_spike", 0.4, "spike_reversal")
+        bump("mirror_spike_s5", 0.35, "spike_reversal_s5")
+        bump("mirror_spike_tight", 0.35, "spike_reversal_tight")
+
+    # Session open bias
+    if now.minute < 20:
+        bump("session_open", 0.3, f"session_{session}_open")
 
     # Safety: avoid overloading tiny VM
     limit = max(1, min(8, WORKER_AUTOCONTROL_LIMIT))
     picked = sorted(scores.items(), key=lambda x: x[1], reverse=True)[:limit]
     selected = {name for name, _ in picked}
     logging.info(
-        "[WORKER_CTL] plan session=%s atr=%.2f vol5m=%.2f trend=%.2f selected=%s reasons=%s",
+        "[WORKER_CTL] plan session=%s atr(m1/m5/h1)=%.2f/%.2f/%.2f vol=%.2f/%.2f adx(h4/h1)=%.1f/%.1f selected=%s reasons=%s",
         session,
-        atr_pips,
+        atr_m1,
+        atr_m5,
+        atr_h1,
         vol_5m,
+        vol_m5,
         adx_h4,
+        adx_h1,
         ",".join(sorted(selected)),
         {k: reasons.get(k, "") for k in selected},
     )
@@ -463,16 +572,20 @@ async def _reconcile_worker_services(previous: set[str], desired: set[str]) -> N
     to_stop = previous - desired
     if not to_start and not to_stop:
         return
+    now = datetime.datetime.utcnow()
+    missing_units: list[str] = []
     for svc in to_start:
         unit = WORKER_SERVICES.get(svc)
         if not unit:
-            logging.debug("[WORKER_CTL] no unit for %s", svc)
+            missing_units.append(svc)
             continue
         ok = await _systemctl("start", unit)
         if ok:
             logging.info("[WORKER_CTL] started %s (%s)", svc, unit)
+            log_metric("worker_start", 1.0, tags={"service": svc, "unit": unit, "result": "started"}, ts=now)
         else:
             logging.warning("[WORKER_CTL] failed to start %s (%s)", svc, unit)
+            log_metric("worker_start", 0.0, tags={"service": svc, "unit": unit, "result": "failed"}, ts=now)
     for svc in to_stop:
         unit = WORKER_SERVICES.get(svc)
         if not unit:
@@ -480,8 +593,14 @@ async def _reconcile_worker_services(previous: set[str], desired: set[str]) -> N
         ok = await _systemctl("stop", unit)
         if ok:
             logging.info("[WORKER_CTL] stopped %s (%s)", svc, unit)
+            log_metric("worker_stop", 1.0, tags={"service": svc, "unit": unit, "result": "stopped"}, ts=now)
         else:
             logging.warning("[WORKER_CTL] failed to stop %s (%s)", svc, unit)
+            log_metric("worker_stop", 0.0, tags={"service": svc, "unit": unit, "result": "failed"}, ts=now)
+    if missing_units:
+        logging.warning("[WORKER_CTL] units missing for selected services: %s", ",".join(sorted(missing_units)))
+        for svc in missing_units:
+            log_metric("worker_missing_unit", 1.0, tags={"service": svc}, ts=now)
 
 
 class GPTDecisionState:
@@ -1686,13 +1805,21 @@ async def logic_loop(
                 fac_m1["recent_ticks"] = []
                 fac_m1["recent_tick_summary"] = {}
             if WORKER_AUTOCONTROL_ENABLED:
-                try:
-                    desired_workers = _select_worker_targets(fac_m1, fac_h4, now)
-                    if desired_workers != last_worker_plan:
-                        await _reconcile_worker_services(last_worker_plan, desired_workers)
-                        last_worker_plan = desired_workers
-                except Exception as exc:  # pragma: no cover - defensive
-                    logging.debug("[WORKER_CTL] reconcile failed: %s", exc)
+                if not fac_m5 or not fac_h1 or not fac_m5.get("close") or not fac_h1.get("close"):
+                    if loop_counter % 12 == 0:  # ~1分毎に控えめログ
+                        logging.info(
+                            "[WORKER_CTL] waiting for M5/H1 factors m5=%s h1=%s",
+                            bool(fac_m5 and fac_m5.get("close")),
+                            bool(fac_h1 and fac_h1.get("close")),
+                        )
+                else:
+                    try:
+                        desired_workers = _select_worker_targets(fac_m1, fac_m5, fac_h1, fac_h4, now)
+                        if desired_workers != last_worker_plan:
+                            await _reconcile_worker_services(last_worker_plan, desired_workers)
+                            last_worker_plan = desired_workers
+                    except Exception as exc:  # pragma: no cover - defensive
+                        logging.debug("[WORKER_CTL] reconcile failed: %s", exc)
             if loop_counter % 5 == 0:
                 latest_epoch = None
                 if recent_tick_rows:

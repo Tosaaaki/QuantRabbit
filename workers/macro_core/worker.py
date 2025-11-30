@@ -44,4 +44,10 @@ async def macro_core_worker() -> None:
 
 
 if __name__ == "__main__":  # pragma: no cover
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s - %(levelname)s - %(message)s",
+        force=True,
+    )
+    LOG.info("%s worker starting", config.LOG_PREFIX)
     asyncio.run(macro_core_worker())

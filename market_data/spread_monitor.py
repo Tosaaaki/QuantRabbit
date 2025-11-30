@@ -16,6 +16,8 @@ import os
 
 from utils.secrets import get_secret
 
+_FALSEY = {"", "0", "false", "no"}
+
 PIP_VALUE = 0.01  # USD/JPY で 1 pip = 0.01
 
 
@@ -69,12 +71,32 @@ SPIKE_FORGIVE_PIPS = _load_float(
     "spread_guard_spike_forgive_pips", max(MAX_SPREAD_PIPS * 2.0, MAX_SPREAD_PIPS + 0.5)
 )
 SPIKE_FORGIVE_PCT = _load_float("spread_guard_spike_forgive_pct", 95.0, minimum=50.0)
-DISABLE_SPREAD_GUARD = os.getenv("SPREAD_GUARD_DISABLE", "0").strip().lower() not in {
-    "",
-    "0",
-    "false",
-    "no",
-}
+
+
+def _bool_from_sources(*keys: str, default: str = "0") -> bool:
+    """
+    Resolve a boolean-ish value from environment or config/env.toml (via get_secret).
+    The first found key is used; values in {"", "0", "false", "no"} are treated as False.
+    """
+    for key in keys:
+        env = os.getenv(key)
+        if env is not None:
+            return env.strip().lower() not in _FALSEY
+    for key in keys:
+        try:
+            raw = get_secret(key)
+        except Exception:
+            continue
+        if raw is not None:
+            return str(raw).strip().lower() not in _FALSEY
+    return str(default).strip().lower() not in _FALSEY
+
+
+DISABLE_SPREAD_GUARD = _bool_from_sources(
+    "SPREAD_GUARD_DISABLE", "SPREAD_GUARD_DISABLED", "DISABLE_SPREAD_GUARD"
+)
+if DISABLE_SPREAD_GUARD:
+    logging.warning("[SPREAD] Guard disabled via SPREAD_GUARD_DISABLE")
 
 # 上限を設け過去履歴が無限に伸びるのを防ぐ
 _HISTORY_MAX_LEN = 180

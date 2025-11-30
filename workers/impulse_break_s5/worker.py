@@ -522,3 +522,13 @@ async def _manage_open_trades(
                 if ok:
                     state.last_trail_sl = desired_sl
                     state.last_update = now_monotonic
+
+
+if __name__ == "__main__":  # pragma: no cover
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s - %(levelname)s - %(message)s",
+        force=True,
+    )
+    LOG.info("%s worker boot (loop %.2fs)", config.LOG_PREFIX, config.LOOP_INTERVAL_SEC)
+    asyncio.run(impulse_break_s5_worker())
