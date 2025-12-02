@@ -162,6 +162,9 @@ class StageTracker:
             os.getenv("LOSS_CLUSTER_WINDOW_MIN", str(_LOSS_WINDOW_MINUTES)) or _LOSS_WINDOW_MINUTES
         )
         self._loss_decay_minutes = int(os.getenv("LOSS_STREAK_DECAY_MINUTES", "120") or 120)
+        self._cooldown_disabled = (
+            str(os.getenv("DISABLE_ALL_COOLDOWNS", "")).strip().lower() in {"1", "true", "yes"}
+        )
         self._cluster_last_trade_id: Dict[str, int] = {}
         for row in self._con.execute(
             "SELECT pocket, MAX(trade_id) AS last_id FROM pocket_loss_window GROUP BY pocket"
@@ -176,6 +179,8 @@ class StageTracker:
         self._con.close()
 
     def clear_expired(self, now: datetime) -> None:
+        if self._cooldown_disabled:
+            return
         now = _coerce_utc(now)
         ts = now.isoformat()
         self._con.execute(
@@ -228,6 +233,8 @@ class StageTracker:
         seconds: int,
         now: Optional[datetime] = None,
     ) -> None:
+        if self._cooldown_disabled:
+            return
         base = _coerce_utc(now)
         cooldown_until = base + timedelta(seconds=max(1, seconds))
         self._con.execute(
@@ -255,6 +262,8 @@ class StageTracker:
         Ensure the cooldown for (pocket, direction) is at least the requested duration.
         Returns True if the cooldown was extended or set, False if existing cooldown was longer.
         """
+        if self._cooldown_disabled:
+            return False
         current = _coerce_utc(now)
         desired_until = current + timedelta(seconds=max(1, seconds))
         info = self.get_cooldown(pocket, direction, now=current)
@@ -328,7 +337,7 @@ class StageTracker:
             (ts, pocket, direction, float(required_sec), float(actual_sec), reason),
         )
         self._con.commit()
-        if cooldown_seconds > 0:
+        if cooldown_seconds > 0 and not self._cooldown_disabled:
             current = _coerce_utc(now)
             self.ensure_cooldown(
                 pocket,
@@ -346,6 +355,8 @@ class StageTracker:
         seconds: int,
         now: Optional[datetime] = None,
     ) -> None:
+        if self._cooldown_disabled:
+            return
         if not strategy:
             return
         base = _coerce_utc(now)
@@ -365,6 +376,8 @@ class StageTracker:
     def is_strategy_blocked(
         self, strategy: str, now: Optional[datetime] = None
     ) -> Tuple[bool, Optional[int], Optional[str]]:
+        if self._cooldown_disabled:
+            return False, None, None
         if not strategy:
             return False, None, None
         row = self._con.execute(
@@ -388,6 +401,8 @@ class StageTracker:
     def get_cooldown(
         self, pocket: str, direction: str, now: Optional[datetime] = None
     ) -> Optional[CooldownInfo]:
+        if self._cooldown_disabled:
+            return None
         row = self._con.execute(
             "SELECT reason, cooldown_until FROM stage_cooldown WHERE pocket=? AND direction=?",
             (pocket, direction),
@@ -410,6 +425,8 @@ class StageTracker:
     def is_blocked(
         self, pocket: str, direction: str, now: Optional[datetime] = None
     ) -> Tuple[bool, Optional[int], Optional[str]]:
+        if self._cooldown_disabled:
+            return False, None, None
         info = self.get_cooldown(pocket, direction, now)
         if not info:
             return False, None, None
