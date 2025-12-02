@@ -120,6 +120,8 @@ RSI_EXIT_SHORT: float = float(os.getenv("FAST_SCALP_RSI_EXIT_SHORT", "58"))
 ATR_PERIOD: int = max(2, int(float(os.getenv("FAST_SCALP_ATR_PERIOD", "8"))))
 ATR_LOW_VOL_PIPS: float = max(0.0, float(os.getenv("FAST_SCALP_ATR_LOW_VOL_PIPS", "1.4")))
 ATR_HIGH_VOL_PIPS: float = max(0.0, float(os.getenv("FAST_SCALP_ATR_HIGH_VOL_PIPS", "4.0")))
+# When tick-derived ATR falls below this floor, fall back to an extended window.
+ATR_FLOOR_PIPS: float = max(0.0, float(os.getenv("FAST_SCALP_ATR_FLOOR_PIPS", "0.6")))
 
 _MIN_TICK_ENV = int(float(os.getenv("FAST_SCALP_MIN_TICK_COUNT", "14")))
 MIN_TICK_COUNT: int = max(RSI_PERIOD + 2, ATR_PERIOD + 1, _MIN_TICK_ENV)

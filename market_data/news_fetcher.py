@@ -32,6 +32,11 @@ from google.cloud import storage
 FETCH_LIMIT = int(os.environ.get("NEWS_FETCH_MAX", "20"))
 FETCH_INTERVAL_SECONDS = int(os.environ.get("NEWS_FETCH_INTERVAL_SEC", "300"))
 MIN_IMPACT = int(os.environ.get("NEWS_MIN_IMPACT", "2"))  # 2=medium, 3=high
+NEWS_FETCH_DISABLED = os.environ.get("NEWS_FETCH_DISABLED", "").lower() in {
+    "1",
+    "true",
+    "yes",
+}
 
 # env.toml 優先で GCS バケットを決定
 try:
@@ -244,6 +249,9 @@ def _fetch_faireconomy_events(limit: int) -> List[dict]:
 # --- メイン処理 -------------------------------------------------------------
 
 async def fetch_loop():
+    if NEWS_FETCH_DISABLED:
+        logging.warning("[NEWS] fetch loop disabled via NEWS_FETCH_DISABLED=1")
+        return
     logging.info("[NEWS] fetch loop started interval=%ss limit=%s", FETCH_INTERVAL_SECONDS, FETCH_LIMIT)
     while True:
         await _rss_once()

@@ -13,7 +13,6 @@ from typing import Any, Dict, List, Optional, Set
 
 from analysis import policy_bus
 from analysis.range_guard import detect_range_mode
-from analysis.summary_ingestor import get_latest_news
 from analytics.realtime_metrics_client import (
     ConfidencePolicy,
     RealtimeMetricsClient,
@@ -36,7 +35,6 @@ from strategies.micro.range_break import MicroRangeBreak
 from strategies.micro.pullback_ema import MicroPullbackEMA
 from strategies.micro.momentum_stack import MicroMomentumStack
 from strategies.micro.level_reactor import MicroLevelReactor
-from strategies.news.spike_reversal import NewsSpikeReversal
 from utils.metrics_logger import log_metric
 from utils.oanda_account import get_account_snapshot
 from analysis.perf_monitor import snapshot as get_perf
@@ -56,7 +54,6 @@ DEFAULT_STRATEGIES = [
     "MicroPullbackEMA",
     "MicroLevelReactor",
     "MomentumBurst",
-    "NewsSpikeReversal",
 ]
 POCKET_STRATEGY_MAP = {
     "micro": {
@@ -67,7 +64,6 @@ POCKET_STRATEGY_MAP = {
         "MicroPullbackEMA",
         "MicroLevelReactor",
         "MomentumBurst",
-        "NewsSpikeReversal",
     }
 }
 BASE_RISK_PCT = 0.02
@@ -81,7 +77,6 @@ STRATEGY_CLASSES = {
     "MicroPullbackEMA": MicroPullbackEMA,
     "MicroLevelReactor": MicroLevelReactor,
     "MomentumBurst": MomentumBurstMicro,
-    "NewsSpikeReversal": NewsSpikeReversal,
 }
 def _env_set(name: str, default: str = "") -> set[str]:
     raw = os.getenv(name)
@@ -617,7 +612,6 @@ async def micro_core_worker() -> None:
             pref_range = [
                 "MicroRangeBreak",
                 "BB_RSI",
-                "NewsSpikeReversal",
                 "MicroMomentumStack",
                 "MicroPullbackEMA",
                 "TrendMomentumMicro",
@@ -626,7 +620,6 @@ async def micro_core_worker() -> None:
                 "TrendMomentumMicro",
                 "MicroMomentumStack",
                 "MicroPullbackEMA",
-                "NewsSpikeReversal",
                 "BB_RSI",
                 "MicroRangeBreak",
             ]
@@ -637,7 +630,6 @@ async def micro_core_worker() -> None:
                 except ValueError:
                     return len(preference)
             ranked_strategies = list(dict.fromkeys(sorted(ranked_strategies, key=_sort_key)))
-            news_cache = get_latest_news()
             perf_cache = get_perf()
 
             positions = pos_manager.get_open_positions()
@@ -698,7 +690,6 @@ async def micro_core_worker() -> None:
             signals = _collect_micro_signals(
                 ranked_strategies,
                 fac_m1,
-                news_cache,
                 metrics_client,
                 confidence_policy,
                 regime_mode,
@@ -1034,14 +1025,12 @@ async def micro_core_worker() -> None:
 def _collect_micro_signals(
     ranked: List[str],
     fac_m1: dict,
-    news_cache: dict,
     metrics_client: RealtimeMetricsClient,
     confidence_policy: ConfidencePolicy,
     regime_mode: str,
     regime_direction: str,
 ) -> List[dict]:
     signals: List[dict] = []
-    news_short = news_cache.get("short", [])
     try:
         ma10 = float(fac_m1.get("ma10"))
         ma20 = float(fac_m1.get("ma20"))
@@ -1083,9 +1072,9 @@ def _collect_micro_signals(
         if sname == "MicroMomentumStack" and not allow_stack:
             continue
         if sname == "NewsSpikeReversal":
-            raw_signal = cls.check(fac_m1, news_short)
-        else:
-            raw_signal = cls.check(fac_m1)
+            LOG.info("%s skip NewsSpikeReversal (news feed removed)", config.LOG_PREFIX)
+            continue
+        raw_signal = cls.check(fac_m1)
 
         if not raw_signal:
             continue
@@ -1104,8 +1093,6 @@ def _collect_micro_signals(
             "confidence": int(raw_signal.get("confidence", 50) or 50),
             "tag": raw_signal.get("tag", sname),
         }
-        if sname == "NewsSpikeReversal" and allow_trend:
-            signal["confidence"] = int(signal["confidence"] * 0.7)
         # Apply strategy health scaling
         confidence_policy.reset()
         health = metrics_client.evaluate(sname, POCKET)

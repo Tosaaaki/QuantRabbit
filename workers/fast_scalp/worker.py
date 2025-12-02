@@ -413,6 +413,16 @@ async def fast_scalp_worker(shared_state: Optional[FastScalpState] = None) -> No
                 low_quality = True
 
             if low_quality:
+                logger.info(
+                    "%s low-vol check atr=%.3f ticks=%d span=%.2fs thr_atr=%.2f thr_ticks=%d span_ok=%s",
+                    config.LOG_PREFIX_TICK,
+                    (features.atr_pips if features.atr_pips is not None else -1.0),
+                    features.tick_count,
+                    features.span_seconds,
+                    config.MIN_ENTRY_ATR_PIPS,
+                    config.MIN_ENTRY_TICK_COUNT,
+                    span_ok,
+                )
                 low_vol_counter += 1
                 if (
                     config.LOW_VOL_COOLDOWN_SEC > 0

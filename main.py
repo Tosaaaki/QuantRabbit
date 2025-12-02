@@ -19,10 +19,6 @@ from analysis.regime_classifier import classify
 from analysis.focus_decider import decide_focus
 from analysis.gpt_decider import get_decision, fallback_decision
 from analysis.perf_monitor import snapshot as get_perf
-from analysis.summary_ingestor import check_event_soon, get_latest_news
-# バックグラウンドでニュース取得と要約を実行するためのインポート
-from market_data.news_fetcher import fetch_loop as news_fetch_loop
-from analysis.summary_ingestor import ingest_loop as summary_ingest_loop
 from analytics.insight_client import InsightClient
 from analysis.range_guard import detect_range_mode
 import os
@@ -60,7 +56,6 @@ from analytics.realtime_metrics_client import (
 from strategies.trend.ma_cross import MovingAverageCross
 from strategies.breakout.donchian55 import Donchian55
 from strategies.mean_reversion.bb_rsi import BBRsi
-from strategies.news.spike_reversal import NewsSpikeReversal
 from strategies.scalping.m1_scalper import M1Scalper
 from strategies.scalping.range_fader import RangeFader
 from strategies.scalping.pulse_break import PulseBreak
@@ -74,7 +69,6 @@ from advisors.focus_override import FocusOverrideAdvisor
 from advisors.volatility_bias import VolatilityBiasAdvisor
 from advisors.stage_plan import StagePlanAdvisor
 from advisors.partial_reduction import PartialReductionAdvisor
-from advisors.news_bias import NewsBiasAdvisor
 from autotune.scalp_trainer import start_background_autotune
 from workers.fast_scalp import FastScalpState, fast_scalp_worker
 
@@ -91,7 +85,6 @@ STRATEGIES = {
     "TrendMA": MovingAverageCross,
     "Donchian55": Donchian55,
     "BB_RSI": BBRsi,
-    "NewsSpikeReversal": NewsSpikeReversal,
     "M1Scalper": M1Scalper,
     "RangeFader": RangeFader,
     "PulseBreak": PulseBreak,
@@ -99,7 +92,7 @@ STRATEGIES = {
 
 POCKET_STRATEGY_MAP = {
     "macro": {"TrendMA", "Donchian55"},
-    "micro": {"BB_RSI", "NewsSpikeReversal"},
+    "micro": {"BB_RSI"},
     "scalp": {"M1Scalper", "RangeFader", "PulseBreak"},
 }
 
@@ -227,12 +220,6 @@ except Exception as exc:  # pragma: no cover - defensive
     logging.warning("[PARTIAL_ADVISOR] init failed: %s", exc)
     PARTIAL_ADVISOR = None
 
-try:
-    NEWS_BIAS_ADVISOR = NewsBiasAdvisor()
-except Exception as exc:  # pragma: no cover - defensive
-    logging.warning("[NEWS_BIAS_ADVISOR] init failed: %s", exc)
-    NEWS_BIAS_ADVISOR = None
-
 PIP = 0.01
 _MACRO_PULLBACK_MIN_RETRACE_PIPS = {
     1: 4.8,
@@ -306,7 +293,6 @@ GPT_FACTOR_KEYS: Dict[str, tuple[str, ...]] = {
         "rsi",
     ),
 }
-NEWS_LIMITS = {"short": 2, "long": 2}
 # systemd service mapping for auxiliary workers (optional; may fail if units are absent)
 WORKER_SERVICES = {
     # names must match actual systemd unit filenames (underscores)
@@ -754,16 +740,6 @@ def _gpt_payload_signature(
     factors_h4 = payload.get("factors_h4") or {}
     factors_d1 = payload.get("factors_d1") or {}
     perf = payload.get("perf") or {}
-    news_short = payload.get("news_short") or []
-    latest_news = None
-    if isinstance(news_short, list) and news_short:
-        top = news_short[0]
-        if isinstance(top, dict):
-            latest_news = {
-                "source": top.get("source"),
-                "headline": top.get("headline"),
-                "published_at": str(top.get("published_at")),
-            }
     perf_snapshot = {}
     for key, value in perf.items():
         if isinstance(value, (int, float)):
@@ -817,7 +793,6 @@ def _gpt_payload_signature(
             "ma20": _hashable_float(factors_d1.get("ma20"), 4),
         },
         "perf": perf_snapshot,
-        "news": latest_news,
     }
     serialized = json.dumps(key_data, sort_keys=True, separators=(",", ":"))
     return hashlib.sha1(serialized.encode("utf-8")).hexdigest()
@@ -941,11 +916,7 @@ async def prime_gpt_decision(
             continue
 
         perf_cache = get_perf()
-        news_cache = get_latest_news(
-            limit_short=NEWS_LIMITS["short"],
-            limit_long=NEWS_LIMITS["long"],
-        )
-        event_soon = check_event_soon(within_minutes=30, min_impact=3)
+        event_soon = False
         payload = {
             "ts": datetime.datetime.utcnow().isoformat(timespec="seconds"),
             "reg_macro": classify(fac_h4, "H4", event_mode=event_soon),
@@ -961,8 +932,6 @@ async def prime_gpt_decision(
                 for pocket, metrics in (perf_cache or {}).items()
                 if metrics
             },
-            "news_short": news_cache.get("short", []),
-            "news_long": news_cache.get("long", []),
             "event_soon": event_soon,
         }
         signature = _gpt_payload_signature(
@@ -1379,7 +1348,6 @@ def _evaluate_high_impact_context(
     fac_m1: dict[str, float],
     fac_h4: dict[str, float],
     story_snapshot: Optional[ChartStorySnapshot],
-    news_bias_hint,
     macro_regime: Optional[str],
     momentum: float,
     atr_pips: float,
@@ -1404,16 +1372,6 @@ def _evaluate_high_impact_context(
     except (TypeError, ValueError):
         slope_h4 = 0.0
 
-    news_bias = None
-    news_conf = None
-    try:
-        if news_bias_hint and getattr(news_bias_hint, "biases", None):
-            news_bias = float(news_bias_hint.biases.get("macro", 0.0))
-            news_conf = float(getattr(news_bias_hint, "confidence", None) or 0.0)
-    except (TypeError, ValueError):
-        news_bias = None
-        news_conf = None
-
     direction_sign = 1.0 if direction == "long" else -1.0
     directional_momentum = direction_sign * float(momentum)
 
@@ -1431,11 +1389,8 @@ def _evaluate_high_impact_context(
         or (direction == "long" and higher_story == "up")
         or (direction == "short" and higher_story == "down")
     )
-    news_ok = news_bias is None or (direction == "long" and news_bias >= -0.05) or (
-        direction == "short" and news_bias <= 0.05
-    )
 
-    if not (strong_trend and momentum_ok and story_ok and higher_ok and news_ok):
+    if not (strong_trend and momentum_ok and story_ok and higher_ok):
         return None
 
     reason_parts = []
@@ -1443,8 +1398,6 @@ def _evaluate_high_impact_context(
         reason_parts.append(f"adx={adx_h4:.1f}")
     if momentum_ok:
         reason_parts.append(f"momentum={directional_momentum:.4f}")
-    if news_bias is not None:
-        reason_parts.append(f"news={news_bias:.2f}")
     if win_streak > 0:
         reason_parts.append(f"win_streak={win_streak}")
     if macro_regime:
@@ -1457,8 +1410,6 @@ def _evaluate_high_impact_context(
         "win_streak": win_streak,
         "adx_h4": adx_h4,
         "momentum": directional_momentum,
-        "news_bias_macro": news_bias,
-        "news_bias_confidence": news_conf,
         "atr_pips": atr_pips,
     }
 
@@ -1478,20 +1429,9 @@ def _build_entry_context(
     vol_5m: float,
     lose_streak: int,
     win_streak: int,
-    news_bias_hint,
     high_impact_enabled: bool,
     high_impact_reason: Optional[str],
 ) -> Dict[str, object]:
-    news_bias = None
-    news_conf = None
-    try:
-        if news_bias_hint and getattr(news_bias_hint, "biases", None):
-            news_bias = float(news_bias_hint.biases.get("macro", 0.0))
-            news_conf = float(getattr(news_bias_hint, "confidence", None) or 0.0)
-    except (TypeError, ValueError):
-        news_bias = None
-        news_conf = None
-
     context: Dict[str, object] = {
         "pocket": pocket,
         "direction": direction,
@@ -1506,8 +1446,6 @@ def _build_entry_context(
         "vol_5m": round(float(vol_5m), 4),
         "lose_streak": int(lose_streak),
         "win_streak": int(win_streak),
-        "news_bias_macro": news_bias,
-        "news_bias_confidence": news_conf,
         "high_impact_override": bool(high_impact_enabled),
     }
     if high_impact_reason:
@@ -1651,7 +1589,6 @@ async def d1_candle_handler(cndl: Candle):
 async def logic_loop(
     gpt_state: GPTDecisionState,
     gpt_requests: GPTRequestManager,
-    news_cache_supplier=None,
     fast_scalp_state: FastScalpState | None = None,
     *,
     rr_advisor: RRRatioAdvisor | None = None,
@@ -1661,7 +1598,6 @@ async def logic_loop(
     volatility_advisor: VolatilityBiasAdvisor | None = None,
     stage_plan_advisor: StagePlanAdvisor | None = None,
     partial_advisor: PartialReductionAdvisor | None = None,
-    news_bias_advisor: NewsBiasAdvisor | None = None,
 ):
     pos_manager = PositionManager()
     metrics_client = RealtimeMetricsClient()
@@ -1671,7 +1607,6 @@ async def logic_loop(
     param_context = ParamContext()
     chart_story = ChartStory()
     perf_cache = {}
-    news_cache = {}
     insight = InsightClient()
     last_update_time = datetime.datetime.min
     last_heartbeat_time = datetime.datetime.min  # Add this line
@@ -1740,20 +1675,15 @@ async def logic_loop(
                 )
                 last_heartbeat_time = now
 
-            # 5分ごとにパフォーマンスとニュースを更新
+            # 5分ごとにパフォーマンスを更新
             if (now - last_update_time).total_seconds() >= 300:
                 perf_cache = get_perf()
-                news_cache = get_latest_news(
-                    limit_short=NEWS_LIMITS["short"],
-                    limit_long=NEWS_LIMITS["long"],
-                )
                 try:
                     insight.refresh()
                 except Exception:
                     pass
                 last_update_time = now
                 logging.info(f"[PERF] Updated: {perf_cache}")
-                logging.info(f"[NEWS] Updated: {news_cache}")
 
             # --- 1. 状況分析 ---
             factors = all_factors()
@@ -1855,7 +1785,7 @@ async def logic_loop(
             if close_px_value is not None and ema20_value is not None:
                 momentum = close_px_value - ema20_value
 
-            event_soon = check_event_soon(within_minutes=30, min_impact=3)
+            event_soon = False
             global_drawdown_exceeded = check_global_drawdown()
 
             if global_drawdown_exceeded:
@@ -2258,11 +2188,9 @@ async def logic_loop(
                         for key, val in (metrics or {}).items()
                         if key in GPT_PERF_KEYS and val not in (None, "")
                     }
-                    for pocket, metrics in (perf_cache or {}).items()
-                    if metrics
+                for pocket, metrics in (perf_cache or {}).items()
+                if metrics
                 },
-                "news_short": news_cache.get("short", []),
-                "news_long": news_cache.get("long", []),
                 "event_soon": event_soon,
             }
             payload_signature = _gpt_payload_signature(
@@ -2323,6 +2251,8 @@ async def logic_loop(
                 reuse_reason,
             )
             ranked_strategies = list(gpt.get("ranked_strategies", []))
+            gpt_strategy_allowlist = set(ranked_strategies)
+            auto_injected_strategies: set[str] = set()
             weight_scalp = None
             if raw_weight_scalp is not None:
                 try:
@@ -2342,8 +2272,6 @@ async def logic_loop(
                     "event_soon": event_soon,
                     "d1": _factor_snapshot(fac_d1),
                     "h4": _factor_snapshot(fac_h4),
-                    "news_short": (news_cache.get("short", []) if news_cache else [])[:3],
-                    "news_long": (news_cache.get("long", []) if news_cache else [])[:2],
                     "gpt_focus": gpt.get("focus_tag"),
                     "gpt_weight_macro": gpt.get("weight_macro"),
                     "gpt_weight_scalp": gpt.get("weight_scalp"),
@@ -2636,32 +2564,6 @@ async def logic_loop(
                 scalp_hint = max(min(weight_scalp, 1.0), 0.0)
             micro_hint = max(1.0 - macro_hint - scalp_hint, 0.0)
 
-            news_bias_hint = None
-            if news_bias_advisor and news_bias_advisor.enabled:
-                bias_context = {
-                    "reg_macro": macro_regime,
-                    "reg_micro": micro_regime,
-                    "range_active": range_active,
-                    "event_soon": event_soon,
-                    "news_short": (news_cache.get("short", []) if news_cache else [])[:5],
-                    "news_long": (news_cache.get("long", []) if news_cache else [])[:3],
-                }
-                try:
-                    news_bias_hint = await news_bias_advisor.advise(bias_context)
-                except Exception as exc:  # pragma: no cover
-                    logging.debug("[NEWS_BIAS] failed: %s", exc)
-                    news_bias_hint = None
-                if news_bias_hint and news_bias_hint.confidence >= 0.4:
-                    macro_hint = _clamp(macro_hint + news_bias_hint.biases.get("macro", 0.0), 0.0, 1.0)
-                    micro_hint = _clamp(micro_hint + news_bias_hint.biases.get("micro", 0.0), 0.0, 1.0)
-                    scalp_hint = _clamp(scalp_hint + news_bias_hint.biases.get("scalp", 0.0), 0.0, 1.0)
-                    log_metric(
-                        "news_bias_hint",
-                        float(news_bias_hint.biases.get("macro", 0.0)),
-                        tags={"confidence": f"{news_bias_hint.confidence:.2f}"},
-                        ts=now,
-                    )
-
             stage_tracker.set_weight_hint("macro", macro_hint)
             stage_tracker.set_weight_hint("micro", micro_hint)
             stage_tracker.set_weight_hint("scalp", scalp_hint if weight_scalp is not None else None)
@@ -2769,12 +2671,15 @@ async def logic_loop(
                 and scalp_weight_ok
             ):
                 ranked_strategies.append("M1Scalper")
+                auto_injected_strategies.add("M1Scalper")
             if os.getenv("SCALP_TACTICAL", "0").strip().lower() not in {"","0","false","no"}:
                 focus_pockets.add("scalp")
                 if "M1Scalper" not in ranked_strategies:
                     ranked_strategies.append("M1Scalper")
+                    auto_injected_strategies.add("M1Scalper")
                 if "BB_RSI" not in ranked_strategies:
                     ranked_strategies.append("BB_RSI")
+                    auto_injected_strategies.add("BB_RSI")
 
                 logging.info(
                     "[SCALP-MAIN] Auto-added M1Scalper (mode=%s ATR %.2f momentum %.4f vol5m %.2f).",
@@ -2792,6 +2697,7 @@ async def logic_loop(
                 and scalp_weight_ok
             ):
                 ranked_strategies.append("RangeFader")
+                auto_injected_strategies.add("RangeFader")
                 logging.info(
                     "[SCALP-MAIN] Range mode: auto-added RangeFader (score=%.2f bbw=%.2f atr=%.2f).",
                     range_ctx.score,
@@ -2809,6 +2715,7 @@ async def logic_loop(
                 and (vol_5m or 0.0) >= PULSEBREAK_AUTO_VOL_MIN
             ):
                 ranked_strategies.append("PulseBreak")
+                auto_injected_strategies.add("PulseBreak")
                 logging.info(
                     "[SCALP-MAIN] Auto-added PulseBreak (mom=%.4f atr=%.2f vol5m=%.2f).",
                     momentum,
@@ -2862,9 +2769,19 @@ async def logic_loop(
                     logging.info("[RANGE] skip %s in range mode.", sname)
                     continue
                 if sname == "NewsSpikeReversal":
-                    raw_signal = cls.check(fac_m1, news_cache.get("short", []))
-                else:
-                    raw_signal = cls.check(fac_m1)
+                    logging.info("[SKIP] NewsSpikeReversal disabled (news feed removed).")
+                    continue
+                if (
+                    gpt_strategy_allowlist
+                    and sname not in gpt_strategy_allowlist
+                    and sname not in auto_injected_strategies
+                ):
+                    logging.info(
+                        "[STRAT_GUARD] skip %s (not in GPT ranked_strategies)",
+                        sname,
+                    )
+                    continue
+                raw_signal = cls.check(fac_m1)
                 if not raw_signal:
                     if FORCE_SCALP_MODE and pocket == "scalp":
                         logging.warning("[FORCE_SCALP] %s returned None", sname)
@@ -3069,8 +2986,6 @@ async def logic_loop(
                             "factors_h1": _factor_snapshot(fac_h1),
                             "factors_h4": _factor_snapshot(fac_h4),
                             "factors_d1": _factor_snapshot(fac_d1),
-                            "news_short": (news_cache.get("short", []) if news_cache else [])[:2],
-                            "news_long": (news_cache.get("long", []) if news_cache else [])[:1],
                         }
                         rr_hint = await rr_advisor.advise(rr_context)
                     except Exception as exc:  # pragma: no cover - defensive
@@ -3197,7 +3112,6 @@ async def logic_loop(
                         fac_h4=fac_h4,
                         fac_h1=fac_h1,
                         fac_d1=fac_d1,
-                        news_cache=news_cache,
                         range_active=range_active,
                         now=now,
                     )
@@ -3708,7 +3622,6 @@ async def logic_loop(
                     fac_m1=fac_m1,
                     fac_h4=fac_h4,
                     story_snapshot=story_snapshot,
-                    news_bias_hint=news_bias_hint,
                     macro_regime=macro_regime,
                     momentum=momentum,
                     atr_pips=atr_pips,
@@ -3977,7 +3890,6 @@ async def logic_loop(
                     fac_m1=fac_m1,
                     fac_h4=fac_h4,
                     story_snapshot=story_snapshot,
-                    news_bias_hint=news_bias_hint,
                     macro_regime=macro_regime,
                     momentum=momentum,
                     atr_pips=atr_pips,
@@ -4029,7 +3941,6 @@ async def logic_loop(
                     vol_5m=vol_5m,
                     lose_streak=lose_streak,
                     win_streak=win_streak,
-                    news_bias_hint=news_bias_hint,
                     high_impact_enabled=bool(
                         high_impact_context and high_impact_context.get("enabled")
                     ),
@@ -4333,7 +4244,6 @@ async def main():
                             volatility_advisor=VOLATILITY_ADVISOR,
                             stage_plan_advisor=STAGE_PLAN_ADVISOR,
                             partial_advisor=PARTIAL_ADVISOR,
-                            news_bias_advisor=NEWS_BIAS_ADVISOR,
                         ),
                     )
                 ),

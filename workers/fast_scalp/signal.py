@@ -128,6 +128,21 @@ def _resolve_indicators(mids: list[float]) -> tuple[Optional[float], str, Option
                 if atr_ext is not None:
                     atr_pips = atr_ext
                     atr_source = "extended"
+    # If ATR is unrealistically small, attempt a wider window fallback before treating as low-vol.
+    if atr_pips is not None and atr_pips < config.ATR_FLOOR_PIPS:
+        extended_ticks = tick_window.recent_ticks(
+            seconds=min(config.LONG_WINDOW_SEC * 6, 90.0), limit=720
+        )
+        extended_mids = [float(t["mid"]) for t in extended_ticks] if extended_ticks else []
+        if len(extended_mids) >= 2:
+            atr_ext = _compute_atr(extended_mids, config.ATR_PERIOD)
+            if atr_ext is not None and atr_ext > atr_pips:
+                atr_pips = atr_ext
+                atr_source = "extended_floor"
+        # As a final guardrail, clamp to floor so gating doesn't misfire on noisy ticks.
+        if atr_pips is not None and atr_pips < config.ATR_FLOOR_PIPS:
+            atr_pips = config.ATR_FLOOR_PIPS
+            atr_source = "floor"
 
     if rsi is None:
         rsi_source = "missing"

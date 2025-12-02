@@ -14,7 +14,6 @@ _ALLOWED_STRATEGIES = (
     "H1Momentum",
     "Donchian55",
     "BB_RSI",
-    "NewsSpikeReversal",
     "M1Scalper",
     "MomentumPulse",
     "VolCompressionBreak",
@@ -165,7 +164,7 @@ def heuristic_decision(
     ranked: List[str] = []
 
     if focus_tag == "event":
-        _enqueue_unique(ranked, ("NewsSpikeReversal", "BB_RSI"))
+        _enqueue_unique(ranked, ("BB_RSI",))
 
     if focus_tag in {"macro", "hybrid", "event"}:
         if macro_adx >= 19 or macro_gap >= 0.03:

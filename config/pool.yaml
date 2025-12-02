@@ -14,4 +14,4 @@ strategies:
   - name: NewsSpikeReversal
     sl: 10
     tp: 20
-    enabled: true
+    enabled: false
