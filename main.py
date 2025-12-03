@@ -8,6 +8,13 @@ import json
 import contextlib
 from typing import Optional, Tuple, Coroutine, Any, Dict
 
+# Safe float conversion for optional numeric inputs
+def _safe_float(value: object, default: float = 0.0) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
 from market_data.candle_fetcher import (
     Candle,
     start_candle_stream,
@@ -17,7 +24,7 @@ from market_data import spread_monitor, tick_window
 from indicators.factor_cache import all_factors, on_candle
 from analysis.regime_classifier import classify
 from analysis.focus_decider import decide_focus
-from analysis.gpt_decider import get_decision, fallback_decision
+from analysis.gpt_decider import get_decision
 from analysis.perf_monitor import snapshot as get_perf
 from analytics.insight_client import InsightClient
 from analysis.range_guard import detect_range_mode
@@ -59,6 +66,7 @@ from strategies.mean_reversion.bb_rsi import BBRsi
 from strategies.scalping.m1_scalper import M1Scalper
 from strategies.scalping.range_fader import RangeFader
 from strategies.scalping.pulse_break import PulseBreak
+from strategies.scalping.impulse_retrace import ImpulseRetraceScalp
 from utils.oanda_account import get_account_snapshot
 from utils.secrets import get_secret
 from utils.metrics_logger import log_metric
@@ -88,12 +96,13 @@ STRATEGIES = {
     "M1Scalper": M1Scalper,
     "RangeFader": RangeFader,
     "PulseBreak": PulseBreak,
+    "ImpulseRetrace": ImpulseRetraceScalp,
 }
 
 POCKET_STRATEGY_MAP = {
     "macro": {"TrendMA", "Donchian55"},
     "micro": {"BB_RSI"},
-    "scalp": {"M1Scalper", "RangeFader", "PulseBreak"},
+    "scalp": {"M1Scalper", "RangeFader", "PulseBreak", "ImpulseRetrace"},
 }
 
 FOCUS_POCKETS = {
@@ -162,20 +171,20 @@ if HEDGING_ENABLED:
 FALLBACK_EQUITY = 10000.0  # REST失敗時のフォールバック
 
 RSI_LONG_FLOOR = {
-    "macro": 40.0,
-    "micro": 40.0,
-    "scalp": 42.0,
+    "macro": 35.0,
+    "micro": 34.0,
+    "scalp": 36.0,
 }
 
 RSI_SHORT_CEILING = {
-    "macro": 60.0,
-    "micro": 60.0,
-    "scalp": 58.0,
+    "macro": 65.0,
+    "micro": 66.0,
+    "scalp": 64.0,
 }
 
 POCKET_ATR_MIN_PIPS = {
-    "micro": 2.5,
-    "scalp": 2.5,
+    "micro": 1.1,
+    "scalp": 1.1,
 }
 
 try:
@@ -259,7 +268,7 @@ SCALP_WEIGHT_READY_FLOOR = _safe_env_float(
 )
 SCALP_AUTO_MIN_WEIGHT = _safe_env_float("SCALP_AUTO_MIN_WEIGHT", 0.12, low=0.0, high=0.3)
 SCALP_CONFIDENCE_FLOOR = _safe_env_float("SCALP_CONFIDENCE_FLOOR", 0.74, low=0.4, high=1.0)
-SCALP_MIN_ABS_LOT = _safe_env_float("SCALP_MIN_ABS_LOT", 0.14, low=0.0, high=0.6)
+SCALP_MIN_ABS_LOT = _safe_env_float("SCALP_MIN_ABS_LOT", 0.05, low=0.0, high=0.6)
 PULSEBREAK_AUTO_MOM_MIN = _safe_env_float("PULSEBREAK_AUTO_MOM_MIN", 0.0018, low=0.0, high=0.02)
 PULSEBREAK_AUTO_ATR_MIN = _safe_env_float("PULSEBREAK_AUTO_ATR_MIN", 2.4, low=0.0, high=15.0)
 PULSEBREAK_AUTO_VOL_MIN = _safe_env_float("PULSEBREAK_AUTO_VOL_MIN", 1.3, low=0.0, high=5.0)
@@ -323,7 +332,8 @@ WORKER_SERVICES = {
     "onepip_maker_s1": "qr-onepip_maker_s1.service",
 }
 WORKER_AUTOCONTROL_ENABLED = os.getenv("WORKER_AUTOCONTROL", "1").strip() not in {"", "0", "false", "no"}
-WORKER_AUTOCONTROL_LIMIT = int(os.getenv("WORKER_AUTOCONTROL_LIMIT", "4") or "4")
+# Default to a higher cap so more workers can run in parallel; 0 or negative = no cap
+WORKER_AUTOCONTROL_LIMIT = int(os.getenv("WORKER_AUTOCONTROL_LIMIT", "12") or "12")
 GPT_PERF_KEYS = ("pf", "win_rate", "avg_pips", "sharpe", "sample")
 _GPT_FACTOR_PRECISION = {
     "adx": 2,
@@ -348,7 +358,7 @@ def _stage_plan(pocket: str) -> tuple[float, ...]:
 
 MIN_MACRO_STAGE_LOT = 0.03  # 3000 units baseline keeps macro entries meaningful
 MAX_MICRO_STAGE_LOT = 0.02  # cap micro scaling when momentum signals fire repeatedly
-MIN_SCALP_STAGE_LOT = 0.1  # 10k units baseline to keep scalp entries meaningful
+MIN_SCALP_STAGE_LOT = 0.06  # lower floor to allow smaller scalp entries
 DEFAULT_COOLDOWN_SECONDS = 180
 RANGE_COOLDOWN_SECONDS = 420
 GPT_MIN_INTERVAL_SECONDS = 180
@@ -517,7 +527,10 @@ def _select_worker_targets(
         bump("session_open", 0.3, f"session_{session}_open")
 
     # Safety: avoid overloading tiny VM
-    limit = max(1, min(8, WORKER_AUTOCONTROL_LIMIT))
+    if WORKER_AUTOCONTROL_LIMIT <= 0:
+        limit = len(scores)
+    else:
+        limit = max(1, min(len(scores), WORKER_AUTOCONTROL_LIMIT))
     picked = sorted(scores.items(), key=lambda x: x[1], reverse=True)[:limit]
     selected = {name for name, _ in picked}
     logging.info(
@@ -871,21 +884,11 @@ async def gpt_worker(
                 decision.get("model_used", "unknown"),
             )
         except Exception as exc:  # pragma: no cover - defensive
-            logging.warning(
-                "[GPT WORKER] failed for signature %s (%s: %s)",
+            logging.error(
+                "[GPT WORKER] decision failed signature=%s (%s: %s) - keeping previous decision",
                 signature[:10],
                 type(exc).__name__,
                 str(exc) or "no message",
-            )
-            fallback = fallback_decision(
-                payload,
-                reason="worker_fallback",
-                last_exception=exc,
-                log_reason=True,
-            )
-            await gpt_state.update(signature, fallback)
-            logging.info(
-                "[GPT WORKER] applied fallback decision signature=%s", signature[:10]
             )
         finally:
             await gpt_requests.task_done(signature)
@@ -1665,6 +1668,7 @@ async def logic_loop(
             now = datetime.datetime.utcnow()
             loop_counter += 1
             scalp_ready_forced = False
+            logging.info("[LOOP] start loop=%d", loop_counter)
             if FORCE_SCALP_MODE and loop_counter % 5 == 0:
                 logging.warning("[FORCE_SCALP] loop=%d", loop_counter)
             stage_tracker.clear_expired(now)
@@ -1728,6 +1732,47 @@ async def logic_loop(
                         tick_empty_counter,
                     )
                     tick_empty_counter = 0
+            def _range_pips_from_ticks(ticks: list[dict]) -> float:
+                hi = float("-inf")
+                lo = float("inf")
+                for t in ticks:
+                    mid = t.get("mid")
+                    if mid is None:
+                        bid = t.get("bid")
+                        ask = t.get("ask")
+                        if bid is not None and ask is not None:
+                            try:
+                                mid = (float(bid) + float(ask)) / 2.0
+                            except (TypeError, ValueError):
+                                mid = None
+                        elif bid is not None:
+                            try:
+                                mid = float(bid)
+                            except (TypeError, ValueError):
+                                mid = None
+                        elif ask is not None:
+                            try:
+                                mid = float(ask)
+                            except (TypeError, ValueError):
+                                mid = None
+                    if mid is None:
+                        continue
+                    try:
+                        mval = float(mid)
+                    except (TypeError, ValueError):
+                        continue
+                    if mval > hi:
+                        hi = mval
+                    if mval < lo:
+                        lo = mval
+                if hi == float("-inf") or lo == float("inf"):
+                    return 0.0
+                return max(0.0, (hi - lo) / 0.01)
+
+            ticks_5m = tick_window.recent_ticks(300.0, limit=2000)
+            ticks_15m = tick_window.recent_ticks(900.0, limit=4000)
+            sustained_range_5 = _range_pips_from_ticks(ticks_5m)
+            sustained_range_15 = _range_pips_from_ticks(ticks_15m)
             if recent_tick_rows:
                 fac_m1["recent_ticks"] = recent_tick_rows
                 fac_m1["recent_tick_summary"] = tick_window.summarize(75.0)
@@ -2251,6 +2296,12 @@ async def logic_loop(
                 reuse_reason,
             )
             ranked_strategies = list(gpt.get("ranked_strategies", []))
+            if not ranked_strategies:
+                logging.info(
+                    "[STRAT_EVAL_PRE] ranked_strategies empty focus=%s reason=%s",
+                    gpt.get("focus_tag"),
+                    reuse_reason,
+                )
             gpt_strategy_allowlist = set(ranked_strategies)
             auto_injected_strategies: set[str] = set()
             weight_scalp = None
@@ -2326,11 +2377,28 @@ async def logic_loop(
                 last_range_scalp_ready = scalp_ready
             else:
                 scalp_ready = (
-                    (atr_pips >= 1.0 and momentum_abs >= 0.0006)
-                    or (atr_pips >= 0.85 and vol_5m and vol_5m >= 0.7)
+                    (atr_pips >= 0.60 and momentum_abs >= 0.00030)
+                    or (atr_pips >= 0.50 and vol_5m and vol_5m >= 0.25)
                 )
-                if not scalp_ready and momentum_abs >= 0.0012:
-                    scalp_ready = atr_pips >= 0.7
+                if not scalp_ready and momentum_abs >= 0.0007:
+                    scalp_ready = atr_pips >= 0.50
+                if (
+                    not scalp_ready
+                    and atr_pips >= 0.50
+                    and (
+                        sustained_range_5 >= 1.2
+                        or sustained_range_15 >= 2.4
+                    )
+                ):
+                    scalp_ready = True
+                    logging.info(
+                        "[SCALP-MAIN] Sustained range unlock range5=%.2f range15=%.2f atr=%.2f vol5m=%s mom=%.4f",
+                        sustained_range_5,
+                        sustained_range_15,
+                        atr_pips,
+                        f"{vol_5m:.2f}" if vol_5m is not None else "n/a",
+                        momentum,
+                    )
                 last_range_scalp_ready = None
             if (
                 not scalp_ready
@@ -2558,6 +2626,14 @@ async def logic_loop(
                 for s in ranked_strategies
                 if STRATEGIES.get(s)
             }
+            if not ranked_strategies:
+                logging.info(
+                    "[WAIT] ranked_strategies empty focus=%s pockets=%s range=%s soft=%s",
+                    focus_tag,
+                    ",".join(sorted(focus_pockets)),
+                    range_active,
+                    range_soft_active,
+                )
             macro_hint = max(min(weight_macro, 1.0), 0.0)
             scalp_hint = 0.0
             if weight_scalp is not None:
@@ -2593,6 +2669,8 @@ async def logic_loop(
                 "vol5": round(vol_5m, 2) if vol_5m is not None else "n/a",
                 "momentum": round(momentum, 4),
                 "weight": round(weight_scalp, 3) if weight_scalp is not None else "n/a",
+                "rng5": round(sustained_range_5, 2),
+                "rng15": round(sustained_range_15, 2),
                 "pockets": ",".join(sorted(focus_pockets)),
                 "strategies": ",".join(ranked_strategies[:4]) if ranked_strategies else "-",
             }
@@ -2607,8 +2685,8 @@ async def logic_loop(
                     f"{weight_scalp:.3f}" if weight_scalp is not None else "n/a",
                     ranked_strategies,
                 )
-        if range_active and "macro" in focus_pockets:
-            focus_pockets.discard("macro")
+            if range_active and "macro" in focus_pockets:
+                focus_pockets.discard("macro")
 
             if (
                 last_logged_focus != focus_tag
@@ -2724,6 +2802,19 @@ async def logic_loop(
                 )
 
             evaluated_signals: list[dict] = []
+            signal_emitted = False
+            evaluated_count = 0
+            logging.info(
+                "[STRAT_EVAL_BEGIN] ranked=%s pockets=%s allow=%s focus=%s range=%s atr=%.2f vol5=%s momentum=%.4f",
+                ranked_strategies,
+                ",".join(sorted(focus_pockets)),
+                sorted(gpt_strategy_allowlist),
+                focus_tag,
+                range_active,
+                atr_pips if atr_pips is not None else -1.0,
+                f"{vol_5m:.2f}" if vol_5m is not None else "n/a",
+                momentum,
+            )
             if FORCE_SCALP_MODE:
                 logging.warning(
                     "[FORCE_SCALP] ranked_strategies=%s focus=%s pockets=%s ready=%s",
@@ -2736,7 +2827,13 @@ async def logic_loop(
                 cls = STRATEGIES.get(sname)
                 if not cls:
                     continue
+                evaluated_count += 1
                 pocket = cls.pocket
+                rsi_val = fac_m1.get("rsi")
+                adx_val = fac_m1.get("adx")
+                ma10_val = fac_m1.get("ma10")
+                ma20_val = fac_m1.get("ma20")
+                close_val = fac_m1.get("close")
                 if (
                     range_soft_active
                     and not range_active
@@ -2759,10 +2856,11 @@ async def logic_loop(
                 allowed_names = POCKET_STRATEGY_MAP.get(pocket)
                 if allowed_names and sname not in allowed_names:
                     logging.info(
-                        "[POCKET] skip %s (pocket=%s) not in whitelist %s",
+                        "[POCKET] skip %s (pocket=%s) not in whitelist %s focus=%s",
                         sname,
                         pocket,
                         sorted(allowed_names),
+                        focus_tag,
                     )
                     continue
                 if range_active and cls.name not in ALLOWED_RANGE_STRATEGIES:
@@ -2777,12 +2875,29 @@ async def logic_loop(
                     and sname not in auto_injected_strategies
                 ):
                     logging.info(
-                        "[STRAT_GUARD] skip %s (not in GPT ranked_strategies)",
+                        "[STRAT_GUARD] skip %s (not in GPT ranked_strategies) ranked=%s auto=%s",
                         sname,
+                        ranked_strategies,
+                        sorted(auto_injected_strategies),
                     )
                     continue
                 raw_signal = cls.check(fac_m1)
                 if not raw_signal:
+                    logging.info(
+                        "[STRAT_SKIP] %s pocket=%s signal=None focus=%s range=%s atr=%.2f vol5=%s momentum=%.4f rsi=%s adx=%s ma10=%s ma20=%s close=%s",
+                        sname,
+                        pocket,
+                        focus_tag,
+                        range_active,
+                        atr_pips if atr_pips is not None else -1.0,
+                        f"{vol_5m:.2f}" if vol_5m is not None else "n/a",
+                        momentum,
+                        f"{_safe_float(rsi_val):.1f}" if rsi_val is not None else "n/a",
+                        f"{_safe_float(adx_val):.1f}" if adx_val is not None else "n/a",
+                        f"{_safe_float(ma10_val):.4f}" if ma10_val is not None else "n/a",
+                        f"{_safe_float(ma20_val):.4f}" if ma20_val is not None else "n/a",
+                        f"{_safe_float(close_val):.4f}" if close_val is not None else "n/a",
+                    )
                     if FORCE_SCALP_MODE and pocket == "scalp":
                         logging.warning("[FORCE_SCALP] %s returned None", sname)
                     continue
@@ -2806,10 +2921,11 @@ async def logic_loop(
                             health.confidence_scale = 0.75
                     else:
                         logging.info(
-                            "[HEALTH] skip %s pocket=%s reason=%s",
+                            "[HEALTH] skip %s pocket=%s reason=%s conf_scale=%.2f",
                             sname,
                             cls.pocket,
                             health.reason,
+                            health.confidence_scale,
                         )
                         continue
                 signal = {
@@ -2821,6 +2937,7 @@ async def logic_loop(
                     "tp_pips": raw_signal.get("tp_pips"),
                     "tag": raw_signal.get("tag", cls.name),
                 }
+                signal_emitted = True
                 for extra_key in (
                     "entry_type",
                     "entry_price",
@@ -3129,8 +3246,6 @@ async def logic_loop(
                 stage_state=stage_snapshot,
                 pocket_profiles=recent_profiles,
                 now=now,
-                story=story_snapshot,
-                advisor_hints=advisor_hints,
             )
 
             executed_pockets: set[str] = set()
@@ -3214,7 +3329,33 @@ async def logic_loop(
                             )
 
             if not evaluated_signals:
-                logging.info("[WAIT] No actionable entry signals this cycle.")
+                logging.info(
+                    "[WAIT] No signals focus=%s pockets=%s range=%s soft=%s atr=%.2f vol5=%s mom=%.4f ranked=%s allow=%s",
+                    focus_tag,
+                    ",".join(sorted(focus_pockets)),
+                    range_active,
+                    range_soft_active,
+                    atr_pips if atr_pips is not None else -1.0,
+                    f"{vol_5m:.2f}" if vol_5m is not None else "n/a",
+                    momentum,
+                    ranked_strategies,
+                    sorted(gpt_strategy_allowlist),
+                )
+                if evaluated_count == 0:
+                    logging.info(
+                        "[WAIT] No strategies evaluated focus=%s pockets=%s gpt_allow=%s",
+                        focus_tag,
+                        ",".join(sorted(focus_pockets)),
+                        sorted(gpt_strategy_allowlist),
+                    )
+            else:
+                logging.info(
+                    "[STRAT_EVAL_END] evaluated=%d signals=%d focus=%s range=%s",
+                    evaluated_count,
+                    len(evaluated_signals),
+                    focus_tag,
+                    range_active,
+                )
                 if FORCE_SCALP_MODE:
                     logging.warning("[FORCE_SCALP] evaluated_signals empty")
 
@@ -3288,6 +3429,8 @@ async def logic_loop(
                     focus_tag=focus_tag,
                     risk_pct_override=risk_override,
                     range_active=range_active,
+                    m1_rsi=_safe_float(fac_m1.get("rsi")),
+                    m1_rsi_age_sec=None,
                 )
 
             base_price_val = fac_m1.get("close")
@@ -3588,21 +3731,9 @@ async def logic_loop(
                 action = signal.get("action")
                 if action not in {"OPEN_LONG", "OPEN_SHORT"}:
                     continue
-                if (
-                    story_snapshot
-                    and not story_snapshot.is_aligned(pocket, action)
-                    and not (FORCE_SCALP_MODE and pocket == "scalp")
-                ):
-                    if pocket == "micro":
-                        logging.info(
-                            "[STORY] micro override pocket=%s action=%s macro_trend=%s micro_trend=%s higher_trend=%s",
-                            pocket,
-                            action,
-                            story_snapshot.macro_trend,
-                            story_snapshot.micro_trend,
-                            story_snapshot.higher_trend,
-                        )
-                    else:
+                if story_snapshot and not story_snapshot.is_aligned(pocket, action) and not (FORCE_SCALP_MODE and pocket == "scalp"):
+                    # Relaxed: macroのみ厳密チェック。micro/scalpは記録だけ残して通す。
+                    if pocket == "macro":
                         logging.info(
                             "[STORY] skip pocket=%s action=%s trend macro=%s micro=%s",
                             pocket,
@@ -3611,6 +3742,15 @@ async def logic_loop(
                             story_snapshot.micro_trend,
                         )
                         continue
+                    else:
+                        logging.info(
+                            "[STORY] micro/scalp override pocket=%s action=%s macro_trend=%s micro_trend=%s higher_trend=%s",
+                            pocket,
+                            action,
+                            story_snapshot.macro_trend,
+                            story_snapshot.micro_trend,
+                            story_snapshot.higher_trend,
+                        )
                 is_tactical = os.getenv('SCALP_TACTICAL','0').strip().lower() not in ('','0','false','no')
                 direction = "long" if action == "OPEN_LONG" else "short"
                 lose_streak, win_streak = stage_tracker.get_loss_profile(pocket, direction)

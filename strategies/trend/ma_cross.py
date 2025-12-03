@@ -11,19 +11,19 @@ class MovingAverageCross:
     profile = "macro_trend_ma"
 
     # Entry quality baselines (pips are 0.01 for USD/JPY)
-    _MIN_GAP_PIPS = 0.90            # require >= ~1 pip MA10/MA20 separation
-    _MIN_TREND_ADX = 25.0           # trend baseline stronger than 24
-    _MIN_GAP_IN_WEAK_TREND = 1.40   # if ADX weak, demand clearer gap
-    _MIN_SLOPE_IN_WEAK_TREND = 0.12 # and a minimal positive slope (pips/bar)
-    _NARROW_BBW_LIMIT = 0.20        # align with range_guard threshold
+    _MIN_GAP_PIPS = 0.40            # allow smaller MA10/MA20 separation
+    _MIN_TREND_ADX = 13.0           # allow weaker trend
+    _MIN_GAP_IN_WEAK_TREND = 0.70   # lower gap requirement when ADX is weak
+    _MIN_SLOPE_IN_WEAK_TREND = 0.04 # allow gentler slope
+    _NARROW_BBW_LIMIT = 0.14        # stand down only in ultra compression
     _MAX_FAST_DISTANCE = 7.0        # avoid stretched entries far from fast MA
     # Use bars-based threshold to work across timeframes (M1/H4)
-    _CROSS_BARS_STOP = 6.0          # avoid entering too close to a cross (in bars)
-    _MIN_ATR_PIPS = 1.20            # avoid illiquid minutes
-    _MIN_GAP_ATR_RATIO = 0.55       # require separation vs ATR
+    _CROSS_BARS_STOP = 2.0          # allow entries closer to a cross
+    _MIN_ATR_PIPS = 0.60            # allow lower ATR
+    _MIN_GAP_ATR_RATIO = 0.22       # require separation vs ATR
 
     # Pullback gating: avoid buying too far below fast MA or selling too far above
-    _PULLBACK_LIMIT = 0.80          # pips relative to fast MA
+    _PULLBACK_LIMIT = 1.60          # pips relative to fast MA
 
     # Simple M1-only range suppression to avoid trend entries under compression
     _RANGE_ADX_CUTOFF = 22.0
@@ -207,6 +207,15 @@ class MovingAverageCross:
         entry_price: Optional[float] = None
         entry_tolerance: Optional[float] = None
         close_price = fac.get("close")
+        try:
+            close_val = float(close_price) if close_price is not None else None
+        except (TypeError, ValueError):
+            close_val = None
+        # Treat stretched distance from fast MA as a momentum proxy for pullback sizing
+        try:
+            strong_momentum = abs(float(projection.price_to_fast_pips or 0.0)) >= 3.0
+        except Exception:
+            strong_momentum = False
         atr_hint = fac.get("atr_pips")
         if atr_hint is None:
             atr_hint = (fac.get("atr") or 0.0) * 100

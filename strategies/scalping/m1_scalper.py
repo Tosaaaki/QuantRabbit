@@ -79,12 +79,30 @@ def _force_mode() -> bool:
     return os.getenv("SCALP_FORCE_ALWAYS", "0").strip().lower() not in {"", "0", "false", "no"}
 
 
+def _cfg_float(section: Dict, key: str, default: float) -> float:
+    val = _to_float(section.get(key))
+    return default if val is None else val
+
+
 class M1Scalper:
     name = "M1Scalper"
     pocket = "scalp"
 
     @staticmethod
     def check(fac: Dict) -> Dict | None:
+        cfg = _load_scalper_config()
+        fallback_cfg = cfg.get("fallback", {}) if isinstance(cfg, dict) else {}
+        nwave_cfg = cfg.get("nwave", {}) if isinstance(cfg, dict) else {}
+        scalp_tactical = _to_bool(cfg.get("tactical") or cfg.get("scalp_tactical"), False)
+
+        def _fallback_float(key: str, default: float) -> float:
+            return _cfg_float(fallback_cfg, key, default)
+
+        def _nwave_float(key: str, default: float) -> float:
+            return _cfg_float(nwave_cfg, key, default)
+
+        candles = fac.get("candles") or []
+        nwave = detect_latest_n_wave(candles) if detect_latest_n_wave else None
         close = fac.get("close")
         ema20 = fac.get("ema20")
         rsi = fac.get("rsi")
@@ -101,14 +119,12 @@ class M1Scalper:
         if atr_pips is None:
             atr_pips = (atr or 0.0) * 100
 
-        if atr_pips < 2.5:
+        # Loosened gates to allow entries in低中ボラ
+        if atr_pips < 1.0:
             return None
-        # Avoid tight range compression; prefer moderate activity
-        if bbw and bbw <= 0.20:
+        if vol5 < 0.30:
             return None
-        if vol5 < 1.2:
-            return None
-        if adx < 18.0:
+        if adx < 10.0:
             return None
 
         # Dynamic TP/SL (pips) tuned to recent volatility
@@ -119,9 +135,9 @@ class M1Scalper:
         tp_dyn = round(tp_dyn, 2)
         sl_dyn = round(sl_dyn, 2)
 
-        if momentum < -0.0030 and rsi < 54:
+        if momentum < -0.0020 and rsi < 55:
             speed = abs(momentum) / max(0.0005, atr)
-            rsi_gap = max(0.0, 54 - rsi) / 10
+            rsi_gap = max(0.0, 55 - rsi) / 10
             confidence = int(
                 max(40.0, min(95.0, 45.0 + speed * 30.0 + rsi_gap * 25.0))
             )
@@ -132,9 +148,9 @@ class M1Scalper:
                 "confidence": confidence,
                 "tag": f"{M1Scalper.name}-buy-dip",
             }
-        if momentum > 0.0030 and rsi > 46:
+        if momentum > 0.0020 and rsi > 45:
             speed = abs(momentum) / max(0.0005, atr)
-            rsi_gap = max(0.0, rsi - 46) / 10
+            rsi_gap = max(0.0, rsi - 45) / 10
             confidence = int(
                 max(40.0, min(95.0, 45.0 + speed * 30.0 + rsi_gap * 25.0))
             )
