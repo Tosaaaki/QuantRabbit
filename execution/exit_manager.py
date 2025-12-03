@@ -98,6 +98,7 @@ class ExitManager:
         self._reverse_confirmations = 2
         self._reverse_decay = timedelta(seconds=180)
         self._reverse_hits: Dict[Tuple[str, str], Dict[str, object]] = {}
+        self._low_vol_hazard_hits: Dict[Tuple[str, str], int] = {}
         self._range_macro_grace_minutes = 8.0
         # Micro-specific stability controls
         # Guard against premature exits on noisy micro trades: enforce longer holds and wider grace

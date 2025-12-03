@@ -13,7 +13,9 @@ import datetime as dt
 import json
 import logging
 import os
+import random
 import re
+import time
 from typing import Dict, List
 
 from openai import AsyncOpenAI
@@ -44,7 +46,7 @@ def _get_openai_client() -> AsyncOpenAI:
     return _CLIENT
 
 
-_REQUIRED_KEYS = ("focus_tag", "weight_macro", "ranked_strategies")
+_REQUIRED_KEYS = ("focus_tag", "weight_macro", "weight_scalp", "ranked_strategies")
 
 _FOCUS_TAGS = {"micro", "macro", "hybrid", "event"}
 _ALLOWED_STRATEGIES = [
@@ -90,34 +92,15 @@ _FALLBACK_MODELS = [
 
 _REUSE_WINDOW_SECONDS = 300
 _FAIL_OPEN_SECONDS = int(os.getenv("GPT_FAIL_OPEN_SECONDS", "120") or 120)
-_FALLBACK_DECISION = {
-    "focus_tag": "hybrid",
-    "weight_macro": 0.7,
-    "weight_scalp": 0.1,
-    "ranked_strategies": [
-        "TrendMA",
-        "H1Momentum",
-        "Donchian55",
-        "MomentumBurst",
-        "BB_RSI",
-        "BB_RSI_Fast",
-        "MomentumBurst",
-        "TrendMomentumMicro",
-        "MicroMomentumStack",
-        "MicroPullbackEMA",
-        "MicroRangeBreak",
-        "MicroLevelReactor",
-        "MomentumPulse",
-        "VolCompressionBreak",
-        "MicroVWAPRevert",
-        "RangeFader",
-        "PulseBreak",
-        "M1Scalper",
-        "M1Scalper",
-        "RangeFader",
-    ],
-    "reason": "fallback",
-}
+_MAX_MODEL_ATTEMPTS = max(1, int(os.getenv("GPT_MAX_MODEL_ATTEMPTS", "4")))
+_RETRY_BASE_SEC = max(0.1, float(os.getenv("GPT_RETRY_BASE_SEC", "0.6")))
+_RETRY_JITTER_SEC = max(0.0, float(os.getenv("GPT_RETRY_JITTER_SEC", "0.25")))
+_MIN_CALL_INTERVAL_SEC = max(0.1, float(os.getenv("GPT_MIN_CALL_INTERVAL_SEC", "0.6")))
+_FALLBACK_DECISION = None  # フォールバック禁止
+
+# 単純なレートリミット（call間隔を確保して 429 を防ぐ）
+_LAST_CALL_TS: float | None = None
+_CALL_LOCK = asyncio.Lock()
 
 def _normalize_json_content(raw: str) -> str:
     """Remove Markdown fences / whitespace around JSON payloads."""
@@ -184,6 +167,15 @@ async def _call_model(payload: Dict, messages: List[Dict], model: str) -> Dict:
         "gpt_decider",
         extra_tags={"tier": tier, "model": model},
     ) as tracker:
+        # simple rate limit to avoid 429
+        async with _CALL_LOCK:
+            global _LAST_CALL_TS
+            now = time.monotonic()
+            if _LAST_CALL_TS is not None:
+                delta = now - _LAST_CALL_TS
+                if delta < _MIN_CALL_INTERVAL_SEC:
+                    await asyncio.sleep(_MIN_CALL_INTERVAL_SEC - delta)
+            _LAST_CALL_TS = time.monotonic()
         timeout = _MODEL_TIMEOUT_SECONDS.get(model, 15)
         base_kwargs = {
             "model": model,
@@ -196,84 +188,103 @@ async def _call_model(payload: Dict, messages: List[Dict], model: str) -> Dict:
             {"max_completion_tokens": _MAX_COMPLETION_TOKENS},
             {"max_tokens": _MAX_COMPLETION_TOKENS},
         ]
+
+        async def _sleep_with_jitter(attempt: int) -> None:
+            delay = _RETRY_BASE_SEC * (2 ** attempt)
+            if _RETRY_JITTER_SEC > 0:
+                delay += random.uniform(0.0, _RETRY_JITTER_SEC)
+            await asyncio.sleep(delay)
+
+        def _is_retryable(exc: Exception) -> bool:
+            msg = str(exc).lower()
+            fatal_tokens = ("authentication", "invalid api key", "invalid_request_error", "invalid request")
+            if any(tok in msg for tok in fatal_tokens):
+                return False
+            if "unsupported parameter" in msg:
+                return False
+            if "insufficient_quota" in msg or "rate limit" in msg or "429" in msg:
+                return True
+            return True
+
         usage_in = usage_out = 0
-        resp = None
         last_error: Exception | None = None
-        for token_kwargs in token_kwargs_order:
-            try:
-                client = _get_openai_client()
-                resp = await client.chat.completions.create(
-                    **base_kwargs, **token_kwargs
-                )
-                break
-            except Exception as exc:
-                msg = str(exc)
-                param_name = next(iter(token_kwargs))
-                if "Unsupported parameter" in msg and param_name in msg:
+        for attempt in range(_MAX_MODEL_ATTEMPTS):
+            for token_kwargs in token_kwargs_order:
+                try:
+                    client = _get_openai_client()
+                    resp = await client.chat.completions.create(
+                        **base_kwargs, **token_kwargs
+                    )
+                    usage_in = resp.usage.prompt_tokens
+                    usage_out = resp.usage.completion_tokens
+                    content = _normalize_json_content(resp.choices[0].message.content or "")
+                    tracker.add_tag("tokens", usage_in + usage_out)
+                    add_tokens(usage_in + usage_out, MAX_TOKENS_MONTH)
+                    data = _load_json_payload(content)
+
+                    for key in _REQUIRED_KEYS:
+                        if key not in data:
+                            raise ValueError(f"key {key} missing")
+                    if not isinstance(data["ranked_strategies"], list):
+                        raise ValueError("ranked_strategies type error")
+
+                    try:
+                        weight_macro = float(data["weight_macro"])
+                    except (TypeError, ValueError) as exc:
+                        raise ValueError("weight_macro type error") from exc
+                    weight_macro = max(0.0, min(1.0, weight_macro))
+                    data["weight_macro"] = round(weight_macro, 2)
+
+                    focus_tag = data.get("focus_tag")
+                    if not isinstance(focus_tag, str) or focus_tag not in _FOCUS_TAGS:
+                        focus_tag = "hybrid"
+                    data["focus_tag"] = focus_tag
+
+                    weight_scalp_raw = data.get("weight_scalp")
+                    weight_scalp: float | None = None
+                    default_scalp = min(0.25, max(0.1, 1.0 - weight_macro))
+                    if weight_scalp_raw is not None:
+                        try:
+                            weight_scalp = float(weight_scalp_raw)
+                        except (TypeError, ValueError):
+                            weight_scalp = None
+                    if weight_scalp is None:
+                        weight_scalp = default_scalp
+                    weight_scalp = max(0.0, min(1.0, weight_scalp))
+                    if weight_scalp + weight_macro > 0.95:
+                        weight_scalp = max(0.0, 0.95 - weight_macro)
+                    data["weight_scalp"] = round(weight_scalp, 2)
+
+                    ranked = [
+                        s for s in data.get("ranked_strategies", []) if s in _ALLOWED_STRATEGIES
+                    ]
+                    if not any(s in ("M1Scalper", "BB_RSI") for s in ranked):
+                        for s in ("M1Scalper", "BB_RSI"):
+                            if s not in ranked:
+                                ranked.append(s)
+                    data["ranked_strategies"] = ranked
+                    data["model_used"] = model
+                    return data
+                except Exception as exc:
                     last_error = exc
-                    continue
-                raise GPTTimeout(msg) from exc
-        else:
-            raise GPTTimeout(str(last_error) if last_error else "unable to call OpenAI")
+                    if not _is_retryable(exc):
+                        raise GPTTimeout(str(exc)) from exc
+                    # unsupported token kwargs: try next token kwarg without counting attempt
+                    msg = str(exc)
+                    param_name = next(iter(token_kwargs))
+                    if "Unsupported parameter" in msg and param_name in msg:
+                        continue
+                    break  # will go to retry loop
+            if attempt < _MAX_MODEL_ATTEMPTS - 1:
+                await _sleep_with_jitter(attempt)
 
-        usage_in = resp.usage.prompt_tokens
-        usage_out = resp.usage.completion_tokens
-        content = _normalize_json_content(resp.choices[0].message.content or "")
-
-        tracker.add_tag("tokens", usage_in + usage_out)
-        add_tokens(usage_in + usage_out, MAX_TOKENS_MONTH)
-        data = _load_json_payload(content)
-
-        for key in _REQUIRED_KEYS:
-            if key not in data:
-                raise ValueError(f"key {key} missing")
-        if not isinstance(data["ranked_strategies"], list):
-            raise ValueError("ranked_strategies type error")
-
-        try:
-            weight_macro = float(data["weight_macro"])
-        except (TypeError, ValueError) as exc:
-            raise ValueError("weight_macro type error") from exc
-        weight_macro = max(0.0, min(1.0, weight_macro))
-        data["weight_macro"] = round(weight_macro, 2)
-
-        focus_tag = data.get("focus_tag")
-        if not isinstance(focus_tag, str) or focus_tag not in _FOCUS_TAGS:
-            focus_tag = "hybrid"
-        data["focus_tag"] = focus_tag
-
-        weight_scalp_raw = data.get("weight_scalp")
-        weight_scalp: float | None = None
-        if weight_scalp_raw is not None:
-            try:
-                weight_scalp = float(weight_scalp_raw)
-            except (TypeError, ValueError):
-                weight_scalp = None
-        if weight_scalp is not None:
-            weight_scalp = max(0.0, min(1.0, weight_scalp))
-            if weight_scalp + weight_macro > 1.0:
-                weight_scalp = max(0.0, 1.0 - weight_macro)
-            data["weight_scalp"] = round(weight_scalp, 2)
-        else:
-            data["weight_scalp"] = None
-
-        ranked = [
-            s for s in data.get("ranked_strategies", []) if s in _ALLOWED_STRATEGIES
-        ]
-        data["ranked_strategies"] = ranked
-        data["model_used"] = model
-        return data
+        raise GPTTimeout(str(last_error) if last_error else "unable to call OpenAI")
 
 
 async def call_openai(payload: Dict) -> Dict:
     """非同期で GPT を呼ぶ → dict を返す（フォールバック不要値は None）"""
     if _LLM_MODE in _DUMMY_MODES:
-        logger.info("[GPT] dummy mode active (LLM_MODE=%s)", _LLM_MODE or "dummy")
-        decision = heuristic_decision(
-            payload, _LAST_DECISION_DATA or _FALLBACK_DECISION
-        )
-        decision["reason"] = "dummy_mode"
-        return decision
+        raise RuntimeError("LLM_MODE dummy is not allowed when fallback is disabled")
 
     if not add_tokens(0, MAX_TOKENS_MONTH):
         raise RuntimeError("GPT token limit exceeded")
@@ -303,108 +314,39 @@ async def call_openai(payload: Dict) -> Dict:
 
 async def get_decision(payload: Dict) -> Dict:
     """
-    上位ラッパ：GPT 呼び出し（リトライあり、失敗時は再利用/フォールバック決定）
+    上位ラッパ：GPT 呼び出し（リトライあり、失敗時は例外とする）
     """
     global _LAST_DECISION_TS, _LAST_DECISION_DATA, _LAST_FAILURE_TS
-    now = dt.datetime.utcnow()
-    if _LAST_FAILURE_TS:
-        elapsed = (now - _LAST_FAILURE_TS).total_seconds()
-        if elapsed <= _FAIL_OPEN_SECONDS:
-            remaining = max(0, _FAIL_OPEN_SECONDS - int(elapsed))
-            logger.warning(
-                "GPT fail-open active (remaining %ss); using fallback decision.",
-                remaining,
-            )
-            return fallback_decision(
-                payload,
-                last_decision=_LAST_DECISION_DATA,
-                reason="fail_open",
-                now=now,
-                log_reason=True,
-                last_exception=None,
-            )
-    # 最大2回リトライ（Responses→Chat のフォールバック込み）
     last_exc: Exception | None = None
-    for attempt in range(2):
+    for attempt in range(3):
         try:
             fresh = await call_openai(payload)
             if not isinstance(fresh, dict):
                 raise ValueError("GPT response must be dict")
-            # 決定情報を保持（reasonは揮発値なので除外）
             _LAST_DECISION_TS = dt.datetime.utcnow()
             _LAST_DECISION_DATA = {k: v for k, v in fresh.items() if k != "reason"}
             _LAST_FAILURE_TS = None
             return fresh
         except Exception as e:
             last_exc = e
+            _LAST_FAILURE_TS = dt.datetime.utcnow()
             logger.warning(
                 "GPT decision attempt %d failed (%s: %s)",
                 attempt + 1,
                 type(e).__name__,
                 str(e) or "no message",
             )
-            await asyncio.sleep(1.5)
-    # フォールバック：直近 5 分以内の決定を再利用、なければデフォルト構成を返す
-    now = dt.datetime.utcnow()
-    _LAST_FAILURE_TS = now
-    if _LAST_DECISION_TS and _LAST_DECISION_DATA:
-        age = (now - _LAST_DECISION_TS).total_seconds()
-        if age <= _REUSE_WINDOW_SECONDS:
-            reused = fallback_decision(
-                payload,
-                last_decision=_LAST_DECISION_DATA,
-                reason="reuse_previous",
-                now=now,
-                log_reason=True,
-                last_exception=last_exc,
-            )
-            return reused
+            await asyncio.sleep(0.6 * (attempt + 1))
+            continue
 
-    return fallback_decision(
-        payload,
-        last_decision=_LAST_DECISION_DATA,
-        reason="heuristic",
-        now=now,
-        log_reason=True,
-        last_exception=last_exc,
-    )
+    raise GPTTimeout(str(last_exc) if last_exc else "all GPT models failed")
 
 
-def fallback_decision(
-    payload: Dict,
-    *,
-    last_decision: Dict[str, object] | None = None,
-    reason: str = "fallback",
-    now: dt.datetime | None = None,
-    log_reason: bool = False,
-    last_exception: Exception | None = None,
-) -> Dict:
-    global _LAST_DECISION_TS, _LAST_DECISION_DATA
-    use_now = now or dt.datetime.utcnow()
-    decision: Dict[str, object]
-    try:
-        decision = heuristic_decision(payload, last_decision)
-        decision["reason"] = reason
-        if log_reason:
-            log_gpt_fallback("gpt_decider", "heuristic")
-            if last_exception is not None:
-                logger.warning(
-                    "GPT decision failed (%s); using heuristic fallback decision.",
-                    str(last_exception),
-                )
-    except Exception as heur_exc:  # pragma: no cover - defensive path
-        decision = dict(_FALLBACK_DECISION)
-        decision["reason"] = reason
-        if log_reason:
-            log_gpt_fallback("gpt_decider", "static_config")
-            logger.error(
-                "GPT decision fallback to static config (%s -> %s)",
-                str(last_exception),
-                heur_exc,
-            )
-    _LAST_DECISION_TS = use_now
-    _LAST_DECISION_DATA = {k: v for k, v in decision.items() if k != "reason"}
-    return decision
+def fallback_decision(*args, **kwargs):
+    """
+    フォールバックは無効化する。呼ばれた場合は例外を投げる。
+    """
+    raise RuntimeError("fallback_decision is disabled; GPT response is required")
 
 
 # ---------- CLI self‑test ----------

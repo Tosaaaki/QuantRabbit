@@ -36,6 +36,9 @@ class IndicatorEngine:
         ema20 = close.ewm(span=20, adjust=False, min_periods=20).mean()
         ema24 = close.ewm(span=24, adjust=False, min_periods=24).mean()
 
+        # pip単位のボラ（5本平均）
+        vol_5m = close.diff().abs().rolling(window=5, min_periods=5).mean() / 0.01
+
         rsi = _rsi(close, period=14)
         atr = _atr(high, low, close, period=14)
         adx = _adx(high, low, close, period=14)
@@ -53,6 +56,7 @@ class IndicatorEngine:
             "atr": float(atr.iloc[-1]) if not atr.empty else 0.0,
             "adx": float(adx.iloc[-1]) if not adx.empty else 0.0,
             "bbw": float(bbw_series[-1]) if bbw_series.size else 0.0,
+            "vol_5m": float(vol_5m.iloc[-1]) if not vol_5m.empty else 0.0,
         }
 
         for k, v in out.items():

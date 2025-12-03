@@ -1945,9 +1945,10 @@ async def market_order(
                             order_data["order"]["stopLossOnFill"] = {
                                 "price": f"{fallback_sl:.3f}"
                             }
-                    sl_price = fallback_sl
+                            sl_price = fallback_sl
                         elif "stopLossOnFill" in order_data["order"]:
                             order_data["order"].pop("stopLossOnFill", None)
+
                         if fallback_tp is not None:
                             order_data["order"]["takeProfitOnFill"] = {
                                 "price": f"{fallback_tp:.3f}"
@@ -1955,6 +1956,7 @@ async def market_order(
                             tp_price = fallback_tp
                         elif "takeProfitOnFill" in order_data["order"]:
                             order_data["order"].pop("takeProfitOnFill", None)
+
                         protection_fallback_applied = True
                         logging.warning(
                             "[ORDER] protection fallback applied client=%s reason=%s",
