@@ -6,7 +6,7 @@ import time
 import hashlib
 import json
 import contextlib
-from typing import Optional, Tuple, Coroutine, Any, Dict
+from typing import Optional, Tuple, Coroutine, Any, Dict, Sequence
 
 # Safe float conversion for optional numeric inputs
 def _safe_float(value: object, default: float = 0.0) -> float:
@@ -70,6 +70,7 @@ from strategies.scalping.impulse_retrace import ImpulseRetraceScalp
 from utils.oanda_account import get_account_snapshot
 from utils.secrets import get_secret
 from utils.metrics_logger import log_metric
+from utils.market_hours import is_market_open, seconds_until_open
 from advisors.rr_ratio import RRRatioAdvisor
 from advisors.exit_advisor import ExitAdvisor
 from advisors.strategy_confidence import StrategyConfidenceAdvisor
@@ -126,39 +127,39 @@ POCKET_LOSS_COOLDOWNS = {
 
 # 新規エントリー後のクールダウン（再エントリー抑制）
 POCKET_ENTRY_MIN_INTERVAL = {
-    "macro": 240,  # 4分
-    "micro": 150,  # 2.5分
-    "scalp": 75,
+    "macro": 180,  # 少し短縮
+    "micro": 90,   # 1.5分
+    "scalp": 45,
 }
 
 if os.getenv("SCALP_TACTICAL", "0").strip().lower() not in {"", "0", "false", "no"}:
     POCKET_LOSS_COOLDOWNS["scalp"] = 120
-    POCKET_ENTRY_MIN_INTERVAL["scalp"] = 45
+    POCKET_ENTRY_MIN_INTERVAL["scalp"] = 25
 
 PIP = 0.01
 
 POCKET_MAX_ACTIVE_TRADES = {
-    "macro": 6,
-    "micro": 2,
-    "scalp": 3,
+    "macro": 50,
+    "micro": 50,
+    "scalp": 50,
 }
 
 POCKET_MAX_ACTIVE_TRADES_RANGE = {
-    "macro": 0,
-    "micro": 1,
-    "scalp": 1,
+    "macro": 50,
+    "micro": 50,
+    "scalp": 50,
 }
 
 POCKET_MAX_DIRECTIONAL_TRADES = {
-    "macro": 6,
-    "micro": 1,
-    "scalp": 2,
+    "macro": 50,
+    "micro": 50,
+    "scalp": 50,
 }
 
 POCKET_MAX_DIRECTIONAL_TRADES_RANGE = {
-    "macro": 0,
-    "micro": 1,
-    "scalp": 1,
+    "macro": 50,
+    "micro": 50,
+    "scalp": 50,
 }
 
 try:
@@ -355,6 +356,56 @@ def _stage_plan(pocket: str) -> tuple[float, ...]:
     if pocket in _BASE_STAGE_RATIOS:
         return _BASE_STAGE_RATIOS[pocket]
     return (1.0,)
+
+
+def _normalize_plan(plan: Sequence[float]) -> tuple[float, ...]:
+    values = []
+    for val in plan:
+        try:
+            num = float(val)
+        except (TypeError, ValueError):
+            continue
+        if num <= 0:
+            continue
+        values.append(num)
+    if not values:
+        return (1.0,)
+    total = sum(values)
+    if total <= 0:
+        return (1.0,)
+    normalized = [v / total for v in values]
+    norm_sum = sum(normalized)
+    if abs(norm_sum - 1.0) > 1e-6:
+        normalized[-1] += 1.0 - norm_sum
+    rounded = [round(max(0.0, val), 4) for val in normalized]
+    diff = round(1.0 - sum(rounded), 4)
+    rounded[-1] = round(max(0.0, rounded[-1] + diff), 4)
+    return tuple(rounded)
+
+
+def _frontload_plan(base_plan: Sequence[float], target_first: float) -> tuple[float, ...]:
+    plan = _normalize_plan(base_plan)
+    if len(plan) == 1:
+        return plan
+    target_first = max(0.12, min(target_first, 0.8))
+    rest_sum = sum(plan[1:])
+    if rest_sum <= 0:
+        return (1.0,)
+    scale = max(0.0, 1.0 - target_first) / rest_sum
+    adjusted = [target_first]
+    for frac in plan[1:]:
+        adjusted.append(max(0.0, frac * scale))
+    total = sum(adjusted)
+    if total <= 0:
+        return plan
+    adjusted = [val / total for val in adjusted]
+    diff = 1.0 - sum(adjusted)
+    adjusted[-1] = max(0.0, adjusted[-1] + diff)
+    rounded = [round(val, 4) for val in adjusted]
+    diff_round = round(1.0 - sum(rounded), 4)
+    rounded[-1] = round(max(0.0, rounded[-1] + diff_round), 4)
+    return tuple(rounded)
+
 
 MIN_MACRO_STAGE_LOT = 0.03  # 3000 units baseline keeps macro entries meaningful
 MAX_MICRO_STAGE_LOT = 0.02  # cap micro scaling when momentum signals fire repeatedly
@@ -738,6 +789,70 @@ def _hashable_float(value: Optional[float], digits: int = 4) -> Optional[float]:
 
 def _clamp(value: float, low: float, high: float) -> float:
     return max(low, min(high, value))
+
+
+def _compute_stage_base(
+    *,
+    param_snapshot: ParamSnapshot | None,
+    range_active: bool,
+    focus_tag: str,
+    weight_macro: float,
+    weight_scalp: float | None,
+) -> dict[str, tuple[float, ...]]:
+    """
+    Build per-pocket stage plans before bias/Advisor adjustments.
+    Front-load the first stage (e.g., 45% / 55%) whenトレンドが強いときだけ許容し、
+    レンジや高ボラでは分割して次のエントリー枠を残す。
+    """
+    base = {pocket: _normalize_plan(plan) for pocket, plan in _BASE_STAGE_RATIOS.items()}
+    if param_snapshot is None:
+        return base
+
+    trend_score = (param_snapshot.adx_m1_score + param_snapshot.adx_h4_score) / 2.0
+    vol_high = param_snapshot.volatility_state == "high" or param_snapshot.vol_high_ratio >= 0.3
+    tight_liquidity = param_snapshot.liquidity_state == "wide"
+    risk = param_snapshot.risk_appetite
+
+    macro_first = base.get("macro", (0.35,))[0]
+    micro_first = base.get("micro", (0.3,))[0]
+    scalp_first = base.get("scalp", (0.4,))[0]
+
+    if not range_active and trend_score >= 0.6 and risk >= 0.55:
+        macro_first = max(macro_first, 0.45)
+    elif range_active or trend_score <= 0.45 or tight_liquidity:
+        macro_first = min(macro_first, 0.34)
+    else:
+        macro_first = max(macro_first, 0.38)
+    if not range_active and weight_macro >= 0.55:
+        macro_first = max(macro_first, 0.42)
+    if weight_macro <= 0.25:
+        macro_first = min(macro_first, 0.38)
+    if focus_tag == "macro" and not range_active:
+        macro_first = max(macro_first, 0.4)
+    macro_first = _clamp(macro_first, 0.22, 0.65)
+
+    if range_active:
+        micro_first = max(micro_first * 0.95, 0.3)
+        micro_first = min(micro_first, 0.42)
+    elif trend_score >= 0.6:
+        micro_first = max(micro_first, 0.4)
+    else:
+        micro_first = max(micro_first, 0.34)
+    micro_first = _clamp(micro_first, 0.22, 0.6)
+
+    scalp_first = max(scalp_first, 0.35)
+    if not vol_high and risk >= 0.5 and not tight_liquidity:
+        scalp_first = max(scalp_first, 0.45)
+    if range_active or vol_high or tight_liquidity:
+        scalp_first = min(scalp_first, 0.4)
+    if weight_scalp is not None and weight_scalp < 0.18:
+        scalp_first = min(scalp_first, 0.38)
+    scalp_first = _clamp(scalp_first, 0.25, 0.6)
+
+    base["macro"] = _frontload_plan(_BASE_STAGE_RATIOS["macro"], macro_first)
+    base["micro"] = _frontload_plan(_BASE_STAGE_RATIOS["micro"], micro_first)
+    base["scalp"] = _frontload_plan(_BASE_STAGE_RATIOS["scalp"], scalp_first)
+    return base
 
 
 def _gpt_payload_signature(
@@ -1662,6 +1777,7 @@ async def logic_loop(
     last_stage_biases: dict[str, float] = {}
     last_story_summary: Optional[dict] = None
     last_worker_plan: set[str] = set()
+    last_market_closed: Optional[datetime.datetime] = None
 
     try:
         while True:
@@ -1688,6 +1804,21 @@ async def logic_loop(
                     pass
                 last_update_time = now
                 logging.info(f"[PERF] Updated: {perf_cache}")
+
+            # 週末クローズ中はロジックとGPTを止めて待機
+            if not is_market_open(now):
+                if last_market_closed is None or (now - last_market_closed).total_seconds() >= 900:
+                    wait_sec = max(60.0, min(3600.0, seconds_until_open(now)))
+                    logging.info(
+                        "[MARKET_CLOSED] Weekend window active. Next open in ~%.1f min (UTC=%s)",
+                        wait_sec / 60.0,
+                        now.isoformat(timespec="seconds"),
+                    )
+                    last_market_closed = now
+                await asyncio.sleep(60)
+                continue
+            else:
+                last_market_closed = None
 
             # --- 1. 状況分析 ---
             factors = all_factors()
@@ -2555,8 +2686,15 @@ async def logic_loop(
                     scalp_ready,
                     focus_tag,
                 )
+            stage_base = _compute_stage_base(
+                param_snapshot=param_snapshot,
+                range_active=range_active,
+                focus_tag=focus_tag,
+                weight_macro=weight_macro,
+                weight_scalp=weight_scalp,
+            )
             stage_overrides, stage_changed, stage_biases = param_context.stage_overrides(
-                _BASE_STAGE_RATIOS,
+                stage_base,
                 range_active=range_active,
             )
             if stage_plan_advisor and stage_plan_advisor.enabled:
@@ -2579,9 +2717,11 @@ async def logic_loop(
             vol_ratio = param_snapshot.vol_high_ratio if param_snapshot else -1.0
             if stage_changed:
                 log_bias = {k: round(v, 2) for k, v in stage_biases.items()}
+                first_stage = {k: round(plan[0], 3) for k, plan in stage_overrides.items()}
                 logging.info(
-                    "[STAGE] dynamic_plan=%s bias=%s range=%s vol_high=%.2f",
+                    "[STAGE] dynamic_plan=%s first=%s bias=%s range=%s vol_high=%.2f",
                     stage_overrides,
+                    first_stage,
                     log_bias,
                     range_active,
                     vol_ratio,
@@ -3655,6 +3795,17 @@ async def logic_loop(
                         },
                     )
 
+            # できるだけ余力を使う: 信号があるポケットで 92% 以上を配分する
+            allocated_total = round(sum(max(v, 0.0) for v in lots.values()), 3)
+            target_total = round(lot_total * 0.92, 3)
+            if lot_total > 0 and allocated_total + 1e-6 < target_total:
+                remaining = target_total - allocated_total
+                active_with_signals = [p for p, cnt in signal_counts.items() if cnt > 0 and lots.get(p, 0.0) >= 0.0]
+                if active_with_signals:
+                    share = round(remaining / len(active_with_signals), 3)
+                    for p in active_with_signals:
+                        lots[p] = round(max(lots.get(p, 0.0), 0.0) + share, 3)
+
             if lot_total > 0:
                 macro_lot = round(max(lots.get("macro", 0.0), 0.0), 3)
                 micro_lot = round(max(lots.get("micro", 0.0), 0.0), 3)
@@ -3725,7 +3876,101 @@ async def logic_loop(
 
             lot_total = round(sum(max(value, 0.0) for value in lots.values()), 3)
 
+            worker_lot_caps: dict[tuple[str, str], float] = {}
+            if lot_total > 0:
+                per_pocket_signals: dict[str, list[dict[str, object]]] = {}
+                for sig in evaluated_signals:
+                    if sig.get("action") not in {"OPEN_LONG", "OPEN_SHORT"}:
+                        continue
+                    pocket_name = sig.get("pocket")
+                    strategy_name = sig.get("strategy")
+                    if not pocket_name or not strategy_name:
+                        continue
+                    per_pocket_signals.setdefault(str(pocket_name), []).append(sig)
+
+                for pocket_name, signals in per_pocket_signals.items():
+                    pocket_budget = round(max(lots.get(pocket_name, 0.0), 0.0), 3)
+                    if pocket_budget <= 0:
+                        continue
+                    weights: list[float] = []
+                    for idx, sig in enumerate(signals):
+                        try:
+                            conf = max(0.3, min(1.0, (float(sig.get("confidence") or 0.0) / 100.0)))
+                        except Exception:
+                            conf = 0.3
+                        health_scale = 1.0
+                        try:
+                            health_scale = float((sig.get("health") or {}).get("confidence_scale") or 1.0)
+                        except Exception:
+                            health_scale = 1.0
+                        health_scale = max(0.65, min(1.35, health_scale))
+                        rank_bonus = max(0.72, 1.0 - idx * 0.08)
+                        weights.append(conf * health_scale * rank_bonus)
+                    total_weight = sum(weights)
+                    if total_weight <= 0:
+                        continue
+                    for sig, weight in zip(signals, weights):
+                        pocket_key = str(sig.get("pocket"))
+                        strategy_key = str(sig.get("strategy"))
+                        share = weight / total_weight
+                        cap = round(pocket_budget * share, 3)
+                        worker_lot_caps[(pocket_key, strategy_key)] = cap
+
+                if worker_lot_caps:
+                    logging.info(
+                        "[WORKER_ALLOC] per_strategy=%s",
+                        {
+                            f"{pocket}:{strategy}": lot
+                            for (pocket, strategy), lot in worker_lot_caps.items()
+                        },
+                )
+
             spread_skip_logged = False
+            pocket_limits_map = POCKET_MAX_ACTIVE_TRADES_RANGE if range_active else POCKET_MAX_ACTIVE_TRADES
+            direction_limits_map = (
+                POCKET_MAX_DIRECTIONAL_TRADES_RANGE if range_active else POCKET_MAX_DIRECTIONAL_TRADES
+            )
+            active_signal_pockets = {
+                sig["pocket"]
+                for sig in evaluated_signals
+                if sig.get("action") in {"OPEN_LONG", "OPEN_SHORT"}
+            }
+            donated_pockets: set[str] = set()
+
+            def _reallocate_blocked_lot(from_pocket: str, *, reason: str) -> None:
+                if from_pocket in donated_pockets:
+                    return
+                available = round(max(lots.get(from_pocket, 0.0), 0.0), 3)
+                if available <= 0:
+                    return
+                recipients: list[str] = []
+                for sig in evaluated_signals:
+                    pocket_name = sig.get("pocket")
+                    if pocket_name == from_pocket or pocket_name in recipients:
+                        continue
+                    if pocket_name not in active_signal_pockets:
+                        continue
+                    info = open_positions.get(pocket_name, {}) or {}
+                    current = int(info.get("trades", 0) or 0)
+                    limit = pocket_limits_map.get(pocket_name, 0)
+                    if limit <= 0 or current >= limit:
+                        continue
+                    recipients.append(pocket_name)
+                if not recipients:
+                    return
+                share = round(available / len(recipients), 3)
+                for pocket_name in recipients:
+                    lots[pocket_name] = round(max(lots.get(pocket_name, 0.0), 0.0) + share, 3)
+                lots[from_pocket] = 0.0
+                donated_pockets.add(from_pocket)
+                logging.info(
+                    "[ALLOC] Reallocated %.3f lot from %s (%s) to %s",
+                    available,
+                    from_pocket,
+                    reason,
+                    ",".join(recipients),
+                )
+
             for signal in evaluated_signals:
                 pocket = signal["pocket"]
                 action = signal.get("action")
@@ -3862,6 +4107,17 @@ async def logic_loop(
                     continue
 
                 total_lot_for_pocket = lots.get(pocket, 0.0)
+                strategy_cap = worker_lot_caps.get((pocket, signal.get("strategy")))
+                if strategy_cap is not None:
+                    if strategy_cap + 1e-6 < total_lot_for_pocket:
+                        logging.info(
+                            "[ALLOC] pocket=%s strategy=%s capped %.3f -> %.3f",
+                            pocket,
+                            signal.get("strategy"),
+                            total_lot_for_pocket,
+                            strategy_cap,
+                        )
+                    total_lot_for_pocket = strategy_cap
                 if total_lot_for_pocket <= 0:
                     continue
 
@@ -3913,10 +4169,8 @@ async def logic_loop(
                     confidence_target = adj
 
                 open_info = open_positions.get(pocket, {})
-                pocket_limits = POCKET_MAX_ACTIVE_TRADES_RANGE if range_active else POCKET_MAX_ACTIVE_TRADES
-                per_direction_limits = (
-                    POCKET_MAX_DIRECTIONAL_TRADES_RANGE if range_active else POCKET_MAX_DIRECTIONAL_TRADES
-                )
+                pocket_limits = pocket_limits_map
+                per_direction_limits = direction_limits_map
                 direction_limit = per_direction_limits.get(pocket, 1)
                 if direction_limit <= 0:
                     logging.info(
@@ -3924,6 +4178,7 @@ async def logic_loop(
                         pocket,
                         direction,
                     )
+                    _reallocate_blocked_lot(pocket, reason="direction_limit")
                     continue
                 open_trades = open_info.get("open_trades", []) or []
                 direction_units_positive = direction == "long"
@@ -3960,6 +4215,7 @@ async def logic_loop(
                         current_trades,
                         max_trades_allowed,
                     )
+                    _reallocate_blocked_lot(pocket, reason="pocket_cap")
                     continue
                 if same_direction_trades >= direction_limit:
                     logging.info(
@@ -3969,6 +4225,7 @@ async def logic_loop(
                         same_direction_trades,
                         direction_limit,
                     )
+                    _reallocate_blocked_lot(pocket, reason="direction_cap")
                     continue
 
                 try:
@@ -3982,8 +4239,10 @@ async def logic_loop(
                     open_units = int(open_info.get("short_units", 0))
                     ref_price = open_info.get("short_avg_price")
 
-                cluster_units = open_units
+                # マクロのステージ計算は自ポケットのみを基準にし、他ポケットの同方向エクスポージャは考慮しない
                 if pocket == "macro":
+                    cluster_units = open_units
+                else:
                     cluster_units = _cluster_directional_units(direction, open_positions)
 
                 is_buy = action == "OPEN_LONG"
@@ -4347,7 +4606,9 @@ async def main():
         ("H4", h4_candle_handler),
         ("D1", d1_candle_handler),
     ]
-    await initialize_history("USD_JPY")
+    seeded = await initialize_history("USD_JPY")
+    if not seeded:
+        logging.warning("[HISTORY] Startup seeding incomplete, continuing with live feed.")
     gpt_state = GPTDecisionState()
     gpt_requests = GPTRequestManager()
     worker_task = asyncio.create_task(gpt_worker(gpt_state, gpt_requests))

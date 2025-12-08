@@ -30,6 +30,25 @@ def _log(reason: str, **kwargs: object) -> None:
     _LOGGER.info("[M1SCALPER] %s %s", reason, payload)
 
 
+def _attach_kill(signal: Dict) -> Dict:
+    """Ensure kill/fast_cut opt-in tags are present."""
+    tags = []
+    raw_tags = signal.get("exit_tags") or signal.get("tags")
+    if raw_tags:
+        if isinstance(raw_tags, str):
+            tags = [raw_tags]
+        elif isinstance(raw_tags, (list, tuple)):
+            tags = list(raw_tags)
+    tags = [t for t in tags if isinstance(t, str)]
+    if "kill" not in [t.lower() for t in tags]:
+        tags.append("kill")
+    if "fast_cut" not in [t.lower() for t in tags]:
+        tags.append("fast_cut")
+    signal["exit_tags"] = tags
+    signal["kill_switch"] = True
+    return signal
+
+
 def _load_scalper_config() -> Dict:
     try:
         mtime = _CONFIG_PATH.stat().st_mtime
@@ -114,6 +133,13 @@ class M1Scalper:
             return None
 
         momentum = close - ema20
+        ema10 = fac.get("ema10")
+        ema_gap_pips = 0.0
+        if ema10 is not None:
+            try:
+                ema_gap_pips = (float(ema10) - float(ema20)) / _PIP
+            except Exception:
+                ema_gap_pips = 0.0
         # Prefer explicit atr_pips if provided; otherwise convert ATR (price units) to pips
         atr_pips = _to_float(fac.get("atr_pips"))
         if atr_pips is None:
@@ -126,6 +152,9 @@ class M1Scalper:
             return None
         if adx < 10.0:
             return None
+        # トレンド方向を判定（強い順行なら逆張りを避け、順張りに寄せる）
+        trend_up = momentum > 0.0025 and ema_gap_pips > 0.05
+        trend_down = momentum < -0.0025 and ema_gap_pips < -0.05
 
         # Dynamic TP/SL (pips) tuned to recent volatility
         # - TP ≈ 3x ATR (pips) within [5, 9]
@@ -134,6 +163,11 @@ class M1Scalper:
         sl_dyn = max(4.0, min(atr_pips * 2.0, tp_dyn * 0.95))
         tp_dyn = round(tp_dyn, 2)
         sl_dyn = round(sl_dyn, 2)
+        fast_cut = max(6.0, atr_pips * 0.9)
+        fast_cut_time = max(60.0, atr_pips * 15.0)
+        conf_scale = 1.0
+        if atr_pips > 4.0:
+            conf_scale = 0.8
 
         if momentum < -0.0020 and rsi < 55:
             speed = abs(momentum) / max(0.0005, atr)
@@ -141,19 +175,42 @@ class M1Scalper:
             confidence = int(
                 max(40.0, min(95.0, 45.0 + speed * 30.0 + rsi_gap * 25.0))
             )
-            return {
-                "action": "OPEN_LONG",
+            action = "OPEN_LONG"
+            if trend_down:
+                # 強い下落トレンドでは順張りショートに切替
+                action = "OPEN_SHORT"
+                confidence = int(confidence * 0.9)
+            return _attach_kill({
+                "action": action,
                 "sl_pips": sl_dyn,
                 "tp_pips": tp_dyn,
-                "confidence": confidence,
-                "tag": f"{M1Scalper.name}-buy-dip",
-            }
+                "confidence": int(confidence * conf_scale),
+                "fast_cut_pips": round(fast_cut, 2),
+                "fast_cut_time_sec": int(fast_cut_time),
+                "fast_cut_hard_mult": 1.6,
+                "tag": f"{M1Scalper.name}-buy-dip" if action == "OPEN_LONG" else f"{M1Scalper.name}-trend-short",
+            })
         if momentum > 0.0020 and rsi > 45:
             speed = abs(momentum) / max(0.0005, atr)
             rsi_gap = max(0.0, rsi - 45) / 10
             confidence = int(
                 max(40.0, min(95.0, 45.0 + speed * 30.0 + rsi_gap * 25.0))
             )
+            action = "OPEN_SHORT"
+            if trend_up:
+                # 強い上昇トレンドでは順張りロングに切替
+                action = "OPEN_LONG"
+                confidence = int(confidence * 0.9)
+            return _attach_kill({
+                "action": action,
+                "sl_pips": sl_dyn,
+                "tp_pips": tp_dyn,
+                "confidence": int(confidence * conf_scale),
+                "fast_cut_pips": round(fast_cut, 2),
+                "fast_cut_time_sec": int(fast_cut_time),
+                "fast_cut_hard_mult": 1.6,
+                "tag": f"{M1Scalper.name}-sell-rally" if action == "OPEN_SHORT" else f"{M1Scalper.name}-trend-long",
+            })
 
         def _alignment_ok(side: str) -> bool:
             if len(candles) < 2:
@@ -226,6 +283,9 @@ class M1Scalper:
                     "sl_pips": round(hard_sl, 2),
                     "tp_pips": round(target_pips, 2),
                     "confidence": int(base_conf),
+                    "fast_cut_pips": round(fast_cut, 2),
+                    "fast_cut_time_sec": int(fast_cut_time),
+                    "fast_cut_hard_mult": 1.6,
                     "tag": f"{M1Scalper.name}-nwave-long",
                 }
                 _log(
@@ -237,7 +297,7 @@ class M1Scalper:
                     atr=round(atr_pips, 2),
                     rsi=round(rsi, 2),
                 )
-                return signal
+                return _attach_kill(signal)
 
             if close < entry_price - tolerance_pips * _PIP:
                 _log(
@@ -259,6 +319,9 @@ class M1Scalper:
                 "sl_pips": round(hard_sl, 2),
                 "tp_pips": round(target_pips, 2),
                 "confidence": int(base_conf),
+                "fast_cut_pips": round(fast_cut, 2),
+                "fast_cut_time_sec": int(fast_cut_time),
+                "fast_cut_hard_mult": 1.6,
                 "tag": f"{M1Scalper.name}-nwave-short",
             }
             _log(
@@ -270,7 +333,7 @@ class M1Scalper:
                 atr=round(atr_pips, 2),
                 rsi=round(rsi, 2),
             )
-            return signal
+            return _attach_kill(signal)
 
         # Fallback microstructure scalp (limit entry every cycle)
         fallback_enabled = _to_bool(fallback_cfg.get("enabled", True), True) or _force_mode()
@@ -372,6 +435,13 @@ class M1Scalper:
             confidence = int(max(48.0, min(96.0, conf_base)))
 
             action = "OPEN_LONG" if direction == "long" else "OPEN_SHORT"
+            # トレンドと逆なら方向をスイッチ
+            if action == "OPEN_LONG" and trend_down:
+                action = "OPEN_SHORT"
+                confidence = int(confidence * 0.9)
+            elif action == "OPEN_SHORT" and trend_up:
+                action = "OPEN_LONG"
+                confidence = int(confidence * 0.9)
             entry_type = "limit"
             limit_expiry = 35 if scalp_tactical else 50
             entry_price_out = entry_price
@@ -410,7 +480,7 @@ class M1Scalper:
                 rsi=round(rsi, 2),
                 ticks=len(ticks),
             )
-            return signal
+            return _attach_kill(signal)
 
         _log(
             "skip_no_trigger",

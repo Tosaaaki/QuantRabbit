@@ -3,15 +3,16 @@ from __future__ import annotations
 
 import math
 from typing import Dict, Optional, Sequence, Tuple
+import logging
 
 PIP = 0.01
 # Treat MA10/MA20 gaps >=0.5 pips combined with ADX>=21 as strong trend
-MAX_TREND_GAP_PIPS = 0.5
-MAX_ADX = 21.0
+MAX_TREND_GAP_PIPS = 0.6
+MAX_ADX = 23.0
 MIN_VOL_5M = 0.6
 PROFILE_NAME = "bb_range_reversion"
-MIN_DISTANCE_RANGE = 0.05
-MIN_DISTANCE_TREND = 0.12
+MIN_DISTANCE_RANGE = 0.045
+MIN_DISTANCE_TREND = 0.10
 
 
 class BBRsi:
@@ -20,13 +21,20 @@ class BBRsi:
     _MIN_HOLD_SEC_RANGE = (80.0, 420.0)
 
     @staticmethod
+    def _log_skip(reason: str, **kwargs) -> None:
+        extras = " ".join(f"{k}={v}" for k, v in kwargs.items() if v is not None)
+        logging.info("[STRAT_SKIP_DETAIL] BB_RSI reason=%s %s", reason, extras)
+
+    @staticmethod
     def check(fac: Dict) -> Dict | None:
         if fac.get("bb_suppress_strong"):
+            BBRsi._log_skip("suppressed_strong_trend")
             return None
         rsi = fac.get("rsi")
         bbw = fac.get("bbw")
         ma = fac.get("ma20")
         if not all([rsi, bbw, ma]):
+            BBRsi._log_skip("missing_inputs", rsi=rsi, bbw=bbw, ma=ma)
             return None
 
         price = fac.get("close", ma)
@@ -35,18 +43,25 @@ class BBRsi:
         adx = float(fac.get("adx") or 0.0)
         vol_5m = float(fac.get("vol_5m") or 0.0)
         if vol_5m < MIN_VOL_5M:
+            BBRsi._log_skip("low_vol", vol_5m=vol_5m)
             return None
         try:
             ma_gap_pips = abs((ma10 - ma20) / PIP) if ma10 is not None and ma20 is not None else 0.0
         except (TypeError, ValueError):
             ma_gap_pips = 0.0
         if ma_gap_pips >= MAX_TREND_GAP_PIPS and adx >= MAX_ADX:
+            BBRsi._log_skip(
+                "trend_filter",
+                ma_gap_pips=round(ma_gap_pips, 3),
+                adx=round(adx, 1),
+            )
             return None
 
         upper = ma + (ma * bbw / 2)
         lower = ma - (ma * bbw / 2)
         band_width = upper - lower if upper is not None and lower is not None else 0.0
         if band_width <= 0:
+            BBRsi._log_skip("invalid_band_width", upper=upper, lower=lower)
             return None
 
         atr_hint = fac.get("atr_pips") or (fac.get("atr") or 0.0) * 100 or 6.0
@@ -113,11 +128,19 @@ class BBRsi:
         if price < lower and rsi < 30:
             distance = (lower - price) / band_width if band_width else 0.0
             if distance < min_distance_req:
+                BBRsi._log_skip(
+                    "distance_too_small_long",
+                    distance=round(distance, 4),
+                    min_req=round(min_distance_req, 4),
+                    rsi=round(rsi, 2),
+                    bbw=round(bbw, 4),
+                )
                 return None
             sl_dynamic, tp_dynamic = _calc_sl_tp(distance)
             sl_dynamic = _apply_range_bias(sl_dynamic, kind="sl", score=range_score)
             tp_dynamic = _apply_range_bias(tp_dynamic, kind="tp", score=range_score)
             if tp_dynamic <= sl_dynamic * 1.3:
+                BBRsi._log_skip("tp_sl_ratio_low_long", tp=tp_dynamic, sl=sl_dynamic)
                 tp_dynamic = round(sl_dynamic * 1.35, 2)
             rsi_gap = max(0.0, 30 - rsi) / 30
             eta_bonus = 0.0
@@ -144,11 +167,19 @@ class BBRsi:
         if price > upper and rsi > 70:
             distance = (price - upper) / band_width if band_width else 0.0
             if distance < min_distance_req:
+                BBRsi._log_skip(
+                    "distance_too_small_short",
+                    distance=round(distance, 4),
+                    min_req=round(min_distance_req, 4),
+                    rsi=round(rsi, 2),
+                    bbw=round(bbw, 4),
+                )
                 return None
             sl_dynamic, tp_dynamic = _calc_sl_tp(distance)
             sl_dynamic = _apply_range_bias(sl_dynamic, kind="sl", score=range_score)
             tp_dynamic = _apply_range_bias(tp_dynamic, kind="tp", score=range_score)
             if tp_dynamic <= sl_dynamic * 1.3:
+                BBRsi._log_skip("tp_sl_ratio_low_short", tp=tp_dynamic, sl=sl_dynamic)
                 tp_dynamic = round(sl_dynamic * 1.35, 2)
             rsi_gap = max(0.0, rsi - 70) / 30
             eta_bonus = 0.0
@@ -172,6 +203,15 @@ class BBRsi:
                 "min_hold_sec": BBRsi._min_hold_seconds(tp_dynamic),
                 "tag": f"{BBRsi.name}-short",
             }
+        BBRsi._log_skip(
+            "no_band_touch",
+            price=price,
+            upper=upper,
+            lower=lower,
+            rsi=round(rsi, 2),
+            bbw=round(bbw, 4),
+            min_distance=round(min_distance_req, 4),
+        )
         return None
 
     @staticmethod

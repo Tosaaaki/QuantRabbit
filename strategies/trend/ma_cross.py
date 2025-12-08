@@ -1,5 +1,6 @@
 from __future__ import annotations
 from typing import Dict, Optional
+import logging
 
 from analysis.ma_projection import MACrossProjection, compute_ma_projection
 from typing import List, Dict, Optional as _Optional
@@ -11,24 +12,29 @@ class MovingAverageCross:
     profile = "macro_trend_ma"
 
     # Entry quality baselines (pips are 0.01 for USD/JPY)
-    _MIN_GAP_PIPS = 0.40            # allow smaller MA10/MA20 separation
-    _MIN_TREND_ADX = 13.0           # allow weaker trend
-    _MIN_GAP_IN_WEAK_TREND = 0.70   # lower gap requirement when ADX is weak
-    _MIN_SLOPE_IN_WEAK_TREND = 0.04 # allow gentler slope
+    _MIN_GAP_PIPS = 0.34            # allow smaller MA10/MA20 separation
+    _MIN_TREND_ADX = 12.5           # allow weaker trend
+    _MIN_GAP_IN_WEAK_TREND = 0.60   # lower gap requirement when ADX is weak
+    _MIN_SLOPE_IN_WEAK_TREND = 0.03 # allow gentler slope
     _NARROW_BBW_LIMIT = 0.14        # stand down only in ultra compression
-    _MAX_FAST_DISTANCE = 7.0        # avoid stretched entries far from fast MA
+    _MAX_FAST_DISTANCE = 8.0        # avoid stretched entries far from fast MA
     # Use bars-based threshold to work across timeframes (M1/H4)
-    _CROSS_BARS_STOP = 2.0          # allow entries closer to a cross
-    _MIN_ATR_PIPS = 0.60            # allow lower ATR
-    _MIN_GAP_ATR_RATIO = 0.22       # require separation vs ATR
+    _CROSS_BARS_STOP = 1.5          # allow entries closer to a cross
+    _MIN_ATR_PIPS = 0.55            # allow lower ATR
+    _MIN_GAP_ATR_RATIO = 0.18       # require separation vs ATR
 
     # Pullback gating: avoid buying too far below fast MA or selling too far above
     _PULLBACK_LIMIT = 1.60          # pips relative to fast MA
 
     # Simple M1-only range suppression to avoid trend entries under compression
     _RANGE_ADX_CUTOFF = 22.0
-    _RANGE_BBW_CUTOFF = 0.20
+    _RANGE_BBW_CUTOFF = 0.18
     _RANGE_ATR_MAX = 6.0
+
+    @staticmethod
+    def _log_skip(reason: str, **kwargs) -> None:
+        extras = " ".join(f"{k}={v}" for k, v in kwargs.items() if v is not None)
+        logging.info("[STRAT_SKIP_DETAIL] TrendMA reason=%s %s", reason, extras)
 
     @staticmethod
     def check(fac: Dict) -> Dict | None:
@@ -61,6 +67,7 @@ class MovingAverageCross:
 
         projection = compute_ma_projection(fac, timeframe_minutes=tf_minutes)
         if not projection:
+            MovingAverageCross._log_skip("projection_missing", tf_minutes=tf_minutes)
             return None
 
         ma10 = projection.fast_ma
@@ -71,6 +78,7 @@ class MovingAverageCross:
         except (TypeError, ValueError):
             adx = 0.0
         if not ma10 or not ma20:
+            MovingAverageCross._log_skip("ma_missing", ma10=ma10, ma20=ma20)
             return None
         bbw = fac.get("bbw")
         if isinstance(bbw, str):
@@ -101,22 +109,54 @@ class MovingAverageCross:
             and float(atr_pips_val) <= MovingAverageCross._RANGE_ATR_MAX
         ):
             # Defer to range-mode strategies; TrendMA stands down
+            MovingAverageCross._log_skip(
+                "range_suppression",
+                adx=round(float(adx or 0.0), 2),
+                bbw=round(float(bbw), 4),
+                atr_pips=round(float(atr_pips_val), 3),
+            )
             return None
 
         weak_trend = adx < MovingAverageCross._MIN_TREND_ADX
         if weak_trend:
             if abs(projection.gap_pips) < MovingAverageCross._MIN_GAP_IN_WEAK_TREND:
+                MovingAverageCross._log_skip(
+                    "weak_trend_gap_small",
+                    adx=round(adx, 2),
+                    gap_pips=round(projection.gap_pips, 4),
+                )
                 return None
             if abs(projection.gap_slope_pips) < MovingAverageCross._MIN_SLOPE_IN_WEAK_TREND:
+                MovingAverageCross._log_skip(
+                    "weak_trend_slope_small",
+                    adx=round(adx, 2),
+                    gap_slope=round(projection.gap_slope_pips or 0.0, 5),
+                )
                 return None
             if isinstance(bbw, (int, float)) and bbw <= MovingAverageCross._NARROW_BBW_LIMIT:
+                MovingAverageCross._log_skip(
+                    "weak_trend_bbw_narrow",
+                    adx=round(adx, 2),
+                    bbw=round(bbw, 4),
+                )
                 return None
         if abs(projection.gap_pips) < MovingAverageCross._MIN_GAP_PIPS:
+            MovingAverageCross._log_skip(
+                "gap_small",
+                gap_pips=round(projection.gap_pips, 4),
+                min_gap=MovingAverageCross._MIN_GAP_PIPS,
+            )
             return None
         if (
             abs(projection.price_to_fast_pips) > MovingAverageCross._MAX_FAST_DISTANCE
             and abs(projection.price_to_fast_pips) > abs(projection.price_to_slow_pips)
         ):
+            MovingAverageCross._log_skip(
+                "price_far_from_fast",
+                price_to_fast=round(projection.price_to_fast_pips, 4),
+                price_to_slow=round(projection.price_to_slow_pips or 0.0, 4),
+                max_fast=MovingAverageCross._MAX_FAST_DISTANCE,
+            )
             return None
 
         # ATR/strength checks
@@ -124,29 +164,63 @@ class MovingAverageCross:
         if atr_pips_val is not None and atr_pips_val > 0:
             strength_ratio = abs(projection.gap_pips) / max(atr_pips_val, 0.01)
             if atr_pips_val < MovingAverageCross._MIN_ATR_PIPS:
+                MovingAverageCross._log_skip(
+                    "atr_low",
+                    atr_pips=round(atr_pips_val, 3),
+                    min_atr=MovingAverageCross._MIN_ATR_PIPS,
+                )
                 return None
             if strength_ratio < MovingAverageCross._MIN_GAP_ATR_RATIO:
+                MovingAverageCross._log_skip(
+                    "strength_ratio_low",
+                    strength_ratio=round(strength_ratio, 4),
+                    gap_pips=round(projection.gap_pips, 4),
+                    atr_pips=round(atr_pips_val, 3),
+                )
                 return None
 
         direction = "long" if ma10 > ma20 else "short" if ma10 < ma20 else None
         if direction is None:
+            MovingAverageCross._log_skip("direction_flat", ma10=ma10, ma20=ma20)
             return None
 
         # Align slope with the intended direction; avoid entering against a rolling flattening
         slope = projection.gap_slope_pips
         if direction == "long" and slope < -0.05:
+            MovingAverageCross._log_skip(
+                "slope_against_long", slope=round(slope or 0.0, 5)
+            )
             return None
         if direction == "short" and slope > 0.05:
+            MovingAverageCross._log_skip(
+                "slope_against_short", slope=round(slope or 0.0, 5)
+            )
             return None
 
         # Avoid chasing when price sits on the wrong side of the fast MA too far
         if direction == "long" and projection.price_to_fast_pips < -MovingAverageCross._PULLBACK_LIMIT:
+            MovingAverageCross._log_skip(
+                "long_pullback_too_far",
+                price_to_fast=round(projection.price_to_fast_pips, 4),
+                limit=MovingAverageCross._PULLBACK_LIMIT,
+            )
             return None
         if direction == "short" and projection.price_to_fast_pips > MovingAverageCross._PULLBACK_LIMIT:
+            MovingAverageCross._log_skip(
+                "short_pullback_too_far",
+                price_to_fast=round(projection.price_to_fast_pips, 4),
+                limit=MovingAverageCross._PULLBACK_LIMIT,
+            )
             return None
 
         macd_adjust = MovingAverageCross._macd_adjust(projection, direction)
         if macd_adjust is None:
+            MovingAverageCross._log_skip(
+                "macd_filter",
+                macd=fac.get("macd"),
+                macd_sig=fac.get("macd_signal"),
+                direction=direction,
+            )
             return None
 
         # Guard: avoid entries when too close to a cross in terms of bars
@@ -154,6 +228,11 @@ class MovingAverageCross:
             projection.projected_cross_bars is not None
             and projection.projected_cross_bars < MovingAverageCross._CROSS_BARS_STOP
         ):
+            MovingAverageCross._log_skip(
+                "too_close_to_cross",
+                projected_cross=round(projection.projected_cross_bars, 3),
+                stop=MovingAverageCross._CROSS_BARS_STOP,
+            )
             return None
 
         # Multi-timeframe confluence: use H1/M10/M5 slopes to shape confidence.
@@ -182,6 +261,13 @@ class MovingAverageCross:
                     oppose += 1
             # Hard gate: if H1 opposes and either M10 or M5 opposes, stand down
             if (p_h1 and p_h1.gap_slope_pips is not None and p_h1.gap_slope_pips * dir_sign < -0.05) and (oppose >= 2):
+                MovingAverageCross._log_skip(
+                    "mtf_opposition",
+                    h1_slope=round(p_h1.gap_slope_pips, 5) if p_h1 and p_h1.gap_slope_pips is not None else None,
+                    oppose=oppose,
+                    support=support,
+                    dir=direction,
+                )
                 return None
             # Adjust confidence and risk: reward broad alignment, penalize near-term opposition
             conf_adj += max(0, support - 1) * 6  # +6..+12 when 2–3 agree

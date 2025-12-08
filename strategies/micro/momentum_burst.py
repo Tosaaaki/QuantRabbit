@@ -17,6 +17,23 @@ DRIFT_PIPS_CEIL = 0.5    # block shorts if short-term drift is positive
 SPREAD_PIPS_MAX = 1.2    # hard cap; additionally scaled by ATR below
 
 
+def _attach_kill(signal: Dict) -> Dict:
+    tags = []
+    raw_tags = signal.get("exit_tags") or signal.get("tags")
+    if raw_tags:
+        if isinstance(raw_tags, str):
+            tags = [raw_tags]
+        elif isinstance(raw_tags, (list, tuple)):
+            tags = list(raw_tags)
+    tags = [t for t in tags if isinstance(t, str)]
+    lower = [t.lower() for t in tags]
+    if "kill" not in lower:
+        tags.append("kill")
+    signal["exit_tags"] = tags
+    signal["kill_switch"] = True
+    return signal
+
+
 class MomentumBurstMicro:
     name = "MomentumBurst"
     pocket = "micro"
@@ -170,7 +187,7 @@ class MomentumBurstMicro:
             )
             profile = "momentum_burst"
             min_hold = max(90.0, min(540.0, tp * 42.0))
-            return {
+            return _attach_kill({
                 "action": action,
                 "sl_pips": round(sl, 2),
                 "tp_pips": round(tp, 2),
@@ -180,7 +197,7 @@ class MomentumBurstMicro:
                 "target_tp_pips": round(tp, 2),
                 "min_hold_sec": round(min_hold, 1),
                 "tag": f"{MomentumBurstMicro.name}-{action.lower()}",
-            }
+            })
 
         if (
             gap_pips >= MIN_GAP_TREND

@@ -193,7 +193,7 @@ async def fetch_historical_candles(
     return out
 
 
-async def initialize_history(instrument: str):
+async def initialize_history(instrument: str) -> bool:
     """起動時に過去ローソクを取得し factor_cache を埋める。
 
     ネットワーク断や API 失敗を考慮し、一定回数リトライして最低限の本数を確保する。
@@ -204,6 +204,7 @@ async def initialize_history(instrument: str):
     max_attempts = 6
     base_delay = 2.0
 
+    seeded_all = True
     for tf in ("M1", "H1", "H4"):
         required = max(20, min_required.get(tf, 20))
         attempts = 0
@@ -231,10 +232,16 @@ async def initialize_history(instrument: str):
                 max_attempts,
             )
             if attempts >= max_attempts:
-                raise RuntimeError(
-                    f"Failed to seed {tf} history for {instrument} after {max_attempts} attempts"
+                logging.error(
+                    "[HISTORY] Failed to seed %s %s after %d attempts (continuing with live feed).",
+                    instrument,
+                    tf,
+                    max_attempts,
                 )
+                seeded_all = False
+                break
             await asyncio.sleep(min(30.0, base_delay * attempts))
+    return seeded_all
 
 
 # ---------- self test ----------

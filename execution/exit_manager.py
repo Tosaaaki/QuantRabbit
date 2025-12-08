@@ -114,6 +114,12 @@ class ExitManager:
         # Scalp pocket guard rails
         self._scalp_min_hold_seconds = float(os.getenv("EXIT_SCALP_MIN_HOLD_SEC", "45"))
         self._scalp_loss_grace_pips = float(os.getenv("EXIT_SCALP_GUARD_LOSS_PIPS", "2.0"))
+        # Fast-cut opt-out: default OFF -> 高速カットを有効。ただしガードを強化。
+        self._disable_scalp_fast_cut = str(os.getenv("EXIT_DISABLE_SCALP_FAST_CUT", "0")).strip().lower() in {
+            "1",
+            "true",
+            "yes",
+        }
         # TrendMA / volatility-specific garde rails
         self._trendma_partial_fraction = float(os.getenv("EXIT_TRENDMA_PARTIAL_FRACTION", "0.5"))
         self._trendma_partial_profit_cap = float(os.getenv("EXIT_TRENDMA_PARTIAL_PROFIT_CAP", "3.4"))
@@ -133,6 +139,19 @@ class ExitManager:
         self._loss_guard_atr_trigger = float(os.getenv("EXIT_LOSS_GUARD_ATR_TRIGGER", "2.0"))
         self._loss_guard_vol_trigger = float(os.getenv("EXIT_LOSS_GUARD_VOL_TRIGGER", "1.5"))
         self._loss_guard_compress_ratio = float(os.getenv("EXIT_LOSS_GUARD_COMPRESS_RATIO", "0.7"))
+        # track best profit (pips) per pocket/side to avoid cutting trades that already went positive
+        self._max_profit_cache: Dict[Tuple[str, str], float] = {}
+        # Apply stale drawdown exits only to trades opened after this cutover (if set)
+        self._dd_cutover = self._parse_cutover_env(os.getenv("EXIT_DD_CUTOVER_ISO"))
+        # Loss clamp thresholds derived from recent MAE analysis (pips)
+        self._loss_clamp_partial = {
+            "micro": float(os.getenv("LOSS_CLAMP_MICRO_PARTIAL_PIPS", "10.0")),
+            "scalp": float(os.getenv("LOSS_CLAMP_SCALP_PARTIAL_PIPS", "8.0")),
+        }
+        self._loss_clamp_full = {
+            "micro": float(os.getenv("LOSS_CLAMP_MICRO_FULL_PIPS", "14.0")),
+            "scalp": float(os.getenv("LOSS_CLAMP_SCALP_FULL_PIPS", "12.0")),
+        }
         # MFE-based trail/partials for breakout・pullback系の尻尾切り
         self._mfe_partial_macro = float(os.getenv("EXIT_MFE_PARTIAL_MACRO", "8.0"))
         self._mfe_partial_micro = float(os.getenv("EXIT_MFE_PARTIAL_MICRO", "5.0"))
@@ -180,6 +199,11 @@ class ExitManager:
                 long_profit = (close_price - avg_long) / 0.01
             if avg_short and close_price:
                 short_profit = (avg_short - close_price) / 0.01
+            # Update per-pocket/side max profit cache (for once-positive detection)
+            if long_units > 0 and long_profit is not None:
+                self._update_max_profit(pocket, "long", long_profit)
+            if short_units > 0 and short_profit is not None:
+                self._update_max_profit(pocket, "short", short_profit)
             if long_units == 0:
                 self._reset_reverse_counter(pocket, "long")
                 self._low_vol_hazard_hits.pop((pocket, "long"), None)
@@ -188,6 +212,28 @@ class ExitManager:
                 self._low_vol_hazard_hits.pop((pocket, "short"), None)
             if long_units == 0 and short_units == 0:
                 continue
+
+            # MFEリトレースによる早期部分カット（scalp/microのみ）
+            if long_units > 0 and long_profit is not None and long_profit > 0:
+                mfe_exit = self._mfe_retrace_exit(
+                    pocket=pocket,
+                    side="long",
+                    units=long_units,
+                    profit_pips=long_profit,
+                )
+                if mfe_exit:
+                    decisions.append(mfe_exit)
+                    long_units += mfe_exit.units  # cut_units is negative for long
+            if short_units > 0 and short_profit is not None and short_profit > 0:
+                mfe_exit = self._mfe_retrace_exit(
+                    pocket=pocket,
+                    side="short",
+                    units=short_units,
+                    profit_pips=short_profit,
+                )
+                if mfe_exit:
+                    decisions.append(mfe_exit)
+                    short_units -= mfe_exit.units  # cut_units is positive for short
 
             if pocket == "scalp_fast":
                 decisions.extend(
@@ -228,6 +274,19 @@ class ExitManager:
             profile = (pocket_profiles or {}).get(pocket, {})
 
             if long_units > 0:
+                fast_cut = self._fast_cut_decision(
+                    pocket=pocket,
+                    side="long",
+                    units=long_units,
+                    open_info=info,
+                    close_price=close_price,
+                    atr_pips=atr_pips,
+                    fac_m1=fac_m1,
+                    now=current_time,
+                )
+                if fast_cut:
+                    decisions.append(fast_cut)
+                    continue
                 if long_profit is not None and long_profit < 0:
                     continue  # 明示要求: マイナス時はEXITしない
                 decision = self._evaluate_long(
@@ -255,6 +314,19 @@ class ExitManager:
                     decisions.append(decision)
 
             if short_units > 0:
+                fast_cut = self._fast_cut_decision(
+                    pocket=pocket,
+                    side="short",
+                    units=short_units,
+                    open_info=info,
+                    close_price=close_price,
+                    atr_pips=atr_pips,
+                    fac_m1=fac_m1,
+                    now=current_time,
+                )
+                if fast_cut:
+                    decisions.append(fast_cut)
+                    continue
                 if short_profit is not None and short_profit < 0:
                     continue  # 明示要求: マイナス時はEXITしない
                 decision = self._evaluate_short(
@@ -368,6 +440,437 @@ class ExitManager:
         trail_floor = avg_price - give_back * 0.01
         return close_price >= trail_floor
 
+    def _fast_cut_decision(
+        self,
+        *,
+        pocket: str,
+        side: str,
+        units: int,
+        open_info: Dict,
+        close_price: float,
+        atr_pips: float,
+        fac_m1: Dict,
+        now: datetime,
+    ) -> Optional[ExitDecision]:
+        """
+        ATR×時間に基づく早期クローズ。
+        - 逆行が fast_cut を大きく超えた場合は即時クローズ
+        - 逆行が fast_cut を超え、かつ一定時間経過でクローズ
+        - ただし「一度も+域に乗っておらず若いポジ」は緩めに判定する
+        """
+        if pocket not in {"micro", "scalp"}:
+            return None
+        if pocket == "scalp" and self._disable_scalp_fast_cut:
+            return None
+        if units <= 0:
+            return None
+
+        avg_price = open_info.get("long_avg_price") if side == "long" else open_info.get("short_avg_price")
+        if avg_price is None:
+            avg_price = open_info.get("avg_price")
+        if avg_price is None or close_price is None:
+            return None
+
+        # 経過時間（最古トレード基準）
+        open_trades = [tr for tr in (open_info.get("open_trades") or []) if tr.get("side") == side]
+        age_sec = None
+        for tr in open_trades:
+            age = self._trade_age_seconds(tr, now)
+            if age is not None:
+                age_sec = age if age_sec is None else min(age_sec, age)
+
+        profit_pips = (close_price - avg_price) / 0.01 if side == "long" else (avg_price - close_price) / 0.01
+        max_seen = self._max_profit_cache.get((pocket, side))
+        if profit_pips >= 0:
+            return None  # 順行中は早切りしない
+        # まだ+域未達かつ極めて若いポジは少し待つ
+        if max_seen is None and age_sec is not None and age_sec < 90:
+            return None
+
+        atr_val = float(atr_pips or 0.0)
+        # 市況でゲートを揺らす（ATR低→広げる、高→やや狭める）
+        if pocket == "scalp":
+            # scalpは戻りを待つ: 基準を広げ、時間ゲートも長め
+            if atr_val <= 1.6:
+                fast_cut = max(7.5, atr_val * 1.4)
+                time_gate = max(self._scalp_min_hold_seconds, max(95.0, atr_val * 20.0))
+            elif atr_val >= 3.0:
+                fast_cut = max(8.5, atr_val * 1.1)
+                time_gate = max(self._scalp_min_hold_seconds, max(85.0, atr_val * 14.0))
+            else:
+                fast_cut = max(7.0, atr_val * 1.2)
+                time_gate = max(self._scalp_min_hold_seconds, max(90.0, atr_val * 17.0))
+            hard_cut = fast_cut * 1.8
+        else:
+            if atr_val <= 1.5:
+                fast_cut = max(6.0, atr_val * 1.1)
+                time_gate = max(90.0 if pocket == "micro" else 70.0, atr_val * 18.0)
+            elif atr_val >= 3.5:
+                fast_cut = max(6.0, atr_val * 0.8)
+                time_gate = max(75.0 if pocket == "micro" else 60.0, atr_val * 12.0)
+            else:
+                fast_cut = max(6.0, atr_val * 0.9)
+                time_gate = max(80.0 if pocket == "micro" else 65.0, atr_val * 15.0)
+            hard_cut = fast_cut * 1.6
+        # 低ボラはもう少し待つ
+        if pocket == "scalp" and atr_val <= 1.2:
+            fast_cut *= 1.1
+            time_gate *= 1.2
+
+        thesis_fast_cut = None
+        thesis_time_gate = None
+        thesis_hard_mult = None
+        has_fast_cut_meta = False
+        for tr in open_trades:
+            age = self._trade_age_seconds(tr, now)
+            if age is None:
+                continue
+            age_sec = age if age_sec is None else min(age_sec, age)
+            if self._has_kill_opt_in(tr):
+                has_fast_cut_meta = True
+            thesis = self._parse_entry_thesis(tr)
+            if thesis:
+                try:
+                    if thesis_fast_cut is None and thesis.get("fast_cut_pips") is not None:
+                        thesis_fast_cut = float(thesis.get("fast_cut_pips"))
+                    if thesis_time_gate is None and thesis.get("fast_cut_time_sec") is not None:
+                        thesis_time_gate = float(thesis.get("fast_cut_time_sec"))
+                    if thesis_hard_mult is None and thesis.get("fast_cut_hard_mult") is not None:
+                        thesis_hard_mult = float(thesis.get("fast_cut_hard_mult"))
+                except Exception:
+                    pass
+        if thesis_time_gate:
+            time_gate = max(time_gate, thesis_time_gate)
+
+        loss = abs(profit_pips)
+        # fast_cut はメタがあるシグナルのみ適用（手動・旧ポジは対象外）
+        if not has_fast_cut_meta:
+            return None
+        if thesis_fast_cut and thesis_fast_cut > 0:
+            fast_cut = thesis_fast_cut
+        if thesis_hard_mult and thesis_hard_mult > 0:
+            hard_cut = fast_cut * thesis_hard_mult
+
+        # 一度でも+域に乗ったポジは少し緩めて待つ
+        max_seen = self._max_profit_cache.get((pocket, side))
+        if max_seen is not None and max_seen >= 2.5:
+            fast_cut *= 1.3
+            time_gate *= 1.3
+
+        # 直近のRSIが中立帯なら1回だけ様子見
+        rsi_val = None
+        try:
+            rsi_val = float(fac_m1.get("rsi"))
+        except Exception:
+            rsi_val = None
+        if rsi_val is not None and 45.0 <= rsi_val <= 55.0 and loss < fast_cut * 0.8:
+            return None
+
+        # MFEリトレース＆構造・モメンタム確認: 戻しそうなら切らない
+        rsi_val = None
+        adx_val = None
+        ma_fast = None
+        ma_slow = None
+        drawdown_ratio = None
+        try:
+            rsi_val = float(fac_m1.get("rsi"))
+        except Exception:
+            pass
+        try:
+            adx_val = float(fac_m1.get("adx"))
+        except Exception:
+            pass
+        try:
+            ma_fast = float(fac_m1.get("ma10"))
+            ma_slow = float(fac_m1.get("ma20"))
+        except Exception:
+            pass
+        if max_seen is not None and max_seen > 0:
+            try:
+                drawdown_ratio = (max_seen - profit_pips) / max_seen
+            except Exception:
+                drawdown_ratio = None
+
+        # MFEが小さい、またはリトレース比率が低いときは早切りしない
+        if max_seen is not None and max_seen < 3.0:
+            return None
+        if drawdown_ratio is not None and drawdown_ratio < 0.6:
+            return None
+
+        # neutral RSI帯やADX弱いときは早切りしない
+        if rsi_val is not None and 44.0 <= rsi_val <= 56.0:
+            return None
+        if adx_val is not None and adx_val < 16.0:
+            return None
+        # MA向きがポジ方向と整合するなら待つ
+        if ma_fast is not None and ma_slow is not None:
+            if side == "long" and ma_fast >= ma_slow:
+                return None
+            if side == "short" and ma_fast <= ma_slow:
+                return None
+
+        if loss >= hard_cut:
+            cut_units = -abs(units) if side == "long" else abs(units)
+            return ExitDecision(
+                pocket=pocket,
+                units=cut_units,
+                reason="fast_cut_hard",
+                tag="fast-cut",
+                allow_reentry=True,
+            )
+        if loss >= fast_cut and age_sec is not None and age_sec >= time_gate:
+            # scalpは部分カットで様子見
+            cut_units = -abs(units) if side == "long" else abs(units)
+            if pocket == "scalp":
+                partial = max(1000, int(abs(units) * 0.5))
+                cut_units = -partial if side == "long" else partial
+            return ExitDecision(
+                pocket=pocket,
+                units=cut_units,
+                reason="fast_cut_soft",
+                tag="fast-cut",
+                allow_reentry=True,
+            )
+        return None
+
+    def _loss_clamp_exit(
+        self,
+        *,
+        pocket: str,
+        side: str,
+        units: int,
+        profit_pips: float,
+        open_info: Dict,
+        atr_pips: float,
+        fac_m1: Dict,
+        now: datetime,
+        close_price: Optional[float],
+    ) -> Optional[ExitDecision]:
+        """
+        Clamp deep losses based on pocket-specific MAE bands, with chart/ATR/time/MFE gating.
+        Partial cut at lower band, full cut at higher band. タグ必須。
+        """
+        if pocket not in {"micro", "scalp"}:
+            return None
+        if profit_pips is None or profit_pips >= 0.0:
+            return None
+        partial = self._loss_clamp_partial.get(pocket)
+        full = self._loss_clamp_full.get(pocket)
+        if partial is None or full is None:
+            return None
+
+        # Opt-in required: kill_switch/fast_cutタグまたはメタ付きトレードのみ対象
+        trades = [tr for tr in (open_info.get("open_trades") or []) if tr.get("side") == side and self._has_kill_opt_in(tr)]
+        if not trades:
+            return None
+
+        # Chart gate: require EMA方向とMA傾きが逆行を示す
+        gap_thresh = float(os.getenv("LOSS_CLAMP_EMA_GAP_PIPS", "0.6"))
+        try:
+            ema = float(fac_m1.get("ema20") or fac_m1.get("ma20") or 0.0)
+            ma10 = float(fac_m1.get("ma10") or 0.0)
+            ma20 = float(fac_m1.get("ma20") or ema or 0.0)
+        except Exception:
+            ema = ma10 = ma20 = 0.0
+        gap_ok = False
+        if close_price is not None and ema:
+            ema_gap = (close_price - ema) / 0.01
+            if side == "long":
+                if ema_gap <= -gap_thresh and ma10 < ma20:
+                    gap_ok = True
+            else:
+                if ema_gap >= gap_thresh and ma10 > ma20:
+                    gap_ok = True
+        if not gap_ok:
+            return None
+
+        # Max seen profit (MFE) to avoid cutting before giving it a chance
+        max_seen = self._max_profit_cache.get((pocket, side))
+
+        # Age scaling: newer tradesは少し緩め、長く抱えるほどタイトに
+        age_min = None
+        for tr in trades:
+            age = self._trade_age_seconds(tr, now)
+            if age is None:
+                continue
+            age_m = age / 60.0
+            age_min = age_m if age_min is None else min(age_min, age_m)
+        age_scale = 1.0
+        if age_min is not None:
+            if age_min < 20:
+                age_scale = 1.2
+            elif age_min > 180:
+                age_scale = 0.9
+            elif age_min > 360:
+                age_scale = 0.8
+
+        # ATR scaling: 高ボラはタイトに、低ボラはやや緩め
+        atr_val = float(atr_pips or 0.0)
+        if atr_val <= 0.0:
+            try:
+                atr_val = float(fac_m1.get("atr") or 0.0) * 100.0
+            except Exception:
+                atr_val = 0.0
+        atr_scale = 1.0
+        if atr_val > 3.5:
+            atr_scale = 0.8
+        elif atr_val < 1.2:
+            atr_scale = 1.25
+
+        # RSI中立帯はリバウンド余地とみてわずかに緩め
+        try:
+            rsi_val = float(fac_m1.get("rsi"))
+        except Exception:
+            rsi_val = None
+        rsi_scale = 1.0
+        if rsi_val is not None and 45.0 <= rsi_val <= 55.0:
+            rsi_scale = 1.1
+
+        # Require either some age or prior +MFE to avoid premature clamp
+        mfe_gate = float(os.getenv("LOSS_CLAMP_MFE_GATE_PIPS", "3.0"))
+        if max_seen is None:
+            if age_min is None or age_min < 15.0:
+                return None
+            max_seen = 0.0  # ageだけで解禁
+
+        # Retrace-based thresholds: まずはMFEに対する戻り率で判定
+        retrace_partial = float(os.getenv("LOSS_CLAMP_RETRACE_PARTIAL", "0.6"))
+        retrace_full = float(os.getenv("LOSS_CLAMP_RETRACE_FULL", "0.8"))
+
+        scale = max(0.6, min(1.4, atr_scale * age_scale * rsi_scale))
+        partial *= scale
+        full *= scale
+        # MFEがゲートを超えていれば、MFEに対する戻し割合も閾値に組み込む
+        if max_seen is not None and max_seen >= mfe_gate:
+            partial = max(partial, abs(max_seen) * retrace_partial)
+            full = max(full, abs(max_seen) * retrace_full)
+        loss = abs(profit_pips)
+        if loss >= full:
+            cut_units = -abs(units) if side == "long" else abs(units)
+            return ExitDecision(
+                pocket=pocket,
+                units=cut_units,
+                reason="loss_clamp_full",
+                tag="loss-clamp",
+                allow_reentry=True,
+            )
+        if loss >= partial:
+            cut_units = max(1000, abs(units) // 2)
+            cut_units = min(abs(units), cut_units)
+            cut_units = -cut_units if side == "long" else cut_units
+            return ExitDecision(
+                pocket=pocket,
+                units=cut_units,
+                reason="loss_clamp_partial",
+                tag="loss-clamp",
+                allow_reentry=True,
+            )
+        return None
+
+    def _stale_drawdown_exit(
+        self,
+        *,
+        pocket: str,
+        side: str,
+        units: int,
+        open_info: Dict,
+        profit_pips: float,
+        atr_pips: float,
+        fac_m1: Dict,
+        now: datetime,
+    ) -> Optional[ExitDecision]:
+        """
+        Catch aging underwater trades that never armed fast_cut.
+        Designed for micro/scalp pockets: widen early, tighten with age.
+        """
+        # stale_drawdownは新しい loss_clamp に統合する方針のため無効化
+        return None
+        if pocket not in {"micro", "scalp"}:
+            return None
+        if profit_pips is None or profit_pips >= 0.0:
+            return None
+
+        trades = [
+            tr for tr in (open_info.get("open_trades") or []) if tr.get("side") == side
+        ]
+        if not trades:
+            return None
+        # Opt-in via entry tags/flags; fast_cutメタもキル対象として扱う
+        trades = [tr for tr in trades if self._has_kill_opt_in(tr)]
+        if not trades:
+            return None
+        # Respect cutover: only act on trades opened at/after the configured timestamp
+        if self._dd_cutover is not None:
+            eligible = []
+            for tr in trades:
+                opened_at = self._parse_open_time(tr.get("open_time"))
+                if opened_at and opened_at >= self._dd_cutover:
+                    eligible.append(tr)
+            trades = eligible
+            if not trades:
+                return None
+
+        oldest: Optional[float] = None
+        for tr in trades:
+            age = self._trade_age_seconds(tr, now)
+            if age is None:
+                continue
+            if oldest is None or age > oldest:
+                oldest = age
+        if oldest is None:
+            return None
+
+        atr_val = float(atr_pips or 0.0)
+        if atr_val <= 0.0:
+            try:
+                atr_val = float(fac_m1.get("atr") or 0.0) * 100.0
+            except Exception:
+                atr_val = 0.0
+        if atr_val <= 0.0:
+            atr_val = 6.0
+        age_min = oldest / 60.0
+        trigger = None
+        if pocket == "micro":
+            if age_min >= 360:  # 6h+
+                trigger = max(atr_val * 0.8, 3.8)
+            elif age_min >= 180:  # 3h+
+                trigger = max(atr_val * 0.9, 4.5)
+            elif age_min >= 60:  # 1h+
+                trigger = max(atr_val * 1.05, 6.0)
+            elif age_min >= 30:  # 30m+
+                trigger = max(atr_val * 1.2, 7.5)
+        else:  # scalp
+            if age_min >= 90:
+                trigger = max(atr_val * 0.8, 3.0)
+            elif age_min >= 45:
+                trigger = max(atr_val * 0.9, 3.5)
+            elif age_min >= 20:
+                trigger = max(atr_val * 1.0, 4.2)
+        if trigger is None:
+            return None
+
+        loss = abs(profit_pips)
+        if loss < trigger:
+            return None
+
+        cut_units = -abs(units) if side == "long" else abs(units)
+        logging.info(
+            "[EXIT] stale_drawdown pocket=%s side=%s age_min=%.1f loss=%.1fp gate=%.1fp atr=%.2f",
+            pocket,
+            side,
+            age_min,
+            loss,
+            trigger,
+            atr_val,
+        )
+        return ExitDecision(
+            pocket=pocket,
+            units=cut_units,
+            reason="drawdown_stale",
+            tag="dd-kill",
+            allow_reentry=True,
+        )
+
     def _evaluate_long(
         self,
         pocket: str,
@@ -398,9 +901,31 @@ class ExitManager:
         profit_pips = 0.0
         if avg_price and close_price:
             profit_pips = (close_price - avg_price) / 0.01
-        # ユーザー指定: マイナス時はEXITしない（SLなし運用のため、逆行中はホールド）
-        if profit_pips < 0:
-            return None
+        drawdown_exit = self._stale_drawdown_exit(
+            pocket=pocket,
+            side="long",
+            units=units,
+            open_info=open_info,
+            profit_pips=profit_pips,
+            atr_pips=atr_pips,
+            fac_m1=fac_m1,
+            now=now,
+        )
+        if drawdown_exit:
+            return drawdown_exit
+        clamp_exit = self._loss_clamp_exit(
+            pocket=pocket,
+            side="long",
+            units=units,
+            profit_pips=profit_pips,
+            open_info=open_info,
+            atr_pips=atr_pips,
+            fac_m1=fac_m1,
+            now=now,
+            close_price=close_price,
+        )
+        if clamp_exit:
+            return clamp_exit
         neg_exit_blocked = self._negative_exit_blocked(
             pocket, open_info, "long", now, profit_pips, stage_tracker, atr_pips, fac_m1
         )
@@ -887,9 +1412,31 @@ class ExitManager:
         profit_pips = 0.0
         if avg_price and close_price:
             profit_pips = (avg_price - close_price) / 0.01
-        # ユーザー指定: マイナス時はEXITしない（SLなし運用のため、逆行中はホールド）
-        if profit_pips < 0:
-            return None
+        drawdown_exit = self._stale_drawdown_exit(
+            pocket=pocket,
+            side="short",
+            units=units,
+            open_info=open_info,
+            profit_pips=profit_pips,
+            atr_pips=atr_pips,
+            fac_m1=fac_m1,
+            now=now,
+        )
+        if drawdown_exit:
+            return drawdown_exit
+        clamp_exit = self._loss_clamp_exit(
+            pocket=pocket,
+            side="short",
+            units=units,
+            profit_pips=profit_pips,
+            open_info=open_info,
+            atr_pips=atr_pips,
+            fac_m1=fac_m1,
+            now=now,
+            close_price=close_price,
+        )
+        if clamp_exit:
+            return clamp_exit
         neg_exit_blocked = self._negative_exit_blocked(
             pocket, open_info, "short", now, profit_pips, stage_tracker, atr_pips, fac_m1
         )
@@ -2214,6 +2761,55 @@ class ExitManager:
 
     def _reset_reverse_counter(self, pocket: str, direction: str) -> None:
         self._reverse_hits.pop((pocket, direction), None)
+        self._max_profit_cache.pop((pocket, direction), None)
+
+    def _update_max_profit(self, pocket: str, side: str, profit_pips: float) -> None:
+        try:
+            val = float(profit_pips)
+        except (TypeError, ValueError):
+            return
+        key = (pocket, side)
+        prev = self._max_profit_cache.get(key)
+        if prev is None or val > prev:
+            self._max_profit_cache[key] = val
+
+    def _mfe_retrace_exit(
+        self,
+        *,
+        pocket: str,
+        side: str,
+        units: int,
+        profit_pips: Optional[float],
+    ) -> Optional[ExitDecision]:
+        """
+        Partial close when a once-positive trade has retraced deeply.
+        Applies only to micro/scalp to avoid dragging a fully winning trade back to flat.
+        """
+        if pocket not in {"micro", "scalp"}:
+            return None
+        if units <= 0 or profit_pips is None or profit_pips <= 0:
+            return None
+        max_seen = self._max_profit_cache.get((pocket, side))
+        if max_seen is None or max_seen < 3.0:
+            return None
+        try:
+            retrace_ratio = (max_seen - profit_pips) / max_seen
+        except Exception:
+            return None
+        if retrace_ratio < 0.6:
+            return None
+        partial_units = int(abs(units) * 0.5)
+        partial_units = max(1000, min(abs(units) - 1, partial_units))
+        if partial_units <= 0 or partial_units >= abs(units):
+            return None
+        cut_units = -partial_units if side == "long" else partial_units
+        return ExitDecision(
+            pocket=pocket,
+            units=cut_units,
+            reason="mfe_retrace",
+            tag="mfe-retrace",
+            allow_reentry=True,
+        )
 
     def _has_mature_trade(
         self,
@@ -2424,6 +3020,70 @@ class ExitManager:
         if pocket == "micro":
             return 240
         return 180
+
+    @staticmethod
+    def _flag_truthy(val: object) -> bool:
+        if isinstance(val, bool):
+            return val
+        if isinstance(val, (int, float)):
+            return val != 0
+        if isinstance(val, str):
+            return val.strip().lower() in {"1", "true", "yes", "on"}
+        return False
+
+    def _has_kill_opt_in(self, trade: Dict) -> bool:
+        """
+        Opt-in gate for stale_drawdown/fast_cut-like safety exits.
+        - flags: kill_switch / kill_opt_in
+        - tags/exit_tags include {kill, kill_switch, dd_kill, fast_cut}
+        - fast_cut meta present (fast_cut_pips/time/hard_mult)
+        """
+        thesis = self._parse_entry_thesis(trade)
+        if self._flag_truthy(thesis.get("kill_switch")) or self._flag_truthy(thesis.get("kill_opt_in")):
+            return True
+        tags = thesis.get("tags") or thesis.get("exit_tags") or []
+        if isinstance(tags, str):
+            tags = [tags]
+        tags_norm = []
+        for t in tags:
+            if not isinstance(t, str):
+                continue
+            tnorm = t.strip().lower()
+            if tnorm:
+                tags_norm.append(tnorm)
+        if any(t in {"kill", "kill_switch", "dd_kill", "fast_cut"} for t in tags_norm):
+            return True
+        # fast_cut meta implies kill opt-in
+        if thesis.get("fast_cut_pips") or thesis.get("fast_cut_time_sec") or thesis.get("fast_cut_hard_mult"):
+            return True
+        # Fallback: client_id / strategy_tag contains known fast_cut strategies
+        cid = trade.get("client_id") or trade.get("client_order_id") or trade.get("id")
+        if isinstance(cid, str):
+            cid_low = cid.lower()
+            for key in ("impulsere", "m1scalper", "pulsebreak", "rangefader"):
+                if key in cid_low:
+                    return True
+        strategy_tag = trade.get("strategy_tag")
+        if isinstance(strategy_tag, str) and any(
+            k in strategy_tag.lower() for k in ("impulsere", "m1scalper", "pulsebreak", "rangefader")
+        ):
+            return True
+        return False
+
+    @staticmethod
+    def _parse_cutover_env(raw: Optional[str]) -> Optional[datetime]:
+        """
+        Parse ISO8601-like string from env (e.g., 2025-12-06T11:19:00Z) for drawdown cutover.
+        """
+        if not raw:
+            return None
+        t = raw.strip()
+        try:
+            if t.endswith("Z"):
+                t = t[:-1] + "+00:00"
+            return datetime.fromisoformat(t).astimezone(timezone.utc)
+        except Exception:
+            return None
 
     def _entry_target_bounds(
         self,

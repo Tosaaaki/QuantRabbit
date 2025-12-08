@@ -230,6 +230,33 @@ def _fetch_quote(instrument: str) -> dict[str, float] | None:
         return None
 
 
+def _safe_json(payload: Optional[dict]) -> str:
+    """
+    Serialize payload safely; never raises. None -> "{}".
+    Coerces non-serializable objects to string to avoid dropping the payload.
+    """
+    def _coerce(obj: object):
+        if obj is None or isinstance(obj, (bool, int, float, str)):
+            return obj
+        if isinstance(obj, dict):
+            return {str(k): _coerce(v) for k, v in obj.items()}
+        if isinstance(obj, (list, tuple, set)):
+            return [_coerce(v) for v in obj]
+        try:
+            return str(obj)
+        except Exception:
+            return repr(obj)
+
+    if payload is None:
+        return "{}"
+    try:
+        coerced = _coerce(payload)
+        return json.dumps(coerced, ensure_ascii=False)
+    except Exception as exc:  # pragma: no cover - defensive
+        logging.warning("[ORDER][LOG] failed to serialize payload: %s", exc)
+        return "{}"
+
+
 def _log_order(
     *,
     pocket: Optional[str],
@@ -276,8 +303,8 @@ def _log_order(
                 float(executed_price) if executed_price is not None else None,
                 error_code,
                 error_message,
-                json.dumps(request_payload, ensure_ascii=False) if request_payload else None,
-                json.dumps(response_payload, ensure_ascii=False) if response_payload else None,
+                _safe_json(request_payload),
+                _safe_json(response_payload),
             ),
         )
         con.commit()
@@ -1147,18 +1174,24 @@ def _apply_dynamic_protections_v2(
     now_ts = time.time()
     current_price = fac_m1.get("close")
     pip = 0.01
-
+    # 市況（ATR/短期ボラ）を拾ってトリガーを動的調整
     def _coerce(value: Any, default: float) -> float:
         try:
             return float(value)
         except (TypeError, ValueError):
             return default
 
+    atr_m1 = _coerce(fac_m1.get("atr_pips"), _coerce(fac_m1.get("atr"), 0.0) * 100.0)
+    vol_5m = _coerce(fac_m1.get("vol_5m"), 1.0)
+
     defaults = {
         "macro": {"trigger": 6.8, "lock_ratio": 0.55, "min_lock": 2.6, "cooldown": 90.0},
-        "micro": {"trigger": 2.2, "lock_ratio": 0.48, "min_lock": 0.45, "cooldown": 60.0},
-        "scalp": {"trigger": 1.3, "lock_ratio": 0.45, "min_lock": 0.20, "cooldown": 20.0},
+        "micro": {"trigger": 2.8, "lock_ratio": 0.42, "min_lock": 0.60, "cooldown": 60.0},
+        # スキャルは利幅を伸ばせるようにトリガー/ロックを緩める
+        "scalp": {"trigger": 2.5, "lock_ratio": 0.25, "min_lock": 0.60, "cooldown": 30.0},
     }
+    # トレーリング開始を ATR/ボラで動的に決める（micro/scalp）
+    base_start_delay = {"micro": 55.0, "scalp": 45.0}
 
     for pocket, info in open_positions.items():
         if pocket == "__net__":
@@ -1174,6 +1207,42 @@ def _apply_dynamic_protections_v2(
         lock_ratio = max(0.0, min(1.0, _coerce(be_profile.get("lock_ratio"), default_cfg["lock_ratio"])))
         min_lock = max(0.0, _coerce(be_profile.get("min_lock_pips"), default_cfg["min_lock"]))
         cooldown_sec = max(0.0, _coerce(be_profile.get("cooldown_sec"), default_cfg["cooldown"]))
+
+        # ATR/ボラに応じて動的スケール
+        atr_val = atr_m1
+        if pocket == "macro":
+            # マクロは大きめのATRを見て少しだけ拡げる
+            trigger = max(trigger, atr_val * (1.2 if vol_5m < 1.0 else 1.35 if vol_5m < 1.8 else 1.5))
+            min_lock = max(min_lock, atr_val * 0.3)
+            lock_ratio = max(lock_ratio, 0.50 if vol_5m >= 1.5 else 0.45)
+        elif pocket == "micro":
+            if vol_5m < 0.8:
+                trigger = max(trigger, atr_val * 1.1)
+                lock_ratio = max(lock_ratio, 0.4)
+            elif vol_5m > 1.6:
+                trigger = max(trigger, atr_val * 1.4)
+                lock_ratio = max(lock_ratio, 0.35)
+            else:
+                trigger = max(trigger, atr_val * 1.25)
+                lock_ratio = max(lock_ratio, 0.38)
+            min_lock = max(min_lock, atr_val * 0.25)
+        elif pocket == "scalp":
+            if vol_5m < 0.8:
+                trigger = max(trigger, atr_val * 1.0)
+                lock_ratio = max(lock_ratio, 0.22)
+            elif vol_5m > 1.6:
+                trigger = max(trigger, atr_val * 1.3)
+                lock_ratio = max(lock_ratio, 0.28)
+            else:
+                trigger = max(trigger, atr_val * 1.15)
+                lock_ratio = max(lock_ratio, 0.25)
+            min_lock = max(min_lock, atr_val * 0.25)
+        # 経過時間に応じてロック強度を少し引き上げる
+        def _age_scaled_lock(age_sec: float, base_ratio: float) -> float:
+            if age_sec <= 0:
+                return base_ratio
+            bump = min(0.2, (age_sec / 180.0) * 0.2)  # 3分で+20%まで
+            return min(0.65, base_ratio * (1.0 + bump))
 
         for tr in trades:
             trade_id = tr.get("trade_id")
@@ -1204,6 +1273,20 @@ def _apply_dynamic_protections_v2(
                 gain_pips = ((current_price or entry) - entry) * 100.0
             else:
                 gain_pips = (entry - (current_price or entry)) * 100.0
+
+            # micro/scalp: ATR/ボラに応じた開始遅延＋経過時間でロック強化
+            opened_at = _parse_trade_open_time(tr.get("open_time"))
+            if pocket in {"micro", "scalp"} and opened_at:
+                age_sec = max(0.0, (datetime.now(timezone.utc) - opened_at).total_seconds())
+                start_delay = base_start_delay.get(pocket, 45.0)
+                start_delay = max(start_delay, atr_val * (22.0 if pocket == "micro" else 18.0))
+                if vol_5m > 1.6:
+                    start_delay *= 0.85
+                elif vol_5m < 0.8:
+                    start_delay *= 1.1
+                if age_sec < start_delay:
+                    continue
+                lock_ratio = _age_scaled_lock(age_sec - start_delay, lock_ratio)
 
             if gain_pips < trigger:
                 continue
@@ -1659,6 +1742,7 @@ async def market_order(
 
     # Margin preflight (new entriesのみ)
     preflight_units = units
+    original_units = units
     min_allowed_units = min_units_for_pocket(pocket)
     requested_units = units
     clamped_to_minimum = False
@@ -1670,10 +1754,11 @@ async def market_order(
         requested_units = min_allowed_units if requested_units > 0 else -min_allowed_units
         clamped_to_minimum = True
         units = requested_units
+        preflight_units = requested_units
         logging.info(
             "[ORDER] units clamped to pocket minimum pocket=%s requested=%s -> %s",
             pocket,
-            preflight_units,
+            original_units,
             requested_units,
         )
 
@@ -2004,6 +2089,8 @@ async def market_order(
                     stage_index=stage_index,
                     ticket_id=trade_id,
                     executed_price=executed_price,
+                    # Keep the original request for post-hoc analysis (side/units/TP含む)
+                    request_payload=attempt_payload,
                     response_payload=response,
                 )
                 _console_order_log(
@@ -2305,6 +2392,7 @@ async def limit_order(
         attempt=1,
         ticket_id=trade_id,
         executed_price=executed_price,
+        request_payload=attempt_payload,
         response_payload=response,
     )
 

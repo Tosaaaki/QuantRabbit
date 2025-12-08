@@ -200,6 +200,7 @@ class PositionManager:
             "version": "TEXT DEFAULT 'v1'",
             "unrealized_pl": "REAL",
             # strategy attribution
+            "strategy": "TEXT",
             "client_order_id": "TEXT",
             "strategy_tag": "TEXT",
             "entry_thesis": "TEXT",
@@ -207,6 +208,13 @@ class PositionManager:
         for name, ddl in columns.items():
             if name not in existing:
                 self.con.execute(f"ALTER TABLE trades ADD COLUMN {name} {ddl}")
+        # 既存データで strategy が空の場合は strategy_tag をコピー
+        try:
+            self.con.execute(
+                "UPDATE trades SET strategy = strategy_tag WHERE (strategy IS NULL OR strategy = '') AND strategy_tag IS NOT NULL"
+            )
+        except sqlite3.Error:
+            pass
 
         if self._has_ticket_unique_constraint():
             self._migrate_remove_ticket_unique()
@@ -602,6 +610,7 @@ class PositionManager:
                     # attribution
                     details.get("client_order_id"),
                     details.get("strategy_tag"),
+                    details.get("strategy_tag"),
                     json.dumps(details.get("entry_thesis"), ensure_ascii=False)
                 )
                 trades_to_save.append(record_tuple)
@@ -628,6 +637,7 @@ class PositionManager:
                         "version": "v3",
                         "unrealized_pl": 0.0,
                         "client_order_id": details.get("client_order_id"),
+                        "strategy": details.get("strategy_tag"),
                         "strategy_tag": details.get("strategy_tag"),
                     }
                 )
@@ -663,10 +673,11 @@ class PositionManager:
                     version,
                     unrealized_pl,
                     client_order_id,
+                    strategy,
                     strategy_tag,
                     entry_thesis
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
                 trades_to_save,
             )

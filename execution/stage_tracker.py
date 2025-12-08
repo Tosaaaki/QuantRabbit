@@ -165,6 +165,14 @@ class StageTracker:
         self._cooldown_disabled = (
             str(os.getenv("DISABLE_ALL_COOLDOWNS", "")).strip().lower() in {"1", "true", "yes"}
         )
+        self._cluster_cooldown_disabled = (
+            str(os.getenv("DISABLE_CLUSTER_COOLDOWN", "")).strip().lower() in {"1", "true", "yes"}
+        )
+        # デフォルトで scalp の損失クラスタークールダウンを無効化（リクエスト対応）
+        self._scalp_cluster_cooldown_disabled = (
+            str(os.getenv("DISABLE_SCALP_CLUSTER_COOLDOWN", "1")).strip().lower()
+            in {"1", "true", "yes"}
+        )
         self._cluster_last_trade_id: Dict[str, int] = {}
         for row in self._con.execute(
             "SELECT pocket, MAX(trade_id) AS last_id FROM pocket_loss_window GROUP BY pocket"
@@ -670,6 +678,10 @@ class StageTracker:
         atr_val = float(atr_pips or 0.0)
         vol_val = float(vol_5m or 0.0)
 
+        if self._cooldown_disabled or self._cluster_cooldown_disabled:
+            self._drop_cluster_cooldowns(cluster_stats.keys())
+            return
+
         for pocket, stats in cluster_stats.items():
             count = int(stats.get("count", 0) or 0)
             loss_jpy = float(stats.get("loss_jpy", 0.0) or 0.0)
@@ -677,6 +689,10 @@ class StageTracker:
             base_cd = int(stats.get("cooldown", 0) or 0)
             if base_cd <= 0:
                 base_cd = 900
+
+            if pocket == "scalp" and self._scalp_cluster_cooldown_disabled:
+                self._drop_cluster_cooldowns({pocket})
+                continue
 
             severity = 0.0
             if count >= 3:
@@ -727,6 +743,17 @@ class StageTracker:
                 loss_jpy,
                 seconds,
             )
+
+    def _drop_cluster_cooldowns(self, pockets) -> None:
+        items = [p for p in pockets if p]
+        if not items:
+            return
+        placeholders = ",".join("?" for _ in items)
+        self._con.execute(
+            f"DELETE FROM stage_cooldown WHERE pocket IN ({placeholders}) AND reason LIKE 'loss_cluster_%'",
+            tuple(items),
+        )
+        self._con.commit()
 
     def _build_recent_profile(
         self, rows: List[sqlite3.Row], now_dt: datetime

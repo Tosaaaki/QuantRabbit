@@ -1,5 +1,6 @@
 import pandas as pd
 from typing import Dict
+import logging
 from analysis.ma_projection import compute_donchian_projection
 
 
@@ -9,9 +10,15 @@ class Donchian55:
     profile = "macro_breakout_donchian"
 
     @staticmethod
+    def _log_skip(reason: str, **kwargs) -> None:
+        extras = " ".join(f"{k}={v}" for k, v in kwargs.items() if v is not None)
+        logging.info("[STRAT_SKIP_DETAIL] Donchian55 reason=%s %s", reason, extras)
+
+    @staticmethod
     def check(fac: Dict) -> Dict | None:
         candles = fac.get("candles")
         if candles is None or len(candles) < 56:
+            Donchian55._log_skip("insufficient_candles", count=len(candles) if candles is not None else 0)
             return None
 
         df = pd.DataFrame(candles)[-56:]
@@ -19,6 +26,7 @@ class Donchian55:
         low55 = df["low"][:-1].min()
         close = df["close"].iloc[-1]
         if any(val is None for val in (high55, low55, close)):
+            Donchian55._log_skip("nan_values", high55=high55, low55=low55, close=close)
             return None
         range_span = max(1e-6, high55 - low55)
         try:
@@ -68,6 +76,13 @@ class Donchian55:
                 "min_hold_sec": Donchian55._min_hold_seconds(tp),
                 "tag": f"{Donchian55.name}-breakout-down",
             }
+        Donchian55._log_skip(
+            "no_breakout",
+            close=close,
+            high55=high55,
+            low55=low55,
+            near_pips=round(near_pips, 3) if near_pips is not None else None,
+        )
         return None
 
     @staticmethod

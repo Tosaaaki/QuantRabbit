@@ -110,6 +110,79 @@
   Notes:
     - 11/17 06:50 前後は ATR≈1.7、MA 乖離≈2.4pips でも Range 判定で抑止されていたため、ATR連動の gap/ADX 緩和が必要
 
+- [ ] ID: T-20251208-001
+  Title: M1Scalper fast_cut緩和に合わせたMFEリトレース部分カット
+  Status: todo
+  Priority: P1
+  Owner: codex
+  Scope/Paths: strategies/scalping/m1_scalper.py, execution/exit_manager.py, docs/TASKS.md
+  Context: fast_cut緩和で保有が長くなるため、MFEリトレース時に早めの部分カットを入れて逆行ダメージを抑えたい（scalp/microのみ）。
+  Acceptance:
+    - MFE>しきい値後のリトレースで部分カットが発火し、logs/orders.db / trades.db に部分決済が残る
+    - エントリー回数は大きく減らず、fast_cut/hard_cutを残したまま部分カットが先行する
+  Plan:
+    - exit_manager に MFE リトレース判定を追加し、scalp/microはまず50%近辺を部分クローズ
+    - M1Scalper のエントリーにタグ/メタを付与し、exit 側で選択的に適用
+    - VM でログ確認し、過剰発火があれば閾値/比率を調整
+
+- [ ] ID: T-20251208-002
+  Title: BB_RSI トレンド時のサイズ縮小とTP寄せ
+  Status: todo
+  Priority: P2
+  Owner: codex
+  Scope/Paths: strategies/mean_reversion/bb_rsi.py, docs/TASKS.md
+  Context: fast_cut緩和で損切りが遅れがち。トレンド検知時にフルサイズで逆張りしないよう抑えたい。
+  Acceptance:
+    - ADX/MA傾きが強いときは BB_RSI の confidence/size を下げ、TPを近めに設定したシグナルがログに残る
+    - レンジ時のエントリー数は従来と同程度
+  Plan:
+    - トレンド判定(ADX+MA傾き)を組み込み、サイズ係数とTP短縮を適用
+    - VM でログ/約定を確認し、抑制しすぎないよう閾値を調整
+
+- [ ] ID: T-20251208-003
+  Title: TrendMA 短時間クールダウンと逆行初動の軽い部分クローズ
+  Status: todo
+  Priority: P3
+  Owner: codex
+  Scope/Paths: strategies/trend/ma_cross.py, execution/exit_manager.py, docs/TASKS.md
+  Context: TrendMA の連続エントリーを少し間引き、逆行初動で小さく逃がすオプションを入れたい。
+  Acceptance:
+    - 約定直後に2–3分の再エントリークールダウンがかかり、ログに理由付きで出力される
+    - モメンタム大回転時に小さな部分クローズが実行され trades.db に記録される
+  Plan:
+    - ma_cross にクールダウンロジックを追加
+    - exit_manager に TrendMA 用の軽い部分クローズ条件を追加（任意で無効化可）
+    - VM でログ/約定を確認して閾値を調整
+
+- [ ] ID: T-20251208-004
+  Title: MomentumBurst/MTF Breakout 同方向重複のサイズ上限と反転トレイル強化
+  Status: todo
+  Priority: P2
+  Owner: codex
+  Scope/Paths: strategies/micro/momentum_burst.py, strategies/micro/mtf_breakout.py, execution/exit_manager.py, docs/TASKS.md
+  Context: ImpulseRetraceが順張り化したことで同方向ポジが重なる可能性。重複時のサイズ抑制と反転時のトレイル強化が必要。
+  Acceptance:
+    - 同方向ポジ保有中は新規サイズが縮小され、ログに理由が残る
+    - モメンタム急反転時にトレイル/早期クローズが動作し trades.db に反映される
+  Plan:
+    - 戦略側で同方向オープン数を参照しサイズ係数を適用
+    - exit_manager にモメンタム反転トレイル（micro向け）を追加
+    - VM で挙動を確認し、サイズ係数/トレイル閾値を調整
+
+- [ ] ID: T-20251208-005
+  Title: Macro_core / Trend_H1 の軽量エクスポージャ制御
+  Status: todo
+  Priority: P3
+  Owner: codex
+  Scope/Paths: main.py, execution/risk_guard.py, docs/TASKS.md
+  Context: 下位足の逆向きヘッジが長持ちしやすくなったため、同方向総エクスポージャが閾値超なら新規サイズを小さくする軽い制御を入れたい。
+  Acceptance:
+    - 同方向エクスポージャが設定閾値を超えた場合、新規オーダーのサイズが縮小されるログが残る
+    - エクスポージャ閾値は環境変数で調整可能
+  Plan:
+    - risk_guard か main のロット計算で同方向オープン量を参照し縮小係数を適用
+    - VM でログ/約定を確認し、閾値と係数を微調整
+
 ## Archive
 - [x] ID: T-20251121-004
   Title: ボラ急変時の並列戦略トリガとキャンドル機会の補完
