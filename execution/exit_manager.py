@@ -158,6 +158,9 @@ class ExitManager:
         self._vol_partial_atr_max = float(os.getenv("EXIT_VOL_PARTIAL_ATR_MAX", "2.6"))
         self._vol_partial_fraction = float(os.getenv("EXIT_VOL_PARTIAL_FRACTION", "0.66"))
         self._vol_partial_profit_floor = float(os.getenv("EXIT_VOL_PARTIAL_PROFIT_FLOOR", "2.5"))
+        # Overnight/roll spread対策: JST時間帯で自動カットを止めるためのゲート
+        self._cut_disable_jst_start = _env_int("EXIT_CUT_DISABLE_JST_START", 7)
+        self._cut_disable_jst_end = _env_int("EXIT_CUT_DISABLE_JST_END", 8)
         self._vol_partial_profit_cap = float(os.getenv("EXIT_VOL_PARTIAL_PROFIT_CAP", "3.0"))
         self._vol_ema_release_gap = float(os.getenv("EXIT_VOL_EMA_RELEASE_GAP", "1.0"))
         self._profit_snatch_min = float(os.getenv("EXIT_SNATCH_MIN_PROFIT_PIPS", "0.3"))
@@ -516,6 +519,9 @@ class ExitManager:
         - 逆行が fast_cut を超え、かつ一定時間経過でクローズ
         - ただし「一度も+域に乗っておらず若いポジ」は緩めに判定する
         """
+        # スプレッド拡大時間帯（例: 07-08 JST）はカットを停止
+        if _in_jst_window(now, self._cut_disable_jst_start, self._cut_disable_jst_end):
+            return None
         if pocket not in {"micro", "scalp"}:
             return None
         if pocket == "scalp" and self._disable_scalp_fast_cut:
@@ -867,6 +873,8 @@ class ExitManager:
             return None
         if profit_pips is None or profit_pips >= 0.0:
             return None
+        if _in_jst_window(now, self._cut_disable_jst_start, self._cut_disable_jst_end):
+            return None
         partial = self._loss_clamp_partial.get(pocket)
         full = self._loss_clamp_full.get(pocket)
         if partial is None or full is None:
@@ -1015,6 +1023,8 @@ class ExitManager:
         Trades without kill/fast_cut meta (thesis欠損/SLなし想定) を広めのソフトガードで捕捉。
         ハードSLは置かず、ATR×時間＋リトレースでマーケット決済する。
         """
+        if _in_jst_window(now, self._cut_disable_jst_start, self._cut_disable_jst_end):
+            return None
         if pocket not in {"micro", "scalp"}:
             return None
         if profit_pips is None or profit_pips >= 0.0:
