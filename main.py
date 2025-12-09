@@ -1847,13 +1847,13 @@ def _micro_chart_gate(
         atr_pips = 0.0
     if atr_pips > 0:
         band = max(0.2, min(0.6, atr_pips * 0.05))
-    # ボラに応じて「何回のタッチで鈍化とみなすか」を変える
+    # ボラと市況（セッション/上位TF）に応じて「何回のタッチで鈍化とみなすか」を動的に決める
     if atr_pips <= 3.0:
-        attack_thresh = 2
+        attack_thresh = 2.4
     elif atr_pips >= 8.0:
-        attack_thresh = 4
+        attack_thresh = 4.2
     else:
-        attack_thresh = 3
+        attack_thresh = 3.0
     if highs:
         recent_high = max(highs[-window:])
         for h in highs[-6:]:
@@ -1937,6 +1937,51 @@ def _micro_chart_gate(
 
     m15_trend = summary.get("M15") if isinstance(summary, dict) else None
     h1_trend = summary.get("H1") if isinstance(summary, dict) else None
+    vol_state = ""
+    if story_snapshot and hasattr(story_snapshot, "volatility_state"):
+        try:
+            vol_state = str(getattr(story_snapshot, "volatility_state") or "")
+        except Exception:
+            vol_state = ""
+    session = _session_bucket(datetime.datetime.utcnow())
+
+    # 上位TFのトレンド・ボラとセッションに合わせて閾値を微調整
+    if action == "OPEN_LONG":
+        if m15_trend == "up":
+            attack_thresh += 0.4
+        if h1_trend == "up":
+            attack_thresh += 0.6
+        if m15_trend == "down" or h1_trend == "down":
+            attack_thresh -= 0.5
+    elif action == "OPEN_SHORT":
+        if m15_trend == "down":
+            attack_thresh += 0.4
+        if h1_trend == "down":
+            attack_thresh += 0.6
+        if m15_trend == "up" or h1_trend == "up":
+            attack_thresh -= 0.5
+    if vol_state == "low":
+        attack_thresh -= 0.3
+        base_rise_thresh *= 1.1
+    elif vol_state == "high":
+        attack_thresh += 0.3
+        base_rise_thresh *= 0.9
+    if session == "asia":
+        attack_thresh -= 0.2
+    elif session == "ny":
+        attack_thresh += 0.2
+    attack_thresh = max(2.0, min(5.0, attack_thresh))
+
+    if action == "OPEN_LONG":
+        if micro_trend == "up":
+            base_rise_thresh = max(0.08, base_rise_thresh * 0.9)
+        elif micro_trend == "down":
+            base_rise_thresh = min(0.8, base_rise_thresh * 1.15)
+    else:
+        if micro_trend == "down":
+            base_rise_thresh = max(0.08, base_rise_thresh * 0.9)
+        elif micro_trend == "up":
+            base_rise_thresh = min(0.8, base_rise_thresh * 1.15)
     opposed_count = int(_opposes(m15_trend, str(action))) + int(_opposes(h1_trend, str(action)))
     if opposed_count >= 2 and abs(slope6) <= 3.5:
         return False, "micro_mtf_opposed", {

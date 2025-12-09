@@ -39,6 +39,31 @@ def _in_jst_window(now: datetime, start_hour: int, end_hour: int) -> bool:
     return hour >= start or hour < end
 
 
+def _session_bucket(now: datetime) -> str:
+    """Rough session bucket in UTC to gate aggressiveness."""
+    hour = now.hour
+    if 7 <= hour < 17:
+        return "london"
+    if 17 <= hour < 23:
+        return "ny"
+    return "asia"
+
+
+def _slope_from_candles(candles: List[dict], window: int = 6) -> float:
+    """Return slope in pips over the window; falls back to 0.0."""
+    try:
+        if len(candles) < window:
+            return 0.0
+        closes = []
+        for cndl in candles[-window:]:
+            closes.append(float(cndl.get("close")))
+        if len(closes) < window:
+            return 0.0
+        return (closes[-1] - closes[0]) / 0.01
+    except Exception:
+        return 0.0
+
+
 @dataclass
 class ExitDecision:
     pocket: str
@@ -410,11 +435,38 @@ class ExitManager:
             slope_fade = projection_fast.gap_slope_pips < 0.08
         return momentum_band and ema_cooling and slope_fade and (adx_fade or rsi_fade)
 
-    def _mfe_partial_units(self, pocket: str, units: int, profit_pips: float) -> int:
+    def _mfe_partial_units(
+        self,
+        pocket: str,
+        units: int,
+        profit_pips: float,
+        *,
+        atr_pips: Optional[float] = None,
+        slope_hint: Optional[float] = None,
+    ) -> int:
         """Return partial units when MFEが一定以上に達したときに利益を確定する。"""
         if units <= 0:
             return 0
         threshold = self._mfe_partial_macro if pocket == "macro" else self._mfe_partial_micro
+        if atr_pips is not None:
+            try:
+                atr_val = float(atr_pips or 0.0)
+            except Exception:
+                atr_val = 0.0
+            if atr_val > 0.0:
+                if pocket == "macro":
+                    threshold = max(threshold * 0.8, min(threshold * 1.3, atr_val * 1.1))
+                else:
+                    threshold = max(threshold * 0.7, min(threshold * 1.25, atr_val * 0.95))
+        if slope_hint is not None:
+            try:
+                slope_val = float(slope_hint)
+            except Exception:
+                slope_val = 0.0
+            if slope_val > 0.12:
+                threshold *= 1.12
+            elif slope_val < -0.12:
+                threshold *= 0.88
         if profit_pips >= threshold:
             # take half but keep at least 1000 units
             partial = max(1000, units // 2)
@@ -496,6 +548,11 @@ class ExitManager:
             return None
 
         atr_val = float(atr_pips or 0.0)
+        candles = fac_m1.get("candles") or []
+        slope6 = _slope_from_candles(candles, window=6)
+        slope12 = _slope_from_candles(candles, window=12) if len(candles) >= 12 else slope6
+        session = _session_bucket(now if now.tzinfo else now.replace(tzinfo=timezone.utc))
+        stack_units = abs(units)
         # 市況でゲートを揺らす（ATR低→広げる、高→やや狭める）
         if pocket == "scalp":
             # scalpは戻りを待つ: 基準を広げ、時間ゲートも長め
@@ -524,6 +581,34 @@ class ExitManager:
         if pocket == "scalp" and atr_val <= 1.2:
             fast_cut *= 1.1
             time_gate *= 1.2
+
+        # 傾き・スタック・セッションで微調整
+        slope_bias = 1.0
+        if side == "long":
+            if slope6 < -0.6 or slope12 < -0.4:
+                slope_bias = 0.82
+            elif slope6 > 1.2:
+                slope_bias = 1.12
+        else:
+            if slope6 > 0.6 or slope12 > 0.4:
+                slope_bias = 0.82
+            elif slope6 < -1.2:
+                slope_bias = 1.12
+        fast_cut *= slope_bias
+        hard_cut *= slope_bias
+        if session == "asia":
+            time_gate *= 0.9
+        elif session == "ny":
+            time_gate *= 1.05
+
+        if stack_units >= 25000:
+            fast_cut *= 0.85
+            hard_cut *= 0.85
+            time_gate *= 0.9
+        elif stack_units >= 15000:
+            fast_cut *= 0.92
+            hard_cut *= 0.92
+            time_gate *= 0.95
 
         thesis_fast_cut = None
         thesis_time_gate = None
@@ -648,6 +733,117 @@ class ExitManager:
                 tag="fast-cut",
                 allow_reentry=True,
             )
+        return None
+
+    def _micro_adaptive_trail(
+        self,
+        *,
+        pocket: str,
+        side: str,
+        units: int,
+        open_info: Dict,
+        profit_pips: float,
+        close_price: float,
+        atr_pips: float,
+        fac_m1: Dict,
+        now: datetime,
+    ) -> Optional[ExitDecision]:
+        """BE/トレールを市況とスタック量で動的に緩急。"""
+        if pocket not in {"micro", "scalp"}:
+            return None
+        if profit_pips is None or profit_pips <= 0.0:
+            return None
+        try:
+            avg_price = (
+                open_info.get("long_avg_price") if side == "long" else open_info.get("short_avg_price")
+            ) or open_info.get("avg_price")
+        except Exception:
+            avg_price = None
+        if avg_price is None or close_price is None:
+            return None
+
+        candles = fac_m1.get("candles") or []
+        slope6 = _slope_from_candles(candles, window=6)
+        slope12 = _slope_from_candles(candles, window=12) if len(candles) >= 12 else slope6
+        slope = (slope6 * 0.6) + (slope12 * 0.4)
+        if side == "short":
+            slope *= -1  # long基準に揃える
+        atr_val = float(atr_pips or 0.0)
+        if atr_val <= 0.0:
+            try:
+                atr_val = float(fac_m1.get("atr") or 0.0) * 100.0
+            except Exception:
+                atr_val = 0.0
+        if atr_val <= 0.0:
+            atr_val = 6.0
+
+        youngest = self._youngest_trade_age_seconds(open_info, side, now) or 0.0
+        stack_units = abs(units)
+        session = _session_bucket(now if now.tzinfo else now.replace(tzinfo=timezone.utc))
+
+        arm = max(0.8, min(2.4, atr_val * 0.35))
+        give_back = max(0.6, min(2.6, atr_val * 0.45))
+        if pocket == "scalp":
+            arm = max(0.6, arm * 0.9)
+            give_back = max(0.5, give_back * 0.9)
+
+        # 傾きが鈍いならトレールを近づけ、強いなら少し伸ばす
+        if slope <= 0.15:
+            arm = max(0.6, arm * 0.9)
+            give_back = max(0.5, give_back * 0.8)
+        elif slope >= 0.9:
+            arm = min(3.2, arm * 1.25)
+            give_back = min(3.0, give_back * 1.15)
+
+        # セッションとスタック量で絞る
+        if session == "asia":
+            give_back = max(0.5, give_back * 0.9)
+        if stack_units >= 20000:
+            arm = max(0.5, arm * 0.9)
+            give_back = max(0.4, give_back * 0.8)
+        elif stack_units >= 15000:
+            give_back = max(0.5, give_back * 0.9)
+
+        if profit_pips < arm:
+            return None
+
+        # スタックが大きく傾き弱なら部分利確で軽くする
+        if stack_units >= 20000 and slope <= 0.3 and youngest >= 40.0:
+            cut_units = max(1000, int(stack_units * 0.5))
+            if cut_units < stack_units:
+                cut = -cut_units if side == "long" else cut_units
+                return ExitDecision(
+                    pocket=pocket,
+                    units=cut,
+                    reason="micro_slope_be_partial",
+                    tag="micro-slope-be",
+                    allow_reentry=True,
+                )
+
+        # BE+トレール（順行が伸びずに戻し始めたときのみ）
+        cushion = profit_pips - give_back
+        if cushion <= 0.2:
+            return None
+        if side == "long":
+            trail_floor = avg_price + cushion * 0.01
+            if close_price <= trail_floor:
+                return ExitDecision(
+                    pocket=pocket,
+                    units=units,
+                    reason="micro_slope_trail",
+                    tag="micro-slope-be",
+                    allow_reentry=True,
+                )
+        else:
+            trail_floor = avg_price - cushion * 0.01
+            if close_price >= trail_floor:
+                return ExitDecision(
+                    pocket=pocket,
+                    units=units,
+                    reason="micro_slope_trail",
+                    tag="micro-slope-be",
+                    allow_reentry=True,
+                )
         return None
 
     def _loss_clamp_exit(
@@ -918,6 +1114,19 @@ class ExitManager:
         profit_pips = 0.0
         if avg_price and close_price:
             profit_pips = (close_price - avg_price) / 0.01
+        adaptive_exit = self._micro_adaptive_trail(
+            pocket=pocket,
+            side="long",
+            units=units,
+            open_info=open_info,
+            profit_pips=profit_pips,
+            close_price=close_price,
+            atr_pips=atr_pips,
+            fac_m1=fac_m1,
+            now=now,
+        )
+        if adaptive_exit:
+            return adaptive_exit
         drawdown_exit = self._stale_drawdown_exit(
             pocket=pocket,
             side="long",
@@ -1065,7 +1274,14 @@ class ExitManager:
                 )
 
         # Generic MFE-based partial/trail for breakout/pullback styles
-        mfe_partial = self._mfe_partial_units(pocket, units, profit_pips)
+        slope_hint = projection_fast.gap_slope_pips if projection_fast is not None else None
+        mfe_partial = self._mfe_partial_units(
+            pocket,
+            units,
+            profit_pips,
+            atr_pips=atr_pips,
+            slope_hint=slope_hint,
+        )
         if mfe_partial:
             return ExitDecision(
                 pocket=pocket,
@@ -1429,6 +1645,19 @@ class ExitManager:
         profit_pips = 0.0
         if avg_price and close_price:
             profit_pips = (avg_price - close_price) / 0.01
+        adaptive_exit = self._micro_adaptive_trail(
+            pocket=pocket,
+            side="short",
+            units=units,
+            open_info=open_info,
+            profit_pips=profit_pips,
+            close_price=close_price,
+            atr_pips=atr_pips,
+            fac_m1=fac_m1,
+            now=now,
+        )
+        if adaptive_exit:
+            return adaptive_exit
         drawdown_exit = self._stale_drawdown_exit(
             pocket=pocket,
             side="short",
@@ -1553,7 +1782,16 @@ class ExitManager:
                     allow_reentry=True,
                 )
 
-        mfe_partial = self._mfe_partial_units(pocket, units, profit_pips)
+        slope_hint = projection_fast.gap_slope_pips if projection_fast is not None else None
+        if slope_hint is not None:
+            slope_hint *= -1.0
+        mfe_partial = self._mfe_partial_units(
+            pocket,
+            units,
+            profit_pips,
+            atr_pips=atr_pips,
+            slope_hint=slope_hint,
+        )
         if mfe_partial:
             return ExitDecision(
                 pocket=pocket,
