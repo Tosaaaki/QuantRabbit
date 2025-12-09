@@ -1837,6 +1837,39 @@ def _micro_chart_gate(
     top_gap = (high_n - price) / PIP if highs else 0.0
     bottom_gap = (price - low_n) / PIP if lows else 0.0
 
+    # 攻め方/足場を確認: 直近高値へのアタック回数と安値の切り上げ幅
+    high_attacks = 0
+    low_attacks = 0
+    band = 0.3  # pips許容帯
+    if highs:
+        recent_high = max(highs[-window:])
+        for h in highs[-6:]:
+            if (recent_high - h) / PIP <= band:
+                high_attacks += 1
+    if lows:
+        recent_low = min(lows[-window:])
+        for l in lows[-6:]:
+            if (l - recent_low) / PIP <= band:
+                low_attacks += 1
+    low_base_rise = 0.0
+    if lows:
+        first_half = lows[-window:-window // 2] or lows[:-window // 2] or lows
+        if first_half:
+            try:
+                low_base_rise = (lows[-1] - min(first_half)) / PIP
+            except Exception:
+                low_base_rise = 0.0
+
+    pattern_summary = {}
+    if story_snapshot and hasattr(story_snapshot, "pattern_summary"):
+        try:
+            pattern_summary = dict(getattr(story_snapshot, "pattern_summary") or {})
+        except Exception:
+            pattern_summary = {}
+    n_wave = None
+    if isinstance(pattern_summary, dict):
+        n_wave = pattern_summary.get("n_wave")
+
     micro_trend = None
     summary = {}
     if story_snapshot and hasattr(story_snapshot, "micro_trend"):
@@ -1878,6 +1911,47 @@ def _micro_chart_gate(
             "m15": m15_trend or "",
             "h1": h1_trend or "",
         }
+
+    if action == "OPEN_LONG":
+        if high_attacks >= 3 and low_base_rise <= 0.2 and slope6 <= 3.0:
+            return False, "micro_high_attack_flat_base", {
+                "slope6": round(slope6, 2),
+                "range": round(range_pips, 2),
+                "trend": micro_trend or "",
+                "m15": m15_trend or "",
+                "h1": h1_trend or "",
+                "high_attacks": high_attacks,
+                "low_rise": round(low_base_rise, 2),
+            }
+        if n_wave and isinstance(n_wave, dict) and n_wave.get("direction") == "down" and slope6 <= 1.5:
+            return False, "micro_nwave_opposed", {
+                "slope6": round(slope6, 2),
+                "range": round(range_pips, 2),
+                "trend": micro_trend or "",
+                "m15": m15_trend or "",
+                "h1": h1_trend or "",
+                "nwave": n_wave,
+            }
+    if action == "OPEN_SHORT":
+        if low_attacks >= 3 and low_base_rise >= -0.2 and slope6 >= -3.0:
+            return False, "micro_low_attack_flat_base", {
+                "slope6": round(slope6, 2),
+                "range": round(range_pips, 2),
+                "trend": micro_trend or "",
+                "m15": m15_trend or "",
+                "h1": h1_trend or "",
+                "low_attacks": low_attacks,
+                "low_rise": round(low_base_rise, 2),
+            }
+        if n_wave and isinstance(n_wave, dict) and n_wave.get("direction") == "up" and slope6 >= -1.5:
+            return False, "micro_nwave_opposed", {
+                "slope6": round(slope6, 2),
+                "range": round(range_pips, 2),
+                "trend": micro_trend or "",
+                "m15": m15_trend or "",
+                "h1": h1_trend or "",
+                "nwave": n_wave,
+            }
 
     if range_pips <= 4.0 and abs(slope6) <= 1.4:
         return False, "micro_chop_gate", {
