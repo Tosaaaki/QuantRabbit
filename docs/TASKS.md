@@ -32,6 +32,24 @@
 ```
 
 ## Open Tasks
+- [ ] ID: T-20251209-001
+  Title: BQ strategy scores → Firestore snapshot (read-only反映)
+  Status: todo
+  Priority: P1
+  Owner: codex
+  Scope/Paths: analytics/*, scripts/*, config/*, docs/TASKS.md
+  Context: リアルタイム売買に影響を与えずに利益直結のロット/SLTP調整を回すため、BQ 集計結果を Firestore に小さく保存し、VM 側は短 TTL キャッシュで読むだけの仕組みを入れる。
+  Acceptance:
+    - BQ 上の strategy×pocket×regime 集計からスコア/ロット係数/SLTPプリセットを JSON 化し、Firestore `strategy_scores/current` に上書きできる（1MB 未満）
+    - VM 側で Firestore 読み取りが失敗しても既定値/最終キャッシュでトレード継続し、適用有無がログ/metrics に残る
+    - 適用対象はロット係数と SLTP プリセットのみで、エントリー頻度/クールダウン/時間帯ゲートを変更しないことが確認できる
+  Plan:
+    - BQ 集計ビュー/クエリを用意し、strategy×pocket×regime の PF/Sharpe/score と SLTP 推奨値を算出するスクリプトを作成
+    - Firestore へサマリ JSON を書き出すバッチ（Cloud Scheduler/cron 想定）を実装し、1 ドキュメント 1MB 未満で履歴は GCS/BQ に残す
+    - VM 側に TTL キャッシュ付きリーダーを追加し、ロット係数/SLTP プリセットのみ反映するフラグを設定ファイル経由で切替できるようにする
+  Notes:
+    - まずは読み取りのみでログ確認し、安全性が確認できたら適用フラグを ON にする二段階ロールアウトにする
+
 - [ ] ID: T-20251127-004
   Title: Pattern-based lot boost from candle/tech win-rate
   Status: in-progress
@@ -127,7 +145,7 @@
 
 - [ ] ID: T-20251208-002
   Title: BB_RSI トレンド時のサイズ縮小とTP寄せ
-  Status: todo
+  Status: in-progress
   Priority: P2
   Owner: codex
   Scope/Paths: strategies/mean_reversion/bb_rsi.py, docs/TASKS.md
@@ -138,6 +156,8 @@
   Plan:
     - トレンド判定(ADX+MA傾き)を組み込み、サイズ係数とTP短縮を適用
     - VM でログ/約定を確認し、抑制しすぎないよう閾値を調整
+  Notes:
+    - 2025-12-08: BB_RSI に trend_score (ADX+MA gap) を追加し、confidence/downsize・TP寄せを適用。`trend_bias`/`size_factor_hint` がログ/シグナルに出る。要VMデプロイと挙動確認。
 
 - [ ] ID: T-20251208-003
   Title: TrendMA 短時間クールダウンと逆行初動の軽い部分クローズ
@@ -494,3 +514,17 @@
     - `exposure_ratio` メトリクスと単体テストで 92% 超過がブロックされることを確認
   Completed: 2025-11-13
   Summary: PositionManager に manual exposure API を追加し、risk_guard が `ExposureState` を算出して `exposure_ratio` を記録するように変更。main/micro_core の lot 配分と発注前チェックで cap を超える場合はスキップし、成功時は state を consume。tests/execution/test_risk_guard.py で割当ロジックを検証（pytest は環境に未導入のため実行不可）。
+
+- [ ] ID: T-20251209-001
+  Title: fast_cut タグレス化＋テクニカル必須化の仕上げとトレイル強化
+  Status: in-progress
+  Priority: P0
+  Owner: tossaki
+  Scope/Paths: main.py, execution/exit_manager.py, execution/order_manager.py, strategies/*
+  Context: fast_cut/kill がタグ漏れで外れる問題を解消し、エントリー時に ATR/RSI/ADX/レジームを必須メタとして付与。レンジ/トレンド別の部分利確・トレイルとレジーム連動ロット縮退も合わせて仕上げる。
+  Acceptance:
+    - 全エントリーが ATR/RSI/ADX/fast_cut_pips/time/hard_mult を thesis に保持し、欠損時は発注しない
+    - exit_manager がタグレスでもテクニカル揃いのポジに fast_cut/hard_cut を適用し、manual 口座は除外
+    - レンジ判定時は部分利確/トレイル/fast_cut がタイト化、トレンド強時は緩和される
+    - レジーム連動のロット縮退（低ADX・BBW収縮時に初手/追撃を抑制）を main/risk_guard で反映
+    - 手動ポジは常に除外され、メトリクスに tech-on/skip が記録される

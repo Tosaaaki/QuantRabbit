@@ -193,7 +193,10 @@ python scripts/run_sync_pipeline.py \
 4. **ロット調整インサイト**  
    `analytics/lot_pattern_analyzer.py` が BigQuery のトレード履歴 (lookback 既定 14 日) を集計し、Pocket × Side 別の勝率 / PF / 標準偏差からロット倍率を提案します。結果は BigQuery `lot_insights` テーブルに追記され、`analytics/lot_insights.json`（GCS UI バケットまたは `GCS_ANALYTICS_BUCKET`）に JSON スナップショットを保存します。手動実行やパラメータ変更は `scripts/generate_lot_insights.py` を利用してください。
 
-5. **systemd への登録例**
+5. **戦略スコア スナップショット（オプション）**  
+   `scripts/generate_strategy_scores.py` が BQ `trades_raw` を集計し、strategy×pocket の PF / Sharpe / ロット係数 / SLTP 推奨値を Firestore `strategy_scores/current` にコンパクトに上書きします（1 ドキュメントのみ）。VM 側は TTL キャッシュ付きリーダーで読むだけ、未設定時は無効のためリアルタイム売買に影響しません。
+
+6. **systemd への登録例**
 
 ```ini
 [Unit]

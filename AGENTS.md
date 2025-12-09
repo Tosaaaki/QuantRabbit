@@ -414,6 +414,17 @@ scripts/vm.sh -p quantrabbit -z asia-northeast1-a -m fx-trader-vm deploy -i -k ~
     2. コード規約：black / ruff / mypy (optional)
     3. 秘匿情報は 絶対に Git に push しない
     4. 不具合・改善は GitHub Issue で管理（ラベル: bug/feat/doc/ops）
+    5. ポジション問い合わせ対応: ユーザが「今のポジ？」「これ何？」などと聞いたら、当該会話文脈と開いているログを優先し、最新の fills / open trades を即答する。基本手順:
+        - 直近ログ（例: `logs/oanda/transactions_*.jsonl`, `logs/orders.db`, `logs/trades.db`）から最新の建玉とサイズ/向き/TP/SL/時刻を抜粋
+        - オープンが無ければ「今はフラット」で、直近クローズと理由（SL/TP/手動）を短く添える
+        - サイズ異常や最小単位クランプが原因なら、どの設定（`ORDER_MIN_UNITS_*`, `_MIN_ORDER_UNITS` など）で決まったかも一言で示す
+        - 過去日の無関係なトレードには飛ばず、ユーザが示したファイル/タイムスタンプを優先（「今の話」であることを前提に回答）
+        - ローカルで情報が欠ける/古い場合は必ず VM ログ（`/home/tossaki/QuantRabbit/logs/*`）か OANDA API を直接確認して最新状態を答える（手元データだけで推測しない）
+        - 日付意識: まず `date` などで今日の日付を確認し、開いているログが今日より古ければ「手元は<日付>まで、最新はVM/OANDAを確認する」と明示してから最新データを取りに行く（「今の話」がデフォルト）
+        - 代表的な確認コマンド（必要に応じて都度実行）
+            - VM ログ: `scripts/vm.sh -p quantrabbit -z asia-northeast1-a -m fx-trader-vm sql -f /home/tossaki/QuantRabbit/logs/trades.db -q "select ticket_id,pocket,client_order_id,units,entry_time,close_time,pl_pips from trades order by entry_time desc limit 5;" -t`
+            - 取引履歴: `gcloud compute ssh fx-trader-vm --project=quantrabbit --zone=asia-northeast1-a --tunnel-through-iap --ssh-key-file ~/.ssh/gcp_oslogin_quantrabbit --command "sqlite3 /home/tossaki/QuantRabbit/logs/orders.db 'select ts,pocket,side,units,client_order_id,status from orders order by ts desc limit 5;'"` 
+            - OANDA 現在ポジ: `curl -s -H "Authorization: Bearer $OANDA_TOKEN" "https://api-fxtrade.oanda.com/v3/accounts/$OANDA_ACCOUNT/openTrades" | jq '.trades[] | {id, instrument, currentUnits, price, takeProfit, stopLoss}'`
 
 ⸻
 
@@ -551,3 +562,25 @@ scripts/deploy_to_vm.sh -p "$PROJ" -t -k ~/.ssh/gcp_oslogin_qr \
 - `docs/TASKS.md` は頻繁に更新されるため、コミットメッセージに `[Task:<ID>]` を含めて追跡性を確保する。
 - 1 ファイル = 1 PR の原則は維持するが、台帳更新（`docs/TASKS.md`）は同時反映可。
 - 自動チューニング関連 ToDo は引き続き `docs/autotune_taskboard.md` に追記し、完了後は同ファイル内で状態をアーカイブする。
+
+## 12. 調査用ローソクの取得手順（VM/OANDA）
+- OANDAから任意期間のローソクを取得する（例: M1 2025-12-08 03:40Z〜05:30Z）
+  ```bash
+  gcloud compute ssh fx-trader-vm --project=quantrabbit --zone=asia-northeast1-a \
+    --tunnel-through-iap --ssh-key-file ~/.ssh/gcp_oslogin_quantrabbit --command \
+    "sudo -u tossaki -H bash -lc 'cd /home/tossaki/QuantRabbit && source .venv/bin/activate && PYTHONPATH=. \
+      python scripts/fetch_candles.py --instrument USD_JPY --granularity M1 \
+      --start 2025-12-08T03:40:00Z --end 2025-12-08T05:30:00Z \
+      --out logs/candles_USDJPY_M1_20251208_0340_0530.json'"
+  ```
+- ローカルへ持ち帰る（/home/tossaki 以下に直接 scp できない場合は /tmp 経由）
+  ```bash
+  gcloud compute ssh fx-trader-vm --project=quantrabbit --zone=asia-northeast1-a \
+    --tunnel-through-iap --ssh-key-file ~/.ssh/gcp_oslogin_quantrabbit --command \
+    "sudo cp /home/tossaki/QuantRabbit/logs/candles_USDJPY_M1_20251208_0340_0530.json /tmp/"
+
+  gcloud compute scp --project=quantrabbit --zone=asia-northeast1-a --tunnel-through-iap \
+    --ssh-key-file ~/.ssh/gcp_oslogin_quantrabbit \
+    fx-trader-vm:/tmp/candles_USDJPY_M1_20251208_0340_0530.json ./remote_logs/
+  ```
+- 取得済みファイル（例）: `remote_logs/candles_USDJPY_M1_20251208_0340_0530.json`

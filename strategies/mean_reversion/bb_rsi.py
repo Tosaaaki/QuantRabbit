@@ -6,9 +6,12 @@ from typing import Dict, Optional, Sequence, Tuple
 import logging
 
 PIP = 0.01
-# Treat MA10/MA20 gaps >=0.5 pips combined with ADX>=21 as strong trend
-MAX_TREND_GAP_PIPS = 0.6
-MAX_ADX = 23.0
+TREND_GAP_SOFT_PIPS = 0.35
+TREND_GAP_STRONG_PIPS = 1.0
+TREND_ADX_SOFT = 18.0
+TREND_ADX_STRONG = 30.0
+MIN_SIZE_FACTOR_TREND = 0.55
+MAX_TP_REDUCTION = 0.32
 MIN_VOL_5M = 0.35
 PROFILE_NAME = "bb_range_reversion"
 MIN_DISTANCE_RANGE = 0.045
@@ -49,13 +52,32 @@ class BBRsi:
             ma_gap_pips = abs((ma10 - ma20) / PIP) if ma10 is not None and ma20 is not None else 0.0
         except (TypeError, ValueError):
             ma_gap_pips = 0.0
-        if ma_gap_pips >= MAX_TREND_GAP_PIPS and adx >= MAX_ADX:
-            BBRsi._log_skip(
-                "trend_filter",
-                ma_gap_pips=round(ma_gap_pips, 3),
-                adx=round(adx, 1),
+
+        def _trend_score() -> float:
+            gap_score = 0.0
+            adx_score = 0.0
+            if ma_gap_pips > TREND_GAP_SOFT_PIPS:
+                gap_score = (ma_gap_pips - TREND_GAP_SOFT_PIPS) / max(
+                    0.01, (TREND_GAP_STRONG_PIPS - TREND_GAP_SOFT_PIPS)
+                )
+            if adx > TREND_ADX_SOFT:
+                adx_score = (adx - TREND_ADX_SOFT) / max(1.0, (TREND_ADX_STRONG - TREND_ADX_SOFT))
+            score = 0.58 * gap_score + 0.42 * adx_score
+            return max(0.0, min(1.0, score))
+
+        trend_score = _trend_score()
+        size_factor_trend = max(MIN_SIZE_FACTOR_TREND, 1.0 - 0.45 * trend_score)
+        tp_factor_trend = max(1.0 - MAX_TP_REDUCTION, 1.0 - 0.28 * trend_score)
+        conf_factor_trend = max(0.65, 0.9 - 0.25 * trend_score)
+        if trend_score > 0:
+            logging.info(
+                "[STRAT_DETAIL] BB_RSI trend_bias score=%.3f ma_gap=%.3f adx=%.1f size_factor=%.3f tp_factor=%.3f",
+                trend_score,
+                round(ma_gap_pips, 3),
+                round(adx, 1),
+                size_factor_trend,
+                tp_factor_trend,
             )
-            return None
 
         upper = ma + (ma * bbw / 2)
         lower = ma - (ma * bbw / 2)
@@ -142,6 +164,9 @@ class BBRsi:
             if tp_dynamic <= sl_dynamic * 1.3:
                 BBRsi._log_skip("tp_sl_ratio_low_long", tp=tp_dynamic, sl=sl_dynamic)
                 tp_dynamic = round(sl_dynamic * 1.35, 2)
+            if trend_score > 0:
+                tp_scaled = round(tp_dynamic * tp_factor_trend, 2)
+                tp_dynamic = max(round(sl_dynamic * 1.22, 2), tp_scaled)
             rsi_gap = max(0.0, 30 - rsi) / 30
             eta_bonus = 0.0
             if rsi_eta_up is not None:
@@ -153,6 +178,9 @@ class BBRsi:
                 max(35.0, min(95.0, 45.0 + distance * 70.0 + rsi_gap * 35.0 + eta_bonus + squeeze_bias))
             )
             confidence = min(100, confidence + int(range_score * 20.0))
+            if trend_score > 0:
+                confidence = int(confidence * conf_factor_trend)
+                confidence = max(30, min(95, confidence))
             return {
                 "action": "OPEN_LONG",
                 "sl_pips": sl_dynamic,
@@ -163,6 +191,9 @@ class BBRsi:
                 "target_tp_pips": tp_dynamic,
                 "min_hold_sec": BBRsi._min_hold_seconds(tp_dynamic),
                 "tag": f"{BBRsi.name}-long",
+                "trend_bias": trend_score > 0,
+                "trend_score": round(trend_score, 3) if trend_score > 0 else None,
+                "size_factor_hint": round(size_factor_trend, 3) if trend_score > 0 else None,
             }
         if price > upper and rsi > 70:
             distance = (price - upper) / band_width if band_width else 0.0
@@ -181,6 +212,9 @@ class BBRsi:
             if tp_dynamic <= sl_dynamic * 1.3:
                 BBRsi._log_skip("tp_sl_ratio_low_short", tp=tp_dynamic, sl=sl_dynamic)
                 tp_dynamic = round(sl_dynamic * 1.35, 2)
+            if trend_score > 0:
+                tp_scaled = round(tp_dynamic * tp_factor_trend, 2)
+                tp_dynamic = max(round(sl_dynamic * 1.22, 2), tp_scaled)
             rsi_gap = max(0.0, rsi - 70) / 30
             eta_bonus = 0.0
             if rsi_eta_dn is not None:
@@ -192,6 +226,9 @@ class BBRsi:
                 max(35.0, min(95.0, 45.0 + distance * 70.0 + rsi_gap * 35.0 + eta_bonus + squeeze_bias))
             )
             confidence = min(100, confidence + int(range_score * 20.0))
+            if trend_score > 0:
+                confidence = int(confidence * conf_factor_trend)
+                confidence = max(30, min(95, confidence))
             return {
                 "action": "OPEN_SHORT",
                 "sl_pips": sl_dynamic,
@@ -202,6 +239,9 @@ class BBRsi:
                 "target_tp_pips": tp_dynamic,
                 "min_hold_sec": BBRsi._min_hold_seconds(tp_dynamic),
                 "tag": f"{BBRsi.name}-short",
+                "trend_bias": trend_score > 0,
+                "trend_score": round(trend_score, 3) if trend_score > 0 else None,
+                "size_factor_hint": round(size_factor_trend, 3) if trend_score > 0 else None,
             }
         BBRsi._log_skip(
             "no_band_touch",
