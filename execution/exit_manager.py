@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import os
+import math
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Optional, Tuple, TYPE_CHECKING
@@ -48,6 +49,11 @@ class ExitDecision:
 
 
 MANAGED_POCKETS = {"macro", "micro", "scalp", "scalp_fast"}
+AGENT_CLIENT_PREFIXES = tuple(
+    p for p in os.getenv("AGENT_CLIENT_PREFIXES", "qr-,qs-").split(",") if p
+)
+if not AGENT_CLIENT_PREFIXES:
+    AGENT_CLIENT_PREFIXES = ("qr-",)
 
 
 def _env_flag(name: str, default: bool = False) -> bool:
@@ -473,6 +479,8 @@ class ExitManager:
 
         # 経過時間（最古トレード基準）
         open_trades = [tr for tr in (open_info.get("open_trades") or []) if tr.get("side") == side]
+        if any(self._is_manual_trade(tr) for tr in open_trades):
+            return None
         age_sec = None
         for tr in open_trades:
             age = self._trade_age_seconds(tr, now)
@@ -521,6 +529,7 @@ class ExitManager:
         thesis_time_gate = None
         thesis_hard_mult = None
         has_fast_cut_meta = False
+        has_technical_meta = False
         for tr in open_trades:
             age = self._trade_age_seconds(tr, now)
             if age is None:
@@ -531,6 +540,13 @@ class ExitManager:
             thesis = self._parse_entry_thesis(tr)
             if thesis:
                 try:
+                    factors = thesis.get("factors") if isinstance(thesis.get("factors"), dict) else {}
+                    fac_m1_thesis = factors.get("m1") if isinstance(factors, dict) else {}
+                    atr_hint = fac_m1_thesis.get("atr_pips") or thesis.get("atr_pips")
+                    rsi_hint = fac_m1_thesis.get("rsi") or thesis.get("rsi")
+                    adx_hint = fac_m1_thesis.get("adx") or thesis.get("adx")
+                    if atr_hint not in (None, "") and rsi_hint not in (None, "") and adx_hint not in (None, ""):
+                        has_technical_meta = True
                     if thesis_fast_cut is None and thesis.get("fast_cut_pips") is not None:
                         thesis_fast_cut = float(thesis.get("fast_cut_pips"))
                     if thesis_time_gate is None and thesis.get("fast_cut_time_sec") is not None:
@@ -543,8 +559,9 @@ class ExitManager:
             time_gate = max(time_gate, thesis_time_gate)
 
         loss = abs(profit_pips)
-        # fast_cut はメタがあるシグナルのみ適用（手動・旧ポジは対象外）
-        if not has_fast_cut_meta:
+        tech_ok = has_technical_meta or self._has_realtime_technicals(fac_m1)
+        # fast_cut はメタ付き or テクニカルが揃ったポジのみ適用（手動・旧ポジは対象外）
+        if not has_fast_cut_meta and not tech_ok:
             return None
         if thesis_fast_cut and thesis_fast_cut > 0:
             fast_cut = thesis_fast_cut
@@ -1998,8 +2015,31 @@ class ExitManager:
     ) -> bool:
         if profit_pips is None:
             return False
-        hard = profit_pips >= self._micro_profit_hard
-        soft = profit_pips >= self._micro_profit_soft
+
+        slope = None
+        if projection_fast is not None:
+            try:
+                slope = float(projection_fast.gap_slope_pips or 0.0)
+            except Exception:
+                slope = None
+
+        soft_thr = self._micro_profit_soft
+        hard_thr = self._micro_profit_hard
+        # Allow winners to stretch a bit if slopeは順方向に傾いている
+        if slope is not None:
+            if side == "long" and slope > 0.12:
+                soft_thr += 0.2
+                hard_thr += 0.4
+            elif side == "short" and slope < -0.12:
+                soft_thr += 0.2
+                hard_thr += 0.4
+            elif side == "long" and slope < -0.05:
+                hard_thr = max(hard_thr - 0.2, self._micro_profit_soft)
+            elif side == "short" and slope > 0.05:
+                hard_thr = max(hard_thr - 0.2, self._micro_profit_soft)
+
+        hard = profit_pips >= hard_thr
+        soft = profit_pips >= soft_thr
         if not (hard or soft):
             return False
 
@@ -2023,12 +2063,6 @@ class ExitManager:
                 rsi_trigger = True
 
         slope_trigger = False
-        slope = None
-        if projection_fast is not None:
-            try:
-                slope = float(projection_fast.gap_slope_pips or 0.0)
-            except Exception:
-                slope = None
         if slope is not None and self._micro_profit_slope_min > 0:
             if side == "long" and slope <= -self._micro_profit_slope_min:
                 slope_trigger = True
@@ -3069,6 +3103,38 @@ class ExitManager:
         ):
             return True
         return False
+
+    def _is_manual_trade(self, trade: Dict) -> bool:
+        """Detect manually entered/unknown trades to exclude from automated exits."""
+        thesis = self._parse_entry_thesis(trade)
+        if thesis.get("pocket") == "manual" or self._flag_truthy(thesis.get("manual")):
+            return True
+        tags = thesis.get("tags") or thesis.get("exit_tags") or []
+        if isinstance(tags, str):
+            tags = [tags]
+        for t in tags:
+            if isinstance(t, str) and t.strip().lower() == "manual":
+                return True
+        cid = trade.get("client_id") or trade.get("client_order_id") or ""
+        if isinstance(cid, str) and cid:
+            if not cid.startswith(AGENT_CLIENT_PREFIXES):
+                return True
+        tag = thesis.get("tag") or trade.get("tag")
+        if isinstance(tag, str) and "manual" in tag.lower():
+            return True
+        return False
+
+    @staticmethod
+    def _has_realtime_technicals(fac_m1: Dict) -> bool:
+        try:
+            atr_p = float(fac_m1.get("atr_pips") or (fac_m1.get("atr") or 0.0) * 100.0)
+            rsi = float(fac_m1.get("rsi"))
+            adx = float(fac_m1.get("adx"))
+        except Exception:
+            return False
+        if math.isnan(atr_p) or math.isnan(rsi) or math.isnan(adx):
+            return False
+        return atr_p > 0.0
 
     @staticmethod
     def _parse_cutover_env(raw: Optional[str]) -> Optional[datetime]:
