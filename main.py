@@ -35,10 +35,25 @@ from analysis.focus_decider import decide_focus
 from analysis.gpt_decider import get_decision
 from analysis.perf_monitor import snapshot as get_perf
 from analytics.insight_client import InsightClient
-from analytics.firestore_strategy_client import (
-    FirestoreStrategyClient,
-    firestore_strategy_enabled,
-)
+try:
+    from analytics.firestore_strategy_client import (
+        FirestoreStrategyClient,
+        firestore_strategy_enabled,
+    )
+except Exception:  # pragma: no cover - optional dependency
+    logging.warning(
+        "[FIRESTORE] firestore_strategy_client not available; exporting disabled"
+    )
+
+    class FirestoreStrategyClient:  # type: ignore[override]
+        def __init__(self, enable: bool = False):
+            self.enable = False
+
+        def export_scores(self, *_, **__):
+            return None
+
+    def firestore_strategy_enabled() -> bool:
+        return False
 from analysis.range_guard import detect_range_mode
 import os
 from analysis.param_context import ParamContext, ParamSnapshot
@@ -1582,6 +1597,86 @@ def _build_entry_context(
     if high_impact_reason:
         context["high_impact_reason"] = high_impact_reason
     return context
+
+
+def _recompute_m1_technicals(fac_m1: Dict) -> Tuple[Optional[float], Optional[float], Optional[float]]:
+    """
+    Best-effort recompute of ATR/RSI/ADX from M1 candles when factor fields are missing.
+    Returns (atr_pips, rsi, adx) or (None, None, None) if unavailable.
+    """
+    candles = fac_m1.get("candles") or []
+    if not isinstance(candles, list) or len(candles) < 20:
+        return None, None, None
+    closes: list[float] = []
+    highs: list[float] = []
+    lows: list[float] = []
+    for c in candles[-120:]:
+        try:
+            closes.append(float(c.get("c") or c.get("close")))
+            highs.append(float(c.get("h") or c.get("high")))
+            lows.append(float(c.get("l") or c.get("low")))
+        except Exception:
+            continue
+    if len(closes) < 20 or len(highs) < 20 or len(lows) < 20:
+        return None, None, None
+
+    # ATR (simple Wilder smoothing over last 14 bars)
+    tr_list: list[float] = []
+    prev_close = closes[0]
+    for h, l, c in zip(highs[1:], lows[1:], closes[1:]):
+        try:
+            tr = max(h - l, abs(h - prev_close), abs(l - prev_close))
+            tr_list.append(tr / PIP)
+            prev_close = c
+        except Exception:
+            continue
+    atr_pips = None
+    if len(tr_list) >= 14:
+        atr_pips = sum(tr_list[-14:]) / 14.0
+
+    # RSI (reuse fast_scalp helper)
+    rsi_val = None
+    try:
+        rsi_val = _fs_compute_rsi(closes[-30:], 14)
+    except Exception:
+        rsi_val = None
+
+    # ADX (simplified SMA-based DI/ADX over last 14)
+    adx_val = None
+    try:
+        dm_plus: list[float] = []
+        dm_minus: list[float] = []
+        tr_vals: list[float] = []
+        for i in range(1, min(len(highs), len(lows))):
+            up_move = highs[i] - highs[i - 1]
+            down_move = lows[i - 1] - lows[i]
+            dm_plus.append(up_move if up_move > down_move and up_move > 0 else 0.0)
+            dm_minus.append(down_move if down_move > up_move and down_move > 0 else 0.0)
+            tr_vals.append(tr_list[i - 1] if i - 1 < len(tr_list) else 0.0)
+        period = 14
+        if len(tr_vals) >= period and len(dm_plus) >= period and len(dm_minus) >= period:
+            tr_avg = sum(tr_vals[-period:]) / period
+            if tr_avg > 0:
+                di_plus = (sum(dm_plus[-period:]) / period) / tr_avg * 100
+                di_minus = (sum(dm_minus[-period:]) / period) / tr_avg * 100
+                dx_vals: list[float] = []
+                for i in range(period, len(dm_plus)):
+                    tr_win = tr_vals[i - period : i]
+                    dm_p_win = dm_plus[i - period : i]
+                    dm_m_win = dm_minus[i - period : i]
+                    tr_win_avg = sum(tr_win) / period if tr_win else 0.0
+                    if tr_win_avg <= 0:
+                        continue
+                    di_p = (sum(dm_p_win) / period) / tr_win_avg * 100
+                    di_m = (sum(dm_m_win) / period) / tr_win_avg * 100
+                    dx_vals.append(abs(di_p - di_m) / max(di_p + di_m, 1e-9) * 100)
+                dx_series = dx_vals[-5:] if dx_vals else [abs(di_plus - di_minus) / max(di_plus + di_minus, 1e-9) * 100]
+                if dx_series:
+                    adx_val = sum(dx_series) / len(dx_series)
+    except Exception:
+        adx_val = None
+
+    return atr_pips, rsi_val, adx_val
 
 
 def compute_stage_lot(
@@ -4700,20 +4795,27 @@ async def logic_loop(
                 if tp_pips is None:
                     logging.info("[SKIP] Missing TP for %s.", signal["strategy"])
                     continue
-                # ATR/RSI/ADX は必須。欠損時は発注せずログを残す。
+                # ATR/RSI/ADX は必須。欠損時は M1 ローソクから再計算を試みる。
+                atr_entry = fac_m1.get("atr_pips")
+                if atr_entry is None:
+                    atr_entry = (fac_m1.get("atr") or 0.0) * 100
+                rsi_entry = fac_m1.get("rsi")
+                adx_entry = fac_m1.get("adx")
+                missing = False
                 try:
-                    atr_entry = fac_m1.get("atr_pips")
-                    if atr_entry is None:
-                        atr_entry = (fac_m1.get("atr") or 0.0) * 100
                     atr_entry = float(atr_entry)
-                    rsi_entry = float(fac_m1.get("rsi"))
-                    adx_entry = float(fac_m1.get("adx"))
-                except Exception as exc:
-                    logging.error("[SKIP] Missing/invalid ATR/RSI/ADX for %s: %s", signal["strategy"], exc)
-                    continue
-                if atr_entry <= 0.0:
-                    logging.error("[SKIP] Non-positive ATR for %s (atr_entry=%.3f)", signal["strategy"], atr_entry)
-                    continue
+                    rsi_entry = float(rsi_entry)
+                    adx_entry = float(adx_entry)
+                except Exception:
+                    missing = True
+                if missing or atr_entry <= 0.0 or math.isnan(atr_entry) or math.isnan(rsi_entry) or math.isnan(adx_entry):
+                    rec_atr, rec_rsi, rec_adx = _recompute_m1_technicals(fac_m1)
+                    if rec_atr is not None and rec_rsi is not None and rec_adx is not None and rec_atr > 0.0:
+                        atr_entry, rsi_entry, adx_entry = rec_atr, rec_rsi, rec_adx
+                        logging.info("[RECOMPUTE] Filled ATR/RSI/ADX from candles atr=%.3f rsi=%.2f adx=%.2f", atr_entry, rsi_entry, adx_entry)
+                    else:
+                        logging.error("[SKIP] Missing/invalid ATR/RSI/ADX for %s (recompute failed)", signal["strategy"])
+                        continue
 
                 base_sl = None
                 if sl_pips is not None:
