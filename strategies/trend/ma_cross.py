@@ -12,7 +12,7 @@ class MovingAverageCross:
     profile = "macro_trend_ma"
 
     # Entry quality baselines (pips are 0.01 for USD/JPY)
-    _MIN_GAP_PIPS = 0.34            # allow smaller MA10/MA20 separation
+    _MIN_GAP_PIPS = 0.28            # allow smaller MA10/MA20 separation
     _MIN_TREND_ADX = 12.5           # allow weaker trend
     _MIN_GAP_IN_WEAK_TREND = 0.60   # lower gap requirement when ADX is weak
     _MIN_SLOPE_IN_WEAK_TREND = 0.03 # allow gentler slope
@@ -21,7 +21,7 @@ class MovingAverageCross:
     # Use bars-based threshold to work across timeframes (M1/H4)
     _CROSS_BARS_STOP = 1.5          # allow entries closer to a cross
     _MIN_ATR_PIPS = 0.55            # allow lower ATR
-    _MIN_GAP_ATR_RATIO = 0.18       # require separation vs ATR
+    _MIN_GAP_ATR_RATIO = 0.14       # require separation vs ATR
 
     # Pullback gating: avoid buying too far below fast MA or selling too far above
     _PULLBACK_LIMIT = 1.60          # pips relative to fast MA

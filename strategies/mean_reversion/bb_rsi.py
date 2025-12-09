@@ -9,7 +9,7 @@ PIP = 0.01
 # Treat MA10/MA20 gaps >=0.5 pips combined with ADX>=21 as strong trend
 MAX_TREND_GAP_PIPS = 0.6
 MAX_ADX = 23.0
-MIN_VOL_5M = 0.6
+MIN_VOL_5M = 0.35
 PROFILE_NAME = "bb_range_reversion"
 MIN_DISTANCE_RANGE = 0.045
 MIN_DISTANCE_TREND = 0.10

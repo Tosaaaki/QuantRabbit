@@ -148,13 +148,14 @@ class M1Scalper:
         # Loosened gates to allow entries in低中ボラ
         if atr_pips < 1.0:
             return None
-        if vol5 < 0.30:
+        if vol5 < 0.20:
             return None
         if adx < 10.0:
             return None
         # トレンド方向を判定（強い順行なら逆張りを避け、順張りに寄せる）
-        trend_up = momentum > 0.0025 and ema_gap_pips > 0.05
-        trend_down = momentum < -0.0025 and ema_gap_pips < -0.05
+        diff_pips = momentum / _PIP
+        trend_up = diff_pips >= 3.0 and momentum > 0.003 and ema_gap_pips > -0.6
+        trend_down = diff_pips <= -3.0 and momentum < -0.003 and ema_gap_pips < -0.6
 
         # Dynamic TP/SL (pips) tuned to recent volatility
         # - TP ≈ 3x ATR (pips) within [5, 9]
