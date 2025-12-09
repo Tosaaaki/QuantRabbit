@@ -196,7 +196,14 @@ python scripts/run_sync_pipeline.py \
 5. **戦略スコア スナップショット（オプション）**  
    `scripts/generate_strategy_scores.py` が BQ `trades_raw` を集計し、strategy×pocket の PF / Sharpe / ロット係数 / SLTP 推奨値を Firestore `strategy_scores/current` にコンパクトに上書きします（1 ドキュメントのみ）。VM 側は TTL キャッシュ付きリーダーで読むだけ、未設定時は無効のためリアルタイム売買に影響しません。
 
-6. **systemd への登録例**
+6. **価格帯マップ（オプション）**  
+   `scripts/generate_level_map.py` が BQ のローソクテーブル（例: `candles_m1`）を集計し、価格バケットごとの反転/到達傾向マップを JSON として出力します。`scripts/upload_candles_to_bq.py` でローカルのローソクログを BQ にロードしておくと利用可能です。
+
+7. **Level map / 戦略スコアのVM適用（オプトイン）**  
+   - level_map.json（GCS）: `LEVEL_MAP_ENABLE=true` で `main.py` が TTL キャッシュ読み込みし、エントリーの thesis に近傍バケット情報を添付（挙動はデフォルトOFF）。  
+   - strategy_scores (Firestore): `FIRESTORE_STRATEGY_ENABLE=true` でロット係数/SLTP推奨を読み込めます（挙動はデフォルトOFF、SLTPは `FIRESTORE_STRATEGY_APPLY_SLTP` で制御）。
+
+8. **systemd への登録例**
 
 ```ini
 [Unit]

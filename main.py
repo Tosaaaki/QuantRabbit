@@ -7,6 +7,7 @@ import hashlib
 import json
 import contextlib
 import math
+import os
 from typing import Optional, Tuple, Coroutine, Any, Dict, Sequence
 
 # Safe float conversion for optional numeric inputs
@@ -40,10 +41,9 @@ try:
         FirestoreStrategyClient,
         firestore_strategy_enabled,
     )
+    from analytics.level_map_client import LevelMapClient
 except Exception:  # pragma: no cover - optional dependency
-    logging.warning(
-        "[FIRESTORE] firestore_strategy_client not available; exporting disabled"
-    )
+    logging.warning("[FIRESTORE] firestore_strategy_client not available; exporting disabled")
 
     class FirestoreStrategyClient:  # type: ignore[override]
         def __init__(self, enable: bool = False):
@@ -54,8 +54,17 @@ except Exception:  # pragma: no cover - optional dependency
 
     def firestore_strategy_enabled() -> bool:
         return False
+
+    class LevelMapClient:  # type: ignore[override]
+        def __init__(self, *_, **__):
+            self.enabled = False
+
+        def refresh(self, *_, **__):
+            return None
+
+        def nearest(self, *_, **__):
+            return None
 from analysis.range_guard import detect_range_mode
-import os
 from analysis.param_context import ParamContext, ParamSnapshot
 from analysis.chart_story import ChartStory, ChartStorySnapshot
 from signals.pocket_allocator import (
@@ -2179,6 +2188,11 @@ async def logic_loop(
     fs_strategy_enabled = firestore_strategy_enabled()
     fs_strategy_client = FirestoreStrategyClient(enable=fs_strategy_enabled) if fs_strategy_enabled else None
     fs_strategy_apply_sltp = _env_bool("FIRESTORE_STRATEGY_APPLY_SLTP", default=False)
+    level_map_enabled = _env_bool("LEVEL_MAP_ENABLE", default=False)
+    level_map_client = LevelMapClient(
+        object_path=os.getenv("LEVEL_MAP_OBJECT_PATH", "analytics/level_map.json"),
+        ttl_sec=int(os.getenv("LEVEL_MAP_TTL_SEC", "300")),
+    ) if level_map_enabled else None
     last_update_time = datetime.datetime.min
     last_heartbeat_time = datetime.datetime.min  # Add this line
     last_metrics_refresh = datetime.datetime.min
@@ -2255,6 +2269,11 @@ async def logic_loop(
                     insight.refresh()
                 except Exception:
                     pass
+                if level_map_client:
+                    try:
+                        level_map_client.refresh()
+                    except Exception:
+                        pass
                 if fs_strategy_client:
                     try:
                         fs_strategy_client.refresh()
@@ -4988,6 +5007,21 @@ async def logic_loop(
                     else reference_price - (tp_pips / 100)
                 )
 
+                level_map_note = None
+                if level_map_client and level_map_enabled:
+                    try:
+                        lm = level_map_client.nearest(reference_price)
+                        if lm:
+                            level_map_note = {
+                                "bucket": lm.get("bucket"),
+                                "hit_count": lm.get("hit_count"),
+                                "p_up_5": lm.get("p_up_5"),
+                                "p_down_5": lm.get("p_down_5"),
+                                "mean_ret_5": lm.get("mean_ret_5"),
+                            }
+                    except Exception:
+                        level_map_note = None
+
                 sl, tp = clamp_sl_tp(
                     reference_price,
                     base_sl,
@@ -5063,6 +5097,8 @@ async def logic_loop(
                         "micro": micro_regime,
                     },
                 }
+                if level_map_note:
+                    entry_thesis["level_map"] = level_map_note
                 note = signal.get("notes")
                 if note:
                     entry_thesis["note"] = note

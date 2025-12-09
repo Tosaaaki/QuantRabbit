@@ -1,0 +1,18 @@
+[Unit]
+Description=QuantRabbit Level Map pipeline (candles -> BQ -> level_map.json -> GCS)
+After=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/home/tossaki/QuantRabbit
+Environment=PYTHONUNBUFFERED=1
+# 環境に合わせて上書きしてください（プロジェクト/資格情報/バケットなど）
+Environment=PROJECT=quantrabbit
+Environment=BQ_PROJECT=quantrabbit
+Environment=GCS_BUCKET=fx-ui-realtime
+Environment=GOOGLE_APPLICATION_CREDENTIALS=/home/tossaki/.config/gcloud/legacy_credentials/www.tosakiweb.net@gmail.com/adc.json
+ExecStart=/usr/bin/env bash scripts/run_level_map_pipeline.sh
+User=tossaki
+
+[Install]
+WantedBy=default.target
