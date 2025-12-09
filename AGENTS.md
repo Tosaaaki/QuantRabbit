@@ -425,6 +425,10 @@ scripts/vm.sh -p quantrabbit -z asia-northeast1-a -m fx-trader-vm deploy -i -k ~
             - VM ログ: `scripts/vm.sh -p quantrabbit -z asia-northeast1-a -m fx-trader-vm sql -f /home/tossaki/QuantRabbit/logs/trades.db -q "select ticket_id,pocket,client_order_id,units,entry_time,close_time,pl_pips from trades order by entry_time desc limit 5;" -t`
             - 取引履歴: `gcloud compute ssh fx-trader-vm --project=quantrabbit --zone=asia-northeast1-a --tunnel-through-iap --ssh-key-file ~/.ssh/gcp_oslogin_quantrabbit --command "sqlite3 /home/tossaki/QuantRabbit/logs/orders.db 'select ts,pocket,side,units,client_order_id,status from orders order by ts desc limit 5;'"` 
             - OANDA 現在ポジ: `curl -s -H "Authorization: Bearer $OANDA_TOKEN" "https://api-fxtrade.oanda.com/v3/accounts/$OANDA_ACCOUNT/openTrades" | jq '.trades[] | {id, instrument, currentUnits, price, takeProfit, stopLoss}'`
+        - ポジ/タグ欠損トラブルシュート（運用メモ）
+            - オープン確認は VM で `.venv` 有効化後 `python - <<'PY' ... PositionManager().get_open_positions()`。trades.db はクローズ済みのみなので、openTrades API と突合する。
+            - thesis/fast_cut/kill が空の micro/scalp はオーファン扱い。2025-12-09 以降の MomentumBurst は fast_cut/kill メタ付与済みだが、それ以前の建玉は空のまま残るので必要なら手動クローズする。
+            - manual ポケットは自動エグジット対象外。意図しない manual が残っていれば明示的にクローズする。
 
 ⸻
 
