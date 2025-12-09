@@ -1840,7 +1840,20 @@ def _micro_chart_gate(
     # 攻め方/足場を確認: 直近高値へのアタック回数と安値の切り上げ幅
     high_attacks = 0
     low_attacks = 0
-    band = 0.3  # pips許容帯
+    band = 0.3  # pips許容帯 (動的に調整)
+    try:
+        atr_pips = float(fac_m1.get("atr_pips") or (fac_m1.get("atr") or 0.0) * 100.0)
+    except Exception:
+        atr_pips = 0.0
+    if atr_pips > 0:
+        band = max(0.2, min(0.6, atr_pips * 0.05))
+    # ボラに応じて「何回のタッチで鈍化とみなすか」を変える
+    if atr_pips <= 3.0:
+        attack_thresh = 2
+    elif atr_pips >= 8.0:
+        attack_thresh = 4
+    else:
+        attack_thresh = 3
     if highs:
         recent_high = max(highs[-window:])
         for h in highs[-6:]:
@@ -1913,7 +1926,7 @@ def _micro_chart_gate(
         }
 
     if action == "OPEN_LONG":
-        if high_attacks >= 3 and low_base_rise <= 0.2 and slope6 <= 3.0:
+        if high_attacks >= attack_thresh and low_base_rise <= 0.2 and slope6 <= 3.0:
             return False, "micro_high_attack_flat_base", {
                 "slope6": round(slope6, 2),
                 "range": round(range_pips, 2),
@@ -1922,6 +1935,7 @@ def _micro_chart_gate(
                 "h1": h1_trend or "",
                 "high_attacks": high_attacks,
                 "low_rise": round(low_base_rise, 2),
+                "attack_thresh": attack_thresh,
             }
         if n_wave and isinstance(n_wave, dict) and n_wave.get("direction") == "down" and slope6 <= 1.5:
             return False, "micro_nwave_opposed", {
@@ -1933,7 +1947,7 @@ def _micro_chart_gate(
                 "nwave": n_wave,
             }
     if action == "OPEN_SHORT":
-        if low_attacks >= 3 and low_base_rise >= -0.2 and slope6 >= -3.0:
+        if low_attacks >= attack_thresh and low_base_rise >= -0.2 and slope6 >= -3.0:
             return False, "micro_low_attack_flat_base", {
                 "slope6": round(slope6, 2),
                 "range": round(range_pips, 2),
@@ -1942,6 +1956,7 @@ def _micro_chart_gate(
                 "h1": h1_trend or "",
                 "low_attacks": low_attacks,
                 "low_rise": round(low_base_rise, 2),
+                "attack_thresh": attack_thresh,
             }
         if n_wave and isinstance(n_wave, dict) and n_wave.get("direction") == "up" and slope6 >= -1.5:
             return False, "micro_nwave_opposed", {
