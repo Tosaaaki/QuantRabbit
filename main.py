@@ -15,6 +15,13 @@ def _safe_float(value: object, default: float = 0.0) -> float:
     except (TypeError, ValueError):
         return default
 
+
+def _env_bool(name: str, default: bool = False) -> bool:
+    val = os.getenv(name, None)
+    if val is None:
+        return default
+    return str(val).strip().lower() in {"1", "true", "yes", "on"}
+
 from market_data.candle_fetcher import (
     Candle,
     start_candle_stream,
@@ -27,6 +34,10 @@ from analysis.focus_decider import decide_focus
 from analysis.gpt_decider import get_decision
 from analysis.perf_monitor import snapshot as get_perf
 from analytics.insight_client import InsightClient
+from analytics.firestore_strategy_client import (
+    FirestoreStrategyClient,
+    firestore_strategy_enabled,
+)
 from analysis.range_guard import detect_range_mode
 import os
 from analysis.param_context import ParamContext, ParamSnapshot
@@ -1806,6 +1817,26 @@ def _micro_chart_gate(
         short_units = int(micro_info.get("short_units", 0) or 0)
     except Exception:
         short_units = 0
+    try:
+        avg_price = float(micro_info.get("avg_price", 0.0) or 0.0)
+    except Exception:
+        avg_price = 0.0
+    same_band = abs(price - avg_price) / PIP if avg_price > 0 else 99.0
+    if (
+        action == "OPEN_LONG"
+        and long_units >= 15000
+        and same_band <= 1.2  # 1.2pips帯での積み増しを抑制
+        and slope6 <= 3.0
+    ):
+        return False, "micro_same_band_stack", {
+            "slope6": round(slope6, 2),
+            "range": round(range_pips, 2),
+            "trend": micro_trend or "",
+            "m15": m15_trend or "",
+            "h1": h1_trend or "",
+            "long_units": long_units,
+            "band_pips": round(same_band, 2),
+        }
     stack_threshold = 20000
     if action == "OPEN_LONG" and long_units >= stack_threshold and slope6 <= 0.8:
         return False, "micro_stack_guard_long", {
@@ -1875,6 +1906,9 @@ async def logic_loop(
     chart_story = ChartStory()
     perf_cache = {}
     insight = InsightClient()
+    fs_strategy_enabled = firestore_strategy_enabled()
+    fs_strategy_client = FirestoreStrategyClient(enable=fs_strategy_enabled) if fs_strategy_enabled else None
+    fs_strategy_apply_sltp = _env_bool("FIRESTORE_STRATEGY_APPLY_SLTP", default=False)
     last_update_time = datetime.datetime.min
     last_heartbeat_time = datetime.datetime.min  # Add this line
     last_metrics_refresh = datetime.datetime.min
@@ -1951,6 +1985,11 @@ async def logic_loop(
                     insight.refresh()
                 except Exception:
                     pass
+                if fs_strategy_client:
+                    try:
+                        fs_strategy_client.refresh()
+                    except Exception:
+                        pass
                 last_update_time = now
                 logging.info(f"[PERF] Updated: {perf_cache}")
 
@@ -4345,6 +4384,28 @@ async def logic_loop(
                     )
                     confidence_target = adj
 
+                if fs_strategy_client:
+                    try:
+                        strat_mult = float(
+                            fs_strategy_client.get_multiplier(
+                                str(signal.get("strategy") or ""),
+                                pocket,
+                            )
+                        )
+                    except Exception:
+                        strat_mult = 1.0
+                    if abs(strat_mult - 1.0) > 1e-3:
+                        new_conf_target = round(confidence_target * strat_mult, 3)
+                        logging.info(
+                            "[FS_STRAT] pocket=%s strategy=%s mult=%.3f target %.3f -> %.3f",
+                            pocket,
+                            signal.get("strategy"),
+                            strat_mult,
+                            confidence_target,
+                            new_conf_target,
+                        )
+                        confidence_target = new_conf_target
+
                 open_info = open_positions.get(pocket, {})
                 pocket_limits = pocket_limits_map
                 per_direction_limits = direction_limits_map
@@ -4604,23 +4665,37 @@ async def logic_loop(
                     if hard_stop is not None:
                         sl_pips = hard_stop
                 tp_pips = signal.get("tp_pips")
+                if fs_strategy_client and fs_strategy_apply_sltp:
+                    try:
+                        tp_override, sl_override = fs_strategy_client.get_sltp(
+                            str(signal.get("strategy") or ""),
+                            pocket,
+                            None,
+                        )
+                        if tp_override is not None:
+                            tp_pips = max(1.0, float(tp_override))
+                            signal["tp_pips"] = tp_pips
+                        if sl_override is not None:
+                            sl_pips = max(1.0, float(sl_override))
+                            signal["sl_pips"] = sl_pips
+                    except Exception as exc:
+                        logging.info("[FS_STRAT] sltp override skipped: %s", exc)
                 if tp_pips is None:
                     logging.info("[SKIP] Missing TP for %s.", signal["strategy"])
                     continue
-                atr_entry = fac_m1.get("atr_pips")
-                if atr_entry is None:
-                    atr_entry = (fac_m1.get("atr") or 0.0) * 100
-                rsi_entry = fac_m1.get("rsi")
-                adx_entry = fac_m1.get("adx")
+                # ATR/RSI/ADX は必須。欠損時は発注せずログを残す。
                 try:
-                    atr_entry = float(atr_entry or 0.0)
-                    rsi_entry = float(rsi_entry)
-                    adx_entry = float(adx_entry)
-                except Exception:
-                    logging.info("[SKIP] Missing/invalid ATR/RSI/ADX for %s.", signal["strategy"])
+                    atr_entry = fac_m1.get("atr_pips")
+                    if atr_entry is None:
+                        atr_entry = (fac_m1.get("atr") or 0.0) * 100
+                    atr_entry = float(atr_entry)
+                    rsi_entry = float(fac_m1.get("rsi"))
+                    adx_entry = float(fac_m1.get("adx"))
+                except Exception as exc:
+                    logging.error("[SKIP] Missing/invalid ATR/RSI/ADX for %s: %s", signal["strategy"], exc)
                     continue
                 if atr_entry <= 0.0:
-                    logging.info("[SKIP] Non-positive ATR for %s.", signal["strategy"])
+                    logging.error("[SKIP] Non-positive ATR for %s (atr_entry=%.3f)", signal["strategy"], atr_entry)
                     continue
 
                 base_sl = None
