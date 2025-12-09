@@ -1684,6 +1684,155 @@ def _cluster_directional_units(
     return total
 
 
+def _micro_chart_gate(
+    signal: dict[str, object],
+    fac_m1: dict[str, object],
+    story_snapshot: object | None,
+    open_positions: dict[str, dict[str, object]] | None = None,
+) -> tuple[bool, str, dict[str, float | str]]:
+    """
+    Lightweight micro entry guard that uses recent price action instead of blindly stacking.
+    Returns (allow, reason, ctx).
+    """
+    pocket = signal.get("pocket")
+    action = signal.get("action")
+    if pocket != "micro" or action not in {"OPEN_LONG", "OPEN_SHORT"}:
+        return True, "pass", {}
+
+    candles = fac_m1.get("candles") or []
+    if len(candles) < 6:
+        return True, "no_candles", {}
+
+    closes: list[float] = []
+    highs: list[float] = []
+    lows: list[float] = []
+    for cndl in candles:
+        try:
+            close_val = _safe_float(cndl.get("close"))
+            high_val = _safe_float(cndl.get("high"), close_val)
+            low_val = _safe_float(cndl.get("low"), close_val)
+        except Exception:
+            continue
+        closes.append(close_val)
+        highs.append(high_val)
+        lows.append(low_val)
+
+    if len(closes) < 6:
+        return True, "no_candles", {}
+
+    price = closes[-1]
+    slope6 = (price - closes[-6]) / PIP
+    window = min(12, len(highs))
+    high_n = max(highs[-window:])
+    low_n = min(lows[-window:])
+    range_pips = (high_n - low_n) / PIP if highs and lows else 0.0
+    top_gap = (high_n - price) / PIP if highs else 0.0
+    bottom_gap = (price - low_n) / PIP if lows else 0.0
+
+    micro_trend = None
+    summary = {}
+    if story_snapshot and hasattr(story_snapshot, "micro_trend"):
+        micro_trend = getattr(story_snapshot, "micro_trend")
+        if hasattr(story_snapshot, "summary"):
+            try:
+                summary = dict(getattr(story_snapshot, "summary") or {})
+            except Exception:
+                summary = {}
+        if hasattr(story_snapshot, "is_aligned"):
+            try:
+                aligned = story_snapshot.is_aligned("micro", str(action))
+            except Exception:
+                aligned = True
+            if not aligned and micro_trend not in {"range", "quiet"}:
+                return False, f"chart_misaligned_{micro_trend}", {
+                    "slope6": round(slope6, 2),
+                    "range": round(range_pips, 2),
+                    "trend": micro_trend or "",
+                    "m15": summary.get("M15", ""),
+                    "h1": summary.get("H1", ""),
+                }
+
+    def _opposes(frame_trend: str | None, side: str) -> bool:
+        if frame_trend not in {"up", "down"}:
+            return False
+        return (side == "OPEN_LONG" and frame_trend == "down") or (
+            side == "OPEN_SHORT" and frame_trend == "up"
+        )
+
+    m15_trend = summary.get("M15") if isinstance(summary, dict) else None
+    h1_trend = summary.get("H1") if isinstance(summary, dict) else None
+    opposed_count = int(_opposes(m15_trend, str(action))) + int(_opposes(h1_trend, str(action)))
+    if opposed_count >= 2 and abs(slope6) <= 3.5:
+        return False, "micro_mtf_opposed", {
+            "slope6": round(slope6, 2),
+            "range": round(range_pips, 2),
+            "trend": micro_trend or "",
+            "m15": m15_trend or "",
+            "h1": h1_trend or "",
+        }
+
+    if range_pips <= 4.0 and abs(slope6) <= 1.4:
+        return False, "micro_chop_gate", {
+            "slope6": round(slope6, 2),
+            "range": round(range_pips, 2),
+            "trend": micro_trend or "",
+            "m15": m15_trend or "",
+            "h1": h1_trend or "",
+        }
+
+    if action == "OPEN_LONG" and top_gap <= 0.6 and slope6 <= 2.0:
+        return False, "micro_top_chase_guard", {
+            "slope6": round(slope6, 2),
+            "range": round(range_pips, 2),
+            "trend": micro_trend or "",
+            "m15": m15_trend or "",
+            "h1": h1_trend or "",
+        }
+    if action == "OPEN_SHORT" and bottom_gap <= 0.6 and slope6 >= -2.0:
+        return False, "micro_bottom_fade_guard", {
+            "slope6": round(slope6, 2),
+            "range": round(range_pips, 2),
+            "trend": micro_trend or "",
+            "m15": m15_trend or "",
+            "h1": h1_trend or "",
+        }
+
+    micro_info = (open_positions or {}).get("micro", {}) if open_positions else {}
+    try:
+        long_units = int(micro_info.get("long_units", 0) or 0)
+    except Exception:
+        long_units = 0
+    try:
+        short_units = int(micro_info.get("short_units", 0) or 0)
+    except Exception:
+        short_units = 0
+    stack_threshold = 20000
+    if action == "OPEN_LONG" and long_units >= stack_threshold and slope6 <= 0.8:
+        return False, "micro_stack_guard_long", {
+            "slope6": round(slope6, 2),
+            "range": round(range_pips, 2),
+            "trend": micro_trend or "",
+            "long_units": long_units,
+        }
+    if action == "OPEN_SHORT" and short_units >= stack_threshold and slope6 >= -0.8:
+        return False, "micro_stack_guard_short", {
+            "slope6": round(slope6, 2),
+            "range": round(range_pips, 2),
+            "trend": micro_trend or "",
+            "short_units": short_units,
+            "m15": m15_trend or "",
+            "h1": h1_trend or "",
+        }
+
+    return True, "ok", {
+        "slope6": round(slope6, 2),
+        "range": round(range_pips, 2),
+        "trend": micro_trend or "",
+        "m15": m15_trend or "",
+        "h1": h1_trend or "",
+    }
+
+
 async def m1_candle_handler(cndl: Candle):
     await on_candle("M1", cndl)
 
@@ -2941,6 +3090,7 @@ async def logic_loop(
                     vol_5m,
                 )
 
+            open_positions_snapshot = pos_manager.get_open_positions()
             evaluated_signals: list[dict] = []
             signal_emitted = False
             evaluated_count = 0
@@ -3090,6 +3240,33 @@ async def logic_loop(
                         signal[extra_key] = raw_signal[extra_key]
                 scaled_conf = int(signal["confidence"] * health.confidence_scale)
                 signal["confidence"] = max(0, min(100, scaled_conf))
+
+                allow_micro, gate_reason, gate_ctx = _micro_chart_gate(
+                    signal,
+                    fac_m1,
+                    story_snapshot,
+                    open_positions_snapshot,
+                )
+                if not allow_micro:
+                    logging.info(
+                        "[CHART_GATE] skip %s pocket=%s action=%s reason=%s ctx=%s",
+                        sname,
+                        pocket,
+                        signal["action"],
+                        gate_reason,
+                        gate_ctx,
+                    )
+                    log_metric(
+                        "micro_chart_gate_block",
+                        1.0,
+                        tags={
+                            "reason": gate_reason,
+                            "strategy": sname,
+                            "trend": str(gate_ctx.get("trend", "")),
+                        },
+                        ts=now,
+                    )
+                    continue
                 if FORCE_SCALP_MODE:
                     logging.warning("[FORCE_SCALP] signal=%s", signal)
                 if range_active:
@@ -4430,6 +4607,21 @@ async def logic_loop(
                 if tp_pips is None:
                     logging.info("[SKIP] Missing TP for %s.", signal["strategy"])
                     continue
+                atr_entry = fac_m1.get("atr_pips")
+                if atr_entry is None:
+                    atr_entry = (fac_m1.get("atr") or 0.0) * 100
+                rsi_entry = fac_m1.get("rsi")
+                adx_entry = fac_m1.get("adx")
+                try:
+                    atr_entry = float(atr_entry or 0.0)
+                    rsi_entry = float(rsi_entry)
+                    adx_entry = float(adx_entry)
+                except Exception:
+                    logging.info("[SKIP] Missing/invalid ATR/RSI/ADX for %s.", signal["strategy"])
+                    continue
+                if atr_entry <= 0.0:
+                    logging.info("[SKIP] Non-positive ATR for %s.", signal["strategy"])
+                    continue
 
                 base_sl = None
                 if sl_pips is not None:
@@ -4458,6 +4650,18 @@ async def logic_loop(
                 )
                 h4_ma10 = fac_h4.get("ma10")
                 h4_ma20 = fac_h4.get("ma20")
+                if pocket == "scalp":
+                    fast_cut_pips = round(max(6.0, atr_entry * (1.0 if not range_active else 0.9)), 2)
+                    fast_cut_time = int(max(60.0, atr_entry * 15.0))
+                    fast_cut_hard = 1.6
+                elif pocket == "macro":
+                    fast_cut_pips = round(max(8.0, atr_entry * 1.5), 2)
+                    fast_cut_time = int(max(120.0, atr_entry * 18.0))
+                    fast_cut_hard = 1.8
+                else:
+                    fast_cut_pips = round(max(6.5, atr_entry * 1.1), 2)
+                    fast_cut_time = int(max(90.0, atr_entry * 16.0))
+                    fast_cut_hard = 1.6
                 entry_thesis = {
                     "type": thesis_type,
                     "strategy": signal.get("strategy"),
@@ -4471,12 +4675,12 @@ async def logic_loop(
                     "min_hold_min": 11.0 if pocket == "macro" else (5.0 if pocket == "micro" else 3.0),
                     "factors": {
                         "m1": {
-                            "rsi": fac_m1.get("rsi"),
-                            "adx": fac_m1.get("adx"),
+                            "rsi": rsi_entry,
+                            "adx": adx_entry,
                             "ema20": fac_m1.get("ema20") or fac_m1.get("ma20"),
                             "ma10": fac_m1.get("ma10"),
                             "ma20": fac_m1.get("ma20"),
-                            "atr_pips": fac_m1.get("atr_pips") or ((fac_m1.get("atr") or 0.0) * 100),
+                            "atr_pips": atr_entry,
                         },
                         "h4": {
                             "ma10": h4_ma10,
@@ -4497,6 +4701,15 @@ async def logic_loop(
                     },
                     "levels": story_snapshot.major_levels if story_snapshot else None,
                     "context": entry_context_payload,
+                    "fast_cut_pips": fast_cut_pips,
+                    "fast_cut_time_sec": fast_cut_time,
+                    "fast_cut_hard_mult": fast_cut_hard,
+                    "kill_switch": True,
+                    "regime": {
+                        "range_active": bool(range_active),
+                        "macro": macro_regime,
+                        "micro": micro_regime,
+                    },
                 }
                 note = signal.get("notes")
                 if note:
