@@ -6,6 +6,7 @@ import time
 import hashlib
 import json
 import contextlib
+import math
 from typing import Optional, Tuple, Coroutine, Any, Dict, Sequence
 
 # Safe float conversion for optional numeric inputs
@@ -91,6 +92,7 @@ from advisors.stage_plan import StagePlanAdvisor
 from advisors.partial_reduction import PartialReductionAdvisor
 from autotune.scalp_trainer import start_background_autotune
 from workers.fast_scalp import FastScalpState, fast_scalp_worker
+from workers.fast_scalp.signal import _compute_rsi as _fs_compute_rsi  # reuse RSI helper
 
 # Configure logging
 logging.basicConfig(
@@ -1835,6 +1837,21 @@ def _micro_chart_gate(
             "m15": m15_trend or "",
             "h1": h1_trend or "",
             "long_units": long_units,
+            "band_pips": round(same_band, 2),
+        }
+    if (
+        action == "OPEN_SHORT"
+        and short_units >= 15000
+        and same_band <= 1.2
+        and slope6 >= -3.0
+    ):
+        return False, "micro_same_band_stack_short", {
+            "slope6": round(slope6, 2),
+            "range": round(range_pips, 2),
+            "trend": micro_trend or "",
+            "m15": m15_trend or "",
+            "h1": h1_trend or "",
+            "short_units": short_units,
             "band_pips": round(same_band, 2),
         }
     stack_threshold = 20000
