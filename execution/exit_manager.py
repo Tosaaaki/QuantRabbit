@@ -996,41 +996,46 @@ class ExitManager:
         Catch aging underwater trades that never armed fast_cut.
         Designed for micro/scalp pockets: widen early, tighten with age.
         """
-        # stale_drawdownは新しい loss_clamp に統合する方針のため無効化
+        # stale_drawdownは新しい loss_clamp/orphan_guard へ統合
         return None
+
+    def _orphan_guard_exit(
+        self,
+        *,
+        pocket: str,
+        side: str,
+        units: int,
+        open_info: Dict,
+        profit_pips: float,
+        atr_pips: float,
+        fac_m1: Dict,
+        now: datetime,
+    ) -> Optional[ExitDecision]:
+        """
+        Trades without kill/fast_cut meta (thesis欠損/SLなし想定) を広めのソフトガードで捕捉。
+        ハードSLは置かず、ATR×時間＋リトレースでマーケット決済する。
+        """
         if pocket not in {"micro", "scalp"}:
             return None
         if profit_pips is None or profit_pips >= 0.0:
             return None
 
-        trades = [
-            tr for tr in (open_info.get("open_trades") or []) if tr.get("side") == side
-        ]
+        trades = [tr for tr in (open_info.get("open_trades") or []) if tr.get("side") == side]
         if not trades:
             return None
-        # Opt-in via entry tags/flags; fast_cutメタもキル対象として扱う
-        trades = [tr for tr in trades if self._has_kill_opt_in(tr)]
-        if not trades:
-            return None
-        # Respect cutover: only act on trades opened at/after the configured timestamp
-        if self._dd_cutover is not None:
-            eligible = []
-            for tr in trades:
-                opened_at = self._parse_open_time(tr.get("open_time"))
-                if opened_at and opened_at >= self._dd_cutover:
-                    eligible.append(tr)
-            trades = eligible
-            if not trades:
-                return None
 
-        oldest: Optional[float] = None
+        eligible: list[Dict] = []
         for tr in trades:
-            age = self._trade_age_seconds(tr, now)
-            if age is None:
+            if self._has_kill_opt_in(tr):
+                continue  # 正規の fast_cut/kill に任せる
+            thesis = self._parse_entry_thesis(tr)
+            has_fast_meta = thesis.get("fast_cut_pips") or thesis.get("fast_cut_time_sec") or thesis.get(
+                "fast_cut_hard_mult"
+            )
+            if has_fast_meta:
                 continue
-            if oldest is None or age > oldest:
-                oldest = age
-        if oldest is None:
+            eligible.append(tr)
+        if not eligible:
             return None
 
         atr_val = float(atr_pips or 0.0)
@@ -1041,46 +1046,45 @@ class ExitManager:
                 atr_val = 0.0
         if atr_val <= 0.0:
             atr_val = 6.0
-        age_min = oldest / 60.0
-        trigger = None
-        if pocket == "micro":
-            if age_min >= 360:  # 6h+
-                trigger = max(atr_val * 0.8, 3.8)
-            elif age_min >= 180:  # 3h+
-                trigger = max(atr_val * 0.9, 4.5)
-            elif age_min >= 60:  # 1h+
-                trigger = max(atr_val * 1.05, 6.0)
-            elif age_min >= 30:  # 30m+
-                trigger = max(atr_val * 1.2, 7.5)
-        else:  # scalp
-            if age_min >= 90:
-                trigger = max(atr_val * 0.8, 3.0)
-            elif age_min >= 45:
-                trigger = max(atr_val * 0.9, 3.5)
-            elif age_min >= 20:
-                trigger = max(atr_val * 1.0, 4.2)
-        if trigger is None:
+
+        age_sec = None
+        for tr in eligible:
+            age = self._trade_age_seconds(tr, now)
+            if age is None:
+                continue
+            age_sec = age if age_sec is None else min(age_sec, age)
+        if age_sec is None or age_sec < 300.0:  # 5分は待つ
             return None
 
         loss = abs(profit_pips)
-        if loss < trigger:
+        gate = max(6.0, atr_val * 2.5)
+        max_seen = self._max_profit_cache.get((pocket, side))
+        retrace_hit = False
+        if max_seen is not None and max_seen >= 6.0:
+            try:
+                retrace_hit = loss >= max_seen * 0.7
+            except Exception:
+                retrace_hit = False
+
+        if loss < gate and not retrace_hit:
             return None
 
         cut_units = -abs(units) if side == "long" else abs(units)
         logging.info(
-            "[EXIT] stale_drawdown pocket=%s side=%s age_min=%.1f loss=%.1fp gate=%.1fp atr=%.2f",
+            "[EXIT] orphan_guard pocket=%s side=%s loss=%.1fp gate=%.1fp retrace=%s age=%.0fs atr=%.2f",
             pocket,
             side,
-            age_min,
             loss,
-            trigger,
+            gate,
+            retrace_hit,
+            age_sec,
             atr_val,
         )
         return ExitDecision(
             pocket=pocket,
             units=cut_units,
-            reason="drawdown_stale",
-            tag="dd-kill",
+            reason="orphan_guard",
+            tag="orphan-guard",
             allow_reentry=True,
         )
 
@@ -1114,6 +1118,18 @@ class ExitManager:
         profit_pips = 0.0
         if avg_price and close_price:
             profit_pips = (close_price - avg_price) / 0.01
+        orphan_guard = self._orphan_guard_exit(
+            pocket=pocket,
+            side="long",
+            units=units,
+            open_info=open_info,
+            profit_pips=profit_pips,
+            atr_pips=atr_pips,
+            fac_m1=fac_m1,
+            now=now,
+        )
+        if orphan_guard:
+            return orphan_guard
         adaptive_exit = self._micro_adaptive_trail(
             pocket=pocket,
             side="long",
@@ -1645,6 +1661,18 @@ class ExitManager:
         profit_pips = 0.0
         if avg_price and close_price:
             profit_pips = (avg_price - close_price) / 0.01
+        orphan_guard = self._orphan_guard_exit(
+            pocket=pocket,
+            side="short",
+            units=units,
+            open_info=open_info,
+            profit_pips=profit_pips,
+            atr_pips=atr_pips,
+            fac_m1=fac_m1,
+            now=now,
+        )
+        if orphan_guard:
+            return orphan_guard
         adaptive_exit = self._micro_adaptive_trail(
             pocket=pocket,
             side="short",

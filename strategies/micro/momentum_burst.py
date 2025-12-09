@@ -29,6 +29,8 @@ def _attach_kill(signal: Dict) -> Dict:
     lower = [t.lower() for t in tags]
     if "kill" not in lower:
         tags.append("kill")
+    if "fast_cut" not in lower:
+        tags.append("fast_cut")
     signal["exit_tags"] = tags
     signal["kill_switch"] = True
     return signal
@@ -187,7 +189,7 @@ class MomentumBurstMicro:
             )
             profile = "momentum_burst"
             min_hold = max(90.0, min(540.0, tp * 42.0))
-            return _attach_kill({
+            sig = _attach_kill({
                 "action": action,
                 "sl_pips": round(sl, 2),
                 "tp_pips": round(tp, 2),
@@ -198,6 +200,29 @@ class MomentumBurstMicro:
                 "min_hold_sec": round(min_hold, 1),
                 "tag": f"{MomentumBurstMicro.name}-{action.lower()}",
             })
+            # ソフトガード用メタを添付（ハードSLは使わず fast_cut 相当の情報だけ持たせる）
+            if "fast_cut_pips" not in sig:
+                sig["fast_cut_pips"] = round(max(6.0, atr_pips * 1.3), 2)
+            if "fast_cut_time_sec" not in sig:
+                sig["fast_cut_time_sec"] = int(max(300.0, atr_pips * 90.0))
+            if "fast_cut_hard_mult" not in sig:
+                sig["fast_cut_hard_mult"] = 2.5
+            return sig
+
+        def _bull_run_len(candles, lookback: int = 5) -> int:
+            closes = []
+            for c in candles[-lookback:]:
+                try:
+                    closes.append(float(c.get("close") or c.get("c") or c.get("C")))
+                except Exception:
+                    return 0
+            run = 0
+            for prev, cur in zip(closes, closes[1:]):
+                if cur > prev:
+                    run += 1
+                else:
+                    run = 0
+            return run
 
         if (
             gap_pips >= MIN_GAP_TREND
@@ -207,7 +232,8 @@ class MomentumBurstMicro:
             and MomentumBurstMicro._mtf_supports("long", fac)
             and MomentumBurstMicro._price_action_direction(candles, "long")
         ):
-            if rsi >= RSI_LONG_MIN:
+            # 高値追い抑制: RSI過熱・連続陽線が続くときは見送り
+            if rsi >= RSI_LONG_MIN and rsi < 70 and _bull_run_len(candles, 5) < 4:
                 return _build_signal("OPEN_LONG", gap_pips)
 
         if (

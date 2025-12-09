@@ -20,7 +20,7 @@ def _bool_env(key: str, default: bool) -> bool:
 
 
 # Hard stop: disable fast scalp worker regardless of environment.
-FAST_SCALP_ENABLED: bool = _bool_env("FAST_SCALP_ENABLED", False)
+FAST_SCALP_ENABLED: bool = _bool_env("FAST_SCALP_ENABLED", True)
 LOOP_INTERVAL_SEC: float = max(0.1, float(os.getenv("FAST_SCALP_LOOP_INTERVAL_SEC", "0.25")))
 TP_BASE_PIPS: float = max(0.2, float(os.getenv("FAST_SCALP_TP_BASE_PIPS", "0.6")))
 TP_SPREAD_BUFFER_PIPS: float = max(0.05, float(os.getenv("FAST_SCALP_SPREAD_BUFFER_PIPS", "0.2")))

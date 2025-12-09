@@ -65,7 +65,7 @@ def _parse_hours(key: str, default: str) -> Set[int]:
 
 
 LOG_PREFIX = "[PULLBACK-RUNNER-S5]"
-ENABLED: bool = _bool("PULLBACK_RUNNER_S5_ENABLED", False)
+ENABLED: bool = _bool("PULLBACK_RUNNER_S5_ENABLED", True)
 LOOP_INTERVAL_SEC: float = max(0.2, _float("PULLBACK_RUNNER_S5_LOOP_INTERVAL_SEC", 0.45))
 
 ACTIVE_HOURS_UTC = frozenset(range(24))
