@@ -1873,6 +1873,28 @@ def _micro_chart_gate(
             except Exception:
                 low_base_rise = 0.0
 
+    base_rise_thresh = 0.2
+    if atr_pips > 0:
+        base_rise_thresh = max(0.1, min(0.6, atr_pips * 0.04))
+
+    range_chop_thresh = 4.0
+    slope_chop_thresh = 1.4
+    top_gap_thresh = 0.6
+    bottom_gap_thresh = 0.6
+    slope_chase_thresh = 2.0
+    slope_stack_soft = 3.0
+    slope_stack_hard = 0.8
+    nwave_slope_thresh = 1.5
+    if atr_pips > 0:
+        range_chop_thresh = max(2.5, min(8.0, atr_pips * 1.5))
+        slope_chop_thresh = max(1.0, min(3.5, atr_pips * 0.6))
+        top_gap_thresh = max(0.3, min(1.2, atr_pips * 0.05))
+        bottom_gap_thresh = top_gap_thresh
+        slope_chase_thresh = max(1.5, min(4.0, atr_pips * 0.8))
+        slope_stack_soft = max(2.0, min(5.0, atr_pips * 0.9))
+        slope_stack_hard = max(0.6, min(2.0, atr_pips * 0.3))
+        nwave_slope_thresh = max(1.0, min(3.0, atr_pips * 0.5))
+
     pattern_summary = {}
     if story_snapshot and hasattr(story_snapshot, "pattern_summary"):
         try:
@@ -1926,7 +1948,7 @@ def _micro_chart_gate(
         }
 
     if action == "OPEN_LONG":
-        if high_attacks >= attack_thresh and low_base_rise <= 0.2 and slope6 <= 3.0:
+        if high_attacks >= attack_thresh and low_base_rise <= base_rise_thresh and slope6 <= slope_stack_soft:
             return False, "micro_high_attack_flat_base", {
                 "slope6": round(slope6, 2),
                 "range": round(range_pips, 2),
@@ -1936,8 +1958,9 @@ def _micro_chart_gate(
                 "high_attacks": high_attacks,
                 "low_rise": round(low_base_rise, 2),
                 "attack_thresh": attack_thresh,
+                "base_rise_thresh": round(base_rise_thresh, 2),
             }
-        if n_wave and isinstance(n_wave, dict) and n_wave.get("direction") == "down" and slope6 <= 1.5:
+        if n_wave and isinstance(n_wave, dict) and n_wave.get("direction") == "down" and slope6 <= nwave_slope_thresh:
             return False, "micro_nwave_opposed", {
                 "slope6": round(slope6, 2),
                 "range": round(range_pips, 2),
@@ -1947,7 +1970,7 @@ def _micro_chart_gate(
                 "nwave": n_wave,
             }
     if action == "OPEN_SHORT":
-        if low_attacks >= attack_thresh and low_base_rise >= -0.2 and slope6 >= -3.0:
+        if low_attacks >= attack_thresh and low_base_rise >= -base_rise_thresh and slope6 >= -slope_stack_soft:
             return False, "micro_low_attack_flat_base", {
                 "slope6": round(slope6, 2),
                 "range": round(range_pips, 2),
@@ -1957,8 +1980,9 @@ def _micro_chart_gate(
                 "low_attacks": low_attacks,
                 "low_rise": round(low_base_rise, 2),
                 "attack_thresh": attack_thresh,
+                "base_rise_thresh": round(base_rise_thresh, 2),
             }
-        if n_wave and isinstance(n_wave, dict) and n_wave.get("direction") == "up" and slope6 >= -1.5:
+        if n_wave and isinstance(n_wave, dict) and n_wave.get("direction") == "up" and slope6 >= -nwave_slope_thresh:
             return False, "micro_nwave_opposed", {
                 "slope6": round(slope6, 2),
                 "range": round(range_pips, 2),
@@ -1968,7 +1992,7 @@ def _micro_chart_gate(
                 "nwave": n_wave,
             }
 
-    if range_pips <= 4.0 and abs(slope6) <= 1.4:
+    if range_pips <= range_chop_thresh and abs(slope6) <= slope_chop_thresh:
         return False, "micro_chop_gate", {
             "slope6": round(slope6, 2),
             "range": round(range_pips, 2),
@@ -1977,7 +2001,7 @@ def _micro_chart_gate(
             "h1": h1_trend or "",
         }
 
-    if action == "OPEN_LONG" and top_gap <= 0.6 and slope6 <= 2.0:
+    if action == "OPEN_LONG" and top_gap <= top_gap_thresh and slope6 <= slope_chase_thresh:
         return False, "micro_top_chase_guard", {
             "slope6": round(slope6, 2),
             "range": round(range_pips, 2),
@@ -1985,7 +2009,7 @@ def _micro_chart_gate(
             "m15": m15_trend or "",
             "h1": h1_trend or "",
         }
-    if action == "OPEN_SHORT" and bottom_gap <= 0.6 and slope6 >= -2.0:
+    if action == "OPEN_SHORT" and bottom_gap <= bottom_gap_thresh and slope6 >= -slope_chase_thresh:
         return False, "micro_bottom_fade_guard", {
             "slope6": round(slope6, 2),
             "range": round(range_pips, 2),
@@ -2012,7 +2036,7 @@ def _micro_chart_gate(
         action == "OPEN_LONG"
         and long_units >= 15000
         and same_band <= 1.2  # 1.2pips帯での積み増しを抑制
-        and slope6 <= 3.0
+        and slope6 <= slope_stack_soft
     ):
         return False, "micro_same_band_stack", {
             "slope6": round(slope6, 2),
@@ -2027,7 +2051,7 @@ def _micro_chart_gate(
         action == "OPEN_SHORT"
         and short_units >= 15000
         and same_band <= 1.2
-        and slope6 >= -3.0
+        and slope6 >= -slope_stack_soft
     ):
         return False, "micro_same_band_stack_short", {
             "slope6": round(slope6, 2),
