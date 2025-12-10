@@ -35,6 +35,7 @@ from strategies.micro.range_break import MicroRangeBreak
 from strategies.micro.pullback_ema import MicroPullbackEMA
 from strategies.micro.momentum_stack import MicroMomentumStack
 from strategies.micro.level_reactor import MicroLevelReactor
+from strategies.micro.vwap_bound_revert import MicroVWAPBound
 from utils.metrics_logger import log_metric
 from utils.oanda_account import get_account_snapshot
 from analysis.perf_monitor import snapshot as get_perf
@@ -47,6 +48,7 @@ LOG = logging.getLogger(__name__)
 POCKET = "micro"
 PIP = 0.01
 DEFAULT_STRATEGIES = [
+    "MicroVWAPBound",
     "BB_RSI",
     "MicroRangeBreak",
     "TrendMomentumMicro",
@@ -64,6 +66,7 @@ POCKET_STRATEGY_MAP = {
         "MicroPullbackEMA",
         "MicroLevelReactor",
         "MomentumBurst",
+        "MicroVWAPBound",
     }
 }
 BASE_RISK_PCT = 0.02
@@ -77,6 +80,7 @@ STRATEGY_CLASSES = {
     "MicroPullbackEMA": MicroPullbackEMA,
     "MicroLevelReactor": MicroLevelReactor,
     "MomentumBurst": MomentumBurstMicro,
+    "MicroVWAPBound": MicroVWAPBound,
 }
 def _env_set(name: str, default: str = "") -> set[str]:
     raw = os.getenv(name)
@@ -610,6 +614,7 @@ async def micro_core_worker() -> None:
 
             ranked_strategies = strategies_hint or list(DEFAULT_STRATEGIES)
             pref_range = [
+                "MicroVWAPBound",
                 "MicroRangeBreak",
                 "BB_RSI",
                 "MicroMomentumStack",
@@ -1060,6 +1065,8 @@ def _collect_micro_signals(
         if not cls:
             continue
         if sname not in POCKET_STRATEGY_MAP["micro"]:
+            continue
+        if sname == "MicroVWAPBound" and (not allow_range or not fac_m1.get("range_active")):
             continue
         if sname == "BB_RSI" and (not allow_range or strong_trend_bias or bb_suppress):
             continue
