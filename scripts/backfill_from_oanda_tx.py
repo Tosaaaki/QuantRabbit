@@ -57,8 +57,6 @@ def classify_from_client_id(client_id: Optional[str]) -> Optional[str]:
         return "main.Donchian55"
     if "BBRSI" in cid or "BB_RSI" in cid:
         return "main.BB_RSI"
-    if "NewsSpike" in cid:
-        return "main.NewsSpikeReversal"
     return None
 
 
@@ -126,4 +124,3 @@ def backfill_from_oanda() -> int:
 if __name__ == "__main__":
     count = backfill_from_oanda()
     print(f"OANDA backfill updated rows: {count}")
-

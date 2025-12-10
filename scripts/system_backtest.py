@@ -321,10 +321,7 @@ class SystemBacktester:
                 continue
             if range_active and cls.name not in main_mod.ALLOWED_RANGE_STRATEGIES:
                 continue
-            if name == "NewsSpikeReversal":
-                raw = cls.check(fac_m1, [])  # type: ignore[arg-type]
-            else:
-                raw = cls.check(fac_m1)
+            raw = cls.check(fac_m1)
             if not raw:
                 continue
             if raw.get("action") not in {"OPEN_LONG", "OPEN_SHORT"}:

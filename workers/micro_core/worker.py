@@ -1071,9 +1071,6 @@ def _collect_micro_signals(
             continue
         if sname == "MicroMomentumStack" and not allow_stack:
             continue
-        if sname == "NewsSpikeReversal":
-            LOG.info("%s skip NewsSpikeReversal (news feed removed)", config.LOG_PREFIX)
-            continue
         raw_signal = cls.check(fac_m1)
 
         if not raw_signal:

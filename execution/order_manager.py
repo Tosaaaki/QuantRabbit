@@ -731,6 +731,38 @@ def _coerce_entry_thesis(meta: Any) -> dict:
     return {}
 
 
+def _encode_thesis_comment(entry_thesis: Optional[dict]) -> Optional[str]:
+    """
+    Serialize a minimal subset of the thesis into OANDA clientExtensions.comment
+    so exit側がリスタート後も fast_cut/kill メタを参照できるようにする。
+    """
+    if not isinstance(entry_thesis, dict):
+        return None
+    keys = (
+        "strategy_tag",
+        "profile",
+        "tag",
+        "fast_cut_pips",
+        "fast_cut_time_sec",
+        "fast_cut_hard_mult",
+        "kill_switch",
+    )
+    compact: dict[str, object] = {}
+    for key in keys:
+        val = entry_thesis.get(key)
+        if val in (None, "", False):
+            continue
+        compact[key] = val
+    if not compact:
+        return None
+    try:
+        text = json.dumps(compact, ensure_ascii=True, separators=(",", ":"))
+    except Exception:
+        return None
+    # OANDA comment max 256 chars
+    return text[:255]
+
+
 def _trade_min_hold_seconds(trade: dict, pocket: str) -> float:
     thesis = _coerce_entry_thesis(trade.get("entry_thesis"))
     hold = thesis.get("min_hold_sec") or thesis.get("min_hold_seconds")
@@ -1914,6 +1946,12 @@ async def market_order(
             )
             preflight_units = capped
 
+    comment = _encode_thesis_comment(entry_thesis)
+    client_ext = {"tag": f"pocket={pocket}"}
+    trade_ext = {"tag": f"pocket={pocket}"}
+    if comment:
+        client_ext["comment"] = comment
+        trade_ext["comment"] = comment
     order_data = {
         "order": {
             "type": "MARKET",
@@ -1921,8 +1959,8 @@ async def market_order(
             "units": str(preflight_units),
             "timeInForce": "FOK",
             "positionFill": "REDUCE_ONLY" if reduce_only else POSITION_FILL,
-            "clientExtensions": {"tag": f"pocket={pocket}"},
-            "tradeClientExtensions": {"tag": f"pocket={pocket}"},
+            "clientExtensions": client_ext,
+            "tradeClientExtensions": trade_ext,
         }
     }
     if client_order_id:
@@ -2263,6 +2301,13 @@ async def limit_order(
         gtd_time = expiry.strftime("%Y-%m-%dT%H:%M:%S.%fZ")
         time_in_force = "GTD"
 
+    comment = _encode_thesis_comment(entry_thesis)
+    client_ext = {"tag": f"pocket={pocket}"}
+    trade_ext = {"tag": f"pocket={pocket}"}
+    if comment:
+        client_ext["comment"] = comment
+        trade_ext["comment"] = comment
+
     payload = {
         "order": {
             "type": "LIMIT",
@@ -2271,8 +2316,8 @@ async def limit_order(
             "price": f"{price:.3f}",
             "timeInForce": time_in_force,
             "positionFill": "REDUCE_ONLY" if reduce_only else POSITION_FILL,
-            "clientExtensions": {"tag": f"pocket={pocket}"},
-            "tradeClientExtensions": {"tag": f"pocket={pocket}"},
+            "clientExtensions": client_ext,
+            "tradeClientExtensions": trade_ext,
         }
     }
     if gtd_time:

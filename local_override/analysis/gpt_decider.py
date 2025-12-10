@@ -13,7 +13,6 @@ _FALLBACK = {
         "H1Momentum",
         "Donchian55",
         "BB_RSI",
-        "NewsSpikeReversal",
     ],
     "reason": "fallback_override",
 }
@@ -30,4 +29,3 @@ async def get_decision(payload: Dict[str, Any]) -> Tuple[Dict[str, Any], int, st
 
 def fallback_decision(payload: Dict[str, Any]) -> Dict[str, Any]:
     return dict(_FALLBACK)
-

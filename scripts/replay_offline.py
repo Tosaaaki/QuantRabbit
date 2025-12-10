@@ -37,7 +37,6 @@ from analysis.param_context import ParamContext, ParamSnapshot
 from analysis.range_guard import detect_range_mode
 from execution.risk_guard import allowed_lot
 from indicators import factor_cache as factor_cache_module
-from strategies.news.spike_reversal import NewsSpikeReversal
 
 # main から内部関数を import（副作用抑制のため遅延 import）
 main_mod = importlib.import_module("main")
@@ -200,7 +199,7 @@ def _simple_ranked_strategies(range_active: bool) -> List[str]:
 
 
 def _evaluate_strategies(
-    ranked: List[str], fac_m1: dict, news_cache: dict, *, range_active: bool
+    ranked: List[str], fac_m1: dict, *, range_active: bool
 ) -> List[dict]:
     signals: List[dict] = []
     for name in ranked:
@@ -209,10 +208,7 @@ def _evaluate_strategies(
             continue
         if range_active and cls.name not in ALLOWED_RANGE_STRATEGIES:
             continue
-        if name == NewsSpikeReversal.name:
-            raw = cls.check(fac_m1, news_cache.get("short", []))  # type: ignore[arg-type]
-        else:
-            raw = cls.check(fac_m1)
+        raw = cls.check(fac_m1)
         if not raw:
             continue
         if not isinstance(raw, dict):
@@ -260,8 +256,6 @@ async def replay_day(
     # まず H4 を流し込んでベース指標を準備
     await _feed_candles("H4", h4_candles, on_candle)
 
-    news_cache: Dict[str, list] = {"short": []}
-
     last_fac_h4: Optional[dict] = None
 
     for candle in m1_candles:
@@ -301,7 +295,7 @@ async def replay_day(
         structure_bias = story_snapshot.structure_bias if story_snapshot else 0.0
         range_ctx = detect_range_mode(fac_m1, fac_h4)
         ranked = _simple_ranked_strategies(range_ctx.active)
-        signals = _evaluate_strategies(ranked, fac_m1, news_cache, range_active=range_ctx.active)
+        signals = _evaluate_strategies(ranked, fac_m1, range_active=range_ctx.active)
 
         param_snapshot: ParamSnapshot = param_ctx.update(
             now=ts,

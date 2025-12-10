@@ -417,8 +417,8 @@ class StageTracker:
         ).fetchone()
         if not row:
             return None
-        limit = _parse_timestamp(row[1])
-        current = _coerce_utc(now)
+        limit = _parse_timestamp(row[1]).replace(tzinfo=None)
+        current = _coerce_utc(now).replace(tzinfo=None)
         if current >= limit:
             self._con.execute(
                 "DELETE FROM stage_cooldown WHERE pocket=? AND direction=?",

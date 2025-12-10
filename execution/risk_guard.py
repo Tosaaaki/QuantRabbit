@@ -46,6 +46,7 @@ _DEFAULT_BASE_EQUITY = {
     "scalp_fast": 2000.0,
 }
 _LOOKBACK_DAYS = 7
+MAX_MARGIN_USAGE = float(os.getenv("MAX_MARGIN_USAGE", "0.92"))
 
 _DISABLE_POCKET_DD = os.getenv("DISABLE_POCKET_DD", "false").lower() in {
     "1",
@@ -69,7 +70,7 @@ _MIN_LOT_BY_POCKET = {
 }
 _EXPOSURE_IGNORE_POCKETS = {
     token.strip().lower()
-    for token in os.getenv("EXPOSURE_IGNORE_POCKETS", "manual,unknown").split(",")
+    for token in os.getenv("EXPOSURE_IGNORE_POCKETS", "unknown").split(",")
     if token.strip()
 }
 
@@ -131,29 +132,100 @@ def update_dd_context(
     weight_macro: float,
     weight_scalp: Optional[float] = None,
     scalp_share: float = 0.0,
+    *,
+    atr_pips: Optional[float] = None,
+    free_margin_ratio: Optional[float] = None,
+    perf_hint: Optional[dict] = None,
 ) -> None:
     """最新の口座残高とポケット配分ヒントを共有し、DD 判定の母数を更新する。"""
     if account_equity <= 0:
         return
 
-    macro_ratio = min(max(weight_macro, 0.0), POCKET_MAX_RATIOS["macro"])
+    macro_cap = POCKET_MAX_RATIOS["macro"]
+    micro_cap = POCKET_MAX_RATIOS["micro"]
+    scalp_cap = POCKET_MAX_RATIOS["scalp"]
+    scalp_fast_cap = POCKET_MAX_RATIOS["scalp_fast"]
+
+    # ATRでダイナミックに揺らす（高ボラで上限を少し緩め、低ボラで絞る）
+    if atr_pips is not None:
+        try:
+            atr_val = float(atr_pips)
+        except Exception:
+            atr_val = None
+        if atr_val is not None and atr_val > 0:
+            if atr_val >= 3.0:
+                scale = 1.2
+            elif atr_val <= 1.0:
+                scale = 0.8
+            else:
+                scale = 1.0
+            macro_cap = min(1.0, macro_cap * scale)
+            micro_cap = min(1.0, micro_cap * scale)
+            scalp_cap = min(1.0, scalp_cap * scale)
+            scalp_fast_cap = min(1.0, scalp_fast_cap * scale)
+
+    # 成績連動（pf中心）で微調整
+    if isinstance(perf_hint, dict):
+        def _scale_from_pf(pf: Optional[float]) -> float:
+            try:
+                val = float(pf)
+            except Exception:
+                return 1.0
+            if val <= 0.8:
+                return 0.7
+            if val <= 1.0:
+                return 0.9
+            if val >= 1.3:
+                return 1.15
+            if val >= 1.1:
+                return 1.05
+            return 1.0
+
+        macro_cap *= _scale_from_pf((perf_hint.get("macro") or {}).get("pf"))
+        micro_cap *= _scale_from_pf((perf_hint.get("micro") or {}).get("pf"))
+        scalp_cap *= _scale_from_pf((perf_hint.get("scalp") or {}).get("pf"))
+
+    # 手動ポジ含めた負荷を free_margin_ratio でざっくり反映
+    if free_margin_ratio is not None:
+        try:
+            fmr = float(free_margin_ratio)
+        except Exception:
+            fmr = None
+        if fmr is not None:
+            if fmr < 0.15:
+                macro_cap *= 0.6
+                micro_cap *= 0.6
+                scalp_cap *= 0.6
+                scalp_fast_cap *= 0.6
+            elif fmr < 0.25:
+                macro_cap *= 0.8
+                micro_cap *= 0.8
+                scalp_cap *= 0.8
+                scalp_fast_cap *= 0.8
+
+    macro_cap = min(max(macro_cap, 0.0), 1.0)
+    micro_cap = min(max(micro_cap, 0.0), 1.0)
+    scalp_cap = min(max(scalp_cap, 0.0), 1.0)
+    scalp_fast_cap = min(max(scalp_fast_cap, 0.0), 1.0)
+
+    macro_ratio = min(max(weight_macro, 0.0), macro_cap)
     scalp_ratio = 0.0
     if weight_scalp is not None:
-        scalp_ratio = min(max(weight_scalp, 0.0), POCKET_MAX_RATIOS["scalp"])
+        scalp_ratio = min(max(weight_scalp, 0.0), scalp_cap)
         remainder = max(1.0 - macro_ratio - scalp_ratio, 0.0)
     else:
         remainder = max(1.0 - macro_ratio, 0.0)
         share = max(scalp_share, 0.0)
-        scalp_ratio = min(share * remainder, POCKET_MAX_RATIOS["scalp"])
+        scalp_ratio = min(share * remainder, scalp_cap)
         remainder = max(remainder - scalp_ratio, 0.0)
 
-    micro_ratio = min(remainder, POCKET_MAX_RATIOS["micro"])
+    micro_ratio = min(remainder, micro_cap)
 
     scalp_fast_ratio = min(
         max(scalp_ratio * _FAST_SCALP_SHARE, 0.0),
-        POCKET_MAX_RATIOS["scalp_fast"],
+        scalp_fast_cap,
     )
-    scalp_ratio = max(0.0, min(POCKET_MAX_RATIOS["scalp"], scalp_ratio - scalp_fast_ratio))
+    scalp_ratio = max(0.0, min(scalp_cap, scalp_ratio - scalp_fast_ratio))
 
     ratios = {
         "macro": macro_ratio,
@@ -249,7 +321,7 @@ def allowed_lot(
     if margin_available is not None and price is not None and margin_rate:
         margin_per_lot = price * margin_rate * 100000
         if margin_per_lot > 0:
-            margin_budget = margin_available
+            margin_budget = margin_available * max(0.0, min(MAX_MARGIN_USAGE, 1.0))
             try:
                 usage_cap = float(get_secret("max_margin_usage"))
                 if 0.0 < usage_cap <= 1.0:

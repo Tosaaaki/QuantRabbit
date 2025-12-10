@@ -3,8 +3,7 @@ Tools to (re)build the macro snapshot JSON consumed by MacroState.
 
 The snapshot summarises lightweight macro context derived from:
  - Current technical factors (ATR, MA differentials) as a proxy for volatility / USD bias
- - Recent news summaries stored in ``logs/news.db`` for currency-specific sentiment
- - Upcoming high-impact events for gating
+ - (News pipeline removed) currency bias / events are neutralised
 
 The generated file lives under ``fixtures/macro_snapshots/latest.json`` by default.
 """
@@ -13,7 +12,6 @@ from __future__ import annotations
 
 import datetime as dt
 import json
-import sqlite3
 from dataclasses import asdict
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Tuple
@@ -48,73 +46,8 @@ def _aggregate_news_scores(
     now: dt.datetime,
     window_hours: int = DEFAULT_WINDOW_HOURS,
 ) -> Tuple[Dict[str, float], List[Tuple[str, str, str]]]:
-    if not db_path.exists():
-        return {}, []
-
-    start_ts = (now - dt.timedelta(hours=window_hours)).isoformat()
-    upcoming_limit = (now + dt.timedelta(hours=DEFAULT_EVENT_LOOKAHEAD_HOURS)).isoformat()
-
-    conn = sqlite3.connect(db_path)
-    conn.row_factory = sqlite3.Row
-    cur = conn.cursor()
-
-    scores: Dict[str, float] = {}
-    cur.execute(
-        """
-        SELECT pair_bias, sentiment, impact
-        FROM news
-        WHERE ts_utc >= ?
-        """,
-        (start_ts,),
-    )
-    for row in cur.fetchall():
-        parsed = _normalise_pair_bias(row["pair_bias"])
-        if not parsed:
-            continue
-        base, quote, direction = parsed
-        sentiment = row["sentiment"] or 0
-        impact = row["impact"] or 1
-        weight = float(sentiment)
-        if abs(weight) < 1e-6:
-            weight = 1.0 if direction.endswith("UP") else -1.0
-        if direction.endswith("DOWN"):
-            weight = -weight
-        weight *= max(1.0, float(impact))
-        scores[base] = scores.get(base, 0.0) + weight
-        scores[quote] = scores.get(quote, 0.0) - weight
-
-    # Normalise scores into [-1, 1]
-    if scores:
-        max_abs = max(abs(v) for v in scores.values()) or 1.0
-        for key, val in list(scores.items()):
-            scores[key] = round(max(-1.0, min(1.0, val / max_abs)), 4)
-
-    # Upcoming events
-    events: List[Tuple[str, str, str]] = []
-    cur.execute(
-        """
-        SELECT event_time, summary, pair_bias, impact
-        FROM news
-        WHERE event_time IS NOT NULL
-          AND event_time BETWEEN ? AND ?
-        ORDER BY event_time ASC
-        LIMIT 50
-        """,
-        (now.isoformat(), upcoming_limit),
-    )
-    for row in cur.fetchall():
-        parsed = _normalise_pair_bias(row["pair_bias"])
-        if not parsed:
-            continue
-        event_time = row["event_time"]
-        summary = (row["summary"] or "").strip()
-        summary = summary[:160] if summary else "Economic event"
-        base, quote, _ = parsed
-        for ccy in (base, quote):
-            events.append((event_time, ccy, summary))
-
-    conn.close()
-    return scores, events
+    # News pipeline removed; return neutral scores and no upcoming events.
+    return {}, []
 
 
 def _derive_vix_and_dxy(factors: Dict[str, Dict[str, float]]) -> Tuple[float, float]:

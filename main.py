@@ -175,6 +175,9 @@ if os.getenv("SCALP_TACTICAL", "0").strip().lower() not in {"", "0", "false", "n
 
 PIP = 0.01
 
+MACRO_DISABLED = _env_bool("MACRO_DISABLE", False)
+MACRO_STRATEGIES = {"TrendMA", "Donchian55"}
+
 POCKET_MAX_ACTIVE_TRADES = {
     "macro": 50,
     "micro": 50,
@@ -447,6 +450,11 @@ def _frontload_plan(base_plan: Sequence[float], target_first: float) -> tuple[fl
 MIN_MACRO_STAGE_LOT = 0.03  # 3000 units baseline keeps macro entries meaningful
 MAX_MICRO_STAGE_LOT = 0.02  # cap micro scaling when momentum signals fire repeatedly
 MIN_SCALP_STAGE_LOT = 0.06  # lower floor to allow smaller scalp entries
+REENTRY_EXTRA_LOT = {
+    "macro": _safe_env_float("STAGE_REENTRY_EXTRA_MACRO", 0.04, low=0.0, high=0.5),
+    "micro": _safe_env_float("STAGE_REENTRY_EXTRA_MICRO", 0.03, low=0.0, high=0.3),
+    "scalp": _safe_env_float("STAGE_REENTRY_EXTRA_SCALP", 0.06, low=0.0, high=0.6),
+}
 DEFAULT_COOLDOWN_SECONDS = 180
 RANGE_COOLDOWN_SECONDS = 420
 GPT_MIN_INTERVAL_SECONDS = 180
@@ -1774,6 +1782,14 @@ def compute_stage_lot(
         round(current_lot, 4),
         round(total_lot, 4),
     )
+    extra = REENTRY_EXTRA_LOT.get(pocket, 0.0)
+    if extra > 0.0:
+        logging.info(
+            "[STAGE] %s pocket allow re-entry override extra=%.3f lots",
+            pocket,
+            round(extra, 4),
+        )
+        return round(extra, 4), len(plan) if plan else -1
     return 0.0, -1
 
 
@@ -2207,6 +2223,8 @@ async def logic_loop(
     raw_range_reason = ""
     range_breakout_release_until = datetime.datetime.min
     range_breakout_reason = ""
+    last_macro_regime: Optional[str] = None
+    last_micro_regime: Optional[str] = None
     range_override_active_prev = False
     last_range_scalp_ready: Optional[bool] = None
     range_macro_hold_until = datetime.datetime.min
@@ -2658,8 +2676,17 @@ async def logic_loop(
                     ts=now,
                 )
 
-            macro_regime = classify(fac_h4, "H4", event_mode=event_soon)
-            micro_regime = classify(fac_m1, "M1", event_mode=event_soon)
+            def _safe_regime(factors: dict | None, tf: str, last: Optional[str]) -> str:
+                try:
+                    return classify(factors or {}, tf, event_mode=event_soon)
+                except Exception as exc:  # pragma: no cover - defensive
+                    logging.warning("[REGIME] classify failed tf=%s err=%s; fallback=%s", tf, exc, last or "Mixed")
+                    return last or "Mixed"
+
+            macro_regime = _safe_regime(fac_h4, "H4", last_macro_regime)
+            micro_regime = _safe_regime(fac_m1, "M1", last_micro_regime)
+            last_macro_regime = macro_regime
+            last_micro_regime = micro_regime
             focus, w_macro = decide_focus(
                 macro_regime,
                 micro_regime,
@@ -2894,6 +2921,8 @@ async def logic_loop(
                         weight_macro,
                     )
                     weight_macro_override = None
+            if MACRO_DISABLED:
+                weight_macro_override = 0.0
             logging.info(
                 "[GPT] focus=%s weight_macro=%.2f weight_scalp=%s model=%s strategies=%s reason=%s",
                 gpt.get("focus_tag"),
@@ -2904,6 +2933,15 @@ async def logic_loop(
                 reuse_reason,
             )
             ranked_strategies = list(gpt.get("ranked_strategies", []))
+            if MACRO_DISABLED and ranked_strategies:
+                before = list(ranked_strategies)
+                ranked_strategies = [s for s in ranked_strategies if s not in MACRO_STRATEGIES]
+                if ranked_strategies != before:
+                    logging.info(
+                        "[MACRO_DISABLED] Filtered macro strategies %s -> %s",
+                        before,
+                        ranked_strategies,
+                    )
             if not ranked_strategies:
                 logging.info(
                     "[STRAT_EVAL_PRE] ranked_strategies empty focus=%s reason=%s",
@@ -2921,6 +2959,8 @@ async def logic_loop(
             if weight_macro_override is not None:
                 weight_macro = weight_macro_override
             focus_tag = gpt.get("focus_tag") or focus_tag
+            if MACRO_DISABLED and focus_tag in {"macro", "hybrid"}:
+                focus_tag = "micro"
             focus_override_hint = None
             if focus_advisor and focus_advisor.enabled:
                 focus_context = {
@@ -3303,7 +3343,10 @@ async def logic_loop(
                     ranked_strategies,
                 )
             if range_active and "macro" in focus_pockets:
-                focus_pockets.discard("macro")
+                logging.info(
+                    "[RANGE_MACRO_KEEP] range_active macro_regime=%s macro pocket kept",
+                    macro_regime or "unknown",
+                )
 
             if (
                 last_logged_focus != focus_tag
@@ -3483,9 +3526,6 @@ async def logic_loop(
                     continue
                 if range_active and cls.name not in ALLOWED_RANGE_STRATEGIES:
                     logging.info("[RANGE] skip %s in range mode.", sname)
-                    continue
-                if sname == "NewsSpikeReversal":
-                    logging.info("[SKIP] NewsSpikeReversal disabled (news feed removed).")
                     continue
                 if (
                     gpt_strategy_allowlist
@@ -4118,7 +4158,27 @@ async def logic_loop(
                     )
                 else:
                     scalp_share = DEFAULT_SCALP_SHARE
-            update_dd_context(account_equity, weight_macro, weight_scalp, scalp_share)
+            atr_hint = None
+            try:
+                atr_hint = float(fac_m1.get("atr_pips") or (fac_m1.get("atr") or 0.0) * 100.0)
+            except Exception:
+                atr_hint = None
+            perf_hint = None
+            try:
+                perf_summary = pos_manager.get_performance_summary()
+                perf_hint = perf_summary.get("pockets")
+            except Exception as exc:  # noqa: BLE001
+                logging.warning("[PERF] failed to compute pocket PF: %s", exc)
+                perf_hint = None
+            update_dd_context(
+                account_equity,
+                weight_macro,
+                weight_scalp,
+                scalp_share,
+                atr_pips=atr_hint,
+                free_margin_ratio=scalp_free_ratio,
+                perf_hint=perf_hint,
+            )
             lots = alloc(
                 lot_total,
                 weight_macro,

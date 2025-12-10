@@ -27,7 +27,6 @@ ENV_MAP = {
     "openai_model_summarizer": "OPENAI_SUMMARIZER_MODEL",
     "openai_max_month_tokens": "OPENAI_MAX_MONTH_TOKENS",
     "gcp_project_id": "GCP_PROJECT",
-    "news_bucket_name": "GCS_BACKUP_BUCKET",
     "ui_bucket_name": "GCS_UI_BUCKET",
     "analytics_bucket_name": "GCS_ANALYTICS_BUCKET",
 }

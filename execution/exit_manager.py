@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import os
 import math
+import statistics
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Optional, Tuple, TYPE_CHECKING
@@ -191,6 +192,38 @@ class ExitManager:
         self._mfe_partial_micro = float(os.getenv("EXIT_MFE_PARTIAL_MICRO", "5.0"))
         self._mfe_trail_floor = float(os.getenv("EXIT_MFE_TRAIL_FLOOR", "3.5"))
         self._mfe_trail_gap = float(os.getenv("EXIT_MFE_TRAIL_GAP", "4.0"))
+        self._agent_meta_cutover = self._parse_cutover_env(os.getenv("EXIT_AGENT_META_CUTOVER_ISO"))
+        if self._agent_meta_cutover is None:
+            try:
+                self._agent_meta_cutover = datetime.now(timezone.utc)
+            except Exception:
+                self._agent_meta_cutover = None
+        self._min_partial_units = int(os.getenv("EXIT_MIN_PARTIAL_UNITS", "1"))
+        # H1 momentum profit lock (macro) defaults
+        self._h1_lock_min_trigger = float(os.getenv("EXIT_H1_LOCK_MIN_TRIGGER", "6.0"))
+        self._h1_lock_min_buffer = float(os.getenv("EXIT_H1_LOCK_MIN_BUFFER", "2.0"))
+        self._h1_lock_trigger_ratio = float(os.getenv("EXIT_H1_LOCK_TRIGGER_RATIO", "0.35"))
+        self._h1_lock_buffer_ratio = float(os.getenv("EXIT_H1_LOCK_BUFFER_RATIO", "0.22"))
+        self._h1_lock_min_hold_minutes = float(os.getenv("EXIT_H1_LOCK_MIN_HOLD_MIN", "20.0"))
+        # Low-vol / hazard controls (news removed; keep deterministic defaults)
+        self._low_vol_enabled = True
+        self._micro_low_vol_grace_sec = float(os.getenv("EXIT_MICRO_LOW_VOL_GRACE_SEC", "5.0"))
+        self._micro_low_vol_event_budget_sec = float(os.getenv("EXIT_MICRO_LOW_VOL_EVENT_BUDGET_SEC", "4.0"))
+        self._micro_low_vol_hazard_loss = float(os.getenv("EXIT_MICRO_LOW_VOL_HAZARD_LOSS", "0.4"))
+        self._hazard_exit_enabled = _env_flag("EXIT_LOW_VOL_HAZARD_ENABLED", True)
+        self._hazard_debounce_ticks = max(1, int(os.getenv("EXIT_LOW_VOL_HAZARD_DEBOUNCE", "2") or 2))
+        self._upper_bound_max_sec = float(os.getenv("EXIT_UPPER_BOUND_MAX_SEC", "0"))
+        self._timeout_soft_tp_frac = float(os.getenv("EXIT_TIMEOUT_SOFT_TP_FRAC", "0.8"))
+        self._soft_tp_pips = float(os.getenv("EXIT_SOFT_TP_PIPS", "0.8"))
+        self._mfe_sensitive_reasons = {
+            "trend_reversal",
+            "macro_trail_hit",
+            "macro_atr_trail",
+            "macro_trend_fade",
+            "reverse_signal",
+            "range_take_profit",
+            "range_stop",
+        }
 
     def plan_closures(
         self,
@@ -204,6 +237,10 @@ class ExitManager:
         pocket_profiles: Optional[Dict[str, Dict[str, float]]] = None,
         now: Optional[datetime] = None,
         stage_tracker: Optional["StageTracker"] = None,
+        *,
+        low_vol_profile: Optional[Dict[str, float]] = None,
+        low_vol_quiet: bool = False,
+        news_status: str = "quiet",
     ) -> List[ExitDecision]:
         current_time = self._ensure_utc(now)
         decisions: List[ExitDecision] = []
@@ -214,15 +251,24 @@ class ExitManager:
         if close_price is None:
             # Price不明なら安全側でスキップ
             return decisions
+        news_status = news_status or "quiet"  # news pipeline removed; keep flag static
         projection_m1 = compute_ma_projection(fac_m1, timeframe_minutes=1.0)
         projection_h4 = compute_ma_projection(fac_h4, timeframe_minutes=240.0)
+        m1_candles = fac_m1.get("candles") or []
         atr_pips = fac_m1.get("atr_pips")
         if atr_pips is None:
             atr_pips = (fac_m1.get("atr") or 0.0) * 100.0
+        atr_primary = atr_pips
+        atr_m1 = atr_pips
+        ema_m1 = self._safe_float(fac_m1.get("ema20"), self._safe_float(fac_m1.get("ma20")))
+        ema_h4 = self._safe_float(fac_h4.get("ema20"), self._safe_float(fac_h4.get("ma20")))
+        story = None
+        low_vol_profile = low_vol_profile or {}
         close_price = float(fac_m1.get("close") or 0.0)
         for pocket, info in open_positions.items():
             if pocket == "__net__" or pocket not in MANAGED_POCKETS:
                 continue
+            sig_pool = list(signals)
             long_units = int(info.get("long_units", 0) or 0)
             short_units = int(info.get("short_units", 0) or 0)
             avg_long = info.get("long_avg_price") or info.get("avg_price")
@@ -282,14 +328,33 @@ class ExitManager:
                 )
                 continue
 
+            if long_units > 0 and long_profit is not None:
+                peak_reverse = self._peak_reversal_hint(
+                    pocket=pocket,
+                    side="long",
+                    profit_pips=long_profit,
+                    fac_m1=fac_m1,
+                )
+                if peak_reverse:
+                    sig_pool.append(peak_reverse)
+            if short_units > 0 and short_profit is not None:
+                peak_reverse = self._peak_reversal_hint(
+                    pocket=pocket,
+                    side="short",
+                    profit_pips=short_profit,
+                    fac_m1=fac_m1,
+                )
+                if peak_reverse:
+                    sig_pool.append(peak_reverse)
+
             reverse_short = self._confirm_reverse_signal(
-                self._strong_signal(signals, pocket, "OPEN_SHORT"),
+                self._strong_signal(sig_pool, pocket, "OPEN_SHORT"),
                 pocket,
                 "long",
                 current_time,
             )
             reverse_long = self._confirm_reverse_signal(
-                self._strong_signal(signals, pocket, "OPEN_LONG"),
+                self._strong_signal(sig_pool, pocket, "OPEN_LONG"),
                 pocket,
                 "short",
                 current_time,
@@ -306,6 +371,17 @@ class ExitManager:
             stage_long = ((stage_state or {}).get(pocket) or {}).get("long", 0)
             stage_short = ((stage_state or {}).get(pocket) or {}).get("short", 0)
             profile = (pocket_profiles or {}).get(pocket, {})
+            stage_level = stage_long
+            max_mfe_long = (
+                self._max_mfe_for_side(info, "long", m1_candles, current_time)
+                if long_units > 0
+                else None
+            )
+            max_mfe_short = (
+                self._max_mfe_for_side(info, "short", m1_candles, current_time)
+                if short_units > 0
+                else None
+            )
 
             if long_units > 0:
                 fast_cut = self._fast_cut_decision(
@@ -321,8 +397,10 @@ class ExitManager:
                 if fast_cut:
                     decisions.append(fast_cut)
                     continue
-                if long_profit is not None and long_profit < 0:
-                    continue  # 明示要求: マイナス時はEXITしない
+                if self._negative_exit_blocked(
+                    pocket, info, "long", current_time, long_profit or 0.0, stage_tracker, atr_pips, fac_m1
+                ):
+                    continue
                 decision = self._evaluate_long(
                     pocket,
                     info,
@@ -343,11 +421,19 @@ class ExitManager:
                     atr_pips,
                     fac_m1,
                     stage_tracker,
+                    max_mfe_long=max_mfe_long,
+                    max_mfe_short=max_mfe_short,
+                    low_vol_profile=low_vol_profile,
+                    low_vol_quiet=low_vol_quiet,
+                    news_status=news_status,
+                    m1_candles=m1_candles,
+                    profile=profile,
                 )
                 if decision:
                     decisions.append(decision)
 
             if short_units > 0:
+                stage_level = stage_short
                 fast_cut = self._fast_cut_decision(
                     pocket=pocket,
                     side="short",
@@ -361,8 +447,10 @@ class ExitManager:
                 if fast_cut:
                     decisions.append(fast_cut)
                     continue
-                if short_profit is not None and short_profit < 0:
-                    continue  # 明示要求: マイナス時はEXITしない
+                if self._negative_exit_blocked(
+                    pocket, info, "short", current_time, short_profit or 0.0, stage_tracker, atr_pips, fac_m1
+                ):
+                    continue
                 decision = self._evaluate_short(
                     pocket,
                     info,
@@ -383,6 +471,13 @@ class ExitManager:
                     atr_pips,
                     fac_m1,
                     stage_tracker,
+                    max_mfe_short=max_mfe_short,
+                    max_mfe_long=max_mfe_long,
+                    low_vol_profile=low_vol_profile,
+                    low_vol_quiet=low_vol_quiet,
+                    news_status=news_status,
+                    m1_candles=m1_candles,
+                    profile=profile,
                 )
                 if decision:
                     decisions.append(decision)
@@ -653,7 +748,23 @@ class ExitManager:
         tech_ok = has_technical_meta or self._has_realtime_technicals(fac_m1)
         # fast_cut はメタ付き or テクニカルが揃ったポジのみ適用（手動・旧ポジは対象外）
         if not has_fast_cut_meta and not tech_ok:
-            return None
+            agent_like = False
+            cutover_ok = False
+            for tr in open_trades:
+                cid = tr.get("client_id") or tr.get("client_order_id") or ""
+                if any(cid.startswith(prefix) for prefix in AGENT_CLIENT_PREFIXES):
+                    agent_like = True
+                    if self._agent_meta_cutover:
+                        ot = self._parse_open_time(tr.get("open_time"))
+                        if ot and ot >= self._agent_meta_cutover:
+                            cutover_ok = True
+                    else:
+                        cutover_ok = True
+            if not agent_like:
+                return None
+            if self._agent_meta_cutover and not cutover_ok:
+                return None
+            has_fast_cut_meta = True
         if thesis_fast_cut and thesis_fast_cut > 0:
             fast_cut = thesis_fast_cut
         if thesis_hard_mult and thesis_hard_mult > 0:
@@ -698,17 +809,19 @@ class ExitManager:
                 drawdown_ratio = (max_seen - profit_pips) / max_seen
             except Exception:
                 drawdown_ratio = None
-
-        # MFEが小さい、またはリトレース比率が低いときは早切りしない
-        if max_seen is not None and max_seen < 3.0:
-            return None
-        if drawdown_ratio is not None and drawdown_ratio < 0.6:
-            return None
+            # MFEが小さいときは時間を長めに取るが、ゲート時間を超えれば切る
+            if max_seen < 3.0 and age_sec is not None and age_sec < time_gate * 0.8:
+                return None
+            if drawdown_ratio is not None and drawdown_ratio < 0.5 and age_sec is not None and age_sec < time_gate:
+                return None
+        else:
+            # 一度も+域に乗っていないケースはゲートをやや緩くして待つが、lossが閾値超なら切る
+            time_gate = max(time_gate, 75.0 if pocket == "micro" else 60.0)
 
         # neutral RSI帯やADX弱いときは早切りしない
-        if rsi_val is not None and 44.0 <= rsi_val <= 56.0:
+        if rsi_val is not None and 44.0 <= rsi_val <= 56.0 and drawdown_ratio is not None and drawdown_ratio < 0.9:
             return None
-        if adx_val is not None and adx_val < 16.0:
+        if adx_val is not None and adx_val < 16.0 and drawdown_ratio is not None and drawdown_ratio < 0.9:
             return None
         # MA向きがポジ方向と整合するなら待つ
         if ma_fast is not None and ma_slow is not None:
@@ -1048,6 +1161,21 @@ class ExitManager:
         if not eligible:
             return None
 
+        # エージェント玉のメタ欠損のみを対象にし、cutover以前の建玉は除外
+        filtered: list[Dict] = []
+        for tr in eligible:
+            cid = tr.get("client_id") or tr.get("client_order_id") or ""
+            if not any(cid.startswith(prefix) for prefix in AGENT_CLIENT_PREFIXES):
+                continue
+            if self._agent_meta_cutover:
+                ot = self._parse_open_time(tr.get("open_time"))
+                if ot is None or ot < self._agent_meta_cutover:
+                    continue
+            filtered.append(tr)
+        if not filtered:
+            return None
+        eligible = filtered
+
         atr_val = float(atr_pips or 0.0)
         if atr_val <= 0.0:
             try:
@@ -1119,11 +1247,26 @@ class ExitManager:
         atr_pips: float,
         fac_m1: Dict,
         stage_tracker: Optional["StageTracker"],
+        *,
+        max_mfe_long: Optional[float] = None,
+        max_mfe_short: Optional[float] = None,
+        low_vol_profile: Optional[Dict[str, float]] = None,
+        low_vol_quiet: bool = False,
+        news_status: str = "quiet",
+        m1_candles: Optional[List[Dict]] = None,
+        profile: Optional[Dict] = None,
     ) -> Optional[ExitDecision]:
 
         allow_reentry = False
         reason = ""
         tag = f"{pocket}-long"
+        story = None
+        ema20 = ema_primary if ema_primary is not None else ema_fast
+        candles = m1_candles or fac_m1.get("candles") or []
+        atr_primary = atr_pips
+        atr_m1 = atr_pips
+        stage_level = 0
+        profile = profile or {}
         avg_price = open_info.get("long_avg_price") or open_info.get("avg_price")
         profit_pips = 0.0
         if avg_price and close_price:
@@ -1260,6 +1403,21 @@ class ExitManager:
                     tag="trendma-decay",
                     allow_reentry=True,
                 )
+            lock_reason = self._macro_profit_capture(
+                open_info,
+                "long",
+                profit_pips,
+                max_mfe_long if max_mfe_long is not None else profit_pips,
+                now,
+            )
+            if lock_reason:
+                return ExitDecision(
+                    pocket=pocket,
+                    units=-abs(units),
+                    reason=lock_reason,
+                    tag="macro-profit-lock",
+                    allow_reentry=False,
+                )
             if (
                 close_price is not None
                 and ema20 is not None
@@ -1391,7 +1549,7 @@ class ExitManager:
             and ma_gap_pips >= self._macro_ma_gap
         ):
             reason = "trend_reversal"
-        elif pocket == "scalp" and close_price > ema20:
+        elif pocket == "scalp" and close_price < ema20:
             reason = "scalp_momentum_flip"
         elif (
             pocket == "micro"
@@ -1484,7 +1642,7 @@ class ExitManager:
         # avoid exiting on a mild pullback unless strong invalidation.
         if reason in self._mfe_sensitive_reasons and not range_mode:
             guard_threshold, guard_ratio = self._get_mfe_guard(pocket, atr_primary)
-            max_mfe = self._max_mfe_for_side(open_info, "long", m1_candles, now)
+            max_mfe = self._max_mfe_for_side(open_info, "long", candles, now)
             if max_mfe is not None and max_mfe >= guard_threshold:
                 retrace = max(0.0, max_mfe - max(0.0, profit_pips))
                 if retrace <= guard_ratio * max_mfe and profit_pips > -self._macro_loss_buffer:
@@ -1496,7 +1654,7 @@ class ExitManager:
                 "long",
                 story,
                 close_price,
-                m1_candles,
+                candles,
                 atr_primary=atr_primary,
                 atr_m1=atr_m1,
             ):
@@ -1507,7 +1665,7 @@ class ExitManager:
                 "long",
                 story,
                 close_price,
-                m1_candles,
+                candles,
                 atr_primary=atr_primary,
                 atr_m1=atr_m1,
                 bias_only=True,
@@ -1573,14 +1731,8 @@ class ExitManager:
 
         if range_mode and reason == "reverse_signal":
             allow_reentry = False
-        if reason:
-            if not self._pattern_supports_exit(
-                story,
-                pocket,
-                "long",
-                reason,
-                profit_pips,
-            ):
+        if reason and story:
+            if not self._pattern_supports_exit(story, pocket, "long", reason, profit_pips):
                 return None
             if not self._story_allows_exit(
                 story,
@@ -1620,7 +1772,9 @@ class ExitManager:
             now,
         )
 
-        age_seconds = self._trade_age_seconds(open_info, "long", now)
+        trades = [tr for tr in (open_info.get("open_trades") or []) if tr.get("side") == "long"]
+        trade = trades[0] if trades else None
+        age_seconds = self._trade_age_seconds(trade, now) if trade else None
         hold_minutes = round(age_seconds / 60.0, 2) if age_seconds is not None else None
         logging.info(
             "[EXIT] pocket=%s side=long reason=%s profit=%.2fp hold=%smin close_units=%s range=%s stage=%d",
@@ -1662,11 +1816,26 @@ class ExitManager:
         atr_pips: float,
         fac_m1: Dict,
         stage_tracker: Optional["StageTracker"],
+        *,
+        max_mfe_short: Optional[float] = None,
+        max_mfe_long: Optional[float] = None,
+        low_vol_profile: Optional[Dict[str, float]] = None,
+        low_vol_quiet: bool = False,
+        news_status: str = "quiet",
+        m1_candles: Optional[List[Dict]] = None,
+        profile: Optional[Dict] = None,
     ) -> Optional[ExitDecision]:
 
         allow_reentry = False
         reason = ""
         tag = f"{pocket}-short"
+        story = None
+        ema20 = ema_primary if ema_primary is not None else ema_fast
+        candles = m1_candles or fac_m1.get("candles") or []
+        atr_primary = atr_pips
+        atr_m1 = atr_pips
+        stage_level = 0
+        profile = profile or {}
         avg_price = open_info.get("short_avg_price") or open_info.get("avg_price")
         profit_pips = 0.0
         if avg_price and close_price:
@@ -2009,7 +2178,7 @@ class ExitManager:
 
         if reason in self._mfe_sensitive_reasons and not range_mode:
             guard_threshold, guard_ratio = self._get_mfe_guard(pocket, atr_primary)
-            max_mfe = self._max_mfe_for_side(open_info, "short", m1_candles, now)
+            max_mfe = self._max_mfe_for_side(open_info, "short", candles, now)
             if max_mfe is not None and max_mfe >= guard_threshold:
                 retrace = max(0.0, max_mfe - max(0.0, -profit_pips))
                 if retrace <= guard_ratio * max_mfe and profit_pips < self._macro_loss_buffer:
@@ -2021,7 +2190,7 @@ class ExitManager:
                 "short",
                 story,
                 close_price,
-                m1_candles,
+                candles,
                 atr_primary=atr_primary,
                 atr_m1=atr_m1,
             ):
@@ -2032,7 +2201,7 @@ class ExitManager:
                 "short",
                 story,
                 close_price,
-                m1_candles,
+                candles,
                 atr_primary=atr_primary,
                 atr_m1=atr_m1,
                 bias_only=True,
@@ -2097,14 +2266,8 @@ class ExitManager:
 
         if range_mode and reason == "reverse_signal":
             allow_reentry = False
-        if reason:
-            if not self._pattern_supports_exit(
-                story,
-                pocket,
-                "short",
-                reason,
-                profit_pips,
-            ):
+        if reason and story:
+            if not self._pattern_supports_exit(story, pocket, "short", reason, profit_pips):
                 return None
             if not self._story_allows_exit(
                 story,
@@ -2144,7 +2307,9 @@ class ExitManager:
             now,
         )
 
-        age_seconds = self._trade_age_seconds(open_info, "short", now)
+        trades = [tr for tr in (open_info.get("open_trades") or []) if tr.get("side") == "short"]
+        trade = trades[0] if trades else None
+        age_seconds = self._trade_age_seconds(trade, now) if trade else None
         hold_minutes = round(age_seconds / 60.0, 2) if age_seconds is not None else None
         logging.info(
             "[EXIT] pocket=%s side=short reason=%s profit=%.2fp hold=%smin close_units=%s range=%s stage=%d",
@@ -2569,15 +2734,29 @@ class ExitManager:
             return None, False
         if news_status == "active":
             return None, False
-        atr = max(0.6, float(atr_hint or profile.get("atr") or 2.0))
-        age_sec = self._trade_age_seconds(open_info, side, now)
+        trades = [
+            tr for tr in (open_info.get("open_trades") or []) if tr.get("side") == side
+        ]
+        trade = trades[0] if trades else None
+        age_sec = self._trade_age_seconds(trade, now) if trade else None
         if age_sec is None:
             return None, False
+        atr = max(0.6, float(atr_hint or profile.get("atr") or 2.0))
+        key = (pocket, side)
         score = float(profile.get("score", 0.0) or 0.0)
         health = 0.0
         if max_mfe is not None:
             denom = max(0.45, atr)
             health = max(0.0, min(1.0, max_mfe / denom))
+        budget = self._micro_low_vol_event_budget_sec
+        if age_sec >= budget and health < 0.22 and profit_pips <= 0.6:
+            self._low_vol_hazard_hits[key] = 0
+            log_metric(
+                "low_vol_exit",
+                1.0,
+                tags={"reason": "low_vol_event_budget", "side": side, "score": f"{score:.2f}"},
+            )
+            return "low_vol_event_budget", True
         grace = self._micro_low_vol_grace_sec
         key = (pocket, side)
         if age_sec <= grace and profit_pips <= -0.25 and (max_mfe is None or max_mfe <= 0.45):
@@ -2588,15 +2767,6 @@ class ExitManager:
                 tags={"reason": "low_vol_early_scratch", "side": side, "score": f"{score:.2f}"},
             )
             return "low_vol_early_scratch", True
-        budget = self._micro_low_vol_event_budget_sec
-        if age_sec >= budget and health < 0.22 and profit_pips <= 0.6:
-            self._low_vol_hazard_hits[key] = 0
-            log_metric(
-                "low_vol_exit",
-                1.0,
-                tags={"reason": "low_vol_event_budget", "side": side, "score": f"{score:.2f}"},
-            )
-            return "low_vol_event_budget", True
         # Soft TP before hard timeout (low-vol only)
         if (
             self._upper_bound_max_sec > 0
@@ -2616,7 +2786,7 @@ class ExitManager:
             and health < (0.3 if low_vol_quiet else 0.4)
         )
         if hazard_met and self._hazard_exit_enabled:
-            debounce = 1 if low_vol_quiet else self._hazard_debounce_ticks
+            debounce = 2 if low_vol_quiet else self._hazard_debounce_ticks
             hits = self._low_vol_hazard_hits.get(key, 0) + 1
             self._low_vol_hazard_hits[key] = hits
             if hits >= debounce:
@@ -2661,6 +2831,53 @@ class ExitManager:
             else:
                 self._reverse_hits[key] = {"count": 0, "ts": now}
         return None
+
+    def _peak_reversal_hint(
+        self,
+        *,
+        pocket: str,
+        side: str,
+        profit_pips: float,
+        fac_m1: Dict,
+    ) -> Optional[Dict]:
+        """
+        Detect a sharp fade after a local peak and emit a synthetic reverse signal
+        (e.g., long→short) so strategies can flip quickly after topping out.
+        """
+        if pocket not in {"micro", "scalp"}:
+            return None
+        max_seen = self._max_profit_cache.get((pocket, side))
+        if max_seen is None or max_seen < 5.5:
+            return None
+        try:
+            loss_now = -float(profit_pips)
+        except Exception:
+            return None
+        try:
+            drawdown_ratio = (max_seen - profit_pips) / max_seen
+        except Exception:
+            drawdown_ratio = None
+        if drawdown_ratio is None or drawdown_ratio < 0.7:
+            return None
+
+        candles = fac_m1.get("candles") or []
+        slope6 = _slope_from_candles(candles, window=6)
+        slope12 = _slope_from_candles(candles, window=12) if len(candles) >= 12 else slope6
+        slope = (slope6 + slope12) / 2.0
+        if side == "long" and slope > -0.35:
+            return None
+        if side == "short" and slope < 0.35:
+            return None
+
+        action = "OPEN_SHORT" if side == "long" else "OPEN_LONG"
+        confidence = 88 if drawdown_ratio < 1.4 else 93
+        return {
+            "pocket": pocket,
+            "action": action,
+            "confidence": confidence,
+            "tag": "peak_reversal",
+            "reason": f"mfe_retrace_{drawdown_ratio:.2f}_loss{loss_now:.1f}p",
+        }
 
     def _story_allows_exit(
         self,
@@ -2791,7 +3008,11 @@ class ExitManager:
             return None
         if max_mfe is None or max_mfe < self._h1_lock_min_trigger:
             return None
-        hold_seconds = self._trade_age_seconds(open_info, side, now)
+        trades = [
+            tr for tr in (open_info.get("open_trades") or []) if tr.get("side") == side
+        ]
+        trade = trades[0] if trades else None
+        hold_seconds = self._trade_age_seconds(trade, now) if trade else None
         hold_minutes = (hold_seconds or 0.0) / 60.0 if hold_seconds is not None else 0.0
         if hold_minutes < self._h1_lock_min_hold_minutes:
             return None
@@ -3078,6 +3299,8 @@ class ExitManager:
             val = float(profit_pips)
         except (TypeError, ValueError):
             return
+        if val <= 0.0:
+            return
         key = (pocket, side)
         prev = self._max_profit_cache.get(key)
         if prev is None or val > prev:
@@ -3162,6 +3385,8 @@ class ExitManager:
         return youngest
 
     def _trade_age_seconds(self, trade: Dict, now: datetime) -> Optional[float]:
+        if not trade:
+            return None
         opened_at = self._parse_open_time(trade.get("open_time"))
         if opened_at is None:
             return None
@@ -3181,6 +3406,8 @@ class ExitManager:
         atr_pips: float,
         fac_m1: Dict,
     ) -> bool:
+        if stage_tracker is None:
+            return False
         if profit_pips is None or profit_pips >= 0.0:
             return False
         default_loss, default_hold = self._default_loss_hold(pocket)

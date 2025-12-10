@@ -1081,8 +1081,9 @@ class PositionManager:
         latest_close: datetime | None = None
 
         rows = self.con.execute(
-            "SELECT pl_pips, realized_pl, close_time FROM trades WHERE close_time IS NOT NULL"
+            "SELECT pl_pips, realized_pl, close_time, pocket FROM trades WHERE close_time IS NOT NULL"
         ).fetchall()
+        pocket_raw: dict[str, dict[str, float | int]] = {}
         for row in rows:
             try:
                 close_dt = _parse_timestamp(row["close_time"])
@@ -1092,6 +1093,11 @@ class PositionManager:
                 latest_close = close_dt
             pl_pips = float(row["pl_pips"] or 0.0)
             pl_jpy = float(row["realized_pl"] or 0.0)
+            pocket = (row["pocket"] or "unknown").lower()
+            pkt = pocket_raw.setdefault(
+                pocket,
+                {"pips": 0.0, "jpy": 0.0, "trades": 0, "wins": 0, "losses": 0},
+            )
 
             def _apply(bucket: dict) -> None:
                 bucket["pips"] += pl_pips
@@ -1103,6 +1109,7 @@ class PositionManager:
                     bucket["losses"] += 1
 
             _apply(buckets["total"])
+            _apply(pkt)
             if close_dt >= week_start:
                 _apply(buckets["weekly"])
             if close_dt >= today_start:
@@ -1111,6 +1118,12 @@ class PositionManager:
         def _finalise(data: dict) -> dict:
             trades = data["trades"]
             win_rate = (data["wins"] / trades) if trades else 0.0
+            pf = None
+            if data["losses"] > 0:
+                loss_sum = abs(data["pips"] - max(0.0, data["pips"]))
+                win_sum = max(0.0, data["pips"])
+                if loss_sum > 0:
+                    pf = win_sum / loss_sum if loss_sum else None
             return {
                 "pips": round(data["pips"], 2),
                 "jpy": round(data["jpy"], 2),
@@ -1118,13 +1131,19 @@ class PositionManager:
                 "wins": data["wins"],
                 "losses": data["losses"],
                 "win_rate": win_rate,
+                "pf": pf,
             }
+
+        pockets_final: dict[str, dict] = {}
+        for name, raw in pocket_raw.items():
+            pockets_final[name] = _finalise(raw)
 
         return {
             "daily": _finalise(buckets["daily"]),
             "weekly": _finalise(buckets["weekly"]),
             "total": _finalise(buckets["total"]),
             "last_trade_at": latest_close.isoformat() if latest_close else None,
+            "pockets": pockets_final,
         }
 
     def fetch_recent_trades(self, limit: int = 50) -> list[dict]:

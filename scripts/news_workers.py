@@ -1,27 +1,15 @@
 #!/usr/bin/env python3
-"""Utility runner for news fetch + summary ingest loops."""
+"""Deprecated stub: news pipeline has been removed."""
 from __future__ import annotations
 
 import asyncio
 import logging
 
-from analysis.summary_ingestor import ingest_loop as summary_ingest_loop
-from market_data.news_fetcher import fetch_loop as news_fetch_loop
 
-
-async def _run() -> None:
-    tasks = [
-        asyncio.create_task(news_fetch_loop(), name="news_fetch_loop"),
-        asyncio.create_task(summary_ingest_loop(), name="summary_ingest_loop"),
-    ]
-    try:
-        await asyncio.gather(*tasks)
-    except asyncio.CancelledError:
-        raise
-    finally:
-        for task in tasks:
-            task.cancel()
-        await asyncio.gather(*tasks, return_exceptions=True)
+async def _idle() -> None:
+    logging.info("news pipeline removed; news_workers is now a no-op")
+    while True:
+        await asyncio.sleep(3600)
 
 
 def main() -> None:
@@ -30,9 +18,9 @@ def main() -> None:
         format="%(asctime)s %(levelname)s %(name)s %(message)s",
     )
     try:
-        asyncio.run(_run())
+        asyncio.run(_idle())
     except KeyboardInterrupt:
-        logging.info("news workers stopped by user")
+        logging.info("news worker stub stopped by user")
 
 
 if __name__ == "__main__":

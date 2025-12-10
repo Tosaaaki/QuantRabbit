@@ -36,6 +36,7 @@ _LLM_MODE = os.getenv("LLM_MODE", "").strip().lower()
 _DUMMY_MODES = {"dummy", "mock", "offline", "test"}
 
 _CLIENT: AsyncOpenAI | None = None
+_FENCE_PREFIX_RE = re.compile(r"^```(?:json)?\s*", re.IGNORECASE)
 
 
 def _get_openai_client() -> AsyncOpenAI:
@@ -361,7 +362,6 @@ if __name__ == "__main__":
         "reg_micro": "Range",
         "factors_m1": {"ma10": 157.2, "ma20": 157.1, "adx": 30},
         "factors_h4": {"ma10": 157.0, "ma20": 156.8, "adx": 25},
-        "news_features": {"news_count_total": 1.0, "news_latest_age_minutes": 5.0},
         "perf": {"macro_pf": 1.3, "micro_pf": 1.1},
     }
 

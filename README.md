@@ -6,11 +6,11 @@ QuantRabbit は USD/JPY で 24/7 自律運用する無裁量トレーディン�
 > どの変更でも資本成長のために最善を尽くす（守りではなく勝ちにいく）方針を明記しています。
 
 * **テクニカル** : ta‑lib で計算した MA / BB / RSI / ADX …  
-* **ニュース** : Forex Factory / DailyFX RSS → VM fetcher → Cloud Run summarizer (GPT‑4o‑mini)  
+* **ニュース** : 廃止（ニュース連動なし）  
 * **GPT** : レジーム補足 + 戦略順位 + lot 配分を 60 秒ごとに判断  
 * **Pocket 方式** : 同じ口座内で _micro_（スキャル）／_macro_（順張り）を tag 管理  
-* **インフラ** : GCE VM + Cloud Storage + Pub/Sub + Cloud Run (news summarizer)  
-* **月額コスト** : VM ≈ $19 + Cloud Run ≈ $0.6 + GPT ≈ $4.5 ＝ **$ <25**  
+* **インフラ** : GCE VM（ニュースパイプライン廃止）  
+* **月額コスト** : VM ≈ $19 + GPT ≈ $4.5 ＝ **$ <25**  
 
 ### VM ログの確認
 
@@ -41,7 +41,6 @@ Make を使わない場合は `scripts/vm.sh -p <PROJECT> -z <ZONE> -m <INSTANCE
 ├── market_data/             # ⇢ データ取得
 │   ├── tick_fetcher.py      # OANDA WebSocket
 │   ├── candle_fetcher.py    # Tick → Candle 生成
-│   └── news_fetcher.py      # RSS → GCS raw/ アップ
 │
 ├── indicators/              # ⇢ テクニカル
 │   ├── calc_core.py         # ta‑lib ラッパ
@@ -53,7 +52,6 @@ Make を使わない場合は `scripts/vm.sh -p <PROJECT> -z <ZONE> -m <INSTANCE
 │   ├── gpt_prompter.py      # GPT 入力生成
 │   ├── gpt_decider.py       # OpenAI 呼び出し
 │   ├── perf_monitor.py      # PF / Sharpe 更新
-│   └── summary_ingestor.py  # GCS summary/ → news.db
 │
 ├── strategies/              # ⇢ 手法プラグイン
 │   ├── trend/ma_cross.py
@@ -73,8 +71,7 @@ Make を使わない場合は `scripts/vm.sh -p <PROJECT> -z <ZONE> -m <INSTANCE
 │   └── backup_to_gcs.sh     # SQLite/logs nightly backup
 │
 ├── logs/                    # SQLite DB 等
-│   ├── trades.db
-│   └── news.db
+│   └── trades.db
 │
 ├── docs/
 │   ├── ONLINE_TUNER.md       # オンラインチューナの導入方法
@@ -131,10 +128,6 @@ strategies:
     sl: 10
     tp: 15
     enabled: true
-  - name: NewsSpikeReversal
-    sl: 10
-    tp: 20
-    enabled: true
 ```
 
 ### Worker Group Toggles
@@ -149,8 +142,8 @@ strategies:
 Trade Loop Overview
 	1.	Tick → Candle(M1) 生成 → factor_cache 更新
 	2.	regime_classifier で Macro/Micro レジーム判定
-	3.	GPT デシジョン（既定は gpt-5-mini、env で切り替え）に指標 + ニュース + 成績を渡し
-	→ focus_tag + weight_macro + 戦略順位 を受け取る
+	3.	GPT デシジョン（既定は gpt-5-mini、env で切り替え）に指標 + 成績だけを渡し
+	→ focus_tag + weight_macro + 戦略順位 を受け取る（ニュース連動なし）
 	4.	pocket_allocator で lot を micro/macro に分配
 	5.	Strategy プラグイン (MA クロス / Donchian55 / BB+RSI) がシグナルを返す
 	6.	risk_guard が lot/SL/TP をクランプし OANDA REST 発注

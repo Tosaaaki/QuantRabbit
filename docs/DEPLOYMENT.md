@@ -43,15 +43,7 @@ scripts/vm.sh -p quantrabbit -z asia-northeast1-a -m fx-trader-vm \
   -q "SELECT DATE(close_time), COUNT(*), ROUND(SUM(pl_pips),2) FROM trades WHERE DATE(close_time)=DATE('now') GROUP BY 1;" -t
 ```
 
-5) Cloud Run ニュース要約（任意）
-- 既存の Cloud Build でのコンテナビルドも、プロジェクトを明示して実行
-```
-gcloud --project=quantrabbit builds submit --tag gcr.io/quantrabbit/news-summarizer
-```
-- SBOM/署名など（必要に応じて）
-  - `cosign sign` と `gcloud artifacts sbom export` を CI から実行可能
-
-6) 旧スクリプトとの互換
+5) 旧スクリプトとの互換
 - `scripts/deploy_to_vm.sh` はラッパとして `scripts/vm.sh` を呼び出すよう置換済みです
 - 旧呼び出しでも動作しますが、今後は `scripts/vm.sh` または Makefile を推奨します
 
@@ -62,4 +54,3 @@ gcloud --project=quantrabbit builds submit --tag gcr.io/quantrabbit/news-summari
   - `-t` 指定と `roles/iap.tunnelResourceAccessor` の付与を確認
 - gcloud アカウント関連
   - `-A <ACCOUNT>` を付ける場合は `gcloud auth login <ACCOUNT>` で認証済みであること
-

@@ -2,9 +2,11 @@
 
 ## 1. ミッション
 > **狙い**	: USD/JPY で 1 日 +100 pips を実現する、 24/7 無裁量トレーディング・エージェント。  
-> **境界**	: 発注・リスクは機械的、曖昧判断とニュース解釈は GPT‑5 系 (既定 gpt‑5‑mini) に委譲。
+> **境界**	: 発注・リスクは機械的、曖昧判断は GPT‑5 系 (既定 gpt‑5‑mini) に委譲。
 
 補助資料: 運用/デプロイの手順面は `README.md` と `docs/` 配下を参照する。
+
+> **更新 (ニュース廃止)**: RSS→GCS→要約のニュース連動パイプラインは撤去済み。`news_fetcher` / `summary_ingestor` / NewsSpike 系戦略は無効化されており、以下のニュース関連記述は参考情報としてのみ扱う。
 
 ## 目次
 - [1. ミッション](#1-ミッション)
@@ -27,7 +29,7 @@
 | **DataFetcher** | `market_data/*` | + Tick JSON<br>+ Candle dict<br>+ raw News JSON (→ GCS) |
 | **IndicatorEngine** | `indicators/*` | ← Candle deque<br>→ factors dict {ma10, rsi, …} |
 | **Regime & Focus** | `analysis/regime_classifier.py` / `focus_decider.py` | ← factors<br>→ macro/micro レジーム・weight_macro |
-| **GPT Decider** | `analysis/gpt_decider.py` | ← focus + perf + news<br>→ JSON {focus_tag, weight_macro, weight_scalp, ranked_strategies} |
+| **GPT Decider** | `analysis/gpt_decider.py` | ← focus + perf<br>→ JSON {focus_tag, weight_macro, weight_scalp, ranked_strategies} |
 | **Strategy Plugin** | `strategies/*` | ← factors<br>→ dict {action, sl_pips, tp_pips, confidence, tag} or None |
 | **Exit Manager** | `execution/exit_manager.py` | ← open positions + signals<br>→ list[{pocket, units, reason, tag}] |
 | **Risk Guard** | `execution/risk_guard.py` | ← lot, SL/TP, pocket<br>→ bool (可否)・調整値 |
@@ -102,7 +104,7 @@ class OrderIntent(BaseModel):
 | `pip` | USD/JPY の 1 pip は 0.01。入力/出力とも pip 単位を明記する。 |
 | `point` | 0.001。OANDA REST 価格の丸め単位。 |
 | `lot` | 1 lot = 100,000 units。`units = round(lot * 100000)`。 |
-| `pocket` | `micro` = 短期テクニカル、`macro` = レジーム/ニュース。口座資金を `pocket_ratio` で按分。 |
+| `pocket` | `micro` = 短期テクニカル、`macro` = レジーム。口座資金を `pocket_ratio` で按分。 |
 | `weight_macro` | 0.0〜1.0。`pocket_macro = pocket_total * weight_macro` を意味する（運用では Macro を最大 30% に制限）。 |
 
 - `price_from_pips("BUY", entry, sl_pips)` = `entry - sl_pips * 0.01` を `round(price, 3)`。
@@ -114,7 +116,7 @@ class OrderIntent(BaseModel):
 - DataFetcher: OANDA streaming で `Tick` を取得し 60s 終端で `Candle` を確定、欠損 tick は遅延として扱う (`lag_ms` を添付)。
 - IndicatorEngine: 各 timeframe ごとに `Deque[Candle]` を維持し 300 本以上揃ったときに `Factors` を算出、入力欠損時は `stale=True` を返し Strategy を停止。
 - Regime & Focus: macro=H4/D1, micro=M1 の `Factors` を消費し、`focus_decider` は `FocusDecision`(`focus_tag`,`weight_macro`) を返す。
-- GPT Decider: 過去 15 分のニュース要約 + パフォーマンス指標を入力し `GPTDecision` を返す（`weight_macro` と `weight_scalp` を明示）。JSON Schema 不一致時はフォールバックを Raise。
+- GPT Decider: テクニカル要因とパフォーマンス指標のみで `GPTDecision` を返す（`weight_macro` と `weight_scalp` を明示）。JSON Schema 不一致時はフォールバックを Raise。
 - Strategy Plugin: `ranked_strategies` 順に呼び出し `StrategyDecision` または `None` を返す。必ず `confidence` と `tag` を含め、`None` は「ノートレード」。
 - Exit Manager: 現在のポジションとシグナルを突き合わせ、逆方向シグナル・イベントロック・指標劣化の各条件でクローズ指示を組み立てる。
 - Risk Guard: エントリー/クローズ双方の `StrategyDecision` と口座情報から `OrderIntent` を生成、拒否理由は `{"allow": False, "reason": ...}` としてロガーへ渡す。
@@ -135,7 +137,6 @@ class OrderIntent(BaseModel):
 ### 2.5 ログと永続化
 
 - `logs/trades.db`: `trade_id`, `pocket`, `entry_ts`, `exit_ts`, `pl_pips`, `sl_pips`, `tp_pips`, `strategy_tag`, `client_order_id`, `event_mode`。
-- `logs/news.db`: `published_at`, `source`, `headline`, `summary`, `url`, `tokens_used`。
 - `logs/metrics.db`: `ts`, `metric`, `value`, `tags`。`decision_latency`, `data_lag`, `order_success_rate` 等を保存。
 - **運用メモ**: 本番ログは VM (`fx-trader-vm`) 上 `/home/tossaki/QuantRabbit/logs/` にのみ保存。状況確認時は OS Login/IAP 経由で以下のように参照する：
   ```bash
@@ -164,11 +165,8 @@ class OrderIntent(BaseModel):
    2. regime + focus → GPT decision  
    3. pocket lot 配分 → Strategy loop（confidence スケーリング + ステージ判定）  
    4. Exit manager → Risk guard → order_manager でクローズ/新規発注  
-   5. trades.db / news.db / metrics.db にログ
+   5. trades.db / metrics.db にログ
 3. **Background Jobs**
-   - `news_fetcher` RSS → GCS raw/  
-   - Cloud Run `news‑summarizer`  raw → summary/  
-   - `summary_ingestor` summary/ → news.db  
    - nightly `backup_to_gcs.sh` logs/ → backup bucket
 
 ### 3.1 60 秒タクトの運用要件
@@ -181,8 +179,6 @@ class OrderIntent(BaseModel):
 
 - `max_data_lag_ms = 3000`。これを超える遅延は `DataFetcher` が `stale=True` を返し `Risk Guard` は発注を拒否する。
 - Candle 確定は `tick.ts_ms // 60000` の変化で判定し、終値は最後の mid。`volume=0` のローソク足は `missing_bar` としてログ。
-- ニュースは `summary_ingestor` が 30 秒毎にポーリング。最新記事が 120 分超なら `news_status=stale` をセット。
-
 ### 3.3 発注冪等性とリトライ
 
 - `client_order_id` は 90 日間ユニーク。OANDA `POST /orders` 失敗時は同一 ID で最大 3 回まで再送。
@@ -231,7 +227,6 @@ class OrderIntent(BaseModel):
 |-----|------|
 | `OPENAI_API_KEY` | GPT 呼び出し用 (Decider / Summarizer 共通) |
 | `OPENAI_MODEL_DECIDER` | GPT デシジョン用モデル (例: gpt-5-mini) |
-| `OPENAI_MODEL_SUMMARIZER` | ニュース要約用モデル (例: gpt-5-nano) |
 | `OANDA_TOKEN` / `OANDA_ACCOUNT` | REST / Stream |
 | `GCP_PROJECT` / `GOOGLE_APPLICATION_CREDENTIALS` | GCS・Pub/Sub |
 | `GCS_BACKUP_BUCKET` | logs バックアップ先 |
@@ -242,8 +237,8 @@ class OrderIntent(BaseModel):
 
 * `.cache/token_usage.json` に月累計。  
 * `openai.max_month_tokens` (env.toml) で上限設定。  
-* 超過時：`news_fetcher` は継続、`gpt_decider` はフォールバック JSON を返す。  
-* フォールバック JSON: `{"focus_tag":"hybrid","weight_macro":0.5,"weight_scalp":0.15,"ranked_strategies":["TrendMA","H1Momentum","Donchian55","BB_RSI","NewsSpikeReversal"],"reason":"fallback"}`。  
+* 超過時：`gpt_decider` はフォールバック JSON を返す。  
+* フォールバック JSON: `{"focus_tag":"hybrid","weight_macro":0.5,"weight_scalp":0.15,"ranked_strategies":["TrendMA","H1Momentum","Donchian55","BB_RSI"],"reason":"fallback"}`。  
 * GPT 失敗時は過去 5 分の決定を再利用 (`reason="reuse_previous"`) し、`decision_latency_ms` を 9,000 で固定計上する。
 
 ---
@@ -270,30 +265,21 @@ class OrderIntent(BaseModel):
 |------|----------|------|
 | `NORMAL` | 初期状態 | 全 pocket 取引許可 |
 | `EVENT_LOCK` | 経済指標 ±30 min | `micro` 新規停止、建玉縮小ロジック発動 |
-| `MICRO_STOP` | `micro` pocket DD ≥5% または `news_status=stale` | `micro` 決済のみ、`macro` 継続 |
+| `MICRO_STOP` | `micro` pocket DD ≥5% | `micro` 決済のみ、`macro` 継続 |
 | `GLOBAL_STOP` | Global DD ≥20% または `Healthbeat` 欠損>10 min | 全取引停止、プロセス終了 |
 | `RECOVERY` | DD が閾値の 80% 未満、24h 経過 | 新規建玉再開前に `main.py` がドライラン |
-
-### 6.3 ニュース・イベント劣化運転
-
-- `news_age_min > 120` で `focus_tag` を強制的に `micro` / `hybrid` へ縮退、`weight_macro` は指数減衰 (`weight_macro *= 0.5`)。
-- RSS 取得失敗が 5 回連続した場合は `news_fetcher` が削除せずリトライを継続しつつ Slack へ通知。
-- 週末・祝日ギャップは 金曜 21:55Z〜日曜 21:35Z を取引禁止 window とし、自動復帰時に `stale` フラグをクリアする。
 
 ### 6.4 観測指標とアラート
 
 - **SLI**: `decision_latency_ms`, `data_lag_ms`, `order_success_rate`, `reject_rate`, `gpt_timeout_rate`, `pnl_day_pips`, `drawdown_pct`。
 - **SLO**: `decision_latency_ms p95 < 2000`, `order_success_rate ≥ 0.995`, `data_lag_ms p95 < 1500`, `drawdown_pct max < 0.18`, `gpt_timeout_rate < 0.05`。
-- **Alert**: SLO 違反、`healthbeat` 欠損 5 分超、`token_usage ≥ 0.8 * max_month_tokens`, `news_status=stale 10 min`, `order reject` 連続 3 件。
+- **Alert**: SLO 違反、`healthbeat` 欠損 5 分超、`token_usage ≥ 0.8 * max_month_tokens`, `order reject` 連続 3 件。
 
 ---
 
 ## 7. デプロイ手順（更新版 / 要約）
 
 ```bash
-# Cloud Run ニュース要約のビルド（プロジェクトを明示）
-gcloud --project=quantrabbit builds submit --tag gcr.io/quantrabbit/news-summarizer
-
 # IaC（必要に応じて）
 cd infra/terraform && terraform init && terraform apply
 
@@ -433,6 +419,8 @@ scripts/vm.sh -p quantrabbit -z asia-northeast1-a -m fx-trader-vm deploy -i -k ~
             - VM上の最新ローソク: `gcloud compute ssh ... --command "tail -n 3 /home/tossaki/QuantRabbit/logs/candles_M1_latest.json"` や `sqlite3 /home/tossaki/QuantRabbit/logs/candles.db "select * from candles order by ts_ms desc limit 3;"`（表構造は環境による）。
             - OANDAリアルタイム価格: `curl -s -H "Authorization: Bearer $OANDA_TOKEN" "https://api-fxtrade.oanda.com/v3/accounts/$OANDA_ACCOUNT/pricing?instruments=USD_JPY" | jq '.prices[0] | {bid: .bids[0].price, ask: .asks[0].price, time: .time}'`
             - それでも取得できない場合は `PositionManager().get_open_positions()` の価格と組み合わせて、最新レートをユーザに聞いて判断する。
+    6. ローソク/チャート確認依頼: 「ローソクを確認」「チャートを見て」といった指示を受けたら、指示された時刻・時間帯の市況を優先し、VM ログ（candles, transactions, orders など）か OANDA API から必要なローソク・価格・出来高を取り寄せて分析する。テクニカル指標（MA/RSI/ADX/BBW など）も併せて評価し、価格推移・ボラ・方向感を短くまとめて返す。手元データが古ければ必ず VM/OANDA を参照して補完する。
+    7. 回答言語: ユーザへの回答は必ず日本語で行う。英語等での返答は避け、短く明瞭に伝える。
 
 ⸻
 

@@ -7,7 +7,7 @@ Secret Manager / 環境変数 から必要なキーを収集し、config/env.tom
 必要なキー（必要に応じて増やす）:
   - oanda_account_id, oanda_token, oanda_practice, oanda_hedging_enabled
   - openai_api_key, openai_model, openai_model_decider, openai_model_summarizer, openai_max_month_tokens
-  - gcp_project_id, gcp_pubsub_topic, news_bucket_name
+  - gcp_project_id, gcp_pubsub_topic
 """
 from __future__ import annotations
 import os
@@ -32,7 +32,6 @@ KEYS = [
     "openai_max_month_tokens",
     "gcp_project_id",
     "gcp_pubsub_topic",
-    "news_bucket_name",
 ]
 
 

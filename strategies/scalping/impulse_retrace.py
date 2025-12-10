@@ -4,7 +4,7 @@ from typing import Dict
 import logging
 
 PIP = 0.01
-MIN_ATR = 1.2
+MIN_ATR = 0.9
 MAX_SPREAD = 1.55
 MIN_DISLOCATION = 1.05  # pips away from ema20
 RSI_LONG_MAX = 44

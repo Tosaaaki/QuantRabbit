@@ -1,9 +1,9 @@
 """
 analysis.macro_state
 ~~~~~~~~~~~~~~~~~~~~
-Centralises macro-level context such as yield differentials, risk metrics,
-news-derived currency bias, and upcoming event windows so that the trading loop
-can make consistent gating and sizing decisions.
+Centralises macro-level context such as yield differentials and risk metrics so
+that the trading loop can make consistent gating and sizing decisions. News/event
+signals are currently neutralised.
 """
 
 from __future__ import annotations

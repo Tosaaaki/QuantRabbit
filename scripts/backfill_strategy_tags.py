@@ -48,8 +48,6 @@ def _classify_from_client_id(client_id: str | None) -> str | None:
         return "main.Donchian55"
     if "BBRSI" in cid or "BB_RSI" in cid:
         return "main.BB_RSI"
-    if "NewsSpike" in cid:
-        return "main.NewsSpikeReversal"
     return None
 
 TRADES_DB = Path("logs/trades.db")

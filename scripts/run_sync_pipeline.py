@@ -80,7 +80,6 @@ def _sync_remote_logs(dest_dir: Path) -> None:
         Path("logs/trades.db"),
         Path("logs/orders.db"),
         Path("logs/metrics.db"),
-        Path("logs/news.db"),
         Path("logs/oanda/candles_M1_latest.json"),
         Path("logs/oanda/candles_H1_latest.json"),
         Path("logs/oanda/candles_H4_latest.json"),

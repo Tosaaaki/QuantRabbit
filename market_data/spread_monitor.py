@@ -49,6 +49,8 @@ if RELEASE_SPREAD_PIPS >= MAX_SPREAD_PIPS:
     RELEASE_SPREAD_PIPS = max(MAX_SPREAD_PIPS * 0.75, MAX_SPREAD_PIPS - 0.35)
 
 WINDOW_SECONDS = _load_float("spread_guard_window_sec", 3.5, minimum=0.5)
+# サンプルを安定化させるためデフォルトをやや長めにする
+WINDOW_SECONDS = max(WINDOW_SECONDS, 8.0)
 COOLDOWN_SECONDS = _load_float("spread_guard_cooldown_sec", 12.0, minimum=5.0)
 MAX_AGE_MS = _load_int("spread_guard_max_age_ms", 4000, minimum=1000)
 MIN_HIGH_SAMPLES = _load_int("spread_guard_min_high_samples", 3, minimum=1)
@@ -187,25 +189,73 @@ def update_from_tick(tick) -> None:  # type: ignore[no-untyped-def]
         # この時点で history が空になることはないが、念のため
         return
 
+    max_spread = max(values)
+    min_spread = min(values)
+    avg_spread = sum(values) / len(values)
+    median_spread = _percentile(values, 50.0)
+    p95_spread = _percentile(values, 95.0)
+
     # ガード完全無効化（エントリー阻害しない）
     triggered = False
+    reason = ""
 
-    if triggered:
-        prev_until = _blocked_until
-        _blocked_until = max(_blocked_until, now) + COOLDOWN_SECONDS
-        _blocked_reason = (
-            f"spread max {max_spread:.2f}p (avg {avg_spread:.2f}p) >= limit {MAX_SPREAD_PIPS:.2f}p"
+    # ベースラインが長時間広がっている場合のブロック
+    baseline_values = [val for _, val in _baseline_history]
+    baseline_ready = len(baseline_values) >= BASELINE_MIN_SAMPLES
+    baseline_p50 = _percentile(baseline_values, 50.0) if baseline_ready else None
+    if (
+        baseline_ready
+        and baseline_p50 is not None
+        and baseline_p50 >= BASELINE_BLOCK_PIPS
+    ):
+        triggered = True
+        reason = (
+            f"baseline_p50 {baseline_p50:.2f}p >= {BASELINE_BLOCK_PIPS:.2f}p "
+            f"(samples={len(baseline_values)})"
         )
+
+    # 短期窓の中央値/95pctで判定（単発スパイクは無視）
+    window_ready = len(values) >= max(MIN_HIGH_SAMPLES, RELEASE_SAMPLES)
+    spike_forgive = (
+        max_spread <= SPIKE_FORGIVE_PIPS
+        and p95_spread < MAX_SPREAD_PIPS
+        and median_spread < MAX_SPREAD_PIPS
+    )
+    high_count = sum(1 for val in values if val >= MAX_SPREAD_PIPS)
+    if (
+        not triggered
+        and window_ready
+        and not spike_forgive
+        and (
+            (median_spread >= MAX_SPREAD_PIPS and high_count >= MIN_HIGH_SAMPLES)
+            or p95_spread >= MAX_SPREAD_PIPS
+            or (max_spread >= MAX_SPREAD_PIPS and high_count >= MIN_HIGH_SAMPLES)
+        )
+    ):
+        triggered = True
+        reason = (
+            f"spread_med {median_spread:.2f}p p95 {p95_spread:.2f}p "
+            f"max {max_spread:.2f}p >= limit {MAX_SPREAD_PIPS:.2f}p "
+            f"(high_samples={high_count}/{len(values)})"
+        )
+
+    if triggered and not DISABLE_SPREAD_GUARD:
+        _blocked_until = max(_blocked_until, now) + COOLDOWN_SECONDS
+        _blocked_reason = reason
     elif _blocked_until > now and len(values) >= RELEASE_SAMPLES:
         recent = [val for _, val in list(_history)[-RELEASE_SAMPLES:]]
         if recent and max(recent) <= RELEASE_SPREAD_PIPS:
             _blocked_until = now
             _blocked_reason = ""
+    elif not triggered and _blocked_until <= now:
+        _blocked_reason = ""
 
     blocked_now = _blocked_until > now
     if blocked_now and not _last_logged_blocked:
         logging.warning(
-            "[SPREAD] Guard activated (max=%.2fp avg=%.2fp samples=%d reason=%s)",
+            "[SPREAD] Guard activated (med=%.2fp p95=%.2fp max=%.2fp avg=%.2fp samples=%d reason=%s)",
+            median_spread,
+            p95_spread,
             max_spread,
             avg_spread,
             len(values),
@@ -214,7 +264,9 @@ def update_from_tick(tick) -> None:  # type: ignore[no-untyped-def]
         _last_logged_blocked = True
     elif not blocked_now and _last_logged_blocked:
         logging.info(
-            "[SPREAD] Guard cleared (max=%.2fp avg=%.2fp samples=%d)",
+            "[SPREAD] Guard cleared (med=%.2fp p95=%.2fp max=%.2fp avg=%.2fp samples=%d)",
+            median_spread,
+            p95_spread,
             max_spread,
             avg_spread,
             len(values),
@@ -237,6 +289,8 @@ def get_state() -> Optional[dict]:
     max_spread = max(values)
     min_spread = min(values)
     avg_spread = sum(values) / len(values)
+    median_spread = _percentile(values, 50.0)
+    p95_spread = _percentile(values, 95.0)
     high_count = sum(1 for val in values if val >= MAX_SPREAD_PIPS)
     stale = age_ms > MAX_AGE_MS
     stale_since = _stale_since
@@ -264,6 +318,8 @@ def get_state() -> Optional[dict]:
         "avg_pips": avg_spread,
         "max_pips": max_spread,
         "min_pips": min_spread,
+        "median_pips": median_spread,
+        "p95_pips": p95_spread,
         "samples": len(values),
         "age_ms": age_ms,
         "limit_pips": MAX_SPREAD_PIPS,
