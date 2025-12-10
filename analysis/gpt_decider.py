@@ -86,10 +86,8 @@ _MODEL_TIMEOUT_SECONDS = {
     "gpt-4o-mini-2024-07-18": 15,
 }
 
-_FALLBACK_MODELS = [
-    "gpt-4o-mini",
-    "gpt-4o-mini-2024-07-18",
-]
+# フォールバックモデルは明示的に無効化（primary のみを使用）
+_FALLBACK_MODELS: list[str] = []
 
 _REUSE_WINDOW_SECONDS = 300
 _FAIL_OPEN_SECONDS = int(os.getenv("GPT_FAIL_OPEN_SECONDS", "120") or 120)
@@ -183,7 +181,6 @@ async def _call_model(payload: Dict, messages: List[Dict], model: str) -> Dict:
             "messages": messages,
             "timeout": timeout,
             "response_format": {"type": "json_object"},
-            "temperature": 0.2,
         }
         token_kwargs_order = [
             {"max_completion_tokens": _MAX_COMPLETION_TOKENS},
