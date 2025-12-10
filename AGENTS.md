@@ -429,6 +429,10 @@ scripts/vm.sh -p quantrabbit -z asia-northeast1-a -m fx-trader-vm deploy -i -k ~
             - オープン確認は VM で `.venv` 有効化後 `python - <<'PY' ... PositionManager().get_open_positions()`。trades.db はクローズ済みのみなので、openTrades API と突合する。
             - thesis/fast_cut/kill が空の micro/scalp はオーファン扱い。2025-12-09 以降の MomentumBurst は fast_cut/kill メタ付与済みだが、それ以前の建玉は空のまま残るので必要なら手動クローズする。
             - manual ポケットは自動エグジット対象外。意図しない manual が残っていれば明示的にクローズする。
+        - 最新価格/ローソクの取り方（チャートが見られないとき）
+            - VM上の最新ローソク: `gcloud compute ssh ... --command "tail -n 3 /home/tossaki/QuantRabbit/logs/candles_M1_latest.json"` や `sqlite3 /home/tossaki/QuantRabbit/logs/candles.db "select * from candles order by ts_ms desc limit 3;"`（表構造は環境による）。
+            - OANDAリアルタイム価格: `curl -s -H "Authorization: Bearer $OANDA_TOKEN" "https://api-fxtrade.oanda.com/v3/accounts/$OANDA_ACCOUNT/pricing?instruments=USD_JPY" | jq '.prices[0] | {bid: .bids[0].price, ask: .asks[0].price, time: .time}'`
+            - それでも取得できない場合は `PositionManager().get_open_positions()` の価格と組み合わせて、最新レートをユーザに聞いて判断する。
 
 ⸻
 
