@@ -40,6 +40,10 @@ def _attach_kill(signal: Dict) -> Dict:
 class ImpulseRetraceScalp:
     name = "ImpulseRetrace"
     pocket = "scalp"
+    # 強いトレンドと逆方向のエントリーを抑止するためのガード
+    TREND_BLOCK_GAP = 0.08  # ema10-ema20 (pips換算)
+    TREND_BLOCK_MOMENTUM = 0.028  # 価格変化/秒目安
+    TREND_WEAK_PENALTY = 0.9  # 軽い逆行なら信頼度を下げる
 
     @staticmethod
     def _log_skip(reason: str, **kwargs) -> None:
@@ -139,6 +143,14 @@ class ImpulseRetraceScalp:
             momentum = 0.0
         trend_up = momentum > MOMENTUM_GUARD and ema_gap_pips > 0.05
         trend_down = momentum < -MOMENTUM_GUARD and ema_gap_pips < -0.05
+        strong_up = (
+            momentum > ImpulseRetraceScalp.TREND_BLOCK_MOMENTUM
+            and ema_gap_pips > ImpulseRetraceScalp.TREND_BLOCK_GAP
+        )
+        strong_down = (
+            momentum < -ImpulseRetraceScalp.TREND_BLOCK_MOMENTUM
+            and ema_gap_pips < -ImpulseRetraceScalp.TREND_BLOCK_GAP
+        )
 
         # ATRが低い環境では乖離の要求を少し緩める（ただしスプレッド優位が前提）
         dislocation_min = MIN_DISLOCATION
@@ -178,6 +190,11 @@ class ImpulseRetraceScalp:
                 )
             )
             profile = "impulse_retrace"
+            # 軽い逆行トレンドの場合は信頼度を下げてロットを抑える
+            if dist < dislocation_min * 1.2 and (
+                (trend_up and action == "OPEN_SHORT") or (trend_down and action == "OPEN_LONG")
+            ):
+                confidence = int(confidence * ImpulseRetraceScalp.TREND_WEAK_PENALTY)
             min_hold = max(60.0, min(420.0, tp * 36.0))
             fast_cut = max(6.0, atr_pips * 0.9)
             fast_cut_time = max(60.0, atr_pips * 15.0)
@@ -205,27 +222,45 @@ class ImpulseRetraceScalp:
 
         if dislocation_pips <= -MIN_DISLOCATION and rsi_val <= RSI_LONG_MAX:
             # oversold spike, look for retrace long
-            # 強い下向きモメンタム＆EMA下向きのときは見送り
-            if trend_down:
-                # 順張り（ショート）に切り替え
-                distance = abs(dislocation_pips)
-                return _build_signal(
-                    action="OPEN_SHORT", dist=distance, rsi_value=rsi_val, atr_pips=atr_pips
+            # 強い下向きトレンドならロングをブロック（逆張り抑制）
+            if strong_down:
+                ImpulseRetraceScalp._log_skip(
+                    "trend_block_long",
+                    momentum=round(momentum, 4),
+                    ema_gap=round(ema_gap_pips, 4),
                 )
+                return None
             distance = abs(dislocation_pips)
-            return _build_signal(action="OPEN_LONG", dist=distance, rsi_value=rsi_val, atr_pips=atr_pips)
+            # 下向きトレンドがやや強いときは dislocation 要求を引き上げて慎重にする
+            if trend_down:
+                distance = max(distance, dislocation_min * 1.2)
+            return _build_signal(
+                action="OPEN_LONG",
+                dist=distance,
+                rsi_value=rsi_val,
+                atr_pips=atr_pips,
+            )
 
         if dislocation_pips >= MIN_DISLOCATION and rsi_val >= RSI_SHORT_MIN:
             # overbought spike, look for retrace short
-            # 強い上向きモメンタム＆EMA上向きのときは見送り
-            if trend_up:
-                # 順張り（ロング）に切り替え
-                distance = abs(dislocation_pips)
-                return _build_signal(
-                    action="OPEN_LONG", dist=distance, rsi_value=rsi_val, atr_pips=atr_pips
+            # 強い上向きトレンドならショートをブロック（逆張り抑制）
+            if strong_up:
+                ImpulseRetraceScalp._log_skip(
+                    "trend_block_short",
+                    momentum=round(momentum, 4),
+                    ema_gap=round(ema_gap_pips, 4),
                 )
+                return None
             distance = abs(dislocation_pips)
-            return _build_signal(action="OPEN_SHORT", dist=distance, rsi_value=rsi_val, atr_pips=atr_pips)
+            # 上向きトレンドがやや強いときは dislocation 要求を引き上げて慎重にする
+            if trend_up:
+                distance = max(distance, dislocation_min * 1.2)
+            return _build_signal(
+                action="OPEN_SHORT",
+                dist=distance,
+                rsi_value=rsi_val,
+                atr_pips=atr_pips,
+            )
 
         ImpulseRetraceScalp._log_skip(
             "no_extreme",
