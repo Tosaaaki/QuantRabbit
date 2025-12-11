@@ -89,13 +89,11 @@ _MODEL_TIMEOUT_SECONDS = {
 # フォールバックモデルは明示的に無効化（primary のみを使用）
 _FALLBACK_MODELS: list[str] = []
 
-_REUSE_WINDOW_SECONDS = 300
-_FAIL_OPEN_SECONDS = int(os.getenv("GPT_FAIL_OPEN_SECONDS", "120") or 120)
 _MAX_MODEL_ATTEMPTS = max(1, int(os.getenv("GPT_MAX_MODEL_ATTEMPTS", "4")))
 _RETRY_BASE_SEC = max(0.1, float(os.getenv("GPT_RETRY_BASE_SEC", "0.6")))
 _RETRY_JITTER_SEC = max(0.0, float(os.getenv("GPT_RETRY_JITTER_SEC", "0.25")))
 _MIN_CALL_INTERVAL_SEC = max(0.1, float(os.getenv("GPT_MIN_CALL_INTERVAL_SEC", "0.6")))
-_FALLBACK_DECISION = None  # フォールバック禁止
+_MODEL_TEMPERATURE = float(os.getenv("GPT_DECIDER_TEMPERATURE", "0.0") or 0.0)
 
 # 単純なレートリミット（call間隔を確保して 429 を防ぐ）
 _LAST_CALL_TS: float | None = None
@@ -147,7 +145,7 @@ def _extract_json_object(text: str) -> Optional[str]:
 
 def _load_json_payload(content: str) -> Dict:
     if not content:
-        raise ValueError("Invalid JSON: (empty string)")
+        raise ValueError("Invalid JSON: (empty string) – check model/temperature/response_format")
     try:
         return json.loads(content)
     except json.JSONDecodeError as exc:
@@ -181,6 +179,7 @@ async def _call_model(payload: Dict, messages: List[Dict], model: str) -> Dict:
             "messages": messages,
             "timeout": timeout,
             "response_format": {"type": "json_object"},
+            "temperature": _MODEL_TEMPERATURE,
         }
         token_kwargs_order = [
             {"max_completion_tokens": _MAX_COMPLETION_TOKENS},

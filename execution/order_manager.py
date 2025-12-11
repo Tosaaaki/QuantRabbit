@@ -31,6 +31,8 @@ from utils.secrets import get_secret
 from utils.market_hours import is_market_open
 from utils.metrics_logger import log_metric
 from execution import strategy_guard
+from execution.position_manager import PositionManager
+from execution.risk_guard import POCKET_MAX_RATIOS, MAX_LEVERAGE
 
 # ---------- 読み込み：env.toml ----------
 TOKEN = get_secret("oanda_token")
@@ -134,6 +136,14 @@ except Exception:
 # reduce_only（決済）では適用しない。
 _MIN_ORDER_UNITS = 1000
 
+# Directional exposure cap (dynamic; scales units instead of rejecting)
+_DIR_CAP_ENABLE = os.getenv("DIR_CAP_ENABLE", "1").strip().lower() not in {"", "0", "false", "no"}
+_DIR_CAP_RATIO = float(os.getenv("DIR_CAP_RATIO", "0.92"))
+_DIR_CAP_WARN_RATIO = float(os.getenv("DIR_CAP_WARN_RATIO", "0.98"))
+# Floor multiplier to avoid crushing frequency when shrinking; 0.0 to disable
+_DIR_CAP_MIN_FRACTION = float(os.getenv("DIR_CAP_MIN_FRACTION", "0.15"))
+_DIR_CAP_CACHE: Optional[PositionManager] = None
+
 # ---------- orders logger (logs/orders.db) ----------
 _ORDERS_DB_PATH = pathlib.Path("logs/orders.db")
 
@@ -199,6 +209,104 @@ def _ensure_utc(candidate: Optional[datetime]) -> datetime:
     if candidate.tzinfo is None:
         return candidate.replace(tzinfo=timezone.utc)
     return candidate.astimezone(timezone.utc)
+
+
+def _estimate_price(meta: Optional[dict]) -> Optional[float]:
+    if not meta:
+        return None
+    for key in ("entry_price", "price", "mid_price"):
+        try:
+            val = float(meta.get(key))
+            if val > 0:
+                return val
+        except Exception:
+            continue
+    return None
+
+
+def _apply_directional_cap(
+    units: int,
+    pocket: str,
+    side_label: str,
+    meta: Optional[dict],
+) -> int:
+    """
+    Dynamically scale units to keep same-direction exposure within a cap derived
+    from NAV and pocket ratio. Never rejects outright; scales down to remaining.
+    """
+    if not _DIR_CAP_ENABLE or units == 0 or pocket is None:
+        return units
+    try:
+        from utils.oanda_account import get_account_snapshot
+    except Exception:
+        return units
+    try:
+        snap = get_account_snapshot(cache_ttl_sec=30.0)
+    except Exception as exc:  # pragma: no cover - defensive
+        logging.warning("[DIR_CAP] snapshot fetch failed: %s", exc)
+        return units
+    price = _estimate_price(meta) or 0.0
+    if price <= 0:
+        return units
+    if snap.margin_rate <= 0 or snap.nav <= 0:
+        return units
+    try:
+        pocket_ratio = POCKET_MAX_RATIOS.get(pocket, 1.0)
+    except Exception:
+        pocket_ratio = 1.0
+    # cap derived from notional limit (NAV * leverage) and pocket share
+    notional_cap_units = (snap.nav / price) * MAX_LEVERAGE * _DIR_CAP_RATIO * pocket_ratio
+    if notional_cap_units <= 0:
+        return units
+    # fetch cached PositionManager to avoid repeated instantiation
+    global _DIR_CAP_CACHE
+    if _DIR_CAP_CACHE is None:
+        _DIR_CAP_CACHE = PositionManager()
+    positions = _DIR_CAP_CACHE.get_open_positions()
+    info = positions.get(pocket) or {}
+    current_same_dir = 0
+    try:
+        if side_label == "buy":
+            current_same_dir = int(info.get("long_units", 0) or 0)
+        else:
+            current_same_dir = int(info.get("short_units", 0) or 0)
+    except Exception:
+        current_same_dir = 0
+    remaining = max(0.0, notional_cap_units - current_same_dir)
+    if remaining <= 0:
+        logging.warning(
+            "[DIR_CAP] pocket=%s side=%s blocked at cap cap_units=%.0f current=%s",
+            pocket,
+            side_label,
+            notional_cap_units,
+            current_same_dir,
+        )
+        return 0
+    target = abs(units)
+    if remaining < target:
+        scaled = max(remaining, target * _DIR_CAP_MIN_FRACTION)
+        new_units = int(max(0, round(scaled)))
+        logging.info(
+            "[DIR_CAP] scale pocket=%s side=%s units=%d -> %d (current=%s cap=%.0f)",
+            pocket,
+            side_label,
+            units,
+            new_units if units > 0 else -new_units,
+            current_same_dir,
+            notional_cap_units,
+        )
+        return new_units if units > 0 else -new_units
+    # near-cap warning
+    if current_same_dir + target >= _DIR_CAP_WARN_RATIO * notional_cap_units:
+        logging.warning(
+            "[DIR_CAP] near cap pocket=%s side=%s current=%s pending=%d cap=%.0f",
+            pocket,
+            side_label,
+            current_same_dir,
+            target,
+            notional_cap_units,
+        )
+    return units
 
 
 def _fetch_quote(instrument: str) -> dict[str, float] | None:
@@ -603,11 +711,12 @@ _PARTIAL_THRESHOLDS = {
     # 直近の実測では micro/scalp は数 pip の含み益が頻出する一方、macro は伸びが限定的。
     # 小さめのしきい値で部分利確を優先し、ランナーは trailing に委ねる。
     "macro": (5.0, 10.0),
-    "micro": (3.0, 6.0),
-    "scalp": (2.0, 4.0),
+    "micro": (2.0, 4.2),
+    # 早めに小利を拾いつつ、2段目は少し先にしてランナーを残す
+    "scalp": (1.6, 3.6),
     # 超短期（fast scalp）は利幅が小さいため閾値も縮小
     # まずは小刻みにヘッジしてランナーのみを残す方針
-    "scalp_fast": (1.2, 2.0),
+    "scalp_fast": (1.0, 1.8),
 }
 _PARTIAL_THRESHOLDS_RANGE = {
     # AGENT.me 仕様（3.5.1）に合わせ、レンジ時は段階利確を引き延ばしすぎず早期ヘッジ。
@@ -1204,6 +1313,31 @@ def _apply_dynamic_protections_v2(
 ) -> None:
     policy = policy_bus.latest()
     pockets_policy = policy.pockets if policy else {}
+    try:
+        atr_m1 = float(fac_m1.get("atr_pips") or (fac_m1.get("atr") or 0.0) * 100.0)
+    except Exception:
+        atr_m1 = 0.0
+    try:
+        vol_5m = float(fac_m1.get("vol_5m") or 1.0)
+    except Exception:
+        vol_5m = 1.0
+
+    def _scaled_thresholds(pocket: str, base: tuple[float, ...]) -> tuple[float, ...]:
+        scale = 1.0
+        if pocket in {"micro", "scalp", "scalp_fast"}:
+            if vol_5m < 0.8:
+                scale *= 0.9  # 早めに利確
+            elif vol_5m > 1.6:
+                scale *= 1.2  # 伸ばす
+            if atr_m1 > 3.0:
+                scale *= 1.15
+            elif atr_m1 < 1.2:
+                scale *= 0.92
+        elif pocket == "macro":
+            if vol_5m > 1.6 or atr_m1 > 3.0:
+                scale *= 1.12
+        scale = max(0.7, min(1.4, scale))
+        return tuple(max(1.0, t * scale) for t in base)
     now_ts = time.time()
     current_price = fac_m1.get("close")
     pip = 0.01
@@ -1427,6 +1561,8 @@ def plan_partial_reductions(
             thresholds, fractions = _macro_partial_profile(fac_h4, range_mode)
         elif range_mode:
             thresholds = _PARTIAL_THRESHOLDS_RANGE.get(pocket, thresholds)
+        if thresholds:
+            thresholds = _scaled_thresholds(pocket, thresholds)
         plan = pockets_policy.get(pocket) if isinstance(pockets_policy, dict) else {}
         partial_plan = plan.get("partial_profile", {}) if isinstance(plan, dict) else {}
         min_units_override: Optional[int] = None
@@ -1546,6 +1682,22 @@ async def market_order(
             strategy_tag = None
     else:
         strategy_tag = None
+    virtual_sl_price: Optional[float] = None
+    virtual_tp_price: Optional[float] = None
+
+    def _merge_virtual(payload: Optional[dict] = None) -> dict:
+        base: dict = {}
+        if virtual_sl_price is not None:
+            base["virtual_sl_price"] = virtual_sl_price
+        if virtual_tp_price is not None:
+            base["virtual_tp_price"] = virtual_tp_price
+        if payload:
+            base.update(payload)
+        return base
+
+    def log_order(**kwargs):
+        kwargs["request_payload"] = _merge_virtual(kwargs.get("request_payload"))
+        return _log_order(**kwargs)
     thesis_sl_pips: Optional[float] = None
     thesis_tp_pips: Optional[float] = None
     if stage_index is None and isinstance(entry_thesis, dict):
@@ -1606,7 +1758,7 @@ async def market_order(
                 client_order_id=client_order_id,
                 note=f"strategy_cooldown:{reason}",
             )
-            _log_order(
+            log_order(
                 pocket=pocket,
                 instrument=instrument,
                 side="buy" if units > 0 else "sell",
@@ -1638,7 +1790,7 @@ async def market_order(
                 client_order_id=client_order_id,
                 note="margin_cooldown_active",
             )
-            _log_order(
+            log_order(
                 pocket=pocket,
                 instrument=instrument,
                 side="buy" if units > 0 else "sell",
@@ -1707,7 +1859,7 @@ async def market_order(
             attempt_payload["entry_thesis"] = entry_thesis
         if meta is not None:
             attempt_payload["meta"] = meta
-        _log_order(
+        log_order(
             pocket=pocket,
             instrument=instrument,
             side="buy" if units > 0 else "sell",
@@ -1736,7 +1888,7 @@ async def market_order(
                 client_order_id=client_order_id,
                 note=note,
             )
-            _log_order(
+            log_order(
                 pocket=pocket,
                 instrument=instrument,
                 side="buy" if units > 0 else "sell",
@@ -1811,7 +1963,7 @@ async def market_order(
                 client_order_id=client_order_id,
                 note="insufficient_margin",
             )
-            _log_order(
+            log_order(
                 pocket=pocket,
                 instrument=instrument,
                 side="buy" if units > 0 else "sell",
@@ -1843,7 +1995,7 @@ async def market_order(
                 client_order_id=client_order_id,
                 note="insufficient_margin_min_units",
             )
-            _log_order(
+            log_order(
                 pocket=pocket,
                 instrument=instrument,
                 side="buy" if allowed_units > 0 else "sell",
@@ -1897,6 +2049,47 @@ async def market_order(
                 estimated_entry,
             )
 
+    # Virtual SL/TP logging (even if SL is disabled)
+    if estimated_entry is not None:
+        if thesis_sl_pips is not None:
+            virtual_sl_price = round(
+                estimated_entry - thesis_sl_pips * 0.01, 3
+            ) if units > 0 else round(estimated_entry + thesis_sl_pips * 0.01, 3)
+        if thesis_tp_pips is not None:
+            virtual_tp_price = round(
+                estimated_entry + thesis_tp_pips * 0.01, 3
+            ) if units > 0 else round(estimated_entry - thesis_tp_pips * 0.01, 3)
+    if sl_price is not None:
+        virtual_sl_price = sl_price
+    if tp_price is not None:
+        virtual_tp_price = tp_price
+
+    # Directional exposure cap: scale down instead of rejecting
+    if not reduce_only:
+        adjusted = _apply_directional_cap(preflight_units, pocket, side_label, meta)
+        if adjusted == 0:
+            _console_order_log(
+                "OPEN_SKIP",
+                pocket=pocket,
+                strategy=strategy_tag,
+                side=side_label,
+                units=preflight_units,
+                sl_price=sl_price,
+                tp_price=tp_price,
+                client_order_id=client_order_id,
+                note="dir_cap",
+            )
+            return None
+        if adjusted != preflight_units:
+            logging.info(
+                "[ORDER] dir_cap scaled units %s -> %s pocket=%s side=%s",
+                preflight_units,
+                adjusted,
+                pocket,
+                side_label,
+            )
+            preflight_units = adjusted
+
     # Cap new-entry order size with dynamic boost for high-confidence profiles
     if not reduce_only:
         cap_multiplier = 1.0
@@ -1926,7 +2119,7 @@ async def market_order(
         abs_units = abs(int(preflight_units))
         if abs_units > dynamic_cap:
             capped = (1 if preflight_units > 0 else -1) * dynamic_cap
-            _log_order(
+            log_order(
                 pocket=pocket,
                 instrument=instrument,
                 side="buy" if preflight_units > 0 else "sell",
@@ -1996,7 +2189,8 @@ async def market_order(
             attempt_payload["meta"] = meta
         if quote:
             attempt_payload["quote"] = quote
-        _log_order(
+        attempt_payload = _merge_virtual(attempt_payload)
+        log_order(
             pocket=pocket,
             instrument=instrument,
             side=side,
@@ -2026,7 +2220,7 @@ async def market_order(
                     reason,
                 )
                 logging.error("Reject payload: %s", reject)
-                _log_order(
+                log_order(
                     pocket=pocket,
                     instrument=instrument,
                     side=side,
@@ -2115,7 +2309,7 @@ async def market_order(
                         executed_price = float(ofill.get("price"))
                     except Exception:
                         executed_price = None
-                _log_order(
+                log_order(
                     pocket=pocket,
                     instrument=instrument,
                     side=side,
@@ -2164,7 +2358,7 @@ async def market_order(
                 client_order_id=client_order_id,
                 note=f"no_trade_id attempt={attempt+1}",
             )
-            _log_order(
+            log_order(
                 pocket=pocket,
                 instrument=instrument,
                 side=side,
@@ -2189,7 +2383,7 @@ async def market_order(
             resp = getattr(e, "response", None)
             if resp:
                 logging.error("OANDA response: %s", resp)
-            _log_order(
+            log_order(
                 pocket=pocket,
                 instrument=instrument,
                 side=side,
@@ -2223,7 +2417,7 @@ async def market_order(
                 attempt + 1,
                 exc,
             )
-            _log_order(
+            log_order(
                 pocket=pocket,
                 instrument=instrument,
                 side=side,

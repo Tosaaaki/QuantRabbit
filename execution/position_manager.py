@@ -80,6 +80,40 @@ def _build_http_session() -> requests.Session:
     return session
 
 
+def _ensure_orders_db() -> sqlite3.Connection:
+    """orders.db が存在しない/テーブル欠損時に安全に初期化する。"""
+    _ORDERS_DB.parent.mkdir(parents=True, exist_ok=True)
+    con = sqlite3.connect(_ORDERS_DB)
+    con.execute(
+        """
+        CREATE TABLE IF NOT EXISTS orders (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          ts TEXT,
+          pocket TEXT,
+          instrument TEXT,
+          side TEXT,
+          units INTEGER,
+          sl_price REAL,
+          tp_price REAL,
+          client_order_id TEXT,
+          status TEXT,
+          attempt INTEGER,
+          stage_index INTEGER,
+          ticket_id TEXT,
+          executed_price REAL,
+          error_code TEXT,
+          error_message TEXT,
+          request_json TEXT,
+          response_json TEXT
+        )
+        """
+    )
+    con.execute("CREATE INDEX IF NOT EXISTS idx_orders_client ON orders(client_order_id)")
+    con.execute("CREATE INDEX IF NOT EXISTS idx_orders_ts ON orders(ts)")
+    con.commit()
+    return con
+
+
 def _tx_sort_key(tx: dict) -> int:
     try:
         return int(tx.get("id") or 0)
@@ -434,10 +468,8 @@ class PositionManager:
             return self._get_trade_details_from_orders(trade_id)
 
     def _get_trade_details_from_orders(self, trade_id: str) -> dict | None:
-        if not _ORDERS_DB.exists():
-            return None
         try:
-            con = sqlite3.connect(_ORDERS_DB)
+            con = _ensure_orders_db()
             con.row_factory = sqlite3.Row
             row = con.execute(
                 """
@@ -470,7 +502,7 @@ class PositionManager:
         thesis_obj = None
         if client_id:
             try:
-                con2 = sqlite3.connect(_ORDERS_DB)
+                con2 = _ensure_orders_db()
                 con2.row_factory = sqlite3.Row
                 att = con2.execute(
                     """

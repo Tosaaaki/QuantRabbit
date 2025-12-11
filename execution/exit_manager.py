@@ -65,6 +65,14 @@ def _slope_from_candles(candles: List[dict], window: int = 6) -> float:
         return 0.0
 
 
+def _candle_high(c: dict) -> Optional[float]:
+    return c.get("high") or c.get("h") or c.get("close")
+
+
+def _candle_low(c: dict) -> Optional[float]:
+    return c.get("low") or c.get("l") or c.get("close")
+
+
 @dataclass
 class ExitDecision:
     pocket: str
@@ -174,6 +182,18 @@ class ExitManager:
         self._loss_guard_atr_trigger = float(os.getenv("EXIT_LOSS_GUARD_ATR_TRIGGER", "2.0"))
         self._loss_guard_vol_trigger = float(os.getenv("EXIT_LOSS_GUARD_VOL_TRIGGER", "1.5"))
         self._loss_guard_compress_ratio = float(os.getenv("EXIT_LOSS_GUARD_COMPRESS_RATIO", "0.7"))
+        # MFE ベースのトレール/抑制パラメータ（未定義で落ちないように初期化）
+        self._mfe_guard_base_default = float(os.getenv("EXIT_MFE_GUARD_BASE_DEFAULT", "0.8"))
+        self._mfe_guard_base = {
+            "macro": float(os.getenv("EXIT_MFE_GUARD_BASE_MACRO", "1.2")),
+            "micro": float(os.getenv("EXIT_MFE_GUARD_BASE_MICRO", "0.9")),
+            "scalp": float(os.getenv("EXIT_MFE_GUARD_BASE_SCALP", "0.7")),
+        }
+        self._mfe_guard_ratio = {
+            "macro": float(os.getenv("EXIT_MFE_GUARD_RATIO_MACRO", "0.6")),
+            "micro": float(os.getenv("EXIT_MFE_GUARD_RATIO_MICRO", "0.65")),
+            "scalp": float(os.getenv("EXIT_MFE_GUARD_RATIO_SCALP", "0.7")),
+        }
         # track best profit (pips) per pocket/side to avoid cutting trades that already went positive
         self._max_profit_cache: Dict[Tuple[str, str], float] = {}
         # Apply stale drawdown exits only to trades opened after this cutover (if set)
@@ -902,6 +922,9 @@ class ExitManager:
 
         arm = max(0.8, min(2.4, atr_val * 0.35))
         give_back = max(0.6, min(2.6, atr_val * 0.45))
+        # スキャルは fast_cut を優先し、スロープ系のBEトレールは使わない
+        if pocket == "scalp":
+            return None
         if pocket == "scalp":
             arm = max(0.6, arm * 0.9)
             give_back = max(0.5, give_back * 0.9)
@@ -1357,6 +1380,24 @@ class ExitManager:
         )
         macd_cross_minutes = self._macd_cross_minutes(projection_fast, "long")
 
+        value_cut = self._value_cut_exit(
+            pocket=pocket,
+            side="long",
+            units=units,
+            open_info=open_info,
+            profit_pips=profit_pips,
+            close_price=close_price,
+            ema20=ema20,
+            rsi=rsi,
+            atr_pips=atr_pips,
+            fac_m1=fac_m1,
+            now=now,
+            max_mfe=max_mfe_long,
+            neg_exit_blocked=neg_exit_blocked,
+        )
+        if value_cut:
+            return value_cut
+
         matured_macro = False
         loss_cap = None
         if pocket == "macro":
@@ -1549,8 +1590,9 @@ class ExitManager:
             and ma_gap_pips >= self._macro_ma_gap
         ):
             reason = "trend_reversal"
-        elif pocket == "scalp" and close_price < ema20:
-            reason = "scalp_momentum_flip"
+        elif pocket == "scalp" and close_price is not None and ema20 is not None:
+            # スキャルは EMA 反転で即切りしない（fast_cut/SL/TP に任せる）
+            pass
         elif (
             pocket == "micro"
             and profit_pips <= -self._micro_loss_grace_pips
@@ -1926,6 +1968,24 @@ class ExitManager:
         )
         macd_cross_minutes = self._macd_cross_minutes(projection_fast, "short")
 
+        value_cut = self._value_cut_exit(
+            pocket=pocket,
+            side="short",
+            units=units,
+            open_info=open_info,
+            profit_pips=profit_pips,
+            close_price=close_price,
+            ema20=ema20,
+            rsi=rsi,
+            atr_pips=atr_pips,
+            fac_m1=fac_m1,
+            now=now,
+            max_mfe=max_mfe_short,
+            neg_exit_blocked=neg_exit_blocked,
+        )
+        if value_cut:
+            return value_cut
+
         matured_macro = False
         loss_cap = None
         if pocket == "macro":
@@ -2085,8 +2145,9 @@ class ExitManager:
             reason = "micro_loss_guard"
         elif pocket == "macro" and loss_cap is not None and profit_pips <= -loss_cap:
             reason = "macro_loss_cap"
-        elif pocket == "scalp" and close_price < ema20:
-            reason = "scalp_momentum_flip"
+        elif pocket == "scalp" and close_price is not None and ema20 is not None:
+            # スキャルは EMA 反転で即切りしない（fast_cut/SL/TP に任せる）
+            pass
         elif (
             pocket == "macro"
             and avg_price
@@ -2444,6 +2505,92 @@ class ExitManager:
         youngest = self._youngest_trade_age_seconds(open_info, side, now) or 0.0
         return youngest >= self._micro_loss_hold_seconds
 
+    def _value_cut_exit(
+        self,
+        *,
+        pocket: str,
+        side: str,
+        units: int,
+        open_info: Dict,
+        profit_pips: float,
+        close_price: float,
+        ema20: Optional[float],
+        rsi: float,
+        atr_pips: float,
+        fac_m1: Dict,
+        now: datetime,
+        max_mfe: Optional[float],
+        neg_exit_blocked: bool,
+    ) -> Optional[ExitDecision]:
+        """
+        Dynamically close when上位足節目割れ+RSI 極端＋十分なMFE後の戻り。
+        - micro/scalpのみ
+        - 一定ホールド後に、pivotブレイクかつRSI極端、かつ MFEドローダウンが大きいときに発火
+        - マイナスでも「価値あるカット」(MFE済み→戻し) のみに限定
+        """
+        if pocket not in {"micro", "scalp"}:
+            return None
+        if neg_exit_blocked:
+            return None
+        if close_price is None:
+            return None
+
+        candles = fac_m1.get("candles") or []
+        recent = candles[-20:] if len(candles) >= 5 else candles
+        if len(recent) < 5:
+            return None
+
+        highs = [float(_candle_high(c)) for c in recent if _candle_high(c) is not None]
+        lows = [float(_candle_low(c)) for c in recent if _candle_low(c) is not None]
+        if not highs or not lows:
+            return None
+        recent_high = max(highs)
+        recent_low = min(lows)
+
+        min_hold = self._scalp_min_hold_seconds if pocket == "scalp" else self._micro_min_hold_seconds
+        youngest = self._youngest_trade_age_seconds(open_info, side, now) or 0.0
+        if youngest < min_hold:
+            return None
+
+        mfe_gate = max(1.2, (atr_pips or 1.8) * 0.5)
+        drawdown_gate = max(0.8, (atr_pips or 1.8) * 0.45)
+        loss_gate = max(1.0, (atr_pips or 1.8) * 0.6)
+
+        # 価格が直近高安を明確に割ったか（節目ブレイク）
+        pivot_break = False
+        if side == "long":
+            gap = (close_price - recent_low) / 0.01
+            pivot_break = gap <= 0.4  # 0.4p 以内まで迫る/割り込み
+        else:
+            gap = (recent_high - close_price) / 0.01
+            pivot_break = gap <= 0.4
+
+        rsi_extreme = (side == "long" and rsi <= 42.0) or (side == "short" and rsi >= 58.0)
+
+        if not (pivot_break and rsi_extreme):
+            return None
+
+        drawdown_ok = False
+        if max_mfe is not None and max_mfe >= mfe_gate:
+            drawdown_from_peak = max_mfe - max(profit_pips, 0.0)
+            if drawdown_from_peak >= drawdown_gate or profit_pips <= -loss_gate:
+                drawdown_ok = True
+        else:
+            if profit_pips <= -loss_gate:
+                drawdown_ok = True
+
+        if not drawdown_ok:
+            return None
+
+        cut_units = -abs(units) if side == "long" else abs(units)
+        return ExitDecision(
+            pocket=pocket,
+            units=cut_units,
+            reason="value_cut_pivot_rsi",
+            tag="value-cut",
+            allow_reentry=True,
+        )
+
     def _micro_profit_exit_ready(
         self,
         *,
@@ -2528,6 +2675,11 @@ class ExitManager:
         macd_cross_minutes: Optional[float],
         atr_pips: float,
     ) -> bool:
+        # スキャル/マイクロは fast_cut 系の早期撤退に寄せる。
+        # MA クロスは頻発しノイズになりやすいため、ここでは抑制する。
+        if pocket in {"micro", "scalp"}:
+            return False
+
         # For macro positions, prefer primary (H4) projection to avoid
         # churning exits on transient M1 flickers. For other pockets,
         # keep fast (M1) responsive.
@@ -3323,15 +3475,15 @@ class ExitManager:
         if units <= 0 or profit_pips is None or profit_pips <= 0:
             return None
         max_seen = self._max_profit_cache.get((pocket, side))
-        if max_seen is None or max_seen < 3.0:
+        if max_seen is None or max_seen < 2.0:
             return None
         try:
             retrace_ratio = (max_seen - profit_pips) / max_seen
         except Exception:
             return None
-        if retrace_ratio < 0.6:
+        if retrace_ratio < 0.5:
             return None
-        partial_units = int(abs(units) * 0.5)
+        partial_units = int(abs(units) * 0.35)
         partial_units = max(1000, min(abs(units) - 1, partial_units))
         if partial_units <= 0 or partial_units >= abs(units):
             return None

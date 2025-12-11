@@ -8,6 +8,7 @@ import json
 import contextlib
 import math
 import os
+from pathlib import Path
 from typing import Optional, Tuple, Coroutine, Any, Dict, Sequence
 
 # Safe float conversion for optional numeric inputs
@@ -118,10 +119,16 @@ from autotune.scalp_trainer import start_background_autotune
 from workers.fast_scalp import FastScalpState, fast_scalp_worker
 from workers.fast_scalp.signal import _compute_rsi as _fs_compute_rsi  # reuse RSI helper
 
-# Configure logging
+# Configure logging (stdout + file)
+LOG_PATH = Path("logs/pipeline.log")
+LOG_PATH.parent.mkdir(exist_ok=True)
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(levelname)s - %(message)s",
+    handlers=[
+        logging.StreamHandler(),
+        logging.FileHandler(LOG_PATH, encoding="utf-8"),
+    ],
     force=True,  # enforce INFO even if another logger configured earlier
 )
 
@@ -375,6 +382,7 @@ WORKER_SERVICES = {
 WORKER_AUTOCONTROL_ENABLED = os.getenv("WORKER_AUTOCONTROL", "1").strip() not in {"", "0", "false", "no"}
 # Default to a higher cap so more workers can run in parallel; 0 or negative = no cap
 WORKER_AUTOCONTROL_LIMIT = int(os.getenv("WORKER_AUTOCONTROL_LIMIT", "12") or "12")
+WORKER_SYSTEMCTL_ENABLED = _env_bool("WORKER_SYSTEMCTL", True)
 GPT_PERF_KEYS = ("pf", "win_rate", "avg_pips", "sharpe", "sample")
 _GPT_FACTOR_PRECISION = {
     "adx": 2,
@@ -646,6 +654,11 @@ def _select_worker_targets(
 
 
 async def _systemctl(action: str, service: str) -> bool:
+    if not WORKER_SYSTEMCTL_ENABLED:
+        if not getattr(_systemctl, "_warned", False):
+            logging.warning("[WORKER_CTL] systemctl disabled (WORKER_SYSTEMCTL=0); skip %s %s", action, service)
+            _systemctl._warned = True  # type: ignore[attr-defined]
+        return False
     try:
         proc = await asyncio.create_subprocess_exec(
             "sudo",

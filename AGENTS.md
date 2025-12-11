@@ -240,6 +240,7 @@ class OrderIntent(BaseModel):
 * 超過時：`gpt_decider` はフォールバック JSON を返す。  
 * フォールバック JSON: `{"focus_tag":"hybrid","weight_macro":0.5,"weight_scalp":0.15,"ranked_strategies":["TrendMA","H1Momentum","Donchian55","BB_RSI"],"reason":"fallback"}`。  
 * GPT 失敗時は過去 5 分の決定を再利用 (`reason="reuse_previous"`) し、`decision_latency_ms` を 9,000 で固定計上する。
+* 原則フォールバック決定は使わない。トークン制限や一時障害でもまず再試行・負荷抑制で回避し、やむを得ずフォールバックを有効化する場合は事前に影響（focus 固定・重複注文リスクなど）を共有して限定的に許可する。
 
 ---
 
@@ -505,6 +506,10 @@ scripts/deploy_to_vm.sh -p "$PROJ" -t -k ~/.ssh/gcp_oslogin_qr \
 - スタッシュが溜まると意図しないロールバックや SL/TP 設定の再旧化を招くため、不要になったら `git stash drop` で整理する。
 - config/tuning_overrides.yaml・fixtures/*.json などのローカル調整を維持したい場合は stash/commit で保全し、ブランチ切替後に明示的に `git stash pop` してから再起動する。
 
+### 10.5 VM 削除禁止と警告
+- `fx-trader-vm` を含む運用 VM は何があっても削除しない（停止/再起動で代替し、`gcloud compute instances delete` やコンソールの削除ボタンには触れない）。
+- 例外的に削除を検討する場合でも、実行前に「VM を削除すると復旧不可で稼働停止する」ことを関係者へ明示的に警告し、二重確認を取ってから進める。自動化スクリプトにも削除警告を出し、既定動作はキャンセルにする。
+
 ---
 
 ## 11. タスク運用ルール（共通）
@@ -512,6 +517,7 @@ scripts/deploy_to_vm.sh -p "$PROJ" -t -k ~/.ssh/gcp_oslogin_qr \
 - タスクファイル: 本リポの全タスクは `docs/TASKS.md` を単一の台帳として管理する（正本）。
 - 適用範囲: 機能開発/バグ修正/運用改善/ドキュメント更新など、すべての作業タスク。
 - 位置付け: オンライン自動チューニング関連は従来どおり `docs/autotune_taskboard.md` を使用しつつ、必要に応じて `docs/TASKS.md` からリンクする。
+- 動作確認・テストは担当者（エージェント）が必ず自分で実施し、ユーザに依頼しない。必要な検証は自前で回して結果を共有する。
 
 ### 11.1 運用フロー
 
