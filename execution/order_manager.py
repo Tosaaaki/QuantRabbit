@@ -224,6 +224,33 @@ def _estimate_price(meta: Optional[dict]) -> Optional[float]:
     return None
 
 
+def _scaled_thresholds(
+    pocket: str,
+    base: tuple[float, ...],
+    atr_m1: float,
+    vol_5m: float,
+) -> tuple[float, ...]:
+    """
+    Scale partial/lock thresholds by short-term volatility/ATR.
+    Bound the scale to avoid extreme shrink/expansion.
+    """
+    scale = 1.0
+    if pocket in {"micro", "scalp", "scalp_fast"}:
+        if vol_5m < 0.8:
+            scale *= 0.9  # 早めに利確
+        elif vol_5m > 1.6:
+            scale *= 1.2  # 伸ばす
+        if atr_m1 > 3.0:
+            scale *= 1.15
+        elif atr_m1 < 1.2:
+            scale *= 0.92
+    elif pocket == "macro":
+        if vol_5m > 1.6 or atr_m1 > 3.0:
+            scale *= 1.12
+    scale = max(0.7, min(1.4, scale))
+    return tuple(max(1.0, t * scale) for t in base)
+
+
 def _apply_directional_cap(
     units: int,
     pocket: str,
@@ -1322,22 +1349,6 @@ def _apply_dynamic_protections_v2(
     except Exception:
         vol_5m = 1.0
 
-    def _scaled_thresholds(pocket: str, base: tuple[float, ...]) -> tuple[float, ...]:
-        scale = 1.0
-        if pocket in {"micro", "scalp", "scalp_fast"}:
-            if vol_5m < 0.8:
-                scale *= 0.9  # 早めに利確
-            elif vol_5m > 1.6:
-                scale *= 1.2  # 伸ばす
-            if atr_m1 > 3.0:
-                scale *= 1.15
-            elif atr_m1 < 1.2:
-                scale *= 0.92
-        elif pocket == "macro":
-            if vol_5m > 1.6 or atr_m1 > 3.0:
-                scale *= 1.12
-        scale = max(0.7, min(1.4, scale))
-        return tuple(max(1.0, t * scale) for t in base)
     now_ts = time.time()
     current_price = fac_m1.get("close")
     pip = 0.01
@@ -1547,6 +1558,14 @@ def plan_partial_reductions(
     if price is None:
         return []
     pip_scale = 100
+    try:
+        atr_m1 = float(fac_m1.get("atr_pips") or (fac_m1.get("atr") or 0.0) * 100.0)
+    except Exception:
+        atr_m1 = 0.0
+    try:
+        vol_5m = float(fac_m1.get("vol_5m") or 1.0)
+    except Exception:
+        vol_5m = 1.0
     current_time = _ensure_utc(now)
     actions: list[tuple[str, str, int]] = []
     policy = policy_bus.latest()
@@ -1562,7 +1581,7 @@ def plan_partial_reductions(
         elif range_mode:
             thresholds = _PARTIAL_THRESHOLDS_RANGE.get(pocket, thresholds)
         if thresholds:
-            thresholds = _scaled_thresholds(pocket, thresholds)
+            thresholds = _scaled_thresholds(pocket, thresholds, atr_m1, vol_5m)
         plan = pockets_policy.get(pocket) if isinstance(pockets_policy, dict) else {}
         partial_plan = plan.get("partial_profile", {}) if isinstance(plan, dict) else {}
         min_units_override: Optional[int] = None
