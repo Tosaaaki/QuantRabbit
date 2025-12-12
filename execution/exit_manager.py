@@ -201,6 +201,8 @@ class ExitManager:
         self._dd_cutover = self._parse_cutover_env(os.getenv("EXIT_DD_CUTOVER_ISO"))
         # time-guard throttle to avoid repeated partial cuts
         self._time_guard_ts: Dict[Tuple[str, str], datetime] = {}
+        # Optional: disable time-based guards to rely on technical exits only
+        self._time_guard_enabled = _env_flag("EXIT_TIME_GUARD_ENABLED", False)
         # Loss clamp thresholds derived from recent MAE analysis (pips)
         self._loss_clamp_partial = {
             "micro": float(os.getenv("LOSS_CLAMP_MICRO_PARTIAL_PIPS", "10.0")),
@@ -311,6 +313,38 @@ class ExitManager:
         self._soft_exit_floor = float(os.getenv("EXIT_SOFT_EXIT_FLOOR", "-6.0"))
         self._soft_exit_frac = float(os.getenv("EXIT_SOFT_EXIT_FRAC", "0.35"))
 
+    def _exit_tech_context(self, fac_m1: Dict, side: str) -> Dict[str, float | bool]:
+        """Ichimoku/クラスタ/モメンタム/ボラをEXIT判断用にまとめる。"""
+        cloud_pos = self._safe_float(fac_m1.get("ichimoku_cloud_pos"), 0.0)
+        span_a_gap = self._safe_float(fac_m1.get("ichimoku_span_a_gap"), 0.0)
+        span_b_gap = self._safe_float(fac_m1.get("ichimoku_span_b_gap"), 0.0)
+        cluster_high = self._safe_float(fac_m1.get("cluster_high_gap"), 0.0)
+        cluster_low = self._safe_float(fac_m1.get("cluster_low_gap"), 0.0)
+        macd_hist = self._safe_float(fac_m1.get("macd_hist"), 0.0)
+        dmi_diff = self._safe_float(fac_m1.get("plus_di"), 0.0) - self._safe_float(
+            fac_m1.get("minus_di"), 0.0
+        )
+        stoch = self._safe_float(fac_m1.get("stoch_rsi"), 0.5)
+        kc_width = self._safe_float(fac_m1.get("kc_width"), 0.0)
+        don_width = self._safe_float(fac_m1.get("donchian_width"), 0.0)
+        chaikin = self._safe_float(fac_m1.get("chaikin_vol"), 0.0)
+        cluster_gap = cluster_high if side == "long" else cluster_low
+        cloud_support = (cloud_pos > 0.2) if side == "long" else (cloud_pos < -0.2)
+        in_cloud = abs(cloud_pos) < 0.1
+        vol_low = (kc_width < 0.006 and don_width < 0.006) or chaikin < 0.1
+        return {
+            "cloud_pos": cloud_pos,
+            "span_a_gap": span_a_gap,
+            "span_b_gap": span_b_gap,
+            "cloud_support": cloud_support,
+            "in_cloud": in_cloud,
+            "cluster_gap": cluster_gap,
+            "macd_hist": macd_hist,
+            "dmi_diff": dmi_diff,
+            "stoch": stoch,
+            "vol_low": vol_low,
+        }
+
     def _regime_profile(self, fac_m1: Dict, fac_h4: Dict, range_mode: bool) -> str:
         """軽量なレジームタグを返す。"""
         if range_mode:
@@ -351,6 +385,11 @@ class ExitManager:
         if age_sec is None:
             return None
         if profit_pips >= 1.2:
+            return None
+
+        # 微反転・ごく浅い含み損では時間ガードを発動させない
+        small_draw = -max(1.5, atr_pips * 0.5)
+        if profit_pips >= small_draw:
             return None
 
         # MAEセーフティ（SL代替）: 含み損が大きくなったら即時撤退
@@ -553,30 +592,31 @@ class ExitManager:
             if long_units == 0 and short_units == 0:
                 continue
 
-            # レジーム別時間ガード: 伸びないポジを段階的に縮小/撤退
-            for side, units, profit in (
-                ("long", long_units, long_profit),
-                ("short", short_units, short_profit),
-            ):
-                tg_decision = self._time_guard_exit(
-                    pocket=pocket,
-                    side=side,
-                    open_info=info,
-                    units=units,
-                    profit_pips=profit,
-                    regime=regime_profile,
-                    atr_pips=atr_primary,
-                    now=current_time,
-                    vwap_gap_pips=vwap_gap_pips,
-                    close_to_vwap=close_to_vwap,
-                    low_vol=low_vol_flag,
-                )
-                if tg_decision:
-                    decisions.append(tg_decision)
-                    if side == "long":
-                        long_units += tg_decision.units  # negative to reduce
-                    else:
-                        short_units -= tg_decision.units  # positive to reduce
+            # レジーム別時間ガード: 伸びないポジを段階的に縮小/撤退（既定OFF）
+            if self._time_guard_enabled:
+                for side, units, profit in (
+                    ("long", long_units, long_profit),
+                    ("short", short_units, short_profit),
+                ):
+                    tg_decision = self._time_guard_exit(
+                        pocket=pocket,
+                        side=side,
+                        open_info=info,
+                        units=units,
+                        profit_pips=profit,
+                        regime=regime_profile,
+                        atr_pips=atr_primary,
+                        now=current_time,
+                        vwap_gap_pips=vwap_gap_pips,
+                        close_to_vwap=close_to_vwap,
+                        low_vol=low_vol_flag,
+                    )
+                    if tg_decision:
+                        decisions.append(tg_decision)
+                        if side == "long":
+                            long_units += tg_decision.units  # negative to reduce
+                        else:
+                            short_units -= tg_decision.units  # positive to reduce
 
             # VWAP急接近で半分利確して反転負けを防ぐ
             if long_units > 0 and long_profit is not None:
@@ -1863,6 +1903,7 @@ class ExitManager:
         if event_soon and pocket in {"micro", "scalp"}:
             reason = "event_lock"
         elif reverse_signal:
+            tech_ctx = self._exit_tech_context(fac_m1 or {}, "long")
             macro_skip = (
                 pocket == "macro"
                 and reverse_signal.get("confidence", 0) < self._macro_signal_threshold
@@ -1922,6 +1963,21 @@ class ExitManager:
                     if ema_gap_pips <= buffer and slope_fast > 0.0:
                         bounce_ok = True
                     if bounce_ok:
+                        return None
+                    cluster_gap = float(tech_ctx.get("cluster_gap") or 0.0)
+                    if cluster_gap > 0 and cluster_gap <= 2.8 and profit_pips is not None and profit_pips > self._soft_exit_floor:
+                        partial_units = max(1000, int(abs(units) * max(self._reverse_partial_frac, 0.25)))
+                        partial_units = min(partial_units, abs(units) - 1) if abs(units) > 1 else partial_units
+                        if partial_units > 0 and partial_units < abs(units):
+                            signed = -partial_units if side == "long" else partial_units
+                            return ExitDecision(
+                                pocket=pocket,
+                                units=signed,
+                                reason="cluster_partial",
+                                tag=reverse_signal.get("tag", tag),
+                                allow_reentry=True,
+                            )
+                    if tech_ctx.get("cloud_support") and cluster_gap > 4.0 and profit_pips is not None and profit_pips > -self._reverse_loss_floor:
                         return None
                     last_rev = self._reverse_ts.get((pocket, "long"))
                     if last_rev and (now - last_rev).total_seconds() < self._reverse_cooldown_sec:
@@ -2143,6 +2199,7 @@ class ExitManager:
                 max_mfe=max_mfe_long,
                 atr_pips=atr_pips,
                 vol_5m=vol_5m,
+                fac_m1=fac_m1,
             )
             if be_guard:
                 return be_guard
@@ -2553,6 +2610,7 @@ class ExitManager:
         elif event_soon and pocket in {"micro", "scalp"}:
             reason = "event_lock"
         elif reverse_signal:
+            tech_ctx = self._exit_tech_context(fac_m1 or {}, "short")
             macro_skip = (
                 pocket == "macro"
                 and reverse_signal.get("confidence", 0) < self._macro_signal_threshold
@@ -2633,6 +2691,21 @@ class ExitManager:
                     if ema_gap_pips <= buffer and slope_fast < 0.0:
                         bounce_ok = True
                     if bounce_ok:
+                        return None
+                    cluster_gap = float(tech_ctx.get("cluster_gap") or 0.0)
+                    if cluster_gap > 0 and cluster_gap <= 2.8 and profit_pips is not None and profit_pips > self._soft_exit_floor:
+                        partial_units = max(1000, int(abs(units) * max(self._reverse_partial_frac, 0.25)))
+                        partial_units = min(partial_units, abs(units) - 1) if abs(units) > 1 else partial_units
+                        if partial_units > 0 and partial_units < abs(units):
+                            signed = -partial_units if side == "long" else partial_units
+                            return ExitDecision(
+                                pocket=pocket,
+                                units=signed,
+                                reason="cluster_partial",
+                                tag=reverse_signal.get("tag", tag),
+                                allow_reentry=True,
+                            )
+                    if tech_ctx.get("cloud_support") and cluster_gap > 4.0 and profit_pips is not None and profit_pips > -self._reverse_loss_floor:
                         return None
                     last_rev = self._reverse_ts.get((pocket, "short"))
                     if last_rev and (now - last_rev).total_seconds() < self._reverse_cooldown_sec:
@@ -2747,6 +2820,7 @@ class ExitManager:
                 max_mfe=max_mfe_short,
                 atr_pips=atr_pips,
                 vol_5m=vol_5m,
+                fac_m1=fac_m1,
             )
             if be_guard:
                 return be_guard
@@ -3158,6 +3232,7 @@ class ExitManager:
         max_mfe: Optional[float],
         atr_pips: Optional[float],
         vol_5m: Optional[float] = None,
+        fac_m1: Optional[Dict] = None,
     ) -> Optional[ExitDecision]:
         """
         Once favorable excursion is achieved, avoid letting it slip to loss.
@@ -3172,6 +3247,12 @@ class ExitManager:
         min_loss = self._be_guard_min_loss
         frac = self._be_guard_frac
 
+        tech_ctx = self._exit_tech_context(fac_m1 or {}, side)
+        cluster_gap = float(tech_ctx.get("cluster_gap") or 0.0)
+        cloud_pos = float(tech_ctx.get("cloud_pos") or 0.0)
+        cloud_support = bool(tech_ctx.get("cloud_support"))
+        in_cloud = bool(tech_ctx.get("in_cloud"))
+
         atr_val = atr_pips or 0.0
         vol_val = vol_5m or 0.0
         if atr_val <= 2.5 or vol_val <= 0.8:
@@ -3181,6 +3262,22 @@ class ExitManager:
         elif atr_val >= 6.0 or vol_val >= 3.0:
             trigger += 0.4
             frac = max(0.25, frac - 0.1)
+        if cluster_gap > 0:
+            if cluster_gap < 3.0:
+                trigger = max(0.8, trigger - 0.4)
+                floor += 0.15
+                frac = min(0.95, frac + 0.12)
+            elif cluster_gap > 7.0:
+                trigger += 0.3
+                frac = max(0.2, frac - 0.08)
+        if cloud_support:
+            trigger += 0.2
+            frac = max(0.25, frac - 0.08)
+        elif cloud_pos != 0.0:
+            trigger = max(0.8, trigger - 0.2)
+            frac = min(0.95, frac + 0.08)
+        if in_cloud and tech_ctx.get("vol_low"):
+            floor += 0.1
 
         if max_mfe < trigger:
             return None
