@@ -301,26 +301,29 @@ async def vwap_magnet_s5_worker() -> None:
             env_block_logged = False
 
             candles = _bucket_ticks_with_counts(ticks)
-            if len(candles) < config.MIN_BUCKETS:
+            if len(candles) < config.WARMUP_MIN_BUCKETS:
                 continue
 
+            window_size = min(len(candles), config.VWAP_WINDOW_BUCKETS)
             closes = [c["close"] for c in candles]
             counts = [c["count"] for c in candles]
             weights = counts
-            z_dev = _z_dev(closes, weights, config.VWAP_WINDOW_BUCKETS)
+            closes_win = closes[-window_size:]
+            weights_win = weights[-window_size:]
+            z_dev = _z_dev(closes_win, weights_win, window_size)
             if z_dev is None:
                 continue
-            atr = _atr_from_closes(closes, config.VWAP_WINDOW_BUCKETS // 2)
+            atr = _atr_from_closes(closes_win, max(1, window_size // 2))
             if atr < config.MIN_ATR_PIPS:
                 continue
-            rsi = _rsi(closes[-config.VWAP_WINDOW_BUCKETS :], config.RSI_PERIOD)
+            rsi = _rsi(closes_win, config.RSI_PERIOD)
             if rsi is None:
                 continue
 
             stage_idx = 0  # Stage管理はexecutorに委任（Planで複数signal可）
 
             latest_close = closes[-1]
-            prev_vwap = _wma(closes[-(config.VWAP_WINDOW_BUCKETS + 1):-1], counts[-(config.VWAP_WINDOW_BUCKETS + 1):-1])
+            prev_vwap = _wma(closes_win[:-1], weights_win[:-1]) if len(closes_win) > 1 else None
             slope = latest_close - prev_vwap
 
             side: Optional[str] = None

@@ -44,6 +44,8 @@ class TunerBounds:
     hazard_debounce_ticks: tuple = (1, 3)
     min_grace_before_scratch_ms: tuple = (0, 400)
     scratch_requires_events: tuple = (0, 2)
+    # Stage/exit cadence: keep deltas very small as these are sensitive in live
+    reentry_block_s: tuple = (8, 30)
 
     # Micro gates
     momentum_conf_min: tuple = (0.55, 0.75)
@@ -183,6 +185,10 @@ class OnlineTuner:
             ub = preset.get('exit', {}).get('lowvol', {}).get('upper_bound_max_sec', 3.6)
             ub = max(self.bounds.upper_bound_max_sec[0], ub - 0.2)
             patch.setdefault('exit', {}).setdefault('lowvol', {})['upper_bound_max_sec'] = round(min(ub, self.bounds.upper_bound_max_sec[1]), 2)
+        elif hard_timeout < 0.05:
+            ub = preset.get('exit', {}).get('lowvol', {}).get('upper_bound_max_sec', 3.6)
+            ub = min(self.bounds.upper_bound_max_sec[1], ub + 0.1)
+            patch.setdefault('exit', {}).setdefault('lowvol', {})['upper_bound_max_sec'] = round(max(ub, self.bounds.upper_bound_max_sec[0]), 2)
 
         hazard_exit = reasons_pct.get('hazard_exit', 0.0)
         if hazard_exit == 0.0 and hazard_ticks_sum > 20:
@@ -194,6 +200,15 @@ class OnlineTuner:
             clb = preset.get('exit', {}).get('lowvol', {}).get('hazard_cost_latency_base_ms', 240) - 20
             patch['exit']['lowvol']['hazard_cost_spread_base'] = round(_clamp(csb, *self.bounds.hazard_cost_spread_base), 3)
             patch['exit']['lowvol']['hazard_cost_latency_base_ms'] = int(_clamp(clb, *self.bounds.hazard_cost_latency_base_ms))
+        elif hazard_exit > 0.25:
+            # too many hazard exits → loosen sensitivity a bit
+            hb = preset.get('exit', {}).get('lowvol', {}).get('hazard_debounce_ticks', 2)
+            hb = min(self.bounds.hazard_debounce_ticks[1], hb + 1)
+            patch.setdefault('exit', {}).setdefault('lowvol', {})['hazard_debounce_ticks'] = int(max(hb, self.bounds.hazard_debounce_ticks[0]))
+            csb = preset.get('exit', {}).get('lowvol', {}).get('hazard_cost_spread_base', 0.25) + 0.02
+            clb = preset.get('exit', {}).get('lowvol', {}).get('hazard_cost_latency_base_ms', 240) + 20
+            patch['exit']['lowvol']['hazard_cost_spread_base'] = round(_clamp(csb, *self.bounds.hazard_cost_spread_base), 3)
+            patch['exit']['lowvol']['hazard_cost_latency_base_ms'] = int(_clamp(clb, *self.bounds.hazard_cost_latency_base_ms))
 
         scratch = reasons_pct.get('scratch', 0.0)
         if scratch > 0.55:
@@ -201,6 +216,11 @@ class OnlineTuner:
             sr = preset.get('exit', {}).get('lowvol', {}).get('scratch_requires_events', 1)
             patch.setdefault('exit', {}).setdefault('lowvol', {})['min_grace_before_scratch_ms'] = int(_clamp(mg, *self.bounds.min_grace_before_scratch_ms))
             patch['exit']['lowvol']['scratch_requires_events'] = int(_clamp(sr+1, *self.bounds.scratch_requires_events))
+        elif scratch < 0.15:
+            mg = preset.get('exit', {}).get('lowvol', {}).get('min_grace_before_scratch_ms', 120) - 20
+            sr = preset.get('exit', {}).get('lowvol', {}).get('scratch_requires_events', 1)
+            patch.setdefault('exit', {}).setdefault('lowvol', {})['min_grace_before_scratch_ms'] = int(_clamp(mg, *self.bounds.min_grace_before_scratch_ms))
+            patch['exit']['lowvol']['scratch_requires_events'] = int(_clamp(max(sr-1, self.bounds.scratch_requires_events[0]), *self.bounds.scratch_requires_events))
 
         # Strategy gate tweaks based on EV
         if ev < 0.05:
@@ -209,6 +229,16 @@ class OnlineTuner:
             zv = preset.get('strategies', {}).get('MicroVWAPRevert', {}).get('vwap_z_min', 2.2) + 0.1
             ap = preset.get('strategies', {}).get('VolCompressionBreak', {}).get('accel_pctile', 75) + 2
             rb = preset.get('strategies', {}).get('BB_RSI_Fast', {}).get('reentry_block_s', 15) + 2
+            patch.setdefault('strategies', {}).setdefault('MomentumPulse', {})['min_confidence'] = round(_clamp(mp, *self.bounds.momentum_conf_min), 2)
+            patch['strategies'].setdefault('MicroVWAPRevert', {})['vwap_z_min'] = round(_clamp(zv, *self.bounds.microvwap_z_min), 2)
+            patch['strategies'].setdefault('VolCompressionBreak', {})['accel_pctile'] = int(_clamp(ap, *self.bounds.volcomp_accel_pctile))
+            patch['strategies'].setdefault('BB_RSI_Fast', {})['reentry_block_s'] = int(_clamp(rb, *self.bounds.bb_rsi_reentry_block_s))
+        elif ev > 0.12:
+            # loosen gates slightly when EV is healthy
+            mp = preset.get('strategies', {}).get('MomentumPulse', {}).get('min_confidence', 0.65) - 0.01
+            zv = preset.get('strategies', {}).get('MicroVWAPRevert', {}).get('vwap_z_min', 2.2) - 0.05
+            ap = preset.get('strategies', {}).get('VolCompressionBreak', {}).get('accel_pctile', 75) - 1
+            rb = preset.get('strategies', {}).get('BB_RSI_Fast', {}).get('reentry_block_s', 15) - 1
             patch.setdefault('strategies', {}).setdefault('MomentumPulse', {})['min_confidence'] = round(_clamp(mp, *self.bounds.momentum_conf_min), 2)
             patch['strategies'].setdefault('MicroVWAPRevert', {})['vwap_z_min'] = round(_clamp(zv, *self.bounds.microvwap_z_min), 2)
             patch['strategies'].setdefault('VolCompressionBreak', {})['accel_pctile'] = int(_clamp(ap, *self.bounds.volcomp_accel_pctile))
