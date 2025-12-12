@@ -68,6 +68,26 @@
   Notes:
     - refresh 間隔は perf/news 更新と同じ 5 分で、ホットパスに負荷を掛けない
 
+- [ ] ID: T-20251212-002
+  Title: Expand technical composite for lot/entry/exit (scalp→micro→macro)
+  Status: in-progress
+  Priority: P1
+  Owner: codex
+  Scope/Paths: indicators/*, main.py, strategies/scalping/*, execution/exit_manager.py, docs/TASKS.md
+  Context: テクニカル/パターンをlot調整・エントリー・EXITに広く使い、信頼度に応じてサイズ/粘りを動的に変える。まずscalpで導入し、検証後にmicro/macroへ拡大する。
+  Acceptance:
+    - facにMACD/ROC/CCI/StochRSI/DMI/EMAスロープ/Ichimoku/Keltner/Donchian/ChaikinVol/VWAP乖離/高安クラスタ距離が供給される
+    - scalp戦略でコンポジットスコアによりconfidence/lot/TPを0.7〜1.3倍スケールし、range/トレンドで挙動が変わる
+    - EXITでMACD/DMI/ボラ/パターン(N波/ローソク)を用い、順行でデファー・逆行で部分利確/BE強化が働く（ログ/metrics確認可）
+    - 短時間リプレイ/バックテストでエントリー数・lot・EXIT挙動が想定通りであることを確認し、micro/macro適用前に記録する
+  Plan:
+    - indicatorsに不足指標を実装し、facに追加（nullセーフ）
+    - scalpの信頼度/TP/lotスケールにコンポジットスコアを組み込み、ログで倍率を出す
+    - EXITにMACD/DMI/ボラ/パターンのデファー・部分利確ロジックを追加し、micro/macro展開前にリプレイ検証
+    - 検証後にmicro/macroへ適用し、回帰チェックを行う
+  Notes:
+    - 最初はscalpのみ有効化し、影響を限定した状態で観察する
+
 - [ ] ID: T-20251117-002
   Title: TrendMomentumMicro gating fix & range-to-trend handoff
   Status: in-progress
