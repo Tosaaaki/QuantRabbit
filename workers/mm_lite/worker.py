@@ -1,6 +1,6 @@
 from __future__ import annotations
 from typing import Any, Dict, List, Optional, Protocol, Tuple
-import math, time
+import math, time, asyncio, logging
 
 class DataFeed(Protocol):
     def get_bars(self, symbol: str, tf: str, n: int) -> Any: ...
@@ -36,6 +36,8 @@ def _round_tick(px: float, tick: float) -> float:
     if tick and tick > 0:
         return round(px / tick) * tick
     return px
+
+LOG = logging.getLogger(__name__)
 
 class MMLiteWorker:
     """
@@ -110,3 +112,20 @@ class MMLiteWorker:
             self.orders[sym] = {"bid_id": bid_id, "ask_id": ask_id}
 
         return {"symbol": sym, "bid": bid, "ask": ask, "mid": mid, "atr_bp": atr_bp, "half_spread_bp": half_bp}
+
+
+async def _idle_loop() -> None:
+    """Keep systemd unit alive when run via -m workers.mm_lite.worker."""
+    LOG.info("mm_lite idle loop started (no live broker/datafeed wiring)")
+    try:
+        while True:
+            await asyncio.sleep(3600.0)
+    except asyncio.CancelledError:  # pragma: no cover
+        LOG.info("mm_lite idle loop cancelled")
+        raise
+
+
+if __name__ == "__main__":  # pragma: no cover
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s", force=True)
+    LOG.info("mm_lite worker boot")
+    asyncio.run(_idle_loop())
