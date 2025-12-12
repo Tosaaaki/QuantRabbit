@@ -321,13 +321,16 @@ def allowed_lot(
     if margin_available is not None and price is not None and margin_rate:
         margin_per_lot = price * margin_rate * 100000
         if margin_per_lot > 0:
-            margin_budget = margin_available * max(0.0, min(MAX_MARGIN_USAGE, 1.0))
+            margin_cap = max(0.0, min(MAX_MARGIN_USAGE, 1.0))
             try:
                 usage_cap = float(get_secret("max_margin_usage"))
                 if 0.0 < usage_cap <= 1.0:
-                    margin_budget = margin_available * usage_cap
+                    margin_cap = max(margin_cap, usage_cap)
             except Exception:
                 pass
+            # guard下でも92%までは使う
+            margin_cap = max(margin_cap, 0.92)
+            margin_budget = margin_available * margin_cap
             lot = min(lot, margin_budget / margin_per_lot)
 
     lot = min(lot, MAX_LOT)
