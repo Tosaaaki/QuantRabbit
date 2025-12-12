@@ -244,6 +244,35 @@ class ExitManager:
             "range_take_profit",
             "range_stop",
         }
+        # 部分利確を許容する理由（それ以外はフルクローズ）
+        self._partial_eligible_reasons = {
+            "trend_reversal",
+            "reverse_signal",
+            "ma_cross_imminent",
+            "ma_cross",
+            "macro_trend_fade",
+            "macro_trail_hit",
+            "macro_atr_trail",
+            "range_take_profit",
+            "micro_profit_guard",
+            "micro_profit_snatch",
+            "mfe_trail",
+            "mfe_guard",
+            "micro_slope_trail",
+            "macro_profit_lock",
+            "advisor_takeprofit",
+        }
+        # 強制全決済とする理由（部分利確を無効化）
+        self._force_exit_reasons = {
+            "range_stop",
+            "stop_loss_order",
+            "event_lock",
+            "micro_momentum_stop",
+            "macro_loss_cap",
+            "advisor_drawdown",
+            "kill_switch",
+            "hard_stop",
+        }
 
     def plan_closures(
         self,

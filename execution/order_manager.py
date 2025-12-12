@@ -923,6 +923,9 @@ def _maybe_update_protections(
     trade_id: str,
     sl_price: Optional[float],
     tp_price: Optional[float],
+    *,
+    context: str = "auto",
+    ref_price: Optional[float] = None,
 ) -> None:
     if not trade_id or (sl_price is None and tp_price is None):
         return
@@ -950,6 +953,20 @@ def _maybe_update_protections(
     if prev_sl == current_sl and prev_tp == current_tp:
         return
 
+    def _fmt(val: Optional[float]) -> str:
+        return "-" if val is None else f"{val:.3f}"
+
+    logging.info(
+        "[PROTECT][%s] trade=%s sl=%s->%s tp=%s->%s ref=%s",
+        context,
+        trade_id,
+        _fmt(prev_sl),
+        _fmt(current_sl),
+        _fmt(prev_tp),
+        _fmt(current_tp),
+        _fmt(ref_price),
+    )
+
     try:
         req = TradeCRCDO(accountID=ACCOUNT, tradeID=trade_id, data=data)
         api.request(req)
@@ -960,83 +977,13 @@ def _maybe_update_protections(
         }
     except Exception as exc:  # noqa: BLE001
         logging.warning(
-            "[ORDER] Failed to update protections trade=%s sl=%s tp=%s: %s",
+            "[ORDER] Failed to update protections trade=%s sl=%s tp=%s ctx=%s: %s",
             trade_id,
             sl_price,
             tp_price,
+            context,
             exc,
         )
-
-
-async def set_trade_protections(
-    trade_id: str,
-    *,
-    sl_price: Optional[float],
-    tp_price: Optional[float],
-) -> bool:
-    if not trade_id or (sl_price is None and tp_price is None):
-        return False
-    data: dict[str, dict[str, str]] = {}
-    if sl_price is not None:
-        data["stopLoss"] = {
-            "price": f"{sl_price:.3f}",
-            "timeInForce": "GTC",
-        }
-    if tp_price is not None:
-        data["takeProfit"] = {
-            "price": f"{tp_price:.3f}",
-            "timeInForce": "GTC",
-        }
-    if not data:
-        return False
-    try:
-        req = TradeCRCDO(accountID=ACCOUNT, tradeID=trade_id, data=data)
-        api.request(req)
-        _LAST_PROTECTIONS[trade_id] = (
-            round(sl_price, 3) if sl_price is not None else None,
-            round(tp_price, 3) if tp_price is not None else None,
-        )
-        _log_order(
-            pocket=None,
-            instrument=None,
-            side=None,
-            units=None,
-            sl_price=sl_price,
-            tp_price=tp_price,
-            client_order_id=None,
-            status="protection_update",
-            attempt=1,
-            stage_index=None,
-            ticket_id=trade_id,
-            executed_price=None,
-            request_payload={"trade_id": trade_id, "data": data},
-        )
-        return True
-    except Exception as exc:  # noqa: BLE001
-        logging.warning(
-            "[ORDER] protection update failed trade=%s sl=%s tp=%s: %s",
-            trade_id,
-            sl_price,
-            tp_price,
-            exc,
-        )
-        _log_order(
-            pocket=None,
-            instrument=None,
-            side=None,
-            units=None,
-            sl_price=sl_price,
-            tp_price=tp_price,
-            client_order_id=None,
-            status="protection_update_failed",
-            attempt=1,
-            stage_index=None,
-            ticket_id=trade_id,
-            executed_price=None,
-            error_message=str(exc),
-            request_payload={"trade_id": trade_id, "data": data},
-        )
-        return False
 
 
 async def close_trade(trade_id: str, units: Optional[int] = None) -> bool:
@@ -1330,7 +1277,13 @@ def update_dynamic_protections(
                         tp_price = round(sl_price - max(0.004, tp_pips * pip), 3)
                 if current_price is not None and sl_price <= current_price:
                     sl_price = round(current_price + 0.003, 3)
-            _maybe_update_protections(trade_id, sl_price, tp_price)
+            _maybe_update_protections(
+                trade_id,
+                sl_price,
+                tp_price,
+                context="dynamic_protection_v1",
+                ref_price=current_price,
+            )
 
 
 def _apply_dynamic_protections_v2(
@@ -1491,7 +1444,13 @@ def _apply_dynamic_protections_v2(
             desired_sl = round(desired_sl, 3)
             tp_price = trade_tp
 
-            _maybe_update_protections(trade_id, desired_sl, tp_price)
+            _maybe_update_protections(
+                trade_id,
+                desired_sl,
+                tp_price,
+                context="dynamic_protection_v2",
+                ref_price=current_price,
+            )
 
 
 async def set_trade_protections(
@@ -1508,7 +1467,12 @@ async def set_trade_protections(
     if not trade_id:
         return False
     try:
-        _maybe_update_protections(trade_id, sl_price, tp_price)
+        _maybe_update_protections(
+            trade_id,
+            sl_price,
+            tp_price,
+            context="legacy_set_trade_protections",
+        )
         return True
     except Exception as exc:  # noqa: BLE001
         logging.warning(
@@ -2358,7 +2322,13 @@ async def market_order(
                     note=f"attempt={attempt+1}",
                 )
                 target_sl = None if STOP_LOSS_DISABLED else sl_price
-                _maybe_update_protections(trade_id, target_sl, tp_price)
+                _maybe_update_protections(
+                    trade_id,
+                    target_sl,
+                    tp_price,
+                    context="on_fill_protection",
+                    ref_price=executed_price,
+                )
                 return trade_id
 
             logging.error(
