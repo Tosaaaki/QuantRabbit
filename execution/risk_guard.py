@@ -323,18 +323,28 @@ def allowed_lot(
         margin_per_lot = price * margin_rate * 100000
         if margin_per_lot > 0:
             margin_cap = max(0.0, min(MAX_MARGIN_USAGE, 1.0))
+            # Allow env override and hard cap to prevent overuse (e.g., 0.95)
+            hard_margin_cap = float(os.getenv("MAX_MARGIN_USAGE_HARD", "0.95") or 0.95)
             try:
                 usage_cap = float(get_secret("max_margin_usage"))
                 if 0.0 < usage_cap <= 1.0:
                     margin_cap = max(margin_cap, usage_cap)
             except Exception:
                 pass
-            # guard下でも92%までは使う
-            margin_cap = max(margin_cap, 0.92)
-            margin_budget = margin_available * margin_cap
-            lot_margin = margin_budget / margin_per_lot
+            # guard下でも92%までは使うが、上限も守る
+            margin_cap = min(max(margin_cap, 0.92), hard_margin_cap)
+            # 既存利用分を踏まえて「総使用率が cap を超えない」ように残余枠を計算
+            # margin_available は「残り証拠金」と仮定し、使用中 = equity - margin_available
+            margin_used = max(0.0, equity - margin_available)
+            margin_budget_total = equity * margin_cap
+            margin_budget_new = max(0.0, margin_budget_total - margin_used)
+            lot_margin = margin_budget_new / margin_per_lot
+            # すでに cap 超なら新規はゼロ
+            current_usage = margin_used / equity if equity > 0 else 0.0
+            if current_usage >= margin_cap:
+                lot_margin = 0.0
             # 信頼度・SLなしの運用では margin ベースを優先
-            lot = lot_margin if lot_margin > 0 else lot
+            lot = max(lot, lot_margin)
 
     lot = min(lot, MAX_LOT)
     min_lot = _MIN_LOT_BY_POCKET.get((pocket or "").lower(), 0.0)

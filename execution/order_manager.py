@@ -75,9 +75,10 @@ _MACRO_MIN_UNITS_DEFAULT = max(_DEFAULT_MIN_UNITS * 4, 10000)
 _MIN_UNITS_BY_POCKET: dict[str, int] = {
     "micro": _env_int("ORDER_MIN_UNITS_MICRO", _DEFAULT_MIN_UNITS),
     "macro": _env_int("ORDER_MIN_UNITS_MACRO", _MACRO_MIN_UNITS_DEFAULT),
-    # scalp は最低 5k に緩和（環境変数で上書き可）
-    "scalp": _env_int("ORDER_MIN_UNITS_SCALP", 5000),
+    # scalp は最低 10k（環境変数で上書き可）
+    "scalp": _env_int("ORDER_MIN_UNITS_SCALP", 10000),
 }
+# Raise scalp floor to avoid tiny entries; can override via env ORDER_MIN_UNITS_SCALP
 # If true, do not attach stopLossOnFill (TP is still sent).
 STOP_LOSS_DISABLED = stop_loss_disabled()
 TRAILING_SL_ALLOWED = trailing_sl_allowed()
@@ -122,14 +123,14 @@ _ORDER_SPREAD_BLOCK_PIPS = float(os.getenv("ORDER_SPREAD_BLOCK_PIPS", "1.6"))
 
 # Max units per new entry order (reduce_only orders are exempt)
 try:
-    _MAX_ORDER_UNITS = int(os.getenv("MAX_ORDER_UNITS", "20000"))
+    _MAX_ORDER_UNITS = int(os.getenv("MAX_ORDER_UNITS", "40000"))
 except Exception:
-    _MAX_ORDER_UNITS = 20000
+    _MAX_ORDER_UNITS = 40000
 # Hard safety cap even after dynamic boosts
 try:
-    _MAX_ORDER_UNITS_HARD = int(os.getenv("MAX_ORDER_UNITS_HARD", "40000"))
+    _MAX_ORDER_UNITS_HARD = int(os.getenv("MAX_ORDER_UNITS_HARD", "60000"))
 except Exception:
-    _MAX_ORDER_UNITS_HARD = 40000
+    _MAX_ORDER_UNITS_HARD = 60000
 
 # 最低発注単位（AGENT.me 6.1 に準拠）。
 # リスク計算・ステージ係数適用後の“最終 units”に対して適用する最終ゲート。
