@@ -3761,8 +3761,9 @@ class ExitManager:
             except Exception:
                 slope = None
 
-        soft_thr = self._micro_profit_soft
-        hard_thr = self._micro_profit_hard
+        # 伸ばし優先: 閾値をやや広げ、強い逆行シグナルが複合したときだけ発火
+        soft_thr = self._micro_profit_soft + 0.3
+        hard_thr = self._micro_profit_hard + 0.5
         # Allow winners to stretch a bit if slopeは順方向に傾いている
         if slope is not None:
             if side == "long" and slope > 0.12:
@@ -3807,9 +3808,13 @@ class ExitManager:
             elif side == "short" and slope >= self._micro_profit_slope_min:
                 slope_trigger = True
 
-        if hard and (ema_trigger or rsi_trigger or slope_trigger):
+        triggers = [ema_trigger, rsi_trigger, slope_trigger]
+        trigger_count = sum(1 for t in triggers if t)
+
+        # より強い逆行シグナルの組み合わせを要求
+        if hard and trigger_count >= 2:
             return True
-        if soft and ema_trigger and (rsi_trigger or slope_trigger):
+        if soft and ema_trigger and trigger_count >= 2:
             return True
         return False
 
