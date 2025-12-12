@@ -296,13 +296,11 @@ def allowed_lot(
 ) -> float:
     """
     口座全体の許容ロットを概算する。
-    sl_pips: 損切り幅（pip単位）
+    sl_pips: 損切り幅（pip単位）。SLなしの場合は margin ベースで算出。
     margin_available: 利用可能証拠金
     price: 現在値（USD/JPY mid）
     margin_rate: OANDA口座の証拠金率
     """
-    if sl_pips <= 0:
-        return 0.0
 
     # Allow override from config/env or environment: key "risk_pct" (e.g. 0.01 = 1%)
     try:
@@ -316,7 +314,10 @@ def allowed_lot(
     if risk_pct_override is not None:
         risk_pct = max(0.0005, min(risk_pct_override, 0.25))
     risk_amount = equity * risk_pct
-    lot = risk_amount / (sl_pips * 1000)  # USD/JPYの1lotは1000JPY/pip ≒ 1000
+    lot_risk = MAX_LOT
+    if sl_pips > 0:
+        lot_risk = risk_amount / (sl_pips * 1000)  # USD/JPYの1lotは1000JPY/pip ≒ 1000
+    lot = lot_risk
 
     if margin_available is not None and price is not None and margin_rate:
         margin_per_lot = price * margin_rate * 100000
@@ -331,7 +332,9 @@ def allowed_lot(
             # guard下でも92%までは使う
             margin_cap = max(margin_cap, 0.92)
             margin_budget = margin_available * margin_cap
-            lot = min(lot, margin_budget / margin_per_lot)
+            lot_margin = margin_budget / margin_per_lot
+            # 信頼度・SLなしの運用では margin ベースを優先
+            lot = lot_margin if lot_margin > 0 else lot
 
     lot = min(lot, MAX_LOT)
     min_lot = _MIN_LOT_BY_POCKET.get((pocket or "").lower(), 0.0)
