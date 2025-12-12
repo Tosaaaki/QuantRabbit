@@ -18,6 +18,7 @@ from utils.oanda_account import get_account_snapshot
 from . import config
 
 LOG = logging.getLogger(__name__)
+PIP = 0.01
 
 
 def _time_in_window(now: datetime.datetime) -> bool:
@@ -84,6 +85,24 @@ async def london_momentum_worker() -> None:
                 if momentum < config.MOMENTUM_MIN:
                     await asyncio.sleep(config.LOOP_INTERVAL_SEC)
                     continue
+
+                adx_m5 = float(fac_m5.get("adx") or 0.0)
+                bbw_m5 = float(fac_m5.get("bbw") or 0.0)
+                vwap_m5 = fac_m5.get("vwap")
+                price_f = float(price)
+                if bbw_m5 > 0.0 and bbw_m5 < 0.0013 and adx_m5 < 18.0:
+                    LOG.debug("%s skip: range/low-vol (adx=%.2f bbw=%.5f)", config.LOG_PREFIX, adx_m5, bbw_m5)
+                    await asyncio.sleep(config.LOOP_INTERVAL_SEC)
+                    continue
+                if vwap_m5 is not None:
+                    try:
+                        vwap_gap = abs(price_f - float(vwap_m5)) / PIP
+                        if vwap_gap < 1.0:
+                            LOG.debug("%s skip: vwap too close gap=%.2fp", config.LOG_PREFIX, vwap_gap)
+                            await asyncio.sleep(config.LOOP_INTERVAL_SEC)
+                            continue
+                    except Exception:
+                        pass
 
                 atr_pips = fac_m5.get("atr_pips")
                 if atr_pips is None:
