@@ -269,6 +269,10 @@ class ExitManager:
             "range_take_profit",
             "micro_profit_guard",
             "micro_profit_snatch",
+            "micro_struct_partial",
+            "nwave_partial",
+            "pivot_partial",
+            "candle_partial",
             "mfe_trail",
             "mfe_guard",
             "micro_slope_trail",
@@ -2044,6 +2048,47 @@ class ExitManager:
         ):
             reason = "micro_profit_snatch"
             allow_reentry = True
+        elif pocket in {"micro", "scalp"} and not reason:
+            struct_partial = self._micro_struct_partial(
+                pocket=pocket,
+                side="long",
+                units=units,
+                profit_pips=profit_pips,
+                close_price=close_price,
+                fac_m1=fac_m1,
+                atr_pips=atr_pips,
+            )
+            if struct_partial:
+                return struct_partial
+        elif pocket == "macro" and not reason:
+            partial = (
+                self._nwave_partial_exit(
+                    pocket=pocket,
+                    side="long",
+                    units=units,
+                    profit_pips=profit_pips,
+                    story=story,
+                )
+                or self._pivot_soft_partial(
+                    pocket=pocket,
+                    side="long",
+                    units=units,
+                    profit_pips=profit_pips,
+                    price=close_price,
+                    fac_m1=fac_m1,
+                    atr_pips=atr_pips,
+                )
+                or self._candlestick_partial_exit(
+                    pocket=pocket,
+                    side="long",
+                    units=units,
+                    profit_pips=profit_pips,
+                    story=story,
+                    atr_pips=atr_pips,
+                )
+            )
+            if partial:
+                return partial
 
         # Structure-based kill-line: if macro and M5 pivot breaks beyond cushion, exit decisively
         if pocket == "macro" and not reason:
@@ -2500,6 +2545,47 @@ class ExitManager:
             projection_fast=projection_fast,
         ):
             reason = "micro_profit_guard"
+        elif pocket in {"micro", "scalp"} and not reason:
+            struct_partial = self._micro_struct_partial(
+                pocket=pocket,
+                side="short",
+                units=units,
+                profit_pips=profit_pips,
+                close_price=close_price,
+                fac_m1=fac_m1,
+                atr_pips=atr_pips,
+            )
+            if struct_partial:
+                return struct_partial
+        elif pocket == "macro" and not reason:
+            partial = (
+                self._nwave_partial_exit(
+                    pocket=pocket,
+                    side="short",
+                    units=units,
+                    profit_pips=profit_pips,
+                    story=story,
+                )
+                or self._pivot_soft_partial(
+                    pocket=pocket,
+                    side="short",
+                    units=units,
+                    profit_pips=profit_pips,
+                    price=close_price,
+                    fac_m1=fac_m1,
+                    atr_pips=atr_pips,
+                )
+                or self._candlestick_partial_exit(
+                    pocket=pocket,
+                    side="short",
+                    units=units,
+                    profit_pips=profit_pips,
+                    story=story,
+                    atr_pips=atr_pips,
+                )
+            )
+            if partial:
+                return partial
         elif range_mode:
             if pocket == "macro":
                 if self._has_mature_trade(open_info, "short", now, self._range_macro_grace_minutes):
@@ -2805,6 +2891,237 @@ class ExitManager:
             return True
         youngest = self._youngest_trade_age_seconds(open_info, side, now) or 0.0
         return youngest >= self._micro_loss_hold_seconds
+
+    def _micro_struct_partial(
+        self,
+        *,
+        pocket: str,
+        side: str,
+        units: int,
+        profit_pips: Optional[float],
+        close_price: Optional[float],
+        fac_m1: Dict,
+        atr_pips: Optional[float],
+    ) -> Optional[ExitDecision]:
+        """
+        M1の直近高安を明確に割ったときに小さく利確して往復負けを防ぐ。
+        - micro/scalpのみ
+        - 利益が薄い/フラット付近でのみ発動
+        - 全撤退ではなく部分利確
+        """
+        if pocket not in {"micro", "scalp"}:
+            return None
+        if profit_pips is None or profit_pips < 0.0:
+            return None
+        if close_price is None or units == 0:
+            return None
+
+        candles = fac_m1.get("candles") or []
+        if len(candles) < 8:
+            return None
+        highs = [self._safe_float(c.get("high")) for c in candles[-14:]]
+        lows = [self._safe_float(c.get("low")) for c in candles[-14:]]
+        highs = [h for h in highs if h is not None]
+        lows = [l for l in lows if l is not None]
+        if not highs or not lows:
+            return None
+        recent_high = max(highs)
+        recent_low = min(lows)
+        cushion = max(0.08, min(0.25, (atr_pips or 2.0) * 0.08))
+        profit_cap = max(2.8, (atr_pips or 2.0) * 1.4)
+
+        if profit_pips > profit_cap:
+            return None
+
+        if side == "long":
+            gap = (close_price - recent_low) / 0.01
+            if gap > cushion:
+                return None
+        else:
+            gap = (recent_high - close_price) / 0.01
+            if gap > cushion:
+                return None
+
+        cut_units = max(1000, abs(units) // 3)
+        if cut_units <= 0 or cut_units >= abs(units):
+            return None
+
+        signed = -cut_units if side == "long" else cut_units
+        return ExitDecision(
+            pocket=pocket,
+            units=signed,
+            reason="micro_struct_partial",
+            tag="struct-partial",
+            allow_reentry=True,
+        )
+
+    def _nwave_partial_exit(
+        self,
+        *,
+        pocket: str,
+        side: str,
+        units: int,
+        profit_pips: Optional[float],
+        story: Optional[ChartStorySnapshot],
+    ) -> Optional[ExitDecision]:
+        """
+        H4 N波が逆行している場合に、マクロポジションを小さく利確してリスクを落とす。
+        """
+        if pocket != "macro" or story is None or profit_pips is None or units == 0:
+            return None
+        patterns = getattr(story, "pattern_summary", None) or {}
+        n_wave = patterns.get("n_wave") or {}
+        bias = n_wave.get("direction") or n_wave.get("bias")
+        try:
+            conf = float(n_wave.get("confidence", 0.0) or 0.0)
+        except Exception:
+            conf = 0.0
+        if conf < 0.6 or bias is None:
+            return None
+        if side == "long" and bias != "down":
+            return None
+        if side == "short" and bias != "up":
+            return None
+        if profit_pips < 0.6 or profit_pips > 6.0:
+            return None
+        cut_units = max(1000, int(abs(units) * 0.33))
+        if cut_units <= 0 or cut_units >= abs(units):
+            return None
+        signed = -cut_units if side == "long" else cut_units
+        return ExitDecision(
+            pocket=pocket,
+            units=signed,
+            reason="nwave_partial",
+            tag="nwave-partial",
+            allow_reentry=True,
+        )
+
+    def _pivot_soft_partial(
+        self,
+        *,
+        pocket: str,
+        side: str,
+        units: int,
+        profit_pips: Optional[float],
+        price: float,
+        fac_m1: Dict,
+        atr_pips: Optional[float],
+    ) -> Optional[ExitDecision]:
+        """
+        M5ピボット手前で先に一部利確して、キルライン到達時の全クローズを緩和する。
+        マクロのみ、薄利〜中利幅で発動。
+        """
+        if pocket != "macro":
+            return None
+        if profit_pips is None or profit_pips < 0.8 or profit_pips > 6.5:
+            return None
+        try:
+            c5 = resample_candles_from_m1(fac_m1.get("candles") or [], 5)
+        except Exception:
+            return None
+        if len(c5) < 9:
+            return None
+
+        low_key, high_key = ("low", "high")
+
+        def _last_pivot(arr: List[Dict[str, float]], is_low: bool, width: int = 2, lookback: int = 14) -> Optional[float]:
+            n = len(arr)
+            start = max(2, n - lookback)
+            for i in range(n - 3, start - 1, -1):
+                try:
+                    center = float(arr[i][low_key if is_low else high_key])
+                except Exception:
+                    continue
+                ok = True
+                for k in range(1, width + 1):
+                    try:
+                        left = float(arr[i - k][low_key if is_low else high_key])
+                        right = float(arr[i + k][low_key if is_low else high_key])
+                    except Exception:
+                        ok = False
+                        break
+                    if is_low:
+                        if not (center <= left and center <= right):
+                            ok = False
+                            break
+                    else:
+                        if not (center >= left and center >= right):
+                            ok = False
+                            break
+                if ok:
+                    return center
+            return None
+
+        cushion = max(0.5, (atr_pips or 0.0) * self._macro_struct_cushion)
+        soft_band = cushion * 0.5
+        pivot = _last_pivot(c5, is_low=(side == "long"))
+        if pivot is None:
+            return None
+        gap_pips = (price - pivot) / 0.01 if side == "long" else (pivot - price) / 0.01
+        if gap_pips < 0:
+            # already breached; let kill-line handle
+            return None
+        if gap_pips > soft_band:
+            return None
+
+        cut_units = max(1000, int(abs(units) * 0.33))
+        if cut_units <= 0 or cut_units >= abs(units):
+            return None
+        signed = -cut_units if side == "long" else cut_units
+        return ExitDecision(
+            pocket=pocket,
+            units=signed,
+            reason="pivot_partial",
+            tag="pivot-partial",
+            allow_reentry=True,
+        )
+
+    def _candlestick_partial_exit(
+        self,
+        *,
+        pocket: str,
+        side: str,
+        units: int,
+        profit_pips: Optional[float],
+        story: Optional[ChartStorySnapshot],
+        atr_pips: Optional[float],
+    ) -> Optional[ExitDecision]:
+        """
+        H1ローソク足の強い逆行パターンが出たときに、薄利〜小利幅で部分利確する。
+        順行パターンでは発火しない。
+        """
+        if story is None or pocket not in {"macro", "micro", "scalp"}:
+            return None
+        patterns = getattr(story, "pattern_summary", None) or {}
+        candle = patterns.get("candlestick") or {}
+        bias = candle.get("bias")
+        if bias is None or profit_pips is None or profit_pips < 0.4:
+            return None
+        try:
+            conf = float(candle.get("confidence", 0.0) or 0.0)
+        except Exception:
+            conf = 0.0
+        if conf < 0.6:
+            return None
+        if side == "long" and bias != "down":
+            return None
+        if side == "short" and bias != "up":
+            return None
+        profit_cap = min(2.8, max(1.4, (atr_pips or 2.0) * 1.3))
+        if profit_pips > profit_cap:
+            return None
+        frac = 0.5 if pocket in {"micro", "scalp"} else 0.33
+        cut_units = max(1000, int(abs(units) * frac))
+        if cut_units <= 0 or cut_units >= abs(units):
+            return None
+        signed = -cut_units if side == "long" else cut_units
+        return ExitDecision(
+            pocket=pocket,
+            units=signed,
+            reason="candle_partial",
+            tag="candle-partial",
+            allow_reentry=True,
+        )
 
     def _value_cut_exit(
         self,
@@ -3525,8 +3842,14 @@ class ExitManager:
             return True
 
         n_wave = patterns.get("n_wave") or {}
-        bias = n_wave.get("bias")
+        bias = n_wave.get("direction") or n_wave.get("bias")
         confidence = float(n_wave.get("confidence", 0.0) or 0.0)
+        candle = patterns.get("candlestick") or {}
+        candle_bias = candle.get("bias")
+        try:
+            candle_conf = float(candle.get("confidence", 0.0) or 0.0)
+        except Exception:
+            candle_conf = 0.0
         # Reasons that are soft / pattern-driven for macro exits
         pattern_reasons = {
             "reverse_signal",
@@ -3537,6 +3860,19 @@ class ExitManager:
         }
         if reason not in pattern_reasons:
             return True
+
+        # Candlestickが強く逆行する場合はEXITを許容し、順行の場合は軽くブロック
+        if candle_bias and candle_conf >= 0.6:
+            if side == "long":
+                if candle_bias == "down":
+                    return True
+                if candle_bias == "up" and profit_pips > -self._macro_loss_buffer:
+                    return False
+            else:
+                if candle_bias == "up":
+                    return True
+                if candle_bias == "down" and profit_pips > -self._macro_loss_buffer:
+                    return False
 
         if side == "long":
             if bias == "up" and confidence >= 0.55 and profit_pips > -self._macro_loss_buffer:

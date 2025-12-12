@@ -175,6 +175,8 @@ def _detect_n_wave(
             for s in sw
         ]
 
+    bias: Optional[str] = None
+
     if (
         last[0]["kind"] == "low"
         and last[1]["kind"] == "high"
@@ -189,8 +191,10 @@ def _detect_n_wave(
             swing_depth = (last[1]["price"] - last[2]["price"]) / _PIP
             confidence = min(1.0, max(leg_a, leg_b) / 18.0)
             confidence = max(confidence, min(1.0, swing_depth / 12.0))
+            bias = "up"
             pattern = {
                 "bias": "up",
+                "direction": "up",
                 "confidence": round(confidence, 3),
                 "structure": {
                     "legs": [round(leg_a, 1), round(swing_depth, 1), round(leg_b, 1)],
@@ -213,8 +217,10 @@ def _detect_n_wave(
             swing_depth = (last[2]["price"] - last[1]["price"]) / _PIP
             confidence = min(1.0, max(leg_a, leg_b) / 18.0)
             confidence = max(confidence, min(1.0, swing_depth / 12.0))
+            bias = "down"
             pattern = {
                 "bias": "down",
+                "direction": "down",
                 "confidence": round(confidence, 3),
                 "structure": {
                     "legs": [round(leg_a, 1), round(swing_depth, 1), round(leg_b, 1)],
@@ -225,6 +231,8 @@ def _detect_n_wave(
             }
     if pattern:
         pattern["timeframe"] = "H4"
+        if bias and "direction" not in pattern:
+            pattern["direction"] = bias
         return pattern
     return None
 
@@ -244,6 +252,8 @@ def _detect_candlestick_pattern(
     pattern_type: Optional[str] = None
     confidence = 0.0
 
+    bias: Optional[str] = None
+
     if (
         c1 > o1
         and c0 < o0
@@ -253,6 +263,7 @@ def _detect_candlestick_pattern(
     ):
         pattern_type = "bullish_engulfing"
         confidence = min(1.0, body1 / range1 + 0.3)
+        bias = "up"
     elif (
         c1 < o1
         and c0 > o0
@@ -262,12 +273,15 @@ def _detect_candlestick_pattern(
     ):
         pattern_type = "bearish_engulfing"
         confidence = min(1.0, body1 / range1 + 0.3)
+        bias = "down"
     elif lower_wick > body1 * 2.5 and upper_wick <= body1 * 0.6:
         pattern_type = "hammer" if c1 >= o1 else "inverted_hammer"
         confidence = min(1.0, lower_wick / range1 + 0.25)
+        bias = "up"
     elif upper_wick > body1 * 2.5 and lower_wick <= body1 * 0.6:
         pattern_type = "shooting_star" if c1 <= o1 else "hanging_man"
         confidence = min(1.0, upper_wick / range1 + 0.25)
+        bias = "down"
 
     if pattern_type:
         return {
@@ -275,6 +289,7 @@ def _detect_candlestick_pattern(
             "type": pattern_type,
             "confidence": round(min(confidence, 1.0), 3),
             "body_pips": round(body1 / _PIP, 2),
+            "bias": bias,
         }
     return None
 

@@ -1974,8 +1974,13 @@ def _micro_chart_gate(
         except Exception:
             pattern_summary = {}
     n_wave = None
+    candlestick = None
     if isinstance(pattern_summary, dict):
         n_wave = pattern_summary.get("n_wave")
+        candlestick = pattern_summary.get("candlestick")
+    n_wave_direction = None
+    if isinstance(n_wave, dict):
+        n_wave_direction = n_wave.get("direction") or n_wave.get("bias")
 
     micro_trend = None
     summary = {}
@@ -2077,7 +2082,7 @@ def _micro_chart_gate(
                 "attack_thresh": attack_thresh,
                 "base_rise_thresh": round(base_rise_thresh, 2),
             }
-        if n_wave and isinstance(n_wave, dict) and n_wave.get("direction") == "down" and slope6 <= nwave_slope_thresh:
+        if n_wave_direction == "down" and slope6 <= nwave_slope_thresh:
             return False, "micro_nwave_opposed", {
                 "slope6": round(slope6, 2),
                 "range": round(range_pips, 2),
@@ -2099,7 +2104,7 @@ def _micro_chart_gate(
                 "attack_thresh": attack_thresh,
                 "base_rise_thresh": round(base_rise_thresh, 2),
             }
-        if n_wave and isinstance(n_wave, dict) and n_wave.get("direction") == "up" and slope6 >= -nwave_slope_thresh:
+        if n_wave_direction == "up" and slope6 >= -nwave_slope_thresh:
             return False, "micro_nwave_opposed", {
                 "slope6": round(slope6, 2),
                 "range": round(range_pips, 2),
@@ -2107,6 +2112,31 @@ def _micro_chart_gate(
                 "m15": m15_trend or "",
                 "h1": h1_trend or "",
                 "nwave": n_wave,
+            }
+
+    # H1ローソク足パターンが明確に逆行している場合はワンタッチで抑制（強トレンド時のみ許容）
+    if candlestick and isinstance(candlestick, dict):
+        try:
+            candle_conf = float(candlestick.get("confidence", 0.0) or 0.0)
+        except Exception:
+            candle_conf = 0.0
+        candle_type = str(candlestick.get("type") or "")
+        candle_bias = str(candlestick.get("bias") or "")
+        opp_long = action == "OPEN_LONG" and candle_bias == "down"
+        opp_short = action == "OPEN_SHORT" and candle_bias == "up"
+        strong_trend_supports = (action == "OPEN_LONG" and micro_trend == "up") or (
+            action == "OPEN_SHORT" and micro_trend == "down"
+        )
+        if candle_conf >= 0.6 and (opp_long or opp_short) and not strong_trend_supports:
+            reason = "micro_candle_opposed"
+            return False, reason, {
+                "slope6": round(slope6, 2),
+                "range": round(range_pips, 2),
+                "trend": micro_trend or "",
+                "m15": m15_trend or "",
+                "h1": h1_trend or "",
+                "candle": candle_type,
+                "candle_conf": round(candle_conf, 2),
             }
 
     if range_pips <= range_chop_thresh and abs(slope6) <= slope_chop_thresh:
