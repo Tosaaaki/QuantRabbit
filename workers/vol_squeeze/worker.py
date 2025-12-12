@@ -1,6 +1,8 @@
 from __future__ import annotations
 from typing import Any, Dict, List, Optional, Protocol
 import math
+import asyncio
+import logging
 
 class DataFeed(Protocol):
     def get_bars(self, symbol: str, tf: str, n: int) -> Any: ...
@@ -10,6 +12,8 @@ class Broker(Protocol):
     def send(self, order: Dict[str, Any]) -> Any: ...
 
 from workers.common.exit_adapter import build_exit_manager
+
+LOG = logging.getLogger(__name__)
 
 def _as_bars(bars: Any):
     if not bars: return []
@@ -147,3 +151,18 @@ class VolSqueezeWorker:
         side = "buy" if intent["side"] == "long" else "sell"
         size = max(0.0, float(self.c.get("budget_bps", 30))/10000.0)
         return {"symbol": sym, "side": side, "type": "market", "size": size, "meta": {"worker_id": self.c.get("id"), "intent": intent}}
+
+
+async def _idle_loop() -> None:
+    """Keep systemd service alive when run as a module without a runner."""
+    LOG.info("vol_squeeze worker idle loop started (no live wiring)")
+    try:
+        while True:
+            await asyncio.sleep(3600.0)
+    except asyncio.CancelledError:  # pragma: no cover
+        LOG.info("vol_squeeze worker idle loop cancelled")
+        raise
+
+
+if __name__ == "__main__":  # pragma: no cover
+    asyncio.run(_idle_loop())
