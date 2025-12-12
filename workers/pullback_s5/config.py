@@ -104,7 +104,7 @@ FAST_BUCKETS: int = max(24, _int("PULLBACK_S5_FAST_BUCKETS", 48))
 SLOW_BUCKETS: int = max(FAST_BUCKETS + 8, _int("PULLBACK_S5_SLOW_BUCKETS", 72))
 MIN_BUCKETS: int = max(FAST_BUCKETS, _int("PULLBACK_S5_MIN_BUCKETS", 60))
 
-MAX_SPREAD_PIPS: float = max(0.1, _float("PULLBACK_S5_MAX_SPREAD_PIPS", 0.35))
+MAX_SPREAD_PIPS: float = max(0.1, _float("PULLBACK_S5_MAX_SPREAD_PIPS", 1.0))
 ENTRY_UNITS: int = max(1000, _int("PULLBACK_S5_ENTRY_UNITS", 7000))
 # 余力に応じた最小単位（余力不足時にこの下限を下回る場合は見送り）
 MIN_UNITS: int = max(500, _int("PULLBACK_S5_MIN_UNITS", 1200))
