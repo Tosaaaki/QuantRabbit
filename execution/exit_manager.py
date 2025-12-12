@@ -345,6 +345,51 @@ class ExitManager:
             "vol_low": vol_low,
         }
 
+    def _pattern_bias(self, story: Optional[ChartStorySnapshot], *, side: str) -> dict:
+        """
+        抜粋したパターンバイアスを返す。
+        bias: 順行/逆行/中立 を示す簡易タグ。
+        """
+        if story is None:
+            return {"bias": "neutral", "conf": 0.0}
+        patterns = getattr(story, "pattern_summary", None) or {}
+        candle = patterns.get("candlestick") if isinstance(patterns, dict) else {}
+        n_wave = patterns.get("n_wave") if isinstance(patterns, dict) else {}
+        c_bias = candle.get("bias")
+        try:
+            c_conf = float(candle.get("confidence", 0.0) or 0.0)
+        except Exception:
+            c_conf = 0.0
+        n_bias = n_wave.get("direction") or n_wave.get("bias")
+        try:
+            n_conf = float(n_wave.get("confidence", 0.0) or 0.0)
+        except Exception:
+            n_conf = 0.0
+
+        bias = "neutral"
+        conf = 0.0
+        if c_bias and c_conf >= 0.55:
+            if (side == "long" and c_bias == "up") or (side == "short" and c_bias == "down"):
+                bias = "with_candle"
+            elif (side == "long" and c_bias == "down") or (side == "short" and c_bias == "up"):
+                bias = "against_candle"
+            conf = max(conf, c_conf)
+        if n_bias and n_conf >= 0.55:
+            if (side == "long" and n_bias == "up") or (side == "short" and n_bias == "down"):
+                if bias == "against_candle":
+                    bias = "mixed"
+                elif bias == "with_candle":
+                    bias = "with_both"
+                else:
+                    bias = "with_nwave"
+            elif (side == "long" and n_bias == "down") or (side == "short" and n_bias == "up"):
+                if bias.startswith("with_"):
+                    bias = "mixed"
+                else:
+                    bias = "against_nwave"
+            conf = max(conf, n_conf, conf)
+        return {"bias": bias, "conf": conf}
+
     def _regime_profile(self, fac_m1: Dict, fac_h4: Dict, range_mode: bool) -> str:
         """軽量なレジームタグを返す。"""
         if range_mode:
@@ -1194,6 +1239,9 @@ class ExitManager:
         macd_hist = float(tech_ctx.get("macd_hist") or 0.0)
         dmi_diff = float(tech_ctx.get("dmi_diff") or 0.0)
         stoch = float(tech_ctx.get("stoch") or 0.5)
+        pattern_ctx = self._pattern_bias(open_info.get("story") if isinstance(open_info, dict) else None, side=side)
+        pattern_bias = pattern_ctx.get("bias")
+        pattern_conf = float(pattern_ctx.get("conf") or 0.0)
         bounce_possible = False
         if cluster_gap > 3.0 and cloud_support:
             if side == "long":
@@ -1204,6 +1252,10 @@ class ExitManager:
                     bounce_possible = True
         if in_cloud and tech_ctx.get("vol_low"):
             bounce_possible = True
+        if pattern_bias in {"with_candle", "with_nwave", "with_both"} and pattern_conf >= 0.6:
+            bounce_possible = True
+        if pattern_bias in {"against_candle", "against_nwave"} and pattern_conf >= 0.6:
+            bounce_possible = False
 
         if loss >= hard_cut:
             # ハードでもまず部分でリスク落とす（極端な損失のみ全量）
@@ -3318,6 +3370,21 @@ class ExitManager:
         frac = max(0.2, min(0.9, frac))
         if atr_val <= 1.2:
             frac *= 0.85
+        pattern_ctx = self._pattern_bias(None, side=side)
+        try:
+            story = fac_m1.get("story")
+        except Exception:
+            story = None
+        if story:
+            pattern_ctx = self._pattern_bias(story, side=side)
+        bias = pattern_ctx.get("bias")
+        conf = float(pattern_ctx.get("conf") or 0.0)
+        if bias in {"with_candle", "with_nwave", "with_both"} and conf >= 0.6:
+            trigger += 0.2
+            frac = max(0.2, frac - 0.08)
+        elif bias in {"against_candle", "against_nwave"} and conf >= 0.6:
+            trigger = max(0.8, trigger - 0.3)
+            frac = min(0.95, frac + 0.12)
         cut_units = max(1000, int(abs(units) * frac))
         if cut_units <= 0:
             return None
