@@ -4041,6 +4041,9 @@ async def logic_loop(
                     if not decision.allow_reentry or decision.reason == "range_cooldown":
                         executed_pockets.add(pocket)
                         cooldown_seconds = _cooldown_for_pocket(pocket, range_active)
+                        # 動的クールダウン: 時間ガードやMAE系の退出は少し長めにする
+                        if decision.reason and decision.reason.startswith("time_guard"):
+                            cooldown_seconds = int(max(cooldown_seconds, cooldown_seconds * 1.5, 150))
                         stage_tracker.set_cooldown(
                             pocket,
                             target_side,

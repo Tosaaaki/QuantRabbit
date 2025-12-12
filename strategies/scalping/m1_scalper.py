@@ -155,6 +155,22 @@ class M1Scalper:
         if atr_pips is None:
             atr_pips = (atr or 0.0) * 100
 
+        def _adjust_tp(tp: float, conf: int) -> float:
+            """TPを信頼度とボラ/レンジ状態で可変化する。"""
+            if low_vol_range:
+                base = 2.0
+                if conf >= 85 and atr_pips >= 2.0:
+                    base = min(max(base, atr_pips * 1.2), 4.5)
+                elif conf >= 70:
+                    base = max(base, min(3.0, 1.0 + atr_pips))
+                return round(base, 2)
+            out = tp
+            if conf >= 85 and atr_pips >= 2.5:
+                out = min(tp * 1.2, 9.0)
+            elif conf <= 60:
+                out = max(3.0, min(tp, 6.0))
+            return round(out, 2)
+
         # レンジ・低ボラを検知し、帯付近のみエントリーを許可
         low_vol_range = (adx < 18.0 and bbw > 0.0 and bbw < 0.0013 and atr_pips < 2.2)
         if low_vol_range:
@@ -240,10 +256,11 @@ class M1Scalper:
             if action == "OPEN_LONG" and strong_down:
                 _log("trend_block_long", momentum=round(momentum, 5), ema_gap=round(ema_gap_pips, 3), price_gap=round(price_gap_pips, 3))
                 return None
+            tp_dyn_adj = _adjust_tp(tp_dyn, confidence)
             return _attach_kill({
                 "action": action,
                 "sl_pips": sl_dyn,
-                "tp_pips": tp_dyn,
+                "tp_pips": tp_dyn_adj,
                 "confidence": int(confidence * conf_scale),
                 "fast_cut_pips": round(fast_cut, 2),
                 "fast_cut_time_sec": int(fast_cut_time),
@@ -264,10 +281,11 @@ class M1Scalper:
             if action == "OPEN_SHORT" and strong_up:
                 _log("trend_block_short", momentum=round(momentum, 5), ema_gap=round(ema_gap_pips, 3), price_gap=round(price_gap_pips, 3))
                 return None
+            tp_dyn_adj = _adjust_tp(tp_dyn, confidence)
             return _attach_kill({
                 "action": action,
                 "sl_pips": sl_dyn,
-                "tp_pips": tp_dyn,
+                "tp_pips": tp_dyn_adj,
                 "confidence": int(confidence * conf_scale),
                 "fast_cut_pips": round(fast_cut, 2),
                 "fast_cut_time_sec": int(fast_cut_time),

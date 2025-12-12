@@ -326,6 +326,19 @@ class ExitManager:
         if profit_pips >= 1.2:
             return None
 
+        # MAEセーフティ（SL代替）: 含み損が大きくなったら即時撤退
+        mae_floor = max(5.0, atr_pips * 1.5)
+        if profit_pips <= -mae_floor:
+            self._time_guard_ts[(pocket, side)] = now
+            signed = -abs(units) if side == "long" else abs(units)
+            return ExitDecision(
+                pocket=pocket,
+                units=signed,
+                reason="time_guard_mae",
+                tag="time_guard",
+                allow_reentry=False,
+            )
+
         if regime == "range":
             partial_sec, full_sec = (180.0, 360.0) if pocket == "scalp" else (240.0, 540.0)
             profit_gate = 0.8
@@ -343,6 +356,11 @@ class ExitManager:
             partial_sec *= 1.4
             full_sec *= 1.5
             profit_gate += 0.4
+
+        # 低ATR時はガードを短縮
+        if atr_pips <= 2.0:
+            partial_sec *= 0.75
+            full_sec *= 0.85
 
         key = (pocket, side)
         last_cut = self._time_guard_ts.get(key)
