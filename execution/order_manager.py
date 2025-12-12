@@ -1544,6 +1544,15 @@ def plan_partial_reductions(
             thresholds, fractions = _macro_partial_profile(fac_h4, range_mode)
         elif range_mode:
             thresholds = _PARTIAL_THRESHOLDS_RANGE.get(pocket, thresholds)
+        if thresholds and range_mode:
+            try:
+                atr_hint = float(atr_m1 or 0.0)
+            except Exception:
+                atr_hint = 0.0
+            if atr_hint <= 2.0:
+                thresholds = (1.6, 2.6) if pocket == "scalp" else (2.2, 3.6)
+            elif atr_hint <= 3.0:
+                thresholds = (min(thresholds[0], 2.2), min(thresholds[1], 3.8))
         if thresholds:
             thresholds = _scaled_thresholds(pocket, thresholds, atr_m1, vol_5m)
         plan = pockets_policy.get(pocket) if isinstance(pockets_policy, dict) else {}

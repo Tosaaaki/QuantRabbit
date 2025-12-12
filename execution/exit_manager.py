@@ -313,6 +313,9 @@ class ExitManager:
         regime: str,
         atr_pips: float,
         now: datetime,
+        vwap_gap_pips: Optional[float] = None,
+        close_to_vwap: bool = False,
+        low_vol: bool = False,
     ) -> Optional[ExitDecision]:
         """時間と含み益/損に応じた段階的縮小を返す。"""
         if units <= 0 or profit_pips is None:
@@ -361,6 +364,14 @@ class ExitManager:
         if atr_pips <= 2.0:
             partial_sec *= 0.75
             full_sec *= 0.85
+        if low_vol:
+            partial_sec *= 0.85
+            full_sec *= 0.9
+        if close_to_vwap or (vwap_gap_pips is not None and vwap_gap_pips <= 0.6):
+            partial_sec *= 0.8
+            full_sec *= 0.85
+            profit_gate -= 0.1
+            exit_floor = max(exit_floor, -2.2)
 
         key = (pocket, side)
         last_cut = self._time_guard_ts.get(key)
@@ -369,6 +380,8 @@ class ExitManager:
 
         if age_sec >= partial_sec and profit_pips <= profit_gate:
             frac = 0.5 if pocket in {"scalp", "micro"} else 0.33
+            if close_to_vwap or low_vol:
+                frac *= 0.9
             cut_units = max(1, math.ceil(abs(units) * frac))
             signed = -cut_units if side == "long" else cut_units
             self._time_guard_ts[key] = now
@@ -391,6 +404,45 @@ class ExitManager:
                 allow_reentry=False,
             )
         return None
+
+    def _vwap_revert_exit(
+        self,
+        *,
+        pocket: str,
+        side: str,
+        units: int,
+        profit_pips: Optional[float],
+        vwap_gap_pips: Optional[float],
+        regime: str,
+        range_mode: bool,
+        atr_pips: Optional[float],
+        now: datetime,
+    ) -> Optional[ExitDecision]:
+        """VWAP急接近時に一部利確して往復負けを防ぐ。"""
+        if units <= 0 or profit_pips is None or vwap_gap_pips is None:
+            return None
+        if vwap_gap_pips > 0.6:
+            return None
+        if profit_pips < 0.6 and pocket in {"scalp", "micro"}:
+            return None
+        if profit_pips < 1.0 and pocket not in {"scalp", "micro"}:
+            return None
+        # 静かなレンジ・低ATRほど強く利確
+        frac = 0.5 if pocket in {"scalp", "micro"} else 0.35
+        if range_mode or regime == "range":
+            frac *= 1.1
+        if atr_pips is not None and atr_pips <= 2.0:
+            frac *= 1.1
+        frac = max(0.25, min(0.8, frac))
+        cut_units = max(1, math.ceil(abs(units) * frac))
+        signed = -cut_units if side == "long" else cut_units
+        return ExitDecision(
+            pocket=pocket,
+            units=signed,
+            reason="vwap_gravity",
+            tag="vwap_guard",
+            allow_reentry=True,
+        )
 
     def plan_closures(
         self,
@@ -433,6 +485,20 @@ class ExitManager:
         low_vol_profile = low_vol_profile or {}
         close_price = float(fac_m1.get("close") or 0.0)
         regime_profile = self._regime_profile(fac_m1, fac_h4, range_mode)
+        try:
+            vwap_gap_pips = (
+                abs(close_price - float(fac_m1.get("vwap"))) / 0.01
+                if fac_m1.get("vwap") is not None
+                else None
+            )
+        except Exception:
+            vwap_gap_pips = None
+        close_to_vwap = vwap_gap_pips is not None and vwap_gap_pips <= 0.6
+        try:
+            vol_5m = float(fac_m1.get("vol_5m") or 0.0)
+        except Exception:
+            vol_5m = 0.0
+        low_vol_flag = (atr_primary or 0.0) <= 2.0 or vol_5m <= 0.8
         for pocket, info in open_positions.items():
             if pocket == "__net__" or pocket not in MANAGED_POCKETS:
                 continue
@@ -475,6 +541,9 @@ class ExitManager:
                     regime=regime_profile,
                     atr_pips=atr_primary,
                     now=current_time,
+                    vwap_gap_pips=vwap_gap_pips,
+                    close_to_vwap=close_to_vwap,
+                    low_vol=low_vol_flag,
                 )
                 if tg_decision:
                     decisions.append(tg_decision)
@@ -482,6 +551,38 @@ class ExitManager:
                         long_units += tg_decision.units  # negative to reduce
                     else:
                         short_units -= tg_decision.units  # positive to reduce
+
+            # VWAP急接近で半分利確して反転負けを防ぐ
+            if long_units > 0 and long_profit is not None:
+                vwap_exit = self._vwap_revert_exit(
+                    pocket=pocket,
+                    side="long",
+                    units=long_units,
+                    profit_pips=long_profit,
+                    vwap_gap_pips=vwap_gap_pips,
+                    regime=regime_profile,
+                    range_mode=range_mode,
+                    atr_pips=atr_primary,
+                    now=current_time,
+                )
+                if vwap_exit:
+                    decisions.append(vwap_exit)
+                    long_units += vwap_exit.units  # negative
+            if short_units > 0 and short_profit is not None:
+                vwap_exit = self._vwap_revert_exit(
+                    pocket=pocket,
+                    side="short",
+                    units=short_units,
+                    profit_pips=short_profit,
+                    vwap_gap_pips=vwap_gap_pips,
+                    regime=regime_profile,
+                    range_mode=range_mode,
+                    atr_pips=atr_primary,
+                    now=current_time,
+                )
+                if vwap_exit:
+                    decisions.append(vwap_exit)
+                    short_units -= vwap_exit.units  # positive
 
             # MFEリトレースによる早期部分カット（scalp/microのみ）
             if long_units > 0 and long_profit is not None and long_profit > 0:
