@@ -2564,6 +2564,30 @@ class ExitManager:
                         return None
                     if profit_pips is not None and (-self._reverse_loss_floor < profit_pips < self._reverse_profit_floor):
                         return None
+                    # パターンが順行なら逆行EXITをデファー
+                    patterns = getattr(story, "pattern_summary", None) or {}
+                    candle = patterns.get("candlestick") if isinstance(patterns, dict) else {}
+                    c_bias = candle.get("bias")
+                    try:
+                        c_conf = float(candle.get("confidence", 0.0) or 0.0)
+                    except Exception:
+                        c_conf = 0.0
+                    n_wave = patterns.get("n_wave") if isinstance(patterns, dict) else {}
+                    n_bias = n_wave.get("direction") or n_wave.get("bias")
+                    try:
+                        n_conf = float(n_wave.get("confidence", 0.0) or 0.0)
+                    except Exception:
+                        n_conf = 0.0
+                    if c_bias and c_conf >= 0.6:
+                        if side == "long" and c_bias == "up":
+                            return None
+                        if side == "short" and c_bias == "down":
+                            return None
+                    if n_bias and n_conf >= 0.6:
+                        if side == "long" and n_bias == "up":
+                            return None
+                        if side == "short" and n_bias == "down":
+                            return None
                     # 反発余地: EMA近傍かつ傾きが順行なら見送り
                     bounce_ok = False
                     try:

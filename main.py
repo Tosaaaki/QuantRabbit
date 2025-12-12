@@ -4206,6 +4206,51 @@ async def logic_loop(
             if tick_bid is not None and tick_ask is not None:
                 mid_price = round((tick_bid + tick_ask) / 2, 3)
 
+            def _lot_pattern_multiplier(fac: dict, story: object | None) -> float:
+                """
+                Composite multiplier fromテクニカル/パターン。
+                0.75〜1.25の範囲でlotを調整する（市況が良ければ増、悪ければ減）。
+                """
+                mult = 1.0
+                try:
+                    adx = float(fac.get("adx") or 0.0)
+                    rsi = float(fac.get("rsi") or 50.0)
+                    bbw = float(fac.get("bbw") or 0.0)
+                    vol5 = float(fac.get("vol_5m") or 0.0)
+                except Exception:
+                    adx, rsi, bbw, vol5 = (0.0, 50.0, 0.0, 0.0)
+                # トレンド強/適度なボラなら増額、低ボラレンジなら減額
+                if adx >= 25:
+                    mult += 0.05
+                if bbw <= 0.0015 and adx <= 14:
+                    mult -= 0.08
+                if vol5 >= 1.2:
+                    mult += 0.04
+                if vol5 <= 0.5:
+                    mult -= 0.05
+                # RSIが極端なら控えめ
+                if rsi <= 25 or rsi >= 75:
+                    mult -= 0.03
+                patterns = {}
+                if story and hasattr(story, "pattern_summary"):
+                    try:
+                        patterns = dict(getattr(story, "pattern_summary") or {})
+                    except Exception:
+                        patterns = {}
+                n_wave = patterns.get("n_wave") if isinstance(patterns, dict) else None
+                candle = patterns.get("candlestick") if isinstance(patterns, dict) else None
+                try:
+                    if n_wave and float(n_wave.get("confidence", 0.0) or 0.0) >= 0.6:
+                        mult += 0.06
+                except Exception:
+                    pass
+                try:
+                    if candle and float(candle.get("confidence", 0.0) or 0.0) >= 0.6:
+                        mult += 0.03
+                except Exception:
+                    pass
+                return max(0.75, min(1.25, mult))
+
             lot_total = allowed_lot(
                 account_equity,
                 sl_pips=max(1.0, avg_sl),
@@ -4214,6 +4259,7 @@ async def logic_loop(
                 margin_rate=margin_rate,
                 risk_pct_override=risk_override,
             )
+            lot_total = round(lot_total * _lot_pattern_multiplier(fac_m1, story_snapshot), 3)
             if FORCE_SCALP_MODE and lot_total <= 0:
                 logging.warning(
                     "[FORCE_SCALP] lot_total %.3f -> forcing floor %.3f",
