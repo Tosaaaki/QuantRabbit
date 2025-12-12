@@ -1131,6 +1131,16 @@ class ExitManager:
         candles = fac_m1.get("candles") or []
         slope6 = _slope_from_candles(candles, window=6)
         slope12 = _slope_from_candles(candles, window=12) if len(candles) >= 12 else slope6
+        try:
+            bbw_val = float(fac_m1.get("bbw") or 0.0)
+        except Exception:
+            bbw_val = 0.0
+        try:
+            vol5_val = float(fac_m1.get("vol_5m") or 0.0)
+        except Exception:
+            vol5_val = 0.0
+        range_quiet = (atr_val <= 3.0 and bbw_val <= 0.24) or vol5_val <= 1.2
+        inv_score = self._trend_invalidation_score(fac_m1, side)
         session = _session_bucket(now if now.tzinfo else now.replace(tzinfo=timezone.utc))
         stack_units = abs(units)
         # 市況でゲートを揺らす（ATR低→広げる、高→やや狭める）
@@ -1138,13 +1148,13 @@ class ExitManager:
             # scalpは戻りを待つ: 基準を広げ、時間ゲートも長め
             if atr_val <= 1.6:
                 fast_cut = max(7.5, atr_val * 1.4)
-                time_gate = max(self._scalp_min_hold_seconds, max(95.0, atr_val * 20.0))
+                time_gate = max(self._scalp_min_hold_seconds, max(110.0, atr_val * 22.0))
             elif atr_val >= 3.0:
                 fast_cut = max(8.5, atr_val * 1.1)
-                time_gate = max(self._scalp_min_hold_seconds, max(85.0, atr_val * 14.0))
+                time_gate = max(self._scalp_min_hold_seconds, max(100.0, atr_val * 16.0))
             else:
                 fast_cut = max(7.0, atr_val * 1.2)
-                time_gate = max(self._scalp_min_hold_seconds, max(90.0, atr_val * 17.0))
+                time_gate = max(self._scalp_min_hold_seconds, max(105.0, atr_val * 18.0))
             hard_cut = fast_cut * 1.8
         else:
             if atr_val <= 1.5:
@@ -1161,6 +1171,10 @@ class ExitManager:
         if pocket == "scalp" and atr_val <= 1.2:
             fast_cut *= 1.1
             time_gate *= 1.2
+
+        # レンジ・低ボラでは fast_cut を極力抑止し、強い無効化のみ許容
+        if range_quiet and inv_score < 0.9 and (max_seen is None or max_seen < 3.0):
+            return None
 
         # 傾き・スタック・セッションで微調整
         slope_bias = 1.0
@@ -1323,6 +1337,11 @@ class ExitManager:
         pattern_conf = float(pattern_ctx.get("conf") or 0.0)
         mtf_score_m5 = self._mtf_trend_score(fac_m5, side, adx_floor=13.0)
         mtf_score_h1 = self._mtf_trend_score(fac_h1, side, adx_floor=16.0)
+        pattern_against = pattern_bias in {"against_candle", "against_nwave", "mixed"} and pattern_conf >= 0.6
+        pattern_with = pattern_bias in {"with_candle", "with_nwave", "with_both"} and pattern_conf >= 0.55
+        mtf_reversal = (mtf_score_m5 is not None and mtf_score_m5 <= -0.25) or (
+            mtf_score_h1 is not None and mtf_score_h1 <= -0.25
+        )
         bounce_possible = False
         if cluster_gap > 3.0 and cloud_support:
             if side == "long":
@@ -1333,9 +1352,9 @@ class ExitManager:
                     bounce_possible = True
         if in_cloud and tech_ctx.get("vol_low"):
             bounce_possible = True
-        if pattern_bias in {"with_candle", "with_nwave", "with_both"} and pattern_conf >= 0.6:
+        if pattern_with:
             bounce_possible = True
-        if pattern_bias in {"against_candle", "against_nwave"} and pattern_conf >= 0.6:
+        if pattern_against:
             bounce_possible = False
         if mtf_score_m5 >= 0.6 or mtf_score_h1 >= 0.6:
             bounce_possible = True
@@ -1346,6 +1365,9 @@ class ExitManager:
             bounce_possible = False
 
         if loss >= hard_cut:
+            # 強い無効化（逆行スコア/パターン/MTF）なしなら待つ
+            if inv_score < 0.85 and not pattern_against and not mtf_reversal and (max_seen is None or max_seen < 3.5):
+                return None
             # ハードでもまず部分でリスク落とす（極端な損失のみ全量）
             fraction = 0.7 if pocket == "micro" else 0.6
             cut_units = max(1000, int(abs(units) * fraction))
@@ -1362,6 +1384,8 @@ class ExitManager:
             )
         if loss >= fast_cut:
             # 市況が味方なら様子見（雲順行＋クラスタ遠＋MACD/DMI順向 or Stoch極端）
+            if inv_score < 0.9 and not pattern_against and not mtf_reversal and (max_seen is None or max_seen < 2.5):
+                return None
             if bounce_possible:
                 return None
             # 部分カットを基本とし、雲逆行やクラスタ近は厚めに削る
