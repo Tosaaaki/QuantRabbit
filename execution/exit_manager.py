@@ -1084,9 +1084,7 @@ class ExitManager:
         max_seen = self._max_profit_cache.get((pocket, side))
         if profit_pips >= 0:
             return None  # 順行中は早切りしない
-        # まだ+域未達かつ極めて若いポジは少し待つ
-        if max_seen is None and age_sec is not None and age_sec < 90:
-            return None
+        # 時間ではなく市況・テクニカルで判断するため、年齢ゲートは撤廃
 
         atr_val = float(atr_pips or 0.0)
         candles = fac_m1.get("candles") or []
@@ -1214,7 +1212,6 @@ class ExitManager:
         max_seen = self._max_profit_cache.get((pocket, side))
         if max_seen is not None and max_seen >= 2.5:
             fast_cut *= 1.3
-            time_gate *= 1.3
 
         # 直近のRSIが中立帯なら1回だけ様子見
         rsi_val = None
@@ -1225,7 +1222,7 @@ class ExitManager:
         if rsi_val is not None and 45.0 <= rsi_val <= 55.0 and loss < fast_cut * 0.8:
             return None
 
-        # MFEリトレース＆構造・モメンタム確認: 戻しそうなら切らない
+        # MFEリトレース＆構造・モメンタム確認: 戻しそうなら切らない（時間条件は使わない）
         rsi_val = None
         adx_val = None
         ma_fast = None
@@ -1250,13 +1247,13 @@ class ExitManager:
             except Exception:
                 drawdown_ratio = None
             # MFEが小さいときは時間を長めに取るが、ゲート時間を超えれば切る
-            if max_seen < 3.0 and age_sec is not None and age_sec < time_gate * 0.8:
+            if max_seen < 3.0:
                 return None
-            if drawdown_ratio is not None and drawdown_ratio < 0.5 and age_sec is not None and age_sec < time_gate:
+            if drawdown_ratio is not None and drawdown_ratio < 0.5:
                 return None
         else:
-            # 一度も+域に乗っていないケースはゲートをやや緩くして待つが、lossが閾値超なら切る
-            time_gate = max(time_gate, 75.0 if pocket == "micro" else 60.0)
+            # 一度も+域に乗っていないケースはloss閾値でのみ判断（時間は使わない）
+            pass
 
         # neutral RSI帯やADX弱いときは早切りしない
         if rsi_val is not None and 44.0 <= rsi_val <= 56.0 and drawdown_ratio is not None and drawdown_ratio < 0.9:
@@ -1324,9 +1321,7 @@ class ExitManager:
             )
         if loss >= fast_cut:
             # 市況が味方なら様子見（雲順行＋クラスタ遠＋MACD/DMI順向 or Stoch極端）
-            if bounce_possible and (age_sec is None or age_sec < time_gate * 1.4):
-                return None
-            if age_sec is not None and age_sec < time_gate * 0.7:
+            if bounce_possible:
                 return None
             # 部分カットを基本とし、雲逆行やクラスタ近は厚めに削る
             fraction = 0.5 if pocket == "scalp" else 0.6
