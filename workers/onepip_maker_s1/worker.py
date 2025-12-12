@@ -82,6 +82,26 @@ class _ShadowWriter:
             self.write(event)
 
 
+async def _idle_loop() -> None:
+    LOG.info("%s idle loop started (no live runner configured)", config.LOG_PREFIX)
+    try:
+        while True:
+            await asyncio.sleep(3600.0)
+    except asyncio.CancelledError:  # pragma: no cover
+        LOG.info("%s idle loop cancelled", config.LOG_PREFIX)
+        raise
+
+
+if __name__ == "__main__":  # pragma: no cover
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s - %(levelname)s - %(message)s",
+        force=True,
+    )
+    LOG.info("%s worker boot", config.LOG_PREFIX)
+    asyncio.run(_idle_loop())
+
+
 def _compute_momentum(seconds: float) -> tuple[float, float]:
     ticks = tick_window.recent_ticks(seconds=seconds, limit=24)
     if len(ticks) < 2:
