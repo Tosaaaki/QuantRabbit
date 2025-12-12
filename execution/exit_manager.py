@@ -198,6 +198,8 @@ class ExitManager:
         self._max_profit_cache: Dict[Tuple[str, str], float] = {}
         # Apply stale drawdown exits only to trades opened after this cutover (if set)
         self._dd_cutover = self._parse_cutover_env(os.getenv("EXIT_DD_CUTOVER_ISO"))
+        # time-guard throttle to avoid repeated partial cuts
+        self._time_guard_ts: Dict[Tuple[str, str], datetime] = {}
         # Loss clamp thresholds derived from recent MAE analysis (pips)
         self._loss_clamp_partial = {
             "micro": float(os.getenv("LOSS_CLAMP_MICRO_PARTIAL_PIPS", "10.0")),
@@ -235,6 +237,17 @@ class ExitManager:
         self._upper_bound_max_sec = float(os.getenv("EXIT_UPPER_BOUND_MAX_SEC", "0"))
         self._timeout_soft_tp_frac = float(os.getenv("EXIT_TIMEOUT_SOFT_TP_FRAC", "0.8"))
         self._soft_tp_pips = float(os.getenv("EXIT_SOFT_TP_PIPS", "0.8"))
+        # Dynamic escape (quiet/range/normal) — shrink TP/SL only, do not widen to avoid interfering with runners
+        self._escape_atr_quiet = float(os.getenv("EXIT_ESCAPE_ATR_QUIET", "2.8"))
+        self._escape_atr_hot = float(os.getenv("EXIT_ESCAPE_ATR_HOT", "5.2"))
+        self._escape_bbw_quiet = float(os.getenv("EXIT_ESCAPE_BBW_QUIET", "0.22"))
+        self._escape_bbw_hot = float(os.getenv("EXIT_ESCAPE_BBW_HOT", "0.35"))
+        self._escape_vol_quiet = float(os.getenv("EXIT_ESCAPE_VOL5M_QUIET", "1.0"))
+        self._escape_quiet_tp = float(os.getenv("EXIT_ESCAPE_QUIET_TP_PIPS", "1.2"))
+        self._escape_quiet_draw_min = float(os.getenv("EXIT_ESCAPE_QUIET_DRAW_MIN_PIPS", "0.9"))
+        self._escape_quiet_draw_ratio = float(os.getenv("EXIT_ESCAPE_QUIET_DRAW_RATIO", "0.55"))
+        self._escape_momentum_cut = float(os.getenv("EXIT_ESCAPE_MOMENTUM_MAX", "0.0"))
+        self._escape_min_hold = float(os.getenv("EXIT_ESCAPE_MIN_HOLD_SEC", "60"))
         self._mfe_sensitive_reasons = {
             "trend_reversal",
             "macro_trail_hit",
@@ -273,6 +286,93 @@ class ExitManager:
             "kill_switch",
             "hard_stop",
         }
+
+    def _regime_profile(self, fac_m1: Dict, fac_h4: Dict, range_mode: bool) -> str:
+        """軽量なレジームタグを返す。"""
+        if range_mode:
+            return "range"
+        adx_m1 = self._safe_float(fac_m1.get("adx"), 0.0)
+        bbw_m1 = self._safe_float(fac_m1.get("bbw"), 1.0)
+        atr_pips = self._safe_float(fac_m1.get("atr_pips"), 0.0)
+        adx_h4 = self._safe_float(fac_h4.get("adx"), 0.0)
+        slope_h4 = abs(self._safe_float(fac_h4.get("ma20"), 0.0) - self._safe_float(fac_h4.get("ma10"), 0.0))
+        if adx_m1 <= 22.0 and bbw_m1 <= 0.24 and atr_pips <= 7.0:
+            return "range"
+        if adx_m1 >= 26.0 and adx_h4 >= 20.0 and slope_h4 >= 0.0008:
+            return "trend"
+        return "mixed"
+
+    def _time_guard_exit(
+        self,
+        *,
+        pocket: str,
+        side: str,
+        open_info: Dict,
+        units: int,
+        profit_pips: Optional[float],
+        regime: str,
+        atr_pips: float,
+        now: datetime,
+    ) -> Optional[ExitDecision]:
+        """時間と含み益/損に応じた段階的縮小を返す。"""
+        if units <= 0 or profit_pips is None:
+            return None
+        open_trades = [tr for tr in (open_info.get("open_trades") or []) if tr.get("side") == side]
+        if any(self._is_manual_trade(tr) for tr in open_trades):
+            return None
+        age_sec = self._youngest_trade_age_seconds(open_info, side, now)
+        if age_sec is None:
+            return None
+        if profit_pips >= 1.2:
+            return None
+
+        if regime == "range":
+            partial_sec, full_sec = (180.0, 360.0) if pocket == "scalp" else (240.0, 540.0)
+            profit_gate = 0.8
+            exit_floor = -max(3.0, atr_pips * 0.7)
+        elif regime == "trend":
+            partial_sec, full_sec = (300.0, 480.0) if pocket == "scalp" else (360.0, 720.0)
+            profit_gate = 1.4
+            exit_floor = -max(4.5, atr_pips * 0.9)
+        else:
+            partial_sec, full_sec = (240.0, 420.0) if pocket == "scalp" else (320.0, 600.0)
+            profit_gate = 1.0
+            exit_floor = -max(3.5, atr_pips * 0.8)
+
+        if pocket == "macro":
+            partial_sec *= 1.4
+            full_sec *= 1.5
+            profit_gate += 0.4
+
+        key = (pocket, side)
+        last_cut = self._time_guard_ts.get(key)
+        if last_cut and (now - last_cut).total_seconds() < 70.0:
+            return None
+
+        if age_sec >= partial_sec and profit_pips <= profit_gate:
+            frac = 0.5 if pocket in {"scalp", "micro"} else 0.33
+            cut_units = max(1, math.ceil(abs(units) * frac))
+            signed = -cut_units if side == "long" else cut_units
+            self._time_guard_ts[key] = now
+            return ExitDecision(
+                pocket=pocket,
+                units=signed,
+                reason=f"time_guard_partial_{regime}",
+                tag="time_guard",
+                allow_reentry=True,
+            )
+
+        if age_sec >= full_sec and profit_pips <= max(0.2, exit_floor):
+            self._time_guard_ts[key] = now
+            signed = -abs(units) if side == "long" else abs(units)
+            return ExitDecision(
+                pocket=pocket,
+                units=signed,
+                reason=f"time_guard_exit_{regime}",
+                tag="time_guard",
+                allow_reentry=False,
+            )
+        return None
 
     def plan_closures(
         self,
@@ -314,6 +414,7 @@ class ExitManager:
         story = None
         low_vol_profile = low_vol_profile or {}
         close_price = float(fac_m1.get("close") or 0.0)
+        regime_profile = self._regime_profile(fac_m1, fac_h4, range_mode)
         for pocket, info in open_positions.items():
             if pocket == "__net__" or pocket not in MANAGED_POCKETS:
                 continue
@@ -341,6 +442,28 @@ class ExitManager:
                 self._low_vol_hazard_hits.pop((pocket, "short"), None)
             if long_units == 0 and short_units == 0:
                 continue
+
+            # レジーム別時間ガード: 伸びないポジを段階的に縮小/撤退
+            for side, units, profit in (
+                ("long", long_units, long_profit),
+                ("short", short_units, short_profit),
+            ):
+                tg_decision = self._time_guard_exit(
+                    pocket=pocket,
+                    side=side,
+                    open_info=info,
+                    units=units,
+                    profit_pips=profit,
+                    regime=regime_profile,
+                    atr_pips=atr_primary,
+                    now=current_time,
+                )
+                if tg_decision:
+                    decisions.append(tg_decision)
+                    if side == "long":
+                        long_units += tg_decision.units  # negative to reduce
+                    else:
+                        short_units -= tg_decision.units  # positive to reduce
 
             # MFEリトレースによる早期部分カット（scalp/microのみ）
             if long_units > 0 and long_profit is not None and long_profit > 0:
@@ -1393,6 +1516,21 @@ class ExitManager:
             )
             reverse_signal = None
 
+        escape_exit = self._dynamic_escape_exit(
+            pocket=pocket,
+            side="long",
+            units=units,
+            open_info=open_info,
+            profit_pips=profit_pips,
+            max_mfe=max_mfe_long,
+            atr_pips=atr_pips,
+            fac_m1=fac_m1,
+            now=now,
+            range_mode=range_mode,
+        )
+        if escape_exit:
+            return escape_exit
+
         ma_gap_pips = 0.0
         if ma10 is not None and ma20 is not None:
             ma_gap_pips = abs(ma10 - ma20) / 0.01
@@ -1980,6 +2118,21 @@ class ExitManager:
                 reverse_signal.get("tag") if reverse_signal else None,
             )
             reverse_signal = None
+
+        escape_exit = self._dynamic_escape_exit(
+            pocket=pocket,
+            side="short",
+            units=units,
+            open_info=open_info,
+            profit_pips=profit_pips,
+            max_mfe=max_mfe_short,
+            atr_pips=atr_pips,
+            fac_m1=fac_m1,
+            now=now,
+            range_mode=range_mode,
+        )
+        if escape_exit:
+            return escape_exit
 
         ma_gap_pips = 0.0
         if ma10 is not None and ma20 is not None:
@@ -2920,6 +3073,102 @@ class ExitManager:
                 if fav > max_mfe:
                     max_mfe = fav
         return round(max_mfe, 2)
+
+    def _escape_profile(self, *, pocket: str, atr_pips: Optional[float], fac_m1: Dict, range_mode: bool) -> Dict:
+        """Classify market state for escape logic; never widens profit targets."""
+        try:
+            bbw = float(fac_m1.get("bbw") or 0.0)
+        except Exception:
+            bbw = 0.0
+        try:
+            vol5m = float(fac_m1.get("vol_5m") or 0.0)
+        except Exception:
+            vol5m = 0.0
+        try:
+            momentum = float(fac_m1.get("momentum") or 0.0)
+        except Exception:
+            momentum = 0.0
+        atr_val = float(atr_pips or 0.0)
+        if atr_val <= 0.0:
+            try:
+                atr_val = float(fac_m1.get("atr") or 0.0) * 100.0
+            except Exception:
+                atr_val = 0.0
+        quiet = range_mode or (
+            (atr_val > 0 and atr_val <= self._escape_atr_quiet)
+            or (bbw > 0 and bbw <= self._escape_bbw_quiet)
+            or (vol5m > 0 and vol5m <= self._escape_vol_quiet)
+        )
+        hot = (atr_val >= self._escape_atr_hot) or (bbw >= self._escape_bbw_hot)
+        state = "quiet" if quiet else ("hot" if hot else "normal")
+        return {
+            "state": state,
+            "atr": atr_val,
+            "bbw": bbw,
+            "vol5m": vol5m,
+            "momentum": momentum,
+        }
+
+    def _dynamic_escape_exit(
+        self,
+        *,
+        pocket: str,
+        side: str,
+        units: int,
+        open_info: Dict,
+        profit_pips: float,
+        max_mfe: Optional[float],
+        atr_pips: Optional[float],
+        fac_m1: Dict,
+        now: datetime,
+        range_mode: bool,
+    ) -> Optional[ExitDecision]:
+        """Shrink TP/SL dynamically in quiet/range; avoid interfering with runners."""
+        if pocket not in {"micro", "scalp", "scalp_fast"}:
+            return None
+        profile = self._escape_profile(pocket=pocket, atr_pips=atr_pips, fac_m1=fac_m1, range_mode=range_mode)
+        state = profile["state"]
+        if state == "hot":
+            return None  # let profit extension logic run
+        if profit_pips is None:
+            return None
+        if profit_pips < 0.2:
+            return None
+        age_sec = self._youngest_trade_age_seconds(open_info, side, now) or 0.0
+        if age_sec < max(self._escape_min_hold, self._scalp_min_hold_seconds if pocket.startswith("scalp") else self._micro_min_hold_seconds):
+            return None
+        max_seen = max_mfe if max_mfe is not None else profit_pips
+        drawdown = max(0.0, max_seen - profit_pips)
+        # Quiet/range: tighten aggressively; normal: only if drawdown from a small peak
+        if state == "quiet":
+            hit_tp = profit_pips >= self._escape_quiet_tp
+            draw_gate = max(self._escape_quiet_draw_min, max_seen * self._escape_quiet_draw_ratio)
+            momentum_cut = profile["momentum"] <= self._escape_momentum_cut
+            if hit_tp or (max_seen >= self._escape_quiet_tp and drawdown >= draw_gate) or (momentum_cut and profit_pips >= self._escape_quiet_tp * 0.8):
+                cut_units = -abs(units) if side == "long" else abs(units)
+                return ExitDecision(
+                    pocket=pocket,
+                    units=cut_units,
+                    reason=f"escape_quiet_{'tp' if hit_tp else 'draw'}",
+                    tag="escape-quiet",
+                    allow_reentry=False,
+                )
+        else:  # normal
+            if max_seen <= 0.0:
+                return None
+            # Protect small peaks; do not trigger once profit has stretched enough (leave to other profit locks)
+            if max_seen <= 3.0:
+                draw_gate = max(self._escape_quiet_draw_min, max_seen * 0.6)
+                if drawdown >= draw_gate and profit_pips >= 0.4:
+                    cut_units = -abs(units) if side == "long" else abs(units)
+                    return ExitDecision(
+                        pocket=pocket,
+                        units=cut_units,
+                        reason="escape_normal_draw",
+                        tag="escape-normal",
+                        allow_reentry=False,
+                    )
+        return None
 
     def _micro_low_vol_exit_check(
         self,
