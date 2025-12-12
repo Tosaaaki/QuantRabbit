@@ -24,6 +24,24 @@ class IndicatorEngine:
                 "atr": 0.0,
                 "adx": 0.0,
                 "bbw": 0.0,
+                "macd": 0.0,
+                "macd_signal": 0.0,
+                "macd_hist": 0.0,
+                "roc5": 0.0,
+                "roc10": 0.0,
+                "cci": 0.0,
+                "stoch_rsi": 0.0,
+                "plus_di": 0.0,
+                "minus_di": 0.0,
+                "ema_slope_5": 0.0,
+                "ema_slope_10": 0.0,
+                "ema_slope_20": 0.0,
+                "kc_width": 0.0,
+                "donchian_width": 0.0,
+                "chaikin_vol": 0.0,
+                "vwap_gap": 0.0,
+                "swing_dist_high": 0.0,
+                "swing_dist_low": 0.0,
             }
 
         close = df["close"].astype(float)
@@ -35,16 +53,33 @@ class IndicatorEngine:
         ema12 = close.ewm(span=12, adjust=False, min_periods=12).mean()
         ema20 = close.ewm(span=20, adjust=False, min_periods=20).mean()
         ema24 = close.ewm(span=24, adjust=False, min_periods=24).mean()
+        ema26 = close.ewm(span=26, adjust=False, min_periods=26).mean()
 
         # pip単位のボラ（5本平均）
         vol_5m = close.diff().abs().rolling(window=5, min_periods=5).mean() / 0.01
 
         rsi = _rsi(close, period=14)
         atr = _atr(high, low, close, period=14)
-        adx = _adx(high, low, close, period=14)
+        adx, plus_di, minus_di = _adx(high, low, close, period=14, with_di=True)
 
         upper, middle, lower = _bollinger(close, period=20, std_mult=2.0)
         bbw_series = np.where(middle != 0, (upper - lower) / middle, 0.0)
+
+        macd_line = ema12 - ema26
+        macd_signal = macd_line.ewm(span=9, adjust=False, min_periods=9).mean()
+        macd_hist = macd_line - macd_signal
+        roc5 = _roc(close, period=5)
+        roc10 = _roc(close, period=10)
+        cci = _cci(high, low, close, period=14)
+        stoch_rsi = _stoch_rsi(close, period=14)
+        ema_slope_5 = _slope(ema12, window=5)
+        ema_slope_10 = _slope(ema20, window=10)
+        ema_slope_20 = _slope(ema24, window=20)
+        kc_width = _keltner_width(close, high, low, period=20, mult=1.5)
+        donchian_width = _donchian_width(high, low, period=20)
+        chaikin_vol = _chaikin_vol(high, low, period=10, slow=20)
+        vwap_gap = _vwap_gap(df)
+        swing_high_dist, swing_low_dist = _swing_distance(close, high, low, lookback=50)
 
         out: Dict[str, float] = {
             "ma10": float(ma10.iloc[-1]) if not ma10.empty else 0.0,
@@ -57,6 +92,24 @@ class IndicatorEngine:
             "adx": float(adx.iloc[-1]) if not adx.empty else 0.0,
             "bbw": float(bbw_series[-1]) if bbw_series.size else 0.0,
             "vol_5m": float(vol_5m.iloc[-1]) if not vol_5m.empty else 0.0,
+            "macd": float(macd_line.iloc[-1]) if not macd_line.empty else 0.0,
+            "macd_signal": float(macd_signal.iloc[-1]) if not macd_signal.empty else 0.0,
+            "macd_hist": float(macd_hist.iloc[-1]) if not macd_hist.empty else 0.0,
+            "roc5": float(roc5.iloc[-1]) if not roc5.empty else 0.0,
+            "roc10": float(roc10.iloc[-1]) if not roc10.empty else 0.0,
+            "cci": float(cci.iloc[-1]) if not cci.empty else 0.0,
+            "stoch_rsi": float(stoch_rsi.iloc[-1]) if not stoch_rsi.empty else 0.0,
+            "plus_di": float(plus_di.iloc[-1]) if not plus_di.empty else 0.0,
+            "minus_di": float(minus_di.iloc[-1]) if not minus_di.empty else 0.0,
+            "ema_slope_5": float(ema_slope_5) if np.isfinite(ema_slope_5) else 0.0,
+            "ema_slope_10": float(ema_slope_10) if np.isfinite(ema_slope_10) else 0.0,
+            "ema_slope_20": float(ema_slope_20) if np.isfinite(ema_slope_20) else 0.0,
+            "kc_width": float(kc_width) if np.isfinite(kc_width) else 0.0,
+            "donchian_width": float(donchian_width) if np.isfinite(donchian_width) else 0.0,
+            "chaikin_vol": float(chaikin_vol) if np.isfinite(chaikin_vol) else 0.0,
+            "vwap_gap": float(vwap_gap) if np.isfinite(vwap_gap) else 0.0,
+            "swing_dist_high": float(swing_high_dist) if np.isfinite(swing_high_dist) else 0.0,
+            "swing_dist_low": float(swing_low_dist) if np.isfinite(swing_low_dist) else 0.0,
         }
 
         for k, v in out.items():
@@ -105,7 +158,7 @@ def _dm(high: pd.Series, low: pd.Series) -> tuple[pd.Series, pd.Series]:
     return pd.Series(plus_dm, index=high.index), pd.Series(minus_dm, index=high.index)
 
 
-def _adx(high: pd.Series, low: pd.Series, close: pd.Series, period: int) -> pd.Series:
+def _adx(high: pd.Series, low: pd.Series, close: pd.Series, period: int, with_di: bool = False):
     atr = _atr(high, low, close, period)
     plus_dm, minus_dm = _dm(high, low)
 
@@ -113,8 +166,103 @@ def _adx(high: pd.Series, low: pd.Series, close: pd.Series, period: int) -> pd.S
     minus_di = 100 * minus_dm.ewm(alpha=1 / period, adjust=False).mean() / atr.replace(0.0, np.nan)
 
     dx = ((plus_di - minus_di).abs() / (plus_di + minus_di).abs()) * 100
-    adx = dx.ewm(alpha=1 / period, adjust=False, min_periods=period).mean()
-    return adx.fillna(0.0)
+    adx = dx.ewm(alpha=1 / period, adjust=False, min_periods=period).mean().fillna(0.0)
+    if with_di:
+        return adx, plus_di.fillna(0.0), minus_di.fillna(0.0)
+    return adx
+
+
+def _roc(close: pd.Series, period: int) -> pd.Series:
+    if period <= 0:
+        return pd.Series([0.0])
+    return close.pct_change(periods=period).fillna(0.0) * 100
+
+
+def _cci(high: pd.Series, low: pd.Series, close: pd.Series, period: int) -> pd.Series:
+    typical = (high + low + close) / 3.0
+    sma = typical.rolling(window=period, min_periods=period).mean()
+    mad = (typical - sma).abs().rolling(window=period, min_periods=period).mean()
+    cci = (typical - sma) / (0.015 * mad.replace(0.0, np.nan))
+    return cci.fillna(0.0)
+
+
+def _stoch_rsi(close: pd.Series, period: int = 14) -> pd.Series:
+    rsi = _rsi(close, period)
+    min_rsi = rsi.rolling(window=period, min_periods=period).min()
+    max_rsi = rsi.rolling(window=period, min_periods=period).max()
+    denom = (max_rsi - min_rsi).replace(0.0, np.nan)
+    stoch = (rsi - min_rsi) / denom
+    return stoch.fillna(0.0)
+
+
+def _slope(series: pd.Series, window: int) -> float:
+    if len(series) < window or window <= 1:
+        return 0.0
+    y = series.iloc[-window:]
+    x = np.arange(window)
+    if np.ptp(x) == 0:
+        return 0.0
+    coeffs = np.polyfit(x, y, 1)
+    return coeffs[0]
+
+
+def _keltner_width(close: pd.Series, high: pd.Series, low: pd.Series, period: int, mult: float) -> float:
+    ema = close.ewm(span=period, adjust=False, min_periods=period).mean()
+    atr = _atr(high, low, close, period)
+    if ema.empty or atr.empty or ema.iloc[-1] == 0:
+        return 0.0
+    upper = ema + mult * atr
+    lower = ema - mult * atr
+    return float((upper.iloc[-1] - lower.iloc[-1]) / ema.iloc[-1]) if ema.iloc[-1] != 0 else 0.0
+
+
+def _donchian_width(high: pd.Series, low: pd.Series, period: int) -> float:
+    if len(high) < period or len(low) < period:
+        return 0.0
+    upper = high.rolling(window=period, min_periods=period).max().iloc[-1]
+    lower = low.rolling(window=period, min_periods=period).min().iloc[-1]
+    mid = (upper + lower) / 2.0
+    if mid == 0:
+        return 0.0
+    return float((upper - lower) / mid)
+
+
+def _chaikin_vol(high: pd.Series, low: pd.Series, period: int = 10, slow: int = 20) -> float:
+    if len(high) < slow or len(low) < slow:
+        return 0.0
+    hl = high - low
+    ema_fast = hl.ewm(span=period, adjust=False, min_periods=period).mean()
+    ema_slow = hl.ewm(span=slow, adjust=False, min_periods=slow).mean()
+    if ema_slow.empty or ema_slow.iloc[-1] == 0:
+        return 0.0
+    return float((ema_fast.iloc[-1] - ema_slow.iloc[-1]) / ema_slow.iloc[-1])
+
+
+def _vwap_gap(df: pd.DataFrame) -> float:
+    if df.empty or "close" not in df:
+        return 0.0
+    try:
+        price = (df["high"] + df["low"] + df["close"]) / 3.0
+        # ボリュームなしのため時間重みで近似
+        cum_price = (price * np.arange(1, len(price) + 1)).sum()
+        vwap = cum_price / (np.arange(1, len(price) + 1).sum())
+        latest = price.iloc[-1]
+        if vwap == 0:
+            return 0.0
+        return float((latest - vwap) / 0.01)
+    except Exception:
+        return 0.0
+
+
+def _swing_distance(close: pd.Series, high: pd.Series, low: pd.Series, lookback: int = 50) -> tuple[float, float]:
+    if len(close) < max(5, lookback):
+        return (0.0, 0.0)
+    segment_high = high.iloc[-lookback:]
+    segment_low = low.iloc[-lookback:]
+    ch = segment_high.max()
+    cl = segment_low.min()
+    last = close.iloc[-1]
+    return ((ch - last) / 0.01, (last - cl) / 0.01)
 
 
 def _bollinger(close: pd.Series, period: int, std_mult: float):

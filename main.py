@@ -4217,8 +4217,17 @@ async def logic_loop(
                     rsi = float(fac.get("rsi") or 50.0)
                     bbw = float(fac.get("bbw") or 0.0)
                     vol5 = float(fac.get("vol_5m") or 0.0)
+                    macd_hist = float(fac.get("macd_hist") or 0.0)
+                    stoch = float(fac.get("stoch_rsi") or 0.0)
+                    plus_di = float(fac.get("plus_di") or 0.0)
+                    minus_di = float(fac.get("minus_di") or 0.0)
+                    kc_width = float(fac.get("kc_width") or 0.0)
+                    don_width = float(fac.get("donchian_width") or 0.0)
+                    chaikin_vol = float(fac.get("chaikin_vol") or 0.0)
+                    vwap_gap = float(fac.get("vwap_gap") or 0.0)
                 except Exception:
                     adx, rsi, bbw, vol5 = (0.0, 50.0, 0.0, 0.0)
+                    macd_hist = stoch = plus_di = minus_di = kc_width = don_width = chaikin_vol = vwap_gap = 0.0
                 # トレンド強/適度なボラなら増額、低ボラレンジなら減額
                 if adx >= 25:
                     mult += 0.05
@@ -4231,6 +4240,29 @@ async def logic_loop(
                 # RSIが極端なら控えめ
                 if rsi <= 25 or rsi >= 75:
                     mult -= 0.03
+                # MACDヒスト/DMI順行なら加点、逆行なら減点
+                dmi_diff = plus_di - minus_di
+                if macd_hist > 0:
+                    mult += 0.02
+                elif macd_hist < 0:
+                    mult -= 0.02
+                if dmi_diff > 5:
+                    mult += 0.02
+                elif dmi_diff < -5:
+                    mult -= 0.02
+                # StochRSI極端で減額
+                if 0.8 <= stoch <= 1.2:
+                    mult -= 0.015
+                elif 0.0 <= stoch <= 0.2:
+                    mult -= 0.015
+                # ボラ幅系
+                if kc_width > 0.012 or don_width > 0.012 or chaikin_vol > 0.15:
+                    mult -= 0.02  # 過剰ボラは控えめ
+                if kc_width < 0.006 and don_width < 0.006:
+                    mult -= 0.01  # 低ボラレンジも控えめ
+                # VWAP乖離が大きければ逆張り余地で少し加点
+                if abs(vwap_gap) >= 5.0:
+                    mult += 0.01
                 patterns = {}
                 if story and hasattr(story, "pattern_summary"):
                     try:

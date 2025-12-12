@@ -1891,6 +1891,16 @@ class ExitManager:
                         return None
                     if profit_pips is not None and (-self._reverse_loss_floor < profit_pips < self._reverse_profit_floor):
                         return None
+                    # 強い順行モメンタムならデファー
+                    try:
+                        macd_hist = float(fac_m1.get("macd_hist") or 0.0)
+                        plus_di = float(fac_m1.get("plus_di") or 0.0)
+                        minus_di = float(fac_m1.get("minus_di") or 0.0)
+                    except Exception:
+                        macd_hist = 0.0
+                        plus_di = minus_di = 0.0
+                    if macd_hist > 0.0 and (plus_di - minus_di) > 0.0:
+                        return None
                     # 反発余地: EMA近傍かつ傾きが順行なら見送り
                     bounce_ok = False
                     try:
@@ -2563,6 +2573,16 @@ class ExitManager:
                     if retrace < self._reverse_mfe_ratio * max_mfe and profit_pips is not None and profit_pips > -self._micro_loss_grace_pips:
                         return None
                     if profit_pips is not None and (-self._reverse_loss_floor < profit_pips < self._reverse_profit_floor):
+                        return None
+                    # 強い順行モメンタムならデファー
+                    try:
+                        macd_hist = float(fac_m1.get("macd_hist") or 0.0)
+                        plus_di = float(fac_m1.get("plus_di") or 0.0)
+                        minus_di = float(fac_m1.get("minus_di") or 0.0)
+                    except Exception:
+                        macd_hist = 0.0
+                        plus_di = minus_di = 0.0
+                    if macd_hist < 0.0 and (plus_di - minus_di) < 0.0:
                         return None
                     # パターンが順行なら逆行EXITをデファー
                     patterns = getattr(story, "pattern_summary", None) or {}
