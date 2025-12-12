@@ -9,7 +9,7 @@ from datetime import datetime
 from typing import Any, Dict, List, Literal
 
 
-PocketType = Literal["macro", "scalp"]
+PocketType = Literal["macro", "micro", "scalp"]
 
 
 @dataclass(slots=True)

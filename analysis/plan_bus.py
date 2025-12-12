@@ -18,17 +18,53 @@ _LOG = logging.getLogger(__name__)
 _LOG_PUBLISH = os.getenv("PLAN_BUS_LOG", "0").strip().lower() in {"1", "true", "yes", "on"}
 
 
+def _merge_plans(existing: PocketPlan, incoming: PocketPlan) -> PocketPlan:
+    """Merge signals from multiple publishers for the same pocket."""
+    merged_signals = list(existing.signals or []) + list(incoming.signals or [])
+    # Prefer the latest generated_at for freshness-sensitive fields
+    newer = incoming if incoming.generated_at >= existing.generated_at else existing
+    older = existing if newer is incoming else incoming
+    merged_notes = dict(older.notes or {})
+    merged_notes.update(newer.notes or {})
+    return PocketPlan(
+        generated_at=newer.generated_at,
+        pocket=newer.pocket,
+        focus_tag=newer.focus_tag or older.focus_tag,
+        focus_pockets=newer.focus_pockets or older.focus_pockets,
+        range_active=bool(newer.range_active or older.range_active),
+        range_soft_active=bool(newer.range_soft_active or older.range_soft_active),
+        range_ctx=newer.range_ctx or older.range_ctx,
+        event_soon=bool(newer.event_soon or older.event_soon),
+        spread_gate_active=bool(newer.spread_gate_active or older.spread_gate_active),
+        spread_gate_reason=newer.spread_gate_reason or older.spread_gate_reason,
+        spread_log_context=newer.spread_log_context or older.spread_log_context,
+        lot_allocation=newer.lot_allocation if newer.lot_allocation is not None else older.lot_allocation,
+        risk_override=newer.risk_override if newer.risk_override is not None else older.risk_override,
+        weight_macro=newer.weight_macro if newer.weight_macro is not None else older.weight_macro,
+        scalp_share=newer.scalp_share if newer.scalp_share is not None else older.scalp_share,
+        signals=merged_signals,
+        perf_snapshot=newer.perf_snapshot or older.perf_snapshot,
+        factors_m1=newer.factors_m1 or older.factors_m1,
+        factors_h4=newer.factors_h4 or older.factors_h4,
+        notes=merged_notes,
+    )
+
+
 def publish(plan: PocketPlan) -> None:
     with _LOCK:
+        existing = _PLANS.get(plan.pocket)
+        if existing:
+            plan = _merge_plans(existing, plan)
         _PLANS[plan.pocket] = plan
     if _LOG_PUBLISH:
         try:
             _LOG.info(
-                "[PLAN] publish pocket=%s signals=%d lot=%.4f range=%s",
+                "[PLAN] publish pocket=%s signals=%d lot=%.4f range=%s merged=%s",
                 plan.pocket,
                 len(plan.signals or []),
                 float(plan.lot_allocation or 0.0),
                 bool(plan.range_active),
+                bool(existing),
             )
         except Exception:
             pass

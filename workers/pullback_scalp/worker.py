@@ -7,11 +7,13 @@ import hashlib
 import logging
 import math
 import time
+from datetime import datetime
 from typing import Optional
 
-from execution.order_manager import market_order
-from execution.position_manager import PositionManager
+from analysis import plan_bus
+from indicators.factor_cache import all_factors
 from market_data import spread_monitor, tick_window
+from workers.common.pocket_plan import PocketPlan
 
 from . import config
 
@@ -94,7 +96,6 @@ async def pullback_scalp_worker() -> None:
         return
 
     LOG.info("%s worker starting", config.LOG_PREFIX)
-    pos_manager = PositionManager()
     cooldown_until = 0.0
     last_spread_log = 0.0
     last_density_log = 0.0
@@ -175,23 +176,6 @@ async def pullback_scalp_worker() -> None:
             if side is None:
                 continue
 
-            pockets = pos_manager.get_open_positions()
-            scalp_pos = pockets.get("scalp") or {}
-            tagged = []
-            for tr in scalp_pos.get("open_trades") or []:
-                thesis = tr.get("entry_thesis") or {}
-                if thesis.get("strategy_tag") == "pullback_scalp":
-                    tagged.append(tr)
-            if tagged:
-                latest_tr = sorted(tagged, key=lambda tr: tr.get("open_time") or "")[-1]
-                prev_price = float(latest_tr.get("price") or 0.0)
-                if prev_price:
-                    delta = abs(prev_price - mids_m1[-1]) / config.PIP_VALUE
-                    if delta < config.STAGE_MIN_DELTA_PIPS:
-                        continue
-            if len(tagged) >= config.MAX_ACTIVE_TRADES:
-                continue
-
             latest_tick = ticks_m1[-1]
             entry_price = float(latest_tick.get("ask")) if side == "long" else float(latest_tick.get("bid"))
 
@@ -219,57 +203,71 @@ async def pullback_scalp_worker() -> None:
             if high_vol and config.HIGH_VOL_UNIT_FACTOR < 0.999:
                 scaled = int(round(base_units * config.HIGH_VOL_UNIT_FACTOR / 1000.0) * 1000)
                 base_units = max(1000, scaled)
-            units = base_units if side == "long" else -base_units
-            client_id = _client_id(side)
-            thesis = {
-                "strategy_tag": "pullback_scalp",
-                "z_m1": None if z_m1 is None else round(z_m1, 2),
-                "z_m5": None if z_m5 is None else round(z_m5, 2),
-                "rsi_m1": None if rsi_m1 is None else round(rsi_m1, 1),
-                "atr_fast_pips": round(atr_fast, 2),
-                "atr_slow_pips": round(atr_slow, 2),
-                "atr_ref_pips": round(atr_ref, 2),
-                "spread_pips": round(spread_pips, 2),
+            # Plan publish (scalp pocket)
+            confidence = 85
+            total_lot = base_units / (100000.0 * (confidence / 100.0))
+            factors = all_factors()
+            fac_m1 = factors.get("M1") or {}
+            fac_h4 = factors.get("H4") or {}
+            signal = {
+                "action": "OPEN_LONG" if side == "long" else "OPEN_SHORT",
+                "pocket": "scalp",
+                "strategy": "pullback_scalp",
+                "tag": "pullback_scalp",
+                "tp_pips": round(tp_pips, 2),
+                "sl_pips": None if sl_price is None else round(abs(tp_pips) * 2, 2),
+                "confidence": confidence,
+                "min_hold_sec": 90,
+                "loss_guard_pips": None,
+                "target_tp_pips": round(tp_pips, 2),
+                "meta": {
+                    "z_m1": None if z_m1 is None else round(z_m1, 2),
+                    "z_m5": None if z_m5 is None else round(z_m5, 2),
+                    "rsi_m1": None if rsi_m1 is None else round(rsi_m1, 1),
+                    "atr_fast_pips": round(atr_fast, 2),
+                    "atr_slow_pips": round(atr_slow, 2),
+                    "atr_ref_pips": round(atr_ref, 2),
+                    "spread_pips": round(spread_pips, 2),
+                },
             }
-
-            try:
-                trade_id = await market_order(
-                    "USD_JPY",
-                    units,
-                    sl_price=sl_price,
-                    tp_price=tp_price,
-                    pocket="scalp",
-                    client_order_id=client_id,
-                    entry_thesis=thesis,
-                )
-            except Exception as exc:
-                LOG.error("%s order error side=%s exc=%s", config.LOG_PREFIX, side, exc)
-                cooldown_until = now_monotonic + config.COOLDOWN_SEC
-                continue
-
-            if trade_id:
-                LOG.info(
-                    "%s entry trade=%s side=%s units=%s tp=%.3f z1=%.2f z5=%.2f rsi=%.1f",
-                    config.LOG_PREFIX,
-                    trade_id,
-                    side,
-                    units,
-                    tp_price,
-                    z_m1 or 0.0,
-                    z_m5 or 0.0,
-                    rsi_m1 or -1.0,
-                )
-                cooldown_until = now_monotonic + config.COOLDOWN_SEC
-            else:
-                cooldown_until = now_monotonic + 10.0
+            plan = PocketPlan(
+                generated_at=datetime.utcnow(),
+                pocket="scalp",
+                focus_tag="hybrid",
+                focus_pockets=["scalp"],
+                range_active=False,
+                range_soft_active=False,
+                range_ctx={},
+                event_soon=False,
+                spread_gate_active=False,
+                spread_gate_reason="",
+                spread_log_context="pullback_scalp",
+                lot_allocation=total_lot,
+                risk_override=0.0,
+                weight_macro=0.0,
+                scalp_share=1.0,
+                signals=[signal],
+                perf_snapshot={},
+                factors_m1=fac_m1,
+                factors_h4=fac_h4,
+                notes={},
+            )
+            plan_bus.publish(plan)
+            LOG.info(
+                "%s publish plan side=%s units=%s tp=%.2fp z1=%.2f z5=%.2f rsi=%.1f atr=%.2f",
+                config.LOG_PREFIX,
+                side,
+                base_units if side == "long" else -base_units,
+                tp_pips,
+                z_m1 or 0.0,
+                z_m5 or 0.0,
+                rsi_m1 or -1.0,
+                atr_ref,
+            )
+            cooldown_until = now_monotonic + config.COOLDOWN_SEC
     except asyncio.CancelledError:
         LOG.info("%s worker cancelled", config.LOG_PREFIX)
         raise
-    finally:
-        try:
-            pos_manager.close()
-        except Exception:
-            LOG.exception("%s failed to close PositionManager", config.LOG_PREFIX)
 
 
 if __name__ == "__main__":  # pragma: no cover
