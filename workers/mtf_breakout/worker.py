@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+import logging
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Protocol
 
@@ -137,6 +139,9 @@ def _atr(bars: List[Dict[str, float]], period: int = 14) -> float:
         prev_close = bars[-i - 1]["close"]
         ranges.append(max(h - l, abs(h - prev_close), abs(l - prev_close)))
     return sum(ranges) / len(ranges)
+
+
+LOG = logging.getLogger(__name__)
 
 
 class MtfBreakoutWorker:
@@ -316,3 +321,18 @@ class MtfBreakoutWorker:
                 },
             },
         }
+
+
+async def _idle_loop() -> None:
+    """Keep the systemd service alive when no live wiring is present."""
+    LOG.info("mtf_breakout worker idle loop started (no live broker/datafeed wiring)")
+    try:
+        while True:
+            await asyncio.sleep(3600.0)
+    except asyncio.CancelledError:  # pragma: no cover - service shutdown path
+        LOG.info("mtf_breakout worker idle loop cancelled")
+        raise
+
+
+if __name__ == "__main__":  # pragma: no cover
+    asyncio.run(_idle_loop())
