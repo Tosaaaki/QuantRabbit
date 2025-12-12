@@ -273,6 +273,7 @@ class ExitManager:
             "nwave_partial",
             "pivot_partial",
             "candle_partial",
+            "breakeven_guard",
             "mfe_trail",
             "mfe_guard",
             "micro_slope_trail",
@@ -290,6 +291,21 @@ class ExitManager:
             "kill_switch",
             "hard_stop",
         }
+        # reverse_signal連発を防ぐクールダウンとゲート
+        self._reverse_cooldown_sec = float(os.getenv("EXIT_REVERSE_COOLDOWN_SEC", "75"))
+        self._reverse_min_hold_sec = float(os.getenv("EXIT_REVERSE_MIN_HOLD_SEC", "90"))
+        self._reverse_profit_floor = float(os.getenv("EXIT_REVERSE_PROFIT_FLOOR", "0.5"))
+        self._reverse_loss_floor = float(os.getenv("EXIT_REVERSE_LOSS_FLOOR", "3.0"))
+        self._reverse_mfe_ratio = float(os.getenv("EXIT_REVERSE_MFE_RATIO", "0.6"))
+        self._reverse_mfe_min = float(os.getenv("EXIT_REVERSE_MFE_MIN", "1.5"))
+        self._reverse_partial_frac = float(os.getenv("EXIT_REVERSE_PARTIAL_FRAC", "0.4"))
+        self._reverse_bounce_buffer = float(os.getenv("EXIT_REVERSE_BOUNCE_BUFFER", "1.2"))
+        self._reverse_ts: Dict[Tuple[str, str], datetime] = {}
+        # Breakeven guard: lock profits before turning negative
+        self._be_guard_trigger = float(os.getenv("EXIT_BE_GUARD_TRIGGER", "1.8"))
+        self._be_guard_floor = float(os.getenv("EXIT_BE_GUARD_FLOOR", "0.2"))
+        self._be_guard_min_loss = float(os.getenv("EXIT_BE_GUARD_MIN_LOSS", "-0.3"))
+        self._be_guard_frac = float(os.getenv("EXIT_BE_GUARD_FRAC", "0.6"))
 
     def _regime_profile(self, fac_m1: Dict, fac_h4: Dict, range_mode: bool) -> str:
         """軽量なレジームタグを返す。"""
@@ -1860,10 +1876,49 @@ class ExitManager:
                     pocket == "macro"
                     and -self._macro_hysteresis_pips < profit_pips < self._macro_hysteresis_pips
                 )
-                # Micro pocket: enforce a minimum hold before obeying reverse
-                if pocket == "micro" and not range_mode:
-                    if not self._has_mature_trade(open_info, "long", now, self._micro_min_hold_minutes):
+                if pocket in {"micro", "scalp"} and not range_mode:
+                    # 市況に合わせたゲート: 最低ホールド、MFEリトレース、利益/損失バンド、クールダウン
+                    if not self._has_mature_trade(open_info, "long", now, max(self._micro_min_hold_minutes, self._reverse_min_hold_sec / 60.0)):
                         return None
+                    max_mfe = self._max_mfe_for_side(open_info, "long", candles, now)
+                    if max_mfe is None or max_mfe < self._reverse_mfe_min:
+                        return None
+                    retrace = max(0.0, max_mfe - max(0.0, profit_pips or 0.0))
+                    if retrace < self._reverse_mfe_ratio * max_mfe and profit_pips is not None and profit_pips > -self._micro_loss_grace_pips:
+                        return None
+                    if profit_pips is not None and (-self._reverse_loss_floor < profit_pips < self._reverse_profit_floor):
+                        return None
+                    # 反発余地: EMA近傍かつ傾きが順行なら見送り
+                    bounce_ok = False
+                    try:
+                        ema_gap_pips = abs(float(close_price) - float(ema20)) / 0.01
+                    except Exception:
+                        ema_gap_pips = 99.0
+                    try:
+                        slope_fast = float(projection_fast.gap_slope_pips or 0.0) if projection_fast else 0.0
+                    except Exception:
+                        slope_fast = 0.0
+                    buffer = max(self._reverse_bounce_buffer, (atr_pips or 0.0) * 0.3)
+                    if ema_gap_pips <= buffer and slope_fast > 0.0:
+                        bounce_ok = True
+                    if bounce_ok:
+                        return None
+                    last_rev = self._reverse_ts.get((pocket, "long"))
+                    if last_rev and (now - last_rev).total_seconds() < self._reverse_cooldown_sec:
+                        return None
+                    self._reverse_ts[(pocket, "long")] = now
+                    # まず部分利確でリスク縮小し、揺れでの全撤退を防ぐ
+                    partial_units = max(1000, int(abs(units) * self._reverse_partial_frac))
+                    partial_units = min(partial_units, abs(units) - 1) if abs(units) > 1 else partial_units
+                    if partial_units > 0 and partial_units < abs(units):
+                        signed = -partial_units if side == "long" else partial_units
+                        return ExitDecision(
+                            pocket=pocket,
+                            units=signed,
+                            reason="reverse_signal_partial",
+                            tag=reverse_signal.get("tag", tag),
+                            allow_reentry=True,
+                        )
                 if micro_guard or macro_guard:
                     return None
                 reason = "reverse_signal"
@@ -2060,6 +2115,17 @@ class ExitManager:
             )
             if struct_partial:
                 return struct_partial
+            be_guard = self._breakeven_guard(
+                pocket=pocket,
+                side="long",
+                units=units,
+                profit_pips=profit_pips,
+                max_mfe=max_mfe_long,
+                atr_pips=atr_pips,
+                vol_5m=vol_5m,
+            )
+            if be_guard:
+                return be_guard
         elif pocket == "macro" and not reason:
             partial = (
                 self._nwave_partial_exit(
@@ -2463,10 +2529,47 @@ class ExitManager:
                     pocket == "macro"
                     and -self._macro_hysteresis_pips < profit_pips < self._macro_hysteresis_pips
                 )
-                # Micro pocket: enforce a minimum hold before obeying reverse
-                if pocket == "micro" and not range_mode:
-                    if not self._has_mature_trade(open_info, "short", now, self._micro_min_hold_minutes):
+                if pocket in {"micro", "scalp"} and not range_mode:
+                    if not self._has_mature_trade(open_info, "short", now, max(self._micro_min_hold_minutes, self._reverse_min_hold_sec / 60.0)):
                         return None
+                    max_mfe = self._max_mfe_for_side(open_info, "short", candles, now)
+                    if max_mfe is None or max_mfe < self._reverse_mfe_min:
+                        return None
+                    retrace = max(0.0, max_mfe - max(0.0, profit_pips or 0.0))
+                    if retrace < self._reverse_mfe_ratio * max_mfe and profit_pips is not None and profit_pips > -self._micro_loss_grace_pips:
+                        return None
+                    if profit_pips is not None and (-self._reverse_loss_floor < profit_pips < self._reverse_profit_floor):
+                        return None
+                    # 反発余地: EMA近傍かつ傾きが順行なら見送り
+                    bounce_ok = False
+                    try:
+                        ema_gap_pips = abs(float(close_price) - float(ema20)) / 0.01
+                    except Exception:
+                        ema_gap_pips = 99.0
+                    try:
+                        slope_fast = float(projection_fast.gap_slope_pips or 0.0) if projection_fast else 0.0
+                    except Exception:
+                        slope_fast = 0.0
+                    buffer = max(self._reverse_bounce_buffer, (atr_pips or 0.0) * 0.3)
+                    if ema_gap_pips <= buffer and slope_fast < 0.0:
+                        bounce_ok = True
+                    if bounce_ok:
+                        return None
+                    last_rev = self._reverse_ts.get((pocket, "short"))
+                    if last_rev and (now - last_rev).total_seconds() < self._reverse_cooldown_sec:
+                        return None
+                    self._reverse_ts[(pocket, "short")] = now
+                    partial_units = max(1000, int(abs(units) * self._reverse_partial_frac))
+                    partial_units = min(partial_units, abs(units) - 1) if abs(units) > 1 else partial_units
+                    if partial_units > 0 and partial_units < abs(units):
+                        signed = -partial_units if side == "long" else partial_units
+                        return ExitDecision(
+                            pocket=pocket,
+                            units=signed,
+                            reason="reverse_signal_partial",
+                            tag=reverse_signal.get("tag", tag),
+                            allow_reentry=True,
+                        )
                 if micro_guard or macro_guard:
                     return None
                 reason = "reverse_signal"
@@ -2557,6 +2660,17 @@ class ExitManager:
             )
             if struct_partial:
                 return struct_partial
+            be_guard = self._breakeven_guard(
+                pocket=pocket,
+                side="short",
+                units=units,
+                profit_pips=profit_pips,
+                max_mfe=max_mfe_short,
+                atr_pips=atr_pips,
+                vol_5m=vol_5m,
+            )
+            if be_guard:
+                return be_guard
         elif pocket == "macro" and not reason:
             partial = (
                 self._nwave_partial_exit(
@@ -2952,6 +3066,63 @@ class ExitManager:
             units=signed,
             reason="micro_struct_partial",
             tag="struct-partial",
+            allow_reentry=True,
+        )
+
+    def _breakeven_guard(
+        self,
+        *,
+        pocket: str,
+        side: str,
+        units: int,
+        profit_pips: Optional[float],
+        max_mfe: Optional[float],
+        atr_pips: Optional[float],
+        vol_5m: Optional[float] = None,
+    ) -> Optional[ExitDecision]:
+        """
+        Once favorable excursion is achieved, avoid letting it slip to loss.
+        Applies to micro/scalp only; prefers partial close.
+        """
+        if pocket not in {"micro", "scalp"}:
+            return None
+        if profit_pips is None or max_mfe is None:
+            return None
+        trigger = self._be_guard_trigger
+        floor = self._be_guard_floor
+        min_loss = self._be_guard_min_loss
+        frac = self._be_guard_frac
+
+        atr_val = atr_pips or 0.0
+        vol_val = vol_5m or 0.0
+        if atr_val <= 2.5 or vol_val <= 0.8:
+            trigger = max(1.0, trigger - 0.4)
+            floor += 0.1
+            frac = min(0.9, frac + 0.1)
+        elif atr_val >= 6.0 or vol_val >= 3.0:
+            trigger += 0.4
+            frac = max(0.25, frac - 0.1)
+
+        if max_mfe < trigger:
+            return None
+        if profit_pips > floor:
+            return None
+        if profit_pips < min_loss:
+            return None
+        frac = max(0.2, min(0.9, frac))
+        if atr_val <= 1.2:
+            frac *= 0.85
+        cut_units = max(1000, int(abs(units) * frac))
+        if cut_units <= 0:
+            return None
+        if cut_units >= abs(units):
+            cut_units = abs(units)
+        signed = -cut_units if side == "long" else cut_units
+        return ExitDecision(
+            pocket=pocket,
+            units=signed,
+            reason="breakeven_guard",
+            tag="be-guard",
             allow_reentry=True,
         )
 
