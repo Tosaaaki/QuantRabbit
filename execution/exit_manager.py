@@ -143,6 +143,7 @@ class ExitManager:
         # Micro-specific stability controls
         # Guard against premature exits on noisy micro trades: enforce longer holds and wider grace
         self._micro_min_hold_seconds = float(os.getenv("EXIT_MICRO_MIN_HOLD_SEC", "90"))
+        self._micro_min_hold_minutes = self._micro_min_hold_seconds / 60.0
         self._micro_loss_grace_pips = float(os.getenv("EXIT_MICRO_GUARD_LOSS_PIPS", "2.5"))
         self._micro_loss_hold_seconds = float(os.getenv("EXIT_MICRO_LOSS_HOLD_SEC", "90"))
         self._micro_profit_hard = float(os.getenv("EXIT_MICRO_PROFIT_TAKE_PIPS", "1.60"))
@@ -353,10 +354,12 @@ class ExitManager:
             return None
 
         # MAEセーフティ（SL代替）: 含み損が大きくなったら即時撤退
-        mae_floor = max(5.0, atr_pips * 1.5)
+        # 早めに傷を浅く切る: 閾値をやや緩め、まずは部分クローズで被弾を抑える
+        mae_floor = max(3.5, atr_pips * 1.1)
         if profit_pips <= -mae_floor:
             self._time_guard_ts[(pocket, side)] = now
-            signed = -abs(units) if side == "long" else abs(units)
+            cut_units = max(self._min_partial_units, int(abs(units) * 0.6))
+            signed = -cut_units if side == "long" else cut_units
             return ExitDecision(
                 pocket=pocket,
                 units=signed,

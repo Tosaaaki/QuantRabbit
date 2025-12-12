@@ -431,6 +431,116 @@ def _normalize_plan(plan: Sequence[float]) -> tuple[float, ...]:
     return tuple(rounded)
 
 
+def _apply_tech_overlays(signal: dict, fac: dict) -> dict:
+    """
+    Cross-worker tech overlays: apply Ichimoku/cluster/oscillator context to confidence/TP.
+    """
+    if not signal or not isinstance(signal, dict):
+        return signal
+    sig = dict(signal)
+    try:
+        conf = int(sig.get("confidence", 50) or 50)
+    except Exception:
+        conf = 50
+    try:
+        tp = float(sig.get("tp_pips")) if sig.get("tp_pips") is not None else None
+    except Exception:
+        tp = None
+    action = str(sig.get("action", "")).upper()
+
+    def _safe_float(val, default=0.0):
+        try:
+            return float(val)
+        except Exception:
+            return default
+
+    cloud_pos = _safe_float(fac.get("ichimoku_cloud_pos"), 0.0)
+    span_a_gap = _safe_float(fac.get("ichimoku_span_a_gap"), 0.0)
+    span_b_gap = _safe_float(fac.get("ichimoku_span_b_gap"), 0.0)
+    cluster_high = _safe_float(fac.get("cluster_high_gap"), 0.0)
+    cluster_low = _safe_float(fac.get("cluster_low_gap"), 0.0)
+    macd_hist = _safe_float(fac.get("macd_hist"), 0.0)
+    dmi_diff = _safe_float(fac.get("plus_di"), 0.0) - _safe_float(fac.get("minus_di"), 0.0)
+    stoch = _safe_float(fac.get("stoch_rsi"), 0.5)
+    vol5 = _safe_float(fac.get("vol_5m"), 1.0)
+
+    mult_conf = 1.0
+    mult_tp = 1.0
+
+    # Ichimoku bias: above/below cloud supports順方向、雲中は弱め
+    if action == "OPEN_LONG":
+        if cloud_pos > 0.5:
+            mult_conf += 0.06
+        elif cloud_pos < -0.5:
+            mult_conf -= 0.12
+            mult_tp -= 0.08
+    elif action == "OPEN_SHORT":
+        if cloud_pos < -0.5:
+            mult_conf += 0.06
+        elif cloud_pos > 0.5:
+            mult_conf -= 0.12
+            mult_tp -= 0.08
+
+    # Span方向に素直な場合は少し強化
+    if action == "OPEN_LONG" and span_a_gap > 0 and span_b_gap > 0:
+        mult_conf += 0.03
+    if action == "OPEN_SHORT" and span_a_gap < 0 and span_b_gap < 0:
+        mult_conf += 0.03
+
+    # クラスタ距離が近い側は抑制、遠いなら伸ばす
+    if action == "OPEN_LONG":
+        dist = cluster_high
+    else:
+        dist = cluster_low
+    if dist > 0:
+        if dist < 3.0:
+            mult_conf -= 0.08
+            mult_tp -= 0.1
+        elif dist > 7.0:
+            mult_conf += 0.05
+            mult_tp += 0.08
+
+    # MACD/DMI 順方向は強化、逆行は抑制
+    if action == "OPEN_LONG":
+        if macd_hist > 0 or dmi_diff > 2.0:
+            mult_conf += 0.04
+        elif macd_hist < 0 and dmi_diff < -2.0:
+            mult_conf -= 0.08
+    elif action == "OPEN_SHORT":
+        if macd_hist < 0 or dmi_diff < -2.0:
+            mult_conf += 0.04
+        elif macd_hist > 0 and dmi_diff > 2.0:
+            mult_conf -= 0.08
+
+    # StochRSI極端は抑制、適度なボラは維持
+    if stoch >= 0.85 or stoch <= 0.15:
+        mult_conf -= 0.05
+    if vol5 < 0.4:
+        mult_conf -= 0.04
+
+    mult_conf = max(0.65, min(1.25, mult_conf))
+    mult_tp = max(0.7, min(1.2, mult_tp))
+
+    conf = int(max(0, min(100, conf * mult_conf)))
+    sig["confidence"] = conf
+    if tp is not None:
+        sig["tp_pips"] = round(max(0.5, tp * mult_tp), 2)
+    notes = sig.get("notes") or {}
+    if not isinstance(notes, dict):
+        notes = {}
+    notes.update(
+        {
+            "tech_conf_mult": round(mult_conf, 3),
+            "tech_tp_mult": round(mult_tp, 3),
+            "ichimoku_pos": round(cloud_pos, 3),
+            "cluster_high": round(cluster_high, 3),
+            "cluster_low": round(cluster_low, 3),
+        }
+    )
+    sig["notes"] = notes
+    return sig
+
+
 def _frontload_plan(base_plan: Sequence[float], target_first: float) -> tuple[float, ...]:
     plan = _normalize_plan(base_plan)
     if len(plan) == 1:
@@ -3685,6 +3795,8 @@ async def logic_loop(
                         signal[extra_key] = raw_signal[extra_key]
                 scaled_conf = int(signal["confidence"] * health.confidence_scale)
                 signal["confidence"] = max(0, min(100, scaled_conf))
+                # Tech overlays (Ichimoku/cluster/MACD-DMI/Stoch) applied uniformly across workers
+                signal = _apply_tech_overlays(signal, fac_m1)
 
                 allow_micro, gate_reason, gate_ctx = _micro_chart_gate(
                     signal,

@@ -124,8 +124,11 @@ def _tech_multiplier(fac: Dict[str, object]) -> float:
         vwap_gap = float(fac.get("vwap_gap") or 0.0)
         roc5 = float(fac.get("roc5") or 0.0)
         cci = float(fac.get("cci") or 0.0)
+        ichimoku_pos = float(fac.get("ichimoku_cloud_pos") or 0.0)
+        cluster_high = float(fac.get("cluster_high_gap") or 0.0)
+        cluster_low = float(fac.get("cluster_low_gap") or 0.0)
     except Exception:
-        adx = rsi = bbw = vol5 = macd_hist = stoch = plus_di = minus_di = kc_width = don_width = chaikin_vol = vwap_gap = roc5 = cci = 0.0
+        adx = rsi = bbw = vol5 = macd_hist = stoch = plus_di = minus_di = kc_width = don_width = chaikin_vol = vwap_gap = roc5 = cci = ichimoku_pos = cluster_high = cluster_low = 0.0
 
     score = 0.0
     # トレンド強/順行
@@ -170,6 +173,18 @@ def _tech_multiplier(fac: Dict[str, object]) -> float:
     # RSI極端は抑制
     if rsi <= 25 or rsi >= 75:
         score -= 0.05
+    # Ichimoku/クラスタバイアス
+    if ichimoku_pos > 0.8:
+        score += 0.08
+    elif ichimoku_pos < -0.8:
+        score -= 0.1
+    distances = [c for c in (cluster_high, cluster_low) if c and c > 0]
+    min_cluster = float(min(distances)) if distances else 0.0
+    if min_cluster > 0:
+        if min_cluster < 3.0:
+            score -= 0.08
+        elif min_cluster > 7.0:
+            score += 0.05
 
     mult = 1.0 + score * 0.08
     return max(0.7, min(1.3, mult))
