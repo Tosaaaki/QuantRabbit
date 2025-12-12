@@ -420,8 +420,56 @@ class PocketPlanExecutor:
                     hold_val = 0.0
                 if hold_val < 120.0:
                     signal["min_hold_sec"] = 120.0
+            # 市況に応じた動的スケール（TP/lot/CD 可変）
+            lot_adjust = 1.0
+            tp_val = signal.get("tp_pips")
+            try:
+                tp_val = float(tp_val) if tp_val is not None else None
+            except Exception:
+                tp_val = None
+            # ATRベース: 低ボラはTP圧縮・lot軽め、高ボラは拡大
+            if atr_pips is not None:
+                if atr_pips <= 2.0:
+                    lot_adjust *= 0.9
+                    if tp_val is not None:
+                        tp_val = tp_val * 0.75
+                elif atr_pips >= 6.0:
+                    lot_adjust *= 1.05
+                    if tp_val is not None:
+                        tp_val = tp_val * 1.15
+            # レンジ/低ADx+BBWならさらに圧縮
+            if plan.range_active or (
+                adx_val is not None and bbw_val is not None and adx_val <= 16.0 and bbw_val <= 0.0012
+            ):
+                lot_adjust *= 0.9
+                if tp_val is not None:
+                    tp_val = tp_val * 0.85
+            # VWAP乖離で微調整（離れていればTP少し伸ばす）
+            try:
+                if factors:
+                    vwap_gap = None
+                    vwap_val = factors.get("vwap")
+                    close_val = factors.get("close")
+                    if vwap_val is not None and close_val is not None:
+                        vwap_gap = abs(float(close_val) - float(vwap_val)) / PIP
+                    if vwap_gap is not None:
+                        if vwap_gap >= 1.6:
+                            if tp_val is not None:
+                                tp_val = tp_val + 0.4
+                        elif vwap_gap <= 0.8:
+                            if tp_val is not None:
+                                tp_val = tp_val * 0.9
+                                lot_adjust *= 0.95
+            except Exception:
+                pass
+            # フロア設定（ポケット別）
+            if tp_val is not None:
+                floor = 2.0 if self.pocket in {"scalp", "micro"} else 5.0
+                ceiling = 40.0
+                signal["tp_pips"] = max(floor, min(ceiling, round(tp_val, 2)))
             confidence = max(0, min(100, signal.get("confidence", 50)))
             confidence_factor = max(0.2, confidence / 100.0)
+            confidence_factor *= lot_adjust
             confidence_target = round(total_lot * confidence_factor, 3)
             if confidence_target <= 0:
                 LOG.info(
@@ -589,6 +637,11 @@ class PocketPlanExecutor:
             self.pos_manager.register_open_trade(trade_id, self.pocket, client_id)
             self.stage_tracker.set_stage(self.pocket, direction, stage_idx + 1, now=now)
             entry_cd = POCKET_ENTRY_MIN_INTERVAL.get(self.pocket, 120)
+            # 市況でクールダウンも可変化
+            if plan.range_active or (atr_pips is not None and atr_pips <= 2.0):
+                entry_cd = max(15.0, entry_cd * 0.8)
+            elif atr_pips is not None and atr_pips >= 6.0:
+                entry_cd = max(15.0, entry_cd * 0.9)
             self.stage_tracker.set_cooldown(
                 self.pocket,
                 direction,
