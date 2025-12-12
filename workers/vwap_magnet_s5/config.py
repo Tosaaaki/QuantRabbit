@@ -101,7 +101,8 @@ ALLOW_SHORT: bool = _bool("VWAP_MAGNET_S5_ALLOW_SHORT", False)
 WINDOW_SEC: float = max(60.0, _float("VWAP_MAGNET_S5_WINDOW_SEC", 600.0))
 BUCKET_SECONDS: float = max(1.0, _float("VWAP_MAGNET_S5_BUCKET_SECONDS", 5.0))
 VWAP_WINDOW_BUCKETS: int = max(30, _int("VWAP_MAGNET_S5_VWAP_BUCKETS", 96))
-MIN_BUCKETS: int = max(VWAP_WINDOW_BUCKETS + 4, _int("VWAP_MAGNET_S5_MIN_BUCKETS", 120))
+# Require at least the VWAP window, but not an extra margin, to ease warmup after restart.
+MIN_BUCKETS: int = max(VWAP_WINDOW_BUCKETS, _int("VWAP_MAGNET_S5_MIN_BUCKETS", VWAP_WINDOW_BUCKETS))
 
 MAX_SPREAD_PIPS: float = max(0.1, _float("VWAP_MAGNET_S5_MAX_SPREAD_PIPS", 1.2))
 MIN_DENSITY_TICKS: int = max(10, _int("VWAP_MAGNET_S5_MIN_DENSITY_TICKS", 60))
