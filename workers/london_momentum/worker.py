@@ -90,7 +90,9 @@ async def london_momentum_worker() -> None:
                 bbw_m5 = float(fac_m5.get("bbw") or 0.0)
                 vwap_m5 = fac_m5.get("vwap")
                 price_f = float(price)
+                range_flag = False
                 if bbw_m5 > 0.0 and bbw_m5 < 0.0010 and adx_m5 < 16.0:
+                    range_flag = True
                     LOG.debug("%s skip: range/low-vol (adx=%.2f bbw=%.5f)", config.LOG_PREFIX, adx_m5, bbw_m5)
                     await asyncio.sleep(config.LOOP_INTERVAL_SEC)
                     continue
@@ -162,8 +164,35 @@ async def london_momentum_worker() -> None:
                 if direction == "short":
                     units = -units
 
+                # 市況に応じて TP/lot/Cooldown を可変化
+                lot_scale = 1.0
+                tp_pips = config.TP_PIPS
+                if atr_pips <= 2.5:
+                    lot_scale *= 0.9
+                    tp_pips = max(2.0, tp_pips * 0.7)
+                elif atr_pips >= 6.0:
+                    lot_scale *= 1.1
+                    tp_pips = min(12.0, tp_pips * 1.15)
+                if vwap_m5 is not None:
+                    try:
+                        vwap_gap = abs(price_f - float(vwap_m5)) / PIP
+                        if vwap_gap >= 1.6:
+                            tp_pips = min(12.0, tp_pips + 0.6)
+                        elif vwap_gap <= 0.9:
+                            tp_pips = max(1.8, tp_pips * 0.85)
+                    except Exception:
+                        pass
+                if range_flag:
+                    lot_scale *= 0.9
+                    tp_pips = max(2.0, tp_pips * 0.8)
+
+                units = int(round(units * lot_scale))
+                if abs(units) < config.MIN_UNITS:
+                    await asyncio.sleep(config.LOOP_INTERVAL_SEC)
+                    continue
+
                 sl_delta = config.SL_PIPS * 0.01
-                tp_delta = config.TP_PIPS * 0.01
+                tp_delta = tp_pips * 0.01
                 price_float = float(price)
                 if direction == "long":
                     sl_price = round(price_float - sl_delta, 3)
@@ -207,11 +236,16 @@ async def london_momentum_worker() -> None:
                 )
                 pos_manager.register_open_trade(trade_id, config.POCKET)
                 stage_tracker.set_stage(config.POCKET, direction, 1, now=now)
+                cooldown = config.COOLDOWN_SEC
+                if range_flag:
+                    cooldown = max(30.0, cooldown * 0.8)
+                elif atr_pips >= 6.0:
+                    cooldown = min(cooldown * 0.9, cooldown)
                 stage_tracker.set_cooldown(
                     config.POCKET,
                     direction,
                     reason="lm_entry",
-                    seconds=config.COOLDOWN_SEC,
+                    seconds=cooldown,
                     now=now,
                 )
 

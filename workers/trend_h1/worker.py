@@ -388,6 +388,23 @@ async def trend_h1_worker() -> None:
                     _log_skip("lot_zero", skip_state)
                     continue
 
+                # 市況に応じた lot/TP の動的調整
+                if atr_pips < 6.0:
+                    lot *= 0.92
+                    tp_pips = max(6.0, tp_pips * 0.9)
+                elif atr_pips > 22.0:
+                    lot *= 1.06
+                    tp_pips = min(36.0, tp_pips * 1.05)
+                try:
+                    vwap_gap = abs(entry_price - float(vwap)) / PIP if vwap is not None else None
+                except Exception:
+                    vwap_gap = None
+                if vwap_gap is not None:
+                    if vwap_gap >= 2.0:
+                        tp_pips = min(38.0, tp_pips + 1.0)
+                    elif vwap_gap <= 1.0:
+                        tp_pips = max(5.0, tp_pips * 0.9)
+
                 lot *= _confidence_scale(confidence)
                 lot = max(config.MIN_LOT, min(config.MAX_LOT, lot))
                 stage_ratio = config.STAGE_RATIOS[stage_idx]
