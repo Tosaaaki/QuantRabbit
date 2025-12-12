@@ -42,6 +42,11 @@ class IndicatorEngine:
                 "vwap_gap": 0.0,
                 "swing_dist_high": 0.0,
                 "swing_dist_low": 0.0,
+                "ichimoku_span_a_gap": 0.0,
+                "ichimoku_span_b_gap": 0.0,
+                "ichimoku_cloud_pos": 0.0,
+                "cluster_high_gap": 0.0,
+                "cluster_low_gap": 0.0,
             }
 
         close = df["close"].astype(float)
@@ -80,6 +85,8 @@ class IndicatorEngine:
         chaikin_vol = _chaikin_vol(high, low, period=10, slow=20)
         vwap_gap = _vwap_gap(df)
         swing_high_dist, swing_low_dist = _swing_distance(close, high, low, lookback=50)
+        ichimoku_a_gap, ichimoku_b_gap, ichimoku_pos = _ichimoku_position(high, low, close)
+        cluster_high_gap, cluster_low_gap = _cluster_distance(high, low, close)
 
         out: Dict[str, float] = {
             "ma10": float(ma10.iloc[-1]) if not ma10.empty else 0.0,
@@ -110,6 +117,11 @@ class IndicatorEngine:
             "vwap_gap": float(vwap_gap) if np.isfinite(vwap_gap) else 0.0,
             "swing_dist_high": float(swing_high_dist) if np.isfinite(swing_high_dist) else 0.0,
             "swing_dist_low": float(swing_low_dist) if np.isfinite(swing_low_dist) else 0.0,
+            "ichimoku_span_a_gap": float(ichimoku_a_gap) if np.isfinite(ichimoku_a_gap) else 0.0,
+            "ichimoku_span_b_gap": float(ichimoku_b_gap) if np.isfinite(ichimoku_b_gap) else 0.0,
+            "ichimoku_cloud_pos": float(ichimoku_pos) if np.isfinite(ichimoku_pos) else 0.0,
+            "cluster_high_gap": float(cluster_high_gap) if np.isfinite(cluster_high_gap) else 0.0,
+            "cluster_low_gap": float(cluster_low_gap) if np.isfinite(cluster_low_gap) else 0.0,
         }
 
         for k, v in out.items():
@@ -271,3 +283,61 @@ def _bollinger(close: pd.Series, period: int, std_mult: float):
     upper = middle + std_mult * std
     lower = middle - std_mult * std
     return upper.fillna(0.0), middle.fillna(0.0), lower.fillna(0.0)
+
+
+def _ichimoku_position(high: pd.Series, low: pd.Series, close: pd.Series) -> tuple[float, float, float]:
+    """
+    Price vs Ichimoku cloud.
+    Returns (spanA_gap_pips, spanB_gap_pips, cloud_position)
+    cloud_position: >0 above cloud top, <0 below cloud bottom, 0 inside.
+    """
+    if len(close) < 52:
+        return (0.0, 0.0, 0.0)
+    tenkan = (high.rolling(window=9, min_periods=9).max() + low.rolling(window=9, min_periods=9).min()) / 2.0
+    kijun = (high.rolling(window=26, min_periods=26).max() + low.rolling(window=26, min_periods=26).min()) / 2.0
+    senkou_a = ((tenkan + kijun) / 2.0).shift(26)
+    senkou_b = ((high.rolling(window=52, min_periods=52).max() + low.rolling(window=52, min_periods=52).min()) / 2.0).shift(26)
+    span_a = senkou_a.iloc[-1] if not senkou_a.empty else np.nan
+    span_b = senkou_b.iloc[-1] if not senkou_b.empty else np.nan
+    price = close.iloc[-1]
+    if not np.isfinite(span_a) or not np.isfinite(span_b) or not np.isfinite(price):
+        return (0.0, 0.0, 0.0)
+    span_a_gap = (price - span_a) / 0.01
+    span_b_gap = (price - span_b) / 0.01
+    cloud_top = max(span_a, span_b)
+    cloud_bottom = min(span_a, span_b)
+    if price > cloud_top:
+        pos = (price - cloud_top) / 0.01
+    elif price < cloud_bottom:
+        pos = (price - cloud_bottom) / 0.01
+    else:
+        pos = 0.0
+    return (float(span_a_gap), float(span_b_gap), float(pos))
+
+
+def _cluster_distance(high: pd.Series, low: pd.Series, close: pd.Series, lookback: int = 120, bin_size: float = 0.02) -> tuple[float, float]:
+    """
+    Approximate distance (pips) to nearest high/low price clusters within lookback.
+    bin_size in price units (0.02 ~= 2 pips).
+    """
+    if len(close) < max(10, lookback):
+        return (0.0, 0.0)
+    last = float(close.iloc[-1])
+
+    def _cluster_gap(series: pd.Series, above: bool) -> float:
+        seg = series.iloc[-lookback:]
+        if seg.empty:
+            return 0.0
+        binned = (seg / bin_size).round().astype(int)
+        counts = binned.value_counts()
+        if counts.empty:
+            return 0.0
+        center_bin = counts.idxmax()
+        center = float(center_bin) * bin_size
+        if above:
+            gap = max(0.0, center - last)
+        else:
+            gap = max(0.0, last - center)
+        return gap / 0.01
+
+    return (_cluster_gap(high, above=True), _cluster_gap(low, above=False))

@@ -1585,6 +1585,10 @@ class ExitManager:
         stage_level = 0
         profile = profile or {}
         avg_price = open_info.get("long_avg_price") or open_info.get("avg_price")
+        try:
+            vol_5m = float(fac_m1.get("vol_5m") or 0.0)
+        except Exception:
+            vol_5m = 0.0
         profit_pips = 0.0
         if avg_price and close_price:
             profit_pips = (close_price - avg_price) / 0.01
@@ -2310,6 +2314,10 @@ class ExitManager:
         stage_level = 0
         profile = profile or {}
         avg_price = open_info.get("short_avg_price") or open_info.get("avg_price")
+        try:
+            vol_5m = float(fac_m1.get("vol_5m") or 0.0)
+        except Exception:
+            vol_5m = 0.0
         profit_pips = 0.0
         if avg_price and close_price:
             profit_pips = (avg_price - close_price) / 0.01
