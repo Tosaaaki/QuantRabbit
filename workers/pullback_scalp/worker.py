@@ -198,6 +198,20 @@ async def pullback_scalp_worker() -> None:
                     entry_price - sl_pips * config.PIP_VALUE if side == "long" else entry_price + sl_pips * config.PIP_VALUE,
                     3,
                 )
+            else:
+                sl_pips = None
+
+            # Safety: avoid inverted TP/SL before publishing
+            if tp_price is not None:
+                if side == "long" and tp_price <= entry_price:
+                    continue
+                if side == "short" and tp_price >= entry_price:
+                    continue
+            if sl_price is not None:
+                if side == "long" and sl_price >= entry_price:
+                    sl_price = None
+                elif side == "short" and sl_price <= entry_price:
+                    sl_price = None
 
             base_units = config.ENTRY_UNITS
             if high_vol and config.HIGH_VOL_UNIT_FACTOR < 0.999:
@@ -215,7 +229,7 @@ async def pullback_scalp_worker() -> None:
                 "strategy": "pullback_scalp",
                 "tag": "pullback_scalp",
                 "tp_pips": round(tp_pips, 2),
-                "sl_pips": None if sl_price is None else round(abs(tp_pips) * 2, 2),
+                "sl_pips": None if sl_price is None or sl_pips is None else round(sl_pips, 2),
                 "confidence": confidence,
                 "min_hold_sec": 90,
                 "loss_guard_pips": None,
