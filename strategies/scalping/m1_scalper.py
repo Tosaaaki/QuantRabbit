@@ -133,6 +133,11 @@ class M1Scalper:
         adx = fac.get("adx", 0.0) or 0.0
         vol5 = fac.get("vol_5m", 0.0) or 0.0
         bbw = fac.get("bbw") or 0.0
+        bb_upper = fac.get("bb_upper")
+        bb_lower = fac.get("bb_lower")
+        cci = fac.get("cci")
+        stoch = fac.get("stoch_rsi")
+        vwap = fac.get("vwap")
         if close is None or ema20 is None or rsi is None:
             return None
 
@@ -149,6 +154,47 @@ class M1Scalper:
         atr_pips = _to_float(fac.get("atr_pips"))
         if atr_pips is None:
             atr_pips = (atr or 0.0) * 100
+
+        # レンジ・低ボラを検知し、帯付近のみエントリーを許可
+        low_vol_range = (adx < 18.0 and bbw > 0.0 and bbw < 0.0013 and atr_pips < 2.2)
+        if low_vol_range:
+            # BB 上下どちらかのバンドに近い場合のみ許可（2pips以内）
+            near_band = False
+            if bb_upper is not None and bb_lower is not None:
+                try:
+                    dist_upper = (float(bb_upper) - float(close)) / _PIP
+                    dist_lower = (float(close) - float(bb_lower)) / _PIP
+                    if dist_upper <= 2.0 or dist_lower <= 2.0:
+                        near_band = True
+                except Exception:
+                    near_band = False
+            # VWAP 乖離が大きい場合も許可（中心回帰狙い）
+            if not near_band and vwap is not None:
+                try:
+                    vwap_gap = abs(float(close) - float(vwap)) / _PIP
+                    if vwap_gap >= 1.4:
+                        near_band = True
+                except Exception:
+                    pass
+            if not near_band:
+                _log("range_skip_not_near_band", bbw=round(bbw, 5), adx=round(adx, 2), atr_pips=round(atr_pips, 2))
+                return None
+            # CCI / StochRSI でオシレーター確認（あれば）
+            if cci is not None:
+                try:
+                    if abs(float(cci)) < 80:
+                        _log("range_skip_weak_cci", cci=round(float(cci), 2))
+                        return None
+                except Exception:
+                    pass
+            if stoch is not None:
+                try:
+                    stoch_f = float(stoch)
+                    if 0.2 < stoch_f < 0.8:
+                        _log("range_skip_mid_stoch", stoch=round(stoch_f, 3))
+                        return None
+                except Exception:
+                    pass
 
         # Loosened gates to allow entries in低中ボラ
         if atr_pips < 1.0:
