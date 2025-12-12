@@ -145,6 +145,23 @@ async def start_candle_stream(
                 provider="oanda-stream",
                 latency_ms=latency_ms,
             )
+            # Debug log every few seconds to verify orderbook updates
+            ts_mon = datetime.datetime.utcnow().timestamp()
+            if int(ts_mon) % 10 == 0:
+                snap = orderbook_state.get_latest()
+                if snap:
+                    try:
+                        print(
+                            "[orderbook] updated mid=%.3f spread=%.3f provider=%s latency=%.1fms"
+                            % (
+                                snap.mid,
+                                snap.spread,
+                                snap.provider or "oanda-stream",
+                                snap.latency_ms or -1.0,
+                            )
+                        )
+                    except Exception:
+                        pass
         except Exception as exc:  # noqa: BLE001
             print(f"[orderbook] failed to update snapshot: {exc}")
         await agg.on_tick(tick)
