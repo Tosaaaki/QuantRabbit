@@ -90,14 +90,14 @@ async def london_momentum_worker() -> None:
                 bbw_m5 = float(fac_m5.get("bbw") or 0.0)
                 vwap_m5 = fac_m5.get("vwap")
                 price_f = float(price)
-                if bbw_m5 > 0.0 and bbw_m5 < 0.0013 and adx_m5 < 18.0:
+                if bbw_m5 > 0.0 and bbw_m5 < 0.0010 and adx_m5 < 16.0:
                     LOG.debug("%s skip: range/low-vol (adx=%.2f bbw=%.5f)", config.LOG_PREFIX, adx_m5, bbw_m5)
                     await asyncio.sleep(config.LOOP_INTERVAL_SEC)
                     continue
                 if vwap_m5 is not None:
                     try:
                         vwap_gap = abs(price_f - float(vwap_m5)) / PIP
-                        if vwap_gap < 1.0:
+                        if vwap_gap < 0.8:
                             LOG.debug("%s skip: vwap too close gap=%.2fp", config.LOG_PREFIX, vwap_gap)
                             await asyncio.sleep(config.LOOP_INTERVAL_SEC)
                             continue

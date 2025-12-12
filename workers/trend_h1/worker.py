@@ -262,13 +262,13 @@ async def trend_h1_worker() -> None:
                     close_f = float(close_price) if close_price is not None else 0.0
                 except (TypeError, ValueError):
                     close_f = 0.0
-                if bbw_h1 > 0.0 and bbw_h1 < 0.0013 and adx_h1 < 18.0:
+                if bbw_h1 > 0.0 and bbw_h1 < 0.0010 and adx_h1 < 16.0:
                     _log_skip(f"range_guard adx={adx_h1:.1f} bbw={bbw_h1:.4f}", skip_state)
                     continue
                 if vwap is not None and close_price is not None:
                     try:
                         vwap_gap = abs(close_f - float(vwap)) / PIP
-                        if vwap_gap < 1.2:
+                        if vwap_gap < 1.0:
                             _log_skip(f"vwap_gap {vwap_gap:.2f}p", skip_state)
                             continue
                     except Exception:
