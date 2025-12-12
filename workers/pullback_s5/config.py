@@ -151,7 +151,7 @@ TP_ATR_MAX_PIPS: float = max(
     _float("PULLBACK_S5_TP_ATR_MAX_PIPS", 3.4),
 )
 
-MIN_ATR_PIPS: float = max(0.0, _float("PULLBACK_S5_MIN_ATR_PIPS", 1.1))
+MIN_ATR_PIPS: float = max(0.0, _float("PULLBACK_S5_MIN_ATR_PIPS", 1.0))
 MIN_DENSITY_TICKS: int = max(10, _int("PULLBACK_S5_MIN_DENSITY_TICKS", 90))
 
 # --- quality gates ---

@@ -381,7 +381,7 @@ WORKER_SERVICES = {
 }
 WORKER_AUTOCONTROL_ENABLED = os.getenv("WORKER_AUTOCONTROL", "1").strip() not in {"", "0", "false", "no"}
 # Default to a higher cap so more workers can run in parallel; 0 or negative = no cap
-WORKER_AUTOCONTROL_LIMIT = int(os.getenv("WORKER_AUTOCONTROL_LIMIT", "12") or "12")
+WORKER_AUTOCONTROL_LIMIT = int(os.getenv("WORKER_AUTOCONTROL_LIMIT", "16") or "16")
 WORKER_SYSTEMCTL_ENABLED = _env_bool("WORKER_SYSTEMCTL", True)
 GPT_PERF_KEYS = ("pf", "win_rate", "avg_pips", "sharpe", "sample")
 _GPT_FACTOR_PRECISION = {
@@ -612,20 +612,20 @@ def _select_worker_targets(
 
     # Range/低ボラ
     if low_vol or range_like:
-        bump("pullback_scalp", 0.8, "range_low_vol")
-        bump("vol_squeeze", 0.4, "range_compression")
-        bump("pullback_s5", 0.45, "range_s5")
-        bump("pullback_runner_s5", 0.4, "range_runner")
-        bump("vwap_magnet_s5", 0.35, "vwap_range")
-        bump("onepip_maker_s1", 0.4, "low_vol_onepip")
+        bump("pullback_scalp", 0.9, "range_low_vol")
+        bump("vol_squeeze", 0.45, "range_compression")
+        bump("pullback_s5", 0.6, "range_s5")
+        bump("pullback_runner_s5", 0.55, "range_runner")
+        bump("vwap_magnet_s5", 0.55, "vwap_range")
+        bump("onepip_maker_s1", 0.6, "low_vol_onepip")
         if compression:
-            bump("squeeze_break_s5", 0.35, "compression_break")
+            bump("squeeze_break_s5", 0.5, "compression_break")
     elif soft_range:
-        bump("pullback_scalp", 0.65, "soft_range")
-        bump("pullback_s5", 0.55, "soft_range")
-        bump("vwap_magnet_s5", 0.5, "soft_range")
-        bump("onepip_maker_s1", 0.5, "soft_range")
-        bump("vol_squeeze", 0.35, "soft_range")
+        bump("pullback_scalp", 0.78, "soft_range")
+        bump("pullback_s5", 0.65, "soft_range")
+        bump("vwap_magnet_s5", 0.6, "soft_range")
+        bump("onepip_maker_s1", 0.6, "soft_range")
+        bump("vol_squeeze", 0.45, "soft_range")
 
     # Spike/impulse style entries
     if spike_like:
@@ -668,7 +668,7 @@ def _select_worker_targets(
             else:
                 lowest_name, lowest_score = min(picked, key=lambda x: x[1])
                 # 低スコア枠と入れ替えてレンジ系を確保する
-                if best_score >= lowest_score * 0.9:
+                if best_score >= lowest_score * 0.7:
                     selected.discard(lowest_name)
                     selected.add(best_name)
     logging.info(

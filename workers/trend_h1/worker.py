@@ -171,273 +171,281 @@ async def trend_h1_worker() -> None:
 
     try:
         while True:
-            await asyncio.sleep(config.LOOP_INTERVAL_SEC)
-            now_mono = time.monotonic()
-            if now_mono < cooldown_until:
-                continue
-
-            now_utc = datetime.datetime.utcnow()
-            if not is_market_open(now_utc):
-                _log_skip("market_closed", skip_state)
-                continue
-
-            if config.NEWS_BLOCK_MINUTES > 0.0 and news_block_active(
-                config.NEWS_BLOCK_MINUTES, min_impact=config.NEWS_BLOCK_MIN_IMPACT
-            ):
-                _log_skip("news_block_active", skip_state)
-                continue
-
-            if not can_trade(config.POCKET):
-                _log_skip("pocket_drawdown_guard", skip_state)
-                continue
-
-            loss_block, loss_remain = loss_cooldown_status(
-                config.POCKET,
-                max_losses=config.LOSS_STREAK_MAX,
-                cooldown_minutes=config.LOSS_STREAK_COOLDOWN_MIN,
-            )
-            if loss_block:
-                _log_skip(f"loss_cooldown {loss_remain:.0f}s", skip_state)
-                continue
-
-            blocked, _, spread_state, spread_reason = spread_monitor.is_blocked()
-            spread_pips = float((spread_state or {}).get("spread_pips") or 0.0)
-            if blocked:
-                _log_skip(f"spread_block {spread_reason or ''}".strip(), skip_state)
-                continue
-            if config.SPREAD_MAX_PIPS > 0.0 and spread_pips > config.SPREAD_MAX_PIPS:
-                _log_skip(f"spread {spread_pips:.2f}p>limit", skip_state)
-                continue
-
-            factors = all_factors()
-            fac_h1 = factors.get("H1")
-            fac_h4 = factors.get("H4")
-            if not fac_h1:
-                _log_skip("missing_h1_factors", skip_state)
-                continue
-
-            candles = fac_h1.get("candles")
-            if not isinstance(candles, list) or len(candles) < config.MIN_CANDLES:
-                _log_skip("insufficient_candles", skip_state)
-                continue
-
-            timestamp_raw = fac_h1.get("timestamp")
-            if isinstance(timestamp_raw, str):
-                ts = _parse_iso8601(timestamp_raw)
-                if ts:
-                    age = (
-                        now_utc.replace(tzinfo=datetime.timezone.utc) - ts
-                    ).total_seconds()
-                    if config.DATA_STALE_SECONDS > 0 and age > config.DATA_STALE_SECONDS:
-                        _log_skip(f"stale_data age={age:.0f}s", skip_state)
-                        continue
-
-            fac_signal = dict(fac_h1)
-            atr_val = fac_signal.get("atr_pips")
-            if atr_val is None:
-                atr_raw = fac_signal.get("atr")
-                if isinstance(atr_raw, (int, float)):
-                    atr_val = float(atr_raw) * 100.0
-                    fac_signal["atr_pips"] = atr_val
             try:
-                atr_pips = float(atr_val) if atr_val is not None else None
-            except (TypeError, ValueError):
-                atr_pips = None
-            if atr_pips is None:
-                _log_skip("atr_missing", skip_state)
-                continue
-            if atr_pips < config.MIN_ATR_PIPS:
-                _log_skip(f"atr_low {atr_pips:.1f}p", skip_state)
-                continue
-            if atr_pips > config.MAX_ATR_PIPS:
-                _log_skip(f"atr_high {atr_pips:.1f}p", skip_state)
-                continue
+                await asyncio.sleep(config.LOOP_INTERVAL_SEC)
+                now_mono = time.monotonic()
+                if now_mono < cooldown_until:
+                    continue
 
-            regime = current_regime("H1")
-            if config.REQUIRE_REGIME and regime and regime not in config.REQUIRE_REGIME:
-                _log_skip(f"regime_guard {regime}", skip_state)
-                continue
-            if config.BLOCK_REGIME and regime and regime in config.BLOCK_REGIME:
-                _log_skip(f"blocked_regime {regime}", skip_state)
-                continue
+                now_utc = datetime.datetime.utcnow()
+                if not is_market_open(now_utc):
+                    _log_skip("market_closed", skip_state)
+                    continue
 
-            decision = MovingAverageCross.check(fac_signal)
-            if not decision:
-                _log_skip("no_signal", skip_state)
-                continue
+                if config.NEWS_BLOCK_MINUTES > 0.0 and news_block_active(
+                    config.NEWS_BLOCK_MINUTES, min_impact=config.NEWS_BLOCK_MIN_IMPACT
+                ):
+                    _log_skip("news_block_active", skip_state)
+                    continue
 
-            confidence = int(decision.get("confidence", 0))
-            if confidence < config.MIN_CONFIDENCE:
-                _log_skip(f"confidence_low {confidence}", skip_state)
-                continue
+                if not can_trade(config.POCKET):
+                    _log_skip("pocket_drawdown_guard", skip_state)
+                    continue
 
-            action = decision.get("action")
-            if action not in {"OPEN_LONG", "OPEN_SHORT"}:
-                _log_skip(f"unsupported_action {action}", skip_state)
-                continue
+                loss_block, loss_remain = loss_cooldown_status(
+                    config.POCKET,
+                    max_losses=config.LOSS_STREAK_MAX,
+                    cooldown_minutes=config.LOSS_STREAK_COOLDOWN_MIN,
+                )
+                if loss_block:
+                    _log_skip(f"loss_cooldown {loss_remain:.0f}s", skip_state)
+                    continue
 
-            direction = "long" if action == "OPEN_LONG" else "short"
-            if (
-                config.ALLOWED_DIRECTIONS
-                and direction.title() not in config.ALLOWED_DIRECTIONS
-            ):
-                _log_skip(f"direction_block {direction}", skip_state)
-                continue
-            meta = decision.get("_meta") or {}
-            fast_gap = float(meta.get("price_to_fast_pips", 0.0) or 0.0)
-            if direction == "long" and fast_gap < config.MIN_FAST_GAP_PIPS:
-                _log_skip("fast_gap_insufficient", skip_state)
-                continue
-            if direction == "short" and fast_gap > -config.MIN_FAST_GAP_PIPS:
-                _log_skip("fast_gap_insufficient", skip_state)
-                continue
-            if not _direction_allowed(fac_signal, fac_h4, direction, atr_pips):
-                _log_skip("direction_mismatch", skip_state)
-                continue
+                blocked, _, spread_state, spread_reason = spread_monitor.is_blocked()
+                spread_pips = float((spread_state or {}).get("spread_pips") or 0.0)
+                if blocked:
+                    _log_skip(f"spread_block {spread_reason or ''}".strip(), skip_state)
+                    continue
+                if config.SPREAD_MAX_PIPS > 0.0 and spread_pips > config.SPREAD_MAX_PIPS:
+                    _log_skip(f"spread {spread_pips:.2f}p>limit", skip_state)
+                    continue
 
-            sig_key = f"{decision.get('tag')}:{direction}"
-            prev_ts = recent_signal_gate.get(sig_key, 0.0)
-            if config.REPEAT_BLOCK_SEC > 0 and now_mono - prev_ts < config.REPEAT_BLOCK_SEC:
-                _log_skip("repeat_signal_block", skip_state)
-                continue
+                factors = all_factors()
+                fac_h1 = factors.get("H1")
+                fac_h4 = factors.get("H4")
+                if not fac_h1:
+                    _log_skip("missing_h1_factors", skip_state)
+                    continue
 
-            open_positions = pos_manager.get_open_positions()
-            macro_positions = open_positions.get(config.POCKET, {})
-            trades = macro_positions.get("open_trades", [])
-            if len(trades) >= config.MAX_ACTIVE_TRADES:
-                _log_skip("max_active_trades", skip_state)
-                continue
-            directional_trades = [
-                tr for tr in trades if (tr.get("side") or "").lower() == direction
-            ]
-            if len(directional_trades) >= config.MAX_DIRECTIONAL_TRADES:
-                _log_skip("directional_trade_cap", skip_state)
-                continue
-            directional_units = sum(
-                abs(int(tr.get("units", 0) or 0)) for tr in directional_trades
-            )
-            if directional_units >= config.MAX_DIRECTIONAL_UNITS:
-                _log_skip("directional_units_cap", skip_state)
-                continue
-            stage_idx = len(directional_trades)
-            if stage_idx >= len(config.STAGE_RATIOS):
-                _log_skip("stage_limit", skip_state)
-                continue
+                candles = fac_h1.get("candles")
+                if not isinstance(candles, list) or len(candles) < config.MIN_CANDLES:
+                    _log_skip("insufficient_candles", skip_state)
+                    continue
 
-            last_entry_ts = last_direction_entry.get(direction, 0.0)
-            if now_mono - last_entry_ts < config.REENTRY_COOLDOWN_SEC:
-                _log_skip("directional_cooldown", skip_state)
-                continue
+                timestamp_raw = fac_h1.get("timestamp")
+                if isinstance(timestamp_raw, str):
+                    ts = _parse_iso8601(timestamp_raw)
+                    if ts:
+                        age = (
+                            now_utc.replace(tzinfo=datetime.timezone.utc) - ts
+                        ).total_seconds()
+                        if config.DATA_STALE_SECONDS > 0 and age > config.DATA_STALE_SECONDS:
+                            _log_skip(f"stale_data age={age:.0f}s", skip_state)
+                            continue
 
-            try:
-                snapshot = get_account_snapshot()
-            except Exception as exc:  # noqa: BLE001
-                LOG.warning("%s account snapshot failed: %s", config.LOG_PREFIX, exc)
-                _log_skip("account_snapshot_failed", skip_state)
-                continue
+                fac_signal = dict(fac_h1)
+                atr_val = fac_signal.get("atr_pips")
+                if atr_val is None:
+                    atr_raw = fac_signal.get("atr")
+                    if isinstance(atr_raw, (int, float)):
+                        atr_val = float(atr_raw) * 100.0
+                        fac_signal["atr_pips"] = atr_val
+                try:
+                    atr_pips = float(atr_val) if atr_val is not None else None
+                except (TypeError, ValueError):
+                    atr_pips = None
+                if atr_pips is None:
+                    _log_skip("atr_missing", skip_state)
+                    continue
+                if atr_pips < config.MIN_ATR_PIPS:
+                    _log_skip(f"atr_low {atr_pips:.1f}p", skip_state)
+                    continue
+                if atr_pips > config.MAX_ATR_PIPS:
+                    _log_skip(f"atr_high {atr_pips:.1f}p", skip_state)
+                    continue
 
-            equity = float(getattr(snapshot, "nav", 0.0) or getattr(snapshot, "balance", 0.0))
-            if equity <= 0.0:
-                _log_skip("equity_zero", skip_state)
-                continue
+                regime = current_regime("H1")
+                if config.REQUIRE_REGIME and regime and regime not in config.REQUIRE_REGIME:
+                    _log_skip(f"regime_guard {regime}", skip_state)
+                    continue
+                if config.BLOCK_REGIME and regime and regime in config.BLOCK_REGIME:
+                    _log_skip(f"blocked_regime {regime}", skip_state)
+                    continue
 
-            try:
-                sl_pips = float(decision.get("sl_pips") or 0.0)
-                tp_pips = float(decision.get("tp_pips") or 0.0)
-            except (TypeError, ValueError):
-                _log_skip("invalid_sl_tp", skip_state)
-                continue
-            if sl_pips <= 0.0 or tp_pips <= 0.0:
-                _log_skip("invalid_sl_tp", skip_state)
-                continue
+                decision = MovingAverageCross.check(fac_signal)
+                if not decision:
+                    _log_skip("no_signal", skip_state)
+                    continue
 
-            price_hint = float(fac_signal.get("close") or 0.0)
-            entry_price = _latest_mid(price_hint)
+                confidence = int(decision.get("confidence", 0))
+                if confidence < config.MIN_CONFIDENCE:
+                    _log_skip(f"confidence_low {confidence}", skip_state)
+                    continue
 
-            lot = allowed_lot(
-                equity,
-                sl_pips,
-                margin_available=getattr(snapshot, "margin_available", None),
-                price=entry_price,
-                margin_rate=getattr(snapshot, "margin_rate", None),
-                risk_pct_override=config.RISK_PCT,
-                pocket=config.POCKET,
-            )
-            if lot <= 0.0:
-                _log_skip("lot_zero", skip_state)
-                continue
+                action = decision.get("action")
+                if action not in {"OPEN_LONG", "OPEN_SHORT"}:
+                    _log_skip(f"unsupported_action {action}", skip_state)
+                    continue
 
-            lot *= _confidence_scale(confidence)
-            lot = max(config.MIN_LOT, min(config.MAX_LOT, lot))
-            stage_ratio = config.STAGE_RATIOS[stage_idx]
-            lot *= max(0.01, stage_ratio)
-            units = int(round(lot * 100000))
-            if units < config.MIN_UNITS:
-                _log_skip("units_below_min", skip_state)
-                continue
-            if direction == "short":
-                units = -units
+                direction = "long" if action == "OPEN_LONG" else "short"
+                if (
+                    config.ALLOWED_DIRECTIONS
+                    and direction.title() not in config.ALLOWED_DIRECTIONS
+                ):
+                    _log_skip(f"direction_block {direction}", skip_state)
+                    continue
+                meta = decision.get("_meta") or {}
+                fast_gap = float(meta.get("price_to_fast_pips", 0.0) or 0.0)
+                if direction == "long" and fast_gap < config.MIN_FAST_GAP_PIPS:
+                    _log_skip("fast_gap_insufficient", skip_state)
+                    continue
+                if direction == "short" and fast_gap > -config.MIN_FAST_GAP_PIPS:
+                    _log_skip("fast_gap_insufficient", skip_state)
+                    continue
+                if not _direction_allowed(fac_signal, fac_h4, direction, atr_pips):
+                    _log_skip("direction_mismatch", skip_state)
+                    continue
 
-            sl_price = (
-                entry_price - sl_pips * PIP if direction == "long" else entry_price + sl_pips * PIP
-            )
-            tp_price = (
-                entry_price + tp_pips * PIP if direction == "long" else entry_price - tp_pips * PIP
-            )
-            sl_price, tp_price = clamp_sl_tp(entry_price, sl_price, tp_price, direction == "long")
+                sig_key = f"{decision.get('tag')}:{direction}"
+                prev_ts = recent_signal_gate.get(sig_key, 0.0)
+                if config.REPEAT_BLOCK_SEC > 0 and now_mono - prev_ts < config.REPEAT_BLOCK_SEC:
+                    _log_skip("repeat_signal_block", skip_state)
+                    continue
 
-            client_id = _client_order_id(decision.get("tag") or "trend")
-            thesis = {
-                "confidence": confidence,
-                "atr_pips": atr_pips,
-                "regime": regime,
-                "stage": stage_idx + 1,
-            }
-            entry_meta = decision.get("_meta") or {}
-            entry_meta["stage_index"] = stage_idx
+                open_positions = pos_manager.get_open_positions()
+                macro_positions = open_positions.get(config.POCKET, {})
+                trades = macro_positions.get("open_trades", [])
+                if len(trades) >= config.MAX_ACTIVE_TRADES:
+                    _log_skip("max_active_trades", skip_state)
+                    continue
+                directional_trades = [
+                    tr for tr in trades if (tr.get("side") or "").lower() == direction
+                ]
+                if len(directional_trades) >= config.MAX_DIRECTIONAL_TRADES:
+                    _log_skip("directional_trade_cap", skip_state)
+                    continue
+                directional_units = sum(
+                    abs(int(tr.get("units", 0) or 0)) for tr in directional_trades
+                )
+                if directional_units >= config.MAX_DIRECTIONAL_UNITS:
+                    _log_skip("directional_units_cap", skip_state)
+                    continue
+                stage_idx = len(directional_trades)
+                if stage_idx >= len(config.STAGE_RATIOS):
+                    _log_skip("stage_limit", skip_state)
+                    continue
 
-            LOG.info(
-                "%s signal=%s dir=%s conf=%d lot=%.4f units=%d sl=%.2fp tp=%.2fp price=%.3f atr=%.1fp",
-                config.LOG_PREFIX,
-                decision.get("tag"),
-                direction,
-                confidence,
-                lot,
-                units,
-                sl_pips,
-                tp_pips,
-                entry_price,
-                atr_pips,
-            )
+                last_entry_ts = last_direction_entry.get(direction, 0.0)
+                if now_mono - last_entry_ts < config.REENTRY_COOLDOWN_SEC:
+                    _log_skip("directional_cooldown", skip_state)
+                    continue
 
-            ticket_id = await market_order(
-                "USD_JPY",
-                units,
-                sl_price,
-                tp_price,
-                config.POCKET,
-                client_order_id=client_id,
-                entry_thesis=thesis,
-                meta=entry_meta,
-            )
-            if ticket_id:
-                pos_manager.register_open_trade(ticket_id, config.POCKET, client_id)
-                last_direction_entry[direction] = now_mono
-                recent_signal_gate[sig_key] = now_mono
-                cooldown_until = now_mono + config.ENTRY_COOLDOWN_SEC
-                skip_state["reason"] = ""
-                skip_state["ts"] = 0.0
+                try:
+                    snapshot = get_account_snapshot()
+                except Exception as exc:  # noqa: BLE001
+                    LOG.warning("%s account snapshot failed: %s", config.LOG_PREFIX, exc)
+                    _log_skip("account_snapshot_failed", skip_state)
+                    continue
+
+                equity = float(getattr(snapshot, "nav", 0.0) or getattr(snapshot, "balance", 0.0))
+                if equity <= 0.0:
+                    _log_skip("equity_zero", skip_state)
+                    continue
+
+                try:
+                    sl_pips = float(decision.get("sl_pips") or 0.0)
+                    tp_pips = float(decision.get("tp_pips") or 0.0)
+                except (TypeError, ValueError):
+                    _log_skip("invalid_sl_tp", skip_state)
+                    continue
+                if sl_pips <= 0.0 or tp_pips <= 0.0:
+                    _log_skip("invalid_sl_tp", skip_state)
+                    continue
+
+                price_hint = float(fac_signal.get("close") or 0.0)
+                entry_price = _latest_mid(price_hint)
+
+                lot = allowed_lot(
+                    equity,
+                    sl_pips,
+                    margin_available=getattr(snapshot, "margin_available", None),
+                    price=entry_price,
+                    margin_rate=getattr(snapshot, "margin_rate", None),
+                    risk_pct_override=config.RISK_PCT,
+                    pocket=config.POCKET,
+                )
+                if lot <= 0.0:
+                    _log_skip("lot_zero", skip_state)
+                    continue
+
+                lot *= _confidence_scale(confidence)
+                lot = max(config.MIN_LOT, min(config.MAX_LOT, lot))
+                stage_ratio = config.STAGE_RATIOS[stage_idx]
+                lot *= max(0.01, stage_ratio)
+                units = int(round(lot * 100000))
+                if units < config.MIN_UNITS:
+                    _log_skip("units_below_min", skip_state)
+                    continue
+                if direction == "short":
+                    units = -units
+
+                sl_price = (
+                    entry_price - sl_pips * PIP if direction == "long" else entry_price + sl_pips * PIP
+                )
+                tp_price = (
+                    entry_price + tp_pips * PIP if direction == "long" else entry_price - tp_pips * PIP
+                )
+                sl_price, tp_price = clamp_sl_tp(entry_price, sl_price, tp_price, direction == "long")
+
+                client_id = _client_order_id(decision.get("tag") or "trend")
+                thesis = {
+                    "confidence": confidence,
+                    "atr_pips": atr_pips,
+                    "regime": regime,
+                    "stage": stage_idx + 1,
+                }
+                entry_meta = decision.get("_meta") or {}
+                entry_meta["stage_index"] = stage_idx
+
                 LOG.info(
-                    "%s order filled ticket=%s units=%d sl=%.3f tp=%.3f",
+                    "%s signal=%s dir=%s conf=%d lot=%.4f units=%d sl=%.2fp tp=%.2fp price=%.3f atr=%.1fp",
                     config.LOG_PREFIX,
-                    ticket_id,
+                    decision.get("tag"),
+                    direction,
+                    confidence,
+                    lot,
+                    units,
+                    sl_pips,
+                    tp_pips,
+                    entry_price,
+                    atr_pips,
+                )
+
+                ticket_id = await market_order(
+                    "USD_JPY",
                     units,
                     sl_price,
                     tp_price,
+                    config.POCKET,
+                    client_order_id=client_id,
+                    entry_thesis=thesis,
+                    meta=entry_meta,
                 )
-            else:
-                cooldown_until = now_mono + min(config.ENTRY_COOLDOWN_SEC, 60.0)
-                _log_skip("order_failed", skip_state)
+                if ticket_id:
+                    pos_manager.register_open_trade(ticket_id, config.POCKET, client_id)
+                    last_direction_entry[direction] = now_mono
+                    recent_signal_gate[sig_key] = now_mono
+                    cooldown_until = now_mono + config.ENTRY_COOLDOWN_SEC
+                    skip_state["reason"] = ""
+                    skip_state["ts"] = 0.0
+                    LOG.info(
+                        "%s order filled ticket=%s units=%d sl=%.3f tp=%.3f",
+                        config.LOG_PREFIX,
+                        ticket_id,
+                        units,
+                        sl_price,
+                        tp_price,
+                    )
+                else:
+                    cooldown_until = now_mono + min(config.ENTRY_COOLDOWN_SEC, 60.0)
+                    _log_skip("order_failed", skip_state)
+            except asyncio.CancelledError:
+                LOG.info("%s worker cancelled", config.LOG_PREFIX)
+                raise
+            except Exception as exc:  # noqa: BLE001
+                LOG.exception("%s loop error: %s", config.LOG_PREFIX, exc)
+                cooldown_until = time.monotonic() + max(config.LOOP_INTERVAL_SEC, 15.0)
+                continue
     except asyncio.CancelledError:
         LOG.info("%s worker cancelled", config.LOG_PREFIX)
         raise
@@ -446,3 +454,7 @@ async def trend_h1_worker() -> None:
     finally:
         pos_manager.close()
         LOG.info("%s worker stopped", config.LOG_PREFIX)
+
+
+if __name__ == "__main__":  # pragma: no cover
+    asyncio.run(trend_h1_worker())

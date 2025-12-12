@@ -127,7 +127,7 @@ RSI_LONG_RANGE = (
     float(_float("VWAP_MAGNET_S5_RSI_LONG_MIN", 34.0)),
     float(_float("VWAP_MAGNET_S5_RSI_LONG_MAX", 52.0)),
 )
-MIN_ATR_PIPS: float = max(0.0, _float("VWAP_MAGNET_S5_MIN_ATR_PIPS", 0.7))
+MIN_ATR_PIPS: float = max(0.0, _float("VWAP_MAGNET_S5_MIN_ATR_PIPS", 0.6))
 
 TP_PIPS: float = max(1.0, _float("VWAP_MAGNET_S5_TP_PIPS", 1.4))
 SL_ATR_MULT: float = max(0.2, _float("VWAP_MAGNET_S5_SL_ATR_MULT", 0.7))

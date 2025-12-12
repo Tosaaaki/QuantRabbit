@@ -94,7 +94,7 @@ RSI_LONG_RANGE = (
     float(_float("PULLBACK_SCALP_RSI_LONG_MAX", 56.0)),
 )
 
-MIN_ATR_PIPS: float = max(0.0, _float("PULLBACK_SCALP_MIN_ATR_PIPS", 0.45))
+MIN_ATR_PIPS: float = max(0.0, _float("PULLBACK_SCALP_MIN_ATR_PIPS", 0.40))
 
 TP_PIPS: float = max(1.0, _float("PULLBACK_SCALP_TP_PIPS", 2.3))
 USE_INITIAL_SL: bool = _bool("PULLBACK_SCALP_USE_INITIAL_SL", True)
