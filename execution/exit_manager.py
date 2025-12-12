@@ -313,7 +313,7 @@ class ExitManager:
         self._soft_exit_floor = float(os.getenv("EXIT_SOFT_EXIT_FLOOR", "-6.0"))
         self._soft_exit_frac = float(os.getenv("EXIT_SOFT_EXIT_FRAC", "0.35"))
 
-    def _exit_tech_context(self, fac_m1: Dict, side: str) -> Dict[str, float | bool]:
+    def _exit_tech_context(self, fac_m1: Dict, side: str, fac_m5: Optional[Dict] = None, fac_h1: Optional[Dict] = None, fac_h4: Optional[Dict] = None) -> Dict[str, float | bool]:
         """Ichimoku/クラスタ/モメンタム/ボラをEXIT判断用にまとめる。"""
         cloud_pos = self._safe_float(fac_m1.get("ichimoku_cloud_pos"), 0.0)
         span_a_gap = self._safe_float(fac_m1.get("ichimoku_span_a_gap"), 0.0)
@@ -332,7 +332,7 @@ class ExitManager:
         cloud_support = (cloud_pos > 0.2) if side == "long" else (cloud_pos < -0.2)
         in_cloud = abs(cloud_pos) < 0.1
         vol_low = (kc_width < 0.006 and don_width < 0.006) or chaikin < 0.1
-        return {
+        ctx = {
             "cloud_pos": cloud_pos,
             "span_a_gap": span_a_gap,
             "span_b_gap": span_b_gap,
@@ -344,6 +344,11 @@ class ExitManager:
             "stoch": stoch,
             "vol_low": vol_low,
         }
+        # MTF方向スコア
+        ctx["mtf_m5"] = self._mtf_trend_score(fac_m5, side, adx_floor=13.0)
+        ctx["mtf_h1"] = self._mtf_trend_score(fac_h1, side, adx_floor=16.0)
+        ctx["mtf_h4"] = self._mtf_trend_score(fac_h4, side, adx_floor=18.0)
+        return ctx
 
     def _mtf_trend_score(self, fac: Optional[Dict], side: str, *, adx_floor: float = 15.0) -> float:
         """
@@ -1272,6 +1277,9 @@ class ExitManager:
         macd_hist = float(tech_ctx.get("macd_hist") or 0.0)
         dmi_diff = float(tech_ctx.get("dmi_diff") or 0.0)
         stoch = float(tech_ctx.get("stoch") or 0.5)
+        mtf_m5 = float(tech_ctx.get("mtf_m5") or 0.0)
+        mtf_h1 = float(tech_ctx.get("mtf_h1") or 0.0)
+        mtf_h4 = float(tech_ctx.get("mtf_h4") or 0.0)
         pattern_ctx = self._pattern_bias(open_info.get("story") if isinstance(open_info, dict) else None, side=side)
         pattern_bias = pattern_ctx.get("bias")
         pattern_conf = float(pattern_ctx.get("conf") or 0.0)
@@ -1294,6 +1302,9 @@ class ExitManager:
         if mtf_score_m5 >= 0.6 or mtf_score_h1 >= 0.6:
             bounce_possible = True
         if mtf_score_m5 <= 0.0 and mtf_score_h1 <= 0.0:
+            bounce_possible = False
+        # H4強逆行は抑制
+        if mtf_h4 <= 0.0:
             bounce_possible = False
 
         if loss >= hard_cut:
@@ -3354,6 +3365,9 @@ class ExitManager:
         atr_pips: Optional[float],
         vol_5m: Optional[float] = None,
         fac_m1: Optional[Dict] = None,
+        fac_m5: Optional[Dict] = None,
+        fac_h1: Optional[Dict] = None,
+        fac_h4: Optional[Dict] = None,
     ) -> Optional[ExitDecision]:
         """
         Once favorable excursion is achieved, avoid letting it slip to loss.
@@ -3368,11 +3382,14 @@ class ExitManager:
         min_loss = self._be_guard_min_loss
         frac = self._be_guard_frac
 
-        tech_ctx = self._exit_tech_context(fac_m1 or {}, side)
+        tech_ctx = self._exit_tech_context(fac_m1 or {}, side, fac_m5=fac_m5, fac_h1=fac_h1, fac_h4=fac_h4)
         cluster_gap = float(tech_ctx.get("cluster_gap") or 0.0)
         cloud_pos = float(tech_ctx.get("cloud_pos") or 0.0)
         cloud_support = bool(tech_ctx.get("cloud_support"))
         in_cloud = bool(tech_ctx.get("in_cloud"))
+        mtf_m5 = float(tech_ctx.get("mtf_m5") or 0.0)
+        mtf_h1 = float(tech_ctx.get("mtf_h1") or 0.0)
+        mtf_h4 = float(tech_ctx.get("mtf_h4") or 0.0)
 
         atr_val = atr_pips or 0.0
         vol_val = vol_5m or 0.0
@@ -3399,6 +3416,13 @@ class ExitManager:
             frac = min(0.95, frac + 0.08)
         if in_cloud and tech_ctx.get("vol_low"):
             floor += 0.1
+        mtf_dir = max(mtf_m5, mtf_h1, mtf_h4)
+        if mtf_dir >= 0.6:
+            trigger += 0.25
+            frac = max(0.2, frac - 0.08)
+        if mtf_dir <= 0.0:
+            trigger = max(0.7, trigger - 0.35)
+            frac = min(0.95, frac + 0.1)
 
         if max_mfe < trigger:
             return None

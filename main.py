@@ -431,7 +431,34 @@ def _normalize_plan(plan: Sequence[float]) -> tuple[float, ...]:
     return tuple(rounded)
 
 
-def _apply_tech_overlays(signal: dict, fac: dict) -> dict:
+def _mtf_dir_score(fac: Optional[dict], side: str, adx_floor: float, slope_floor: float) -> float:
+    if not fac:
+        return 0.0
+    try:
+        ma_fast = float(fac.get("ma10") or fac.get("ema12") or 0.0)
+        ma_slow = float(fac.get("ma20") or fac.get("ema20") or 0.0)
+        adx = float(fac.get("adx") or 0.0)
+    except Exception:
+        return 0.0
+    dir_ok = (side == "long" and ma_fast > ma_slow) or (side == "short" and ma_fast < ma_slow)
+    if not dir_ok:
+        return -0.3
+    gap = abs(ma_fast - ma_slow) / PIP
+    score = 0.2 + min(0.5, gap * 0.05)
+    if adx >= adx_floor:
+        score += min(0.4, (adx - adx_floor) * 0.02)
+    try:
+        ema_fast = float(fac.get("ema12") or ma_fast)
+        ema_slow = float(fac.get("ema20") or ma_slow)
+        slope = (ema_fast - ema_slow) / PIP
+        if (side == "long" and slope > slope_floor) or (side == "short" and -slope > slope_floor):
+            score += 0.1
+    except Exception:
+        pass
+    return max(0.0, min(1.0, score))
+
+
+def _apply_tech_overlays(signal: dict, fac_m1: dict, fac_m5: Optional[dict] = None, fac_h1: Optional[dict] = None, fac_h4: Optional[dict] = None) -> dict:
     """
     Cross-worker tech overlays: apply Ichimoku/cluster/oscillator context to confidence/TP.
     """
@@ -454,15 +481,15 @@ def _apply_tech_overlays(signal: dict, fac: dict) -> dict:
         except Exception:
             return default
 
-    cloud_pos = _safe_float(fac.get("ichimoku_cloud_pos"), 0.0)
-    span_a_gap = _safe_float(fac.get("ichimoku_span_a_gap"), 0.0)
-    span_b_gap = _safe_float(fac.get("ichimoku_span_b_gap"), 0.0)
-    cluster_high = _safe_float(fac.get("cluster_high_gap"), 0.0)
-    cluster_low = _safe_float(fac.get("cluster_low_gap"), 0.0)
-    macd_hist = _safe_float(fac.get("macd_hist"), 0.0)
-    dmi_diff = _safe_float(fac.get("plus_di"), 0.0) - _safe_float(fac.get("minus_di"), 0.0)
-    stoch = _safe_float(fac.get("stoch_rsi"), 0.5)
-    vol5 = _safe_float(fac.get("vol_5m"), 1.0)
+    cloud_pos = _safe_float(fac_m1.get("ichimoku_cloud_pos"), 0.0)
+    span_a_gap = _safe_float(fac_m1.get("ichimoku_span_a_gap"), 0.0)
+    span_b_gap = _safe_float(fac_m1.get("ichimoku_span_b_gap"), 0.0)
+    cluster_high = _safe_float(fac_m1.get("cluster_high_gap"), 0.0)
+    cluster_low = _safe_float(fac_m1.get("cluster_low_gap"), 0.0)
+    macd_hist = _safe_float(fac_m1.get("macd_hist"), 0.0)
+    dmi_diff = _safe_float(fac_m1.get("plus_di"), 0.0) - _safe_float(fac_m1.get("minus_di"), 0.0)
+    stoch = _safe_float(fac_m1.get("stoch_rsi"), 0.5)
+    vol5 = _safe_float(fac_m1.get("vol_5m"), 1.0)
 
     mult_conf = 1.0
     mult_tp = 1.0
@@ -518,6 +545,22 @@ def _apply_tech_overlays(signal: dict, fac: dict) -> dict:
     if vol5 < 0.4:
         mult_conf -= 0.04
 
+    # MTF方向コンフルエンス（M5/H1/H4）
+    mtf_scores = []
+    for fac, adx_floor, slope_floor in (
+        (fac_m5, 13.0, 0.5),
+        (fac_h1, 16.0, 0.4),
+        (fac_h4, 18.0, 0.3),
+    ):
+        mtf_scores.append(_mtf_dir_score(fac, action, adx_floor=adx_floor, slope_floor=slope_floor))
+    mtf_score = sum(mtf_scores) / max(1, len([s for s in mtf_scores if s is not None]))
+    if mtf_score > 0.6:
+        mult_conf += 0.06
+        mult_tp += 0.05
+    elif mtf_score < 0.2:
+        mult_conf -= 0.08
+        mult_tp -= 0.06
+
     mult_conf = max(0.65, min(1.25, mult_conf))
     mult_tp = max(0.7, min(1.2, mult_tp))
 
@@ -535,6 +578,7 @@ def _apply_tech_overlays(signal: dict, fac: dict) -> dict:
             "ichimoku_pos": round(cloud_pos, 3),
             "cluster_high": round(cluster_high, 3),
             "cluster_low": round(cluster_low, 3),
+            "mtf_score": round(mtf_score, 3),
         }
     )
     sig["notes"] = notes
@@ -3796,7 +3840,7 @@ async def logic_loop(
                 scaled_conf = int(signal["confidence"] * health.confidence_scale)
                 signal["confidence"] = max(0, min(100, scaled_conf))
                 # Tech overlays (Ichimoku/cluster/MACD-DMI/Stoch) applied uniformly across workers
-                signal = _apply_tech_overlays(signal, fac_m1)
+                signal = _apply_tech_overlays(signal, fac_m1, fac_m5, fac_h1, fac_h4)
 
                 allow_micro, gate_reason, gate_ctx = _micro_chart_gate(
                     signal,
