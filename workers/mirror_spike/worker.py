@@ -363,5 +363,6 @@ if __name__ == "__main__":  # pragma: no cover
         format="%(asctime)s - %(levelname)s - %(message)s",
         force=True,
     )
+    logger = logging.getLogger(__name__)
     logger.info("%s worker boot (loop %.2fs)", config.LOG_PREFIX, config.LOOP_INTERVAL_SEC)
     asyncio.run(mirror_spike_worker())
