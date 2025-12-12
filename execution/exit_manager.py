@@ -2528,14 +2528,14 @@ class ExitManager:
         - 一定ホールド後に、pivotブレイクかつRSI極端、かつ MFEドローダウンが大きいときに発火
         - マイナスでも「価値あるカット」(MFE済み→戻し) のみに限定
         """
-        # 一旦停止（fast_cut / partials で対応する）
-        return None
         if pocket not in {"micro", "scalp"}:
             return None
         if neg_exit_blocked:
             return None
         if close_price is None:
             return None
+        if profit_pips is None or profit_pips < 0.0:
+            return None  # プラス圏のみで発火
 
         candles = fac_m1.get("candles") or []
         recent = candles[-20:] if len(candles) >= 5 else candles
@@ -2566,26 +2566,26 @@ class ExitManager:
                 allow_reentry=False,
             )
 
-        mfe_gate = max(1.6, (atr_pips or 1.8) * 0.6)
-        drawdown_gate = max(1.2, (atr_pips or 1.8) * 0.5)
-        loss_gate = max(1.5, (atr_pips or 1.8) * 0.75)
+        mfe_gate = max(2.5, (atr_pips or 1.8) * 0.8)
+        drawdown_gate = max(1.5, (atr_pips or 1.8) * 0.6)
+        loss_gate = max(2.0, (atr_pips or 1.8) * 0.8)
 
         # 価格が直近高安を明確に割ったか（節目ブレイク）
         pivot_break = False
         if side == "long":
             gap = (close_price - recent_low) / 0.01
-            pivot_break = gap <= 0.25  # より深いブレイクのみ反応
+            pivot_break = gap <= 0.10  # より深いブレイクのみ反応
         else:
             gap = (recent_high - close_price) / 0.01
-            pivot_break = gap <= 0.25
+            pivot_break = gap <= 0.10
 
-        rsi_extreme = (side == "long" and rsi <= 40.0) or (side == "short" and rsi >= 60.0)
+        rsi_extreme = (side == "long" and rsi <= 38.0) or (side == "short" and rsi >= 62.0)
 
         if not (pivot_break and rsi_extreme):
             return None
 
         drawdown_ok = False
-        # 一定の含み益が乗るまでは value_cut を発動しない
+        # 一定の含み益が乗るまでは value_cut を発動しない（プラス圏限定）
         if max_mfe is None or max_mfe < mfe_gate:
             return None
 
