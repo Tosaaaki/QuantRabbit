@@ -1187,21 +1187,51 @@ class ExitManager:
             if side == "short" and ma_fast <= ma_slow:
                 return None
 
+        tech_ctx = self._exit_tech_context(fac_m1 or {}, side)
+        cluster_gap = float(tech_ctx.get("cluster_gap") or 0.0)
+        cloud_support = bool(tech_ctx.get("cloud_support"))
+        in_cloud = bool(tech_ctx.get("in_cloud"))
+        macd_hist = float(tech_ctx.get("macd_hist") or 0.0)
+        dmi_diff = float(tech_ctx.get("dmi_diff") or 0.0)
+        stoch = float(tech_ctx.get("stoch") or 0.5)
+        bounce_possible = False
+        if cluster_gap > 3.0 and cloud_support:
+            if side == "long":
+                if macd_hist > 0 or dmi_diff > 0 or stoch <= 0.15:
+                    bounce_possible = True
+            else:
+                if macd_hist < 0 or dmi_diff < 0 or stoch >= 0.85:
+                    bounce_possible = True
+        if in_cloud and tech_ctx.get("vol_low"):
+            bounce_possible = True
+
         if loss >= hard_cut:
-            cut_units = -abs(units) if side == "long" else abs(units)
+            # ハードでもまず部分でリスク落とす（極端な損失のみ全量）
+            fraction = 0.7 if pocket == "micro" else 0.6
+            cut_units = max(1000, int(abs(units) * fraction))
+            cut_units = -cut_units if side == "long" else cut_units
+            reason = "fast_cut_hard"
+            if loss >= hard_cut * 1.4:
+                cut_units = -abs(units) if side == "long" else abs(units)
             return ExitDecision(
                 pocket=pocket,
                 units=cut_units,
-                reason="fast_cut_hard",
+                reason=reason,
                 tag="fast-cut",
                 allow_reentry=True,
             )
-        if loss >= fast_cut and age_sec is not None and age_sec >= time_gate:
-            # scalpは部分カットで様子見
-            cut_units = -abs(units) if side == "long" else abs(units)
-            if pocket == "scalp":
-                partial = max(1000, int(abs(units) * 0.5))
-                cut_units = -partial if side == "long" else partial
+        if loss >= fast_cut:
+            # 市況が味方なら様子見（雲順行＋クラスタ遠＋MACD/DMI順向 or Stoch極端）
+            if bounce_possible and (age_sec is None or age_sec < time_gate * 1.4):
+                return None
+            if age_sec is not None and age_sec < time_gate * 0.7:
+                return None
+            # 部分カットを基本とし、雲逆行やクラスタ近は厚めに削る
+            fraction = 0.5 if pocket == "scalp" else 0.6
+            if cluster_gap > 0 and cluster_gap <= 3.0:
+                fraction = max(fraction, 0.7)
+            cut_units = max(1000, int(abs(units) * fraction))
+            cut_units = -cut_units if side == "long" else cut_units
             return ExitDecision(
                 pocket=pocket,
                 units=cut_units,
