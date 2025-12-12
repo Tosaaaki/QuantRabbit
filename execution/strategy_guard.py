@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import sqlite3
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from threading import Lock
 from typing import Optional, Tuple
@@ -34,6 +34,13 @@ def _ensure_conn() -> sqlite3.Connection:
     return _CONN  # type: ignore[return-value]
 
 
+def _as_naive_utc(dt: datetime) -> datetime:
+    """Normalize datetime to naive UTC to avoid aware/naive comparison issues."""
+    if dt.tzinfo is not None:
+        return dt.astimezone(timezone.utc).replace(tzinfo=None)
+    return dt
+
+
 def is_blocked(strategy: str, now: Optional[datetime] = None) -> Tuple[bool, Optional[int], Optional[str]]:
     """Return (blocked, remaining_seconds, reason) for the strategy."""
     if not strategy:
@@ -45,8 +52,8 @@ def is_blocked(strategy: str, now: Optional[datetime] = None) -> Tuple[bool, Opt
     ).fetchone()
     if not row:
         return False, None, None
-    limit = datetime.fromisoformat(row[1])
-    current = now or datetime.utcnow()
+    limit = _as_naive_utc(datetime.fromisoformat(row[1]))
+    current = _as_naive_utc(now or datetime.utcnow())
     if current >= limit:
         with _LOCK:
             conn.execute("DELETE FROM strategy_cooldown WHERE strategy=?", (strategy,))
@@ -58,7 +65,7 @@ def is_blocked(strategy: str, now: Optional[datetime] = None) -> Tuple[bool, Opt
 
 def clear_expired(now: Optional[datetime] = None) -> None:
     conn = _ensure_conn()
-    current = (now or datetime.utcnow()).isoformat()
+    current = _as_naive_utc(now or datetime.utcnow()).isoformat()
     with _LOCK:
         conn.execute("DELETE FROM strategy_cooldown WHERE cooldown_until <= ?", (current,))
         conn.commit()

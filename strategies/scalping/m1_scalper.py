@@ -21,6 +21,10 @@ _LOGGER = logging.getLogger(__name__)
 _EMPTY_TICK_LOG_DEBOUNCE_SEC = 20.0
 _last_no_tick_log_ts = 0.0
 
+# 強いトレンドを逆行するエントリーを抑制するための閾値
+STRONG_TREND_PIPS = 5.0   # ema10-ema20差や価格-ema20差の目安
+STRONG_MOMENTUM = 0.0035  # 価格変化量（約0.35pips）
+
 
 def _log(reason: str, **kwargs: object) -> None:
     if not kwargs:
@@ -140,6 +144,7 @@ class M1Scalper:
                 ema_gap_pips = (float(ema10) - float(ema20)) / _PIP
             except Exception:
                 ema_gap_pips = 0.0
+        price_gap_pips = (float(close) - float(ema20)) / _PIP if close is not None else 0.0
         # Prefer explicit atr_pips if provided; otherwise convert ATR (price units) to pips
         atr_pips = _to_float(fac.get("atr_pips"))
         if atr_pips is None:
@@ -156,6 +161,8 @@ class M1Scalper:
         diff_pips = momentum / _PIP
         trend_up = diff_pips >= 3.0 and momentum > 0.003 and ema_gap_pips > -0.6
         trend_down = diff_pips <= -3.0 and momentum < -0.003 and ema_gap_pips < -0.6
+        strong_up = (price_gap_pips >= STRONG_TREND_PIPS or ema_gap_pips >= STRONG_TREND_PIPS) and momentum > STRONG_MOMENTUM
+        strong_down = (price_gap_pips <= -STRONG_TREND_PIPS or ema_gap_pips <= -STRONG_TREND_PIPS) and momentum < -STRONG_MOMENTUM
 
         # Dynamic TP/SL (pips) tuned to recent volatility
         # - TP ≈ 3x ATR (pips) within [5, 9]
@@ -164,8 +171,11 @@ class M1Scalper:
         sl_dyn = max(4.0, min(atr_pips * 2.0, tp_dyn * 0.95))
         tp_dyn = round(tp_dyn, 2)
         sl_dyn = round(sl_dyn, 2)
-        fast_cut = max(6.0, atr_pips * 0.9)
-        fast_cut_time = max(60.0, atr_pips * 15.0)
+        fast_cut = max(5.0, atr_pips * 0.85)
+        fast_cut_time = max(50.0, atr_pips * 12.0)
+        if abs(momentum) > 0.0045:
+            fast_cut *= 0.85
+            fast_cut_time *= 0.85
         conf_scale = 1.0
         if atr_pips > 4.0:
             conf_scale = 0.8
@@ -181,6 +191,9 @@ class M1Scalper:
                 # 強い下落トレンドでは順張りショートに切替
                 action = "OPEN_SHORT"
                 confidence = int(confidence * 0.9)
+            if action == "OPEN_LONG" and strong_down:
+                _log("trend_block_long", momentum=round(momentum, 5), ema_gap=round(ema_gap_pips, 3), price_gap=round(price_gap_pips, 3))
+                return None
             return _attach_kill({
                 "action": action,
                 "sl_pips": sl_dyn,
@@ -202,6 +215,9 @@ class M1Scalper:
                 # 強い上昇トレンドでは順張りロングに切替
                 action = "OPEN_LONG"
                 confidence = int(confidence * 0.9)
+            if action == "OPEN_SHORT" and strong_up:
+                _log("trend_block_short", momentum=round(momentum, 5), ema_gap=round(ema_gap_pips, 3), price_gap=round(price_gap_pips, 3))
+                return None
             return _attach_kill({
                 "action": action,
                 "sl_pips": sl_dyn,
