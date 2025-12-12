@@ -2552,20 +2552,20 @@ class ExitManager:
         if youngest < min_hold:
             return None
 
-        mfe_gate = max(1.2, (atr_pips or 1.8) * 0.5)
-        drawdown_gate = max(0.8, (atr_pips or 1.8) * 0.45)
-        loss_gate = max(1.0, (atr_pips or 1.8) * 0.6)
+        mfe_gate = max(1.6, (atr_pips or 1.8) * 0.6)
+        drawdown_gate = max(1.2, (atr_pips or 1.8) * 0.5)
+        loss_gate = max(1.5, (atr_pips or 1.8) * 0.75)
 
         # 価格が直近高安を明確に割ったか（節目ブレイク）
         pivot_break = False
         if side == "long":
             gap = (close_price - recent_low) / 0.01
-            pivot_break = gap <= 0.4  # 0.4p 以内まで迫る/割り込み
+            pivot_break = gap <= 0.25  # より深いブレイクのみ反応
         else:
             gap = (recent_high - close_price) / 0.01
-            pivot_break = gap <= 0.4
+            pivot_break = gap <= 0.25
 
-        rsi_extreme = (side == "long" and rsi <= 42.0) or (side == "short" and rsi >= 58.0)
+        rsi_extreme = (side == "long" and rsi <= 40.0) or (side == "short" and rsi >= 60.0)
 
         if not (pivot_break and rsi_extreme):
             return None
@@ -2588,7 +2588,7 @@ class ExitManager:
             units=cut_units,
             reason="value_cut_pivot_rsi",
             tag="value-cut",
-            allow_reentry=True,
+            allow_reentry=False,  # 直後の再エントリーでドローダウンを広げない
         )
 
     def _micro_profit_exit_ready(
