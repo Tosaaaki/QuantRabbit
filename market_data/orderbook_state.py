@@ -128,6 +128,7 @@ def get_latest(max_age_ms: Optional[float] = None) -> Optional[OrderBookSnapshot
 
 
 def latest_age_ms() -> Optional[float]:
+    _reload_snapshot_if_updated()
     with _LOCK:
         if _SNAPSHOT is None:
             return None
