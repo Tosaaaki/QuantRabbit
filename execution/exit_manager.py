@@ -345,6 +345,29 @@ class ExitManager:
             "vol_low": vol_low,
         }
 
+    def _mtf_trend_score(self, fac: Optional[Dict], side: str, *, adx_floor: float = 15.0) -> float:
+        """
+        簡易MTF方向スコア。ma10-ma20の方向とADXで評価。
+        戻り余地判定やfast_cutデファーの材料に使う。
+        """
+        if not fac:
+            return 0.0
+        try:
+            ma_fast = float(fac.get("ma10") or fac.get("ema12") or 0.0)
+            ma_slow = float(fac.get("ma20") or fac.get("ema20") or 0.0)
+            adx_val = float(fac.get("adx") or 0.0)
+        except Exception:
+            return 0.0
+        dir_ok = (side == "long" and ma_fast > ma_slow) or (side == "short" and ma_fast < ma_slow)
+        if not dir_ok:
+            return -0.5
+        score = 0.2
+        gap = abs(ma_fast - ma_slow) / 0.01
+        score += min(0.6, gap * 0.05)
+        if adx_val >= adx_floor:
+            score += min(0.4, (adx_val - adx_floor) * 0.02)
+        return max(0.0, min(1.0, score))
+
     def _pattern_bias(self, story: Optional[ChartStorySnapshot], *, side: str) -> dict:
         """
         抜粋したパターンバイアスを返す。
@@ -560,7 +583,9 @@ class ExitManager:
         signals: List[Dict],
         fac_m1: Dict,
         fac_h4: Dict,
-        event_soon: bool,
+        fac_h1: Optional[Dict] = None,
+        fac_m5: Optional[Dict] = None,
+        event_soon: bool = False,
         range_mode: bool = False,
         stage_state: Optional[Dict[str, Dict[str, int]]] = None,
         pocket_profiles: Optional[Dict[str, Dict[str, float]]] = None,
@@ -582,6 +607,8 @@ class ExitManager:
             return decisions
         news_status = news_status or "quiet"  # news pipeline removed; keep flag static
         projection_m1 = compute_ma_projection(fac_m1, timeframe_minutes=1.0)
+        projection_m5 = compute_ma_projection(fac_m5, timeframe_minutes=5.0) if fac_m5 else None
+        projection_h1 = compute_ma_projection(fac_h1, timeframe_minutes=60.0) if fac_h1 else None
         projection_h4 = compute_ma_projection(fac_h4, timeframe_minutes=240.0)
         m1_candles = fac_m1.get("candles") or []
         atr_pips = fac_m1.get("atr_pips")
@@ -794,6 +821,8 @@ class ExitManager:
                     close_price=close_price,
                     atr_pips=atr_pips,
                     fac_m1=fac_m1,
+                    fac_m5=fac_m5,
+                    fac_h1=fac_h1,
                     now=current_time,
                 )
                 if fast_cut:
@@ -844,6 +873,8 @@ class ExitManager:
                     close_price=close_price,
                     atr_pips=atr_pips,
                     fac_m1=fac_m1,
+                    fac_m5=fac_m5,
+                    fac_h1=fac_h1,
                     now=current_time,
                 )
                 if fast_cut:
@@ -1008,6 +1039,8 @@ class ExitManager:
         close_price: float,
         atr_pips: float,
         fac_m1: Dict,
+        fac_m5: Optional[Dict],
+        fac_h1: Optional[Dict],
         now: datetime,
     ) -> Optional[ExitDecision]:
         """
@@ -1242,6 +1275,8 @@ class ExitManager:
         pattern_ctx = self._pattern_bias(open_info.get("story") if isinstance(open_info, dict) else None, side=side)
         pattern_bias = pattern_ctx.get("bias")
         pattern_conf = float(pattern_ctx.get("conf") or 0.0)
+        mtf_score_m5 = self._mtf_trend_score(fac_m5, side, adx_floor=13.0)
+        mtf_score_h1 = self._mtf_trend_score(fac_h1, side, adx_floor=16.0)
         bounce_possible = False
         if cluster_gap > 3.0 and cloud_support:
             if side == "long":
@@ -1255,6 +1290,10 @@ class ExitManager:
         if pattern_bias in {"with_candle", "with_nwave", "with_both"} and pattern_conf >= 0.6:
             bounce_possible = True
         if pattern_bias in {"against_candle", "against_nwave"} and pattern_conf >= 0.6:
+            bounce_possible = False
+        if mtf_score_m5 >= 0.6 or mtf_score_h1 >= 0.6:
+            bounce_possible = True
+        if mtf_score_m5 <= 0.0 and mtf_score_h1 <= 0.0:
             bounce_possible = False
 
         if loss >= hard_cut:
