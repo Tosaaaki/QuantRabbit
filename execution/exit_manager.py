@@ -2528,6 +2528,8 @@ class ExitManager:
         - 一定ホールド後に、pivotブレイクかつRSI極端、かつ MFEドローダウンが大きいときに発火
         - マイナスでも「価値あるカット」(MFE済み→戻し) のみに限定
         """
+        # 一旦停止（fast_cut / partials で対応する）
+        return None
         if pocket not in {"micro", "scalp"}:
             return None
         if neg_exit_blocked:
