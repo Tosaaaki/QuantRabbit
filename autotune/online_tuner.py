@@ -6,6 +6,7 @@ import random
 import datetime as dt
 from dataclasses import dataclass, field
 from typing import Any, Dict, Optional
+import logging
 
 try:
     import pandas as pd
@@ -76,6 +77,7 @@ class OnlineTuner:
                     df = pd.read_json(p, lines=True)
                 else:
                     df = pd.read_csv(p)
+                df = self._normalize_columns(df, source=p)
                 frames.append(df)
             except Exception:
                 continue
@@ -87,6 +89,57 @@ class OnlineTuner:
             cutoff = pd.Timestamp.utcnow() - pd.Timedelta(minutes=self.minutes)
             df = df[df['timestamp'] >= cutoff]
         return df.reset_index(drop=True)
+
+    def _normalize_columns(self, df: 'pd.DataFrame', source: str) -> 'pd.DataFrame':
+        """
+        Align input columns coming from live DB exports or backtests.
+        Fallbacks:
+        - timestamp: prefer 'timestamp', else 'close_time', else 'exit_ts', else 'entry_ts'
+        - reason: prefer 'reason', else 'close_reason'
+        - pips: prefer 'pips', else 'pl_pips'
+        - strategy: leave as-is if present, otherwise best-effort from 'strategy_tag'
+        - regime: fallback to 'pocket'
+        Missing hazard/event columns are filled with 0 so downstream logic can run.
+        """
+        df = df.copy()
+        col_map = {}
+        if 'close_reason' in df.columns and 'reason' not in df.columns:
+            col_map['close_reason'] = 'reason'
+        if 'pl_pips' in df.columns and 'pips' not in df.columns:
+            col_map['pl_pips'] = 'pips'
+        if 'strategy_tag' in df.columns and 'strategy' not in df.columns:
+            col_map['strategy_tag'] = 'strategy'
+        df = df.rename(columns=col_map)
+
+        # timestamp fallback
+        if 'timestamp' not in df.columns:
+            for alt in ('close_time', 'exit_ts', 'entry_ts'):
+                if alt in df.columns:
+                    df['timestamp'] = df[alt]
+                    break
+        if 'timestamp' not in df.columns:
+            logging.warning("[tuner] missing timestamp column in %s, filling now()", source)
+            df['timestamp'] = dt.datetime.utcnow().isoformat() + 'Z'
+
+        # regime fallback
+        if 'regime' not in df.columns and 'pocket' in df.columns:
+            df['regime'] = df['pocket']
+
+        # ensure all expected columns exist (fill defaults)
+        defaults = {
+            'reason': '',
+            'pips': 0.0,
+            'strategy': '',
+            'regime': '',
+            'hazard_ticks': 0,
+            'events': 0,
+            'grace_used_ms': 0,
+            'scratch_hits': 0,
+        }
+        for col, default in defaults.items():
+            if col not in df.columns:
+                df[col] = default
+        return df
 
     def compute_metrics(self, df) -> Dict[str, Any]:
         m = {}

@@ -577,6 +577,11 @@ def _select_worker_targets(
     range_like = (adx_h4 <= 15.0 and max(vol_5m, vol_m5) <= 0.9) and adx_h1 <= 14.0
     compression = bbw_m1 <= 0.002 or (vol_5m <= 0.6 and atr_pips <= 1.2)
     spike_like = high_vol or abs(momentum_m1) >= 0.015
+    soft_range = (
+        (adx_h4 <= 22.0 and adx_h1 <= 20.0)
+        and vol_5m <= 1.4
+        and bbw_m1 <= 0.004
+    ) or (compression and vol_5m <= 1.2)
 
     scores: dict[str, float] = {}
     reasons: dict[str, str] = {}
@@ -615,6 +620,12 @@ def _select_worker_targets(
         bump("onepip_maker_s1", 0.4, "low_vol_onepip")
         if compression:
             bump("squeeze_break_s5", 0.35, "compression_break")
+    elif soft_range:
+        bump("pullback_scalp", 0.65, "soft_range")
+        bump("pullback_s5", 0.55, "soft_range")
+        bump("vwap_magnet_s5", 0.5, "soft_range")
+        bump("onepip_maker_s1", 0.5, "soft_range")
+        bump("vol_squeeze", 0.35, "soft_range")
 
     # Spike/impulse style entries
     if spike_like:
@@ -637,6 +648,29 @@ def _select_worker_targets(
         limit = max(1, min(len(scores), WORKER_AUTOCONTROL_LIMIT))
     picked = sorted(scores.items(), key=lambda x: x[1], reverse=True)[:limit]
     selected = {name for name, _ in picked}
+
+    # Diversity nudge: 低〜中ボラではレンジ系が一つも選ばれていない場合に補充する
+    range_workers = {
+        "pullback_scalp",
+        "pullback_s5",
+        "vwap_magnet_s5",
+        "onepip_maker_s1",
+        "vol_squeeze",
+        "pullback_runner_s5",
+        "squeeze_break_s5",
+    }
+    if (low_vol or range_like or soft_range) and not (selected & range_workers):
+        candidates = [(name, scores[name]) for name in range_workers if name in scores]
+        if candidates:
+            best_name, best_score = max(candidates, key=lambda x: x[1])
+            if len(selected) < limit:
+                selected.add(best_name)
+            else:
+                lowest_name, lowest_score = min(picked, key=lambda x: x[1])
+                # 低スコア枠と入れ替えてレンジ系を確保する
+                if best_score >= lowest_score * 0.9:
+                    selected.discard(lowest_name)
+                    selected.add(best_name)
     logging.info(
         "[WORKER_CTL] plan session=%s atr(m1/m5/h1)=%.2f/%.2f/%.2f vol=%.2f/%.2f adx(h4/h1)=%.1f/%.1f selected=%s reasons=%s",
         session,

@@ -716,9 +716,19 @@ class StageTracker:
                 self._weight_hint.pop(pocket, None)
                 continue
 
-            seconds = int(base_cd * (1.0 + severity))
-            seconds = max(seconds, base_cd)
-            seconds = min(seconds, 4 * base_cd)
+            base_seconds = base_cd
+            seconds = int(base_seconds * (1.0 + severity))
+            seconds = max(seconds, base_seconds)
+            seconds = min(seconds, 4 * base_seconds)
+
+            # 低ボラ・小損のときはクールダウンを短縮し、再開までの待ち時間を減らす
+            low_vol_soft = atr_val <= 1.4 and vol_val <= 1.0
+            small_losses = loss_pips <= 12 and loss_jpy <= 2000
+            if pocket in {"micro", "scalp"} and low_vol_soft and small_losses:
+                seconds = max(int(seconds * 0.55), int(base_seconds * 0.4))
+            elif pocket == "macro" and low_vol_soft and small_losses:
+                seconds = max(int(seconds * 0.7), int(base_seconds * 0.5))
+
             reason = f"loss_cluster_{count or 1}"
             self.ensure_cooldown(
                 pocket,
@@ -736,12 +746,14 @@ class StageTracker:
             )
             self._weight_hint[pocket] = max(0.3, round(1.0 - min(severity * 0.25, 0.6), 3))
             logging.info(
-                "[STAGE] cluster cooldown pocket=%s count=%s loss_pips=%.1f jpy=%.1f sec=%s",
+                "[STAGE] cluster cooldown pocket=%s count=%s loss_pips=%.1f jpy=%.1f sec=%s atr=%.2f vol=%.2f",
                 pocket,
                 count,
                 loss_pips,
                 loss_jpy,
                 seconds,
+                atr_val,
+                vol_val,
             )
 
     def _drop_cluster_cooldowns(self, pockets) -> None:

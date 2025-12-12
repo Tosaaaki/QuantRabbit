@@ -11,6 +11,10 @@
 ```bash
 python3 scripts/run_online_tuner.py --logs-glob "tmp/exit_eval*.csv"   --presets config/tuning_presets.yaml   --overrides-out config/tuning_overrides.yaml   --minutes 15 --shadow
 ```
+  - 実績ログが DB のみの場合は先にエクスポート:
+```bash
+PYTHONPATH=. python3 scripts/export_exit_eval.py --db logs/trades.db --out tmp/exit_eval_live.csv
+```
 4. 本番（定期実行）: `snippets/main_hook.pyfrag` を `main.py` の周期処理へ貼付
 
 - 生成物：`config/tuning_overrides.yaml`（本適用）、`config/tuning_history/tuning_*.yaml`（履歴）
