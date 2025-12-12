@@ -579,6 +579,11 @@ def _apply_tech_overlays(signal: dict, fac_m1: dict, fac_m5: Optional[dict] = No
             "cluster_high": round(cluster_high, 3),
             "cluster_low": round(cluster_low, 3),
             "mtf_score": round(mtf_score, 3),
+            # Logging-only: wick/hit stats for後分析（シグナル判断には未使用）
+            "upper_wick": round(_safe_float(fac_m1.get("upper_wick_avg_pips"), 0.0), 3),
+            "lower_wick": round(_safe_float(fac_m1.get("lower_wick_avg_pips"), 0.0), 3),
+            "high_hits": round(_safe_float(fac_m1.get("high_hits"), 0.0), 2),
+            "low_hits": round(_safe_float(fac_m1.get("low_hits"), 0.0), 2),
         }
     )
     sig["notes"] = notes
@@ -999,8 +1004,8 @@ RANGE_FADER_MIN_RR = 1.12
 RANGE_FADER_MAX_RR = 1.32
 RANGE_FADER_RANGE_CONF_SCALE = 0.82
 
-_HARD_BASE_RISK_CAP = 0.03  # 3.0%
-_HARD_MAX_RISK_CAP = 0.05   # 1.8%
+_HARD_BASE_RISK_CAP = 0.05  # 5.0% もう少し積極的に張れるように上限を緩和
+_HARD_MAX_RISK_CAP = 0.10   # 10% までダイナミックリスクを許容（信号強度に応じて自動調整）
 _RANGE_RISK_CAP = 0.008      # 0.8%
 _SQUEEZE_RISK_CAP = 0.006    # 0.6% 個別ドローダウン時
 

@@ -47,6 +47,12 @@ class IndicatorEngine:
                 "ichimoku_cloud_pos": 0.0,
                 "cluster_high_gap": 0.0,
                 "cluster_low_gap": 0.0,
+                "upper_wick_avg_pips": 0.0,
+                "lower_wick_avg_pips": 0.0,
+                "high_hits": 0.0,
+                "low_hits": 0.0,
+                "high_hit_interval": 0.0,
+                "low_hit_interval": 0.0,
             }
 
         close = df["close"].astype(float)
@@ -87,6 +93,8 @@ class IndicatorEngine:
         swing_high_dist, swing_low_dist = _swing_distance(close, high, low, lookback=50)
         ichimoku_a_gap, ichimoku_b_gap, ichimoku_pos = _ichimoku_position(high, low, close)
         cluster_high_gap, cluster_low_gap = _cluster_distance(high, low, close)
+        upper_wick_avg, lower_wick_avg = _wick_ratios(df, window=20)
+        high_hits, low_hits, high_int, low_int = _hit_stats(high, low, window=30, band=0.0008)
 
         out: Dict[str, float] = {
             "ma10": float(ma10.iloc[-1]) if not ma10.empty else 0.0,
@@ -122,6 +130,12 @@ class IndicatorEngine:
             "ichimoku_cloud_pos": float(ichimoku_pos) if np.isfinite(ichimoku_pos) else 0.0,
             "cluster_high_gap": float(cluster_high_gap) if np.isfinite(cluster_high_gap) else 0.0,
             "cluster_low_gap": float(cluster_low_gap) if np.isfinite(cluster_low_gap) else 0.0,
+            "upper_wick_avg_pips": float(upper_wick_avg) if np.isfinite(upper_wick_avg) else 0.0,
+            "lower_wick_avg_pips": float(lower_wick_avg) if np.isfinite(lower_wick_avg) else 0.0,
+            "high_hits": float(high_hits),
+            "low_hits": float(low_hits),
+            "high_hit_interval": float(high_int),
+            "low_hit_interval": float(low_int),
         }
 
         for k, v in out.items():
@@ -283,6 +297,51 @@ def _bollinger(close: pd.Series, period: int, std_mult: float):
     upper = middle + std_mult * std
     lower = middle - std_mult * std
     return upper.fillna(0.0), middle.fillna(0.0), lower.fillna(0.0)
+
+
+def _wick_ratios(df: pd.DataFrame, window: int = 20) -> tuple[float, float]:
+    if df.empty:
+        return (0.0, 0.0)
+    segment = df.iloc[-window:]
+    uppers = []
+    lowers = []
+    for _, row in segment.iterrows():
+        try:
+            o = float(row["open"])
+            c = float(row["close"])
+            h = float(row["high"])
+            l = float(row["low"])
+        except Exception:
+            continue
+        upper = max(0.0, h - max(o, c)) / 0.01
+        lower = max(0.0, min(o, c) - l) / 0.01
+        uppers.append(upper)
+        lowers.append(lower)
+    if not uppers:
+        return (0.0, 0.0)
+    return (float(np.mean(uppers)), float(np.mean(lowers)))
+
+
+def _hit_stats(high: pd.Series, low: pd.Series, window: int = 30, band: float = 0.0008) -> tuple[int, int, float, float]:
+    """
+    Count how many times recent highs/lows retest the extreme within a band, and average interval (bars) between hits.
+    """
+    if len(high) < window or len(low) < window:
+        return (0, 0, 0.0, 0.0)
+    segment_high = high.iloc[-window:]
+    segment_low = low.iloc[-window:]
+    recent_high = segment_high.max()
+    recent_low = segment_low.min()
+    hit_high_idx = [i for i, val in enumerate(segment_high) if recent_high - val <= band]
+    hit_low_idx = [i for i, val in enumerate(segment_low) if val - recent_low <= band]
+
+    def _avg_interval(idxs: list[int]) -> float:
+        if len(idxs) < 2:
+            return 0.0
+        diffs = [idxs[i] - idxs[i - 1] for i in range(1, len(idxs))]
+        return float(np.mean(diffs))
+
+    return (len(hit_high_idx), len(hit_low_idx), _avg_interval(hit_high_idx), _avg_interval(hit_low_idx))
 
 
 def _ichimoku_position(high: pd.Series, low: pd.Series, close: pd.Series) -> tuple[float, float, float]:
