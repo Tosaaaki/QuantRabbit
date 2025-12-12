@@ -98,13 +98,13 @@ BLOCKED_WEEKDAYS = tuple(
 ALLOW_LONG: bool = _bool("PULLBACK_S5_ALLOW_LONG", True)
 ALLOW_SHORT: bool = _bool("PULLBACK_S5_ALLOW_SHORT", False)
 
-WINDOW_SEC: float = max(60.0, _float("PULLBACK_S5_WINDOW_SEC", 360.0))
+WINDOW_SEC: float = max(60.0, _float("PULLBACK_S5_WINDOW_SEC", 600.0))
 BUCKET_SECONDS: float = max(1.0, _float("PULLBACK_S5_BUCKET_SECONDS", 5.0))
 FAST_BUCKETS: int = max(24, _int("PULLBACK_S5_FAST_BUCKETS", 48))
 SLOW_BUCKETS: int = max(FAST_BUCKETS + 8, _int("PULLBACK_S5_SLOW_BUCKETS", 72))
 MIN_BUCKETS: int = max(FAST_BUCKETS, _int("PULLBACK_S5_MIN_BUCKETS", 60))
 
-MAX_SPREAD_PIPS: float = max(0.1, _float("PULLBACK_S5_MAX_SPREAD_PIPS", 1.0))
+MAX_SPREAD_PIPS: float = max(0.1, _float("PULLBACK_S5_MAX_SPREAD_PIPS", 1.2))
 ENTRY_UNITS: int = max(1000, _int("PULLBACK_S5_ENTRY_UNITS", 7000))
 # 余力に応じた最小単位（余力不足時にこの下限を下回る場合は見送り）
 MIN_UNITS: int = max(500, _int("PULLBACK_S5_MIN_UNITS", 1200))

@@ -329,7 +329,8 @@ async def pullback_s5_worker() -> None:
             atr_fast = _atr_from_candles(fast_candles, config.RSI_PERIOD)
             if atr_fast < config.MIN_ATR_PIPS:
                 continue
-            if spread_pips > max(0.18, atr_fast * 0.35):
+            # Spread gate: allow through up to the configured cap (defaults 1.2p)
+            if spread_pips > config.MAX_SPREAD_PIPS:
                 continue
             rsi_fast = _rsi(fast_series, config.RSI_PERIOD)
 
