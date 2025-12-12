@@ -1971,40 +1971,6 @@ async def market_order(
                 },
             )
             return None
-        if (
-            min_allowed_units > 0
-            and 0 < abs(allowed_units) < min_allowed_units
-            and not reduce_only
-        ):
-            _console_order_log(
-                "OPEN_SKIP",
-                pocket=pocket,
-                strategy_tag=strategy_tag,
-                side=side_label,
-                units=allowed_units,
-                sl_price=sl_price,
-                tp_price=tp_price,
-                client_order_id=client_order_id,
-                note="insufficient_margin_min_units",
-            )
-            log_order(
-                pocket=pocket,
-                instrument=instrument,
-                side="buy" if allowed_units > 0 else "sell",
-                units=allowed_units,
-                sl_price=sl_price,
-                tp_price=tp_price,
-                client_order_id=client_order_id,
-                status="min_unit_margin_skip",
-                attempt=0,
-                request_payload={
-                    "requested_units": requested_units,
-                    "min_units": min_allowed_units,
-                    "estimated_price": estimated_entry,
-                    "required_margin": req_margin,
-                },
-            )
-            return None
         if allowed_units != units:
             logging.info(
                 "[ORDER] Preflight scaled units %s -> %s (pocket=%s)",
