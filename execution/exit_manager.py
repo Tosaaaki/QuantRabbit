@@ -488,6 +488,8 @@ class ExitManager:
         vwap_gap_pips: Optional[float] = None,
         close_to_vwap: bool = False,
         low_vol: bool = False,
+        fac_m1: Optional[Dict] = None,
+        close_price: Optional[float] = None,
     ) -> Optional[ExitDecision]:
         """時間と含み益/損に応じた段階的縮小を返す。"""
         if units <= 0 or profit_pips is None:
@@ -538,6 +540,24 @@ class ExitManager:
             partial_sec *= 1.4
             full_sec *= 1.5
             profit_gate += 0.4
+        # プライスアクションで時間ガードの厳しさを動的調整
+        price_val = close_price
+        pa_score = 0.0
+        if price_val is not None:
+            pa_score = self._loss_clamp_price_action_score(
+                side=side,
+                fac_m1=fac_m1 or {},
+                price=price_val,
+                n_pips=atr_pips,
+            )
+        if pa_score >= 1.0:
+            partial_sec = max(120.0, partial_sec * 0.82)
+            full_sec = max(220.0, full_sec * 0.88)
+            profit_gate = max(0.4, profit_gate - 0.25)
+        elif pa_score <= 0.35:
+            partial_sec *= 1.08
+            full_sec *= 1.08
+            profit_gate += 0.2
 
         # 低ATR時はガードを短縮
         if atr_pips <= 2.0:
@@ -606,12 +626,24 @@ class ExitManager:
             return None
         if profit_pips < 1.0 and pocket not in {"scalp", "micro"}:
             return None
+        pa_score = self._loss_clamp_price_action_score(
+            side=side,
+            fac_m1=fac_m1 or {},
+            price=float(fac_m1.get("close") or 0.0) if fac_m1 else None,
+            n_pips=atr_pips or profit_pips,
+        )
+        if pa_score < 0.35:
+            return None
         # 静かなレンジ・低ATRほど強く利確
         frac = 0.5 if pocket in {"scalp", "micro"} else 0.35
         if range_mode or regime == "range":
             frac *= 1.1
         if atr_pips is not None and atr_pips <= 2.0:
             frac *= 1.1
+        if pa_score >= 1.0:
+            frac *= 1.1
+        elif pa_score <= 0.5:
+            frac *= 0.9
         frac = max(0.25, min(0.8, frac))
         cut_units = max(1, math.ceil(abs(units) * frac))
         signed = -cut_units if side == "long" else cut_units
@@ -718,17 +750,19 @@ class ExitManager:
                 ):
                     tg_decision = self._time_guard_exit(
                         pocket=pocket,
-                        side=side,
-                        open_info=info,
-                        units=units,
-                        profit_pips=profit,
-                        regime=regime_profile,
-                        atr_pips=atr_primary,
-                        now=current_time,
-                        vwap_gap_pips=vwap_gap_pips,
-                        close_to_vwap=close_to_vwap,
-                        low_vol=low_vol_flag,
-                    )
+                    side=side,
+                    open_info=info,
+                    units=units,
+                    profit_pips=profit,
+                    regime=regime_profile,
+                    atr_pips=atr_primary,
+                    now=current_time,
+                    vwap_gap_pips=vwap_gap_pips,
+                    close_to_vwap=close_to_vwap,
+                    low_vol=low_vol_flag,
+                    fac_m1=fac_m1,
+                    close_price=close_price,
+                )
                     if tg_decision:
                         decisions.append(tg_decision)
                         if side == "long":
@@ -775,6 +809,8 @@ class ExitManager:
                     side="long",
                     units=long_units,
                     profit_pips=long_profit,
+                    fac_m1=fac_m1,
+                    atr_pips=atr_primary,
                 )
                 if mfe_exit:
                     decisions.append(mfe_exit)
@@ -785,6 +821,8 @@ class ExitManager:
                     side="short",
                     units=short_units,
                     profit_pips=short_profit,
+                    fac_m1=fac_m1,
+                    atr_pips=atr_primary,
                 )
                 if mfe_exit:
                     decisions.append(mfe_exit)
@@ -1451,6 +1489,12 @@ class ExitManager:
 
         arm = max(0.8, min(2.4, atr_val * 0.35))
         give_back = max(0.6, min(2.6, atr_val * 0.45))
+        pa_score = self._loss_clamp_price_action_score(
+            side=side,
+            fac_m1=fac_m1,
+            price=close_price,
+            n_pips=atr_val,
+        )
         # スキャルは fast_cut を優先し、スロープ系のBEトレールは使わない
         if pocket == "scalp":
             return None
@@ -1465,6 +1509,13 @@ class ExitManager:
         elif slope >= 0.9:
             arm = min(3.2, arm * 1.25)
             give_back = min(3.0, give_back * 1.15)
+        # 直近のプライスアクションが不利側に強い場合は早めに巻き取り、圧が弱い場合は少し猶予を持たせる
+        if pa_score >= 1.0:
+            arm = max(0.6, arm * 0.9)
+            give_back = max(0.4, give_back * 0.85)
+        elif pa_score <= 0.35:
+            arm = min(3.0, arm * 1.08)
+            give_back = min(2.8, give_back * 1.05)
 
         # セッションとスタック量で絞る
         if session == "asia":
@@ -1516,6 +1567,81 @@ class ExitManager:
                     allow_reentry=True,
                 )
         return None
+
+    def _loss_clamp_price_action_score(
+        self,
+        *,
+        side: str,
+        fac_m1: Dict,
+        price: Optional[float],
+        n_pips: float,
+    ) -> float:
+        """
+        Price action gate for loss_clamp: require structure + candle pressure.
+        Returns additive score; caller decides threshold.
+        """
+        candles = fac_m1.get("candles") or []
+        if price is None or len(candles) < 4:
+            return 0.0
+
+        try:
+            last = candles[-1]
+            prev = candles[-2]
+            prev2 = candles[-3]
+            highs = [self._safe_float(c.get("high")) for c in candles[-5:]]
+            lows = [self._safe_float(c.get("low")) for c in candles[-5:]]
+        except Exception:
+            return 0.0
+
+        highs = [h for h in highs if h is not None]
+        lows = [l for l in lows if l is not None]
+        if not highs or not lows:
+            return 0.0
+
+        n_val = max(0.6, float(n_pips or 0.0))
+        try:
+            h1, l1 = float(last.get("high")), float(last.get("low"))
+            h2, l2 = float(prev.get("high")), float(prev.get("low"))
+            h3, l3 = float(prev2.get("high")), float(prev2.get("low"))
+            c_close = float(last.get("close"))
+            c_open = float(last.get("open"))
+            p_close = float(prev.get("close"))
+            p_open = float(prev.get("open"))
+        except Exception:
+            return 0.0
+
+        seq_press = False
+        if side == "long":
+            seq_press = h1 < h2 < h3 and l1 < l2 < l3
+        else:
+            seq_press = h1 > h2 > h3 and l1 > l2 > l3
+
+        body_pips = abs(c_close - c_open) / 0.01 if c_open is not None else 0.0
+        engulf = False
+        if side == "long":
+            engulf = c_open > p_close and c_close < p_open
+        else:
+            engulf = c_open < p_close and c_close > p_open
+        engulf = engulf and body_pips >= 0.35 * n_val
+
+        recent_high = max(highs)
+        recent_low = min(lows)
+        cushion = max(0.08, min(0.4, n_val * 0.12))
+        if side == "long":
+            range_break = price <= recent_low - cushion * 0.01
+        else:
+            range_break = price >= recent_high + cushion * 0.01
+
+        score = 0.0
+        if seq_press:
+            score += 0.6
+        if engulf:
+            score += 0.45
+        if range_break:
+            score += 0.7
+        if body_pips >= 0.5 * n_val:
+            score += 0.25
+        return score
 
     def _loss_clamp_exit(
         self,
@@ -1631,6 +1757,15 @@ class ExitManager:
             partial = max(partial, abs(max_seen) * retrace_partial)
             full = max(full, abs(max_seen) * retrace_full)
         loss = abs(profit_pips)
+        n_hint = atr_val if atr_val > 0.0 else max(partial, 1.0)
+        pa_score = self._loss_clamp_price_action_score(
+            side=side,
+            fac_m1=fac_m1,
+            price=close_price,
+            n_pips=n_hint,
+        )
+        if loss < full * 1.2 and pa_score < 1.0:
+            return None
         if loss >= full:
             cut_units = -abs(units) if side == "long" else abs(units)
             return ExitDecision(
@@ -1755,6 +1890,22 @@ class ExitManager:
                 retrace_hit = loss >= max_seen * 0.7
             except Exception:
                 retrace_hit = False
+
+        price_val: Optional[float]
+        try:
+            price_val = float(fac_m1.get("close")) if fac_m1 and fac_m1.get("close") is not None else None
+        except Exception:
+            price_val = None
+        pa_score = self._loss_clamp_price_action_score(
+            side=side,
+            fac_m1=fac_m1,
+            price=price_val,
+            n_pips=atr_val,
+        )
+        if pa_score >= 1.1:
+            gate *= 0.9
+        elif pa_score <= 0.35:
+            gate *= 1.1
 
         if loss < gate and not retrace_hit:
             return None
@@ -2288,6 +2439,8 @@ class ExitManager:
                 low_vol_profile,
                 low_vol_quiet,
                 news_status,
+                fac_m1,
+                close_price,
             )
             if low_reason:
                 reason = low_reason
@@ -3078,6 +3231,8 @@ class ExitManager:
                 low_vol_profile,
                 low_vol_quiet,
                 news_status,
+                fac_m1,
+                close_price,
             )
             if low_reason:
                 reason = low_reason
@@ -3392,6 +3547,15 @@ class ExitManager:
         if profit_pips > profit_cap:
             return None
 
+        pa_score = self._loss_clamp_price_action_score(
+            side=side,
+            fac_m1=fac_m1,
+            price=close_price,
+            n_pips=atr_pips or profit_cap,
+        )
+        if pa_score < 0.45:
+            return None
+
         if side == "long":
             gap = (close_price - recent_low) / 0.01
             if gap > cushion:
@@ -3483,6 +3647,25 @@ class ExitManager:
         if mtf_dir <= 0.0:
             trigger = max(0.7, trigger - 0.35)
             frac = min(0.95, frac + 0.1)
+
+        price_val: Optional[float]
+        try:
+            price_val = float(fac_m1.get("close")) if fac_m1 and fac_m1.get("close") is not None else None
+        except Exception:
+            price_val = None
+        pa_score = self._loss_clamp_price_action_score(
+            side=side,
+            fac_m1=fac_m1 or {},
+            price=price_val,
+            n_pips=atr_val or trigger,
+        )
+        if pa_score >= 1.0:
+            trigger = max(0.6, trigger - 0.3)
+            floor = max(min_loss, floor - 0.1)
+            frac = min(0.95, frac + 0.1)
+        elif pa_score <= 0.35:
+            trigger += 0.25
+            frac = max(0.2, frac - 0.06)
 
         if max_mfe < trigger:
             return None
@@ -4136,6 +4319,21 @@ class ExitManager:
             return None
         if pocket not in {"micro", "scalp", "scalp_fast"}:
             return None
+        price_val: Optional[float]
+        try:
+            price_val = float(fac_m1.get("close")) if fac_m1.get("close") is not None else None
+        except Exception:
+            price_val = None
+        pa_score = 0.0
+        if price_val is not None:
+            pa_score = self._loss_clamp_price_action_score(
+                side=side,
+                fac_m1=fac_m1,
+                price=price_val,
+                n_pips=atr_pips or profit_pips or 0.0,
+            )
+        if pa_score < 0.35:
+            return None
         profile = self._escape_profile(pocket=pocket, atr_pips=atr_pips, fac_m1=fac_m1, range_mode=range_mode)
         state = profile["state"]
         if state == "hot":
@@ -4192,6 +4390,8 @@ class ExitManager:
         low_vol_profile: Optional[Dict[str, float]],
         low_vol_quiet: bool,
         news_status: str,
+        fac_m1: Optional[Dict] = None,
+        close_price: Optional[float] = None,
     ) -> tuple[Optional[str], bool]:
         if not self._low_vol_enabled:
             return None, False
@@ -4199,6 +4399,14 @@ class ExitManager:
             return None, False
         if pocket != "micro":
             return None, False
+        pa_score = 0.0
+        if close_price is not None:
+            pa_score = self._loss_clamp_price_action_score(
+                side=side,
+                fac_m1=fac_m1 or {},
+                price=close_price,
+                n_pips=atr_hint or 0.0,
+            )
         profile = low_vol_profile or {}
         low_active = bool(profile.get("low_vol"))
         low_like = bool(profile.get("low_vol_like"))
@@ -4222,6 +4430,8 @@ class ExitManager:
             health = max(0.0, min(1.0, max_mfe / denom))
         budget = self._micro_low_vol_event_budget_sec
         if age_sec >= budget and health < 0.22 and profit_pips <= 0.6:
+            if pa_score < 0.35:
+                return None, False
             self._low_vol_hazard_hits[key] = 0
             log_metric(
                 "low_vol_exit",
@@ -4232,6 +4442,8 @@ class ExitManager:
         grace = self._micro_low_vol_grace_sec
         key = (pocket, side)
         if age_sec <= grace and profit_pips <= -0.25 and (max_mfe is None or max_mfe <= 0.45):
+            if pa_score < 0.35:
+                return None, False
             self._low_vol_hazard_hits[key] = 0
             log_metric(
                 "low_vol_exit",
@@ -4245,6 +4457,8 @@ class ExitManager:
             and age_sec >= self._timeout_soft_tp_frac * self._upper_bound_max_sec
             and profit_pips >= self._soft_tp_pips
         ):
+            if pa_score < 0.35:
+                return None, False
             self._low_vol_hazard_hits[key] = 0
             log_metric(
                 "low_vol_exit",
@@ -4258,6 +4472,8 @@ class ExitManager:
             and health < (0.3 if low_vol_quiet else 0.4)
         )
         if hazard_met and self._hazard_exit_enabled:
+            if pa_score < 0.35:
+                return None, False
             debounce = 2 if low_vol_quiet else self._hazard_debounce_ticks
             hits = self._low_vol_hazard_hits.get(key, 0) + 1
             self._low_vol_hazard_hits[key] = hits
@@ -4804,6 +5020,8 @@ class ExitManager:
         side: str,
         units: int,
         profit_pips: Optional[float],
+        fac_m1: Optional[Dict] = None,
+        atr_pips: Optional[float] = None,
     ) -> Optional[ExitDecision]:
         """
         Partial close when a once-positive trade has retraced deeply.
@@ -4821,6 +5039,19 @@ class ExitManager:
         except Exception:
             return None
         if retrace_ratio < 0.5:
+            return None
+        price_val: Optional[float]
+        try:
+            price_val = float(fac_m1.get("close")) if fac_m1 and fac_m1.get("close") is not None else None
+        except Exception:
+            price_val = None
+        pa_score = self._loss_clamp_price_action_score(
+            side=side,
+            fac_m1=fac_m1 or {},
+            price=price_val,
+            n_pips=atr_pips or max_seen,
+        )
+        if pa_score < 0.45:
             return None
         partial_units = int(abs(units) * 0.35)
         partial_units = max(1000, min(abs(units) - 1, partial_units))
