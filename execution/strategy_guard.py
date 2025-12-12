@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import sqlite3
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from threading import Lock
 from typing import Optional, Tuple
@@ -39,6 +39,24 @@ def _as_naive_utc(dt: datetime) -> datetime:
     if dt.tzinfo is not None:
         return dt.astimezone(timezone.utc).replace(tzinfo=None)
     return dt
+
+
+def set_block(strategy: str, seconds: int, reason: str) -> None:
+    """Set a cooldown for the strategy with a given duration (in seconds)."""
+    if not strategy or seconds <= 0:
+        return
+    conn = _ensure_conn()
+    until = _as_naive_utc(datetime.utcnow()) + timedelta(seconds=max(1, seconds))
+    with _LOCK:
+        conn.execute(
+            """
+            INSERT INTO strategy_cooldown(strategy, reason, cooldown_until)
+            VALUES(?,?,?)
+            ON CONFLICT(strategy) DO UPDATE SET reason=excluded.reason, cooldown_until=excluded.cooldown_until
+            """,
+            (strategy, reason, until.isoformat()),
+        )
+        conn.commit()
 
 
 def is_blocked(strategy: str, now: Optional[datetime] = None) -> Tuple[bool, Optional[int], Optional[str]]:

@@ -2552,6 +2552,18 @@ class ExitManager:
         if youngest < min_hold:
             return None
 
+        # MFEロック: 一定の含み益が乗ったら部分利確＋建値近辺にロック相当の動き（部分クローズでリスク縮小）
+        lock_gate = max(2.0, (atr_pips or 2.0) * 0.9)
+        if max_mfe is not None and max_mfe >= lock_gate and profit_pips is not None and profit_pips >= 0.4:
+            cut_units = -abs(max(units // 2, 1000)) if side == "long" else abs(max(units // 2, 1000))
+            return ExitDecision(
+                pocket=pocket,
+                units=cut_units,
+                reason="value_lock_be",
+                tag="value-lock",
+                allow_reentry=False,
+            )
+
         mfe_gate = max(1.6, (atr_pips or 1.8) * 0.6)
         drawdown_gate = max(1.2, (atr_pips or 1.8) * 0.5)
         loss_gate = max(1.5, (atr_pips or 1.8) * 0.75)
@@ -2571,18 +2583,34 @@ class ExitManager:
             return None
 
         drawdown_ok = False
-        if max_mfe is not None and max_mfe >= mfe_gate:
-            drawdown_from_peak = max_mfe - max(profit_pips, 0.0)
-            if drawdown_from_peak >= drawdown_gate or profit_pips <= -loss_gate:
-                drawdown_ok = True
-        else:
-            if profit_pips <= -loss_gate:
-                drawdown_ok = True
+        # 一定の含み益が乗るまでは value_cut を発動しない
+        if max_mfe is None or max_mfe < mfe_gate:
+            return None
+
+        drawdown_from_peak = max_mfe - max(profit_pips, 0.0)
+        if drawdown_from_peak >= drawdown_gate or profit_pips <= -loss_gate:
+            drawdown_ok = True
 
         if not drawdown_ok:
             return None
 
         cut_units = -abs(units) if side == "long" else abs(units)
+        # 直後の再突入を抑制するため、価格挙動ベースの短時間ブロックを設定（強い逆行ほど長く）
+        try:
+            import execution.strategy_guard as strategy_guard
+
+            momentum = 0.0
+            try:
+                momentum = float(fac_m1.get("momentum") or 0.0)
+            except Exception:
+                momentum = 0.0
+            speed_factor = min(2.0, 1.0 + abs(momentum) / 0.02)
+            base_sec = 45 if pocket == "scalp" else 60
+            duration = int(base_sec * speed_factor)
+            strategy_guard.set_block(f"{pocket}_value_cut", duration, "value_cut_cooldown")
+        except Exception:
+            pass
+
         return ExitDecision(
             pocket=pocket,
             units=cut_units,
