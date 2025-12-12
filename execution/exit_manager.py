@@ -1214,6 +1214,18 @@ class ExitManager:
         if range_quiet and inv_score < 0.9 and (max_seen is None or max_seen < 3.0):
             return None
 
+        # プライスアクションが弱い（包み足/連続高安/レンジブレイクが無い）場合は fast_cut を遅らせる
+        pa_score = self._loss_clamp_price_action_score(
+            side=side,
+            fac_m1=fac_m1,
+            price=close_price,
+            n_pips=atr_val or fast_cut,
+        )
+        if pa_score < 0.45:
+            fast_cut *= 1.2
+            hard_cut *= 1.2
+            time_gate *= 1.15
+
         # 傾き・スタック・セッションで微調整
         slope_bias = 1.0
         if side == "long":
@@ -1380,6 +1392,13 @@ class ExitManager:
         mtf_reversal = (mtf_score_m5 is not None and mtf_score_m5 <= -0.25) or (
             mtf_score_h1 is not None and mtf_score_h1 <= -0.25
         )
+        # プライスアクションスコアを反映: 強い圧が出ていない場合は fast_cut を遅らせる
+        if pa_score < 0.45:
+            # RSI/ADX/MA判定よりも前に早切りを抑制
+            if loss < hard_cut and max_seen is not None and max_seen < fast_cut * 0.8:
+                return None
+            if loss < fast_cut * 1.1:
+                return None
         bounce_possible = False
         if cluster_gap > 3.0 and cloud_support:
             if side == "long":
