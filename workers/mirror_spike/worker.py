@@ -364,5 +364,6 @@ if __name__ == "__main__":  # pragma: no cover
         force=True,
     )
     logger = logging.getLogger(__name__)
-    logger.info("%s worker boot (loop %.2fs)", config.LOG_PREFIX, config.LOOP_INTERVAL_SEC)
+    loop_sec = getattr(config, "LOOP_INTERVAL_SEC", 0.5)
+    logger.info("%s worker boot (loop %.2fs)", config.LOG_PREFIX, loop_sec)
     asyncio.run(mirror_spike_worker())
