@@ -10,14 +10,13 @@ import math
 import time
 from typing import Dict, List, Optional, Sequence
 
-from execution.order_manager import market_order
-from execution.position_manager import PositionManager
-from execution.risk_guard import loss_cooldown_status
+from analysis import plan_bus
 from indicators.factor_cache import all_factors
 from market_data import spread_monitor, tick_window
-from workers.common import env_guard
-from workers.common.quality_gate import current_regime, news_block_active
 from utils.market_hours import is_market_open
+from workers.common import env_guard
+from workers.common.pocket_plan import PocketPlan
+from workers.common.quality_gate import current_regime, news_block_active
 
 from . import config
 
@@ -127,7 +126,6 @@ async def vwap_magnet_s5_worker() -> None:
         return
 
     LOG.info("%s worker starting", config.LOG_PREFIX)
-    pos_manager = PositionManager()
     cooldown_until = 0.0
     post_exit_until = 0.0
     last_spread_log = 0.0
@@ -319,25 +317,7 @@ async def vwap_magnet_s5_worker() -> None:
             if rsi is None:
                 continue
 
-            position_info = pos_manager.get_open_positions()
-            scalp_pos = position_info.get("scalp") or {}
-            trades = scalp_pos.get("open_trades") or []
-            current_tagged = [
-                tr
-                for tr in trades
-                if (tr.get("entry_thesis") or {}).get("strategy_tag") == "vwap_magnet_s5"
-            ]
-            stage_idx = len(current_tagged)
-            if stage_idx >= config.MAX_ACTIVE_TRADES or stage_idx >= len(config.ENTRY_STAGE_RATIOS):
-                continue
-            if current_tagged:
-                last_price = float(current_tagged[-1].get("price") or 0.0)
-                latest_close = closes[-1]
-                delta = abs(latest_close - last_price) / config.PIP_VALUE
-                if delta < config.STAGE_MIN_DELTA_PIPS:
-                    continue
-                if not config.ALLOW_DUPLICATE_ENTRIES and stage_idx > 0:
-                    continue
+            stage_idx = 0  # Stage管理はexecutorに委任（Planで複数signal可）
 
             latest_close = closes[-1]
             prev_vwap = _wma(closes[-(config.VWAP_WINDOW_BUCKETS + 1):-1], counts[-(config.VWAP_WINDOW_BUCKETS + 1):-1])
@@ -433,68 +413,84 @@ async def vwap_magnet_s5_worker() -> None:
                 if side == "long"
                 else entry_price + sl_pips * config.PIP_VALUE
             )
+            # Publish plan
             stage_ratio = _stage_ratio(stage_idx)
             staged_units = int(round(config.ENTRY_UNITS * stage_ratio))
             if staged_units < 1000:
                 staged_units = 1000
-            units = staged_units if side == "long" else -staged_units
-
-            thesis = {
-                "strategy_tag": "vwap_magnet_s5",
-                "z_dev": round(z_dev, 3),
-                "atr_pips": round(atr, 3),
-                "rsi": round(rsi, 2),
-                "slope": round(slope, 5),
-                "spread_pips": round(spread_pips, 3),
-                "stage_index": stage_idx + 1,
-                "stage_ratio": round(stage_ratio, 3),
-                "trend_bias": trend_bias,
-                "trend_adx": None if trend_adx is None else round(trend_adx, 1),
-                "ma_diff_pips": round(ma_diff_pips, 3),
-            }
-            client_id = _client_id(side)
-
+            confidence = 78
+            lot = abs(staged_units) / (100000.0 * (confidence / 100.0))
             try:
-                trade_id = await market_order(
-                    "USD_JPY",
-                    units,
-                    sl_price=sl_price,
-                    tp_price=tp_price,
-                    pocket="scalp",
-                    client_order_id=client_id,
-                    entry_thesis=thesis,
-                )
-            except Exception as exc:  # noqa: BLE001
-                LOG.error("%s order error side=%s exc=%s", config.LOG_PREFIX, side, exc)
-                cooldown_until = now_monotonic + config.COOLDOWN_SEC
-                continue
-
-            if trade_id:
-                fill_price = entry_price
-                LOG.info(
-                    "%s entry trade=%s side=%s units=%s price=%.3f tp=%.3f sl=%.3f",
-                    config.LOG_PREFIX,
-                    trade_id,
-                    side,
-                    units,
-                    fill_price,
-                    tp_price,
-                    sl_price,
-                )
-                cooldown_until = now_monotonic + config.COOLDOWN_SEC
-                post_exit_until = now_monotonic + config.POST_EXIT_COOLDOWN_SEC
-            else:
-                cooldown_until = now_monotonic + config.COOLDOWN_SEC
+                factors = all_factors()
+            except Exception:
+                factors = {}
+            fac_m1 = factors.get("M1") or {}
+            fac_h4 = factors.get("H4") or {}
+            signal = {
+                "action": "OPEN_LONG" if side == "long" else "OPEN_SHORT",
+                "pocket": "scalp",
+                "strategy": "vwap_magnet_s5",
+                "tag": "vwap_magnet_s5",
+                "tp_pips": round(config.TP_PIPS, 2),
+                "sl_pips": None if sl_price is None else round(sl_pips, 2),
+                "confidence": confidence,
+                "min_hold_sec": 90,
+                "loss_guard_pips": None,
+                "target_tp_pips": round(config.TP_PIPS, 2),
+                "meta": {
+                    "vwap_gap_pips": round(vwap_gap_pips, 3),
+                    "z_dev": round(z_dev, 3),
+                    "atr_pips": round(atr, 3),
+                    "rsi": round(rsi, 2),
+                    "slope": round(slope, 5),
+                    "spread_pips": round(spread_pips, 3),
+                    "stage_index": stage_idx + 1,
+                    "stage_ratio": round(stage_ratio, 3),
+                    "trend_bias": trend_bias,
+                    "trend_adx": None if trend_adx is None else round(trend_adx, 1),
+                    "ma_diff_pips": round(ma_diff_pips, 3),
+                },
+            }
+            plan = PocketPlan(
+                generated_at=datetime.datetime.utcnow(),
+                pocket="scalp",
+                focus_tag="hybrid",
+                focus_pockets=["scalp"],
+                range_active=False,
+                range_soft_active=False,
+                range_ctx={},
+                event_soon=False,
+                spread_gate_active=False,
+                spread_gate_reason="",
+                spread_log_context="vwap_magnet_s5",
+                lot_allocation=lot,
+                risk_override=0.0,
+                weight_macro=0.0,
+                scalp_share=1.0,
+                signals=[signal],
+                perf_snapshot={},
+                factors_m1=fac_m1,
+                factors_h4=fac_h4,
+                notes={},
+            )
+            plan_bus.publish(plan)
+            LOG.info(
+                "%s publish plan side=%s units=%s tp=%.2f sl=%.2f vwap_gap=%.3f z=%.2f rsi=%.1f adx=%.1f",
+                config.LOG_PREFIX,
+                side,
+                staged_units if side == "long" else -staged_units,
+                config.TP_PIPS,
+                sl_pips,
+                vwap_gap_pips,
+                z_dev or 0.0,
+                rsi or -1.0,
+                trend_adx or 0.0,
+            )
+            cooldown_until = now_monotonic + config.COOLDOWN_SEC
+            post_exit_until = now_monotonic + config.POST_EXIT_COOLDOWN_SEC
 
     except asyncio.CancelledError:
         LOG.info("%s worker cancelled", config.LOG_PREFIX)
         raise
-    finally:
-        try:
-            pos_manager.close()
-        except Exception:  # noqa: BLE001
-            LOG.exception("%s failed to close PositionManager", config.LOG_PREFIX)
-
-
 if __name__ == "__main__":  # pragma: no cover
     asyncio.run(vwap_magnet_s5_worker())
