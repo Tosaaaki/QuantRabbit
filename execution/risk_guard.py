@@ -323,17 +323,24 @@ def allowed_lot(
     if margin_available is not None and price is not None and margin_rate:
         margin_per_lot = price * margin_rate * 100000
         if margin_per_lot > 0:
+            # 基準: MAX_MARGIN_USAGE (env) を優先し、hard cap で上限を設ける
             margin_cap = max(0.0, min(MAX_MARGIN_USAGE, 1.0))
-            # Allow env override and hard cap to prevent overuse (e.g., 0.95)
-            hard_margin_cap = float(os.getenv("MAX_MARGIN_USAGE_HARD", "0.95") or 0.95)
+            hard_margin_cap = max(
+                0.0, min(float(os.getenv("MAX_MARGIN_USAGE_HARD", "0.95") or 0.95), 1.0)
+            )
+            secret_cap = None
             try:
-                usage_cap = float(get_secret("max_margin_usage"))
-                if 0.0 < usage_cap <= 1.0:
-                    margin_cap = max(margin_cap, usage_cap)
+                candidate = float(get_secret("max_margin_usage"))
+                if 0.0 < candidate <= 1.0:
+                    secret_cap = candidate
             except Exception:
                 pass
-            # guard下でも92%までは使うが、上限も守る
-            margin_cap = min(max(margin_cap, 0.92), hard_margin_cap)
+            if secret_cap is not None:
+                margin_cap = min(margin_cap, secret_cap)
+            margin_cap = min(margin_cap, hard_margin_cap)
+            # margin_cap=0 の場合は強制停止
+            if margin_cap <= 0.0:
+                return 0.0
             # 既存利用分を踏まえて「総使用率が cap を超えない」ように残余枠を計算
             # margin_available は「残り証拠金」と仮定し、使用中 = equity - margin_available
             margin_used = max(0.0, equity - margin_available)
@@ -344,8 +351,8 @@ def allowed_lot(
             current_usage = margin_used / equity if equity > 0 else 0.0
             if current_usage >= margin_cap:
                 lot_margin = 0.0
-            # 信頼度・SLなしの運用では margin ベースを優先
-            lot = max(lot, lot_margin)
+            # 信頼度・SLなしの運用では margin ベースを優先しつつ、cap を超えないよう clamp
+            lot = min(lot, lot_margin)
     # margin_rate が取れない場合でも、free_ratio から強制ガードを入れる
     if margin_cap is None and margin_available is not None and equity > 0:
         hard_margin_cap = float(os.getenv("MAX_MARGIN_USAGE_HARD", "0.95") or 0.95)
