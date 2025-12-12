@@ -11,13 +11,11 @@ import time
 from collections import deque
 from typing import Dict, List, Optional, Sequence
 
-from execution.order_manager import market_order
-from workers.common.dyn_size import compute_units
-from execution.position_manager import PositionManager
-from market_data import spread_monitor, tick_window
+from analysis import plan_bus
 from indicators.factor_cache import all_factors
-from execution.risk_guard import loss_cooldown_status
+from market_data import spread_monitor, tick_window
 from workers.common import env_guard
+from workers.common.pocket_plan import PocketPlan
 from workers.common.quality_gate import current_regime, news_block_active
 
 from . import config
@@ -137,7 +135,6 @@ async def pullback_s5_worker() -> None:
         return
 
     LOG.info("%s worker starting", config.LOG_PREFIX)
-    pos_manager = PositionManager()
     cooldown_until = 0.0
     last_spread_log = 0.0
     news_block_logged = False
@@ -176,42 +173,6 @@ async def pullback_s5_worker() -> None:
 
             if config.ACTIVE_HOURS_UTC and now_utc.hour not in config.ACTIVE_HOURS_UTC:
                 continue
-
-            if not kill_switch_triggered and now_monotonic - last_perf_sync >= config.PERFORMANCE_REFRESH_SEC:
-                last_perf_sync = now_monotonic
-                try:
-                    pos_manager.sync_trades()
-                except Exception as exc:  # pragma: no cover
-                    LOG.debug("%s sync_trades error: %s", config.LOG_PREFIX, exc)
-                try:
-                    summary = pos_manager.get_performance_summary()
-                except Exception as exc:  # pragma: no cover
-                    LOG.debug("%s performance summary error: %s", config.LOG_PREFIX, exc)
-                    summary = {}
-                daily = summary.get("daily", {}) if isinstance(summary, dict) else {}
-                daily_pips = float(daily.get("pips", 0.0) or 0.0)
-                if config.DAILY_PNL_STOP_PIPS > 0.0 and daily_pips <= -config.DAILY_PNL_STOP_PIPS:
-                    kill_switch_triggered = True
-                    kill_switch_reason = f"daily_pnl={daily_pips:.1f}"
-                elif config.MAX_CONSEC_LOSSES > 0:
-                    try:
-                        recent = pos_manager.fetch_recent_trades(limit=config.MAX_CONSEC_LOSSES)
-                    except Exception as exc:  # pragma: no cover
-                        LOG.debug("%s fetch_recent_trades error: %s", config.LOG_PREFIX, exc)
-                        recent = []
-                    consecutive_losses = 0
-                    for row in recent:
-                        try:
-                            pl_val = float(row.get("pl_pips") or 0.0)
-                        except (TypeError, ValueError):
-                            pl_val = 0.0
-                        if pl_val < 0:
-                            consecutive_losses += 1
-                        else:
-                            break
-                    if consecutive_losses >= config.MAX_CONSEC_LOSSES:
-                        kill_switch_triggered = True
-                        kill_switch_reason = f"consecutive_losses={consecutive_losses}"
 
             if kill_switch_triggered:
                 if now_monotonic - last_kill_log > 60.0:
@@ -276,23 +237,7 @@ async def pullback_s5_worker() -> None:
                 continue
             regime_block_logged = None
 
-            if config.LOSS_STREAK_MAX > 0 and config.LOSS_STREAK_COOLDOWN_MIN > 0:
-                loss_block, remain_sec = loss_cooldown_status(
-                    "scalp",
-                    max_losses=config.LOSS_STREAK_MAX,
-                    cooldown_minutes=config.LOSS_STREAK_COOLDOWN_MIN,
-                )
-                if loss_block:
-                    if not loss_block_logged:
-                        LOG.warning(
-                            "%s cooling down after %d consecutive losses (%.0fs remain)",
-                            config.LOG_PREFIX,
-                            config.LOSS_STREAK_MAX,
-                            remain_sec,
-                        )
-                        loss_block_logged = True
-                    continue
-            loss_block_logged = False
+            # loss streak / DDは core_executor 側で統合管理
 
             ticks = tick_window.recent_ticks(seconds=config.WINDOW_SEC, limit=3600)
             if len(ticks) < config.MIN_BUCKETS:
@@ -417,92 +362,78 @@ async def pullback_s5_worker() -> None:
                 3,
             )
 
-            stage_idx = len(tagged)
+            stage_idx = 0  # stage管理は executor に委任
             stage_ratio = _stage_ratio(stage_idx)
             base_units = int(round(config.ENTRY_UNITS * stage_ratio))
-            # シグナル強度を 0..1 に正規化
-            sig_strength = None
+            if base_units < config.MIN_UNITS:
+                base_units = config.MIN_UNITS
+            confidence = 80
+            lot = abs(base_units) / (100000.0 * (confidence / 100.0))
             try:
-                span = max(1e-6, config.FAST_Z_MAX - config.FAST_Z_MIN)
-                if side == "short":
-                    sig_strength = (z_fast - config.FAST_Z_MIN) / span
-                else:
-                    sig_strength = ((-z_fast) - config.FAST_Z_MIN) / span
-                sig_strength = max(0.0, min(1.0, sig_strength))
+                factors = all_factors()
             except Exception:
-                sig_strength = None
-
-            # 柔軟なユニット計算（リスク/スプレッド/ADX/余力）
-            sizing = compute_units(
-                entry_price=entry_price,
-                sl_pips=float(sl_base),
-                base_entry_units=base_units,
-                min_units=int(config.MIN_UNITS),
-                max_margin_usage=float(config.MAX_MARGIN_USAGE),
-                spread_pips=float(spread_pips),
-                spread_soft_cap=float(config.MAX_SPREAD_PIPS),
-                adx=adx_value,
-                signal_score=sig_strength,
-                pocket="scalp",
-            )
-            if sizing.units <= 0:
-                continue
-            units = sizing.units if side == "long" else -sizing.units
-            thesis = {
-                "strategy_tag": "pullback_s5",
-                "z_fast": round(z_fast, 2),
-                "z_slow": round(z_slow, 2),
-                "rsi_fast": None if rsi_fast is None else round(rsi_fast, 1),
-                "atr_fast_pips": round(atr_fast, 2),
-                "spread_pips": round(spread_pips, 2),
-                "trend_bias": trend_bias,
-                "trend_adx": None if adx_value is None else round(adx_value, 1),
+                factors = {}
+            fac_m1 = factors.get("M1") or {}
+            fac_h4 = factors.get("H4") or {}
+            signal = {
+                "action": "OPEN_LONG" if side == "long" else "OPEN_SHORT",
+                "pocket": "scalp",
+                "strategy": "pullback_s5",
+                "tag": "pullback_s5",
                 "tp_pips": round(tp_pips, 2),
                 "sl_pips": round(sl_base, 2),
-                "stage_index": stage_idx + 1,
-                "stage_ratio": round(stage_ratio, 3),
+                "confidence": confidence,
+                "min_hold_sec": 90,
+                "loss_guard_pips": None,
+                "target_tp_pips": round(tp_pips, 2),
+                "meta": {
+                    "z_fast": round(z_fast, 2),
+                    "z_slow": round(z_slow, 2),
+                    "rsi_fast": None if rsi_fast is None else round(rsi_fast, 1),
+                    "atr_fast_pips": round(atr_fast, 2),
+                    "spread_pips": round(spread_pips, 2),
+                    "trend_bias": trend_bias,
+                    "trend_adx": None if adx_value is None else round(adx_value, 1),
+                    "stage_index": stage_idx + 1,
+                    "stage_ratio": round(stage_ratio, 3),
+                },
             }
-
-            try:
-                trade_id = await market_order(
-                    "USD_JPY",
-                    units,
-                    sl_price=sl_price,
-                    tp_price=tp_price,
-                    pocket="scalp",
-                    client_order_id=_client_id(side),
-                    entry_thesis=thesis,
-                    meta={"entry_price": entry_price},
-                )
-            except Exception as exc:  # pragma: no cover - network path
-                LOG.error("%s order error side=%s exc=%s", config.LOG_PREFIX, side, exc)
-                cooldown_until = now_monotonic + config.COOLDOWN_SEC
-                continue
-
-            if trade_id:
-                LOG.info(
-                    "%s entry trade=%s side=%s units=%s tp=%.3f sl=%.3f z_fast=%.2f z_slow=%.2f",
-                    config.LOG_PREFIX,
-                    trade_id,
-                    side,
-                    units,
-                    tp_price,
-                    sl_price,
-                    z_fast,
-                    z_slow,
-                )
-                cooldown_until = now_monotonic + config.COOLDOWN_SEC
-            else:
-                cooldown_until = now_monotonic + 10.0
+            plan = PocketPlan(
+                generated_at=datetime.datetime.utcnow(),
+                pocket="scalp",
+                focus_tag="hybrid",
+                focus_pockets=["scalp"],
+                range_active=False,
+                range_soft_active=False,
+                range_ctx={},
+                event_soon=False,
+                spread_gate_active=False,
+                spread_gate_reason="",
+                spread_log_context="pullback_s5",
+                lot_allocation=lot,
+                risk_override=0.0,
+                weight_macro=0.0,
+                scalp_share=1.0,
+                signals=[signal],
+                perf_snapshot={},
+                factors_m1=fac_m1,
+                factors_h4=fac_h4,
+                notes={},
+            )
+            plan_bus.publish(plan)
+            LOG.info(
+                "%s publish plan side=%s units=%s tp=%.2f sl=%.2f z_fast=%.2f z_slow=%.2f",
+                config.LOG_PREFIX,
+                side,
+                base_units if side == "long" else -base_units,
+                tp_pips,
+                sl_base,
+                z_fast,
+                z_slow,
+            )
+            cooldown_until = now_monotonic + config.COOLDOWN_SEC
     except asyncio.CancelledError:
         LOG.info("%s worker cancelled", config.LOG_PREFIX)
         raise
-    finally:
-        try:
-            pos_manager.close()
-        except Exception:  # pragma: no cover - defensive
-            LOG.exception("%s failed to close PositionManager", config.LOG_PREFIX)
-
-
 if __name__ == "__main__":  # pragma: no cover
     asyncio.run(pullback_s5_worker())
