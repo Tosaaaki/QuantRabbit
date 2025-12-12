@@ -319,6 +319,7 @@ def allowed_lot(
         lot_risk = risk_amount / (sl_pips * 1000)  # USD/JPYの1lotは1000JPY/pip ≒ 1000
     lot = lot_risk
 
+    margin_cap = None
     if margin_available is not None and price is not None and margin_rate:
         margin_per_lot = price * margin_rate * 100000
         if margin_per_lot > 0:
@@ -345,6 +346,13 @@ def allowed_lot(
                 lot_margin = 0.0
             # 信頼度・SLなしの運用では margin ベースを優先
             lot = max(lot, lot_margin)
+    # margin_rate が取れない場合でも、free_ratio から強制ガードを入れる
+    if margin_cap is None and margin_available is not None and equity > 0:
+        hard_margin_cap = float(os.getenv("MAX_MARGIN_USAGE_HARD", "0.95") or 0.95)
+        margin_used = max(0.0, equity - margin_available)
+        current_usage = margin_used / equity
+        if current_usage >= hard_margin_cap:
+            lot = 0.0
 
     lot = min(lot, MAX_LOT)
     min_lot = _MIN_LOT_BY_POCKET.get((pocket or "").lower(), 0.0)
