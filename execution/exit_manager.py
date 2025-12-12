@@ -140,6 +140,15 @@ class ExitManager:
         self._reverse_hits: Dict[Tuple[str, str], Dict[str, object]] = {}
         self._low_vol_hazard_hits: Dict[Tuple[str, str], int] = {}
         self._range_macro_grace_minutes = 8.0
+        # 時間由来のEXITを全面停止するトグル（デフォルトONで無効化）
+        self._disable_time_based_exits = _env_flag("EXIT_DISABLE_TIME_BASED", True)
+        # 早期エスケープ（escape_quiet/normal）を有効にするか
+        raw_escape_enabled = _env_flag("EXIT_ESCAPE_ENABLED", False)
+        self._escape_enabled = False if self._disable_time_based_exits else raw_escape_enabled
+        # マイナス決済を極力避けるための厳格モード
+        self._strict_negative_exit = _env_flag("EXIT_STRICT_NEGATIVE", True)
+        self._strict_loss_buffer = float(os.getenv("EXIT_STRICT_LOSS_BUFFER_PIPS", "2.5"))
+        self._strict_invalidation_threshold = float(os.getenv("EXIT_STRICT_INVALIDATION_THRESHOLD", "0.6"))
         # Micro-specific stability controls
         # Guard against premature exits on noisy micro trades: enforce longer holds and wider grace
         self._micro_min_hold_seconds = float(os.getenv("EXIT_MICRO_MIN_HOLD_SEC", "90"))
@@ -202,7 +211,8 @@ class ExitManager:
         # time-guard throttle to avoid repeated partial cuts
         self._time_guard_ts: Dict[Tuple[str, str], datetime] = {}
         # Optional: disable time-based guards to rely on technical exits only
-        self._time_guard_enabled = _env_flag("EXIT_TIME_GUARD_ENABLED", False)
+        raw_time_guard = _env_flag("EXIT_TIME_GUARD_ENABLED", False)
+        self._time_guard_enabled = False if self._disable_time_based_exits else raw_time_guard
         # Loss clamp thresholds derived from recent MAE analysis (pips)
         self._loss_clamp_partial = {
             "micro": float(os.getenv("LOSS_CLAMP_MICRO_PARTIAL_PIPS", "10.0")),
@@ -237,7 +247,9 @@ class ExitManager:
         self._micro_low_vol_hazard_loss = float(os.getenv("EXIT_MICRO_LOW_VOL_HAZARD_LOSS", "0.4"))
         self._hazard_exit_enabled = _env_flag("EXIT_LOW_VOL_HAZARD_ENABLED", True)
         self._hazard_debounce_ticks = max(1, int(os.getenv("EXIT_LOW_VOL_HAZARD_DEBOUNCE", "2") or 2))
-        self._upper_bound_max_sec = float(os.getenv("EXIT_UPPER_BOUND_MAX_SEC", "0"))
+        self._upper_bound_max_sec = (
+            0.0 if self._disable_time_based_exits else float(os.getenv("EXIT_UPPER_BOUND_MAX_SEC", "0"))
+        )
         self._timeout_soft_tp_frac = float(os.getenv("EXIT_TIMEOUT_SOFT_TP_FRAC", "0.8"))
         self._soft_tp_pips = float(os.getenv("EXIT_SOFT_TP_PIPS", "0.8"))
         # Dynamic escape (quiet/range/normal) — shrink TP/SL only, do not widen to avoid interfering with runners
@@ -417,6 +429,35 @@ class ExitManager:
                     bias = "against_nwave"
             conf = max(conf, n_conf, conf)
         return {"bias": bias, "conf": conf}
+
+    def _trend_invalidation_score(self, fac: Dict, side: str) -> float:
+        """傾き・ADX・RSIから逆行強度をざっくりスコア化。1.0に近いほど逆行が強い。"""
+        try:
+            ma_fast = float(fac.get("ma10") or fac.get("ema12") or 0.0)
+            ma_slow = float(fac.get("ma20") or fac.get("ema20") or 0.0)
+            adx_val = float(fac.get("adx") or 0.0)
+            rsi = float(fac.get("rsi") or 50.0)
+        except Exception:
+            return 0.0
+        gap_pips = (ma_fast - ma_slow) / 0.01
+        score = 0.0
+        if side == "long":
+            if gap_pips < 0:
+                score += 0.6 + min(0.4, abs(gap_pips) * 0.05)
+            if rsi < 45:
+                score += 0.25
+                if rsi < 42:
+                    score += 0.1
+        else:
+            if gap_pips > 0:
+                score += 0.6 + min(0.4, abs(gap_pips) * 0.05)
+            if rsi > 55:
+                score += 0.25
+                if rsi > 58:
+                    score += 0.1
+        if adx_val < 16:
+            score += 0.1
+        return max(0.0, min(1.0, score))
 
     def _regime_profile(self, fac_m1: Dict, fac_h4: Dict, range_mode: bool) -> str:
         """軽量なレジームタグを返す。"""
@@ -4067,6 +4108,8 @@ class ExitManager:
         range_mode: bool,
     ) -> Optional[ExitDecision]:
         """Shrink TP/SL dynamically in quiet/range; avoid interfering with runners."""
+        if not self._escape_enabled:
+            return None
         if pocket not in {"micro", "scalp", "scalp_fast"}:
             return None
         profile = self._escape_profile(pocket=pocket, atr_pips=atr_pips, fac_m1=fac_m1, range_mode=range_mode)
@@ -4127,6 +4170,8 @@ class ExitManager:
         news_status: str,
     ) -> tuple[Optional[str], bool]:
         if not self._low_vol_enabled:
+            return None, False
+        if self._disable_time_based_exits:
             return None, False
         if pocket != "micro":
             return None, False
@@ -4883,6 +4928,12 @@ class ExitManager:
                 )
                 blocked = True
                 break
+            if self._strict_negative_exit:
+                buffer = max(self._strict_loss_buffer, loss_guard)
+                inv_score = self._trend_invalidation_score(fac_m1, side)
+                if profit_pips > -buffer and inv_score < self._strict_invalidation_threshold:
+                    blocked = True
+                    break
         return blocked
 
     def _default_loss_hold(self, pocket: str) -> tuple[float, float]:
