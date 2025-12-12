@@ -1,9 +1,8 @@
 from __future__ import annotations
-from typing import Dict, Optional
+from typing import Dict, List, Optional, Tuple
 import logging
 
 from analysis.ma_projection import MACrossProjection, compute_ma_projection
-from typing import List, Dict, Optional as _Optional
 
 
 class MovingAverageCross:
@@ -30,6 +29,68 @@ class MovingAverageCross:
     _RANGE_ADX_CUTOFF = 22.0
     _RANGE_BBW_CUTOFF = 0.18
     _RANGE_ATR_MAX = 6.0
+
+    @staticmethod
+    def _swing_levels(candles: List[Dict], close_val: Optional[float]) -> Tuple[Optional[float], Optional[float]]:
+        candles_list = list(candles or [])
+        highs: List[float] = []
+        lows: List[float] = []
+        for c in candles_list[-30:]:
+            h = c.get("high") or c.get("h")
+            l = c.get("low") or c.get("l")
+            try:
+                if h is not None:
+                    highs.append(float(h))
+                if l is not None:
+                    lows.append(float(l))
+            except (TypeError, ValueError):
+                continue
+        swing_high = max(highs) if highs else close_val
+        swing_low = min(lows) if lows else close_val
+        return swing_high, swing_low
+
+    @staticmethod
+    def _adjust_targets_with_structure(
+        *,
+        tp_pips: float,
+        sl_pips: float,
+        direction: str,
+        close_price: Optional[float],
+        candles: List[Dict],
+        projection: MACrossProjection,
+        fac: Dict,
+    ) -> Tuple[float, float]:
+        """スイング高安・VWAP・MA傾きに基づき TP/SL を補正する。"""
+        if close_price is None:
+            return tp_pips, sl_pips
+        swing_high, swing_low = MovingAverageCross._swing_levels(candles, close_price)
+        vwap_gap = None
+        try:
+            vwap = fac.get("vwap")
+            vwap_gap = abs(close_price - float(vwap)) / 0.01 if vwap is not None else None
+        except Exception:
+            vwap_gap = None
+        slope_boost = abs(projection.gap_slope_pips or 0.0) * 9.0  # ~0.1 slope -> +0.9pips
+
+        tp_out = tp_pips
+        sl_out = sl_pips
+        if direction == "long":
+            swing_room = (swing_high - close_price) / 0.01 if swing_high and swing_high > close_price else None
+            if swing_room is not None:
+                tp_out = max(tp_out, min(tp_out * 1.6, swing_room * 0.9 + slope_boost))
+            swing_buffer = (close_price - swing_low) / 0.01 * 0.9 if swing_low and swing_low < close_price else None
+            if swing_buffer:
+                sl_out = max(sl_out, min(sl_out * 1.6, swing_buffer))
+        else:
+            swing_room = (close_price - swing_low) / 0.01 if swing_low and swing_low < close_price else None
+            if swing_room is not None:
+                tp_out = max(tp_out, min(tp_out * 1.6, swing_room * 0.9 + slope_boost))
+            swing_buffer = (swing_high - close_price) / 0.01 * 0.9 if swing_high and swing_high > close_price else None
+            if swing_buffer:
+                sl_out = max(sl_out, min(sl_out * 1.6, swing_buffer))
+        if vwap_gap is not None and tp_out > 0:
+            tp_out = min(tp_out * 1.05, tp_out + max(0.0, (vwap_gap - 5.0) * 0.1))
+        return round(max(tp_out, tp_pips), 2), round(max(sl_out, sl_pips), 2)
 
     @staticmethod
     def _log_skip(reason: str, **kwargs) -> None:
@@ -241,7 +302,7 @@ class MovingAverageCross:
         sl_adj = 0.0
         tp_scale = 1.0
         if isinstance(mtf, dict):
-            def _proj_from_candles(candles: List[Dict[str, float]], minutes: float) -> _Optional[MACrossProjection]:
+            def _proj_from_candles(candles: List[Dict[str, float]], minutes: float) -> Optional[MACrossProjection]:
                 if not candles:
                     return None
                 return compute_ma_projection({"candles": candles}, timeframe_minutes=minutes)
@@ -333,6 +394,15 @@ class MovingAverageCross:
 
         if tp_pips <= 0 or sl_pips <= 0:
             return None
+        tp_pips, sl_pips = MovingAverageCross._adjust_targets_with_structure(
+            tp_pips=tp_pips,
+            sl_pips=sl_pips,
+            direction=direction,
+            close_price=close_val,
+            candles=candles,
+            projection=projection,
+            fac=fac,
+        )
         tag_suffix = "bull" if direction == "long" else "bear"
         action = "OPEN_LONG" if direction == "long" else "OPEN_SHORT"
         meta = {

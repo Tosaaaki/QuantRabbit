@@ -190,6 +190,70 @@ def _tech_multiplier(fac: Dict[str, object]) -> float:
     return max(0.7, min(1.3, mult))
 
 
+def _structure_targets(signal: Dict[str, object], fac: Dict[str, object], direction: str) -> Dict[str, object]:
+    """
+    リアルタイムのスイング高安・VWAP・MA傾きを使ってTP/SLを補強する。
+    - TP: 直近スイング方向の伸び余地とMA傾きで底上げ
+    - SL: 直近逆方向スイングにクッションを置き、デフォルトより緩めるのみ（削らない）
+    """
+    sig = dict(signal)
+    tp_default = _to_float(sig.get("tp_pips")) or 0.0
+    sl_default = _to_float(sig.get("sl_pips")) or 0.0
+    candles = list(fac.get("candles") or [])
+    close_px = _to_float(fac.get("close"))
+    if close_px is None and candles:
+        close_px = _to_float(candles[-1].get("close"))
+    highs: list[float] = []
+    lows: list[float] = []
+    for c in candles[-20:]:
+        h = _to_float(c.get("high") or c.get("h"))
+        l = _to_float(c.get("low") or c.get("l"))
+        if h is not None:
+            highs.append(h)
+        if l is not None:
+            lows.append(l)
+    swing_high = max(highs) if highs else None
+    swing_low = min(lows) if lows else None
+    vwap_gap_pips = None
+    try:
+        vwap = _to_float(fac.get("vwap"))
+        if vwap is not None and close_px is not None:
+            vwap_gap_pips = abs(close_px - vwap) / _PIP
+    except Exception:
+        vwap_gap_pips = None
+    try:
+        ma_fast = _to_float(fac.get("ma10")) or _to_float(fac.get("ema12")) or 0.0
+        ma_slow = _to_float(fac.get("ma20")) or _to_float(fac.get("ema20")) or 0.0
+        slope_boost = abs(ma_fast - ma_slow) / _PIP * 0.08
+    except Exception:
+        slope_boost = 0.0
+
+    tp_out = tp_default
+    sl_out = sl_default
+    if close_px is not None:
+        if direction == "long":
+            swing_room = (swing_high - close_px) / _PIP if swing_high and swing_high > close_px else None
+            if swing_room is not None:
+                tp_out = max(tp_out, min(tp_out * 1.8, swing_room * 0.9 + slope_boost))
+            swing_buffer = (close_px - swing_low) / _PIP * 0.9 if swing_low and swing_low < close_px else None
+            if swing_buffer:
+                sl_out = max(sl_out, min(sl_out * 1.8, swing_buffer))
+        else:
+            swing_room = (close_px - swing_low) / _PIP if swing_low and swing_low < close_px else None
+            if swing_room is not None:
+                tp_out = max(tp_out, min(tp_out * 1.8, swing_room * 0.9 + slope_boost))
+            swing_buffer = (swing_high - close_px) / _PIP * 0.9 if swing_high and swing_high > close_px else None
+            if swing_buffer:
+                sl_out = max(sl_out, min(sl_out * 1.8, swing_buffer))
+    if vwap_gap_pips is not None and vwap_gap_pips > 4.0 and tp_out > 0:
+        # 大きく乖離しているときは半分を戻しに充てる程度に抑える
+        cap = tp_default + max(0.0, (vwap_gap_pips - 4.0) * 0.15)
+        tp_out = min(tp_out, cap)
+    sig["tp_pips"] = round(max(tp_out, tp_default), 2)
+    sig["sl_pips"] = round(max(sl_out, sl_default), 2)
+    return sig
+
+
 def _scale_signal(signal: Dict[str, object], mult: float) -> Dict[str, object]:
     """Apply composite multiplier to confidence/tp."""
     if not signal or not isinstance(signal, dict):
@@ -481,6 +545,7 @@ class M1Scalper:
                     "fast_cut_hard_mult": 1.6,
                     "tag": f"{M1Scalper.name}-nwave-long",
                 }
+                signal = _structure_targets(signal, fac, "long")
                 signal = _apply_mult(signal)
                 _log(
                     "signal_nwave_long",
@@ -504,7 +569,7 @@ class M1Scalper:
             if not _alignment_ok("short"):
                 _log("skip_nwave_short_alignment", price=round(close, 3))
                 return None
-            signal = _apply_mult({
+            signal = {
                 "action": "OPEN_SHORT",
                 "entry_type": "limit",
                 "entry_price": entry_price,
@@ -517,7 +582,9 @@ class M1Scalper:
                 "fast_cut_time_sec": int(fast_cut_time),
                 "fast_cut_hard_mult": 1.6,
                 "tag": f"{M1Scalper.name}-nwave-short",
-            })
+            }
+            signal = _structure_targets(signal, fac, "short")
+            signal = _apply_mult(signal)
             _log(
                 "signal_nwave_short",
                 entry=entry_price,
@@ -661,6 +728,7 @@ class M1Scalper:
                     "dist_low": round(dist_low_pips, 2),
                 },
             }
+            signal = _structure_targets(signal, fac, "long" if action == "OPEN_LONG" else "short")
             signal = _apply_mult(signal)
             if _force_mode():
                 _LOGGER.warning("[FORCE_SCALP] issuing market signal %s", signal)
