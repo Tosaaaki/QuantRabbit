@@ -292,20 +292,23 @@ class ExitManager:
             "hard_stop",
         }
         # reverse_signal連発を防ぐクールダウンとゲート
-        self._reverse_cooldown_sec = float(os.getenv("EXIT_REVERSE_COOLDOWN_SEC", "75"))
-        self._reverse_min_hold_sec = float(os.getenv("EXIT_REVERSE_MIN_HOLD_SEC", "90"))
-        self._reverse_profit_floor = float(os.getenv("EXIT_REVERSE_PROFIT_FLOOR", "0.5"))
-        self._reverse_loss_floor = float(os.getenv("EXIT_REVERSE_LOSS_FLOOR", "3.0"))
-        self._reverse_mfe_ratio = float(os.getenv("EXIT_REVERSE_MFE_RATIO", "0.6"))
-        self._reverse_mfe_min = float(os.getenv("EXIT_REVERSE_MFE_MIN", "1.5"))
-        self._reverse_partial_frac = float(os.getenv("EXIT_REVERSE_PARTIAL_FRAC", "0.4"))
-        self._reverse_bounce_buffer = float(os.getenv("EXIT_REVERSE_BOUNCE_BUFFER", "1.2"))
+        self._reverse_cooldown_sec = float(os.getenv("EXIT_REVERSE_COOLDOWN_SEC", "120"))
+        self._reverse_min_hold_sec = float(os.getenv("EXIT_REVERSE_MIN_HOLD_SEC", "120"))
+        self._reverse_profit_floor = float(os.getenv("EXIT_REVERSE_PROFIT_FLOOR", "0.8"))
+        self._reverse_loss_floor = float(os.getenv("EXIT_REVERSE_LOSS_FLOOR", "4.0"))
+        self._reverse_mfe_ratio = float(os.getenv("EXIT_REVERSE_MFE_RATIO", "0.65"))
+        self._reverse_mfe_min = float(os.getenv("EXIT_REVERSE_MFE_MIN", "2.0"))
+        self._reverse_partial_frac = float(os.getenv("EXIT_REVERSE_PARTIAL_FRAC", "0.3"))
+        self._reverse_bounce_buffer = float(os.getenv("EXIT_REVERSE_BOUNCE_BUFFER", "1.5"))
         self._reverse_ts: Dict[Tuple[str, str], datetime] = {}
         # Breakeven guard: lock profits before turning negative
-        self._be_guard_trigger = float(os.getenv("EXIT_BE_GUARD_TRIGGER", "1.8"))
-        self._be_guard_floor = float(os.getenv("EXIT_BE_GUARD_FLOOR", "0.2"))
-        self._be_guard_min_loss = float(os.getenv("EXIT_BE_GUARD_MIN_LOSS", "-0.3"))
-        self._be_guard_frac = float(os.getenv("EXIT_BE_GUARD_FRAC", "0.6"))
+        self._be_guard_trigger = float(os.getenv("EXIT_BE_GUARD_TRIGGER", "1.4"))
+        self._be_guard_floor = float(os.getenv("EXIT_BE_GUARD_FLOOR", "0.3"))
+        self._be_guard_min_loss = float(os.getenv("EXIT_BE_GUARD_MIN_LOSS", "-0.1"))
+        self._be_guard_frac = float(os.getenv("EXIT_BE_GUARD_FRAC", "0.7"))
+        # 最終手段としてのマイナス決済を遅らせるための部分利確設定
+        self._soft_exit_floor = float(os.getenv("EXIT_SOFT_EXIT_FLOOR", "-6.0"))
+        self._soft_exit_frac = float(os.getenv("EXIT_SOFT_EXIT_FRAC", "0.35"))
 
     def _regime_profile(self, fac_m1: Dict, fac_h4: Dict, range_mode: bool) -> str:
         """軽量なレジームタグを返す。"""
@@ -2167,6 +2170,27 @@ class ExitManager:
         if reason and pocket in {"micro", "scalp"} and reason != "event_lock":
             if neg_exit_blocked:
                 return None
+
+        # 最終手段: micro/scalp は強制理由以外ならまず部分利確で逃がす
+        if (
+            reason
+            and pocket in {"micro", "scalp"}
+            and reason not in self._force_exit_reasons
+            and profit_pips is not None
+            and profit_pips > self._soft_exit_floor
+        ):
+            partial_units = max(1000, int(abs(units) * self._soft_exit_frac))
+            if partial_units >= abs(units):
+                partial_units = abs(units) - 1 if abs(units) > 1 else abs(units)
+            if partial_units > 0:
+                signed = -partial_units if side == "long" else partial_units
+                return ExitDecision(
+                    pocket=pocket,
+                    units=signed,
+                    reason=f"{reason}_soft_partial",
+                    tag="soft-partial",
+                    allow_reentry=True,
+                )
 
         if range_mode and reason == "reverse_signal":
             allow_reentry = False
