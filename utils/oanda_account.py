@@ -66,6 +66,13 @@ def get_account_snapshot(timeout: float = 7.0, *, cache_ttl_sec: float = 600.0) 
     unrealized = _f("unrealizedPL", 0.0)
     margin_closeout = _f("marginCloseoutPercent", 0.0)
 
+    # margin_rate が欠落するケースでは、直近の正常スナップショットを優先し、
+    # 無ければ例外を投げて呼び出し側に安全側（発注停止）で落としてもらう。
+    if margin_rate <= 0:
+        if _LAST_SNAPSHOT and (_LAST_SNAPSHOT.margin_rate or 0) > 0:
+            return _LAST_SNAPSHOT
+        raise RuntimeError("margin_rate_missing")
+
     free_ratio: Optional[float]
     if nav > 0:
         free_ratio = margin_available / nav
