@@ -1,5 +1,7 @@
 from __future__ import annotations
 from typing import Any, Dict, List, Optional, Protocol
+import asyncio
+import logging
 
 class DataFeed(Protocol):
     def get_bars(self, symbol: str, tf: str, n: int) -> Any: ...
@@ -9,6 +11,7 @@ class Broker(Protocol):
     def send(self, order: Dict[str, Any]) -> Any: ...
 
 from workers.common.exit_adapter import build_exit_manager
+LOG = logging.getLogger(__name__)
 
 def _as_bars(bars: Any):
     if not bars: return []
@@ -67,7 +70,8 @@ class StopRunReversalWorker:
 
     def edge(self, sym: str):
         bars = _as_bars(self.d.get_bars(sym, self.tf, 200))
-        if len(bars) < 50: return None
+        if len(bars) < 50:
+            return None
         atr = _atr(bars, n=int(self.c.get("atr_len", 14)))
 
         rngs = [b["high"] - b["low"] for b in bars[-50:]]
@@ -121,3 +125,19 @@ class StopRunReversalWorker:
                 }
 
         return None
+
+
+async def _idle_loop() -> None:
+    LOG.info("stop_run_reversal idle loop started (no live runner configured)")
+    try:
+        while True:
+            await asyncio.sleep(3600.0)
+    except asyncio.CancelledError:  # pragma: no cover
+        LOG.info("stop_run_reversal idle loop cancelled")
+        raise
+
+
+if __name__ == "__main__":  # pragma: no cover
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s", force=True)
+    LOG.info("stop_run_reversal worker boot")
+    asyncio.run(_idle_loop())
