@@ -107,6 +107,88 @@ def _cfg_float(section: Dict, key: str, default: float) -> float:
     return default if val is None else val
 
 
+def _tech_multiplier(fac: Dict[str, object]) -> float:
+    """Composite multiplier from expanded technical set."""
+    try:
+        adx = float(fac.get("adx") or 0.0)
+        rsi = float(fac.get("rsi") or 50.0)
+        bbw = float(fac.get("bbw") or 0.0)
+        vol5 = float(fac.get("vol_5m") or 0.0)
+        macd_hist = float(fac.get("macd_hist") or 0.0)
+        stoch = float(fac.get("stoch_rsi") or 0.0)
+        plus_di = float(fac.get("plus_di") or 0.0)
+        minus_di = float(fac.get("minus_di") or 0.0)
+        kc_width = float(fac.get("kc_width") or 0.0)
+        don_width = float(fac.get("donchian_width") or 0.0)
+        chaikin_vol = float(fac.get("chaikin_vol") or 0.0)
+        vwap_gap = float(fac.get("vwap_gap") or 0.0)
+        roc5 = float(fac.get("roc5") or 0.0)
+        cci = float(fac.get("cci") or 0.0)
+    except Exception:
+        adx = rsi = bbw = vol5 = macd_hist = stoch = plus_di = minus_di = kc_width = don_width = chaikin_vol = vwap_gap = roc5 = cci = 0.0
+
+    score = 0.0
+    # トレンド強/順行
+    if adx >= 25:
+        score += 0.4
+    if macd_hist > 0:
+        score += 0.3
+    elif macd_hist < 0:
+        score -= 0.3
+    dmi_diff = plus_di - minus_di
+    if dmi_diff > 5:
+        score += 0.2
+    elif dmi_diff < -5:
+        score -= 0.2
+    # モメンタム
+    if roc5 > 0:
+        score += 0.1
+    elif roc5 < 0:
+        score -= 0.1
+    if cci >= 100:
+        score += 0.05
+    elif cci <= -100:
+        score -= 0.05
+    # オシレーター極端は減点
+    if stoch >= 0.8 or stoch <= 0.2:
+        score -= 0.1
+    # ボラ幅
+    if kc_width > 0.015 or don_width > 0.015 or chaikin_vol > 0.2:
+        score -= 0.1
+    elif 0.006 <= kc_width <= 0.012:
+        score += 0.05
+    # レンジ/低ボラ
+    if bbw <= 0.0013 and adx <= 14:
+        score -= 0.1
+    if vol5 <= 0.5:
+        score -= 0.05
+    elif vol5 >= 1.5:
+        score += 0.05
+    # VWAP乖離で逆張り余地
+    if abs(vwap_gap) >= 5.0:
+        score += 0.05
+    # RSI極端は抑制
+    if rsi <= 25 or rsi >= 75:
+        score -= 0.05
+
+    mult = 1.0 + score * 0.08
+    return max(0.7, min(1.3, mult))
+
+
+def _scale_signal(signal: Dict[str, object], mult: float) -> Dict[str, object]:
+    """Apply composite multiplier to confidence/tp."""
+    if not signal or not isinstance(signal, dict):
+        return signal
+    sig = dict(signal)
+    conf = int(sig.get("confidence", 50) or 50)
+    conf = int(max(0, min(100, conf * mult)))
+    sig["confidence"] = conf
+    tp = _to_float(sig.get("tp_pips"))
+    if tp is not None:
+        tp_scaled = max(0.6, min(tp * mult, tp * 1.35))
+        sig["tp_pips"] = round(tp_scaled, 2)
+    return sig
+
 class M1Scalper:
     name = "M1Scalper"
     pocket = "scalp"
@@ -140,6 +222,19 @@ class M1Scalper:
         vwap = fac.get("vwap")
         if close is None or ema20 is None or rsi is None:
             return None
+
+        tech_mult = _tech_multiplier(fac)
+        tech_mult_r = round(tech_mult, 3)
+
+        def _apply_mult(signal: Dict[str, object]) -> Dict[str, object]:
+            sig = _scale_signal(signal, tech_mult)
+            if isinstance(sig, dict):
+                notes = sig.get("notes") or {}
+                if not isinstance(notes, dict):
+                    notes = {}
+                notes["tech_mult"] = tech_mult_r
+                sig["notes"] = notes
+            return sig
 
         momentum = close - ema20
         ema10 = fac.get("ema10")
@@ -257,7 +352,7 @@ class M1Scalper:
                 _log("trend_block_long", momentum=round(momentum, 5), ema_gap=round(ema_gap_pips, 3), price_gap=round(price_gap_pips, 3))
                 return None
             tp_dyn_adj = _adjust_tp(tp_dyn, confidence)
-            return _attach_kill({
+            signal = _apply_mult({
                 "action": action,
                 "sl_pips": sl_dyn,
                 "tp_pips": tp_dyn_adj,
@@ -267,6 +362,7 @@ class M1Scalper:
                 "fast_cut_hard_mult": 1.6,
                 "tag": f"{M1Scalper.name}-buy-dip" if action == "OPEN_LONG" else f"{M1Scalper.name}-trend-short",
             })
+            return _attach_kill(signal)
         if momentum > 0.0020 and rsi > 45:
             speed = abs(momentum) / max(0.0005, atr)
             rsi_gap = max(0.0, rsi - 45) / 10
@@ -282,7 +378,7 @@ class M1Scalper:
                 _log("trend_block_short", momentum=round(momentum, 5), ema_gap=round(ema_gap_pips, 3), price_gap=round(price_gap_pips, 3))
                 return None
             tp_dyn_adj = _adjust_tp(tp_dyn, confidence)
-            return _attach_kill({
+            signal = _apply_mult({
                 "action": action,
                 "sl_pips": sl_dyn,
                 "tp_pips": tp_dyn_adj,
@@ -292,6 +388,7 @@ class M1Scalper:
                 "fast_cut_hard_mult": 1.6,
                 "tag": f"{M1Scalper.name}-sell-rally" if action == "OPEN_SHORT" else f"{M1Scalper.name}-trend-long",
             })
+            return _attach_kill(signal)
 
         def _alignment_ok(side: str) -> bool:
             if len(candles) < 2:
@@ -369,6 +466,7 @@ class M1Scalper:
                     "fast_cut_hard_mult": 1.6,
                     "tag": f"{M1Scalper.name}-nwave-long",
                 }
+                signal = _apply_mult(signal)
                 _log(
                     "signal_nwave_long",
                     entry=entry_price,
@@ -391,7 +489,7 @@ class M1Scalper:
             if not _alignment_ok("short"):
                 _log("skip_nwave_short_alignment", price=round(close, 3))
                 return None
-            signal = {
+            signal = _apply_mult({
                 "action": "OPEN_SHORT",
                 "entry_type": "limit",
                 "entry_price": entry_price,
@@ -404,7 +502,7 @@ class M1Scalper:
                 "fast_cut_time_sec": int(fast_cut_time),
                 "fast_cut_hard_mult": 1.6,
                 "tag": f"{M1Scalper.name}-nwave-short",
-            }
+            })
             _log(
                 "signal_nwave_short",
                 entry=entry_price,
@@ -548,18 +646,20 @@ class M1Scalper:
                     "dist_low": round(dist_low_pips, 2),
                 },
             }
+            signal = _apply_mult(signal)
             if _force_mode():
                 _LOGGER.warning("[FORCE_SCALP] issuing market signal %s", signal)
             _log(
                 "signal_micro_limit",
                 direction=direction,
-                entry=entry_price,
+                entry=signal["entry_price"],
                 tp=signal["tp_pips"],
                 sl=signal["sl_pips"],
                 span=round(span_pips, 2),
                 momentum=round(momentum, 5),
                 rsi=round(rsi, 2),
                 ticks=len(ticks),
+                tech_mult=tech_mult_r,
             )
             return _attach_kill(signal)
 
