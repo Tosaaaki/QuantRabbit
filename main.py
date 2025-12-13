@@ -4450,6 +4450,7 @@ async def logic_loop(
                 account_equity,
                 sl_pips=max(1.0, avg_sl),
                 margin_available=margin_available,
+                margin_used=account_snapshot.margin_used if account_snapshot else None,
                 price=mid_price if mid_price > 0 else None,
                 margin_rate=margin_rate,
                 risk_pct_override=risk_override,

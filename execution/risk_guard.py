@@ -289,6 +289,7 @@ def allowed_lot(
     sl_pips: float,
     *,
     margin_available: float | None = None,
+    margin_used: float | None = None,
     price: float | None = None,
     margin_rate: float | None = None,
     risk_pct_override: float | None = None,
@@ -319,36 +320,30 @@ def allowed_lot(
         lot_risk = risk_amount / (sl_pips * 1000)  # USD/JPYの1lotは1000JPY/pip ≒ 1000
     lot = lot_risk
 
+    # 証拠金情報が欠損している場合は安全側（発注しない）
+    if margin_available is None or price is None or not margin_rate:
+        return 0.0
+
     margin_cap = None
     if margin_available is not None and price is not None and margin_rate:
         margin_per_lot = price * margin_rate * 100000
         if margin_per_lot > 0:
-            # 基準: MAX_MARGIN_USAGE (env) を優先し、hard cap で上限を設ける
+            # 基準: MAX_MARGIN_USAGE を絶対上限（デフォルト0.92）
             margin_cap = max(0.0, min(MAX_MARGIN_USAGE, 1.0))
-            hard_margin_cap = max(
-                0.0, min(float(os.getenv("MAX_MARGIN_USAGE_HARD", "0.95") or 0.95), 1.0)
-            )
-            secret_cap = None
-            try:
-                candidate = float(get_secret("max_margin_usage"))
-                if 0.0 < candidate <= 1.0:
-                    secret_cap = candidate
-            except Exception:
-                pass
-            if secret_cap is not None:
-                margin_cap = min(margin_cap, secret_cap)
-            margin_cap = min(margin_cap, hard_margin_cap)
+            hard_margin_cap = margin_cap
             # margin_cap=0 の場合は強制停止
             if margin_cap <= 0.0:
                 return 0.0
             # 既存利用分を踏まえて「総使用率が cap を超えない」ように残余枠を計算
-            # margin_available は「残り証拠金」と仮定し、使用中 = equity - margin_available
-            margin_used = max(0.0, equity - margin_available)
+            used = margin_used
+            if used is None:
+                used = max(0.0, equity - margin_available)
             margin_budget_total = equity * margin_cap
-            margin_budget_new = max(0.0, margin_budget_total - margin_used)
+            # 少し余白（0.5%）を残す
+            margin_budget_new = max(0.0, margin_budget_total * 0.995 - used)
             lot_margin = margin_budget_new / margin_per_lot
             # すでに cap 超なら新規はゼロ
-            current_usage = margin_used / equity if equity > 0 else 0.0
+            current_usage = used / equity if equity > 0 else 0.0
             if current_usage >= margin_cap:
                 lot_margin = 0.0
             # 信頼度・SLなしの運用では margin ベースを優先しつつ、cap を超えないよう clamp
