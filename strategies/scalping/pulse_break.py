@@ -49,12 +49,18 @@ class PulseBreak:
             atr = fac.get("atr")
             atr_pips = (atr or 0.0) * 100
 
-        # 低ボラ時は閾値を少し緩めるが、スプレッド/ATRのバランスは別途 main 側が管理
-        if atr_pips < 2.2 or vol_5m < 1.1:
+        # ATR が薄いときは vol_5m の閾値をスライドさせる（低ボラ帯でも相対ブレイクを拾う）
+        if atr_pips < 2.0:
+            PulseBreak._log_skip("atr_low", atr_pips=round(atr_pips, 3))
+            return None
+        vol_thresh = 1.05 + (atr_pips - 2.6) * 0.08
+        vol_thresh = max(0.86, min(1.18, vol_thresh))
+        if vol_5m < vol_thresh:
             PulseBreak._log_skip(
-                "vol_or_atr_low",
+                "vol_dyn_low",
                 atr_pips=round(atr_pips, 3),
                 vol_5m=round(vol_5m, 3),
+                vol_thresh=round(vol_thresh, 3),
             )
             return None
 
