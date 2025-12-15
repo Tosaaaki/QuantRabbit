@@ -4462,6 +4462,71 @@ async def logic_loop(
                             bias_h1,
                             bias_h4,
                         )
+                # Strategy-specific directional shaping
+                strategy_name = str(sig.get("strategy") or "")
+                if action_dir != 0 and adx_h1 is not None and adx_h4 is not None:
+                    adx_max = max(adx_h1, adx_h4)
+                    aligned_h4 = bias_h4 != 0 and bias_h4 == action_dir
+                    opposed_h4 = bias_h4 != 0 and bias_h4 != action_dir
+                    aligned_h1 = bias_h1 != 0 and bias_h1 == action_dir
+                    opposed_h1 = bias_h1 != 0 and bias_h1 != action_dir
+                    # Trend-following (macro/core)
+                    if strategy_name == "TrendMA":
+                        adj = 1.0
+                        if opposed_h4:
+                            adj *= 0.2
+                        elif aligned_h4:
+                            adj *= 1.1
+                        if opposed_h1 and adx_max >= 22.0:
+                            adj *= 0.85
+                        if abs(adj - 1.0) > 1e-3:
+                            prev_conf = int(sig.get("confidence", 0) or 0)
+                            sig["confidence"] = max(0, int(prev_conf * adj))
+                            logging.info(
+                                "[DIR_STRAT] TrendMA conf=%d->%d h1=%d h4=%d adx_max=%.1f",
+                                prev_conf,
+                                sig["confidence"],
+                                bias_h1,
+                                bias_h4,
+                                adx_max,
+                            )
+                    # Mean reversion / range: downscale when trend is strong
+                    if strategy_name in {"RangeFader", "BB_RSI"}:
+                        if adx_max >= 25.0 and (aligned_h4 or aligned_h1):
+                            prev_conf = int(sig.get("confidence", 0) or 0)
+                            new_conf = max(0, int(prev_conf * 0.45))
+                            if new_conf != prev_conf:
+                                sig["confidence"] = new_conf
+                                logging.info(
+                                    "[DIR_STRAT] Range downscale conf=%d->%d h1=%d h4=%d adx_max=%.1f",
+                                    prev_conf,
+                                    new_conf,
+                                    bias_h1,
+                                    bias_h4,
+                                    adx_max,
+                                )
+                    # Impulse系/Scalper: trend強なら順方向強め、逆は薄め
+                    if strategy_name in {"ImpulseRe", "ImpulseRetrace", "M1Scalper"}:
+                        adj = 1.0
+                        if adx_max >= 25.0:
+                            if aligned_h4 or aligned_h1:
+                                adj *= 1.1
+                            if opposed_h4 or opposed_h1:
+                                adj *= 0.4
+                        elif adx_max <= 18.0 and opposed_h4 and opposed_h1:
+                            adj *= 0.7
+                        if abs(adj - 1.0) > 1e-3:
+                            prev_conf = int(sig.get("confidence", 0) or 0)
+                            sig["confidence"] = max(0, int(prev_conf * adj))
+                            logging.info(
+                                "[DIR_STRAT] %s conf=%d->%d h1=%d h4=%d adx_max=%.1f",
+                                strategy_name,
+                                prev_conf,
+                                sig["confidence"],
+                                bias_h1,
+                                bias_h4,
+                                adx_max,
+                            )
                 if sig.get("pocket") == "scalp" and scalp_conf_scale < 0.999:
                     prev_conf = int(sig.get("confidence", 0) or 0)
                     new_conf = max(0, int(prev_conf * scalp_conf_scale))
