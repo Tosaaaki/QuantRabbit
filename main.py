@@ -291,7 +291,7 @@ _MACRO_PULLBACK_MAX_MA_SLACK_PIPS = 2.1
 _MACRO_PULLBACK_MIN_ADX = 19.0
 _MACRO_LIMIT_TIMEOUT_SEC = 75.0
 _MACRO_LIMIT_TIMEOUT_MIN = 45.0
-_MACRO_LIMIT_WAIT: dict[str, dict[str, float]] = {}
+MACRO_LIMIT_WAIT: dict[str, dict[str, float]] = {}
 
 _BASE_STAGE_RATIOS = {
     # Spread staging to smooth adverse price moves while preserving total exposure.
