@@ -289,8 +289,8 @@ _MACRO_PULLBACK_MAX_RETRACE_PIPS = 16.0
 _MACRO_PULLBACK_MAX_EMA_GAP_PIPS = 6.5
 _MACRO_PULLBACK_MAX_MA_SLACK_PIPS = 2.1
 _MACRO_PULLBACK_MIN_ADX = 19.0
-_MACRO_LIMIT_TIMEOUT_SEC = 75.0
-_MACRO_LIMIT_TIMEOUT_MIN = 45.0
+_MACRO_LIMIT_TIMEOUT_SEC = 60.0
+_MACRO_LIMIT_TIMEOUT_MIN = 35.0
 MACRO_LIMIT_WAIT: dict[str, dict[str, float]] = {}
 _DIR_BIAS_SCALE_OPPOSE = 0.35
 _DIR_BIAS_SCALE_ALIGN = 1.05
@@ -4577,6 +4577,24 @@ async def logic_loop(
                                     adx_max,
                                 )
                             continue
+                        # 強トレンドでM1Scalper逆方向も大きく抑制
+                        if (
+                            strategy_name == "M1Scalper"
+                            and trend_dir != 0
+                            and action_dir != trend_dir
+                            and adx_max >= 25.0
+                        ):
+                            prev_conf = int(sig.get("confidence", 0) or 0)
+                            new_conf = max(0, int(prev_conf * 0.25))
+                            sig["confidence"] = new_conf
+                            logging.info(
+                                "[DIR_STRAT] M1Scalper oppose strong trend conf=%d->%d h1=%d h4=%d adx=%.1f",
+                                prev_conf,
+                                new_conf,
+                                bias_h1,
+                                bias_h4,
+                                adx_max,
+                            )
                         # use normalized distance to avoid chasing stretched moves
                         if strategy_name in {"ImpulseRe", "ImpulseRetrace"} and dist_norm is not None:
                             if trend_dir != 0 and action_dir == trend_dir:
@@ -5815,7 +5833,7 @@ async def logic_loop(
                             wait_scale *= 1.1
                         if clamp_level >= 2:
                             wait_scale = min(wait_scale, 0.85)
-                        wait_scale = max(0.5, min(1.4, wait_scale))
+                        wait_scale = max(0.5, min(1.3, wait_scale))
                         timeout_sec = max(_MACRO_LIMIT_TIMEOUT_MIN, _MACRO_LIMIT_TIMEOUT_SEC * wait_scale)
                         try:
                             atr_for_gap = float(locals().get("atr_hint", 0.0) or 0.0)

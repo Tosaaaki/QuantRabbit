@@ -75,8 +75,8 @@ _MACRO_MIN_UNITS_DEFAULT = max(_DEFAULT_MIN_UNITS * 4, 10000)
 _MIN_UNITS_BY_POCKET: dict[str, int] = {
     "micro": _env_int("ORDER_MIN_UNITS_MICRO", _DEFAULT_MIN_UNITS),
     "macro": _env_int("ORDER_MIN_UNITS_MACRO", _MACRO_MIN_UNITS_DEFAULT),
-    # scalp は最低 10k（環境変数で上書き可）
-    "scalp": _env_int("ORDER_MIN_UNITS_SCALP", 10000),
+    # scalp は最低 5k（環境変数で上書き可）に下げ、クラスター損失を縮小
+    "scalp": _env_int("ORDER_MIN_UNITS_SCALP", 5000),
 }
 # Raise scalp floor to avoid tiny entries; can override via env ORDER_MIN_UNITS_SCALP
 # If true, do not attach stopLossOnFill (TP is still sent).
