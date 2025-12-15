@@ -289,6 +289,9 @@ _MACRO_PULLBACK_MAX_RETRACE_PIPS = 16.0
 _MACRO_PULLBACK_MAX_EMA_GAP_PIPS = 6.5
 _MACRO_PULLBACK_MAX_MA_SLACK_PIPS = 2.1
 _MACRO_PULLBACK_MIN_ADX = 19.0
+_MACRO_LIMIT_TIMEOUT_SEC = 75.0
+_MACRO_LIMIT_TIMEOUT_MIN = 45.0
+_MACRO_LIMIT_WAIT: dict[str, dict[str, float]] = {}
 
 _BASE_STAGE_RATIOS = {
     # Spread staging to smooth adverse price moves while preserving total exposure.
@@ -5400,6 +5403,7 @@ async def logic_loop(
                 )
 
                 pullback_note = None
+                limit_wait_key = None
                 entry_type = signal.get("entry_type", "market")
                 target_price = signal.get("entry_price")
                 tolerance_pips = float(signal.get("entry_tolerance_pips", 0.25))
@@ -5424,18 +5428,23 @@ async def logic_loop(
                         pullback_min,
                         pullback_max,
                     )
+                    limit_wait_key = f"{signal.get('strategy') or 'macro'}:{direction}"
                     if is_buy:
                         target_price = round(entry_price - pullback_pips * PIP, 3)
                     else:
                         target_price = round(entry_price + pullback_pips * PIP, 3)
                     entry_type = "limit"
                     tolerance_pips = max(
-                        0.35,
-                        min(
-                            1.25,
-                            pullback_pips * (0.28 if atr_hint <= 2.0 else 0.33)
-                            + (0.18 if abs(momentum) <= 0.008 else 0.08),
+                        tolerance_pips,
+                        max(
+                            0.35,
+                            min(
+                                1.25,
+                                pullback_pips * (0.28 if atr_hint <= 2.0 else 0.33)
+                                + (0.18 if abs(momentum) <= 0.008 else 0.08),
+                            ),
                         ),
+                        min(1.8, 0.42 * atr_hint + 0.28),
                     )
                     pullback_note = pullback_pips
                 tolerance_price = tolerance_pips * PIP
@@ -5451,24 +5460,74 @@ async def logic_loop(
                         continue
                     else:
                         target_price = reference_price
+                    needs_pullback = False
+                    gap_pips = 0.0
                     if is_buy:
-                        if price > reference_price + tolerance_price:
-                            logging.info(
-                                "[LIMIT] Waiting for pullback (target=%.3f cur=%.3f tol=%.2fp)",
-                                reference_price,
-                                price,
-                                tolerance_pips,
-                            )
-                            continue
+                        needs_pullback = price > reference_price + tolerance_price
+                        gap_pips = (price - reference_price) / PIP
                     else:
-                        if price < reference_price - tolerance_price:
+                        needs_pullback = price < reference_price - tolerance_price
+                        gap_pips = (reference_price - price) / PIP
+
+                    if needs_pullback:
+                        elapsed = 0.0
+                        if limit_wait_key:
+                            now_ts = time.time()
+                            prev = MACRO_LIMIT_WAIT.get(limit_wait_key)
+                            if not prev or abs(prev.get("target", reference_price) - reference_price) > 0.0009:
+                                MACRO_LIMIT_WAIT[limit_wait_key] = {
+                                    "start": now_ts,
+                                    "target": reference_price,
+                                }
+                                prev = MACRO_LIMIT_WAIT.get(limit_wait_key)
+                            elapsed = max(0.0, now_ts - float(prev.get("start", now_ts)))
+                        wait_scale = 1.0
+                        if vol_5m is not None:
+                            try:
+                                wait_scale = max(0.7, min(1.3, 1.0 + (float(vol_5m) - 1.0) * 0.18))
+                            except Exception:
+                                wait_scale = 1.0
+                        timeout_sec = max(_MACRO_LIMIT_TIMEOUT_MIN, _MACRO_LIMIT_TIMEOUT_SEC * wait_scale)
+                        try:
+                            atr_for_gap = float(locals().get("atr_hint", 0.0) or 0.0)
+                        except Exception:
+                            atr_for_gap = 0.0
+                        fallback_gap = max(
+                            tolerance_pips * 1.9,
+                            (pullback_note or tolerance_pips) * 0.75,
+                            0.45 + min(2.2, atr_for_gap * 0.25),
+                        )
+                        fallback_gap = min(4.2, fallback_gap)
+                        if elapsed >= timeout_sec and gap_pips <= fallback_gap:
                             logging.info(
-                                "[LIMIT] Waiting for bounce (target=%.3f cur=%.3f tol=%.2fp)",
+                                "[LIMIT->MARKET] Macro timeout %.0fs gap=%.2fp tol=%.2fp pullback=%.2fp fallback=%.2fp vol=%.2f",
+                                elapsed,
+                                gap_pips,
+                                tolerance_pips,
+                                pullback_note or 0.0,
+                                fallback_gap,
+                                vol_5m or 0.0,
+                            )
+                            entry_type = "market"
+                            reference_price = entry_price
+                            target_price = None
+                            if limit_wait_key:
+                                MACRO_LIMIT_WAIT.pop(limit_wait_key, None)
+                        else:
+                            logging.info(
+                                "[LIMIT] Waiting for %s (target=%.3f cur=%.3f tol=%.2fp gap=%.2fp elapsed=%.0fs timeout=%.0fs fallback=%.2fp)",
+                                "pullback" if is_buy else "bounce",
                                 reference_price,
                                 price,
                                 tolerance_pips,
+                                gap_pips,
+                                elapsed,
+                                timeout_sec,
+                                fallback_gap,
                             )
                             continue
+                    if limit_wait_key:
+                        MACRO_LIMIT_WAIT.pop(limit_wait_key, None)
 
                 sl_pips = signal.get("sl_pips")
                 if sl_pips is None:
