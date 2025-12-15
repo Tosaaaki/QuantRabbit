@@ -4470,6 +4470,22 @@ async def logic_loop(
                     opposed_h4 = bias_h4 != 0 and bias_h4 != action_dir
                     aligned_h1 = bias_h1 != 0 and bias_h1 == action_dir
                     opposed_h1 = bias_h1 != 0 and bias_h1 != action_dir
+                    trend_dir = bias_h4 or bias_h1
+                    try:
+                        close_val = float(price or 0.0)
+                    except Exception:
+                        close_val = None
+                    try:
+                        ema20_h1 = float(fac_h1.get("ema20") or fac_h1.get("ma20") or 0.0)
+                    except Exception:
+                        ema20_h1 = 0.0
+                    try:
+                        atr_m5_val = float(fac_m5.get("atr_pips") or (fac_m5.get("atr") or 0.0) * 100.0)
+                    except Exception:
+                        atr_m5_val = 0.0
+                    dist_norm = None
+                    if close_val is not None and atr_m5_val > 0:
+                        dist_norm = abs(close_val - ema20_h1) / (atr_m5_val * PIP)
                     # Trend-following (macro/core)
                     if strategy_name == "TrendMA":
                         adj = 1.0
@@ -4508,6 +4524,29 @@ async def logic_loop(
                     # Impulse系/Scalper: trend強なら順方向強め、逆は薄め
                     if strategy_name in {"ImpulseRe", "ImpulseRetrace", "M1Scalper"}:
                         adj = 1.0
+                        # use normalized distance to avoid chasing stretched moves
+                        if strategy_name in {"ImpulseRe", "ImpulseRetrace"} and dist_norm is not None:
+                            if trend_dir != 0 and action_dir == trend_dir:
+                                if 0.2 <= dist_norm <= 0.9:
+                                    adj *= 1.12
+                                elif dist_norm >= 1.6:
+                                    adj *= 0.7
+                            elif trend_dir != 0 and action_dir != trend_dir:
+                                if dist_norm >= 1.0:
+                                    adj *= 0.3
+                                else:
+                                    adj *= 0.5
+                        if strategy_name == "M1Scalper" and dist_norm is not None:
+                            if trend_dir != 0 and action_dir == trend_dir:
+                                if dist_norm >= 1.5:
+                                    adj *= 0.6
+                                elif dist_norm <= 0.9:
+                                    adj *= 1.05
+                            elif trend_dir != 0 and action_dir != trend_dir:
+                                if adx_max >= 25.0:
+                                    adj *= 0.5
+                                elif dist_norm <= 1.0 and adx_max <= 18.0:
+                                    adj *= 0.9
                         if adx_max >= 25.0:
                             if aligned_h4 or aligned_h1:
                                 adj *= 1.1
