@@ -256,6 +256,12 @@ class StageTracker:
             state["event_count"] = 0
             state["clamp_score"] = 0.0
             state["last_trade_id"] = 0
+        # Safety cap to avoid runaway scores on reload
+        try:
+            if state["clamp_score"] > 3.0:
+                state["clamp_score"] = 3.0
+        except Exception:
+            state["clamp_score"] = 0.0
         for key in ("last_event_at", "clamp_until", "impulse_stop_until"):
             raw = row[key] if row else None
             try:
@@ -300,12 +306,13 @@ class StageTracker:
         if (level <= 0 and score <= 0.0) or not last_evt:
             return
         try:
-            elapsed = (now - last_evt).total_seconds()
+            elapsed = max(0.0, (now - last_evt).total_seconds())
         except Exception:
             return
-        if elapsed < max(60, _CLAMP_DECAY_MIN * 60):
-            return
-        decayed_score = max(0.0, score * 0.5)
+        # Exponential decay with half-life = _CLAMP_DECAY_MIN minutes
+        half_life_sec = max(1.0, float(_CLAMP_DECAY_MIN) * 60.0)
+        decay_factor = 0.5 ** (elapsed / half_life_sec)
+        decayed_score = max(0.0, min(3.0, score * decay_factor))
         self._clamp_state["clamp_score"] = decayed_score
         if decayed_score <= 0.5:
             new_level = 0
@@ -335,7 +342,7 @@ class StageTracker:
         severity = max(1, severity)
         current_level = int(self._clamp_state.get("level", 0) or 0)
         current_score = float(self._clamp_state.get("clamp_score", 0.0) or 0.0)
-        new_score = current_score + float(severity)
+        new_score = min(3.0, current_score + float(severity))
         self._clamp_state["clamp_score"] = new_score
         if new_score >= 3.0:
             new_level = 3

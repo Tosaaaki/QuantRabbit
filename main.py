@@ -4411,6 +4411,13 @@ async def logic_loop(
 
             filtered_signals: list[dict] = []
             for sig in evaluated_signals:
+                if sig.get("pocket") == "scalp" and clamp_level >= 3:
+                    logging.info(
+                        "[CLAMP] skip scalp entry level=3 strategy=%s action=%s",
+                        sig.get("strategy"),
+                        sig.get("action"),
+                    )
+                    continue
                 action_dir = 0
                 try:
                     if sig.get("action") == "OPEN_LONG":
