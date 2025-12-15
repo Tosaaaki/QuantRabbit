@@ -162,12 +162,19 @@ class MovingAverageCross:
             except (TypeError, ValueError):
                 atr_pips_val = None
 
+        trend_override = False
+        try:
+            trend_override = abs(projection.gap_pips) >= 1.0 and abs(projection.gap_slope_pips or 0.0) >= 0.05
+        except Exception:
+            trend_override = False
+
         if (
             isinstance(bbw, (int, float))
             and atr_pips_val is not None
             and float(adx or 0.0) <= MovingAverageCross._RANGE_ADX_CUTOFF
             and float(bbw) <= MovingAverageCross._RANGE_BBW_CUTOFF
             and float(atr_pips_val) <= MovingAverageCross._RANGE_ATR_MAX
+            and not trend_override
         ):
             # Defer to range-mode strategies; TrendMA stands down
             MovingAverageCross._log_skip(
@@ -177,6 +184,15 @@ class MovingAverageCross:
                 atr_pips=round(float(atr_pips_val), 3),
             )
             return None
+        if trend_override:
+            MovingAverageCross._log_skip(
+                "range_override_strong_trend",
+                gap_pips=round(projection.gap_pips, 4),
+                gap_slope=round(projection.gap_slope_pips or 0.0, 5),
+                adx=round(float(adx or 0.0), 2),
+                bbw=round(float(bbw), 4) if isinstance(bbw, (int, float)) else None,
+                atr_pips=round(float(atr_pips_val or 0.0), 3) if atr_pips_val is not None else None,
+            )
 
         weak_trend = adx < MovingAverageCross._MIN_TREND_ADX
         if weak_trend:
