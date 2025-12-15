@@ -5,6 +5,7 @@ import requests
 from typing import Optional
 
 from utils.secrets import get_secret
+from utils.metrics_logger import log_metric
 
 
 @dataclasses.dataclass
@@ -97,6 +98,28 @@ def get_account_snapshot(timeout: float = 7.0, *, cache_ttl_sec: float = 60.0) -
         free_margin_ratio=free_ratio,
         health_buffer=health_buffer,
     )
+    # record a small set of health metrics for downstream hazard tuning
+    try:
+        log_metric(
+            "account.health_buffer",
+            health_buffer if health_buffer is not None else -1.0,
+            tags={"practice": str(practice).lower()},
+        )
+        if free_ratio is not None:
+            log_metric(
+                "account.free_margin_ratio",
+                free_ratio,
+                tags={"practice": str(practice).lower()},
+            )
+        if nav > 0:
+            log_metric(
+                "account.margin_usage_ratio",
+                margin_used / nav,
+                tags={"practice": str(practice).lower()},
+            )
+    except Exception:
+        # metrics logging failures must not block account snapshot retrieval
+        pass
     try:
         import time
 

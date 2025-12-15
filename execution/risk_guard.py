@@ -500,6 +500,8 @@ def build_exposure_state(
         return None
     manual_units = 0
     bot_units = 0
+    long_units_total = 0
+    short_units_total = 0
     ignore_manual = "manual" in _EXPOSURE_IGNORE_POCKETS
     for pocket, info in (open_positions or {}).items():
         if pocket in {"__net__", "__meta__"}:
@@ -518,6 +520,20 @@ def build_exposure_state(
             manual_units += units
         else:
             bot_units += units
+        try:
+            long_units_total += int(info.get("long_units", 0) or 0)
+            short_units_total += int(info.get("short_units", 0) or 0)
+        except Exception:
+            # fallback: sign of net units if detailed breakdown is missing
+            net_units = info.get("units")
+            try:
+                net_units = int(net_units or 0)
+            except Exception:
+                net_units = 0
+            if net_units > 0:
+                long_units_total += net_units
+            elif net_units < 0:
+                short_units_total += abs(net_units)
     unit_margin_cost = None
     margin_pool = None
     manual_margin = None
@@ -544,12 +560,19 @@ def build_exposure_state(
         bot_margin=bot_margin,
         unit_margin_cost=unit_margin_cost,
     )
-    _log_exposure_metrics(state)
+    _log_exposure_metrics(state, long_units_total=long_units_total, short_units_total=short_units_total)
     return state
 
 
-def _log_exposure_metrics(state: ExposureState) -> None:
+def _log_exposure_metrics(
+    state: ExposureState,
+    *,
+    long_units_total: float = 0.0,
+    short_units_total: float = 0.0,
+) -> None:
     ratio = state.ratio()
+    cap_units = state.limit_units()
+    available = state.available_units()
     tags = {
         "cap": f"{state.cap_ratio:.2f}",
         "manual_ratio": f"{state.manual_ratio():.3f}",
@@ -572,6 +595,21 @@ def _log_exposure_metrics(state: ExposureState) -> None:
             state.bot_ratio() * 100,
             state.cap_ratio * 100,
         )
+    try:
+        log_metric(
+            "exposure_ratio",
+            ratio,
+            tags={
+                "cap_units": f"{cap_units:.0f}",
+                "available_units": f"{available:.0f}",
+                "manual_units": f"{state.manual_units:.0f}",
+                "bot_units": f"{state.bot_units:.0f}",
+                "long_units": f"{long_units_total:.0f}",
+                "short_units": f"{short_units_total:.0f}",
+            },
+        )
+    except Exception:
+        pass
 
 
 def loss_cooldown_status(
