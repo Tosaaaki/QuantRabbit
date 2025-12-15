@@ -511,6 +511,14 @@ class MovingAverageCross:
         sl_rounded = max(sl_rounded, spread_floor)
         tp_floor = sl_rounded * 1.2 + spread_pips * 0.8
         tp_rounded = round(max(sl_rounded * 1.08, tp, tp_floor), 2)
+        try:
+            adx_val = float(fac.get("adx") or 0.0)
+        except Exception:
+            adx_val = 0.0
+        if adx_val >= 28.0:
+            tp_rounded = round(min(tp_rounded * 1.15, sl_rounded * 2.4), 2)
+        elif adx_val <= 14.0:
+            tp_rounded = round(max(tp_rounded * 0.9, sl_rounded * 1.15), 2)
         return sl_rounded, tp_rounded
 
     @staticmethod

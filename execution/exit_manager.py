@@ -1134,8 +1134,8 @@ class ExitManager:
             elif slope_val < -0.12:
                 threshold *= 0.88
         if profit_pips >= threshold:
-            # take half but keep at least 1000 units
-            partial = max(1000, units // 2)
+            # take ~30% but keep at least 1000 units, avoid over-trimming
+            partial = max(1000, int(units * 0.3))
             if partial < units:
                 return partial
         return 0

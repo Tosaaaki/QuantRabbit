@@ -292,6 +292,8 @@ _MACRO_PULLBACK_MIN_ADX = 19.0
 _MACRO_LIMIT_TIMEOUT_SEC = 75.0
 _MACRO_LIMIT_TIMEOUT_MIN = 45.0
 MACRO_LIMIT_WAIT: dict[str, dict[str, float]] = {}
+_DIR_BIAS_SCALE_OPPOSE = 0.35
+_DIR_BIAS_SCALE_ALIGN = 1.05
 
 _BASE_STAGE_RATIOS = {
     # Spread staging to smooth adverse price moves while preserving total exposure.
@@ -1404,6 +1406,22 @@ def _compact_factors(data: Optional[Dict[str, Any]], keys: tuple[str, ...]) -> D
         else:
             compact[key] = value
     return compact
+
+
+def _dir_bias(fac_h1: dict[str, Any], fac_h4: dict[str, Any]) -> tuple[int, int]:
+    def _dir(fac: dict[str, Any]) -> int:
+        try:
+            ma10 = float(fac.get("ma10") or 0.0)
+            ma20 = float(fac.get("ma20") or 0.0)
+        except Exception:
+            return 0
+        if ma10 > ma20:
+            return 1
+        if ma10 < ma20:
+            return -1
+        return 0
+
+    return _dir(fac_h1 or {}), _dir(fac_h4 or {})
 
 
 def _macro_pullback_ready(
@@ -4365,11 +4383,49 @@ async def logic_loop(
             impulse_stop_until = clamp_state.get("impulse_stop_until")
             impulse_thin_active = bool(clamp_state.get("impulse_thin_active"))
             impulse_thin_scale = float(clamp_state.get("impulse_thin_scale", 1.0) or 1.0)
+            bias_h1, bias_h4 = _dir_bias(fac_h1, fac_h4)
             high_vol_env = (atr_pips is not None and atr_pips > 2.5) or (vol_5m is not None and vol_5m > 1.5)
             low_vol_env = (atr_pips is not None and atr_pips < 1.2) and (vol_5m is not None and vol_5m < 0.7)
 
             filtered_signals: list[dict] = []
             for sig in evaluated_signals:
+                action_dir = 0
+                try:
+                    if sig.get("action") == "OPEN_LONG":
+                        action_dir = 1
+                    elif sig.get("action") == "OPEN_SHORT":
+                        action_dir = -1
+                except Exception:
+                    action_dir = 0
+                if action_dir != 0 and (bias_h1 != 0 or bias_h4 != 0):
+                    scale = 1.0
+                    align = False
+                    oppose = False
+                    if bias_h1 != 0 and action_dir != bias_h1:
+                        oppose = True
+                    if bias_h4 != 0 and action_dir != bias_h4:
+                        oppose = True
+                    if bias_h1 != 0 and action_dir == bias_h1:
+                        align = True
+                    if bias_h4 != 0 and action_dir == bias_h4:
+                        align = True
+                    if oppose:
+                        scale *= _DIR_BIAS_SCALE_OPPOSE
+                    elif align:
+                        scale *= _DIR_BIAS_SCALE_ALIGN
+                    if abs(scale - 1.0) > 1e-3:
+                        prev_conf = int(sig.get("confidence", 0) or 0)
+                        new_conf = max(0, int(prev_conf * scale))
+                        sig["confidence"] = new_conf
+                        logging.info(
+                            "[DIR_BIAS] strategy=%s action=%s conf=%d->%d h1=%d h4=%d",
+                            sig.get("strategy"),
+                            sig.get("action"),
+                            prev_conf,
+                            new_conf,
+                            bias_h1,
+                            bias_h4,
+                        )
                 if sig.get("pocket") == "scalp" and scalp_conf_scale < 0.999:
                     prev_conf = int(sig.get("confidence", 0) or 0)
                     new_conf = max(0, int(prev_conf * scalp_conf_scale))
