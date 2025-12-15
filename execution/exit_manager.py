@@ -1109,6 +1109,7 @@ class ExitManager:
         *,
         atr_pips: Optional[float] = None,
         slope_hint: Optional[float] = None,
+        adx: Optional[float] = None,
     ) -> int:
         """Return partial units when MFEが一定以上に達したときに利益を確定する。"""
         if units <= 0:
@@ -1133,6 +1134,15 @@ class ExitManager:
                 threshold *= 1.12
             elif slope_val < -0.12:
                 threshold *= 0.88
+        if adx is not None:
+            try:
+                adx_val = float(adx)
+            except Exception:
+                adx_val = 0.0
+            if adx_val >= 32.0:
+                threshold *= 1.25  # 強トレンドでは利を伸ばす
+            elif adx_val <= 18.0:
+                threshold *= 0.9  # 弱トレンド/レンジは早めに利確
         if profit_pips >= threshold:
             # take ~30% but keep at least 1000 units, avoid over-trimming
             partial = max(1000, int(units * 0.3))
@@ -2293,6 +2303,7 @@ class ExitManager:
             profit_pips,
             atr_pips=atr_pips,
             slope_hint=slope_hint,
+            adx=adx,
         )
         if mfe_partial:
             return ExitDecision(
@@ -3005,6 +3016,7 @@ class ExitManager:
             profit_pips,
             atr_pips=atr_pips,
             slope_hint=slope_hint,
+            adx=adx,
         )
         if mfe_partial:
             return ExitDecision(
