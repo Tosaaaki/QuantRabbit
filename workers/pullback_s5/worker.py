@@ -311,10 +311,12 @@ async def pullback_s5_worker() -> None:
                 if adx is not None:
                     adx_value = float(adx)
                     break
-            if trend_bias and trend_bias != side:
-                continue
-            if adx_value is not None and adx_value < config.TREND_ADX_MIN:
-                continue
+            if adx_value is not None and adx_value >= config.TREND_ADX_MIN:
+                if trend_bias and trend_bias != side:
+                    continue
+            elif adx_value is not None and adx_value < config.TREND_ADX_MIN:
+                # レンジ寄りは方向バイアスを緩める
+                pass
 
             pockets = pos_manager.get_open_positions()
             scalp_pos = pockets.get("scalp") or {}

@@ -105,9 +105,9 @@ SLOW_BUCKETS: int = max(FAST_BUCKETS + 8, _int("PULLBACK_S5_SLOW_BUCKETS", 72))
 MIN_BUCKETS: int = max(FAST_BUCKETS, _int("PULLBACK_S5_MIN_BUCKETS", 60))
 
 MAX_SPREAD_PIPS: float = max(0.1, _float("PULLBACK_S5_MAX_SPREAD_PIPS", 1.2))
-ENTRY_UNITS: int = max(1000, _int("PULLBACK_S5_ENTRY_UNITS", 7000))
+ENTRY_UNITS: int = max(1000, _int("PULLBACK_S5_ENTRY_UNITS", 6000))
 # 余力に応じた最小単位（余力不足時にこの下限を下回る場合は見送り）
-MIN_UNITS: int = max(500, _int("PULLBACK_S5_MIN_UNITS", 1200))
+MIN_UNITS: int = max(500, _int("PULLBACK_S5_MIN_UNITS", 900))
 # 余力のうちエントリーに使ってよい割合（0.1〜1.0）
 MAX_MARGIN_USAGE: float = max(0.1, min(1.0, _float("PULLBACK_S5_MAX_MARGIN_USAGE", 0.35)))
 ENTRY_STAGE_RATIOS: tuple[float, ...] = _parse_float_list(
@@ -143,7 +143,7 @@ MAX_SL_PIPS: float = max(1.0, _float("PULLBACK_S5_MAX_SL_PIPS", 2.5))
 TREND_ALIGN_BUFFER_PIPS: float = max(
     0.0, _float("PULLBACK_S5_TREND_ALIGN_BUFFER_PIPS", 0.6)
 )
-TREND_ADX_MIN: float = max(0.0, _float("PULLBACK_S5_TREND_ADX_MIN", 22.0))
+TREND_ADX_MIN: float = max(0.0, _float("PULLBACK_S5_TREND_ADX_MIN", 18.0))
 TP_ATR_MULT: float = max(0.0, _float("PULLBACK_S5_TP_ATR_MULT", 1.8))
 TP_ATR_MIN_PIPS: float = max(0.5, _float("PULLBACK_S5_TP_ATR_MIN_PIPS", 1.6))
 TP_ATR_MAX_PIPS: float = max(

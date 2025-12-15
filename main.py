@@ -5302,6 +5302,7 @@ async def logic_loop(
                     ",".join(recipients),
                 )
 
+            entry_mix: dict[str, int] = {}
             for signal in evaluated_signals:
                 pocket = signal["pocket"]
                 action = signal.get("action")
@@ -5454,9 +5455,10 @@ async def logic_loop(
 
                 confidence = max(0, min(100, signal.get("confidence", 50)))
                 is_reduce_only = bool(signal.get("reduce_only"))
-                base_conf_factor = max(0.3, confidence / 100.0)
+                raw_conf_factor = max(0.0, min(1.0, confidence / 100.0))
+                base_conf_factor = raw_conf_factor if clamp_level > 0 else max(0.3, raw_conf_factor)
                 confidence_factor = base_conf_factor
-                if pocket == "macro" and not is_reduce_only and clamp_level < 3:
+                if pocket == "macro" and not is_reduce_only and clamp_level == 0:
                     boosted_factor = max(confidence_factor, MACRO_CONFIDENCE_FLOOR)
                     if boosted_factor > 1.0:
                         boosted_factor = 1.0
@@ -5468,7 +5470,7 @@ async def logic_loop(
                             confidence,
                         )
                     confidence_factor = boosted_factor
-                if pocket == "scalp" and not is_reduce_only and clamp_level < 3:
+                if pocket == "scalp" and not is_reduce_only and clamp_level == 0:
                     if confidence_factor + 1e-6 < SCALP_CONFIDENCE_FLOOR:
                         logging.info(
                             "[ALLOCATION] Scalp confidence factor floor %.2f -> %.2f (conf=%d)",
@@ -6113,6 +6115,8 @@ async def logic_loop(
                     net_units += units
                     open_positions.setdefault("__net__", {})["units"] = net_units
                     executed_pockets.add(pocket)
+                    key = f"{signal.get('strategy')}@{pocket}"
+                    entry_mix[key] = entry_mix.get(key, 0) + 1
                     # 直後の再エントリーを抑制（気迷いトレード対策）
                     entry_cd = POCKET_ENTRY_MIN_INTERVAL.get(pocket, 120)
                     stage_tracker.set_cooldown(
@@ -6124,6 +6128,15 @@ async def logic_loop(
                     )
                 else:
                     logging.error(f"[ORDER FAILED] {signal['strategy']}")
+
+            if entry_mix:
+                logging.info(
+                    "[ENTRY_MIX] %s",
+                    ", ".join(
+                        f"{k}:{v}"
+                        for k, v in sorted(entry_mix.items(), key=lambda kv: kv[1], reverse=True)
+                    ),
+                )
 
             # --- 5. 決済済み取引の同期 ---
             try:
