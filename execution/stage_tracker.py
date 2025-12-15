@@ -768,8 +768,11 @@ class StageTracker:
             cooldown_scale = 1.0
         # Scale loss thresholds by NAV and current exposure context
         nav_val = float(nav or 0.0)
-        nav_jpy = nav_val * 0.0025 if nav_val > 0 else 0.0  # 0.25% NAV
-        clamp_jpy = max(clamp_jpy, nav_jpy, _CLAMP_WINDOW_JPY)
+        nav_pct_main = 0.0025  # 0.25% NAV
+        nav_pct_floor = 0.0005  # 0.05% NAV
+        nav_jpy = nav_val * nav_pct_main if nav_val > 0 else 0.0
+        nav_floor_jpy = nav_val * nav_pct_floor if nav_val > 0 else 0.0
+        clamp_jpy = max(clamp_jpy, nav_jpy, nav_floor_jpy)
         # pips threshold: ATR(M5) weighted to reduce noise on high vol
         atr_m5_val = float(atr_m5_pips or 0.0)
         if atr_m5_val > 0:
