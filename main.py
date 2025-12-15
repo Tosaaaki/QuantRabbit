@@ -1408,8 +1408,8 @@ def _compact_factors(data: Optional[Dict[str, Any]], keys: tuple[str, ...]) -> D
     return compact
 
 
-def _dir_bias(fac_h1: dict[str, Any], fac_h4: dict[str, Any]) -> tuple[int, int]:
-    def _dir(fac: dict[str, Any]) -> int:
+def _dir_bias(fac_h1: dict[str, Any], fac_h4: dict[str, Any]) -> tuple[int, int, float, float]:
+    def _dir_fast(fac: dict[str, Any]) -> int:
         try:
             ma10 = float(fac.get("ma10") or 0.0)
             ma20 = float(fac.get("ma20") or 0.0)
@@ -1421,7 +1421,29 @@ def _dir_bias(fac_h1: dict[str, Any], fac_h4: dict[str, Any]) -> tuple[int, int]
             return -1
         return 0
 
-    return _dir(fac_h1 or {}), _dir(fac_h4 or {})
+    def _dir_slow(fac: dict[str, Any]) -> int:
+        try:
+            ma20 = float(fac.get("ma20") or 0.0)
+            ma50 = float(fac.get("ma50") or fac.get("ema50") or 0.0)
+        except Exception:
+            return 0
+        if ma20 > ma50:
+            return 1
+        if ma20 < ma50:
+            return -1
+        return 0
+
+    bias_h1 = _dir_fast(fac_h1 or {})
+    bias_h4 = _dir_slow(fac_h4 or {})
+    try:
+        adx_h1 = float(fac_h1.get("adx") or 0.0)
+    except Exception:
+        adx_h1 = 0.0
+    try:
+        adx_h4 = float(fac_h4.get("adx") or 0.0)
+    except Exception:
+        adx_h4 = 0.0
+    return bias_h1, bias_h4, adx_h1, adx_h4
 
 
 def _macro_pullback_ready(
@@ -4383,7 +4405,7 @@ async def logic_loop(
             impulse_stop_until = clamp_state.get("impulse_stop_until")
             impulse_thin_active = bool(clamp_state.get("impulse_thin_active"))
             impulse_thin_scale = float(clamp_state.get("impulse_thin_scale", 1.0) or 1.0)
-            bias_h1, bias_h4 = _dir_bias(fac_h1, fac_h4)
+            bias_h1, bias_h4, adx_h1, adx_h4 = _dir_bias(fac_h1, fac_h4)
             high_vol_env = (atr_pips is not None and atr_pips > 2.5) or (vol_5m is not None and vol_5m > 1.5)
             low_vol_env = (atr_pips is not None and atr_pips < 1.2) and (vol_5m is not None and vol_5m < 0.7)
 
@@ -4401,6 +4423,16 @@ async def logic_loop(
                     scale = 1.0
                     align = False
                     oppose = False
+                    # determine trend strength from H1/H4
+                    adx_max = max(adx_h1, adx_h4)
+                    reverse_scale = _DIR_BIAS_SCALE_OPPOSE
+                    align_scale = _DIR_BIAS_SCALE_ALIGN
+                    if adx_max >= 28.0:
+                        reverse_scale = min(reverse_scale, 0.25)
+                        align_scale = max(align_scale, 1.08)
+                    elif adx_max <= 18.0:
+                        reverse_scale = max(reverse_scale, 0.6)
+                        align_scale = 1.0
                     if bias_h1 != 0 and action_dir != bias_h1:
                         oppose = True
                     if bias_h4 != 0 and action_dir != bias_h4:
@@ -4409,10 +4441,14 @@ async def logic_loop(
                         align = True
                     if bias_h4 != 0 and action_dir == bias_h4:
                         align = True
+                    if oppose and align:
+                        # disagreement between H1/H4: weaken bias
+                        reverse_scale = min(0.7, reverse_scale * 1.5)
+                        align_scale = 1.0
                     if oppose:
-                        scale *= _DIR_BIAS_SCALE_OPPOSE
+                        scale *= reverse_scale
                     elif align:
-                        scale *= _DIR_BIAS_SCALE_ALIGN
+                        scale *= align_scale
                     if abs(scale - 1.0) > 1e-3:
                         prev_conf = int(sig.get("confidence", 0) or 0)
                         new_conf = max(0, int(prev_conf * scale))
@@ -5555,6 +5591,22 @@ async def logic_loop(
                                 wait_scale = max(0.7, min(1.3, 1.0 + (float(vol_5m) - 1.0) * 0.18))
                             except Exception:
                                 wait_scale = 1.0
+                        try:
+                            adx_h1_val = float(fac_h1.get("adx") or 0.0)
+                        except Exception:
+                            adx_h1_val = 0.0
+                        try:
+                            adx_h4_val = float(fac_h4.get("adx") or 0.0)
+                        except Exception:
+                            adx_h4_val = 0.0
+                        adx_max = max(adx_h1_val, adx_h4_val)
+                        if adx_max >= 28.0:
+                            wait_scale *= 0.85
+                        elif adx_max <= 18.0:
+                            wait_scale *= 1.1
+                        if clamp_level >= 2:
+                            wait_scale = min(wait_scale, 0.85)
+                        wait_scale = max(0.5, min(1.4, wait_scale))
                         timeout_sec = max(_MACRO_LIMIT_TIMEOUT_MIN, _MACRO_LIMIT_TIMEOUT_SEC * wait_scale)
                         try:
                             atr_for_gap = float(locals().get("atr_hint", 0.0) or 0.0)
@@ -5563,7 +5615,7 @@ async def logic_loop(
                         fallback_gap = max(
                             tolerance_pips * 1.9,
                             (pullback_note or tolerance_pips) * 0.75,
-                            0.45 + min(2.2, atr_for_gap * 0.25),
+                            0.45 + min(2.2, atr_for_gap * 0.3),
                         )
                         fallback_gap = min(4.2, fallback_gap)
                         if elapsed >= timeout_sec and gap_pips <= fallback_gap:
