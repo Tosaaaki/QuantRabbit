@@ -4201,6 +4201,7 @@ async def logic_loop(
                 stage_state=stage_snapshot,
                 pocket_profiles=recent_profiles,
                 now=now,
+                clamp_state=clamp_state,
             )
 
             executed_pockets: set[str] = set()

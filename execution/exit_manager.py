@@ -206,6 +206,7 @@ class ExitManager:
         }
         # track best profit (pips) per pocket/side to avoid cutting trades that already went positive
         self._max_profit_cache: Dict[Tuple[str, str], float] = {}
+        self._clamp_partial_guard: Dict[Tuple[str, str], datetime] = {}
         # Apply stale drawdown exits only to trades opened after this cutover (if set)
         self._dd_cutover = self._parse_cutover_env(os.getenv("EXIT_DD_CUTOVER_ISO"))
         # time-guard throttle to avoid repeated partial cuts
@@ -669,6 +670,7 @@ class ExitManager:
         pocket_profiles: Optional[Dict[str, Dict[str, float]]] = None,
         now: Optional[datetime] = None,
         stage_tracker: Optional["StageTracker"] = None,
+        clamp_state: Optional[Dict[str, object]] = None,
         *,
         low_vol_profile: Optional[Dict[str, float]] = None,
         low_vol_quiet: bool = False,
@@ -714,6 +716,12 @@ class ExitManager:
         except Exception:
             vol_5m = 0.0
         low_vol_flag = (atr_primary or 0.0) <= 2.0 or vol_5m <= 0.8
+        clamp_level = 0
+        if clamp_state:
+            try:
+                clamp_level = int(clamp_state.get("level", 0) or 0)
+            except Exception:
+                clamp_level = 0
         for pocket, info in open_positions.items():
             if pocket == "__net__" or pocket not in MANAGED_POCKETS:
                 continue
@@ -739,6 +747,49 @@ class ExitManager:
             if short_units == 0:
                 self._reset_reverse_counter(pocket, "short")
                 self._low_vol_hazard_hits.pop((pocket, "short"), None)
+
+            # Clamp Red: drop up to 2 latest trades per方向 with a short guard (both BUY/SELL)
+            if clamp_level >= 3:
+                partial_added = False
+                for side, units_active in (("long", long_units), ("short", short_units)):
+                    if units_active <= 0:
+                        continue
+                    guard_key = (pocket, side)
+                    last_cut = self._clamp_partial_guard.get(guard_key)
+                    if last_cut and (current_time - last_cut).total_seconds() < 300:
+                        continue
+                    trades_side = [
+                        tr for tr in (info.get("open_trades") or []) if tr.get("side") == side
+                    ]
+                    if not trades_side:
+                        continue
+                    try:
+                        trades_side.sort(key=lambda t: t.get("open_time") or "", reverse=True)
+                    except Exception:
+                        trades_side = trades_side[::-1]
+                    cuts = 0
+                    for tr in trades_side:
+                        if cuts >= 2:
+                            break
+                        t_units = abs(int(tr.get("units", 0) or 0))
+                        if t_units <= 0:
+                            continue
+                        signed = -t_units if side == "long" else t_units
+                        decisions.append(
+                            ExitDecision(
+                                pocket=pocket,
+                                units=signed,
+                                reason="clamp_partial_red",
+                                tag="clamp-partial",
+                                allow_reentry=True,
+                            )
+                        )
+                        cuts += 1
+                    if cuts > 0:
+                        self._clamp_partial_guard[guard_key] = current_time
+                        partial_added = True
+                if partial_added:
+                    continue
             if long_units == 0 and short_units == 0:
                 continue
 
