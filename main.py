@@ -5597,6 +5597,8 @@ async def logic_loop(
                 if pocket == "macro":
                     stage_context["cluster_units"] = cluster_units
                     stage_context["cluster_direction"] = direction
+                reduce_only = bool(signal.get("reduce_only"))
+                reduce_cap_units = int(signal.get("reduce_cap_units") or 0)
 
                 high_impact_context = _evaluate_high_impact_context(
                     pocket=pocket,
@@ -5694,8 +5696,6 @@ async def logic_loop(
                 entry_type = signal.get("entry_type", "market")
                 target_price = signal.get("entry_price")
                 tolerance_pips = float(signal.get("entry_tolerance_pips", 0.25))
-                reduce_only = bool(signal.get("reduce_only"))
-                reduce_cap_units = int(signal.get("reduce_cap_units") or 0)
                 if (
                     pocket == "macro"
                     and stage_idx == 0
