@@ -1882,6 +1882,9 @@ class ExitManager:
             return None
         eligible = filtered
 
+        def _clamp(val: float, lo: float, hi: float) -> float:
+            return max(lo, min(hi, val))
+
         atr_val = float(atr_pips or 0.0)
         if atr_val <= 0.0:
             try:
@@ -1891,17 +1894,30 @@ class ExitManager:
         if atr_val <= 0.0:
             atr_val = 6.0
 
+        try:
+            vol_5m = float(fac_m1.get("vol_5m") or 0.0)
+        except Exception:
+            vol_5m = 0.0
+
         age_sec = None
         for tr in eligible:
             age = self._trade_age_seconds(tr, now)
             if age is None:
                 continue
             age_sec = age if age_sec is None else min(age_sec, age)
-        if age_sec is None or age_sec < 300.0:  # 5分は待つ
+        # 動的に待ち時間を調整: 高ボラは長め、低ボラは短め。ただし短すぎない。
+        age_base = 300.0  # 5分
+        vol_norm = _clamp(vol_5m / 1.2, 0.0, 2.0)
+        atr_norm = _clamp(atr_val / 2.0, 0.0, 2.0)
+        age_scale = _clamp(0.7 + 0.25 * vol_norm + 0.25 * atr_norm, 0.6, 1.6)
+        age_limit = max(240.0, age_base * age_scale)
+        if age_sec is None or age_sec < age_limit:
             return None
 
         loss = abs(profit_pips)
         gate = max(6.0, atr_val * 2.5)
+        # ボラ・価格アクションでゲートを微調整
+        gate *= _clamp(0.85 + 0.25 * vol_norm, 0.8, 1.35)
         max_seen = self._max_profit_cache.get((pocket, side))
         retrace_hit = False
         if max_seen is not None and max_seen >= 6.0:
@@ -1931,14 +1947,16 @@ class ExitManager:
 
         cut_units = -abs(units) if side == "long" else abs(units)
         logging.info(
-            "[EXIT] orphan_guard pocket=%s side=%s loss=%.1fp gate=%.1fp retrace=%s age=%.0fs atr=%.2f",
+            "[EXIT] orphan_guard pocket=%s side=%s loss=%.1fp gate=%.1fp retrace=%s age=%.0fs age_limit=%.0fs atr=%.2f vol5=%.2f",
             pocket,
             side,
             loss,
             gate,
             retrace_hit,
             age_sec,
+            age_limit,
             atr_val,
+            vol_5m,
         )
         return ExitDecision(
             pocket=pocket,
