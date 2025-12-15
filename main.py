@@ -294,6 +294,9 @@ _MACRO_LIMIT_TIMEOUT_MIN = 45.0
 MACRO_LIMIT_WAIT: dict[str, dict[str, float]] = {}
 _DIR_BIAS_SCALE_OPPOSE = 0.35
 _DIR_BIAS_SCALE_ALIGN = 1.05
+# Clamp/L3 reduce-only controls
+_CLAMP_L3_REDUCE_FRACTION = 0.25  # fraction of net to unwind per reduce-only order
+_CLAMP_L3_MIN_REDUCE_UNITS = 1000
 
 _BASE_STAGE_RATIOS = {
     # Spread staging to smooth adverse price moves while preserving total exposure.
@@ -4119,6 +4122,11 @@ async def logic_loop(
                 logging.info("[SIGNAL] %s -> %s", cls.name, signal)
 
             open_positions = pos_manager.get_open_positions()
+            net_units = 0
+            try:
+                net_units = int(open_positions.get("__net__", {}).get("units", 0) or 0)
+            except Exception:
+                net_units = 0
             stage_snapshot: dict[str, dict[str, int]] = {}
             for pocket_name, position_info in open_positions.items():
                 if pocket_name == "__net__":
@@ -4411,6 +4419,7 @@ async def logic_loop(
 
             filtered_signals: list[dict] = []
             for sig in evaluated_signals:
+                reduce_cap_units = 0
                 if sig.get("pocket") == "scalp" and clamp_level >= 3:
                     logging.info(
                         "[CLAMP] skip scalp entry level=3 strategy=%s action=%s",
@@ -4426,6 +4435,24 @@ async def logic_loop(
                         action_dir = -1
                 except Exception:
                     action_dir = 0
+                # L3 reduce-only: allow only net-reducing orders
+                if clamp_level >= 3 and action_dir != 0:
+                    if net_units == 0:
+                        logging.info("[CLAMP] L3 reduce_only skip (flat net).")
+                        continue
+                    net_dir = 1 if net_units > 0 else -1
+                    if action_dir == net_dir:
+                        logging.info(
+                            "[CLAMP] L3 reduce_only skip same_dir net=%d strategy=%s",
+                            net_units,
+                            sig.get("strategy"),
+                        )
+                        continue
+                    reduce_cap_units = max(
+                        _CLAMP_L3_MIN_REDUCE_UNITS, int(abs(net_units) * _CLAMP_L3_REDUCE_FRACTION)
+                    )
+                    sig["reduce_only"] = True
+                    sig["reduce_cap_units"] = reduce_cap_units
                 if action_dir != 0 and (bias_h1 != 0 or bias_h4 != 0):
                     scale = 1.0
                     align = False
@@ -4561,11 +4588,11 @@ async def logic_loop(
                                 adj *= 0.4
                         elif adx_max <= 18.0 and opposed_h4 and opposed_h1:
                             adj *= 0.7
-                        if abs(adj - 1.0) > 1e-3:
-                            prev_conf = int(sig.get("confidence", 0) or 0)
-                            sig["confidence"] = max(0, int(prev_conf * adj))
-                            logging.info(
-                                "[DIR_STRAT] %s conf=%d->%d h1=%d h4=%d adx_max=%.1f",
+                    if abs(adj - 1.0) > 1e-3:
+                        prev_conf = int(sig.get("confidence", 0) or 0)
+                        sig["confidence"] = max(0, int(prev_conf * adj))
+                        logging.info(
+                            "[DIR_STRAT] %s conf=%d->%d h1=%d h4=%d adx_max=%.1f",
                                 strategy_name,
                                 prev_conf,
                                 sig["confidence"],
@@ -4573,6 +4600,28 @@ async def logic_loop(
                                 bias_h4,
                                 adx_max,
                             )
+                # Macro hedging during Orange/Red: only net-reducing orders with cap
+                if (
+                    clamp_level >= 2
+                    and sig.get("pocket") == "macro"
+                    and action_dir != 0
+                    and net_units != 0
+                ):
+                    net_dir = 1 if net_units > 0 else -1
+                    if action_dir == net_dir:
+                        logging.info(
+                            "[MACRO_HEDGE] Skip same-dir macro (clamp>=2) net=%d strategy=%s",
+                            net_units,
+                            sig.get("strategy"),
+                        )
+                        continue
+                    reduce_cap_units = max(
+                        reduce_cap_units,
+                        int(abs(net_units) * 0.35),
+                        _CLAMP_L3_MIN_REDUCE_UNITS,
+                    )
+                    sig["reduce_only"] = True
+                    sig["reduce_cap_units"] = reduce_cap_units
                 if sig.get("pocket") == "scalp" and scalp_conf_scale < 0.999:
                     prev_conf = int(sig.get("confidence", 0) or 0)
                     new_conf = max(0, int(prev_conf * scalp_conf_scale))
@@ -5367,9 +5416,10 @@ async def logic_loop(
                     continue
 
                 confidence = max(0, min(100, signal.get("confidence", 50)))
+                is_reduce_only = bool(signal.get("reduce_only"))
                 base_conf_factor = max(0.3, confidence / 100.0)
                 confidence_factor = base_conf_factor
-                if pocket == "macro":
+                if pocket == "macro" and not is_reduce_only and clamp_level < 3:
                     boosted_factor = max(confidence_factor, MACRO_CONFIDENCE_FLOOR)
                     if boosted_factor > 1.0:
                         boosted_factor = 1.0
@@ -5381,7 +5431,7 @@ async def logic_loop(
                             confidence,
                         )
                     confidence_factor = boosted_factor
-                if pocket == "scalp":
+                if pocket == "scalp" and not is_reduce_only and clamp_level < 3:
                     if confidence_factor + 1e-6 < SCALP_CONFIDENCE_FLOOR:
                         logging.info(
                             "[ALLOCATION] Scalp confidence factor floor %.2f -> %.2f (conf=%d)",
@@ -5592,6 +5642,28 @@ async def logic_loop(
                         "[SKIP] Stage lot %.3f produced 0 units. Skipping.", staged_lot
                     )
                     continue
+                if reduce_only:
+                    net_dir = 0
+                    if net_units > 0:
+                        net_dir = 1
+                    elif net_units < 0:
+                        net_dir = -1
+                    # allow only net-reducing orders
+                    if net_dir != 0 and ((units > 0 and net_dir > 0) or (units < 0 and net_dir < 0)):
+                        logging.info(
+                            "[CLAMP] Reduce-only skip (same dir) units=%d net=%d",
+                            units,
+                            net_units,
+                        )
+                        continue
+                    cap_units = abs(net_units)
+                    if reduce_cap_units > 0:
+                        cap_units = min(cap_units, reduce_cap_units)
+                    capped_units = min(abs(units), cap_units)
+                    if capped_units <= 0:
+                        logging.info("[CLAMP] Reduce-only produced 0 units. Skipping.")
+                        continue
+                    units = capped_units if units > 0 else -capped_units
 
                 entry_context_payload = _build_entry_context(
                     pocket=pocket,
@@ -5623,6 +5695,7 @@ async def logic_loop(
                 target_price = signal.get("entry_price")
                 tolerance_pips = float(signal.get("entry_tolerance_pips", 0.25))
                 reduce_only = bool(signal.get("reduce_only"))
+                reduce_cap_units = int(signal.get("reduce_cap_units") or 0)
                 if (
                     pocket == "macro"
                     and stage_idx == 0
@@ -5665,6 +5738,12 @@ async def logic_loop(
                 tolerance_price = tolerance_pips * PIP
                 reference_price = entry_price
                 if entry_type == "limit":
+                    spread_pips = None
+                    try:
+                        if tick_ask is not None and tick_bid is not None:
+                            spread_pips = max(0.0, (float(tick_ask) - float(tick_bid)) / PIP)
+                    except Exception:
+                        spread_pips = None
                     if target_price is None:
                         logging.info("[LIMIT] Missing entry_price for %s.", signal["strategy"])
                         continue
@@ -5729,7 +5808,19 @@ async def logic_loop(
                             0.45 + min(2.2, atr_for_gap * 0.3),
                         )
                         fallback_gap = min(4.2, fallback_gap)
-                        if elapsed >= timeout_sec and gap_pips <= fallback_gap:
+                        allow_fallback = elapsed >= timeout_sec and gap_pips <= fallback_gap
+                        if (
+                            allow_fallback
+                            and clamp_level >= 2
+                            and spread_pips is not None
+                            and spread_pips > 1.3
+                        ):
+                            logging.info(
+                                "[LIMIT] Spread %.2fp too wide for fallback; keep limit (clamp>=2)",
+                                spread_pips,
+                            )
+                            allow_fallback = False
+                        if allow_fallback:
                             logging.info(
                                 "[LIMIT->MARKET] Macro timeout %.0fs gap=%.2fp tol=%.2fp pullback=%.2fp fallback=%.2fp vol=%.2f",
                                 elapsed,
