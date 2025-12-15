@@ -3499,6 +3499,7 @@ async def logic_loop(
             last_stage_biases = dict(stage_biases)
 
             # アカウント情報はクランプ閾値にも使うため早めに取得する
+            account_equity = FALLBACK_EQUITY
             # クランプ検知のためのオープン玉情報
             clamp_positions = pos_manager.get_open_positions()
             open_scalp_trades = 0
