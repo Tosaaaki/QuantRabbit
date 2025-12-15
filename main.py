@@ -2499,6 +2499,9 @@ async def logic_loop(
     last_story_summary: Optional[dict] = None
     last_worker_plan: set[str] = set()
     last_market_closed: Optional[datetime.datetime] = None
+    last_rsi_m1: Optional[float] = None
+    last_close_m1: Optional[float] = None
+    clamp_state: dict[str, object] = {}
 
     try:
         while True:
@@ -3498,7 +3501,10 @@ async def logic_loop(
                 range_active=range_active,
                 atr_pips=atr_pips,
                 vol_5m=vol_5m,
+                adx_m1=_safe_float(fac_m1.get("adx")),
+                momentum=momentum,
             )
+            clamp_state = stage_tracker.get_clamp_state(now=now)
             recent_profiles = stage_tracker.get_recent_profiles()
             if last_logged_range_state is None or last_logged_range_state != range_active:
                 log_metric(
@@ -4328,6 +4334,120 @@ async def logic_loop(
                         scalp_buffer,
                         scalp_free_ratio * 100 if scalp_free_ratio is not None else 0.0,
                     )
+
+            clamp_level = int(clamp_state.get("level", 0) or 0)
+            scalp_conf_scale = float(clamp_state.get("scalp_conf_scale", 1.0) or 1.0)
+            impulse_stop_until = clamp_state.get("impulse_stop_until")
+            impulse_thin_active = bool(clamp_state.get("impulse_thin_active"))
+            impulse_thin_scale = float(clamp_state.get("impulse_thin_scale", 1.0) or 1.0)
+            high_vol_env = (atr_pips is not None and atr_pips > 2.5) or (vol_5m is not None and vol_5m > 1.5)
+            low_vol_env = (atr_pips is not None and atr_pips < 1.2) and (vol_5m is not None and vol_5m < 0.7)
+
+            filtered_signals: list[dict] = []
+            for sig in evaluated_signals:
+                if sig.get("pocket") == "scalp" and scalp_conf_scale < 0.999:
+                    prev_conf = int(sig.get("confidence", 0) or 0)
+                    new_conf = max(0, int(prev_conf * scalp_conf_scale))
+                    if new_conf != prev_conf:
+                        logging.info(
+                            "[CLAMP] scalp confidence scale=%.2f strategy=%s action=%s %d->%d level=%s",
+                            scalp_conf_scale,
+                            sig.get("strategy"),
+                            sig.get("action"),
+                            prev_conf,
+                            new_conf,
+                            clamp_level,
+                        )
+                        sig["confidence"] = new_conf
+
+                if sig.get("strategy") == "ImpulseRe" and sig.get("action") == "OPEN_LONG":
+                    stop_active = False
+                    remain = None
+                    rebound_ok = True
+                    if impulse_stop_until:
+                        try:
+                            stop_active = now.timestamp() < impulse_stop_until.timestamp()
+                            remain = int(max(1, impulse_stop_until.timestamp() - now.timestamp()))
+                        except Exception:
+                            stop_active = False
+                    rsi_val = fac_m1.get("rsi")
+                    if stop_active is False:
+                        # 停止明けの市況チェック
+                        if scalp_buffer is None or scalp_buffer <= 0.1:
+                            rebound_ok = False
+                        if rsi_val is None or rsi_val <= 45.0:
+                            rebound_ok = False
+                        if momentum < 0:
+                            rebound_ok = False
+                        if not rebound_ok:
+                            stop_active = True
+                            remain = remain or 30
+                    if stop_active:
+                        logging.info(
+                            "[CLAMP] skip ImpulseRe BUY during cooldown remain=%ss level=%s rebound_ok=%s",
+                            remain,
+                            clamp_level,
+                            rebound_ok,
+                        )
+                        continue
+                    prev_conf = int(sig.get("confidence", 0) or 0)
+                    rsi_val = fac_m1.get("rsi")
+                    allow_rebound = True
+                    rsi_gate = 33.0
+                    if high_vol_env and momentum < 0:
+                        rsi_gate = 38.0
+                    elif low_vol_env:
+                        rsi_gate = 33.0
+                    if rsi_val is not None and momentum < 0 and rsi_val < 40:
+                        rsi_rising = (
+                            last_rsi_m1 is not None and rsi_val > last_rsi_m1 and rsi_val >= rsi_gate
+                        )
+                        price_rising = False
+                        if close_px_value is not None and last_close_m1 is not None:
+                            try:
+                                price_rising = close_px_value > last_close_m1
+                            except Exception:
+                                price_rising = False
+                        if not (rsi_rising or price_rising):
+                            allow_rebound = False
+                            damped = max(0, int(prev_conf * 0.35))
+                            sig["confidence"] = damped
+                            logging.info(
+                                "[IMPULSE_FILTER] damped ImpulseRe BUY conf=%d->%d rsi=%.2f mom=%.4f rising=%s price_up=%s",
+                                prev_conf,
+                                damped,
+                                rsi_val,
+                                momentum,
+                                rsi_rising,
+                                price_rising,
+                            )
+                    if not allow_rebound and int(sig.get("confidence", 0) or 0) <= 0:
+                        continue
+                    if impulse_thin_active:
+                        if scalp_buffer is None or scalp_buffer > 0.1:
+                            prev_conf = int(sig.get("confidence", 0) or 0)
+                            thin_scale = impulse_thin_scale
+                            if high_vol_env:
+                                thin_scale = max(thin_scale, 0.3)
+                            scaled_conf = max(0, int(prev_conf * thin_scale))
+                            if scaled_conf != prev_conf:
+                                logging.info(
+                                    "[CLAMP] ImpulseRe BUY thin scale=%.2f conf=%d->%d level=%s",
+                                    thin_scale,
+                                    prev_conf,
+                                    scaled_conf,
+                                    clamp_level,
+                                )
+                                sig["confidence"] = scaled_conf
+                        else:
+                            logging.info(
+                                "[CLAMP] skip ImpulseRe BUY thin stage buffer=%.3f level=%s",
+                                scalp_buffer,
+                                clamp_level,
+                            )
+                            continue
+                filtered_signals.append(sig)
+            evaluated_signals = filtered_signals
 
             risk_override = _dynamic_risk_pct(
                 evaluated_signals,
@@ -5568,6 +5688,16 @@ async def logic_loop(
                     logging.error(f"[ORDER FAILED] {signal['strategy']}")
 
             # --- 5. 決済済み取引の同期 ---
+            try:
+                if fac_m1.get("rsi") is not None:
+                    last_rsi_m1 = float(fac_m1.get("rsi") or last_rsi_m1)
+            except Exception:
+                pass
+            try:
+                if close_px_value is not None:
+                    last_close_m1 = close_px_value
+            except Exception:
+                pass
             pos_manager.sync_trades()
 
             await asyncio.sleep(60)

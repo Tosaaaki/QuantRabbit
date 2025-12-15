@@ -10,9 +10,10 @@ import logging
 import os
 import sqlite3
 from dataclasses import dataclass
+from collections import deque
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Deque, Dict, List, Optional, Tuple
 
 _DB_PATH = Path("logs/stage_state.db")
 _TRADES_DB = Path("logs/trades.db")
@@ -29,6 +30,24 @@ _STAGE_REVERSE_FLIP_GUARD_SEC = int(os.getenv("STAGE_REVERSE_FLIP_GUARD_SEC", "9
 _LOSS_WINDOW_MINUTES = int(os.getenv("LOSS_CLUSTER_WINDOW_MIN", "480"))
 # Loss judgment floor (JPY). Trades with |pl_jpy| <= this are treated as flat.
 _MIN_LOSS_JPY = float(os.getenv("LOSS_CLUSTER_MIN_JPY", "50"))
+# Clamp detection for scalp pocket (loss bundles)
+_CLAMP_WINDOW_SEC = int(os.getenv("SCALP_CLAMP_WINDOW_SEC", "120"))
+_CLAMP_WINDOW_COUNT = int(os.getenv("SCALP_CLAMP_WINDOW_COUNT", "5"))
+_CLAMP_WINDOW_JPY = float(os.getenv("SCALP_CLAMP_WINDOW_JPY", "5000"))
+_CLAMP_WINDOW_PIPS = float(os.getenv("SCALP_CLAMP_WINDOW_PIPS", "50"))
+_CLAMP_DECAY_MIN = int(os.getenv("SCALP_CLAMP_DECAY_MIN", "120"))
+_CLAMP_LEVEL_COOLDOWN = {
+    1: int(os.getenv("SCALP_CLAMP_COOLDOWN_L1_SEC", "600")),
+    2: int(os.getenv("SCALP_CLAMP_COOLDOWN_L2_SEC", "1800")),
+    3: int(os.getenv("SCALP_CLAMP_COOLDOWN_L3_SEC", "3600")),
+}
+_CLAMP_IMPULSE_STOP = {
+    1: 0,
+    2: int(os.getenv("SCALP_CLAMP_IMPULSE_STOP_L2_SEC", "1800")),
+    3: int(os.getenv("SCALP_CLAMP_IMPULSE_STOP_L3_SEC", "3600")),
+}
+_CLAMP_SCALP_FACTORS = {1: 0.6, 2: 0.4, 3: 0.1}
+_CLAMP_IMPULSE_THIN_SCALE = float(os.getenv("SCALP_CLAMP_IMPULSE_THIN_SCALE", "0.2"))
 
 
 def _utcnow() -> datetime:
@@ -134,6 +153,19 @@ class StageTracker:
         )
         self._con.execute(
             """
+            CREATE TABLE IF NOT EXISTS clamp_guard_state (
+                id INTEGER PRIMARY KEY CHECK (id=1),
+                level INTEGER DEFAULT 0,
+                event_count INTEGER DEFAULT 0,
+                last_trade_id INTEGER DEFAULT 0,
+                last_event_at TEXT,
+                clamp_until TEXT,
+                impulse_stop_until TEXT
+            )
+            """
+        )
+        self._con.execute(
+            """
             CREATE TABLE IF NOT EXISTS hold_violation_log (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 ts TEXT NOT NULL,
@@ -182,6 +214,240 @@ class StageTracker:
                 self._cluster_last_trade_id[pocket] = int(row["last_id"] or 0)
         self._recent_profile: Dict[str, Dict[str, float]] = {}
         self._weight_hint: Dict[str, float] = {}
+        self._clamp_state = self._load_clamp_state()
+        self._clamp_recent: Deque[Tuple[datetime, int, float, float]] = deque()
+        self._clamp_last_scanned: int = 0
+
+    def _load_clamp_state(self) -> Dict[str, object]:
+        row = self._con.execute(
+            "SELECT level, event_count, last_trade_id, last_event_at, clamp_until, impulse_stop_until FROM clamp_guard_state WHERE id=1"
+        ).fetchone()
+        state = {
+            "level": 0,
+            "event_count": 0,
+            "last_trade_id": 0,
+            "last_event_at": None,
+            "clamp_until": None,
+            "impulse_stop_until": None,
+        }
+        if not row:
+            self._con.execute(
+                """
+                INSERT OR IGNORE INTO clamp_guard_state(id, level, event_count, last_trade_id, last_event_at, clamp_until, impulse_stop_until)
+                VALUES (1, 0, 0, 0, NULL, NULL, NULL)
+                """
+            )
+            self._con.commit()
+            return state
+        try:
+            state["level"] = int(row["level"] or 0)
+            state["event_count"] = int(row["event_count"] or 0)
+            state["last_trade_id"] = int(row["last_trade_id"] or 0)
+        except Exception:
+            state["level"] = 0
+            state["event_count"] = 0
+            state["last_trade_id"] = 0
+        for key in ("last_event_at", "clamp_until", "impulse_stop_until"):
+            raw = row[key] if row else None
+            try:
+                state[key] = _parse_timestamp(raw) if raw else None
+            except Exception:
+                state[key] = None
+        return state
+
+    def _persist_clamp_state(self) -> None:
+        st = self._clamp_state
+        self._con.execute(
+            """
+            INSERT INTO clamp_guard_state(id, level, event_count, last_trade_id, last_event_at, clamp_until, impulse_stop_until)
+            VALUES (1, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(id) DO UPDATE SET
+                level=excluded.level,
+                event_count=excluded.event_count,
+                last_trade_id=excluded.last_trade_id,
+                last_event_at=excluded.last_event_at,
+                clamp_until=excluded.clamp_until,
+                impulse_stop_until=excluded.impulse_stop_until
+            """,
+            (
+                int(st.get("level", 0) or 0),
+                int(st.get("event_count", 0) or 0),
+                int(st.get("last_trade_id", 0) or 0),
+                st.get("last_event_at").isoformat() if st.get("last_event_at") else None,
+                st.get("clamp_until").isoformat() if st.get("clamp_until") else None,
+                st.get("impulse_stop_until").isoformat()
+                if st.get("impulse_stop_until")
+                else None,
+            ),
+        )
+        self._con.commit()
+
+    def _decay_clamp_guard(self, now: datetime) -> None:
+        level = int(self._clamp_state.get("level", 0) or 0)
+        last_evt = self._clamp_state.get("last_event_at")
+        if level <= 0 or not last_evt:
+            return
+        try:
+            elapsed = (now - last_evt).total_seconds()
+        except Exception:
+            return
+        if elapsed < max(60, _CLAMP_DECAY_MIN * 60):
+            return
+        new_level = max(0, level - 1)
+        self._clamp_state["level"] = new_level
+        if new_level == 0:
+            self._clamp_state["clamp_until"] = None
+            self._clamp_state["impulse_stop_until"] = None
+        self._persist_clamp_state()
+
+    def _bump_clamp_level(
+        self,
+        event_time: datetime,
+        trade_id: int,
+        *,
+        loss_jpy: float,
+        loss_pips: float,
+        count: int,
+        cooldown_scale: float = 1.0,
+    ) -> None:
+        current_level = int(self._clamp_state.get("level", 0) or 0)
+        new_level = min(3, current_level + 1) if current_level > 0 else 1
+        self._clamp_state["level"] = new_level
+        self._clamp_state["event_count"] = int(self._clamp_state.get("event_count", 0) or 0) + 1
+        self._clamp_state["last_trade_id"] = max(int(trade_id), int(self._clamp_state.get("last_trade_id", 0) or 0))
+        self._clamp_state["last_event_at"] = event_time
+        base_cd = _CLAMP_LEVEL_COOLDOWN.get(new_level, _CLAMP_LEVEL_COOLDOWN[1])
+        scaled_cd = int(max(1, base_cd * cooldown_scale))
+        clamp_until = event_time + timedelta(seconds=scaled_cd)
+        prev_clamp = self._clamp_state.get("clamp_until")
+        if prev_clamp:
+            clamp_until = max(prev_clamp, clamp_until)
+        self._clamp_state["clamp_until"] = clamp_until
+        stop_dur = _CLAMP_IMPULSE_STOP.get(new_level, 0)
+        if stop_dur > 0:
+            scaled_stop = int(max(1, stop_dur * cooldown_scale))
+            stop_until = event_time + timedelta(seconds=scaled_stop)
+            prev_stop = self._clamp_state.get("impulse_stop_until")
+            if not prev_stop or stop_until > prev_stop:
+                self._clamp_state["impulse_stop_until"] = stop_until
+        self._persist_clamp_state()
+        logging.info(
+            "[CLAMP] detected scalp loss bundle level=%s count=%s loss_jpy=%.1f loss_pips=%.1f window=%ss cd=%ss stop=%ss",
+            new_level,
+            count,
+            loss_jpy,
+            loss_pips,
+            _CLAMP_WINDOW_SEC,
+            scaled_cd,
+            stop_dur,
+        )
+
+    def _detect_clamp_events(
+        self,
+        rows: List[sqlite3.Row],
+        now_dt: datetime,
+        *,
+        clamp_jpy: float,
+        clamp_pips: float,
+        cooldown_scale: float = 1.0,
+    ) -> None:
+        self._decay_clamp_guard(now_dt)
+        if not rows:
+            return
+        window = self._clamp_recent
+        last_scanned = int(self._clamp_last_scanned or 0)
+        max_seen = last_scanned
+        for row in rows:
+            try:
+                trade_id = int(row["id"])
+            except Exception:
+                continue
+            if trade_id <= last_scanned:
+                continue
+            pocket = row["pocket"] or ""
+            if pocket != "scalp":
+                continue
+            try:
+                close_reason = str(row["close_reason"] or "")
+            except Exception:
+                close_reason = ""
+            if close_reason != "MARKET_ORDER_TRADE_CLOSE":
+                continue
+            try:
+                pl_jpy = float(row["realized_pl"] or 0.0)
+                pl_pips = float(row["pl_pips"] or 0.0)
+            except Exception:
+                continue
+            if pl_jpy >= -_MIN_LOSS_JPY:
+                continue
+            ts_raw = row["close_time"]
+            try:
+                ts = _parse_timestamp(ts_raw) if ts_raw else now_dt
+            except Exception:
+                ts = now_dt
+            window.append((ts, trade_id, pl_jpy, pl_pips))
+            while window and (ts - window[0][0]).total_seconds() > _CLAMP_WINDOW_SEC:
+                window.popleft()
+            max_seen = max(max_seen, trade_id)
+            if not window:
+                continue
+            count = len(window)
+            loss_sum_jpy = sum(item[2] for item in window)
+            loss_sum_pips = sum(item[3] for item in window)
+            if (
+                count >= _CLAMP_WINDOW_COUNT
+                and (loss_sum_jpy <= -clamp_jpy or loss_sum_pips <= -clamp_pips)
+            ):
+                self._bump_clamp_level(
+                    ts,
+                    trade_id,
+                    loss_jpy=loss_sum_jpy,
+                    loss_pips=loss_sum_pips,
+                    count=count,
+                    cooldown_scale=cooldown_scale,
+                )
+                window.clear()
+                last_scanned = trade_id
+                max_seen = max(max_seen, trade_id)
+        if max_seen > self._clamp_last_scanned:
+            self._clamp_last_scanned = max_seen
+        # Keep only recent trades in memory to allow cross-iteration detection
+        self._clamp_recent = deque(
+            [
+                item
+                for item in window
+                if (now_dt - item[0]).total_seconds() <= _CLAMP_WINDOW_SEC
+            ]
+        )
+
+    def get_clamp_state(self, now: Optional[datetime] = None) -> Dict[str, object]:
+        current = _coerce_utc(now)
+        self._decay_clamp_guard(current)
+        state = dict(self._clamp_state)
+        clamp_until = state.get("clamp_until")
+        active_level = 0
+        if clamp_until and clamp_until > current:
+            active_level = int(state.get("level", 0) or 0)
+        scalp_scale = 1.0
+        if active_level > 0:
+            scalp_scale = _CLAMP_SCALP_FACTORS.get(active_level, 1.0)
+        impulse_stop_until = state.get("impulse_stop_until")
+        impulse_thin_active = False
+        if state.get("level", 0) >= 2:
+            if impulse_stop_until and current >= impulse_stop_until:
+                last_evt = state.get("last_event_at") or current
+                thin_until = last_evt + timedelta(minutes=_CLAMP_DECAY_MIN)
+                impulse_thin_active = current < thin_until
+        return {
+            "level": int(state.get("level", 0) or 0),
+            "event_count": int(state.get("event_count", 0) or 0),
+            "last_event_at": state.get("last_event_at"),
+            "clamp_until": clamp_until,
+            "scalp_conf_scale": float(scalp_scale),
+            "impulse_stop_until": impulse_stop_until,
+            "impulse_thin_active": impulse_thin_active,
+            "impulse_thin_scale": _CLAMP_IMPULSE_THIN_SCALE if impulse_thin_active else 1.0,
+        }
 
     def close(self) -> None:
         self._con.close()
@@ -453,6 +719,8 @@ class StageTracker:
         range_active: bool = False,
         atr_pips: Optional[float] = None,
         vol_5m: Optional[float] = None,
+        adx_m1: Optional[float] = None,
+        momentum: Optional[float] = None,
     ) -> None:
         trades_path = trades_db or _TRADES_DB
         if not trades_path.exists():
@@ -460,7 +728,7 @@ class StageTracker:
         conn = sqlite3.connect(trades_path)
         _ensure_row_factory(conn)
         rows = conn.execute(
-            "SELECT id, pocket, units, pl_pips, realized_pl, strategy_tag FROM trades WHERE close_time IS NOT NULL ORDER BY id ASC"
+            "SELECT id, pocket, units, pl_pips, realized_pl, strategy_tag, close_time, close_reason FROM trades WHERE close_time IS NOT NULL ORDER BY id ASC"
         ).fetchall()
         conn.close()
         if not rows:
@@ -469,6 +737,37 @@ class StageTracker:
 
         now_dt = _coerce_utc(now)
         self._decay_loss_streaks(now_dt)
+        clamp_jpy = _CLAMP_WINDOW_JPY
+        clamp_pips = _CLAMP_WINDOW_PIPS
+        cooldown_scale = 1.0
+        try:
+            def _clampf(val: float, lo: float, hi: float) -> float:
+                return max(lo, min(hi, val))
+
+            if vol_5m is not None:
+                cooldown_scale *= max(0.7, min(1.3, float(vol_5m) / 1.0))
+            if range_active:
+                cooldown_scale *= 0.7
+            if adx_m1 is not None and momentum is not None:
+                if adx_m1 >= 30.0 and abs(momentum) > 0.0:
+                    cooldown_scale *= 1.2
+            cooldown_scale = max(0.5, min(1.5, cooldown_scale))
+            vol_norm = _clampf(float(vol_5m or 1.0) / 1.2, 0.0, 2.0)
+            atr_norm = _clampf(float(atr_pips or 2.0) / 2.0, 0.0, 2.0)
+            scale = _clampf(0.6 + 0.25 * vol_norm + 0.25 * atr_norm, 0.6, 1.6)
+            clamp_jpy = _CLAMP_WINDOW_JPY * scale
+            clamp_pips = _CLAMP_WINDOW_PIPS * scale
+        except Exception:
+            clamp_jpy = _CLAMP_WINDOW_JPY
+            clamp_pips = _CLAMP_WINDOW_PIPS
+            cooldown_scale = 1.0
+        self._detect_clamp_events(
+            rows,
+            now_dt,
+            clamp_jpy=clamp_jpy,
+            clamp_pips=clamp_pips,
+            cooldown_scale=cooldown_scale,
+        )
 
         existing: Dict[Tuple[str, str], Tuple[int, int, int]] = {}
         for row in self._con.execute(
