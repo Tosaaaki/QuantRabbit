@@ -158,6 +158,7 @@ class StageTracker:
                 id INTEGER PRIMARY KEY CHECK (id=1),
                 level INTEGER DEFAULT 0,
                 event_count INTEGER DEFAULT 0,
+                clamp_score REAL DEFAULT 0,
                 last_trade_id INTEGER DEFAULT 0,
                 last_event_at TEXT,
                 clamp_until TEXT,
@@ -165,6 +166,10 @@ class StageTracker:
             )
             """
         )
+        try:
+            self._con.execute("ALTER TABLE clamp_guard_state ADD COLUMN clamp_score REAL DEFAULT 0")
+        except sqlite3.OperationalError:
+            pass
         self._con.execute(
             """
             CREATE TABLE IF NOT EXISTS hold_violation_log (
@@ -221,11 +226,12 @@ class StageTracker:
 
     def _load_clamp_state(self) -> Dict[str, object]:
         row = self._con.execute(
-            "SELECT level, event_count, last_trade_id, last_event_at, clamp_until, impulse_stop_until FROM clamp_guard_state WHERE id=1"
+            "SELECT level, event_count, clamp_score, last_trade_id, last_event_at, clamp_until, impulse_stop_until FROM clamp_guard_state WHERE id=1"
         ).fetchone()
         state = {
             "level": 0,
             "event_count": 0,
+            "clamp_score": 0.0,
             "last_trade_id": 0,
             "last_event_at": None,
             "clamp_until": None,
@@ -234,8 +240,8 @@ class StageTracker:
         if not row:
             self._con.execute(
                 """
-                INSERT OR IGNORE INTO clamp_guard_state(id, level, event_count, last_trade_id, last_event_at, clamp_until, impulse_stop_until)
-                VALUES (1, 0, 0, 0, NULL, NULL, NULL)
+                INSERT OR IGNORE INTO clamp_guard_state(id, level, event_count, clamp_score, last_trade_id, last_event_at, clamp_until, impulse_stop_until)
+                VALUES (1, 0, 0, 0.0, 0, NULL, NULL, NULL)
                 """
             )
             self._con.commit()
@@ -243,10 +249,12 @@ class StageTracker:
         try:
             state["level"] = int(row["level"] or 0)
             state["event_count"] = int(row["event_count"] or 0)
+            state["clamp_score"] = float(row["clamp_score"] or 0.0)
             state["last_trade_id"] = int(row["last_trade_id"] or 0)
         except Exception:
             state["level"] = 0
             state["event_count"] = 0
+            state["clamp_score"] = 0.0
             state["last_trade_id"] = 0
         for key in ("last_event_at", "clamp_until", "impulse_stop_until"):
             raw = row[key] if row else None
@@ -260,11 +268,12 @@ class StageTracker:
         st = self._clamp_state
         self._con.execute(
             """
-            INSERT INTO clamp_guard_state(id, level, event_count, last_trade_id, last_event_at, clamp_until, impulse_stop_until)
-            VALUES (1, ?, ?, ?, ?, ?, ?)
+            INSERT INTO clamp_guard_state(id, level, event_count, clamp_score, last_trade_id, last_event_at, clamp_until, impulse_stop_until)
+            VALUES (1, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(id) DO UPDATE SET
                 level=excluded.level,
                 event_count=excluded.event_count,
+                clamp_score=excluded.clamp_score,
                 last_trade_id=excluded.last_trade_id,
                 last_event_at=excluded.last_event_at,
                 clamp_until=excluded.clamp_until,
@@ -273,6 +282,7 @@ class StageTracker:
             (
                 int(st.get("level", 0) or 0),
                 int(st.get("event_count", 0) or 0),
+                float(st.get("clamp_score", 0.0) or 0.0),
                 int(st.get("last_trade_id", 0) or 0),
                 st.get("last_event_at").isoformat() if st.get("last_event_at") else None,
                 st.get("clamp_until").isoformat() if st.get("clamp_until") else None,
@@ -285,8 +295,9 @@ class StageTracker:
 
     def _decay_clamp_guard(self, now: datetime) -> None:
         level = int(self._clamp_state.get("level", 0) or 0)
+        score = float(self._clamp_state.get("clamp_score", 0.0) or 0.0)
         last_evt = self._clamp_state.get("last_event_at")
-        if level <= 0 or not last_evt:
+        if (level <= 0 and score <= 0.0) or not last_evt:
             return
         try:
             elapsed = (now - last_evt).total_seconds()
@@ -294,7 +305,16 @@ class StageTracker:
             return
         if elapsed < max(60, _CLAMP_DECAY_MIN * 60):
             return
-        new_level = max(0, level - 1)
+        decayed_score = max(0.0, score * 0.5)
+        self._clamp_state["clamp_score"] = decayed_score
+        if decayed_score <= 0.5:
+            new_level = 0
+        elif decayed_score >= 3.0:
+            new_level = 3
+        elif decayed_score >= 2.0:
+            new_level = 2
+        else:
+            new_level = 1
         self._clamp_state["level"] = new_level
         if new_level == 0:
             self._clamp_state["clamp_until"] = None
@@ -309,10 +329,20 @@ class StageTracker:
         loss_jpy: float,
         loss_pips: float,
         count: int,
+        severity: int = 1,
         cooldown_scale: float = 1.0,
     ) -> None:
+        severity = max(1, severity)
         current_level = int(self._clamp_state.get("level", 0) or 0)
-        new_level = min(3, current_level + 1) if current_level > 0 else 1
+        current_score = float(self._clamp_state.get("clamp_score", 0.0) or 0.0)
+        new_score = current_score + float(severity)
+        self._clamp_state["clamp_score"] = new_score
+        if new_score >= 3.0:
+            new_level = 3
+        elif new_score >= 2.0:
+            new_level = 2
+        else:
+            new_level = max(1, 1 if current_level == 0 else current_level + 1)
         self._clamp_state["level"] = new_level
         self._clamp_state["event_count"] = int(self._clamp_state.get("event_count", 0) or 0) + 1
         self._clamp_state["last_trade_id"] = max(int(trade_id), int(self._clamp_state.get("last_trade_id", 0) or 0))
@@ -333,8 +363,10 @@ class StageTracker:
                 self._clamp_state["impulse_stop_until"] = stop_until
         self._persist_clamp_state()
         logging.info(
-            "[CLAMP] detected scalp loss bundle level=%s count=%s loss_jpy=%.1f loss_pips=%.1f window=%ss cd=%ss stop=%ss",
+            "[CLAMP] detected scalp loss bundle level=%s score=%.2f severity=%s count=%s loss_jpy=%.1f loss_pips=%.1f window=%ss cd=%ss stop=%ss",
             new_level,
+            new_score,
+            severity,
             count,
             loss_jpy,
             loss_pips,
@@ -351,6 +383,7 @@ class StageTracker:
         clamp_jpy: float,
         clamp_pips: float,
         n_min: int,
+        nav_val: float = 0.0,
         cooldown_scale: float = 1.0,
     ) -> None:
         self._decay_clamp_guard(now_dt)
@@ -400,12 +433,21 @@ class StageTracker:
                 count >= n_min
                 and (loss_sum_jpy <= -clamp_jpy or loss_sum_pips <= -clamp_pips)
             ):
+                severity = 1
+                nav_thresh = 0.0
+                try:
+                    nav_thresh = float(nav_val or 0.0) * 0.005
+                except Exception:
+                    nav_thresh = 0.0
+                if nav_thresh > 0 and abs(loss_sum_jpy) >= nav_thresh:
+                    severity = 2
                 self._bump_clamp_level(
                     ts,
                     trade_id,
                     loss_jpy=loss_sum_jpy,
                     loss_pips=loss_sum_pips,
                     count=count,
+                    severity=severity,
                     cooldown_scale=cooldown_scale,
                 )
                 window.clear()
@@ -443,6 +485,7 @@ class StageTracker:
         return {
             "level": int(state.get("level", 0) or 0),
             "event_count": int(state.get("event_count", 0) or 0),
+            "clamp_score": float(state.get("clamp_score", 0.0) or 0.0),
             "last_event_at": state.get("last_event_at"),
             "clamp_until": clamp_until,
             "scalp_conf_scale": float(scalp_scale),
@@ -787,6 +830,7 @@ class StageTracker:
             clamp_jpy=clamp_jpy,
             clamp_pips=clamp_pips,
             n_min=n_min,
+            nav_val=nav_val,
             cooldown_scale=cooldown_scale,
         )
 

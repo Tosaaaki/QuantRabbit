@@ -4384,10 +4384,11 @@ async def logic_loop(
                         )
                         sig["confidence"] = new_conf
 
-                if sig.get("strategy") == "ImpulseRe" and sig.get("action") == "OPEN_LONG":
+                if sig.get("strategy") == "ImpulseRe" and sig.get("action") in {"OPEN_LONG", "OPEN_SHORT"}:
                     stop_active = False
                     remain = None
                     rebound_ok = True
+                    is_buy = sig.get("action") == "OPEN_LONG"
                     if impulse_stop_until:
                         try:
                             stop_active = now.timestamp() < impulse_stop_until.timestamp()
@@ -4399,16 +4400,25 @@ async def logic_loop(
                         # 停止明けの市況チェック
                         if scalp_buffer is None or scalp_buffer <= 0.1:
                             rebound_ok = False
-                        if rsi_val is None or rsi_val <= 45.0:
+                        if rsi_val is None:
                             rebound_ok = False
-                        if momentum < 0:
-                            rebound_ok = False
+                        if is_buy:
+                            if rsi_val is None or rsi_val <= 45.0:
+                                rebound_ok = False
+                            if momentum < 0:
+                                rebound_ok = False
+                        else:
+                            if rsi_val is None or rsi_val >= 55.0:
+                                rebound_ok = False
+                            if momentum > 0:
+                                rebound_ok = False
                         if not rebound_ok:
                             stop_active = True
                             remain = remain or 30
                     if stop_active:
                         logging.info(
-                            "[CLAMP] skip ImpulseRe BUY during cooldown remain=%ss level=%s rebound_ok=%s",
+                            "[CLAMP] skip ImpulseRe %s during cooldown remain=%ss level=%s rebound_ok=%s",
+                            "BUY" if is_buy else "SELL",
                             remain,
                             clamp_level,
                             rebound_ok,
