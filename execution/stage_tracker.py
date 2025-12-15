@@ -14,6 +14,7 @@ from collections import deque
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Deque, Dict, List, Optional, Tuple
+import math
 
 _DB_PATH = Path("logs/stage_state.db")
 _TRADES_DB = Path("logs/trades.db")
@@ -349,6 +350,7 @@ class StageTracker:
         *,
         clamp_jpy: float,
         clamp_pips: float,
+        n_min: int,
         cooldown_scale: float = 1.0,
     ) -> None:
         self._decay_clamp_guard(now_dt)
@@ -395,7 +397,7 @@ class StageTracker:
             loss_sum_jpy = sum(item[2] for item in window)
             loss_sum_pips = sum(item[3] for item in window)
             if (
-                count >= _CLAMP_WINDOW_COUNT
+                count >= n_min
                 and (loss_sum_jpy <= -clamp_jpy or loss_sum_pips <= -clamp_pips)
             ):
                 self._bump_clamp_level(
@@ -721,6 +723,9 @@ class StageTracker:
         vol_5m: Optional[float] = None,
         adx_m1: Optional[float] = None,
         momentum: Optional[float] = None,
+        nav: Optional[float] = None,
+        open_scalp_positions: int = 0,
+        atr_m5_pips: Optional[float] = None,
     ) -> None:
         trades_path = trades_db or _TRADES_DB
         if not trades_path.exists():
@@ -761,11 +766,24 @@ class StageTracker:
             clamp_jpy = _CLAMP_WINDOW_JPY
             clamp_pips = _CLAMP_WINDOW_PIPS
             cooldown_scale = 1.0
+        # Scale loss thresholds by NAV and current exposure context
+        nav_val = float(nav or 0.0)
+        nav_jpy = nav_val * 0.0025 if nav_val > 0 else 0.0  # 0.25% NAV
+        clamp_jpy = max(clamp_jpy, nav_jpy, _CLAMP_WINDOW_JPY)
+        # pips threshold: ATR(M5) weighted to reduce noise on high vol
+        atr_m5_val = float(atr_m5_pips or 0.0)
+        if atr_m5_val > 0:
+            clamp_pips = max(clamp_pips, atr_m5_val * 8.0)
+        clamp_pips = max(clamp_pips, _CLAMP_WINDOW_PIPS)
+        # Count threshold scales with current open scalp positions
+        n_min = max(3, int(math.ceil(max(0, open_scalp_positions) * 0.25)))
+        n_min = max(n_min, 3)
         self._detect_clamp_events(
             rows,
             now_dt,
             clamp_jpy=clamp_jpy,
             clamp_pips=clamp_pips,
+            n_min=n_min,
             cooldown_scale=cooldown_scale,
         )
 

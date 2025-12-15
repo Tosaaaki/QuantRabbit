@@ -3495,6 +3495,23 @@ async def logic_loop(
                 )
             last_stage_biases = dict(stage_biases)
 
+            # アカウント情報はクランプ閾値にも使うため早めに取得する
+            # クランプ検知のためのオープン玉情報
+            clamp_positions = pos_manager.get_open_positions()
+            open_scalp_trades = 0
+            try:
+                open_scalp_trades = len(
+                    clamp_positions.get("scalp", {}).get("open_trades", []) or []
+                )
+            except Exception:
+                open_scalp_trades = 0
+            atr_m5_val = None
+            try:
+                if fac_m5 and fac_m5.get("atr_pips") is not None:
+                    atr_m5_val = float(fac_m5["atr_pips"])
+            except Exception:
+                atr_m5_val = None
+
             stage_tracker.update_loss_streaks(
                 now=now,
                 cooldown_map=POCKET_LOSS_COOLDOWNS,
@@ -3503,6 +3520,9 @@ async def logic_loop(
                 vol_5m=vol_5m,
                 adx_m1=_safe_float(fac_m1.get("adx")),
                 momentum=momentum,
+                nav=account_equity,
+                open_scalp_positions=open_scalp_trades,
+                atr_m5_pips=atr_m5_val,
             )
             clamp_state = stage_tracker.get_clamp_state(now=now)
             recent_profiles = stage_tracker.get_recent_profiles()
