@@ -4558,6 +4558,25 @@ async def logic_loop(
                     # Impulse系/Scalper: trend強なら順方向強め、逆は薄め
                     if strategy_name in {"ImpulseRe", "ImpulseRetrace", "M1Scalper"}:
                         adj = 1.0
+                        # 強トレンドで逆方向のImpulse系はほぼ封印
+                        if (
+                            strategy_name in {"ImpulseRe", "ImpulseRetrace"}
+                            and trend_dir != 0
+                            and action_dir != trend_dir
+                            and adx_max >= 25.0
+                        ):
+                            prev_conf = int(sig.get("confidence", 0) or 0)
+                            if prev_conf > 0:
+                                sig["confidence"] = 0
+                                logging.info(
+                                    "[DIR_STRAT] %s oppose strong trend -> conf=%d->0 h1=%d h4=%d adx=%.1f",
+                                    strategy_name,
+                                    prev_conf,
+                                    bias_h1,
+                                    bias_h4,
+                                    adx_max,
+                                )
+                            continue
                         # use normalized distance to avoid chasing stretched moves
                         if strategy_name in {"ImpulseRe", "ImpulseRetrace"} and dist_norm is not None:
                             if trend_dir != 0 and action_dir == trend_dir:
