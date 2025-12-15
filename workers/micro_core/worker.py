@@ -103,6 +103,8 @@ MARGIN_GUARD_THRESHOLD = float(os.getenv("MICRO_MARGIN_GUARD_THRESHOLD", "0.025"
 MARGIN_GUARD_RELEASE = float(os.getenv("MICRO_MARGIN_GUARD_RELEASE", "0.035"))
 MARGIN_GUARD_CHECK_INTERVAL = float(os.getenv("MICRO_MARGIN_GUARD_CHECK_INTERVAL", "75"))
 MARGIN_GUARD_STOP = float(os.getenv("MICRO_MARGIN_GUARD_STOP", "0.018"))
+MARGIN_BUFFER_EWMA_ALPHA = float(os.getenv("MICRO_MARGIN_BUFFER_EWMA_ALPHA", "0.2"))
+MARGIN_BUFFER_HYST = float(os.getenv("MICRO_MARGIN_BUFFER_HYST", "0.002"))
 TREND_GAP_PIPS = float(os.getenv("MICRO_TREND_GAP_PIPS", "0.50"))
 TREND_ADX_MIN = float(os.getenv("MICRO_TREND_ADX_MIN", "21.0"))
 MICRO_SPREAD_DAMP_PIPS = (
@@ -323,6 +325,39 @@ def _default_micro_policy() -> Dict[str, Any]:
     }
 
 
+def _select_reduction_candidate(open_trades: List[dict]) -> Optional[dict]:
+    """
+    Pick one trade to trim based on loss size, margin weight, and pocket priority.
+    Returns only a candidate; caller decides whether/how to execute reduce-only.
+    """
+    if not open_trades:
+        return None
+
+    pocket_priority = {"scalp": 0, "scalp_fast": 0, "micro": 1, "macro": 2, "manual": 3}
+
+    def _score(tr: dict) -> tuple:
+        unreal = tr.get("unrealized_pl") or 0.0
+        units = abs(int(tr.get("units", 0) or 0))
+        pocket = str(tr.get("pocket", "")).lower()
+        pprio = pocket_priority.get(pocket, 4)
+        # loss first (more negative wins), then larger units, then pocket priority
+        return (unreal, -units, pprio)
+
+    enriched: List[dict] = []
+    for tr in open_trades:
+        p = tr.get("pocket")
+        if not p:
+            thesis = tr.get("entry_thesis") or {}
+            if isinstance(thesis, dict):
+                p = thesis.get("pocket")
+        e = dict(tr)
+        if p:
+            e["pocket"] = p
+        enriched.append(e)
+    enriched.sort(key=_score)
+    return enriched[0] if enriched else None
+
+
 def _micro_flow_factor(
     spread_pips: Optional[float],
     margin_buffer: Optional[float],
@@ -406,6 +441,7 @@ async def micro_core_worker() -> None:
     manual_clear_cycles = 0
     margin_guard_active = False
     margin_guard_buffer: Optional[float] = None
+    margin_buffer_smoothed: Optional[float] = None
     last_margin_guard_check = datetime.datetime.min.replace(tzinfo=datetime.timezone.utc)
     last_regime_mode: Optional[str] = None
 
@@ -560,30 +596,70 @@ async def micro_core_worker() -> None:
                     margin_guard_buffer = None
                 last_margin_guard_check = now
                 if margin_guard_buffer is not None:
-                    if margin_guard_buffer < MARGIN_GUARD_STOP:
+                    if margin_buffer_smoothed is None:
+                        margin_buffer_smoothed = margin_guard_buffer
+                    else:
+                        margin_buffer_smoothed = (
+                            margin_buffer_smoothed * (1.0 - MARGIN_BUFFER_EWMA_ALPHA)
+                            + margin_guard_buffer * MARGIN_BUFFER_EWMA_ALPHA
+                        )
+                    try:
+                        log_metric(
+                            "margin_buffer",
+                            margin_guard_buffer,
+                            tags={
+                                "smoothed": f"{margin_buffer_smoothed:.4f}",
+                                "alpha": f"{MARGIN_BUFFER_EWMA_ALPHA:.2f}",
+                            },
+                        )
+                    except Exception:
+                        pass
+                if margin_guard_buffer is not None:
+                    buffer_val = (
+                        margin_buffer_smoothed
+                        if margin_buffer_smoothed is not None
+                        else margin_guard_buffer
+                    )
+                    start_thresh = max(0.0, MARGIN_GUARD_STOP - MARGIN_BUFFER_HYST)
+                    release_thresh = MARGIN_GUARD_RELEASE + MARGIN_BUFFER_HYST
+                    if buffer_val < start_thresh:
                         if not margin_guard_active:
                             margin_guard_active = True
                             LOG.warning(
                                 "%s margin guard activated buffer=%.3f",
                                 config.LOG_PREFIX,
-                                margin_guard_buffer,
+                                buffer_val,
                             )
                     elif (
                         margin_guard_active
-                        and margin_guard_buffer
-                        >= MARGIN_GUARD_RELEASE
+                        and buffer_val >= release_thresh
                     ):
                         margin_guard_active = False
                         LOG.info(
                             "%s margin guard released buffer=%.3f",
                             config.LOG_PREFIX,
-                            margin_guard_buffer,
+                            buffer_val,
                         )
             if margin_guard_active:
+                selected = _select_reduction_candidate(open_trades)
+                if selected:
+                    try:
+                        log_metric(
+                            "margin_guard_delever_candidate",
+                            abs(float(selected.get("units", 0) or 0)),
+                            tags={
+                                "pocket": str(selected.get("pocket") or ""),
+                                "trade_id": str(selected.get("trade_id") or ""),
+                                "unreal": f"{selected.get('unrealized_pl', 0.0)}",
+                            },
+                        )
+                    except Exception:
+                        pass
                 LOG.info(
-                    "%s margin guard active buffer=%.3f; skip entries",
+                    "%s margin guard active buffer=%.3f; skip entries (candidate=%s)",
                     config.LOG_PREFIX,
                     margin_guard_buffer if margin_guard_buffer is not None else -1.0,
+                    selected.get("trade_id") if selected else "none",
                 )
                 await _publish_micro_policy(
                     fac_m1,
