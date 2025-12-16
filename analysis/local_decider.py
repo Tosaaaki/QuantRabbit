@@ -14,6 +14,7 @@ _ALLOWED_STRATEGIES = (
     "H1Momentum",
     "Donchian55",
     "BB_RSI",
+    "MicroVWAPBound",
     "M1Scalper",
     "MomentumPulse",
     "VolCompressionBreak",

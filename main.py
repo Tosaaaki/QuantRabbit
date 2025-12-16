@@ -19,6 +19,61 @@ def _safe_float(value: object, default: float = 0.0) -> float:
         return default
 
 
+def _strategy_conf_multiplier(gpt: Dict[str, object], strategy: str) -> float:
+    """Apply GPT mode/bias/pattern hints as gentle confidence multipliers."""
+    base = 1.0
+    mode = str(gpt.get("mode") or "").upper()
+    risk = str(gpt.get("risk_bias") or "").lower()
+    liq = str(gpt.get("liquidity_bias") or "").lower()
+    rc = _safe_float(gpt.get("range_confidence"), 0.0)
+    hints = gpt.get("pattern_hint") or []
+    if isinstance(hints, str):
+        hints = [hints]
+    # Mode-based
+    if mode == "DEFENSIVE":
+        base *= 0.85
+    elif mode == "TRANSITION":
+        base *= 0.9
+    elif mode == "TREND_FOLLOW":
+        if strategy in TREND_STRATEGIES:
+            base *= 1.08
+        if strategy in RANGE_STRATEGIES:
+            base *= 0.9
+    elif mode == "RANGE_SCALP":
+        if strategy in RANGE_STRATEGIES:
+            base *= 1.1
+        if strategy in TREND_STRATEGIES:
+            base *= 0.9
+    # Risk bias
+    if risk == "high":
+        base *= 1.08
+    elif risk == "low":
+        base *= 0.9
+    # Liquidity bias
+    if liq == "tight":
+        base *= 0.92
+    elif liq == "loose":
+        base *= 1.03
+    # Range confidence tilt
+    if rc >= 0.6 and strategy in RANGE_STRATEGIES:
+        base *= 1.06
+    if rc <= 0.3 and strategy in TREND_STRATEGIES:
+        base *= 1.04
+    # Pattern hints
+    lower_hints = [h.strip().lower() for h in hints if isinstance(h, str)]
+    if any("long_wick" in h or "hammer" in h for h in lower_hints):
+        if strategy in RANGE_STRATEGIES:
+            base *= 1.04
+    if any("bull_flag" in h or "impulse" in h for h in lower_hints):
+        if strategy in MOMENTUM_STRATEGIES:
+            base *= 1.05
+    if any("double_top" in h or "engulfing_bear" in h for h in lower_hints):
+        if strategy in TREND_STRATEGIES:
+            base *= 0.96
+    # Clamp
+    return max(0.75, min(1.2, base))
+
+
 def _env_bool(name: str, default: bool = False) -> bool:
     val = os.getenv(name, None)
     if val is None:
@@ -34,6 +89,7 @@ from market_data import spread_monitor, tick_window
 from indicators.factor_cache import all_factors, on_candle
 from analysis.regime_classifier import classify
 from analysis.focus_decider import decide_focus
+from analysis.local_decider import heuristic_decision
 from analysis.gpt_decider import get_decision
 from analysis.perf_monitor import snapshot as get_perf
 from analytics.insight_client import InsightClient
@@ -98,12 +154,24 @@ from analytics.realtime_metrics_client import (
     StrategyHealth,
 )
 from strategies.trend.ma_cross import MovingAverageCross
+from strategies.trend.h1_momentum import H1MomentumSwing
 from strategies.breakout.donchian55 import Donchian55
 from strategies.mean_reversion.bb_rsi import BBRsi
 from strategies.scalping.m1_scalper import M1Scalper
 from strategies.scalping.range_fader import RangeFader
 from strategies.scalping.pulse_break import PulseBreak
 from strategies.scalping.impulse_retrace import ImpulseRetraceScalp
+from strategies.micro.momentum_burst import MomentumBurstMicro
+from strategies.micro.momentum_stack import MicroMomentumStack
+from strategies.micro.pullback_ema import MicroPullbackEMA
+from strategies.micro.level_reactor import MicroLevelReactor
+from strategies.micro.range_break import MicroRangeBreak
+from strategies.micro.vwap_bound_revert import MicroVWAPBound
+from strategies.micro.trend_momentum import TrendMomentumMicro
+from strategies.micro_lowvol.micro_vwap_revert import MicroVWAPRevert
+from strategies.micro_lowvol.bb_rsi_fast import BBRsiFast
+from strategies.micro_lowvol.vol_compression_break import VolCompressionBreak
+from strategies.micro_lowvol.momentum_pulse import MomentumPulse
 from utils.oanda_account import get_account_snapshot
 from utils.secrets import get_secret
 from utils.metrics_logger import log_metric
@@ -136,17 +204,67 @@ logging.info("Application started!")
 
 STRATEGIES = {
     "TrendMA": MovingAverageCross,
+    "H1Momentum": H1MomentumSwing,
     "Donchian55": Donchian55,
     "BB_RSI": BBRsi,
+    "BB_RSI_Fast": BBRsiFast,
+    "MicroVWAPRevert": MicroVWAPRevert,
     "M1Scalper": M1Scalper,
     "RangeFader": RangeFader,
     "PulseBreak": PulseBreak,
     "ImpulseRetrace": ImpulseRetraceScalp,
+    "MomentumBurst": MomentumBurstMicro,
+    "TrendMomentumMicro": TrendMomentumMicro,
+    "MicroMomentumStack": MicroMomentumStack,
+    "MicroPullbackEMA": MicroPullbackEMA,
+    "MicroRangeBreak": MicroRangeBreak,
+    "MicroLevelReactor": MicroLevelReactor,
+    "MicroVWAPBound": MicroVWAPBound,
+    "VolCompressionBreak": VolCompressionBreak,
+    "MomentumPulse": MomentumPulse,
+}
+
+TREND_STRATEGIES = {
+    "TrendMA",
+    "H1Momentum",
+    "Donchian55",
+    "TrendMomentumMicro",
+    "MicroMomentumStack",
+}
+RANGE_STRATEGIES = {
+    "RangeFader",
+    "BB_RSI",
+    "BB_RSI_Fast",
+    "MicroVWAPRevert",
+    "MicroVWAPBound",
+    "VolCompressionBreak",
+    "MicroPullbackEMA",
+    "MicroRangeBreak",
+}
+MOMENTUM_STRATEGIES = {
+    "PulseBreak",
+    "ImpulseRetrace",
+    "MomentumBurst",
+    "MomentumPulse",
+    "MicroMomentumStack",
 }
 
 POCKET_STRATEGY_MAP = {
-    "macro": {"TrendMA", "Donchian55"},
-    "micro": {"BB_RSI"},
+    "macro": {"TrendMA", "Donchian55", "H1Momentum"},
+    "micro": {
+        "BB_RSI",
+        "BB_RSI_Fast",
+        "MicroVWAPRevert",
+        "MomentumBurst",
+        "TrendMomentumMicro",
+        "MicroMomentumStack",
+        "MicroPullbackEMA",
+        "MicroRangeBreak",
+        "MicroLevelReactor",
+        "MicroVWAPBound",
+        "VolCompressionBreak",
+        "MomentumPulse",
+    },
     "scalp": {"M1Scalper", "RangeFader", "PulseBreak", "ImpulseRetrace"},
 }
 
@@ -640,6 +758,13 @@ MACRO_MARGIN_SAFETY_BUFFER = _safe_env_float("MACRO_MARGIN_SAFETY_BUFFER", 0.1, 
 FORCE_SCALP_MODE = os.getenv("SCALP_FORCE_ALWAYS", "0").strip().lower() not in {"", "0", "false", "no"}
 if FORCE_SCALP_MODE:
     logging.warning("[FORCE_SCALP] mode enabled")
+
+RELAX_GPT_ALLOWLIST = os.getenv("RELAX_GPT_ALLOWLIST", "true").strip().lower() in {
+    "1",
+    "true",
+    "yes",
+    "on",
+}
 
 
 def _session_bucket(now: datetime.datetime) -> str:
@@ -1218,6 +1343,7 @@ def _dynamic_risk_pct(
     weight_macro: float | None,
     *,
     context: ParamSnapshot | None = None,
+    gpt_bias: Dict[str, object] | None = None,
 ) -> float:
     if not signals or _MAX_RISK_PCT <= _BASE_RISK_PCT:
         return _BASE_RISK_PCT
@@ -1264,6 +1390,26 @@ def _dynamic_risk_pct(
             risk_pct = min(risk_pct, _BASE_RISK_PCT * 0.35, _SQUEEZE_RISK_CAP)
         if context.vol_high_ratio >= 0.3:
             risk_pct = min(risk_pct, _BASE_RISK_PCT * 0.4)
+    if gpt_bias:
+        mode = str(gpt_bias.get("mode") or "").upper()
+        risk_flag = str(gpt_bias.get("risk_bias") or "").lower()
+        liq_flag = str(gpt_bias.get("liquidity_bias") or "").lower()
+        if mode == "DEFENSIVE":
+            risk_pct *= 0.75
+        elif mode == "TRANSITION":
+            risk_pct *= 0.9
+        elif mode == "TREND_FOLLOW":
+            risk_pct *= 1.05
+        elif mode == "RANGE_SCALP":
+            risk_pct *= 0.95
+        if risk_flag == "high":
+            risk_pct *= 1.08
+        elif risk_flag == "low":
+            risk_pct *= 0.85
+        if liq_flag == "tight":
+            risk_pct *= 0.9
+        elif liq_flag == "loose":
+            risk_pct *= 1.03
     risk_pct = min(risk_pct, _HARD_MAX_RISK_CAP)
     return max(0.0005, risk_pct)
 
@@ -2575,6 +2721,7 @@ async def logic_loop(
     last_rsi_m1: Optional[float] = None
     last_close_m1: Optional[float] = None
     clamp_state: dict[str, object] = {}
+    last_local_decision: dict | None = None
 
     try:
         while True:
@@ -3213,6 +3360,16 @@ async def logic_loop(
             if not isinstance(gpt, dict):
                 logging.warning("[GPT] invalid decision payload type=%s; using empty dict", type(gpt))
                 gpt = {}
+            local_decision: dict = {}
+            try:
+                local_decision = heuristic_decision(payload, last_local_decision)
+                if isinstance(local_decision, dict):
+                    last_local_decision = local_decision
+                else:
+                    local_decision = {}
+            except Exception as exc:
+                logging.warning("[LOCAL_DECIDER] failed: %s", exc)
+                local_decision = {}
             raw_weight_scalp = gpt.get("weight_scalp")
             if raw_weight_scalp is None:
                 weight_scalp_display = "n/a"
@@ -3236,15 +3393,18 @@ async def logic_loop(
             if MACRO_DISABLED:
                 weight_macro_override = 0.0
             logging.info(
-                "[GPT] focus=%s weight_macro=%.2f weight_scalp=%s model=%s strategies=%s reason=%s",
+                "[GPT] mode=%s risk=%s liq=%s range=%.2f focus=%s weight_macro=%.2f weight_scalp=%s model=%s reason=%s",
+                gpt.get("mode"),
+                gpt.get("risk_bias"),
+                gpt.get("liquidity_bias"),
+                _safe_float(gpt.get("range_confidence"), 0.0),
                 gpt.get("focus_tag"),
                 weight_macro_override if weight_macro_override is not None else weight_macro,
                 weight_scalp_display,
                 gpt.get("model_used", "unknown"),
-                gpt.get("ranked_strategies"),
                 reuse_reason,
             )
-            ranked_strategies = list(gpt.get("ranked_strategies", []))
+            ranked_strategies = list(local_decision.get("ranked_strategies") or [])
             if MACRO_DISABLED and ranked_strategies:
                 before = list(ranked_strategies)
                 ranked_strategies = [s for s in ranked_strategies if s not in MACRO_STRATEGIES]
@@ -3881,13 +4041,22 @@ async def logic_loop(
                     and sname not in gpt_strategy_allowlist
                     and sname not in auto_injected_strategies
                 ):
-                    logging.info(
-                        "[STRAT_GUARD] skip %s (not in GPT ranked_strategies) ranked=%s auto=%s",
-                        sname,
-                        ranked_strategies,
-                        sorted(auto_injected_strategies),
-                    )
-                    continue
+                    if RELAX_GPT_ALLOWLIST:
+                        logging.info(
+                            "[STRAT_GUARD] allowlist miss but relaxed -> evaluate %s ranked=%s auto=%s allow=%s",
+                            sname,
+                            ranked_strategies,
+                            sorted(auto_injected_strategies),
+                            sorted(gpt_strategy_allowlist),
+                        )
+                    else:
+                        logging.info(
+                            "[STRAT_GUARD] skip %s (not in GPT ranked_strategies) ranked=%s auto=%s",
+                            sname,
+                            ranked_strategies,
+                            sorted(auto_injected_strategies),
+                        )
+                        continue
                 raw_signal = cls.check(fac_m1)
                 if not raw_signal:
                     logging.info(
@@ -3957,6 +4126,12 @@ async def logic_loop(
                         signal[extra_key] = raw_signal[extra_key]
                 scaled_conf = int(signal["confidence"] * health.confidence_scale)
                 signal["confidence"] = max(0, min(100, scaled_conf))
+                # Apply GPT mode/bias/pattern multipliers (gentle)
+                conf_mult = _strategy_conf_multiplier(gpt, sname)
+                if conf_mult != 1.0:
+                    signal["confidence"] = max(
+                        0, min(100, int(signal["confidence"] * conf_mult))
+                    )
                 # Tech overlays (Ichimoku/cluster/MACD-DMI/Stoch) applied uniformly across workers
                 signal = _apply_tech_overlays(signal, fac_m1, fac_m5, fac_h1, fac_h4)
 
@@ -3974,9 +4149,27 @@ async def logic_loop(
                     strong_trend = (adx_h4_val >= 28.0) or (adx_h1_val >= 28.0)
                     if strong_trend and signal.get("strategy") in {"M1Scalper", "ImpulseRetrace", "ImpulseBreak", "ImpulseMomentum"}:
                         base = tp_val
-                        # modest boost to allow 10p超えを狙う
                         boosted = max(base * 1.2, base + 2.0)
-                        signal["tp_pips"] = round(min(boosted, 15.0), 2)
+                        atr_cap = None
+                        try:
+                            atr_cap = float((fac_m5 or {}).get("atr_pips") or 0.0) * 6.0
+                        except Exception:
+                            atr_cap = None
+                        cap = 15.0
+                        if atr_cap and atr_cap > 0:
+                            cap = min(cap, atr_cap)
+                        new_tp = round(min(boosted, cap), 2)
+                        if abs(new_tp - base) >= 0.01:
+                            logging.info(
+                                "[TP_BOOST] strategy=%s tp=%.2f->%.2f adx_h4=%.1f adx_h1=%.1f cap=%.2f",
+                                signal.get("strategy"),
+                                base,
+                                new_tp,
+                                adx_h4_val,
+                                adx_h1_val,
+                                cap,
+                            )
+                            signal["tp_pips"] = new_tp
 
                 # --- Dynamic guards: shock/position/stretch and role-based blocks ---
                 action = signal.get("action")
@@ -4590,6 +4783,7 @@ async def logic_loop(
             margin_rate = None
             scalp_buffer = None
             scalp_free_ratio = None
+            margin_usage = None
 
             if account_snapshot:
                 account_equity = account_snapshot.nav or account_snapshot.balance or FALLBACK_EQUITY
@@ -4625,13 +4819,13 @@ async def logic_loop(
                     m_used = float(account_snapshot.margin_used or 0.0)
                     total_margin = m_avail + m_used
                     if total_margin > 0:
-                        usage = m_used / total_margin
-                        if usage >= 0.85:
+                        margin_usage = m_used / total_margin
+                        if margin_usage >= 0.85:
                             margin_block = True
-                            logging.warning("[RISK] margin usage %.1f%% blocking new entries", usage * 100)
-                        elif usage >= 0.7:
+                            logging.warning("[RISK] margin usage %.1f%% blocking new entries", margin_usage * 100)
+                        elif margin_usage >= 0.7:
                             margin_warn = True
-                            logging.info("[RISK] margin usage elevated %.1f%% (new entries restricted)", usage * 100)
+                            logging.info("[RISK] margin usage elevated %.1f%% (new entries restricted)", margin_usage * 100)
                 except Exception:
                     margin_block = False
 
@@ -4645,7 +4839,18 @@ async def logic_loop(
             if mid_price > 0 and account_equity > 0:
                 exposure_pct = abs(net_units) * mid_price / account_equity
             exposure_hard_cap = 0.45  # hard stop at ~45% notional/equity
-            exposure_soft_cap = 0.30  # start restricting above 30%
+            exposure_soft_cap = 0.30  # base: restrict above 30%
+            # 動的な緩和: 低ボラ・低使用率・クランプ0のときだけ少し緩める
+            try:
+                if clamp_level == 0 and (margin_usage is None or margin_usage < 0.65):
+                    if (atr_pips or 0.0) < 1.8 and (vol_5m or 0.0) < 0.8:
+                        exposure_soft_cap = 0.38
+                    elif (atr_pips or 0.0) < 2.2 and (vol_5m or 0.0) < 1.2:
+                        exposure_soft_cap = 0.33
+                if clamp_level >= 2 or (margin_usage is not None and margin_usage >= 0.8):
+                    exposure_soft_cap = 0.30
+            except Exception:
+                exposure_soft_cap = 0.30
 
             filtered_signals: list[dict] = []
             for sig in evaluated_signals:
@@ -4913,6 +5118,31 @@ async def logic_loop(
                     )
                     sig["reduce_only"] = True
                     sig["reduce_cap_units"] = reduce_cap_units
+                # Macroヘッジを常時薄く許可（net逆方向のみ、net超過はしない）
+                if (
+                    sig.get("pocket") == "macro"
+                    and action_dir != 0
+                    and net_units != 0
+                ):
+                    net_dir = 1 if net_units > 0 else -1
+                    if action_dir != net_dir:
+                        hedge_frac = 0.25
+                        if clamp_level >= 2:
+                            hedge_frac = 0.5
+                        reduce_cap_units = max(
+                            reduce_cap_units,
+                            int(abs(net_units) * hedge_frac),
+                            _CLAMP_L3_MIN_REDUCE_UNITS,
+                        )
+                        sig["reduce_only"] = True
+                        sig["reduce_cap_units"] = reduce_cap_units
+                        logging.info(
+                            "[MACRO_HEDGE] allow reduce-only macro net=%d action_dir=%d cap=%d frac=%.2f",
+                            net_units,
+                            action_dir,
+                            reduce_cap_units,
+                            hedge_frac,
+                        )
                 if sig.get("pocket") == "scalp" and scalp_conf_scale < 0.999:
                     prev_conf = int(sig.get("confidence", 0) or 0)
                     new_conf = max(0, int(prev_conf * scalp_conf_scale))
@@ -5024,6 +5254,50 @@ async def logic_loop(
                                 clamp_level,
                             )
                             continue
+                # 強トレンドの逆張りは反転確認が無ければ大きく減衰（全戦略共通の簡易ガード）
+                if action_dir != 0 and bias_h4 != 0 and action_dir != bias_h4 and adx_h4 is not None and adx_h4 >= 25.0:
+                    try:
+                        rsi_m1_val = float(fac_m1.get("rsi") or 0.0)
+                    except Exception:
+                        rsi_m1_val = 0.0
+                    try:
+                        mom_val = float(momentum or 0.0)
+                    except Exception:
+                        mom_val = 0.0
+                    try:
+                        close_val = float(fac_m1.get("close") or 0.0)
+                        ema20_m1_val = float(fac_m1.get("ema20") or fac_m1.get("ma20") or 0.0)
+                    except Exception:
+                        close_val = 0.0
+                        ema20_m1_val = 0.0
+                    allow_reversal = False
+                    if bias_h4 < 0 and action_dir > 0:
+                        # buy許可: RSI>52, momentum>=0, 直近close>EMA20
+                        if rsi_m1_val >= 52.0 and mom_val >= 0 and close_val > ema20_m1_val:
+                            allow_reversal = True
+                    if bias_h4 > 0 and action_dir < 0:
+                        # sell許可: RSI<48, momentum<=0, 直近close<EMA20
+                        if rsi_m1_val <= 48.0 and mom_val <= 0 and close_val < ema20_m1_val:
+                            allow_reversal = True
+                    if not allow_reversal:
+                        prev_conf = int(sig.get("confidence", 0) or 0)
+                        damped = max(0, int(prev_conf * 0.1))
+                        sig["confidence"] = damped
+                        logging.info(
+                            "[REVERSAL_GUARD] strategy=%s dir=%s trend_h4=%s adx=%.1f rsi=%.1f mom=%.4f ema20=%.3f close=%.3f conf=%d->%d",
+                            sig.get("strategy"),
+                            "BUY" if action_dir > 0 else "SELL",
+                            "up" if bias_h4 > 0 else "down",
+                            adx_h4,
+                            rsi_m1_val,
+                            mom_val,
+                            ema20_m1_val,
+                            close_val,
+                            prev_conf,
+                            damped,
+                        )
+                        if damped <= 0:
+                            continue
                 filtered_signals.append(sig)
             evaluated_signals = filtered_signals
 
@@ -5032,6 +5306,7 @@ async def logic_loop(
                 range_active,
                 weight_macro,
                 context=param_snapshot,
+                gpt_bias=gpt,
             )
             if (
                 _MAX_RISK_PCT > _BASE_RISK_PCT
@@ -5667,6 +5942,14 @@ async def logic_loop(
                 if event_soon and pocket in {"micro", "scalp"} and not is_tactical:
                     logging.info("[SKIP] Event soon, skipping %s pocket trade.", pocket)
                     continue
+                # Tick watchdog: if scalp_tick loop stops reporting, avoid stale trading
+                try:
+                    last_tick_ago = (datetime.utcnow() - _last_tick_ts).total_seconds()
+                except Exception:
+                    last_tick_ago = 0
+                if pocket == "scalp" and last_tick_ago > 15:
+                    logging.warning("[WATCHDOG] Scalp tick stale %.1fs -> skip scalp trade", last_tick_ago)
+                    continue
                 if pocket in executed_pockets:
                     logging.info("[SKIP] %s pocket already handled this loop.", pocket)
                     continue
@@ -5917,6 +6200,25 @@ async def logic_loop(
                     stage_context,
                     high_impact_context=high_impact_context,
                 )
+                # 負け方向の深いステージは大幅抑制（逆張りを止める/薄くする）
+                if staged_lot > 0 and stage_idx is not None:
+                    if stage_idx >= 2 and bias_h4 != 0 and action_dir != 0 and action_dir != bias_h4:
+                        staged_lot *= 0.4
+                        logging.info(
+                            "[STAGE_GUARD] downscale lot due to stage=%s against H4 dir=%s->action=%s lot=%.3f",
+                            stage_idx,
+                            bias_h4,
+                            action_dir,
+                            staged_lot,
+                        )
+                    if stage_idx >= 3 and lose_streak >= 2:
+                        staged_lot *= 0.5
+                        logging.info(
+                            "[STAGE_GUARD] downscale lot lose_streak=%s stage=%s lot=%.3f",
+                            lose_streak,
+                            stage_idx,
+                            staged_lot,
+                        )
                 if staged_lot <= 0:
                     if pocket == "scalp":
                         logging.info(

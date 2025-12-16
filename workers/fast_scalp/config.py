@@ -154,6 +154,12 @@ REVIEW_INTERVAL_SEC: float = max(
     0.2, float(os.getenv("FAST_SCALP_REVIEW_INTERVAL_SEC", "1.2"))
 )
 MIN_HOLD_SEC: float = max(0.0, float(os.getenv("FAST_SCALP_MIN_HOLD_SEC", "2.5")))
+# Watchdog: empty tick streaks before warn/abort (in worker loops)
+EMPTY_TICK_WARN_LOOPS: int = max(1, int(float(os.getenv("FAST_SCALP_EMPTY_TICK_WARN_LOOPS", "20"))))
+EMPTY_TICK_FATAL_LOOPS: int = max(
+    EMPTY_TICK_WARN_LOOPS,
+    int(float(os.getenv("FAST_SCALP_EMPTY_TICK_FATAL_LOOPS", "80"))),
+)
 
 # Fixed sizing / protections
 FIXED_UNITS: int = int(float(os.getenv("FAST_SCALP_FIXED_UNITS", "0")))

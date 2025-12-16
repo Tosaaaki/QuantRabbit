@@ -221,8 +221,13 @@ class StageTracker:
         self._recent_profile: Dict[str, Dict[str, float]] = {}
         self._weight_hint: Dict[str, float] = {}
         self._clamp_state = self._load_clamp_state()
-        self._clamp_recent: Deque[Tuple[datetime, int, float, float]] = deque()
-        self._clamp_last_scanned: int = 0
+        # ts, trade_id, pl_jpy, pl_pips, direction
+        self._clamp_recent: Deque[Tuple[datetime, int, float, float, str]] = deque()
+        # 再起動後に過去のクラスターを再検知しないよう、前回イベントの trade_id を初期値にする
+        try:
+            self._clamp_last_scanned = int(self._clamp_state.get("last_trade_id", 0) or 0)
+        except Exception:
+            self._clamp_last_scanned = 0
 
     def _load_clamp_state(self) -> Dict[str, object]:
         row = self._con.execute(
@@ -338,7 +343,7 @@ class StageTracker:
         count: int,
         severity: int = 1,
         cooldown_scale: float = 1.0,
-    ) -> None:
+    ) -> int:
         severity = max(1, severity)
         current_level = int(self._clamp_state.get("level", 0) or 0)
         current_score = float(self._clamp_state.get("clamp_score", 0.0) or 0.0)
@@ -381,6 +386,7 @@ class StageTracker:
             scaled_cd,
             stop_dur,
         )
+        return new_level
 
     def _detect_clamp_events(
         self,
@@ -422,12 +428,17 @@ class StageTracker:
                 continue
             if pl_jpy >= -_MIN_LOSS_JPY:
                 continue
+            try:
+                units_val = int(row["units"] or 0)
+            except Exception:
+                units_val = 0
+            direction = "long" if units_val > 0 else "short" if units_val < 0 else ""
             ts_raw = row["close_time"]
             try:
                 ts = _parse_timestamp(ts_raw) if ts_raw else now_dt
             except Exception:
                 ts = now_dt
-            window.append((ts, trade_id, pl_jpy, pl_pips))
+            window.append((ts, trade_id, pl_jpy, pl_pips, direction))
             while window and (ts - window[0][0]).total_seconds() > _CLAMP_WINDOW_SEC:
                 window.popleft()
             max_seen = max(max_seen, trade_id)
@@ -441,6 +452,15 @@ class StageTracker:
                 and (loss_sum_jpy <= -clamp_jpy or loss_sum_pips <= -clamp_pips)
             ):
                 severity = 1
+                dir_counts: Dict[str, int] = {"long": 0, "short": 0}
+                for item in window:
+                    if len(item) >= 5 and item[4]:
+                        dir_counts[item[4]] = dir_counts.get(item[4], 0) + 1
+                main_dir = None
+                if dir_counts["long"] > dir_counts["short"]:
+                    main_dir = "long"
+                elif dir_counts["short"] > dir_counts["long"]:
+                    main_dir = "short"
                 nav_thresh = 0.0
                 try:
                     nav_thresh = float(nav_val or 0.0) * 0.005
@@ -448,7 +468,7 @@ class StageTracker:
                     nav_thresh = 0.0
                 if nav_thresh > 0 and abs(loss_sum_jpy) >= nav_thresh:
                     severity = 2
-                self._bump_clamp_level(
+                new_level = self._bump_clamp_level(
                     ts,
                     trade_id,
                     loss_jpy=loss_sum_jpy,
@@ -457,6 +477,26 @@ class StageTracker:
                     severity=severity,
                     cooldown_scale=cooldown_scale,
                 )
+                # Direction-aware re-entryガード: 同方向のみ一定時間ブロック
+                if main_dir:
+                    cd = _CLAMP_LEVEL_COOLDOWN.get(new_level, _CLAMP_LEVEL_COOLDOWN[1])
+                    for pocket_name in ("scalp", "micro", "macro"):
+                        try:
+                            self.ensure_cooldown(
+                                pocket_name,
+                                main_dir,
+                                reason=f"clamp_bundle_L{new_level}",
+                                seconds=cd,
+                                now=ts,
+                            )
+                        except Exception:
+                            logging.exception("[CLAMP] failed to set cooldown pocket=%s dir=%s", pocket_name, main_dir)
+                    logging.info(
+                        "[CLAMP] cooldown dir=%s level=%s sec=%s pockets=scalp|micro|macro",
+                        main_dir,
+                        new_level,
+                        cd,
+                    )
                 window.clear()
                 last_scanned = trade_id
                 max_seen = max(max_seen, trade_id)

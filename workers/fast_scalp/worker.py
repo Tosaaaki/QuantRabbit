@@ -243,6 +243,7 @@ async def fast_scalp_worker(shared_state: Optional[FastScalpState] = None) -> No
     next_exit_review = time.monotonic() + config.REVIEW_INTERVAL_SEC
 
     loop_counter = 0
+    empty_tick_streak = 0
     try:
         while True:
             loop_start = time.monotonic()
@@ -252,6 +253,29 @@ async def fast_scalp_worker(shared_state: Optional[FastScalpState] = None) -> No
                 logger.warning(
                     "%s loop=%d active=%d", config.LOG_PREFIX_TICK, loop_counter, len(active_trades)
                 )
+
+            # Watchdog: detect stale/empty tick window and abort for supervisor restart
+            ticks_now = tick_window.recent_ticks(seconds=config.LONG_WINDOW_SEC, limit=2)
+            if ticks_now:
+                if empty_tick_streak >= config.EMPTY_TICK_WARN_LOOPS:
+                    logger.info(
+                        "%s tick stream recovered after %d empty loops", config.LOG_PREFIX_TICK, empty_tick_streak
+                    )
+                empty_tick_streak = 0
+            else:
+                empty_tick_streak += 1
+                if empty_tick_streak in {config.EMPTY_TICK_WARN_LOOPS, config.EMPTY_TICK_FATAL_LOOPS} or (
+                    empty_tick_streak > config.EMPTY_TICK_WARN_LOOPS and empty_tick_streak % config.EMPTY_TICK_WARN_LOOPS == 0
+                ):
+                    logger.warning(
+                        "%s no ticks for %d loops (%.1fs) window=%.1fs",
+                        config.LOG_PREFIX_TICK,
+                        empty_tick_streak,
+                        empty_tick_streak * config.LOOP_INTERVAL_SEC,
+                        config.LONG_WINDOW_SEC,
+                    )
+                if empty_tick_streak >= config.EMPTY_TICK_FATAL_LOOPS:
+                    raise RuntimeError(f"{config.LOG_PREFIX_TICK} aborting due to empty tick window")
 
             if _is_off_hours(now):
                 if not off_hours_logged:

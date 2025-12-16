@@ -67,7 +67,6 @@ def build_messages(payload: Dict) -> List[Dict]:
             },
             "factors": factors,
             "perf": payload.get("perf") or {},
-            "event_soon": payload.get("event_soon", False),
         }
     )
 
@@ -78,20 +77,20 @@ def build_messages(payload: Dict) -> List[Dict]:
 
     system_content = (
         "You are an FX trading assistant for USD/JPY. Respond ONLY with a single JSON "
-        "object (no markdown, no text) containing keys: "
-        "'focus_tag', 'weight_macro', 'weight_scalp', 'ranked_strategies'.\n"
-        "Schema constraints:\n"
-        "- focus_tag: one of ['micro','macro','hybrid','event'].\n"
-        "- weight_macro: float 0.0–1.0.\n"
-        "- weight_scalp: float 0.0–1.0, and weight_macro + weight_scalp <= 1.0.\n"
-        "- ranked_strategies: array of zero or more from "
-        "['TrendMA','Donchian55','BB_RSI','M1Scalper','RangeFader',"
-        "'PulseBreak','ImpulseRetrace','MomentumBurst','TrendMomentumMicro',"
-        "'MicroMomentumStack','MicroPullbackEMA','MicroRangeBreak',"
-        "'MicroLevelReactor'] ordered best to worst. Do NOT invent new names.\n"
-        "Output format: compact JSON, e.g. "
-        "{\"focus_tag\":\"hybrid\",\"weight_macro\":0.55,\"weight_scalp\":0.2,"
-        "\"ranked_strategies\":[\"M1Scalper\",\"BB_RSI\",\"TrendMA\"]}"
+        "object (no markdown, no text) containing keys:\n"
+        "- mode: one of ['DEFENSIVE','TREND_FOLLOW','RANGE_SCALP','TRANSITION']\n"
+        "- risk_bias: one of ['high','neutral','low']\n"
+        "- liquidity_bias: one of ['tight','normal','loose']\n"
+        "- range_confidence: float 0.0–1.0 (higher = more range-like)\n"
+        "- pattern_hint: array of zero or more short tags for recent candle patterns "
+        "(examples: 'long_wick_down','bull_flag','double_top','inside_bar','engulfing_bear')\n"
+        "- focus_tag: one of ['micro','macro','hybrid']\n"
+        "- weight_macro: float 0.0–1.0\n"
+        "- weight_scalp: float 0.0–1.0 (weight_macro + weight_scalp <= 1.0)\n"
+        "Do NOT include any other keys. Output format: compact JSON, e.g. "
+        "{\"mode\":\"DEFENSIVE\",\"risk_bias\":\"low\",\"liquidity_bias\":\"tight\","
+        "\"range_confidence\":0.7,\"pattern_hint\":[\"inside_bar\"],"
+        "\"focus_tag\":\"hybrid\",\"weight_macro\":0.4,\"weight_scalp\":0.25}"
     )
 
     messages = [

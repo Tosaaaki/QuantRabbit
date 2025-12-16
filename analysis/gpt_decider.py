@@ -47,26 +47,21 @@ def _get_openai_client() -> AsyncOpenAI:
     return _CLIENT
 
 
-_REQUIRED_KEYS = ("focus_tag", "weight_macro", "weight_scalp", "ranked_strategies")
+_REQUIRED_KEYS = (
+    "mode",
+    "risk_bias",
+    "liquidity_bias",
+    "range_confidence",
+    "pattern_hint",
+    "focus_tag",
+    "weight_macro",
+    "weight_scalp",
+)
 
 _FOCUS_TAGS = {"micro", "macro", "hybrid", "event"}
-_ALLOWED_STRATEGIES = [
-    "TrendMA",
-    "Donchian55",
-    "H1Momentum",
-    "BB_RSI",
-    "BB_RSI_Fast",
-    "M1Scalper",
-    "RangeFader",
-    "PulseBreak",
-    "ImpulseRetrace",
-    "MomentumBurst",
-    "TrendMomentumMicro",
-    "MicroMomentumStack",
-    "MicroPullbackEMA",
-    "MicroRangeBreak",
-    "MicroLevelReactor",
-]
+_ALLOWED_MODES = {"DEFENSIVE", "TREND_FOLLOW", "RANGE_SCALP", "TRANSITION"}
+_ALLOWED_RISK = {"high", "neutral", "low"}
+_ALLOWED_LIQ = {"tight", "normal", "loose"}
 
 _MAX_COMPLETION_TOKENS = 200
 _GPT5_MAX_OUTPUT_TOKENS = 256
@@ -222,8 +217,36 @@ async def _call_model(payload: Dict, messages: List[Dict], model: str) -> Dict:
                     for key in _REQUIRED_KEYS:
                         if key not in data:
                             raise ValueError(f"key {key} missing")
-                    if not isinstance(data["ranked_strategies"], list):
-                        raise ValueError("ranked_strategies type error")
+
+                    mode = str(data.get("mode") or "").strip().upper()
+                    if mode not in _ALLOWED_MODES:
+                        raise ValueError(f"invalid mode {mode}")
+                    data["mode"] = mode
+
+                    risk_bias = str(data.get("risk_bias") or "").strip().lower()
+                    if risk_bias not in _ALLOWED_RISK:
+                        raise ValueError(f"invalid risk_bias {risk_bias}")
+                    data["risk_bias"] = risk_bias
+
+                    liquidity_bias = str(data.get("liquidity_bias") or "").strip().lower()
+                    if liquidity_bias not in _ALLOWED_LIQ:
+                        raise ValueError(f"invalid liquidity_bias {liquidity_bias}")
+                    data["liquidity_bias"] = liquidity_bias
+
+                    try:
+                        rc = float(data.get("range_confidence") or 0.0)
+                    except (TypeError, ValueError):
+                        rc = 0.0
+                    data["range_confidence"] = max(0.0, min(1.0, rc))
+
+                    hints = data.get("pattern_hint") or []
+                    if isinstance(hints, str):
+                        hints = [hints]
+                    clean_hints: list[str] = []
+                    for h in hints:
+                        if isinstance(h, str) and h.strip():
+                            clean_hints.append(h.strip()[:24])
+                    data["pattern_hint"] = clean_hints[:5]
 
                     try:
                         weight_macro = float(data["weight_macro"])
@@ -252,14 +275,7 @@ async def _call_model(payload: Dict, messages: List[Dict], model: str) -> Dict:
                         weight_scalp = max(0.0, 0.95 - weight_macro)
                     data["weight_scalp"] = round(weight_scalp, 2)
 
-                    ranked = [
-                        s for s in data.get("ranked_strategies", []) if s in _ALLOWED_STRATEGIES
-                    ]
-                    if not any(s in ("M1Scalper", "BB_RSI") for s in ranked):
-                        for s in ("M1Scalper", "BB_RSI"):
-                            if s not in ranked:
-                                ranked.append(s)
-                    data["ranked_strategies"] = ranked
+                    data["ranked_strategies"] = data.get("ranked_strategies") or []
                     data["model_used"] = model
                     return data
                 except Exception as exc:

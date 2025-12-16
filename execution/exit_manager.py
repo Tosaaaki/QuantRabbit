@@ -140,8 +140,8 @@ class ExitManager:
         self._reverse_hits: Dict[Tuple[str, str], Dict[str, object]] = {}
         self._low_vol_hazard_hits: Dict[Tuple[str, str], int] = {}
         self._range_macro_grace_minutes = 8.0
-        # 時間由来のEXITを全面停止するトグル（デフォルトONで無効化）
-        self._disable_time_based_exits = _env_flag("EXIT_DISABLE_TIME_BASED", True)
+        # 時間由来のEXITを全面停止するトグル（デフォルトは有効にする）
+        self._disable_time_based_exits = _env_flag("EXIT_DISABLE_TIME_BASED", False)
         # 早期エスケープ（escape_quiet/normal）を有効にするか
         raw_escape_enabled = _env_flag("EXIT_ESCAPE_ENABLED", False)
         self._escape_enabled = False if self._disable_time_based_exits else raw_escape_enabled
@@ -212,7 +212,7 @@ class ExitManager:
         # time-guard throttle to avoid repeated partial cuts
         self._time_guard_ts: Dict[Tuple[str, str], datetime] = {}
         # Optional: disable time-based guards to rely on technical exits only
-        raw_time_guard = _env_flag("EXIT_TIME_GUARD_ENABLED", False)
+        raw_time_guard = _env_flag("EXIT_TIME_GUARD_ENABLED", True)
         self._time_guard_enabled = False if self._disable_time_based_exits else raw_time_guard
         # Loss clamp thresholds derived from recent MAE analysis (pips)
         self._loss_clamp_partial = {
@@ -504,6 +504,29 @@ class ExitManager:
         if profit_pips >= 1.2:
             return None
 
+        # 強制寿命ガード（scalp/microのみ、利益/損失に関わらずタイマーで縮小）
+        if pocket in {"scalp", "micro"}:
+            if age_sec >= 1200.0:  # 20分で強制縮小（実質エグジット寄り）
+                cut_units = max(self._min_partial_units, int(abs(units) * 0.7))
+                signed = -cut_units if side == "long" else cut_units
+                return ExitDecision(
+                    pocket=pocket,
+                    units=signed,
+                    reason="time_guard_force_exit",
+                    tag="time_guard",
+                    allow_reentry=False,
+                )
+            if age_sec >= 600.0:  # 10分で部分縮小（どちらに動いていてもリスク軽減）
+                cut_units = max(self._min_partial_units, int(abs(units) * 0.3))
+                signed = -cut_units if side == "long" else cut_units
+                return ExitDecision(
+                    pocket=pocket,
+                    units=signed,
+                    reason="time_guard_force_partial",
+                    tag="time_guard",
+                    allow_reentry=True,
+                )
+
         # 微反転・ごく浅い含み損では時間ガードを発動させない
         small_draw = -max(1.5, atr_pips * 0.5)
         if profit_pips >= small_draw:
@@ -524,23 +547,25 @@ class ExitManager:
                 allow_reentry=False,
             )
 
-        if regime == "range":
-            partial_sec, full_sec = (180.0, 360.0) if pocket == "scalp" else (240.0, 540.0)
-            profit_gate = 0.8
-            exit_floor = -max(3.0, atr_pips * 0.7)
-        elif regime == "trend":
-            partial_sec, full_sec = (300.0, 480.0) if pocket == "scalp" else (360.0, 720.0)
-            profit_gate = 1.4
-            exit_floor = -max(4.5, atr_pips * 0.9)
-        else:
-            partial_sec, full_sec = (240.0, 420.0) if pocket == "scalp" else (320.0, 600.0)
-            profit_gate = 1.0
-            exit_floor = -max(3.5, atr_pips * 0.8)
-
+        # 10分で部分カット、20分で見切りを基本に（データで10分超の期待値がマイナスなため）
         if pocket == "macro":
-            partial_sec *= 1.4
-            full_sec *= 1.5
-            profit_gate += 0.4
+            partial_sec, full_sec = 900.0, 1500.0
+            profit_gate = 1.4
+            exit_floor = -max(4.2, atr_pips * 0.85)
+        else:
+            partial_sec, full_sec = 600.0, 1200.0
+            profit_gate = 1.0
+            exit_floor = -max(3.2, atr_pips * 0.75)
+        if regime == "range":
+            partial_sec *= 0.9
+            full_sec *= 0.9
+            profit_gate = max(0.7, profit_gate - 0.2)
+            exit_floor = -max(2.8, atr_pips * 0.65)
+        elif regime == "trend":
+            partial_sec *= 1.05
+            full_sec *= 1.05
+            profit_gate += 0.25
+            exit_floor = -max(4.0, atr_pips * 0.85)
         # プライスアクションで時間ガードの厳しさを動的調整
         price_val = close_price
         pa_score = 0.0
@@ -5438,6 +5463,9 @@ class ExitManager:
     def _is_manual_trade(self, trade: Dict) -> bool:
         """Detect manually entered/unknown trades to exclude from automated exits."""
         thesis = self._parse_entry_thesis(trade)
+        pocket_val = str(trade.get("pocket") or thesis.get("pocket") or "").strip().lower()
+        if pocket_val and pocket_val not in MANAGED_POCKETS:
+            return True
         if thesis.get("pocket") == "manual" or self._flag_truthy(thesis.get("manual")):
             return True
         tags = thesis.get("tags") or thesis.get("exit_tags") or []
@@ -5450,6 +5478,9 @@ class ExitManager:
         if isinstance(cid, str) and cid:
             if not cid.startswith(AGENT_CLIENT_PREFIXES):
                 return True
+        else:
+            # client_id 空＝手動・外部起点とみなして除外
+            return True
         tag = thesis.get("tag") or trade.get("tag")
         if isinstance(tag, str) and "manual" in tag.lower():
             return True

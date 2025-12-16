@@ -26,9 +26,9 @@ class MovingAverageCross:
     _PULLBACK_LIMIT = 1.60          # pips relative to fast MA
 
     # Simple M1-only range suppression to avoid trend entries under compression
-    _RANGE_ADX_CUTOFF = 22.0
-    _RANGE_BBW_CUTOFF = 0.18
-    _RANGE_ATR_MAX = 6.0
+    _RANGE_ADX_CUTOFF = 18.0  # 緩和して弱トレンドでも拾う
+    _RANGE_BBW_CUTOFF = 0.20  # やや広げる
+    _RANGE_ATR_MAX = 8.0      # 高ATRでも抑制しすぎない
 
     @staticmethod
     def _swing_levels(candles: List[Dict], close_val: Optional[float]) -> Tuple[Optional[float], Optional[float]]:
