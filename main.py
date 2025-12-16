@@ -324,7 +324,7 @@ SCALP_WEIGHT_READY_FLOOR = _safe_env_float(
 )
 SCALP_AUTO_MIN_WEIGHT = _safe_env_float("SCALP_AUTO_MIN_WEIGHT", 0.12, low=0.0, high=0.3)
 SCALP_CONFIDENCE_FLOOR = _safe_env_float("SCALP_CONFIDENCE_FLOOR", 0.74, low=0.4, high=1.0)
-SCALP_MIN_ABS_LOT = _safe_env_float("SCALP_MIN_ABS_LOT", 0.05, low=0.0, high=0.6)
+SCALP_MIN_ABS_LOT = _safe_env_float("SCALP_MIN_ABS_LOT", 0.01, low=0.0, high=0.6)
 PULSEBREAK_AUTO_MOM_MIN = _safe_env_float("PULSEBREAK_AUTO_MOM_MIN", 0.0018, low=0.0, high=0.02)
 PULSEBREAK_AUTO_ATR_MIN = _safe_env_float("PULSEBREAK_AUTO_ATR_MIN", 2.4, low=0.0, high=15.0)
 PULSEBREAK_AUTO_VOL_MIN = _safe_env_float("PULSEBREAK_AUTO_VOL_MIN", 1.3, low=0.0, high=5.0)
@@ -622,9 +622,9 @@ def _frontload_plan(base_plan: Sequence[float], target_first: float) -> tuple[fl
     return tuple(rounded)
 
 
-MIN_MACRO_STAGE_LOT = 0.03  # 3000 units baseline keeps macro entries meaningful
+MIN_MACRO_STAGE_LOT = 0.01  # smaller floor to let macro trickle-in
 MAX_MICRO_STAGE_LOT = 0.02  # cap micro scaling when momentum signals fire repeatedly
-MIN_SCALP_STAGE_LOT = 0.06  # lower floor to allow smaller scalp entries
+MIN_SCALP_STAGE_LOT = 0.02  # allow smaller scalp entries
 REENTRY_EXTRA_LOT = {
     "macro": _safe_env_float("STAGE_REENTRY_EXTRA_MACRO", 0.04, low=0.0, high=0.5),
     "micro": _safe_env_float("STAGE_REENTRY_EXTRA_MICRO", 0.03, low=0.0, high=0.3),
@@ -633,7 +633,7 @@ REENTRY_EXTRA_LOT = {
 DEFAULT_COOLDOWN_SECONDS = 180
 RANGE_COOLDOWN_SECONDS = 420
 GPT_MIN_INTERVAL_SECONDS = 180
-MIN_MACRO_TOTAL_LOT = _safe_env_float("MIN_MACRO_TOTAL_LOT", 0.05, low=0.0, high=3.0)
+MIN_MACRO_TOTAL_LOT = _safe_env_float("MIN_MACRO_TOTAL_LOT", 0.02, low=0.0, high=3.0)
 TARGET_MACRO_MARGIN_RATIO = _safe_env_float("TARGET_MACRO_MARGIN_RATIO", 0.7, low=0.0, high=0.95)
 MACRO_MARGIN_SAFETY_BUFFER = _safe_env_float("MACRO_MARGIN_SAFETY_BUFFER", 0.1, low=0.0, high=0.5)
 
