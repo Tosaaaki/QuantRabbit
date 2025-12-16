@@ -652,6 +652,33 @@ def _session_bucket(now: datetime.datetime) -> str:
     return "asia"
 
 
+def _shock_state(fac_m1: dict) -> dict[str, object]:
+    """Compute 1H shock strength from recent M1 candles."""
+    candles = fac_m1.get("candles") or []
+    if not isinstance(candles, list) or len(candles) < 20:
+        return {"strength": 0.0, "down": False, "up": False}
+    sample = candles[-60:]
+    closes: list[float] = []
+    highs: list[float] = []
+    lows: list[float] = []
+    for c in sample:
+        try:
+            closes.append(float(c.get("close")))
+            highs.append(float(c.get("high", c.get("h", 0.0))))
+            lows.append(float(c.get("low", c.get("l", 0.0))))
+        except Exception:
+            continue
+    if len(closes) < 10 or not highs or not lows:
+        return {"strength": 0.0, "down": False, "up": False}
+    delta = closes[-1] - closes[0]
+    rng = max(highs) - min(lows)
+    strength = abs(delta) / max(rng, 1e-6)
+    return {
+        "strength": strength,
+        "down": delta < -0.001 and strength >= 0.7,
+        "up": delta > 0.001 and strength >= 0.7,
+    }
+
 def _select_worker_targets(
     fac_m1: dict,
     fac_m5: Optional[dict],
@@ -3774,6 +3801,19 @@ async def logic_loop(
             evaluated_signals: list[dict] = []
             signal_emitted = False
             evaluated_count = 0
+            shock_ctx = _shock_state(fac_m1)
+            h4_dir = 0
+            try:
+                ma10_h4_val = float(fac_h4.get("ma10") or 0.0)
+                ma20_h4_val = float(fac_h4.get("ma20") or 0.0)
+                if ma10_h4_val and ma20_h4_val:
+                    if ma10_h4_val > ma20_h4_val:
+                        h4_dir = 1
+                    elif ma10_h4_val < ma20_h4_val:
+                        h4_dir = -1
+            except Exception:
+                h4_dir = 0
+            adx_h4_val = float(fac_h4.get("adx") or 0.0)
             logging.info(
                 "[STRAT_EVAL_BEGIN] ranked=%s pockets=%s allow=%s focus=%s range=%s atr=%.2f vol5=%s momentum=%.4f",
                 ranked_strategies,
@@ -3919,6 +3959,111 @@ async def logic_loop(
                 signal["confidence"] = max(0, min(100, scaled_conf))
                 # Tech overlays (Ichimoku/cluster/MACD-DMI/Stoch) applied uniformly across workers
                 signal = _apply_tech_overlays(signal, fac_m1, fac_m5, fac_h1, fac_h4)
+
+                # --- Dynamic guards: shock/position/stretch and role-based blocks ---
+                action = signal.get("action")
+                if action not in {"OPEN_LONG", "OPEN_SHORT"}:
+                    continue
+                is_buy = action == "OPEN_LONG"
+
+                def _ensure_notes(sig: dict) -> dict:
+                    notes = sig.get("notes")
+                    if not isinstance(notes, dict):
+                        notes = {}
+                    sig["notes"] = notes
+                    return notes
+
+                def _apply_wait(sig: dict, *, reason: str, price_hint: Optional[float]) -> None:
+                    if price_hint is None:
+                        return
+                    wait_pips = max(0.12, min(max(atr_pips, 0.8) * 0.6, 1.8))
+                    tol = max(
+                        0.25,
+                        float(sig.get("entry_tolerance_pips") or 0.0),
+                        wait_pips * 0.6,
+                    )
+                    target = (
+                        price_hint - wait_pips * PIP if is_buy else price_hint + wait_pips * PIP
+                    )
+                    sig["entry_type"] = "limit"
+                    sig["entry_price"] = round(target, 3)
+                    sig["entry_tolerance_pips"] = round(tol, 2)
+                    notes = _ensure_notes(sig)
+                    notes.setdefault("wait_guard", []).append(reason)
+
+                try:
+                    price_now = float(close_val) if close_val is not None else None
+                except Exception:
+                    price_now = None
+                pos_pct = None
+                try:
+                    c_list = fac_m1.get("candles") or []
+                    sample = c_list[-60:] if isinstance(c_list, list) else []
+                    highs = [float(c.get("high", c.get("h"))) for c in sample if c.get("high") or c.get("h")]
+                    lows = [float(c.get("low", c.get("l"))) for c in sample if c.get("low") or c.get("l")]
+                    if highs and lows and price_now is not None:
+                        rng = max(highs) - min(lows)
+                        if rng > 1e-6:
+                            pos_pct = max(0.0, min(1.0, (price_now - min(lows)) / rng))
+                except Exception:
+                    pos_pct = None
+                stretch = None
+                try:
+                    ema20_h1 = float(fac_h1.get("ema20") or fac_h1.get("ma20") or 0.0) if fac_h1 else 0.0
+                    atr_m5 = fac_m5.get("atr_pips") if fac_m5 else None
+                    if atr_m5 is None and fac_m5:
+                        atr_m5 = (fac_m5.get("atr") or 0.0) * 100.0
+                    if price_now is not None and atr_m5:
+                        stretch = (price_now - ema20_h1) / max(float(atr_m5), 1e-6)
+                except Exception:
+                    stretch = None
+
+                # Shock handling: prefer waiting over chasing
+                if shock_ctx.get("down") and is_buy:
+                    _apply_wait(signal, reason="shock_down", price_hint=price_now)
+                if shock_ctx.get("up") and not is_buy:
+                    _apply_wait(signal, reason="shock_up", price_hint=price_now)
+
+                # Position (bottom/top) handling
+                if pos_pct is not None:
+                    if pos_pct < 0.15 and not is_buy:
+                        _apply_wait(signal, reason="bottom_short_wait", price_hint=price_now)
+                    if pos_pct > 0.85 and is_buy:
+                        _apply_wait(signal, reason="top_long_wait", price_hint=price_now)
+
+                # Stretch guard (ema20 vs ATR)
+                if stretch is not None:
+                    if is_buy and stretch > 1.2:
+                        _apply_wait(signal, reason="long_stretch_wait", price_hint=price_now)
+                    if (not is_buy) and stretch < -1.2:
+                        _apply_wait(signal, reason="short_stretch_wait", price_hint=price_now)
+
+                # ImpulseRetrace: strong downtrend -> block longs unless reversal
+                if (
+                    signal.get("strategy") == "ImpulseRetrace"
+                    and is_buy
+                    and h4_dir < 0
+                    and adx_h4_val >= 25.0
+                ):
+                    rsi_v = fac_m1.get("rsi")
+                    momentum_v = momentum
+                    allow_reversal = False
+                    try:
+                        allow_reversal = (rsi_v is not None and float(rsi_v) >= 35.0) and momentum_v is not None and float(momentum_v) > 0.0
+                    except Exception:
+                        allow_reversal = False
+                    if not allow_reversal:
+                        signal["confidence"] = 0
+                        logging.info(
+                            "[DIR_GUARD] ImpulseRetrace long blocked (h4_down adx=%.1f rsi=%s mom=%.4f)",
+                            adx_h4_val,
+                            rsi_v,
+                            momentum,
+                        )
+
+                if signal.get("confidence", 0) <= 0:
+                    logging.info("[SKIP] zero confidence after guards %s", signal.get("strategy"))
+                    continue
 
                 allow_micro, gate_reason, gate_ctx = _micro_chart_gate(
                     signal,
