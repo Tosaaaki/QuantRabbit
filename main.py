@@ -4056,6 +4056,39 @@ async def logic_loop(
                     if (not is_buy) and stretch < -1.2:
                         _apply_wait(signal, reason="short_stretch_wait", price_hint=price_now)
 
+                # Strong trend: drop opposite direction entirely unless reversal is evident
+                strong_trend_dir = 0
+                strong_trend = False
+                try:
+                    if bias_h1 != 0 and bias_h1 == bias_h4 and max(adx_h1, adx_h4) >= 25.0:
+                        strong_trend_dir = bias_h1
+                        strong_trend = True
+                except Exception:
+                    strong_trend = False
+                rsi_val_num = None
+                try:
+                    rsi_val_num = float(fac_m1.get("rsi"))
+                except Exception:
+                    rsi_val_num = None
+                if strong_trend_dir and ((is_buy and strong_trend_dir < 0) or ((not is_buy) and strong_trend_dir > 0)):
+                    allow_reversal = False
+                    if rsi_val_num is not None and momentum is not None:
+                        if is_buy:
+                            allow_reversal = rsi_val_num >= 35.0 and momentum > 0.0
+                        else:
+                            allow_reversal = rsi_val_num <= 65.0 and momentum < 0.0
+                    if not allow_reversal:
+                        signal["confidence"] = 0
+                        logging.info(
+                            "[DIR_GUARD] Opposite to strong trend blocked strategy=%s dir=%s trend_dir=%s adx_max=%.1f rsi=%s mom=%.4f",
+                            signal.get("strategy"),
+                            "long" if is_buy else "short",
+                            strong_trend_dir,
+                            max(adx_h1, adx_h4),
+                            rsi_val_num,
+                            momentum,
+                        )
+
                 # ImpulseRetrace: strong downtrend -> block longs unless reversal
                 if (
                     signal.get("strategy") == "ImpulseRetrace"
