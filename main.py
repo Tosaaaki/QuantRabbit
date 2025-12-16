@@ -3960,6 +3960,24 @@ async def logic_loop(
                 # Tech overlays (Ichimoku/cluster/MACD-DMI/Stoch) applied uniformly across workers
                 signal = _apply_tech_overlays(signal, fac_m1, fac_m5, fac_h1, fac_h4)
 
+                # TP extension for trend-runner modes (keep short-T P workers as-is)
+                try:
+                    tp_val = float(signal.get("tp_pips") or 0.0)
+                except Exception:
+                    tp_val = 0.0
+                if tp_val > 0 and not range_active:
+                    adx_h1_val = 0.0
+                    try:
+                        adx_h1_val = float((fac_h1 or {}).get("adx") or 0.0)
+                    except Exception:
+                        adx_h1_val = 0.0
+                    strong_trend = (adx_h4_val >= 28.0) or (adx_h1_val >= 28.0)
+                    if strong_trend and signal.get("strategy") in {"M1Scalper", "ImpulseRetrace", "ImpulseBreak", "ImpulseMomentum"}:
+                        base = tp_val
+                        # modest boost to allow 10p超えを狙う
+                        boosted = max(base * 1.2, base + 2.0)
+                        signal["tp_pips"] = round(min(boosted, 15.0), 2)
+
                 # --- Dynamic guards: shock/position/stretch and role-based blocks ---
                 action = signal.get("action")
                 if action not in {"OPEN_LONG", "OPEN_SHORT"}:
