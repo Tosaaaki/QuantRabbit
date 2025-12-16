@@ -4579,6 +4579,40 @@ async def logic_loop(
             bias_h1, bias_h4, adx_h1, adx_h4 = _dir_bias(fac_h1, fac_h4)
             high_vol_env = (atr_pips is not None and atr_pips > 2.5) or (vol_5m is not None and vol_5m > 1.5)
             low_vol_env = (atr_pips is not None and atr_pips < 1.2) and (vol_5m is not None and vol_5m < 0.7)
+            try:
+                mid_price = float(fac_m1.get("close") or fac_m1.get("mid") or 0.0)
+            except Exception:
+                mid_price = 0.0
+            # Account/margin exposure guards
+            margin_block = False
+            margin_warn = False
+            if account_snapshot:
+                try:
+                    m_avail = float(account_snapshot.margin_available or 0.0)
+                    m_used = float(account_snapshot.margin_used or 0.0)
+                    total_margin = m_avail + m_used
+                    if total_margin > 0:
+                        usage = m_used / total_margin
+                        if usage >= 0.85:
+                            margin_block = True
+                            logging.warning("[RISK] margin usage %.1f%% blocking new entries", usage * 100)
+                        elif usage >= 0.7:
+                            margin_warn = True
+                            logging.info("[RISK] margin usage elevated %.1f%% (new entries restricted)", usage * 100)
+                except Exception:
+                    margin_block = False
+
+            open_positions_snapshot = pos_manager.get_open_positions()
+            net_units = 0
+            try:
+                net_units = int(open_positions_snapshot.get("__net__", {}).get("units", 0) or 0)
+            except Exception:
+                net_units = 0
+            exposure_pct = 0.0
+            if mid_price > 0 and account_equity > 0:
+                exposure_pct = abs(net_units) * mid_price / account_equity
+            exposure_hard_cap = 0.45  # hard stop at ~45% notional/equity
+            exposure_soft_cap = 0.30  # start restricting above 30%
 
             filtered_signals: list[dict] = []
             for sig in evaluated_signals:
@@ -4590,6 +4624,9 @@ async def logic_loop(
                         sig.get("action"),
                     )
                     continue
+                if margin_block and not sig.get("reduce_only"):
+                    logging.info("[RISK] skip new entry (margin block) strategy=%s", sig.get("strategy"))
+                    continue
                 action_dir = 0
                 try:
                     if sig.get("action") == "OPEN_LONG":
@@ -4598,6 +4635,27 @@ async def logic_loop(
                         action_dir = -1
                 except Exception:
                     action_dir = 0
+                if exposure_pct >= exposure_hard_cap and not sig.get("reduce_only"):
+                    logging.info(
+                        "[RISK] skip new entry (exposure %.2f >= cap %.2f) strategy=%s",
+                        exposure_pct,
+                        exposure_hard_cap,
+                        sig.get("strategy"),
+                    )
+                    continue
+                if (
+                    not sig.get("reduce_only")
+                    and exposure_pct >= exposure_soft_cap
+                    and net_units != 0
+                    and ((net_units > 0 and action_dir > 0) or (net_units < 0 and action_dir < 0))
+                ):
+                    logging.info(
+                        "[RISK] skip same-direction entry (exposure %.2f >= soft cap %.2f) strategy=%s",
+                        exposure_pct,
+                        exposure_soft_cap,
+                        sig.get("strategy"),
+                    )
+                    continue
                 # L3 reduce-only: allow only net-reducing orders
                 if clamp_level >= 3 and action_dir != 0:
                     if net_units == 0:
