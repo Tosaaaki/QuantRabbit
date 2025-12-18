@@ -310,6 +310,9 @@ async def call_openai(payload: Dict) -> Dict:
             result = await _call_model(payload, messages, model)
             if model != MODEL:
                 logger.warning("GPT decision succeeded via fallback model %s", model)
+            # ranked_strategies はローカルで決定する方針のため空配列を保証
+            if "ranked_strategies" not in result or result.get("ranked_strategies") is None:
+                result["ranked_strategies"] = []
             return result
         except Exception as exc:
             last_exc = exc
@@ -322,8 +325,7 @@ async def call_openai(payload: Dict) -> Dict:
             )
             continue
 
-    logger.warning("All GPT models failed (%s); using heuristic decision", last_exc)
-    return heuristic_decision(payload)
+    raise GPTTimeout(str(last_exc) if last_exc else "all GPT models failed")
 
 
 async def get_decision(payload: Dict) -> Dict:
@@ -353,19 +355,24 @@ async def get_decision(payload: Dict) -> Dict:
             await asyncio.sleep(0.6 * (attempt + 1))
             continue
 
-    logger.warning("GPT decision failed after retries (%s); using heuristic fallback", last_exc)
-    fallback = heuristic_decision(payload, last_decision=_LAST_DECISION_DATA or None)
-    _LAST_DECISION_TS = dt.datetime.utcnow()
-    _LAST_DECISION_DATA = {k: v for k, v in fallback.items() if k != "reason"}
-    return fallback
+    if _LAST_DECISION_DATA:
+        logger.warning(
+            "GPT decision failed after retries (%s); reusing previous decision", last_exc
+        )
+        return dict(_LAST_DECISION_DATA, reason="reuse_previous")
+
+    raise GPTTimeout(str(last_exc) if last_exc else "all GPT models failed")
 
 
 def fallback_decision(payload: Dict, last_decision: Dict | None = None):
     """
     GPT が利用できない場合の明示的フォールバック。
+    ここでは最後に成功した GPT 決定を再利用し、無ければ例外を投げる。
     """
-    logger.warning("fallback_decision called explicitly; using heuristic decision")
-    return heuristic_decision(payload, last_decision=last_decision)
+    if last_decision:
+        logger.warning("fallback_decision using last_decision")
+        return dict(last_decision, reason="reuse_previous")
+    raise RuntimeError("fallback_decision unavailable: no previous decision")
 
 
 # ---------- CLI self‑test ----------

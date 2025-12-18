@@ -203,6 +203,11 @@ def heuristic_decision(
     if atr_pips < 4.0 and "M1Scalper" in ranked:
         ranked.remove("M1Scalper")
 
+    # 偏り防止: 最低限のスキャル/レンジ系を常に候補に含める
+    _enqueue_unique(ranked, ("M1Scalper", "BB_RSI"))
+    # macro 側のデフォルトも1本は入れておく
+    _enqueue_unique(ranked, ("TrendMA",))
+
     # 前回決定の上位戦略を尊重し、再追加
     if last_decision:
         previous = last_decision.get("ranked_strategies") or []
