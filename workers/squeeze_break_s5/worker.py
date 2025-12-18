@@ -339,3 +339,10 @@ async def squeeze_break_s5_worker() -> None:
             pos_manager.close()
         except Exception:  # noqa: BLE001
             LOG.exception("%s failed to close PositionManager", config.LOG_PREFIX)
+
+
+if __name__ == "__main__":  # pragma: no cover - service entrypoint
+    try:
+        asyncio.run(squeeze_break_s5_worker())
+    except KeyboardInterrupt:
+        pass

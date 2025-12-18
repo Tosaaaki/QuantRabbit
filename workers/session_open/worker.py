@@ -3,6 +3,8 @@ from typing import Any, Dict, List, Optional, Protocol, Tuple
 from dataclasses import dataclass
 import time, math, datetime as dt
 from zoneinfo import ZoneInfo
+import asyncio
+import logging
 
 # ---- minimal protocols ----
 class DataFeed(Protocol):
@@ -166,3 +168,21 @@ class SessionOpenWorker:
             "symbol": sym, "side": side, "type": "market", "size": size,
             "meta": {"worker_id": self.c.get("id", "session_open_breakout"), "intent": intent}
         }
+
+
+async def _idle_loop() -> None:
+    """
+    Placeholder loop to keep the service alive when no datafeed/broker wiring exists.
+    SessionOpenWorker expects external feed/broker; until接続するまでは idle で待機させる。
+    """
+    log = logging.getLogger("session_open")
+    while True:
+        log.info("[SESSION_OPEN] inactive (no datafeed/broker configured); sleeping 300s")
+        await asyncio.sleep(300)
+
+
+if __name__ == "__main__":  # pragma: no cover - service entrypoint
+    try:
+        asyncio.run(_idle_loop())
+    except KeyboardInterrupt:
+        pass
