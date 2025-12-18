@@ -16,7 +16,7 @@ import os
 import random
 import re
 import time
-from typing import Dict, List
+from typing import Dict, List, Optional
 
 from openai import AsyncOpenAI
 
@@ -322,7 +322,8 @@ async def call_openai(payload: Dict) -> Dict:
             )
             continue
 
-    raise GPTTimeout(str(last_exc) if last_exc else "all GPT models failed")
+    logger.warning("All GPT models failed (%s); using heuristic decision", last_exc)
+    return heuristic_decision(payload)
 
 
 async def get_decision(payload: Dict) -> Dict:
@@ -352,14 +353,19 @@ async def get_decision(payload: Dict) -> Dict:
             await asyncio.sleep(0.6 * (attempt + 1))
             continue
 
-    raise GPTTimeout(str(last_exc) if last_exc else "all GPT models failed")
+    logger.warning("GPT decision failed after retries (%s); using heuristic fallback", last_exc)
+    fallback = heuristic_decision(payload, last_decision=_LAST_DECISION_DATA or None)
+    _LAST_DECISION_TS = dt.datetime.utcnow()
+    _LAST_DECISION_DATA = {k: v for k, v in fallback.items() if k != "reason"}
+    return fallback
 
 
-def fallback_decision(*args, **kwargs):
+def fallback_decision(payload: Dict, last_decision: Dict | None = None):
     """
-    フォールバックは無効化する。呼ばれた場合は例外を投げる。
+    GPT が利用できない場合の明示的フォールバック。
     """
-    raise RuntimeError("fallback_decision is disabled; GPT response is required")
+    logger.warning("fallback_decision called explicitly; using heuristic decision")
+    return heuristic_decision(payload, last_decision=last_decision)
 
 
 # ---------- CLI self‑test ----------

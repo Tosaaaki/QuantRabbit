@@ -4048,9 +4048,16 @@ class ExitManager:
             return None
 
         # MFEロック: 一定の含み益が乗ったら部分利確＋建値近辺にロック相当の動き（部分クローズでリスク縮小）
-        lock_gate = max(2.0, (atr_pips or 2.0) * 0.9)
-        if max_mfe is not None and max_mfe >= lock_gate and profit_pips is not None and profit_pips >= 0.4:
-            cut_units = -abs(max(units // 2, 1000)) if side == "long" else abs(max(units // 2, 1000))
+        lock_gate = max(3.0, (atr_pips or 2.0) * 1.1)
+        # もっと伸びる余地を残す: 現在益が1.2p以上、MFEがlock_gate+0.5p以上で部分利確
+        if (
+            max_mfe is not None
+            and max_mfe >= lock_gate + 0.5
+            and profit_pips is not None
+            and profit_pips >= 1.2
+        ):
+            cut_base = max(int(units * 0.35), 1000)
+            cut_units = -abs(cut_base) if side == "long" else abs(cut_base)
             return ExitDecision(
                 pocket=pocket,
                 units=cut_units,
@@ -4059,9 +4066,9 @@ class ExitManager:
                 allow_reentry=False,
             )
 
-        mfe_gate = max(2.5, (atr_pips or 1.8) * 0.8)
-        drawdown_gate = max(1.5, (atr_pips or 1.8) * 0.6)
-        loss_gate = max(2.0, (atr_pips or 1.8) * 0.8)
+        mfe_gate = max(3.0, (atr_pips or 1.8) * 1.0)
+        drawdown_gate = max(2.0, (atr_pips or 1.8) * 0.75)
+        loss_gate = max(2.5, (atr_pips or 1.8) * 1.0)
 
         # 価格が直近高安を明確に割ったか（節目ブレイク）
         pivot_break = False

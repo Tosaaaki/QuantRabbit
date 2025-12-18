@@ -4820,12 +4820,13 @@ async def logic_loop(
                     total_margin = m_avail + m_used
                     if total_margin > 0:
                         margin_usage = m_used / total_margin
-                        if margin_usage >= 0.85:
+                        # allow利用目標: 85% まで。ブロックは 90% 以上で発動し、82% 超で警告。
+                        if margin_usage >= 0.90:
                             margin_block = True
-                            logging.warning("[RISK] margin usage %.1f%% blocking new entries", margin_usage * 100)
-                        elif margin_usage >= 0.7:
+                            logging.warning("[RISK] margin usage %.1f%% blocking new entries (>=90%%)", margin_usage * 100)
+                        elif margin_usage >= 0.82:
                             margin_warn = True
-                            logging.info("[RISK] margin usage elevated %.1f%% (new entries restricted)", margin_usage * 100)
+                            logging.info("[RISK] margin usage elevated %.1f%% (monitoring, no block)", margin_usage * 100)
                 except Exception:
                     margin_block = False
 
