@@ -203,10 +203,12 @@ def update_dd_context(
                 scalp_cap *= 0.8
                 scalp_fast_cap *= 0.8
 
-    macro_cap = min(max(macro_cap, 0.0), 1.0)
-    micro_cap = min(max(micro_cap, 0.0), 1.0)
-    scalp_cap = min(max(scalp_cap, 0.0), 1.0)
-    scalp_fast_cap = min(max(scalp_fast_cap, 0.0), 1.0)
+    # enforce lower bound to avoid over-shrinking when metrics are soft
+    MIN_CAP = 0.8
+    macro_cap = min(max(macro_cap, MIN_CAP), 1.0)
+    micro_cap = min(max(micro_cap, MIN_CAP), 1.0)
+    scalp_cap = min(max(scalp_cap, MIN_CAP), 1.0)
+    scalp_fast_cap = min(max(scalp_fast_cap, MIN_CAP), 1.0)
 
     macro_ratio = min(max(weight_macro, 0.0), macro_cap)
     scalp_ratio = 0.0
