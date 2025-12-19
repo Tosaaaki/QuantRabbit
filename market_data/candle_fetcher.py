@@ -53,19 +53,21 @@ class CandleAggregator:
             self.subscribers[tf].append(coro)
 
     def _get_key(self, tf: TimeFrame, ts: datetime.datetime) -> str:
-        if tf == "M1":
+        # normalize timeframe to handle stray whitespace / case
+        tf_norm = str(tf).strip().upper()
+        if tf_norm == "M1":
             return ts.strftime("%Y-%m-%dT%H:%M")
-        if tf == "M5":
+        if tf_norm == "M5":
             minute = (ts.minute // 5) * 5
             ts5 = ts.replace(minute=minute, second=0, microsecond=0)
             return ts5.strftime("%Y-%m-%dT%H:%M")
-        if tf == "H1":
+        if tf_norm == "H1":
             return ts.strftime("%Y-%m-%dT%H:00")
-        if tf == "H4":
+        if tf_norm == "H4":
             # 4時間足の区切り (0, 4, 8, 12, 16, 20時 UTC)
             hour = (ts.hour // 4) * 4
             return ts.strftime(f"%Y-%m-%dT{hour:02d}:00")
-        if tf == "D1":
+        if tf_norm == "D1":
             return ts.strftime("%Y-%m-%dT00:00")
         raise ValueError(f"Unsupported timeframe: {tf}")
 
@@ -134,8 +136,10 @@ async def start_candle_stream(
             # best-effort; do not break the streaming loop
             print(f"[tick_cache] failed to record tick: {exc}")
         try:
-            bids = tick.bids or ((tick.bid, float(tick.liquidity or 0)),)
-            asks = tick.asks or ((tick.ask, float(tick.liquidity or 0)),)
+            bids_raw = getattr(tick, "bids", None)
+            asks_raw = getattr(tick, "asks", None)
+            bids = bids_raw or ((float(tick.bid), float(getattr(tick, "liquidity", 0) or 0)),)
+            asks = asks_raw or ((float(tick.ask), float(getattr(tick, "liquidity", 0) or 0)),)
             now_utc = datetime.datetime.utcnow().replace(tzinfo=datetime.timezone.utc)
             latency_ms = abs((now_utc - tick.time).total_seconds()) * 1000.0
             orderbook_state.update_snapshot(

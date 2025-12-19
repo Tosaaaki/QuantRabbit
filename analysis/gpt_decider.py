@@ -47,15 +47,11 @@ def _get_openai_client() -> AsyncOpenAI:
     return _CLIENT
 
 
+# GPT の出力は「モード/バイアス+フォーカス/ウェイト」が最小限。
+# ranked_strategies はローカルで決めるため必須ではない。
 _REQUIRED_KEYS = (
-    "mode",
-    "risk_bias",
-    "liquidity_bias",
-    "range_confidence",
-    "pattern_hint",
     "focus_tag",
     "weight_macro",
-    "weight_scalp",
 )
 
 _FOCUS_TAGS = {"micro", "macro", "hybrid", "event"}
@@ -159,6 +155,7 @@ async def _call_model(payload: Dict, messages: List[Dict], model: str) -> Dict:
         "gpt_decider",
         extra_tags={"tier": tier, "model": model},
     ) as tracker:
+        content: str = ""
         # simple rate limit to avoid 429
         async with _CALL_LOCK:
             global _LAST_CALL_TS
@@ -220,17 +217,17 @@ async def _call_model(payload: Dict, messages: List[Dict], model: str) -> Dict:
 
                     mode = str(data.get("mode") or "").strip().upper()
                     if mode not in _ALLOWED_MODES:
-                        raise ValueError(f"invalid mode {mode}")
+                        mode = "DEFENSIVE"
                     data["mode"] = mode
 
                     risk_bias = str(data.get("risk_bias") or "").strip().lower()
                     if risk_bias not in _ALLOWED_RISK:
-                        raise ValueError(f"invalid risk_bias {risk_bias}")
+                        risk_bias = "neutral"
                     data["risk_bias"] = risk_bias
 
                     liquidity_bias = str(data.get("liquidity_bias") or "").strip().lower()
                     if liquidity_bias not in _ALLOWED_LIQ:
-                        raise ValueError(f"invalid liquidity_bias {liquidity_bias}")
+                        liquidity_bias = "normal"
                     data["liquidity_bias"] = liquidity_bias
 
                     try:
@@ -280,6 +277,13 @@ async def _call_model(payload: Dict, messages: List[Dict], model: str) -> Dict:
                     return data
                 except Exception as exc:
                     last_error = exc
+                    if isinstance(exc, ValueError):
+                        logger.warning(
+                            "GPT validation failed (model=%s): %s content=%s",
+                            model,
+                            exc,
+                            (content or "")[:500],
+                        )
                     if not _is_retryable(exc):
                         raise GPTTimeout(str(exc)) from exc
                     # unsupported token kwargs: try next token kwarg without counting attempt

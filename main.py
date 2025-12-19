@@ -29,11 +29,12 @@ def _strategy_conf_multiplier(gpt: Dict[str, object], strategy: str) -> float:
     hints = gpt.get("pattern_hint") or []
     if isinstance(hints, str):
         hints = [hints]
-    # Mode-based
+
+    # Mode-based coefficients
     if mode == "DEFENSIVE":
-        base *= 0.85
+        base *= 0.88
     elif mode == "TRANSITION":
-        base *= 0.9
+        base *= 0.94
     elif mode == "TREND_FOLLOW":
         if strategy in TREND_STRATEGIES:
             base *= 1.08
@@ -44,34 +45,45 @@ def _strategy_conf_multiplier(gpt: Dict[str, object], strategy: str) -> float:
             base *= 1.1
         if strategy in TREND_STRATEGIES:
             base *= 0.9
+
     # Risk bias
     if risk == "high":
         base *= 1.08
     elif risk == "low":
         base *= 0.9
+
     # Liquidity bias
     if liq == "tight":
         base *= 0.92
     elif liq == "loose":
-        base *= 1.03
-    # Range confidence tilt
-    if rc >= 0.6 and strategy in RANGE_STRATEGIES:
-        base *= 1.06
-    if rc <= 0.3 and strategy in TREND_STRATEGIES:
         base *= 1.04
+
+    # Range confidence tilt
+    if rc >= 0.65:
+        if strategy in RANGE_STRATEGIES:
+            base *= 1.08
+        if strategy in TREND_STRATEGIES:
+            base *= 0.95
+    elif rc <= 0.35:
+        if strategy in TREND_STRATEGIES:
+            base *= 1.05
+        if strategy in RANGE_STRATEGIES:
+            base *= 0.95
+
     # Pattern hints
     lower_hints = [h.strip().lower() for h in hints if isinstance(h, str)]
     if any("long_wick" in h or "hammer" in h for h in lower_hints):
         if strategy in RANGE_STRATEGIES:
-            base *= 1.04
+            base *= 1.05
     if any("bull_flag" in h or "impulse" in h for h in lower_hints):
         if strategy in MOMENTUM_STRATEGIES:
             base *= 1.05
     if any("double_top" in h or "engulfing_bear" in h for h in lower_hints):
         if strategy in TREND_STRATEGIES:
-            base *= 0.96
+            base *= 0.95
+
     # Clamp
-    return max(0.75, min(1.2, base))
+    return max(0.7, min(1.3, base))
 
 
 def _env_bool(name: str, default: bool = False) -> bool:

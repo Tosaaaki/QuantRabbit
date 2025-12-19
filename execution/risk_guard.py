@@ -32,12 +32,12 @@ POCKET_DD_LIMITS = {
 }  # equity 比 (%)
 GLOBAL_DD_LIMIT = 0.20  # 全体ドローダウン 20%
 # Pocketごとの口座配分上限（DD母数の推定に使用）
-# Macro は 30% に制限（以前は 80%）。
+# 一時的に上限を緩和（0.85）してエントリー通過を優先する。
 POCKET_MAX_RATIOS = {
-    "macro": 0.3,
-    "micro": 0.6,
-    "scalp": 0.25,
-    "scalp_fast": 0.1,
+    "macro": 0.85,
+    "micro": 0.85,
+    "scalp": 0.85,
+    "scalp_fast": 0.85,
 }
 _DEFAULT_BASE_EQUITY = {
     "macro": 8000.0,

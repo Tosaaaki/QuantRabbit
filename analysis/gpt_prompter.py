@@ -70,27 +70,21 @@ def build_messages(payload: Dict) -> List[Dict]:
         }
     )
 
-    user_content = (
-        "Latest USD/JPY snapshot JSON:\n"
-        + _compact_json(compact_payload or {})
-    )
+    user_content = "Latest USD/JPY snapshot JSON:\n" + _compact_json(compact_payload or {})
 
     system_content = (
-        "You are an FX trading assistant for USD/JPY. Respond ONLY with a single JSON "
-        "object (no markdown, no text) containing keys:\n"
-        "- mode: one of ['DEFENSIVE','TREND_FOLLOW','RANGE_SCALP','TRANSITION']\n"
-        "- risk_bias: one of ['high','neutral','low']\n"
-        "- liquidity_bias: one of ['tight','normal','loose']\n"
-        "- range_confidence: float 0.0–1.0 (higher = more range-like)\n"
-        "- pattern_hint: array of zero or more short tags for recent candle patterns "
-        "(examples: 'long_wick_down','bull_flag','double_top','inside_bar','engulfing_bear')\n"
-        "- focus_tag: one of ['micro','macro','hybrid']\n"
-        "- weight_macro: float 0.0–1.0\n"
-        "- weight_scalp: float 0.0–1.0 (weight_macro + weight_scalp <= 1.0)\n"
-        "Do NOT include any other keys. Output format: compact JSON, e.g. "
-        "{\"mode\":\"DEFENSIVE\",\"risk_bias\":\"low\",\"liquidity_bias\":\"tight\","
-        "\"range_confidence\":0.7,\"pattern_hint\":[\"inside_bar\"],"
-        "\"focus_tag\":\"hybrid\",\"weight_macro\":0.4,\"weight_scalp\":0.25}"
+        "You are an FX trading assistant for USD/JPY. Respond ONLY with one JSON object "
+        "containing exactly these fields (no markdown/text): "
+        "{\"mode\":\"DEFENSIVE|TREND_FOLLOW|RANGE_SCALP|TRANSITION\","
+        "\"risk_bias\":\"high|neutral|low\","
+        "\"liquidity_bias\":\"tight|normal|loose\","
+        "\"range_confidence\":<0.0-1.0>,"
+        "\"pattern_hint\":[\"short tags\"],"
+        "\"focus_tag\":\"micro|macro|hybrid\","
+        "\"weight_macro\":<0.0-1.0>,"
+        "\"weight_scalp\":<0.0-1.0>} "
+        "Constraints: weight_macro + weight_scalp <= 1.0. "
+        "Keep pattern_hint short (<=5 items, <=24 chars each). Output compact JSON only."
     )
 
     messages = [
