@@ -4886,7 +4886,13 @@ async def logic_loop(
                         action_dir = -1
                 except Exception:
                     action_dir = 0
-                if exposure_pct >= exposure_hard_cap and not sig.get("reduce_only"):
+                # margin_usage が十分余裕 (<MAX_MARGIN_USAGE) の場合は露出capによるブロックを緩和
+                def _can_apply_exposure_cap() -> bool:
+                    if margin_usage is None:
+                        return True
+                    return margin_usage >= MAX_MARGIN_USAGE
+
+                if exposure_pct >= exposure_hard_cap and not sig.get("reduce_only") and _can_apply_exposure_cap():
                     logging.info(
                         "[RISK] skip new entry (exposure %.2f >= cap %.2f) strategy=%s",
                         exposure_pct,
@@ -4899,6 +4905,7 @@ async def logic_loop(
                     and exposure_pct >= exposure_soft_cap
                     and net_units != 0
                     and ((net_units > 0 and action_dir > 0) or (net_units < 0 and action_dir < 0))
+                    and _can_apply_exposure_cap()
                 ):
                     logging.info(
                         "[RISK] skip same-direction entry (exposure %.2f >= soft cap %.2f) strategy=%s",
