@@ -4843,11 +4843,26 @@ async def logic_loop(
                     margin_block = False
 
             open_positions_snapshot = pos_manager.get_open_positions()
+            # bot-only net units (manualポケットは除外)
             net_units = 0
             try:
                 net_units = int(open_positions_snapshot.get("__net__", {}).get("units", 0) or 0)
             except Exception:
                 net_units = 0
+            try:
+                bot_units = 0
+                for pk, info in open_positions_snapshot.items():
+                    if pk in {"__net__", "__meta__"}:
+                        continue
+                    if str(pk).lower().startswith("manual"):
+                        continue
+                    try:
+                        bot_units += int(info.get("units", 0) or 0)
+                    except Exception:
+                        continue
+                net_units = bot_units
+            except Exception:
+                pass
             exposure_pct = 0.0
             if mid_price > 0 and account_equity > 0:
                 exposure_pct = abs(net_units) * mid_price / account_equity
