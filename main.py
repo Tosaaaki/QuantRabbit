@@ -4851,19 +4851,19 @@ async def logic_loop(
             exposure_pct = 0.0
             if mid_price > 0 and account_equity > 0:
                 exposure_pct = abs(net_units) * mid_price / account_equity
-            exposure_hard_cap = 0.45  # hard stop at ~45% notional/equity
-            exposure_soft_cap = 0.30  # base: restrict above 30%
-            # 動的な緩和: 低ボラ・低使用率・クランプ0のときだけ少し緩める
+            exposure_hard_cap = 0.92  # allow up to ~92% notional/equity
+            exposure_soft_cap = 0.87  # base soft cap
+            # 動的な調整（ただし下限0.87を維持）
             try:
                 if clamp_level == 0 and (margin_usage is None or margin_usage < 0.65):
                     if (atr_pips or 0.0) < 1.8 and (vol_5m or 0.0) < 0.8:
-                        exposure_soft_cap = 0.38
+                        exposure_soft_cap = max(0.87, exposure_soft_cap)
                     elif (atr_pips or 0.0) < 2.2 and (vol_5m or 0.0) < 1.2:
-                        exposure_soft_cap = 0.33
+                        exposure_soft_cap = max(0.87, exposure_soft_cap)
                 if clamp_level >= 2 or (margin_usage is not None and margin_usage >= 0.8):
-                    exposure_soft_cap = 0.30
+                    exposure_soft_cap = max(0.87, exposure_soft_cap)
             except Exception:
-                exposure_soft_cap = 0.30
+                exposure_soft_cap = 0.87
 
             filtered_signals: list[dict] = []
             for sig in evaluated_signals:
