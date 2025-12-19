@@ -6252,6 +6252,38 @@ async def logic_loop(
                         "[SKIP] Stage lot %.3f produced 0 units. Skipping.", staged_lot
                     )
                     continue
+                # 同方向でエクスポージャ上限を超える場合はユニットを自動調整（手動ポジは無視）
+                if action_dir != 0 and net_units != 0 and account_equity > 0 and mid_price > 0:
+                    same_dir = (net_units > 0 and units > 0) or (net_units < 0 and units < 0)
+                    if same_dir:
+                        current_notional = abs(net_units) * mid_price
+                        cap_notional = exposure_hard_cap * account_equity
+                        remain_notional = cap_notional - current_notional
+                        if remain_notional <= 0:
+                            logging.info(
+                                "[RISK] auto-adjust skip (no remaining notional) net=%.0f cap=%.2f",
+                                net_units,
+                                exposure_hard_cap,
+                            )
+                            continue
+                        allowed_units = int(remain_notional / mid_price)
+                        if allowed_units < abs(units):
+                            adj_units = max(0, allowed_units)
+                            if adj_units == 0:
+                                logging.info(
+                                    "[RISK] auto-adjust produced 0 units (net=%.0f cap=%.2f)",
+                                    net_units,
+                                    exposure_hard_cap,
+                                )
+                                continue
+                            logging.info(
+                                "[RISK] auto-adjust units %d -> %d to fit cap %.2f (net=%.0f)",
+                                units,
+                                adj_units if units > 0 else -adj_units,
+                                exposure_hard_cap,
+                                net_units,
+                            )
+                            units = adj_units if units > 0 else -adj_units
                 if reduce_only:
                     net_dir = 0
                     if net_units > 0:
