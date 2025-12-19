@@ -68,9 +68,10 @@ _MIN_LOT_BY_POCKET = {
     # scalp は最小 0.05 lot (=5k units) に緩和（環境変数で上書き可）
     "scalp": max(0.0, float(os.getenv("RISK_MIN_LOT_SCALP", "0.05"))),
 }
+# 手動ポジはエクスポージャ計算から除外するのをデフォルトにする。
 _EXPOSURE_IGNORE_POCKETS = {
     token.strip().lower()
-    for token in os.getenv("EXPOSURE_IGNORE_POCKETS", "unknown").split(",")
+    for token in os.getenv("EXPOSURE_IGNORE_POCKETS", "unknown,manual").split(",")
     if token.strip()
 }
 
