@@ -1176,18 +1176,18 @@ RANGE_FADER_MIN_RR = 1.12
 RANGE_FADER_MAX_RR = 1.32
 RANGE_FADER_RANGE_CONF_SCALE = 0.82
 
-_HARD_BASE_RISK_CAP = 0.05  # 5.0% もう少し積極的に張れるように上限を緩和
-_HARD_MAX_RISK_CAP = 0.10   # 10% までダイナミックリスクを許容（信号強度に応じて自動調整）
-_RANGE_RISK_CAP = 0.008      # 0.8%
-_SQUEEZE_RISK_CAP = 0.006    # 0.6% 個別ドローダウン時
+_HARD_BASE_RISK_CAP = 0.15   # 最大ベースリスク 15%（証拠金を積極活用）
+_HARD_MAX_RISK_CAP = 0.35    # ダイナミックリスク上限 35%
+_RANGE_RISK_CAP = 0.02       # レンジ時も 2% まで許容
+_SQUEEZE_RISK_CAP = 0.02     # 個別ドローダウン時の下限を緩めて回転率を確保
 
 try:
     _BASE_RISK_PCT = float(get_secret("risk_pct"))
     if _BASE_RISK_PCT <= 0:
-        _BASE_RISK_PCT = 0.025
+        _BASE_RISK_PCT = 0.1
 except Exception:
-    _BASE_RISK_PCT = 0.025
-_BASE_RISK_PCT = max(_BASE_RISK_PCT, 0.025)
+    _BASE_RISK_PCT = 0.1
+_BASE_RISK_PCT = max(_BASE_RISK_PCT, 0.1)
 try:
     _MAX_RISK_PCT = float(get_secret("risk_pct_max"))
     if _MAX_RISK_PCT < _BASE_RISK_PCT:
@@ -5119,11 +5119,11 @@ async def logic_loop(
                                 adj *= 0.4
                         elif adx_max <= 18.0 and opposed_h4 and opposed_h1:
                             adj *= 0.7
-                    if abs(adj - 1.0) > 1e-3:
-                        prev_conf = int(sig.get("confidence", 0) or 0)
-                        sig["confidence"] = max(0, int(prev_conf * adj))
-                        logging.info(
-                            "[DIR_STRAT] %s conf=%d->%d h1=%d h4=%d adx_max=%.1f",
+                        if abs(adj - 1.0) > 1e-3:
+                            prev_conf = int(sig.get("confidence", 0) or 0)
+                            sig["confidence"] = max(0, int(prev_conf * adj))
+                            logging.info(
+                                "[DIR_STRAT] %s conf=%d->%d h1=%d h4=%d adx_max=%.1f",
                                 strategy_name,
                                 prev_conf,
                                 sig["confidence"],
