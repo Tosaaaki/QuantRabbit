@@ -5,6 +5,8 @@ from __future__ import annotations
 import datetime
 import logging
 import os
+import json
+from pathlib import Path
 from typing import Dict, Tuple
 
 from analytics.insight_client import InsightClient
@@ -24,9 +26,17 @@ from execution.risk_guard import can_trade, clamp_sl_tp
 from execution.stage_rules import compute_stage_lot
 from execution.stage_tracker import StageTracker
 from execution.position_manager import PositionManager
+from market_data import spread_monitor
 from workers.common.pocket_plan import PocketPlan, PocketType
 
 LOG = logging.getLogger(__name__)
+
+
+def _env_bool(key: str, default: bool) -> bool:
+    raw = os.getenv(key)
+    if raw is None:
+        return default
+    return raw.strip().lower() not in {"", "0", "false", "no", "off"}
 
 
 def _env_float(key: str, default: float) -> float:
@@ -42,6 +52,13 @@ def _env_float(key: str, default: float) -> float:
 _USD_LONG_CAP_LOT = _env_float("EXPOSURE_USD_LONG_MAX_LOT", 2.5)
 STARTUP_GRACE_SECONDS = _env_float("STARTUP_GRACE_SECONDS", 120.0)
 STOP_LOSS_DISABLED = stop_loss_disabled()
+_SCALP_SHADOW_MODE = _env_bool("SCALP_SHADOW_MODE", False)
+_SCALP_SHADOW_LOG_ONLY = _env_bool("SCALP_SHADOW_LOG_ONLY", False)
+_SCALP_SHADOW_SPREAD_PIPS = _env_float("SCALP_SHADOW_SPREAD_PIPS", 0.2)
+_SCALP_SHADOW_MEDIAN_PIPS = _env_float("SCALP_SHADOW_MEDIAN_PIPS", 0.25)
+_SCALP_SHADOW_LATENCY_MS = _env_float("SCALP_SHADOW_LATENCY_MS", 1200.0)
+_SCALP_SHADOW_MIN_ATR_PIPS = _env_float("SCALP_SHADOW_MIN_ATR_PIPS", 0.5)
+_SCALP_SHADOW_LOG_PATH = os.getenv("SCALP_SHADOW_LOG_PATH", "logs/scalp_shadow.jsonl")
 
 
 class PocketPlanExecutor:
@@ -55,6 +72,60 @@ class PocketPlanExecutor:
         self._last_insight_refresh = datetime.datetime.min
         self._stage_empty_since: Dict[Tuple[str, str], datetime.datetime] = {}
         self._started_at = datetime.datetime.utcnow()
+
+    def _write_shadow_log(self, payload: dict) -> None:
+        try:
+            path = Path(_SCALP_SHADOW_LOG_PATH)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            with path.open("a", encoding="utf-8") as f:
+                f.write(json.dumps(payload, ensure_ascii=True) + "\n")
+        except Exception:  # pragma: no cover - best-effort logging
+            LOG.debug("%s shadow log write failed", self.log_prefix, exc_info=True)
+
+    def _evaluate_scalp_shadow_gate(self, plan: PocketPlan, atr_pips: float | None) -> tuple[bool, str, dict]:
+        state = spread_monitor.get_state() or {}
+        spread_latest = state.get("spread_pips")
+        spread_p50 = state.get("baseline_p50_pips") or state.get("median_pips")
+        reasons = []
+        if plan.spread_gate_active:
+            reasons.append(plan.spread_gate_reason or "plan_spread_gate")
+        if _SCALP_SHADOW_SPREAD_PIPS > 0 and spread_latest is not None and spread_latest > _SCALP_SHADOW_SPREAD_PIPS:
+            reasons.append(f"spread>{_SCALP_SHADOW_SPREAD_PIPS:.2f}")
+        if _SCALP_SHADOW_MEDIAN_PIPS > 0 and spread_p50 is not None and spread_p50 > _SCALP_SHADOW_MEDIAN_PIPS:
+            reasons.append(f"spread_p50>{_SCALP_SHADOW_MEDIAN_PIPS:.2f}")
+
+        lat_ms = None
+        if isinstance(plan.notes, dict):
+            for key in ("decision_latency_ms", "latency_ms", "decision_latency"):
+                raw = plan.notes.get(key)
+                if raw is None:
+                    continue
+                try:
+                    lat_ms = float(raw)
+                    break
+                except Exception:
+                    continue
+        if _SCALP_SHADOW_LATENCY_MS > 0 and lat_ms is not None and lat_ms > _SCALP_SHADOW_LATENCY_MS:
+            reasons.append(f"latency>{_SCALP_SHADOW_LATENCY_MS:.0f}ms")
+
+        if atr_pips is None:
+            try:
+                atr_pips = float(plan.factors_m1.get("atr_pips") or (plan.factors_m1.get("atr") or 0.0) * 100)
+            except Exception:
+                atr_pips = None
+        if _SCALP_SHADOW_MIN_ATR_PIPS > 0 and atr_pips is not None and atr_pips < _SCALP_SHADOW_MIN_ATR_PIPS:
+            reasons.append(f"atr<{_SCALP_SHADOW_MIN_ATR_PIPS:.2f}")
+
+        passed = len(reasons) == 0
+        ctx = {
+            "spread_pips": spread_latest,
+            "spread_p50": spread_p50,
+            "latency_ms": lat_ms,
+            "atr_pips": atr_pips,
+            "range_active": bool(plan.range_active),
+            "event_soon": bool(plan.event_soon),
+        }
+        return passed, ("ok" if passed else ";".join(reasons)), ctx
 
     async def process_plan(self, plan: PocketPlan) -> None:
         now = datetime.datetime.utcnow()
@@ -610,6 +681,43 @@ class PocketPlanExecutor:
                 "sl_pips": sl_pips,
                 "tp_pips": tp_pips,
             }
+            shadow_enabled = (self.pocket == "scalp") and (_SCALP_SHADOW_MODE or _SCALP_SHADOW_LOG_ONLY)
+            if shadow_enabled:
+                shadow_pass, shadow_reason, shadow_ctx = self._evaluate_scalp_shadow_gate(plan, atr_pips)
+                shadow_payload = {
+                    "ts": datetime.datetime.utcnow().isoformat(),
+                    "mode": "shadow" if _SCALP_SHADOW_MODE else "log",
+                    "pocket": self.pocket,
+                    "strategy": signal.get("strategy") or signal.get("tag"),
+                    "action": action,
+                    "units": units,
+                    "stage": stage_idx + 1,
+                    "lot": staged_lot,
+                    "price": price,
+                    "sl_pips": sl_pips,
+                    "tp_pips": tp_pips,
+                    "range": bool(plan.range_active),
+                    "event_soon": bool(plan.event_soon),
+                    "spread_gate": bool(plan.spread_gate_active),
+                    "spread_reason": plan.spread_gate_reason,
+                    "shadow_pass": shadow_pass,
+                    "shadow_reason": shadow_reason,
+                }
+                shadow_payload.update(shadow_ctx)
+                self._write_shadow_log(shadow_payload)
+                if _SCALP_SHADOW_MODE:
+                    LOG.info(
+                        "%s shadow scalp entry strategy=%s pass=%s reason=%s spread=%.3f med=%.3f lat=%s atr=%.2f",
+                        self.log_prefix,
+                        signal.get("strategy"),
+                        shadow_pass,
+                        shadow_reason,
+                        shadow_ctx.get("spread_pips") or -1.0,
+                        shadow_ctx.get("spread_p50") or -1.0,
+                        shadow_ctx.get("latency_ms") or "n/a",
+                        shadow_ctx.get("atr_pips") or -1.0,
+                    )
+                    continue
             trade_id = await market_order(
                 "USD_JPY",
                 units,
