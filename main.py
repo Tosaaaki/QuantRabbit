@@ -92,6 +92,9 @@ def _env_bool(name: str, default: bool = False) -> bool:
         return default
     return str(val).strip().lower() in {"1", "true", "yes", "on"}
 
+# Aggressive mode: loosen range gates and micro entry guards to favor throughput
+AGGRESSIVE_TRADING = _env_bool("AGGRESSIVE_TRADING", default=True)
+
 # ---- Dynamic allocation (strategy score / pocket cap) loader ----
 _DYNAMIC_ALLOC_PATH = Path("config/dynamic_alloc.json")
 _DYNAMIC_ALLOC_MTIME: float | None = None
@@ -191,7 +194,7 @@ except Exception:  # pragma: no cover - optional dependency
 
         def nearest(self, *_, **__):
             return None
-from analysis.range_guard import detect_range_mode
+from analysis.range_guard import RangeContext, detect_range_mode
 from analysis.param_context import ParamContext, ParamSnapshot
 from analysis.chart_story import ChartStory, ChartStorySnapshot
 from signals.pocket_allocator import (
@@ -2373,6 +2376,8 @@ def _micro_chart_gate(
     Lightweight micro entry guard that uses recent price action instead of blindly stacking.
     Returns (allow, reason, ctx).
     """
+    if AGGRESSIVE_TRADING:
+        return True, "aggressive_override", {"mode": "aggressive"}
     pocket = signal.get("pocket")
     action = signal.get("action")
     if pocket != "micro" or action not in {"OPEN_LONG", "OPEN_SHORT"}:
@@ -3301,6 +3306,22 @@ async def logic_loop(
                 weight_macro = 0.0
             soft_range_just_activated = False
             range_ctx = detect_range_mode(fac_m1, fac_h4)
+            if AGGRESSIVE_TRADING:
+                if range_ctx.active:
+                    logging.info(
+                        "[RANGE] aggressive override: force inactive (reason=%s)",
+                        range_ctx.reason,
+                    )
+                range_ctx = RangeContext(
+                    active=False,
+                    reason="aggressive_override",
+                    score=range_ctx.score,
+                    metrics=range_ctx.metrics,
+                )
+                range_active = False
+                range_soft_active = False
+                range_entry_counter = 0
+                range_exit_counter = 0
             if range_ctx.active != raw_range_active or range_ctx.reason != raw_range_reason:
                 logging.info(
                     "[RANGE] detected active=%s reason=%s score=%.2f metrics=%s",
@@ -3374,6 +3395,8 @@ async def logic_loop(
                 and volatility_ratio >= SOFT_RANGE_VOL_MIN
                 and effective_adx_m1 <= (adx_threshold + SOFT_RANGE_ADX_BUFFER)
             )
+            if AGGRESSIVE_TRADING:
+                soft_range_candidate = False
             if soft_range_candidate != soft_range_prev and not raw_range_active:
                 logging.info(
                     "[RANGE] soft=%s score=%.2f eff_adx=%.2f comp=%.2f vol=%.2f",

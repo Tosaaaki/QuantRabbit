@@ -1,6 +1,9 @@
 from __future__ import annotations
 from typing import Dict, List, Optional, Tuple
 import logging
+import sqlite3
+from datetime import datetime, timezone
+from pathlib import Path
 
 from analysis.ma_projection import MACrossProjection, compute_ma_projection
 
@@ -31,6 +34,7 @@ class MovingAverageCross:
     _RANGE_ATR_MAX = 8.0      # 高ATRでも抑制しすぎない
     _MACRO_TREND_ADX_OVERRIDE = 24.0
     _MACRO_TREND_GAP_PIPS = 1.2
+    _OPPOSITE_FLIP_COOLDOWN_SEC = 1800  # 30min flip guard for macro direction changes
 
     @staticmethod
     def _swing_levels(candles: List[Dict], close_val: Optional[float]) -> Tuple[Optional[float], Optional[float]]:
@@ -98,6 +102,69 @@ class MovingAverageCross:
     def _log_skip(reason: str, **kwargs) -> None:
         extras = " ".join(f"{k}={v}" for k, v in kwargs.items() if v is not None)
         logging.info("[STRAT_SKIP_DETAIL] TrendMA reason=%s %s", reason, extras)
+
+    @staticmethod
+    def _parse_dt(value: object) -> Optional[datetime]:
+        if not value:
+            return None
+        try:
+            dt = datetime.fromisoformat(str(value))
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
+            else:
+                dt = dt.astimezone(timezone.utc)
+            return dt
+        except Exception:
+            return None
+
+    @staticmethod
+    def _opposite_flip_blocked(
+        direction: str, now: Optional[datetime] = None
+    ) -> Tuple[bool, Optional[float], Optional[str]]:
+        cooldown = MovingAverageCross._OPPOSITE_FLIP_COOLDOWN_SEC
+        if cooldown <= 0 or not direction:
+            return False, None, None
+        path = Path("logs/trades.db")
+        if not path.exists():
+            return False, None, None
+        try:
+            with sqlite3.connect(path) as con:
+                con.row_factory = sqlite3.Row
+                row = con.execute(
+                    """
+                    SELECT close_time, units
+                    FROM trades
+                    WHERE state='CLOSED'
+                      AND strategy_tag LIKE 'TrendMA%'
+                      AND close_time IS NOT NULL
+                    ORDER BY close_time DESC
+                    LIMIT 1
+                    """
+                ).fetchone()
+        except Exception as exc:  # pragma: no cover - defensive
+            logging.warning("[TrendMA] flip_guard_lookup_failed err=%s", exc)
+            return False, None, None
+        if not row:
+            return False, None, None
+        try:
+            units = float(row["units"] or 0.0)
+        except Exception:
+            return False, None, None
+        if units == 0:
+            return False, None, None
+        last_dir = "long" if units > 0 else "short"
+        if last_dir == direction:
+            return False, None, last_dir
+        closed_at = MovingAverageCross._parse_dt(row["close_time"])
+        if not closed_at:
+            return False, None, last_dir
+        now_ts = now or datetime.now(timezone.utc)
+        diff_sec = (now_ts - closed_at).total_seconds()
+        if diff_sec < 0:
+            return False, None, last_dir
+        if diff_sec < cooldown:
+            return True, diff_sec / 60.0, last_dir
+        return False, diff_sec / 60.0, last_dir
 
     @staticmethod
     def check(fac: Dict) -> Dict | None:
@@ -196,6 +263,16 @@ class MovingAverageCross:
                     macro_trend_override = True
             except Exception:
                 macro_trend_override = False
+
+        if h4_dir and direction and h4_dir != direction and not macro_trend_override:
+            MovingAverageCross._log_skip(
+                "h4_conflict",
+                h4_dir=h4_dir,
+                h4_adx=round(float(h4_adx or 0.0), 2) if h4_adx is not None else None,
+                h4_gap=round(float(h4_gap_pips or 0.0), 3) if h4_gap_pips is not None else None,
+                dir=direction,
+            )
+            return None
 
         range_block = (
             isinstance(bbw, (int, float))
@@ -306,6 +383,16 @@ class MovingAverageCross:
         if direction == "short" and slope > 0.05:
             MovingAverageCross._log_skip(
                 "slope_against_short", slope=round(slope or 0.0, 5)
+            )
+            return None
+
+        blocked, since_min, last_dir = MovingAverageCross._opposite_flip_blocked(direction)
+        if blocked:
+            MovingAverageCross._log_skip(
+                "opposite_flip_cooldown",
+                last_dir=last_dir,
+                minutes=round(since_min or 0.0, 2),
+                cooldown_min=round(MovingAverageCross._OPPOSITE_FLIP_COOLDOWN_SEC / 60.0, 1),
             )
             return None
 

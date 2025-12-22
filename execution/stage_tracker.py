@@ -49,6 +49,12 @@ _CLAMP_IMPULSE_STOP = {
 }
 _CLAMP_SCALP_FACTORS = {1: 0.6, 2: 0.4, 3: 0.1}
 _CLAMP_IMPULSE_THIN_SCALE = float(os.getenv("SCALP_CLAMP_IMPULSE_THIN_SCALE", "0.2"))
+AGGRESSIVE_TRADING = os.getenv("AGGRESSIVE_TRADING", "1").strip().lower() in {
+    "1",
+    "true",
+    "yes",
+    "on",
+}
 
 
 def _utcnow() -> datetime:
@@ -201,14 +207,17 @@ class StageTracker:
         )
         self._loss_decay_minutes = int(os.getenv("LOSS_STREAK_DECAY_MINUTES", "120") or 120)
         self._cooldown_disabled = (
-            str(os.getenv("DISABLE_ALL_COOLDOWNS", "")).strip().lower() in {"1", "true", "yes"}
+            AGGRESSIVE_TRADING
+            or str(os.getenv("DISABLE_ALL_COOLDOWNS", "")).strip().lower() in {"1", "true", "yes"}
         )
         self._cluster_cooldown_disabled = (
-            str(os.getenv("DISABLE_CLUSTER_COOLDOWN", "")).strip().lower() in {"1", "true", "yes"}
+            AGGRESSIVE_TRADING
+            or str(os.getenv("DISABLE_CLUSTER_COOLDOWN", "")).strip().lower() in {"1", "true", "yes"}
         )
         # デフォルトで scalp の損失クラスタークールダウンを無効化（リクエスト対応）
         self._scalp_cluster_cooldown_disabled = (
-            str(os.getenv("DISABLE_SCALP_CLUSTER_COOLDOWN", "0")).strip().lower()
+            AGGRESSIVE_TRADING
+            or str(os.getenv("DISABLE_SCALP_CLUSTER_COOLDOWN", "0")).strip().lower()
             in {"1", "true", "yes"}
         )
         self._cluster_last_trade_id: Dict[str, int] = {}
