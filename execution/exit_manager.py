@@ -4835,6 +4835,28 @@ class ExitManager:
             return story.micro_trend
         return story.higher_trend
 
+    def _macro_trend_supports(
+        self,
+        side: str,
+        ma10: Optional[float],
+        ma20: Optional[float],
+        adx: Optional[float],
+        slope_support: bool,
+        cross_support: bool,
+    ) -> bool:
+        """
+        Lightweight trend check used to suppress premature macro exits.
+        Treats MA順行かつ十分なADX、もしくはプロジェクション傾きのサポートがあれば「支持あり」とみなす。
+        """
+        if slope_support or cross_support:
+            return True
+        if ma10 is None or ma20 is None:
+            return False
+        adx_ok = adx is None or adx >= self._macro_trend_adx
+        if side == "long":
+            return ma10 >= ma20 and adx_ok
+        return ma10 <= ma20 and adx_ok
+
     def _macro_profit_capture(
         self,
         open_info: Dict,
