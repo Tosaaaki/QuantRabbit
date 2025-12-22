@@ -345,6 +345,14 @@ class M1Scalper:
                 out = max(3.0, min(tp, 6.0))
             return round(out, 2)
 
+        # Precision gates (configurable via fallback section)
+        atr_floor = _fallback_float("atr_floor", 1.2)
+        if scalp_tactical:
+            atr_floor = _fallback_float("atr_floor_tactical", atr_floor)
+        vol5_min = _fallback_float("vol5_min", 0.35)
+        adx_min = _fallback_float("adx_min", 12.0)
+        momentum_thresh = _fallback_float("momentum_thresh", 0.0025)
+
         # レンジ・低ボラを検知し、帯付近のみエントリーを許可
         low_vol_range = (adx < 18.0 and bbw > 0.0 and bbw < 0.0016 and atr_pips < 2.4)
         if low_vol_range:
@@ -367,19 +375,24 @@ class M1Scalper:
                 except Exception:
                     pass
             if not near_band:
-                # 過フィルタを避けるため、スキップせず軽いペナルティのみ
+                low_vol_block = _to_bool(fallback_cfg.get("low_vol_block", True), True)
+                if low_vol_block:
+                    _log(
+                        "range_block_no_edge",
+                        bbw=round(bbw, 5),
+                        adx=round(adx, 2),
+                        atr_pips=round(atr_pips, 2),
+                    )
+                    return None
+                # allow but log when explicitly configured
                 _log("range_allow_far_band", bbw=round(bbw, 5), adx=round(adx, 2), atr_pips=round(atr_pips, 2))
-                try:
-                    confidence = max(30, int(confidence * 0.7))
-                except Exception:
-                    pass
 
-        # Loosened gates to allow entries in低中ボラ
-        if atr_pips < 1.0:
+        # Tighten gates to reduce low-quality entries
+        if atr_pips < atr_floor:
             return None
-        if vol5 < 0.20:
+        if vol5 < vol5_min:
             return None
-        if adx < 10.0:
+        if adx < adx_min:
             return None
         # トレンド方向を判定（強い順行なら逆張りを避け、順張りに寄せる）
         diff_pips = momentum / _PIP
@@ -404,7 +417,7 @@ class M1Scalper:
         if atr_pips > 4.0:
             conf_scale = 0.8
 
-        if momentum < -0.0020 and rsi < 55:
+        if momentum < -momentum_thresh and rsi < 55:
             speed = abs(momentum) / max(0.0005, atr)
             rsi_gap = max(0.0, 55 - rsi) / 10
             confidence = int(
@@ -430,7 +443,7 @@ class M1Scalper:
                 "tag": f"{M1Scalper.name}-buy-dip" if action == "OPEN_LONG" else f"{M1Scalper.name}-trend-short",
             })
             return _attach_kill(signal)
-        if momentum > 0.0020 and rsi > 45:
+        if momentum > momentum_thresh and rsi > 45:
             speed = abs(momentum) / max(0.0005, atr)
             rsi_gap = max(0.0, rsi - 45) / 10
             confidence = int(
@@ -634,6 +647,10 @@ class M1Scalper:
             span_pips = max(0.2, min(4.0, span_mid / _PIP))
             dist_high_pips = max((high_mid - mid_latest) / _PIP, 0.05)
             dist_low_pips = max((mid_latest - low_mid) / _PIP, 0.05)
+            min_span_pips = _fallback_float("min_span_pips", 0.8)
+            if span_pips < min_span_pips:
+                _log("skip_fallback_span", span=round(span_pips, 2), min_span=min_span_pips)
+                return None
 
             base_tp_floor = _fallback_float("tp_floor", 1.0)
             tp_cap = _fallback_float("tp_cap", 1.9)
@@ -676,6 +693,10 @@ class M1Scalper:
                     entry_price = cap_price
 
             mom_norm = abs(momentum) / max(0.0001, atr or 0.0001)
+            min_mom_norm = _fallback_float("min_mom_norm", 0.7)
+            if mom_norm < min_mom_norm and abs(momentum) < momentum_thresh:
+                _log("skip_fallback_momentum", mom=round(momentum, 5), mom_norm=round(mom_norm, 2))
+                return None
             rsi_bias = abs(rsi - 50.0) / 25.0
             conf_base = 58.0 + (mom_norm * 18.0) + (rsi_bias * 14.0)
             if scalp_tactical:

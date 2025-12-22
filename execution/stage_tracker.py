@@ -208,7 +208,7 @@ class StageTracker:
         )
         # デフォルトで scalp の損失クラスタークールダウンを無効化（リクエスト対応）
         self._scalp_cluster_cooldown_disabled = (
-            str(os.getenv("DISABLE_SCALP_CLUSTER_COOLDOWN", "1")).strip().lower()
+            str(os.getenv("DISABLE_SCALP_CLUSTER_COOLDOWN", "0")).strip().lower()
             in {"1", "true", "yes"}
         )
         self._cluster_last_trade_id: Dict[str, int] = {}

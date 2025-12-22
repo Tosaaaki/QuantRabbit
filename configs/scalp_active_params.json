@@ -18,9 +18,14 @@
   },
   "M1Scalper": {
     "fallback": {
-      "atr_floor": 1.0,
-      "atr_floor_tactical": 0.82,
-      "momentum_thresh": 0.0013,
+      "atr_floor": 1.6,
+      "atr_floor_tactical": 1.3,
+      "momentum_thresh": 0.0026,
+      "vol5_min": 0.45,
+      "adx_min": 14.0,
+      "low_vol_block": true,
+      "min_span_pips": 0.8,
+      "min_mom_norm": 0.7,
       "sl_atr_mult": 2.8,
       "sl_atr_mult_tactical": 3.2,
       "sl_cap": 15.0,
