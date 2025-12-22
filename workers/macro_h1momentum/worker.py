@@ -18,6 +18,7 @@ from strategies.trend.h1_momentum import H1MomentumSwing
 from utils.market_hours import is_market_open
 from utils.oanda_account import get_account_snapshot
 from workers.common.quality_gate import news_block_active
+from workers.common.dyn_cap import compute_cap
 
 from . import config
 
@@ -65,59 +66,16 @@ def _confidence_scale(conf: int) -> float:
 
 
 def _compute_cap(
-    *,
-    atr_pips: float,
-    free_ratio: float,
-    range_active: bool,
-    perf_pf: Optional[float],
-    pos_bias: float,
+    *args,
+    **kwargs,
 ) -> Tuple[float, Dict[str, float]]:
-    cap = 0.7
-    reasons: Dict[str, float] = {}
-
-    # ATR
-    if atr_pips >= 3.0:
-        cap *= 1.2
-        reasons["atr_boost"] = atr_pips
-    elif atr_pips <= 1.2:
-        cap *= 0.75
-        reasons["atr_cut"] = atr_pips
-
-    # Free margin ratio
-    if free_ratio < 0.03:
-        return 0.0, {"free_ratio": free_ratio}
-    if free_ratio < 0.15:
-        cap *= 0.65
-        reasons["fmr_tight"] = free_ratio
-    elif free_ratio < 0.25:
-        cap *= 0.85
-        reasons["fmr_soft"] = free_ratio
-    else:
-        cap *= 1.05
-        reasons["fmr_ok"] = free_ratio
-
-    # Perf
-    if perf_pf is not None:
-        if perf_pf >= 1.3:
-            cap *= 1.15
-            reasons["pf_boost"] = perf_pf
-        elif perf_pf <= 0.9:
-            cap *= 0.7
-            reasons["pf_cut"] = perf_pf
-
-    # Range guard
-    if range_active:
-        cap = min(cap, 0.4)
-        reasons["range_cap"] = 1.0
-
-    # Existing position bias (same side reduces headroom)
-    if pos_bias > 0.5:
-        cap *= 0.7
-        reasons["pos_bias_cut"] = pos_bias
-
-    cap = max(config.CAP_MIN, min(config.CAP_MAX, cap))
-    reasons["cap"] = cap
-    return cap, reasons
+    res = compute_cap(
+        cap_min=config.CAP_MIN,
+        cap_max=config.CAP_MAX,
+        *args,
+        **kwargs,
+    )
+    return res.cap, res.reasons
 
 
 async def h1momentum_worker() -> None:
