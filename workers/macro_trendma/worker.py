@@ -1,4 +1,4 @@
-"""H1Momentum dedicated macro worker with dynamic cap by market state."""
+"""TrendMA dedicated macro worker with dynamic cap."""
 
 from __future__ import annotations
 
@@ -14,7 +14,7 @@ from indicators.factor_cache import all_factors
 from execution.order_manager import market_order
 from execution.risk_guard import allowed_lot, can_trade, clamp_sl_tp
 from market_data import tick_window
-from strategies.trend.h1_momentum import H1MomentumSwing
+from strategies.trend.ma_cross import MovingAverageCross
 from utils.market_hours import is_market_open
 from utils.oanda_account import get_account_snapshot
 from workers.common.quality_gate import news_block_active
@@ -31,13 +31,12 @@ def _latest_mid(fallback: float) -> float:
     ticks = tick_window.recent_ticks(seconds=15.0, limit=1)
     if ticks:
         tick = ticks[-1]
-        for key in ("mid",):
-            val = tick.get(key)
-            if val is not None:
-                try:
-                    return float(val)
-                except Exception:
-                    pass
+        mid_val = tick.get("mid")
+        if mid_val is not None:
+            try:
+                return float(mid_val)
+            except Exception:
+                pass
         bid = tick.get("bid")
         ask = tick.get("ask")
         if bid is not None and ask is not None:
@@ -50,7 +49,7 @@ def _latest_mid(fallback: float) -> float:
 
 def _client_order_id(tag: str) -> str:
     ts_ms = int(time.time() * 1000)
-    sanitized = "".join(ch.lower() for ch in tag if ch.isalnum())[:8] or "h1m"
+    sanitized = "".join(ch.lower() for ch in tag if ch.isalnum())[:8] or "trendma"
     digest = hashlib.sha1(f"{ts_ms}-{tag}".encode("utf-8")).hexdigest()[:9]
     return f"qr-{ts_ms}-macro-{sanitized}{digest}"
 
@@ -79,11 +78,10 @@ def _compute_cap(
     return res.cap, res.reasons
 
 
-async def h1momentum_worker() -> None:
+async def trendma_worker() -> None:
     if not config.ENABLED:
-        LOG.info("%s disabled via config", config.LOG_PREFIX)
+        LOG.info("%s disabled", config.LOG_PREFIX)
         return
-
     LOG.info("%s worker start (interval=%.1fs)", config.LOG_PREFIX, config.LOOP_INTERVAL_SEC)
 
     while True:
@@ -113,7 +111,7 @@ async def h1momentum_worker() -> None:
         except Exception:
             pf = None
 
-        signal = H1MomentumSwing.check(fac_m1)
+        signal = MovingAverageCross.check(fac_m1)
         if not signal:
             continue
 
@@ -136,12 +134,10 @@ async def h1momentum_worker() -> None:
             pos_bias=pos_bias,
         )
         if cap <= 0.0:
-            LOG.info("%s cap=0 stop (atr=%.2f fmr=%.3f range=%s)", config.LOG_PREFIX, atr_pips, free_ratio, range_ctx.active)
             continue
 
-        # Entry sizing
         try:
-            price = float(fac_h1.get("close") or 0.0)
+            price = float(fac_m1.get("close") or fac_h1.get("close") or 0.0)
         except Exception:
             price = 0.0
         price = _latest_mid(price)
@@ -149,13 +145,12 @@ async def h1momentum_worker() -> None:
         sl_pips = float(signal.get("sl_pips") or 0.0)
         tp_pips = float(signal.get("tp_pips") or 0.0)
         if price <= 0.0 or sl_pips <= 0.0:
-            LOG.debug("%s skip: bad price/sl price=%.5f sl=%.2f", config.LOG_PREFIX, price, sl_pips)
             continue
 
-        # 長めのTPはロットを薄く、短めはやや厚めにする
         tp_scale = 14.0 / max(1.0, tp_pips)
         tp_scale = max(0.35, min(1.1, tp_scale))
         base_units = int(round(config.BASE_ENTRY_UNITS * tp_scale))
+
         conf_scale = _confidence_scale(int(signal.get("confidence", 50)))
         lot = allowed_lot(
             float(snap.nav or 0.0),
@@ -170,7 +165,6 @@ async def h1momentum_worker() -> None:
         units = min(units, units_risk)
         units = int(round(units * cap))
         if units < config.MIN_UNITS:
-            LOG.debug("%s skip: units too small (%s)", config.LOG_PREFIX, units)
             continue
         if side == "short":
             units = -abs(units)
@@ -181,7 +175,7 @@ async def h1momentum_worker() -> None:
             tp_pips=tp_pips,
             side="BUY" if side == "long" else "SELL",
         )
-        client_id = _client_order_id(signal.get("tag", H1MomentumSwing.name))
+        client_id = _client_order_id(signal.get("tag", MovingAverageCross.name))
 
         res = market_order(
             units=units,
@@ -189,7 +183,7 @@ async def h1momentum_worker() -> None:
             tp=tp_price,
             client_order_id=client_id,
             pocket=config.POCKET,
-            tag=signal.get("tag", H1MomentumSwing.name),
+            tag=signal.get("tag", MovingAverageCross.name),
         )
         LOG.info(
             "%s sent units=%s side=%s price=%.3f sl=%.3f tp=%.3f conf=%.0f cap=%.2f reasons=%s res=%s",
@@ -204,3 +198,4 @@ async def h1momentum_worker() -> None:
             {**cap_reason, "tp_scale": round(tp_scale, 3)},
             res.status if res else "none",
         )
+
