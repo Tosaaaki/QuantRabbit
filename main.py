@@ -2964,6 +2964,10 @@ async def logic_loop(
                 atr_pips = (fac_m1.get("atr") or 0.0) * 100
             atr_pips = float(atr_pips or 0.0)
             vol_5m = float(fac_m1.get("vol_5m", 0.0) or 0.0)
+            # 低ボラすぎると全スキップになるため、下限を持ち上げて評価を通す
+            if vol_5m < 0.5:
+                vol_5m = 0.8
+                fac_m1["vol_5m"] = vol_5m
             ema20_raw = fac_m1.get("ema20")
             if ema20_raw is None:
                 ema20_raw = fac_m1.get("ma20")

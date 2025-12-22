@@ -1100,6 +1100,11 @@ class StageTracker:
             base_cd = int(stats.get("cooldown", 0) or 0)
             if base_cd <= 0:
                 base_cd = 900
+            # エントリー頻度を確保するため、micro/scalpのクラスターCDを短縮
+            if pocket in {"micro", "scalp"}:
+                base_cd = min(base_cd, 180)
+            elif pocket == "macro":
+                base_cd = min(base_cd, 300)
 
             if pocket == "scalp" and self._scalp_cluster_cooldown_disabled:
                 self._drop_cluster_cooldowns({pocket})
