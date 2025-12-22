@@ -1096,11 +1096,16 @@ class ExitManager:
         return None
 
     def _macro_loss_cap(self, atr_pips: float, matured: bool) -> float:
+        """
+        Loosen macro early-stop to avoid cutting at 1p級。
+        未成熟の間はやや広め、成熟後は少しだけ広げる。
+        """
         atr_ref = float(atr_pips or 0.0)
         if atr_ref <= 0.0:
-            atr_ref = 8.0
-        value = atr_ref * (0.08 if matured else 0.06)
-        return max(0.8, min(1.6, value))
+            atr_ref = 1.2
+        base_factor = 1.6 if matured else 1.4
+        value = atr_ref * base_factor
+        return max(1.2, min(5.0, value))
 
     def _macro_slowdown_detected(
         self,
@@ -2240,7 +2245,11 @@ class ExitManager:
             matured_macro = self._has_mature_trade(
                 open_info, "long", now, self._macro_min_hold_minutes
             )
-            loss_cap = self._macro_loss_cap(atr_pips, matured_macro)
+            hold_sec = self._youngest_trade_age_seconds(open_info, "long", now)
+            if hold_sec is not None and hold_sec < 180.0:
+                loss_cap = None
+            else:
+                loss_cap = self._macro_loss_cap(atr_pips, matured_macro)
 
         ema_gap_pips = None
         if close_price is not None and ema20 is not None:
@@ -2989,7 +2998,11 @@ class ExitManager:
             matured_macro = self._has_mature_trade(
                 open_info, "short", now, self._macro_min_hold_minutes
             )
-            loss_cap = self._macro_loss_cap(atr_pips, matured_macro)
+            hold_sec = self._youngest_trade_age_seconds(open_info, "short", now)
+            if hold_sec is not None and hold_sec < 180.0:
+                loss_cap = None
+            else:
+                loss_cap = self._macro_loss_cap(atr_pips, matured_macro)
 
         ema_gap_pips = None
         if close_price is not None and ema20 is not None:

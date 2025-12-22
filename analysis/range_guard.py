@@ -64,7 +64,8 @@ def detect_range_mode(
 
     adx_m1 = _safe_get(fac_m1, "adx", 0.0)
     bbw_m1 = _safe_get(fac_m1, "bbw", 1.0)
-    atr_m1 = _safe_get(fac_m1, "atr_pips", 10.0)
+    # ATR が欠損した場合に 10p と誤判定しないよう、穏当なデフォルトに寄せる
+    atr_m1 = _safe_get(fac_m1, "atr_pips", 1.8)
     adx_h4 = _safe_get(fac_h4, "adx", 0.0)
     slope_h4 = abs(_safe_get(fac_h4, "ma20", 0.0) - _safe_get(fac_h4, "ma10", 0.0))
 
