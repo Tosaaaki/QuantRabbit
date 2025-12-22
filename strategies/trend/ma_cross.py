@@ -29,6 +29,8 @@ class MovingAverageCross:
     _RANGE_ADX_CUTOFF = 18.0  # 緩和して弱トレンドでも拾う
     _RANGE_BBW_CUTOFF = 0.20  # やや広げる
     _RANGE_ATR_MAX = 8.0      # 高ATRでも抑制しすぎない
+    _MACRO_TREND_ADX_OVERRIDE = 24.0
+    _MACRO_TREND_GAP_PIPS = 1.2
 
     @staticmethod
     def _swing_levels(candles: List[Dict], close_val: Optional[float]) -> Tuple[Optional[float], Optional[float]]:
@@ -168,14 +170,48 @@ class MovingAverageCross:
         except Exception:
             trend_override = False
 
-        if (
+        direction = "long" if ma10 > ma20 else "short" if ma10 < ma20 else None
+        macro_trend_override = False
+        h4_adx = None
+        h4_gap_pips = None
+        h4_dir = None
+        if direction:
+            try:
+                from indicators.factor_cache import all_factors
+                fac_h4 = all_factors().get("H4") or {}
+                h4_adx = float(fac_h4.get("adx") or 0.0)
+                ma10_h4 = float(fac_h4.get("ma10") or 0.0)
+                ma20_h4 = float(fac_h4.get("ma20") or 0.0)
+                if ma10_h4 and ma20_h4:
+                    h4_dir = "long" if ma10_h4 > ma20_h4 else "short" if ma10_h4 < ma20_h4 else None
+                    h4_gap_pips = abs(ma10_h4 - ma20_h4) / 0.01
+                if (
+                    h4_dir
+                    and h4_dir == direction
+                    and h4_adx is not None
+                    and h4_adx >= MovingAverageCross._MACRO_TREND_ADX_OVERRIDE
+                    and h4_gap_pips is not None
+                    and h4_gap_pips >= MovingAverageCross._MACRO_TREND_GAP_PIPS
+                ):
+                    macro_trend_override = True
+            except Exception:
+                macro_trend_override = False
+
+        range_block = (
             isinstance(bbw, (int, float))
             and atr_pips_val is not None
             and float(adx or 0.0) <= MovingAverageCross._RANGE_ADX_CUTOFF
             and float(bbw) <= MovingAverageCross._RANGE_BBW_CUTOFF
             and float(atr_pips_val) <= MovingAverageCross._RANGE_ATR_MAX
-            and not trend_override
-        ):
+        )
+        if range_block and macro_trend_override:
+            logging.info(
+                "[STRAT_GUARD] TrendMA bypass range_suppression h4_adx=%.2f h4_gap=%.2f h4_dir=%s",
+                float(h4_adx or 0.0),
+                float(h4_gap_pips or 0.0),
+                h4_dir,
+            )
+        elif range_block and not trend_override:
             # Defer to range-mode strategies; TrendMA stands down
             MovingAverageCross._log_skip(
                 "range_suppression",
@@ -256,7 +292,6 @@ class MovingAverageCross:
                 )
                 return None
 
-        direction = "long" if ma10 > ma20 else "short" if ma10 < ma20 else None
         if direction is None:
             MovingAverageCross._log_skip("direction_flat", ma10=ma10, ma20=ma20)
             return None
