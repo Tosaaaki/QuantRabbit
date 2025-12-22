@@ -208,6 +208,7 @@ from execution.risk_guard import (
     clamp_sl_tp,
     check_global_drawdown,
     update_dd_context,
+    MAX_MARGIN_USAGE,
 )
 from execution.order_manager import (
     market_order,
