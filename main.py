@@ -3013,6 +3013,8 @@ async def logic_loop(
             if atr_pips is None:
                 atr_pips = (fac_m1.get("atr") or 0.0) * 100
             atr_pips = float(atr_pips or 0.0)
+            fac_m1["range_5m_pips"] = sustained_range_5
+            fac_m1["range_15m_pips"] = sustained_range_15
             vol_5m = float(fac_m1.get("vol_5m", 0.0) or 0.0)
             # 低ボラすぎると全スキップになるため、下限を持ち上げて評価を通す
             if vol_5m < 0.5:
@@ -3253,6 +3255,17 @@ async def logic_loop(
                     tags={"state": "missing"},
                     ts=now,
                 )
+            logging.info(
+                "[FLOW] story macro=%s micro=%s higher=%s rng5=%.2fp rng15=%.2fp vol5=%.2f atr=%.2f mom=%.4f",
+                story_snapshot.macro_trend if story_snapshot else "n/a",
+                story_snapshot.micro_trend if story_snapshot else "n/a",
+                story_snapshot.higher_trend if story_snapshot else "n/a",
+                sustained_range_5,
+                sustained_range_15,
+                vol_5m,
+                atr_pips,
+                momentum,
+            )
 
             def _safe_regime(factors: dict | None, tf: str, last: Optional[str]) -> str:
                 try:
