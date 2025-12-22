@@ -1,0 +1,10 @@
+[Unit]
+Description=Run quant-dynamic-alloc.service every 7 minutes
+
+[Timer]
+OnBootSec=90s
+OnUnitActiveSec=7min
+Unit=quant-dynamic-alloc.service
+
+[Install]
+WantedBy=timers.target

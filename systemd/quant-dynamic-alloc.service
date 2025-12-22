@@ -1,0 +1,15 @@
+[Unit]
+Description=QuantRabbit dynamic allocation scorer
+After=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/tossaki/QuantRabbit
+ExecStart=/usr/bin/env python3 scripts/dynamic_alloc_worker.py --limit 400 --target-use 0.9
+Restart=on-failure
+RestartSec=10
+User=tossaki
+Environment=PYTHONUNBUFFERED=1
+
+[Install]
+WantedBy=default.target
