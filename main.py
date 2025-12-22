@@ -5388,8 +5388,8 @@ async def logic_loop(
                             continue
                 filtered_signals.append(sig)
             # Apply dynamic allocation (score-driven confidence trim) if available
-            alloc = load_dynamic_alloc()
-            evaluated_signals, pocket_caps, target_use = apply_dynamic_alloc(filtered_signals, alloc)
+            alloc_data = load_dynamic_alloc()
+            evaluated_signals, pocket_caps, target_use = apply_dynamic_alloc(filtered_signals, alloc_data)
 
             risk_override = _dynamic_risk_pct(
                 evaluated_signals,
@@ -5398,7 +5398,7 @@ async def logic_loop(
                 context=param_snapshot,
                 gpt_bias=gpt,
             )
-            if alloc:
+            if alloc_data:
                 try:
                     target_scale = max(0.8, min(1.4, target_use / 0.88))
                     risk_override = min(_MAX_RISK_PCT, risk_override * target_scale)
