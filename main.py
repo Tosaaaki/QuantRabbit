@@ -575,6 +575,7 @@ WORKER_SERVICES = {
     "mm_lite": "qr-mm_lite.service",
     "onepip_maker_s1": "qr-onepip_maker_s1.service",
 }
+WORKER_ALL_SERVICES = set(WORKER_SERVICES.keys())
 WORKER_AUTOCONTROL_ENABLED = os.getenv("WORKER_AUTOCONTROL", "1").strip() not in {"", "0", "false", "no"}
 # Default to a higher cap so more workers can run in parallel; 0 or negative = no cap
 WORKER_AUTOCONTROL_LIMIT = int(os.getenv("WORKER_AUTOCONTROL_LIMIT", "16") or "16")
@@ -2935,21 +2936,15 @@ async def logic_loop(
                 fac_m1["recent_ticks"] = []
                 fac_m1["recent_tick_summary"] = {}
             if WORKER_AUTOCONTROL_ENABLED:
-                if not fac_m5 or not fac_h1 or not fac_m5.get("close") or not fac_h1.get("close"):
-                    if loop_counter % 12 == 0:  # ~1分毎に控えめログ
-                        logging.info(
-                            "[WORKER_CTL] waiting for M5/H1 factors m5=%s h1=%s",
-                            bool(fac_m5 and fac_m5.get("close")),
-                            bool(fac_h1 and fac_h1.get("close")),
-                        )
-                else:
-                    try:
-                        desired_workers = _select_worker_targets(fac_m1, fac_m5, fac_h1, fac_h4, now)
-                        if desired_workers != last_worker_plan:
-                            await _reconcile_worker_services(last_worker_plan, desired_workers)
-                            last_worker_plan = desired_workers
-                    except Exception as exc:  # pragma: no cover - defensive
-                        logging.debug("[WORKER_CTL] reconcile failed: %s", exc)
+                try:
+                    desired_workers = WORKER_ALL_SERVICES
+                    if not desired_workers:
+                        logging.debug("[WORKER_CTL] no worker services configured; skip reconcile")
+                    elif desired_workers != last_worker_plan:
+                        await _reconcile_worker_services(last_worker_plan, desired_workers)
+                        last_worker_plan = desired_workers
+                except Exception as exc:  # pragma: no cover - defensive
+                    logging.debug("[WORKER_CTL] reconcile failed: %s", exc)
             if loop_counter % 5 == 0:
                 latest_epoch = None
                 if recent_tick_rows:
