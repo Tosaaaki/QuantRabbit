@@ -138,7 +138,7 @@ class OrderIntent(BaseModel):
 
 - `logs/trades.db`: `trade_id`, `pocket`, `entry_ts`, `exit_ts`, `pl_pips`, `sl_pips`, `tp_pips`, `strategy_tag`, `client_order_id`, `event_mode`。
 - `logs/metrics.db`: `ts`, `metric`, `value`, `tags`。`decision_latency`, `data_lag`, `order_success_rate` 等を保存。
-- **運用メモ**: 本番ログは VM (`fx-trader-vm`) 上 `/home/tossaki/QuantRabbit/logs/` にのみ保存。状況確認時は OS Login/IAP 経由で以下のように参照する：
+- **運用メモ**: 本番ログは VM (`fx-trader-vm`) 上 `/home/tossaki/QuantRabbit/logs/` にのみ保存。ローカルの `logs/*.db` は運用判断に使わない。状況確認時は OS Login/IAP 経由で以下のように参照する：
   ```bash
   gcloud compute ssh fx-trader-vm \
     --project=quantrabbit --zone=asia-northeast1-a \

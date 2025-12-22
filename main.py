@@ -506,6 +506,55 @@ def _safe_env_float(key: str, default: float, *, low: float, high: float) -> flo
     return max(low, min(high, value))
 
 
+SCALP_SHADOW_MODE = _env_bool("SCALP_SHADOW_MODE", False)
+SCALP_SHADOW_LOG_ONLY = _env_bool("SCALP_SHADOW_LOG_ONLY", False)
+SCALP_SHADOW_SPREAD_PIPS = _safe_env_float("SCALP_SHADOW_SPREAD_PIPS", 0.2, low=0.0, high=5.0)
+SCALP_SHADOW_MEDIAN_PIPS = _safe_env_float("SCALP_SHADOW_MEDIAN_PIPS", 0.25, low=0.0, high=5.0)
+SCALP_SHADOW_LATENCY_MS = _safe_env_float("SCALP_SHADOW_LATENCY_MS", 1200.0, low=0.0, high=20000.0)
+SCALP_SHADOW_MIN_ATR_PIPS = _safe_env_float("SCALP_SHADOW_MIN_ATR_PIPS", 0.5, low=0.0, high=20.0)
+SCALP_SHADOW_LOG_PATH = Path(os.getenv("SCALP_SHADOW_LOG_PATH", "logs/scalp_shadow.jsonl"))
+
+
+def _write_scalp_shadow_log(payload: dict) -> None:
+    try:
+        SCALP_SHADOW_LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
+        with SCALP_SHADOW_LOG_PATH.open("a", encoding="utf-8") as f:
+            f.write(json.dumps(payload, ensure_ascii=True) + "\n")
+    except Exception:
+        logging.debug("[SCALP_SHADOW] write failed", exc_info=True)
+
+
+def _scalp_shadow_gate(
+    *,
+    spread_state: Optional[dict],
+    spread_gate_reason: str,
+    atr_pips: Optional[float],
+    latency_ms: Optional[float],
+) -> tuple[bool, str, dict]:
+    state = spread_state or {}
+    spread_latest = state.get("spread_pips")
+    spread_p50 = state.get("baseline_p50_pips") or state.get("median_pips")
+    reasons: list[str] = []
+    if spread_gate_reason:
+        reasons.append(spread_gate_reason)
+    if SCALP_SHADOW_SPREAD_PIPS > 0 and spread_latest is not None and spread_latest > SCALP_SHADOW_SPREAD_PIPS:
+        reasons.append(f"spread>{SCALP_SHADOW_SPREAD_PIPS:.2f}")
+    if SCALP_SHADOW_MEDIAN_PIPS > 0 and spread_p50 is not None and spread_p50 > SCALP_SHADOW_MEDIAN_PIPS:
+        reasons.append(f"spread_p50>{SCALP_SHADOW_MEDIAN_PIPS:.2f}")
+    if SCALP_SHADOW_LATENCY_MS > 0 and latency_ms is not None and latency_ms > SCALP_SHADOW_LATENCY_MS:
+        reasons.append(f"latency>{SCALP_SHADOW_LATENCY_MS:.0f}ms")
+    if SCALP_SHADOW_MIN_ATR_PIPS > 0 and atr_pips is not None and atr_pips < SCALP_SHADOW_MIN_ATR_PIPS:
+        reasons.append(f"atr<{SCALP_SHADOW_MIN_ATR_PIPS:.2f}")
+    passed = len(reasons) == 0
+    ctx = {
+        "spread_pips": spread_latest,
+        "spread_p50": spread_p50,
+        "latency_ms": latency_ms,
+        "atr_pips": atr_pips,
+    }
+    return passed, ("ok" if passed else ";".join(reasons)), ctx
+
+
 SCALP_WEIGHT_FLOOR = _safe_env_float("SCALP_WEIGHT_FLOOR", 0.22, low=0.0, high=0.4)
 SCALP_WEIGHT_READY_FLOOR = _safe_env_float(
     "SCALP_WEIGHT_READY_FLOOR", 0.32, low=SCALP_WEIGHT_FLOOR, high=0.45
@@ -2797,6 +2846,7 @@ async def logic_loop(
     try:
         while True:
             now = datetime.datetime.utcnow()
+            loop_start_mono = time.monotonic()
             loop_counter += 1
             scalp_ready_forced = False
             logging.info("[LOOP] start loop=%d", loop_counter)
@@ -6736,6 +6786,49 @@ async def logic_loop(
                     entry_thesis.setdefault("notes_auto", {})[
                         "macro_pullback_pips"
                     ] = pullback_note
+                shadow_enabled = pocket == "scalp" and (SCALP_SHADOW_MODE or SCALP_SHADOW_LOG_ONLY)
+                if shadow_enabled:
+                    latency_ms = max(0.0, (time.monotonic() - loop_start_mono) * 1000.0)
+                    shadow_pass, shadow_reason, shadow_ctx = _scalp_shadow_gate(
+                        spread_state=spread_snapshot,
+                        spread_gate_reason=spread_gate_reason,
+                        atr_pips=atr_entry,
+                        latency_ms=latency_ms,
+                    )
+                    shadow_payload = {
+                        "ts": datetime.datetime.utcnow().isoformat(),
+                        "mode": "shadow" if SCALP_SHADOW_MODE else "log",
+                        "pocket": pocket,
+                        "strategy": signal.get("strategy"),
+                        "tag": signal.get("tag"),
+                        "action": action,
+                        "units": units,
+                        "stage": stage_idx + 1,
+                        "lot": staged_lot,
+                        "price": price,
+                        "sl_pips": sl_pips,
+                        "tp_pips": tp_pips,
+                        "range": bool(range_active),
+                        "event_soon": bool(event_soon),
+                        "spread_gate": bool(spread_gate_reason),
+                        "spread_reason": spread_gate_reason,
+                        "shadow_pass": shadow_pass,
+                        "shadow_reason": shadow_reason,
+                    }
+                    shadow_payload.update(shadow_ctx)
+                    _write_scalp_shadow_log(shadow_payload)
+                    if SCALP_SHADOW_MODE:
+                        logging.info(
+                            "[SCALP_SHADOW] skip order strategy=%s pass=%s reason=%s spread=%.3f med=%.3f lat=%.0f atr=%.2f",
+                            signal.get("strategy"),
+                            shadow_pass,
+                            shadow_reason,
+                            shadow_ctx.get("spread_pips") or -1.0,
+                            shadow_ctx.get("spread_p50") or -1.0,
+                            shadow_ctx.get("latency_ms") or -1.0,
+                            shadow_ctx.get("atr_pips") or -1.0,
+                        )
+                        continue
                 trade_id = await market_order(
                     "USD_JPY",
                     units,
