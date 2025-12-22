@@ -142,6 +142,8 @@ class ExitManager:
         self._range_macro_grace_minutes = 8.0
         # 時間由来のEXITを全面停止するトグル（デフォルトは有効にする）
         self._disable_time_based_exits = _env_flag("EXIT_DISABLE_TIME_BASED", False)
+        # Macroポケットの汎用フォールバックEXIT（±数pipsでのtake_profit/stop）を無効化する
+        self._disable_macro_fallback = _env_flag("EXIT_DISABLE_MACRO_FALLBACK", True)
         # 早期エスケープ（escape_quiet/normal）を有効にするか
         raw_escape_enabled = _env_flag("EXIT_ESCAPE_ENABLED", False)
         self._escape_enabled = False if self._disable_time_based_exits else raw_escape_enabled
@@ -2619,25 +2621,18 @@ class ExitManager:
             and not range_mode
             and profit_pips > -self._macro_loss_buffer
         ):
-            trend_supports = self._macro_trend_supports(
-                "long", ma10, ma20, adx, slope_support, cross_support
-            )
-            mature = self._has_mature_trade(
-                open_info, "long", now, self._macro_min_hold_minutes
-            )
-            if trend_supports and not mature and reason in {
-                "reverse_signal",
-                "trend_reversal",
-                "ma_cross",
-                "ma_cross_imminent",
-            }:
+            trend_supports = self._macro_trend_supports("long", ma10, ma20, adx, slope_support, cross_support)
+            mature = self._has_mature_trade(open_info, "long", now, self._macro_min_hold_minutes)
+            if trend_supports and not mature and reason in {"reverse_signal", "trend_reversal", "ma_cross", "ma_cross_imminent"}:
                 return None
-            if profit_pips >= 1.6:
-                reason = "range_take_profit"
-            elif profit_pips > 0.4:
-                return None
-            elif profit_pips <= -1.0:
-                reason = "range_stop"
+            # 汎用フォールバックを無効化: 戦略側のTP/SLに委ねる
+            if not self._disable_macro_fallback:
+                if profit_pips >= 1.6:
+                    reason = "range_take_profit"
+                elif profit_pips > 0.4:
+                    return None
+                elif profit_pips <= -1.0:
+                    reason = "range_stop"
         elif self._ema_release_ready(
             pocket=pocket,
             profit_pips=profit_pips,
@@ -3414,25 +3409,18 @@ class ExitManager:
             and not range_mode
             and profit_pips > -self._macro_loss_buffer
         ):
-            trend_supports = self._macro_trend_supports(
-                "short", ma10, ma20, adx, slope_support, cross_support
-            )
-            mature = self._has_mature_trade(
-                open_info, "short", now, self._macro_min_hold_minutes
-            )
-            if trend_supports and not mature and reason in {
-                "reverse_signal",
-                "trend_reversal",
-                "ma_cross",
-                "ma_cross_imminent",
-            }:
+            trend_supports = self._macro_trend_supports("short", ma10, ma20, adx, slope_support, cross_support)
+            mature = self._has_mature_trade(open_info, "short", now, self._macro_min_hold_minutes)
+            if trend_supports and not mature and reason in {"reverse_signal", "trend_reversal", "ma_cross", "ma_cross_imminent"}:
                 return None
-            if profit_pips >= 1.6:
-                reason = "range_take_profit"
-            elif profit_pips > 0.4:
-                return None
-            elif profit_pips <= -1.0:
-                reason = "range_stop"
+            # 汎用フォールバックを無効化: 戦略側のTP/SLに委ねる
+            if not self._disable_macro_fallback:
+                if profit_pips >= 1.6:
+                    reason = "range_take_profit"
+                elif profit_pips > 0.4:
+                    return None
+                elif profit_pips <= -1.0:
+                    reason = "range_stop"
         elif self._ema_release_ready(
             pocket=pocket,
             profit_pips=profit_pips,
