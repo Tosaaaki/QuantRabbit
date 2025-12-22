@@ -92,6 +92,64 @@ def _env_bool(name: str, default: bool = False) -> bool:
         return default
     return str(val).strip().lower() in {"1", "true", "yes", "on"}
 
+# ---- Dynamic allocation (strategy score / pocket cap) loader ----
+_DYNAMIC_ALLOC_PATH = Path("config/dynamic_alloc.json")
+_DYNAMIC_ALLOC_MTIME: float | None = None
+_DYNAMIC_ALLOC_CACHE: dict | None = None
+
+
+def load_dynamic_alloc() -> Optional[dict]:
+    """Load dynamic allocation JSON if present; cached by mtime."""
+    global _DYNAMIC_ALLOC_MTIME, _DYNAMIC_ALLOC_CACHE
+    try:
+        stat = _DYNAMIC_ALLOC_PATH.stat()
+    except FileNotFoundError:
+        _DYNAMIC_ALLOC_CACHE = None
+        _DYNAMIC_ALLOC_MTIME = None
+        return None
+    if _DYNAMIC_ALLOC_MTIME == stat.st_mtime and _DYNAMIC_ALLOC_CACHE is not None:
+        return _DYNAMIC_ALLOC_CACHE
+    try:
+        data = json.loads(_DYNAMIC_ALLOC_PATH.read_text())
+        _DYNAMIC_ALLOC_CACHE = data
+        _DYNAMIC_ALLOC_MTIME = stat.st_mtime
+        return data
+    except Exception as exc:  # pragma: no cover - defensive
+        logging.warning("[DYN_ALLOC] failed to load %s: %s", _DYNAMIC_ALLOC_PATH, exc)
+        _DYNAMIC_ALLOC_CACHE = None
+        _DYNAMIC_ALLOC_MTIME = stat.st_mtime
+        return None
+
+
+def apply_dynamic_alloc(signals: list[dict], alloc: Optional[dict]) -> tuple[list[dict], dict, float]:
+    """Adjust confidence based on dynamic scores; return (signals, pocket_caps, target_use)."""
+    if not alloc:
+        return signals, {}, 0.88
+    strat_scores = alloc.get("strategies") or {}
+    pocket_caps = alloc.get("pocket_caps") or {}
+    target_use = float(alloc.get("target_use", 0.88) or 0.88)
+    adjusted: list[dict] = []
+    for sig in signals:
+        strat = sig.get("strategy")
+        info = strat_scores.get(strat, {}) if isinstance(strat_scores, dict) else {}
+        try:
+            score = float(info.get("score", 1.0) or 1.0)
+        except Exception:
+            score = 1.0
+        conf = int(sig.get("confidence", 0) or 0)
+        new_conf = conf
+        if score < 0.15:
+            new_conf = max(0, int(conf * 0.3))
+        elif score < 0.3:
+            new_conf = max(0, int(conf * 0.6))
+        elif score > 0.8:
+            new_conf = min(100, int(conf * 1.05))
+        if new_conf != conf:
+            sig = dict(sig)
+            sig["confidence"] = new_conf
+        adjusted.append(sig)
+    return adjusted, pocket_caps, target_use
+
 from market_data.candle_fetcher import (
     Candle,
     start_candle_stream,
@@ -5334,7 +5392,9 @@ async def logic_loop(
                         if damped <= 0:
                             continue
                 filtered_signals.append(sig)
-            evaluated_signals = filtered_signals
+            # Apply dynamic allocation (score-driven confidence trim) if available
+            alloc = load_dynamic_alloc()
+            evaluated_signals, pocket_caps, target_use = apply_dynamic_alloc(filtered_signals, alloc)
 
             risk_override = _dynamic_risk_pct(
                 evaluated_signals,
@@ -5343,6 +5403,12 @@ async def logic_loop(
                 context=param_snapshot,
                 gpt_bias=gpt,
             )
+            if alloc:
+                try:
+                    target_scale = max(0.8, min(1.4, target_use / 0.88))
+                    risk_override = min(_MAX_RISK_PCT, risk_override * target_scale)
+                except Exception:
+                    pass
             if (
                 _MAX_RISK_PCT > _BASE_RISK_PCT
                 and (last_risk_pct is None or abs(risk_override - last_risk_pct) > 0.001)
