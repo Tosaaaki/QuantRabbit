@@ -187,7 +187,10 @@ async def h1momentum_worker() -> None:
             LOG.debug("%s skip: bad price/sl price=%.5f sl=%.2f", config.LOG_PREFIX, price, sl_pips)
             continue
 
-        base_units = config.BASE_ENTRY_UNITS
+        # 長めのTPはロットを薄く、短めはやや厚めにする
+        tp_scale = 14.0 / max(1.0, tp_pips)
+        tp_scale = max(0.35, min(1.1, tp_scale))
+        base_units = int(round(config.BASE_ENTRY_UNITS * tp_scale))
         conf_scale = _confidence_scale(int(signal.get("confidence", 50)))
         lot = allowed_lot(
             float(snap.nav or 0.0),
@@ -233,7 +236,6 @@ async def h1momentum_worker() -> None:
             tp_price,
             signal.get("confidence", 0),
             cap,
-            cap_reason,
+            {**cap_reason, "tp_scale": round(tp_scale, 3)},
             res.status if res else "none",
         )
-
