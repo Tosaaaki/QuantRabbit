@@ -160,11 +160,18 @@ async def donchian55_worker() -> None:
         if side == "short":
             units = -abs(units)
 
+        if side == "long":
+            sl_price = round(price - sl_pips * 0.01, 3)
+            tp_price = round(price + tp_pips * 0.01, 3) if tp_pips > 0 else None
+        else:
+            sl_price = round(price + sl_pips * 0.01, 3)
+            tp_price = round(price - tp_pips * 0.01, 3) if tp_pips > 0 else None
+
         sl_price, tp_price = clamp_sl_tp(
             price=price,
-            sl_pips=sl_pips,
-            tp_pips=tp_pips,
-            side="BUY" if side == "long" else "SELL",
+            sl=sl_price,
+            tp=tp_price,
+            is_buy=side == "long",
         )
         client_id = _client_order_id(signal.get("tag", Donchian55.name))
 
