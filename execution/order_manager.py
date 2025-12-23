@@ -884,6 +884,9 @@ def _encode_thesis_comment(entry_thesis: Optional[dict]) -> Optional[str]:
         "fast_cut_time_sec",
         "fast_cut_hard_mult",
         "kill_switch",
+        "loss_guard_pips",
+        "min_hold_sec",
+        "target_tp_pips",
     )
     compact: dict[str, object] = {}
     for key in keys:
@@ -904,6 +907,11 @@ def _encode_thesis_comment(entry_thesis: Optional[dict]) -> Optional[str]:
 def _trade_min_hold_seconds(trade: dict, pocket: str) -> float:
     thesis = _coerce_entry_thesis(trade.get("entry_thesis"))
     hold = thesis.get("min_hold_sec") or thesis.get("min_hold_seconds")
+    if hold is None:
+        try:
+            hold = float(thesis.get("min_hold_min") or thesis.get("min_hold_minutes")) * 60.0
+        except Exception:
+            hold = None
     try:
         hold_val = float(hold)
     except (TypeError, ValueError):

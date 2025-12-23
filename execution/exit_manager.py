@@ -5377,6 +5377,11 @@ class ExitManager:
     ) -> tuple[float, float]:
         loss_guard = thesis.get("loss_guard_pips") or thesis.get("loss_grace_pips")
         hold_req = thesis.get("min_hold_sec") or thesis.get("min_hold_seconds")
+        if hold_req is None:
+            try:
+                hold_req = float(thesis.get("min_hold_min") or thesis.get("min_hold_minutes")) * 60.0
+            except Exception:
+                hold_req = None
         try:
             loss_val = float(loss_guard)
         except (TypeError, ValueError):

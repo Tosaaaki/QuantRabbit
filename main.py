@@ -11,6 +11,14 @@ import os
 from pathlib import Path
 from typing import Optional, Tuple, Coroutine, Any, Dict, Sequence
 
+# Main process guard: disable entries (mainループからの新規建てを止める)
+MAIN_DISABLE_ENTRY = os.getenv("MAIN_DISABLE_ENTRY", "1").strip().lower() in {
+    "1",
+    "true",
+    "yes",
+    "on",
+}
+
 # Safe float conversion for optional numeric inputs
 def _safe_float(value: object, default: float = 0.0) -> float:
     try:
@@ -4759,6 +4767,19 @@ async def logic_loop(
                 if pocket == "__net__" or pocket not in _EXIT_MAIN_DISABLED_POCKETS
             }
 
+            if MAIN_DISABLE_ENTRY:
+                before = len(evaluated_signals)
+                evaluated_signals = [
+                    s for s in evaluated_signals if str(s.get("action")).upper() == "CLOSE"
+                ]
+                dropped = before - len(evaluated_signals)
+                if dropped > 0:
+                    logging.info("[ENTRY_DISABLED] main dropped %d open signals (entry disabled)", dropped)
+                # exit-related views should follow the filtered signals
+                signals_for_exit = [
+                    sig for sig in evaluated_signals if sig.get("pocket") not in _EXIT_MAIN_DISABLED_POCKETS
+                ]
+
             exit_decisions = []
             if open_positions_for_exit:
                 exit_decisions = exit_manager.plan_closures(
@@ -6732,21 +6753,51 @@ async def logic_loop(
                 )
                 h4_ma10 = fac_h4.get("ma10")
                 h4_ma20 = fac_h4.get("ma20")
-                if pocket == "scalp":
-                    fast_cut_pips = round(max(6.0, atr_entry * (1.0 if not range_active else 0.9)), 2)
-                    fast_cut_time = int(max(60.0, atr_entry * 15.0))
-                    fast_cut_hard = 1.6
-                elif pocket == "macro":
-                    fast_cut_pips = round(max(8.0, atr_entry * 1.5), 2)
-                    fast_cut_time = int(max(120.0, atr_entry * 18.0))
-                    fast_cut_hard = 1.8
-                else:
-                    fast_cut_pips = round(max(6.5, atr_entry * 1.1), 2)
-                    fast_cut_time = int(max(90.0, atr_entry * 16.0))
-                    fast_cut_hard = 1.6
+                # Strategy-provided metaで上書きし、無い場合はポケット別のデフォルトを使う
+                def _opt_float(val):
+                    try:
+                        return float(val)
+                    except (TypeError, ValueError):
+                        return None
+
+                strategy_tag = signal.get("tag") or signal.get("strategy")
+                strategy_profile = signal.get("profile") or signal.get("strategy_profile")
+                target_tp_hint = _opt_float(signal.get("target_tp_pips"))
+                loss_guard_hint = _opt_float(signal.get("loss_guard_pips") or signal.get("loss_grace_pips"))
+                min_hold_sec = _opt_float(signal.get("min_hold_sec") or signal.get("min_hold_seconds"))
+                if min_hold_sec is None:
+                    min_hold_min = 11.0 if pocket == "macro" else (5.0 if pocket == "micro" else 3.0)
+                    min_hold_sec = min_hold_min * 60.0
+                fast_cut_pips = _opt_float(signal.get("fast_cut_pips"))
+                fast_cut_time = None
+                try:
+                    fast_cut_time = int(float(signal.get("fast_cut_time_sec")))
+                except (TypeError, ValueError):
+                    fast_cut_time = None
+                fast_cut_hard = _opt_float(signal.get("fast_cut_hard_mult"))
+                exit_tags = signal.get("exit_tags") or signal.get("tags")
+                if fast_cut_pips is None or fast_cut_time is None or fast_cut_hard is None:
+                    if pocket == "scalp":
+                        fast_cut_pips = _opt_float(fast_cut_pips) or round(
+                            max(6.0, atr_entry * (1.0 if not range_active else 0.9)), 2
+                        )
+                        fast_cut_time = fast_cut_time or int(max(60.0, atr_entry * 15.0))
+                        fast_cut_hard = fast_cut_hard or 1.6
+                    elif pocket == "macro":
+                        fast_cut_pips = _opt_float(fast_cut_pips) or round(max(8.0, atr_entry * 1.5), 2)
+                        fast_cut_time = fast_cut_time or int(max(120.0, atr_entry * 18.0))
+                        fast_cut_hard = fast_cut_hard or 1.8
+                    else:
+                        fast_cut_pips = _opt_float(fast_cut_pips) or round(max(6.5, atr_entry * 1.1), 2)
+                        fast_cut_time = fast_cut_time or int(max(90.0, atr_entry * 16.0))
+                        fast_cut_hard = fast_cut_hard or 1.6
+                target_tp = target_tp_hint if target_tp_hint is not None else _opt_float(tp_pips)
+                loss_guard = loss_guard_hint if loss_guard_hint is not None else _opt_float(sl_pips)
                 entry_thesis = {
                     "type": thesis_type,
                     "strategy": signal.get("strategy"),
+                    "strategy_tag": strategy_tag,
+                    "profile": strategy_profile,
                     "tag": signal.get("tag"),
                     "pocket": pocket,
                     "action": action,
@@ -6754,7 +6805,13 @@ async def logic_loop(
                     "entry_ref": reference_price,
                     "limit_target": target_price,
                     "entry_ts": now.isoformat(timespec="seconds"),
-                    "min_hold_min": 11.0 if pocket == "macro" else (5.0 if pocket == "micro" else 3.0),
+                    "sl_pips": sl_pips,
+                    "tp_pips": tp_pips,
+                    "hard_stop_pips": signal.get("hard_stop_pips"),
+                    "target_tp_pips": target_tp,
+                    "loss_guard_pips": loss_guard,
+                    "min_hold_sec": min_hold_sec,
+                    "min_hold_minutes": min_hold_sec / 60.0 if min_hold_sec else None,
                     "factors": {
                         "m1": {
                             "rsi": rsi_entry,
@@ -6787,6 +6844,7 @@ async def logic_loop(
                     "fast_cut_time_sec": fast_cut_time,
                     "fast_cut_hard_mult": fast_cut_hard,
                     "kill_switch": True,
+                    "exit_tags": exit_tags,
                     "regime": {
                         "range_active": bool(range_active),
                         "macro": macro_regime,
