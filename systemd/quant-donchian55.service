@@ -1,0 +1,22 @@
+[Unit]
+Description=QuantRabbit Donchian55 Worker
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/tossaki/QuantRabbit
+Environment="PYTHONUNBUFFERED=1"
+ExecStart=/home/tossaki/QuantRabbit/.venv/bin/python - <<'PY'
+import asyncio
+import logging
+from workers.macro_donchian55 import donchian55_worker
+
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+asyncio.run(donchian55_worker())
+PY
+Restart=always
+RestartSec=5
+User=tossaki
+
+[Install]
+WantedBy=multi-user.target

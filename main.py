@@ -277,69 +277,17 @@ logging.basicConfig(
 logging.info("Application started!")
 
 STRATEGIES = {
-    "TrendMA": MovingAverageCross,
-    "H1Momentum": H1MomentumSwing,
-    "Donchian55": Donchian55,
-    "BB_RSI": BBRsi,
-    "BB_RSI_Fast": BBRsiFast,
-    "MicroVWAPRevert": MicroVWAPRevert,
-    "M1Scalper": M1Scalper,
-    "RangeFader": RangeFader,
-    "PulseBreak": PulseBreak,
-    "ImpulseRetrace": ImpulseRetraceScalp,
-    "MomentumBurst": MomentumBurstMicro,
-    "TrendMomentumMicro": TrendMomentumMicro,
-    "MicroMomentumStack": MicroMomentumStack,
-    "MicroPullbackEMA": MicroPullbackEMA,
-    "MicroRangeBreak": MicroRangeBreak,
-    "MicroLevelReactor": MicroLevelReactor,
-    "MicroVWAPBound": MicroVWAPBound,
-    "VolCompressionBreak": VolCompressionBreak,
-    "MomentumPulse": MomentumPulse,
+    # Mainループからはすべての戦略呼び出しを無効化（個別ワーカーへ移行）
 }
 
-TREND_STRATEGIES = {
-    "TrendMA",
-    "H1Momentum",
-    "Donchian55",
-    "TrendMomentumMicro",
-    "MicroMomentumStack",
-}
-RANGE_STRATEGIES = {
-    "RangeFader",
-    "BB_RSI",
-    "BB_RSI_Fast",
-    "MicroVWAPRevert",
-    "MicroVWAPBound",
-    "VolCompressionBreak",
-    "MicroPullbackEMA",
-    "MicroRangeBreak",
-}
-MOMENTUM_STRATEGIES = {
-    "PulseBreak",
-    "ImpulseRetrace",
-    "MomentumBurst",
-    "MomentumPulse",
-    "MicroMomentumStack",
-}
+TREND_STRATEGIES: set[str] = set()
+RANGE_STRATEGIES: set[str] = set()
+MOMENTUM_STRATEGIES: set[str] = set()
 
-POCKET_STRATEGY_MAP = {
-    "macro": {"TrendMA", "Donchian55", "H1Momentum"},
-    "micro": {
-        "BB_RSI",
-        "BB_RSI_Fast",
-        "MicroVWAPRevert",
-        "MomentumBurst",
-        "TrendMomentumMicro",
-        "MicroMomentumStack",
-        "MicroPullbackEMA",
-        "MicroRangeBreak",
-        "MicroLevelReactor",
-        "MicroVWAPBound",
-        "VolCompressionBreak",
-        "MomentumPulse",
-    },
-    "scalp": {"M1Scalper", "RangeFader", "PulseBreak", "ImpulseRetrace"},
+POCKET_STRATEGY_MAP: dict[str, set[str]] = {
+    "macro": set(),
+    "micro": set(),
+    "scalp": set(),
 }
 
 FOCUS_POCKETS = {

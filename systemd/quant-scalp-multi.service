@@ -1,0 +1,22 @@
+[Unit]
+Description=QuantRabbit Scalp Multi-Strategy Worker
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/tossaki/QuantRabbit
+Environment="PYTHONUNBUFFERED=1"
+ExecStart=/home/tossaki/QuantRabbit/.venv/bin/python - <<'PY'
+import asyncio
+import logging
+from workers.scalp_multistrat import scalp_multi_worker
+
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+asyncio.run(scalp_multi_worker())
+PY
+Restart=always
+RestartSec=5
+User=tossaki
+
+[Install]
+WantedBy=multi-user.target

@@ -84,6 +84,10 @@ def _guard_enabled() -> bool:
     flag = os.getenv("ENABLE_DRAWDOWN_GUARD", "0").strip().lower()
     return flag not in {"", "0", "false", "off"}
 
+
+def _trading_paused() -> bool:
+    return os.getenv("TRADING_PAUSED", "1").strip().lower() not in {"", "0", "false", "off"}
+
 _FAST_SCALP_SHARE = 0.35
 try:
     _FAST_SCALP_SHARE = max(
@@ -283,7 +287,10 @@ def check_global_drawdown() -> bool:
 
 
 def can_trade(pocket: str) -> bool:
-    # DD ガードを撤廃し、常に取引を許可
+    # グローバル停止フラグ（環境変数 TRADING_PAUSED=1 で全ポケット停止）
+    if _trading_paused():
+        return False
+    # DD ガードは撤廃したまま
     return True
 
 
