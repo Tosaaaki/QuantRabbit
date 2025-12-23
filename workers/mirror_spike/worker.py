@@ -15,6 +15,7 @@ from execution.order_manager import market_order
 from execution.position_manager import PositionManager
 from market_data import spread_monitor, tick_window
 from workers.fast_scalp.signal import SignalFeatures, extract_features
+from utils.metrics_logger import log_metric
 
 from . import config
 
@@ -67,6 +68,8 @@ def _detect_short_signal(
         return None
     if features.rsi is None or features.rsi < config.RSI_OVERBOUGHT:
         return None
+    if features.short_momentum_pips < -config.SHORT_MAX_DOWNSLOPE_PIPS:
+        return None
     peak_idx = max(range(len(mids)), key=mids.__getitem__)
     peak_price = mids[peak_idx]
     peak_epoch = epochs[peak_idx]
@@ -78,7 +81,8 @@ def _detect_short_signal(
 
     trough_price = min(mids[: peak_idx + 1]) if peak_idx > 0 else mids[0]
     spike_height_pips = (peak_price - trough_price) / config.PIP_VALUE
-    if spike_height_pips < config.SPIKE_THRESHOLD_PIPS:
+    short_spike_floor = max(config.SPIKE_THRESHOLD_PIPS, config.SHORT_MIN_SPIKE_PIPS)
+    if spike_height_pips < short_spike_floor:
         return None
 
     retrace_pips = (peak_price - features.latest_mid) / config.PIP_VALUE
@@ -123,6 +127,8 @@ def _detect_long_signal(
         return None
     if features.rsi is None or features.rsi > config.RSI_OVERSOLD:
         return None
+    if features.short_momentum_pips > config.LONG_MAX_UPSLOPE_PIPS:
+        return None
 
     trough_idx = min(range(len(mids)), key=mids.__getitem__)
     trough_price = mids[trough_idx]
@@ -135,7 +141,8 @@ def _detect_long_signal(
 
     peak_price = max(mids[: trough_idx + 1]) if trough_idx > 0 else mids[0]
     spike_height_pips = (peak_price - trough_price) / config.PIP_VALUE
-    if spike_height_pips < config.SPIKE_THRESHOLD_PIPS:
+    long_spike_floor = max(config.SPIKE_THRESHOLD_PIPS, config.LONG_MIN_SPIKE_PIPS)
+    if spike_height_pips < long_spike_floor:
         return None
 
     retrace_pips = (features.latest_mid - trough_price) / config.PIP_VALUE
@@ -167,6 +174,42 @@ def _detect_signal(
     if signal:
         return signal
     return _detect_long_signal(ticks, features)
+
+
+async def _log_direction_path(side: str, entry_price: float, entry_epoch: float) -> None:
+    """Log short-horizon direction hit/move + MFE/MAE for precision tracking."""
+    horizons = (30, 60)
+    logger = logging.getLogger(__name__)
+    try:
+        for horizon in horizons:
+            delay = horizon - (time.time() - entry_epoch)
+            if delay > 0:
+                await asyncio.sleep(delay)
+            ticks = tick_window.recent_ticks(seconds=max(horizon + 10, 90), limit=720)
+            mids = []
+            for t in ticks:
+                try:
+                    if float(t.get("epoch", 0.0)) >= entry_epoch:
+                        mids.append(float(t.get("mid")))
+                except Exception:
+                    continue
+            if not mids:
+                continue
+            last_mid = mids[-1]
+            move = (last_mid - entry_price) / config.PIP_VALUE
+            mfe = (max(mids) - entry_price) / config.PIP_VALUE
+            mae = (entry_price - min(mids)) / config.PIP_VALUE
+            if side == "short":
+                move = -move
+                mfe = (entry_price - min(mids)) / config.PIP_VALUE
+                mae = (max(mids) - entry_price) / config.PIP_VALUE
+            tags = {"side": side, "horizon": f"{horizon}s"}
+            log_metric("mirror_spike_dir_hit", 1.0 if move > 0 else 0.0, tags=tags)
+            log_metric("mirror_spike_move_pips", move, tags=tags)
+            log_metric("mirror_spike_mfe_pips", mfe, tags=tags)
+            log_metric("mirror_spike_mae_pips", mae, tags=tags)
+    except Exception:
+        logger.debug("%s metric logging failed", config.LOG_PREFIX, exc_info=True)
 
 
 async def mirror_spike_worker() -> None:
@@ -264,18 +307,20 @@ async def mirror_spike_worker() -> None:
                 last_bid = signal.entry_price
                 last_ask = signal.entry_price
 
+            tp_pips = config.SHORT_TP_PIPS if signal.side == "short" else config.TP_PIPS
+            sl_pips = config.SHORT_SL_PIPS if signal.side == "short" else config.SL_PIPS
             if signal.side == "short":
                 entry_price = last_bid
-                tp_price = round(entry_price - config.TP_PIPS * config.PIP_VALUE, 3)
+                tp_price = round(entry_price - tp_pips * config.PIP_VALUE, 3)
             else:
                 entry_price = last_ask
-                tp_price = round(entry_price + config.TP_PIPS * config.PIP_VALUE, 3)
+                tp_price = round(entry_price + tp_pips * config.PIP_VALUE, 3)
             if tp_price is not None and tp_price <= 0:
                 tp_price = None
             if signal.side == "short":
-                sl_price = round(entry_price + config.SL_PIPS * config.PIP_VALUE, 3)
+                sl_price = round(entry_price + sl_pips * config.PIP_VALUE, 3)
             else:
-                sl_price = round(entry_price - config.SL_PIPS * config.PIP_VALUE, 3)
+                sl_price = round(entry_price - sl_pips * config.PIP_VALUE, 3)
             if sl_price is not None and sl_price <= 0:
                 sl_price = None
 
@@ -304,6 +349,8 @@ async def mirror_spike_worker() -> None:
                 "atr_pips": None
                 if signal.features.atr_pips is None
                 else round(signal.features.atr_pips, 3),
+                "momentum_pips": round(signal.features.momentum_pips, 3),
+                "short_momentum_pips": round(signal.features.short_momentum_pips, 3),
             }
 
             try:
@@ -340,6 +387,7 @@ async def mirror_spike_worker() -> None:
                     signal.spike_height_pips,
                     signal.retrace_pips,
                 )
+                asyncio.create_task(_log_direction_path(signal.side, entry_price, time.time()))
                 cooldown_until = now_monotonic + config.COOLDOWN_SEC
                 post_exit_cooldown_until = now_monotonic + config.POST_EXIT_COOLDOWN_SEC
             else:

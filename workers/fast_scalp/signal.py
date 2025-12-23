@@ -337,6 +337,12 @@ def evaluate_signal(
         dyn_mom *= 0.85
         dyn_short_mom *= 0.75
 
+    span = max(features.span_seconds, 1e-6)
+    velocity = abs(features.short_momentum_pips) / span
+    tick_density = features.tick_count / span
+    vel_floor = config.ENTRY_MIN_VELOCITY_PIPS_PER_SEC * (0.85 if range_active else 1.0)
+    density_floor = config.ENTRY_MIN_TICK_DENSITY * (0.85 if range_active else 1.0)
+
     if features.atr_pips is None or features.atr_pips < config.MIN_ENTRY_ATR_PIPS:
         return None
     if features.tick_count < config.MIN_ENTRY_TICK_COUNT:
@@ -352,6 +358,10 @@ def evaluate_signal(
     if features.tick_count < config.MIN_TICK_COUNT:
         return None
     if features.span_seconds <= 0.0:
+        return None
+    if velocity < vel_floor:
+        return None
+    if tick_density < density_floor:
         return None
 
     if not config.FORCE_ENTRIES:
@@ -418,6 +428,12 @@ def evaluate_signal(
             action = "OPEN_LONG" if candidate_long else None
         elif action.endswith("SHORT") and short_momentum > -config.ENTRY_SHORT_THRESHOLD_PIPS:
             action = "OPEN_SHORT" if candidate_short else None
+
+    if action in {"REVERSAL_LONG", "REVERSAL_SHORT"}:
+        impulse_ok = features.impulse_pips >= config.REVERSAL_TO_TREND_IMPULSE_PIPS
+        mom_ok = abs(features.short_momentum_pips) >= config.REVERSAL_TO_TREND_MOM_PIPS
+        if impulse_ok and mom_ok and features.impulse_direction != 0:
+            action = "OPEN_LONG" if features.impulse_direction > 0 else "OPEN_SHORT"
 
     if range_active and action in {"OPEN_LONG", "OPEN_SHORT"}:
         # Rangeモードでは、直近モメンタムが逆向きに強い場合は素直に逆張り扱いに切り替える

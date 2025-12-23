@@ -107,6 +107,18 @@ CONSOLIDATION_MIN_TICKS: int = max(
     2, int(float(os.getenv("FAST_SCALP_CONSOLIDATION_MIN_TICKS", "8")))
 )
 REQUIRE_CONSOLIDATION: bool = _bool_env("FAST_SCALP_REQUIRE_CONSOLIDATION", True)
+ENTRY_MIN_VELOCITY_PIPS_PER_SEC: float = max(
+    0.0, float(os.getenv("FAST_SCALP_ENTRY_MIN_VELOCITY_PIPS_PER_SEC", "0.04"))
+)
+ENTRY_MIN_TICK_DENSITY: float = max(
+    0.1, float(os.getenv("FAST_SCALP_ENTRY_MIN_TICK_DENSITY", "1.1"))
+)
+REVERSAL_TO_TREND_IMPULSE_PIPS: float = max(
+    0.0, float(os.getenv("FAST_SCALP_REVERSAL_TO_TREND_IMPULSE_PIPS", "1.2"))
+)
+REVERSAL_TO_TREND_MOM_PIPS: float = max(
+    0.0, float(os.getenv("FAST_SCALP_REVERSAL_TO_TREND_MOM_PIPS", "1.0"))
+)
 
 # --- technical thresholds ---
 RSI_PERIOD: int = max(3, int(float(os.getenv("FAST_SCALP_RSI_PERIOD", "6"))))

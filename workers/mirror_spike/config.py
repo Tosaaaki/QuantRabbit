@@ -166,6 +166,14 @@ SL_PIPS: float = max(
         legacy_key=None,
     ),
 )
+SHORT_SL_PIPS: float = max(
+    0.5,
+    _float_env(
+        "MIRROR_SPIKE_SHORT_SL_PIPS",
+        SL_PIPS,
+        legacy_key=None,
+    ),
+)
 MIN_ATR_PIPS: float = max(
     0.0,
     _float_env(
@@ -196,6 +204,46 @@ POST_EXIT_COOLDOWN_SEC: float = max(
         "MIRROR_SPIKE_POST_EXIT_COOLDOWN_SEC",
         900.0,
         legacy_key="MANUAL_SPIKE_POST_EXIT_COOLDOWN_SEC",
+    ),
+)
+SHORT_MIN_SPIKE_PIPS: float = max(
+    SPIKE_THRESHOLD_PIPS,
+    _float_env(
+        "MIRROR_SPIKE_SHORT_MIN_SPIKE_PIPS",
+        5.0,
+        legacy_key=None,
+    ),
+)
+SHORT_MAX_DOWNSLOPE_PIPS: float = max(
+    0.0,
+    _float_env(
+        "MIRROR_SPIKE_SHORT_MAX_DOWNSLOPE_PIPS",
+        2.0,
+        legacy_key=None,
+    ),
+)
+SHORT_TP_PIPS: float = max(
+    1.0,
+    _float_env(
+        "MIRROR_SPIKE_SHORT_TP_PIPS",
+        TP_PIPS,
+        legacy_key=None,
+    ),
+)
+LONG_MIN_SPIKE_PIPS: float = max(
+    SPIKE_THRESHOLD_PIPS,
+    _float_env(
+        "MIRROR_SPIKE_LONG_MIN_SPIKE_PIPS",
+        5.0,
+        legacy_key=None,
+    ),
+)
+LONG_MAX_UPSLOPE_PIPS: float = max(
+    0.0,
+    _float_env(
+        "MIRROR_SPIKE_LONG_MAX_UPSLOPE_PIPS",
+        2.0,
+        legacy_key=None,
     ),
 )
 MAX_ACTIVE_TRADES: int = max(
