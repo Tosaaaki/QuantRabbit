@@ -6,12 +6,7 @@ After=network.target
 Type=simple
 WorkingDirectory=/home/tossaki/QuantRabbit
 Environment="PYTHONUNBUFFERED=1"
-ExecStart=/home/tossaki/QuantRabbit/.venv/bin/python - <<'PY'
-import asyncio
-from workers.macro_trendma import trendma_worker
-
-asyncio.run(trendma_worker())
-PY
+ExecStart=/home/tossaki/QuantRabbit/.venv/bin/python -m workers.macro_trendma.worker
 Restart=always
 RestartSec=5
 User=tossaki

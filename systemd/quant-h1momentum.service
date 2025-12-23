@@ -6,12 +6,7 @@ After=network.target
 Type=simple
 WorkingDirectory=/home/tossaki/QuantRabbit
 Environment="PYTHONUNBUFFERED=1"
-ExecStart=/home/tossaki/QuantRabbit/.venv/bin/python - <<'PY'
-import asyncio
-from workers.macro_h1momentum import h1momentum_worker
-
-asyncio.run(h1momentum_worker())
-PY
+ExecStart=/home/tossaki/QuantRabbit/.venv/bin/python -m workers.macro_h1momentum.worker
 Restart=always
 RestartSec=5
 User=tossaki

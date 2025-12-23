@@ -199,3 +199,6 @@ async def trendma_worker() -> None:
             res.status if res else "none",
         )
 
+
+if __name__ == "__main__":
+    asyncio.run(trendma_worker())

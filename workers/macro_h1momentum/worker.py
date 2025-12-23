@@ -204,3 +204,7 @@ async def h1momentum_worker() -> None:
             {**cap_reason, "tp_scale": round(tp_scale, 3)},
             res.status if res else "none",
         )
+
+
+if __name__ == "__main__":
+    asyncio.run(h1momentum_worker())

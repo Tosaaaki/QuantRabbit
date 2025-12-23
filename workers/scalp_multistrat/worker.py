@@ -207,3 +207,6 @@ async def scalp_multi_worker() -> None:
             res.status if res else "none",
         )
 
+
+if __name__ == "__main__":
+    asyncio.run(scalp_multi_worker())

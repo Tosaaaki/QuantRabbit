@@ -190,3 +190,6 @@ async def donchian55_worker() -> None:
             res.status if res else "none",
         )
 
+
+if __name__ == "__main__":
+    asyncio.run(donchian55_worker())

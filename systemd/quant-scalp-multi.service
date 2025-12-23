@@ -6,12 +6,7 @@ After=network.target
 Type=simple
 WorkingDirectory=/home/tossaki/QuantRabbit
 Environment="PYTHONUNBUFFERED=1"
-ExecStart=/home/tossaki/QuantRabbit/.venv/bin/python - <<'PY'
-import asyncio
-from workers.scalp_multistrat import scalp_multi_worker
-
-asyncio.run(scalp_multi_worker())
-PY
+ExecStart=/home/tossaki/QuantRabbit/.venv/bin/python -m workers.scalp_multistrat.worker
 Restart=always
 RestartSec=5
 User=tossaki
