@@ -1,0 +1,15 @@
+[Unit]
+Description=QuantRabbit Micro Exit Worker
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/tossaki/QuantRabbit
+Environment="PYTHONUNBUFFERED=1"
+ExecStart=/home/tossaki/QuantRabbit/.venv/bin/python -m workers.micro_exit.worker
+Restart=always
+RestartSec=5
+User=tossaki
+
+[Install]
+WantedBy=multi-user.target

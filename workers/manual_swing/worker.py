@@ -495,3 +495,7 @@ async def manual_swing_worker() -> None:
                 last_sync_perf = now_mono
     finally:
         pos_manager.close()
+
+
+if __name__ == "__main__":  # pragma: no cover
+    asyncio.run(manual_swing_worker())
