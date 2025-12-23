@@ -7,6 +7,7 @@ SQLite `logs/trades.db` 内に保存。
 """
 
 from __future__ import annotations
+import os
 import sqlite3
 import pathlib
 import pandas as pd
@@ -14,74 +15,112 @@ from typing import Dict
 
 _DB = pathlib.Path("logs/trades.db")
 _DB.parent.mkdir(exist_ok=True)
-con = sqlite3.connect(_DB)
+
+_DB_TIMEOUT = float(os.getenv("PERF_DB_TIMEOUT_SEC", "8.0"))
+_BUSY_TIMEOUT_MS = int(os.getenv("PERF_DB_BUSY_TIMEOUT_MS", str(int(_DB_TIMEOUT * 1000))))
+_JOURNAL_MODE = os.getenv("PERF_DB_JOURNAL_MODE", "WAL")
+_SYNCHRONOUS = os.getenv("PERF_DB_SYNCHRONOUS", "NORMAL")
+_TEMP_STORE = os.getenv("PERF_DB_TEMP_STORE", "MEMORY")
+
+
+def _connect() -> sqlite3.Connection:
+    con = sqlite3.connect(_DB, timeout=_DB_TIMEOUT)
+    try:
+        con.execute(f"PRAGMA journal_mode={_JOURNAL_MODE}")
+    except sqlite3.Error:
+        pass
+    try:
+        con.execute(f"PRAGMA busy_timeout={_BUSY_TIMEOUT_MS}")
+    except sqlite3.Error:
+        pass
+    try:
+        con.execute(f"PRAGMA synchronous={_SYNCHRONOUS}")
+    except sqlite3.Error:
+        pass
+    try:
+        con.execute(f"PRAGMA temp_store={_TEMP_STORE}")
+    except sqlite3.Error:
+        pass
+    return con
 
 
 def _ensure_schema() -> None:
     """trades テーブルが存在しない / 欠損カラムがある場合に補正する。"""
-    con.execute(
-        """
-CREATE TABLE IF NOT EXISTS trades (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  transaction_id INTEGER,
-  ticket_id TEXT UNIQUE,
-  pocket TEXT,
-  instrument TEXT,
-  units INTEGER,
-  entry_price REAL,
-  close_price REAL,
-  pl_pips REAL,
-  realized_pl REAL,
-  entry_time TEXT,
-  open_time TEXT,
-  close_time TEXT,
-  close_reason TEXT,
-  state TEXT,
-  updated_at TEXT,
-  version TEXT DEFAULT 'v1',
-  unrealized_pl REAL
-)
-"""
+    with _connect() as con:
+        con.execute(
+            """
+    CREATE TABLE IF NOT EXISTS trades (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      transaction_id INTEGER,
+      ticket_id TEXT,
+      pocket TEXT,
+      instrument TEXT,
+      units INTEGER,
+      entry_price REAL,
+      close_price REAL,
+      pl_pips REAL,
+      realized_pl REAL,
+      entry_time TEXT,
+      open_time TEXT,
+      close_time TEXT,
+      close_reason TEXT,
+      state TEXT,
+      updated_at TEXT,
+      version TEXT DEFAULT 'v1',
+      unrealized_pl REAL
     )
-    existing = {
-        row[1] for row in con.execute("PRAGMA table_info(trades)")  # pragma: no cover
-    }
-    columns: dict[str, str] = {
-        "transaction_id": "INTEGER",
-        "ticket_id": "TEXT",
-        "pocket": "TEXT",
-        "instrument": "TEXT",
-        "units": "INTEGER",
-        "entry_price": "REAL",
-        "close_price": "REAL",
-        "pl_pips": "REAL",
-        "realized_pl": "REAL",
-        "entry_time": "TEXT",
-        "open_time": "TEXT",
-        "close_time": "TEXT",
-        "close_reason": "TEXT",
-        "state": "TEXT",
-        "updated_at": "TEXT",
-        "version": "TEXT DEFAULT 'v1'",
-        "unrealized_pl": "REAL",
-    }
-    for name, ddl in columns.items():
-        if name not in existing:
-            con.execute(f"ALTER TABLE trades ADD COLUMN {name} {ddl}")
-    con.execute(
-        "CREATE UNIQUE INDEX IF NOT EXISTS idx_trades_ticket ON trades(ticket_id)"
-    )
-    con.execute(
-        "CREATE INDEX IF NOT EXISTS idx_trades_close_time ON trades(close_time)"
-    )
-    con.commit()
+    """
+        )
+        existing = {
+            row[1]
+            for row in con.execute("PRAGMA table_info(trades)")  # pragma: no cover
+        }
+        columns: dict[str, str] = {
+            "transaction_id": "INTEGER",
+            "ticket_id": "TEXT",
+            "pocket": "TEXT",
+            "instrument": "TEXT",
+            "units": "INTEGER",
+            "entry_price": "REAL",
+            "close_price": "REAL",
+            "pl_pips": "REAL",
+            "realized_pl": "REAL",
+            "entry_time": "TEXT",
+            "open_time": "TEXT",
+            "close_time": "TEXT",
+            "close_reason": "TEXT",
+            "state": "TEXT",
+            "updated_at": "TEXT",
+            "version": "TEXT DEFAULT 'v1'",
+            "unrealized_pl": "REAL",
+        }
+        for name, ddl in columns.items():
+            if name not in existing:
+                con.execute(f"ALTER TABLE trades ADD COLUMN {name} {ddl}")
+        con.execute(
+            """
+            CREATE UNIQUE INDEX IF NOT EXISTS uniq_trades_tx_trade
+            ON trades(transaction_id, ticket_id)
+            """
+        )
+        con.execute(
+            "CREATE INDEX IF NOT EXISTS idx_trades_ticket ON trades(ticket_id)"
+        )
+        con.execute(
+            "CREATE INDEX IF NOT EXISTS idx_trades_close_time ON trades(close_time)"
+        )
 
 
 _ensure_schema()
 
 
 def _load_df() -> pd.DataFrame:
-    return pd.read_sql_query("SELECT * FROM trades", con, parse_dates=["close_time"])
+    with _connect() as con:
+        try:
+            con.execute("PRAGMA read_uncommitted=1")
+        except sqlite3.Error:
+            pass
+        return pd.read_sql_query("SELECT * FROM trades", con, parse_dates=["close_time"])
 
 
 def snapshot() -> Dict[str, Dict[str, float]]:
@@ -122,17 +161,17 @@ def snapshot() -> Dict[str, Dict[str, float]]:
 
 if __name__ == "__main__":
     # ダミー行でテスト
-    con.execute("DELETE FROM trades")
-    con.executemany(
-        "INSERT INTO trades(pocket,open_time,close_time,pl_pips) VALUES (?,?,?,?)",
-        [
-            ("micro", "2025-06-23T12:00", "2025-06-23T12:05", 8.5),
-            ("micro", "2025-06-23T12:10", "2025-06-23T12:15", -6.0),
-            ("macro", "2025-06-23T12:00", "2025-06-23T13:30", 42.0),
-            ("scalp", "2025-06-23T12:02", "2025-06-23T12:03", 2.1),
-        ],
-    )
-    con.commit()
+    with _connect() as con:
+        con.execute("DELETE FROM trades")
+        con.executemany(
+            "INSERT INTO trades(pocket,open_time,close_time,pl_pips) VALUES (?,?,?,?)",
+            [
+                ("micro", "2025-06-23T12:00", "2025-06-23T12:05", 8.5),
+                ("micro", "2025-06-23T12:10", "2025-06-23T12:15", -6.0),
+                ("macro", "2025-06-23T12:00", "2025-06-23T13:30", 42.0),
+                ("scalp", "2025-06-23T12:02", "2025-06-23T12:03", 2.1),
+            ],
+        )
     import pprint
 
     pprint.pp(snapshot())

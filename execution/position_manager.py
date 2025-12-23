@@ -7,6 +7,8 @@ import time
 import copy
 import sqlite3
 import pathlib
+import fcntl
+from contextlib import contextmanager
 from datetime import datetime, timezone, timedelta
 from typing import Dict, Tuple
 
@@ -48,6 +50,17 @@ _OPEN_TRADES_FAIL_BACKOFF_MAX = float(
 )
 _MANUAL_POCKET_NAME = os.getenv("POSITION_MANAGER_MANUAL_POCKET", "manual")
 _KNOWN_POCKETS = {"micro", "macro", "scalp"}
+# SQLite locking周り
+_DB_BUSY_TIMEOUT_MS = int(os.getenv("POSITION_MANAGER_DB_BUSY_TIMEOUT_MS", "8000"))
+_DB_LOCK_RETRY = int(os.getenv("POSITION_MANAGER_DB_LOCK_RETRY", "3"))
+_DB_LOCK_RETRY_SLEEP = float(os.getenv("POSITION_MANAGER_DB_LOCK_RETRY_SLEEP", "0.25"))
+# PRAGMA values
+_DB_JOURNAL_MODE = os.getenv("POSITION_MANAGER_DB_JOURNAL_MODE", "WAL")
+_DB_SYNCHRONOUS = os.getenv("POSITION_MANAGER_DB_SYNCHRONOUS", "NORMAL")
+_DB_TEMP_STORE = os.getenv("POSITION_MANAGER_DB_TEMP_STORE", "MEMORY")
+_DB_LOCK_PATH = pathlib.Path(os.getenv("POSITION_MANAGER_DB_LOCK_PATH", "logs/trades.db.lock"))
+_DB_FILE_LOCK_TIMEOUT = float(os.getenv("POSITION_MANAGER_DB_FILE_LOCK_TIMEOUT", "10.0"))
+
 # Agent-generated client order ID prefixes (qr-...), used to classify pockets.
 agent_client_prefixes = tuple(
     os.getenv("AGENT_CLIENT_PREFIXES", "qr-,qs-").split(",")
@@ -57,6 +70,61 @@ if not agent_client_prefixes:
     agent_client_prefixes = ("qr-",)
 # pockets that belong to this agent
 agent_pockets = {"micro", "macro", "scalp"}
+
+
+def _configure_sqlite(con: sqlite3.Connection) -> sqlite3.Connection:
+    """Apply SQLite PRAGMAs to reduce lock contention."""
+    try:
+        con.execute(f"PRAGMA journal_mode={_DB_JOURNAL_MODE}")
+    except sqlite3.Error:
+        pass
+    try:
+        con.execute(f"PRAGMA busy_timeout={_DB_BUSY_TIMEOUT_MS}")
+    except sqlite3.Error:
+        pass
+    try:
+        con.execute(f"PRAGMA synchronous={_DB_SYNCHRONOUS}")
+    except sqlite3.Error:
+        pass
+    try:
+        con.execute(f"PRAGMA temp_store={_DB_TEMP_STORE}")
+    except sqlite3.Error:
+        pass
+    return con
+
+
+def _open_trades_db() -> sqlite3.Connection:
+    con = sqlite3.connect(_DB, timeout=_DB_BUSY_TIMEOUT_MS / 1000)
+    con.row_factory = sqlite3.Row
+    return _configure_sqlite(con)
+
+
+@contextmanager
+def _file_lock(path: pathlib.Path, timeout: float = _DB_FILE_LOCK_TIMEOUT):
+    """
+    Inter-process advisory lock to serialize schema/migration/writes.
+
+    Prevents multiple worker processes from ALTER/INSERT at the same time,
+    which is the main source of sqlite 'database is locked' at boot.
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "a+", encoding="utf-8") as fh:
+        start = time.monotonic()
+        while True:
+            try:
+                fcntl.flock(fh.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                break
+            except BlockingIOError:
+                if time.monotonic() - start > timeout:
+                    raise TimeoutError(f"Timed out acquiring file lock: {path}")
+                time.sleep(0.1)
+        try:
+            yield
+        finally:
+            try:
+                fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
+            except Exception:
+                pass
 
 
 def _build_http_session() -> requests.Session:
@@ -83,7 +151,9 @@ def _build_http_session() -> requests.Session:
 def _ensure_orders_db() -> sqlite3.Connection:
     """orders.db が存在しない/テーブル欠損時に安全に初期化する。"""
     _ORDERS_DB.parent.mkdir(parents=True, exist_ok=True)
-    con = sqlite3.connect(_ORDERS_DB)
+    con = sqlite3.connect(_ORDERS_DB, timeout=_DB_BUSY_TIMEOUT_MS / 1000)
+    con.row_factory = sqlite3.Row
+    _configure_sqlite(con)
     con.execute(
         """
         CREATE TABLE IF NOT EXISTS orders (
@@ -149,9 +219,9 @@ def _parse_timestamp(ts: str) -> datetime:
 
 class PositionManager:
     def __init__(self):
-        self.con = sqlite3.connect(_DB)
-        self.con.row_factory = sqlite3.Row
-        self._ensure_schema()
+        self.con = _open_trades_db()
+        with _file_lock(_DB_LOCK_PATH):
+            self._ensure_schema()
         self._last_tx_id = self._get_last_transaction_id()
         self._pocket_cache: dict[str, str] = {}
         self._client_cache: dict[str, str] = {}
@@ -268,7 +338,7 @@ class PositionManager:
         self.con.execute(
             "CREATE INDEX IF NOT EXISTS idx_trades_close_time ON trades(close_time)"
         )
-        self.con.commit()
+        self._commit_with_retry()
 
     def _get_last_transaction_id(self) -> int:
         """DBに記録済みの最新トランザクションIDを取得"""
@@ -350,6 +420,8 @@ class PositionManager:
         except sqlite3.Error as exc:
             self.con.rollback()
             print(f"[PositionManager] Failed to migrate trades table: {exc}")
+        finally:
+            self._commit_with_retry()
 
     def _fetch_closed_trades(self):
         """OANDAから決済済みトランザクションを取得"""
@@ -680,40 +752,41 @@ class PositionManager:
 
         if trades_to_save:
             # ticket_id (OANDA tradeID) が重複しないように挿入
-            self.con.executemany(
-                """
-                INSERT OR REPLACE INTO trades (
-                    transaction_id,
-                    ticket_id,
-                    pocket,
-                    instrument,
-                    units,
-                    closed_units,
-                    entry_price,
-                    close_price,
-                    fill_price,
-                    pl_pips,
-                    realized_pl,
-                    commission,
-                    financing,
-                    entry_time,
-                    open_time,
-                    close_time,
-                    close_reason,
-                    state,
-                    updated_at,
-                    version,
-                    unrealized_pl,
-                    client_order_id,
-                    strategy,
-                    strategy_tag,
-                    entry_thesis
+            with _file_lock(_DB_LOCK_PATH):
+                self._executemany_with_retry(
+                    """
+                    INSERT OR REPLACE INTO trades (
+                        transaction_id,
+                        ticket_id,
+                        pocket,
+                        instrument,
+                        units,
+                        closed_units,
+                        entry_price,
+                        close_price,
+                        fill_price,
+                        pl_pips,
+                        realized_pl,
+                        commission,
+                        financing,
+                        entry_time,
+                        open_time,
+                        close_time,
+                        close_reason,
+                        state,
+                        updated_at,
+                        version,
+                        unrealized_pl,
+                        client_order_id,
+                        strategy,
+                        strategy_tag,
+                        entry_thesis
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                    trades_to_save,
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-                trades_to_save,
-            )
-            self.con.commit()
+                self._commit_with_retry()
             print(f"[PositionManager] Saved {len(trades_to_save)} new trades.")
 
         if processed_tx_ids:
@@ -968,6 +1041,27 @@ class PositionManager:
         self._last_positions_meta = dict(extra_meta)
         return self._package_positions(pockets, stale=False, age_sec=0.0, extra_meta=extra_meta)
 
+    def _commit_with_retry(self) -> None:
+        """Commit with retry to survive short lock bursts."""
+        for attempt in range(_DB_LOCK_RETRY):
+            try:
+                self.con.commit()
+                return
+            except sqlite3.OperationalError as exc:
+                if "locked" not in str(exc).lower() or attempt == _DB_LOCK_RETRY - 1:
+                    raise
+                time.sleep(_DB_LOCK_RETRY_SLEEP * (attempt + 1))
+
+    def _executemany_with_retry(self, sql: str, params) -> None:
+        for attempt in range(_DB_LOCK_RETRY):
+            try:
+                self.con.executemany(sql, params)
+                return
+            except sqlite3.OperationalError as exc:
+                if "locked" not in str(exc).lower() or attempt == _DB_LOCK_RETRY - 1:
+                    raise
+                time.sleep(_DB_LOCK_RETRY_SLEEP * (attempt + 1))
+
     def _package_positions(
         self,
         pockets: dict[str, dict],
@@ -1044,8 +1138,7 @@ class PositionManager:
         if not unique_ids:
             return {}
         try:
-            con = sqlite3.connect(_ORDERS_DB)
-            con.row_factory = sqlite3.Row
+            con = _ensure_orders_db()
         except sqlite3.Error as exc:
             print(f"[PositionManager] Failed to open orders.db: {exc}")
             return {}
