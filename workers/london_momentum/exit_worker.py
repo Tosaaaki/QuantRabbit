@@ -1,4 +1,4 @@
-"""Exit loop for H1Momentum macro worker with technical filters."""
+"""Exit loop tailored for LondonMomentum worker with technical filters."""
 
 from __future__ import annotations
 
@@ -18,7 +18,7 @@ from utils.metrics_logger import log_metric
 
 LOG = logging.getLogger(__name__)
 
-ALLOWED_TAGS = {"H1Momentum"}
+ALLOWED_TAGS = {"LondonMomentum"}
 POCKET = "macro"
 
 
@@ -82,45 +82,45 @@ class _Context:
     range_active: bool
 
 
-class H1MomentumExitWorker:
-    """PnL + RSI/ATR/VWAP/レンジ判定を組み合わせた H1Momentum EXIT."""
+class LondonMomentumExitWorker:
+    """PnL + RSI/ATR/VWAP/レンジ判定を組み合わせた LondonMomentum EXIT."""
 
     def __init__(self) -> None:
-        self.loop_interval = max(1.0, _float_env("H1MOMENTUM_EXIT_LOOP_INTERVAL_SEC", 2.0))
+        self.loop_interval = max(0.8, _float_env("LONDON_MOMENTUM_EXIT_LOOP_INTERVAL_SEC", 1.5))
         self._pos_manager = PositionManager()
         self._states: Dict[str, _TradeState] = {}
 
-        self.profit_take = max(2.0, _float_env("H1MOMENTUM_EXIT_PROFIT_PIPS", 5.0))
-        self.trail_start = max(2.5, _float_env("H1MOMENTUM_EXIT_TRAIL_START_PIPS", 6.5))
-        self.trail_backoff = max(0.6, _float_env("H1MOMENTUM_EXIT_TRAIL_BACKOFF_PIPS", 2.0))
-        self.stop_loss = max(1.5, _float_env("H1MOMENTUM_EXIT_STOP_LOSS_PIPS", 3.0))
-        self.max_hold_sec = max(900.0, _float_env("H1MOMENTUM_EXIT_MAX_HOLD_SEC", 3 * 3600))
-        self.lock_trigger = max(0.9, _float_env("H1MOMENTUM_EXIT_LOCK_TRIGGER_PIPS", 2.2))
-        self.lock_buffer = max(0.25, _float_env("H1MOMENTUM_EXIT_LOCK_BUFFER_PIPS", 0.9))
+        self.profit_take = max(2.0, _float_env("LONDON_MOMENTUM_EXIT_PROFIT_PIPS", 5.0))
+        self.trail_start = max(2.5, _float_env("LONDON_MOMENTUM_EXIT_TRAIL_START_PIPS", 6.5))
+        self.trail_backoff = max(0.6, _float_env("LONDON_MOMENTUM_EXIT_TRAIL_BACKOFF_PIPS", 2.0))
+        self.stop_loss = max(1.5, _float_env("LONDON_MOMENTUM_EXIT_STOP_LOSS_PIPS", 3.0))
+        self.max_hold_sec = max(1200.0, _float_env("LONDON_MOMENTUM_EXIT_MAX_HOLD_SEC", 2 * 3600))
+        self.lock_trigger = max(0.9, _float_env("LONDON_MOMENTUM_EXIT_LOCK_TRIGGER_PIPS", 2.2))
+        self.lock_buffer = max(0.25, _float_env("LONDON_MOMENTUM_EXIT_LOCK_BUFFER_PIPS", 0.9))
 
-        self.range_profit_take = max(1.6, _float_env("H1MOMENTUM_EXIT_RANGE_PROFIT_PIPS", 4.2))
-        self.range_trail_start = max(2.0, _float_env("H1MOMENTUM_EXIT_RANGE_TRAIL_START_PIPS", 5.6))
-        self.range_trail_backoff = max(0.5, _float_env("H1MOMENTUM_EXIT_RANGE_TRAIL_BACKOFF_PIPS", 1.6))
-        self.range_stop_loss = max(1.2, _float_env("H1MOMENTUM_EXIT_RANGE_STOP_LOSS_PIPS", 2.4))
-        self.range_max_hold_sec = max(900.0, _float_env("H1MOMENTUM_EXIT_RANGE_MAX_HOLD_SEC", 2.5 * 3600))
-        self.range_lock_trigger = max(0.8, _float_env("H1MOMENTUM_EXIT_RANGE_LOCK_TRIGGER_PIPS", 1.8))
-        self.range_lock_buffer = max(0.25, _float_env("H1MOMENTUM_EXIT_RANGE_LOCK_BUFFER_PIPS", 0.7))
+        self.range_profit_take = max(1.6, _float_env("LONDON_MOMENTUM_EXIT_RANGE_PROFIT_PIPS", 4.0))
+        self.range_trail_start = max(2.0, _float_env("LONDON_MOMENTUM_EXIT_RANGE_TRAIL_START_PIPS", 5.5))
+        self.range_trail_backoff = max(0.5, _float_env("LONDON_MOMENTUM_EXIT_RANGE_TRAIL_BACKOFF_PIPS", 1.6))
+        self.range_stop_loss = max(1.2, _float_env("LONDON_MOMENTUM_EXIT_RANGE_STOP_LOSS_PIPS", 2.4))
+        self.range_max_hold_sec = max(900.0, _float_env("LONDON_MOMENTUM_EXIT_RANGE_MAX_HOLD_SEC", 1.8 * 3600))
+        self.range_lock_trigger = max(0.8, _float_env("LONDON_MOMENTUM_EXIT_RANGE_LOCK_TRIGGER_PIPS", 1.8))
+        self.range_lock_buffer = max(0.25, _float_env("LONDON_MOMENTUM_EXIT_RANGE_LOCK_BUFFER_PIPS", 0.7))
 
-        self.range_adx = max(5.0, _float_env("H1MOMENTUM_EXIT_RANGE_ADX", 22.0))
-        self.range_bbw = max(0.02, _float_env("H1MOMENTUM_EXIT_RANGE_BBW", 0.22))
-        self.range_atr = max(0.4, _float_env("H1MOMENTUM_EXIT_RANGE_ATR", 6.5))
+        self.range_adx = max(5.0, _float_env("LONDON_MOMENTUM_EXIT_RANGE_ADX", 22.0))
+        self.range_bbw = max(0.02, _float_env("LONDON_MOMENTUM_EXIT_RANGE_BBW", 0.22))
+        self.range_atr = max(0.4, _float_env("LONDON_MOMENTUM_EXIT_RANGE_ATR", 6.5))
 
-        self.rsi_fade_long = _float_env("H1MOMENTUM_EXIT_RSI_FADE_LONG", 44.0)
-        self.rsi_fade_short = _float_env("H1MOMENTUM_EXIT_RSI_FADE_SHORT", 56.0)
-        self.rsi_take_long = _float_env("H1MOMENTUM_EXIT_RSI_TAKE_LONG", 72.0)
-        self.rsi_take_short = _float_env("H1MOMENTUM_EXIT_RSI_TAKE_SHORT", 28.0)
-        self.negative_hold_sec = max(240.0, _float_env("H1MOMENTUM_EXIT_NEG_HOLD_SEC", 1500.0))
-        self.allow_negative_exit = _bool_env("H1MOMENTUM_EXIT_ALLOW_NEGATIVE", True)
+        self.rsi_fade_long = _float_env("LONDON_MOMENTUM_EXIT_RSI_FADE_LONG", 44.0)
+        self.rsi_fade_short = _float_env("LONDON_MOMENTUM_EXIT_RSI_FADE_SHORT", 56.0)
+        self.rsi_take_long = _float_env("LONDON_MOMENTUM_EXIT_RSI_TAKE_LONG", 72.0)
+        self.rsi_take_short = _float_env("LONDON_MOMENTUM_EXIT_RSI_TAKE_SHORT", 28.0)
+        self.negative_hold_sec = max(180.0, _float_env("LONDON_MOMENTUM_EXIT_NEG_HOLD_SEC", 1200.0))
+        self.allow_negative_exit = _bool_env("LONDON_MOMENTUM_EXIT_ALLOW_NEGATIVE", True)
 
-        self.vwap_grab_gap = max(0.1, _float_env("H1MOMENTUM_EXIT_VWAP_GAP_PIPS", 1.1))
+        self.vwap_grab_gap = max(0.1, _float_env("LONDON_MOMENTUM_EXIT_VWAP_GAP_PIPS", 1.0))
 
-        self.atr_hot = max(1.0, _float_env("H1MOMENTUM_EXIT_ATR_HOT_PIPS", 9.0))
-        self.atr_cold = max(0.5, _float_env("H1MOMENTUM_EXIT_ATR_COLD_PIPS", 2.8))
+        self.atr_hot = max(1.0, _float_env("LONDON_MOMENTUM_EXIT_ATR_HOT_PIPS", 8.5))
+        self.atr_cold = max(0.5, _float_env("LONDON_MOMENTUM_EXIT_ATR_COLD_PIPS", 2.5))
 
     def _filter_trades(self, trades: list[dict]) -> list[dict]:
         if not ALLOWED_TAGS:
@@ -174,7 +174,7 @@ class H1MomentumExitWorker:
         ok = await close_trade(trade_id, units)
         if ok:
             LOG.info(
-                "[EXIT-h1momentum] trade=%s units=%s reason=%s pnl=%.2fp range=%s",
+                "[EXIT-london_momentum] trade=%s units=%s reason=%s pnl=%.2fp range=%s",
                 trade_id,
                 units,
                 reason,
@@ -182,13 +182,13 @@ class H1MomentumExitWorker:
                 range_mode,
             )
             log_metric(
-                "h1momentum_exit",
+                "london_momentum_exit",
                 pnl,
                 tags={"reason": reason, "range": str(range_mode), "side": side},
                 ts=_utc_now(),
             )
         else:
-            LOG.error("[EXIT-h1momentum] close failed trade=%s units=%s reason=%s", trade_id, units, reason)
+            LOG.error("[EXIT-london_momentum] close failed trade=%s units=%s reason=%s", trade_id, units, reason)
         return ok
 
     def _evaluate(self, trade: dict, ctx: _Context, now: datetime) -> Optional[str]:
@@ -230,10 +230,10 @@ class H1MomentumExitWorker:
 
         atr = ctx.atr_pips or 0.0
         if atr >= self.atr_hot:
-            profit_take += 0.4
-            trail_start += 0.4
+            profit_take += 0.35
+            trail_start += 0.35
         elif 0.0 < atr <= self.atr_cold:
-            profit_take = max(1.6, profit_take * 0.92)
+            profit_take = max(1.8, profit_take * 0.92)
             stop_loss = max(1.1, stop_loss * 0.9)
 
         if pnl <= -stop_loss:
@@ -284,7 +284,7 @@ class H1MomentumExitWorker:
 
     async def run(self) -> None:
         LOG.info(
-            "[EXIT-h1momentum] worker starting (interval=%.2fs tags=%s)",
+            "[EXIT-london_momentum] worker starting (interval=%.2fs tags=%s)",
             self.loop_interval,
             ",".join(sorted(ALLOWED_TAGS)),
         )
@@ -310,7 +310,7 @@ class H1MomentumExitWorker:
                     try:
                         reason = self._evaluate(tr, ctx, now)
                     except Exception:
-                        LOG.exception("[EXIT-h1momentum] evaluate failed trade=%s", tr.get("trade_id"))
+                        LOG.exception("[EXIT-london_momentum] evaluate failed trade=%s", tr.get("trade_id"))
                         continue
                     if not reason:
                         continue
@@ -321,20 +321,24 @@ class H1MomentumExitWorker:
                     await self._close(trade_id, -units, reason, pnl, side, ctx.range_active)
                     self._states.pop(trade_id, None)
         except asyncio.CancelledError:
-            LOG.info("[EXIT-h1momentum] worker cancelled")
+            LOG.info("[EXIT-london_momentum] worker cancelled")
             raise
         finally:
             try:
                 self._pos_manager.close()
             except Exception:
-                LOG.exception("[EXIT-h1momentum] failed to close PositionManager")
+                LOG.exception("[EXIT-london_momentum] failed to close PositionManager")
 
 
-async def h1momentum_exit_worker() -> None:
-    worker = H1MomentumExitWorker()
+async def london_momentum_exit_worker() -> None:
+    worker = LondonMomentumExitWorker()
     await worker.run()
 
 
 if __name__ == "__main__":  # pragma: no cover
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s", force=True)
-    asyncio.run(h1momentum_exit_worker())
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)s %(message)s",
+        force=True,
+    )
+    asyncio.run(london_momentum_exit_worker())

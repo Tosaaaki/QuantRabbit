@@ -1,4 +1,4 @@
-"""Exit loop for H1Momentum macro worker with technical filters."""
+"""Exit loop for squeeze_break_s5 worker (scalp pocket) with technical filters."""
 
 from __future__ import annotations
 
@@ -18,8 +18,8 @@ from utils.metrics_logger import log_metric
 
 LOG = logging.getLogger(__name__)
 
-ALLOWED_TAGS = {"H1Momentum"}
-POCKET = "macro"
+ALLOWED_TAGS = {"squeeze_break_s5"}
+POCKET = "scalp"
 
 
 def _float_env(key: str, default: float) -> float:
@@ -53,14 +53,14 @@ def _parse_time(value: Optional[str]) -> Optional[datetime]:
 
 
 def _latest_mid() -> Optional[float]:
-    tick = tick_window.recent_ticks(seconds=3.0, limit=1)
+    tick = tick_window.recent_ticks(seconds=2.0, limit=1)
     if tick:
         try:
             return float(tick[-1]["mid"])
         except Exception:
             pass
     try:
-        return float(all_factors().get("H1", {}).get("close"))
+        return float(all_factors().get("M1", {}).get("close"))
     except Exception:
         return None
 
@@ -82,45 +82,45 @@ class _Context:
     range_active: bool
 
 
-class H1MomentumExitWorker:
-    """PnL + RSI/ATR/VWAP/レンジ判定を組み合わせた H1Momentum EXIT."""
+class SqueezeBreakExitWorker:
+    """PnL + RSI/ATR/VWAP/レンジ判定を組み合わせた squeeze_break_s5 EXIT."""
 
     def __init__(self) -> None:
-        self.loop_interval = max(1.0, _float_env("H1MOMENTUM_EXIT_LOOP_INTERVAL_SEC", 2.0))
+        self.loop_interval = max(0.3, _float_env("SQUEEZE_BREAK_S5_EXIT_LOOP_INTERVAL_SEC", 1.0))
         self._pos_manager = PositionManager()
         self._states: Dict[str, _TradeState] = {}
 
-        self.profit_take = max(2.0, _float_env("H1MOMENTUM_EXIT_PROFIT_PIPS", 5.0))
-        self.trail_start = max(2.5, _float_env("H1MOMENTUM_EXIT_TRAIL_START_PIPS", 6.5))
-        self.trail_backoff = max(0.6, _float_env("H1MOMENTUM_EXIT_TRAIL_BACKOFF_PIPS", 2.0))
-        self.stop_loss = max(1.5, _float_env("H1MOMENTUM_EXIT_STOP_LOSS_PIPS", 3.0))
-        self.max_hold_sec = max(900.0, _float_env("H1MOMENTUM_EXIT_MAX_HOLD_SEC", 3 * 3600))
-        self.lock_trigger = max(0.9, _float_env("H1MOMENTUM_EXIT_LOCK_TRIGGER_PIPS", 2.2))
-        self.lock_buffer = max(0.25, _float_env("H1MOMENTUM_EXIT_LOCK_BUFFER_PIPS", 0.9))
+        self.profit_take = max(1.0, _float_env("SQUEEZE_BREAK_S5_EXIT_PROFIT_PIPS", 2.2))
+        self.trail_start = max(1.2, _float_env("SQUEEZE_BREAK_S5_EXIT_TRAIL_START_PIPS", 3.0))
+        self.trail_backoff = max(0.3, _float_env("SQUEEZE_BREAK_S5_EXIT_TRAIL_BACKOFF_PIPS", 1.0))
+        self.stop_loss = max(0.8, _float_env("SQUEEZE_BREAK_S5_EXIT_STOP_LOSS_PIPS", 1.5))
+        self.max_hold_sec = max(60.0, _float_env("SQUEEZE_BREAK_S5_EXIT_MAX_HOLD_SEC", 24 * 60))
+        self.lock_trigger = max(0.6, _float_env("SQUEEZE_BREAK_S5_EXIT_LOCK_TRIGGER_PIPS", 1.1))
+        self.lock_buffer = max(0.1, _float_env("SQUEEZE_BREAK_S5_EXIT_LOCK_BUFFER_PIPS", 0.55))
 
-        self.range_profit_take = max(1.6, _float_env("H1MOMENTUM_EXIT_RANGE_PROFIT_PIPS", 4.2))
-        self.range_trail_start = max(2.0, _float_env("H1MOMENTUM_EXIT_RANGE_TRAIL_START_PIPS", 5.6))
-        self.range_trail_backoff = max(0.5, _float_env("H1MOMENTUM_EXIT_RANGE_TRAIL_BACKOFF_PIPS", 1.6))
-        self.range_stop_loss = max(1.2, _float_env("H1MOMENTUM_EXIT_RANGE_STOP_LOSS_PIPS", 2.4))
-        self.range_max_hold_sec = max(900.0, _float_env("H1MOMENTUM_EXIT_RANGE_MAX_HOLD_SEC", 2.5 * 3600))
-        self.range_lock_trigger = max(0.8, _float_env("H1MOMENTUM_EXIT_RANGE_LOCK_TRIGGER_PIPS", 1.8))
-        self.range_lock_buffer = max(0.25, _float_env("H1MOMENTUM_EXIT_RANGE_LOCK_BUFFER_PIPS", 0.7))
+        self.range_profit_take = max(0.8, _float_env("SQUEEZE_BREAK_S5_EXIT_RANGE_PROFIT_PIPS", 1.6))
+        self.range_trail_start = max(1.0, _float_env("SQUEEZE_BREAK_S5_EXIT_RANGE_TRAIL_START_PIPS", 2.2))
+        self.range_trail_backoff = max(0.2, _float_env("SQUEEZE_BREAK_S5_EXIT_RANGE_TRAIL_BACKOFF_PIPS", 0.7))
+        self.range_stop_loss = max(0.6, _float_env("SQUEEZE_BREAK_S5_EXIT_RANGE_STOP_LOSS_PIPS", 1.0))
+        self.range_max_hold_sec = max(45.0, _float_env("SQUEEZE_BREAK_S5_EXIT_RANGE_MAX_HOLD_SEC", 16 * 60))
+        self.range_lock_trigger = max(0.35, _float_env("SQUEEZE_BREAK_S5_EXIT_RANGE_LOCK_TRIGGER_PIPS", 0.8))
+        self.range_lock_buffer = max(0.1, _float_env("SQUEEZE_BREAK_S5_EXIT_RANGE_LOCK_BUFFER_PIPS", 0.35))
 
-        self.range_adx = max(5.0, _float_env("H1MOMENTUM_EXIT_RANGE_ADX", 22.0))
-        self.range_bbw = max(0.02, _float_env("H1MOMENTUM_EXIT_RANGE_BBW", 0.22))
-        self.range_atr = max(0.4, _float_env("H1MOMENTUM_EXIT_RANGE_ATR", 6.5))
+        self.range_adx = max(5.0, _float_env("SQUEEZE_BREAK_S5_EXIT_RANGE_ADX", 22.0))
+        self.range_bbw = max(0.02, _float_env("SQUEEZE_BREAK_S5_EXIT_RANGE_BBW", 0.22))
+        self.range_atr = max(0.4, _float_env("SQUEEZE_BREAK_S5_EXIT_RANGE_ATR", 6.2))
 
-        self.rsi_fade_long = _float_env("H1MOMENTUM_EXIT_RSI_FADE_LONG", 44.0)
-        self.rsi_fade_short = _float_env("H1MOMENTUM_EXIT_RSI_FADE_SHORT", 56.0)
-        self.rsi_take_long = _float_env("H1MOMENTUM_EXIT_RSI_TAKE_LONG", 72.0)
-        self.rsi_take_short = _float_env("H1MOMENTUM_EXIT_RSI_TAKE_SHORT", 28.0)
-        self.negative_hold_sec = max(240.0, _float_env("H1MOMENTUM_EXIT_NEG_HOLD_SEC", 1500.0))
-        self.allow_negative_exit = _bool_env("H1MOMENTUM_EXIT_ALLOW_NEGATIVE", True)
+        self.rsi_fade_long = _float_env("SQUEEZE_BREAK_S5_EXIT_RSI_FADE_LONG", 43.0)
+        self.rsi_fade_short = _float_env("SQUEEZE_BREAK_S5_EXIT_RSI_FADE_SHORT", 57.0)
+        self.rsi_take_long = _float_env("SQUEEZE_BREAK_S5_EXIT_RSI_TAKE_LONG", 70.0)
+        self.rsi_take_short = _float_env("SQUEEZE_BREAK_S5_EXIT_RSI_TAKE_SHORT", 30.0)
+        self.negative_hold_sec = max(20.0, _float_env("SQUEEZE_BREAK_S5_EXIT_NEG_HOLD_SEC", 140.0))
+        self.allow_negative_exit = _bool_env("SQUEEZE_BREAK_S5_EXIT_ALLOW_NEGATIVE", True)
 
-        self.vwap_grab_gap = max(0.1, _float_env("H1MOMENTUM_EXIT_VWAP_GAP_PIPS", 1.1))
+        self.vwap_grab_gap = max(0.2, _float_env("SQUEEZE_BREAK_S5_EXIT_VWAP_GAP_PIPS", 0.9))
 
-        self.atr_hot = max(1.0, _float_env("H1MOMENTUM_EXIT_ATR_HOT_PIPS", 9.0))
-        self.atr_cold = max(0.5, _float_env("H1MOMENTUM_EXIT_ATR_COLD_PIPS", 2.8))
+        self.atr_hot = max(0.5, _float_env("SQUEEZE_BREAK_S5_EXIT_ATR_HOT_PIPS", 5.2))
+        self.atr_cold = max(0.3, _float_env("SQUEEZE_BREAK_S5_EXIT_ATR_COLD_PIPS", 1.1))
 
     def _filter_trades(self, trades: list[dict]) -> list[dict]:
         if not ALLOWED_TAGS:
@@ -135,7 +135,7 @@ class H1MomentumExitWorker:
 
     def _context(self) -> _Context:
         factors = all_factors()
-        fac_h1 = factors.get("H1") or {}
+        fac_m1 = factors.get("M1") or {}
         fac_h4 = factors.get("H4") or {}
 
         def _safe_float(val: object, default: Optional[float] = None) -> Optional[float]:
@@ -146,14 +146,14 @@ class H1MomentumExitWorker:
             except (TypeError, ValueError):
                 return default
 
-        atr_pips = _safe_float(fac_h1.get("atr_pips"))
+        atr_pips = _safe_float(fac_m1.get("atr_pips"))
         if atr_pips is None:
-            atr_pips = _safe_float(fac_h1.get("atr"), 0.0)
+            atr_pips = _safe_float(fac_m1.get("atr"), 0.0)
             if atr_pips is not None:
                 atr_pips *= 100.0
 
         range_ctx = detect_range_mode(
-            fac_h1 if fac_h1 else {},
+            fac_m1,
             fac_h4,
             adx_threshold=self.range_adx,
             bbw_threshold=self.range_bbw,
@@ -162,11 +162,11 @@ class H1MomentumExitWorker:
 
         return _Context(
             mid=_latest_mid(),
-            rsi=_safe_float(fac_h1.get("rsi"), None),
-            adx=_safe_float(fac_h1.get("adx"), None),
-            bbw=_safe_float(fac_h1.get("bbw"), None),
+            rsi=_safe_float(fac_m1.get("rsi"), None),
+            adx=_safe_float(fac_m1.get("adx"), None),
+            bbw=_safe_float(fac_m1.get("bbw"), None),
             atr_pips=atr_pips,
-            vwap_gap_pips=_safe_float(fac_h1.get("vwap_gap"), None),
+            vwap_gap_pips=_safe_float(fac_m1.get("vwap_gap"), None),
             range_active=bool(range_ctx.active),
         )
 
@@ -174,7 +174,7 @@ class H1MomentumExitWorker:
         ok = await close_trade(trade_id, units)
         if ok:
             LOG.info(
-                "[EXIT-h1momentum] trade=%s units=%s reason=%s pnl=%.2fp range=%s",
+                "[EXIT-squeeze_break_s5] trade=%s units=%s reason=%s pnl=%.2fp range=%s",
                 trade_id,
                 units,
                 reason,
@@ -182,13 +182,13 @@ class H1MomentumExitWorker:
                 range_mode,
             )
             log_metric(
-                "h1momentum_exit",
+                "squeeze_break_s5_exit",
                 pnl,
                 tags={"reason": reason, "range": str(range_mode), "side": side},
                 ts=_utc_now(),
             )
         else:
-            LOG.error("[EXIT-h1momentum] close failed trade=%s units=%s reason=%s", trade_id, units, reason)
+            LOG.error("[EXIT-squeeze_break_s5] close failed trade=%s units=%s reason=%s", trade_id, units, reason)
         return ok
 
     def _evaluate(self, trade: dict, ctx: _Context, now: datetime) -> Optional[str]:
@@ -230,11 +230,11 @@ class H1MomentumExitWorker:
 
         atr = ctx.atr_pips or 0.0
         if atr >= self.atr_hot:
-            profit_take += 0.4
-            trail_start += 0.4
+            profit_take += 0.3
+            trail_start += 0.3
         elif 0.0 < atr <= self.atr_cold:
-            profit_take = max(1.6, profit_take * 0.92)
-            stop_loss = max(1.1, stop_loss * 0.9)
+            profit_take = max(1.0, profit_take * 0.88)
+            stop_loss = max(0.7, stop_loss * 0.9)
 
         if pnl <= -stop_loss:
             return "hard_stop"
@@ -262,11 +262,8 @@ class H1MomentumExitWorker:
         if state.peak >= trail_start and pnl <= state.peak - trail_backoff:
             return "trail_take"
 
-        if ctx.vwap_gap_pips is not None and abs(ctx.vwap_gap_pips) <= self.vwap_grab_gap:
-            if pnl > 0.3:
-                return "vwap_gravity"
-            if pnl < 0 and self.allow_negative_exit:
-                return "vwap_cut"
+        if pnl > 0.35 and ctx.vwap_gap_pips is not None and abs(ctx.vwap_gap_pips) <= self.vwap_grab_gap:
+            return "vwap_gravity"
 
         if pnl >= profit_take * 0.65 and ctx.rsi is not None:
             if side == "long" and ctx.rsi >= self.rsi_take_long:
@@ -284,7 +281,7 @@ class H1MomentumExitWorker:
 
     async def run(self) -> None:
         LOG.info(
-            "[EXIT-h1momentum] worker starting (interval=%.2fs tags=%s)",
+            "[EXIT-squeeze_break_s5] worker starting (interval=%.2fs tags=%s)",
             self.loop_interval,
             ",".join(sorted(ALLOWED_TAGS)),
         )
@@ -310,7 +307,7 @@ class H1MomentumExitWorker:
                     try:
                         reason = self._evaluate(tr, ctx, now)
                     except Exception:
-                        LOG.exception("[EXIT-h1momentum] evaluate failed trade=%s", tr.get("trade_id"))
+                        LOG.exception("[EXIT-squeeze_break_s5] evaluate failed trade=%s", tr.get("trade_id"))
                         continue
                     if not reason:
                         continue
@@ -321,20 +318,20 @@ class H1MomentumExitWorker:
                     await self._close(trade_id, -units, reason, pnl, side, ctx.range_active)
                     self._states.pop(trade_id, None)
         except asyncio.CancelledError:
-            LOG.info("[EXIT-h1momentum] worker cancelled")
+            LOG.info("[EXIT-squeeze_break_s5] worker cancelled")
             raise
         finally:
             try:
                 self._pos_manager.close()
             except Exception:
-                LOG.exception("[EXIT-h1momentum] failed to close PositionManager")
+                LOG.exception("[EXIT-squeeze_break_s5] failed to close PositionManager")
 
 
-async def h1momentum_exit_worker() -> None:
-    worker = H1MomentumExitWorker()
+async def squeeze_break_s5_exit_worker() -> None:
+    worker = SqueezeBreakExitWorker()
     await worker.run()
 
 
 if __name__ == "__main__":  # pragma: no cover
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s", force=True)
-    asyncio.run(h1momentum_exit_worker())
+    asyncio.run(squeeze_break_s5_exit_worker())

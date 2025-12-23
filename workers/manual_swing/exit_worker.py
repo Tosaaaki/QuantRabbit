@@ -1,4 +1,4 @@
-"""Exit loop for H1Momentum macro worker with technical filters."""
+"""Exit loop for manual_swing worker (macro pocket) with technical filters."""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ import logging
 import os
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Dict, Optional
+from typing import Dict, Optional, Set
 
 from analysis.range_guard import detect_range_mode
 from execution.order_manager import close_trade
@@ -18,7 +18,8 @@ from utils.metrics_logger import log_metric
 
 LOG = logging.getLogger(__name__)
 
-ALLOWED_TAGS = {"H1Momentum"}
+# manual_swing はタグが固定されないため、空集合で pocket 全体を対象にする
+ALLOWED_TAGS: Set[str] = set()
 POCKET = "macro"
 
 
@@ -82,49 +83,49 @@ class _Context:
     range_active: bool
 
 
-class H1MomentumExitWorker:
-    """PnL + RSI/ATR/VWAP/レンジ判定を組み合わせた H1Momentum EXIT."""
+class ManualSwingExitWorker:
+    """PnL + RSI/ATR/VWAP/レンジ判定を組み合わせた manual_swing EXIT."""
 
     def __init__(self) -> None:
-        self.loop_interval = max(1.0, _float_env("H1MOMENTUM_EXIT_LOOP_INTERVAL_SEC", 2.0))
+        self.loop_interval = max(1.0, _float_env("MANUAL_SWING_EXIT_LOOP_INTERVAL_SEC", 2.5))
         self._pos_manager = PositionManager()
         self._states: Dict[str, _TradeState] = {}
 
-        self.profit_take = max(2.0, _float_env("H1MOMENTUM_EXIT_PROFIT_PIPS", 5.0))
-        self.trail_start = max(2.5, _float_env("H1MOMENTUM_EXIT_TRAIL_START_PIPS", 6.5))
-        self.trail_backoff = max(0.6, _float_env("H1MOMENTUM_EXIT_TRAIL_BACKOFF_PIPS", 2.0))
-        self.stop_loss = max(1.5, _float_env("H1MOMENTUM_EXIT_STOP_LOSS_PIPS", 3.0))
-        self.max_hold_sec = max(900.0, _float_env("H1MOMENTUM_EXIT_MAX_HOLD_SEC", 3 * 3600))
-        self.lock_trigger = max(0.9, _float_env("H1MOMENTUM_EXIT_LOCK_TRIGGER_PIPS", 2.2))
-        self.lock_buffer = max(0.25, _float_env("H1MOMENTUM_EXIT_LOCK_BUFFER_PIPS", 0.9))
+        self.profit_take = max(2.0, _float_env("MANUAL_SWING_EXIT_PROFIT_PIPS", 5.5))
+        self.trail_start = max(2.5, _float_env("MANUAL_SWING_EXIT_TRAIL_START_PIPS", 7.5))
+        self.trail_backoff = max(0.6, _float_env("MANUAL_SWING_EXIT_TRAIL_BACKOFF_PIPS", 2.5))
+        self.stop_loss = max(1.5, _float_env("MANUAL_SWING_EXIT_STOP_LOSS_PIPS", 3.5))
+        self.max_hold_sec = max(1200.0, _float_env("MANUAL_SWING_EXIT_MAX_HOLD_SEC", 6 * 3600))
+        self.lock_trigger = max(1.0, _float_env("MANUAL_SWING_EXIT_LOCK_TRIGGER_PIPS", 2.5))
+        self.lock_buffer = max(0.3, _float_env("MANUAL_SWING_EXIT_LOCK_BUFFER_PIPS", 1.0))
 
-        self.range_profit_take = max(1.6, _float_env("H1MOMENTUM_EXIT_RANGE_PROFIT_PIPS", 4.2))
-        self.range_trail_start = max(2.0, _float_env("H1MOMENTUM_EXIT_RANGE_TRAIL_START_PIPS", 5.6))
-        self.range_trail_backoff = max(0.5, _float_env("H1MOMENTUM_EXIT_RANGE_TRAIL_BACKOFF_PIPS", 1.6))
-        self.range_stop_loss = max(1.2, _float_env("H1MOMENTUM_EXIT_RANGE_STOP_LOSS_PIPS", 2.4))
-        self.range_max_hold_sec = max(900.0, _float_env("H1MOMENTUM_EXIT_RANGE_MAX_HOLD_SEC", 2.5 * 3600))
-        self.range_lock_trigger = max(0.8, _float_env("H1MOMENTUM_EXIT_RANGE_LOCK_TRIGGER_PIPS", 1.8))
-        self.range_lock_buffer = max(0.25, _float_env("H1MOMENTUM_EXIT_RANGE_LOCK_BUFFER_PIPS", 0.7))
+        self.range_profit_take = max(1.8, _float_env("MANUAL_SWING_EXIT_RANGE_PROFIT_PIPS", 4.4))
+        self.range_trail_start = max(2.2, _float_env("MANUAL_SWING_EXIT_RANGE_TRAIL_START_PIPS", 6.0))
+        self.range_trail_backoff = max(0.5, _float_env("MANUAL_SWING_EXIT_RANGE_TRAIL_BACKOFF_PIPS", 2.0))
+        self.range_stop_loss = max(1.2, _float_env("MANUAL_SWING_EXIT_RANGE_STOP_LOSS_PIPS", 2.8))
+        self.range_max_hold_sec = max(1200.0, _float_env("MANUAL_SWING_EXIT_RANGE_MAX_HOLD_SEC", 5 * 3600))
+        self.range_lock_trigger = max(0.9, _float_env("MANUAL_SWING_EXIT_RANGE_LOCK_TRIGGER_PIPS", 2.0))
+        self.range_lock_buffer = max(0.25, _float_env("MANUAL_SWING_EXIT_RANGE_LOCK_BUFFER_PIPS", 0.8))
 
-        self.range_adx = max(5.0, _float_env("H1MOMENTUM_EXIT_RANGE_ADX", 22.0))
-        self.range_bbw = max(0.02, _float_env("H1MOMENTUM_EXIT_RANGE_BBW", 0.22))
-        self.range_atr = max(0.4, _float_env("H1MOMENTUM_EXIT_RANGE_ATR", 6.5))
+        self.range_adx = max(5.0, _float_env("MANUAL_SWING_EXIT_RANGE_ADX", 22.0))
+        self.range_bbw = max(0.02, _float_env("MANUAL_SWING_EXIT_RANGE_BBW", 0.24))
+        self.range_atr = max(0.4, _float_env("MANUAL_SWING_EXIT_RANGE_ATR", 7.0))
 
-        self.rsi_fade_long = _float_env("H1MOMENTUM_EXIT_RSI_FADE_LONG", 44.0)
-        self.rsi_fade_short = _float_env("H1MOMENTUM_EXIT_RSI_FADE_SHORT", 56.0)
-        self.rsi_take_long = _float_env("H1MOMENTUM_EXIT_RSI_TAKE_LONG", 72.0)
-        self.rsi_take_short = _float_env("H1MOMENTUM_EXIT_RSI_TAKE_SHORT", 28.0)
-        self.negative_hold_sec = max(240.0, _float_env("H1MOMENTUM_EXIT_NEG_HOLD_SEC", 1500.0))
-        self.allow_negative_exit = _bool_env("H1MOMENTUM_EXIT_ALLOW_NEGATIVE", True)
+        self.rsi_fade_long = _float_env("MANUAL_SWING_EXIT_RSI_FADE_LONG", 44.0)
+        self.rsi_fade_short = _float_env("MANUAL_SWING_EXIT_RSI_FADE_SHORT", 56.0)
+        self.rsi_take_long = _float_env("MANUAL_SWING_EXIT_RSI_TAKE_LONG", 72.0)
+        self.rsi_take_short = _float_env("MANUAL_SWING_EXIT_RSI_TAKE_SHORT", 28.0)
+        self.negative_hold_sec = max(360.0, _float_env("MANUAL_SWING_EXIT_NEG_HOLD_SEC", 2100.0))
+        self.allow_negative_exit = _bool_env("MANUAL_SWING_EXIT_ALLOW_NEGATIVE", True)
 
-        self.vwap_grab_gap = max(0.1, _float_env("H1MOMENTUM_EXIT_VWAP_GAP_PIPS", 1.1))
+        self.vwap_grab_gap = max(0.1, _float_env("MANUAL_SWING_EXIT_VWAP_GAP_PIPS", 1.2))
 
-        self.atr_hot = max(1.0, _float_env("H1MOMENTUM_EXIT_ATR_HOT_PIPS", 9.0))
-        self.atr_cold = max(0.5, _float_env("H1MOMENTUM_EXIT_ATR_COLD_PIPS", 2.8))
+        self.atr_hot = max(1.0, _float_env("MANUAL_SWING_EXIT_ATR_HOT_PIPS", 10.0))
+        self.atr_cold = max(0.5, _float_env("MANUAL_SWING_EXIT_ATR_COLD_PIPS", 3.0))
 
     def _filter_trades(self, trades: list[dict]) -> list[dict]:
         if not ALLOWED_TAGS:
-            return trades
+            return list(trades)
         filtered: list[dict] = []
         for tr in trades:
             thesis = tr.get("entry_thesis") or {}
@@ -174,7 +175,7 @@ class H1MomentumExitWorker:
         ok = await close_trade(trade_id, units)
         if ok:
             LOG.info(
-                "[EXIT-h1momentum] trade=%s units=%s reason=%s pnl=%.2fp range=%s",
+                "[EXIT-manual_swing] trade=%s units=%s reason=%s pnl=%.2fp range=%s",
                 trade_id,
                 units,
                 reason,
@@ -182,13 +183,13 @@ class H1MomentumExitWorker:
                 range_mode,
             )
             log_metric(
-                "h1momentum_exit",
+                "manual_swing_exit",
                 pnl,
                 tags={"reason": reason, "range": str(range_mode), "side": side},
                 ts=_utc_now(),
             )
         else:
-            LOG.error("[EXIT-h1momentum] close failed trade=%s units=%s reason=%s", trade_id, units, reason)
+            LOG.error("[EXIT-manual_swing] close failed trade=%s units=%s reason=%s", trade_id, units, reason)
         return ok
 
     def _evaluate(self, trade: dict, ctx: _Context, now: datetime) -> Optional[str]:
@@ -230,11 +231,11 @@ class H1MomentumExitWorker:
 
         atr = ctx.atr_pips or 0.0
         if atr >= self.atr_hot:
-            profit_take += 0.4
-            trail_start += 0.4
+            profit_take += 0.5
+            trail_start += 0.5
         elif 0.0 < atr <= self.atr_cold:
-            profit_take = max(1.6, profit_take * 0.92)
-            stop_loss = max(1.1, stop_loss * 0.9)
+            profit_take = max(2.0, profit_take * 0.92)
+            stop_loss = max(1.3, stop_loss * 0.9)
 
         if pnl <= -stop_loss:
             return "hard_stop"
@@ -263,7 +264,7 @@ class H1MomentumExitWorker:
             return "trail_take"
 
         if ctx.vwap_gap_pips is not None and abs(ctx.vwap_gap_pips) <= self.vwap_grab_gap:
-            if pnl > 0.3:
+            if pnl > 0.4:
                 return "vwap_gravity"
             if pnl < 0 and self.allow_negative_exit:
                 return "vwap_cut"
@@ -284,9 +285,8 @@ class H1MomentumExitWorker:
 
     async def run(self) -> None:
         LOG.info(
-            "[EXIT-h1momentum] worker starting (interval=%.2fs tags=%s)",
+            "[EXIT-manual_swing] worker starting (interval=%.2fs)",
             self.loop_interval,
-            ",".join(sorted(ALLOWED_TAGS)),
         )
         try:
             while True:
@@ -310,7 +310,7 @@ class H1MomentumExitWorker:
                     try:
                         reason = self._evaluate(tr, ctx, now)
                     except Exception:
-                        LOG.exception("[EXIT-h1momentum] evaluate failed trade=%s", tr.get("trade_id"))
+                        LOG.exception("[EXIT-manual_swing] evaluate failed trade=%s", tr.get("trade_id"))
                         continue
                     if not reason:
                         continue
@@ -321,20 +321,24 @@ class H1MomentumExitWorker:
                     await self._close(trade_id, -units, reason, pnl, side, ctx.range_active)
                     self._states.pop(trade_id, None)
         except asyncio.CancelledError:
-            LOG.info("[EXIT-h1momentum] worker cancelled")
+            LOG.info("[EXIT-manual_swing] worker cancelled")
             raise
         finally:
             try:
                 self._pos_manager.close()
             except Exception:
-                LOG.exception("[EXIT-h1momentum] failed to close PositionManager")
+                LOG.exception("[EXIT-manual_swing] failed to close PositionManager")
 
 
-async def h1momentum_exit_worker() -> None:
-    worker = H1MomentumExitWorker()
+async def manual_swing_exit_worker() -> None:
+    worker = ManualSwingExitWorker()
     await worker.run()
 
 
 if __name__ == "__main__":  # pragma: no cover
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s", force=True)
-    asyncio.run(h1momentum_exit_worker())
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)s %(message)s",
+        force=True,
+    )
+    asyncio.run(manual_swing_exit_worker())
