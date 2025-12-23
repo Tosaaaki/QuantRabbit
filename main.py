@@ -312,8 +312,8 @@ POCKET_LOSS_COOLDOWNS = {
 # 新規エントリー後のクールダウン（再エントリー抑制）
 POCKET_ENTRY_MIN_INTERVAL = {
     "macro": 180,  # 少し短縮
-    "micro": 90,   # 1.5分
-    "scalp": 45,
+    "micro": 150,  # 2.5分。micro の連打抑制を強める
+    "scalp": 90,   # 1.5分
 }
 
 if os.getenv("SCALP_TACTICAL", "0").strip().lower() not in {"", "0", "false", "no"}:
@@ -326,27 +326,27 @@ MACRO_DISABLED = _env_bool("MACRO_DISABLE", False)
 MACRO_STRATEGIES = {"TrendMA", "Donchian55"}
 
 POCKET_MAX_ACTIVE_TRADES = {
-    "macro": 50,
-    "micro": 50,
-    "scalp": 50,
+    "macro": 20,
+    "micro": 12,
+    "scalp": 8,
 }
 
 POCKET_MAX_ACTIVE_TRADES_RANGE = {
-    "macro": 50,
-    "micro": 50,
-    "scalp": 50,
+    "macro": 20,
+    "micro": 12,
+    "scalp": 8,
 }
 
 POCKET_MAX_DIRECTIONAL_TRADES = {
-    "macro": 50,
-    "micro": 50,
-    "scalp": 50,
+    "macro": 12,
+    "micro": 6,
+    "scalp": 6,
 }
 
 POCKET_MAX_DIRECTIONAL_TRADES_RANGE = {
-    "macro": 50,
-    "micro": 50,
-    "scalp": 50,
+    "macro": 12,
+    "micro": 6,
+    "scalp": 6,
 }
 
 try:

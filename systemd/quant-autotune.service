@@ -4,15 +4,14 @@ After=network-online.target
 
 [Service]
 Type=simple
-# ここをあなたのリポの絶対パスに変更してください
-WorkingDirectory=/opt/quantrabbit
-ExecStart=/usr/bin/env python3 scripts/continuous_backtest.py --profile all
+WorkingDirectory=/home/tossaki/QuantRabbit
+ExecStart=/home/tossaki/QuantRabbit/.venv/bin/python scripts/continuous_backtest.py --profile all
 Restart=on-failure
 RestartSec=10
-User=%i
+User=tossaki
 Environment=PYTHONUNBUFFERED=1
 Environment=AUTOTUNE_BQ_TABLE=quantrabbit.autotune_runs
 Environment=AUTOTUNE_BQ_SETTINGS_TABLE=quantrabbit.autotune_settings
 
 [Install]
-WantedBy=default.target
+WantedBy=multi-user.target

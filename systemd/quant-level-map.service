@@ -11,8 +11,8 @@ Environment=PROJECT=quantrabbit
 Environment=BQ_PROJECT=quantrabbit
 Environment=GCS_BUCKET=fx-ui-realtime
 Environment=GOOGLE_APPLICATION_CREDENTIALS=/home/tossaki/.config/gcloud/legacy_credentials/www.tosakiweb.net@gmail.com/adc.json
-ExecStart=/usr/bin/env bash scripts/run_level_map_pipeline.sh
+ExecStart=/bin/bash -lc 'source /home/tossaki/QuantRabbit/.venv/bin/activate && scripts/run_level_map_pipeline.sh'
 User=tossaki
 
 [Install]
-WantedBy=default.target
+WantedBy=multi-user.target

@@ -17,6 +17,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Optional, Tuple, TYPE_CHECKING
 
 import logging
+LOG = logging.getLogger(__name__)
 
 from analysis.chart_story import ChartStorySnapshot
 
@@ -1077,6 +1078,20 @@ class ExitManager:
                 if decision:
                     decisions.append(decision)
 
+        if decisions:
+            for dec in decisions:
+                try:
+                    LOG.info(
+                        "[EXIT_DECISION] pocket=%s units=%s reason=%s tag=%s close_price=%.3f",
+                        dec.pocket,
+                        dec.units,
+                        dec.reason,
+                        dec.tag,
+                        close_price if close_price is not None else -1.0,
+                    )
+                except Exception:
+                    # logging must not break exit flow
+                    pass
         return decisions
 
     def _strong_signal(
