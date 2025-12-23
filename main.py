@@ -575,6 +575,8 @@ WORKER_SERVICES = {
     "impulse_break_s5": "qr-impulse_break_s5.service",
     "mm_lite": "qr-mm_lite.service",
     "onepip_maker_s1": "qr-onepip_maker_s1.service",
+    "micro_exit": "qr-micro_exit.service",
+    "macro_exit": "qr-macro_exit.service",
 }
 WORKER_ALL_SERVICES = set(WORKER_SERVICES.keys())
 WORKER_AUTOCONTROL_ENABLED = os.getenv("WORKER_AUTOCONTROL", "1").strip() not in {"", "0", "false", "no"}
@@ -589,6 +591,13 @@ _GPT_FACTOR_PRECISION = {
     "vol_5m": 3,
     "bbw": 3,
 }
+_EXIT_MAIN_DISABLED_POCKETS = {
+    p.strip().lower()
+    for p in os.getenv("EXIT_MAIN_DISABLE_POCKETS", "").split(",")
+    if p.strip()
+}
+if _env_bool("EXIT_MAIN_DISABLE_MICRO", False):
+    _EXIT_MAIN_DISABLED_POCKETS.add("micro")
 
 
 def _set_stage_plan_overrides(overrides: dict[str, tuple[float, ...]]) -> None:
@@ -4730,20 +4739,36 @@ async def logic_loop(
                     logging.warning("[EXIT_ADVISOR] build_hints failed: %s", exc)
                     advisor_hints = None
 
-            exit_decisions = exit_manager.plan_closures(
-                open_positions,
-                evaluated_signals,
-                fac_m1,
-                fac_h4,
-                fac_h1=fac_h1,
-                fac_m5=fac_m5,
-                event_soon=event_soon,
-                range_mode=range_active,
-                stage_state=stage_snapshot,
-                pocket_profiles=recent_profiles,
-                now=now,
-                clamp_state=clamp_state,
-            )
+            signals_for_exit = [
+                sig for sig in evaluated_signals if sig.get("pocket") not in _EXIT_MAIN_DISABLED_POCKETS
+            ]
+            stage_state_for_exit = {
+                pocket: state
+                for pocket, state in (stage_snapshot or {}).items()
+                if pocket not in _EXIT_MAIN_DISABLED_POCKETS
+            }
+            open_positions_for_exit = {
+                pocket: info
+                for pocket, info in open_positions.items()
+                if pocket == "__net__" or pocket not in _EXIT_MAIN_DISABLED_POCKETS
+            }
+
+            exit_decisions = []
+            if open_positions_for_exit:
+                exit_decisions = exit_manager.plan_closures(
+                    open_positions_for_exit,
+                    signals_for_exit,
+                    fac_m1,
+                    fac_h4,
+                    fac_h1=fac_h1,
+                    fac_m5=fac_m5,
+                    event_soon=event_soon,
+                    range_mode=range_active,
+                    stage_state=stage_state_for_exit,
+                    pocket_profiles=recent_profiles,
+                    now=now,
+                    clamp_state=clamp_state,
+                )
 
             executed_pockets: set[str] = set()
             for decision in exit_decisions:
