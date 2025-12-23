@@ -191,13 +191,15 @@ async def scalp_multi_worker() -> None:
         )
         client_id = _client_order_id(signal.get("tag", strategy_name))
 
-        res = market_order(
+        res = await market_order(
+            instrument="USD_JPY",
             units=units,
-            sl=sl_price,
-            tp=tp_price,
-            client_order_id=client_id,
+            sl_price=sl_price,
+            tp_price=tp_price,
             pocket=config.POCKET,
-            tag=signal.get("tag", strategy_name),
+            client_order_id=client_id,
+            strategy_tag=signal.get("tag", strategy_name),
+            confidence=int(signal.get("confidence", 0)),
         )
         LOG.info(
             "%s strat=%s sent units=%s side=%s price=%.3f sl=%.3f tp=%.3f conf=%.0f cap=%.2f reasons=%s res=%s",
@@ -211,7 +213,7 @@ async def scalp_multi_worker() -> None:
             signal.get("confidence", 0),
             cap,
             {**cap_reason, "tp_scale": round(tp_scale, 3)},
-            res.status if res else "none",
+            res or "none",
         )
 
 
