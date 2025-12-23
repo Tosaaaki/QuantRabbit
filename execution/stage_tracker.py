@@ -55,6 +55,12 @@ AGGRESSIVE_TRADING = os.getenv("AGGRESSIVE_TRADING", "1").strip().lower() in {
     "yes",
     "on",
 }
+# trades.db 読み取り用 PRAGMA（多プロセス同時アクセス時のロック回避）
+_TRADES_BUSY_TIMEOUT_MS = int(os.getenv("STAGE_TRADES_BUSY_TIMEOUT_MS", "10000"))
+_TRADES_JOURNAL_MODE = os.getenv("STAGE_TRADES_JOURNAL_MODE", "WAL")
+_TRADES_SYNCHRONOUS = os.getenv("STAGE_TRADES_SYNCHRONOUS", "NORMAL")
+_TRADES_TEMP_STORE = os.getenv("STAGE_TRADES_TEMP_STORE", "MEMORY")
+_TRADES_URI_TMPL = "file:{path}?mode=ro"
 
 
 def _utcnow() -> datetime:
@@ -829,7 +835,34 @@ class StageTracker:
         trades_path = trades_db or _TRADES_DB
         if not trades_path.exists():
             return
-        conn = sqlite3.connect(trades_path)
+        # trades.db は読み取り専用接続でロックを避ける
+        uri = _TRADES_URI_TMPL.format(path=trades_path)
+        conn = sqlite3.connect(
+            uri,
+            uri=True,
+            timeout=_TRADES_BUSY_TIMEOUT_MS / 1000.0,
+            isolation_level=None,
+        )
+        try:
+            conn.execute(f"PRAGMA journal_mode={_TRADES_JOURNAL_MODE}")
+        except sqlite3.Error:
+            pass
+        try:
+            conn.execute(f"PRAGMA busy_timeout={_TRADES_BUSY_TIMEOUT_MS}")
+        except sqlite3.Error:
+            pass
+        try:
+            conn.execute(f"PRAGMA synchronous={_TRADES_SYNCHRONOUS}")
+        except sqlite3.Error:
+            pass
+        try:
+            conn.execute(f"PRAGMA temp_store={_TRADES_TEMP_STORE}")
+        except sqlite3.Error:
+            pass
+        try:
+            conn.execute("PRAGMA query_only=ON")
+        except sqlite3.Error:
+            pass
         _ensure_row_factory(conn)
         rows = conn.execute(
             "SELECT id, pocket, units, pl_pips, realized_pl, strategy_tag, close_time, close_reason FROM trades WHERE close_time IS NOT NULL ORDER BY id ASC"

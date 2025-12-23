@@ -21,10 +21,24 @@ _BUSY_TIMEOUT_MS = int(os.getenv("PERF_DB_BUSY_TIMEOUT_MS", str(int(_DB_TIMEOUT 
 _JOURNAL_MODE = os.getenv("PERF_DB_JOURNAL_MODE", "WAL")
 _SYNCHRONOUS = os.getenv("PERF_DB_SYNCHRONOUS", "NORMAL")
 _TEMP_STORE = os.getenv("PERF_DB_TEMP_STORE", "MEMORY")
+_READONLY_URI = f"file:{_DB}?mode=ro"
 
 
-def _connect() -> sqlite3.Connection:
-    con = sqlite3.connect(_DB, timeout=_DB_TIMEOUT)
+def _connect(readonly: bool = False) -> sqlite3.Connection:
+    """
+    Get SQLite connection.
+    - readonly=True は mode=ro で接続し、書き込みロックを避ける。
+    - readonly=False はスキーマ初期化用に使用。
+    """
+    if readonly:
+        con = sqlite3.connect(
+            _READONLY_URI,
+            uri=True,
+            timeout=_DB_TIMEOUT,
+            isolation_level=None,
+        )
+    else:
+        con = sqlite3.connect(_DB, timeout=_DB_TIMEOUT)
     try:
         con.execute(f"PRAGMA journal_mode={_JOURNAL_MODE}")
     except sqlite3.Error:
@@ -46,7 +60,7 @@ def _connect() -> sqlite3.Connection:
 
 def _ensure_schema() -> None:
     """trades テーブルが存在しない / 欠損カラムがある場合に補正する。"""
-    with _connect() as con:
+    with _connect(readonly=False) as con:
         con.execute(
             """
     CREATE TABLE IF NOT EXISTS trades (
@@ -115,7 +129,8 @@ _ensure_schema()
 
 
 def _load_df() -> pd.DataFrame:
-    with _connect() as con:
+    # 読み取り専用接続でロックを避ける
+    with _connect(readonly=True) as con:
         try:
             con.execute("PRAGMA read_uncommitted=1")
         except sqlite3.Error:

@@ -3533,7 +3533,13 @@ async def logic_loop(
                     gpt.get("focus_tag"),
                     reuse_reason,
                 )
-            gpt_strategy_allowlist = set(ranked_strategies)
+            # Evaluate all strategies (満遍なく使う) — allowlist is full set.
+            gpt_strategy_allowlist = set(STRATEGIES.keys())
+            # Also append remaining strategies so evaluation covers the whole universe
+            ranked_strategies = list(ranked_strategies)
+            for s in STRATEGIES.keys():
+                if s not in ranked_strategies:
+                    ranked_strategies.append(s)
             auto_injected_strategies: set[str] = set()
             weight_scalp = None
             if raw_weight_scalp is not None:

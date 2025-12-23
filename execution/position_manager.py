@@ -51,15 +51,16 @@ _OPEN_TRADES_FAIL_BACKOFF_MAX = float(
 _MANUAL_POCKET_NAME = os.getenv("POSITION_MANAGER_MANUAL_POCKET", "manual")
 _KNOWN_POCKETS = {"micro", "macro", "scalp"}
 # SQLite locking周り
-_DB_BUSY_TIMEOUT_MS = int(os.getenv("POSITION_MANAGER_DB_BUSY_TIMEOUT_MS", "8000"))
-_DB_LOCK_RETRY = int(os.getenv("POSITION_MANAGER_DB_LOCK_RETRY", "3"))
-_DB_LOCK_RETRY_SLEEP = float(os.getenv("POSITION_MANAGER_DB_LOCK_RETRY_SLEEP", "0.25"))
+# ロック頻発に備えてデフォルトを広めに取る
+_DB_BUSY_TIMEOUT_MS = int(os.getenv("POSITION_MANAGER_DB_BUSY_TIMEOUT_MS", "20000"))
+_DB_LOCK_RETRY = int(os.getenv("POSITION_MANAGER_DB_LOCK_RETRY", "6"))
+_DB_LOCK_RETRY_SLEEP = float(os.getenv("POSITION_MANAGER_DB_LOCK_RETRY_SLEEP", "0.5"))
 # PRAGMA values
 _DB_JOURNAL_MODE = os.getenv("POSITION_MANAGER_DB_JOURNAL_MODE", "WAL")
 _DB_SYNCHRONOUS = os.getenv("POSITION_MANAGER_DB_SYNCHRONOUS", "NORMAL")
 _DB_TEMP_STORE = os.getenv("POSITION_MANAGER_DB_TEMP_STORE", "MEMORY")
 _DB_LOCK_PATH = pathlib.Path(os.getenv("POSITION_MANAGER_DB_LOCK_PATH", "logs/trades.db.lock"))
-_DB_FILE_LOCK_TIMEOUT = float(os.getenv("POSITION_MANAGER_DB_FILE_LOCK_TIMEOUT", "10.0"))
+_DB_FILE_LOCK_TIMEOUT = float(os.getenv("POSITION_MANAGER_DB_FILE_LOCK_TIMEOUT", "30.0"))
 
 # Agent-generated client order ID prefixes (qr-...), used to classify pockets.
 agent_client_prefixes = tuple(
@@ -221,8 +222,8 @@ class PositionManager:
     def __init__(self):
         self.con = _open_trades_db()
         with _file_lock(_DB_LOCK_PATH):
-            self._ensure_schema()
-        self._last_tx_id = self._get_last_transaction_id()
+            self._ensure_schema_with_retry()
+        self._last_tx_id = self._get_last_transaction_id_with_retry()
         self._pocket_cache: dict[str, str] = {}
         self._client_cache: dict[str, str] = {}
         self._http = _build_http_session()
@@ -247,6 +248,18 @@ class PositionManager:
         if p in ("", "unknown"):
             return "manual"
         return p if p in allowed else "manual"
+
+    def _ensure_schema_with_retry(self):
+        for attempt in range(_DB_LOCK_RETRY):
+            try:
+                self._ensure_schema()
+                return
+            except sqlite3.OperationalError as exc:
+                if "locked" not in str(exc).lower():
+                    raise
+                time.sleep(_DB_LOCK_RETRY_SLEEP)
+        # 最後のリトライで例外を伝播
+        self._ensure_schema()
 
     def _ensure_schema(self):
         # trades テーブルが存在しない場合のベース定義
@@ -339,6 +352,16 @@ class PositionManager:
             "CREATE INDEX IF NOT EXISTS idx_trades_close_time ON trades(close_time)"
         )
         self._commit_with_retry()
+
+    def _get_last_transaction_id_with_retry(self) -> int:
+        for attempt in range(_DB_LOCK_RETRY):
+            try:
+                return self._get_last_transaction_id()
+            except sqlite3.OperationalError as exc:
+                if "locked" not in str(exc).lower():
+                    raise
+                time.sleep(_DB_LOCK_RETRY_SLEEP)
+        return self._get_last_transaction_id()
 
     def _get_last_transaction_id(self) -> int:
         """DBに記録済みの最新トランザクションIDを取得"""

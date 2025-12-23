@@ -22,7 +22,9 @@ OUTPUT_PATH = BASE_DIR / "config" / "dynamic_alloc.json"
 def fetch_trades(limit: int) -> List[Tuple]:
     if not TRADES_DB.exists():
         return []
-    conn = sqlite3.connect(TRADES_DB)
+    # 読み取り専用で接続し、ロック影響を最小化
+    uri = f"file:{TRADES_DB}?mode=ro"
+    conn = sqlite3.connect(uri, uri=True, timeout=10.0, isolation_level=None)
     try:
         cur = conn.cursor()
         cur.execute(
