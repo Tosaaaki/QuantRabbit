@@ -86,7 +86,7 @@ def _guard_enabled() -> bool:
 
 
 def _trading_paused() -> bool:
-    return os.getenv("TRADING_PAUSED", "1").strip().lower() not in {"", "0", "false", "off"}
+    return os.getenv("TRADING_PAUSED", "0").strip().lower() not in {"", "0", "false", "off"}
 
 _FAST_SCALP_SHARE = 0.35
 try:
