@@ -173,6 +173,10 @@ class ExitManager:
             "true",
             "yes",
         }
+        # Fast-kill / loss clamp opt-out for scalp pocket
+        self._disable_scalp_kill = _env_flag("EXIT_DISABLE_SCALP_KILL", False)
+        # 全自動EXIT（fast_cut/kill/clamp/trail/escape/guards）をオフにするグローバルトグル
+        self._disable_auto_exit = _env_flag("EXIT_DISABLE_AUTO_EXIT", False)
         # TrendMA / volatility-specific garde rails
         self._trendma_partial_fraction = float(os.getenv("EXIT_TRENDMA_PARTIAL_FRACTION", "0.5"))
         self._trendma_partial_profit_cap = float(os.getenv("EXIT_TRENDMA_PARTIAL_PROFIT_CAP", "3.4"))
@@ -750,6 +754,35 @@ class ExitManager:
                 clamp_level = int(clamp_state.get("level", 0) or 0)
             except Exception:
                 clamp_level = 0
+        if self._disable_auto_exit:
+            # ワーカーが出すCLOSEシグナルのみ反映し、その他の自動EXITはすべて無効化
+            for pocket, info in open_positions.items():
+                if pocket == "__net__" or pocket not in MANAGED_POCKETS:
+                    continue
+                long_units = int(info.get("long_units", 0) or 0)
+                short_units = int(info.get("short_units", 0) or 0)
+                if long_units == 0 and short_units == 0:
+                    continue
+                for sig in signals:
+                    if sig.get("pocket") != pocket or sig.get("action") != "CLOSE":
+                        continue
+                    units = 0
+                    if long_units > 0:
+                        units -= long_units
+                    if short_units > 0:
+                        units += short_units
+                    if units == 0:
+                        continue
+                    decisions.append(
+                        ExitDecision(
+                            pocket=pocket,
+                            units=units,
+                            reason="signal_close",
+                            tag=sig.get("tag", "signal-close"),
+                            allow_reentry=True,
+                        )
+                    )
+            return decisions
         for pocket, info in open_positions.items():
             if pocket == "__net__" or pocket not in MANAGED_POCKETS:
                 continue
@@ -1241,12 +1274,14 @@ class ExitManager:
         - 逆行が fast_cut を超え、かつ一定時間経過でクローズ
         - ただし「一度も+域に乗っておらず若いポジ」は緩めに判定する
         """
+        if self._disable_auto_exit:
+            return None
         # スプレッド拡大時間帯（例: 07-08 JST）はカットを停止
         if _in_jst_window(now, self._cut_disable_jst_start, self._cut_disable_jst_end):
             return None
         if pocket not in {"micro", "scalp"}:
             return None
-        if pocket == "scalp" and self._disable_scalp_fast_cut:
+        if pocket == "scalp" and (self._disable_scalp_fast_cut or self._disable_scalp_kill):
             return None
         if units <= 0:
             return None
@@ -1582,6 +1617,8 @@ class ExitManager:
         now: datetime,
     ) -> Optional[ExitDecision]:
         """BE/トレールを市況とスタック量で動的に緩急。"""
+        if self._disable_auto_exit:
+            return None
         if pocket not in {"micro", "scalp"}:
             return None
         if profit_pips is None or profit_pips <= 0.0:
@@ -1789,6 +1826,10 @@ class ExitManager:
         """
         if pocket not in {"micro", "scalp"}:
             return None
+        if pocket == "scalp" and self._disable_scalp_kill:
+            return None
+        if self._disable_auto_exit:
+            return None
         if profit_pips is None or profit_pips >= 0.0:
             return None
         if _in_jst_window(now, self._cut_disable_jst_start, self._cut_disable_jst_end):
@@ -1950,9 +1991,13 @@ class ExitManager:
         Trades without kill/fast_cut meta (thesis欠損/SLなし想定) を広めのソフトガードで捕捉。
         ハードSLは置かず、ATR×時間＋リトレースでマーケット決済する。
         """
+        if self._disable_auto_exit:
+            return None
         if _in_jst_window(now, self._cut_disable_jst_start, self._cut_disable_jst_end):
             return None
         if pocket not in {"micro", "scalp"}:
+            return None
+        if pocket == "scalp" and self._disable_scalp_kill:
             return None
         if profit_pips is None or profit_pips >= 0.0:
             return None
@@ -4463,6 +4508,8 @@ class ExitManager:
         range_mode: bool,
     ) -> Optional[ExitDecision]:
         """Shrink TP/SL dynamically in quiet/range; avoid interfering with runners."""
+        if self._disable_auto_exit:
+            return None
         if not self._escape_enabled:
             return None
         if pocket not in {"micro", "scalp", "scalp_fast"}:
@@ -5298,6 +5345,8 @@ class ExitManager:
         atr_pips: float,
         fac_m1: Dict,
     ) -> bool:
+        if self._disable_auto_exit:
+            return False
         if stage_tracker is None:
             return False
         if profit_pips is None or profit_pips >= 0.0:
