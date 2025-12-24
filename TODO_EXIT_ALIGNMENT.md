@@ -84,3 +84,21 @@
   - PnL/時間/RSI/レンジ/VWAP。range閾値共有化、エントリーメタで stop/lock/trail/profit をスケール（hard_stop*0.5 等）。M1 MA逆転/ADX低下＋ギャップ縮小で structure_break。
 - 整合ギャップ
   - なし（構造崩れも追加済み）。必要なら閾値微調整。
+
+### Pullback 系 S5（pullback_s5 / pullback_runner_s5 / pullback_scalp）
+- EXIT: エントリーメタ（hard_stop/tp_hint）で stop/lock/trail/profit をスケール、lock_buffer を stop_loss に合わせて拡張。レンジ閾値は ADX<=22, BBW<=0.20, ATR<=6 で統一。
+- 構造崩れ: M1 MA10/MA20 逆転 or ADX<14&ギャップ<2p で structure_break クローズ。
+
+### SqueezeBreak S5 / VWAP Magnet S5
+- EXIT: pullback系と同様にエントリーメタスケール + lock_buffer 拡張。レンジ閾値を共通化。
+- 構造崩れ: M1 MA逆転/ADX低下で structure_break。
+
+### MicroMultiStrat
+- EXIT: エントリーメタで stop/lock/trail/profit をスケール、lock_buffer を stop_loss 連動に。レンジ閾値共通化、構造崩れ（M1 MA逆転/ADX<14&gap<2）を追加。
+
+### LondonMomentum / Donchian55 / ManualSwing（macro）
+- EXIT: hard_stop/tp_hint をスケールに反映し、lock_buffer を stop_loss 連動で拡張。
+- 構造崩れ: H1 MA10/MA20 逆転 or ADX<16 & gap<3.5p で structure_break。
+
+### SimpleExit ワーカー（onepip/mirror_spike/trend_h1/impulse_break_s5）
+- 修正: hard_stop/tp_hint を保持する TradeState へ拡張、エントリーメタで stop/take/trail/lock をスケール。構造崩れオプションを実装（impulse_break_s5 で有効化）。

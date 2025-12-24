@@ -69,6 +69,8 @@ def _latest_mid() -> Optional[float]:
 class _TradeState:
     peak: float
     lock_floor: Optional[float] = None
+    hard_stop: Optional[float] = None
+    tp_hint: Optional[float] = None
 
 
 @dataclass
@@ -211,7 +213,18 @@ class PullbackExitWorker:
 
         state = self._states.get(trade_id)
         if state is None:
-            state = _TradeState(peak=pnl)
+            thesis = trade.get("entry_thesis") or {}
+            hard_stop = thesis.get("hard_stop_pips") or thesis.get("hard_stop") or thesis.get("stop_loss")
+            tp_hint = thesis.get("tp_pips") or thesis.get("tp") or thesis.get("take_profit")
+            try:
+                hard_stop_val = float(hard_stop) if hard_stop is not None else None
+            except Exception:
+                hard_stop_val = None
+            try:
+                tp_hint_val = float(tp_hint) if tp_hint is not None else None
+            except Exception:
+                tp_hint_val = None
+            state = _TradeState(peak=pnl, hard_stop=hard_stop_val, tp_hint=tp_hint_val)
             self._states[trade_id] = state
         else:
             state.peak = max(state.peak, pnl)
@@ -228,6 +241,16 @@ class PullbackExitWorker:
         lock_buffer = self.range_lock_buffer if range_mode else self.lock_buffer
         max_hold = self.range_max_hold_sec if range_mode else self.max_hold_sec
 
+        # エントリーメタに合わせてEXIT閾値をスケール
+        if state.hard_stop:
+            stop_loss = max(stop_loss, max(0.8, state.hard_stop * 0.5))
+            lock_trigger = max(lock_trigger, max(0.25, state.hard_stop * 0.25))
+            trail_start = max(trail_start, max(1.0, state.hard_stop * 0.6))
+            max_hold = max(max_hold, self.max_hold_sec * 1.05)
+        if state.tp_hint:
+            profit_take = max(profit_take, max(1.0, state.tp_hint * 0.7))
+            trail_start = max(trail_start, max(1.0, state.tp_hint * 0.8))
+
         atr = ctx.atr_pips or 0.0
         if atr >= self.atr_hot:
             profit_take += 0.25
@@ -235,6 +258,19 @@ class PullbackExitWorker:
         elif 0.0 < atr <= self.atr_cold:
             profit_take = max(1.0, profit_take * 0.85)
             stop_loss = max(0.7, stop_loss * 0.9)
+        lock_buffer = max(lock_buffer, stop_loss * 0.35)
+
+        # 構造崩れ（M1 MA逆転/ADX低下＋ギャップ縮小）で撤退
+        if ctx.adx is not None and ctx.adx < self.range_adx:
+            try:
+                factors = all_factors().get("M1") or {}
+                ma10 = float(factors.get("ma10"))
+                ma20 = float(factors.get("ma20"))
+                gap = abs(ma10 - ma20) / 0.01
+                if (side == "long" and ma10 <= ma20) or (side == "short" and ma10 >= ma20) or (ctx.adx < 14.0 and gap < 2.0):
+                    return "structure_break"
+            except Exception:
+                pass
 
         if pnl <= -stop_loss:
             return "hard_stop"

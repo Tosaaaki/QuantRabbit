@@ -46,6 +46,8 @@ def _latest_mid() -> Optional[float]:
 class TradeState:
     peak: float
     lock_floor: Optional[float] = None
+    hard_stop: Optional[float] = None
+    tp_hint: Optional[float] = None
 
     def update(self, pnl: float, lock_buffer: float) -> None:
         if pnl > self.peak:
@@ -69,6 +71,12 @@ class SimpleExitWorker:
         max_hold_sec: float,
         loop_interval: float = 1.0,
         lock_buffer: float = 0.6,
+        use_entry_meta: bool = True,
+        structure_break: bool = False,
+        structure_timeframe: str = "M1",
+        structure_adx: float = 22.0,
+        structure_gap_pips: float = 2.0,
+        structure_adx_cold: float = 12.0,
     ) -> None:
         self.pocket = pocket
         self.strategy_tags = {tag.strip() for tag in strategy_tags if tag.strip()}
@@ -79,6 +87,12 @@ class SimpleExitWorker:
         self.max_hold_sec = max_hold_sec
         self.loop_interval = loop_interval
         self.lock_buffer = lock_buffer
+        self.use_entry_meta = use_entry_meta
+        self.structure_break = structure_break
+        self.structure_timeframe = structure_timeframe
+        self.structure_adx = structure_adx
+        self.structure_gap_pips = structure_gap_pips
+        self.structure_adx_cold = structure_adx_cold
         self._states: Dict[str, TradeState] = {}
         self._pos_manager = PositionManager()
 
@@ -134,8 +148,6 @@ class SimpleExitWorker:
                 tp_hint_val = None
             state = TradeState(peak=pnl, hard_stop=hard_stop_val, tp_hint=tp_hint_val)
             self._states[trade_id] = state
-        else:
-            state.update(pnl, self.lock_buffer)
 
         # lightly scale thresholds with entry meta when requested
         profit_take = self.profit_take
@@ -143,7 +155,7 @@ class SimpleExitWorker:
         stop_loss = self.stop_loss
         max_hold = self.max_hold_sec
         lock_buffer = self.lock_buffer
-        if getattr(self, "use_entry_meta", True):
+        if self.use_entry_meta:
             if state.hard_stop:
                 stop_loss = max(stop_loss, max(0.8, state.hard_stop * 0.5))
                 lock_buffer = max(lock_buffer, stop_loss * 0.35)
@@ -152,6 +164,25 @@ class SimpleExitWorker:
             if state.tp_hint:
                 profit_take = max(profit_take, max(1.0, state.tp_hint * 0.7))
                 trail_start = max(trail_start, max(1.0, state.tp_hint * 0.8))
+
+        state.update(pnl, lock_buffer)
+
+        # Structure break: MA10/MA20逆転＋ADX低下（エントリー優位性崩れ）
+        if self.structure_break:
+            try:
+                factors = all_factors().get(self.structure_timeframe) or {}
+                adx = float(factors.get("adx"))
+                ma10 = float(factors.get("ma10"))
+                ma20 = float(factors.get("ma20"))
+                gap = abs(ma10 - ma20) / 0.01
+                if adx < self.structure_adx:
+                    dir_long = units > 0
+                    if (dir_long and ma10 <= ma20) or ((not dir_long) and ma10 >= ma20) or (adx < self.structure_adx_cold and gap < self.structure_gap_pips):
+                        await self._close(trade_id, -units, "structure_break")
+                        self._states.pop(trade_id, None)
+                        return
+            except Exception:
+                pass
 
         # Hard stop
         if pnl <= -stop_loss:
