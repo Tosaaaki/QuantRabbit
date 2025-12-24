@@ -59,12 +59,8 @@
   - SL/TP: projection +構造/VWAP/スイング高安で補正。SLはデフォで10p以上、TPはSL比1.08以上、MTF整合でスケール。
   - メタ: strategy_tag=TrendMA系。hard_stop_pipsなどは明示無し（構造から計算）。
 - EXIT（workers/macro_trendma/exit_worker.py）
-  - PnL/時間/RSI/レンジ/VWAPのみ（H1構造崩れ検知なし）。range_mode閾値: ADX<=22, BBW<=0.22, ATR<=6.5。
-  - stop_loss≈3.5p、profit_take≈6p、trail_start≈7p、lock_trigger≈2.4p、max_hold≈4h。range時はややタイト。
+  - PnL/時間/RSI/レンジ/VWAP + H1構造崩れ（MA逆転/ADX低下＋ギャップ収縮）でCLOSE。range_mode閾値: ADX<=22, BBW<=0.22, ATR<=6.5。
+  - エントリーメタがあれば stop/lock/trail/profit をスケール（hard_stop*0.4 など）。
+  - stop_lossの最低値を拡張（エントリーSLとの整合を少し改善）。
 - 整合ギャップ
-  - エントリー根拠のMA構造逆転/ADX低下でEXITしない。SL/TP計算（10p+）とEXIT stop_loss（3.5p）に乖離。
-  - range判定閾値がエントリー側のレンジ抑制と一致しているか未確認。
-- 案
-  - エントリーメタから SL/TP ヒントを持ち込み、EXITのstop/lock/trailをスケール。
-  - H1構造崩れ（MA10/20逆転、ADX<entry閾値&gap縮小）でCLOSEを追加。
-  - range判定をエントリー側のdetect_range_mode閾値に揃える。
+  - range判定閾値がエントリー側のレンジ抑制と完全一致しているかは未確認（必要なら揃える）。

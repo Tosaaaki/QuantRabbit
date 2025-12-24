@@ -69,6 +69,8 @@ def _latest_mid() -> Optional[float]:
 class _TradeState:
     peak: float
     lock_floor: Optional[float] = None
+    hard_stop: Optional[float] = None
+    tp_hint: Optional[float] = None
 
 
 @dataclass
@@ -109,6 +111,7 @@ class ScalpMultiExitWorker:
         self.range_adx = max(5.0, _float_env("SCALP_MULTI_EXIT_RANGE_ADX", 22.0))
         self.range_bbw = max(0.02, _float_env("SCALP_MULTI_EXIT_RANGE_BBW", 0.20))
         self.range_atr = max(0.3, _float_env("SCALP_MULTI_EXIT_RANGE_ATR", 6.0))
+        self._range_thresholds = (self.range_adx, self.range_bbw, self.range_atr)
 
         self.rsi_fade_long = _float_env("SCALP_MULTI_EXIT_RSI_FADE_LONG", 42.0)
         self.rsi_fade_short = _float_env("SCALP_MULTI_EXIT_RSI_FADE_SHORT", 58.0)
@@ -152,12 +155,13 @@ class ScalpMultiExitWorker:
             if atr_pips is not None:
                 atr_pips *= 100.0
 
+        adx_th, bbw_th, atr_th = self._range_thresholds
         range_ctx = detect_range_mode(
             fac_m1,
             fac_h4,
-            adx_threshold=self.range_adx,
-            bbw_threshold=self.range_bbw,
-            atr_threshold=self.range_atr,
+            adx_threshold=adx_th,
+            bbw_threshold=bbw_th,
+            atr_threshold=atr_th,
         )
 
         return _Context(
@@ -211,7 +215,18 @@ class ScalpMultiExitWorker:
 
         state = self._states.get(trade_id)
         if state is None:
-            state = _TradeState(peak=pnl)
+            thesis = trade.get("entry_thesis") or {}
+            hard_stop = thesis.get("hard_stop_pips") or thesis.get("hard_stop") or thesis.get("stop_loss")
+            tp_hint = thesis.get("tp_pips") or thesis.get("tp") or thesis.get("take_profit")
+            try:
+                hard_stop_val = float(hard_stop) if hard_stop is not None else None
+            except Exception:
+                hard_stop_val = None
+            try:
+                tp_hint_val = float(tp_hint) if tp_hint is not None else None
+            except Exception:
+                tp_hint_val = None
+            state = _TradeState(peak=pnl, hard_stop=hard_stop_val, tp_hint=tp_hint_val)
             self._states[trade_id] = state
         else:
             state.peak = max(state.peak, pnl)
@@ -227,6 +242,16 @@ class ScalpMultiExitWorker:
         lock_trigger = self.range_lock_trigger if range_mode else self.lock_trigger
         lock_buffer = self.range_lock_buffer if range_mode else self.lock_buffer
         max_hold = self.range_max_hold_sec if range_mode else self.max_hold_sec
+
+        # エントリーメタがあれば EXIT 閾値をスケール（エントリー設計と整合）
+        if state.hard_stop:
+            stop_loss = max(stop_loss, max(0.7, state.hard_stop * 0.5))
+            lock_trigger = max(lock_trigger, max(0.2, state.hard_stop * 0.25))
+            trail_start = max(trail_start, max(0.9, state.hard_stop * 0.6))
+            max_hold = max(max_hold, self.max_hold_sec * 1.15)
+        if state.tp_hint:
+            profit_take = max(profit_take, max(0.9, state.tp_hint * 0.7))
+            trail_start = max(trail_start, max(1.0, state.tp_hint * 0.8))
 
         atr = ctx.atr_pips or 0.0
         if atr >= self.atr_hot:
