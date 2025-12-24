@@ -69,6 +69,8 @@ def _latest_mid() -> Optional[float]:
 class _TradeState:
     peak: float
     lock_floor: Optional[float] = None
+    hard_stop: Optional[float] = None
+    tp_hint: Optional[float] = None
 
 
 @dataclass
@@ -109,6 +111,7 @@ class TrendMAExitWorker:
         self.range_adx = max(5.0, _float_env("TRENDMA_EXIT_RANGE_ADX", 22.0))
         self.range_bbw = max(0.02, _float_env("TRENDMA_EXIT_RANGE_BBW", 0.22))
         self.range_atr = max(0.4, _float_env("TRENDMA_EXIT_RANGE_ATR", 6.5))
+        self._range_thresholds = (self.range_adx, self.range_bbw, self.range_atr)
 
         self.rsi_fade_long = _float_env("TRENDMA_EXIT_RSI_FADE_LONG", 44.0)
         self.rsi_fade_short = _float_env("TRENDMA_EXIT_RSI_FADE_SHORT", 56.0)
@@ -152,12 +155,13 @@ class TrendMAExitWorker:
             if atr_pips is not None:
                 atr_pips *= 100.0
 
+        adx_th, bbw_th, atr_th = self._range_thresholds
         range_ctx = detect_range_mode(
             fac_h1 if fac_h1 else {},
             fac_h4,
-            adx_threshold=self.range_adx,
-            bbw_threshold=self.range_bbw,
-            atr_threshold=self.range_atr,
+            adx_threshold=adx_th,
+            bbw_threshold=bbw_th,
+            atr_threshold=atr_th,
         )
 
         return _Context(
@@ -211,7 +215,18 @@ class TrendMAExitWorker:
 
         state = self._states.get(trade_id)
         if state is None:
-            state = _TradeState(peak=pnl)
+            thesis = trade.get("entry_thesis") or {}
+            hard_stop = thesis.get("hard_stop_pips") or thesis.get("hard_stop") or thesis.get("stop_loss")
+            tp_hint = thesis.get("tp_pips") or thesis.get("tp") or thesis.get("take_profit")
+            try:
+                hard_stop_val = float(hard_stop) if hard_stop is not None else None
+            except Exception:
+                hard_stop_val = None
+            try:
+                tp_hint_val = float(tp_hint) if tp_hint is not None else None
+            except Exception:
+                tp_hint_val = None
+            state = _TradeState(peak=pnl, hard_stop=hard_stop_val, tp_hint=tp_hint_val)
             self._states[trade_id] = state
         else:
             state.peak = max(state.peak, pnl)
@@ -228,6 +243,16 @@ class TrendMAExitWorker:
         lock_buffer = self.range_lock_buffer if range_mode else self.lock_buffer
         max_hold = self.range_max_hold_sec if range_mode else self.max_hold_sec
 
+        # エントリーSL/TPメタがあればEXIT閾値をスケールして整合を取る
+        if state.hard_stop:
+            stop_loss = max(stop_loss, max(5.0, state.hard_stop * 0.4))
+            lock_trigger = max(lock_trigger, max(1.2, state.hard_stop * 0.25))
+            trail_start = max(trail_start, max(2.2, state.hard_stop * 0.5))
+            max_hold = max(max_hold, self.max_hold_sec * 1.2)
+        if state.tp_hint:
+            profit_take = max(profit_take, max(2.2, state.tp_hint * 0.7))
+            trail_start = max(trail_start, max(2.2, state.tp_hint * 0.8))
+
         atr = ctx.atr_pips or 0.0
         if atr >= self.atr_hot:
             profit_take += 0.5
@@ -235,6 +260,19 @@ class TrendMAExitWorker:
         elif 0.0 < atr <= self.atr_cold:
             profit_take = max(1.8, profit_take * 0.92)
             stop_loss = max(1.2, stop_loss * 0.9)
+
+        # H1構造崩れ（MA逆転/ADX低下＋ギャップ収縮）で即時クローズ
+        if ctx.adx is not None and ctx.adx < self.range_adx:
+            try:
+                factors = all_factors().get("H1") or {}
+                ma10 = float(factors.get("ma10"))
+                ma20 = float(factors.get("ma20"))
+                gap = abs(ma10 - ma20) / 0.01
+                dir_long = units > 0
+                if (dir_long and ma10 <= ma20) or ((not dir_long) and ma10 >= ma20) or (ctx.adx < 12.5 and gap < 3.0):
+                    return "structure_break"
+            except Exception:
+                pass
 
         if pnl <= -stop_loss:
             return "hard_stop"

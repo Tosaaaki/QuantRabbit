@@ -1,5 +1,9 @@
 ## EXIT 整合性チェック ToDo
 
+共通方針
+- ポケット共通EXITは使わない。エントリーしたワーカー専用のEXITのみ有効。
+- ExitManager 自動EXITは `EXIT_DISABLE_AUTO_EXIT=1`（scalp fast_cut/kill も無効化）前提で整合を見る。
+
 進め方（ワーカーごとに繰り返し）
 - 対象ワーカー一覧を確定（systemd/strategies から列挙し、優先度付け）
 - ワーカーのエントリー条件を抽出（指標/閾値/時間帯/ボラ/ステージ/メタ付与）
@@ -35,3 +39,32 @@
   - H1構造崩れ（MAクロス逆転/ADX<しきい値）をEXITトリガに含めるか？
   - stop_loss/lock/trailのpipsをエントリーSL/TP比に合わせて再設計するか？
   - allow_negative_exit=False運用にするか（現状True）と、その際のmax_hold/time_cutの扱い。
+
+### M1Scalper（scalp）
+- エントリー（strategies/scalping/m1_scalper.py）
+  - ゲート: ATR_pips>=1.2（tactical時は別値）、vol5>=0.35、ADX>=12。低ボラレンジ（ADX<18 & BBW<0.0016 & ATR<2.4）はBB/VWAP近接のみ許可。
+  - トレンド判定: EMAモメンタム/価格乖離で trend_up/down/strong_up/down を判定し、逆張りを抑制。
+  - TP/SL: tp_dyn≈ATR*3 を [5,9]pにクランプ、sl_dyn≈min(ATR*2, 0.95*TP) を >=4p。fast_cut≈0.85*ATR, fast_cut_time≈12*ATR秒（メタ付与）。
+  - メタ: fast_cut_pips/time/hard_mult=1.6、kill_switch付与。tag: buy-dip/sell-rally/trend-long/short/nwave派生。
+- EXIT
+  - ポケット共通EXITは使わない。専用Exitワーカーも置かず、エントリーしたワーカー（M1Scalper）が設定するSL/TPのみで完結させる方針。
+  - ExitManager自動EXITは `EXIT_DISABLE_AUTO_EXIT=1`、fast_cut/kill メタは環境変数で無効化中。
+- 整合ギャップ
+  - fast_cut/kill 無効化により、低ボラ/レンジの早期撤退や構造崩れEXITなし。ホールドリスクは許容前提。
+  - 必要なら将来、各エントリーワーカー内にCLOSEロジックを内包させる形で追加する（ポケット共通EXITや専用EXITワーカーは置かない）。
+
+### TrendMA（macro）
+- エントリー（strategies/trend/ma_cross.py）
+  - H1/H4のMA10/MA20ギャップとADXでトレンド判定。ATR/BBWレンジ抑制、MACDフィルタ、MTFスロープ整合性。逆方向クールダウン30分。
+  - SL/TP: projection +構造/VWAP/スイング高安で補正。SLはデフォで10p以上、TPはSL比1.08以上、MTF整合でスケール。
+  - メタ: strategy_tag=TrendMA系。hard_stop_pipsなどは明示無し（構造から計算）。
+- EXIT（workers/macro_trendma/exit_worker.py）
+  - PnL/時間/RSI/レンジ/VWAPのみ（H1構造崩れ検知なし）。range_mode閾値: ADX<=22, BBW<=0.22, ATR<=6.5。
+  - stop_loss≈3.5p、profit_take≈6p、trail_start≈7p、lock_trigger≈2.4p、max_hold≈4h。range時はややタイト。
+- 整合ギャップ
+  - エントリー根拠のMA構造逆転/ADX低下でEXITしない。SL/TP計算（10p+）とEXIT stop_loss（3.5p）に乖離。
+  - range判定閾値がエントリー側のレンジ抑制と一致しているか未確認。
+- 案
+  - エントリーメタから SL/TP ヒントを持ち込み、EXITのstop/lock/trailをスケール。
+  - H1構造崩れ（MA10/20逆転、ADX<entry閾値&gap縮小）でCLOSEを追加。
+  - range判定をエントリー側のdetect_range_mode閾値に揃える。
