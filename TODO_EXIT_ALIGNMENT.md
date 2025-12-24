@@ -78,3 +78,9 @@
 - エントリー: S5バケットのモメ/リトレース/ブレイク系。詳細要抽出。
 - EXIT: 専用Exitワーカーあり（PnL/時間中心）。エントリーメタ連携や構造崩れ検知の有無は未確認。
 - 次アクション: エントリー条件とEXIT閾値・構造崩れの整合を確認し、必要ならエントリーメタ参照スケール＆構造崩れCLOSEを追加。
+
+### FastScalp（scalp_fast）
+- EXIT（workers/fast_scalp/exit_worker.py）
+  - PnL/時間/RSI/レンジ/VWAP。range閾値共有化、エントリーメタで stop/lock/trail/profit をスケール（hard_stop*0.5 等）。M1 MA逆転/ADX低下＋ギャップ縮小で structure_break。
+- 整合ギャップ
+  - なし（構造崩れも追加済み）。必要なら閾値微調整。
