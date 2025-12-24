@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import datetime
 import logging
+import os
 from typing import Dict, List
 
 from analysis import policy_bus
@@ -24,6 +25,7 @@ from . import config
 LOG = logging.getLogger(__name__)
 POCKET = "micro"
 PIP = 0.01
+DISABLE_POCKET_EXIT = os.getenv("DISABLE_POCKET_EXIT", "1").strip().lower() in {"1", "true", "yes", "on"}
 
 
 def _utc_now() -> datetime.datetime:
@@ -156,6 +158,9 @@ async def _execute_exit(
 
 
 async def micro_exit_worker() -> None:
+    if DISABLE_POCKET_EXIT:
+        LOG.info("%s disabled via DISABLE_POCKET_EXIT", config.LOG_PREFIX)
+        return
     if not config.ENABLED:
         LOG.info("%s disabled", config.LOG_PREFIX)
         return

@@ -3,6 +3,7 @@
 共通方針
 - ポケット共通EXITは使わない。エントリーしたワーカー専用のEXITのみ有効。
 - ExitManager 自動EXITは `EXIT_DISABLE_AUTO_EXIT=1`（scalp fast_cut/kill も無効化）前提で整合を見る。
+- macro_exit/micro_exit/scalp_exit の共通出口ループは `DISABLE_POCKET_EXIT`（デフォルトON）で停止。
 
 進め方（ワーカーごとに繰り返し）
 - 対象ワーカー一覧を確定（systemd/strategies から列挙し、優先度付け）

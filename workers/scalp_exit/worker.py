@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 from datetime import datetime, timezone
 from statistics import mean, pstdev
 from typing import Dict, Optional
@@ -17,6 +18,7 @@ from analysis import policy_bus
 from . import config
 
 LOG = logging.getLogger(__name__)
+DISABLE_POCKET_EXIT = os.getenv("DISABLE_POCKET_EXIT", "1").strip().lower() in {"1", "true", "yes", "on"}
 
 
 def _utc_now() -> datetime:
@@ -203,6 +205,9 @@ class ScalpExitManager:
 
 
 async def scalp_exit_worker() -> None:
+    if DISABLE_POCKET_EXIT:
+        LOG.info("%s disabled via DISABLE_POCKET_EXIT", config.LOG_PREFIX)
+        return
     if not config.ENABLED:
         LOG.info("%s disabled", config.LOG_PREFIX)
         return
