@@ -64,3 +64,16 @@
   - stop_lossの最低値を拡張（エントリーSLとの整合を少し改善）。
 - 整合ギャップ
   - range判定閾値がエントリー側のレンジ抑制と完全一致しているかは未確認（必要なら揃える）。
+
+### Scalp multi（RangeFader / PulseBreak / ImpulseRetraceScalp）
+- エントリー: strategies/scalping/* で各戦略（BB/レンジ/ブレイク/逆張り）。
+- EXIT（workers/scalp_multistrat/exit_worker.py）
+  - PnL/時間/RSI/レンジ/VWAP。range閾値共有化済み、エントリーメタで stop/lock/trail/profit をスケール（hard_stop*0.5 等）。
+  - 構造崩れ検知は未導入（必要なら各戦略ごとに条件を持ち込む余地あり）。
+- 整合ギャップ
+  - 戦略ごとの優位性崩れ（BBタッチ解消、ブレイク失敗、逆行モメ減衰など）をEXIT側で見ていない。必要なら個別に追加。
+
+### Impulse系 S5（impulse_momentum_s5 / impulse_retest_s5 / impulse_break_s5）
+- エントリー: S5バケットのモメ/リトレース/ブレイク系。詳細要抽出。
+- EXIT: 専用Exitワーカーあり（PnL/時間中心）。エントリーメタ連携や構造崩れ検知の有無は未確認。
+- 次アクション: エントリー条件とEXIT閾値・構造崩れの整合を確認し、必要ならエントリーメタ参照スケール＆構造崩れCLOSEを追加。
