@@ -23,6 +23,8 @@ async def impulse_break_s5_exit_worker() -> None:
         max_hold_sec=25 * 60,
         loop_interval=1.0,
         lock_buffer=0.6,
+        use_entry_meta=True,
+        structure_break=True,
     )
     await worker.run()
 

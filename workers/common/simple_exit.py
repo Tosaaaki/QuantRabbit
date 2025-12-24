@@ -121,19 +121,46 @@ class SimpleExitWorker:
 
         state = self._states.get(trade_id)
         if state is None:
-            state = TradeState(peak=pnl)
+            thesis = trade.get("entry_thesis") or {}
+            hard_stop = thesis.get("hard_stop_pips") or thesis.get("hard_stop") or thesis.get("stop_loss")
+            tp_hint = thesis.get("tp_pips") or thesis.get("tp") or thesis.get("take_profit")
+            try:
+                hard_stop_val = float(hard_stop) if hard_stop is not None else None
+            except Exception:
+                hard_stop_val = None
+            try:
+                tp_hint_val = float(tp_hint) if tp_hint is not None else None
+            except Exception:
+                tp_hint_val = None
+            state = TradeState(peak=pnl, hard_stop=hard_stop_val, tp_hint=tp_hint_val)
             self._states[trade_id] = state
         else:
             state.update(pnl, self.lock_buffer)
 
+        # lightly scale thresholds with entry meta when requested
+        profit_take = self.profit_take
+        trail_start = self.trail_start
+        stop_loss = self.stop_loss
+        max_hold = self.max_hold_sec
+        lock_buffer = self.lock_buffer
+        if getattr(self, "use_entry_meta", True):
+            if state.hard_stop:
+                stop_loss = max(stop_loss, max(0.8, state.hard_stop * 0.5))
+                lock_buffer = max(lock_buffer, stop_loss * 0.35)
+                trail_start = max(trail_start, max(1.0, state.hard_stop * 0.6))
+                max_hold = max(max_hold, self.max_hold_sec * 1.05)
+            if state.tp_hint:
+                profit_take = max(profit_take, max(1.0, state.tp_hint * 0.7))
+                trail_start = max(trail_start, max(1.0, state.tp_hint * 0.8))
+
         # Hard stop
-        if pnl <= -self.stop_loss:
+        if pnl <= -stop_loss:
             await self._close(trade_id, -units, "hard_stop")
             self._states.pop(trade_id, None)
             return
 
         # Max hold timeout
-        if hold_sec >= self.max_hold_sec and pnl <= self.profit_take * 0.5:
+        if hold_sec >= max_hold and pnl <= profit_take * 0.5:
             await self._close(trade_id, -units, "time_stop")
             self._states.pop(trade_id, None)
             return
@@ -145,13 +172,13 @@ class SimpleExitWorker:
             return
 
         # Trail
-        if state.peak >= self.trail_start and pnl <= state.peak - self.trail_backoff:
+        if state.peak >= trail_start and pnl <= state.peak - self.trail_backoff:
             await self._close(trade_id, -units, "trail_take")
             self._states.pop(trade_id, None)
             return
 
         # Take profit
-        if pnl >= self.profit_take:
+        if pnl >= profit_take:
             await self._close(trade_id, -units, "take_profit")
             self._states.pop(trade_id, None)
             return
