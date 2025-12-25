@@ -105,3 +105,24 @@
 
 ### M1Scalper
 - EXIT: 専用ワーカー追加（workers/scalp_m1scalper/exit_worker.py）。SimpleExitベースでエントリーメタ追随＋構造崩れ（M1 MA10/MA20逆転＋ADX低下）で撤退。ポケット共通EXITは使わない。
+
+### 新規ToDo: TP最優先・仮想SL化
+- 目的: 全ワーカーで「TP到達を第一目標」「雲行き悪化時のみ微益/微損撤退」、実SLは置かず仮想SL/メタSLで運用しRRを維持。
+- 方針ドラフト
+  - 物理SLは送らず（or極小）、EXIT側で仮想SL/構造崩れ/レンジ圧縮をトリガに微損撤退。
+  - TPはエントリーTP未満に落とさない。trail/lock開始はtp_pips比で設定。
+  - RR確認: 仮想SL距離をtp_pipsの≥0.7倍程度にし、ロット計算は entry_hard_stop をリスクガードに渡す（実発注はTPのみ）。
+- 早逃げ: 構造崩れ(MA逆転+ADX低下+gap小)とボラ圧縮時のみ微益/微損でクローズ。負域許容は限定。
+- 対応順（提案）: 1) Scalp系全般（fast_scalp, scalp_multistrat, m1scalper, pullback/squeeze/vwap/impulse系）→ 2) MicroMulti → 3) TrendMA/H1Momentum/Donchian/London/ManualSwing。
+- 進め方: ワーカーごとに「物理SL送信を外し、仮想SL/構造崩れ/レンジ圧縮のEXITに切替」「trail/lock閾値をtp基準に再設計」「リスク計算でのhard_stopは維持」を適用。完了したらここでチェックを外して整理する。
+
+### 使用テクニカル（参照一覧）
+- トレンド/モメンタム: MA10/20（H1/H4/M1）、EMA12/24、MA/EMAスロープ・乖離、MAクロス（構造崩れ判定）、ADX、MACD/ヒスト、ROC5/10、Chaikin Vol、DMI(+DI/-DI)。
+- ボラ/帯: ATR_pips、BBW、KC幅、Donchian幅。
+- オシレーター: RSI、StochRSI、CCI。
+- レベル系: スイング高安距離、クラスタ高低ギャップ（cluster_high_gap/low_gap）、Donchian高安、VWAP乖離(vwap_gap)。
+- パターン/構造: N波（M1Scalper）、スパイク/リバーサル（mirror_spike）、レンジ判定(range_mode: ADX/BBW/ATR)、構造崩れ（MA逆転+ADX低下+ギャップ縮小）。
+- Ichimoku: cloud_pos、span_a_gap、span_b_gap。
+- 価格・ティック: candle body pips、tick_rate/vol_5m、momentum_pips/short_momentum_pips。
+- その他ゲート: スプレッドゲート、ニュースブロック、市場時間帯、PF/勝率によるcap調整。
+  - TODO: ダブルトップ/三尊などのローソク・チャートパターンと雲（Ichimoku）活用の適用範囲を各ワーカーに明示し、必要ならシグナル/EXIT条件に統合する。
