@@ -102,3 +102,6 @@
 
 ### SimpleExit ワーカー（onepip/mirror_spike/trend_h1/impulse_break_s5）
 - 修正: hard_stop/tp_hint を保持する TradeState へ拡張、エントリーメタで stop/take/trail/lock をスケール。構造崩れオプションを実装（impulse_break_s5 で有効化）。
+
+### M1Scalper
+- EXIT: 専用ワーカー追加（workers/scalp_m1scalper/exit_worker.py）。SimpleExitベースでエントリーメタ追随＋構造崩れ（M1 MA10/MA20逆転＋ADX低下）で撤退。ポケット共通EXITは使わない。
