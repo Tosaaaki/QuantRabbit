@@ -538,6 +538,11 @@ class PositionManager:
                         m = re.match(r"^qr-\d+-(micro|macro|event|hybrid)-(.*)$", client_id)
                         if m:
                             details["strategy_tag"] = m.group(2)
+                        else:
+                            # Newer ID format: qr-<pocket>-<ts>-<tag>-<hash>
+                            m2 = re.match(r"^qr-(micro|macro|scalp|event|hybrid)-\d+-([^-]+)", client_id)
+                            if m2:
+                                details["strategy_tag"] = m2.group(2)
             except Exception:
                 pass
             # Augment with local orders log for strategy_tag/thesis if possible
@@ -982,6 +987,16 @@ class PositionManager:
                 "unrealized_pl_pips": unrealized_pl_pips,
                 "open_time": open_time_iso or open_time_raw,
             }
+            # Fallback: decode clientExtensions.comment to recover entry meta for EXIT判定
+            thesis_from_comment = None
+            try:
+                comment_raw = client_ext.get("comment")
+                if isinstance(comment_raw, str) and comment_raw.startswith("{") and len(comment_raw) <= 256:
+                    parsed = json.loads(comment_raw)
+                    if isinstance(parsed, dict):
+                        thesis_from_comment = parsed
+            except Exception:
+                thesis_from_comment = None
             meta = self._resolve_entry_meta(trade_id)
             if meta:
                 thesis = meta.get("entry_thesis")
@@ -995,6 +1010,13 @@ class PositionManager:
                 strategy_tag = meta.get("strategy_tag")
                 if strategy_tag:
                     trade_entry["strategy_tag"] = strategy_tag
+            if thesis_from_comment:
+                if not trade_entry.get("entry_thesis"):
+                    trade_entry["entry_thesis"] = thesis_from_comment
+                if not trade_entry.get("strategy_tag"):
+                    tag_val = thesis_from_comment.get("strategy_tag") or thesis_from_comment.get("tag")
+                    if tag_val:
+                        trade_entry["strategy_tag"] = tag_val
             info["open_trades"].append(trade_entry)
             prev_total_units = info["units"]
             new_total_units = prev_total_units + units

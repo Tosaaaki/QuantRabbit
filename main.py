@@ -102,8 +102,9 @@ def _env_bool(name: str, default: bool = False) -> bool:
         return default
     return str(val).strip().lower() in {"1", "true", "yes", "on"}
 
-# Aggressive mode: loosen range gates and micro entry guards to favor throughput
-AGGRESSIVE_TRADING = _env_bool("AGGRESSIVE_TRADING", default=True)
+# Aggressive mode: loosen range gatesとマイクロの入口ガードを緩めるフラグ
+# デフォルトは安全寄りに OFF
+AGGRESSIVE_TRADING = _env_bool("AGGRESSIVE_TRADING", default=False)
 
 # Worker-onlyモード: mainはワーカー起動/データ供給のみ行い、発注/Exitロジックはスキップ
 WORKER_ONLY_MODE = _env_bool("WORKER_ONLY_MODE", default=True)
@@ -326,7 +327,6 @@ POCKET_STRATEGY_MAP: dict[str, set[str]] = {
         "MicroPullbackEMA",
         "MicroLevelReactor",
         "MicroVWAPBound",
-        "TrendMomentumMicro",
     },
     "scalp": {"M1Scalper", "BB_RSI_Fast"},
 }
@@ -1490,8 +1490,16 @@ class GPTRequestManager:
         async with self._lock:
             self._pending.discard(signature)
         self._queue.task_done()
-# In range mode, allow mean‑reversion and light scalping entries
-ALLOWED_RANGE_STRATEGIES = {"BB_RSI", "RangeFader", "M1Scalper"}
+# In range mode, allow mean‑reversionと軽量スキャルのみを通す
+ALLOWED_RANGE_STRATEGIES = {
+    "BB_RSI",
+    "BB_RSI_Fast",
+    "RangeFader",
+    "M1Scalper",
+    "MicroRangeBreak",
+    "MicroVWAPRevert",
+    "MicroVWAPBound",
+}
 SOFT_RANGE_SUPPRESS_STRATEGIES = {"TrendMA", "Donchian55"}
 LOW_TREND_ADX_THRESHOLD = 18.0
 LOW_TREND_SLOPE_THRESHOLD = 0.00035
@@ -4364,6 +4372,22 @@ async def logic_loop(
                     fac_m1.get("bbw", 0.0) or 0.0,
                     atr_pips,
                 )
+            if range_active and "micro" in focus_pockets:
+                injected: list[str] = []
+                for sname in ("MicroVWAPBound", "MicroRangeBreak", "MicroVWAPRevert", "BB_RSI_Fast"):
+                    if sname not in ranked_strategies:
+                        ranked_strategies.insert(0, sname)
+                        auto_injected_strategies.add(sname)
+                        injected.append(sname)
+                if injected:
+                    logging.info(
+                        "[MICRO-RANGE] Auto-added %s (range score=%.2f adx=%.2f bbw=%.2f atr=%.2f).",
+                        ",".join(injected),
+                        range_ctx.score,
+                        fac_m1.get("adx", 0.0) or 0.0,
+                        fac_m1.get("bbw", 0.0) or 0.0,
+                        atr_pips,
+                    )
             if (
                 not range_active
                 and scalp_ready

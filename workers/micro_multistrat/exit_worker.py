@@ -141,7 +141,14 @@ class MicroMultiExitWorker:
         for tr in trades:
             thesis = tr.get("entry_thesis") or {}
             tag = thesis.get("strategy_tag") or thesis.get("strategy") or tr.get("strategy")
-            if tag and str(tag) in ALLOWED_TAGS:
+            if tag:
+                tag_str = str(tag)
+                base_tag = tag_str.split("-", 1)[0]
+                if tag_str in ALLOWED_TAGS or base_tag in ALLOWED_TAGS:
+                    filtered.append(tr)
+                    continue
+            else:
+                # 無タグでも micro pocket のポジションはすべて評価する（過去エントリーメタ欠落対策）
                 filtered.append(tr)
         return filtered
 
