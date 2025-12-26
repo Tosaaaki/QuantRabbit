@@ -15,6 +15,8 @@ class TrendMomentumMicro:
     _MIN_ADX = 20.0
     _MIN_SLOPE = 0.06
     _MAX_PULLBACK = 1.2
+    _MIN_ATR_PIPS = 2.0  # quietな場面はスルー
+    _MIN_BBW = 0.18      # バンドが締まりすぎなら見送り
 
     @staticmethod
     def check(fac: Dict) -> Dict | None:
@@ -39,6 +41,14 @@ class TrendMomentumMicro:
         except (TypeError, ValueError):
             dyn_adx = 0.0
         adx_threshold = dyn_adx if dyn_adx > 0 else TrendMomentumMicro._MIN_ADX
+
+        # レンジ寄り・ボラ不足は捨てる
+        try:
+            bbw = float(fac.get("bbw") or 0.0)
+        except (TypeError, ValueError):
+            bbw = 0.0
+        if bbw and bbw < TrendMomentumMicro._MIN_BBW:
+            return None
 
         diff = (ma10 - ma20) / PIP
         direction = None
@@ -73,12 +83,18 @@ class TrendMomentumMicro:
                 atr_pips = float(atr_raw or 0.0) * 100.0
             except (TypeError, ValueError):
                 atr_pips = 6.0
-        atr_pips = max(1.6, min(atr_pips, 12.0))
+        atr_pips = max(TrendMomentumMicro._MIN_ATR_PIPS, min(atr_pips, 12.0))
 
-        sl_pips = round(max(1.2, atr_pips * 0.75), 2)
-        tp_pips = round(max(sl_pips * 1.45, sl_pips + atr_pips * 0.9), 2)
+        # SL/TP を広げ、見送り条件を強化
+        sl_floor = 2.8
+        sl_pips = round(max(sl_floor, atr_pips * 1.05), 2)
+        tp_pips = round(max(sl_pips * 1.7, sl_pips + max(atr_pips * 0.8, 1.2)), 2)
+
         confidence = 50 + int(min(18.0, abs(diff)) + max(0.0, (adx - TrendMomentumMicro._MIN_ADX) * 0.7))
         confidence = max(45, min(95, confidence))
+
+        # 短期で刈られないよう最低ホールドを伸ばす
+        min_hold_sec = max(90.0, tp_pips * 55.0)
 
         return {
             "action": direction,
@@ -88,6 +104,6 @@ class TrendMomentumMicro:
             "profile": "trend_momentum_micro",
             "loss_guard_pips": sl_pips,
             "target_tp_pips": tp_pips,
-            "min_hold_sec": round(tp_pips * 35.0, 1),
+            "min_hold_sec": round(min_hold_sec, 1),
             "tag": f"{TrendMomentumMicro.name}-{'long' if direction == 'OPEN_LONG' else 'short'}",
         }
