@@ -1098,7 +1098,7 @@ def _local_strategy_ranking(
     scores: dict[str, float] = {}
     for name in strategies:
         cat = _strategy_category(name)
-        score = 0.0
+        score = 0.05  # baseline to avoid zero-score drops
         # Base: trend strength
         if cat in {"trend", "breakout"}:
             score += 0.8 * (adx_h4 / 30.0) + 0.6 * (adx_m1 / 30.0)
@@ -1128,7 +1128,11 @@ def _local_strategy_ranking(
         if last_focus and last_focus == "micro" and "micro" in name.lower():
             score += 0.1
         scores[name] = score
-    return sorted(strategies, key=lambda n: scores.get(n, 0.0), reverse=True)
+    if not scores:
+        return strategies
+    ranked = sorted(strategies, key=lambda n: scores.get(n, 0.0), reverse=True)
+    # If all scores tie/very low, still return full list (top N fallback not needed because we keep all)
+    return ranked
 
 def _select_worker_targets(
     fac_m1: dict,
