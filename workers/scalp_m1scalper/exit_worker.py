@@ -1,4 +1,4 @@
-"""Per-trade EXIT loop for M1Scalper (scalp pocket)."""
+"""Per-trade EXIT loop for M1Scalper (scalp pocket) – プラス決済専用。"""
 
 from __future__ import annotations
 
@@ -70,62 +70,29 @@ class _TradeState:
             self.lock_floor = max(0.0, pnl - lock_buffer)
 
 
-@dataclass
-class _ExitParams:
-    profit_take: float
-    trail_start: float
-    trail_backoff: float
-    stop_loss: float
-    max_hold_sec: float
-    lock_buffer: float
-    use_entry_meta: bool = True
-    structure_break: bool = False
-    structure_timeframe: str = "M1"
-    structure_adx: float = 22.0
-    structure_gap_pips: float = 2.0
-    structure_adx_cold: float = 12.0
-    virtual_sl_ratio: float = 0.72
-    trail_from_tp_ratio: float = 0.82
-    lock_from_tp_ratio: float = 0.45
-    tp_floor_ratio: float = 1.0
-
-
 async def _run_exit_loop(
     *,
     pocket: str,
     tags: Set[str],
-    params: _ExitParams,
+    profit_take: float,
+    trail_start: float,
+    trail_backoff: float,
+    lock_buffer: float,
+    min_hold_sec: float,
+    trail_from_tp_ratio: float,
+    lock_from_tp_ratio: float,
     loop_interval: float,
 ) -> None:
     pos_manager = PositionManager()
     states: Dict[str, _TradeState] = {}
 
-    async def _close(trade_id: str, units: int, reason: str) -> bool:
-        ok = await close_trade(trade_id, units)
+    async def _close(trade_id: str, units: int, reason: str, client_order_id: Optional[str]) -> bool:
+        ok = await close_trade(trade_id, units, client_order_id=client_order_id)
         if ok:
             LOG.info("[EXIT-%s] trade=%s units=%s reason=%s", pocket, trade_id, units, reason)
         else:
             LOG.error("[EXIT-%s] close failed trade=%s units=%s reason=%s", pocket, trade_id, units, reason)
         return ok
-
-    def _structure_break(units: int) -> bool:
-        if not params.structure_break:
-            return False
-        try:
-            factors = all_factors().get(params.structure_timeframe) or {}
-            adx = float(factors.get("adx"))
-            ma10 = float(factors.get("ma10"))
-            ma20 = float(factors.get("ma20"))
-            gap = abs(ma10 - ma20) / 0.01
-            if adx < params.structure_adx:
-                dir_long = units > 0
-                if (dir_long and ma10 <= ma20) or ((not dir_long) and ma10 >= ma20) or (
-                    adx < params.structure_adx_cold and gap < params.structure_gap_pips
-                ):
-                    return True
-        except Exception:
-            return False
-        return False
 
     async def _review_trade(trade: dict, now: datetime) -> None:
         trade_id = str(trade.get("trade_id"))
@@ -164,46 +131,31 @@ async def _run_exit_loop(
             state = _TradeState(peak=pnl, hard_stop=hard_stop_val, tp_hint=tp_hint_val)
             states[trade_id] = state
 
-        profit_take = params.profit_take
-        trail_start = params.trail_start
-        stop_loss = params.stop_loss
-        max_hold = params.max_hold_sec
-        lock_buffer = params.lock_buffer
+        tp = profit_take
+        ts = trail_start
+        lb = lock_buffer
 
-        if params.use_entry_meta:
-            if state.tp_hint:
-                profit_take = max(profit_take, max(1.0, state.tp_hint * params.tp_floor_ratio))
-                trail_start = max(trail_start, max(1.0, profit_take * params.trail_from_tp_ratio))
-                lock_buffer = max(lock_buffer, profit_take * params.lock_from_tp_ratio)
-            if state.hard_stop:
-                stop_loss = max(stop_loss, max(0.8, state.hard_stop * 0.5))
-                lock_buffer = max(lock_buffer, stop_loss * 0.35)
-                trail_start = max(trail_start, max(1.0, state.hard_stop * 0.6))
-                max_hold = max(max_hold, params.max_hold_sec * 1.05)
+        if state.tp_hint:
+            tp = max(tp, max(1.0, state.tp_hint * 0.9))
+            ts = max(ts, max(1.0, tp * trail_from_tp_ratio))
+            lb = max(lb, tp * lock_from_tp_ratio)
 
-        stop_loss = max(stop_loss, profit_take * params.virtual_sl_ratio)
-        trail_start = max(trail_start, profit_take * params.trail_from_tp_ratio)
-        lock_buffer = max(lock_buffer, profit_take * params.lock_from_tp_ratio)
+        state.update(pnl, lb)
 
-        state.update(pnl, lock_buffer)
+        client_id = trade.get("client_order_id") or (trade.get("clientExtensions") or {}).get("id") if isinstance(trade.get("clientExtensions"), dict) else trade.get("client_order_id")
 
-        if _structure_break(units):
-            await _close(trade_id, -units, "structure_break")
+        # 最低保有時間まではクローズ禁止（スプレッド負け防止）
+        if hold_sec < min_hold_sec:
+            return
+
+        # プラス圏のみでクローズする
+        if state.peak > 0 and state.peak >= ts and pnl > 0 and pnl <= state.peak - trail_backoff:
+            await _close(trade_id, -units, "trail_take", client_id)
             states.pop(trade_id, None)
             return
 
-        if pnl <= -stop_loss:
-            await _close(trade_id, -units, "hard_stop")
-            states.pop(trade_id, None)
-            return
-
-        if hold_sec >= max_hold and pnl <= profit_take * 0.5:
-            await _close(trade_id, -units, "time_stop")
-            states.pop(trade_id, None)
-            return
-
-        if state.lock_floor is not None and pnl <= state.lock_floor:
-            await _close(trade_id, -units, "lock_release")
+        if pnl >= tp:
+            await _close(trade_id, -units, "take_profit", client_id)
             states.pop(trade_id, None)
             return
 
@@ -245,16 +197,13 @@ async def m1_scalper_exit_worker() -> None:
     await _run_exit_loop(
         pocket="scalp",
         tags=ALLOWED_TAGS,
-        params=_ExitParams(
-            profit_take=2.0,
-            trail_start=2.6,
-            trail_backoff=0.9,
-            stop_loss=1.6,
-            max_hold_sec=15 * 60,
-            lock_buffer=0.5,
-            use_entry_meta=True,
-            structure_break=True,
-        ),
+        profit_take=2.0,
+        trail_start=2.6,
+        trail_backoff=0.9,
+        lock_buffer=0.5,
+        min_hold_sec=10.0,
+        trail_from_tp_ratio=0.82,
+        lock_from_tp_ratio=0.45,
         loop_interval=0.8,
     )
 

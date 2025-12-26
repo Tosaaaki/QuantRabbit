@@ -54,8 +54,8 @@ scripts/deploy_to_vm.sh -p <PROJECT> -z <ZONE> -m <INSTANCE> -i -t -k ~/.ssh/gcp
 
 ## 6. ワーカー/構成の要点
 - メイン 60 秒ループ: `main.py`（regime/focus/GPT → strategy → risk_guard → order_manager）。  
-- ワーカー: `workers/micro_core`, `macro_core`, `scalp_core`（plan_bus ポーリング）。S5 系補助は各 `config.py` の `ENABLED` で制御。  
-- グループスイッチ: `SCALP_WORKERS_ENABLED`, `MICRO_WORKERS_ENABLED`, `MACRO_WORKERS_ENABLED`, `MICRO_DELEGATE_TO_WORKER`。環境依存の閾値は env で調整。
+- ワーカー: core は廃止済み。各戦略ごとの専用ワーカー（`workers/<strategy>/`）を `*_ENABLED` と systemd で制御。  
+- グループスイッチ: `SCALP_WORKERS_ENABLED`, `MICRO_WORKERS_ENABLED`, `MACRO_WORKERS_ENABLED`, `MICRO_DELEGATE_TO_WORKER`（専用 micro_* へ委譲）。
 
 ## 7. 動作確認クイックチェック
 - systemd: `sudo systemctl status quantrabbit.service`  

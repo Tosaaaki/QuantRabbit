@@ -998,8 +998,38 @@ def _maybe_update_protections(
         )
 
 
-async def close_trade(trade_id: str, units: Optional[int] = None) -> bool:
+async def close_trade(trade_id: str, units: Optional[int] = None, client_order_id: Optional[str] = None) -> bool:
     data: Optional[dict[str, str]] = None
+    # close 側も client_order_id を必須化し、欠損時は拒否＋メトリクス
+    if not client_order_id:
+        log_metric("close_missing_client_id", 1.0, tags={"trade_id": str(trade_id)})
+        _console_order_log(
+            "CLOSE_REJECT",
+            pocket=None,
+            strategy_tag=None,
+            side=None,
+            units=units,
+            sl_price=None,
+            tp_price=None,
+            client_order_id="",
+            ticket_id=str(trade_id),
+            note="missing_client_order_id",
+        )
+        _log_order(
+            pocket=None,
+            instrument=None,
+            side=None,
+            units=units,
+            sl_price=None,
+            tp_price=None,
+            client_order_id=None,
+            status="close_missing_client_id",
+            attempt=0,
+            ticket_id=str(trade_id),
+            executed_price=None,
+            request_payload={"trade_id": trade_id, "data": data or {}},
+        )
+        return False
     if units is None:
         data = {"units": "ALL"}
     else:
@@ -1023,6 +1053,9 @@ async def close_trade(trade_id: str, units: Optional[int] = None) -> bool:
         # OANDA expects the absolute size; the trade side is derived from trade_id.
         data = {"units": str(target_units)}
     req = TradeClose(accountID=ACCOUNT, tradeID=trade_id, data=data)
+    if not client_order_id:
+        log_metric("close_missing_client_id", 1.0, tags={"trade_id": str(trade_id)})
+        client_order_id = None
     _console_order_log(
         "CLOSE_REQ",
         pocket=None,
@@ -1031,7 +1064,7 @@ async def close_trade(trade_id: str, units: Optional[int] = None) -> bool:
         units=units,
         sl_price=None,
         tp_price=None,
-        client_order_id=None,
+        client_order_id=client_order_id,
         ticket_id=str(trade_id),
     )
     try:
@@ -1042,7 +1075,7 @@ async def close_trade(trade_id: str, units: Optional[int] = None) -> bool:
             units=units,
             sl_price=None,
             tp_price=None,
-            client_order_id=None,
+            client_order_id=client_order_id,
             status="close_request",
             attempt=1,
             ticket_id=str(trade_id),
@@ -1059,7 +1092,7 @@ async def close_trade(trade_id: str, units: Optional[int] = None) -> bool:
             units=units,
             sl_price=None,
             tp_price=None,
-            client_order_id=None,
+            client_order_id=client_order_id,
             status="close_ok",
             attempt=1,
             ticket_id=str(trade_id),
@@ -1073,7 +1106,7 @@ async def close_trade(trade_id: str, units: Optional[int] = None) -> bool:
             units=units,
             sl_price=None,
             tp_price=None,
-            client_order_id=None,
+            client_order_id=client_order_id,
             ticket_id=str(trade_id),
         )
         return True
@@ -1098,7 +1131,7 @@ async def close_trade(trade_id: str, units: Optional[int] = None) -> bool:
             units=units,
             sl_price=None,
             tp_price=None,
-            client_order_id=None,
+            client_order_id=client_order_id,
             status="close_failed",
             attempt=1,
             ticket_id=str(trade_id),
@@ -1115,7 +1148,7 @@ async def close_trade(trade_id: str, units: Optional[int] = None) -> bool:
             units=units,
             sl_price=None,
             tp_price=None,
-            client_order_id=None,
+            client_order_id=client_order_id,
             ticket_id=str(trade_id),
             note=f"code={log_error_code}",
         )
@@ -1148,7 +1181,7 @@ async def close_trade(trade_id: str, units: Optional[int] = None) -> bool:
             units=units,
             sl_price=None,
             tp_price=None,
-            client_order_id=None,
+            client_order_id=client_order_id,
             status="close_failed",
             attempt=1,
             ticket_id=str(trade_id),
@@ -1163,7 +1196,7 @@ async def close_trade(trade_id: str, units: Optional[int] = None) -> bool:
             units=units,
             sl_price=None,
             tp_price=None,
-            client_order_id=None,
+            client_order_id=client_order_id,
             ticket_id=str(trade_id),
             note="exception",
         )
@@ -1682,6 +1715,42 @@ async def market_order(
     units : +10000 = buy 0.1 lot, ‑10000 = sell 0.1 lot
     returns order ticket id（決済のみの fill でも tradeID を返却）
     """
+    # client_order_id は必須。欠損したまま送れば OANDA 側で空白になり、追跡不能となる。
+    if not client_order_id:
+        _console_order_log(
+            "OPEN_REJECT",
+            pocket=pocket,
+            strategy_tag=strategy_tag or "unknown",
+            side="buy" if units > 0 else "sell",
+            units=units,
+            sl_price=sl_price,
+            tp_price=tp_price,
+            client_order_id="",
+            note="missing_client_order_id",
+        )
+        log_order(
+            pocket=pocket,
+            instrument=instrument,
+            side="buy" if units > 0 else "sell",
+            units=units,
+            sl_price=sl_price,
+            tp_price=tp_price,
+            client_order_id=None,
+            status="missing_client_order_id",
+            attempt=0,
+            request_payload={
+                "strategy_tag": strategy_tag,
+                "meta": meta,
+                "entry_thesis": entry_thesis,
+            },
+        )
+        log_metric(
+            "order_missing_client_id",
+            1.0,
+            tags={"pocket": pocket, "strategy": strategy_tag or "unknown"},
+        )
+        return None
+
     if strategy_tag is not None:
         strategy_tag = str(strategy_tag)
         if not strategy_tag:
@@ -1730,23 +1799,6 @@ async def market_order(
         except (TypeError, ValueError):
             thesis_tp_pips = None
     side_label = "buy" if units > 0 else "sell"
-
-    generated_client_id = False
-    if not client_order_id:
-        strategy_hint = None
-        if isinstance(entry_thesis, dict):
-            strategy_hint = entry_thesis.get("strategy_tag") or entry_thesis.get("strategy")
-        if not strategy_hint and strategy_tag:
-            strategy_hint = strategy_tag
-        focus_hint = pocket or "hybrid"
-        client_order_id = build_client_order_id(focus_hint, str(strategy_hint or "fallback"))
-        generated_client_id = True
-        logging.warning(
-            "[ORDER] Missing client_order_id; generated %s (pocket=%s strategy=%s)",
-            client_order_id,
-            pocket,
-            strategy_hint or strategy_tag or "unknown",
-        )
 
     entry_price_meta = _as_float((meta or {}).get("entry_price"))
 

@@ -75,8 +75,7 @@ class _ExitParams:
     profit_take: float
     trail_start: float
     trail_backoff: float
-    stop_loss: float
-    max_hold_sec: float
+    min_hold_sec: float
     lock_buffer: float
     use_entry_meta: bool = True
     structure_break: bool = False
@@ -92,16 +91,16 @@ class _ExitParams:
 
 async def _run_exit_loop(
     *,
-    pocket: str,
-    tags: Set[str],
-    params: _ExitParams,
-    loop_interval: float,
-) -> None:
+        pocket: str,
+        tags: Set[str],
+        params: _ExitParams,
+        loop_interval: float,
+    ) -> None:
     pos_manager = PositionManager()
     states: Dict[str, _TradeState] = {}
 
-    async def _close(trade_id: str, units: int, reason: str) -> bool:
-        ok = await close_trade(trade_id, units)
+    async def _close(trade_id: str, units: int, reason: str, client_order_id: Optional[str]) -> bool:
+        ok = await close_trade(trade_id, units, client_order_id=client_order_id)
         if ok:
             LOG.info("[EXIT-%s] trade=%s units=%s reason=%s", pocket, trade_id, units, reason)
         else:
@@ -154,20 +153,14 @@ async def _run_exit_loop(
             hard_stop = thesis.get("hard_stop_pips") or thesis.get("hard_stop") or thesis.get("stop_loss")
             tp_hint = thesis.get("tp_pips") or thesis.get("tp") or thesis.get("take_profit") or thesis.get("target_tp_pips")
             try:
-                hard_stop_val = float(hard_stop) if hard_stop is not None else None
-            except Exception:
-                hard_stop_val = None
-            try:
                 tp_hint_val = float(tp_hint) if tp_hint is not None else None
             except Exception:
                 tp_hint_val = None
-            state = _TradeState(peak=pnl, hard_stop=hard_stop_val, tp_hint=tp_hint_val)
+            state = _TradeState(peak=pnl, hard_stop=None, tp_hint=tp_hint_val)
             states[trade_id] = state
 
         profit_take = params.profit_take
         trail_start = params.trail_start
-        stop_loss = params.stop_loss
-        max_hold = params.max_hold_sec
         lock_buffer = params.lock_buffer
 
         if params.use_entry_meta:
@@ -175,45 +168,29 @@ async def _run_exit_loop(
                 profit_take = max(profit_take, max(1.0, state.tp_hint * params.tp_floor_ratio))
                 trail_start = max(trail_start, max(1.0, profit_take * params.trail_from_tp_ratio))
                 lock_buffer = max(lock_buffer, profit_take * params.lock_from_tp_ratio)
-            if state.hard_stop:
-                stop_loss = max(stop_loss, max(0.8, state.hard_stop * 0.5))
-                lock_buffer = max(lock_buffer, stop_loss * 0.35)
-                trail_start = max(trail_start, max(1.0, state.hard_stop * 0.6))
-                max_hold = max(max_hold, params.max_hold_sec * 1.05)
-
-        stop_loss = max(stop_loss, profit_take * params.virtual_sl_ratio)
-        trail_start = max(trail_start, profit_take * params.trail_from_tp_ratio)
-        lock_buffer = max(lock_buffer, profit_take * params.lock_from_tp_ratio)
 
         state.update(pnl, lock_buffer)
 
+        client_id = trade.get("client_order_id") or (trade.get("clientExtensions") or {}).get("id") if isinstance(trade.get("clientExtensions"), dict) else trade.get("client_order_id")
+
+        # 最低保有時間内はクローズ禁止（スプレッド負け防止）
+        if hold_sec < params.min_hold_sec:
+            return
+
         if _structure_break(units):
-            await _close(trade_id, -units, "structure_break")
-            states.pop(trade_id, None)
+            if pnl > 0:
+                await _close(trade_id, -units, "structure_break", client_id)
+                states.pop(trade_id, None)
             return
 
-        if pnl <= -stop_loss:
-            await _close(trade_id, -units, "hard_stop")
-            states.pop(trade_id, None)
-            return
-
-        if hold_sec >= max_hold and pnl <= profit_take * 0.5:
-            await _close(trade_id, -units, "time_stop")
-            states.pop(trade_id, None)
-            return
-
-        if state.lock_floor is not None and pnl <= state.lock_floor:
-            await _close(trade_id, -units, "lock_release")
-            states.pop(trade_id, None)
-            return
-
-        if state.peak >= trail_start and pnl <= state.peak - params.trail_backoff:
-            await _close(trade_id, -units, "trail_take")
+        # トレールはプラス圏のみで発動
+        if state.peak > 0 and state.peak >= trail_start and pnl > 0 and pnl <= state.peak - params.trail_backoff:
+            await _close(trade_id, -units, "trail_take", client_id)
             states.pop(trade_id, None)
             return
 
         if pnl >= profit_take:
-            await _close(trade_id, -units, "take_profit")
+            await _close(trade_id, -units, "take_profit", client_id)
             states.pop(trade_id, None)
             return
 
@@ -249,8 +226,7 @@ async def impulse_break_s5_exit_worker() -> None:
             profit_take=2.2,
             trail_start=3.0,
             trail_backoff=1.0,
-            stop_loss=1.6,
-            max_hold_sec=25 * 60,
+            min_hold_sec=10.0,
             lock_buffer=0.6,
             use_entry_meta=True,
             structure_break=True,

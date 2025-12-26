@@ -1,6 +1,7 @@
 # TASKS – Repository Task Board
 
-本リポジトリの全タスクを一元管理する台帳。タスクが発生したら本ファイルへ逐次追記し、作業中は本ファイルを参照しながら進め、完了後はアーカイブへ移してください。詳細ポリシーは `AGENTS.md` の「11. タスク運用ルール（共通）」を参照。
+本リポジトリの全タスクを一元管理する台帳。タスクが発生したら本ファイルへ逐次追記し、作業中は本ファイルを参照しながら進め、完了後はアーカイブへ移してください。詳細ポリシーは `AGENTS.md` の「11. タスク運用ルール（共通）」を参照。  
+※ `micro_core` / `macro_core` / `scalp_core` と `core_executor` は廃止済み。本文に残るコア関連タスク/記述はレガシーとして扱ってください。
 
 ## 運用ルール（要約）
 
@@ -93,7 +94,7 @@
   Status: in-progress
   Priority: P1
   Owner: codex
-  Scope/Paths: workers/micro_core/worker.py, analysis/range_guard.py, docs/TASKS.md
+  Scope/Paths: (core 廃止済み) workers/micro_core/worker.py, analysis/range_guard.py, docs/TASKS.md
   Context: 2025-11-17 JST 05:55〜06:05 のローソクで MA 乖離≥0.45pips & ADX≥20 でも TrendMomentumMicro が発火せず、BB_RSI がショートを連発している。
   Acceptance:
     - MA 乖離≥0.45pips & ADX≥20 時は range_score が高くても regime_mode が trend_* へ遷移し、同時間帯のログで確認できる
@@ -135,7 +136,7 @@
   Status: in-progress
   Priority: P1
   Owner: codex
-  Scope/Paths: workers/micro_core/worker.py, strategies/micro/*, docs/TASKS.md
+  Scope/Paths: (core 廃止済み) workers/micro_core/worker.py, strategies/micro/*, docs/TASKS.md
   Context: micro pocket が固定パラメータのままでボラ変化に追随できず、強トレンド中も BB_RSI ばかりが約定している。小刻みな順張り追加・学習的な可変調整を導入したい。
   Acceptance:
     - ATR/vol/range_score に応じて TrendMomentum/BB_RSI のしきい値が自動で上下し、ログに動的パラメータが残る
@@ -210,7 +211,7 @@
     - VM で挙動を確認し、サイズ係数/トレイル閾値を調整
 
 - [ ] ID: T-20251208-005
-  Title: Macro_core / Trend_H1 の軽量エクスポージャ制御
+  Title: Macro_core / Trend_H1 の軽量エクスポージャ制御（core 廃止済みメモ）
   Status: todo
   Priority: P3
   Owner: codex

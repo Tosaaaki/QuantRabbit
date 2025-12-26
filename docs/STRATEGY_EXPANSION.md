@@ -54,7 +54,7 @@ _Date: 2025-11-11_
 - **Monitoring**: add CLI helper to print snapshot `asof`, `macro_bias`, computed cap/lot multiplier for quick verification.
 
 ## 5. BB_RSI Cooldown Adjustments
-- Current entry gating in `workers/micro_core/worker.py` uses StageTracker with 120s cooldown + global spread gate。
+- (legacy) `workers/micro_core/worker.py` は廃止。現在は各 micro_* 専用ワーカーが個別に動作する。
 - Observed issue: after 2連敗, StageTracker blocks even when ATR/spread favorable。
 - Plan:
   1. Introduce volatility-aware cooldown: `cooldown = base * max(0.5, min(1.5, atr/6))`。

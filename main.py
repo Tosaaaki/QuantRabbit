@@ -650,8 +650,6 @@ GPT_FACTOR_KEYS: Dict[str, tuple[str, ...]] = {
 # systemd service mapping for auxiliary workers (optional; may fail if units are absent)
 WORKER_SERVICES = {
     # names must match actual systemd unit filenames (underscores)
-    "macro_core": "qr-macro_core.service",
-    "micro_core": "qr-micro_core.service",
     "fast_scalp": "qr-fast_scalp.service",
     "mtf_breakout": "qr-mtf_breakout.service",
     "pullback_scalp": "qr-pullback_scalp.service",
@@ -669,7 +667,6 @@ WORKER_SERVICES = {
     "manual_swing": "qr-manual_swing.service",
     "impulse_momentum_s5": "qr-impulse_momentum_s5.service",
     "pullback_s5": "qr-pullback_s5.service",
-    "scalp_core": "qr-scalp_core.service",
     "squeeze_break_s5": "qr-squeeze_break_s5.service",
     "impulse_break_s5": "qr-impulse_break_s5.service",
     "mm_lite": "qr-mm_lite.service",
@@ -1274,14 +1271,11 @@ def _select_worker_targets(
             reasons[name] = reason
 
     # Baseline set
-    bump("micro_core", 1.0, "baseline_micro")
     bump("fast_scalp", 0.9, "baseline_scalp")
-    bump("scalp_core", 0.6, "baseline_scalp_core")
     bump("mm_lite", 0.3, "baseline_mm_lite")
 
     # Macro/trend
     if trending:
-        bump("macro_core", 0.9, "h4_trend")
         bump("trend_h1", 0.5, "trend_confirmed")
     if high_vol and trending:
         bump("mtf_breakout", 0.8, "high_vol_trend")
