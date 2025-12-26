@@ -99,7 +99,7 @@ HOLD_RATIO_MIN_SAMPLES = int(os.getenv("HOLD_RATIO_MIN_SAMPLES", "80"))
 HOLD_RATIO_MAX = float(os.getenv("HOLD_RATIO_MAX", "0.30"))
 HOLD_RATIO_RELEASE_FACTOR = float(os.getenv("HOLD_RATIO_RELEASE_FACTOR", "0.8"))
 HOLD_RATIO_CHECK_INTERVAL_SEC = float(os.getenv("HOLD_RATIO_CHECK_INTERVAL_SEC", "900"))
-HOLD_RATIO_GUARD_DISABLED = str(os.getenv("HOLD_RATIO_GUARD_DISABLED", "0")).strip().lower() in {
+HOLD_RATIO_GUARD_DISABLED = str(os.getenv("HOLD_RATIO_GUARD_DISABLED", "1")).strip().lower() in {
     "1",
     "true",
     "yes",
