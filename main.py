@@ -4269,13 +4269,17 @@ async def logic_loop(
                 "[STRAT_EVAL_BEGIN] ranked=%s pockets=%s allow=%s focus=%s range=%s atr=%.2f vol5=%s momentum=%.4f",
                 ranked_strategies,
                 ",".join(sorted(focus_pockets)),
-                sorted(gpt_strategy_allowlist),
+                sorted(gpt_strategy_allowlist) if gpt_strategy_allowlist else ["*"],
                 focus_tag,
                 range_active,
                 atr_pips if atr_pips is not None else -1.0,
                 f"{vol_5m:.2f}" if vol_5m is not None else "n/a",
                 momentum,
             )
+            # Safety: if GPT allowlist is empty, fall back to full universe to avoid stalls.
+            if not gpt_strategy_allowlist:
+                gpt_strategy_allowlist = set(STRATEGIES.keys())
+                logging.info("[STRAT_GUARD] GPT allowlist empty; falling back to all strategies.")
             if FORCE_SCALP_MODE:
                 logging.warning(
                     "[FORCE_SCALP] ranked_strategies=%s focus=%s pockets=%s ready=%s",
