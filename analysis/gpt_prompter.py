@@ -88,7 +88,7 @@ def build_messages(payload: Dict) -> List[Dict]:
         "\"forecast_horizon_min\":<int>} "
         "Constraints: weight_macro + weight_scalp <= 1.0. "
         "Keep pattern_hint short (<=5 items, <=24 chars each). "
-        "Forecast: give directional bias for the next 5–30 minutes. "
+        "Forecast: give directional bias for the next 5–240 minutes (short bias if horizon<60, macro bias if >=60). "
         "Output compact JSON only."
     )
 

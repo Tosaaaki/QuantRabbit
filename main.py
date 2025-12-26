@@ -4497,10 +4497,18 @@ async def logic_loop(
                         pass
                     # GPTの方向バイアスを confidence に反映（軽めの重み）
                     if forecast_bias and raw_signal.get("action") in {"OPEN_LONG", "OPEN_SHORT"}:
+                        horizon = float(forecast_horizon or 0)
                         aligned = (forecast_bias == "up" and raw_signal["action"] == "OPEN_LONG") or (
                             forecast_bias == "down" and raw_signal["action"] == "OPEN_SHORT"
                         )
-                        bias_factor = 1.0 + (0.15 * forecast_conf if aligned else -0.15 * forecast_conf)
+                        # 短期( <60min )はスカルプ/マイクロ寄り、長期はマクロ寄りの補正を強める
+                        if horizon >= 60 and pocket == "macro":
+                            mult = 0.2
+                        elif horizon < 60 and pocket != "macro":
+                            mult = 0.15
+                        else:
+                            mult = 0.08
+                        bias_factor = 1.0 + (mult * forecast_conf if aligned else -mult * forecast_conf)
                         bias_factor = max(0.7, min(1.3, bias_factor))
                         try:
                             conf2 = float(raw_signal.get("confidence", 50))
