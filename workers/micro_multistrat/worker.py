@@ -75,8 +75,13 @@ def _compute_cap(*args, **kwargs) -> Tuple[float, Dict[str, float]]:
     return res.cap, res.reasons
 
 
-def _strategy_list() -> List:
-    return [
+def _allowed_strategies() -> List:
+    """
+    Return strategy classes filtered by MICRO_STRATEGY_ALLOWLIST.
+    Set env MICRO_STRATEGY_ALLOWLIST=\"MicroVWAPBound,TrendMomentumMicro\" to run only those.
+    """
+    allow_raw = (os.getenv("MICRO_STRATEGY_ALLOWLIST") or "").strip()
+    all_classes = [
         MomentumBurstMicro,
         MicroMomentumStack,
         MicroPullbackEMA,
@@ -85,6 +90,25 @@ def _strategy_list() -> List:
         MicroVWAPBound,
         TrendMomentumMicro,
     ]
+    if not allow_raw:
+        return all_classes
+    allow = {s.strip() for s in allow_raw.split(",") if s.strip()}
+    if not allow:
+        return all_classes
+    filtered = [cls for cls in all_classes if getattr(cls, "name", cls.__name__) in allow]
+    if not filtered:
+        LOG.warning("%s allowlist empty; using all strategies", config.LOG_PREFIX)
+        return all_classes
+    LOG.info(
+        "%s allowlist applied: %s",
+        config.LOG_PREFIX,
+        ",".join(getattr(c, "name", c.__name__) for c in filtered),
+    )
+    return filtered
+
+
+def _strategy_list() -> List:
+    return _allowed_strategies()
 
 
 async def micro_multi_worker() -> None:
