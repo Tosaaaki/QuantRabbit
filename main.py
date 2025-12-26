@@ -105,6 +105,9 @@ def _env_bool(name: str, default: bool = False) -> bool:
 # Aggressive mode: loosen range gates and micro entry guards to favor throughput
 AGGRESSIVE_TRADING = _env_bool("AGGRESSIVE_TRADING", default=True)
 
+# Worker-onlyモード: mainはワーカー起動/データ供給のみ行い、発注/Exitロジックはスキップ
+WORKER_ONLY_MODE = _env_bool("WORKER_ONLY_MODE", default=True)
+
 # ---- Dynamic allocation (strategy score / pocket cap) loader ----
 _DYNAMIC_ALLOC_PATH = Path("config/dynamic_alloc.json")
 _DYNAMIC_ALLOC_MTIME: float | None = None
@@ -3235,6 +3238,14 @@ async def logic_loop(
                         last_worker_plan = desired_workers
                 except Exception as exc:  # pragma: no cover - defensive
                     logging.debug("[WORKER_CTL] reconcile failed: %s", exc)
+            if WORKER_ONLY_MODE:
+                if loop_counter % 5 == 1:
+                    logging.info(
+                        "[WORKER_ONLY_MODE] trading loop skipped; workers handle entry/exit. active_workers=%s",
+                        ",".join(sorted(last_worker_plan)) if last_worker_plan else "unknown",
+                    )
+                await asyncio.sleep(10)
+                continue
             if loop_counter % 5 == 0:
                 latest_epoch = None
                 if recent_tick_rows:
@@ -7347,18 +7358,21 @@ async def main():
         logging.warning("[HISTORY] Startup seeding incomplete, continuing with live feed.")
     gpt_state = GPTDecisionState()
     gpt_requests = GPTRequestManager()
-    worker_task = asyncio.create_task(gpt_worker(gpt_state, gpt_requests))
+    worker_task = None
+    if not WORKER_ONLY_MODE:
+        worker_task = asyncio.create_task(gpt_worker(gpt_state, gpt_requests))
     autotune_task = start_background_autotune(asyncio.get_running_loop())
     fast_scalp_state = FastScalpState()
     fast_scalp_task = None
     try:
-        await prime_gpt_decision(gpt_state, gpt_requests)
-        fast_scalp_task = asyncio.create_task(
-            supervised_runner(
-                "fast_scalp",
-                fast_scalp_worker(fast_scalp_state),
+        if not WORKER_ONLY_MODE:
+            await prime_gpt_decision(gpt_state, gpt_requests)
+            fast_scalp_task = asyncio.create_task(
+                supervised_runner(
+                    "fast_scalp",
+                    fast_scalp_worker(fast_scalp_state),
+                )
             )
-        )
         while True:
             tasks = [
                 asyncio.create_task(
@@ -7398,7 +7412,7 @@ async def main():
                 for task in tasks:
                     task.cancel()
                 await asyncio.gather(*tasks, return_exceptions=True)
-            if worker_task.done():
+            if worker_task and worker_task.done():
                 logging.error("[SUPERVISOR] GPT worker terminated; restarting service")
                 worker_task = asyncio.create_task(gpt_worker(gpt_state, gpt_requests))
                 await prime_gpt_decision(gpt_state, gpt_requests)
@@ -7412,9 +7426,10 @@ async def main():
                 )
             await asyncio.sleep(5)
     finally:
-        worker_task.cancel()
-        with contextlib.suppress(Exception):
-            await worker_task
+        if worker_task:
+            worker_task.cancel()
+            with contextlib.suppress(Exception):
+                await worker_task
         if fast_scalp_task:
             fast_scalp_task.cancel()
             with contextlib.suppress(Exception):
