@@ -58,6 +58,7 @@ _FOCUS_TAGS = {"micro", "macro", "hybrid", "event"}
 _ALLOWED_MODES = {"DEFENSIVE", "TREND_FOLLOW", "RANGE_SCALP", "TRANSITION"}
 _ALLOWED_RISK = {"high", "neutral", "low"}
 _ALLOWED_LIQ = {"tight", "normal", "loose"}
+_ALLOWED_BIAS = {"up", "down", "flat"}
 
 _MAX_COMPLETION_TOKENS = 200
 _GPT5_MAX_OUTPUT_TOKENS = 256
@@ -271,6 +272,31 @@ async def _call_model(payload: Dict, messages: List[Dict], model: str) -> Dict:
                     if weight_scalp + weight_macro > 0.95:
                         weight_scalp = max(0.0, 0.95 - weight_macro)
                     data["weight_scalp"] = round(weight_scalp, 2)
+
+                    # Optional: short-term directional forecast
+                    bias_raw = data.get("forecast_bias")
+                    if isinstance(bias_raw, str) and bias_raw.lower() in _ALLOWED_BIAS:
+                        data["forecast_bias"] = bias_raw.lower()
+                    else:
+                        data["forecast_bias"] = None
+                    try:
+                        conf = data.get("forecast_confidence")
+                        if conf is not None:
+                            conf_f = float(conf)
+                            if 0.0 <= conf_f <= 1.0:
+                                data["forecast_confidence"] = conf_f
+                            else:
+                                data["forecast_confidence"] = None
+                        else:
+                            data["forecast_confidence"] = None
+                    except (TypeError, ValueError):
+                        data["forecast_confidence"] = None
+                    try:
+                        horizon = data.get("forecast_horizon_min")
+                        if horizon is not None:
+                            data["forecast_horizon_min"] = int(horizon)
+                    except Exception:
+                        data["forecast_horizon_min"] = None
 
                     data["ranked_strategies"] = data.get("ranked_strategies") or []
                     data["model_used"] = model

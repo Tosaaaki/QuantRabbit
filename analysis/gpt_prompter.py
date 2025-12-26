@@ -82,9 +82,14 @@ def build_messages(payload: Dict) -> List[Dict]:
         "\"pattern_hint\":[\"short tags\"],"
         "\"focus_tag\":\"micro|macro|hybrid\","
         "\"weight_macro\":<0.0-1.0>,"
-        "\"weight_scalp\":<0.0-1.0>} "
+        "\"weight_scalp\":<0.0-1.0>,"
+        "\"forecast_bias\":\"up|down|flat\","
+        "\"forecast_confidence\":<0.0-1.0>,"
+        "\"forecast_horizon_min\":<int>} "
         "Constraints: weight_macro + weight_scalp <= 1.0. "
-        "Keep pattern_hint short (<=5 items, <=24 chars each). Output compact JSON only."
+        "Keep pattern_hint short (<=5 items, <=24 chars each). "
+        "Forecast: give directional bias for the next 5–30 minutes. "
+        "Output compact JSON only."
     )
 
     messages = [

@@ -3760,6 +3760,13 @@ async def logic_loop(
                 gpt.get("model_used", "unknown"),
                 reuse_reason,
             )
+            forecast_bias = str(gpt.get("forecast_bias") or "").lower() if gpt else ""
+            forecast_conf = float(gpt.get("forecast_confidence") or 0.0) if gpt else 0.0
+            forecast_horizon = gpt.get("forecast_horizon_min")
+            if forecast_bias not in {"up", "down", "flat"}:
+                forecast_bias = ""
+                forecast_conf = 0.0
+                forecast_horizon = None
             # --- ローカル順位付けに置換（GPTは順位ヒントのみ） ---
             all_strats = list(STRATEGIES.keys())
             gpt_rank = list(local_decision.get("ranked_strategies") or [])
@@ -4486,6 +4493,22 @@ async def logic_loop(
                         raw_signal["confidence"] = int(min(100, conf * rank_boost))
                     except Exception:
                         pass
+                    # GPTの方向バイアスを confidence に反映（軽めの重み）
+                    if forecast_bias and raw_signal.get("action") in {"OPEN_LONG", "OPEN_SHORT"}:
+                        aligned = (forecast_bias == "up" and raw_signal["action"] == "OPEN_LONG") or (
+                            forecast_bias == "down" and raw_signal["action"] == "OPEN_SHORT"
+                        )
+                        bias_factor = 1.0 + (0.15 * forecast_conf if aligned else -0.15 * forecast_conf)
+                        bias_factor = max(0.7, min(1.3, bias_factor))
+                        try:
+                            conf2 = float(raw_signal.get("confidence", 50))
+                            raw_signal["confidence"] = int(min(100, max(1, conf2 * bias_factor)))
+                            if aligned:
+                                raw_signal.setdefault("meta", {})["forecast_bias"] = forecast_bias
+                            else:
+                                raw_signal.setdefault("meta", {})["forecast_bias"] = f"opp:{forecast_bias}"
+                        except Exception:
+                            pass
                 signal_emitted = True
                 for extra_key in (
                     "entry_type",
