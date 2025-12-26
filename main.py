@@ -11,14 +11,6 @@ import os
 from pathlib import Path
 from typing import Optional, Tuple, Coroutine, Any, Dict, Sequence
 
-# Main process guard: disable entries (mainループからの新規建てを止める)
-MAIN_DISABLE_ENTRY = os.getenv("MAIN_DISABLE_ENTRY", "1").strip().lower() in {
-    "1",
-    "true",
-    "yes",
-    "on",
-}
-
 PIP_VALUE = 0.01  # USD/JPY pip size
 
 # Safe float conversion for optional numeric inputs
@@ -101,6 +93,9 @@ def _env_bool(name: str, default: bool = False) -> bool:
     if val is None:
         return default
     return str(val).strip().lower() in {"1", "true", "yes", "on"}
+
+# Trading from main is disabled by default; workers are the single entry/exit path.
+MAIN_TRADING_ENABLED = _env_bool("MAIN_TRADING_ENABLED", False)
 
 # Aggressive mode: loosen range gatesとマイクロの入口ガードを緩めるフラグ
 # デフォルトは安全寄りに OFF
@@ -291,6 +286,11 @@ logging.basicConfig(
 )
 
 logging.info("Application started!")
+logging.info(
+    "[CONFIG] WORKER_ONLY_MODE=%s MAIN_TRADING_ENABLED=%s",
+    WORKER_ONLY_MODE,
+    MAIN_TRADING_ENABLED,
+)
 
 # Backward-compatible alias (expected by STRATEGIES map and logs)
 TrendMA = MovingAverageCross
@@ -1276,7 +1276,6 @@ def _select_worker_targets(
     # Baseline set
     bump("micro_core", 1.0, "baseline_micro")
     bump("fast_scalp", 0.9, "baseline_scalp")
-    bump("scalp_exit", 0.8, "exit_guard")
     bump("scalp_core", 0.6, "baseline_scalp_core")
     bump("mm_lite", 0.3, "baseline_mm_lite")
 
@@ -3145,6 +3144,28 @@ async def logic_loop(
             else:
                 last_market_closed = None
 
+            if WORKER_AUTOCONTROL_ENABLED:
+                try:
+                    desired_workers = WORKER_ALL_SERVICES
+                    if not desired_workers:
+                        logging.debug("[WORKER_CTL] no worker services configured; skip reconcile")
+                    elif desired_workers != last_worker_plan:
+                        await _reconcile_worker_services(last_worker_plan, desired_workers)
+                        last_worker_plan = desired_workers
+                except Exception as exc:  # pragma: no cover - defensive
+                    logging.debug("[WORKER_CTL] reconcile failed: %s", exc)
+
+            if WORKER_ONLY_MODE or not MAIN_TRADING_ENABLED:
+                if loop_counter % 5 == 1:
+                    logging.info(
+                        "[WORKER_MODE] trading loop skipped (worker_only=%s main_trading=%s). active_workers=%s",
+                        WORKER_ONLY_MODE,
+                        MAIN_TRADING_ENABLED,
+                        ",".join(sorted(last_worker_plan)) if last_worker_plan else "unknown",
+                    )
+                await asyncio.sleep(10)
+                continue
+
             # --- 1. 状況分析 ---
             factors = all_factors()
             fac_m1_raw = factors.get("M1")
@@ -3235,24 +3256,6 @@ async def logic_loop(
             else:
                 fac_m1["recent_ticks"] = []
                 fac_m1["recent_tick_summary"] = {}
-            if WORKER_AUTOCONTROL_ENABLED:
-                try:
-                    desired_workers = WORKER_ALL_SERVICES
-                    if not desired_workers:
-                        logging.debug("[WORKER_CTL] no worker services configured; skip reconcile")
-                    elif desired_workers != last_worker_plan:
-                        await _reconcile_worker_services(last_worker_plan, desired_workers)
-                        last_worker_plan = desired_workers
-                except Exception as exc:  # pragma: no cover - defensive
-                    logging.debug("[WORKER_CTL] reconcile failed: %s", exc)
-            if WORKER_ONLY_MODE:
-                if loop_counter % 5 == 1:
-                    logging.info(
-                        "[WORKER_ONLY_MODE] trading loop skipped; workers handle entry/exit. active_workers=%s",
-                        ",".join(sorted(last_worker_plan)) if last_worker_plan else "unknown",
-                    )
-                await asyncio.sleep(10)
-                continue
             if loop_counter % 5 == 0:
                 latest_epoch = None
                 if recent_tick_rows:
@@ -5080,19 +5083,6 @@ async def logic_loop(
                 for pocket, info in open_positions.items()
                 if pocket == "__net__" or pocket not in _EXIT_MAIN_DISABLED_POCKETS
             }
-
-            if MAIN_DISABLE_ENTRY:
-                before = len(evaluated_signals)
-                evaluated_signals = [
-                    s for s in evaluated_signals if str(s.get("action")).upper() == "CLOSE"
-                ]
-                dropped = before - len(evaluated_signals)
-                if dropped > 0:
-                    logging.info("[ENTRY_DISABLED] main dropped %d open signals (entry disabled)", dropped)
-                # exit-related views should follow the filtered signals
-                signals_for_exit = [
-                    sig for sig in evaluated_signals if sig.get("pocket") not in _EXIT_MAIN_DISABLED_POCKETS
-                ]
 
             exit_decisions = []
             if open_positions_for_exit:

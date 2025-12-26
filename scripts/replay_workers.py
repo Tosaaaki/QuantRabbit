@@ -1998,94 +1998,6 @@ def replay_mirror_spike(ticks: List[Tick]) -> Dict[str, object]:
     return {"summary": summary, "trades": trades}
 
 
-# ---------------------------------------------------------------------------
-# Scalp exit manager replay (wraps fast scalper simulation)
-# ---------------------------------------------------------------------------
-
-
-def replay_scalp_exit(ticks: List[Tick], *, candle_path: Optional[Path] = None) -> Dict[str, object]:
-    exit_mod = __import__("workers.scalp_exit.worker", fromlist=["worker"])
-    exit_config = exit_mod.config
-    ScalpExitManager = exit_mod.ScalpExitManager
-
-    # Prepare fast scalp simulation with exit manager hooked in.
-    result = replay_fast_scalp(ticks)
-    trade_records = result.get("trades", [])
-    if not trade_records:
-        return {"summary": {"trades": 0, "exit_triggers": {}}, "trades": []}
-
-    # Aggregate exit reasons by replaying manager decisions on the recorded trades.
-    manager = ScalpExitManager()
-    reasons: Dict[str, int] = {}
-    exit_trades: List[Dict[str, object]] = []
-
-    # Build simple M1 factor stream from ticks or optional candle file.
-    m1_candles: List[dict] = []
-    def _aggregate_candle(epoch: float, price: float) -> None:
-        dt = datetime.fromtimestamp(epoch, tz=timezone.utc)
-        if not m1_candles or dt.minute != m1_candles[-1]["time"].minute:
-            m1_candles.append({
-                "time": dt.replace(second=0, microsecond=0),
-                "open": price,
-                "high": price,
-                "low": price,
-                "close": price,
-            })
-        else:
-            candle = m1_candles[-1]
-            candle["high"] = max(candle["high"], price)
-            candle["low"] = min(candle["low"], price)
-            candle["close"] = price
-
-    for tick in ticks:
-        _aggregate_candle(tick.epoch, tick.mid)
-
-    def _current_factors(price: float) -> dict:
-        candles = [
-            {
-                "open": c["open"],
-                "high": c["high"],
-                "low": c["low"],
-                "close": c["close"],
-            }
-            for c in m1_candles[-120:]
-        ]
-        closes = [c["close"] for c in m1_candles]
-        rsi = _rsi(closes, 14) if len(closes) >= 15 else 50.0
-        return {"candles": candles, "rsi": rsi or 50.0}
-
-    exit_mod.all_factors = lambda: {"M1": _current_factors(last_price)}  # type: ignore[assignment]
-    last_price = ticks[-1].mid
-
-    for tr in trade_records:
-        side = tr["direction"]
-        entry_price = tr["entry_price"]
-        exit_price = tr["exit_price"]
-        pnl_pips = tr["pnl_pips"]
-        trade_id = f"replay-{len(exit_trades)+1}"
-        units = 2000 if side == "long" else -2000
-        trade_dict = {
-            "trade_id": trade_id,
-            "units": units,
-            "price": entry_price,
-            "open_time": tr["entry_time"],
-            "entry_thesis": {"strategy_tag": "fast_scalp"},
-        }
-        last_price = exit_price
-        exit_mod._latest_mid = lambda: exit_price  # type: ignore[assignment]
-        reason = manager.evaluate(trade_dict, _current_factors(exit_price), datetime.fromisoformat(tr["exit_time"].replace("Z", "+00:00")))
-        if reason:
-            reasons[reason] = reasons.get(reason, 0) + 1
-        exit_trades.append({"trade_id": trade_id, "pnl_pips": pnl_pips, "reason": reason or "original"})
-
-    summary = {
-        "trades": len(exit_trades),
-        "exit_triggers": reasons,
-    }
-    return {"summary": summary, "trades": exit_trades}
-
-
-# ---------------------------------------------------------------------------
 # Pullback scalp (M1/M5) replay (simplified)
 # ---------------------------------------------------------------------------
 
@@ -2255,7 +2167,6 @@ def main() -> None:
             "mirror_spike_tight",
             "pullback_scalp",
             "mirror_spike",
-            "scalp_exit",
         ],
     )
     ap.add_argument("--ticks", help="Tick JSONL file (timestamp,bid,ask).")
@@ -2469,7 +2380,7 @@ def main() -> None:
     elif args.worker == "mirror_spike":
         result = replay_mirror_spike(ticks)
     else:
-        result = replay_scalp_exit(ticks, candle_path=Path(args.candles) if args.candles else None)
+        raise ValueError(f"Unsupported worker: {args.worker}")
 
     if sim_meta:
         result.setdefault("meta", {})["simulation"] = sim_meta

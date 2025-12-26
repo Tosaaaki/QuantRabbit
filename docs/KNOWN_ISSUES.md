@@ -1,11 +1,9 @@
 # Known Issues (2025-11-07)
 
-## 1. Micro pocket exits at near-zero P/L
-- **Symptom**: `BB_RSI` entries (micro_core) are closed within seconds at -0.2~-0.5 pips (e.g., trade ID 3549 @ 05:55Z).
-- **Cause**: `scalp_exit` / micro exit policy has `allow_negative_exit=True` via `scalp_lock_release` and very low timeouts. Even small pullbacks trigger `MARKET_ORDER_TRADE_CLOSE`.
-- **Next steps**:
-  - Relax micro exit policy (`_be_profile_for('micro')`, `scalp_exit` thresholds) so the trade is allowed to develop.
-  - Tighten micro entry filters (RSI extremes, spread gate) to reduce false signals.
+## 1. Micro pocket exits at near-zero P/L（旧 common exit, 廃止済み）
+- **Symptom**: `BB_RSI` entries (micro_core) were closed within seconds at -0.2~-0.5 pips (e.g., trade ID 3549 @ 05:55Z)。
+- **Cause**: 共通 EXIT ワーカー（scalp_exit/micro_exit）が `allow_negative_exit=True` かつ極端なタイムアウトで早期クローズしていたため。
+- **Status**: 共通 EXIT ワーカーを廃止し、各ワーカー専用 EXIT に統一。
 
 ## 2. Macro planning blocked by stale snapshot
 - **Symptom**: `[MACRO] snapshot stale (age > 900s)` repeatedly logged, macro_core emits no entries.
