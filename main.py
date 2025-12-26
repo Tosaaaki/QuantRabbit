@@ -287,17 +287,42 @@ logging.basicConfig(
 logging.info("Application started!")
 
 STRATEGIES = {
-    # Mainループからはすべての戦略呼び出しを無効化（個別ワーカーへ移行）
+    # Macro
+    "TrendMA": TrendMA,
+    "Donchian55": Donchian55,
+    # Micro / Scalp
+    "BB_RSI": BBRsi,
+    "MomentumPulse": MomentumPulse,
+    "VolCompressionBreak": VolCompressionBreak,
+    "BB_RSI_Fast": BBRsiFast,
+    "MicroVWAPRevert": MicroVWAPRevert,
+    "MicroRangeBreak": MicroRangeBreak,
+    "MicroPullbackEMA": MicroPullbackEMA,
+    "MicroLevelReactor": MicroLevelReactor,
+    "MicroVWAPBound": MicroVWAPBound,
+    "TrendMomentumMicro": TrendMomentumMicro,
+    "M1Scalper": M1Scalper,
 }
 
-TREND_STRATEGIES: set[str] = set()
-RANGE_STRATEGIES: set[str] = set()
-MOMENTUM_STRATEGIES: set[str] = set()
+TREND_STRATEGIES: set[str] = {"TrendMA", "Donchian55", "TrendMomentumMicro"}
+RANGE_STRATEGIES: set[str] = {"BB_RSI", "BB_RSI_Fast", "MicroVWAPRevert", "MicroRangeBreak", "MicroVWAPBound"}
+MOMENTUM_STRATEGIES: set[str] = {"MomentumPulse", "VolCompressionBreak", "MicroPullbackEMA", "MicroLevelReactor", "M1Scalper"}
 
 POCKET_STRATEGY_MAP: dict[str, set[str]] = {
-    "macro": set(),
-    "micro": set(),
-    "scalp": set(),
+    "macro": {"TrendMA", "Donchian55"},
+    "micro": {
+        "BB_RSI",
+        "MomentumPulse",
+        "VolCompressionBreak",
+        "BB_RSI_Fast",
+        "MicroVWAPRevert",
+        "MicroRangeBreak",
+        "MicroPullbackEMA",
+        "MicroLevelReactor",
+        "MicroVWAPBound",
+        "TrendMomentumMicro",
+    },
+    "scalp": {"M1Scalper", "BB_RSI_Fast"},
 }
 
 FOCUS_POCKETS = {
