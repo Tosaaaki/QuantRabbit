@@ -103,19 +103,19 @@ def _atr_from_candles(candles: Sequence[Dict[str, float]], period: int) -> float
 
 
 async def pullback_runner_s5_worker() -> None:
-    if not config.ENABLED:
-        LOG.info("%s disabled", config.LOG_PREFIX)
-        return
-
-    LOG.info("%s worker starting", config.LOG_PREFIX)
-    pos_manager = PositionManager()
-    cooldown_until = 0.0
-    last_spread_log = 0.0
-    news_block_logged = False
-    regime_block_logged: Optional[str] = None
-    loss_block_logged = False
-    managed_state: Dict[str, float] = {}  # trade_id -> last_update_monotonic
     try:
+        if not config.ENABLED:
+            LOG.info("%s disabled", config.LOG_PREFIX)
+            return
+
+        LOG.info("%s worker starting", config.LOG_PREFIX)
+        pos_manager = PositionManager()
+        cooldown_until = 0.0
+        last_spread_log = 0.0
+        news_block_logged = False
+        regime_block_logged: Optional[str] = None
+        loss_block_logged = False
+        managed_state: Dict[str, float] = {}  # trade_id -> last_update_monotonic
         while True:
             await asyncio.sleep(config.LOOP_INTERVAL_SEC)
             now_mono = time.monotonic()
@@ -360,6 +360,12 @@ async def pullback_runner_s5_worker() -> None:
                     ok = await set_trade_protections(trade_id, sl_price=None, tp_price=round(tp_price, 3))
                     if ok:
                         managed_state[trade_id] = now_mono
+    except asyncio.CancelledError:
+        LOG.info("%s worker cancelled", config.LOG_PREFIX)
+        raise
+    except Exception:
+        LOG.exception("%s fatal error; exiting loop", config.LOG_PREFIX)
+        await asyncio.sleep(2.0)
     finally:
         try:
             pos_manager.close()

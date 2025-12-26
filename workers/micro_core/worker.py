@@ -99,6 +99,12 @@ HOLD_RATIO_MIN_SAMPLES = int(os.getenv("HOLD_RATIO_MIN_SAMPLES", "80"))
 HOLD_RATIO_MAX = float(os.getenv("HOLD_RATIO_MAX", "0.30"))
 HOLD_RATIO_RELEASE_FACTOR = float(os.getenv("HOLD_RATIO_RELEASE_FACTOR", "0.8"))
 HOLD_RATIO_CHECK_INTERVAL_SEC = float(os.getenv("HOLD_RATIO_CHECK_INTERVAL_SEC", "900"))
+HOLD_RATIO_GUARD_DISABLED = str(os.getenv("HOLD_RATIO_GUARD_DISABLED", "0")).strip().lower() in {
+    "1",
+    "true",
+    "yes",
+    "on",
+}
 MARGIN_GUARD_THRESHOLD = float(os.getenv("MICRO_MARGIN_GUARD_THRESHOLD", "0.025"))
 MARGIN_GUARD_RELEASE = float(os.getenv("MICRO_MARGIN_GUARD_RELEASE", "0.035"))
 MARGIN_GUARD_CHECK_INTERVAL = float(os.getenv("MICRO_MARGIN_GUARD_CHECK_INTERVAL", "75"))
@@ -479,7 +485,9 @@ async def micro_core_worker() -> None:
                 except (TypeError, ValueError):
                     spread_pips = 0.0
             fac_m1["spread_pips"] = spread_pips
-            if (now - last_hold_ratio_check).total_seconds() >= HOLD_RATIO_CHECK_INTERVAL_SEC:
+            if HOLD_RATIO_GUARD_DISABLED:
+                hold_ratio_guard_active = False
+            elif (now - last_hold_ratio_check).total_seconds() >= HOLD_RATIO_CHECK_INTERVAL_SEC:
                 ratio, total, lt60 = hold_monitor.sample()
                 last_hold_ratio_check = now
                 if ratio is not None:
