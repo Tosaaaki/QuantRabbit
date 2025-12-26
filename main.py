@@ -1012,12 +1012,7 @@ FORCE_SCALP_MODE = os.getenv("SCALP_FORCE_ALWAYS", "0").strip().lower() not in {
 if FORCE_SCALP_MODE:
     logging.warning("[FORCE_SCALP] mode enabled")
 
-RELAX_GPT_ALLOWLIST = os.getenv("RELAX_GPT_ALLOWLIST", "true").strip().lower() in {
-    "1",
-    "true",
-    "yes",
-    "on",
-}
+RELAX_GPT_ALLOWLIST = True  # GPT は順位付けのみ利用し、評価フィルタには使わない
 
 
 def _session_bucket(now: datetime.datetime) -> str:
@@ -4336,22 +4331,13 @@ async def logic_loop(
                     and sname not in gpt_strategy_allowlist
                     and sname not in auto_injected_strategies
                 ):
-                    if RELAX_GPT_ALLOWLIST:
-                        logging.info(
-                            "[STRAT_GUARD] allowlist miss but relaxed -> evaluate %s ranked=%s auto=%s allow=%s",
-                            sname,
-                            ranked_strategies,
-                            sorted(auto_injected_strategies),
-                            sorted(gpt_strategy_allowlist),
-                        )
-                    else:
-                        logging.info(
-                            "[STRAT_GUARD] skip %s (not in GPT ranked_strategies) ranked=%s auto=%s",
-                            sname,
-                            ranked_strategies,
-                            sorted(auto_injected_strategies),
-                        )
-                        continue
+                    logging.info(
+                        "[STRAT_GUARD] allowlist miss -> still evaluate (RELAXED) %s ranked=%s auto=%s allow=%s",
+                        sname,
+                        ranked_strategies,
+                        sorted(auto_injected_strategies),
+                        sorted(gpt_strategy_allowlist),
+                    )
                 raw_signal = cls.check(fac_m1)
                 if not raw_signal:
                     logging.info(
