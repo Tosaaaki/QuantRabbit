@@ -286,6 +286,9 @@ logging.basicConfig(
 
 logging.info("Application started!")
 
+# Backward-compatible alias (expected by STRATEGIES map and logs)
+TrendMA = MovingAverageCross
+
 STRATEGIES = {
     # Macro
     "TrendMA": TrendMA,
