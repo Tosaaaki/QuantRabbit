@@ -105,6 +105,8 @@ def _env_bool(name: str, default: bool = False) -> bool:
 # Aggressive mode: loosen range gatesとマイクロの入口ガードを緩めるフラグ
 # デフォルトは安全寄りに OFF
 AGGRESSIVE_TRADING = _env_bool("AGGRESSIVE_TRADING", default=False)
+# Micro 新規エントリーを緊急停止するフラグ（Exit は動かす）
+MICRO_OPENS_DISABLED = _env_bool("MICRO_OPENS_DISABLED", default=False)
 
 # Worker-onlyモード: mainはワーカー起動/データ供給のみ行い、発注/Exitロジックはスキップ
 WORKER_ONLY_MODE = _env_bool("WORKER_ONLY_MODE", default=True)
@@ -4230,22 +4232,8 @@ async def logic_loop(
             stage_tracker.set_weight_hint("macro", macro_hint)
             stage_tracker.set_weight_hint("micro", micro_hint)
             stage_tracker.set_weight_hint("scalp", scalp_hint if weight_scalp is not None else None)
-            focus_pockets = set(focus_candidates)
-            if macro_hint >= 0.05:
-                focus_pockets.add("macro")
-            if micro_hint >= 0.08:
-                focus_pockets.add("micro")
-            if scalp_hint >= 0.02:
-                focus_pockets.add("scalp")
-            if (
-                scalp_ready
-                or focus_tag in {"micro", "hybrid"}
-                or micro_hint >= 0.05
-                or scalp_hint >= 0.05
-            ):
-                focus_pockets.add("scalp")
-            focus_pockets.update(strategy_pockets)
-            focus_pockets.add("scalp")
+            # Pocketフィルタは無効化し、全ポケットを常に評価対象にする
+            focus_pockets = {"macro", "micro", "scalp"}
             diag_fields = {
                 "ready": int(bool(scalp_ready)),
                 "forced": int(bool(scalp_ready_forced)),
@@ -4469,24 +4457,7 @@ async def logic_loop(
                         sname,
                     )
                     continue
-                if pocket not in focus_pockets:
-                    logging.info(
-                        "[FOCUS] skip %s pocket=%s focus=%s",
-                        sname,
-                        pocket,
-                        focus_tag,
-                    )
-                    continue
-                allowed_names = POCKET_STRATEGY_MAP.get(pocket)
-                if allowed_names and sname not in allowed_names:
-                    logging.info(
-                        "[POCKET] skip %s (pocket=%s) not in whitelist %s focus=%s",
-                        sname,
-                        pocket,
-                        sorted(allowed_names),
-                        focus_tag,
-                    )
-                    continue
+                # ポケット別フィルタは全て無効化
                 if range_active and cls.name not in ALLOWED_RANGE_STRATEGIES:
                     logging.info("[RANGE] skip %s in range mode.", sname)
                     continue
