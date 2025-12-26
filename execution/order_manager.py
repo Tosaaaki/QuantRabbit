@@ -937,6 +937,8 @@ def _maybe_update_protections(
     context: str = "auto",
     ref_price: Optional[float] = None,
 ) -> None:
+    if STOP_LOSS_DISABLED:
+        sl_price = None
     if not trade_id or (sl_price is None and tp_price is None):
         return
 
@@ -1472,6 +1474,8 @@ async def set_trade_protections(
     """
     Legacy compatibility layer – update SL/TP for an open trade and report success.
     """
+    if STOP_LOSS_DISABLED:
+        sl_price = None
     if not TRAILING_SL_ALLOWED and sl_price is not None:
         return False
     if not trade_id:
@@ -2226,6 +2230,8 @@ async def market_order(
                         sl_gap_pips=thesis_sl_pips,
                         tp_gap_pips=thesis_tp_pips,
                     )
+                    if STOP_LOSS_DISABLED:
+                        fallback_sl = None
                     if fallback_sl is not None or fallback_tp is not None:
                         if fallback_sl is not None:
                             order_data["order"]["stopLossOnFill"] = {
@@ -2493,7 +2499,7 @@ async def limit_order(
     if client_order_id:
         payload["order"]["clientExtensions"]["id"] = client_order_id
         payload["order"]["tradeClientExtensions"]["id"] = client_order_id
-    if sl_price is not None:
+    if (not STOP_LOSS_DISABLED) and sl_price is not None:
         payload["order"]["stopLossOnFill"] = {"price": f"{sl_price:.3f}"}
     if tp_price is not None:
         payload["order"]["takeProfitOnFill"] = {"price": f"{tp_price:.3f}"}

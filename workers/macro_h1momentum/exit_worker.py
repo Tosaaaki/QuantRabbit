@@ -15,6 +15,7 @@ from execution.position_manager import PositionManager
 from indicators.factor_cache import all_factors
 from market_data import tick_window
 from utils.metrics_logger import log_metric
+from workers.common.exit_scaling import TPScaleConfig, apply_tp_virtual_floor
 
 LOG = logging.getLogger(__name__)
 
@@ -88,6 +89,7 @@ class H1MomentumExitWorker:
     """PnL + RSI/ATR/VWAP/レンジ判定を組み合わせた H1Momentum EXIT."""
 
     def __init__(self) -> None:
+        self.tp_scale = TPScaleConfig()
         self.loop_interval = max(1.0, _float_env("H1MOMENTUM_EXIT_LOOP_INTERVAL_SEC", 2.0))
         self._pos_manager = PositionManager()
         self._states: Dict[str, _TradeState] = {}
@@ -252,10 +254,15 @@ class H1MomentumExitWorker:
             trail_start = max(trail_start, max(2.0, state.hard_stop * 0.5))
             # 時間制御を少し緩め（長期ポジを許容）
             max_hold = max(max_hold, self.max_hold_sec * 1.2)
-        if state.tp_hint:
-            # TPヒントがあれば利確系をその70%程度に寄せる
-            profit_take = max(profit_take, max(2.0, state.tp_hint * 0.7))
-            trail_start = max(trail_start, max(2.0, state.tp_hint * 0.8))
+
+        profit_take, trail_start, lock_buffer, stop_loss = apply_tp_virtual_floor(
+            profit_take,
+            trail_start,
+            lock_buffer,
+            stop_loss,
+            state,
+            self.tp_scale,
+        )
 
         atr = ctx.atr_pips or 0.0
         if atr >= self.atr_hot:

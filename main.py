@@ -328,6 +328,63 @@ if os.getenv("SCALP_TACTICAL", "0").strip().lower() not in {"", "0", "false", "n
     POCKET_LOSS_COOLDOWNS["scalp"] = 120
     POCKET_ENTRY_MIN_INTERVAL["scalp"] = 25
 
+
+def _dynamic_entry_cooldown_seconds(
+    pocket: str,
+    fac_m1: Optional[dict],
+    fac_h1: Optional[dict],
+    fac_h4: Optional[dict],
+    range_active: bool,
+) -> int:
+    """
+    Determine entry cooldown using live technicals to boost throughput when 市況が強い。
+    - 強トレンド/高ボラ: クールダウン短縮（エントリー頻度↑）
+    - 低ボラ/レンジ圧縮: 伸長
+    """
+    base = POCKET_ENTRY_MIN_INTERVAL.get(pocket, 120)
+    if base <= 0:
+        return 0
+
+    m1 = fac_m1 or {}
+    h1 = fac_h1 or {}
+    h4 = fac_h4 or {}
+
+    adx_m1 = _safe_float(m1.get("adx"), 0.0)
+    vol_5m = _safe_float(m1.get("vol_5m"), 1.0)
+    atr_m1 = _safe_float(m1.get("atr_pips"), _safe_float(m1.get("atr"), 0.0) * 100.0)
+    bbw_m1 = _safe_float(m1.get("bbw"), 0.0)
+    gap_m1 = abs(_safe_float(m1.get("ma10"), 0.0) - _safe_float(m1.get("ma20"), 0.0)) / 0.01
+
+    adx_h1 = _safe_float(h1.get("adx"), 0.0)
+    adx_h4 = _safe_float(h4.get("adx"), 0.0)
+    bbw_h1 = _safe_float(h1.get("bbw"), 0.0)
+    atr_h1 = _safe_float(h1.get("atr_pips"), _safe_float(h1.get("atr"), 0.0) * 100.0)
+
+    scale = 1.0
+    if pocket == "macro":
+        trend_strength = max(adx_h1, adx_h4)
+        if trend_strength >= 26.0 or atr_h1 >= 3.2:
+            scale *= 0.55
+        elif trend_strength >= 22.0:
+            scale *= 0.72
+        elif trend_strength <= 16.0 or bbw_h1 <= 0.012:
+            scale *= 1.15
+    else:
+        # micro/scalp 系は短期トレンドとボラを優先
+        if adx_m1 >= 24.0 and vol_5m >= 0.7 and atr_m1 >= 2.0:
+            scale *= 0.45
+        elif adx_m1 >= 20.0 and vol_5m >= 0.5:
+            scale *= 0.65
+        elif adx_m1 <= 13.0 or vol_5m < 0.35:
+            scale *= 1.18
+        if gap_m1 >= 4.0 and adx_m1 >= 22.0:
+            scale *= 0.9
+        if range_active and (adx_m1 < 14.5 or bbw_m1 < 0.0016):
+            scale *= 1.15
+
+    scale = max(0.38, min(1.35, scale))
+    return int(max(20, round(base * scale)))
+
 PIP = 0.01
 
 MACRO_DISABLED = _env_bool("MACRO_DISABLE", False)
@@ -679,6 +736,9 @@ def _apply_tech_overlays(signal: dict, fac_m1: dict, fac_m5: Optional[dict] = No
     """
     if not signal or not isinstance(signal, dict):
         return signal
+    # 共通オーバーレイを使わない場合はそのまま返す（戦略内で個別処理する前提）
+    if os.getenv("TECH_OVERLAY_ENABLE", "0").strip().lower() in {"", "0", "false", "no"}:
+        return signal
     sig = dict(signal)
     try:
         conf = int(sig.get("confidence", 50) or 50)
@@ -705,6 +765,17 @@ def _apply_tech_overlays(signal: dict, fac_m1: dict, fac_m5: Optional[dict] = No
     dmi_diff = _safe_float(fac_m1.get("plus_di"), 0.0) - _safe_float(fac_m1.get("minus_di"), 0.0)
     stoch = _safe_float(fac_m1.get("stoch_rsi"), 0.5)
     vol5 = _safe_float(fac_m1.get("vol_5m"), 1.0)
+    roc5 = _safe_float(fac_m1.get("roc5"), 0.0)
+    roc10 = _safe_float(fac_m1.get("roc10"), 0.0)
+    bbw = _safe_float(fac_m1.get("bbw"), 0.0)
+    cci = _safe_float(fac_m1.get("cci"), 0.0)
+    vwap_gap = _safe_float(fac_m1.get("vwap_gap"), 0.0)
+    adx_m1 = _safe_float(fac_m1.get("adx"), 0.0)
+    vol_5m = _safe_float(fac_m1.get("vol_5m"), 1.0)
+    ma10 = _safe_float(fac_m1.get("ma10"), 0.0)
+    ma20 = _safe_float(fac_m1.get("ma20"), 0.0)
+    slope_pips = (ma10 - ma20) / PIP if PIP else 0.0
+    gap_pips = abs(ma10 - ma20) / PIP if PIP else 0.0
 
     mult_conf = 1.0
     mult_tp = 1.0
@@ -760,6 +831,91 @@ def _apply_tech_overlays(signal: dict, fac_m1: dict, fac_m5: Optional[dict] = No
     if vol5 < 0.4:
         mult_conf -= 0.04
 
+    # ROC/モメ判定: 方向一致で軽く強化（頻度維持のため抑制は緩め）
+    if action == "OPEN_LONG" and (roc5 > 0.0 or roc10 > 0.0):
+        mult_conf += 0.04
+    elif action == "OPEN_SHORT" and (roc5 < 0.0 or roc10 < 0.0):
+        mult_conf += 0.04
+    elif roc5 == 0 and roc10 == 0:
+        mult_conf -= 0.02
+
+    # M1総合スコア（ADX/ROC/スロープ/BBW/vol_5m）
+    m1_score = 0.0
+    if adx_m1 >= 16.0:
+        m1_score += min(0.2, (adx_m1 - 16.0) * 0.01)
+    if (action == "OPEN_LONG" and slope_pips > 0.0) or (action == "OPEN_SHORT" and slope_pips < 0.0):
+        m1_score += min(0.16, abs(slope_pips) * 0.02)
+    if abs(roc5) > 0 or abs(roc10) > 0:
+        m1_score += min(0.12, (abs(roc5) + abs(roc10)) * 0.005)
+    if bbw <= 0.0016:
+        m1_score -= 0.05
+    if vol_5m < 0.45:
+        m1_score -= 0.06
+    mult_conf += m1_score
+
+    # CCI 極端は反動警戒
+    if cci >= 140 or cci <= -140:
+        mult_conf -= 0.05
+
+    # BBW と VWAP 乖離でリスクリワード調整（頻度は落とさずTP側を調整）
+    if bbw <= 0.0016:
+        mult_tp -= 0.04
+    elif bbw >= 0.004:
+        mult_tp += 0.04
+    if action == "OPEN_LONG" and vwap_gap > 0.0:
+        mult_conf += 0.02
+    elif action == "OPEN_SHORT" and vwap_gap < 0.0:
+        mult_conf += 0.02
+
+    # セッションバイアス（ロンドン/NYは緩め、アジアは軽く絞る）
+    now = datetime.datetime.utcnow()
+    hour = now.hour
+    session = "asia"
+    if 7 <= hour < 17:
+        session = "london"
+    elif 17 <= hour < 23:
+        session = "ny"
+    if session in {"london", "ny"}:
+        mult_conf += 0.04
+        mult_tp += 0.02
+    else:
+        if abs(vwap_gap) < 0.8 and bbw <= 0.0025:
+            mult_conf -= 0.04
+        else:
+            mult_conf -= 0.01
+
+    # クラスタ/VWAP振り分け: 近接なら逆張り系を優遇、遠いならブレイク系を優遇（拒否せずスケールのみ）
+    mean_rev_strats = {"BB_RSI", "RangeFader", "pullback_s5", "pullback_scalp", "pullback_runner_s5"}
+    breakout_strats = {"TrendMA", "Donchian55", "LondonMomentum", "SqueezeBreak", "ImpulseBreak", "impulse_break_s5"}
+    strat = str(sig.get("strategy") or sig.get("tag") or "").strip()
+    cluster_gap = cluster_high if action == "OPEN_LONG" else cluster_low
+    if cluster_gap > 0:
+        if cluster_gap < 3.0:
+            if strat in mean_rev_strats:
+                mult_conf += 0.05
+            elif strat in breakout_strats:
+                mult_conf -= 0.06
+        elif cluster_gap > 7.0:
+            if strat in breakout_strats:
+                mult_conf += 0.06
+            elif strat in mean_rev_strats:
+                mult_conf -= 0.05
+
+    # MA整列直前チェックでサイズ感（confidence）を微調整
+    aligned = (action == "OPEN_LONG" and ma10 > ma20) or (action == "OPEN_SHORT" and ma10 < ma20)
+    if aligned and gap_pips >= 3.0 and adx_m1 >= 14.0:
+        mult_conf += 0.05
+    elif not aligned and gap_pips >= 2.0:
+        mult_conf -= 0.08
+
+    # パターンヒント（三角/矩形）はブレイク系を優遇、逆張り系は抑制（拒否はしない）
+    pattern_hint = str(sig.get("pattern") or sig.get("pattern_hint") or "").lower()
+    if "triangle" in pattern_hint or "sym_triangle" in pattern_hint or "range" in pattern_hint or "box" in pattern_hint:
+        if strat in breakout_strats:
+            mult_conf += 0.04
+        elif strat in mean_rev_strats:
+            mult_conf -= 0.04
+
     # MTF方向コンフルエンス（M5/H1/H4）
     mtf_scores = []
     for fac, adx_floor, slope_floor in (
@@ -794,6 +950,14 @@ def _apply_tech_overlays(signal: dict, fac_m1: dict, fac_m5: Optional[dict] = No
             "cluster_high": round(cluster_high, 3),
             "cluster_low": round(cluster_low, 3),
             "mtf_score": round(mtf_score, 3),
+            "roc5": round(roc5, 3),
+            "roc10": round(roc10, 3),
+            "cci": round(cci, 3),
+            "bbw": round(bbw, 4),
+            "vwap_gap": round(vwap_gap, 3),
+            "m1_score": round(m1_score, 3),
+            "session": session,
+            "ma_gap": round(gap_pips, 2),
             # Logging-only: wick/hit stats for後分析（シグナル判断には未使用）
             "upper_wick": round(_safe_float(fac_m1.get("upper_wick_avg_pips"), 0.0), 3),
             "lower_wick": round(_safe_float(fac_m1.get("lower_wick_avg_pips"), 0.0), 3),
@@ -6973,7 +7137,13 @@ async def logic_loop(
                     key = f"{signal.get('strategy')}@{pocket}"
                     entry_mix[key] = entry_mix.get(key, 0) + 1
                     # 直後の再エントリーを抑制（気迷いトレード対策）
-                    entry_cd = POCKET_ENTRY_MIN_INTERVAL.get(pocket, 120)
+                    entry_cd = _dynamic_entry_cooldown_seconds(
+                        pocket,
+                        fac_m1,
+                        fac_h1,
+                        fac_h4,
+                        range_active,
+                    )
                     stage_tracker.set_cooldown(
                         pocket,
                         direction,

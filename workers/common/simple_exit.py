@@ -77,6 +77,10 @@ class SimpleExitWorker:
         structure_adx: float = 22.0,
         structure_gap_pips: float = 2.0,
         structure_adx_cold: float = 12.0,
+        virtual_sl_ratio: float = 0.72,
+        trail_from_tp_ratio: float = 0.82,
+        lock_from_tp_ratio: float = 0.45,
+        tp_floor_ratio: float = 1.0,
     ) -> None:
         self.pocket = pocket
         self.strategy_tags = {tag.strip() for tag in strategy_tags if tag.strip()}
@@ -93,6 +97,10 @@ class SimpleExitWorker:
         self.structure_adx = structure_adx
         self.structure_gap_pips = structure_gap_pips
         self.structure_adx_cold = structure_adx_cold
+        self.virtual_sl_ratio = max(0.0, virtual_sl_ratio)
+        self.trail_from_tp_ratio = max(0.0, trail_from_tp_ratio)
+        self.lock_from_tp_ratio = max(0.0, lock_from_tp_ratio)
+        self.tp_floor_ratio = max(0.0, tp_floor_ratio)
         self._states: Dict[str, TradeState] = {}
         self._pos_manager = PositionManager()
 
@@ -156,14 +164,20 @@ class SimpleExitWorker:
         max_hold = self.max_hold_sec
         lock_buffer = self.lock_buffer
         if self.use_entry_meta:
+            if state.tp_hint:
+                profit_take = max(profit_take, max(1.0, state.tp_hint * self.tp_floor_ratio))
+                trail_start = max(trail_start, max(1.0, profit_take * self.trail_from_tp_ratio))
+                lock_buffer = max(lock_buffer, profit_take * self.lock_from_tp_ratio)
             if state.hard_stop:
                 stop_loss = max(stop_loss, max(0.8, state.hard_stop * 0.5))
                 lock_buffer = max(lock_buffer, stop_loss * 0.35)
                 trail_start = max(trail_start, max(1.0, state.hard_stop * 0.6))
                 max_hold = max(max_hold, self.max_hold_sec * 1.05)
-            if state.tp_hint:
-                profit_take = max(profit_take, max(1.0, state.tp_hint * 0.7))
-                trail_start = max(trail_start, max(1.0, state.tp_hint * 0.8))
+
+        # TP を優先しつつ、RR を維持する仮想SL/ロック位置を決定
+        stop_loss = max(stop_loss, profit_take * self.virtual_sl_ratio)
+        trail_start = max(trail_start, profit_take * self.trail_from_tp_ratio)
+        lock_buffer = max(lock_buffer, profit_take * self.lock_from_tp_ratio)
 
         state.update(pnl, lock_buffer)
 

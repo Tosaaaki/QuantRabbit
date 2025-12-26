@@ -123,12 +123,15 @@ def _tech_multiplier(fac: Dict[str, object]) -> float:
         chaikin_vol = float(fac.get("chaikin_vol") or 0.0)
         vwap_gap = float(fac.get("vwap_gap") or 0.0)
         roc5 = float(fac.get("roc5") or 0.0)
+        roc10 = float(fac.get("roc10") or 0.0)
         cci = float(fac.get("cci") or 0.0)
         ichimoku_pos = float(fac.get("ichimoku_cloud_pos") or 0.0)
         cluster_high = float(fac.get("cluster_high_gap") or 0.0)
         cluster_low = float(fac.get("cluster_low_gap") or 0.0)
+        ma10 = float(fac.get("ma10") or 0.0)
+        ma20 = float(fac.get("ma20") or 0.0)
     except Exception:
-        adx = rsi = bbw = vol5 = macd_hist = stoch = plus_di = minus_di = kc_width = don_width = chaikin_vol = vwap_gap = roc5 = cci = ichimoku_pos = cluster_high = cluster_low = 0.0
+        adx = rsi = bbw = vol5 = macd_hist = stoch = plus_di = minus_di = kc_width = don_width = chaikin_vol = vwap_gap = roc5 = roc10 = cci = ichimoku_pos = cluster_high = cluster_low = ma10 = ma20 = 0.0
 
     score = 0.0
     # トレンド強/順行
@@ -148,6 +151,10 @@ def _tech_multiplier(fac: Dict[str, object]) -> float:
         score += 0.1
     elif roc5 < 0:
         score -= 0.1
+    if roc10 > 0:
+        score += 0.08
+    elif roc10 < 0:
+        score -= 0.08
     if cci >= 100:
         score += 0.05
     elif cci <= -100:
@@ -186,8 +193,21 @@ def _tech_multiplier(fac: Dict[str, object]) -> float:
         elif min_cluster > 7.0:
             score += 0.05
 
+    # MA整列/スロープで方向強化
+    slope = (ma10 - ma20) / _PIP if _PIP else 0.0
+    if slope > 2.0:
+        score += 0.08
+    elif slope < -2.0:
+        score -= 0.08
+
     mult = 1.0 + score * 0.08
-    return max(0.7, min(1.3, mult))
+    # セッションバイアス（ロンドン/NY は軽く緩め、アジアは微抑制）
+    hour = time.gmtime().tm_hour
+    if 7 <= hour < 17 or 17 <= hour < 23:
+        mult *= 1.03
+    else:
+        mult *= 0.97
+    return max(0.7, min(1.35, mult))
 
 
 def _structure_targets(signal: Dict[str, object], fac: Dict[str, object], direction: str) -> Dict[str, object]:

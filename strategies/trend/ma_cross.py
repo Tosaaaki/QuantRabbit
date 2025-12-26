@@ -439,6 +439,12 @@ class MovingAverageCross:
         conf_adj = 0
         sl_adj = 0.0
         tp_scale = 1.0
+        # Session bias: London/NY slightly looser, Asia slightly stricter (no hard gate)
+        hour = datetime.utcnow().hour
+        if 7 <= hour < 17 or 17 <= hour < 23:
+            conf_adj += 3
+        else:
+            conf_adj -= 2
         if isinstance(mtf, dict):
             def _proj_from_candles(candles: List[Dict[str, float]], minutes: float) -> Optional[MACrossProjection]:
                 if not candles:
@@ -475,6 +481,23 @@ class MovingAverageCross:
                 tp_scale = 1.06
             if oppose >= 1:
                 sl_adj += 2.0
+
+        # Cluster / VWAP context (favor breakouts when room, penalize when tight)
+        try:
+            cluster_gap = float(fac.get("cluster_high_gap") or fac.get("cluster_low_gap") or 0.0)
+        except Exception:
+            cluster_gap = 0.0
+        try:
+            vwap_gap = float(fac.get("vwap_gap") or 0.0)
+        except Exception:
+            vwap_gap = 0.0
+        if cluster_gap > 0:
+            if cluster_gap < 3.0:
+                conf_adj -= 4
+            elif cluster_gap > 7.0:
+                conf_adj += 4
+        if abs(vwap_gap) >= 3.0:
+            conf_adj += 2
 
         confidence = MovingAverageCross._confidence(
             projection, direction, adx, macd_adjust

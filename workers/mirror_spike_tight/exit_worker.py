@@ -237,9 +237,15 @@ class MirrorSpikeTightExitWorker:
             lock_trigger = max(lock_trigger, max(0.25, state.hard_stop * 0.25))
             trail_start = max(trail_start, max(1.0, state.hard_stop * 0.6))
             max_hold = max(max_hold, self.max_hold_sec * 1.1)
-        if state.tp_hint:
-            profit_take = max(profit_take, max(1.0, state.tp_hint * 0.7))
-            trail_start = max(trail_start, max(1.1, state.tp_hint * 0.8))
+
+        profit_take, trail_start, lock_buffer, stop_loss = apply_tp_virtual_floor(
+            profit_take,
+            trail_start,
+            lock_buffer,
+            stop_loss,
+            state,
+            self.tp_scale,
+        )
 
         atr = ctx.atr_pips or 0.0
         if atr >= self.atr_hot:

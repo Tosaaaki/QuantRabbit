@@ -15,6 +15,7 @@ from execution.position_manager import PositionManager
 from indicators.factor_cache import all_factors
 from market_data import tick_window
 from utils.metrics_logger import log_metric
+from workers.common.exit_scaling import TPScaleConfig, apply_tp_virtual_floor
 
 LOG = logging.getLogger(__name__)
 
@@ -96,6 +97,7 @@ class MicroMultiExitWorker:
     """PnL + RSI/ATR/VWAP/レンジ判定を組み合わせた micro_multistrat EXIT."""
 
     def __init__(self) -> None:
+        self.tp_scale = TPScaleConfig()
         self.loop_interval = max(0.3, _float_env("MICRO_MULTI_EXIT_LOOP_INTERVAL_SEC", 1.0))
         self._pos_manager = PositionManager()
         self._states: Dict[str, _TradeState] = {}
@@ -255,9 +257,15 @@ class MicroMultiExitWorker:
             lock_trigger = max(lock_trigger, max(0.2, state.hard_stop * 0.25))
             trail_start = max(trail_start, max(0.9, state.hard_stop * 0.6))
             max_hold = max(max_hold, self.max_hold_sec * 1.05)
-        if state.tp_hint:
-            profit_take = max(profit_take, max(0.9, state.tp_hint * 0.7))
-            trail_start = max(trail_start, max(1.0, state.tp_hint * 0.8))
+
+        profit_take, trail_start, lock_buffer, stop_loss = apply_tp_virtual_floor(
+            profit_take,
+            trail_start,
+            lock_buffer,
+            stop_loss,
+            state,
+            self.tp_scale,
+        )
 
         atr = ctx.atr_pips or 0.0
         if atr >= self.atr_hot:
