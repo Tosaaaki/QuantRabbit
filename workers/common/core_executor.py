@@ -7,7 +7,7 @@ import logging
 import os
 import json
 from pathlib import Path
-from typing import Dict, Tuple
+from typing import Dict, Tuple, Set
 
 from analytics.insight_client import InsightClient
 from execution.exit_manager import ExitManager, ExitDecision
@@ -49,6 +49,11 @@ def _env_float(key: str, default: float) -> float:
         return default
 
 
+def _env_set(key: str) -> Set[str]:
+    raw = os.getenv(key, "")
+    return {item.strip() for item in raw.split(",") if item.strip()}
+
+
 _USD_LONG_CAP_LOT = _env_float("EXPOSURE_USD_LONG_MAX_LOT", 2.5)
 STARTUP_GRACE_SECONDS = _env_float("STARTUP_GRACE_SECONDS", 120.0)
 STOP_LOSS_DISABLED = stop_loss_disabled()
@@ -72,6 +77,9 @@ class PocketPlanExecutor:
         self._last_insight_refresh = datetime.datetime.min
         self._stage_empty_since: Dict[Tuple[str, str], datetime.datetime] = {}
         self._started_at = datetime.datetime.utcnow()
+        allow_global = _env_set("POCKET_STRATEGY_ALLOWLIST")
+        allow_pocket = _env_set(f"{pocket.upper()}_STRATEGY_ALLOWLIST")
+        self.strategy_allowlist = allow_global | allow_pocket
 
     def _write_shadow_log(self, payload: dict) -> None:
         try:
@@ -392,6 +400,19 @@ class PocketPlanExecutor:
             action = signal.get("action")
             if action not in {"OPEN_LONG", "OPEN_SHORT"}:
                 LOG.info("%s skip non-entry action=%s", self.log_prefix, action)
+                continue
+            strategy_name = str(
+                signal.get("strategy")
+                or signal.get("strategy_tag")
+                or signal.get("tag")
+                or ""
+            ).strip()
+            if self.strategy_allowlist and strategy_name not in self.strategy_allowlist:
+                LOG.info(
+                    "%s skip strategy=%s (allowlist)",
+                    self.log_prefix,
+                    strategy_name or "-",
+                )
                 continue
             pocket = signal.get("pocket") or self.pocket
             factors = plan.factors_m1 if pocket in {"micro", "scalp"} else plan.factors_h4
