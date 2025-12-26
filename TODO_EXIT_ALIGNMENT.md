@@ -4,6 +4,7 @@
 - もうポケット単位で考えない。mainはWORKER_ONLY_MODEで発注・EXITを行わず、各ワーカーがエントリー/EXITまで完結させる。
 - micro_core（ホールド比率ガード連発でブロック）は使わない前提。必要なら明示的に止める or 無効化環境をセットし、再度使う場合は個別に指示する。
 - ポケット共通EXITは使わない。エントリーしたワーカー専用のEXITのみ有効。
+- 共通EXITワーカー（macro_exit/micro_exit/scalp_exit）をすべて外す。自動起動リストにも載せない。
 - ExitManager 自動EXITは `EXIT_DISABLE_AUTO_EXIT=1`（scalp fast_cut/kill も無効化）前提で整合を見る。
 - macro_exit/micro_exit/scalp_exit の共通出口ループは `DISABLE_POCKET_EXIT`（デフォルトON）で停止。
 

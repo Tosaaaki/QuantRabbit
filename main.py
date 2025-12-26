@@ -652,7 +652,6 @@ WORKER_SERVICES = {
     "micro_core": "qr-micro_core.service",
     "fast_scalp": "qr-fast_scalp.service",
     "mtf_breakout": "qr-mtf_breakout.service",
-    "scalp_exit": "qr-scalp_exit.service",
     "pullback_scalp": "qr-pullback_scalp.service",
     "london_momentum": "qr-london_momentum.service",
     "pullback_runner_s5": "qr-pullback_runner_s5.service",
