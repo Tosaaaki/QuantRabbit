@@ -377,3 +377,7 @@ async def pullback_runner_s5_worker() -> None:
         except Exception:
             LOG.exception("%s loop error; continuing", config.LOG_PREFIX)
             await asyncio.sleep(1.5)
+
+
+if __name__ == "__main__":  # pragma: no cover
+    asyncio.run(pullback_runner_s5_worker())
