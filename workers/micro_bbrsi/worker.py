@@ -189,3 +189,12 @@ async def micro_bbrsi_worker() -> None:
             res.status if res else "none",
         )
 
+
+if __name__ == "__main__":  # pragma: no cover
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s - %(levelname)s - %(message)s",
+        force=True,
+    )
+    LOG.info("%s worker starting", config.LOG_PREFIX)
+    asyncio.run(micro_bbrsi_worker())
