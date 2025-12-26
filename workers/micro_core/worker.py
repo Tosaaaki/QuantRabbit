@@ -481,6 +481,7 @@ async def micro_core_worker() -> None:
                 except (TypeError, ValueError):
                     spread_pips = 0.0
             fac_m1["spread_pips"] = spread_pips
+            # デフォルトでホールド比率ガードを無効化（環境依存せずオフ）
             hold_ratio_guard_active = False
             range_ctx = detect_range_mode(fac_m1, fac_h4)
             dyn_profile = _derive_dynamic_profile(fac_m1, range_ctx)

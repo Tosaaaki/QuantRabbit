@@ -102,12 +102,8 @@ def _atr_from_candles(candles: Sequence[Dict[str, float]], period: int) -> float
     return (sum(recent) / len(recent)) / config.PIP_VALUE
 
 
-async def pullback_runner_s5_worker() -> None:
-    if not config.ENABLED:
-        LOG.info("%s disabled", config.LOG_PREFIX)
-        return
-
-    LOG.info("%s worker starting", config.LOG_PREFIX)
+async def _runner_loop() -> None:
+    """Single iteration loop body with defensive guards."""
     pos_manager = PositionManager()
     cooldown_until = 0.0
     last_spread_log = 0.0
@@ -117,11 +113,10 @@ async def pullback_runner_s5_worker() -> None:
     managed_state: Dict[str, float] = {}  # trade_id -> last_update_monotonic
     try:
         while True:
-            try:
-                await asyncio.sleep(config.LOOP_INTERVAL_SEC)
-                now_mono = time.monotonic()
-                if now_mono < cooldown_until:
-                    continue
+            await asyncio.sleep(config.LOOP_INTERVAL_SEC)
+            now_mono = time.monotonic()
+            if now_mono < cooldown_until:
+                continue
 
                 # Spread gate
                 blocked, _, spread_state, spread_reason = spread_monitor.is_blocked()
@@ -361,22 +356,25 @@ async def pullback_runner_s5_worker() -> None:
                         ok = await set_trade_protections(trade_id, sl_price=None, tp_price=round(tp_price, 3))
                         if ok:
                             managed_state[trade_id] = now_mono
-            except asyncio.CancelledError:
-                LOG.info("%s worker cancelled", config.LOG_PREFIX)
-                raise
-            except Exception:
-                LOG.exception("%s loop error; continuing", config.LOG_PREFIX)
-                await asyncio.sleep(1.0)
-                continue
-    except asyncio.CancelledError:
-        LOG.info("%s worker cancelled", config.LOG_PREFIX)
-        raise
-    except Exception:
-        LOG.exception("%s loop error; restarting loop", config.LOG_PREFIX)
-        await asyncio.sleep(1.0)
-        await pullback_runner_s5_worker()
     finally:
         try:
             pos_manager.close()
         except Exception:
             LOG.exception("%s failed to close PositionManager", config.LOG_PREFIX)
+
+
+async def pullback_runner_s5_worker() -> None:
+    if not config.ENABLED:
+        LOG.info("%s disabled", config.LOG_PREFIX)
+        return
+
+    LOG.info("%s worker starting", config.LOG_PREFIX)
+    while True:
+        try:
+            await _runner_loop()
+        except asyncio.CancelledError:
+            LOG.info("%s worker cancelled", config.LOG_PREFIX)
+            raise
+        except Exception:
+            LOG.exception("%s loop error; continuing", config.LOG_PREFIX)
+            await asyncio.sleep(1.5)
