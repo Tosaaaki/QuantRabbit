@@ -673,8 +673,6 @@ WORKER_SERVICES = {
     "impulse_break_s5": "qr-impulse_break_s5.service",
     "mm_lite": "qr-mm_lite.service",
     "onepip_maker_s1": "qr-onepip_maker_s1.service",
-    "micro_exit": "qr-micro_exit.service",
-    "macro_exit": "qr-macro_exit.service",
 }
 WORKER_ALL_SERVICES = set(WORKER_SERVICES.keys())
 WORKER_AUTOCONTROL_ENABLED = os.getenv("WORKER_AUTOCONTROL", "1").strip() not in {"", "0", "false", "no"}
