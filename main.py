@@ -19,6 +19,8 @@ MAIN_DISABLE_ENTRY = os.getenv("MAIN_DISABLE_ENTRY", "1").strip().lower() in {
     "on",
 }
 
+PIP_VALUE = 0.01  # USD/JPY pip size
+
 # Safe float conversion for optional numeric inputs
 def _safe_float(value: object, default: float = 0.0) -> float:
     try:
