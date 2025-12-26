@@ -99,12 +99,8 @@ HOLD_RATIO_MIN_SAMPLES = int(os.getenv("HOLD_RATIO_MIN_SAMPLES", "80"))
 HOLD_RATIO_MAX = float(os.getenv("HOLD_RATIO_MAX", "0.30"))
 HOLD_RATIO_RELEASE_FACTOR = float(os.getenv("HOLD_RATIO_RELEASE_FACTOR", "0.8"))
 HOLD_RATIO_CHECK_INTERVAL_SEC = float(os.getenv("HOLD_RATIO_CHECK_INTERVAL_SEC", "900"))
-HOLD_RATIO_GUARD_DISABLED = str(os.getenv("HOLD_RATIO_GUARD_DISABLED", "1")).strip().lower() in {
-    "1",
-    "true",
-    "yes",
-    "on",
-}
+# エントリー頻度を阻害しないようにホールド比率ガードはデフォルトで無効化
+HOLD_RATIO_GUARD_DISABLED = True
 MARGIN_GUARD_THRESHOLD = float(os.getenv("MICRO_MARGIN_GUARD_THRESHOLD", "0.025"))
 MARGIN_GUARD_RELEASE = float(os.getenv("MICRO_MARGIN_GUARD_RELEASE", "0.035"))
 MARGIN_GUARD_CHECK_INTERVAL = float(os.getenv("MICRO_MARGIN_GUARD_CHECK_INTERVAL", "75"))
@@ -485,38 +481,7 @@ async def micro_core_worker() -> None:
                 except (TypeError, ValueError):
                     spread_pips = 0.0
             fac_m1["spread_pips"] = spread_pips
-            if HOLD_RATIO_GUARD_DISABLED:
-                hold_ratio_guard_active = False
-            elif (now - last_hold_ratio_check).total_seconds() >= HOLD_RATIO_CHECK_INTERVAL_SEC:
-                ratio, total, lt60 = hold_monitor.sample()
-                last_hold_ratio_check = now
-                if ratio is not None:
-                    if (not hold_ratio_guard_active) and ratio > HOLD_RATIO_MAX:
-                        hold_ratio_guard_active = True
-                        log_metric(
-                            "hold_ratio_guard",
-                            1.0,
-                            tags={"scope": "micro_worker", "ratio": f"{ratio:.3f}", "samples": str(total)},
-                        )
-                        LOG.warning(
-                            "%s hold ratio guard activated (ratio=%.1f%% total=%s)",
-                            config.LOG_PREFIX,
-                            ratio * 100,
-                            total,
-                        )
-                    elif hold_ratio_guard_active and ratio < HOLD_RATIO_MAX * HOLD_RATIO_RELEASE_FACTOR:
-                        hold_ratio_guard_active = False
-                        log_metric(
-                            "hold_ratio_guard",
-                            0.0,
-                            tags={"scope": "micro_worker", "ratio": f"{ratio:.3f}", "samples": str(total)},
-                        )
-                        LOG.info(
-                            "%s hold ratio guard released (ratio=%.1f%% total=%s)",
-                            config.LOG_PREFIX,
-                            ratio * 100,
-                            total,
-                        )
+            hold_ratio_guard_active = False
             range_ctx = detect_range_mode(fac_m1, fac_h4)
             dyn_profile = _derive_dynamic_profile(fac_m1, range_ctx)
             if config.DYNAMIC_LOG_ENABLED:

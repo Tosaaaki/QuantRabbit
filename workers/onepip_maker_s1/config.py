@@ -42,8 +42,9 @@ def _int(key: str, default: int, minimum: int | None = None) -> int:
 
 
 LOG_PREFIX = "[ONEPIP-MAKER]"
-ENABLED = _bool("ONEPIP_MAKER_S1_ENABLED", True)
-SHADOW_MODE = _bool("ONEPIP_MAKER_S1_SHADOW_MODE", False)
+# 強制有効化（環境変数に依存しない）
+ENABLED = True
+SHADOW_MODE = False
 SHADOW_LOG_ALL = _bool("ONEPIP_MAKER_S1_SHADOW_LOG_ALL", False)
 LOOP_INTERVAL_SEC = max(0.1, _float("ONEPIP_MAKER_S1_LOOP_INTERVAL_SEC", 0.25))
 
