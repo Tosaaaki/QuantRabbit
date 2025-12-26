@@ -1052,6 +1052,82 @@ def _shock_state(fac_m1: dict) -> dict[str, object]:
         "up": delta > 0.001 and strength >= 0.7,
     }
 
+
+def _strategy_category(name: str) -> str:
+    n = name.lower()
+    if any(k in n for k in ("trend", "momentum", "impulse")):
+        return "trend"
+    if any(k in n for k in ("break", "burst", "retest", "donchian")):
+        return "breakout"
+    if any(k in n for k in ("range", "vwap", "bb", "revert", "mean", "magnet")):
+        return "range"
+    if any(k in n for k in ("scalp", "micro", "onepip", "s1")):
+        return "scalp"
+    return "other"
+
+
+def _local_strategy_ranking(
+    *,
+    strategies: list[str],
+    fac_m1: dict,
+    fac_h4: dict,
+    range_ctx,
+    session_bucket: str,
+    last_gpt_mode: str | None,
+    last_focus: str | None,
+) -> list[str]:
+    """Rank strategies locally using regime/volatility/context without GPT."""
+    adx_m1 = float(fac_m1.get("adx") or 0.0)
+    adx_h4 = float(fac_h4.get("adx") or 0.0)
+    atr = float(fac_m1.get("atr_pips") or 0.0)
+    vol_5m = float(fac_m1.get("vol_5m") or 0.0)
+    bbw = float(fac_m1.get("bbw") or 0.0)
+    ma10 = fac_m1.get("ma10")
+    ma20 = fac_m1.get("ma20")
+    slope = 0.0
+    if ma10 is not None and ma20 is not None:
+        try:
+            slope = float(ma10) - float(ma20)
+        except Exception:
+            slope = 0.0
+    slope_pips = slope / PIP_VALUE
+    range_active = bool(getattr(range_ctx, "active", False))
+    compression = float((range_ctx.metrics or {}).get("compression_ratio", 0.0) if range_ctx else 0.0)
+    scores: dict[str, float] = {}
+    for name in strategies:
+        cat = _strategy_category(name)
+        score = 0.0
+        # Base: trend strength
+        if cat in {"trend", "breakout"}:
+            score += 0.8 * (adx_h4 / 30.0) + 0.6 * (adx_m1 / 30.0)
+            score += 0.2 * max(0.0, min(3.0, abs(slope_pips)))
+        if cat == "range":
+            score += 0.5 if range_active else -0.4
+            score += 0.2 * (1.0 - min(1.0, compression))
+            score += 0.15 * max(0.0, 0.4 - bbw)
+        if cat == "scalp":
+            score += 0.4 * (vol_5m / 1.5) + 0.3 * (atr / 2.0)
+            score += 0.2 * max(0.0, 0.5 - bbw)
+        if cat == "breakout":
+            score += 0.4 * (vol_5m / 1.2) + 0.3 * (atr / 2.5)
+        if cat == "other":
+            score += 0.2 * (atr / 2.0) + 0.2 * (vol_5m / 1.0)
+        # Session bias
+        if session_bucket in {"london", "ny"} and cat in {"trend", "breakout"}:
+            score += 0.3
+        if session_bucket == "asia" and cat == "range":
+            score += 0.3
+        # Range suppression for trends
+        if range_active and cat in {"trend", "breakout"}:
+            score -= 0.6
+        # Last GPT mode/focus hint: keep some continuity
+        if last_gpt_mode and str(last_gpt_mode).lower().startswith("range") and cat == "range":
+            score += 0.2
+        if last_focus and last_focus == "micro" and "micro" in name.lower():
+            score += 0.1
+        scores[name] = score
+    return sorted(strategies, key=lambda n: scores.get(n, 0.0), reverse=True)
+
 def _select_worker_targets(
     fac_m1: dict,
     fac_m5: Optional[dict],
@@ -3684,29 +3760,44 @@ async def logic_loop(
                 gpt.get("model_used", "unknown"),
                 reuse_reason,
             )
-            ranked_strategies = list(local_decision.get("ranked_strategies") or [])
-            if MACRO_DISABLED and ranked_strategies:
-                before = list(ranked_strategies)
-                ranked_strategies = [s for s in ranked_strategies if s not in MACRO_STRATEGIES]
-                if ranked_strategies != before:
-                    logging.info(
-                        "[MACRO_DISABLED] Filtered macro strategies %s -> %s",
-                        before,
-                        ranked_strategies,
-                    )
-            if not ranked_strategies:
-                logging.info(
-                    "[STRAT_EVAL_PRE] ranked_strategies empty focus=%s reason=%s",
-                    gpt.get("focus_tag"),
-                    reuse_reason,
+            # --- ローカル順位付けに置換（GPTは順位ヒントのみ） ---
+            all_strats = list(STRATEGIES.keys())
+            gpt_rank = list(local_decision.get("ranked_strategies") or [])
+            # MACRO 禁止時は除外
+            if MACRO_DISABLED and gpt_rank:
+                before = list(gpt_rank)
+                gpt_rank = [s for s in gpt_rank if s not in MACRO_STRATEGIES]
+                if gpt_rank != before:
+                    logging.info("[MACRO_DISABLED] Filtered macro strategies %s -> %s", before, gpt_rank)
+            # ローカルスコアリング（レジーム/ATR/vol/MA/セッション/範囲）
+            session_bucket = _session_bucket(now)
+            ranked_strategies = _local_strategy_ranking(
+                strategies=all_strats,
+                fac_m1=fac_m1,
+                fac_h4=fac_h4,
+                range_ctx=range_ctx,
+                session_bucket=session_bucket,
+                last_gpt_mode=str(gpt.get("mode")) if gpt else None,
+                last_focus=gpt.get("focus_tag") if gpt else None,
+            )
+            # GPT順位をヒントとして微調整（上位に加点）
+            if gpt_rank:
+                bonus = {name: (len(gpt_rank) - idx) * 0.01 for idx, name in enumerate(gpt_rank)}
+                ranked_strategies = sorted(
+                    ranked_strategies,
+                    key=lambda n: bonus.get(n, 0.0),
+                    reverse=True,
                 )
-            # Evaluate all strategies (満遍なく使う) — allowlist is full set.
-            gpt_strategy_allowlist = set(STRATEGIES.keys())
-            # Also append remaining strategies so evaluation covers the whole universe
-            ranked_strategies = list(ranked_strategies)
-            for s in STRATEGIES.keys():
-                if s not in ranked_strategies:
-                    ranked_strategies.append(s)
+            gpt_strategy_allowlist = set(all_strats)  # フィルタしない
+            if not ranked_strategies:
+                ranked_strategies = all_strats
+            logging.info(
+                "[STRAT_EVAL_PRE] ranked_strategies(local)=%s focus=%s session=%s range=%s",
+                ranked_strategies[:8],
+                focus_tag,
+                session_bucket,
+                range_active,
+            )
             auto_injected_strategies: set[str] = set()
             weight_scalp = None
             if raw_weight_scalp is not None:
@@ -4326,18 +4417,7 @@ async def logic_loop(
                 if range_active and cls.name not in ALLOWED_RANGE_STRATEGIES:
                     logging.info("[RANGE] skip %s in range mode.", sname)
                     continue
-                if (
-                    gpt_strategy_allowlist
-                    and sname not in gpt_strategy_allowlist
-                    and sname not in auto_injected_strategies
-                ):
-                    logging.info(
-                        "[STRAT_GUARD] allowlist miss -> still evaluate (RELAXED) %s ranked=%s auto=%s allow=%s",
-                        sname,
-                        ranked_strategies,
-                        sorted(auto_injected_strategies),
-                        sorted(gpt_strategy_allowlist),
-                    )
+                # GPT allowlist は参考のみ。スキップしない。
                 raw_signal = cls.check(fac_m1)
                 if not raw_signal:
                     logging.info(
@@ -4394,6 +4474,18 @@ async def logic_loop(
                     "tp_pips": raw_signal.get("tp_pips"),
                     "tag": raw_signal.get("tag", cls.name),
                 }
+                # ランクに応じて confidence を微調整（上位ほど少し増やす）
+                if isinstance(raw_signal, dict):
+                    rank_pos = max(0, ranked_strategies.index(sname)) if sname in ranked_strategies else 0
+                    if len(ranked_strategies) > 1:
+                        rank_boost = 1.0 + 0.12 * (len(ranked_strategies) - rank_pos - 1) / (len(ranked_strategies) - 1)
+                    else:
+                        rank_boost = 1.0
+                    try:
+                        conf = float(raw_signal.get("confidence", 50))
+                        raw_signal["confidence"] = int(min(100, conf * rank_boost))
+                    except Exception:
+                        pass
                 signal_emitted = True
                 for extra_key in (
                     "entry_type",
