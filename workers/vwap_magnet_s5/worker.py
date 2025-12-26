@@ -11,6 +11,8 @@ import time
 from typing import Dict, List, Optional, Sequence
 
 from analysis import plan_bus
+from execution.position_manager import PositionManager
+from execution.risk_guard import loss_cooldown_status
 from indicators.factor_cache import all_factors
 from market_data import spread_monitor, tick_window
 from utils.market_hours import is_market_open
@@ -126,6 +128,7 @@ async def vwap_magnet_s5_worker() -> None:
         return
 
     LOG.info("%s worker starting", config.LOG_PREFIX)
+    pos_manager = PositionManager()
     cooldown_until = 0.0
     post_exit_until = 0.0
     last_spread_log = 0.0
@@ -321,9 +324,13 @@ async def vwap_magnet_s5_worker() -> None:
                 continue
 
             stage_idx = 0  # Stage管理はexecutorに委任（Planで複数signal可）
+            current_tagged: List[Dict[str, float]] = []
 
             latest_close = closes[-1]
             prev_vwap = _wma(closes_win[:-1], weights_win[:-1]) if len(closes_win) > 1 else None
+            vwap_gap_pips = (
+                (latest_close - prev_vwap) / config.PIP_VALUE if prev_vwap is not None else 0.0
+            )
             slope = latest_close - prev_vwap
 
             side: Optional[str] = None
