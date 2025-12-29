@@ -120,6 +120,8 @@ def _env_int(name: str, default: int) -> int:
 
 class ExitManager:
     def __init__(self, confidence_threshold: int = 70):
+        # 共通EXITは既定で停止。明示的に EXIT_MANAGER_DISABLED=0 を渡したときのみ有効。
+        self._disabled = _env_flag("EXIT_MANAGER_DISABLED", True)
         self.confidence_threshold = confidence_threshold
         self._macro_signal_threshold = max(confidence_threshold + 10, 80)
         self._macro_trend_adx = 16
@@ -708,6 +710,8 @@ class ExitManager:
         low_vol_quiet: bool = False,
         news_status: str = "quiet",
     ) -> List[ExitDecision]:
+        if self._disabled:
+            return []
         current_time = self._ensure_utc(now)
         decisions: List[ExitDecision] = []
         try:
