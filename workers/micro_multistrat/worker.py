@@ -116,6 +116,7 @@ async def micro_multi_worker() -> None:
         LOG.info("%s disabled", config.LOG_PREFIX)
         return
     LOG.info("%s worker start (interval=%.1fs)", config.LOG_PREFIX, config.LOOP_INTERVAL_SEC)
+    last_trend_block_log = 0.0
 
     while True:
         await asyncio.sleep(config.LOOP_INTERVAL_SEC)
@@ -124,6 +125,7 @@ async def micro_multi_worker() -> None:
             continue
         if not can_trade(config.POCKET):
             continue
+        current_hour = now.hour
 
         factors = all_factors()
         fac_m1 = factors.get("M1") or {}
@@ -139,6 +141,21 @@ async def micro_multi_worker() -> None:
         signal = None
         strategy_name = ""
         for strat in _strategy_list():
+            if (
+                getattr(strat, "name", strat.__name__) == TrendMomentumMicro.name
+                and current_hour in config.TREND_BLOCK_HOURS_UTC
+            ):
+                now_mono = time.monotonic()
+                if now_mono - last_trend_block_log > 300.0:
+                    LOG.info(
+                        "%s skip %s at hour=%02d block_hours=%s",
+                        config.LOG_PREFIX,
+                        TrendMomentumMicro.name,
+                        current_hour,
+                        sorted(config.TREND_BLOCK_HOURS_UTC),
+                    )
+                    last_trend_block_log = now_mono
+                continue
             cand = strat.check(fac_m1)
             if cand:
                 signal = cand

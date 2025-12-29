@@ -275,5 +275,6 @@ ENABLED: bool = _bool_env(
     True,
     legacy_key="MANUAL_SPIKE_ENABLED",
 )
-ACTIVE_HOURS_UTC = frozenset(range(24))
+# デフォルトは 00UTC と 15UTC を外す（直近損失時間帯）
+ACTIVE_HOURS_UTC = frozenset(_parse_hours("MIRROR_SPIKE_ACTIVE_HOURS_UTC", "2-14,16-23"))
 LOG_PREFIX = "[MIRROR-SPIKE]"

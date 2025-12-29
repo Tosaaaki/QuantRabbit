@@ -2,6 +2,33 @@ from __future__ import annotations
 
 import os
 
+def _parse_hours(raw: str) -> set[int]:
+    hours: set[int] = set()
+    for token in raw.split(","):
+        token = token.strip()
+        if not token:
+            continue
+        if "-" in token:
+            start_s, end_s = token.split("-", 1)
+            try:
+                start = int(float(start_s))
+                end = int(float(end_s))
+            except ValueError:
+                continue
+            if start > end:
+                start, end = end, start
+            for h in range(start, end + 1):
+                if 0 <= h <= 23:
+                    hours.add(h)
+            continue
+        try:
+            h = int(float(token))
+        except ValueError:
+            continue
+        if 0 <= h <= 23:
+            hours.add(h)
+    return hours
+
 POCKET = "scalp"
 LOOP_INTERVAL_SEC = float(os.getenv("M1SCALP_LOOP_INTERVAL_SEC", "6.0"))
 ENABLED = os.getenv("M1SCALP_ENABLED", "1").strip().lower() not in {"", "0", "false", "no"}
@@ -18,3 +45,7 @@ CAP_MAX = float(os.getenv("M1SCALP_CAP_MAX", "0.25"))
 # クールダウン/同時建玉制御（デフォルトを明示）
 COOLDOWN_SEC = float(os.getenv("M1SCALP_COOLDOWN_SEC", "120"))
 MAX_OPEN_TRADES = int(os.getenv("M1SCALP_MAX_OPEN_TRADES", "2"))
+# 直近の大敗時間帯をデフォルトでブロック（00/10/20/23 UTC）
+BLOCK_HOURS_UTC = frozenset(
+    _parse_hours(os.getenv("M1SCALP_BLOCK_HOURS_UTC", "0,10,20,23"))
+)

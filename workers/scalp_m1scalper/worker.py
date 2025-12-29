@@ -73,6 +73,7 @@ async def scalp_m1_worker() -> None:
         LOG.info("%s disabled", config.LOG_PREFIX)
         return
     LOG.info("%s worker start (interval=%.1fs)", config.LOG_PREFIX, config.LOOP_INTERVAL_SEC)
+    last_block_log = 0.0
 
     while True:
         await asyncio.sleep(config.LOOP_INTERVAL_SEC)
@@ -80,6 +81,17 @@ async def scalp_m1_worker() -> None:
         if not is_market_open(now):
             continue
         if not can_trade(config.POCKET):
+            continue
+        if now.hour in config.BLOCK_HOURS_UTC:
+            now_mono = time.monotonic()
+            if now_mono - last_block_log > 300.0:
+                LOG.info(
+                    "%s blocked by hour hour=%02d block_hours=%s",
+                    config.LOG_PREFIX,
+                    now.hour,
+                    sorted(config.BLOCK_HOURS_UTC),
+                )
+                last_block_log = now_mono
             continue
 
         factors = all_factors()

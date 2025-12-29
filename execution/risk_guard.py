@@ -324,6 +324,19 @@ def allowed_lot(
         risk_pct = 0.02
     if risk_pct_override is not None:
         risk_pct = max(0.0005, min(risk_pct_override, 0.25))
+
+    # free margin が枯渇していれば発注自体を止める
+    min_free_margin_ratio = max(0.01, float(os.getenv("MIN_FREE_MARGIN_RATIO", "0.12") or 0.12))
+    if equity > 0 and margin_available is not None:
+        free_ratio = margin_available / equity if equity > 0 else 0.0
+        if free_ratio < min_free_margin_ratio:
+            logging.info(
+                "[RISK] free margin low: ratio=%.3f < min=%.3f -> skip",
+                free_ratio,
+                min_free_margin_ratio,
+            )
+            return 0.0
+
     risk_amount = equity * risk_pct
     lot_risk = MAX_LOT
     if sl_pips > 0:
@@ -365,6 +378,14 @@ def allowed_lot(
         current_usage = margin_used / equity
         if current_usage >= hard_margin_cap:
             lot = 0.0
+
+    # 余剰を見込んでサイズを一段絞る（INSUFFICIENT_MARGIN の頻発を防ぐ）
+    try:
+        margin_safety = float(os.getenv("MARGIN_SAFETY_FACTOR", "0.9") or 0.9)
+    except Exception:
+        margin_safety = 0.9
+    margin_safety = min(max(margin_safety, 0.1), 1.0)
+    lot *= margin_safety
 
     lot = min(lot, MAX_LOT)
     min_lot = _MIN_LOT_BY_POCKET.get((pocket or "").lower(), 0.0)
