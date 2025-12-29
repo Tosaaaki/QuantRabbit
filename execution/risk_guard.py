@@ -398,6 +398,22 @@ def allowed_lot(
             min_lot,
         )
         lot = min(min_lot, MAX_LOT)
+
+    # Free margin ベースでロット幅を追加スケール（残余証拠金が少なければ線形に絞る）
+    if margin_available is not None and equity > 0:
+        free_ratio = max(0.0, margin_available / equity)
+        try:
+            soft = float(os.getenv("FREE_MARGIN_SOFT_RATIO", "0.35") or 0.35)
+            hard = float(os.getenv("FREE_MARGIN_HARD_RATIO", "0.2") or 0.2)
+        except Exception:
+            soft, hard = 0.35, 0.2
+        hard = max(0.0, min(hard, soft))
+        if free_ratio <= hard:
+            lot = 0.0
+        elif free_ratio < soft and lot > 0.0:
+            scale = (free_ratio - hard) / (soft - hard) if soft > hard else 0.0
+            lot *= max(0.0, min(1.0, scale))
+
     return round(max(lot, 0.0), 3)
 
 
