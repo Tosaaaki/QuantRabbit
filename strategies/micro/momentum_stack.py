@@ -14,7 +14,7 @@ class MicroMomentumStack:
     _BASE_PULLBACK = 0.45  # pips
     _MAX_PULLBACK = 1.05
     _MAX_SKEW = 0.35
-    _MIN_ATR = 0.9
+    _MIN_ATR = 0.8
 
     @staticmethod
     def check(fac: Dict) -> Dict | None:

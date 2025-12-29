@@ -46,9 +46,9 @@ def detect_range_mode(
     fac_m1: Dict[str, float],
     fac_h4: Dict[str, float],
     *,
-    adx_threshold: float = 24.0,
-    bbw_threshold: float = 0.24,
-    atr_threshold: float = 7.0,
+    adx_threshold: float = 16.0,
+    bbw_threshold: float = 0.16,
+    atr_threshold: float = 5.0,
 ) -> RangeContext:
     """
     M1/H4 の因子からレンジモードを検知する。

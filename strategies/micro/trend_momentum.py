@@ -11,12 +11,12 @@ class TrendMomentumMicro:
     name = "TrendMomentumMicro"
     pocket = "micro"
 
-    _MIN_GAP_PIPS = 0.35
-    _MIN_ADX = 15.0
-    _MIN_SLOPE = 0.04
+    _MIN_GAP_PIPS = 0.28
+    _MIN_ADX = 12.0
+    _MIN_SLOPE = 0.03
     _MAX_PULLBACK = 1.2
-    _MIN_ATR_PIPS = 1.1  # quietでも拾う
-    _MIN_BBW = 0.12      # バンドが締まりすぎなら見送り
+    _MIN_ATR_PIPS = 0.9  # quietでも拾う
+    _MIN_BBW = 0.10      # バンドが締まりすぎなら見送り
 
     @staticmethod
     def check(fac: Dict) -> Dict | None:
