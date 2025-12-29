@@ -5902,6 +5902,19 @@ async def logic_loop(
                         conf_floor if conf_floor > 0 else "none",
                         ",".join(sorted({s.get('strategy') or s.get('strategy_tag') or 'unknown' for s in selected})),
                     )
+                for sig in selected:
+                    try:
+                        log_metric(
+                            "signal_confidence",
+                            float(sig.get("confidence", 0) or 0),
+                            tags={
+                                "pocket": sig.get("pocket") or "unknown",
+                                "strategy": sig.get("strategy") or sig.get("strategy_tag") or sig.get("tag") or "unknown",
+                            },
+                            ts=now,
+                        )
+                    except Exception:
+                        pass
                 evaluated_signals = selected
 
             risk_override = _dynamic_risk_pct(
@@ -7228,6 +7241,7 @@ async def logic_loop(
                     "strategy": signal.get("strategy"),
                     "strategy_tag": strategy_tag,
                     "profile": strategy_profile,
+                    "confidence": confidence,
                     "tag": signal.get("tag"),
                     "pocket": pocket,
                     "action": action,
