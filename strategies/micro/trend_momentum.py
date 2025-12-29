@@ -78,9 +78,9 @@ class TrendMomentumMicro:
                 break
             except (TypeError, ValueError):
                 continue
-        if direction == "OPEN_LONG" and drift_pips < -0.8:
+        if direction == "OPEN_LONG" and drift_pips < -1.3:
             return None
-        if direction == "OPEN_SHORT" and drift_pips > 0.8:
+        if direction == "OPEN_SHORT" and drift_pips > 1.3:
             return None
 
         pullback = (price - ma10) / PIP

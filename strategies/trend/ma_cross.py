@@ -319,10 +319,10 @@ class MovingAverageCross:
                 break
             except (TypeError, ValueError):
                 continue
-        if direction == "long" and drift_pips < -1.0:
+        if direction == "long" and drift_pips < -1.5:
             MovingAverageCross._log_skip("drift_against_long", drift_pips=drift_pips)
             return None
-        if direction == "short" and drift_pips > 1.0:
+        if direction == "short" and drift_pips > 1.5:
             MovingAverageCross._log_skip("drift_against_short", drift_pips=drift_pips)
             return None
 

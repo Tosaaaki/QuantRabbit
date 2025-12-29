@@ -17,8 +17,8 @@ def _int_env(key: str, default: int) -> int:
 
 POCKET_EXIT_COOLDOWNS = {
     "macro": 540,
-    "micro": 240,
-    "scalp": 180,
+    "micro": 120,
+    "scalp": 120,
 }
 
 _SCALP_LOSS_COOLDOWN = max(60, _int_env("SCALP_LOSS_COOLDOWN_SEC", 150))

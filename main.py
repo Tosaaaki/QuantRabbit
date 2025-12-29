@@ -5251,7 +5251,13 @@ async def logic_loop(
                         # Flip guard: avoid immediate opposite-direction flip after reverse exit
                         if decision.reason == "reverse_signal":
                             opposite = "short" if target_side == "long" else "long"
-                            flip_cd = min(240, max(60, cooldown_seconds // 2))
+                            # micro/スカルプは短めにして方向転換を許容、macroは従来通り長め
+                            if pocket == "micro":
+                                flip_cd = 30
+                            elif pocket == "scalp":
+                                flip_cd = 45
+                            else:
+                                flip_cd = min(240, max(60, cooldown_seconds // 2))
                             stage_tracker.set_cooldown(
                                 pocket,
                                 opposite,

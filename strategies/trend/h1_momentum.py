@@ -106,9 +106,9 @@ class H1MomentumSwing:
                 break
             except (TypeError, ValueError):
                 continue
-        if direction == "long" and drift_pips < -1.0:
+        if direction == "long" and drift_pips < -1.5:
             return None
-        if direction == "short" and drift_pips > 1.0:
+        if direction == "short" and drift_pips > 1.5:
             return None
 
         # Derive a wide "insurance" stop; real exit timing is delegated to ExitManager.
