@@ -5355,22 +5355,22 @@ async def logic_loop(
             # Account/margin exposure guards
             margin_block = False
             margin_warn = False
-            if account_snapshot:
-                try:
-                    m_avail = float(account_snapshot.margin_available or 0.0)
-                    m_used = float(account_snapshot.margin_used or 0.0)
-                    total_margin = m_avail + m_used
-                    if total_margin > 0:
-                        margin_usage = m_used / total_margin
-                        # allow利用目標: 85% まで。ブロックは 90% 以上で発動し、82% 超で警告。
-                        if margin_usage >= 0.90:
-                            margin_block = True
-                            logging.warning("[RISK] margin usage %.1f%% blocking new entries (>=90%%)", margin_usage * 100)
-                        elif margin_usage >= 0.82:
-                            margin_warn = True
-                            logging.info("[RISK] margin usage elevated %.1f%% (monitoring, no block)", margin_usage * 100)
-                except Exception:
-                    margin_block = False
+                if account_snapshot:
+                    try:
+                        m_avail = float(account_snapshot.margin_available or 0.0)
+                        m_used = float(account_snapshot.margin_used or 0.0)
+                        total_margin = m_avail + m_used
+                        if total_margin > 0:
+                            margin_usage = m_used / total_margin
+                            # allow利用目標: 85%+ を許容、ブロックは 94% 以上、警告は 88% 以上で発火
+                            if margin_usage >= 0.94:
+                                margin_block = True
+                                logging.warning("[RISK] margin usage %.1f%% blocking new entries (>=94%%)", margin_usage * 100)
+                            elif margin_usage >= 0.88:
+                                margin_warn = True
+                                logging.info("[RISK] margin usage elevated %.1f%% (monitoring, no block)", margin_usage * 100)
+                    except Exception:
+                        margin_block = False
 
             open_positions_snapshot = pos_manager.get_open_positions()
             # bot-only net units (manualポケットは除外)
@@ -5867,7 +5867,8 @@ async def logic_loop(
             # Apply dynamic allocation (score-driven confidence trim) if available
             alloc_data = load_dynamic_alloc()
             evaluated_signals, pocket_caps, target_use = apply_dynamic_alloc(filtered_signals, alloc_data)
-            # 同一サイクルで pocket ごとに最高 confidence を選び、全体で最大3本まで許可
+            # 同一サイクルで pocket ごとに最高 confidence を選び、全体で最大3本まで許可。
+            # マージン高利用時は本数と信頼度をさらに絞る。
             if evaluated_signals:
                 pocket_best: dict[str, dict] = {}
                 for sig in evaluated_signals:
@@ -5883,15 +5884,28 @@ async def logic_loop(
                     key=lambda s: int(s.get("confidence", 0) or 0),
                     reverse=True,
                 )
-                MAX_SIGNALS_PER_CYCLE = 3
-                if len(selected) > MAX_SIGNALS_PER_CYCLE:
-                    selected = selected[:MAX_SIGNALS_PER_CYCLE]
+                max_signals = 3
+                conf_floor = 0
+                if margin_usage is not None and margin_usage >= 0.88:
+                    max_signals = 2
+                    conf_floor = 60
+                if margin_usage is not None and margin_usage >= 0.92:
+                    max_signals = 1
+                    conf_floor = 65
+                if conf_floor > 0:
+                    filtered = [s for s in selected if int(s.get("confidence", 0) or 0) >= conf_floor]
+                    if filtered:
+                        selected = filtered
+                if len(selected) > max_signals:
+                    selected = selected[:max_signals]
                 if len(selected) != len(evaluated_signals):
                     logging.info(
-                        "[SIGNAL_SELECT] picked=%d out_of=%d pockets=%s",
+                        "[SIGNAL_SELECT] picked=%d out_of=%d pockets=%s margin=%.2f conf_floor=%s",
                         len(selected),
                         len(evaluated_signals),
                         ",".join(sorted({s.get('pocket') or 'unknown' for s in selected})),
+                        margin_usage if margin_usage is not None else -1.0,
+                        conf_floor if conf_floor > 0 else "none",
                     )
                 evaluated_signals = selected
 
