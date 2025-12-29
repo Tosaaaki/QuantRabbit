@@ -40,10 +40,10 @@ ENTRY_SHORT_THRESHOLD_PIPS: float = max(
     0.002, float(os.getenv("FAST_SCALP_ENTRY_SHORT_MOM_PIPS", "0.003"))
 )
 ENTRY_RANGE_FLOOR_PIPS: float = max(0.005, float(os.getenv("FAST_SCALP_RANGE_FLOOR_PIPS", "0.02")))
-ENTRY_COOLDOWN_SEC: float = max(0.5, float(os.getenv("FAST_SCALP_ENTRY_COOLDOWN_SEC", "2.0")))
-MAX_ORDERS_PER_MINUTE: int = max(1, int(float(os.getenv("FAST_SCALP_MAX_ORDERS_PER_MIN", "8"))))
+ENTRY_COOLDOWN_SEC: float = max(3.0, float(os.getenv("FAST_SCALP_ENTRY_COOLDOWN_SEC", "5.0")))
+MAX_ORDERS_PER_MINUTE: int = max(1, int(float(os.getenv("FAST_SCALP_MAX_ORDERS_PER_MIN", "3"))))
 MIN_ORDER_SPACING_SEC: float = max(
-    0.2, float(os.getenv("FAST_SCALP_MIN_ORDER_SPACING_SEC", "0.5"))
+    0.5, float(os.getenv("FAST_SCALP_MIN_ORDER_SPACING_SEC", "3.0"))
 )
 MAX_LOT: float = max(0.001, float(os.getenv("FAST_SCALP_MAX_LOT", "0.05")))
 SYNC_INTERVAL_SEC: float = max(5.0, float(os.getenv("FAST_SCALP_SYNC_INTERVAL_SEC", "45.0")))
@@ -80,8 +80,8 @@ SNAPSHOT_BURST_INTERVAL_SEC: float = max(
 NO_LOSS_CLOSE: bool = _bool_env("FAST_SCALP_NO_LOSS_CLOSE", True)
 
 # --- entry gating / quality thresholds ---
-MIN_ENTRY_ATR_PIPS: float = max(0.0, float(os.getenv("FAST_SCALP_MIN_ENTRY_ATR_PIPS", "0.05")))
-MIN_ENTRY_TICK_COUNT: int = max(2, int(float(os.getenv("FAST_SCALP_MIN_ENTRY_TICK_COUNT", "3"))))
+MIN_ENTRY_ATR_PIPS: float = max(0.0, float(os.getenv("FAST_SCALP_MIN_ENTRY_ATR_PIPS", "0.08")))
+MIN_ENTRY_TICK_COUNT: int = max(2, int(float(os.getenv("FAST_SCALP_MIN_ENTRY_TICK_COUNT", "4"))))
 RSI_ENTRY_OVERBOUGHT: float = float(os.getenv("FAST_SCALP_RSI_ENTRY_OVERBOUGHT", "70"))
 RSI_ENTRY_OVERSOLD: float = float(os.getenv("FAST_SCALP_RSI_ENTRY_OVERSOLD", "30"))
 LOW_VOL_COOLDOWN_SEC: float = max(0.0, float(os.getenv("FAST_SCALP_LOW_VOL_COOLDOWN_SEC", "0.0")))
