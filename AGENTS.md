@@ -8,6 +8,7 @@
 - 運用モード（2025-12 攻め設定）: マージン活用を 85–92% 目安に引き上げ、ロット上限を拡大（`RISK_MAX_LOT` 既定 10.0lot）。手動ポジションを含めた総エクスポージャでガードし、PF/勝率の悪い戦略は自動ブロック。必要に応じて `PERF_GUARD_GLOBAL_ENABLED=0` で解除する。
 - エージェントの役割: VM 上で常時ログ・オーダーを監視し、(1) 手動玉を含めたエクスポージャを高水準で維持しつつ、(2) PF/勝率が悪化した戦略・時間帯を自動ブロックし、(3) マージン拒否やタグ欠損を検知したら即パラメータ更新＆デプロイで収益最大化を図る。ユーザ手動トレードと併走し、両者のポジションを総量管理する。凄腕トレーダーとして「資産を劇的に増やす」を最優先のゴールとし、必要なリスクテイクと調整を即断・即実行する。
 - 運用/デプロイ手順は `README.md` と `docs/` を参照。
+- マージン余力判定の落とし穴（2025-12-29対応済み）: fast_scalp が shared_state 欠落時に余力0と誤判定し全シグナルをスキップした事象あり。`workers/fast_scalp/worker.py` で `get_account_snapshot()` フォールバックを追加済み。再発時はログに `refreshed account snapshot equity=... margin_available=...` が出ることを確認し、0判定が続く場合は OANDA snapshot 取得を先に疑う。
 
 ## 2. システム概要とフロー
 - データ → 判定 → 発注: Tick 取得 → Candle 確定 → Factors 算出 → Regime/Focus → GPT Decider → Strategy Plugins → Risk Guard → Order Manager → ログ。
