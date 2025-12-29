@@ -5355,22 +5355,22 @@ async def logic_loop(
             # Account/margin exposure guards
             margin_block = False
             margin_warn = False
-                if account_snapshot:
-                    try:
-                        m_avail = float(account_snapshot.margin_available or 0.0)
-                        m_used = float(account_snapshot.margin_used or 0.0)
-                        total_margin = m_avail + m_used
-                        if total_margin > 0:
-                            margin_usage = m_used / total_margin
-                            # allow利用目標: 85%+ を許容、ブロックは 94% 以上、警告は 88% 以上で発火
-                            if margin_usage >= 0.94:
-                                margin_block = True
-                                logging.warning("[RISK] margin usage %.1f%% blocking new entries (>=94%%)", margin_usage * 100)
-                            elif margin_usage >= 0.88:
-                                margin_warn = True
-                                logging.info("[RISK] margin usage elevated %.1f%% (monitoring, no block)", margin_usage * 100)
-                    except Exception:
-                        margin_block = False
+            if account_snapshot:
+                try:
+                    m_avail = float(account_snapshot.margin_available or 0.0)
+                    m_used = float(account_snapshot.margin_used or 0.0)
+                    total_margin = m_avail + m_used
+                    if total_margin > 0:
+                        margin_usage = m_used / total_margin
+                        # allow利用目標: 85%+ を許容、ブロックは 94% 以上、警告は 88% 以上で発火
+                        if margin_usage >= 0.94:
+                            margin_block = True
+                            logging.warning("[RISK] margin usage %.1f%% blocking new entries (>=94%%)", margin_usage * 100)
+                        elif margin_usage >= 0.88:
+                            margin_warn = True
+                            logging.info("[RISK] margin usage elevated %.1f%% (monitoring, no block)", margin_usage * 100)
+                except Exception:
+                    margin_block = False
 
             open_positions_snapshot = pos_manager.get_open_positions()
             # bot-only net units (manualポケットは除外)
