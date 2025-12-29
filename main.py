@@ -293,6 +293,15 @@ logging.info(
 # Backward-compatible alias (expected by STRATEGIES map and logs)
 TrendMA = MovingAverageCross
 
+# 内蔵ストラテジーでも、既に独立ワーカー化されているものはメイン側で発注しない
+DISABLE_MAIN_STRATEGIES = {
+    "TrendMA",
+    "Donchian55",
+    "BB_RSI",
+    "MicroRangeBreak",
+    "M1Scalper",
+}
+
 STRATEGIES = {
     # Macro
     "TrendMA": TrendMA,
@@ -3603,6 +3612,20 @@ async def logic_loop(
                 atr_pips,
                 momentum,
             )
+
+            # 既に独立ワーカー化したストラテジーはメインの関所から除外
+            if evaluated_signals:
+                filtered_for_main = []
+                dropped = []
+                for sig in evaluated_signals:
+                    strat_name = sig.get("strategy") or sig.get("strategy_tag") or ""
+                    if strat_name in DISABLE_MAIN_STRATEGIES:
+                        dropped.append(strat_name)
+                        continue
+                    filtered_for_main.append(sig)
+                if dropped:
+                    logging.info("[MAIN_SKIP] dropped strategies in main loop: %s", ",".join(sorted(set(dropped))))
+                evaluated_signals = filtered_for_main
 
             def _safe_regime(factors: dict | None, tf: str, last: Optional[str]) -> str:
                 try:
