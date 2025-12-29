@@ -45,5 +45,5 @@ CAP_MAX = float(os.getenv("MICRO_MULTI_CAP_MAX", "0.95"))
 
 # TrendMomentumMicro が沈んだ時間帯（UTC 10/11）をデフォルトブロック
 TREND_BLOCK_HOURS_UTC = frozenset(
-    _parse_hours(os.getenv("MICRO_TREND_BLOCK_HOURS_UTC", "10,11"))
+    _parse_hours(os.getenv("MICRO_TREND_BLOCK_HOURS_UTC", ""))
 )

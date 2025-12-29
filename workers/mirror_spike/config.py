@@ -146,7 +146,7 @@ ENTRY_UNITS: int = max(
     1000,
     _int_env(
         "MIRROR_SPIKE_ENTRY_UNITS",
-        8000,
+        12000,
         legacy_key="MANUAL_SPIKE_ENTRY_UNITS",
     ),
 )
@@ -276,5 +276,5 @@ ENABLED: bool = _bool_env(
     legacy_key="MANUAL_SPIKE_ENABLED",
 )
 # デフォルトは 00UTC と 15UTC を外す（直近損失時間帯）
-ACTIVE_HOURS_UTC = frozenset(_parse_hours("MIRROR_SPIKE_ACTIVE_HOURS_UTC", "2-14,16-23"))
+ACTIVE_HOURS_UTC = frozenset(_parse_hours("MIRROR_SPIKE_ACTIVE_HOURS_UTC", "0-23"))
 LOG_PREFIX = "[MIRROR-SPIKE]"

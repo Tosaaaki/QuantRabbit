@@ -45,7 +45,7 @@ _DEFAULT_BASE_EQUITY = {
     "scalp_fast": 2000.0,
 }
 _LOOKBACK_DAYS = 7
-MAX_MARGIN_USAGE = float(os.getenv("MAX_MARGIN_USAGE", "0.92"))
+MAX_MARGIN_USAGE = float(os.getenv("MAX_MARGIN_USAGE", "0.95"))
 
 _DISABLE_POCKET_DD = os.getenv("DISABLE_POCKET_DD", "false").lower() in {
     "1",
@@ -59,8 +59,8 @@ _DISABLE_GLOBAL_DD = os.getenv("DISABLE_GLOBAL_DD", "false").lower() in {
     "yes",
     "on",
 }
-EXPOSURE_MAX_RATIO = float(os.getenv("EXPOSURE_MAX_RATIO", "0.95"))
-EXPOSURE_WARN_THRESHOLD = float(os.getenv("EXPOSURE_WARN_THRESHOLD", "0.99"))
+EXPOSURE_MAX_RATIO = float(os.getenv("EXPOSURE_MAX_RATIO", "0.98"))
+EXPOSURE_WARN_THRESHOLD = float(os.getenv("EXPOSURE_WARN_THRESHOLD", "1.02"))
 _MIN_LOT_BY_POCKET = {
     "macro": max(0.0, float(os.getenv("RISK_MIN_LOT_MACRO", "0.1"))),
     "micro": max(0.0, float(os.getenv("RISK_MIN_LOT_MICRO", "0.0"))),
@@ -326,7 +326,7 @@ def allowed_lot(
         risk_pct = max(0.0005, min(risk_pct_override, 0.4))
 
     # free margin が枯渇していれば発注自体を止める
-    min_free_margin_ratio = max(0.01, float(os.getenv("MIN_FREE_MARGIN_RATIO", "0.07") or 0.07))
+    min_free_margin_ratio = max(0.005, float(os.getenv("MIN_FREE_MARGIN_RATIO", "0.03") or 0.03))
     if equity > 0 and margin_available is not None:
         free_ratio = margin_available / equity if equity > 0 else 0.0
         if free_ratio < min_free_margin_ratio:
