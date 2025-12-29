@@ -26,6 +26,7 @@ from execution.position_manager import PositionManager
 from market_data import spread_monitor, tick_window
 from utils.metrics_logger import log_metric
 from utils.secrets import get_secret
+from utils.oanda_account import get_account_snapshot
 from workers.common.quality_gate import current_regime
 
 from . import config
@@ -362,6 +363,26 @@ async def fast_scalp_worker(shared_state: Optional[FastScalpState] = None) -> No
             loss_block_logged = False
 
             snapshot = shared_state.snapshot()
+            equity = snapshot.account_equity
+            margin_available = snapshot.margin_available
+            margin_rate = snapshot.margin_rate
+            if equity <= 0 or margin_available <= 0 or margin_rate <= 0:
+                try:
+                    live = get_account_snapshot(cache_ttl_sec=0.5)
+                    equity = live.nav
+                    margin_available = live.margin_available
+                    margin_rate = live.margin_rate
+                    logger.info(
+                        "%s refreshed account snapshot equity=%.2f margin_available=%.2f margin_rate=%.4f",
+                        config.LOG_PREFIX_TICK,
+                        equity,
+                        margin_available,
+                        margin_rate,
+                    )
+                except Exception as exc:
+                    logger.warning("%s account snapshot refresh failed: %s", config.LOG_PREFIX_TICK, exc)
+            equity = max(equity, 1.0)
+            margin_available = max(margin_available, 0.0)
             range_active_flag = bool(getattr(snapshot, "range_active", False))
             m1_rsi_snapshot = getattr(snapshot, "m1_rsi", None)
             if m1_rsi_snapshot is not None:
@@ -760,11 +781,11 @@ async def fast_scalp_worker(shared_state: Optional[FastScalpState] = None) -> No
                 lot = allowed_lot_raw
             else:
                 allowed_lot_raw = allowed_lot(
-                    snapshot.account_equity,
+                    equity,
                     sl_pips=profile_sl_pips,
-                    margin_available=snapshot.margin_available,
+                    margin_available=margin_available,
                     price=features.latest_mid,
-                    margin_rate=snapshot.margin_rate,
+                    margin_rate=margin_rate,
                     risk_pct_override=snapshot.risk_pct_override,
                     pocket="scalp",
                 )
@@ -778,12 +799,12 @@ async def fast_scalp_worker(shared_state: Optional[FastScalpState] = None) -> No
                     adjusted_lot = True
                 units = int(round(lot * 100000.0))
             if (
-                snapshot.margin_rate > 0.0
-                and snapshot.margin_available > 0.0
+                margin_rate > 0.0
+                and margin_available > 0.0
                 and 0.0 < config.MAX_MARGIN_USAGE < 1.0
             ):
-                margin_budget = snapshot.margin_available * config.MAX_MARGIN_USAGE
-                margin_per_unit = features.latest_mid * snapshot.margin_rate
+                margin_budget = margin_available * config.MAX_MARGIN_USAGE
+                margin_per_unit = features.latest_mid * margin_rate
                 if margin_per_unit > 0:
                     max_units_margin = int(margin_budget / margin_per_unit)
                     if max_units_margin < config.MIN_UNITS:
