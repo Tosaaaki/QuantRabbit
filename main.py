@@ -5362,11 +5362,11 @@ async def logic_loop(
                     total_margin = m_avail + m_used
                     if total_margin > 0:
                         margin_usage = m_used / total_margin
-                        # allow利用目標: 85%+ を許容、ブロックは 94% 以上、警告は 88% 以上で発火
-                        if margin_usage >= 0.94:
+                        # allow利用目標: 82〜88%、ブロックは 90% 以上、警告は 85% 以上で発火
+                        if margin_usage >= 0.90:
                             margin_block = True
-                            logging.warning("[RISK] margin usage %.1f%% blocking new entries (>=94%%)", margin_usage * 100)
-                        elif margin_usage >= 0.88:
+                            logging.warning("[RISK] margin usage %.1f%% blocking new entries (>=90%%)", margin_usage * 100)
+                        elif margin_usage >= 0.85:
                             margin_warn = True
                             logging.info("[RISK] margin usage elevated %.1f%% (monitoring, no block)", margin_usage * 100)
                 except Exception:
@@ -5396,19 +5396,19 @@ async def logic_loop(
             exposure_pct = 0.0
             if mid_price > 0 and account_equity > 0:
                 exposure_pct = abs(net_units) * mid_price / account_equity
-            exposure_hard_cap = 0.92  # allow up to ~92% notional/equity
-            exposure_soft_cap = 0.87  # base soft cap
+            exposure_hard_cap = 0.90  # allow up to ~90% notional/equity
+            exposure_soft_cap = 0.82  # base soft cap
             # 動的な調整（ただし下限0.87を維持）
             try:
                 if clamp_level == 0 and (margin_usage is None or margin_usage < 0.65):
                     if (atr_pips or 0.0) < 1.8 and (vol_5m or 0.0) < 0.8:
-                        exposure_soft_cap = max(0.87, exposure_soft_cap)
+                        exposure_soft_cap = max(0.82, exposure_soft_cap)
                     elif (atr_pips or 0.0) < 2.2 and (vol_5m or 0.0) < 1.2:
-                        exposure_soft_cap = max(0.87, exposure_soft_cap)
+                        exposure_soft_cap = max(0.82, exposure_soft_cap)
                 if clamp_level >= 2 or (margin_usage is not None and margin_usage >= 0.8):
-                    exposure_soft_cap = max(0.87, exposure_soft_cap)
+                    exposure_soft_cap = max(0.82, exposure_soft_cap)
             except Exception:
-                exposure_soft_cap = 0.87
+                exposure_soft_cap = 0.82
 
             filtered_signals: list[dict] = []
             for sig in evaluated_signals:
