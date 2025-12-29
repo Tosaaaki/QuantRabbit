@@ -307,6 +307,25 @@ class MovingAverageCross:
                 atr_pips=round(float(atr_pips_val or 0.0), 3) if atr_pips_val is not None else None,
             )
 
+        # 短期ドリフトが逆行しているときは方向を捨てる
+        drift_keys = ("drift_pips_15m", "drift_15m", "return_15m_pips", "drift_pips_30m", "return_30m_pips")
+        drift_pips = 0.0
+        for k in drift_keys:
+            val = fac.get(k)
+            if val is None:
+                continue
+            try:
+                drift_pips = float(val)
+                break
+            except (TypeError, ValueError):
+                continue
+        if direction == "long" and drift_pips < -1.0:
+            MovingAverageCross._log_skip("drift_against_long", drift_pips=drift_pips)
+            return None
+        if direction == "short" and drift_pips > 1.0:
+            MovingAverageCross._log_skip("drift_against_short", drift_pips=drift_pips)
+            return None
+
         weak_trend = adx < MovingAverageCross._MIN_TREND_ADX
         if weak_trend:
             if abs(projection.gap_pips) < MovingAverageCross._MIN_GAP_IN_WEAK_TREND:

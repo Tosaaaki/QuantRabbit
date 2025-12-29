@@ -88,6 +88,29 @@ class H1MomentumSwing:
         if direction == "short" and rsi_m1 <= cls._MIN_M1_RSI_SUPPORT:
             return None
 
+        # M1短期ドリフトが逆行しているときは方向精度のためスキップ
+        drift_keys = (
+            "drift_pips_15m",
+            "drift_15m",
+            "return_15m_pips",
+            "drift_pips_30m",
+            "return_30m_pips",
+        )
+        drift_pips = 0.0
+        for k in drift_keys:
+            val = fac_m1.get(k)
+            if val is None:
+                continue
+            try:
+                drift_pips = float(val)
+                break
+            except (TypeError, ValueError):
+                continue
+        if direction == "long" and drift_pips < -1.0:
+            return None
+        if direction == "short" and drift_pips > 1.0:
+            return None
+
         # Derive a wide "insurance" stop; real exit timing is delegated to ExitManager.
         atr_floor = max(cls._MIN_ATR_PIPS, atr_pips)
         sl_base = atr_floor * 2.1

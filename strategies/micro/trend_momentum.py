@@ -66,6 +66,23 @@ class TrendMomentumMicro:
         if direction == "OPEN_SHORT" and ema_gap > -TrendMomentumMicro._MIN_SLOPE:
             return None
 
+        # 15-30mドリフトが逆行している場合はスキップして方向精度を担保する
+        drift_keys = ("drift_pips_15m", "drift_15m", "return_15m_pips", "drift_pips_30m", "return_30m_pips")
+        drift_pips = 0.0
+        for k in drift_keys:
+            val = fac.get(k)
+            if val is None:
+                continue
+            try:
+                drift_pips = float(val)
+                break
+            except (TypeError, ValueError):
+                continue
+        if direction == "OPEN_LONG" and drift_pips < -0.8:
+            return None
+        if direction == "OPEN_SHORT" and drift_pips > 0.8:
+            return None
+
         pullback = (price - ma10) / PIP
         if direction == "OPEN_LONG" and pullback < -TrendMomentumMicro._MAX_PULLBACK:
             return None
