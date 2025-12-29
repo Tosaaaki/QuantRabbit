@@ -5878,13 +5878,13 @@ async def logic_loop(
                     raw_conf = int(s.get("confidence", 0) or 0)
                     tag = s.get("strategy") or s.get("strategy_tag") or s.get("tag") or ""
                     adj = raw_conf
-                    # 戦略別の軽いバイアス: fast_scalpを抑え、macro/microを少し押し上げる
+                    # 戦略別バイアス: fast_scalpを強めに抑え、macro/microを押し上げる
                     if tag == "fast_scalp":
-                        adj -= 8
+                        adj -= 12
                     elif s.get("pocket") == "macro":
-                        adj += 6
+                        adj += 10
                     elif s.get("pocket") == "micro":
-                        adj += 3
+                        adj += 6
                     s["conf_adj"] = adj
                     candidates.append(s)
                 selected = sorted(
@@ -6168,7 +6168,8 @@ async def logic_loop(
                 if key not in active_pockets:
                     lots[key] = 0.0
             if range_active and "macro" in lots:
-                lots["macro"] = 0.0
+                # レンジでもmacroを完全にゼロにせず抑制だけする
+                lots["macro"] = round(lots["macro"] * 0.4, 3)
 
             signal_counts: dict[str, int] = {}
             for sig in evaluated_signals:
