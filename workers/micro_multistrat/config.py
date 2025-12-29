@@ -41,7 +41,7 @@ BASE_ENTRY_UNITS = int(os.getenv("MICRO_MULTI_BASE_UNITS", "12000"))
 MAX_MARGIN_USAGE = float(os.getenv("MICRO_MULTI_MAX_MARGIN_USAGE", "0.9"))
 
 CAP_MIN = float(os.getenv("MICRO_MULTI_CAP_MIN", "0.15"))
-CAP_MAX = float(os.getenv("MICRO_MULTI_CAP_MAX", "0.8"))
+CAP_MAX = float(os.getenv("MICRO_MULTI_CAP_MAX", "0.95"))
 
 # TrendMomentumMicro が沈んだ時間帯（UTC 10/11）をデフォルトブロック
 TREND_BLOCK_HOURS_UTC = frozenset(

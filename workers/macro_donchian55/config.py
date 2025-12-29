@@ -14,5 +14,4 @@ BASE_ENTRY_UNITS = int(os.getenv("DON55_BASE_UNITS", "30000"))
 MAX_MARGIN_USAGE = float(os.getenv("DON55_MAX_MARGIN_USAGE", "0.9"))
 
 CAP_MIN = float(os.getenv("DON55_CAP_MIN", "0.2"))
-CAP_MAX = float(os.getenv("DON55_CAP_MAX", "0.8"))
-
+CAP_MAX = float(os.getenv("DON55_CAP_MAX", "0.95"))

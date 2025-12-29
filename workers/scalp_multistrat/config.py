@@ -14,7 +14,7 @@ BASE_ENTRY_UNITS = int(os.getenv("SCALP_MULTI_BASE_UNITS", "2000"))
 MAX_MARGIN_USAGE = float(os.getenv("SCALP_MULTI_MAX_MARGIN_USAGE", "0.82"))
 
 CAP_MIN = float(os.getenv("SCALP_MULTI_CAP_MIN", "0.1"))
-CAP_MAX = float(os.getenv("SCALP_MULTI_CAP_MAX", "0.25"))
+CAP_MAX = float(os.getenv("SCALP_MULTI_CAP_MAX", "0.9"))
 
 # 新規エントリーのクールダウン（秒）
 COOLDOWN_SEC = float(os.getenv("SCALP_MULTI_COOLDOWN_SEC", "90"))

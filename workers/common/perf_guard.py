@@ -18,12 +18,13 @@ LOG = logging.getLogger(__name__)
 
 _DB = pathlib.Path("logs/trades.db")
 
+_ENABLED = os.getenv("PERF_GUARD_ENABLED", "0").strip().lower() not in {"", "0", "false", "no"}
 _LOOKBACK_DAYS = max(1, int(float(os.getenv("PERF_GUARD_LOOKBACK_DAYS", "3"))))
 _MIN_TRADES = max(5, int(float(os.getenv("PERF_GUARD_MIN_TRADES", "20"))))
 _PF_MIN = float(os.getenv("PERF_GUARD_PF_MIN", "0.9") or 0.9)
 _WIN_MIN = float(os.getenv("PERF_GUARD_WIN_MIN", "0.48") or 0.48)
 _TTL_SEC = max(30.0, float(os.getenv("PERF_GUARD_TTL_SEC", "120")) or 120.0)
-_HOURLY_ENABLED = os.getenv("PERF_GUARD_HOURLY", "1").strip().lower() not in {"", "0", "false", "no"}
+_HOURLY_ENABLED = os.getenv("PERF_GUARD_HOURLY", "0").strip().lower() not in {"", "0", "false", "no"}
 _HOURLY_MIN_TRADES = max(5, int(float(os.getenv("PERF_GUARD_HOURLY_MIN_TRADES", "12"))))
 
 _cache: dict[tuple[str, str, Optional[int]], tuple[float, bool, str, int]] = {}
@@ -90,6 +91,8 @@ def is_allowed(tag: str, pocket: str, *, hour: Optional[int] = None) -> PerfDeci
     """
     hour: optional UTC hour string (0-23) to apply hourly PF filter. When None, aggregate filter only.
     """
+    if not _ENABLED:
+        return PerfDecision(True, "disabled", 0)
     key = (tag, pocket, hour if _HOURLY_ENABLED else None)
     now = time.monotonic()
     cached = _cache.get(key)

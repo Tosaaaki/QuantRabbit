@@ -14,5 +14,4 @@ BASE_ENTRY_UNITS = int(os.getenv("BBRSI_BASE_UNITS", "12000"))
 MAX_MARGIN_USAGE = float(os.getenv("BBRSI_MAX_MARGIN_USAGE", "0.9"))
 
 CAP_MIN = float(os.getenv("BBRSI_CAP_MIN", "0.15"))
-CAP_MAX = float(os.getenv("BBRSI_CAP_MAX", "0.8"))
-
+CAP_MAX = float(os.getenv("BBRSI_CAP_MAX", "0.95"))

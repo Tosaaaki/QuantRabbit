@@ -1878,7 +1878,7 @@ async def market_order(
         entry_thesis["strategy_tag"] = strategy_tag
 
     # 成績ガード（直近 PF/勝率が悪いタグは全ポケットでブロック。manual は除外）
-    perf_guard_enabled = os.getenv("PERF_GUARD_GLOBAL_ENABLED", "1").strip().lower() not in {
+    perf_guard_enabled = os.getenv("PERF_GUARD_GLOBAL_ENABLED", "0").strip().lower() not in {
         "",
         "0",
         "false",

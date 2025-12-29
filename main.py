@@ -93,8 +93,8 @@ def _env_bool(name: str, default: bool = False) -> bool:
         return default
     return str(val).strip().lower() in {"1", "true", "yes", "on"}
 
-# Trading from main is disabled; workers are the single entry/exit path.
-MAIN_TRADING_ENABLED = False
+# Trading from main is enabled alongside workers for higher entry density.
+MAIN_TRADING_ENABLED = True
 
 # Aggressive mode: loosen range gatesとマイクロの入口ガードを緩めるフラグ
 # デフォルトは安全寄りに OFF
@@ -103,7 +103,7 @@ AGGRESSIVE_TRADING = _env_bool("AGGRESSIVE_TRADING", default=False)
 MICRO_OPENS_DISABLED = _env_bool("MICRO_OPENS_DISABLED", default=False)
 
 # Worker-onlyモード: mainはワーカー起動/データ供給のみ行い、発注/Exitロジックはスキップ
-WORKER_ONLY_MODE = True
+WORKER_ONLY_MODE = False
 
 # ---- Dynamic allocation (strategy score / pocket cap) loader ----
 _DYNAMIC_ALLOC_PATH = Path("config/dynamic_alloc.json")

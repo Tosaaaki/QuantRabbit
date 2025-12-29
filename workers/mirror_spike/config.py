@@ -146,7 +146,7 @@ ENTRY_UNITS: int = max(
     1000,
     _int_env(
         "MIRROR_SPIKE_ENTRY_UNITS",
-        5000,
+        8000,
         legacy_key="MANUAL_SPIKE_ENTRY_UNITS",
     ),
 )
