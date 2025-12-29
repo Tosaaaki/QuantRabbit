@@ -5905,26 +5905,33 @@ async def logic_loop(
                     if conf_floor and raw_conf < conf_floor:
                         continue
                     tag = s.get("strategy") or s.get("strategy_tag") or s.get("tag") or ""
+                    pocket = s.get("pocket") or ""
                     adj = raw_conf
                     # 戦略別バイアス: fast_scalpを強めに抑え、macro/microを押し上げる
                     if tag == "fast_scalp":
-                        adj -= 12
+                        adj -= 14
+                    elif pocket == "scalp":
+                        adj -= 8
                     elif s.get("pocket") == "macro":
-                        adj += 10
+                        adj += 14
                     elif s.get("pocket") == "micro":
-                        adj += 6
+                        adj += 10
                     s["conf_adj"] = adj
                     candidates.append(s)
 
                 fast_candidates = []
-                other_candidates = []
+                scalp_candidates = []
+                macro_micro_candidates = []
                 for s in candidates:
                     tag = s.get("strategy") or s.get("strategy_tag") or s.get("tag") or ""
+                    pocket = s.get("pocket") or ""
                     if tag == "fast_scalp":
                         fast_candidates.append(s)
+                    elif pocket == "scalp":
+                        scalp_candidates.append(s)
                     else:
-                        other_candidates.append(s)
-                other_candidates.sort(
+                        macro_micro_candidates.append(s)
+                macro_micro_candidates.sort(
                     key=lambda s: int(s.get("conf_adj", s.get("confidence", 0)) or 0),
                     reverse=True,
                 )
@@ -5932,14 +5939,26 @@ async def logic_loop(
                     key=lambda s: int(s.get("conf_adj", s.get("confidence", 0)) or 0),
                     reverse=True,
                 )
+                scalp_candidates.sort(
+                    key=lambda s: int(s.get("conf_adj", s.get("confidence", 0)) or 0),
+                    reverse=True,
+                )
 
                 fast_limit = 1
+                scalp_limit = 1
                 selected: list[dict] = []
-                # まず非 fast を優先的に詰める
-                for sig in other_candidates:
+                # まず macro/micro を優先的に詰める
+                for sig in macro_micro_candidates:
                     if len(selected) >= max_signals:
                         break
                     selected.append(sig)
+                # 次に通常のscalpを1本まで
+                scalp_added = 0
+                for sig in scalp_candidates:
+                    if len(selected) >= max_signals or scalp_added >= scalp_limit:
+                        break
+                    selected.append(sig)
+                    scalp_added += 1
                 # 残枠に fast_scalp を1本だけ許容
                 fast_added = 0
                 for sig in fast_candidates:
