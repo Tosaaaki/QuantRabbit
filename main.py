@@ -5867,20 +5867,15 @@ async def logic_loop(
             # Apply dynamic allocation (score-driven confidence trim) if available
             alloc_data = load_dynamic_alloc()
             evaluated_signals, pocket_caps, target_use = apply_dynamic_alloc(filtered_signals, alloc_data)
-            # 同一サイクルで pocket ごとに最高 confidence を選び、全体で最大3本まで許可。
-            # マージン高利用時は本数と信頼度をさらに絞る。
+            # 同一サイクルで全体からconfidence上位のみを通す（最大3本）。マージン高利用時はさらに本数・閾値を絞る。
             if evaluated_signals:
-                pocket_best: dict[str, dict] = {}
-                for sig in evaluated_signals:
-                    action = (sig.get("action") or "").upper()
-                    if action not in {"OPEN_LONG", "OPEN_SHORT"}:
-                        continue
-                    pocket = sig.get("pocket") or "unknown"
-                    conf = int(sig.get("confidence", 0) or 0)
-                    if pocket not in pocket_best or conf > int(pocket_best[pocket].get("confidence", 0) or 0):
-                        pocket_best[pocket] = sig
+                candidates = [
+                    s
+                    for s in evaluated_signals
+                    if (s.get("action") or "").upper() in {"OPEN_LONG", "OPEN_SHORT"}
+                ]
                 selected = sorted(
-                    pocket_best.values(),
+                    candidates,
                     key=lambda s: int(s.get("confidence", 0) or 0),
                     reverse=True,
                 )
@@ -5900,12 +5895,12 @@ async def logic_loop(
                     selected = selected[:max_signals]
                 if len(selected) != len(evaluated_signals):
                     logging.info(
-                        "[SIGNAL_SELECT] picked=%d out_of=%d pockets=%s margin=%.2f conf_floor=%s",
+                        "[SIGNAL_SELECT] picked=%d out_of=%d margin=%.2f conf_floor=%s strategies=%s",
                         len(selected),
                         len(evaluated_signals),
-                        ",".join(sorted({s.get('pocket') or 'unknown' for s in selected})),
                         margin_usage if margin_usage is not None else -1.0,
                         conf_floor if conf_floor > 0 else "none",
+                        ",".join(sorted({s.get('strategy') or s.get('strategy_tag') or 'unknown' for s in selected})),
                     )
                 evaluated_signals = selected
 
