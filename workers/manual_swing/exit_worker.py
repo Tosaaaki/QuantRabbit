@@ -67,6 +67,14 @@ def _latest_mid() -> Optional[float]:
         return None
 
 
+def _client_id(trade: dict) -> Optional[str]:
+    client_ext = trade.get("clientExtensions")
+    client_id = trade.get("client_order_id")
+    if not client_id and isinstance(client_ext, dict):
+        client_id = client_ext.get("id")
+    return client_id
+
+
 @dataclass
 class _TradeState:
     peak: float
@@ -175,8 +183,8 @@ class ManualSwingExitWorker:
             range_active=bool(range_ctx.active),
         )
 
-    async def _close(self, trade_id: str, units: int, reason: str, pnl: float, side: str, range_mode: bool) -> bool:
-        ok = await close_trade(trade_id, units)
+    async def _close(self, trade_id: str, units: int, reason: str, pnl: float, side: str, range_mode: bool, client_id: str) -> bool:
+        ok = await close_trade(trade_id, units, client_order_id=client_id)
         if ok:
             LOG.info(
                 "[EXIT-manual_swing] trade=%s units=%s reason=%s pnl=%.2fp range=%s",
@@ -269,6 +277,11 @@ class ManualSwingExitWorker:
             stop_loss = max(1.3, stop_loss * 0.9)
         lock_buffer = max(lock_buffer, stop_loss * 0.35)
 
+        client_id = _client_id(trade)
+        if not client_id:
+            LOG.warning("[EXIT-manual_swing] missing client_id trade=%s skip close", trade_id)
+            return None
+
         # 構造崩れ（H1 MA逆転/ADX低下＋ギャップ縮小）で撤退
         if ctx.adx is not None and ctx.adx < self.range_adx:
             try:
@@ -360,9 +373,13 @@ class ManualSwingExitWorker:
                         continue
                     trade_id = str(tr.get("trade_id"))
                     units = int(tr.get("units", 0) or 0)
+                    client_id = _client_id(tr)
+                    if not client_id:
+                        LOG.warning("[EXIT-manual_swing] missing client_id trade=%s skip close", trade_id)
+                        continue
                     side = "long" if units > 0 else "short"
                     pnl = (ctx.mid - float(tr.get("price") or 0.0)) * 100.0 if side == "long" else (float(tr.get("price") or 0.0) - ctx.mid) * 100.0
-                    await self._close(trade_id, -units, reason, pnl, side, ctx.range_active)
+                    await self._close(trade_id, -units, reason, pnl, side, ctx.range_active, client_id)
                     self._states.pop(trade_id, None)
         except asyncio.CancelledError:
             LOG.info("[EXIT-manual_swing] worker cancelled")

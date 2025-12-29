@@ -75,6 +75,7 @@ async def scalp_m1_worker() -> None:
         return
     LOG.info("%s worker start (interval=%.1fs)", config.LOG_PREFIX, config.LOOP_INTERVAL_SEC)
     last_block_log = 0.0
+    last_cap_log = 0.0
 
     while True:
         await asyncio.sleep(config.LOOP_INTERVAL_SEC)
@@ -146,6 +147,25 @@ async def scalp_m1_worker() -> None:
         )
         if cap <= 0.0:
             continue
+
+        now_mono = time.monotonic()
+        if (
+            cap >= config.CAP_MAX * 0.85
+            or free_ratio < 0.12
+            or pos_bias > 0.25
+            or range_ctx.active
+        ) and now_mono - last_cap_log > 90.0:
+            LOG.info(
+                "%s cap=%.3f reasons=%s free_ratio=%.3f pos_bias=%.3f pf=%s range=%s",
+                config.LOG_PREFIX,
+                cap,
+                cap_reason,
+                free_ratio,
+                pos_bias,
+                pf,
+                range_ctx.active,
+            )
+            last_cap_log = now_mono
 
         try:
             price = float(fac_m1.get("close") or 0.0)

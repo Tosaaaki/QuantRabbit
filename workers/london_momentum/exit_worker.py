@@ -66,6 +66,14 @@ def _latest_mid() -> Optional[float]:
         return None
 
 
+def _client_id(trade: dict) -> Optional[str]:
+    client_ext = trade.get("clientExtensions")
+    client_id = trade.get("client_order_id")
+    if not client_id and isinstance(client_ext, dict):
+        client_id = client_ext.get("id")
+    return client_id
+
+
 @dataclass
 class _TradeState:
     peak: float
@@ -174,8 +182,8 @@ class LondonMomentumExitWorker:
             range_active=bool(range_ctx.active),
         )
 
-    async def _close(self, trade_id: str, units: int, reason: str, pnl: float, side: str, range_mode: bool) -> bool:
-        ok = await close_trade(trade_id, units)
+    async def _close(self, trade_id: str, units: int, reason: str, pnl: float, side: str, range_mode: bool, client_id: str) -> bool:
+        ok = await close_trade(trade_id, units, client_order_id=client_id)
         if ok:
             LOG.info(
                 "[EXIT-london_momentum] trade=%s units=%s reason=%s pnl=%.2fp range=%s",
@@ -360,9 +368,13 @@ class LondonMomentumExitWorker:
                         continue
                     trade_id = str(tr.get("trade_id"))
                     units = int(tr.get("units", 0) or 0)
+                    client_id = _client_id(tr)
+                    if not client_id:
+                        LOG.warning("[EXIT-london_momentum] missing client_id trade=%s skip close", trade_id)
+                        continue
                     side = "long" if units > 0 else "short"
                     pnl = (ctx.mid - float(tr.get("price") or 0.0)) * 100.0 if side == "long" else (float(tr.get("price") or 0.0) - ctx.mid) * 100.0
-                    await self._close(trade_id, -units, reason, pnl, side, ctx.range_active)
+                    await self._close(trade_id, -units, reason, pnl, side, ctx.range_active, client_id)
                     self._states.pop(trade_id, None)
         except asyncio.CancelledError:
             LOG.info("[EXIT-london_momentum] worker cancelled")

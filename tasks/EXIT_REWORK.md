@@ -35,6 +35,7 @@
 - 専用 EXIT 完了: impulse_break_s5 / impulse_momentum_s5 / impulse_retest_s5 / scalp_m1scalper / scalp_multistrat / fast_scalp / micro_multistrat / macro_trendma / macro_h1momentum / macro_donchian55 / micro_trendmomentum（TrendMomentumMicro / MicroMomentumStack） / micro_pullbackema / micro_levelreactor / micro_rangebreak / micro_vwapbound / micro_momentumburst（いずれも最低保有 + PnL>0 決済のみ、ExitManager 非依存）。
 - 共通コア（micro_core / macro_core / scalp_core）と core_executor を削除。scalp_core 用 systemd ユニットも削除済み。
 - 未着手: exit_worker 回帰リプレイと再起動動作の確認。fast_scalp の `NO_LOSS_CLOSE` 運用を含む保有時間・微益トレイルのログ確認。
+- ローカル追加対応: 全 exit_worker（macro/micro/scalp/手動/派生含む）で client_id 必須ガードを統一し、client_id 欠損ポジはクローズを拒否して警告ログを出すようにした。`close_trade` 呼び出しはすべて client_order_id を渡す形に統一済み。
 
 ## EXIT誤爆防止・タグ運用（必須事項）
 - 発注時は必ず `strategy_tag` と `client_order_id` をセット。欠損なら発注を拒否する。

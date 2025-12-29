@@ -174,8 +174,8 @@ class SqueezeBreakExitWorker:
             range_active=bool(range_ctx.active),
         )
 
-    async def _close(self, trade_id: str, units: int, reason: str, pnl: float, side: str, range_mode: bool) -> bool:
-        ok = await close_trade(trade_id, units)
+    async def _close(self, trade_id: str, units: int, reason: str, pnl: float, side: str, range_mode: bool, client_id: str) -> bool:
+        ok = await close_trade(trade_id, units, client_order_id=client_id)
         if ok:
             LOG.info(
                 "[EXIT-squeeze_break_s5] trade=%s units=%s reason=%s pnl=%.2fp range=%s",
@@ -357,9 +357,16 @@ class SqueezeBreakExitWorker:
                         continue
                     trade_id = str(tr.get("trade_id"))
                     units = int(tr.get("units", 0) or 0)
+                    client_ext = tr.get("clientExtensions")
+                    client_id = tr.get("client_order_id")
+                    if not client_id and isinstance(client_ext, dict):
+                        client_id = client_ext.get("id")
+                    if not client_id:
+                        LOG.warning("[EXIT-squeeze_break_s5] missing client_id trade=%s skip close", trade_id)
+                        continue
                     side = "long" if units > 0 else "short"
                     pnl = (ctx.mid - float(tr.get("price") or 0.0)) * 100.0 if side == "long" else (float(tr.get("price") or 0.0) - ctx.mid) * 100.0
-                    await self._close(trade_id, -units, reason, pnl, side, ctx.range_active)
+                    await self._close(trade_id, -units, reason, pnl, side, ctx.range_active, client_id)
                     self._states.pop(trade_id, None)
         except asyncio.CancelledError:
             LOG.info("[EXIT-squeeze_break_s5] worker cancelled")

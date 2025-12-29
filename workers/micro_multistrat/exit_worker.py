@@ -200,7 +200,13 @@ class MicroMultiExitWorker:
             trail_start = max(trail_start, profit_take * 0.9)
             lock_buffer = max(lock_buffer, profit_take * 0.4)
 
-        client_id = trade.get("client_order_id") or (trade.get("clientExtensions") or {}).get("id") if isinstance(trade.get("clientExtensions"), dict) else trade.get("client_order_id")
+        client_ext = trade.get("clientExtensions")
+        client_id = trade.get("client_order_id")
+        if not client_id and isinstance(client_ext, dict):
+            client_id = client_ext.get("id")
+        if not client_id:
+            LOG.warning("[EXIT-micro_multi] missing client_id trade=%s skip close", trade_id)
+            return
 
         if state.peak > 0 and state.peak >= trail_start and pnl > 0 and pnl <= state.peak - trail_backoff:
             await self._close(trade_id, -units, "trail_take", pnl, client_id)

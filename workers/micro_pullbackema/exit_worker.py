@@ -167,7 +167,13 @@ class MicroPullbackEMAExitWorker:
             self._states[trade_id] = state
         state.update(pnl, self.lock_buffer if not range_active else self.range_lock_buffer)
 
-        client_id = trade.get("client_order_id") or (trade.get("clientExtensions") or {}).get("id") if isinstance(trade.get("clientExtensions"), dict) else trade.get("client_order_id")
+        client_ext = trade.get("clientExtensions")
+        client_id = trade.get("client_order_id")
+        if not client_id and isinstance(client_ext, dict):
+            client_id = client_ext.get("id")
+        if not client_id:
+            LOG.warning("[EXIT-micro_pbema] missing client_id trade=%s skip close", trade_id)
+            return
 
         if hold_sec < self.min_hold_sec:
             return

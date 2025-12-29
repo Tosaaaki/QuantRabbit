@@ -142,30 +142,34 @@ async def _run_exit_loop(
 
         state.update(pnl, lb)
 
-        client_id = trade.get("client_order_id") or (trade.get("clientExtensions") or {}).get("id") if isinstance(trade.get("clientExtensions"), dict) else trade.get("client_order_id")
+        client_ext = trade.get("clientExtensions")
+        client_id = trade.get("client_order_id")
+        if not client_id and isinstance(client_ext, dict):
+            client_id = client_ext.get("id")
 
         # 最低保有時間まではクローズ禁止（スプレッド負け防止）
         if hold_sec < min_hold_sec:
             return
 
+        if not client_id:
+            LOG.warning("[EXIT-%s] missing client_id trade=%s skip close", pocket, trade_id)
+            return
+
+        trail_trigger = max(ts, 0.0)
+
         # プラス圏のみでクローズする
-        if state.peak > 0 and state.peak >= ts and pnl > 0 and pnl <= state.peak - trail_backoff:
+        if (
+            state.peak > 0
+            and state.peak >= trail_trigger
+            and pnl > 0
+            and pnl <= state.peak - trail_backoff
+        ):
             await _close(trade_id, -units, "trail_take", client_id)
             states.pop(trade_id, None)
             return
 
         if pnl >= tp:
             await _close(trade_id, -units, "take_profit", client_id)
-            states.pop(trade_id, None)
-            return
-
-        if state.peak >= trail_start and pnl <= state.peak - params.trail_backoff:
-            await _close(trade_id, -units, "trail_take")
-            states.pop(trade_id, None)
-            return
-
-        if pnl >= profit_take:
-            await _close(trade_id, -units, "take_profit")
             states.pop(trade_id, None)
             return
 
