@@ -5892,13 +5892,13 @@ async def logic_loop(
                     key=lambda s: int(s.get("conf_adj", s.get("confidence", 0)) or 0),
                     reverse=True,
                 )
-                # fast_scalpは1本まで許容
+                # fast_scalpは2本まで許容（他が無い場合の枠確保）
                 fast_taken = 0
                 filtered_selected = []
                 for sig in selected:
                     tag = sig.get("strategy") or sig.get("strategy_tag") or sig.get("tag") or ""
                     if tag == "fast_scalp":
-                        if fast_taken >= 1:
+                        if fast_taken >= 2:
                             continue
                         fast_taken += 1
                     filtered_selected.append(sig)
