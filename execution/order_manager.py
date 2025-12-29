@@ -1764,7 +1764,7 @@ async def market_order(
             client_order_id="",
             note="missing_client_order_id",
         )
-        log_order(
+        _log_order(
             pocket=pocket,
             instrument=instrument,
             side="buy" if units > 0 else "sell",
@@ -1799,7 +1799,7 @@ async def market_order(
             client_order_id=client_order_id,
             note="missing_strategy_tag",
         )
-        log_order(
+        _log_order(
             pocket=pocket,
             instrument=instrument,
             side="buy" if units > 0 else "sell",

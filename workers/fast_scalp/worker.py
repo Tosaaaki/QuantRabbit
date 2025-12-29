@@ -933,6 +933,7 @@ async def fast_scalp_worker(shared_state: Optional[FastScalpState] = None) -> No
                     sl_price,
                     tp_price,
                     "scalp_fast",
+                    strategy_tag="fast_scalp",
                     client_order_id=client_id,
                     entry_thesis={**thesis, "strategy_tag": "fast_scalp"},
                 )
