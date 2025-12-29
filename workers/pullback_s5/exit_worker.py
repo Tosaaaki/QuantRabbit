@@ -107,6 +107,7 @@ class PullbackExitWorker:
         self.trail_backoff = max(0.3, _float_env("PULLBACK_S5_EXIT_TRAIL_BACKOFF_PIPS", 0.9))
         self.stop_loss = max(0.8, _float_env("PULLBACK_S5_EXIT_STOP_LOSS_PIPS", 1.4))
         self.max_hold_sec = max(60.0, _float_env("PULLBACK_S5_EXIT_MAX_HOLD_SEC", 22 * 60))
+        self.min_hold_sec = max(5.0, _float_env("PULLBACK_S5_EXIT_MIN_HOLD_SEC", 10.0))
         self.lock_trigger = max(0.6, _float_env("PULLBACK_S5_EXIT_LOCK_TRIGGER_PIPS", 1.0))
         self.lock_buffer = max(0.1, _float_env("PULLBACK_S5_EXIT_LOCK_BUFFER_PIPS", 0.5))
 
@@ -127,7 +128,7 @@ class PullbackExitWorker:
         self.rsi_take_long = _float_env("PULLBACK_S5_EXIT_RSI_TAKE_LONG", 69.0)
         self.rsi_take_short = _float_env("PULLBACK_S5_EXIT_RSI_TAKE_SHORT", 31.0)
         self.negative_hold_sec = max(20.0, _float_env("PULLBACK_S5_EXIT_NEG_HOLD_SEC", 120.0))
-        self.allow_negative_exit = _bool_env("PULLBACK_S5_EXIT_ALLOW_NEGATIVE", True)
+        self.allow_negative_exit = _bool_env("PULLBACK_S5_EXIT_ALLOW_NEGATIVE", False)
 
         self.vwap_grab_gap = max(0.2, _float_env("PULLBACK_S5_EXIT_VWAP_GAP_PIPS", 1.0))
 
@@ -276,8 +277,11 @@ class PullbackExitWorker:
             stop_loss = max(0.7, stop_loss * 0.9)
         lock_buffer = max(lock_buffer, stop_loss * 0.35)
 
+        if hold_sec < self.min_hold_sec:
+            return None
+
         # 構造崩れ（M1 MA逆転/ADX低下＋ギャップ縮小）で撤退
-        if ctx.adx is not None and ctx.adx < self.range_adx:
+        if ctx.adx is not None and ctx.adx < self.range_adx and (pnl > 0 or self.allow_negative_exit):
             try:
                 factors = all_factors().get("M1") or {}
                 ma10 = float(factors.get("ma10"))
@@ -288,30 +292,27 @@ class PullbackExitWorker:
             except Exception:
                 pass
 
-        if pnl <= -stop_loss:
+        if self.allow_negative_exit and pnl <= -stop_loss:
             return "hard_stop"
 
-        if pnl < 0 and hold_sec >= self.negative_hold_sec:
-            if self.allow_negative_exit:
-                return "time_cut"
+        if self.allow_negative_exit and pnl < 0 and hold_sec >= max(self.negative_hold_sec, self.min_hold_sec):
+            return "time_cut"
 
-        if pnl < 0:
+        if self.allow_negative_exit and pnl < 0:
             if side == "long" and ctx.rsi is not None and ctx.rsi <= self.rsi_fade_long:
-                if self.allow_negative_exit or atr >= self.atr_hot:
-                    return "rsi_fade"
+                return "rsi_fade"
             if side == "short" and ctx.rsi is not None and ctx.rsi >= self.rsi_fade_short:
-                if self.allow_negative_exit or atr >= self.atr_hot:
-                    return "rsi_fade"
+                return "rsi_fade"
 
-        if hold_sec >= max_hold and pnl <= profit_take * 0.7:
+        if hold_sec >= max_hold and pnl > 0 and pnl <= profit_take * 0.7:
             return "time_stop"
 
-        if state.lock_floor is None and pnl >= lock_trigger:
+        if state.lock_floor is None and pnl > 0 and pnl >= lock_trigger:
             state.lock_floor = max(0.0, pnl - lock_buffer)
-        if state.lock_floor is not None and pnl <= state.lock_floor:
+        if state.lock_floor is not None and pnl > 0 and pnl <= state.lock_floor:
             return "lock_release"
 
-        if state.peak >= trail_start and pnl <= state.peak - trail_backoff:
+        if state.peak >= trail_start and pnl > 0 and pnl <= state.peak - trail_backoff:
             return "trail_take"
 
         if pnl > 0.3 and ctx.vwap_gap_pips is not None and abs(ctx.vwap_gap_pips) <= self.vwap_grab_gap:
