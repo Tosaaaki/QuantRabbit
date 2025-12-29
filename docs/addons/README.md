@@ -13,5 +13,6 @@ Included components:
 - Start with `place_orders=False` to dry-run, then enable live orders.
 
 ## Notes
-- Exit/TP/SL are attached via `execution.exit_manager.ExitManager` if present in your repo.
+- 本リポの `execution.exit_manager` は互換スタブ（自動EXITなし）。各ワーカーで SL/TP / exit_worker を持つ前提で統合する。
+- 互換的に attach() を持つ ExitManager が必要な場合は `workers/common/exit_adapter.build_exit_manager()` を経由する。`EXIT_MANAGER_DISABLED=1` が既定で、設定時のみ attach を試みる。
 - Time windows and thresholds are intentionally conservative; tune after replay/backtest.

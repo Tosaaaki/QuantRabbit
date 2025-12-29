@@ -20,6 +20,10 @@ QuantRabbit は USD/JPY で 24/7 自律運用する無裁量トレーディン�
 * **インフラ** : GCE VM（ニュースパイプライン廃止）  
 * **月額コスト** : VM ≈ $19 + GPT ≈ $4.5 ＝ **$ <25**  
 
+**Runtime defaults（Exit/worker）**
+- `WORKER_ONLY_MODE=true` / `MAIN_TRADING_ENABLED=0` が既定。main は 60s ループのログ/metrics 更新のみを行い、発注/EXIT は各 worker で完結させる。
+- 共通 `execution/exit_manager.py` は互換スタブ（自動EXITなし）。戦略ごとに専用の `exit_worker` を起動し、最低保有＋PnL>0 決済（例外は強制ドローダウン/ヘルスチェック）の運用がデフォルト。
+
 ### VM ログの確認
 
 IAP + OS Login 環境では `scripts/tail_vm_logs.sh` を使うと、systemd ログや任意コマンドを簡単に追尾できます。

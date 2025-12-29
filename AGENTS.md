@@ -31,7 +31,7 @@
 | **Regime & Focus** | `analysis/regime_classifier.py` / `focus_decider.py` | ← factors<br>→ macro/micro レジーム・weight_macro |
 | **GPT Decider** | `analysis/gpt_decider.py` | ← focus + perf<br>→ JSON {focus_tag, weight_macro, weight_scalp, ranked_strategies} |
 | **Strategy Plugin** | `strategies/*` | ← factors<br>→ dict {action, sl_pips, tp_pips, confidence, tag} or None |
-| **Exit Manager** | `execution/exit_manager.py` | ← open positions + signals<br>→ list[{pocket, units, reason, tag}] |
+| **Exit (専用ワーカー)** | `workers/*/exit_worker.py` | ← pocket別 open positions<br>→ list[{pocket, units, reason, tag}]（PnL>0 決済が原則）。共通 ExitManager は互換スタブで自動EXITなし |
 | **Risk Guard** | `execution/risk_guard.py` | ← lot, SL/TP, pocket<br>→ bool (可否)・調整値 |
 | **Order Manager** | `execution/order_manager.py` | ← units, sl, tp, client_order_id, tag<br>→ OANDA ticket ID |
 | **Logger** | `logs/*.db` | 全コンポーネントが INSERT |
@@ -118,7 +118,7 @@ class OrderIntent(BaseModel):
 - Regime & Focus: macro=H4/D1, micro=M1 の `Factors` を消費し、`focus_decider` は `FocusDecision`(`focus_tag`,`weight_macro`) を返す。
 - GPT Decider: テクニカル要因とパフォーマンス指標のみで `GPTDecision` を返す（`weight_macro` と `weight_scalp` を明示）。JSON Schema 不一致時はフォールバックを Raise。
 - Strategy Plugin: `ranked_strategies` 順に呼び出し `StrategyDecision` または `None` を返す。必ず `confidence` と `tag` を含め、`None` は「ノートレード」。
-- Exit Manager: 現在のポジションとシグナルを突き合わせ、逆方向シグナル・イベントロック・指標劣化の各条件でクローズ指示を組み立てる。
+- Exit: 戦略ごとの `exit_worker` が最低保有時間とテクニカル/レンジ判定を踏まえてクローズ可否を判断する（PnL>0 決済が原則）。共通 `execution/exit_manager.py` は互換スタブで自動EXITは発生しない。
 - Risk Guard: エントリー/クローズ双方の `StrategyDecision` と口座情報から `OrderIntent` を生成、拒否理由は `{"allow": False, "reason": ...}` としてロガーへ渡す。
 - Order Manager: `OrderIntent` を OANDA REST へ送信、結果は `ticket_id` と `executed_price` を返し `logs/orders.db` に保存。
 
@@ -157,15 +157,17 @@ class OrderIntent(BaseModel):
 
 ## 3. ライフサイクル
 
+> **現行運用デフォルト**: `WORKER_ONLY_MODE=true` / `MAIN_TRADING_ENABLED=0`。main の 60 秒トレードループはスキップされ、エントリー/EXIT は各戦略ワーカー＋専用 `exit_worker` が担当（共通 `exit_manager` は互換スタブで自動EXITなし）。
+
 1. **Startup (`main.py`)**
    1. env.toml 読込 → Secrets 確認
    2. WebSocket 接続確立
-2. **Every 60 s**
+2. **Every 60 s（main トレード有効時のみ）**
    1. 新ローソク → factors 更新  
    2. regime + focus → GPT decision  
    3. pocket lot 配分 → Strategy loop（confidence スケーリング + ステージ判定）  
-   4. Exit manager → Risk guard → order_manager でクローズ/新規発注  
-   5. trades.db / metrics.db にログ
+   4. 専用 exit_worker（PnL>0 決済が原則）→ risk_guard → order_manager でクローズ/新規発注  
+   5. trades.db / metrics.db にログ（worker-only 時は主にメトリクス更新のみ）
 3. **Background Jobs**
    - nightly `backup_to_gcs.sh` logs/ → backup bucket
 
@@ -195,20 +197,20 @@ class OrderIntent(BaseModel):
 
 - **Confidence スケーリング**: Strategy の `confidence` (0–100) をポケット割当 lot に掛け、最低 0.2 倍〜最大 1.0 倍のレンジで段階的エントリーを行う。  
 - **ステージ比率**: `STAGE_RATIOS` で定義されたフラクションに従い、各ステージ条件 (`_stage_conditions_met`) を通過した場合のみ追撃。  
-- **Exit Manager**: 逆方向シグナルが閾値 (既定 70) を超えた場合やイベントロック、RSI/ADX 劣化などでクローズ。`allow_reentry` が False の場合は当該サイクル内の再参入を禁止する。
+- **Exit**: 各戦略の `exit_worker` が最低保有経過後に PnL>0 決済のみを許可（強制 DD/ヘルスのみ例外）。共通 `exit_manager` の自動EXITはスタブ化され、`plan_closures` は常に空を返す。
 - **Release gate**: PF>1.1, 勝率>52%、最大 DD<5% を 2 週間連続で満たしたら実弾に昇格。
 
 #### 3.5.1 レンジモード強化（2025-10）
 - 判定: `analysis/range_guard.detect_range_mode` が M1 の `ADX<=22`, `BBW<=0.20`, `ATR<=6` の同時充足、または H4 トレンド弱含み＋複合スコア閾値超で `range_mode` を返す。`metrics.composite` と `reason` をログ出力。
 - エントリー制御: `range_mode=True` の間はマクロ新規を抑制し、許可戦略を BB 逆張り（`BB_RSI`）等に限定。`focus_tag` を `micro` へ縮退、`weight_macro` を上限 0.15 に制限。
-- 利確/損切り: レンジ中は TP/SL をタイトに調整（目安 1.5〜2.0 pips の RR≒1:1）。`execution/exit_manager` は含み益が+1.6pips 以上で利確、+0.4pips超はホールド、−1.0pips で早期撤退。
+- 利確/損切り: レンジ中は各 `exit_worker` が TP/トレイル/lock をタイトに調整（目安 1.5〜2.0 pips の RR≒1:1、fast_scalp/micro/macro で閾値を別設定）。共通 `exit_manager` は使用しない。
 - 分割利確: `execution/order_manager.plan_partial_reductions` はレンジ中のしきい値を（macro 16/22, micro 10/16, scalp 6/10 pips）に低減し早めにヘッジ。
 - ステージ/再入場: `execution/stage_tracker` が方向別クールダウンとステージ永続化を提供。強制クローズや連続 3 敗で 15 分ブロック。勝ち負けに応じてロット係数を自動縮小（マーチン禁止）。
 
 実装差分の主な入口
 - レンジ判定: `analysis/range_guard.py`
-- エントリー選別/SLTP調整/レンジ抑制: `main.py` のシグナル評価・ロット配分周辺
-- 早期利確/撤退: `execution/exit_manager.py`
+- エントリー選別/SLTP調整/レンジ抑制: `main.py` のシグナル評価・ロット配分周辺、および各 worker の entry ロジック
+- 早期利確/撤退: 各戦略専用 `workers/*/exit_worker.py`（fast_scalp/micro/macro いずれも PnL>0 決済が原則）
 - 分割利確しきい値(レンジ対応): `execution/order_manager.py`
 - ステージ永続化/クールダウン/ロット係数: `execution/stage_tracker.py`
 

@@ -123,6 +123,13 @@ _PARTIAL_CLOSE_RETRY_CODES = {
     "POSITION_TO_REDUCE_TOO_SMALL",
 }
 _ORDER_SPREAD_BLOCK_PIPS = float(os.getenv("ORDER_SPREAD_BLOCK_PIPS", "1.6"))
+# コメントを付けるとリジェクトが発生する場合に強制オフにするトグル（デフォルトで無効化）
+_DISABLE_CLIENT_COMMENT = os.getenv("ORDER_DISABLE_CLIENT_COMMENT", "1").strip().lower() not in {
+    "",
+    "0",
+    "false",
+    "no",
+}
 
 # Max units per new entry order (reduce_only orders are exempt)
 try:
@@ -890,6 +897,8 @@ def _encode_thesis_comment(entry_thesis: Optional[dict]) -> Optional[str]:
     Serialize a minimal subset of the thesis into OANDA clientExtensions.comment
     so exit側がリスタート後も fast_cut/kill メタを参照できるようにする。
     """
+    if _DISABLE_CLIENT_COMMENT:
+        return None
     if not isinstance(entry_thesis, dict):
         return None
     keys = (

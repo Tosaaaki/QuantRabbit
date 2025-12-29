@@ -30,4 +30,4 @@ for intent in intents:
 ## 次のステップ
 1. `place_orders=False` のまま `run_once()` の戻り値をログに流し、シグナルの頻度・質感を確認
 2. リプレイ (`scripts/replay_workers.py` 等) にフックして挙動を検証
-3. 問題なければ `place_orders=True` に切替え、実ブローカー層と ExitManager を統合する
+3. 問題なければ `place_orders=True` に切替え、実ブローカー層と各戦略専用の exit_worker/保護ロジックを統合する（本リポの ExitManager は互換スタブ）

@@ -6,6 +6,7 @@ import asyncio
 import datetime
 import hashlib
 import logging
+import os
 import time
 from typing import Dict, List, Tuple
 
@@ -17,6 +18,7 @@ from market_data import tick_window
 from strategies.scalping.range_fader import RangeFader
 from strategies.scalping.pulse_break import PulseBreak
 from strategies.scalping.impulse_retrace import ImpulseRetraceScalp
+from strategies.scalping.m1_scalper import M1Scalper
 from utils.market_hours import is_market_open
 from utils.oanda_account import get_account_snapshot
 from workers.common.quality_gate import news_block_active
@@ -72,18 +74,43 @@ def _compute_cap(*args, **kwargs) -> Tuple[float, Dict[str, float]]:
 
 
 def _strategy_list() -> List:
-    return [
-        RangeFader,
-        PulseBreak,
-        ImpulseRetraceScalp,
-    ]
+    """Select strategies based on env allowlist (comma-separated names)."""
+    allow_raw = (os.getenv("SCALP_STRATEGY_ALLOWLIST") or "").strip()
+    allowlist = {token.strip() for token in allow_raw.split(",") if token.strip()}
+    catalog = {
+        "RangeFader": RangeFader,
+        "PulseBreak": PulseBreak,
+        "ImpulseRetrace": ImpulseRetraceScalp,
+        "ImpulseRetraceScalp": ImpulseRetraceScalp,
+        "M1Scalper": M1Scalper,
+    }
+    if not allowlist:
+        return list(catalog.values())
+
+    selected = []
+    for name in allowlist:
+        strat = catalog.get(name)
+        if strat:
+            selected.append(strat)
+        else:
+            LOG.warning("%s unknown strategy in allowlist: %s", config.LOG_PREFIX, name)
+
+    if not selected:
+        LOG.warning("%s allowlist provided but no strategies matched; skipping all", config.LOG_PREFIX)
+    return selected
 
 
 async def scalp_multi_worker() -> None:
     if not config.ENABLED:
         LOG.info("%s disabled", config.LOG_PREFIX)
         return
-    LOG.info("%s worker start (interval=%.1fs)", config.LOG_PREFIX, config.LOOP_INTERVAL_SEC)
+    strategies = _strategy_list()
+    LOG.info(
+        "%s worker start (interval=%.1fs) strategies=%s",
+        config.LOG_PREFIX,
+        config.LOOP_INTERVAL_SEC,
+        [getattr(s, "name", s.__name__) for s in strategies],
+    )
 
     while True:
         await asyncio.sleep(config.LOOP_INTERVAL_SEC)
@@ -110,7 +137,7 @@ async def scalp_multi_worker() -> None:
 
         signal = None
         strategy_name = ""
-        for strat in _strategy_list():
+        for strat in strategies:
             cand = strat.check(fac_m1)
             if cand:
                 signal = cand
@@ -200,6 +227,12 @@ async def scalp_multi_worker() -> None:
             client_order_id=client_id,
             strategy_tag=signal.get("tag", strategy_name),
             confidence=int(signal.get("confidence", 0)),
+            entry_thesis={
+                "strategy_tag": signal.get("tag", strategy_name),
+                "tp_pips": tp_pips,
+                "sl_pips": sl_pips,
+                "confidence": signal.get("confidence", 0),
+            },
         )
         LOG.info(
             "%s strat=%s sent units=%s side=%s price=%.3f sl=%.3f tp=%.3f conf=%.0f cap=%.2f reasons=%s res=%s",

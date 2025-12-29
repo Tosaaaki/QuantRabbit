@@ -1,7 +1,8 @@
 # TASKS – Repository Task Board
 
 本リポジトリの全タスクを一元管理する台帳。タスクが発生したら本ファイルへ逐次追記し、作業中は本ファイルを参照しながら進め、完了後はアーカイブへ移してください。詳細ポリシーは `AGENTS.md` の「11. タスク運用ルール（共通）」を参照。  
-※ `micro_core` / `macro_core` / `scalp_core` と `core_executor` は廃止済み。本文に残るコア関連タスク/記述はレガシーとして扱ってください。
+※ `micro_core` / `macro_core` / `scalp_core` と `core_executor` は廃止済み。本文に残るコア関連タスク/記述はレガシーとして扱ってください。  
+※ 2025-12-26 時点で共通 `execution/exit_manager.py` はスタブ化（自動EXITなし）。Archive に残る ExitManager 改修タスクは履歴としてのみ参照してください。
 
 ## 運用ルール（要約）
 
@@ -242,7 +243,7 @@
   Owner: codex
   Scope/Paths: execution/exit_manager.py, execution/order_manager.py
   Completed: 2025-11-21
-  Summary: ExitManager に ATR/vol_5m を用いた loss_guard 圧縮と TrendMA/Vol partial exit 強化を加え、2.5〜3.0p で 2/3 クローズ→ EMA gap 1.0p で残りを解放するフローを実装。注文生成側でも pocket 最小単位を clamp し、TAKE_PROFIT_ON_FILL_LOSS の再発時はログに理由が残るよう修正した。
+  Summary: ExitManager に ATR/vol_5m を用いた loss_guard 圧縮と TrendMA/Vol partial exit 強化を加え、2.5〜3.0p で 2/3 クローズ→ EMA gap 1.0p で残りを解放するフローを実装。注文生成側でも pocket 最小単位を clamp し、TAKE_PROFIT_ON_FILL_LOSS の再発時はログに理由が残るよう修正した。（現行コードでは ExitManager はスタブ化され、専用 exit_worker 側へ移行済み）
 
 - [x] ID: T-20251121-002
   Title: Macro lot 下限 & exposure 推定の是正
@@ -368,7 +369,7 @@
     - docs/TASKS.md で移行計画が追跡され、影響パスが明示されている
   Completed: 2025-11-17
   PR: <pending>
-  Summary: main.py now publishes PocketPlans (plan_bus) for macro/scalp with spread-aware factors, while workers/common/core_executor.py consumes them using shared StageTracker/ExitManager helpers, completing the extraction prerequisites.
+  Summary: main.py now publishes PocketPlans (plan_bus) for macro/scalp with spread-aware factors, while workers/common/core_executor.py consumes them using shared StageTracker/ExitManager helpers, completing the extraction prerequisites。（現在は core_executor/ExitManager は廃止・スタブ化済みで、本項は履歴のみ）
 
 - [x] ID: T-20251108-001
   Title: Macro 戦略のスプレッド考慮 SL/TP 反映
@@ -393,12 +394,12 @@
   Scope/Paths: workers/macro_core/, workers/scalp_core/, execution/, main.py, docs/TASKS.md
   Context: macro/scalp Plan を消費する専用ワーカーを追加し、ステージ制御→発注→Exit までを main から切り出す（AGENT.me §3.5, range 強化仕様）
   Acceptance:
-    - workers/macro_core/worker.py および workers/scalp_core/worker.py にプランポーリング〜Stage/Exit/Order の実処理ループが実装されている（ログ・メトリクス含む）
-    - StageTracker / ExitManager / PositionManager をワーカー内で保有し、main 側との競合なく PocketPlan を消費できる
+    - workers/macro_core/worker.py および workers/scalp_core/worker.py にプランポーリング〜Stage/Exit/Order の実処理ループが実装されている（ログ・メトリクス含む）（※ core 系は現在廃止済み）
+    - StageTracker / ExitManager / PositionManager をワーカー内で保有し、main 側との競合なく PocketPlan を消費できる（※ ExitManager はスタブ化済み）
     - main.py 側から新ワーカーを起動できる設定項目が用意され（既定は安全側で無効）、実装メモが docs/TASKS.md に反映されている
   Completed: 2025-11-17
   PR: <pending>
-  Summary: workers/macro_core/worker.py and workers/scalp_core/worker.py already host the StageTracker/Exit/Order loops and now receive live PocketPlans from main.py, so macro/scalp execution runs fully inside the dedicated workers.
+  Summary: workers/macro_core/worker.py and workers/scalp_core/worker.py already host the StageTracker/Exit/Order loops and now receive live PocketPlans from main.py, so macro/scalp execution runs fully inside the dedicated workers（現在は core 系・共通 EXIT を廃止しており履歴のみ）。
 
 - [x] ID: T-20251104-003
   Title: Maker型1pipスカルパーワーカーの実装
@@ -505,9 +506,9 @@
   Acceptance:
     - manual/unknown エクスポージャを検知して micro/scalp を自動停止し、解除は 2 サイクル遅延で行う
     - BB_RSI が環境フィルタ＋ATR ベース SL/TP/target を提供し、新メタを exit/partial/metrics へ連携
-    - ExitManager/微コアが hold ratio ガード・manual sentinel・ヒステリシスをメトリクス付きで実装
+    - ExitManager/微コアが hold ratio ガード・manual sentinel・ヒステリシスをメトリクス付きで実装（※ ExitManager/微コアは現在廃止・スタブ化）
   Completed: 2025-11-13
-  Summary: main/micro_core と HoldMonitor で manual sentinel＋hold ratio guard を導入し、2 サイクル待機後に自動解除する仕組みを追加。BB_RSI に profile/target/min_hold を付与して環境依存の SLTP を生成、micro worker の policy 出力と metrics (`manual_halt_active`, `hold_ratio_guard`) を更新した。
+  Summary: main/micro_core と HoldMonitor で manual sentinel＋hold ratio guard を導入し、2 サイクル待機後に自動解除する仕組みを追加。BB_RSI に profile/target/min_hold を付与して環境依存の SLTP を生成、micro worker の policy 出力と metrics (`manual_halt_active`, `hold_ratio_guard`) を更新した（現在の運用は専用 micro_* ワーカー＋スタブ ExitManager）。
 
 - [x] ID: T-20251112-002
   Title: 戦略プロファイル化（ATR/ADX/RSIコンボ）でエントリー〜EXITを一貫化

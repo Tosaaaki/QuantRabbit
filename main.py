@@ -5,7 +5,6 @@ import traceback
 import time
 import hashlib
 import json
-import contextlib
 import math
 import os
 from pathlib import Path
@@ -94,8 +93,8 @@ def _env_bool(name: str, default: bool = False) -> bool:
         return default
     return str(val).strip().lower() in {"1", "true", "yes", "on"}
 
-# Trading from main is disabled by default; workers are the single entry/exit path.
-MAIN_TRADING_ENABLED = _env_bool("MAIN_TRADING_ENABLED", False)
+# Trading from main is disabled; workers are the single entry/exit path.
+MAIN_TRADING_ENABLED = False
 
 # Aggressive mode: loosen range gatesとマイクロの入口ガードを緩めるフラグ
 # デフォルトは安全寄りに OFF
@@ -104,7 +103,7 @@ AGGRESSIVE_TRADING = _env_bool("AGGRESSIVE_TRADING", default=False)
 MICRO_OPENS_DISABLED = _env_bool("MICRO_OPENS_DISABLED", default=False)
 
 # Worker-onlyモード: mainはワーカー起動/データ供給のみ行い、発注/Exitロジックはスキップ
-WORKER_ONLY_MODE = _env_bool("WORKER_ONLY_MODE", default=True)
+WORKER_ONLY_MODE = True
 
 # ---- Dynamic allocation (strategy score / pocket cap) loader ----
 _DYNAMIC_ALLOC_PATH = Path("config/dynamic_alloc.json")
@@ -268,7 +267,6 @@ from advisors.focus_override import FocusOverrideAdvisor
 from advisors.volatility_bias import VolatilityBiasAdvisor
 from advisors.stage_plan import StagePlanAdvisor
 from advisors.partial_reduction import PartialReductionAdvisor
-from autotune.scalp_trainer import start_background_autotune
 from workers.fast_scalp import FastScalpState, fast_scalp_worker
 from workers.fast_scalp.signal import _compute_rsi as _fs_compute_rsi  # reuse RSI helper
 
@@ -286,11 +284,7 @@ logging.basicConfig(
 )
 
 logging.info("Application started!")
-logging.info(
-    "[CONFIG] WORKER_ONLY_MODE=%s MAIN_TRADING_ENABLED=%s",
-    WORKER_ONLY_MODE,
-    MAIN_TRADING_ENABLED,
-)
+logging.info("[CONFIG] Worker-only runtime enforced; main trading loop disabled.")
 
 # Backward-compatible alias (expected by STRATEGIES map and logs)
 TrendMA = MovingAverageCross
@@ -647,30 +641,69 @@ GPT_FACTOR_KEYS: Dict[str, tuple[str, ...]] = {
         "rsi",
     ),
 }
-# systemd service mapping for auxiliary workers (optional; may fail if units are absent)
+# systemd service mapping for worker/exit processes (names must match .service files)
 WORKER_SERVICES = {
-    # names must match actual systemd unit filenames (underscores)
-    "fast_scalp": "qr-fast_scalp.service",
-    "mtf_breakout": "qr-mtf_breakout.service",
-    "pullback_scalp": "qr-pullback_scalp.service",
-    "london_momentum": "qr-london_momentum.service",
-    "pullback_runner_s5": "qr-pullback_runner_s5.service",
-    "mirror_spike": "qr-mirror_spike.service",
-    "vol_squeeze": "qr-vol_squeeze.service",
-    "stop_run_reversal": "qr-stop_run_reversal.service",
-    "mirror_spike_s5": "qr-mirror_spike_s5.service",
-    "session_open": "qr-session_open.service",
-    "mirror_spike_tight": "qr-mirror_spike_tight.service",
-    "trend_h1": "qr-trend_h1.service",
-    "vwap_magnet_s5": "qr-vwap_magnet_s5.service",
-    "impulse_retest_s5": "qr-impulse_retest_s5.service",
-    "manual_swing": "qr-manual_swing.service",
-    "impulse_momentum_s5": "qr-impulse_momentum_s5.service",
-    "pullback_s5": "qr-pullback_s5.service",
-    "squeeze_break_s5": "qr-squeeze_break_s5.service",
-    "impulse_break_s5": "qr-impulse_break_s5.service",
-    "mm_lite": "qr-mm_lite.service",
-    "onepip_maker_s1": "qr-onepip_maker_s1.service",
+    # Scalp / S5
+    "fast_scalp": "quant-fast-scalp.service",
+    "fast_scalp_exit": "quant-fast-scalp-exit.service",
+    "impulse_break_s5": "quant-impulse-break-s5.service",
+    "impulse_break_s5_exit": "quant-impulse-break-s5-exit.service",
+    "impulse_momentum_s5": "quant-impulse-momentum-s5.service",
+    "impulse_momentum_s5_exit": "quant-impulse-momentum-s5-exit.service",
+    "impulse_retest_s5": "quant-impulse-retest-s5.service",
+    "impulse_retest_s5_exit": "quant-impulse-retest-s5-exit.service",
+    "pullback_s5": "quant-pullback-s5.service",
+    "pullback_s5_exit": "quant-pullback-s5-exit.service",
+    "pullback_runner_s5": "quant-pullback-runner-s5.service",
+    "pullback_runner_s5_exit": "quant-pullback-runner-s5-exit.service",
+    "pullback_scalp": "quant-pullback-scalp.service",
+    "pullback_scalp_exit": "quant-pullback-scalp-exit.service",
+    "squeeze_break_s5": "quant-squeeze-break-s5.service",
+    "squeeze_break_s5_exit": "quant-squeeze-break-s5-exit.service",
+    "vwap_magnet_s5": "quant-vwap-magnet-s5.service",
+    "vwap_magnet_s5_exit": "quant-vwap-magnet-s5-exit.service",
+    "mirror_spike_s5": "quant-mirror-spike-s5.service",
+    "mirror_spike_s5_exit": "quant-mirror-spike-s5-exit.service",
+    "mirror_spike_tight": "quant-mirror-spike-tight.service",
+    "mirror_spike_tight_exit": "quant-mirror-spike-tight-exit.service",
+    "mirror_spike": "quant-mirror-spike.service",
+    "mirror_spike_exit": "quant-mirror-spike-exit.service",
+    "onepip_maker_s1": "quant-onepip-s1.service",
+    "onepip_maker_s1_exit": "quant-onepip-s1-exit.service",
+    "scalp_multi": "quant-scalp-multi.service",
+    "scalp_multi_exit": "quant-scalp-multi-exit.service",
+    "m1_scalper": "qr-m1scalper.service",
+    "m1_scalper_exit": "quant-m1scalper-exit.service",
+    # Micro
+    "micro_bbrsi": "qr-micro-bbrsi.service",
+    "micro_levelreactor": "qr-micro-level-reactor.service",
+    "micro_levelreactor_exit": "qr-micro-level-reactor-exit.service",
+    "micro_momentumburst": "qr-micro-momentum-burst.service",
+    "micro_momentumburst_exit": "qr-micro-momentum-burst-exit.service",
+    "micro_momentumstack": "qr-micro-momentum-stack.service",
+    "micro_pullbackema": "qr-micro-pullback-ema.service",
+    "micro_pullbackema_exit": "qr-micro-pullback-ema-exit.service",
+    "micro_rangebreak": "qr-micro-range-break.service",
+    "micro_rangebreak_exit": "qr-micro-range-break-exit.service",
+    "micro_trendmomentum": "qr-micro-trend-momentum.service",
+    "micro_trendmomentum_exit": "qr-micro-trend-momentum-exit.service",
+    "micro_vwapbound": "qr-micro-vwap-bound.service",
+    "micro_vwapbound_exit": "qr-micro-vwap-bound-exit.service",
+    "micro_multi": "quant-micro-multi.service",
+    "micro_multi_exit": "quant-micro-multi-exit.service",
+    # Macro
+    "macro_trendma": "quant-trendma.service",
+    "macro_trendma_exit": "quant-trendma-exit.service",
+    "macro_donchian55": "quant-donchian55.service",
+    "macro_donchian55_exit": "quant-donchian55-exit.service",
+    "macro_h1momentum": "quant-h1momentum.service",
+    "macro_h1momentum_exit": "quant-h1momentum-exit.service",
+    "macro_trend_h1": "quant-trend-h1.service",
+    "macro_trend_h1_exit": "quant-trend-h1-exit.service",
+    "macro_london_momentum": "quant-london-momentum.service",
+    "macro_london_momentum_exit": "quant-london-momentum-exit.service",
+    "macro_manual_swing": "quant-manual-swing.service",
+    "macro_manual_swing_exit": "quant-manual-swing-exit.service",
 }
 WORKER_ALL_SERVICES = set(WORKER_SERVICES.keys())
 WORKER_AUTOCONTROL_ENABLED = os.getenv("WORKER_AUTOCONTROL", "1").strip() not in {"", "0", "false", "no"}
@@ -2997,6 +3030,48 @@ async def d1_candle_handler(cndl: Candle):
     await on_candle("D1", cndl)
 
 
+async def worker_only_loop() -> None:
+    """Minimal supervisor loop for worker-only runtime."""
+    last_worker_plan: set[str] = set()
+    last_market_closed: Optional[datetime.datetime] = None
+    last_heartbeat_time = datetime.datetime.utcnow()
+
+    while True:
+        now = datetime.datetime.utcnow()
+        if not is_market_open(now):
+            if last_market_closed is None or (now - last_market_closed).total_seconds() >= 900:
+                wait_sec = max(60.0, min(3600.0, seconds_until_open(now)))
+                logging.info(
+                    "[MARKET_CLOSED] Worker-only standby. Next open in ~%.1f min (UTC=%s)",
+                    wait_sec / 60.0,
+                    now.isoformat(timespec="seconds"),
+                )
+                last_market_closed = now
+            await asyncio.sleep(60)
+            continue
+        last_market_closed = None
+
+        if WORKER_AUTOCONTROL_ENABLED:
+            try:
+                desired_workers = WORKER_ALL_SERVICES
+                if not desired_workers:
+                    logging.debug("[WORKER_CTL] no worker services configured; skip reconcile")
+                elif desired_workers != last_worker_plan:
+                    await _reconcile_worker_services(last_worker_plan, desired_workers)
+                    last_worker_plan = desired_workers
+            except Exception as exc:  # pragma: no cover - defensive
+                logging.debug("[WORKER_CTL] reconcile failed: %s", exc)
+
+        if (now - last_heartbeat_time).total_seconds() >= 300:
+            logging.info(
+                "[WORKER_ONLY] heartbeat active_workers=%s",
+                ",".join(sorted(last_worker_plan)) if last_worker_plan else "unknown",
+            )
+            last_heartbeat_time = now
+
+        await asyncio.sleep(10)
+
+
 async def logic_loop(
     gpt_state: GPTDecisionState,
     gpt_requests: GPTRequestManager,
@@ -3010,6 +3085,9 @@ async def logic_loop(
     stage_plan_advisor: StagePlanAdvisor | None = None,
     partial_advisor: PartialReductionAdvisor | None = None,
 ):
+    if WORKER_ONLY_MODE or not MAIN_TRADING_ENABLED:
+        logging.info("[LOGIC_LOOP] disabled (worker-only runtime).")
+        return
     pos_manager = PositionManager()
     metrics_client = RealtimeMetricsClient()
     confidence_policy = ConfidencePolicy()
@@ -7332,87 +7410,36 @@ async def main():
     seeded = await initialize_history("USD_JPY")
     if not seeded:
         logging.warning("[HISTORY] Startup seeding incomplete, continuing with live feed.")
-    gpt_state = GPTDecisionState()
-    gpt_requests = GPTRequestManager()
-    worker_task = None
-    if not WORKER_ONLY_MODE:
-        worker_task = asyncio.create_task(gpt_worker(gpt_state, gpt_requests))
-    autotune_task = start_background_autotune(asyncio.get_running_loop())
-    fast_scalp_state = FastScalpState()
-    fast_scalp_task = None
-    try:
-        if not WORKER_ONLY_MODE:
-            await prime_gpt_decision(gpt_state, gpt_requests)
-            fast_scalp_task = asyncio.create_task(
+
+    while True:
+        tasks = [
+            asyncio.create_task(
                 supervised_runner(
-                    "fast_scalp",
-                    fast_scalp_worker(fast_scalp_state),
+                    "candle_stream",
+                    start_candle_stream("USD_JPY", handlers),
                 )
-            )
-        while True:
-            tasks = [
-                asyncio.create_task(
-                    supervised_runner(
-                        "candle_stream",
-                        start_candle_stream("USD_JPY", handlers),
-                    )
-                ),
-                asyncio.create_task(
-                    supervised_runner(
-                        "logic_loop",
-                        logic_loop(
-                            gpt_state,
-                            gpt_requests,
-                            fast_scalp_state=fast_scalp_state,
-                            rr_advisor=RR_ADVISOR,
-                            exit_advisor=EXIT_ADVISOR,
-                            strategy_conf_advisor=STRATEGY_CONF_ADVISOR,
-                            focus_advisor=FOCUS_ADVISOR,
-                            volatility_advisor=VOLATILITY_ADVISOR,
-                            stage_plan_advisor=STAGE_PLAN_ADVISOR,
-                            partial_advisor=PARTIAL_ADVISOR,
-                        ),
-                    )
-                ),
-            ]
-            try:
-                await asyncio.gather(*tasks)
-                logging.error("[SUPERVISOR] Task group exited cleanly; restarting in 5s.")
-            except asyncio.CancelledError:
-                for task in tasks:
-                    task.cancel()
-                raise
-            except Exception:
-                logging.exception("[SUPERVISOR] Task group crashed; restarting in 5s.")
-            finally:
-                for task in tasks:
-                    task.cancel()
-                await asyncio.gather(*tasks, return_exceptions=True)
-            if worker_task and worker_task.done():
-                logging.error("[SUPERVISOR] GPT worker terminated; restarting service")
-                worker_task = asyncio.create_task(gpt_worker(gpt_state, gpt_requests))
-                await prime_gpt_decision(gpt_state, gpt_requests)
-            if fast_scalp_task and fast_scalp_task.done():
-                logging.error("[SUPERVISOR] fast_scalp worker terminated; restarting")
-                fast_scalp_task = asyncio.create_task(
-                    supervised_runner(
-                        "fast_scalp",
-                        fast_scalp_worker(fast_scalp_state),
-                    )
+            ),
+            asyncio.create_task(
+                supervised_runner(
+                    "worker_only_loop",
+                    worker_only_loop(),
                 )
-            await asyncio.sleep(5)
-    finally:
-        if worker_task:
-            worker_task.cancel()
-            with contextlib.suppress(Exception):
-                await worker_task
-        if fast_scalp_task:
-            fast_scalp_task.cancel()
-            with contextlib.suppress(Exception):
-                await fast_scalp_task
-        autotune_task.cancel()
-        with contextlib.suppress(Exception):
-            await autotune_task
+            ),
+        ]
+        try:
+            await asyncio.gather(*tasks)
+            logging.error("[SUPERVISOR] Worker-only task group exited cleanly; restarting in 5s.")
+        except asyncio.CancelledError:
+            for task in tasks:
+                task.cancel()
+            raise
+        except Exception:
+            logging.exception("[SUPERVISOR] Worker-only task group crashed; restarting in 5s.")
+        finally:
+            for task in tasks:
+                task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
+        await asyncio.sleep(5)
 
 
 if __name__ == "__main__":

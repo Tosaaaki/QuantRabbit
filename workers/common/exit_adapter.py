@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from typing import Any, Optional
 
 try:  # pragma: no cover - ExitManager may be missing in lightweight runs
@@ -20,6 +21,10 @@ def build_exit_manager(exit_cfg: Optional[dict[str, Any]]) -> Optional[Any]:
     which does not provide that helper.  We therefore try to instantiate it
     defensively and only return the object if the expected helper exists.
     """
+
+    # 共通EXITは既定で無効化（専用 exit_worker のみを使用）
+    if str(os.getenv("EXIT_MANAGER_DISABLED", "1")).strip().lower() not in {"", "0", "false", "no"}:
+        return None
 
     if not exit_cfg or _ExitManagerBase is None:
         return None
