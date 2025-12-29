@@ -41,7 +41,7 @@ ENTRY_SHORT_THRESHOLD_PIPS: float = max(
 )
 ENTRY_RANGE_FLOOR_PIPS: float = max(0.005, float(os.getenv("FAST_SCALP_RANGE_FLOOR_PIPS", "0.02")))
 ENTRY_COOLDOWN_SEC: float = max(0.5, float(os.getenv("FAST_SCALP_ENTRY_COOLDOWN_SEC", "2.0")))
-MAX_ORDERS_PER_MINUTE: int = max(1, int(float(os.getenv("FAST_SCALP_MAX_ORDERS_PER_MIN", "15"))))
+MAX_ORDERS_PER_MINUTE: int = max(1, int(float(os.getenv("FAST_SCALP_MAX_ORDERS_PER_MIN", "8"))))
 MIN_ORDER_SPACING_SEC: float = max(
     0.2, float(os.getenv("FAST_SCALP_MIN_ORDER_SPACING_SEC", "0.5"))
 )
@@ -61,8 +61,8 @@ JST_OFF_HOURS_START: int = min(23, max(0, int(float(os.getenv("FAST_SCALP_OFF_HO
 JST_OFF_HOURS_END: int = min(23, max(0, int(float(os.getenv("FAST_SCALP_OFF_HOURS_END_JST", "5")))))
 LOG_PREFIX_TICK = "[SCALP-TICK]"
 MIN_UNITS: int = max(1000, int(float(os.getenv("FAST_SCALP_MIN_UNITS", "2000"))))
-MAX_ACTIVE_TRADES: int = max(1, int(float(os.getenv("FAST_SCALP_MAX_ACTIVE", "3"))))
-MAX_PER_DIRECTION: int = max(1, int(float(os.getenv("FAST_SCALP_MAX_PER_DIRECTION", "3"))))
+MAX_ACTIVE_TRADES: int = max(1, int(float(os.getenv("FAST_SCALP_MAX_ACTIVE", "1"))))
+MAX_PER_DIRECTION: int = max(1, int(float(os.getenv("FAST_SCALP_MAX_PER_DIRECTION", "1"))))
 STALE_TICK_MAX_SEC: float = max(0.5, float(os.getenv("FAST_SCALP_STALE_TICK_MAX_SEC", "3.0")))
 SNAPSHOT_MIN_INTERVAL_SEC: float = max(
     0.25, float(os.getenv("FAST_SCALP_SNAPSHOT_MIN_INTERVAL_SEC", "1.0"))

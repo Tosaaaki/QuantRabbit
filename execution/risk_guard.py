@@ -33,10 +33,10 @@ POCKET_DD_LIMITS = {
 GLOBAL_DD_LIMIT = 0.20  # 全体ドローダウン 20%
 # Pocketごとの口座配分上限（DD母数の推定に使用）
 POCKET_MAX_RATIOS = {
-    "macro": float(os.getenv("POCKET_MAX_RATIO_MACRO", "0.92")),
-    "micro": float(os.getenv("POCKET_MAX_RATIO_MICRO", "0.92")),
-    "scalp": float(os.getenv("POCKET_MAX_RATIO_SCALP", "0.92")),
-    "scalp_fast": float(os.getenv("POCKET_MAX_RATIO_SCALP_FAST", "0.92")),
+    "macro": float(os.getenv("POCKET_MAX_RATIO_MACRO", "0.88")),
+    "micro": float(os.getenv("POCKET_MAX_RATIO_MICRO", "0.88")),
+    "scalp": float(os.getenv("POCKET_MAX_RATIO_SCALP", "0.88")),
+    "scalp_fast": float(os.getenv("POCKET_MAX_RATIO_SCALP_FAST", "0.88")),
 }
 _DEFAULT_BASE_EQUITY = {
     "macro": 8000.0,
@@ -45,7 +45,7 @@ _DEFAULT_BASE_EQUITY = {
     "scalp_fast": 2000.0,
 }
 _LOOKBACK_DAYS = 7
-MAX_MARGIN_USAGE = float(os.getenv("MAX_MARGIN_USAGE", "0.97"))
+MAX_MARGIN_USAGE = float(os.getenv("MAX_MARGIN_USAGE", "0.90"))
 
 _DISABLE_POCKET_DD = os.getenv("DISABLE_POCKET_DD", "false").lower() in {
     "1",
@@ -59,8 +59,8 @@ _DISABLE_GLOBAL_DD = os.getenv("DISABLE_GLOBAL_DD", "false").lower() in {
     "yes",
     "on",
 }
-EXPOSURE_MAX_RATIO = float(os.getenv("EXPOSURE_MAX_RATIO", "0.99"))
-EXPOSURE_WARN_THRESHOLD = float(os.getenv("EXPOSURE_WARN_THRESHOLD", "1.05"))
+EXPOSURE_MAX_RATIO = float(os.getenv("EXPOSURE_MAX_RATIO", "0.96"))
+EXPOSURE_WARN_THRESHOLD = float(os.getenv("EXPOSURE_WARN_THRESHOLD", "1.02"))
 _MIN_LOT_BY_POCKET = {
     "macro": max(0.0, float(os.getenv("RISK_MIN_LOT_MACRO", "0.1"))),
     "micro": max(0.0, float(os.getenv("RISK_MIN_LOT_MICRO", "0.0"))),
