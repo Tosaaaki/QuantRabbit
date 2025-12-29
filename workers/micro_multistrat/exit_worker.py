@@ -72,14 +72,12 @@ def _filter_trades(trades: Sequence[dict], tags: Set[str]) -> list[dict]:
     for tr in trades:
         thesis = tr.get("entry_thesis") or {}
         tag = thesis.get("strategy_tag") or thesis.get("strategy") or tr.get("strategy")
-        if tag:
-            tag_str = str(tag)
-            base_tag = tag_str.split("-", 1)[0]
-            if tag_str in tags or base_tag in tags:
-                filtered.append(tr)
-                continue
-        else:
-            # メタ欠損でも micro pocket のポジションは評価する
+        if not tag:
+            # タグ欠損はEXIT対象外（誤爆防止）
+            continue
+        tag_str = str(tag)
+        base_tag = tag_str.split("-", 1)[0]
+        if tag_str in tags or base_tag in tags:
             filtered.append(tr)
     return filtered
 

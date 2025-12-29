@@ -235,6 +235,47 @@ class PositionManager:
         self._entry_meta_cache: dict[str, dict] = {}
 
     @staticmethod
+    def _infer_strategy_tag(thesis: dict | None, client_id: str | None, pocket: str | None) -> str | None:
+        """
+        推定ルール:
+        - thesis.strategy_tag / strategy を最優先
+        - client_id から既知プレフィックスや qr-<ts>-<pocket>-<tag> / qr-<pocket>-<ts>-<tag> を抽出
+        """
+        if thesis and isinstance(thesis, dict):
+            tag = thesis.get("strategy_tag") or thesis.get("strategy")
+            if tag:
+                return str(tag)
+        if not client_id:
+            return None
+        cid = str(client_id)
+        try:
+            import re
+            # Known prefixes
+            if cid.startswith("qr-fast-"):
+                return "fast_scalp"
+            if cid.startswith("qr-pullback-s5-"):
+                return "pullback_s5"
+            if cid.startswith("qr-pullback-"):
+                return "pullback_scalp"
+            if cid.startswith("qr-mirror-s5-"):
+                return "mirror_spike_s5"
+            # qr-<ts>-<pocket>-<tag...>
+            m = re.match(r"^qr-\d+-(micro|macro|scalp|event|hybrid)-(.+)$", cid)
+            if m:
+                return m.group(2)
+            # qr-<pocket>-<ts>-<tag...>
+            m2 = re.match(r"^qr-(micro|macro|scalp|event|hybrid)-\d+-([^-]+)", cid)
+            if m2:
+                return m2.group(2)
+            # fallback: qr-<word>-<rest>
+            m3 = re.match(r"^qr-([a-zA-Z0-9_]+)-(.*)$", cid)
+            if m3 and m3.group(1) not in {"micro", "macro", "scalp", "event", "hybrid"}:
+                return m3.group(1)
+        except Exception:
+            return None
+        return None
+
+    @staticmethod
     def _normalize_pocket(pocket: str | None) -> str:
         """Map pocket values to a canonical set.
 
@@ -525,24 +566,9 @@ class PositionManager:
             # Heuristic mapping from client id prefix
             try:
                 if client_id:
-                    if client_id.startswith("qr-fast-"):
-                        details["strategy_tag"] = "fast_scalp"
-                    elif client_id.startswith("qr-pullback-s5-"):
-                        details["strategy_tag"] = "pullback_s5"
-                    elif client_id.startswith("qr-pullback-"):
-                        details["strategy_tag"] = "pullback_scalp"
-                    elif client_id.startswith("qr-mirror-s5-"):
-                        details["strategy_tag"] = "mirror_spike_s5"
-                    elif client_id.startswith("qr-"):
-                        import re
-                        m = re.match(r"^qr-\d+-(micro|macro|event|hybrid)-(.*)$", client_id)
-                        if m:
-                            details["strategy_tag"] = m.group(2)
-                        else:
-                            # Newer ID format: qr-<pocket>-<ts>-<tag>-<hash>
-                            m2 = re.match(r"^qr-(micro|macro|scalp|event|hybrid)-\d+-([^-]+)", client_id)
-                            if m2:
-                                details["strategy_tag"] = m2.group(2)
+                    strat = self._infer_strategy_tag(None, client_id, pocket)
+                    if strat:
+                        details["strategy_tag"] = strat
             except Exception:
                 pass
             # Augment with local orders log for strategy_tag/thesis if possible
@@ -624,6 +650,8 @@ class PositionManager:
                         thesis_obj = None
             except sqlite3.Error:
                 pass
+        if strategy_tag is None:
+            strategy_tag = self._infer_strategy_tag(thesis_obj, client_id, row["pocket"])
         return {
             "entry_price": float(row["executed_price"] or 0.0),
             "entry_time": entry_time,
@@ -683,6 +711,13 @@ class PositionManager:
                 details = self._get_trade_details(trade_id)
                 if not details:
                     continue
+                inferred_tag = self._infer_strategy_tag(
+                    details.get("entry_thesis"),
+                    details.get("client_order_id"),
+                    details.get("pocket"),
+                )
+                if inferred_tag and not details.get("strategy_tag"):
+                    details["strategy_tag"] = inferred_tag
 
                 close_price = float(tx.get("price", 0.0))
                 close_time = _parse_timestamp(tx.get("time"))
@@ -1017,6 +1052,19 @@ class PositionManager:
                     tag_val = thesis_from_comment.get("strategy_tag") or thesis_from_comment.get("tag")
                     if tag_val:
                         trade_entry["strategy_tag"] = tag_val
+            if not trade_entry.get("strategy_tag"):
+                inferred = self._infer_strategy_tag(trade_entry.get("entry_thesis"), client_id, pocket)
+                if inferred:
+                    trade_entry["strategy_tag"] = inferred
+            # EXIT誤爆防止: エージェント管理ポケットかつ strategy_tag 不明なら除外
+            if pocket in agent_pockets and not trade_entry.get("strategy_tag"):
+                logging.warning(
+                    "[PositionManager] skip open trade without strategy_tag pocket=%s trade_id=%s client_id=%s",
+                    pocket,
+                    trade_id,
+                    trade_entry.get("client_id"),
+                )
+                continue
             info["open_trades"].append(trade_entry)
             prev_total_units = info["units"]
             new_total_units = prev_total_units + units

@@ -290,6 +290,15 @@ scripts/vm.sh -p quantrabbit -z asia-northeast1-a -m fx-trader-vm \
 ```
 
 - デプロイ前に `terraform plan` を CI で実行し差分確認、サービスアカウントは最小権限 (`roles/storage.objectAdmin`, `roles/logging.logWriter`, 必要な Pub/Sub Roles)。
+
+クイックデプロイ（覚書）
+- 標準: `scripts/vm.sh -p quantrabbit -z asia-northeast1-a -m fx-trader-vm -t -k ~/.ssh/gcp_oslogin_quantrabbit deploy -i --restart quantrabbit.service`
+- アカウント切替: 上記に `-A <ACCOUNT>` を追加
+- ブランチ指定: 上記に `-b <BRANCH>` を追加
+- vm.sh が失敗した場合（フォールバック直書き）
+  1) `gcloud compute ssh fx-trader-vm --project=quantrabbit --zone=asia-northeast1-a --tunnel-through-iap --ssh-key-file ~/.ssh/gcp_oslogin_quantrabbit --command "sudo -u tossaki -H bash -lc 'cd /home/tossaki/QuantRabbit && git fetch --all -q || true && git checkout -q main || git checkout -b main origin/main || true && git pull --ff-only && if [ -d .venv ]; then source .venv/bin/activate && pip install -r requirements.txt; fi'"`
+  2) `gcloud compute ssh fx-trader-vm --project=quantrabbit --zone=asia-northeast1-a --tunnel-through-iap --ssh-key-file ~/.ssh/gcp_oslogin_quantrabbit --command "sudo systemctl daemon-reload && sudo systemctl restart quantrabbit.service && sudo systemctl status --no-pager -l quantrabbit.service || true"`
+
 - Cloud Build 成功時に `cosign sign` でイメージ署名、SBOM (`gcloud artifacts sbom export`) を保存。
 - 予算アラート: `GCP Budget Alert ≥ 80%` で Slack 通知、IAP トンネルは `roles/iap.tunnelResourceAccessor` を必須化。
 - ロールバック: `scripts/vm.sh ... exec -- 'cd ~/QuantRabbit && git checkout <release-tag> && ./startup.sh --dry-run'` を実施し、検証後に `--apply`。

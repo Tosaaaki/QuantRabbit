@@ -71,9 +71,12 @@ def _ensure_schema() -> None:
       instrument TEXT,
       units INTEGER,
       entry_price REAL,
+      closed_units INTEGER,
       close_price REAL,
       pl_pips REAL,
       realized_pl REAL,
+      commission REAL,
+      financing REAL,
       entry_time TEXT,
       open_time TEXT,
       close_time TEXT,
@@ -81,7 +84,13 @@ def _ensure_schema() -> None:
       state TEXT,
       updated_at TEXT,
       version TEXT DEFAULT 'v1',
-      unrealized_pl REAL
+      unrealized_pl REAL,
+      strategy TEXT,
+      macro_regime TEXT,
+      micro_regime TEXT,
+      client_order_id TEXT,
+      strategy_tag TEXT,
+      entry_thesis TEXT
     )
     """
         )
@@ -95,10 +104,13 @@ def _ensure_schema() -> None:
             "pocket": "TEXT",
             "instrument": "TEXT",
             "units": "INTEGER",
+            "closed_units": "INTEGER",
             "entry_price": "REAL",
             "close_price": "REAL",
             "pl_pips": "REAL",
             "realized_pl": "REAL",
+            "commission": "REAL",
+            "financing": "REAL",
             "entry_time": "TEXT",
             "open_time": "TEXT",
             "close_time": "TEXT",
@@ -107,6 +119,12 @@ def _ensure_schema() -> None:
             "updated_at": "TEXT",
             "version": "TEXT DEFAULT 'v1'",
             "unrealized_pl": "REAL",
+            "strategy": "TEXT",
+            "macro_regime": "TEXT",
+            "micro_regime": "TEXT",
+            "client_order_id": "TEXT",
+            "strategy_tag": "TEXT",
+            "entry_thesis": "TEXT",
         }
         for name, ddl in columns.items():
             if name not in existing:
@@ -158,6 +176,10 @@ def snapshot() -> Dict[str, Dict[str, float]]:
         pf = profit / loss if loss else float("inf")
         win_rate = (sub.pl_pips > 0).mean()
         avg = sub.pl_pips.mean()
+        sum_pips = float(sub.pl_pips.sum())
+        units = _pick_units(sub)
+        realized_jpy = _realized_sum_jpy(sub)
+        sum_jpy = realized_jpy if realized_jpy is not None else _yen_from_pips(sub.pl_pips, units)
 
         # シャープ比：日次換算を簡易に pips/sd
         sd = sub.pl_pips.std()
@@ -168,6 +190,124 @@ def snapshot() -> Dict[str, Dict[str, float]]:
             "sharpe": round(sharpe, 2),
             "win_rate": round(win_rate, 2),
             "avg_pips": round(avg, 2),
+            "sum_pips": round(sum_pips, 2),
+            "sum_jpy": round(sum_jpy),
+        }
+    for key in ("micro", "macro", "scalp"):
+        result.setdefault(key, {})
+    return result
+
+
+def _pick_units(sub: pd.DataFrame) -> pd.Series:
+    """
+    単位選択: closed_units があれば優先し、無ければ units。
+    """
+    if "closed_units" in sub.columns:
+        ser = sub["closed_units"].fillna(0)
+        if ser.abs().sum() > 0:
+            return ser
+    if "units" in sub.columns:
+        return sub["units"].fillna(0)
+    return pd.Series(0, index=sub.index)
+
+
+def _realized_sum_jpy(sub: pd.DataFrame) -> float | None:
+    """realized_pl + commission + financing を合算。列が無ければ None を返す。"""
+    if "realized_pl" not in sub.columns:
+        return None
+    if not sub["realized_pl"].notna().any():
+        return None
+    realized = sub["realized_pl"].fillna(0)
+    commission = sub["commission"].fillna(0) if "commission" in sub.columns else 0
+    financing = sub["financing"].fillna(0) if "financing" in sub.columns else 0
+    try:
+        return float((realized + commission + financing).sum())
+    except Exception:
+        return float(realized.sum())
+
+
+def _yen_from_pips(pl_pips: pd.Series, units: pd.Series) -> float:
+    """
+    JPY換算の損益を計算する。
+    USD/JPY は 1pip=0.01 JPY、pip価値=units*0.01。
+    """
+    try:
+        return float((pl_pips.astype(float) * units.abs().astype(float) * 0.01).sum())
+    except Exception:
+        return 0.0
+
+
+def snapshot_strategy(limit: int = 30) -> list[dict]:
+    """
+    strategy_tag 単位の集計を返す（数量は JPY換算も付与）。
+    limit 件を sum_jpy 降順で返却。
+    """
+    df = _load_df()
+    if df.empty:
+        return []
+    if "units" not in df.columns:
+        df["units"] = 0
+    tag = None
+    for key in ("strategy_tag", "strategy", "pocket"):
+        if key in df.columns:
+            tag = key
+            break
+    if tag is None:
+        return []
+
+    rows = []
+    for strat, sub in df.groupby(tag):
+        trades = len(sub)
+        wins = int((sub.pl_pips > 0).sum())
+        losses = int((sub.pl_pips < 0).sum())
+        sum_pips = float(sub.pl_pips.sum())
+        avg_pips = float(sub.pl_pips.mean())
+        units = _pick_units(sub)
+        realized_jpy = _realized_sum_jpy(sub)
+        sum_jpy = realized_jpy if realized_jpy is not None else _yen_from_pips(sub.pl_pips, units)
+        rows.append(
+            {
+                "strategy": str(strat),
+                "trades": trades,
+                "wins": wins,
+                "losses": losses,
+                "win_rate": round(wins / trades, 3) if trades else 0.0,
+                "sum_pips": round(sum_pips, 2),
+                "avg_pips": round(avg_pips, 2),
+                "sum_jpy": round(sum_jpy),
+            }
+        )
+    rows.sort(key=lambda r: r["sum_jpy"], reverse=True)
+    return rows[:limit]
+
+
+def snapshot_with_yen() -> dict[str, dict[str, float]]:
+    """
+    pocket単位のスナップショットに JPY換算の総損益を付与して返す。
+    戻り値例:
+      {'micro': {'pf':..., 'sum_jpy': 12000.0, ...}, ...}
+    """
+    df = _load_df()
+    if df.empty:
+        return {"micro": {}, "macro": {}, "scalp": {}}
+    if "units" not in df.columns:
+        df["units"] = 0
+
+    result: Dict[str, Dict[str, float]] = {}
+    for pocket, sub in df.groupby("pocket"):
+        profit = sub.loc[sub.pl_pips > 0, "pl_pips"].sum()
+        loss = abs(sub.loc[sub.pl_pips < 0, "pl_pips"].sum())
+        pf = profit / loss if loss else float("inf")
+        win_rate = (sub.pl_pips > 0).mean()
+        avg = sub.pl_pips.mean()
+        sum_jpy = _yen_from_pips(sub.pl_pips, sub.units)
+
+        result[pocket] = {
+            "pf": round(pf, 2),
+            "win_rate": round(win_rate, 2),
+            "avg_pips": round(avg, 2),
+            "sum_pips": round(float(sub.pl_pips.sum()), 2),
+            "sum_jpy": round(sum_jpy),
         }
     for key in ("micro", "macro", "scalp"):
         result.setdefault(key, {})
@@ -175,18 +315,10 @@ def snapshot() -> Dict[str, Dict[str, float]]:
 
 
 if __name__ == "__main__":
-    # ダミー行でテスト
-    with _connect() as con:
-        con.execute("DELETE FROM trades")
-        con.executemany(
-            "INSERT INTO trades(pocket,open_time,close_time,pl_pips) VALUES (?,?,?,?)",
-            [
-                ("micro", "2025-06-23T12:00", "2025-06-23T12:05", 8.5),
-                ("micro", "2025-06-23T12:10", "2025-06-23T12:15", -6.0),
-                ("macro", "2025-06-23T12:00", "2025-06-23T13:30", 42.0),
-                ("scalp", "2025-06-23T12:02", "2025-06-23T12:03", 2.1),
-            ],
-        )
+    # 既存 trades.db を破壊せずに集計結果だけを表示する。
     import pprint
 
-    pprint.pp(snapshot())
+    print("Pocket snapshot with JPY:")
+    pprint.pp(snapshot_with_yen())
+    print("\nStrategy snapshot (top 30 by JPY P/L):")
+    pprint.pp(snapshot_strategy())

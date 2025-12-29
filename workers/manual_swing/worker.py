@@ -21,6 +21,12 @@ from workers.common.quality_gate import current_regime, news_block_active
 from . import config
 
 LOG = logging.getLogger(__name__)
+STRATEGY_TAG = "manual_swing"
+
+
+def _client_order_id(suffix: str) -> str:
+    ts_ms = int(time.time() * 1000)
+    return f"qr-manual-{ts_ms}-{suffix}"
 
 
 def _latest_mid(fallback: float) -> float:
@@ -368,7 +374,9 @@ async def manual_swing_worker() -> None:
                     tp_price=None,
                     pocket=config.POCKET,  # type: ignore[arg-type]
                     reduce_only=True,
-                    entry_thesis={"exit_reason": exit_reason},
+                    client_order_id=_client_order_id("close"),
+                    strategy_tag=STRATEGY_TAG,
+                    entry_thesis={"exit_reason": exit_reason, "strategy_tag": STRATEGY_TAG},
                 )
                 stage_cooldown_until["long"] = now_mono + 300.0
                 stage_cooldown_until["short"] = now_mono + 300.0
@@ -475,9 +483,10 @@ async def manual_swing_worker() -> None:
                 sl_price=sl_price,
                 tp_price=tp_price,
                 pocket=config.POCKET,  # type: ignore[arg-type]
-                client_order_id=None,
+                client_order_id=_client_order_id(f"{side}-stage{current_stage_count+1}"),
                 reduce_only=False,
-                entry_thesis=entry_meta,
+                strategy_tag=STRATEGY_TAG,
+                entry_thesis={**entry_meta, "strategy_tag": STRATEGY_TAG},
             )
             stage_cooldown_until[direction] = now_mono + config.STAGE_COOLDOWN_MINUTES * 60.0
             position_tracker["side"] = side

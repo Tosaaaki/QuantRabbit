@@ -5,6 +5,14 @@ QuantRabbit は USD/JPY で 24/7 自律運用する無裁量トレーディン�
 > **運用ミッション**: 口座資金を長期的に最大化することだけを目的とし、  
 > どの変更でも資本成長のために最善を尽くす（守りではなく勝ちにいく）方針を明記しています。
 
+### Quick Deploy（覚書）
+- 標準: `scripts/vm.sh -p quantrabbit -z asia-northeast1-a -m fx-trader-vm -t -k ~/.ssh/gcp_oslogin_quantrabbit deploy -i --restart quantrabbit.service`
+- gcloudアカウント切替: `scripts/vm.sh ... -A <ACCOUNT> -t -k ~/.ssh/gcp_oslogin_quantrabbit deploy -i --restart quantrabbit.service`
+- ブランチ指定: `scripts/vm.sh ... deploy -b main -i --restart quantrabbit.service -t`
+- vm.shが壊れたときの直打ち（2ステップ）
+  1) `gcloud compute ssh fx-trader-vm --project=quantrabbit --zone=asia-northeast1-a --tunnel-through-iap --ssh-key-file ~/.ssh/gcp_oslogin_quantrabbit --command "sudo -u tossaki -H bash -lc 'cd /home/tossaki/QuantRabbit && git fetch --all -q || true && git checkout -q main || git checkout -b main origin/main || true && git pull --ff-only && if [ -d .venv ]; then source .venv/bin/activate && pip install -r requirements.txt; fi'"`
+  2) `gcloud compute ssh fx-trader-vm --project=quantrabbit --zone=asia-northeast1-a --tunnel-through-iap --ssh-key-file ~/.ssh/gcp_oslogin_quantrabbit --command "sudo systemctl daemon-reload && sudo systemctl restart quantrabbit.service && sudo systemctl status --no-pager -l quantrabbit.service || true"`
+
 * **テクニカル** : ta‑lib で計算した MA / BB / RSI / ADX …  
 * **ニュース** : 廃止（ニュース連動なし）  
 * **GPT** : レジーム補足 + 戦略順位 + lot 配分を 60 秒ごとに判断  

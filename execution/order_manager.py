@@ -91,6 +91,8 @@ def min_units_for_pocket(pocket: Optional[str]) -> int:
     return int(_MIN_UNITS_BY_POCKET.get(pocket, _DEFAULT_MIN_UNITS))
 
 
+_EXIT_NO_NEGATIVE_CLOSE = os.getenv("EXIT_NO_NEGATIVE_CLOSE", "1").strip().lower() not in {"", "0", "false", "no"}
+
 _DYNAMIC_SL_ENABLE = os.getenv("ORDER_DYNAMIC_SL_ENABLE", "true").lower() in {
     "1",
     "true",
@@ -594,6 +596,20 @@ def _current_trade_units(trade_id: str) -> Optional[int]:
         return None
 
 
+def _current_trade_unrealized_pl(trade_id: str) -> Optional[float]:
+    try:
+        req = TradeDetails(accountID=ACCOUNT, tradeID=trade_id)
+        api.request(req)
+        trade = req.response.get("trade") or {}
+        pl = trade.get("unrealizedPL")
+        if pl is None:
+            return None
+        return float(pl)
+    except Exception as exc:  # noqa: BLE001
+        logging.warning("[ORDER] Failed to fetch unrealized PL trade=%s err=%s", trade_id, exc)
+        return None
+
+
 def _retry_close_with_actual_units(
     trade_id: str,
     requested_units: Optional[int],
@@ -1030,6 +1046,41 @@ async def close_trade(trade_id: str, units: Optional[int] = None, client_order_i
             request_payload={"trade_id": trade_id, "data": data or {}},
         )
         return False
+    if _EXIT_NO_NEGATIVE_CLOSE:
+        pl = _current_trade_unrealized_pl(trade_id)
+        if pl is not None and pl <= 0:
+            log_metric(
+                "close_blocked_negative",
+                float(pl),
+                tags={"trade_id": str(trade_id)},
+            )
+            _console_order_log(
+                "CLOSE_REJECT",
+                pocket=None,
+                strategy_tag=None,
+                side=None,
+                units=units,
+                sl_price=None,
+                tp_price=None,
+                client_order_id=client_order_id,
+                ticket_id=str(trade_id),
+                note="no_negative_close",
+            )
+            _log_order(
+                pocket=None,
+                instrument=None,
+                side=None,
+                units=units,
+                sl_price=None,
+                tp_price=None,
+                client_order_id=client_order_id,
+                status="close_reject_no_negative",
+                attempt=0,
+                ticket_id=str(trade_id),
+                executed_price=None,
+                request_payload={"trade_id": trade_id, "data": {"unrealized_pl": pl}},
+            )
+            return False
     if units is None:
         data = {"units": "ALL"}
     else:
@@ -1792,12 +1843,56 @@ async def market_order(
                 thesis_sl_pips = float(value)
         except (TypeError, ValueError):
             thesis_sl_pips = None
-        try:
-            value = entry_thesis.get("tp_pips") or entry_thesis.get("target_tp_pips")
-            if value is not None:
-                thesis_tp_pips = float(value)
-        except (TypeError, ValueError):
-            thesis_tp_pips = None
+    try:
+        value = entry_thesis.get("tp_pips") or entry_thesis.get("target_tp_pips")
+        if value is not None:
+            thesis_tp_pips = float(value)
+    except (TypeError, ValueError):
+        thesis_tp_pips = None
+
+    # strategy_tag は必須: entry_thesis から補完しても欠損なら拒否
+    raw_tag = None
+    if isinstance(entry_thesis, dict):
+        raw_tag = entry_thesis.get("strategy_tag") or entry_thesis.get("strategy")
+    if not strategy_tag and raw_tag:
+        strategy_tag = str(raw_tag)
+    if isinstance(entry_thesis, dict) and strategy_tag and not entry_thesis.get("strategy_tag"):
+        entry_thesis = dict(entry_thesis)
+        entry_thesis["strategy_tag"] = strategy_tag
+    if not strategy_tag:
+        _console_order_log(
+            "OPEN_REJECT",
+            pocket=pocket,
+            strategy_tag="missing_tag",
+            side="buy" if units > 0 else "sell",
+            units=units,
+            sl_price=sl_price,
+            tp_price=tp_price,
+            client_order_id=client_order_id,
+            note="missing_strategy_tag",
+        )
+        log_order(
+            pocket=pocket,
+            instrument=instrument,
+            side="buy" if units > 0 else "sell",
+            units=units,
+            sl_price=sl_price,
+            tp_price=tp_price,
+            client_order_id=client_order_id,
+            status="missing_strategy_tag",
+            attempt=0,
+            request_payload={
+                "strategy_tag": strategy_tag,
+                "meta": meta,
+                "entry_thesis": entry_thesis,
+            },
+        )
+        log_metric(
+            "order_missing_strategy_tag",
+            1.0,
+            tags={"pocket": pocket, "side": "buy" if units > 0 else "sell"},
+        )
+        return None
     side_label = "buy" if units > 0 else "sell"
 
     entry_price_meta = _as_float((meta or {}).get("entry_price"))
@@ -2183,7 +2278,7 @@ async def market_order(
     if client_order_id:
         order_data["order"]["clientExtensions"]["id"] = client_order_id
         order_data["order"]["tradeClientExtensions"]["id"] = client_order_id
-    if (not STOP_LOSS_DISABLED) and sl_price is not None:
+    if (not STOP_LOSS_DISABLED) and sl_price is not None and not _EXIT_NO_NEGATIVE_CLOSE:
         order_data["order"]["stopLossOnFill"] = {"price": f"{sl_price:.3f}"}
     if tp_price is not None:
         order_data["order"]["takeProfitOnFill"] = {"price": f"{tp_price:.3f}"}
@@ -2285,7 +2380,7 @@ async def market_order(
                     if STOP_LOSS_DISABLED:
                         fallback_sl = None
                     if fallback_sl is not None or fallback_tp is not None:
-                        if fallback_sl is not None:
+                        if fallback_sl is not None and not _EXIT_NO_NEGATIVE_CLOSE:
                             order_data["order"]["stopLossOnFill"] = {
                                 "price": f"{fallback_sl:.3f}"
                             }
@@ -2551,7 +2646,7 @@ async def limit_order(
     if client_order_id:
         payload["order"]["clientExtensions"]["id"] = client_order_id
         payload["order"]["tradeClientExtensions"]["id"] = client_order_id
-    if (not STOP_LOSS_DISABLED) and sl_price is not None:
+    if (not STOP_LOSS_DISABLED) and sl_price is not None and not _EXIT_NO_NEGATIVE_CLOSE:
         payload["order"]["stopLossOnFill"] = {"price": f"{sl_price:.3f}"}
     if tp_price is not None:
         payload["order"]["takeProfitOnFill"] = {"price": f"{tp_price:.3f}"}
