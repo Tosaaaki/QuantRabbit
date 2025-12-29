@@ -5886,7 +5886,15 @@ async def logic_loop(
             except Exception:
                 pass
             # 同一サイクルで全体からconfidence上位のみを通す（最大3本）。
-            # fast_scalp 偏重を避けるため、戦略ごとのブースト/ペナルティを適用し、fast_scalpは1本まで。
+            # fast_scalp 偏重を避けるため、戦略ごとのブースト/ペナルティを適用し、fast_scalpは原則1本。
+            max_signals = 3
+            conf_floor = 0
+            if margin_usage is not None and margin_usage >= 0.88:
+                max_signals = 2
+                conf_floor = 60
+            if margin_usage is not None and margin_usage >= 0.92:
+                max_signals = 1
+                conf_floor = 65
             if evaluated_signals:
                 candidates = []
                 for s in evaluated_signals:
@@ -5894,6 +5902,8 @@ async def logic_loop(
                     if action not in {"OPEN_LONG", "OPEN_SHORT"}:
                         continue
                     raw_conf = int(s.get("confidence", 0) or 0)
+                    if conf_floor and raw_conf < conf_floor:
+                        continue
                     tag = s.get("strategy") or s.get("strategy_tag") or s.get("tag") or ""
                     adj = raw_conf
                     # 戦略別バイアス: fast_scalpを強めに抑え、macro/microを押し上げる
@@ -5905,55 +5915,62 @@ async def logic_loop(
                         adj += 6
                     s["conf_adj"] = adj
                     candidates.append(s)
-                selected = sorted(
-                    candidates,
+
+                fast_candidates = []
+                other_candidates = []
+                for s in candidates:
+                    tag = s.get("strategy") or s.get("strategy_tag") or s.get("tag") or ""
+                    if tag == "fast_scalp":
+                        fast_candidates.append(s)
+                    else:
+                        other_candidates.append(s)
+                other_candidates.sort(
                     key=lambda s: int(s.get("conf_adj", s.get("confidence", 0)) or 0),
                     reverse=True,
                 )
-                # fast_scalpは2本まで許容（他が無い場合の枠確保）
-                fast_taken = 0
-                filtered_selected = []
-                for sig in selected:
-                    tag = sig.get("strategy") or sig.get("strategy_tag") or sig.get("tag") or ""
-                    if tag == "fast_scalp":
-                        if fast_taken >= 2:
-                            continue
-                        fast_taken += 1
-                    filtered_selected.append(sig)
-                selected = filtered_selected
+                fast_candidates.sort(
+                    key=lambda s: int(s.get("conf_adj", s.get("confidence", 0)) or 0),
+                    reverse=True,
+                )
+
+                fast_limit = 1
+                selected: list[dict] = []
+                # まず非 fast を優先的に詰める
+                for sig in other_candidates:
+                    if len(selected) >= max_signals:
+                        break
+                    selected.append(sig)
+                # 残枠に fast_scalp を1本だけ許容
+                fast_added = 0
+                for sig in fast_candidates:
+                    if len(selected) >= max_signals or fast_added >= fast_limit:
+                        break
+                    selected.append(sig)
+                    fast_added += 1
+
+                if len(selected) != len(candidates):
+                    try:
+                        logging.info(
+                            "[SIGNAL_SELECT] picked=%d out_of=%d margin=%.2f conf_floor=%s strategies=%s fast_used=%d",
+                            len(selected),
+                            len(candidates),
+                            margin_usage if margin_usage is not None else -1.0,
+                            conf_floor if conf_floor > 0 else "none",
+                            ",".join(sorted({s.get('strategy') or s.get('strategy_tag') or 'unknown' for s in selected})),
+                            fast_added,
+                        )
+                    except Exception:
+                        pass
                 try:
                     logging.info(
                         "[SIGNAL_SELECT] selected=%d fast=%d confs=%s tags=%s",
                         len(selected),
-                        fast_taken,
+                        sum(1 for sig in selected if (sig.get('strategy') or sig.get('strategy_tag') or sig.get('tag')) == 'fast_scalp'),
                         ",".join(str(sig.get("conf_adj", sig.get("confidence"))) for sig in selected),
                         ",".join(sig.get("strategy") or sig.get("strategy_tag") or sig.get("tag") or "unknown" for sig in selected),
                     )
                 except Exception:
                     pass
-                max_signals = 3
-                conf_floor = 0
-                if margin_usage is not None and margin_usage >= 0.88:
-                    max_signals = 2
-                    conf_floor = 60
-                if margin_usage is not None and margin_usage >= 0.92:
-                    max_signals = 1
-                    conf_floor = 65
-                if conf_floor > 0:
-                    filtered = [s for s in selected if int(s.get("confidence", 0) or 0) >= conf_floor]
-                    if filtered:
-                        selected = filtered
-                if len(selected) > max_signals:
-                    selected = selected[:max_signals]
-                if len(selected) != len(evaluated_signals):
-                    logging.info(
-                        "[SIGNAL_SELECT] picked=%d out_of=%d margin=%.2f conf_floor=%s strategies=%s",
-                        len(selected),
-                        len(evaluated_signals),
-                        margin_usage if margin_usage is not None else -1.0,
-                        conf_floor if conf_floor > 0 else "none",
-                        ",".join(sorted({s.get('strategy') or s.get('strategy_tag') or 'unknown' for s in selected})),
-                    )
                 for sig in selected:
                     try:
                         log_metric(
