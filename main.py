@@ -5867,6 +5867,21 @@ async def logic_loop(
             # Apply dynamic allocation (score-driven confidence trim) if available
             alloc_data = load_dynamic_alloc()
             evaluated_signals, pocket_caps, target_use = apply_dynamic_alloc(filtered_signals, alloc_data)
+            # 同一サイクルで最もconfidenceが高いシグナルだけを通す（機会損失を抑えつつ方向精度を優先）
+            if evaluated_signals:
+                best = max(
+                    evaluated_signals,
+                    key=lambda s: int(s.get("confidence", 0) or 0),
+                )
+                if len(evaluated_signals) > 1:
+                    logging.info(
+                        "[SIGNAL_SELECT] picked strategy=%s pocket=%s conf=%s out_of=%d",
+                        best.get("strategy") or best.get("strategy_tag"),
+                        best.get("pocket"),
+                        best.get("confidence"),
+                        len(evaluated_signals),
+                    )
+                evaluated_signals = [best]
 
             risk_override = _dynamic_risk_pct(
                 evaluated_signals,
