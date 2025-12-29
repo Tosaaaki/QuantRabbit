@@ -73,9 +73,6 @@ BLOCKED_WEEKDAYS = tuple(
     day for day in os.getenv("IMPULSE_BREAK_S5_BLOCKED_WEEKDAYS", "4").split(",") if day.strip()
 )
 
-ALLOW_LONG: bool = _bool("IMPULSE_BREAK_S5_ALLOW_LONG", True)
-ALLOW_SHORT: bool = _bool("IMPULSE_BREAK_S5_ALLOW_SHORT", False)
-
 DAILY_PNL_STOP_PIPS: float = max(0.0, _float("IMPULSE_BREAK_S5_DAILY_PNL_STOP_PIPS", 10.0))
 MAX_CONSEC_LOSSES: int = max(0, _int("IMPULSE_BREAK_S5_MAX_CONSEC_LOSSES", 3))
 PERFORMANCE_REFRESH_SEC: float = max(10.0, _float("IMPULSE_BREAK_S5_PERF_REFRESH_SEC", 60.0))

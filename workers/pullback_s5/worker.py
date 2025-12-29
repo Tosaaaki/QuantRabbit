@@ -289,11 +289,6 @@ async def pullback_s5_worker() -> None:
             if side is None:
                 continue
 
-            if side == "short" and not config.ALLOW_SHORT:
-                continue
-            if side == "long" and not config.ALLOW_LONG:
-                continue
-
             factors = all_factors()
             trend_bias: Optional[str] = None
             adx_value: Optional[float] = None

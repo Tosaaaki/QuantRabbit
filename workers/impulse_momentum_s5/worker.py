@@ -289,8 +289,7 @@ async def impulse_momentum_s5_worker() -> None:
             latest_close = latest["close"]
 
             if (
-                config.ALLOW_LONG
-                and latest_close >= recent_high + breakout_gap
+                latest_close >= recent_high + breakout_gap
                 and fast_z is not None
                 and slow_z is not None
                 and fast_z >= config.FAST_Z_LONG_MIN
@@ -299,8 +298,7 @@ async def impulse_momentum_s5_worker() -> None:
             ):
                 direction = "long"
             elif (
-                config.ALLOW_SHORT
-                and latest_close <= recent_low - breakout_gap
+                latest_close <= recent_low - breakout_gap
                 and fast_z is not None
                 and slow_z is not None
                 and fast_z <= config.FAST_Z_SHORT_MAX
@@ -459,6 +457,7 @@ async def impulse_momentum_s5_worker() -> None:
                     tp_price=tp_price,
                     pocket="scalp",
                     client_order_id=client_id,
+                    strategy_tag="impulse_momentum_s5",
                     entry_thesis=thesis,
                 )
             except Exception as exc:  # noqa: BLE001

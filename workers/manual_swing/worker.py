@@ -241,10 +241,6 @@ async def manual_swing_worker() -> None:
             if not fac_h1 or not fac_h4:
                 continue
             direction, features = _trend_bias(fac_h1, fac_h4)
-            if direction == "long" and not config.ALLOW_LONG:
-                direction = None
-            elif direction == "short" and not config.ALLOW_SHORT:
-                direction = None
             if direction is None:
                 continue
 

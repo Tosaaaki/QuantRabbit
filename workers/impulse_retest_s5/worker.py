@@ -309,6 +309,7 @@ async def impulse_retest_s5_worker() -> None:
                     tp_price=round(tp_price, 3),
                     pocket="scalp",
                     client_order_id=client_id,
+                    strategy_tag="impulse_retest_s5",
                     entry_thesis=thesis,
                 )
             except Exception as exc:  # noqa: BLE001

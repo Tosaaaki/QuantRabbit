@@ -349,11 +349,6 @@ async def vwap_magnet_s5_worker() -> None:
             if side is None:
                 continue
 
-            if side == "long" and not config.ALLOW_LONG:
-                continue
-            if side == "short" and not config.ALLOW_SHORT:
-                continue
-
             fast_len = min(len(closes), config.MA_FAST_BUCKETS)
             slow_len = min(len(closes), config.MA_SLOW_BUCKETS)
             if fast_len < config.MA_FAST_BUCKETS or slow_len < config.MA_SLOW_BUCKETS:

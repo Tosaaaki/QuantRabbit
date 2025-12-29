@@ -95,9 +95,6 @@ BLOCKED_WEEKDAYS = tuple(
     if day.strip()
 )
 
-ALLOW_LONG: bool = _bool("VWAP_MAGNET_S5_ALLOW_LONG", True)
-ALLOW_SHORT: bool = _bool("VWAP_MAGNET_S5_ALLOW_SHORT", False)
-
 WINDOW_SEC: float = max(60.0, _float("VWAP_MAGNET_S5_WINDOW_SEC", 600.0))
 BUCKET_SECONDS: float = max(1.0, _float("VWAP_MAGNET_S5_BUCKET_SECONDS", 5.0))
 VWAP_WINDOW_BUCKETS: int = max(30, _int("VWAP_MAGNET_S5_VWAP_BUCKETS", 96))

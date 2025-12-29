@@ -340,10 +340,6 @@ async def impulse_break_s5_worker() -> None:
 
             if direction is None:
                 continue
-            if direction == "long" and not config.ALLOW_LONG:
-                continue
-            if direction == "short" and not config.ALLOW_SHORT:
-                continue
             if existing_side and existing_side != direction:
                 continue
 
@@ -424,6 +420,7 @@ async def impulse_break_s5_worker() -> None:
                     tp_price=tp_price,
                     pocket="scalp",
                     client_order_id=client_id,
+                    strategy_tag="impulse_break_s5",
                     entry_thesis=entry_thesis,
                 )
             except Exception as exc:  # noqa: BLE001

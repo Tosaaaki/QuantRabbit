@@ -84,9 +84,6 @@ ENABLED: bool = _bool("MANUAL_SWING_ENABLED", True)
 LOOP_INTERVAL_SEC: float = max(5.0, _float("MANUAL_SWING_LOOP_INTERVAL_SEC", 15.0))
 
 POCKET: str = os.getenv("MANUAL_SWING_POCKET", "macro")
-ALLOW_LONG: bool = _bool("MANUAL_SWING_ALLOW_LONG", True)
-ALLOW_SHORT: bool = _bool("MANUAL_SWING_ALLOW_SHORT", True)
-
 ALLOWED_HOURS_UTC = frozenset(range(24))
 BLOCKED_WEEKDAYS = tuple(
     day.strip()

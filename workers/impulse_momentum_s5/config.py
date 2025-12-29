@@ -73,9 +73,6 @@ BLOCKED_WEEKDAYS = tuple(
     token for token in os.getenv("IMPULSE_MOMENTUM_S5_BLOCKED_WEEKDAYS", "").split(",") if token.strip()
 )
 
-ALLOW_LONG: bool = _bool("IMPULSE_MOMENTUM_S5_ALLOW_LONG", True)
-ALLOW_SHORT: bool = _bool("IMPULSE_MOMENTUM_S5_ALLOW_SHORT", False)
-
 WINDOW_SEC: float = max(120.0, _float("IMPULSE_MOMENTUM_S5_WINDOW_SEC", 360.0))
 BUCKET_SECONDS: float = max(1.0, _float("IMPULSE_MOMENTUM_S5_BUCKET_SECONDS", 5.0))
 FAST_BUCKETS: int = max(36, _int("IMPULSE_MOMENTUM_S5_FAST_BUCKETS", 60))
