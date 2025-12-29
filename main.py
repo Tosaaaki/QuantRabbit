@@ -5867,6 +5867,24 @@ async def logic_loop(
             # Apply dynamic allocation (score-driven confidence trim) if available
             alloc_data = load_dynamic_alloc()
             evaluated_signals, pocket_caps, target_use = apply_dynamic_alloc(filtered_signals, alloc_data)
+            # デバッグ: 関所手前のシグナル件数とタグ
+            try:
+                if not evaluated_signals:
+                    logging.info(
+                        "[SIGNAL_DEBUG] evaluated=0 filtered=%d raw=%d alloc_data=%s",
+                        len(filtered_signals),
+                        len(signals),
+                        "yes" if alloc_data else "no",
+                    )
+                else:
+                    logging.info(
+                        "[SIGNAL_DEBUG] evaluated=%d pockets=%s tags=%s",
+                        len(evaluated_signals),
+                        ",".join(sorted({s.get('pocket') or 'unknown' for s in evaluated_signals})),
+                        ",".join(sorted({s.get('strategy') or s.get('strategy_tag') or s.get('tag') or 'unknown' for s in evaluated_signals})),
+                    )
+            except Exception:
+                pass
             # 同一サイクルで全体からconfidence上位のみを通す（最大3本）。
             # fast_scalp 偏重を避けるため、戦略ごとのブースト/ペナルティを適用し、fast_scalpは1本まで。
             if evaluated_signals:
@@ -5903,6 +5921,16 @@ async def logic_loop(
                         fast_taken += 1
                     filtered_selected.append(sig)
                 selected = filtered_selected
+                try:
+                    logging.info(
+                        "[SIGNAL_SELECT] selected=%d fast=%d confs=%s tags=%s",
+                        len(selected),
+                        fast_taken,
+                        ",".join(str(sig.get("conf_adj", sig.get("confidence"))) for sig in selected),
+                        ",".join(sig.get("strategy") or sig.get("strategy_tag") or sig.get("tag") or "unknown" for sig in selected),
+                    )
+                except Exception:
+                    pass
                 max_signals = 3
                 conf_floor = 0
                 if margin_usage is not None and margin_usage >= 0.88:
