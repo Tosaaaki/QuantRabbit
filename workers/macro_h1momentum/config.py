@@ -16,6 +16,5 @@ MAX_MARGIN_USAGE = float(os.getenv("H1M_MAX_MARGIN_USAGE", "0.92"))
 
 # Dynamic cap clamp
 CAP_MIN = float(os.getenv("H1M_CAP_MIN", "0.25"))
-CAP_MAX = float(os.getenv("H1M_CAP_MAX", "0.95"))
-
+CAP_MAX = float(os.getenv("H1M_CAP_MAX", "0.99"))
 

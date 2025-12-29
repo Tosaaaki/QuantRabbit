@@ -14,5 +14,4 @@ BASE_ENTRY_UNITS = int(os.getenv("TRENDMA_BASE_UNITS", "35000"))
 MAX_MARGIN_USAGE = float(os.getenv("TRENDMA_MAX_MARGIN_USAGE", "0.92"))
 
 CAP_MIN = float(os.getenv("TRENDMA_CAP_MIN", "0.25"))
-CAP_MAX = float(os.getenv("TRENDMA_CAP_MAX", "0.9"))
-
+CAP_MAX = float(os.getenv("TRENDMA_CAP_MAX", "0.99"))

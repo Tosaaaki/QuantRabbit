@@ -26,7 +26,7 @@ def compute_cap(
     reasons: Dict[str, float] = {}
 
     # Aim for target margin usage (e.g., 0.9 = use 90% of equity)
-    target_usage = max(0.1, min(0.99, float(os.getenv("TARGET_MARGIN_USAGE", "0.9") or 0.9)))
+    target_usage = max(0.1, min(0.99, float(os.getenv("TARGET_MARGIN_USAGE", "0.95") or 0.95)))
     current_usage = max(0.0, min(1.0, 1.0 - free_ratio))
     if current_usage > 0:
         adj = target_usage / current_usage
