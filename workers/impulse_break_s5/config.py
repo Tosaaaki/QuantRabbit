@@ -73,7 +73,8 @@ BLOCKED_WEEKDAYS = tuple(
     day for day in os.getenv("IMPULSE_BREAK_S5_BLOCKED_WEEKDAYS", "4").split(",") if day.strip()
 )
 
-DAILY_PNL_STOP_PIPS: float = max(0.0, _float("IMPULSE_BREAK_S5_DAILY_PNL_STOP_PIPS", 10.0))
+# Disable daily kill-switch by setting an effectively infinite stop.
+DAILY_PNL_STOP_PIPS: float = 1e9
 MAX_CONSEC_LOSSES: int = max(0, _int("IMPULSE_BREAK_S5_MAX_CONSEC_LOSSES", 3))
 PERFORMANCE_REFRESH_SEC: float = max(10.0, _float("IMPULSE_BREAK_S5_PERF_REFRESH_SEC", 60.0))
 
@@ -126,8 +127,6 @@ BLOCK_REGIMES = tuple(
     regime.strip()
     for regime in os.getenv("IMPULSE_BREAK_S5_BLOCK_REGIMES", "Event").split(",")
     if regime.strip()
-)
-)
 )
 LOSS_STREAK_MAX: int = max(0, _int("IMPULSE_BREAK_S5_MAX_CONSEC_LOSSES", 2))
 LOSS_STREAK_COOLDOWN_MIN: float = max(

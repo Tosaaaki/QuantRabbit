@@ -82,12 +82,12 @@ SNAPSHOT_BURST_INTERVAL_SEC: float = max(
 NO_LOSS_CLOSE: bool = _bool_env("FAST_SCALP_NO_LOSS_CLOSE", True)
 
 # --- entry gating / quality thresholds ---
-MIN_ENTRY_ATR_PIPS: float = max(0.0, float(os.getenv("FAST_SCALP_MIN_ENTRY_ATR_PIPS", "0.30")))
-MIN_ENTRY_TICK_COUNT: int = max(2, int(float(os.getenv("FAST_SCALP_MIN_ENTRY_TICK_COUNT", "22"))))
+MIN_ENTRY_ATR_PIPS: float = max(0.0, float(os.getenv("FAST_SCALP_MIN_ENTRY_ATR_PIPS", "0.08")))
+MIN_ENTRY_TICK_COUNT: int = max(2, int(float(os.getenv("FAST_SCALP_MIN_ENTRY_TICK_COUNT", "4"))))
 RSI_ENTRY_OVERBOUGHT: float = float(os.getenv("FAST_SCALP_RSI_ENTRY_OVERBOUGHT", "70"))
 RSI_ENTRY_OVERSOLD: float = float(os.getenv("FAST_SCALP_RSI_ENTRY_OVERSOLD", "30"))
-LOW_VOL_COOLDOWN_SEC: float = max(0.0, float(os.getenv("FAST_SCALP_LOW_VOL_COOLDOWN_SEC", "120.0")))
-LOW_VOL_MAX_CONSECUTIVE: int = max(1, int(float(os.getenv("FAST_SCALP_LOW_VOL_MAX_CONSECUTIVE", "2"))))
+LOW_VOL_COOLDOWN_SEC: float = max(0.0, float(os.getenv("FAST_SCALP_LOW_VOL_COOLDOWN_SEC", "0.0")))
+LOW_VOL_MAX_CONSECUTIVE: int = max(1, int(float(os.getenv("FAST_SCALP_LOW_VOL_MAX_CONSECUTIVE", "10"))))
 PATTERN_MODEL_PATH: str = os.getenv("FAST_SCALP_PATTERN_MODEL_PATH", "").strip()
 PATTERN_MIN_PROB: float = max(0.0, min(1.0, float(os.getenv("FAST_SCALP_PATTERN_MIN_PROB", "0.62"))))
 IMPULSE_LOOKBACK_SEC: float = max(
@@ -110,10 +110,10 @@ CONSOLIDATION_MIN_TICKS: int = max(
 )
 REQUIRE_CONSOLIDATION: bool = _bool_env("FAST_SCALP_REQUIRE_CONSOLIDATION", True)
 ENTRY_MIN_VELOCITY_PIPS_PER_SEC: float = max(
-    0.0, float(os.getenv("FAST_SCALP_ENTRY_MIN_VELOCITY_PIPS_PER_SEC", "0.04"))
+    0.0, float(os.getenv("FAST_SCALP_ENTRY_MIN_VELOCITY_PIPS_PER_SEC", "0.0"))
 )
 ENTRY_MIN_TICK_DENSITY: float = max(
-    0.1, float(os.getenv("FAST_SCALP_ENTRY_MIN_TICK_DENSITY", "1.1"))
+    0.0, float(os.getenv("FAST_SCALP_ENTRY_MIN_TICK_DENSITY", "0.2"))
 )
 REVERSAL_TO_TREND_IMPULSE_PIPS: float = max(
     0.0, float(os.getenv("FAST_SCALP_REVERSAL_TO_TREND_IMPULSE_PIPS", "1.2"))
@@ -135,7 +135,7 @@ ATR_PERIOD: int = max(2, int(float(os.getenv("FAST_SCALP_ATR_PERIOD", "8"))))
 ATR_LOW_VOL_PIPS: float = max(0.0, float(os.getenv("FAST_SCALP_ATR_LOW_VOL_PIPS", "1.4")))
 ATR_HIGH_VOL_PIPS: float = max(0.0, float(os.getenv("FAST_SCALP_ATR_HIGH_VOL_PIPS", "4.0")))
 # When tick-derived ATR falls below this floor, fall back to an extended window.
-ATR_FLOOR_PIPS: float = max(0.0, float(os.getenv("FAST_SCALP_ATR_FLOOR_PIPS", "0.6")))
+ATR_FLOOR_PIPS: float = max(0.0, float(os.getenv("FAST_SCALP_ATR_FLOOR_PIPS", "0.20")))
 
 _MIN_TICK_ENV = int(float(os.getenv("FAST_SCALP_MIN_TICK_COUNT", "14")))
 MIN_TICK_COUNT: int = max(RSI_PERIOD + 2, ATR_PERIOD + 1, _MIN_TICK_ENV)
@@ -191,12 +191,12 @@ M1_RSI_CONFIRM_SPAN_SEC: float = max(5.0, float(os.getenv("FAST_SCALP_M1_RSI_CON
 
 # --- dynamic entry tuning ---
 # エントリー閾値を ATR/スプレッドに応じて可変化
-ENTRY_MOM_ATR_COEF: float = max(0.0, float(os.getenv("FAST_SCALP_ENTRY_MOM_ATR_COEF", "0.16")))
-ENTRY_MOM_SPREAD_COEF: float = max(0.0, float(os.getenv("FAST_SCALP_ENTRY_MOM_SPREAD_COEF", "0.4")))
-ENTRY_RANGE_SPREAD_COEF: float = max(0.0, float(os.getenv("FAST_SCALP_ENTRY_RANGE_SPREAD_COEF", "0.35")))
+ENTRY_MOM_ATR_COEF: float = max(0.0, float(os.getenv("FAST_SCALP_ENTRY_MOM_ATR_COEF", "0.05")))
+ENTRY_MOM_SPREAD_COEF: float = max(0.0, float(os.getenv("FAST_SCALP_ENTRY_MOM_SPREAD_COEF", "0.2")))
+ENTRY_RANGE_SPREAD_COEF: float = max(0.0, float(os.getenv("FAST_SCALP_ENTRY_RANGE_SPREAD_COEF", "0.15")))
 
 # テスト/検証用（広いスプレッド時は無効）
-FORCE_ENTRIES: bool = _bool_env("FAST_SCALP_FORCE_ENTRIES", False)
+FORCE_ENTRIES: bool = _bool_env("FAST_SCALP_FORCE_ENTRIES", True)
 
 # --- advanced timeout control ---
 TIMEOUT_EVENT_BUDGET: int = max(1, int(float(os.getenv("FAST_SCALP_TIMEOUT_EVENT_BUDGET", "12"))))

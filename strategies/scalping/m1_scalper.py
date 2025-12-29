@@ -366,12 +366,13 @@ class M1Scalper:
             return round(out, 2)
 
         # Precision gates (configurable via fallback section)
-        atr_floor = _fallback_float("atr_floor", 1.2)
+        # Allow entries in thinner markets by lowering the default ATR/volatility floors.
+        atr_floor = _fallback_float("atr_floor", 0.4)
         if scalp_tactical:
             atr_floor = _fallback_float("atr_floor_tactical", atr_floor)
-        vol5_min = _fallback_float("vol5_min", 0.35)
-        adx_min = _fallback_float("adx_min", 12.0)
-        momentum_thresh = _fallback_float("momentum_thresh", 0.0025)
+        vol5_min = _fallback_float("vol5_min", 0.05)
+        adx_min = _fallback_float("adx_min", 5.0)
+        momentum_thresh = _fallback_float("momentum_thresh", 0.0010)
 
         # レンジ・低ボラを検知し、帯付近のみエントリーを許可
         low_vol_range = (adx < 18.0 and bbw > 0.0 and bbw < 0.0016 and atr_pips < 2.4)
