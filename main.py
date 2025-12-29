@@ -94,7 +94,7 @@ def _env_bool(name: str, default: bool = False) -> bool:
     return str(val).strip().lower() in {"1", "true", "yes", "on"}
 
 # Trading from main is enabled alongside workers for higher entry density.
-MAIN_TRADING_ENABLED = True
+MAIN_TRADING_ENABLED = _env_bool("MAIN_TRADING_ENABLED", default=True)
 
 # Aggressive mode: loosen range gatesとマイクロの入口ガードを緩めるフラグ
 # デフォルトは安全寄りに OFF
@@ -103,7 +103,7 @@ AGGRESSIVE_TRADING = _env_bool("AGGRESSIVE_TRADING", default=False)
 MICRO_OPENS_DISABLED = _env_bool("MICRO_OPENS_DISABLED", default=False)
 
 # Worker-onlyモード: mainはワーカー起動/データ供給のみ行い、発注/Exitロジックはスキップ
-WORKER_ONLY_MODE = False
+WORKER_ONLY_MODE = _env_bool("WORKER_ONLY_MODE", default=False)
 
 # ---- Dynamic allocation (strategy score / pocket cap) loader ----
 _DYNAMIC_ALLOC_PATH = Path("config/dynamic_alloc.json")
@@ -284,7 +284,11 @@ logging.basicConfig(
 )
 
 logging.info("Application started!")
-logging.info("[CONFIG] Worker-only runtime enforced; main trading loop disabled.")
+logging.info(
+    "[CONFIG] main_trading_enabled=%s worker_only_mode=%s",
+    MAIN_TRADING_ENABLED,
+    WORKER_ONLY_MODE,
+)
 
 # Backward-compatible alias (expected by STRATEGIES map and logs)
 TrendMA = MovingAverageCross
