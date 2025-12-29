@@ -1,42 +1,35 @@
-# AGENT.me  –  QuantRabbit Agent Specification
+# AGENT.me – QuantRabbit Agent Specification（整理版）
 
-## 1. ミッション
-> **狙い**	: USD/JPY で 1 日 +100 pips を実現する、 24/7 無裁量トレーディング・エージェント。  
-> **境界**	: 発注・リスクは機械的、曖昧判断は GPT‑5 系 (既定 gpt‑5‑mini) に委譲。
+## 1. ミッション / 運用前提
+> 狙い: USD/JPY で 1 日 +100 pips を狙う 24/7 無裁量トレーディング・エージェント。  
+> 境界: 発注・リスクは機械的、曖昧判断は GPT‑5 系（既定 gpt-5-mini）。
+- ニュース連動パイプラインは撤去済み（`news_fetcher` / `summary_ingestor` / NewsSpike は無効）。
+- 現行デフォルト: `WORKER_ONLY_MODE=true` / `MAIN_TRADING_ENABLED=0`。共通 `exit_manager` はスタブ化され、エントリー/EXIT は各戦略ワーカー＋専用 `exit_worker` が担当。
+- 運用/デプロイ手順は `README.md` と `docs/` を参照。
 
-補助資料: 運用/デプロイの手順面は `README.md` と `docs/` 配下を参照する。
+## 2. システム概要とフロー
+- データ → 判定 → 発注: Tick 取得 → Candle 確定 → Factors 算出 → Regime/Focus → GPT Decider → Strategy Plugins → Risk Guard → Order Manager → ログ。
+- コンポーネントと I/O
 
-> **更新 (ニュース廃止)**: RSS→GCS→要約のニュース連動パイプラインは撤去済み。`news_fetcher` / `summary_ingestor` / NewsSpike 系戦略は無効化されており、以下のニュース関連記述は参考情報としてのみ扱う。
+  | レイヤ | 担当 | 主な入出力 |
+  |--------|------|------------|
+  | DataFetcher | `market_data/*` | Tick JSON, Candle dict |
+  | IndicatorEngine | `indicators/*` | Candle deque → Factors dict {ma10, rsi, …} |
+  | Regime & Focus | `analysis/regime_classifier.py` / `focus_decider.py` | Factors → macro/micro レジーム・`weight_macro` |
+  | GPT Decider | `analysis/gpt_decider.py` | focus + perf → `GPTDecision` |
+  | Strategy Plugin | `strategies/*` | Factors → `StrategyDecision` または None |
+  | Exit (専用ワーカー) | `workers/*/exit_worker.py` | pocket 別 open positions → exit 指示（PnL>0 決済が原則） |
+  | Risk Guard | `execution/risk_guard.py` | lot/SL/TP/pocket → 可否・調整値 |
+  | Order Manager | `execution/order_manager.py` | units/sl/tp/client_order_id/tag → OANDA ticket |
+  | Logger | `logs/*.db` | 全コンポーネントが INSERT |
+- ライフサイクル
+  - Startup: `env.toml` 読込 → Secrets 確認 → WebSocket 接続。
+  - 60s タクト（main 有効時のみ）: 新ローソク → Factors 更新 → Regime/Focus → GPT decision → Strategy loop（confidence スケーリング + ステージ判定）→ exit_worker → risk_guard → order_manager → `trades.db` / `metrics.db` ログ。
+  - タクト要件: 正秒同期（±500 ms）、締切 55 s 超でサイクル破棄（バックログ禁止）、`monotonic()` で `decision_latency_ms` 計測。
+  - Background: `backup_to_gcs.sh` による nightly logs バックアップ。
 
-## 目次
-- [1. ミッション](#1-ミッション)
-- [2. コンポーネント間の契約](#2-コンポーネント間の契約)
-- [3. ライフサイクル](#3-ライフサイクル)
-- [4. 環境変数 / Secret 一覧](#4-環境変数--secret-一覧)
-- [5. トークン & コストガード](#5-トークン--コストガード)
-- [6. 安全装置](#6-安全装置)
-- [7. デプロイ手順（更新版 / 要約）](#7-デプロイ手順更新版--要約)
-- [8. チーム運用ルール](#8-チーム運用ルール)
-- [9. 参考ドキュメント](#9-参考ドキュメント)
-- [10. GCE SSH / OS Login ガイド](#10-gce-ssh--os-login-ガイド)
-
----
-
-## 2. コンポーネント間の契約
-
-| レイヤ | 担当 | 期待する入出力 |
-|--------|------|----------------|
-| **DataFetcher** | `market_data/*` | + Tick JSON<br>+ Candle dict<br>+ raw News JSON (→ GCS) |
-| **IndicatorEngine** | `indicators/*` | ← Candle deque<br>→ factors dict {ma10, rsi, …} |
-| **Regime & Focus** | `analysis/regime_classifier.py` / `focus_decider.py` | ← factors<br>→ macro/micro レジーム・weight_macro |
-| **GPT Decider** | `analysis/gpt_decider.py` | ← focus + perf<br>→ JSON {focus_tag, weight_macro, weight_scalp, ranked_strategies} |
-| **Strategy Plugin** | `strategies/*` | ← factors<br>→ dict {action, sl_pips, tp_pips, confidence, tag} or None |
-| **Exit (専用ワーカー)** | `workers/*/exit_worker.py` | ← pocket別 open positions<br>→ list[{pocket, units, reason, tag}]（PnL>0 決済が原則）。共通 ExitManager は互換スタブで自動EXITなし |
-| **Risk Guard** | `execution/risk_guard.py` | ← lot, SL/TP, pocket<br>→ bool (可否)・調整値 |
-| **Order Manager** | `execution/order_manager.py` | ← units, sl, tp, client_order_id, tag<br>→ OANDA ticket ID |
-| **Logger** | `logs/*.db` | 全コンポーネントが INSERT |
-
-### 2.1 共通データスキーマ
+## 3. データスキーマと単位
+- 共通スキーマ（pydantic 互換）
 
 ```python
 from pydantic import BaseModel, Field
@@ -95,505 +88,122 @@ class OrderIntent(BaseModel):
     client_order_id: str
 ```
 
-> すべてのコンポーネントは上記モデル（もしくは互換 JSON Schema）で通信し、`logs/*.db` にも生 JSON を残す。
+- 単位と用語
 
-### 2.2 単位・用語の定義
+  | 用語 | 定義 |
+  |------|------|
+  | `pip` | USD/JPY の 1 pip = 0.01。入力/出力は pip 単位を明記。 |
+  | `point` | 0.001。OANDA REST 価格の丸め単位。 |
+  | `lot` | 1 lot = 100,000 units。`units = round(lot * 100000)`。 |
+  | `pocket` | `micro` = 短期テクニカル、`macro` = レジーム、`scalp` = スカルプ。口座資金を `pocket_ratio` で按分。 |
+  | `weight_macro` | 0.0〜1.0。`pocket_macro = pocket_total * weight_macro`（運用では Macro 上限 30%）。 |
 
-| 用語 | 定義 |
-|------|------|
-| `pip` | USD/JPY の 1 pip は 0.01。入力/出力とも pip 単位を明記する。 |
-| `point` | 0.001。OANDA REST 価格の丸め単位。 |
-| `lot` | 1 lot = 100,000 units。`units = round(lot * 100000)`。 |
-| `pocket` | `micro` = 短期テクニカル、`macro` = レジーム。口座資金を `pocket_ratio` で按分。 |
-| `weight_macro` | 0.0〜1.0。`pocket_macro = pocket_total * weight_macro` を意味する（運用では Macro を最大 30% に制限）。 |
+- 価格計算: `price_from_pips("BUY", entry, sl_pips) = round(entry - sl_pips * 0.01, 3)`、`price_from_pips("SELL", entry, sl_pips) = round(entry + sl_pips * 0.01, 3)`。
+- `client_order_id = f"qr-{ts_ms}-{focus_tag}-{tag}"`（9 桁以内のハッシュで重複防止）。Exit も同形式で 90 日ユニーク。
 
-- `price_from_pips("BUY", entry, sl_pips)` = `entry - sl_pips * 0.01` を `round(price, 3)`。
-- `price_from_pips("SELL", entry, sl_pips)` = `entry + sl_pips * 0.01` を `round(price, 3)`。
-- `client_order_id = f"qr-{ts_ms}-{focus_tag}-{tag}"`。9 桁以内のハッシュを付けて重複防止。
+## 4. エントリー / Exit / リスク制御
+- Strategy フロー: Focus/GPT decision → `ranked_strategies` 順に Strategy Plugin を呼び、`StrategyDecision` または None を返す。`None` はノートレード。
+- Confidence スケーリング: `confidence`(0–100) を pocket 割当 lot に掛け、最小 0.2〜最大 1.0 の段階的エントリー。`STAGE_RATIOS` に従い `_stage_conditions_met` を通過したステージのみ追撃。
+- Exit: 各戦略の `exit_worker` が最低保有時間とテクニカル/レンジ判定を踏まえ、PnL>0 決済が原則（強制 DD/ヘルスのみ例外）。共通 `execution/exit_manager.py` は常に空を返す互換スタブ。`execution/stage_tracker` がクールダウンと方向別ブロックを管理。
+- Release gate: PF>1.1、勝率>52%、最大 DD<5% を 2 週間連続で満たすと実弾へ昇格。
+- リスク計算とロット: `pocket_equity = account_equity * pocket_ratio`。`POCKET_MAX_RATIOS` は macro/micro/scalp/scalp_fast すべて 0.85 を起点に ATR・PF・free_margin で動的スケールし、下限 0.92〜上限 1.0 にクランプ（scalp_fast は scalp から 0.35 割合で分岐）。`risk_pct = 0.02`、`risk_amount = pocket_equity * risk_pct`。1 lot の pip 価値は 1000 JPY → `lot = min(MAX_LOT, round(risk_amount / (sl_pips * 1000), 3))`、`units = int(round(lot * 100000))`。`abs(units) < 1000` は発注しない。最小ロット下限: macro 0.1, micro 0.0, scalp 0.05（env で上書き可）。`clamp_sl_tp(price, sl, tp, side)` で 0.001 丸め、SL/TP 逆転時は 0.1 バッファ。
+- OANDA API マッピング
 
-### 2.3 コンポーネント I/O 詳細
+  | Strategy action | REST 注文 | units 符号 | SL/TP | 備考 |
+  |-----------------|-----------|------------|-------|------|
+  | `OPEN_LONG` | `MARKET` | `+abs(units)` | `stopLossOnFill`, `takeProfitOnFill` | `timeInForce=FOK`, `positionFill=DEFAULT` |
+  | `OPEN_SHORT` | `MARKET` | `-abs(units)` | 同上 | ask/bid 逆転チェック後送信 |
+  | `CLOSE` | `MARKET` | 既存ポジの反対売買 | 指定なし | `OrderCancelReplace` で逆指値削除 |
+  | `HOLD` | 送信なし | 0 | なし | Strategy ループ継続 |
 
-- DataFetcher: OANDA streaming で `Tick` を取得し 60s 終端で `Candle` を確定、欠損 tick は遅延として扱う (`lag_ms` を添付)。
-- IndicatorEngine: 各 timeframe ごとに `Deque[Candle]` を維持し 300 本以上揃ったときに `Factors` を算出、入力欠損時は `stale=True` を返し Strategy を停止。
-- Regime & Focus: macro=H4/D1, micro=M1 の `Factors` を消費し、`focus_decider` は `FocusDecision`(`focus_tag`,`weight_macro`) を返す。
-- GPT Decider: テクニカル要因とパフォーマンス指標のみで `GPTDecision` を返す（`weight_macro` と `weight_scalp` を明示）。JSON Schema 不一致時はフォールバックを Raise。
-- Strategy Plugin: `ranked_strategies` 順に呼び出し `StrategyDecision` または `None` を返す。必ず `confidence` と `tag` を含め、`None` は「ノートレード」。
-- Exit: 戦略ごとの `exit_worker` が最低保有時間とテクニカル/レンジ判定を踏まえてクローズ可否を判断する（PnL>0 決済が原則）。共通 `execution/exit_manager.py` は互換スタブで自動EXITは発生しない。
-- Risk Guard: エントリー/クローズ双方の `StrategyDecision` と口座情報から `OrderIntent` を生成、拒否理由は `{"allow": False, "reason": ...}` としてロガーへ渡す。
-- Order Manager: `OrderIntent` を OANDA REST へ送信、結果は `ticket_id` と `executed_price` を返し `logs/orders.db` に保存。
+- 発注冪等性とリトライ: `client_order_id` は 90 日ユニーク。OANDA 429/5xx/timeout は 0.5s→1.5s→3.5s（+100 ms ジッター）で最大 3 回リトライ。同一 ID を再利用。WebSocket 停止検知時は `halt_reason="stream_disconnected"` を残して停止。
 
-### 2.4 OANDA API マッピング
+## 5. データ鮮度・ログ・検証
+- データ鮮度: `max_data_lag_ms = 3000` 超は `DataFetcher` が `stale=True` を返し Risk Guard が発注拒否。Candle 確定は `tick.ts_ms // 60000` 変化で判定し、終値は最後の mid。`volume=0` は `missing_bar` としてログ。
+- ログ永続化: 本番ログは VM `/home/tossaki/QuantRabbit/logs/` のみを真とする。ローカル `logs/*.db` は参考扱い。
+  - 日次集計例  
+    `scripts/vm.sh -p quantrabbit -z asia-northeast1-a -m fx-trader-vm sql -f /home/tossaki/QuantRabbit/logs/trades.db -q "SELECT DATE(close_time), COUNT(*), ROUND(SUM(pl_pips),2) FROM trades WHERE DATE(close_time)=DATE('now') GROUP BY 1;" -t`
+  - 直近オーダー例  
+    `gcloud compute ssh fx-trader-vm --project=quantrabbit --zone=asia-northeast1-a --tunnel-through-iap --ssh-key-file ~/.ssh/gcp_oslogin_quantrabbit --command "sqlite3 /home/tossaki/QuantRabbit/logs/orders.db 'select ts,pocket,side,units,client_order_id,status from orders order by ts desc limit 5;'"` 
+- 検証パイプライン: `logs/replay/*.jsonl` で Record、Strategy Plugin は Backtest で再現性確認、Shadow では本番 tick + 仮想アカウントで `OrderIntent` と `risk_guard` 拒否理由を比較。
+- 観測指標: `decision_latency_ms`, `data_lag_ms`, `order_success_rate`, `reject_rate`, `gpt_timeout_rate`, `pnl_day_pips`, `drawdown_pct`。SLO: `decision_latency_ms p95 < 2000`, `order_success_rate ≥ 0.995`, `data_lag_ms p95 < 1500`, `drawdown_pct max < 0.18`, `gpt_timeout_rate < 0.05`。Alert: SLO 違反、`healthbeat` 欠損 5 分超、`token_usage ≥ 0.8 * max_month_tokens`, `order reject` 連続 3 件。
 
-| Strategy action | REST 注文 | units 符号 | SL/TP 指定 | 備考 |
-|-----------------|-----------|------------|------------|------|
-| `OPEN_LONG` | `MARKET` | `+abs(units)` | `stopLossOnFill`, `takeProfitOnFill` | `timeInForce=FOK`, `positionFill=DEFAULT` |
-| `OPEN_SHORT` | `MARKET` | `-abs(units)` | 同上 | ask/bid 逆転チェック後に送信 |
-| `CLOSE` | `MARKET` | 既存ポジの反対売買 | SL/TP 指定なし | `OrderCancelReplace` で逆指値を削除 |
-| `HOLD` | 送信なし | 0 | なし | Strategy ループ継続 |
+## 6. 安全装置と状態遷移
+- 安全装置: Pocket DD micro 5% / macro 15% / scalp 3% / scalp_fast 2% で該当 pocket 新規停止、Global DD 20% でプロセス終了、Event モード（指標 ±30 min）は micro 新規禁止、Timeout: GPT 7 s / OANDA REST 5 s 再試行、Healthbeat は `main.py` から 5 min ping。
+- 状態遷移
 
-- すべての注文に `clientExtensions = {"id": client_order_id, "tag": pocket}` を付与し、再試行時は同一 ID を再利用する。Exit 指示も同じ ID 命名規則に従い、`qr-{epoch_ms}-{focus_tag}-{strategy_tag}` 形式で 90 日間ユニークにする。
-- OANDA 5xx/timeout 時は 0.5s, 1.5s の指数バックオフをかけ、3 回失敗で `Risk Guard` にエスカレーションする。
+  | 状態 | 遷移条件 | 動作 |
+  |------|----------|------|
+  | `NORMAL` | 初期 | 全 pocket 取引許可 |
+  | `EVENT_LOCK` | 経済指標 ±30 min | `micro` 新規停止、建玉縮小ロジック発動 |
+  | `MICRO_STOP` | `micro` pocket DD ≥5% | `micro` 決済のみ、`macro` 継続 |
+  | `GLOBAL_STOP` | Global DD ≥20% または `healthbeat` 欠損>10 min | 全取引停止、プロセス終了 |
+  | `RECOVERY` | DD が閾値の 80% 未満、24h 経過 | 新規建玉再開前に `main.py` ドライラン |
 
-### 2.5 ログと永続化
+## 7. トークン & コストガード
+- `.cache/token_usage.json` に月累計。`env.toml` の `openai.max_month_tokens` で上限を設定。
+- 超過時のフォールバック JSON: `{"focus_tag":"hybrid","weight_macro":0.5,"weight_scalp":0.15,"ranked_strategies":["TrendMA","H1Momentum","Donchian55","BB_RSI"],"reason":"fallback"}`。
+- GPT 失敗時は過去 5 分の決定を再利用し、`reason="reuse_previous"` / `decision_latency_ms=9000` として記録。フォールバックは最後の手段とし、影響（focus 固定・重複注文リスクなど）を共有して限定的に許可する。
 
-- `logs/trades.db`: `trade_id`, `pocket`, `entry_ts`, `exit_ts`, `pl_pips`, `sl_pips`, `tp_pips`, `strategy_tag`, `client_order_id`, `event_mode`。
-- `logs/metrics.db`: `ts`, `metric`, `value`, `tags`。`decision_latency`, `data_lag`, `order_success_rate` 等を保存。
-- **運用メモ**: 本番ログは VM (`fx-trader-vm`) 上 `/home/tossaki/QuantRabbit/logs/` にのみ保存。ローカルの `logs/*.db` は運用判断に使わない。状況確認時は OS Login/IAP 経由で以下のように参照する：
-  ```bash
-  gcloud compute ssh fx-trader-vm \
-    --project=quantrabbit --zone=asia-northeast1-a \
-    --tunnel-through-iap \
-    --ssh-key-file ~/.ssh/gcp_oslogin_quantrabbit \
-    --command "sudo -u tossaki sqlite3 /home/tossaki/QuantRabbit/logs/trades.db \"SELECT DATE(close_time), COUNT(*), ROUND(SUM(pl_pips),2) FROM trades WHERE DATE(close_time)=DATE('now') GROUP BY 1;\""
-  ```
-  推奨（デフォルト設定不要のヘルパ）:
-  ```bash
-  scripts/vm.sh -p quantrabbit -z asia-northeast1-a -m fx-trader-vm \
-    sql -f /home/tossaki/QuantRabbit/logs/trades.db \
-    -q "SELECT DATE(close_time), COUNT(*), ROUND(SUM(pl_pips),2) FROM trades WHERE DATE(close_time)=DATE('now') GROUP BY 1;" -t
-  ```
+## 8. レンジモードとオンラインチューニング
+- レンジモード強化（2025-10）
+  - 判定: `analysis/range_guard.detect_range_mode` が M1 の `ADX<=24`, `BBW<=0.24`, `ATR<=7` を主に見つつ圧縮/ボラ比の複合スコア（0.66 以上）や `compression_trigger` で `range_mode` を返す。`metrics.composite` と `reason` をログ。
+  - エントリー制御: `range_mode=True` 中は macro 新規を抑制し、許可戦略を BB 逆張り（`BB_RSI` など）に限定。`focus_tag` を `micro` へ縮退、`weight_macro` 上限 0.15。
+  - 利確/損切り: レンジ中は各 `exit_worker` が TP/トレイル/lock をタイトに（目安 1.5〜2.0 pips の RR≒1:1、fast_scalp/micro/macro で閾値別設定）。共通 `exit_manager` は使用しない。
+  - 分割利確: `execution/order_manager.plan_partial_reductions` はレンジ中にしきい値を macro 16/22, micro 10/16, scalp 6/10 pips に低減。ステージ/再入場は `execution/stage_tracker` が方向別クールダウン、連続 3 敗で 15 分ブロック、勝敗に応じてロット係数縮小（マーチン禁止）。
+- オンライン自動チューニング
+  - 5〜15 分間隔で `scripts/run_online_tuner.py` を呼び、Exit 感度や入口ゲート・quiet_low_vol 配分を小幅調整（ホットパスは対象外）。
+  - 既定: `TUNER_ENABLE=true`, `TUNER_SHADOW_MODE=true`。`config/tuning_history/` に履歴だけを残し、本番パラメータ (`config/tuning_overrides.yaml`) は書き換えない。
+  - 本適用時: `TUNER_SHADOW_MODE=false` → `scripts/apply_override.py` で `config/tuning_overlay.yaml` を生成しランタイム読み込み。
+  - ToDo/検証タスクは `docs/autotune_taskboard.md` に集約し、完了後は同ファイルでアーカイブ。
 
----
-
-## 3. ライフサイクル
-
-> **現行運用デフォルト**: `WORKER_ONLY_MODE=true` / `MAIN_TRADING_ENABLED=0`。main の 60 秒トレードループはスキップされ、エントリー/EXIT は各戦略ワーカー＋専用 `exit_worker` が担当（共通 `exit_manager` は互換スタブで自動EXITなし）。
-
-1. **Startup (`main.py`)**
-   1. env.toml 読込 → Secrets 確認
-   2. WebSocket 接続確立
-2. **Every 60 s（main トレード有効時のみ）**
-   1. 新ローソク → factors 更新  
-   2. regime + focus → GPT decision  
-   3. pocket lot 配分 → Strategy loop（confidence スケーリング + ステージ判定）  
-   4. 専用 exit_worker（PnL>0 決済が原則）→ risk_guard → order_manager でクローズ/新規発注  
-   5. trades.db / metrics.db にログ（worker-only 時は主にメトリクス更新のみ）
-3. **Background Jobs**
-   - nightly `backup_to_gcs.sh` logs/ → backup bucket
-
-### 3.1 60 秒タクトの運用要件
-
-- サイクル開始は正秒同期 (`datetime.utcnow().replace(second=0, microsecond=0)`)、許容誤差 ±500 ms。
-- 処理締切は 55 s。締切超過時は当該サイクルを捨て、次のサイクルで再計算する (バックログ禁止)。
-- `monotonic()` ベースで `decision_latency_ms` を測定し、遅延は `logs/metrics.db` に記録する。
-
-### 3.2 データ鮮度と完全性
-
-- `max_data_lag_ms = 3000`。これを超える遅延は `DataFetcher` が `stale=True` を返し `Risk Guard` は発注を拒否する。
-- Candle 確定は `tick.ts_ms // 60000` の変化で判定し、終値は最後の mid。`volume=0` のローソク足は `missing_bar` としてログ。
-### 3.3 発注冪等性とリトライ
-
-- `client_order_id` は 90 日間ユニーク。OANDA `POST /orders` 失敗時は同一 ID で最大 3 回まで再送。
-- REST 429/5xx は指数バックオフ (0.5s→1.5s→3.5s) とジッター 100 ms を加える。
-- 発注中に WebSocket 停止を検知した場合は `Order Manager` が `halt_reason="stream_disconnected"` を残して停止。
-
-### 3.4 検証パイプライン
-
-- **Record**: `DataFetcher` は全 Tick を `logs/replay/*.jsonl` に保存しテストで再生できる状態を担保。
-- **Backtest**: Strategy Plugin は記録データを用い同一 `StrategyDecision` を再現できることを CI で検証。
-- **Shadow**: 本番 tick + 仮想アカウントで `OrderIntent` を生成し、`risk_guard` の拒否理由を比較。
-
-### 3.5 エントリー/クローズ制御
-
-- **Confidence スケーリング**: Strategy の `confidence` (0–100) をポケット割当 lot に掛け、最低 0.2 倍〜最大 1.0 倍のレンジで段階的エントリーを行う。  
-- **ステージ比率**: `STAGE_RATIOS` で定義されたフラクションに従い、各ステージ条件 (`_stage_conditions_met`) を通過した場合のみ追撃。  
-- **Exit**: 各戦略の `exit_worker` が最低保有経過後に PnL>0 決済のみを許可（強制 DD/ヘルスのみ例外）。共通 `exit_manager` の自動EXITはスタブ化され、`plan_closures` は常に空を返す。
-- **Release gate**: PF>1.1, 勝率>52%、最大 DD<5% を 2 週間連続で満たしたら実弾に昇格。
-
-#### 3.5.1 レンジモード強化（2025-10）
-- 判定: `analysis/range_guard.detect_range_mode` が M1 の `ADX<=22`, `BBW<=0.20`, `ATR<=6` の同時充足、または H4 トレンド弱含み＋複合スコア閾値超で `range_mode` を返す。`metrics.composite` と `reason` をログ出力。
-- エントリー制御: `range_mode=True` の間はマクロ新規を抑制し、許可戦略を BB 逆張り（`BB_RSI`）等に限定。`focus_tag` を `micro` へ縮退、`weight_macro` を上限 0.15 に制限。
-- 利確/損切り: レンジ中は各 `exit_worker` が TP/トレイル/lock をタイトに調整（目安 1.5〜2.0 pips の RR≒1:1、fast_scalp/micro/macro で閾値を別設定）。共通 `exit_manager` は使用しない。
-- 分割利確: `execution/order_manager.plan_partial_reductions` はレンジ中のしきい値を（macro 16/22, micro 10/16, scalp 6/10 pips）に低減し早めにヘッジ。
-- ステージ/再入場: `execution/stage_tracker` が方向別クールダウンとステージ永続化を提供。強制クローズや連続 3 敗で 15 分ブロック。勝ち負けに応じてロット係数を自動縮小（マーチン禁止）。
-
-実装差分の主な入口
-- レンジ判定: `analysis/range_guard.py`
-- エントリー選別/SLTP調整/レンジ抑制: `main.py` のシグナル評価・ロット配分周辺、および各 worker の entry ロジック
-- 早期利確/撤退: 各戦略専用 `workers/*/exit_worker.py`（fast_scalp/micro/macro いずれも PnL>0 決済が原則）
-- 分割利確しきい値(レンジ対応): `execution/order_manager.py`
-- ステージ永続化/クールダウン/ロット係数: `execution/stage_tracker.py`
-
-### 3.6 オンライン自動チューニング運用
-- 5〜15 分間隔で `scripts/run_online_tuner.py` を呼び出し、Exit 感度や入口ゲート、quiet_low_vol の配分を**小幅**に調整する。リスクのあるホットパス（tick 判定・即時 Exit）は対象外。
-- 既定はシャドウ運用（`TUNER_ENABLE=true`, `TUNER_SHADOW_MODE=true`）。`config/tuning_history/` に履歴だけを残し、本番パラメータ (`config/tuning_overrides.yaml`) は書き換えない。
-- 本適用時は `TUNER_SHADOW_MODE=false` に切り替え、`scripts/apply_override.py` で `config/tuning_overlay.yaml` を生成してランタイムへ読み込ませる。
-- 現在の検証タスクと実行手順は `docs/autotune_taskboard.md` に集約。定期実行の有無・評価観点（EV, hazard 比率, decision_latency）もここで管理する。
-- オンラインチューニング関連の ToDo は必ず `docs/autotune_taskboard.md` に追記し、対応中はここを参照しながら進める。完了後は同ファイル内で状態をアーカイブ（チェック済み / メモ欄）として残す。
-
----
-
-## 4. 環境変数 / Secret 一覧
-
-| Key | 説明 |
-|-----|------|
-| `OPENAI_API_KEY` | GPT 呼び出し用 (Decider / Summarizer 共通) |
-| `OPENAI_MODEL_DECIDER` | GPT デシジョン用モデル (例: gpt-5-mini) |
-| `OANDA_TOKEN` / `OANDA_ACCOUNT` | REST / Stream |
-| `GCP_PROJECT` / `GOOGLE_APPLICATION_CREDENTIALS` | GCS・Pub/Sub |
-| `GCS_BACKUP_BUCKET` | logs バックアップ先 |
-
----
-
-## 5. トークン & コストガード
-
-* `.cache/token_usage.json` に月累計。  
-* `openai.max_month_tokens` (env.toml) で上限設定。  
-* 超過時：`gpt_decider` はフォールバック JSON を返す。  
-* フォールバック JSON: `{"focus_tag":"hybrid","weight_macro":0.5,"weight_scalp":0.15,"ranked_strategies":["TrendMA","H1Momentum","Donchian55","BB_RSI"],"reason":"fallback"}`。  
-* GPT 失敗時は過去 5 分の決定を再利用 (`reason="reuse_previous"`) し、`decision_latency_ms` を 9,000 で固定計上する。
-* 原則フォールバック決定は使わない。トークン制限や一時障害でもまず再試行・負荷抑制で回避し、やむを得ずフォールバックを有効化する場合は事前に影響（focus 固定・重複注文リスクなど）を共有して限定的に許可する。
-
----
-
-## 6. 安全装置
-
-* **Pocket DD**	: micro 5 %、macro 15 % → 該当 pocket の新規取引停止  
-* **Global DD**	: 20 % → プロセス自動終了 (`risk_guard`)  
-* **Event モード**	: 指標 ±30 min → micro 新規禁止  
-* **Timeout**	: GPT 7 s、OANDA REST 5 s → 再試行 / フォールバック  
-* **Healthbeat**	: `main.py` が 5 min ping を Cloud Logging に残す
-
-### 6.1 リスク計算とロット配分
-
-- `pocket_equity = account_equity * pocket_ratio`。`pocket_ratio` は `weight_macro` と `pocket` 固有の上限 (`micro<=0.6`, `macro<=0.3`) を掛け合わせる。
-- 1 トレードの許容損失は `risk_pct = 0.02`。`risk_amount = pocket_equity * risk_pct`。
-- USD/JPY の 1 lot 当たり pip 価値は 1000 JPY。従って `lot = min(MAX_LOT, round(risk_amount / (sl_pips * 1000), 3))`。
-- `units = int(round(lot * 100000))`。`abs(units) < 1000` はノイズ扱いで発注しない。
-- `clamp_sl_tp(price, sl, tp, side)` は 0.001 単位で丸め、SL/TP 逆転時は 0.1 のバッファを確保。
-
-### 6.2 状態遷移
-
-| 状態 | 遷移条件 | 動作 |
-|------|----------|------|
-| `NORMAL` | 初期状態 | 全 pocket 取引許可 |
-| `EVENT_LOCK` | 経済指標 ±30 min | `micro` 新規停止、建玉縮小ロジック発動 |
-| `MICRO_STOP` | `micro` pocket DD ≥5% | `micro` 決済のみ、`macro` 継続 |
-| `GLOBAL_STOP` | Global DD ≥20% または `Healthbeat` 欠損>10 min | 全取引停止、プロセス終了 |
-| `RECOVERY` | DD が閾値の 80% 未満、24h 経過 | 新規建玉再開前に `main.py` がドライラン |
-
-### 6.4 観測指標とアラート
-
-- **SLI**: `decision_latency_ms`, `data_lag_ms`, `order_success_rate`, `reject_rate`, `gpt_timeout_rate`, `pnl_day_pips`, `drawdown_pct`。
-- **SLO**: `decision_latency_ms p95 < 2000`, `order_success_rate ≥ 0.995`, `data_lag_ms p95 < 1500`, `drawdown_pct max < 0.18`, `gpt_timeout_rate < 0.05`。
-- **Alert**: SLO 違反、`healthbeat` 欠損 5 分超、`token_usage ≥ 0.8 * max_month_tokens`, `order reject` 連続 3 件。
-
----
-
-## 7. デプロイ手順（更新版 / 要約）
+## 9. デプロイ / GCP アクセス
+- 原則 OS Login + IAP。`scripts/gcloud_doctor.sh` で前提検診（Compute API 有効化 / OS Login 鍵登録 / IAP 確認）→ `scripts/deploy_to_vm.sh` でデプロイ。
+- クイックコマンド（proj/zone/inst は適宜置換）
 
 ```bash
-# IaC（必要に応じて）
-cd infra/terraform && terraform init && terraform apply
-
-# VM へアプリをデプロイ（IAP 経由）
-scripts/vm.sh -p quantrabbit -z asia-northeast1-a -m fx-trader-vm \
-  deploy -b main -i --restart quantrabbit.service -t
+# Doctor（一括検診 + 鍵登録）
+scripts/gcloud_doctor.sh -p quantrabbit -z asia-northeast1-a -m fx-trader-vm -E -S -G -t -k ~/.ssh/gcp_oslogin_qr -c
+# デプロイ（venv 依存更新付き/IAP）
+scripts/deploy_to_vm.sh -i -t -k ~/.ssh/gcp_oslogin_qr -p quantrabbit
+# ログ追尾
+gcloud compute ssh fx-trader-vm --project=quantrabbit --zone=asia-northeast1-a --tunnel-through-iap --ssh-key-file ~/.ssh/gcp_oslogin_qr --command 'journalctl -u quantrabbit.service -f'
 ```
 
-- デプロイ前に `terraform plan` を CI で実行し差分確認、サービスアカウントは最小権限 (`roles/storage.objectAdmin`, `roles/logging.logWriter`, 必要な Pub/Sub Roles)。
-
-クイックデプロイ（覚書）
-- 標準: `scripts/vm.sh -p quantrabbit -z asia-northeast1-a -m fx-trader-vm -t -k ~/.ssh/gcp_oslogin_quantrabbit deploy -i --restart quantrabbit.service`
-- アカウント切替: 上記に `-A <ACCOUNT>` を追加
-- ブランチ指定: 上記に `-b <BRANCH>` を追加
-- vm.sh が失敗した場合（フォールバック直書き）
+- フォールバック（vm.sh が失敗する場合の直書き）
   1) `gcloud compute ssh fx-trader-vm --project=quantrabbit --zone=asia-northeast1-a --tunnel-through-iap --ssh-key-file ~/.ssh/gcp_oslogin_quantrabbit --command "sudo -u tossaki -H bash -lc 'cd /home/tossaki/QuantRabbit && git fetch --all -q || true && git checkout -q main || git checkout -b main origin/main || true && git pull --ff-only && if [ -d .venv ]; then source .venv/bin/activate && pip install -r requirements.txt; fi'"`
   2) `gcloud compute ssh fx-trader-vm --project=quantrabbit --zone=asia-northeast1-a --tunnel-through-iap --ssh-key-file ~/.ssh/gcp_oslogin_quantrabbit --command "sudo systemctl daemon-reload && sudo systemctl restart quantrabbit.service && sudo systemctl status --no-pager -l quantrabbit.service || true"`
+- OS Login 権限不足時は `roles/compute.osAdminLogin` を付与（検証: `sudo -n true && echo SUDO_OK`）。本番 VM `fx-trader-vm` は原則 `main` ブランチ稼働。スタッシュ/未コミットはブランチ切替前に解消。
+- VM 削除禁止。再起動やブランチ切替で代替し、`gcloud compute instances delete` 等には触れない。
 
-- Cloud Build 成功時に `cosign sign` でイメージ署名、SBOM (`gcloud artifacts sbom export`) を保存。
-- 予算アラート: `GCP Budget Alert ≥ 80%` で Slack 通知、IAP トンネルは `roles/iap.tunnelResourceAccessor` を必須化。
-- ロールバック: `scripts/vm.sh ... exec -- 'cd ~/QuantRabbit && git checkout <release-tag> && ./startup.sh --dry-run'` を実施し、検証後に `--apply`。
-  - 旧 `gcloud compute ssh ... --command` でも可だが、`vm.sh` でプロジェクト/ゾーン/IAP を一元化することを推奨。
-
-### 7.1 VM デプロイ（Git フロー標準）
-
-ローカル → リモート（origin）へ push → VM で `git pull` → systemd 再起動の流れをスクリプト化しています。
-
-前提条件
-- OS Login が有効、`roles/compute.osLogin` と（外部 IP 無しの場合）`roles/iap.tunnelResourceAccessor` 付与済み
-- VM 側のリポジトリは `origin` が到達可能（例: GitHub）
-
-コマンド例（新標準）
-```bash
-# 現在のブランチをデプロイし、VM の venv も依存更新
-scripts/vm.sh -p quantrabbit -z asia-northeast1-a -m fx-trader-vm deploy -i -t
-
-# 明示的にブランチを指定
-scripts/vm.sh -p quantrabbit -z asia-northeast1-a -m fx-trader-vm deploy -b feature/exit-manager -i -t
-
-# ログの追尾（systemd）
-scripts/vm.sh -p quantrabbit -z asia-northeast1-a -m fx-trader-vm tail -s quantrabbit.service -t
-```
-
-Makefile ショートカット（`scripts/vm.env` を設定すると便利）
-```bash
-make vm-deploy BRANCH=main
-make vm-tail VM_SERVICE=quantrabbit.service
-make vm-logs
-make vm-sql Q="SELECT COUNT(*) FROM trades;"
-```
-
-オプション
-- `-b <BRANCH>`: デプロイ対象ブランチ（既定はローカルの現在ブランチ）
-- `-i`: VM の venv で `pip install -r requirements.txt` を実行
-- `-p <PROJECT>` / `-z <ZONE>` / `-m <INSTANCE>` / `-d <REPO_DIR>` / `-s <SERVICE>`: 環境に応じて上書き可能
-- `-k <KEYFILE>`: OS Login 用 SSH 鍵を明示
-- `-t`: IAP トンネルを使用（外部 IP 無しでも SSH）
-
-注意点
-- ローカルの未コミット変更は push されません。必ずコミットしてから実行してください。
-- 直接 SCP での差し替えは緊急時のみ。通常運用は本スクリプト経由の Git ベース反映を推奨します。
-
-OS Login 鍵準備（初回のみ）
-```bash
-ssh-keygen -t ed25519 -f ~/.ssh/gcp_oslogin_quantrabbit -N '' -C 'oslogin-quantrabbit'
-gcloud compute os-login ssh-keys add --key-file ~/.ssh/gcp_oslogin_quantrabbit.pub --ttl 30d
-```
-デプロイ例（鍵指定/IAP併用）
-```bash
-scripts/vm.sh -p quantrabbit -z asia-northeast1-a -m fx-trader-vm deploy -i -k ~/.ssh/gcp_oslogin_quantrabbit -t
-```
-
-## 7.2 デプロイトラブルシュート（OS Login / 権限 / systemd）
-
-- 症状
-  - IAP/OS Login で VM には入れるが、`sudo` 不可・`/home/tossaki/QuantRabbit` へアクセス不可・`systemctl` での再起動ができない。
-  - `scripts/vm.sh ... deploy -i --restart ...` が `sudo` 権限不足で停止。
-
-- 原因
-  - 対象の OS Login ユーザに `roles/compute.osAdminLogin` が付与されていない。
-
-- 解決（プロジェクト IAM に 1 コマンドで付与）
-  - 実行者: プロジェクト IAM 管理者
-  - 例:
-    - `gcloud projects add-iam-policy-binding quantrabbit \
-       --member="user:www.tosakiweb.net@gmail.com" \
-       --role="roles/compute.osAdminLogin"`
-
-- 検証
-  - `gcloud compute ssh fx-trader-vm --project=quantrabbit --zone=asia-northeast1-a \
-     --tunnel-through-iap --ssh-key-file ~/.ssh/gcp_oslogin_quantrabbit \
-     --command "sudo -n true && echo SUDO_OK || echo NO_SUDO"`
-  - `SUDO_OK` が出れば権限 OK。
-
-- デプロイ実行（標準）
-  - `scripts/vm.sh -p quantrabbit -z asia-northeast1-a -m fx-trader-vm -t \
-     -k ~/.ssh/gcp_oslogin_quantrabbit -d /home/tossaki/QuantRabbit \
-     deploy -i --restart quantrabbit.service`
-
-- デプロイ実行（フォールバック直書き）
-  - vm.sh の remote 実行でシェルの quoting 事情により失敗する場合は、下記の直接実行に退避:
-    - `gcloud compute ssh fx-trader-vm --project quantrabbit --zone asia-northeast1-a \
-       --tunnel-through-iap --ssh-key-file ~/.ssh/gcp_oslogin_quantrabbit \
-       --command "sudo -u tossaki -H bash -lc 'cd /home/tossaki/QuantRabbit && git fetch --all -q || true && git checkout -q main || git checkout -b main origin/main || true && git pull --ff-only && if [ -d .venv ]; then source .venv/bin/activate && pip install -r requirements.txt; fi'"`
-    - `gcloud compute ssh fx-trader-vm --project quantrabbit --zone asia-northeast1-a \
-       --tunnel-through-iap --ssh-key-file ~/.ssh/gcp_oslogin_quantrabbit \
-       --command "sudo systemctl daemon-reload && sudo systemctl restart quantrabbit.service && sudo systemctl status --no-pager -l quantrabbit.service || true"`
-
-- 稼働確認
-  - ステータス: `scripts/vm.sh ... tail -s quantrabbit.service -t`
-  - 直接: `gcloud compute ssh ... --command "journalctl -u quantrabbit.service -n 200 -f --output=short-iso"`
-
-### 7.2.1 既知事象: vm.sh の remote コマンド quoting
-- まれに `scripts/vm.sh deploy` の内部で base64+eval を用いたリモート実行の quoting が壊れ、
-  期待通りに複数行コマンドが評価されないことがあります（`set` の出力が流れる等）。
-- その場合は上記「フォールバック直書き」を用いるか、単純な `--command` で小さな単位に分けて実行してください。
-
-### 7.2.2 直近のエラー履歴（参考）
-- 旧ビルドで `main.py` に SyntaxError があり、`journalctl` に以下が記録されました。
-  - `File "/home/tossaki/QuantRabbit/main.py", line 349` の `if os.getenv(SCALP_TACTICAL, 0).strip().lower() not in {, 0, false, no}:`
-- 現行ブランチでは修正済み。類似箇所では以下を推奨します。
-  - `if str(os.getenv("SCALP_TACTICAL", "0")).strip().lower() not in {"", "0", "false", "no"}: ...`
-
-
-8. チーム運用ルール
-    1. 1 ファイル = 1 PR、Squash Merge、CI green 必須
-    2. コード規約：black / ruff / mypy (optional)
-    3. 秘匿情報は 絶対に Git に push しない
-    4. 不具合・改善は GitHub Issue で管理（ラベル: bug/feat/doc/ops）
-    5. ポジション問い合わせ対応: ユーザが「今のポジ？」「これ何？」などと聞いたら、当該会話文脈と開いているログを優先し、最新の fills / open trades を即答する。基本手順:
-        - 直近ログ（例: `logs/oanda/transactions_*.jsonl`, `logs/orders.db`, `logs/trades.db`）から最新の建玉とサイズ/向き/TP/SL/時刻を抜粋
-        - オープンが無ければ「今はフラット」で、直近クローズと理由（SL/TP/手動）を短く添える
-        - サイズ異常や最小単位クランプが原因なら、どの設定（`ORDER_MIN_UNITS_*`, `_MIN_ORDER_UNITS` など）で決まったかも一言で示す
-        - 過去日の無関係なトレードには飛ばず、ユーザが示したファイル/タイムスタンプを優先（「今の話」であることを前提に回答）
-        - ローカルで情報が欠ける/古い場合は必ず VM ログ（`/home/tossaki/QuantRabbit/logs/*`）か OANDA API を直接確認して最新状態を答える（手元データだけで推測しない）
-        - 日付意識: まず `date` などで今日の日付を確認し、開いているログが今日より古ければ「手元は<日付>まで、最新はVM/OANDAを確認する」と明示してから最新データを取りに行く（「今の話」がデフォルト）
-        - 代表的な確認コマンド（必要に応じて都度実行）
-            - VM ログ: `scripts/vm.sh -p quantrabbit -z asia-northeast1-a -m fx-trader-vm sql -f /home/tossaki/QuantRabbit/logs/trades.db -q "select ticket_id,pocket,client_order_id,units,entry_time,close_time,pl_pips from trades order by entry_time desc limit 5;" -t`
-            - 取引履歴: `gcloud compute ssh fx-trader-vm --project=quantrabbit --zone=asia-northeast1-a --tunnel-through-iap --ssh-key-file ~/.ssh/gcp_oslogin_quantrabbit --command "sqlite3 /home/tossaki/QuantRabbit/logs/orders.db 'select ts,pocket,side,units,client_order_id,status from orders order by ts desc limit 5;'"` 
-            - OANDA 現在ポジ: `curl -s -H "Authorization: Bearer $OANDA_TOKEN" "https://api-fxtrade.oanda.com/v3/accounts/$OANDA_ACCOUNT/openTrades" | jq '.trades[] | {id, instrument, currentUnits, price, takeProfit, stopLoss}'`
-        - ポジ/タグ欠損トラブルシュート（運用メモ）
-            - オープン確認は VM で `.venv` 有効化後 `python - <<'PY' ... PositionManager().get_open_positions()`。trades.db はクローズ済みのみなので、openTrades API と突合する。
-            - thesis/fast_cut/kill が空の micro/scalp はオーファン扱い。2025-12-09 以降の MomentumBurst は fast_cut/kill メタ付与済みだが、それ以前の建玉は空のまま残るので必要なら手動クローズする。
-            - manual ポケットは自動エグジット対象外。意図しない manual が残っていれば明示的にクローズする。
-        - 最新価格/ローソクの取り方（チャートが見られないとき）
-            - VM上の最新ローソク: `gcloud compute ssh ... --command "tail -n 3 /home/tossaki/QuantRabbit/logs/candles_M1_latest.json"` や `sqlite3 /home/tossaki/QuantRabbit/logs/candles.db "select * from candles order by ts_ms desc limit 3;"`（表構造は環境による）。
-            - OANDAリアルタイム価格: `curl -s -H "Authorization: Bearer $OANDA_TOKEN" "https://api-fxtrade.oanda.com/v3/accounts/$OANDA_ACCOUNT/pricing?instruments=USD_JPY" | jq '.prices[0] | {bid: .bids[0].price, ask: .asks[0].price, time: .time}'`
-            - それでも取得できない場合は `PositionManager().get_open_positions()` の価格と組み合わせて、最新レートをユーザに聞いて判断する。
-    6. ローソク/チャート確認依頼: 「ローソクを確認」「チャートを見て」といった指示を受けたら、指示された時刻・時間帯の市況を優先し、VM ログ（candles, transactions, orders など）か OANDA API から必要なローソク・価格・出来高を取り寄せて分析する。テクニカル指標（MA/RSI/ADX/BBW など）も併せて評価し、価格推移・ボラ・方向感を短くまとめて返す。手元データが古ければ必ず VM/OANDA を参照して補完する。
-    7. 回答言語: ユーザへの回答は必ず日本語で行う。英語等での返答は避け、短く明瞭に伝える。
-
-⸻
-
-9. 参考ドキュメント
-    - README.md – 🍵 ユーザ向け概観
-    - パッチ適用の推奨シーケンス.pdf – 開発手順ガイド
-    - 全体仕様まとめ（最終版）.pdf – アーキテクチャ詳細
-    - OFL.txt + ZenOldMincho-*.ttf – 付属フォントライセンス
-
----
-
-## 10. GCP アクセス / デプロイ指針（最新版）
-
-- 原則 OS Login + IAP を使用（メタデータ `ssh-keys` は OS Login 有効時に無視）。
-- まずは Doctor で前提を自動検診し、鍵の生成/登録まで一括実施：
-  - `scripts/gcloud_doctor.sh -p <PROJECT> -z asia-northeast1-a -m fx-trader-vm -E -S -G [-t -k ~/.ssh/gcp_oslogin_qr] -c`
-- デプロイは `scripts/deploy_to_vm.sh` を使用：
-  - 例（IAP 経由/依存更新込み）: `scripts/deploy_to_vm.sh -i -t -k ~/.ssh/gcp_oslogin_qr -p <PROJECT>`
-- 詳細手順・背景は `docs/GCP_DEPLOY_SETUP.md` を参照。
-
-### 10.1 事前健診（Doctor）
-
-- gcloud 未導入時は `scripts/install_gcloud.sh` で導入。
-- 推奨実行: `scripts/gcloud_doctor.sh -p <PROJECT> -z asia-northeast1-a -m fx-trader-vm -E -S -G [-t -k ~/.ssh/gcp_oslogin_qr] -c`
-  - `-E`: Compute API 自動有効化、`-S`: OS Login 鍵登録、`-G`: SSH鍵が無い場合に生成。
-- `scripts/deploy_to_vm.sh` は内部で Doctor を呼び出し、前提不備は早期失敗＋対処ガイドを表示。
-- 詳細は `docs/GCP_DEPLOY_SETUP.md` を参照。
-
-### 10.2 ヘッドレス（サービスアカウント）運用
-
-- アクティブなユーザーアカウントが無い環境でも、Service Account(SA) で gcloud を操作できる。
-- `scripts/gcloud_doctor.sh` は `-K <SA_KEYFILE>` 指定時、アカウント不在なら SA キーで自動有効化する。
-- `scripts/deploy_to_vm.sh` は `-K <SA_KEYFILE> / -A <SA_ACCOUNT>` を受け取り、Compute/IAP/OS Login を SA で実行可能。
-- 必須ロール例: `roles/compute.osAdminLogin`, `roles/compute.instanceAdmin.v1`, （IAP利用時）`roles/iap.tunnelResourceAccessor`。
-
-### 10.3 クイックコマンド（quantrabbit 固定）
+## 10. チーム / タスク運用ルール
+- チームルール: 1 ファイル = 1 PR、Squash Merge、CI green。コード規約 black / ruff / mypy(optional)。秘匿情報は Git に置かない。Issue 管理: bug/feat/doc/ops ラベル。
+- タスク台帳: `docs/TASKS.md` を正本とし、Open→進行→Archive の流れで更新。テンプレート・Plan 記載済み。オンラインチューニング ToDo は `docs/autotune_taskboard.md` に追記し完了後アーカイブ。
+- ポジション問い合わせ対応: 直近ログを優先し最新建玉/サイズ/向き/TP/SL/時刻を即答。オープン無しなら「今はフラット」＋直近クローズ理由。サイズ異常時は決定した設定（`ORDER_MIN_UNITS_*` など）を明示。
+  - 代表コマンド: `scripts/vm.sh -p quantrabbit -z asia-northeast1-a -m fx-trader-vm sql -f /home/tossaki/QuantRabbit/logs/trades.db -q "select ticket_id,pocket,client_order_id,units,entry_time,close_time,pl_pips from trades order by entry_time desc limit 5;" -t`
+  - OANDA open trades: `curl -s -H "Authorization: Bearer $OANDA_TOKEN" "https://api-fxtrade.oanda.com/v3/accounts/$OANDA_ACCOUNT/openTrades" | jq '.trades[] | {id, instrument, currentUnits, price, takeProfit, stopLoss}'`
+- ローソク/チャート確認依頼: 指定時刻の市況を VM ログ（candles/transactions/orders）や OANDA API から取得し、MA/RSI/ADX/BBW なども含めて短く要約。手元が古い場合は VM/OANDA を必ず参照。
+- 回答言語: すべて日本語。動作確認・テストは担当者が自前で実施し、ユーザへ依頼しない。
+- 調査用ローソク取得例（VM/OANDA）
 
 ```bash
-# プロジェクト/ゾーン/インスタンス（実値）
-export PROJ=quantrabbit
-export ZONE=asia-northeast1-a
-export INST=fx-trader-vm
-
-# 0) gcloud が無い場合の導入
-scripts/install_gcloud.sh
-
-# 1) 事前健診（Compute API / OS Login / IAP / SSH 検証と鍵登録まで）
-scripts/gcloud_doctor.sh -p "$PROJ" -z "$ZONE" -m "$INST" \
-  -E -S -G -t -k ~/.ssh/gcp_oslogin_qr -c
-
-# 2) IAP 経由の疎通確認（単体）
-gcloud compute ssh "$INST" --project "$PROJ" --zone "$ZONE" \
-  --tunnel-through-iap --ssh-key-file ~/.ssh/gcp_oslogin_qr \
-  --command 'echo [vm] hello'
-
-# 3) デプロイ（venv 依存更新あり / IAP 経由）
-scripts/deploy_to_vm.sh -i -t -k ~/.ssh/gcp_oslogin_qr -p "$PROJ"
-
-# 4) ログ追尾（IAP 経由）
-gcloud compute ssh "$INST" --project "$PROJ" --zone "$ZONE" \
-  --tunnel-through-iap --ssh-key-file ~/.ssh/gcp_oslogin_qr \
-  --command 'journalctl -u quantrabbit.service -f'
-
-# 5) ヘッドレス（サービスアカウント）で診断/デプロイ
-export SA=qr-deployer@${PROJ}.iam.gserviceaccount.com
-export SA_KEY=~/.gcp/qr-deployer.json
-
-# 診断（ユーザー非アクティブでも可）
-scripts/gcloud_doctor.sh -p "$PROJ" -z "$ZONE" -m "$INST" \
-  -K "$SA_KEY" -A "$SA" -E -S -G -t -k ~/.ssh/gcp_oslogin_qr -c
-
-# デプロイ（SA インパーソネート）
-scripts/deploy_to_vm.sh -p "$PROJ" -t -k ~/.ssh/gcp_oslogin_qr \
-  -K "$SA_KEY" -A "$SA" -i
+gcloud compute ssh fx-trader-vm --project=quantrabbit --zone=asia-northeast1-a \
+  --tunnel-through-iap --ssh-key-file ~/.ssh/gcp_oslogin_quantrabbit --command \
+  "sudo -u tossaki -H bash -lc 'cd /home/tossaki/QuantRabbit && source .venv/bin/activate && PYTHONPATH=. \
+    python scripts/fetch_candles.py --instrument USD_JPY --granularity M1 \
+    --start 2025-12-08T03:40:00Z --end 2025-12-08T05:30:00Z \
+    --out logs/candles_USDJPY_M1_20251208_0340_0530.json'"
+gcloud compute ssh fx-trader-vm --project=quantrabbit --zone=asia-northeast1-a \
+  --tunnel-through-iap --ssh-key-file ~/.ssh/gcp_oslogin_quantrabbit --command \
+  "sudo cp /home/tossaki/QuantRabbit/logs/candles_USDJPY_M1_20251208_0340_0530.json /tmp/"
+gcloud compute scp --project=quantrabbit --zone=asia-northeast1-a --tunnel-through-iap \
+  --ssh-key-file ~/.ssh/gcp_oslogin_quantrabbit \
+  fx-trader-vm:/tmp/candles_USDJPY_M1_20251208_0340_0530.json ./remote_logs/
 ```
 
-### 10.4 VM ブランチ運用と再起動ガイド
-- 本番 VM (`fx-trader-vm`) は原則 `main` を稼働ブランチとする。検証や一時対応で別ブランチを動かす場合は必ず記録し、元に戻すときも明示する。SL/TP などの挙動差分はブランチ依存なので、切替時に注意。
-- 稼働中のコードは「作業ツリーのブランチ＋最後に `systemctl restart quantrabbit` を実行した時点の内容」。`git checkout` だけではプロセスは変わらない。
-- ブランチ切替前に `git status` でクリーンを確認し、未コミット・未 stash のまま切替えない。`scripts/deploy_to_vm.sh -b <branch>` を使うと自動 stash 付きで安全。
-- 再起動前に `git rev-parse --abbrev-ref HEAD && git rev-parse --short HEAD` でブランチ/HEAD を確認し、journal にも再起動時のブランチをメモする。
-- スタッシュが溜まると意図しないロールバックや SL/TP 設定の再旧化を招くため、不要になったら `git stash drop` で整理する。
-- config/tuning_overrides.yaml・fixtures/*.json などのローカル調整を維持したい場合は stash/commit で保全し、ブランチ切替後に明示的に `git stash pop` してから再起動する。
-
-### 10.5 VM 削除禁止と警告
-- `fx-trader-vm` を含む運用 VM は何があっても削除しない（停止/再起動で代替し、`gcloud compute instances delete` やコンソールの削除ボタンには触れない）。
-- 例外的に削除を検討する場合でも、実行前に「VM を削除すると復旧不可で稼働停止する」ことを関係者へ明示的に警告し、二重確認を取ってから進める。自動化スクリプトにも削除警告を出し、既定動作はキャンセルにする。
-
----
-
-## 11. タスク運用ルール（共通）
-
-- タスクファイル: 本リポの全タスクは `docs/TASKS.md` を単一の台帳として管理する（正本）。
-- 適用範囲: 機能開発/バグ修正/運用改善/ドキュメント更新など、すべての作業タスク。
-- 位置付け: オンライン自動チューニング関連は従来どおり `docs/autotune_taskboard.md` を使用しつつ、必要に応じて `docs/TASKS.md` からリンクする。
-- 動作確認・テストは担当者（エージェント）が必ず自分で実施し、ユーザに依頼しない。必要な検証は自前で回して結果を共有する。
-
-### 11.1 運用フロー
-
-1. タスク発生時: `docs/TASKS.md` の「Open Tasks」に新規エントリを追加する。
-2. 作業中: 当該エントリを逐次更新し、進め方は同ファイルの計画（Plan）を参照しながら進行する。
-3. 完了時: エントリを「Archive」に移し、完了日・対応 PR/コミット・要約を追記してアーカイブする。
-
-### 11.2 記載項目（推奨）
-
-- ID（例: `T-YYYYMMDD-###`）
-- Title（簡潔な件名）
-- Status（`todo | in-progress | review | done`）
-- Priority（`P1 | P2 | P3`）
-- Owner（担当）
-- Scope/Paths（対象ファイルやディレクトリ）
-- Context（関連 Issue/PR、参考リンク、仕様箇所）
-- Acceptance Criteria（受入条件）
-- Plan（主要ステップ。エージェントの `update_plan` と整合）
-- Notes（補足、決定メモ）
-
-### 11.3 テンプレート
-
-以下テンプレートを `docs/TASKS.md` に記載済み。新規タスクはこれを複製して使用する。
-
-```md
-- [ ] ID: T-YYYYMMDD-001
-  Title: <短い件名>
-  Status: todo | in-progress | review | done
-  Priority: P1 | P2 | P3
-  Owner: <担当>
-  Scope/Paths: <例> AGENTS.md, docs/TASKS.md
-  Context: <Issue/PR/仕様リンク>
-  Acceptance:
-    - <受入条件1>
-    - <受入条件2>
-  Plan:
-    - <主要ステップ1>
-    - <主要ステップ2>
-  Notes:
-    - <補足>
-```
-
-運用メモ
-- `docs/TASKS.md` は頻繁に更新されるため、コミットメッセージに `[Task:<ID>]` を含めて追跡性を確保する。
-- 1 ファイル = 1 PR の原則は維持するが、台帳更新（`docs/TASKS.md`）は同時反映可。
-- 自動チューニング関連 ToDo は引き続き `docs/autotune_taskboard.md` に追記し、完了後は同ファイル内で状態をアーカイブする。
-
-## 12. 調査用ローソクの取得手順（VM/OANDA）
-- OANDAから任意期間のローソクを取得する（例: M1 2025-12-08 03:40Z〜05:30Z）
-  ```bash
-  gcloud compute ssh fx-trader-vm --project=quantrabbit --zone=asia-northeast1-a \
-    --tunnel-through-iap --ssh-key-file ~/.ssh/gcp_oslogin_quantrabbit --command \
-    "sudo -u tossaki -H bash -lc 'cd /home/tossaki/QuantRabbit && source .venv/bin/activate && PYTHONPATH=. \
-      python scripts/fetch_candles.py --instrument USD_JPY --granularity M1 \
-      --start 2025-12-08T03:40:00Z --end 2025-12-08T05:30:00Z \
-      --out logs/candles_USDJPY_M1_20251208_0340_0530.json'"
-  ```
-- ローカルへ持ち帰る（/home/tossaki 以下に直接 scp できない場合は /tmp 経由）
-  ```bash
-  gcloud compute ssh fx-trader-vm --project=quantrabbit --zone=asia-northeast1-a \
-    --tunnel-through-iap --ssh-key-file ~/.ssh/gcp_oslogin_quantrabbit --command \
-    "sudo cp /home/tossaki/QuantRabbit/logs/candles_USDJPY_M1_20251208_0340_0530.json /tmp/"
-
-  gcloud compute scp --project=quantrabbit --zone=asia-northeast1-a --tunnel-through-iap \
-    --ssh-key-file ~/.ssh/gcp_oslogin_quantrabbit \
-    fx-trader-vm:/tmp/candles_USDJPY_M1_20251208_0340_0530.json ./remote_logs/
-  ```
-- 取得済みファイル（例）: `remote_logs/candles_USDJPY_M1_20251208_0340_0530.json`
+## 11. 参考ドキュメント
+- `README.md` – ユーザ向け概観
+- `docs/GCP_DEPLOY_SETUP.md` – GCP/IAP/OS Login 設定詳細
+- `パッチ適用の推奨シーケンス.pdf` – 開発手順ガイド
+- `全体仕様まとめ（最終版）.pdf` – アーキテクチャ詳細
+- `OFL.txt` + `ZenOldMincho-*.ttf` – 付属フォントライセンス
