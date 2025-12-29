@@ -23,7 +23,7 @@ from utils.secrets import get_secret
 
 # --- risk params ---
 MAX_LEVERAGE = 20.0  # 1:20
-MAX_LOT = 3.0  # 1 lot = 100k 通貨
+MAX_LOT = float(os.getenv("RISK_MAX_LOT", "10.0"))  # aggressive上限（envで絞れる）
 POCKET_DD_LIMITS = {
     "micro": 0.05,
     "macro": 0.15,
@@ -32,12 +32,11 @@ POCKET_DD_LIMITS = {
 }  # equity 比 (%)
 GLOBAL_DD_LIMIT = 0.20  # 全体ドローダウン 20%
 # Pocketごとの口座配分上限（DD母数の推定に使用）
-# 一時的に上限を緩和（0.85）してエントリー通過を優先する。
 POCKET_MAX_RATIOS = {
-    "macro": 0.85,
-    "micro": 0.85,
-    "scalp": 0.85,
-    "scalp_fast": 0.85,
+    "macro": float(os.getenv("POCKET_MAX_RATIO_MACRO", "0.92")),
+    "micro": float(os.getenv("POCKET_MAX_RATIO_MICRO", "0.92")),
+    "scalp": float(os.getenv("POCKET_MAX_RATIO_SCALP", "0.92")),
+    "scalp_fast": float(os.getenv("POCKET_MAX_RATIO_SCALP_FAST", "0.92")),
 }
 _DEFAULT_BASE_EQUITY = {
     "macro": 8000.0,
@@ -46,7 +45,7 @@ _DEFAULT_BASE_EQUITY = {
     "scalp_fast": 2000.0,
 }
 _LOOKBACK_DAYS = 7
-MAX_MARGIN_USAGE = float(os.getenv("MAX_MARGIN_USAGE", "0.80"))
+MAX_MARGIN_USAGE = float(os.getenv("MAX_MARGIN_USAGE", "0.92"))
 
 _DISABLE_POCKET_DD = os.getenv("DISABLE_POCKET_DD", "false").lower() in {
     "1",
@@ -60,8 +59,8 @@ _DISABLE_GLOBAL_DD = os.getenv("DISABLE_GLOBAL_DD", "false").lower() in {
     "yes",
     "on",
 }
-EXPOSURE_MAX_RATIO = float(os.getenv("EXPOSURE_MAX_RATIO", "0.93"))
-EXPOSURE_WARN_THRESHOLD = float(os.getenv("EXPOSURE_WARN_THRESHOLD", "1.05"))
+EXPOSURE_MAX_RATIO = float(os.getenv("EXPOSURE_MAX_RATIO", "0.95"))
+EXPOSURE_WARN_THRESHOLD = float(os.getenv("EXPOSURE_WARN_THRESHOLD", "0.99"))
 _MIN_LOT_BY_POCKET = {
     "macro": max(0.0, float(os.getenv("RISK_MIN_LOT_MACRO", "0.1"))),
     "micro": max(0.0, float(os.getenv("RISK_MIN_LOT_MICRO", "0.0"))),
@@ -318,16 +317,16 @@ def allowed_lot(
     try:
         risk_pct_str = get_secret("risk_pct")
         risk_pct = float(risk_pct_str)
-        if not (0.0001 <= risk_pct <= 0.2):
+        if not (0.0001 <= risk_pct <= 0.4):
             raise ValueError("out_of_range")
     except Exception:
-        # safer default under drawdown pressure; slightly more assertive sizing
-        risk_pct = 0.02
+        # aggressiveデフォルトに寄せる
+        risk_pct = 0.04
     if risk_pct_override is not None:
-        risk_pct = max(0.0005, min(risk_pct_override, 0.25))
+        risk_pct = max(0.0005, min(risk_pct_override, 0.4))
 
     # free margin が枯渇していれば発注自体を止める
-    min_free_margin_ratio = max(0.01, float(os.getenv("MIN_FREE_MARGIN_RATIO", "0.12") or 0.12))
+    min_free_margin_ratio = max(0.01, float(os.getenv("MIN_FREE_MARGIN_RATIO", "0.07") or 0.07))
     if equity > 0 and margin_available is not None:
         free_ratio = margin_available / equity if equity > 0 else 0.0
         if free_ratio < min_free_margin_ratio:
