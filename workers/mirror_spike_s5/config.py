@@ -119,11 +119,7 @@ BLOCK_REGIMES = tuple(
     for regime in os.getenv("MIRROR_SPIKE_S5_BLOCK_REGIMES", "Event").split(",")
     if regime.strip()
 )
-NEWS_BLOCK_MINUTES: float = max(
-    0.0, _float("MIRROR_SPIKE_S5_NEWS_BLOCK_MINUTES", 25.0)
 )
-NEWS_BLOCK_MIN_IMPACT: int = max(
-    1, _int("MIRROR_SPIKE_S5_NEWS_BLOCK_MIN_IMPACT", 3)
 )
 LOSS_STREAK_MAX: int = max(0, _int("MIRROR_SPIKE_S5_MAX_CONSEC_LOSSES", 3))
 LOSS_STREAK_COOLDOWN_MIN: float = max(

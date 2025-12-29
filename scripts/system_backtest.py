@@ -13,7 +13,7 @@ QuantRabbit のメインループ構成要素を簡易に模したオフライ�
 
 注意:
   本スクリプトは「約定順序」や `ExitManager` の複雑な分割利確ロジックを再現しません。
-  StageTracker・ニュースモジュール・RiskGuard のドローダウン判定も簡易化しています。
+  StageTracker・RiskGuard のドローダウン判定も簡易化しています。
   実運用ロジックとの差分を理解した上で参考値として利用してください。
 """
 
@@ -239,7 +239,6 @@ class SystemBacktester:
                 "factors_m1": {k: v for k, v in fac_m1.items() if k != "candles"},
                 "factors_h4": {k: v for k, v in fac_h4.items() if k != "candles"},
                 "perf": {},
-                "news_short": [],
                 "event_soon": False,
             }
             gpt_like = heuristic_decision(payload)

@@ -16,5 +16,3 @@ MAX_MARGIN_USAGE = float(os.getenv("M1SCALP_MAX_MARGIN_USAGE", "0.85"))
 CAP_MIN = float(os.getenv("M1SCALP_CAP_MIN", "0.1"))
 CAP_MAX = float(os.getenv("M1SCALP_CAP_MAX", "0.65"))
 
-NEWS_BLOCK_MINUTES = float(os.getenv("M1SCALP_NEWS_BLOCK_MINUTES", "0"))
-NEWS_BLOCK_MIN_IMPACT = int(os.getenv("M1SCALP_NEWS_BLOCK_IMPACT", "2"))

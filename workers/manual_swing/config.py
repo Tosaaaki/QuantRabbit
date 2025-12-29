@@ -91,8 +91,6 @@ BLOCKED_WEEKDAYS = tuple(
     if day.strip()
 )
 
-NEWS_BLOCK_MINUTES: float = max(0.0, _float("MANUAL_SWING_NEWS_BLOCK_MINUTES", 30.0))
-NEWS_BLOCK_MIN_IMPACT: int = max(1, _int("MANUAL_SWING_NEWS_IMPACT", 2))
 
 LOSS_STREAK_MAX: int = max(0, _int("MANUAL_SWING_MAX_CONSEC_LOSSES", 2))
 LOSS_STREAK_COOLDOWN_MIN: float = max(

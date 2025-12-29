@@ -22,7 +22,7 @@ from execution.position_manager import PositionManager
 from market_data import spread_monitor, tick_window
 from indicators.factor_cache import all_factors
 from workers.common import env_guard
-from workers.common.quality_gate import current_regime, news_block_active
+from workers.common.quality_gate import current_regime
 from utils.oanda_account import get_account_snapshot
 
 from . import config
@@ -107,7 +107,6 @@ async def _runner_loop() -> None:
     pos_manager = PositionManager()
     cooldown_until = 0.0
     last_spread_log = 0.0
-    news_block_logged = False
     regime_block_logged: Optional[str] = None
     loss_block_logged = False
     managed_state: Dict[str, float] = {}  # trade_id -> last_update_monotonic
@@ -126,14 +125,6 @@ async def _runner_loop() -> None:
                     LOG.info("%s spread gate active spread=%.2fp reason=%s", config.LOG_PREFIX, spread_pips, spread_reason or "guard")
                     last_spread_log = now_mono
                 continue
-
-            # News guard
-            if config.NEWS_BLOCK_MINUTES > 0 and news_block_active(config.NEWS_BLOCK_MINUTES, min_impact=config.NEWS_BLOCK_MIN_IMPACT):
-                if not news_block_logged:
-                    LOG.info("%s paused by news guard (impact≥%s / %.0f min)", config.LOG_PREFIX, config.NEWS_BLOCK_MIN_IMPACT, config.NEWS_BLOCK_MINUTES)
-                    news_block_logged = True
-                continue
-            news_block_logged = False
 
             # Regime guard
             regime_label = current_regime("M1", event_mode=False)

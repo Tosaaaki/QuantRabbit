@@ -196,29 +196,6 @@ def session_tag(dt: datetime) -> str:
     return "newyork"
 
 
-_RAW_NEWS = os.getenv("REPLAY_NEWS_TIMES", "").strip()
-NEWS_EVENTS: List[datetime] = []
-if _RAW_NEWS:
-    for token in _RAW_NEWS.split(","):
-        token = token.strip()
-        if not token:
-            continue
-        try:
-            NEWS_EVENTS.append(datetime.fromisoformat(token.replace("Z", "+00:00")).astimezone(timezone.utc))
-        except ValueError:
-            continue
-
-
-def is_news_block(ts: datetime, window_minutes: float) -> bool:
-    if not NEWS_EVENTS or window_minutes <= 0:
-        return False
-    window = window_minutes * 60.0
-    for event in NEWS_EVENTS:
-        if abs((ts - event).total_seconds()) <= window:
-            return True
-    return False
-
-
 def passes_quality_gate(
     ts: datetime,
     spread_pips: float,
@@ -227,7 +204,6 @@ def passes_quality_gate(
     max_spread_pips: float = 0.8,
     min_atr_pips: float = 0.0,
     sessions: Optional[Iterable[str]] = None,
-    news_block_min: float = 0.0,
 ) -> bool:
     if spread_pips > max_spread_pips:
         return False
@@ -237,8 +213,6 @@ def passes_quality_gate(
         session = session_tag(ts)
         if session not in set(sessions):
             return False
-    if news_block_min > 0.0 and is_news_block(ts, news_block_min):
-        return False
     return True
 
 
@@ -388,7 +362,6 @@ def replay_fast_scalp(
         "max_spread_pips": 0.8,
         "min_atr_pips": max(0.01, fs_config.MIN_ENTRY_ATR_PIPS * 0.45),
         "sessions": {"london", "newyork"},
-        "news_block_min": 5.0,
     }
     if overrides.get("max_spread_pips") is not None:
         gate_kwargs["max_spread_pips"] = max(0.0, float(overrides["max_spread_pips"]))
@@ -396,8 +369,6 @@ def replay_fast_scalp(
         gate_kwargs["min_atr_pips"] = max(0.0, float(overrides["gate_min_atr_pips"]))
     elif overrides.get("min_entry_atr_pips") is not None:
         gate_kwargs["min_atr_pips"] = max(0.0, float(overrides["min_entry_atr_pips"]))
-    if overrides.get("news_block_min") is not None:
-        gate_kwargs["news_block_min"] = max(0.0, float(overrides["news_block_min"]))
     session_override = overrides.get("sessions")
     if session_override is not None:
         tokens = [token.strip().lower() for token in str(session_override).split(",") if token.strip()]
@@ -2222,7 +2193,6 @@ def main() -> None:
     ap.add_argument("--tickrate-window-sec", type=float, help="Tickrate measurement window seconds.")
     ap.add_argument("--min-atr-pips", type=float, help="Override minimum ATR in pips for entries.")
     ap.add_argument("--gate-min-atr-pips", type=float, help="Quality gate ATR floor in pips.")
-    ap.add_argument("--news-block-min", type=float, help="News blackout window in minutes (± window).")
     ap.add_argument("--cooldown-sec", type=float, help="Entry cooldown seconds per direction.")
     ap.add_argument("--hold-ms", type=float, help="Minimum hold duration in milliseconds.")
     ap.add_argument("--sessions", type=str, help="Comma separated session tags to allow (asia,london,newyork).")
@@ -2348,8 +2318,6 @@ def main() -> None:
         overrides["min_entry_atr_pips"] = args.min_atr_pips
     if args.gate_min_atr_pips is not None:
         overrides["gate_min_atr_pips"] = args.gate_min_atr_pips
-    if args.news_block_min is not None:
-        overrides["news_block_min"] = args.news_block_min
     if args.cooldown_sec is not None:
         overrides["entry_cooldown_sec"] = args.cooldown_sec
     if args.hold_ms is not None:

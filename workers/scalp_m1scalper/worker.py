@@ -17,7 +17,6 @@ from market_data import tick_window
 from strategies.scalping.m1_scalper import M1Scalper
 from utils.market_hours import is_market_open
 from utils.oanda_account import get_account_snapshot
-from workers.common.quality_gate import news_block_active
 from workers.common.dyn_cap import compute_cap
 from analysis import perf_monitor
 
@@ -79,10 +78,6 @@ async def scalp_m1_worker() -> None:
         await asyncio.sleep(config.LOOP_INTERVAL_SEC)
         now = datetime.datetime.utcnow()
         if not is_market_open(now):
-            continue
-        if config.NEWS_BLOCK_MINUTES > 0 and news_block_active(
-            config.NEWS_BLOCK_MINUTES, min_impact=config.NEWS_BLOCK_MIN_IMPACT
-        ):
             continue
         if not can_trade(config.POCKET):
             continue

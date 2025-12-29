@@ -106,8 +106,6 @@ BLOCK_REGIMES = tuple(
     for regime in os.getenv("SQUEEZE_BREAK_S5_BLOCK_REGIMES", "Event").split(",")
     if regime.strip()
 )
-NEWS_BLOCK_MINUTES: float = max(0.0, _float("SQUEEZE_BREAK_S5_NEWS_BLOCK_MINUTES", 20.0))
-NEWS_BLOCK_MIN_IMPACT: int = max(1, _int("SQUEEZE_BREAK_S5_NEWS_BLOCK_MIN_IMPACT", 2))
 LOSS_STREAK_MAX: int = max(0, _int("SQUEEZE_BREAK_S5_MAX_CONSEC_LOSSES", 2))
 LOSS_STREAK_COOLDOWN_MIN: float = max(0.0, _float("SQUEEZE_BREAK_S5_LOSS_COOLDOWN_MIN", 20.0))
 

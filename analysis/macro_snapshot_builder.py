@@ -3,7 +3,6 @@ Tools to (re)build the macro snapshot JSON consumed by MacroState.
 
 The snapshot summarises lightweight macro context derived from:
  - Current technical factors (ATR, MA differentials) as a proxy for volatility / USD bias
- - (News pipeline removed) currency bias / events are neutralised
 
 The generated file lives under ``fixtures/macro_snapshots/latest.json`` by default.
 """
@@ -14,15 +13,13 @@ import datetime as dt
 import json
 from dataclasses import asdict
 from pathlib import Path
-from typing import Dict, Iterable, List, Optional, Tuple
+from typing import Dict, Iterable, Optional, Tuple
 
 from analysis.macro_state import MacroSnapshot
 from indicators.factor_cache import all_factors
 
-NEWS_DB_PATH = Path("logs/news.db")
 DEFAULT_SNAPSHOT_PATH = Path("fixtures/macro_snapshots/latest.json")
 DEFAULT_WINDOW_HOURS = 24
-DEFAULT_EVENT_LOOKAHEAD_HOURS = 12
 
 
 def _normalise_pair_bias(pair_bias: str | None) -> Optional[Tuple[str, str, str]]:
@@ -38,16 +35,6 @@ def _normalise_pair_bias(pair_bias: str | None) -> Optional[Tuple[str, str, str]
     if len(pair) != 6:
         return None
     return pair[:3], pair[3:], direction
-
-
-def _aggregate_news_scores(
-    db_path: Path,
-    *,
-    now: dt.datetime,
-    window_hours: int = DEFAULT_WINDOW_HOURS,
-) -> Tuple[Dict[str, float], List[Tuple[str, str, str]]]:
-    # News pipeline removed; return neutral scores and no upcoming events.
-    return {}, []
 
 
 def _derive_vix_and_dxy(factors: Dict[str, Dict[str, float]]) -> Tuple[float, float]:
@@ -121,18 +108,13 @@ def refresh_macro_snapshot(
     factors = all_factors()
     vix, dxy = _derive_vix_and_dxy(factors)
 
-    news_scores, events = _aggregate_news_scores(NEWS_DB_PATH, now=now)
-    base_currencies: set[str] = {"USD", "JPY"}
-    base_currencies.update(news_scores.keys())
-    yield_map = _derive_yields(news_scores, base_currencies)
+    yield_map = _derive_yields({}, {"USD", "JPY"})
 
     snapshot = MacroSnapshot(
         asof=now.isoformat(timespec="seconds"),
         vix=vix,
         dxy=dxy,
         yield2y=yield_map,
-        news_ccy_score=news_scores,
-        events=events,
     )
     snapshot_path.parent.mkdir(parents=True, exist_ok=True)
     snapshot_path.write_text(json.dumps(asdict(snapshot), indent=2), encoding="utf-8")

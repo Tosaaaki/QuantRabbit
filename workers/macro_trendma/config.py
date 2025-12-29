@@ -16,5 +16,3 @@ MAX_MARGIN_USAGE = float(os.getenv("TRENDMA_MAX_MARGIN_USAGE", "0.92"))
 CAP_MIN = float(os.getenv("TRENDMA_CAP_MIN", "0.25"))
 CAP_MAX = float(os.getenv("TRENDMA_CAP_MAX", "0.9"))
 
-NEWS_BLOCK_MINUTES = float(os.getenv("TRENDMA_NEWS_BLOCK_MINUTES", "0"))
-NEWS_BLOCK_MIN_IMPACT = int(os.getenv("TRENDMA_NEWS_BLOCK_IMPACT", "2"))

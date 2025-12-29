@@ -131,22 +131,11 @@ class RRRatioAdvisor:
         return round(max(self.min_ratio, min(self.max_ratio, ratio)), 2)
 
     def _hash_context(self, context: Dict[str, Any]) -> str:
-        sanitized = {
-            k: context[k]
-            for k in sorted(context)
-            if k not in {"news_short", "news_long"}  # avoid large payload
-        }
-        serialized = json.dumps(sanitized, sort_keys=True, separators=(",", ":"))
+        serialized = json.dumps(context, sort_keys=True, separators=(",", ":"))
         return hashlib.sha1(serialized.encode("utf-8")).hexdigest()
 
     def _build_payload(self, context: Dict[str, Any]) -> Dict[str, Any]:
         payload = dict(context)
-        news_short = context.get("news_short") or []
-        if isinstance(news_short, list) and len(news_short) > 3:
-            payload["news_short"] = news_short[:3]
-        news_long = context.get("news_long") or []
-        if isinstance(news_long, list) and len(news_long) > 2:
-            payload["news_long"] = news_long[:2]
         return payload
 
     async def _call_model(self, payload: Dict[str, Any]) -> Dict[str, Any]:

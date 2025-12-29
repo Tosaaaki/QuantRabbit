@@ -18,13 +18,6 @@ _regime_cache: dict[str, tuple[float, Optional[str]]] = {}
 LOG = logging.getLogger(__name__)
 
 
-def news_block_active(window_minutes: float, *, min_impact: int) -> bool:
-    """
-    News/event gating has been removed; always return False.
-    """
-    return False
-
-
 def current_regime(tf: str = "M1", *, event_mode: bool = False) -> Optional[str]:
     """
     Retrieve the latest technical regime label for the given timeframe.

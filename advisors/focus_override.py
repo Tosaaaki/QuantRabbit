@@ -109,12 +109,7 @@ class FocusOverrideAdvisor:
         return hint
 
     def _hash_context(self, context: Dict[str, Any]) -> str:
-        sanitized = {
-            k: context[k]
-            for k in sorted(context)
-            if k not in {"news_short", "news_long"}
-        }
-        serialized = json.dumps(sanitized, sort_keys=True, separators=(",", ":"))
+        serialized = json.dumps(context, sort_keys=True, separators=(",", ":"))
         return hashlib.sha1(serialized.encode("utf-8")).hexdigest()
 
     def _parse_hint(self, data: Dict[str, Any]) -> Optional[FocusHint]:
@@ -156,7 +151,7 @@ class FocusOverrideAdvisor:
                 "role": "system",
                 "content": (
                     "You are a trading focus supervisor. "
-                    "Given multi-timeframe indicators, news sentiment, and event flags, "
+                    "Given multi-timeframe indicators and event flags, "
                     "decide if focus_tag or macro/scalp weights should be overridden. "
                     "Return JSON with keys "
                     "\"focus_tag\" (macro/micro/hybrid/event or null), "

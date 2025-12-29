@@ -12,7 +12,7 @@
    | Window (UTC) | Move | Direction | Notes |
    |--------------|------|-----------|-------|
    | 07:16–07:35  | 15.2 pips | down | ロンドン早朝急落。microはcooldown、macro閉鎖でノートレード。
-   | 10:32–10:55  | 11.8 pips | up   | NY先物オープンに被る反騰。NewsSpike/Trend系なし。
+   | 10:32–10:55  | 11.8 pips | up   | NY先物オープンに被る反騰。スパイク/Trend系なし。
    | 13:05–13:30  | 9.4 pips  | down | 東京午後〜欧州序盤の調整。spread<1pだが micro冷却で休眠。
 
 ## 次のアクション

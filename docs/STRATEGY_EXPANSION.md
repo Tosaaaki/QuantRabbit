@@ -9,7 +9,7 @@ _Date: 2025-11-11_
   | Window UTC | Move | Direction | Context |
   |------------|------|-----------|---------|
   | 07:16–07:35 | 15.2 pips | down | London fix sellers。macro閉鎖＋micro cooldownで参加ゼロ。
-  | 10:32–10:55 | 11.8 pips | up | NY先物open。News/VWAP系無し。
+  | 10:32–10:55 | 11.8 pips | up | NY先物open。VWAP系無し。
   | 13:05–13:30 | 9.4 pips  | down | 東京午後の調整。spread<1p でも stage tracker 冷却。
 
 ## 2. Strategy Requirements

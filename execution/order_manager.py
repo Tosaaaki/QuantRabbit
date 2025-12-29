@@ -149,7 +149,7 @@ _MIN_ORDER_UNITS = 1000
 
 # Directional exposure cap (dynamic; scales units instead of rejecting)
 _DIR_CAP_ENABLE = os.getenv("DIR_CAP_ENABLE", "1").strip().lower() not in {"", "0", "false", "no"}
-_DIR_CAP_RATIO = float(os.getenv("DIR_CAP_RATIO", "0.92"))
+_DIR_CAP_RATIO = float(os.getenv("DIR_CAP_RATIO", "0.85"))
 _DIR_CAP_WARN_RATIO = float(os.getenv("DIR_CAP_WARN_RATIO", "0.98"))
 # Floor multiplier to avoid crushing frequency when shrinking; 0.0 to disable
 _DIR_CAP_MIN_FRACTION = float(os.getenv("DIR_CAP_MIN_FRACTION", "0.15"))
@@ -279,7 +279,7 @@ def _apply_directional_cap(
     except Exception:
         return units
     try:
-        snap = get_account_snapshot(cache_ttl_sec=30.0)
+        snap = get_account_snapshot(cache_ttl_sec=3.0)
     except Exception as exc:  # pragma: no cover - defensive
         logging.warning("[DIR_CAP] snapshot fetch failed: %s", exc)
         return units
@@ -1819,6 +1819,7 @@ async def market_order(
         strategy_tag = None
     virtual_sl_price: Optional[float] = None
     virtual_tp_price: Optional[float] = None
+    side_label = "buy" if units > 0 else "sell"
 
     def _merge_virtual(payload: Optional[dict] = None) -> dict:
         base: dict = {}
@@ -1868,6 +1869,111 @@ async def market_order(
     if isinstance(entry_thesis, dict) and strategy_tag and not entry_thesis.get("strategy_tag"):
         entry_thesis = dict(entry_thesis)
         entry_thesis["strategy_tag"] = strategy_tag
+
+    # 強制マージンガード（reduce_only 以外）。直近スナップショットから
+    # 現在の使用率と注文後の想定使用率を確認し、上限超えは即リジェクト。
+    if not reduce_only:
+        try:
+            from utils.oanda_account import get_account_snapshot
+        except Exception:
+            get_account_snapshot = None  # type: ignore
+        if get_account_snapshot is not None:
+            try:
+                snap = get_account_snapshot(cache_ttl_sec=1.0)
+                nav = float(snap.nav or 0.0)
+                margin_used = float(snap.margin_used or 0.0)
+                margin_rate = float(snap.margin_rate or 0.0)
+                soft_cap = float(os.getenv("MAX_MARGIN_USAGE", "0.85") or 0.85)
+                hard_cap = float(os.getenv("MAX_MARGIN_USAGE_HARD", "0.88") or 0.88)
+                cap = min(hard_cap, max(soft_cap, 0.0))
+                if nav > 0:
+                    usage = margin_used / nav
+                    if usage >= hard_cap * 0.995:
+                        note = "margin_usage_exceeds_cap"
+                        _console_order_log(
+                            "OPEN_REJECT",
+                            pocket=pocket,
+                            strategy_tag=strategy_tag or "unknown",
+                            side=side_label,
+                            units=units,
+                            sl_price=sl_price,
+                            tp_price=tp_price,
+                            client_order_id=client_order_id,
+                            note=note,
+                        )
+                        log_order(
+                            pocket=pocket,
+                            instrument=instrument,
+                            side=side_label,
+                            units=units,
+                            sl_price=sl_price,
+                            tp_price=tp_price,
+                            client_order_id=client_order_id,
+                            status=note,
+                            attempt=0,
+                            stage_index=stage_index,
+                            request_payload={
+                                "strategy_tag": strategy_tag,
+                                "meta": meta,
+                                "entry_thesis": entry_thesis,
+                            },
+                        )
+                        log_metric(
+                            "order_margin_block",
+                            1.0,
+                            tags={
+                                "pocket": pocket,
+                                "strategy": strategy_tag or "unknown",
+                                "reason": note,
+                            },
+                        )
+                        return None
+                price_hint = _estimate_price(meta) or 0.0
+                if nav > 0 and price_hint > 0 and margin_rate > 0:
+                    projected_used = margin_used + abs(units) * price_hint * margin_rate
+                    projected_usage = projected_used / nav
+                    if projected_usage >= cap:
+                        note = "margin_usage_projected_cap"
+                        _console_order_log(
+                            "OPEN_REJECT",
+                            pocket=pocket,
+                            strategy_tag=strategy_tag or "unknown",
+                            side=side_label,
+                            units=units,
+                            sl_price=sl_price,
+                            tp_price=tp_price,
+                            client_order_id=client_order_id,
+                            note=note,
+                        )
+                        log_order(
+                            pocket=pocket,
+                            instrument=instrument,
+                            side=side_label,
+                            units=units,
+                            sl_price=sl_price,
+                            tp_price=tp_price,
+                            client_order_id=client_order_id,
+                            status=note,
+                            attempt=0,
+                            stage_index=stage_index,
+                            request_payload={
+                                "strategy_tag": strategy_tag,
+                                "meta": meta,
+                                "entry_thesis": entry_thesis,
+                            },
+                        )
+                        log_metric(
+                            "order_margin_block",
+                            1.0,
+                            tags={
+                                "pocket": pocket,
+                                "strategy": strategy_tag or "unknown",
+                                "reason": note,
+                            },
+                        )
+                        return None
+            except Exception as exc:  # pragma: no cover - defensive
+                logging.warning("[ORDER] margin guard skipped: %s", exc)
     if not strategy_tag:
         _console_order_log(
             "OPEN_REJECT",

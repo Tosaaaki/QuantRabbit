@@ -18,7 +18,4 @@ MAX_MARGIN_USAGE = float(os.getenv("H1M_MAX_MARGIN_USAGE", "0.92"))
 CAP_MIN = float(os.getenv("H1M_CAP_MIN", "0.25"))
 CAP_MAX = float(os.getenv("H1M_CAP_MAX", "0.95"))
 
-# News guard
-NEWS_BLOCK_MINUTES = float(os.getenv("H1M_NEWS_BLOCK_MINUTES", "0"))
-NEWS_BLOCK_MIN_IMPACT = int(os.getenv("H1M_NEWS_BLOCK_IMPACT", "2"))
 

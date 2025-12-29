@@ -18,7 +18,7 @@ from market_data import spread_monitor, tick_window
 from utils.market_hours import is_market_open
 from workers.common import env_guard
 from workers.common.pocket_plan import PocketPlan
-from workers.common.quality_gate import current_regime, news_block_active
+from workers.common.quality_gate import current_regime
 
 from . import config
 
@@ -134,7 +134,6 @@ async def vwap_magnet_s5_worker() -> None:
     last_spread_log = 0.0
     last_hour_log = 0.0
     last_market_log = 0.0
-    news_block_logged = False
     regime_block_logged: Optional[str] = None
     loss_block_logged = False
     env_block_logged = False
@@ -242,20 +241,6 @@ async def vwap_magnet_s5_worker() -> None:
                     )
                     last_spread_log = now_monotonic
                 continue
-
-            if config.NEWS_BLOCK_MINUTES > 0 and news_block_active(
-                config.NEWS_BLOCK_MINUTES, min_impact=config.NEWS_BLOCK_MIN_IMPACT
-            ):
-                if not news_block_logged:
-                    LOG.info(
-                        "%s paused by news guard (impact≥%s / %.0f min)",
-                        config.LOG_PREFIX,
-                        config.NEWS_BLOCK_MIN_IMPACT,
-                        config.NEWS_BLOCK_MINUTES,
-                    )
-                    news_block_logged = True
-                continue
-            news_block_logged = False
 
             regime_label = current_regime("M1", event_mode=False)
             if regime_label and regime_label in config.BLOCK_REGIMES:

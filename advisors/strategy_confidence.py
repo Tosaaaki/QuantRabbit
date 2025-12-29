@@ -108,13 +108,9 @@ class StrategyConfidenceAdvisor:
         return hint
 
     def _hash_context(self, strategy: str, context: Dict[str, Any]) -> str:
-        sanitized = {
-            k: context[k]
-            for k in sorted(context)
-            if k not in {"news_short", "news_long"}
-        }
-        sanitized["strategy"] = strategy
-        serialized = json.dumps(sanitized, sort_keys=True, separators=(",", ":"))
+        payload = dict(context)
+        payload["strategy"] = strategy
+        serialized = json.dumps(payload, sort_keys=True, separators=(",", ":"))
         return hashlib.sha1(serialized.encode("utf-8")).hexdigest()
 
     def _parse_hint(self, data: Dict[str, Any]) -> Optional[ConfidenceHint]:

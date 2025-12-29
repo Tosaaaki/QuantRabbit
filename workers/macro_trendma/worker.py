@@ -17,7 +17,6 @@ from market_data import tick_window
 from strategies.trend.ma_cross import MovingAverageCross
 from utils.market_hours import is_market_open
 from utils.oanda_account import get_account_snapshot
-from workers.common.quality_gate import news_block_active
 from workers.common.dyn_cap import compute_cap
 from analysis import perf_monitor
 
@@ -89,11 +88,6 @@ async def trendma_worker() -> None:
         now = datetime.datetime.utcnow()
         if not is_market_open(now):
             LOG.debug("%s skip: market closed", config.LOG_PREFIX)
-            continue
-        if config.NEWS_BLOCK_MINUTES > 0 and news_block_active(
-            config.NEWS_BLOCK_MINUTES, min_impact=config.NEWS_BLOCK_MIN_IMPACT
-        ):
-            LOG.debug("%s skip: news block", config.LOG_PREFIX)
             continue
         if not can_trade(config.POCKET):
             LOG.debug("%s skip: pocket guard", config.LOG_PREFIX)

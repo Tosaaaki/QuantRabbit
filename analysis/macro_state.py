@@ -2,7 +2,7 @@
 analysis.macro_state
 ~~~~~~~~~~~~~~~~~~~~
 Centralises macro-level context such as yield differentials and risk metrics so
-that the trading loop can make consistent gating and sizing decisions. News/event
+that the trading loop can make consistent gating and sizing decisions. Event
 signals are currently neutralised.
 """
 
@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, List, Tuple
+from typing import Dict
 import datetime as dt
 import json
 
@@ -21,8 +21,6 @@ class MacroSnapshot:
     vix: float
     dxy: float
     yield2y: Dict[str, float]
-    news_ccy_score: Dict[str, float]
-    events: List[Tuple[str, str, str]]
 
 
 class MacroState:
@@ -47,8 +45,6 @@ class MacroState:
             vix=20.0,
             dxy=0.0,
             yield2y={},
-            news_ccy_score={},
-            events=[],
         )
         return MacroState(snap, deadzone=deadzone)
 
@@ -69,11 +65,7 @@ class MacroState:
         carry = (
             self._snap.yield2y.get(base, 0.0) - self._snap.yield2y.get(quote, 0.0)
         ) / 3.0
-        news = (
-            self._snap.news_ccy_score.get(base, 0.0)
-            - self._snap.news_ccy_score.get(quote, 0.0)
-        ) * 0.5
-        score = carry + news
+        score = carry
         if self._snap.vix >= 25.0 and score > 0.0:
             score -= 0.3
         score = max(-1.0, min(1.0, score))
@@ -90,22 +82,4 @@ class MacroState:
         now: dt.datetime | None = None,
     ) -> bool:
         """True if pair trades during configured event window."""
-        if not self._snap.events:
-            return False
-        now = now or dt.datetime.utcnow().replace(tzinfo=dt.timezone.utc)
-        clean = "".join(ch for ch in pair.upper() if ch.isalpha())
-        if len(clean) != 6:
-            return False
-        base, quote = clean[:3], clean[3:]
-        for iso_ts, ccy, _ in self._snap.events:
-            if ccy not in (base, quote):
-                continue
-            try:
-                event_ts = dt.datetime.fromisoformat(iso_ts.replace("Z", "+00:00"))
-            except ValueError:
-                continue
-            window_start = event_ts - dt.timedelta(hours=before_hours)
-            window_end = event_ts + dt.timedelta(hours=after_hours)
-            if window_start <= now <= window_end:
-                return True
         return False

@@ -92,7 +92,6 @@ class ExitAdvisor:
         fac_h4: Dict[str, Any],
         fac_h1: Optional[Dict[str, Any]] = None,
         fac_d1: Optional[Dict[str, Any]] = None,
-        news_cache: Optional[Dict[str, Any]] = None,
         range_active: bool = False,
         now: Optional[dt.datetime] = None,
     ) -> Dict[str, ExitHint]:
@@ -129,7 +128,6 @@ class ExitAdvisor:
                     fac_h4,
                     fac_h1,
                     fac_d1,
-                    news_cache,
                     range_active,
                 )
                 hint = await self._advise_once(key, context, now=now)
@@ -156,8 +154,6 @@ class ExitAdvisor:
             return None
 
         payload = dict(context)
-        payload.pop("news_short", None)
-        payload.pop("news_long", None)
         try:
             data = await self._call_model(context)
         except Exception as exc:
@@ -210,7 +206,6 @@ class ExitAdvisor:
         fac_h4: Dict[str, Any],
         fac_h1: Optional[Dict[str, Any]],
         fac_d1: Optional[Dict[str, Any]],
-        news_cache: Optional[Dict[str, Any]],
         range_active: bool,
     ) -> Dict[str, Any]:
         context = {
@@ -223,8 +218,6 @@ class ExitAdvisor:
             "range_active": range_active,
             "factors_m1": self._summarize_factors(fac_m1),
             "factors_h4": self._summarize_factors(fac_h4),
-            "news_short": (news_cache or {}).get("short", [])[:3],
-            "news_long": (news_cache or {}).get("long", [])[:2],
         }
         if fac_h1:
             context["factors_h1"] = self._summarize_factors(fac_h1)
@@ -246,12 +239,7 @@ class ExitAdvisor:
         return summary
 
     def _hash_context(self, context: Dict[str, Any]) -> str:
-        sanitized = {
-            k: context[k]
-            for k in sorted(context)
-            if k not in {"news_short", "news_long"}
-        }
-        serialized = json.dumps(sanitized, sort_keys=True, separators=(",", ":"))
+        serialized = json.dumps(context, sort_keys=True, separators=(",", ":"))
         return hashlib.sha1(serialized.encode("utf-8")).hexdigest()
 
     async def _call_model(self, payload: Dict[str, Any]) -> Dict[str, Any]:

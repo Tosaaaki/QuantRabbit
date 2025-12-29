@@ -4,7 +4,7 @@ Tick ベースの超短期スキャル (`workers/fast_scalp/worker.py`) と、Pn
 
 ## 現状サマリ
 - ループ間隔: 0.25s 既定。`tick_window` を優先し、深さ不足時は OANDA HTTP pricing snapshot で補完する。
-- ゲート: `MAX_SPREAD_PIPS`(既定0.45)、JST 03:00–05:00 クールダウン、news_block、stale tick (>=3s) でスキップ。low-vol 連続検知で短いクールダウンを付与。
+- ゲート: `MAX_SPREAD_PIPS`(既定0.45)、JST 03:00–05:00 クールダウン、stale tick (>=3s) でスキップ。low-vol 連続検知で短いクールダウンを付与。
 - シグナル: `evaluate_signal` が tick モメンタム/レンジ/インパルス + ATR/RSI で方向を返す。ATR/スプレッドに応じてエントリー閾値を動的調整し、`consolidation_ok` が外れると見送り。任意で `PATTERN_MODEL_PATH` によるパターンスコアゲートを追加できる。
 - サイジング: `allowed_lot` を使い pocket `scalp_fast` で上限チェックし、`MAX_LOT`/`MIN_UNITS`/`MAX_ACTIVE_TRADES`/`MAX_PER_DIRECTION` と StageTracker クールダウンを併用。既定は物理SL無効 (`STOP_LOSS_DISABLED` true) で TP だけを付け、必要に応じて `USE_SL=1` で実SLを送る。
 - オーダー: `market_order` で `client_order_id=qr-fast-...`、エントリーメタにシグナル/ATR/RSI/パターン/timeout情報を詰める。fill 後は `set_trade_protections` で TP/SL を再設定。

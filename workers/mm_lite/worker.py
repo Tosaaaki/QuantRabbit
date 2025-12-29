@@ -12,7 +12,7 @@ class Broker(Protocol):
     def cancel(self, order_id: str) -> Any: ...
 
 class EventFlagSource(Protocol):
-    def is_event_now(self) -> bool: ...  # e.g., macro news window
+    def is_event_now(self) -> bool: ...  # e.g., macro event window
 
 def _as_bars(bars: Any):
     if not bars: return []

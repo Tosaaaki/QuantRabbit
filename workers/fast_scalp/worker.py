@@ -26,7 +26,7 @@ from execution.position_manager import PositionManager
 from market_data import spread_monitor, tick_window
 from utils.metrics_logger import log_metric
 from utils.secrets import get_secret
-from workers.common.quality_gate import current_regime, news_block_active
+from workers.common.quality_gate import current_regime
 
 from . import config
 from .rate_limiter import SlidingWindowRateLimiter
@@ -233,7 +233,6 @@ async def fast_scalp_worker(shared_state: Optional[FastScalpState] = None) -> No
     spread_block_logged = False
     dd_block_logged = False
     off_hours_logged = False
-    news_block_logged = False
     regime_block_logged: Optional[str] = None
     loss_block_logged = False
     order_backoff: float = 0.0
@@ -317,27 +316,6 @@ async def fast_scalp_worker(shared_state: Optional[FastScalpState] = None) -> No
                 await asyncio.sleep(config.LOOP_INTERVAL_SEC)
                 continue
             spread_block_logged = False
-
-            if config.NEWS_BLOCK_MINUTES > 0 and news_block_active(
-                config.NEWS_BLOCK_MINUTES, min_impact=config.NEWS_BLOCK_MIN_IMPACT
-            ):
-                if not news_block_logged:
-                    logger.info(
-                        "%s pause due to upcoming news (impact≥%s within %.0f min)",
-                        config.LOG_PREFIX_TICK,
-                        config.NEWS_BLOCK_MIN_IMPACT,
-                        config.NEWS_BLOCK_MINUTES,
-                    )
-                    log_metric(
-                        "fast_scalp_skip",
-                        config.NEWS_BLOCK_MINUTES,
-                        tags={"reason": "news"},
-                        ts=now,
-                    )
-                    news_block_logged = True
-                await asyncio.sleep(config.LOOP_INTERVAL_SEC)
-                continue
-            news_block_logged = False
 
             regime_label = current_regime("M1", event_mode=False)
             if regime_label and regime_label in config.BLOCK_REGIMES:

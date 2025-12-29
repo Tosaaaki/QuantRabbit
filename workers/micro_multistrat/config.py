@@ -16,5 +16,3 @@ MAX_MARGIN_USAGE = float(os.getenv("MICRO_MULTI_MAX_MARGIN_USAGE", "0.9"))
 CAP_MIN = float(os.getenv("MICRO_MULTI_CAP_MIN", "0.15"))
 CAP_MAX = float(os.getenv("MICRO_MULTI_CAP_MAX", "0.8"))
 
-NEWS_BLOCK_MINUTES = float(os.getenv("MICRO_MULTI_NEWS_BLOCK_MINUTES", "0"))
-NEWS_BLOCK_MIN_IMPACT = int(os.getenv("MICRO_MULTI_NEWS_BLOCK_IMPACT", "2"))

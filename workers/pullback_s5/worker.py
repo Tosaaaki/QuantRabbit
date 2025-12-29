@@ -16,7 +16,7 @@ from indicators.factor_cache import all_factors
 from market_data import spread_monitor, tick_window
 from workers.common import env_guard
 from workers.common.pocket_plan import PocketPlan
-from workers.common.quality_gate import current_regime, news_block_active
+from workers.common.quality_gate import current_regime
 
 from . import config
 
@@ -137,7 +137,6 @@ async def pullback_s5_worker() -> None:
     LOG.info("%s worker starting", config.LOG_PREFIX)
     cooldown_until = 0.0
     last_spread_log = 0.0
-    news_block_logged = False
     regime_block_logged: Optional[str] = None
     loss_block_logged = False
     last_density_log = 0.0
@@ -197,20 +196,6 @@ async def pullback_s5_worker() -> None:
                     )
                     last_spread_log = now_monotonic
                 continue
-
-            if config.NEWS_BLOCK_MINUTES > 0 and news_block_active(
-                config.NEWS_BLOCK_MINUTES, min_impact=config.NEWS_BLOCK_MIN_IMPACT
-            ):
-                if not news_block_logged:
-                    LOG.info(
-                        "%s paused by news guard (impact≥%s / %.0f min)",
-                        config.LOG_PREFIX,
-                        config.NEWS_BLOCK_MIN_IMPACT,
-                        config.NEWS_BLOCK_MINUTES,
-                    )
-                    news_block_logged = True
-                continue
-            news_block_logged = False
 
             if getattr(config, "MIN_DENSITY_TICKS", 0):
                 density_ticks = tick_window.recent_ticks(seconds=30.0, limit=1200)

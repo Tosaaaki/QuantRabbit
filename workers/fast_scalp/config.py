@@ -257,11 +257,7 @@ BLOCK_REGIMES = tuple(
     for regime in os.getenv("FAST_SCALP_BLOCK_REGIMES", "Event").split(",")
     if regime.strip()
 )
-NEWS_BLOCK_MINUTES: float = max(
-    0.0, float(os.getenv("FAST_SCALP_NEWS_BLOCK_MINUTES", "30"))
 )
-NEWS_BLOCK_MIN_IMPACT: int = max(
-    1, int(float(os.getenv("FAST_SCALP_NEWS_BLOCK_MIN_IMPACT", "3")))
 )
 LOSS_STREAK_MAX: int = max(
     0, int(float(os.getenv("FAST_SCALP_MAX_CONSEC_LOSSES", "3")))

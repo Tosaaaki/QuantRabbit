@@ -22,7 +22,7 @@ from market_data import spread_monitor, tick_window
 from strategies.trend.ma_cross import MovingAverageCross
 from utils.market_hours import is_market_open
 from utils.oanda_account import get_account_snapshot
-from workers.common.quality_gate import current_regime, news_block_active
+from workers.common.quality_gate import current_regime
 
 from . import config
 
@@ -180,12 +180,6 @@ async def trend_h1_worker() -> None:
                 now_utc = datetime.datetime.utcnow()
                 if not is_market_open(now_utc):
                     _log_skip("market_closed", skip_state)
-                    continue
-
-                if config.NEWS_BLOCK_MINUTES > 0.0 and news_block_active(
-                    config.NEWS_BLOCK_MINUTES, min_impact=config.NEWS_BLOCK_MIN_IMPACT
-                ):
-                    _log_skip("news_block_active", skip_state)
                     continue
 
                 if not can_trade(config.POCKET):

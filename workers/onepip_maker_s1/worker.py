@@ -15,7 +15,6 @@ from analytics import cost_guard
 from analysis.range_guard import detect_range_mode
 from indicators.factor_cache import all_factors
 from market_data import orderbook_state, spread_monitor, tick_window
-from workers.common.quality_gate import news_block_active
 from execution.order_manager import limit_order, cancel_order
 from execution.risk_guard import allowed_lot, can_trade, clamp_sl_tp
 from utils.oanda_account import get_account_snapshot
@@ -113,7 +112,6 @@ async def onepip_maker_s1_worker() -> None:
     shadow_writer = _ShadowWriter(config.SHADOW_LOG_PATH, config.SHADOW_LOG_ALL)
     cooldown_until = 0.0
     last_snapshot_warn = 0.0
-    last_news_warn = 0.0
     last_cost_warn = 0.0
     last_spread_warn = 0.0
     session_reset_at = time.monotonic() + config.SESSION_RESET_SEC
@@ -154,16 +152,6 @@ async def onepip_maker_s1_worker() -> None:
                             loaded,
                             age or -1.0,
                         )
-
-            news_gate = news_block_active(
-                config.NEWS_BLOCK_MINUTES,
-                min_impact=config.NEWS_BLOCK_MIN_IMPACT,
-            )
-            if news_gate:
-                if now_mono - last_news_warn > 30.0:
-                    LOG.info("%s gated by news window.", config.LOG_PREFIX)
-                    last_news_warn = now_mono
-                continue
 
             snapshot = orderbook_state.get_latest(max_age_ms=config.MAX_SNAPSHOT_AGE_MS)
             if snapshot is None:

@@ -16,5 +16,3 @@ MAX_MARGIN_USAGE = float(os.getenv("DON55_MAX_MARGIN_USAGE", "0.9"))
 CAP_MIN = float(os.getenv("DON55_CAP_MIN", "0.2"))
 CAP_MAX = float(os.getenv("DON55_CAP_MAX", "0.8"))
 
-NEWS_BLOCK_MINUTES = float(os.getenv("DON55_NEWS_BLOCK_MINUTES", "0"))
-NEWS_BLOCK_MIN_IMPACT = int(os.getenv("DON55_NEWS_BLOCK_IMPACT", "2"))

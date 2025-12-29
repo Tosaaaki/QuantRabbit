@@ -68,7 +68,7 @@
     - main のロット計算に pattern boost を組み込み、range 上限を守りつつ entry_thesis にメタ情報を保存する
     - ドライラン/ログで係数と clamp を確認し、しきい値を微調整 or 無効化できるようにする
   Notes:
-    - refresh 間隔は perf/news 更新と同じ 5 分で、ホットパスに負荷を掛けない
+    - refresh 間隔は perf 更新と同じ 5 分で、ホットパスに負荷を掛けない
 
 - [ ] ID: T-20251212-002
   Title: Expand technical composite for lot/entry/exit (scalp→micro→macro)
@@ -494,7 +494,7 @@
     - exit_manager が保持期間ガードを適用し、StageTracker が違反を記録してクールダウンと `exit_hold_violation` メトリクスを出す
     - range_mode 時の分割利確が min_hold 経過までは抑制され、`partial_hold_guard` をログへ記録
   Completed: 2025-11-13
-  Summary: TrendMA/Donchian/BB_RSI/NewsSpike 各ストラテジーに profile/hold メタを付与し、main→order_manager→exit_manager がエントリー thesis に埋め込んだ値で判断するよう更新。StageTracker・hold monitor で違反を記録し、range partial も `partial_hold_guard` により早期利確をブロックする。ユニットテスト（tests/execution/test_exit_manager.py, test_risk_guard.py）を追加し、pytest 実行はローカルに pytest が無いため未実施。
+  Summary: TrendMA/Donchian/BB_RSI 各ストラテジーに profile/hold メタを付与し、main→order_manager→exit_manager がエントリー thesis に埋め込んだ値で判断するよう更新。StageTracker・hold monitor で違反を記録し、range partial も `partial_hold_guard` により早期利確をブロックする。ユニットテスト（tests/execution/test_exit_manager.py, test_risk_guard.py）を追加し、pytest 実行はローカルに pytest が無いため未実施。
 
 - [x] ID: T-20251112-001
   Title: Micro/Scalpのエントリー・SLTP・EXIT精度を改善し manual sentinel を実装
@@ -515,7 +515,7 @@
   Status: done
   Priority: P0
   Owner: tossaki
-  Scope/Paths: strategies/mean_reversion/bb_rsi.py, strategies/breakout/donchian55.py, strategies/trend/ma_cross.py, strategies/news/spike_reversal.py, main.py, execution/exit_manager.py
+  Scope/Paths: strategies/mean_reversion/bb_rsi.py, strategies/breakout/donchian55.py, strategies/trend/ma_cross.py, main.py, execution/exit_manager.py
   Context: 戦略メタを entry→exit まで引き回し、レンジ/トレンド応じたガードを実装。
   Acceptance:
     - `strategy_profile` と target/hold/loss メタが entry thesis に保存され、range ガードや exit_manager が参照
