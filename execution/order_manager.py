@@ -34,6 +34,11 @@ from execution import strategy_guard
 from execution.position_manager import PositionManager
 from execution.risk_guard import POCKET_MAX_RATIOS, MAX_LEVERAGE
 from workers.common import perf_guard
+from utils import signal_bus
+try:
+    from market_data import tick_window
+except Exception:  # pragma: no cover - optional
+    tick_window = None
 
 # ---------- 読み込み：env.toml ----------
 TOKEN = get_secret("oanda_token")
@@ -124,6 +129,11 @@ _PARTIAL_CLOSE_RETRY_CODES = {
     "POSITION_TO_REDUCE_TOO_SMALL",
 }
 _ORDER_SPREAD_BLOCK_PIPS = float(os.getenv("ORDER_SPREAD_BLOCK_PIPS", "1.6"))
+# ワーカーのオーダーをメインの関所に転送するフラグ（reduce_only は除外）
+_FORWARD_TO_SIGNAL_GATE = (
+    os.getenv("ORDER_FORWARD_TO_SIGNAL_GATE", "1").strip().lower()
+    not in {"", "0", "false", "no"}
+)
 # コメントを付けるとリジェクトが発生する場合に強制オフにするトグル（デフォルトで無効化）
 _DISABLE_CLIENT_COMMENT = os.getenv("ORDER_DISABLE_CLIENT_COMMENT", "1").strip().lower() not in {
     "",
@@ -233,6 +243,41 @@ def _estimate_price(meta: Optional[dict]) -> Optional[float]:
                 return val
         except Exception:
             continue
+    return None
+
+
+def _latest_mid_price() -> Optional[float]:
+    if tick_window is None:
+        return None
+    try:
+        ticks = tick_window.recent_ticks(seconds=3.0, limit=1)
+    except Exception:
+        return None
+    if not ticks:
+        return None
+    tick = ticks[-1]
+    try:
+        if tick.get("mid") is not None:
+            return float(tick.get("mid"))
+    except Exception:
+        pass
+    bid = tick.get("bid")
+    ask = tick.get("ask")
+    try:
+        if bid is not None and ask is not None:
+            return (float(bid) + float(ask)) / 2.0
+    except Exception:
+        return None
+    try:
+        if bid is not None:
+            return float(bid)
+    except Exception:
+        pass
+    try:
+        if ask is not None:
+            return float(ask)
+    except Exception:
+        pass
     return None
 
 
@@ -715,12 +760,33 @@ def _preflight_units(
         snap = get_account_snapshot()
         margin_avail = float(getattr(snap, "margin_available", 0.0) or 0.0)
         margin_rate = float(getattr(snap, "margin_rate", 0.0) or 0.0)
-    except Exception:
-        # If snapshot fails, do not block the order here.
-        return (requested_units, 0.0)
+    except Exception as exc:
+        logging.warning("[ORDER] preflight snapshot failed: %s", exc)
+        try:
+            log_metric(
+                "order_margin_block",
+                1.0,
+                tags={"reason": "preflight_snapshot_failed"},
+            )
+        except Exception:
+            pass
+        return (0, 0.0)
 
     if margin_rate <= 0.0 or estimated_price <= 0.0:
-        return (requested_units, 0.0)
+        logging.warning(
+            "[ORDER] preflight missing margin data rate=%.4f price=%.4f",
+            margin_rate,
+            estimated_price,
+        )
+        try:
+            log_metric(
+                "order_margin_block",
+                1.0,
+                tags={"reason": "preflight_missing_margin_data"},
+            )
+        except Exception:
+            pass
+        return (0, 0.0)
 
     # Required margin ≈ |units| * price * marginRate (JPY)
     req = abs(requested_units) * estimated_price * margin_rate
@@ -1746,6 +1812,7 @@ async def market_order(
     meta: Optional[dict] = None,
     confidence: Optional[int] = None,
     stage_index: Optional[int] = None,
+    arbiter_final: bool = False,
 ) -> Optional[str]:
     """
     units : +10000 = buy 0.1 lot, ‑10000 = sell 0.1 lot
@@ -1937,11 +2004,54 @@ async def market_order(
         if get_account_snapshot is not None:
             try:
                 snap = get_account_snapshot(cache_ttl_sec=1.0)
+            except Exception as exc:
+                note = "margin_snapshot_failed"
+                logging.warning("[ORDER] margin guard snapshot failed: %s", exc)
+                _console_order_log(
+                    "OPEN_REJECT",
+                    pocket=pocket,
+                    strategy_tag=strategy_tag or "unknown",
+                    side=side_label,
+                    units=units,
+                    sl_price=sl_price,
+                    tp_price=tp_price,
+                    client_order_id=client_order_id,
+                    note=note,
+                )
+                log_order(
+                    pocket=pocket,
+                    instrument=instrument,
+                    side=side_label,
+                    units=units,
+                    sl_price=sl_price,
+                    tp_price=tp_price,
+                    client_order_id=client_order_id,
+                    status=note,
+                    attempt=0,
+                    stage_index=stage_index,
+                    request_payload={
+                        "strategy_tag": strategy_tag,
+                        "meta": meta,
+                        "entry_thesis": entry_thesis,
+                        "error": str(exc),
+                    },
+                )
+                log_metric(
+                    "order_margin_block",
+                    1.0,
+                    tags={
+                        "pocket": pocket,
+                        "strategy": strategy_tag or "unknown",
+                        "reason": note,
+                    },
+                )
+                return None
+            try:
                 nav = float(snap.nav or 0.0)
                 margin_used = float(snap.margin_used or 0.0)
                 margin_rate = float(snap.margin_rate or 0.0)
-                soft_cap = float(os.getenv("MAX_MARGIN_USAGE", "0.80") or 0.80)
-                hard_cap = float(os.getenv("MAX_MARGIN_USAGE_HARD", "0.83") or 0.83)
+                soft_cap = min(float(os.getenv("MAX_MARGIN_USAGE", "0.80") or 0.80), 0.92)
+                hard_cap = min(float(os.getenv("MAX_MARGIN_USAGE_HARD", "0.83") or 0.83), 0.92)
                 cap = min(hard_cap, max(soft_cap, 0.0))
                 if nav > 0:
                     usage = margin_used / nav
@@ -1973,6 +2083,8 @@ async def market_order(
                                 "strategy_tag": strategy_tag,
                                 "meta": meta,
                                 "entry_thesis": entry_thesis,
+                                "margin_usage": usage,
+                                "cap": hard_cap,
                             },
                         )
                         log_metric(
@@ -2017,6 +2129,8 @@ async def market_order(
                                 "strategy_tag": strategy_tag,
                                 "meta": meta,
                                 "entry_thesis": entry_thesis,
+                                "projected_usage": projected_usage,
+                                "cap": cap,
                             },
                         )
                         log_metric(
@@ -2030,7 +2144,47 @@ async def market_order(
                         )
                         return None
             except Exception as exc:  # pragma: no cover - defensive
-                logging.warning("[ORDER] margin guard skipped: %s", exc)
+                note = "margin_guard_error"
+                logging.warning("[ORDER] margin guard error: %s", exc)
+                _console_order_log(
+                    "OPEN_REJECT",
+                    pocket=pocket,
+                    strategy_tag=strategy_tag or "unknown",
+                    side=side_label,
+                    units=units,
+                    sl_price=sl_price,
+                    tp_price=tp_price,
+                    client_order_id=client_order_id,
+                    note=note,
+                )
+                log_order(
+                    pocket=pocket,
+                    instrument=instrument,
+                    side=side_label,
+                    units=units,
+                    sl_price=sl_price,
+                    tp_price=tp_price,
+                    client_order_id=client_order_id,
+                    status=note,
+                    attempt=0,
+                    stage_index=stage_index,
+                    request_payload={
+                        "strategy_tag": strategy_tag,
+                        "meta": meta,
+                        "entry_thesis": entry_thesis,
+                        "error": str(exc),
+                    },
+                )
+                log_metric(
+                    "order_margin_block",
+                    1.0,
+                    tags={
+                        "pocket": pocket,
+                        "strategy": strategy_tag or "unknown",
+                        "reason": note,
+                    },
+                )
+                return None
     if not strategy_tag:
         _console_order_log(
             "OPEN_REJECT",
@@ -2133,6 +2287,82 @@ async def market_order(
 
     if STOP_LOSS_DISABLED:
         sl_price = None
+
+    if (
+        _FORWARD_TO_SIGNAL_GATE
+        and not reduce_only
+        and not arbiter_final
+    ):
+        price_hint = entry_price_meta or _estimate_price(meta) or _latest_mid_price()
+        sl_pips_hint = _as_float((entry_thesis or {}).get("sl_pips")) if isinstance(entry_thesis, dict) else None
+        if sl_pips_hint is None and isinstance(entry_thesis, dict):
+            for alt in ("profile_sl_pips", "loss_guard_pips", "hard_stop_pips"):
+                alt_val = _as_float(entry_thesis.get(alt))
+                if alt_val:
+                    sl_pips_hint = alt_val
+                    break
+        tp_pips_hint = _as_float((entry_thesis or {}).get("tp_pips")) if isinstance(entry_thesis, dict) else None
+        if tp_pips_hint is None and isinstance(entry_thesis, dict):
+            for alt in ("profile_tp_pips", "target_tp_pips"):
+                alt_val = _as_float(entry_thesis.get(alt))
+                if alt_val:
+                    tp_pips_hint = alt_val
+                    break
+        if sl_pips_hint is None and price_hint is not None and sl_price is not None:
+            sl_pips_hint = abs(price_hint - sl_price) / 0.01
+        if tp_pips_hint is None and price_hint is not None and tp_price is not None:
+            tp_pips_hint = abs(price_hint - tp_price) / 0.01
+        try:
+            conf_val = int(confidence if confidence is not None else (entry_thesis or {}).get("confidence", 50))
+        except Exception:
+            conf_val = 50
+        conf_val = max(0, min(100, conf_val))
+        payload = {
+            "source": "order_manager",
+            "strategy": strategy_tag,
+            "pocket": pocket,
+            "action": "OPEN_LONG" if units > 0 else "OPEN_SHORT",
+            "confidence": conf_val,
+            "sl_pips": sl_pips_hint,
+            "tp_pips": tp_pips_hint,
+            "sl_price": sl_price,
+            "tp_price": tp_price,
+            "entry_price": price_hint,
+            "client_order_id": client_order_id,
+            "proposed_units": abs(units),
+            "entry_type": (entry_thesis or {}).get("entry_type"),
+            "entry_thesis": entry_thesis,
+            "meta": meta or {},
+        }
+        try:
+            signal_bus.enqueue(payload)
+            log_order(
+                pocket=pocket,
+                instrument=instrument,
+                side="buy" if units > 0 else "sell",
+                units=units,
+                sl_price=sl_price,
+                tp_price=tp_price,
+                client_order_id=client_order_id,
+                status="queued_to_gate",
+                attempt=0,
+                stage_index=stage_index,
+                request_payload=payload,
+            )
+            _console_order_log(
+                "OPEN_QUEUE",
+                pocket=pocket,
+                strategy_tag=strategy_tag or "unknown",
+                side=side_label,
+                units=units,
+                sl_price=sl_price,
+                tp_price=tp_price,
+                client_order_id=client_order_id,
+                note="signal_gate",
+            )
+            return None
+        except Exception as exc:
+            logging.warning("[ORDER_GATE] enqueue failed, fall back to live order: %s", exc)
 
     if (
         _DYNAMIC_SL_ENABLE

@@ -9,6 +9,7 @@ import math
 import os
 from pathlib import Path
 from typing import Optional, Tuple, Coroutine, Any, Dict, Sequence
+from utils import signal_bus
 
 PIP_VALUE = 0.01  # USD/JPY pip size
 
@@ -96,6 +97,10 @@ def _env_bool(name: str, default: bool = False) -> bool:
 # Trading from main is enabled alongside workers for higher entry density.
 # 内蔵ストラテジーはデフォルト停止。動かす場合は環境変数で明示的にONにする。
 MAIN_TRADING_ENABLED = _env_bool("MAIN_TRADING_ENABLED", default=False)
+# ワーカー発のシグナルを関所で集約・順位付けするか
+SIGNAL_GATE_ENABLED = _env_bool("SIGNAL_GATE_ENABLED", default=True)
+# 関所キューから一度に取り出す件数
+SIGNAL_GATE_FETCH_LIMIT = int(os.getenv("SIGNAL_GATE_FETCH_LIMIT", "120"))
 
 # Aggressive mode: loosen range gatesとマイクロの入口ガードを緩めるフラグ
 # デフォルトは安全寄りに OFF
@@ -286,9 +291,10 @@ logging.basicConfig(
 
 logging.info("Application started!")
 logging.info(
-    "[CONFIG] main_trading_enabled=%s worker_only_mode=%s",
+    "[CONFIG] main_trading_enabled=%s worker_only_mode=%s signal_gate=%s",
     MAIN_TRADING_ENABLED,
     WORKER_ONLY_MODE,
+    SIGNAL_GATE_ENABLED,
 )
 
 # Backward-compatible alias (expected by STRATEGIES map and logs)
@@ -3068,8 +3074,11 @@ async def logic_loop(
     stage_plan_advisor: StagePlanAdvisor | None = None,
     partial_advisor: PartialReductionAdvisor | None = None,
 ):
-    if WORKER_ONLY_MODE or not MAIN_TRADING_ENABLED:
+    if WORKER_ONLY_MODE and not SIGNAL_GATE_ENABLED:
         logging.info("[LOGIC_LOOP] disabled (worker-only runtime).")
+        return
+    if not MAIN_TRADING_ENABLED and not SIGNAL_GATE_ENABLED:
+        logging.info("[LOGIC_LOOP] disabled (main trading off, gate off).")
         return
     pos_manager = PositionManager()
     metrics_client = RealtimeMetricsClient()
@@ -3134,6 +3143,83 @@ async def logic_loop(
             except (TypeError, ValueError):
                 continue
         return snapshot
+
+    def _normalize_bus_signal(raw: dict, price_hint: Optional[float]) -> Optional[dict]:
+        if not isinstance(raw, dict):
+            return None
+        pocket = str(raw.get("pocket") or raw.get("pocket_name") or "").strip() or "micro"
+        pocket_lower = pocket.lower()
+        if pocket_lower.startswith("scalp"):
+            pocket = "scalp"
+        elif pocket_lower.startswith("micro"):
+            pocket = "micro"
+        elif pocket_lower.startswith("macro"):
+            pocket = "macro"
+        action = (raw.get("action") or raw.get("side") or "").upper()
+        if not action and "units" in raw:
+            try:
+                action = "OPEN_LONG" if float(raw.get("units")) > 0 else "OPEN_SHORT"
+            except Exception:
+                action = ""
+        if action not in {"OPEN_LONG", "OPEN_SHORT", "CLOSE"}:
+            return None
+        strategy = (
+            raw.get("strategy")
+            or raw.get("strategy_tag")
+            or raw.get("tag")
+            or raw.get("profile")
+            or ""
+        )
+        if not strategy:
+            return None
+        try:
+            conf = int(raw.get("confidence", raw.get("conf", 50)) or 50)
+        except Exception:
+            conf = 50
+        conf = max(0, min(100, conf))
+        entry_price = _safe_float(
+            raw.get("entry_price")
+            or raw.get("price")
+            or raw.get("mid_price")
+            or raw.get("entry_ref")
+            or raw.get("entry")
+        )
+        sl_price = _safe_float(raw.get("sl_price"))
+        tp_price = _safe_float(raw.get("tp_price"))
+        sl_pips = _safe_float(raw.get("sl_pips"), default=None)
+        tp_pips = _safe_float(raw.get("tp_pips"), default=None)
+        if sl_pips is None and entry_price is not None and sl_price is not None:
+            sl_pips = abs(entry_price - sl_price) / PIP
+        if tp_pips is None and entry_price is not None and tp_price is not None:
+            tp_pips = abs(entry_price - tp_price) / PIP
+        if sl_pips is None and price_hint is not None and sl_price is not None:
+            sl_pips = abs(price_hint - sl_price) / PIP
+        if tp_pips is None and price_hint is not None and tp_price is not None:
+            tp_pips = abs(price_hint - tp_price) / PIP
+        sig = {
+            "strategy": str(strategy),
+            "pocket": pocket,
+            "action": action,
+            "confidence": conf,
+            "sl_pips": sl_pips,
+            "tp_pips": tp_pips,
+            "tag": raw.get("tag") or strategy,
+            "entry_price": entry_price,
+            "entry_type": raw.get("entry_type") or raw.get("order_type") or "market",
+            "client_order_id": raw.get("client_order_id"),
+            "proposed_units": raw.get("proposed_units"),
+            "meta": raw.get("meta") or {},
+            "source": raw.get("source") or "bus",
+        }
+        if sl_price is not None:
+            sig["sl_price"] = sl_price
+        if tp_price is not None:
+            sig["tp_price"] = tp_price
+        entry_thesis = raw.get("entry_thesis")
+        if isinstance(entry_thesis, dict):
+            sig["entry_thesis"] = entry_thesis
+        return sig
+
     last_volatility_state: Optional[str] = None
     last_liquidity_state: Optional[str] = None
     last_risk_appetite: Optional[float] = None
@@ -3210,7 +3296,7 @@ async def logic_loop(
                 except Exception as exc:  # pragma: no cover - defensive
                     logging.debug("[WORKER_CTL] reconcile failed: %s", exc)
 
-            if WORKER_ONLY_MODE or not MAIN_TRADING_ENABLED:
+            if (WORKER_ONLY_MODE or not MAIN_TRADING_ENABLED) and not SIGNAL_GATE_ENABLED:
                 if loop_counter % 5 == 1:
                     logging.info(
                         "[WORKER_MODE] trading loop skipped (worker_only=%s main_trading=%s). active_workers=%s",
@@ -4469,8 +4555,44 @@ async def logic_loop(
 
             open_positions_snapshot = pos_manager.get_open_positions()
             evaluated_signals: list[dict] = []
+            signals: list[dict] = []
             signal_emitted = False
             evaluated_count = 0
+            bus_signals: list[dict] = []
+            price_hint = _safe_float(fac_m1.get("close")) or _safe_float(fac_m1.get("mid"))
+            if SIGNAL_GATE_ENABLED:
+                try:
+                    raw_bus = signal_bus.fetch(limit=SIGNAL_GATE_FETCH_LIMIT)
+                except Exception as exc:
+                    raw_bus = []
+                    logging.warning("[SIGNAL_GATE] fetch failed: %s", exc)
+                for raw_sig in raw_bus:
+                    norm = _normalize_bus_signal(raw_sig, price_hint)
+                    if norm:
+                        bus_signals.append(norm)
+                if bus_signals:
+                    try:
+                        logging.info(
+                            "[SIGNAL_GATE] bus=%d tags=%s",
+                            len(bus_signals),
+                            ",".join(
+                                sorted(
+                                    {
+                                        s.get("strategy")
+                                        or s.get("strategy_tag")
+                                        or s.get("tag")
+                                        or "unknown"
+                                        for s in bus_signals
+                                    }
+                                )
+                            ),
+                        )
+                    except Exception:
+                        pass
+            evaluated_signals = list(bus_signals)
+            signals = list(bus_signals)
+            evaluated_count = len(bus_signals)
+            signal_emitted = bool(bus_signals)
             shock_ctx = _shock_state(fac_m1)
             h4_dir = 0
             try:
@@ -5021,6 +5143,7 @@ async def logic_loop(
                                 ts=now,
                             )
                 evaluated_signals.append(signal)
+                signals.append(signal)
                 logging.info("[SIGNAL] %s -> %s", cls.name, signal)
 
             open_positions = pos_manager.get_open_positions()
@@ -7437,6 +7560,7 @@ async def logic_loop(
                     pocket,
                     client_order_id=client_id,
                     entry_thesis=entry_thesis,
+                    arbiter_final=True,
                 )
                 if trade_id:
                     logging.info(
@@ -7601,7 +7725,10 @@ async def main():
         except Exception:
             logging.exception("[MAIN] prime_gpt_decision failed; continuing without primer")
 
-        if MAIN_TRADING_ENABLED and not WORKER_ONLY_MODE:
+        run_logic = (MAIN_TRADING_ENABLED or SIGNAL_GATE_ENABLED) and (
+            not WORKER_ONLY_MODE or SIGNAL_GATE_ENABLED
+        )
+        if run_logic:
             tasks.append(
                 asyncio.create_task(
                     supervised_runner(
@@ -7623,9 +7750,10 @@ async def main():
             )
         else:
             logging.info(
-                "[MAIN] logic_loop disabled main_trading_enabled=%s worker_only=%s",
+                "[MAIN] logic_loop disabled main_trading_enabled=%s worker_only=%s signal_gate=%s",
                 MAIN_TRADING_ENABLED,
                 WORKER_ONLY_MODE,
+                SIGNAL_GATE_ENABLED,
             )
         try:
             await asyncio.gather(*tasks)
