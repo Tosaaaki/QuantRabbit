@@ -64,8 +64,9 @@ EXPOSURE_WARN_THRESHOLD = float(os.getenv("EXPOSURE_WARN_THRESHOLD", "0.95"))
 _MIN_LOT_BY_POCKET = {
     "macro": max(0.0, float(os.getenv("RISK_MIN_LOT_MACRO", "0.1"))),
     "micro": max(0.0, float(os.getenv("RISK_MIN_LOT_MICRO", "0.0"))),
-    # scalp は最小 0.05 lot (=5k units) に緩和（環境変数で上書き可）
-    "scalp": max(0.0, float(os.getenv("RISK_MIN_LOT_SCALP", "0.05"))),
+    # scalp系も0を許容し、リスク計算結果に全面委ねる（envで上書き可）
+    "scalp": max(0.0, float(os.getenv("RISK_MIN_LOT_SCALP", "0.0"))),
+    "scalp_fast": max(0.0, float(os.getenv("RISK_MIN_LOT_SCALP_FAST", "0.0"))),
 }
 # 手動ポジはエクスポージャ計算から除外するのをデフォルトにする。
 # manual ポジも含めて総エクスポージャを見たいので、既定で manual は除外しない。
