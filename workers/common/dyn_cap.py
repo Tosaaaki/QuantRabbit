@@ -25,6 +25,17 @@ def compute_cap(
     cap = cap_max * 0.9
     reasons: Dict[str, float] = {}
 
+    # Aim for target margin usage (e.g., 0.9 = use 90% of equity)
+    target_usage = max(0.1, min(0.99, float(os.getenv("TARGET_MARGIN_USAGE", "0.9") or 0.9)))
+    current_usage = max(0.0, min(1.0, 1.0 - free_ratio))
+    if current_usage > 0:
+        adj = target_usage / current_usage
+        # clamp adjustment to avoid extreme swings
+        adj = max(0.8, min(1.2, adj))
+        cap *= adj
+        reasons["usage_adj"] = round(adj, 3)
+        reasons["usage_now"] = round(current_usage, 3)
+
     # ATR / volatility
     if atr_pips >= 3.0:
         cap *= 1.1
