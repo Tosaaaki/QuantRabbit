@@ -5867,21 +5867,33 @@ async def logic_loop(
             # Apply dynamic allocation (score-driven confidence trim) if available
             alloc_data = load_dynamic_alloc()
             evaluated_signals, pocket_caps, target_use = apply_dynamic_alloc(filtered_signals, alloc_data)
-            # 同一サイクルで最もconfidenceが高いシグナルだけを通す（機会損失を抑えつつ方向精度を優先）
+            # 同一サイクルで pocket ごとに最高 confidence を選び、全体で最大3本まで許可
             if evaluated_signals:
-                best = max(
-                    evaluated_signals,
+                pocket_best: dict[str, dict] = {}
+                for sig in evaluated_signals:
+                    action = (sig.get("action") or "").upper()
+                    if action not in {"OPEN_LONG", "OPEN_SHORT"}:
+                        continue
+                    pocket = sig.get("pocket") or "unknown"
+                    conf = int(sig.get("confidence", 0) or 0)
+                    if pocket not in pocket_best or conf > int(pocket_best[pocket].get("confidence", 0) or 0):
+                        pocket_best[pocket] = sig
+                selected = sorted(
+                    pocket_best.values(),
                     key=lambda s: int(s.get("confidence", 0) or 0),
+                    reverse=True,
                 )
-                if len(evaluated_signals) > 1:
+                MAX_SIGNALS_PER_CYCLE = 3
+                if len(selected) > MAX_SIGNALS_PER_CYCLE:
+                    selected = selected[:MAX_SIGNALS_PER_CYCLE]
+                if len(selected) != len(evaluated_signals):
                     logging.info(
-                        "[SIGNAL_SELECT] picked strategy=%s pocket=%s conf=%s out_of=%d",
-                        best.get("strategy") or best.get("strategy_tag"),
-                        best.get("pocket"),
-                        best.get("confidence"),
+                        "[SIGNAL_SELECT] picked=%d out_of=%d pockets=%s",
+                        len(selected),
                         len(evaluated_signals),
+                        ",".join(sorted({s.get('pocket') or 'unknown' for s in selected})),
                     )
-                evaluated_signals = [best]
+                evaluated_signals = selected
 
             risk_override = _dynamic_risk_pct(
                 evaluated_signals,
