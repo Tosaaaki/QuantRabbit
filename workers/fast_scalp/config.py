@@ -34,16 +34,16 @@ SL_PIPS: float = max(10.0, float(os.getenv("FAST_SCALP_SL_PIPS", "60.0")))
 SL_POST_ADJUST_BUFFER_PIPS: float = max(
     0.0, float(os.getenv("FAST_SCALP_SL_POST_ADJUST_BUFFER_PIPS", "5.0"))
 )
-MAX_SPREAD_PIPS: float = max(0.1, float(os.getenv("FAST_SCALP_MAX_SPREAD_PIPS", "1.2")))
-ENTRY_THRESHOLD_PIPS: float = max(0.002, float(os.getenv("FAST_SCALP_ENTRY_MOM_PIPS", "0.004")))
+MAX_SPREAD_PIPS: float = max(0.1, float(os.getenv("FAST_SCALP_MAX_SPREAD_PIPS", "1.3")))
+ENTRY_THRESHOLD_PIPS: float = max(0.002, float(os.getenv("FAST_SCALP_ENTRY_MOM_PIPS", "0.003")))
 ENTRY_SHORT_THRESHOLD_PIPS: float = max(
-    0.002, float(os.getenv("FAST_SCALP_ENTRY_SHORT_MOM_PIPS", "0.004"))
+    0.002, float(os.getenv("FAST_SCALP_ENTRY_SHORT_MOM_PIPS", "0.003"))
 )
-ENTRY_RANGE_FLOOR_PIPS: float = max(0.005, float(os.getenv("FAST_SCALP_RANGE_FLOOR_PIPS", "0.04")))
-ENTRY_COOLDOWN_SEC: float = max(0.2, float(os.getenv("FAST_SCALP_ENTRY_COOLDOWN_SEC", "1.0")))
-MAX_ORDERS_PER_MINUTE: int = max(1, int(float(os.getenv("FAST_SCALP_MAX_ORDERS_PER_MIN", "12"))))
+ENTRY_RANGE_FLOOR_PIPS: float = max(0.005, float(os.getenv("FAST_SCALP_RANGE_FLOOR_PIPS", "0.02")))
+ENTRY_COOLDOWN_SEC: float = max(0.5, float(os.getenv("FAST_SCALP_ENTRY_COOLDOWN_SEC", "2.0")))
+MAX_ORDERS_PER_MINUTE: int = max(1, int(float(os.getenv("FAST_SCALP_MAX_ORDERS_PER_MIN", "15"))))
 MIN_ORDER_SPACING_SEC: float = max(
-    0.2, float(os.getenv("FAST_SCALP_MIN_ORDER_SPACING_SEC", "1.0"))
+    0.2, float(os.getenv("FAST_SCALP_MIN_ORDER_SPACING_SEC", "0.5"))
 )
 MAX_LOT: float = max(0.001, float(os.getenv("FAST_SCALP_MAX_LOT", "0.05")))
 SYNC_INTERVAL_SEC: float = max(5.0, float(os.getenv("FAST_SCALP_SYNC_INTERVAL_SEC", "45.0")))
@@ -61,10 +61,8 @@ JST_OFF_HOURS_START: int = min(23, max(0, int(float(os.getenv("FAST_SCALP_OFF_HO
 JST_OFF_HOURS_END: int = min(23, max(0, int(float(os.getenv("FAST_SCALP_OFF_HOURS_END_JST", "5")))))
 LOG_PREFIX_TICK = "[SCALP-TICK]"
 MIN_UNITS: int = max(1000, int(float(os.getenv("FAST_SCALP_MIN_UNITS", "2000"))))
-MAX_ACTIVE_TRADES: int = max(1, int(float(os.getenv("FAST_SCALP_MAX_ACTIVE", "2"))))
-MAX_PER_DIRECTION: int = max(1, int(float(os.getenv("FAST_SCALP_MAX_PER_DIRECTION", "2"))))
-ENTRY_COOLDOWN_SEC: float = max(1.0, float(os.getenv("FAST_SCALP_ENTRY_COOLDOWN_SEC", "120.0")))
-MAX_ORDERS_PER_MINUTE: int = max(1, int(float(os.getenv("FAST_SCALP_MAX_ORDERS_PER_MIN", "4"))))
+MAX_ACTIVE_TRADES: int = max(1, int(float(os.getenv("FAST_SCALP_MAX_ACTIVE", "3"))))
+MAX_PER_DIRECTION: int = max(1, int(float(os.getenv("FAST_SCALP_MAX_PER_DIRECTION", "3"))))
 STALE_TICK_MAX_SEC: float = max(0.5, float(os.getenv("FAST_SCALP_STALE_TICK_MAX_SEC", "3.0")))
 SNAPSHOT_MIN_INTERVAL_SEC: float = max(
     0.25, float(os.getenv("FAST_SCALP_SNAPSHOT_MIN_INTERVAL_SEC", "1.0"))
@@ -82,8 +80,8 @@ SNAPSHOT_BURST_INTERVAL_SEC: float = max(
 NO_LOSS_CLOSE: bool = _bool_env("FAST_SCALP_NO_LOSS_CLOSE", True)
 
 # --- entry gating / quality thresholds ---
-MIN_ENTRY_ATR_PIPS: float = max(0.0, float(os.getenv("FAST_SCALP_MIN_ENTRY_ATR_PIPS", "0.08")))
-MIN_ENTRY_TICK_COUNT: int = max(2, int(float(os.getenv("FAST_SCALP_MIN_ENTRY_TICK_COUNT", "4"))))
+MIN_ENTRY_ATR_PIPS: float = max(0.0, float(os.getenv("FAST_SCALP_MIN_ENTRY_ATR_PIPS", "0.05")))
+MIN_ENTRY_TICK_COUNT: int = max(2, int(float(os.getenv("FAST_SCALP_MIN_ENTRY_TICK_COUNT", "3"))))
 RSI_ENTRY_OVERBOUGHT: float = float(os.getenv("FAST_SCALP_RSI_ENTRY_OVERBOUGHT", "70"))
 RSI_ENTRY_OVERSOLD: float = float(os.getenv("FAST_SCALP_RSI_ENTRY_OVERSOLD", "30"))
 LOW_VOL_COOLDOWN_SEC: float = max(0.0, float(os.getenv("FAST_SCALP_LOW_VOL_COOLDOWN_SEC", "0.0")))
