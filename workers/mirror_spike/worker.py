@@ -16,6 +16,7 @@ from execution.position_manager import PositionManager
 from market_data import spread_monitor, tick_window
 from workers.fast_scalp.signal import SignalFeatures, extract_features
 from utils.metrics_logger import log_metric
+from workers.common import perf_guard
 
 from . import config
 
@@ -223,6 +224,7 @@ async def mirror_spike_worker() -> None:
     post_exit_cooldown_until = 0.0
     last_spread_block_log = 0.0
     last_hour_log = 0.0
+    last_perf_log = 0.0
     try:
         while True:
             await asyncio.sleep(0.6)
@@ -295,6 +297,17 @@ async def mirror_spike_worker() -> None:
 
             signal = _detect_signal(ticks, features)
             if not signal:
+                continue
+            perf_decision = perf_guard.is_allowed("mirror_spike", "scalp")
+            if not perf_decision.allowed:
+                if now_monotonic - last_perf_log > 120.0:
+                    logger.info(
+                        "%s perf_block tag=%s reason=%s",
+                        config.LOG_PREFIX,
+                        "mirror_spike",
+                        perf_decision.reason,
+                    )
+                    last_perf_log = now_monotonic
                 continue
             if existing_side and signal.side != existing_side:
                 continue

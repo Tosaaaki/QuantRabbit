@@ -25,6 +25,7 @@ from strategies.micro.trend_momentum import TrendMomentumMicro
 from utils.market_hours import is_market_open
 from utils.oanda_account import get_account_snapshot
 from workers.common.dyn_cap import compute_cap
+from workers.common import perf_guard
 from analysis import perf_monitor
 
 from . import config
@@ -160,6 +161,20 @@ async def micro_multi_worker() -> None:
             if cand:
                 signal = cand
                 strategy_name = getattr(strat, "name", strat.__name__)
+                perf_decision = perf_guard.is_allowed(strategy_name, config.POCKET)
+                if not perf_decision.allowed:
+                    now_mono = time.monotonic()
+                    if now_mono - last_trend_block_log > 120.0:
+                        LOG.info(
+                            "%s perf_block tag=%s reason=%s",
+                            config.LOG_PREFIX,
+                            strategy_name,
+                            perf_decision.reason,
+                        )
+                        last_trend_block_log = now_mono
+                    signal = None
+                    strategy_name = ""
+                    continue
                 break
         if not signal:
             continue

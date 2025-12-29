@@ -18,6 +18,7 @@ from strategies.scalping.m1_scalper import M1Scalper
 from utils.market_hours import is_market_open
 from utils.oanda_account import get_account_snapshot
 from workers.common.dyn_cap import compute_cap
+from workers.common import perf_guard
 from analysis import perf_monitor
 
 from . import config
@@ -107,6 +108,19 @@ async def scalp_m1_worker() -> None:
 
         signal = M1Scalper.check(fac_m1)
         if not signal:
+            continue
+
+        perf_decision = perf_guard.is_allowed(M1Scalper.name, config.POCKET)
+        if not perf_decision.allowed:
+            now_mono = time.monotonic()
+            if now_mono - last_block_log > 120.0:
+                LOG.info(
+                    "%s perf_block tag=%s reason=%s",
+                    config.LOG_PREFIX,
+                    M1Scalper.name,
+                    perf_decision.reason,
+                )
+                last_block_log = now_mono
             continue
 
         snap = get_account_snapshot()
