@@ -809,6 +809,23 @@ class ExitManager:
                 self._reset_reverse_counter(pocket, "short")
                 self._low_vol_hazard_hits.pop((pocket, "short"), None)
 
+            # Simple scalp momentum flip: price below EMA after short hold -> flat
+            if pocket == "scalp" and long_units > 0 and ema_m1:
+                trades_side = [tr for tr in (info.get("open_trades") or []) if tr.get("side") == "long"]
+                trade = trades_side[0] if trades_side else None
+                age_sec = self._trade_age_seconds(trade, current_time) if trade else None
+                if close_price < ema_m1 and (age_sec is None or age_sec >= 10.0):
+                    decisions.append(
+                        ExitDecision(
+                            pocket="scalp",
+                            units=-abs(long_units),
+                            reason="scalp_momentum_flip",
+                            tag="scalp-momentum",
+                            allow_reentry=True,
+                        )
+                    )
+                    continue
+
             # Clamp Red: drop up to 2 latest trades per方向 with a short guard (both BUY/SELL)
             if clamp_level >= 3:
                 partial_added = False
@@ -2782,6 +2799,7 @@ class ExitManager:
         if (
             reason
             and pocket in {"micro", "scalp"}
+            and not str(reason).startswith("low_vol")
             and reason not in self._force_exit_reasons
             and profit_pips is not None
             and profit_pips > self._soft_exit_floor
@@ -2790,7 +2808,7 @@ class ExitManager:
             if partial_units >= abs(units):
                 partial_units = abs(units) - 1 if abs(units) > 1 else abs(units)
             if partial_units > 0:
-                signed = -partial_units if side == "long" else partial_units
+                signed = -partial_units
                 return ExitDecision(
                     pocket=pocket,
                     units=signed,
@@ -4625,8 +4643,6 @@ class ExitManager:
             health = max(0.0, min(1.0, max_mfe / denom))
         budget = self._micro_low_vol_event_budget_sec
         if age_sec >= budget and health < 0.22 and profit_pips <= 0.6:
-            if pa_score < 0.35:
-                return None, False
             self._low_vol_hazard_hits[key] = 0
             log_metric(
                 "low_vol_exit",
@@ -4637,8 +4653,6 @@ class ExitManager:
         grace = self._micro_low_vol_grace_sec
         key = (pocket, side)
         if age_sec <= grace and profit_pips <= -0.25 and (max_mfe is None or max_mfe <= 0.45):
-            if pa_score < 0.35:
-                return None, False
             self._low_vol_hazard_hits[key] = 0
             log_metric(
                 "low_vol_exit",
@@ -4652,8 +4666,6 @@ class ExitManager:
             and age_sec >= self._timeout_soft_tp_frac * self._upper_bound_max_sec
             and profit_pips >= self._soft_tp_pips
         ):
-            if pa_score < 0.35:
-                return None, False
             self._low_vol_hazard_hits[key] = 0
             log_metric(
                 "low_vol_exit",
@@ -4667,8 +4679,6 @@ class ExitManager:
             and health < (0.3 if low_vol_quiet else 0.4)
         )
         if hazard_met and self._hazard_exit_enabled:
-            if pa_score < 0.35:
-                return None, False
             debounce = 2 if low_vol_quiet else self._hazard_debounce_ticks
             hits = self._low_vol_hazard_hits.get(key, 0) + 1
             self._low_vol_hazard_hits[key] = hits
