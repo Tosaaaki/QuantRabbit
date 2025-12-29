@@ -94,7 +94,8 @@ def _env_bool(name: str, default: bool = False) -> bool:
     return str(val).strip().lower() in {"1", "true", "yes", "on"}
 
 # Trading from main is enabled alongside workers for higher entry density.
-MAIN_TRADING_ENABLED = _env_bool("MAIN_TRADING_ENABLED", default=True)
+# 内蔵ストラテジーはデフォルト停止。動かす場合は環境変数で明示的にONにする。
+MAIN_TRADING_ENABLED = _env_bool("MAIN_TRADING_ENABLED", default=False)
 
 # Aggressive mode: loosen range gatesとマイクロの入口ガードを緩めるフラグ
 # デフォルトは安全寄りに OFF
