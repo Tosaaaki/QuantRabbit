@@ -305,26 +305,10 @@ DISABLE_MAIN_STRATEGIES = {
 
 # メイン側では内蔵ストラテジーを発注しない（ワーカーに移行済み）
 STRATEGIES: dict[str, object] = {}
-
-TREND_STRATEGIES: set[str] = {"TrendMA", "Donchian55", "TrendMomentumMicro"}
-RANGE_STRATEGIES: set[str] = {"BB_RSI", "BB_RSI_Fast", "MicroVWAPRevert", "MicroRangeBreak", "MicroVWAPBound"}
-MOMENTUM_STRATEGIES: set[str] = {"MomentumPulse", "VolCompressionBreak", "MicroPullbackEMA", "MicroLevelReactor", "M1Scalper"}
-
-POCKET_STRATEGY_MAP: dict[str, set[str]] = {
-    "macro": {"TrendMA", "Donchian55"},
-    "micro": {
-        "BB_RSI",
-        "MomentumPulse",
-        "VolCompressionBreak",
-        "BB_RSI_Fast",
-        "MicroVWAPRevert",
-        "MicroRangeBreak",
-        "MicroPullbackEMA",
-        "MicroLevelReactor",
-        "MicroVWAPBound",
-    },
-    "scalp": {"M1Scalper", "BB_RSI_Fast"},
-}
+TREND_STRATEGIES: set[str] = set()
+RANGE_STRATEGIES: set[str] = set()
+MOMENTUM_STRATEGIES: set[str] = set()
+POCKET_STRATEGY_MAP: dict[str, set[str]] = {}
 
 FOCUS_POCKETS = {
     "macro": ("macro",),
