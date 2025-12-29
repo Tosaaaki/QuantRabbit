@@ -29,9 +29,9 @@ class MovingAverageCross:
     _PULLBACK_LIMIT = 1.60          # pips relative to fast MA
 
     # Simple M1-only range suppression to avoid trend entries under compression
-    _RANGE_ADX_CUTOFF = 18.0  # 緩和して弱トレンドでも拾う
-    _RANGE_BBW_CUTOFF = 0.20  # やや広げる
-    _RANGE_ATR_MAX = 8.0      # 高ATRでも抑制しすぎない
+    _RANGE_ADX_CUTOFF = 14.0  # さらに緩和して弱トレンドでも拾う
+    _RANGE_BBW_CUTOFF = 0.16  # 締まり気味でも拾う
+    _RANGE_ATR_MAX = 9.0      # 高ATRでも抑制しすぎない
     _MACRO_TREND_ADX_OVERRIDE = 24.0
     _MACRO_TREND_GAP_PIPS = 1.2
     _OPPOSITE_FLIP_COOLDOWN_SEC = 1800  # 30min flip guard for macro direction changes

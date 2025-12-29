@@ -25,11 +25,11 @@ class H1MomentumSwing:
     name = "H1Momentum"
     pocket = "macro"
 
-    _MIN_ADX = 18.0
-    _MIN_GAP_PIPS = 4.5
-    _MIN_ATR_PIPS = 2.0
-    _MAX_M1_RSI_EXTREME = 76.0
-    _MIN_M1_RSI_SUPPORT = 24.0
+    _MIN_ADX = 15.0
+    _MIN_GAP_PIPS = 3.2
+    _MIN_ATR_PIPS = 1.2
+    _MAX_M1_RSI_EXTREME = 78.0
+    _MIN_M1_RSI_SUPPORT = 22.0
 
     @classmethod
     def _h1_factors(cls) -> Optional[Dict[str, float]]:

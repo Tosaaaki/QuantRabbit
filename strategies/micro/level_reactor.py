@@ -24,9 +24,9 @@ class MicroLevelReactor:
     # Optional absolute overrides (price). If unset, dynamic ATR-based levels are used.
     ABS_LEVEL_UP = __import__("os").getenv("MLR_LEVEL_UP")
     ABS_LEVEL_DOWN = __import__("os").getenv("MLR_LEVEL_DOWN")
-    BAND_PIPS = float(__import__("os").getenv("MLR_BAND_PIPS", "1.5"))  # allow +- band checks
-    UP_ATR_MULT = float(__import__("os").getenv("MLR_UP_ATR_MULT", "3.5"))
-    DOWN_ATR_MULT = float(__import__("os").getenv("MLR_DOWN_ATR_MULT", "3.5"))
+    BAND_PIPS = float(__import__("os").getenv("MLR_BAND_PIPS", "1.2"))  # allow +- band checks
+    UP_ATR_MULT = float(__import__("os").getenv("MLR_UP_ATR_MULT", "2.5"))
+    DOWN_ATR_MULT = float(__import__("os").getenv("MLR_DOWN_ATR_MULT", "2.5"))
 
     @staticmethod
     def _as_float(val: Optional[float], default: float = 0.0) -> float:

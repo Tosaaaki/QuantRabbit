@@ -6,10 +6,10 @@ from analysis.ma_projection import compute_ma_projection, MACrossProjection
 
 # Helper thresholds for directional quality
 PIP = 0.01
-MIN_GAP_TREND = 0.32
-MIN_ADX = 24.0
-MIN_ATR = 1.2
-VOL_MIN = 0.7
+MIN_GAP_TREND = 0.24
+MIN_ADX = 18.0
+MIN_ATR = 0.9
+VOL_MIN = 0.6
 RSI_LONG_MIN = 54
 RSI_SHORT_MAX = 46
 DRIFT_PIPS_FLOOR = -0.5  # block longs if short-term drift is negative
