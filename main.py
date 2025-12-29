@@ -7550,6 +7550,18 @@ async def main():
         logging.warning("[HISTORY] Startup seeding incomplete, continuing with live feed.")
 
     while True:
+        # 周辺コンポーネント（GPT/アドバイザー等）の初期化
+        gpt_state = GPTDecisionState()
+        gpt_requests = GPTRequestManager()
+        fast_scalp_state = FastScalpState()
+        rr_advisor = RRRatioAdvisor()
+        exit_advisor = ExitAdvisor()
+        strategy_conf_advisor = StrategyConfidenceAdvisor()
+        focus_advisor = FocusOverrideAdvisor()
+        volatility_advisor = VolatilityBiasAdvisor()
+        stage_plan_advisor = StagePlanAdvisor()
+        partial_advisor = PartialReductionAdvisor()
+
         tasks = [
             asyncio.create_task(
                 supervised_runner(
@@ -7563,10 +7575,49 @@ async def main():
                     worker_only_loop(),
                 )
             ),
+            asyncio.create_task(
+                supervised_runner(
+                    "gpt_worker",
+                    gpt_worker(gpt_state, gpt_requests),
+                )
+            ),
         ]
+
+        # 先にGPTの初期決定を温めておく（ロジック開始前のプリム）
+        try:
+            await prime_gpt_decision(gpt_state, gpt_requests)
+        except Exception:
+            logging.exception("[MAIN] prime_gpt_decision failed; continuing without primer")
+
+        if MAIN_TRADING_ENABLED and not WORKER_ONLY_MODE:
+            tasks.append(
+                asyncio.create_task(
+                    supervised_runner(
+                        "logic_loop",
+                        logic_loop(
+                            gpt_state,
+                            gpt_requests,
+                            fast_scalp_state=fast_scalp_state,
+                            rr_advisor=rr_advisor,
+                            exit_advisor=exit_advisor,
+                            strategy_conf_advisor=strategy_conf_advisor,
+                            focus_advisor=focus_advisor,
+                            volatility_advisor=volatility_advisor,
+                            stage_plan_advisor=stage_plan_advisor,
+                            partial_advisor=partial_advisor,
+                        ),
+                    )
+                )
+            )
+        else:
+            logging.info(
+                "[MAIN] logic_loop disabled main_trading_enabled=%s worker_only=%s",
+                MAIN_TRADING_ENABLED,
+                WORKER_ONLY_MODE,
+            )
         try:
             await asyncio.gather(*tasks)
-            logging.error("[SUPERVISOR] Worker-only task group exited cleanly; restarting in 5s.")
+            logging.error("[SUPERVISOR] Task group exited cleanly; restarting in 5s.")
         except asyncio.CancelledError:
             for task in tasks:
                 task.cancel()
