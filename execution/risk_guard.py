@@ -46,7 +46,7 @@ _DEFAULT_BASE_EQUITY = {
     "scalp_fast": 2000.0,
 }
 _LOOKBACK_DAYS = 7
-MAX_MARGIN_USAGE = float(os.getenv("MAX_MARGIN_USAGE", "0.85"))
+MAX_MARGIN_USAGE = float(os.getenv("MAX_MARGIN_USAGE", "0.80"))
 
 _DISABLE_POCKET_DD = os.getenv("DISABLE_POCKET_DD", "false").lower() in {
     "1",
@@ -360,7 +360,7 @@ def allowed_lot(
             lot = min(lot, lot_margin)
     # margin_rate が取れない場合でも、free_ratio から強制ガードを入れる
     if margin_cap is None and margin_available is not None and equity > 0:
-        hard_margin_cap = float(os.getenv("MAX_MARGIN_USAGE_HARD", "0.88") or 0.88)
+        hard_margin_cap = float(os.getenv("MAX_MARGIN_USAGE_HARD", "0.83") or 0.83)
         margin_used = max(0.0, equity - margin_available)
         current_usage = margin_used / equity
         if current_usage >= hard_margin_cap:

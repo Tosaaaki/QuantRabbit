@@ -14,6 +14,7 @@ from analysis.range_guard import detect_range_mode
 from indicators.factor_cache import all_factors
 from execution.order_manager import market_order
 from execution.risk_guard import allowed_lot, can_trade, clamp_sl_tp
+from execution.position_manager import PositionManager
 from market_data import tick_window
 from strategies.scalping.range_fader import RangeFader
 from strategies.scalping.pulse_break import PulseBreak
@@ -27,6 +28,8 @@ from analysis import perf_monitor
 from . import config
 
 LOG = logging.getLogger(__name__)
+PM = PositionManager()
+_LAST_ENTRY_TS: float = 0.0
 
 
 def _latest_mid(fallback: float) -> float:
@@ -118,6 +121,10 @@ async def scalp_multi_worker() -> None:
             continue
         if not can_trade(config.POCKET):
             continue
+        # クールダウン: 直近エントリーから一定時間はスキップ
+        now_ts = time.time()
+        if now_ts - _LAST_ENTRY_TS < config.COOLDOWN_SEC:
+            continue
 
         factors = all_factors()
         fac_m1 = factors.get("M1") or {}
@@ -142,6 +149,15 @@ async def scalp_multi_worker() -> None:
             continue
 
         snap = get_account_snapshot()
+        # 同ポケットのオープントレード数制限
+        try:
+            positions = PM.get_open_positions()
+            scalp_info = positions.get("scalp") or {}
+            open_trades = len(scalp_info.get("open_trades") or [])
+            if open_trades >= config.MAX_OPEN_TRADES:
+                continue
+        except Exception:
+            pass
         free_ratio = float(snap.free_margin_ratio or 0.0) if snap.free_margin_ratio is not None else 0.0
         try:
             atr_pips = float(fac_m1.get("atr_pips") or 0.0)

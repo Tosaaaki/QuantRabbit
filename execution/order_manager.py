@@ -149,7 +149,7 @@ _MIN_ORDER_UNITS = 1000
 
 # Directional exposure cap (dynamic; scales units instead of rejecting)
 _DIR_CAP_ENABLE = os.getenv("DIR_CAP_ENABLE", "1").strip().lower() not in {"", "0", "false", "no"}
-_DIR_CAP_RATIO = float(os.getenv("DIR_CAP_RATIO", "0.85"))
+_DIR_CAP_RATIO = float(os.getenv("DIR_CAP_RATIO", "0.70"))
 _DIR_CAP_WARN_RATIO = float(os.getenv("DIR_CAP_WARN_RATIO", "0.98"))
 # Floor multiplier to avoid crushing frequency when shrinking; 0.0 to disable
 _DIR_CAP_MIN_FRACTION = float(os.getenv("DIR_CAP_MIN_FRACTION", "0.15"))
@@ -1025,35 +1025,10 @@ def _maybe_update_protections(
 
 async def close_trade(trade_id: str, units: Optional[int] = None, client_order_id: Optional[str] = None) -> bool:
     data: Optional[dict[str, str]] = None
-    # close 側も client_order_id を必須化し、欠損時は拒否＋メトリクス
+    # close 側も client_order_id を必須化。欠損かつ agent 管理外の建玉はスキップして無駄打ちを防ぐ。
     if not client_order_id:
-        log_metric("close_missing_client_id", 1.0, tags={"trade_id": str(trade_id)})
-        _console_order_log(
-            "CLOSE_REJECT",
-            pocket=None,
-            strategy_tag=None,
-            side=None,
-            units=units,
-            sl_price=None,
-            tp_price=None,
-            client_order_id="",
-            ticket_id=str(trade_id),
-            note="missing_client_order_id",
-        )
-        _log_order(
-            pocket=None,
-            instrument=None,
-            side=None,
-            units=units,
-            sl_price=None,
-            tp_price=None,
-            client_order_id=None,
-            status="close_missing_client_id",
-            attempt=0,
-            ticket_id=str(trade_id),
-            executed_price=None,
-            request_payload={"trade_id": trade_id, "data": data or {}},
-        )
+        log_metric("close_skip_missing_client_id", 1.0, tags={"trade_id": str(trade_id)})
+        logging.info("[ORDER] skip close trade=%s missing client_id (likely manual/external)", trade_id)
         return False
     if _EXIT_NO_NEGATIVE_CLOSE:
         pl = _current_trade_unrealized_pl(trade_id)
@@ -1883,8 +1858,8 @@ async def market_order(
                 nav = float(snap.nav or 0.0)
                 margin_used = float(snap.margin_used or 0.0)
                 margin_rate = float(snap.margin_rate or 0.0)
-                soft_cap = float(os.getenv("MAX_MARGIN_USAGE", "0.85") or 0.85)
-                hard_cap = float(os.getenv("MAX_MARGIN_USAGE_HARD", "0.88") or 0.88)
+                soft_cap = float(os.getenv("MAX_MARGIN_USAGE", "0.80") or 0.80)
+                hard_cap = float(os.getenv("MAX_MARGIN_USAGE_HARD", "0.83") or 0.83)
                 cap = min(hard_cap, max(soft_cap, 0.0))
                 if nav > 0:
                     usage = margin_used / nav
