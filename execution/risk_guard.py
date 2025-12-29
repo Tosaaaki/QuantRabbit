@@ -46,7 +46,7 @@ _DEFAULT_BASE_EQUITY = {
     "scalp_fast": 2000.0,
 }
 _LOOKBACK_DAYS = 7
-MAX_MARGIN_USAGE = float(os.getenv("MAX_MARGIN_USAGE", "0.92"))
+MAX_MARGIN_USAGE = float(os.getenv("MAX_MARGIN_USAGE", "0.88"))
 
 _DISABLE_POCKET_DD = os.getenv("DISABLE_POCKET_DD", "false").lower() in {
     "1",
@@ -338,7 +338,7 @@ def allowed_lot(
     if margin_available is not None and price is not None and margin_rate:
         margin_per_lot = price * margin_rate * 100000
         if margin_per_lot > 0:
-            # 基準: MAX_MARGIN_USAGE を絶対上限（デフォルト0.92）
+            # 基準: MAX_MARGIN_USAGE を絶対上限（デフォルト0.88）
             margin_cap = max(0.0, min(MAX_MARGIN_USAGE, 1.0))
             hard_margin_cap = margin_cap
             # margin_cap=0 の場合は強制停止
@@ -354,13 +354,13 @@ def allowed_lot(
             lot_margin = margin_budget_new / margin_per_lot
             # すでに cap 超なら新規はゼロ
             current_usage = used / equity if equity > 0 else 0.0
-            if current_usage >= margin_cap:
+            if current_usage >= margin_cap * 0.995:
                 lot_margin = 0.0
             # 信頼度・SLなしの運用では margin ベースを優先しつつ、cap を超えないよう clamp
             lot = min(lot, lot_margin)
     # margin_rate が取れない場合でも、free_ratio から強制ガードを入れる
     if margin_cap is None and margin_available is not None and equity > 0:
-        hard_margin_cap = float(os.getenv("MAX_MARGIN_USAGE_HARD", "0.95") or 0.95)
+        hard_margin_cap = float(os.getenv("MAX_MARGIN_USAGE_HARD", "0.9") or 0.9)
         margin_used = max(0.0, equity - margin_available)
         current_usage = margin_used / equity
         if current_usage >= hard_margin_cap:

@@ -24,7 +24,7 @@ _LAST_SNAPSHOT: AccountSnapshot | None = None
 _LAST_SNAPSHOT_TS: float | None = None
 
 
-def get_account_snapshot(timeout: float = 7.0, *, cache_ttl_sec: float = 60.0) -> AccountSnapshot:
+def get_account_snapshot(timeout: float = 7.0, *, cache_ttl_sec: float = 5.0) -> AccountSnapshot:
     token = get_secret("oanda_token")
     account = get_secret("oanda_account_id")
     try:
