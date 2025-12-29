@@ -303,23 +303,8 @@ DISABLE_MAIN_STRATEGIES = {
     "M1Scalper",
 }
 
-STRATEGIES = {
-    # Macro
-    "TrendMA": TrendMA,
-    "Donchian55": Donchian55,
-    # Micro / Scalp
-    "BB_RSI": BBRsi,
-    "MomentumPulse": MomentumPulse,
-    "VolCompressionBreak": VolCompressionBreak,
-    "BB_RSI_Fast": BBRsiFast,
-    "MicroVWAPRevert": MicroVWAPRevert,
-    "MicroRangeBreak": MicroRangeBreak,
-    "MicroPullbackEMA": MicroPullbackEMA,
-    "MicroLevelReactor": MicroLevelReactor,
-    "MicroVWAPBound": MicroVWAPBound,
-    "TrendMomentumMicro": TrendMomentumMicro,
-    "M1Scalper": M1Scalper,
-}
+# メイン側では内蔵ストラテジーを発注しない（ワーカーに移行済み）
+STRATEGIES: dict[str, object] = {}
 
 TREND_STRATEGIES: set[str] = {"TrendMA", "Donchian55", "TrendMomentumMicro"}
 RANGE_STRATEGIES: set[str] = {"BB_RSI", "BB_RSI_Fast", "MicroVWAPRevert", "MicroRangeBreak", "MicroVWAPBound"}
