@@ -5867,18 +5867,42 @@ async def logic_loop(
             # Apply dynamic allocation (score-driven confidence trim) if available
             alloc_data = load_dynamic_alloc()
             evaluated_signals, pocket_caps, target_use = apply_dynamic_alloc(filtered_signals, alloc_data)
-            # 同一サイクルで全体からconfidence上位のみを通す（最大3本）。マージン高利用時はさらに本数・閾値を絞る。
+            # 同一サイクルで全体からconfidence上位のみを通す（最大3本）。
+            # fast_scalp 偏重を避けるため、戦略ごとのブースト/ペナルティを適用し、fast_scalpは1本まで。
             if evaluated_signals:
-                candidates = [
-                    s
-                    for s in evaluated_signals
-                    if (s.get("action") or "").upper() in {"OPEN_LONG", "OPEN_SHORT"}
-                ]
+                candidates = []
+                for s in evaluated_signals:
+                    action = (s.get("action") or "").upper()
+                    if action not in {"OPEN_LONG", "OPEN_SHORT"}:
+                        continue
+                    raw_conf = int(s.get("confidence", 0) or 0)
+                    tag = s.get("strategy") or s.get("strategy_tag") or s.get("tag") or ""
+                    adj = raw_conf
+                    # 戦略別の軽いバイアス: fast_scalpを抑え、macro/microを少し押し上げる
+                    if tag == "fast_scalp":
+                        adj -= 8
+                    elif s.get("pocket") == "macro":
+                        adj += 6
+                    elif s.get("pocket") == "micro":
+                        adj += 3
+                    s["conf_adj"] = adj
+                    candidates.append(s)
                 selected = sorted(
                     candidates,
-                    key=lambda s: int(s.get("confidence", 0) or 0),
+                    key=lambda s: int(s.get("conf_adj", s.get("confidence", 0)) or 0),
                     reverse=True,
                 )
+                # fast_scalpは1本まで許容
+                fast_taken = 0
+                filtered_selected = []
+                for sig in selected:
+                    tag = sig.get("strategy") or sig.get("strategy_tag") or sig.get("tag") or ""
+                    if tag == "fast_scalp":
+                        if fast_taken >= 1:
+                            continue
+                        fast_taken += 1
+                    filtered_selected.append(sig)
+                selected = filtered_selected
                 max_signals = 3
                 conf_floor = 0
                 if margin_usage is not None and margin_usage >= 0.88:
