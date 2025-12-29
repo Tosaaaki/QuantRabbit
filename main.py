@@ -7168,7 +7168,16 @@ async def logic_loop(
                     is_buy,
                 )
 
-                client_id = build_client_order_id(focus_tag, signal["tag"])
+                strategy_tag = (
+                    signal.get("tag")
+                    or signal.get("strategy")
+                    or signal.get("strategy_tag")
+                    or signal.get("profile")
+                    or "unknown_signal"
+                )
+                signal["tag"] = strategy_tag
+
+                client_id = build_client_order_id(focus_tag, strategy_tag)
                 # Build a lightweight entry thesis for contextual exits
                 thesis_type = (
                     "trend_follow" if pocket == "macro" else ("mean_reversion" if pocket == "micro" else "scalp")
@@ -7182,7 +7191,6 @@ async def logic_loop(
                     except (TypeError, ValueError):
                         return None
 
-                strategy_tag = signal.get("tag") or signal.get("strategy")
                 strategy_profile = signal.get("profile") or signal.get("strategy_profile")
                 target_tp_hint = _opt_float(signal.get("target_tp_pips"))
                 loss_guard_hint = _opt_float(signal.get("loss_guard_pips") or signal.get("loss_grace_pips"))
