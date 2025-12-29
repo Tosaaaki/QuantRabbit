@@ -33,6 +33,7 @@ from utils.metrics_logger import log_metric
 from execution import strategy_guard
 from execution.position_manager import PositionManager
 from execution.risk_guard import POCKET_MAX_RATIOS, MAX_LEVERAGE
+from workers.common import perf_guard
 
 # ---------- 読み込み：env.toml ----------
 TOKEN = get_secret("oanda_token")
@@ -1875,6 +1876,56 @@ async def market_order(
     if isinstance(entry_thesis, dict) and strategy_tag and not entry_thesis.get("strategy_tag"):
         entry_thesis = dict(entry_thesis)
         entry_thesis["strategy_tag"] = strategy_tag
+
+    # 成績ガード（直近 PF/勝率が悪いタグは全ポケットでブロック。manual は除外）
+    perf_guard_enabled = os.getenv("PERF_GUARD_GLOBAL_ENABLED", "1").strip().lower() not in {
+        "",
+        "0",
+        "false",
+        "no",
+    }
+    if perf_guard_enabled and pocket != "manual" and strategy_tag:
+        try:
+            current_hour = datetime.now(timezone.utc).hour
+        except Exception:
+            current_hour = None
+        decision = perf_guard.is_allowed(str(strategy_tag), pocket, hour=current_hour)
+        if not decision.allowed:
+            note = f"perf_block:{decision.reason}"
+            _console_order_log(
+                "OPEN_REJECT",
+                pocket=pocket,
+                strategy_tag=strategy_tag,
+                side=side_label,
+                units=units,
+                sl_price=sl_price,
+                tp_price=tp_price,
+                client_order_id=client_order_id,
+                note=note,
+            )
+            log_order(
+                pocket=pocket,
+                instrument=instrument,
+                side=side_label,
+                units=units,
+                sl_price=sl_price,
+                tp_price=tp_price,
+                client_order_id=client_order_id,
+                status="perf_block",
+                attempt=0,
+                stage_index=stage_index,
+                request_payload={"strategy_tag": strategy_tag, "meta": meta, "entry_thesis": entry_thesis},
+            )
+            log_metric(
+                "order_perf_block",
+                1.0,
+                tags={
+                    "pocket": pocket,
+                    "strategy": str(strategy_tag),
+                    "reason": decision.reason,
+                },
+            )
+            return None
 
     # 強制マージンガード（reduce_only 以外）。直近スナップショットから
     # 現在の使用率と注文後の想定使用率を確認し、上限超えは即リジェクト。
