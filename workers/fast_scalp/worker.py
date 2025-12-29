@@ -883,6 +883,9 @@ async def fast_scalp_worker(shared_state: Optional[FastScalpState] = None) -> No
                 tp_price = entry_price - tp_pips * config.PIP_VALUE
             sl_price, tp_price = clamp_sl_tp(entry_price, sl_price, tp_price, direction == "long")
 
+            sl_price_initial = None if sl_price is None else round(sl_price, 5)
+            tp_price_initial = None if tp_price is None else round(tp_price, 5)
+
             thesis = {
                 "strategy_tag": "fast_scalp",
                 "momentum_pips": round(features.momentum_pips, 3),
@@ -900,8 +903,8 @@ async def fast_scalp_worker(shared_state: Optional[FastScalpState] = None) -> No
                 "weight_scalp": snapshot.weight_scalp,
                 "tp_pips": round(tp_pips, 3),
                 "entry_price_expect": round(entry_price, 5),
-                "sl_price_initial": round(sl_price, 5),
-                "tp_price_initial": round(tp_price, 5),
+                "sl_price_initial": sl_price_initial,
+                "tp_price_initial": tp_price_initial,
                 "signal": action,
                 "profile": profile.name,
                 "session": session_tag,
