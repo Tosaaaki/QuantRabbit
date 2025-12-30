@@ -46,9 +46,9 @@ def detect_range_mode(
     fac_m1: Dict[str, float],
     fac_h4: Dict[str, float],
     *,
-    adx_threshold: float = 16.0,
-    bbw_threshold: float = 0.16,
-    atr_threshold: float = 5.0,
+    adx_threshold: float = 14.0,
+    bbw_threshold: float = 0.14,
+    atr_threshold: float = 4.0,
 ) -> RangeContext:
     """
     M1/H4 の因子からレンジモードを検知する。
@@ -127,13 +127,14 @@ def detect_range_mode(
     ]
     composite = sum(components) / len(components)
 
+    composite_threshold = 0.75  # require stronger confluence before range=ON
     compression_trigger = (
         compression_ratio >= 0.65
         and volatility_ratio >= 0.50
         and effective_adx_m1 <= (adx_threshold + 3.0)
     )
     active = (is_low_adx and is_narrow_band and is_low_atr) or (
-        composite >= 0.66 and h4_trend_weak
+        composite >= composite_threshold and h4_trend_weak
     )
     if not active and compression_trigger:
         active = True
