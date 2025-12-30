@@ -5679,11 +5679,11 @@ async def logic_loop(
                             (margin_usage_long if action_dir > 0 else margin_usage_short) * 100.0,
                         )
                         continue
-            # margin_usage が十分余裕 (<MAX_MARGIN_USAGE) の場合は露出capによるブロックを緩和
-            def _can_apply_exposure_cap() -> bool:
-                if margin_usage is None:
-                    return True
-                return margin_usage >= MAX_MARGIN_USAGE
+                # margin_usage が十分余裕 (<MAX_MARGIN_USAGE) の場合は露出capによるブロックを緩和
+                def _can_apply_exposure_cap() -> bool:
+                    if margin_usage is None:
+                        return True
+                    return margin_usage >= MAX_MARGIN_USAGE
 
                 if (
                     action_dir != 0
