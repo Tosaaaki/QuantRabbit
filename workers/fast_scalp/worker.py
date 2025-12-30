@@ -742,6 +742,23 @@ async def fast_scalp_worker(shared_state: Optional[FastScalpState] = None) -> No
                 range_active=range_active_flag,
             )
             if not action:
+                span = max(features.span_seconds, 1e-6)
+                velocity = abs(features.short_momentum_pips) / span
+                density = features.tick_count / span
+                logger.info(
+                    "%s no_action range=%.3f mom=%.3f short_mom=%.3f atr=%.3f spread=%.3f ticks=%d span=%.2f vel=%.3f dens=%.3f range_active=%s",
+                    config.LOG_PREFIX_TICK,
+                    features.range_pips,
+                    features.momentum_pips,
+                    features.short_momentum_pips,
+                    features.atr_pips if features.atr_pips is not None else -1.0,
+                    features.spread_pips,
+                    features.tick_count,
+                    features.span_seconds,
+                    velocity,
+                    density,
+                    range_active_flag,
+                )
                 # 強制エントリー（検証用）: スプレッドが許容内であれば短期モメンタム方向に入る
                 if config.FORCE_ENTRIES and spread_pips <= config.MAX_SPREAD_PIPS:
                     action = "OPEN_LONG" if features.short_momentum_pips >= 0 else "OPEN_SHORT"

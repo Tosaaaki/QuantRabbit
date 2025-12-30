@@ -36,6 +36,7 @@ _CANDLES: Dict[TimeFrame, deque] = {
 }
 _FACTORS: Dict[TimeFrame, Dict[str, float]] = defaultdict(dict)
 _CACHE_PATH = Path("logs/factor_cache.json")
+_LAST_RESTORE_MTIME: float | None = None
 
 _LOCK = asyncio.Lock()
 
@@ -77,6 +78,11 @@ def _persist_cache() -> None:
             return
         _CACHE_PATH.parent.mkdir(parents=True, exist_ok=True)
         _CACHE_PATH.write_text(json.dumps(payload), encoding="utf-8")
+        try:
+            global _LAST_RESTORE_MTIME
+            _LAST_RESTORE_MTIME = _CACHE_PATH.stat().st_mtime
+        except Exception:
+            pass
     except Exception as exc:  # noqa: BLE001
         logging.warning("[FACTOR_CACHE] persist failed: %s", exc)
 
@@ -85,12 +91,16 @@ def _restore_cache() -> None:
     """Load persisted factors (if any) back into memory."""
     if not _CACHE_PATH.exists():
         return
+    global _LAST_RESTORE_MTIME
     try:
         data = json.loads(_CACHE_PATH.read_text(encoding="utf-8"))
+        try:
+            _LAST_RESTORE_MTIME = _CACHE_PATH.stat().st_mtime  # type: ignore[assignment]
+        except Exception:
+            pass
     except Exception as exc:  # noqa: BLE001
         logging.warning("[FACTOR_CACHE] restore failed: %s", exc)
         return
-
     for tf, snapshot in data.items():
         if tf not in _CANDLES:
             continue
@@ -149,6 +159,25 @@ for tf, dq in _CANDLES.items():
         _FACTORS[tf].update(factors)
     except Exception as exc:  # noqa: BLE001
         logging.warning("[FACTOR_CACHE] warm recompute failed tf=%s: %s", tf, exc)
+
+
+def refresh_cache_from_disk() -> bool:
+    """
+    Reload cache from disk if the persisted file is newer than the last in-memory restore.
+    Returns True when a reload was performed.
+    """
+    global _LAST_RESTORE_MTIME
+    try:
+        stat = _CACHE_PATH.stat()
+    except FileNotFoundError:
+        return False
+    except Exception:
+        return False
+    if _LAST_RESTORE_MTIME is not None and stat.st_mtime <= _LAST_RESTORE_MTIME:
+        return False
+    _restore_cache()
+    _LAST_RESTORE_MTIME = stat.st_mtime
+    return True
 
 
 def _serialize(value: object) -> object:
@@ -212,7 +241,11 @@ async def on_candle(tf: TimeFrame, candle: Dict[str, float]):
 
 
 def all_factors() -> Dict[TimeFrame, Dict[str, float]]:
-    """全タイムフレームの指標dictを返す"""
+    """全タイムフレームの指標dictを返す（ディスクキャッシュが新しければ自動リロード）。"""
+    try:
+        refresh_cache_from_disk()
+    except Exception:  # defensive: 失敗しても古いキャッシュを返す
+        pass
     return dict(_FACTORS)
 
 

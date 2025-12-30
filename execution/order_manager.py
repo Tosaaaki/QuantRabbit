@@ -76,13 +76,13 @@ def _as_float(value: object, default: float | None = None) -> float | None:
     except (TypeError, ValueError):
         return default
 
-# Min size per pocketを引き上げて、勝ちトレードでも有効額を確保する。
-_DEFAULT_MIN_UNITS = _env_int("ORDER_MIN_UNITS_DEFAULT", 10_000)
-_MACRO_MIN_UNITS_DEFAULT = max(_DEFAULT_MIN_UNITS * 4, 40_000)
+# エントリーが詰まらないようデフォルトの最小ユニットを下げる。
+_DEFAULT_MIN_UNITS = _env_int("ORDER_MIN_UNITS_DEFAULT", 1_000)
+_MACRO_MIN_UNITS_DEFAULT = max(_env_int("ORDER_MIN_UNITS_MACRO", 10_000), _DEFAULT_MIN_UNITS * 10)
 _MIN_UNITS_BY_POCKET: dict[str, int] = {
     "micro": _env_int("ORDER_MIN_UNITS_MICRO", _DEFAULT_MIN_UNITS),
     "macro": _env_int("ORDER_MIN_UNITS_MACRO", _MACRO_MIN_UNITS_DEFAULT),
-    # scalp も最低 10k に揃える（環境変数で上書き可）
+    # scalp 系も同じ下限を使う（環境変数で上書き可）
     "scalp": _env_int("ORDER_MIN_UNITS_SCALP", _DEFAULT_MIN_UNITS),
 }
 # Raise scalp floor to avoid tiny entries; can override via env ORDER_MIN_UNITS_SCALP
@@ -156,7 +156,7 @@ except Exception:
 # 最低発注単位（AGENT.me 6.1 に準拠）。
 # リスク計算・ステージ係数適用後の“最終 units”に対して適用する最終ゲート。
 # reduce_only（決済）では適用しない。
-_MIN_ORDER_UNITS = 1000
+_MIN_ORDER_UNITS = 500
 
 # Directional exposure cap (dynamic; scales units instead of rejecting)
 _DIR_CAP_ENABLE = os.getenv("DIR_CAP_ENABLE", "1").strip().lower() not in {"", "0", "false", "no"}

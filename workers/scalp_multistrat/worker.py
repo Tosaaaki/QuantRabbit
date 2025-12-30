@@ -147,6 +147,7 @@ async def scalp_multi_worker() -> None:
                 break
         if not signal:
             continue
+        signal_tag = (signal.get("tag") or "").strip() or strategy_name
 
         snap = get_account_snapshot()
         # 同ポケットのオープントレード数制限
@@ -227,7 +228,7 @@ async def scalp_multi_worker() -> None:
             tp=tp_price,
             is_buy=side == "long",
         )
-        client_id = _client_order_id(signal.get("tag", strategy_name))
+        client_id = _client_order_id(signal_tag)
 
         res = await market_order(
             instrument="USD_JPY",
@@ -236,10 +237,10 @@ async def scalp_multi_worker() -> None:
             tp_price=tp_price,
             pocket=config.POCKET,
             client_order_id=client_id,
-            strategy_tag=signal.get("tag", strategy_name),
+            strategy_tag=signal_tag,
             confidence=int(signal.get("confidence", 0)),
             entry_thesis={
-                "strategy_tag": signal.get("tag", strategy_name),
+                "strategy_tag": signal_tag,
                 "tp_pips": tp_pips,
                 "sl_pips": sl_pips,
                 "confidence": signal.get("confidence", 0),

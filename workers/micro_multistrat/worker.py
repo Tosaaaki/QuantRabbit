@@ -11,7 +11,7 @@ import time
 from typing import Dict, List, Tuple
 
 from analysis.range_guard import detect_range_mode
-from indicators.factor_cache import all_factors
+from indicators.factor_cache import all_factors, refresh_cache_from_disk
 from execution.order_manager import market_order
 from execution.risk_guard import allowed_lot, can_trade, clamp_sl_tp
 from market_data import tick_window
@@ -120,15 +120,18 @@ def _factor_age_seconds(factors: Dict[str, float]) -> float:
     try:
         if isinstance(ts_raw, (int, float)):
             ts_val = float(ts_raw)
-            ts_dt = datetime.datetime.utcfromtimestamp(ts_val)
+            ts_dt = datetime.datetime.utcfromtimestamp(ts_val).replace(tzinfo=datetime.timezone.utc)
         else:
             ts_txt = str(ts_raw)
             if ts_txt.endswith("Z"):
                 ts_txt = ts_txt.replace("Z", "+00:00")
             ts_dt = datetime.datetime.fromisoformat(ts_txt)
+            if ts_dt.tzinfo is None:
+                ts_dt = ts_dt.replace(tzinfo=datetime.timezone.utc)
     except Exception:
         return float("inf")
-    return max(0.0, (datetime.datetime.utcnow() - ts_dt).total_seconds())
+    now = datetime.datetime.now(datetime.timezone.utc)
+    return max(0.0, (now - ts_dt).total_seconds())
 
 
 async def micro_multi_worker() -> None:
@@ -148,27 +151,32 @@ async def micro_multi_worker() -> None:
             continue
         current_hour = now.hour
 
+        # 最新キャッシュに更新（他プロセスが書いた factor_cache.json を取り込む）
+        try:
+            refresh_cache_from_disk()
+        except Exception:
+            pass
         factors = all_factors()
         fac_m1 = factors.get("M1") or {}
         fac_h4 = factors.get("H4") or {}
         age_m1 = _factor_age_seconds(fac_m1)
         if age_m1 > config.MAX_FACTOR_AGE_SEC:
+            # 入口を止める代わりにログだけ残して評価を継続（データ欠損で固まらないようにする）
             log_metric(
                 "micro_multi_skip",
                 float(age_m1),
-                tags={"reason": "factor_stale", "tf": "M1"},
+                tags={"reason": "factor_stale_warn", "tf": "M1"},
                 ts=now,
             )
             now_ts = time.time()
             if now_ts - last_stale_log > 30.0:
                 LOG.warning(
-                    "%s skip stale factors age=%.1fs limit=%.1fs",
+                    "%s stale factors age=%.1fs limit=%.1fs (proceeding anyway)",
                     config.LOG_PREFIX,
                     age_m1,
                     config.MAX_FACTOR_AGE_SEC,
                 )
                 last_stale_log = now_ts
-            continue
         range_ctx = detect_range_mode(fac_m1, fac_h4)
         perf = perf_monitor.snapshot()
         pf = None
