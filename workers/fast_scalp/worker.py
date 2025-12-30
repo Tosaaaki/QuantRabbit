@@ -477,6 +477,25 @@ async def fast_scalp_worker(shared_state: Optional[FastScalpState] = None) -> No
                 else float(features.tick_count)
             )
 
+            recent_tick = None
+            latest_tick_mid: Optional[float] = None
+            last_tick_age_ms: Optional[float] = None
+            recent_ticks = tick_window.recent_ticks(seconds=3.0, limit=1)
+            if recent_ticks:
+                recent_tick = recent_ticks[-1]
+                try:
+                    latest_tick_mid = float(recent_tick.get("mid") or 0.0)
+                except Exception:
+                    latest_tick_mid = None
+                try:
+                    epoch_val = float(recent_tick.get("epoch") or 0.0)
+                    if epoch_val > 0:
+                        last_tick_age_ms = max(0.0, (time.time() - epoch_val) * 1000.0)
+                except Exception:
+                    last_tick_age_ms = None
+            if last_tick_age_ms is None and isinstance(age_ms, (int, float)):
+                last_tick_age_ms = float(age_ms)
+
             skip_new_entry = False
             pattern_prob: Optional[float] = None
             atr_value = features.atr_pips if features.atr_pips is not None else 0.0
@@ -698,6 +717,25 @@ async def fast_scalp_worker(shared_state: Optional[FastScalpState] = None) -> No
                 await asyncio.sleep(config.LOOP_INTERVAL_SEC)
                 continue
 
+            if (
+                last_tick_age_ms is not None
+                and last_tick_age_ms > config.MAX_SIGNAL_AGE_MS
+            ):
+                log_metric(
+                    "fast_scalp_skip",
+                    float(last_tick_age_ms),
+                    tags={"reason": "signal_stale"},
+                    ts=now,
+                )
+                logger.info(
+                    "%s skip due to stale tick age_ms=%.0f limit=%.0f",
+                    config.LOG_PREFIX_TICK,
+                    last_tick_age_ms,
+                    config.MAX_SIGNAL_AGE_MS,
+                )
+                await asyncio.sleep(config.LOOP_INTERVAL_SEC)
+                continue
+
             action = evaluate_signal(
                 features,
                 m1_rsi=m1_rsi_snapshot,
@@ -848,11 +886,19 @@ async def fast_scalp_worker(shared_state: Optional[FastScalpState] = None) -> No
             state = spread_monitor.get_state()
             bid_quote = float(state.get("bid") or 0.0) if state else 0.0
             ask_quote = float(state.get("ask") or 0.0) if state else 0.0
-            last_ticks = tick_window.recent_ticks(3.0, limit=1)
-            if last_ticks:
-                last_tick = last_ticks[-1]
+            last_tick = recent_tick
+            if last_tick is None:
+                last_ticks = tick_window.recent_ticks(3.0, limit=1)
+                if last_ticks:
+                    last_tick = last_ticks[-1]
+            if last_tick:
                 bid_quote = float(last_tick.get("bid") or bid_quote or features.latest_mid)
                 ask_quote = float(last_tick.get("ask") or ask_quote or features.latest_mid)
+                if latest_tick_mid is None:
+                    try:
+                        latest_tick_mid = float(last_tick.get("mid") or 0.0)
+                    except Exception:
+                        latest_tick_mid = None
             expected_entry_price = (
                 ask_quote if direction == "long" else bid_quote
             ) or features.latest_mid
@@ -882,6 +928,31 @@ async def fast_scalp_worker(shared_state: Optional[FastScalpState] = None) -> No
                 sl_price = None if not config.USE_SL else entry_price + sl_pips * config.PIP_VALUE
                 tp_price = entry_price - tp_pips * config.PIP_VALUE
             sl_price, tp_price = clamp_sl_tp(entry_price, sl_price, tp_price, direction == "long")
+
+            current_mid = latest_tick_mid
+            if current_mid is None and bid_quote and ask_quote:
+                current_mid = (bid_quote + ask_quote) / 2.0
+            drift_pips = 0.0
+            if current_mid is not None:
+                drift_pips = abs(current_mid - features.latest_mid) / config.PIP_VALUE
+            drift_limit = max(config.MAX_DRIFT_PIPS, tp_pips * config.DRIFT_TP_RATIO)
+            if drift_limit > 0.0 and drift_pips > drift_limit:
+                log_metric(
+                    "fast_scalp_skip",
+                    float(drift_pips),
+                    tags={"reason": "price_drift", "side": direction},
+                    ts=now,
+                )
+                logger.info(
+                    "%s skip due to price drift drift=%.3fp limit=%.3fp mid_now=%.5f signal_mid=%.5f",
+                    config.LOG_PREFIX_TICK,
+                    drift_pips,
+                    drift_limit,
+                    current_mid if current_mid is not None else -1.0,
+                    features.latest_mid,
+                )
+                await asyncio.sleep(config.LOOP_INTERVAL_SEC)
+                continue
 
             sl_price_initial = None if sl_price is None else round(sl_price, 5)
             tp_price_initial = None if tp_price is None else round(tp_price, 5)
@@ -924,6 +995,8 @@ async def fast_scalp_worker(shared_state: Optional[FastScalpState] = None) -> No
                 if features.pattern_features is not None
                 else None,
                 "pattern_score": None if pattern_prob is None else round(pattern_prob, 3),
+                "signal_age_ms": None if last_tick_age_ms is None else float(last_tick_age_ms),
+                "price_drift_pips": round(drift_pips, 4),
             }
 
             try:

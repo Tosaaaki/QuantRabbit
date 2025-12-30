@@ -24,6 +24,7 @@ from strategies.micro.vwap_bound_revert import MicroVWAPBound
 from strategies.micro.trend_momentum import TrendMomentumMicro
 from utils.market_hours import is_market_open
 from utils.oanda_account import get_account_snapshot
+from utils.metrics_logger import log_metric
 from workers.common.dyn_cap import compute_cap
 from workers.common import perf_guard
 from analysis import perf_monitor
@@ -112,12 +113,31 @@ def _strategy_list() -> List:
     return _allowed_strategies()
 
 
+def _factor_age_seconds(factors: Dict[str, float]) -> float:
+    ts_raw = factors.get("timestamp") if isinstance(factors, dict) else None
+    if not ts_raw:
+        return float("inf")
+    try:
+        if isinstance(ts_raw, (int, float)):
+            ts_val = float(ts_raw)
+            ts_dt = datetime.datetime.utcfromtimestamp(ts_val)
+        else:
+            ts_txt = str(ts_raw)
+            if ts_txt.endswith("Z"):
+                ts_txt = ts_txt.replace("Z", "+00:00")
+            ts_dt = datetime.datetime.fromisoformat(ts_txt)
+    except Exception:
+        return float("inf")
+    return max(0.0, (datetime.datetime.utcnow() - ts_dt).total_seconds())
+
+
 async def micro_multi_worker() -> None:
     if not config.ENABLED:
         LOG.info("%s disabled", config.LOG_PREFIX)
         return
     LOG.info("%s worker start (interval=%.1fs)", config.LOG_PREFIX, config.LOOP_INTERVAL_SEC)
     last_trend_block_log = 0.0
+    last_stale_log = 0.0
 
     while True:
         await asyncio.sleep(config.LOOP_INTERVAL_SEC)
@@ -131,6 +151,24 @@ async def micro_multi_worker() -> None:
         factors = all_factors()
         fac_m1 = factors.get("M1") or {}
         fac_h4 = factors.get("H4") or {}
+        age_m1 = _factor_age_seconds(fac_m1)
+        if age_m1 > config.MAX_FACTOR_AGE_SEC:
+            log_metric(
+                "micro_multi_skip",
+                float(age_m1),
+                tags={"reason": "factor_stale", "tf": "M1"},
+                ts=now,
+            )
+            now_ts = time.time()
+            if now_ts - last_stale_log > 30.0:
+                LOG.warning(
+                    "%s skip stale factors age=%.1fs limit=%.1fs",
+                    config.LOG_PREFIX,
+                    age_m1,
+                    config.MAX_FACTOR_AGE_SEC,
+                )
+                last_stale_log = now_ts
+            continue
         range_ctx = detect_range_mode(fac_m1, fac_h4)
         perf = perf_monitor.snapshot()
         pf = None

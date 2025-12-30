@@ -331,12 +331,25 @@ def allowed_lot(
     if equity > 0 and margin_available is not None:
         free_ratio = margin_available / equity if equity > 0 else 0.0
         if free_ratio < min_free_margin_ratio:
-            logging.info(
-                "[RISK] free margin low: ratio=%.3f < min=%.3f -> skip",
+            allow_low_margin = os.getenv("ALLOW_HEDGE_ON_LOW_MARGIN", "1").strip().lower() not in {
+                "",
+                "0",
+                "false",
+                "off",
+                "no",
+            }
+            if not allow_low_margin:
+                logging.info(
+                    "[RISK] free margin low: ratio=%.3f < min=%.3f -> skip",
+                    free_ratio,
+                    min_free_margin_ratio,
+                )
+                return 0.0
+            logging.warning(
+                "[RISK] free margin low but ALLOW_HEDGE_ON_LOW_MARGIN enabled: ratio=%.3f < min=%.3f (continue)",
                 free_ratio,
                 min_free_margin_ratio,
             )
-            return 0.0
 
     risk_amount = equity * risk_pct
     lot_risk = MAX_LOT
@@ -352,8 +365,8 @@ def allowed_lot(
     if margin_available is not None and price is not None and margin_rate:
         margin_per_lot = price * margin_rate * 100000
         if margin_per_lot > 0:
-            # 基準: MAX_MARGIN_USAGE を絶対上限（デフォルト0.88）
-            margin_cap = max(0.0, min(MAX_MARGIN_USAGE, 1.0))
+            # 基準: MAX_MARGIN_USAGE を絶対上限（デフォルト0.88、運用上限0.92にクランプ）
+            margin_cap = max(0.0, min(MAX_MARGIN_USAGE, 0.92))
             hard_margin_cap = margin_cap
             # margin_cap=0 の場合は強制停止
             if margin_cap <= 0.0:

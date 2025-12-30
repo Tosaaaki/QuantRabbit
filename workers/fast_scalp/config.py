@@ -64,6 +64,7 @@ MIN_UNITS: int = max(0, int(float(os.getenv("FAST_SCALP_MIN_UNITS", "1000"))))
 MAX_ACTIVE_TRADES: int = max(1, int(float(os.getenv("FAST_SCALP_MAX_ACTIVE", "1"))))
 MAX_PER_DIRECTION: int = max(1, int(float(os.getenv("FAST_SCALP_MAX_PER_DIRECTION", "1"))))
 STALE_TICK_MAX_SEC: float = max(0.5, float(os.getenv("FAST_SCALP_STALE_TICK_MAX_SEC", "3.0")))
+MAX_SIGNAL_AGE_MS: float = max(200.0, float(os.getenv("FAST_SCALP_MAX_SIGNAL_AGE_MS", "1200.0")))
 SNAPSHOT_MIN_INTERVAL_SEC: float = max(
     0.25, float(os.getenv("FAST_SCALP_SNAPSHOT_MIN_INTERVAL_SEC", "1.0"))
 )
@@ -239,6 +240,8 @@ TIMEOUT_ADAPTIVE_MAX_SEC: float = max(
 TIMEOUT_FLAT_PIPS_THRESHOLD: float = float(
     os.getenv("FAST_SCALP_TIMEOUT_FLAT_PIPS_THRESHOLD", "0.3")
 )
+MAX_DRIFT_PIPS: float = max(0.0, float(os.getenv("FAST_SCALP_MAX_DRIFT_PIPS", "0.6")))
+DRIFT_TP_RATIO: float = max(0.0, float(os.getenv("FAST_SCALP_DRIFT_TP_RATIO", "0.15")))
 TIMEOUT_FLAT_TICKRATE_THRESHOLD: float = float(
     os.getenv("FAST_SCALP_TIMEOUT_FLAT_TICKRATE_THRESHOLD", "6.0")
 )

@@ -47,3 +47,5 @@ CAP_MAX = float(os.getenv("MICRO_MULTI_CAP_MAX", "0.95"))
 TREND_BLOCK_HOURS_UTC = frozenset(
     _parse_hours(os.getenv("MICRO_TREND_BLOCK_HOURS_UTC", ""))
 )
+
+MAX_FACTOR_AGE_SEC = float(os.getenv("MICRO_MULTI_MAX_FACTOR_AGE_SEC", "90.0"))
