@@ -5577,8 +5577,6 @@ async def logic_loop(
                 for pk, info in open_positions_snapshot.items():
                     if pk in {"__net__", "__meta__"}:
                         continue
-                    if str(pk).lower().startswith("manual"):
-                        continue
                     try:
                         bot_units += int(info.get("units", 0) or 0)
                     except Exception:
