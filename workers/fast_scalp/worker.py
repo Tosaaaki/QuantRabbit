@@ -26,7 +26,7 @@ from execution.position_manager import PositionManager
 from market_data import spread_monitor, tick_window
 from utils.metrics_logger import log_metric
 from utils.secrets import get_secret
-from utils.oanda_account import get_account_snapshot
+from utils.oanda_account import get_account_snapshot, get_position_summary
 from workers.common.quality_gate import current_regime
 
 from . import config
@@ -818,6 +818,12 @@ async def fast_scalp_worker(shared_state: Optional[FastScalpState] = None) -> No
                 allowed_lot_raw = units / 100000.0
                 lot = allowed_lot_raw
             else:
+                long_units = 0.0
+                short_units = 0.0
+                try:
+                    long_units, short_units = get_position_summary("USD_JPY", timeout=3.0)
+                except Exception:
+                    long_units, short_units = 0.0, 0.0
                 allowed_lot_raw = allowed_lot(
                     equity,
                     sl_pips=profile_sl_pips,
@@ -826,6 +832,9 @@ async def fast_scalp_worker(shared_state: Optional[FastScalpState] = None) -> No
                     margin_rate=margin_rate,
                     risk_pct_override=snapshot.risk_pct_override,
                     pocket="scalp",
+                    side=direction,
+                    open_long_units=long_units,
+                    open_short_units=short_units,
                 )
                 lot = min(allowed_lot_raw, config.MAX_LOT)
                 if lot <= 0.0:

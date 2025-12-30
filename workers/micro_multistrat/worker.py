@@ -23,7 +23,7 @@ from strategies.micro.range_break import MicroRangeBreak
 from strategies.micro.vwap_bound_revert import MicroVWAPBound
 from strategies.micro.trend_momentum import TrendMomentumMicro
 from utils.market_hours import is_market_open
-from utils.oanda_account import get_account_snapshot
+from utils.oanda_account import get_account_snapshot, get_position_summary
 from utils.metrics_logger import log_metric
 from workers.common.dyn_cap import compute_cap
 from workers.common import perf_guard
@@ -257,6 +257,12 @@ async def micro_multi_worker() -> None:
         base_units = int(round(config.BASE_ENTRY_UNITS * tp_scale))
 
         conf_scale = _confidence_scale(int(signal.get("confidence", 50)))
+        long_units = 0.0
+        short_units = 0.0
+        try:
+            long_units, short_units = get_position_summary("USD_JPY", timeout=3.0)
+        except Exception:
+            long_units, short_units = 0.0, 0.0
         lot = allowed_lot(
             float(snap.nav or 0.0),
             sl_pips,
@@ -264,6 +270,9 @@ async def micro_multi_worker() -> None:
             price=price,
             margin_rate=float(snap.margin_rate or 0.0),
             pocket=config.POCKET,
+            side=side,
+            open_long_units=long_units,
+            open_short_units=short_units,
         )
         units_risk = int(round(lot * 100000))
         units = int(round(base_units * conf_scale))

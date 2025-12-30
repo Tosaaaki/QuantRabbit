@@ -128,3 +128,49 @@ def get_account_snapshot(timeout: float = 7.0, *, cache_ttl_sec: float = 1.0) ->
     except Exception:
         pass
     return snapshot
+
+
+def get_position_summary(
+    instrument: str = "USD_JPY", timeout: float = 7.0
+) -> tuple[float, float]:
+    """
+    Return (long_units, short_units) for the given instrument from OANDA openPositions.
+    Falls back to (0, 0) on errors.
+    """
+    try:
+        token = get_secret("oanda_token")
+        account = get_secret("oanda_account_id")
+        try:
+            practice = get_secret("oanda_practice").lower() == "true"
+        except KeyError:
+            practice = False
+        base = "https://api-fxpractice.oanda.com" if practice else "https://api-fxtrade.oanda.com"
+        headers = {"Authorization": f"Bearer {token}"}
+        resp = requests.get(
+            f"{base}/v3/accounts/{account}/openPositions",
+            headers=headers,
+            timeout=timeout,
+        )
+        resp.raise_for_status()
+        data = resp.json() or {}
+        positions = data.get("positions") or []
+        for pos in positions:
+            if str(pos.get("instrument") or "").upper() != instrument.upper():
+                continue
+            longs = pos.get("long") or {}
+            shorts = pos.get("short") or {}
+            try:
+                long_units = float(longs.get("units") or 0.0)
+            except Exception:
+                long_units = 0.0
+            try:
+                short_units = abs(float(shorts.get("units") or 0.0))
+            except Exception:
+                short_units = 0.0
+            return long_units, short_units
+    except Exception as exc:  # noqa: BLE001
+        try:
+            log_metric("oanda.positions.error", 1.0, tags={"msg": str(exc)[:120]})
+        except Exception:
+            pass
+    return 0.0, 0.0

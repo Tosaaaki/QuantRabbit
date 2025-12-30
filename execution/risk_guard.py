@@ -305,6 +305,9 @@ def allowed_lot(
     margin_rate: float | None = None,
     risk_pct_override: float | None = None,
     pocket: str | None = None,
+    side: str | None = None,
+    open_long_units: float | None = None,
+    open_short_units: float | None = None,
 ) -> float:
     """
     口座全体の許容ロットを概算する。
@@ -375,15 +378,39 @@ def allowed_lot(
             used = margin_used
             if used is None:
                 used = max(0.0, equity - margin_available)
+
+            # Netting-aware margin projection: if we know current long/short and entry side,
+            # allow opposite-direction entries to reduce margin_used.
+            def _net_margin_after(add_units: float) -> float:
+                if open_long_units is None or open_short_units is None or not side:
+                    return used
+                long_u = float(open_long_units)
+                short_u = float(open_short_units)
+                if side.lower() == "long":
+                    long_u += add_units
+                else:
+                    short_u += add_units
+                net_units = abs(long_u - short_u)
+                return net_units * price * margin_rate
+
             margin_budget_total = equity * margin_cap
             # 少し余白（0.5%）を残す
-            margin_budget_new = max(0.0, margin_budget_total * 0.995 - used)
-            lot_margin = margin_budget_new / margin_per_lot
+            margin_budget_safe = margin_budget_total * 0.995
+
+            # provisional margin clamp
+            lot_margin = (margin_budget_safe - used) / margin_per_lot
+
+            # If netting would reduce usage (opposite side), allow larger lot up to cap.
+            proposed_units = lot * 100000.0
+            net_used_after = _net_margin_after(abs(proposed_units))
+            if net_used_after < used:
+                # No clamp needed if it frees margin; ensure we don't exceed total cap even if same-side.
+                lot_margin = max(lot_margin, (margin_budget_safe - net_used_after) / margin_per_lot)
+
             # すでに cap 超なら新規はゼロ
             current_usage = used / equity if equity > 0 else 0.0
-            if current_usage >= margin_cap * 0.995:
+            if current_usage >= margin_cap * 0.995 and net_used_after >= used:
                 lot_margin = 0.0
-            # 信頼度・SLなしの運用では margin ベースを優先しつつ、cap を超えないよう clamp
             lot = min(lot, lot_margin)
     # margin_rate が取れない場合でも、free_ratio から強制ガードを入れる
     if margin_cap is None and margin_available is not None and equity > 0:
