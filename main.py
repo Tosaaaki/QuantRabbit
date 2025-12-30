@@ -5543,26 +5543,6 @@ async def logic_loop(
                 mid_price = float(fac_m1.get("close") or fac_m1.get("mid") or 0.0)
             except Exception:
                 mid_price = 0.0
-            # Account/margin exposure guards
-            margin_block = False
-            margin_warn = False
-            if account_snapshot:
-                try:
-                    m_avail = float(account_snapshot.margin_available or 0.0)
-                    m_used = float(account_snapshot.margin_used or 0.0)
-                    total_margin = m_avail + m_used
-                    if total_margin > 0:
-                        margin_usage = m_used / total_margin
-                        # allow利用目標: 82〜88%、ブロックは 90% 以上、警告は 85% 以上で発火
-                        if margin_usage >= 0.90:
-                            margin_block = True
-                            logging.warning("[RISK] margin usage %.1f%% blocking new entries (>=90%%)", margin_usage * 100)
-                        elif margin_usage >= 0.85:
-                            margin_warn = True
-                            logging.info("[RISK] margin usage elevated %.1f%% (monitoring, no block)", margin_usage * 100)
-                except Exception:
-                    margin_block = False
-
             open_positions_snapshot = pos_manager.get_open_positions()
             # bot-only net units (manualポケットは除外)
             net_units = 0
@@ -5603,6 +5583,33 @@ async def logic_loop(
                 net_units = bot_units
             except Exception:
                 pass
+            # Account/margin exposure guards（OANDAスナップショットに加え、自前のネット額計算を優先）
+            margin_block = False
+            margin_warn = False
+            if account_snapshot:
+                try:
+                    m_avail = float(account_snapshot.margin_available or 0.0)
+                    m_used = float(account_snapshot.margin_used or 0.0)
+                    total_margin = m_avail + m_used
+                    if total_margin > 0:
+                        margin_usage = m_used / total_margin
+                except Exception:
+                    margin_usage = None
+            # 自前計算: abs(net_units) * mid_price * margin_rate / equity でネット証拠金率を推定
+            try:
+                if margin_rate and account_equity > 0 and mid_price > 0:
+                    usage_est = abs(float(net_units)) * mid_price * margin_rate / account_equity
+                    margin_usage = usage_est
+            except Exception:
+                pass
+            if margin_usage is not None:
+                # allow利用目標: 82〜88%、ブロックは 90% 以上、警告は 85% 以上で発火
+                if margin_usage >= 0.90:
+                    margin_block = True
+                    logging.warning("[RISK] margin usage %.1f%% blocking new entries (>=90%%)", margin_usage * 100)
+                elif margin_usage >= 0.85:
+                    margin_warn = True
+                    logging.info("[RISK] margin usage elevated %.1f%% (monitoring, no block)", margin_usage * 100)
             exposure_pct = 0.0
             side_exposure_long = 0.0
             side_exposure_short = 0.0
