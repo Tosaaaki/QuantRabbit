@@ -157,8 +157,6 @@ BLOCK_REGIMES = tuple(
     for regime in os.getenv("PULLBACK_S5_BLOCK_REGIMES", "Event").split(",")
     if regime.strip()
 )
-)
-)
 LOSS_STREAK_MAX: int = max(0, _int("PULLBACK_S5_MAX_CONSEC_LOSSES", 2))
 LOSS_STREAK_COOLDOWN_MIN: float = max(
     0.0, _float("PULLBACK_S5_LOSS_COOLDOWN_MIN", 18.0)

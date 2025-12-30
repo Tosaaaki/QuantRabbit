@@ -111,8 +111,6 @@ TREND_ALIGN_BUFFER_PIPS: float = max(0.0, _float("MIRROR_SPIKE_TIGHT_TREND_ALIGN
 TREND_ADX_MIN: float = max(0.0, _float("MIRROR_SPIKE_TIGHT_TREND_ADX_MIN", 25.0))
 TREND_SLOPE_MIN_PIPS: float = max(0.0, _float("MIRROR_SPIKE_TIGHT_TREND_SLOPE_MIN_PIPS", 0.17))
 
-)
-)
 BLOCK_REGIMES = tuple(
     regime.strip()
     for regime in os.getenv("MIRROR_SPIKE_TIGHT_BLOCK_REGIMES", "Event").split(",")
