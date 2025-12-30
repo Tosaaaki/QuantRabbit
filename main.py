@@ -3239,6 +3239,7 @@ async def logic_loop(
             loop_start_mono = time.monotonic()
             loop_counter += 1
             scalp_ready_forced = False
+            evaluated_signals: list[dict] = []
             logging.info("[LOOP] start loop=%d", loop_counter)
             if FORCE_SCALP_MODE and loop_counter % 5 == 0:
                 logging.warning("[FORCE_SCALP] loop=%d", loop_counter)
