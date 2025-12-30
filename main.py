@@ -342,6 +342,14 @@ POCKET_ENTRY_MIN_INTERVAL = {
     "scalp": 90,   # 1.5分
 }
 
+# Gross exposure guard (both sides合計での上限を軽く見る)
+GROSS_EXPOSURE_SOFT = float(os.getenv("GROSS_EXPOSURE_SOFT", "1.6") or 1.6)
+GROSS_EXPOSURE_HARD = float(os.getenv("GROSS_EXPOSURE_HARD", "1.8") or 1.8)
+
+# reduce_only 用のデフォルトSL/TP（シグナル側で未指定のときに使用）
+REDUCE_ONLY_DEFAULT_SL_PIPS = float(os.getenv("REDUCE_ONLY_DEFAULT_SL_PIPS", "5.0") or 5.0)
+REDUCE_ONLY_DEFAULT_TP_PIPS = float(os.getenv("REDUCE_ONLY_DEFAULT_TP_PIPS", "5.0") or 5.0)
+
 if os.getenv("SCALP_TACTICAL", "0").strip().lower() not in {"", "0", "false", "no"}:
     POCKET_LOSS_COOLDOWNS["scalp"] = 120
     POCKET_ENTRY_MIN_INTERVAL["scalp"] = 25
@@ -3196,6 +3204,20 @@ async def logic_loop(
             sl_pips = abs(price_hint - sl_price) / PIP
         if tp_pips is None and price_hint is not None and tp_price is not None:
             tp_pips = abs(price_hint - tp_price) / PIP
+        reduce_only_val = raw.get("reduce_only")
+        reduce_cap_units_raw = raw.get("reduce_cap_units")
+        reduce_only = None
+        if reduce_only_val is not None:
+            if isinstance(reduce_only_val, str):
+                reduce_only = reduce_only_val.strip().lower() in {"1", "true", "yes", "on"}
+            else:
+                reduce_only = bool(reduce_only_val)
+        reduce_cap_units = None
+        if reduce_cap_units_raw is not None:
+            try:
+                reduce_cap_units = int(float(reduce_cap_units_raw))
+            except Exception:
+                reduce_cap_units = None
         sig = {
             "strategy": str(strategy),
             "pocket": pocket,
@@ -3211,6 +3233,10 @@ async def logic_loop(
             "meta": raw.get("meta") or {},
             "source": raw.get("source") or "bus",
         }
+        if reduce_only is not None:
+            sig["reduce_only"] = reduce_only
+        if reduce_cap_units is not None:
+            sig["reduce_cap_units"] = reduce_cap_units
         if sl_price is not None:
             sig["sl_price"] = sl_price
         if tp_price is not None:
@@ -5498,6 +5524,8 @@ async def logic_loop(
                 net_units = 0
             try:
                 bot_units = 0
+                side_long_units = 0
+                side_short_units = 0
                 for pk, info in open_positions_snapshot.items():
                     if pk in {"__net__", "__meta__"}:
                         continue
@@ -5507,12 +5535,35 @@ async def logic_loop(
                         bot_units += int(info.get("units", 0) or 0)
                     except Exception:
                         continue
+                    try:
+                        lu = int(info.get("long_units", 0) or 0)
+                    except Exception:
+                        lu = 0
+                    try:
+                        su = int(info.get("short_units", 0) or 0)
+                    except Exception:
+                        su = 0
+                    if lu == 0 and su == 0:
+                        try:
+                            units_raw = int(info.get("units", 0) or 0)
+                            if units_raw > 0:
+                                lu = units_raw
+                            elif units_raw < 0:
+                                su = abs(units_raw)
+                        except Exception:
+                            pass
+                    side_long_units += max(0, lu)
+                    side_short_units += max(0, su)
                 net_units = bot_units
             except Exception:
                 pass
             exposure_pct = 0.0
+            side_exposure_long = 0.0
+            side_exposure_short = 0.0
             if mid_price > 0 and account_equity > 0:
                 exposure_pct = abs(net_units) * mid_price / account_equity
+                side_exposure_long = side_long_units * mid_price / account_equity
+                side_exposure_short = side_short_units * mid_price / account_equity
             exposure_hard_cap = 0.90  # allow up to ~90% notional/equity
             exposure_soft_cap = 0.82  # base soft cap
             # 動的な調整（ただし下限0.87を維持）
@@ -5530,16 +5581,6 @@ async def logic_loop(
             filtered_signals: list[dict] = []
             for sig in evaluated_signals:
                 reduce_cap_units = 0
-                if sig.get("pocket") == "scalp" and clamp_level >= 3:
-                    logging.info(
-                        "[CLAMP] skip scalp entry level=3 strategy=%s action=%s",
-                        sig.get("strategy"),
-                        sig.get("action"),
-                    )
-                    continue
-                if margin_block and not sig.get("reduce_only"):
-                    logging.info("[RISK] skip new entry (margin block) strategy=%s", sig.get("strategy"))
-                    continue
                 action_dir = 0
                 try:
                     if sig.get("action") == "OPEN_LONG":
@@ -5548,32 +5589,63 @@ async def logic_loop(
                         action_dir = -1
                 except Exception:
                     action_dir = 0
+                net_reducing = bool(
+                    net_units
+                    and action_dir
+                    and ((net_units > 0 and action_dir < 0) or (net_units < 0 and action_dir > 0))
+                )
+                side_exposure = 0.0
+                if action_dir > 0:
+                    side_exposure = side_exposure_long
+                elif action_dir < 0:
+                    side_exposure = side_exposure_short
+                if sig.get("pocket") == "scalp" and clamp_level >= 3:
+                    logging.info(
+                        "[CLAMP] skip scalp entry level=3 strategy=%s action=%s",
+                        sig.get("strategy"),
+                        sig.get("action"),
+                    )
+                    continue
+                if margin_block and not sig.get("reduce_only") and not net_reducing:
+                    logging.info(
+                        "[RISK] skip new entry (margin block) strategy=%s",
+                        sig.get("strategy"),
+                    )
+                    continue
                 # margin_usage が十分余裕 (<MAX_MARGIN_USAGE) の場合は露出capによるブロックを緩和
                 def _can_apply_exposure_cap() -> bool:
                     if margin_usage is None:
                         return True
                     return margin_usage >= MAX_MARGIN_USAGE
 
-                if exposure_pct >= exposure_hard_cap and not sig.get("reduce_only") and _can_apply_exposure_cap():
+                if (
+                    action_dir != 0
+                    and side_exposure >= exposure_hard_cap
+                    and not sig.get("reduce_only")
+                    and _can_apply_exposure_cap()
+                    and not net_reducing
+                ):
                     logging.info(
-                        "[RISK] skip new entry (exposure %.2f >= cap %.2f) strategy=%s",
-                        exposure_pct,
+                        "[RISK] skip new entry (side exposure %.2f >= cap %.2f) strategy=%s dir=%s",
+                        side_exposure,
                         exposure_hard_cap,
                         sig.get("strategy"),
+                        "long" if action_dir > 0 else "short",
                     )
                     continue
                 if (
                     not sig.get("reduce_only")
-                    and exposure_pct >= exposure_soft_cap
-                    and net_units != 0
-                    and ((net_units > 0 and action_dir > 0) or (net_units < 0 and action_dir < 0))
+                    and action_dir != 0
+                    and side_exposure >= exposure_soft_cap
                     and _can_apply_exposure_cap()
+                    and not net_reducing
                 ):
                     logging.info(
-                        "[RISK] skip same-direction entry (exposure %.2f >= soft cap %.2f) strategy=%s",
-                        exposure_pct,
+                        "[RISK] skip same-direction entry (side exposure %.2f >= soft cap %.2f) strategy=%s dir=%s",
+                        side_exposure,
                         exposure_soft_cap,
                         sig.get("strategy"),
+                        "long" if action_dir > 0 else "short",
                     )
                     continue
                 # L3 reduce-only: allow only net-reducing orders
@@ -7062,6 +7134,10 @@ async def logic_loop(
                 units = int(round(staged_lot * 100000)) * (
                     1 if action == "OPEN_LONG" else -1
                 )
+                if reduce_only and proposed_units:
+                    sign = 1 if action == "OPEN_LONG" else -1
+                    units = sign * abs(proposed_units)
+                    staged_lot = abs(units) / 100000.0
                 if units == 0:
                     logging.info(
                         "[SKIP] Stage lot %.3f produced 0 units. Skipping.", staged_lot
@@ -7121,6 +7197,47 @@ async def logic_loop(
                         logging.info("[CLAMP] Reduce-only produced 0 units. Skipping.")
                         continue
                     units = capped_units if units > 0 else -capped_units
+                # Gross exposure guard: 両サイド合計が上限を超えないよう調整
+                if (
+                    not reduce_only
+                    and account_equity > 0
+                    and mid_price > 0
+                    and GROSS_EXPOSURE_HARD > 0
+                ):
+                    gross_units = side_long_units + side_short_units
+                    gross_exposure = gross_units * mid_price / account_equity
+                    gross_after_units = gross_units + abs(units)
+                    gross_after_exposure = gross_after_units * mid_price / account_equity
+                    if gross_after_exposure >= GROSS_EXPOSURE_HARD:
+                        max_units_allowed = int((GROSS_EXPOSURE_HARD * account_equity) / mid_price) - gross_units
+                        if max_units_allowed <= 0:
+                            logging.info(
+                                "[RISK] gross cap hit (%.2f>=%.2f) skip strategy=%s dir=%s",
+                                gross_after_exposure,
+                                GROSS_EXPOSURE_HARD,
+                                signal.get("strategy"),
+                                direction,
+                            )
+                            continue
+                        adj_units = min(abs(units), max_units_allowed)
+                        if adj_units <= 0:
+                            logging.info(
+                                "[RISK] gross cap adjust produced 0 units strategy=%s dir=%s",
+                                signal.get("strategy"),
+                                direction,
+                            )
+                            continue
+                        if adj_units < abs(units):
+                            units = adj_units if units > 0 else -adj_units
+                            staged_lot = abs(units) / 100000.0
+                            logging.info(
+                                "[RISK] gross cap adjust units -> %d gross_after=%.2f cap=%.2f strategy=%s dir=%s",
+                                units,
+                                (gross_units + abs(units)) * mid_price / account_equity,
+                                GROSS_EXPOSURE_HARD,
+                                signal.get("strategy"),
+                                direction,
+                            )
 
                 entry_context_payload = _build_entry_context(
                     pocket=pocket,
@@ -7149,6 +7266,13 @@ async def logic_loop(
                 pullback_note = None
                 limit_wait_key = None
                 entry_type = signal.get("entry_type", "market")
+                proposed_units_raw = signal.get("proposed_units")
+                proposed_units: Optional[int] = None
+                try:
+                    if proposed_units_raw is not None:
+                        proposed_units = int(float(proposed_units_raw))
+                except Exception:
+                    proposed_units = None
                 target_price = signal.get("entry_price")
                 tolerance_pips = float(signal.get("entry_tolerance_pips", 0.25))
                 if (
@@ -7312,6 +7436,11 @@ async def logic_loop(
                     if hard_stop is not None:
                         sl_pips = hard_stop
                 tp_pips = signal.get("tp_pips")
+                if reduce_only:
+                    if sl_pips is None:
+                        sl_pips = REDUCE_ONLY_DEFAULT_SL_PIPS
+                    if tp_pips is None:
+                        tp_pips = REDUCE_ONLY_DEFAULT_TP_PIPS
                 if fs_strategy_client and fs_strategy_apply_sltp:
                     try:
                         tp_override, sl_override = fs_strategy_client.get_sltp(
@@ -7327,7 +7456,7 @@ async def logic_loop(
                             signal["sl_pips"] = sl_pips
                     except Exception as exc:
                         logging.info("[FS_STRAT] sltp override skipped: %s", exc)
-                if tp_pips is None:
+                if tp_pips is None and not reduce_only:
                     logging.info("[SKIP] Missing TP for %s.", signal["strategy"])
                     continue
                 # ATR/RSI/ADX は必須。欠損時は M1 ローソクから再計算を試みる。
@@ -7353,39 +7482,44 @@ async def logic_loop(
                         continue
 
                 base_sl = None
-                if sl_pips is not None:
-                    base_sl = (
-                        reference_price - (sl_pips / 100)
+                sl = None
+                tp = None
+                if not reduce_only:
+                    if sl_pips is not None:
+                        base_sl = (
+                            reference_price - (sl_pips / 100)
+                            if is_buy
+                            else reference_price + (sl_pips / 100)
+                        )
+                    base_tp = (
+                        reference_price + (tp_pips / 100)
                         if is_buy
-                        else reference_price + (sl_pips / 100)
+                        else reference_price - (tp_pips / 100)
                     )
-                base_tp = (
-                    reference_price + (tp_pips / 100)
-                    if is_buy
-                    else reference_price - (tp_pips / 100)
-                )
 
-                level_map_note = None
-                if level_map_client and level_map_enabled:
-                    try:
-                        lm = level_map_client.nearest(reference_price)
-                        if lm:
-                            level_map_note = {
-                                "bucket": lm.get("bucket"),
-                                "hit_count": lm.get("hit_count"),
-                                "p_up_5": lm.get("p_up_5"),
-                                "p_down_5": lm.get("p_down_5"),
-                                "mean_ret_5": lm.get("mean_ret_5"),
-                            }
-                    except Exception:
-                        level_map_note = None
+                    level_map_note = None
+                    if level_map_client and level_map_enabled:
+                        try:
+                            lm = level_map_client.nearest(reference_price)
+                            if lm:
+                                level_map_note = {
+                                    "bucket": lm.get("bucket"),
+                                    "hit_count": lm.get("hit_count"),
+                                    "p_up_5": lm.get("p_up_5"),
+                                    "p_down_5": lm.get("p_down_5"),
+                                    "mean_ret_5": lm.get("mean_ret_5"),
+                                }
+                        except Exception:
+                            level_map_note = None
 
-                sl, tp = clamp_sl_tp(
-                    reference_price,
-                    base_sl,
-                    base_tp,
-                    is_buy,
-                )
+                    sl, tp = clamp_sl_tp(
+                        reference_price,
+                        base_sl,
+                        base_tp,
+                        is_buy,
+                    )
+                else:
+                    level_map_note = None
 
                 strategy_tag = (
                     signal.get("tag")
@@ -7574,70 +7708,72 @@ async def logic_loop(
                         confidence,
                         client_id,
                     )
-                    if stage_idx >= 0:
-                        stage_tracker.set_stage(pocket, direction, stage_idx + 1, now=now)
-                    pos_manager.register_open_trade(trade_id, pocket, client_id)
-                    info = open_positions.setdefault(
-                        pocket,
-                        {
-                            "units": 0,
-                            "avg_price": entry_price or price or 0.0,
-                            "trades": 0,
-                            "long_units": 0,
-                            "long_avg_price": 0.0,
-                            "short_units": 0,
-                            "short_avg_price": 0.0,
-                        },
-                    )
-                    info["units"] = info.get("units", 0) + units
-                    info["trades"] = info.get("trades", 0) + 1
-                    if entry_price is not None:
-                        info["avg_price"] = entry_price
-                        if units > 0:
-                            prev_units = info.get("long_units", 0)
-                            new_units = prev_units + units
-                            if new_units > 0:
-                                if prev_units == 0:
-                                    info["long_avg_price"] = entry_price
-                                else:
-                                    info["long_avg_price"] = (
-                                        info.get("long_avg_price", entry_price) * prev_units
-                                        + entry_price * units
-                                    ) / new_units
-                            info["long_units"] = new_units
-                        else:
-                            trade_size = abs(units)
-                            prev_units = info.get("short_units", 0)
-                            new_units = prev_units + trade_size
-                            if new_units > 0:
-                                if prev_units == 0:
-                                    info["short_avg_price"] = entry_price
-                                else:
-                                    info["short_avg_price"] = (
-                                        info.get("short_avg_price", entry_price) * prev_units
-                                        + entry_price * trade_size
-                                    ) / new_units
-                            info["short_units"] = new_units
+                    if not reduce_only:
+                        if stage_idx >= 0:
+                            stage_tracker.set_stage(pocket, direction, stage_idx + 1, now=now)
+                        pos_manager.register_open_trade(trade_id, pocket, client_id)
+                        info = open_positions.setdefault(
+                            pocket,
+                            {
+                                "units": 0,
+                                "avg_price": entry_price or price or 0.0,
+                                "trades": 0,
+                                "long_units": 0,
+                                "long_avg_price": 0.0,
+                                "short_units": 0,
+                                "short_avg_price": 0.0,
+                            },
+                        )
+                        info["units"] = info.get("units", 0) + units
+                        info["trades"] = info.get("trades", 0) + 1
+                        if entry_price is not None:
+                            info["avg_price"] = entry_price
+                            if units > 0:
+                                prev_units = info.get("long_units", 0)
+                                new_units = prev_units + units
+                                if new_units > 0:
+                                    if prev_units == 0:
+                                        info["long_avg_price"] = entry_price
+                                    else:
+                                        info["long_avg_price"] = (
+                                            info.get("long_avg_price", entry_price) * prev_units
+                                            + entry_price * units
+                                        ) / new_units
+                                info["long_units"] = new_units
+                            else:
+                                trade_size = abs(units)
+                                prev_units = info.get("short_units", 0)
+                                new_units = prev_units + trade_size
+                                if new_units > 0:
+                                    if prev_units == 0:
+                                        info["short_avg_price"] = entry_price
+                                    else:
+                                        info["short_avg_price"] = (
+                                            info.get("short_avg_price", entry_price) * prev_units
+                                            + entry_price * trade_size
+                                        ) / new_units
+                                info["short_units"] = new_units
                     net_units += units
                     open_positions.setdefault("__net__", {})["units"] = net_units
                     executed_pockets.add(pocket)
-                    key = f"{signal.get('strategy')}@{pocket}"
-                    entry_mix[key] = entry_mix.get(key, 0) + 1
-                    # 直後の再エントリーを抑制（気迷いトレード対策）
-                    entry_cd = _dynamic_entry_cooldown_seconds(
-                        pocket,
-                        fac_m1,
-                        fac_h1,
-                        fac_h4,
-                        range_active,
-                    )
-                    stage_tracker.set_cooldown(
-                        pocket,
-                        direction,
-                        reason="entry_rate_limit",
-                        seconds=entry_cd,
-                        now=now,
-                    )
+                    if not reduce_only:
+                        key = f"{signal.get('strategy')}@{pocket}"
+                        entry_mix[key] = entry_mix.get(key, 0) + 1
+                        # 直後の再エントリーを抑制（気迷いトレード対策）
+                        entry_cd = _dynamic_entry_cooldown_seconds(
+                            pocket,
+                            fac_m1,
+                            fac_h1,
+                            fac_h4,
+                            range_active,
+                        )
+                        stage_tracker.set_cooldown(
+                            pocket,
+                            direction,
+                            reason="entry_rate_limit",
+                            seconds=entry_cd,
+                            now=now,
+                        )
                 else:
                     logging.error(f"[ORDER FAILED] {signal['strategy']}")
 
