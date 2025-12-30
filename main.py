@@ -5613,10 +5613,15 @@ async def logic_loop(
             exposure_pct = 0.0
             side_exposure_long = 0.0
             side_exposure_short = 0.0
+            margin_usage_long = None
+            margin_usage_short = None
             if mid_price > 0 and account_equity > 0:
                 exposure_pct = abs(net_units) * mid_price / account_equity
                 side_exposure_long = side_long_units * mid_price / account_equity
                 side_exposure_short = side_short_units * mid_price / account_equity
+                if margin_rate:
+                    margin_usage_long = side_long_units * mid_price * margin_rate / account_equity
+                    margin_usage_short = side_short_units * mid_price * margin_rate / account_equity
             exposure_hard_cap = 0.90  # allow up to ~90% notional/equity
             exposure_soft_cap = 0.82  # base soft cap
             # 動的な調整（ただし下限0.87を維持）
@@ -5660,14 +5665,23 @@ async def logic_loop(
                     )
                     continue
                 if margin_block and not sig.get("reduce_only") and not net_reducing:
-                    logging.info(
-                        "[RISK] skip new entry (margin block) strategy=%s",
-                        sig.get("strategy"),
-                    )
-                    continue
-                # margin_usage が十分余裕 (<MAX_MARGIN_USAGE) の場合は露出capによるブロックを緩和
-                def _can_apply_exposure_cap() -> bool:
-                    if margin_usage is None:
+                    # 方向別に判定し、反対側は通す（別腹扱い）
+                    dir_block = False
+                    if action_dir > 0 and margin_usage_long is not None and margin_usage_long >= 0.90:
+                        dir_block = True
+                    if action_dir < 0 and margin_usage_short is not None and margin_usage_short >= 0.90:
+                        dir_block = True
+                    if dir_block:
+                        logging.info(
+                            "[RISK] skip new entry (dir margin block) strategy=%s dir=%s usage=%.1f%%",
+                            sig.get("strategy"),
+                            "long" if action_dir > 0 else "short",
+                            (margin_usage_long if action_dir > 0 else margin_usage_short) * 100.0,
+                        )
+                        continue
+            # margin_usage が十分余裕 (<MAX_MARGIN_USAGE) の場合は露出capによるブロックを緩和
+            def _can_apply_exposure_cap() -> bool:
+                if margin_usage is None:
                         return True
                     return margin_usage >= MAX_MARGIN_USAGE
 
