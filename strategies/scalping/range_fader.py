@@ -40,6 +40,14 @@ class RangeFader:
         rsi = fac.get("rsi")
         atr_pips = fac.get("atr_pips")
         vol_5m = fac.get("vol_5m", 1.0)
+        try:
+            vol_5m = float(vol_5m)
+        except Exception:
+            vol_5m = 1.0
+        try:
+            adx_val = float(fac.get("adx") or 0.0)
+        except Exception:
+            adx_val = 0.0
         if close is None or ema20 is None or rsi is None:
             RangeFader._log_skip("missing_inputs", close=close, ema20=ema20, rsi=rsi)
             return None
@@ -47,6 +55,10 @@ class RangeFader:
         if atr_pips is None:
             atr = fac.get("atr")
             atr_pips = (atr or 0.0) * 100
+        try:
+            atr_pips = float(atr_pips)
+        except Exception:
+            atr_pips = 0.0
 
         scalp_tactical = os.getenv("SCALP_TACTICAL", "0").strip().lower() not in {"", "0", "false", "no"}
         spread = fac.get("spread_pips")
@@ -54,20 +66,44 @@ class RangeFader:
             spread = float(spread) if spread is not None else None
         except (TypeError, ValueError):
             spread = None
-        # In tactical mode broaden acceptance slightly on the low side and cap top-end volatility
-        low_atr = 0.9 if scalp_tactical else 1.0
-        high_atr = 4.2
+        low_atr_base = float(os.getenv("RANGE_FADER_ATR_LOW", "1.0"))
+        low_atr = min(low_atr_base, 0.9) if scalp_tactical else low_atr_base
+        base_high_atr = float(os.getenv("RANGE_FADER_ATR_HIGH", "6.0"))
+        hard_atr_cap = float(os.getenv("RANGE_FADER_ATR_HARD", "10.5"))
+        high_atr = min(hard_atr_cap, max(4.2, base_high_atr))
+        if scalp_tactical:
+            high_atr = min(hard_atr_cap, max(high_atr, base_high_atr + 1.2))
+        if vol_5m is not None:
+            try:
+                vol_val = float(vol_5m)
+            except Exception:
+                vol_val = None
+            if vol_val is not None:
+                high_atr = min(
+                    hard_atr_cap,
+                    max(high_atr, 4.2 + max(0.0, (vol_val - 1.0) * 2.4)),
+                )
+        if adx_val >= 45.0:
+            high_atr = min(hard_atr_cap, max(high_atr, 7.2))
         if spread is not None and atr_pips > 0:
             ratio = spread / max(atr_pips, 1e-6)
             # スプレッド負担が軽いときはATR下限を追加で緩める
             if ratio <= 0.35:
                 low_atr = max(0.85, low_atr * 0.9)
-        if atr_pips < low_atr or atr_pips > high_atr:
+        if atr_pips < low_atr:
             RangeFader._log_skip(
                 "atr_out_of_range",
                 atr_pips=round(atr_pips, 3),
                 low=low_atr,
                 high=high_atr,
+            )
+            return None
+        if atr_pips > hard_atr_cap:
+            RangeFader._log_skip(
+                "atr_out_of_range",
+                atr_pips=round(atr_pips, 3),
+                low=low_atr,
+                high=hard_atr_cap,
             )
             return None
         if vol_5m < 0.5 or vol_5m > 2.6:
@@ -105,11 +141,18 @@ class RangeFader:
         fast_cut_time = max(60.0, atr_pips * 15.0)
 
         confidence_scale = 1.0
+        high_atr_profile = atr_pips > high_atr
+        if high_atr_profile:
+            confidence_scale *= max(0.55, 1.0 - max(0.0, (atr_pips - high_atr)) * 0.06)
         if atr_pips > 3.0 or momentum_pips > drift_cap * 0.8:
-            confidence_scale = 0.75
+            confidence_scale *= 0.75
+        confidence_scale = max(0.45, min(confidence_scale, 1.0))
 
         if rsi <= long_gate:
-            if scalp_tactical:
+            if high_atr_profile:
+                sl = max(3.0, min(6.5, atr_pips * 0.95))
+                tp = max(sl * 1.25, min(8.5, atr_pips * 1.35))
+            elif scalp_tactical:
                 sl = max(2.0, min(3.2, atr_pips * 1.2))
                 tp = max(2.0, min(3.4, atr_pips * 1.25))
             else:
@@ -132,7 +175,10 @@ class RangeFader:
             })
 
         if rsi >= short_gate:
-            if scalp_tactical:
+            if high_atr_profile:
+                sl = max(3.0, min(6.5, atr_pips * 0.95))
+                tp = max(sl * 1.25, min(8.5, atr_pips * 1.35))
+            elif scalp_tactical:
                 sl = max(2.0, min(3.2, atr_pips * 1.2))
                 tp = max(2.0, min(3.4, atr_pips * 1.25))
             else:

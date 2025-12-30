@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Dict
 import logging
+import os
 
 
 def _attach_kill(signal: Dict) -> Dict:
@@ -40,7 +41,15 @@ class PulseBreak:
         ema100 = fac.get("ema100") or fac.get("ma50")
         atr_pips = fac.get("atr_pips")
         vol_5m = fac.get("vol_5m", 1.0) or 0.0
+        try:
+            vol_5m = float(vol_5m)
+        except Exception:
+            vol_5m = 0.0
         adx = fac.get("adx", 0.0) or 0.0
+        try:
+            adx = float(adx)
+        except Exception:
+            adx = 0.0
         if close is None or ema20 is None or ema50 is None:
             PulseBreak._log_skip("missing_inputs", close=close, ema20=ema20, ema50=ema50)
             return None
@@ -48,6 +57,10 @@ class PulseBreak:
         if atr_pips is None:
             atr = fac.get("atr")
             atr_pips = (atr or 0.0) * 100
+        try:
+            atr_pips = float(atr_pips)
+        except Exception:
+            atr_pips = 0.0
 
         # ATR が薄いときは vol_5m の閾値をスライドさせる（低ボラ帯でも相対ブレイクを拾う）
         if atr_pips < 2.0:
@@ -63,6 +76,16 @@ class PulseBreak:
                 vol_thresh=round(vol_thresh, 3),
             )
             return None
+        short_enabled_env = os.getenv("PULSE_BREAK_ENABLE_SHORT", "1").strip().lower() not in {"", "0", "false", "no"}
+        try:
+            short_adx_gate = float(os.getenv("PULSE_BREAK_SHORT_ADX", "28.0"))
+        except Exception:
+            short_adx_gate = 28.0
+        try:
+            short_vol_cushion = float(os.getenv("PULSE_BREAK_SHORT_VOL_CUSHION", "0.12"))
+        except Exception:
+            short_vol_cushion = 0.12
+        short_vol_cushion = max(0.0, min(short_vol_cushion, 0.4))
 
         momentum = close - ema20
         bias = ema20 - ema50
@@ -83,6 +106,8 @@ class PulseBreak:
             confidence = int(max(50.0, min(92.0, base_conf)))
             if atr_pips > 4.5 or abs(momentum) > 0.05:
                 confidence = int(confidence * 0.8)
+            if action == "OPEN_SHORT":
+                confidence = int(confidence * 0.93)
             tp = max(4.8, min(6.4, atr_pips * 1.9))
             sl = max(3.1, min(tp * 0.7, atr_pips * 1.4))
             return _attach_kill({
@@ -111,9 +136,44 @@ class PulseBreak:
             return _build_payload("OPEN_LONG", slope_bonus, "momentum-up")
 
         if momentum < 0 and bias < -0.06:
-            # 2024Q4 環境ではショートの期待値が低いため、厳格な条件が整うまで見送り。
-            PulseBreak._log_skip("short_disabled", momentum=round(momentum, 5), bias=round(bias, 5))
-            return None
+            allow_short = short_enabled_env or (adx >= short_adx_gate)
+            if not allow_short:
+                PulseBreak._log_skip(
+                    "short_disabled",
+                    momentum=round(momentum, 5),
+                    bias=round(bias, 5),
+                    adx=round(adx, 3),
+                )
+                return None
+            if adx < short_adx_gate:
+                PulseBreak._log_skip(
+                    "adx_low_short",
+                    adx=round(adx, 3),
+                    gate=round(short_adx_gate, 2),
+                )
+                return None
+            if ema100 is not None and ema20 > ema100:
+                PulseBreak._log_skip(
+                    "ema100_block_short",
+                    ema20=round(ema20, 5) if ema20 is not None else None,
+                    ema100=round(ema100, 5) if ema100 is not None else None,
+                )
+                return None
+            vol_gate = vol_thresh * (1.0 - short_vol_cushion)
+            vol_gate = max(0.78, vol_gate)
+            if vol_5m < vol_gate:
+                PulseBreak._log_skip(
+                    "vol_dyn_low_short",
+                    atr_pips=round(atr_pips, 3),
+                    vol_5m=round(vol_5m, 3),
+                    vol_thresh=round(vol_gate, 3),
+                )
+                return None
+            if adx_slope < 0.02:
+                PulseBreak._log_skip("adx_slope_flat_short", adx_slope=round(adx_slope, 4))
+                return None
+            slope_bonus = max(0.0, min(7.0, adx_slope * 35.0 + max(0.0, atr_slope) * 2.0))
+            return _build_payload("OPEN_SHORT", slope_bonus, "momentum-down")
 
         PulseBreak._log_skip(
             "no_alignment",

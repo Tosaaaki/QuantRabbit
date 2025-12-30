@@ -1054,7 +1054,7 @@ def _frontload_plan(base_plan: Sequence[float], target_first: float) -> tuple[fl
 
 MIN_MACRO_STAGE_LOT = 0.01  # smaller floor to let macro trickle-in
 MAX_MICRO_STAGE_LOT = 0.02  # cap micro scaling when momentum signals fire repeatedly
-MIN_SCALP_STAGE_LOT = 0.02  # allow smaller scalp entries
+MIN_SCALP_STAGE_LOT = 0.01  # allow smaller scalp entries
 REENTRY_EXTRA_LOT = {
     "macro": _safe_env_float("STAGE_REENTRY_EXTRA_MACRO", 0.04, low=0.0, high=0.5),
     "micro": _safe_env_float("STAGE_REENTRY_EXTRA_MICRO", 0.03, low=0.0, high=0.3),
@@ -1190,6 +1190,54 @@ def _local_strategy_ranking(
     ranked = sorted(strategies, key=lambda n: scores.get(n, 0.0), reverse=True)
     # If all scores tie/very low, still return full list (top N fallback not needed because we keep all)
     return ranked
+
+
+def _reset_strategy_registry() -> None:
+    """Populate STRATEGIES/POCKET maps soランキングが空にならないようにする。"""
+    STRATEGIES.clear()
+    TREND_STRATEGIES.clear()
+    RANGE_STRATEGIES.clear()
+    MOMENTUM_STRATEGIES.clear()
+    POCKET_STRATEGY_MAP.clear()
+
+    strategy_classes = [
+        TrendMA,
+        Donchian55,
+        BBRsi,
+        BBRsiFast,
+        RangeFader,
+        M1Scalper,
+        PulseBreak,
+        ImpulseRetraceScalp,
+        MomentumBurstMicro,
+        MicroMomentumStack,
+        MicroPullbackEMA,
+        MicroLevelReactor,
+        MicroRangeBreak,
+        MicroVWAPBound,
+        TrendMomentumMicro,
+        MicroVWAPRevert,
+        VolCompressionBreak,
+        MomentumPulse,
+    ]
+    for cls in strategy_classes:
+        name = getattr(cls, "name", cls.__name__)
+        STRATEGIES[name] = cls
+        pocket = getattr(cls, "pocket", "")
+        if pocket:
+            POCKET_STRATEGY_MAP.setdefault(pocket, set()).add(name)
+        cat = _strategy_category(name)
+        if cat == "range":
+            RANGE_STRATEGIES.add(name)
+        if cat in {"trend", "breakout"}:
+            TREND_STRATEGIES.add(name)
+            MOMENTUM_STRATEGIES.add(name)
+        elif cat == "scalp":
+            MOMENTUM_STRATEGIES.add(name)
+
+
+# 起動時に一度だけ初期化
+_reset_strategy_registry()
 
 def _select_worker_targets(
     fac_m1: dict,
@@ -7425,11 +7473,24 @@ async def logic_loop(
                                 elapsed,
                                 timeout_sec,
                                 fallback_gap,
-                            )
+                        )
                             continue
                     if limit_wait_key:
                         MACRO_LIMIT_WAIT.pop(limit_wait_key, None)
 
+                logging.info(
+                    "[ENTRY_PLAN] strategy=%s pocket=%s action=%s stage=%s lot=%.3f units=%d reduce_only=%s sl=%.3f tp=%.3f entry_type=%s",
+                    signal.get("strategy"),
+                    pocket,
+                    action,
+                    stage_idx,
+                    staged_lot,
+                    units,
+                    reduce_only,
+                    sl_price if sl_price is not None else -1.0,
+                    tp_price if tp_price is not None else -1.0,
+                    entry_type,
+                )
                 sl_pips = signal.get("sl_pips")
                 if sl_pips is None:
                     hard_stop = signal.get("hard_stop_pips")
