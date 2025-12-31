@@ -6237,6 +6237,23 @@ async def logic_loop(
                     selected.append(sig)
                     fast_added += 1
 
+                # Fallback: if candidates exist but nothing selected (conf_floor/max_signalsでゼロになるのを防ぐ)
+                if not selected and candidates:
+                    try:
+                        top = sorted(
+                            candidates,
+                            key=lambda s: int(s.get("conf_adj", s.get("confidence", 0)) or 0),
+                            reverse=True,
+                        )[0]
+                        selected.append(top)
+                        logging.info(
+                            "[SIGNAL_SELECT] fallback top pick conf=%s tag=%s",
+                            top.get("conf_adj", top.get("confidence")),
+                            top.get("strategy") or top.get("strategy_tag") or top.get("tag"),
+                        )
+                    except Exception:
+                        pass
+
                 if len(selected) != len(candidates):
                     try:
                         logging.info(
