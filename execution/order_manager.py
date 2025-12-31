@@ -850,6 +850,49 @@ def _preflight_units(
     return (allowed, req)
 
 
+def _projected_usage_with_netting(
+    nav: float,
+    margin_rate: float,
+    side_label: str,
+    units: int,
+    margin_used: float | None = None,
+    meta: Optional[dict] = None,
+) -> Optional[float]:
+    """
+    Estimate margin usage after applying `units`, accounting for netting.
+    Returns None if estimation is not possible.
+    """
+    if nav <= 0 or margin_rate <= 0 or units == 0:
+        return None
+    try:
+        from utils.oanda_account import get_position_summary
+
+        long_u, short_u = get_position_summary()
+    except Exception:
+        return None
+
+    price_hint = _estimate_price(meta) or 0.0
+    net_before = float(long_u) - float(short_u)
+    # If price is missing, infer from current margin usage as a last resort.
+    if price_hint <= 0 and margin_used and net_before:
+        try:
+            price_hint = (margin_used / abs(net_before)) / margin_rate
+        except Exception:
+            price_hint = 0.0
+    if price_hint <= 0:
+        return None
+
+    new_long = float(long_u)
+    new_short = float(short_u)
+    if side_label.lower() == "buy":
+        new_long += abs(units)
+    else:
+        new_short += abs(units)
+    projected_net_units = abs(new_long - new_short)
+    projected_used = projected_net_units * price_hint * margin_rate
+    return projected_used / nav
+
+
 def _is_passive_price(
     *,
     units: int,
@@ -2099,7 +2142,16 @@ async def market_order(
                 cap = min(hard_cap, max(soft_cap, 0.0))
                 if nav > 0:
                     usage = margin_used / nav
-                    if usage >= hard_cap * 0.995:
+                    projected_usage = _projected_usage_with_netting(
+                        nav,
+                        margin_rate,
+                        side_label,
+                        units,
+                        margin_used=margin_used,
+                        meta=meta,
+                    )
+                    usage_for_cap = projected_usage if projected_usage is not None else usage
+                    if usage_for_cap >= hard_cap * 0.995:
                         note = "margin_usage_exceeds_cap"
                         _console_order_log(
                             "OPEN_REJECT",
@@ -2128,6 +2180,7 @@ async def market_order(
                                 "meta": meta,
                                 "entry_thesis": entry_thesis,
                                 "margin_usage": usage,
+                                "projected_usage": projected_usage,
                                 "cap": hard_cap,
                             },
                         )
@@ -2142,28 +2195,22 @@ async def market_order(
                         )
                         return None
                 price_hint = _estimate_price(meta) or 0.0
-                if nav > 0 and price_hint > 0 and margin_rate > 0:
-                    projected_usage = None
-                    # ネット額を正しく計算するためにポジション残高を参照
-                    try:
-                        from utils.oanda_account import get_position_summary
-
-                        long_u, short_u = get_position_summary()
-                        new_long = float(long_u)
-                        new_short = float(short_u)
-                        if side_label.lower() == "buy":
-                            new_long += abs(units)
-                        else:
-                            new_short += abs(units)
-                        projected_net_units = abs(new_long - new_short)
-                        projected_used = projected_net_units * price_hint * margin_rate
-                        projected_usage = projected_used / nav
-                    except Exception:
+                projected_usage = None
+                if nav > 0 and margin_rate > 0:
+                    projected_usage = _projected_usage_with_netting(
+                        nav,
+                        margin_rate,
+                        side_label,
+                        units,
+                        margin_used=margin_used,
+                        meta=meta,
+                    )
+                    if projected_usage is None and price_hint > 0:
                         # フォールバック: 片側加算のみ
                         projected_used = margin_used + abs(units) * price_hint * margin_rate
                         projected_usage = projected_used / nav
 
-                    if projected_usage >= cap:
+                if projected_usage is not None and projected_usage >= cap:
                         note = "margin_usage_projected_cap"
                         _console_order_log(
                             "OPEN_REJECT",

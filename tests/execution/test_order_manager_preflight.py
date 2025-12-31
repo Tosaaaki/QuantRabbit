@@ -7,7 +7,10 @@ PROJECT_ROOT = pathlib.Path(__file__).resolve().parents[2]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from execution.order_manager import _preflight_units
+from execution.order_manager import (
+    _preflight_units,
+    _projected_usage_with_netting,
+)
 
 
 class _Snapshot:
@@ -46,3 +49,25 @@ def test_preflight_scales_down_with_budget(monkeypatch):
     budget = snap.margin_used + snap.margin_available * 0.92
     assert req_margin == abs(net_after) * per_unit_margin
     assert req_margin <= budget + 1.0  # small slack for rounding
+
+
+def test_projected_usage_with_netting_allows_reduction(monkeypatch):
+    nav = 300_000.0
+    margin_rate = 0.04
+    meta = {"entry_price": 156.8}
+
+    # Current net: 80k short. Buying 50k should bring net to 30k -> usage drops.
+    monkeypatch.setattr("utils.oanda_account.get_position_summary", lambda: (0.0, 80_000.0))
+    usage = _projected_usage_with_netting(
+        nav,
+        margin_rate,
+        side_label="buy",
+        units=50_000,
+        margin_used=0.0,
+        meta=meta,
+    )
+
+    assert usage is not None
+    # margin_used after hedge ≈ 30k * 156.8 * 0.04
+    expected_usage = (30_000 * 156.8 * margin_rate) / nav
+    assert abs(usage - expected_usage) < 1e-6
