@@ -5630,10 +5630,8 @@ async def logic_loop(
                     target_hard_usage = 0.96  # margin_usageブロック閾値に合わせる
                     target_soft_usage = 0.88
                     exposure_hard_cap = max(2.0, min(30.0, target_hard_usage / margin_rate))
-                    exposure_soft_cap = max(1.5, min(exposure_hard_cap, target_soft_usage / margin_rate))
-                # clampやボラ低減時はソフトcapを下振れさせない（最小値を維持）
-                if clamp_level >= 2 or (margin_usage is not None and margin_usage >= 0.8):
-                    exposure_soft_cap = max(exposure_soft_cap, exposure_hard_cap * 0.6)
+                    # ソフトキャップは実質ハードと同等にして方向別マージンの許容量を確保
+                    exposure_soft_cap = exposure_hard_cap
             except Exception:
                 pass
 
