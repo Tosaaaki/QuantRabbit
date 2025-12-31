@@ -14,8 +14,9 @@ MIN_SIZE_FACTOR_TREND = 0.55
 MAX_TP_REDUCTION = 0.32
 MIN_VOL_5M = 0.35
 PROFILE_NAME = "bb_range_reversion"
-MIN_DISTANCE_RANGE = 0.045
-MIN_DISTANCE_TREND = 0.10
+# 距離判定を緩めてバンドタッチ手前でもエントリー可能にする
+MIN_DISTANCE_RANGE = 0.02
+MIN_DISTANCE_TREND = 0.06
 
 
 class BBRsi:
@@ -147,7 +148,7 @@ class BBRsi:
         bbw_eta = fac.get("bbw_squeeze_eta_min")
         bbw_slope = fac.get("bbw_slope_per_bar", 0.0) or 0.0
 
-        if price < lower and rsi < 30:
+        if price < lower and rsi < 40:
             distance = (lower - price) / band_width if band_width else 0.0
             if distance < min_distance_req:
                 BBRsi._log_skip(
@@ -195,7 +196,7 @@ class BBRsi:
                 "trend_score": round(trend_score, 3) if trend_score > 0 else None,
                 "size_factor_hint": round(size_factor_trend, 3) if trend_score > 0 else None,
             }
-        if price > upper and rsi > 70:
+        if price > upper and rsi > 60:
             distance = (price - upper) / band_width if band_width else 0.0
             if distance < min_distance_req:
                 BBRsi._log_skip(

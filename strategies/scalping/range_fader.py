@@ -130,9 +130,9 @@ class RangeFader:
             )
             return None
 
-        # RSIゲートをボラ/セッションに合わせて緩める
-        long_gate = 43 if scalp_tactical else 41
-        short_gate = 57 if scalp_tactical else 59
+        # RSIゲートを広げ、ニュートラル近辺でもフェードを許容する
+        long_gate = 47 if scalp_tactical else 45
+        short_gate = 53 if scalp_tactical else 55
         if atr_pips <= 1.6 or vol_5m < 1.0:
             long_gate += 2  # 低ボラ時は門を広げて約定機会を増やす
             short_gate -= 2
