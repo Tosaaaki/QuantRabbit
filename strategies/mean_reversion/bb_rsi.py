@@ -157,6 +157,8 @@ class BBRsi:
 
         if (price < lower or near_lower) and rsi < 45:
             distance = (lower - price) / band_width if band_width else 0.0
+            if distance < 0:
+                distance = 0.0
             if distance < min_distance_req:
                 BBRsi._log_skip(
                     "distance_too_small_long",
@@ -205,6 +207,8 @@ class BBRsi:
             }
         if (price > upper or near_upper) and rsi > 55:
             distance = (price - upper) / band_width if band_width else 0.0
+            if distance < 0:
+                distance = 0.0
             if distance < min_distance_req:
                 BBRsi._log_skip(
                     "distance_too_small_short",

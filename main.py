@@ -4973,6 +4973,7 @@ async def logic_loop(
                     rsi_val_num = float(fac_m1.get("rsi"))
                 except Exception:
                     rsi_val_num = None
+                pocket_val = (signal.get("pocket") or "").lower()
                 if strong_trend_dir and ((is_buy and strong_trend_dir < 0) or ((not is_buy) and strong_trend_dir > 0)):
                     allow_reversal = False
                     if rsi_val_num is not None and momentum is not None:
@@ -4981,16 +4982,29 @@ async def logic_loop(
                         else:
                             allow_reversal = rsi_val_num <= 65.0 and momentum < 0.0
                     if not allow_reversal:
-                        signal["confidence"] = 0
-                        logging.info(
-                            "[DIR_GUARD] Opposite to strong trend blocked strategy=%s dir=%s trend_dir=%s adx_max=%.1f rsi=%s mom=%.4f",
-                            signal.get("strategy"),
-                            "long" if is_buy else "short",
-                            strong_trend_dir,
-                            max(adx_h1, adx_h4),
-                            rsi_val_num,
-                            momentum,
-                        )
+                        # スキャルプ/マイクロは逆行でもサイズを落として通す
+                        if pocket_val in {"micro", "scalp", "scalp_fast"}:
+                            conf_before = signal.get("confidence", 0)
+                            signal["confidence"] = int(max(15, conf_before * 0.45))
+                            logging.info(
+                                "[DIR_GUARD_SOFT] strong trend opposite allowed with reduced confidence strategy=%s dir=%s trend_dir=%s conf=%s->%s",
+                                signal.get("strategy"),
+                                "long" if is_buy else "short",
+                                strong_trend_dir,
+                                conf_before,
+                                signal.get("confidence"),
+                            )
+                        else:
+                            signal["confidence"] = 0
+                            logging.info(
+                                "[DIR_GUARD] Opposite to strong trend blocked strategy=%s dir=%s trend_dir=%s adx_max=%.1f rsi=%s mom=%.4f",
+                                signal.get("strategy"),
+                                "long" if is_buy else "short",
+                                strong_trend_dir,
+                                max(adx_h1, adx_h4),
+                                rsi_val_num,
+                                momentum,
+                            )
 
                 # ImpulseRetrace: strong downtrend -> block longs unless reversal
                 if (

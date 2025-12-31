@@ -121,7 +121,7 @@ class RangeFader:
             return None
 
         momentum_pips = abs(close - ema20) / 0.01
-        drift_cap = max(2.2, min(5.0, atr_pips * 1.25))
+        drift_cap = max(3.0, min(6.5, atr_pips * 2.5))
         if momentum_pips > drift_cap:
             RangeFader._log_skip(
                 "too_far_from_mean",

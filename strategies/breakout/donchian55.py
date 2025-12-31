@@ -50,7 +50,7 @@ class Donchian55:
             tp = max(base_tp, sl * 1.35 + spread_pips)
             return round(sl, 2), round(tp, 2)
 
-        if close > high55:
+        if close > high55 or (near_pips is not None and near_pips <= 3.0 and close >= high55 - 0.02):
             sl, tp = _targets()
             return {
                 "action": "OPEN_LONG",
@@ -63,7 +63,7 @@ class Donchian55:
                 "min_hold_sec": Donchian55._min_hold_seconds(tp),
                 "tag": f"{Donchian55.name}-breakout-up",
             }
-        if close < low55:
+        if close < low55 or (near_pips is not None and near_pips <= 3.0 and close <= low55 + 0.02):
             sl, tp = _targets()
             return {
                 "action": "OPEN_SHORT",

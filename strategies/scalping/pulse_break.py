@@ -63,11 +63,11 @@ class PulseBreak:
             atr_pips = 0.0
 
         # ATR が薄いときは vol_5m の閾値をスライドさせる（低ボラ帯でも相対ブレイクを拾う）
-        if atr_pips < 2.0:
+        if atr_pips < 0.9:
             PulseBreak._log_skip("atr_low", atr_pips=round(atr_pips, 3))
             return None
-        vol_thresh = 1.05 + (atr_pips - 2.6) * 0.08
-        vol_thresh = max(0.86, min(1.18, vol_thresh))
+        vol_thresh = 0.9 + (atr_pips - 2.0) * 0.06
+        vol_thresh = max(0.8, min(1.15, vol_thresh))
         if vol_5m < vol_thresh:
             PulseBreak._log_skip(
                 "vol_dyn_low",
