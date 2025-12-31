@@ -6158,13 +6158,11 @@ async def logic_loop(
             # 同一サイクルで全体からconfidence上位のみを通す（最大3本）。
             # fast_scalp 偏重を避けるため、戦略ごとのブースト/ペナルティを適用し、fast_scalpは原則1本。
             max_signals = 3
-            conf_floor = 0
+            conf_floor = 0  # 両建て/ヘッジ運用ではconfidence下限でロングを落とさない
             if margin_usage is not None and margin_usage >= 0.88:
                 max_signals = 2
-                conf_floor = 60
             if margin_usage is not None and margin_usage >= 0.92:
                 max_signals = 1
-                conf_floor = 65
             if evaluated_signals:
                 candidates = []
                 for s in evaluated_signals:
@@ -6172,8 +6170,6 @@ async def logic_loop(
                     if action not in {"OPEN_LONG", "OPEN_SHORT"}:
                         continue
                     raw_conf = int(s.get("confidence", 0) or 0)
-                    if conf_floor and raw_conf < conf_floor:
-                        continue
                     tag = s.get("strategy") or s.get("strategy_tag") or s.get("tag") or ""
                     pocket = s.get("pocket") or ""
                     adj = raw_conf
