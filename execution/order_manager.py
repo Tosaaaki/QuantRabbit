@@ -2050,8 +2050,8 @@ async def market_order(
                 nav = float(snap.nav or 0.0)
                 margin_used = float(snap.margin_used or 0.0)
                 margin_rate = float(snap.margin_rate or 0.0)
-                soft_cap = min(float(os.getenv("MAX_MARGIN_USAGE", "0.80") or 0.80), 0.92)
-                hard_cap = min(float(os.getenv("MAX_MARGIN_USAGE_HARD", "0.83") or 0.83), 0.92)
+                soft_cap = min(float(os.getenv("MAX_MARGIN_USAGE", "0.92") or 0.92), 0.99)
+                hard_cap = min(float(os.getenv("MAX_MARGIN_USAGE_HARD", "0.96") or 0.96), 0.995)
                 cap = min(hard_cap, max(soft_cap, 0.0))
                 if nav > 0:
                     usage = margin_used / nav
