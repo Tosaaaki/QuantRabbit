@@ -753,12 +753,18 @@ def _preflight_units(
     """Return (allowed_units, required_margin_estimate).
 
     allowed_units may be 0 if margin is insufficient even for minimum size.
+    Netting-aware: if the requested units shrink current net exposure, allow them
+    even when free margin is low.
     """
     try:
-        from utils.oanda_account import get_account_snapshot  # lazy import
+        from utils.oanda_account import (  # lazy import
+            get_account_snapshot,
+            get_position_summary,
+        )
 
         snap = get_account_snapshot()
         margin_avail = float(getattr(snap, "margin_available", 0.0) or 0.0)
+        margin_used = float(getattr(snap, "margin_used", 0.0) or 0.0)
         margin_rate = float(getattr(snap, "margin_rate", 0.0) or 0.0)
     except Exception as exc:
         logging.warning("[ORDER] preflight snapshot failed: %s", exc)
@@ -788,12 +794,50 @@ def _preflight_units(
             pass
         return (0, 0.0)
 
-    # Required margin ≈ |units| * price * marginRate (JPY)
-    req = abs(requested_units) * estimated_price * margin_rate
+    per_unit_margin = estimated_price * margin_rate
+    if per_unit_margin <= 0.0:
+        return (0, 0.0)
+
+    long_units: float | None = None
+    short_units: float | None = None
+    try:
+        long_units, short_units = get_position_summary(timeout=3.0)
+        long_units = max(0.0, float(long_units or 0.0))
+        short_units = max(0.0, float(short_units or 0.0))
+    except Exception as exc:
+        logging.debug("[ORDER] preflight position summary unavailable: %s", exc)
+        long_units = short_units = None
+
+    if long_units is not None and short_units is not None:
+        net_before = long_units - short_units
+        net_after = net_before + requested_units
+        margin_after = abs(net_after) * per_unit_margin
+        # If the order reduces or keeps net margin, allow it regardless of free margin.
+        if margin_after <= margin_used * 1.0005:
+            return (requested_units, margin_after)
+
+        budget = margin_used + margin_avail * margin_buffer
+        if margin_after <= budget:
+            return (requested_units, margin_after)
+
+        # Scale down to stay within budget while preserving direction.
+        target_net = budget / per_unit_margin
+        clamped_net_after = max(-target_net, min(target_net, net_after))
+        allowed_units = clamped_net_after - net_before
+        if requested_units > 0:
+            allowed_units = min(max(0.0, allowed_units), float(requested_units))
+        else:
+            allowed_units = -min(max(0.0, -allowed_units), float(abs(requested_units)))
+        allowed_units_int = int(round(allowed_units))
+        margin_allowed = abs(net_before + allowed_units_int) * per_unit_margin
+        return (allowed_units_int, margin_allowed)
+
+    # Fallback: use free margin only (no position breakdown available)
+    req = abs(requested_units) * per_unit_margin
     if req * 1.0 <= margin_avail * margin_buffer:
         return (requested_units, req)
 
-    max_units = int((margin_avail * margin_buffer) / (estimated_price * margin_rate))
+    max_units = int((margin_avail * margin_buffer) / per_unit_margin)
     if max_units <= 0:
         return (0, req)
     # Keep sign
