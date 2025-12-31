@@ -422,8 +422,10 @@ def allowed_lot(
                 gap_units = max(0.0, float(open_long_units or 0.0) - float(open_short_units or 0.0))
             gap_lot = gap_units / 100000.0 if gap_units > 0 else 0.0
             if net_used_after < used:
-                # No clamp needed if it frees margin; ensure flatten分までは通す。
-                lot_margin = max(lot_margin, (margin_budget_safe - net_used_after) / margin_per_lot)
+                # nettingで使用率が下がる場合は cap を緩和し、flatten分を優先して通す
+                hedge_cap = max(margin_cap, 0.995)
+                hedge_budget_safe = equity * hedge_cap * 0.999
+                lot_margin = max(lot_margin, (hedge_budget_safe - net_used_after) / margin_per_lot)
                 lot_margin = max(lot_margin, gap_lot)
                 # margin_budget を超えていてもネット縮小なら最低ロットは通す
                 if lot_margin <= 0 and gap_lot > 0:
