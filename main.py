@@ -5617,11 +5617,8 @@ async def logic_loop(
             except Exception:
                 pass
             if margin_usage is not None:
-                # allow利用目標: 82〜88%、警告は 93% 以上、ブロックは 96% 以上で発火（方向別ブロックは別途判定）
-                if margin_usage >= 0.96:
-                    margin_block = True
-                    logging.warning("[RISK] margin usage %.1f%% blocking new entries (>=96%%)", margin_usage * 100)
-                elif margin_usage >= 0.93:
+                # allow利用目標: 82〜88%、警告は 93% 以上。ブロックは方向別判定に任せ、ここでは止めない。
+                if margin_usage >= 0.93:
                     margin_warn = True
                     logging.info("[RISK] margin usage elevated %.1f%% (monitoring, no block)", margin_usage * 100)
             exposure_pct = 0.0
