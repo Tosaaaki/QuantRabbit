@@ -2099,14 +2099,26 @@ async def market_order(
                         return None
                 price_hint = _estimate_price(meta) or 0.0
                 if nav > 0 and price_hint > 0 and margin_rate > 0:
-                    projected_used = margin_used + abs(units) * price_hint * margin_rate
-                    # netting考慮: 既存と反対方向なら使用証拠金を減算して判定する
-                    if side_label.lower() == "buy" and units < 0:
-                        projected_used = max(0.0, margin_used - abs(units) * price_hint * margin_rate)
-                    elif side_label.lower() == "sell" and units > 0:
-                        projected_used = max(0.0, margin_used - abs(units) * price_hint * margin_rate)
+                    projected_usage = None
+                    # ネット額を正しく計算するためにポジション残高を参照
+                    try:
+                        from utils.oanda_account import get_position_summary
 
-                    projected_usage = projected_used / nav
+                        long_u, short_u = get_position_summary()
+                        new_long = float(long_u)
+                        new_short = float(short_u)
+                        if side_label.lower() == "buy":
+                            new_long += abs(units)
+                        else:
+                            new_short += abs(units)
+                        projected_net_units = abs(new_long - new_short)
+                        projected_used = projected_net_units * price_hint * margin_rate
+                        projected_usage = projected_used / nav
+                    except Exception:
+                        # フォールバック: 片側加算のみ
+                        projected_used = margin_used + abs(units) * price_hint * margin_rate
+                        projected_usage = projected_used / nav
+
                     if projected_usage >= cap:
                         note = "margin_usage_projected_cap"
                         _console_order_log(
