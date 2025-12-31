@@ -148,7 +148,14 @@ class BBRsi:
         bbw_eta = fac.get("bbw_squeeze_eta_min")
         bbw_slope = fac.get("bbw_slope_per_bar", 0.0) or 0.0
 
-        if price < lower and rsi < 40:
+        near_lower = False
+        near_upper = False
+        if price is not None and lower is not None and band_width > 0:
+            near_lower = price <= lower + band_width * 0.2
+        if price is not None and upper is not None and band_width > 0:
+            near_upper = price >= upper - band_width * 0.2
+
+        if (price < lower or near_lower) and rsi < 45:
             distance = (lower - price) / band_width if band_width else 0.0
             if distance < min_distance_req:
                 BBRsi._log_skip(
@@ -196,7 +203,7 @@ class BBRsi:
                 "trend_score": round(trend_score, 3) if trend_score > 0 else None,
                 "size_factor_hint": round(size_factor_trend, 3) if trend_score > 0 else None,
             }
-        if price > upper and rsi > 60:
+        if (price > upper or near_upper) and rsi > 55:
             distance = (price - upper) / band_width if band_width else 0.0
             if distance < min_distance_req:
                 BBRsi._log_skip(

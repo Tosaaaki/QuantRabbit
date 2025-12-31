@@ -66,7 +66,7 @@ class RangeFader:
             spread = float(spread) if spread is not None else None
         except (TypeError, ValueError):
             spread = None
-        low_atr_base = float(os.getenv("RANGE_FADER_ATR_LOW", "1.0"))
+        low_atr_base = float(os.getenv("RANGE_FADER_ATR_LOW", "0.8"))
         low_atr = min(low_atr_base, 0.9) if scalp_tactical else low_atr_base
         base_high_atr = float(os.getenv("RANGE_FADER_ATR_HIGH", "6.0"))
         hard_atr_cap = float(os.getenv("RANGE_FADER_ATR_HARD", "10.5"))
@@ -106,7 +106,7 @@ class RangeFader:
                 high=hard_atr_cap,
             )
             return None
-        if vol_5m < 0.5 or vol_5m > 2.6:
+        if vol_5m < 0.4 or vol_5m > 3.0:
             RangeFader._log_skip("vol_out_of_range", vol_5m=round(vol_5m, 3))
             return None
 
@@ -200,12 +200,19 @@ class RangeFader:
                 "tag": f"{RangeFader.name}-sell-fade",
             })
 
-        RangeFader._log_skip(
-            "rsi_neutral",
-            rsi=round(rsi, 2),
-            long_gate=long_gate,
-            short_gate=short_gate,
-            atr_pips=round(atr_pips, 3),
-            vol_5m=round(vol_5m, 3),
-        )
-        return None
+        # ニュートラルRSIでもEMAからの乖離方向にフェードを打つ
+        neutral_side = "short" if close > ema20 else "long"
+        sl = max(2.4, min(5.0, atr_pips * 1.2))
+        tp = max(sl * 1.2, min(6.0, atr_pips * 1.6))
+        conf_base = 48 + min(12.0, abs(momentum_pips) * 1.8)
+        confidence = int(max(40, min(85, conf_base * confidence_scale)))
+        return _attach_kill({
+            "action": "OPEN_SHORT" if neutral_side == "short" else "OPEN_LONG",
+            "sl_pips": round(sl, 2),
+            "tp_pips": round(tp, 2),
+            "confidence": confidence,
+            "fast_cut_pips": round(max(5.5, sl * 0.9), 2),
+            "fast_cut_time_sec": int(max(60.0, atr_pips * 12.0)),
+            "fast_cut_hard_mult": 1.6,
+            "tag": f"{RangeFader.name}-neutral-fade",
+        })
