@@ -5622,19 +5622,20 @@ async def logic_loop(
                 if margin_rate:
                     margin_usage_long = side_long_units * mid_price * margin_rate / account_equity
                     margin_usage_short = side_short_units * mid_price * margin_rate / account_equity
-            exposure_hard_cap = 0.90  # allow up to ~90% notional/equity
-            exposure_soft_cap = 0.82  # base soft cap
-            # 動的な調整（ただし下限0.87を維持）
+            # 露出capは証拠金率に整合させる（例: 4% = 25x → ハード24x、ソフト22x）
+            exposure_hard_cap = 0.90
+            exposure_soft_cap = 0.82
             try:
-                if clamp_level == 0 and (margin_usage is None or margin_usage < 0.65):
-                    if (atr_pips or 0.0) < 1.8 and (vol_5m or 0.0) < 0.8:
-                        exposure_soft_cap = max(0.82, exposure_soft_cap)
-                    elif (atr_pips or 0.0) < 2.2 and (vol_5m or 0.0) < 1.2:
-                        exposure_soft_cap = max(0.82, exposure_soft_cap)
+                if margin_rate and margin_rate > 0:
+                    target_hard_usage = 0.96  # margin_usageブロック閾値に合わせる
+                    target_soft_usage = 0.88
+                    exposure_hard_cap = max(2.0, min(30.0, target_hard_usage / margin_rate))
+                    exposure_soft_cap = max(1.5, min(exposure_hard_cap, target_soft_usage / margin_rate))
+                # clampやボラ低減時はソフトcapを下振れさせない（最小値を維持）
                 if clamp_level >= 2 or (margin_usage is not None and margin_usage >= 0.8):
-                    exposure_soft_cap = max(0.82, exposure_soft_cap)
+                    exposure_soft_cap = max(exposure_soft_cap, exposure_hard_cap * 0.6)
             except Exception:
-                exposure_soft_cap = 0.82
+                pass
 
             filtered_signals: list[dict] = []
             for sig in evaluated_signals:
