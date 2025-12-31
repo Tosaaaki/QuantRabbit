@@ -425,6 +425,9 @@ def allowed_lot(
                 # No clamp needed if it frees margin; ensure flatten分までは通す。
                 lot_margin = max(lot_margin, (margin_budget_safe - net_used_after) / margin_per_lot)
                 lot_margin = max(lot_margin, gap_lot)
+                # margin_budget を超えていてもネット縮小なら最低ロットは通す
+                if lot_margin <= 0 and gap_lot > 0:
+                    lot_margin = gap_lot
 
             # すでに cap 超なら新規はゼロ
             current_usage = used / equity if equity > 0 else 0.0
@@ -486,6 +489,9 @@ def allowed_lot(
             if netting_reduce and scale < 1.0:
                 scale = max(scale, 0.5)
             lot *= scale
+        # netting 減少で lot が 0 まで絞られた場合、最小ロット(0.01)は確保する
+        if netting_reduce and lot <= 0.0:
+            lot = max(lot, 0.01)
 
     return round(max(lot, 0.0), 3)
 
