@@ -365,6 +365,31 @@ def allowed_lot(
         return 0.0
 
     margin_cap = None
+    side_norm = (side or "").lower()
+    used: float | None = None
+
+    def _net_margin_after(add_units: float) -> float:
+        """
+        追加後のネット証拠金使用額（netting を考慮）をざっくり推定する。
+        price/margin_rate が無い場合は現在値を返す。
+        """
+        if price is None or not margin_rate:
+            if used is not None:
+                return used
+            if margin_used is not None:
+                return float(margin_used)
+            if equity > 0 and margin_available is not None:
+                return max(0.0, equity - margin_available)
+            return 0.0
+        long_u = float(open_long_units or 0.0)
+        short_u = float(open_short_units or 0.0)
+        if side_norm == "long":
+            long_u += add_units
+        else:
+            short_u += add_units
+        net_units = abs(long_u - short_u)
+        return net_units * price * margin_rate
+
     if margin_available is not None and price is not None and margin_rate:
         margin_per_lot = price * margin_rate * 100000
         if margin_per_lot > 0:
@@ -379,20 +404,6 @@ def allowed_lot(
             if used is None:
                 used = max(0.0, equity - margin_available)
 
-            # Netting-aware margin projection: if we know current long/short and entry side,
-            # allow opposite-direction entries to reduce margin_used.
-            def _net_margin_after(add_units: float) -> float:
-                if open_long_units is None or open_short_units is None or not side:
-                    return used
-                long_u = float(open_long_units)
-                short_u = float(open_short_units)
-                if side.lower() == "long":
-                    long_u += add_units
-                else:
-                    short_u += add_units
-                net_units = abs(long_u - short_u)
-                return net_units * price * margin_rate
-
             margin_budget_total = equity * margin_cap
             # 少し余白（0.5%）を残す
             margin_budget_safe = margin_budget_total * 0.995
@@ -403,9 +414,17 @@ def allowed_lot(
             # If netting would reduce usage (opposite side), allow larger lot up to cap.
             proposed_units = lot * 100000.0
             net_used_after = _net_margin_after(abs(proposed_units))
+            # 片側 flatten までの必要ロットを最低限許容する
+            gap_units = 0.0
+            if side_norm == "long":
+                gap_units = max(0.0, float(open_short_units or 0.0) - float(open_long_units or 0.0))
+            elif side_norm == "short":
+                gap_units = max(0.0, float(open_long_units or 0.0) - float(open_short_units or 0.0))
+            gap_lot = gap_units / 100000.0 if gap_units > 0 else 0.0
             if net_used_after < used:
-                # No clamp needed if it frees margin; ensure we don't exceed total cap even if same-side.
+                # No clamp needed if it frees margin; ensure flatten分までは通す。
                 lot_margin = max(lot_margin, (margin_budget_safe - net_used_after) / margin_per_lot)
+                lot_margin = max(lot_margin, gap_lot)
 
             # すでに cap 超なら新規はゼロ
             current_usage = used / equity if equity > 0 else 0.0
@@ -440,19 +459,33 @@ def allowed_lot(
         lot = min(min_lot, MAX_LOT)
 
     # Free margin ベースでロット幅を追加スケール（残余証拠金が少なければ線形に絞る）
+    # netting で使用証拠金が減る方向のポジションは、投下後の free_ratio を基準に緩和する
     if margin_available is not None and equity > 0:
         free_ratio = max(0.0, margin_available / equity)
+        projected_used = _net_margin_after(abs(lot * 100000.0))
+        free_ratio_after = None
+        if equity > 0 and projected_used is not None:
+            free_ratio_after = max(0.0, (equity - projected_used) / equity)
+        netting_reduce = projected_used is not None and used is not None and projected_used < used
         try:
             soft = float(os.getenv("FREE_MARGIN_SOFT_RATIO", "0.35") or 0.35)
             hard = float(os.getenv("FREE_MARGIN_HARD_RATIO", "0.2") or 0.2)
         except Exception:
             soft, hard = 0.35, 0.2
         hard = max(0.0, min(hard, soft))
-        if free_ratio <= hard:
+        # netting 減少なら「投下後」の free ratio を優先
+        ratio_for_scale = free_ratio
+        if free_ratio_after is not None and netting_reduce:
+            ratio_for_scale = max(free_ratio, free_ratio_after)
+        if ratio_for_scale <= hard and not netting_reduce:
             lot = 0.0
-        elif free_ratio < soft and lot > 0.0:
-            scale = (free_ratio - hard) / (soft - hard) if soft > hard else 0.0
-            lot *= max(0.0, min(1.0, scale))
+        elif ratio_for_scale < soft and lot > 0.0:
+            scale = (ratio_for_scale - hard) / (soft - hard) if soft > hard else 0.0
+            scale = max(0.0, min(1.0, scale))
+            # netting 減少ならスケールを少し緩める
+            if netting_reduce and scale < 1.0:
+                scale = max(scale, 0.5)
+            lot *= scale
 
     return round(max(lot, 0.0), 3)
 
