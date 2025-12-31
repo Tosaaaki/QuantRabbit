@@ -1572,6 +1572,12 @@ ALLOWED_RANGE_STRATEGIES = {
     "MicroRangeBreak",
     "MicroVWAPRevert",
     "MicroVWAPBound",
+    # レンジ中でもロングを通したいエントリー系を許可
+    "MomentumPulse",
+    "VolCompressionBreak",
+    "MicroPullbackEMA",
+    "MicroLevelReactor",
+    "MicroMomentumStack",
 }
 SOFT_RANGE_SUPPRESS_STRATEGIES = {"TrendMA", "Donchian55"}
 LOW_TREND_ADX_THRESHOLD = 18.0
