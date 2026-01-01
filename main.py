@@ -262,7 +262,7 @@ from strategies.micro_lowvol.micro_vwap_revert import MicroVWAPRevert
 from strategies.micro_lowvol.bb_rsi_fast import BBRsiFast
 from strategies.micro_lowvol.vol_compression_break import VolCompressionBreak
 from strategies.micro_lowvol.momentum_pulse import MomentumPulse
-from utils.oanda_account import get_account_snapshot
+from utils.oanda_account import get_account_snapshot, get_position_summary
 from utils.secrets import get_secret
 from utils.metrics_logger import log_metric
 from utils.market_hours import is_market_open, seconds_until_open
@@ -6400,6 +6400,13 @@ async def logic_loop(
                     pass
                 return max(0.75, min(1.25, mult))
 
+            long_units = 0.0
+            short_units = 0.0
+            try:
+                long_units, short_units = get_position_summary("USD_JPY", timeout=3.0)
+            except Exception:
+                long_units, short_units = 0.0, 0.0
+
             lot_total = allowed_lot(
                 account_equity,
                 sl_pips=max(1.0, avg_sl),
@@ -6408,6 +6415,8 @@ async def logic_loop(
                 price=mid_price if mid_price > 0 else None,
                 margin_rate=margin_rate,
                 risk_pct_override=risk_override,
+                open_long_units=long_units,
+                open_short_units=short_units,
             )
             lot_total = round(lot_total * _lot_pattern_multiplier(fac_m1, story_snapshot), 3)
             if FORCE_SCALP_MODE and lot_total <= 0:
