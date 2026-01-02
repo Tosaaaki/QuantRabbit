@@ -605,7 +605,8 @@ SCALP_WEIGHT_READY_FLOOR = _safe_env_float(
 )
 SCALP_AUTO_MIN_WEIGHT = _safe_env_float("SCALP_AUTO_MIN_WEIGHT", 0.12, low=0.0, high=0.3)
 SCALP_CONFIDENCE_FLOOR = _safe_env_float("SCALP_CONFIDENCE_FLOOR", 0.74, low=0.4, high=1.0)
-SCALP_MIN_ABS_LOT = _safe_env_float("SCALP_MIN_ABS_LOT", 0.0, low=0.0, high=0.6)
+# スカルプロットの絶対下限は 0（フロアなし）。環境変数での下限設定も無効化。
+SCALP_MIN_ABS_LOT = 0.0
 PULSEBREAK_AUTO_MOM_MIN = _safe_env_float("PULSEBREAK_AUTO_MOM_MIN", 0.0018, low=0.0, high=0.02)
 PULSEBREAK_AUTO_ATR_MIN = _safe_env_float("PULSEBREAK_AUTO_ATR_MIN", 2.4, low=0.0, high=15.0)
 PULSEBREAK_AUTO_VOL_MIN = _safe_env_float("PULSEBREAK_AUTO_VOL_MIN", 1.3, low=0.0, high=5.0)
