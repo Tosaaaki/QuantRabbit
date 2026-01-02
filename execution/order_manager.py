@@ -2140,6 +2140,18 @@ async def market_order(
                 soft_cap = min(float(os.getenv("MAX_MARGIN_USAGE", "0.92") or 0.92), 0.99)
                 hard_cap = min(float(os.getenv("MAX_MARGIN_USAGE_HARD", "0.96") or 0.96), 0.995)
                 cap = min(hard_cap, max(soft_cap, 0.0))
+                net_reducing = False
+                try:
+                    from utils.oanda_account import get_position_summary
+
+                    long_u, short_u = get_position_summary()
+                    net_before_units = float(long_u) - float(short_u)
+                    net_after_units = (
+                        net_before_units + abs(units) if side_label.lower() == "buy" else net_before_units - abs(units)
+                    )
+                    net_reducing = abs(net_after_units) < abs(net_before_units)
+                except Exception:
+                    net_reducing = False
                 if nav > 0:
                     usage = margin_used / nav
                     projected_usage = _projected_usage_with_netting(
@@ -2151,7 +2163,15 @@ async def market_order(
                         meta=meta,
                     )
                     usage_for_cap = projected_usage if projected_usage is not None else usage
-                    if usage_for_cap >= hard_cap * 0.995:
+                    if (
+                        usage_for_cap >= hard_cap * 0.995
+                        and not (
+                            net_reducing
+                            and projected_usage is not None
+                            and usage is not None
+                            and projected_usage < usage
+                        )
+                    ):
                         note = "margin_usage_exceeds_cap"
                         _console_order_log(
                             "OPEN_REJECT",
@@ -2194,6 +2214,20 @@ async def market_order(
                             },
                         )
                         return None
+                    if (
+                        usage_for_cap >= hard_cap * 0.995
+                        and net_reducing
+                        and projected_usage is not None
+                        and usage is not None
+                        and projected_usage < usage
+                    ):
+                        logging.info(
+                            "[ORDER] allow net-reducing order usage=%.3f->%.3f cap=%.3f units=%d",
+                            usage,
+                            projected_usage,
+                            hard_cap,
+                            units,
+                        )
                 price_hint = _estimate_price(meta) or 0.0
                 projected_usage = None
                 if nav > 0 and margin_rate > 0:
@@ -2210,48 +2244,66 @@ async def market_order(
                         projected_used = margin_used + abs(units) * price_hint * margin_rate
                         projected_usage = projected_used / nav
 
-                if projected_usage is not None and projected_usage >= cap:
-                        note = "margin_usage_projected_cap"
-                        _console_order_log(
-                            "OPEN_REJECT",
-                            pocket=pocket,
-                            strategy_tag=strategy_tag or "unknown",
-                            side=side_label,
-                            units=units,
-                            sl_price=sl_price,
-                            tp_price=tp_price,
-                            client_order_id=client_order_id,
-                            note=note,
-                        )
-                        log_order(
-                            pocket=pocket,
-                            instrument=instrument,
-                            side=side_label,
-                            units=units,
-                            sl_price=sl_price,
-                            tp_price=tp_price,
-                            client_order_id=client_order_id,
-                            status=note,
-                            attempt=0,
-                            stage_index=stage_index,
-                            request_payload={
-                                "strategy_tag": strategy_tag,
-                                "meta": meta,
-                                "entry_thesis": entry_thesis,
-                                "projected_usage": projected_usage,
-                                "cap": cap,
-                            },
-                        )
-                        log_metric(
-                            "order_margin_block",
-                            1.0,
-                            tags={
-                                "pocket": pocket,
-                                "strategy": strategy_tag or "unknown",
-                                "reason": note,
-                            },
-                        )
-                        return None
+                if (
+                    projected_usage is not None
+                    and projected_usage >= cap
+                    and not (net_reducing and usage is not None and projected_usage < usage)
+                ):
+                    note = "margin_usage_projected_cap"
+                    _console_order_log(
+                        "OPEN_REJECT",
+                        pocket=pocket,
+                        strategy_tag=strategy_tag or "unknown",
+                        side=side_label,
+                        units=units,
+                        sl_price=sl_price,
+                        tp_price=tp_price,
+                        client_order_id=client_order_id,
+                        note=note,
+                    )
+                    log_order(
+                        pocket=pocket,
+                        instrument=instrument,
+                        side=side_label,
+                        units=units,
+                        sl_price=sl_price,
+                        tp_price=tp_price,
+                        client_order_id=client_order_id,
+                        status=note,
+                        attempt=0,
+                        stage_index=stage_index,
+                        request_payload={
+                            "strategy_tag": strategy_tag,
+                            "meta": meta,
+                            "entry_thesis": entry_thesis,
+                            "projected_usage": projected_usage,
+                            "cap": cap,
+                        },
+                    )
+                    log_metric(
+                        "order_margin_block",
+                        1.0,
+                        tags={
+                            "pocket": pocket,
+                            "strategy": strategy_tag or "unknown",
+                            "reason": note,
+                        },
+                    )
+                    return None
+                if (
+                    projected_usage is not None
+                    and projected_usage >= cap
+                    and net_reducing
+                    and usage is not None
+                    and projected_usage < usage
+                ):
+                    logging.info(
+                        "[ORDER] allow net-reducing projected usage=%.3f->%.3f cap=%.3f units=%d",
+                        usage,
+                        projected_usage,
+                        cap,
+                        units,
+                    )
             except Exception as exc:  # pragma: no cover - defensive
                 note = "margin_guard_error"
                 logging.warning("[ORDER] margin guard error: %s", exc)
