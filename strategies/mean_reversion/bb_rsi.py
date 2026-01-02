@@ -154,10 +154,7 @@ class BBRsi:
         if atr_hint <= 1.2 or bbw <= 0.22:
             touch_buffer = 0.32
 
-        if trend_score >= 0.75 and price is not None and lower is not None and upper is not None:
-            if lower < price < upper:
-                BBRsi._log_skip("trend_block_inside_band", trend_score=round(trend_score, 3))
-                return None
+        # トレンド強でもバンド内は許容（ロング拒否を避ける）
 
         def _distance_to_lower() -> float:
             if price is None or lower is None or band_width <= 0:

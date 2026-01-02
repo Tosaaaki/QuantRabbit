@@ -2818,19 +2818,7 @@ def _micro_chart_gate(
                 summary = dict(getattr(story_snapshot, "summary") or {})
             except Exception:
                 summary = {}
-        if hasattr(story_snapshot, "is_aligned"):
-            try:
-                aligned = story_snapshot.is_aligned("micro", str(action))
-            except Exception:
-                aligned = True
-            if not aligned and micro_trend not in {"range", "quiet"}:
-                return False, f"chart_misaligned_{micro_trend}", {
-                    "slope6": round(slope6, 2),
-                    "range": round(range_pips, 2),
-                    "trend": micro_trend or "",
-                    "m15": summary.get("M15", ""),
-                    "h1": summary.get("H1", ""),
-                }
+        # 方向ミスマッチによるブロックは無効化（機会損失防止）
 
     def _opposes(frame_trend: str | None, side: str) -> bool:
         if frame_trend not in {"up", "down"}:
@@ -2975,22 +2963,7 @@ def _micro_chart_gate(
             "h1": h1_trend or "",
         }
 
-    if action == "OPEN_LONG" and top_gap <= top_gap_thresh and slope6 <= slope_chase_thresh:
-        return False, "micro_top_chase_guard", {
-            "slope6": round(slope6, 2),
-            "range": round(range_pips, 2),
-            "trend": micro_trend or "",
-            "m15": m15_trend or "",
-            "h1": h1_trend or "",
-        }
-    if action == "OPEN_SHORT" and bottom_gap <= bottom_gap_thresh and slope6 >= -slope_chase_thresh:
-        return False, "micro_bottom_fade_guard", {
-            "slope6": round(slope6, 2),
-            "range": round(range_pips, 2),
-            "trend": micro_trend or "",
-            "m15": m15_trend or "",
-            "h1": h1_trend or "",
-        }
+    # 直近天井/底付近のブロックを解除（スカルプの取りこぼし防止）
 
     micro_info = (open_positions or {}).get("micro", {}) if open_positions else {}
     try:
