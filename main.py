@@ -7257,6 +7257,10 @@ async def logic_loop(
                 units = int(round(staged_lot * 100000)) * (
                     1 if action == "OPEN_LONG" else -1
                 )
+                # ステージ配分で極小になった場合でも最低1k unitsは確保する
+                if units != 0 and abs(units) < 1000:
+                    units = 1000 if units > 0 else -1000
+                    staged_lot = abs(units) / 100000.0
                 if reduce_only and proposed_units:
                     sign = 1 if action == "OPEN_LONG" else -1
                     units = sign * abs(proposed_units)
