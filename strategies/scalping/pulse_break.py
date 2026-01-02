@@ -121,7 +121,7 @@ class PulseBreak:
             )
             return None
         adx_dyn_gate = max(
-            16.0, min(34.0, 13.5 + 0.7 * min(range_pips, 12.0) + 1.2 * vol_floor)
+            14.0, min(32.0, 12.0 + 0.55 * min(range_pips, 12.0) + 0.9 * vol_floor)
         )
         if adx < adx_dyn_gate:
             PulseBreak._log_skip(
