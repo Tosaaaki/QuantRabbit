@@ -7332,7 +7332,9 @@ async def logic_loop(
                     gross_exposure = gross_units * mid_price / account_equity
                     gross_after_units = gross_units + abs(units)
                     gross_after_exposure = gross_after_units * mid_price / account_equity
-                    if gross_after_exposure >= GROSS_EXPOSURE_HARD:
+                    netting_reduce = net_units != 0 and units != 0 and (net_units * units) < 0
+                    # Nettingで総ノッチ（long+short）が増えない方向のオーダーは gross cap を無視する
+                    if not netting_reduce and gross_after_exposure >= GROSS_EXPOSURE_HARD:
                         max_units_allowed = int((GROSS_EXPOSURE_HARD * account_equity) / mid_price) - gross_units
                         if max_units_allowed <= 0:
                             logging.info(
