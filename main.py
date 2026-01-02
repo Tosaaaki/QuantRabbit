@@ -9,6 +9,7 @@ import math
 import os
 from pathlib import Path
 from typing import Optional, Tuple, Coroutine, Any, Dict, Sequence
+from types import SimpleNamespace
 from utils import signal_bus
 
 PIP_VALUE = 0.01  # USD/JPY pip size
@@ -3433,6 +3434,23 @@ async def logic_loop(
                         tick_empty_counter,
                     )
                     tick_empty_counter = 0
+                # Keep spread monitor in sync using the latest tick (netting-aware sizing relies on this).
+                try:
+                    last_tick = recent_tick_rows[-1]
+                    bid = last_tick.get("bid")
+                    ask = last_tick.get("ask")
+                    if bid is not None and ask is not None:
+                        epoch = last_tick.get("epoch")
+                        ts = (
+                            datetime.fromtimestamp(float(epoch), timezone.utc)
+                            if epoch is not None
+                            else datetime.utcnow().replace(tzinfo=timezone.utc)
+                        )
+                        spread_monitor.update_from_tick(
+                            SimpleNamespace(bid=bid, ask=ask, time=ts)
+                        )
+                except Exception:
+                    pass
             def _range_pips_from_ticks(ticks: list[dict]) -> float:
                 hi = float("-inf")
                 lo = float("inf")
