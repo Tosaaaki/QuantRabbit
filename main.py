@@ -7486,16 +7486,16 @@ async def logic_loop(
                                 now_ts = time.time()
                                 prev = MACRO_LIMIT_WAIT.get(limit_wait_key)
                                 if not prev or abs(prev.get("target", reference_price) - reference_price) > 0.0009:
-                                MACRO_LIMIT_WAIT[limit_wait_key] = {
-                                    "start": now_ts,
-                                    "target": reference_price,
-                                }
-                                prev = MACRO_LIMIT_WAIT.get(limit_wait_key)
-                            elapsed = max(0.0, now_ts - float(prev.get("start", now_ts)))
-                        wait_scale = 1.0
-                        if vol_5m is not None:
-                            try:
-                                wait_scale = max(0.7, min(1.3, 1.0 + (float(vol_5m) - 1.0) * 0.18))
+                                    MACRO_LIMIT_WAIT[limit_wait_key] = {
+                                        "start": now_ts,
+                                        "target": reference_price,
+                                    }
+                                    prev = MACRO_LIMIT_WAIT.get(limit_wait_key)
+                                elapsed = max(0.0, now_ts - float(prev.get("start", now_ts)))
+                            wait_scale = 1.0
+                            if vol_5m is not None:
+                                try:
+                                    wait_scale = max(0.7, min(1.3, 1.0 + (float(vol_5m) - 1.0) * 0.18))
                             except Exception:
                                 wait_scale = 1.0
                         try:
