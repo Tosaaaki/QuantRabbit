@@ -61,10 +61,21 @@ class PulseBreak:
             atr_pips = float(atr_pips)
         except Exception:
             atr_pips = 0.0
+        spread = fac.get("spread_pips")
+        try:
+            spread = float(spread) if spread is not None else None
+        except Exception:
+            spread = None
+        atr_floor = 0.9
+        if spread is not None:
+            if spread <= 0.95 and vol_5m >= 0.75:
+                atr_floor = 0.72
+            if spread <= 0.8 and vol_5m >= 0.8:
+                atr_floor = 0.65
 
         # ATR が薄いときは vol_5m の閾値をスライドさせる（低ボラ帯でも相対ブレイクを拾う）
-        if atr_pips < 0.9:
-            PulseBreak._log_skip("atr_low", atr_pips=round(atr_pips, 3))
+        if atr_pips < atr_floor:
+            PulseBreak._log_skip("atr_low", atr_pips=round(atr_pips, 3), floor=round(atr_floor, 2))
             return None
         vol_thresh = 0.9 + (atr_pips - 2.0) * 0.06
         vol_thresh = max(0.8, min(1.15, vol_thresh))

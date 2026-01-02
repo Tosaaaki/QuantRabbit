@@ -15,8 +15,8 @@ MAX_TP_REDUCTION = 0.32
 MIN_VOL_5M = 0.35
 PROFILE_NAME = "bb_range_reversion"
 # 距離判定を緩めてバンドタッチ手前でもエントリー可能にする
-MIN_DISTANCE_RANGE = 0.02
-MIN_DISTANCE_TREND = 0.06
+MIN_DISTANCE_RANGE = 0.015
+MIN_DISTANCE_TREND = 0.05
 
 
 class BBRsi:
@@ -142,23 +142,45 @@ class BBRsi:
             return max(MIN_DISTANCE_RANGE, base - penalty)
 
         min_distance_req = _min_distance(range_score, range_active)
+        if atr_hint <= 1.1 or bbw <= 0.22:
+            min_distance_req = max(MIN_DISTANCE_RANGE * 0.5, min_distance_req - 0.01)
 
         rsi_eta_up = fac.get("rsi_eta_upper_min")
         rsi_eta_dn = fac.get("rsi_eta_lower_min")
         bbw_eta = fac.get("bbw_squeeze_eta_min")
         bbw_slope = fac.get("bbw_slope_per_bar", 0.0) or 0.0
 
-        near_lower = False
-        near_upper = False
-        if price is not None and lower is not None and band_width > 0:
-            near_lower = price <= lower + band_width * 0.2
-        if price is not None and upper is not None and band_width > 0:
-            near_upper = price >= upper - band_width * 0.2
+        touch_buffer = 0.28
+        if atr_hint <= 1.2 or bbw <= 0.22:
+            touch_buffer = 0.32
 
-        if (price < lower or near_lower) and rsi < 45:
-            distance = (lower - price) / band_width if band_width else 0.0
-            if distance < 0:
-                distance = 0.0
+        if trend_score >= 0.75 and price is not None and lower is not None and upper is not None:
+            if lower < price < upper:
+                BBRsi._log_skip("trend_block_inside_band", trend_score=round(trend_score, 3))
+                return None
+
+        def _distance_to_lower() -> float:
+            if price is None or lower is None or band_width <= 0:
+                return 0.0
+            if price < lower:
+                return (lower - price) / band_width
+            if price <= lower + band_width * touch_buffer:
+                return max(0.0, (lower + band_width * touch_buffer - price) / band_width)
+            return 0.0
+
+        def _distance_to_upper() -> float:
+            if price is None or upper is None or band_width <= 0:
+                return 0.0
+            if price > upper:
+                return (price - upper) / band_width
+            if price >= upper - band_width * touch_buffer:
+                return max(0.0, (price - (upper - band_width * touch_buffer)) / band_width)
+            return 0.0
+
+        distance_lower = _distance_to_lower()
+        distance_upper = _distance_to_upper()
+        if distance_lower > 0 and rsi < 45:
+            distance = distance_lower
             if distance < min_distance_req:
                 BBRsi._log_skip(
                     "distance_too_small_long",
@@ -205,10 +227,8 @@ class BBRsi:
                 "trend_score": round(trend_score, 3) if trend_score > 0 else None,
                 "size_factor_hint": round(size_factor_trend, 3) if trend_score > 0 else None,
             }
-        if (price > upper or near_upper) and rsi > 55:
-            distance = (price - upper) / band_width if band_width else 0.0
-            if distance < 0:
-                distance = 0.0
+        if distance_upper > 0 and rsi > 55:
+            distance = distance_upper
             if distance < min_distance_req:
                 BBRsi._log_skip(
                     "distance_too_small_short",
@@ -263,6 +283,7 @@ class BBRsi:
             rsi=round(rsi, 2),
             bbw=round(bbw, 4),
             min_distance=round(min_distance_req, 4),
+            touch_buffer=round(touch_buffer, 3),
         )
         return None
 

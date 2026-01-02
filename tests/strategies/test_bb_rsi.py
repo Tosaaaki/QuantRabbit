@@ -37,3 +37,22 @@ def test_bb_rsi_skips_trending_env():
     }
     signal = BBRsi.check(fac)
     assert signal is None
+
+
+def test_bb_rsi_allows_near_band_touch_in_tight_range():
+    fac = {
+        "rsi": 38,
+        "bbw": 0.012,
+        "ma20": 156.8,
+        "ma10": 156.81,
+        "close": 156.25,
+        "atr_pips": 0.95,
+        "adx": 16.0,
+        "vol_5m": 0.8,
+        "rsi_eta_upper_min": 3.5,
+        "bbw_squeeze_eta_min": 3.0,
+    }
+    signal = BBRsi.check(fac)
+    assert signal is not None
+    assert signal["action"] == "OPEN_LONG"
+    assert signal["sl_pips"] > 0

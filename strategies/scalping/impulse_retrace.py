@@ -78,11 +78,16 @@ class ImpulseRetraceScalp:
         except (TypeError, ValueError):
             vol_5m = None
         atr_hint = ImpulseRetraceScalp._atr_pips(fac)
-        if atr_hint > 0 and spread is not None:
-            ratio = spread / max(atr_hint, 1e-6)
-            # スプレッド負担が軽い＆最低限のボラがあるときは下限を少し緩める
-            if ratio <= SPREAD_ATR_RELAX and (vol_5m is None or vol_5m >= 0.8):
-                base = max(0.9, base * 0.75)
+        if atr_hint > 0:
+            if spread is not None:
+                if spread <= 1.0 and (vol_5m is None or vol_5m >= 0.75):
+                    base = min(base, 0.72)
+                ratio = spread / max(atr_hint, 1e-6)
+                # スプレッド負担が軽い＆最低限のボラがあるときは下限を少し緩める
+                if ratio <= SPREAD_ATR_RELAX and (vol_5m is None or vol_5m >= 0.65):
+                    base = min(base, max(0.62, MIN_ATR * 0.7))
+            if vol_5m is not None and vol_5m >= 1.1:
+                base = min(base, max(0.6, MIN_ATR * 0.66))
         return base
 
     @staticmethod

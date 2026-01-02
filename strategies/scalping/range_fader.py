@@ -85,16 +85,22 @@ class RangeFader:
                 )
         if adx_val >= 45.0:
             high_atr = min(hard_atr_cap, max(high_atr, 7.2))
+        low_atr_dyn = low_atr
         if spread is not None and atr_pips > 0:
             ratio = spread / max(atr_pips, 1e-6)
             # スプレッド負担が軽いときはATR下限を追加で緩める
             if ratio <= 0.35:
-                low_atr = max(0.85, low_atr * 0.9)
-        if atr_pips < low_atr:
+                low_atr_dyn = min(low_atr_dyn, low_atr * 0.85)
+                if vol_5m is not None and vol_5m >= 0.8:
+                    low_atr_dyn = min(low_atr_dyn, max(0.65, low_atr * 0.7))
+            if spread <= 1.0 and (vol_5m is None or vol_5m >= 0.85):
+                low_atr_dyn = min(low_atr_dyn, max(0.7, low_atr * 0.82))
+        low_atr_dyn = max(0.6, low_atr_dyn)
+        if atr_pips < low_atr_dyn:
             RangeFader._log_skip(
                 "atr_out_of_range",
                 atr_pips=round(atr_pips, 3),
-                low=low_atr,
+                low=round(low_atr_dyn, 3),
                 high=high_atr,
             )
             return None
