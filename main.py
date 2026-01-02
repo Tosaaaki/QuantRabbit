@@ -7496,75 +7496,75 @@ async def logic_loop(
                             if vol_5m is not None:
                                 try:
                                     wait_scale = max(0.7, min(1.3, 1.0 + (float(vol_5m) - 1.0) * 0.18))
+                                except Exception:
+                                    wait_scale = 1.0
+                            try:
+                                adx_h1_val = float(fac_h1.get("adx") or 0.0)
                             except Exception:
-                                wait_scale = 1.0
-                        try:
-                            adx_h1_val = float(fac_h1.get("adx") or 0.0)
-                        except Exception:
-                            adx_h1_val = 0.0
-                        try:
-                            adx_h4_val = float(fac_h4.get("adx") or 0.0)
-                        except Exception:
-                            adx_h4_val = 0.0
-                        adx_max = max(adx_h1_val, adx_h4_val)
-                        if adx_max >= 28.0:
-                            wait_scale *= 0.85
-                        elif adx_max <= 18.0:
-                            wait_scale *= 1.1
-                        if clamp_level >= 2:
-                            wait_scale = min(wait_scale, 0.85)
-                        wait_scale = max(0.5, min(1.3, wait_scale))
-                        timeout_sec = max(_MACRO_LIMIT_TIMEOUT_MIN, _MACRO_LIMIT_TIMEOUT_SEC * wait_scale)
-                        try:
-                            atr_for_gap = float(locals().get("atr_hint", 0.0) or 0.0)
-                        except Exception:
-                            atr_for_gap = 0.0
-                        fallback_gap = max(
-                            tolerance_pips * 1.9,
-                            (pullback_note or tolerance_pips) * 0.75,
-                            0.45 + min(2.2, atr_for_gap * 0.3),
-                        )
-                        fallback_gap = min(4.2, fallback_gap)
-                        allow_fallback = elapsed >= timeout_sec and gap_pips <= fallback_gap
-                        if (
-                            allow_fallback
-                            and clamp_level >= 2
-                            and spread_pips is not None
-                            and spread_pips > 1.3
-                        ):
-                            logging.info(
-                                "[LIMIT] Spread %.2fp too wide for fallback; keep limit (clamp>=2)",
-                                spread_pips,
+                                adx_h1_val = 0.0
+                            try:
+                                adx_h4_val = float(fac_h4.get("adx") or 0.0)
+                            except Exception:
+                                adx_h4_val = 0.0
+                            adx_max = max(adx_h1_val, adx_h4_val)
+                            if adx_max >= 28.0:
+                                wait_scale *= 0.85
+                            elif adx_max <= 18.0:
+                                wait_scale *= 1.1
+                            if clamp_level >= 2:
+                                wait_scale = min(wait_scale, 0.85)
+                            wait_scale = max(0.5, min(1.3, wait_scale))
+                            timeout_sec = max(_MACRO_LIMIT_TIMEOUT_MIN, _MACRO_LIMIT_TIMEOUT_SEC * wait_scale)
+                            try:
+                                atr_for_gap = float(locals().get("atr_hint", 0.0) or 0.0)
+                            except Exception:
+                                atr_for_gap = 0.0
+                            fallback_gap = max(
+                                tolerance_pips * 1.9,
+                                (pullback_note or tolerance_pips) * 0.75,
+                                0.45 + min(2.2, atr_for_gap * 0.3),
                             )
-                            allow_fallback = False
-                        if allow_fallback:
-                            logging.info(
-                                "[LIMIT->MARKET] Macro timeout %.0fs gap=%.2fp tol=%.2fp pullback=%.2fp fallback=%.2fp vol=%.2f",
-                                elapsed,
-                                gap_pips,
-                                tolerance_pips,
-                                pullback_note or 0.0,
-                                fallback_gap,
-                                vol_5m or 0.0,
-                            )
-                            entry_type = "market"
-                            reference_price = entry_price
-                            target_price = None
-                            if limit_wait_key:
-                                MACRO_LIMIT_WAIT.pop(limit_wait_key, None)
-                        else:
-                            logging.info(
-                                "[LIMIT] Waiting for %s (target=%.3f cur=%.3f tol=%.2fp gap=%.2fp elapsed=%.0fs timeout=%.0fs fallback=%.2fp)",
-                                "pullback" if is_buy else "bounce",
-                                reference_price,
-                                price,
-                                tolerance_pips,
-                                gap_pips,
-                                elapsed,
-                                timeout_sec,
-                                fallback_gap,
-                        )
-                            continue
+                            fallback_gap = min(4.2, fallback_gap)
+                            allow_fallback = elapsed >= timeout_sec and gap_pips <= fallback_gap
+                            if (
+                                allow_fallback
+                                and clamp_level >= 2
+                                and spread_pips is not None
+                                and spread_pips > 1.3
+                            ):
+                                logging.info(
+                                    "[LIMIT] Spread %.2fp too wide for fallback; keep limit (clamp>=2)",
+                                    spread_pips,
+                                )
+                                allow_fallback = False
+                            if allow_fallback:
+                                logging.info(
+                                    "[LIMIT->MARKET] Macro timeout %.0fs gap=%.2fp tol=%.2fp pullback=%.2fp fallback=%.2fp vol=%.2f",
+                                    elapsed,
+                                    gap_pips,
+                                    tolerance_pips,
+                                    pullback_note or 0.0,
+                                    fallback_gap,
+                                    vol_5m or 0.0,
+                                )
+                                entry_type = "market"
+                                reference_price = entry_price
+                                target_price = None
+                                if limit_wait_key:
+                                    MACRO_LIMIT_WAIT.pop(limit_wait_key, None)
+                            else:
+                                logging.info(
+                                    "[LIMIT] Waiting for %s (target=%.3f cur=%.3f tol=%.2fp gap=%.2fp elapsed=%.0fs timeout=%.0fs fallback=%.2fp)",
+                                    "pullback" if is_buy else "bounce",
+                                    reference_price,
+                                    price,
+                                    tolerance_pips,
+                                    gap_pips,
+                                    elapsed,
+                                    timeout_sec,
+                                    fallback_gap,
+                                )
+                                continue
                     if limit_wait_key:
                         MACRO_LIMIT_WAIT.pop(limit_wait_key, None)
 
