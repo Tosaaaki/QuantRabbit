@@ -75,7 +75,65 @@ class PulseBreak:
 
         # ATR が薄いときは vol_5m の閾値をスライドさせる（低ボラ帯でも相対ブレイクを拾う）
         # 超低ボラでも通す: ATR/vol ガードを解除
-        vol_thresh = 0.0
+        # 現行市況に合わせた動的ゲート（低ボラ寄りで発火しすぎを防ぐ）
+        candles = fac.get("candles") or []
+        range_pips = 0.0
+        if isinstance(candles, list) and candles:
+            try:
+                highs = [float(c.get("high") or c.get("h") or 0.0) for c in candles[-18:]]
+                lows = [float(c.get("low") or c.get("l") or 0.0) for c in candles[-18:]]
+                if highs and lows:
+                    range_pips = (max(highs) - min(lows)) / 0.01
+            except Exception:
+                range_pips = 0.0
+        range_pips = max(range_pips, atr_pips * 2.0)
+        vol_floor = max(
+            0.45,
+            min(
+                1.55,
+                0.42
+                + 0.06 * min(range_pips, 12.0)
+                + 0.14 * min(atr_pips, 4.5)
+                - (spread or 0.0) * 0.08,
+            ),
+        )
+        atr_floor_dyn = max(
+            0.58,
+            min(
+                1.8,
+                0.35 + 0.05 * min(range_pips, 12.0) + 0.12 * vol_floor,
+            ),
+        )
+        if atr_pips < atr_floor_dyn:
+            PulseBreak._log_skip(
+                "atr_dyn_low",
+                atr_pips=round(atr_pips, 3),
+                gate=round(atr_floor_dyn, 3),
+                range=round(range_pips, 2),
+            )
+            return None
+        if vol_5m < vol_floor:
+            PulseBreak._log_skip(
+                "vol_dyn_low",
+                vol_5m=round(vol_5m, 3),
+                gate=round(vol_floor, 3),
+                atr_pips=round(atr_pips, 3),
+            )
+            return None
+        adx_dyn_gate = max(
+            16.0, min(34.0, 13.5 + 0.7 * min(range_pips, 12.0) + 1.2 * vol_floor)
+        )
+        if adx < adx_dyn_gate:
+            PulseBreak._log_skip(
+                "adx_dyn_low",
+                adx=round(adx, 3),
+                gate=round(adx_dyn_gate, 3),
+                range=round(range_pips, 2),
+                vol=round(vol_5m, 3),
+            )
+            return None
+
+        vol_thresh = vol_floor
         short_enabled_env = os.getenv("PULSE_BREAK_ENABLE_SHORT", "1").strip().lower() not in {"", "0", "false", "no"}
         try:
             short_adx_gate = float(os.getenv("PULSE_BREAK_SHORT_ADX", "28.0"))
@@ -146,6 +204,7 @@ class PulseBreak:
                     gate=round(short_adx_gate, 2),
                 )
                 return None
+            short_adx_gate = max(short_adx_gate, adx_dyn_gate)
             if ema100 is not None and ema20 > ema100:
                 PulseBreak._log_skip(
                     "ema100_block_short",

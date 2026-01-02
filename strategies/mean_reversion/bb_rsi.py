@@ -46,9 +46,6 @@ class BBRsi:
         ma20 = fac.get("ma20") or ma
         adx = float(fac.get("adx") or 0.0)
         vol_5m = float(fac.get("vol_5m") or 0.0)
-        if vol_5m < MIN_VOL_5M:
-            BBRsi._log_skip("low_vol", vol_5m=vol_5m)
-            return None
         try:
             ma_gap_pips = abs((ma10 - ma20) / PIP) if ma10 is not None and ma20 is not None else 0.0
         except (TypeError, ValueError):
@@ -89,6 +86,10 @@ class BBRsi:
 
         atr_hint = fac.get("atr_pips") or (fac.get("atr") or 0.0) * 100 or 6.0
         atr_hint = max(1.4, min(atr_hint, 9.0))
+        vol_floor = max(0.32, min(0.9, 0.26 + 0.07 * min(atr_hint, 7.5)))
+        if vol_5m < vol_floor:
+            BBRsi._log_skip("low_vol_dyn", vol_5m=vol_5m, gate=round(vol_floor, 3))
+            return None
         spread_pips = float(fac.get("spread_pips") or 0.0)
         spread_buffer = max(0.5, spread_pips * 1.6)
 
@@ -144,6 +145,15 @@ class BBRsi:
         min_distance_req = _min_distance(range_score, range_active)
         if atr_hint <= 1.1 or bbw <= 0.22:
             min_distance_req = max(MIN_DISTANCE_RANGE * 0.5, min_distance_req - 0.01)
+        trend_distance_floor = None
+        if trend_score >= 0.45:
+            trend_distance_floor = max(
+                min_distance_req,
+                min(
+                    0.9,
+                    0.12 + 0.32 * trend_score + max(0.0, 0.28 - (bbw or 0.0)) * 0.6,
+                ),
+            )
 
         rsi_eta_up = fac.get("rsi_eta_upper_min")
         rsi_eta_dn = fac.get("rsi_eta_lower_min")
@@ -178,6 +188,14 @@ class BBRsi:
         distance_upper = _distance_to_upper()
         if distance_lower > 0 and rsi < 45:
             distance = distance_lower
+            if trend_distance_floor and distance < trend_distance_floor:
+                BBRsi._log_skip(
+                    "trend_block_inside_band_long",
+                    distance=round(distance, 4),
+                    gate=round(trend_distance_floor, 4),
+                    trend_score=round(trend_score, 3),
+                )
+                return None
             if distance < min_distance_req:
                 BBRsi._log_skip(
                     "distance_too_small_long",
@@ -226,6 +244,14 @@ class BBRsi:
             }
         if distance_upper > 0 and rsi > 55:
             distance = distance_upper
+            if trend_distance_floor and distance < trend_distance_floor:
+                BBRsi._log_skip(
+                    "trend_block_inside_band_short",
+                    distance=round(distance, 4),
+                    gate=round(trend_distance_floor, 4),
+                    trend_score=round(trend_score, 3),
+                )
+                return None
             if distance < min_distance_req:
                 BBRsi._log_skip(
                     "distance_too_small_short",

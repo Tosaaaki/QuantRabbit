@@ -307,6 +307,49 @@ class MovingAverageCross:
                 atr_pips=round(float(atr_pips_val or 0.0), 3) if atr_pips_val is not None else None,
             )
 
+        # 市況に合わせた動的ギャップ/ADXゲート（戦略の主旨を維持しつつ緩和）
+        gap_pips = abs(projection.gap_pips)
+        atr_norm = max(0.6, min(8.0, atr_pips_val or 2.0))
+        recent_range = 0.0
+        try:
+            highs = [float(c.get("high") or c.get("h") or 0.0) for c in (candles or [])[-24:]]
+            lows = [float(c.get("low") or c.get("l") or 0.0) for c in (candles or [])[-24:]]
+            if highs and lows:
+                recent_range = (max(highs) - min(lows)) / 0.01
+        except Exception:
+            recent_range = 0.0
+        gap_floor = max(
+            MovingAverageCross._MIN_GAP_PIPS,
+            min(
+                1.8,
+                0.18 * atr_norm
+                + 0.04 * min(recent_range, 14.0)
+                + (0.22 if adx is not None and adx < 18.0 else 0.0),
+            ),
+        )
+        if gap_pips < gap_floor and not trend_override:
+            MovingAverageCross._log_skip(
+                "gap_dyn_low",
+                gap=round(gap_pips, 4),
+                gate=round(gap_floor, 3),
+                atr=round(atr_norm, 3),
+                adx=round(float(adx or 0.0), 2),
+            )
+            return None
+        adx_floor = max(
+            MovingAverageCross._MIN_TREND_ADX,
+            min(30.0, 11.5 + 1.8 * atr_norm + 0.35 * gap_floor),
+        )
+        if adx < adx_floor and not macro_trend_override:
+            MovingAverageCross._log_skip(
+                "adx_dyn_low",
+                adx=round(float(adx or 0.0), 2),
+                gate=round(adx_floor, 2),
+                atr=round(atr_norm, 3),
+                gap=round(gap_pips, 3),
+            )
+            return None
+
         # 短期ドリフトが逆行しているときは方向を捨てる
         drift_keys = ("drift_pips_15m", "drift_15m", "return_15m_pips", "drift_pips_30m", "return_30m_pips")
         drift_pips = 0.0
@@ -494,7 +537,12 @@ class MovingAverageCross:
         )
         confidence = int(max(40.0, min(96.0, confidence + conf_adj)))
         sl_pips, tp_pips = MovingAverageCross._targets(
-            projection, direction, macd_adjust, atr_pips_val, spread_pips
+            projection,
+            direction,
+            macd_adjust,
+            atr_pips_val,
+            spread_pips,
+            adx_val=float(adx or 0.0),
         )
         if sl_adj:
             sl_pips = round(max(10.0, sl_pips + sl_adj), 2)
@@ -620,6 +668,7 @@ class MovingAverageCross:
         macd_adjust: float,
         atr_pips: Optional[float],
         spread_pips: float = 0.0,
+        adx_val: float = 0.0,
     ) -> tuple[float, float]:
         slope = projection.gap_slope_pips if direction == "long" else -projection.gap_slope_pips
         slope = max(-3.5, min(3.5, slope))
@@ -647,7 +696,7 @@ class MovingAverageCross:
         tp_floor = sl_rounded * 1.2 + spread_pips * 0.8
         tp_rounded = round(max(sl_rounded * 1.08, tp, tp_floor), 2)
         try:
-            adx_val = float(fac.get("adx") or 0.0)
+            adx_val = float(adx_val)
         except Exception:
             adx_val = 0.0
         if adx_val >= 28.0:

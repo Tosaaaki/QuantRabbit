@@ -20,6 +20,7 @@ from typing import Dict, Optional
 
 from utils.metrics_logger import log_metric
 from utils.secrets import get_secret
+from utils.oanda_account import get_position_summary
 
 # --- risk params ---
 MAX_LEVERAGE = 20.0  # 1:20
@@ -329,11 +330,40 @@ def allowed_lot(
     if risk_pct_override is not None:
         risk_pct = max(0.0005, min(risk_pct_override, 0.4))
 
+    side_norm = (side or "").lower()
+    long_units = None if open_long_units is None else float(open_long_units)
+    short_units = None if open_short_units is None else float(open_short_units)
+    fetch_positions = os.getenv("ALLOWED_LOT_FETCH_POS", "1").strip().lower() not in {
+        "",
+        "0",
+        "false",
+        "no",
+    }
+    # 方向別の残余を誤認しないよう、long/short が未提供なら都度フェッチする
+    if (long_units is None or short_units is None) and fetch_positions:
+        try:
+            fetched_long, fetched_short = get_position_summary("USD_JPY", timeout=2.5)
+            if long_units is None:
+                long_units = float(fetched_long or 0.0)
+            if short_units is None:
+                short_units = float(fetched_short or 0.0)
+        except Exception:
+            long_units = float(long_units or 0.0)
+            short_units = float(short_units or 0.0)
+    else:
+        long_units = float(long_units or 0.0)
+        short_units = float(short_units or 0.0)
+
     # free margin が枯渇していれば発注自体を止める
     min_free_margin_ratio = max(0.005, float(os.getenv("MIN_FREE_MARGIN_RATIO", "0.01") or 0.01))
     if equity > 0 and margin_available is not None:
         free_ratio = margin_available / equity if equity > 0 else 0.0
-        if free_ratio < min_free_margin_ratio:
+        netting_reduce = False
+        if side_norm == "long" and long_units < short_units:
+            netting_reduce = True
+        elif side_norm == "short" and short_units < long_units:
+            netting_reduce = True
+        if free_ratio < min_free_margin_ratio and not netting_reduce:
             allow_low_margin = os.getenv("ALLOW_HEDGE_ON_LOW_MARGIN", "1").strip().lower() not in {
                 "",
                 "0",
@@ -365,7 +395,6 @@ def allowed_lot(
         return 0.0
 
     margin_cap = None
-    side_norm = (side or "").lower()
     used: float | None = None
 
     def _net_margin_after(add_units: float) -> float:
@@ -381,8 +410,8 @@ def allowed_lot(
             if equity > 0 and margin_available is not None:
                 return max(0.0, equity - margin_available)
             return 0.0
-        long_u = float(open_long_units or 0.0)
-        short_u = float(open_short_units or 0.0)
+        long_u = float(long_units or 0.0)
+        short_u = float(short_units or 0.0)
         if side_norm == "long":
             long_u += add_units
         else:
