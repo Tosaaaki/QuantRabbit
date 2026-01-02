@@ -7462,11 +7462,30 @@ async def logic_loop(
                         gap_pips = (reference_price - price) / PIP
 
                     if needs_pullback:
-                        elapsed = 0.0
-                        if limit_wait_key:
-                            now_ts = time.time()
-                            prev = MACRO_LIMIT_WAIT.get(limit_wait_key)
-                            if not prev or abs(prev.get("target", reference_price) - reference_price) > 0.0009:
+                        bypass_wait = (
+                            os.getenv("DISABLE_LIMIT_WAIT", "1").strip().lower()
+                            not in {"", "0", "false", "no"}
+                        )
+                        if bypass_wait:
+                            logging.info(
+                                "[LIMIT->MARKET] bypass wait strategy=%s target=%.3f cur=%.3f gap=%.2fp tol=%.2fp",
+                                signal.get("strategy"),
+                                reference_price,
+                                price,
+                                gap_pips,
+                                tolerance_pips,
+                            )
+                            entry_type = "market"
+                            reference_price = entry_price
+                            target_price = None
+                            if limit_wait_key:
+                                MACRO_LIMIT_WAIT.pop(limit_wait_key, None)
+                        else:
+                            elapsed = 0.0
+                            if limit_wait_key:
+                                now_ts = time.time()
+                                prev = MACRO_LIMIT_WAIT.get(limit_wait_key)
+                                if not prev or abs(prev.get("target", reference_price) - reference_price) > 0.0009:
                                 MACRO_LIMIT_WAIT[limit_wait_key] = {
                                     "start": now_ts,
                                     "target": reference_price,
