@@ -5954,9 +5954,16 @@ async def logic_loop(
                                 bias_h4,
                                 adx_max,
                             )
+                macro_hedge_enabled = os.getenv("MACRO_HEDGE_ENABLE", "0").strip().lower() not in {
+                    "",
+                    "0",
+                    "false",
+                    "off",
+                }
                 # Macro hedging during Orange/Red: only net-reducing orders with cap
                 if (
-                    clamp_level >= 2
+                    macro_hedge_enabled
+                    and clamp_level >= 2
                     and sig.get("pocket") == "macro"
                     and action_dir != 0
                     and net_units != 0
@@ -5978,7 +5985,8 @@ async def logic_loop(
                     sig["reduce_cap_units"] = reduce_cap_units
                 # Macroヘッジを常時薄く許可（net逆方向のみ、net超過はしない）
                 if (
-                    sig.get("pocket") == "macro"
+                    macro_hedge_enabled
+                    and sig.get("pocket") == "macro"
                     and action_dir != 0
                     and net_units != 0
                 ):
