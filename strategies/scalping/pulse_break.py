@@ -74,19 +74,8 @@ class PulseBreak:
                 atr_floor = 0.65
 
         # ATR が薄いときは vol_5m の閾値をスライドさせる（低ボラ帯でも相対ブレイクを拾う）
-        if atr_pips < atr_floor:
-            PulseBreak._log_skip("atr_low", atr_pips=round(atr_pips, 3), floor=round(atr_floor, 2))
-            return None
-        vol_thresh = 0.9 + (atr_pips - 2.0) * 0.06
-        vol_thresh = max(0.8, min(1.15, vol_thresh))
-        if vol_5m < vol_thresh:
-            PulseBreak._log_skip(
-                "vol_dyn_low",
-                atr_pips=round(atr_pips, 3),
-                vol_5m=round(vol_5m, 3),
-                vol_thresh=round(vol_thresh, 3),
-            )
-            return None
+        # 超低ボラでも通す: ATR/vol ガードを解除
+        vol_thresh = 0.0
         short_enabled_env = os.getenv("PULSE_BREAK_ENABLE_SHORT", "1").strip().lower() not in {"", "0", "false", "no"}
         try:
             short_adx_gate = float(os.getenv("PULSE_BREAK_SHORT_ADX", "28.0"))
@@ -100,13 +89,7 @@ class PulseBreak:
 
         momentum = close - ema20
         bias = ema20 - ema50
-        if abs(momentum) < 0.0048:
-            PulseBreak._log_skip("momentum_small", momentum=round(momentum, 5))
-            return None
-
-        if adx < 22.5:
-            PulseBreak._log_skip("adx_low", adx=round(adx, 3))
-            return None
+        # モメンタム/ADX 下限も解除してスキップしない
 
         adx_slope = fac.get("adx_slope_per_bar", 0.0) or 0.0
         atr_slope = fac.get("atr_slope_pips", 0.0) or 0.0

@@ -326,36 +326,7 @@ class MovingAverageCross:
             MovingAverageCross._log_skip("drift_against_short", drift_pips=drift_pips)
             return None
 
-        weak_trend = adx < MovingAverageCross._MIN_TREND_ADX
-        if weak_trend:
-            if abs(projection.gap_pips) < MovingAverageCross._MIN_GAP_IN_WEAK_TREND:
-                MovingAverageCross._log_skip(
-                    "weak_trend_gap_small",
-                    adx=round(adx, 2),
-                    gap_pips=round(projection.gap_pips, 4),
-                )
-                return None
-            if abs(projection.gap_slope_pips) < MovingAverageCross._MIN_SLOPE_IN_WEAK_TREND:
-                MovingAverageCross._log_skip(
-                    "weak_trend_slope_small",
-                    adx=round(adx, 2),
-                    gap_slope=round(projection.gap_slope_pips or 0.0, 5),
-                )
-                return None
-            if isinstance(bbw, (int, float)) and bbw <= MovingAverageCross._NARROW_BBW_LIMIT:
-                MovingAverageCross._log_skip(
-                    "weak_trend_bbw_narrow",
-                    adx=round(adx, 2),
-                    bbw=round(bbw, 4),
-                )
-                return None
-        if abs(projection.gap_pips) < MovingAverageCross._MIN_GAP_PIPS:
-            MovingAverageCross._log_skip(
-                "gap_small",
-                gap_pips=round(projection.gap_pips, 4),
-                min_gap=MovingAverageCross._MIN_GAP_PIPS,
-            )
-            return None
+        # ギャップ不足・弱トレンド時のブロックを無効化してエントリー優先
         if (
             abs(projection.price_to_fast_pips) > MovingAverageCross._MAX_FAST_DISTANCE
             and abs(projection.price_to_fast_pips) > abs(projection.price_to_slow_pips)
