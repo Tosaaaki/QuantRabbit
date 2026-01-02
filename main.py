@@ -7184,6 +7184,13 @@ async def logic_loop(
                     stage_context["cluster_direction"] = direction
                 reduce_only = bool(signal.get("reduce_only"))
                 reduce_cap_units = int(signal.get("reduce_cap_units") or 0)
+                proposed_units_raw = signal.get("proposed_units")
+                proposed_units: Optional[int] = None
+                try:
+                    if proposed_units_raw is not None:
+                        proposed_units = int(float(proposed_units_raw))
+                except Exception:
+                    proposed_units = None
 
                 high_impact_context = _evaluate_high_impact_context(
                     pocket=pocket,
@@ -7375,13 +7382,6 @@ async def logic_loop(
                 pullback_note = None
                 limit_wait_key = None
                 entry_type = signal.get("entry_type", "market")
-                proposed_units_raw = signal.get("proposed_units")
-                proposed_units: Optional[int] = None
-                try:
-                    if proposed_units_raw is not None:
-                        proposed_units = int(float(proposed_units_raw))
-                except Exception:
-                    proposed_units = None
                 target_price = signal.get("entry_price")
                 tolerance_pips = float(signal.get("entry_tolerance_pips", 0.25))
                 if (
