@@ -7726,6 +7726,10 @@ async def logic_loop(
                     tp,
                     pocket,
                     client_order_id=client_id,
+                    strategy_tag=signal.get("tag")
+                    or signal.get("strategy")
+                    or sname
+                    or "unknown",
                     entry_thesis=entry_thesis,
                     arbiter_final=True,
                 )
