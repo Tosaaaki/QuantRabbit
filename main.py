@@ -7437,6 +7437,18 @@ async def logic_loop(
                     if limit_wait_key:
                         MACRO_LIMIT_WAIT.pop(limit_wait_key, None)
 
+                # ensure sl/tp price placeholders exist for logging
+                sl_price = signal.get("sl_price")
+                tp_price = signal.get("tp_price")
+                try:
+                    sl_price = float(sl_price) if sl_price is not None else None
+                except Exception:
+                    sl_price = None
+                try:
+                    tp_price = float(tp_price) if tp_price is not None else None
+                except Exception:
+                    tp_price = None
+
                 logging.info(
                     "[ENTRY_PLAN] strategy=%s pocket=%s action=%s stage=%s lot=%.3f units=%d reduce_only=%s sl=%.3f tp=%.3f entry_type=%s",
                     signal.get("strategy"),
