@@ -105,6 +105,11 @@ async def trendma_worker() -> None:
         except Exception:
             pf = None
 
+        # レンジ判定が出ているときは TrendMA での新規を抑止
+        if range_ctx.active:
+            LOG.debug("%s skip: range_active", config.LOG_PREFIX)
+            continue
+
         signal = MovingAverageCross.check(fac_m1)
         if not signal:
             continue
@@ -140,6 +145,25 @@ async def trendma_worker() -> None:
         tp_pips = float(signal.get("tp_pips") or 0.0)
         if price <= 0.0 or sl_pips <= 0.0:
             continue
+
+        # H4直近高値近辺でのロングは見送り（高値掴み防止）
+        try:
+            h4_recent_high = float(fac_h4.get("recent_high") or 0.0)
+        except Exception:
+            h4_recent_high = 0.0
+        if side == "long" and h4_recent_high > 0 and (h4_recent_high - price) <= 0.08:
+            LOG.debug(
+                "%s skip: near_h4_high price=%.3f recent_high=%.3f",
+                config.LOG_PREFIX,
+                price,
+                h4_recent_high,
+            )
+            continue
+
+        # TP を手前にクランプ（レンジ気味のため）
+        tp_cap = max(12.0, min(20.0, atr_pips * 3.5 + 4.0))
+        if tp_pips > tp_cap:
+            tp_pips = tp_cap
 
         tp_scale = 14.0 / max(1.0, tp_pips)
         tp_scale = max(0.35, min(1.1, tp_scale))
