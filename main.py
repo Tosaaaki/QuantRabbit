@@ -1055,9 +1055,9 @@ def _frontload_plan(base_plan: Sequence[float], target_first: float) -> tuple[fl
 
 
 MIN_MACRO_STAGE_LOT = 0.01  # smaller floor to let macro trickle-in
-MAX_MICRO_STAGE_LOT = 0.03  # cap micro scaling when momentum signals fire repeatedly
-MIN_MACRO_STAGE_LOT = 0.02  # ensure初回でも0.02lotは投下
-MIN_SCALP_STAGE_LOT = 0.02  # 最低でも0.02lot確保
+MAX_MICRO_STAGE_LOT = 0.02  # cap micro scaling when momentum signals fire repeatedly
+MIN_MACRO_STAGE_LOT = 0.01  # ensure初回でも0.01lotは投下
+MIN_SCALP_STAGE_LOT = 0.01  # 最低でも0.01lot確保
 REENTRY_EXTRA_LOT = {
     "macro": _safe_env_float("STAGE_REENTRY_EXTRA_MACRO", 0.04, low=0.0, high=0.5),
     "micro": _safe_env_float("STAGE_REENTRY_EXTRA_MICRO", 0.03, low=0.0, high=0.3),
@@ -1075,7 +1075,7 @@ if FORCE_SCALP_MODE:
     logging.warning("[FORCE_SCALP] mode enabled")
 
 RELAX_GPT_ALLOWLIST = True  # GPT は順位付けのみ利用し、評価フィルタには使わない
-DISABLE_WAIT_GUARD = os.getenv("DISABLE_WAIT_GUARD", "1").strip().lower() not in {"", "0", "false", "no"}
+DISABLE_WAIT_GUARD = os.getenv("DISABLE_WAIT_GUARD", "0").strip().lower() not in {"", "0", "false", "no"}
 
 
 def _session_bucket(now: datetime.datetime) -> str:
