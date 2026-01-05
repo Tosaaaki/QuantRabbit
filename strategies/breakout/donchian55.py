@@ -94,9 +94,9 @@ class Donchian55:
             tp *= max(0.45, min(1.35, vol_scale * trend_scale * range_scale * momentum_scale))
             # 到達確度を優先し、ATRと55本レンジで上限を強くクランプ
             range_pips = max(10.0, range_span * 100.0)  # 55本レンジをpip換算
-            tp_cap = min(tp, atr_pips * 10.0 + 6.0, range_pips * 0.6)
-            tp_floor = max(12.0, sl * 0.5, atr_pips * 3.5)
-            tp = max(tp_floor, min(tp_cap, sl * 1.6))
+            tp_cap = min(tp, 24.0, atr_pips * 4.5 + 6.0, range_pips * 0.35)
+            tp_floor = max(10.0, sl * 0.5, atr_pips * 2.5)
+            tp = max(tp_floor, min(tp_cap, sl * 1.25))
             return round(sl, 2), round(tp, 2)
 
         if close > high55 or (near_pips is not None and near_pips <= 3.0 and close >= high55 - 0.02):

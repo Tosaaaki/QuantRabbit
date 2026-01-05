@@ -146,6 +146,11 @@ async def trendma_worker() -> None:
         if price <= 0.0 or sl_pips <= 0.0:
             continue
 
+        # TP をさらに短くクランプ（レンジ警戒）
+        tp_cap = max(10.0, min(22.0, atr_pips * 3.0 + 6.0))
+        if tp_pips > tp_cap:
+            tp_pips = tp_cap
+
         # H4直近高値近辺でのロングは見送り（高値掴み防止）
         try:
             h4_recent_high = float(fac_h4.get("recent_high") or 0.0)
