@@ -42,6 +42,21 @@ class Donchian55:
             atr_pips = float(fac.get("atr_pips") or 0.0)
         except (TypeError, ValueError):
             atr_pips = 0.0
+        try:
+            rsi = float(fac.get("rsi") or 0.0)
+        except (TypeError, ValueError):
+            rsi = 50.0
+        # 勢いフィルター（トレンド弱・RSI中立ならスキップ）
+        if adx < 22.0:
+            Donchian55._log_skip("weak_adx", adx=round(adx, 2))
+            return None
+        if close >= high55 and rsi < 52.0:
+            Donchian55._log_skip("weak_momentum_long", rsi=round(rsi, 2))
+            return None
+        if close <= low55 and rsi > 48.0:
+            Donchian55._log_skip("weak_momentum_short", rsi=round(rsi, 2))
+            return None
+
         # ブレイクへの近さ（pips）で発火加減を調整
         proj = compute_donchian_projection(candles, lookback=55)
         near_pips = proj.nearest_pips if proj else None
@@ -49,6 +64,15 @@ class Donchian55:
         if near_pips is not None:
             distance_bonus = max(0.0, min(10.0, (8.0 - min(8.0, near_pips)) * 1.2))
         confidence = int(max(45.0, min(95.0, 54.0 + breakout_strength * 42.0 + distance_bonus)))
+
+        # レンジ／低勢い時はそもそもエントリー抑制
+        if range_active and breakout_strength < 0.4:
+            Donchian55._log_skip(
+                "range_block",
+                breakout_strength=round(breakout_strength, 3),
+                near_pips=round(near_pips, 2) if near_pips is not None else None,
+            )
+            return None
 
         def _targets() -> tuple[float, float]:
             base_sl = 55.0
