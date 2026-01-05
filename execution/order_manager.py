@@ -78,7 +78,8 @@ def _as_float(value: object, default: float | None = None) -> float | None:
 
 # エントリーが詰まらないようデフォルトの最小ユニットを下げる。
 _DEFAULT_MIN_UNITS = _env_int("ORDER_MIN_UNITS_DEFAULT", 1_000)
-_MACRO_MIN_UNITS_DEFAULT = max(_env_int("ORDER_MIN_UNITS_MACRO", 10_000), _DEFAULT_MIN_UNITS * 10)
+# Macro も環境変数で可変（デフォルト 2,000 units、最低でも DEFAULT_MIN を確保）
+_MACRO_MIN_UNITS_DEFAULT = max(_env_int("ORDER_MIN_UNITS_MACRO", 2_000), _DEFAULT_MIN_UNITS)
 _MIN_UNITS_BY_POCKET: dict[str, int] = {
     "micro": _env_int("ORDER_MIN_UNITS_MICRO", _DEFAULT_MIN_UNITS),
     "macro": _env_int("ORDER_MIN_UNITS_MACRO", _MACRO_MIN_UNITS_DEFAULT),

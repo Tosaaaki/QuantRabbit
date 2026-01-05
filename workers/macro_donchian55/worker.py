@@ -63,6 +63,31 @@ def _confidence_scale(conf: int) -> float:
     return 0.55 + span * 0.45
 
 
+def _confidence_fraction(conf: int) -> float:
+    """0.35〜1.10で信頼度に応じて段階的に増加。"""
+    lo = config.CONFIDENCE_FLOOR
+    hi = config.CONFIDENCE_CEIL
+    norm = (conf - lo) / max(1.0, hi - lo)
+    norm = max(0.0, min(1.0, norm))
+    return max(0.35, min(1.10, 0.35 + norm * 0.75))
+
+
+def _incremental_units(target_units: int, existing_units: int, min_units: int) -> int:
+    """長期の積み増し用に、既存ポジとの差分の一部だけを積む。"""
+    if target_units == 0:
+        return 0
+    same_side = target_units * existing_units > 0
+    if same_side:
+        gap = abs(target_units) - abs(existing_units)
+        if gap <= max(1, int(min_units * 0.25)):
+            return 0
+        step = int(round(gap * 0.4))
+        step = max(min_units, min(abs(gap), step))
+        return step if target_units > 0 else -step
+    # 反対サイドだったらそのまま（ネットで調整）
+    return target_units
+
+
 def _compute_cap(*args, **kwargs) -> Tuple[float, Dict[str, float]]:
     res = compute_cap(cap_min=config.CAP_MIN, cap_max=config.CAP_MAX, *args, **kwargs)
     return res.cap, res.reasons
@@ -94,7 +119,7 @@ async def donchian55_worker() -> None:
         except Exception:
             pf = None
 
-        signal = Donchian55.check(fac_h1)
+        signal = Donchian55.check(fac_h1, range_active=range_ctx.active)
         if not signal:
             continue
 
@@ -109,8 +134,10 @@ async def donchian55_worker() -> None:
             open_positions = snap.positions or {}
             macro_pos = open_positions.get("macro") or {}
             pos_bias = abs(float(macro_pos.get("units", 0.0) or 0.0)) / max(1.0, float(snap.nav or 1.0))
+            existing_units = int(macro_pos.get("units") or 0)
         except Exception:
             pos_bias = 0.0
+            existing_units = 0
 
         cap, cap_reason = _compute_cap(
             atr_pips=atr_pips,
@@ -137,7 +164,9 @@ async def donchian55_worker() -> None:
         tp_scale = max(0.25, min(1.05, tp_scale))
         base_units = int(round(config.BASE_ENTRY_UNITS * tp_scale))
 
-        conf_scale = _confidence_scale(int(signal.get("confidence", 50)))
+        conf = int(signal.get("confidence", 50))
+        conf_scale = _confidence_scale(conf)
+        conf_frac = _confidence_fraction(conf)
         lot = allowed_lot(
             float(snap.nav or 0.0),
             sl_pips,
@@ -147,13 +176,15 @@ async def donchian55_worker() -> None:
             pocket=config.POCKET,
         )
         units_risk = int(round(lot * 100000))
-        units = int(round(base_units * conf_scale))
-        units = min(units, units_risk)
-        units = int(round(units * cap))
-        if units < config.MIN_UNITS:
-            continue
+        target_units = int(round(base_units * conf_frac))
+        target_units = min(target_units, units_risk)
+        target_units = int(round(target_units * cap))
         if side == "short":
-            units = -abs(units)
+            target_units = -abs(target_units)
+
+        units = _incremental_units(target_units, existing_units, config.MIN_UNITS)
+        if abs(units) < config.MIN_UNITS:
+            continue
 
         if side == "long":
             sl_price = round(price - sl_pips * 0.01, 3)
@@ -181,9 +212,11 @@ async def donchian55_worker() -> None:
             confidence=int(signal.get("confidence", 0)),
         )
         LOG.info(
-            "%s sent units=%s side=%s price=%.3f sl=%.3f tp=%.3f conf=%.0f cap=%.2f reasons=%s res=%s",
+            "%s sent units=%s target=%s existing=%s side=%s price=%.3f sl=%.3f tp=%.3f conf=%.0f cap=%.2f reasons=%s res=%s",
             config.LOG_PREFIX,
             units,
+            target_units,
+            existing_units,
             side,
             price,
             sl_price,
