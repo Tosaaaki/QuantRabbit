@@ -15,6 +15,7 @@ import sqlite3
 import pathlib
 from datetime import datetime, timezone, timedelta
 import os
+import math
 from typing import Any, Literal, Optional, Tuple
 import requests
 
@@ -2142,6 +2143,7 @@ async def market_order(
                 hard_cap = min(float(os.getenv("MAX_MARGIN_USAGE_HARD", "0.96") or 0.96), 0.995)
                 cap = min(hard_cap, max(soft_cap, 0.0))
                 net_reducing = False
+                net_before_units = 0.0
                 try:
                     from utils.oanda_account import get_position_summary
 
@@ -2153,6 +2155,7 @@ async def market_order(
                     net_reducing = abs(net_after_units) < abs(net_before_units)
                 except Exception:
                     net_reducing = False
+                    net_before_units = 0.0
                 if nav > 0:
                     usage = margin_used / nav
                     projected_usage = _projected_usage_with_netting(
@@ -2173,48 +2176,72 @@ async def market_order(
                             and projected_usage < usage
                         )
                     ):
-                        note = "margin_usage_exceeds_cap"
-                        _console_order_log(
-                            "OPEN_REJECT",
-                            pocket=pocket,
-                            strategy_tag=strategy_tag or "unknown",
-                            side=side_label,
-                            units=units,
-                            sl_price=sl_price,
-                            tp_price=tp_price,
-                            client_order_id=client_order_id,
-                            note=note,
-                        )
-                        log_order(
-                            pocket=pocket,
-                            instrument=instrument,
-                            side=side_label,
-                            units=units,
-                            sl_price=sl_price,
-                            tp_price=tp_price,
-                            client_order_id=client_order_id,
-                            status=note,
-                            attempt=0,
-                            stage_index=stage_index,
-                            request_payload={
-                                "strategy_tag": strategy_tag,
-                                "meta": meta,
-                                "entry_thesis": entry_thesis,
-                                "margin_usage": usage,
-                                "projected_usage": projected_usage,
-                                "cap": hard_cap,
-                            },
-                        )
-                        log_metric(
-                            "order_margin_block",
-                            1.0,
-                            tags={
-                                "pocket": pocket,
-                                "strategy": strategy_tag or "unknown",
-                                "reason": note,
-                            },
-                        )
-                        return None
+                        price_hint = _estimate_price(meta) or _latest_mid_price() or 0.0
+                        scaled_units = 0
+                        cap_target = hard_cap * 0.99
+                        if projected_usage and projected_usage > 0 and abs(units) > 0:
+                            factor = cap_target / projected_usage
+                            scaled_units = int(math.floor(abs(units) * factor))
+                        elif nav > 0 and margin_rate > 0 and price_hint > 0:
+                            try:
+                                allowed_net = (cap_target * nav) / (price_hint * margin_rate)
+                                room = allowed_net - abs(net_before_units)
+                                scaled_units = int(math.floor(min(abs(units), room)))
+                            except Exception:
+                                scaled_units = 0
+                        if scaled_units > 0:
+                            new_units = scaled_units if units > 0 else -scaled_units
+                            logging.info(
+                                "[ORDER] margin cap scale units %s -> %s usage=%.3f cap=%.3f",
+                                units,
+                                new_units,
+                                usage_for_cap,
+                                cap_target,
+                            )
+                            units = new_units
+                        else:
+                            note = "margin_usage_exceeds_cap"
+                            _console_order_log(
+                                "OPEN_REJECT",
+                                pocket=pocket,
+                                strategy_tag=strategy_tag or "unknown",
+                                side=side_label,
+                                units=units,
+                                sl_price=sl_price,
+                                tp_price=tp_price,
+                                client_order_id=client_order_id,
+                                note=note,
+                            )
+                            log_order(
+                                pocket=pocket,
+                                instrument=instrument,
+                                side=side_label,
+                                units=units,
+                                sl_price=sl_price,
+                                tp_price=tp_price,
+                                client_order_id=client_order_id,
+                                status=note,
+                                attempt=0,
+                                stage_index=stage_index,
+                                request_payload={
+                                    "strategy_tag": strategy_tag,
+                                    "meta": meta,
+                                    "entry_thesis": entry_thesis,
+                                    "margin_usage": usage,
+                                    "projected_usage": projected_usage,
+                                    "cap": hard_cap,
+                                },
+                            )
+                            log_metric(
+                                "order_margin_block",
+                                1.0,
+                                tags={
+                                    "pocket": pocket,
+                                    "strategy": strategy_tag or "unknown",
+                                    "reason": note,
+                                },
+                            )
+                            return None
                     if (
                         usage_for_cap >= hard_cap * 0.995
                         and net_reducing
@@ -2250,47 +2277,71 @@ async def market_order(
                     and projected_usage >= cap
                     and not (net_reducing and usage is not None and projected_usage < usage)
                 ):
-                    note = "margin_usage_projected_cap"
-                    _console_order_log(
-                        "OPEN_REJECT",
-                        pocket=pocket,
-                        strategy_tag=strategy_tag or "unknown",
-                        side=side_label,
-                        units=units,
-                        sl_price=sl_price,
-                        tp_price=tp_price,
-                        client_order_id=client_order_id,
-                        note=note,
-                    )
-                    log_order(
-                        pocket=pocket,
-                        instrument=instrument,
-                        side=side_label,
-                        units=units,
-                        sl_price=sl_price,
-                        tp_price=tp_price,
-                        client_order_id=client_order_id,
-                        status=note,
-                        attempt=0,
-                        stage_index=stage_index,
-                        request_payload={
-                            "strategy_tag": strategy_tag,
-                            "meta": meta,
-                            "entry_thesis": entry_thesis,
-                            "projected_usage": projected_usage,
-                            "cap": cap,
-                        },
-                    )
-                    log_metric(
-                        "order_margin_block",
-                        1.0,
-                        tags={
-                            "pocket": pocket,
-                            "strategy": strategy_tag or "unknown",
-                            "reason": note,
-                        },
-                    )
-                    return None
+                    price_hint = _estimate_price(meta) or _latest_mid_price() or 0.0
+                    scaled_units = 0
+                    cap_target = cap * 0.99
+                    try:
+                        factor = cap_target / projected_usage if projected_usage > 0 else 0.0
+                        if factor > 0 and abs(units) > 0:
+                            scaled_units = int(math.floor(abs(units) * factor))
+                        elif nav > 0 and margin_rate > 0 and price_hint > 0:
+                            allowed_net = (cap_target * nav) / (price_hint * margin_rate)
+                            room = allowed_net - abs(net_before_units)
+                            scaled_units = int(math.floor(min(abs(units), room)))
+                    except Exception:
+                        scaled_units = 0
+                    if scaled_units > 0:
+                        new_units = scaled_units if units > 0 else -scaled_units
+                        logging.info(
+                            "[ORDER] projected margin scale units %s -> %s usage=%.3f cap=%.3f",
+                            units,
+                            new_units,
+                            projected_usage,
+                            cap_target,
+                        )
+                        units = new_units
+                    else:
+                        note = "margin_usage_projected_cap"
+                        _console_order_log(
+                            "OPEN_REJECT",
+                            pocket=pocket,
+                            strategy_tag=strategy_tag or "unknown",
+                            side=side_label,
+                            units=units,
+                            sl_price=sl_price,
+                            tp_price=tp_price,
+                            client_order_id=client_order_id,
+                            note=note,
+                        )
+                        log_order(
+                            pocket=pocket,
+                            instrument=instrument,
+                            side=side_label,
+                            units=units,
+                            sl_price=sl_price,
+                            tp_price=tp_price,
+                            client_order_id=client_order_id,
+                            status=note,
+                            attempt=0,
+                            stage_index=stage_index,
+                            request_payload={
+                                "strategy_tag": strategy_tag,
+                                "meta": meta,
+                                "entry_thesis": entry_thesis,
+                                "projected_usage": projected_usage,
+                                "cap": cap,
+                            },
+                        )
+                        log_metric(
+                            "order_margin_block",
+                            1.0,
+                            tags={
+                                "pocket": pocket,
+                                "strategy": strategy_tag or "unknown",
+                                "reason": note,
+                            },
+                        )
+                        return None
                 if (
                     projected_usage is not None
                     and projected_usage >= cap
