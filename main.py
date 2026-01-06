@@ -111,6 +111,8 @@ MICRO_OPENS_DISABLED = _env_bool("MICRO_OPENS_DISABLED", default=False)
 
 # Worker-onlyモード: mainはワーカー起動/データ供給のみ行い、発注/Exitロジックはスキップ
 WORKER_ONLY_MODE = _env_bool("WORKER_ONLY_MODE", default=False)
+# GPT を完全に無効化するフラグ（誤作動防止用）。設定時はローカル順位付けのみを使用。
+GPT_DISABLED = _env_bool("GPT_DISABLED", default=False)
 
 # ---- Dynamic allocation (strategy score / pocket cap) loader ----
 _DYNAMIC_ALLOC_PATH = Path("config/dynamic_alloc.json")
@@ -3979,28 +3981,37 @@ async def logic_loop(
                 range_reason=last_range_reason or range_ctx.reason,
                 soft_range=range_soft_active,
             )
-            logging.info(
-                "[GPT] decision_trigger signature=%s range=%s", payload_signature[:10], range_active
-            )
-            if await gpt_state.needs_refresh(payload_signature, GPT_MIN_INTERVAL_SECONDS):
-                logging.info("[GPT] enqueue signature=%s", payload_signature[:10])
-                await gpt_requests.submit(payload_signature, payload)
-                try:
-                    gpt = await gpt_state.wait_for_signature(payload_signature, timeout=30)
-                    reuse_reason = gpt.get("reason") or "live_call"
-                except asyncio.TimeoutError:
-                    logging.warning(
-                        "[GPT] wait for signature %s timed out; using previous decision",
-                        payload_signature[:10],
-                    )
-                    gpt, _, _ = await gpt_state.get_latest()
-                    reuse_reason = gpt.get("reason") or "cached_timeout"
-            else:
-                gpt, _, _ = await gpt_state.get_latest()
-                reuse_reason = gpt.get("reason") or "cached"
-            if not isinstance(gpt, dict):
-                logging.warning("[GPT] invalid decision payload type=%s; using empty dict", type(gpt))
+            if GPT_DISABLED:
                 gpt = {}
+                reuse_reason = "disabled"
+                logging.info("[GPT] disabled; skipping GPT evaluation and using local ranking only")
+            else:
+                logging.info(
+                    "[GPT] decision_trigger signature=%s range=%s",
+                    payload_signature[:10],
+                    range_active,
+                )
+                if await gpt_state.needs_refresh(payload_signature, GPT_MIN_INTERVAL_SECONDS):
+                    logging.info("[GPT] enqueue signature=%s", payload_signature[:10])
+                    await gpt_requests.submit(payload_signature, payload)
+                    try:
+                        gpt = await gpt_state.wait_for_signature(payload_signature, timeout=30)
+                        reuse_reason = gpt.get("reason") or "live_call"
+                    except asyncio.TimeoutError:
+                        logging.warning(
+                            "[GPT] wait for signature %s timed out; using previous decision",
+                            payload_signature[:10],
+                        )
+                        gpt, _, _ = await gpt_state.get_latest()
+                        reuse_reason = gpt.get("reason") or "cached_timeout"
+                else:
+                    gpt, _, _ = await gpt_state.get_latest()
+                    reuse_reason = gpt.get("reason") or "cached"
+                if not isinstance(gpt, dict):
+                    logging.warning(
+                        "[GPT] invalid decision payload type=%s; using empty dict", type(gpt)
+                    )
+                    gpt = {}
             local_decision: dict = {}
             try:
                 local_decision = heuristic_decision(payload, last_local_decision)
