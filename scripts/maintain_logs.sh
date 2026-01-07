@@ -11,6 +11,8 @@ ROOT="${ROOT:-$(cd "$(dirname "$0")/.." && pwd)}"
 LOG_DIR="${LOG_DIR:-$ROOT/logs}"
 ARCHIVE_DIR="${ARCHIVE_DIR:-$LOG_DIR/archive}"
 MAX_AGE_DAYS="${LOG_ROTATE_MAX_AGE_DAYS:-7}"
+ARCHIVE_BUCKET="${LOG_ARCHIVE_BUCKET:-}"
+ARCHIVE_PREFIX="${LOG_ARCHIVE_PREFIX:-$(hostname -s)/logs}"
 TS="$(date +%Y%m%d-%H%M%S)"
 
 mkdir -p "$ARCHIVE_DIR"
@@ -52,12 +54,28 @@ prune_old() {
   find "$ARCHIVE_DIR" -type f -mtime +"$MAX_AGE_DAYS" -print -delete
 }
 
+upload_to_gcs() {
+  if [[ -z "$ARCHIVE_BUCKET" ]]; then
+    echo "[gcs] LOG_ARCHIVE_BUCKET not set; skip upload"
+    return
+  fi
+  shopt -s nullglob
+  local files=("$ARCHIVE_DIR"/*.gz "$ARCHIVE_DIR"/*.tgz)
+  if [[ ${#files[@]} -eq 0 ]]; then
+    echo "[gcs] no archives to upload"
+    return
+  fi
+  local dest="${ARCHIVE_BUCKET%/}/${ARCHIVE_PREFIX}"
+  echo "[gcs] uploading ${#files[@]} archive(s) to ${dest}"
+  gsutil -m cp "${files[@]}" "${dest}/"
+}
+
 echo "[start] log maintenance at $TS (LOG_DIR=$LOG_DIR)"
 rotate_pipeline
 archive_replay
 checkpoint_db "$LOG_DIR/orders.db"
 checkpoint_db "$LOG_DIR/trades.db"
 checkpoint_db "$LOG_DIR/metrics.db"
+upload_to_gcs
 prune_old
 echo "[done] log maintenance complete."
-
