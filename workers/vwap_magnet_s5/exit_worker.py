@@ -12,6 +12,7 @@ from typing import Dict, Optional
 from analysis.range_guard import detect_range_mode
 from execution.order_manager import close_trade
 from execution.position_manager import PositionManager
+from execution.reversion_failure import evaluate_reversion_failure, evaluate_tp_zone
 from indicators.factor_cache import all_factors
 from market_data import tick_window
 from utils.metrics_logger import log_metric
@@ -80,6 +81,7 @@ class _TradeState:
     lock_floor: Optional[float] = None
     hard_stop: Optional[float] = None
     tp_hint: Optional[float] = None
+    trend_hits: int = 0
 
 
 @dataclass
@@ -290,6 +292,42 @@ class VWAPMagnetExitWorker:
 
         if pnl <= -stop_loss:
             return "hard_stop"
+
+        if pnl <= 0 and self.allow_negative_exit:
+            decision = evaluate_reversion_failure(
+                trade,
+                current_price=ctx.mid,
+                now=now,
+                side=side,
+                env_tf="M5",
+                struct_tf="M1",
+                trend_hits=state.trend_hits,
+            )
+            state.trend_hits = decision.trend_hits
+            if decision.should_exit and decision.reason:
+                LOG.info(
+                    "[EXIT-vwap_magnet_s5] reversion_exit trade=%s reason=%s detail=%s",
+                    trade_id,
+                    decision.reason,
+                    decision.debug,
+                )
+                return decision.reason
+
+        if pnl > 0:
+            tp_decision = evaluate_tp_zone(
+                trade,
+                current_price=ctx.mid,
+                side=side,
+                env_tf="M5",
+                struct_tf="M1",
+            )
+            if tp_decision.should_exit:
+                LOG.info(
+                    "[EXIT-vwap_magnet_s5] tp_zone trade=%s detail=%s",
+                    trade_id,
+                    tp_decision.debug,
+                )
+                return "take_profit_zone"
 
         if pnl < 0 and hold_sec >= self.negative_hold_sec:
             if self.allow_negative_exit:

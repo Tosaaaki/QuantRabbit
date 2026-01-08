@@ -1048,6 +1048,15 @@ def _coerce_entry_thesis(meta: Any) -> dict:
     return {}
 
 
+def _soft_tp_mode(thesis: Optional[dict]) -> bool:
+    if not isinstance(thesis, dict):
+        return False
+    mode = thesis.get("tp_mode")
+    if not mode and isinstance(thesis.get("execution"), dict):
+        mode = thesis.get("execution", {}).get("tp_mode")
+    return str(mode or "").lower() in {"soft_zone", "soft"}
+
+
 def _encode_thesis_comment(entry_thesis: Optional[dict]) -> Optional[str]:
     """
     Serialize a minimal subset of the thesis into OANDA clientExtensions.comment
@@ -1623,6 +1632,9 @@ def _apply_dynamic_protections_v2(
                 continue
             if pocket == "scalp" and client_id.startswith("qr-mirror-s5-"):
                 continue
+            thesis = _coerce_entry_thesis(tr.get("entry_thesis"))
+            if _soft_tp_mode(thesis):
+                continue
 
             entry = float(price)
             trade_tp_info = tr.get("take_profit") or {}
@@ -1826,6 +1838,9 @@ def plan_partial_reductions(
             units = int(tr.get("units", 0) or 0)
             if not trade_id or not side or entry is None or units == 0:
                 continue
+            thesis = _coerce_entry_thesis(tr.get("entry_thesis"))
+            if _soft_tp_mode(thesis):
+                continue
             client_id = str(tr.get("client_id") or "")
             if not client_id.startswith("qr-"):
                 continue
@@ -1999,6 +2014,7 @@ async def market_order(
         return _log_order(**kwargs)
     thesis_sl_pips: Optional[float] = None
     thesis_tp_pips: Optional[float] = None
+    soft_tp = _soft_tp_mode(entry_thesis)
     if stage_index is None and isinstance(entry_thesis, dict):
         try:
             raw_stage = entry_thesis.get("stage_index")
@@ -2021,6 +2037,9 @@ async def market_order(
         if value is not None:
             thesis_tp_pips = float(value)
     except (TypeError, ValueError):
+        thesis_tp_pips = None
+    if soft_tp:
+        tp_price = None
         thesis_tp_pips = None
 
     # strategy_tag は必須: entry_thesis から補完しても欠損なら拒否
@@ -2082,6 +2101,57 @@ async def market_order(
                 },
             )
             return None
+
+    exec_cfg = None
+    if isinstance(entry_thesis, dict):
+        exec_cfg = entry_thesis.get("execution")
+    if exec_cfg is None and isinstance(meta, dict):
+        exec_cfg = meta.get("execution")
+    if (
+        not reduce_only
+        and isinstance(exec_cfg, dict)
+        and exec_cfg.get("order_policy") == "market_guarded"
+    ):
+        ideal = _as_float(exec_cfg.get("ideal_entry"))
+        chase_max = _as_float(exec_cfg.get("chase_max"))
+        price_hint = (
+            _as_float((meta or {}).get("entry_price"))
+            or _as_float((entry_thesis or {}).get("entry_ref") if isinstance(entry_thesis, dict) else None)
+            or _estimate_price(meta)
+            or _latest_mid_price()
+        )
+        if ideal is not None and chase_max is not None and price_hint is not None:
+            if abs(price_hint - ideal) > chase_max:
+                _console_order_log(
+                    "OPEN_SKIP",
+                    pocket=pocket,
+                    strategy_tag=str(strategy_tag or "unknown"),
+                    side=side_label,
+                    units=units,
+                    sl_price=sl_price,
+                    tp_price=tp_price,
+                    client_order_id=client_order_id,
+                    note="market_guarded",
+                )
+                log_order(
+                    pocket=pocket,
+                    instrument=instrument,
+                    side=side_label,
+                    units=units,
+                    sl_price=sl_price,
+                    tp_price=tp_price,
+                    client_order_id=client_order_id,
+                    status="market_guarded_skip",
+                    attempt=0,
+                    stage_index=stage_index,
+                    request_payload={
+                        "price_hint": price_hint,
+                        "ideal_entry": ideal,
+                        "chase_max": chase_max,
+                        "execution": exec_cfg,
+                    },
+                )
+                return None
 
     # 強制マージンガード（reduce_only 以外）。直近スナップショットから
     # 現在の使用率と注文後の想定使用率を確認し、上限超えは即リジェクト。
@@ -3197,6 +3267,9 @@ async def limit_order(
 
     if units == 0:
         return None, None
+
+    if _soft_tp_mode(entry_thesis):
+        tp_price = None
 
     if require_passive and not _is_passive_price(
         units=units,

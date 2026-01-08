@@ -8,10 +8,11 @@ import hashlib
 import logging
 import os
 import time
-from typing import Dict, List, Tuple
+from typing import Dict, List, Optional, Tuple
 
 from analysis.range_guard import detect_range_mode
-from indicators.factor_cache import all_factors
+from analysis.range_model import compute_range_snapshot
+from indicators.factor_cache import all_factors, get_candles_snapshot
 from execution.order_manager import market_order
 from execution.risk_guard import allowed_lot, can_trade, clamp_sl_tp
 from execution.position_manager import PositionManager
@@ -30,6 +31,9 @@ from . import config
 LOG = logging.getLogger(__name__)
 PM = PositionManager()
 _LAST_ENTRY_TS: float = 0.0
+MR_RANGE_LOOKBACK = 20
+MR_RANGE_HI_PCT = 95.0
+MR_RANGE_LO_PCT = 5.0
 
 
 def _latest_mid(fallback: float) -> float:
@@ -73,6 +77,58 @@ def _confidence_scale(conf: int) -> float:
 def _compute_cap(*args, **kwargs) -> Tuple[float, Dict[str, float]]:
     res = compute_cap(cap_min=config.CAP_MIN, cap_max=config.CAP_MAX, *args, **kwargs)
     return res.cap, res.reasons
+
+
+def _is_mr_signal(tag: str) -> bool:
+    tag_str = (tag or "").strip()
+    if not tag_str:
+        return False
+    base_tag = tag_str.split("-", 1)[0]
+    return base_tag == "RangeFader"
+
+
+def _build_mr_entry_thesis(
+    signal: Dict,
+    *,
+    strategy_tag: str,
+    atr_entry: float,
+    entry_mean: Optional[float],
+) -> Dict:
+    thesis: Dict[str, object] = {
+        "strategy_tag": strategy_tag,
+        "confidence": signal.get("confidence", 0),
+        "env_tf": "M5",
+        "struct_tf": "M1",
+        "range_method": "percentile",
+        "range_lookback": MR_RANGE_LOOKBACK,
+        "range_hi_pct": MR_RANGE_HI_PCT,
+        "range_lo_pct": MR_RANGE_LO_PCT,
+        "atr_entry": atr_entry,
+        "structure_break": {"buffer_atr": 0.10, "confirm_closes": 2},
+        "tp_mode": "soft_zone",
+        "tp_target": "entry_mean",
+        "tp_pad_atr": 0.05,
+        "reversion_failure": {
+            "z_ext": 0.45,
+            "contraction_min": 0.45,
+            "bars_budget": {"k_per_z": 2.5, "min": 2, "max": 8},
+            "trend_takeover": {"require_env_trend_bars": 2},
+        },
+    }
+    if entry_mean is not None and entry_mean > 0:
+        thesis["entry_mean"] = float(entry_mean)
+    candles = get_candles_snapshot("M5", limit=MR_RANGE_LOOKBACK)
+    snapshot = compute_range_snapshot(
+        candles,
+        lookback=MR_RANGE_LOOKBACK,
+        method="percentile",
+        hi_pct=MR_RANGE_HI_PCT,
+        lo_pct=MR_RANGE_LO_PCT,
+    )
+    if snapshot:
+        thesis["range_snapshot"] = snapshot.to_dict()
+        thesis.setdefault("entry_mean", snapshot.mid)
+    return thesis
 
 
 def _strategy_list() -> List:
@@ -229,6 +285,38 @@ async def scalp_multi_worker() -> None:
             is_buy=side == "long",
         )
         client_id = _client_order_id(signal_tag)
+        entry_thesis = {
+            "strategy_tag": signal_tag,
+            "tp_pips": tp_pips,
+            "sl_pips": sl_pips,
+            "confidence": signal.get("confidence", 0),
+        }
+        if _is_mr_signal(signal_tag):
+            entry_mean = None
+            try:
+                entry_mean = float(fac_m1.get("ema20") or fac_m1.get("ma20") or fac_m1.get("ma10") or 0.0) or None
+            except Exception:
+                entry_mean = None
+            entry_thesis.update(
+                _build_mr_entry_thesis(
+                    signal,
+                    strategy_tag=signal_tag,
+                    atr_entry=atr_pips or 1.0,
+                    entry_mean=entry_mean,
+                )
+            )
+            rf = entry_thesis.get("reversion_failure")
+            if isinstance(rf, dict):
+                bars_budget = rf.get("bars_budget")
+                if not isinstance(bars_budget, dict):
+                    bars_budget = {}
+                    rf["bars_budget"] = bars_budget
+                if atr_pips >= 6.0:
+                    bars_budget["k_per_z"] = 3.0
+                    bars_budget["max"] = 10
+                elif 0.0 < atr_pips <= 3.0:
+                    bars_budget["k_per_z"] = 2.0
+                    bars_budget["max"] = 6
 
         res = await market_order(
             instrument="USD_JPY",
@@ -239,12 +327,7 @@ async def scalp_multi_worker() -> None:
             client_order_id=client_id,
             strategy_tag=signal_tag,
             confidence=int(signal.get("confidence", 0)),
-            entry_thesis={
-                "strategy_tag": signal_tag,
-                "tp_pips": tp_pips,
-                "sl_pips": sl_pips,
-                "confidence": signal.get("confidence", 0),
-            },
+            entry_thesis=entry_thesis,
         )
         LOG.info(
             "%s strat=%s sent units=%s side=%s price=%.3f sl=%.3f tp=%.3f conf=%.0f cap=%.2f reasons=%s res=%s",

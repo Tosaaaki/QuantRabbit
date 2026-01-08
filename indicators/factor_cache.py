@@ -200,6 +200,17 @@ def _serialize(value: object) -> object:
     return value
 
 
+def get_candles_snapshot(tf: TimeFrame, *, limit: int | None = None) -> list[dict]:
+    """Return a shallow copy of cached candles for a timeframe."""
+    dq = _CANDLES.get(tf)
+    if not dq:
+        return []
+    candles = list(dq)
+    if limit is not None and limit > 0:
+        return candles[-limit:]
+    return candles
+
+
 async def on_candle(tf: TimeFrame, candle: Dict[str, float]):
     """
     market_data.candle_fetcher から呼ばれる想定

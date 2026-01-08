@@ -364,6 +364,14 @@ async def mirror_spike_tight_worker() -> None:
                 continue
             units = units_abs if direction == "long" else -units_abs
             client_id = _client_id(direction)
+            atr_entry = None
+            try:
+                fac_m1 = (factors.get("M1") or {}) if isinstance(factors, dict) else {}
+                atr_entry = fac_m1.get("atr_pips")
+                atr_entry = float(atr_entry) if atr_entry is not None else None
+            except Exception:
+                atr_entry = None
+            entry_mean = 0.5 * (high_val + low_val)
             thesis = {
                 "strategy_tag": "mirror_spike_tight",
                 "direction": direction,
@@ -374,7 +382,48 @@ async def mirror_spike_tight_worker() -> None:
                 "trend_bias": trend_bias,
                 "trend_adx": None if trend_adx is None else round(trend_adx, 1),
                 "trend_slope_pips": round(slope_pips, 3) if slope_pips is not None else None,
+                "tp_pips": round(config.TP_PIPS, 2),
+                "sl_pips": round(config.SL_PIPS, 2),
+                "env_tf": "M5",
+                "struct_tf": "M1",
+                "entry_mean": round(entry_mean, 5),
+                "atr_entry": None if atr_entry is None else round(atr_entry, 3),
+                "range_method": "bucket_range",
+                "range_lookback": int(config.MIRROR_LOOKBACK_BUCKETS),
+                "range_hi_pct": 100.0,
+                "range_lo_pct": 0.0,
+                "tp_mode": "soft_zone",
+                "tp_target": "entry_mean",
+                "tp_pad_atr": 0.05,
+                "range_snapshot": {
+                    "high": round(high_val, 5),
+                    "low": round(low_val, 5),
+                    "mid": round(entry_mean, 5),
+                    "method": "bucket_range",
+                    "lookback": int(config.MIRROR_LOOKBACK_BUCKETS),
+                    "hi_pct": 100.0,
+                    "lo_pct": 0.0,
+                },
+                "structure_break": {"buffer_atr": 0.10, "confirm_closes": 0},
+                "reversion_failure": {
+                    "z_ext": 0.45,
+                    "contraction_min": 0.45,
+                    "bars_budget": {"k_per_z": 2.5, "min": 2, "max": 8},
+                    "trend_takeover": {"require_env_trend_bars": 2},
+                },
             }
+            rf = thesis.get("reversion_failure")
+            if isinstance(rf, dict):
+                bars_budget = rf.get("bars_budget")
+                if not isinstance(bars_budget, dict):
+                    bars_budget = {}
+                    rf["bars_budget"] = bars_budget
+                if range_pips >= 10.0:
+                    bars_budget["k_per_z"] = 3.0
+                    bars_budget["max"] = 10
+                elif range_pips <= 6.0:
+                    bars_budget["k_per_z"] = 2.0
+                    bars_budget["max"] = 6
 
             try:
                 trade_id = await market_order(

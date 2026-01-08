@@ -11,9 +11,10 @@ import time
 from typing import Dict, List, Optional, Sequence
 
 from analysis import plan_bus
+from analysis.range_model import compute_range_snapshot
 from execution.position_manager import PositionManager
 from execution.risk_guard import loss_cooldown_status
-from indicators.factor_cache import all_factors
+from indicators.factor_cache import all_factors, get_candles_snapshot
 from market_data import spread_monitor, tick_window
 from utils.market_hours import is_market_open
 from workers.common import env_guard
@@ -23,6 +24,10 @@ from workers.common.quality_gate import current_regime
 from . import config
 
 LOG = logging.getLogger(__name__)
+
+MR_RANGE_LOOKBACK = 20
+MR_RANGE_HI_PCT = 95.0
+MR_RANGE_LO_PCT = 5.0
 
 
 def _stage_ratio(idx: int) -> float:
@@ -120,6 +125,47 @@ def _atr_from_closes(values: Sequence[float], period: int) -> float:
         return 0.0
     period = max(1, min(period, len(trs)))
     return sum(trs[-period:]) / period / config.PIP_VALUE
+
+
+def _build_entry_thesis(
+    *,
+    entry_mean: Optional[float],
+    atr_pips: float,
+) -> Dict[str, object]:
+    thesis: Dict[str, object] = {
+        "strategy_tag": "vwap_magnet_s5",
+        "env_tf": "M5",
+        "struct_tf": "M1",
+        "range_method": "percentile",
+        "range_lookback": MR_RANGE_LOOKBACK,
+        "range_hi_pct": MR_RANGE_HI_PCT,
+        "range_lo_pct": MR_RANGE_LO_PCT,
+        "atr_entry": atr_pips,
+        "tp_mode": "soft_zone",
+        "tp_target": "entry_mean",
+        "tp_pad_atr": 0.05,
+        # vwap_magnet はレンジ端の構造否定を使わない
+        "structure_break": {"buffer_atr": 0.10, "confirm_closes": 0},
+        "reversion_failure": {
+            "z_ext": 0.45,
+            "contraction_min": 0.45,
+            "bars_budget": {"k_per_z": 2.5, "min": 2, "max": 8},
+            "trend_takeover": {"require_env_trend_bars": 2},
+        },
+    }
+    if entry_mean is not None:
+        thesis["entry_mean"] = entry_mean
+    candles = get_candles_snapshot("M5", limit=MR_RANGE_LOOKBACK)
+    snapshot = compute_range_snapshot(
+        candles,
+        lookback=MR_RANGE_LOOKBACK,
+        method="percentile",
+        hi_pct=MR_RANGE_HI_PCT,
+        lo_pct=MR_RANGE_LO_PCT,
+    )
+    if snapshot:
+        thesis["range_snapshot"] = snapshot.to_dict()
+    return thesis
 
 
 async def vwap_magnet_s5_worker() -> None:
@@ -416,6 +462,23 @@ async def vwap_magnet_s5_worker() -> None:
                 factors = {}
             fac_m1 = factors.get("M1") or {}
             fac_h4 = factors.get("H4") or {}
+            entry_thesis = _build_entry_thesis(entry_mean=prev_vwap, atr_pips=atr)
+            try:
+                z_abs = abs(float(z_dev))
+            except Exception:
+                z_abs = None
+            rf = entry_thesis.get("reversion_failure")
+            if isinstance(rf, dict) and z_abs is not None:
+                bars_budget = rf.get("bars_budget")
+                if not isinstance(bars_budget, dict):
+                    bars_budget = {}
+                    rf["bars_budget"] = bars_budget
+                if z_abs >= 2.5:
+                    bars_budget["k_per_z"] = 3.0
+                    bars_budget["max"] = 10
+                elif z_abs <= 1.4:
+                    bars_budget["k_per_z"] = 2.0
+                    bars_budget["max"] = 6
             signal = {
                 "action": "OPEN_LONG" if side == "long" else "OPEN_SHORT",
                 "pocket": "scalp",
@@ -440,6 +503,7 @@ async def vwap_magnet_s5_worker() -> None:
                     "trend_adx": None if trend_adx is None else round(trend_adx, 1),
                     "ma_diff_pips": round(ma_diff_pips, 3),
                 },
+                "entry_thesis": entry_thesis,
             }
             plan = PocketPlan(
                 generated_at=datetime.datetime.utcnow(),

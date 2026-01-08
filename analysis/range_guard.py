@@ -19,6 +19,9 @@ class RangeContext:
     reason: str
     score: float
     metrics: Dict[str, float]
+    mode: str = "UNKNOWN"  # RANGE / NEUTRAL / TREND
+    env_tf: str = "M1"
+    macro_tf: str = "H4"
 
 
 def _score_component(value: float, threshold: float, reverse: bool = False) -> float:
@@ -42,25 +45,44 @@ def _safe_get(fac: Dict[str, float], key: str, default: float = 0.0) -> float:
         return default
 
 
+def _resolve_mode(
+    active: bool,
+    score: float,
+    *,
+    range_score_threshold: float,
+    trend_score_threshold: float,
+) -> str:
+    if active:
+        return "RANGE"
+    if score <= trend_score_threshold:
+        return "TREND"
+    return "NEUTRAL"
+
+
 def detect_range_mode(
     fac_m1: Dict[str, float],
     fac_h4: Dict[str, float],
     *,
+    env_tf: str = "M1",
+    macro_tf: str = "H4",
     adx_threshold: float = 14.0,
     bbw_threshold: float = 0.14,
     atr_threshold: float = 1.3,
     bbw_pips_threshold: float = 4.0,
     vol_5m_threshold: float = 0.8,
+    range_score_threshold: float = 0.75,
+    trend_score_threshold: float = 0.45,
 ) -> RangeContext:
     """
     M1/H4 の因子からレンジモードを検知する。
+    env_tf / macro_tf を渡すと判定系の文脈を識別できる。
 
     Returns
     -------
     RangeContext
         active: レンジモードかどうか
         reason: 主因
-        score : 0〜1 の確信度（0.6 以上でアクティブ判定）
+        score : 0〜1 の確信度（高いほどレンジ寄り）
         metrics: 参考値
     """
 
@@ -69,6 +91,10 @@ def detect_range_mode(
     # ATR が欠損した場合に 10p と誤判定しないよう、穏当なデフォルトに寄せる
     atr_m1 = _safe_get(fac_m1, "atr_pips", 1.8)
     vol_5m = _safe_get(fac_m1, "vol_5m", 0.0)
+    if str(env_tf).upper() != "M1":
+        # vol_5m は 5 bars 依存のため、非 M1 ではスケールが崩れる
+        vol_5m_threshold = 0.0
+        vol_5m = 0.0
     anchor_price = _safe_get(fac_m1, "ma20", 0.0) or _safe_get(fac_m1, "ma10", 0.0)
     if anchor_price <= 0.0:
         anchor_price = 155.0  # fallback for width→pips換算
@@ -143,7 +169,7 @@ def detect_range_mode(
     ]
     composite = sum(components) / len(components)
 
-    composite_threshold = 0.75  # require stronger confluence before range=ON
+    composite_threshold = range_score_threshold  # require stronger confluence before range=ON
     compression_trigger = (
         compression_ratio >= 0.65
         and volatility_ratio >= 0.50
@@ -166,6 +192,13 @@ def detect_range_mode(
             reason = "trend_weaken"
     else:
         reason = "trend_ok"
+
+    mode = _resolve_mode(
+        active,
+        composite,
+        range_score_threshold=composite_threshold,
+        trend_score_threshold=trend_score_threshold,
+    )
 
     metrics = {
         "adx_m1": adx_m1,
@@ -194,4 +227,31 @@ def detect_range_mode(
         "adx_m1_relaxed_low": float(is_low_adx_relaxed),
     }
 
-    return RangeContext(active=active, reason=reason, score=composite, metrics=metrics)
+    return RangeContext(
+        active=active,
+        reason=reason,
+        score=composite,
+        metrics=metrics,
+        mode=mode,
+        env_tf=env_tf,
+        macro_tf=macro_tf,
+    )
+
+
+def detect_range_mode_for_tf(
+    factors: Dict[str, Dict[str, float]],
+    env_tf: str,
+    *,
+    macro_tf: str = "H4",
+    **kwargs,
+) -> RangeContext:
+    """Factor cache から TF を選んでレンジ判定する薄いラッパー。"""
+    fac_env = factors.get(env_tf, {}) if isinstance(factors, dict) else {}
+    fac_macro = factors.get(macro_tf, {}) if isinstance(factors, dict) else {}
+    return detect_range_mode(
+        fac_env,
+        fac_macro,
+        env_tf=env_tf,
+        macro_tf=macro_tf,
+        **kwargs,
+    )

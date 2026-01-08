@@ -178,7 +178,7 @@ from market_data.candle_fetcher import (
     initialize_history,
 )
 from market_data import spread_monitor, tick_window
-from indicators.factor_cache import all_factors, on_candle
+from indicators.factor_cache import all_factors, get_candles_snapshot, on_candle
 from analysis.regime_classifier import classify
 from analysis.focus_decider import decide_focus
 from analysis.local_decider import heuristic_decision
@@ -213,7 +213,8 @@ except Exception:  # pragma: no cover - optional dependency
 
         def nearest(self, *_, **__):
             return None
-from analysis.range_guard import RangeContext, detect_range_mode
+from analysis.range_guard import RangeContext, detect_range_mode, detect_range_mode_for_tf
+from analysis.range_model import compute_range_snapshot
 from analysis.param_context import ParamContext, ParamSnapshot
 from analysis.chart_story import ChartStory, ChartStorySnapshot
 from signals.pocket_allocator import (
@@ -1584,6 +1585,19 @@ ALLOWED_RANGE_STRATEGIES = {
     "MicroPullbackEMA",
     "MicroLevelReactor",
     "MicroMomentumStack",
+    # S5/スカルプ系（レンジでも評価を通す）
+    "vwap_magnet_s5",
+    "pullback_runner_s5",
+    "squeeze_break_s5",
+    "mirror_spike",
+    "mirror_spike_tight",
+    "mirror_spike_s5",
+    "pullback_s5",
+    "pullback_scalp",
+    "impulse_break_s5",
+    "impulse_momentum_s5",
+    "impulse_retest_s5",
+    "onepip_maker_s1",
 }
 SOFT_RANGE_SUPPRESS_STRATEGIES = {"TrendMA", "Donchian55"}
 LOW_TREND_ADX_THRESHOLD = 18.0
@@ -1596,6 +1610,63 @@ SOFT_RANGE_WEIGHT_CAP = 0.25
 SOFT_RANGE_ADX_BUFFER = 6.0
 RANGE_ENTRY_CONFIRMATIONS = 1
 RANGE_EXIT_CONFIRMATIONS = 3
+RANGE_GUARD_RANGE_CONFIRM = int(os.getenv("RANGE_GUARD_RANGE_CONFIRM", "2"))
+RANGE_GUARD_TREND_CONFIRM = int(os.getenv("RANGE_GUARD_TREND_CONFIRM", "2"))
+RANGE_GUARD_NEUTRAL_CONFIRM = int(os.getenv("RANGE_GUARD_NEUTRAL_CONFIRM", "2"))
+RANGE_GUARD_RANGE_SCORE_MICRO = _safe_env_float(
+    "RANGE_GUARD_RANGE_SCORE_MICRO", 0.75, low=0.0, high=1.0
+)
+RANGE_GUARD_TREND_SCORE_MICRO = _safe_env_float(
+    "RANGE_GUARD_TREND_SCORE_MICRO", 0.45, low=0.0, high=1.0
+)
+RANGE_GUARD_ADX_MICRO = _safe_env_float(
+    "RANGE_GUARD_ADX_MICRO", 14.0, low=5.0, high=40.0
+)
+RANGE_GUARD_BBW_MICRO = _safe_env_float(
+    "RANGE_GUARD_BBW_MICRO", 0.14, low=0.0, high=1.0
+)
+RANGE_GUARD_ATR_MICRO = _safe_env_float(
+    "RANGE_GUARD_ATR_MICRO", 1.3, low=0.1, high=50.0
+)
+RANGE_GUARD_BBW_PIPS_MICRO = _safe_env_float(
+    "RANGE_GUARD_BBW_PIPS_MICRO", 4.0, low=0.0, high=50.0
+)
+RANGE_GUARD_RANGE_SCORE_SCALP = _safe_env_float(
+    "RANGE_GUARD_RANGE_SCORE_SCALP", 0.75, low=0.0, high=1.0
+)
+RANGE_GUARD_TREND_SCORE_SCALP = _safe_env_float(
+    "RANGE_GUARD_TREND_SCORE_SCALP", 0.45, low=0.0, high=1.0
+)
+RANGE_GUARD_ADX_SCALP = _safe_env_float(
+    "RANGE_GUARD_ADX_SCALP", 14.0, low=5.0, high=40.0
+)
+RANGE_GUARD_BBW_SCALP = _safe_env_float(
+    "RANGE_GUARD_BBW_SCALP", 0.14, low=0.0, high=1.0
+)
+RANGE_GUARD_ATR_SCALP = _safe_env_float(
+    "RANGE_GUARD_ATR_SCALP", 1.3, low=0.1, high=50.0
+)
+RANGE_GUARD_BBW_PIPS_SCALP = _safe_env_float(
+    "RANGE_GUARD_BBW_PIPS_SCALP", 4.0, low=0.0, high=50.0
+)
+RANGE_GUARD_RANGE_SCORE_GLOBAL = _safe_env_float(
+    "RANGE_GUARD_RANGE_SCORE_GLOBAL", 0.75, low=0.0, high=1.0
+)
+RANGE_GUARD_TREND_SCORE_GLOBAL = _safe_env_float(
+    "RANGE_GUARD_TREND_SCORE_GLOBAL", 0.45, low=0.0, high=1.0
+)
+RANGE_GUARD_ADX_GLOBAL = _safe_env_float(
+    "RANGE_GUARD_ADX_GLOBAL", 14.0, low=5.0, high=40.0
+)
+RANGE_GUARD_BBW_GLOBAL = _safe_env_float(
+    "RANGE_GUARD_BBW_GLOBAL", 0.14, low=0.0, high=1.0
+)
+RANGE_GUARD_ATR_GLOBAL = _safe_env_float(
+    "RANGE_GUARD_ATR_GLOBAL", 1.3, low=0.1, high=50.0
+)
+RANGE_GUARD_BBW_PIPS_GLOBAL = _safe_env_float(
+    "RANGE_GUARD_BBW_PIPS_GLOBAL", 4.0, low=0.0, high=50.0
+)
 RANGE_MIN_ACTIVE_SECONDS = 120
 RANGE_ENTRY_SCORE_FLOOR = 0.62
 RANGE_EXIT_SCORE_CEIL = 0.56
@@ -3148,6 +3219,12 @@ async def logic_loop(
     range_state_since = datetime.datetime.min
     range_entry_counter = 0
     range_exit_counter = 0
+    guard_state: dict[str, dict[str, object]] = {
+        "scalp": {"mode": "NEUTRAL", "range_hits": 0, "trend_hits": 0, "neutral_hits": 0},
+        "micro": {"mode": "NEUTRAL", "range_hits": 0, "trend_hits": 0, "neutral_hits": 0},
+        "global": {"mode": "NEUTRAL", "range_hits": 0, "trend_hits": 0, "neutral_hits": 0},
+    }
+    guard_contexts: dict[str, RangeContext] = {}
     raw_range_active = False
     raw_range_reason = ""
     range_breakout_release_until = datetime.datetime.min
@@ -3266,6 +3343,9 @@ async def logic_loop(
             "meta": raw.get("meta") or {},
             "source": raw.get("source") or "bus",
         }
+        profile = raw.get("profile") or raw.get("strategy_profile")
+        if profile:
+            sig["profile"] = profile
         if reduce_only is not None:
             sig["reduce_only"] = reduce_only
         if reduce_cap_units is not None:
@@ -3277,7 +3357,190 @@ async def logic_loop(
         entry_thesis = raw.get("entry_thesis")
         if isinstance(entry_thesis, dict):
             sig["entry_thesis"] = entry_thesis
+        execution = raw.get("execution")
+        if isinstance(execution, dict):
+            sig["execution"] = execution
         return sig
+
+    def _market_guarded_skip(signal: dict, price: Optional[float], *, context: str) -> bool:
+        if not signal or price is None or price <= 0:
+            return False
+        if signal.get("reduce_only"):
+            return False
+        exec_cfg = signal.get("execution")
+        if not isinstance(exec_cfg, dict):
+            thesis = signal.get("entry_thesis")
+            if isinstance(thesis, dict):
+                exec_cfg = thesis.get("execution")
+        if not isinstance(exec_cfg, dict):
+            return False
+        if exec_cfg.get("order_policy") != "market_guarded":
+            return False
+        ideal = _safe_float(exec_cfg.get("ideal_entry"))
+        chase_max = _safe_float(exec_cfg.get("chase_max"))
+        if ideal is None or chase_max is None:
+            return False
+        if abs(price - ideal) <= chase_max:
+            return False
+        logging.info(
+            "[MARKET_GUARD] skip=%s strategy=%s pocket=%s price=%.3f ideal=%.3f chase_max=%.3f",
+            context,
+            signal.get("strategy") or signal.get("tag"),
+            signal.get("pocket"),
+            price,
+            ideal,
+            chase_max,
+        )
+        return True
+
+    def _is_mr_signal(strategy_tag: Optional[str], profile: Optional[str]) -> bool:
+        tag = str(strategy_tag or "").strip()
+        if not tag:
+            return False
+        base_tag = tag.split("-", 1)[0]
+        if base_tag in {
+            "BB_RSI",
+            "MicroVWAPBound",
+            "RangeFader",
+            "vwap_magnet_s5",
+            "mirror_spike",
+            "mirror_spike_tight",
+            "mirror_spike_s5",
+        }:
+            return True
+        tag_lower = tag.lower()
+        if tag_lower.startswith("mlr-fade") or tag_lower.startswith("mlr-bounce"):
+            return True
+        if profile in {"bb_range_reversion", "micro_vwap_bound"}:
+            return True
+        return False
+
+    def _augment_entry_thesis_for_mr(entry_thesis: dict, *, pocket: str, atr_entry: float) -> None:
+        if not isinstance(entry_thesis, dict):
+            return
+        if pocket not in {"micro", "scalp"}:
+            return
+        env_tf, struct_tf = ("H1", "M5") if pocket == "micro" else ("M5", "M1")
+        lookback = 20
+        hi_pct = 95.0
+        lo_pct = 5.0
+        entry_thesis.setdefault("env_tf", env_tf)
+        entry_thesis.setdefault("struct_tf", struct_tf)
+        entry_thesis.setdefault("range_method", "percentile")
+        entry_thesis.setdefault("range_lookback", lookback)
+        entry_thesis.setdefault("range_hi_pct", hi_pct)
+        entry_thesis.setdefault("range_lo_pct", lo_pct)
+        if atr_entry and atr_entry > 0:
+            entry_thesis.setdefault("atr_entry", float(atr_entry))
+        entry_thesis.setdefault("structure_break", {"buffer_atr": 0.10, "confirm_closes": 2})
+        if pocket == "scalp":
+            z_ext = 0.45
+            contraction_min = 0.45
+            k_per_z = 2.5
+            min_bars = 2
+            max_bars = 8
+        else:
+            z_ext = 0.55
+            contraction_min = 0.50
+            k_per_z = 3.5
+            min_bars = 2
+            max_bars = 12
+        rf = entry_thesis.setdefault("reversion_failure", {})
+        if isinstance(rf, dict):
+            rf.setdefault("z_ext", z_ext)
+            rf.setdefault("contraction_min", contraction_min)
+            bars_budget = rf.setdefault("bars_budget", {})
+            if isinstance(bars_budget, dict):
+                bars_budget.setdefault("k_per_z", k_per_z)
+                bars_budget.setdefault("min", min_bars)
+                bars_budget.setdefault("max", max_bars)
+            rf.setdefault("trend_takeover", {"require_env_trend_bars": 2})
+            trend_bias = bool(entry_thesis.get("trend_bias") or entry_thesis.get("trend_score"))
+            if trend_bias:
+                rf["z_ext"] = 0.45
+                rf["contraction_min"] = 0.60
+                if isinstance(bars_budget, dict):
+                    bars_budget["k_per_z"] = 2.5
+                    bars_budget["max"] = 8
+        entry_thesis.setdefault("tp_mode", "soft_zone")
+        entry_thesis.setdefault("tp_target", "entry_mean")
+        entry_thesis.setdefault("tp_pad_atr", 0.05)
+        if entry_thesis.get("range_snapshot") and entry_thesis.get("entry_mean") is not None:
+            return
+        candles = get_candles_snapshot(env_tf, limit=lookback)
+        snapshot = compute_range_snapshot(
+            candles,
+            lookback=lookback,
+            method="percentile",
+            hi_pct=hi_pct,
+            lo_pct=lo_pct,
+        )
+        if snapshot:
+            entry_thesis.setdefault("range_snapshot", snapshot.to_dict())
+            entry_thesis.setdefault("entry_mean", snapshot.mid)
+
+    def _confirm_guard_mode(raw_mode: str, state: dict[str, object]) -> str:
+        mode = str(raw_mode or "").upper()
+        range_hits = int(state.get("range_hits", 0) or 0)
+        trend_hits = int(state.get("trend_hits", 0) or 0)
+        neutral_hits = int(state.get("neutral_hits", 0) or 0)
+        if mode == "RANGE":
+            range_hits += 1
+            trend_hits = 0
+            neutral_hits = 0
+            if range_hits >= RANGE_GUARD_RANGE_CONFIRM:
+                state["mode"] = "RANGE"
+        elif mode == "TREND":
+            trend_hits += 1
+            range_hits = 0
+            neutral_hits = 0
+            if trend_hits >= RANGE_GUARD_TREND_CONFIRM:
+                state["mode"] = "TREND"
+        else:
+            neutral_hits += 1
+            range_hits = 0
+            trend_hits = 0
+            if neutral_hits >= RANGE_GUARD_NEUTRAL_CONFIRM:
+                state["mode"] = "NEUTRAL"
+        state["range_hits"] = range_hits
+        state["trend_hits"] = trend_hits
+        state["neutral_hits"] = neutral_hits
+        return str(state.get("mode") or "NEUTRAL")
+
+    def _mr_guard_snapshot(pocket: str) -> dict[str, object]:
+        pocket_key = "scalp" if pocket in {"scalp_fast"} else pocket
+        local_ctx = guard_contexts.get(pocket_key)
+        global_ctx = guard_contexts.get("global")
+        return {
+            "local_mode": guard_modes.get(pocket_key, "NEUTRAL"),
+            "local_score": getattr(local_ctx, "score", None),
+            "local_reason": getattr(local_ctx, "reason", None),
+            "local_env_tf": getattr(local_ctx, "env_tf", None),
+            "global_mode": global_guard_mode,
+            "global_score": getattr(global_ctx, "score", None),
+            "global_reason": getattr(global_ctx, "reason", None),
+            "global_env_tf": getattr(global_ctx, "env_tf", None),
+        }
+
+    def _mr_guard_reject(signal: dict, *, context: str) -> bool:
+        tag = signal.get("strategy") or signal.get("strategy_tag") or signal.get("tag")
+        profile = signal.get("profile") or signal.get("strategy_profile")
+        if not _is_mr_signal(tag, profile):
+            return False
+        pocket = signal.get("pocket")
+        pocket_key = "scalp" if pocket in {"scalp_fast"} else pocket
+        local_mode = guard_modes.get(pocket_key, "NEUTRAL")
+        if local_mode != "RANGE" or global_guard_mode == "TREND":
+            logging.info(
+                "[MR_GUARD] skip=%s strategy=%s pocket=%s local=%s global=%s",
+                context,
+                tag,
+                pocket,
+                local_mode,
+                global_guard_mode,
+            )
+            return True
+        return False
 
     last_volatility_state: Optional[str] = None
     last_liquidity_state: Optional[str] = None
@@ -3804,6 +4067,9 @@ async def logic_loop(
                     reason="aggressive_override",
                     score=range_ctx.score,
                     metrics=range_ctx.metrics,
+                    mode="TREND",
+                    env_tf=range_ctx.env_tf,
+                    macro_tf=range_ctx.macro_tf,
                 )
                 range_active = False
                 range_soft_active = False
@@ -3817,6 +4083,126 @@ async def logic_loop(
                     range_ctx.score,
                     range_ctx.metrics,
                 )
+            prev_guard_modes = {
+                "micro": str((guard_state.get("micro") or {}).get("mode") or "NEUTRAL"),
+                "scalp": str((guard_state.get("scalp") or {}).get("mode") or "NEUTRAL"),
+                "global": str((guard_state.get("global") or {}).get("mode") or "NEUTRAL"),
+            }
+            guard_modes = {"micro": "NEUTRAL", "scalp": "NEUTRAL"}
+            global_guard_mode = "NEUTRAL"
+            if AGGRESSIVE_TRADING:
+                guard_modes = {"micro": "TREND", "scalp": "TREND"}
+                global_guard_mode = "TREND"
+                guard_contexts = {
+                    "micro": RangeContext(
+                        active=False,
+                        reason="aggressive_override",
+                        score=0.0,
+                        metrics={},
+                        mode="TREND",
+                        env_tf="H1",
+                        macro_tf="H4",
+                    ),
+                    "scalp": RangeContext(
+                        active=False,
+                        reason="aggressive_override",
+                        score=0.0,
+                        metrics={},
+                        mode="TREND",
+                        env_tf="M5",
+                        macro_tf="H4",
+                    ),
+                    "global": RangeContext(
+                        active=False,
+                        reason="aggressive_override",
+                        score=0.0,
+                        metrics={},
+                        mode="TREND",
+                        env_tf="H4",
+                        macro_tf="H4",
+                    ),
+                }
+            else:
+                guard_micro = detect_range_mode_for_tf(
+                    factors,
+                    "H1",
+                    macro_tf="H4",
+                    range_score_threshold=RANGE_GUARD_RANGE_SCORE_MICRO,
+                    trend_score_threshold=RANGE_GUARD_TREND_SCORE_MICRO,
+                    adx_threshold=RANGE_GUARD_ADX_MICRO,
+                    bbw_threshold=RANGE_GUARD_BBW_MICRO,
+                    atr_threshold=RANGE_GUARD_ATR_MICRO,
+                    bbw_pips_threshold=RANGE_GUARD_BBW_PIPS_MICRO,
+                )
+                guard_scalp = detect_range_mode_for_tf(
+                    factors,
+                    "M5",
+                    macro_tf="H4",
+                    range_score_threshold=RANGE_GUARD_RANGE_SCORE_SCALP,
+                    trend_score_threshold=RANGE_GUARD_TREND_SCORE_SCALP,
+                    adx_threshold=RANGE_GUARD_ADX_SCALP,
+                    bbw_threshold=RANGE_GUARD_BBW_SCALP,
+                    atr_threshold=RANGE_GUARD_ATR_SCALP,
+                    bbw_pips_threshold=RANGE_GUARD_BBW_PIPS_SCALP,
+                )
+                guard_global = detect_range_mode_for_tf(
+                    factors,
+                    "H4",
+                    macro_tf="H4",
+                    range_score_threshold=RANGE_GUARD_RANGE_SCORE_GLOBAL,
+                    trend_score_threshold=RANGE_GUARD_TREND_SCORE_GLOBAL,
+                    adx_threshold=RANGE_GUARD_ADX_GLOBAL,
+                    bbw_threshold=RANGE_GUARD_BBW_GLOBAL,
+                    atr_threshold=RANGE_GUARD_ATR_GLOBAL,
+                    bbw_pips_threshold=RANGE_GUARD_BBW_PIPS_GLOBAL,
+                )
+                guard_contexts = {
+                    "micro": guard_micro,
+                    "scalp": guard_scalp,
+                    "global": guard_global,
+                }
+                guard_modes["micro"] = _confirm_guard_mode(guard_micro.mode, guard_state["micro"])
+                guard_modes["scalp"] = _confirm_guard_mode(guard_scalp.mode, guard_state["scalp"])
+                global_guard_mode = _confirm_guard_mode(guard_global.mode, guard_state["global"])
+                if guard_modes["micro"] != prev_guard_modes["micro"]:
+                    logging.info(
+                        "[MR_GUARD] mode change pocket=micro mode=%s score=%.2f reason=%s",
+                        guard_modes["micro"],
+                        guard_micro.score,
+                        guard_micro.reason,
+                    )
+                    log_metric(
+                        "range_guard_mode",
+                        1.0,
+                        tags={"pocket": "micro", "mode": guard_modes["micro"]},
+                        ts=now,
+                    )
+                if guard_modes["scalp"] != prev_guard_modes["scalp"]:
+                    logging.info(
+                        "[MR_GUARD] mode change pocket=scalp mode=%s score=%.2f reason=%s",
+                        guard_modes["scalp"],
+                        guard_scalp.score,
+                        guard_scalp.reason,
+                    )
+                    log_metric(
+                        "range_guard_mode",
+                        1.0,
+                        tags={"pocket": "scalp", "mode": guard_modes["scalp"]},
+                        ts=now,
+                    )
+                if global_guard_mode != prev_guard_modes["global"]:
+                    logging.info(
+                        "[MR_GUARD] mode change pocket=global mode=%s score=%.2f reason=%s",
+                        global_guard_mode,
+                        guard_global.score,
+                        guard_global.reason,
+                    )
+                    log_metric(
+                        "range_guard_mode",
+                        1.0,
+                        tags={"pocket": "global", "mode": global_guard_mode},
+                        ts=now,
+                    )
             raw_range_active = range_ctx.active
             raw_range_reason = range_ctx.reason
             metrics = range_ctx.metrics or {}
@@ -4655,6 +5041,14 @@ async def logic_loop(
                 for raw_sig in raw_bus:
                     norm = _normalize_bus_signal(raw_sig, price_hint)
                     if norm:
+                        if _mr_guard_reject(norm, context="bus"):
+                            continue
+                        tag = norm.get("strategy") or norm.get("strategy_tag") or norm.get("tag")
+                        profile = norm.get("profile") or norm.get("strategy_profile")
+                        if _is_mr_signal(tag, profile):
+                            guard_note = _mr_guard_snapshot(norm.get("pocket"))
+                            norm["mr_guard"] = guard_note
+                            norm.setdefault("meta", {})["mr_guard"] = guard_note
                         bus_signals.append(norm)
                 if bus_signals:
                     try:
@@ -4763,6 +5157,22 @@ async def logic_loop(
                         logging.warning("[FORCE_SCALP] %s returned None", sname)
                     continue
 
+                strategy_tag = raw_signal.get("tag", cls.name) if isinstance(raw_signal, dict) else cls.name
+                strategy_profile = None
+                if isinstance(raw_signal, dict):
+                    strategy_profile = raw_signal.get("profile") or raw_signal.get("strategy_profile")
+                if _is_mr_signal(strategy_tag, strategy_profile):
+                    local_mode = guard_modes.get(pocket, "NEUTRAL")
+                    if local_mode != "RANGE" or global_guard_mode == "TREND":
+                        logging.info(
+                            "[MR_GUARD] skip=local strategy=%s pocket=%s local=%s global=%s",
+                            sname,
+                            pocket,
+                            local_mode,
+                            global_guard_mode,
+                        )
+                        continue
+
                 health = strategy_health_cache.get(sname)
                 if not health:
                     health = metrics_client.evaluate(sname, cls.pocket)
@@ -4798,6 +5208,18 @@ async def logic_loop(
                     "tp_pips": raw_signal.get("tp_pips"),
                     "tag": raw_signal.get("tag", cls.name),
                 }
+                if raw_signal.get("profile") or raw_signal.get("strategy_profile"):
+                    signal["profile"] = raw_signal.get("profile") or raw_signal.get("strategy_profile")
+                entry_thesis_raw = raw_signal.get("entry_thesis")
+                if isinstance(entry_thesis_raw, dict):
+                    signal["entry_thesis"] = entry_thesis_raw
+                execution_raw = raw_signal.get("execution")
+                if isinstance(execution_raw, dict):
+                    signal["execution"] = execution_raw
+                if _is_mr_signal(signal.get("tag"), signal.get("profile")):
+                    guard_note = _mr_guard_snapshot(pocket)
+                    signal["mr_guard"] = guard_note
+                    signal.setdefault("meta", {})["mr_guard"] = guard_note
                 # ランクに応じて confidence を微調整（上位ほど少し増やす）
                 if isinstance(raw_signal, dict):
                     rank_pos = max(0, ranked_strategies.index(sname)) if sname in ranked_strategies else 0
@@ -5242,6 +5664,9 @@ async def logic_loop(
                                 },
                                 ts=now,
                             )
+                guard_price = _safe_float(fac_m1.get("close") or fac_m1.get("mid"))
+                if _market_guarded_skip(signal, guard_price, context="prefilter"):
+                    continue
                 evaluated_signals.append(signal)
                 signals.append(signal)
                 logging.info("[SIGNAL] %s -> %s", cls.name, signal)
@@ -7146,6 +7571,8 @@ async def logic_loop(
                     entry_price = float(tick_ask)
                 elif not is_buy and tick_bid is not None:
                     entry_price = float(tick_bid)
+                if _market_guarded_skip(signal, entry_price, context="final"):
+                    continue
 
                 size_factor = stage_tracker.size_multiplier(pocket, direction)
                 if size_factor < 0.999:
@@ -7619,7 +8046,10 @@ async def logic_loop(
                         fast_cut_hard = fast_cut_hard or 1.6
                 target_tp = target_tp_hint if target_tp_hint is not None else _opt_float(tp_pips)
                 loss_guard = loss_guard_hint if loss_guard_hint is not None else _opt_float(sl_pips)
-                entry_thesis = {
+                draft_thesis = signal.get("entry_thesis")
+                if not isinstance(draft_thesis, dict):
+                    draft_thesis = None
+                base_thesis = {
                     "type": thesis_type,
                     "strategy": signal.get("strategy"),
                     "strategy_tag": strategy_tag,
@@ -7678,6 +8108,17 @@ async def logic_loop(
                         "micro": micro_regime,
                     },
                 }
+                if draft_thesis:
+                    entry_thesis = dict(draft_thesis)
+                    entry_thesis.update(base_thesis)
+                else:
+                    entry_thesis = base_thesis
+                if _is_mr_signal(strategy_tag, strategy_profile):
+                    _augment_entry_thesis_for_mr(entry_thesis, pocket=pocket, atr_entry=atr_entry)
+                    entry_thesis.setdefault("mr_guard", _mr_guard_snapshot(pocket))
+                execution_cfg = signal.get("execution")
+                if isinstance(execution_cfg, dict):
+                    entry_thesis["execution"] = execution_cfg
                 if level_map_note:
                     entry_thesis["level_map"] = level_map_note
                 note = signal.get("notes")

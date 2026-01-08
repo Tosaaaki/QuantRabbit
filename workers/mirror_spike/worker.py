@@ -9,10 +9,12 @@ import hashlib
 import logging
 import time
 from dataclasses import dataclass
-from typing import Optional
+from typing import Dict, Optional
 
+from analysis.range_model import compute_range_snapshot
 from execution.order_manager import market_order
 from execution.position_manager import PositionManager
+from indicators.factor_cache import get_candles_snapshot
 from market_data import spread_monitor, tick_window
 from workers.fast_scalp.signal import SignalFeatures, extract_features
 from utils.metrics_logger import log_metric
@@ -21,6 +23,9 @@ from workers.common import perf_guard
 from . import config
 
 _LOGGER = logging.getLogger(__name__)
+MR_RANGE_LOOKBACK = 20
+MR_RANGE_HI_PCT = 95.0
+MR_RANGE_LO_PCT = 5.0
 
 
 @dataclass
@@ -40,6 +45,43 @@ def _build_client_order_id(side: str) -> str:
     ts_ms = int(time.time() * 1000)
     digest = hashlib.sha1(f"{ts_ms}-{side}".encode("utf-8")).hexdigest()[:6]
     return f"qr-mirror-{ts_ms}-{side[0]}{digest}"
+
+
+def _build_reversion_meta(reference_price: float, atr_pips: Optional[float]) -> dict:
+    meta: Dict[str, object] = {
+        "env_tf": "M5",
+        "struct_tf": "M1",
+        "range_method": "percentile",
+        "range_lookback": MR_RANGE_LOOKBACK,
+        "range_hi_pct": MR_RANGE_HI_PCT,
+        "range_lo_pct": MR_RANGE_LO_PCT,
+        "tp_mode": "soft_zone",
+        "tp_target": "entry_mean",
+        "tp_pad_atr": 0.05,
+        # mirror_spike はMA構造で十分なので追加の構造否定は無効化
+        "structure_break": {"buffer_atr": 0.10, "confirm_closes": 0},
+        "reversion_failure": {
+            "z_ext": 0.45,
+            "contraction_min": 0.45,
+            "bars_budget": {"k_per_z": 2.5, "min": 2, "max": 8},
+            "trend_takeover": {"require_env_trend_bars": 2},
+        },
+    }
+    if reference_price and reference_price > 0:
+        meta["entry_mean"] = float(reference_price)
+    if atr_pips and atr_pips > 0:
+        meta["atr_entry"] = float(atr_pips)
+    candles = get_candles_snapshot("M5", limit=MR_RANGE_LOOKBACK)
+    snapshot = compute_range_snapshot(
+        candles,
+        lookback=MR_RANGE_LOOKBACK,
+        method="percentile",
+        hi_pct=MR_RANGE_HI_PCT,
+        lo_pct=MR_RANGE_LO_PCT,
+    )
+    if snapshot:
+        meta["range_snapshot"] = snapshot.to_dict()
+    return meta
 
 
 def _detect_short_signal(
@@ -353,6 +395,8 @@ async def mirror_spike_worker() -> None:
                 "extreme_age_sec": round(signal.extreme_age_sec, 2),
                 "extreme_price": round(signal.extreme_price, 5),
                 "reference_price": round(signal.reference_price, 5),
+                "tp_pips": round(tp_pips, 2),
+                "sl_pips": round(sl_pips, 2),
                 "entry_price_snapshot": round(entry_price, 5),
                 "latest_mid": round(signal.entry_price, 5),
                 "spread_pips": round(spread_pips, 3),
@@ -365,6 +409,28 @@ async def mirror_spike_worker() -> None:
                 "momentum_pips": round(signal.features.momentum_pips, 3),
                 "short_momentum_pips": round(signal.features.short_momentum_pips, 3),
             }
+            entry_thesis.update(
+                _build_reversion_meta(
+                    signal.reference_price,
+                    signal.features.atr_pips,
+                )
+            )
+            try:
+                spike_height = float(signal.spike_height_pips)
+            except Exception:
+                spike_height = None
+            rf = entry_thesis.get("reversion_failure")
+            if isinstance(rf, dict) and spike_height is not None:
+                bars_budget = rf.get("bars_budget")
+                if not isinstance(bars_budget, dict):
+                    bars_budget = {}
+                    rf["bars_budget"] = bars_budget
+                if spike_height >= 7.0:
+                    bars_budget["k_per_z"] = 3.0
+                    bars_budget["max"] = 10
+                elif spike_height <= 4.0:
+                    bars_budget["k_per_z"] = 2.0
+                    bars_budget["max"] = 6
 
             try:
                 trade_id = await market_order(

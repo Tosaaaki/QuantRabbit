@@ -1264,7 +1264,7 @@ class PositionManager:
                 payload = json.loads(payload_raw)
             except json.JSONDecodeError:
                 continue
-            thesis = (payload.get("meta") or {}).get("entry_thesis") or {}
+            thesis = payload.get("entry_thesis") or (payload.get("meta") or {}).get("entry_thesis") or {}
             result[cid] = thesis
         return result
 

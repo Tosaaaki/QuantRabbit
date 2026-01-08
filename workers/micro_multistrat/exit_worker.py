@@ -1,4 +1,4 @@
-"""Exit loop for micro_multistrat (micro pocket) – プラス決済専用。"""
+"""Exit loop for micro_multistrat (micro pocket) - positive exits with MR exception."""
 
 from __future__ import annotations
 
@@ -12,12 +12,15 @@ from typing import Dict, Optional, Sequence, Set
 from analysis.range_guard import detect_range_mode
 from execution.order_manager import close_trade
 from execution.position_manager import PositionManager
+from execution.reversion_failure import evaluate_reversion_failure, evaluate_tp_zone
 from indicators.factor_cache import all_factors
 from market_data import tick_window
+from utils.metrics_logger import log_metric
 
 LOG = logging.getLogger(__name__)
 
 ALLOWED_TAGS: Set[str] = {
+    "BB_RSI",
     "MomentumBurst",
     "MicroMomentumStack",
     "MicroPullbackEMA",
@@ -26,6 +29,8 @@ ALLOWED_TAGS: Set[str] = {
     "MicroVWAPBound",
     "TrendMomentumMicro",
 }
+REVERSAL_TAG_PREFIXES: Set[str] = {"BB_RSI", "MicroVWAPBound"}
+REVERSAL_PROFILES: Set[str] = {"bb_range_reversion", "micro_vwap_bound"}
 POCKET = "micro"
 
 
@@ -82,11 +87,29 @@ def _filter_trades(trades: Sequence[dict], tags: Set[str]) -> list[dict]:
     return filtered
 
 
+def _is_reversion_candidate(trade: dict) -> bool:
+    thesis = trade.get("entry_thesis") or {}
+    tag = thesis.get("strategy_tag") or thesis.get("strategy") or trade.get("strategy")
+    if tag:
+        tag_str = str(tag)
+        base_tag = tag_str.split("-", 1)[0]
+        if base_tag in REVERSAL_TAG_PREFIXES:
+            return True
+        tag_lower = tag_str.lower()
+        if tag_lower.startswith("mlr-fade") or tag_lower.startswith("mlr-bounce"):
+            return True
+    profile = thesis.get("profile") or thesis.get("strategy_profile")
+    if profile:
+        return str(profile) in REVERSAL_PROFILES
+    return False
+
+
 @dataclass
 class _TradeState:
     peak: float
     lock_floor: Optional[float] = None
     tp_hint: Optional[float] = None
+    trend_hits: int = 0
 
     def update(self, pnl: float, lock_buffer: float) -> None:
         if pnl > self.peak:
@@ -189,6 +212,58 @@ class MicroMultiExitWorker:
 
         if hold_sec < self.min_hold_sec:
             return
+
+        if pnl <= 0 and _is_reversion_candidate(trade):
+            decision = evaluate_reversion_failure(
+                trade,
+                current_price=mid,
+                now=now,
+                side=side,
+                env_tf="H1",
+                struct_tf="M5",
+                trend_hits=state.trend_hits,
+            )
+            state.trend_hits = decision.trend_hits
+            if decision.should_exit and decision.reason:
+                LOG.info(
+                    "[EXIT-micro_multi] reversion_exit trade=%s reason=%s detail=%s",
+                    trade_id,
+                    decision.reason,
+                    decision.debug,
+                )
+                log_metric(
+                    "micro_multi_reversion_exit",
+                    pnl,
+                    tags={"reason": decision.reason, "side": side},
+                    ts=now,
+                )
+                await self._close(trade_id, -units, decision.reason, pnl, client_id)
+                self._states.pop(trade_id, None)
+                return
+
+        if pnl > 0 and _is_reversion_candidate(trade):
+            tp_decision = evaluate_tp_zone(
+                trade,
+                current_price=mid,
+                side=side,
+                env_tf="H1",
+                struct_tf="M5",
+            )
+            if tp_decision.should_exit:
+                LOG.info(
+                    "[EXIT-micro_multi] tp_zone trade=%s detail=%s",
+                    trade_id,
+                    tp_decision.debug,
+                )
+                log_metric(
+                    "micro_multi_tp_zone",
+                    pnl,
+                    tags={"side": side},
+                    ts=now,
+                )
+                await self._close(trade_id, -units, "take_profit_zone", pnl, client_id)
+                self._states.pop(trade_id, None)
+                return
 
         profit_take = self.range_profit_take if range_active else self.profit_take
         trail_start = self.range_trail_start if range_active else self.trail_start

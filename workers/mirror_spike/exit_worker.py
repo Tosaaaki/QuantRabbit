@@ -10,8 +10,10 @@ from typing import Dict, Optional, Sequence, Set
 
 from execution.order_manager import close_trade
 from execution.position_manager import PositionManager
+from execution.reversion_failure import evaluate_reversion_failure, evaluate_tp_zone
 from indicators.factor_cache import all_factors
 from market_data import tick_window
+from utils.metrics_logger import log_metric
 
 LOG = logging.getLogger(__name__)
 
@@ -70,6 +72,7 @@ class _TradeState:
     lock_floor: Optional[float] = None
     hard_stop: Optional[float] = None
     tp_hint: Optional[float] = None
+    trend_hits: int = 0
 
     def update(self, pnl: float, lock_buffer: float) -> None:
         if pnl > self.peak:
@@ -209,6 +212,47 @@ async def _run_exit_loop(
             await _close(trade_id, -units, "hard_stop", client_id)
             states.pop(trade_id, None)
             return
+
+        if pnl <= 0:
+            decision = evaluate_reversion_failure(
+                trade,
+                current_price=current,
+                now=now,
+                side=side,
+                env_tf="M5",
+                struct_tf="M1",
+                trend_hits=state.trend_hits,
+            )
+            state.trend_hits = decision.trend_hits
+            if decision.should_exit and decision.reason:
+                log_metric(
+                    "mirror_spike_reversion_exit",
+                    pnl,
+                    tags={"reason": decision.reason, "side": side},
+                    ts=now,
+                )
+                await _close(trade_id, -units, decision.reason, client_id)
+                states.pop(trade_id, None)
+                return
+
+        if pnl > 0:
+            tp_decision = evaluate_tp_zone(
+                trade,
+                current_price=current,
+                side=side,
+                env_tf="M5",
+                struct_tf="M1",
+            )
+            if tp_decision.should_exit:
+                log_metric(
+                    "mirror_spike_tp_zone",
+                    pnl,
+                    tags={"side": side},
+                    ts=now,
+                )
+                await _close(trade_id, -units, "take_profit_zone", client_id)
+                states.pop(trade_id, None)
+                return
 
         if hold_sec >= max_hold and pnl <= profit_take * 0.5:
             await _close(trade_id, -units, "time_stop", client_id)

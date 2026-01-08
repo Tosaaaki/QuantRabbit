@@ -313,6 +313,50 @@ async def mirror_spike_s5_worker() -> None:
                 "tp_pips": round(tp_pips, 2),
                 "sl_pips": round(sl_pips, 2),
             }
+            entry_mean = 0.5 * (peak["high"] + trough["low"])
+            entry_thesis.update(
+                {
+                    "env_tf": "M5",
+                    "struct_tf": "M1",
+                    "entry_mean": round(entry_mean, 5),
+                    "atr_entry": round(atr, 3),
+                    "range_method": "bucket_range",
+                    "range_lookback": int(config.LOOKBACK_BUCKETS),
+                    "range_hi_pct": 100.0,
+                    "range_lo_pct": 0.0,
+                    "tp_mode": "soft_zone",
+                    "tp_target": "entry_mean",
+                    "tp_pad_atr": 0.05,
+                    "range_snapshot": {
+                        "high": round(peak["high"], 5),
+                        "low": round(trough["low"], 5),
+                        "mid": round(entry_mean, 5),
+                        "method": "bucket_range",
+                        "lookback": int(config.LOOKBACK_BUCKETS),
+                        "hi_pct": 100.0,
+                        "lo_pct": 0.0,
+                    },
+                    "structure_break": {"buffer_atr": 0.10, "confirm_closes": 0},
+                    "reversion_failure": {
+                        "z_ext": 0.45,
+                        "contraction_min": 0.45,
+                        "bars_budget": {"k_per_z": 2.5, "min": 2, "max": 8},
+                        "trend_takeover": {"require_env_trend_bars": 2},
+                    },
+                }
+            )
+            rf = entry_thesis.get("reversion_failure")
+            if isinstance(rf, dict):
+                bars_budget = rf.get("bars_budget")
+                if not isinstance(bars_budget, dict):
+                    bars_budget = {}
+                    rf["bars_budget"] = bars_budget
+                if spike_height >= 7.0:
+                    bars_budget["k_per_z"] = 3.0
+                    bars_budget["max"] = 10
+                elif spike_height <= 4.0:
+                    bars_budget["k_per_z"] = 2.0
+                    bars_budget["max"] = 6
 
             # 柔軟サイズ決定（スプレッド/ATR/余力/シグナル強度）
             sig_strength = None

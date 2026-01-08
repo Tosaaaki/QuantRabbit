@@ -8,10 +8,11 @@ import hashlib
 import logging
 import os
 import time
-from typing import Dict, List, Tuple
+from typing import Dict, List, Optional, Tuple
 
 from analysis.range_guard import detect_range_mode
-from indicators.factor_cache import all_factors, refresh_cache_from_disk
+from analysis.range_model import compute_range_snapshot
+from indicators.factor_cache import all_factors, get_candles_snapshot, refresh_cache_from_disk
 from execution.order_manager import market_order
 from execution.risk_guard import allowed_lot, can_trade, clamp_sl_tp
 from market_data import tick_window
@@ -32,6 +33,10 @@ from analysis import perf_monitor
 from . import config
 
 LOG = logging.getLogger(__name__)
+
+MR_RANGE_LOOKBACK = 20
+MR_RANGE_HI_PCT = 95.0
+MR_RANGE_LO_PCT = 5.0
 
 
 def _latest_mid(fallback: float) -> float:
@@ -113,6 +118,62 @@ def _strategy_list() -> List:
     return _allowed_strategies()
 
 
+def _is_mr_signal(tag: str) -> bool:
+    tag_str = (tag or "").strip()
+    if not tag_str:
+        return False
+    base_tag = tag_str.split("-", 1)[0]
+    if base_tag in {"MicroVWAPBound", "BB_RSI"}:
+        return True
+    lower = tag_str.lower()
+    return lower.startswith("mlr-fade") or lower.startswith("mlr-bounce")
+
+
+def _build_mr_entry_thesis(
+    signal: Dict,
+    *,
+    strategy_tag: str,
+    atr_entry: float,
+    entry_mean: Optional[float],
+) -> Dict:
+    thesis: Dict[str, object] = {
+        "strategy_tag": strategy_tag,
+        "profile": signal.get("profile"),
+        "confidence": signal.get("confidence", 0),
+        "env_tf": "H1",
+        "struct_tf": "M5",
+        "range_method": "percentile",
+        "range_lookback": MR_RANGE_LOOKBACK,
+        "range_hi_pct": MR_RANGE_HI_PCT,
+        "range_lo_pct": MR_RANGE_LO_PCT,
+        "atr_entry": atr_entry,
+        "structure_break": {"buffer_atr": 0.10, "confirm_closes": 2},
+        "tp_mode": "soft_zone",
+        "tp_target": "entry_mean",
+        "tp_pad_atr": 0.05,
+        "reversion_failure": {
+            "z_ext": 0.55,
+            "contraction_min": 0.50,
+            "bars_budget": {"k_per_z": 3.5, "min": 2, "max": 12},
+            "trend_takeover": {"require_env_trend_bars": 2},
+        },
+    }
+    if entry_mean is not None and entry_mean > 0:
+        thesis["entry_mean"] = float(entry_mean)
+    candles = get_candles_snapshot("H1", limit=MR_RANGE_LOOKBACK)
+    snapshot = compute_range_snapshot(
+        candles,
+        lookback=MR_RANGE_LOOKBACK,
+        method="percentile",
+        hi_pct=MR_RANGE_HI_PCT,
+        lo_pct=MR_RANGE_LO_PCT,
+    )
+    if snapshot:
+        thesis["range_snapshot"] = snapshot.to_dict()
+        thesis.setdefault("entry_mean", snapshot.mid)
+    return thesis
+
+
 def _factor_age_seconds(factors: Dict[str, float]) -> float:
     ts_raw = factors.get("timestamp") if isinstance(factors, dict) else None
     if not ts_raw:
@@ -159,6 +220,7 @@ async def micro_multi_worker() -> None:
         factors = all_factors()
         fac_m1 = factors.get("M1") or {}
         fac_h4 = factors.get("H4") or {}
+        fac_m5 = factors.get("M5") or {}
         age_m1 = _factor_age_seconds(fac_m1)
         if age_m1 > config.MAX_FACTOR_AGE_SEC:
             # 入口を止める代わりにログだけ残して評価を継続（データ欠損で固まらないようにする）
@@ -231,6 +293,10 @@ async def micro_multi_worker() -> None:
             atr_pips = float(fac_m1.get("atr_pips") or 0.0)
         except Exception:
             atr_pips = 0.0
+        try:
+            atr_m5 = float(fac_m5.get("atr_pips") or 0.0)
+        except Exception:
+            atr_m5 = 0.0
         pos_bias = 0.0
         try:
             open_positions = snap.positions or {}
@@ -304,7 +370,58 @@ async def micro_multi_worker() -> None:
             tp=tp_price,
             is_buy=side == "long",
         )
-        client_id = _client_order_id(signal.get("tag", strategy_name))
+        signal_tag = signal.get("tag", strategy_name)
+        client_id = _client_order_id(signal_tag)
+        entry_thesis: Dict[str, object] = {
+            "strategy_tag": signal_tag,
+            "profile": signal.get("profile"),
+            "confidence": signal.get("confidence", 0),
+            "tp_pips": tp_pips,
+            "sl_pips": sl_pips,
+        }
+        if _is_mr_signal(signal_tag):
+            entry_mean = None
+            base_tag = signal_tag.split("-", 1)[0] if signal_tag else ""
+            if base_tag == "MicroVWAPBound":
+                notes = signal.get("notes") or {}
+                if isinstance(notes, dict):
+                    try:
+                        entry_mean = float(notes.get("vwap"))
+                    except Exception:
+                        entry_mean = None
+            elif base_tag == "BB_RSI":
+                try:
+                    entry_mean = float(fac_m1.get("ma20") or fac_m1.get("ma10") or 0.0) or None
+                except Exception:
+                    entry_mean = None
+            entry_thesis.update(
+                _build_mr_entry_thesis(
+                    signal,
+                    strategy_tag=signal_tag,
+                    atr_entry=atr_m5 or atr_pips or 1.0,
+                    entry_mean=entry_mean,
+                )
+            )
+            if base_tag == "MicroVWAPBound":
+                notes = signal.get("notes") or {}
+                z_val = None
+                if isinstance(notes, dict):
+                    try:
+                        z_val = abs(float(notes.get("z")))
+                    except Exception:
+                        z_val = None
+                rf = entry_thesis.get("reversion_failure")
+                if isinstance(rf, dict) and z_val is not None:
+                    bars_budget = rf.get("bars_budget")
+                    if not isinstance(bars_budget, dict):
+                        bars_budget = {}
+                        rf["bars_budget"] = bars_budget
+                    if z_val >= 2.5:
+                        bars_budget["k_per_z"] = 4.0
+                        bars_budget["max"] = 14
+                    elif z_val <= 1.4:
+                        bars_budget["k_per_z"] = 3.0
+                        bars_budget["max"] = 10
 
         res = await market_order(
             instrument="USD_JPY",
@@ -313,8 +430,9 @@ async def micro_multi_worker() -> None:
             tp_price=tp_price,
             pocket=config.POCKET,
             client_order_id=client_id,
-            strategy_tag=signal.get("tag", strategy_name),
+            strategy_tag=signal_tag,
             confidence=int(signal.get("confidence", 0)),
+            entry_thesis=entry_thesis,
         )
         LOG.info(
             "%s strat=%s sent units=%s side=%s price=%.3f sl=%.3f tp=%.3f conf=%.0f cap=%.2f reasons=%s res=%s",
