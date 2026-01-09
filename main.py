@@ -3396,6 +3396,7 @@ async def logic_loop(
     MR_SIGNAL_TAGS = {
         "BB_RSI",
         "MicroVWAPBound",
+        "MicroVWAPRevert",
         "RangeFader",
         "vwap_magnet_s5",
         "mirror_spike",

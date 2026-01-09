@@ -27,12 +27,13 @@ ALLOWED_TAGS: Set[str] = {
     "MicroLevelReactor",
     "MicroRangeBreak",
     "MicroVWAPBound",
+    "MicroVWAPRevert",
     "TrendMomentumMicro",
     "VolCompressionBreak",
     "MomentumPulse",
 }
-REVERSAL_TAG_PREFIXES: Set[str] = {"BB_RSI", "MicroVWAPBound"}
-REVERSAL_PROFILES: Set[str] = {"bb_range_reversion", "micro_vwap_bound"}
+REVERSAL_TAG_PREFIXES: Set[str] = {"BB_RSI", "MicroVWAPBound", "MicroVWAPRevert"}
+REVERSAL_PROFILES: Set[str] = {"bb_range_reversion", "micro_vwap_bound", "micro_vwap_revert"}
 OVERLAY_TAG_PREFIXES: Set[str] = {"VolCompressionBreak", "MomentumPulse"}
 POCKET = "micro"
 
