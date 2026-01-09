@@ -1188,14 +1188,19 @@ def _maybe_update_protections(
         )
 
 
-async def close_trade(trade_id: str, units: Optional[int] = None, client_order_id: Optional[str] = None) -> bool:
+async def close_trade(
+    trade_id: str,
+    units: Optional[int] = None,
+    client_order_id: Optional[str] = None,
+    allow_negative: bool = False,
+) -> bool:
     data: Optional[dict[str, str]] = None
     # close 側も client_order_id を必須化。欠損かつ agent 管理外の建玉はスキップして無駄打ちを防ぐ。
     if not client_order_id:
         log_metric("close_skip_missing_client_id", 1.0, tags={"trade_id": str(trade_id)})
         logging.info("[ORDER] skip close trade=%s missing client_id (likely manual/external)", trade_id)
         return False
-    if _EXIT_NO_NEGATIVE_CLOSE:
+    if _EXIT_NO_NEGATIVE_CLOSE and not allow_negative:
         pl = _current_trade_unrealized_pl(trade_id)
         if pl is not None and pl <= 0:
             log_metric(

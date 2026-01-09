@@ -184,8 +184,23 @@ class MirrorSpikeExitWorker:
             range_active=bool(range_ctx.active),
         )
 
-    async def _close(self, trade_id: str, units: int, reason: str, pnl: float, side: str, range_mode: bool, client_id: str) -> bool:
-        ok = await close_trade(trade_id, units, client_order_id=client_id)
+    async def _close(
+        self,
+        trade_id: str,
+        units: int,
+        reason: str,
+        pnl: float,
+        side: str,
+        range_mode: bool,
+        client_id: str,
+        allow_negative: bool = False,
+    ) -> bool:
+        ok = await close_trade(
+            trade_id,
+            units,
+            client_order_id=client_id,
+            allow_negative=allow_negative,
+        )
         if ok:
             LOG.info(
                 "[EXIT-mirror_spike_s5] trade=%s units=%s reason=%s pnl=%.2fp range=%s",
@@ -398,7 +413,17 @@ class MirrorSpikeExitWorker:
                         continue
                     side = "long" if units > 0 else "short"
                     pnl = (ctx.mid - float(tr.get("price") or 0.0)) * 100.0 if side == "long" else (float(tr.get("price") or 0.0) - ctx.mid) * 100.0
-                    await self._close(trade_id, -units, reason, pnl, side, ctx.range_active, client_id)
+                    allow_negative = pnl <= 0
+                    await self._close(
+                        trade_id,
+                        -units,
+                        reason,
+                        pnl,
+                        side,
+                        ctx.range_active,
+                        client_id,
+                        allow_negative=allow_negative,
+                    )
                     self._states.pop(trade_id, None)
         except asyncio.CancelledError:
             LOG.info("[EXIT-mirror_spike_s5] worker cancelled")

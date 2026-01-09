@@ -111,8 +111,19 @@ async def _run_exit_loop(
     pos_manager = PositionManager()
     states: Dict[str, _TradeState] = {}
 
-    async def _close(trade_id: str, units: int, reason: str, client_id: str) -> bool:
-        ok = await close_trade(trade_id, units, client_order_id=client_id)
+    async def _close(
+        trade_id: str,
+        units: int,
+        reason: str,
+        client_id: str,
+        allow_negative: bool = False,
+    ) -> bool:
+        ok = await close_trade(
+            trade_id,
+            units,
+            client_order_id=client_id,
+            allow_negative=allow_negative,
+        )
         if ok:
             LOG.info("[EXIT-%s] trade=%s units=%s reason=%s", pocket, trade_id, units, reason)
         else:
@@ -204,12 +215,12 @@ async def _run_exit_loop(
             return
 
         if _structure_break(units):
-            await _close(trade_id, -units, "structure_break", client_id)
+            await _close(trade_id, -units, "structure_break", client_id, allow_negative=True)
             states.pop(trade_id, None)
             return
 
         if pnl <= -stop_loss:
-            await _close(trade_id, -units, "hard_stop", client_id)
+            await _close(trade_id, -units, "hard_stop", client_id, allow_negative=True)
             states.pop(trade_id, None)
             return
 
@@ -231,7 +242,7 @@ async def _run_exit_loop(
                     tags={"reason": decision.reason, "side": side},
                     ts=now,
                 )
-                await _close(trade_id, -units, decision.reason, client_id)
+                await _close(trade_id, -units, decision.reason, client_id, allow_negative=True)
                 states.pop(trade_id, None)
                 return
 

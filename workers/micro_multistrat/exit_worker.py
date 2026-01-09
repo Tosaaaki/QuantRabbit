@@ -180,8 +180,21 @@ class MicroMultiExitWorker:
         rsi = _safe_float(fac_m1.get("rsi"))
         return _latest_mid(), rsi, bool(range_ctx.active)
 
-    async def _close(self, trade_id: str, units: int, reason: str, pnl: float, client_order_id: Optional[str]) -> None:
-        ok = await close_trade(trade_id, units, client_order_id=client_order_id)
+    async def _close(
+        self,
+        trade_id: str,
+        units: int,
+        reason: str,
+        pnl: float,
+        client_order_id: Optional[str],
+        allow_negative: bool = False,
+    ) -> None:
+        ok = await close_trade(
+            trade_id,
+            units,
+            client_order_id=client_order_id,
+            allow_negative=allow_negative,
+        )
         if ok:
             LOG.info("[EXIT-micro_multi] trade=%s units=%s reason=%s pnl=%.2fp", trade_id, units, reason, pnl)
         else:
@@ -254,7 +267,14 @@ class MicroMultiExitWorker:
                     tags={"reason": decision.reason, "side": side, "kind": reversion_kind},
                     ts=now,
                 )
-                await self._close(trade_id, -units, decision.reason, pnl, client_id)
+                await self._close(
+                    trade_id,
+                    -units,
+                    decision.reason,
+                    pnl,
+                    client_id,
+                    allow_negative=True,
+                )
                 self._states.pop(trade_id, None)
                 return
 
