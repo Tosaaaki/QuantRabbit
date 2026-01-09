@@ -242,7 +242,7 @@ class MicroMultiExitWorker:
                 log_metric(
                     "micro_multi_reversion_exit",
                     pnl,
-                    tags={"reason": decision.reason, "side": side},
+                    tags={"reason": decision.reason, "side": side, "kind": reversion_kind},
                     ts=now,
                 )
                 await self._close(trade_id, -units, decision.reason, pnl, client_id)
@@ -266,7 +266,7 @@ class MicroMultiExitWorker:
                 log_metric(
                     "micro_multi_tp_zone",
                     pnl,
-                    tags={"side": side},
+                    tags={"side": side, "kind": reversion_kind},
                     ts=now,
                 )
                 await self._close(trade_id, -units, "take_profit_zone", pnl, client_id)
