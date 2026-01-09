@@ -28,9 +28,12 @@ ALLOWED_TAGS: Set[str] = {
     "MicroRangeBreak",
     "MicroVWAPBound",
     "TrendMomentumMicro",
+    "VolCompressionBreak",
+    "MomentumPulse",
 }
 REVERSAL_TAG_PREFIXES: Set[str] = {"BB_RSI", "MicroVWAPBound"}
 REVERSAL_PROFILES: Set[str] = {"bb_range_reversion", "micro_vwap_bound"}
+OVERLAY_TAG_PREFIXES: Set[str] = {"VolCompressionBreak", "MomentumPulse"}
 POCKET = "micro"
 
 
@@ -87,21 +90,23 @@ def _filter_trades(trades: Sequence[dict], tags: Set[str]) -> list[dict]:
     return filtered
 
 
-def _is_reversion_candidate(trade: dict) -> bool:
+def _reversion_kind(trade: dict) -> Optional[str]:
     thesis = trade.get("entry_thesis") or {}
     tag = thesis.get("strategy_tag") or thesis.get("strategy") or trade.get("strategy")
     if tag:
         tag_str = str(tag)
         base_tag = tag_str.split("-", 1)[0]
         if base_tag in REVERSAL_TAG_PREFIXES:
-            return True
+            return "range_mr"
+        if base_tag in OVERLAY_TAG_PREFIXES:
+            return "mr_overlay"
         tag_lower = tag_str.lower()
         if tag_lower.startswith("mlr-fade") or tag_lower.startswith("mlr-bounce"):
-            return True
+            return "range_mr"
     profile = thesis.get("profile") or thesis.get("strategy_profile")
     if profile:
-        return str(profile) in REVERSAL_PROFILES
-    return False
+        return "range_mr" if str(profile) in REVERSAL_PROFILES else None
+    return None
 
 
 @dataclass
@@ -213,7 +218,9 @@ class MicroMultiExitWorker:
         if hold_sec < self.min_hold_sec:
             return
 
-        if pnl <= 0 and _is_reversion_candidate(trade):
+        reversion_kind = _reversion_kind(trade)
+        if pnl <= 0 and reversion_kind:
+            struct_override = [] if reversion_kind == "mr_overlay" else None
             decision = evaluate_reversion_failure(
                 trade,
                 current_price=mid,
@@ -222,6 +229,7 @@ class MicroMultiExitWorker:
                 env_tf="H1",
                 struct_tf="M5",
                 trend_hits=state.trend_hits,
+                struct_candles=struct_override,
             )
             state.trend_hits = decision.trend_hits
             if decision.should_exit and decision.reason:
@@ -241,7 +249,7 @@ class MicroMultiExitWorker:
                 self._states.pop(trade_id, None)
                 return
 
-        if pnl > 0 and _is_reversion_candidate(trade):
+        if pnl > 0 and reversion_kind == "range_mr":
             tp_decision = evaluate_tp_zone(
                 trade,
                 current_price=mid,
