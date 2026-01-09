@@ -19,6 +19,7 @@ LOG = logging.getLogger(__name__)
 
 ALLOWED_TAGS: Set[str] = {"TrendMA"}
 POCKET = "macro"
+PIP = 0.01
 
 
 def _float_env(key: str, default: float) -> float:
@@ -33,6 +34,13 @@ def _float_env(key: str, default: float) -> float:
 
 def _utc_now() -> datetime:
     return datetime.now(timezone.utc)
+
+
+def _safe_float(val: object) -> Optional[float]:
+    try:
+        return float(val)
+    except Exception:
+        return None
 
 
 def _parse_time(value: Optional[str]) -> Optional[datetime]:
@@ -67,6 +75,18 @@ def _filter_trades(trades: Sequence[dict], tags: Set[str]) -> list[dict]:
         if tag and str(tag) in tags:
             filtered.append(tr)
     return filtered
+
+
+def _trend_failure(side: str, fac_h1: dict, buffer_pips: float) -> bool:
+    close = _safe_float(fac_h1.get("close"))
+    ma10 = _safe_float(fac_h1.get("ma10"))
+    ma20 = _safe_float(fac_h1.get("ma20"))
+    if close is None or ma10 is None or ma20 is None:
+        return False
+    buffer_price = max(0.0, buffer_pips) * PIP
+    if side == "long":
+        return close < (ma20 - buffer_price) and ma10 < ma20
+    return close > (ma20 + buffer_price) and ma10 > ma20
 
 
 @dataclass
@@ -112,17 +132,13 @@ class TrendMAExitWorker:
 
         self.rsi_take_long = _float_env("TRENDMA_EXIT_RSI_TAKE_LONG", 72.0)
         self.rsi_take_short = _float_env("TRENDMA_EXIT_RSI_TAKE_SHORT", 28.0)
+        self.trend_fail_pips = max(8.0, _float_env("TRENDMA_EXIT_TREND_FAIL_PIPS", 24.0))
+        self.trend_fail_buffer_pips = max(0.2, _float_env("TRENDMA_EXIT_TREND_FAIL_BUFFER_PIPS", 1.2))
 
-    def _context(self) -> tuple[Optional[float], Optional[float], bool]:
+    def _context(self) -> tuple[Optional[float], Optional[float], bool, dict]:
         factors = all_factors()
         fac_h1 = factors.get("H1") or {}
         fac_h4 = factors.get("H4") or {}
-
-        def _safe_float(val: object) -> Optional[float]:
-            try:
-                return float(val)
-            except Exception:
-                return None
 
         adx = _safe_float(fac_h1.get("adx"))
         bbw = _safe_float(fac_h1.get("bbw"))
@@ -135,7 +151,7 @@ class TrendMAExitWorker:
             atr_threshold=self.range_atr,
         )
         rsi = _safe_float(fac_h1.get("rsi"))
-        return _latest_mid(), rsi, bool(range_ctx.active)
+        return _latest_mid(), rsi, bool(range_ctx.active), fac_h1
 
     async def _close(self, trade_id: str, units: int, reason: str, pnl: float, client_order_id: Optional[str]) -> None:
         ok = await close_trade(trade_id, units, client_order_id=client_order_id)
@@ -144,7 +160,15 @@ class TrendMAExitWorker:
         else:
             LOG.error("[EXIT-trendma] close failed trade=%s units=%s reason=%s", trade_id, units, reason)
 
-    async def _review_trade(self, trade: dict, now: datetime, mid: float, rsi: Optional[float], range_active: bool) -> None:
+    async def _review_trade(
+        self,
+        trade: dict,
+        now: datetime,
+        mid: float,
+        rsi: Optional[float],
+        range_active: bool,
+        fac_h1: dict,
+    ) -> None:
         trade_id = str(trade.get("trade_id"))
         if not trade_id:
             return
@@ -183,6 +207,15 @@ class TrendMAExitWorker:
 
         # マクロは最低15分はホールドしてノイズ決済を防止
         if hold_sec < self.min_hold_sec:
+            return
+
+        if (
+            self.trend_fail_pips > 0
+            and pnl <= -self.trend_fail_pips
+            and _trend_failure(side, fac_h1, self.trend_fail_buffer_pips)
+        ):
+            await self._close(trade_id, -units, "trend_failure", pnl, client_id)
+            self._states.pop(trade_id, None)
             return
 
         profit_take = self.range_profit_take if range_active else self.profit_take
@@ -239,14 +272,14 @@ class TrendMAExitWorker:
                 if not trades:
                     continue
 
-                mid, rsi, range_active = self._context()
+                mid, rsi, range_active, fac_h1 = self._context()
                 if mid is None:
                     continue
 
                 now = _utc_now()
                 for tr in trades:
                     try:
-                        await self._review_trade(tr, now, mid, rsi, range_active)
+                        await self._review_trade(tr, now, mid, rsi, range_active, fac_h1)
                     except Exception:
                         LOG.exception("[EXIT-trendma] review failed trade=%s", tr.get("trade_id"))
                         continue

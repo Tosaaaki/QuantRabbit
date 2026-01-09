@@ -19,6 +19,7 @@ LOG = logging.getLogger(__name__)
 
 ALLOWED_TAGS: Set[str] = {"Donchian55"}
 POCKET = "macro"
+PIP = 0.01
 
 
 def _float_env(key: str, default: float) -> float:
@@ -33,6 +34,13 @@ def _float_env(key: str, default: float) -> float:
 
 def _utc_now() -> datetime:
     return datetime.now(timezone.utc)
+
+
+def _safe_float(val: object) -> Optional[float]:
+    try:
+        return float(val)
+    except Exception:
+        return None
 
 
 def _parse_time(value: Optional[str]) -> Optional[datetime]:
@@ -67,6 +75,31 @@ def _filter_trades(trades: Sequence[dict], tags: Set[str]) -> list[dict]:
         if tag and str(tag) in tags:
             filtered.append(tr)
     return filtered
+
+
+def _donchian_failure(side: str, fac_h1: dict, buffer_pips: float) -> bool:
+    candles = fac_h1.get("candles") or []
+    if not isinstance(candles, list) or len(candles) < 56:
+        return False
+    window = candles[-56:]
+    high_vals = []
+    low_vals = []
+    for cndl in window[:-1]:
+        hval = _safe_float(cndl.get("high"))
+        lval = _safe_float(cndl.get("low"))
+        if hval is not None:
+            high_vals.append(hval)
+        if lval is not None:
+            low_vals.append(lval)
+    close = _safe_float(window[-1].get("close"))
+    if not high_vals or not low_vals or close is None:
+        return False
+    high55 = max(high_vals)
+    low55 = min(low_vals)
+    buffer_price = max(0.0, buffer_pips) * PIP
+    if side == "long":
+        return close <= high55 - buffer_price
+    return close >= low55 + buffer_price
 
 
 @dataclass
@@ -112,17 +145,13 @@ class DonchianExitWorker:
 
         self.rsi_take_long = _float_env("DONCHIAN55_EXIT_RSI_TAKE_LONG", 72.0)
         self.rsi_take_short = _float_env("DONCHIAN55_EXIT_RSI_TAKE_SHORT", 28.0)
+        self.trend_fail_pips = max(10.0, _float_env("DONCHIAN55_EXIT_TREND_FAIL_PIPS", 32.0))
+        self.trend_fail_buffer_pips = max(0.5, _float_env("DONCHIAN55_EXIT_TREND_FAIL_BUFFER_PIPS", 3.0))
 
-    def _context(self) -> tuple[Optional[float], Optional[float], bool]:
+    def _context(self) -> tuple[Optional[float], Optional[float], bool, dict]:
         factors = all_factors()
         fac_h1 = factors.get("H1") or {}
         fac_h4 = factors.get("H4") or {}
-
-        def _safe_float(val: object) -> Optional[float]:
-            try:
-                return float(val)
-            except Exception:
-                return None
 
         adx = _safe_float(fac_h1.get("adx"))
         bbw = _safe_float(fac_h1.get("bbw"))
@@ -135,7 +164,7 @@ class DonchianExitWorker:
             atr_threshold=self.range_atr,
         )
         rsi = _safe_float(fac_h1.get("rsi"))
-        return _latest_mid(), rsi, bool(range_ctx.active)
+        return _latest_mid(), rsi, bool(range_ctx.active), fac_h1
 
     async def _close(self, trade_id: str, units: int, reason: str, pnl: float, client_order_id: Optional[str]) -> None:
         ok = await close_trade(trade_id, units, client_order_id=client_order_id)
@@ -144,7 +173,15 @@ class DonchianExitWorker:
         else:
             LOG.error("[EXIT-donchian55] close failed trade=%s units=%s reason=%s", trade_id, units, reason)
 
-    async def _review_trade(self, trade: dict, now: datetime, mid: float, rsi: Optional[float], range_active: bool) -> None:
+    async def _review_trade(
+        self,
+        trade: dict,
+        now: datetime,
+        mid: float,
+        rsi: Optional[float],
+        range_active: bool,
+        fac_h1: dict,
+    ) -> None:
         trade_id = str(trade.get("trade_id"))
         if not trade_id:
             return
@@ -182,6 +219,15 @@ class DonchianExitWorker:
             return
 
         if hold_sec < self.min_hold_sec:
+            return
+
+        if (
+            self.trend_fail_pips > 0
+            and pnl <= -self.trend_fail_pips
+            and _donchian_failure(side, fac_h1, self.trend_fail_buffer_pips)
+        ):
+            await self._close(trade_id, -units, "trend_failure", pnl, client_id)
+            self._states.pop(trade_id, None)
             return
 
         profit_take = self.range_profit_take if range_active else self.profit_take
@@ -238,14 +284,14 @@ class DonchianExitWorker:
                 if not trades:
                     continue
 
-                mid, rsi, range_active = self._context()
+                mid, rsi, range_active, fac_h1 = self._context()
                 if mid is None:
                     continue
 
                 now = _utc_now()
                 for tr in trades:
                     try:
-                        await self._review_trade(tr, now, mid, rsi, range_active)
+                        await self._review_trade(tr, now, mid, rsi, range_active, fac_h1)
                     except Exception:
                         LOG.exception("[EXIT-donchian55] review failed trade=%s", tr.get("trade_id"))
                         continue
