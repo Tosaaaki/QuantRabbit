@@ -1,9 +1,10 @@
-"""Per-trade EXIT loop for M1Scalper (scalp pocket) – プラス決済専用。"""
+"""Per-trade EXIT loop for M1Scalper (scalp pocket) – 利確優先 + 安全弁。"""
 
 from __future__ import annotations
 
 import asyncio
 import logging
+import os
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Dict, Optional, Sequence, Set
@@ -16,6 +17,16 @@ from market_data import tick_window
 LOG = logging.getLogger(__name__)
 
 ALLOWED_TAGS = {"M1Scalper", "m1scalper", "m1_scalper"}
+
+
+def _float_env(key: str, default: float) -> float:
+    raw = os.getenv(key)
+    if raw is None:
+        return default
+    try:
+        return float(raw)
+    except ValueError:
+        return default
 
 
 def _utc_now() -> datetime:
@@ -79,6 +90,8 @@ async def _run_exit_loop(
     trail_backoff: float,
     lock_buffer: float,
     min_hold_sec: float,
+    max_hold_sec: float,
+    max_adverse_pips: float,
     trail_from_tp_ratio: float,
     lock_from_tp_ratio: float,
     loop_interval: float,
@@ -155,6 +168,16 @@ async def _run_exit_loop(
             LOG.warning("[EXIT-%s] missing client_id trade=%s skip close", pocket, trade_id)
             return
 
+        if max_adverse_pips > 0 and pnl <= -max_adverse_pips:
+            await _close(trade_id, -units, "max_adverse", client_id)
+            states.pop(trade_id, None)
+            return
+
+        if max_hold_sec > 0 and hold_sec >= max_hold_sec and pnl <= 0:
+            await _close(trade_id, -units, "max_hold", client_id)
+            states.pop(trade_id, None)
+            return
+
         trail_trigger = max(ts, 0.0)
 
         # プラス圏のみでクローズする
@@ -198,6 +221,9 @@ async def _run_exit_loop(
 
 
 async def m1_scalper_exit_worker() -> None:
+    min_hold_sec = 10.0
+    max_hold_sec = max(min_hold_sec + 1.0, _float_env("M1SCALP_EXIT_MAX_HOLD_SEC", 20 * 60))
+    max_adverse_pips = max(0.0, _float_env("M1SCALP_EXIT_MAX_ADVERSE_PIPS", 8.0))
     await _run_exit_loop(
         pocket="scalp",
         tags=ALLOWED_TAGS,
@@ -205,7 +231,9 @@ async def m1_scalper_exit_worker() -> None:
         trail_start=2.6,
         trail_backoff=0.9,
         lock_buffer=0.5,
-        min_hold_sec=10.0,
+        min_hold_sec=min_hold_sec,
+        max_hold_sec=max_hold_sec,
+        max_adverse_pips=max_adverse_pips,
         trail_from_tp_ratio=0.82,
         lock_from_tp_ratio=0.45,
         loop_interval=0.8,
