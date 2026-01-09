@@ -249,7 +249,7 @@ class MicroMultiExitWorker:
                 self._states.pop(trade_id, None)
                 return
 
-        if pnl > 0 and reversion_kind == "range_mr":
+        if pnl > 0 and reversion_kind in {"range_mr", "mr_overlay"}:
             tp_decision = evaluate_tp_zone(
                 trade,
                 current_price=mid,

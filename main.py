@@ -3393,25 +3393,37 @@ async def logic_loop(
         )
         return True
 
+    MR_SIGNAL_TAGS = {
+        "BB_RSI",
+        "MicroVWAPBound",
+        "RangeFader",
+        "vwap_magnet_s5",
+        "mirror_spike",
+        "mirror_spike_tight",
+        "mirror_spike_s5",
+    }
+    MR_OVERLAY_TAGS = {"VolCompressionBreak", "MomentumPulse"}
+
     def _is_mr_signal(strategy_tag: Optional[str], profile: Optional[str]) -> bool:
         tag = str(strategy_tag or "").strip()
         if not tag:
             return False
         base_tag = tag.split("-", 1)[0]
-        if base_tag in {
-            "BB_RSI",
-            "MicroVWAPBound",
-            "RangeFader",
-            "vwap_magnet_s5",
-            "mirror_spike",
-            "mirror_spike_tight",
-            "mirror_spike_s5",
-        }:
+        if base_tag in MR_SIGNAL_TAGS:
             return True
         tag_lower = tag.lower()
         if tag_lower.startswith("mlr-fade") or tag_lower.startswith("mlr-bounce"):
             return True
         if profile in {"bb_range_reversion", "micro_vwap_bound"}:
+            return True
+        return False
+
+    def _is_mr_overlay_signal(strategy_tag: Optional[str], profile: Optional[str]) -> bool:
+        tag = str(strategy_tag or "").strip()
+        if not tag:
+            return False
+        base_tag = tag.split("-", 1)[0]
+        if base_tag in MR_OVERLAY_TAGS:
             return True
         return False
 
@@ -8113,9 +8125,14 @@ async def logic_loop(
                     entry_thesis.update(base_thesis)
                 else:
                     entry_thesis = base_thesis
-                if _is_mr_signal(strategy_tag, strategy_profile):
+                is_mr_signal = _is_mr_signal(strategy_tag, strategy_profile)
+                is_mr_overlay = _is_mr_overlay_signal(strategy_tag, strategy_profile)
+                if is_mr_signal or is_mr_overlay:
                     _augment_entry_thesis_for_mr(entry_thesis, pocket=pocket, atr_entry=atr_entry)
-                    entry_thesis.setdefault("mr_guard", _mr_guard_snapshot(pocket))
+                    if is_mr_signal:
+                        entry_thesis.setdefault("mr_guard", _mr_guard_snapshot(pocket))
+                    if is_mr_overlay:
+                        entry_thesis.setdefault("mr_overlay", True)
                 execution_cfg = signal.get("execution")
                 if isinstance(execution_cfg, dict):
                     entry_thesis["execution"] = execution_cfg
