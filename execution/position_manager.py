@@ -1012,11 +1012,13 @@ class PositionManager:
             abs_units = abs(units)
             pip_value = abs_units * 0.01
             unrealized_pl_pips = unrealized_pl / pip_value if pip_value else 0.0
+            client_id = client_ext.get("id")
             trade_entry = {
                 "trade_id": trade_id,
                 "units": units,
                 "price": price,
-                "client_id": client_ext.get("id"),
+                "client_id": client_id,
+                "client_order_id": client_id,
                 "side": "long" if units > 0 else "short",
                 "unrealized_pl": unrealized_pl,
                 "unrealized_pl_pips": unrealized_pl_pips,
@@ -1042,6 +1044,8 @@ class PositionManager:
                         thesis = None
                 if isinstance(thesis, dict):
                     trade_entry["entry_thesis"] = thesis
+                if meta.get("client_order_id"):
+                    trade_entry["client_order_id"] = meta.get("client_order_id")
                 strategy_tag = meta.get("strategy_tag")
                 if strategy_tag:
                     trade_entry["strategy_tag"] = strategy_tag
