@@ -3427,7 +3427,13 @@ async def logic_loop(
             return True
         return False
 
-    def _augment_entry_thesis_for_mr(entry_thesis: dict, *, pocket: str, atr_entry: float) -> None:
+    def _augment_entry_thesis_for_mr(
+        entry_thesis: dict,
+        *,
+        pocket: str,
+        atr_entry: float,
+        overlay: bool = False,
+    ) -> None:
         if not isinstance(entry_thesis, dict):
             return
         if pocket not in {"micro", "scalp"}:
@@ -3476,7 +3482,9 @@ async def logic_loop(
                     bars_budget["max"] = 8
         entry_thesis.setdefault("tp_mode", "soft_zone")
         entry_thesis.setdefault("tp_target", "entry_mean")
-        entry_thesis.setdefault("tp_pad_atr", 0.05)
+        base_pad = _safe_float(os.getenv("MR_TP_PAD_ATR"), 0.05)
+        overlay_pad = _safe_float(os.getenv("MR_OVERLAY_TP_PAD_ATR"), 0.06)
+        entry_thesis.setdefault("tp_pad_atr", overlay_pad if overlay else base_pad)
         if entry_thesis.get("range_snapshot") and entry_thesis.get("entry_mean") is not None:
             return
         candles = get_candles_snapshot(env_tf, limit=lookback)
@@ -8128,7 +8136,12 @@ async def logic_loop(
                 is_mr_signal = _is_mr_signal(strategy_tag, strategy_profile)
                 is_mr_overlay = _is_mr_overlay_signal(strategy_tag, strategy_profile)
                 if is_mr_signal or is_mr_overlay:
-                    _augment_entry_thesis_for_mr(entry_thesis, pocket=pocket, atr_entry=atr_entry)
+                    _augment_entry_thesis_for_mr(
+                        entry_thesis,
+                        pocket=pocket,
+                        atr_entry=atr_entry,
+                        overlay=is_mr_overlay,
+                    )
                     if is_mr_signal:
                         entry_thesis.setdefault("mr_guard", _mr_guard_snapshot(pocket))
                     if is_mr_overlay:
