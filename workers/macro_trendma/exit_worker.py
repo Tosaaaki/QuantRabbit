@@ -14,6 +14,7 @@ from execution.order_manager import close_trade
 from execution.position_manager import PositionManager
 from indicators.factor_cache import all_factors
 from market_data import tick_window
+from utils.metrics_logger import log_metric
 
 LOG = logging.getLogger(__name__)
 
@@ -214,6 +215,7 @@ class TrendMAExitWorker:
             and pnl <= -self.trend_fail_pips
             and _trend_failure(side, fac_h1, self.trend_fail_buffer_pips)
         ):
+            log_metric("trendma_trend_failure", pnl, tags={"side": side})
             await self._close(trade_id, -units, "trend_failure", pnl, client_id)
             self._states.pop(trade_id, None)
             return

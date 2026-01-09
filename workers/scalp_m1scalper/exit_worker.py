@@ -13,6 +13,7 @@ from execution.order_manager import close_trade
 from execution.position_manager import PositionManager
 from indicators.factor_cache import all_factors
 from market_data import tick_window
+from utils.metrics_logger import log_metric
 
 LOG = logging.getLogger(__name__)
 
@@ -169,11 +170,13 @@ async def _run_exit_loop(
             return
 
         if max_adverse_pips > 0 and pnl <= -max_adverse_pips:
+            log_metric("m1scalp_max_adverse", pnl, tags={"side": side})
             await _close(trade_id, -units, "max_adverse", client_id)
             states.pop(trade_id, None)
             return
 
         if max_hold_sec > 0 and hold_sec >= max_hold_sec and pnl <= 0:
+            log_metric("m1scalp_max_hold", pnl, tags={"side": side})
             await _close(trade_id, -units, "max_hold", client_id)
             states.pop(trade_id, None)
             return
