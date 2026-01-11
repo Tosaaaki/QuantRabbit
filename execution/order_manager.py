@@ -171,6 +171,27 @@ _DIR_CAP_CACHE: Optional[PositionManager] = None
 
 # ---------- orders logger (logs/orders.db) ----------
 _ORDERS_DB_PATH = pathlib.Path("logs/orders.db")
+_ORDER_DB_JOURNAL_MODE = os.getenv("ORDER_DB_JOURNAL_MODE", "WAL")
+_ORDER_DB_SYNCHRONOUS = os.getenv("ORDER_DB_SYNCHRONOUS", "NORMAL")
+_ORDER_DB_BUSY_TIMEOUT_MS = int(os.getenv("ORDER_DB_BUSY_TIMEOUT_MS", "5000"))
+_ORDER_DB_WAL_AUTOCHECKPOINT_PAGES = int(
+    os.getenv("ORDER_DB_WAL_AUTOCHECKPOINT_PAGES", "2000")
+)
+_ORDER_DB_JOURNAL_SIZE_LIMIT_BYTES = int(
+    os.getenv("ORDER_DB_JOURNAL_SIZE_LIMIT_BYTES", "268435456")
+)
+_ORDER_DB_CHECKPOINT_ENABLE = (
+    os.getenv("ORDER_DB_CHECKPOINT_ENABLE", "1").strip().lower()
+    not in {"", "0", "false", "no"}
+)
+_ORDER_DB_CHECKPOINT_INTERVAL_SEC = float(
+    os.getenv("ORDER_DB_CHECKPOINT_INTERVAL_SEC", "60")
+)
+_ORDER_DB_CHECKPOINT_MIN_WAL_BYTES = int(
+    os.getenv("ORDER_DB_CHECKPOINT_MIN_WAL_BYTES", "134217728")
+)
+_ORDERS_DB_WAL_PATH = _ORDERS_DB_PATH.with_suffix(_ORDERS_DB_PATH.suffix + "-wal")
+_LAST_ORDER_DB_CHECKPOINT = 0.0
 
 _DEFAULT_MIN_HOLD_SEC = {
     "macro": 360.0,
@@ -179,9 +200,69 @@ _DEFAULT_MIN_HOLD_SEC = {
 }
 
 
+def _configure_orders_sqlite(con: sqlite3.Connection) -> sqlite3.Connection:
+    """Apply SQLite PRAGMAs for WAL size control."""
+    try:
+        con.execute(f"PRAGMA journal_mode={_ORDER_DB_JOURNAL_MODE}")
+    except sqlite3.Error:
+        pass
+    try:
+        con.execute(f"PRAGMA synchronous={_ORDER_DB_SYNCHRONOUS}")
+    except sqlite3.Error:
+        pass
+    try:
+        con.execute(f"PRAGMA busy_timeout={_ORDER_DB_BUSY_TIMEOUT_MS}")
+    except sqlite3.Error:
+        pass
+    try:
+        con.execute(
+            f"PRAGMA wal_autocheckpoint={_ORDER_DB_WAL_AUTOCHECKPOINT_PAGES}"
+        )
+    except sqlite3.Error:
+        pass
+    try:
+        con.execute(
+            f"PRAGMA journal_size_limit={_ORDER_DB_JOURNAL_SIZE_LIMIT_BYTES}"
+        )
+    except sqlite3.Error:
+        pass
+    return con
+
+
+def _maybe_checkpoint_orders_db(con: sqlite3.Connection) -> None:
+    """Best-effort WAL checkpoint to avoid runaway orders.db-wal growth."""
+    if not _ORDER_DB_CHECKPOINT_ENABLE:
+        return
+    global _LAST_ORDER_DB_CHECKPOINT
+    now = time.monotonic()
+    if now - _LAST_ORDER_DB_CHECKPOINT < _ORDER_DB_CHECKPOINT_INTERVAL_SEC:
+        return
+    try:
+        wal_size = _ORDERS_DB_WAL_PATH.stat().st_size
+    except FileNotFoundError:
+        _LAST_ORDER_DB_CHECKPOINT = now
+        return
+    except Exception as exc:  # pragma: no cover - defensive
+        logging.debug("[ORDER][DB] WAL size check failed: %s", exc)
+        _LAST_ORDER_DB_CHECKPOINT = now
+        return
+    if wal_size < _ORDER_DB_CHECKPOINT_MIN_WAL_BYTES:
+        _LAST_ORDER_DB_CHECKPOINT = now
+        return
+    try:
+        row = con.execute("PRAGMA wal_checkpoint(PASSIVE)").fetchone()
+        busy = row[2] if row and len(row) > 2 else 0
+        if busy == 0:
+            con.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+    except sqlite3.Error as exc:
+        logging.info("[ORDER][DB] wal checkpoint failed: %s", exc)
+    _LAST_ORDER_DB_CHECKPOINT = now
+
+
 def _ensure_orders_schema() -> sqlite3.Connection:
     _ORDERS_DB_PATH.parent.mkdir(parents=True, exist_ok=True)
     con = sqlite3.connect(_ORDERS_DB_PATH)
+    _configure_orders_sqlite(con)
     con.execute(
         """
         CREATE TABLE IF NOT EXISTS orders (
@@ -504,6 +585,7 @@ def _log_order(
             ),
         )
         con.commit()
+        _maybe_checkpoint_orders_db(con)
     except Exception as exc:  # noqa: BLE001
         logging.warning("[ORDER][LOG] failed to persist orders log: %s", exc)
 
