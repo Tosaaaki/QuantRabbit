@@ -12,6 +12,7 @@ from typing import Dict, Optional, Sequence, Set
 from analysis.range_guard import detect_range_mode
 from execution.order_manager import close_trade
 from execution.position_manager import PositionManager
+from execution.section_axis import evaluate_section_exit
 from indicators.factor_cache import all_factors
 from market_data import tick_window
 
@@ -138,8 +139,21 @@ class FastScalpExitWorker:
         rsi = _safe_float(fac_m1.get("rsi"))
         return _latest_mid(), rsi, bool(range_ctx.active)
 
-    async def _close(self, trade_id: str, units: int, reason: str, pnl: float, client_order_id: Optional[str]) -> None:
-        ok = await close_trade(trade_id, units, client_order_id=client_order_id)
+    async def _close(
+        self,
+        trade_id: str,
+        units: int,
+        reason: str,
+        pnl: float,
+        client_order_id: Optional[str],
+        allow_negative: bool = False,
+    ) -> None:
+        ok = await close_trade(
+            trade_id,
+            units,
+            client_order_id=client_order_id,
+            allow_negative=allow_negative,
+        )
         if ok:
             LOG.info("[EXIT-fast_scalp] trade=%s units=%s reason=%s pnl=%.2fp", trade_id, units, reason, pnl)
         else:
@@ -194,6 +208,34 @@ class FastScalpExitWorker:
 
         if not client_id:
             LOG.warning("[EXIT-fast_scalp] missing client_id trade=%s skip close", trade_id)
+            return
+
+        section_decision = evaluate_section_exit(
+            trade,
+            current_price=mid,
+            now=now,
+            side=side,
+            pocket=POCKET,
+            hold_sec=hold_sec,
+            min_hold_sec=self.min_hold_sec,
+            entry_price=entry,
+        )
+        if section_decision.should_exit and section_decision.reason:
+            LOG.info(
+                "[EXIT-fast_scalp] section_exit trade=%s reason=%s detail=%s",
+                trade_id,
+                section_decision.reason,
+                section_decision.debug,
+            )
+            await self._close(
+                trade_id,
+                -units,
+                section_decision.reason,
+                pnl,
+                client_id,
+                allow_negative=section_decision.allow_negative,
+            )
+            self._states.pop(trade_id, None)
             return
 
         if state.peak > 0 and state.peak >= trail_start and pnl > 0 and pnl <= state.peak - trail_backoff:

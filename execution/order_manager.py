@@ -26,6 +26,7 @@ from oandapyV20.endpoints.trades import TradeCRCDO, TradeClose, TradeDetails
 
 from execution.order_ids import build_client_order_id
 from execution.stop_loss_policy import stop_loss_disabled, trailing_sl_allowed
+from execution.section_axis import attach_section_axis
 
 from analysis import policy_bus
 from utils.secrets import get_secret
@@ -2056,6 +2057,8 @@ async def market_order(
     if isinstance(entry_thesis, dict) and strategy_tag and not entry_thesis.get("strategy_tag"):
         entry_thesis = dict(entry_thesis)
         entry_thesis["strategy_tag"] = strategy_tag
+    if isinstance(entry_thesis, dict) and not reduce_only:
+        entry_thesis = attach_section_axis(entry_thesis, pocket=pocket)
 
     # 成績ガード（直近 PF/勝率が悪いタグは全ポケットでブロック。manual は除外）
     perf_guard_enabled = os.getenv("PERF_GUARD_GLOBAL_ENABLED", "0").strip().lower() not in {

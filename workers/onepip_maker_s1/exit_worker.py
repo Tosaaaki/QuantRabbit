@@ -10,10 +10,13 @@ from typing import Dict, Optional, Sequence, Set
 
 from execution.order_manager import close_trade
 from execution.position_manager import PositionManager
+from execution.section_axis import evaluate_section_exit
 from indicators.factor_cache import all_factors
 from market_data import tick_window
 
 LOG = logging.getLogger(__name__)
+ONEPIP_TAGS: Set[str] = {"OnePipMakerS1", "onepip_maker_s1", "onepip_s1"}
+ONEPIP_CLIENT_ID_PREFIXES = ("qr-onepip-s1-",)
 
 
 def _utc_now() -> datetime:
@@ -50,14 +53,23 @@ def _client_id(trade: dict) -> Optional[str]:
     return client_id
 
 
-def _filter_trades(trades: Sequence[dict], tags: Set[str]) -> list[dict]:
-    if not tags:
+def _filter_trades(trades: Sequence[dict], tags: Set[str], client_id_prefixes: Sequence[str]) -> list[dict]:
+    if not tags and not client_id_prefixes:
         return list(trades)
     filtered: list[dict] = []
     for tr in trades:
         thesis = tr.get("entry_thesis") or {}
         tag = thesis.get("strategy_tag") or thesis.get("strategy") or tr.get("strategy")
-        if tag and str(tag) in tags:
+        tag_ok = False
+        if tag and tags:
+            tag_str = str(tag)
+            tag_ok = tag_str in tags or tag_str.split("-", 1)[0] in tags
+        client_ok = False
+        if client_id_prefixes:
+            client_id = _client_id(tr)
+            if client_id:
+                client_ok = any(str(client_id).startswith(prefix) for prefix in client_id_prefixes)
+        if tag_ok or client_ok:
             filtered.append(tr)
     return filtered
 
@@ -100,14 +112,26 @@ async def _run_exit_loop(
     *,
     pocket: str,
     tags: Set[str],
+    client_id_prefixes: Sequence[str],
     params: _ExitParams,
     loop_interval: float,
 ) -> None:
     pos_manager = PositionManager()
     states: Dict[str, _TradeState] = {}
 
-    async def _close(trade_id: str, units: int, reason: str, client_id: str) -> bool:
-        ok = await close_trade(trade_id, units, client_order_id=client_id)
+    async def _close(
+        trade_id: str,
+        units: int,
+        reason: str,
+        client_id: str,
+        allow_negative: bool = False,
+    ) -> bool:
+        ok = await close_trade(
+            trade_id,
+            units,
+            client_order_id=client_id,
+            allow_negative=allow_negative,
+        )
         if ok:
             LOG.info("[EXIT-%s] trade=%s units=%s reason=%s", pocket, trade_id, units, reason)
         else:
@@ -198,6 +222,33 @@ async def _run_exit_loop(
             LOG.warning("[EXIT-%s] missing client_id trade=%s skip close", pocket, trade_id)
             return
 
+        section_decision = evaluate_section_exit(
+            trade,
+            current_price=current,
+            now=now,
+            side=side,
+            pocket=pocket,
+            hold_sec=hold_sec,
+            entry_price=price_entry,
+        )
+        if section_decision.should_exit and section_decision.reason:
+            LOG.info(
+                "[EXIT-%s] section_exit trade=%s reason=%s detail=%s",
+                pocket,
+                trade_id,
+                section_decision.reason,
+                section_decision.debug,
+            )
+            await _close(
+                trade_id,
+                -units,
+                section_decision.reason,
+                client_id,
+                allow_negative=section_decision.allow_negative,
+            )
+            states.pop(trade_id, None)
+            return
+
         if _structure_break(units):
             await _close(trade_id, -units, "structure_break", client_id)
             states.pop(trade_id, None)
@@ -234,7 +285,7 @@ async def _run_exit_loop(
             positions = pos_manager.get_open_positions()
             pocket_info = positions.get(pocket) or {}
             trades = pocket_info.get("open_trades") or []
-            trades = _filter_trades(trades, tags)
+            trades = _filter_trades(trades, tags, client_id_prefixes)
             active_ids = {str(tr.get("trade_id")) for tr in trades if tr.get("trade_id")}
             for tid in list(states.keys()):
                 if tid not in active_ids:
@@ -255,7 +306,8 @@ async def _run_exit_loop(
 async def onepip_maker_s1_exit_worker() -> None:
     await _run_exit_loop(
         pocket="scalp",
-        tags=set(),  # target all trades in pocket (strategy tag not set)
+        tags=ONEPIP_TAGS,
+        client_id_prefixes=ONEPIP_CLIENT_ID_PREFIXES,
         params=_ExitParams(
             profit_take=1.2,
             trail_start=1.6,

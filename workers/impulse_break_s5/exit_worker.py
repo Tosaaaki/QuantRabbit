@@ -10,6 +10,7 @@ from typing import Dict, Optional, Sequence, Set
 
 from execution.order_manager import close_trade
 from execution.position_manager import PositionManager
+from execution.section_axis import evaluate_section_exit
 from indicators.factor_cache import all_factors
 from market_data import tick_window
 
@@ -99,8 +100,19 @@ async def _run_exit_loop(
     pos_manager = PositionManager()
     states: Dict[str, _TradeState] = {}
 
-    async def _close(trade_id: str, units: int, reason: str, client_order_id: Optional[str]) -> bool:
-        ok = await close_trade(trade_id, units, client_order_id=client_order_id)
+    async def _close(
+        trade_id: str,
+        units: int,
+        reason: str,
+        client_order_id: Optional[str],
+        allow_negative: bool = False,
+    ) -> bool:
+        ok = await close_trade(
+            trade_id,
+            units,
+            client_order_id=client_order_id,
+            allow_negative=allow_negative,
+        )
         if ok:
             LOG.info("[EXIT-%s] trade=%s units=%s reason=%s", pocket, trade_id, units, reason)
         else:
@@ -181,6 +193,33 @@ async def _run_exit_loop(
 
         # 最低保有時間内はクローズ禁止（スプレッド負け防止）
         if hold_sec < params.min_hold_sec:
+            return
+
+        section_decision = evaluate_section_exit(
+            trade,
+            current_price=current,
+            now=now,
+            side=side,
+            pocket=pocket,
+            hold_sec=hold_sec,
+            min_hold_sec=params.min_hold_sec,
+            entry_price=price_entry,
+        )
+        if section_decision.should_exit and section_decision.reason:
+            LOG.info(
+                "[EXIT-impulse_break_s5] section_exit trade=%s reason=%s detail=%s",
+                trade_id,
+                section_decision.reason,
+                section_decision.debug,
+            )
+            await _close(
+                trade_id,
+                -units,
+                section_decision.reason,
+                client_id,
+                allow_negative=section_decision.allow_negative,
+            )
+            states.pop(trade_id, None)
             return
 
         if _structure_break(units):

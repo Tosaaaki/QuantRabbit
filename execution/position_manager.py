@@ -49,7 +49,7 @@ _OPEN_TRADES_FAIL_BACKOFF_MAX = float(
     os.getenv("POSITION_MANAGER_OPEN_TRADES_BACKOFF_MAX", "60.0")
 )
 _MANUAL_POCKET_NAME = os.getenv("POSITION_MANAGER_MANUAL_POCKET", "manual")
-_KNOWN_POCKETS = {"micro", "macro", "scalp"}
+_KNOWN_POCKETS = {"micro", "macro", "scalp", "scalp_fast"}
 # SQLite locking周り
 # ロック頻発に備えてデフォルトを広めに取る
 _DB_BUSY_TIMEOUT_MS = int(os.getenv("POSITION_MANAGER_DB_BUSY_TIMEOUT_MS", "20000"))
@@ -70,7 +70,106 @@ agent_client_prefixes = tuple(p for p in agent_client_prefixes if p)
 if not agent_client_prefixes:
     agent_client_prefixes = ("qr-",)
 # pockets that belong to this agent
-agent_pockets = {"micro", "macro", "scalp"}
+agent_pockets = {"micro", "macro", "scalp", "scalp_fast"}
+
+# Strategy tag normalization: map suffix/abbrev tags to canonical bases for EXIT filtering.
+_CANONICAL_STRATEGY_TAGS = {
+    # Core strategies
+    "TrendMA",
+    "Donchian55",
+    "H1Momentum",
+    "M1Scalper",
+    "ImpulseRetrace",
+    "RangeFader",
+    "PulseBreak",
+    "BB_RSI",
+    "BB_RSI_Fast",
+    "MomentumBurst",
+    "MomentumPulse",
+    "VolCompressionBreak",
+    "MicroMomentumStack",
+    "MicroPullbackEMA",
+    "MicroLevelReactor",
+    "MicroRangeBreak",
+    "MicroVWAPBound",
+    "MicroVWAPRevert",
+    "TrendMomentumMicro",
+    # Worker-only tags
+    "trend_h1",
+    "mirror_spike",
+    "mirror_spike_s5",
+    "mirror_spike_tight",
+    "pullback_s5",
+    "pullback_scalp",
+    "pullback_runner_s5",
+    "impulse_break_s5",
+    "impulse_retest_s5",
+    "impulse_momentum_s5",
+    "squeeze_break_s5",
+    "vwap_magnet_s5",
+    "fast_scalp",
+    "manual_swing",
+    "OnePipMakerS1",
+    "LondonMomentum",
+}
+_CANONICAL_TAGS_LOWER = {tag.lower(): tag for tag in _CANONICAL_STRATEGY_TAGS}
+_TAG_ALIAS_PREFIXES = {
+    "mlr": "MicroLevelReactor",
+    "trendma": "TrendMA",
+    "donchian": "Donchian55",
+    "h1momentum": "H1Momentum",
+    "m1scalper": "M1Scalper",
+    "bbrsi": "BB_RSI",
+    "bb_rsi": "BB_RSI",
+}
+
+
+def _normalize_strategy_tag(tag: object | None) -> str | None:
+    if tag is None:
+        return None
+    tag_str = str(tag).strip()
+    if not tag_str:
+        return None
+    lower = tag_str.lower()
+    if lower in _CANONICAL_TAGS_LOWER:
+        return _CANONICAL_TAGS_LOWER[lower]
+    base = tag_str.split("-", 1)[0].strip()
+    if base:
+        base_lower = base.lower()
+        if base_lower in _CANONICAL_TAGS_LOWER:
+            return _CANONICAL_TAGS_LOWER[base_lower]
+    for prefix, canonical in _TAG_ALIAS_PREFIXES.items():
+        if lower.startswith(prefix):
+            return canonical
+    alnum = "".join(ch for ch in lower if ch.isalnum())
+    if len(alnum) >= 4:
+        best = None
+        best_len = 0
+        for base_lower, canonical in _CANONICAL_TAGS_LOWER.items():
+            base_alnum = "".join(ch for ch in base_lower if ch.isalnum())
+            if not base_alnum:
+                continue
+            if alnum.startswith(base_alnum) or base_alnum.startswith(alnum):
+                if len(base_alnum) > best_len:
+                    best = canonical
+                    best_len = len(base_alnum)
+        if best:
+            return best
+    return tag_str
+
+
+def _apply_strategy_tag_normalization(thesis: dict | None, raw_tag: object | None) -> tuple[dict | None, str | None]:
+    """Ensure thesis carries normalized strategy_tag while preserving raw tag."""
+    norm = _normalize_strategy_tag(raw_tag)
+    if not norm and thesis is None:
+        return thesis, None
+    if thesis is None or not isinstance(thesis, dict):
+        thesis = {}
+    if raw_tag and norm and str(raw_tag) != norm:
+        thesis.setdefault("strategy_tag_raw", str(raw_tag))
+    if norm:
+        thesis["strategy_tag"] = norm
+    return thesis, norm
 
 
 def _configure_sqlite(con: sqlite3.Connection) -> sqlite3.Connection:
@@ -244,7 +343,7 @@ class PositionManager:
         if thesis and isinstance(thesis, dict):
             tag = thesis.get("strategy_tag") or thesis.get("strategy")
             if tag:
-                return str(tag)
+                return _normalize_strategy_tag(tag)
         if not client_id:
             return None
         cid = str(client_id)
@@ -252,25 +351,25 @@ class PositionManager:
             import re
             # Known prefixes
             if cid.startswith("qr-fast-"):
-                return "fast_scalp"
+                return _normalize_strategy_tag("fast_scalp")
             if cid.startswith("qr-pullback-s5-"):
-                return "pullback_s5"
+                return _normalize_strategy_tag("pullback_s5")
             if cid.startswith("qr-pullback-"):
-                return "pullback_scalp"
+                return _normalize_strategy_tag("pullback_scalp")
             if cid.startswith("qr-mirror-s5-"):
-                return "mirror_spike_s5"
+                return _normalize_strategy_tag("mirror_spike_s5")
             # qr-<ts>-<pocket>-<tag...>
             m = re.match(r"^qr-\d+-(micro|macro|scalp|event|hybrid)-(.+)$", cid)
             if m:
-                return m.group(2)
+                return _normalize_strategy_tag(m.group(2))
             # qr-<pocket>-<ts>-<tag...>
             m2 = re.match(r"^qr-(micro|macro|scalp|event|hybrid)-\d+-([^-]+)", cid)
             if m2:
-                return m2.group(2)
+                return _normalize_strategy_tag(m2.group(2))
             # fallback: qr-<word>-<rest>
             m3 = re.match(r"^qr-([a-zA-Z0-9_]+)-(.*)$", cid)
             if m3 and m3.group(1) not in {"micro", "macro", "scalp", "event", "hybrid"}:
-                return m3.group(1)
+                return _normalize_strategy_tag(m3.group(1))
         except Exception:
             return None
         return None
@@ -580,6 +679,14 @@ class PositionManager:
                             details[key] = from_orders.get(key)
             except Exception:
                 pass
+            thesis_obj, norm_tag = _apply_strategy_tag_normalization(
+                details.get("entry_thesis"),
+                details.get("strategy_tag"),
+            )
+            if thesis_obj is not None:
+                details["entry_thesis"] = thesis_obj
+            if norm_tag:
+                details["strategy_tag"] = norm_tag
             return details
         except requests.HTTPError as exc:
             if exc.response is not None and exc.response.status_code == 404:
@@ -652,6 +759,14 @@ class PositionManager:
                 pass
         if strategy_tag is None:
             strategy_tag = self._infer_strategy_tag(thesis_obj, client_id, row["pocket"])
+        raw_tag = None
+        if isinstance(thesis_obj, dict):
+            raw_tag = thesis_obj.get("strategy_tag") or thesis_obj.get("strategy")
+        if not raw_tag:
+            raw_tag = strategy_tag
+        thesis_obj, norm_tag = _apply_strategy_tag_normalization(thesis_obj, raw_tag)
+        if norm_tag:
+            strategy_tag = norm_tag
         return {
             "entry_price": float(row["executed_price"] or 0.0),
             "entry_time": entry_time,
@@ -1060,6 +1175,17 @@ class PositionManager:
                 inferred = self._infer_strategy_tag(trade_entry.get("entry_thesis"), client_id, pocket)
                 if inferred:
                     trade_entry["strategy_tag"] = inferred
+            raw_tag = None
+            thesis_obj = trade_entry.get("entry_thesis")
+            if isinstance(thesis_obj, dict):
+                raw_tag = thesis_obj.get("strategy_tag") or thesis_obj.get("strategy")
+            if not raw_tag:
+                raw_tag = trade_entry.get("strategy_tag")
+            thesis_obj, norm_tag = _apply_strategy_tag_normalization(thesis_obj, raw_tag)
+            if thesis_obj is not None:
+                trade_entry["entry_thesis"] = thesis_obj
+            if norm_tag:
+                trade_entry["strategy_tag"] = norm_tag
             # EXIT誤爆防止: エージェント管理ポケットかつ strategy_tag 不明なら除外
             if pocket in agent_pockets and not trade_entry.get("strategy_tag"):
                 logging.warning(
@@ -1122,7 +1248,17 @@ class PositionManager:
                 for trade in trades_list:
                     cid = trade.get("client_id")
                     if cid and cid in entry_map:
-                        trade["entry_thesis"] = entry_map[cid]
+                        thesis_obj = entry_map[cid]
+                        raw_tag = None
+                        if isinstance(thesis_obj, dict):
+                            raw_tag = thesis_obj.get("strategy_tag_raw") or thesis_obj.get("strategy_tag")
+                            if not raw_tag:
+                                raw_tag = thesis_obj.get("strategy")
+                        thesis_obj, norm_tag = _apply_strategy_tag_normalization(thesis_obj, raw_tag)
+                        if thesis_obj is not None:
+                            trade["entry_thesis"] = thesis_obj
+                        if norm_tag:
+                            trade["strategy_tag"] = norm_tag
 
         pockets["__net__"] = {"units": net_units}
         self._last_positions = copy.deepcopy(pockets)

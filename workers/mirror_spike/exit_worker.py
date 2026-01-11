@@ -11,6 +11,7 @@ from typing import Dict, Optional, Sequence, Set
 from execution.order_manager import close_trade
 from execution.position_manager import PositionManager
 from execution.reversion_failure import evaluate_reversion_failure, evaluate_tp_zone
+from execution.section_axis import evaluate_section_exit
 from indicators.factor_cache import all_factors
 from market_data import tick_window
 from utils.metrics_logger import log_metric
@@ -212,6 +213,33 @@ async def _run_exit_loop(
         client_id = _client_id(trade)
         if not client_id:
             LOG.warning("[EXIT-%s] missing client_id trade=%s skip close", pocket, trade_id)
+            return
+
+        section_decision = evaluate_section_exit(
+            trade,
+            current_price=current,
+            now=now,
+            side=side,
+            pocket=pocket,
+            hold_sec=hold_sec,
+            entry_price=price_entry,
+        )
+        if section_decision.should_exit and section_decision.reason:
+            LOG.info(
+                "[EXIT-%s] section_exit trade=%s reason=%s detail=%s",
+                pocket,
+                trade_id,
+                section_decision.reason,
+                section_decision.debug,
+            )
+            await _close(
+                trade_id,
+                -units,
+                section_decision.reason,
+                client_id,
+                allow_negative=section_decision.allow_negative,
+            )
+            states.pop(trade_id, None)
             return
 
         if _structure_break(units):

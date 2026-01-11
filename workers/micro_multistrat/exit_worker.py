@@ -13,6 +13,7 @@ from analysis.range_guard import detect_range_mode
 from execution.order_manager import close_trade
 from execution.position_manager import PositionManager
 from execution.reversion_failure import evaluate_reversion_failure, evaluate_tp_zone
+from execution.section_axis import evaluate_section_exit
 from indicators.factor_cache import all_factors
 from market_data import tick_window
 from utils.metrics_logger import log_metric
@@ -21,6 +22,7 @@ LOG = logging.getLogger(__name__)
 
 ALLOWED_TAGS: Set[str] = {
     "BB_RSI",
+    "BB_RSI_Fast",
     "MomentumBurst",
     "MicroMomentumStack",
     "MicroPullbackEMA",
@@ -32,7 +34,7 @@ ALLOWED_TAGS: Set[str] = {
     "VolCompressionBreak",
     "MomentumPulse",
 }
-REVERSAL_TAG_PREFIXES: Set[str] = {"BB_RSI", "MicroVWAPBound", "MicroVWAPRevert"}
+REVERSAL_TAG_PREFIXES: Set[str] = {"BB_RSI", "BB_RSI_Fast", "MicroVWAPBound", "MicroVWAPRevert"}
 REVERSAL_PROFILES: Set[str] = {"bb_range_reversion", "micro_vwap_bound", "micro_vwap_revert"}
 OVERLAY_TAG_PREFIXES: Set[str] = {"VolCompressionBreak", "MomentumPulse"}
 POCKET = "micro"
@@ -80,7 +82,12 @@ def _filter_trades(trades: Sequence[dict], tags: Set[str]) -> list[dict]:
     filtered: list[dict] = []
     for tr in trades:
         thesis = tr.get("entry_thesis") or {}
-        tag = thesis.get("strategy_tag") or thesis.get("strategy") or tr.get("strategy")
+        tag = (
+            thesis.get("strategy_tag")
+            or thesis.get("strategy")
+            or thesis.get("strategy_tag_raw")
+            or tr.get("strategy")
+        )
         if not tag:
             # タグ欠損はEXIT対象外（誤爆防止）
             continue
@@ -93,7 +100,12 @@ def _filter_trades(trades: Sequence[dict], tags: Set[str]) -> list[dict]:
 
 def _reversion_kind(trade: dict) -> Optional[str]:
     thesis = trade.get("entry_thesis") or {}
-    tag = thesis.get("strategy_tag") or thesis.get("strategy") or trade.get("strategy")
+    tag = (
+        thesis.get("strategy_tag_raw")
+        or thesis.get("strategy_tag")
+        or thesis.get("strategy")
+        or trade.get("strategy")
+    )
     if tag:
         tag_str = str(tag)
         base_tag = tag_str.split("-", 1)[0]
@@ -238,6 +250,34 @@ class MicroMultiExitWorker:
             return
 
         if hold_sec < self.min_hold_sec:
+            return
+
+        section_decision = evaluate_section_exit(
+            trade,
+            current_price=mid,
+            now=now,
+            side=side,
+            pocket=POCKET,
+            hold_sec=hold_sec,
+            min_hold_sec=self.min_hold_sec,
+            entry_price=entry,
+        )
+        if section_decision.should_exit and section_decision.reason:
+            LOG.info(
+                "[EXIT-micro_multi] section_exit trade=%s reason=%s detail=%s",
+                trade_id,
+                section_decision.reason,
+                section_decision.debug,
+            )
+            await self._close(
+                trade_id,
+                -units,
+                section_decision.reason,
+                pnl,
+                client_id,
+                allow_negative=section_decision.allow_negative,
+            )
+            self._states.pop(trade_id, None)
             return
 
         reversion_kind = _reversion_kind(trade)

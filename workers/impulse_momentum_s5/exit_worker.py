@@ -12,6 +12,7 @@ from typing import Dict, Optional, Sequence, Set
 from analysis.range_guard import detect_range_mode
 from execution.order_manager import close_trade
 from execution.position_manager import PositionManager
+from execution.section_axis import evaluate_section_exit
 from indicators.factor_cache import all_factors
 from market_data import tick_window
 
@@ -142,8 +143,21 @@ class ImpulseMomentumExitWorker:
         rsi = _safe_float(fac_m1.get("rsi"))
         return _latest_mid(), rsi, bool(range_ctx.active)
 
-    async def _close(self, trade_id: str, units: int, reason: str, pnl: float, client_order_id: Optional[str]) -> None:
-        ok = await close_trade(trade_id, units, client_order_id=client_order_id)
+    async def _close(
+        self,
+        trade_id: str,
+        units: int,
+        reason: str,
+        pnl: float,
+        client_order_id: Optional[str],
+        allow_negative: bool = False,
+    ) -> None:
+        ok = await close_trade(
+            trade_id,
+            units,
+            client_order_id=client_order_id,
+            allow_negative=allow_negative,
+        )
         if ok:
             LOG.info("[EXIT-impulse_momentum_s5] trade=%s units=%s reason=%s pnl=%.2fp", trade_id, units, reason, pnl)
         else:
@@ -188,6 +202,34 @@ class ImpulseMomentumExitWorker:
 
         # 最低保有時間内は絶対にクローズしない（スプレッド負け防止）
         if hold_sec < self.min_hold_sec:
+            return
+
+        section_decision = evaluate_section_exit(
+            trade,
+            current_price=mid,
+            now=now,
+            side=side,
+            pocket=POCKET,
+            hold_sec=hold_sec,
+            min_hold_sec=self.min_hold_sec,
+            entry_price=entry,
+        )
+        if section_decision.should_exit and section_decision.reason:
+            LOG.info(
+                "[EXIT-impulse_momentum_s5] section_exit trade=%s reason=%s detail=%s",
+                trade_id,
+                section_decision.reason,
+                section_decision.debug,
+            )
+            await self._close(
+                trade_id,
+                -units,
+                section_decision.reason,
+                pnl,
+                client_id,
+                allow_negative=section_decision.allow_negative,
+            )
+            self._states.pop(trade_id, None)
             return
 
         profit_take = self.range_profit_take if range_active else self.profit_take

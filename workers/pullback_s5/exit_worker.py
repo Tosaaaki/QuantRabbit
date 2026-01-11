@@ -12,6 +12,7 @@ from typing import Dict, Optional
 from analysis.range_guard import detect_range_mode
 from execution.order_manager import close_trade
 from execution.position_manager import PositionManager
+from execution.section_axis import evaluate_section_exit
 from indicators.factor_cache import all_factors
 from market_data import tick_window
 from utils.metrics_logger import log_metric
@@ -183,8 +184,23 @@ class PullbackExitWorker:
             range_active=bool(range_ctx.active),
         )
 
-    async def _close(self, trade_id: str, units: int, reason: str, pnl: float, side: str, range_mode: bool, client_id: str) -> bool:
-        ok = await close_trade(trade_id, units, client_order_id=client_id)
+    async def _close(
+        self,
+        trade_id: str,
+        units: int,
+        reason: str,
+        pnl: float,
+        side: str,
+        range_mode: bool,
+        client_id: str,
+        allow_negative: bool = False,
+    ) -> bool:
+        ok = await close_trade(
+            trade_id,
+            units,
+            client_order_id=client_id,
+            allow_negative=allow_negative,
+        )
         if ok:
             LOG.info(
                 "[EXIT-pullback_s5] trade=%s units=%s reason=%s pnl=%.2fp range=%s",
@@ -280,6 +296,25 @@ class PullbackExitWorker:
         if hold_sec < self.min_hold_sec:
             return None
 
+        section_decision = evaluate_section_exit(
+            trade,
+            current_price=ctx.mid,
+            now=now,
+            side=side,
+            pocket=POCKET,
+            hold_sec=hold_sec,
+            min_hold_sec=self.min_hold_sec,
+            entry_price=entry_price,
+        )
+        if section_decision.should_exit and section_decision.reason:
+            LOG.info(
+                "[EXIT-pullback_s5] section_exit trade=%s reason=%s detail=%s",
+                trade_id,
+                section_decision.reason,
+                section_decision.debug,
+            )
+            return section_decision.reason
+
         # 構造崩れ（M1 MA逆転/ADX低下＋ギャップ縮小）で撤退
         if ctx.adx is not None and ctx.adx < self.range_adx and (pnl > 0 or self.allow_negative_exit):
             try:
@@ -372,7 +407,17 @@ class PullbackExitWorker:
                         continue
                     side = "long" if units > 0 else "short"
                     pnl = (ctx.mid - float(tr.get("price") or 0.0)) * 100.0 if side == "long" else (float(tr.get("price") or 0.0) - ctx.mid) * 100.0
-                    await self._close(trade_id, -units, reason, pnl, side, ctx.range_active, client_id)
+                    allow_negative = reason.startswith("section_")
+                    await self._close(
+                        trade_id,
+                        -units,
+                        reason,
+                        pnl,
+                        side,
+                        ctx.range_active,
+                        client_id,
+                        allow_negative=allow_negative,
+                    )
                     self._states.pop(trade_id, None)
         except asyncio.CancelledError:
             LOG.info("[EXIT-pullback_s5] worker cancelled")

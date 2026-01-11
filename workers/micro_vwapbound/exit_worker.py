@@ -12,6 +12,7 @@ from typing import Dict, Optional, Sequence, Set
 from execution.order_manager import close_trade
 from execution.position_manager import PositionManager
 from execution.reversion_failure import evaluate_reversion_failure, evaluate_tp_zone
+from execution.section_axis import evaluate_section_exit
 from indicators.factor_cache import all_factors
 from market_data import tick_window
 from utils.metrics_logger import log_metric
@@ -192,6 +193,34 @@ class MicroVWAPBoundExitWorker:
             return
 
         if hold_sec < self.min_hold_sec:
+            return
+
+        section_decision = evaluate_section_exit(
+            trade,
+            current_price=mid,
+            now=now,
+            side=side,
+            pocket=POCKET,
+            hold_sec=hold_sec,
+            min_hold_sec=self.min_hold_sec,
+            entry_price=entry,
+        )
+        if section_decision.should_exit and section_decision.reason:
+            LOG.info(
+                "[EXIT-micro_vwap] section_exit trade=%s reason=%s detail=%s",
+                trade_id,
+                section_decision.reason,
+                section_decision.debug,
+            )
+            await self._close(
+                trade_id,
+                -units,
+                section_decision.reason,
+                pnl,
+                client_id,
+                allow_negative=section_decision.allow_negative,
+            )
+            self._states.pop(trade_id, None)
             return
 
         if pnl <= 0:
