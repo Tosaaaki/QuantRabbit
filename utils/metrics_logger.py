@@ -13,22 +13,31 @@ from typing import Mapping, Optional
 
 _DB_PATH = Path("logs/metrics.db")
 _LOCK = threading.Lock()
-_AGG_METRICS = {
-    m.strip()
-    for m in os.getenv("METRICS_AGGREGATE", "onepip_maker_skip").split(",")
-    if m.strip()
-}
+
+
+def _parse_csv_env(name: str, default: str) -> set[str]:
+    return {m.strip() for m in os.getenv(name, default).split(",") if m.strip()}
+
+
+def _parse_prefix_env(name: str, default: str) -> tuple[str, ...]:
+    return tuple(p.strip() for p in os.getenv(name, default).split(",") if p.strip())
+
+
+_AGG_METRICS = _parse_csv_env(
+    "METRICS_AGGREGATE",
+    "close_blocked_negative",
+)
+_AGG_PREFIXES = _parse_prefix_env(
+    "METRICS_AGG_PREFIXES",
+    "onepip_maker_,fast_scalp_,entry_tech_",
+)
 _AGG_WINDOW_SEC = max(1.0, float(os.getenv("METRICS_AGG_WINDOW_SEC", "10.0")))
-_AGG_DROP_TAG_KEYS = {
-    k.strip()
-    for k in os.getenv("METRICS_AGG_DROP_TAG_KEYS", "latency_ms").split(",")
-    if k.strip()
-}
-_SAMPLE_METRICS = {
-    m.strip()
-    for m in os.getenv("METRICS_SAMPLE", "").split(",")
-    if m.strip()
-}
+_AGG_DROP_TAG_KEYS = _parse_csv_env(
+    "METRICS_AGG_DROP_TAG_KEYS",
+    "latency_ms,trade_id,client_order_id,ticket_id,order_id",
+)
+_SAMPLE_METRICS = _parse_csv_env("METRICS_SAMPLE", "")
+_SAMPLE_PREFIXES = _parse_prefix_env("METRICS_SAMPLE_PREFIXES", "")
 _SAMPLE_EVERY_SEC = max(0.1, float(os.getenv("METRICS_SAMPLE_EVERY_SEC", "1.0")))
 
 
@@ -82,6 +91,10 @@ def _tags_key(tags: Mapping[str, object]) -> str:
     return json.dumps(tags, ensure_ascii=True, sort_keys=True, separators=(",", ":"))
 
 
+def _match_prefix(metric: str, prefixes: tuple[str, ...]) -> bool:
+    return any(metric.startswith(prefix) for prefix in prefixes)
+
+
 def _write_payload(payload: dict[str, object], metric: str) -> None:
     attempts = 0
     while attempts < 2:
@@ -115,7 +128,7 @@ def log_metric(
     ts: Optional[datetime] = None,
 ) -> None:
     now_mono = time.monotonic()
-    if metric in _AGG_METRICS:
+    if metric in _AGG_METRICS or _match_prefix(metric, _AGG_PREFIXES):
         norm_tags = _normalize_tags(tags)
         key = (metric, _tags_key(norm_tags))
         with _LOCK:
@@ -157,7 +170,7 @@ def log_metric(
             _write_payload(payload, metric)
             return
 
-    if metric in _SAMPLE_METRICS:
+    if metric in _SAMPLE_METRICS or _match_prefix(metric, _SAMPLE_PREFIXES):
         last = _LAST_SAMPLE_TS.get(metric)
         if last is not None and now_mono - last < _SAMPLE_EVERY_SEC:
             return
