@@ -18,6 +18,21 @@
 - スプレッドが原因で止まる場合: `FAST_SCALP_MAX_SPREAD_PIPS` を 1.1–1.2p 目安に調整して検証。
 - stale 緩和: `FAST_SCALP_MAX_SIGNAL_AGE_MS=6000`（遅い tick feed でもエントリー可能）。
 
+## 追加案: 押し目/戻りカウンター（ロング/ショート両対応）
+- ロング時は「押し目」、ショート時は「戻り」を同一ロジックでカウント。
+- 定義例: 直近高値/安値からの逆行幅が `PULLBACK_PIPS` 以上、かつ直近の順行幅が `TREND_CONFIRM_PIPS` 以上で 1 カウント。
+- 窓: `PULLBACK_WINDOW_SEC` 内でのみ加算し、時間超過で減衰またはリセット。
+- リセット条件: 新高値/新安値更新、または `PULLBACK_RESET_SEC` 経過。
+- 使い道: `counter >= N` でヘッジ方向の新規許可、`counter` 上昇でヘッジロットを段階減衰、急増時は reduce-only を優先。
+
+## 追加であると良い候補
+- 逆行連続カウンター: 逆行が連続したら新規ヘッジ停止/縮小（過剰両建て回避）。
+- ヘッジ・サイズの段階係数: `free_margin_ratio` だけでなく net_units/ATR も加味して縮小。
+- 時間帯フィルタ: 流動性が低い時間はヘッジ禁止 or サイズ半減。
+- reduce-only 優先モード: マージン逼迫時は新規ではなく縮小のみ許可。
+- spread spike guard: 直近平均比でスプレッドが広いときはヘッジ中止。
+- hedge TTL: 一定時間でヘッジ建玉を必ず縮小/クローズ。
+
 ## 運用フロー
 1) ポジション取得: `/v3/accounts/{id}/openPositions` から long/short units を取得。
 2) ロット計算: `allowed_lot(..., side, open_long_units, open_short_units)` でエントリー方向と net 後の証拠金を考慮。

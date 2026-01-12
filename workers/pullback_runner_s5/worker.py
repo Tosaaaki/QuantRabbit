@@ -23,6 +23,7 @@ from market_data import spread_monitor, tick_window
 from indicators.factor_cache import all_factors
 from workers.common import env_guard
 from workers.common.quality_gate import current_regime
+from workers.common.pullback_touch import count_pullback_touches
 from utils.oanda_account import get_account_snapshot
 
 from . import config
@@ -150,7 +151,14 @@ async def _runner_loop() -> None:
                 b_id = int(float(epoch) // config.BUCKET_SECONDS)
                 c = buckets.get(b_id)
                 if c is None:
-                    c = {"start": b_id * config.BUCKET_SECONDS, "open": price, "high": price, "low": price, "close": price}
+                    c = {
+                        "start": b_id * config.BUCKET_SECONDS,
+                        "end": (b_id + 1) * config.BUCKET_SECONDS,
+                        "open": price,
+                        "high": price,
+                        "low": price,
+                        "close": price,
+                    }
                     buckets[b_id] = c
                 else:
                     c["high"] = max(c["high"], price)
@@ -205,6 +213,62 @@ async def _runner_loop() -> None:
                 if adx_value is not None and adx_value < config.ADX_TREND_MIN:
                     side = None
 
+            touch_stats = None
+            touch_pullback_pips = None
+            touch_trend_pips = None
+            touch_reset_pips = None
+            touch_last_age_sec = None
+            if side and config.TOUCH_ENABLED:
+                touch_candles = candles
+                if config.TOUCH_WINDOW_SEC > 0:
+                    try:
+                        cutoff = float(candles[-1].get("end") or 0.0) - config.TOUCH_WINDOW_SEC
+                    except (TypeError, ValueError):
+                        cutoff = None
+                    if cutoff is not None:
+                        touch_candles = [
+                            c
+                            for c in candles
+                            if float(c.get("end") or c.get("start") or 0.0) >= cutoff
+                        ]
+                touch_prices = [float(c["close"]) for c in touch_candles]
+                touch_times = [
+                    float(c.get("end") or c.get("start") or 0.0) for c in touch_candles
+                ]
+                if len(touch_prices) >= 4:
+                    atr_ref = atr_fast if atr_fast > 0.0 else config.TOUCH_PULLBACK_MIN_PIPS
+                    touch_pullback_pips = max(
+                        config.TOUCH_PULLBACK_MIN_PIPS,
+                        min(config.TOUCH_PULLBACK_MAX_PIPS, atr_ref * config.TOUCH_PULLBACK_ATR_MULT),
+                    )
+                    touch_trend_pips = max(
+                        config.TOUCH_TREND_MIN_PIPS,
+                        min(config.TOUCH_TREND_MAX_PIPS, atr_ref * config.TOUCH_TREND_ATR_MULT),
+                    )
+                    touch_reset_pips = max(
+                        config.TOUCH_PULLBACK_MIN_PIPS * 0.5,
+                        touch_pullback_pips * config.TOUCH_RESET_RATIO,
+                    )
+                    touch_stats = count_pullback_touches(
+                        touch_prices,
+                        side,
+                        pullback_pips=touch_pullback_pips,
+                        trend_confirm_pips=touch_trend_pips,
+                        reset_pips=touch_reset_pips,
+                        pip_value=config.PIP_VALUE,
+                        timestamps=touch_times,
+                    )
+                    if touch_stats.count >= config.TOUCH_HARD_COUNT:
+                        side = None
+                    if touch_stats.last_touch_ts is not None and side:
+                        try:
+                            touch_last_age_sec = max(
+                                0.0,
+                                float(touch_times[-1]) - float(touch_stats.last_touch_ts),
+                            )
+                        except (TypeError, ValueError):
+                            touch_last_age_sec = None
+
             if side:
                 latest_tick = ticks[-1]
                 bid = float(latest_tick.get("bid") or closes[-1])
@@ -225,10 +289,14 @@ async def _runner_loop() -> None:
                 sl_price = round(entry_price - (sl_base * config.PIP_VALUE if side == "long" else -sl_base * config.PIP_VALUE), 3)
 
                 # 柔軟サイズ決定
+                entry_units = int(config.ENTRY_UNITS)
+                if touch_stats and touch_stats.count >= config.TOUCH_SOFT_COUNT:
+                    entry_units = int(round(entry_units * config.TOUCH_UNIT_FACTOR))
+                    entry_units = max(entry_units, int(config.MIN_UNITS))
                 sizing = compute_units(
                     entry_price=float(entry_price),
                     sl_pips=float(sl_base),
-                    base_entry_units=int(config.ENTRY_UNITS),
+                    base_entry_units=entry_units,
                     min_units=int(config.MIN_UNITS),
                     max_margin_usage=float(config.MAX_MARGIN_USAGE),
                     spread_pips=float(spread_pips),
@@ -248,6 +316,19 @@ async def _runner_loop() -> None:
                         "spread_pips": round(spread_pips, 2),
                         "tp_pips": round(tp_pips, 2),
                         "sl_pips": round(sl_base, 2),
+                        "touch_count": None if touch_stats is None else touch_stats.count,
+                        "touch_pullback_pips": None
+                        if touch_pullback_pips is None
+                        else round(touch_pullback_pips, 2),
+                        "touch_trend_pips": None
+                        if touch_trend_pips is None
+                        else round(touch_trend_pips, 2),
+                        "touch_reset_pips": None
+                        if touch_reset_pips is None
+                        else round(touch_reset_pips, 2),
+                        "touch_last_age_sec": None
+                        if touch_last_age_sec is None
+                        else round(touch_last_age_sec, 1),
                     }
                     try:
                         trade_id = await market_order(

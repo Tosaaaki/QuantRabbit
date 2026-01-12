@@ -17,6 +17,7 @@ from market_data import spread_monitor, tick_window
 from workers.common import env_guard
 from workers.common.pocket_plan import PocketPlan
 from workers.common.quality_gate import current_regime
+from workers.common.pullback_touch import count_pullback_touches
 
 from . import config
 
@@ -298,6 +299,62 @@ async def pullback_s5_worker() -> None:
                 # レンジ寄りは方向バイアスを緩める
                 pass
 
+            touch_stats = None
+            touch_pullback_pips = None
+            touch_trend_pips = None
+            touch_reset_pips = None
+            touch_last_age_sec = None
+            if config.TOUCH_ENABLED:
+                touch_candles = candles
+                if config.TOUCH_WINDOW_SEC > 0:
+                    try:
+                        cutoff = float(candles[-1].get("end") or 0.0) - config.TOUCH_WINDOW_SEC
+                    except (TypeError, ValueError):
+                        cutoff = None
+                    if cutoff is not None:
+                        touch_candles = [
+                            c
+                            for c in candles
+                            if float(c.get("end") or c.get("start") or 0.0) >= cutoff
+                        ]
+                touch_prices = [float(c["close"]) for c in touch_candles]
+                touch_times = [
+                    float(c.get("end") or c.get("start") or 0.0) for c in touch_candles
+                ]
+                if len(touch_prices) >= 4:
+                    atr_ref = atr_fast if atr_fast > 0.0 else config.TOUCH_PULLBACK_MIN_PIPS
+                    touch_pullback_pips = max(
+                        config.TOUCH_PULLBACK_MIN_PIPS,
+                        min(config.TOUCH_PULLBACK_MAX_PIPS, atr_ref * config.TOUCH_PULLBACK_ATR_MULT),
+                    )
+                    touch_trend_pips = max(
+                        config.TOUCH_TREND_MIN_PIPS,
+                        min(config.TOUCH_TREND_MAX_PIPS, atr_ref * config.TOUCH_TREND_ATR_MULT),
+                    )
+                    touch_reset_pips = max(
+                        config.TOUCH_PULLBACK_MIN_PIPS * 0.5,
+                        touch_pullback_pips * config.TOUCH_RESET_RATIO,
+                    )
+                    touch_stats = count_pullback_touches(
+                        touch_prices,
+                        side,
+                        pullback_pips=touch_pullback_pips,
+                        trend_confirm_pips=touch_trend_pips,
+                        reset_pips=touch_reset_pips,
+                        pip_value=config.PIP_VALUE,
+                        timestamps=touch_times,
+                    )
+                    if touch_stats.count >= config.TOUCH_HARD_COUNT:
+                        continue
+                    if touch_stats.last_touch_ts is not None:
+                        try:
+                            touch_last_age_sec = max(
+                                0.0,
+                                float(touch_times[-1]) - float(touch_stats.last_touch_ts),
+                            )
+                        except (TypeError, ValueError):
+                            touch_last_age_sec = None
+
             pockets = pos_manager.get_open_positions()
             scalp_pos = pockets.get("scalp") or {}
             tagged = []
@@ -350,6 +407,13 @@ async def pullback_s5_worker() -> None:
             if base_units < config.MIN_UNITS:
                 base_units = config.MIN_UNITS
             confidence = 80
+            if touch_stats and touch_stats.count >= config.TOUCH_SOFT_COUNT:
+                orig_units = base_units
+                base_units = int(round(base_units * config.TOUCH_UNIT_FACTOR))
+                if base_units < config.MIN_UNITS:
+                    base_units = config.MIN_UNITS
+                if base_units < orig_units:
+                    confidence = max(1, confidence - config.TOUCH_CONF_PENALTY)
             lot = abs(base_units) / (100000.0 * (confidence / 100.0))
             try:
                 factors = all_factors()
@@ -378,6 +442,19 @@ async def pullback_s5_worker() -> None:
                     "trend_adx": None if adx_value is None else round(adx_value, 1),
                     "stage_index": stage_idx + 1,
                     "stage_ratio": round(stage_ratio, 3),
+                    "touch_count": None if touch_stats is None else touch_stats.count,
+                    "touch_pullback_pips": None
+                    if touch_pullback_pips is None
+                    else round(touch_pullback_pips, 2),
+                    "touch_trend_pips": None
+                    if touch_trend_pips is None
+                    else round(touch_trend_pips, 2),
+                    "touch_reset_pips": None
+                    if touch_reset_pips is None
+                    else round(touch_reset_pips, 2),
+                    "touch_last_age_sec": None
+                    if touch_last_age_sec is None
+                    else round(touch_last_age_sec, 1),
                 },
             }
             plan = PocketPlan(

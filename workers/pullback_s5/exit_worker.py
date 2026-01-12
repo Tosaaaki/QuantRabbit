@@ -17,6 +17,7 @@ from indicators.factor_cache import all_factors
 from market_data import tick_window
 from utils.metrics_logger import log_metric
 from workers.common.exit_scaling import TPScaleConfig, apply_tp_virtual_floor
+from workers.common.pullback_touch import PullbackTouchResult, count_pullback_touches
 
 LOG = logging.getLogger(__name__)
 
@@ -136,6 +137,45 @@ class PullbackExitWorker:
         self.atr_hot = max(0.5, _float_env("PULLBACK_S5_EXIT_ATR_HOT_PIPS", 5.0))
         self.atr_cold = max(0.3, _float_env("PULLBACK_S5_EXIT_ATR_COLD_PIPS", 1.2))
 
+        self.touch_enabled = _bool_env("PULLBACK_S5_EXIT_TOUCH_ENABLED", True)
+        self.touch_window_sec = max(30.0, _float_env("PULLBACK_S5_EXIT_TOUCH_WINDOW_SEC", 180.0))
+        self.touch_min_ticks = max(20, int(_float_env("PULLBACK_S5_EXIT_TOUCH_MIN_TICKS", 40)))
+        self.touch_pullback_atr_mult = max(
+            0.1, _float_env("PULLBACK_S5_EXIT_TOUCH_PULLBACK_ATR_MULT", 0.7)
+        )
+        self.touch_pullback_min_pips = max(
+            0.1, _float_env("PULLBACK_S5_EXIT_TOUCH_PULLBACK_MIN_PIPS", 0.6)
+        )
+        self.touch_pullback_max_pips = max(
+            self.touch_pullback_min_pips,
+            _float_env("PULLBACK_S5_EXIT_TOUCH_PULLBACK_MAX_PIPS", 2.4),
+        )
+        self.touch_trend_atr_mult = max(
+            0.1, _float_env("PULLBACK_S5_EXIT_TOUCH_TREND_ATR_MULT", 1.5)
+        )
+        self.touch_trend_min_pips = max(
+            0.2, _float_env("PULLBACK_S5_EXIT_TOUCH_TREND_MIN_PIPS", 1.2)
+        )
+        self.touch_trend_max_pips = max(
+            self.touch_trend_min_pips,
+            _float_env("PULLBACK_S5_EXIT_TOUCH_TREND_MAX_PIPS", 4.5),
+        )
+        self.touch_reset_ratio = max(
+            0.1, min(0.9, _float_env("PULLBACK_S5_EXIT_TOUCH_RESET_RATIO", 0.45)))
+        self.touch_tighten_count = max(
+            1, int(_float_env("PULLBACK_S5_EXIT_TOUCH_TIGHTEN_COUNT", 3))
+        )
+        self.touch_tighten_ratio = max(
+            0.5, min(1.0, _float_env("PULLBACK_S5_EXIT_TOUCH_TIGHTEN_RATIO", 0.85))
+        )
+        self.touch_force_count = max(
+            self.touch_tighten_count + 1,
+            int(_float_env("PULLBACK_S5_EXIT_TOUCH_FORCE_COUNT", 5)),
+        )
+        self.touch_force_min_pips = max(
+            0.1, _float_env("PULLBACK_S5_EXIT_TOUCH_FORCE_MIN_PIPS", 0.6)
+        )
+
     def _filter_trades(self, trades: list[dict]) -> list[dict]:
         if not ALLOWED_TAGS:
             return trades
@@ -182,6 +222,48 @@ class PullbackExitWorker:
             atr_pips=atr_pips,
             vwap_gap_pips=_safe_float(fac_m1.get("vwap_gap"), None),
             range_active=bool(range_ctx.active),
+        )
+
+    def _touch_stats(self, side: str, ctx: _Context) -> Optional[PullbackTouchResult]:
+        if not self.touch_enabled:
+            return None
+        ticks = tick_window.recent_ticks(seconds=self.touch_window_sec, limit=2400)
+        if len(ticks) < self.touch_min_ticks:
+            return None
+        prices: list[float] = []
+        times: list[float] = []
+        for row in ticks:
+            mid = row.get("mid")
+            epoch = row.get("epoch")
+            if mid is None or epoch is None:
+                continue
+            try:
+                prices.append(float(mid))
+                times.append(float(epoch))
+            except (TypeError, ValueError):
+                continue
+        if len(prices) < self.touch_min_ticks:
+            return None
+        atr_ref = ctx.atr_pips or 0.0
+        if atr_ref <= 0.0:
+            atr_ref = self.touch_pullback_min_pips
+        pullback_pips = max(
+            self.touch_pullback_min_pips,
+            min(self.touch_pullback_max_pips, atr_ref * self.touch_pullback_atr_mult),
+        )
+        trend_pips = max(
+            self.touch_trend_min_pips,
+            min(self.touch_trend_max_pips, atr_ref * self.touch_trend_atr_mult),
+        )
+        reset_pips = max(self.touch_pullback_min_pips * 0.5, pullback_pips * self.touch_reset_ratio)
+        return count_pullback_touches(
+            prices,
+            side,
+            pullback_pips=pullback_pips,
+            trend_confirm_pips=trend_pips,
+            reset_pips=reset_pips,
+            pip_value=0.01,
+            timestamps=times,
         )
 
     async def _close(
@@ -293,6 +375,14 @@ class PullbackExitWorker:
             stop_loss = max(0.7, stop_loss * 0.9)
         lock_buffer = max(lock_buffer, stop_loss * 0.35)
 
+        touch_stats = self._touch_stats(side, ctx)
+        if touch_stats and touch_stats.count >= self.touch_tighten_count:
+            profit_take = max(0.6, profit_take * self.touch_tighten_ratio)
+            trail_start = max(0.8, trail_start * self.touch_tighten_ratio)
+            trail_backoff = max(0.2, trail_backoff * self.touch_tighten_ratio)
+            lock_trigger = max(0.3, lock_trigger * self.touch_tighten_ratio)
+            lock_buffer = max(0.1, lock_buffer * self.touch_tighten_ratio)
+
         if hold_sec < self.min_hold_sec:
             return None
 
@@ -349,6 +439,9 @@ class PullbackExitWorker:
 
         if state.peak >= trail_start and pnl > 0 and pnl <= state.peak - trail_backoff:
             return "trail_take"
+
+        if touch_stats and touch_stats.count >= self.touch_force_count and pnl >= self.touch_force_min_pips:
+            return "touch_exhaust"
 
         if pnl > 0.3 and ctx.vwap_gap_pips is not None and abs(ctx.vwap_gap_pips) <= self.vwap_grab_gap:
             return "vwap_gravity"
