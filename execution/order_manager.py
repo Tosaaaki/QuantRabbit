@@ -27,6 +27,7 @@ from oandapyV20.endpoints.trades import TradeCRCDO, TradeClose, TradeDetails
 from execution.order_ids import build_client_order_id
 from execution.stop_loss_policy import stop_loss_disabled, trailing_sl_allowed
 from execution.section_axis import attach_section_axis
+from execution.entry_guard import evaluate_entry_guard
 
 from analysis import policy_bus
 from utils.secrets import get_secret
@@ -362,6 +363,30 @@ def _latest_mid_price() -> Optional[float]:
             return float(ask)
     except Exception:
         pass
+    return None
+
+
+def _entry_price_hint(entry_thesis: Optional[dict], meta: Optional[dict]) -> Optional[float]:
+    if isinstance(entry_thesis, dict):
+        for key in ("entry_price", "price", "entry_ref"):
+            try:
+                val = float(entry_thesis.get(key))
+                if val > 0:
+                    return val
+            except Exception:
+                continue
+    est = _estimate_price(meta)
+    if est is not None:
+        return est
+    return _latest_mid_price()
+
+
+def _strategy_tag_from_thesis(entry_thesis: Optional[dict]) -> Optional[str]:
+    if not isinstance(entry_thesis, dict):
+        return None
+    raw_tag = entry_thesis.get("strategy_tag") or entry_thesis.get("strategy")
+    if raw_tag:
+        return str(raw_tag)
     return None
 
 
@@ -2142,6 +2167,57 @@ async def market_order(
     if isinstance(entry_thesis, dict) and not reduce_only:
         entry_thesis = attach_section_axis(entry_thesis, pocket=pocket)
 
+    if not reduce_only and pocket != "manual":
+        entry_price = _entry_price_hint(entry_thesis, meta)
+        if entry_price is not None:
+            guard = evaluate_entry_guard(
+                entry_price=entry_price,
+                side="long" if units > 0 else "short",
+                pocket=pocket,
+                strategy_tag=strategy_tag,
+                entry_thesis=entry_thesis,
+            )
+            if not guard.allowed:
+                _console_order_log(
+                    "OPEN_REJECT",
+                    pocket=pocket,
+                    strategy_tag=strategy_tag or "unknown",
+                    side=side_label,
+                    units=units,
+                    sl_price=sl_price,
+                    tp_price=tp_price,
+                    client_order_id=client_order_id,
+                    note=guard.reason or "entry_guard",
+                )
+                log_order(
+                    pocket=pocket,
+                    instrument=instrument,
+                    side=side_label,
+                    units=units,
+                    sl_price=sl_price,
+                    tp_price=tp_price,
+                    client_order_id=client_order_id,
+                    status="entry_guard_block",
+                    attempt=0,
+                    request_payload={
+                        "reason": guard.reason,
+                        "entry_price": entry_price,
+                        "entry_guard": guard.debug,
+                        "entry_thesis": entry_thesis,
+                        "meta": meta,
+                    },
+                )
+                log_metric(
+                    "entry_guard_block",
+                    1.0,
+                    tags={
+                        "pocket": pocket,
+                        "strategy": strategy_tag or "unknown",
+                        "reason": guard.reason or "entry_guard",
+                    },
+                )
+                return None
+
     # 成績ガード（直近 PF/勝率が悪いタグは全ポケットでブロック。manual は除外）
     perf_guard_enabled = os.getenv("PERF_GUARD_GLOBAL_ENABLED", "0").strip().lower() not in {
         "",
@@ -3376,6 +3452,45 @@ async def limit_order(
             f"{current_ask:.3f}" if current_ask is not None else "NA",
         )
         return None, None
+
+    if not reduce_only and pocket != "manual":
+        strategy_tag = _strategy_tag_from_thesis(entry_thesis)
+        guard = evaluate_entry_guard(
+            entry_price=price,
+            side="long" if units > 0 else "short",
+            pocket=pocket,
+            strategy_tag=strategy_tag,
+            entry_thesis=entry_thesis,
+        )
+        if not guard.allowed:
+            _log_order(
+                pocket=pocket,
+                instrument=instrument,
+                side="buy" if units > 0 else "sell",
+                units=units,
+                sl_price=sl_price,
+                tp_price=tp_price,
+                client_order_id=client_order_id,
+                status="entry_guard_block",
+                attempt=0,
+                request_payload={
+                    "reason": guard.reason,
+                    "entry_price": price,
+                    "entry_guard": guard.debug,
+                    "entry_thesis": entry_thesis,
+                    "meta": meta,
+                },
+            )
+            log_metric(
+                "entry_guard_block",
+                1.0,
+                tags={
+                    "pocket": pocket,
+                    "strategy": strategy_tag or "unknown",
+                    "reason": guard.reason or "entry_guard",
+                },
+            )
+            return None, None
 
     if not is_market_open():
         _log_order(
