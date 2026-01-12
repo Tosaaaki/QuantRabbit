@@ -297,7 +297,60 @@ def _compute_axis(thesis: Dict[str, object], pocket: str) -> Optional[SectionAxi
     return _axis_from_snapshot(snapshot, tf, "cache")
 
 
-def _resolve_by_pocket(name: str, pocket: str, defaults: Dict[str, float]) -> float:
+def _strategy_from_client_id(client_order_id: Optional[str]) -> Optional[str]:
+    if not client_order_id:
+        return None
+    parts = str(client_order_id).split("-")
+    if len(parts) < 5:
+        return None
+    tag = parts[3].strip()
+    return tag or None
+
+
+def _extract_strategy_tag(trade: Dict[str, object]) -> Optional[str]:
+    thesis = trade.get("entry_thesis") or {}
+    if isinstance(thesis, str):
+        try:
+            parsed = json.loads(thesis)
+            if isinstance(parsed, dict):
+                thesis = parsed
+        except Exception:
+            thesis = {}
+    if isinstance(thesis, dict):
+        for key in ("strategy_tag", "strategy", "tag"):
+            val = thesis.get(key)
+            if val:
+                return str(val)
+    for key in ("strategy_tag", "strategy", "tag"):
+        val = trade.get(key)
+        if val:
+            return str(val)
+    client_id = trade.get("client_order_id")
+    if not client_id and isinstance(trade.get("clientExtensions"), dict):
+        client_id = trade["clientExtensions"].get("id")
+    return _strategy_from_client_id(str(client_id)) if client_id else None
+
+
+def _strategy_key_candidates(tag: Optional[str]) -> tuple[str, ...]:
+    if not tag:
+        return ()
+    raw = "".join(ch for ch in str(tag) if ch.isalnum()).upper()
+    if not raw:
+        return ()
+    keys = [raw]
+    if len(raw) > 9:
+        keys.append(raw[:9])
+    return tuple(dict.fromkeys(keys))
+
+
+def _resolve_by_pocket(
+    name: str, pocket: str, defaults: Dict[str, float], strategy_keys: tuple[str, ...] | None = None
+) -> float:
+    if strategy_keys:
+        for key in strategy_keys:
+            specific = _env_float(f"{name}_{key}")
+            if specific is not None:
+                return specific
     pocket_upper = pocket.upper()
     specific = _env_float(f"{name}_{pocket_upper}")
     if specific is not None:
@@ -308,7 +361,14 @@ def _resolve_by_pocket(name: str, pocket: str, defaults: Dict[str, float]) -> fl
     return float(defaults.get(pocket, defaults.get("default", 0.0)))
 
 
-def _resolve_int_by_pocket(name: str, pocket: str, defaults: Dict[str, int]) -> int:
+def _resolve_int_by_pocket(
+    name: str, pocket: str, defaults: Dict[str, int], strategy_keys: tuple[str, ...] | None = None
+) -> int:
+    if strategy_keys:
+        for key in strategy_keys:
+            specific = _env_int(f"{name}_{key}")
+            if specific is not None:
+                return specific
     pocket_upper = pocket.upper()
     specific = _env_int(f"{name}_{pocket_upper}")
     if specific is not None:
@@ -319,7 +379,12 @@ def _resolve_int_by_pocket(name: str, pocket: str, defaults: Dict[str, int]) -> 
     return int(defaults.get(pocket, defaults.get("default", 0)))
 
 
-def _section_exit_enabled(pocket: str) -> bool:
+def _section_exit_enabled(pocket: str, strategy_keys: tuple[str, ...] | None = None) -> bool:
+    if strategy_keys:
+        for key in strategy_keys:
+            specific = _env_bool(f"SECTION_EXIT_ENABLED_{key}")
+            if specific is not None:
+                return specific
     pocket_upper = pocket.upper()
     specific = _env_bool(f"SECTION_EXIT_ENABLED_{pocket_upper}")
     if specific is not None:
@@ -362,7 +427,9 @@ def evaluate_section_exit(
     min_hold_sec: Optional[float] = None,
     entry_price: Optional[float] = None,
 ) -> SectionExitDecision:
-    if not _section_exit_enabled(pocket):
+    strategy_tag = _extract_strategy_tag(trade)
+    strategy_keys = _strategy_key_candidates(strategy_tag)
+    if not _section_exit_enabled(pocket, strategy_keys):
         return SectionExitDecision(False, None, False, {})
     if current_price <= 0.0:
         return SectionExitDecision(False, None, False, {})
@@ -378,7 +445,12 @@ def evaluate_section_exit(
         hold_sec = (now - opened_at).total_seconds() if opened_at else 0.0
 
     pocket_key = pocket or "default"
-    min_hold = _resolve_by_pocket("SECTION_EXIT_MIN_HOLD_SEC", pocket_key, _DEFAULT_MIN_HOLD_SEC)
+    min_hold = _resolve_by_pocket(
+        "SECTION_EXIT_MIN_HOLD_SEC",
+        pocket_key,
+        _DEFAULT_MIN_HOLD_SEC,
+        strategy_keys,
+    )
     if min_hold_sec is not None:
         min_hold = max(min_hold, float(min_hold_sec))
     if hold_sec < min_hold:
@@ -397,12 +469,22 @@ def evaluate_section_exit(
         return SectionExitDecision(False, None, False, {})
     range_pips = range_span / PIP
 
-    min_range_pips = _resolve_by_pocket("SECTION_EXIT_MIN_RANGE_PIPS", pocket_key, _DEFAULT_MIN_RANGE_PIPS)
+    min_range_pips = _resolve_by_pocket(
+        "SECTION_EXIT_MIN_RANGE_PIPS",
+        pocket_key,
+        _DEFAULT_MIN_RANGE_PIPS,
+        strategy_keys,
+    )
     if range_pips < min_range_pips:
         return SectionExitDecision(False, None, False, {})
 
     pnl_pips = (current_price - entry) / PIP if side == "long" else (entry - current_price) / PIP
-    max_profit = _resolve_by_pocket("SECTION_EXIT_MAX_PROFIT_PIPS", pocket_key, _DEFAULT_MAX_PROFIT_PIPS)
+    max_profit = _resolve_by_pocket(
+        "SECTION_EXIT_MAX_PROFIT_PIPS",
+        pocket_key,
+        _DEFAULT_MAX_PROFIT_PIPS,
+        strategy_keys,
+    )
     if pnl_pips > max_profit:
         return SectionExitDecision(False, None, False, {})
 
@@ -415,10 +497,21 @@ def evaluate_section_exit(
         "SECTION_EXIT_SECTION_DELTA",
         pocket_key,
         _DEFAULT_SECTION_DELTA,
+        strategy_keys,
     )
 
-    fib_trigger = _resolve_by_pocket("SECTION_EXIT_FIB_TRIGGER", pocket_key, {"default": 0.382})
-    fib_deep = _resolve_by_pocket("SECTION_EXIT_FIB_DEEP", pocket_key, {"default": 0.236})
+    fib_trigger = _resolve_by_pocket(
+        "SECTION_EXIT_FIB_TRIGGER",
+        pocket_key,
+        {"default": 0.382},
+        strategy_keys,
+    )
+    fib_deep = _resolve_by_pocket(
+        "SECTION_EXIT_FIB_DEEP",
+        pocket_key,
+        {"default": 0.236},
+        strategy_keys,
+    )
     fib_trigger = _clamp(fib_trigger, 0.05, 0.49)
     fib_deep = _clamp(fib_deep, 0.05, fib_trigger)
     fib_low = axis.low + range_span * fib_trigger
@@ -426,9 +519,24 @@ def evaluate_section_exit(
     fib_low_deep = axis.low + range_span * fib_deep
     fib_high_deep = axis.high - range_span * fib_deep
 
-    mid_buffer_pips = _resolve_by_pocket("SECTION_EXIT_MID_BUFFER_PIPS", pocket_key, _DEFAULT_MID_BUFFER_PIPS)
-    mid_distance_pips = _resolve_by_pocket("SECTION_EXIT_MID_DISTANCE_PIPS", pocket_key, _DEFAULT_MID_DISTANCE_PIPS)
-    mid_distance_frac = _resolve_by_pocket("SECTION_EXIT_MID_DISTANCE_FRAC", pocket_key, {"default": 0.15})
+    mid_buffer_pips = _resolve_by_pocket(
+        "SECTION_EXIT_MID_BUFFER_PIPS",
+        pocket_key,
+        _DEFAULT_MID_BUFFER_PIPS,
+        strategy_keys,
+    )
+    mid_distance_pips = _resolve_by_pocket(
+        "SECTION_EXIT_MID_DISTANCE_PIPS",
+        pocket_key,
+        _DEFAULT_MID_DISTANCE_PIPS,
+        strategy_keys,
+    )
+    mid_distance_frac = _resolve_by_pocket(
+        "SECTION_EXIT_MID_DISTANCE_FRAC",
+        pocket_key,
+        {"default": 0.15},
+        strategy_keys,
+    )
     mid_distance_pips = max(mid_distance_pips, range_pips * mid_distance_frac)
     mid_buffer_price = max(0.0, mid_buffer_pips) * PIP
 
@@ -479,6 +587,7 @@ def evaluate_section_exit(
         "fib_high": round(fib_high, 5),
         "axis_tf": axis.tf or "",
         "axis_source": axis.source or "",
+        "strategy_tag": strategy_tag or "",
     }
     return SectionExitDecision(
         True,
