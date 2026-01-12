@@ -96,6 +96,7 @@ class Donchian55:
             range_pips = max(10.0, range_span * 100.0)  # 55本レンジをpip換算
             tp_cap = min(tp, 24.0, atr_pips * 4.5 + 6.0, range_pips * 0.35)
             tp_floor = max(10.0, sl * 0.5, atr_pips * 2.5)
+            tp_floor = min(tp_floor, tp_cap)
             tp = max(tp_floor, min(tp_cap, sl * 1.25))
             return round(sl, 2), round(tp, 2)
 
