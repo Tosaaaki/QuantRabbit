@@ -5652,6 +5652,10 @@ async def logic_loop(
                     and signal.get("tp_pips")
                 ):
                     try:
+                        tp_before_rr = float(signal.get("tp_pips") or 0.0)
+                    except Exception:
+                        tp_before_rr = 0.0
+                    try:
                         rr_context = {
                             "pocket": signal["pocket"],
                             "strategy": signal["strategy"],
@@ -5675,6 +5679,19 @@ async def logic_loop(
                         sl_val = float(signal["sl_pips"] or 0.0)
                         target_tp = round(max(sl_val * rr_hint.ratio, sl_val * rr_advisor.min_ratio), 2)
                         if target_tp > 0.0:
+                            # Donchian55 の TP は戦略側の上限を優先して短く保つ
+                            if (
+                                (signal.get("strategy") == "Donchian55"
+                                 or signal.get("profile") == "macro_breakout_donchian")
+                                and tp_before_rr > 0.0
+                                and target_tp > tp_before_rr
+                            ):
+                                logging.info(
+                                    "[RR_ADVISOR] cap tp for Donchian55 %.2f->%.2f",
+                                    target_tp,
+                                    tp_before_rr,
+                                )
+                                target_tp = tp_before_rr
                             signal["tp_pips"] = target_tp
                             log_metric(
                                 "rr_advisor_ratio",
