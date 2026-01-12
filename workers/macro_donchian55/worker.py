@@ -66,7 +66,7 @@ def _entry_guard(
 ) -> bool:
     if not _env_bool("ENTRY_GUARD_ENABLED_DONCHIAN55", True):
         return True
-    if not is_addon and not _env_bool("ENTRY_GUARD_PRIMARY_DONCHIAN55", False):
+    if not is_addon and not _env_bool("ENTRY_GUARD_PRIMARY_DONCHIAN55", True):
         return True
 
     candles = fac_h4.get("candles") or fac_h1.get("candles") or []
