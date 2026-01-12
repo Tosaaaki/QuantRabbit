@@ -6,10 +6,12 @@ import asyncio
 import datetime
 import hashlib
 import logging
+import os
 import time
 from typing import Dict, Optional, Tuple
 
 from analysis.range_guard import detect_range_mode
+from analysis.range_model import compute_range_snapshot
 from indicators.factor_cache import all_factors
 from execution.order_manager import market_order
 from execution.risk_guard import allowed_lot, can_trade, clamp_sl_tp
@@ -23,6 +25,102 @@ from analysis import perf_monitor
 from . import config
 
 LOG = logging.getLogger(__name__)
+PIP = 0.01
+
+
+def _env_float(name: str, default: float) -> float:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    try:
+        return float(raw)
+    except (TypeError, ValueError):
+        return default
+
+
+def _env_int(name: str, default: int) -> int:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    try:
+        return int(raw)
+    except (TypeError, ValueError):
+        return default
+
+
+def _env_bool(name: str, default: bool) -> bool:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() not in {"", "0", "false", "no"}
+
+
+def _entry_guard(
+    *,
+    side: str,
+    price: float,
+    adx: float,
+    fac_h4: Dict[str, object],
+    fac_h1: Dict[str, object],
+    is_addon: bool,
+) -> bool:
+    if not _env_bool("ENTRY_GUARD_ENABLED_DONCHIAN55", True):
+        return True
+    if not is_addon and not _env_bool("ENTRY_GUARD_PRIMARY_DONCHIAN55", False):
+        return True
+
+    candles = fac_h4.get("candles") or fac_h1.get("candles") or []
+    if not candles:
+        return True
+    lookback = _env_int("ENTRY_GUARD_LOOKBACK_DONCHIAN55", 60)
+    hi_pct = _env_float("ENTRY_GUARD_HI_PCT_DONCHIAN55", 95.0)
+    lo_pct = _env_float("ENTRY_GUARD_LO_PCT_DONCHIAN55", 5.0)
+    axis = compute_range_snapshot(
+        candles,
+        lookback=max(20, lookback),
+        method="percentile",
+        hi_pct=hi_pct,
+        lo_pct=lo_pct,
+    )
+    if axis is None:
+        return True
+    range_span = max(0.0, float(axis.high) - float(axis.low))
+    if range_span <= 0.0:
+        return True
+    range_pips = range_span / PIP
+    min_range_pips = _env_float("ENTRY_GUARD_MIN_RANGE_PIPS_DONCHIAN55", 20.0)
+    if range_pips < min_range_pips:
+        return True
+
+    fib_extreme = _env_float("ENTRY_GUARD_FIB_EXTREME_DONCHIAN55", 0.214)
+    fib_extreme = max(0.05, min(0.45, fib_extreme))
+    mid_distance_pips = _env_float("ENTRY_GUARD_MID_DISTANCE_PIPS_DONCHIAN55", 20.0)
+    mid_distance_frac = _env_float("ENTRY_GUARD_MID_DISTANCE_FRAC_DONCHIAN55", 0.2)
+    mid_distance_pips = max(mid_distance_pips, range_pips * mid_distance_frac)
+    adx_bypass = _env_float("ENTRY_GUARD_ADX_BYPASS_DONCHIAN55", 30.0)
+    if adx >= adx_bypass:
+        return True
+
+    upper_guard = float(axis.high) - range_span * fib_extreme
+    lower_guard = float(axis.low) + range_span * fib_extreme
+    mid = float(axis.mid)
+    mid_distance = abs(price - mid) / PIP
+
+    if side == "long":
+        if price >= upper_guard:
+            LOG.info("%s entry_guard_extreme_long price=%.3f upper=%.3f", config.LOG_PREFIX, price, upper_guard)
+            return False
+        if price > mid and mid_distance >= mid_distance_pips:
+            LOG.info("%s entry_guard_mid_far_long price=%.3f mid=%.3f dist=%.1f", config.LOG_PREFIX, price, mid, mid_distance)
+            return False
+    else:
+        if price <= lower_guard:
+            LOG.info("%s entry_guard_extreme_short price=%.3f lower=%.3f", config.LOG_PREFIX, price, lower_guard)
+            return False
+        if price < mid and mid_distance >= mid_distance_pips:
+            LOG.info("%s entry_guard_mid_far_short price=%.3f mid=%.3f dist=%.1f", config.LOG_PREFIX, price, mid, mid_distance)
+            return False
+    return True
 
 
 def _latest_mid(fallback: float) -> float:
@@ -129,6 +227,10 @@ async def donchian55_worker() -> None:
             atr_pips = float(fac_h1.get("atr_pips") or 0.0)
         except Exception:
             atr_pips = 0.0
+        try:
+            adx = float(fac_h1.get("adx") or 0.0)
+        except Exception:
+            adx = 0.0
         pos_bias = 0.0
         try:
             open_positions = snap.positions or {}
@@ -155,6 +257,17 @@ async def donchian55_worker() -> None:
             price = 0.0
         price = _latest_mid(price)
         side = "long" if signal["action"] == "OPEN_LONG" else "short"
+        same_side = (existing_units > 0 and side == "long") or (existing_units < 0 and side == "short")
+        is_addon = same_side and abs(existing_units) > 0
+        if not _entry_guard(
+            side=side,
+            price=price,
+            adx=adx,
+            fac_h4=fac_h4,
+            fac_h1=fac_h1,
+            is_addon=is_addon,
+        ):
+            continue
         sl_pips = float(signal.get("sl_pips") or 0.0)
         tp_pips = float(signal.get("tp_pips") or 0.0)
         if price <= 0.0 or sl_pips <= 0.0:

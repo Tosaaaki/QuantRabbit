@@ -14,6 +14,8 @@ except ModuleNotFoundError:  # pragma: no cover - fallback when optional module 
     def detect_latest_n_wave(*args, **kwargs):  # type: ignore
         return None
 
+from analysis.range_model import compute_range_snapshot
+
 _PIP = 0.01
 _CONFIG_PATH = Path(__file__).resolve().parents[2] / "configs" / "scalp_active_params.json"
 _PARAM_CACHE: Dict[str, Dict] = {"mtime": None, "data": {}}
@@ -90,6 +92,24 @@ def _to_bool(value: object, default: bool = False) -> bool:
         return default
 
 
+def _env_float(name: str, default: float) -> float:
+    val = os.getenv(name)
+    return default if val is None else (_to_float(val, default) or default)
+
+
+def _env_int(name: str, default: int) -> int:
+    val = os.getenv(name)
+    try:
+        return int(val) if val is not None else default
+    except (TypeError, ValueError):
+        return default
+
+
+def _env_bool(name: str, default: bool) -> bool:
+    val = os.getenv(name)
+    return _to_bool(val, default)
+
+
 def _candle_body_pips(candle: Dict[str, float]) -> Optional[float]:
     open_px = _to_float(candle.get("open"))
     close_px = _to_float(candle.get("close"))
@@ -105,6 +125,79 @@ def _force_mode() -> bool:
 def _cfg_float(section: Dict, key: str, default: float) -> float:
     val = _to_float(section.get(key))
     return default if val is None else val
+
+
+def _entry_guard_axis(candles: list[dict]) -> Optional[object]:
+    if not _env_bool("ENTRY_GUARD_ENABLED_M1SCALPER", True):
+        return None
+    lookback = _env_int("ENTRY_GUARD_LOOKBACK_M1SCALPER", 24)
+    hi_pct = _env_float("ENTRY_GUARD_HI_PCT_M1SCALPER", 95.0)
+    lo_pct = _env_float("ENTRY_GUARD_LO_PCT_M1SCALPER", 5.0)
+    return compute_range_snapshot(
+        candles,
+        lookback=max(10, lookback),
+        method="percentile",
+        hi_pct=hi_pct,
+        lo_pct=lo_pct,
+    )
+
+
+def _entry_guard(
+    *,
+    side: str,
+    entry_price: float,
+    axis: Optional[object],
+    adx: float,
+    strong_up: bool,
+    strong_down: bool,
+) -> bool:
+    if axis is None:
+        return True
+    try:
+        high = float(axis.high)
+        low = float(axis.low)
+        mid = float(axis.mid)
+    except Exception:
+        return True
+    range_span = max(0.0, high - low)
+    if range_span <= 0.0:
+        return True
+    range_pips = range_span / _PIP
+    min_range_pips = _env_float("ENTRY_GUARD_MIN_RANGE_PIPS_M1SCALPER", 3.0)
+    if range_pips < min_range_pips:
+        return True
+    fib_extreme = _env_float("ENTRY_GUARD_FIB_EXTREME_M1SCALPER", 0.214)
+    fib_extreme = max(0.05, min(0.45, fib_extreme))
+    mid_distance_pips = _env_float("ENTRY_GUARD_MID_DISTANCE_PIPS_M1SCALPER", 1.6)
+    mid_distance_frac = _env_float("ENTRY_GUARD_MID_DISTANCE_FRAC_M1SCALPER", 0.25)
+    mid_distance_pips = max(mid_distance_pips, range_pips * mid_distance_frac)
+    adx_bypass = _env_float("ENTRY_GUARD_ADX_BYPASS_M1SCALPER", 28.0)
+    if adx >= adx_bypass:
+        return True
+    if side == "long" and strong_up:
+        return True
+    if side == "short" and strong_down:
+        return True
+
+    upper_guard = high - range_span * fib_extreme
+    lower_guard = low + range_span * fib_extreme
+    mid_distance = abs(entry_price - mid) / _PIP
+
+    if side == "long":
+        if entry_price >= upper_guard:
+            _log("entry_guard_extreme_long", price=round(entry_price, 3), upper=round(upper_guard, 3))
+            return False
+        if entry_price > mid and mid_distance >= mid_distance_pips:
+            _log("entry_guard_mid_far_long", price=round(entry_price, 3), mid=round(mid, 3), dist=round(mid_distance, 2))
+            return False
+    else:
+        if entry_price <= lower_guard:
+            _log("entry_guard_extreme_short", price=round(entry_price, 3), lower=round(lower_guard, 3))
+            return False
+        if entry_price < mid and mid_distance >= mid_distance_pips:
+            _log("entry_guard_mid_far_short", price=round(entry_price, 3), mid=round(mid, 3), dist=round(mid_distance, 2))
+            return False
+    return True
 
 
 def _tech_multiplier(fac: Dict[str, object]) -> float:
@@ -306,6 +399,7 @@ class M1Scalper:
             return _cfg_float(nwave_cfg, key, default)
 
         candles = fac.get("candles") or []
+        entry_axis = _entry_guard_axis(candles)
         nwave = detect_latest_n_wave(candles) if detect_latest_n_wave else None
         close = fac.get("close")
         ema20 = fac.get("ema20")
@@ -463,6 +557,16 @@ class M1Scalper:
                 "fast_cut_hard_mult": 1.6,
                 "tag": f"{M1Scalper.name}-buy-dip" if action == "OPEN_LONG" else f"{M1Scalper.name}-trend-short",
             })
+            side = "long" if action == "OPEN_LONG" else "short"
+            if not _entry_guard(
+                side=side,
+                entry_price=float(close),
+                axis=entry_axis,
+                adx=float(adx),
+                strong_up=strong_up,
+                strong_down=strong_down,
+            ):
+                return None
             return _attach_kill(signal)
         if momentum > momentum_thresh and rsi > 45:
             speed = abs(momentum) / max(0.0005, atr)
@@ -489,6 +593,16 @@ class M1Scalper:
                 "fast_cut_hard_mult": 1.6,
                 "tag": f"{M1Scalper.name}-sell-rally" if action == "OPEN_SHORT" else f"{M1Scalper.name}-trend-long",
             })
+            side = "long" if action == "OPEN_LONG" else "short"
+            if not _entry_guard(
+                side=side,
+                entry_price=float(close),
+                axis=entry_axis,
+                adx=float(adx),
+                strong_up=strong_up,
+                strong_down=strong_down,
+            ):
+                return None
             return _attach_kill(signal)
 
         def _alignment_ok(side: str) -> bool:
@@ -578,6 +692,15 @@ class M1Scalper:
                     atr=round(atr_pips, 2),
                     rsi=round(rsi, 2),
                 )
+                if not _entry_guard(
+                    side="long",
+                    entry_price=float(entry_price),
+                    axis=entry_axis,
+                    adx=float(adx),
+                    strong_up=strong_up,
+                    strong_down=strong_down,
+                ):
+                    return None
                 return _attach_kill(signal)
 
             if close < entry_price - tolerance_pips * _PIP:
@@ -616,6 +739,15 @@ class M1Scalper:
                 atr=round(atr_pips, 2),
                 rsi=round(rsi, 2),
             )
+            if not _entry_guard(
+                side="short",
+                entry_price=float(entry_price),
+                axis=entry_axis,
+                adx=float(adx),
+                strong_up=strong_up,
+                strong_down=strong_down,
+            ):
+                return None
             return _attach_kill(signal)
 
         # Fallback microstructure scalp (limit entry every cycle)
@@ -774,6 +906,16 @@ class M1Scalper:
                 ticks=len(ticks),
                 tech_mult=tech_mult_r,
             )
+            side = "long" if action == "OPEN_LONG" else "short"
+            if not _entry_guard(
+                side=side,
+                entry_price=float(entry_price_out),
+                axis=entry_axis,
+                adx=float(adx),
+                strong_up=strong_up,
+                strong_down=strong_down,
+            ):
+                return None
             return _attach_kill(signal)
 
         _log(
