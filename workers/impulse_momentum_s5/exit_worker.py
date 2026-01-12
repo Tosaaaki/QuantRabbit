@@ -10,7 +10,7 @@ from datetime import datetime, timezone
 from typing import Dict, Optional, Sequence, Set
 
 from analysis.range_guard import detect_range_mode
-from execution.order_manager import close_trade
+from workers.common.exit_utils import close_trade
 from execution.position_manager import PositionManager
 from execution.section_axis import evaluate_section_exit
 from indicators.factor_cache import all_factors
