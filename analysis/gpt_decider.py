@@ -60,7 +60,7 @@ _ALLOWED_RISK = {"high", "neutral", "low"}
 _ALLOWED_LIQ = {"tight", "normal", "loose"}
 _ALLOWED_BIAS = {"up", "down", "flat"}
 
-_MAX_COMPLETION_TOKENS = 200
+_MAX_COMPLETION_TOKENS = max(80, int(os.getenv("GPT_DECIDER_MAX_TOKENS", "120")))
 _GPT5_MAX_OUTPUT_TOKENS = 256
 _MODEL_OUTPUT_LIMITS = {
     "gpt-5-mini": 256,
@@ -174,9 +174,11 @@ async def _call_model(payload: Dict, messages: List[Dict], model: str) -> Dict:
             "response_format": {"type": "json_object"},
             "temperature": _MODEL_TEMPERATURE,
         }
+        model_cap = _MODEL_OUTPUT_LIMITS.get(model, _MAX_COMPLETION_TOKENS)
+        max_tokens = min(_MAX_COMPLETION_TOKENS, model_cap)
         token_kwargs_order = [
-            {"max_completion_tokens": _MAX_COMPLETION_TOKENS},
-            {"max_tokens": _MAX_COMPLETION_TOKENS},
+            {"max_completion_tokens": max_tokens},
+            {"max_tokens": max_tokens},
         ]
 
         async def _sleep_with_jitter(attempt: int) -> None:

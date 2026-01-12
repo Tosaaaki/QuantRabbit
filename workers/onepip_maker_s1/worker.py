@@ -417,6 +417,7 @@ async def onepip_maker_s1_worker() -> None:
                 client_order_id=client_id,
                 ttl_ms=config.TTL_MS,
                 entry_thesis={
+                    "strategy_tag": "OnePipMakerS1",
                     "imbalance": event.imbalance,
                     "spread": event.spread_pips,
                     "drift": event.drift_pips,

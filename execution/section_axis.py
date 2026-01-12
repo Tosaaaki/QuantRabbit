@@ -9,6 +9,7 @@ import json
 import os
 
 from analysis.range_model import RangeSnapshot, compute_range_snapshot
+from analysis.technique_engine import evaluate_exit_techniques
 from indicators.factor_cache import get_candles_snapshot
 
 PIP = 0.01
@@ -459,6 +460,20 @@ def evaluate_section_exit(
     thesis = trade.get("entry_thesis") or {}
     if not isinstance(thesis, dict):
         thesis = {}
+
+    tech_exit = evaluate_exit_techniques(
+        trade=trade,
+        current_price=current_price,
+        side=side,
+        pocket=pocket,
+    )
+    if tech_exit.should_exit:
+        return SectionExitDecision(
+            True,
+            tech_exit.reason,
+            tech_exit.allow_negative,
+            tech_exit.debug,
+        )
 
     axis = _extract_axis(thesis) or _compute_axis(thesis, pocket_key)
     if axis is None:

@@ -619,14 +619,9 @@ MACRO_SPREAD_OVERRIDE = _safe_env_float("MACRO_SPREAD_OVERRIDE", 1.4, low=1.0, h
 
 GPT_FACTOR_KEYS: Dict[str, tuple[str, ...]] = {
     "M1": (
-        "timestamp",
         "close",
-        "open",
-        "high",
-        "low",
         "ma10",
         "ma20",
-        "ema20",
         "adx",
         "rsi",
         "atr_pips",
@@ -634,7 +629,6 @@ GPT_FACTOR_KEYS: Dict[str, tuple[str, ...]] = {
         "bbw",
     ),
     "H4": (
-        "timestamp",
         "close",
         "ma10",
         "ma20",

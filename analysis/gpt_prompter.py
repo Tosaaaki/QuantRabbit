@@ -70,26 +70,22 @@ def build_messages(payload: Dict) -> List[Dict]:
         }
     )
 
-    user_content = "Latest USD/JPY snapshot JSON:\n" + _compact_json(compact_payload or {})
+    user_content = _compact_json(compact_payload or {})
 
     system_content = (
-        "You are an FX trading assistant for USD/JPY. Respond ONLY with one JSON object "
-        "containing exactly these fields (no markdown/text): "
+        "Return ONLY compact JSON with fields: "
         "{\"mode\":\"DEFENSIVE|TREND_FOLLOW|RANGE_SCALP|TRANSITION\","
         "\"risk_bias\":\"high|neutral|low\","
         "\"liquidity_bias\":\"tight|normal|loose\","
-        "\"range_confidence\":<0.0-1.0>,"
-        "\"pattern_hint\":[\"short tags\"],"
-        "\"focus_tag\":\"micro|macro|hybrid\","
-        "\"weight_macro\":<0.0-1.0>,"
-        "\"weight_scalp\":<0.0-1.0>,"
+        "\"range_confidence\":0-1,"
+        "\"pattern_hint\":[\"short\"],"
+        "\"focus_tag\":\"micro|macro|hybrid|event\","
+        "\"weight_macro\":0-1,"
+        "\"weight_scalp\":0-1,"
         "\"forecast_bias\":\"up|down|flat\","
-        "\"forecast_confidence\":<0.0-1.0>,"
-        "\"forecast_horizon_min\":<int>} "
-        "Constraints: weight_macro + weight_scalp <= 1.0. "
-        "Keep pattern_hint short (<=5 items, <=24 chars each). "
-        "Forecast: give directional bias for the next 5–240 minutes (short bias if horizon<60, macro bias if >=60). "
-        "Output compact JSON only."
+        "\"forecast_confidence\":0-1,"
+        "\"forecast_horizon_min\":int}. "
+        "Constraints: weight_macro+weight_scalp<=1.0; pattern_hint<=5 items. No markdown."
     )
 
     messages = [

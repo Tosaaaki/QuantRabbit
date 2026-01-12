@@ -13,6 +13,8 @@ from __future__ import annotations
 
 import json
 import logging
+import os
+import tempfile
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -205,9 +207,28 @@ def _persist_snapshot(snapshot: OrderBookSnapshot) -> None:
             "ask_levels": [[lvl.price, lvl.size] for lvl in snapshot.ask_levels],
         }
         _SNAPSHOT_PATH.parent.mkdir(parents=True, exist_ok=True)
-        tmp_path = _SNAPSHOT_PATH.with_suffix(".tmp")
-        tmp_path.write_text(json.dumps(payload, separators=(",", ":")), encoding="utf-8")
-        tmp_path.replace(_SNAPSHOT_PATH)
+        tmp_path = None
+        try:
+            with tempfile.NamedTemporaryFile(
+                mode="w",
+                encoding="utf-8",
+                dir=str(_SNAPSHOT_PATH.parent),
+                prefix=f"{_SNAPSHOT_PATH.stem}.",
+                suffix=".tmp",
+                delete=False,
+            ) as fh:
+                json.dump(payload, fh, separators=(",", ":"))
+                fh.flush()
+                os.fsync(fh.fileno())
+                tmp_path = Path(fh.name)
+            if tmp_path is not None:
+                os.replace(tmp_path, _SNAPSHOT_PATH)
+        finally:
+            if tmp_path is not None and tmp_path.exists():
+                try:
+                    tmp_path.unlink()
+                except Exception:
+                    pass
         try:
             _cache_mtime = float(_SNAPSHOT_PATH.stat().st_mtime)
         except Exception:

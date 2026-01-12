@@ -30,14 +30,16 @@ from execution.section_axis import attach_section_axis
 from execution.entry_guard import evaluate_entry_guard
 
 from analysis import policy_bus
+from analysis.technique_engine import evaluate_entry_techniques
 from utils.secrets import get_secret
 from utils.market_hours import is_market_open
 from utils.metrics_logger import log_metric
 from execution import strategy_guard
-from execution.position_manager import PositionManager
+from execution.position_manager import PositionManager, agent_client_prefixes
 from execution.risk_guard import POCKET_MAX_RATIOS, MAX_LEVERAGE
 from workers.common import perf_guard
 from utils import signal_bus
+from utils.oanda_account import get_account_snapshot
 try:
     from market_data import tick_window
 except Exception:  # pragma: no cover - optional
@@ -101,7 +103,33 @@ def min_units_for_pocket(pocket: Optional[str]) -> int:
     return int(_MIN_UNITS_BY_POCKET.get(pocket, _DEFAULT_MIN_UNITS))
 
 
+def _apply_tech_units(units: int, multiplier: float, pocket: str) -> int:
+    if units == 0:
+        return units
+    sign = 1 if units > 0 else -1
+    target = int(round(abs(units) * multiplier))
+    if target <= 0:
+        target = abs(units)
+    min_units = min_units_for_pocket(pocket)
+    if min_units > 0 and target < min_units and abs(units) >= min_units:
+        target = min_units
+    return sign * target
+
+
 _EXIT_NO_NEGATIVE_CLOSE = os.getenv("EXIT_NO_NEGATIVE_CLOSE", "1").strip().lower() not in {"", "0", "false", "no"}
+_EXIT_EMERGENCY_ALLOW_NEGATIVE = os.getenv("EXIT_EMERGENCY_ALLOW_NEGATIVE", "1").strip().lower() not in {
+    "",
+    "0",
+    "false",
+    "no",
+}
+_EXIT_EMERGENCY_HEALTH_BUFFER = max(
+    0.0, float(os.getenv("EXIT_EMERGENCY_HEALTH_BUFFER", "0.01"))
+)
+_EXIT_EMERGENCY_CACHE_TTL_SEC = max(
+    0.5, float(os.getenv("EXIT_EMERGENCY_CACHE_TTL_SEC", "2.0"))
+)
+_LAST_EMERGENCY_LOG_TS: float = 0.0
 
 _DYNAMIC_SL_ENABLE = os.getenv("ORDER_DYNAMIC_SL_ENABLE", "true").lower() in {
     "1",
@@ -773,6 +801,35 @@ def _current_trade_unrealized_pl(trade_id: str) -> Optional[float]:
         return None
 
 
+def _should_allow_negative_close(client_order_id: Optional[str]) -> bool:
+    if not _EXIT_EMERGENCY_ALLOW_NEGATIVE:
+        return False
+    if not client_order_id or not client_order_id.startswith(agent_client_prefixes):
+        return False
+    if _EXIT_EMERGENCY_HEALTH_BUFFER <= 0:
+        return False
+    try:
+        snapshot = get_account_snapshot(cache_ttl_sec=_EXIT_EMERGENCY_CACHE_TTL_SEC)
+    except Exception as exc:  # noqa: BLE001
+        logging.debug("[ORDER] emergency health check failed: %s", exc)
+        return False
+    hb = snapshot.health_buffer
+    if hb is None:
+        return False
+    if hb <= _EXIT_EMERGENCY_HEALTH_BUFFER:
+        global _LAST_EMERGENCY_LOG_TS
+        now = time.time()
+        if now - _LAST_EMERGENCY_LOG_TS >= 30.0:
+            log_metric(
+                "close_emergency_allow_negative",
+                float(hb),
+                tags={"threshold": _EXIT_EMERGENCY_HEALTH_BUFFER},
+            )
+            _LAST_EMERGENCY_LOG_TS = now
+        return True
+    return False
+
+
 def _retry_close_with_actual_units(
     trade_id: str,
     requested_units: Optional[int],
@@ -1311,38 +1368,41 @@ async def close_trade(
     if _EXIT_NO_NEGATIVE_CLOSE and not allow_negative:
         pl = _current_trade_unrealized_pl(trade_id)
         if pl is not None and pl <= 0:
-            log_metric(
-                "close_blocked_negative",
-                float(pl),
-                tags={"trade_id": str(trade_id)},
-            )
-            _console_order_log(
-                "CLOSE_REJECT",
-                pocket=None,
-                strategy_tag=None,
-                side=None,
-                units=units,
-                sl_price=None,
-                tp_price=None,
-                client_order_id=client_order_id,
-                ticket_id=str(trade_id),
-                note="no_negative_close",
-            )
-            _log_order(
-                pocket=None,
-                instrument=None,
-                side=None,
-                units=units,
-                sl_price=None,
-                tp_price=None,
-                client_order_id=client_order_id,
-                status="close_reject_no_negative",
-                attempt=0,
-                ticket_id=str(trade_id),
-                executed_price=None,
-                request_payload={"trade_id": trade_id, "data": {"unrealized_pl": pl}},
-            )
-            return False
+            if _should_allow_negative_close(client_order_id):
+                allow_negative = True
+            if not allow_negative:
+                log_metric(
+                    "close_blocked_negative",
+                    float(pl),
+                    tags={"trade_id": str(trade_id)},
+                )
+                _console_order_log(
+                    "CLOSE_REJECT",
+                    pocket=None,
+                    strategy_tag=None,
+                    side=None,
+                    units=units,
+                    sl_price=None,
+                    tp_price=None,
+                    client_order_id=client_order_id,
+                    ticket_id=str(trade_id),
+                    note="no_negative_close",
+                )
+                _log_order(
+                    pocket=None,
+                    instrument=None,
+                    side=None,
+                    units=units,
+                    sl_price=None,
+                    tp_price=None,
+                    client_order_id=client_order_id,
+                    status="close_reject_no_negative",
+                    attempt=0,
+                    ticket_id=str(trade_id),
+                    executed_price=None,
+                    request_payload={"trade_id": trade_id, "data": {"unrealized_pl": pl}},
+                )
+                return False
     if units is None:
         data = {"units": "ALL"}
     else:
@@ -2167,6 +2227,7 @@ async def market_order(
     if isinstance(entry_thesis, dict) and not reduce_only:
         entry_thesis = attach_section_axis(entry_thesis, pocket=pocket)
 
+    entry_price = None
     if not reduce_only and pocket != "manual":
         entry_price = _entry_price_hint(entry_thesis, meta)
         if entry_price is not None:
@@ -2215,8 +2276,80 @@ async def market_order(
                         "strategy": strategy_tag or "unknown",
                         "reason": guard.reason or "entry_guard",
                     },
+            )
+            return None
+
+    if not reduce_only and pocket != "manual":
+        tech_entry_price = entry_price or _entry_price_hint(entry_thesis, meta)
+        if tech_entry_price is not None:
+            tech = evaluate_entry_techniques(
+                entry_price=tech_entry_price,
+                side="long" if units > 0 else "short",
+                pocket=pocket,
+                strategy_tag=strategy_tag,
+                entry_thesis=entry_thesis,
+            )
+            if not tech.allowed:
+                _console_order_log(
+                    "OPEN_REJECT",
+                    pocket=pocket,
+                    strategy_tag=strategy_tag or "unknown",
+                    side=side_label,
+                    units=units,
+                    sl_price=sl_price,
+                    tp_price=tp_price,
+                    client_order_id=client_order_id,
+                    note="tech_entry_block",
+                )
+                log_order(
+                    pocket=pocket,
+                    instrument=instrument,
+                    side=side_label,
+                    units=units,
+                    sl_price=sl_price,
+                    tp_price=tp_price,
+                    client_order_id=client_order_id,
+                    status="entry_tech_block",
+                    attempt=0,
+                    request_payload={
+                        "entry_price": tech_entry_price,
+                        "tech_decision": tech.debug,
+                        "tech_reasons": list(tech.reasons),
+                        "entry_thesis": entry_thesis,
+                        "meta": meta,
+                    },
+                )
+                log_metric(
+                    "entry_tech_block",
+                    1.0,
+                    tags={
+                        "pocket": pocket,
+                        "strategy": strategy_tag or "unknown",
+                        "reason": "score_block",
+                    },
                 )
                 return None
+            if isinstance(entry_thesis, dict):
+                entry_thesis = dict(entry_thesis)
+                entry_thesis["tech_entry"] = {
+                    "score": round(tech.score, 3),
+                    "multiplier": round(tech.size_multiplier, 3),
+                    "reasons": list(tech.reasons)[:6],
+                }
+            if tech.size_multiplier and abs(tech.size_multiplier - 1.0) >= 0.01:
+                before_units = units
+                units = _apply_tech_units(units, tech.size_multiplier, pocket)
+                if units != before_units:
+                    log_metric(
+                        "entry_tech_multiplier",
+                        tech.size_multiplier,
+                        tags={"pocket": pocket, "strategy": strategy_tag or "unknown"},
+                    )
+            log_metric(
+                "entry_tech_score",
+                tech.score,
+                tags={"pocket": pocket, "strategy": strategy_tag or "unknown"},
+            )
 
     # 成績ガード（直近 PF/勝率が悪いタグは全ポケットでブロック。manual は除外）
     perf_guard_enabled = os.getenv("PERF_GUARD_GLOBAL_ENABLED", "0").strip().lower() not in {
@@ -3491,6 +3624,64 @@ async def limit_order(
                 },
             )
             return None, None
+
+        tech = evaluate_entry_techniques(
+            entry_price=price,
+            side="long" if units > 0 else "short",
+            pocket=pocket,
+            strategy_tag=strategy_tag,
+            entry_thesis=entry_thesis,
+        )
+        if not tech.allowed:
+            _log_order(
+                pocket=pocket,
+                instrument=instrument,
+                side="buy" if units > 0 else "sell",
+                units=units,
+                sl_price=sl_price,
+                tp_price=tp_price,
+                client_order_id=client_order_id,
+                status="entry_tech_block",
+                attempt=0,
+                request_payload={
+                    "entry_price": price,
+                    "tech_decision": tech.debug,
+                    "tech_reasons": list(tech.reasons),
+                    "entry_thesis": entry_thesis,
+                    "meta": meta,
+                },
+            )
+            log_metric(
+                "entry_tech_block",
+                1.0,
+                tags={
+                    "pocket": pocket,
+                    "strategy": strategy_tag or "unknown",
+                    "reason": "score_block",
+                },
+            )
+            return None, None
+        if isinstance(entry_thesis, dict):
+            entry_thesis = dict(entry_thesis)
+            entry_thesis["tech_entry"] = {
+                "score": round(tech.score, 3),
+                "multiplier": round(tech.size_multiplier, 3),
+                "reasons": list(tech.reasons)[:6],
+            }
+        if tech.size_multiplier and abs(tech.size_multiplier - 1.0) >= 0.01:
+            before_units = units
+            units = _apply_tech_units(units, tech.size_multiplier, pocket)
+            if units != before_units:
+                log_metric(
+                    "entry_tech_multiplier",
+                    tech.size_multiplier,
+                    tags={"pocket": pocket, "strategy": strategy_tag or "unknown"},
+                )
+        log_metric(
+            "entry_tech_score",
+            tech.score,
+            tags={"pocket": pocket, "strategy": strategy_tag or "unknown"},
+        )
 
     if not is_market_open():
         _log_order(
