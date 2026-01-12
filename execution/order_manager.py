@@ -204,10 +204,10 @@ _ORDER_DB_JOURNAL_MODE = os.getenv("ORDER_DB_JOURNAL_MODE", "WAL")
 _ORDER_DB_SYNCHRONOUS = os.getenv("ORDER_DB_SYNCHRONOUS", "NORMAL")
 _ORDER_DB_BUSY_TIMEOUT_MS = int(os.getenv("ORDER_DB_BUSY_TIMEOUT_MS", "5000"))
 _ORDER_DB_WAL_AUTOCHECKPOINT_PAGES = int(
-    os.getenv("ORDER_DB_WAL_AUTOCHECKPOINT_PAGES", "2000")
+    os.getenv("ORDER_DB_WAL_AUTOCHECKPOINT_PAGES", "500")
 )
 _ORDER_DB_JOURNAL_SIZE_LIMIT_BYTES = int(
-    os.getenv("ORDER_DB_JOURNAL_SIZE_LIMIT_BYTES", "268435456")
+    os.getenv("ORDER_DB_JOURNAL_SIZE_LIMIT_BYTES", "67108864")
 )
 _ORDER_DB_CHECKPOINT_ENABLE = (
     os.getenv("ORDER_DB_CHECKPOINT_ENABLE", "1").strip().lower()
@@ -217,7 +217,7 @@ _ORDER_DB_CHECKPOINT_INTERVAL_SEC = float(
     os.getenv("ORDER_DB_CHECKPOINT_INTERVAL_SEC", "60")
 )
 _ORDER_DB_CHECKPOINT_MIN_WAL_BYTES = int(
-    os.getenv("ORDER_DB_CHECKPOINT_MIN_WAL_BYTES", "134217728")
+    os.getenv("ORDER_DB_CHECKPOINT_MIN_WAL_BYTES", "33554432")
 )
 _ORDERS_DB_WAL_PATH = _ORDERS_DB_PATH.with_suffix(_ORDERS_DB_PATH.suffix + "-wal")
 _LAST_ORDER_DB_CHECKPOINT = 0.0
@@ -280,7 +280,7 @@ def _maybe_checkpoint_orders_db(con: sqlite3.Connection) -> None:
         return
     try:
         row = con.execute("PRAGMA wal_checkpoint(PASSIVE)").fetchone()
-        busy = row[2] if row and len(row) > 2 else 0
+        busy = row[0] if row else 0
         if busy == 0:
             con.execute("PRAGMA wal_checkpoint(TRUNCATE)")
     except sqlite3.Error as exc:
