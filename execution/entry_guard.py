@@ -96,6 +96,32 @@ _DEFAULT_PULLBACK_BUFFER_PIPS = {
     "macro": 2.0,
     "manual": 2.0,
 }
+_DEFAULT_SOFT_MIN_CHECKS = {
+    "default": 2,
+}
+_DEFAULT_SOFT_MIN_PENALTIES = {
+    "default": 2,
+}
+_DEFAULT_MOMENTUM_MIN = {
+    "scalp": 0.004,
+    "scalp_fast": 0.004,
+    "micro": 0.003,
+    "macro": 0.002,
+    "manual": 0.002,
+}
+_DEFAULT_VOL_5M_MIN = {
+    "scalp": 0.8,
+    "scalp_fast": 0.8,
+    "micro": 0.7,
+    "macro": 0.6,
+    "manual": 0.6,
+}
+_DEFAULT_RSI_HIGH = {
+    "default": 70.0,
+}
+_DEFAULT_RSI_LOW = {
+    "default": 30.0,
+}
 
 
 @dataclass(slots=True)
@@ -156,6 +182,44 @@ def _coerce_thesis(meta: object) -> dict:
         if isinstance(parsed, dict):
             return parsed
     return {}
+
+
+def _factor_from_thesis(thesis: dict, key: str, tf: Optional[str]) -> Optional[float]:
+    ctx = thesis.get("context") if isinstance(thesis, dict) else None
+    if isinstance(ctx, dict) and key in ctx:
+        try:
+            return float(ctx[key])
+        except Exception:
+            return None
+    factors = thesis.get("factors") if isinstance(thesis, dict) else None
+    if isinstance(factors, dict):
+        tf_key = (tf or "").lower()
+        if tf_key:
+            sub = factors.get(tf_key)
+            if isinstance(sub, dict) and key in sub:
+                try:
+                    return float(sub[key])
+                except Exception:
+                    return None
+        for sub in factors.values():
+            if isinstance(sub, dict) and key in sub:
+                try:
+                    return float(sub[key])
+                except Exception:
+                    return None
+    return None
+
+
+def _resolve_factor(thesis: dict, fac: dict, key: str, tf: str) -> Optional[float]:
+    val = _factor_from_thesis(thesis, key, tf)
+    if val is not None:
+        return val
+    if isinstance(fac, dict) and key in fac:
+        try:
+            return float(fac[key])
+        except Exception:
+            return None
+    return None
 
 
 def _strategy_key_candidates(tag: Optional[str]) -> tuple[str, ...]:
@@ -320,10 +384,13 @@ def evaluate_entry_guard(
 
     factors = all_factors()
     fac = factors.get(tf) or factors.get("H1") or {}
+    adx_value = None
     try:
-        adx = float(fac.get("adx") or 0.0)
+        if fac.get("adx") is not None:
+            adx_value = float(fac.get("adx"))
     except Exception:
-        adx = 0.0
+        adx_value = None
+    adx = adx_value or 0.0
     adx_bypass = _resolve_float("ENTRY_GUARD_ADX_BYPASS", pocket, _DEFAULT_ADX_BYPASS, strategy_keys)
     if adx >= adx_bypass:
         return EntryGuardDecision(True, None, {})
@@ -414,6 +481,81 @@ def evaluate_entry_guard(
     mid = float(axis.mid)
     mid_distance = abs(entry_price - mid) / PIP
 
+    soft_enabled = _resolve_bool("ENTRY_GUARD_SOFT_ENABLED", pocket, True, strategy_keys)
+    soft_min_checks = _resolve_int(
+        "ENTRY_GUARD_SOFT_MIN_CHECKS", pocket, _DEFAULT_SOFT_MIN_CHECKS, strategy_keys
+    )
+    soft_min_penalties = _resolve_int(
+        "ENTRY_GUARD_SOFT_MIN_PENALTIES",
+        pocket,
+        _DEFAULT_SOFT_MIN_PENALTIES,
+        strategy_keys,
+    )
+    momentum_min = _resolve_float(
+        "ENTRY_GUARD_MOMENTUM_MIN",
+        pocket,
+        _DEFAULT_MOMENTUM_MIN,
+        strategy_keys,
+    )
+    vol_5m_min = _resolve_float(
+        "ENTRY_GUARD_VOL_5M_MIN",
+        pocket,
+        _DEFAULT_VOL_5M_MIN,
+        strategy_keys,
+    )
+    rsi_high = _resolve_float("ENTRY_GUARD_RSI_HIGH", pocket, _DEFAULT_RSI_HIGH, strategy_keys)
+    rsi_low = _resolve_float("ENTRY_GUARD_RSI_LOW", pocket, _DEFAULT_RSI_LOW, strategy_keys)
+    momentum = _resolve_factor(thesis, fac, "momentum", tf)
+    vol_5m = _resolve_factor(thesis, fac, "vol_5m", tf)
+    rsi = _resolve_factor(thesis, fac, "rsi", tf)
+
+    soft_checks = []
+    soft_penalties = []
+
+    def _soft_check(name: str, ok: bool) -> None:
+        soft_checks.append(name)
+        if not ok:
+            soft_penalties.append(name)
+
+    if adx_value is not None:
+        _soft_check("adx", adx >= trend_adx_min)
+    if ma_diff_pips > 0.0:
+        _soft_check("ma_gap", ma_diff_pips >= trend_ma_min)
+    if trend_dir != 0:
+        _soft_check("trend_dir", trend_dir == (1 if side == "long" else -1))
+    if momentum is not None:
+        if side == "long":
+            _soft_check("momentum", momentum >= momentum_min)
+        else:
+            _soft_check("momentum", momentum <= -momentum_min)
+    if vol_5m is not None:
+        _soft_check("vol_5m", vol_5m >= vol_5m_min)
+    if rsi is not None:
+        if side == "long":
+            _soft_check("rsi", rsi <= rsi_high)
+        else:
+            _soft_check("rsi", rsi >= rsi_low)
+
+    def _soft_allow(block_reason: str, base_debug: Dict[str, object]) -> Optional[EntryGuardDecision]:
+        if not soft_enabled:
+            return None
+        if len(soft_checks) < max(0, soft_min_checks):
+            return None
+        if len(soft_penalties) >= max(1, soft_min_penalties):
+            return None
+        debug = dict(base_debug)
+        debug["soft_block_reason"] = block_reason
+        debug["soft_checks"] = list(soft_checks)
+        debug["soft_penalties"] = list(soft_penalties)
+        debug["soft_metrics"] = {
+            "adx": round(adx, 2),
+            "trend_ma_pips": round(ma_diff_pips, 2),
+            "momentum": round(momentum, 5) if momentum is not None else None,
+            "vol_5m": round(vol_5m, 3) if vol_5m is not None else None,
+            "rsi": round(rsi, 2) if rsi is not None else None,
+        }
+        return EntryGuardDecision(True, "entry_guard_soft_allow", debug)
+
     if side == "long":
         if entry_price >= upper_guard:
             if pullback_bypass:
@@ -450,6 +592,20 @@ def evaluate_entry_guard(
                         "trend_ma_pips": round(ma_diff_pips, 2),
                     },
                 )
+            soft = _soft_allow(
+                "entry_guard_extreme_long",
+                {
+                    "entry": entry_price,
+                    "upper": upper_guard,
+                    "mid": mid,
+                    "range_pips": round(range_pips, 3),
+                    "adx": round(adx, 2),
+                    "trend_dir": "up" if trend_dir > 0 else "down" if trend_dir < 0 else "flat",
+                    "trend_ma_pips": round(ma_diff_pips, 2),
+                },
+            )
+            if soft:
+                return soft
             return EntryGuardDecision(
                 False,
                 "entry_guard_extreme_long",
@@ -496,6 +652,20 @@ def evaluate_entry_guard(
                         "trend_ma_pips": round(ma_diff_pips, 2),
                     },
                 )
+            soft = _soft_allow(
+                "entry_guard_mid_far_long",
+                {
+                    "entry": entry_price,
+                    "mid": mid,
+                    "distance_pips": round(mid_distance, 2),
+                    "range_pips": round(range_pips, 3),
+                    "adx": round(adx, 2),
+                    "trend_dir": "up" if trend_dir > 0 else "down" if trend_dir < 0 else "flat",
+                    "trend_ma_pips": round(ma_diff_pips, 2),
+                },
+            )
+            if soft:
+                return soft
             return EntryGuardDecision(
                 False,
                 "entry_guard_mid_far_long",
@@ -543,6 +713,20 @@ def evaluate_entry_guard(
                         "trend_ma_pips": round(ma_diff_pips, 2),
                     },
                 )
+            soft = _soft_allow(
+                "entry_guard_extreme_short",
+                {
+                    "entry": entry_price,
+                    "lower": lower_guard,
+                    "mid": mid,
+                    "range_pips": round(range_pips, 3),
+                    "adx": round(adx, 2),
+                    "trend_dir": "up" if trend_dir > 0 else "down" if trend_dir < 0 else "flat",
+                    "trend_ma_pips": round(ma_diff_pips, 2),
+                },
+            )
+            if soft:
+                return soft
             return EntryGuardDecision(
                 False,
                 "entry_guard_extreme_short",
@@ -589,6 +773,20 @@ def evaluate_entry_guard(
                         "trend_ma_pips": round(ma_diff_pips, 2),
                     },
                 )
+            soft = _soft_allow(
+                "entry_guard_mid_far_short",
+                {
+                    "entry": entry_price,
+                    "mid": mid,
+                    "distance_pips": round(mid_distance, 2),
+                    "range_pips": round(range_pips, 3),
+                    "adx": round(adx, 2),
+                    "trend_dir": "up" if trend_dir > 0 else "down" if trend_dir < 0 else "flat",
+                    "trend_ma_pips": round(ma_diff_pips, 2),
+                },
+            )
+            if soft:
+                return soft
             return EntryGuardDecision(
                 False,
                 "entry_guard_mid_far_short",
