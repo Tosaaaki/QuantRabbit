@@ -35,6 +35,10 @@ MR_RANGE_LOOKBACK = 20
 MR_RANGE_HI_PCT = 95.0
 MR_RANGE_LO_PCT = 5.0
 _STRATEGY_LAST_TS: Dict[str, float] = {}
+_TREND_STRATEGIES = {
+    PulseBreak.name,
+    ImpulseRetraceScalp.name,
+}
 
 
 def _latest_mid(fallback: float) -> float:
@@ -310,7 +314,10 @@ async def scalp_multi_worker() -> None:
             "sl_pips": sl_pips,
             "confidence": signal.get("confidence", 0),
         }
+        if strategy_name in _TREND_STRATEGIES:
+            entry_thesis["entry_guard_trend"] = True
         if _is_mr_signal(signal_tag):
+            entry_thesis["entry_guard_trend"] = False
             entry_mean = None
             try:
                 entry_mean = float(fac_m1.get("ema20") or fac_m1.get("ma20") or fac_m1.get("ma10") or 0.0) or None

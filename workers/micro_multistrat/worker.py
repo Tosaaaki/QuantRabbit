@@ -38,6 +38,13 @@ MR_RANGE_LOOKBACK = 20
 MR_RANGE_HI_PCT = 95.0
 MR_RANGE_LO_PCT = 5.0
 _STRATEGY_LAST_TS: Dict[str, float] = {}
+_TREND_STRATEGIES = {
+    MomentumBurstMicro.name,
+    MicroMomentumStack.name,
+    MicroPullbackEMA.name,
+    MicroRangeBreak.name,
+    TrendMomentumMicro.name,
+}
 
 
 def _latest_mid(fallback: float) -> float:
@@ -397,7 +404,10 @@ async def micro_multi_worker() -> None:
             "tp_pips": tp_pips,
             "sl_pips": sl_pips,
         }
+        if strategy_name in _TREND_STRATEGIES:
+            entry_thesis["entry_guard_trend"] = True
         if _is_mr_signal(signal_tag):
+            entry_thesis["entry_guard_trend"] = False
             entry_mean = None
             base_tag = signal_tag.split("-", 1)[0] if signal_tag else ""
             if base_tag == "MicroVWAPBound":

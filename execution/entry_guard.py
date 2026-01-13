@@ -172,7 +172,21 @@ def _trend_hint(strategy_tag: Optional[str], thesis: dict) -> bool:
         return True
     profile = thesis.get("profile") or thesis.get("strategy_profile") or ""
     parts = " ".join([str(strategy_tag or ""), str(profile or "")]).lower()
-    for token in ("trend", "break", "breakout", "donchian", "momentum", "impulse", "pulse", "trendma"):
+    for token in (
+        "trend",
+        "break",
+        "breakout",
+        "donchian",
+        "momentum",
+        "impulse",
+        "pulse",
+        "trendma",
+        "pullback",
+        "retest",
+        "runner",
+        "stack",
+        "retrace",
+    ):
         if token in parts:
             return True
     return False
