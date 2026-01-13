@@ -331,6 +331,7 @@ async def _runner_loop() -> None:
                     thesis = {
                         "strategy_tag": "pullback_runner_s5",
                         "entry_guard_pullback": True,
+                        "entry_guard_pullback_only": True,
                         "z_fast": round(z_fast, 2),
                         "z_slow": round(z_slow, 2),
                         "rsi_fast": None if rsi_fast is None else round(rsi_fast, 1),

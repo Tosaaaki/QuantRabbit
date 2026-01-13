@@ -632,6 +632,20 @@ SCALP_WEIGHT_FLOOR = _safe_env_float("SCALP_WEIGHT_FLOOR", 0.22, low=0.0, high=0
 SCALP_WEIGHT_READY_FLOOR = _safe_env_float(
     "SCALP_WEIGHT_READY_FLOOR", 0.32, low=SCALP_WEIGHT_FLOOR, high=0.45
 )
+BASE_SIGNAL_BIAS_MACRO = 14.0
+BASE_SIGNAL_BIAS_MICRO = 10.0
+BASE_SIGNAL_BIAS_SCALP = -8.0
+BASE_SIGNAL_BIAS_FAST_SCALP = -14.0
+HIGH_ZONE_ENABLED = _env_bool("HIGH_ZONE_ENABLED", True)
+HIGH_ZONE_RSI_H1 = _safe_env_float("HIGH_ZONE_RSI_H1", 66.0, low=50.0, high=90.0)
+HIGH_ZONE_DIST_ATR = _safe_env_float("HIGH_ZONE_DIST_ATR", 1.25, low=0.4, high=4.0)
+HIGH_ZONE_MACRO_BIAS = _safe_env_float("HIGH_ZONE_MACRO_BIAS", -4.0, low=-30.0, high=30.0)
+HIGH_ZONE_MICRO_BIAS = _safe_env_float("HIGH_ZONE_MICRO_BIAS", 12.0, low=-30.0, high=30.0)
+HIGH_ZONE_SCALP_BIAS = _safe_env_float("HIGH_ZONE_SCALP_BIAS", 6.0, low=-30.0, high=30.0)
+HIGH_ZONE_MACRO_CONF_SCALE = _safe_env_float("HIGH_ZONE_MACRO_CONF_SCALE", 0.55, low=0.0, high=1.0)
+HIGH_ZONE_IMPULSE_COUNTER_SCALE = _safe_env_float(
+    "HIGH_ZONE_IMPULSE_COUNTER_SCALE", 0.25, low=0.0, high=1.0
+)
 SCALP_AUTO_MIN_WEIGHT = _safe_env_float("SCALP_AUTO_MIN_WEIGHT", 0.12, low=0.0, high=0.3)
 SCALP_CONFIDENCE_FLOOR = _safe_env_float("SCALP_CONFIDENCE_FLOOR", 0.74, low=0.4, high=1.0)
 # スカルプロットの絶対下限は 0（フロアなし）。環境変数での下限設定も無効化。
@@ -6045,6 +6059,51 @@ async def logic_loop(
             impulse_thin_active = bool(clamp_state.get("impulse_thin_active"))
             impulse_thin_scale = float(clamp_state.get("impulse_thin_scale", 1.0) or 1.0)
             bias_h1, bias_h4, adx_h1, adx_h4 = _dir_bias(fac_h1, fac_h4)
+            high_zone = False
+            high_zone_reason = None
+            high_zone_dist = None
+            rsi_h1_val = None
+            if HIGH_ZONE_ENABLED:
+                trend_up = bias_h4 > 0 or bias_h1 > 0
+                if trend_up:
+                    try:
+                        rsi_h1_val = float(fac_h1.get("rsi") or 0.0)
+                    except Exception:
+                        rsi_h1_val = 0.0
+                    try:
+                        close_val = float(fac_m1.get("close") or 0.0)
+                    except Exception:
+                        close_val = 0.0
+                    try:
+                        ema20_h1 = float(fac_h1.get("ema20") or fac_h1.get("ma20") or 0.0)
+                    except Exception:
+                        ema20_h1 = 0.0
+                    try:
+                        atr_m5_val = float(
+                            fac_m5.get("atr_pips") or (fac_m5.get("atr") or 0.0) * 100.0
+                        )
+                    except Exception:
+                        atr_m5_val = 0.0
+                    if close_val > 0.0 and ema20_h1 > 0.0 and atr_m5_val > 0.0:
+                        high_zone_dist = abs(close_val - ema20_h1) / (atr_m5_val * PIP)
+                        if (
+                            high_zone_dist >= HIGH_ZONE_DIST_ATR
+                            and rsi_h1_val >= HIGH_ZONE_RSI_H1
+                        ) or (high_zone_dist >= HIGH_ZONE_DIST_ATR * 1.6):
+                            high_zone = True
+                            high_zone_reason = (
+                                "rsi+stretch"
+                                if rsi_h1_val is not None and rsi_h1_val >= HIGH_ZONE_RSI_H1
+                                else "stretch"
+                            )
+                            logging.info(
+                                "[HIGH_ZONE] active reason=%s rsi_h1=%.1f dist=%.2f close=%.3f ema20=%.3f",
+                                high_zone_reason,
+                                rsi_h1_val or 0.0,
+                                high_zone_dist,
+                                close_val,
+                                ema20_h1,
+                            )
             high_vol_env = (atr_pips is not None and atr_pips > 2.5) or (vol_5m is not None and vol_5m > 1.5)
             low_vol_env = (atr_pips is not None and atr_pips < 1.2) and (vol_5m is not None and vol_5m < 0.7)
             try:
@@ -6325,6 +6384,26 @@ async def logic_loop(
                                 bias_h4,
                                 adx_max,
                             )
+                    if (
+                        high_zone
+                        and action_dir != 0
+                        and trend_dir != 0
+                        and action_dir == trend_dir
+                        and (strategy_name == "TrendMA" or strategy_name.startswith("Donchian55"))
+                    ):
+                        prev_conf = int(sig.get("confidence", 0) or 0)
+                        new_conf = max(0, int(prev_conf * HIGH_ZONE_MACRO_CONF_SCALE))
+                        if new_conf != prev_conf:
+                            sig["confidence"] = new_conf
+                            logging.info(
+                                "[HIGH_ZONE] macro scale strategy=%s conf=%d->%d h1=%d h4=%d dist=%.2f",
+                                strategy_name,
+                                prev_conf,
+                                new_conf,
+                                bias_h1,
+                                bias_h4,
+                                dist_norm if dist_norm is not None else -1.0,
+                            )
                     # Mean reversion / range: downscale when trend is strong
                     if strategy_name in {"RangeFader", "BB_RSI"}:
                         if adx_max >= 25.0 and (aligned_h4 or aligned_h1):
@@ -6352,16 +6431,38 @@ async def logic_loop(
                         ):
                             prev_conf = int(sig.get("confidence", 0) or 0)
                             if prev_conf > 0:
-                                sig["confidence"] = 0
-                                logging.info(
-                                    "[DIR_STRAT] %s oppose strong trend -> conf=%d->0 h1=%d h4=%d adx=%.1f",
-                                    strategy_name,
-                                    prev_conf,
-                                    bias_h1,
-                                    bias_h4,
-                                    adx_max,
-                                )
-                            continue
+                                if (
+                                    high_zone
+                                    and dist_norm is not None
+                                    and dist_norm >= HIGH_ZONE_DIST_ATR
+                                ):
+                                    new_conf = max(
+                                        0, int(prev_conf * HIGH_ZONE_IMPULSE_COUNTER_SCALE)
+                                    )
+                                    sig["confidence"] = new_conf
+                                    logging.info(
+                                        "[DIR_STRAT] %s high_zone counter conf=%d->%d h1=%d h4=%d adx=%.1f dist=%.2f",
+                                        strategy_name,
+                                        prev_conf,
+                                        new_conf,
+                                        bias_h1,
+                                        bias_h4,
+                                        adx_max,
+                                        dist_norm,
+                                    )
+                                    if new_conf <= 0:
+                                        continue
+                                else:
+                                    sig["confidence"] = 0
+                                    logging.info(
+                                        "[DIR_STRAT] %s oppose strong trend -> conf=%d->0 h1=%d h4=%d adx=%.1f",
+                                        strategy_name,
+                                        prev_conf,
+                                        bias_h1,
+                                        bias_h4,
+                                        adx_max,
+                                    )
+                                    continue
                         # 強トレンドでM1Scalper逆方向も大きく抑制
                         if (
                             strategy_name == "M1Scalper"
@@ -6664,6 +6765,13 @@ async def logic_loop(
                 max_signals = 1
             if evaluated_signals:
                 now_ts = time.time()
+                macro_bias = BASE_SIGNAL_BIAS_MACRO
+                micro_bias = BASE_SIGNAL_BIAS_MICRO
+                scalp_bias = BASE_SIGNAL_BIAS_SCALP
+                if high_zone:
+                    macro_bias = HIGH_ZONE_MACRO_BIAS
+                    micro_bias = HIGH_ZONE_MICRO_BIAS
+                    scalp_bias = HIGH_ZONE_SCALP_BIAS
                 candidates = []
                 for s in evaluated_signals:
                     action = (s.get("action") or "").upper()
@@ -6675,13 +6783,13 @@ async def logic_loop(
                     adj = raw_conf
                     # 戦略別バイアス: fast_scalpを強めに抑え、macro/microを押し上げる
                     if tag == "fast_scalp":
-                        adj -= 14
+                        adj += BASE_SIGNAL_BIAS_FAST_SCALP
                     elif pocket == "scalp":
-                        adj -= 8
+                        adj += scalp_bias
                     elif s.get("pocket") == "macro":
-                        adj += 14
+                        adj += macro_bias
                     elif s.get("pocket") == "micro":
-                        adj += 10
+                        adj += micro_bias
                     s["conf_adj"] = float(adj)
                     candidates.append(s)
 

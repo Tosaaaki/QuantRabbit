@@ -345,6 +345,8 @@ def evaluate_entry_guard(
 
     trend_hint = _trend_hint(strategy_tag, thesis)
     trend_bypass_enabled = _resolve_bool("ENTRY_GUARD_TREND_BYPASS", pocket, True, strategy_keys)
+    if thesis.get("entry_guard_pullback_only") is True:
+        trend_bypass_enabled = False
     trend_bypass = False
     pullback_bypass = False
     trend_ok = False

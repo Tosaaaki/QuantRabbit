@@ -41,6 +41,7 @@ _TREND_STRATEGIES = {
 }
 _PULLBACK_STRATEGIES = {
     ImpulseRetraceScalp.name,
+    M1Scalper.name,
 }
 
 
@@ -321,6 +322,9 @@ async def scalp_multi_worker() -> None:
             entry_thesis["entry_guard_trend"] = True
         if strategy_name in _PULLBACK_STRATEGIES:
             entry_thesis["entry_guard_pullback"] = True
+            entry_thesis["entry_guard_pullback_only"] = True
+        if strategy_name == M1Scalper.name:
+            entry_thesis["entry_guard_trend"] = True
         if _is_mr_signal(signal_tag):
             entry_thesis["entry_guard_trend"] = False
             entry_mean = None

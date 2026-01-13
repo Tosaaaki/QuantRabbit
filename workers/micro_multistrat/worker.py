@@ -412,6 +412,7 @@ async def micro_multi_worker() -> None:
             entry_thesis["entry_tf"] = "M5"
         if strategy_name in _PULLBACK_STRATEGIES:
             entry_thesis["entry_guard_pullback"] = True
+            entry_thesis["entry_guard_pullback_only"] = True
         if _is_mr_signal(signal_tag):
             entry_thesis["entry_guard_trend"] = False
             entry_mean = None

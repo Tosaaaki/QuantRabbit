@@ -318,6 +318,7 @@ async def pullback_scalp_worker() -> None:
                 "entry_thesis": {
                     "strategy_tag": "pullback_scalp",
                     "entry_guard_pullback": True,
+                    "entry_guard_pullback_only": True,
                 },
                 "tp_pips": round(tp_pips, 2),
                 "sl_pips": None if sl_price is None or sl_pips is None else round(sl_pips, 2),
