@@ -447,6 +447,10 @@ async def pullback_s5_worker() -> None:
                 "pocket": "scalp",
                 "strategy": "pullback_s5",
                 "tag": "pullback_s5",
+                "entry_thesis": {
+                    "strategy_tag": "pullback_s5",
+                    "entry_guard_pullback": True,
+                },
                 "tp_pips": round(tp_pips, 2),
                 "sl_pips": round(sl_base, 2),
                 "confidence": confidence,

@@ -32,6 +32,11 @@ _AGG_PREFIXES = _parse_prefix_env(
     "onepip_maker_,fast_scalp_,entry_tech_",
 )
 _AGG_WINDOW_SEC = max(1.0, float(os.getenv("METRICS_AGG_WINDOW_SEC", "10.0")))
+_AGG_LONG_PREFIXES = _parse_prefix_env(
+    "METRICS_AGG_LONG_PREFIXES",
+    "onepip_maker_",
+)
+_AGG_LONG_WINDOW_SEC = max(1.0, float(os.getenv("METRICS_AGG_LONG_WINDOW_SEC", "60.0")))
 _AGG_DROP_TAG_KEYS = _parse_csv_env(
     "METRICS_AGG_DROP_TAG_KEYS",
     "latency_ms,trade_id,client_order_id,ticket_id,order_id",
@@ -49,6 +54,7 @@ class _AggBucket:
     max_val: float | None = None
     last_flush: float = 0.0
     tags: dict[str, object] | None = None
+    window_sec: float = 0.0
 
 
 _AGG_BUCKETS: dict[tuple[str, str], _AggBucket] = {}
@@ -95,6 +101,12 @@ def _match_prefix(metric: str, prefixes: tuple[str, ...]) -> bool:
     return any(metric.startswith(prefix) for prefix in prefixes)
 
 
+def _resolve_agg_window(metric: str) -> float:
+    if _match_prefix(metric, _AGG_LONG_PREFIXES):
+        return _AGG_LONG_WINDOW_SEC
+    return _AGG_WINDOW_SEC
+
+
 def _write_payload(payload: dict[str, object], metric: str) -> None:
     attempts = 0
     while attempts < 2:
@@ -134,7 +146,7 @@ def log_metric(
         with _LOCK:
             bucket = _AGG_BUCKETS.get(key)
             if bucket is None:
-                bucket = _AggBucket(tags=norm_tags)
+                bucket = _AggBucket(tags=norm_tags, window_sec=_resolve_agg_window(metric))
                 _AGG_BUCKETS[key] = bucket
             val = float(value)
             bucket.count += 1
@@ -144,7 +156,8 @@ def log_metric(
             if bucket.last_flush == 0.0:
                 bucket.last_flush = now_mono
                 return
-            if now_mono - bucket.last_flush < _AGG_WINDOW_SEC:
+            window_sec = bucket.window_sec or _AGG_WINDOW_SEC
+            if now_mono - bucket.last_flush < window_sec:
                 return
             flush_tags = dict(bucket.tags or {})
             flush_tags.update(
@@ -153,7 +166,7 @@ def log_metric(
                     "count": bucket.count,
                     "min": bucket.min_val,
                     "max": bucket.max_val,
-                    "window_sec": _AGG_WINDOW_SEC,
+                    "window_sec": window_sec,
                 }
             )
             payload = {

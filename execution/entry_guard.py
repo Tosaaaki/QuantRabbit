@@ -89,6 +89,13 @@ _DEFAULT_TREND_MA_DIFF_PIPS = {
     "macro": 2.0,
     "manual": 2.0,
 }
+_DEFAULT_PULLBACK_BUFFER_PIPS = {
+    "scalp": 0.8,
+    "scalp_fast": 0.6,
+    "micro": 1.2,
+    "macro": 2.0,
+    "manual": 2.0,
+}
 
 
 @dataclass(slots=True)
@@ -321,33 +328,68 @@ def evaluate_entry_guard(
     if adx >= adx_bypass:
         return EntryGuardDecision(True, None, {})
 
+    try:
+        ma10 = float(fac.get("ma10") or 0.0)
+        ma20 = float(fac.get("ma20") or 0.0)
+    except Exception:
+        ma10 = 0.0
+        ma20 = 0.0
+    trend_dir = 0
+    ma_diff_pips = 0.0
+    if ma10 > 0.0 and ma20 > 0.0:
+        if ma10 > ma20:
+            trend_dir = 1
+        elif ma10 < ma20:
+            trend_dir = -1
+        ma_diff_pips = abs(ma10 - ma20) / PIP
+
     trend_hint = _trend_hint(strategy_tag, thesis)
     trend_bypass_enabled = _resolve_bool("ENTRY_GUARD_TREND_BYPASS", pocket, True, strategy_keys)
     trend_bypass = False
-    trend_dir = 0
-    ma_diff_pips = 0.0
-    if trend_hint and trend_bypass_enabled:
-        try:
-            ma10 = float(fac.get("ma10") or 0.0)
-            ma20 = float(fac.get("ma20") or 0.0)
-        except Exception:
-            ma10 = 0.0
-            ma20 = 0.0
-        if ma10 > 0.0 and ma20 > 0.0:
-            if ma10 > ma20:
-                trend_dir = 1
-            elif ma10 < ma20:
-                trend_dir = -1
-            ma_diff_pips = abs(ma10 - ma20) / PIP
-        trend_adx_min = _resolve_float(
-            "ENTRY_GUARD_TREND_ADX_MIN", pocket, _DEFAULT_TREND_ADX_MIN, strategy_keys
-        )
-        trend_ma_min = _resolve_float(
-            "ENTRY_GUARD_TREND_MA_DIFF_PIPS", pocket, _DEFAULT_TREND_MA_DIFF_PIPS, strategy_keys
-        )
+    pullback_bypass = False
+    trend_ok = False
+    trend_adx_min = _resolve_float(
+        "ENTRY_GUARD_TREND_ADX_MIN", pocket, _DEFAULT_TREND_ADX_MIN, strategy_keys
+    )
+    trend_ma_min = _resolve_float(
+        "ENTRY_GUARD_TREND_MA_DIFF_PIPS", pocket, _DEFAULT_TREND_MA_DIFF_PIPS, strategy_keys
+    )
+    if trend_hint:
         side_dir = 1 if side == "long" else -1
-        if trend_dir == side_dir and (adx >= trend_adx_min or ma_diff_pips >= trend_ma_min):
+        trend_ok = trend_dir == side_dir and (adx >= trend_adx_min or ma_diff_pips >= trend_ma_min)
+        if trend_bypass_enabled and trend_ok:
             trend_bypass = True
+
+    pullback_flag = thesis.get("entry_guard_pullback")
+    if pullback_flag is True:
+        pullback_enabled = True
+    elif pullback_flag is False:
+        pullback_enabled = False
+    else:
+        pullback_enabled = _resolve_bool("ENTRY_GUARD_PULLBACK", pocket, False, strategy_keys)
+    pullback_buffer_pips = None
+    pullback_dist_pips = None
+    if pullback_enabled and trend_hint and trend_ok:
+        buffer_pips = _resolve_float(
+            "ENTRY_GUARD_PULLBACK_BUFFER_PIPS",
+            pocket,
+            _DEFAULT_PULLBACK_BUFFER_PIPS,
+            strategy_keys,
+        )
+        buffer_pips = max(0.1, buffer_pips)
+        buffer = buffer_pips * PIP
+        if ma10 > 0.0:
+            dist = abs(entry_price - ma10)
+            if dist <= buffer:
+                pullback_bypass = True
+                pullback_dist_pips = dist / PIP
+        if (not pullback_bypass) and ma20 > 0.0:
+            dist = abs(entry_price - ma20)
+            if dist <= buffer:
+                pullback_bypass = True
+                pullback_dist_pips = dist / PIP
+        if pullback_bypass:
+            pullback_buffer_pips = buffer_pips
 
     fib_extreme = _resolve_float("ENTRY_GUARD_FIB_EXTREME", pocket, _DEFAULT_FIB_EXTREME, strategy_keys)
     fib_extreme = max(0.05, min(0.45, fib_extreme))
@@ -372,6 +414,26 @@ def evaluate_entry_guard(
 
     if side == "long":
         if entry_price >= upper_guard:
+            if pullback_bypass:
+                return EntryGuardDecision(
+                    True,
+                    "entry_guard_pullback",
+                    {
+                        "entry": entry_price,
+                        "upper": upper_guard,
+                        "mid": mid,
+                        "range_pips": round(range_pips, 3),
+                        "adx": round(adx, 2),
+                        "trend_dir": "up" if trend_dir > 0 else "down" if trend_dir < 0 else "flat",
+                        "trend_ma_pips": round(ma_diff_pips, 2),
+                        "ma10": round(ma10, 3) if ma10 > 0 else None,
+                        "ma20": round(ma20, 3) if ma20 > 0 else None,
+                        "pullback_buffer_pips": pullback_buffer_pips,
+                        "pullback_dist_pips": round(pullback_dist_pips, 3)
+                        if pullback_dist_pips is not None
+                        else None,
+                    },
+                )
             if trend_bypass:
                 return EntryGuardDecision(
                     True,
@@ -398,6 +460,26 @@ def evaluate_entry_guard(
                 },
             )
         if entry_price > mid and mid_distance >= mid_distance_pips:
+            if pullback_bypass:
+                return EntryGuardDecision(
+                    True,
+                    "entry_guard_pullback",
+                    {
+                        "entry": entry_price,
+                        "mid": mid,
+                        "distance_pips": round(mid_distance, 2),
+                        "range_pips": round(range_pips, 3),
+                        "adx": round(adx, 2),
+                        "trend_dir": "up" if trend_dir > 0 else "down" if trend_dir < 0 else "flat",
+                        "trend_ma_pips": round(ma_diff_pips, 2),
+                        "ma10": round(ma10, 3) if ma10 > 0 else None,
+                        "ma20": round(ma20, 3) if ma20 > 0 else None,
+                        "pullback_buffer_pips": pullback_buffer_pips,
+                        "pullback_dist_pips": round(pullback_dist_pips, 3)
+                        if pullback_dist_pips is not None
+                        else None,
+                    },
+                )
             if trend_bypass:
                 return EntryGuardDecision(
                     True,
@@ -425,6 +507,26 @@ def evaluate_entry_guard(
             )
     else:
         if entry_price <= lower_guard:
+            if pullback_bypass:
+                return EntryGuardDecision(
+                    True,
+                    "entry_guard_pullback",
+                    {
+                        "entry": entry_price,
+                        "lower": lower_guard,
+                        "mid": mid,
+                        "range_pips": round(range_pips, 3),
+                        "adx": round(adx, 2),
+                        "trend_dir": "up" if trend_dir > 0 else "down" if trend_dir < 0 else "flat",
+                        "trend_ma_pips": round(ma_diff_pips, 2),
+                        "ma10": round(ma10, 3) if ma10 > 0 else None,
+                        "ma20": round(ma20, 3) if ma20 > 0 else None,
+                        "pullback_buffer_pips": pullback_buffer_pips,
+                        "pullback_dist_pips": round(pullback_dist_pips, 3)
+                        if pullback_dist_pips is not None
+                        else None,
+                    },
+                )
             if trend_bypass:
                 return EntryGuardDecision(
                     True,
@@ -451,6 +553,26 @@ def evaluate_entry_guard(
                 },
             )
         if entry_price < mid and mid_distance >= mid_distance_pips:
+            if pullback_bypass:
+                return EntryGuardDecision(
+                    True,
+                    "entry_guard_pullback",
+                    {
+                        "entry": entry_price,
+                        "mid": mid,
+                        "distance_pips": round(mid_distance, 2),
+                        "range_pips": round(range_pips, 3),
+                        "adx": round(adx, 2),
+                        "trend_dir": "up" if trend_dir > 0 else "down" if trend_dir < 0 else "flat",
+                        "trend_ma_pips": round(ma_diff_pips, 2),
+                        "ma10": round(ma10, 3) if ma10 > 0 else None,
+                        "ma20": round(ma20, 3) if ma20 > 0 else None,
+                        "pullback_buffer_pips": pullback_buffer_pips,
+                        "pullback_dist_pips": round(pullback_dist_pips, 3)
+                        if pullback_dist_pips is not None
+                        else None,
+                    },
+                )
             if trend_bypass:
                 return EntryGuardDecision(
                     True,

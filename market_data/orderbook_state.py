@@ -70,6 +70,8 @@ _LOGGER = logging.getLogger(__name__)
 _last_flush_ts: float = 0.0
 _cache_mtime: float = 0.0
 _last_persist_error_ts: float = 0.0
+_last_regen_ts: float = 0.0
+_regen_cooldown_sec: float = 2.0
 
 
 def _normalize_levels(levels: Iterable[Tuple[float, float]]) -> Tuple[OrderBookLevel, ...]:
@@ -189,12 +191,19 @@ def has_sufficient_depth(
     return True
 
 
-def _persist_snapshot(snapshot: OrderBookSnapshot) -> None:
+def _write_snapshot_payload(payload: dict[str, object]) -> None:
+    with _SNAPSHOT_PATH.open("w", encoding="utf-8") as fh:
+        json.dump(payload, fh, separators=(",", ":"))
+        fh.flush()
+        os.fsync(fh.fileno())
+
+
+def _persist_snapshot(snapshot: OrderBookSnapshot, *, force: bool = False) -> None:
     """Persist the latest snapshot for cross-process consumers."""
 
     global _last_flush_ts, _last_persist_error_ts, _cache_mtime
     now = time.time()
-    if now - _last_flush_ts < _FLUSH_INTERVAL_SEC:
+    if (not force) and now - _last_flush_ts < _FLUSH_INTERVAL_SEC:
         return
     _last_flush_ts = now
     try:
@@ -209,6 +218,7 @@ def _persist_snapshot(snapshot: OrderBookSnapshot) -> None:
         _SNAPSHOT_PATH.parent.mkdir(parents=True, exist_ok=True)
         tmp_path = None
         try:
+            # Ensure write -> fsync -> atomic replace order for readers.
             with tempfile.NamedTemporaryFile(
                 mode="w",
                 encoding="utf-8",
@@ -221,8 +231,10 @@ def _persist_snapshot(snapshot: OrderBookSnapshot) -> None:
                 fh.flush()
                 os.fsync(fh.fileno())
                 tmp_path = Path(fh.name)
-            if tmp_path is not None:
+            if tmp_path is not None and tmp_path.exists():
                 os.replace(tmp_path, _SNAPSHOT_PATH)
+            if not _SNAPSHOT_PATH.exists():
+                _write_snapshot_payload(payload)
         finally:
             if tmp_path is not None and tmp_path.exists():
                 try:
@@ -246,6 +258,12 @@ def _reload_snapshot_if_updated() -> None:
     try:
         stat = _SNAPSHOT_PATH.stat()
     except FileNotFoundError:
+        if _SNAPSHOT is not None:
+            now = time.monotonic()
+            global _last_regen_ts
+            if now - _last_regen_ts >= _regen_cooldown_sec:
+                _last_regen_ts = now
+                _persist_snapshot(_SNAPSHOT, force=True)
         return
     except Exception:
         return

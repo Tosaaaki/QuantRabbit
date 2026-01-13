@@ -45,6 +45,9 @@ _TREND_STRATEGIES = {
     MicroRangeBreak.name,
     TrendMomentumMicro.name,
 }
+_PULLBACK_STRATEGIES = {
+    MicroPullbackEMA.name,
+}
 
 
 def _latest_mid(fallback: float) -> float:
@@ -407,6 +410,8 @@ async def micro_multi_worker() -> None:
         if strategy_name in _TREND_STRATEGIES:
             entry_thesis["entry_guard_trend"] = True
             entry_thesis["entry_tf"] = "M5"
+        if strategy_name in _PULLBACK_STRATEGIES:
+            entry_thesis["entry_guard_pullback"] = True
         if _is_mr_signal(signal_tag):
             entry_thesis["entry_guard_trend"] = False
             entry_mean = None
