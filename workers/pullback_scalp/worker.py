@@ -101,6 +101,7 @@ async def pullback_scalp_worker() -> None:
     last_spread_log = 0.0
     last_density_log = 0.0
     last_hour_log = 0.0
+    last_touch_block_log = 0.0
     try:
         while True:
             await asyncio.sleep(config.LOOP_INTERVAL_SEC)
@@ -226,6 +227,16 @@ async def pullback_scalp_worker() -> None:
                         timestamps=touch_times,
                     )
                     if touch_stats.count >= config.TOUCH_HARD_COUNT:
+                        if now_monotonic - last_touch_block_log > 30.0:
+                            LOG.info(
+                                "%s touch block side=%s count=%d pullback=%.2f trend=%.2f",
+                                config.LOG_PREFIX,
+                                side,
+                                touch_stats.count,
+                                touch_pullback_pips,
+                                touch_trend_pips,
+                            )
+                            last_touch_block_log = now_monotonic
                         continue
                     if touch_stats.last_touch_ts is not None:
                         try:
@@ -346,8 +357,16 @@ async def pullback_scalp_worker() -> None:
                 notes={},
             )
             plan_bus.publish(plan)
+            touch_count = "n/a" if touch_stats is None else str(touch_stats.count)
+            touch_pullback = (
+                "n/a" if touch_pullback_pips is None else f"{touch_pullback_pips:.2f}"
+            )
+            touch_trend = "n/a" if touch_trend_pips is None else f"{touch_trend_pips:.2f}"
+            touch_age = (
+                "n/a" if touch_last_age_sec is None else f"{touch_last_age_sec:.1f}"
+            )
             LOG.info(
-                "%s publish plan side=%s units=%s tp=%.2fp z1=%.2f z5=%.2f rsi=%.1f atr=%.2f",
+                "%s publish plan side=%s units=%s tp=%.2fp z1=%.2f z5=%.2f rsi=%.1f atr=%.2f touch=%s pullback=%s trend=%s age=%s",
                 config.LOG_PREFIX,
                 side,
                 base_units if side == "long" else -base_units,
@@ -356,6 +375,10 @@ async def pullback_scalp_worker() -> None:
                 z_m5 or 0.0,
                 rsi_m1 or -1.0,
                 atr_ref,
+                touch_count,
+                touch_pullback,
+                touch_trend,
+                touch_age,
             )
             cooldown_until = now_monotonic + config.COOLDOWN_SEC
     except asyncio.CancelledError:

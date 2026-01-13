@@ -110,6 +110,7 @@ async def _runner_loop() -> None:
     last_spread_log = 0.0
     regime_block_logged: Optional[str] = None
     loss_block_logged = False
+    last_touch_block_log = 0.0
     managed_state: Dict[str, float] = {}  # trade_id -> last_update_monotonic
     try:
         while True:
@@ -259,6 +260,16 @@ async def _runner_loop() -> None:
                         timestamps=touch_times,
                     )
                     if touch_stats.count >= config.TOUCH_HARD_COUNT:
+                        if now_mono - last_touch_block_log > 30.0:
+                            LOG.info(
+                                "%s touch block side=%s count=%d pullback=%.2f trend=%.2f",
+                                config.LOG_PREFIX,
+                                side,
+                                touch_stats.count,
+                                touch_pullback_pips,
+                                touch_trend_pips,
+                            )
+                            last_touch_block_log = now_mono
                         side = None
                     if touch_stats.last_touch_ts is not None and side:
                         try:
@@ -348,7 +359,7 @@ async def _runner_loop() -> None:
 
                     if trade_id:
                         LOG.info(
-                            "%s entry trade=%s side=%s units=%s tp=%.3f sl=%.3f zf=%.2f zs=%.2f atr=%.2f",
+                            "%s entry trade=%s side=%s units=%s tp=%.3f sl=%.3f zf=%.2f zs=%.2f atr=%.2f touch=%s pullback=%s trend=%s",
                             config.LOG_PREFIX,
                             trade_id,
                             side,
@@ -358,6 +369,13 @@ async def _runner_loop() -> None:
                             z_fast,
                             z_slow,
                             atr_fast,
+                            "n/a" if touch_stats is None else str(touch_stats.count),
+                            "n/a"
+                            if touch_pullback_pips is None
+                            else f"{touch_pullback_pips:.2f}",
+                            "n/a"
+                            if touch_trend_pips is None
+                            else f"{touch_trend_pips:.2f}",
                         )
                         cooldown_until = now_mono + config.COOLDOWN_SEC
                     else:
