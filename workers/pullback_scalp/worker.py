@@ -15,6 +15,7 @@ from indicators.factor_cache import all_factors
 from market_data import spread_monitor, tick_window
 from workers.common.pocket_plan import PocketPlan
 from workers.common.pullback_touch import count_pullback_touches
+from utils.metrics_logger import log_metric
 
 from . import config
 
@@ -236,6 +237,15 @@ async def pullback_scalp_worker() -> None:
                                 touch_pullback_pips,
                                 touch_trend_pips,
                             )
+                            log_metric(
+                                "pullback_touch_count",
+                                float(touch_stats.count),
+                                tags={
+                                    "strategy": "pullback_scalp",
+                                    "side": side,
+                                    "event": "block",
+                                },
+                            )
                             last_touch_block_log = now_monotonic
                         continue
                     if touch_stats.last_touch_ts is not None:
@@ -380,6 +390,16 @@ async def pullback_scalp_worker() -> None:
                 touch_trend,
                 touch_age,
             )
+            if touch_stats:
+                log_metric(
+                    "pullback_touch_count",
+                    float(touch_stats.count),
+                    tags={
+                        "strategy": "pullback_scalp",
+                        "side": side,
+                        "event": "entry",
+                    },
+                )
             cooldown_until = now_monotonic + config.COOLDOWN_SEC
     except asyncio.CancelledError:
         LOG.info("%s worker cancelled", config.LOG_PREFIX)

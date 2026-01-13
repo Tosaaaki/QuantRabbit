@@ -82,6 +82,7 @@ class _TradeState:
     lock_floor: Optional[float] = None
     hard_stop: Optional[float] = None
     tp_hint: Optional[float] = None
+    last_touch_count: Optional[int] = None
 
 
 @dataclass
@@ -275,6 +276,7 @@ class PullbackScalpExitWorker:
         range_mode: bool,
         client_id: str,
         allow_negative: bool = False,
+        touch_count: Optional[int] = None,
     ) -> bool:
         ok = await close_trade(
             trade_id,
@@ -284,17 +286,21 @@ class PullbackScalpExitWorker:
         )
         if ok:
             LOG.info(
-                "[EXIT-pullback_scalp] trade=%s units=%s reason=%s pnl=%.2fp range=%s",
+                "[EXIT-pullback_scalp] trade=%s units=%s reason=%s pnl=%.2fp range=%s touch=%s",
                 trade_id,
                 units,
                 reason,
                 pnl,
                 range_mode,
+                "n/a" if touch_count is None else touch_count,
             )
+            tags = {"reason": reason, "range": str(range_mode), "side": side}
+            if touch_count is not None:
+                tags["touch_count"] = touch_count
             log_metric(
                 "pullback_scalp_exit",
                 pnl,
-                tags={"reason": reason, "range": str(range_mode), "side": side},
+                tags=tags,
                 ts=_utc_now(),
             )
         else:
@@ -393,6 +399,7 @@ class PullbackScalpExitWorker:
         lock_buffer = max(lock_buffer, stop_loss * 0.35)
 
         touch_stats = self._touch_stats(side, ctx)
+        state.last_touch_count = touch_stats.count if touch_stats else None
         if touch_stats and touch_stats.count >= self.touch_tighten_count:
             profit_take = max(0.5, profit_take * self.touch_tighten_ratio)
             trail_start = max(0.7, trail_start * self.touch_tighten_ratio)
@@ -499,6 +506,8 @@ class PullbackScalpExitWorker:
                     if not client_id:
                         LOG.warning("[EXIT-pullback_scalp] missing client_id trade=%s skip close", trade_id)
                         continue
+                    state = self._states.get(trade_id)
+                    touch_count = state.last_touch_count if state else None
                     side = "long" if units > 0 else "short"
                     pnl = (ctx.mid - float(tr.get("price") or 0.0)) * 100.0 if side == "long" else (float(tr.get("price") or 0.0) - ctx.mid) * 100.0
                     allow_negative = reason.startswith("section_")
@@ -511,6 +520,7 @@ class PullbackScalpExitWorker:
                         ctx.range_active,
                         client_id,
                         allow_negative=allow_negative,
+                        touch_count=touch_count,
                     )
                     self._states.pop(trade_id, None)
         except asyncio.CancelledError:

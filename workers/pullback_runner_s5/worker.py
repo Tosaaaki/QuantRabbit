@@ -25,6 +25,7 @@ from workers.common import env_guard
 from workers.common.quality_gate import current_regime
 from workers.common.pullback_touch import count_pullback_touches
 from utils.oanda_account import get_account_snapshot
+from utils.metrics_logger import log_metric
 
 from . import config
 
@@ -269,6 +270,15 @@ async def _runner_loop() -> None:
                                 touch_pullback_pips,
                                 touch_trend_pips,
                             )
+                            log_metric(
+                                "pullback_touch_count",
+                                float(touch_stats.count),
+                                tags={
+                                    "strategy": "pullback_runner_s5",
+                                    "side": side,
+                                    "event": "block",
+                                },
+                            )
                             last_touch_block_log = now_mono
                         side = None
                     if touch_stats.last_touch_ts is not None and side:
@@ -377,6 +387,16 @@ async def _runner_loop() -> None:
                             if touch_trend_pips is None
                             else f"{touch_trend_pips:.2f}",
                         )
+                        if touch_stats:
+                            log_metric(
+                                "pullback_touch_count",
+                                float(touch_stats.count),
+                                tags={
+                                    "strategy": "pullback_runner_s5",
+                                    "side": side,
+                                    "event": "entry",
+                                },
+                            )
                         cooldown_until = now_mono + config.COOLDOWN_SEC
                     else:
                         cooldown_until = now_mono + 10.0
