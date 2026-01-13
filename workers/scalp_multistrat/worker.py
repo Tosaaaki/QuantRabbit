@@ -34,6 +34,7 @@ _LAST_ENTRY_TS: float = 0.0
 MR_RANGE_LOOKBACK = 20
 MR_RANGE_HI_PCT = 95.0
 MR_RANGE_LO_PCT = 5.0
+_STRATEGY_LAST_TS: Dict[str, float] = {}
 
 
 def _latest_mid(fallback: float) -> float:
@@ -131,6 +132,20 @@ def _build_mr_entry_thesis(
     return thesis
 
 
+def _diversity_bonus(strategy_name: str, now_ts: float) -> float:
+    if not config.DIVERSITY_ENABLED:
+        return 0.0
+    last_ts = _STRATEGY_LAST_TS.get(strategy_name)
+    if last_ts is None:
+        return config.DIVERSITY_MAX_BONUS
+    idle = max(0.0, now_ts - last_ts)
+    if idle < config.DIVERSITY_IDLE_SEC:
+        return 0.0
+    scale = max(1.0, config.DIVERSITY_SCALE_SEC)
+    bonus = (idle - config.DIVERSITY_IDLE_SEC) / scale * config.DIVERSITY_MAX_BONUS
+    return min(config.DIVERSITY_MAX_BONUS, bonus)
+
+
 def _strategy_list() -> List:
     """Select strategies based on env allowlist (comma-separated names)."""
     allow_raw = (os.getenv("SCALP_STRATEGY_ALLOWLIST") or "").strip()
@@ -193,16 +208,20 @@ async def scalp_multi_worker() -> None:
         except Exception:
             pf = None
 
-        signal = None
-        strategy_name = ""
+        candidates: List[Tuple[float, int, Dict, str]] = []
         for strat in strategies:
             cand = strat.check(fac_m1)
-            if cand:
-                signal = cand
-                strategy_name = getattr(strat, "name", strat.__name__)
-                break
-        if not signal:
+            if not cand:
+                continue
+            strategy_name = getattr(strat, "name", strat.__name__)
+            base_conf = int(cand.get("confidence", 0) or 0)
+            bonus = _diversity_bonus(strategy_name, now_ts)
+            score = base_conf + bonus
+            candidates.append((score, base_conf, cand, strategy_name))
+        if not candidates:
             continue
+        candidates.sort(key=lambda item: (item[0], item[1]), reverse=True)
+        _, _, signal, strategy_name = candidates[0]
         signal_tag = (signal.get("tag") or "").strip() or strategy_name
 
         snap = get_account_snapshot()
@@ -329,6 +348,7 @@ async def scalp_multi_worker() -> None:
             confidence=int(signal.get("confidence", 0)),
             entry_thesis=entry_thesis,
         )
+        _STRATEGY_LAST_TS[strategy_name] = time.time()
         LOG.info(
             "%s strat=%s sent units=%s side=%s price=%.3f sl=%.3f tp=%.3f conf=%.0f cap=%.2f reasons=%s res=%s",
             config.LOG_PREFIX,

@@ -49,3 +49,14 @@ TREND_BLOCK_HOURS_UTC = frozenset(
 )
 
 MAX_FACTOR_AGE_SEC = float(os.getenv("MICRO_MULTI_MAX_FACTOR_AGE_SEC", "90.0"))
+
+# Strategy diversity: promote idle strategies without inflating risk sizing.
+DIVERSITY_ENABLED = os.getenv("MICRO_MULTI_DIVERSITY_ENABLED", "1").strip().lower() not in {
+    "",
+    "0",
+    "false",
+    "no",
+}
+DIVERSITY_IDLE_SEC = float(os.getenv("MICRO_MULTI_DIVERSITY_IDLE_SEC", "300"))
+DIVERSITY_SCALE_SEC = float(os.getenv("MICRO_MULTI_DIVERSITY_SCALE_SEC", "900"))
+DIVERSITY_MAX_BONUS = float(os.getenv("MICRO_MULTI_DIVERSITY_MAX_BONUS", "12"))

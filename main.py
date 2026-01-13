@@ -102,6 +102,12 @@ MAIN_TRADING_ENABLED = _env_bool("MAIN_TRADING_ENABLED", default=False)
 SIGNAL_GATE_ENABLED = _env_bool("SIGNAL_GATE_ENABLED", default=True)
 # 関所キューから一度に取り出す件数
 SIGNAL_GATE_FETCH_LIMIT = int(os.getenv("SIGNAL_GATE_FETCH_LIMIT", "120"))
+SIGNAL_DIVERSITY_ENABLED = _env_bool("SIGNAL_DIVERSITY_ENABLED", default=True)
+SIGNAL_DIVERSITY_DEDUPE = _env_bool("SIGNAL_DIVERSITY_DEDUPE", default=True)
+SIGNAL_DIVERSITY_IDLE_SEC = float(os.getenv("SIGNAL_DIVERSITY_IDLE_SEC", "300"))
+SIGNAL_DIVERSITY_SCALE_SEC = float(os.getenv("SIGNAL_DIVERSITY_SCALE_SEC", "1200"))
+SIGNAL_DIVERSITY_MAX_BONUS = float(os.getenv("SIGNAL_DIVERSITY_MAX_BONUS", "8"))
+_SIGNAL_DIVERSITY_LAST_TS: Dict[str, float] = {}
 
 # Aggressive mode: loosen range gatesとマイクロの入口ガードを緩めるフラグ
 # デフォルトは安全寄りに OFF
@@ -141,6 +147,26 @@ def load_dynamic_alloc() -> Optional[dict]:
         _DYNAMIC_ALLOC_CACHE = None
         _DYNAMIC_ALLOC_MTIME = stat.st_mtime
         return None
+
+
+def _signal_strategy_key(sig: dict) -> str:
+    strategy = sig.get("strategy") or sig.get("strategy_tag") or sig.get("tag") or "unknown"
+    pocket = sig.get("pocket") or "unknown"
+    return f"{pocket}:{strategy}"
+
+
+def _signal_diversity_bonus(strategy_key: str, now_ts: float) -> float:
+    if not SIGNAL_DIVERSITY_ENABLED:
+        return 0.0
+    last_ts = _SIGNAL_DIVERSITY_LAST_TS.get(strategy_key)
+    if last_ts is None:
+        return SIGNAL_DIVERSITY_MAX_BONUS
+    idle = max(0.0, now_ts - last_ts)
+    if idle < SIGNAL_DIVERSITY_IDLE_SEC:
+        return 0.0
+    scale = max(1.0, SIGNAL_DIVERSITY_SCALE_SEC)
+    bonus = (idle - SIGNAL_DIVERSITY_IDLE_SEC) / scale * SIGNAL_DIVERSITY_MAX_BONUS
+    return min(SIGNAL_DIVERSITY_MAX_BONUS, bonus)
 
 
 def apply_dynamic_alloc(signals: list[dict], alloc: Optional[dict]) -> tuple[list[dict], dict, float]:
@@ -6637,6 +6663,7 @@ async def logic_loop(
             if margin_usage is not None and margin_usage >= 0.92:
                 max_signals = 1
             if evaluated_signals:
+                now_ts = time.time()
                 candidates = []
                 for s in evaluated_signals:
                     action = (s.get("action") or "").upper()
@@ -6655,8 +6682,34 @@ async def logic_loop(
                         adj += 14
                     elif s.get("pocket") == "micro":
                         adj += 10
-                    s["conf_adj"] = adj
+                    s["conf_adj"] = float(adj)
                     candidates.append(s)
+
+                if SIGNAL_DIVERSITY_ENABLED:
+                    for s in candidates:
+                        key = _signal_strategy_key(s)
+                        bonus = _signal_diversity_bonus(key, now_ts)
+                        if bonus > 0.0:
+                            s["conf_adj"] = float(s.get("conf_adj", 0.0)) + bonus
+                            s["diversity_bonus"] = round(bonus, 2)
+
+                if SIGNAL_DIVERSITY_DEDUPE:
+                    deduped: Dict[str, dict] = {}
+                    for s in candidates:
+                        key = _signal_strategy_key(s)
+                        cur = deduped.get(key)
+                        if cur is None or float(s.get("conf_adj", 0.0)) > float(cur.get("conf_adj", 0.0)):
+                            deduped[key] = s
+                    if len(deduped) != len(candidates):
+                        try:
+                            logging.info(
+                                "[SIGNAL_DEDUPE] before=%d after=%d",
+                                len(candidates),
+                                len(deduped),
+                            )
+                        except Exception:
+                            pass
+                    candidates = list(deduped.values())
 
                 fast_candidates = []
                 scalp_candidates = []
@@ -6742,6 +6795,9 @@ async def logic_loop(
                         )
                     except Exception:
                         pass
+                if SIGNAL_DIVERSITY_ENABLED:
+                    for sig in selected:
+                        _SIGNAL_DIVERSITY_LAST_TS[_signal_strategy_key(sig)] = now_ts
                 evaluated_signals = selected
 
             risk_override = _dynamic_risk_pct(

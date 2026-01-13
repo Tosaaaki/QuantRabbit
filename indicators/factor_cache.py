@@ -10,6 +10,8 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
+import tempfile
 from collections import deque, defaultdict
 from pathlib import Path
 from typing import Dict, Literal
@@ -39,6 +41,23 @@ _CACHE_PATH = Path("logs/factor_cache.json")
 _LAST_RESTORE_MTIME: float | None = None
 
 _LOCK = asyncio.Lock()
+
+
+def _atomic_write_text(path: Path, payload: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_fd, tmp_name = tempfile.mkstemp(prefix=f".{path.name}.", dir=str(path.parent))
+    try:
+        with os.fdopen(tmp_fd, "w", encoding="utf-8") as fh:
+            fh.write(payload)
+            fh.flush()
+            os.fsync(fh.fileno())
+        os.replace(tmp_name, path)
+    finally:
+        try:
+            if os.path.exists(tmp_name):
+                os.unlink(tmp_name)
+        except Exception:
+            pass
 
 
 def _persist_cache() -> None:
@@ -77,7 +96,7 @@ def _persist_cache() -> None:
         if not payload:
             return
         _CACHE_PATH.parent.mkdir(parents=True, exist_ok=True)
-        _CACHE_PATH.write_text(json.dumps(payload), encoding="utf-8")
+        _atomic_write_text(_CACHE_PATH, json.dumps(payload))
         try:
             global _LAST_RESTORE_MTIME
             _LAST_RESTORE_MTIME = _CACHE_PATH.stat().st_mtime

@@ -2238,6 +2238,16 @@ async def market_order(
                 strategy_tag=strategy_tag,
                 entry_thesis=entry_thesis,
             )
+            if guard.allowed and guard.reason:
+                log_metric(
+                    "entry_guard_bypass",
+                    1.0,
+                    tags={
+                        "pocket": pocket,
+                        "strategy": strategy_tag or "unknown",
+                        "reason": guard.reason,
+                    },
+                )
             if not guard.allowed:
                 _console_order_log(
                     "OPEN_REJECT",
@@ -3595,6 +3605,16 @@ async def limit_order(
             strategy_tag=strategy_tag,
             entry_thesis=entry_thesis,
         )
+        if guard.allowed and guard.reason:
+            log_metric(
+                "entry_guard_bypass",
+                1.0,
+                tags={
+                    "pocket": pocket,
+                    "strategy": strategy_tag or "unknown",
+                    "reason": guard.reason,
+                },
+            )
         if not guard.allowed:
             _log_order(
                 pocket=pocket,

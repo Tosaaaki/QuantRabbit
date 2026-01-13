@@ -22,3 +22,14 @@ COOLDOWN_SEC = float(os.getenv("SCALP_MULTI_COOLDOWN_SEC", "90"))
 MAX_OPEN_TRADES = int(os.getenv("SCALP_MULTI_MAX_OPEN_TRADES", "2"))
 # 経済指標ブロック（分）。未設定で AttributeError とならないようデフォルトを明示。
 NEWS_BLOCK_MINUTES = float(os.getenv("SCALP_MULTI_NEWS_BLOCK_MINUTES", "0"))
+
+# Strategy diversity: promote idle strategies without inflating risk sizing.
+DIVERSITY_ENABLED = os.getenv("SCALP_MULTI_DIVERSITY_ENABLED", "1").strip().lower() not in {
+    "",
+    "0",
+    "false",
+    "no",
+}
+DIVERSITY_IDLE_SEC = float(os.getenv("SCALP_MULTI_DIVERSITY_IDLE_SEC", "180"))
+DIVERSITY_SCALE_SEC = float(os.getenv("SCALP_MULTI_DIVERSITY_SCALE_SEC", "600"))
+DIVERSITY_MAX_BONUS = float(os.getenv("SCALP_MULTI_DIVERSITY_MAX_BONUS", "10"))

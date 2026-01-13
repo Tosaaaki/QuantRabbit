@@ -37,6 +37,7 @@ LOG = logging.getLogger(__name__)
 MR_RANGE_LOOKBACK = 20
 MR_RANGE_HI_PCT = 95.0
 MR_RANGE_LO_PCT = 5.0
+_STRATEGY_LAST_TS: Dict[str, float] = {}
 
 
 def _latest_mid(fallback: float) -> float:
@@ -195,6 +196,20 @@ def _factor_age_seconds(factors: Dict[str, float]) -> float:
     return max(0.0, (now - ts_dt).total_seconds())
 
 
+def _diversity_bonus(strategy_name: str, now_ts: float) -> float:
+    if not config.DIVERSITY_ENABLED:
+        return 0.0
+    last_ts = _STRATEGY_LAST_TS.get(strategy_name)
+    if last_ts is None:
+        return config.DIVERSITY_MAX_BONUS
+    idle = max(0.0, now_ts - last_ts)
+    if idle < config.DIVERSITY_IDLE_SEC:
+        return 0.0
+    scale = max(1.0, config.DIVERSITY_SCALE_SEC)
+    bonus = (idle - config.DIVERSITY_IDLE_SEC) / scale * config.DIVERSITY_MAX_BONUS
+    return min(config.DIVERSITY_MAX_BONUS, bonus)
+
+
 async def micro_multi_worker() -> None:
     if not config.ENABLED:
         LOG.info("%s disabled", config.LOG_PREFIX)
@@ -202,6 +217,7 @@ async def micro_multi_worker() -> None:
     LOG.info("%s worker start (interval=%.1fs)", config.LOG_PREFIX, config.LOOP_INTERVAL_SEC)
     last_trend_block_log = 0.0
     last_stale_log = 0.0
+    last_perf_block_log = 0.0
 
     while True:
         await asyncio.sleep(config.LOOP_INTERVAL_SEC)
@@ -211,6 +227,7 @@ async def micro_multi_worker() -> None:
         if not can_trade(config.POCKET):
             continue
         current_hour = now.hour
+        now_ts = time.time()
 
         # 最新キャッシュに更新（他プロセスが書いた factor_cache.json を取り込む）
         try:
@@ -230,7 +247,6 @@ async def micro_multi_worker() -> None:
                 tags={"reason": "factor_stale_warn", "tf": "M1"},
                 ts=now,
             )
-            now_ts = time.time()
             if now_ts - last_stale_log > 30.0:
                 LOG.warning(
                     "%s stale factors age=%.1fs limit=%.1fs (proceeding anyway)",
@@ -247,8 +263,7 @@ async def micro_multi_worker() -> None:
         except Exception:
             pf = None
 
-        signal = None
-        strategy_name = ""
+        candidates: List[Tuple[float, int, Dict, str]] = []
         for strat in _strategy_list():
             if (
                 getattr(strat, "name", strat.__name__) == TrendMomentumMicro.name
@@ -266,26 +281,29 @@ async def micro_multi_worker() -> None:
                     last_trend_block_log = now_mono
                 continue
             cand = strat.check(fac_m1)
-            if cand:
-                signal = cand
-                strategy_name = getattr(strat, "name", strat.__name__)
-                perf_decision = perf_guard.is_allowed(strategy_name, config.POCKET)
-                if not perf_decision.allowed:
-                    now_mono = time.monotonic()
-                    if now_mono - last_trend_block_log > 120.0:
-                        LOG.info(
-                            "%s perf_block tag=%s reason=%s",
-                            config.LOG_PREFIX,
-                            strategy_name,
-                            perf_decision.reason,
-                        )
-                        last_trend_block_log = now_mono
-                    signal = None
-                    strategy_name = ""
-                    continue
-                break
-        if not signal:
+            if not cand:
+                continue
+            strategy_name = getattr(strat, "name", strat.__name__)
+            perf_decision = perf_guard.is_allowed(strategy_name, config.POCKET)
+            if not perf_decision.allowed:
+                now_mono = time.monotonic()
+                if now_mono - last_perf_block_log > 120.0:
+                    LOG.info(
+                        "%s perf_block tag=%s reason=%s",
+                        config.LOG_PREFIX,
+                        strategy_name,
+                        perf_decision.reason,
+                    )
+                    last_perf_block_log = now_mono
+                continue
+            base_conf = int(cand.get("confidence", 0) or 0)
+            bonus = _diversity_bonus(strategy_name, now_ts)
+            score = base_conf + bonus
+            candidates.append((score, base_conf, cand, strategy_name))
+        if not candidates:
             continue
+        candidates.sort(key=lambda item: (item[0], item[1]), reverse=True)
+        _, _, signal, strategy_name = candidates[0]
 
         snap = get_account_snapshot()
         free_ratio = float(snap.free_margin_ratio or 0.0) if snap.free_margin_ratio is not None else 0.0
@@ -434,6 +452,7 @@ async def micro_multi_worker() -> None:
             confidence=int(signal.get("confidence", 0)),
             entry_thesis=entry_thesis,
         )
+        _STRATEGY_LAST_TS[strategy_name] = time.time()
         LOG.info(
             "%s strat=%s sent units=%s side=%s price=%.3f sl=%.3f tp=%.3f conf=%.0f cap=%.2f reasons=%s res=%s",
             config.LOG_PREFIX,
