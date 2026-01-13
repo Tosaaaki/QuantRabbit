@@ -636,6 +636,7 @@ class TechniquePolicy:
     mid_distance_pips: float
     min_score: float
     min_coverage: float
+    min_positive: int
     require_fib: bool
     require_median: bool
     require_nwave: bool
@@ -650,6 +651,8 @@ class TechniquePolicy:
     candle_min_conf: float
     nwave_min_quality: float
     nwave_min_leg_pips: float
+    exit_min_neg_pips: float
+    exit_return_score: float
 
 
 @dataclass(slots=True)
@@ -736,6 +739,21 @@ def _base_policy(mode: str, pocket: str) -> TechniquePolicy:
     mid_distance = 1.2 if pocket in {"scalp", "scalp_fast"} else 2.5
     if pocket == "macro":
         mid_distance = 6.0
+    min_positive = 2 if pocket in {"macro", "micro"} else 1
+    exit_min_neg_pips = 2.0
+    if pocket == "scalp_fast":
+        exit_min_neg_pips = 1.0
+    elif pocket == "scalp":
+        exit_min_neg_pips = 1.5
+    elif pocket == "micro":
+        exit_min_neg_pips = 3.0
+    elif pocket == "macro":
+        exit_min_neg_pips = 6.0
+    exit_return_score = -0.25
+    if pocket in {"scalp", "scalp_fast"}:
+        exit_return_score = -0.3
+    elif pocket == "macro":
+        exit_return_score = -0.2
     return TechniquePolicy(
         mode=mode,
         fib_tf=base_tf,
@@ -751,6 +769,7 @@ def _base_policy(mode: str, pocket: str) -> TechniquePolicy:
         mid_distance_pips=mid_distance,
         min_score=min_score,
         min_coverage=0.5,
+        min_positive=min_positive,
         require_fib=False,
         require_median=False,
         require_nwave=False,
@@ -765,6 +784,8 @@ def _base_policy(mode: str, pocket: str) -> TechniquePolicy:
         candle_min_conf=0.35,
         nwave_min_quality=0.18,
         nwave_min_leg_pips=3.0,
+        exit_min_neg_pips=exit_min_neg_pips,
+        exit_return_score=exit_return_score,
     )
 
 
@@ -843,6 +864,7 @@ def _resolve_policy(
         "mid_distance_pips",
         "min_score",
         "min_coverage",
+        "min_positive",
         "weight_fib",
         "weight_median",
         "weight_nwave",
@@ -853,6 +875,8 @@ def _resolve_policy(
         "candle_min_conf",
         "nwave_min_quality",
         "nwave_min_leg_pips",
+        "exit_min_neg_pips",
+        "exit_return_score",
     ):
         env_name = f"TECH_{field.upper()}"
         specific = None
@@ -1213,14 +1237,18 @@ def evaluate_entry_techniques(
     ]
     weight_sum = 0.0
     score_sum = 0.0
+    pos_count = 0
+    neg_count = 0
     for name, weight, score in weights:
         if score is None:
             continue
         weight_sum += weight
         score_sum += weight * score
         if score > 0:
+            pos_count += 1
             reasons.append(f"{name}_ok")
         elif score < 0:
+            neg_count += 1
             reasons.append(f"{name}_ng")
 
     coverage = weight_sum / max(policy.weight_fib + policy.weight_median + policy.weight_nwave + policy.weight_candle, 1e-6)
@@ -1248,6 +1276,12 @@ def evaluate_entry_techniques(
 
     score = _clamp(score_sum / weight_sum, -1.0, 1.0)
     debug["score"] = round(score, 3)
+    debug["pos_count"] = pos_count
+    debug["neg_count"] = neg_count
+    debug["min_positive"] = policy.min_positive
+    if pos_count < policy.min_positive:
+        reasons.append("min_positive_block")
+        return TechniqueDecision(False, score, 1.0, reasons, debug)
     if coverage < policy.min_coverage:
         reasons.append("low_coverage")
         return TechniqueDecision(True, score, 1.0, reasons, debug)
@@ -1275,6 +1309,16 @@ def evaluate_exit_techniques(
     policy = _resolve_policy(strategy_tag=strategy_tag, pocket=pocket, entry_thesis=trade.get("entry_thesis"))
 
     allow_negative = _env_bool("TECH_EXIT_ALLOW_NEGATIVE") or False
+    entry_price = None
+    try:
+        entry_price = float(trade.get("price") or trade.get("entry_price") or 0.0)
+    except (TypeError, ValueError):
+        entry_price = None
+    pnl_pips = None
+    if entry_price and entry_price > 0 and current_price:
+        pnl_pips = (current_price - entry_price) / PIP if side == "long" else (entry_price - current_price) / PIP
+
+    candle_score = candle_debug = None
     candle_candles = get_candles_snapshot(policy.candle_tf, limit=4)
     if candle_candles:
         candle_score, candle_debug = _score_candle(
@@ -1287,9 +1331,15 @@ def evaluate_exit_techniques(
                 True,
                 "tech_candle_reversal",
                 allow_negative,
-                {"price": price_dbg, "candle": candle_debug or {}, "score": round(candle_score, 3)},
+                {
+                    "price": price_dbg,
+                    "pnl_pips": round(pnl_pips, 3) if pnl_pips is not None else None,
+                    "candle": candle_debug or {},
+                    "score": round(candle_score, 3),
+                },
             )
 
+    nwave_score = nwave_debug = None
     nwave_candles = get_candles_snapshot(policy.nwave_tf, limit=policy.lookback)
     if nwave_candles:
         nwave_score, nwave_debug = _score_nwave(
@@ -1303,7 +1353,84 @@ def evaluate_exit_techniques(
                 True,
                 "tech_nwave_flip",
                 allow_negative,
-                {"price": price_dbg, "nwave": nwave_debug or {}, "score": round(nwave_score, 3)},
+                {
+                    "price": price_dbg,
+                    "pnl_pips": round(pnl_pips, 3) if pnl_pips is not None else None,
+                    "nwave": nwave_debug or {},
+                    "score": round(nwave_score, 3),
+                },
             )
+
+    if pnl_pips is None or pnl_pips > -policy.exit_min_neg_pips:
+        return TechniqueExitDecision(False, None, False, {})
+
+    axis = _range_from_policy(policy, tf=policy.fib_tf, entry_thesis=trade.get("entry_thesis"))
+    fib_score = fib_debug = None
+    if axis:
+        fib_score, fib_debug = _score_fib(
+            entry_price=current_price,
+            axis=axis,
+            side=side,
+            mode=policy.mode,
+            fib_trigger=policy.fib_trigger,
+        )
+    median_score = median_debug = None
+    axis_mid = axis or _range_from_policy(policy, tf=policy.median_tf, entry_thesis=trade.get("entry_thesis"))
+    if axis_mid:
+        median_score, median_debug = _score_median(
+            entry_price=current_price,
+            axis=axis_mid,
+            side=side,
+            mode=policy.mode,
+            mid_distance_pips=policy.mid_distance_pips,
+        )
+
+    weights = [
+        ("fib", policy.weight_fib, fib_score),
+        ("median", policy.weight_median, median_score),
+        ("nwave", policy.weight_nwave, nwave_score),
+        ("candle", policy.weight_candle, candle_score),
+    ]
+    weight_sum = 0.0
+    score_sum = 0.0
+    pos_count = 0
+    neg_count = 0
+    for _, weight, score in weights:
+        if score is None:
+            continue
+        weight_sum += weight
+        score_sum += weight * score
+        if score > 0:
+            pos_count += 1
+        elif score < 0:
+            neg_count += 1
+    if weight_sum <= 0:
+        return TechniqueExitDecision(False, None, False, {})
+    return_score = _clamp(score_sum / weight_sum, -1.0, 1.0)
+    coverage = weight_sum / max(
+        policy.weight_fib + policy.weight_median + policy.weight_nwave + policy.weight_candle, 1e-6
+    )
+
+    debug = {
+        "price": price_dbg,
+        "pnl_pips": round(pnl_pips, 3),
+        "return_score": round(return_score, 3),
+        "exit_min_neg_pips": round(policy.exit_min_neg_pips, 3),
+        "exit_return_score": round(policy.exit_return_score, 3),
+        "coverage": round(coverage, 3),
+        "pos_count": pos_count,
+        "neg_count": neg_count,
+    }
+    if fib_debug:
+        debug["fib"] = fib_debug
+    if median_debug:
+        debug["median"] = median_debug
+    if nwave_debug:
+        debug["nwave"] = nwave_debug
+    if candle_debug:
+        debug["candle"] = candle_debug
+
+    if return_score <= policy.exit_return_score:
+        return TechniqueExitDecision(True, "tech_return_fail", True, debug)
 
     return TechniqueExitDecision(False, None, False, {})

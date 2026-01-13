@@ -14,7 +14,8 @@ from typing import Dict, Optional
 
 import httpx
 
-from execution.order_manager import close_trade, market_order, set_trade_protections
+from workers.common.exit_utils import close_trade
+from execution.order_manager import market_order, set_trade_protections
 from execution.risk_guard import (
     allowed_lot,
     can_trade,

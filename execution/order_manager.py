@@ -2130,38 +2130,6 @@ async def market_order(
             tags={"pocket": pocket, "strategy": strategy_tag or "unknown"},
         )
         return None
-    # strategy_tag も必須。欠損エントリーは EXIT 不可かつ損益が不明瞭になる。
-    if not strategy_tag:
-        _console_order_log(
-            "OPEN_REJECT",
-            pocket=pocket,
-            strategy_tag="missing",
-            side="buy" if units > 0 else "sell",
-            units=units,
-            sl_price=sl_price,
-            tp_price=tp_price,
-            client_order_id=client_order_id,
-            note="missing_strategy_tag",
-        )
-        _log_order(
-            pocket=pocket,
-            instrument=instrument,
-            side="buy" if units > 0 else "sell",
-            units=units,
-            sl_price=sl_price,
-            tp_price=tp_price,
-            client_order_id=client_order_id,
-            status="missing_strategy_tag",
-            attempt=0,
-            request_payload={"meta": meta, "entry_thesis": entry_thesis},
-        )
-        log_metric(
-            "order_missing_strategy_tag",
-            1.0,
-            tags={"pocket": pocket, "strategy": "missing"},
-        )
-        return None
-
     if strategy_tag is not None:
         strategy_tag = str(strategy_tag)
         if not strategy_tag:
@@ -2226,6 +2194,38 @@ async def market_order(
         entry_thesis["strategy_tag"] = strategy_tag
     if isinstance(entry_thesis, dict) and not reduce_only:
         entry_thesis = attach_section_axis(entry_thesis, pocket=pocket)
+
+    # strategy_tag も必須。entry_thesis から補完した上で欠損なら拒否。
+    if not strategy_tag:
+        _console_order_log(
+            "OPEN_REJECT",
+            pocket=pocket,
+            strategy_tag="missing",
+            side="buy" if units > 0 else "sell",
+            units=units,
+            sl_price=sl_price,
+            tp_price=tp_price,
+            client_order_id=client_order_id,
+            note="missing_strategy_tag",
+        )
+        _log_order(
+            pocket=pocket,
+            instrument=instrument,
+            side="buy" if units > 0 else "sell",
+            units=units,
+            sl_price=sl_price,
+            tp_price=tp_price,
+            client_order_id=client_order_id,
+            status="missing_strategy_tag",
+            attempt=0,
+            request_payload={"meta": meta, "entry_thesis": entry_thesis},
+        )
+        log_metric(
+            "order_missing_strategy_tag",
+            1.0,
+            tags={"pocket": pocket, "strategy": "missing"},
+        )
+        return None
 
     entry_price = None
     if not reduce_only and pocket != "manual":
