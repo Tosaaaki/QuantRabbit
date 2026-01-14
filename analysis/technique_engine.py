@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Dict, Iterable, Mapping, Optional, Sequence, Tuple
 
 from analysis.patterns import detect_latest_n_wave
@@ -805,7 +805,7 @@ def _apply_override(policy: TechniquePolicy, overrides: Mapping[str, object]) ->
     data = {k: v for k, v in overrides.items() if v is not None}
     if not data:
         return policy
-    updated = TechniquePolicy(**policy.__dict__)
+    updated = replace(policy)
     for key, val in data.items():
         if not hasattr(updated, key):
             continue
