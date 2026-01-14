@@ -313,7 +313,8 @@ async def micro_multi_worker() -> None:
         if not candidates:
             continue
         candidates.sort(key=lambda item: (item[0], item[1]), reverse=True)
-        _, _, signal, strategy_name = candidates[0]
+        max_signals = max(1, int(config.MAX_SIGNALS_PER_CYCLE))
+        selected = candidates[:max_signals]
 
         snap = get_account_snapshot()
         free_ratio = float(snap.free_margin_ratio or 0.0) if snap.free_margin_ratio is not None else 0.0
@@ -342,148 +343,155 @@ async def micro_multi_worker() -> None:
         )
         if cap <= 0.0:
             continue
+        multi_scale = max(
+            float(config.MULTI_SIGNAL_MIN_SCALE),
+            1.0 / max(1, len(selected)),
+        )
 
         try:
             price = float(fac_m1.get("close") or 0.0)
         except Exception:
             price = 0.0
         price = _latest_mid(price)
-        side = "long" if signal["action"] == "OPEN_LONG" else "short"
-        sl_pips = float(signal.get("sl_pips") or 0.0)
-        tp_pips = float(signal.get("tp_pips") or 0.0)
-        if price <= 0.0 or sl_pips <= 0.0:
-            continue
-
-        tp_scale = 10.0 / max(1.0, tp_pips)
-        tp_scale = max(0.4, min(1.1, tp_scale))
-        base_units = int(round(config.BASE_ENTRY_UNITS * tp_scale))
-
-        conf_scale = _confidence_scale(int(signal.get("confidence", 50)))
         long_units = 0.0
         short_units = 0.0
         try:
             long_units, short_units = get_position_summary("USD_JPY", timeout=3.0)
         except Exception:
             long_units, short_units = 0.0, 0.0
-        lot = allowed_lot(
-            float(snap.nav or 0.0),
-            sl_pips,
-            margin_available=float(snap.margin_available or 0.0),
-            price=price,
-            margin_rate=float(snap.margin_rate or 0.0),
-            pocket=config.POCKET,
-            side=side,
-            open_long_units=long_units,
-            open_short_units=short_units,
-        )
-        units_risk = int(round(lot * 100000))
-        units = int(round(base_units * conf_scale))
-        units = min(units, units_risk)
-        units = int(round(units * cap))
-        if units < config.MIN_UNITS:
-            continue
-        if side == "short":
-            units = -abs(units)
+        for _, _, signal, strategy_name in selected:
+            side = "long" if signal["action"] == "OPEN_LONG" else "short"
+            sl_pips = float(signal.get("sl_pips") or 0.0)
+            tp_pips = float(signal.get("tp_pips") or 0.0)
+            if price <= 0.0 or sl_pips <= 0.0:
+                continue
 
-        if side == "long":
-            sl_price = round(price - sl_pips * 0.01, 3)
-            tp_price = round(price + tp_pips * 0.01, 3) if tp_pips > 0 else None
-        else:
-            sl_price = round(price + sl_pips * 0.01, 3)
-            tp_price = round(price - tp_pips * 0.01, 3) if tp_pips > 0 else None
+            tp_scale = 10.0 / max(1.0, tp_pips)
+            tp_scale = max(0.4, min(1.1, tp_scale))
+            base_units = int(round(config.BASE_ENTRY_UNITS * tp_scale))
 
-        sl_price, tp_price = clamp_sl_tp(
-            price=price,
-            sl=sl_price,
-            tp=tp_price,
-            is_buy=side == "long",
-        )
-        signal_tag = signal.get("tag", strategy_name)
-        client_id = _client_order_id(signal_tag)
-        entry_thesis: Dict[str, object] = {
-            "strategy_tag": signal_tag,
-            "profile": signal.get("profile"),
-            "confidence": signal.get("confidence", 0),
-            "tp_pips": tp_pips,
-            "sl_pips": sl_pips,
-        }
-        if strategy_name in _TREND_STRATEGIES:
-            entry_thesis["entry_guard_trend"] = True
-            entry_thesis["entry_tf"] = "M5"
-        if strategy_name in _PULLBACK_STRATEGIES:
-            entry_thesis["entry_guard_pullback"] = True
-            entry_thesis["entry_guard_pullback_only"] = True
-        if _is_mr_signal(signal_tag):
-            entry_thesis["entry_guard_trend"] = False
-            entry_mean = None
-            base_tag = signal_tag.split("-", 1)[0] if signal_tag else ""
-            if base_tag == "MicroVWAPBound":
-                notes = signal.get("notes") or {}
-                if isinstance(notes, dict):
+            conf_scale = _confidence_scale(int(signal.get("confidence", 50)))
+            lot = allowed_lot(
+                float(snap.nav or 0.0),
+                sl_pips,
+                margin_available=float(snap.margin_available or 0.0),
+                price=price,
+                margin_rate=float(snap.margin_rate or 0.0),
+                pocket=config.POCKET,
+                side=side,
+                open_long_units=long_units,
+                open_short_units=short_units,
+            )
+            units_risk = int(round(lot * 100000))
+            units = int(round(base_units * conf_scale))
+            units = min(units, units_risk)
+            units = int(round(units * cap))
+            units = int(round(units * multi_scale))
+            if units < config.MIN_UNITS:
+                continue
+            if side == "short":
+                units = -abs(units)
+
+            if side == "long":
+                sl_price = round(price - sl_pips * 0.01, 3)
+                tp_price = round(price + tp_pips * 0.01, 3) if tp_pips > 0 else None
+            else:
+                sl_price = round(price + sl_pips * 0.01, 3)
+                tp_price = round(price - tp_pips * 0.01, 3) if tp_pips > 0 else None
+
+            sl_price, tp_price = clamp_sl_tp(
+                price=price,
+                sl=sl_price,
+                tp=tp_price,
+                is_buy=side == "long",
+            )
+            signal_tag = signal.get("tag", strategy_name)
+            client_id = _client_order_id(signal_tag)
+            entry_thesis: Dict[str, object] = {
+                "strategy_tag": signal_tag,
+                "profile": signal.get("profile"),
+                "confidence": signal.get("confidence", 0),
+                "tp_pips": tp_pips,
+                "sl_pips": sl_pips,
+            }
+            if strategy_name in _TREND_STRATEGIES:
+                entry_thesis["entry_guard_trend"] = True
+                entry_thesis["entry_tf"] = "M5"
+            if strategy_name in _PULLBACK_STRATEGIES:
+                entry_thesis["entry_guard_pullback"] = True
+                entry_thesis["entry_guard_pullback_only"] = True
+            if _is_mr_signal(signal_tag):
+                entry_thesis["entry_guard_trend"] = False
+                entry_mean = None
+                base_tag = signal_tag.split("-", 1)[0] if signal_tag else ""
+                if base_tag == "MicroVWAPBound":
+                    notes = signal.get("notes") or {}
+                    if isinstance(notes, dict):
+                        try:
+                            entry_mean = float(notes.get("vwap"))
+                        except Exception:
+                            entry_mean = None
+                elif base_tag == "BB_RSI":
                     try:
-                        entry_mean = float(notes.get("vwap"))
+                        entry_mean = float(fac_m1.get("ma20") or fac_m1.get("ma10") or 0.0) or None
                     except Exception:
                         entry_mean = None
-            elif base_tag == "BB_RSI":
-                try:
-                    entry_mean = float(fac_m1.get("ma20") or fac_m1.get("ma10") or 0.0) or None
-                except Exception:
-                    entry_mean = None
-            entry_thesis.update(
-                _build_mr_entry_thesis(
-                    signal,
-                    strategy_tag=signal_tag,
-                    atr_entry=atr_m5 or atr_pips or 1.0,
-                    entry_mean=entry_mean,
+                entry_thesis.update(
+                    _build_mr_entry_thesis(
+                        signal,
+                        strategy_tag=signal_tag,
+                        atr_entry=atr_m5 or atr_pips or 1.0,
+                        entry_mean=entry_mean,
+                    )
                 )
-            )
-            if base_tag == "MicroVWAPBound":
-                notes = signal.get("notes") or {}
-                z_val = None
-                if isinstance(notes, dict):
-                    try:
-                        z_val = abs(float(notes.get("z")))
-                    except Exception:
-                        z_val = None
-                rf = entry_thesis.get("reversion_failure")
-                if isinstance(rf, dict) and z_val is not None:
-                    bars_budget = rf.get("bars_budget")
-                    if not isinstance(bars_budget, dict):
-                        bars_budget = {}
-                        rf["bars_budget"] = bars_budget
-                    if z_val >= 2.5:
-                        bars_budget["k_per_z"] = 4.0
-                        bars_budget["max"] = 14
-                    elif z_val <= 1.4:
-                        bars_budget["k_per_z"] = 3.0
-                        bars_budget["max"] = 10
+                if base_tag == "MicroVWAPBound":
+                    notes = signal.get("notes") or {}
+                    z_val = None
+                    if isinstance(notes, dict):
+                        try:
+                            z_val = abs(float(notes.get("z")))
+                        except Exception:
+                            z_val = None
+                    rf = entry_thesis.get("reversion_failure")
+                    if isinstance(rf, dict) and z_val is not None:
+                        bars_budget = rf.get("bars_budget")
+                        if not isinstance(bars_budget, dict):
+                            bars_budget = {}
+                            rf["bars_budget"] = bars_budget
+                        if z_val >= 2.5:
+                            bars_budget["k_per_z"] = 4.0
+                            bars_budget["max"] = 14
+                        elif z_val <= 1.4:
+                            bars_budget["k_per_z"] = 3.0
+                            bars_budget["max"] = 10
 
-        res = await market_order(
-            instrument="USD_JPY",
-            units=units,
-            sl_price=sl_price,
-            tp_price=tp_price,
-            pocket=config.POCKET,
-            client_order_id=client_id,
-            strategy_tag=signal_tag,
-            confidence=int(signal.get("confidence", 0)),
-            entry_thesis=entry_thesis,
-        )
-        _STRATEGY_LAST_TS[strategy_name] = time.time()
-        LOG.info(
-            "%s strat=%s sent units=%s side=%s price=%.3f sl=%.3f tp=%.3f conf=%.0f cap=%.2f reasons=%s res=%s",
-            config.LOG_PREFIX,
-            strategy_name,
-            units,
-            side,
-            price,
-            sl_price,
-            tp_price,
-            signal.get("confidence", 0),
-            cap,
-            {**cap_reason, "tp_scale": round(tp_scale, 3)},
-            res or "none",
-        )
+            res = await market_order(
+                instrument="USD_JPY",
+                units=units,
+                sl_price=sl_price,
+                tp_price=tp_price,
+                pocket=config.POCKET,
+                client_order_id=client_id,
+                strategy_tag=signal_tag,
+                confidence=int(signal.get("confidence", 0)),
+                entry_thesis=entry_thesis,
+            )
+            _STRATEGY_LAST_TS[strategy_name] = time.time()
+            LOG.info(
+                "%s strat=%s sent units=%s side=%s price=%.3f sl=%.3f tp=%.3f conf=%.0f cap=%.2f multi=%.2f reasons=%s res=%s",
+                config.LOG_PREFIX,
+                strategy_name,
+                units,
+                side,
+                price,
+                sl_price,
+                tp_price,
+                signal.get("confidence", 0),
+                cap,
+                multi_scale,
+                {**cap_reason, "tp_scale": round(tp_scale, 3)},
+                res or "none",
+            )
 
 
 if __name__ == "__main__":

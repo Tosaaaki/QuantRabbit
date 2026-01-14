@@ -33,3 +33,7 @@ DIVERSITY_ENABLED = os.getenv("SCALP_MULTI_DIVERSITY_ENABLED", "1").strip().lowe
 DIVERSITY_IDLE_SEC = float(os.getenv("SCALP_MULTI_DIVERSITY_IDLE_SEC", "180"))
 DIVERSITY_SCALE_SEC = float(os.getenv("SCALP_MULTI_DIVERSITY_SCALE_SEC", "600"))
 DIVERSITY_MAX_BONUS = float(os.getenv("SCALP_MULTI_DIVERSITY_MAX_BONUS", "10"))
+
+# Multi-signal dispatch (variety): send top-N signals per cycle with smaller sizing.
+MAX_SIGNALS_PER_CYCLE = int(os.getenv("SCALP_MULTI_MAX_SIGNALS_PER_CYCLE", "2"))
+MULTI_SIGNAL_MIN_SCALE = float(os.getenv("SCALP_MULTI_MULTI_SIGNAL_MIN_SCALE", "0.6"))
