@@ -7268,9 +7268,6 @@ async def logic_loop(
             for pocket_key in list(lots.keys()):
                 if pocket_key not in focus_pockets:
                     lots[pocket_key] = 0.0
-            for key in list(lots):
-                if key not in active_pockets:
-                    lots[key] = 0.0
             if range_active and "macro" in lots:
                 # レンジでもmacroを完全にゼロにせず抑制だけする
                 lots["macro"] = round(lots["macro"] * 0.4, 3)
@@ -7484,6 +7481,12 @@ async def logic_loop(
                                 desired_lot = round(desired_units / 100000.0, 3)
                                 if desired_lot > 0:
                                     lots["macro"] = round(max(lots.get("macro", 0.0), desired_lot), 3)
+
+            # Defer active-pocket zeroing until after redistribution to keep donor lots available.
+            if active_pockets:
+                for key in list(lots):
+                    if key not in active_pockets:
+                        lots[key] = 0.0
 
             lot_total = round(sum(max(value, 0.0) for value in lots.values()), 3)
 
