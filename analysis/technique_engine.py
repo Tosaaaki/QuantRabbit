@@ -1279,15 +1279,27 @@ def evaluate_entry_techniques(
     debug["pos_count"] = pos_count
     debug["neg_count"] = neg_count
     debug["min_positive"] = policy.min_positive
-    if pos_count < policy.min_positive:
-        reasons.append("min_positive_block")
-        return TechniqueDecision(False, score, 1.0, reasons, debug)
     if coverage < policy.min_coverage:
         reasons.append("low_coverage")
         return TechniqueDecision(True, score, 1.0, reasons, debug)
+    hard_block_score = -0.3
+    hard_block_neg = 3
+
+    def _hard_block(score_val: float, neg_count_val: int) -> bool:
+        return neg_count_val >= hard_block_neg or score_val <= hard_block_score
+
+    if pos_count < policy.min_positive:
+        if _hard_block(score, neg_count):
+            reasons.append("min_positive_block")
+            return TechniqueDecision(False, score, 1.0, reasons, debug)
+        reasons.append("min_positive_soft")
+        return TechniqueDecision(True, score, policy.size_min, reasons, debug)
     if score < policy.min_score:
-        reasons.append("min_score_block")
-        return TechniqueDecision(False, score, 1.0, reasons, debug)
+        if _hard_block(score, neg_count):
+            reasons.append("min_score_block")
+            return TechniqueDecision(False, score, 1.0, reasons, debug)
+        reasons.append("min_score_soft")
+        return TechniqueDecision(True, score, policy.size_min, reasons, debug)
 
     multiplier = _clamp(1.0 + score * policy.size_scale, policy.size_min, policy.size_max)
     return TechniqueDecision(True, score, multiplier, reasons, debug)
