@@ -6549,7 +6549,6 @@ async def logic_loop(
                                 strategy_name == "M1Scalper"
                                 and trend_dir != 0
                                 and action_dir != trend_dir
-                                and high_zone
                                 and M1SCALPER_COUNTER_MIN_CONF > 0
                             ):
                                 floor_conf = int(M1SCALPER_COUNTER_MIN_CONF)
@@ -6787,7 +6786,7 @@ async def logic_loop(
                         prev_conf = int(sig.get("confidence", 0) or 0)
                         pocket_name = (sig.get("pocket") or "").lower()
                         min_conf = 0
-                        if prev_conf > 0 and pocket_name in {"micro", "scalp", "scalp_fast"}:
+                        if pocket_name in {"micro", "scalp", "scalp_fast"}:
                             min_conf = int(REVERSAL_GUARD_MIN_CONF_SCALP)
                         damped = max(min_conf, int(prev_conf * 0.1))
                         sig["confidence"] = damped
