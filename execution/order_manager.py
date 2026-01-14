@@ -91,6 +91,13 @@ _MIN_UNITS_BY_POCKET: dict[str, int] = {
     # scalp 系も同じ下限を使う（環境変数で上書き可）
     "scalp": _env_int("ORDER_MIN_UNITS_SCALP", _DEFAULT_MIN_UNITS),
 }
+# Default MTF hints for workers without explicit entry_thesis TFs.
+_DEFAULT_ENTRY_THESIS_TFS: dict[str, tuple[str, str]] = {
+    "macro": ("H4", "H1"),
+    "micro": ("H1", "M5"),
+    "scalp": ("M5", "M1"),
+    "scalp_fast": ("M5", "M1"),
+}
 # Raise scalp floor to avoid tiny entries; can override via env ORDER_MIN_UNITS_SCALP
 # If true, do not attach stopLossOnFill (TP is still sent).
 STOP_LOSS_DISABLED = stop_loss_disabled()
@@ -416,6 +423,42 @@ def _strategy_tag_from_thesis(entry_thesis: Optional[dict]) -> Optional[str]:
     if raw_tag:
         return str(raw_tag)
     return None
+
+
+def _apply_default_entry_thesis_tfs(
+    entry_thesis: Optional[dict],
+    pocket: Optional[str],
+) -> Optional[dict]:
+    if not isinstance(entry_thesis, dict):
+        return entry_thesis
+    if not pocket or pocket == "manual":
+        return entry_thesis
+    defaults = _DEFAULT_ENTRY_THESIS_TFS.get(pocket)
+    if not defaults:
+        return entry_thesis
+    env_tf_default, struct_tf_default = defaults
+
+    def _missing(key: str) -> bool:
+        val = entry_thesis.get(key)
+        if val is None:
+            return True
+        return isinstance(val, str) and not val.strip()
+
+    updates: dict[str, str] = {}
+    struct_tf_value = entry_thesis.get("struct_tf")
+    if _missing("env_tf"):
+        updates["env_tf"] = env_tf_default
+    if _missing("struct_tf"):
+        updates["struct_tf"] = struct_tf_default
+        struct_tf_value = struct_tf_default
+    if _missing("entry_tf"):
+        entry_tf_value = struct_tf_value or struct_tf_default
+        updates["entry_tf"] = entry_tf_value
+    if not updates:
+        return entry_thesis
+    merged = dict(entry_thesis)
+    merged.update(updates)
+    return merged
 
 
 def _scaled_thresholds(
@@ -2192,6 +2235,8 @@ async def market_order(
     if isinstance(entry_thesis, dict) and strategy_tag and not entry_thesis.get("strategy_tag"):
         entry_thesis = dict(entry_thesis)
         entry_thesis["strategy_tag"] = strategy_tag
+    if not reduce_only and pocket != "manual":
+        entry_thesis = _apply_default_entry_thesis_tfs(entry_thesis, pocket)
     if isinstance(entry_thesis, dict) and not reduce_only:
         entry_thesis = attach_section_axis(entry_thesis, pocket=pocket)
 
@@ -3659,6 +3704,9 @@ async def limit_order(
 
     if _soft_tp_mode(entry_thesis):
         tp_price = None
+
+    if not reduce_only and pocket != "manual":
+        entry_thesis = _apply_default_entry_thesis_tfs(entry_thesis, pocket)
 
     if require_passive and not _is_passive_price(
         units=units,
