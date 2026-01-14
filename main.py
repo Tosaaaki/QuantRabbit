@@ -646,6 +646,15 @@ HIGH_ZONE_MACRO_CONF_SCALE = _safe_env_float("HIGH_ZONE_MACRO_CONF_SCALE", 0.55,
 HIGH_ZONE_IMPULSE_COUNTER_SCALE = _safe_env_float(
     "HIGH_ZONE_IMPULSE_COUNTER_SCALE", 0.25, low=0.0, high=1.0
 )
+HIGH_ZONE_SCALP_COUNTER_SCALE = _safe_env_float(
+    "HIGH_ZONE_SCALP_COUNTER_SCALE", 0.4, low=0.0, high=1.0
+)
+HIGH_ZONE_REVERSAL_RSI_SHORT = _safe_env_float(
+    "HIGH_ZONE_REVERSAL_RSI_SHORT", 58.0, low=40.0, high=70.0
+)
+HIGH_ZONE_REVERSAL_RSI_LONG = _safe_env_float(
+    "HIGH_ZONE_REVERSAL_RSI_LONG", 42.0, low=30.0, high=60.0
+)
 SCALP_AUTO_MIN_WEIGHT = _safe_env_float("SCALP_AUTO_MIN_WEIGHT", 0.12, low=0.0, high=0.3)
 SCALP_CONFIDENCE_FLOOR = _safe_env_float("SCALP_CONFIDENCE_FLOOR", 0.74, low=0.4, high=1.0)
 # スカルプロットの絶対下限は 0（フロアなし）。環境変数での下限設定も無効化。
@@ -6471,7 +6480,14 @@ async def logic_loop(
                             and adx_max >= 25.0
                         ):
                             prev_conf = int(sig.get("confidence", 0) or 0)
-                            new_conf = max(0, int(prev_conf * 0.25))
+                            counter_scale = 0.25
+                            if (
+                                high_zone
+                                and dist_norm is not None
+                                and dist_norm >= HIGH_ZONE_DIST_ATR
+                            ):
+                                counter_scale = max(counter_scale, HIGH_ZONE_SCALP_COUNTER_SCALE)
+                            new_conf = max(0, int(prev_conf * counter_scale))
                             sig["confidence"] = new_conf
                             logging.info(
                                 "[DIR_STRAT] M1Scalper oppose strong trend conf=%d->%d h1=%d h4=%d adx=%.1f",
@@ -6706,6 +6722,7 @@ async def logic_loop(
                         close_val = 0.0
                         ema20_m1_val = 0.0
                     allow_reversal = False
+                    high_zone_override = False
                     if bias_h4 < 0 and action_dir > 0:
                         # buy許可: RSI>52, momentum>=0, 直近close>EMA20
                         if rsi_m1_val >= 52.0 and mom_val >= 0 and close_val > ema20_m1_val:
@@ -6714,6 +6731,33 @@ async def logic_loop(
                         # sell許可: RSI<48, momentum<=0, 直近close<EMA20
                         if rsi_m1_val <= 48.0 and mom_val <= 0 and close_val < ema20_m1_val:
                             allow_reversal = True
+                    if not allow_reversal and high_zone:
+                        # allow early countertrend in overheat if momentum flips
+                        if bias_h4 > 0 and action_dir < 0:
+                            if mom_val <= 0 and (
+                                rsi_m1_val <= HIGH_ZONE_REVERSAL_RSI_SHORT
+                                or close_val <= ema20_m1_val
+                            ):
+                                allow_reversal = True
+                                high_zone_override = True
+                        if bias_h4 < 0 and action_dir > 0:
+                            if mom_val >= 0 and (
+                                rsi_m1_val >= HIGH_ZONE_REVERSAL_RSI_LONG
+                                or close_val >= ema20_m1_val
+                            ):
+                                allow_reversal = True
+                                high_zone_override = True
+                    if high_zone_override:
+                        logging.info(
+                            "[REVERSAL_GUARD] high_zone allow strategy=%s dir=%s trend_h4=%s rsi=%.1f mom=%.4f ema20=%.3f close=%.3f",
+                            sig.get("strategy"),
+                            "BUY" if action_dir > 0 else "SELL",
+                            "up" if bias_h4 > 0 else "down",
+                            rsi_m1_val,
+                            mom_val,
+                            ema20_m1_val,
+                            close_val,
+                        )
                     if not allow_reversal:
                         prev_conf = int(sig.get("confidence", 0) or 0)
                         damped = max(0, int(prev_conf * 0.1))
