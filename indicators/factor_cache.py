@@ -106,20 +106,23 @@ def _persist_cache() -> None:
         logging.warning("[FACTOR_CACHE] persist failed: %s", exc)
 
 
-def _restore_cache() -> None:
+def _restore_cache() -> bool:
     """Load persisted factors (if any) back into memory."""
     if not _CACHE_PATH.exists():
-        return
+        return False
     global _LAST_RESTORE_MTIME
     try:
-        data = json.loads(_CACHE_PATH.read_text(encoding="utf-8"))
-        try:
-            _LAST_RESTORE_MTIME = _CACHE_PATH.stat().st_mtime  # type: ignore[assignment]
-        except Exception:
-            pass
+        payload = _CACHE_PATH.read_text(encoding="utf-8")
+        if not payload.strip():
+            return False
+        data = json.loads(payload)
     except Exception as exc:  # noqa: BLE001
         logging.warning("[FACTOR_CACHE] restore failed: %s", exc)
-        return
+        return False
+    try:
+        _LAST_RESTORE_MTIME = _CACHE_PATH.stat().st_mtime  # type: ignore[assignment]
+    except Exception:
+        pass
     for tf, snapshot in data.items():
         if tf not in _CANDLES:
             continue
@@ -153,6 +156,7 @@ def _restore_cache() -> None:
             _FACTORS[tf].update(factors)
         except Exception as exc:  # noqa: BLE001
             logging.warning("[FACTOR_CACHE] failed to restore timeframe %s: %s", tf, exc)
+    return True
 
 
 _restore_cache()
@@ -194,9 +198,10 @@ def refresh_cache_from_disk() -> bool:
         return False
     if _LAST_RESTORE_MTIME is not None and stat.st_mtime <= _LAST_RESTORE_MTIME:
         return False
-    _restore_cache()
-    _LAST_RESTORE_MTIME = stat.st_mtime
-    return True
+    if _restore_cache():
+        _LAST_RESTORE_MTIME = stat.st_mtime
+        return True
+    return False
 
 
 def _serialize(value: object) -> object:
