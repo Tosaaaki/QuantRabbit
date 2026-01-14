@@ -32,6 +32,11 @@ _AGG_PREFIXES = _parse_prefix_env(
     "onepip_maker_,fast_scalp_,entry_tech_",
 )
 _AGG_WINDOW_SEC = max(1.0, float(os.getenv("METRICS_AGG_WINDOW_SEC", "10.0")))
+_AGG_VLONG_PREFIXES = _parse_prefix_env(
+    "METRICS_AGG_VLONG_PREFIXES",
+    "onepip_maker_skip",
+)
+_AGG_VLONG_WINDOW_SEC = max(1.0, float(os.getenv("METRICS_AGG_VLONG_WINDOW_SEC", "300.0")))
 _AGG_LONG_PREFIXES = _parse_prefix_env(
     "METRICS_AGG_LONG_PREFIXES",
     "onepip_maker_",
@@ -102,6 +107,8 @@ def _match_prefix(metric: str, prefixes: tuple[str, ...]) -> bool:
 
 
 def _resolve_agg_window(metric: str) -> float:
+    if _match_prefix(metric, _AGG_VLONG_PREFIXES):
+        return _AGG_VLONG_WINDOW_SEC
     if _match_prefix(metric, _AGG_LONG_PREFIXES):
         return _AGG_LONG_WINDOW_SEC
     return _AGG_WINDOW_SEC

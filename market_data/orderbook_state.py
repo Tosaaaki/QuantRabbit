@@ -231,9 +231,14 @@ def _persist_snapshot(snapshot: OrderBookSnapshot, *, force: bool = False) -> No
                 fh.flush()
                 os.fsync(fh.fileno())
                 tmp_path = Path(fh.name)
+            replaced = False
             if tmp_path is not None and tmp_path.exists():
-                os.replace(tmp_path, _SNAPSHOT_PATH)
-            if not _SNAPSHOT_PATH.exists():
+                try:
+                    os.replace(tmp_path, _SNAPSHOT_PATH)
+                    replaced = True
+                except FileNotFoundError:
+                    replaced = False
+            if not replaced:
                 _write_snapshot_payload(payload)
         finally:
             if tmp_path is not None and tmp_path.exists():

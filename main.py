@@ -5838,9 +5838,20 @@ async def logic_loop(
             except Exception as exc:
                 logging.warning("[PARTIAL] planning failed: %s", exc)
                 partials = []
+            trade_client_ids = {}
+            for pocket_name, info in open_positions.items():
+                if pocket_name == "__net__":
+                    continue
+                for tr in info.get("open_trades", []) or []:
+                    trade_id = tr.get("trade_id")
+                    if trade_id:
+                        trade_client_ids[str(trade_id)] = tr.get("client_order_id") or tr.get(
+                            "client_id"
+                        )
             partial_closed = False
             for pocket, trade_id, reduce_units in partials:
-                ok = await close_trade(trade_id, reduce_units)
+                client_id = trade_client_ids.get(str(trade_id))
+                ok = await close_trade(trade_id, reduce_units, client_order_id=client_id)
                 if ok:
                     logging.info(
                         "[PARTIAL] trade=%s pocket=%s units=%s",
@@ -5953,7 +5964,12 @@ async def logic_loop(
                     trade_id = tr.get("trade_id")
                     if not trade_id:
                         continue
-                    ok = await close_trade(trade_id, sign * close_amount)
+                    client_id = tr.get("client_order_id") or tr.get("client_id")
+                    ok = await close_trade(
+                        trade_id,
+                        sign * close_amount,
+                        client_order_id=client_id,
+                    )
                     if ok:
                         logging.info(
                             "[EXIT] trade=%s pocket=%s units=%s reason=%s",
@@ -7565,10 +7581,17 @@ async def logic_loop(
                 )
 
             entry_mix: dict[str, int] = {}
+            entry_plans = 0
             for signal in evaluated_signals:
                 pocket = signal["pocket"]
                 action = signal.get("action")
                 if action not in {"OPEN_LONG", "OPEN_SHORT"}:
+                    logging.info(
+                        "[SKIP] unsupported action=%s strategy=%s pocket=%s",
+                        action,
+                        signal.get("strategy"),
+                        pocket,
+                    )
                     continue
                 if story_snapshot and not story_snapshot.is_aligned(pocket, action) and not (FORCE_SCALP_MODE and pocket == "scalp"):
                     # Relaxed: macroのみ厳密チェック。micro/scalpは記録だけ残して通す。
@@ -7900,6 +7923,13 @@ async def logic_loop(
                     logging.info("[SIZE] %s %s factor=%.2f due to streaks", pocket, direction, size_factor)
                 confidence_target = round(confidence_target * size_factor, 3)
                 if confidence_target <= 0:
+                    logging.info(
+                        "[SKIP] zero_conf_after_size pocket=%s strategy=%s factor=%.3f target=%.3f",
+                        pocket,
+                        signal.get("strategy"),
+                        size_factor,
+                        confidence_target,
+                    )
                     continue
 
                 blocked, remain_sec, block_reason = stage_tracker.is_blocked(
@@ -8229,6 +8259,7 @@ async def logic_loop(
                     tp_price if tp_price is not None else -1.0,
                     entry_type,
                 )
+                entry_plans += 1
                 sl_pips = signal.get("sl_pips")
                 if sl_pips is None:
                     hard_stop = signal.get("hard_stop_pips")
@@ -8624,6 +8655,26 @@ async def logic_loop(
                             client_id,
                         )
 
+            if evaluated_signals and entry_plans == 0:
+                try:
+                    logging.info(
+                        "[ENTRY_SKIP] no entry planned candidates=%d tags=%s pockets=%s",
+                        len(evaluated_signals),
+                        ",".join(
+                            sorted(
+                                {
+                                    sig.get("strategy")
+                                    or sig.get("strategy_tag")
+                                    or sig.get("tag")
+                                    or "unknown"
+                                    for sig in evaluated_signals
+                                }
+                            )
+                        ),
+                        ",".join(sorted({sig.get("pocket") or "unknown" for sig in evaluated_signals})),
+                    )
+                except Exception:
+                    pass
             if entry_mix:
                 logging.info(
                     "[ENTRY_MIX] %s",
