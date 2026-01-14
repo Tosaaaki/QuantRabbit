@@ -34,7 +34,7 @@ _AGG_PREFIXES = _parse_prefix_env(
 _AGG_WINDOW_SEC = max(1.0, float(os.getenv("METRICS_AGG_WINDOW_SEC", "10.0")))
 _AGG_VLONG_PREFIXES = _parse_prefix_env(
     "METRICS_AGG_VLONG_PREFIXES",
-    "onepip_maker_skip",
+    "onepip_maker_skip,fast_scalp_skip,entry_tech_",
 )
 _AGG_VLONG_WINDOW_SEC = max(1.0, float(os.getenv("METRICS_AGG_VLONG_WINDOW_SEC", "300.0")))
 _AGG_LONG_PREFIXES = _parse_prefix_env(

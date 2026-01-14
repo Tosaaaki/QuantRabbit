@@ -578,7 +578,10 @@ async def fast_scalp_worker(shared_state: Optional[FastScalpState] = None) -> No
                             rate_limiter.record()
                             summary_payload: dict[str, float | str | bool] = {}
                             try:
-                                await close_trade(trade_id)
+                                await close_trade(
+                                    trade_id,
+                                    client_order_id=active.client_order_id,
+                                )
                             finally:
                                 summary_payload = timeout_controller.finalize(
                                     trade_id,

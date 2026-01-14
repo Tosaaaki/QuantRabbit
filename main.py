@@ -7262,10 +7262,12 @@ async def logic_loop(
                     tags={"total": f"{lot_total:.3f}"},
                     ts=now,
                 )
+            active_pockets = {sig["pocket"] for sig in evaluated_signals if sig.get("pocket")}
+            if active_pockets:
+                focus_pockets |= active_pockets
             for pocket_key in list(lots.keys()):
                 if pocket_key not in focus_pockets:
                     lots[pocket_key] = 0.0
-            active_pockets = {sig["pocket"] for sig in evaluated_signals}
             for key in list(lots):
                 if key not in active_pockets:
                     lots[key] = 0.0
