@@ -2195,6 +2195,25 @@ async def market_order(
     if isinstance(entry_thesis, dict) and not reduce_only:
         entry_thesis = attach_section_axis(entry_thesis, pocket=pocket)
 
+    trace_enabled = os.getenv("ORDER_TRACE_PROGRESS", "0").strip().lower() not in {
+        "",
+        "0",
+        "false",
+        "no",
+    }
+
+    def _trace(step: str) -> None:
+        if not trace_enabled:
+            return
+        logging.info(
+            "[ORDER_TRACE] step=%s pocket=%s strategy=%s units=%s client=%s",
+            step,
+            pocket,
+            strategy_tag or "-",
+            units,
+            client_order_id or "-",
+        )
+
     # strategy_tag も必須。entry_thesis から補完した上で欠損なら拒否。
     if not strategy_tag:
         _console_order_log(
@@ -2244,9 +2263,11 @@ async def market_order(
             "reduce_only": reduce_only,
         },
     )
+    _trace("preflight_start")
 
     entry_price = None
     if not reduce_only and pocket != "manual":
+        _trace("entry_guard")
         entry_price = _entry_price_hint(entry_thesis, meta)
         if entry_price is not None:
             guard = evaluate_entry_guard(
@@ -2308,6 +2329,7 @@ async def market_order(
                 return None
 
     if not reduce_only and pocket != "manual":
+        _trace("entry_tech")
         tech_entry_price = entry_price or _entry_price_hint(entry_thesis, meta)
         if tech_entry_price is not None:
             tech = evaluate_entry_techniques(
@@ -2387,6 +2409,7 @@ async def market_order(
         "no",
     }
     if perf_guard_enabled and pocket != "manual" and strategy_tag:
+        _trace("perf_guard")
         try:
             current_hour = datetime.now(timezone.utc).hour
         except Exception:
@@ -2483,6 +2506,7 @@ async def market_order(
     # 強制マージンガード（reduce_only 以外）。直近スナップショットから
     # 現在の使用率と注文後の想定使用率を確認し、上限超えは即リジェクト。
     if not reduce_only:
+        _trace("margin_guard")
         try:
             from utils.oanda_account import get_account_snapshot
         except Exception:
@@ -2834,6 +2858,7 @@ async def market_order(
     entry_price_meta = _as_float((meta or {}).get("entry_price"))
 
     if strategy_tag and not reduce_only:
+        _trace("strategy_cooldown")
         blocked, remain, reason = strategy_guard.is_blocked(strategy_tag)
         if blocked:
             _console_order_log(
@@ -2868,6 +2893,7 @@ async def market_order(
     # Pocket-level cooldown after margin rejection
     try:
         if pocket and _MARGIN_REJECT_UNTIL.get(pocket, 0.0) > time.monotonic():
+            _trace("margin_cooldown")
             _console_order_log(
                 "OPEN_SKIP",
                 pocket=pocket,
@@ -3002,6 +3028,7 @@ async def market_order(
                 sl_price = round(entry_price_meta + offset, 3)
 
     if not is_market_open():
+        _trace("market_closed")
         logging.info(
             "[ORDER] Market closed window. Skip order pocket=%s units=%s client_id=%s",
             pocket,
@@ -3040,6 +3067,7 @@ async def market_order(
 
     quote = _fetch_quote(instrument)
     if quote and quote.get("spread_pips") is not None:
+        _trace("spread_check")
         if quote["spread_pips"] >= _ORDER_SPREAD_BLOCK_PIPS and not reduce_only:
             note = f"spread_block:{quote['spread_pips']:.2f}p"
             _console_order_log(
@@ -3113,6 +3141,7 @@ async def market_order(
         )
 
     if not reduce_only and estimated_entry is not None:
+        _trace("preflight_units")
         allowed_units, req_margin = _preflight_units(
             estimated_price=estimated_entry, requested_units=requested_units
         )
@@ -3197,6 +3226,7 @@ async def market_order(
 
     # Directional exposure cap: scale down instead of rejecting
     if not reduce_only:
+        _trace("dir_cap")
         adjusted = _apply_directional_cap(preflight_units, pocket, side_label, meta)
         if adjusted == 0:
             _console_order_log(
@@ -3315,6 +3345,7 @@ async def market_order(
 
     side = "buy" if preflight_units > 0 else "sell"
     units_to_send = preflight_units
+    _trace("open_req")
     _console_order_log(
         "OPEN_REQ",
         pocket=pocket,
