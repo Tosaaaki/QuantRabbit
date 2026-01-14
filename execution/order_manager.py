@@ -2227,6 +2227,24 @@ async def market_order(
         )
         return None
 
+    log_order(
+        pocket=pocket,
+        instrument=instrument,
+        side=side_label,
+        units=units,
+        sl_price=sl_price,
+        tp_price=tp_price,
+        client_order_id=client_order_id,
+        status="preflight_start",
+        attempt=0,
+        stage_index=stage_index,
+        request_payload={
+            "note": "preflight_start",
+            "arbiter_final": arbiter_final,
+            "reduce_only": reduce_only,
+        },
+    )
+
     entry_price = None
     if not reduce_only and pocket != "manual":
         entry_price = _entry_price_hint(entry_thesis, meta)
