@@ -7482,11 +7482,30 @@ async def logic_loop(
                                 if desired_lot > 0:
                                     lots["macro"] = round(max(lots.get("macro", 0.0), desired_lot), 3)
 
-            # Defer active-pocket zeroing until after redistribution to keep donor lots available.
+            # Defer active-pocket zeroing until after redistribution to keep donor lots available,
+            # then reallocate dropped lots to active pockets.
             if active_pockets:
+                pre_total = round(sum(max(value, 0.0) for value in lots.values()), 3)
                 for key in list(lots):
                     if key not in active_pockets:
                         lots[key] = 0.0
+                post_total = round(sum(max(value, 0.0) for value in lots.values()), 3)
+                dropped = round(pre_total - post_total, 3)
+                if dropped > 0:
+                    active_list = [p for p in active_pockets if p in lots]
+                    if active_list:
+                        weight_sum = sum(max(1, signal_counts.get(p, 1)) for p in active_list)
+                        remaining = dropped
+                        for pocket_name in active_list:
+                            weight = max(1, signal_counts.get(pocket_name, 1))
+                            add = round(dropped * weight / weight_sum, 3)
+                            if add <= 0:
+                                continue
+                            lots[pocket_name] = round(max(lots.get(pocket_name, 0.0), 0.0) + add, 3)
+                            remaining = round(remaining - add, 3)
+                        if remaining > 0:
+                            pocket_name = active_list[0]
+                            lots[pocket_name] = round(max(lots.get(pocket_name, 0.0), 0.0) + remaining, 3)
 
             lot_total = round(sum(max(value, 0.0) for value in lots.values()), 3)
 
