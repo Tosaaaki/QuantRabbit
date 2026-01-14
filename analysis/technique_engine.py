@@ -856,6 +856,42 @@ def _normalize_tag_key(tag: str) -> str:
     return "".join(ch for ch in base if ch.isalnum())
 
 
+def _entry_thesis_hint_tfs(label: str, entry_thesis: Optional[dict]) -> list[str]:
+    if not isinstance(entry_thesis, dict):
+        return []
+    env_tf = _normalize_tf(entry_thesis.get("env_tf"))
+    struct_tf = _normalize_tf(entry_thesis.get("struct_tf"))
+    entry_tf = _normalize_tf(entry_thesis.get("entry_tf"))
+    tfs: list[str] = []
+    if label in {"fib", "median"}:
+        for tf in (env_tf, struct_tf, entry_tf):
+            if tf and tf not in tfs:
+                tfs.append(tf)
+    else:
+        for tf in (struct_tf, entry_tf, env_tf):
+            if tf and tf not in tfs:
+                tfs.append(tf)
+    return tfs
+
+
+def _tag_hint_tfs(strategy_tag: Optional[str]) -> list[str]:
+    if not strategy_tag:
+        return []
+    tag = _normalize_tag_key(str(strategy_tag))
+    tfs: list[str] = []
+    if "d1" in tag or "daily" in tag:
+        tfs.append("D1")
+    if "h4" in tag:
+        tfs.append("H4")
+    if "h1" in tag:
+        tfs.append("H1")
+    if "m5" in tag or "s5" in tag:
+        tfs.append("M5")
+    if "m1" in tag or "scalp" in tag or "onepip" in tag:
+        tfs.append("M1")
+    return tfs
+
+
 def _resolve_mtf_tfs(
     label: str,
     *,
@@ -892,6 +928,14 @@ def _resolve_mtf_tfs(
     norm = _normalize_tf_list(specific)
     if norm:
         return norm
+
+    hint = _entry_thesis_hint_tfs(label, entry_thesis)
+    if hint:
+        return hint
+
+    hinted = _tag_hint_tfs(strategy_tag)
+    if hinted:
+        return hinted
 
     defaults = _DEFAULT_MTF_TFS.get(pocket, {})
     tfs = list(defaults.get(label, (getattr(policy, f"{label}_tf"),)))
