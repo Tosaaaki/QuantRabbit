@@ -3184,13 +3184,31 @@ async def market_order(
             _console_order_log(
                 "OPEN_SKIP",
                 pocket=pocket,
-                strategy=strategy_tag,
+                strategy_tag=strategy_tag,
                 side=side_label,
                 units=preflight_units,
                 sl_price=sl_price,
                 tp_price=tp_price,
                 client_order_id=client_order_id,
                 note="dir_cap",
+            )
+            log_order(
+                pocket=pocket,
+                instrument=instrument,
+                side=side_label,
+                units=preflight_units,
+                sl_price=sl_price,
+                tp_price=tp_price,
+                client_order_id=client_order_id,
+                status="dir_cap_block",
+                attempt=0,
+                stage_index=stage_index,
+                request_payload={
+                    "note": "dir_cap",
+                    "preflight_units": preflight_units,
+                    "entry_thesis": entry_thesis,
+                    "meta": meta,
+                },
             )
             return None
         if adjusted != preflight_units:
@@ -3552,6 +3570,19 @@ async def market_order(
                 error_message=str(exc),
             )
             return None
+    log_order(
+        pocket=pocket,
+        instrument=instrument,
+        side=side,
+        units=units_to_send,
+        sl_price=sl_price,
+        tp_price=tp_price,
+        client_order_id=client_order_id,
+        status="order_fallthrough",
+        attempt=0,
+        stage_index=stage_index,
+        request_payload={"note": "market_order_fallthrough"},
+    )
     return None
 
 
