@@ -2304,8 +2304,8 @@ async def market_order(
                         "strategy": strategy_tag or "unknown",
                         "reason": guard.reason or "entry_guard",
                     },
-            )
-            return None
+                )
+                return None
 
     if not reduce_only and pocket != "manual":
         tech_entry_price = entry_price or _entry_price_hint(entry_thesis, meta)
