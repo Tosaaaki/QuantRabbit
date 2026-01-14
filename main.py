@@ -649,6 +649,9 @@ HIGH_ZONE_IMPULSE_COUNTER_SCALE = _safe_env_float(
 HIGH_ZONE_SCALP_COUNTER_SCALE = _safe_env_float(
     "HIGH_ZONE_SCALP_COUNTER_SCALE", 0.4, low=0.0, high=1.0
 )
+M1SCALPER_COUNTER_MIN_CONF = _safe_env_float(
+    "M1SCALPER_COUNTER_MIN_CONF", 8.0, low=0.0, high=50.0
+)
 HIGH_ZONE_REVERSAL_RSI_SHORT = _safe_env_float(
     "HIGH_ZONE_REVERSAL_RSI_SHORT", 58.0, low=40.0, high=70.0
 )
@@ -6488,6 +6491,26 @@ async def logic_loop(
                             ):
                                 counter_scale = max(counter_scale, HIGH_ZONE_SCALP_COUNTER_SCALE)
                             new_conf = max(0, int(prev_conf * counter_scale))
+                            if (
+                                prev_conf > 0
+                                and M1SCALPER_COUNTER_MIN_CONF > 0
+                                and high_zone
+                                and dist_norm is not None
+                                and dist_norm >= HIGH_ZONE_DIST_ATR
+                            ):
+                                floor_conf = int(M1SCALPER_COUNTER_MIN_CONF)
+                                if new_conf < floor_conf:
+                                    new_conf = floor_conf
+                                    logging.info(
+                                        "[DIR_STRAT] M1Scalper counter floor conf=%d->%d min=%d h1=%d h4=%d adx=%.1f dist=%.2f",
+                                        prev_conf,
+                                        new_conf,
+                                        floor_conf,
+                                        bias_h1,
+                                        bias_h4,
+                                        adx_max,
+                                        dist_norm,
+                                    )
                             sig["confidence"] = new_conf
                             logging.info(
                                 "[DIR_STRAT] M1Scalper oppose strong trend conf=%d->%d h1=%d h4=%d adx=%.1f",
