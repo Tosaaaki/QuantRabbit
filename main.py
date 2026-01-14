@@ -658,6 +658,9 @@ HIGH_ZONE_REVERSAL_RSI_SHORT = _safe_env_float(
 HIGH_ZONE_REVERSAL_RSI_LONG = _safe_env_float(
     "HIGH_ZONE_REVERSAL_RSI_LONG", 42.0, low=30.0, high=60.0
 )
+REVERSAL_GUARD_MIN_CONF_SCALP = _safe_env_float(
+    "REVERSAL_GUARD_MIN_CONF_SCALP", 8.0, low=0.0, high=30.0
+)
 SCALP_AUTO_MIN_WEIGHT = _safe_env_float("SCALP_AUTO_MIN_WEIGHT", 0.12, low=0.0, high=0.3)
 SCALP_CONFIDENCE_FLOOR = _safe_env_float("SCALP_CONFIDENCE_FLOOR", 0.74, low=0.4, high=1.0)
 # スカルプロットの絶対下限は 0（フロアなし）。環境変数での下限設定も無効化。
@@ -6782,7 +6785,11 @@ async def logic_loop(
                         )
                     if not allow_reversal:
                         prev_conf = int(sig.get("confidence", 0) or 0)
-                        damped = max(0, int(prev_conf * 0.1))
+                        pocket_name = (sig.get("pocket") or "").lower()
+                        min_conf = 0
+                        if prev_conf > 0 and pocket_name in {"micro", "scalp", "scalp_fast"}:
+                            min_conf = int(REVERSAL_GUARD_MIN_CONF_SCALP)
+                        damped = max(min_conf, int(prev_conf * 0.1))
                         sig["confidence"] = damped
                         logging.info(
                             "[REVERSAL_GUARD] strategy=%s dir=%s trend_h4=%s adx=%.1f rsi=%.1f mom=%.4f ema20=%.3f close=%.3f conf=%d->%d",
@@ -6797,6 +6804,14 @@ async def logic_loop(
                             prev_conf,
                             damped,
                         )
+                        if min_conf > 0 and damped == min_conf:
+                            logging.info(
+                                "[REVERSAL_GUARD] floor pocket=%s conf=%d->%d min=%d",
+                                pocket_name,
+                                prev_conf,
+                                damped,
+                                min_conf,
+                            )
                         if damped <= 0:
                             continue
                 filtered_signals.append(sig)
