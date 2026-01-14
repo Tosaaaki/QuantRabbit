@@ -3492,7 +3492,7 @@ async def market_order(
                 stage_index=stage_index,
                 response_payload=response,
             )
-            return None, None
+            return None
         except V20Error as e:
             logging.error(
                 "OANDA API Error (attempt %d) pocket=%s units=%s: %s",
@@ -3531,7 +3531,7 @@ async def market_order(
                     "Retrying order with reduced units=%s (half).", units_to_send
                 )
                 continue
-            return None, None
+            return None
         except Exception as exc:
             logging.exception(
                 "Unexpected error submitting order (attempt %d): %s",

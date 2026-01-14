@@ -7,6 +7,7 @@ import hashlib
 import json
 import math
 import os
+import sqlite3
 from pathlib import Path
 from typing import Optional, Tuple, Coroutine, Any, Dict, Sequence
 from types import SimpleNamespace
@@ -2093,6 +2094,35 @@ def build_client_order_id(focus_tag: Optional[str], strategy_tag: str) -> str:
     focus_part = (focus_tag or "hybrid")[:6]
     clean_tag = "".join(ch for ch in strategy_tag if ch.isalnum())[:9] or "sig"
     return f"qr-{ts_ms}-{focus_part}-{clean_tag}"
+
+
+def _lookup_order_status(client_order_id: str) -> Optional[dict]:
+    if not client_order_id:
+        return None
+    try:
+        con = sqlite3.connect("logs/orders.db", timeout=1.0)
+        row = con.execute(
+            """
+            SELECT ts, status, error_code, error_message
+            FROM orders
+            WHERE client_order_id = ?
+            ORDER BY ts DESC
+            LIMIT 1
+            """,
+            (client_order_id,),
+        ).fetchone()
+        con.close()
+    except Exception as exc:
+        logging.info("[ORDER_LOOKUP] failed client=%s err=%s", client_order_id, exc)
+        return None
+    if not row:
+        return None
+    return {
+        "ts": row[0],
+        "status": row[1],
+        "error_code": row[2],
+        "error_message": row[3],
+    }
 
 
 def _cooldown_for_pocket(pocket: str, range_mode: bool) -> int:
@@ -7691,6 +7721,13 @@ async def logic_loop(
                         )
                     total_lot_for_pocket = strategy_cap
                 if total_lot_for_pocket <= 0:
+                    logging.info(
+                        "[SKIP] no_lot pocket=%s strategy=%s lot_total=%.3f alloc=%.3f",
+                        pocket,
+                        signal.get("strategy"),
+                        lot_total,
+                        total_lot_for_pocket,
+                    )
                     continue
 
                 confidence = max(0, min(100, signal.get("confidence", 50)))
@@ -7722,6 +7759,14 @@ async def logic_loop(
                 confidence_factor = min(confidence_factor, 1.0)
                 confidence_target = round(total_lot_for_pocket * confidence_factor, 3)
                 if confidence_target <= 0:
+                    logging.info(
+                        "[SKIP] conf_target_zero pocket=%s strategy=%s conf=%s lot=%.3f factor=%.3f",
+                        pocket,
+                        signal.get("strategy"),
+                        confidence,
+                        total_lot_for_pocket,
+                        confidence_factor,
+                    )
                     continue
 
                 # Apply lot multiplier from insights per pocket side
@@ -7940,6 +7985,14 @@ async def logic_loop(
                             open_units,
                             _stage_plan(pocket),
                             scalp_ready,
+                        )
+                    else:
+                        logging.info(
+                            "[STAGE_SKIP] pocket=%s strategy=%s stage=%s confidence=%.3f",
+                            pocket,
+                            signal.get("strategy"),
+                            stage_idx,
+                            confidence_target,
                         )
                     continue
 
@@ -8549,7 +8602,27 @@ async def logic_loop(
                             now=now,
                         )
                 else:
-                    logging.error(f"[ORDER FAILED] {signal['strategy']}")
+                    status = _lookup_order_status(client_id)
+                    if status:
+                        logging.error(
+                            "[ORDER FAILED] strategy=%s pocket=%s units=%d client_id=%s status=%s code=%s msg=%s ts=%s",
+                            signal.get("strategy"),
+                            pocket,
+                            units,
+                            client_id,
+                            status.get("status"),
+                            status.get("error_code"),
+                            status.get("error_message"),
+                            status.get("ts"),
+                        )
+                    else:
+                        logging.error(
+                            "[ORDER FAILED] strategy=%s pocket=%s units=%d client_id=%s status=not_logged",
+                            signal.get("strategy"),
+                            pocket,
+                            units,
+                            client_id,
+                        )
 
             if entry_mix:
                 logging.info(
