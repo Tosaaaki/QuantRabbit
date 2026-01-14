@@ -48,8 +48,8 @@ _DEFAULT_MIN_RANGE_PIPS = {
     "manual": 10.0,
 }
 _DEFAULT_FIB_EXTREME = {
-    "scalp": 0.214,
-    "scalp_fast": 0.214,
+    "scalp": 0.12,
+    "scalp_fast": 0.12,
     "micro": 0.236,
     "macro": 0.236,
     "manual": 0.236,
