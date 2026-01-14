@@ -166,7 +166,7 @@ def _entry_guard(
     min_range_pips = _env_float("ENTRY_GUARD_MIN_RANGE_PIPS_M1SCALPER", 3.0)
     if range_pips < min_range_pips:
         return True
-    fib_extreme = _env_float("ENTRY_GUARD_FIB_EXTREME_M1SCALPER", 0.214)
+    fib_extreme = _env_float("ENTRY_GUARD_FIB_EXTREME_M1SCALPER", 0.12)
     fib_extreme = max(0.05, min(0.45, fib_extreme))
     mid_distance_pips = _env_float("ENTRY_GUARD_MID_DISTANCE_PIPS_M1SCALPER", 1.6)
     mid_distance_frac = _env_float("ENTRY_GUARD_MID_DISTANCE_FRAC_M1SCALPER", 0.25)
