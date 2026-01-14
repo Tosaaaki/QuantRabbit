@@ -1607,6 +1607,8 @@ def evaluate_exit_techniques(
     policy = _resolve_policy(strategy_tag=strategy_tag, pocket=pocket, entry_thesis=trade.get("entry_thesis"))
 
     allow_negative = _env_bool("TECH_EXIT_ALLOW_NEGATIVE") or False
+    entry_thesis = trade.get("entry_thesis") if isinstance(trade.get("entry_thesis"), dict) else None
+    axis_override = _axis_from_thesis(entry_thesis) if isinstance(entry_thesis, dict) else None
     entry_price = None
     try:
         entry_price = float(trade.get("price") or trade.get("entry_price") or 0.0)
@@ -1616,75 +1618,116 @@ def evaluate_exit_techniques(
     if entry_price and entry_price > 0 and current_price:
         pnl_pips = (current_price - entry_price) / PIP if side == "long" else (entry_price - current_price) / PIP
 
-    allow_negative_reversal = allow_negative
-    if pnl_pips is not None and pnl_pips <= -policy.exit_min_neg_pips:
-        allow_negative_reversal = True
-
-    candle_score = candle_debug = None
-    candle_candles = get_candles_snapshot(policy.candle_tf, limit=4)
-    if candle_candles:
-        candle_score, candle_debug = _score_candle(
-            candles=candle_candles,
-            side=side,
-            min_conf=policy.candle_min_conf,
+    fib_score = fib_debug = None
+    fib_items: list[tuple[str, float, Dict[str, object]]] = []
+    fib_tfs = (
+        [policy.fib_tf]
+        if axis_override
+        else _resolve_mtf_tfs(
+            "fib",
+            policy=policy,
+            pocket=pocket,
+            strategy_tag=strategy_tag,
+            entry_thesis=entry_thesis,
         )
-        if candle_score is not None and candle_score < 0:
-            return TechniqueExitDecision(
-                True,
-                "tech_candle_reversal",
-                allow_negative_reversal,
-                {
-                    "price": price_dbg,
-                    "pnl_pips": round(pnl_pips, 3) if pnl_pips is not None else None,
-                    "candle": candle_debug or {},
-                    "score": round(candle_score, 3),
-                },
+    )
+    for tf in fib_tfs:
+        axis = axis_override or _range_from_policy(policy, tf=tf, entry_thesis=entry_thesis)
+        if axis:
+            score, detail = _score_fib(
+                entry_price=current_price,
+                axis=axis,
+                side=side,
+                mode=policy.mode,
+                fib_trigger=policy.fib_trigger,
             )
+            if score is not None:
+                fib_items.append((tf, score, detail))
+    if fib_items:
+        fib_score, fib_debug = _blend_tf_scores(fib_items, mode=policy.mode)
+
+    median_score = median_debug = None
+    median_items: list[tuple[str, float, Dict[str, object]]] = []
+    median_tfs = (
+        [policy.median_tf]
+        if axis_override
+        else _resolve_mtf_tfs(
+            "median",
+            policy=policy,
+            pocket=pocket,
+            strategy_tag=strategy_tag,
+            entry_thesis=entry_thesis,
+        )
+    )
+    for tf in median_tfs:
+        axis = axis_override or _range_from_policy(policy, tf=tf, entry_thesis=entry_thesis)
+        if axis:
+            dist_scale = _tf_length_scale(tf)
+            score, detail = _score_median(
+                entry_price=current_price,
+                axis=axis,
+                side=side,
+                mode=policy.mode,
+                mid_distance_pips=policy.mid_distance_pips * dist_scale,
+            )
+            if score is not None:
+                median_items.append((tf, score, detail))
+    if median_items:
+        median_score, median_debug = _blend_tf_scores(median_items, mode=policy.mode)
 
     nwave_score = nwave_debug = None
-    nwave_candles = get_candles_snapshot(policy.nwave_tf, limit=policy.lookback)
-    if nwave_candles:
-        nwave_score, nwave_debug = _score_nwave(
-            candles=nwave_candles,
-            side=side,
-            min_quality=policy.nwave_min_quality,
-            min_leg_pips=policy.nwave_min_leg_pips,
-        )
-        if nwave_score is not None and nwave_score < 0:
-            return TechniqueExitDecision(
-                True,
-                "tech_nwave_flip",
-                allow_negative_reversal,
-                {
-                    "price": price_dbg,
-                    "pnl_pips": round(pnl_pips, 3) if pnl_pips is not None else None,
-                    "nwave": nwave_debug or {},
-                    "score": round(nwave_score, 3),
-                },
+    nwave_items: list[tuple[str, float, Dict[str, object]]] = []
+    nwave_tfs = _resolve_mtf_tfs(
+        "nwave",
+        policy=policy,
+        pocket=pocket,
+        strategy_tag=strategy_tag,
+        entry_thesis=entry_thesis,
+    )
+    for tf in nwave_tfs:
+        lookback = _LOOKBACK_BY_TF.get(tf, policy.lookback)
+        nwave_candles = get_candles_snapshot(tf, limit=lookback)
+        if nwave_candles:
+            leg_scale = _tf_length_scale(tf)
+            score, detail = _score_nwave(
+                candles=nwave_candles,
+                side=side,
+                min_quality=policy.nwave_min_quality,
+                min_leg_pips=policy.nwave_min_leg_pips * leg_scale,
             )
-
-    if pnl_pips is None or pnl_pips > -policy.exit_min_neg_pips:
-        return TechniqueExitDecision(False, None, False, {})
-
-    axis = _range_from_policy(policy, tf=policy.fib_tf, entry_thesis=trade.get("entry_thesis"))
-    fib_score = fib_debug = None
-    if axis:
-        fib_score, fib_debug = _score_fib(
-            entry_price=current_price,
-            axis=axis,
-            side=side,
+            if score is not None:
+                nwave_items.append((tf, score, detail))
+    if nwave_items:
+        nwave_score, nwave_debug = _blend_tf_scores(
+            nwave_items,
             mode=policy.mode,
-            fib_trigger=policy.fib_trigger,
+            prefer_lower=True,
         )
-    median_score = median_debug = None
-    axis_mid = axis or _range_from_policy(policy, tf=policy.median_tf, entry_thesis=trade.get("entry_thesis"))
-    if axis_mid:
-        median_score, median_debug = _score_median(
-            entry_price=current_price,
-            axis=axis_mid,
-            side=side,
+
+    candle_score = candle_debug = None
+    candle_items: list[tuple[str, float, Dict[str, object]]] = []
+    candle_tfs = _resolve_mtf_tfs(
+        "candle",
+        policy=policy,
+        pocket=pocket,
+        strategy_tag=strategy_tag,
+        entry_thesis=entry_thesis,
+    )
+    for tf in candle_tfs:
+        candle_candles = get_candles_snapshot(tf, limit=4)
+        if candle_candles:
+            score, detail = _score_candle(
+                candles=candle_candles,
+                side=side,
+                min_conf=policy.candle_min_conf,
+            )
+            if score is not None:
+                candle_items.append((tf, score, detail))
+    if candle_items:
+        candle_score, candle_debug = _blend_tf_scores(
+            candle_items,
             mode=policy.mode,
-            mid_distance_pips=policy.mid_distance_pips,
+            prefer_lower=True,
         )
 
     weights = [
@@ -1706,20 +1749,12 @@ def evaluate_exit_techniques(
             pos_count += 1
         elif score < 0:
             neg_count += 1
-    if weight_sum <= 0:
-        return TechniqueExitDecision(False, None, False, {})
-    return_score = _clamp(score_sum / weight_sum, -1.0, 1.0)
-    coverage = weight_sum / max(
-        policy.weight_fib + policy.weight_median + policy.weight_nwave + policy.weight_candle, 1e-6
-    )
 
     debug = {
         "price": price_dbg,
-        "pnl_pips": round(pnl_pips, 3),
-        "return_score": round(return_score, 3),
+        "pnl_pips": round(pnl_pips, 3) if pnl_pips is not None else None,
         "exit_min_neg_pips": round(policy.exit_min_neg_pips, 3),
         "exit_return_score": round(policy.exit_return_score, 3),
-        "coverage": round(coverage, 3),
         "pos_count": pos_count,
         "neg_count": neg_count,
     }
@@ -1732,7 +1767,37 @@ def evaluate_exit_techniques(
     if candle_debug:
         debug["candle"] = candle_debug
 
-    if return_score <= policy.exit_return_score:
+    return_score = None
+    coverage = None
+    if weight_sum > 0:
+        return_score = _clamp(score_sum / weight_sum, -1.0, 1.0)
+        coverage = weight_sum / max(
+            policy.weight_fib + policy.weight_median + policy.weight_nwave + policy.weight_candle,
+            1e-6,
+        )
+        debug["return_score"] = round(return_score, 3)
+        debug["coverage"] = round(coverage, 3)
+
+    reversal_signal = (candle_score is not None and candle_score < 0) or (
+        nwave_score is not None and nwave_score < 0
+    )
+    allow_negative_reversal = allow_negative
+    if pnl_pips is not None and pnl_pips <= -policy.exit_min_neg_pips:
+        if return_score is not None and return_score <= policy.exit_return_score:
+            allow_negative_reversal = True
+        elif neg_count >= 2 and pos_count == 0:
+            allow_negative_reversal = True
+
+    if reversal_signal:
+        reason = "tech_candle_reversal" if candle_score is not None and candle_score < 0 else "tech_nwave_flip"
+        if (candle_score is not None and candle_score < 0) and (nwave_score is not None and nwave_score < 0):
+            reason = "tech_reversal_combo"
+        return TechniqueExitDecision(True, reason, allow_negative_reversal, debug)
+
+    if pnl_pips is None or pnl_pips > -policy.exit_min_neg_pips:
+        return TechniqueExitDecision(False, None, False, {})
+
+    if return_score is not None and return_score <= policy.exit_return_score:
         return TechniqueExitDecision(True, "tech_return_fail", True, debug)
 
     return TechniqueExitDecision(False, None, False, {})
