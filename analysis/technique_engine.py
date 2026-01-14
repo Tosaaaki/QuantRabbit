@@ -1616,6 +1616,10 @@ def evaluate_exit_techniques(
     if entry_price and entry_price > 0 and current_price:
         pnl_pips = (current_price - entry_price) / PIP if side == "long" else (entry_price - current_price) / PIP
 
+    allow_negative_reversal = allow_negative
+    if pnl_pips is not None and pnl_pips <= -policy.exit_min_neg_pips:
+        allow_negative_reversal = True
+
     candle_score = candle_debug = None
     candle_candles = get_candles_snapshot(policy.candle_tf, limit=4)
     if candle_candles:
@@ -1628,7 +1632,7 @@ def evaluate_exit_techniques(
             return TechniqueExitDecision(
                 True,
                 "tech_candle_reversal",
-                allow_negative,
+                allow_negative_reversal,
                 {
                     "price": price_dbg,
                     "pnl_pips": round(pnl_pips, 3) if pnl_pips is not None else None,
@@ -1650,7 +1654,7 @@ def evaluate_exit_techniques(
             return TechniqueExitDecision(
                 True,
                 "tech_nwave_flip",
-                allow_negative,
+                allow_negative_reversal,
                 {
                     "price": price_dbg,
                     "pnl_pips": round(pnl_pips, 3) if pnl_pips is not None else None,
