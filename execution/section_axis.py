@@ -83,6 +83,23 @@ _DEFAULT_SECTION_DELTA = {
     "macro": 2,
     "manual": 2,
 }
+_DEFAULT_LEFT_BEHIND_HOLD_SEC = {
+    "scalp": 600.0,
+    "scalp_fast": 480.0,
+    "micro": 1800.0,
+    "macro": 3600.0,
+    "manual": 21600.0,
+}
+_DEFAULT_LEFT_BEHIND_MIN_PIPS = {
+    "scalp": 1.2,
+    "scalp_fast": 1.0,
+    "micro": 2.5,
+    "macro": 4.0,
+    "manual": 8.0,
+}
+_DEFAULT_LEFT_BEHIND_RETURN_SCORE = {"default": -0.15}
+_DEFAULT_LEFT_BEHIND_MIN_COVERAGE = {"default": 0.55}
+_DEFAULT_LEFT_BEHIND_NEG_COUNT = {"default": 2}
 
 
 @dataclass(slots=True)
@@ -445,6 +462,8 @@ def evaluate_section_exit(
         opened_at = _parse_time(trade.get("open_time"))
         hold_sec = (now - opened_at).total_seconds() if opened_at else 0.0
 
+    pnl_pips = (current_price - entry) / PIP if side == "long" else (entry - current_price) / PIP
+
     pocket_key = pocket or "default"
     min_hold = _resolve_by_pocket(
         "SECTION_EXIT_MIN_HOLD_SEC",
@@ -475,6 +494,68 @@ def evaluate_section_exit(
             tech_exit.debug,
         )
 
+    if pocket_key not in {"manual", "unknown"}:
+        left_hold_sec = _resolve_by_pocket(
+            "SECTION_EXIT_LEFT_BEHIND_HOLD_SEC",
+            pocket_key,
+            _DEFAULT_LEFT_BEHIND_HOLD_SEC,
+            strategy_keys,
+        )
+        left_min_pips = _resolve_by_pocket(
+            "SECTION_EXIT_LEFT_BEHIND_MIN_PIPS",
+            pocket_key,
+            _DEFAULT_LEFT_BEHIND_MIN_PIPS,
+            strategy_keys,
+        )
+        left_return_score = _resolve_by_pocket(
+            "SECTION_EXIT_LEFT_BEHIND_RETURN_SCORE",
+            pocket_key,
+            _DEFAULT_LEFT_BEHIND_RETURN_SCORE,
+            strategy_keys,
+        )
+        left_min_coverage = _resolve_by_pocket(
+            "SECTION_EXIT_LEFT_BEHIND_MIN_COVERAGE",
+            pocket_key,
+            _DEFAULT_LEFT_BEHIND_MIN_COVERAGE,
+            strategy_keys,
+        )
+        left_neg_count = _resolve_int_by_pocket(
+            "SECTION_EXIT_LEFT_BEHIND_NEG_COUNT",
+            pocket_key,
+            _DEFAULT_LEFT_BEHIND_NEG_COUNT,
+            strategy_keys,
+        )
+        if (
+            left_hold_sec > 0
+            and left_min_pips > 0
+            and hold_sec >= left_hold_sec
+            and pnl_pips <= -left_min_pips
+        ):
+            debug = dict(tech_exit.debug) if isinstance(tech_exit.debug, dict) else {}
+            return_score = debug.get("return_score")
+            coverage = float(debug.get("coverage") or 0.0)
+            neg_count = int(debug.get("neg_count") or 0)
+            pos_count = int(debug.get("pos_count") or 0)
+            debug.update(
+                {
+                    "left_hold_sec": round(left_hold_sec, 3),
+                    "left_min_pips": round(left_min_pips, 3),
+                    "left_return_score": round(left_return_score, 3),
+                    "left_min_coverage": round(left_min_coverage, 3),
+                    "left_neg_count": left_neg_count,
+                    "pnl_pips": round(pnl_pips, 3),
+                    "hold_sec": round(hold_sec, 3),
+                }
+            )
+            if (
+                return_score is not None
+                and coverage >= left_min_coverage
+                and float(return_score) <= left_return_score
+            ):
+                return SectionExitDecision(True, "left_behind_return", True, debug)
+            if coverage >= left_min_coverage and neg_count >= left_neg_count and pos_count == 0:
+                return SectionExitDecision(True, "left_behind_signal", True, debug)
+
     axis = _extract_axis(thesis) or _compute_axis(thesis, pocket_key)
     if axis is None:
         return SectionExitDecision(False, None, False, {})
@@ -493,7 +574,6 @@ def evaluate_section_exit(
     if range_pips < min_range_pips:
         return SectionExitDecision(False, None, False, {})
 
-    pnl_pips = (current_price - entry) / PIP if side == "long" else (entry - current_price) / PIP
     max_profit = _resolve_by_pocket(
         "SECTION_EXIT_MAX_PROFIT_PIPS",
         pocket_key,
