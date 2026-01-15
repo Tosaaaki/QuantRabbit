@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Dict, Optional, Sequence, Set
 
+from analysis.technique_engine import evaluate_exit_techniques
 from workers.common.exit_utils import close_trade
 from execution.position_manager import PositionManager
 from execution.reversion_failure import evaluate_reversion_failure, evaluate_tp_zone
@@ -235,6 +236,14 @@ class MicroVWAPBoundExitWorker:
             )
             state.trend_hits = decision.trend_hits
             if decision.should_exit and decision.reason:
+                tech_exit = evaluate_exit_techniques(
+                    trade=trade,
+                    current_price=mid,
+                    side=side,
+                    pocket=POCKET,
+                )
+                if not (tech_exit.should_exit and tech_exit.allow_negative):
+                    return
                 LOG.info(
                     "[EXIT-micro_vwap] reversion_exit trade=%s reason=%s detail=%s",
                     trade_id,
@@ -253,7 +262,7 @@ class MicroVWAPBoundExitWorker:
                     decision.reason,
                     pnl,
                     client_id,
-                    allow_negative=True,
+                    allow_negative=tech_exit.allow_negative,
                 )
                 self._states.pop(trade_id, None)
                 return

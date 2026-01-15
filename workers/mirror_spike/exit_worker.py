@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Dict, Optional, Sequence, Set
 
+from analysis.technique_engine import evaluate_exit_techniques
 from workers.common.exit_utils import close_trade
 from execution.position_manager import PositionManager
 from execution.reversion_failure import evaluate_reversion_failure, evaluate_tp_zone
@@ -264,15 +265,28 @@ async def _run_exit_loop(
             )
             state.trend_hits = decision.trend_hits
             if decision.should_exit and decision.reason:
-                log_metric(
-                    "mirror_spike_reversion_exit",
-                    pnl,
-                    tags={"reason": decision.reason, "side": side},
-                    ts=now,
+                tech_exit = evaluate_exit_techniques(
+                    trade=trade,
+                    current_price=current,
+                    side=side,
+                    pocket=pocket,
                 )
-                await _close(trade_id, -units, decision.reason, client_id, allow_negative=True)
-                states.pop(trade_id, None)
-                return
+                if tech_exit.should_exit and tech_exit.allow_negative:
+                    log_metric(
+                        "mirror_spike_reversion_exit",
+                        pnl,
+                        tags={"reason": decision.reason, "side": side},
+                        ts=now,
+                    )
+                    await _close(
+                        trade_id,
+                        -units,
+                        decision.reason,
+                        client_id,
+                        allow_negative=tech_exit.allow_negative,
+                    )
+                    states.pop(trade_id, None)
+                    return
 
         if pnl > 0:
             tp_decision = evaluate_tp_zone(

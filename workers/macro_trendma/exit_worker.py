@@ -10,6 +10,7 @@ from datetime import datetime, timezone
 from typing import Dict, Optional, Sequence, Set
 
 from analysis.range_guard import detect_range_mode
+from analysis.technique_engine import evaluate_exit_techniques
 from workers.common.exit_utils import close_trade
 from execution.position_manager import PositionManager
 from execution.section_axis import evaluate_section_exit
@@ -257,10 +258,28 @@ class TrendMAExitWorker:
             and pnl <= -self.trend_fail_pips
             and _trend_failure(side, fac_h1, self.trend_fail_buffer_pips)
         ):
-            log_metric("trendma_trend_failure", pnl, tags={"side": side})
-            await self._close(trade_id, -units, "trend_failure", pnl, client_id)
-            self._states.pop(trade_id, None)
-            return
+            tech_exit = evaluate_exit_techniques(
+                trade=trade,
+                current_price=mid,
+                side=side,
+                pocket=POCKET,
+            )
+            if tech_exit.should_exit:
+                log_metric(
+                    "trendma_trend_failure",
+                    pnl,
+                    tags={"side": side, "tech": tech_exit.reason or "none"},
+                )
+                await self._close(
+                    trade_id,
+                    -units,
+                    "trend_failure",
+                    pnl,
+                    client_id,
+                    allow_negative=tech_exit.allow_negative,
+                )
+                self._states.pop(trade_id, None)
+                return
 
         profit_take = self.range_profit_take if range_active else self.profit_take
         trail_start = self.range_trail_start if range_active else self.trail_start

@@ -10,6 +10,7 @@ from datetime import datetime, timezone
 from typing import Dict, Optional
 
 from analysis.range_guard import detect_range_mode
+from analysis.technique_engine import evaluate_exit_techniques
 from workers.common.exit_utils import close_trade
 from execution.position_manager import PositionManager
 from execution.reversion_failure import evaluate_reversion_failure, evaluate_tp_zone
@@ -339,7 +340,14 @@ class MirrorSpikeExitWorker:
             )
             state.trend_hits = decision.trend_hits
             if decision.should_exit and decision.reason:
-                return decision.reason
+                tech_exit = evaluate_exit_techniques(
+                    trade=trade,
+                    current_price=ctx.mid,
+                    side=side,
+                    pocket=POCKET,
+                )
+                if tech_exit.should_exit and tech_exit.allow_negative:
+                    return decision.reason
 
         if pnl > 0:
             tp_decision = evaluate_tp_zone(
