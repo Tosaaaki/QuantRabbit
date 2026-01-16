@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import json
 import os
+import re
 from typing import Dict, Optional
 
 from analysis.range_model import compute_range_snapshot
@@ -25,6 +26,7 @@ _TF_ALIASES = {
     "d1": "D1",
 }
 _VALID_TFS = {"M1", "M5", "H1", "H4", "D1"}
+_TF_ORDER = {"M1": 1, "M5": 2, "H1": 3, "H4": 4, "D1": 5}
 
 _DEFAULT_TF_BY_POCKET = {
     "scalp": "M1",
@@ -102,6 +104,9 @@ _DEFAULT_SOFT_MIN_CHECKS = {
 _DEFAULT_SOFT_MIN_PENALTIES = {
     "default": 2,
 }
+_DEFAULT_MTF_MIN_BLOCKS = {
+    "default": 2,
+}
 _DEFAULT_MOMENTUM_MIN = {
     "scalp": 0.004,
     "scalp_fast": 0.004,
@@ -169,6 +174,49 @@ def _normalize_tf(value: Optional[str]) -> Optional[str]:
         return alias
     upper = text.upper()
     return upper if upper in _VALID_TFS else None
+
+
+def _parse_tf_list(value: object) -> list[str]:
+    if value is None:
+        return []
+    items = []
+    if isinstance(value, (list, tuple, set)):
+        items.extend(value)
+    else:
+        text = str(value)
+        for token in re.split(r"[\\s,|/]+", text):
+            if token:
+                items.append(token)
+    tfs: list[str] = []
+    for item in items:
+        tf = _normalize_tf(item)
+        if tf:
+            tfs.append(tf)
+    return tfs
+
+
+def _dedupe_keep_order(values: list[str]) -> list[str]:
+    seen: set[str] = set()
+    out: list[str] = []
+    for value in values:
+        if not value or value in seen:
+            continue
+        seen.add(value)
+        out.append(value)
+    return out
+
+
+def _tf_rank(tf: Optional[str]) -> int:
+    if not tf:
+        return 99
+    return _TF_ORDER.get(tf, 99)
+
+
+def _pick_tf_extremes(tfs: list[str]) -> tuple[Optional[str], Optional[str]]:
+    if not tfs:
+        return None, None
+    ordered = sorted(tfs, key=_tf_rank)
+    return ordered[0], ordered[-1]
 
 
 def _coerce_thesis(meta: object) -> dict:
@@ -279,6 +327,31 @@ def _resolve_tf(thesis: dict, pocket: str, strategy_keys: tuple[str, ...]) -> st
     return _DEFAULT_TF_BY_POCKET.get(pocket, "H1")
 
 
+def _resolve_tfs(thesis: dict, pocket: str, strategy_keys: tuple[str, ...]) -> list[str]:
+    primary_tf = _resolve_tf(thesis, pocket, strategy_keys)
+    tfs = [primary_tf]
+
+    explicit: list[str] = []
+    explicit.extend(_parse_tf_list(thesis.get("entry_guard_tfs")))
+    if not explicit:
+        for key in strategy_keys:
+            explicit.extend(_parse_tf_list(os.getenv(f"ENTRY_GUARD_TFS_{key}")))
+        pocket_upper = pocket.upper()
+        explicit.extend(_parse_tf_list(os.getenv(f"ENTRY_GUARD_TFS_{pocket_upper}")))
+        explicit.extend(_parse_tf_list(os.getenv("ENTRY_GUARD_TFS")))
+
+    if explicit:
+        tfs.extend(explicit)
+    else:
+        for key in ("entry_tf", "struct_tf", "env_tf", "tf", "timeframe", "entry_timeframe"):
+            tfs.extend(_parse_tf_list(thesis.get(key)))
+        section_axis = thesis.get("section_axis")
+        if isinstance(section_axis, dict):
+            tfs.extend(_parse_tf_list(section_axis.get("tf")))
+
+    return _dedupe_keep_order([tf for tf in tfs if tf])
+
+
 def _resolve_bool(name: str, pocket: str, default: bool, strategy_keys: tuple[str, ...]) -> bool:
     for key in strategy_keys:
         specific = _env_bool(f"{name}_{key}")
@@ -328,6 +401,69 @@ def _resolve_int(
     return int(defaults.get(pocket, defaults.get("default", 0)))
 
 
+def _resolve_trend_metrics(
+    thesis: dict, fac: dict, tf: str
+) -> tuple[float, int, float]:
+    adx = _resolve_factor(thesis, fac, "adx", tf) or 0.0
+    ma10 = _resolve_factor(thesis, fac, "ma10", tf) or 0.0
+    ma20 = _resolve_factor(thesis, fac, "ma20", tf) or 0.0
+    trend_dir = 0
+    ma_diff_pips = 0.0
+    if ma10 > 0.0 and ma20 > 0.0:
+        if ma10 > ma20:
+            trend_dir = 1
+        elif ma10 < ma20:
+            trend_dir = -1
+        ma_diff_pips = abs(ma10 - ma20) / PIP
+    return float(adx), trend_dir, float(ma_diff_pips)
+
+
+def _resolve_momentum_metrics(
+    thesis: dict, fac: dict, tf: str
+) -> tuple[Optional[float], Optional[float]]:
+    momentum = _resolve_factor(thesis, fac, "momentum", tf)
+    vol_5m = _resolve_factor(thesis, fac, "vol_5m", tf)
+    return momentum, vol_5m
+
+
+def _pick_block_reason(blocked: list[EntryGuardDecision], side: str) -> Optional[str]:
+    if not blocked:
+        return None
+    if side == "short":
+        priority = ("entry_guard_extreme_short", "entry_guard_mid_far_short")
+    else:
+        priority = ("entry_guard_extreme_long", "entry_guard_mid_far_long")
+    for reason in priority:
+        for decision in blocked:
+            if decision.reason == reason:
+                return reason
+    return blocked[0].reason
+
+
+def _merge_mtf_debug(
+    base_debug: Dict[str, object],
+    tfs: list[str],
+    decisions: list[EntryGuardDecision],
+    min_blocks: int,
+) -> Dict[str, object]:
+    debug = dict(base_debug or {})
+    mtf_decisions: Dict[str, object] = {}
+    for tf, decision in zip(tfs, decisions):
+        mtf_decisions[tf] = {
+            "allowed": decision.allowed,
+            "reason": decision.reason,
+            "debug": decision.debug,
+        }
+    debug["mtf"] = {
+        "primary_tf": tfs[0] if tfs else None,
+        "tfs": list(tfs),
+        "min_blocks": int(min_blocks),
+        "blocked": sum(1 for decision in decisions if not decision.allowed),
+        "decisions": mtf_decisions,
+    }
+    return debug
+
+
 def evaluate_entry_guard(
     *,
     entry_price: float,
@@ -335,6 +471,9 @@ def evaluate_entry_guard(
     pocket: str,
     strategy_tag: Optional[str] = None,
     entry_thesis: Optional[dict] = None,
+    _tf_override: Optional[str] = None,
+    _factors: Optional[Dict[str, Dict[str, float]]] = None,
+    _mtf: bool = True,
 ) -> EntryGuardDecision:
     if entry_price <= 0.0:
         return EntryGuardDecision(True, None, {})
@@ -353,7 +492,103 @@ def evaluate_entry_guard(
     if not _resolve_bool("ENTRY_GUARD_ENABLED", pocket, True, strategy_keys):
         return EntryGuardDecision(True, None, {})
 
-    tf = _resolve_tf(thesis, pocket, strategy_keys)
+    mtf_enabled = _resolve_bool("ENTRY_GUARD_MTF_ENABLED", pocket, True, strategy_keys)
+    factors = _factors or all_factors()
+    if _mtf and _tf_override is None and mtf_enabled:
+        tfs = _resolve_tfs(thesis, pocket, strategy_keys)
+        if len(tfs) > 1:
+            decisions = [
+                evaluate_entry_guard(
+                    entry_price=entry_price,
+                    side=side,
+                    pocket=pocket,
+                    strategy_tag=strategy_tag,
+                    entry_thesis=thesis,
+                    _tf_override=tf,
+                    _factors=factors,
+                    _mtf=False,
+                )
+                for tf in tfs
+            ]
+            primary = decisions[0]
+            blocked = [decision for decision in decisions if not decision.allowed]
+            extreme_reason = (
+                "entry_guard_extreme_short" if side == "short" else "entry_guard_extreme_long"
+            )
+            extreme_blocked = [
+                decision
+                for decision in decisions
+                if (not decision.allowed) and decision.reason == extreme_reason
+            ]
+            min_blocks = _resolve_int(
+                "ENTRY_GUARD_MTF_MIN_BLOCKS", pocket, _DEFAULT_MTF_MIN_BLOCKS, strategy_keys
+            )
+            min_blocks = max(1, min(int(min_blocks), len(decisions)))
+            base_debug = primary.debug if decisions else {}
+            debug = _merge_mtf_debug(base_debug, tfs, decisions, min_blocks)
+            trend_adx_min = _resolve_float(
+                "ENTRY_GUARD_TREND_ADX_MIN", pocket, _DEFAULT_TREND_ADX_MIN, strategy_keys
+            )
+            trend_ma_min = _resolve_float(
+                "ENTRY_GUARD_TREND_MA_DIFF_PIPS", pocket, _DEFAULT_TREND_MA_DIFF_PIPS, strategy_keys
+            )
+            momentum_min = _resolve_float(
+                "ENTRY_GUARD_MOMENTUM_MIN", pocket, _DEFAULT_MOMENTUM_MIN, strategy_keys
+            )
+            vol_5m_min = _resolve_float(
+                "ENTRY_GUARD_VOL_5M_MIN", pocket, _DEFAULT_VOL_5M_MIN, strategy_keys
+            )
+            lower_tf, higher_tf = _pick_tf_extremes(tfs)
+            trend_ok = False
+            trend_metrics = None
+            if higher_tf:
+                fac = factors.get(higher_tf) or factors.get("H1") or {}
+                adx, trend_dir, ma_diff_pips = _resolve_trend_metrics(thesis, fac, higher_tf)
+                side_dir = 1 if side == "long" else -1
+                trend_ok = trend_dir == side_dir and (
+                    adx >= trend_adx_min or ma_diff_pips >= trend_ma_min
+                )
+                trend_metrics = {
+                    "tf": higher_tf,
+                    "adx": round(adx, 2),
+                    "trend_dir": "up" if trend_dir > 0 else "down" if trend_dir < 0 else "flat",
+                    "trend_ma_pips": round(ma_diff_pips, 2),
+                }
+            momentum_ok = False
+            momentum_metrics = None
+            if lower_tf:
+                fac = factors.get(lower_tf) or factors.get("H1") or {}
+                momentum, vol_5m = _resolve_momentum_metrics(thesis, fac, lower_tf)
+                if momentum is not None:
+                    if side == "long":
+                        momentum_ok = momentum >= momentum_min
+                    else:
+                        momentum_ok = momentum <= -momentum_min
+                    if vol_5m is not None:
+                        momentum_ok = momentum_ok and vol_5m >= vol_5m_min
+                momentum_metrics = {
+                    "tf": lower_tf,
+                    "momentum": round(momentum, 5) if momentum is not None else None,
+                    "vol_5m": round(vol_5m, 3) if vol_5m is not None else None,
+                }
+            if "mtf" not in debug:
+                debug["mtf"] = {}
+            debug["mtf"]["trend_ok"] = trend_ok
+            debug["mtf"]["momentum_ok"] = momentum_ok
+            debug["mtf"]["extreme_blocked"] = len(extreme_blocked)
+            debug["mtf"]["trend_metrics"] = trend_metrics
+            debug["mtf"]["momentum_metrics"] = momentum_metrics
+            if primary.allowed:
+                return EntryGuardDecision(True, primary.reason, debug)
+            if trend_ok or momentum_ok:
+                debug["mtf"]["allow_reason"] = "trend_ok" if trend_ok else "momentum_ok"
+                return EntryGuardDecision(True, "entry_guard_mtf_allow", debug)
+            if len(extreme_blocked) >= min_blocks:
+                reason = _pick_block_reason(blocked, side)
+                return EntryGuardDecision(False, reason, debug)
+            return EntryGuardDecision(True, "entry_guard_mtf_allow", debug)
+
+    tf = _tf_override or _resolve_tf(thesis, pocket, strategy_keys)
     lookback = _resolve_int("ENTRY_GUARD_LOOKBACK", pocket, _DEFAULT_LOOKBACK_BY_POCKET, strategy_keys)
     hi_pct = _resolve_float("ENTRY_GUARD_HI_PCT", pocket, {"default": 95.0}, strategy_keys)
     lo_pct = _resolve_float("ENTRY_GUARD_LO_PCT", pocket, {"default": 5.0}, strategy_keys)
@@ -382,7 +617,6 @@ def evaluate_entry_guard(
     if range_pips < min_range_pips:
         return EntryGuardDecision(True, None, {})
 
-    factors = all_factors()
     fac = factors.get(tf) or factors.get("H1") or {}
     adx_value = None
     try:
