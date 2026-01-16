@@ -107,6 +107,24 @@ _DEFAULT_SOFT_MIN_PENALTIES = {
 _DEFAULT_MTF_MIN_BLOCKS = {
     "default": 2,
 }
+_DEFAULT_ALIGN_MIN = {
+    "default": 0,
+}
+_DEFAULT_ALIGN_ADX_MIN = {
+    "default": 0.0,
+}
+_DEFAULT_ALIGN_MA_DIFF_PIPS = {
+    "default": 0.0,
+}
+_DEFAULT_ADX_RANGE_MIN = {
+    "default": 0.0,
+}
+_DEFAULT_ADX_RANGE_MAX = {
+    "default": 0.0,
+}
+_DEFAULT_MA20_GAP_ATR_MAX = {
+    "default": 0.0,
+}
 _DEFAULT_MOMENTUM_MIN = {
     "scalp": 0.004,
     "scalp_fast": 0.004,
@@ -352,6 +370,26 @@ def _resolve_tfs(thesis: dict, pocket: str, strategy_keys: tuple[str, ...]) -> l
     return _dedupe_keep_order([tf for tf in tfs if tf])
 
 
+def _resolve_metric_tf(
+    thesis: dict,
+    thesis_key: str,
+    env_key: str,
+    pocket: str,
+    strategy_keys: tuple[str, ...],
+    fallback: Optional[str],
+) -> Optional[str]:
+    tf = _normalize_tf(thesis.get(thesis_key))
+    if tf:
+        return tf
+    for key in strategy_keys:
+        tf = _normalize_tf(os.getenv(f"{env_key}_{key}"))
+        if tf:
+            return tf
+    pocket_upper = pocket.upper()
+    tf = _normalize_tf(os.getenv(f"{env_key}_{pocket_upper}") or os.getenv(env_key))
+    return tf or fallback
+
+
 def _resolve_bool(name: str, pocket: str, default: bool, strategy_keys: tuple[str, ...]) -> bool:
     for key in strategy_keys:
         specific = _env_bool(f"{name}_{key}")
@@ -426,6 +464,41 @@ def _resolve_momentum_metrics(
     return momentum, vol_5m
 
 
+def _compute_alignment(
+    tfs: list[str],
+    side: str,
+    thesis: dict,
+    factors: Dict[str, Dict[str, float]],
+    adx_min: float,
+    ma_min: float,
+) -> tuple[int, int, Dict[str, object]]:
+    if not tfs:
+        return 0, 0, {}
+    side_dir = 1 if side == "long" else -1
+    align_count = 0
+    valid_count = 0
+    details: Dict[str, object] = {}
+    for tf in tfs:
+        fac = factors.get(tf) or factors.get("H1") or {}
+        adx, trend_dir, ma_diff_pips = _resolve_trend_metrics(thesis, fac, tf)
+        aligned = trend_dir == side_dir
+        strong = aligned and (
+            (adx_min <= 0.0 and ma_min <= 0.0) or adx >= adx_min or ma_diff_pips >= ma_min
+        )
+        if trend_dir != 0:
+            valid_count += 1
+        if strong:
+            align_count += 1
+        details[tf] = {
+            "adx": round(adx, 2),
+            "trend_dir": "up" if trend_dir > 0 else "down" if trend_dir < 0 else "flat",
+            "trend_ma_pips": round(ma_diff_pips, 2),
+            "aligned": aligned,
+            "strong": strong,
+        }
+    return align_count, valid_count, details
+
+
 def _pick_block_reason(blocked: list[EntryGuardDecision], side: str) -> Optional[str]:
     if not blocked:
         return None
@@ -494,8 +567,160 @@ def evaluate_entry_guard(
 
     mtf_enabled = _resolve_bool("ENTRY_GUARD_MTF_ENABLED", pocket, True, strategy_keys)
     factors = _factors or all_factors()
-    if _mtf and _tf_override is None and mtf_enabled:
+    tfs: list[str] = []
+    lower_tf: Optional[str] = None
+    higher_tf: Optional[str] = None
+    align_min = 0
+    align_count: Optional[int] = None
+    align_valid: Optional[int] = None
+    align_details: Optional[Dict[str, object]] = None
+
+    def _base_guard_debug() -> Dict[str, object]:
+        debug: Dict[str, object] = {}
+        if tfs:
+            mtf_debug: Dict[str, object] = {
+                "primary_tf": tfs[0],
+                "tfs": list(tfs),
+            }
+            if align_count is not None:
+                mtf_debug["align_min"] = align_min
+                mtf_debug["align_count"] = align_count
+                mtf_debug["align_valid"] = align_valid
+                mtf_debug["align_details"] = align_details
+            debug["mtf"] = mtf_debug
+        return debug
+
+    if _tf_override is None:
         tfs = _resolve_tfs(thesis, pocket, strategy_keys)
+        lower_tf, higher_tf = _pick_tf_extremes(tfs)
+
+        align_min = _resolve_int("ENTRY_GUARD_ALIGN_MIN", pocket, _DEFAULT_ALIGN_MIN, strategy_keys)
+        align_min = max(0, min(int(align_min), len(tfs))) if tfs else 0
+        align_adx_min = _resolve_float(
+            "ENTRY_GUARD_ALIGN_ADX_MIN", pocket, _DEFAULT_ALIGN_ADX_MIN, strategy_keys
+        )
+        align_ma_min = _resolve_float(
+            "ENTRY_GUARD_ALIGN_MA_DIFF_PIPS", pocket, _DEFAULT_ALIGN_MA_DIFF_PIPS, strategy_keys
+        )
+        if tfs:
+            align_count, align_valid, align_details = _compute_alignment(
+                tfs,
+                side,
+                thesis,
+                factors,
+                align_adx_min,
+                align_ma_min,
+            )
+        if align_min > 0 and align_count is not None:
+            if align_valid is not None and align_valid >= align_min and align_count < align_min:
+                debug = _base_guard_debug()
+                return EntryGuardDecision(False, "entry_guard_align_min", debug)
+
+        overheat_enabled = _resolve_bool(
+            "ENTRY_GUARD_OVERHEAT_BLOCK", pocket, False, strategy_keys
+        )
+        if overheat_enabled:
+            rsi_tf = _resolve_metric_tf(
+                thesis,
+                "entry_guard_rsi_tf",
+                "ENTRY_GUARD_RSI_TF",
+                pocket,
+                strategy_keys,
+                lower_tf or (tfs[0] if tfs else None),
+            )
+            rsi_high = _resolve_float("ENTRY_GUARD_RSI_HIGH", pocket, _DEFAULT_RSI_HIGH, strategy_keys)
+            rsi_low = _resolve_float("ENTRY_GUARD_RSI_LOW", pocket, _DEFAULT_RSI_LOW, strategy_keys)
+            if rsi_tf:
+                fac = factors.get(rsi_tf) or factors.get("H1") or {}
+                rsi = _resolve_factor(thesis, fac, "rsi", rsi_tf)
+                if rsi is not None:
+                    if side == "long" and rsi >= rsi_high:
+                        debug = _base_guard_debug()
+                        debug["overheat"] = {
+                            "tf": rsi_tf,
+                            "rsi": round(rsi, 2),
+                            "threshold": rsi_high,
+                        }
+                        return EntryGuardDecision(False, "entry_guard_overheat_long", debug)
+                    if side == "short" and rsi <= rsi_low:
+                        debug = _base_guard_debug()
+                        debug["overheat"] = {
+                            "tf": rsi_tf,
+                            "rsi": round(rsi, 2),
+                            "threshold": rsi_low,
+                        }
+                        return EntryGuardDecision(False, "entry_guard_overheat_short", debug)
+
+        adx_min = _resolve_float(
+            "ENTRY_GUARD_ADX_RANGE_MIN", pocket, _DEFAULT_ADX_RANGE_MIN, strategy_keys
+        )
+        adx_max = _resolve_float(
+            "ENTRY_GUARD_ADX_RANGE_MAX", pocket, _DEFAULT_ADX_RANGE_MAX, strategy_keys
+        )
+        if adx_min > 0.0 or adx_max > 0.0:
+            adx_tf = _resolve_metric_tf(
+                thesis,
+                "entry_guard_adx_tf",
+                "ENTRY_GUARD_ADX_TF",
+                pocket,
+                strategy_keys,
+                higher_tf or (tfs[0] if tfs else None),
+            )
+            if adx_tf:
+                fac = factors.get(adx_tf) or factors.get("H1") or {}
+                adx_value = _resolve_factor(thesis, fac, "adx", adx_tf)
+                if adx_value is not None:
+                    if adx_min > 0.0 and adx_value < adx_min:
+                        debug = _base_guard_debug()
+                        debug["adx_range"] = {
+                            "tf": adx_tf,
+                            "adx": round(adx_value, 2),
+                            "min": adx_min,
+                            "max": adx_max if adx_max > 0.0 else None,
+                        }
+                        return EntryGuardDecision(False, "entry_guard_adx_low", debug)
+                    if adx_max > 0.0 and adx_value > adx_max:
+                        debug = _base_guard_debug()
+                        debug["adx_range"] = {
+                            "tf": adx_tf,
+                            "adx": round(adx_value, 2),
+                            "min": adx_min if adx_min > 0.0 else None,
+                            "max": adx_max,
+                        }
+                        return EntryGuardDecision(False, "entry_guard_adx_high", debug)
+
+        gap_atr_max = _resolve_float(
+            "ENTRY_GUARD_MA20_GAP_ATR_MAX", pocket, _DEFAULT_MA20_GAP_ATR_MAX, strategy_keys
+        )
+        if gap_atr_max > 0.0:
+            gap_tf = _resolve_metric_tf(
+                thesis,
+                "entry_guard_ma20_gap_tf",
+                "ENTRY_GUARD_MA20_GAP_TF",
+                pocket,
+                strategy_keys,
+                higher_tf or (tfs[0] if tfs else None),
+            )
+            if gap_tf:
+                fac = factors.get(gap_tf) or factors.get("H1") or {}
+                ma20 = _resolve_factor(thesis, fac, "ma20", gap_tf)
+                atr_pips = _resolve_factor(thesis, fac, "atr_pips", gap_tf)
+                if ma20 is not None and atr_pips is not None and atr_pips > 0.0:
+                    gap_atr = abs(entry_price - ma20) / (atr_pips * PIP)
+                    if gap_atr > gap_atr_max:
+                        debug = _base_guard_debug()
+                        debug["ma20_gap_atr"] = {
+                            "tf": gap_tf,
+                            "entry": round(entry_price, 3),
+                            "ma20": round(ma20, 3),
+                            "atr_pips": round(atr_pips, 2),
+                            "gap_atr": round(gap_atr, 2),
+                            "max": gap_atr_max,
+                        }
+                        return EntryGuardDecision(False, "entry_guard_ma20_gap", debug)
+
+    if _mtf and _tf_override is None and mtf_enabled:
+        tfs = tfs or _resolve_tfs(thesis, pocket, strategy_keys)
         if len(tfs) > 1:
             decisions = [
                 evaluate_entry_guard(
@@ -538,7 +763,8 @@ def evaluate_entry_guard(
             vol_5m_min = _resolve_float(
                 "ENTRY_GUARD_VOL_5M_MIN", pocket, _DEFAULT_VOL_5M_MIN, strategy_keys
             )
-            lower_tf, higher_tf = _pick_tf_extremes(tfs)
+            if lower_tf is None or higher_tf is None:
+                lower_tf, higher_tf = _pick_tf_extremes(tfs)
             trend_ok = False
             trend_metrics = None
             if higher_tf:
@@ -573,6 +799,11 @@ def evaluate_entry_guard(
                 }
             if "mtf" not in debug:
                 debug["mtf"] = {}
+            if align_count is not None:
+                debug["mtf"]["align_min"] = align_min
+                debug["mtf"]["align_count"] = align_count
+                debug["mtf"]["align_valid"] = align_valid
+                debug["mtf"]["align_details"] = align_details
             debug["mtf"]["trend_ok"] = trend_ok
             debug["mtf"]["momentum_ok"] = momentum_ok
             debug["mtf"]["extreme_blocked"] = len(extreme_blocked)

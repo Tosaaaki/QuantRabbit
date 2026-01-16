@@ -34,7 +34,7 @@ from analysis.technique_engine import evaluate_entry_techniques
 from utils.secrets import get_secret
 from utils.market_hours import is_market_open
 from utils.metrics_logger import log_metric
-from execution import strategy_guard
+from execution import strategy_guard, reentry_guard
 from execution.position_manager import PositionManager, agent_client_prefixes
 from execution.risk_guard import POCKET_MAX_RATIOS, MAX_LEVERAGE
 from workers.common import perf_guard
@@ -501,6 +501,49 @@ def _apply_default_entry_thesis_tfs(
         return entry_thesis
     merged = dict(entry_thesis)
     merged.update(updates)
+    return merged
+
+
+_ENTRY_THESIS_FLAG_KEYS = (
+    "trend_bias",
+    "trend_score",
+    "size_factor_hint",
+    "range_snapshot",
+    "entry_mean",
+    "reversion_failure",
+    "mr_guard",
+    "mr_overlay",
+    "tp_mode",
+    "tp_target",
+    "section_axis",
+    "tech_entry",
+    "pattern_tag",
+    "pattern_meta",
+    "profile",
+)
+
+
+def _augment_entry_thesis_flags(entry_thesis: Optional[dict]) -> Optional[dict]:
+    if not isinstance(entry_thesis, dict):
+        return entry_thesis
+    flags: set[str] = set()
+    existing = entry_thesis.get("flags")
+    if isinstance(existing, (list, tuple, set)):
+        for item in existing:
+            if item:
+                flags.add(str(item))
+    for key in _ENTRY_THESIS_FLAG_KEYS:
+        val = entry_thesis.get(key)
+        if val in (None, False, "", 0):
+            continue
+        flags.add(key)
+    for key, val in entry_thesis.items():
+        if key.startswith("entry_guard_") and val:
+            flags.add(key)
+    if not flags:
+        return entry_thesis
+    merged = dict(entry_thesis)
+    merged["flags"] = sorted(flags)
     return merged
 
 
@@ -2284,6 +2327,8 @@ async def market_order(
         entry_thesis = _apply_default_entry_thesis_tfs(entry_thesis, pocket)
     if isinstance(entry_thesis, dict) and not reduce_only:
         entry_thesis = attach_section_axis(entry_thesis, pocket=pocket)
+    if isinstance(entry_thesis, dict):
+        entry_thesis = _augment_entry_thesis_flags(entry_thesis)
 
     trace_enabled = os.getenv("ORDER_TRACE_PROGRESS", "0").strip().lower() not in {
         "",
@@ -3033,6 +3078,44 @@ async def market_order(
                 },
             )
             return None
+        price_hint = entry_price_meta
+        if price_hint is None:
+            price_hint = _entry_price_hint(entry_thesis, meta)
+        allow_reentry, reentry_reason, reentry_details = reentry_guard.allow_entry(
+            strategy_tag=strategy_tag,
+            units=units,
+            price=price_hint,
+            now=datetime.now(timezone.utc),
+        )
+        if not allow_reentry:
+            _console_order_log(
+                "OPEN_SKIP",
+                pocket=pocket,
+                strategy_tag=strategy_tag,
+                side=side_label,
+                units=units,
+                sl_price=sl_price,
+                tp_price=tp_price,
+                client_order_id=client_order_id,
+                note=f"reentry_guard:{reentry_reason}",
+            )
+            log_order(
+                pocket=pocket,
+                instrument=instrument,
+                side="buy" if units > 0 else "sell",
+                units=units,
+                sl_price=sl_price,
+                tp_price=tp_price,
+                client_order_id=client_order_id,
+                status="reentry_block",
+                attempt=0,
+                request_payload={
+                    "strategy_tag": strategy_tag,
+                    "reentry_reason": reentry_reason,
+                    "reentry_details": reentry_details,
+                },
+            )
+            return None
 
     # Pocket-level cooldown after margin rejection
     try:
@@ -3462,6 +3545,8 @@ async def market_order(
             )
             preflight_units = capped
 
+    if isinstance(entry_thesis, dict):
+        entry_thesis = _augment_entry_thesis_flags(entry_thesis)
     comment = _encode_thesis_comment(entry_thesis)
     client_ext = {"tag": f"pocket={pocket}"}
     trade_ext = {"tag": f"pocket={pocket}"}

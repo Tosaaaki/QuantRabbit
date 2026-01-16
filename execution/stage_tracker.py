@@ -61,6 +61,15 @@ _TRADES_JOURNAL_MODE = os.getenv("STAGE_TRADES_JOURNAL_MODE", "WAL")
 _TRADES_SYNCHRONOUS = os.getenv("STAGE_TRADES_SYNCHRONOUS", "NORMAL")
 _TRADES_TEMP_STORE = os.getenv("STAGE_TRADES_TEMP_STORE", "MEMORY")
 _TRADES_URI_TMPL = "file:{path}?mode=ro"
+_STRATEGY_ALIAS_BASE = {
+    "mlr": "MicroLevelReactor",
+    "trendma": "TrendMA",
+    "donchian": "Donchian55",
+    "h1momentum": "H1Momentum",
+    "m1scalper": "M1Scalper",
+    "bbrsi": "BB_RSI",
+    "bb_rsi": "BB_RSI",
+}
 
 
 def _utcnow() -> datetime:
@@ -80,6 +89,17 @@ def _parse_timestamp(value: str) -> datetime:
     if dt.tzinfo is None:
         return dt.replace(tzinfo=timezone.utc)
     return dt.astimezone(timezone.utc)
+
+
+def _base_strategy_tag(tag: Optional[str]) -> str:
+    if not tag:
+        return ""
+    text = str(tag).strip()
+    if not text:
+        return ""
+    base = text.split("-", 1)[0].strip() or text
+    alias = _STRATEGY_ALIAS_BASE.get(base.lower())
+    return alias or base
 
 
 def _in_jst_reverse_window(now: Optional[datetime] = None) -> bool:
@@ -161,6 +181,21 @@ class StageTracker:
                 lose_streak INTEGER DEFAULT 0,
                 win_streak INTEGER DEFAULT 0,
                 updated_at TEXT
+            )
+            """
+        )
+        self._con.execute(
+            """
+            CREATE TABLE IF NOT EXISTS strategy_reentry_state (
+                strategy TEXT NOT NULL,
+                direction TEXT NOT NULL,
+                last_trade_id INTEGER DEFAULT 0,
+                last_close_time TEXT,
+                last_close_price REAL,
+                last_result TEXT,
+                last_pl_pips REAL,
+                updated_at TEXT,
+                PRIMARY KEY (strategy, direction)
             )
             """
         )
@@ -865,7 +900,7 @@ class StageTracker:
             pass
         _ensure_row_factory(conn)
         rows = conn.execute(
-            "SELECT id, pocket, units, pl_pips, realized_pl, strategy_tag, close_time, close_reason FROM trades WHERE close_time IS NOT NULL ORDER BY id ASC"
+            "SELECT id, pocket, units, pl_pips, realized_pl, strategy_tag, close_time, close_price, close_reason FROM trades WHERE close_time IS NOT NULL ORDER BY id ASC"
         ).fetchall()
         conn.close()
         if not rows:
@@ -942,6 +977,12 @@ class StageTracker:
                 int(row[2] or 0),
                 int(row[3] or 0),
             )
+        reentry_existing: Dict[Tuple[str, str], int] = {}
+        for row in self._con.execute(
+            "SELECT strategy, direction, last_trade_id FROM strategy_reentry_state"
+        ):
+            key = (row["strategy"], row["direction"])
+            reentry_existing[key] = int(row["last_trade_id"] or 0)
 
         ts = now_dt.isoformat()
         reverse_window = _in_jst_reverse_window(now_dt)
@@ -1020,6 +1061,7 @@ class StageTracker:
 
             strategy_tag = row["strategy_tag"] if "strategy_tag" in row.keys() else None
             if strategy_tag:
+                base_strategy = _base_strategy_tag(strategy_tag)
                 strat_last, strat_lose, strat_win = strategy_existing.get(strategy_tag, (0, 0, 0))
                 if trade_id > strat_last:
                     if pl_jpy < -1.0:
@@ -1058,6 +1100,62 @@ class StageTracker:
                             "UPDATE strategy_history SET lose_streak=? WHERE strategy=?",
                             (strat_lose, strategy_tag),
                         )
+                if base_strategy:
+                    reentry_key = (base_strategy, direction)
+                    last_reentry_id = reentry_existing.get(reentry_key, 0)
+                    if trade_id > last_reentry_id:
+                        close_time = row["close_time"] if "close_time" in row.keys() else None
+                        try:
+                            close_price = (
+                                float(row["close_price"])
+                                if row["close_price"] is not None
+                                else None
+                            )
+                        except Exception:
+                            close_price = None
+                        try:
+                            pl_pips = float(row["pl_pips"] or 0.0)
+                        except Exception:
+                            pl_pips = 0.0
+                        if pl_pips > 0:
+                            result = "win"
+                        elif pl_pips < 0:
+                            result = "loss"
+                        else:
+                            result = "flat"
+                        self._con.execute(
+                            """
+                            INSERT INTO strategy_reentry_state(
+                                strategy,
+                                direction,
+                                last_trade_id,
+                                last_close_time,
+                                last_close_price,
+                                last_result,
+                                last_pl_pips,
+                                updated_at
+                            )
+                            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                            ON CONFLICT(strategy, direction)
+                            DO UPDATE SET last_trade_id=excluded.last_trade_id,
+                                          last_close_time=excluded.last_close_time,
+                                          last_close_price=excluded.last_close_price,
+                                          last_result=excluded.last_result,
+                                          last_pl_pips=excluded.last_pl_pips,
+                                          updated_at=excluded.updated_at
+                            """,
+                            (
+                                base_strategy,
+                                direction,
+                                trade_id,
+                                close_time,
+                                close_price,
+                                result,
+                                pl_pips,
+                                ts,
+                            ),
+                        )
+                        reentry_existing[reentry_key] = trade_id
         self._con.commit()
 
         fallback_cd = cooldown_seconds

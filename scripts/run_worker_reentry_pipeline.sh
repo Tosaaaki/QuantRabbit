@@ -1,0 +1,94 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+DAYS="${DAYS:-14}"
+MIN_TRADES="${MIN_TRADES:-30}"
+BLOCK_HOUR_TRADES="${BLOCK_HOUR_TRADES:-20}"
+BLOCK_HOUR_MFE_MAX="${BLOCK_HOUR_MFE_MAX:-1.2}"
+BLOCK_HOUR_MAE_MAX="${BLOCK_HOUR_MAE_MAX:-1.2}"
+BLOCK_HOUR_TOP="${BLOCK_HOUR_TOP:-4}"
+BLOCK_HOUR_WINDOW="${BLOCK_HOUR_WINDOW:-}"
+BLOCK_HOURS_SCOPE="${BLOCK_HOURS_SCOPE:-global}"
+OUT_DIR="${OUT_DIR:-logs/reports/worker_return_wait}"
+FLAG_DIR="${FLAG_DIR:-logs/reports/entry_thesis_flags}"
+PY="${PYTHON:-python}"
+APPLY=0
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --days)
+      DAYS="$2"
+      shift 2
+      ;;
+    --min-trades)
+      MIN_TRADES="$2"
+      shift 2
+      ;;
+    --out-dir)
+      OUT_DIR="$2"
+      shift 2
+      ;;
+    --block-hour-trades)
+      BLOCK_HOUR_TRADES="$2"
+      shift 2
+      ;;
+    --block-hour-mfe-max)
+      BLOCK_HOUR_MFE_MAX="$2"
+      shift 2
+      ;;
+    --block-hour-mae-max)
+      BLOCK_HOUR_MAE_MAX="$2"
+      shift 2
+      ;;
+    --block-hour-top)
+      BLOCK_HOUR_TOP="$2"
+      shift 2
+      ;;
+    --block-hour-window)
+      BLOCK_HOUR_WINDOW="$2"
+      shift 2
+      ;;
+    --block-hours-scope)
+      BLOCK_HOURS_SCOPE="$2"
+      shift 2
+      ;;
+    --flag-dir)
+      FLAG_DIR="$2"
+      shift 2
+      ;;
+    --apply)
+      APPLY=1
+      shift 1
+      ;;
+    *)
+      echo "Unknown arg: $1" >&2
+      exit 1
+      ;;
+  esac
+done
+
+mkdir -p "$OUT_DIR" "$FLAG_DIR"
+
+$PY -m analytics.worker_return_wait_report \
+  --days "$DAYS" \
+  --min-trades "$MIN_TRADES" \
+  --block-hour-trades "$BLOCK_HOUR_TRADES" \
+  --block-hour-mfe-max "$BLOCK_HOUR_MFE_MAX" \
+  --block-hour-mae-max "$BLOCK_HOUR_MAE_MAX" \
+  --block-hour-top "$BLOCK_HOUR_TOP" \
+  --block-hour-window "$BLOCK_HOUR_WINDOW" \
+  --block-hours-scope "$BLOCK_HOURS_SCOPE" \
+  --out-json "$OUT_DIR/latest.json" \
+  --out-yaml "$OUT_DIR/worker_reentry.yaml"
+
+$PY -m analytics.entry_thesis_flag_report \
+  --days "$DAYS" \
+  --min-trades "$MIN_TRADES" \
+  --out-json "$FLAG_DIR/latest.json"
+
+if [[ "$APPLY" -eq 1 ]]; then
+  $PY utils/yaml_merge.py \
+    --base config/worker_reentry.yaml \
+    --over "$OUT_DIR/worker_reentry.yaml" \
+    --out config/worker_reentry.yaml
+fi

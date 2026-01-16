@@ -1,0 +1,9 @@
+defaults:
+  cooldown_win_sec: 60
+  cooldown_loss_sec: 180
+  same_dir_reentry_pips: 1.8
+  allow_jst_hours: []
+  block_jst_hours: []
+  return_wait_bias: neutral
+
+strategies: {}

@@ -43,6 +43,22 @@
 - DIR_CAP_RATIO（同方向キャップ）は既定のまま。 gross 全体を抑えたいときだけ調整。
 - cap=0.92+安全係数で「総裁量が過大になる」ケースは抑制されるが、急変時のマージンコールに注意。
 
+## 追い過ぎ防止（entry guard / MTF）検証メモ
+- 発注前の preflight で `evaluate_entry_guard` を必ず実行（reduce_only / manual を除く）。
+- MTF は `ENTRY_GUARD_TFS` で複数 TF を評価、`ENTRY_GUARD_MTF_MIN_BLOCKS` でブロック判定（M1/H1/H4 の整合数=align_count）。
+- ガードは range/fib + trend/pullback + soft allow を併用。ADX が閾値以上ならバイパス可。
+- 直近 200 件クローズ検証の傾向: H1+H4 一致の平均 +3.79p、H1 ADX>=20 の平均 +3.50p（<20 は +1.48p）、H1 MA20 距離は勝ち 0.92 ATR/負け 1.36 ATR。
+- 期待値改善ゲート案（戦略別）: Donchian5=align>=2、M1Scalper=align>=1 & 過熱除外、TrendMAbu=MA20 距離<=0.8 ATR、MomentumB=align>=2、ImpulseRe=align>=1 & ADX 25-35、MomentumP は原則ブロック。
+- 追加ゲート（env）: `ENTRY_GUARD_ALIGN_MIN_*` / `ENTRY_GUARD_OVERHEAT_BLOCK_*` / `ENTRY_GUARD_ADX_RANGE_*` / `ENTRY_GUARD_MA20_GAP_ATR_MAX_*` を戦略別に設定。debug に align_count/RSI/ADX/MA20 gap を出す。
+- ブロック集計: `python scripts/report_entry_guard.py --days 7 --group-base`
+- VMログで解析する場合: `python scripts/report_entry_guard.py --orders-db remote_logs/orders.db`
+- レポート出力: 戦略別/ポケット別の block rate は `--min-total` で小サンプルを除外。
+- 追加出力: reason 別の p25/median/p75（edge_pips / distance_pips / rsi / adx / gap_atr）。
+- 推奨レンジ: reason 別の候補閾値（25/50/75%のブロック許容）も出力。
+- さらに: ブロックが多い戦略トップに対して、strategy別の推奨レンジも出力。
+- VM集計メモ（2026-01-17）: guard_total=1463、blocked_rate=60.1%、極端ブロックは extreme_long が 96%。
+- Top block 例: TrendMA-bull / Donchian55-breakout-up / MomentumBurst-open_long / MicroPullbackEMA。trend bypass の ADX_MIN を個別に下げて緩和（env 追記済み）。
+
 ## 実装済みヘッジワーカー (HedgeBalancer)
 - 役割: マージン使用率が高まったときに逆方向の reduce-only シグナルを `signal_bus` 経由で main 関所へ送り、ネットエクスポージャを軽くする。ファイル: `workers/hedge_balancer/worker.py`。
 - トリガー: `margin_usage >= 0.88` または `free_margin_ratio <= 0.08` かつ net_units≥15k。ターゲット使用率は 0.82、ネット削減量は net の 55% 以内で最小 10k、最大 90k units。
