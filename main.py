@@ -241,6 +241,7 @@ except Exception:  # pragma: no cover - optional dependency
         def nearest(self, *_, **__):
             return None
 from analysis.range_guard import RangeContext, detect_range_mode, detect_range_mode_for_tf
+from analysis.pattern_stats import derive_pattern_signature
 from analysis.range_model import compute_range_snapshot
 from analysis.param_context import ParamContext, ParamSnapshot
 from analysis.chart_story import ChartStory, ChartStorySnapshot
@@ -3029,13 +3030,16 @@ def _micro_chart_gate(
         elif micro_trend == "up":
             base_rise_thresh = min(0.8, base_rise_thresh * 1.15)
     opposed_count = int(_opposes(m15_trend, str(action))) + int(_opposes(h1_trend, str(action)))
-    if opposed_count >= 2 and abs(slope6) <= 3.5:
+    weak_micro = micro_trend in {"", "quiet", None}
+    if opposed_count >= 2 and abs(slope6) <= 3.5 and weak_micro and vol_state != "high":
         return False, "micro_mtf_opposed", {
             "slope6": round(slope6, 2),
             "range": round(range_pips, 2),
             "trend": micro_trend or "",
             "m15": m15_trend or "",
             "h1": h1_trend or "",
+            "vol_state": vol_state,
+            "opposed_count": opposed_count,
         }
 
     if action == "OPEN_LONG":
@@ -3506,6 +3510,25 @@ async def logic_loop(
         if base_tag in MR_OVERLAY_TAGS:
             return True
         return False
+
+    def _augment_entry_thesis_from_signal(entry_thesis: dict, signal: dict) -> None:
+        if not isinstance(entry_thesis, dict) or not isinstance(signal, dict):
+            return
+
+        def _maybe_set(key: str, value: object) -> None:
+            if key in entry_thesis:
+                return
+            if value is None:
+                return
+            entry_thesis[key] = value
+
+        for key in ("trend_bias", "trend_score", "size_factor_hint"):
+            _maybe_set(key, signal.get(key))
+        for key in ("entry_guard", "entry_guard_disabled", "entry_guard_tfs"):
+            _maybe_set(key, signal.get(key))
+        for key, value in signal.items():
+            if key.startswith("entry_guard_"):
+                _maybe_set(key, value)
 
     def _augment_entry_thesis_for_mr(
         entry_thesis: dict,
@@ -8497,6 +8520,16 @@ async def logic_loop(
                     entry_thesis.update(base_thesis)
                 else:
                     entry_thesis = base_thesis
+                if isinstance(entry_thesis, dict):
+                    _augment_entry_thesis_from_signal(entry_thesis, signal)
+                    if not entry_thesis.get("pattern_tag"):
+                        pattern_tag, pattern_meta = derive_pattern_signature(
+                            fac_m1, action=action
+                        )
+                        if pattern_tag:
+                            entry_thesis["pattern_tag"] = pattern_tag
+                        if pattern_meta:
+                            entry_thesis["pattern_meta"] = pattern_meta
                 is_mr_signal = _is_mr_signal(strategy_tag, strategy_profile)
                 is_mr_overlay = _is_mr_overlay_signal(strategy_tag, strategy_profile)
                 if is_mr_signal or is_mr_overlay:
