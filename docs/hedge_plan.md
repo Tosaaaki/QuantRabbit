@@ -58,6 +58,18 @@
 - さらに: ブロックが多い戦略トップに対して、strategy別の推奨レンジも出力。
 - VM集計メモ（2026-01-17）: guard_total=1463、blocked_rate=60.1%、極端ブロックは extreme_long が 96%。
 - Top block 例: TrendMA-bull / Donchian55-breakout-up / MomentumBurst-open_long / MicroPullbackEMA。trend bypass の ADX_MIN を個別に下げて緩和（env 追記済み）。
+- VM集計メモ（2026-01-17, 直近14日）:
+  - M1/H4 指標取得率: 965/966。MTF は実運用で評価済み。
+  - M1Scalper: RSI 70/30 ブロックで avg=4.24p（n=333）、65/35 で avg=4.15p（n=267）。
+  - TrendMA: MA20 gap<=1.2ATR で avg=9.63p（n=56）、<=0.8ATR で avg=12.23p（n=29）。
+  - TrendMAbu: MA20 gap<=1.2ATR で avg=6.10p（n=13）。
+  - ImpulseRe: base avg=-12.71p → H4 ADX>=20 で avg=+1.05p（n=2）。
+  - MomentumPulse: PF=0.52 / win=0.42（n=12）で期待値悪化。perf_guard で自動ブロック対象。
+- 反映方針:
+  - `ENTRY_GUARD_ADX_RANGE_MIN_IMPULSERE=20` / `ENTRY_GUARD_ADX_TF_IMPULSERE=H4`。
+  - `ENTRY_GUARD_MA20_GAP_ATR_MAX_TRENDMA=1.2` / `ENTRY_GUARD_MA20_GAP_TF_TRENDMA=M1`。
+  - `ENTRY_GUARD_MA20_GAP_ATR_MAX_TRENDMABU=1.2` / `ENTRY_GUARD_MA20_GAP_TF_TRENDMABU=M1`。
+  - `PERF_GUARD_GLOBAL_ENABLED=1` + `PERF_GUARD_LOOKBACK_DAYS=14` + `PERF_GUARD_MIN_TRADES=10`（MomentumPulse のみブロック）。
 
 ## 実装済みヘッジワーカー (HedgeBalancer)
 - 役割: マージン使用率が高まったときに逆方向の reduce-only シグナルを `signal_bus` 経由で main 関所へ送り、ネットエクスポージャを軽くする。ファイル: `workers/hedge_balancer/worker.py`。
