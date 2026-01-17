@@ -35,6 +35,9 @@ _DEFAULT_REENTRY_CONFIG = {
     "allow_jst_hours": [],
     "block_jst_hours": [],
     "return_wait_bias": "neutral",
+    "max_open_trades": 0,
+    "max_open_adverse_pips": 0.0,
+    "max_open_avg_adverse_pips": 0.0,
 }
 _REENTRY_COOLDOWN_WIN_RANGE = (30, 300)
 _REENTRY_COOLDOWN_LOSS_RANGE = (60, 900)

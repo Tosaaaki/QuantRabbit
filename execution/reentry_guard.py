@@ -31,6 +31,9 @@ _DEFAULTS = {
     "allow_jst_hours": [],
     "block_jst_hours": [],
     "return_wait_bias": "neutral",
+    "max_open_trades": 0,
+    "max_open_adverse_pips": 0.0,
+    "max_open_avg_adverse_pips": 0.0,
 }
 _BIAS_COOLDOWN_SCALE = {
     "favor": float(os.getenv("REENTRY_BIAS_FAVOR_COOLDOWN_SCALE", "1.3")),
@@ -155,6 +158,88 @@ def _coerce_hours(value: object) -> list[int]:
     return sorted(set(hours))
 
 
+def _extract_open_stats(
+    open_positions: dict,
+    strategy: str,
+    direction: str,
+) -> Tuple[int, Optional[float], Optional[float]]:
+    if not isinstance(open_positions, dict):
+        return 0, None, None
+    open_count = 0
+    sum_pips = 0.0
+    worst_pips: Optional[float] = None
+    for pocket, info in open_positions.items():
+        if pocket and str(pocket).startswith("__"):
+            continue
+        if not isinstance(info, dict):
+            continue
+        trades = info.get("open_trades") or []
+        if not isinstance(trades, list):
+            continue
+        for tr in trades:
+            if not isinstance(tr, dict):
+                continue
+            tag = tr.get("strategy_tag")
+            if not tag:
+                thesis = tr.get("entry_thesis")
+                if isinstance(thesis, dict):
+                    tag = thesis.get("strategy_tag") or thesis.get("strategy") or thesis.get("tag")
+            base = _base_strategy_tag(tag)
+            if not base or base != strategy:
+                continue
+            units = tr.get("units") or 0
+            try:
+                units = int(units)
+            except Exception:
+                units = 0
+            if units == 0:
+                continue
+            if direction == "long" and units <= 0:
+                continue
+            if direction == "short" and units >= 0:
+                continue
+            pips_val = tr.get("unrealized_pl_pips")
+            if pips_val is None:
+                try:
+                    pl_val = float(tr.get("unrealized_pl") or 0.0)
+                    abs_units = abs(units)
+                    pips_val = pl_val / (abs_units * 0.01) if abs_units else 0.0
+                except Exception:
+                    pips_val = 0.0
+            try:
+                pips = float(pips_val)
+            except Exception:
+                pips = 0.0
+            open_count += 1
+            sum_pips += pips
+            if worst_pips is None or pips < worst_pips:
+                worst_pips = pips
+    if open_count <= 0:
+        return 0, None, None
+    return open_count, worst_pips, sum_pips / open_count
+
+
+def needs_open_positions(strategy_tag: Optional[str]) -> bool:
+    if not _ENABLED:
+        return False
+    base = _base_strategy_tag(strategy_tag)
+    if not base:
+        return False
+    cfg = _load_config()
+    defaults = cfg.get("defaults") or {}
+    overrides = (cfg.get("strategies") or {}).get(base) or {}
+    if not isinstance(overrides, dict):
+        overrides = {}
+    merged = _merge_config(defaults, overrides)
+    for key in ("max_open_trades", "max_open_adverse_pips", "max_open_avg_adverse_pips"):
+        try:
+            if float(merged.get(key) or 0.0) > 0.0:
+                return True
+        except Exception:
+            continue
+    return False
+
+
 def _get_state(strategy: str, direction: str) -> Optional[ReentryState]:
     if not _DB_PATH.exists():
         return None
@@ -201,6 +286,7 @@ def allow_entry(
     strategy_tag: Optional[str],
     units: int,
     price: Optional[float],
+    open_positions: Optional[dict] = None,
     now: Optional[datetime] = None,
 ) -> Tuple[bool, str, Dict[str, object]]:
     if not _ENABLED:
@@ -241,6 +327,35 @@ def allow_entry(
         jst_hour = (now_dt + timedelta(hours=9)).hour
         if jst_hour in block_hours:
             return False, "time_block", {"jst_hour": jst_hour, "block_jst_hours": block_hours}
+
+    max_open_trades = int(merged.get("max_open_trades") or 0)
+    max_open_adverse = float(merged.get("max_open_adverse_pips") or 0.0)
+    max_open_avg = float(merged.get("max_open_avg_adverse_pips") or 0.0)
+    if open_positions and (max_open_trades > 0 or max_open_adverse > 0.0 or max_open_avg > 0.0):
+        open_count, worst_pips, avg_pips = _extract_open_stats(open_positions, base, direction)
+        if max_open_trades > 0 and open_count >= max_open_trades:
+            return False, "open_stack", {
+                "open_count": open_count,
+                "max_open_trades": max_open_trades,
+                "worst_unrealized_pips": worst_pips,
+                "avg_unrealized_pips": avg_pips,
+            }
+        if max_open_adverse > 0.0 and worst_pips is not None:
+            threshold = -abs(max_open_adverse)
+            if worst_pips <= threshold:
+                return False, "open_adverse", {
+                    "open_count": open_count,
+                    "worst_unrealized_pips": worst_pips,
+                    "max_open_adverse_pips": max_open_adverse,
+                }
+        if max_open_avg > 0.0 and avg_pips is not None:
+            threshold = -abs(max_open_avg)
+            if avg_pips <= threshold:
+                return False, "open_avg_adverse", {
+                    "open_count": open_count,
+                    "avg_unrealized_pips": avg_pips,
+                    "max_open_avg_adverse_pips": max_open_avg,
+                }
 
     state = _get_state(base, direction)
     if not state:

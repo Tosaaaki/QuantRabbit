@@ -3081,10 +3081,17 @@ async def market_order(
         price_hint = entry_price_meta
         if price_hint is None:
             price_hint = _entry_price_hint(entry_thesis, meta)
+        open_positions = None
+        if reentry_guard.needs_open_positions(strategy_tag):
+            global _DIR_CAP_CACHE
+            if _DIR_CAP_CACHE is None:
+                _DIR_CAP_CACHE = PositionManager()
+            open_positions = _DIR_CAP_CACHE.get_open_positions()
         allow_reentry, reentry_reason, reentry_details = reentry_guard.allow_entry(
             strategy_tag=strategy_tag,
             units=units,
             price=price_hint,
+            open_positions=open_positions,
             now=datetime.now(timezone.utc),
         )
         if not allow_reentry:
