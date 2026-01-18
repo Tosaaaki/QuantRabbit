@@ -37,7 +37,8 @@
 - VolCompressionBreak: micro_multistrat の負け決済は reversion_failure 対象外。section_exit が主ルートなので、基準未達だと長期化する。
 - データ依存: exit_worker は `tick_window` / `all_factors` から mid/ADX/RSI を引く。データ欠損や stale で `_latest_mid()` が None だと判定自体がスキップされる。
 - 対応: exit_worker のタグ判定を base tag / `strategy_tag_raw` / `trade.strategy_tag` まで拡張し、派生タグの取り残しを抑える（ワーカー別ルールは維持）。
-- 対応: M1Scalper/TrendMA/Donchian55/VolCompressionBreak にテクニック系の負け決済を追加（RSI fade / VWAP cut / 構造崩れ / チャネル回帰 / レンジ復帰 など）。
+- 対応: M1Scalper/TrendMA/Donchian55/VolCompressionBreak に加え、MomentumBurst/MicroRangeBreak/MicroPullbackEMA/TrendMomentumMicro/MicroLevelReactor/ScalpMulti(非reversion) にテクニック系の負け決済を追加（RSI fade / VWAP cut / 構造崩れ / ATR spike / レンジ復帰 など）。
+- 追加ガード: テクニック負け決済は `*_EXIT_TECH_NEG_MIN_PIPS` + `*_EXIT_TECH_NEG_HOLD_SEC` + スコア閾値で早すぎを抑制し、`*_EXIT_TECH_NEG_HARD_PIPS` で過大マイナスを上限化。
 
 ## 対策方針（ヘッジと損切りの両輪）
 - 時間×深さで損切り: open>24h かつ PnL<0 なら reduce-only、>72h なら強制縮小/クローズ。

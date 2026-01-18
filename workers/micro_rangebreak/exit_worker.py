@@ -31,6 +31,20 @@ def _float_env(key: str, default: float) -> float:
         return default
 
 
+def _bool_env(key: str, default: bool) -> bool:
+    raw = os.getenv(key)
+    if raw is None:
+        return default
+    return raw.strip().lower() not in {"", "0", "false", "no"}
+
+
+def _safe_float(value: object) -> Optional[float]:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
 def _utc_now() -> datetime:
     return datetime.now(timezone.utc)
 
@@ -119,17 +133,26 @@ class MicroRangeBreakExitWorker:
 
         self.rsi_take_long = _float_env("MICRO_RB_EXIT_RSI_TAKE_LONG", 70.0)
         self.rsi_take_short = _float_env("MICRO_RB_EXIT_RSI_TAKE_SHORT", 30.0)
+        self.tech_exit_enabled = _bool_env("MICRO_RB_EXIT_TECH_ENABLED", True)
+        self.rsi_fade_long = _float_env("MICRO_RB_EXIT_RSI_FADE_LONG", 44.0)
+        self.rsi_fade_short = _float_env("MICRO_RB_EXIT_RSI_FADE_SHORT", 56.0)
+        self.vwap_gap_pips = _float_env("MICRO_RB_EXIT_VWAP_GAP_PIPS", 0.8)
+        self.structure_adx = _float_env("MICRO_RB_EXIT_STRUCTURE_ADX", 20.0)
+        self.structure_gap_pips = _float_env("MICRO_RB_EXIT_STRUCTURE_GAP_PIPS", 1.8)
+        self.atr_spike_pips = _float_env("MICRO_RB_EXIT_ATR_SPIKE_PIPS", 5.0)
+        self.tech_neg_min_pips = max(0.2, _float_env("MICRO_RB_EXIT_TECH_NEG_MIN_PIPS", self.profit_take * 0.6))
+        hard_default = max(self.tech_neg_min_pips + 0.8, self.profit_take * 1.6)
+        self.tech_neg_hard_pips = max(
+            self.tech_neg_min_pips,
+            _float_env("MICRO_RB_EXIT_TECH_NEG_HARD_PIPS", hard_default),
+        )
+        self.tech_neg_hold_sec = max(self.min_hold_sec, _float_env("MICRO_RB_EXIT_TECH_NEG_HOLD_SEC", 45.0))
+        self.tech_score_min = max(1, int(_float_env("MICRO_RB_EXIT_TECH_SCORE_MIN", 2.0)))
 
     def _context(self) -> tuple[Optional[float], Optional[float], bool]:
         factors = all_factors()
         fac_m1 = factors.get("M1") or {}
         fac_h4 = factors.get("H4") or {}
-
-        def _safe_float(val: object) -> Optional[float]:
-            try:
-                return float(val)
-            except Exception:
-                return None
 
         adx = _safe_float(fac_m1.get("adx"))
         bbw = _safe_float(fac_m1.get("bbw"))
@@ -142,6 +165,29 @@ class MicroRangeBreakExitWorker:
             range_active = False
         rsi = _safe_float(fac_m1.get("rsi"))
         return _latest_mid(), rsi, range_active
+
+    def _tech_context(
+        self,
+    ) -> tuple[
+        Optional[float],
+        Optional[float],
+        Optional[float],
+        Optional[float],
+        Optional[tuple[float, float]],
+    ]:
+        fac_m1 = all_factors().get("M1") or {}
+        rsi = _safe_float(fac_m1.get("rsi"))
+        adx = _safe_float(fac_m1.get("adx"))
+        atr_pips = _safe_float(fac_m1.get("atr_pips"))
+        if atr_pips is None:
+            atr_val = _safe_float(fac_m1.get("atr"))
+            if atr_val is not None:
+                atr_pips = atr_val * 100.0
+        vwap_gap = _safe_float(fac_m1.get("vwap_gap"))
+        ma10 = _safe_float(fac_m1.get("ma10"))
+        ma20 = _safe_float(fac_m1.get("ma20"))
+        ma_pair = (ma10, ma20) if ma10 is not None and ma20 is not None else None
+        return rsi, adx, atr_pips, vwap_gap, ma_pair
 
     async def _close(
         self,
@@ -232,6 +278,47 @@ class MicroRangeBreakExitWorker:
             )
             self._states.pop(trade_id, None)
             return
+
+        if pnl < 0 and self.tech_exit_enabled:
+            hard_stop_ready = pnl <= -self.tech_neg_hard_pips and hold_sec >= self.min_hold_sec
+            soft_ready = pnl <= -self.tech_neg_min_pips and hold_sec >= self.tech_neg_hold_sec
+            if hard_stop_ready or soft_ready:
+                rsi_val, adx, atr_pips, vwap_gap, ma_pair = self._tech_context()
+                score = 0
+                reason = None
+                if atr_pips is not None and atr_pips >= self.atr_spike_pips:
+                    score += 2
+                    if reason is None:
+                        reason = "atr_spike"
+                if adx is not None and ma_pair is not None:
+                    ma10, ma20 = ma_pair
+                    gap = abs(ma10 - ma20) / 0.01
+                    cross_bad = (side == "long" and ma10 <= ma20) or (side == "short" and ma10 >= ma20)
+                    if adx <= self.structure_adx and (cross_bad or gap <= self.structure_gap_pips):
+                        score += 2
+                        if reason is None:
+                            reason = "structure_break"
+                if rsi_val is not None:
+                    if side == "long" and rsi_val <= self.rsi_fade_long:
+                        score += 1
+                        if reason is None:
+                            reason = "rsi_fade"
+                    if side == "short" and rsi_val >= self.rsi_fade_short:
+                        score += 1
+                        if reason is None:
+                            reason = "rsi_fade"
+                if vwap_gap is not None and abs(vwap_gap) <= self.vwap_gap_pips:
+                    score += 1
+                    if reason is None:
+                        reason = "vwap_cut"
+                if hard_stop_ready and score == 0:
+                    await self._close(trade_id, -units, "tech_hard_stop", pnl, client_id)
+                    self._states.pop(trade_id, None)
+                    return
+                if (hard_stop_ready and score > 0) or (soft_ready and score >= self.tech_score_min):
+                    await self._close(trade_id, -units, reason or "tech_exit", pnl, client_id)
+                    self._states.pop(trade_id, None)
+                    return
 
         profit_take = self.range_profit_take if range_active else self.profit_take
         trail_start = self.range_trail_start if range_active else self.trail_start

@@ -34,6 +34,60 @@
 ```
 
 ## Open Tasks
+- [ ] ID: T-20260118-001
+  Title: Factor cache stale ガードの監視と閾値調整（市場オープン後）
+  Status: todo
+  Priority: P1
+  Owner: codex
+  Scope/Paths: execution/order_manager.py, main.py, docs/weekly/2026-01-19_week.md, docs/TASKS.md
+  Context: factor cache stale ガード/自動再シードを有効化済み。市場オープン後の過剰ブロック有無を確認し、必要なら閾値を調整する。
+  Acceptance:
+    - 市場オープン後に `orders.db` と `journalctl` で `factor_stale` / `FACTOR_CACHE` を確認し、過剰ブロックがない
+    - stale が出る場合は `ENTRY_FACTOR_MAX_AGE_SEC` / `FACTOR_CACHE_STALE_SEC` / `FACTOR_CACHE_REFRESH_MIN_INTERVAL_SEC` を調整して再デプロイ
+    - 週次ドキュメントに結果を記録する
+  Plan:
+    - 市場オープン後に `orders.db` と `journalctl` を確認
+    - しきい値調整と再デプロイ（必要時のみ）
+    - 週次ドキュメントに結果を追記
+  Notes:
+    - 週次ドキュメント: `docs/weekly/2026-01-19_week.md`
+
+- [ ] ID: T-20260118-002
+  Title: ワーカー別 return-wait の最終確定と再エントリー条件更新
+  Status: todo
+  Priority: P1
+  Owner: codex
+  Scope/Paths: analytics/worker_return_wait_report.py, config/worker_reentry.yaml, docs/hedge_plan.md, docs/weekly/2026-01-19_week.md, docs/TASKS.md
+  Context: 取り残し対策として「戻り待ちが有利/不利」をワーカー別に確定し、再エントリー条件を更新する。
+  Acceptance:
+    - ワーカー別に保有時間分布/勝率/平均損益を算出し、`return_wait_bias` を最終確定
+    - `config/worker_reentry.yaml` にクールダウン/同方向再入場閾値を反映
+    - 週次ドキュメントに結果を記録する
+  Plan:
+    - `analytics/worker_return_wait_report.py` を使ってワーカー別の return-wait を集計
+    - `config/worker_reentry.yaml` を更新し、挙動を監視
+    - 週次ドキュメントに結果を追記
+  Notes:
+    - 取り残し/戻り待ちの判断は pocket ではなく worker 単位で扱う
+
+- [ ] ID: T-20260118-003
+  Title: entry_thesis フラグ保存と MFE/MAE/BE 時間分析
+  Status: todo
+  Priority: P2
+  Owner: codex
+  Scope/Paths: execution/order_manager.py, execution/position_manager.py, analytics/*, docs/hedge_plan.md, docs/weekly/2026-01-19_week.md, docs/TASKS.md
+  Context: entry_thesis の `entry_guard_*` / `trend_bias` が履歴に残らず差異分析が難しい。MFE/MAE と BE までの時間も未分析。
+  Acceptance:
+    - `entry_guard_*` / `trend_bias` などのフラグが `entry_thesis` に確実に残り、trades.db 解析で利用できる
+    - MFE/MAE と BE 到達時間をワーカー別に出力できる（分析スクリプト）
+    - 週次ドキュメントに結果を記録する
+  Plan:
+    - entry_thesis の保存/復元の欠落箇所を特定し修正
+    - MFE/MAE/BE 時間を集計するスクリプトを追加
+    - 週次ドキュメントに結果を追記
+  Notes:
+    - 差異分析のボトルネック解消が主目的
+
 - [ ] ID: T-20251209-001
   Title: BQ strategy scores → Firestore snapshot (read-only反映)
   Status: todo
