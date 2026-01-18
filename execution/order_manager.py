@@ -13,6 +13,7 @@ import json
 import logging
 import sqlite3
 import pathlib
+import re
 from datetime import datetime, timezone, timedelta
 import os
 import math
@@ -492,6 +493,36 @@ def _strategy_tag_from_thesis(entry_thesis: Optional[dict]) -> Optional[str]:
     raw_tag = entry_thesis.get("strategy_tag") or entry_thesis.get("strategy")
     if raw_tag:
         return str(raw_tag)
+    return None
+
+
+def _strategy_tag_from_client_id(client_order_id: Optional[str]) -> Optional[str]:
+    if not client_order_id:
+        return None
+    cid = str(client_order_id)
+    if not cid:
+        return None
+    if cid.startswith("qr-fast-"):
+        return "fast_scalp"
+    if cid.startswith("qr-pullback-s5-"):
+        return "pullback_s5"
+    if cid.startswith("qr-pullback-"):
+        return "pullback_scalp"
+    if cid.startswith("qr-mirror-tight-"):
+        return "mirror_spike_tight"
+    if cid.startswith("qr-mirror-s5-"):
+        return "mirror_spike_s5"
+    if cid.startswith("qr-mirror-"):
+        return "mirror_spike"
+    match = re.match(
+        r"^qr-(\d+)-(micro|macro|scalp|event|hybrid)-([A-Za-z0-9]+)(?:-[A-Za-z0-9]+)?$",
+        cid,
+    )
+    if match:
+        return match.group(3)
+    match = re.match(r"^qr-(micro|macro|scalp|event|hybrid)-(\d+)-([A-Za-z0-9]+)", cid)
+    if match:
+        return match.group(3)
     return None
 
 
@@ -2347,6 +2378,10 @@ async def market_order(
         raw_tag = entry_thesis.get("strategy_tag") or entry_thesis.get("strategy")
     if not strategy_tag and raw_tag:
         strategy_tag = str(raw_tag)
+    if not strategy_tag:
+        inferred = _strategy_tag_from_client_id(client_order_id)
+        if inferred:
+            strategy_tag = inferred
     if isinstance(entry_thesis, dict) and strategy_tag and not entry_thesis.get("strategy_tag"):
         entry_thesis = dict(entry_thesis)
         entry_thesis["strategy_tag"] = strategy_tag
