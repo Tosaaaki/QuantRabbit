@@ -38,6 +38,8 @@ _DEFAULT_REENTRY_CONFIG = {
     "max_open_trades": 0,
     "max_open_adverse_pips": 0.0,
     "max_open_avg_adverse_pips": 0.0,
+    "max_open_trades_hard": 0,
+    "stack_reentry_pips": 0.0,
 }
 _REENTRY_COOLDOWN_WIN_RANGE = (30, 300)
 _REENTRY_COOLDOWN_LOSS_RANGE = (60, 900)

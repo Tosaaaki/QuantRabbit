@@ -39,6 +39,7 @@
   - `short` は `price >= last_close + reentry_pips`
 - **時間帯フィルタ**: 極端にボラがない時間帯のみブロック（基本は時間帯フィルタなし）
 - **同方向オープン抑制**: 同一ワーカーの同方向オープン数や含み損が閾値を超えたら新規を停止
+- **距離が十分離れた場合の例外**: `stack_reentry_pips` を超える逆行距離なら、soft cap を一時的に許可（hard cap は維持）
 
 ### 2-2. 設定フォーマット（案）
 - `config/worker_reentry.yaml`
@@ -55,6 +56,8 @@ defaults:
   return_wait_bias: neutral
   max_open_trades: 0
   max_open_adverse_pips: 0.0
+  max_open_trades_hard: 0
+  stack_reentry_pips: 0.0
 
 strategies:
   TrendMA:
@@ -63,6 +66,8 @@ strategies:
     block_jst_hours: [4,5,6]
     max_open_trades: 3
     max_open_adverse_pips: 40.0
+    max_open_trades_hard: 6
+    stack_reentry_pips: 25.0
     return_wait_bias: favor
   M1Scalper:
     cooldown_loss_sec: 60

@@ -34,6 +34,8 @@ _DEFAULTS = {
     "max_open_trades": 0,
     "max_open_adverse_pips": 0.0,
     "max_open_avg_adverse_pips": 0.0,
+    "max_open_trades_hard": 0,
+    "stack_reentry_pips": 0.0,
 }
 _BIAS_COOLDOWN_SCALE = {
     "favor": float(os.getenv("REENTRY_BIAS_FAVOR_COOLDOWN_SCALE", "1.3")),
@@ -162,12 +164,14 @@ def _extract_open_stats(
     open_positions: dict,
     strategy: str,
     direction: str,
-) -> Tuple[int, Optional[float], Optional[float]]:
+) -> Tuple[int, Optional[float], Optional[float], Optional[float]]:
     if not isinstance(open_positions, dict):
-        return 0, None, None
+        return 0, None, None, None
     open_count = 0
     sum_pips = 0.0
     worst_pips: Optional[float] = None
+    sum_units = 0.0
+    sum_price = 0.0
     for pocket, info in open_positions.items():
         if pocket and str(pocket).startswith("__"):
             continue
@@ -210,13 +214,26 @@ def _extract_open_stats(
                 pips = float(pips_val)
             except Exception:
                 pips = 0.0
+            entry_price = tr.get("price")
+            try:
+                entry_price = float(entry_price) if entry_price is not None else None
+            except Exception:
+                entry_price = None
             open_count += 1
             sum_pips += pips
             if worst_pips is None or pips < worst_pips:
                 worst_pips = pips
+            if entry_price is not None:
+                weight = abs(units)
+                if weight > 0:
+                    sum_units += weight
+                    sum_price += entry_price * weight
     if open_count <= 0:
-        return 0, None, None
-    return open_count, worst_pips, sum_pips / open_count
+        return 0, None, None, None
+    avg_entry = None
+    if sum_units > 0:
+        avg_entry = sum_price / sum_units
+    return open_count, worst_pips, sum_pips / open_count, avg_entry
 
 
 def needs_open_positions(strategy_tag: Optional[str]) -> bool:
@@ -231,7 +248,13 @@ def needs_open_positions(strategy_tag: Optional[str]) -> bool:
     if not isinstance(overrides, dict):
         overrides = {}
     merged = _merge_config(defaults, overrides)
-    for key in ("max_open_trades", "max_open_adverse_pips", "max_open_avg_adverse_pips"):
+    for key in (
+        "max_open_trades",
+        "max_open_trades_hard",
+        "max_open_adverse_pips",
+        "max_open_avg_adverse_pips",
+        "stack_reentry_pips",
+    ):
         try:
             if float(merged.get(key) or 0.0) > 0.0:
                 return True
@@ -329,18 +352,48 @@ def allow_entry(
             return False, "time_block", {"jst_hour": jst_hour, "block_jst_hours": block_hours}
 
     max_open_trades = int(merged.get("max_open_trades") or 0)
+    max_open_trades_hard = int(merged.get("max_open_trades_hard") or 0)
     max_open_adverse = float(merged.get("max_open_adverse_pips") or 0.0)
     max_open_avg = float(merged.get("max_open_avg_adverse_pips") or 0.0)
-    if open_positions and (max_open_trades > 0 or max_open_adverse > 0.0 or max_open_avg > 0.0):
-        open_count, worst_pips, avg_pips = _extract_open_stats(open_positions, base, direction)
-        if max_open_trades > 0 and open_count >= max_open_trades:
+    stack_reentry_pips = float(merged.get("stack_reentry_pips") or 0.0)
+    if open_positions and (
+        max_open_trades > 0
+        or max_open_trades_hard > 0
+        or max_open_adverse > 0.0
+        or max_open_avg > 0.0
+        or stack_reentry_pips > 0.0
+    ):
+        open_count, worst_pips, avg_pips, avg_entry = _extract_open_stats(
+            open_positions, base, direction
+        )
+        distance_pips = None
+        distance_override = False
+        if stack_reentry_pips > 0.0 and price is not None and avg_entry is not None:
+            try:
+                if direction == "long":
+                    distance_pips = (avg_entry - float(price)) / 0.01
+                else:
+                    distance_pips = (float(price) - avg_entry) / 0.01
+            except Exception:
+                distance_pips = None
+            if distance_pips is not None and distance_pips >= stack_reentry_pips:
+                distance_override = True
+        hard_cap = max_open_trades_hard if max_open_trades_hard > 0 else max_open_trades
+        if hard_cap > 0 and open_count >= hard_cap:
+            return False, "open_hard_cap", {
+                "open_count": open_count,
+                "max_open_trades_hard": hard_cap,
+                "worst_unrealized_pips": worst_pips,
+                "avg_unrealized_pips": avg_pips,
+            }
+        if max_open_trades > 0 and open_count >= max_open_trades and not distance_override:
             return False, "open_stack", {
                 "open_count": open_count,
                 "max_open_trades": max_open_trades,
                 "worst_unrealized_pips": worst_pips,
                 "avg_unrealized_pips": avg_pips,
             }
-        if max_open_adverse > 0.0 and worst_pips is not None:
+        if max_open_adverse > 0.0 and worst_pips is not None and not distance_override:
             threshold = -abs(max_open_adverse)
             if worst_pips <= threshold:
                 return False, "open_adverse", {
@@ -348,7 +401,7 @@ def allow_entry(
                     "worst_unrealized_pips": worst_pips,
                     "max_open_adverse_pips": max_open_adverse,
                 }
-        if max_open_avg > 0.0 and avg_pips is not None:
+        if max_open_avg > 0.0 and avg_pips is not None and not distance_override:
             threshold = -abs(max_open_avg)
             if avg_pips <= threshold:
                 return False, "open_avg_adverse", {
