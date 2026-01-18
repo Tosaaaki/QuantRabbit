@@ -31,7 +31,7 @@
   - Startup: `env.toml` 読込 → Secrets 確認 → WebSocket 接続。
   - 60s タクト（main 有効時のみ）: 新ローソク → Factors 更新 → Regime/Focus → GPT decision → Strategy loop（confidence スケーリング + ステージ判定）→ exit_worker → risk_guard → order_manager → `trades.db` / `metrics.db` ログ。ワーカーは発注前に `signal_bus` へ enqueue、main の関所が confidence 順に選択・lot配分して発注。
   - タクト要件: 正秒同期（±500 ms）、締切 55 s 超でサイクル破棄（バックログ禁止）、`monotonic()` で `decision_latency_ms` 計測。
-  - Background: `backup_to_gcs.sh` による nightly logs バックアップ。
+- Background: `backup_to_gcs.sh` による nightly logs バックアップ + `/etc/cron.hourly/qr-gcs-backup-core` による GCS 退避（自動）。
 
 ## 3. データスキーマと単位
 - 共通スキーマ（pydantic 互換）
@@ -126,6 +126,12 @@ class OrderIntent(BaseModel):
 ## 5. データ鮮度・ログ・検証
 - データ鮮度: `max_data_lag_ms = 3000` 超は `DataFetcher` が `stale=True` を返し Risk Guard が発注拒否。Candle 確定は `tick.ts_ms // 60000` 変化で判定し、終値は最後の mid。`volume=0` は `missing_bar` としてログ。
 - ログ永続化: 本番ログは VM `/home/tossaki/QuantRabbit/logs/` のみを真とする。ローカル `logs/*.db` は参考扱い。
+  - GCS 自動退避: `GCS_BACKUP_BUCKET` を `/etc/quantrabbit.env` に設定し、`/etc/cron.hourly/qr-gcs-backup-core` で毎時アップロード。保存先は `gs://$GCS_BACKUP_BUCKET/qr-logs/<hostname>/core_*.tar`。
+  - Storage から読むとき（VM 上）:
+    - 一覧: `sudo -u tossaki -H /usr/local/bin/qr-gcs-fetch-core list`
+    - 最新を展開: `sudo -u tossaki -H /usr/local/bin/qr-gcs-fetch-core latest /tmp/qr_gcs_restore`
+    - 指定取得: `sudo -u tossaki -H /usr/local/bin/qr-gcs-fetch-core get gs://<bucket>/qr-logs/<host>/core_YYYYmmddTHHMMSSZ.tar /tmp/qr_gcs_restore`
+  - 参照時の補助: `QR_BACKUP_HOST=<hostname>` を指定すると別ホストの退避も読める。
   - 日次集計例  
     `scripts/vm.sh -p quantrabbit -z asia-northeast1-a -m fx-trader-vm sql -f /home/tossaki/QuantRabbit/logs/trades.db -q "SELECT DATE(close_time), COUNT(*), ROUND(SUM(pl_pips),2) FROM trades WHERE DATE(close_time)=DATE('now') GROUP BY 1;" -t`
   - 直近オーダー例  
