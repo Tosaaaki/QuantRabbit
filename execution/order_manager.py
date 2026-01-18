@@ -3830,6 +3830,24 @@ async def market_order(
                     error_message=reject.get("errorMessage") or reason,
                     response_payload=response,
                 )
+                log_metric(
+                    "order_success_rate",
+                    0.0,
+                    tags={
+                        "pocket": pocket,
+                        "strategy": strategy_tag or "unknown",
+                        "reason": reason_key.lower() if reason_key else "rejected",
+                    },
+                )
+                log_metric(
+                    "reject_rate",
+                    1.0,
+                    tags={
+                        "pocket": pocket,
+                        "strategy": strategy_tag or "unknown",
+                        "reason": reason_key.lower() if reason_key else "rejected",
+                    },
+                )
                 if reason_key == "INSUFFICIENT_MARGIN" and pocket:
                     _MARGIN_REJECT_UNTIL[pocket] = time.monotonic() + 120.0
                 if (
@@ -3923,6 +3941,16 @@ async def market_order(
                     request_payload=attempt_payload,
                     response_payload=response,
                 )
+                log_metric(
+                    "order_success_rate",
+                    1.0,
+                    tags={"pocket": pocket, "strategy": strategy_tag or "unknown"},
+                )
+                log_metric(
+                    "reject_rate",
+                    0.0,
+                    tags={"pocket": pocket, "strategy": strategy_tag or "unknown"},
+                )
                 _console_order_log(
                     "OPEN_FILLED",
                     pocket=pocket,
@@ -4000,6 +4028,24 @@ async def market_order(
                 error_message=str(e),
                 response_payload=resp if isinstance(resp, dict) else None,
             )
+            log_metric(
+                "order_success_rate",
+                0.0,
+                tags={
+                    "pocket": pocket,
+                    "strategy": strategy_tag or "unknown",
+                    "reason": "api_error",
+                },
+            )
+            log_metric(
+                "reject_rate",
+                1.0,
+                tags={
+                    "pocket": pocket,
+                    "strategy": strategy_tag or "unknown",
+                    "reason": "api_error",
+                },
+            )
 
             if (
                 attempt == 0
@@ -4075,6 +4121,8 @@ async def limit_order(
     if _soft_tp_mode(entry_thesis):
         tp_price = None
 
+    strategy_tag = _strategy_tag_from_thesis(entry_thesis)
+
     if not reduce_only and pocket != "manual":
         entry_thesis = _apply_default_entry_thesis_tfs(entry_thesis, pocket)
     tech_precomputed = None
@@ -4097,7 +4145,6 @@ async def limit_order(
         return None, None
 
     if not reduce_only and pocket != "manual":
-        strategy_tag = _strategy_tag_from_thesis(entry_thesis)
         guard = evaluate_entry_guard(
             entry_price=price,
             side="long" if units > 0 else "short",
@@ -4345,6 +4392,24 @@ async def limit_order(
             error_message=str(exc),
             request_payload=attempt_payload,
         )
+        log_metric(
+            "order_success_rate",
+            0.0,
+            tags={
+                "pocket": pocket,
+                "strategy": strategy_tag or "unknown",
+                "reason": "api_error",
+            },
+        )
+        log_metric(
+            "reject_rate",
+            1.0,
+            tags={
+                "pocket": pocket,
+                "strategy": strategy_tag or "unknown",
+                "reason": "api_error",
+            },
+        )
         return None, None
     except Exception as exc:  # noqa: BLE001
         logging.exception("[ORDER] Limit order unexpected error: %s", exc)
@@ -4361,12 +4426,31 @@ async def limit_order(
             error_message=str(exc),
             request_payload=attempt_payload,
         )
+        log_metric(
+            "order_success_rate",
+            0.0,
+            tags={
+                "pocket": pocket,
+                "strategy": strategy_tag or "unknown",
+                "reason": "unexpected_error",
+            },
+        )
+        log_metric(
+            "reject_rate",
+            1.0,
+            tags={
+                "pocket": pocket,
+                "strategy": strategy_tag or "unknown",
+                "reason": "unexpected_error",
+            },
+        )
         return None, None
 
     response = endpoint.response
     reject = response.get("orderRejectTransaction")
     if reject:
         reason = reject.get("rejectReason") or reject.get("reason")
+        reason_key = str(reason or "").lower() or "rejected"
         logging.error("[ORDER] Limit order rejected: %s", reason)
         _log_order(
             pocket=pocket,
@@ -4381,6 +4465,24 @@ async def limit_order(
             error_code=reject.get("errorCode"),
             error_message=reject.get("errorMessage") or reason,
             response_payload=response,
+        )
+        log_metric(
+            "order_success_rate",
+            0.0,
+            tags={
+                "pocket": pocket,
+                "strategy": strategy_tag or "unknown",
+                "reason": reason_key,
+            },
+        )
+        log_metric(
+            "reject_rate",
+            1.0,
+            tags={
+                "pocket": pocket,
+                "strategy": strategy_tag or "unknown",
+                "reason": reason_key,
+            },
         )
         return None, None
 
@@ -4417,6 +4519,16 @@ async def limit_order(
         executed_price=executed_price,
         request_payload=attempt_payload,
         response_payload=response,
+    )
+    log_metric(
+        "order_success_rate",
+        1.0,
+        tags={"pocket": pocket, "strategy": strategy_tag or "unknown"},
+    )
+    log_metric(
+        "reject_rate",
+        0.0,
+        tags={"pocket": pocket, "strategy": strategy_tag or "unknown"},
     )
 
     if trade_id:

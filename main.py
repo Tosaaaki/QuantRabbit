@@ -126,6 +126,20 @@ def _factor_age_seconds(tf: str = "M1") -> Optional[float]:
     except Exception:
         return None
 
+
+def _latest_tick_lag_ms() -> Optional[float]:
+    try:
+        ticks = tick_window.recent_ticks(seconds=120.0, limit=1)
+    except Exception:
+        return None
+    if not ticks:
+        return None
+    try:
+        epoch = float(ticks[-1].get("epoch"))
+    except (TypeError, ValueError, AttributeError):
+        return None
+    return max(0.0, (time.time() - epoch) * 1000.0)
+
 # Trading from main is enabled alongside workers for higher entry density.
 # 内蔵ストラテジーはデフォルト停止。動かす場合は環境変数で明示的にONにする。
 MAIN_TRADING_ENABLED = _env_bool("MAIN_TRADING_ENABLED", default=False)
@@ -3736,6 +3750,7 @@ async def logic_loop(
             loop_counter += 1
             scalp_ready_forced = False
             evaluated_signals: list[dict] = []
+            gpt_timed_out = False
             logging.info("[LOOP] start loop=%d", loop_counter)
             if FORCE_SCALP_MODE and loop_counter % 5 == 0:
                 logging.warning("[FORCE_SCALP] loop=%d", loop_counter)
@@ -3764,6 +3779,43 @@ async def logic_loop(
                         fs_strategy_client.refresh()
                     except Exception:
                         pass
+                con = None
+                try:
+                    con = sqlite3.connect("logs/trades.db", timeout=1.0)
+                    row = con.execute(
+                        "SELECT COALESCE(SUM(pl_pips), 0) FROM trades "
+                        "WHERE close_time IS NOT NULL AND date(close_time)=date('now')"
+                    ).fetchone()
+                    pnl_day_pips = float(row[0] or 0.0) if row else 0.0
+                    log_metric("pnl_day_pips", pnl_day_pips, ts=now)
+                    row = con.execute(
+                        """
+                        WITH ordered AS (
+                          SELECT close_time, pl_pips,
+                                 SUM(pl_pips) OVER (ORDER BY close_time) AS equity
+                          FROM trades
+                          WHERE close_time IS NOT NULL
+                        ),
+                        dd AS (
+                          SELECT equity,
+                                 MAX(equity) OVER (ORDER BY close_time) AS peak
+                          FROM ordered
+                        )
+                        SELECT MIN(equity - peak) FROM dd
+                        """
+                    ).fetchone()
+                    if row and row[0] is not None:
+                        drawdown_pips = float(row[0])
+                        drawdown_pct = abs(drawdown_pips) / 100000.0
+                        log_metric("drawdown_pct", drawdown_pct, ts=now)
+                except Exception as exc:
+                    logging.debug("[METRICS] pnl/drawdown query failed: %s", exc)
+                finally:
+                    if con is not None:
+                        try:
+                            con.close()
+                        except Exception:
+                            pass
                 last_update_time = now
                 logging.info(f"[PERF] Updated: {perf_cache}")
 
@@ -4546,12 +4598,14 @@ async def logic_loop(
                 reuse_reason = "disabled"
                 logging.info("[GPT] disabled; skipping GPT evaluation and using local ranking only")
             else:
+                gpt_requested = False
                 logging.info(
                     "[GPT] decision_trigger signature=%s range=%s",
                     payload_signature[:10],
                     range_active,
                 )
                 if await gpt_state.needs_refresh(payload_signature, GPT_MIN_INTERVAL_SECONDS):
+                    gpt_requested = True
                     logging.info("[GPT] enqueue signature=%s", payload_signature[:10])
                     await gpt_requests.submit(payload_signature, payload)
                     try:
@@ -4564,14 +4618,24 @@ async def logic_loop(
                         )
                         gpt, _, _ = await gpt_state.get_latest()
                         reuse_reason = gpt.get("reason") or "cached_timeout"
+                        gpt_timed_out = True
                 else:
                     gpt, _, _ = await gpt_state.get_latest()
                     reuse_reason = gpt.get("reason") or "cached"
+                if gpt_requested and not gpt_timed_out:
+                    if isinstance(gpt, dict) and (gpt.get("reason") or "") == "reuse_previous":
+                        gpt_timed_out = True
                 if not isinstance(gpt, dict):
                     logging.warning(
                         "[GPT] invalid decision payload type=%s; using empty dict", type(gpt)
                     )
                     gpt = {}
+                log_metric(
+                    "gpt_timeout_rate",
+                    1.0 if gpt_timed_out else 0.0,
+                    tags={"reason": reuse_reason},
+                    ts=now,
+                )
             local_decision: dict = {}
             try:
                 local_decision = heuristic_decision(payload, last_local_decision)
@@ -8805,6 +8869,13 @@ async def logic_loop(
                 pass
             pos_manager.sync_trades()
 
+            decision_latency_ms = max(0.0, (time.monotonic() - loop_start_mono) * 1000.0)
+            if gpt_timed_out:
+                decision_latency_ms = max(decision_latency_ms, 9000.0)
+            log_metric("decision_latency_ms", decision_latency_ms)
+            data_lag_ms = _latest_tick_lag_ms()
+            if data_lag_ms is not None:
+                log_metric("data_lag_ms", data_lag_ms)
             await asyncio.sleep(60)
     except Exception as e:
         logging.error(f"[ERROR] An unhandled exception occurred: {e}")
