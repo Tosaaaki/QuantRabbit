@@ -31,6 +31,13 @@ def _float_env(key: str, default: float) -> float:
         return default
 
 
+def _safe_float(value: object) -> Optional[float]:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
 def _utc_now() -> datetime:
     return datetime.now(timezone.utc)
 
@@ -63,8 +70,19 @@ def _filter_trades(trades: Sequence[dict], tags: Set[str]) -> list[dict]:
     filtered: list[dict] = []
     for tr in trades:
         thesis = tr.get("entry_thesis") or {}
-        tag = thesis.get("strategy_tag") or thesis.get("strategy") or tr.get("strategy")
-        if tag and str(tag) in tags:
+        tag = (
+            thesis.get("strategy_tag")
+            or thesis.get("strategy_tag_raw")
+            or thesis.get("strategy")
+            or thesis.get("tag")
+            or tr.get("strategy_tag")
+            or tr.get("strategy")
+        )
+        if not tag:
+            continue
+        tag_str = str(tag)
+        base_tag = tag_str.split("-", 1)[0]
+        if tag_str in tags or base_tag in tags:
             filtered.append(tr)
     return filtered
 
@@ -100,6 +118,38 @@ async def _run_exit_loop(
 ) -> None:
     pos_manager = PositionManager()
     states: Dict[str, _TradeState] = {}
+    rsi_fade_long = _float_env("M1SCALP_EXIT_RSI_FADE_LONG", 44.0)
+    rsi_fade_short = _float_env("M1SCALP_EXIT_RSI_FADE_SHORT", 56.0)
+    vwap_gap_pips = _float_env("M1SCALP_EXIT_VWAP_GAP_PIPS", 0.8)
+    structure_adx = _float_env("M1SCALP_EXIT_STRUCTURE_ADX", 20.0)
+    structure_gap_pips = _float_env("M1SCALP_EXIT_STRUCTURE_GAP_PIPS", 1.8)
+    atr_spike_pips = _float_env("M1SCALP_EXIT_ATR_SPIKE_PIPS", 5.0)
+    allow_negative_exit = os.getenv("M1SCALP_EXIT_ALLOW_NEGATIVE", "1").strip().lower() not in {
+        "",
+        "0",
+        "false",
+        "no",
+    }
+
+    def _context() -> tuple[
+        Optional[float],
+        Optional[float],
+        Optional[float],
+        Optional[float],
+        Optional[tuple[float, float]],
+    ]:
+        fac_m1 = all_factors().get("M1") or {}
+        rsi = _safe_float(fac_m1.get("rsi"))
+        adx = _safe_float(fac_m1.get("adx"))
+        atr_pips = _safe_float(fac_m1.get("atr_pips"))
+        if atr_pips is None:
+            atr_val = _safe_float(fac_m1.get("atr"))
+            if atr_val is not None:
+                atr_pips = atr_val * 100.0
+        vwap_gap = _safe_float(fac_m1.get("vwap_gap"))
+        ma10 = _safe_float(fac_m1.get("ma10"))
+        ma20 = _safe_float(fac_m1.get("ma20"))
+        return rsi, adx, atr_pips, vwap_gap, (ma10, ma20) if ma10 is not None and ma20 is not None else None
 
     async def _close(
         trade_id: str,
@@ -137,6 +187,7 @@ async def _run_exit_loop(
         if current is None:
             return
         pnl = (current - price_entry) * 100.0 if side == "long" else (price_entry - current) * 100.0
+        allow_negative = allow_negative_exit or pnl <= 0
 
         opened_at = _parse_time(trade.get("open_time"))
         hold_sec = (now - opened_at).total_seconds() if opened_at else 0.0
@@ -209,15 +260,43 @@ async def _run_exit_loop(
             states.pop(trade_id, None)
             return
 
+        if pnl < 0:
+            rsi, adx, atr_pips, vwap_gap, ma_pair = _context()
+            if rsi is not None:
+                if side == "long" and rsi <= rsi_fade_long:
+                    await _close(trade_id, -units, "rsi_fade", client_id, allow_negative=allow_negative)
+                    states.pop(trade_id, None)
+                    return
+                if side == "short" and rsi >= rsi_fade_short:
+                    await _close(trade_id, -units, "rsi_fade", client_id, allow_negative=allow_negative)
+                    states.pop(trade_id, None)
+                    return
+            if vwap_gap is not None and abs(vwap_gap) <= vwap_gap_pips:
+                await _close(trade_id, -units, "vwap_cut", client_id, allow_negative=allow_negative)
+                states.pop(trade_id, None)
+                return
+            if adx is not None and ma_pair is not None:
+                ma10, ma20 = ma_pair
+                gap = abs(ma10 - ma20) / 0.01
+                cross_bad = (side == "long" and ma10 <= ma20) or (side == "short" and ma10 >= ma20)
+                if adx <= structure_adx and (cross_bad or gap <= structure_gap_pips):
+                    await _close(trade_id, -units, "structure_break", client_id, allow_negative=allow_negative)
+                    states.pop(trade_id, None)
+                    return
+            if atr_pips is not None and atr_pips >= atr_spike_pips:
+                await _close(trade_id, -units, "atr_spike", client_id, allow_negative=allow_negative)
+                states.pop(trade_id, None)
+                return
+
         if max_adverse_pips > 0 and pnl <= -max_adverse_pips:
             log_metric("m1scalp_max_adverse", pnl, tags={"side": side})
-            await _close(trade_id, -units, "max_adverse", client_id)
+            await _close(trade_id, -units, "max_adverse", client_id, allow_negative=allow_negative)
             states.pop(trade_id, None)
             return
 
         if max_hold_sec > 0 and hold_sec >= max_hold_sec and pnl <= 0:
             log_metric("m1scalp_max_hold", pnl, tags={"side": side})
-            await _close(trade_id, -units, "max_hold", client_id)
+            await _close(trade_id, -units, "max_hold", client_id, allow_negative=allow_negative)
             states.pop(trade_id, None)
             return
 
@@ -230,12 +309,12 @@ async def _run_exit_loop(
             and pnl > 0
             and pnl <= state.peak - trail_backoff
         ):
-            await _close(trade_id, -units, "trail_take", client_id)
+            await _close(trade_id, -units, "trail_take", client_id, allow_negative=allow_negative)
             states.pop(trade_id, None)
             return
 
         if pnl >= tp:
-            await _close(trade_id, -units, "take_profit", client_id)
+            await _close(trade_id, -units, "take_profit", client_id, allow_negative=allow_negative)
             states.pop(trade_id, None)
             return
 

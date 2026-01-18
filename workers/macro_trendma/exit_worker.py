@@ -74,8 +74,19 @@ def _filter_trades(trades: Sequence[dict], tags: Set[str]) -> list[dict]:
     filtered: list[dict] = []
     for tr in trades:
         thesis = tr.get("entry_thesis") or {}
-        tag = thesis.get("strategy_tag") or thesis.get("strategy") or tr.get("strategy")
-        if tag and str(tag) in tags:
+        tag = (
+            thesis.get("strategy_tag")
+            or thesis.get("strategy_tag_raw")
+            or thesis.get("strategy")
+            or thesis.get("tag")
+            or tr.get("strategy_tag")
+            or tr.get("strategy")
+        )
+        if not tag:
+            continue
+        tag_str = str(tag)
+        base_tag = tag_str.split("-", 1)[0]
+        if tag_str in tags or base_tag in tags:
             filtered.append(tr)
     return filtered
 
@@ -137,6 +148,10 @@ class TrendMAExitWorker:
         self.rsi_take_short = _float_env("TRENDMA_EXIT_RSI_TAKE_SHORT", 28.0)
         self.trend_fail_pips = max(8.0, _float_env("TRENDMA_EXIT_TREND_FAIL_PIPS", 24.0))
         self.trend_fail_buffer_pips = max(0.2, _float_env("TRENDMA_EXIT_TREND_FAIL_BUFFER_PIPS", 1.2))
+        self.exhaust_adx = max(5.0, _float_env("TRENDMA_EXIT_EXHAUST_ADX", 18.0))
+        self.exhaust_gap_pips = max(0.5, _float_env("TRENDMA_EXIT_EXHAUST_GAP_PIPS", 2.0))
+        self.exhaust_rsi_long = _float_env("TRENDMA_EXIT_EXHAUST_RSI_LONG", 45.0)
+        self.exhaust_rsi_short = _float_env("TRENDMA_EXIT_EXHAUST_RSI_SHORT", 55.0)
 
     def _context(self) -> tuple[Optional[float], Optional[float], bool, dict]:
         factors = all_factors()
@@ -165,6 +180,8 @@ class TrendMAExitWorker:
         client_order_id: Optional[str],
         allow_negative: bool = False,
     ) -> None:
+        if pnl <= 0:
+            allow_negative = True
         ok = await close_trade(
             trade_id,
             units,
@@ -252,6 +269,34 @@ class TrendMAExitWorker:
             )
             self._states.pop(trade_id, None)
             return
+
+        adx = _safe_float(fac_h1.get("adx"))
+        ma10 = _safe_float(fac_h1.get("ma10"))
+        ma20 = _safe_float(fac_h1.get("ma20"))
+        if (
+            pnl < 0
+            and rsi is not None
+            and adx is not None
+            and ma10 is not None
+            and ma20 is not None
+            and adx <= self.exhaust_adx
+        ):
+            gap = abs(ma10 - ma20) / PIP
+            cross_bad = (side == "long" and ma10 <= ma20) or (side == "short" and ma10 >= ma20)
+            rsi_bad = (side == "long" and rsi <= self.exhaust_rsi_long) or (
+                side == "short" and rsi >= self.exhaust_rsi_short
+            )
+            if rsi_bad and (cross_bad or gap <= self.exhaust_gap_pips):
+                await self._close(
+                    trade_id,
+                    -units,
+                    "trend_exhaust",
+                    pnl,
+                    client_id,
+                    allow_negative=True,
+                )
+                self._states.pop(trade_id, None)
+                return
 
         if (
             self.trend_fail_pips > 0

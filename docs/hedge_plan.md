@@ -8,6 +8,44 @@
 - `allowed_lot` でロット計算時に open long/short を参照し、エントリー後の net margin をシミュレートしてサイズ決定（`workers/fast_scalp` / `workers/micro_multistrat` で適用済み）。
 - cap は `MAX_MARGIN_USAGE` を 0.92 にクランプし、`MARGIN_SAFETY_FACTOR` でさらに少し絞る（デフォルト0.9）。
 
+## 含み損の常態化（手動ポジ除外 / 2026-01-18 VM確認）
+- OANDA openTrades（agentのみ: client_id=qr-/qs-）: 31件（含み損30 / 含み益1）。
+- 含み損合計: -23,712.18 JPY / 含み益合計: +189.5 JPY。
+- 保有時間: 24h超 31件、72h超 7件、最長 84.4h。
+- エクスポージャ: net +28,160 units / gross 39,224 units（net が小さくても含み損は残る）。
+- 含み損寄与（戦略）: M1Scalper -9,824 / TrendMAbu -5,759 / VolCompre -4,915 / Donchian5 -3,176。
+- pocket別合計: scalp -9,824 / macro -8,973 / micro -4,725。
+- 判断: 基本はプラス決済だが、実装には複数の例外条件があり、発火条件が限定的なため含み損が取り残されやすい。
+
+## EXIT条件の実装概要（現行）
+- 共通: `execution/exit_manager.py` はスタブで不使用。各 `workers/*/exit_worker.py` が主担当。
+- 共通: `execution/section_axis.py` の section_exit（fib/median/left_behind など）で負け決済が許可される場合がある。
+- 共通: `analysis/technique_engine.py` の tech_exit が allow_negative を返すと負け決済が許可される。
+- 共通: `workers/common/exit_emergency.py` により health_buffer が閾値以下なら負け決済が許可される。
+- 方針: EXITロジックは共通化せず、ワーカー別に最適化する（共通化はタグ整合・観測のみ）。
+- fast_scalp: `workers/fast_scalp/exit_worker.py` は基本プラス決済だが、`workers/fast_scalp/worker.py` に RSI fade / ATR spike / drawdown / timeout / health_exit などの強制クローズがある（`NO_LOSS_CLOSE` の例外あり）。
+- pullback系: `workers/pullback_scalp/exit_worker.py` / `workers/pullback_s5/exit_worker.py` / `workers/vwap_magnet_s5/exit_worker.py` は stop_loss / time_cut / rsi_fade / vwap_cut / structure_break 等で負け決済が発生し得る。
+- micro_multistrat: `workers/micro_multistrat/exit_worker.py` で reversion_failure/structure_break などの負け決済があり、tech_exit の allow_negative が必要。
+- macro_trendma: `workers/macro_trendma/exit_worker.py` で trend_failure（MA崩れ＋逆行幅）時に tech_exit 連動で負け決済。
+- micro_levelreactor / trend_h1 などは原則プラス決済中心だが section_exit 経由の例外はあり得る。
+
+## EXITが発火しにくい原因（実データ＋コード）
+- orders.db の entry_thesis ではタグが派生形（例: `M1Scalper-trend-long`, `TrendMA-bull`, `Donchian55-breakout-up`, `VolCompressionBreak-long`）。`_filter_trades` が完全一致のみだと拾えず、正規化に失敗すると exit_worker が対象外になる。
+- M1Scalper: `workers/scalp_m1scalper/exit_worker.py` は max_hold/max_adverse で負け決済できるが、タグ一致が前提。派生タグのままだとスキップされる。
+- TrendMA: `workers/macro_trendma/exit_worker.py` の負け決済は trend_failure + tech_exit の連動のみ。時間経過での損切りが無く、含み損が残りやすい。
+- Donchian55: `workers/macro_donchian55/exit_worker.py` も trend_failure + tech_exit 依存。ブレイク後の逆行が「構造崩れ」と判定されない限り残存しやすい。
+- VolCompressionBreak: micro_multistrat の負け決済は reversion_failure 対象外。section_exit が主ルートなので、基準未達だと長期化する。
+- データ依存: exit_worker は `tick_window` / `all_factors` から mid/ADX/RSI を引く。データ欠損や stale で `_latest_mid()` が None だと判定自体がスキップされる。
+- 対応: exit_worker のタグ判定を base tag / `strategy_tag_raw` / `trade.strategy_tag` まで拡張し、派生タグの取り残しを抑える（ワーカー別ルールは維持）。
+- 対応: M1Scalper/TrendMA/Donchian55/VolCompressionBreak にテクニック系の負け決済を追加（RSI fade / VWAP cut / 構造崩れ / チャネル回帰 / レンジ復帰 など）。
+
+## 対策方針（ヘッジと損切りの両輪）
+- 時間×深さで損切り: open>24h かつ PnL<0 なら reduce-only、>72h なら強制縮小/クローズ。
+- 含み損スタック制限: 同一戦略の含み損ポジが N 件以上なら新規停止（reduce-only は許可）。
+- net/gross 圧縮ルール: net が小さくても gross が大きい状態は、順次縮小してコストを抑える。
+- pocket/タグ整合性: client_id と pocket tag の不一致は exit_worker の対象外になり得るため、分類ルールの統一を優先。
+- 監視指標の追加: open_trades_neg_count / neg_sum / age_p95 を metrics に記録し、常時含み損化を検知。
+
 ## 具体的なイメージ
 - NAV 50万円、証拠金率4%の場合、片側だけなら約50万×0.92/（価格×0.04）で ~7.3万 units ほど。ロングとショートを組み合わせれば net が小さくなるため、総建玉は倍近くまで持てる。
 - 例: 45kショート保有時に50kロングを入れると net +5k → 必要証拠金は ~3.1万円まで低下し、余力が回復する。
@@ -72,7 +110,12 @@
   - `ENTRY_GUARD_ADX_RANGE_MIN_IMPULSERE=20` / `ENTRY_GUARD_ADX_TF_IMPULSERE=H4`。
   - `ENTRY_GUARD_MA20_GAP_ATR_MAX_TRENDMA=1.2` / `ENTRY_GUARD_MA20_GAP_TF_TRENDMA=M1`。
   - `ENTRY_GUARD_MA20_GAP_ATR_MAX_TRENDMABU=1.2` / `ENTRY_GUARD_MA20_GAP_TF_TRENDMABU=M1`。
-  - `PERF_GUARD_GLOBAL_ENABLED=1` + `PERF_GUARD_LOOKBACK_DAYS=14` + `PERF_GUARD_MIN_TRADES=10`（MomentumPulse のみブロック）。
+- `PERF_GUARD_GLOBAL_ENABLED=1` + `PERF_GUARD_LOOKBACK_DAYS=14` + `PERF_GUARD_MIN_TRADES=10`（MomentumPulse のみブロック）。
+
+## マイナス決済の許可方針（戻り期待値ベース）
+- exit_worker が理由を出した場合、`pnl <= 0` でも close を許可（`allow_negative` 経由）。
+- 戻り期待が低いときは `section_exit` / `tech_exit` / `reversion_failure` で負けでも切る。
+- 損切り後は `reentry_guard` で同一ワーカーの再入を抑制し、別条件の再エントリーを優先。
 
 ## 実装済みヘッジワーカー (HedgeBalancer)
 - 役割: マージン使用率が高まったときに逆方向の reduce-only シグナルを `signal_bus` 経由で main 関所へ送り、ネットエクスポージャを軽くする。ファイル: `workers/hedge_balancer/worker.py`。

@@ -144,8 +144,19 @@ class VWAPMagnetExitWorker:
         filtered: list[dict] = []
         for tr in trades:
             thesis = tr.get("entry_thesis") or {}
-            tag = thesis.get("strategy_tag") or thesis.get("strategy") or tr.get("strategy")
-            if tag and str(tag) in ALLOWED_TAGS:
+            tag = (
+                thesis.get("strategy_tag")
+                or thesis.get("strategy_tag_raw")
+                or thesis.get("strategy")
+                or thesis.get("tag")
+                or tr.get("strategy_tag")
+                or tr.get("strategy")
+            )
+            if not tag:
+                continue
+            tag_str = str(tag)
+            base_tag = tag_str.split("-", 1)[0]
+            if tag_str in ALLOWED_TAGS or base_tag in ALLOWED_TAGS:
                 filtered.append(tr)
         return filtered
 
@@ -197,6 +208,8 @@ class VWAPMagnetExitWorker:
         client_id: str,
         allow_negative: bool = False,
     ) -> bool:
+        if pnl <= 0:
+            allow_negative = True
         ok = await close_trade(
             trade_id,
             units,

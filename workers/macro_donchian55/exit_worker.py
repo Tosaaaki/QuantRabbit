@@ -74,8 +74,19 @@ def _filter_trades(trades: Sequence[dict], tags: Set[str]) -> list[dict]:
     filtered: list[dict] = []
     for tr in trades:
         thesis = tr.get("entry_thesis") or {}
-        tag = thesis.get("strategy_tag") or thesis.get("strategy") or tr.get("strategy")
-        if tag and str(tag) in tags:
+        tag = (
+            thesis.get("strategy_tag")
+            or thesis.get("strategy_tag_raw")
+            or thesis.get("strategy")
+            or thesis.get("tag")
+            or tr.get("strategy_tag")
+            or tr.get("strategy")
+        )
+        if not tag:
+            continue
+        tag_str = str(tag)
+        base_tag = tag_str.split("-", 1)[0]
+        if tag_str in tags or base_tag in tags:
             filtered.append(tr)
     return filtered
 
@@ -150,6 +161,10 @@ class DonchianExitWorker:
         self.rsi_take_short = _float_env("DONCHIAN55_EXIT_RSI_TAKE_SHORT", 28.0)
         self.trend_fail_pips = max(10.0, _float_env("DONCHIAN55_EXIT_TREND_FAIL_PIPS", 32.0))
         self.trend_fail_buffer_pips = max(0.5, _float_env("DONCHIAN55_EXIT_TREND_FAIL_BUFFER_PIPS", 3.0))
+        self.revert_adx = max(5.0, _float_env("DONCHIAN55_EXIT_REVERT_ADX", 18.0))
+        self.revert_buffer_pips = max(0.5, _float_env("DONCHIAN55_EXIT_REVERT_BUFFER_PIPS", 1.5))
+        self.revert_rsi_long = _float_env("DONCHIAN55_EXIT_REVERT_RSI_LONG", 45.0)
+        self.revert_rsi_short = _float_env("DONCHIAN55_EXIT_REVERT_RSI_SHORT", 55.0)
 
     def _context(self) -> tuple[Optional[float], Optional[float], bool, dict]:
         factors = all_factors()
@@ -178,6 +193,8 @@ class DonchianExitWorker:
         client_order_id: Optional[str],
         allow_negative: bool = False,
     ) -> None:
+        if pnl <= 0:
+            allow_negative = True
         ok = await close_trade(
             trade_id,
             units,
@@ -264,6 +281,28 @@ class DonchianExitWorker:
             )
             self._states.pop(trade_id, None)
             return
+
+        adx = _safe_float(fac_h1.get("adx"))
+        if (
+            pnl < 0
+            and adx is not None
+            and adx <= self.revert_adx
+            and _donchian_failure(side, fac_h1, self.revert_buffer_pips)
+        ):
+            if rsi is None or (
+                (side == "long" and rsi <= self.revert_rsi_long)
+                or (side == "short" and rsi >= self.revert_rsi_short)
+            ):
+                await self._close(
+                    trade_id,
+                    -units,
+                    "donchian_revert",
+                    pnl,
+                    client_id,
+                    allow_negative=True,
+                )
+                self._states.pop(trade_id, None)
+                return
 
         if (
             self.trend_fail_pips > 0

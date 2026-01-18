@@ -64,8 +64,19 @@ def _filter_trades(trades: Sequence[dict], tags: Set[str]) -> list[dict]:
     filtered: list[dict] = []
     for tr in trades:
         thesis = tr.get("entry_thesis") or {}
-        tag = thesis.get("strategy_tag") or thesis.get("strategy") or tr.get("strategy")
-        if tag and str(tag) in tags:
+        tag = (
+            thesis.get("strategy_tag")
+            or thesis.get("strategy_tag_raw")
+            or thesis.get("strategy")
+            or thesis.get("tag")
+            or tr.get("strategy_tag")
+            or tr.get("strategy")
+        )
+        if not tag:
+            continue
+        tag_str = str(tag)
+        base_tag = tag_str.split("-", 1)[0]
+        if tag_str in tags or base_tag in tags:
             filtered.append(tr)
     return filtered
 
@@ -148,6 +159,8 @@ class FastScalpExitWorker:
         client_order_id: Optional[str],
         allow_negative: bool = False,
     ) -> None:
+        if pnl <= 0:
+            allow_negative = True
         ok = await close_trade(
             trade_id,
             units,

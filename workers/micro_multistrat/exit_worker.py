@@ -85,8 +85,10 @@ def _filter_trades(trades: Sequence[dict], tags: Set[str]) -> list[dict]:
         thesis = tr.get("entry_thesis") or {}
         tag = (
             thesis.get("strategy_tag")
-            or thesis.get("strategy")
             or thesis.get("strategy_tag_raw")
+            or thesis.get("strategy")
+            or thesis.get("tag")
+            or tr.get("strategy_tag")
             or tr.get("strategy")
         )
         if not tag:
@@ -121,6 +123,21 @@ def _reversion_kind(trade: dict) -> Optional[str]:
     if profile:
         return "range_mr" if str(profile) in REVERSAL_PROFILES else None
     return None
+
+
+def _base_tag(trade: dict) -> Optional[str]:
+    thesis = trade.get("entry_thesis") or {}
+    tag = (
+        thesis.get("strategy_tag_raw")
+        or thesis.get("strategy_tag")
+        or thesis.get("strategy")
+        or thesis.get("tag")
+        or trade.get("strategy_tag")
+        or trade.get("strategy")
+    )
+    if not tag:
+        return None
+    return str(tag).split("-", 1)[0]
 
 
 @dataclass
@@ -169,7 +186,7 @@ class MicroMultiExitWorker:
         self.rsi_take_long = _float_env("MICRO_MULTI_EXIT_RSI_TAKE_LONG", 70.0)
         self.rsi_take_short = _float_env("MICRO_MULTI_EXIT_RSI_TAKE_SHORT", 30.0)
 
-    def _context(self) -> tuple[Optional[float], Optional[float], bool]:
+    def _context(self) -> tuple[Optional[float], Optional[float], bool, Optional[float], Optional[float]]:
         factors = all_factors()
         fac_m1 = factors.get("M1") or {}
         fac_h4 = factors.get("H4") or {}
@@ -191,7 +208,7 @@ class MicroMultiExitWorker:
             atr_threshold=self.range_atr,
         )
         rsi = _safe_float(fac_m1.get("rsi"))
-        return _latest_mid(), rsi, bool(range_ctx.active)
+        return _latest_mid(), rsi, bool(range_ctx.active), _safe_float(fac_m1.get("adx")), _safe_float(fac_m1.get("bbw"))
 
     async def _close(
         self,
@@ -202,6 +219,8 @@ class MicroMultiExitWorker:
         client_order_id: Optional[str],
         allow_negative: bool = False,
     ) -> None:
+        if pnl <= 0:
+            allow_negative = True
         ok = await close_trade(
             trade_id,
             units,
@@ -213,7 +232,16 @@ class MicroMultiExitWorker:
         else:
             LOG.error("[EXIT-micro_multi] close failed trade=%s units=%s reason=%s", trade_id, units, reason)
 
-    async def _review_trade(self, trade: dict, now: datetime, mid: float, rsi: Optional[float], range_active: bool) -> None:
+    async def _review_trade(
+        self,
+        trade: dict,
+        now: datetime,
+        mid: float,
+        rsi: Optional[float],
+        range_active: bool,
+        adx: Optional[float],
+        bbw: Optional[float],
+    ) -> None:
         trade_id = str(trade.get("trade_id"))
         if not trade_id:
             return
@@ -351,6 +379,26 @@ class MicroMultiExitWorker:
                 self._states.pop(trade_id, None)
                 return
 
+        base_tag = _base_tag(trade)
+        if base_tag == "VolCompressionBreak" and pnl < 0:
+            compression_active = range_active or (
+                adx is not None
+                and bbw is not None
+                and adx <= self.range_adx
+                and bbw <= self.range_bbw
+            )
+            if compression_active:
+                await self._close(
+                    trade_id,
+                    -units,
+                    "compression_fail",
+                    pnl,
+                    client_id,
+                    allow_negative=True,
+                )
+                self._states.pop(trade_id, None)
+                return
+
         profit_take = self.range_profit_take if range_active else self.profit_take
         trail_start = self.range_trail_start if range_active else self.trail_start
         trail_backoff = self.range_trail_backoff if range_active else self.trail_backoff
@@ -405,14 +453,14 @@ class MicroMultiExitWorker:
                 if not trades:
                     continue
 
-                mid, rsi, range_active = self._context()
+                mid, rsi, range_active, adx, bbw = self._context()
                 if mid is None:
                     continue
 
                 now = _utc_now()
                 for tr in trades:
                     try:
-                        await self._review_trade(tr, now, mid, rsi, range_active)
+                        await self._review_trade(tr, now, mid, rsi, range_active, adx, bbw)
                     except Exception:
                         LOG.exception("[EXIT-micro_multistrat] review failed trade=%s", tr.get("trade_id"))
                         continue

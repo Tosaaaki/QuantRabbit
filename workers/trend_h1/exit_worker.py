@@ -59,8 +59,19 @@ def _filter_trades(trades: Sequence[dict], tags: Set[str]) -> list[dict]:
     filtered: list[dict] = []
     for tr in trades:
         thesis = tr.get("entry_thesis") or {}
-        tag = thesis.get("strategy_tag") or thesis.get("strategy") or tr.get("strategy")
-        if tag and str(tag) in tags:
+        tag = (
+            thesis.get("strategy_tag")
+            or thesis.get("strategy_tag_raw")
+            or thesis.get("strategy")
+            or thesis.get("tag")
+            or tr.get("strategy_tag")
+            or tr.get("strategy")
+        )
+        if not tag:
+            continue
+        tag_str = str(tag)
+        base_tag = tag_str.split("-", 1)[0]
+        if tag_str in tags or base_tag in tags:
             filtered.append(tr)
     return filtered
 
@@ -164,6 +175,7 @@ async def _run_exit_loop(
         if current is None:
             return
         pnl = (current - price_entry) * 100.0 if side == "long" else (price_entry - current) * 100.0
+        allow_negative = pnl <= 0
 
         opened_at = _parse_time(trade.get("open_time"))
         hold_sec = (now - opened_at).total_seconds() if opened_at else 0.0
@@ -240,32 +252,32 @@ async def _run_exit_loop(
             return
 
         if _structure_break(units):
-            await _close(trade_id, -units, "structure_break", client_id)
+            await _close(trade_id, -units, "structure_break", client_id, allow_negative=allow_negative)
             states.pop(trade_id, None)
             return
 
         if pnl <= -stop_loss:
-            await _close(trade_id, -units, "hard_stop", client_id)
+            await _close(trade_id, -units, "hard_stop", client_id, allow_negative=allow_negative)
             states.pop(trade_id, None)
             return
 
         if hold_sec >= max_hold and pnl <= profit_take * 0.5:
-            await _close(trade_id, -units, "time_stop", client_id)
+            await _close(trade_id, -units, "time_stop", client_id, allow_negative=allow_negative)
             states.pop(trade_id, None)
             return
 
         if state.lock_floor is not None and pnl <= state.lock_floor:
-            await _close(trade_id, -units, "lock_release", client_id)
+            await _close(trade_id, -units, "lock_release", client_id, allow_negative=allow_negative)
             states.pop(trade_id, None)
             return
 
         if state.peak >= trail_start and pnl <= state.peak - params.trail_backoff:
-            await _close(trade_id, -units, "trail_take", client_id)
+            await _close(trade_id, -units, "trail_take", client_id, allow_negative=allow_negative)
             states.pop(trade_id, None)
             return
 
         if pnl >= profit_take:
-            await _close(trade_id, -units, "take_profit", client_id)
+            await _close(trade_id, -units, "take_profit", client_id, allow_negative=allow_negative)
             states.pop(trade_id, None)
             return
 
