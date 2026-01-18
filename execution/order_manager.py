@@ -33,6 +33,7 @@ from analysis import policy_bus
 from analysis.technique_engine import evaluate_entry_techniques
 from utils.secrets import get_secret
 from utils.market_hours import is_market_open
+from indicators.factor_cache import all_factors
 from utils.metrics_logger import log_metric
 from execution import strategy_guard, reentry_guard
 from execution.position_manager import PositionManager, agent_client_prefixes
@@ -98,6 +99,32 @@ def _as_float(value: object, default: float | None = None) -> float | None:
     except (TypeError, ValueError):
         return default
 
+# Block entries when factor cache is stale (configurable by env).
+_ENTRY_FACTOR_MAX_AGE_SEC = float(os.getenv("ENTRY_FACTOR_MAX_AGE_SEC", "600"))
+
+
+def _factor_age_seconds(tf: str = "M1") -> float | None:
+    try:
+        fac = (all_factors().get(tf.upper()) or {})
+    except Exception:
+        return None
+    ts_raw = fac.get("timestamp")
+    if not ts_raw:
+        return None
+    try:
+        if isinstance(ts_raw, (int, float)):
+            ts_dt = datetime.utcfromtimestamp(float(ts_raw)).replace(tzinfo=timezone.utc)
+        else:
+            ts_txt = str(ts_raw)
+            if ts_txt.endswith("Z"):
+                ts_txt = ts_txt.replace("Z", "+00:00")
+            ts_dt = datetime.fromisoformat(ts_txt)
+            if ts_dt.tzinfo is None:
+                ts_dt = ts_dt.replace(tzinfo=timezone.utc)
+        now = datetime.now(timezone.utc)
+        return max(0.0, (now - ts_dt).total_seconds())
+    except Exception:
+        return None
 # エントリーが詰まらないようデフォルトの最小ユニットを下げる。
 _DEFAULT_MIN_UNITS = _env_int("ORDER_MIN_UNITS_DEFAULT", 1_000)
 # Macro も環境変数で可変（デフォルト 2,000 units、最低でも DEFAULT_MIN を確保）
@@ -3240,6 +3267,40 @@ async def market_order(
 
     if STOP_LOSS_DISABLED:
         sl_price = None
+
+    if (
+        _ENTRY_FACTOR_MAX_AGE_SEC > 0
+        and not reduce_only
+        and (pocket or "").lower() != "manual"
+        and is_market_open()
+    ):
+        age_sec = _factor_age_seconds("M1")
+        if age_sec is not None and age_sec > _ENTRY_FACTOR_MAX_AGE_SEC:
+            _trace("factor_stale")
+            _console_order_log(
+                "OPEN_SKIP",
+                pocket=pocket,
+                strategy_tag=strategy_tag,
+                side=side_label,
+                units=units,
+                sl_price=sl_price,
+                tp_price=tp_price,
+                client_order_id=client_order_id,
+                note="factor_stale",
+            )
+            log_order(
+                pocket=pocket,
+                instrument=instrument,
+                side="buy" if units > 0 else "sell",
+                units=units,
+                sl_price=sl_price,
+                tp_price=tp_price,
+                client_order_id=client_order_id,
+                status="factor_stale",
+                attempt=0,
+                request_payload={"age_sec": round(float(age_sec), 2)},
+            )
+            return None
 
     if (
         _FORWARD_TO_SIGNAL_GATE

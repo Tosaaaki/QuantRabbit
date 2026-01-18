@@ -96,6 +96,36 @@ def _env_bool(name: str, default: bool = False) -> bool:
         return default
     return str(val).strip().lower() in {"1", "true", "yes", "on"}
 
+# Factor cache refresh guard (worker-only loop).
+FACTOR_CACHE_REFRESH_ENABLED = _env_bool("FACTOR_CACHE_REFRESH_ENABLED", default=True)
+FACTOR_CACHE_STALE_SEC = float(os.getenv("FACTOR_CACHE_STALE_SEC", "600"))
+FACTOR_CACHE_REFRESH_MIN_INTERVAL_SEC = float(os.getenv("FACTOR_CACHE_REFRESH_MIN_INTERVAL_SEC", "900"))
+
+def _factor_age_seconds(tf: str = "M1") -> Optional[float]:
+    try:
+        fac = (all_factors().get(tf.upper()) or {})
+    except Exception:
+        return None
+    ts_raw = fac.get("timestamp")
+    if not ts_raw:
+        return None
+    try:
+        if isinstance(ts_raw, (int, float)):
+            ts_dt = datetime.datetime.utcfromtimestamp(float(ts_raw)).replace(
+                tzinfo=datetime.timezone.utc
+            )
+        else:
+            ts_txt = str(ts_raw)
+            if ts_txt.endswith("Z"):
+                ts_txt = ts_txt.replace("Z", "+00:00")
+            ts_dt = datetime.datetime.fromisoformat(ts_txt)
+            if ts_dt.tzinfo is None:
+                ts_dt = ts_dt.replace(tzinfo=datetime.timezone.utc)
+        now = datetime.datetime.now(datetime.timezone.utc)
+        return max(0.0, (now - ts_dt).total_seconds())
+    except Exception:
+        return None
+
 # Trading from main is enabled alongside workers for higher entry density.
 # 内蔵ストラテジーはデフォルト停止。動かす場合は環境変数で明示的にONにする。
 MAIN_TRADING_ENABLED = _env_bool("MAIN_TRADING_ENABLED", default=False)
@@ -3219,6 +3249,7 @@ async def worker_only_loop() -> None:
     last_worker_plan: set[str] = set()
     last_market_closed: Optional[datetime.datetime] = None
     last_heartbeat_time = datetime.datetime.utcnow()
+    last_factor_refresh = 0.0
 
     while True:
         now = datetime.datetime.utcnow()
@@ -3234,6 +3265,26 @@ async def worker_only_loop() -> None:
             await asyncio.sleep(60)
             continue
         last_market_closed = None
+
+        if FACTOR_CACHE_REFRESH_ENABLED and FACTOR_CACHE_STALE_SEC > 0:
+            age_sec = _factor_age_seconds("M1")
+            now_mono = time.monotonic()
+            if (
+                age_sec is not None
+                and age_sec > FACTOR_CACHE_STALE_SEC
+                and now_mono - last_factor_refresh > FACTOR_CACHE_REFRESH_MIN_INTERVAL_SEC
+            ):
+                logging.warning(
+                    "[FACTOR_CACHE] stale age=%.1fs -> reseed history",
+                    age_sec,
+                )
+                try:
+                    seeded = await initialize_history("USD_JPY")
+                    if not seeded:
+                        logging.warning("[FACTOR_CACHE] reseed incomplete; continuing")
+                except Exception as exc:
+                    logging.warning("[FACTOR_CACHE] reseed failed: %s", exc)
+                last_factor_refresh = now_mono
 
         if WORKER_AUTOCONTROL_ENABLED:
             try:
