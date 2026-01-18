@@ -110,8 +110,8 @@ remote_bash() {
   local cmd_str="$1"
   local b64
   b64=$(printf '%s' "$cmd_str" | base64 | tr -d '\n')
-  # Decode and eval within a login shell to preserve quoting and run multi-line blocks
-  $(ssh_base) --command "bash -lc \"eval \"\$(echo $b64 | base64 -d)\"\""
+  # Decode within a login shell to preserve quoting and run multi-line blocks
+  $(ssh_base) --command "bash -lc \"\$(echo $b64 | base64 -d)\""
 }
 
 case "$SUBCMD" in
