@@ -34,6 +34,7 @@
 - hedge TTL: 一定時間でヘッジ建玉を必ず縮小/クローズ。
 - 同方向取り残しガード: 同一ワーカーの同方向オープン数/含み損が閾値超なら新規停止。
 - 距離が十分離れた場合の例外: `stack_reentry_pips` 超の逆行なら soft cap を一時的に許可（hard cap は維持）。
+- 妥当性チェック: `stack_reentry_require_tech=true` の場合、MTF テクニック（fib/nwave）で OK のときだけ例外を許可。
 
 ## 運用フロー
 1) ポジション取得: `/v3/accounts/{id}/openPositions` から long/short units を取得。

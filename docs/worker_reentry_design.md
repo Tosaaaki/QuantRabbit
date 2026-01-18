@@ -40,6 +40,7 @@
 - **時間帯フィルタ**: 極端にボラがない時間帯のみブロック（基本は時間帯フィルタなし）
 - **同方向オープン抑制**: 同一ワーカーの同方向オープン数や含み損が閾値を超えたら新規を停止
 - **距離が十分離れた場合の例外**: `stack_reentry_pips` を超える逆行距離なら、soft cap を一時的に許可（hard cap は維持）
+- **妥当性チェック**: `stack_reentry_require_tech=true` の場合、MTF テクニック（fib/nwave）で OK のときだけ例外を許可
 
 ### 2-2. 設定フォーマット（案）
 - `config/worker_reentry.yaml`
@@ -58,6 +59,8 @@ defaults:
   max_open_adverse_pips: 0.0
   max_open_trades_hard: 0
   stack_reentry_pips: 0.0
+  stack_reentry_require_tech: false
+  stack_reentry_tech_min_score: 0.0
 
 strategies:
   TrendMA:
@@ -68,6 +71,8 @@ strategies:
     max_open_adverse_pips: 40.0
     max_open_trades_hard: 6
     stack_reentry_pips: 25.0
+    stack_reentry_require_tech: true
+    stack_reentry_tech_min_score: 0.05
     return_wait_bias: favor
   M1Scalper:
     cooldown_loss_sec: 60

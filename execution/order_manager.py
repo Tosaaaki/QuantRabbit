@@ -3123,6 +3123,89 @@ async def market_order(
                 },
             )
             return None
+        if (
+            allow_reentry
+            and isinstance(reentry_details, dict)
+            and reentry_details.get("stack_override")
+            and reentry_details.get("stack_require_tech")
+        ):
+            tech_decision = None
+            fib_score = None
+            nwave_score = None
+            tech_ok = False
+            min_score = 0.0
+            try:
+                min_score = float(reentry_details.get("stack_tech_min_score") or 0.0)
+            except Exception:
+                min_score = 0.0
+
+            def _tech_component_score(debug: object, key: str) -> Optional[float]:
+                if not isinstance(debug, dict):
+                    return None
+                block = debug.get(key)
+                if not isinstance(block, dict):
+                    return None
+                blend = block.get("blend")
+                if not isinstance(blend, dict):
+                    return None
+                value = blend.get("score")
+                try:
+                    return float(value)
+                except Exception:
+                    return None
+
+            if price_hint is not None:
+                tech_decision = evaluate_entry_techniques(
+                    entry_price=price_hint,
+                    side="long" if units > 0 else "short",
+                    pocket=pocket,
+                    strategy_tag=strategy_tag,
+                    entry_thesis=entry_thesis,
+                )
+                fib_score = _tech_component_score(tech_decision.debug, "fib")
+                nwave_score = _tech_component_score(tech_decision.debug, "nwave")
+                fib_ok = fib_score is not None and fib_score > 0.0
+                nwave_ok = nwave_score is not None and nwave_score > 0.0
+                tech_ok = (
+                    tech_decision.allowed
+                    and tech_decision.score >= min_score
+                    and (fib_ok or nwave_ok)
+                )
+
+            if not tech_ok:
+                _console_order_log(
+                    "OPEN_SKIP",
+                    pocket=pocket,
+                    strategy_tag=strategy_tag,
+                    side=side_label,
+                    units=units,
+                    sl_price=sl_price,
+                    tp_price=tp_price,
+                    client_order_id=client_order_id,
+                    note="reentry_guard:stack_tech_block",
+                )
+                log_order(
+                    pocket=pocket,
+                    instrument=instrument,
+                    side="buy" if units > 0 else "sell",
+                    units=units,
+                    sl_price=sl_price,
+                    tp_price=tp_price,
+                    client_order_id=client_order_id,
+                    status="reentry_block",
+                    attempt=0,
+                    request_payload={
+                        "strategy_tag": strategy_tag,
+                        "reentry_reason": "stack_tech_block",
+                        "reentry_details": reentry_details,
+                        "tech_score": tech_decision.score if tech_decision else None,
+                        "tech_min_score": min_score,
+                        "tech_fib_score": fib_score,
+                        "tech_nwave_score": nwave_score,
+                        "tech_debug": tech_decision.debug if tech_decision else None,
+                    },
+                )
+                return None
 
     # Pocket-level cooldown after margin rejection
     try:

@@ -36,6 +36,8 @@ _DEFAULTS = {
     "max_open_avg_adverse_pips": 0.0,
     "max_open_trades_hard": 0,
     "stack_reentry_pips": 0.0,
+    "stack_reentry_require_tech": False,
+    "stack_reentry_tech_min_score": 0.0,
 }
 _BIAS_COOLDOWN_SCALE = {
     "favor": float(os.getenv("REENTRY_BIAS_FAVOR_COOLDOWN_SCALE", "1.3")),
@@ -158,6 +160,15 @@ def _coerce_hours(value: object) -> list[int]:
             continue
         hours.append(hour)
     return sorted(set(hours))
+
+
+def _coerce_bool(value: object) -> bool:
+    if isinstance(value, bool):
+        return value
+    if value is None:
+        return False
+    text = str(value).strip().lower()
+    return text in {"1", "true", "yes", "on"}
 
 
 def _extract_open_stats(
@@ -386,29 +397,54 @@ def allow_entry(
                 "worst_unrealized_pips": worst_pips,
                 "avg_unrealized_pips": avg_pips,
             }
-        if max_open_trades > 0 and open_count >= max_open_trades and not distance_override:
-            return False, "open_stack", {
+        soft_reason = None
+        soft_details: Dict[str, object] = {}
+        if max_open_trades > 0 and open_count >= max_open_trades:
+            soft_reason = "open_stack"
+            soft_details = {
                 "open_count": open_count,
                 "max_open_trades": max_open_trades,
                 "worst_unrealized_pips": worst_pips,
                 "avg_unrealized_pips": avg_pips,
             }
-        if max_open_adverse > 0.0 and worst_pips is not None and not distance_override:
+        elif max_open_adverse > 0.0 and worst_pips is not None:
             threshold = -abs(max_open_adverse)
             if worst_pips <= threshold:
-                return False, "open_adverse", {
+                soft_reason = "open_adverse"
+                soft_details = {
                     "open_count": open_count,
                     "worst_unrealized_pips": worst_pips,
                     "max_open_adverse_pips": max_open_adverse,
                 }
-        if max_open_avg > 0.0 and avg_pips is not None and not distance_override:
+        elif max_open_avg > 0.0 and avg_pips is not None:
             threshold = -abs(max_open_avg)
             if avg_pips <= threshold:
-                return False, "open_avg_adverse", {
+                soft_reason = "open_avg_adverse"
+                soft_details = {
                     "open_count": open_count,
                     "avg_unrealized_pips": avg_pips,
                     "max_open_avg_adverse_pips": max_open_avg,
                 }
+        if soft_reason:
+            if not distance_override:
+                return False, soft_reason, soft_details
+            stack_require_tech = _coerce_bool(merged.get("stack_reentry_require_tech"))
+            try:
+                stack_min_score = float(merged.get("stack_reentry_tech_min_score") or 0.0)
+            except Exception:
+                stack_min_score = 0.0
+            override_details = dict(soft_details)
+            override_details.update(
+                {
+                    "stack_override": True,
+                    "stack_block_reason": soft_reason,
+                    "stack_distance_pips": round(distance_pips or 0.0, 2),
+                    "stack_reentry_pips": stack_reentry_pips,
+                    "stack_require_tech": stack_require_tech,
+                    "stack_tech_min_score": stack_min_score,
+                }
+            )
+            return True, "stack_override", override_details
 
     state = _get_state(base, direction)
     if not state:
