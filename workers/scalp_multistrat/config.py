@@ -23,6 +23,12 @@ MAX_OPEN_TRADES = int(os.getenv("SCALP_MULTI_MAX_OPEN_TRADES", "2"))
 # 経済指標ブロック（分）。未設定で AttributeError とならないようデフォルトを明示。
 NEWS_BLOCK_MINUTES = float(os.getenv("SCALP_MULTI_NEWS_BLOCK_MINUTES", "0"))
 
+# Range-mode selection bias.
+RANGE_ONLY_SCORE = float(os.getenv("SCALP_MULTI_RANGE_ONLY_SCORE", "0.78"))
+RANGE_BIAS_SCORE = float(os.getenv("SCALP_MULTI_RANGE_BIAS_SCORE", "0.55"))
+RANGE_STRATEGY_BONUS = float(os.getenv("SCALP_MULTI_RANGE_STRATEGY_BONUS", "12"))
+RANGE_TREND_PENALTY = float(os.getenv("SCALP_MULTI_RANGE_TREND_PENALTY", "10"))
+
 # Strategy diversity: promote idle strategies without inflating risk sizing.
 DIVERSITY_ENABLED = os.getenv("SCALP_MULTI_DIVERSITY_ENABLED", "1").strip().lower() not in {
     "",

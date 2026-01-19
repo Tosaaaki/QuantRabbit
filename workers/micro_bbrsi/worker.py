@@ -134,6 +134,18 @@ async def micro_bbrsi_worker() -> None:
         fac_h4 = factors.get("H4") or {}
         fac_m5 = factors.get("M5") or {}
         range_ctx = detect_range_mode(fac_m1, fac_h4)
+        range_score = 0.0
+        try:
+            range_score = float(range_ctx.score or 0.0)
+        except Exception:
+            range_score = 0.0
+        if not range_ctx.active and range_score < config.RANGE_ONLY_SCORE:
+            continue
+        fac_m1 = dict(fac_m1)
+        fac_m1["range_active"] = bool(range_ctx.active)
+        fac_m1["range_score"] = range_score
+        fac_m1["range_reason"] = range_ctx.reason
+        fac_m1["range_mode"] = range_ctx.mode
         perf = perf_monitor.snapshot()
         pf = None
         try:

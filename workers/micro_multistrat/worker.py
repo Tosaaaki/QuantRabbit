@@ -42,11 +42,15 @@ _TREND_STRATEGIES = {
     MomentumBurstMicro.name,
     MicroMomentumStack.name,
     MicroPullbackEMA.name,
-    MicroRangeBreak.name,
     TrendMomentumMicro.name,
 }
 _PULLBACK_STRATEGIES = {
     MicroPullbackEMA.name,
+}
+_RANGE_STRATEGIES = {
+    MicroRangeBreak.name,
+    MicroVWAPBound.name,
+    MicroLevelReactor.name,
 }
 
 
@@ -266,6 +270,18 @@ async def micro_multi_worker() -> None:
                 )
                 last_stale_log = now_ts
         range_ctx = detect_range_mode(fac_m1, fac_h4)
+        range_score = 0.0
+        try:
+            range_score = float(range_ctx.score or 0.0)
+        except Exception:
+            range_score = 0.0
+        range_only = range_ctx.active or range_score >= config.RANGE_ONLY_SCORE
+        range_bias = range_score >= config.RANGE_BIAS_SCORE
+        fac_m1 = dict(fac_m1)
+        fac_m1["range_active"] = bool(range_ctx.active)
+        fac_m1["range_score"] = range_score
+        fac_m1["range_reason"] = range_ctx.reason
+        fac_m1["range_mode"] = range_ctx.mode
         perf = perf_monitor.snapshot()
         pf = None
         try:
@@ -275,8 +291,9 @@ async def micro_multi_worker() -> None:
 
         candidates: List[Tuple[float, int, Dict, str]] = []
         for strat in _strategy_list():
+            strategy_name = getattr(strat, "name", strat.__name__)
             if (
-                getattr(strat, "name", strat.__name__) == TrendMomentumMicro.name
+                strategy_name == TrendMomentumMicro.name
                 and current_hour in config.TREND_BLOCK_HOURS_UTC
             ):
                 now_mono = time.monotonic()
@@ -290,10 +307,11 @@ async def micro_multi_worker() -> None:
                     )
                     last_trend_block_log = now_mono
                 continue
+            if range_only and strategy_name not in _RANGE_STRATEGIES:
+                continue
             cand = strat.check(fac_m1)
             if not cand:
                 continue
-            strategy_name = getattr(strat, "name", strat.__name__)
             perf_decision = perf_guard.is_allowed(strategy_name, config.POCKET)
             if not perf_decision.allowed:
                 now_mono = time.monotonic()
@@ -309,6 +327,11 @@ async def micro_multi_worker() -> None:
             base_conf = int(cand.get("confidence", 0) or 0)
             bonus = _diversity_bonus(strategy_name, now_ts)
             score = base_conf + bonus
+            if range_bias:
+                if strategy_name in _RANGE_STRATEGIES:
+                    score += config.RANGE_STRATEGY_BONUS * range_score
+                else:
+                    score -= config.RANGE_TREND_PENALTY * range_score
             candidates.append((score, base_conf, cand, strategy_name))
         if not candidates:
             continue
@@ -413,6 +436,10 @@ async def micro_multi_worker() -> None:
                 "confidence": signal.get("confidence", 0),
                 "tp_pips": tp_pips,
                 "sl_pips": sl_pips,
+                "range_active": bool(range_ctx.active),
+                "range_score": round(range_score, 3),
+                "range_reason": range_ctx.reason,
+                "range_mode": range_ctx.mode,
             }
             if strategy_name in _TREND_STRATEGIES:
                 entry_thesis["entry_guard_trend"] = True

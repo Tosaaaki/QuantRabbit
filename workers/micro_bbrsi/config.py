@@ -15,3 +15,6 @@ MAX_MARGIN_USAGE = float(os.getenv("BBRSI_MAX_MARGIN_USAGE", "0.9"))
 
 CAP_MIN = float(os.getenv("BBRSI_CAP_MIN", "0.15"))
 CAP_MAX = float(os.getenv("BBRSI_CAP_MAX", "0.95"))
+
+# Range gating for mean-reversion entries.
+RANGE_ONLY_SCORE = float(os.getenv("BBRSI_RANGE_ONLY_SCORE", "0.7"))

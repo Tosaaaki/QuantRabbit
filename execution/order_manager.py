@@ -194,6 +194,18 @@ def _entry_guard_override_reason_ok(reason: Optional[str], side_label: str) -> b
     return False
 
 
+def _min_rr_for(pocket: Optional[str]) -> float:
+    if not _MIN_RR_ENABLED or not pocket:
+        return 0.0
+    try:
+        value = float(_MIN_RR_BY_POCKET.get(str(pocket).lower(), 0.0))
+    except Exception:
+        return 0.0
+    if value <= 0.0:
+        return 0.0
+    return min(value, 5.0)
+
+
 _EXIT_NO_NEGATIVE_CLOSE = os.getenv("EXIT_NO_NEGATIVE_CLOSE", "1").strip().lower() not in {"", "0", "false", "no"}
 _EXIT_EMERGENCY_ALLOW_NEGATIVE = os.getenv("EXIT_EMERGENCY_ALLOW_NEGATIVE", "1").strip().lower() not in {
     "",
@@ -239,6 +251,20 @@ _PARTIAL_CLOSE_RETRY_CODES = {
     "POSITION_TO_REDUCE_TOO_SMALL",
 }
 _ORDER_SPREAD_BLOCK_PIPS = float(os.getenv("ORDER_SPREAD_BLOCK_PIPS", "1.6"))
+# Minimum reward/risk ratio for new entries.
+_MIN_RR_ENABLED = os.getenv("ORDER_MIN_RR_ENABLED", "1").strip().lower() not in {
+    "",
+    "0",
+    "false",
+    "no",
+}
+_MIN_RR_BY_POCKET = {
+    "macro": float(os.getenv("ORDER_MIN_RR_MACRO", "1.3")),
+    "micro": float(os.getenv("ORDER_MIN_RR_MICRO", "1.2")),
+    "scalp": float(os.getenv("ORDER_MIN_RR_SCALP", "1.15")),
+    "scalp_fast": float(os.getenv("ORDER_MIN_RR_SCALP_FAST", "1.1")),
+    "manual": float(os.getenv("ORDER_MIN_RR_MANUAL", "1.0")),
+}
 # ワーカーのオーダーをメインの関所に転送するフラグ（reduce_only は除外）
 _FORWARD_TO_SIGNAL_GATE = (
     os.getenv("ORDER_FORWARD_TO_SIGNAL_GATE", "1").strip().lower()
@@ -3542,6 +3568,49 @@ async def market_order(
                 tp_price = round(entry_basis + thesis_tp_pips * 0.01, 3)
             else:
                 tp_price = round(entry_basis - thesis_tp_pips * 0.01, 3)
+
+    if (
+        not reduce_only
+        and entry_basis is not None
+        and sl_price is not None
+        and tp_price is not None
+    ):
+        min_rr = _min_rr_for(pocket)
+        if min_rr > 0.0:
+            sl_pips = abs(entry_basis - sl_price) / 0.01
+            tp_pips = abs(tp_price - entry_basis) / 0.01
+            if sl_pips > 0.0 and tp_pips > 0.0 and tp_pips < sl_pips * min_rr:
+                adj_tp_pips = sl_pips * min_rr
+                if units > 0:
+                    tp_price = round(entry_basis + adj_tp_pips * 0.01, 3)
+                else:
+                    tp_price = round(entry_basis - adj_tp_pips * 0.01, 3)
+                thesis_tp_pips = adj_tp_pips
+                if isinstance(entry_thesis, dict):
+                    entry_thesis = dict(entry_thesis)
+                    entry_thesis["tp_pips"] = round(adj_tp_pips, 2)
+                    entry_thesis["min_rr_adjusted"] = {
+                        "min_rr": min_rr,
+                        "sl_pips": round(sl_pips, 2),
+                        "tp_pips": round(tp_pips, 2),
+                    }
+                log_metric(
+                    "min_rr_adjust",
+                    float(adj_tp_pips),
+                    tags={
+                        "pocket": pocket,
+                        "strategy": strategy_tag or "unknown",
+                        "min_rr": f"{min_rr:.2f}",
+                    },
+                )
+                logging.info(
+                    "[ORDER] min_rr adjust pocket=%s strategy=%s sl=%.2fp tp=%.2fp min_rr=%.2f",
+                    pocket,
+                    strategy_tag or "-",
+                    sl_pips,
+                    adj_tp_pips,
+                    min_rr,
+                )
 
     # Margin preflight (new entriesのみ)
     preflight_units = units

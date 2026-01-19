@@ -43,6 +43,9 @@ _PULLBACK_STRATEGIES = {
     ImpulseRetraceScalp.name,
     M1Scalper.name,
 }
+_RANGE_STRATEGIES = {
+    RangeFader.name,
+}
 
 
 def _latest_mid(fallback: float) -> float:
@@ -209,6 +212,18 @@ async def scalp_multi_worker() -> None:
         fac_m1 = factors.get("M1") or {}
         fac_h4 = factors.get("H4") or {}
         range_ctx = detect_range_mode(fac_m1, fac_h4)
+        range_score = 0.0
+        try:
+            range_score = float(range_ctx.score or 0.0)
+        except Exception:
+            range_score = 0.0
+        range_only = range_ctx.active or range_score >= config.RANGE_ONLY_SCORE
+        range_bias = range_score >= config.RANGE_BIAS_SCORE
+        fac_m1 = dict(fac_m1)
+        fac_m1["range_active"] = bool(range_ctx.active)
+        fac_m1["range_score"] = range_score
+        fac_m1["range_reason"] = range_ctx.reason
+        fac_m1["range_mode"] = range_ctx.mode
         perf = perf_monitor.snapshot()
         pf = None
         try:
@@ -218,13 +233,20 @@ async def scalp_multi_worker() -> None:
 
         candidates: List[Tuple[float, int, Dict, str]] = []
         for strat in strategies:
+            strategy_name = getattr(strat, "name", strat.__name__)
+            if range_only and strategy_name not in _RANGE_STRATEGIES:
+                continue
             cand = strat.check(fac_m1)
             if not cand:
                 continue
-            strategy_name = getattr(strat, "name", strat.__name__)
             base_conf = int(cand.get("confidence", 0) or 0)
             bonus = _diversity_bonus(strategy_name, now_ts)
             score = base_conf + bonus
+            if range_bias:
+                if strategy_name in _RANGE_STRATEGIES:
+                    score += config.RANGE_STRATEGY_BONUS * range_score
+                else:
+                    score -= config.RANGE_TREND_PENALTY * range_score
             candidates.append((score, base_conf, cand, strategy_name))
         if not candidates:
             continue
@@ -328,6 +350,10 @@ async def scalp_multi_worker() -> None:
                 "tp_pips": tp_pips,
                 "sl_pips": sl_pips,
                 "confidence": signal.get("confidence", 0),
+                "range_active": bool(range_ctx.active),
+                "range_score": round(range_score, 3),
+                "range_reason": range_ctx.reason,
+                "range_mode": range_ctx.mode,
             }
             if strategy_name in _TREND_STRATEGIES:
                 entry_thesis["entry_guard_trend"] = True

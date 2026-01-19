@@ -50,6 +50,12 @@ TREND_BLOCK_HOURS_UTC = frozenset(
 
 MAX_FACTOR_AGE_SEC = float(os.getenv("MICRO_MULTI_MAX_FACTOR_AGE_SEC", "90.0"))
 
+# Range-mode selection bias.
+RANGE_ONLY_SCORE = float(os.getenv("MICRO_MULTI_RANGE_ONLY_SCORE", "0.76"))
+RANGE_BIAS_SCORE = float(os.getenv("MICRO_MULTI_RANGE_BIAS_SCORE", "0.55"))
+RANGE_STRATEGY_BONUS = float(os.getenv("MICRO_MULTI_RANGE_STRATEGY_BONUS", "10"))
+RANGE_TREND_PENALTY = float(os.getenv("MICRO_MULTI_RANGE_TREND_PENALTY", "8"))
+
 # Strategy diversity: promote idle strategies without inflating risk sizing.
 DIVERSITY_ENABLED = os.getenv("MICRO_MULTI_DIVERSITY_ENABLED", "1").strip().lower() not in {
     "",
