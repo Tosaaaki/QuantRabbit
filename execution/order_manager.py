@@ -1545,8 +1545,16 @@ async def close_trade(
     units: Optional[int] = None,
     client_order_id: Optional[str] = None,
     allow_negative: bool = False,
+    exit_reason: Optional[str] = None,
 ) -> bool:
     data: Optional[dict[str, str]] = None
+    exit_reason = str(exit_reason).strip() if exit_reason else None
+
+    def _with_exit_reason(payload: Optional[dict]) -> dict:
+        base = dict(payload) if payload else {}
+        if exit_reason:
+            base["exit_reason"] = exit_reason
+        return base
     # close 側も client_order_id を必須化。欠損かつ agent 管理外の建玉はスキップして無駄打ちを防ぐ。
     if not client_order_id:
         log_metric("close_skip_missing_client_id", 1.0, tags={"trade_id": str(trade_id)})
@@ -1587,7 +1595,9 @@ async def close_trade(
                     attempt=0,
                     ticket_id=str(trade_id),
                     executed_price=None,
-                    request_payload={"trade_id": trade_id, "data": {"unrealized_pl": pl}},
+                    request_payload=_with_exit_reason(
+                        {"trade_id": trade_id, "data": {"unrealized_pl": pl}}
+                    ),
                 )
                 return False
     if units is None:
@@ -1640,7 +1650,7 @@ async def close_trade(
             attempt=1,
             ticket_id=str(trade_id),
             executed_price=None,
-            request_payload={"trade_id": trade_id, "data": data or {}},
+            request_payload=_with_exit_reason({"trade_id": trade_id, "data": data or {}}),
         )
         api.request(req)
         _LAST_PROTECTIONS.pop(trade_id, None)
@@ -1657,6 +1667,7 @@ async def close_trade(
             attempt=1,
             ticket_id=str(trade_id),
             executed_price=None,
+            request_payload=_with_exit_reason({"trade_id": trade_id}),
         )
         _console_order_log(
             "CLOSE_OK",
@@ -1699,6 +1710,7 @@ async def close_trade(
             error_code=log_error_code,
             error_message=error_payload.get("errorMessage") or str(exc),
             response_payload=error_payload if error_payload else None,
+            request_payload=_with_exit_reason({"trade_id": trade_id, "data": data or {}}),
         )
         _console_order_log(
             "CLOSE_FAIL",

@@ -9,6 +9,7 @@ async def close_trade(
     units: int | None = None,
     client_order_id: str | None = None,
     allow_negative: bool = False,
+    exit_reason: str | None = None,
 ) -> bool:
     if not allow_negative:
         allow_negative = should_allow_negative_close()
@@ -17,4 +18,5 @@ async def close_trade(
         units,
         client_order_id=client_order_id,
         allow_negative=allow_negative,
+        exit_reason=exit_reason,
     )

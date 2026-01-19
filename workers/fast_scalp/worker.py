@@ -581,6 +581,7 @@ async def fast_scalp_worker(shared_state: Optional[FastScalpState] = None) -> No
                                 await close_trade(
                                     trade_id,
                                     client_order_id=active.client_order_id,
+                                    exit_reason=close_reason,
                                 )
                             finally:
                                 summary_payload = timeout_controller.finalize(

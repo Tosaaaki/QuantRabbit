@@ -132,6 +132,7 @@ async def _run_exit_loop(
             units,
             client_order_id=client_id,
             allow_negative=allow_negative,
+            exit_reason=reason,
         )
         if ok:
             LOG.info("[EXIT-%s] trade=%s units=%s reason=%s", pocket, trade_id, units, reason)

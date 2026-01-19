@@ -231,6 +231,7 @@ class ScalpMultiExitWorker:
             units,
             client_order_id=client_order_id,
             allow_negative=allow_negative,
+            exit_reason=reason,
         )
         if ok:
             LOG.info("[EXIT-scalp_multi] trade=%s units=%s reason=%s pnl=%.2fp", trade_id, units, reason, pnl)

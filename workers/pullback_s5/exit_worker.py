@@ -297,6 +297,7 @@ class PullbackExitWorker:
             units,
             client_order_id=client_id,
             allow_negative=allow_negative,
+            exit_reason=reason,
         )
         if ok:
             LOG.info(
