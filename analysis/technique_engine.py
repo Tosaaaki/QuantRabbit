@@ -647,7 +647,8 @@ _STRATEGY_POLICY_OVERRIDES: dict[str, dict[str, object]] = {
 }
 
 
-@dataclass(slots=True)
+# Keep __dict__ available for downstream policy introspection.
+@dataclass
 class TechniquePolicy:
     mode: str
     fib_tf: str
