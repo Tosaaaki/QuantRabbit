@@ -22,6 +22,14 @@ DEFAULT_DATASET = os.getenv("BQ_DATASET", "quantrabbit")
 METRICS_TABLE = os.getenv("BQ_REALTIME_METRICS_TABLE", "realtime_metrics")
 RECO_TABLE = os.getenv("BQ_RECOMMENDATION_TABLE", "strategy_recommendations")
 TTL_SECONDS = int(os.getenv("REALTIME_METRICS_TTL", "240"))
+MAX_AGE_SECONDS = int(os.getenv("REALTIME_METRICS_MAX_AGE_SEC", "600"))
+
+
+def _env_bool(name: str, default: bool = False) -> bool:
+    val = os.getenv(name)
+    if val is None:
+        return default
+    return str(val).strip().lower() in {"1", "true", "yes", "on"}
 
 
 @dataclass
@@ -45,6 +53,9 @@ class RealtimeMetricsClient:
         self._client: Optional[bigquery.Client] = None
         self._last_fetch = datetime.min.replace(tzinfo=timezone.utc)
         self._cache: Dict[str, StrategyHealth] = {}
+        self._require_fresh = _env_bool("REALTIME_METRICS_REQUIRE", False)
+        self._latest_generated_at: Optional[datetime] = None
+        self._last_refresh_ok = False
 
     @property
     def client(self) -> bigquery.Client:
@@ -66,14 +77,28 @@ class RealtimeMetricsClient:
             recos = self._fetch_recommendations()
         except gexc.NotFound:
             logging.warning("[REALTIME] metrics tables not ready.")
+            self._cache = {}
+            self._latest_generated_at = None
+            self._last_refresh_ok = False
+            self._last_fetch = now
             return
         except Exception as exc:  # pragma: no cover - defensive
             logging.warning("[REALTIME] refresh failed: %s", exc)
+            self._cache = {}
+            self._latest_generated_at = None
+            self._last_refresh_ok = False
+            self._last_fetch = now
             return
 
         merged: Dict[str, StrategyHealth] = {}
+        latest_ts: Optional[datetime] = None
         for row in metrics:
             key = f"{row['pocket']}::{row['strategy']}"
+            generated_at = row.get("generated_at")
+            if isinstance(generated_at, datetime):
+                if generated_at.tzinfo is None:
+                    generated_at = generated_at.replace(tzinfo=timezone.utc)
+                latest_ts = generated_at if latest_ts is None else max(latest_ts, generated_at)
             merged[key] = StrategyHealth(
                 pocket=row["pocket"],
                 strategy=row["strategy"],
@@ -112,6 +137,8 @@ class RealtimeMetricsClient:
                 health.reason = reco.get("reason") or "confidence_decreased"
 
         self._cache = merged
+        self._latest_generated_at = latest_ts
+        self._last_refresh_ok = bool(merged)
         self._last_fetch = now
 
     def _fetch_metrics(self):
@@ -142,6 +169,48 @@ class RealtimeMetricsClient:
             return []
 
     def evaluate(self, strategy: str, pocket: str) -> StrategyHealth:
+        if self._require_fresh:
+            now = datetime.now(timezone.utc)
+            if not self._last_refresh_ok or not self._cache:
+                return StrategyHealth(
+                    pocket=pocket,
+                    strategy=strategy,
+                    win_rate=0.0,
+                    profit_factor=0.0,
+                    max_drawdown_pips=0.0,
+                    losing_streak=0,
+                    total_trades=0,
+                    confidence_scale=0.0,
+                    allowed=False,
+                    reason="metrics_missing",
+                )
+            if self._latest_generated_at is None:
+                return StrategyHealth(
+                    pocket=pocket,
+                    strategy=strategy,
+                    win_rate=0.0,
+                    profit_factor=0.0,
+                    max_drawdown_pips=0.0,
+                    losing_streak=0,
+                    total_trades=0,
+                    confidence_scale=0.0,
+                    allowed=False,
+                    reason="metrics_missing",
+                )
+            age = (now - self._latest_generated_at).total_seconds()
+            if age > MAX_AGE_SECONDS:
+                return StrategyHealth(
+                    pocket=pocket,
+                    strategy=strategy,
+                    win_rate=0.0,
+                    profit_factor=0.0,
+                    max_drawdown_pips=0.0,
+                    losing_streak=0,
+                    total_trades=0,
+                    confidence_scale=0.0,
+                    allowed=False,
+                    reason="metrics_stale",
+                )
         key = f"{pocket}::{strategy}"
         health = self._cache.get(key)
         if health:

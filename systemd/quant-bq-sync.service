@@ -1,0 +1,16 @@
+[Unit]
+Description=QuantRabbit BigQuery Sync Pipeline (trades -> BQ + GCS)
+After=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/tossaki/QuantRabbit
+ExecStart=/home/tossaki/QuantRabbit/.venv/bin/python scripts/run_sync_pipeline.py --interval 60 --bq-interval 300
+Restart=on-failure
+RestartSec=10
+User=tossaki
+Environment=PYTHONUNBUFFERED=1
+EnvironmentFile=-/etc/quantrabbit.env
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,11 @@
+[Unit]
+Description=QuantRabbit Strategy Optimizer timer
+
+[Timer]
+OnBootSec=10min
+OnUnitActiveSec=1h
+AccuracySec=2min
+RandomizedDelaySec=2min
+
+[Install]
+WantedBy=timers.target
