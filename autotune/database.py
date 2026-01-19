@@ -9,10 +9,8 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
-try:
-    from google.cloud import bigquery  # type: ignore
-except Exception:  # pragma: no cover - bigquery optional
-    bigquery = None
+from google.api_core import exceptions as gexc
+from google.cloud import bigquery
 
 try:
     from utils.secrets import get_secret
@@ -41,7 +39,7 @@ def _load_autotune_env(name: str) -> str:
 
 AUTOTUNE_BQ_TABLE = _load_autotune_env("AUTOTUNE_BQ_TABLE")
 AUTOTUNE_BQ_SETTINGS_TABLE = _load_autotune_env("AUTOTUNE_BQ_SETTINGS_TABLE")
-USE_BIGQUERY = bool(AUTOTUNE_BQ_TABLE) and bigquery is not None
+USE_BIGQUERY = True
 
 
 def _utc_now() -> str:
@@ -178,9 +176,64 @@ def _parse_table(table: str) -> Tuple[str, str, str]:
 
 @lru_cache()
 def _get_bq_client() -> "bigquery.Client":
-    if bigquery is None:  # pragma: no cover - safety guard
-        raise RuntimeError("google-cloud-bigquery is not installed")
     return bigquery.Client()
+
+
+def _require_autotune_table() -> str:
+    table_id = AUTOTUNE_BQ_TABLE.strip()
+    if not table_id:
+        raise RuntimeError("AUTOTUNE_BQ_TABLE is required (SQLite fallback disabled).")
+    return table_id
+
+
+def _ensure_dataset(client: "bigquery.Client", project: str, dataset: str) -> None:
+    dataset_ref = bigquery.DatasetReference(project, dataset)
+    try:
+        client.get_dataset(dataset_ref)
+    except gexc.NotFound:
+        ds = bigquery.Dataset(dataset_ref)
+        ds.location = os.getenv("BQ_LOCATION", "US")
+        client.create_dataset(ds, exists_ok=True)
+
+
+def _ensure_run_table(client: "bigquery.Client", table_id: str) -> None:
+    project, dataset, table = _parse_table(table_id)
+    _ensure_dataset(client, project, dataset)
+    table_ref = f"{project}.{dataset}.{table}"
+    schema = [
+        bigquery.SchemaField("run_id", "STRING", mode="REQUIRED"),
+        bigquery.SchemaField("strategy", "STRING", mode="REQUIRED"),
+        bigquery.SchemaField("status", "STRING", mode="REQUIRED"),
+        bigquery.SchemaField("score", "FLOAT64"),
+        bigquery.SchemaField("params_json", "STRING"),
+        bigquery.SchemaField("train_json", "STRING"),
+        bigquery.SchemaField("valid_json", "STRING"),
+        bigquery.SchemaField("source_file", "STRING"),
+        bigquery.SchemaField("created_at", "TIMESTAMP"),
+        bigquery.SchemaField("updated_at", "TIMESTAMP"),
+        bigquery.SchemaField("reviewer", "STRING"),
+        bigquery.SchemaField("comment", "STRING"),
+    ]
+    try:
+        client.get_table(table_ref)
+    except gexc.NotFound:
+        client.create_table(bigquery.Table(table_ref, schema=schema))
+
+
+def _ensure_settings_table(client: "bigquery.Client", table_id: str) -> None:
+    project, dataset, table = _parse_table(table_id)
+    _ensure_dataset(client, project, dataset)
+    table_ref = f"{project}.{dataset}.{table}"
+    schema = [
+        bigquery.SchemaField("id", "STRING", mode="REQUIRED"),
+        bigquery.SchemaField("enabled", "BOOL", mode="REQUIRED"),
+        bigquery.SchemaField("updated_at", "TIMESTAMP"),
+        bigquery.SchemaField("updated_by", "STRING"),
+    ]
+    try:
+        client.get_table(table_ref)
+    except gexc.NotFound:
+        client.create_table(bigquery.Table(table_ref, schema=schema))
 
 
 def record_run_bigquery(
@@ -193,10 +246,9 @@ def record_run_bigquery(
     source_file: Optional[str] = None,
     table_override: Optional[str] = None,
 ) -> None:
-    table_id = table_override or AUTOTUNE_BQ_TABLE
-    if not table_id:
-        return
+    table_id = table_override or _require_autotune_table()
     client = _get_bq_client()
+    _ensure_run_table(client, table_id)
     project, dataset, table = _parse_table(table_id)
     table_fqn = f"{project}.{dataset}.{table}"
     now = _utc_now()
@@ -257,10 +309,9 @@ def list_runs_bigquery(
     limit: int = 100,
     table_override: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
-    table_id = table_override or AUTOTUNE_BQ_TABLE
-    if not table_id:
-        return []
+    table_id = table_override or _require_autotune_table()
     client = _get_bq_client()
+    _ensure_run_table(client, table_id)
     project, dataset, table = _parse_table(table_id)
     table_fqn = f"{project}.{dataset}.{table}"
     query = f"""
@@ -282,10 +333,9 @@ def list_runs_bigquery(
 def get_run_bigquery(
     run_id: str, strategy: str, table_override: Optional[str] = None
 ) -> Optional[Dict[str, Any]]:
-    table_id = table_override or AUTOTUNE_BQ_TABLE
-    if not table_id:
-        return None
+    table_id = table_override or _require_autotune_table()
     client = _get_bq_client()
+    _ensure_run_table(client, table_id)
     project, dataset, table = _parse_table(table_id)
     table_fqn = f"{project}.{dataset}.{table}"
     query = f"""
@@ -313,12 +363,11 @@ def update_status_bigquery(
     comment: Optional[str],
     table_override: Optional[str] = None,
 ) -> None:
-    table_id = table_override or AUTOTUNE_BQ_TABLE
-    if not table_id:
-        return
+    table_id = table_override or _require_autotune_table()
     if status not in {"pending", "approved", "rejected"}:
         raise ValueError("Invalid status")
     client = _get_bq_client()
+    _ensure_run_table(client, table_id)
     project, dataset, table = _parse_table(table_id)
     table_fqn = f"{project}.{dataset}.{table}"
     query = f"""
@@ -343,10 +392,9 @@ def update_status_bigquery(
 
 
 def get_stats_bigquery(table_override: Optional[str] = None) -> Dict[str, Any]:
-    table_id = table_override or AUTOTUNE_BQ_TABLE
-    if not table_id:
-        return {}
+    table_id = table_override or _require_autotune_table()
     client = _get_bq_client()
+    _ensure_run_table(client, table_id)
     project, dataset, table = _parse_table(table_id)
     table_fqn = f"{project}.{dataset}.{table}"
     query = f"""
@@ -370,15 +418,14 @@ def _settings_table_id(table_override: Optional[str] = None) -> str:
         return table_override
     if AUTOTUNE_BQ_SETTINGS_TABLE:
         return AUTOTUNE_BQ_SETTINGS_TABLE
-    if AUTOTUNE_BQ_TABLE:
-        project, dataset, _ = _parse_table(AUTOTUNE_BQ_TABLE)
-        return f"{project}.{dataset}.autotune_settings"
-    raise ValueError("AUTOTUNE_BQ_TABLE or AUTOTUNE_BQ_SETTINGS_TABLE must be set")
+    project, dataset, _ = _parse_table(_require_autotune_table())
+    return f"{project}.{dataset}.autotune_settings"
 
 
 def get_settings_bigquery(table_override: Optional[str] = None) -> Dict[str, Any]:
     table_id = _settings_table_id(table_override)
     client = _get_bq_client()
+    _ensure_settings_table(client, table_id)
     project, dataset, table = _parse_table(table_id)
     table_fqn = f"{project}.{dataset}.{table}"
     query = f"""
@@ -406,6 +453,7 @@ def set_settings_bigquery(
 ) -> None:
     table_id = _settings_table_id(table_override)
     client = _get_bq_client()
+    _ensure_settings_table(client, table_id)
     project, dataset, table = _parse_table(table_id)
     table_fqn = f"{project}.{dataset}.{table}"
     now = datetime.utcnow()
@@ -440,15 +488,9 @@ def list_runs(
     status: Optional[str] = None,
     limit: int = 100,
 ) -> List[Dict[str, Any]]:
-    if USE_BIGQUERY and conn is None:
-        return list_runs_bigquery(status=status, limit=limit)
-    close_after = False
     if conn is None:
-        conn = get_connection()
-        close_after = True
+        return list_runs_bigquery(status=status, limit=limit)
     rows = _get_sqlite_rows(conn, status, limit)
-    if close_after:
-        conn.close()
     return rows
 
 
@@ -457,19 +499,12 @@ def get_run(
     run_id: str,
     strategy: str,
 ) -> Optional[Dict[str, Any]]:
-    if USE_BIGQUERY and conn is None:
-        return get_run_bigquery(run_id, strategy)
     if conn is None:
-        conn = get_connection()
-        close_after = True
-    else:
-        close_after = False
+        return get_run_bigquery(run_id, strategy)
     row = conn.execute(
         "SELECT * FROM tuning_runs WHERE run_id=? AND strategy=?",
         (run_id, strategy),
     ).fetchone()
-    if close_after:
-        conn.close()
     return dict(row) if row else None
 
 
@@ -481,16 +516,11 @@ def update_status(
     reviewer: Optional[str] = None,
     comment: Optional[str] = None,
 ) -> None:
-    if USE_BIGQUERY and conn is None:
+    if conn is None:
         update_status_bigquery(run_id, strategy, status, reviewer, comment)
         return
     if status not in {"pending", "approved", "rejected"}:
         raise ValueError("Invalid status")
-    if conn is None:
-        conn = get_connection()
-        close_after = True
-    else:
-        close_after = False
     conn.execute(
         """
         UPDATE tuning_runs
@@ -500,17 +530,11 @@ def update_status(
         (status, reviewer, comment, _utc_now(), run_id, strategy),
     )
     conn.commit()
-    if close_after:
-        conn.close()
 
 
 def get_stats(conn: Optional[sqlite3.Connection] = None) -> Dict[str, Any]:
-    if USE_BIGQUERY and conn is None:
-        return get_stats_bigquery()
-    close_after = False
     if conn is None:
-        conn = get_connection()
-        close_after = True
+        return get_stats_bigquery()
     row = conn.execute(
         """
         SELECT
@@ -526,26 +550,15 @@ def get_stats(conn: Optional[sqlite3.Connection] = None) -> Dict[str, Any]:
         "SELECT updated_at FROM tuning_runs WHERE status='approved' ORDER BY updated_at DESC LIMIT 1"
     ).fetchone()
     stats["last_approved_at"] = last_row["updated_at"] if last_row else None
-    if close_after:
-        conn.close()
     return stats
 
 
 def get_settings(conn: Optional[sqlite3.Connection] = None) -> Dict[str, Any]:
-    if USE_BIGQUERY and conn is None:
-        try:
-            return get_settings_bigquery()
-        except ValueError:
-            pass
-    close_after = False
     if conn is None:
-        conn = get_connection()
-        close_after = True
+        return get_settings_bigquery()
     row = conn.execute(
         "SELECT id, enabled, updated_at, updated_by FROM autotune_settings WHERE id='default'"
     ).fetchone()
-    if close_after:
-        conn.close()
     if not row:
         return {"id": "default", "enabled": True, "updated_at": None, "updated_by": None}
     return {
@@ -561,18 +574,9 @@ def set_settings(
     enabled: bool,
     updated_by: Optional[str] = None,
 ) -> None:
-    if USE_BIGQUERY and conn is None:
-        try:
-            set_settings_bigquery(enabled, updated_by)
-            return
-        except ValueError:
-            pass
-        return
     if conn is None:
-        conn = get_connection()
-        close_after = True
-    else:
-        close_after = False
+        set_settings_bigquery(enabled, updated_by)
+        return
     conn.execute(
         """
         INSERT INTO autotune_settings(id, enabled, updated_at, updated_by)
@@ -585,8 +589,6 @@ def set_settings(
         (1 if enabled else 0, _utc_now(), updated_by),
     )
     conn.commit()
-    if close_after:
-        conn.close()
 
 
 def dump_dict(row: Dict[str, Any]) -> Dict[str, Any]:

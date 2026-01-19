@@ -68,6 +68,7 @@ def main():
             "--profile",
             args.profile,
         ]
+        tune_cmd.extend(["--record-db", ""])
         if args.trials:
             tune_cmd.extend(["--trials-per-strategy", str(args.trials)])
         if args.strategies:

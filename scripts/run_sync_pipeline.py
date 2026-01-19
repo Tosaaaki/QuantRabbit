@@ -175,24 +175,24 @@ def main() -> int:
     _setup_logging(args.verbose)
     remote_dir = args.remote_dir.expanduser() if args.remote_dir else None
 
-    exporter = None
-    if not args.disable_bq:
-        try:
-            exporter = BigQueryExporter()
-        except Exception as exc:  # pragma: no cover - defensive
-            logging.warning(
-                "[PIPELINE] BigQuery exporter unavailable (%s). disable-bq fallback.",
-                exc,
-            )
-            args.disable_bq = True
+    if args.disable_bq:
+        logging.error("[PIPELINE] --disable-bq is not supported (BigQuery required).")
+        return 2
+    if args.disable_lot_insights:
+        logging.error("[PIPELINE] --disable-lot-insights is not supported (BigQuery required).")
+        return 2
+
+    try:
+        exporter = BigQueryExporter()
+    except Exception as exc:  # pragma: no cover - defensive
+        logging.error("[PIPELINE] BigQuery exporter init failed: %s", exc)
+        return 2
     gcs_publisher = None if args.disable_gcs else GCSRealtimePublisher()
-    analyzer = None
-    if (not args.disable_bq) and (not args.disable_lot_insights) and exporter:
-        try:
-            analyzer = LotPatternAnalyzer()
-        except Exception as exc:  # pragma: no cover - defensive
-            logging.warning("[PIPELINE] Lot insights disabled (%s).", exc)
-            analyzer = None
+    try:
+        analyzer = LotPatternAnalyzer()
+    except Exception as exc:  # pragma: no cover - defensive
+        logging.error("[PIPELINE] Lot insights init failed: %s", exc)
+        return 2
     pm = PositionManager()
     stop_requested = False
     last_bq_export = 0.0
@@ -233,8 +233,6 @@ def main() -> int:
                         # 新規トレードがあり、最後の export から短時間経過した場合でも水平分散
                         run_bq = True
 
-                if run_bq and exporter is None:
-                    run_bq = False
                 if run_bq and exporter:
                     stats = exporter.export(limit=args.limit or _BQ_MAX_EXPORT)
                     logging.info(
@@ -242,15 +240,14 @@ def main() -> int:
                         stats.exported,
                         stats.last_updated_at,
                     )
-                    if analyzer:
-                        try:
-                            insights = analyzer.run()
-                            logging.info(
-                                "[PIPELINE] lot insights generated=%d",
-                                len(insights),
-                            )
-                        except Exception as exc:  # noqa: BLE001
-                            logging.exception("[PIPELINE] lot insights 生成に失敗: %s", exc)
+                    try:
+                        insights = analyzer.run()
+                        logging.info(
+                            "[PIPELINE] lot insights generated=%d",
+                            len(insights),
+                        )
+                    except Exception as exc:  # noqa: BLE001
+                        logging.exception("[PIPELINE] lot insights 生成に失敗: %s", exc)
                     last_bq_export = now
             except Exception as exc:  # noqa: BLE001
                 logging.exception("[PIPELINE] サイクル失敗: %s", exc)

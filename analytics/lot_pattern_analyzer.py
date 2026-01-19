@@ -181,12 +181,10 @@ ORDER BY pocket, side
         try:
             job = self.client.query(sql, job_config=job_config)
             return list(job.result())
-        except gexc.NotFound:
-            logging.warning("[LotAnalyzer] trades テーブル %s が見つかりません。", table_ref)
-            return []
+        except gexc.NotFound as exc:
+            raise RuntimeError(f"LotAnalyzer trades table missing: {table_ref}") from exc
         except Exception as exc:  # noqa: BLE001
-            logging.exception("[LotAnalyzer] クエリ失敗: %s", exc)
-            return []
+            raise RuntimeError(f"LotAnalyzer query failed: {exc}") from exc
 
     def _build_insight(self, row: bigquery.table.Row) -> Optional[LotInsight]:
         pocket = row.get("pocket")
@@ -284,11 +282,10 @@ ORDER BY pocket, side
             return
         errors = self.client.insert_rows_json(table_ref, payload)
         if errors:
-            logging.error("[LotAnalyzer] insights insert failed: %s", errors)
-        else:
-            logging.info(
-                "[LotAnalyzer] insights inserted rows=%d table=%s", len(payload), table_ref
-            )
+            raise RuntimeError(f"LotAnalyzer insert failed: {errors}")
+        logging.info(
+            "[LotAnalyzer] insights inserted rows=%d table=%s", len(payload), table_ref
+        )
 
     def _write_gcs(self, insights: Iterable[LotInsight]) -> None:
         if not self._gcs_bucket_name or not self._storage_client or not self._storage_bucket:
@@ -339,7 +336,7 @@ ORDER BY pocket, side
             table.clustering_fields = ["pocket", "side"]
             self.client.create_table(table)
         except Exception as exc:  # noqa: BLE001
-            logging.warning("[LotAnalyzer] insights table 取得に失敗: %s", exc)
+            raise RuntimeError(f"LotAnalyzer insights table check failed: {exc}") from exc
 
     def _ensure_dataset(self) -> None:
         dataset_ref = bigquery.DatasetReference(self.client.project, self.dataset_id)
@@ -355,9 +352,9 @@ ORDER BY pocket, side
             except gexc.Conflict:
                 pass
             except Exception as exc:  # noqa: BLE001
-                logging.warning("[LotAnalyzer] dataset 作成に失敗: %s", exc)
+                raise RuntimeError(f"LotAnalyzer dataset create failed: {exc}") from exc
         except Exception as exc:  # noqa: BLE001
-            logging.warning("[LotAnalyzer] dataset 取得に失敗: %s", exc)
+            raise RuntimeError(f"LotAnalyzer dataset check failed: {exc}") from exc
 
     @staticmethod
     def _insight_to_row(insight: LotInsight) -> Dict[str, Any]:

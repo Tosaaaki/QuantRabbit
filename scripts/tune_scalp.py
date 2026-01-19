@@ -42,20 +42,7 @@ def _load_autotune_env(name: str) -> str:
     return ""
 
 
-try:
-    from autotune.database import (
-        AUTOTUNE_BQ_TABLE,
-        USE_BIGQUERY,
-        get_connection,
-        record_run,
-        record_run_bigquery,
-    )
-except Exception:  # pragma: no cover - optional dependency during bootstrap
-    AUTOTUNE_BQ_TABLE = _load_autotune_env("AUTOTUNE_BQ_TABLE")
-    USE_BIGQUERY = bool(AUTOTUNE_BQ_TABLE)
-    get_connection = None  # type: ignore
-    record_run = None  # type: ignore
-    record_run_bigquery = None  # type: ignore
+from autotune.database import AUTOTUNE_BQ_TABLE, record_run_bigquery
 
 StrategyParams = Dict[str, Dict[str, Any]]
 ResultDict = Dict[str, Any]
@@ -301,8 +288,8 @@ def main():
     ap.add_argument("--outdir", default=str(REPO_ROOT / "logs" / "tuning"))
     ap.add_argument(
         "--record-db",
-        default=str(DEFAULT_DB_PATH),
-        help="結果を記録する SQLite DB パス。空文字で無効化",
+        default="",
+        help="SQLite 記録は無効（BQのみ）。空文字固定。",
     )
     ap.add_argument(
         "--bq-table",
@@ -312,6 +299,12 @@ def main():
     args = ap.parse_args()
 
     bq_table = args.bq_table or AUTOTUNE_BQ_TABLE
+    if args.record_db:
+        print("[ERR] --record-db is disabled (BigQuery only).", file=sys.stderr)
+        sys.exit(2)
+    if not bq_table:
+        print("[ERR] --bq-table or AUTOTUNE_BQ_TABLE is required.", file=sys.stderr)
+        sys.exit(2)
     candles_dir = pathlib.Path(args.candles_dir)
     outdir = pathlib.Path(args.outdir)
     outdir.mkdir(parents=True, exist_ok=True)
@@ -459,43 +452,23 @@ def main():
 
     print(f"[INFO] tuning result saved: {out_path}")
 
-    if args.record_db and get_connection and record_run:
-        try:
-            conn = get_connection(pathlib.Path(args.record_db))
-            for strat, rec in aggregated_best.items():
-                run_id = f"{rec['profile']}-{ts}"
-                record_run(
-                    conn,
-                    run_id=run_id,
-                    strategy=strat,
-                    params=rec["params"],
-                    train=rec["train"],
-                    valid=rec["valid"],
-                    score=rec["score"],
-                    source_file=str(out_path),
-                )
-            conn.close()
-            print(f"[INFO] recorded tuning results into {args.record_db}")
-        except Exception as exc:  # pragma: no cover
-            print(f"[WARN] failed to record tuning result: {exc}", file=sys.stderr)
-
-    if record_run_bigquery and bq_table:
-        try:
-            for strat, rec in aggregated_best.items():
-                run_id = f"{rec['profile']}-{ts}"
-                record_run_bigquery(
-                    run_id=run_id,
-                    strategy=strat,
-                    params=rec["params"],
-                    train=rec["train"],
-                    valid=rec["valid"],
-                    score=rec["score"],
-                    source_file=str(out_path),
-                    table_override=bq_table,
-                )
-            print(f"[INFO] recorded tuning results into BigQuery table {bq_table}")
-        except Exception as exc:  # pragma: no cover
-            print(f"[WARN] failed to record tuning result to BigQuery: {exc}", file=sys.stderr)
+    try:
+        for strat, rec in aggregated_best.items():
+            run_id = f"{rec['profile']}-{ts}"
+            record_run_bigquery(
+                run_id=run_id,
+                strategy=strat,
+                params=rec["params"],
+                train=rec["train"],
+                valid=rec["valid"],
+                score=rec["score"],
+                source_file=str(out_path),
+                table_override=bq_table,
+            )
+        print(f"[INFO] recorded tuning results into BigQuery table {bq_table}")
+    except Exception as exc:  # pragma: no cover
+        print(f"[ERR] failed to record tuning result to BigQuery: {exc}", file=sys.stderr)
+        sys.exit(1)
 
     if args.write_best:
         active: Dict[str, Any] = {}
