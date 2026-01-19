@@ -24,6 +24,21 @@ def _utcnow_str() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def _finite(value: float, default: float = 0.0, cap: Optional[float] = None) -> float:
+    try:
+        num = float(value)
+    except (TypeError, ValueError):
+        return default
+    if not math.isfinite(num):
+        return default
+    if cap is not None:
+        if num > cap:
+            return cap
+        if num < -cap:
+            return -cap
+    return num
+
+
 @dataclass
 class LotInsight:
     pocket: str
@@ -195,12 +210,18 @@ ORDER BY pocket, side
 
         winning_trades = float(row.get("winning_trades") or 0.0)
         win_rate = winning_trades / trade_count if trade_count else 0.0
-        avg_pips = float(row.get("avg_pips") or 0.0)
-        total_pips = float(row.get("total_pips") or 0.0)
-        std_pips = float(row.get("std_pips") or 0.0)
+        avg_pips = _finite(row.get("avg_pips") or 0.0)
+        total_pips = _finite(row.get("total_pips") or 0.0)
+        std_pips = _finite(row.get("std_pips") or 0.0)
         gross_profit = float(row.get("gross_profit") or 0.0)
         gross_loss = float(row.get("gross_loss") or 0.0)
-        pf = gross_profit / gross_loss if gross_loss > 0 else float("inf") if gross_profit > 0 else 0.0
+        if gross_loss > 0:
+            pf = gross_profit / gross_loss
+        elif gross_profit > 0:
+            pf = 9.99
+        else:
+            pf = 0.0
+        pf = _finite(pf, default=0.0, cap=9.99)
         avg_hold = row.get("avg_hold_minutes")
         avg_hold_minutes: Optional[float] = None
         if avg_hold is not None:
@@ -218,7 +239,7 @@ ORDER BY pocket, side
             side=side,
             trade_count=trade_count,
             win_rate=round(win_rate, 4),
-            profit_factor=round(pf, 3) if math.isfinite(pf) else float("inf"),
+            profit_factor=round(pf, 3),
             avg_pips=round(avg_pips, 3),
             std_pips=round(std_pips, 3) if std_pips is not None else 0.0,
             total_pips=round(total_pips, 3),
