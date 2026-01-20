@@ -100,6 +100,9 @@ _DEFAULT_LEFT_BEHIND_MIN_PIPS = {
 _DEFAULT_LEFT_BEHIND_RETURN_SCORE = {"default": -0.15}
 _DEFAULT_LEFT_BEHIND_MIN_COVERAGE = {"default": 0.55}
 _DEFAULT_LEFT_BEHIND_NEG_COUNT = {"default": 2}
+_DEFAULT_AXIS_MIN_LOOKBACK_RATIO = {"default": 0.7}
+_DEFAULT_AXIS_MAX_AGE_MULT = {"default": 2.5}
+_DEFAULT_AXIS_MAX_AGE_SEC = {"default": 0.0}
 
 
 @dataclass(slots=True)
@@ -189,6 +192,16 @@ def _parse_time(value: Optional[str]) -> Optional[datetime]:
         return datetime.fromisoformat(value.replace("Z", "+00:00")).astimezone(timezone.utc)
     except Exception:
         return None
+
+
+def _tf_seconds(tf: str) -> int:
+    return {
+        "M1": 60,
+        "M5": 5 * 60,
+        "H1": 60 * 60,
+        "H4": 4 * 60 * 60,
+        "D1": 24 * 60 * 60,
+    }.get(tf.upper(), 60)
 
 
 def _normalize_tf(value: Optional[str]) -> Optional[str]:
@@ -397,6 +410,50 @@ def _resolve_int_by_pocket(
     return int(defaults.get(pocket, defaults.get("default", 0)))
 
 
+def _axis_is_usable(
+    axis: SectionAxis,
+    *,
+    now: datetime,
+    pocket: str,
+    strategy_keys: tuple[str, ...] | None,
+    expected_lookback: int,
+) -> bool:
+    ratio = _resolve_by_pocket(
+        "SECTION_AXIS_MIN_LOOKBACK_RATIO",
+        pocket,
+        _DEFAULT_AXIS_MIN_LOOKBACK_RATIO,
+        strategy_keys,
+    )
+    if expected_lookback > 0 and axis.lookback > 0 and ratio > 0:
+        if axis.lookback < expected_lookback * ratio:
+            return False
+
+    max_age_sec = _resolve_by_pocket(
+        "SECTION_AXIS_MAX_AGE_SEC",
+        pocket,
+        _DEFAULT_AXIS_MAX_AGE_SEC,
+        strategy_keys,
+    )
+    if max_age_sec <= 0:
+        mult = _resolve_by_pocket(
+            "SECTION_AXIS_MAX_AGE_MULT",
+            pocket,
+            _DEFAULT_AXIS_MAX_AGE_MULT,
+            strategy_keys,
+        )
+        tf_sec = _tf_seconds(axis.tf or "")
+        if tf_sec > 0 and mult > 0:
+            max_age_sec = max(30.0, tf_sec * mult)
+
+    if max_age_sec > 0 and axis.end_time:
+        axis_time = _parse_time(axis.end_time)
+        if axis_time is not None:
+            age_sec = (now - axis_time).total_seconds()
+            if age_sec > max_age_sec:
+                return False
+    return True
+
+
 def _section_exit_enabled(pocket: str, strategy_keys: tuple[str, ...] | None = None) -> bool:
     if strategy_keys:
         for key in strategy_keys:
@@ -558,6 +615,19 @@ def evaluate_section_exit(
 
     axis = _extract_axis(thesis) or _compute_axis(thesis, pocket_key)
     if axis is None:
+        return SectionExitDecision(False, None, False, {})
+
+    expected_lookback = _resolve_lookback(
+        thesis,
+        axis.tf or _DEFAULT_TF_BY_POCKET.get(pocket_key, "M1"),
+    )
+    if not _axis_is_usable(
+        axis,
+        now=now,
+        pocket=pocket_key,
+        strategy_keys=strategy_keys,
+        expected_lookback=expected_lookback,
+    ):
         return SectionExitDecision(False, None, False, {})
 
     range_span = axis.high - axis.low

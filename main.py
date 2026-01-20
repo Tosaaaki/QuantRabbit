@@ -164,6 +164,7 @@ MICRO_OPENS_DISABLED = _env_bool("MICRO_OPENS_DISABLED", default=False)
 WORKER_ONLY_MODE = _env_bool("WORKER_ONLY_MODE", default=False)
 # GPT を完全に無効化するフラグ（誤作動防止用）。設定時はローカル順位付けのみを使用。
 GPT_DISABLED = _env_bool("GPT_DISABLED", default=False)
+GPT_FALLBACK_ENABLED = _env_bool("GPT_FALLBACK_ENABLED", default=False)
 
 # ---- Dynamic allocation (strategy score / pocket cap) loader ----
 _DYNAMIC_ALLOC_PATH = Path("config/dynamic_alloc.json")
@@ -2049,7 +2050,7 @@ async def gpt_worker(
             )
         except Exception as exc:  # pragma: no cover - defensive
             logging.error(
-                "[GPT WORKER] decision failed signature=%s (%s: %s) - keeping previous decision",
+                "[GPT WORKER] decision failed signature=%s (%s: %s)",
                 signature[:10],
                 type(exc).__name__,
                 str(exc) or "no message",
@@ -3751,6 +3752,7 @@ async def logic_loop(
             scalp_ready_forced = False
             evaluated_signals: list[dict] = []
             gpt_timed_out = False
+            gpt_unavailable = False
             logging.info("[LOOP] start loop=%d", loop_counter)
             if FORCE_SCALP_MODE and loop_counter % 5 == 0:
                 logging.warning("[FORCE_SCALP] loop=%d", loop_counter)
@@ -4612,12 +4614,21 @@ async def logic_loop(
                         gpt = await gpt_state.wait_for_signature(payload_signature, timeout=30)
                         reuse_reason = gpt.get("reason") or "live_call"
                     except asyncio.TimeoutError:
-                        logging.warning(
-                            "[GPT] wait for signature %s timed out; using previous decision",
-                            payload_signature[:10],
-                        )
-                        gpt, _, _ = await gpt_state.get_latest()
-                        reuse_reason = gpt.get("reason") or "cached_timeout"
+                        if GPT_FALLBACK_ENABLED:
+                            logging.warning(
+                                "[GPT] wait for signature %s timed out; using previous decision",
+                                payload_signature[:10],
+                            )
+                            gpt, _, _ = await gpt_state.get_latest()
+                            reuse_reason = gpt.get("reason") or "cached_timeout"
+                        else:
+                            logging.warning(
+                                "[GPT] wait for signature %s timed out; fallback disabled",
+                                payload_signature[:10],
+                            )
+                            gpt = {}
+                            reuse_reason = "timeout_no_fallback"
+                            gpt_unavailable = True
                         gpt_timed_out = True
                 else:
                     gpt, _, _ = await gpt_state.get_latest()
@@ -4636,6 +4647,23 @@ async def logic_loop(
                     tags={"reason": reuse_reason},
                     ts=now,
                 )
+                if gpt_unavailable and not GPT_FALLBACK_ENABLED:
+                    logging.warning(
+                        "[GPT] unavailable and fallback disabled; skipping entries this loop"
+                    )
+                    try:
+                        pos_manager.sync_trades()
+                    except Exception:
+                        pass
+                    decision_latency_ms = max(0.0, (time.monotonic() - loop_start_mono) * 1000.0)
+                    if gpt_timed_out:
+                        decision_latency_ms = max(decision_latency_ms, 9000.0)
+                    log_metric("decision_latency_ms", decision_latency_ms)
+                    data_lag_ms = _latest_tick_lag_ms()
+                    if data_lag_ms is not None:
+                        log_metric("data_lag_ms", data_lag_ms)
+                    await asyncio.sleep(60)
+                    continue
             local_decision: dict = {}
             try:
                 local_decision = heuristic_decision(payload, last_local_decision)
@@ -7793,14 +7821,8 @@ async def logic_loop(
                 )
                 allow_spread_bypass = False
                 if spread_gate_active:
-                    if pocket == 'scalp' and (is_tactical or spread_gate_soft_scalp):
+                    if pocket == "scalp" and is_tactical and spread_gate_type != "stale":
                         allow_spread_bypass = True
-                        if spread_gate_soft_scalp:
-                            logging.info(
-                                "[SPREAD] stale gating bypassed for scalp (reason=%s context=%s)",
-                                spread_gate_reason,
-                                spread_log_context,
-                            )
                     if not allow_spread_bypass:
                         if (
                             pocket == "macro"

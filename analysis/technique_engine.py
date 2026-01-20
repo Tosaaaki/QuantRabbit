@@ -772,6 +772,19 @@ def _env_float(name: str) -> Optional[float]:
         return None
 
 
+def _env_int(name: str) -> Optional[int]:
+    raw = os.getenv(name)
+    if raw is None:
+        return None
+    try:
+        return int(raw)
+    except ValueError:
+        try:
+            return int(float(raw))
+        except ValueError:
+            return None
+
+
 def _infer_mode(strategy_tag: Optional[str], pocket: str) -> str:
     tag = (strategy_tag or "").strip().lower()
     if any(hint in tag for hint in _SCALP_HINTS):
@@ -807,15 +820,17 @@ def _base_policy(mode: str, pocket: str) -> TechniquePolicy:
     min_positive = 2 if pocket in {"macro", "micro"} else 1
     exit_min_neg_pips = 2.0
     if pocket == "scalp_fast":
-        exit_min_neg_pips = 1.0
+        exit_min_neg_pips = 1.3
     elif pocket == "scalp":
-        exit_min_neg_pips = 1.5
+        exit_min_neg_pips = 1.8
     elif pocket == "micro":
-        exit_min_neg_pips = 3.0
+        exit_min_neg_pips = 3.5
     elif pocket == "macro":
         exit_min_neg_pips = 6.0
     exit_return_score = -0.25
     if pocket in {"scalp", "scalp_fast"}:
+        exit_return_score = -0.35
+    elif pocket == "micro":
         exit_return_score = -0.3
     elif pocket == "macro":
         exit_return_score = -0.2
@@ -1578,8 +1593,27 @@ def evaluate_entry_techniques(
     if coverage < policy.min_coverage:
         reasons.append("low_coverage")
         return TechniqueDecision(True, score, 1.0, reasons, debug)
-    hard_block_score = -0.35
-    hard_block_neg = 3
+    pocket_upper = pocket.upper()
+    key = _normalize_tag_key(str(strategy_tag)).upper() if strategy_tag else None
+    hard_block_score = None
+    hard_block_neg = None
+    if key:
+        hard_block_score = _env_float(f"TECH_HARD_BLOCK_SCORE_{key}")
+        hard_block_neg = _env_int(f"TECH_HARD_BLOCK_NEG_{key}")
+    if hard_block_score is None:
+        hard_block_score = _env_float(f"TECH_HARD_BLOCK_SCORE_{pocket_upper}")
+    if hard_block_score is None:
+        hard_block_score = _env_float("TECH_HARD_BLOCK_SCORE")
+    if hard_block_score is None:
+        hard_block_score = -0.35
+    if hard_block_neg is None:
+        hard_block_neg = _env_int(f"TECH_HARD_BLOCK_NEG_{pocket_upper}")
+    if hard_block_neg is None:
+        hard_block_neg = _env_int("TECH_HARD_BLOCK_NEG")
+    if hard_block_neg is None:
+        hard_block_neg = 3
+    debug["hard_block_score"] = round(float(hard_block_score), 3)
+    debug["hard_block_neg"] = int(hard_block_neg)
 
     def _hard_block(score_val: float, neg_count_val: int, pos_count_val: int) -> bool:
         if neg_count_val >= hard_block_neg:

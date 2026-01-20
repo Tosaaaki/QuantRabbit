@@ -21,6 +21,10 @@ try:
 except Exception:
     PRACTICE = False
 MOCK_STREAM: bool = os.getenv("MOCK_TICK_STREAM", "0") == "1"
+_STREAM_READ_TIMEOUT = float(os.getenv("TICK_STREAM_READ_TIMEOUT_SEC", "12"))
+_STREAM_CONNECT_TIMEOUT = float(os.getenv("TICK_STREAM_CONNECT_TIMEOUT_SEC", "5"))
+_STREAM_WRITE_TIMEOUT = float(os.getenv("TICK_STREAM_WRITE_TIMEOUT_SEC", "5"))
+_STREAM_POOL_TIMEOUT = float(os.getenv("TICK_STREAM_POOL_TIMEOUT_SEC", "5"))
 
 STREAM_HOST = (
     "stream-fxtrade.oanda.com" if not PRACTICE else "stream-fxpractice.oanda.com"
@@ -78,7 +82,13 @@ async def _connect(instrument: str, callback: Callable[[Tick], Awaitable[None]])
 
     while True:
         try:
-            async with httpx.AsyncClient(timeout=None) as client:
+            timeout = httpx.Timeout(
+                connect=_STREAM_CONNECT_TIMEOUT,
+                read=_STREAM_READ_TIMEOUT,
+                write=_STREAM_WRITE_TIMEOUT,
+                pool=_STREAM_POOL_TIMEOUT,
+            )
+            async with httpx.AsyncClient(timeout=timeout) as client:
                 async with client.stream(
                     "GET", STREAM_URL, headers=headers, params=params
                 ) as r:

@@ -86,6 +86,12 @@ _RETRY_BASE_SEC = max(0.1, float(os.getenv("GPT_RETRY_BASE_SEC", "0.6")))
 _RETRY_JITTER_SEC = max(0.0, float(os.getenv("GPT_RETRY_JITTER_SEC", "0.25")))
 _MIN_CALL_INTERVAL_SEC = max(0.1, float(os.getenv("GPT_MIN_CALL_INTERVAL_SEC", "0.6")))
 _MODEL_TEMPERATURE = float(os.getenv("GPT_DECIDER_TEMPERATURE", "0.0") or 0.0)
+_FALLBACK_ENABLED = os.getenv("GPT_FALLBACK_ENABLED", "0").strip().lower() not in {
+    "",
+    "0",
+    "false",
+    "no",
+}
 
 # 単純なレートリミット（call間隔を確保して 429 を防ぐ）
 _LAST_CALL_TS: float | None = None
@@ -387,7 +393,7 @@ async def get_decision(payload: Dict) -> Dict:
             await asyncio.sleep(0.6 * (attempt + 1))
             continue
 
-    if _LAST_DECISION_DATA:
+    if _FALLBACK_ENABLED and _LAST_DECISION_DATA:
         logger.warning(
             "GPT decision failed after retries (%s); reusing previous decision", last_exc
         )
@@ -401,6 +407,8 @@ def fallback_decision(payload: Dict, last_decision: Dict | None = None):
     GPT が利用できない場合の明示的フォールバック。
     ここでは最後に成功した GPT 決定を再利用し、無ければ例外を投げる。
     """
+    if not _FALLBACK_ENABLED:
+        raise RuntimeError("fallback_decision disabled")
     if last_decision:
         logger.warning("fallback_decision using last_decision")
         return dict(last_decision, reason="reuse_previous")

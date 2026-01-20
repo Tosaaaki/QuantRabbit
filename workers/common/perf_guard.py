@@ -22,6 +22,7 @@ _RAW_ENABLED = os.getenv("PERF_GUARD_ENABLED")
 if _RAW_ENABLED is None:
     _RAW_ENABLED = os.getenv("PERF_GUARD_GLOBAL_ENABLED", "1")
 _ENABLED = str(_RAW_ENABLED).strip().lower() not in {"", "0", "false", "no"}
+_MODE = os.getenv("PERF_GUARD_MODE", "warn").strip().lower()
 _LOOKBACK_DAYS = max(1, int(float(os.getenv("PERF_GUARD_LOOKBACK_DAYS", "3"))))
 _MIN_TRADES = max(5, int(float(os.getenv("PERF_GUARD_MIN_TRADES", "12"))))
 _PF_MIN = float(os.getenv("PERF_GUARD_PF_MIN", "0.9") or 0.9)
@@ -118,7 +119,7 @@ def is_allowed(tag: str, pocket: str, *, hour: Optional[int] = None) -> PerfDeci
     """
     hour: optional UTC hour string (0-23) to apply hourly PF filter. When None, aggregate filter only.
     """
-    if not _ENABLED:
+    if not _ENABLED or _MODE in {"off", "disabled", "false", "no"}:
         return PerfDecision(True, "disabled", 0)
     key = (tag, pocket, hour if _HOURLY_ENABLED else None)
     now = time.monotonic()
@@ -131,9 +132,15 @@ def is_allowed(tag: str, pocket: str, *, hour: Optional[int] = None) -> PerfDeci
     if _HOURLY_ENABLED and hour is not None:
         ok_hour, reason_hour, sample_hour = _query_perf(tag, pocket, hour)
         if not ok_hour:
-            _cache[key] = (now, ok_hour, f"hour{hour}:{reason_hour}", sample_hour)
-            return PerfDecision(ok_hour, f"hour{hour}:{reason_hour}", sample_hour)
+            reason_txt = f"hour{hour}:{reason_hour}"
+            allowed = ok_hour if _MODE == "block" else True
+            if _MODE != "block":
+                reason_txt = f"warn:{reason_txt}"
+            _cache[key] = (now, allowed, reason_txt, sample_hour)
+            return PerfDecision(allowed, reason_txt, sample_hour)
 
     ok, reason, sample = _query_perf(tag, pocket, None)
-    _cache[key] = (now, ok, reason, sample)
-    return PerfDecision(ok, reason, sample)
+    allowed = ok if _MODE == "block" else True
+    reason_txt = reason if _MODE == "block" else f"warn:{reason}"
+    _cache[key] = (now, allowed, reason_txt, sample)
+    return PerfDecision(allowed, reason_txt, sample)
