@@ -98,6 +98,8 @@ _TREND_HINTS = {
 }
 _SCALP_HINTS = {"scalp", "m1scalper", "onepip"}
 
+_REQUIRE_MEDIAN_EPS = float(os.getenv("TECH_REQUIRE_MEDIAN_EPS", "0.03"))
+
 _STRATEGY_POLICY_OVERRIDES: dict[str, dict[str, object]] = {
     # macro trend
     "trendma": {
@@ -1540,7 +1542,18 @@ def evaluate_entry_techniques(
     def _require_failed(required: bool, score_val: Optional[float], label: str) -> bool:
         if not required:
             return False
-        if score_val is None or score_val <= 0:
+        if score_val is None:
+            reasons.append(f"require_{label}_fail")
+            return True
+        if score_val <= 0:
+            if (
+                label == "median"
+                and _REQUIRE_MEDIAN_EPS > 0
+                and policy.mode in {"reversal", "scalp"}
+                and score_val > -_REQUIRE_MEDIAN_EPS
+            ):
+                reasons.append("require_median_relaxed")
+                return False
             reasons.append(f"require_{label}_fail")
             return True
         return False
