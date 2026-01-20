@@ -1605,13 +1605,21 @@ def evaluate_entry_techniques(
     if hard_block_score is None:
         hard_block_score = _env_float("TECH_HARD_BLOCK_SCORE")
     if hard_block_score is None:
-        hard_block_score = -0.35
+        if pocket in {"scalp", "scalp_fast"}:
+            hard_block_score = -0.45
+        elif pocket == "micro":
+            hard_block_score = -0.4
+        else:
+            hard_block_score = -0.35
     if hard_block_neg is None:
         hard_block_neg = _env_int(f"TECH_HARD_BLOCK_NEG_{pocket_upper}")
     if hard_block_neg is None:
         hard_block_neg = _env_int("TECH_HARD_BLOCK_NEG")
     if hard_block_neg is None:
-        hard_block_neg = 3
+        if pocket in {"scalp", "scalp_fast", "micro"}:
+            hard_block_neg = 4
+        else:
+            hard_block_neg = 3
     debug["hard_block_score"] = round(float(hard_block_score), 3)
     debug["hard_block_neg"] = int(hard_block_neg)
 
