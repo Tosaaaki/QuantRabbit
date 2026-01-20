@@ -2121,7 +2121,7 @@ async def prime_gpt_decision(
             await asyncio.sleep(5.0)
 
 
-async def supervised_runner(name: str, coro: asyncio.coroutines.coroutine) -> None:
+async def supervised_runner(name: str, coro: Coroutine[Any, Any, Any]) -> None:
     logging.info("[SUPERVISOR] %s started", name)
     try:
         await coro
