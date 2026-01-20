@@ -941,41 +941,48 @@ class PositionManager:
 
         if trades_to_save:
             # ticket_id (OANDA tradeID) が重複しないように挿入
-            with _file_lock(_DB_LOCK_PATH):
-                self._executemany_with_retry(
-                    """
-                    INSERT OR REPLACE INTO trades (
-                        transaction_id,
-                        ticket_id,
-                        pocket,
-                        instrument,
-                        units,
-                        closed_units,
-                        entry_price,
-                        close_price,
-                        fill_price,
-                        pl_pips,
-                        realized_pl,
-                        commission,
-                        financing,
-                        entry_time,
-                        open_time,
-                        close_time,
-                        close_reason,
-                        state,
-                        updated_at,
-                        version,
-                        unrealized_pl,
-                        client_order_id,
-                        strategy,
-                        strategy_tag,
-                        entry_thesis
+            try:
+                with _file_lock(_DB_LOCK_PATH):
+                    self._executemany_with_retry(
+                        """
+                        INSERT OR REPLACE INTO trades (
+                            transaction_id,
+                            ticket_id,
+                            pocket,
+                            instrument,
+                            units,
+                            closed_units,
+                            entry_price,
+                            close_price,
+                            fill_price,
+                            pl_pips,
+                            realized_pl,
+                            commission,
+                            financing,
+                            entry_time,
+                            open_time,
+                            close_time,
+                            close_reason,
+                            state,
+                            updated_at,
+                            version,
+                            unrealized_pl,
+                            client_order_id,
+                            strategy,
+                            strategy_tag,
+                            entry_thesis
+                        )
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                        trades_to_save,
                     )
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                    trades_to_save,
+                    self._commit_with_retry()
+            except TimeoutError:
+                logging.warning(
+                    "[PositionManager] file lock busy; defer saving %d trades",
+                    len(trades_to_save),
                 )
-                self._commit_with_retry()
+                return []
             print(f"[PositionManager] Saved {len(trades_to_save)} new trades.")
 
         if processed_tx_ids:
