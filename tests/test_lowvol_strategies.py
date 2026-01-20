@@ -86,7 +86,7 @@ def test_bb_rsi_fast_prefers_long_in_range():
     signal = BBRsiFast.check(fac)
     assert signal is not None
     assert signal["action"] == "OPEN_LONG"
-    assert signal["sl_pips"] >= signal["tp_pips"]
+    assert signal["tp_pips"] >= signal["sl_pips"]
 
 
 def test_micro_vwap_revert_flags_short_bias():

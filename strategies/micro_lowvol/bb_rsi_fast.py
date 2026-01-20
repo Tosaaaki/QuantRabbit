@@ -32,6 +32,9 @@ def _band_edges(ma: Optional[float], bbw: Optional[float]) -> Optional[Tuple[flo
     return lower, basis, upper
 
 
+MIN_RANGE_SCORE = 0.30
+
+
 class BBRsiFast:
     name = "BB_RSI_Fast"
     pocket = "micro"
@@ -48,6 +51,12 @@ class BBRsiFast:
 
         if None in (rsi, bbw, ma20, close):
             return None
+        if "range_score" in fac or "range_active" in fac:
+            range_score = to_float(fac.get("range_score"), 0.0) or 0.0
+            range_score = clamp(range_score, 0.0, 1.0)
+            range_active = bool(fac.get("range_active"))
+            if not range_active and range_score < MIN_RANGE_SCORE:
+                return None
         if bbw is not None and bbw > 0.28:
             return None
         if adx is not None and adx > 25.0:
@@ -93,7 +102,7 @@ class BBRsiFast:
             return conf
 
         sl = clamp(atr * 1.25, 1.3, 2.05)
-        tp = clamp(sl * 0.88, 0.9, 1.95)
+        tp = clamp(sl * 1.12, 1.0, 2.3)
 
         if long_ready:
             conf = _confidence_base()
