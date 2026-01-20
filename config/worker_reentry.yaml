@@ -1,7 +1,7 @@
 defaults:
   cooldown_win_sec: 60
   cooldown_loss_sec: 120
-  same_dir_reentry_pips: 1.8
+  same_dir_reentry_pips: 1.2
   allow_jst_hours: []
   block_jst_hours: []
   return_wait_bias: neutral
@@ -28,12 +28,12 @@ strategies:
   Donchian55:
     cooldown_win_sec: 300
     cooldown_loss_sec: 480
-    same_dir_reentry_pips: 5.85
+    same_dir_reentry_pips: 3.2
     return_wait_bias: neutral
   M1Scalper:
     cooldown_win_sec: 300
     cooldown_loss_sec: 300
-    same_dir_reentry_pips: 4.134
+    same_dir_reentry_pips: 1.9
     max_open_trades: 3
     max_open_adverse_pips: 40.0
     max_open_trades_hard: 10
@@ -44,7 +44,7 @@ strategies:
   MomentumP:
     cooldown_win_sec: 118
     cooldown_loss_sec: 300
-    same_dir_reentry_pips: 1.782
+    same_dir_reentry_pips: 1.3
     return_wait_bias: avoid
   TrendMA:
     cooldown_win_sec: 300
@@ -65,7 +65,7 @@ strategies:
   VolCompre:
     cooldown_win_sec: 292
     cooldown_loss_sec: 92
-    same_dir_reentry_pips: 2.034
+    same_dir_reentry_pips: 1.4
     max_open_trades: 3
     max_open_adverse_pips: 30.0
     max_open_trades_hard: 10
@@ -76,5 +76,5 @@ strategies:
   impulse_retest_s5:
     cooldown_win_sec: 257
     cooldown_loss_sec: 300
-    same_dir_reentry_pips: 3.301
+    same_dir_reentry_pips: 1.8
     return_wait_bias: favor
