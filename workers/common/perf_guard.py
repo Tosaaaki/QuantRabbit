@@ -18,9 +18,12 @@ LOG = logging.getLogger(__name__)
 
 _DB = pathlib.Path("logs/trades.db")
 
-_ENABLED = os.getenv("PERF_GUARD_ENABLED", "0").strip().lower() not in {"", "0", "false", "no"}
+_RAW_ENABLED = os.getenv("PERF_GUARD_ENABLED")
+if _RAW_ENABLED is None:
+    _RAW_ENABLED = os.getenv("PERF_GUARD_GLOBAL_ENABLED", "1")
+_ENABLED = str(_RAW_ENABLED).strip().lower() not in {"", "0", "false", "no"}
 _LOOKBACK_DAYS = max(1, int(float(os.getenv("PERF_GUARD_LOOKBACK_DAYS", "3"))))
-_MIN_TRADES = max(5, int(float(os.getenv("PERF_GUARD_MIN_TRADES", "20"))))
+_MIN_TRADES = max(5, int(float(os.getenv("PERF_GUARD_MIN_TRADES", "12"))))
 _PF_MIN = float(os.getenv("PERF_GUARD_PF_MIN", "0.9") or 0.9)
 _WIN_MIN = float(os.getenv("PERF_GUARD_WIN_MIN", "0.48") or 0.48)
 _TTL_SEC = max(30.0, float(os.getenv("PERF_GUARD_TTL_SEC", "120")) or 120.0)
@@ -37,6 +40,16 @@ class PerfDecision:
     sample: int
 
 
+def _tag_variants(tag: str) -> Tuple[str, ...]:
+    raw = str(tag).strip().lower()
+    if not raw:
+        return ("",)
+    base = raw.split("-", 1)[0].strip()
+    if base and base != raw:
+        return (raw, base)
+    return (raw,)
+
+
 def _query_perf(tag: str, pocket: str, hour: Optional[int]) -> Tuple[bool, str, int]:
     if not _DB.exists():
         return True, "no_db", 0
@@ -45,21 +58,35 @@ def _query_perf(tag: str, pocket: str, hour: Optional[int]) -> Tuple[bool, str, 
         con.row_factory = sqlite3.Row
     except Exception:
         return True, "db_open_failed", 0
+    variants = _tag_variants(tag)
+    if not variants or variants == ("",):
+        return True, "empty_tag", 0
+    placeholders = ",".join("?" for _ in variants)
+    tag_clause = f"LOWER(COALESCE(NULLIF(strategy_tag, ''), strategy)) IN ({placeholders})"
+    params = list(variants)
+    params.extend(
+        [
+            pocket,
+            f"-{_LOOKBACK_DAYS} day",
+            f"{hour:02d}" if hour is not None else None,
+            f"{hour:02d}" if hour is not None else None,
+        ]
+    )
     try:
         row = con.execute(
-            """
+            f"""
             SELECT
               COUNT(*) AS n,
               SUM(CASE WHEN pl_pips > 0 THEN pl_pips ELSE 0 END) AS profit,
               SUM(CASE WHEN pl_pips < 0 THEN ABS(pl_pips) ELSE 0 END) AS loss,
               SUM(CASE WHEN pl_pips > 0 THEN 1 ELSE 0 END) AS win
             FROM trades
-            WHERE strategy_tag = ?
+            WHERE {tag_clause}
               AND pocket = ?
               AND close_time >= datetime('now', ?)
               AND (strftime('%H', close_time) = ? OR ? IS NULL)
             """,
-            (tag, pocket, f"-{_LOOKBACK_DAYS} day", f"{hour:02d}" if hour is not None else None, f"{hour:02d}" if hour is not None else None),
+            params,
         ).fetchone()
     except Exception as exc:
         LOG.debug("[PERF_GUARD] query failed tag=%s pocket=%s err=%s", tag, pocket, exc)
