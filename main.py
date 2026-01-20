@@ -140,6 +140,36 @@ def _latest_tick_lag_ms() -> Optional[float]:
         return None
     return max(0.0, (time.time() - epoch) * 1000.0)
 
+
+DATA_LAG_RESTART_MS = float(os.getenv("DATA_LAG_RESTART_MS", "8000"))
+DATA_LAG_RESTART_STRIKES = int(os.getenv("DATA_LAG_RESTART_STRIKES", "3"))
+_data_lag_strikes = 0
+
+
+def _check_data_lag_watchdog(data_lag_ms: float) -> None:
+    """Restart the process if tick lag stays high across multiple loops."""
+    global _data_lag_strikes
+    if DATA_LAG_RESTART_MS <= 0 or DATA_LAG_RESTART_STRIKES <= 0:
+        _data_lag_strikes = 0
+        return
+    if data_lag_ms >= DATA_LAG_RESTART_MS:
+        _data_lag_strikes += 1
+        if _data_lag_strikes >= DATA_LAG_RESTART_STRIKES:
+            logging.error(
+                "[WATCHDOG] data_lag_ms=%.1f strikes=%d/%d -> restarting",
+                data_lag_ms,
+                _data_lag_strikes,
+                DATA_LAG_RESTART_STRIKES,
+            )
+            raise SystemExit("data_lag_watchdog")
+    else:
+        if _data_lag_strikes:
+            logging.info(
+                "[WATCHDOG] data_lag recovered (%.1fms); reset strikes",
+                data_lag_ms,
+            )
+        _data_lag_strikes = 0
+
 # Trading from main is enabled alongside workers for higher entry density.
 # 内蔵ストラテジーはデフォルト停止。動かす場合は環境変数で明示的にONにする。
 MAIN_TRADING_ENABLED = _env_bool("MAIN_TRADING_ENABLED", default=False)
@@ -4662,6 +4692,7 @@ async def logic_loop(
                     data_lag_ms = _latest_tick_lag_ms()
                     if data_lag_ms is not None:
                         log_metric("data_lag_ms", data_lag_ms)
+                        _check_data_lag_watchdog(data_lag_ms)
                     await asyncio.sleep(60)
                     continue
             local_decision: dict = {}
@@ -8898,6 +8929,7 @@ async def logic_loop(
             data_lag_ms = _latest_tick_lag_ms()
             if data_lag_ms is not None:
                 log_metric("data_lag_ms", data_lag_ms)
+                _check_data_lag_watchdog(data_lag_ms)
             await asyncio.sleep(60)
     except Exception as e:
         logging.error(f"[ERROR] An unhandled exception occurred: {e}")

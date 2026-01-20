@@ -5,8 +5,9 @@ import json
 import os
 import random
 import datetime
+import time
 from dataclasses import dataclass
-from typing import Callable, Awaitable, Tuple
+from typing import Callable, Awaitable, Optional, Tuple
 
 import httpx
 from utils.secrets import get_secret
@@ -25,6 +26,8 @@ _STREAM_READ_TIMEOUT = float(os.getenv("TICK_STREAM_READ_TIMEOUT_SEC", "12"))
 _STREAM_CONNECT_TIMEOUT = float(os.getenv("TICK_STREAM_CONNECT_TIMEOUT_SEC", "5"))
 _STREAM_WRITE_TIMEOUT = float(os.getenv("TICK_STREAM_WRITE_TIMEOUT_SEC", "5"))
 _STREAM_POOL_TIMEOUT = float(os.getenv("TICK_STREAM_POOL_TIMEOUT_SEC", "5"))
+_STREAM_MAX_IDLE_SEC = float(os.getenv("TICK_STREAM_MAX_IDLE_SEC", "10"))
+_STREAM_MAX_IDLE_STRIKES = int(os.getenv("TICK_STREAM_MAX_IDLE_STRIKES", "2"))
 
 STREAM_HOST = (
     "stream-fxtrade.oanda.com" if not PRACTICE else "stream-fxpractice.oanda.com"
@@ -93,12 +96,31 @@ async def _connect(instrument: str, callback: Callable[[Tick], Awaitable[None]])
                     "GET", STREAM_URL, headers=headers, params=params
                 ) as r:
                     r.raise_for_status()
+                    last_price_mono: Optional[float] = None
+                    idle_strikes = 0
                     async for raw in r.aiter_lines():
                         if not raw:
                             continue
                         msg = json.loads(raw)
-                        if msg.get("type") != "PRICE":
+                        msg_type = msg.get("type")
+                        if msg_type == "HEARTBEAT":
+                            if (
+                                last_price_mono is not None
+                                and _STREAM_MAX_IDLE_SEC > 0
+                                and _STREAM_MAX_IDLE_STRIKES > 0
+                            ):
+                                idle_for = time.monotonic() - last_price_mono
+                                if idle_for >= _STREAM_MAX_IDLE_SEC:
+                                    idle_strikes += 1
+                                    if idle_strikes >= _STREAM_MAX_IDLE_STRIKES:
+                                        raise RuntimeError(
+                                            f"stream idle {idle_for:.1f}s without PRICE"
+                                        )
                             continue
+                        if msg_type != "PRICE":
+                            continue
+                        last_price_mono = time.monotonic()
+                        idle_strikes = 0
                         raw_bids = msg.get("bids", [])
                         raw_asks = msg.get("asks", [])
                         bids = tuple(
