@@ -259,10 +259,10 @@ _MIN_RR_ENABLED = os.getenv("ORDER_MIN_RR_ENABLED", "1").strip().lower() not in 
     "no",
 }
 _MIN_RR_BY_POCKET = {
-    "macro": float(os.getenv("ORDER_MIN_RR_MACRO", "1.3")),
-    "micro": float(os.getenv("ORDER_MIN_RR_MICRO", "1.2")),
-    "scalp": float(os.getenv("ORDER_MIN_RR_SCALP", "1.15")),
-    "scalp_fast": float(os.getenv("ORDER_MIN_RR_SCALP_FAST", "1.1")),
+    "macro": float(os.getenv("ORDER_MIN_RR_MACRO", "1.5")),
+    "micro": float(os.getenv("ORDER_MIN_RR_MICRO", "1.35")),
+    "scalp": float(os.getenv("ORDER_MIN_RR_SCALP", "1.2")),
+    "scalp_fast": float(os.getenv("ORDER_MIN_RR_SCALP_FAST", "1.15")),
     "manual": float(os.getenv("ORDER_MIN_RR_MANUAL", "1.0")),
 }
 # ワーカーのオーダーをメインの関所に転送するフラグ（reduce_only は除外）
