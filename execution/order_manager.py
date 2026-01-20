@@ -92,6 +92,11 @@ def _env_bool(name: str, default: bool) -> bool:
     return raw.strip().lower() not in {"", "0", "false", "no"}
 
 
+def _env_csv_set(name: str, default: str) -> set[str]:
+    raw = os.getenv(name, default)
+    return {item.strip().lower() for item in raw.split(",") if item.strip()}
+
+
 def _as_float(value: object, default: float | None = None) -> float | None:
     if value is None:
         return default
@@ -102,6 +107,10 @@ def _as_float(value: object, default: float | None = None) -> float | None:
 
 # Block entries when factor cache is stale (configurable by env).
 _ENTRY_FACTOR_MAX_AGE_SEC = float(os.getenv("ENTRY_FACTOR_MAX_AGE_SEC", "600"))
+_ENTRY_FACTOR_STALE_ALLOW_POCKETS = _env_csv_set(
+    "ENTRY_FACTOR_STALE_ALLOW_POCKETS",
+    "micro,scalp,scalp_fast",
+)
 
 
 def _factor_age_seconds(tf: str = "M1") -> float | None:
@@ -3352,31 +3361,39 @@ async def market_order(
     ):
         age_sec = _factor_age_seconds("M1")
         if age_sec is not None and age_sec > _ENTRY_FACTOR_MAX_AGE_SEC:
-            _trace("factor_stale")
-            _console_order_log(
-                "OPEN_SKIP",
-                pocket=pocket,
-                strategy_tag=strategy_tag,
-                side=side_label,
-                units=units,
-                sl_price=sl_price,
-                tp_price=tp_price,
-                client_order_id=client_order_id,
-                note="factor_stale",
-            )
-            log_order(
-                pocket=pocket,
-                instrument=instrument,
-                side="buy" if units > 0 else "sell",
-                units=units,
-                sl_price=sl_price,
-                tp_price=tp_price,
-                client_order_id=client_order_id,
-                status="factor_stale",
-                attempt=0,
-                request_payload={"age_sec": round(float(age_sec), 2)},
-            )
-            return None
+            pocket_key = (pocket or "").lower()
+            if pocket_key and pocket_key in _ENTRY_FACTOR_STALE_ALLOW_POCKETS:
+                log_metric(
+                    "factor_stale_allow",
+                    float(age_sec),
+                    tags={"pocket": pocket_key, "tf": "M1"},
+                )
+            else:
+                _trace("factor_stale")
+                _console_order_log(
+                    "OPEN_SKIP",
+                    pocket=pocket,
+                    strategy_tag=strategy_tag,
+                    side=side_label,
+                    units=units,
+                    sl_price=sl_price,
+                    tp_price=tp_price,
+                    client_order_id=client_order_id,
+                    note="factor_stale",
+                )
+                log_order(
+                    pocket=pocket,
+                    instrument=instrument,
+                    side="buy" if units > 0 else "sell",
+                    units=units,
+                    sl_price=sl_price,
+                    tp_price=tp_price,
+                    client_order_id=client_order_id,
+                    status="factor_stale",
+                    attempt=0,
+                    request_payload={"age_sec": round(float(age_sec), 2)},
+                )
+                return None
 
     if (
         _FORWARD_TO_SIGNAL_GATE
