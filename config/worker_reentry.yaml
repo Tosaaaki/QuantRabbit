@@ -14,6 +14,16 @@ defaults:
   stack_reentry_tech_min_score: 0.0
 
 strategies:
+  MicroPullbackEMA:
+    cooldown_win_sec: 10
+    cooldown_loss_sec: 20
+    same_dir_reentry_pips: 0.4
+    return_wait_bias: neutral
+  MomentumBurst:
+    cooldown_win_sec: 10
+    cooldown_loss_sec: 20
+    same_dir_reentry_pips: 0.4
+    return_wait_bias: neutral
   Donchian5:
     cooldown_win_sec: 300
     cooldown_loss_sec: 420
