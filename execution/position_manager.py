@@ -320,8 +320,16 @@ def _parse_timestamp(ts: str) -> datetime:
 class PositionManager:
     def __init__(self):
         self.con = _open_trades_db()
-        with _file_lock(_DB_LOCK_PATH):
-            self._ensure_schema_with_retry()
+        needs_bootstrap = not _DB.exists()
+        try:
+            with _file_lock(_DB_LOCK_PATH):
+                self._ensure_schema_with_retry()
+        except TimeoutError:
+            if needs_bootstrap:
+                raise
+            logging.warning(
+                "[PositionManager] schema lock busy; skipping schema check to avoid startup timeout"
+            )
         self._last_tx_id = self._get_last_transaction_id_with_retry()
         self._pocket_cache: dict[str, str] = {}
         self._client_cache: dict[str, str] = {}
@@ -462,16 +470,19 @@ class PositionManager:
             "strategy_tag": "TEXT",
             "entry_thesis": "TEXT",
         }
+        added_cols: set[str] = set()
         for name, ddl in columns.items():
             if name not in existing:
                 self.con.execute(f"ALTER TABLE trades ADD COLUMN {name} {ddl}")
+                added_cols.add(name)
         # 既存データで strategy が空の場合は strategy_tag をコピー
-        try:
-            self.con.execute(
-                "UPDATE trades SET strategy = strategy_tag WHERE (strategy IS NULL OR strategy = '') AND strategy_tag IS NOT NULL"
-            )
-        except sqlite3.Error:
-            pass
+        if "strategy" in added_cols or "strategy_tag" in added_cols:
+            try:
+                self.con.execute(
+                    "UPDATE trades SET strategy = strategy_tag WHERE (strategy IS NULL OR strategy = '') AND strategy_tag IS NOT NULL"
+                )
+            except sqlite3.Error:
+                pass
 
         if self._has_ticket_unique_constraint():
             self._migrate_remove_ticket_unique()
