@@ -214,7 +214,7 @@ _STRATEGY_POLICY_OVERRIDES: dict[str, dict[str, object]] = {
         "weight_median": 0.25,
         "weight_nwave": 0.15,
         "weight_candle": 0.3,
-        "require_median": True,
+        "require_median": False,
     },
     "impulseretrace": {
         "mode": "reversal",
@@ -228,7 +228,7 @@ _STRATEGY_POLICY_OVERRIDES: dict[str, dict[str, object]] = {
         "weight_median": 0.25,
         "weight_nwave": 0.15,
         "weight_candle": 0.3,
-        "require_median": True,
+        "require_median": False,
     },
     "fastscalp": {
         "mode": "scalp",
@@ -1606,7 +1606,7 @@ def evaluate_entry_techniques(
         hard_block_score = _env_float("TECH_HARD_BLOCK_SCORE")
     if hard_block_score is None:
         if pocket in {"scalp", "scalp_fast"}:
-            hard_block_score = -0.45
+            hard_block_score = -0.8
         elif pocket == "micro":
             hard_block_score = -0.4
         else:
