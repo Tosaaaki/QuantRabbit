@@ -175,7 +175,13 @@ if ! systemctl list-unit-files --type=service | grep -q '^ssh\\.service\\|^sshd\
     apt-get install -y openssh-server || true
   fi
 fi
-if [[ -f /etc/ssh/sshd_config ]]; then
+if [[ -d /etc/ssh/sshd_config.d ]]; then
+  cat > /etc/ssh/sshd_config.d/99-qr.conf <<'EOF_QR_SSH'
+Port 22
+AddressFamily any
+ListenAddress 0.0.0.0
+EOF_QR_SSH
+elif [[ -f /etc/ssh/sshd_config ]]; then
   grep -q '^Port 22' /etc/ssh/sshd_config || echo 'Port 22' >> /etc/ssh/sshd_config
   grep -q '^AddressFamily' /etc/ssh/sshd_config || echo 'AddressFamily any' >> /etc/ssh/sshd_config
   grep -q '^ListenAddress 0.0.0.0' /etc/ssh/sshd_config || echo 'ListenAddress 0.0.0.0' >> /etc/ssh/sshd_config
