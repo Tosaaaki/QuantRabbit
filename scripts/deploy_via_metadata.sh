@@ -15,6 +15,7 @@ Usage: scripts/deploy_via_metadata.sh [options]
   -i                Install requirements in remote .venv (if exists)
   -r                Run health report after restart (serial output)
   -e <ENV_FILE>      Local env overrides file (default: local/vm_env_overrides.env)
+  -g <GCS_BUNDLE>    GCS bundle path (e.g. gs://bucket/deploy/qr_bundle.tar.gz)
   -K <SA_KEYFILE>    Service Account JSON key (optional)
   -A <SA_ACCOUNT>    Service Account email to impersonate (optional)
 USAGE
@@ -34,10 +35,11 @@ SERVICE="quantrabbit.service"
 INSTALL_DEPS=0
 RUN_REPORT=0
 ENV_FILE="local/vm_env_overrides.env"
+BUNDLE_GCS=""
 SA_KEYFILE=""
 SA_IMPERSONATE=""
 
-while getopts ":p:z:m:b:d:s:ire:K:A:" opt; do
+while getopts ":p:z:m:b:d:s:ire:g:K:A:" opt; do
   case "$opt" in
     p) PROJECT="$OPTARG" ;;
     z) ZONE="$OPTARG" ;;
@@ -48,6 +50,7 @@ while getopts ":p:z:m:b:d:s:ire:K:A:" opt; do
     i) INSTALL_DEPS=1 ;;
     r) RUN_REPORT=1 ;;
     e) ENV_FILE="$OPTARG" ;;
+    g) BUNDLE_GCS="$OPTARG" ;;
     K) SA_KEYFILE="$OPTARG" ;;
     A) SA_IMPERSONATE="$OPTARG" ;;
     :) echo "Option -$OPTARG requires an argument" >&2; usage; exit 2 ;;
@@ -102,6 +105,7 @@ BRANCH="$BRANCH"
 SERVICE="$SERVICE"
 INSTALL_DEPS="$INSTALL_DEPS"
 RUN_REPORT="$RUN_REPORT"
+BUNDLE_GCS="$BUNDLE_GCS"
 REPO_OWNER="\$(basename "\$(dirname "\$REPO_DIR")")"
 STAMP_DIR="/var/lib/quantrabbit"
 STAMP_FILE="\$STAMP_DIR/deploy_id"
@@ -155,6 +159,42 @@ fi
 sudo -u "\$REPO_OWNER" -H bash -lc "cd \"\$REPO_DIR\" && echo \"[startup] git_rev=\$(git rev-parse --short HEAD 2>/dev/null || echo unknown)\""
 if [[ "\$git_ok" -ne 1 ]]; then
   echo "[startup] git update failed; continuing with existing code"
+fi
+
+if [[ "\$git_ok" -ne 1 && -n "\$BUNDLE_GCS" ]]; then
+  echo "[startup] attempting bundle deploy from \$BUNDLE_GCS"
+  export BUNDLE_GCS
+  tmp_bundle="/tmp/qr_bundle.tar.gz"
+  if command -v gcloud >/dev/null 2>&1; then
+    gcloud storage cp "\$BUNDLE_GCS" "\$tmp_bundle" || true
+  elif command -v gsutil >/dev/null 2>&1; then
+    gsutil cp "\$BUNDLE_GCS" "\$tmp_bundle" || true
+  elif command -v python3 >/dev/null 2>&1; then
+    python3 - <<'PY'
+import os
+import sys
+try:
+    from google.cloud import storage
+except Exception:
+    sys.exit(0)
+path = os.environ.get("BUNDLE_GCS", "")
+if not path.startswith("gs://"):
+    sys.exit(0)
+bucket, _, obj = path[5:].partition("/")
+if not bucket or not obj:
+    sys.exit(0)
+client = storage.Client()
+blob = client.bucket(bucket).blob(obj)
+blob.download_to_filename("/tmp/qr_bundle.tar.gz")
+PY
+  fi
+  if [[ -f "\$tmp_bundle" ]]; then
+    mkdir -p "\$REPO_DIR"
+    tar -xzf "\$tmp_bundle" -C "\$REPO_DIR"
+    echo "[startup] bundle extracted"
+  else
+    echo "[startup] bundle download failed"
+  fi
 fi
 
 if [[ -f "\$REPO_DIR/scripts/ssh_watchdog.sh" ]]; then

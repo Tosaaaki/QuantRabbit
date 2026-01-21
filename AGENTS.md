@@ -225,6 +225,7 @@ gcloud compute ssh fx-trader-vm --project=quantrabbit --zone=asia-northeast1-a -
 - VM 削除禁止。再起動やブランチ切替で代替し、`gcloud compute instances delete` 等には触れない。
 - IAP/SSH 不調時の反映/確認（代替フロー）
   - 反映: `scripts/deploy_via_metadata.sh -p quantrabbit -z asia-northeast1-a -m fx-trader-vm -b main -i -e local/vm_env_overrides.env`
+  - GitHub 到達不安定時: `scripts/deploy_bundle_to_gcs.sh -b quantrabbit-logs` → `scripts/deploy_via_metadata.sh ... -g gs://quantrabbit-logs/deploy/qr_bundle_*.tar.gz`
   - 確認: `gcloud compute instances get-serial-port-output fx-trader-vm --zone=asia-northeast1-a --project=quantrabbit --port=1 | rg 'startup-script|deploy_id'`
   - SSH 自己回復: `quant-ssh-watchdog.timer` が `ssh/sshd` と `google-guest-agent` を 1 分ごとに再起動監視
   - ヘルス可視化: `quant-health-snapshot.timer` が `/home/tossaki/QuantRabbit/logs/health_snapshot.json` を 1 分ごとに更新し、`ui_bucket_name`（未設定なら `GCS_BACKUP_BUCKET`）の `realtime/health_<hostname>.json` へ送信（orders/signals/trades/サービス状態を同梱）
