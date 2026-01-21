@@ -51,6 +51,40 @@ def _safe_query_rows(db_path: Path, query: str) -> Optional[list[dict[str, Any]]
         return None
 
 
+def _load_recent_signals(db_path: Path, limit: int = 5) -> Optional[list[dict[str, Any]]]:
+    if not db_path.exists():
+        return None
+    try:
+        with sqlite3.connect(str(db_path)) as conn:
+            cur = conn.cursor()
+            cur.execute(
+                "select ts_ms, payload from signals order by ts_ms desc limit ?;",
+                (int(limit),),
+            )
+            rows: list[dict[str, Any]] = []
+            for ts_ms, payload in cur.fetchall():
+                item: dict[str, Any] = {"ts_ms": ts_ms}
+                try:
+                    data = json.loads(payload)
+                except Exception:
+                    data = None
+                if isinstance(data, dict):
+                    for key in (
+                        "pocket",
+                        "strategy",
+                        "confidence",
+                        "action",
+                        "client_order_id",
+                        "proposed_units",
+                    ):
+                        if key in data:
+                            item[key] = data[key]
+                rows.append(item)
+            return rows
+    except Exception:
+        return None
+
+
 def _run_cmd(args: list[str]) -> Optional[str]:
     try:
         proc = subprocess.run(
@@ -210,11 +244,8 @@ def _build_snapshot() -> dict[str, Any]:
             "select ticket_id,pocket,client_order_id,units,entry_time,close_time,pl_pips,state "
             "from trades order by entry_time desc limit 5;",
         ),
-        "signals_last_ts": _safe_query(signals_db, "select max(ts) from signals;"),
-        "signals_recent": _safe_query_rows(
-            signals_db,
-            "select ts,pocket,strategy,confidence,action from signals order by ts desc limit 5;",
-        ),
+        "signals_last_ts": _safe_query(signals_db, "select max(ts_ms) from signals;"),
+        "signals_recent": _load_recent_signals(signals_db, limit=5),
         "orders_last_ts": _safe_query(orders_db, "select max(ts) from orders;"),
         "orders_recent": _safe_query_rows(
             orders_db,
