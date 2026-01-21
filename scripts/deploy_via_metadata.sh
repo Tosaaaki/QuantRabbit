@@ -13,6 +13,7 @@ Usage: scripts/deploy_via_metadata.sh [options]
   -d <REPO_DIR>      Remote repo dir (default: /home/tossaki/QuantRabbit)
   -s <SERVICE>       systemd service (default: quantrabbit.service)
   -i                Install requirements in remote .venv (if exists)
+  -r                Run health report after restart (serial output)
   -K <SA_KEYFILE>    Service Account JSON key (optional)
   -A <SA_ACCOUNT>    Service Account email to impersonate (optional)
 USAGE
@@ -30,10 +31,11 @@ BRANCH=""
 REPO_DIR="/home/tossaki/QuantRabbit"
 SERVICE="quantrabbit.service"
 INSTALL_DEPS=0
+RUN_REPORT=0
 SA_KEYFILE=""
 SA_IMPERSONATE=""
 
-while getopts ":p:z:m:b:d:s:iK:A:" opt; do
+while getopts ":p:z:m:b:d:s:irK:A:" opt; do
   case "$opt" in
     p) PROJECT="$OPTARG" ;;
     z) ZONE="$OPTARG" ;;
@@ -42,6 +44,7 @@ while getopts ":p:z:m:b:d:s:iK:A:" opt; do
     d) REPO_DIR="$OPTARG" ;;
     s) SERVICE="$OPTARG" ;;
     i) INSTALL_DEPS=1 ;;
+    r) RUN_REPORT=1 ;;
     K) SA_KEYFILE="$OPTARG" ;;
     A) SA_IMPERSONATE="$OPTARG" ;;
     :) echo "Option -$OPTARG requires an argument" >&2; usage; exit 2 ;;
@@ -85,6 +88,7 @@ REPO_DIR="$REPO_DIR"
 BRANCH="$BRANCH"
 SERVICE="$SERVICE"
 INSTALL_DEPS="$INSTALL_DEPS"
+RUN_REPORT="$RUN_REPORT"
 REPO_OWNER="\$(basename "\$(dirname "\$REPO_DIR")")"
 STAMP_DIR="/var/lib/quantrabbit"
 STAMP_FILE="\$STAMP_DIR/deploy_id"
@@ -112,6 +116,10 @@ fi
 
 systemctl restart "\$SERVICE"
 systemctl is-active "\$SERVICE" || systemctl status --no-pager -l "\$SERVICE" || true
+
+if [[ "\$RUN_REPORT" == "1" && -f "\$REPO_DIR/scripts/report_vm_health.sh" ]]; then
+  bash "\$REPO_DIR/scripts/report_vm_health.sh" || true
+fi
 EOF
 
 echo "[deploy-meta] Applying startup-script metadata (deploy_id=$DEPLOY_ID)"

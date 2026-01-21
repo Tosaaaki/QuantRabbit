@@ -206,6 +206,7 @@ gcloud compute ssh fx-trader-vm --project=quantrabbit --zone=asia-northeast1-a -
 - IAP/SSH が不安定な場合の無SSH反映（metadata 経由・推奨）
   - 目的: `failed to connect to backend` 等で SSH/IAP が落ちても反映を止めない
   - 手順: `scripts/deploy_via_metadata.sh -p quantrabbit -z asia-northeast1-a -m fx-trader-vm -b main -i`
+  - 健康レポート取得: `-r` を付ける（serial に status/trades/signal を出力）
   - 仕組み: `startup-script` に `deploy_id` を埋め込み、`/var/lib/quantrabbit/deploy_id` で重複実行を抑止
   - 後片付け（任意）: `gcloud compute instances remove-metadata fx-trader-vm --project=quantrabbit --zone=asia-northeast1-a --keys startup-script`
 - IAP/SSH 落ちが続く場合の予防
