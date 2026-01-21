@@ -37,6 +37,20 @@ def _safe_query(db_path: Path, query: str) -> Optional[Any]:
         return None
 
 
+def _safe_query_rows(db_path: Path, query: str) -> Optional[list[dict[str, Any]]]:
+    if not db_path.exists():
+        return None
+    try:
+        with sqlite3.connect(str(db_path)) as conn:
+            conn.row_factory = sqlite3.Row
+            cur = conn.cursor()
+            cur.execute(query)
+            rows = cur.fetchall()
+            return [dict(row) for row in rows]
+    except Exception:
+        return None
+
+
 def _run_cmd(args: list[str]) -> Optional[str]:
     try:
         proc = subprocess.run(
@@ -96,6 +110,29 @@ def _free_mb(path: Path) -> Optional[int]:
     return int(usage.free // (1024 * 1024))
 
 
+def _uptime_sec() -> Optional[float]:
+    try:
+        text = Path("/proc/uptime").read_text().strip()
+        return float(text.split()[0])
+    except Exception:
+        return None
+
+
+def _mtime_iso(path: Path) -> Optional[str]:
+    try:
+        ts = path.stat().st_mtime
+    except Exception:
+        return None
+    return datetime.fromtimestamp(ts, tz=timezone.utc).isoformat()
+
+
+def _size_bytes(path: Path) -> Optional[int]:
+    try:
+        return int(path.stat().st_size)
+    except Exception:
+        return None
+
+
 def _git_rev(repo_dir: Path) -> Optional[str]:
     if not (repo_dir / ".git").exists():
         return None
@@ -152,10 +189,12 @@ def _build_snapshot() -> dict[str, Any]:
         pass
 
     snapshot = {
+        "snapshot_version": 2,
         "generated_at": _utcnow_iso(),
         "hostname": hostname,
         "deploy_id": deploy_id,
         "git_rev": _git_rev(repo_dir),
+        "uptime_sec": _uptime_sec(),
         "trades_last_entry": _safe_query(
             trades_db, "select max(entry_time) from trades;"
         ),
@@ -166,8 +205,28 @@ def _build_snapshot() -> dict[str, Any]:
             trades_db,
             "select count(*) from trades where entry_time >= datetime('now','-1 day');",
         ),
+        "trades_recent": _safe_query_rows(
+            trades_db,
+            "select ticket_id,pocket,client_order_id,units,entry_time,close_time,pl_pips,state "
+            "from trades order by entry_time desc limit 5;",
+        ),
         "signals_last_ts": _safe_query(signals_db, "select max(ts) from signals;"),
+        "signals_recent": _safe_query_rows(
+            signals_db,
+            "select ts,pocket,strategy,confidence,action from signals order by ts desc limit 5;",
+        ),
         "orders_last_ts": _safe_query(orders_db, "select max(ts) from orders;"),
+        "orders_recent": _safe_query_rows(
+            orders_db,
+            "select ts,pocket,side,units,client_order_id,status from orders "
+            "order by ts desc limit 5;",
+        ),
+        "orders_status_1h": _safe_query_rows(
+            orders_db,
+            "select status,count(*) as count from orders "
+            "where ts >= datetime('now','-1 hour') "
+            "group by status order by count desc limit 8;",
+        ),
         "data_lag_ms": _safe_query(
             metrics_db,
             "select value from metrics where metric='data_lag_ms' order by ts desc limit 1;",
@@ -180,6 +239,26 @@ def _build_snapshot() -> dict[str, Any]:
             metrics_db,
             "select max(ts) from metrics where metric='healthbeat';",
         ),
+        "db_mtime": {
+            "trades": _mtime_iso(trades_db),
+            "orders": _mtime_iso(orders_db),
+            "signals": _mtime_iso(signals_db),
+            "metrics": _mtime_iso(metrics_db),
+        },
+        "db_size_bytes": {
+            "trades": _size_bytes(trades_db),
+            "orders": _size_bytes(orders_db),
+            "signals": _size_bytes(signals_db),
+            "metrics": _size_bytes(metrics_db),
+        },
+        "service_active": {
+            "quantrabbit": _systemd_is_active("quantrabbit.service"),
+            "quant_health_snapshot": _systemd_is_active("quant-health-snapshot.service"),
+            "quant_health_timer": _systemd_is_active("quant-health-snapshot.timer"),
+            "quant_ssh_watchdog": _systemd_is_active("quant-ssh-watchdog.service"),
+            "quant_ssh_timer": _systemd_is_active("quant-ssh-watchdog.timer"),
+            "quant_bq_sync": _systemd_is_active("quant-bq-sync.service"),
+        },
         "ssh_active": _systemd_is_active("ssh"),
         "sshd_active": _systemd_is_active("sshd"),
         "guest_agent_active": _systemd_is_active("google-guest-agent"),

@@ -2,9 +2,9 @@
 Description=QuantRabbit health snapshot timer
 
 [Timer]
-OnBootSec=3min
-OnUnitActiveSec=5min
-AccuracySec=30s
+OnBootSec=1min
+OnUnitActiveSec=1min
+AccuracySec=20s
 Unit=quant-health-snapshot.service
 
 [Install]
