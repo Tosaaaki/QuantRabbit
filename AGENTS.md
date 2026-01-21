@@ -208,6 +208,11 @@ gcloud compute ssh fx-trader-vm --project=quantrabbit --zone=asia-northeast1-a -
   - 手順: `scripts/deploy_via_metadata.sh -p quantrabbit -z asia-northeast1-a -m fx-trader-vm -b main -i`
   - 仕組み: `startup-script` に `deploy_id` を埋め込み、`/var/lib/quantrabbit/deploy_id` で重複実行を抑止
   - 後片付け（任意）: `gcloud compute instances remove-metadata fx-trader-vm --project=quantrabbit --zone=asia-northeast1-a --keys startup-script`
+- IAP/SSH 落ちが続く場合の予防
+  - 目的: SSH サービス/guest agent 停止で port 22 が閉じる事象を自動復旧
+  - 監視: `systemd/quant-ssh-watchdog.timer`（1分間隔）→ `scripts/ssh_watchdog.sh`
+  - 導入: `sudo bash scripts/install_trading_services.sh --units "quant-ssh-watchdog.service quant-ssh-watchdog.timer"`
+  - 備考: `/home/tossaki/QuantRabbit` 前提。ユーザが異なる場合は unit を編集。
 - OS Login 権限不足時は `roles/compute.osAdminLogin` を付与（検証: `sudo -n true && echo SUDO_OK`）。本番 VM `fx-trader-vm` は原則 `main` ブランチ稼働。スタッシュ/未コミットはブランチ切替前に解消。
 - VM 削除禁止。再起動やブランチ切替で代替し、`gcloud compute instances delete` 等には触れない。
 
