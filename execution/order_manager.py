@@ -157,6 +157,9 @@ _ENTRY_GUARD_TECH_OVERRIDE_SIDE = os.getenv("ENTRY_GUARD_TECH_OVERRIDE_SIDE", "s
 _ENTRY_GUARD_TECH_OVERRIDE_SCORE = _env_float("ENTRY_GUARD_TECH_OVERRIDE_SCORE", 0.25)
 _ENTRY_GUARD_TECH_OVERRIDE_MIN_POS = _env_int("ENTRY_GUARD_TECH_OVERRIDE_MIN_POS", 2)
 _ENTRY_GUARD_TECH_OVERRIDE_MAX_NEG = _env_int("ENTRY_GUARD_TECH_OVERRIDE_MAX_NEG", 0)
+_ENTRY_TECH_FAILOPEN = _env_bool("ENTRY_TECH_FAILOPEN", False)
+_ENTRY_TECH_FAILOPEN_MIN_SCORE = _env_float("ENTRY_TECH_FAILOPEN_MIN_SCORE", -0.4)
+_ENTRY_TECH_FAILOPEN_SIZE_MULT = _env_float("ENTRY_TECH_FAILOPEN_SIZE_MULT", 0.7)
 # Raise scalp floor to avoid tiny entries; can override via env ORDER_MIN_UNITS_SCALP
 # If true, do not attach stopLossOnFill (TP is still sent).
 STOP_LOSS_DISABLED = stop_loss_disabled()
@@ -201,6 +204,38 @@ def _entry_guard_override_reason_ok(reason: Optional[str], side_label: str) -> b
     if side_label == "buy":
         return reason in {"entry_guard_mid_far_long", "entry_guard_extreme_long"}
     return False
+
+
+def _apply_entry_tech_failopen(
+    tech: Any,
+    units: int,
+    pocket: str,
+    strategy_tag: Optional[str],
+    entry_thesis: Optional[dict],
+) -> tuple[int, Optional[dict], bool]:
+    if not _ENTRY_TECH_FAILOPEN:
+        return units, entry_thesis, False
+    try:
+        score = float(tech.score)
+    except Exception:
+        return units, entry_thesis, False
+    if score < _ENTRY_TECH_FAILOPEN_MIN_SCORE:
+        return units, entry_thesis, False
+    log_metric(
+        "entry_tech_failopen",
+        score,
+        tags={"pocket": pocket, "strategy": strategy_tag or "unknown"},
+    )
+    if isinstance(entry_thesis, dict):
+        entry_thesis = dict(entry_thesis)
+        entry_thesis["tech_entry_failopen"] = {
+            "score": round(score, 3),
+            "min_score": _ENTRY_TECH_FAILOPEN_MIN_SCORE,
+            "reasons": list(getattr(tech, "reasons", []))[:6],
+        }
+    if _ENTRY_TECH_FAILOPEN_SIZE_MULT and abs(_ENTRY_TECH_FAILOPEN_SIZE_MULT - 1.0) >= 0.01:
+        units = _apply_tech_units(units, _ENTRY_TECH_FAILOPEN_SIZE_MULT, pocket)
+    return units, entry_thesis, True
 
 
 def _min_rr_for(pocket: Optional[str]) -> float:
@@ -2638,45 +2673,53 @@ async def market_order(
                     entry_thesis=entry_thesis,
                 )
             if not tech.allowed:
-                _console_order_log(
-                    "OPEN_REJECT",
-                    pocket=pocket,
-                    strategy_tag=strategy_tag or "unknown",
-                    side=side_label,
-                    units=units,
-                    sl_price=sl_price,
-                    tp_price=tp_price,
-                    client_order_id=client_order_id,
-                    note="tech_entry_block",
+                units, entry_thesis, failopen = _apply_entry_tech_failopen(
+                    tech,
+                    units,
+                    pocket,
+                    strategy_tag,
+                    entry_thesis,
                 )
-                log_order(
-                    pocket=pocket,
-                    instrument=instrument,
-                    side=side_label,
-                    units=units,
-                    sl_price=sl_price,
-                    tp_price=tp_price,
-                    client_order_id=client_order_id,
-                    status="entry_tech_block",
-                    attempt=0,
-                    request_payload={
-                        "entry_price": tech_entry_price,
-                        "tech_decision": tech.debug,
-                        "tech_reasons": list(tech.reasons),
-                        "entry_thesis": entry_thesis,
-                        "meta": meta,
-                    },
-                )
-                log_metric(
-                    "entry_tech_block",
-                    1.0,
-                    tags={
-                        "pocket": pocket,
-                        "strategy": strategy_tag or "unknown",
-                        "reason": "score_block",
-                    },
-                )
-                return None
+                if not failopen:
+                    _console_order_log(
+                        "OPEN_REJECT",
+                        pocket=pocket,
+                        strategy_tag=strategy_tag or "unknown",
+                        side=side_label,
+                        units=units,
+                        sl_price=sl_price,
+                        tp_price=tp_price,
+                        client_order_id=client_order_id,
+                        note="tech_entry_block",
+                    )
+                    log_order(
+                        pocket=pocket,
+                        instrument=instrument,
+                        side=side_label,
+                        units=units,
+                        sl_price=sl_price,
+                        tp_price=tp_price,
+                        client_order_id=client_order_id,
+                        status="entry_tech_block",
+                        attempt=0,
+                        request_payload={
+                            "entry_price": tech_entry_price,
+                            "tech_decision": tech.debug,
+                            "tech_reasons": list(tech.reasons),
+                            "entry_thesis": entry_thesis,
+                            "meta": meta,
+                        },
+                    )
+                    log_metric(
+                        "entry_tech_block",
+                        1.0,
+                        tags={
+                            "pocket": pocket,
+                            "strategy": strategy_tag or "unknown",
+                            "reason": "score_block",
+                        },
+                    )
+                    return None
             if isinstance(entry_thesis, dict):
                 entry_thesis = dict(entry_thesis)
                 entry_thesis["tech_entry"] = {
@@ -4353,34 +4396,42 @@ async def limit_order(
                 entry_thesis=entry_thesis,
             )
         if not tech.allowed:
-            _log_order(
-                pocket=pocket,
-                instrument=instrument,
-                side="buy" if units > 0 else "sell",
-                units=units,
-                sl_price=sl_price,
-                tp_price=tp_price,
-                client_order_id=client_order_id,
-                status="entry_tech_block",
-                attempt=0,
-                request_payload={
-                    "entry_price": price,
-                    "tech_decision": tech.debug,
-                    "tech_reasons": list(tech.reasons),
-                    "entry_thesis": entry_thesis,
-                    "meta": meta,
-                },
+            units, entry_thesis, failopen = _apply_entry_tech_failopen(
+                tech,
+                units,
+                pocket,
+                strategy_tag,
+                entry_thesis,
             )
-            log_metric(
-                "entry_tech_block",
-                1.0,
-                tags={
-                    "pocket": pocket,
-                    "strategy": strategy_tag or "unknown",
-                    "reason": "score_block",
-                },
-            )
-            return None, None
+            if not failopen:
+                _log_order(
+                    pocket=pocket,
+                    instrument=instrument,
+                    side="buy" if units > 0 else "sell",
+                    units=units,
+                    sl_price=sl_price,
+                    tp_price=tp_price,
+                    client_order_id=client_order_id,
+                    status="entry_tech_block",
+                    attempt=0,
+                    request_payload={
+                        "entry_price": price,
+                        "tech_decision": tech.debug,
+                        "tech_reasons": list(tech.reasons),
+                        "entry_thesis": entry_thesis,
+                        "meta": meta,
+                    },
+                )
+                log_metric(
+                    "entry_tech_block",
+                    1.0,
+                    tags={
+                        "pocket": pocket,
+                        "strategy": strategy_tag or "unknown",
+                        "reason": "score_block",
+                    },
+                )
+                return None, None
         if isinstance(entry_thesis, dict):
             entry_thesis = dict(entry_thesis)
             entry_thesis["tech_entry"] = {

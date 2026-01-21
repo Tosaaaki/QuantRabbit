@@ -3,8 +3,11 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
+import shutil
 import socket
 import sqlite3
+import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
@@ -31,6 +34,72 @@ def _safe_query(db_path: Path, query: str) -> Optional[Any]:
         return None
 
 
+def _run_cmd(args: list[str]) -> Optional[str]:
+    try:
+        proc = subprocess.run(
+            args,
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=2.0,
+        )
+    except Exception:
+        return None
+    out = proc.stdout.strip() if proc.stdout else ""
+    if proc.returncode != 0 and not out:
+        return None
+    return out or None
+
+
+def _systemd_is_active(unit: str) -> Optional[bool]:
+    if not shutil.which("systemctl"):
+        return None
+    output = _run_cmd(["systemctl", "is-active", unit])
+    if output is None:
+        return None
+    return output.strip() == "active"
+
+
+def _port_listening(port: int) -> Optional[bool]:
+    pattern = re.compile(rf":{port}\\b")
+    if shutil.which("ss"):
+        output = _run_cmd(["ss", "-ltn"])
+        if output is None:
+            return None
+        return any(pattern.search(line) for line in output.splitlines())
+    if shutil.which("netstat"):
+        output = _run_cmd(["netstat", "-ltn"])
+        if output is None:
+            return None
+        return any(pattern.search(line) for line in output.splitlines())
+    return None
+
+
+def _disk_usage_pct(path: Path) -> Optional[float]:
+    try:
+        usage = shutil.disk_usage(path)
+    except Exception:
+        return None
+    if usage.total <= 0:
+        return None
+    return round(usage.used / usage.total * 100.0, 2)
+
+
+def _free_mb(path: Path) -> Optional[int]:
+    try:
+        usage = shutil.disk_usage(path)
+    except Exception:
+        return None
+    return int(usage.free // (1024 * 1024))
+
+
+def _git_rev(repo_dir: Path) -> Optional[str]:
+    if not (repo_dir / ".git").exists():
+        return None
+    output = _run_cmd(["git", "-C", str(repo_dir), "rev-parse", "--short", "HEAD"])
+    return output.strip() if output else None
+
+
 def _load_bucket_name() -> Optional[str]:
     for key in ("ui_bucket_name", "GCS_BACKUP_BUCKET"):
         try:
@@ -42,6 +111,7 @@ def _load_bucket_name() -> Optional[str]:
 
 def _build_snapshot() -> dict[str, Any]:
     hostname = socket.gethostname()
+    repo_dir = Path("/home/tossaki/QuantRabbit")
     logs_dir = Path("/home/tossaki/QuantRabbit/logs")
     trades_db = logs_dir / "trades.db"
     signals_db = logs_dir / "signals.db"
@@ -60,6 +130,7 @@ def _build_snapshot() -> dict[str, Any]:
         "generated_at": _utcnow_iso(),
         "hostname": hostname,
         "deploy_id": deploy_id,
+        "git_rev": _git_rev(repo_dir),
         "trades_last_entry": _safe_query(
             trades_db, "select max(entry_time) from trades;"
         ),
@@ -74,13 +145,28 @@ def _build_snapshot() -> dict[str, Any]:
         "orders_last_ts": _safe_query(orders_db, "select max(ts) from orders;"),
         "data_lag_ms": _safe_query(
             metrics_db,
-            "select value from metrics where name='data_lag_ms' order by ts desc limit 1;",
+            "select value from metrics where metric='data_lag_ms' order by ts desc limit 1;",
         ),
         "decision_latency_ms": _safe_query(
             metrics_db,
-            "select value from metrics where name='decision_latency_ms' order by ts desc limit 1;",
+            "select value from metrics where metric='decision_latency_ms' order by ts desc limit 1;",
         ),
+        "healthbeat_ts": _safe_query(
+            metrics_db,
+            "select max(ts) from metrics where metric='healthbeat';",
+        ),
+        "ssh_active": _systemd_is_active("ssh"),
+        "sshd_active": _systemd_is_active("sshd"),
+        "guest_agent_active": _systemd_is_active("google-guest-agent"),
+        "ssh_port_listening": _port_listening(22),
+        "disk_used_pct": _disk_usage_pct(Path("/")),
+        "disk_free_mb": _free_mb(Path("/")),
     }
+    try:
+        load1, load5, load15 = os.getloadavg()
+        snapshot["load_avg"] = [round(load1, 3), round(load5, 3), round(load15, 3)]
+    except Exception:
+        snapshot["load_avg"] = None
     return snapshot
 
 

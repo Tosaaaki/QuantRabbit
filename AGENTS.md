@@ -116,6 +116,7 @@ class OrderIntent(BaseModel):
 - Strategy フロー: Focus/GPT decision → `ranked_strategies` 順に Strategy Plugin を呼び、`StrategyDecision` または None を返す。`None` はノートレード。
 - Confidence スケーリング: `confidence`(0–100) を pocket 割当 lot に掛け、最小 0.2〜最大 1.0 の段階的エントリー。`STAGE_RATIOS` に従い `_stage_conditions_met` を通過したステージのみ追撃。
 - Exit: 各戦略の `exit_worker` が最低保有時間とテクニカル/レンジ判定を踏まえ、PnL>0 決済が原則（強制 DD/ヘルスのみ例外）。共通 `execution/exit_manager.py` は常に空を返す互換スタブ。`execution/stage_tracker` がクールダウンと方向別ブロックを管理。
+- エントリー詰まり対策（必要時のみ）: `ENTRY_TECH_FAILOPEN=1` で tech ブロック時に小ロットで通す（`ENTRY_TECH_FAILOPEN_MIN_SCORE`, `ENTRY_TECH_FAILOPEN_SIZE_MULT` で緩和幅を制御）
 - Release gate: PF>1.1、勝率>52%、最大 DD<5% を 2 週間連続で満たすと実弾へ昇格。
 - リスク計算とロット:
   - `pocket_equity = account_equity * pocket_ratio`
@@ -222,6 +223,11 @@ gcloud compute ssh fx-trader-vm --project=quantrabbit --zone=asia-northeast1-a -
   - ローカル: `/home/tossaki/QuantRabbit/logs/health_snapshot.json` にも保存（バックアップ対象）
 - OS Login 権限不足時は `roles/compute.osAdminLogin` を付与（検証: `sudo -n true && echo SUDO_OK`）。本番 VM `fx-trader-vm` は原則 `main` ブランチ稼働。スタッシュ/未コミットはブランチ切替前に解消。
 - VM 削除禁止。再起動やブランチ切替で代替し、`gcloud compute instances delete` 等には触れない。
+- IAP/SSH 不調時の反映/確認（代替フロー）
+  - 反映: `scripts/deploy_via_metadata.sh -p quantrabbit -z asia-northeast1-a -m fx-trader-vm -b main -i -e local/vm_env_overrides.env`
+  - 確認: `gcloud compute instances get-serial-port-output fx-trader-vm --zone=asia-northeast1-a --project=quantrabbit --port=1 | rg 'startup-script|deploy_id'`
+  - SSH 自己回復: `quant-ssh-watchdog.timer` が `ssh/sshd` と `google-guest-agent` を 1 分ごとに再起動監視
+  - ヘルス可視化: `quant-health-snapshot.timer` が `/home/tossaki/QuantRabbit/logs/health_snapshot.json` を更新し、`ui_bucket_name`（未設定なら `GCS_BACKUP_BUCKET`）の `realtime/health_<hostname>.json` へ送信
 
 ### 9.1 GCP 基盤/VM（API・IAM・ネットワーク）
 - 有効化 API: `compute.googleapis.com` / `storage.googleapis.com` / `secretmanager.googleapis.com` / `logging.googleapis.com`（任意: `bigquery.googleapis.com`, Firestore 使用時は Firestore API）

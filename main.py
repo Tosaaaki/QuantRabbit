@@ -3834,6 +3834,7 @@ async def logic_loop(
                 logging.info(
                     f"[HEARTBEAT] System is alive at {now.isoformat(timespec='seconds')}"
                 )
+                log_metric("healthbeat", 1.0, ts=now)
                 last_heartbeat_time = now
 
             # 5分ごとにパフォーマンスを更新
