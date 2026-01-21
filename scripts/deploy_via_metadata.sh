@@ -175,6 +175,14 @@ if ! systemctl list-unit-files --type=service | grep -q '^ssh\\.service\\|^sshd\
     apt-get install -y openssh-server || true
   fi
 fi
+if [[ -f /etc/ssh/sshd_config ]]; then
+  grep -q '^Port 22' /etc/ssh/sshd_config || echo 'Port 22' >> /etc/ssh/sshd_config
+  grep -q '^AddressFamily' /etc/ssh/sshd_config || echo 'AddressFamily any' >> /etc/ssh/sshd_config
+  grep -q '^ListenAddress 0.0.0.0' /etc/ssh/sshd_config || echo 'ListenAddress 0.0.0.0' >> /etc/ssh/sshd_config
+fi
+if command -v ssh-keygen >/dev/null 2>&1; then
+  ssh-keygen -A || true
+fi
 if systemctl list-unit-files --type=service | grep -q '^ssh\\.service'; then
   systemctl unmask ssh || true
   systemctl enable ssh || true
