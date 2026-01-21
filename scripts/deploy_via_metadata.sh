@@ -158,7 +158,7 @@ if [[ "\$git_ok" -ne 1 ]]; then
 fi
 
 if [[ -f "\$REPO_DIR/scripts/ssh_watchdog.sh" ]]; then
-  bash "\$REPO_DIR/scripts/install_trading_services.sh" --repo "\$REPO_DIR" --units "quant-ssh-watchdog.service quant-ssh-watchdog.timer quant-health-snapshot.service quant-health-snapshot.timer quant-bq-sync.service"
+  bash "\$REPO_DIR/scripts/install_trading_services.sh" --repo "\$REPO_DIR" --units "quant-ssh-watchdog.service quant-ssh-watchdog.timer quant-health-snapshot.service quant-health-snapshot.timer quant-ui-snapshot.service quant-ui-snapshot.timer quant-bq-sync.service"
 fi
 
 if [[ "\$INSTALL_DEPS" == "1" ]]; then
@@ -209,12 +209,18 @@ fi
 if systemctl list-unit-files --type=service | grep -q '^quant-health-snapshot\\.service'; then
   systemctl start quant-health-snapshot.service || true
 fi
+if systemctl list-unit-files --type=service | grep -q '^quant-ui-snapshot\\.service'; then
+  systemctl start quant-ui-snapshot.service || true
+fi
 if systemctl list-unit-files --type=service | grep -q '^quant-bq-sync\\.service'; then
   systemctl restart quant-bq-sync.service || true
 fi
 
 if [[ -f "\$REPO_DIR/scripts/run_health_snapshot.sh" ]]; then
   bash "\$REPO_DIR/scripts/run_health_snapshot.sh" || true
+fi
+if [[ -f "\$REPO_DIR/scripts/run_ui_snapshot.sh" ]]; then
+  bash "\$REPO_DIR/scripts/run_ui_snapshot.sh" || true
 fi
 
 if [[ "\$RUN_REPORT" == "1" && -f "\$REPO_DIR/scripts/report_vm_health.sh" ]]; then

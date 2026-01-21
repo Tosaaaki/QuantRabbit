@@ -1,0 +1,13 @@
+[Unit]
+Description=QuantRabbit UI snapshot publisher
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=tossaki
+WorkingDirectory=/home/tossaki/QuantRabbit
+Environment="PYTHONUNBUFFERED=1"
+Environment="PYTHONPATH=/home/tossaki/QuantRabbit"
+EnvironmentFile=/etc/quantrabbit.env
+ExecStart=/bin/bash /home/tossaki/QuantRabbit/scripts/run_ui_snapshot.sh
