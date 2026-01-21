@@ -4730,7 +4730,7 @@ async def logic_loop(
                         pass
                     decision_latency_ms = max(0.0, (time.monotonic() - loop_start_mono) * 1000.0)
                     if gpt_timed_out:
-                    decision_latency_ms = max(decision_latency_ms, 9000.0)
+                        decision_latency_ms = max(decision_latency_ms, 9000.0)
                     log_metric("decision_latency_ms", decision_latency_ms)
                     data_lag_ms = _latest_tick_lag_ms()
                     _check_tick_silence_watchdog(data_lag_ms)
