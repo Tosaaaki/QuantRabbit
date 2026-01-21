@@ -111,6 +111,65 @@ STAMP_DIR="/var/lib/quantrabbit"
 STAMP_FILE="\$STAMP_DIR/deploy_id"
 
 echo "[startup] deploy_id=\$DEPLOY_ID branch=\$BRANCH repo=\$REPO_DIR service=\$SERVICE"
+MARKER_BUCKET=""
+if [[ -f /etc/quantrabbit.env ]]; then
+  MARKER_BUCKET="\$(grep -E '^(GCS_UI_BUCKET|ui_bucket_name)=' /etc/quantrabbit.env | tail -n 1 | cut -d= -f2-)"
+  if [[ -z "\$MARKER_BUCKET" ]]; then
+    MARKER_BUCKET="\$(grep -E '^GCS_BACKUP_BUCKET=' /etc/quantrabbit.env | tail -n 1 | cut -d= -f2-)"
+  fi
+fi
+if [[ -n "\$MARKER_BUCKET" ]] && command -v python3 >/dev/null 2>&1; then
+  MARKER_BUCKET="\$MARKER_BUCKET" DEPLOY_ID="\$DEPLOY_ID" python3 - <<'PY'
+import json
+import os
+import socket
+import urllib.parse
+import urllib.request
+from datetime import datetime, timezone
+
+bucket = os.environ.get("MARKER_BUCKET")
+deploy_id = os.environ.get("DEPLOY_ID")
+if not bucket or not deploy_id:
+    raise SystemExit(0)
+payload = json.dumps(
+    {
+        "deploy_id": deploy_id,
+        "hostname": socket.gethostname(),
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+    },
+    ensure_ascii=True,
+    separators=(",", ":"),
+).encode("utf-8")
+token_req = urllib.request.Request(
+    "http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token",
+    headers={"Metadata-Flavor": "Google"},
+)
+try:
+    with urllib.request.urlopen(token_req, timeout=2.0) as resp:
+        token = json.loads(resp.read().decode("utf-8")).get("access_token")
+except Exception:
+    token = None
+if not token:
+    raise SystemExit(0)
+obj = f"realtime/startup_{socket.gethostname()}_{deploy_id}.json"
+obj_enc = urllib.parse.quote(obj, safe="/")
+url = (
+    "https://storage.googleapis.com/upload/storage/v1/b/"
+    f"{bucket}/o?uploadType=media&name={obj_enc}"
+)
+headers = {
+    "Authorization": f"Bearer {token}",
+    "Content-Type": "application/json",
+    "Content-Length": str(len(payload)),
+}
+req = urllib.request.Request(url, data=payload, headers=headers, method="POST")
+try:
+    with urllib.request.urlopen(req, timeout=5.0):
+        pass
+except Exception:
+    pass
+PY
+fi
 mkdir -p "\$STAMP_DIR"
 if [[ -f "\$STAMP_FILE" ]] && [[ "\$(cat "\$STAMP_FILE")" == "\$DEPLOY_ID" ]]; then
   echo "[startup] deploy_id already applied: \$DEPLOY_ID"
@@ -173,19 +232,63 @@ if [[ -n "\$BUNDLE_GCS" ]]; then
     python3 - <<'PY'
 import os
 import sys
+import json
+import urllib.parse
+import urllib.request
+
+def _metadata_token():
+    url = "http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token"
+    req = urllib.request.Request(url, headers={"Metadata-Flavor": "Google"})
+    try:
+        with urllib.request.urlopen(req, timeout=2.0) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+            return data.get("access_token")
+    except Exception:
+        return None
+
+def _download_via_metadata(bucket, obj, dest):
+    token = _metadata_token()
+    if not token:
+        return False
+    obj_enc = urllib.parse.quote(obj, safe="/")
+    url = (
+        "https://storage.googleapis.com/storage/v1/b/"
+        f"{bucket}/o/{obj_enc}?alt=media"
+    )
+    req = urllib.request.Request(url, headers={"Authorization": f"Bearer {token}"})
+    try:
+        with urllib.request.urlopen(req, timeout=10.0) as resp:
+            data = resp.read()
+    except Exception:
+        return False
+    try:
+        with open(dest, "wb") as f:
+            f.write(data)
+        return True
+    except Exception:
+        return False
+
 try:
     from google.cloud import storage
 except Exception:
-    sys.exit(0)
+    storage = None
 path = os.environ.get("BUNDLE_GCS", "")
 if not path.startswith("gs://"):
     sys.exit(0)
 bucket, _, obj = path[5:].partition("/")
 if not bucket or not obj:
     sys.exit(0)
-client = storage.Client()
-blob = client.bucket(bucket).blob(obj)
-blob.download_to_filename("/tmp/qr_bundle.tar.gz")
+dest = "/tmp/qr_bundle.tar.gz"
+if storage is not None:
+    try:
+        client = storage.Client()
+        blob = client.bucket(bucket).blob(obj)
+        blob.download_to_filename(dest)
+        sys.exit(0)
+    except Exception:
+        pass
+if _download_via_metadata(bucket, obj, dest):
+    sys.exit(0)
 PY
   fi
   if [[ -f "\$tmp_bundle" ]]; then

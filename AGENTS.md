@@ -226,8 +226,9 @@ gcloud compute ssh fx-trader-vm --project=quantrabbit --zone=asia-northeast1-a -
 - VM 削除禁止。再起動やブランチ切替で代替し、`gcloud compute instances delete` 等には触れない。
 - IAP/SSH 不調時の反映/確認（代替フロー）
   - 反映: `scripts/deploy_via_metadata.sh -p quantrabbit -z asia-northeast1-a -m fx-trader-vm -b main -i -e local/vm_env_overrides.env`
-  - GitHub 到達不安定時: `scripts/deploy_bundle_to_gcs.sh -b quantrabbit-logs` → `scripts/deploy_via_metadata.sh ... -g gs://quantrabbit-logs/deploy/qr_bundle_*.tar.gz`
+  - GitHub 到達不安定時: `scripts/deploy_bundle_to_gcs.sh -b quantrabbit-logs` → `scripts/deploy_via_metadata.sh ... -g gs://quantrabbit-logs/deploy/qr_bundle_*.tar.gz`（VM 側は metadata token で直取得できるため gcloud/gsutil 不要）
   - 確認: `gcloud compute instances get-serial-port-output fx-trader-vm --zone=asia-northeast1-a --project=quantrabbit --port=1 | rg 'startup-script|deploy_id'`
+  - 反映マーカー: `realtime/startup_<hostname>_<deploy_id>.json` が UI bucket に生成される（無SSHで deploy 実行確認）
   - SSH 自己回復: `quant-ssh-watchdog.timer` が `ssh/sshd` と `google-guest-agent` を 1 分ごとに再起動監視
   - ヘルス可視化: `quant-health-snapshot.timer` が `/home/tossaki/QuantRabbit/logs/health_snapshot.json` を 1 分ごとに更新し、`ui_bucket_name`（未設定なら `GCS_BACKUP_BUCKET`）の `realtime/health_<hostname>.json` へ送信（orders/signals/trades/サービス状態を同梱）
   - UI 可視化: `quant-ui-snapshot.timer` が `realtime/ui_state.json` を 1 分ごとに更新（orders/signals/healthbeat を metrics に同梱）
