@@ -63,6 +63,30 @@ install_unit() {
   ENABLE_QUEUE+=("$(basename "$dest")")
 }
 
+remove_legacy_qr_units() {
+  local -a legacy_units=()
+  local -a legacy_dirs=()
+  for path in "$SYSTEMD_DEST"/qr-*.service "$SYSTEMD_DEST"/qr-*.timer; do
+    [[ -e "$path" ]] || continue
+    legacy_units+=("$(basename "$path")")
+  done
+  for dir in "$SYSTEMD_DEST"/qr-*.service.d; do
+    [[ -e "$dir" ]] || continue
+    legacy_dirs+=("$dir")
+  done
+  if [[ ${#legacy_units[@]} -eq 0 && ${#legacy_dirs[@]} -eq 0 ]]; then
+    return
+  fi
+  echo "Removing legacy qr units..."
+  for unit in "${legacy_units[@]}"; do
+    systemctl disable --now "$unit" >/dev/null 2>&1 || true
+    rm -f "$SYSTEMD_DEST/$unit"
+  done
+  for dir in "${legacy_dirs[@]}"; do
+    rm -rf "$dir"
+  done
+}
+
 ENABLE_QUEUE=()
 
 # Always install the main gate service
@@ -88,6 +112,8 @@ if [[ ${#EXPLICIT_UNITS[@]} -gt 0 ]]; then
     fi
   done
 fi
+
+remove_legacy_qr_units
 
 systemctl daemon-reload
 

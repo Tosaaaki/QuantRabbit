@@ -1,0 +1,12 @@
+[Unit]
+Description=QuantRabbit log maintenance
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=tossaki
+WorkingDirectory=/home/tossaki/QuantRabbit
+ExecStart=/home/tossaki/QuantRabbit/scripts/maintain_logs.sh
+
+[Install]
+WantedBy=multi-user.target

@@ -6,6 +6,10 @@ After=network.target
 Type=simple
 WorkingDirectory=/home/tossaki/QuantRabbit
 Environment="PYTHONUNBUFFERED=1"
+Environment="ONEPIP_MAKER_S1_ENABLED=true"
+Environment="ONEPIP_MAKER_S1_SHADOW_MODE=true"
+Environment="ONEPIP_MAKER_S1_RANGE_ONLY=false"
+Environment="ONEPIP_MAKER_S1_MAX_SNAPSHOT_AGE_MS=4000"
 ExecStart=/home/tossaki/QuantRabbit/.venv/bin/python -m workers.onepip_maker_s1.worker
 Restart=always
 RestartSec=5

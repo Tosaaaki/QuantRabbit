@@ -1,0 +1,19 @@
+[Unit]
+Description=QuantRabbit Worker workers.stop_run_reversal.worker
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=tossaki
+WorkingDirectory=/home/tossaki/QuantRabbit
+Environment=PYTHONUNBUFFERED=1
+Environment=HOME=/home/tossaki
+ExecStart=/home/tossaki/QuantRabbit/.venv/bin/python -m workers.stop_run_reversal.worker
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

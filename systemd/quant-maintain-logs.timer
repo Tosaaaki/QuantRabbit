@@ -1,0 +1,10 @@
+[Unit]
+Description=Daily log maintenance for QuantRabbit
+
+[Timer]
+OnCalendar=daily
+Persistent=true
+RandomizedDelaySec=300
+
+[Install]
+WantedBy=timers.target
