@@ -24,6 +24,8 @@ from execution.position_manager import PositionManager
 
 LOG_FILE = Path("logs/pipeline.log")
 METRICS_DB = Path("logs/metrics.db")
+ORDERS_DB = Path("logs/orders.db")
+SIGNALS_DB = Path("logs/signals.db")
 
 
 def _load_latest_metric(metric: str) -> Optional[float]:
@@ -40,6 +42,40 @@ def _load_latest_metric(metric: str) -> Optional[float]:
         if not row:
             return None
         return float(row[0])
+    except Exception:
+        return None
+
+
+def _load_last_orders(limit: int = 5) -> list[dict]:
+    if not ORDERS_DB.exists():
+        return []
+    try:
+        con = sqlite3.connect(ORDERS_DB)
+        con.row_factory = sqlite3.Row
+        cur = con.execute(
+            "SELECT ts, pocket, side, units, status, client_order_id "
+            "FROM orders ORDER BY ts DESC LIMIT ?",
+            (limit,),
+        )
+        rows = [dict(r) for r in cur.fetchall()]
+        con.close()
+        return rows
+    except Exception:
+        return []
+
+
+def _load_last_signal_ts_ms() -> Optional[int]:
+    if not SIGNALS_DB.exists():
+        return None
+    try:
+        con = sqlite3.connect(SIGNALS_DB)
+        cur = con.execute("SELECT max(ts_ms) FROM signals")
+        row = cur.fetchone()
+        con.close()
+        if not row:
+            return None
+        val = row[0]
+        return int(val) if val is not None else None
     except Exception:
         return None
 
@@ -85,6 +121,12 @@ def _run_cycle(
                 metrics["data_lag_ms"] = data_lag_ms
             if decision_latency_ms is not None:
                 metrics["decision_latency_ms"] = decision_latency_ms
+            last_orders = _load_last_orders()
+            if last_orders:
+                metrics["orders_last"] = last_orders
+            last_signal_ts = _load_last_signal_ts_ms()
+            if last_signal_ts is not None:
+                metrics["signals_last_ts_ms"] = last_signal_ts
         try:
             gcs_publisher.publish_snapshot(
                 new_trades=new_trades,
