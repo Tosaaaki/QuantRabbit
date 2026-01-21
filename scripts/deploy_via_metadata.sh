@@ -94,7 +94,7 @@ LOG_FILE="/var/log/quantrabbit-startup.log"
 if [[ -w /dev/ttyS0 ]]; then
   exec > >(tee -a "\$LOG_FILE" /dev/ttyS0) 2>&1
 else
-  exec >>"\$LOG_FILE" 2>&1
+  exec > >(tee -a "\$LOG_FILE") 2>&1
 fi
 DEPLOY_ID="$DEPLOY_ID"
 REPO_DIR="$REPO_DIR"
