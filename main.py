@@ -203,6 +203,15 @@ def _check_tick_silence_watchdog(data_lag_ms: Optional[float]) -> None:
                 TICK_SILENCE_RESTART_STRIKES,
             )
             raise SystemExit("tick_silence_watchdog")
+
+
+async def _run_blocking(func, *args):
+    """Run blocking calls without stalling the event loop."""
+    try:
+        return await asyncio.to_thread(func, *args)
+    except AttributeError:
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(None, lambda: func(*args))
 # Trading from main is enabled alongside workers for higher entry density.
 # 内蔵ストラテジーはデフォルト停止。動かす場合は環境変数で明示的にONにする。
 MAIN_TRADING_ENABLED = _env_bool("MAIN_TRADING_ENABLED", default=False)
@@ -4715,7 +4724,7 @@ async def logic_loop(
                         "[GPT] unavailable and fallback disabled; skipping entries this loop"
                     )
                     try:
-                        pos_manager.sync_trades()
+                        await _run_blocking(pos_manager.sync_trades)
                     except Exception:
                         pass
                     decision_latency_ms = max(0.0, (time.monotonic() - loop_start_mono) * 1000.0)
@@ -8954,7 +8963,7 @@ async def logic_loop(
                     last_close_m1 = close_px_value
             except Exception:
                 pass
-            pos_manager.sync_trades()
+            await _run_blocking(pos_manager.sync_trades)
 
             decision_latency_ms = max(0.0, (time.monotonic() - loop_start_mono) * 1000.0)
             if gpt_timed_out:

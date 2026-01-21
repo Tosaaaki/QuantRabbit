@@ -194,7 +194,9 @@ def _configure_sqlite(con: sqlite3.Connection) -> sqlite3.Connection:
 
 
 def _open_trades_db() -> sqlite3.Connection:
-    con = sqlite3.connect(_DB, timeout=_DB_BUSY_TIMEOUT_MS / 1000)
+    con = sqlite3.connect(
+        _DB, timeout=_DB_BUSY_TIMEOUT_MS / 1000, check_same_thread=False
+    )
     con.row_factory = sqlite3.Row
     return _configure_sqlite(con)
 

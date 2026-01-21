@@ -14,6 +14,7 @@ Usage: scripts/deploy_via_metadata.sh [options]
   -s <SERVICE>       systemd service (default: quantrabbit.service)
   -i                Install requirements in remote .venv (if exists)
   -r                Run health report after restart (serial output)
+  -e <ENV_FILE>      Local env overrides file (default: local/vm_env_overrides.env)
   -K <SA_KEYFILE>    Service Account JSON key (optional)
   -A <SA_ACCOUNT>    Service Account email to impersonate (optional)
 USAGE
@@ -32,10 +33,11 @@ REPO_DIR="/home/tossaki/QuantRabbit"
 SERVICE="quantrabbit.service"
 INSTALL_DEPS=0
 RUN_REPORT=0
+ENV_FILE="local/vm_env_overrides.env"
 SA_KEYFILE=""
 SA_IMPERSONATE=""
 
-while getopts ":p:z:m:b:d:s:irK:A:" opt; do
+while getopts ":p:z:m:b:d:s:ire:K:A:" opt; do
   case "$opt" in
     p) PROJECT="$OPTARG" ;;
     z) ZONE="$OPTARG" ;;
@@ -45,6 +47,7 @@ while getopts ":p:z:m:b:d:s:irK:A:" opt; do
     s) SERVICE="$OPTARG" ;;
     i) INSTALL_DEPS=1 ;;
     r) RUN_REPORT=1 ;;
+    e) ENV_FILE="$OPTARG" ;;
     K) SA_KEYFILE="$OPTARG" ;;
     A) SA_IMPERSONATE="$OPTARG" ;;
     :) echo "Option -$OPTARG requires an argument" >&2; usage; exit 2 ;;
@@ -79,10 +82,20 @@ fi
 DEPLOY_ID="$(date -u +%Y%m%dT%H%M%SZ)"
 TMP_SCRIPT="$(mktemp)"
 trap 'rm -f "$TMP_SCRIPT"' EXIT
+ENV_OVERRIDES_CONTENT=""
+if [[ -n "${ENV_FILE}" && -f "${ENV_FILE}" ]]; then
+  ENV_OVERRIDES_CONTENT="$(sed -e 's/\\/\\\\/g' -e 's/`/\\`/g' -e 's/\\$/\\$/g' "${ENV_FILE}")"
+fi
 
 cat > "$TMP_SCRIPT" <<EOF
 #!/usr/bin/env bash
 set -euo pipefail
+LOG_FILE="/var/log/quantrabbit-startup.log"
+if [[ -w /dev/ttyS0 ]]; then
+  exec > >(tee -a "\$LOG_FILE" /dev/ttyS0) 2>&1
+else
+  exec >>"\$LOG_FILE" 2>&1
+fi
 DEPLOY_ID="$DEPLOY_ID"
 REPO_DIR="$REPO_DIR"
 BRANCH="$BRANCH"
@@ -93,6 +106,7 @@ REPO_OWNER="\$(basename "\$(dirname "\$REPO_DIR")")"
 STAMP_DIR="/var/lib/quantrabbit"
 STAMP_FILE="\$STAMP_DIR/deploy_id"
 
+echo "[startup] deploy_id=\$DEPLOY_ID branch=\$BRANCH repo=\$REPO_DIR service=\$SERVICE"
 mkdir -p "\$STAMP_DIR"
 if [[ -f "\$STAMP_FILE" ]] && [[ "\$(cat "\$STAMP_FILE")" == "\$DEPLOY_ID" ]]; then
   echo "[startup] deploy_id already applied: \$DEPLOY_ID"
@@ -100,11 +114,35 @@ if [[ -f "\$STAMP_FILE" ]] && [[ "\$(cat "\$STAMP_FILE")" == "\$DEPLOY_ID" ]]; t
 fi
 echo "\$DEPLOY_ID" > "\$STAMP_FILE"
 
+if [[ -n "${ENV_OVERRIDES_CONTENT}" ]]; then
+  echo "[startup] applying env overrides from ${ENV_FILE}"
+  cat > /tmp/qr_env_overrides <<EOF_OVR
+${ENV_OVERRIDES_CONTENT}
+EOF_OVR
+  touch /etc/quantrabbit.env
+  cp /etc/quantrabbit.env "/etc/quantrabbit.env.bak.\$DEPLOY_ID" || true
+  while IFS= read -r line; do
+    trimmed="\${line%%#*}"
+    trimmed="\$(echo "\$trimmed" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
+    [[ -z "\$trimmed" ]] && continue
+    key="\${trimmed%%=*}"
+    if grep -q "^\\\${key}=" /etc/quantrabbit.env; then
+      sed -i "s|^\\\${key}=.*|\\\${trimmed}|" /etc/quantrabbit.env
+    else
+      echo "\$trimmed" >> /etc/quantrabbit.env
+    fi
+  done < /tmp/qr_env_overrides
+fi
+
 if [[ ! -d "\$REPO_DIR/.git" ]]; then
+  echo "[startup] cloning repo"
   sudo -u "\$REPO_OWNER" -H bash -lc "git clone https://github.com/Tosaaaki/QuantRabbit.git \"\$REPO_DIR\""
 fi
 
-sudo -u "\$REPO_OWNER" -H bash -lc "cd \"\$REPO_DIR\" && git fetch --all -q || true && git checkout -q \"\$BRANCH\" || git checkout -b \"\$BRANCH\" \"origin/\$BRANCH\" || true && git pull --ff-only -q || true"
+sudo -u "\$REPO_OWNER" -H bash -lc "cd \"\$REPO_DIR\" && git fetch --all -q"
+sudo -u "\$REPO_OWNER" -H bash -lc "cd \"\$REPO_DIR\" && git checkout -q \"\$BRANCH\" || git checkout -b \"\$BRANCH\" \"origin/\$BRANCH\" || true"
+sudo -u "\$REPO_OWNER" -H bash -lc "cd \"\$REPO_DIR\" && git pull --ff-only -q || true"
+sudo -u "\$REPO_OWNER" -H bash -lc "cd \"\$REPO_DIR\" && echo \"[startup] git_rev=\$(git rev-parse --short HEAD)\""
 
 if [[ -f "\$REPO_DIR/scripts/ssh_watchdog.sh" ]]; then
   bash "\$REPO_DIR/scripts/install_trading_services.sh" --repo "\$REPO_DIR" --units "quant-ssh-watchdog.service quant-ssh-watchdog.timer quant-health-snapshot.service quant-health-snapshot.timer quant-bq-sync.service"
