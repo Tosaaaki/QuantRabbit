@@ -84,6 +84,18 @@ def _build_snapshot() -> dict[str, Any]:
     return snapshot
 
 
+def _write_local(snapshot: dict[str, Any]) -> None:
+    logs_dir = Path("/home/tossaki/QuantRabbit/logs")
+    try:
+        logs_dir.mkdir(parents=True, exist_ok=True)
+        (logs_dir / "health_snapshot.json").write_text(
+            json.dumps(snapshot, ensure_ascii=True, separators=(",", ":")),
+            encoding="utf-8",
+        )
+    except Exception:
+        pass
+
+
 def main() -> None:
     bucket_name = _load_bucket_name()
     if not bucket_name:
@@ -99,6 +111,7 @@ def main() -> None:
         object_path = f"realtime/health_{socket.gethostname()}.json"
 
     snapshot = _build_snapshot()
+    _write_local(snapshot)
     try:
         client = storage.Client(project=project_id) if project_id else storage.Client()
         bucket = client.bucket(bucket_name)

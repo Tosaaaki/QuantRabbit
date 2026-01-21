@@ -219,6 +219,7 @@ gcloud compute ssh fx-trader-vm --project=quantrabbit --zone=asia-northeast1-a -
   - 監視: `systemd/quant-health-snapshot.timer`（5分間隔）→ `scripts/publish_health_snapshot.py`
   - 出力先: `ui_bucket_name` 優先、未設定なら `GCS_BACKUP_BUCKET`（`HEALTH_OBJECT_PATH` で上書き）
   - 取得例: `gcloud storage cat gs://<bucket>/<object>`
+  - ローカル: `/home/tossaki/QuantRabbit/logs/health_snapshot.json` にも保存（バックアップ対象）
 - OS Login 権限不足時は `roles/compute.osAdminLogin` を付与（検証: `sudo -n true && echo SUDO_OK`）。本番 VM `fx-trader-vm` は原則 `main` ブランチ稼働。スタッシュ/未コミットはブランチ切替前に解消。
 - VM 削除禁止。再起動やブランチ切替で代替し、`gcloud compute instances delete` 等には触れない。
 

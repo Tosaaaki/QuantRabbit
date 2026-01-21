@@ -117,6 +117,10 @@ fi
 systemctl restart "\$SERVICE"
 systemctl is-active "\$SERVICE" || systemctl status --no-pager -l "\$SERVICE" || true
 
+if systemctl list-unit-files --type=service | grep -q '^quant-health-snapshot\\.service'; then
+  systemctl start quant-health-snapshot.service || true
+fi
+
 if [[ "\$RUN_REPORT" == "1" && -f "\$REPO_DIR/scripts/report_vm_health.sh" ]]; then
   bash "\$REPO_DIR/scripts/report_vm_health.sh" || true
 fi
