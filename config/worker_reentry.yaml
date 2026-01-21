@@ -1,7 +1,7 @@
 defaults:
   cooldown_win_sec: 30
   cooldown_loss_sec: 60
-  same_dir_reentry_pips: 0.8
+  same_dir_reentry_pips: 0.4
   allow_jst_hours: []
   block_jst_hours: []
   return_wait_bias: neutral
@@ -43,7 +43,7 @@ strategies:
   M1Scalper:
     cooldown_win_sec: 60
     cooldown_loss_sec: 120
-    same_dir_reentry_pips: 0.7
+    same_dir_reentry_pips: 0.3
     max_open_trades: 3
     max_open_adverse_pips: 40.0
     max_open_trades_hard: 10
@@ -51,6 +51,11 @@ strategies:
     stack_reentry_require_tech: true
     stack_reentry_tech_min_score: 0.05
     return_wait_bias: avoid
+  fast_scalp:
+    cooldown_win_sec: 20
+    cooldown_loss_sec: 40
+    same_dir_reentry_pips: 0.35
+    return_wait_bias: neutral
   RangeFader:
     cooldown_win_sec: 20
     cooldown_loss_sec: 45
