@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import logging
 import shutil
 import signal
@@ -64,6 +65,25 @@ def _load_last_orders(limit: int = 5) -> list[dict]:
         return []
 
 
+def _load_order_status_counts(limit: int = 8, hours: int = 1) -> list[dict]:
+    if not ORDERS_DB.exists():
+        return []
+    try:
+        con = sqlite3.connect(ORDERS_DB)
+        con.row_factory = sqlite3.Row
+        cur = con.execute(
+            "SELECT status, count(*) AS count FROM orders "
+            "WHERE ts >= datetime('now', ?) "
+            "GROUP BY status ORDER BY count DESC LIMIT ?",
+            (f"-{int(hours)} hour", int(limit)),
+        )
+        rows = [dict(r) for r in cur.fetchall()]
+        con.close()
+        return rows
+    except Exception:
+        return []
+
+
 def _load_last_signal_ts_ms() -> Optional[int]:
     if not SIGNALS_DB.exists():
         return None
@@ -76,6 +96,58 @@ def _load_last_signal_ts_ms() -> Optional[int]:
             return None
         val = row[0]
         return int(val) if val is not None else None
+    except Exception:
+        return None
+
+
+def _load_recent_signals(limit: int = 5) -> list[dict]:
+    if not SIGNALS_DB.exists():
+        return []
+    try:
+        con = sqlite3.connect(SIGNALS_DB)
+        cur = con.execute(
+            "SELECT ts_ms, payload FROM signals ORDER BY ts_ms DESC LIMIT ?",
+            (int(limit),),
+        )
+        rows: list[dict] = []
+        for ts_ms, payload in cur.fetchall():
+            item: dict = {"ts_ms": ts_ms}
+            try:
+                data = json.loads(payload)
+            except Exception:
+                data = None
+            if isinstance(data, dict):
+                for key in (
+                    "pocket",
+                    "strategy",
+                    "confidence",
+                    "action",
+                    "client_order_id",
+                    "proposed_units",
+                ):
+                    if key in data:
+                        item[key] = data[key]
+            rows.append(item)
+        con.close()
+        return rows
+    except Exception:
+        return []
+
+
+def _load_last_metric_ts(metric: str) -> Optional[str]:
+    if not METRICS_DB.exists():
+        return None
+    try:
+        con = sqlite3.connect(METRICS_DB)
+        cur = con.execute(
+            "SELECT ts FROM metrics WHERE metric = ? ORDER BY ts DESC LIMIT 1",
+            (metric,),
+        )
+        row = cur.fetchone()
+        con.close()
+        if not row:
+            return None
+        return str(row[0]) if row[0] is not None else None
     except Exception:
         return None
 
@@ -124,9 +196,18 @@ def _run_cycle(
             last_orders = _load_last_orders()
             if last_orders:
                 metrics["orders_last"] = last_orders
+            status_counts = _load_order_status_counts()
+            if status_counts:
+                metrics["orders_status_1h"] = status_counts
             last_signal_ts = _load_last_signal_ts_ms()
             if last_signal_ts is not None:
                 metrics["signals_last_ts_ms"] = last_signal_ts
+            recent_signals = _load_recent_signals()
+            if recent_signals:
+                metrics["signals_recent"] = recent_signals
+            healthbeat_ts = _load_last_metric_ts("healthbeat")
+            if healthbeat_ts:
+                metrics["healthbeat_ts"] = healthbeat_ts
         try:
             gcs_publisher.publish_snapshot(
                 new_trades=new_trades,
