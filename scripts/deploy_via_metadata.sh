@@ -68,9 +68,9 @@ if [[ -z "$ACTIVE_ACCOUNT" && -n "$SA_KEYFILE" ]]; then
   gcloud auth activate-service-account --key-file "$SA_KEYFILE"
 fi
 
-GCLOUD_ARGS=()
+IMPERSONATE_ARG=""
 if [[ -n "$SA_IMPERSONATE" ]]; then
-  GCLOUD_ARGS+=("--impersonate-service-account=$SA_IMPERSONATE")
+  IMPERSONATE_ARG="--impersonate-service-account=$SA_IMPERSONATE"
 fi
 
 DEPLOY_ID="$(date -u +%Y%m%dT%H%M%SZ)"
@@ -112,10 +112,10 @@ EOF
 
 echo "[deploy-meta] Applying startup-script metadata (deploy_id=$DEPLOY_ID)"
 gcloud compute instances add-metadata "$INSTANCE" \
-  --project "$PROJECT" --zone "$ZONE" "${GCLOUD_ARGS[@]}" \
+  --project "$PROJECT" --zone "$ZONE" ${IMPERSONATE_ARG} \
   --metadata-from-file startup-script="$TMP_SCRIPT"
 
 echo "[deploy-meta] Resetting instance to run startup-script"
-gcloud compute instances reset "$INSTANCE" --project "$PROJECT" --zone "$ZONE" "${GCLOUD_ARGS[@]}"
+gcloud compute instances reset "$INSTANCE" --project "$PROJECT" --zone "$ZONE" ${IMPERSONATE_ARG}
 
 echo "[deploy-meta] Done. When SSH/IAP recovers, tail logs via journalctl."
