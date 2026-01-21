@@ -228,6 +228,7 @@ gcloud compute ssh fx-trader-vm --project=quantrabbit --zone=asia-northeast1-a -
   - 確認: `gcloud compute instances get-serial-port-output fx-trader-vm --zone=asia-northeast1-a --project=quantrabbit --port=1 | rg 'startup-script|deploy_id'`
   - SSH 自己回復: `quant-ssh-watchdog.timer` が `ssh/sshd` と `google-guest-agent` を 1 分ごとに再起動監視
   - ヘルス可視化: `quant-health-snapshot.timer` が `/home/tossaki/QuantRabbit/logs/health_snapshot.json` を更新し、`ui_bucket_name`（未設定なら `GCS_BACKUP_BUCKET`）の `realtime/health_<hostname>.json` へ送信
+  - まだ復帰しない場合: cloud-init の `user-data` で openssh/guest-agent を再投入 → `gcloud compute instances add-metadata fx-trader-vm --project=quantrabbit --zone=asia-northeast1-a --metadata-from-file user-data=local/cloudinit_ssh_repair.yaml` → reset
 
 ### 9.1 GCP 基盤/VM（API・IAM・ネットワーク）
 - 有効化 API: `compute.googleapis.com` / `storage.googleapis.com` / `secretmanager.googleapis.com` / `logging.googleapis.com`（任意: `bigquery.googleapis.com`, Firestore 使用時は Firestore API）
