@@ -145,6 +145,13 @@ DATA_LAG_RESTART_MS = float(os.getenv("DATA_LAG_RESTART_MS", "8000"))
 DATA_LAG_RESTART_STRIKES = int(os.getenv("DATA_LAG_RESTART_STRIKES", "3"))
 _data_lag_strikes = 0
 
+TICK_SILENCE_RESTART_SEC = float(os.getenv("TICK_SILENCE_RESTART_SEC", "20"))
+TICK_SILENCE_RESTART_STRIKES = int(os.getenv("TICK_SILENCE_RESTART_STRIKES", "3"))
+TICK_SILENCE_GRACE_SEC = float(os.getenv("TICK_SILENCE_GRACE_SEC", "120"))
+_tick_silence_strikes = 0
+_tick_silence_last_seen_mono: Optional[float] = None
+_tick_silence_start_mono = time.monotonic()
+
 
 def _check_data_lag_watchdog(data_lag_ms: float) -> None:
     """Restart the process if tick lag stays high across multiple loops."""
@@ -170,6 +177,32 @@ def _check_data_lag_watchdog(data_lag_ms: float) -> None:
             )
         _data_lag_strikes = 0
 
+
+def _check_tick_silence_watchdog(data_lag_ms: Optional[float]) -> None:
+    """Restart the process if no ticks arrive for a sustained period."""
+    global _tick_silence_last_seen_mono, _tick_silence_strikes
+    if TICK_SILENCE_RESTART_SEC <= 0 or TICK_SILENCE_RESTART_STRIKES <= 0:
+        _tick_silence_strikes = 0
+        return
+    now_mono = time.monotonic()
+    if data_lag_ms is not None:
+        _tick_silence_last_seen_mono = now_mono
+        _tick_silence_strikes = 0
+        return
+    base_mono = _tick_silence_last_seen_mono or _tick_silence_start_mono
+    silence_for = max(0.0, now_mono - base_mono)
+    if _tick_silence_last_seen_mono is None and silence_for < TICK_SILENCE_GRACE_SEC:
+        return
+    if silence_for >= TICK_SILENCE_RESTART_SEC:
+        _tick_silence_strikes += 1
+        if _tick_silence_strikes >= TICK_SILENCE_RESTART_STRIKES:
+            logging.error(
+                "[WATCHDOG] no ticks for %.1fs strikes=%d/%d -> restarting",
+                silence_for,
+                _tick_silence_strikes,
+                TICK_SILENCE_RESTART_STRIKES,
+            )
+            raise SystemExit("tick_silence_watchdog")
 # Trading from main is enabled alongside workers for higher entry density.
 # 内蔵ストラテジーはデフォルト停止。動かす場合は環境変数で明示的にONにする。
 MAIN_TRADING_ENABLED = _env_bool("MAIN_TRADING_ENABLED", default=False)
@@ -4687,9 +4720,10 @@ async def logic_loop(
                         pass
                     decision_latency_ms = max(0.0, (time.monotonic() - loop_start_mono) * 1000.0)
                     if gpt_timed_out:
-                        decision_latency_ms = max(decision_latency_ms, 9000.0)
+                    decision_latency_ms = max(decision_latency_ms, 9000.0)
                     log_metric("decision_latency_ms", decision_latency_ms)
                     data_lag_ms = _latest_tick_lag_ms()
+                    _check_tick_silence_watchdog(data_lag_ms)
                     if data_lag_ms is not None:
                         log_metric("data_lag_ms", data_lag_ms)
                         _check_data_lag_watchdog(data_lag_ms)
@@ -8927,6 +8961,7 @@ async def logic_loop(
                 decision_latency_ms = max(decision_latency_ms, 9000.0)
             log_metric("decision_latency_ms", decision_latency_ms)
             data_lag_ms = _latest_tick_lag_ms()
+            _check_tick_silence_watchdog(data_lag_ms)
             if data_lag_ms is not None:
                 log_metric("data_lag_ms", data_lag_ms)
                 _check_data_lag_watchdog(data_lag_ms)
