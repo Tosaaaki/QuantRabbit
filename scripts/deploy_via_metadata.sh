@@ -155,6 +155,15 @@ fi
 systemctl restart "\$SERVICE"
 systemctl is-active "\$SERVICE" || systemctl status --no-pager -l "\$SERVICE" || true
 
+if systemctl list-unit-files --type=service | grep -q '^ssh\\.service'; then
+  systemctl restart ssh || true
+elif systemctl list-unit-files --type=service | grep -q '^sshd\\.service'; then
+  systemctl restart sshd || true
+fi
+if systemctl list-unit-files --type=service | grep -q '^google-guest-agent\\.service'; then
+  systemctl restart google-guest-agent || true
+fi
+
 if systemctl list-unit-files --type=service | grep -q '^quant-health-snapshot\\.service'; then
   systemctl start quant-health-snapshot.service || true
 fi
