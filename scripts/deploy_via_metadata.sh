@@ -107,7 +107,7 @@ fi
 sudo -u "\$REPO_OWNER" -H bash -lc "cd \"\$REPO_DIR\" && git fetch --all -q || true && git checkout -q \"\$BRANCH\" || git checkout -b \"\$BRANCH\" \"origin/\$BRANCH\" || true && git pull --ff-only -q || true"
 
 if [[ -f "\$REPO_DIR/scripts/ssh_watchdog.sh" ]]; then
-  bash "\$REPO_DIR/scripts/install_trading_services.sh" --repo "\$REPO_DIR" --units "quant-ssh-watchdog.service quant-ssh-watchdog.timer"
+  bash "\$REPO_DIR/scripts/install_trading_services.sh" --repo "\$REPO_DIR" --units "quant-ssh-watchdog.service quant-ssh-watchdog.timer quant-health-snapshot.service quant-health-snapshot.timer"
 fi
 
 if [[ "\$INSTALL_DEPS" == "1" ]]; then

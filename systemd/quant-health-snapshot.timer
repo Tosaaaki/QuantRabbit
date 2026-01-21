@@ -1,0 +1,11 @@
+[Unit]
+Description=QuantRabbit health snapshot timer
+
+[Timer]
+OnBootSec=3min
+OnUnitActiveSec=5min
+AccuracySec=30s
+Unit=quant-health-snapshot.service
+
+[Install]
+WantedBy=timers.target
