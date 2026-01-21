@@ -11,6 +11,7 @@ import sys
 import time
 from pathlib import Path
 from typing import Optional
+import sqlite3
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
@@ -22,6 +23,25 @@ from analytics.lot_pattern_analyzer import LotPatternAnalyzer
 from execution.position_manager import PositionManager
 
 LOG_FILE = Path("logs/pipeline.log")
+METRICS_DB = Path("logs/metrics.db")
+
+
+def _load_latest_metric(metric: str) -> Optional[float]:
+    if not METRICS_DB.exists():
+        return None
+    try:
+        con = sqlite3.connect(METRICS_DB)
+        cur = con.execute(
+            "SELECT value FROM metrics WHERE metric = ? ORDER BY ts DESC LIMIT 1",
+            (metric,),
+        )
+        row = cur.fetchone()
+        con.close()
+        if not row:
+            return None
+        return float(row[0])
+    except Exception:
+        return None
 
 
 def _setup_logging(verbose: bool) -> None:
@@ -58,6 +78,13 @@ def _run_cycle(
             open_positions = {}
         recent_trades = pm.fetch_recent_trades(limit=ui_recent)
         metrics = pm.get_performance_summary()
+        if isinstance(metrics, dict):
+            data_lag_ms = _load_latest_metric("data_lag_ms")
+            decision_latency_ms = _load_latest_metric("decision_latency_ms")
+            if data_lag_ms is not None:
+                metrics["data_lag_ms"] = data_lag_ms
+            if decision_latency_ms is not None:
+                metrics["decision_latency_ms"] = decision_latency_ms
         try:
             gcs_publisher.publish_snapshot(
                 new_trades=new_trades,
