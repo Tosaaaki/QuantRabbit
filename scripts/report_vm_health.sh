@@ -5,20 +5,26 @@ SERIAL_OUT=""
 if [[ -w /dev/ttyS0 ]]; then
   SERIAL_OUT="/dev/ttyS0"
 fi
+LOGGER_TAG="qr-health"
+HAS_LOGGER=0
+if command -v logger >/dev/null 2>&1; then
+  HAS_LOGGER=1
+fi
 
 emit() {
   echo "$*"
   if [[ -n "$SERIAL_OUT" ]]; then
     echo "$*" >"$SERIAL_OUT" || true
   fi
+  if [[ "$HAS_LOGGER" -eq 1 ]]; then
+    logger -t "$LOGGER_TAG" -- "$*" || true
+  fi
 }
 
 emit_block() {
-  if [[ -n "$SERIAL_OUT" ]]; then
-    tee -a "$SERIAL_OUT"
-  else
-    cat
-  fi
+  while IFS= read -r line; do
+    emit "$line"
+  done
 }
 
 ts="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
