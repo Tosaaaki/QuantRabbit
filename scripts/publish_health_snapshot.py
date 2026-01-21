@@ -12,7 +12,10 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
 
-from google.cloud import storage
+try:
+    from google.cloud import storage
+except Exception:  # pragma: no cover - fallback to CLI upload
+    storage = None
 
 from utils.secrets import get_secret
 
@@ -98,6 +101,28 @@ def _git_rev(repo_dir: Path) -> Optional[str]:
         return None
     output = _run_cmd(["git", "-C", str(repo_dir), "rev-parse", "--short", "HEAD"])
     return output.strip() if output else None
+
+
+def _upload_via_cli(bucket: str, object_path: str, payload: str) -> bool:
+    target = f"gs://{bucket}/{object_path}"
+    for cmd in (["gcloud", "storage", "cp", "-", target], ["gsutil", "cp", "-", target]):
+        if not shutil.which(cmd[0]):
+            continue
+        try:
+            proc = subprocess.run(
+                cmd,
+                input=payload,
+                text=True,
+                capture_output=True,
+                timeout=10.0,
+                check=False,
+            )
+        except Exception:
+            continue
+        if proc.returncode == 0:
+            logging.info("[HEALTH] snapshot uploaded via %s -> %s", cmd[0], target)
+            return True
+    return False
 
 
 def _load_bucket_name() -> Optional[str]:
@@ -198,20 +223,20 @@ def main() -> None:
 
     snapshot = _build_snapshot()
     _write_local(snapshot)
+    payload = json.dumps(snapshot, ensure_ascii=True, separators=(",", ":"))
     try:
+        if storage is None:
+            raise RuntimeError("google-cloud-storage not available")
         client = storage.Client(project=project_id) if project_id else storage.Client()
         bucket = client.bucket(bucket_name)
         blob = bucket.blob(object_path)
         blob.cache_control = "no-cache"
-        blob.upload_from_string(
-            json.dumps(snapshot, ensure_ascii=True, separators=(",", ":")),
-            content_type="application/json",
-        )
-        logging.info(
-            "[HEALTH] snapshot uploaded bucket=%s object=%s", bucket_name, object_path
-        )
+        blob.upload_from_string(payload, content_type="application/json")
+        logging.info("[HEALTH] snapshot uploaded bucket=%s object=%s", bucket_name, object_path)
+        return
     except Exception as exc:  # noqa: BLE001
         logging.warning("[HEALTH] upload failed: %s", exc)
+    _upload_via_cli(bucket_name, object_path, payload)
 
 
 if __name__ == "__main__":
