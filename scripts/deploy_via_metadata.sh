@@ -139,10 +139,23 @@ if [[ ! -d "\$REPO_DIR/.git" ]]; then
   sudo -u "\$REPO_OWNER" -H bash -lc "git clone https://github.com/Tosaaaki/QuantRabbit.git \"\$REPO_DIR\""
 fi
 
-sudo -u "\$REPO_OWNER" -H bash -lc "cd \"\$REPO_DIR\" && git fetch --all -q"
-sudo -u "\$REPO_OWNER" -H bash -lc "cd \"\$REPO_DIR\" && git checkout -q \"\$BRANCH\" || git checkout -b \"\$BRANCH\" \"origin/\$BRANCH\" || true"
-sudo -u "\$REPO_OWNER" -H bash -lc "cd \"\$REPO_DIR\" && git pull --ff-only -q || true"
-sudo -u "\$REPO_OWNER" -H bash -lc "cd \"\$REPO_DIR\" && echo \"[startup] git_rev=\$(git rev-parse --short HEAD)\""
+git_ok=1
+if ! sudo -u "\$REPO_OWNER" -H bash -lc "cd \"\$REPO_DIR\" && git fetch --all -q"; then
+  echo "[startup] git fetch failed"
+  git_ok=0
+fi
+if ! sudo -u "\$REPO_OWNER" -H bash -lc "cd \"\$REPO_DIR\" && git checkout -q \"\$BRANCH\" || git checkout -b \"\$BRANCH\" \"origin/\$BRANCH\""; then
+  echo "[startup] git checkout failed"
+  git_ok=0
+fi
+if ! sudo -u "\$REPO_OWNER" -H bash -lc "cd \"\$REPO_DIR\" && git pull --ff-only -q"; then
+  echo "[startup] git pull failed"
+  git_ok=0
+fi
+sudo -u "\$REPO_OWNER" -H bash -lc "cd \"\$REPO_DIR\" && echo \"[startup] git_rev=\$(git rev-parse --short HEAD 2>/dev/null || echo unknown)\""
+if [[ "\$git_ok" -ne 1 ]]; then
+  echo "[startup] git update failed; continuing with existing code"
+fi
 
 if [[ -f "\$REPO_DIR/scripts/ssh_watchdog.sh" ]]; then
   bash "\$REPO_DIR/scripts/install_trading_services.sh" --repo "\$REPO_DIR" --units "quant-ssh-watchdog.service quant-ssh-watchdog.timer quant-health-snapshot.service quant-health-snapshot.timer quant-bq-sync.service"
@@ -155,13 +168,28 @@ fi
 systemctl restart "\$SERVICE"
 systemctl is-active "\$SERVICE" || systemctl status --no-pager -l "\$SERVICE" || true
 
+if ! systemctl list-unit-files --type=service | grep -q '^ssh\\.service\\|^sshd\\.service'; then
+  if command -v apt-get >/dev/null 2>&1; then
+    echo "[startup] installing openssh-server"
+    apt-get update -y || true
+    apt-get install -y openssh-server || true
+  fi
+fi
 if systemctl list-unit-files --type=service | grep -q '^ssh\\.service'; then
+  systemctl unmask ssh || true
+  systemctl enable ssh || true
   systemctl restart ssh || true
 elif systemctl list-unit-files --type=service | grep -q '^sshd\\.service'; then
+  systemctl unmask sshd || true
+  systemctl enable sshd || true
   systemctl restart sshd || true
 fi
 if systemctl list-unit-files --type=service | grep -q '^google-guest-agent\\.service'; then
+  systemctl unmask google-guest-agent || true
   systemctl restart google-guest-agent || true
+fi
+if command -v ufw >/dev/null 2>&1 && ufw status | grep -q '^Status: active'; then
+  ufw allow 22/tcp || true
 fi
 
 if systemctl list-unit-files --type=service | grep -q '^quant-health-snapshot\\.service'; then
@@ -169,6 +197,10 @@ if systemctl list-unit-files --type=service | grep -q '^quant-health-snapshot\\.
 fi
 if systemctl list-unit-files --type=service | grep -q '^quant-bq-sync\\.service'; then
   systemctl restart quant-bq-sync.service || true
+fi
+
+if [[ -f "\$REPO_DIR/scripts/run_health_snapshot.sh" ]]; then
+  bash "\$REPO_DIR/scripts/run_health_snapshot.sh" || true
 fi
 
 if [[ "\$RUN_REPORT" == "1" && -f "\$REPO_DIR/scripts/report_vm_health.sh" ]]; then
