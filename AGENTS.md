@@ -280,6 +280,8 @@ sudo -u <user> -H bash -lc '
 '
 ```
 
+- cloud-init 注意: `user-data` の `bootcmd` で長時間タスク（git/pip/サービス起動など）を走らせると、起動シーケンスが止まり SSH が立ち上がらないことがある。重い処理は systemd の oneshot/timer へ逃がし、詰まった場合は metadata の `user-data` を削除して `/var/lib/cloud/instances/*` と `/var/lib/cloud/sem` をクリア後に再起動する。
+
 - `config/env.toml` 最低限: `gcp_project_id`, `gcp_location`, `GCS_BACKUP_BUCKET`, `ui_bucket_name`, `BQ_PROJECT/BQ_DATASET/BQ_TRADES_TABLE`, `oanda_account_id`, `oanda_token`, `oanda_practice`, `openai_model_decider`  
   Secret Manager を使わない場合は `openai_api_key` を追加
 - デプロイは上記の `gcloud_doctor.sh` / `deploy_to_vm.sh` を使用
