@@ -161,8 +161,8 @@ if [[ "\$git_ok" -ne 1 ]]; then
   echo "[startup] git update failed; continuing with existing code"
 fi
 
-if [[ "\$git_ok" -ne 1 && -n "\$BUNDLE_GCS" ]]; then
-  echo "[startup] attempting bundle deploy from \$BUNDLE_GCS"
+if [[ -n "\$BUNDLE_GCS" ]]; then
+  echo "[startup] applying bundle deploy from \$BUNDLE_GCS"
   export BUNDLE_GCS
   tmp_bundle="/tmp/qr_bundle.tar.gz"
   if command -v gcloud >/dev/null 2>&1; then
