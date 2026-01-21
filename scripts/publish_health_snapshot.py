@@ -18,6 +18,7 @@ except Exception:  # pragma: no cover - fallback to CLI upload
     storage = None
 
 from utils.secrets import get_secret
+from utils.gcs_uploader import upload_json_via_metadata
 
 
 def _utcnow_iso() -> str:
@@ -346,7 +347,12 @@ def main() -> None:
         return
     except Exception as exc:  # noqa: BLE001
         logging.warning("[HEALTH] upload failed: %s", exc)
-    _upload_via_cli(bucket_name, object_path, payload)
+    if _upload_via_cli(bucket_name, object_path, payload):
+        return
+    if upload_json_via_metadata(
+        bucket_name, object_path, payload, cache_control="no-cache"
+    ):
+        logging.info("[HEALTH] snapshot uploaded via metadata bucket=%s", bucket_name)
 
 
 if __name__ == "__main__":

@@ -13,6 +13,7 @@ except Exception:  # pragma: no cover - fallback to CLI upload
     storage = None
 
 from utils.secrets import get_secret
+from utils.gcs_uploader import metadata_available, upload_json_via_metadata
 
 _DEFAULT_OBJECT = "realtime/ui_state.json"
 
@@ -29,6 +30,7 @@ class GCSRealtimePublisher:
         self._object_path = object_path or _DEFAULT_OBJECT
         self._bucket_name: str | None = None
         self._use_cli = False
+        self._use_metadata = False
         try:
             project_id = get_secret("gcp_project_id")
         except KeyError:
@@ -45,6 +47,7 @@ class GCSRealtimePublisher:
             self._bucket = None
             return
         self._bucket_name = bucket_name
+        self._use_metadata = metadata_available()
 
         try:
             if storage is None:
@@ -57,12 +60,14 @@ class GCSRealtimePublisher:
             self._bucket = None
             if shutil.which("gcloud") or shutil.which("gsutil"):
                 self._use_cli = True
-            else:
+            elif not self._use_metadata:
                 self._enabled = False
 
     @property
     def enabled(self) -> bool:
-        return self._enabled and (self._bucket is not None or self._use_cli)
+        return self._enabled and (
+            self._bucket is not None or self._use_cli or self._use_metadata
+        )
 
     def _upload_via_cli(self, payload: str) -> bool:
         if not self._bucket_name:
@@ -110,14 +115,26 @@ class GCSRealtimePublisher:
 
         serialized = json.dumps(payload, ensure_ascii=True, separators=(",", ":"))
         if self._bucket is not None:
-            blob = self._bucket.blob(self._object_path)
-            blob.cache_control = "no-cache"
-            blob.upload_from_string(serialized, content_type="application/json")
-            logging.info(
-                "[GCS] realtime snapshot uploaded: trades=%d recent=%d",
-                len(payload["new_trades"]),
-                len(payload["recent_trades"]),
-            )
-            return
+            try:
+                blob = self._bucket.blob(self._object_path)
+                blob.cache_control = "no-cache"
+                blob.upload_from_string(serialized, content_type="application/json")
+                logging.info(
+                    "[GCS] realtime snapshot uploaded: trades=%d recent=%d",
+                    len(payload["new_trades"]),
+                    len(payload["recent_trades"]),
+                )
+                return
+            except Exception as exc:  # noqa: BLE001
+                logging.warning("[GCS] realtime snapshot upload failed: %s", exc)
         if self._use_cli and self._upload_via_cli(serialized):
             return
+        if self._use_metadata and self._bucket_name:
+            if upload_json_via_metadata(
+                self._bucket_name,
+                self._object_path,
+                serialized,
+                cache_control="no-cache",
+            ):
+                logging.info("[GCS] realtime snapshot uploaded via metadata")
+                return
