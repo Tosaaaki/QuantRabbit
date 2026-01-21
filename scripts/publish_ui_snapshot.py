@@ -190,20 +190,16 @@ def main() -> int:
         if decision_latency_ms is not None:
             metrics["decision_latency_ms"] = decision_latency_ms
         last_orders = _load_last_orders()
-        if last_orders:
-            metrics["orders_last"] = last_orders
+        metrics["orders_last"] = last_orders
         status_counts = _load_order_status_counts()
-        if status_counts:
-            metrics["orders_status_1h"] = status_counts
+        metrics["orders_status_1h"] = status_counts
         last_signal_ts = _load_last_signal_ts_ms()
         if last_signal_ts is not None:
             metrics["signals_last_ts_ms"] = last_signal_ts
         recent_signals = _load_recent_signals()
-        if recent_signals:
-            metrics["signals_recent"] = recent_signals
+        metrics["signals_recent"] = recent_signals
         healthbeat_ts = _load_last_metric_ts("healthbeat")
-        if healthbeat_ts:
-            metrics["healthbeat_ts"] = healthbeat_ts
+        metrics["healthbeat_ts"] = healthbeat_ts
 
     try:
         gcs.publish_snapshot(
