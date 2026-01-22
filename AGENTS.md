@@ -115,7 +115,7 @@ class OrderIntent(BaseModel):
 ## 4. エントリー / Exit / リスク制御
 - Strategy フロー: Focus/GPT decision → `ranked_strategies` 順に Strategy Plugin を呼び、`StrategyDecision` または None を返す。`None` はノートレード。
 - Confidence スケーリング: `confidence`(0–100) を pocket 割当 lot に掛け、最小 0.2〜最大 1.0 の段階的エントリー。`STAGE_RATIOS` に従い `_stage_conditions_met` を通過したステージのみ追撃。
-- Exit: 各戦略の `exit_worker` が最低保有時間とテクニカル/レンジ判定を踏まえ、PnL>0 決済が原則（強制 DD/ヘルスのみ例外）。共通 `execution/exit_manager.py` は常に空を返す互換スタブ。`execution/stage_tracker` がクールダウンと方向別ブロックを管理。
+- Exit: 各戦略の `exit_worker` が最低保有時間とテクニカル/レンジ判定を踏まえ、PnL>0 決済が原則（強制 DD/ヘルス/マージン使用率/余力/未実現DDの総合判定のみ例外）。共通 `execution/exit_manager.py` は常に空を返す互換スタブ。`execution/stage_tracker` がクールダウンと方向別ブロックを管理。
 - エントリー詰まり対策（必要時のみ）: `ENTRY_TECH_FAILOPEN=1` で tech ブロック時に小ロットで通す（`ENTRY_TECH_FAILOPEN_MIN_SCORE`, `ENTRY_TECH_FAILOPEN_SIZE_MULT` で緩和幅を制御）
 - Release gate: PF>1.1、勝率>52%、最大 DD<5% を 2 週間連続で満たすと実弾へ昇格。
 - リスク計算とロット:
@@ -363,6 +363,8 @@ openai_max_month_tokens = "300000"
 - チームルール: 1 ファイル = 1 PR、Squash Merge、CI green。コード規約 black / ruff / mypy(optional)。秘匿情報は Git に置かない。Issue 管理: bug/feat/doc/ops ラベル。
 - タスク台帳: `docs/TASKS.md` を正本とし、Open→進行→Archive の流れで更新。テンプレート・Plan 記載済み。オンラインチューニング ToDo は `docs/autotune_taskboard.md` に追記し完了後アーカイブ。
 - ポジション問い合わせ対応: 直近ログを優先し最新建玉/サイズ/向き/TP/SL/時刻を即答。オープン無しなら「今はフラット」＋直近クローズ理由。サイズ異常時は決定した設定（`ORDER_MIN_UNITS_*` など）を明示。
+  - 損益報告は `sum(realized_pl)` (JPY) と `sum(pl_pips)` を必ず併記し、未実現損益は別枠で提示する。JPY がマイナスなら勝ち扱いしない。UTC/JST を明記する。
+  - マージン/エクスポージャは OANDA snapshot の total を使用し、手動玉を含めて確認する。
   - 代表コマンド:
     ```bash
     scripts/vm.sh -p quantrabbit -z asia-northeast1-a -m fx-trader-vm sql -f /home/tossaki/QuantRabbit/logs/trades.db -q "select ticket_id,pocket,client_order_id,units,entry_time,close_time,pl_pips from trades order by entry_time desc limit 5;" -t

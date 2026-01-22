@@ -34,6 +34,24 @@
 ```
 
 ## Open Tasks
+- [ ] ID: T-20260122-004
+  Title: 損切りの総合判定強化（exit_emergency のマージン/DD反映）
+  Status: in-progress
+  Priority: P1
+  Owner: codex
+  Scope/Paths: workers/common/exit_emergency.py, execution/order_manager.py, AGENTS.md, docs/TASKS.md
+  Context: negative close が health buffer だけで詰まり、損切り判断が総合的になっていない。損益報告の取り違えも再発防止する。
+  Acceptance:
+    - health buffer / free margin / margin usage / unrealized DD のいずれかで negative close を許可できる
+    - `exit_emergency_allow_negative` に理由タグが記録される
+    - AGENTS に損益報告ルールを追記する
+  Plan:
+    - exit_emergency に複合判定を追加する
+    - AGENTS の損益/マージン報告ルールを更新する
+    - デプロイ後に `orders.db` の `close_reject_no_negative` を監視する
+  Notes:
+    - 「停止なし」条件を維持する
+
 - [ ] ID: T-20260122-003
   Title: TP距離の異常拡大を抑止（signal gate/注文整合）
   Status: in-progress

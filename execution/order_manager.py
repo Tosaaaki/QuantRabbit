@@ -272,6 +272,15 @@ _EXIT_EMERGENCY_ALLOW_NEGATIVE = os.getenv("EXIT_EMERGENCY_ALLOW_NEGATIVE", "1")
 _EXIT_EMERGENCY_HEALTH_BUFFER = max(
     0.0, float(os.getenv("EXIT_EMERGENCY_HEALTH_BUFFER", "0.07"))
 )
+_EXIT_EMERGENCY_MARGIN_USAGE_RATIO = max(
+    0.0, float(os.getenv("EXIT_EMERGENCY_MARGIN_USAGE_RATIO", "0.92"))
+)
+_EXIT_EMERGENCY_FREE_MARGIN_RATIO = max(
+    0.0, float(os.getenv("EXIT_EMERGENCY_FREE_MARGIN_RATIO", "0.12"))
+)
+_EXIT_EMERGENCY_UNREALIZED_DD_RATIO = max(
+    0.0, float(os.getenv("EXIT_EMERGENCY_UNREALIZED_DD_RATIO", "0.06"))
+)
 _EXIT_EMERGENCY_CACHE_TTL_SEC = max(
     0.5, float(os.getenv("EXIT_EMERGENCY_CACHE_TTL_SEC", "2.0"))
 )
@@ -1089,24 +1098,49 @@ def _should_allow_negative_close(client_order_id: Optional[str]) -> bool:
         return False
     if not client_order_id or not client_order_id.startswith(agent_client_prefixes):
         return False
-    if _EXIT_EMERGENCY_HEALTH_BUFFER <= 0:
-        return False
     try:
         snapshot = get_account_snapshot(cache_ttl_sec=_EXIT_EMERGENCY_CACHE_TTL_SEC)
     except Exception as exc:  # noqa: BLE001
         logging.debug("[ORDER] emergency health check failed: %s", exc)
         return False
     hb = snapshot.health_buffer
-    if hb is None:
-        return False
-    if hb <= _EXIT_EMERGENCY_HEALTH_BUFFER:
+    free_ratio = snapshot.free_margin_ratio
+    nav = snapshot.nav or 0.0
+    margin_used = snapshot.margin_used
+    unrealized = snapshot.unrealized_pl
+    allow = False
+    reasons = {}
+    if hb is not None and _EXIT_EMERGENCY_HEALTH_BUFFER > 0 and hb <= _EXIT_EMERGENCY_HEALTH_BUFFER:
+        allow = True
+        reasons["health_buffer"] = hb
+    if (
+        free_ratio is not None
+        and _EXIT_EMERGENCY_FREE_MARGIN_RATIO > 0
+        and free_ratio <= _EXIT_EMERGENCY_FREE_MARGIN_RATIO
+    ):
+        allow = True
+        reasons["free_margin_ratio"] = free_ratio
+    if nav > 0 and _EXIT_EMERGENCY_MARGIN_USAGE_RATIO > 0:
+        usage_ratio = (margin_used or 0.0) / nav
+        if usage_ratio >= _EXIT_EMERGENCY_MARGIN_USAGE_RATIO:
+            allow = True
+            reasons["margin_usage_ratio"] = usage_ratio
+    if nav > 0 and _EXIT_EMERGENCY_UNREALIZED_DD_RATIO > 0 and unrealized < 0:
+        dd_ratio = abs(unrealized) / nav
+        if dd_ratio >= _EXIT_EMERGENCY_UNREALIZED_DD_RATIO:
+            allow = True
+            reasons["unrealized_dd_ratio"] = dd_ratio
+    if allow:
         global _LAST_EMERGENCY_LOG_TS
         now = time.time()
         if now - _LAST_EMERGENCY_LOG_TS >= 30.0:
             log_metric(
                 "close_emergency_allow_negative",
-                float(hb),
-                tags={"threshold": _EXIT_EMERGENCY_HEALTH_BUFFER},
+                float(hb) if hb is not None else -1.0,
+                tags={
+                    "threshold": _EXIT_EMERGENCY_HEALTH_BUFFER,
+                    "reason": next(iter(reasons.keys()), "unknown"),
+                },
             )
             _LAST_EMERGENCY_LOG_TS = now
         return True
