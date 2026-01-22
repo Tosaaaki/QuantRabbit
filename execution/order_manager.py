@@ -105,6 +105,19 @@ def _as_float(value: object, default: float | None = None) -> float | None:
     except (TypeError, ValueError):
         return default
 
+
+def _coerce_bool(value: object, default: bool = False) -> bool:
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    text = str(value).strip().lower()
+    if text in {"1", "true", "yes", "on"}:
+        return True
+    if text in {"0", "false", "no", "off"}:
+        return False
+    return default
+
 # Block entries when factor cache is stale (configurable by env).
 _ENTRY_FACTOR_MAX_AGE_SEC = float(os.getenv("ENTRY_FACTOR_MAX_AGE_SEC", "600"))
 _ENTRY_FACTOR_STALE_ALLOW_POCKETS = _env_csv_set(
@@ -112,6 +125,87 @@ _ENTRY_FACTOR_STALE_ALLOW_POCKETS = _env_csv_set(
     "micro,scalp,scalp_fast",
 )
 _EXIT_CONTEXT_ENABLED = _env_bool("ORDER_EXIT_CONTEXT_ENABLED", True)
+
+# Strategy-level BE/TP protection overrides (YAML).
+try:  # optional dependency
+    import yaml  # type: ignore
+except Exception:  # pragma: no cover - optional
+    yaml = None
+
+_STRATEGY_PROTECTION_ENABLED = _env_bool("STRATEGY_PROTECTION_ENABLED", True)
+_STRATEGY_PROTECTION_PATH = pathlib.Path(
+    os.getenv("STRATEGY_PROTECTION_PATH", "config/strategy_exit_protections.yaml")
+)
+_STRATEGY_PROTECTION_TTL_SEC = _env_float("STRATEGY_PROTECTION_TTL_SEC", 12.0)
+_STRATEGY_PROTECTION_CACHE: dict[str, Any] = {"ts": 0.0, "data": None}
+_STRATEGY_ALIAS_BASE = {
+    "bbrsi": "BB_RSI",
+    "bb_rsi": "BB_RSI",
+    "trendma": "TrendMA",
+    "donchian": "Donchian55",
+    "donchian55": "Donchian55",
+    "h1momentum": "H1Momentum",
+    "m1scalper": "M1Scalper",
+    "microlevelreactor": "MicroLevelReactor",
+    "microrangebreak": "MicroRangeBreak",
+    "microvwapbound": "MicroVWAPBound",
+    "momentumburst": "MomentumBurst",
+}
+
+
+def _base_strategy_tag(tag: Optional[str]) -> str:
+    if not tag:
+        return ""
+    text = str(tag).strip()
+    if not text:
+        return ""
+    base = text.split("-", 1)[0].strip() or text
+    alias = _STRATEGY_ALIAS_BASE.get(base.lower())
+    return alias or base
+
+
+def _load_strategy_protection_config() -> dict:
+    if not _STRATEGY_PROTECTION_ENABLED:
+        return {"defaults": {}, "strategies": {}}
+    now = time.monotonic()
+    cached_ts = float(_STRATEGY_PROTECTION_CACHE.get("ts") or 0.0)
+    if (now - cached_ts) < _STRATEGY_PROTECTION_TTL_SEC and isinstance(
+        _STRATEGY_PROTECTION_CACHE.get("data"), dict
+    ):
+        return _STRATEGY_PROTECTION_CACHE["data"]  # type: ignore[return-value]
+    payload: dict[str, Any] = {"defaults": {}, "strategies": {}}
+    if yaml is not None and _STRATEGY_PROTECTION_PATH.exists():
+        try:
+            loaded = yaml.safe_load(_STRATEGY_PROTECTION_PATH.read_text(encoding="utf-8")) or {}
+            if isinstance(loaded, dict):
+                payload = loaded
+        except Exception:
+            payload = {"defaults": {}, "strategies": {}}
+    _STRATEGY_PROTECTION_CACHE["ts"] = now
+    _STRATEGY_PROTECTION_CACHE["data"] = payload
+    return payload
+
+
+def _strategy_override(config: dict, strategy_tag: Optional[str]) -> dict:
+    if not isinstance(config, dict):
+        return {}
+    strategies = config.get("strategies")
+    if not isinstance(strategies, dict) or not strategy_tag:
+        return {}
+    base = _base_strategy_tag(strategy_tag)
+    candidates = [
+        strategy_tag,
+        base,
+        strategy_tag.lower(),
+        base.lower(),
+    ]
+    for key in candidates:
+        if not key:
+            continue
+        override = strategies.get(key)
+        if isinstance(override, dict):
+            return override
+    return {}
 
 
 def _factor_age_seconds(tf: str = "M1") -> float | None:
@@ -2351,6 +2445,14 @@ def _apply_dynamic_protections_v2(
     atr_m1 = _coerce(fac_m1.get("atr_pips"), _coerce(fac_m1.get("atr"), 0.0) * 100.0)
     vol_5m = _coerce(fac_m1.get("vol_5m"), 1.0)
 
+    strategy_cfg = _load_strategy_protection_config()
+    defaults_cfg = strategy_cfg.get("defaults", {}) if isinstance(strategy_cfg, dict) else {}
+    apply_when_soft_default = _coerce_bool(defaults_cfg.get("apply_when_soft_tp"), False)
+    tp_move_min_gap_default = _coerce(
+        defaults_cfg.get("tp_move_min_gap_pips"),
+        _env_float("TP_MOVE_MIN_GAP_PIPS", 0.3),
+    )
+
     defaults = {
         "macro": {
             "trigger": _env_float("BE_TRAIL_TRIGGER_MACRO", 6.8),
@@ -2395,6 +2497,66 @@ def _apply_dynamic_protections_v2(
             "buffer": _env_float("TP_MOVE_BUFFER_SCALP", 0.8),
         },
     }
+
+    if isinstance(defaults_cfg, dict):
+        be_defaults = defaults_cfg.get("be_profile")
+        if isinstance(be_defaults, dict):
+            for pocket_key in ("macro", "micro", "scalp"):
+                override = be_defaults.get(pocket_key)
+                if isinstance(override, dict):
+                    defaults[pocket_key]["trigger"] = _coerce(
+                        override.get("trigger_pips"), defaults[pocket_key]["trigger"]
+                    )
+                    defaults[pocket_key]["lock_ratio"] = _coerce(
+                        override.get("lock_ratio"), defaults[pocket_key]["lock_ratio"]
+                    )
+                    defaults[pocket_key]["min_lock"] = _coerce(
+                        override.get("min_lock_pips"), defaults[pocket_key]["min_lock"]
+                    )
+                    defaults[pocket_key]["cooldown"] = _coerce(
+                        override.get("cooldown_sec"), defaults[pocket_key]["cooldown"]
+                    )
+        start_defaults = defaults_cfg.get("start_delay_sec")
+        if isinstance(start_defaults, dict):
+            base_start_delay["micro"] = _coerce(
+                start_defaults.get("micro"), base_start_delay.get("micro", 25.0)
+            )
+            base_start_delay["scalp"] = _coerce(
+                start_defaults.get("scalp"), base_start_delay.get("scalp", 12.0)
+            )
+        max_delay_defaults = defaults_cfg.get("max_delay_sec")
+        if isinstance(max_delay_defaults, dict):
+            max_start_delay["micro"] = _coerce(
+                max_delay_defaults.get("micro"), max_start_delay.get("micro", 70.0)
+            )
+            max_start_delay["scalp"] = _coerce(
+                max_delay_defaults.get("scalp"), max_start_delay.get("scalp", 35.0)
+            )
+        tp_defaults = defaults_cfg.get("tp_move")
+        if isinstance(tp_defaults, dict):
+            tp_enabled = tp_defaults.get("enabled")
+            if tp_enabled is not None:
+                tp_move_enabled = _coerce_bool(tp_enabled, tp_move_enabled)
+            for pocket_key in ("macro", "micro", "scalp"):
+                override = tp_defaults.get(pocket_key)
+                if isinstance(override, dict):
+                    tp_move_cfg[pocket_key]["trigger"] = _coerce(
+                        override.get("trigger_pips"), tp_move_cfg[pocket_key]["trigger"]
+                    )
+                    tp_move_cfg[pocket_key]["buffer"] = _coerce(
+                        override.get("buffer_pips"), tp_move_cfg[pocket_key]["buffer"]
+                    )
+
+    def _strategy_tag_from_trade(tr: dict, thesis: dict) -> str:
+        tag = (
+            thesis.get("strategy_tag")
+            or thesis.get("strategy_tag_raw")
+            or thesis.get("strategy")
+            or thesis.get("tag")
+            or tr.get("strategy_tag")
+            or tr.get("strategy")
+        )
+        return str(tag).strip() if tag else ""
 
     for pocket, info in open_positions.items():
         if pocket == "__net__":
@@ -2442,6 +2604,13 @@ def _apply_dynamic_protections_v2(
                 lock_ratio = max(lock_ratio, 0.33)
             min_lock = max(min_lock, atr_val * 0.20)
             trigger = min(trigger, _env_float("BE_TRAIL_MAX_TRIGGER_SCALP", 3.0))
+        base_trigger = trigger
+        base_lock_ratio = lock_ratio
+        base_min_lock = min_lock
+        base_cooldown_sec = cooldown_sec
+        pocket_start_delay = base_start_delay.get(pocket, 45.0)
+        pocket_max_delay = max_start_delay.get(pocket, 0.0)
+        pocket_tp_cfg = tp_move_cfg.get(pocket, tp_move_cfg["macro"])
         # 経過時間に応じてロック強度を少し引き上げる
         def _age_scaled_lock(age_sec: float, base_ratio: float) -> float:
             if age_sec <= 0:
@@ -2462,8 +2631,38 @@ def _apply_dynamic_protections_v2(
             if pocket == "scalp" and client_id.startswith("qr-mirror-s5-"):
                 continue
             thesis = _coerce_entry_thesis(tr.get("entry_thesis"))
-            if _soft_tp_mode(thesis):
+            strategy_tag = _strategy_tag_from_trade(tr, thesis)
+            override = _strategy_override(strategy_cfg, strategy_tag)
+            if _coerce_bool(override.get("enabled"), True) is False:
                 continue
+            apply_when_soft = _coerce_bool(override.get("apply_when_soft_tp"), apply_when_soft_default)
+            if _soft_tp_mode(thesis) and not apply_when_soft:
+                continue
+
+            trigger = base_trigger
+            lock_ratio = base_lock_ratio
+            min_lock = base_min_lock
+            cooldown_sec = base_cooldown_sec
+            start_delay = pocket_start_delay
+            max_delay = pocket_max_delay
+            tp_move_enabled_local = tp_move_enabled
+            tp_trigger = _coerce(pocket_tp_cfg.get("trigger"), 0.0)
+            tp_buffer = _coerce(pocket_tp_cfg.get("buffer"), 0.6)
+            if isinstance(override, dict):
+                be_override = override.get("be_profile")
+                if isinstance(be_override, dict):
+                    trigger = _coerce(be_override.get("trigger_pips"), trigger)
+                    lock_ratio = _coerce(be_override.get("lock_ratio"), lock_ratio)
+                    min_lock = _coerce(be_override.get("min_lock_pips"), min_lock)
+                    cooldown_sec = _coerce(be_override.get("cooldown_sec"), cooldown_sec)
+                start_delay = _coerce(override.get("start_delay_sec"), start_delay)
+                max_delay = _coerce(override.get("max_delay_sec"), max_delay)
+                tp_override = override.get("tp_move")
+                if isinstance(tp_override, dict):
+                    if tp_override.get("enabled") is not None:
+                        tp_move_enabled_local = _coerce_bool(tp_override.get("enabled"), tp_move_enabled_local)
+                    tp_trigger = _coerce(tp_override.get("trigger_pips"), tp_trigger)
+                    tp_buffer = _coerce(tp_override.get("buffer_pips"), tp_buffer)
 
             entry = float(price)
             trade_tp_info = tr.get("take_profit") or {}
@@ -2486,15 +2685,13 @@ def _apply_dynamic_protections_v2(
             opened_at = _parse_trade_open_time(tr.get("open_time"))
             if pocket in {"micro", "scalp"} and opened_at:
                 age_sec = max(0.0, (datetime.now(timezone.utc) - opened_at).total_seconds())
-                start_delay = base_start_delay.get(pocket, 45.0)
                 delay_mult = 10.0 if pocket == "micro" else 6.0
                 start_delay = max(start_delay, atr_val * delay_mult)
                 if vol_5m > 1.6:
                     start_delay *= 0.75
                 elif vol_5m < 0.8:
                     start_delay *= 1.1
-                max_delay = max_start_delay.get(pocket, 0.0)
-                if max_delay > 0:
+                if max_delay > 0.0:
                     start_delay = min(start_delay, max_delay)
                 if age_sec < start_delay:
                     continue
@@ -2524,14 +2721,11 @@ def _apply_dynamic_protections_v2(
 
             desired_sl = round(desired_sl, 3)
             tp_price = trade_tp
-            if tp_move_enabled and current_price is not None:
-                tp_cfg = tp_move_cfg.get(pocket, tp_move_cfg["macro"])
-                tp_trigger = _coerce(tp_cfg.get("trigger"), 0.0)
-                tp_buffer = _coerce(tp_cfg.get("buffer"), 0.6)
+            if tp_move_enabled_local and current_price is not None:
                 if gain_pips >= tp_trigger:
                     locked = (side == "long" and desired_sl > entry) or (side == "short" and desired_sl < entry)
                     if locked:
-                        min_gap = max(0.3, _env_float("TP_MOVE_MIN_GAP_PIPS", 0.3))
+                        min_gap = max(0.3, tp_move_min_gap_default)
                         if side == "long":
                             target_tp = max(entry + min_gap * pip, float(current_price) + tp_buffer * pip)
                             if trade_tp is None or trade_tp - target_tp > 1e-6:
