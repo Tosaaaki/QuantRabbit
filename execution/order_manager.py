@@ -31,7 +31,7 @@ from execution.section_axis import attach_section_axis
 from execution.entry_guard import evaluate_entry_guard
 
 from analysis import policy_bus
-from analysis.technique_engine import evaluate_entry_techniques
+from analysis.technique_engine import evaluate_entry_techniques, evaluate_exit_techniques
 from utils.secrets import get_secret
 from utils.market_hours import is_market_open
 from indicators.factor_cache import all_factors
@@ -264,6 +264,40 @@ def _tp_cap_for(pocket: Optional[str]) -> float:
 
 
 _EXIT_NO_NEGATIVE_CLOSE = os.getenv("EXIT_NO_NEGATIVE_CLOSE", "1").strip().lower() not in {"", "0", "false", "no"}
+_EXIT_ALLOW_NEGATIVE_BY_WORKER = os.getenv("EXIT_ALLOW_NEGATIVE_BY_WORKER", "0").strip().lower() in {
+    "1",
+    "true",
+    "yes",
+}
+_EXIT_ALLOW_NEGATIVE_REASONS = {
+    token.strip().lower()
+    for token in os.getenv(
+        "EXIT_ALLOW_NEGATIVE_REASONS",
+        "drawdown,max_drawdown,hard_stop,tech_*,health_exit,hazard_exit,"
+        "margin_health,free_margin_low,margin_usage_high,structure_break,reversion_*,"
+        "fast_cut_*,left_behind_*",
+    ).split(",")
+    if token.strip()
+}
+_EXIT_FORCE_ALLOW_REASONS = {
+    token.strip().lower()
+    for token in os.getenv(
+        "EXIT_FORCE_ALLOW_REASONS",
+        "drawdown,max_drawdown,health_exit,hazard_exit,margin_health,free_margin_low,margin_usage_high",
+    ).split(",")
+    if token.strip()
+}
+_EXIT_TECH_GUARD_ENABLED = os.getenv("EXIT_TECH_GUARD_ENABLED", "1").strip().lower() not in {
+    "",
+    "0",
+    "false",
+    "no",
+}
+_EXIT_TECH_GUARD_FAILOPEN = os.getenv("EXIT_TECH_GUARD_FAILOPEN", "0").strip().lower() in {
+    "1",
+    "true",
+    "yes",
+}
 _EXIT_EMERGENCY_ALLOW_NEGATIVE = os.getenv("EXIT_EMERGENCY_ALLOW_NEGATIVE", "1").strip().lower() not in {
     "",
     "0",
@@ -1199,6 +1233,143 @@ def _should_allow_negative_close(client_order_id: Optional[str]) -> bool:
     return False
 
 
+def _reason_allows_negative(exit_reason: Optional[str]) -> bool:
+    if not exit_reason:
+        return False
+    reason_key = str(exit_reason).strip().lower()
+    if not reason_key:
+        return False
+    for token in _EXIT_ALLOW_NEGATIVE_REASONS:
+        if token.endswith("*"):
+            if reason_key.startswith(token[:-1]):
+                return True
+        elif reason_key == token:
+            return True
+    return False
+
+
+def _reason_force_allow(exit_reason: Optional[str]) -> bool:
+    if not exit_reason:
+        return False
+    reason_key = str(exit_reason).strip().lower()
+    if not reason_key:
+        return False
+    for token in _EXIT_FORCE_ALLOW_REASONS:
+        if token.endswith("*"):
+            if reason_key.startswith(token[:-1]):
+                return True
+        elif reason_key == token:
+            return True
+    return False
+
+
+def _latest_exit_price() -> Optional[float]:
+    price = _latest_mid_price()
+    if price is not None:
+        return price
+    try:
+        return _as_float((all_factors().get("M1") or {}).get("close"))
+    except Exception:
+        return None
+
+
+def _load_exit_trade_context(
+    trade_id: str,
+    client_order_id: Optional[str],
+) -> Optional[dict]:
+    try:
+        con = _orders_con()
+        con.row_factory = sqlite3.Row
+        row = con.execute(
+            """
+            SELECT pocket, units, executed_price, client_order_id
+            FROM orders
+            WHERE ticket_id = ?
+              AND status = 'filled'
+            ORDER BY id ASC
+            LIMIT 1
+            """,
+            (trade_id,),
+        ).fetchone()
+    except Exception as exc:  # noqa: BLE001
+        logging.debug("[ORDER] exit context lookup failed trade=%s err=%s", trade_id, exc)
+        return None
+    if not row:
+        return None
+    client_id = row["client_order_id"] or client_order_id
+    entry_thesis = None
+    strategy_tag = None
+    if client_id:
+        try:
+            att = con.execute(
+                """
+                SELECT request_json
+                FROM orders
+                WHERE client_order_id = ?
+                  AND status = 'submit_attempt'
+                ORDER BY id ASC
+                LIMIT 1
+                """,
+                (client_id,),
+            ).fetchone()
+            if att and att["request_json"]:
+                payload = json.loads(att["request_json"]) or {}
+                entry_thesis = _coerce_entry_thesis(
+                    payload.get("entry_thesis") or (payload.get("meta") or {}).get("entry_thesis")
+                )
+                if entry_thesis:
+                    strategy_tag = _strategy_tag_from_thesis(entry_thesis)
+        except Exception:
+            entry_thesis = None
+            strategy_tag = None
+    if not strategy_tag and client_id and client_id.startswith("qr-"):
+        parts = client_id.split("-", 3)
+        if len(parts) == 4 and parts[3]:
+            strategy_tag = parts[3]
+    return {
+        "entry_price": _as_float(row["executed_price"]) or 0.0,
+        "units": int(row["units"] or 0),
+        "pocket": row["pocket"] or "unknown",
+        "strategy_tag": strategy_tag,
+        "entry_thesis": entry_thesis if isinstance(entry_thesis, dict) else None,
+    }
+
+
+def _tech_exit_allows_negative(
+    trade_id: str,
+    *,
+    exit_reason: Optional[str],
+    client_order_id: Optional[str],
+) -> Optional[bool]:
+    ctx = _load_exit_trade_context(trade_id, client_order_id)
+    if not ctx:
+        return None
+    units = int(ctx.get("units") or 0)
+    if units == 0:
+        return None
+    entry_price = _as_float(ctx.get("entry_price")) or 0.0
+    price = _latest_exit_price()
+    if price is None or entry_price <= 0.0:
+        return None
+    side = "long" if units > 0 else "short"
+    trade = {
+        "entry_thesis": ctx.get("entry_thesis"),
+        "strategy_tag": ctx.get("strategy_tag"),
+        "price": entry_price,
+        "entry_price": entry_price,
+        "units": units,
+    }
+    decision = evaluate_exit_techniques(
+        trade=trade,
+        current_price=price,
+        side=side,
+        pocket=str(ctx.get("pocket") or "unknown"),
+    )
+    if not decision.should_exit:
+        return False
+    return bool(decision.allow_negative)
+
+
 def _retry_close_with_actual_units(
     trade_id: str,
     requested_units: Optional[int],
@@ -1745,16 +1916,22 @@ async def close_trade(
         log_metric("close_skip_missing_client_id", 1.0, tags={"trade_id": str(trade_id)})
         logging.info("[ORDER] skip close trade=%s missing client_id (likely manual/external)", trade_id)
         return False
-    if _EXIT_NO_NEGATIVE_CLOSE and not allow_negative:
+    if _EXIT_NO_NEGATIVE_CLOSE:
         pl = _current_trade_unrealized_pl(trade_id)
         if pl is not None and pl <= 0:
-            if _should_allow_negative_close(client_order_id):
-                allow_negative = True
-            if not allow_negative:
+            emergency_allow = _should_allow_negative_close(client_order_id)
+            reason_allow = _reason_allows_negative(exit_reason)
+            worker_allow = _EXIT_ALLOW_NEGATIVE_BY_WORKER and allow_negative
+            neg_allowed = emergency_allow or reason_allow or worker_allow
+            allow_negative = bool(neg_allowed)
+            if not neg_allowed:
                 log_metric(
                     "close_blocked_negative",
                     float(pl),
-                    tags={"trade_id": str(trade_id)},
+                    tags={
+                        "trade_id": str(trade_id),
+                        "reason": str(exit_reason or "unknown"),
+                    },
                 )
                 _console_order_log(
                     "CLOSE_REJECT",
@@ -1785,6 +1962,63 @@ async def close_trade(
                     ),
                 )
                 return False
+            if (
+                not emergency_allow
+                and _EXIT_TECH_GUARD_ENABLED
+                and not _reason_force_allow(exit_reason)
+            ):
+                tech_ok = _tech_exit_allows_negative(
+                    trade_id,
+                    exit_reason=exit_reason,
+                    client_order_id=client_order_id,
+                )
+                if tech_ok is False or (tech_ok is None and not _EXIT_TECH_GUARD_FAILOPEN):
+                    log_metric(
+                        "close_blocked_tech",
+                        float(pl),
+                        tags={
+                            "trade_id": str(trade_id),
+                            "reason": str(exit_reason or "unknown"),
+                            "tech_status": "missing" if tech_ok is None else "reject",
+                        },
+                    )
+                    _console_order_log(
+                        "CLOSE_REJECT",
+                        pocket=None,
+                        strategy_tag=None,
+                        side=None,
+                        units=units,
+                        sl_price=None,
+                        tp_price=None,
+                        client_order_id=client_order_id,
+                        ticket_id=str(trade_id),
+                        note="tech_guard",
+                    )
+                    _log_order(
+                        pocket=None,
+                        instrument=None,
+                        side=None,
+                        units=units,
+                        sl_price=None,
+                        tp_price=None,
+                        client_order_id=client_order_id,
+                        status="close_reject_tech",
+                        attempt=0,
+                        ticket_id=str(trade_id),
+                        executed_price=None,
+                        request_payload=_with_exit_reason(
+                            {
+                                "trade_id": trade_id,
+                                "data": {"unrealized_pl": pl},
+                                "tech_guard": {
+                                    "reason": exit_reason,
+                                    "status": "missing" if tech_ok is None else "reject",
+                                },
+                            }
+                        ),
+                    )
+                    return False
+                allow_negative = True
     if units is None:
         data = {"units": "ALL"}
     else:
