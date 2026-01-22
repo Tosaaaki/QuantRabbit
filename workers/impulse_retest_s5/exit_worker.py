@@ -32,6 +32,13 @@ def _float_env(key: str, default: float) -> float:
         return default
 
 
+def _safe_float(val: object) -> Optional[float]:
+    try:
+        return float(val)
+    except Exception:
+        return None
+
+
 def _utc_now() -> datetime:
     return datetime.now(timezone.utc)
 
@@ -131,12 +138,6 @@ class ImpulseRetestExitWorker:
         fac_m1 = factors.get("M1") or {}
         fac_h4 = factors.get("H4") or {}
 
-        def _safe_float(val: object) -> Optional[float]:
-            try:
-                return float(val)
-            except Exception:
-                return None
-
         adx = _safe_float(fac_m1.get("adx"))
         bbw = _safe_float(fac_m1.get("bbw"))
         atr = _safe_float(fac_m1.get("atr_pips")) or (_safe_float(fac_m1.get("atr")) or 0.0) * 100.0
@@ -190,9 +191,20 @@ class ImpulseRetestExitWorker:
         opened_at = _parse_time(trade.get("open_time"))
         hold_sec = (now - opened_at).total_seconds() if opened_at else 0.0
 
+        thesis = trade.get("entry_thesis") or {}
+        if not isinstance(thesis, dict):
+            thesis = {}
+        min_hold_sec = self.min_hold_sec
+        hold_hint = _safe_float(thesis.get("min_hold_sec"))
+        if hold_hint is None:
+            hold_min = _safe_float(thesis.get("min_hold_minutes"))
+            if hold_min is not None:
+                hold_hint = hold_min * 60.0
+        if hold_hint is not None:
+            min_hold_sec = max(min_hold_sec, hold_hint)
+
         state = self._states.get(trade_id)
         if state is None:
-            thesis = trade.get("entry_thesis") or {}
             tp_hint = thesis.get("tp_pips") or thesis.get("tp") or thesis.get("take_profit")
             try:
                 tp_hint_val = float(tp_hint) if tp_hint is not None else None
@@ -210,7 +222,7 @@ class ImpulseRetestExitWorker:
             LOG.warning("[EXIT-impulse_retest_s5] missing client_id trade=%s skip close", trade_id)
             return
 
-        if hold_sec < self.min_hold_sec:
+        if hold_sec < min_hold_sec:
             return
 
         section_decision = evaluate_section_exit(
@@ -220,7 +232,7 @@ class ImpulseRetestExitWorker:
             side=side,
             pocket=POCKET,
             hold_sec=hold_sec,
-            min_hold_sec=self.min_hold_sec,
+            min_hold_sec=min_hold_sec,
             entry_price=entry,
         )
         if section_decision.should_exit and section_decision.reason:

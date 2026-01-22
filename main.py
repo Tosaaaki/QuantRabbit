@@ -2210,8 +2210,11 @@ async def supervised_runner(name: str, coro: Coroutine[Any, Any, Any]) -> None:
 def build_client_order_id(focus_tag: Optional[str], strategy_tag: str) -> str:
     ts_ms = int(time.time() * 1000)
     focus_part = (focus_tag or "hybrid")[:6]
-    clean_tag = "".join(ch for ch in strategy_tag if ch.isalnum())[:9] or "sig"
-    return f"qr-{ts_ms}-{focus_part}-{clean_tag}"
+    base_tag = (strategy_tag or "").split("-", 1)[0]
+    clean_tag = "".join(ch for ch in base_tag if ch.isalnum())[:16] or "sig"
+    seed = f"{ts_ms}-{focus_part}-{clean_tag}-{os.getpid()}-{time.monotonic_ns()}".encode()
+    digest = hashlib.sha1(seed).hexdigest()[:9]
+    return f"qr-{ts_ms}-{focus_part}-{clean_tag}-{digest}"
 
 
 def _lookup_order_status(client_order_id: str) -> Optional[dict]:

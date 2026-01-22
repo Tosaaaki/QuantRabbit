@@ -255,9 +255,20 @@ class ScalpMultiExitWorker:
         opened_at = _parse_time(trade.get("open_time"))
         hold_sec = (now - opened_at).total_seconds() if opened_at else 0.0
 
+        thesis = trade.get("entry_thesis") or {}
+        if not isinstance(thesis, dict):
+            thesis = {}
+        min_hold_sec = self.min_hold_sec
+        hold_hint = _safe_float(thesis.get("min_hold_sec"))
+        if hold_hint is None:
+            hold_min = _safe_float(thesis.get("min_hold_minutes"))
+            if hold_min is not None:
+                hold_hint = hold_min * 60.0
+        if hold_hint is not None:
+            min_hold_sec = max(min_hold_sec, hold_hint)
+
         state = self._states.get(trade_id)
         if state is None:
-            thesis = trade.get("entry_thesis") or {}
             tp_hint = thesis.get("tp_pips") or thesis.get("tp") or thesis.get("take_profit")
             try:
                 tp_hint_val = float(tp_hint) if tp_hint is not None else None
@@ -275,7 +286,7 @@ class ScalpMultiExitWorker:
             LOG.warning("[EXIT-scalp_multi] missing client_id trade=%s skip close", trade_id)
             return
 
-        if hold_sec < self.min_hold_sec:
+        if hold_sec < min_hold_sec:
             return
 
         section_decision = evaluate_section_exit(
@@ -285,7 +296,7 @@ class ScalpMultiExitWorker:
             side=side,
             pocket=POCKET,
             hold_sec=hold_sec,
-            min_hold_sec=self.min_hold_sec,
+            min_hold_sec=min_hold_sec,
             entry_price=entry,
         )
         if section_decision.should_exit and section_decision.reason:
@@ -350,8 +361,9 @@ class ScalpMultiExitWorker:
                 return
 
         if pnl < 0 and self.tech_exit_enabled and not _is_reversion_candidate(trade):
-            hard_stop_ready = pnl <= -self.tech_neg_hard_pips and hold_sec >= self.min_hold_sec
-            soft_ready = pnl <= -self.tech_neg_min_pips and hold_sec >= self.tech_neg_hold_sec
+            tech_min_hold_sec = max(self.tech_neg_hold_sec, min_hold_sec)
+            hard_stop_ready = pnl <= -self.tech_neg_hard_pips and hold_sec >= min_hold_sec
+            soft_ready = pnl <= -self.tech_neg_min_pips and hold_sec >= tech_min_hold_sec
             if hard_stop_ready or soft_ready:
                 rsi_val, adx, atr_pips, vwap_gap, ma_pair = self._tech_context()
                 score = 0

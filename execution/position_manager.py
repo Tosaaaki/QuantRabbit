@@ -119,6 +119,7 @@ _TAG_ALIAS_PREFIXES = {
     "donchian": "Donchian55",
     "h1momentum": "H1Momentum",
     "m1scalper": "M1Scalper",
+    "impulsere": "ImpulseRetrace",
     "bbrsi": "BB_RSI",
     "bb_rsi": "BB_RSI",
 }
