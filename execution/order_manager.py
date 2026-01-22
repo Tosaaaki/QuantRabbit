@@ -2060,7 +2060,14 @@ async def close_trade(
             emergency_allow = _should_allow_negative_close(client_order_id)
             reason_allow = _reason_allows_negative(exit_reason)
             worker_allow = _EXIT_ALLOW_NEGATIVE_BY_WORKER and allow_negative
-            strategy_tag = _strategy_tag_from_client_id(client_order_id)
+            ctx = _load_exit_trade_context(trade_id, client_order_id)
+            strategy_tag = None
+            if isinstance(ctx, dict):
+                strategy_tag = _strategy_tag_from_thesis(ctx.get("entry_thesis"))
+                if not strategy_tag:
+                    strategy_tag = ctx.get("strategy_tag")
+            if not strategy_tag:
+                strategy_tag = _strategy_tag_from_client_id(client_order_id)
             neg_policy = _strategy_neg_exit_policy(strategy_tag)
             policy_enabled = _coerce_bool(neg_policy.get("enabled"), True)
             allow_tokens = neg_policy.get("allow_reasons")

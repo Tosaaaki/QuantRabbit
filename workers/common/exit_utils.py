@@ -18,7 +18,7 @@ _EXIT_COMPOSITE_REASONS = {
     token.strip().lower()
     for token in os.getenv(
         "EXIT_COMPOSITE_REASONS",
-        "rsi_fade,vwap_cut,atr_spike,structure_break",
+        "rsi_fade,vwap_cut,atr_spike,structure_break,tech_hard_stop",
     ).split(",")
     if token.strip()
 }
