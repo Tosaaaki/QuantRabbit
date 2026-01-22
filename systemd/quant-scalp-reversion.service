@@ -1,13 +1,13 @@
 [Unit]
-Description=QuantRabbit Scalp Multi-Strategy Worker
+Description=QuantRabbit Scalp Reversion Worker
 After=network.target
 
 [Service]
 Type=simple
 WorkingDirectory=/home/tossaki/QuantRabbit
 Environment="PYTHONUNBUFFERED=1"
-Environment="SCALP_STRATEGY_ALLOWLIST=PulseBreak,M1Scalper"
-Environment="SCALP_MULTI_LOG_PREFIX=[ScalpMultiTrend]"
+Environment="SCALP_STRATEGY_ALLOWLIST=RangeFader,ImpulseRetrace"
+Environment="SCALP_MULTI_LOG_PREFIX=[ScalpMultiReversion]"
 ExecStart=/home/tossaki/QuantRabbit/.venv/bin/python -m workers.scalp_multistrat.worker
 Restart=always
 RestartSec=5

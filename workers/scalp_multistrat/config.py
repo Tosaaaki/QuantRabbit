@@ -5,7 +5,7 @@ import os
 POCKET = "scalp"
 LOOP_INTERVAL_SEC = float(os.getenv("SCALP_MULTI_LOOP_INTERVAL_SEC", "6.0"))
 ENABLED = os.getenv("SCALP_MULTI_ENABLED", "1").strip().lower() not in {"", "0", "false", "no"}
-LOG_PREFIX = "[ScalpMulti]"
+LOG_PREFIX = os.getenv("SCALP_MULTI_LOG_PREFIX", "[ScalpMulti]")
 
 CONFIDENCE_FLOOR = 30
 CONFIDENCE_CEIL = 90

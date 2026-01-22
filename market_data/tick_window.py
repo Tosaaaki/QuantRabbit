@@ -24,8 +24,21 @@ _BASE_DIR = Path(__file__).resolve().parents[1]
 _CACHE_PATH = (_BASE_DIR / "logs" / "tick_cache.json").resolve()
 # ディスクキャッシュに含める最大件数（ワーカーが十分な窓幅を再構成できるよう拡張）
 _CACHE_LIMIT = 3000  # およそ 5〜10 分分（tick/sec に依存）
-_FLUSH_INTERVAL_SEC = 5.0
 _LOGGER = logging.getLogger(__name__)
+
+
+def _env_float(key: str, default: float) -> float:
+    raw = os.getenv(key)
+    if raw is None:
+        return default
+    try:
+        return float(raw)
+    except (TypeError, ValueError):
+        return default
+
+
+_FLUSH_INTERVAL_SEC = _env_float("TICK_CACHE_FLUSH_INTERVAL_SEC", 1.0)
+_MIN_RELOAD_INTERVAL_SEC = _env_float("TICK_CACHE_RELOAD_INTERVAL_SEC", 0.2)
 
 
 @dataclass(slots=True)
@@ -41,7 +54,6 @@ _last_flush_ts: float = 0.0
 _last_persist_error_ts: float = 0.0
 _cache_mtime: float = 0.0
 _last_reload_ts: float = 0.0
-_MIN_RELOAD_INTERVAL_SEC: float = 0.4
 
 
 def _load_cache() -> None:
