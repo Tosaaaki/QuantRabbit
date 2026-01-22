@@ -18,11 +18,11 @@ _EXIT_COMPOSITE_REASONS = {
     token.strip().lower()
     for token in os.getenv(
         "EXIT_COMPOSITE_REASONS",
-        "rsi_fade,vwap_cut,atr_spike",
+        "rsi_fade,vwap_cut,atr_spike,structure_break",
     ).split(",")
     if token.strip()
 }
-_EXIT_COMPOSITE_MIN_SCORE = float(os.getenv("EXIT_COMPOSITE_MIN_SCORE", "2"))
+_EXIT_COMPOSITE_MIN_SCORE = float(os.getenv("EXIT_COMPOSITE_MIN_SCORE", "3"))
 _EXIT_COMPOSITE_FAILOPEN = os.getenv("EXIT_COMPOSITE_FAILOPEN", "0").strip().lower() in {
     "1",
     "true",

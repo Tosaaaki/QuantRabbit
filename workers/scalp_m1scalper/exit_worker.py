@@ -97,8 +97,9 @@ class _TradeState:
     def update(self, pnl: float, lock_buffer: float) -> None:
         if pnl > self.peak:
             self.peak = pnl
-        if self.lock_floor is None and pnl > 0:
-            self.lock_floor = max(0.0, pnl - lock_buffer)
+        if pnl > 0:
+            floor = max(0.0, pnl - lock_buffer)
+            self.lock_floor = floor if self.lock_floor is None else max(self.lock_floor, floor)
 
 
 async def _run_exit_loop(
@@ -258,6 +259,17 @@ async def _run_exit_loop(
                 client_id,
                 allow_negative=section_decision.allow_negative,
             )
+            states.pop(trade_id, None)
+            return
+
+        lock_trigger = max(0.6, tp * 0.35)
+        if (
+            state.lock_floor is not None
+            and state.peak >= lock_trigger
+            and pnl > 0
+            and pnl <= state.lock_floor
+        ):
+            await _close(trade_id, -units, "lock_floor", client_id, allow_negative=allow_negative)
             states.pop(trade_id, None)
             return
 

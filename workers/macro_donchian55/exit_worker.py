@@ -125,8 +125,9 @@ class _TradeState:
     def update(self, pnl: float, lock_buffer: float) -> None:
         if pnl > self.peak:
             self.peak = pnl
-        if self.lock_floor is None and pnl > 0:
-            self.lock_floor = max(0.0, pnl - lock_buffer)
+        if pnl > 0:
+            floor = max(0.0, pnl - lock_buffer)
+            self.lock_floor = floor if self.lock_floor is None else max(self.lock_floor, floor)
 
 
 class DonchianExitWorker:
@@ -342,6 +343,17 @@ class DonchianExitWorker:
             profit_take = max(profit_take, max(2.5, state.tp_hint * 0.9))
             trail_start = max(trail_start, profit_take * 0.9)
             lock_buffer = max(lock_buffer, profit_take * 0.35)
+
+        lock_trigger = max(1.6, profit_take * 0.25)
+        if (
+            state.lock_floor is not None
+            and state.peak >= lock_trigger
+            and pnl > 0
+            and pnl <= state.lock_floor
+        ):
+            await self._close(trade_id, -units, "lock_floor", pnl, client_id)
+            self._states.pop(trade_id, None)
+            return
 
         if state.peak > 0 and state.peak >= trail_start and pnl > 0 and pnl <= state.peak - trail_backoff:
             await self._close(trade_id, -units, "trail_take", pnl, client_id)
