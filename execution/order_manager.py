@@ -111,6 +111,7 @@ _ENTRY_FACTOR_STALE_ALLOW_POCKETS = _env_csv_set(
     "ENTRY_FACTOR_STALE_ALLOW_POCKETS",
     "micro,scalp,scalp_fast",
 )
+_EXIT_CONTEXT_ENABLED = _env_bool("ORDER_EXIT_CONTEXT_ENABLED", True)
 
 
 def _factor_age_seconds(tf: str = "M1") -> float | None:
@@ -877,6 +878,57 @@ def _safe_json(payload: Optional[dict]) -> str:
     except Exception as exc:  # pragma: no cover - defensive
         logging.warning("[ORDER][LOG] failed to serialize payload: %s", exc)
         return "{}"
+
+
+def _exit_context_snapshot(exit_reason: Optional[str]) -> Optional[dict]:
+    if not _EXIT_CONTEXT_ENABLED:
+        return None
+    now = datetime.now(timezone.utc).isoformat()
+    factors = {}
+    try:
+        fac = all_factors()
+    except Exception:
+        fac = {}
+
+    def _snap(tf: str) -> dict:
+        data = fac.get(tf) or {}
+        return {
+            "timestamp": data.get("timestamp"),
+            "close": _as_float(data.get("close")),
+            "rsi": _as_float(data.get("rsi")),
+            "adx": _as_float(data.get("adx")),
+            "bbw": _as_float(data.get("bbw")),
+            "atr_pips": _as_float(data.get("atr_pips")),
+            "ma10": _as_float(data.get("ma10")),
+            "ma20": _as_float(data.get("ma20")),
+            "vwap_gap": _as_float(data.get("vwap_gap")),
+        }
+
+    for tf in ("M1", "M5", "H1", "H4"):
+        if fac.get(tf):
+            factors[tf] = _snap(tf)
+
+    mid = None
+    if tick_window is not None:
+        try:
+            tick = tick_window.recent_ticks(seconds=2.0, limit=1)
+            if tick:
+                mid = _as_float(tick[-1].get("mid"))
+        except Exception:
+            mid = None
+    if mid is None:
+        try:
+            mid = _as_float((fac.get("M1") or {}).get("close"))
+        except Exception:
+            mid = None
+
+    return {
+        "ts": now,
+        "reason": exit_reason,
+        "mid": mid,
+        "factor_age_m1_sec": _factor_age_seconds("M1"),
+        "factors": factors,
+    }
 
 
 def _log_order(
@@ -1679,11 +1731,14 @@ async def close_trade(
 ) -> bool:
     data: Optional[dict[str, str]] = None
     exit_reason = str(exit_reason).strip() if exit_reason else None
+    exit_context = _exit_context_snapshot(exit_reason)
 
     def _with_exit_reason(payload: Optional[dict]) -> dict:
         base = dict(payload) if payload else {}
         if exit_reason:
             base["exit_reason"] = exit_reason
+        if exit_context:
+            base["exit_context"] = exit_context
         return base
     # close 側も client_order_id を必須化。欠損かつ agent 管理外の建玉はスキップして無駄打ちを防ぐ。
     if not client_order_id:

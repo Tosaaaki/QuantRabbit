@@ -34,6 +34,22 @@
 ```
 
 ## Open Tasks
+- [ ] ID: T-20260122-007
+  Title: EXIT コンテキストの保存（ローソク/指標との照合用）
+  Status: in-progress
+  Priority: P1
+  Owner: codex
+  Scope/Paths: execution/order_manager.py, docs/TASKS.md
+  Context: 損切り妥当性の検証で exit_reason とローソクの照合が困難。
+  Acceptance:
+    - close_request/close_ok に exit_context が保存される
+    - M1/M5/H1/H4 の指標スナップショットが残る
+  Plan:
+    - order_manager で exit_context を付与
+    - デプロイ後に orders.db で確認
+  Notes:
+    - 「ローソクと照らし合わせて」の検証に使う
+
 - [ ] ID: T-20260122-006
   Title: テクニカル損切りの総合判定強化（reversal確認条件追加）
   Status: in-progress
