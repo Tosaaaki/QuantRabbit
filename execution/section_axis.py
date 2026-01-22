@@ -410,6 +410,42 @@ def _resolve_int_by_pocket(
     return int(defaults.get(pocket, defaults.get("default", 0)))
 
 
+def _resolve_bool_by_pocket(
+    name: str,
+    pocket: str,
+    default: Optional[bool] = None,
+    strategy_keys: tuple[str, ...] | None = None,
+) -> Optional[bool]:
+    if strategy_keys:
+        for key in strategy_keys:
+            specific = _env_bool(f"{name}_{key}")
+            if specific is not None:
+                return specific
+    pocket_upper = pocket.upper()
+    specific = _env_bool(f"{name}_{pocket_upper}")
+    if specific is not None:
+        return specific
+    common = _env_bool(name)
+    if common is not None:
+        return common
+    return default
+
+
+def _fast_cut_config(thesis: Dict[str, object]) -> Optional[tuple[float, float, float]]:
+    if not isinstance(thesis, dict):
+        return None
+    if thesis.get("kill_switch") is False:
+        return None
+    pips = _safe_float(thesis.get("fast_cut_pips"))
+    time_sec = _safe_float(thesis.get("fast_cut_time_sec"))
+    hard_mult = _safe_float(thesis.get("fast_cut_hard_mult")) or 1.6
+    if pips is None or time_sec is None:
+        return None
+    if pips <= 0 or time_sec <= 0:
+        return None
+    return float(pips), float(time_sec), float(hard_mult)
+
+
 def _axis_is_usable(
     axis: SectionAxis,
     *,
@@ -550,6 +586,36 @@ def evaluate_section_exit(
             tech_exit.allow_negative,
             tech_exit.debug,
         )
+
+    fast_cut_enabled = _resolve_bool_by_pocket(
+        "SECTION_EXIT_FAST_CUT_ENABLED",
+        pocket_key,
+        True,
+        strategy_keys,
+    )
+    fast_cut = _fast_cut_config(thesis)
+    if fast_cut_enabled and fast_cut and pnl_pips is not None:
+        fast_pips, fast_time_sec, fast_hard_mult = fast_cut
+        hard_stop_pips = max(fast_pips, fast_pips * max(1.0, fast_hard_mult))
+        if hold_sec >= max(min_hold, fast_time_sec) and pnl_pips <= -fast_pips:
+            debug = {
+                "pnl_pips": round(pnl_pips, 3),
+                "hold_sec": round(hold_sec, 3),
+                "fast_cut_pips": round(fast_pips, 3),
+                "fast_cut_time_sec": round(fast_time_sec, 3),
+                "fast_cut_hard_mult": round(fast_hard_mult, 3),
+            }
+            return SectionExitDecision(True, "fast_cut_time", True, debug)
+        if hold_sec >= min_hold and pnl_pips <= -hard_stop_pips:
+            debug = {
+                "pnl_pips": round(pnl_pips, 3),
+                "hold_sec": round(hold_sec, 3),
+                "fast_cut_pips": round(fast_pips, 3),
+                "fast_cut_time_sec": round(fast_time_sec, 3),
+                "fast_cut_hard_mult": round(fast_hard_mult, 3),
+                "fast_cut_hard_pips": round(hard_stop_pips, 3),
+            }
+            return SectionExitDecision(True, "fast_cut_hard", True, debug)
 
     if pocket_key not in {"manual", "unknown"}:
         left_hold_sec = _resolve_by_pocket(

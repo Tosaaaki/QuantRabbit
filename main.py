@@ -7303,6 +7303,56 @@ async def logic_loop(
                     len({s.get('pocket') for s in evaluated_signals if s.get('action') in {'OPEN_LONG', 'OPEN_SHORT'}}),
                 )
             last_risk_pct = risk_override
+            decision_source = "gpt" if isinstance(gpt, dict) and gpt else "local"
+            spread_pips_val = None
+            if spread_snapshot:
+                try:
+                    spread_pips_val = float(spread_snapshot.get("spread_pips") or 0.0)
+                except (TypeError, ValueError):
+                    spread_pips_val = None
+            decision_meta = {
+                "source": decision_source,
+                "gpt_mode": gpt.get("mode") if isinstance(gpt, dict) else None,
+                "gpt_reason": reuse_reason,
+                "gpt_model": gpt.get("model_used") if isinstance(gpt, dict) else None,
+                "gpt_risk_bias": gpt.get("risk_bias") if isinstance(gpt, dict) else None,
+                "gpt_liquidity_bias": gpt.get("liquidity_bias") if isinstance(gpt, dict) else None,
+                "gpt_range_confidence": _safe_float(gpt.get("range_confidence"), 0.0)
+                if isinstance(gpt, dict)
+                else None,
+                "focus_tag": focus_tag,
+                "weight_macro": weight_macro,
+                "weight_scalp": weight_scalp if weight_scalp is not None else None,
+                "range_active": bool(range_active),
+                "range_reason": last_range_reason or range_ctx.reason,
+                "range_score": round(range_ctx.score, 3),
+                "spread_pips": round(spread_pips_val, 3) if spread_pips_val is not None else None,
+                "risk_pct": round(float(risk_override or 0.0), 4),
+                "event_soon": bool(event_soon),
+                "macro_regime": macro_regime,
+                "micro_regime": micro_regime,
+            }
+            if evaluated_signals:
+                decision_tags = {
+                    "decision_source": decision_source,
+                    "gpt_mode": gpt.get("mode") if isinstance(gpt, dict) else "none",
+                    "range_active": int(range_active),
+                    "focus_tag": focus_tag or "unknown",
+                    "gpt_reason": reuse_reason or "n/a",
+                }
+                log_metric(
+                    "decision_risk_pct",
+                    round(float(risk_override or 0.0), 4),
+                    tags=decision_tags,
+                    ts=now,
+                )
+                if spread_pips_val is not None:
+                    log_metric(
+                        "decision_spread_pips",
+                        round(spread_pips_val, 3),
+                        tags=decision_tags,
+                        ts=now,
+                    )
 
             if fast_scalp_state:
                 fast_scalp_state.update_from_main(
@@ -8719,6 +8769,7 @@ async def logic_loop(
                     },
                     "levels": story_snapshot.major_levels if story_snapshot else None,
                     "context": entry_context_payload,
+                    "decision_meta": decision_meta,
                     "fast_cut_pips": fast_cut_pips,
                     "fast_cut_time_sec": fast_cut_time,
                     "fast_cut_hard_mult": fast_cut_hard,

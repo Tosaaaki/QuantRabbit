@@ -38,6 +38,7 @@ ui-dashboard-sa.json
 # Local caches / artifacts
 .cache/
 .gcloud/
+local/
 remote_logs_vm/
 remote_logs/
 remote_logs_current/

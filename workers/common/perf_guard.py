@@ -22,7 +22,7 @@ _RAW_ENABLED = os.getenv("PERF_GUARD_ENABLED")
 if _RAW_ENABLED is None:
     _RAW_ENABLED = os.getenv("PERF_GUARD_GLOBAL_ENABLED", "1")
 _ENABLED = str(_RAW_ENABLED).strip().lower() not in {"", "0", "false", "no"}
-_MODE = os.getenv("PERF_GUARD_MODE", "warn").strip().lower()
+_MODE = os.getenv("PERF_GUARD_MODE", "block").strip().lower()
 _LOOKBACK_DAYS = max(1, int(float(os.getenv("PERF_GUARD_LOOKBACK_DAYS", "3"))))
 _MIN_TRADES = max(5, int(float(os.getenv("PERF_GUARD_MIN_TRADES", "12"))))
 _PF_MIN = float(os.getenv("PERF_GUARD_PF_MIN", "0.9") or 0.9)
@@ -32,6 +32,24 @@ _HOURLY_ENABLED = os.getenv("PERF_GUARD_HOURLY", "0").strip().lower() not in {""
 _HOURLY_MIN_TRADES = max(5, int(float(os.getenv("PERF_GUARD_HOURLY_MIN_TRADES", "12"))))
 
 _cache: dict[tuple[str, str, Optional[int]], tuple[float, bool, str, int]] = {}
+
+
+def _threshold(name: str, pocket: str, default: float) -> float:
+    pocket_key = (pocket or "").strip().upper()
+    if pocket_key:
+        raw = os.getenv(f"{name}_{pocket_key}")
+        if raw is not None:
+            try:
+                return float(raw)
+            except ValueError:
+                pass
+    raw = os.getenv(name)
+    if raw is not None:
+        try:
+            return float(raw)
+        except ValueError:
+            pass
+    return default
 
 
 @dataclass(frozen=True, slots=True)
@@ -110,7 +128,9 @@ def _query_perf(tag: str, pocket: str, hour: Optional[int]) -> Tuple[bool, str, 
     pf = profit / loss if loss > 0 else float("inf")
     win_rate = win / n if n > 0 else 0.0
 
-    if pf < _PF_MIN or win_rate < _WIN_MIN:
+    pf_min = _threshold("PERF_GUARD_PF_MIN", pocket, _PF_MIN)
+    win_min = _threshold("PERF_GUARD_WIN_MIN", pocket, _WIN_MIN)
+    if pf < pf_min or win_rate < win_min:
         return False, f"pf={pf:.2f} win={win_rate:.2f} n={n}", n
     return True, f"pf={pf:.2f} win={win_rate:.2f} n={n}", n
 
