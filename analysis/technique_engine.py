@@ -6,7 +6,7 @@ from typing import Dict, Iterable, Mapping, Optional, Sequence, Tuple
 
 from analysis.patterns import detect_latest_n_wave
 from analysis.range_model import RangeSnapshot, compute_range_snapshot
-from indicators.factor_cache import get_candles_snapshot
+from indicators.factor_cache import all_factors, get_candles_snapshot
 
 PIP = 0.01
 
@@ -750,6 +750,13 @@ def _tf_length_scale(tf: str) -> float:
     return 0.8 + 0.2 * rank
 
 
+def _to_float(value: object) -> Optional[float]:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
 def _env_str(name: str) -> Optional[str]:
     raw = os.getenv(name)
     return raw.strip() if raw is not None else None
@@ -1383,6 +1390,183 @@ def _score_candle(
     }
 
 
+def _pivot_levels(candles: Sequence[dict]) -> Optional[Dict[str, float]]:
+    if len(candles) < 2:
+        return None
+    prev = candles[-2]
+    try:
+        high = float(prev.get("high"))
+        low = float(prev.get("low"))
+        close = float(prev.get("close"))
+    except (TypeError, ValueError):
+        return None
+    if high <= 0 or low <= 0 or close <= 0:
+        return None
+    pivot = (high + low + close) / 3.0
+    r1 = 2 * pivot - low
+    s1 = 2 * pivot - high
+    return {"pivot": pivot, "r1": r1, "s1": s1}
+
+
+def _exit_pivot_tf(strategy_tag: Optional[str], pocket: str, policy: TechniquePolicy) -> Optional[str]:
+    key = _normalize_tag_key(str(strategy_tag)).upper() if strategy_tag else None
+    pocket_upper = pocket.upper()
+    candidate = None
+    if key:
+        candidate = _env_str(f"TECH_EXIT_PIVOT_TF_{key}")
+    if candidate is None:
+        candidate = _env_str(f"TECH_EXIT_PIVOT_TF_{pocket_upper}") or _env_str("TECH_EXIT_PIVOT_TF")
+    if not candidate:
+        candidate = policy.median_tf or policy.fib_tf
+    norm = _normalize_tf(str(candidate))
+    return norm or policy.median_tf or policy.fib_tf
+
+
+def _exit_pivot_min_pips(strategy_tag: Optional[str], pocket: str) -> float:
+    key = _normalize_tag_key(str(strategy_tag)).upper() if strategy_tag else None
+    pocket_upper = pocket.upper()
+    value = None
+    if key:
+        value = _env_float(f"TECH_EXIT_PIVOT_MIN_PIPS_{key}")
+    if value is None:
+        value = _env_float(f"TECH_EXIT_PIVOT_MIN_PIPS_{pocket_upper}") or _env_float(
+            "TECH_EXIT_PIVOT_MIN_PIPS"
+        )
+    if value is None:
+        if pocket in {"scalp", "scalp_fast"}:
+            value = 0.8
+        elif pocket == "micro":
+            value = 1.5
+        else:
+            value = 3.0
+    return max(0.0, float(value))
+
+
+def _exit_momentum_tf(strategy_tag: Optional[str], pocket: str, policy: TechniquePolicy) -> Optional[str]:
+    key = _normalize_tag_key(str(strategy_tag)).upper() if strategy_tag else None
+    pocket_upper = pocket.upper()
+    candidate = None
+    if key:
+        candidate = _env_str(f"TECH_EXIT_MOMENTUM_TF_{key}")
+    if candidate is None:
+        candidate = _env_str(f"TECH_EXIT_MOMENTUM_TF_{pocket_upper}") or _env_str(
+            "TECH_EXIT_MOMENTUM_TF"
+        )
+    if not candidate:
+        candidate = policy.median_tf or policy.fib_tf
+    norm = _normalize_tf(str(candidate))
+    return norm or policy.median_tf or policy.fib_tf
+
+
+def _exit_momentum_min_score(strategy_tag: Optional[str], pocket: str) -> float:
+    key = _normalize_tag_key(str(strategy_tag)).upper() if strategy_tag else None
+    pocket_upper = pocket.upper()
+    value = None
+    if key:
+        value = _env_float(f"TECH_EXIT_MOMENTUM_MIN_SCORE_{key}")
+    if value is None:
+        value = _env_float(f"TECH_EXIT_MOMENTUM_MIN_SCORE_{pocket_upper}") or _env_float(
+            "TECH_EXIT_MOMENTUM_MIN_SCORE"
+        )
+    if value is None:
+        if pocket in {"scalp", "scalp_fast"}:
+            value = 0.34
+        elif pocket == "micro":
+            value = 0.34
+        else:
+            value = 0.3
+    return max(0.0, float(value))
+
+
+def _exit_momentum_rsi_bounds(strategy_tag: Optional[str], pocket: str) -> tuple[float, float]:
+    key = _normalize_tag_key(str(strategy_tag)).upper() if strategy_tag else None
+    pocket_upper = pocket.upper()
+    upper = None
+    lower = None
+    if key:
+        upper = _env_float(f"TECH_EXIT_RSI_UPPER_{key}")
+        lower = _env_float(f"TECH_EXIT_RSI_LOWER_{key}")
+    if upper is None:
+        upper = _env_float(f"TECH_EXIT_RSI_UPPER_{pocket_upper}") or _env_float("TECH_EXIT_RSI_UPPER")
+    if lower is None:
+        lower = _env_float(f"TECH_EXIT_RSI_LOWER_{pocket_upper}") or _env_float("TECH_EXIT_RSI_LOWER")
+    if upper is None:
+        upper = 55.0
+    if lower is None:
+        lower = 45.0
+    if upper < lower:
+        upper, lower = lower, upper
+    return float(upper), float(lower)
+
+
+def _score_momentum_exit(
+    *,
+    factors: Dict[str, object],
+    side: str,
+    rsi_upper: float,
+    rsi_lower: float,
+) -> tuple[Optional[float], Dict[str, object]]:
+    rsi = _to_float(factors.get("rsi"))
+    ma10 = _to_float(factors.get("ma10"))
+    ma20 = _to_float(factors.get("ma20"))
+    macd_hist = _to_float(factors.get("macd_hist"))
+    macd = _to_float(factors.get("macd"))
+    macd_signal = _to_float(factors.get("macd_signal"))
+
+    scores: list[float] = []
+    detail: Dict[str, object] = {
+        "rsi": round(rsi, 3) if rsi is not None else None,
+        "ma10": round(ma10, 5) if ma10 is not None else None,
+        "ma20": round(ma20, 5) if ma20 is not None else None,
+        "macd_hist": round(macd_hist, 5) if macd_hist is not None else None,
+        "macd": round(macd, 5) if macd is not None else None,
+        "macd_signal": round(macd_signal, 5) if macd_signal is not None else None,
+    }
+
+    ma_score = None
+    if ma10 is not None and ma20 is not None and ma10 != ma20:
+        ma_score = 1.0 if ma10 > ma20 else -1.0
+    rsi_score = None
+    if rsi is not None:
+        if rsi >= rsi_upper:
+            rsi_score = 1.0
+        elif rsi <= rsi_lower:
+            rsi_score = -1.0
+        else:
+            rsi_score = 0.0
+    macd_score = None
+    if macd_hist is not None:
+        if macd_hist > 0:
+            macd_score = 1.0
+        elif macd_hist < 0:
+            macd_score = -1.0
+        else:
+            macd_score = 0.0
+    elif macd is not None and macd_signal is not None:
+        if macd > macd_signal:
+            macd_score = 1.0
+        elif macd < macd_signal:
+            macd_score = -1.0
+        else:
+            macd_score = 0.0
+
+    if ma_score is not None:
+        scores.append(ma_score)
+    if rsi_score is not None:
+        scores.append(rsi_score)
+    if macd_score is not None:
+        scores.append(macd_score)
+
+    if not scores:
+        return None, detail
+
+    support_score = sum(scores) / float(len(scores))
+    if side == "short":
+        support_score = -support_score
+    detail["support_score"] = round(support_score, 3)
+    return support_score, detail
+
+
 def evaluate_entry_techniques(
     *,
     entry_price: float,
@@ -1834,6 +2018,16 @@ def evaluate_exit_techniques(
         debug["return_score"] = round(return_score, 3)
         debug["coverage"] = round(coverage, 3)
 
+    exit_strict = _env_bool("TECH_EXIT_STRICT")
+    if exit_strict is None:
+        exit_strict = True
+    exit_require_coverage = _env_bool("TECH_EXIT_REQUIRE_COVERAGE")
+    if exit_require_coverage is None:
+        exit_require_coverage = True
+    exit_min_coverage = _env_float("TECH_EXIT_MIN_COVERAGE")
+    if exit_min_coverage is None:
+        exit_min_coverage = policy.min_coverage
+
     reversal_signal = (candle_score is not None and candle_score < 0) or (
         nwave_score is not None and nwave_score < 0
     )
@@ -1865,6 +2059,87 @@ def evaluate_exit_techniques(
             allow_negative_reversal = True
         elif reversal_confirmed:
             allow_negative_reversal = True
+    if exit_require_coverage:
+        if coverage is None or coverage < exit_min_coverage:
+            allow_negative_reversal = False
+            debug["exit_guard"] = "low_coverage"
+    if exit_strict and reversal_signal:
+        if not reversal_confirmed and not (
+            return_score is not None and return_score <= policy.exit_return_score
+        ):
+            allow_negative_reversal = False
+            debug["exit_guard"] = "reversal_unconfirmed"
+
+    pivot_guard = _env_bool("TECH_EXIT_PIVOT_GUARD")
+    if pivot_guard is None:
+        pivot_guard = True
+    pivot_failopen = _env_bool("TECH_EXIT_PIVOT_FAILOPEN")
+    if pivot_failopen is None:
+        pivot_failopen = True
+    if pivot_guard and allow_negative_reversal:
+        pivot_tf = _exit_pivot_tf(strategy_tag, pocket, policy)
+        pivot_levels = None
+        if pivot_tf:
+            pivot_levels = _pivot_levels(get_candles_snapshot(pivot_tf, limit=2))
+        if pivot_levels:
+            min_pips = _exit_pivot_min_pips(strategy_tag, pocket)
+            buffer = min_pips * PIP
+            pivot = pivot_levels["pivot"]
+            if side == "long":
+                pivot_ok = current_price <= pivot - buffer
+            else:
+                pivot_ok = current_price >= pivot + buffer
+            debug["pivot"] = {
+                "tf": pivot_tf,
+                "pivot": round(pivot, 5),
+                "r1": round(pivot_levels["r1"], 5),
+                "s1": round(pivot_levels["s1"], 5),
+                "min_pips": round(min_pips, 3),
+                "ok": pivot_ok,
+            }
+            if not pivot_ok:
+                allow_negative_reversal = False
+                debug["exit_guard"] = "pivot_block"
+        elif not pivot_failopen:
+            allow_negative_reversal = False
+            debug["exit_guard"] = "pivot_missing"
+
+    momentum_guard = _env_bool("TECH_EXIT_MOMENTUM_GUARD")
+    if momentum_guard is None:
+        momentum_guard = True
+    momentum_failopen = _env_bool("TECH_EXIT_MOMENTUM_FAILOPEN")
+    if momentum_failopen is None:
+        momentum_failopen = True
+    if momentum_guard and allow_negative_reversal:
+        momentum_tf = _exit_momentum_tf(strategy_tag, pocket, policy)
+        fac = {}
+        try:
+            fac = (all_factors().get(momentum_tf) or {}) if momentum_tf else {}
+        except Exception:
+            fac = {}
+        rsi_upper, rsi_lower = _exit_momentum_rsi_bounds(strategy_tag, pocket)
+        score, detail = _score_momentum_exit(
+            factors=fac,
+            side=side,
+            rsi_upper=rsi_upper,
+            rsi_lower=rsi_lower,
+        )
+        min_score = _exit_momentum_min_score(strategy_tag, pocket)
+        if score is not None:
+            against_ok = score <= -min_score
+            debug["momentum"] = {
+                **detail,
+                "tf": momentum_tf,
+                "min_score": round(min_score, 3),
+                "ok": against_ok,
+            }
+            if not against_ok:
+                allow_negative_reversal = False
+                debug["exit_guard"] = "momentum_block"
+        elif not momentum_failopen:
+            allow_negative_reversal = False
+            debug["exit_guard"] = "momentum_missing"
+
     debug["reversal_allow_negative"] = allow_negative_reversal
 
     if reversal_signal and reversal_confirmed:
@@ -1877,6 +2152,6 @@ def evaluate_exit_techniques(
         return TechniqueExitDecision(False, None, False, {})
 
     if return_score is not None and return_score <= policy.exit_return_score:
-        return TechniqueExitDecision(True, "tech_return_fail", True, debug)
+        return TechniqueExitDecision(True, "tech_return_fail", allow_negative_reversal, debug)
 
     return TechniqueExitDecision(False, None, False, {})
