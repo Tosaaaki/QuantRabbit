@@ -59,6 +59,7 @@ LONG_WINDOW_SEC: float = max(
 )
 JST_OFF_HOURS_START: int = min(23, max(0, int(float(os.getenv("FAST_SCALP_OFF_HOURS_START_JST", "3")))))
 JST_OFF_HOURS_END: int = min(23, max(0, int(float(os.getenv("FAST_SCALP_OFF_HOURS_END_JST", "5")))))
+OFF_HOURS_ENABLED: bool = _bool_env("FAST_SCALP_OFF_HOURS_ENABLED", False)
 LOG_PREFIX_TICK = "[SCALP-TICK]"
 MIN_UNITS: int = max(0, int(float(os.getenv("FAST_SCALP_MIN_UNITS", "1000"))))
 MAX_ACTIVE_TRADES: int = max(1, int(float(os.getenv("FAST_SCALP_MAX_ACTIVE", "2"))))

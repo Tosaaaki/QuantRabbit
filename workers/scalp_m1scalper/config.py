@@ -70,6 +70,7 @@ CONFIDENCE_CEIL = 90
 MIN_UNITS = int(os.getenv("M1SCALP_MIN_UNITS", "1000"))
 BASE_ENTRY_UNITS = int(os.getenv("M1SCALP_BASE_UNITS", "6000"))
 MAX_MARGIN_USAGE = float(os.getenv("M1SCALP_MAX_MARGIN_USAGE", "0.9"))
+MAX_SPREAD_PIPS = float(os.getenv("M1SCALP_MAX_SPREAD_PIPS", "1.4"))
 AUTOTUNE_ENABLED = _env_bool("SCALP_AUTOTUNE_ENABLED", False)
 
 CAP_MIN = float(os.getenv("M1SCALP_CAP_MIN", "0.1"))
@@ -81,3 +82,9 @@ MAX_OPEN_TRADES = int(os.getenv("M1SCALP_MAX_OPEN_TRADES", "2"))
 BLOCK_HOURS_UTC = frozenset(
     _parse_hours(os.getenv("M1SCALP_BLOCK_HOURS_UTC", ""))
 )
+BLOCK_HOURS_ENABLED = os.getenv("M1SCALP_BLOCK_HOURS_ENABLED", "0").strip().lower() not in {
+    "",
+    "0",
+    "false",
+    "no",
+}

@@ -12,6 +12,7 @@ from typing import Dict, Tuple
 from autotune.scalp_trainer import AUTO_INTERVAL_SEC, start_background_autotune
 from analysis.range_guard import detect_range_mode
 from indicators.factor_cache import all_factors
+from market_data import spread_monitor
 from execution.order_manager import market_order
 from execution.risk_guard import allowed_lot, can_trade, clamp_sl_tp
 from market_data import tick_window
@@ -83,6 +84,7 @@ async def scalp_m1_worker() -> None:
             AUTO_INTERVAL_SEC,
         )
     last_block_log = 0.0
+    last_spread_log = 0.0
     last_cap_log = 0.0
 
     while True:
@@ -92,7 +94,7 @@ async def scalp_m1_worker() -> None:
             continue
         if not can_trade(config.POCKET):
             continue
-        if now.hour in config.BLOCK_HOURS_UTC:
+        if config.BLOCK_HOURS_ENABLED and now.hour in config.BLOCK_HOURS_UTC:
             now_mono = time.monotonic()
             if now_mono - last_block_log > 300.0:
                 LOG.info(
@@ -102,6 +104,22 @@ async def scalp_m1_worker() -> None:
                     sorted(config.BLOCK_HOURS_UTC),
                 )
                 last_block_log = now_mono
+            continue
+        blocked, remain, spread_state, spread_reason = spread_monitor.is_blocked()
+        spread_pips = float(spread_state.get("spread_pips") or 0.0) if spread_state else 0.0
+        spread_stale = bool(spread_state.get("stale")) if spread_state else False
+        if blocked or spread_stale or spread_pips > config.MAX_SPREAD_PIPS:
+            now_mono = time.monotonic()
+            if now_mono - last_spread_log > 60.0:
+                LOG.info(
+                    "%s blocked by spread spread=%.2fp stale=%s remain=%ss reason=%s",
+                    config.LOG_PREFIX,
+                    spread_pips,
+                    spread_stale,
+                    remain,
+                    spread_reason or "guard_active",
+                )
+                last_spread_log = now_mono
             continue
 
         factors = all_factors()

@@ -120,6 +120,8 @@ _PRICING_HEADERS = {"Authorization": f"Bearer {_OANDA_TOKEN}"} if _OANDA_TOKEN e
 
 
 def _is_off_hours(now_utc: datetime) -> bool:
+    if not config.OFF_HOURS_ENABLED:
+        return False
     jst = now_utc + timedelta(hours=9)
     start = config.JST_OFF_HOURS_START
     end = config.JST_OFF_HOURS_END
