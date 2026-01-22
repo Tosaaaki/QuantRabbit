@@ -1832,7 +1832,7 @@ def _maybe_update_protections(
     context: str = "auto",
     ref_price: Optional[float] = None,
 ) -> None:
-    if STOP_LOSS_DISABLED:
+    if not TRAILING_SL_ALLOWED:
         sl_price = None
     if not trade_id or (sl_price is None and tp_price is None):
         return
@@ -2352,13 +2352,49 @@ def _apply_dynamic_protections_v2(
     vol_5m = _coerce(fac_m1.get("vol_5m"), 1.0)
 
     defaults = {
-        "macro": {"trigger": 6.8, "lock_ratio": 0.55, "min_lock": 2.6, "cooldown": 90.0},
-        "micro": {"trigger": 2.8, "lock_ratio": 0.42, "min_lock": 0.60, "cooldown": 60.0},
-        # スキャルは利幅を伸ばせるようにトリガー/ロックを緩める
-        "scalp": {"trigger": 2.5, "lock_ratio": 0.25, "min_lock": 0.60, "cooldown": 30.0},
+        "macro": {
+            "trigger": _env_float("BE_TRAIL_TRIGGER_MACRO", 6.8),
+            "lock_ratio": _env_float("BE_TRAIL_LOCK_RATIO_MACRO", 0.55),
+            "min_lock": _env_float("BE_TRAIL_MIN_LOCK_MACRO", 2.6),
+            "cooldown": _env_float("BE_TRAIL_COOLDOWN_MACRO_SEC", 90.0),
+        },
+        "micro": {
+            "trigger": _env_float("BE_TRAIL_TRIGGER_MICRO", 2.2),
+            "lock_ratio": _env_float("BE_TRAIL_LOCK_RATIO_MICRO", 0.50),
+            "min_lock": _env_float("BE_TRAIL_MIN_LOCK_MICRO", 0.60),
+            "cooldown": _env_float("BE_TRAIL_COOLDOWN_MICRO_SEC", 45.0),
+        },
+        "scalp": {
+            "trigger": _env_float("BE_TRAIL_TRIGGER_SCALP", 1.6),
+            "lock_ratio": _env_float("BE_TRAIL_LOCK_RATIO_SCALP", 0.35),
+            "min_lock": _env_float("BE_TRAIL_MIN_LOCK_SCALP", 0.50),
+            "cooldown": _env_float("BE_TRAIL_COOLDOWN_SCALP_SEC", 20.0),
+        },
     }
     # トレーリング開始を ATR/ボラで動的に決める（micro/scalp）
-    base_start_delay = {"micro": 55.0, "scalp": 45.0}
+    base_start_delay = {
+        "micro": _env_float("BE_TRAIL_START_DELAY_MICRO_SEC", 25.0),
+        "scalp": _env_float("BE_TRAIL_START_DELAY_SCALP_SEC", 12.0),
+    }
+    max_start_delay = {
+        "micro": _env_float("BE_TRAIL_MAX_DELAY_MICRO_SEC", 70.0),
+        "scalp": _env_float("BE_TRAIL_MAX_DELAY_SCALP_SEC", 35.0),
+    }
+    tp_move_enabled = _env_bool("TP_MOVE_ENABLED", True)
+    tp_move_cfg = {
+        "macro": {
+            "trigger": _env_float("TP_MOVE_TRIGGER_MACRO", 6.0),
+            "buffer": _env_float("TP_MOVE_BUFFER_MACRO", 2.5),
+        },
+        "micro": {
+            "trigger": _env_float("TP_MOVE_TRIGGER_MICRO", 2.0),
+            "buffer": _env_float("TP_MOVE_BUFFER_MICRO", 1.0),
+        },
+        "scalp": {
+            "trigger": _env_float("TP_MOVE_TRIGGER_SCALP", 1.0),
+            "buffer": _env_float("TP_MOVE_BUFFER_SCALP", 0.8),
+        },
+    }
 
     for pocket, info in open_positions.items():
         if pocket == "__net__":
@@ -2384,26 +2420,28 @@ def _apply_dynamic_protections_v2(
             lock_ratio = max(lock_ratio, 0.50 if vol_5m >= 1.5 else 0.45)
         elif pocket == "micro":
             if vol_5m < 0.8:
-                trigger = max(trigger, atr_val * 1.1)
-                lock_ratio = max(lock_ratio, 0.4)
+                trigger = max(trigger, atr_val * 0.9)
+                lock_ratio = max(lock_ratio, 0.45)
             elif vol_5m > 1.6:
-                trigger = max(trigger, atr_val * 1.4)
-                lock_ratio = max(lock_ratio, 0.35)
+                trigger = max(trigger, atr_val * 1.1)
+                lock_ratio = max(lock_ratio, 0.40)
             else:
-                trigger = max(trigger, atr_val * 1.25)
-                lock_ratio = max(lock_ratio, 0.38)
-            min_lock = max(min_lock, atr_val * 0.25)
+                trigger = max(trigger, atr_val * 1.0)
+                lock_ratio = max(lock_ratio, 0.42)
+            min_lock = max(min_lock, atr_val * 0.22)
+            trigger = min(trigger, _env_float("BE_TRAIL_MAX_TRIGGER_MICRO", 4.0))
         elif pocket == "scalp":
             if vol_5m < 0.8:
-                trigger = max(trigger, atr_val * 1.0)
-                lock_ratio = max(lock_ratio, 0.22)
+                trigger = max(trigger, atr_val * 0.6)
+                lock_ratio = max(lock_ratio, 0.32)
             elif vol_5m > 1.6:
-                trigger = max(trigger, atr_val * 1.3)
-                lock_ratio = max(lock_ratio, 0.28)
+                trigger = max(trigger, atr_val * 0.85)
+                lock_ratio = max(lock_ratio, 0.30)
             else:
-                trigger = max(trigger, atr_val * 1.15)
-                lock_ratio = max(lock_ratio, 0.25)
-            min_lock = max(min_lock, atr_val * 0.25)
+                trigger = max(trigger, atr_val * 0.7)
+                lock_ratio = max(lock_ratio, 0.33)
+            min_lock = max(min_lock, atr_val * 0.20)
+            trigger = min(trigger, _env_float("BE_TRAIL_MAX_TRIGGER_SCALP", 3.0))
         # 経過時間に応じてロック強度を少し引き上げる
         def _age_scaled_lock(age_sec: float, base_ratio: float) -> float:
             if age_sec <= 0:
@@ -2449,11 +2487,15 @@ def _apply_dynamic_protections_v2(
             if pocket in {"micro", "scalp"} and opened_at:
                 age_sec = max(0.0, (datetime.now(timezone.utc) - opened_at).total_seconds())
                 start_delay = base_start_delay.get(pocket, 45.0)
-                start_delay = max(start_delay, atr_val * (22.0 if pocket == "micro" else 18.0))
+                delay_mult = 10.0 if pocket == "micro" else 6.0
+                start_delay = max(start_delay, atr_val * delay_mult)
                 if vol_5m > 1.6:
-                    start_delay *= 0.85
+                    start_delay *= 0.75
                 elif vol_5m < 0.8:
                     start_delay *= 1.1
+                max_delay = max_start_delay.get(pocket, 0.0)
+                if max_delay > 0:
+                    start_delay = min(start_delay, max_delay)
                 if age_sec < start_delay:
                     continue
                 lock_ratio = _age_scaled_lock(age_sec - start_delay, lock_ratio)
@@ -2482,6 +2524,22 @@ def _apply_dynamic_protections_v2(
 
             desired_sl = round(desired_sl, 3)
             tp_price = trade_tp
+            if tp_move_enabled and current_price is not None:
+                tp_cfg = tp_move_cfg.get(pocket, tp_move_cfg["macro"])
+                tp_trigger = _coerce(tp_cfg.get("trigger"), 0.0)
+                tp_buffer = _coerce(tp_cfg.get("buffer"), 0.6)
+                if gain_pips >= tp_trigger:
+                    locked = (side == "long" and desired_sl > entry) or (side == "short" and desired_sl < entry)
+                    if locked:
+                        min_gap = max(0.3, _env_float("TP_MOVE_MIN_GAP_PIPS", 0.3))
+                        if side == "long":
+                            target_tp = max(entry + min_gap * pip, float(current_price) + tp_buffer * pip)
+                            if trade_tp is None or trade_tp - target_tp > 1e-6:
+                                tp_price = round(target_tp, 3)
+                        else:
+                            target_tp = min(entry - min_gap * pip, float(current_price) - tp_buffer * pip)
+                            if trade_tp is None or target_tp - trade_tp > 1e-6:
+                                tp_price = round(target_tp, 3)
 
             _maybe_update_protections(
                 trade_id,
@@ -2501,8 +2559,6 @@ async def set_trade_protections(
     """
     Legacy compatibility layer – update SL/TP for an open trade and report success.
     """
-    if STOP_LOSS_DISABLED:
-        sl_price = None
     if not TRAILING_SL_ALLOWED and sl_price is not None:
         return False
     if not trade_id:
