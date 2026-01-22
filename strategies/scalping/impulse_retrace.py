@@ -4,12 +4,12 @@ from typing import Dict
 import logging
 
 PIP = 0.01
-MIN_ATR = 0.9
+MIN_ATR = 0.8
 MAX_SPREAD = 1.55
-MIN_DISLOCATION = 1.05  # pips away from ema20
-RSI_LONG_MAX = 44
-RSI_SHORT_MIN = 56
-VOL_MIN = 0.40
+MIN_DISLOCATION = 0.95  # pips away from ema20
+RSI_LONG_MAX = 49
+RSI_SHORT_MIN = 60
+VOL_MIN = 0.35
 MIN_SL_FLOOR = 1.05
 SL_ATR_MULT = 1.2
 TP_RATIO_MIN = 1.55
