@@ -34,6 +34,23 @@
 ```
 
 ## Open Tasks
+- [ ] ID: T-20260122-001
+  Title: Perf guard block化とscalp/s5系のマージン上限を攻め設定に統一
+  Status: in-progress
+  Priority: P1
+  Owner: codex
+  Scope/Paths: workers/common/perf_guard.py, workers/fast_scalp/config.py, workers/pullback_s5/config.py, workers/pullback_runner_s5/config.py, workers/mirror_spike_s5/config.py, docs/TASKS.md
+  Context: 低勝率ストラテジがブロックされず損失が拡大し、fast_scalp/鏡反転/PB系が低いMAX_MARGIN_USAGEでほぼ停止している。
+  Acceptance:
+    - perf_guardがwarnではなくblockで低PF/低勝率戦略を停止できる
+    - fast_scalp/鏡反転/PB系がマージン85-92%帯でもエントリー可能
+    - 変更後のログでreentry_block偏重が緩和される
+  Plan:
+    - デフォルトMAX_MARGIN_USAGEの引き上げとperf_guardデフォルトの修正
+    - デプロイ後にorders.db/journalctlで挙動を確認
+  Notes:
+    - 低勝率のM1Scalper/TrendMA等はperf_guardで自動停止させる
+
 - [ ] ID: T-20260118-001
   Title: Factor cache stale ガードの監視と閾値調整（市場オープン後）
   Status: todo

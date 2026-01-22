@@ -106,7 +106,7 @@ ENTRY_UNITS: int = max(1000, _int("PULLBACK_S5_ENTRY_UNITS", 6000))
 # 余力に応じた最小単位（余力不足時にこの下限を下回る場合は見送り）
 MIN_UNITS: int = max(500, _int("PULLBACK_S5_MIN_UNITS", 900))
 # 余力のうちエントリーに使ってよい割合（0.1〜1.0）
-MAX_MARGIN_USAGE: float = max(0.1, min(1.0, _float("PULLBACK_S5_MAX_MARGIN_USAGE", 0.35)))
+MAX_MARGIN_USAGE: float = max(0.1, min(1.0, _float("PULLBACK_S5_MAX_MARGIN_USAGE", 0.9)))
 ENTRY_STAGE_RATIOS: tuple[float, ...] = _parse_float_list(
     "PULLBACK_S5_ENTRY_STAGE_RATIOS", "0.7,0.3"
 )
