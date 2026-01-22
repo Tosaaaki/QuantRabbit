@@ -16,11 +16,39 @@ CONFIG_PATH = REPO_ROOT / "configs" / "scalp_active_params.json"
 TRADES_DB_PATH = REPO_ROOT / "logs" / "trades.db"
 ORDERS_DB_PATH = REPO_ROOT / "logs" / "orders.db"
 STATE_PATH = REPO_ROOT / "logs" / "tuning" / "scalp_autotune_state.json"
+ENV_FALLBACK_PATH = Path(os.getenv("QUANTRABBIT_ENV_FILE", "/etc/quantrabbit.env"))
 
-AUTO_INTERVAL_SEC = int(os.getenv("SCALP_AUTOTUNE_INTERVAL_SEC", str(3 * 60 * 60)))
-MIN_SAMPLE_SIZE = int(os.getenv("SCALP_AUTOTUNE_MIN_SAMPLES", "12"))
-LOOKBACK_LIMIT = int(os.getenv("SCALP_AUTOTUNE_LOOKBACK", "90"))  # trades
-MIN_WIN_RATE = float(os.getenv("SCALP_AUTOTUNE_MIN_WIN_RATE", "0.35"))
+_ENV_CACHE: dict | None = None
+
+
+def _load_env_file() -> dict:
+    global _ENV_CACHE
+    if _ENV_CACHE is not None:
+        return _ENV_CACHE
+    data: dict = {}
+    if ENV_FALLBACK_PATH.exists():
+        for raw in ENV_FALLBACK_PATH.read_text().splitlines():
+            line = raw.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, val = line.split("=", 1)
+            data[key.strip()] = val.strip().strip('"').strip("'")
+    _ENV_CACHE = data
+    return data
+
+
+def _env_value(name: str, default: str) -> str:
+    val = os.getenv(name)
+    if val is not None:
+        return val
+    env_map = _load_env_file()
+    return env_map.get(name, default)
+
+
+AUTO_INTERVAL_SEC = int(_env_value("SCALP_AUTOTUNE_INTERVAL_SEC", str(3 * 60 * 60)))
+MIN_SAMPLE_SIZE = int(_env_value("SCALP_AUTOTUNE_MIN_SAMPLES", "12"))
+LOOKBACK_LIMIT = int(_env_value("SCALP_AUTOTUNE_LOOKBACK", "90"))  # trades
+MIN_WIN_RATE = float(_env_value("SCALP_AUTOTUNE_MIN_WIN_RATE", "0.35"))
 
 
 @dataclass(slots=True)
