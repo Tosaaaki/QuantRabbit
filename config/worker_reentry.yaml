@@ -68,9 +68,9 @@ strategies:
     same_dir_reentry_pips: 0.5
     return_wait_bias: neutral
   ImpulseRetrace:
-    cooldown_win_sec: 20
-    cooldown_loss_sec: 40
-    same_dir_reentry_pips: 0.2
+    cooldown_win_sec: 10
+    cooldown_loss_sec: 20
+    same_dir_reentry_pips: 0.1
     same_dir_mode: both
     return_wait_bias: avoid
   MomentumP:
