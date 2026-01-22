@@ -34,6 +34,24 @@
 ```
 
 ## Open Tasks
+- [ ] ID: T-20260122-002
+  Title: 非停止前提でのエントリー密度/勝ち幅改善（scalp中心）
+  Status: in-progress
+  Priority: P1
+  Owner: codex
+  Scope/Paths: workers/common/perf_guard.py, workers/scalp_m1scalper/config.py, workers/scalp_multistrat/config.py, workers/fast_scalp/config.py, execution/risk_guard.py, config/worker_reentry.yaml, docs/TASKS.md
+  Context: 停止なしの条件で、勝ち幅とエントリー数の改善が必要。M1Scalperの再入場間隔が長く、fast_scalpの回転が足りない。
+  Acceptance:
+    - perf_guardはwarn運用で停止しない
+    - M1Scalper/ScalpMultiのマージン上限を引き上げ、回転とサイズを改善
+    - fast_scalpの回転制限を緩め、scalp_fast配分を増やす
+  Plan:
+    - M1Scalper/ScalpMultiのMAX_MARGIN_USAGEとreentry cooldownを調整
+    - fast_scalpのオーダー回転制限とshare_hintを調整
+    - 反映後にorders.db/trades.dbで改善兆候を確認
+  Notes:
+    - 「停止等はなし」を優先するため、perf_guardはwarnを既定化
+
 - [ ] ID: T-20260122-001
   Title: Perf guard block化とscalp/s5系のマージン上限を攻め設定に統一
   Status: in-progress

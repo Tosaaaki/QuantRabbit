@@ -38,7 +38,7 @@ CONFIDENCE_FLOOR = 30
 CONFIDENCE_CEIL = 90
 MIN_UNITS = int(os.getenv("M1SCALP_MIN_UNITS", "1000"))
 BASE_ENTRY_UNITS = int(os.getenv("M1SCALP_BASE_UNITS", "6000"))
-MAX_MARGIN_USAGE = float(os.getenv("M1SCALP_MAX_MARGIN_USAGE", "0.82"))
+MAX_MARGIN_USAGE = float(os.getenv("M1SCALP_MAX_MARGIN_USAGE", "0.9"))
 
 CAP_MIN = float(os.getenv("M1SCALP_CAP_MIN", "0.1"))
 CAP_MAX = float(os.getenv("M1SCALP_CAP_MAX", "0.9"))

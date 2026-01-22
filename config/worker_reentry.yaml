@@ -45,9 +45,9 @@ strategies:
     same_dir_mode: both
     return_wait_bias: neutral
   M1Scalper:
-    cooldown_win_sec: 60
-    cooldown_loss_sec: 120
-    same_dir_reentry_pips: 0.15
+    cooldown_win_sec: 30
+    cooldown_loss_sec: 60
+    same_dir_reentry_pips: 0.1
     same_dir_mode: both
     max_open_trades: 3
     max_open_adverse_pips: 40.0

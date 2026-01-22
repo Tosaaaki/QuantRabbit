@@ -22,7 +22,7 @@ _RAW_ENABLED = os.getenv("PERF_GUARD_ENABLED")
 if _RAW_ENABLED is None:
     _RAW_ENABLED = os.getenv("PERF_GUARD_GLOBAL_ENABLED", "1")
 _ENABLED = str(_RAW_ENABLED).strip().lower() not in {"", "0", "false", "no"}
-_MODE = os.getenv("PERF_GUARD_MODE", "block").strip().lower()
+_MODE = os.getenv("PERF_GUARD_MODE", "warn").strip().lower()
 _LOOKBACK_DAYS = max(1, int(float(os.getenv("PERF_GUARD_LOOKBACK_DAYS", "3"))))
 _MIN_TRADES = max(5, int(float(os.getenv("PERF_GUARD_MIN_TRADES", "12"))))
 _PF_MIN = float(os.getenv("PERF_GUARD_PF_MIN", "0.9") or 0.9)

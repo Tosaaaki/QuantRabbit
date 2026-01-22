@@ -40,10 +40,10 @@ ENTRY_SHORT_THRESHOLD_PIPS: float = max(
     0.002, float(os.getenv("FAST_SCALP_ENTRY_SHORT_MOM_PIPS", "0.003"))
 )
 ENTRY_RANGE_FLOOR_PIPS: float = max(0.005, float(os.getenv("FAST_SCALP_RANGE_FLOOR_PIPS", "0.02")))
-ENTRY_COOLDOWN_SEC: float = max(3.0, float(os.getenv("FAST_SCALP_ENTRY_COOLDOWN_SEC", "5.0")))
-MAX_ORDERS_PER_MINUTE: int = max(1, int(float(os.getenv("FAST_SCALP_MAX_ORDERS_PER_MIN", "3"))))
+ENTRY_COOLDOWN_SEC: float = max(2.0, float(os.getenv("FAST_SCALP_ENTRY_COOLDOWN_SEC", "3.0")))
+MAX_ORDERS_PER_MINUTE: int = max(1, int(float(os.getenv("FAST_SCALP_MAX_ORDERS_PER_MIN", "6"))))
 MIN_ORDER_SPACING_SEC: float = max(
-    0.5, float(os.getenv("FAST_SCALP_MIN_ORDER_SPACING_SEC", "3.0"))
+    0.5, float(os.getenv("FAST_SCALP_MIN_ORDER_SPACING_SEC", "2.0"))
 )
 MAX_LOT: float = max(0.001, float(os.getenv("FAST_SCALP_MAX_LOT", "0.1")))
 SYNC_INTERVAL_SEC: float = max(5.0, float(os.getenv("FAST_SCALP_SYNC_INTERVAL_SEC", "45.0")))

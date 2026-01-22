@@ -93,7 +93,7 @@ def _trading_paused() -> bool:
 _FAST_SCALP_SHARE = 0.35
 try:
     _FAST_SCALP_SHARE = max(
-        0.0, min(1.0, float(os.getenv("FAST_SCALP_SHARE_HINT", "0.35")))
+        0.0, min(1.0, float(os.getenv("FAST_SCALP_SHARE_HINT", "0.45")))
     )
 except Exception:
     _FAST_SCALP_SHARE = 0.35
