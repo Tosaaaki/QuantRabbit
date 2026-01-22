@@ -335,4 +335,42 @@ async def _idle_loop() -> None:
 
 
 if __name__ == "__main__":  # pragma: no cover
-    asyncio.run(_idle_loop())
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s", force=True)
+    from .config import DEFAULT_CONFIG
+    from workers.common import addon_live
+
+    cfg = addon_live.apply_env_overrides(
+        "MTF_BREAKOUT",
+        DEFAULT_CONFIG,
+        default_universe=["USD_JPY"],
+        default_pocket="micro",
+        default_loop=30.0,
+    )
+    if not cfg.get("live_enabled"):
+        LOG.info("mtf_breakout idle mode (set MTF_BREAKOUT_LIVE=1 or ADDON_LIVE_MODE=1 to enable)")
+        asyncio.run(_idle_loop())
+        raise SystemExit(0)
+
+    datafeed = addon_live.LiveDataFeed(
+        default_timeframe=str(cfg.get("timeframe_entry", "M5")),
+        logger=LOG,
+    )
+    broker = addon_live.AddonLiveBroker(
+        worker_id=str(cfg.get("id", "mtf_breakout")),
+        pocket=str(cfg.get("pocket", "micro")),
+        datafeed=datafeed,
+        exit_cfg=cfg.get("exit"),
+        atr_len=int(cfg.get("atr_len", 14)),
+        atr_timeframe=str(cfg.get("timeframe_entry", "M5")),
+        default_budget_bps=cfg.get("budget_bps"),
+        ttl_ms=float(cfg.get("ttl_ms", 800.0)),
+        require_passive=bool(cfg.get("require_passive", True)),
+        logger=LOG,
+    )
+    worker = MtfBreakoutWorker(cfg, broker=broker, datafeed=datafeed, logger=LOG)
+    addon_live.run_loop(
+        worker,
+        loop_interval_sec=float(cfg.get("loop_interval_sec", 30.0)),
+        pocket=str(cfg.get("pocket", "micro")),
+        logger=LOG,
+    )

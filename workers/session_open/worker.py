@@ -182,7 +182,47 @@ async def _idle_loop() -> None:
 
 
 if __name__ == "__main__":  # pragma: no cover - service entrypoint
-    try:
-        asyncio.run(_idle_loop())
-    except KeyboardInterrupt:
-        pass
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s", force=True)
+    from .config import DEFAULT_CONFIG
+    from workers.common import addon_live
+
+    cfg = addon_live.apply_env_overrides(
+        "SESSION_OPEN",
+        DEFAULT_CONFIG,
+        default_universe=["USD_JPY"],
+        default_pocket="micro",
+        default_loop=20.0,
+    )
+    if not cfg.get("live_enabled"):
+        LOG = logging.getLogger("session_open")
+        LOG.info("session_open idle mode (set SESSION_OPEN_LIVE=1 or ADDON_LIVE_MODE=1 to enable)")
+        try:
+            asyncio.run(_idle_loop())
+        except KeyboardInterrupt:
+            pass
+        raise SystemExit(0)
+
+    datafeed = addon_live.LiveDataFeed(
+        default_timeframe=str(cfg.get("timeframe_entry", "M1")),
+        logger=logging.getLogger("session_open"),
+    )
+    broker = addon_live.AddonLiveBroker(
+        worker_id=str(cfg.get("id", "session_open")),
+        pocket=str(cfg.get("pocket", "micro")),
+        datafeed=datafeed,
+        exit_cfg=cfg.get("exit"),
+        atr_len=int(cfg.get("atr_len", 14)),
+        atr_timeframe=str(cfg.get("timeframe_entry", "M1")),
+        default_budget_bps=cfg.get("budget_bps"),
+        ttl_ms=float(cfg.get("ttl_ms", 800.0)),
+        require_passive=bool(cfg.get("require_passive", True)),
+        logger=logging.getLogger("session_open"),
+    )
+    worker = SessionOpenWorker(cfg, broker=broker, datafeed=datafeed, logger=logging.getLogger("session_open"))
+    addon_live.run_loop(
+        worker,
+        loop_interval_sec=float(cfg.get("loop_interval_sec", 20.0)),
+        pocket=str(cfg.get("pocket", "micro")),
+        pass_now=True,
+        logger=logging.getLogger("session_open"),
+    )

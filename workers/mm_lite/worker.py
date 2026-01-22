@@ -50,7 +50,7 @@ class MMLiteWorker:
     def __init__(self, cfg: Dict[str, Any], broker: Broker, datafeed: DataFeed,
                  event_flags: Optional[EventFlagSource] = None, logger=None):
         self.c = cfg; self.b = broker; self.d = datafeed; self.ev = event_flags; self.log = logger
-        self.tf = "5m"
+        self.tf = str(self.c.get("timeframe", "5m"))
         self.orders = {}       # sym -> {"bid_id":..., "ask_id":...}
         self.inv = {}          # sym -> position size (signed)
         self.risk_unit = 1.0   # user-defined; for demo we treat size in notional fractions
@@ -127,5 +127,40 @@ async def _idle_loop() -> None:
 
 if __name__ == "__main__":  # pragma: no cover
     logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s", force=True)
-    LOG.info("mm_lite worker boot")
-    asyncio.run(_idle_loop())
+    from .config import DEFAULT_CONFIG
+    from workers.common import addon_live
+
+    cfg = addon_live.apply_env_overrides(
+        "MM_LITE",
+        DEFAULT_CONFIG,
+        default_universe=["USD_JPY"],
+        default_pocket="scalp",
+        default_loop=5.0,
+        default_exit={"stop_pips": 2.0, "tp_pips": 3.0},
+    )
+    if not cfg.get("live_enabled"):
+        LOG.info("mm_lite idle mode (set MM_LITE_LIVE=1 or ADDON_LIVE_MODE=1 to enable)")
+        asyncio.run(_idle_loop())
+        raise SystemExit(0)
+
+    datafeed = addon_live.LiveDataFeed(default_timeframe=cfg.get("timeframe", "M5"), logger=LOG)
+    broker = addon_live.AddonLiveBroker(
+        worker_id=str(cfg.get("id", "mm_lite")),
+        pocket=str(cfg.get("pocket", "scalp")),
+        datafeed=datafeed,
+        exit_cfg=cfg.get("exit"),
+        atr_len=int(cfg.get("atr_len", 14)),
+        atr_timeframe=cfg.get("timeframe", "M5"),
+        default_budget_bps=cfg.get("budget_bps"),
+        default_size_bps=cfg.get("size_bps"),
+        ttl_ms=float(cfg.get("ttl_ms", 800.0)),
+        require_passive=bool(cfg.get("require_passive", True)),
+        logger=LOG,
+    )
+    worker = MMLiteWorker(cfg, broker=broker, datafeed=datafeed, logger=LOG)
+    addon_live.run_loop(
+        worker,
+        loop_interval_sec=float(cfg.get("loop_interval_sec", 5.0)),
+        pocket=str(cfg.get("pocket", "scalp")),
+        logger=LOG,
+    )
