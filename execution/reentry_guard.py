@@ -28,6 +28,7 @@ _DEFAULTS = {
     "cooldown_win_sec": 60,
     "cooldown_loss_sec": 180,
     "same_dir_reentry_pips": 1.8,
+    "same_dir_mode": "return",
     "allow_jst_hours": [],
     "block_jst_hours": [],
     "return_wait_bias": "neutral",
@@ -464,21 +465,26 @@ def allow_entry(
 
     if min_pips > 0.0 and price is not None and state.close_price is not None:
         threshold = min_pips * 0.01
+        mode = str(merged.get("same_dir_mode") or "return").strip().lower()
         if direction == "long":
-            if price > state.close_price - threshold:
-                return False, "price_distance", {
-                    "price": float(price),
-                    "last_close_price": state.close_price,
-                    "same_dir_reentry_pips": min_pips,
-                    "return_wait_bias": bias,
-                }
+            allow_return = price <= state.close_price - threshold
+            allow_follow = price >= state.close_price + threshold
         else:
-            if price < state.close_price + threshold:
-                return False, "price_distance", {
-                    "price": float(price),
-                    "last_close_price": state.close_price,
-                    "same_dir_reentry_pips": min_pips,
-                    "return_wait_bias": bias,
-                }
+            allow_return = price >= state.close_price + threshold
+            allow_follow = price <= state.close_price - threshold
+        if mode == "follow":
+            allow = allow_follow
+        elif mode == "both":
+            allow = allow_return or allow_follow
+        else:
+            allow = allow_return
+        if not allow:
+            return False, "price_distance", {
+                "price": float(price),
+                "last_close_price": state.close_price,
+                "same_dir_reentry_pips": min_pips,
+                "same_dir_mode": mode,
+                "return_wait_bias": bias,
+            }
 
     return True, "ok", {}
