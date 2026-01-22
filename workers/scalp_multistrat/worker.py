@@ -10,6 +10,7 @@ import os
 import time
 from typing import Dict, List, Optional, Tuple
 
+from autotune.scalp_trainer import AUTO_INTERVAL_SEC, start_background_autotune
 from analysis.range_guard import detect_range_mode
 from analysis.range_model import compute_range_snapshot
 from indicators.factor_cache import all_factors, get_candles_snapshot
@@ -195,6 +196,13 @@ async def scalp_multi_worker() -> None:
         config.LOOP_INTERVAL_SEC,
         [getattr(s, "name", s.__name__) for s in strategies],
     )
+    if config.AUTOTUNE_ENABLED:
+        start_background_autotune()
+        LOG.info(
+            "%s scalp_autotune enabled interval_sec=%s",
+            config.LOG_PREFIX,
+            AUTO_INTERVAL_SEC,
+        )
 
     while True:
         await asyncio.sleep(config.LOOP_INTERVAL_SEC)

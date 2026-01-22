@@ -12,6 +12,12 @@ CONFIDENCE_CEIL = 90
 MIN_UNITS = int(os.getenv("SCALP_MULTI_MIN_UNITS", "1000"))
 BASE_ENTRY_UNITS = int(os.getenv("SCALP_MULTI_BASE_UNITS", "6000"))
 MAX_MARGIN_USAGE = float(os.getenv("SCALP_MULTI_MAX_MARGIN_USAGE", "0.9"))
+AUTOTUNE_ENABLED = os.getenv("SCALP_AUTOTUNE_ENABLED", "0").strip().lower() not in {
+    "",
+    "0",
+    "false",
+    "no",
+}
 
 CAP_MIN = float(os.getenv("SCALP_MULTI_CAP_MIN", "0.1"))
 CAP_MAX = float(os.getenv("SCALP_MULTI_CAP_MAX", "0.9"))
