@@ -250,6 +250,18 @@ def _min_rr_for(pocket: Optional[str]) -> float:
     return min(value, 5.0)
 
 
+def _tp_cap_for(pocket: Optional[str]) -> float:
+    if not _TP_CAP_ENABLED or not pocket:
+        return 0.0
+    try:
+        value = float(_TP_CAP_BY_POCKET.get(str(pocket).lower(), 0.0))
+    except Exception:
+        return 0.0
+    if value <= 0.0:
+        return 0.0
+    return min(value, 200.0)
+
+
 _EXIT_NO_NEGATIVE_CLOSE = os.getenv("EXIT_NO_NEGATIVE_CLOSE", "1").strip().lower() not in {"", "0", "false", "no"}
 _EXIT_EMERGENCY_ALLOW_NEGATIVE = os.getenv("EXIT_EMERGENCY_ALLOW_NEGATIVE", "1").strip().lower() not in {
     "",
@@ -308,6 +320,20 @@ _MIN_RR_BY_POCKET = {
     "scalp": float(os.getenv("ORDER_MIN_RR_SCALP", "1.2")),
     "scalp_fast": float(os.getenv("ORDER_MIN_RR_SCALP_FAST", "1.15")),
     "manual": float(os.getenv("ORDER_MIN_RR_MANUAL", "1.0")),
+}
+# Cap extreme TP distances (pips) to keep targets realistic.
+_TP_CAP_ENABLED = os.getenv("ORDER_TP_CAP_ENABLED", "1").strip().lower() not in {
+    "",
+    "0",
+    "false",
+    "no",
+}
+_TP_CAP_BY_POCKET = {
+    "macro": float(os.getenv("ORDER_TP_CAP_MACRO", "24.0")),
+    "micro": float(os.getenv("ORDER_TP_CAP_MICRO", "12.0")),
+    "scalp": float(os.getenv("ORDER_TP_CAP_SCALP", "6.0")),
+    "scalp_fast": float(os.getenv("ORDER_TP_CAP_SCALP_FAST", "3.0")),
+    "manual": float(os.getenv("ORDER_TP_CAP_MANUAL", "0.0")),
 }
 # ワーカーのオーダーをメインの関所に転送するフラグ（reduce_only は除外）
 _FORWARD_TO_SIGNAL_GATE = (
@@ -3458,6 +3484,11 @@ async def market_order(
                 if alt_val:
                     tp_pips_hint = alt_val
                     break
+        tag_hint = (strategy_tag or "").strip().lower()
+        if not tag_hint and isinstance(entry_thesis, dict):
+            tag_hint = str(entry_thesis.get("strategy_tag") or entry_thesis.get("strategy") or "").strip().lower()
+        if tag_hint == "fast_scalp":
+            sl_pips_hint = None
         if sl_pips_hint is None and price_hint is not None and sl_price is not None:
             sl_pips_hint = abs(price_hint - sl_price) / 0.01
         if tp_pips_hint is None and price_hint is not None and tp_price is not None:
@@ -3673,6 +3704,44 @@ async def market_order(
                     sl_pips,
                     adj_tp_pips,
                     min_rr,
+                )
+
+    if not reduce_only and entry_basis is not None and tp_price is not None:
+        tp_cap = _tp_cap_for(pocket)
+        if tp_cap > 0.0:
+            tp_pips = abs(tp_price - entry_basis) / 0.01
+            if tp_pips > tp_cap:
+                adj_tp_pips = tp_cap
+                if units > 0:
+                    tp_price = round(entry_basis + adj_tp_pips * 0.01, 3)
+                else:
+                    tp_price = round(entry_basis - adj_tp_pips * 0.01, 3)
+                min_rr = _min_rr_for(pocket)
+                if sl_price is not None and min_rr > 0.0:
+                    sl_pips = abs(entry_basis - sl_price) / 0.01
+                    max_sl_pips = adj_tp_pips / min_rr
+                    if max_sl_pips > 0.0 and sl_pips > max_sl_pips:
+                        if units > 0:
+                            sl_price = round(entry_basis - max_sl_pips * 0.01, 3)
+                        else:
+                            sl_price = round(entry_basis + max_sl_pips * 0.01, 3)
+                if isinstance(entry_thesis, dict):
+                    entry_thesis = dict(entry_thesis)
+                    entry_thesis["tp_cap_applied"] = {
+                        "cap_pips": round(tp_cap, 2),
+                        "tp_pips_before": round(tp_pips, 2),
+                        "tp_pips_after": round(adj_tp_pips, 2),
+                        "sl_pips_after": round(
+                            abs(entry_basis - sl_price) / 0.01, 2
+                        ) if sl_price is not None else None,
+                    }
+                log_metric(
+                    "tp_cap_adjust",
+                    float(adj_tp_pips),
+                    tags={
+                        "pocket": pocket or "unknown",
+                        "strategy": strategy_tag or "unknown",
+                    },
                 )
 
     # Margin preflight (new entriesのみ)

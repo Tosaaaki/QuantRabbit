@@ -34,6 +34,23 @@
 ```
 
 ## Open Tasks
+- [ ] ID: T-20260122-003
+  Title: TP距離の異常拡大を抑止（signal gate/注文整合）
+  Status: in-progress
+  Priority: P1
+  Owner: codex
+  Scope/Paths: execution/order_manager.py, docs/TASKS.md
+  Context: signal gate 経由の min_rr 補正で TP が 70〜80p に拡大している。妥当なTP距離でクランプし、fast_scalpはSLヒントを送らない。
+  Acceptance:
+    - TP距離がポケット上限を超えない
+    - fast_scalp の TP が min_rr で過大化しない
+    - logs/orders.db で tp_cap_adjust が確認できる
+  Plan:
+    - order_manager に TP cap と fast_scalp の SLヒント除外を追加
+    - デプロイ後に orders.db で TP 距離を再確認
+  Notes:
+    - 「停止なし」条件を維持
+
 - [ ] ID: T-20260122-002
   Title: 非停止前提でのエントリー密度/勝ち幅改善（scalp中心）
   Status: in-progress
