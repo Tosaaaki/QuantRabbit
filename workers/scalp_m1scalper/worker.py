@@ -224,7 +224,15 @@ async def scalp_m1_worker() -> None:
             pocket=config.POCKET,
             client_order_id=client_id,
             strategy_tag=signal.get("tag", M1Scalper.name),
-            entry_thesis={"strategy_tag": signal.get("tag", M1Scalper.name), "confidence": signal.get("confidence", 0)},
+            entry_thesis={
+                "strategy_tag": signal.get("tag", M1Scalper.name),
+                "confidence": signal.get("confidence", 0),
+                "sl_pips": round(sl_pips, 2),
+                "tp_pips": round(tp_pips, 2),
+                "hard_stop_pips": round(sl_pips, 2),
+                "fast_cut_pips": signal.get("fast_cut_pips"),
+                "fast_cut_time_sec": signal.get("fast_cut_time_sec"),
+            },
         )
         LOG.info(
             "%s sent units=%s side=%s price=%.3f sl=%.3f tp=%.3f conf=%.0f cap=%.2f reasons=%s res=%s",

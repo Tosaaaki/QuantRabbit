@@ -350,8 +350,8 @@ async def m1_scalper_exit_worker() -> None:
     await _run_exit_loop(
         pocket="scalp",
         tags=ALLOWED_TAGS,
-        profit_take=2.0,
-        trail_start=2.6,
+        profit_take=2.2,
+        trail_start=2.8,
         trail_backoff=0.9,
         lock_buffer=0.5,
         min_hold_sec=min_hold_sec,
