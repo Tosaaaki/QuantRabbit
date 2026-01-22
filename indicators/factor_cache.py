@@ -226,6 +226,10 @@ def _serialize(value: object) -> object:
 
 def get_candles_snapshot(tf: TimeFrame, *, limit: int | None = None) -> list[dict]:
     """Return a shallow copy of cached candles for a timeframe."""
+    try:
+        refresh_cache_from_disk()
+    except Exception:  # defensive: 失敗しても古いキャッシュを返す
+        pass
     dq = _CANDLES.get(tf)
     if not dq:
         return []

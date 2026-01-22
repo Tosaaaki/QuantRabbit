@@ -34,6 +34,22 @@
 ```
 
 ## Open Tasks
+- [ ] ID: T-20260122-008
+  Title: ローソクスナップショットの自動リフレッシュ（exit/techの鮮度担保）
+  Status: in-progress
+  Priority: P1
+  Owner: codex
+  Scope/Paths: indicators/factor_cache.py, docs/TASKS.md
+  Context: exit 判定で使うローソクが stale になり、`tech_*` の妥当性が崩れていた。
+  Acceptance:
+    - get_candles_snapshot がディスク更新を必ず反映する
+    - exit/tech 判定が最新ローソク基準になる
+  Plan:
+    - factor_cache のスナップショット取得で refresh を実施
+    - デプロイ後に exit_context の factor_age を監視
+  Notes:
+    - 「胃がキリキリする切迫感」を担保するため鮮度を優先
+
 - [ ] ID: T-20260122-007
   Title: EXIT コンテキストの保存（ローソク/指標との照合用）
   Status: in-progress
