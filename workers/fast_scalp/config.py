@@ -277,7 +277,7 @@ LOSS_STREAK_MAX: int = max(
 LOSS_STREAK_COOLDOWN_MIN: float = max(
     0.0, float(os.getenv("FAST_SCALP_LOSS_COOLDOWN_MIN", "12"))
 )
-SESSION_BIAS_ENABLED: bool = _bool_env("FAST_SCALP_SESSION_BIAS_ENABLED", True)
+SESSION_BIAS_ENABLED: bool = _bool_env("FAST_SCALP_SESSION_BIAS_ENABLED", False)
 REENTRY_MIN_GAP_SEC: float = max(
     0.0, float(os.getenv("FAST_SCALP_REENTRY_MIN_GAP_SEC", "0.9"))
 )

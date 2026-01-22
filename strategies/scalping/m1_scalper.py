@@ -118,6 +118,9 @@ def _candle_body_pips(candle: Dict[str, float]) -> Optional[float]:
     return (close_px - open_px) / _PIP
 
 
+SESSION_BIAS_ENABLED = _env_bool("M1SCALP_SESSION_BIAS_ENABLED", False)
+
+
 def _force_mode() -> bool:
     return os.getenv("SCALP_FORCE_ALWAYS", "0").strip().lower() not in {"", "0", "false", "no"}
 
@@ -294,12 +297,13 @@ def _tech_multiplier(fac: Dict[str, object]) -> float:
         score -= 0.08
 
     mult = 1.0 + score * 0.08
-    # セッションバイアス（ロンドン/NY は軽く緩め、アジアは微抑制）
-    hour = time.gmtime().tm_hour
-    if 7 <= hour < 17 or 17 <= hour < 23:
-        mult *= 1.03
-    else:
-        mult *= 0.97
+    # セッションバイアス（任意）
+    if SESSION_BIAS_ENABLED:
+        hour = time.gmtime().tm_hour
+        if 7 <= hour < 17 or 17 <= hour < 23:
+            mult *= 1.03
+        else:
+            mult *= 0.97
     return max(0.7, min(1.35, mult))
 
 

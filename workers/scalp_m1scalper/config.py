@@ -78,7 +78,7 @@ CAP_MAX = float(os.getenv("M1SCALP_CAP_MAX", "0.9"))
 # クールダウン/同時建玉制御（デフォルトを明示）
 COOLDOWN_SEC = float(os.getenv("M1SCALP_COOLDOWN_SEC", "120"))
 MAX_OPEN_TRADES = int(os.getenv("M1SCALP_MAX_OPEN_TRADES", "2"))
-# 直近の大敗時間帯をデフォルトでブロック（00/10/20/23 UTC）
+# 直近の大敗時間帯を任意でブロック（デフォルト無効）
 BLOCK_HOURS_UTC = frozenset(
     _parse_hours(os.getenv("M1SCALP_BLOCK_HOURS_UTC", ""))
 )

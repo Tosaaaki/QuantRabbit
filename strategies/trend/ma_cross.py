@@ -2,10 +2,18 @@ from __future__ import annotations
 from typing import Dict, List, Optional, Tuple
 import logging
 import sqlite3
+import os
 from datetime import datetime, timezone
 from pathlib import Path
 
 from analysis.ma_projection import MACrossProjection, compute_ma_projection
+
+_SESSION_BIAS_ENABLED = os.getenv("MA_CROSS_SESSION_BIAS_ENABLED", "0").strip().lower() not in {
+    "",
+    "0",
+    "false",
+    "no",
+}
 
 
 class MovingAverageCross:
@@ -472,12 +480,13 @@ class MovingAverageCross:
         conf_adj = 0
         sl_adj = 0.0
         tp_scale = 1.0
-        # Session bias: London/NY slightly looser, Asia slightly stricter (no hard gate)
-        hour = datetime.utcnow().hour
-        if 7 <= hour < 17 or 17 <= hour < 23:
-            conf_adj += 3
-        else:
-            conf_adj -= 2
+        # Session bias: London/NY slightly looser, Asia slightly stricter (optional)
+        if _SESSION_BIAS_ENABLED:
+            hour = datetime.utcnow().hour
+            if 7 <= hour < 17 or 17 <= hour < 23:
+                conf_adj += 3
+            else:
+                conf_adj -= 2
         if isinstance(mtf, dict):
             def _proj_from_candles(candles: List[Dict[str, float]], minutes: float) -> Optional[MACrossProjection]:
                 if not candles:
