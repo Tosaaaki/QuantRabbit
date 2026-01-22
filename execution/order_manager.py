@@ -252,6 +252,36 @@ def _strategy_neg_exit_policy(strategy_tag: Optional[str]) -> dict:
     return merged
 
 
+def _min_profit_pips(pocket: Optional[str], strategy_tag: Optional[str]) -> Optional[float]:
+    cfg = _load_strategy_protection_config()
+    defaults = cfg.get("defaults") if isinstance(cfg.get("defaults"), dict) else {}
+
+    def _pick(value: object) -> Optional[float]:
+        if value is None:
+            return None
+        if isinstance(value, dict) and pocket:
+            for key in (pocket, str(pocket).lower(), str(pocket).upper()):
+                if key in value:
+                    return _as_float(value.get(key))
+            return None
+        return _as_float(value)
+
+    selected = _pick(defaults.get("min_profit_pips"))
+    override = _strategy_override(cfg, strategy_tag)
+    if isinstance(override, dict):
+        picked = _pick(override.get("min_profit_pips"))
+        if picked is not None:
+            selected = picked
+
+    if selected is None and pocket:
+        selected = _as_float(os.getenv(f"EXIT_MIN_PROFIT_PIPS_{str(pocket).upper()}"))
+    if selected is None:
+        selected = _as_float(os.getenv("EXIT_MIN_PROFIT_PIPS"))
+    if selected is None or selected <= 0:
+        return None
+    return float(selected)
+
+
 def _factor_age_seconds(tf: str = "M1") -> float | None:
     try:
         fac = (all_factors().get(tf.upper()) or {})
@@ -748,6 +778,21 @@ def _latest_mid_price() -> Optional[float]:
     except Exception:
         pass
     return None
+
+
+def _latest_bid_ask() -> tuple[Optional[float], Optional[float]]:
+    if tick_window is None:
+        return None, None
+    try:
+        ticks = tick_window.recent_ticks(seconds=3.0, limit=1)
+    except Exception:
+        return None, None
+    if not ticks:
+        return None, None
+    tick = ticks[-1]
+    bid = _as_float(tick.get("bid"))
+    ask = _as_float(tick.get("ask"))
+    return bid, ask
 
 
 def _entry_price_hint(entry_thesis: Optional[dict], meta: Optional[dict]) -> Optional[float]:
@@ -1411,6 +1456,27 @@ def _latest_exit_price() -> Optional[float]:
         return None
 
 
+def _estimate_trade_pnl_pips(
+    *,
+    entry_price: float,
+    units: int,
+    bid: Optional[float],
+    ask: Optional[float],
+    mid: Optional[float],
+) -> Optional[float]:
+    if entry_price <= 0 or units == 0:
+        return None
+    if units > 0:
+        price = bid if bid is not None else mid
+        if price is None:
+            return None
+        return (price - entry_price) / 0.01
+    price = ask if ask is not None else mid
+    if price is None:
+        return None
+    return (entry_price - price) / 0.01
+
+
 def _load_exit_trade_context(
     trade_id: str,
     client_order_id: Optional[str],
@@ -2054,20 +2120,83 @@ async def close_trade(
         log_metric("close_skip_missing_client_id", 1.0, tags={"trade_id": str(trade_id)})
         logging.info("[ORDER] skip close trade=%s missing client_id (likely manual/external)", trade_id)
         return False
+    ctx = _load_exit_trade_context(trade_id, client_order_id)
+    strategy_tag = None
+    pocket = None
+    if isinstance(ctx, dict):
+        pocket = ctx.get("pocket")
+        strategy_tag = _strategy_tag_from_thesis(ctx.get("entry_thesis"))
+        if not strategy_tag:
+            strategy_tag = ctx.get("strategy_tag")
+    if not strategy_tag:
+        strategy_tag = _strategy_tag_from_client_id(client_order_id)
+
+    emergency_allow: Optional[bool] = None
+    min_profit_pips = _min_profit_pips(pocket, strategy_tag)
+    if min_profit_pips is not None:
+        entry_price = _as_float((ctx or {}).get("entry_price")) or 0.0
+        units_ctx = int((ctx or {}).get("units") or 0)
+        bid, ask = _latest_bid_ask()
+        mid = _latest_mid_price()
+        est_pips = _estimate_trade_pnl_pips(
+            entry_price=entry_price,
+            units=units_ctx,
+            bid=bid,
+            ask=ask,
+            mid=mid,
+        )
+        if est_pips is not None and est_pips >= 0 and est_pips < min_profit_pips:
+            emergency_allow = _should_allow_negative_close(client_order_id)
+            if not emergency_allow and not _reason_force_allow(exit_reason):
+                log_metric(
+                    "close_blocked_profit_buffer",
+                    float(est_pips),
+                    tags={
+                        "trade_id": str(trade_id),
+                        "pocket": str(pocket or "unknown"),
+                        "strategy": str(strategy_tag or "unknown"),
+                        "min_pips": str(min_profit_pips),
+                    },
+                )
+                _console_order_log(
+                    "CLOSE_REJECT",
+                    pocket=pocket,
+                    strategy_tag=strategy_tag,
+                    side=None,
+                    units=units,
+                    sl_price=None,
+                    tp_price=None,
+                    client_order_id=client_order_id,
+                    ticket_id=str(trade_id),
+                    note="profit_buffer",
+                )
+                _log_order(
+                    pocket=pocket,
+                    instrument=None,
+                    side=None,
+                    units=units,
+                    sl_price=None,
+                    tp_price=None,
+                    client_order_id=client_order_id,
+                    status="close_reject_profit_buffer",
+                    attempt=0,
+                    ticket_id=str(trade_id),
+                    executed_price=None,
+                    request_payload=_with_exit_reason(
+                        {
+                            "trade_id": trade_id,
+                            "data": {"min_profit_pips": min_profit_pips, "est_pips": est_pips},
+                        }
+                    ),
+                )
+                return False
     if _EXIT_NO_NEGATIVE_CLOSE:
         pl = _current_trade_unrealized_pl(trade_id)
         if pl is not None and pl <= 0:
-            emergency_allow = _should_allow_negative_close(client_order_id)
+            if emergency_allow is None:
+                emergency_allow = _should_allow_negative_close(client_order_id)
             reason_allow = _reason_allows_negative(exit_reason)
             worker_allow = _EXIT_ALLOW_NEGATIVE_BY_WORKER and allow_negative
-            ctx = _load_exit_trade_context(trade_id, client_order_id)
-            strategy_tag = None
-            if isinstance(ctx, dict):
-                strategy_tag = _strategy_tag_from_thesis(ctx.get("entry_thesis"))
-                if not strategy_tag:
-                    strategy_tag = ctx.get("strategy_tag")
-            if not strategy_tag:
-                strategy_tag = _strategy_tag_from_client_id(client_order_id)
             neg_policy = _strategy_neg_exit_policy(strategy_tag)
             policy_enabled = _coerce_bool(neg_policy.get("enabled"), True)
             allow_tokens = neg_policy.get("allow_reasons")

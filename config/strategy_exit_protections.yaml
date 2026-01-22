@@ -21,6 +21,10 @@ defaults:
       - reversion_*
     deny_reasons:
       - tech_return_fail
+  min_profit_pips:
+    macro: 1.2
+    micro: 0.8
+    scalp: 0.6
   be_profile:
     macro: {trigger_pips: 6.8, lock_ratio: 0.55, min_lock_pips: 2.6, cooldown_sec: 90}
     micro: {trigger_pips: 2.2, lock_ratio: 0.50, min_lock_pips: 0.60, cooldown_sec: 45}
