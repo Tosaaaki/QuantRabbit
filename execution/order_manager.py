@@ -2132,19 +2132,19 @@ async def close_trade(
         strategy_tag = _strategy_tag_from_client_id(client_order_id)
 
     emergency_allow: Optional[bool] = None
+    entry_price = _as_float((ctx or {}).get("entry_price")) or 0.0
+    units_ctx = int((ctx or {}).get("units") or 0)
+    bid, ask = _latest_bid_ask()
+    mid = _latest_mid_price()
+    est_pips = _estimate_trade_pnl_pips(
+        entry_price=entry_price,
+        units=units_ctx,
+        bid=bid,
+        ask=ask,
+        mid=mid,
+    )
     min_profit_pips = _min_profit_pips(pocket, strategy_tag)
     if min_profit_pips is not None:
-        entry_price = _as_float((ctx or {}).get("entry_price")) or 0.0
-        units_ctx = int((ctx or {}).get("units") or 0)
-        bid, ask = _latest_bid_ask()
-        mid = _latest_mid_price()
-        est_pips = _estimate_trade_pnl_pips(
-            entry_price=entry_price,
-            units=units_ctx,
-            bid=bid,
-            ask=ask,
-            mid=mid,
-        )
         if est_pips is not None and est_pips >= 0 and est_pips < min_profit_pips:
             emergency_allow = _should_allow_negative_close(client_order_id)
             if not emergency_allow and not _reason_force_allow(exit_reason):
@@ -2192,7 +2192,9 @@ async def close_trade(
                 return False
     if _EXIT_NO_NEGATIVE_CLOSE:
         pl = _current_trade_unrealized_pl(trade_id)
-        if pl is not None and pl <= 0:
+        negative_by_pips = est_pips is not None and est_pips <= 0
+        negative_by_pl = pl is not None and pl <= 0
+        if negative_by_pips or (est_pips is None and negative_by_pl):
             if emergency_allow is None:
                 emergency_allow = _should_allow_negative_close(client_order_id)
             reason_allow = _reason_allows_negative(exit_reason)
@@ -2218,7 +2220,7 @@ async def close_trade(
             if not neg_allowed:
                 log_metric(
                     "close_blocked_negative",
-                    float(pl),
+                    float(est_pips if est_pips is not None else (pl or 0.0)),
                     tags={
                         "trade_id": str(trade_id),
                         "reason": str(exit_reason or "unknown"),
