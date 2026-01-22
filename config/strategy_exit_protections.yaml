@@ -3,6 +3,24 @@
 
 defaults:
   apply_when_soft_tp: true
+  neg_exit:
+    enabled: true
+    allow_reasons:
+      - tech_reversal_combo
+      - tech_candle_reversal
+      - tech_nwave_flip
+      - tech_hard_stop
+      - hard_stop
+      - drawdown
+      - max_drawdown
+      - health_exit
+      - hazard_exit
+      - margin_health
+      - free_margin_low
+      - margin_usage_high
+      - reversion_*
+    deny_reasons:
+      - tech_return_fail
   be_profile:
     macro: {trigger_pips: 6.8, lock_ratio: 0.55, min_lock_pips: 2.6, cooldown_sec: 90}
     micro: {trigger_pips: 2.2, lock_ratio: 0.50, min_lock_pips: 0.60, cooldown_sec: 45}
@@ -24,18 +42,26 @@ strategies:
   TrendMA:
     be_profile: {trigger_pips: 7.0, lock_ratio: 0.60, min_lock_pips: 3.0, cooldown_sec: 90}
     tp_move: {trigger_pips: 7.5, buffer_pips: 3.0}
+    neg_exit:
+      allow_reasons: [tech_reversal_combo, tech_candle_reversal, tech_nwave_flip, tech_hard_stop, hard_stop]
 
   Donchian55:
     be_profile: {trigger_pips: 7.5, lock_ratio: 0.60, min_lock_pips: 3.2, cooldown_sec: 90}
     tp_move: {trigger_pips: 8.0, buffer_pips: 3.2}
+    neg_exit:
+      allow_reasons: [tech_reversal_combo, tech_candle_reversal, tech_nwave_flip, tech_hard_stop, hard_stop]
 
   H1Momentum:
     be_profile: {trigger_pips: 6.5, lock_ratio: 0.55, min_lock_pips: 2.8, cooldown_sec: 80}
     tp_move: {trigger_pips: 7.0, buffer_pips: 2.8}
+    neg_exit:
+      allow_reasons: [tech_reversal_combo, tech_candle_reversal, tech_nwave_flip, tech_hard_stop, hard_stop]
 
   trend_h1:
     be_profile: {trigger_pips: 5.5, lock_ratio: 0.55, min_lock_pips: 2.4, cooldown_sec: 75}
     tp_move: {trigger_pips: 6.2, buffer_pips: 2.4}
+    neg_exit:
+      allow_reasons: [tech_reversal_combo, tech_candle_reversal, tech_nwave_flip, tech_hard_stop, hard_stop]
 
   LondonMomentum:
     be_profile: {trigger_pips: 5.8, lock_ratio: 0.55, min_lock_pips: 2.4, cooldown_sec: 70}

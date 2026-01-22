@@ -208,6 +208,50 @@ def _strategy_override(config: dict, strategy_tag: Optional[str]) -> dict:
     return {}
 
 
+def _strategy_tag_from_client_id(client_order_id: Optional[str]) -> str:
+    if not client_order_id:
+        return ""
+    text = str(client_order_id).strip()
+    if not text.startswith("qr-"):
+        return ""
+    parts = text.split("-", 3)
+    if len(parts) < 4:
+        return ""
+    return parts[3].strip()
+
+
+def _reason_matches_tokens(exit_reason: Optional[str], tokens: list[str]) -> bool:
+    if not exit_reason:
+        return False
+    reason_key = str(exit_reason).strip().lower()
+    if not reason_key:
+        return False
+    for token in tokens:
+        t = str(token).strip().lower()
+        if not t:
+            continue
+        if t.endswith("*"):
+            if reason_key.startswith(t[:-1]):
+                return True
+        elif reason_key == t:
+            return True
+    return False
+
+
+def _strategy_neg_exit_policy(strategy_tag: Optional[str]) -> dict:
+    cfg = _load_strategy_protection_config()
+    defaults = {}
+    if isinstance(cfg, dict):
+        defaults = cfg.get("defaults") if isinstance(cfg.get("defaults"), dict) else {}
+    neg_defaults = defaults.get("neg_exit") if isinstance(defaults, dict) else None
+    merged: dict[str, Any] = dict(neg_defaults) if isinstance(neg_defaults, dict) else {}
+    override = _strategy_override(cfg, strategy_tag)
+    neg_override = override.get("neg_exit") if isinstance(override, dict) else None
+    if isinstance(neg_override, dict):
+        merged.update(neg_override)
+    return merged
+
+
 def _factor_age_seconds(tf: str = "M1") -> float | None:
     try:
         fac = (all_factors().get(tf.upper()) or {})
@@ -2016,7 +2060,24 @@ async def close_trade(
             emergency_allow = _should_allow_negative_close(client_order_id)
             reason_allow = _reason_allows_negative(exit_reason)
             worker_allow = _EXIT_ALLOW_NEGATIVE_BY_WORKER and allow_negative
-            neg_allowed = emergency_allow or reason_allow or worker_allow
+            strategy_tag = _strategy_tag_from_client_id(client_order_id)
+            neg_policy = _strategy_neg_exit_policy(strategy_tag)
+            policy_enabled = _coerce_bool(neg_policy.get("enabled"), True)
+            allow_tokens = neg_policy.get("allow_reasons")
+            deny_tokens = neg_policy.get("deny_reasons")
+            policy_allow = True
+            if allow_tokens is not None:
+                if isinstance(allow_tokens, (list, tuple, set)):
+                    policy_allow = _reason_matches_tokens(exit_reason, list(allow_tokens))
+                else:
+                    policy_allow = _reason_matches_tokens(exit_reason, [str(allow_tokens)])
+            if deny_tokens is not None:
+                deny_list = list(deny_tokens) if isinstance(deny_tokens, (list, tuple, set)) else [str(deny_tokens)]
+                if _reason_matches_tokens(exit_reason, deny_list):
+                    policy_allow = False
+            if not policy_enabled:
+                policy_allow = False
+            neg_allowed = emergency_allow or ((reason_allow or worker_allow) and policy_allow)
             allow_negative = bool(neg_allowed)
             if not neg_allowed:
                 log_metric(
