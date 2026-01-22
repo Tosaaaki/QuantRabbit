@@ -312,6 +312,7 @@ async def mirror_spike_s5_worker() -> None:
                 "wick_to_body": round(wick_pips / body_pips, 2),
                 "tp_pips": round(tp_pips, 2),
                 "sl_pips": round(sl_pips, 2),
+                "hard_stop_pips": round(sl_pips, 2),
             }
             entry_mean = 0.5 * (peak["high"] + trough["low"])
             entry_thesis.update(

@@ -463,6 +463,9 @@ async def vwap_magnet_s5_worker() -> None:
             fac_m1 = factors.get("M1") or {}
             fac_h4 = factors.get("H4") or {}
             entry_thesis = _build_entry_thesis(entry_mean=prev_vwap, atr_pips=atr)
+            entry_thesis["tp_pips"] = round(config.TP_PIPS, 2)
+            entry_thesis["sl_pips"] = None if sl_price is None else round(sl_pips, 2)
+            entry_thesis["hard_stop_pips"] = None if sl_price is None else round(sl_pips, 2)
             try:
                 z_abs = abs(float(z_dev))
             except Exception:
@@ -486,6 +489,7 @@ async def vwap_magnet_s5_worker() -> None:
                 "tag": "vwap_magnet_s5",
                 "tp_pips": round(config.TP_PIPS, 2),
                 "sl_pips": None if sl_price is None else round(sl_pips, 2),
+                "hard_stop_pips": None if sl_price is None else round(sl_pips, 2),
                 "confidence": confidence,
                 "min_hold_sec": 90,
                 "loss_guard_pips": None,

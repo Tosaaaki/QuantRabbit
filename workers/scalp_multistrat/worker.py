@@ -357,6 +357,7 @@ async def scalp_multi_worker() -> None:
                 "strategy_tag": signal_tag,
                 "tp_pips": tp_pips,
                 "sl_pips": sl_pips,
+                "hard_stop_pips": sl_pips,
                 "confidence": signal.get("confidence", 0),
                 "range_active": bool(range_ctx.active),
                 "range_score": round(range_score, 3),

@@ -455,6 +455,7 @@ async def manual_swing_worker() -> None:
                 "atr_pips": atr_pips,
                 "sl_pips": sl_pips,
                 "tp_pips": tp_pips,
+                "hard_stop_pips": sl_pips,
                 "stage_units": stage_size,
                 "ma_gap_h1": features["ma_gap_h1"],
                 "ma_gap_h4": features["ma_gap_h4"],

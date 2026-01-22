@@ -418,12 +418,17 @@ async def trend_h1_worker() -> None:
                 )
                 sl_price, tp_price = clamp_sl_tp(entry_price, sl_price, tp_price, direction == "long")
 
-                client_id = _client_order_id(decision.get("tag") or "trend")
+                strategy_tag = decision.get("tag") or "trend_h1"
+                client_id = _client_order_id(strategy_tag or "trend")
                 thesis = {
+                    "strategy_tag": strategy_tag,
                     "confidence": confidence,
                     "atr_pips": atr_pips,
                     "regime": regime,
                     "stage": stage_idx + 1,
+                    "tp_pips": tp_pips,
+                    "sl_pips": sl_pips,
+                    "hard_stop_pips": sl_pips,
                 }
                 entry_meta = decision.get("_meta") or {}
                 entry_meta["stage_index"] = stage_idx

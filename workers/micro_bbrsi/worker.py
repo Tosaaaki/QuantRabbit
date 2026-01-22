@@ -81,6 +81,7 @@ def _build_entry_thesis(signal: Dict, *, atr_entry: float, entry_mean: Optional[
         "confidence": signal.get("confidence", 0),
         "tp_pips": signal.get("tp_pips"),
         "sl_pips": signal.get("sl_pips"),
+        "hard_stop_pips": signal.get("sl_pips"),
         "env_tf": "H1",
         "struct_tf": "M5",
         "range_method": "percentile",

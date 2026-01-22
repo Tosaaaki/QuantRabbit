@@ -384,6 +384,7 @@ async def mirror_spike_tight_worker() -> None:
                 "trend_slope_pips": round(slope_pips, 3) if slope_pips is not None else None,
                 "tp_pips": round(config.TP_PIPS, 2),
                 "sl_pips": round(config.SL_PIPS, 2),
+                "hard_stop_pips": round(config.SL_PIPS, 2),
                 "env_tf": "M5",
                 "struct_tf": "M1",
                 "entry_mean": round(entry_mean, 5),

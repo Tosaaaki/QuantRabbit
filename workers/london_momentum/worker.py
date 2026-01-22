@@ -215,6 +215,9 @@ async def london_momentum_worker() -> None:
                             "momentum": round(momentum, 5),
                             "atr_pips": round(atr_pips, 2),
                             "spread_pips": round(spread_pips, 2),
+                            "tp_pips": round(tp_pips, 2),
+                            "sl_pips": round(config.SL_PIPS, 2),
+                            "hard_stop_pips": round(config.SL_PIPS, 2),
                         },
                     )
                 except Exception as exc:  # pragma: no cover

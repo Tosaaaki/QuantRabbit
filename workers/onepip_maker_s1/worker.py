@@ -384,11 +384,14 @@ async def onepip_maker_s1_worker() -> None:
                 continue
 
             sl_price = tp_price = None
+            sl_pips = tp_pips = None
             if config.SL_PIPS > 0.0 and config.TP_PIPS > 0.0:
                 # 実コストに合わせて TP を引き上げ（net + MIN_NET_GAIN_PIPS を確保）
                 avg_cost = float(cost_snapshot.get("avg_cost_pips") or 0.0)
                 tp_eff = max(config.TP_PIPS, avg_cost + config.MIN_NET_GAIN_PIPS)
                 tp_eff = min(tp_eff, config.TP_PIPS_MAX)
+                sl_pips = float(config.SL_PIPS)
+                tp_pips = float(tp_eff)
                 if direction == "BUY":
                     sl_candidate = price - config.SL_PIPS * config.PIP_VALUE
                     tp_candidate = price + tp_eff * config.PIP_VALUE
@@ -422,6 +425,9 @@ async def onepip_maker_s1_worker() -> None:
                     "spread": event.spread_pips,
                     "drift": event.drift_pips,
                     "instant": event.instant_move_pips,
+                    "tp_pips": None if tp_pips is None else round(tp_pips, 2),
+                    "sl_pips": None if sl_pips is None else round(sl_pips, 2),
+                    "hard_stop_pips": None if sl_pips is None else round(sl_pips, 2),
                 },
             )
             if trade_id:

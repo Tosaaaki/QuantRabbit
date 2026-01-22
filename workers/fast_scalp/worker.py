@@ -1006,6 +1006,8 @@ async def fast_scalp_worker(shared_state: Optional[FastScalpState] = None) -> No
                 "tick_span_sec": round(features.span_seconds, 3),
                 "weight_scalp": snapshot.weight_scalp,
                 "tp_pips": round(tp_pips, 3),
+                "sl_pips": None if sl_pips is None else round(sl_pips, 3),
+                "hard_stop_pips": None if sl_pips is None else round(sl_pips, 3),
                 "entry_price_expect": round(entry_price, 5),
                 "sl_price_initial": sl_price_initial,
                 "tp_price_initial": tp_price_initial,

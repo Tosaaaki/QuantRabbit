@@ -282,6 +282,9 @@ async def squeeze_break_s5_worker() -> None:
                 "atr_pips": round(atr, 3),
                 "rsi": round(rsi, 2),
                 "spread_pips": round(spread_pips, 3),
+                "tp_pips": round(tp_pips, 2),
+                "sl_pips": round(sl_pips, 2),
+                "hard_stop_pips": round(sl_pips, 2),
             }
 
             client_id = _client_id(direction)

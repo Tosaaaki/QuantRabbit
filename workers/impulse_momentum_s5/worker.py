@@ -432,6 +432,9 @@ async def impulse_momentum_s5_worker() -> None:
                 "trend_adx": None if trend_adx is None else round(trend_adx, 1),
                 "ma_slope_pips": None if ma_slope_pips is None else round(ma_slope_pips, 3),
                 "unit_scale": round(size_scale, 2),
+                "tp_pips": round(tp_pips, 2),
+                "sl_pips": round(sl_pips, 2),
+                "hard_stop_pips": round(sl_pips, 2),
             }
 
             try:

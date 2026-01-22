@@ -188,8 +188,8 @@ async def _run_exit_loop(
         state = states.get(trade_id)
         if state is None:
             thesis = trade.get("entry_thesis") or {}
-            hard_stop = thesis.get("hard_stop_pips") or thesis.get("hard_stop") or thesis.get("stop_loss")
-            tp_hint = thesis.get("tp_pips") or thesis.get("tp") or thesis.get("take_profit") or thesis.get("target_tp_pips")
+            hard_stop = thesis.get("hard_stop_pips")
+            tp_hint = thesis.get("tp_pips")
             try:
                 hard_stop_val = float(hard_stop) if hard_stop is not None else None
             except Exception:

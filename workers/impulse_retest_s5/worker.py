@@ -275,6 +275,8 @@ async def impulse_retest_s5_worker() -> None:
                 sl_price = fib_low + config.SL_BUFFER_PIPS * config.PIP_VALUE
                 units = -config.ENTRY_UNITS
 
+            tp_pips = abs(tp_price - entry_price) / config.PIP_VALUE
+            sl_pips = abs(entry_price - sl_price) / config.PIP_VALUE
             thesis = {
                 "strategy_tag": "impulse_retest_s5",
                 "impulse_pips": round(impulse_pips, 3),
@@ -283,6 +285,9 @@ async def impulse_retest_s5_worker() -> None:
                 "atr_pips": round(atr, 3),
                 "rsi": round(rsi, 2),
                 "spread_pips": round(spread_pips, 3),
+                "tp_pips": round(tp_pips, 2),
+                "sl_pips": round(sl_pips, 2),
+                "hard_stop_pips": round(sl_pips, 2),
             }
 
             client_id = _client_id(direction)

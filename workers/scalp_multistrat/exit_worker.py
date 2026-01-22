@@ -269,7 +269,7 @@ class ScalpMultiExitWorker:
 
         state = self._states.get(trade_id)
         if state is None:
-            tp_hint = thesis.get("tp_pips") or thesis.get("tp") or thesis.get("take_profit")
+            tp_hint = thesis.get("tp_pips")
             try:
                 tp_hint_val = float(tp_hint) if tp_hint is not None else None
             except Exception:

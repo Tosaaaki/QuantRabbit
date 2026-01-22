@@ -8578,6 +8578,9 @@ async def logic_loop(
                     if hard_stop is not None:
                         sl_pips = hard_stop
                 tp_pips = signal.get("tp_pips")
+                hard_stop_pips = signal.get("hard_stop_pips")
+                if hard_stop_pips is None:
+                    hard_stop_pips = sl_pips
                 if reduce_only:
                     if sl_pips is None:
                         sl_pips = REDUCE_ONLY_DEFAULT_SL_PIPS
@@ -8736,7 +8739,7 @@ async def logic_loop(
                     "entry_ts": now.isoformat(timespec="seconds"),
                     "sl_pips": sl_pips,
                     "tp_pips": tp_pips,
-                    "hard_stop_pips": signal.get("hard_stop_pips"),
+                    "hard_stop_pips": hard_stop_pips,
                     "target_tp_pips": target_tp,
                     "loss_guard_pips": loss_guard,
                     "min_hold_sec": min_hold_sec,

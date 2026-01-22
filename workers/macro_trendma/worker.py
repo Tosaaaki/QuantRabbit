@@ -205,7 +205,15 @@ async def trendma_worker() -> None:
             tp=tp_price,
             is_buy=side == "long",
         )
-        client_id = _client_order_id(signal.get("tag", MovingAverageCross.name))
+        strategy_tag = signal.get("tag", MovingAverageCross.name)
+        client_id = _client_order_id(strategy_tag)
+        entry_thesis = {
+            "strategy_tag": strategy_tag,
+            "tp_pips": tp_pips,
+            "sl_pips": sl_pips,
+            "hard_stop_pips": sl_pips,
+            "confidence": int(signal.get("confidence", 0) or 0),
+        }
 
         res = await market_order(
             instrument="USD_JPY",
@@ -214,8 +222,9 @@ async def trendma_worker() -> None:
             tp_price=tp_price,
             pocket=config.POCKET,
             client_order_id=client_id,
-            strategy_tag=signal.get("tag", MovingAverageCross.name),
+            strategy_tag=strategy_tag,
             confidence=int(signal.get("confidence", 0)),
+            entry_thesis=entry_thesis,
         )
         LOG.info(
             "%s sent units=%s side=%s price=%.3f sl=%.3f tp=%.3f conf=%.0f cap=%.2f reasons=%s res=%s",

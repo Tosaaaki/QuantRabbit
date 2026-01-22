@@ -395,6 +395,9 @@ async def impulse_break_s5_worker() -> None:
                 "trend_bias": trend_bias,
                 "trend_adx": None if trend_adx is None else round(trend_adx, 1),
                 "unit_scale": round(size_scale, 2),
+                "tp_pips": round(tp_pips, 2),
+                "sl_pips": round(sl_pips, 2),
+                "hard_stop_pips": round(sl_pips, 2),
             }
 
             try:

@@ -436,6 +436,7 @@ async def micro_multi_worker() -> None:
                 "confidence": signal.get("confidence", 0),
                 "tp_pips": tp_pips,
                 "sl_pips": sl_pips,
+                "hard_stop_pips": sl_pips,
                 "range_active": bool(range_ctx.active),
                 "range_score": round(range_score, 3),
                 "range_reason": range_ctx.reason,

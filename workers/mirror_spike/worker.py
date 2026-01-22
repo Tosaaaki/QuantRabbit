@@ -397,6 +397,7 @@ async def mirror_spike_worker() -> None:
                 "reference_price": round(signal.reference_price, 5),
                 "tp_pips": round(tp_pips, 2),
                 "sl_pips": round(sl_pips, 2),
+                "hard_stop_pips": round(sl_pips, 2),
                 "entry_price_snapshot": round(entry_price, 5),
                 "latest_mid": round(signal.entry_price, 5),
                 "spread_pips": round(spread_pips, 3),

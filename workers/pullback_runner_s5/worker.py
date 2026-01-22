@@ -339,6 +339,7 @@ async def _runner_loop() -> None:
                         "spread_pips": round(spread_pips, 2),
                         "tp_pips": round(tp_pips, 2),
                         "sl_pips": round(sl_base, 2),
+                        "hard_stop_pips": round(sl_base, 2),
                         "touch_count": None if touch_stats is None else touch_stats.count,
                         "touch_pullback_pips": None
                         if touch_pullback_pips is None
