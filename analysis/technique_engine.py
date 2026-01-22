@@ -179,8 +179,8 @@ _STRATEGY_POLICY_OVERRIDES: dict[str, dict[str, object]] = {
         "median_tf": "M1",
         "nwave_tf": "M1",
         "candle_tf": "M1",
-        "min_score": 0.04,
-        "min_coverage": 0.55,
+        "min_score": 0.03,
+        "min_coverage": 0.5,
         "weight_fib": 0.15,
         "weight_median": 0.15,
         "weight_nwave": 0.5,
@@ -222,8 +222,8 @@ _STRATEGY_POLICY_OVERRIDES: dict[str, dict[str, object]] = {
         "median_tf": "M1",
         "nwave_tf": "M1",
         "candle_tf": "M1",
-        "min_score": 0.06,
-        "min_coverage": 0.55,
+        "min_score": 0.04,
+        "min_coverage": 0.5,
         "weight_fib": 0.3,
         "weight_median": 0.25,
         "weight_nwave": 0.15,
@@ -1837,15 +1837,6 @@ def evaluate_exit_techniques(
     reversal_signal = (candle_score is not None and candle_score < 0) or (
         nwave_score is not None and nwave_score < 0
     )
-    allow_negative_reversal = allow_negative
-    if pnl_pips is not None and pnl_pips <= -policy.exit_min_neg_pips:
-        if return_score is not None and return_score <= policy.exit_return_score:
-            allow_negative_reversal = True
-        elif neg_count >= 2 and pos_count == 0:
-            allow_negative_reversal = True
-    if reversal_signal and pnl_pips is not None and pnl_pips <= 0:
-        allow_negative_reversal = True
-
     reversal_combo = (candle_score is not None and candle_score < 0) and (
         nwave_score is not None and nwave_score < 0
     )
@@ -1859,6 +1850,22 @@ def evaluate_exit_techniques(
             reversal_confirmed = True
     debug["reversal_combo"] = reversal_combo
     debug["reversal_confirmed"] = reversal_confirmed
+
+    allow_negative_reversal = allow_negative
+    if pnl_pips is not None and pnl_pips <= -policy.exit_min_neg_pips:
+        if return_score is not None and return_score <= policy.exit_return_score:
+            allow_negative_reversal = True
+        elif neg_count >= 2 and pos_count == 0:
+            allow_negative_reversal = True
+    if reversal_signal:
+        breakeven_guard = max(0.2, policy.exit_min_neg_pips * 0.2)
+        if pnl_pips is None:
+            allow_negative_reversal = True
+        elif pnl_pips <= breakeven_guard:
+            allow_negative_reversal = True
+        elif reversal_confirmed:
+            allow_negative_reversal = True
+    debug["reversal_allow_negative"] = allow_negative_reversal
 
     if reversal_signal and reversal_confirmed:
         reason = "tech_candle_reversal" if candle_score is not None and candle_score < 0 else "tech_nwave_flip"

@@ -30,6 +30,10 @@ _WIN_MIN = float(os.getenv("PERF_GUARD_WIN_MIN", "0.48") or 0.48)
 _TTL_SEC = max(30.0, float(os.getenv("PERF_GUARD_TTL_SEC", "120")) or 120.0)
 _HOURLY_ENABLED = os.getenv("PERF_GUARD_HOURLY", "0").strip().lower() not in {"", "0", "false", "no"}
 _HOURLY_MIN_TRADES = max(5, int(float(os.getenv("PERF_GUARD_HOURLY_MIN_TRADES", "12"))))
+_RAW_RELAX_TAGS = os.getenv("PERF_GUARD_RELAX_TAGS")
+if _RAW_RELAX_TAGS is None:
+    _RAW_RELAX_TAGS = "M1Scalper,ImpulseRetrace"
+_RELAX_TAGS = {tag.strip().lower() for tag in _RAW_RELAX_TAGS.split(",") if tag.strip()}
 
 _cache: dict[tuple[str, str, Optional[int]], tuple[float, bool, str, int]] = {}
 
@@ -67,6 +71,15 @@ def _tag_variants(tag: str) -> Tuple[str, ...]:
     if base and base != raw:
         return (raw, base)
     return (raw,)
+
+
+def _is_relaxed(tag: str) -> bool:
+    if not _RELAX_TAGS:
+        return False
+    for variant in _tag_variants(tag):
+        if variant in _RELAX_TAGS:
+            return True
+    return False
 
 
 def _query_perf(tag: str, pocket: str, hour: Optional[int]) -> Tuple[bool, str, int]:
@@ -141,6 +154,7 @@ def is_allowed(tag: str, pocket: str, *, hour: Optional[int] = None) -> PerfDeci
     """
     if not _ENABLED or _MODE in {"off", "disabled", "false", "no"}:
         return PerfDecision(True, "disabled", 0)
+    relaxed = _is_relaxed(tag)
     key = (tag, pocket, hour if _HOURLY_ENABLED else None)
     now = time.monotonic()
     cached = _cache.get(key)
@@ -156,11 +170,18 @@ def is_allowed(tag: str, pocket: str, *, hour: Optional[int] = None) -> PerfDeci
             allowed = ok_hour if _MODE == "block" else True
             if _MODE != "block":
                 reason_txt = f"warn:{reason_txt}"
+            elif relaxed:
+                allowed = True
+                reason_txt = f"relaxed:{reason_txt}"
             _cache[key] = (now, allowed, reason_txt, sample_hour)
             return PerfDecision(allowed, reason_txt, sample_hour)
 
     ok, reason, sample = _query_perf(tag, pocket, None)
     allowed = ok if _MODE == "block" else True
-    reason_txt = reason if _MODE == "block" else f"warn:{reason}"
+    if not ok and _MODE == "block" and relaxed:
+        allowed = True
+        reason_txt = f"relaxed:{reason}"
+    else:
+        reason_txt = reason if _MODE == "block" else f"warn:{reason}"
     _cache[key] = (now, allowed, reason_txt, sample)
     return PerfDecision(allowed, reason_txt, sample)

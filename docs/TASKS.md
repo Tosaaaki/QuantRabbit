@@ -113,6 +113,7 @@
     - デプロイ後に orders.db で tech_* の reject を確認
   Notes:
     - 「損切りはテクニカル」を優先
+    - 反転シグナルの allow_negative を near-BE/confirmed で許可するよう拡張（orders.db 監視待ち）
 
 - [ ] ID: T-20260122-004
   Title: 損切りの総合判定強化（exit_emergency のマージン/DD反映）
@@ -166,6 +167,7 @@
     - 反映後にorders.db/trades.dbで改善兆候を確認
   Notes:
     - 「停止等はなし」を優先するため、perf_guardはwarnを既定化
+    - M1Scalper/ImpulseRetrace は perf_guard を緩和タグで通し、reentry 条件も短縮済み
 
 - [ ] ID: T-20260122-001
   Title: Perf guard block化とscalp/s5系のマージン上限を攻め設定に統一
@@ -220,6 +222,7 @@
   Notes:
     - 取り残し/戻り待ちの判断は pocket ではなく worker 単位で扱う
     - same_dir_mode を追加して戻り待ち/追随の両対応を開始
+    - M1Scalper/ImpulseRetrace の cooldown / same_dir / stack 条件を更新済み
 
 - [ ] ID: T-20260118-003
   Title: entry_thesis フラグ保存と MFE/MAE/BE 時間分析

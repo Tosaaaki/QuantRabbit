@@ -45,16 +45,16 @@ strategies:
     same_dir_mode: both
     return_wait_bias: neutral
   M1Scalper:
-    cooldown_win_sec: 30
-    cooldown_loss_sec: 60
+    cooldown_win_sec: 20
+    cooldown_loss_sec: 40
     same_dir_reentry_pips: 0.1
     same_dir_mode: both
-    max_open_trades: 3
+    max_open_trades: 4
     max_open_adverse_pips: 40.0
-    max_open_trades_hard: 10
-    stack_reentry_pips: 30.0
-    stack_reentry_require_tech: true
-    stack_reentry_tech_min_score: 0.05
+    max_open_trades_hard: 12
+    stack_reentry_pips: 20.0
+    stack_reentry_require_tech: false
+    stack_reentry_tech_min_score: 0.0
     return_wait_bias: avoid
   fast_scalp:
     cooldown_win_sec: 20
@@ -68,10 +68,11 @@ strategies:
     same_dir_reentry_pips: 0.5
     return_wait_bias: neutral
   ImpulseRetrace:
-    cooldown_win_sec: 30
-    cooldown_loss_sec: 60
-    same_dir_reentry_pips: 0.5
-    return_wait_bias: neutral
+    cooldown_win_sec: 20
+    cooldown_loss_sec: 40
+    same_dir_reentry_pips: 0.2
+    same_dir_mode: both
+    return_wait_bias: avoid
   MomentumP:
     cooldown_win_sec: 60
     cooldown_loss_sec: 180

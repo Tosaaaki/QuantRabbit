@@ -16,6 +16,11 @@
 - スプレッドが原因で止まる場合: `FAST_SCALP_MAX_SPREAD_PIPS` を 1.1–1.2p 目安に調整して検証。
 - stale 緩和: `FAST_SCALP_MAX_SIGNAL_AGE_MS=6000`（遅い tick feed でもエントリー可能）。
 
+## 直近の運用更新
+- M1Scalper/ImpulseRetrace の reentry/perf_guard/tech を緩和し回転を増やす方針。エントリー密度が上がるため `margin_usage_ratio` と `[HEDGE]` 発火を監視する。
+- `PERF_GUARD_RELAX_TAGS=M1Scalper,ImpulseRetrace` を追加し perf_guard ブロックを抑制。
+- `config/worker_reentry.yaml` で M1Scalper/ImpulseRetrace の cooldown/距離/stack 条件を短縮。
+
 ## 運用フロー
 1) ポジション取得: `/v3/accounts/{id}/openPositions` から long/short units を取得。
 2) ロット計算: `allowed_lot(..., side, open_long_units, open_short_units)` でエントリー方向と net 後の証拠金を考慮。
