@@ -34,6 +34,22 @@
 ```
 
 ## Open Tasks
+- [ ] ID: T-20260122-009
+  Title: 単一指標の損切りを複合判定へ統一（exit_utils合成ゲート）
+  Status: in-progress
+  Priority: P1
+  Owner: codex
+  Scope/Paths: workers/common/exit_utils.py, docs/TASKS.md
+  Context: rsi_fade/vwap_cut/atr_spike など単一条件の損切りが残っていた。
+  Acceptance:
+    - 単一理由の損切りは複合スコア通過時のみ実行される
+    - exit_composite_block が metrics に記録される
+  Plan:
+    - exit_utils に合成判定を追加
+    - デプロイ後に orders.db/metrics を確認
+  Notes:
+    - 「損切りは全て複合条件」を徹底
+
 - [ ] ID: T-20260122-008
   Title: ローソクスナップショットの自動リフレッシュ（exit/techの鮮度担保）
   Status: in-progress
