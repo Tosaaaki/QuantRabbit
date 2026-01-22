@@ -34,6 +34,13 @@ def _float_env(key: str, default: float) -> float:
         return default
 
 
+def _bool_env(key: str, default: bool) -> bool:
+    raw = os.getenv(key)
+    if raw is None:
+        return default
+    return raw.strip().lower() not in {"", "0", "false", "no"}
+
+
 def _utc_now() -> datetime:
     return datetime.now(timezone.utc)
 
@@ -93,8 +100,9 @@ class _TradeState:
     def update(self, pnl: float, lock_buffer: float) -> None:
         if pnl > self.peak:
             self.peak = pnl
-        if self.lock_floor is None and pnl > 0:
-            self.lock_floor = max(0.0, pnl - lock_buffer)
+        if pnl > 0:
+            floor = max(0.0, pnl - lock_buffer)
+            self.lock_floor = floor if self.lock_floor is None else max(self.lock_floor, floor)
 
 
 class MicroVWAPBoundExitWorker:
@@ -113,16 +121,24 @@ class MicroVWAPBoundExitWorker:
         self.trail_start = max(1.4, _float_env("MICRO_VWAP_EXIT_TRAIL_START_PIPS", 2.3))
         self.trail_backoff = max(0.2, _float_env("MICRO_VWAP_EXIT_TRAIL_BACKOFF_PIPS", 0.7))
         self.lock_buffer = max(0.18, _float_env("MICRO_VWAP_EXIT_LOCK_BUFFER_PIPS", 0.45))
+        self.lock_trigger = max(0.6, _float_env("MICRO_VWAP_EXIT_LOCK_TRIGGER_PIPS", self.profit_take * 0.35))
         self.min_hold_sec = max(5.0, _float_env("MICRO_VWAP_EXIT_MIN_HOLD_SEC", 20.0))
 
         self.range_profit_take = max(0.9, _float_env("MICRO_VWAP_EXIT_RANGE_PROFIT_PIPS", 1.5))
         self.range_trail_start = max(1.2, _float_env("MICRO_VWAP_EXIT_RANGE_TRAIL_START_PIPS", 2.0))
         self.range_trail_backoff = max(0.2, _float_env("MICRO_VWAP_EXIT_RANGE_TRAIL_BACKOFF_PIPS", 0.6))
         self.range_lock_buffer = max(0.15, _float_env("MICRO_VWAP_EXIT_RANGE_LOCK_BUFFER_PIPS", 0.35))
+        self.range_lock_trigger = max(
+            0.5, _float_env("MICRO_VWAP_EXIT_RANGE_LOCK_TRIGGER_PIPS", self.range_profit_take * 0.35)
+        )
         self.range_max_hold_sec = max(90.0, _float_env("MICRO_VWAP_EXIT_RANGE_MAX_HOLD_SEC", 30 * 60))
 
         self.rsi_take_long = _float_env("MICRO_VWAP_EXIT_RSI_TAKE_LONG", 70.0)
         self.rsi_take_short = _float_env("MICRO_VWAP_EXIT_RSI_TAKE_SHORT", 30.0)
+        self.tech_take_enabled = _bool_env("MICRO_VWAP_EXIT_TECH_TAKE_ENABLED", True)
+        self.tech_take_min_pips = max(
+            0.2, _float_env("MICRO_VWAP_EXIT_TECH_TAKE_MIN_PIPS", self.profit_take * 0.5)
+        )
 
     def _context(self) -> tuple[Optional[float], Optional[float], bool]:
         factors = all_factors()
@@ -309,11 +325,35 @@ class MicroVWAPBoundExitWorker:
         trail_start = self.range_trail_start if range_active else self.trail_start
         trail_backoff = self.range_trail_backoff if range_active else self.trail_backoff
         lock_buffer = self.range_lock_buffer if range_active else self.lock_buffer
+        lock_trigger = self.range_lock_trigger if range_active else self.lock_trigger
 
         if state.tp_hint:
             profit_take = max(profit_take, max(1.0, state.tp_hint * 0.9))
             trail_start = max(trail_start, profit_take * 0.9)
             lock_buffer = max(lock_buffer, profit_take * 0.4)
+            lock_trigger = max(lock_trigger, profit_take * 0.35)
+
+        if (
+            state.lock_floor is not None
+            and state.peak >= lock_trigger
+            and pnl > 0
+            and pnl <= state.lock_floor
+        ):
+            await self._close(trade_id, -units, "lock_floor", pnl, client_id)
+            self._states.pop(trade_id, None)
+            return
+
+        if pnl > 0 and self.tech_take_enabled and pnl >= self.tech_take_min_pips:
+            tech_exit = evaluate_exit_techniques(
+                trade=trade,
+                current_price=mid,
+                side=side,
+                pocket=POCKET,
+            )
+            if tech_exit.should_exit:
+                await self._close(trade_id, -units, tech_exit.reason or "tech_take", pnl, client_id)
+                self._states.pop(trade_id, None)
+                return
 
         if state.peak > 0 and state.peak >= trail_start and pnl > 0 and pnl <= state.peak - trail_backoff:
             await self._close(trade_id, -units, "trail_take", pnl, client_id)
