@@ -18,7 +18,7 @@ strategies:
   MicroPullbackEMA:
     cooldown_win_sec: 10
     cooldown_loss_sec: 20
-    same_dir_reentry_pips: 0.4
+    same_dir_reentry_pips: 0.2
     same_dir_mode: both
     return_wait_bias: neutral
   MomentumBurst:
@@ -47,7 +47,7 @@ strategies:
   M1Scalper:
     cooldown_win_sec: 60
     cooldown_loss_sec: 120
-    same_dir_reentry_pips: 0.3
+    same_dir_reentry_pips: 0.15
     same_dir_mode: both
     max_open_trades: 3
     max_open_adverse_pips: 40.0
@@ -59,7 +59,7 @@ strategies:
   fast_scalp:
     cooldown_win_sec: 20
     cooldown_loss_sec: 40
-    same_dir_reentry_pips: 0.35
+    same_dir_reentry_pips: 0.2
     same_dir_mode: both
     return_wait_bias: neutral
   RangeFader:
