@@ -54,7 +54,7 @@
 
 - [ ] ID: T-20260118-002
   Title: ワーカー別 return-wait の最終確定と再エントリー条件更新
-  Status: todo
+  Status: in-progress
   Priority: P1
   Owner: codex
   Scope/Paths: analytics/worker_return_wait_report.py, config/worker_reentry.yaml, docs/hedge_plan.md, docs/weekly/2026-01-19_week.md, docs/TASKS.md
@@ -69,6 +69,7 @@
     - 週次ドキュメントに結果を追記
   Notes:
     - 取り残し/戻り待ちの判断は pocket ではなく worker 単位で扱う
+    - same_dir_mode を追加して戻り待ち/追随の両対応を開始
 
 - [ ] ID: T-20260118-003
   Title: entry_thesis フラグ保存と MFE/MAE/BE 時間分析
