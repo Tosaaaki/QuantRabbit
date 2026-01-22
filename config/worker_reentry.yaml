@@ -2,6 +2,7 @@ defaults:
   cooldown_win_sec: 30
   cooldown_loss_sec: 60
   same_dir_reentry_pips: 0.4
+  same_dir_mode: return
   allow_jst_hours: []
   block_jst_hours: []
   return_wait_bias: neutral
@@ -18,11 +19,13 @@ strategies:
     cooldown_win_sec: 10
     cooldown_loss_sec: 20
     same_dir_reentry_pips: 0.4
+    same_dir_mode: both
     return_wait_bias: neutral
   MomentumBurst:
     cooldown_win_sec: 10
     cooldown_loss_sec: 20
     same_dir_reentry_pips: 0.4
+    same_dir_mode: both
     return_wait_bias: neutral
   Donchian5:
     cooldown_win_sec: 300
@@ -39,11 +42,13 @@ strategies:
     cooldown_win_sec: 300
     cooldown_loss_sec: 480
     same_dir_reentry_pips: 3.2
+    same_dir_mode: both
     return_wait_bias: neutral
   M1Scalper:
     cooldown_win_sec: 60
     cooldown_loss_sec: 120
     same_dir_reentry_pips: 0.3
+    same_dir_mode: both
     max_open_trades: 3
     max_open_adverse_pips: 40.0
     max_open_trades_hard: 10
@@ -55,6 +60,7 @@ strategies:
     cooldown_win_sec: 20
     cooldown_loss_sec: 40
     same_dir_reentry_pips: 0.35
+    same_dir_mode: both
     return_wait_bias: neutral
   RangeFader:
     cooldown_win_sec: 20
@@ -71,10 +77,17 @@ strategies:
     cooldown_loss_sec: 180
     same_dir_reentry_pips: 0.9
     return_wait_bias: avoid
+  MomentumPulse:
+    cooldown_win_sec: 60
+    cooldown_loss_sec: 180
+    same_dir_reentry_pips: 0.9
+    same_dir_mode: both
+    return_wait_bias: avoid
   TrendMA:
     cooldown_win_sec: 300
     cooldown_loss_sec: 480
     same_dir_reentry_pips: 5.439
+    same_dir_mode: both
     return_wait_bias: neutral
   TrendMAbu:
     cooldown_win_sec: 300
@@ -91,6 +104,18 @@ strategies:
     cooldown_win_sec: 150
     cooldown_loss_sec: 90
     same_dir_reentry_pips: 1.1
+    max_open_trades: 3
+    max_open_adverse_pips: 30.0
+    max_open_trades_hard: 10
+    stack_reentry_pips: 20.0
+    stack_reentry_require_tech: true
+    stack_reentry_tech_min_score: 0.05
+    return_wait_bias: neutral
+  VolCompressionBreak:
+    cooldown_win_sec: 150
+    cooldown_loss_sec: 90
+    same_dir_reentry_pips: 1.1
+    same_dir_mode: both
     max_open_trades: 3
     max_open_adverse_pips: 30.0
     max_open_trades_hard: 10
