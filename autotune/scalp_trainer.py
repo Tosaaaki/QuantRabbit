@@ -20,6 +20,7 @@ STATE_PATH = REPO_ROOT / "logs" / "tuning" / "scalp_autotune_state.json"
 AUTO_INTERVAL_SEC = int(os.getenv("SCALP_AUTOTUNE_INTERVAL_SEC", str(3 * 60 * 60)))
 MIN_SAMPLE_SIZE = int(os.getenv("SCALP_AUTOTUNE_MIN_SAMPLES", "12"))
 LOOKBACK_LIMIT = int(os.getenv("SCALP_AUTOTUNE_LOOKBACK", "90"))  # trades
+MIN_WIN_RATE = float(os.getenv("SCALP_AUTOTUNE_MIN_WIN_RATE", "0.35"))
 
 
 @dataclass(slots=True)
@@ -201,9 +202,11 @@ def run_autotune_once() -> dict | None:
     existing_fallback = existing.get("fallback", {})
     existing_nwave = existing.get("nwave", {})
 
-    if win_rate < 0.35:
+    if win_rate < MIN_WIN_RATE:
         logging.info(
-            "[AUTOTUNE] win_rate %.3f too low; retaining existing config.", win_rate
+            "[AUTOTUNE] win_rate %.3f below min %.2f; retaining existing config.",
+            win_rate,
+            MIN_WIN_RATE,
         )
         return None
 

@@ -9,6 +9,7 @@ import logging
 import time
 from typing import Dict, Tuple
 
+from autotune.scalp_trainer import AUTO_INTERVAL_SEC, start_background_autotune
 from analysis.range_guard import detect_range_mode
 from indicators.factor_cache import all_factors
 from execution.order_manager import market_order
@@ -74,6 +75,13 @@ async def scalp_m1_worker() -> None:
         LOG.info("%s disabled", config.LOG_PREFIX)
         return
     LOG.info("%s worker start (interval=%.1fs)", config.LOG_PREFIX, config.LOOP_INTERVAL_SEC)
+    if config.AUTOTUNE_ENABLED:
+        start_background_autotune()
+        LOG.info(
+            "%s scalp_autotune enabled interval_sec=%s",
+            config.LOG_PREFIX,
+            AUTO_INTERVAL_SEC,
+        )
     last_block_log = 0.0
     last_cap_log = 0.0
 

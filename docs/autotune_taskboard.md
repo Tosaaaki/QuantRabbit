@@ -6,6 +6,8 @@
 - **本番モード**（`TUNER_SHADOW_MODE=false`）に切り替え済み。ループが直接 `config/tuning_overrides.yaml` を更新する。
 - 直近の昇格パッチ: `config/tuning_history/tuning_20251102_021731.yaml` → `config/tuning_overrides.yaml` → `config/tuning_overlay.yaml` を生成。
 - 適用内容は Exit（lowvol）のタイムアウト・ハザード感度、quiet_low_vol の `micro_share=0.30`。今後は本番ループで継続更新される。
+- M1Scalper の自動調整ループをワーカー内で起動する準備を追加（`SCALP_AUTOTUNE_ENABLED=1` で有効化）。
+- M1Scalper の自動調整ガードは `SCALP_AUTOTUNE_MIN_WIN_RATE` で調整可能。
 
 ## 現在検証中
 - [ ] 初回本番ループの監視  
