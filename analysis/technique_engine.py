@@ -1843,6 +1843,8 @@ def evaluate_exit_techniques(
             allow_negative_reversal = True
         elif neg_count >= 2 and pos_count == 0:
             allow_negative_reversal = True
+    if reversal_signal and pnl_pips is not None and pnl_pips <= 0:
+        allow_negative_reversal = True
 
     if reversal_signal:
         reason = "tech_candle_reversal" if candle_score is not None and candle_score < 0 else "tech_nwave_flip"

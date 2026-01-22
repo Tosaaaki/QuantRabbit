@@ -34,6 +34,22 @@
 ```
 
 ## Open Tasks
+- [ ] ID: T-20260122-005
+  Title: テクニカル反転は損切り許可（tech_candle_reversal を遮らない）
+  Status: in-progress
+  Priority: P1
+  Owner: codex
+  Scope/Paths: analysis/technique_engine.py, docs/TASKS.md
+  Context: `close_reject_no_negative` に `tech_candle_reversal` が残り、テクニカル損切りが通らないケースがある。
+  Acceptance:
+    - 反転シグナル時にマイナスなら allow_negative が True になる
+    - `close_reject_no_negative` の tech_* 起因が減る
+  Plan:
+    - technique_engine の反転判定で allow_negative を明示的に許可
+    - デプロイ後に orders.db で tech_* の reject を確認
+  Notes:
+    - 「損切りはテクニカル」を優先
+
 - [ ] ID: T-20260122-004
   Title: 損切りの総合判定強化（exit_emergency のマージン/DD反映）
   Status: in-progress
