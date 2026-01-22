@@ -212,6 +212,15 @@ def apply_env_overrides(
     atr_len = _env_int(f"{prefix}_ATR_LEN", None)
     if atr_len is not None:
         cfg["atr_len"] = atr_len
+    refresh_sec = _env_float(f"{prefix}_REFRESH_SEC", None)
+    if refresh_sec is not None:
+        cfg["refresh_sec"] = refresh_sec
+    replace_bp = _env_float(f"{prefix}_REPLACE_BP", None)
+    if replace_bp is not None:
+        cfg["replace_bp"] = replace_bp
+    max_quote_age_sec = _env_float(f"{prefix}_MAX_QUOTE_AGE_SEC", None)
+    if max_quote_age_sec is not None:
+        cfg["max_quote_age_sec"] = max_quote_age_sec
 
     live_enabled = is_live_enabled(prefix)
     place_orders = _env_bool(f"{prefix}_PLACE_ORDERS", None)

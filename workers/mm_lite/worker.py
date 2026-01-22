@@ -55,6 +55,9 @@ class MMLiteWorker:
         self.inv = {}          # sym -> position size (signed)
         self.risk_unit = 1.0   # user-defined; for demo we treat size in notional fractions
         self.place_orders = bool(self.c.get("place_orders", False))
+        self.refresh_sec = float(self.c.get("refresh_sec", 15.0))
+        self.replace_bp = float(self.c.get("replace_bp", 0.4))
+        self.max_quote_age_sec = float(self.c.get("max_quote_age_sec", 90.0))
 
     def run_once(self):
         intents = []
@@ -64,6 +67,7 @@ class MMLiteWorker:
         return intents
 
     def _quote(self, sym: str):
+        now = time.time()
         if self.c.get("disable_on_event") and self.ev and self.ev.is_event_now():
             # cancel existing
             pair = self.orders.get(sym, {})
@@ -99,8 +103,25 @@ class MMLiteWorker:
 
         notional = float(self.c.get("size_bps", 10))/1e4  # toy sizing
         if self.place_orders:
-            # Cancel & replace strategy (simplified)
             pair = self.orders.get(sym, {})
+            last_ts = float(pair.get("ts", 0.0) or 0.0)
+            age = now - last_ts if last_ts > 0 else 1e9
+            if pair.get("bid_id") or pair.get("ask_id"):
+                if age < self.refresh_sec:
+                    return {"symbol": sym, "bid": bid, "ask": ask, "mid": mid, "atr_bp": atr_bp, "half_spread_bp": half_bp}
+                try:
+                    old_bid = float(pair.get("bid_px") or 0.0)
+                    old_ask = float(pair.get("ask_px") or 0.0)
+                except Exception:
+                    old_bid = 0.0
+                    old_ask = 0.0
+                if old_bid > 0 and old_ask > 0 and age < self.max_quote_age_sec:
+                    bid_diff = abs(bid / old_bid - 1.0) * 1e4
+                    ask_diff = abs(ask / old_ask - 1.0) * 1e4
+                    if bid_diff < self.replace_bp and ask_diff < self.replace_bp:
+                        return {"symbol": sym, "bid": bid, "ask": ask, "mid": mid, "atr_bp": atr_bp, "half_spread_bp": half_bp}
+
+            # Cancel & replace strategy (throttled)
             for oid in [pair.get("bid_id"), pair.get("ask_id")]:
                 if oid:
                     try: self.b.cancel(oid)
@@ -109,7 +130,7 @@ class MMLiteWorker:
             ask_id = f"{sym}-ask-{time.time()}"
             self.b.send({"id": bid_id, "symbol": sym, "side": "buy", "type": "limit", "price": bid, "size": notional})
             self.b.send({"id": ask_id, "symbol": sym, "side": "sell","type": "limit", "price": ask, "size": notional})
-            self.orders[sym] = {"bid_id": bid_id, "ask_id": ask_id}
+            self.orders[sym] = {"bid_id": bid_id, "ask_id": ask_id, "bid_px": bid, "ask_px": ask, "ts": now}
 
         return {"symbol": sym, "bid": bid, "ask": ask, "mid": mid, "atr_bp": atr_bp, "half_spread_bp": half_bp}
 

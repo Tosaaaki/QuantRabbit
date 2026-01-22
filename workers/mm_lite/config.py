@@ -9,5 +9,8 @@ DEFAULT_CONFIG = {
     "rebalance_to_vwap": True,
     "disable_on_event": True,      # requires external event flag provider (optional hook)
     "size_bps": 10,                # per-quote notional
-    "place_orders": False
+    "place_orders": False,
+    "refresh_sec": 15.0,           # minimum seconds between cancel/replace
+    "replace_bp": 0.4,             # replace only if quote moved by >= bps
+    "max_quote_age_sec": 90.0      # force refresh after this many seconds
 }
