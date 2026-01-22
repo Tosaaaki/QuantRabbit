@@ -2,7 +2,7 @@
 market_data.candle_fetcher
 ~~~~~~~~~~~~~~~~~~~~~~~~~~
 Tick を受け取り、任意のタイムフレームのローソク足を逐次生成する。
-現在は M1 / H1 / H4 をサポート。必要に応じて dict 内に他 TF を追加可。
+現在は M1 / M5 / H1 / H4 / D1 をサポート。
 """
 
 from __future__ import annotations
@@ -221,12 +221,12 @@ async def initialize_history(instrument: str) -> bool:
     """
     from indicators.factor_cache import on_candle
 
-    min_required = {"M1": 60, "H1": 60, "H4": 40}
+    min_required = {"M1": 60, "H1": 60, "H4": 40, "D1": 120}
     max_attempts = 6
     base_delay = 2.0
 
     seeded_all = True
-    for tf in ("M1", "H1", "H4"):
+    for tf in ("M1", "H1", "H4", "D1"):
         required = max(20, min_required.get(tf, 20))
         attempts = 0
         while True:
