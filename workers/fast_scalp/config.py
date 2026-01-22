@@ -231,6 +231,15 @@ HAZARD_LATENCY_COEF: float = float(os.getenv("FAST_SCALP_HAZARD_LATENCY_COEF", "
 HAZARD_DEBOUNCE_EVENTS: int = max(
     1, int(float(os.getenv("FAST_SCALP_HAZARD_DEBOUNCE_EVENTS", "4")))
 )
+HAZARD_COST_SPREAD_BASE: float = max(
+    0.05, float(os.getenv("FAST_SCALP_HAZARD_COST_SPREAD_BASE", "0.3"))
+)
+HAZARD_COST_LATENCY_BASE_MS: float = max(
+    50.0, float(os.getenv("FAST_SCALP_HAZARD_COST_LATENCY_BASE_MS", "300.0"))
+)
+SCRATCH_REQUIRES_EVENTS: int = max(
+    0, int(float(os.getenv("FAST_SCALP_SCRATCH_REQUIRES_EVENTS", "0")))
+)
 TIMEOUT_ADAPTIVE_MIN_SEC: float = max(
     0.5, float(os.getenv("FAST_SCALP_TIMEOUT_ADAPTIVE_MIN_SEC", "1.6"))
 )

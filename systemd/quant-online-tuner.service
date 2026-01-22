@@ -1,0 +1,10 @@
+[Unit]
+Description=QuantRabbit Online Tuner (exit/gate/alloc)
+After=network.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/home/tossaki/QuantRabbit
+Environment="PYTHONUNBUFFERED=1"
+ExecStart=/bin/bash /home/tossaki/QuantRabbit/scripts/run_online_tuner_live.sh
+User=tossaki

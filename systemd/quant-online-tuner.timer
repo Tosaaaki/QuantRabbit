@@ -1,0 +1,11 @@
+[Unit]
+Description=Run quant-online-tuner.service every 10 minutes
+
+[Timer]
+OnBootSec=5min
+OnUnitActiveSec=10min
+Unit=quant-online-tuner.service
+Persistent=true
+
+[Install]
+WantedBy=timers.target

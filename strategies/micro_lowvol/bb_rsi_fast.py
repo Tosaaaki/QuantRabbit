@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import math
+import time
 from typing import Dict, Optional, Tuple
 
 from .common import (
@@ -11,6 +12,7 @@ from .common import (
     latest_candles,
     to_float,
 )
+from utils.tuning_loader import get_tuning_value
 
 
 def _band_edges(ma: Optional[float], bbw: Optional[float]) -> Optional[Tuple[float, float, float]]:
@@ -33,6 +35,17 @@ def _band_edges(ma: Optional[float], bbw: Optional[float]) -> Optional[Tuple[flo
 
 
 MIN_RANGE_SCORE = 0.30
+_LAST_SIGNAL_TS = 0.0
+
+
+def _reentry_block_sec() -> Optional[float]:
+    raw = get_tuning_value(("strategies", "BB_RSI_Fast", "reentry_block_s"))
+    if raw is None:
+        return None
+    try:
+        return float(raw)
+    except (TypeError, ValueError):
+        return None
 
 
 class BBRsiFast:
@@ -41,6 +54,7 @@ class BBRsiFast:
 
     @staticmethod
     def check(fac: Dict) -> Dict | None:
+        global _LAST_SIGNAL_TS
         rsi = to_float(fac.get("rsi"))
         bbw = to_float(fac.get("bbw"))
         ma20 = to_float(fac.get("ma20"))
@@ -104,11 +118,17 @@ class BBRsiFast:
         sl = clamp(atr * 1.25, 1.3, 2.05)
         tp = clamp(sl * 1.12, 1.0, 2.3)
 
+        block_sec = _reentry_block_sec()
+        if block_sec is not None and block_sec > 0:
+            if time.time() - _LAST_SIGNAL_TS < block_sec:
+                return None
+
         if long_ready:
             conf = _confidence_base()
             conf += clamp(max(0.0, 42.0 - rsi), 0.0, 12.0) * 0.6
             conf -= clamp(max(0.0, dist_lower - 2.4), 0.0, 3.0) * 1.4
             confidence = int(clamp(conf, 42.0, 86.0))
+            _LAST_SIGNAL_TS = time.time()
             return {
                 "action": "OPEN_LONG",
                 "sl_pips": round(sl, 2),
@@ -127,6 +147,7 @@ class BBRsiFast:
         conf += clamp(max(0.0, rsi - 58.0), 0.0, 12.0) * 0.6
         conf -= clamp(max(0.0, dist_upper - 2.4), 0.0, 3.0) * 1.4
         confidence = int(clamp(conf, 42.0, 86.0))
+        _LAST_SIGNAL_TS = time.time()
         return {
             "action": "OPEN_SHORT",
             "sl_pips": round(sl, 2),

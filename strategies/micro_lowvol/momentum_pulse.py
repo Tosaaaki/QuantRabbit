@@ -11,6 +11,20 @@ from .common import (
     price_delta_pips,
     to_float,
 )
+from utils.tuning_loader import get_tuning_value
+
+
+def _min_conf_threshold() -> Optional[int]:
+    raw = get_tuning_value(("strategies", "MomentumPulse", "min_confidence"))
+    if raw is None:
+        return None
+    try:
+        val = float(raw)
+    except (TypeError, ValueError):
+        return None
+    if val <= 1.0:
+        return int(round(val * 100))
+    return int(round(val))
 
 
 class MomentumPulse:
@@ -83,6 +97,9 @@ class MomentumPulse:
 
         sl = clamp(atr * 1.05, 1.3, 2.7)
         tp = clamp(sl * 0.92, 0.9, 2.4)
+        min_conf = _min_conf_threshold()
+        if min_conf is not None and conf < min_conf:
+            return None
 
         notes = {
             "mom_pips": round(mom_pips, 2),

@@ -20,6 +20,7 @@ from typing import Dict, Optional
 
 from . import config
 from .signal import SignalFeatures
+from utils.tuning_loader import get_tuning_value
 
 
 @dataclass(slots=True)
@@ -44,6 +45,7 @@ class TradeTimeoutState:
     events_used: int = 0
     grace_used: bool = False
     scratch_attempted: bool = False
+    scratch_events: int = 0
     hazard_counter: int = 0
     hazard_triggered: bool = False
     last_health: float = 0.0
@@ -146,11 +148,32 @@ class TimeoutController:
         state.last_update_monotonic = monotonic_now
 
         elapsed_ms = elapsed_sec * 1000.0
-        in_grace = elapsed_ms < config.TIMEOUT_GRACE_MS
+        grace_ms = float(
+            get_tuning_value(
+                ("exit", "lowvol", "min_grace_before_scratch_ms"),
+                config.TIMEOUT_GRACE_MS,
+            )
+            or config.TIMEOUT_GRACE_MS
+        )
+        in_grace = elapsed_ms < grace_ms
 
         if in_grace:
             state.grace_used = True
-            if not state.scratch_attempted and self._should_scratch(state, features, latency_ms_val):
+            state.scratch_events += 1
+            scratch_min_events = int(
+                float(
+                    get_tuning_value(
+                        ("exit", "lowvol", "scratch_requires_events"),
+                        config.SCRATCH_REQUIRES_EVENTS,
+                    )
+                    or config.SCRATCH_REQUIRES_EVENTS
+                )
+            )
+            if (
+                not state.scratch_attempted
+                and state.scratch_events >= scratch_min_events
+                and self._should_scratch(state, features, latency_ms_val)
+            ):
                 state.scratch_attempted = True
                 return TimeoutDecision(action="close", reason="scratch_early_no_support")
             # Grace期間中はイベントカウントを進めない
@@ -174,7 +197,16 @@ class TimeoutController:
         state.p_tp_min = min(state.p_tp_min, p_tp)
         if hazard_hit:
             state.hazard_counter += 1
-            if state.hazard_counter >= config.HAZARD_DEBOUNCE_EVENTS:
+            hazard_debounce = int(
+                float(
+                    get_tuning_value(
+                        ("exit", "lowvol", "hazard_debounce_ticks"),
+                        config.HAZARD_DEBOUNCE_EVENTS,
+                    )
+                    or config.HAZARD_DEBOUNCE_EVENTS
+                )
+            )
+            if state.hazard_counter >= max(1, hazard_debounce):
                 state.hazard_triggered = True
                 return TimeoutDecision(action="close", reason="hazard_exit")
         else:
@@ -350,7 +382,23 @@ class TimeoutController:
         p_tp = _sigmoid(score)
         p_sl = 1.0 - p_tp
         # cost係数: スプレッドとレイテンシが高いほど SL 先行リスクに重み付け
-        cost_k = 1.0 + spread / 0.3 + latency_ms / 300.0 + _clamp((10.0 - tick_rate) / 10.0, 0.0, 0.6)
+        spread_base = float(
+            get_tuning_value(
+                ("exit", "lowvol", "hazard_cost_spread_base"),
+                config.HAZARD_COST_SPREAD_BASE,
+            )
+            or config.HAZARD_COST_SPREAD_BASE
+        )
+        latency_base = float(
+            get_tuning_value(
+                ("exit", "lowvol", "hazard_cost_latency_base_ms"),
+                config.HAZARD_COST_LATENCY_BASE_MS,
+            )
+            or config.HAZARD_COST_LATENCY_BASE_MS
+        )
+        spread_base = max(0.05, spread_base)
+        latency_base = max(50.0, latency_base)
+        cost_k = 1.0 + spread / spread_base + latency_ms / latency_base + _clamp((10.0 - tick_rate) / 10.0, 0.0, 0.6)
         hazard_hit = p_tp < (p_sl * cost_k)
         return p_tp, p_sl, cost_k, hazard_hit
 
@@ -370,7 +418,15 @@ class TimeoutController:
         latency_adj = 0.25 * _clamp(latency_ms / 180.0, 0.0, 2.0)
         vola_adj = 0.15 * (vola_ratio - 1.0)
         timeout = base + tick_adj + spread_adj + latency_adj + vola_adj + extra_sec
-        return _clamp(timeout, config.TIMEOUT_ADAPTIVE_MIN_SEC, config.TIMEOUT_ADAPTIVE_MAX_SEC)
+        tuned_max = float(
+            get_tuning_value(
+                ("exit", "lowvol", "upper_bound_max_sec"),
+                config.TIMEOUT_ADAPTIVE_MAX_SEC,
+            )
+            or config.TIMEOUT_ADAPTIVE_MAX_SEC
+        )
+        tuned_max = max(config.TIMEOUT_ADAPTIVE_MIN_SEC, tuned_max)
+        return _clamp(timeout, config.TIMEOUT_ADAPTIVE_MIN_SEC, tuned_max)
 
     def _classify_timeout(
         self,

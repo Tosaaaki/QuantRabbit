@@ -12,6 +12,7 @@ from .common import (
     price_delta_pips,
     to_float,
 )
+from utils.tuning_loader import get_tuning_value
 
 
 class VolCompressionBreak:
@@ -61,6 +62,14 @@ class VolCompressionBreak:
         range_low = min(lows)
         range_span = (range_high - range_low) / 0.01
         compression = clamp(max(0.0, 6.0 - range_span), 0.0, 6.0)
+        tuned_pctile = get_tuning_value(("strategies", "VolCompressionBreak", "accel_pctile"))
+        if tuned_pctile is not None:
+            try:
+                min_comp = max(0.0, min(6.0, float(tuned_pctile) / 100.0 * 6.0))
+            except (TypeError, ValueError):
+                min_comp = None
+            if min_comp is not None and compression < min_comp:
+                return None
 
         breakout_up = last_close > range_high + 0.0006
         breakout_dn = last_close < range_low - 0.0006

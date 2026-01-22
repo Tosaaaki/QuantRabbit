@@ -11,6 +11,7 @@ from .common import (
     to_float,
     typical_price,
 )
+from utils.tuning_loader import get_tuning_value
 
 
 class MicroVWAPRevert:
@@ -54,6 +55,12 @@ class MicroVWAPRevert:
         body_bias = candle_body_pips(candles[-1]) if candles else 0.0
 
         threshold = max(1.05, atr * 0.55)
+        tuned_min = get_tuning_value(("strategies", "MicroVWAPRevert", "vwap_z_min"))
+        if tuned_min is not None:
+            try:
+                threshold = max(threshold, float(tuned_min))
+            except (TypeError, ValueError):
+                pass
         if abs(deviation) < threshold:
             return None
 

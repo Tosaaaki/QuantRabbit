@@ -8,6 +8,7 @@
 - 適用内容は Exit（lowvol）のタイムアウト・ハザード感度、quiet_low_vol の `micro_share=0.30`。今後は本番ループで継続更新される。
 - M1Scalper の自動調整ループをワーカー内で起動する準備を追加（`SCALP_AUTOTUNE_ENABLED=1` で有効化）。
 - M1Scalper の自動調整ガードは `SCALP_AUTOTUNE_MIN_WIN_RATE` で調整可能。
+- Online tuner の結果を FastScalp タイムアウト/ハザードへ反映（`config/tuning_overlay.yaml` 読み込み）。
 
 ## 現在検証中
 - [ ] 初回本番ループの監視  
@@ -25,6 +26,7 @@
 3. 運用モニタリング  
  - [ ] `PYTHONPATH=.` 付きで `scripts/run_online_tuner.py` を 5–15 分間隔で回す cron/systemd タイマーを有効化。  
  - [ ] 実行ログとエラー通知の経路（Cloud Logging / Slack）を確定し、失敗時に自動リトライする。
+ - [ ] `systemd/quant-online-tuner.timer` の導入と動作確認。
 
 ## 参考コマンド
 ```bash
