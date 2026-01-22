@@ -39,7 +39,7 @@ from utils.metrics_logger import log_metric
 from execution import strategy_guard, reentry_guard
 from execution.position_manager import PositionManager, agent_client_prefixes
 from execution.risk_guard import POCKET_MAX_RATIOS, MAX_LEVERAGE
-from workers.common import perf_guard
+from workers.common import perf_guard, profit_guard
 from utils import signal_bus
 from utils.oanda_account import get_account_snapshot
 try:
@@ -2906,6 +2906,45 @@ async def market_order(
                 tags={
                     "pocket": pocket,
                     "strategy": str(strategy_tag),
+                    "reason": decision.reason,
+                },
+            )
+            return None
+
+    if not reduce_only and pocket != "manual":
+        decision = profit_guard.is_allowed(pocket, strategy_tag=strategy_tag)
+        if not decision.allowed:
+            note = f"profit_guard:{decision.reason}"
+            _console_order_log(
+                "OPEN_REJECT",
+                pocket=pocket,
+                strategy_tag=strategy_tag,
+                side=side_label,
+                units=units,
+                sl_price=sl_price,
+                tp_price=tp_price,
+                client_order_id=client_order_id,
+                note=note,
+            )
+            log_order(
+                pocket=pocket,
+                instrument=instrument,
+                side=side_label,
+                units=units,
+                sl_price=sl_price,
+                tp_price=tp_price,
+                client_order_id=client_order_id,
+                status="profit_guard",
+                attempt=0,
+                stage_index=stage_index,
+                request_payload={"strategy_tag": strategy_tag, "meta": meta, "entry_thesis": entry_thesis},
+            )
+            log_metric(
+                "order_profit_block",
+                1.0,
+                tags={
+                    "pocket": pocket,
+                    "strategy": str(strategy_tag or "unknown"),
                     "reason": decision.reason,
                 },
             )
