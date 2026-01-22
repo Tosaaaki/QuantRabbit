@@ -1846,9 +1846,23 @@ def evaluate_exit_techniques(
     if reversal_signal and pnl_pips is not None and pnl_pips <= 0:
         allow_negative_reversal = True
 
+    reversal_combo = (candle_score is not None and candle_score < 0) and (
+        nwave_score is not None and nwave_score < 0
+    )
+    reversal_confirmed = False
     if reversal_signal:
+        if reversal_combo:
+            reversal_confirmed = True
+        elif return_score is not None and return_score <= policy.exit_return_score:
+            reversal_confirmed = True
+        elif neg_count >= 2 and pos_count == 0:
+            reversal_confirmed = True
+    debug["reversal_combo"] = reversal_combo
+    debug["reversal_confirmed"] = reversal_confirmed
+
+    if reversal_signal and reversal_confirmed:
         reason = "tech_candle_reversal" if candle_score is not None and candle_score < 0 else "tech_nwave_flip"
-        if (candle_score is not None and candle_score < 0) and (nwave_score is not None and nwave_score < 0):
+        if reversal_combo:
             reason = "tech_reversal_combo"
         return TechniqueExitDecision(True, reason, allow_negative_reversal, debug)
 

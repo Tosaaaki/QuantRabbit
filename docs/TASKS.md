@@ -34,6 +34,22 @@
 ```
 
 ## Open Tasks
+- [ ] ID: T-20260122-006
+  Title: テクニカル損切りの総合判定強化（reversal確認条件追加）
+  Status: in-progress
+  Priority: P1
+  Owner: codex
+  Scope/Paths: analysis/technique_engine.py, docs/TASKS.md
+  Context: `tech_candle_reversal` の不一致が多く、単一シグナルで損切りになっている可能性がある。
+  Acceptance:
+    - reversal 判定は combo または return_score で確認される
+    - `tech_*` の損切りが単発判定にならない
+  Plan:
+    - technique_engine の reversal 判定に確認条件を追加
+    - デプロイ後に orders.db の `tech_*` を監視
+  Notes:
+    - 「損切りは総合判断」を優先
+
 - [ ] ID: T-20260122-005
   Title: テクニカル反転は損切り許可（tech_candle_reversal を遮らない）
   Status: in-progress
