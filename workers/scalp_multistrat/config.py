@@ -2,9 +2,40 @@ from __future__ import annotations
 
 import os
 
+_ENV_CACHE: dict | None = None
+
+
+def _load_env_file() -> dict:
+    global _ENV_CACHE
+    if _ENV_CACHE is not None:
+        return _ENV_CACHE
+    data: dict = {}
+    path = os.getenv("QUANTRABBIT_ENV_FILE", "/etc/quantrabbit.env")
+    try:
+        with open(path, "r", encoding="utf-8") as fh:
+            for raw in fh:
+                line = raw.strip()
+                if not line or line.startswith("#") or "=" not in line:
+                    continue
+                key, val = line.split("=", 1)
+                data[key.strip()] = val.strip().strip('"').strip("'")
+    except FileNotFoundError:
+        pass
+    _ENV_CACHE = data
+    return data
+
+
+def _env_bool(name: str, default: bool) -> bool:
+    raw = os.getenv(name)
+    if raw is None:
+        raw = _load_env_file().get(name)
+    if raw is None:
+        return default
+    return str(raw).strip().lower() not in {"", "0", "false", "no"}
+
 POCKET = "scalp"
 LOOP_INTERVAL_SEC = float(os.getenv("SCALP_MULTI_LOOP_INTERVAL_SEC", "6.0"))
-ENABLED = os.getenv("SCALP_MULTI_ENABLED", "1").strip().lower() not in {"", "0", "false", "no"}
+ENABLED = _env_bool("SCALP_MULTI_ENABLED", True)
 LOG_PREFIX = os.getenv("SCALP_MULTI_LOG_PREFIX", "[ScalpMulti]")
 
 CONFIDENCE_FLOOR = 30
@@ -12,12 +43,7 @@ CONFIDENCE_CEIL = 90
 MIN_UNITS = int(os.getenv("SCALP_MULTI_MIN_UNITS", "1000"))
 BASE_ENTRY_UNITS = int(os.getenv("SCALP_MULTI_BASE_UNITS", "6000"))
 MAX_MARGIN_USAGE = float(os.getenv("SCALP_MULTI_MAX_MARGIN_USAGE", "0.9"))
-AUTOTUNE_ENABLED = os.getenv("SCALP_AUTOTUNE_ENABLED", "0").strip().lower() not in {
-    "",
-    "0",
-    "false",
-    "no",
-}
+AUTOTUNE_ENABLED = _env_bool("SCALP_AUTOTUNE_ENABLED", False)
 
 CAP_MIN = float(os.getenv("SCALP_MULTI_CAP_MIN", "0.1"))
 CAP_MAX = float(os.getenv("SCALP_MULTI_CAP_MAX", "0.9"))
@@ -36,12 +62,7 @@ RANGE_STRATEGY_BONUS = float(os.getenv("SCALP_MULTI_RANGE_STRATEGY_BONUS", "12")
 RANGE_TREND_PENALTY = float(os.getenv("SCALP_MULTI_RANGE_TREND_PENALTY", "10"))
 
 # Strategy diversity: promote idle strategies without inflating risk sizing.
-DIVERSITY_ENABLED = os.getenv("SCALP_MULTI_DIVERSITY_ENABLED", "1").strip().lower() not in {
-    "",
-    "0",
-    "false",
-    "no",
-}
+DIVERSITY_ENABLED = _env_bool("SCALP_MULTI_DIVERSITY_ENABLED", True)
 DIVERSITY_IDLE_SEC = float(os.getenv("SCALP_MULTI_DIVERSITY_IDLE_SEC", "180"))
 DIVERSITY_SCALE_SEC = float(os.getenv("SCALP_MULTI_DIVERSITY_SCALE_SEC", "600"))
 DIVERSITY_MAX_BONUS = float(os.getenv("SCALP_MULTI_DIVERSITY_MAX_BONUS", "10"))
