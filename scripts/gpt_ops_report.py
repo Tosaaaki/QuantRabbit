@@ -14,7 +14,12 @@ import json
 import math
 import os
 import sqlite3
+import sys
 from typing import Any, Dict, Iterable, List, Optional, Tuple
+
+ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if ROOT_DIR not in sys.path:
+    sys.path.insert(0, ROOT_DIR)
 
 try:
     from openai import OpenAI
