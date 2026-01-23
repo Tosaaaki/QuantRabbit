@@ -4713,10 +4713,13 @@ async def logic_loop(
                     logging.warning(
                         "[GPT] unavailable and fallback disabled; skipping entries this loop"
                     )
+                    sync_start = time.monotonic()
                     try:
                         await _run_blocking(pos_manager.sync_trades)
                     except Exception:
                         pass
+                    sync_ms = max(0.0, (time.monotonic() - sync_start) * 1000.0)
+                    log_metric("sync_trades_ms", sync_ms, tags={"phase": "gpt_unavailable"}, ts=now)
                     decision_latency_ms = max(0.0, (time.monotonic() - loop_start_mono) * 1000.0)
                     if gpt_timed_out:
                         decision_latency_ms = max(decision_latency_ms, 9000.0)
@@ -8997,7 +9000,10 @@ async def logic_loop(
                     last_close_m1 = close_px_value
             except Exception:
                 pass
+            sync_start = time.monotonic()
             await _run_blocking(pos_manager.sync_trades)
+            sync_ms = max(0.0, (time.monotonic() - sync_start) * 1000.0)
+            log_metric("sync_trades_ms", sync_ms, tags={"phase": "final"}, ts=now)
 
             decision_latency_ms = max(0.0, (time.monotonic() - loop_start_mono) * 1000.0)
             if gpt_timed_out:
