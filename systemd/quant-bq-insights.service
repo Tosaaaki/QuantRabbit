@@ -1,0 +1,11 @@
+[Unit]
+Description=QuantRabbit Ops Insights (BigQuery)
+After=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/home/tossaki/QuantRabbit
+ExecStart=/home/tossaki/QuantRabbit/.venv/bin/python analytics/bq_ops_insights_job.py --log-level INFO
+User=tossaki
+Environment=PYTHONUNBUFFERED=1
+EnvironmentFile=-/etc/quantrabbit.env
