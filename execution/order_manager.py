@@ -1043,7 +1043,8 @@ def _apply_directional_cap(
 def _fetch_quote(instrument: str) -> dict[str, float] | None:
     """Fetch a single pricing snapshot to derive bid/ask/spread."""
     try:
-        url = f"https://api-fxtrade.oanda.com/v3/accounts/{ACCOUNT}/pricing"
+        base = "https://api-fxpractice.oanda.com" if PRACTICE_FLAG else "https://api-fxtrade.oanda.com"
+        url = f"{base}/v3/accounts/{ACCOUNT}/pricing"
         headers = {"Authorization": f"Bearer {TOKEN}"}
         resp = requests.get(
             url,
@@ -1486,7 +1487,7 @@ def _load_exit_trade_context(
         con.row_factory = sqlite3.Row
         row = con.execute(
             """
-            SELECT pocket, units, executed_price, client_order_id
+            SELECT pocket, units, executed_price, client_order_id, instrument
             FROM orders
             WHERE ticket_id = ?
               AND status = 'filled'
@@ -1534,6 +1535,7 @@ def _load_exit_trade_context(
         "entry_price": _as_float(row["executed_price"]) or 0.0,
         "units": int(row["units"] or 0),
         "pocket": row["pocket"] or "unknown",
+        "instrument": row["instrument"] if row["instrument"] else None,
         "strategy_tag": strategy_tag,
         "entry_thesis": entry_thesis if isinstance(entry_thesis, dict) else None,
     }
@@ -2134,13 +2136,53 @@ async def close_trade(
     emergency_allow: Optional[bool] = None
     entry_price = _as_float((ctx or {}).get("entry_price")) or 0.0
     units_ctx = int((ctx or {}).get("units") or 0)
-    ctx_mid = None
-    if isinstance(exit_context, dict):
-        ctx_mid = _as_float(exit_context.get("mid"))
+    instrument = (ctx or {}).get("instrument") if isinstance(ctx, dict) else None
+    min_profit_pips = _min_profit_pips(pocket, strategy_tag)
     bid, ask = _latest_bid_ask()
-    mid = _latest_mid_price()
-    if mid is None and ctx_mid is not None:
-        mid = ctx_mid
+    mid = None
+    if bid is None or ask is None:
+        quote = _fetch_quote(instrument) if instrument else None
+        if quote:
+            bid = quote.get("bid")
+            ask = quote.get("ask")
+            mid = quote.get("mid")
+    if bid is not None and ask is not None and mid is None:
+        mid = (bid + ask) / 2.0
+    if (bid is None or ask is None) and (_EXIT_NO_NEGATIVE_CLOSE or min_profit_pips is not None):
+        emergency_allow = _should_allow_negative_close(client_order_id)
+        if not emergency_allow and not _reason_force_allow(exit_reason):
+            log_metric(
+                "close_blocked_missing_quote",
+                1.0,
+                tags={"trade_id": str(trade_id), "instrument": str(instrument or "unknown")},
+            )
+            _console_order_log(
+                "CLOSE_REJECT",
+                pocket=pocket,
+                strategy_tag=strategy_tag,
+                side=None,
+                units=units,
+                sl_price=None,
+                tp_price=None,
+                client_order_id=client_order_id,
+                ticket_id=str(trade_id),
+                note="missing_quote",
+            )
+            _log_order(
+                pocket=pocket,
+                instrument=instrument,
+                side=None,
+                units=units,
+                sl_price=None,
+                tp_price=None,
+                client_order_id=client_order_id,
+                status="close_reject_missing_quote",
+                attempt=0,
+                ticket_id=str(trade_id),
+                executed_price=None,
+                request_payload=_with_exit_reason({"trade_id": trade_id}),
+            )
+            return False
     est_pips = _estimate_trade_pnl_pips(
         entry_price=entry_price,
         units=units_ctx,
@@ -2148,7 +2190,6 @@ async def close_trade(
         ask=ask,
         mid=mid,
     )
-    min_profit_pips = _min_profit_pips(pocket, strategy_tag)
     if min_profit_pips is not None:
         if est_pips is not None and est_pips >= 0 and est_pips < min_profit_pips:
             emergency_allow = _should_allow_negative_close(client_order_id)
