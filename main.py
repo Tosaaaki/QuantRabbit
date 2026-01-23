@@ -96,6 +96,13 @@ def _env_bool(name: str, default: bool = False) -> bool:
         return default
     return str(val).strip().lower() in {"1", "true", "yes", "on"}
 
+
+def _env_csv_set(name: str) -> set[str]:
+    raw = (os.getenv(name) or "").strip()
+    if not raw:
+        return set()
+    return {token.strip().lower() for token in raw.split(",") if token.strip()}
+
 # Factor cache refresh guard (worker-only loop).
 FACTOR_CACHE_REFRESH_ENABLED = _env_bool("FACTOR_CACHE_REFRESH_ENABLED", default=True)
 WORKER_AUTOCONTROL_IN_LOGIC = _env_bool("WORKER_AUTOCONTROL_IN_LOGIC", default=False)
@@ -222,12 +229,20 @@ MAIN_TRADING_ENABLED = _env_bool("MAIN_TRADING_ENABLED", default=False)
 SIGNAL_GATE_ENABLED = _env_bool("SIGNAL_GATE_ENABLED", default=True)
 # 関所キューから一度に取り出す件数
 SIGNAL_GATE_FETCH_LIMIT = int(os.getenv("SIGNAL_GATE_FETCH_LIMIT", "120"))
+SIGNAL_GATE_POCKET_ALLOWLIST = _env_csv_set("SIGNAL_GATE_POCKET_ALLOWLIST")
+SIGNAL_GATE_STRATEGY_ALLOWLIST = _env_csv_set("SIGNAL_GATE_STRATEGY_ALLOWLIST")
 SIGNAL_DIVERSITY_ENABLED = _env_bool("SIGNAL_DIVERSITY_ENABLED", default=True)
 SIGNAL_DIVERSITY_DEDUPE = _env_bool("SIGNAL_DIVERSITY_DEDUPE", default=True)
 SIGNAL_DIVERSITY_IDLE_SEC = float(os.getenv("SIGNAL_DIVERSITY_IDLE_SEC", "300"))
 SIGNAL_DIVERSITY_SCALE_SEC = float(os.getenv("SIGNAL_DIVERSITY_SCALE_SEC", "1200"))
 SIGNAL_DIVERSITY_MAX_BONUS = float(os.getenv("SIGNAL_DIVERSITY_MAX_BONUS", "8"))
 _SIGNAL_DIVERSITY_LAST_TS: Dict[str, float] = {}
+if SIGNAL_GATE_POCKET_ALLOWLIST or SIGNAL_GATE_STRATEGY_ALLOWLIST:
+    logging.info(
+        "[CONFIG] signal_gate_allow_pockets=%s signal_gate_allow_strategies=%s",
+        ",".join(sorted(SIGNAL_GATE_POCKET_ALLOWLIST)) if SIGNAL_GATE_POCKET_ALLOWLIST else "none",
+        ",".join(sorted(SIGNAL_GATE_STRATEGY_ALLOWLIST)) if SIGNAL_GATE_STRATEGY_ALLOWLIST else "none",
+    )
 
 # Aggressive mode: loosen range gatesとマイクロの入口ガードを緩めるフラグ
 # デフォルトは安全寄りに OFF
@@ -3575,6 +3590,24 @@ async def logic_loop(
             sig["execution"] = execution
         return sig
 
+    def _signal_gate_allowed(sig: dict) -> bool:
+        if not SIGNAL_GATE_POCKET_ALLOWLIST and not SIGNAL_GATE_STRATEGY_ALLOWLIST:
+            return True
+        pocket = str(sig.get("pocket") or "").strip().lower()
+        if SIGNAL_GATE_POCKET_ALLOWLIST and pocket not in SIGNAL_GATE_POCKET_ALLOWLIST:
+            return False
+        if SIGNAL_GATE_STRATEGY_ALLOWLIST:
+            tag = str(
+                sig.get("strategy") or sig.get("strategy_tag") or sig.get("tag") or ""
+            ).strip()
+            if not tag:
+                return False
+            tag_lower = tag.lower()
+            base = tag_lower.split("-", 1)[0]
+            if tag_lower not in SIGNAL_GATE_STRATEGY_ALLOWLIST and base not in SIGNAL_GATE_STRATEGY_ALLOWLIST:
+                return False
+        return True
+
     def _market_guarded_skip(signal: dict, price: Optional[float], *, context: str) -> bool:
         if not signal or price is None or price <= 0:
             return False
@@ -5554,6 +5587,8 @@ async def logic_loop(
                 for raw_sig in raw_bus:
                     norm = _normalize_bus_signal(raw_sig, price_hint)
                     if norm:
+                        if not _signal_gate_allowed(norm):
+                            continue
                         if _mr_guard_reject(norm, context="bus"):
                             continue
                         tag = norm.get("strategy") or norm.get("strategy_tag") or norm.get("tag")
