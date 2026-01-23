@@ -64,7 +64,7 @@ if command -v sqlite3 >/dev/null 2>&1; then
   fi
   if [[ -f "$SIGNALS_DB" ]]; then
     emit "[health] signals last 5"
-    sqlite3 "$SIGNALS_DB" "select ts,pocket,action,confidence,tag from signals order by ts desc limit 5;" | emit_block || true
+    sqlite3 "$SIGNALS_DB" "select datetime(ts_ms/1000,'unixepoch') as ts, json_extract(payload,'$.pocket'), json_extract(payload,'$.action'), json_extract(payload,'$.confidence'), json_extract(payload,'$.tag') from signals order by ts_ms desc limit 5;" | emit_block || true
   else
     emit "[health] signals.db missing: $SIGNALS_DB"
   fi
