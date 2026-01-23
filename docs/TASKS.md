@@ -34,6 +34,27 @@
 ```
 
 ## Open Tasks
+- [ ] ID: T-20260123-001
+  Title: GPT運用レポート/提案の要件整理と活用フロー設計
+  Status: in-progress
+  Priority: P2
+  Owner: codex
+  Scope/Paths: scripts/gpt_ops_report.py, docs/TASKS.md
+  Context: GPTはメインループで使わず、外部レポートで活用する方針を明文化する。
+  Acceptance:
+    - GPTの要件/アイディア/活用タスクがTASKSに記載されている
+    - レポート生成コマンドと出力先が明記されている
+    - 反映方法（手動/自動）の候補が列挙されている
+  Plan:
+    - 要件/アイディア/タスクを追記
+    - レポート運用方法（手動/定期）を決める
+    - 反映フロー（PERF_GUARD/ALLOWLIST/BQ連携）を設計
+  Notes:
+    - 要件: メインループ非介入、低レイテンシ維持、トレード直接介入なし、JSON出力、24h/短時間窓切替、GPTは任意
+    - アイディア: 日次/週次運用要約、時間帯/ボラ別の勝率/PF整理、注文失敗/拒否の監査、UI向け一行サマリ
+    - タスク: scripts/gpt_ops_report.py を運用→必要なら cron/systemd 化、手動レビューで PERF_GUARD_* / *_STRATEGY_ALLOWLIST を調整、必要なら BQ 推薦へ接続
+    - コマンド例: . .venv/bin/activate && python scripts/gpt_ops_report.py --hours 24 --output logs/gpt_ops_report.json（--gpt で要約）
+
 - [ ] ID: T-20260122-009
   Title: 単一指標の損切りを複合判定へ統一（exit_utils合成ゲート）
   Status: in-progress
