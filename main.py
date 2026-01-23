@@ -401,6 +401,7 @@ from execution.order_manager import (
     close_trade,
     update_dynamic_protections,
     plan_partial_reductions,
+    set_trade_protections,
 )
 from execution.exit_manager import ExitManager
 from execution.position_manager import PositionManager
@@ -1251,6 +1252,49 @@ if FORCE_SCALP_MODE:
 
 RELAX_GPT_ALLOWLIST = True  # GPT は順位付けのみ利用し、評価フィルタには使わない
 DISABLE_WAIT_GUARD = os.getenv("DISABLE_WAIT_GUARD", "0").strip().lower() not in {"", "0", "false", "no"}
+RATE_CHECK_1M_RANGE_PIPS = _safe_env_float("RATE_CHECK_1M_RANGE_PIPS", 150.0, low=0.0, high=2000.0)
+RATE_CHECK_5M_RANGE_PIPS = _safe_env_float("RATE_CHECK_5M_RANGE_PIPS", 180.0, low=0.0, high=2000.0)
+INTERVENTION_1M_RANGE_PIPS = _safe_env_float("INTERVENTION_1M_RANGE_PIPS", 220.0, low=0.0, high=3000.0)
+INTERVENTION_5M_RANGE_PIPS = _safe_env_float("INTERVENTION_5M_RANGE_PIPS", 350.0, low=0.0, high=3000.0)
+INTERVENTION_15M_RANGE_PIPS = _safe_env_float("INTERVENTION_15M_RANGE_PIPS", 500.0, low=0.0, high=4000.0)
+RATE_CHECK_COOLDOWN_SEC = _safe_env_float("RATE_CHECK_COOLDOWN_SEC", 900.0, low=0.0, high=7200.0)
+INTERVENTION_COOLDOWN_SEC = _safe_env_float("INTERVENTION_COOLDOWN_SEC", 3600.0, low=0.0, high=21600.0)
+INTERVENTION_INITIAL_CUT_RATIO = _safe_env_float("INTERVENTION_INITIAL_CUT_RATIO", 0.4, low=0.0, high=1.0)
+INTERVENTION_REBOUND_RATIO = _safe_env_float("INTERVENTION_REBOUND_RATIO", 0.35, low=0.0, high=1.0)
+INTERVENTION_REBOUND_TIMEOUT_SEC = _safe_env_float("INTERVENTION_REBOUND_TIMEOUT_SEC", 480.0, low=30.0, high=7200.0)
+INTERVENTION_NEW_LOW_BREAK_PIPS = _safe_env_float("INTERVENTION_NEW_LOW_BREAK_PIPS", 20.0, low=0.0, high=500.0)
+INTERVENTION_EMERGENCY_SL_MACRO_MIN_PIPS = _safe_env_float(
+    "INTERVENTION_EMERGENCY_SL_MACRO_MIN_PIPS", 120.0, low=0.0, high=2000.0
+)
+INTERVENTION_EMERGENCY_SL_SCALP_MIN_PIPS = _safe_env_float(
+    "INTERVENTION_EMERGENCY_SL_SCALP_MIN_PIPS", 60.0, low=0.0, high=2000.0
+)
+INTERVENTION_EMERGENCY_SL_MACRO_RANGE_MULT = _safe_env_float(
+    "INTERVENTION_EMERGENCY_SL_MACRO_RANGE_MULT", 0.7, low=0.0, high=5.0
+)
+INTERVENTION_EMERGENCY_SL_SCALP_RANGE_MULT = _safe_env_float(
+    "INTERVENTION_EMERGENCY_SL_SCALP_RANGE_MULT", 0.5, low=0.0, high=5.0
+)
+INTERVENTION_CLOSE_RETRY_SEC = _safe_env_float(
+    "INTERVENTION_CLOSE_RETRY_SEC", 15.0, low=1.0, high=300.0
+)
+
+_INTERVENTION_STATE: dict[str, object] = {
+    "active": False,
+    "until_mono": 0.0,
+    "start_mono": 0.0,
+    "dir": 0,
+    "low": None,
+    "high": None,
+    "break_low": None,
+    "break_high": None,
+    "rate_check_until_mono": 0.0,
+    "cut_trades": set(),
+    "protected_trades": set(),
+    "close_attempts": {},
+    "rebound_triggered": False,
+    "timeout_triggered": False,
+}
 
 
 def _session_bucket(now: datetime.datetime) -> str:
@@ -1261,6 +1305,334 @@ def _session_bucket(now: datetime.datetime) -> str:
     if 17 <= hour < 23:
         return "ny"
     return "asia"
+
+
+def _window_stats(candles: list[dict], minutes: int) -> Optional[dict[str, float]]:
+    if not candles or minutes <= 0:
+        return None
+    sample = candles[-minutes:] if len(candles) >= minutes else candles
+    highs: list[float] = []
+    lows: list[float] = []
+    closes: list[float] = []
+
+    def _coerce(val: object) -> Optional[float]:
+        try:
+            return float(val)
+        except (TypeError, ValueError):
+            return None
+
+    for c in sample:
+        if not isinstance(c, dict):
+            continue
+        high = _coerce(c.get("high", c.get("h")))
+        low = _coerce(c.get("low", c.get("l")))
+        close = _coerce(c.get("close", c.get("c")))
+        if high is None or low is None or close is None:
+            continue
+        highs.append(high)
+        lows.append(low)
+        closes.append(close)
+    if not highs or not lows or not closes:
+        return None
+    hi = max(highs)
+    lo = min(lows)
+    return {
+        "high": hi,
+        "low": lo,
+        "first_close": closes[0],
+        "last_close": closes[-1],
+        "range_pips": (hi - lo) / PIP_VALUE,
+    }
+
+
+def _update_intervention_state(
+    fac_m1: dict,
+    *,
+    now: datetime.datetime,
+    now_mono: float,
+) -> dict[str, object]:
+    candles = fac_m1.get("candles") or []
+    if not isinstance(candles, list):
+        candles = []
+    stats_1m = _window_stats(candles, 1)
+    stats_5m = _window_stats(candles, 5)
+    stats_15m = _window_stats(candles, 15)
+
+    state = _INTERVENTION_STATE
+    if state.get("active") and now_mono >= float(state.get("until_mono") or 0.0):
+        state["active"] = False
+        state["dir"] = 0
+        state["rebound_triggered"] = False
+        state["timeout_triggered"] = False
+
+    rate_check_hit = False
+    if stats_1m and stats_1m["range_pips"] >= RATE_CHECK_1M_RANGE_PIPS:
+        rate_check_hit = True
+    if stats_5m and stats_5m["range_pips"] >= RATE_CHECK_5M_RANGE_PIPS:
+        rate_check_hit = True
+    if rate_check_hit:
+        until = now_mono + RATE_CHECK_COOLDOWN_SEC
+        state["rate_check_until_mono"] = max(float(state.get("rate_check_until_mono") or 0.0), until)
+
+    rate_check_active = now_mono <= float(state.get("rate_check_until_mono") or 0.0)
+
+    intervention_hit = False
+    if stats_1m and stats_1m["range_pips"] >= INTERVENTION_1M_RANGE_PIPS:
+        intervention_hit = True
+    if stats_5m and stats_5m["range_pips"] >= INTERVENTION_5M_RANGE_PIPS:
+        intervention_hit = True
+    if stats_15m and stats_15m["range_pips"] >= INTERVENTION_15M_RANGE_PIPS:
+        intervention_hit = True
+
+    if intervention_hit:
+        if not state.get("active"):
+            base = stats_5m or stats_1m or stats_15m
+            low = base["low"] if base else None
+            high = base["high"] if base else None
+            delta = (base["last_close"] - base["first_close"]) if base else 0.0
+            direction = -1 if delta < 0 else 1 if delta > 0 else 0
+            state.update(
+                {
+                    "active": True,
+                    "until_mono": now_mono + INTERVENTION_COOLDOWN_SEC,
+                    "start_mono": now_mono,
+                    "dir": direction,
+                    "low": low,
+                    "high": high,
+                    "break_low": low,
+                    "break_high": high,
+                    "cut_trades": set(),
+                    "protected_trades": set(),
+                    "close_attempts": {},
+                    "rebound_triggered": False,
+                    "timeout_triggered": False,
+                }
+            )
+            if base:
+                log_metric(
+                    "intervention_trigger",
+                    float(base["range_pips"]),
+                    tags={
+                        "dir": "down" if direction < 0 else "up" if direction > 0 else "flat",
+                        "ts": now.isoformat(),
+                    },
+                    ts=now,
+                )
+        else:
+            state["until_mono"] = max(
+                float(state.get("until_mono") or 0.0),
+                now_mono + INTERVENTION_COOLDOWN_SEC,
+            )
+
+    if state.get("active"):
+        base = stats_5m or stats_1m
+        if base:
+            if state.get("low") is None or base["low"] < float(state.get("low") or base["low"]):
+                state["low"] = base["low"]
+            if state.get("high") is None or base["high"] > float(state.get("high") or base["high"]):
+                state["high"] = base["high"]
+            if not state.get("dir"):
+                delta = base["last_close"] - base["first_close"]
+                if delta < 0:
+                    state["dir"] = -1
+                elif delta > 0:
+                    state["dir"] = 1
+
+    return {
+        "active": bool(state.get("active")),
+        "rate_check_active": rate_check_active,
+        "dir": int(state.get("dir") or 0),
+        "low": state.get("low"),
+        "high": state.get("high"),
+        "break_low": state.get("break_low"),
+        "break_high": state.get("break_high"),
+        "start_mono": float(state.get("start_mono") or 0.0),
+        "now_mono": now_mono,
+        "window_1m": stats_1m,
+        "window_5m": stats_5m,
+        "window_15m": stats_15m,
+    }
+
+
+async def _apply_intervention_actions(
+    open_positions: dict[str, dict[str, object]],
+    fac_m1: dict,
+    ctx: dict[str, object],
+    *,
+    now: datetime.datetime,
+) -> bool:
+    if not ctx.get("active"):
+        return False
+    state = _INTERVENTION_STATE
+    now_mono = float(ctx.get("now_mono") or 0.0)
+    start_mono = float(ctx.get("start_mono") or 0.0)
+    event_dir = int(ctx.get("dir") or 0)
+    low = ctx.get("low")
+    high = ctx.get("high")
+    try:
+        current_price = float(fac_m1.get("close") or fac_m1.get("mid") or 0.0)
+    except (TypeError, ValueError):
+        current_price = 0.0
+    if current_price <= 0.0:
+        return False
+
+    window_5m = ctx.get("window_5m") if isinstance(ctx.get("window_5m"), dict) else None
+    window_1m = ctx.get("window_1m") if isinstance(ctx.get("window_1m"), dict) else None
+    recent_range = None
+    if window_5m and window_5m.get("range_pips") is not None:
+        recent_range = float(window_5m["range_pips"])
+    elif window_1m and window_1m.get("range_pips") is not None:
+        recent_range = float(window_1m["range_pips"])
+
+    cut_trades: set = state.get("cut_trades") if isinstance(state.get("cut_trades"), set) else set()
+    protected_trades: set = (
+        state.get("protected_trades") if isinstance(state.get("protected_trades"), set) else set()
+    )
+    close_attempts: dict = (
+        state.get("close_attempts") if isinstance(state.get("close_attempts"), dict) else {}
+    )
+
+    drop_pips = 0.0
+    if isinstance(low, (int, float)) and isinstance(high, (int, float)):
+        drop_pips = max(0.0, (float(high) - float(low)) / PIP_VALUE)
+    rebound_target = max(1.0, drop_pips * INTERVENTION_REBOUND_RATIO)
+
+    rebound_hit = False
+    if event_dir < 0 and isinstance(low, (int, float)):
+        rebound_hit = (current_price - float(low)) / PIP_VALUE >= rebound_target
+    elif event_dir > 0 and isinstance(high, (int, float)):
+        rebound_hit = (float(high) - current_price) / PIP_VALUE >= rebound_target
+
+    timeout_hit = False
+    if start_mono > 0.0 and (now_mono - start_mono) >= INTERVENTION_REBOUND_TIMEOUT_SEC:
+        timeout_hit = True
+
+    if rebound_hit and not state.get("rebound_triggered"):
+        state["rebound_triggered"] = True
+        log_metric(
+            "intervention_rebound",
+            float(rebound_target),
+            tags={"dir": "down" if event_dir < 0 else "up" if event_dir > 0 else "flat"},
+            ts=now,
+        )
+    if timeout_hit and not state.get("timeout_triggered"):
+        state["timeout_triggered"] = True
+        log_metric("intervention_timeout", float(now_mono - start_mono), ts=now)
+
+    close_all_reason = None
+    if rebound_hit:
+        close_all_reason = "intervention_rebound"
+    elif timeout_hit:
+        close_all_reason = "intervention_timeout"
+
+    break_hit = False
+    if event_dir < 0 and isinstance(low, (int, float)):
+        break_low = state.get("break_low")
+        if break_low is None:
+            state["break_low"] = float(low)
+        else:
+            threshold = float(break_low) - (INTERVENTION_NEW_LOW_BREAK_PIPS * PIP_VALUE)
+            if float(low) <= threshold:
+                break_hit = True
+                state["break_low"] = float(low)
+    elif event_dir > 0 and isinstance(high, (int, float)):
+        break_high = state.get("break_high")
+        if break_high is None:
+            state["break_high"] = float(high)
+        else:
+            threshold = float(break_high) + (INTERVENTION_NEW_LOW_BREAK_PIPS * PIP_VALUE)
+            if float(high) >= threshold:
+                break_hit = True
+                state["break_high"] = float(high)
+
+    if break_hit:
+        log_metric(
+            "intervention_break",
+            float(INTERVENTION_NEW_LOW_BREAK_PIPS),
+            tags={"dir": "down" if event_dir < 0 else "up"},
+            ts=now,
+        )
+
+    changed = False
+    for pocket, info in open_positions.items():
+        if pocket == "__net__":
+            continue
+        trades = info.get("open_trades") or []
+        for tr in trades:
+            trade_id = str(tr.get("trade_id") or "")
+            if not trade_id:
+                continue
+            try:
+                units = int(tr.get("units", 0) or 0)
+            except (TypeError, ValueError):
+                units = 0
+            if units == 0:
+                continue
+            side = "long" if units > 0 else "short"
+            against = (event_dir < 0 and side == "long") or (event_dir > 0 and side == "short")
+            client_id = tr.get("client_order_id") or tr.get("client_id")
+            client_id = str(client_id or "")
+            if not client_id.startswith("qr-"):
+                continue
+
+            if close_all_reason or (break_hit and against):
+                reason = close_all_reason or "intervention_break"
+                last_attempt = float(close_attempts.get(trade_id) or 0.0)
+                if now_mono - last_attempt >= INTERVENTION_CLOSE_RETRY_SEC:
+                    close_attempts[trade_id] = now_mono
+                    ok = await close_trade(
+                        trade_id,
+                        abs(units),
+                        client_order_id=client_id,
+                        allow_negative=True,
+                        exit_reason=reason,
+                    )
+                    if ok:
+                        changed = True
+                        continue
+
+            if trade_id not in cut_trades:
+                cut_units = int(abs(units) * INTERVENTION_INITIAL_CUT_RATIO)
+                cut_units = min(abs(units), max(1, cut_units))
+                if cut_units > 0:
+                    ok = await close_trade(
+                        trade_id,
+                        cut_units,
+                        client_order_id=client_id,
+                        allow_negative=True,
+                        exit_reason="intervention_cut",
+                    )
+                    if ok:
+                        cut_trades.add(trade_id)
+                        changed = True
+
+            if trade_id not in protected_trades and recent_range is not None:
+                if pocket in {"scalp", "scalp_fast"}:
+                    sl_pips = max(
+                        INTERVENTION_EMERGENCY_SL_SCALP_MIN_PIPS,
+                        recent_range * INTERVENTION_EMERGENCY_SL_SCALP_RANGE_MULT,
+                    )
+                else:
+                    sl_pips = max(
+                        INTERVENTION_EMERGENCY_SL_MACRO_MIN_PIPS,
+                        recent_range * INTERVENTION_EMERGENCY_SL_MACRO_RANGE_MULT,
+                    )
+                if side == "long":
+                    sl_price = round(current_price - sl_pips * PIP_VALUE, 3)
+                    if sl_price >= current_price:
+                        sl_price = round(current_price - 0.003, 3)
+                else:
+                    sl_price = round(current_price + sl_pips * PIP_VALUE, 3)
+                    if sl_price <= current_price:
+                        sl_price = round(current_price + 0.003, 3)
+                ok = await set_trade_protections(trade_id, sl_price=sl_price, tp_price=None)
+                if ok:
+                    protected_trades.add(trade_id)
+
+    state["cut_trades"] = cut_trades
+    state["protected_trades"] = protected_trades
+    state["close_attempts"] = close_attempts
+    return changed
 
 
 def _shock_state(fac_m1: dict) -> dict[str, object]:
@@ -6289,6 +6661,36 @@ async def logic_loop(
                     "long": stage_tracker.get_stage(pocket_name, "long"),
                     "short": stage_tracker.get_stage(pocket_name, "short"),
                 }
+            intervention_ctx = _update_intervention_state(
+                fac_m1,
+                now=now,
+                now_mono=time.monotonic(),
+            )
+            intervention_closed = False
+            if intervention_ctx.get("active"):
+                try:
+                    intervention_closed = await _apply_intervention_actions(
+                        open_positions,
+                        fac_m1,
+                        intervention_ctx,
+                        now=now,
+                    )
+                except Exception as exc:  # pragma: no cover - defensive
+                    logging.warning("[INTERVENTION] actions failed: %s", exc)
+            if intervention_closed:
+                positions_start = time.monotonic()
+                open_positions = pos_manager.get_open_positions()
+                positions_fetch_ms += max(0.0, (time.monotonic() - positions_start) * 1000.0)
+                positions_fetch_count += 1
+                open_positions_snapshot = open_positions
+                stage_snapshot = {}
+                for pocket_name, position_info in open_positions.items():
+                    if pocket_name == "__net__":
+                        continue
+                    stage_snapshot[pocket_name] = {
+                        "long": stage_tracker.get_stage(pocket_name, "long"),
+                        "short": stage_tracker.get_stage(pocket_name, "short"),
+                    }
             try:
                 update_dynamic_protections(open_positions, fac_m1, fac_h4)
             except Exception as exc:
