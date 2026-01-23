@@ -27,7 +27,12 @@ def _load_env_file() -> dict:
         return _ENV_CACHE
     data: dict = {}
     if ENV_FALLBACK_PATH.exists():
-        for raw in ENV_FALLBACK_PATH.read_text().splitlines():
+        try:
+            content = ENV_FALLBACK_PATH.read_text()
+        except OSError as exc:
+            logging.debug("Failed to read env fallback %s: %s", ENV_FALLBACK_PATH, exc)
+            content = ""
+        for raw in content.splitlines():
             line = raw.strip()
             if not line or line.startswith("#") or "=" not in line:
                 continue
