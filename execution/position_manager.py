@@ -265,6 +265,17 @@ def _infer_pocket_from_tag(tag: object | None) -> str | None:
     return None
 
 
+def _normalize_pocket(pocket: str | None) -> str:
+    """Map pocket values to a canonical set."""
+    allowed = {"macro", "micro", "scalp", "scalp_fast", "manual"}
+    if not pocket:
+        return "manual"
+    p = str(pocket).strip().lower()
+    if p in ("", "unknown"):
+        return "manual"
+    return p if p in allowed else "manual"
+
+
 def _resolve_pocket(
     pocket_raw: object | None,
     strategy_tag: object | None,
@@ -500,18 +511,8 @@ class PositionManager:
 
     @staticmethod
     def _normalize_pocket(pocket: str | None) -> str:
-        """Map pocket values to a canonical set.
-
-        Business rule (2025-10): any "unknown" or empty pocket is treated as
-        manual. Agent-managed pockets remain unchanged.
-        """
-        allowed = {"macro", "micro", "scalp", "scalp_fast", "manual"}
-        if not pocket:
-            return "manual"
-        p = str(pocket).strip().lower()
-        if p in ("", "unknown"):
-            return "manual"
-        return p if p in allowed else "manual"
+        """Map pocket values to a canonical set."""
+        return _normalize_pocket(pocket)
 
     def _ensure_schema_with_retry(self):
         for attempt in range(_DB_LOCK_RETRY):
