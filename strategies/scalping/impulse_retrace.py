@@ -4,12 +4,12 @@ from typing import Dict
 import logging
 
 PIP = 0.01
-MIN_ATR = 0.8
+MIN_ATR = 0.7
 MAX_SPREAD = 1.55
-MIN_DISLOCATION = 0.95  # pips away from ema20
-RSI_LONG_MAX = 49
-RSI_SHORT_MIN = 60
-VOL_MIN = 0.35
+MIN_DISLOCATION = 0.85  # pips away from ema20
+RSI_LONG_MAX = 52
+RSI_SHORT_MIN = 58
+VOL_MIN = 0.3
 MIN_SL_FLOOR = 1.05
 SL_ATR_MULT = 1.2
 TP_RATIO_MIN = 1.55
@@ -160,9 +160,9 @@ class ImpulseRetraceScalp:
         # ATRが低い環境では乖離の要求を少し緩める（ただしスプレッド優位が前提）
         dislocation_min = MIN_DISLOCATION
         if atr_pips <= max(1.1, atr_floor * 1.05):
-            dislocation_min = max(1.05, MIN_DISLOCATION * 0.84)
+            dislocation_min = max(0.8, MIN_DISLOCATION * 0.9)
         if vol_5m is not None and vol_5m >= 1.2:
-            dislocation_min = max(1.0, dislocation_min * 0.95)
+            dislocation_min = max(0.8, dislocation_min * 0.95)
 
         def _build_signal(
             *,

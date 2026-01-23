@@ -1499,6 +1499,27 @@ def _exit_momentum_rsi_bounds(strategy_tag: Optional[str], pocket: str) -> tuple
     return float(upper), float(lower)
 
 
+def _exit_require_flag(
+    flag: str,
+    *,
+    strategy_tag: Optional[str],
+    pocket: str,
+    policy_default: bool,
+) -> bool:
+    key = _normalize_tag_key(str(strategy_tag)).upper() if strategy_tag else None
+    pocket_upper = pocket.upper()
+    value = None
+    if key:
+        value = _env_bool(f"TECH_EXIT_REQUIRE_{flag}_{key}")
+    if value is None:
+        value = _env_bool(f"TECH_EXIT_REQUIRE_{flag}_{pocket_upper}") or _env_bool(
+            f"TECH_EXIT_REQUIRE_{flag}"
+        )
+    if value is None:
+        return policy_default
+    return bool(value)
+
+
 def _score_momentum_exit(
     *,
     factors: Dict[str, object],
@@ -2069,6 +2090,67 @@ def evaluate_exit_techniques(
         ):
             allow_negative_reversal = False
             debug["exit_guard"] = "reversal_unconfirmed"
+    require_mtf_triad = _env_bool("TECH_EXIT_REQUIRE_MTF_TRIAD")
+    if require_mtf_triad is None:
+        require_mtf_triad = False
+    if require_mtf_triad and allow_negative_reversal:
+        triad_ok = (
+            median_score is not None
+            and median_score < 0
+            and nwave_score is not None
+            and nwave_score < 0
+            and candle_score is not None
+            and candle_score < 0
+        )
+        debug["mtf_triad_ok"] = triad_ok
+        if not triad_ok:
+            allow_negative_reversal = False
+            debug["exit_guard"] = "mtf_triad"
+    if allow_negative_reversal:
+        req_fib = _exit_require_flag(
+            "FIB",
+            strategy_tag=strategy_tag,
+            pocket=pocket,
+            policy_default=policy.require_fib,
+        )
+        req_median = _exit_require_flag(
+            "MEDIAN",
+            strategy_tag=strategy_tag,
+            pocket=pocket,
+            policy_default=policy.require_median,
+        )
+        req_nwave = _exit_require_flag(
+            "NWAVE",
+            strategy_tag=strategy_tag,
+            pocket=pocket,
+            policy_default=policy.require_nwave,
+        )
+        req_candle = _exit_require_flag(
+            "CANDLE",
+            strategy_tag=strategy_tag,
+            pocket=pocket,
+            policy_default=policy.require_candle,
+        )
+
+        def _exit_require_failed(required: bool, score_val: Optional[float], label: str) -> bool:
+            if not required:
+                return False
+            if score_val is None:
+                debug["exit_guard"] = f"{label}_missing"
+                return True
+            if score_val >= 0:
+                debug["exit_guard"] = f"{label}_not_reversal"
+                return True
+            return False
+
+        if _exit_require_failed(req_fib, fib_score, "fib"):
+            allow_negative_reversal = False
+        elif _exit_require_failed(req_median, median_score, "median"):
+            allow_negative_reversal = False
+        elif _exit_require_failed(req_nwave, nwave_score, "nwave"):
+            allow_negative_reversal = False
+        elif _exit_require_failed(req_candle, candle_score, "candle"):
+            allow_negative_reversal = False
 
     pivot_guard = _env_bool("TECH_EXIT_PIVOT_GUARD")
     if pivot_guard is None:

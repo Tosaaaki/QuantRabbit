@@ -10,7 +10,7 @@ import os
 
 from analysis.range_model import RangeSnapshot, compute_range_snapshot
 from analysis.technique_engine import evaluate_exit_techniques
-from indicators.factor_cache import get_candles_snapshot
+from indicators.factor_cache import all_factors, get_candles_snapshot
 
 PIP = 0.01
 
@@ -27,6 +27,7 @@ _TF_ALIASES = {
     "d1": "D1",
 }
 _VALID_TFS = {"M1", "M5", "H1", "H4", "D1"}
+_TF_ORDER = {"M1": 1, "M5": 2, "H1": 3, "H4": 4, "D1": 5}
 _DEFAULT_TF_BY_POCKET = {
     "scalp": "M1",
     "scalp_fast": "M1",
@@ -34,6 +35,61 @@ _DEFAULT_TF_BY_POCKET = {
     "macro": "H1",
     "manual": "H1",
 }
+_DEFAULT_EXIT_MTF_TFS = {
+    "scalp": ("M1", "M5"),
+    "scalp_fast": ("M1", "M5"),
+    "micro": ("M5", "H1"),
+    "macro": ("H1", "H4"),
+    "manual": ("H1", "H4"),
+}
+_DEFAULT_MTF_NEG_PIPS = {
+    "scalp": 1.2,
+    "scalp_fast": 1.0,
+    "micro": 2.4,
+    "macro": 4.0,
+    "manual": 6.0,
+}
+_DEFAULT_MTF_TREND_ADX_MIN = {
+    "scalp": 20.0,
+    "scalp_fast": 20.0,
+    "micro": 18.0,
+    "macro": 22.0,
+    "manual": 22.0,
+}
+_DEFAULT_MTF_TREND_MA_DIFF_PIPS = {
+    "scalp": 0.8,
+    "scalp_fast": 0.6,
+    "micro": 1.2,
+    "macro": 2.0,
+    "manual": 2.0,
+}
+_DEFAULT_MTF_TREND_MIN_SIGNALS = {
+    "scalp": 3,
+    "scalp_fast": 3,
+    "micro": 4,
+    "macro": 4,
+    "manual": 4,
+}
+_DEFAULT_MTF_MOMENTUM_MIN_SIGNALS = {
+    "scalp": 4,
+    "scalp_fast": 4,
+    "micro": 5,
+    "macro": 5,
+    "manual": 5,
+}
+_DEFAULT_MTF_MACD_MIN = {"default": 0.0}
+_DEFAULT_MTF_ROC_MIN = {"default": 0.0}
+_DEFAULT_MTF_SLOPE_MIN = {"default": 0.0}
+_DEFAULT_MTF_CLOUD_MIN = {"default": 0.0}
+_DEFAULT_MTF_VWAP_GAP_MIN = {"default": 0.4}
+_DEFAULT_MTF_DI_GAP_MIN = {"default": 6.0}
+_DEFAULT_MTF_STOCH_LOW = {"default": 0.2}
+_DEFAULT_MTF_STOCH_HIGH = {"default": 0.8}
+_DEFAULT_MTF_CCI_LOW = {"default": -100.0}
+_DEFAULT_MTF_CCI_HIGH = {"default": 100.0}
+_DEFAULT_MTF_RSI_LOW = {"default": 45.0}
+_DEFAULT_MTF_RSI_HIGH = {"default": 55.0}
+_DEFAULT_MTF_HOLD_SEC = {"default": 0.0}
 _DEFAULT_LOOKBACK_BY_TF = {
     "M1": 20,
     "M5": 20,
@@ -215,6 +271,40 @@ def _normalize_tf(value: Optional[str]) -> Optional[str]:
         return alias
     upper = text.upper()
     return upper if upper in _VALID_TFS else None
+
+
+def _parse_tf_list(value: object) -> list[str]:
+    if value is None:
+        return []
+    items: list[object]
+    if isinstance(value, (list, tuple, set)):
+        items = list(value)
+    else:
+        items = [value]
+    tfs: list[str] = []
+    for item in items:
+        text = str(item)
+        for token in text.replace("|", ",").replace("/", ",").split(","):
+            token = token.strip()
+            if not token:
+                continue
+            tf = _normalize_tf(token)
+            if tf:
+                tfs.append(tf)
+    if not tfs:
+        return []
+    return list(dict.fromkeys(tfs))
+
+
+def _pick_tf_extremes(tfs: list[str]) -> tuple[Optional[str], Optional[str]]:
+    if not tfs:
+        return None, None
+    valid = [tf for tf in tfs if tf in _TF_ORDER]
+    if not valid:
+        return None, None
+    lower_tf = min(valid, key=lambda tf: _TF_ORDER[tf])
+    higher_tf = max(valid, key=lambda tf: _TF_ORDER[tf])
+    return lower_tf, higher_tf
 
 
 def _resolve_tf(thesis: Dict[str, object], pocket: str) -> str:
@@ -446,6 +536,599 @@ def _fast_cut_config(thesis: Dict[str, object]) -> Optional[tuple[float, float, 
     return float(pips), float(time_sec), float(hard_mult)
 
 
+def _resolve_exit_mtf_tfs(
+    thesis: Dict[str, object],
+    pocket: str,
+    strategy_keys: tuple[str, ...] | None,
+) -> list[str]:
+    if isinstance(thesis, dict):
+        for key in ("exit_mtf_tfs", "mtf_tfs", "mtf_timeframes", "timeframes"):
+            tfs = _parse_tf_list(thesis.get(key))
+            if tfs:
+                return tfs
+    if strategy_keys:
+        for key in strategy_keys:
+            raw = os.getenv(f"SECTION_EXIT_MTF_TFS_{key}")
+            if raw:
+                tfs = _parse_tf_list(raw)
+                if tfs:
+                    return tfs
+    pocket_upper = pocket.upper()
+    raw = os.getenv(f"SECTION_EXIT_MTF_TFS_{pocket_upper}") or os.getenv("SECTION_EXIT_MTF_TFS")
+    if raw:
+        tfs = _parse_tf_list(raw)
+        if tfs:
+            return tfs
+    defaults = _DEFAULT_EXIT_MTF_TFS.get(pocket, ())
+    return list(defaults)
+
+
+def _trend_metrics(
+    fac: Dict[str, object],
+) -> tuple[Optional[int], Optional[float], Optional[float], Optional[float], Optional[float]]:
+    ma10 = _safe_float(fac.get("ma10"))
+    ma20 = _safe_float(fac.get("ma20"))
+    trend_dir = None
+    ma_diff_pips = None
+    if ma10 is not None and ma20 is not None and ma10 > 0.0 and ma20 > 0.0:
+        if ma10 > ma20:
+            trend_dir = 1
+        elif ma10 < ma20:
+            trend_dir = -1
+        else:
+            trend_dir = 0
+        ma_diff_pips = abs(ma10 - ma20) / PIP
+    adx = _safe_float(fac.get("adx"))
+    return trend_dir, adx, ma_diff_pips, ma10, ma20
+
+
+def _collect_trend_signals(
+    fac: Dict[str, object],
+    side_dir: int,
+    *,
+    adx_min: float,
+    ma_min: float,
+    di_gap_min: float,
+    macd_min: float,
+    roc_min: float,
+    slope_min: float,
+    cloud_min: float,
+    vwap_min: float,
+) -> tuple[int, int, Dict[str, object], Dict[str, object]]:
+    signals: Dict[str, object] = {}
+    against_count = 0
+    signal_count = 0
+
+    def add_signal(name: str, against: bool, **details: object) -> None:
+        nonlocal against_count, signal_count
+        signal_count += 1
+        if against:
+            against_count += 1
+        payload = dict(details)
+        payload["against"] = against
+        signals[name] = payload
+
+    trend_dir, adx, ma_diff_pips, ma10, ma20 = _trend_metrics(fac)
+    dir_hint: Optional[int] = None
+    dir_source: Optional[str] = None
+    if trend_dir is not None and trend_dir != 0 and ma10 is not None and ma20 is not None:
+        add_signal(
+            "ma_cross",
+            trend_dir == -side_dir,
+            ma10=round(ma10, 5),
+            ma20=round(ma20, 5),
+            dir="up" if trend_dir > 0 else "down",
+            ma_diff_pips=round(ma_diff_pips or 0.0, 2),
+        )
+        dir_hint = trend_dir
+        dir_source = "ma_cross"
+
+    plus_di = _safe_float(fac.get("plus_di"))
+    minus_di = _safe_float(fac.get("minus_di"))
+    di_gap = None
+    if plus_di is not None and minus_di is not None:
+        di_dir = 1 if plus_di > minus_di else -1 if plus_di < minus_di else 0
+        di_gap = abs(plus_di - minus_di)
+        if di_dir != 0:
+            add_signal(
+                "di_cross",
+                di_dir == -side_dir,
+                plus_di=round(plus_di, 2),
+                minus_di=round(minus_di, 2),
+                gap=round(di_gap, 2),
+                dir="up" if di_dir > 0 else "down",
+            )
+            if dir_hint is None:
+                dir_hint = di_dir
+                dir_source = "di_cross"
+
+    macd_hist = _safe_float(fac.get("macd_hist"))
+    if macd_hist is not None and abs(macd_hist) >= macd_min:
+        macd_dir = 1 if macd_hist > 0 else -1 if macd_hist < 0 else 0
+        if macd_dir != 0:
+            add_signal(
+                "macd_hist",
+                macd_dir == -side_dir,
+                macd_hist=round(macd_hist, 5),
+                macd_min=round(macd_min, 5),
+                dir="up" if macd_dir > 0 else "down",
+            )
+            if dir_hint is None:
+                dir_hint = macd_dir
+                dir_source = "macd_hist"
+
+    roc10 = _safe_float(fac.get("roc10"))
+    if roc10 is not None and abs(roc10) >= roc_min:
+        roc_dir = 1 if roc10 > 0 else -1 if roc10 < 0 else 0
+        if roc_dir != 0:
+            add_signal(
+                "roc10",
+                roc_dir == -side_dir,
+                roc10=round(roc10, 4),
+                roc_min=round(roc_min, 4),
+                dir="up" if roc_dir > 0 else "down",
+            )
+            if dir_hint is None:
+                dir_hint = roc_dir
+                dir_source = "roc10"
+
+    slope20 = _safe_float(fac.get("ema_slope_20"))
+    if slope20 is not None and abs(slope20) >= slope_min:
+        slope_dir = 1 if slope20 > 0 else -1 if slope20 < 0 else 0
+        if slope_dir != 0:
+            add_signal(
+                "ema_slope_20",
+                slope_dir == -side_dir,
+                ema_slope_20=round(slope20, 6),
+                slope_min=round(slope_min, 6),
+                dir="up" if slope_dir > 0 else "down",
+            )
+            if dir_hint is None:
+                dir_hint = slope_dir
+                dir_source = "ema_slope_20"
+
+    cloud_pos = _safe_float(fac.get("ichimoku_cloud_pos"))
+    if cloud_pos is not None and abs(cloud_pos) >= cloud_min:
+        cloud_dir = 1 if cloud_pos > 0 else -1 if cloud_pos < 0 else 0
+        if cloud_dir != 0:
+            add_signal(
+                "ichimoku_cloud",
+                cloud_dir == -side_dir,
+                cloud_pos=round(cloud_pos, 4),
+                cloud_min=round(cloud_min, 4),
+                dir="up" if cloud_dir > 0 else "down",
+            )
+            if dir_hint is None:
+                dir_hint = cloud_dir
+                dir_source = "ichimoku_cloud"
+
+    close = _safe_float(fac.get("close"))
+    ema20 = _safe_float(fac.get("ema20") or fac.get("ma20"))
+    if close is not None and ema20 is not None and close > 0.0 and ema20 > 0.0:
+        price_dir = 1 if close > ema20 else -1 if close < ema20 else 0
+        if price_dir != 0:
+            add_signal(
+                "price_vs_ema20",
+                price_dir == -side_dir,
+                close=round(close, 5),
+                ema20=round(ema20, 5),
+                gap_pips=round((close - ema20) / PIP, 2),
+                dir="up" if price_dir > 0 else "down",
+            )
+
+    vwap_gap = _safe_float(fac.get("vwap_gap"))
+    if vwap_gap is not None and abs(vwap_gap) >= vwap_min:
+        vwap_dir = 1 if vwap_gap > 0 else -1 if vwap_gap < 0 else 0
+        if vwap_dir != 0:
+            add_signal(
+                "vwap_gap",
+                vwap_dir == -side_dir,
+                vwap_gap=round(vwap_gap, 3),
+                vwap_min=round(vwap_min, 3),
+                dir="up" if vwap_dir > 0 else "down",
+            )
+            if dir_hint is None:
+                dir_hint = vwap_dir
+                dir_source = "vwap_gap"
+
+    adx_val = adx or 0.0
+    ma_diff_val = ma_diff_pips or 0.0
+    di_gap_val = di_gap or 0.0
+    strength_ok = (
+        dir_hint is not None
+        and dir_hint == -side_dir
+        and (adx_val >= adx_min or ma_diff_val >= ma_min or di_gap_val >= di_gap_min)
+    )
+    strength_debug = {
+        "dir": "up" if (dir_hint or 0) > 0 else "down" if (dir_hint or 0) < 0 else "flat",
+        "dir_source": dir_source,
+        "adx": round(adx_val, 2),
+        "ma_diff_pips": round(ma_diff_val, 2),
+        "di_gap": round(di_gap_val, 2),
+        "adx_min": round(adx_min, 2),
+        "ma_min": round(ma_min, 2),
+        "di_gap_min": round(di_gap_min, 2),
+        "strength_ok": strength_ok,
+    }
+    return against_count, signal_count, signals, strength_debug
+
+
+def _collect_momentum_signals(
+    fac: Dict[str, object],
+    side_dir: int,
+    *,
+    rsi_low: float,
+    rsi_high: float,
+    stoch_low: float,
+    stoch_high: float,
+    cci_low: float,
+    cci_high: float,
+    macd_min: float,
+    roc_min: float,
+    slope_min: float,
+    vwap_min: float,
+) -> tuple[int, int, Dict[str, object]]:
+    signals: Dict[str, object] = {}
+    against_count = 0
+    signal_count = 0
+
+    def add_signal(name: str, against: bool, **details: object) -> None:
+        nonlocal against_count, signal_count
+        signal_count += 1
+        if against:
+            against_count += 1
+        payload = dict(details)
+        payload["against"] = against
+        signals[name] = payload
+
+    rsi = _safe_float(fac.get("rsi"))
+    if rsi is not None and 0.0 < rsi < 100.0:
+        rsi_against = rsi <= rsi_low if side_dir > 0 else rsi >= rsi_high
+        add_signal(
+            "rsi",
+            rsi_against,
+            rsi=round(rsi, 2),
+            rsi_low=round(rsi_low, 2),
+            rsi_high=round(rsi_high, 2),
+        )
+
+    stoch_rsi = _safe_float(fac.get("stoch_rsi"))
+    if stoch_rsi is not None and 0.0 <= stoch_rsi <= 1.0:
+        stoch_against = stoch_rsi <= stoch_low if side_dir > 0 else stoch_rsi >= stoch_high
+        add_signal(
+            "stoch_rsi",
+            stoch_against,
+            stoch_rsi=round(stoch_rsi, 3),
+            stoch_low=round(stoch_low, 2),
+            stoch_high=round(stoch_high, 2),
+        )
+
+    cci = _safe_float(fac.get("cci"))
+    if cci is not None:
+        cci_against = cci <= cci_low if side_dir > 0 else cci >= cci_high
+        add_signal(
+            "cci",
+            cci_against,
+            cci=round(cci, 2),
+            cci_low=round(cci_low, 1),
+            cci_high=round(cci_high, 1),
+        )
+
+    macd_hist = _safe_float(fac.get("macd_hist"))
+    if macd_hist is not None and abs(macd_hist) >= macd_min:
+        macd_dir = 1 if macd_hist > 0 else -1 if macd_hist < 0 else 0
+        if macd_dir != 0:
+            add_signal(
+                "macd_hist",
+                macd_dir == -side_dir,
+                macd_hist=round(macd_hist, 5),
+                macd_min=round(macd_min, 5),
+                dir="up" if macd_dir > 0 else "down",
+            )
+
+    roc5 = _safe_float(fac.get("roc5"))
+    if roc5 is not None and abs(roc5) >= roc_min:
+        roc_dir = 1 if roc5 > 0 else -1 if roc5 < 0 else 0
+        if roc_dir != 0:
+            add_signal(
+                "roc5",
+                roc_dir == -side_dir,
+                roc5=round(roc5, 4),
+                roc_min=round(roc_min, 4),
+                dir="up" if roc_dir > 0 else "down",
+            )
+
+    roc10 = _safe_float(fac.get("roc10"))
+    if roc10 is not None and abs(roc10) >= roc_min:
+        roc_dir = 1 if roc10 > 0 else -1 if roc10 < 0 else 0
+        if roc_dir != 0:
+            add_signal(
+                "roc10",
+                roc_dir == -side_dir,
+                roc10=round(roc10, 4),
+                roc_min=round(roc_min, 4),
+                dir="up" if roc_dir > 0 else "down",
+            )
+
+    slope5 = _safe_float(fac.get("ema_slope_5"))
+    if slope5 is not None and abs(slope5) >= slope_min:
+        slope_dir = 1 if slope5 > 0 else -1 if slope5 < 0 else 0
+        if slope_dir != 0:
+            add_signal(
+                "ema_slope_5",
+                slope_dir == -side_dir,
+                ema_slope_5=round(slope5, 6),
+                slope_min=round(slope_min, 6),
+                dir="up" if slope_dir > 0 else "down",
+            )
+
+    slope10 = _safe_float(fac.get("ema_slope_10"))
+    if slope10 is not None and abs(slope10) >= slope_min:
+        slope_dir = 1 if slope10 > 0 else -1 if slope10 < 0 else 0
+        if slope_dir != 0:
+            add_signal(
+                "ema_slope_10",
+                slope_dir == -side_dir,
+                ema_slope_10=round(slope10, 6),
+                slope_min=round(slope_min, 6),
+                dir="up" if slope_dir > 0 else "down",
+            )
+
+    plus_di = _safe_float(fac.get("plus_di"))
+    minus_di = _safe_float(fac.get("minus_di"))
+    if plus_di is not None and minus_di is not None:
+        di_dir = 1 if plus_di > minus_di else -1 if plus_di < minus_di else 0
+        if di_dir != 0:
+            add_signal(
+                "di_cross",
+                di_dir == -side_dir,
+                plus_di=round(plus_di, 2),
+                minus_di=round(minus_di, 2),
+                dir="up" if di_dir > 0 else "down",
+            )
+
+    close = _safe_float(fac.get("close"))
+    ema20 = _safe_float(fac.get("ema20") or fac.get("ma20"))
+    if close is not None and ema20 is not None and close > 0.0 and ema20 > 0.0:
+        price_dir = 1 if close > ema20 else -1 if close < ema20 else 0
+        if price_dir != 0:
+            add_signal(
+                "price_vs_ema20",
+                price_dir == -side_dir,
+                close=round(close, 5),
+                ema20=round(ema20, 5),
+                gap_pips=round((close - ema20) / PIP, 2),
+                dir="up" if price_dir > 0 else "down",
+            )
+
+    vwap_gap = _safe_float(fac.get("vwap_gap"))
+    if vwap_gap is not None and abs(vwap_gap) >= vwap_min:
+        vwap_dir = 1 if vwap_gap > 0 else -1 if vwap_gap < 0 else 0
+        if vwap_dir != 0:
+            add_signal(
+                "vwap_gap",
+                vwap_dir == -side_dir,
+                vwap_gap=round(vwap_gap, 3),
+                vwap_min=round(vwap_min, 3),
+                dir="up" if vwap_dir > 0 else "down",
+            )
+
+    return against_count, signal_count, signals
+
+
+def _evaluate_mtf_reversal(
+    *,
+    pocket: str,
+    side: str,
+    hold_sec: float,
+    min_hold: float,
+    pnl_pips: float,
+    thesis: Dict[str, object],
+    strategy_keys: tuple[str, ...],
+) -> Optional[SectionExitDecision]:
+    if pocket in {"manual", "unknown"}:
+        return None
+    enabled = _resolve_bool_by_pocket(
+        "SECTION_EXIT_MTF_ENABLED",
+        pocket,
+        True,
+        strategy_keys,
+    )
+    if enabled is False:
+        return None
+    if pnl_pips >= 0:
+        return None
+
+    tfs = _resolve_exit_mtf_tfs(thesis, pocket, strategy_keys)
+    if len(tfs) < 2:
+        return None
+    lower_tf, higher_tf = _pick_tf_extremes(tfs)
+    if not lower_tf or not higher_tf or lower_tf == higher_tf:
+        return None
+
+    hold_req = _resolve_by_pocket(
+        "SECTION_EXIT_MTF_HOLD_SEC",
+        pocket,
+        _DEFAULT_MTF_HOLD_SEC,
+        strategy_keys,
+    )
+    if hold_sec < max(min_hold, hold_req):
+        return None
+
+    neg_pips = _resolve_by_pocket(
+        "SECTION_EXIT_MTF_NEG_PIPS",
+        pocket,
+        _DEFAULT_MTF_NEG_PIPS,
+        strategy_keys,
+    )
+    if pnl_pips > -neg_pips:
+        return None
+
+    factors = all_factors()
+    fac_high = factors.get(higher_tf) or {}
+    fac_low = factors.get(lower_tf) or {}
+    side_dir = 1 if side == "long" else -1
+
+    adx_min = _resolve_by_pocket(
+        "SECTION_EXIT_MTF_TREND_ADX_MIN",
+        pocket,
+        _DEFAULT_MTF_TREND_ADX_MIN,
+        strategy_keys,
+    )
+    ma_min = _resolve_by_pocket(
+        "SECTION_EXIT_MTF_TREND_MA_DIFF_PIPS",
+        pocket,
+        _DEFAULT_MTF_TREND_MA_DIFF_PIPS,
+        strategy_keys,
+    )
+    di_gap_min = _resolve_by_pocket(
+        "SECTION_EXIT_MTF_DI_GAP_MIN",
+        pocket,
+        _DEFAULT_MTF_DI_GAP_MIN,
+        strategy_keys,
+    )
+    macd_min = _resolve_by_pocket(
+        "SECTION_EXIT_MTF_MACD_MIN",
+        pocket,
+        _DEFAULT_MTF_MACD_MIN,
+        strategy_keys,
+    )
+    roc_min = _resolve_by_pocket(
+        "SECTION_EXIT_MTF_ROC_MIN",
+        pocket,
+        _DEFAULT_MTF_ROC_MIN,
+        strategy_keys,
+    )
+    slope_min = _resolve_by_pocket(
+        "SECTION_EXIT_MTF_SLOPE_MIN",
+        pocket,
+        _DEFAULT_MTF_SLOPE_MIN,
+        strategy_keys,
+    )
+    cloud_min = _resolve_by_pocket(
+        "SECTION_EXIT_MTF_CLOUD_MIN",
+        pocket,
+        _DEFAULT_MTF_CLOUD_MIN,
+        strategy_keys,
+    )
+    vwap_min = _resolve_by_pocket(
+        "SECTION_EXIT_MTF_VWAP_GAP_MIN",
+        pocket,
+        _DEFAULT_MTF_VWAP_GAP_MIN,
+        strategy_keys,
+    )
+    trend_min_signals = _resolve_int_by_pocket(
+        "SECTION_EXIT_MTF_TREND_MIN_SIGNALS",
+        pocket,
+        _DEFAULT_MTF_TREND_MIN_SIGNALS,
+        strategy_keys,
+    )
+    momentum_min_signals = _resolve_int_by_pocket(
+        "SECTION_EXIT_MTF_MOMENTUM_MIN_SIGNALS",
+        pocket,
+        _DEFAULT_MTF_MOMENTUM_MIN_SIGNALS,
+        strategy_keys,
+    )
+
+    high_against, high_total, high_signals, trend_debug = _collect_trend_signals(
+        fac_high,
+        side_dir,
+        adx_min=adx_min,
+        ma_min=ma_min,
+        di_gap_min=di_gap_min,
+        macd_min=macd_min,
+        roc_min=roc_min,
+        slope_min=slope_min,
+        cloud_min=cloud_min,
+        vwap_min=vwap_min,
+    )
+
+    rsi_low = _resolve_by_pocket(
+        "SECTION_EXIT_MTF_RSI_LOW",
+        pocket,
+        _DEFAULT_MTF_RSI_LOW,
+        strategy_keys,
+    )
+    rsi_high = _resolve_by_pocket(
+        "SECTION_EXIT_MTF_RSI_HIGH",
+        pocket,
+        _DEFAULT_MTF_RSI_HIGH,
+        strategy_keys,
+    )
+    stoch_low = _resolve_by_pocket(
+        "SECTION_EXIT_MTF_STOCH_LOW",
+        pocket,
+        _DEFAULT_MTF_STOCH_LOW,
+        strategy_keys,
+    )
+    stoch_high = _resolve_by_pocket(
+        "SECTION_EXIT_MTF_STOCH_HIGH",
+        pocket,
+        _DEFAULT_MTF_STOCH_HIGH,
+        strategy_keys,
+    )
+    cci_low = _resolve_by_pocket(
+        "SECTION_EXIT_MTF_CCI_LOW",
+        pocket,
+        _DEFAULT_MTF_CCI_LOW,
+        strategy_keys,
+    )
+    cci_high = _resolve_by_pocket(
+        "SECTION_EXIT_MTF_CCI_HIGH",
+        pocket,
+        _DEFAULT_MTF_CCI_HIGH,
+        strategy_keys,
+    )
+
+    low_against, low_total, low_signals = _collect_momentum_signals(
+        fac_low,
+        side_dir,
+        rsi_low=rsi_low,
+        rsi_high=rsi_high,
+        stoch_low=stoch_low,
+        stoch_high=stoch_high,
+        cci_low=cci_low,
+        cci_high=cci_high,
+        macd_min=macd_min,
+        roc_min=roc_min,
+        slope_min=slope_min,
+        vwap_min=vwap_min,
+    )
+
+    if not trend_debug.get("strength_ok"):
+        return None
+    if high_total < trend_min_signals or low_total < momentum_min_signals:
+        return None
+    if high_against < trend_min_signals or low_against < momentum_min_signals:
+        return None
+
+    debug: Dict[str, object] = {
+        "tfs": list(tfs),
+        "lower_tf": lower_tf,
+        "higher_tf": higher_tf,
+        "pnl_pips": round(pnl_pips, 3),
+        "neg_pips": round(neg_pips, 3),
+        "hold_sec": round(hold_sec, 3),
+        "min_hold": round(min_hold, 3),
+        "trend": {
+            "tf": higher_tf,
+            "strength": trend_debug,
+            "signals": high_signals,
+            "against_count": int(high_against),
+            "signal_count": int(high_total),
+            "min_signals": int(trend_min_signals),
+        },
+        "momentum": {
+            "tf": lower_tf,
+            "signals": low_signals,
+            "against_count": int(low_against),
+            "signal_count": int(low_total),
+            "min_signals": int(momentum_min_signals),
+        },
+    }
+    return SectionExitDecision(True, "mtf_reversal", True, debug)
+
+
 def _axis_is_usable(
     axis: SectionAxis,
     *,
@@ -616,6 +1299,19 @@ def evaluate_section_exit(
                 "fast_cut_hard_pips": round(hard_stop_pips, 3),
             }
             return SectionExitDecision(True, "fast_cut_hard", True, debug)
+
+    if pnl_pips is not None:
+        mtf_decision = _evaluate_mtf_reversal(
+            pocket=pocket_key,
+            side=side,
+            hold_sec=hold_sec,
+            min_hold=min_hold,
+            pnl_pips=pnl_pips,
+            thesis=thesis,
+            strategy_keys=strategy_keys,
+        )
+        if mtf_decision:
+            return mtf_decision
 
     if pocket_key not in {"manual", "unknown"}:
         left_hold_sec = _resolve_by_pocket(
