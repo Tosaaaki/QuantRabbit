@@ -30,6 +30,10 @@ try:
     from openai import OpenAI
 except Exception:
     OpenAI = None  # type: ignore
+try:
+    from google.cloud import bigquery
+except Exception:
+    bigquery = None  # type: ignore
 
 from utils.secrets import get_secret
 from utils.vertex_client import call_vertex_text
@@ -96,6 +100,14 @@ _SPREAD_P95_THROTTLE = _env_float(
 _RANGE_MICRO_STRATEGIES = ["BB_RSI", "BB_RSI_Fast"]
 _TREND_MACRO_STRATEGIES = ["TrendMA", "H1Momentum", "Donchian55"]
 _TREND_MICRO_STRATEGIES = ["MomentumBurst", "MicroPullbackEMA", "TrendMomentumMicro", "MicroMomentumStack"]
+_BQ_INSIGHTS_ENABLED = _env_bool("POLICY_BQ_INSIGHTS_ENABLED", False)
+_BQ_PROJECT = os.getenv("BQ_PROJECT") or os.getenv("GOOGLE_CLOUD_PROJECT")
+_BQ_DATASET = os.getenv("BQ_DATASET", "quantrabbit")
+_BQ_EXEC_TABLE = os.getenv("BQ_EXECUTION_QUALITY_TABLE", "execution_quality")
+_BQ_MARKET_TABLE = os.getenv("BQ_MARKET_STATE_TABLE", "market_state")
+_BQ_EXPOSURE_TABLE = os.getenv("BQ_EXPOSURE_TABLE", "exposure_snapshot")
+_BQ_HEALTH_TABLE = os.getenv("BQ_OPS_HEALTH_TABLE", "ops_health")
+_BQ_RANGE_RATIO = _env_float("POLICY_BQ_RANGE_ACTIVE_RATIO", 0.6)
 
 
 def _utc_now() -> dt.datetime:
@@ -147,6 +159,92 @@ def _connect(path: str) -> sqlite3.Connection:
     con = sqlite3.connect(path)
     con.row_factory = sqlite3.Row
     return con
+
+
+def _bq_client() -> Optional[Any]:
+    if not _BQ_INSIGHTS_ENABLED:
+        return None
+    if bigquery is None:
+        logging.warning("[BQ] bigquery client not available")
+        return None
+    try:
+        return bigquery.Client(project=_BQ_PROJECT) if _BQ_PROJECT else bigquery.Client()
+    except Exception as exc:
+        logging.warning("[BQ] client init failed: %s", exc)
+        return None
+
+
+def _bq_table_fqn(client: Any, dataset: str, table: str) -> Optional[str]:
+    project = getattr(client, "project", None) or _BQ_PROJECT
+    if not project:
+        return None
+    return f"{project}.{dataset}.{table}"
+
+
+def _bq_latest_row(
+    client: Any,
+    dataset: str,
+    table: str,
+    where: Optional[str] = None,
+    limit: int = 1,
+) -> Optional[Dict[str, Any]]:
+    fqn = _bq_table_fqn(client, dataset, table)
+    if not fqn:
+        return None
+    query = f"SELECT * FROM `{fqn}`"
+    if where:
+        query += f" WHERE {where}"
+    query += f" ORDER BY generated_at DESC LIMIT {max(1, limit)}"
+    try:
+        rows = list(client.query(query).result())
+    except Exception as exc:
+        logging.warning("[BQ] query failed table=%s: %s", table, exc)
+        return None
+    if not rows:
+        return None
+    return dict(rows[0])
+
+
+def _bq_latest_exec_row(client: Any) -> Optional[Dict[str, Any]]:
+    fqn = _bq_table_fqn(client, _BQ_DATASET, _BQ_EXEC_TABLE)
+    if not fqn:
+        return None
+    query = (
+        f"SELECT * FROM `{fqn}` "
+        "WHERE pocket IN ('scalp','all') "
+        "ORDER BY generated_at DESC "
+        "LIMIT 10"
+    )
+    try:
+        rows = list(client.query(query).result())
+    except Exception as exc:
+        logging.warning("[BQ] exec quality query failed: %s", exc)
+        return None
+    if not rows:
+        return None
+    items = [dict(row) for row in rows]
+    scalp = next((row for row in items if row.get("pocket") == "scalp"), None)
+    return scalp or items[0]
+
+
+def _load_bq_ops_snapshot() -> Optional[Dict[str, Any]]:
+    client = _bq_client()
+    if client is None:
+        return None
+    snapshot: Dict[str, Any] = {}
+    exec_row = _bq_latest_exec_row(client)
+    if exec_row:
+        snapshot["execution_quality"] = exec_row
+    market_row = _bq_latest_row(client, _BQ_DATASET, _BQ_MARKET_TABLE)
+    if market_row:
+        snapshot["market_state"] = market_row
+    exposure_row = _bq_latest_row(client, _BQ_DATASET, _BQ_EXPOSURE_TABLE)
+    if exposure_row:
+        snapshot["exposure_snapshot"] = exposure_row
+    health_row = _bq_latest_row(client, _BQ_DATASET, _BQ_HEALTH_TABLE)
+    if health_row:
+        snapshot["ops_health"] = health_row
+    return snapshot or None
 
 
 def _trade_aggregate(con: sqlite3.Connection, since_ts: str) -> Dict[str, Any]:
@@ -499,16 +597,29 @@ def _policy_rules_diff(report: Dict[str, Any], latest_path: Path) -> Optional[Di
     notes: Dict[str, Any] = {}
     auto_notes: Dict[str, Any] = {}
     actions: List[str] = []
+    bq_ops = report.get("bq_ops")
+    bq_ops = bq_ops if isinstance(bq_ops, dict) else {}
+    bq_market = bq_ops.get("market_state") if isinstance(bq_ops, dict) else None
+    bq_exec = bq_ops.get("execution_quality") if isinstance(bq_ops, dict) else None
 
-    range_state = report.get("range_state") or {}
-    range_active = bool(range_state.get("active")) if isinstance(range_state, dict) else False
+    range_state = report.get("range_state")
+    range_active: Optional[bool] = None
     range_reason = None
     range_score = None
-    if isinstance(range_state, dict):
+    if isinstance(range_state, dict) and "active" in range_state:
+        range_active = bool(range_state.get("active"))
         tags = range_state.get("tags") or {}
         if isinstance(tags, dict):
             range_reason = tags.get("reason")
             range_score = tags.get("score")
+    if range_active is None and isinstance(bq_market, dict):
+        ratio = bq_market.get("range_active_ratio")
+        if isinstance(ratio, (int, float)):
+            range_active = ratio >= _BQ_RANGE_RATIO
+            range_reason = bq_market.get("range_reason") or "bq_range_ratio"
+            range_score = bq_market.get("range_score_avg")
+    if range_active is None:
+        range_active = False
 
     def _set_entry_gate(pocket: str, allow_new: bool) -> None:
         patch.setdefault("pockets", {}).setdefault(pocket, {}).setdefault("entry_gates", {})[
@@ -588,6 +699,8 @@ def _policy_rules_diff(report: Dict[str, Any], latest_path: Path) -> Optional[Di
     # Spread soft throttle for scalp
     spread_stats = report.get("metrics", {}).get("decision_spread_pips", {})
     spread_p95 = spread_stats.get("p95") if isinstance(spread_stats, dict) else None
+    if not isinstance(spread_p95, (int, float)) and isinstance(bq_exec, dict):
+        spread_p95 = bq_exec.get("decision_spread_p95")
     if isinstance(spread_p95, (int, float)) and spread_p95 >= _SPREAD_P95_THROTTLE:
         _set_entry_gate("scalp", False)
         actions.append("spread_throttle_on")
@@ -1027,6 +1140,9 @@ def run(args: argparse.Namespace) -> Dict[str, Any]:
             }
 
     report["trend"] = _trend_snapshot()
+    bq_ops = _load_bq_ops_snapshot()
+    if bq_ops:
+        report["bq_ops"] = bq_ops
 
     report["flags"] = _build_flags(report)
 
