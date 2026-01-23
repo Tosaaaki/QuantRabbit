@@ -18,6 +18,7 @@ import math
 import os
 import sqlite3
 import sys
+from collections import deque
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
@@ -68,12 +69,33 @@ _VERTEX_POLICY_TIMEOUT_SEC = float(os.getenv("LLM_OPS_POLICY_TIMEOUT_SEC", _VERT
 _POLICY_MAX_TOKENS = int(os.getenv("LLM_OPS_POLICY_MAX_TOKENS", "900"))
 _DEFAULT_POLICY_HOURS = float(os.getenv("LLM_OPS_POLICY_HOURS") or os.getenv("LLM_OPS_REPORT_HOURS") or 24.0)
 
-
 def _env_bool(name: str, default: bool = False) -> bool:
     val = os.getenv(name)
     if val is None:
         return default
     return str(val).strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _env_float(name: str, default: float) -> float:
+    raw = os.getenv(name)
+    if raw is None or str(raw).strip() == "":
+        return default
+    try:
+        return float(raw)
+    except Exception:
+        return default
+
+
+_REPLAY_DIR = Path(os.getenv("OPS_REPLAY_DIR", "logs/replay/USD_JPY"))
+_TREND_STRENGTH_MIN = _env_float("POLICY_TREND_STRENGTH_MIN", 1.0)
+_TREND_STRENGTH_MIN_H1 = _env_float("POLICY_TREND_STRENGTH_MIN_H1", _TREND_STRENGTH_MIN)
+_SPREAD_P95_THROTTLE = _env_float(
+    "POLICY_SPREAD_P95_PIPS",
+    _env_float("M1SCALP_MAX_SPREAD_PIPS", 1.4),
+)
+_RANGE_MICRO_STRATEGIES = ["BB_RSI", "BB_RSI_Fast"]
+_TREND_MACRO_STRATEGIES = ["TrendMA", "H1Momentum", "Donchian55"]
+_TREND_MICRO_STRATEGIES = ["MomentumBurst", "MicroPullbackEMA", "TrendMomentumMicro", "MicroMomentumStack"]
 
 
 def _utc_now() -> dt.datetime:
@@ -314,6 +336,31 @@ def _metric_stats(con: sqlite3.Connection, since_ts: str, metric: str) -> Dict[s
     return out
 
 
+def _latest_metric(con: sqlite3.Connection, metric: str) -> Optional[Dict[str, Any]]:
+    row = con.execute(
+        "SELECT ts, value, tags FROM metrics WHERE metric = ? ORDER BY ts DESC LIMIT 1",
+        (metric,),
+    ).fetchone()
+    if not row:
+        return None
+    tags_raw = row["tags"] if isinstance(row, sqlite3.Row) else row[2]
+    tags: Optional[Dict[str, Any]] = None
+    if tags_raw:
+        try:
+            tags = json.loads(tags_raw)
+        except Exception:
+            tags = None
+    try:
+        value = float(row["value"])
+    except Exception:
+        value = None
+    return {
+        "ts": row["ts"],
+        "value": value,
+        "tags": tags,
+    }
+
+
 def _build_flags(report: Dict[str, Any], *, include_perf: bool = True) -> List[str]:
     flags: List[str] = []
     latency = report.get("metrics", {}).get("decision_latency_ms", {})
@@ -358,6 +405,216 @@ def _strip_perf(report: Dict[str, Any]) -> Dict[str, Any]:
         clone["pockets"] = trimmed_list
     clone["strategies"] = {"top": [], "bottom": []}
     return clone
+
+
+def _load_recent_candles(pattern: str, maxlen: int) -> List[Dict[str, Any]]:
+    if not _REPLAY_DIR.exists():
+        return []
+    files = sorted(_REPLAY_DIR.glob(pattern))
+    if not files:
+        return []
+    data: deque = deque(maxlen=maxlen)
+    for path in files[-2:]:
+        try:
+            with path.open("r", encoding="utf-8") as fh:
+                for line in fh:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        data.append(json.loads(line))
+                    except Exception:
+                        continue
+        except Exception:
+            continue
+    return list(data)
+
+
+def _trend_from_candles(candles: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    if not candles or len(candles) < 5:
+        return None
+    candles = sorted(candles, key=lambda r: r.get("ts") or "")
+    closes = [c.get("close") for c in candles if isinstance(c.get("close"), (int, float))]
+    highs = [c.get("high") for c in candles if isinstance(c.get("high"), (int, float))]
+    lows = [c.get("low") for c in candles if isinstance(c.get("low"), (int, float))]
+    if not closes or not highs or not lows:
+        return None
+    start = closes[0]
+    end = closes[-1]
+    net = end - start
+    ranges = [h - l for h, l in zip(highs, lows)]
+    avg_range = sum(ranges) / len(ranges) if ranges else 0.0
+    strength = abs(net) / avg_range if avg_range else 0.0
+    if strength < 1.0:
+        direction = "flat"
+    else:
+        direction = "up" if net > 0 else "down"
+    return {
+        "direction": direction,
+        "strength": round(strength, 3),
+        "net": round(net, 4),
+        "avg_range": round(avg_range, 4),
+        "last_ts": candles[-1].get("ts"),
+        "count": len(candles),
+    }
+
+
+def _trend_snapshot() -> Dict[str, Any]:
+    return {
+        "m1": _trend_from_candles(_load_recent_candles("USD_JPY_M1_*.jsonl", 120)),
+        "h1": _trend_from_candles(_load_recent_candles("USD_JPY_H1_*.jsonl", 24)),
+        "h4": _trend_from_candles(_load_recent_candles("USD_JPY_H4_*.jsonl", 30)),
+    }
+
+
+def _load_policy_snapshot(path: Path) -> Dict[str, Any]:
+    try:
+        raw = path.read_text()
+        payload = json.loads(raw)
+        return payload if isinstance(payload, dict) else {}
+    except Exception:
+        return {}
+
+
+def _auto_policy_state(notes: Dict[str, Any], key: str) -> Optional[str]:
+    if not isinstance(notes, dict):
+        return None
+    auto = notes.get("auto_policy")
+    if not isinstance(auto, dict):
+        return None
+    entry = auto.get(key)
+    if isinstance(entry, dict):
+        return str(entry.get("state") or "")
+    if isinstance(entry, str):
+        return entry
+    return None
+
+
+def _policy_rules_diff(report: Dict[str, Any], latest_path: Path) -> Optional[Dict[str, Any]]:
+    if not _env_bool("POLICY_RULES_ENABLED", True):
+        return None
+    current = _load_policy_snapshot(latest_path)
+    current_notes = current.get("notes") if isinstance(current.get("notes"), dict) else {}
+    patch: Dict[str, Any] = {}
+    notes: Dict[str, Any] = {}
+    auto_notes: Dict[str, Any] = {}
+    actions: List[str] = []
+
+    range_state = report.get("range_state") or {}
+    range_active = bool(range_state.get("active")) if isinstance(range_state, dict) else False
+    range_reason = None
+    range_score = None
+    if isinstance(range_state, dict):
+        tags = range_state.get("tags") or {}
+        if isinstance(tags, dict):
+            range_reason = tags.get("reason")
+            range_score = tags.get("score")
+
+    def _set_entry_gate(pocket: str, allow_new: bool) -> None:
+        patch.setdefault("pockets", {}).setdefault(pocket, {}).setdefault("entry_gates", {})[
+            "allow_new"
+        ] = allow_new
+
+    def _set_strategies(pocket: str, strategies: List[str]) -> None:
+        patch.setdefault("pockets", {}).setdefault(pocket, {})["strategies"] = strategies
+
+    def _set_bias(pocket: str, bias: str) -> None:
+        patch.setdefault("pockets", {}).setdefault(pocket, {})["bias"] = bias
+
+    # Range regime guard (strategy restriction)
+    if range_active:
+        patch["range_mode"] = True
+        _set_entry_gate("macro", False)
+        _set_strategies("micro", list(_RANGE_MICRO_STRATEGIES))
+        _set_bias("micro", "neutral")
+        actions.append("range_guard_on")
+        auto_notes["range_guard"] = {
+            "state": "active",
+            "reason": range_reason,
+            "score": range_score,
+        }
+    else:
+        if _auto_policy_state(current_notes, "range_guard") == "active":
+            patch["range_mode"] = False
+            _set_entry_gate("macro", True)
+            _set_strategies("micro", [])
+            actions.append("range_guard_off")
+            auto_notes["range_guard"] = {"state": "cleared"}
+
+    # Trend bias (directional throttle) when not in range mode
+    if not range_active:
+        trend = report.get("trend") or {}
+        macro_trend = trend.get("h4") if isinstance(trend, dict) else None
+        micro_trend = trend.get("h1") if isinstance(trend, dict) else None
+        if (
+            isinstance(macro_trend, dict)
+            and macro_trend.get("direction") in {"up", "down"}
+            and (macro_trend.get("strength") or 0) >= _TREND_STRENGTH_MIN
+        ):
+            bias = "long" if macro_trend["direction"] == "up" else "short"
+            _set_bias("macro", bias)
+            _set_strategies("macro", list(_TREND_MACRO_STRATEGIES))
+            actions.append(f"macro_trend_{bias}")
+            auto_notes["trend_guard"] = {
+                "state": "active",
+                "macro_dir": macro_trend["direction"],
+                "macro_strength": macro_trend.get("strength"),
+            }
+        elif _auto_policy_state(current_notes, "trend_guard") == "active":
+            _set_bias("macro", "neutral")
+            _set_strategies("macro", [])
+            actions.append("macro_trend_clear")
+            auto_notes["trend_guard"] = {"state": "cleared"}
+        if (
+            isinstance(micro_trend, dict)
+            and micro_trend.get("direction") in {"up", "down"}
+            and (micro_trend.get("strength") or 0) >= _TREND_STRENGTH_MIN_H1
+        ):
+            bias = "long" if micro_trend["direction"] == "up" else "short"
+            _set_bias("micro", bias)
+            _set_strategies("micro", list(_TREND_MICRO_STRATEGIES))
+            actions.append(f"micro_trend_{bias}")
+            auto_notes["trend_guard_micro"] = {
+                "state": "active",
+                "micro_dir": micro_trend["direction"],
+                "micro_strength": micro_trend.get("strength"),
+            }
+        elif _auto_policy_state(current_notes, "trend_guard_micro") == "active":
+            _set_bias("micro", "neutral")
+            _set_strategies("micro", [])
+            actions.append("micro_trend_clear")
+            auto_notes["trend_guard_micro"] = {"state": "cleared"}
+
+    # Spread soft throttle for scalp
+    spread_stats = report.get("metrics", {}).get("decision_spread_pips", {})
+    spread_p95 = spread_stats.get("p95") if isinstance(spread_stats, dict) else None
+    if isinstance(spread_p95, (int, float)) and spread_p95 >= _SPREAD_P95_THROTTLE:
+        _set_entry_gate("scalp", False)
+        actions.append("spread_throttle_on")
+        auto_notes["spread_guard"] = {
+            "state": "active",
+            "p95": spread_p95,
+            "limit": _SPREAD_P95_THROTTLE,
+        }
+    else:
+        if _auto_policy_state(current_notes, "spread_guard") == "active":
+            _set_entry_gate("scalp", True)
+            actions.append("spread_throttle_off")
+            auto_notes["spread_guard"] = {"state": "cleared"}
+
+    if not patch:
+        return None
+    if auto_notes:
+        notes["auto_policy"] = auto_notes
+    return {
+        "policy_id": f"ops_rules_{int(_utc_now().timestamp())}",
+        "generated_at": _iso(_utc_now()),
+        "source": "ops_rules",
+        "no_change": False,
+        "reason": ",".join(actions) if actions else "rules_apply",
+        "patch": patch,
+        "notes": notes,
+    }
 
 
 def _resolve_model() -> str:
@@ -549,6 +806,8 @@ def _build_policy_prompt(report: Dict[str, Any]) -> str:
         "strategy_bottom": report.get("strategies", {}).get("bottom", []),
         "orders": report.get("orders"),
         "metrics": report.get("metrics"),
+        "range_state": report.get("range_state"),
+        "trend": report.get("trend"),
         "flags": report.get("flags"),
         "perf_excluded": report.get("perf_excluded"),
     }
@@ -757,7 +1016,17 @@ def run(args: argparse.Namespace) -> Dict[str, Any]:
         report["metrics"] = {
             "decision_latency_ms": _metric_stats(con, since_ts, "decision_latency_ms"),
             "data_lag_ms": _metric_stats(con, since_ts, "data_lag_ms"),
+            "decision_spread_pips": _metric_stats(con, since_ts, "decision_spread_pips"),
         }
+        range_latest = _latest_metric(con, "range_mode_active")
+        if range_latest:
+            report["range_state"] = {
+                "active": bool(range_latest.get("value", 0.0)),
+                "ts": range_latest.get("ts"),
+                "tags": range_latest.get("tags"),
+            }
+
+    report["trend"] = _trend_snapshot()
 
     report["flags"] = _build_flags(report)
 
@@ -769,13 +1038,17 @@ def run(args: argparse.Namespace) -> Dict[str, Any]:
             gpt_used = True
     report["gpt_used"] = gpt_used
     if args.policy:
-        policy_report = report
-        if _env_bool("LLM_OPS_POLICY_EXCLUDE_PERF"):
-            policy_report = _strip_perf(report)
-            policy_report["perf_excluded"] = True
-            policy_report["flags"] = _build_flags(policy_report, include_perf=False)
-            report["policy_perf_excluded"] = True
-        diff = _ops_policy_diff(policy_report)
+        diff = _policy_rules_diff(report, Path(args.latest_path))
+        if diff:
+            report["policy_rules_used"] = True
+        else:
+            policy_report = report
+            if _env_bool("LLM_OPS_POLICY_EXCLUDE_PERF"):
+                policy_report = _strip_perf(report)
+                policy_report["perf_excluded"] = True
+                policy_report["flags"] = _build_flags(policy_report, include_perf=False)
+                report["policy_perf_excluded"] = True
+            diff = _ops_policy_diff(policy_report)
         if diff:
             report["policy_diff"] = diff
             report["policy_used"] = True
