@@ -258,6 +258,9 @@ GPT_FALLBACK_ENABLED = _env_bool("GPT_FALLBACK_ENABLED", default=False)
 GPT_STRICT_REQUIRED = _env_bool("GPT_STRICT_REQUIRED", default=True)
 GPT_DECIDER_BLOCKING = _env_bool("GPT_DECIDER_BLOCKING", default=True)
 GPT_DECIDER_WAIT_TIMEOUT_SEC = float(os.getenv("GPT_DECIDER_WAIT_TIMEOUT_SEC", "30"))
+# Main loop should not depend on LLM unless explicitly enabled.
+LLM_IN_MAIN_ENABLED = _env_bool("LLM_IN_MAIN_ENABLED", default=False)
+MAIN_LLM_ENABLED = LLM_IN_MAIN_ENABLED and not GPT_DISABLED
 
 # ---- Dynamic allocation (strategy score / pocket cap) loader ----
 _DYNAMIC_ALLOC_PATH = Path("config/dynamic_alloc.json")
@@ -5263,10 +5266,10 @@ async def logic_loop(
                 range_reason=last_range_reason or range_ctx.reason,
                 soft_range=range_soft_active,
             )
-            if GPT_DISABLED:
+            if not MAIN_LLM_ENABLED:
                 gpt = {}
-                reuse_reason = "disabled"
-                logging.info("[GPT] disabled; skipping GPT evaluation and using local ranking only")
+                reuse_reason = "main_llm_disabled"
+                logging.info("[GPT] main loop disabled; using local ranking only")
             else:
                 gpt_requested = False
                 logging.info(
@@ -9846,7 +9849,7 @@ async def main():
         gpt_state = GPTDecisionState()
         gpt_requests = GPTRequestManager()
         fast_scalp_state = FastScalpState()
-        if GPT_DISABLED:
+        if not MAIN_LLM_ENABLED:
             rr_advisor = None
             exit_advisor = None
             strategy_conf_advisor = None
@@ -9854,7 +9857,7 @@ async def main():
             volatility_advisor = None
             stage_plan_advisor = None
             partial_advisor = None
-            logging.info("[ADVISOR] disabled (GPT_DISABLED=1)")
+            logging.info("[ADVISOR] disabled (LLM_IN_MAIN_ENABLED=0)")
         else:
             rr_advisor = RRRatioAdvisor()
             exit_advisor = ExitAdvisor()
@@ -9878,7 +9881,7 @@ async def main():
                 )
             ),
         ]
-        if not GPT_DISABLED:
+        if MAIN_LLM_ENABLED:
             tasks.append(
                 asyncio.create_task(
                     supervised_runner(
@@ -9889,15 +9892,15 @@ async def main():
             )
 
         # 先にGPTの初期決定を温めておく（ロジック開始前のプリム）
-        if not GPT_DISABLED and GPT_DECIDER_BLOCKING:
+        if MAIN_LLM_ENABLED and GPT_DECIDER_BLOCKING:
             try:
                 await prime_gpt_decision(gpt_state, gpt_requests)
             except Exception:
                 logging.exception("[MAIN] prime_gpt_decision failed; continuing without primer")
-        elif not GPT_DISABLED:
+        elif MAIN_LLM_ENABLED:
             logging.info("[GPT PRIME] skipped (GPT_DECIDER_BLOCKING=0)")
         else:
-            logging.info("[GPT PRIME] skipped (GPT_DISABLED=1)")
+            logging.info("[GPT PRIME] skipped (LLM_IN_MAIN_ENABLED=0)")
 
         run_logic = (MAIN_TRADING_ENABLED or SIGNAL_GATE_ENABLED) and (
             not WORKER_ONLY_MODE or SIGNAL_GATE_ENABLED
