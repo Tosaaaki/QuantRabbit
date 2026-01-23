@@ -9,8 +9,6 @@ from __future__ import annotations
 from typing import Dict, Optional
 import os
 
-DEFAULT_SCALP_SHARE = 0.3
-
 
 def _env_float(name: str, default: float, minimum: float, maximum: float) -> float:
     raw = os.getenv(name)
@@ -21,6 +19,9 @@ def _env_float(name: str, default: float, minimum: float, maximum: float) -> flo
     except (TypeError, ValueError):
         return default
     return max(minimum, min(maximum, value))
+
+
+DEFAULT_SCALP_SHARE = _env_float("POCKET_SCALP_SHARE", 0.3, 0.0, 0.9)
 
 
 MIN_MICRO_WEIGHT = _env_float("POCKET_MIN_MICRO_WEIGHT", 0.05, 0.0, 0.4)

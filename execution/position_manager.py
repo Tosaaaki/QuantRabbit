@@ -61,6 +61,17 @@ _DB_SYNCHRONOUS = os.getenv("POSITION_MANAGER_DB_SYNCHRONOUS", "NORMAL")
 _DB_TEMP_STORE = os.getenv("POSITION_MANAGER_DB_TEMP_STORE", "MEMORY")
 _DB_LOCK_PATH = pathlib.Path(os.getenv("POSITION_MANAGER_DB_LOCK_PATH", "logs/trades.db.lock"))
 _DB_FILE_LOCK_TIMEOUT = float(os.getenv("POSITION_MANAGER_DB_FILE_LOCK_TIMEOUT", "30.0"))
+_BACKFILL_ENABLED = os.getenv("POSITION_MANAGER_BACKFILL_ATTR", "1").strip().lower() not in {
+    "",
+    "0",
+    "false",
+    "no",
+}
+_BACKFILL_TTL_SEC = float(os.getenv("POSITION_MANAGER_BACKFILL_TTL_SEC", "86400"))
+_BACKFILL_MAX_ROWS = int(os.getenv("POSITION_MANAGER_BACKFILL_MAX_ROWS", "5000"))
+_BACKFILL_MARKER = pathlib.Path(
+    os.getenv("POSITION_MANAGER_BACKFILL_MARKER", "logs/position_manager_backfill.json")
+)
 
 # Agent-generated client order ID prefixes (qr-...), used to classify pockets.
 agent_client_prefixes = tuple(
@@ -108,6 +119,7 @@ _CANONICAL_STRATEGY_TAGS = {
     "squeeze_break_s5",
     "vwap_magnet_s5",
     "fast_scalp",
+    "mm_lite",
     "manual_swing",
     "OnePipMakerS1",
     "LondonMomentum",
@@ -120,8 +132,53 @@ _TAG_ALIAS_PREFIXES = {
     "h1momentum": "H1Momentum",
     "m1scalper": "M1Scalper",
     "impulsere": "ImpulseRetrace",
+    "impulser": "ImpulseRetrace",
+    "rangefad": "RangeFader",
+    "mmlite": "mm_lite",
     "bbrsi": "BB_RSI",
     "bb_rsi": "BB_RSI",
+}
+
+_STRATEGY_POCKET_MAP = {
+    # Macro
+    "TrendMA": "macro",
+    "Donchian55": "macro",
+    "H1Momentum": "macro",
+    "LondonMomentum": "macro",
+    "trend_h1": "macro",
+    "manual_swing": "macro",
+    "OnePipMakerS1": "scalp",
+    # Micro
+    "MomentumBurst": "micro",
+    "MomentumPulse": "micro",
+    "VolCompressionBreak": "micro",
+    "MicroMomentumStack": "micro",
+    "MicroPullbackEMA": "micro",
+    "MicroLevelReactor": "micro",
+    "MicroRangeBreak": "micro",
+    "MicroVWAPBound": "micro",
+    "MicroVWAPRevert": "micro",
+    "TrendMomentumMicro": "micro",
+    "BB_RSI": "micro",
+    "BB_RSI_Fast": "micro",
+    # Scalp
+    "M1Scalper": "scalp",
+    "ImpulseRetrace": "scalp",
+    "RangeFader": "scalp",
+    "PulseBreak": "scalp",
+    "mirror_spike": "scalp",
+    "mirror_spike_s5": "scalp",
+    "mirror_spike_tight": "scalp",
+    "pullback_s5": "scalp",
+    "pullback_scalp": "scalp",
+    "pullback_runner_s5": "scalp",
+    "impulse_break_s5": "scalp",
+    "impulse_retest_s5": "scalp",
+    "impulse_momentum_s5": "scalp",
+    "squeeze_break_s5": "scalp",
+    "vwap_magnet_s5": "scalp",
+    "mm_lite": "scalp",
+    "fast_scalp": "scalp_fast",
 }
 
 
@@ -171,6 +228,58 @@ def _apply_strategy_tag_normalization(thesis: dict | None, raw_tag: object | Non
     if norm:
         thesis["strategy_tag"] = norm
     return thesis, norm
+
+
+def _infer_pocket_from_client_id(client_id: object | None) -> str | None:
+    if not client_id:
+        return None
+    cid = str(client_id).strip()
+    if not cid:
+        return None
+    if cid.startswith(("qr-fast-", "qs-fast-")):
+        return "scalp_fast"
+    try:
+        import re
+        match = re.match(r"^(?:qr|qs)-\d+-(micro|macro|scalp|scalp_fast)-", cid)
+        if match:
+            return match.group(1)
+        match = re.match(r"^(?:qr|qs)-(micro|macro|scalp|scalp_fast)-\d+-", cid)
+        if match:
+            return match.group(1)
+    except Exception:
+        return None
+    return None
+
+
+def _infer_pocket_from_tag(tag: object | None) -> str | None:
+    if tag is None:
+        return None
+    norm = _normalize_strategy_tag(tag)
+    if norm and norm in _STRATEGY_POCKET_MAP:
+        return _STRATEGY_POCKET_MAP[norm]
+    raw = str(tag).strip().lower()
+    if not raw:
+        return None
+    if raw.startswith(("mmlite", "mm_lite")):
+        return "scalp"
+    return None
+
+
+def _resolve_pocket(
+    pocket_raw: object | None,
+    strategy_tag: object | None,
+    client_id: object | None,
+) -> str:
+    pocket = _normalize_pocket(str(pocket_raw) if pocket_raw is not None else None)
+    if pocket != "manual":
+        return pocket
+    inferred = _infer_pocket_from_client_id(client_id)
+    if inferred:
+        return inferred
+    inferred = _infer_pocket_from_tag(strategy_tag)
+    if inferred:
+        return inferred
+    return pocket
 
 
 def _configure_sqlite(con: sqlite3.Connection) -> sqlite3.Connection:
@@ -333,6 +442,10 @@ class PositionManager:
             logging.warning(
                 "[PositionManager] schema lock busy; skipping schema check to avoid startup timeout"
             )
+        try:
+            self._maybe_backfill_attribution()
+        except Exception as exc:
+            logging.warning("[PositionManager] attribution backfill skipped: %s", exc)
         self._last_tx_id = self._get_last_transaction_id_with_retry()
         self._pocket_cache: dict[str, str] = {}
         self._client_cache: dict[str, str] = {}
@@ -506,6 +619,91 @@ class PositionManager:
             "CREATE INDEX IF NOT EXISTS idx_trades_close_time ON trades(close_time)"
         )
         self._commit_with_retry()
+
+    def _maybe_backfill_attribution(self) -> None:
+        if not _BACKFILL_ENABLED:
+            return
+        now = time.time()
+        if _BACKFILL_TTL_SEC > 0 and _BACKFILL_MARKER.exists():
+            try:
+                data = json.loads(_BACKFILL_MARKER.read_text(encoding="utf-8"))
+                last_ts = float(data.get("ts") or 0.0)
+                if last_ts > 0 and now - last_ts < _BACKFILL_TTL_SEC:
+                    return
+            except Exception:
+                pass
+        try:
+            with _file_lock(_DB_LOCK_PATH):
+                updated = self._backfill_missing_attribution()
+        except TimeoutError:
+            logging.warning("[PositionManager] attribution backfill lock busy; skip")
+            return
+        try:
+            _BACKFILL_MARKER.parent.mkdir(parents=True, exist_ok=True)
+            _BACKFILL_MARKER.write_text(
+                json.dumps({"ts": now, "updated": updated}),
+                encoding="utf-8",
+            )
+        except Exception:
+            pass
+
+    def _backfill_missing_attribution(self) -> int:
+        try:
+            con = sqlite3.connect(_DB, timeout=_DB_BUSY_TIMEOUT_MS / 1000.0)
+            con.row_factory = sqlite3.Row
+            _configure_sqlite(con)
+        except sqlite3.Error as exc:
+            logging.warning("[PositionManager] backfill open failed: %s", exc)
+            return 0
+        rows = con.execute(
+            """
+            SELECT id, pocket, client_order_id, strategy_tag, strategy, entry_thesis
+            FROM trades
+            WHERE (strategy_tag IS NULL OR strategy_tag = '')
+               OR (pocket IS NULL OR pocket = '' OR pocket = 'unknown')
+            ORDER BY id DESC
+            LIMIT ?
+            """,
+            (_BACKFILL_MAX_ROWS,),
+        ).fetchall()
+        updates = []
+        for row in rows:
+            current_pocket = row["pocket"] or ""
+            current_tag = row["strategy_tag"] or row["strategy"]
+            if not current_tag and row["entry_thesis"]:
+                try:
+                    payload = json.loads(row["entry_thesis"])
+                    if isinstance(payload, dict):
+                        current_tag = payload.get("strategy_tag") or payload.get("strategy")
+                except Exception:
+                    current_tag = current_tag
+            norm_tag = _normalize_strategy_tag(current_tag)
+            final_tag = norm_tag or current_tag
+            if final_tag:
+                final_tag = str(final_tag).strip() or None
+            final_strategy = row["strategy"] or final_tag
+            if final_strategy:
+                final_strategy = str(final_strategy).strip() or None
+            final_pocket = _resolve_pocket(
+                current_pocket,
+                final_tag,
+                row["client_order_id"],
+            )
+            if (
+                str(current_pocket or "") == str(final_pocket or "")
+                and (row["strategy_tag"] or "") == (final_tag or "")
+                and (row["strategy"] or "") == (final_strategy or "")
+            ):
+                continue
+            updates.append((final_pocket, final_tag, final_strategy, row["id"]))
+        if updates:
+            con.executemany(
+                "UPDATE trades SET pocket = ?, strategy_tag = ?, strategy = ? WHERE id = ?",
+                updates,
+            )
+            con.commit()
+        con.close()
+        return len(updates)
 
     def _get_last_transaction_id_with_retry(self) -> int:
         for attempt in range(_DB_LOCK_RETRY):
@@ -701,6 +899,11 @@ class PositionManager:
                 details["entry_thesis"] = thesis_obj
             if norm_tag:
                 details["strategy_tag"] = norm_tag
+            details["pocket"] = _resolve_pocket(
+                details.get("pocket"),
+                details.get("strategy_tag"),
+                client_id,
+            )
             return details
         except requests.HTTPError as exc:
             if exc.response is not None and exc.response.status_code == 404:
@@ -781,11 +984,12 @@ class PositionManager:
         thesis_obj, norm_tag = _apply_strategy_tag_normalization(thesis_obj, raw_tag)
         if norm_tag:
             strategy_tag = norm_tag
+        pocket = _resolve_pocket(row["pocket"], strategy_tag, client_id)
         return {
             "entry_price": float(row["executed_price"] or 0.0),
             "entry_time": entry_time,
             "units": int(row["units"] or 0),
-            "pocket": row["pocket"] or "unknown",
+            "pocket": pocket,
             "client_order_id": client_id,
             "strategy_tag": strategy_tag,
             "entry_thesis": thesis_obj,
@@ -880,6 +1084,11 @@ class PositionManager:
                 transaction_id = int(tx.get("id", 0) or 0)
                 updated_at = datetime.now(timezone.utc).isoformat()
                 close_reason = tx.get("reason") or tx.get("type") or "UNKNOWN"
+                details["pocket"] = _resolve_pocket(
+                    details.get("pocket"),
+                    details.get("strategy_tag"),
+                    details.get("client_order_id"),
+                )
 
                 record_tuple = (
                     transaction_id,

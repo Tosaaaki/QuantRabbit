@@ -1,7 +1,7 @@
 defaults:
-  cooldown_win_sec: 30
-  cooldown_loss_sec: 60
-  same_dir_reentry_pips: 0.4
+  cooldown_win_sec: 60
+  cooldown_loss_sec: 180
+  same_dir_reentry_pips: 1.8
   same_dir_mode: return
   allow_jst_hours: []
   block_jst_hours: []
@@ -13,41 +13,48 @@ defaults:
   stack_reentry_pips: 0.0
   stack_reentry_require_tech: false
   stack_reentry_tech_min_score: 0.0
-
 strategies:
   MicroPullbackEMA:
-    cooldown_win_sec: 10
-    cooldown_loss_sec: 20
-    same_dir_reentry_pips: 0.2
+    cooldown_win_sec: 40
+    cooldown_loss_sec: 66
+    same_dir_reentry_pips: 0.8
     same_dir_mode: both
     return_wait_bias: neutral
+    return_wait_reason: default
+    block_jst_hours: []
   MomentumBurst:
-    cooldown_win_sec: 10
-    cooldown_loss_sec: 20
-    same_dir_reentry_pips: 0.4
+    cooldown_win_sec: 44
+    cooldown_loss_sec: 138
+    same_dir_reentry_pips: 0.8
     same_dir_mode: both
-    return_wait_bias: neutral
+    return_wait_bias: avoid
+    return_wait_reason: be_post_60_or_hold_skew
+    block_jst_hours: []
   Donchian5:
     cooldown_win_sec: 300
-    cooldown_loss_sec: 420
-    same_dir_reentry_pips: 5.694
+    cooldown_loss_sec: 670
+    same_dir_reentry_pips: 1.8
     max_open_trades: 2
     max_open_adverse_pips: 40.0
     max_open_trades_hard: 6
     stack_reentry_pips: 30.0
     stack_reentry_require_tech: true
     stack_reentry_tech_min_score: 0.05
-    return_wait_bias: neutral
+    return_wait_bias: avoid
+    return_wait_reason: be_post_60_or_hold_skew
+    block_jst_hours: []
   Donchian55:
-    cooldown_win_sec: 300
-    cooldown_loss_sec: 480
-    same_dir_reentry_pips: 3.2
+    cooldown_win_sec: 244
+    cooldown_loss_sec: 258
+    same_dir_reentry_pips: 0.8
     same_dir_mode: both
-    return_wait_bias: neutral
+    return_wait_bias: avoid
+    return_wait_reason: be_post_60_or_hold_skew
+    block_jst_hours: []
   M1Scalper:
-    cooldown_win_sec: 20
-    cooldown_loss_sec: 40
-    same_dir_reentry_pips: 0.1
+    cooldown_win_sec: 183
+    cooldown_loss_sec: 60
+    same_dir_reentry_pips: 0.8
     same_dir_mode: both
     max_open_trades: 4
     max_open_adverse_pips: 40.0
@@ -56,66 +63,82 @@ strategies:
     stack_reentry_require_tech: false
     stack_reentry_tech_min_score: 0.0
     return_wait_bias: avoid
+    return_wait_reason: be_post_60_or_hold_skew
+    block_jst_hours: []
   fast_scalp:
-    cooldown_win_sec: 20
-    cooldown_loss_sec: 40
-    same_dir_reentry_pips: 0.2
+    cooldown_win_sec: 177
+    cooldown_loss_sec: 174
+    same_dir_reentry_pips: 1.577
     same_dir_mode: both
-    return_wait_bias: neutral
+    return_wait_bias: avoid
+    return_wait_reason: be_post_60_or_hold_skew
+    block_jst_hours: []
   RangeFader:
     cooldown_win_sec: 20
     cooldown_loss_sec: 45
     same_dir_reentry_pips: 0.5
     return_wait_bias: neutral
   ImpulseRetrace:
-    cooldown_win_sec: 10
-    cooldown_loss_sec: 20
-    same_dir_reentry_pips: 0.1
+    cooldown_win_sec: 46
+    cooldown_loss_sec: 106
+    same_dir_reentry_pips: 0.8
     same_dir_mode: both
     return_wait_bias: avoid
+    return_wait_reason: be_post_60_or_hold_skew
+    block_jst_hours: []
   MomentumP:
-    cooldown_win_sec: 60
-    cooldown_loss_sec: 180
-    same_dir_reentry_pips: 0.9
+    cooldown_win_sec: 118
+    cooldown_loss_sec: 900
+    same_dir_reentry_pips: 1.8
     return_wait_bias: avoid
+    return_wait_reason: be_post_60_or_hold_skew
+    block_jst_hours: []
   MomentumPulse:
-    cooldown_win_sec: 60
-    cooldown_loss_sec: 180
-    same_dir_reentry_pips: 0.9
+    cooldown_win_sec: 30
+    cooldown_loss_sec: 60
+    same_dir_reentry_pips: 0.8
     same_dir_mode: both
     return_wait_bias: avoid
+    return_wait_reason: be_post_60_or_hold_skew
+    block_jst_hours: []
   TrendMA:
     cooldown_win_sec: 300
-    cooldown_loss_sec: 480
-    same_dir_reentry_pips: 5.439
+    cooldown_loss_sec: 60
+    same_dir_reentry_pips: 0.8
     same_dir_mode: both
-    return_wait_bias: neutral
+    return_wait_bias: avoid
+    return_wait_reason: be_post_60_or_hold_skew
+    block_jst_hours: []
   TrendMAbu:
     cooldown_win_sec: 300
-    cooldown_loss_sec: 480
-    same_dir_reentry_pips: 6.894
+    cooldown_loss_sec: 900
+    same_dir_reentry_pips: 1.8
     max_open_trades: 3
     max_open_adverse_pips: 50.0
     max_open_trades_hard: 12
     stack_reentry_pips: 35.0
     stack_reentry_require_tech: true
     stack_reentry_tech_min_score: 0.05
-    return_wait_bias: neutral
+    return_wait_bias: avoid
+    return_wait_reason: be_post_60_or_hold_skew
+    block_jst_hours: []
   VolCompre:
-    cooldown_win_sec: 150
-    cooldown_loss_sec: 90
-    same_dir_reentry_pips: 1.1
+    cooldown_win_sec: 254
+    cooldown_loss_sec: 91
+    same_dir_reentry_pips: 1.8
     max_open_trades: 3
     max_open_adverse_pips: 30.0
     max_open_trades_hard: 10
     stack_reentry_pips: 20.0
     stack_reentry_require_tech: true
     stack_reentry_tech_min_score: 0.05
-    return_wait_bias: neutral
+    return_wait_bias: avoid
+    return_wait_reason: be_post_60_or_hold_skew
+    block_jst_hours: []
   VolCompressionBreak:
-    cooldown_win_sec: 150
-    cooldown_loss_sec: 90
-    same_dir_reentry_pips: 1.1
+    cooldown_win_sec: 30
+    cooldown_loss_sec: 900
+    same_dir_reentry_pips: 1.8
     same_dir_mode: both
     max_open_trades: 3
     max_open_adverse_pips: 30.0
@@ -123,9 +146,55 @@ strategies:
     stack_reentry_pips: 20.0
     stack_reentry_require_tech: true
     stack_reentry_tech_min_score: 0.05
-    return_wait_bias: neutral
+    return_wait_bias: avoid
+    return_wait_reason: be_post_60_or_hold_skew
+    block_jst_hours: []
   impulse_retest_s5:
-    cooldown_win_sec: 120
-    cooldown_loss_sec: 180
-    same_dir_reentry_pips: 1.1
-    return_wait_bias: favor
+    cooldown_win_sec: 161
+    cooldown_loss_sec: 60
+    same_dir_reentry_pips: 0.8
+    return_wait_bias: avoid
+    return_wait_reason: be_post_60_or_hold_skew
+    block_jst_hours: []
+  BB_RSI:
+    return_wait_bias: avoid
+    return_wait_reason: be_post_60_or_hold_skew
+    block_jst_hours: []
+    cooldown_win_sec: 30
+    cooldown_loss_sec: 60
+    same_dir_reentry_pips: 0.8
+  Tren:
+    return_wait_bias: avoid
+    return_wait_reason: be_post_60_or_hold_skew
+    block_jst_hours: []
+    cooldown_win_sec: 30
+    cooldown_loss_sec: 60
+    same_dir_reentry_pips: 1.8
+  TrendMomentumMicro:
+    return_wait_bias: avoid
+    return_wait_reason: be_post_60_or_hold_skew
+    block_jst_hours: []
+    cooldown_win_sec: 30
+    cooldown_loss_sec: 60
+    same_dir_reentry_pips: 1.8
+  VolCompressionBr:
+    return_wait_bias: neutral
+    return_wait_reason: default
+    block_jst_hours: []
+    cooldown_win_sec: 30
+    cooldown_loss_sec: 60
+    same_dir_reentry_pips: 0.8
+  mirror_spike:
+    return_wait_bias: avoid
+    return_wait_reason: be_post_60_or_hold_skew
+    block_jst_hours: []
+    cooldown_win_sec: 157
+    cooldown_loss_sec: 60
+    same_dir_reentry_pips: 1.8
+  unknown:
+    return_wait_bias: avoid
+    return_wait_reason: be_post_60_or_hold_skew
+    block_jst_hours: []
+    cooldown_win_sec: 30
+    cooldown_loss_sec: 60
+    same_dir_reentry_pips: 8.0
