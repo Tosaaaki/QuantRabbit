@@ -401,7 +401,11 @@ def _normalize_policy_patch(payload: Dict[str, Any]) -> None:
 
 def _sanitize_tuning_overrides(payload: Dict[str, Any]) -> None:
     overrides = payload.get("tuning_overrides")
+    if overrides is None:
+        payload.pop("tuning_overrides", None)
+        return
     if not isinstance(overrides, dict):
+        payload.pop("tuning_overrides", None)
         return
     sanitized: Dict[str, Any] = {}
 
@@ -444,6 +448,15 @@ def _sanitize_tuning_overrides(payload: Dict[str, Any]) -> None:
         payload["tuning_overrides"] = sanitized
     else:
         payload.pop("tuning_overrides", None)
+
+
+def _sanitize_optional_object(payload: Dict[str, Any], key: str) -> None:
+    value = payload.get(key)
+    if value is None:
+        payload.pop(key, None)
+        return
+    if not isinstance(value, dict):
+        payload.pop(key, None)
     if raw.startswith("```"):
         raw = raw.strip("`").replace("json", "", 1).strip()
     try:
@@ -468,6 +481,9 @@ def _parse_policy_diff(text: str, *, source: str) -> Optional[Dict[str, Any]]:
     payload["source"] = source
     _normalize_policy_patch(payload)
     _sanitize_tuning_overrides(payload)
+    _sanitize_optional_object(payload, "reentry_overrides")
+    _sanitize_optional_object(payload, "metrics_window")
+    _sanitize_optional_object(payload, "slo_guard")
     payload = normalize_policy_diff(payload, source=source)
     errors = validate_policy_diff(payload)
     if errors:
