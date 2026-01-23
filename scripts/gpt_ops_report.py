@@ -314,7 +314,7 @@ def _metric_stats(con: sqlite3.Connection, since_ts: str, metric: str) -> Dict[s
     return out
 
 
-def _build_flags(report: Dict[str, Any]) -> List[str]:
+def _build_flags(report: Dict[str, Any], *, include_perf: bool = True) -> List[str]:
     flags: List[str] = []
     latency = report.get("metrics", {}).get("decision_latency_ms", {})
     data_lag = report.get("metrics", {}).get("data_lag_ms", {})
@@ -326,11 +326,38 @@ def _build_flags(report: Dict[str, Any]) -> List[str]:
         flags.append("data_lag_p95_high")
     if orders.get("reject_rate") and orders["reject_rate"] > 0.01:
         flags.append("order_reject_rate_high")
-    if overall.get("trades", 0) >= 10 and overall.get("win_rate", 1.0) < 0.48:
-        flags.append("overall_win_rate_low")
-    if overall.get("trades", 0) >= 10 and overall.get("pf") and overall["pf"] < 0.9:
-        flags.append("overall_pf_low")
+    if include_perf:
+        if overall.get("trades", 0) >= 10 and overall.get("win_rate", 1.0) < 0.48:
+            flags.append("overall_win_rate_low")
+        if overall.get("trades", 0) >= 10 and overall.get("pf") and overall["pf"] < 0.9:
+            flags.append("overall_pf_low")
     return flags
+
+
+def _strip_perf(report: Dict[str, Any]) -> Dict[str, Any]:
+    # Keep non-performance telemetry for policy input.
+    clone = json.loads(json.dumps(report))
+    overall = clone.get("overall")
+    if isinstance(overall, dict):
+        trades = overall.get("trades")
+        clone["overall"] = {"trades": trades} if trades is not None else {}
+    pockets = clone.get("pockets")
+    if isinstance(pockets, dict):
+        trimmed: Dict[str, Any] = {}
+        for key, value in pockets.items():
+            if isinstance(value, dict):
+                trades = value.get("trades")
+                trimmed[key] = {"trades": trades} if trades is not None else {}
+        clone["pockets"] = trimmed
+    elif isinstance(pockets, list):
+        trimmed_list = []
+        for value in pockets:
+            if isinstance(value, dict):
+                trades = value.get("trades")
+                trimmed_list.append({"trades": trades} if trades is not None else {})
+        clone["pockets"] = trimmed_list
+    clone["strategies"] = {"top": [], "bottom": []}
+    return clone
 
 
 def _resolve_model() -> str:
@@ -523,6 +550,7 @@ def _build_policy_prompt(report: Dict[str, Any]) -> str:
         "orders": report.get("orders"),
         "metrics": report.get("metrics"),
         "flags": report.get("flags"),
+        "perf_excluded": report.get("perf_excluded"),
     }
     payload_text = json.dumps(payload, ensure_ascii=True, separators=(",", ":"))
     return (
@@ -741,7 +769,13 @@ def run(args: argparse.Namespace) -> Dict[str, Any]:
             gpt_used = True
     report["gpt_used"] = gpt_used
     if args.policy:
-        diff = _ops_policy_diff(report)
+        policy_report = report
+        if _env_bool("LLM_OPS_POLICY_EXCLUDE_PERF"):
+            policy_report = _strip_perf(report)
+            policy_report["perf_excluded"] = True
+            policy_report["flags"] = _build_flags(policy_report, include_perf=False)
+            report["policy_perf_excluded"] = True
+        diff = _ops_policy_diff(policy_report)
         if diff:
             report["policy_diff"] = diff
             report["policy_used"] = True

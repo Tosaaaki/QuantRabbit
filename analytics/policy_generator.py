@@ -33,6 +33,13 @@ DEFAULT_VERTEX_MODEL = os.getenv("VERTEX_POLICY_MODEL", "gemini-2.0-flash")
 DEFAULT_OPENAI_MODEL = os.getenv("POLICY_SHADOW_MODEL", "gpt-5-mini")
 
 
+def _env_bool(name: str, default: bool = False) -> bool:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    return str(raw).strip().lower() in {"1", "true", "yes", "on"}
+
+
 def _safe_float(value: Any) -> float:
     try:
         return float(value)
@@ -257,6 +264,15 @@ def heuristic_policy_diff(
     win_min: float = 0.48,
     min_trades: int = 12,
 ) -> Dict[str, Any]:
+    if not _env_bool("POLICY_HEURISTIC_PERF_BLOCK_ENABLED", True):
+        return {
+            "policy_id": f"heuristic-{int(time.time())}",
+            "generated_at": utc_now_iso(),
+            "source": "heuristic",
+            "no_change": True,
+            "reason": "perf_block_disabled",
+            "notes": {"perf_block_enabled": False},
+        }
     pockets = summary.get("pockets") or []
     patch: Dict[str, Any] = {}
     notes: Dict[str, Any] = {}
