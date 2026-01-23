@@ -2171,13 +2171,20 @@ def evaluate_exit_techniques(
             allow_negative_reversal = False
             debug["exit_guard"] = "pivot_missing"
 
+    skip_momentum_guard = False
+    if allow_negative_reversal and reversal_combo and reversal_confirmed:
+        tag_key = _normalize_tag_key(strategy_tag) if strategy_tag else ""
+        if tag_key == "m1scalper" and pocket in {"scalp", "scalp_fast"}:
+            skip_momentum_guard = True
+            debug["momentum_guard"] = "bypass_m1scalper"
+
     momentum_guard = _env_bool("TECH_EXIT_MOMENTUM_GUARD")
     if momentum_guard is None:
         momentum_guard = True
     momentum_failopen = _env_bool("TECH_EXIT_MOMENTUM_FAILOPEN")
     if momentum_failopen is None:
         momentum_failopen = True
-    if momentum_guard and allow_negative_reversal:
+    if momentum_guard and allow_negative_reversal and not skip_momentum_guard:
         momentum_tf = _exit_momentum_tf(strategy_tag, pocket, policy)
         fac = {}
         try:
