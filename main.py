@@ -3823,6 +3823,8 @@ async def logic_loop(
         gpt_end_mono: Optional[float],
         strategy_end_mono: Optional[float],
         sync_ms: Optional[float],
+        order_exec_ms: Optional[float],
+        order_exec_count: int,
         entry_plans: Optional[int],
         signal_count: int,
     ) -> None:
@@ -3846,6 +3848,7 @@ async def logic_loop(
             "gpt": gpt_ms,
             "strategy": strategy_ms,
             "sync": sync_ms,
+            "order_exec": order_exec_ms,
         }
         for phase, value in phase_map.items():
             if value is None:
@@ -3855,13 +3858,15 @@ async def logic_loop(
 
         entries = entry_plans if entry_plans is not None else -1
         logging.warning(
-            "[SLOW_LOOP] loop=%d total_ms=%.0f analysis_ms=%s gpt_ms=%s strategy_ms=%s sync_ms=%s entries=%s signals=%d",
+            "[SLOW_LOOP] loop=%d total_ms=%.0f analysis_ms=%s gpt_ms=%s strategy_ms=%s sync_ms=%s order_ms=%s orders=%d entries=%s signals=%d",
             loop_counter,
             decision_latency_ms,
             f"{analysis_ms:.0f}" if analysis_ms is not None else "n/a",
             f"{gpt_ms:.0f}" if gpt_ms is not None else "n/a",
             f"{strategy_ms:.0f}" if strategy_ms is not None else "n/a",
             f"{sync_ms:.0f}" if sync_ms is not None else "n/a",
+            f"{order_exec_ms:.0f}" if order_exec_ms is not None else "n/a",
+            order_exec_count,
             entries,
             signal_count,
         )
@@ -3879,6 +3884,8 @@ async def logic_loop(
             gpt_end_mono: Optional[float] = None
             strategy_end_mono: Optional[float] = None
             sync_ms: Optional[float] = None
+            order_exec_ms = 0.0
+            order_exec_count = 0
             gpt_timed_out = False
             gpt_unavailable = False
             logging.info("[LOOP] start loop=%d", loop_counter)
@@ -4808,6 +4815,8 @@ async def logic_loop(
                         gpt_end_mono=gpt_end_mono,
                         strategy_end_mono=strategy_end_mono,
                         sync_ms=sync_ms,
+                        order_exec_ms=order_exec_ms,
+                        order_exec_count=order_exec_count,
                         entry_plans=entry_plans,
                         signal_count=len(evaluated_signals),
                     )
@@ -6300,15 +6309,20 @@ async def logic_loop(
                 if remaining > 0:
                     client_id = build_client_order_id(focus_tag, decision.tag)
                     fallback_units = -remaining if decision.units < 0 else remaining
-                    trade_id = await market_order(
-                        "USD_JPY",
-                        fallback_units,
-                        None,
-                        None,
-                        pocket,
-                        client_order_id=client_id,
-                        reduce_only=True,
-                    )
+                    order_start = time.monotonic()
+                    try:
+                        trade_id = await market_order(
+                            "USD_JPY",
+                            fallback_units,
+                            None,
+                            None,
+                            pocket,
+                            client_order_id=client_id,
+                            reduce_only=True,
+                        )
+                    finally:
+                        order_exec_ms += max(0.0, (time.monotonic() - order_start) * 1000.0)
+                        order_exec_count += 1
                     if trade_id:
                         logging.info(
                             "[EXIT] %s pocket=%s units=%s reason=%s client_id=%s",
@@ -8930,20 +8944,25 @@ async def logic_loop(
                             shadow_ctx.get("atr_pips") or -1.0,
                         )
                         continue
-                trade_id = await market_order(
-                    "USD_JPY",
-                    units,
-                    sl,
-                    tp,
-                    pocket,
-                    client_order_id=client_id,
-                    strategy_tag=signal.get("tag")
-                    or signal.get("strategy")
-                    or sname
-                    or "unknown",
-                    entry_thesis=entry_thesis,
-                    arbiter_final=True,
-                )
+                order_start = time.monotonic()
+                try:
+                    trade_id = await market_order(
+                        "USD_JPY",
+                        units,
+                        sl,
+                        tp,
+                        pocket,
+                        client_order_id=client_id,
+                        strategy_tag=signal.get("tag")
+                        or signal.get("strategy")
+                        or sname
+                        or "unknown",
+                        entry_thesis=entry_thesis,
+                        arbiter_final=True,
+                    )
+                finally:
+                    order_exec_ms += max(0.0, (time.monotonic() - order_start) * 1000.0)
+                    order_exec_count += 1
                 if trade_id:
                     logging.info(
                         "[ORDER] %s | %s | %.3f lot | SL=%.3f | TP=%.3f | conf=%d | client_id=%s",
@@ -9108,6 +9127,8 @@ async def logic_loop(
                 gpt_end_mono=gpt_end_mono,
                 strategy_end_mono=strategy_end_mono,
                 sync_ms=sync_ms,
+                order_exec_ms=order_exec_ms,
+                order_exec_count=order_exec_count,
                 entry_plans=entry_plans,
                 signal_count=len(evaluated_signals),
             )
