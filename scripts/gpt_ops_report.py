@@ -371,6 +371,20 @@ def _extract_json_payload(text: str) -> Optional[Dict[str, Any]]:
     raw = text.strip()
     if not raw:
         return None
+    if raw.startswith("```"):
+        raw = raw.strip("`").replace("json", "", 1).strip()
+    try:
+        return json.loads(raw)
+    except Exception:
+        pass
+    start = raw.find("{")
+    end = raw.rfind("}")
+    if start == -1 or end == -1 or end <= start:
+        return None
+    try:
+        return json.loads(raw[start : end + 1])
+    except Exception:
+        return None
 
 
 def _normalize_policy_patch(payload: Dict[str, Any]) -> None:
