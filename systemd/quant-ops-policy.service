@@ -1,0 +1,11 @@
+[Unit]
+Description=QuantRabbit Ops Policy Loop (LLM)
+After=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/home/tossaki/QuantRabbit
+ExecStart=/home/tossaki/QuantRabbit/.venv/bin/python scripts/gpt_ops_report.py --policy --policy-output logs/policy_diff_ops.json --output logs/gpt_ops_report.json
+User=tossaki
+Environment=PYTHONUNBUFFERED=1
+EnvironmentFile=-/etc/quantrabbit.env

@@ -66,6 +66,14 @@ _VERTEX_POLICY_MODEL = (
 )
 _VERTEX_POLICY_TIMEOUT_SEC = float(os.getenv("LLM_OPS_POLICY_TIMEOUT_SEC", _VERTEX_TIMEOUT_SEC))
 _POLICY_MAX_TOKENS = int(os.getenv("LLM_OPS_POLICY_MAX_TOKENS", "900"))
+_DEFAULT_POLICY_HOURS = float(os.getenv("LLM_OPS_POLICY_HOURS") or os.getenv("LLM_OPS_REPORT_HOURS") or 24.0)
+
+
+def _env_bool(name: str, default: bool = False) -> bool:
+    val = os.getenv(name)
+    if val is None:
+        return default
+    return str(val).strip().lower() in {"1", "true", "yes", "on"}
 
 
 def _utc_now() -> dt.datetime:
@@ -363,6 +371,79 @@ def _extract_json_payload(text: str) -> Optional[Dict[str, Any]]:
     raw = text.strip()
     if not raw:
         return None
+
+
+def _normalize_policy_patch(payload: Dict[str, Any]) -> None:
+    patch = payload.get("patch")
+    if not isinstance(patch, dict):
+        return
+    pockets = patch.get("pockets")
+    if not isinstance(pockets, dict):
+        return
+    for _, pocket_cfg in pockets.items():
+        if not isinstance(pocket_cfg, dict):
+            continue
+        strategies = pocket_cfg.get("strategies")
+        if isinstance(strategies, dict):
+            allowlist = strategies.get("allowlist") or strategies.get("allow")
+            if isinstance(allowlist, str):
+                pocket_cfg["strategies"] = [allowlist]
+            elif isinstance(allowlist, (list, tuple, set)):
+                pocket_cfg["strategies"] = [str(item) for item in allowlist if item]
+        if isinstance(pocket_cfg.get("strategies"), list):
+            entry_gates = pocket_cfg.get("entry_gates")
+            if not isinstance(entry_gates, dict):
+                entry_gates = {}
+                pocket_cfg["entry_gates"] = entry_gates
+            if "allow_new" not in entry_gates:
+                entry_gates["allow_new"] = True
+
+
+def _sanitize_tuning_overrides(payload: Dict[str, Any]) -> None:
+    overrides = payload.get("tuning_overrides")
+    if not isinstance(overrides, dict):
+        return
+    sanitized: Dict[str, Any] = {}
+
+    exit_cfg = overrides.get("exit")
+    if isinstance(exit_cfg, dict):
+        lowvol = exit_cfg.get("lowvol")
+        if isinstance(lowvol, dict):
+            allowed_lowvol = {
+                "upper_bound_max_sec",
+                "hazard_cost_spread_base",
+                "hazard_cost_latency_base_ms",
+                "hazard_debounce_ticks",
+                "min_grace_before_scratch_ms",
+                "scratch_requires_events",
+            }
+            kept = {k: lowvol[k] for k in allowed_lowvol if k in lowvol}
+            if kept:
+                sanitized.setdefault("exit", {})["lowvol"] = kept
+
+    strategies_cfg = overrides.get("strategies")
+    if isinstance(strategies_cfg, dict):
+        allowed_strategies = {
+            "MomentumPulse": {"min_confidence"},
+            "MicroVWAPRevert": {"vwap_z_min"},
+            "VolCompressionBreak": {"accel_pctile"},
+            "BB_RSI_Fast": {"reentry_block_s"},
+        }
+        kept_strategies: Dict[str, Any] = {}
+        for strat, allowed_keys in allowed_strategies.items():
+            cfg = strategies_cfg.get(strat)
+            if not isinstance(cfg, dict):
+                continue
+            kept = {k: cfg[k] for k in allowed_keys if k in cfg}
+            if kept:
+                kept_strategies[strat] = kept
+        if kept_strategies:
+            sanitized["strategies"] = kept_strategies
+
+    if sanitized:
+        payload["tuning_overrides"] = sanitized
+    else:
+        payload.pop("tuning_overrides", None)
     if raw.startswith("```"):
         raw = raw.strip("`").replace("json", "", 1).strip()
     try:
@@ -383,20 +464,9 @@ def _parse_policy_diff(text: str, *, source: str) -> Optional[Dict[str, Any]]:
     payload = _extract_json_payload(text)
     if not isinstance(payload, dict):
         return None
-    patch = payload.get("patch")
-    if isinstance(patch, dict):
-        pockets = patch.get("pockets")
-        if isinstance(pockets, dict):
-            for _, pocket_cfg in pockets.items():
-                if not isinstance(pocket_cfg, dict):
-                    continue
-                strategies = pocket_cfg.get("strategies")
-                if isinstance(strategies, dict):
-                    allowlist = strategies.get("allowlist") or strategies.get("allow")
-                    if isinstance(allowlist, str):
-                        pocket_cfg["strategies"] = [allowlist]
-                    elif isinstance(allowlist, (list, tuple, set)):
-                        pocket_cfg["strategies"] = [str(item) for item in allowlist if item]
+    payload["source"] = source
+    _normalize_policy_patch(payload)
+    _sanitize_tuning_overrides(payload)
     payload = normalize_policy_diff(payload, source=source)
     errors = validate_policy_diff(payload)
     if errors:
@@ -442,7 +512,13 @@ def _build_policy_prompt(report: Dict[str, Any]) -> str:
         f"- Allowed patch keys: {patch_keys}.\n"
         f"- Allowed pocket keys: {pocket_keys}.\n"
         "- strategies must be a list of strings (no allowlist object).\n"
-        "- You may use tuning_overrides for exit/partial/trail tweaks (small deltas).\n\n"
+        "- tuning_overrides keys:\n"
+        "  - exit.lowvol.{upper_bound_max_sec,hazard_cost_spread_base,hazard_cost_latency_base_ms,"
+        "hazard_debounce_ticks,min_grace_before_scratch_ms,scratch_requires_events}\n"
+        "  - strategies.MomentumPulse.min_confidence\n"
+        "  - strategies.MicroVWAPRevert.vwap_z_min\n"
+        "  - strategies.VolCompressionBreak.accel_pctile\n"
+        "  - strategies.BB_RSI_Fast.reentry_block_s\n\n"
         "Input JSON:\n"
         f"{payload_text}\n"
     )
@@ -664,7 +740,7 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--trades-db", default="logs/trades.db")
     parser.add_argument("--orders-db", default="logs/orders.db")
     parser.add_argument("--metrics-db", default="logs/metrics.db")
-    parser.add_argument("--hours", type=float, default=24.0)
+    parser.add_argument("--hours", type=float, default=_DEFAULT_POLICY_HOURS)
     parser.add_argument("--strategy-limit", type=int, default=8)
     parser.add_argument("--strategy-min-trades", type=int, default=3)
     parser.add_argument("--output", default="logs/gpt_ops_report.json")
@@ -676,7 +752,10 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--history-dir", default=os.getenv("POLICY_HISTORY_DIR", "logs/policy_history"))
     parser.add_argument("--latest-path", default=os.getenv("POLICY_LATEST_PATH", "logs/policy_latest.json"))
     parser.add_argument("--stdout", action="store_true", help="Print report to stdout only")
-    return parser.parse_args()
+    args = parser.parse_args()
+    if _env_bool("LLM_OPS_POLICY_APPLY") and not args.apply_policy:
+        args.apply_policy = True
+    return args
 
 
 def main() -> None:
