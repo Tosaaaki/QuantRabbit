@@ -3924,6 +3924,7 @@ async def logic_loop(
             gpt_end_mono: Optional[float] = None
             strategy_end_mono: Optional[float] = None
             sync_ms: Optional[float] = None
+            first_order_start_mono: Optional[float] = None
             order_exec_ms = 0.0
             order_exec_count = 0
             positions_fetch_ms = 0.0
@@ -4858,6 +4859,13 @@ async def logic_loop(
                     if gpt_timed_out:
                         decision_latency_ms = max(decision_latency_ms, 9000.0)
                     log_metric("decision_latency_ms", decision_latency_ms)
+                    if first_order_start_mono is not None:
+                        pre_order_ms = max(
+                            0.0, (first_order_start_mono - loop_start_mono) * 1000.0
+                        )
+                    else:
+                        pre_order_ms = decision_latency_ms
+                    log_metric("decision_latency_pre_order_ms", pre_order_ms)
                     data_lag_ms = _latest_tick_lag_ms()
                     _check_tick_silence_watchdog(data_lag_ms)
                     if data_lag_ms is not None:
@@ -6408,6 +6416,8 @@ async def logic_loop(
                     client_id = build_client_order_id(focus_tag, decision.tag)
                     fallback_units = -remaining if decision.units < 0 else remaining
                     order_start = time.monotonic()
+                    if first_order_start_mono is None:
+                        first_order_start_mono = order_start
                     try:
                         trade_id = await market_order(
                             "USD_JPY",
@@ -9046,6 +9056,8 @@ async def logic_loop(
                         )
                         continue
                 order_start = time.monotonic()
+                if first_order_start_mono is None:
+                    first_order_start_mono = order_start
                 try:
                     trade_id = await market_order(
                         "USD_JPY",
@@ -9214,6 +9226,11 @@ async def logic_loop(
             if gpt_timed_out:
                 decision_latency_ms = max(decision_latency_ms, 9000.0)
             log_metric("decision_latency_ms", decision_latency_ms)
+            if first_order_start_mono is not None:
+                pre_order_ms = max(0.0, (first_order_start_mono - loop_start_mono) * 1000.0)
+            else:
+                pre_order_ms = decision_latency_ms
+            log_metric("decision_latency_pre_order_ms", pre_order_ms)
             data_lag_ms = _latest_tick_lag_ms()
             _check_tick_silence_watchdog(data_lag_ms)
             if data_lag_ms is not None:
