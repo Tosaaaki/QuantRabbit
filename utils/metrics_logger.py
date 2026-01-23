@@ -29,17 +29,17 @@ _AGG_METRICS = _parse_csv_env(
 )
 _AGG_PREFIXES = _parse_prefix_env(
     "METRICS_AGG_PREFIXES",
-    "onepip_maker_,fast_scalp_,entry_tech_",
+    "fast_scalp_,entry_tech_",
 )
 _AGG_WINDOW_SEC = max(1.0, float(os.getenv("METRICS_AGG_WINDOW_SEC", "10.0")))
 _AGG_VLONG_PREFIXES = _parse_prefix_env(
     "METRICS_AGG_VLONG_PREFIXES",
-    "onepip_maker_skip,fast_scalp_skip,entry_tech_",
+    "fast_scalp_skip,entry_tech_",
 )
 _AGG_VLONG_WINDOW_SEC = max(1.0, float(os.getenv("METRICS_AGG_VLONG_WINDOW_SEC", "300.0")))
 _AGG_LONG_PREFIXES = _parse_prefix_env(
     "METRICS_AGG_LONG_PREFIXES",
-    "onepip_maker_",
+    "",
 )
 _AGG_LONG_WINDOW_SEC = max(1.0, float(os.getenv("METRICS_AGG_LONG_WINDOW_SEC", "60.0")))
 _AGG_DROP_TAG_KEYS = _parse_csv_env(

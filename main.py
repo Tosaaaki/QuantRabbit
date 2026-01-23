@@ -857,8 +857,6 @@ WORKER_SERVICES = {
     "mirror_spike_tight_exit": "quant-mirror-spike-tight-exit.service",
     "mirror_spike": "quant-mirror-spike.service",
     "mirror_spike_exit": "quant-mirror-spike-exit.service",
-    "onepip_maker_s1": "quant-onepip-s1.service",
-    "onepip_maker_s1_exit": "quant-onepip-s1-exit.service",
     "scalp_multi": "quant-scalp-multi.service",
     "scalp_multi_exit": "quant-scalp-multi-exit.service",
     "m1_scalper": "quant-m1scalper.service",
@@ -1671,7 +1669,7 @@ def _strategy_category(name: str) -> str:
         return "breakout"
     if any(k in n for k in ("range", "vwap", "bb", "revert", "mean", "magnet")):
         return "range"
-    if any(k in n for k in ("scalp", "micro", "onepip", "s1")):
+    if any(k in n for k in ("scalp", "micro")):
         return "scalp"
     return "other"
 
@@ -1918,14 +1916,12 @@ def _select_worker_targets(
         bump("pullback_s5", 0.6, "range_s5")
         bump("pullback_runner_s5", 0.55, "range_runner")
         bump("vwap_magnet_s5", 0.55, "vwap_range")
-        bump("onepip_maker_s1", 0.6, "low_vol_onepip")
         if compression:
             bump("squeeze_break_s5", 0.5, "compression_break")
     elif soft_range:
         bump("pullback_scalp", 0.78, "soft_range")
         bump("pullback_s5", 0.65, "soft_range")
         bump("vwap_magnet_s5", 0.6, "soft_range")
-        bump("onepip_maker_s1", 0.6, "soft_range")
         bump("vol_squeeze", 0.45, "soft_range")
 
     # Spike/impulse style entries
@@ -1955,7 +1951,6 @@ def _select_worker_targets(
         "pullback_scalp",
         "pullback_s5",
         "vwap_magnet_s5",
-        "onepip_maker_s1",
         "vol_squeeze",
         "pullback_runner_s5",
         "squeeze_break_s5",
@@ -2141,7 +2136,6 @@ ALLOWED_RANGE_STRATEGIES = {
     "impulse_break_s5",
     "impulse_momentum_s5",
     "impulse_retest_s5",
-    "onepip_maker_s1",
 }
 SOFT_RANGE_SUPPRESS_STRATEGIES = {"TrendMA", "Donchian55"}
 LOW_TREND_ADX_THRESHOLD = 18.0

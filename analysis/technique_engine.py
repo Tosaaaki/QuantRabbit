@@ -96,7 +96,7 @@ _TREND_HINTS = {
     "session_open",
     "mtf",
 }
-_SCALP_HINTS = {"scalp", "m1scalper", "onepip"}
+_SCALP_HINTS = {"scalp", "m1scalper"}
 
 _REQUIRE_MEDIAN_EPS = float(os.getenv("TECH_REQUIRE_MEDIAN_EPS", "0.03"))
 
@@ -243,21 +243,6 @@ _STRATEGY_POLICY_OVERRIDES: dict[str, dict[str, object]] = {
         "weight_nwave": 0.45,
         "weight_candle": 0.25,
         "size_scale": 0.45,
-    },
-    "onepipmakers1": {
-        "mode": "reversal",
-        "fib_tf": "M1",
-        "median_tf": "M1",
-        "nwave_tf": "M1",
-        "candle_tf": "M1",
-        "min_score": 0.03,
-        "min_coverage": 0.55,
-        "weight_fib": 0.3,
-        "weight_median": 0.3,
-        "weight_nwave": 0.1,
-        "weight_candle": 0.3,
-        "size_scale": 0.2,
-        "require_median": True,
     },
     # micro trend / momentum
     "momentumburst": {
@@ -912,7 +897,7 @@ def _tag_hint_tfs(strategy_tag: Optional[str]) -> list[str]:
         tfs.append("H1")
     if "m5" in tag or "s5" in tag:
         tfs.append("M5")
-    if "m1" in tag or "scalp" in tag or "onepip" in tag:
+    if "m1" in tag or "scalp" in tag:
         tfs.append("M1")
     return tfs
 

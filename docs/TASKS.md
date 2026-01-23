@@ -784,6 +784,7 @@
   Completed: 2025-11-17
   PR: <pending>
   Summary: market_data/orderbook_state.py maintains the L2 snapshot, analytics/cost_guard.py tracks realised costs, and workers/onepip_maker_s1/worker.py (wired via main.py flags) runs the one-pip maker logic in shadow/post-only mode as specified.
+  Note: onepip_maker_s1 removed from the codebase (2026-01-23).
 
 
 完了タスクを以下形式で移動・記録:

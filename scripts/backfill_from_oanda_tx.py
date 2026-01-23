@@ -46,7 +46,6 @@ def classify_from_client_id(client_id: Optional[str]) -> Optional[str]:
         ("qr-pullback-s5-", "pullback_s5"),
         ("qr-pullback-", "pullback_scalp"),
         ("qr-vwap-s5-", "vwap_magnet_s5"),
-        ("qr-onepip-s1-", "onepip_maker_s1"),
     )
     for pref, tag in mapping:
         if cid.startswith(pref):
