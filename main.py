@@ -98,6 +98,7 @@ def _env_bool(name: str, default: bool = False) -> bool:
 
 # Factor cache refresh guard (worker-only loop).
 FACTOR_CACHE_REFRESH_ENABLED = _env_bool("FACTOR_CACHE_REFRESH_ENABLED", default=True)
+WORKER_AUTOCONTROL_IN_LOGIC = _env_bool("WORKER_AUTOCONTROL_IN_LOGIC", default=False)
 FACTOR_CACHE_STALE_SEC = float(os.getenv("FACTOR_CACHE_STALE_SEC", "600"))
 FACTOR_CACHE_REFRESH_MIN_INTERVAL_SEC = float(os.getenv("FACTOR_CACHE_REFRESH_MIN_INTERVAL_SEC", "900"))
 
@@ -4007,7 +4008,7 @@ async def logic_loop(
             else:
                 last_market_closed = None
 
-            if WORKER_AUTOCONTROL_ENABLED:
+            if WORKER_AUTOCONTROL_ENABLED and WORKER_AUTOCONTROL_IN_LOGIC:
                 try:
                     desired_workers = WORKER_ALL_SERVICES
                     if not desired_workers:
