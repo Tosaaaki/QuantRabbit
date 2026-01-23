@@ -55,6 +55,85 @@
     - タスク: scripts/gpt_ops_report.py を運用→必要なら cron/systemd 化、手動レビューで PERF_GUARD_* / *_STRATEGY_ALLOWLIST を調整、必要なら BQ 推薦へ接続
     - コマンド例: . .venv/bin/activate && python scripts/gpt_ops_report.py --hours 24 --output logs/gpt_ops_report.json（--gpt で要約）
 
+- [ ] ID: T-20260123-002
+  Title: GPT運用レポートに時間帯×レジーム×ボラの勝率/PFマトリクスを追加
+  Status: todo
+  Priority: P2
+  Owner: codex
+  Scope/Paths: scripts/gpt_ops_report.py, analytics/*, docs/TASKS.md
+  Context: GPTは外部レポートのみ。時間帯/レジーム/ボラの偏りを可視化し、ALLOWLIST/PERF_GUARD調整の材料にする。
+  Acceptance:
+    - time_band/regime/vol_bucket の matrix を JSON 出力する
+    - min_trades と 24h/短時間窓を CLI で切替できる
+    - GPT要約は任意で、出力は手動反映前提
+  Plan:
+    - trades.db を集計するサブレポートを追加する
+    - gpt_ops_report 出力に統合し、サンプル不足は除外する
+  Notes:
+    - 自動適用は行わない
+
+- [ ] ID: T-20260123-003
+  Title: 注文失敗/拒否の監査レポート（orders.db集計+GPT要約）
+  Status: todo
+  Priority: P2
+  Owner: codex
+  Scope/Paths: scripts/gpt_ops_report.py, analytics/*, docs/TASKS.md
+  Context: 拒否/失敗の根因を日次で把握し、SLTP/マージン/タグ欠損の再発を抑止する。
+  Acceptance:
+    - error_code/status の上位集計と再発頻度が JSON に出る
+    - pocket/strategy/side 別の偏りがわかる
+    - GPT要約は任意で、修正は手動レビュー前提
+  Plan:
+    - orders.db の失敗/拒否レコードを集計する
+    - gpt_ops_report へ統合し、上位Nを出力する
+  Notes:
+    - 追加ログ取得が必要なら別スクリプト化する
+
+- [ ] ID: T-20260123-004
+  Title: デプロイ前の差分リスクレビュー（GPT任意・JSON出力）
+  Status: todo
+  Priority: P3
+  Owner: codex
+  Scope/Paths: scripts/*, docs/TASKS.md
+  Context: 変更点のSL/TP/ロット/クールダウン影響を事前に把握し、必要テストを明確化する。
+  Acceptance:
+    - git diff からリスク領域と推奨テストを JSON 出力できる
+    - GPTなしでも最低限のルールベース診断が出る
+    - 出力はレビュー用途のみで自動適用しない
+  Plan:
+    - 差分を読み込む軽量スクリプトを追加する
+    - 影響カテゴリとテスト候補の辞書を実装する
+
+- [ ] ID: T-20260123-005
+  Title: レジーム判定ミス検知レポート（range/trendの取り逃し検出）
+  Status: todo
+  Priority: P2
+  Owner: codex
+  Scope/Paths: analytics/*, docs/TASKS.md
+  Context: range→trend の切替ミスやエントリー欠落を後付けで抽出し、閾値調整の根拠を残す。
+  Acceptance:
+    - 指定期間で「取り逃し」候補の時間帯と根拠を JSON/CSV で出力する
+    - regime/range_score/ADX/MA乖離などの根拠指標が付く
+    - GPT要約は任意で、適用は手動レビュー前提
+  Plan:
+    - metrics/trades を参照する分析スクリプトを追加する
+    - 週次レポートへ流用できる出力形式にする
+
+- [ ] ID: T-20260123-006
+  Title: 再入場/過密エントリー検知レポート（worker_reentry提案）
+  Status: todo
+  Priority: P2
+  Owner: codex
+  Scope/Paths: analytics/*, config/worker_reentry.yaml, docs/TASKS.md
+  Context: 同方向重複や過密エントリーの抑制/緩和を、実績ベースで最小限に調整したい。
+  Acceptance:
+    - ワーカー別の連続エントリー/同方向重複/短時間損失が集計される
+    - 提案パラメータ（cooldown/same_dir等）が JSON で出る
+    - GPT要約は任意で、適用は手動レビュー前提
+  Plan:
+    - trades.db を集計する分析スクリプトを追加する
+    - 出力を `worker_reentry.yaml` 更新の材料として整理する
+
 - [ ] ID: T-20260122-009
   Title: 単一指標の損切りを複合判定へ統一（exit_utils合成ゲート）
   Status: in-progress
@@ -455,6 +534,66 @@
     - VM でログ/約定を確認し、閾値と係数を微調整
 
 ## Archive
+- [x] ID: T-20260123-007
+  Title: Vertex AI主導の全自動ポリシー循環（BQ→Vertex→自動反映→ロールバック）
+  Status: done
+  Priority: P1
+  Owner: codex
+  Scope/Paths: analytics/policy_*.py, scripts/run_policy_cycle.py, scripts/policy_guard.py, systemd/quant-policy-*.*
+  Context: 人間介入なしで「記憶→内省→意思決定→実行→反省」を回す。GPTは影運用のみ。
+  Completed: 2026-01-23
+  Summary: policy_diffの生成/反映/履歴/ロールバックまでのフルループを実装し、BQ/GCS/Firestore への台帳保存と overlay 更新（policy_bus 自動リロード）を追加。systemd で VM タイマー運用できる構成を用意した。
+
+- [x] ID: T-20260123-008
+  Title: BQポリシーマート整備（time_band/regime/vol/strategy集計）
+  Status: done
+  Priority: P1
+  Owner: codex
+  Scope/Paths: analytics/policy_mart.py, scripts/build_policy_mart.py
+  Context: policy_diff 生成に必要な基礎集計を BQ で安定提供する。
+  Completed: 2026-01-23
+  Summary: trades_raw から time_band/regime/vol_bucket/strategy/pocket を集計する policy mart クエリと view 生成スクリプトを追加した。
+
+- [x] ID: T-20260123-009
+  Title: Vertex AI policy_diff生成ジョブ（Gemini + JSON schema）
+  Status: done
+  Priority: P1
+  Owner: codex
+  Scope/Paths: analytics/policy_generator.py, analytics/policy_diff.py, scripts/run_policy_cycle.py
+  Context: BQ集計を入力に policy_diff JSON を生成し、自動反映の入力にする。
+  Completed: 2026-01-23
+  Summary: Vertex AI (Gemini) 呼び出し + strict JSON schema バリデーションを実装し、失敗時はヒューリスティック no_change へフォールバックする仕組みを追加した。
+
+- [x] ID: T-20260123-010
+  Title: ポリシー自動反映エージェント（overlay更新）
+  Status: done
+  Priority: P1
+  Owner: codex
+  Scope/Paths: analytics/policy_apply.py, scripts/apply_policy_diff.py, systemd/quant-policy-cycle.*
+  Context: 生成された policy_diff を人間介入なしで反映する。
+  Completed: 2026-01-23
+  Summary: policy_diff の適用スクリプトを追加し、overlay/履歴更新と reentry/tuning へのマージを自動化した。
+
+- [x] ID: T-20260123-011
+  Title: 自動ロールバックとSLOガード（policy safety）
+  Status: done
+  Priority: P1
+  Owner: codex
+  Scope/Paths: scripts/policy_guard.py, systemd/quant-policy-guard.*
+  Context: 人間介入なしの前提で安全側へ戻す仕組みを確立する。
+  Completed: 2026-01-23
+  Summary: metrics/orders DB から SLO を評価して stable policy へ自動ロールバックする guard を追加した。
+
+- [x] ID: T-20260123-012
+  Title: GPT影運用比較（Vertex vs GPTの評価ログ）
+  Status: done
+  Priority: P2
+  Owner: codex
+  Scope/Paths: scripts/run_policy_shadow.py, analytics/policy_generator.py
+  Context: GPTは本番適用せず、Vertexの意思決定の妥当性を比較検証する。
+  Completed: 2026-01-23
+  Summary: GPT shadow で policy_diff を生成して BQ/GCS へ記録するジョブを追加し、本番反映とは分離した。
+
 - [x] ID: T-20251121-004
   Title: ボラ急変時の並列戦略トリガとキャンドル機会の補完
   Status: done

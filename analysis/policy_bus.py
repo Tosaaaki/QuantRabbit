@@ -12,6 +12,7 @@ import json
 import os
 import threading
 import time
+import datetime
 from dataclasses import dataclass, field, asdict
 from pathlib import Path
 from typing import Any, Dict, Optional
@@ -19,6 +20,13 @@ from typing import Any, Dict, Optional
 
 _LOCK = threading.Lock()
 _POLICY: "PolicySnapshot" | None = None
+_RAW_POLICY_PATH = os.getenv("POLICY_OVERLAY_PATH") or os.getenv("POLICY_SNAPSHOT_PATH")
+if _RAW_POLICY_PATH is not None and _RAW_POLICY_PATH.strip().lower() in {"", "none", "off"}:
+    _RAW_POLICY_PATH = None
+_POLICY_PATH = Path(_RAW_POLICY_PATH) if _RAW_POLICY_PATH else Path("logs/policy_overlay.json")
+_POLICY_REFRESH_SEC = float(os.getenv("POLICY_REFRESH_SEC", "5"))
+_POLICY_LAST_LOAD = 0.0
+_POLICY_LAST_MTIME: float | None = None
 
 
 def _default_pocket_policy() -> Dict[str, Any]:
@@ -101,6 +109,63 @@ def _dump_policy(policy: PolicySnapshot) -> None:
         pass
 
 
+def _coerce_ts(value: object) -> float:
+    if isinstance(value, (int, float)):
+        return float(value)
+    if isinstance(value, str):
+        text = value.strip()
+        if not text:
+            return time.time()
+        if text.endswith("Z"):
+            text = text[:-1] + "+00:00"
+        try:
+            dt = datetime.datetime.fromisoformat(text)
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=datetime.timezone.utc)
+            return dt.timestamp()
+        except Exception:
+            return time.time()
+    return time.time()
+
+
+def _refresh_from_file(force: bool = False) -> None:
+    global _POLICY, _POLICY_LAST_LOAD, _POLICY_LAST_MTIME
+    if _POLICY_REFRESH_SEC <= 0:
+        return
+    if not _POLICY_PATH:
+        return
+    now = time.time()
+    if not force and now - _POLICY_LAST_LOAD < _POLICY_REFRESH_SEC:
+        return
+    _POLICY_LAST_LOAD = now
+    try:
+        mtime = _POLICY_PATH.stat().st_mtime
+    except FileNotFoundError:
+        return
+    if _POLICY_LAST_MTIME is not None and mtime == _POLICY_LAST_MTIME:
+        return
+    try:
+        raw = _POLICY_PATH.read_text()
+        payload = json.loads(raw)
+    except Exception:
+        return
+    if not isinstance(payload, dict):
+        return
+    policy = PolicySnapshot(
+        version=int(payload.get("version", 0)),
+        generated_ts=_coerce_ts(payload.get("generated_ts")),
+        air_score=float(payload.get("air_score", 0.0)),
+        uncertainty=float(payload.get("uncertainty", 0.0)),
+        event_lock=bool(payload.get("event_lock", False)),
+        range_mode=bool(payload.get("range_mode", False)),
+        notes=dict(payload.get("notes", {})),
+        pockets=dict(payload.get("pockets", {})),
+    )
+    with _LOCK:
+        _POLICY = policy
+    _POLICY_LAST_MTIME = mtime
+
+
 def configure_dump(path: str | os.PathLike[str] | None) -> None:
     """
     Optionally configure a filesystem location to persist the latest policy.
@@ -142,6 +207,7 @@ def latest(default: Optional[PolicySnapshot] = None) -> PolicySnapshot | None:
     Return the latest snapshot. A defensive copy is returned so callers
     can mutate without affecting the shared state.
     """
+    _refresh_from_file()
     with _LOCK:
         current = _POLICY
     if current is None:
