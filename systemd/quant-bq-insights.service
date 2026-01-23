@@ -8,4 +8,5 @@ WorkingDirectory=/home/tossaki/QuantRabbit
 ExecStart=/home/tossaki/QuantRabbit/.venv/bin/python analytics/bq_ops_insights_job.py --log-level INFO
 User=tossaki
 Environment=PYTHONUNBUFFERED=1
+Environment=PYTHONPATH=/home/tossaki/QuantRabbit
 EnvironmentFile=-/etc/quantrabbit.env
