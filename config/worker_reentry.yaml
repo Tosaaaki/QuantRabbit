@@ -104,8 +104,18 @@ strategies:
   TrendMA:
     cooldown_win_sec: 300
     cooldown_loss_sec: 60
-    same_dir_reentry_pips: 0.8
+    same_dir_reentry_pips: 3.0
     same_dir_mode: both
+    max_open_trades: 1
+    return_wait_bias: avoid
+    return_wait_reason: be_post_60_or_hold_skew
+    block_jst_hours: []
+  H1Momentum:
+    cooldown_win_sec: 300
+    cooldown_loss_sec: 60
+    same_dir_reentry_pips: 3.0
+    same_dir_mode: both
+    max_open_trades: 1
     return_wait_bias: avoid
     return_wait_reason: be_post_60_or_hold_skew
     block_jst_hours: []
