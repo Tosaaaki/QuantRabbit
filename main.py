@@ -3835,6 +3835,12 @@ async def logic_loop(
         signal_fetch_count: int,
         perf_update_ms: Optional[float],
         perf_update_count: int,
+        exit_plan_ms: Optional[float],
+        exit_plan_count: int,
+        partial_plan_ms: Optional[float],
+        partial_plan_count: int,
+        account_snapshot_ms: Optional[float],
+        account_snapshot_count: int,
         entry_plans: Optional[int],
         signal_count: int,
     ) -> None:
@@ -3865,6 +3871,9 @@ async def logic_loop(
             "close_trade": close_trade_ms,
             "signal_fetch": signal_fetch_ms,
             "perf_update": perf_update_ms,
+            "exit_plan": exit_plan_ms,
+            "partial_plan": partial_plan_ms,
+            "account_snapshot": account_snapshot_ms,
         }
         for phase, value in phase_map.items():
             if value is None:
@@ -3874,7 +3883,7 @@ async def logic_loop(
 
         entries = entry_plans if entry_plans is not None else -1
         logging.warning(
-            "[SLOW_LOOP] loop=%d total_ms=%.0f pre_ms=%s analysis_ms=%s gpt_ms=%s strategy_ms=%s sync_ms=%s order_ms=%s orders=%d pos_ms=%s pos_ct=%d close_ms=%s close_ct=%d sig_ms=%s sig_ct=%d perf_ms=%s perf_ct=%d entries=%s signals=%d",
+            "[SLOW_LOOP] loop=%d total_ms=%.0f pre_ms=%s analysis_ms=%s gpt_ms=%s strategy_ms=%s sync_ms=%s order_ms=%s orders=%d pos_ms=%s pos_ct=%d close_ms=%s close_ct=%d sig_ms=%s sig_ct=%d perf_ms=%s perf_ct=%d exit_ms=%s exit_ct=%d partial_ms=%s partial_ct=%d acct_ms=%s acct_ct=%d entries=%s signals=%d",
             loop_counter,
             decision_latency_ms,
             f"{pre_analysis_ms:.0f}" if pre_analysis_ms is not None else "n/a",
@@ -3892,6 +3901,12 @@ async def logic_loop(
             signal_fetch_count,
             f"{perf_update_ms:.0f}" if perf_update_ms is not None else "n/a",
             perf_update_count,
+            f"{exit_plan_ms:.0f}" if exit_plan_ms is not None else "n/a",
+            exit_plan_count,
+            f"{partial_plan_ms:.0f}" if partial_plan_ms is not None else "n/a",
+            partial_plan_count,
+            f"{account_snapshot_ms:.0f}" if account_snapshot_ms is not None else "n/a",
+            account_snapshot_count,
             entries,
             signal_count,
         )
@@ -3919,6 +3934,12 @@ async def logic_loop(
             signal_fetch_count = 0
             perf_update_ms = 0.0
             perf_update_count = 0
+            exit_plan_ms = 0.0
+            exit_plan_count = 0
+            partial_plan_ms = 0.0
+            partial_plan_count = 0
+            account_snapshot_ms = 0.0
+            account_snapshot_count = 0
             gpt_timed_out = False
             gpt_unavailable = False
             logging.info("[LOOP] start loop=%d", loop_counter)
@@ -4862,6 +4883,12 @@ async def logic_loop(
                         signal_fetch_count=signal_fetch_count,
                         perf_update_ms=perf_update_ms,
                         perf_update_count=perf_update_count,
+                        exit_plan_ms=exit_plan_ms,
+                        exit_plan_count=exit_plan_count,
+                        partial_plan_ms=partial_plan_ms,
+                        partial_plan_count=partial_plan_count,
+                        account_snapshot_ms=account_snapshot_ms,
+                        account_snapshot_count=account_snapshot_count,
                         entry_plans=entry_plans,
                         signal_count=len(evaluated_signals),
                     )
@@ -6203,6 +6230,7 @@ async def logic_loop(
                 if partial_hint and partial_hint.confidence >= 0.35:
                     partial_threshold_overrides = partial_hint.thresholds
 
+            partials_start = time.monotonic()
             try:
                 partials = plan_partial_reductions(
                     open_positions,
@@ -6216,6 +6244,8 @@ async def logic_loop(
             except Exception as exc:
                 logging.warning("[PARTIAL] planning failed: %s", exc)
                 partials = []
+            partial_plan_ms += max(0.0, (time.monotonic() - partials_start) * 1000.0)
+            partial_plan_count += 1
             trade_client_ids = {}
             for pocket_name, info in open_positions.items():
                 if pocket_name == "__net__":
@@ -6318,6 +6348,7 @@ async def logic_loop(
 
             exit_decisions = []
             if open_positions_for_exit:
+                exit_start = time.monotonic()
                 exit_decisions = exit_manager.plan_closures(
                     open_positions_for_exit,
                     signals_for_exit,
@@ -6332,6 +6363,8 @@ async def logic_loop(
                     now=now,
                     clamp_state=clamp_state,
                 )
+                exit_plan_ms += max(0.0, (time.monotonic() - exit_start) * 1000.0)
+                exit_plan_count += 1
 
             executed_pockets: set[str] = set()
             for decision in exit_decisions:
@@ -6481,6 +6514,7 @@ async def logic_loop(
             ]
             avg_sl = sum(sl_values) / len(sl_values) if sl_values else 20.0
 
+            snapshot_start = time.monotonic()
             try:
                 account_snapshot = get_account_snapshot()
             except Exception as exc:  # noqa: BLE001
@@ -6490,6 +6524,8 @@ async def logic_loop(
                     exc,
                 )
                 account_snapshot = None
+            account_snapshot_ms += max(0.0, (time.monotonic() - snapshot_start) * 1000.0)
+            account_snapshot_count += 1
 
             account_equity = FALLBACK_EQUITY
             margin_available = None
@@ -9203,6 +9239,12 @@ async def logic_loop(
                 signal_fetch_count=signal_fetch_count,
                 perf_update_ms=perf_update_ms,
                 perf_update_count=perf_update_count,
+                exit_plan_ms=exit_plan_ms,
+                exit_plan_count=exit_plan_count,
+                partial_plan_ms=partial_plan_ms,
+                partial_plan_count=partial_plan_count,
+                account_snapshot_ms=account_snapshot_ms,
+                account_snapshot_count=account_snapshot_count,
                 entry_plans=entry_plans,
                 signal_count=len(evaluated_signals),
             )
