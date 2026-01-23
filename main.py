@@ -7482,13 +7482,7 @@ async def logic_loop(
                 atr_hint = float(fac_m1.get("atr_pips") or (fac_m1.get("atr") or 0.0) * 100.0)
             except Exception:
                 atr_hint = None
-            perf_hint = None
-            try:
-                perf_summary = pos_manager.get_performance_summary()
-                perf_hint = perf_summary.get("pockets")
-            except Exception as exc:  # noqa: BLE001
-                logging.warning("[PERF] failed to compute pocket PF: %s", exc)
-                perf_hint = None
+            perf_hint = perf_cache if isinstance(perf_cache, dict) and perf_cache else None
             update_dd_context(
                 account_equity,
                 weight_macro,
