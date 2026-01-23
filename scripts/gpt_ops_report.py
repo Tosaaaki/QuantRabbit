@@ -474,20 +474,6 @@ def _sanitize_optional_object(payload: Dict[str, Any], key: str) -> None:
         return
     if not isinstance(value, dict):
         payload.pop(key, None)
-    if raw.startswith("```"):
-        raw = raw.strip("`").replace("json", "", 1).strip()
-    try:
-        return json.loads(raw)
-    except Exception:
-        pass
-    start = raw.find("{")
-    end = raw.rfind("}")
-    if start == -1 or end == -1 or end <= start:
-        return None
-    try:
-        return json.loads(raw[start : end + 1])
-    except Exception:
-        return None
 
 
 def _parse_policy_diff(text: str, *, source: str) -> Optional[Dict[str, Any]]:
