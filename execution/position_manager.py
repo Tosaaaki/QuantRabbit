@@ -896,6 +896,9 @@ class PositionManager:
 
     def _get_trade_details(self, trade_id: str) -> dict | None:
         """tradeIDを使ってOANDAから取引詳細を取得する"""
+        local = self._resolve_entry_meta(trade_id)
+        if local:
+            return local
         url = f"{REST_HOST}/v3/accounts/{ACCOUNT}/trades/{trade_id}"
         try:
             payload = self._request_json(url) or {}
