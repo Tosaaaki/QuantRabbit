@@ -2134,8 +2134,13 @@ async def close_trade(
     emergency_allow: Optional[bool] = None
     entry_price = _as_float((ctx or {}).get("entry_price")) or 0.0
     units_ctx = int((ctx or {}).get("units") or 0)
+    ctx_mid = None
+    if isinstance(exit_context, dict):
+        ctx_mid = _as_float(exit_context.get("mid"))
     bid, ask = _latest_bid_ask()
     mid = _latest_mid_price()
+    if mid is None and ctx_mid is not None:
+        mid = ctx_mid
     est_pips = _estimate_trade_pnl_pips(
         entry_price=entry_price,
         units=units_ctx,
