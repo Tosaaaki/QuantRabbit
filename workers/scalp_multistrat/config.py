@@ -19,7 +19,7 @@ def _load_env_file() -> dict:
                     continue
                 key, val = line.split("=", 1)
                 data[key.strip()] = val.strip().strip('"').strip("'")
-    except FileNotFoundError:
+    except OSError:
         pass
     _ENV_CACHE = data
     return data
