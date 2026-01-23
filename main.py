@@ -3825,6 +3825,10 @@ async def logic_loop(
         sync_ms: Optional[float],
         order_exec_ms: Optional[float],
         order_exec_count: int,
+        positions_fetch_ms: Optional[float],
+        positions_fetch_count: int,
+        close_trade_ms: Optional[float],
+        close_trade_count: int,
         entry_plans: Optional[int],
         signal_count: int,
     ) -> None:
@@ -3849,6 +3853,8 @@ async def logic_loop(
             "strategy": strategy_ms,
             "sync": sync_ms,
             "order_exec": order_exec_ms,
+            "positions_fetch": positions_fetch_ms,
+            "close_trade": close_trade_ms,
         }
         for phase, value in phase_map.items():
             if value is None:
@@ -3858,7 +3864,7 @@ async def logic_loop(
 
         entries = entry_plans if entry_plans is not None else -1
         logging.warning(
-            "[SLOW_LOOP] loop=%d total_ms=%.0f analysis_ms=%s gpt_ms=%s strategy_ms=%s sync_ms=%s order_ms=%s orders=%d entries=%s signals=%d",
+            "[SLOW_LOOP] loop=%d total_ms=%.0f analysis_ms=%s gpt_ms=%s strategy_ms=%s sync_ms=%s order_ms=%s orders=%d pos_ms=%s pos_ct=%d close_ms=%s close_ct=%d entries=%s signals=%d",
             loop_counter,
             decision_latency_ms,
             f"{analysis_ms:.0f}" if analysis_ms is not None else "n/a",
@@ -3867,6 +3873,10 @@ async def logic_loop(
             f"{sync_ms:.0f}" if sync_ms is not None else "n/a",
             f"{order_exec_ms:.0f}" if order_exec_ms is not None else "n/a",
             order_exec_count,
+            f"{positions_fetch_ms:.0f}" if positions_fetch_ms is not None else "n/a",
+            positions_fetch_count,
+            f"{close_trade_ms:.0f}" if close_trade_ms is not None else "n/a",
+            close_trade_count,
             entries,
             signal_count,
         )
@@ -3886,6 +3896,10 @@ async def logic_loop(
             sync_ms: Optional[float] = None
             order_exec_ms = 0.0
             order_exec_count = 0
+            positions_fetch_ms = 0.0
+            positions_fetch_count = 0
+            close_trade_ms = 0.0
+            close_trade_count = 0
             gpt_timed_out = False
             gpt_unavailable = False
             logging.info("[LOOP] start loop=%d", loop_counter)
@@ -4817,6 +4831,10 @@ async def logic_loop(
                         sync_ms=sync_ms,
                         order_exec_ms=order_exec_ms,
                         order_exec_count=order_exec_count,
+                        positions_fetch_ms=positions_fetch_ms,
+                        positions_fetch_count=positions_fetch_count,
+                        close_trade_ms=close_trade_ms,
+                        close_trade_count=close_trade_count,
                         entry_plans=entry_plans,
                         signal_count=len(evaluated_signals),
                     )
@@ -5223,7 +5241,10 @@ async def logic_loop(
             # アカウント情報はクランプ閾値にも使うため早めに取得する
             account_equity = FALLBACK_EQUITY
             # クランプ検知のためのオープン玉情報
+            positions_start = time.monotonic()
             clamp_positions = pos_manager.get_open_positions()
+            positions_fetch_ms += max(0.0, (time.monotonic() - positions_start) * 1000.0)
+            positions_fetch_count += 1
             open_positions_snapshot = clamp_positions
             open_scalp_trades = 0
             try:
@@ -6177,7 +6198,12 @@ async def logic_loop(
             partial_closed = False
             for pocket, trade_id, reduce_units in partials:
                 client_id = trade_client_ids.get(str(trade_id))
-                ok = await close_trade(trade_id, reduce_units, client_order_id=client_id)
+                close_start = time.monotonic()
+                try:
+                    ok = await close_trade(trade_id, reduce_units, client_order_id=client_id)
+                finally:
+                    close_trade_ms += max(0.0, (time.monotonic() - close_start) * 1000.0)
+                    close_trade_count += 1
                 if ok:
                     logging.info(
                         "[PARTIAL] trade=%s pocket=%s units=%s",
@@ -6187,7 +6213,10 @@ async def logic_loop(
                     )
                     partial_closed = True
             if partial_closed:
+                positions_start = time.monotonic()
                 open_positions = pos_manager.get_open_positions()
+                positions_fetch_ms += max(0.0, (time.monotonic() - positions_start) * 1000.0)
+                positions_fetch_count += 1
                 open_positions_snapshot = open_positions
                 stage_snapshot = {}
                 for pocket_name, position_info in open_positions.items():
@@ -6292,11 +6321,16 @@ async def logic_loop(
                     if not trade_id:
                         continue
                     client_id = tr.get("client_order_id") or tr.get("client_id")
-                    ok = await close_trade(
-                        trade_id,
-                        sign * close_amount,
-                        client_order_id=client_id,
-                    )
+                    close_start = time.monotonic()
+                    try:
+                        ok = await close_trade(
+                            trade_id,
+                            sign * close_amount,
+                            client_order_id=client_id,
+                        )
+                    finally:
+                        close_trade_ms += max(0.0, (time.monotonic() - close_start) * 1000.0)
+                        close_trade_count += 1
                     if ok:
                         logging.info(
                             "[EXIT] trade=%s pocket=%s units=%s reason=%s",
@@ -9129,6 +9163,10 @@ async def logic_loop(
                 sync_ms=sync_ms,
                 order_exec_ms=order_exec_ms,
                 order_exec_count=order_exec_count,
+                positions_fetch_ms=positions_fetch_ms,
+                positions_fetch_count=positions_fetch_count,
+                close_trade_ms=close_trade_ms,
+                close_trade_count=close_trade_count,
                 entry_plans=entry_plans,
                 signal_count=len(evaluated_signals),
             )
