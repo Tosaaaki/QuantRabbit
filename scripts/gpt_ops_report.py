@@ -4,6 +4,8 @@
 Usage:
   python scripts/gpt_ops_report.py --hours 24 --output logs/gpt_ops_report.json
   python scripts/gpt_ops_report.py --hours 24 --gpt
+  python scripts/gpt_ops_report.py --hours 6 --policy --policy-output logs/policy_diff_ops.json
+  python scripts/gpt_ops_report.py --hours 6 --policy --apply-policy
 """
 
 from __future__ import annotations
@@ -11,10 +13,12 @@ from __future__ import annotations
 import argparse
 import datetime as dt
 import json
+import logging
 import math
 import os
 import sqlite3
 import sys
+from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -28,6 +32,8 @@ except Exception:
 
 from utils.secrets import get_secret
 from utils.vertex_client import call_vertex_text
+from analytics.policy_apply import apply_policy_diff_to_paths
+from analytics.policy_diff import POLICY_DIFF_SCHEMA, normalize_policy_diff, validate_policy_diff
 
 _SUMMARY_PROVIDER = (
     os.getenv("GPT_SUMMARIZER_PROVIDER")
@@ -46,6 +52,20 @@ _VERTEX_PROJECT = os.getenv("VERTEX_PROJECT_ID") or os.getenv("GCP_PROJECT") or 
 _VERTEX_TIMEOUT_SEC = float(os.getenv("VERTEX_SUMMARIZER_TIMEOUT_SEC", "20"))
 _VERTEX_PROVIDERS = {"vertex", "vertex_ai", "vertexai", "gemini", "gcp"}
 _OPENAI_PROVIDERS = {"openai", "oai"}
+_POLICY_PROVIDER = (
+    os.getenv("LLM_OPS_POLICY_PROVIDER")
+    or os.getenv("LLM_PROVIDER")
+    or _SUMMARY_PROVIDER
+    or "vertex"
+).strip().lower()
+_VERTEX_POLICY_MODEL = (
+    os.getenv("LLM_OPS_POLICY_MODEL")
+    or os.getenv("VERTEX_POLICY_MODEL")
+    or _VERTEX_SUMMARIZER_MODEL
+    or "gemini-2.0-flash"
+)
+_VERTEX_POLICY_TIMEOUT_SEC = float(os.getenv("LLM_OPS_POLICY_TIMEOUT_SEC", _VERTEX_TIMEOUT_SEC))
+_POLICY_MAX_TOKENS = int(os.getenv("LLM_OPS_POLICY_MAX_TOKENS", "900"))
 
 
 def _utc_now() -> dt.datetime:
@@ -339,6 +359,65 @@ def _parse_json_text(text: str) -> Optional[Dict[str, Any]]:
         return None
 
 
+def _extract_json_payload(text: str) -> Optional[Dict[str, Any]]:
+    raw = text.strip()
+    if not raw:
+        return None
+    if raw.startswith("```"):
+        raw = raw.strip("`").replace("json", "", 1).strip()
+    try:
+        return json.loads(raw)
+    except Exception:
+        pass
+    start = raw.find("{")
+    end = raw.rfind("}")
+    if start == -1 or end == -1 or end <= start:
+        return None
+    try:
+        return json.loads(raw[start : end + 1])
+    except Exception:
+        return None
+
+
+def _parse_policy_diff(text: str, *, source: str) -> Optional[Dict[str, Any]]:
+    payload = _extract_json_payload(text)
+    if not isinstance(payload, dict):
+        return None
+    payload = normalize_policy_diff(payload, source=source)
+    errors = validate_policy_diff(payload)
+    if errors:
+        logging.warning("[OPS_POLICY] invalid policy_diff: %s", ", ".join(errors))
+        return None
+    return payload
+
+
+def _build_policy_prompt(report: Dict[str, Any]) -> str:
+    schema_text = json.dumps(POLICY_DIFF_SCHEMA, ensure_ascii=True, separators=(",", ":"))
+    payload = {
+        "window": report.get("window"),
+        "overall": report.get("overall"),
+        "pockets": report.get("pockets"),
+        "strategy_top": report.get("strategies", {}).get("top", []),
+        "strategy_bottom": report.get("strategies", {}).get("bottom", []),
+        "orders": report.get("orders"),
+        "metrics": report.get("metrics"),
+        "flags": report.get("flags"),
+    }
+    payload_text = json.dumps(payload, ensure_ascii=True, separators=(",", ":"))
+    return (
+        "You are QuantRabbit's ops policy agent.\n"
+        "Return ONLY JSON that conforms to this JSON schema:\n"
+        f"{schema_text}\n\n"
+        "Rules:\n"
+        "- If data is insufficient or uncertain, set no_change=true and omit patch.\n"
+        "- Prefer targeted changes: use pockets.*.strategies allowlist, bias, and entry_gates.\n"
+        "- Avoid blocking all pockets unless severe risk is present.\n"
+        "- You may use tuning_overrides for exit/partial/trail tweaks (small deltas).\n\n"
+        "Input JSON:\n"
+        f"{payload_text}\n"
+    )
+
+
 def _openai_summary(report: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     if OpenAI is None:
         return None
@@ -433,6 +512,60 @@ def _gpt_summary(report: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     return None
 
 
+def _openai_policy_diff(report: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    if OpenAI is None:
+        return None
+    try:
+        api_key = get_secret("openai_api_key")
+    except Exception:
+        api_key = None
+    if not api_key:
+        return None
+    client = OpenAI(api_key=api_key)
+    model = _resolve_model()
+    system_prompt = _build_policy_prompt(report)
+    response = client.responses.create(
+        model=model,
+        input=[
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": "Return ONLY the JSON object."},
+        ],
+        max_output_tokens=_POLICY_MAX_TOKENS,
+        temperature=0.2,
+    )
+    try:
+        text = response.output_text.strip()
+    except Exception:
+        text = ""
+    return _parse_policy_diff(text, source="ops_openai") if text else None
+
+
+def _vertex_policy_diff(report: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    prompt = _build_policy_prompt(report)
+    response = call_vertex_text(
+        prompt,
+        project_id=_VERTEX_PROJECT,
+        location=_VERTEX_LOCATION,
+        model=_VERTEX_POLICY_MODEL,
+        temperature=0.2,
+        max_tokens=_POLICY_MAX_TOKENS,
+        timeout_sec=_VERTEX_POLICY_TIMEOUT_SEC,
+        response_mime_type="application/json",
+    )
+    if not response or not response.text:
+        return None
+    return _parse_policy_diff(response.text, source="ops_vertex")
+
+
+def _ops_policy_diff(report: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    provider = _resolve_provider(_POLICY_PROVIDER)
+    if provider == "vertex":
+        return _vertex_policy_diff(report)
+    if provider == "openai":
+        return _openai_policy_diff(report)
+    return None
+
+
 def run(args: argparse.Namespace) -> Dict[str, Any]:
     now = _utc_now()
     since = now - dt.timedelta(hours=args.hours)
@@ -470,6 +603,23 @@ def run(args: argparse.Namespace) -> Dict[str, Any]:
             report["gpt_summary"] = summary
             gpt_used = True
     report["gpt_used"] = gpt_used
+    if args.policy:
+        diff = _ops_policy_diff(report)
+        if diff:
+            report["policy_diff"] = diff
+            report["policy_used"] = True
+            if args.apply_policy:
+                updated, changed, flags = apply_policy_diff_to_paths(
+                    diff,
+                    overlay_path=Path(args.overlay_path),
+                    history_dir=Path(args.history_dir),
+                    latest_path=Path(args.latest_path),
+                )
+                report["policy_applied"] = changed
+                report["policy_apply_flags"] = flags
+                report["policy_overlay"] = updated
+        else:
+            report["policy_used"] = False
     return report
 
 
@@ -489,16 +639,25 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--strategy-min-trades", type=int, default=3)
     parser.add_argument("--output", default="logs/gpt_ops_report.json")
     parser.add_argument("--gpt", action="store_true", help="Enable GPT summary")
+    parser.add_argument("--policy", action="store_true", help="Generate policy diff via LLM")
+    parser.add_argument("--policy-output", default="logs/policy_diff_ops.json")
+    parser.add_argument("--apply-policy", action="store_true", help="Apply policy diff to overlay")
+    parser.add_argument("--overlay-path", default=os.getenv("POLICY_OVERLAY_PATH", "logs/policy_overlay.json"))
+    parser.add_argument("--history-dir", default=os.getenv("POLICY_HISTORY_DIR", "logs/policy_history"))
+    parser.add_argument("--latest-path", default=os.getenv("POLICY_LATEST_PATH", "logs/policy_latest.json"))
     parser.add_argument("--stdout", action="store_true", help="Print report to stdout only")
     return parser.parse_args()
 
 
 def main() -> None:
+    logging.basicConfig(level=logging.INFO)
     args = _parse_args()
     report = run(args)
     if args.stdout:
         print(json.dumps(report, ensure_ascii=True, indent=2))
         return
+    if report.get("policy_used") and report.get("policy_diff") and args.policy_output:
+        _write_output(report.get("policy_diff"), args.policy_output)
     _write_output(report, args.output)
     print(f"[OK] report saved: {args.output}")
 
