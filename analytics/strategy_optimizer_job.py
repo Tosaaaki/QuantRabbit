@@ -31,11 +31,31 @@ try:  # Optional dependency
 except Exception:  # pragma: no cover - optional
     OpenAI = None  # type: ignore
 
+from utils.vertex_client import call_vertex_text
+
 
 DEFAULT_DATASET = os.getenv("BQ_DATASET", "quantrabbit")
 DEFAULT_PROJECT = os.getenv("BQ_PROJECT") or os.getenv("GOOGLE_CLOUD_PROJECT")
 RECO_TABLE = os.getenv("BQ_RECOMMENDATION_TABLE", "strategy_recommendations")
 MODEL_NAME = os.getenv("BQ_STRATEGY_MODEL", "strategy_outcome_model")
+_SUMMARY_PROVIDER = (
+    os.getenv("GPT_SUMMARIZER_PROVIDER")
+    or os.getenv("LLM_SUMMARY_PROVIDER")
+    or os.getenv("LLM_PROVIDER")
+    or "openai"
+).strip().lower()
+_VERTEX_OPTIMIZER_MODEL = (
+    os.getenv("VERTEX_OPTIMIZER_MODEL")
+    or os.getenv("VERTEX_SUMMARIZER_MODEL")
+    or os.getenv("VERTEX_MODEL")
+    or os.getenv("VERTEX_POLICY_MODEL")
+    or "gemini-2.0-flash"
+)
+_VERTEX_LOCATION = os.getenv("VERTEX_LOCATION", os.getenv("GCP_LOCATION", "us-central1"))
+_VERTEX_PROJECT = os.getenv("VERTEX_PROJECT_ID") or os.getenv("GCP_PROJECT") or os.getenv("GOOGLE_CLOUD_PROJECT")
+_VERTEX_TIMEOUT_SEC = float(os.getenv("VERTEX_OPTIMIZER_TIMEOUT_SEC", "20"))
+_VERTEX_PROVIDERS = {"vertex", "vertex_ai", "vertexai", "gemini", "gcp"}
+_OPENAI_PROVIDERS = {"openai", "oai"}
 
 
 def _ensure_reco_table(client: bigquery.Client, dataset_id: str) -> None:
@@ -158,22 +178,34 @@ def _insert_recommendations(
         raise RuntimeError(f"BigQuery insert failed: {errors}")
 
 
-def _summarise_with_gpt(rows: List[Dict[str, object]]) -> str | None:
+def _resolve_provider(value: str) -> str:
+    raw = (value or "").strip().lower()
+    if not raw or raw in _OPENAI_PROVIDERS or raw in {"auto", "default"}:
+        return "openai"
+    if raw in _VERTEX_PROVIDERS:
+        return "vertex"
+    return raw
+
+
+def _build_prompt(rows: List[Dict[str, object]]) -> str:
+    bullet_lines = [
+        f"- {r['pocket']}/{r['strategy']}: action={r['action']} win_rate={r['win_rate']:.2f} pf={r['profit_factor']:.2f}"
+        for r in rows
+    ]
+    return (
+        "以下の指標を分析し、戦略ポートフォリオの調整ポイントを100文字以内でまとめてください:\n"
+        + "\n".join(bullet_lines)
+    )
+
+
+def _summarise_with_openai(rows: List[Dict[str, object]]) -> str | None:
     if not rows or OpenAI is None:
         return None
     try:  # pragma: no cover - relies on external API
         client = OpenAI()
     except Exception:
         return None
-
-    bullet_lines = [
-        f"- {r['pocket']}/{r['strategy']}: action={r['action']} win_rate={r['win_rate']:.2f} pf={r['profit_factor']:.2f}"
-        for r in rows
-    ]
-    prompt = (
-        "以下の指標を分析し、戦略ポートフォリオの調整ポイントを100文字以内でまとめてください:\n"
-        + "\n".join(bullet_lines)
-    )
+    prompt = _build_prompt(rows)
     try:
         response = client.responses.create(
             model=os.getenv("OPENAI_MODEL_OPTIMIZER", os.getenv("OPENAI_MODEL", "gpt-4o-mini")),
@@ -184,6 +216,35 @@ def _summarise_with_gpt(rows: List[Dict[str, object]]) -> str | None:
     except Exception as exc:  # pragma: no cover - defensive
         logging.warning("[GPT] optimisation summary failed: %s", exc)
         return None
+
+
+def _summarise_with_vertex(rows: List[Dict[str, object]]) -> str | None:
+    if not rows:
+        return None
+    prompt = _build_prompt(rows)
+    response = call_vertex_text(
+        prompt,
+        project_id=_VERTEX_PROJECT,
+        location=_VERTEX_LOCATION,
+        model=_VERTEX_OPTIMIZER_MODEL,
+        temperature=0.2,
+        max_tokens=180,
+        timeout_sec=_VERTEX_TIMEOUT_SEC,
+    )
+    if not response or not response.text:
+        return None
+    return response.text.strip()
+
+
+def _summarise_with_gpt(rows: List[Dict[str, object]]) -> str | None:
+    if not rows:
+        return None
+    provider = _resolve_provider(_SUMMARY_PROVIDER)
+    if provider == "vertex":
+        return _summarise_with_vertex(rows)
+    if provider == "openai":
+        return _summarise_with_openai(rows)
+    return None
 
 
 def run(project: str | None = None, dataset: str = DEFAULT_DATASET) -> None:

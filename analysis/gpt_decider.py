@@ -12,7 +12,6 @@ import asyncio
 import datetime as dt
 import json
 import logging
-import os
 import random
 import re
 import time
@@ -29,11 +28,30 @@ from analysis.local_decider import heuristic_decision
 from utils.cost_guard import add_tokens
 from utils.gpt_monitor import log_gpt_fallback, track_gpt_call
 from utils.secrets import get_secret
+from utils.vertex_client import call_vertex_text
 
 logger = logging.getLogger(__name__)
 
 _LLM_MODE = os.getenv("LLM_MODE", "").strip().lower()
 _DUMMY_MODES = {"dummy", "mock", "offline", "test"}
+_DECIDER_PROVIDER = (
+    os.getenv("GPT_DECIDER_PROVIDER")
+    or os.getenv("LLM_PROVIDER")
+    or os.getenv("GPT_PROVIDER")
+    or "openai"
+).strip().lower()
+_VERTEX_DECIDER_MODEL = (
+    os.getenv("VERTEX_DECIDER_MODEL")
+    or os.getenv("VERTEX_MODEL")
+    or os.getenv("VERTEX_POLICY_MODEL")
+    or "gemini-2.0-flash"
+)
+_VERTEX_LOCATION = os.getenv("VERTEX_LOCATION", os.getenv("GCP_LOCATION", "us-central1"))
+_VERTEX_PROJECT = os.getenv("VERTEX_PROJECT_ID") or os.getenv("GCP_PROJECT") or os.getenv("GOOGLE_CLOUD_PROJECT")
+_VERTEX_TIMEOUT_SEC = float(os.getenv("VERTEX_DECIDER_TIMEOUT_SEC", "20"))
+_VERTEX_PROVIDERS = {"vertex", "vertex_ai", "vertexai", "gemini", "gcp"}
+_OPENAI_PROVIDERS = {"openai", "oai"}
+_HEURISTIC_PROVIDERS = {"heuristic", "local"}
 
 _CLIENT: AsyncOpenAI | None = None
 _FENCE_PREFIX_RE = re.compile(r"^```(?:json)?\s*", re.IGNORECASE)
@@ -106,6 +124,27 @@ def _normalize_json_content(raw: str) -> str:
             text = text[: -3]
     return text.strip()
 
+
+def _messages_to_prompt(messages: List[Dict]) -> str:
+    parts: List[str] = []
+    for msg in messages:
+        role = str(msg.get("role") or "user").upper()
+        content = msg.get("content")
+        if isinstance(content, list):
+            chunks = []
+            for item in content:
+                if isinstance(item, dict):
+                    text = item.get("text") or item.get("content")
+                    if text:
+                        chunks.append(str(text))
+                elif item:
+                    chunks.append(str(item))
+            content_text = "\n".join(chunks)
+        else:
+            content_text = "" if content is None else str(content)
+        parts.append(f"{role}: {content_text}")
+    return "\n".join(parts)
+
 _LAST_DECISION_TS: dt.datetime | None = None
 _LAST_DECISION_DATA: Dict[str, object] | None = None
 _LAST_FAILURE_TS: dt.datetime | None = None
@@ -156,6 +195,130 @@ def _load_json_payload(content: str) -> Dict:
         raise ValueError(f"Invalid JSON: {content}") from exc
 
 
+def _normalize_decision(data: Dict, *, model: str) -> Dict:
+    for key in _REQUIRED_KEYS:
+        if key not in data:
+            raise ValueError(f"key {key} missing")
+
+    mode = str(data.get("mode") or "").strip().upper()
+    if mode not in _ALLOWED_MODES:
+        mode = "DEFENSIVE"
+    data["mode"] = mode
+
+    risk_bias = str(data.get("risk_bias") or "").strip().lower()
+    if risk_bias not in _ALLOWED_RISK:
+        risk_bias = "neutral"
+    data["risk_bias"] = risk_bias
+
+    liquidity_bias = str(data.get("liquidity_bias") or "").strip().lower()
+    if liquidity_bias not in _ALLOWED_LIQ:
+        liquidity_bias = "normal"
+    data["liquidity_bias"] = liquidity_bias
+
+    try:
+        rc = float(data.get("range_confidence") or 0.0)
+    except (TypeError, ValueError):
+        rc = 0.0
+    data["range_confidence"] = max(0.0, min(1.0, rc))
+
+    hints = data.get("pattern_hint") or []
+    if isinstance(hints, str):
+        hints = [hints]
+    clean_hints: list[str] = []
+    for h in hints:
+        if isinstance(h, str) and h.strip():
+            clean_hints.append(h.strip()[:24])
+    data["pattern_hint"] = clean_hints[:5]
+
+    try:
+        weight_macro = float(data["weight_macro"])
+    except (TypeError, ValueError) as exc:
+        raise ValueError("weight_macro type error") from exc
+    weight_macro = max(0.0, min(1.0, weight_macro))
+    data["weight_macro"] = round(weight_macro, 2)
+
+    focus_tag = data.get("focus_tag")
+    if not isinstance(focus_tag, str) or focus_tag not in _FOCUS_TAGS:
+        focus_tag = "hybrid"
+    data["focus_tag"] = focus_tag
+
+    weight_scalp_raw = data.get("weight_scalp")
+    weight_scalp: float | None = None
+    default_scalp = min(0.25, max(0.1, 1.0 - weight_macro))
+    if weight_scalp_raw is not None:
+        try:
+            weight_scalp = float(weight_scalp_raw)
+        except (TypeError, ValueError):
+            weight_scalp = None
+    if weight_scalp is None:
+        weight_scalp = default_scalp
+    weight_scalp = max(0.0, min(1.0, weight_scalp))
+    if weight_scalp + weight_macro > 0.95:
+        weight_scalp = max(0.0, 0.95 - weight_macro)
+    data["weight_scalp"] = round(weight_scalp, 2)
+
+    # Optional: short-term directional forecast
+    bias_raw = data.get("forecast_bias")
+    if isinstance(bias_raw, str) and bias_raw.lower() in _ALLOWED_BIAS:
+        data["forecast_bias"] = bias_raw.lower()
+    else:
+        data["forecast_bias"] = None
+    try:
+        conf = data.get("forecast_confidence")
+        if conf is not None:
+            conf_f = float(conf)
+            if 0.0 <= conf_f <= 1.0:
+                data["forecast_confidence"] = conf_f
+            else:
+                data["forecast_confidence"] = None
+        else:
+            data["forecast_confidence"] = None
+    except (TypeError, ValueError):
+        data["forecast_confidence"] = None
+    try:
+        horizon = data.get("forecast_horizon_min")
+        if horizon is not None:
+            data["forecast_horizon_min"] = int(horizon)
+    except Exception:
+        data["forecast_horizon_min"] = None
+
+    data["ranked_strategies"] = data.get("ranked_strategies") or []
+    data["model_used"] = model
+    return data
+
+
+def _resolve_provider(value: str) -> str:
+    raw = (value or "").strip().lower()
+    if not raw or raw in _OPENAI_PROVIDERS or raw in {"auto", "default"}:
+        return "openai"
+    if raw in _VERTEX_PROVIDERS:
+        return "vertex"
+    if raw in _HEURISTIC_PROVIDERS:
+        return "heuristic"
+    return raw
+
+
+async def _sleep_with_jitter(attempt: int) -> None:
+    delay = _RETRY_BASE_SEC * (2 ** attempt)
+    if _RETRY_JITTER_SEC > 0:
+        delay += random.uniform(0.0, _RETRY_JITTER_SEC)
+    await asyncio.sleep(delay)
+
+
+def _is_retryable(exc: Exception) -> bool:
+    msg = str(exc).lower()
+    fatal_tokens = ("authentication", "invalid api key", "invalid_request_error", "invalid request")
+    if any(tok in msg for tok in fatal_tokens):
+        return False
+    if "unsupported parameter" in msg:
+        return False
+    if "permission" in msg or "unauthorized" in msg or "forbidden" in msg:
+        return False
+    if "insufficient_quota" in msg or "rate limit" in msg or "429" in msg:
+        return True
+    return True
+
+
 async def _call_model(payload: Dict, messages: List[Dict], model: str) -> Dict:
     tier = "primary" if model == MODEL else "fallback"
     with track_gpt_call(
@@ -187,23 +350,6 @@ async def _call_model(payload: Dict, messages: List[Dict], model: str) -> Dict:
             {"max_tokens": max_tokens},
         ]
 
-        async def _sleep_with_jitter(attempt: int) -> None:
-            delay = _RETRY_BASE_SEC * (2 ** attempt)
-            if _RETRY_JITTER_SEC > 0:
-                delay += random.uniform(0.0, _RETRY_JITTER_SEC)
-            await asyncio.sleep(delay)
-
-        def _is_retryable(exc: Exception) -> bool:
-            msg = str(exc).lower()
-            fatal_tokens = ("authentication", "invalid api key", "invalid_request_error", "invalid request")
-            if any(tok in msg for tok in fatal_tokens):
-                return False
-            if "unsupported parameter" in msg:
-                return False
-            if "insufficient_quota" in msg or "rate limit" in msg or "429" in msg:
-                return True
-            return True
-
         usage_in = usage_out = 0
         last_error: Exception | None = None
         for attempt in range(_MAX_MODEL_ATTEMPTS):
@@ -215,100 +361,12 @@ async def _call_model(payload: Dict, messages: List[Dict], model: str) -> Dict:
                     )
                     usage_in = resp.usage.prompt_tokens
                     usage_out = resp.usage.completion_tokens
+                    tracker.set_model(getattr(resp, "model", None) or model)
                     content = _normalize_json_content(resp.choices[0].message.content or "")
                     tracker.add_tag("tokens", usage_in + usage_out)
                     add_tokens(usage_in + usage_out, MAX_TOKENS_MONTH)
                     data = _load_json_payload(content)
-
-                    for key in _REQUIRED_KEYS:
-                        if key not in data:
-                            raise ValueError(f"key {key} missing")
-
-                    mode = str(data.get("mode") or "").strip().upper()
-                    if mode not in _ALLOWED_MODES:
-                        mode = "DEFENSIVE"
-                    data["mode"] = mode
-
-                    risk_bias = str(data.get("risk_bias") or "").strip().lower()
-                    if risk_bias not in _ALLOWED_RISK:
-                        risk_bias = "neutral"
-                    data["risk_bias"] = risk_bias
-
-                    liquidity_bias = str(data.get("liquidity_bias") or "").strip().lower()
-                    if liquidity_bias not in _ALLOWED_LIQ:
-                        liquidity_bias = "normal"
-                    data["liquidity_bias"] = liquidity_bias
-
-                    try:
-                        rc = float(data.get("range_confidence") or 0.0)
-                    except (TypeError, ValueError):
-                        rc = 0.0
-                    data["range_confidence"] = max(0.0, min(1.0, rc))
-
-                    hints = data.get("pattern_hint") or []
-                    if isinstance(hints, str):
-                        hints = [hints]
-                    clean_hints: list[str] = []
-                    for h in hints:
-                        if isinstance(h, str) and h.strip():
-                            clean_hints.append(h.strip()[:24])
-                    data["pattern_hint"] = clean_hints[:5]
-
-                    try:
-                        weight_macro = float(data["weight_macro"])
-                    except (TypeError, ValueError) as exc:
-                        raise ValueError("weight_macro type error") from exc
-                    weight_macro = max(0.0, min(1.0, weight_macro))
-                    data["weight_macro"] = round(weight_macro, 2)
-
-                    focus_tag = data.get("focus_tag")
-                    if not isinstance(focus_tag, str) or focus_tag not in _FOCUS_TAGS:
-                        focus_tag = "hybrid"
-                    data["focus_tag"] = focus_tag
-
-                    weight_scalp_raw = data.get("weight_scalp")
-                    weight_scalp: float | None = None
-                    default_scalp = min(0.25, max(0.1, 1.0 - weight_macro))
-                    if weight_scalp_raw is not None:
-                        try:
-                            weight_scalp = float(weight_scalp_raw)
-                        except (TypeError, ValueError):
-                            weight_scalp = None
-                    if weight_scalp is None:
-                        weight_scalp = default_scalp
-                    weight_scalp = max(0.0, min(1.0, weight_scalp))
-                    if weight_scalp + weight_macro > 0.95:
-                        weight_scalp = max(0.0, 0.95 - weight_macro)
-                    data["weight_scalp"] = round(weight_scalp, 2)
-
-                    # Optional: short-term directional forecast
-                    bias_raw = data.get("forecast_bias")
-                    if isinstance(bias_raw, str) and bias_raw.lower() in _ALLOWED_BIAS:
-                        data["forecast_bias"] = bias_raw.lower()
-                    else:
-                        data["forecast_bias"] = None
-                    try:
-                        conf = data.get("forecast_confidence")
-                        if conf is not None:
-                            conf_f = float(conf)
-                            if 0.0 <= conf_f <= 1.0:
-                                data["forecast_confidence"] = conf_f
-                            else:
-                                data["forecast_confidence"] = None
-                        else:
-                            data["forecast_confidence"] = None
-                    except (TypeError, ValueError):
-                        data["forecast_confidence"] = None
-                    try:
-                        horizon = data.get("forecast_horizon_min")
-                        if horizon is not None:
-                            data["forecast_horizon_min"] = int(horizon)
-                    except Exception:
-                        data["forecast_horizon_min"] = None
-
-                    data["ranked_strategies"] = data.get("ranked_strategies") or []
-                    data["model_used"] = model
-                    return data
+                    return _normalize_decision(data, model=model)
                 except Exception as exc:
                     last_error = exc
                     if isinstance(exc, ValueError):
@@ -330,6 +388,64 @@ async def _call_model(payload: Dict, messages: List[Dict], model: str) -> Dict:
                 await _sleep_with_jitter(attempt)
 
         raise GPTTimeout(str(last_error) if last_error else "unable to call OpenAI")
+
+
+async def _call_vertex_model(payload: Dict, messages: List[Dict], model: str) -> Dict:
+    with track_gpt_call(
+        "gpt_decider",
+        extra_tags={"tier": "primary", "model": model, "provider": "vertex"},
+    ) as tracker:
+        content: str = ""
+        # simple rate limit to avoid request spikes
+        async with _CALL_LOCK:
+            global _LAST_CALL_TS
+            now = time.monotonic()
+            if _LAST_CALL_TS is not None:
+                delta = now - _LAST_CALL_TS
+                if delta < _MIN_CALL_INTERVAL_SEC:
+                    await asyncio.sleep(_MIN_CALL_INTERVAL_SEC - delta)
+            _LAST_CALL_TS = time.monotonic()
+
+        prompt = _messages_to_prompt(messages)
+        max_tokens = _MAX_COMPLETION_TOKENS
+        last_error: Exception | None = None
+        for attempt in range(_MAX_MODEL_ATTEMPTS):
+            try:
+                response = await asyncio.to_thread(
+                    call_vertex_text,
+                    prompt,
+                    project_id=_VERTEX_PROJECT,
+                    location=_VERTEX_LOCATION,
+                    model=model,
+                    temperature=_MODEL_TEMPERATURE,
+                    max_tokens=max_tokens,
+                    timeout_sec=_VERTEX_TIMEOUT_SEC,
+                )
+                if not response or not response.text:
+                    raise RuntimeError("vertex response empty")
+                tracker.set_model(response.model or model)
+                usage_total = response.total_tokens or (response.prompt_tokens + response.output_tokens)
+                if usage_total:
+                    tracker.add_tag("tokens", usage_total)
+                    add_tokens(usage_total, MAX_TOKENS_MONTH)
+                content = _normalize_json_content(response.text)
+                data = _load_json_payload(content)
+                return _normalize_decision(data, model=response.model or model)
+            except Exception as exc:
+                last_error = exc
+                if isinstance(exc, ValueError):
+                    logger.warning(
+                        "Vertex validation failed (model=%s): %s content=%s",
+                        model,
+                        exc,
+                        (content or "")[:500],
+                    )
+                if not _is_retryable(exc):
+                    raise GPTTimeout(str(exc)) from exc
+                if attempt < _MAX_MODEL_ATTEMPTS - 1:
+                    await _sleep_with_jitter(attempt)
+
+        raise GPTTimeout(str(last_error) if last_error else "unable to call Vertex")
 
 
 async def call_openai(payload: Dict) -> Dict:
@@ -366,6 +482,34 @@ async def call_openai(payload: Dict) -> Dict:
     raise GPTTimeout(str(last_exc) if last_exc else "all GPT models failed")
 
 
+async def call_vertex(payload: Dict) -> Dict:
+    """Vertex AI で GPT 相当の意思決定を行う."""
+    if _LLM_MODE in _DUMMY_MODES:
+        raise RuntimeError("LLM_MODE dummy is not allowed when fallback is disabled")
+
+    if not add_tokens(0, MAX_TOKENS_MONTH):
+        raise RuntimeError("GPT token limit exceeded")
+
+    messages = build_messages(payload)
+    result = await _call_vertex_model(payload, messages, _VERTEX_DECIDER_MODEL)
+    if "ranked_strategies" not in result or result.get("ranked_strategies") is None:
+        result["ranked_strategies"] = []
+    return result
+
+
+async def call_decider(payload: Dict) -> Dict:
+    provider = _resolve_provider(_DECIDER_PROVIDER)
+    if provider == "vertex":
+        return await call_vertex(payload)
+    if provider == "openai":
+        return await call_openai(payload)
+    if provider == "heuristic":
+        data = heuristic_decision(payload, _LAST_DECISION_DATA)
+        return _normalize_decision(data, model="heuristic")
+    logger.warning("Unknown GPT provider '%s'; falling back to OpenAI", provider)
+    return await call_openai(payload)
+
+
 async def get_decision(payload: Dict) -> Dict:
     """
     上位ラッパ：GPT 呼び出し（リトライあり、失敗時は例外とする）
@@ -374,7 +518,7 @@ async def get_decision(payload: Dict) -> Dict:
     last_exc: Exception | None = None
     for attempt in range(3):
         try:
-            fresh = await call_openai(payload)
+            fresh = await call_decider(payload)
             if not isinstance(fresh, dict):
                 raise ValueError("GPT response must be dict")
             _LAST_DECISION_TS = dt.datetime.utcnow()

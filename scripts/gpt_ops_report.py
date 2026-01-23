@@ -27,6 +27,25 @@ except Exception:
     OpenAI = None  # type: ignore
 
 from utils.secrets import get_secret
+from utils.vertex_client import call_vertex_text
+
+_SUMMARY_PROVIDER = (
+    os.getenv("GPT_SUMMARIZER_PROVIDER")
+    or os.getenv("LLM_SUMMARY_PROVIDER")
+    or os.getenv("LLM_PROVIDER")
+    or "openai"
+).strip().lower()
+_VERTEX_SUMMARIZER_MODEL = (
+    os.getenv("VERTEX_SUMMARIZER_MODEL")
+    or os.getenv("VERTEX_MODEL")
+    or os.getenv("VERTEX_POLICY_MODEL")
+    or "gemini-2.0-flash"
+)
+_VERTEX_LOCATION = os.getenv("VERTEX_LOCATION", os.getenv("GCP_LOCATION", "us-central1"))
+_VERTEX_PROJECT = os.getenv("VERTEX_PROJECT_ID") or os.getenv("GCP_PROJECT") or os.getenv("GOOGLE_CLOUD_PROJECT")
+_VERTEX_TIMEOUT_SEC = float(os.getenv("VERTEX_SUMMARIZER_TIMEOUT_SEC", "20"))
+_VERTEX_PROVIDERS = {"vertex", "vertex_ai", "vertexai", "gemini", "gcp"}
+_OPENAI_PROVIDERS = {"openai", "oai"}
 
 
 def _utc_now() -> dt.datetime:
@@ -301,7 +320,26 @@ def _resolve_model() -> str:
         return "gpt-4o-mini"
 
 
-def _gpt_summary(report: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+def _resolve_provider(value: str) -> str:
+    raw = (value or "").strip().lower()
+    if not raw or raw in _OPENAI_PROVIDERS or raw in {"auto", "default"}:
+        return "openai"
+    if raw in _VERTEX_PROVIDERS:
+        return "vertex"
+    return raw
+
+
+def _parse_json_text(text: str) -> Optional[Dict[str, Any]]:
+    raw = text.strip()
+    if raw.startswith("```"):
+        raw = raw.strip("`").replace("json", "", 1).strip()
+    try:
+        return json.loads(raw)
+    except Exception:
+        return None
+
+
+def _openai_summary(report: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     if OpenAI is None:
         return None
     try:
@@ -341,12 +379,58 @@ def _gpt_summary(report: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         text = response.output_text.strip()
     except Exception:
         text = ""
-    if text.startswith("```"):
-        text = text.strip("`").replace("json", "", 1).strip()
-    try:
-        return json.loads(text)
-    except Exception:
-        return {"summary": text}
+    parsed = _parse_json_text(text) if text else None
+    if parsed is not None:
+        return parsed
+    return {"summary": text}
+
+
+def _vertex_summary(report: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    payload = {
+        "window": report.get("window"),
+        "overall": report.get("overall"),
+        "pockets": report.get("pockets"),
+        "strategy_top": report.get("strategies", {}).get("top", []),
+        "strategy_bottom": report.get("strategies", {}).get("bottom", []),
+        "orders": report.get("orders"),
+        "metrics": report.get("metrics"),
+        "flags": report.get("flags"),
+    }
+    system_prompt = (
+        "You are an FX ops analyst. Summarize performance, highlight risks, and "
+        "propose 3-5 actions. Do not suggest direct trade entries. "
+        "Return JSON with keys: summary, risks(list), actions(list of {type,target,reason,confidence})."
+    )
+    prompt = (
+        system_prompt
+        + "\n\nInput JSON:\n"
+        + json.dumps(payload, ensure_ascii=True, separators=(",", ":"))
+    )
+    response = call_vertex_text(
+        prompt,
+        project_id=_VERTEX_PROJECT,
+        location=_VERTEX_LOCATION,
+        model=_VERTEX_SUMMARIZER_MODEL,
+        temperature=0.2,
+        max_tokens=400,
+        timeout_sec=_VERTEX_TIMEOUT_SEC,
+    )
+    if not response or not response.text:
+        return None
+    text = response.text.strip()
+    parsed = _parse_json_text(text)
+    if parsed is not None:
+        return parsed
+    return {"summary": text}
+
+
+def _gpt_summary(report: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    provider = _resolve_provider(_SUMMARY_PROVIDER)
+    if provider == "vertex":
+        return _vertex_summary(report)
+    if provider == "openai":
+        return _openai_summary(report)
+    return None
 
 
 def run(args: argparse.Namespace) -> Dict[str, Any]:
