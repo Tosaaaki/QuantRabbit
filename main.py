@@ -3829,6 +3829,8 @@ async def logic_loop(
         positions_fetch_count: int,
         close_trade_ms: Optional[float],
         close_trade_count: int,
+        signal_fetch_ms: Optional[float],
+        signal_fetch_count: int,
         entry_plans: Optional[int],
         signal_count: int,
     ) -> None:
@@ -3855,6 +3857,7 @@ async def logic_loop(
             "order_exec": order_exec_ms,
             "positions_fetch": positions_fetch_ms,
             "close_trade": close_trade_ms,
+            "signal_fetch": signal_fetch_ms,
         }
         for phase, value in phase_map.items():
             if value is None:
@@ -3864,7 +3867,7 @@ async def logic_loop(
 
         entries = entry_plans if entry_plans is not None else -1
         logging.warning(
-            "[SLOW_LOOP] loop=%d total_ms=%.0f analysis_ms=%s gpt_ms=%s strategy_ms=%s sync_ms=%s order_ms=%s orders=%d pos_ms=%s pos_ct=%d close_ms=%s close_ct=%d entries=%s signals=%d",
+            "[SLOW_LOOP] loop=%d total_ms=%.0f analysis_ms=%s gpt_ms=%s strategy_ms=%s sync_ms=%s order_ms=%s orders=%d pos_ms=%s pos_ct=%d close_ms=%s close_ct=%d sig_ms=%s sig_ct=%d entries=%s signals=%d",
             loop_counter,
             decision_latency_ms,
             f"{analysis_ms:.0f}" if analysis_ms is not None else "n/a",
@@ -3877,6 +3880,8 @@ async def logic_loop(
             positions_fetch_count,
             f"{close_trade_ms:.0f}" if close_trade_ms is not None else "n/a",
             close_trade_count,
+            f"{signal_fetch_ms:.0f}" if signal_fetch_ms is not None else "n/a",
+            signal_fetch_count,
             entries,
             signal_count,
         )
@@ -3900,6 +3905,8 @@ async def logic_loop(
             positions_fetch_count = 0
             close_trade_ms = 0.0
             close_trade_count = 0
+            signal_fetch_ms = 0.0
+            signal_fetch_count = 0
             gpt_timed_out = False
             gpt_unavailable = False
             logging.info("[LOOP] start loop=%d", loop_counter)
@@ -4835,6 +4842,8 @@ async def logic_loop(
                         positions_fetch_count=positions_fetch_count,
                         close_trade_ms=close_trade_ms,
                         close_trade_count=close_trade_count,
+                        signal_fetch_ms=signal_fetch_ms,
+                        signal_fetch_count=signal_fetch_count,
                         entry_plans=entry_plans,
                         signal_count=len(evaluated_signals),
                     )
@@ -5480,11 +5489,15 @@ async def logic_loop(
             bus_signals: list[dict] = []
             price_hint = _safe_float(fac_m1.get("close")) or _safe_float(fac_m1.get("mid"))
             if SIGNAL_GATE_ENABLED:
+                fetch_start = time.monotonic()
                 try:
                     raw_bus = signal_bus.fetch(limit=SIGNAL_GATE_FETCH_LIMIT)
                 except Exception as exc:
                     raw_bus = []
                     logging.warning("[SIGNAL_GATE] fetch failed: %s", exc)
+                finally:
+                    signal_fetch_ms += max(0.0, (time.monotonic() - fetch_start) * 1000.0)
+                    signal_fetch_count += 1
                 for raw_sig in raw_bus:
                     norm = _normalize_bus_signal(raw_sig, price_hint)
                     if norm:
@@ -9167,6 +9180,8 @@ async def logic_loop(
                 positions_fetch_count=positions_fetch_count,
                 close_trade_ms=close_trade_ms,
                 close_trade_count=close_trade_count,
+                signal_fetch_ms=signal_fetch_ms,
+                signal_fetch_count=signal_fetch_count,
                 entry_plans=entry_plans,
                 signal_count=len(evaluated_signals),
             )
