@@ -411,7 +411,7 @@ from strategies.micro_lowvol.micro_vwap_revert import MicroVWAPRevert
 from strategies.micro_lowvol.bb_rsi_fast import BBRsiFast
 from strategies.micro_lowvol.vol_compression_break import VolCompressionBreak
 from strategies.micro_lowvol.momentum_pulse import MomentumPulse
-from utils.oanda_account import get_account_snapshot, get_position_summary
+from utils.oanda_account import get_account_snapshot
 from utils.secrets import get_secret
 from utils.metrics_logger import log_metric
 from utils.market_hours import is_market_open, seconds_until_open
@@ -5128,6 +5128,7 @@ async def logic_loop(
             account_equity = FALLBACK_EQUITY
             # クランプ検知のためのオープン玉情報
             clamp_positions = pos_manager.get_open_positions()
+            open_positions_snapshot = clamp_positions
             open_scalp_trades = 0
             try:
                 open_scalp_trades = len(
@@ -5355,7 +5356,6 @@ async def logic_loop(
                     vol_5m,
                 )
 
-            open_positions_snapshot = pos_manager.get_open_positions()
             evaluated_signals: list[dict] = []
             signals: list[dict] = []
             signal_emitted = False
@@ -6018,7 +6018,7 @@ async def logic_loop(
                 signals.append(signal)
                 logging.info("[SIGNAL] %s -> %s", cls.name, signal)
 
-            open_positions = pos_manager.get_open_positions()
+            open_positions = open_positions_snapshot
             net_units = 0
             try:
                 net_units = int(open_positions.get("__net__", {}).get("units", 0) or 0)
@@ -6092,6 +6092,7 @@ async def logic_loop(
                     partial_closed = True
             if partial_closed:
                 open_positions = pos_manager.get_open_positions()
+                open_positions_snapshot = open_positions
                 stage_snapshot = {}
                 for pocket_name, position_info in open_positions.items():
                     if pocket_name == "__net__":
@@ -6401,17 +6402,16 @@ async def logic_loop(
                 mid_price = float(fac_m1.get("close") or fac_m1.get("mid") or 0.0)
             except Exception:
                 mid_price = 0.0
-            open_positions_snapshot = pos_manager.get_open_positions()
             # bot-only net units (manualポケットは除外)
             net_units = 0
             try:
                 net_units = int(open_positions_snapshot.get("__net__", {}).get("units", 0) or 0)
             except Exception:
                 net_units = 0
+            side_long_units = 0
+            side_short_units = 0
             try:
                 bot_units = 0
-                side_long_units = 0
-                side_short_units = 0
                 for pk, info in open_positions_snapshot.items():
                     if pk in {"__net__", "__meta__"}:
                         continue
@@ -7438,12 +7438,8 @@ async def logic_loop(
                     pass
                 return max(0.75, min(1.25, mult))
 
-            long_units = 0.0
-            short_units = 0.0
-            try:
-                long_units, short_units = get_position_summary("USD_JPY", timeout=3.0)
-            except Exception:
-                long_units, short_units = 0.0, 0.0
+            long_units = float(side_long_units or 0.0)
+            short_units = float(side_short_units or 0.0)
 
             lot_total = allowed_lot(
                 account_equity,
