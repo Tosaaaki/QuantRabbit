@@ -467,6 +467,12 @@ class PositionManager:
         self._next_open_fetch_after: float = 0.0
         self._last_positions_meta: dict | None = None
         self._entry_meta_cache: dict[str, dict] = {}
+        self._last_sync_fetch_meta: dict[str, float | int] = {}
+        self._last_sync_parse_meta: dict[str, float | int] = {}
+        self._last_sync_breakdown: dict[str, float | int] = {}
+
+    def get_last_sync_breakdown(self) -> dict[str, float | int]:
+        return dict(self._last_sync_breakdown or {})
 
     @staticmethod
     def _infer_strategy_tag(thesis: dict | None, client_id: str | None, pocket: str | None) -> str | None:
@@ -801,6 +807,8 @@ class PositionManager:
 
     def _fetch_closed_trades(self):
         """OANDAから決済済みトランザクションを取得"""
+        fetch_start = time.monotonic()
+        summary_start = time.monotonic()
         summary_url = f"{REST_HOST}/v3/accounts/{ACCOUNT}/transactions"
         try:
             summary = self._request_json(
@@ -810,7 +818,16 @@ class PositionManager:
         except requests.RequestException as e:
             print(f"[PositionManager] Error fetching transactions summary: {e}")
             self._reset_http_if_needed(e)
+            summary_ms = max(0.0, (time.monotonic() - summary_start) * 1000.0)
+            self._last_sync_fetch_meta = {
+                "fetch_ms": summary_ms,
+                "summary_ms": summary_ms,
+                "chunk_ms": 0.0,
+                "chunk_count": 0,
+                "transactions": 0,
+            }
             return []
+        summary_ms = max(0.0, (time.monotonic() - summary_start) * 1000.0)
 
         try:
             last_tx_id = int(summary.get("lastTransactionID") or 0)
@@ -818,6 +835,14 @@ class PositionManager:
             last_tx_id = 0
 
         if last_tx_id <= self._last_tx_id:
+            fetch_ms = max(0.0, (time.monotonic() - fetch_start) * 1000.0)
+            self._last_sync_fetch_meta = {
+                "fetch_ms": fetch_ms,
+                "summary_ms": summary_ms,
+                "chunk_ms": 0.0,
+                "chunk_count": 0,
+                "transactions": 0,
+            }
             return []
 
         fetch_from = self._last_tx_id + 1
@@ -828,10 +853,13 @@ class PositionManager:
         transactions: list[dict] = []
         chunk_from = fetch_from
         chunk_url = f"{REST_HOST}/v3/accounts/{ACCOUNT}/transactions/idrange"
+        chunk_ms = 0.0
+        chunk_count = 0
 
         while chunk_from <= last_tx_id:
             chunk_to = min(chunk_from + _CHUNK_SIZE - 1, last_tx_id)
             params = {"from": chunk_from, "to": chunk_to}
+            chunk_start = time.monotonic()
             try:
                 data = self._request_json(chunk_url, params=params) or {}
             except requests.RequestException as e:
@@ -840,7 +868,10 @@ class PositionManager:
                     f"{chunk_from}-{chunk_to}: {e}"
                 )
                 self._reset_http_if_needed(e)
+                chunk_ms += max(0.0, (time.monotonic() - chunk_start) * 1000.0)
                 break
+            chunk_ms += max(0.0, (time.monotonic() - chunk_start) * 1000.0)
+            chunk_count += 1
             for tx in data.get("transactions") or []:
                 try:
                     tx_id = int(tx.get("id"))
@@ -853,6 +884,14 @@ class PositionManager:
             chunk_from = chunk_to + 1
 
         transactions.sort(key=_tx_sort_key)
+        fetch_ms = max(0.0, (time.monotonic() - fetch_start) * 1000.0)
+        self._last_sync_fetch_meta = {
+            "fetch_ms": fetch_ms,
+            "summary_ms": summary_ms,
+            "chunk_ms": chunk_ms,
+            "chunk_count": chunk_count,
+            "transactions": len(transactions),
+        }
         return transactions
 
     def _get_trade_details(self, trade_id: str) -> dict | None:
@@ -1009,6 +1048,10 @@ class PositionManager:
 
     def _parse_and_save_trades(self, transactions: list[dict]):
         """トランザクションを解析し、DBに保存"""
+        parse_start = time.monotonic()
+        details_ms = 0.0
+        details_calls = 0
+        db_ms = 0.0
         trades_to_save = []
         saved_records: list[dict] = []
         processed_tx_ids = set()
@@ -1042,7 +1085,10 @@ class PositionManager:
                 if not trade_id:
                     continue
 
+                details_start = time.monotonic()
                 details = self._get_trade_details(trade_id)
+                details_ms += max(0.0, (time.monotonic() - details_start) * 1000.0)
+                details_calls += 1
                 if not details:
                     continue
                 inferred_tag = self._infer_strategy_tag(
@@ -1154,6 +1200,7 @@ class PositionManager:
 
         if trades_to_save:
             # ticket_id (OANDA tradeID) が重複しないように挿入
+            db_start = time.monotonic()
             try:
                 with _file_lock(_DB_LOCK_PATH):
                     self._executemany_with_retry(
@@ -1190,24 +1237,57 @@ class PositionManager:
                         trades_to_save,
                     )
                     self._commit_with_retry()
+                db_ms = max(0.0, (time.monotonic() - db_start) * 1000.0)
             except TimeoutError:
                 logging.warning(
                     "[PositionManager] file lock busy; defer saving %d trades",
                     len(trades_to_save),
                 )
+                db_ms = max(0.0, (time.monotonic() - db_start) * 1000.0)
+                parse_ms = max(0.0, (time.monotonic() - parse_start) * 1000.0)
+                self._last_sync_parse_meta = {
+                    "parse_ms": parse_ms,
+                    "details_ms": details_ms,
+                    "details_calls": details_calls,
+                    "db_ms": db_ms,
+                    "trades_saved": len(trades_to_save),
+                }
                 return []
             print(f"[PositionManager] Saved {len(trades_to_save)} new trades.")
 
         if processed_tx_ids:
             self._last_tx_id = max(processed_tx_ids)
+        parse_ms = max(0.0, (time.monotonic() - parse_start) * 1000.0)
+        self._last_sync_parse_meta = {
+            "parse_ms": parse_ms,
+            "details_ms": details_ms,
+            "details_calls": details_calls,
+            "db_ms": db_ms,
+            "trades_saved": len(trades_to_save),
+        }
         return saved_records
 
     def sync_trades(self):
         """定期的に呼び出し、決済済みトレードを同期する"""
+        sync_start = time.monotonic()
         transactions = self._fetch_closed_trades()
+        fetch_meta = dict(self._last_sync_fetch_meta or {})
         if not transactions:
+            total_ms = max(0.0, (time.monotonic() - sync_start) * 1000.0)
+            fetch_meta.setdefault("transactions", 0)
+            fetch_meta["total_ms"] = total_ms
+            self._last_sync_breakdown = fetch_meta
             return []
-        return self._parse_and_save_trades(transactions)
+        saved_records = self._parse_and_save_trades(transactions)
+        parse_meta = dict(self._last_sync_parse_meta or {})
+        total_ms = max(0.0, (time.monotonic() - sync_start) * 1000.0)
+        breakdown = {}
+        breakdown.update(fetch_meta)
+        breakdown.update(parse_meta)
+        breakdown["total_ms"] = total_ms
+        breakdown.setdefault("transactions", len(transactions))
+        self._last_sync_breakdown = breakdown
+        return saved_records
 
     def _request_json(self, url: str, params: dict | None = None) -> dict:
         resp = self._http.get(

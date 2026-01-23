@@ -3876,6 +3876,8 @@ async def logic_loop(
         account_snapshot_count: int,
         entry_plans: Optional[int],
         signal_count: int,
+        strategy_check_ms: Optional[Dict[str, float]],
+        sync_breakdown: Optional[Dict[str, float]],
     ) -> None:
         nonlocal slow_loop_last_log_mono
         if SLOW_LOOP_LOG_MS <= 0 or decision_latency_ms < SLOW_LOOP_LOG_MS:
@@ -3912,6 +3914,34 @@ async def logic_loop(
             if value is None:
                 continue
             log_metric("loop_phase_ms", value, tags={"phase": phase}, ts=now)
+        if strategy_check_ms:
+            top_strats = sorted(
+                strategy_check_ms.items(), key=lambda item: item[1], reverse=True
+            )[:3]
+            for name, ms in top_strats:
+                if ms <= 0:
+                    continue
+                log_metric("strategy_check_ms", ms, tags={"strategy": name}, ts=now)
+        if sync_breakdown:
+            for key, value in sync_breakdown.items():
+                if value is None:
+                    continue
+                if key.endswith("_ms"):
+                    try:
+                        phase = key[:-3]
+                        log_metric("sync_breakdown_ms", float(value), tags={"phase": phase}, ts=now)
+                    except (TypeError, ValueError):
+                        continue
+                elif key in {"transactions", "chunk_count", "details_calls", "trades_saved"}:
+                    try:
+                        log_metric(
+                            "sync_breakdown_count",
+                            float(value),
+                            tags={"name": key},
+                            ts=now,
+                        )
+                    except (TypeError, ValueError):
+                        continue
         log_metric("loop_slow_ms", decision_latency_ms, tags={"phase": "total"}, ts=now)
 
         entries = entry_plans if entry_plans is not None else -1
@@ -3974,6 +4004,8 @@ async def logic_loop(
             partial_plan_count = 0
             account_snapshot_ms = 0.0
             account_snapshot_count = 0
+            strategy_check_ms = {}
+            sync_breakdown = None
             gpt_timed_out = False
             gpt_unavailable = False
             logging.info("[LOOP] start loop=%d", loop_counter)
@@ -4888,6 +4920,7 @@ async def logic_loop(
                         pass
                     sync_ms = max(0.0, (time.monotonic() - sync_start) * 1000.0)
                     log_metric("sync_trades_ms", sync_ms, tags={"phase": "gpt_unavailable"}, ts=now)
+                    sync_breakdown = pos_manager.get_last_sync_breakdown()
                     decision_latency_ms = max(0.0, (time.monotonic() - loop_start_mono) * 1000.0)
                     if gpt_timed_out:
                         decision_latency_ms = max(decision_latency_ms, 9000.0)
@@ -4932,6 +4965,8 @@ async def logic_loop(
                         account_snapshot_count=account_snapshot_count,
                         entry_plans=entry_plans,
                         signal_count=len(evaluated_signals),
+                        strategy_check_ms=strategy_check_ms,
+                        sync_breakdown=sync_breakdown,
                     )
                     await asyncio.sleep(60)
                     continue
@@ -5684,7 +5719,11 @@ async def logic_loop(
                     logging.info("[RANGE] skip %s in range mode.", sname)
                     continue
                 # GPT allowlist は参考のみ。スキップしない。
+                check_start = time.monotonic()
                 raw_signal = cls.check(fac_m1)
+                check_elapsed = max(0.0, (time.monotonic() - check_start) * 1000.0)
+                if check_elapsed > 0:
+                    strategy_check_ms[sname] = strategy_check_ms.get(sname, 0.0) + check_elapsed
                 if not raw_signal:
                     logging.info(
                         "[STRAT_SKIP] %s pocket=%s signal=None focus=%s range=%s atr=%.2f vol5=%s momentum=%.4f rsi=%s adx=%s ma10=%s ma20=%s close=%s",
@@ -9256,6 +9295,7 @@ async def logic_loop(
             await _run_blocking(pos_manager.sync_trades)
             sync_ms = max(0.0, (time.monotonic() - sync_start) * 1000.0)
             log_metric("sync_trades_ms", sync_ms, tags={"phase": "final"}, ts=now)
+            sync_breakdown = pos_manager.get_last_sync_breakdown()
 
             decision_latency_ms = max(0.0, (time.monotonic() - loop_start_mono) * 1000.0)
             if gpt_timed_out:
@@ -9299,6 +9339,8 @@ async def logic_loop(
                 account_snapshot_count=account_snapshot_count,
                 entry_plans=entry_plans,
                 signal_count=len(evaluated_signals),
+                strategy_check_ms=strategy_check_ms,
+                sync_breakdown=sync_breakdown,
             )
             await asyncio.sleep(60)
     except Exception as e:
