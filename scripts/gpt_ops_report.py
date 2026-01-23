@@ -391,6 +391,9 @@ def _normalize_policy_patch(payload: Dict[str, Any]) -> None:
     patch = payload.get("patch")
     if not isinstance(patch, dict):
         return
+    for key in ("tuning_overrides", "reentry_overrides", "metrics_window", "slo_guard"):
+        if key in patch and key not in payload:
+            payload[key] = patch.pop(key)
     pockets = patch.get("pockets")
     if not isinstance(pockets, dict):
         return
@@ -544,6 +547,7 @@ def _build_policy_prompt(report: Dict[str, Any]) -> str:
         "- If data is insufficient or uncertain, set no_change=true and omit patch.\n"
         "- Prefer targeted changes: use pockets.*.strategies allowlist, bias, and entry_gates.\n"
         "- Avoid blocking all pockets unless severe risk is present.\n"
+        "- tuning_overrides and reentry_overrides must be top-level (not inside patch).\n"
         f"- Allowed patch keys: {patch_keys}.\n"
         f"- Allowed pocket keys: {pocket_keys}.\n"
         "- strategies must be a list of strings (no allowlist object).\n"
