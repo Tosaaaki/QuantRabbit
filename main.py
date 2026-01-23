@@ -151,6 +151,8 @@ TICK_SILENCE_GRACE_SEC = float(os.getenv("TICK_SILENCE_GRACE_SEC", "120"))
 _tick_silence_strikes = 0
 _tick_silence_last_seen_mono: Optional[float] = None
 _tick_silence_start_mono = time.monotonic()
+SLOW_LOOP_LOG_MS = float(os.getenv("SLOW_LOOP_LOG_MS", "8000"))
+SLOW_LOOP_LOG_MIN_INTERVAL_SEC = float(os.getenv("SLOW_LOOP_LOG_MIN_INTERVAL_SEC", "60"))
 
 
 def _check_data_lag_watchdog(data_lag_ms: float) -> None:
@@ -3804,6 +3806,65 @@ async def logic_loop(
     last_close_m1: Optional[float] = None
     clamp_state: dict[str, object] = {}
     last_local_decision: dict | None = None
+    slow_loop_last_log_mono = 0.0
+
+    def _delta_ms(start: Optional[float], end: Optional[float]) -> Optional[float]:
+        if start is None or end is None:
+            return None
+        return max(0.0, (end - start) * 1000.0)
+
+    def _maybe_log_slow_loop(
+        *,
+        decision_latency_ms: float,
+        now: datetime.datetime,
+        loop_counter: int,
+        analysis_start_mono: Optional[float],
+        analysis_end_mono: Optional[float],
+        gpt_end_mono: Optional[float],
+        strategy_end_mono: Optional[float],
+        sync_ms: Optional[float],
+        entry_plans: Optional[int],
+        signal_count: int,
+    ) -> None:
+        nonlocal slow_loop_last_log_mono
+        if SLOW_LOOP_LOG_MS <= 0 or decision_latency_ms < SLOW_LOOP_LOG_MS:
+            return
+        now_mono = time.monotonic()
+        if (
+            SLOW_LOOP_LOG_MIN_INTERVAL_SEC > 0
+            and now_mono - slow_loop_last_log_mono < SLOW_LOOP_LOG_MIN_INTERVAL_SEC
+        ):
+            return
+        slow_loop_last_log_mono = now_mono
+
+        analysis_ms = _delta_ms(analysis_start_mono, analysis_end_mono)
+        gpt_ms = _delta_ms(analysis_end_mono, gpt_end_mono)
+        strategy_ms = _delta_ms(gpt_end_mono, strategy_end_mono)
+
+        phase_map = {
+            "analysis": analysis_ms,
+            "gpt": gpt_ms,
+            "strategy": strategy_ms,
+            "sync": sync_ms,
+        }
+        for phase, value in phase_map.items():
+            if value is None:
+                continue
+            log_metric("loop_phase_ms", value, tags={"phase": phase}, ts=now)
+        log_metric("loop_slow_ms", decision_latency_ms, tags={"phase": "total"}, ts=now)
+
+        entries = entry_plans if entry_plans is not None else -1
+        logging.warning(
+            "[SLOW_LOOP] loop=%d total_ms=%.0f analysis_ms=%s gpt_ms=%s strategy_ms=%s sync_ms=%s entries=%s signals=%d",
+            loop_counter,
+            decision_latency_ms,
+            f"{analysis_ms:.0f}" if analysis_ms is not None else "n/a",
+            f"{gpt_ms:.0f}" if gpt_ms is not None else "n/a",
+            f"{strategy_ms:.0f}" if strategy_ms is not None else "n/a",
+            f"{sync_ms:.0f}" if sync_ms is not None else "n/a",
+            entries,
+            signal_count,
+        )
 
     try:
         while True:
@@ -3812,6 +3873,12 @@ async def logic_loop(
             loop_counter += 1
             scalp_ready_forced = False
             evaluated_signals: list[dict] = []
+            entry_plans: Optional[int] = None
+            analysis_start_mono: Optional[float] = None
+            analysis_end_mono: Optional[float] = None
+            gpt_end_mono: Optional[float] = None
+            strategy_end_mono: Optional[float] = None
+            sync_ms: Optional[float] = None
             gpt_timed_out = False
             gpt_unavailable = False
             logging.info("[LOOP] start loop=%d", loop_counter)
@@ -3945,6 +4012,7 @@ async def logic_loop(
                 await asyncio.sleep(5)
                 continue
 
+            analysis_start_mono = time.monotonic()
             fac_m1 = dict(fac_m1_raw)
             recent_tick_rows = tick_window.recent_ticks(75.0, limit=180)
             tick_count = len(recent_tick_rows)
@@ -4630,6 +4698,7 @@ async def logic_loop(
             elif not prev_range_state and range_active:
                 range_entry_counter = 0
 
+            analysis_end_mono = time.monotonic()
             # --- 2. GPT判断 ---
             if FORCE_SCALP_MODE:
                 logging.warning("[FORCE_SCALP] entering GPT stage loop=%d", loop_counter)
@@ -4709,6 +4778,7 @@ async def logic_loop(
                     tags={"reason": reuse_reason},
                     ts=now,
                 )
+                gpt_end_mono = time.monotonic()
                 if gpt_unavailable and not GPT_FALLBACK_ENABLED:
                     logging.warning(
                         "[GPT] unavailable and fallback disabled; skipping entries this loop"
@@ -4729,8 +4799,22 @@ async def logic_loop(
                     if data_lag_ms is not None:
                         log_metric("data_lag_ms", data_lag_ms)
                         _check_data_lag_watchdog(data_lag_ms)
+                    _maybe_log_slow_loop(
+                        decision_latency_ms=decision_latency_ms,
+                        now=now,
+                        loop_counter=loop_counter,
+                        analysis_start_mono=analysis_start_mono,
+                        analysis_end_mono=analysis_end_mono,
+                        gpt_end_mono=gpt_end_mono,
+                        strategy_end_mono=strategy_end_mono,
+                        sync_ms=sync_ms,
+                        entry_plans=entry_plans,
+                        signal_count=len(evaluated_signals),
+                    )
                     await asyncio.sleep(60)
                     continue
+            if gpt_end_mono is None:
+                gpt_end_mono = time.monotonic()
             local_decision: dict = {}
             try:
                 local_decision = heuristic_decision(payload, last_local_decision)
@@ -8989,6 +9073,7 @@ async def logic_loop(
                     ),
                 )
 
+            strategy_end_mono = time.monotonic()
             # --- 5. 決済済み取引の同期 ---
             try:
                 if fac_m1.get("rsi") is not None:
@@ -9014,6 +9099,18 @@ async def logic_loop(
             if data_lag_ms is not None:
                 log_metric("data_lag_ms", data_lag_ms)
                 _check_data_lag_watchdog(data_lag_ms)
+            _maybe_log_slow_loop(
+                decision_latency_ms=decision_latency_ms,
+                now=now,
+                loop_counter=loop_counter,
+                analysis_start_mono=analysis_start_mono,
+                analysis_end_mono=analysis_end_mono,
+                gpt_end_mono=gpt_end_mono,
+                strategy_end_mono=strategy_end_mono,
+                sync_ms=sync_ms,
+                entry_plans=entry_plans,
+                signal_count=len(evaluated_signals),
+            )
             await asyncio.sleep(60)
     except Exception as e:
         logging.error(f"[ERROR] An unhandled exception occurred: {e}")
