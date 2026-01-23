@@ -4380,6 +4380,9 @@ async def logic_loop(
             sync_breakdown = None
             gpt_timed_out = False
             gpt_unavailable = False
+            intervention_ctx = {"active": False, "rate_check_active": False}
+            intervention_active = False
+            rate_check_active = False
             logging.info("[LOOP] start loop=%d", loop_counter)
             if FORCE_SCALP_MODE and loop_counter % 5 == 0:
                 logging.warning("[FORCE_SCALP] loop=%d", loop_counter)
@@ -4615,6 +4618,35 @@ async def logic_loop(
             if atr_pips is None:
                 atr_pips = (fac_m1.get("atr") or 0.0) * 100
             atr_pips = float(atr_pips or 0.0)
+            intervention_ctx = _update_intervention_state(
+                fac_m1,
+                now=now,
+                now_mono=time.monotonic(),
+            )
+            intervention_active = bool(intervention_ctx.get("active"))
+            rate_check_active = bool(intervention_ctx.get("rate_check_active"))
+
+            def _rate_check_wait(signal: dict, price_hint: Optional[float]) -> None:
+                if price_hint is None:
+                    return
+                wait_pips = max(0.2, min(max(atr_pips, 0.8) * 0.8, 2.5))
+                tol = max(
+                    0.25,
+                    float(signal.get("entry_tolerance_pips") or 0.0),
+                    wait_pips * 0.6,
+                )
+                if signal.get("action") == "OPEN_LONG":
+                    target = price_hint - wait_pips * PIP_VALUE
+                else:
+                    target = price_hint + wait_pips * PIP_VALUE
+                signal["entry_type"] = "limit"
+                signal["entry_price"] = round(target, 3)
+                signal["entry_tolerance_pips"] = round(tol, 2)
+                notes = signal.get("notes")
+                if not isinstance(notes, dict):
+                    notes = {}
+                notes.setdefault("rate_check", True)
+                signal["notes"] = notes
             fac_m1["range_5m_pips"] = sustained_range_5
             fac_m1["range_15m_pips"] = sustained_range_15
             vol_5m = float(fac_m1.get("vol_5m", 0.0) or 0.0)
@@ -5994,6 +6026,16 @@ async def logic_loop(
                 for raw_sig in raw_bus:
                     norm = _normalize_bus_signal(raw_sig, price_hint)
                     if norm:
+                        action = norm.get("action")
+                        if intervention_active and action in {"OPEN_LONG", "OPEN_SHORT"}:
+                            continue
+                        if rate_check_active and action in {"OPEN_LONG", "OPEN_SHORT"}:
+                            pocket = str(norm.get("pocket") or "").lower()
+                            if pocket not in {"scalp", "scalp_fast"}:
+                                continue
+                            conf_before = int(norm.get("confidence", 0) or 0)
+                            norm["confidence"] = max(10, int(conf_before * 0.6))
+                            _rate_check_wait(norm, price_hint)
                         if not _signal_gate_allowed(norm):
                             continue
                         if _mr_guard_reject(norm, context="bus"):
@@ -6308,6 +6350,25 @@ async def logic_loop(
                     price_now = float(close_val) if close_val is not None else None
                 except Exception:
                     price_now = None
+                pocket_val = (signal.get("pocket") or "").lower()
+                if intervention_active:
+                    logging.info(
+                        "[INTERVENTION] skip entry strategy=%s pocket=%s",
+                        signal.get("strategy"),
+                        pocket_val,
+                    )
+                    continue
+                if rate_check_active:
+                    if pocket_val not in {"scalp", "scalp_fast"}:
+                        logging.info(
+                            "[RATE_CHECK] skip entry strategy=%s pocket=%s",
+                            signal.get("strategy"),
+                            pocket_val,
+                        )
+                        continue
+                    conf_before = signal.get("confidence", 0)
+                    signal["confidence"] = int(max(10, conf_before * 0.6))
+                    _apply_wait(signal, reason="rate_check_wait", price_hint=price_now)
                 pos_pct = None
                 try:
                     c_list = fac_m1.get("candles") or []
@@ -6365,7 +6426,6 @@ async def logic_loop(
                     rsi_val_num = float(fac_m1.get("rsi"))
                 except Exception:
                     rsi_val_num = None
-                pocket_val = (signal.get("pocket") or "").lower()
                 if strong_trend_dir and ((is_buy and strong_trend_dir < 0) or ((not is_buy) and strong_trend_dir > 0)):
                     allow_reversal = False
                     if rsi_val_num is not None and momentum is not None:
@@ -6661,11 +6721,6 @@ async def logic_loop(
                     "long": stage_tracker.get_stage(pocket_name, "long"),
                     "short": stage_tracker.get_stage(pocket_name, "short"),
                 }
-            intervention_ctx = _update_intervention_state(
-                fac_m1,
-                now=now,
-                now_mono=time.monotonic(),
-            )
             intervention_closed = False
             if intervention_ctx.get("active"):
                 try:
