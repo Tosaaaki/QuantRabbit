@@ -3818,6 +3818,7 @@ async def logic_loop(
         decision_latency_ms: float,
         now: datetime.datetime,
         loop_counter: int,
+        loop_start_mono: float,
         analysis_start_mono: Optional[float],
         analysis_end_mono: Optional[float],
         gpt_end_mono: Optional[float],
@@ -3845,11 +3846,13 @@ async def logic_loop(
             return
         slow_loop_last_log_mono = now_mono
 
+        pre_analysis_ms = _delta_ms(loop_start_mono, analysis_start_mono)
         analysis_ms = _delta_ms(analysis_start_mono, analysis_end_mono)
         gpt_ms = _delta_ms(analysis_end_mono, gpt_end_mono)
         strategy_ms = _delta_ms(gpt_end_mono, strategy_end_mono)
 
         phase_map = {
+            "pre_analysis": pre_analysis_ms,
             "analysis": analysis_ms,
             "gpt": gpt_ms,
             "strategy": strategy_ms,
@@ -3867,9 +3870,10 @@ async def logic_loop(
 
         entries = entry_plans if entry_plans is not None else -1
         logging.warning(
-            "[SLOW_LOOP] loop=%d total_ms=%.0f analysis_ms=%s gpt_ms=%s strategy_ms=%s sync_ms=%s order_ms=%s orders=%d pos_ms=%s pos_ct=%d close_ms=%s close_ct=%d sig_ms=%s sig_ct=%d entries=%s signals=%d",
+            "[SLOW_LOOP] loop=%d total_ms=%.0f pre_ms=%s analysis_ms=%s gpt_ms=%s strategy_ms=%s sync_ms=%s order_ms=%s orders=%d pos_ms=%s pos_ct=%d close_ms=%s close_ct=%d sig_ms=%s sig_ct=%d entries=%s signals=%d",
             loop_counter,
             decision_latency_ms,
+            f"{pre_analysis_ms:.0f}" if pre_analysis_ms is not None else "n/a",
             f"{analysis_ms:.0f}" if analysis_ms is not None else "n/a",
             f"{gpt_ms:.0f}" if gpt_ms is not None else "n/a",
             f"{strategy_ms:.0f}" if strategy_ms is not None else "n/a",
@@ -4831,6 +4835,7 @@ async def logic_loop(
                         decision_latency_ms=decision_latency_ms,
                         now=now,
                         loop_counter=loop_counter,
+                        loop_start_mono=loop_start_mono,
                         analysis_start_mono=analysis_start_mono,
                         analysis_end_mono=analysis_end_mono,
                         gpt_end_mono=gpt_end_mono,
@@ -9169,6 +9174,7 @@ async def logic_loop(
                 decision_latency_ms=decision_latency_ms,
                 now=now,
                 loop_counter=loop_counter,
+                loop_start_mono=loop_start_mono,
                 analysis_start_mono=analysis_start_mono,
                 analysis_end_mono=analysis_end_mono,
                 gpt_end_mono=gpt_end_mono,
