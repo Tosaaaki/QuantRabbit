@@ -9036,13 +9036,23 @@ async def main():
         gpt_state = GPTDecisionState()
         gpt_requests = GPTRequestManager()
         fast_scalp_state = FastScalpState()
-        rr_advisor = RRRatioAdvisor()
-        exit_advisor = ExitAdvisor()
-        strategy_conf_advisor = StrategyConfidenceAdvisor()
-        focus_advisor = FocusOverrideAdvisor()
-        volatility_advisor = VolatilityBiasAdvisor()
-        stage_plan_advisor = StagePlanAdvisor()
-        partial_advisor = PartialReductionAdvisor()
+        if GPT_DISABLED:
+            rr_advisor = None
+            exit_advisor = None
+            strategy_conf_advisor = None
+            focus_advisor = None
+            volatility_advisor = None
+            stage_plan_advisor = None
+            partial_advisor = None
+            logging.info("[ADVISOR] disabled (GPT_DISABLED=1)")
+        else:
+            rr_advisor = RRRatioAdvisor()
+            exit_advisor = ExitAdvisor()
+            strategy_conf_advisor = StrategyConfidenceAdvisor()
+            focus_advisor = FocusOverrideAdvisor()
+            volatility_advisor = VolatilityBiasAdvisor()
+            stage_plan_advisor = StagePlanAdvisor()
+            partial_advisor = PartialReductionAdvisor()
 
         tasks = [
             asyncio.create_task(
