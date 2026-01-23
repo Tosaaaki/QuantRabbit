@@ -1850,6 +1850,7 @@ def evaluate_exit_techniques(
         strategy_tag = trade.get("entry_thesis", {}).get("strategy_tag")
     if not strategy_tag:
         strategy_tag = trade.get("strategy_tag")
+    tag_key = _normalize_tag_key(strategy_tag) if strategy_tag else ""
     policy = _resolve_policy(strategy_tag=strategy_tag, pocket=pocket, entry_thesis=trade.get("entry_thesis"))
 
     allow_negative = _env_bool("TECH_EXIT_ALLOW_NEGATIVE") or False
@@ -2050,6 +2051,16 @@ def evaluate_exit_techniques(
             reversal_confirmed = True
     debug["reversal_combo"] = reversal_combo
     debug["reversal_confirmed"] = reversal_confirmed
+    if tag_key == "m1scalper" and pocket in {"scalp", "scalp_fast"} and reversal_signal:
+        coverage_floor = _env_float("M1SCALP_EXIT_MIN_COVERAGE")
+        if coverage_floor is None:
+            coverage_floor = 0.7
+        coverage_pnl = _env_float("M1SCALP_EXIT_COVERAGE_PNL")
+        if coverage_pnl is None:
+            coverage_pnl = -3.5
+        if pnl_pips is not None and pnl_pips <= coverage_pnl and exit_min_coverage > coverage_floor:
+            exit_min_coverage = coverage_floor
+            debug["exit_min_coverage"] = round(exit_min_coverage, 3)
 
     allow_negative_reversal = allow_negative
     if pnl_pips is not None and pnl_pips <= -policy.exit_min_neg_pips:

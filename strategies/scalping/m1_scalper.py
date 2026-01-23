@@ -15,6 +15,7 @@ except ModuleNotFoundError:  # pragma: no cover - fallback when optional module 
         return None
 
 from analysis.range_model import compute_range_snapshot
+from market_data import orderbook_state
 
 _PIP = 0.01
 _CONFIG_PATH = Path(__file__).resolve().parents[2] / "configs" / "scalp_active_params.json"
@@ -22,6 +23,7 @@ _PARAM_CACHE: Dict[str, Dict] = {"mtime": None, "data": {}}
 _LOGGER = logging.getLogger(__name__)
 _EMPTY_TICK_LOG_DEBOUNCE_SEC = 20.0
 _last_no_tick_log_ts = 0.0
+_last_shock_ts = 0.0
 
 # 強いトレンドを逆行するエントリーを抑制するための閾値
 STRONG_TREND_PIPS = 5.0   # ema10-ema20差や価格-ema20差の目安
@@ -118,6 +120,19 @@ def _candle_body_pips(candle: Dict[str, float]) -> Optional[float]:
     return (close_px - open_px) / _PIP
 
 
+def _candle_high_low(candle: Dict[str, float]) -> tuple[Optional[float], Optional[float]]:
+    high = _to_float(candle.get("high") or candle.get("h"))
+    low = _to_float(candle.get("low") or candle.get("l"))
+    return high, low
+
+
+def _candle_range_pips(candle: Dict[str, float]) -> Optional[float]:
+    high, low = _candle_high_low(candle)
+    if high is None or low is None:
+        return None
+    return (high - low) / _PIP
+
+
 SESSION_BIAS_ENABLED = _env_bool("M1SCALP_SESSION_BIAS_ENABLED", False)
 
 
@@ -201,6 +216,73 @@ def _entry_guard(
             _log("entry_guard_mid_far_short", price=round(entry_price, 3), mid=round(mid, 3), dist=round(mid_distance, 2))
             return False
     return True
+
+
+def _shock_guard(candles: list[dict], atr_pips: Optional[float]) -> bool:
+    if not _env_bool("M1SCALP_SHOCK_GUARD_ENABLED", True):
+        return True
+    if _force_mode():
+        return True
+    if not candles:
+        return True
+    now_ts = time.time()
+    cooldown = max(10.0, _env_float("M1SCALP_SHOCK_COOLDOWN_SEC", 90.0))
+    global _last_shock_ts
+    if _last_shock_ts and (now_ts - _last_shock_ts) < cooldown:
+        return False
+    last = candles[-1]
+    range_1m = _candle_range_pips(last) or 0.0
+    body_1m = abs(_candle_body_pips(last) or 0.0)
+    range_2m = 0.0
+    if len(candles) >= 2:
+        h1, l1 = _candle_high_low(candles[-1])
+        h2, l2 = _candle_high_low(candles[-2])
+        if h1 is not None and l1 is not None and h2 is not None and l2 is not None:
+            range_2m = (max(h1, h2) - min(l1, l2)) / _PIP
+    atr_val = atr_pips or 0.0
+    range_floor = _env_float("M1SCALP_SHOCK_RANGE_PIPS", 9.0)
+    atr_mult = _env_float("M1SCALP_SHOCK_RANGE_ATR_MULT", 2.2)
+    range_thresh = max(range_floor, atr_val * max(0.5, atr_mult))
+    body_thresh = _env_float("M1SCALP_SHOCK_BODY_PIPS", 6.0)
+    range2_thresh = _env_float("M1SCALP_SHOCK_RANGE2_PIPS", 12.0)
+    if range_1m >= range_thresh or body_1m >= body_thresh or range_2m >= range2_thresh:
+        _last_shock_ts = now_ts
+        _log(
+            "shock_guard_block",
+            range_1m=round(range_1m, 2),
+            body_1m=round(body_1m, 2),
+            range_2m=round(range_2m, 2),
+            atr=round(atr_val, 2),
+            cooldown=int(cooldown),
+        )
+        return False
+    return True
+
+
+def _liquidity_guard() -> bool:
+    if not _env_bool("M1SCALP_LIQ_GUARD_ENABLED", True):
+        return True
+    if _force_mode():
+        return True
+    max_age_ms = _env_float("M1SCALP_LIQ_MAX_AGE_MS", 2500.0)
+    min_size = _env_float("M1SCALP_LIQ_MIN_SIZE", 600000.0)
+    depth = _env_int("M1SCALP_LIQ_DEPTH", 1)
+    failopen = _env_bool("M1SCALP_LIQ_FAILOPEN", True)
+    snapshot = orderbook_state.get_latest(max_age_ms=max_age_ms)
+    if snapshot is None:
+        return True if failopen else False
+    if orderbook_state.has_sufficient_depth(snapshot, depth=depth, min_size=min_size):
+        return True
+    age_ms = orderbook_state.latest_age_ms()
+    _log(
+        "liq_guard_block",
+        depth=depth,
+        min_size=int(min_size),
+        bid=round(snapshot.bid_levels[0].price, 3),
+        ask=round(snapshot.ask_levels[0].price, 3),
+        age_ms=int(age_ms or 0),
+    )
+    return False
 
 
 def _tech_multiplier(fac: Dict[str, object]) -> float:
@@ -446,6 +528,10 @@ class M1Scalper:
         atr_pips = _to_float(fac.get("atr_pips"))
         if atr_pips is None:
             atr_pips = (atr or 0.0) * 100
+        if not _shock_guard(candles, atr_pips):
+            return None
+        if not _liquidity_guard():
+            return None
 
         def _adjust_tp(tp: float, conf: int) -> float:
             """TPを信頼度とボラ/レンジ状態で可変化する。"""

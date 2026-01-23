@@ -150,6 +150,31 @@ strategies:
   M1Scalper:
     be_profile: {trigger_pips: 1.6, lock_ratio: 0.35, min_lock_pips: 0.50, cooldown_sec: 20}
     tp_move: {trigger_pips: 1.2, buffer_pips: 0.8}
+    neg_exit:
+      allow_reasons:
+        - tech_reversal_combo
+        - tech_candle_reversal
+        - tech_nwave_flip
+        - tech_hard_stop
+        - hard_stop
+        - drawdown
+        - max_drawdown
+        - health_exit
+        - hazard_exit
+        - margin_health
+        - free_margin_low
+        - margin_usage_high
+        - reversion_*
+        - fast_cut_*
+        - left_behind_*
+        - rsi_fade
+        - vwap_cut
+        - structure_break
+        - atr_spike
+        - max_adverse
+        - max_hold
+      deny_reasons:
+        - tech_return_fail
 
   fast_scalp:
     be_profile: {trigger_pips: 1.2, lock_ratio: 0.40, min_lock_pips: 0.45, cooldown_sec: 12}
