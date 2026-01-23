@@ -3832,6 +3832,8 @@ async def logic_loop(
         close_trade_count: int,
         signal_fetch_ms: Optional[float],
         signal_fetch_count: int,
+        perf_update_ms: Optional[float],
+        perf_update_count: int,
         entry_plans: Optional[int],
         signal_count: int,
     ) -> None:
@@ -3861,6 +3863,7 @@ async def logic_loop(
             "positions_fetch": positions_fetch_ms,
             "close_trade": close_trade_ms,
             "signal_fetch": signal_fetch_ms,
+            "perf_update": perf_update_ms,
         }
         for phase, value in phase_map.items():
             if value is None:
@@ -3870,7 +3873,7 @@ async def logic_loop(
 
         entries = entry_plans if entry_plans is not None else -1
         logging.warning(
-            "[SLOW_LOOP] loop=%d total_ms=%.0f pre_ms=%s analysis_ms=%s gpt_ms=%s strategy_ms=%s sync_ms=%s order_ms=%s orders=%d pos_ms=%s pos_ct=%d close_ms=%s close_ct=%d sig_ms=%s sig_ct=%d entries=%s signals=%d",
+            "[SLOW_LOOP] loop=%d total_ms=%.0f pre_ms=%s analysis_ms=%s gpt_ms=%s strategy_ms=%s sync_ms=%s order_ms=%s orders=%d pos_ms=%s pos_ct=%d close_ms=%s close_ct=%d sig_ms=%s sig_ct=%d perf_ms=%s perf_ct=%d entries=%s signals=%d",
             loop_counter,
             decision_latency_ms,
             f"{pre_analysis_ms:.0f}" if pre_analysis_ms is not None else "n/a",
@@ -3886,6 +3889,8 @@ async def logic_loop(
             close_trade_count,
             f"{signal_fetch_ms:.0f}" if signal_fetch_ms is not None else "n/a",
             signal_fetch_count,
+            f"{perf_update_ms:.0f}" if perf_update_ms is not None else "n/a",
+            perf_update_count,
             entries,
             signal_count,
         )
@@ -3911,6 +3916,8 @@ async def logic_loop(
             close_trade_count = 0
             signal_fetch_ms = 0.0
             signal_fetch_count = 0
+            perf_update_ms = 0.0
+            perf_update_count = 0
             gpt_timed_out = False
             gpt_unavailable = False
             logging.info("[LOOP] start loop=%d", loop_counter)
@@ -3927,6 +3934,7 @@ async def logic_loop(
 
             # 5分ごとにパフォーマンスを更新
             if (now - last_update_time).total_seconds() >= 300:
+                perf_start = time.monotonic()
                 perf_cache = get_perf()
                 try:
                     insight.refresh()
@@ -3979,6 +3987,8 @@ async def logic_loop(
                             con.close()
                         except Exception:
                             pass
+                perf_update_ms += max(0.0, (time.monotonic() - perf_start) * 1000.0)
+                perf_update_count += 1
                 last_update_time = now
                 logging.info(f"[PERF] Updated: {perf_cache}")
 
@@ -4849,6 +4859,8 @@ async def logic_loop(
                         close_trade_count=close_trade_count,
                         signal_fetch_ms=signal_fetch_ms,
                         signal_fetch_count=signal_fetch_count,
+                        perf_update_ms=perf_update_ms,
+                        perf_update_count=perf_update_count,
                         entry_plans=entry_plans,
                         signal_count=len(evaluated_signals),
                     )
@@ -9188,6 +9200,8 @@ async def logic_loop(
                 close_trade_count=close_trade_count,
                 signal_fetch_ms=signal_fetch_ms,
                 signal_fetch_count=signal_fetch_count,
+                perf_update_ms=perf_update_ms,
+                perf_update_count=perf_update_count,
                 entry_plans=entry_plans,
                 signal_count=len(evaluated_signals),
             )
