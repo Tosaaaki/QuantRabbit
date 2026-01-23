@@ -383,6 +383,20 @@ def _parse_policy_diff(text: str, *, source: str) -> Optional[Dict[str, Any]]:
     payload = _extract_json_payload(text)
     if not isinstance(payload, dict):
         return None
+    patch = payload.get("patch")
+    if isinstance(patch, dict):
+        pockets = patch.get("pockets")
+        if isinstance(pockets, dict):
+            for _, pocket_cfg in pockets.items():
+                if not isinstance(pocket_cfg, dict):
+                    continue
+                strategies = pocket_cfg.get("strategies")
+                if isinstance(strategies, dict):
+                    allowlist = strategies.get("allowlist") or strategies.get("allow")
+                    if isinstance(allowlist, str):
+                        pocket_cfg["strategies"] = [allowlist]
+                    elif isinstance(allowlist, (list, tuple, set)):
+                        pocket_cfg["strategies"] = [str(item) for item in allowlist if item]
     payload = normalize_policy_diff(payload, source=source)
     errors = validate_policy_diff(payload)
     if errors:
@@ -427,6 +441,7 @@ def _build_policy_prompt(report: Dict[str, Any]) -> str:
         "- Avoid blocking all pockets unless severe risk is present.\n"
         f"- Allowed patch keys: {patch_keys}.\n"
         f"- Allowed pocket keys: {pocket_keys}.\n"
+        "- strategies must be a list of strings (no allowlist object).\n"
         "- You may use tuning_overrides for exit/partial/trail tweaks (small deltas).\n\n"
         "Input JSON:\n"
         f"{payload_text}\n"
