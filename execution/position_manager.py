@@ -40,7 +40,7 @@ _RETRY_STATUS_CODES = tuple(
     if code.strip().isdigit()
 )
 _OPEN_TRADES_CACHE_TTL = float(
-    os.getenv("POSITION_MANAGER_OPEN_TRADES_CACHE_TTL", "2.0")
+    os.getenv("POSITION_MANAGER_OPEN_TRADES_CACHE_TTL", "5.0")
 )
 _OPEN_TRADES_FAIL_BACKOFF_BASE = float(
     os.getenv("POSITION_MANAGER_OPEN_TRADES_BACKOFF_BASE", "2.5")
