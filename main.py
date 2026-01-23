@@ -231,6 +231,7 @@ SIGNAL_GATE_ENABLED = _env_bool("SIGNAL_GATE_ENABLED", default=True)
 SIGNAL_GATE_FETCH_LIMIT = int(os.getenv("SIGNAL_GATE_FETCH_LIMIT", "120"))
 SIGNAL_GATE_POCKET_ALLOWLIST = _env_csv_set("SIGNAL_GATE_POCKET_ALLOWLIST")
 SIGNAL_GATE_STRATEGY_ALLOWLIST = _env_csv_set("SIGNAL_GATE_STRATEGY_ALLOWLIST")
+SIGNAL_GATE_POLICY_ENABLED = _env_bool("SIGNAL_GATE_POLICY_ENABLED", default=False)
 SIGNAL_DIVERSITY_ENABLED = _env_bool("SIGNAL_DIVERSITY_ENABLED", default=True)
 SIGNAL_DIVERSITY_DEDUPE = _env_bool("SIGNAL_DIVERSITY_DEDUPE", default=True)
 SIGNAL_DIVERSITY_IDLE_SEC = float(os.getenv("SIGNAL_DIVERSITY_IDLE_SEC", "300"))
@@ -351,6 +352,7 @@ from analysis.regime_classifier import classify
 from analysis.focus_decider import decide_focus
 from analysis.local_decider import heuristic_decision
 from analysis.gpt_decider import get_decision
+from analysis import policy_bus
 from analysis.perf_monitor import snapshot as get_perf
 from analytics.insight_client import InsightClient
 try:
@@ -3986,6 +3988,50 @@ async def logic_loop(
                 return False
         return True
 
+    def _policy_gate_allowed(
+        sig: dict,
+        policy_snapshot: Optional[policy_bus.PolicySnapshot],
+    ) -> bool:
+        if not SIGNAL_GATE_POLICY_ENABLED or policy_snapshot is None:
+            return True
+        action = str(sig.get("action") or "").upper()
+        if action == "CLOSE" or sig.get("reduce_only"):
+            return True
+        pocket = str(sig.get("pocket") or "").strip().lower()
+        pockets = policy_snapshot.pockets if isinstance(policy_snapshot.pockets, dict) else {}
+        pocket_policy = pockets.get(pocket)
+        if not isinstance(pocket_policy, dict):
+            return True
+        enabled = pocket_policy.get("enabled")
+        if enabled is not None and not bool(enabled):
+            return False
+        entry_gates = pocket_policy.get("entry_gates")
+        if isinstance(entry_gates, dict):
+            allow_new = entry_gates.get("allow_new")
+            if allow_new is not None and not bool(allow_new):
+                return False
+        bias = str(pocket_policy.get("bias") or "").strip().lower()
+        if bias == "long" and action != "OPEN_LONG":
+            return False
+        if bias == "short" and action != "OPEN_SHORT":
+            return False
+        strategies_raw = pocket_policy.get("strategies")
+        strategy_list: list[str] = []
+        if isinstance(strategies_raw, str):
+            strategy_list = [strategies_raw]
+        elif isinstance(strategies_raw, (list, tuple, set)):
+            strategy_list = [str(item) for item in strategies_raw if item]
+        if strategy_list:
+            tag = str(sig.get("strategy") or sig.get("strategy_tag") or sig.get("tag") or "").strip()
+            if not tag:
+                return False
+            tag_lower = tag.lower()
+            base = tag_lower.split("-", 1)[0]
+            allow = {str(item).strip().lower() for item in strategy_list if str(item).strip()}
+            if tag_lower not in allow and base not in allow:
+                return False
+        return True
+
     def _market_guarded_skip(signal: dict, price: Optional[float], *, context: str) -> bool:
         if not signal or price is None or price <= 0:
             return False
@@ -6035,6 +6081,12 @@ async def logic_loop(
             evaluated_count = 0
             bus_signals: list[dict] = []
             price_hint = _safe_float(fac_m1.get("close")) or _safe_float(fac_m1.get("mid"))
+            policy_snapshot = None
+            if SIGNAL_GATE_ENABLED and SIGNAL_GATE_POLICY_ENABLED:
+                try:
+                    policy_snapshot = policy_bus.latest()
+                except Exception as exc:
+                    logging.warning("[SIGNAL_GATE] policy snapshot failed: %s", exc)
             if SIGNAL_GATE_ENABLED:
                 fetch_start = time.monotonic()
                 try:
@@ -6059,6 +6111,8 @@ async def logic_loop(
                             norm["confidence"] = max(10, int(conf_before * 0.6))
                             _rate_check_wait(norm, price_hint)
                         if not _signal_gate_allowed(norm):
+                            continue
+                        if not _policy_gate_allowed(norm, policy_snapshot):
                             continue
                         if _mr_guard_reject(norm, context="bus"):
                             continue
