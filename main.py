@@ -9067,19 +9067,25 @@ async def main():
                     worker_only_loop(),
                 )
             ),
-            asyncio.create_task(
-                supervised_runner(
-                    "gpt_worker",
-                    gpt_worker(gpt_state, gpt_requests),
-                )
-            ),
         ]
+        if not GPT_DISABLED:
+            tasks.append(
+                asyncio.create_task(
+                    supervised_runner(
+                        "gpt_worker",
+                        gpt_worker(gpt_state, gpt_requests),
+                    )
+                )
+            )
 
         # 先にGPTの初期決定を温めておく（ロジック開始前のプリム）
-        try:
-            await prime_gpt_decision(gpt_state, gpt_requests)
-        except Exception:
-            logging.exception("[MAIN] prime_gpt_decision failed; continuing without primer")
+        if not GPT_DISABLED:
+            try:
+                await prime_gpt_decision(gpt_state, gpt_requests)
+            except Exception:
+                logging.exception("[MAIN] prime_gpt_decision failed; continuing without primer")
+        else:
+            logging.info("[GPT PRIME] skipped (GPT_DISABLED=1)")
 
         run_logic = (MAIN_TRADING_ENABLED or SIGNAL_GATE_ENABLED) and (
             not WORKER_ONLY_MODE or SIGNAL_GATE_ENABLED
