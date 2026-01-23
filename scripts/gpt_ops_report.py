@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import argparse
 import datetime as dt
+import decimal
 import json
 import logging
 import math
@@ -134,6 +135,21 @@ def _safe_int(value: Any) -> int:
         return 0
 
 
+def _json_safe(value: Any) -> Any:
+    if isinstance(value, (dt.datetime, dt.date)):
+        return value.isoformat()
+    if isinstance(value, decimal.Decimal):
+        try:
+            return float(value)
+        except Exception:
+            return str(value)
+    if isinstance(value, dict):
+        return {key: _json_safe(val) for key, val in value.items()}
+    if isinstance(value, list):
+        return [_json_safe(val) for val in value]
+    return value
+
+
 def _percentile(values: List[float], q: float) -> Optional[float]:
     if not values:
         return None
@@ -202,7 +218,7 @@ def _bq_latest_row(
         return None
     if not rows:
         return None
-    return dict(rows[0])
+    return _json_safe(dict(rows[0]))
 
 
 def _bq_latest_exec_row(client: Any) -> Optional[Dict[str, Any]]:
@@ -222,7 +238,7 @@ def _bq_latest_exec_row(client: Any) -> Optional[Dict[str, Any]]:
         return None
     if not rows:
         return None
-    items = [dict(row) for row in rows]
+    items = [_json_safe(dict(row)) for row in rows]
     scalp = next((row for row in items if row.get("pocket") == "scalp"), None)
     return scalp or items[0]
 
