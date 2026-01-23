@@ -255,6 +255,9 @@ WORKER_ONLY_MODE = _env_bool("WORKER_ONLY_MODE", default=False)
 # GPT を完全に無効化するフラグ（誤作動防止用）。設定時はローカル順位付けのみを使用。
 GPT_DISABLED = _env_bool("GPT_DISABLED", default=False)
 GPT_FALLBACK_ENABLED = _env_bool("GPT_FALLBACK_ENABLED", default=False)
+GPT_STRICT_REQUIRED = _env_bool("GPT_STRICT_REQUIRED", default=True)
+GPT_DECIDER_BLOCKING = _env_bool("GPT_DECIDER_BLOCKING", default=True)
+GPT_DECIDER_WAIT_TIMEOUT_SEC = float(os.getenv("GPT_DECIDER_WAIT_TIMEOUT_SEC", "30"))
 
 # ---- Dynamic allocation (strategy score / pocket cap) loader ----
 _DYNAMIC_ALLOC_PATH = Path("config/dynamic_alloc.json")
@@ -2060,6 +2063,12 @@ class GPTDecisionState:
         async with self._cond:
             while self._latest is None:
                 await self._cond.wait()
+            return dict(self._latest), self._signature, self._updated_at
+
+    async def peek_latest(self) -> Tuple[Optional[dict], Optional[str], Optional[datetime.datetime]]:
+        async with self._cond:
+            if self._latest is None:
+                return None, None, None
             return dict(self._latest), self._signature, self._updated_at
 
     async def needs_refresh(self, signature: str, min_interval: int) -> bool:
@@ -5269,26 +5278,38 @@ async def logic_loop(
                     gpt_requested = True
                     logging.info("[GPT] enqueue signature=%s", payload_signature[:10])
                     await gpt_requests.submit(payload_signature, payload)
-                    try:
-                        gpt = await gpt_state.wait_for_signature(payload_signature, timeout=30)
-                        reuse_reason = gpt.get("reason") or "live_call"
-                    except asyncio.TimeoutError:
-                        if GPT_FALLBACK_ENABLED:
-                            logging.warning(
-                                "[GPT] wait for signature %s timed out; using previous decision",
-                                payload_signature[:10],
+                    if GPT_DECIDER_BLOCKING:
+                        try:
+                            gpt = await gpt_state.wait_for_signature(
+                                payload_signature,
+                                timeout=GPT_DECIDER_WAIT_TIMEOUT_SEC,
                             )
-                            gpt, _, _ = await gpt_state.get_latest()
-                            reuse_reason = gpt.get("reason") or "cached_timeout"
-                        else:
-                            logging.warning(
-                                "[GPT] wait for signature %s timed out; fallback disabled",
-                                payload_signature[:10],
-                            )
+                            reuse_reason = gpt.get("reason") or "live_call"
+                        except asyncio.TimeoutError:
+                            if GPT_FALLBACK_ENABLED:
+                                logging.warning(
+                                    "[GPT] wait for signature %s timed out; using previous decision",
+                                    payload_signature[:10],
+                                )
+                                gpt, _, _ = await gpt_state.get_latest()
+                                reuse_reason = gpt.get("reason") or "cached_timeout"
+                            else:
+                                logging.warning(
+                                    "[GPT] wait for signature %s timed out; fallback disabled",
+                                    payload_signature[:10],
+                                )
+                                gpt = {}
+                                reuse_reason = "timeout_no_fallback"
+                                gpt_unavailable = True
+                            gpt_timed_out = True
+                    else:
+                        latest, _, _ = await gpt_state.peek_latest()
+                        if latest is None:
                             gpt = {}
-                            reuse_reason = "timeout_no_fallback"
-                            gpt_unavailable = True
-                        gpt_timed_out = True
+                            reuse_reason = "queued_nonblocking"
+                        else:
+                            gpt = latest
+                            reuse_reason = gpt.get("reason") or "queued_nonblocking"
                 else:
                     gpt, _, _ = await gpt_state.get_latest()
                     reuse_reason = gpt.get("reason") or "cached"
@@ -5308,66 +5329,70 @@ async def logic_loop(
                 )
                 gpt_end_mono = time.monotonic()
                 if gpt_unavailable and not GPT_FALLBACK_ENABLED:
-                    logging.warning(
-                        "[GPT] unavailable and fallback disabled; skipping entries this loop"
-                    )
-                    sync_start = time.monotonic()
-                    try:
-                        await _run_blocking(pos_manager.sync_trades)
-                    except Exception:
-                        pass
-                    sync_ms = max(0.0, (time.monotonic() - sync_start) * 1000.0)
-                    log_metric("sync_trades_ms", sync_ms, tags={"phase": "gpt_unavailable"}, ts=now)
-                    sync_breakdown = pos_manager.get_last_sync_breakdown()
-                    decision_latency_ms = max(0.0, (time.monotonic() - loop_start_mono) * 1000.0)
-                    if gpt_timed_out:
-                        decision_latency_ms = max(decision_latency_ms, 9000.0)
-                    log_metric("decision_latency_ms", decision_latency_ms)
-                    if first_order_start_mono is not None:
-                        pre_order_ms = max(
-                            0.0, (first_order_start_mono - loop_start_mono) * 1000.0
+                    if GPT_STRICT_REQUIRED:
+                        logging.warning(
+                            "[GPT] unavailable and fallback disabled; skipping entries this loop"
                         )
-                    else:
-                        pre_order_ms = decision_latency_ms
-                    log_metric("decision_latency_pre_order_ms", pre_order_ms)
-                    data_lag_ms = _latest_tick_lag_ms()
-                    _check_tick_silence_watchdog(data_lag_ms)
-                    if data_lag_ms is not None:
-                        log_metric("data_lag_ms", data_lag_ms)
-                        _check_data_lag_watchdog(data_lag_ms)
-                    _maybe_log_slow_loop(
-                        decision_latency_ms=decision_latency_ms,
-                        now=now,
-                        loop_counter=loop_counter,
-                        loop_start_mono=loop_start_mono,
-                        analysis_start_mono=analysis_start_mono,
-                        analysis_end_mono=analysis_end_mono,
-                        gpt_end_mono=gpt_end_mono,
-                        strategy_end_mono=strategy_end_mono,
-                        sync_ms=sync_ms,
-                        order_exec_ms=order_exec_ms,
-                        order_exec_count=order_exec_count,
-                        positions_fetch_ms=positions_fetch_ms,
-                        positions_fetch_count=positions_fetch_count,
-                        close_trade_ms=close_trade_ms,
-                        close_trade_count=close_trade_count,
-                        signal_fetch_ms=signal_fetch_ms,
-                        signal_fetch_count=signal_fetch_count,
-                        perf_update_ms=perf_update_ms,
-                        perf_update_count=perf_update_count,
-                        exit_plan_ms=exit_plan_ms,
-                        exit_plan_count=exit_plan_count,
-                        partial_plan_ms=partial_plan_ms,
-                        partial_plan_count=partial_plan_count,
-                        account_snapshot_ms=account_snapshot_ms,
-                        account_snapshot_count=account_snapshot_count,
-                        entry_plans=entry_plans,
-                        signal_count=len(evaluated_signals),
-                        strategy_check_ms=strategy_check_ms,
-                        sync_breakdown=sync_breakdown,
+                        sync_start = time.monotonic()
+                        try:
+                            await _run_blocking(pos_manager.sync_trades)
+                        except Exception:
+                            pass
+                        sync_ms = max(0.0, (time.monotonic() - sync_start) * 1000.0)
+                        log_metric("sync_trades_ms", sync_ms, tags={"phase": "gpt_unavailable"}, ts=now)
+                        sync_breakdown = pos_manager.get_last_sync_breakdown()
+                        decision_latency_ms = max(0.0, (time.monotonic() - loop_start_mono) * 1000.0)
+                        if gpt_timed_out:
+                            decision_latency_ms = max(decision_latency_ms, 9000.0)
+                        log_metric("decision_latency_ms", decision_latency_ms)
+                        if first_order_start_mono is not None:
+                            pre_order_ms = max(
+                                0.0, (first_order_start_mono - loop_start_mono) * 1000.0
+                            )
+                        else:
+                            pre_order_ms = decision_latency_ms
+                        log_metric("decision_latency_pre_order_ms", pre_order_ms)
+                        data_lag_ms = _latest_tick_lag_ms()
+                        _check_tick_silence_watchdog(data_lag_ms)
+                        if data_lag_ms is not None:
+                            log_metric("data_lag_ms", data_lag_ms)
+                            _check_data_lag_watchdog(data_lag_ms)
+                        _maybe_log_slow_loop(
+                            decision_latency_ms=decision_latency_ms,
+                            now=now,
+                            loop_counter=loop_counter,
+                            loop_start_mono=loop_start_mono,
+                            analysis_start_mono=analysis_start_mono,
+                            analysis_end_mono=analysis_end_mono,
+                            gpt_end_mono=gpt_end_mono,
+                            strategy_end_mono=strategy_end_mono,
+                            sync_ms=sync_ms,
+                            order_exec_ms=order_exec_ms,
+                            order_exec_count=order_exec_count,
+                            positions_fetch_ms=positions_fetch_ms,
+                            positions_fetch_count=positions_fetch_count,
+                            close_trade_ms=close_trade_ms,
+                            close_trade_count=close_trade_count,
+                            signal_fetch_ms=signal_fetch_ms,
+                            signal_fetch_count=signal_fetch_count,
+                            perf_update_ms=perf_update_ms,
+                            perf_update_count=perf_update_count,
+                            exit_plan_ms=exit_plan_ms,
+                            exit_plan_count=exit_plan_count,
+                            partial_plan_ms=partial_plan_ms,
+                            partial_plan_count=partial_plan_count,
+                            account_snapshot_ms=account_snapshot_ms,
+                            account_snapshot_count=account_snapshot_count,
+                            entry_plans=entry_plans,
+                            signal_count=len(evaluated_signals),
+                            strategy_check_ms=strategy_check_ms,
+                            sync_breakdown=sync_breakdown,
+                        )
+                        await asyncio.sleep(60)
+                        continue
+                    logging.warning(
+                        "[GPT] unavailable and fallback disabled; continuing with local decision"
                     )
-                    await asyncio.sleep(60)
-                    continue
             if gpt_end_mono is None:
                 gpt_end_mono = time.monotonic()
             local_decision: dict = {}
@@ -9864,11 +9889,13 @@ async def main():
             )
 
         # 先にGPTの初期決定を温めておく（ロジック開始前のプリム）
-        if not GPT_DISABLED:
+        if not GPT_DISABLED and GPT_DECIDER_BLOCKING:
             try:
                 await prime_gpt_decision(gpt_state, gpt_requests)
             except Exception:
                 logging.exception("[MAIN] prime_gpt_decision failed; continuing without primer")
+        elif not GPT_DISABLED:
+            logging.info("[GPT PRIME] skipped (GPT_DECIDER_BLOCKING=0)")
         else:
             logging.info("[GPT PRIME] skipped (GPT_DISABLED=1)")
 
