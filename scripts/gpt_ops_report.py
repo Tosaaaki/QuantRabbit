@@ -393,6 +393,19 @@ def _parse_policy_diff(text: str, *, source: str) -> Optional[Dict[str, Any]]:
 
 def _build_policy_prompt(report: Dict[str, Any]) -> str:
     schema_text = json.dumps(POLICY_DIFF_SCHEMA, ensure_ascii=True, separators=(",", ":"))
+    patch_keys = ["air_score", "uncertainty", "event_lock", "range_mode", "notes", "pockets"]
+    pocket_keys = [
+        "enabled",
+        "bias",
+        "confidence",
+        "units_cap",
+        "entry_gates",
+        "exit_profile",
+        "be_profile",
+        "partial_profile",
+        "strategies",
+        "pending_orders",
+    ]
     payload = {
         "window": report.get("window"),
         "overall": report.get("overall"),
@@ -412,6 +425,8 @@ def _build_policy_prompt(report: Dict[str, Any]) -> str:
         "- If data is insufficient or uncertain, set no_change=true and omit patch.\n"
         "- Prefer targeted changes: use pockets.*.strategies allowlist, bias, and entry_gates.\n"
         "- Avoid blocking all pockets unless severe risk is present.\n"
+        f"- Allowed patch keys: {patch_keys}.\n"
+        f"- Allowed pocket keys: {pocket_keys}.\n"
         "- You may use tuning_overrides for exit/partial/trail tweaks (small deltas).\n\n"
         "Input JSON:\n"
         f"{payload_text}\n"
