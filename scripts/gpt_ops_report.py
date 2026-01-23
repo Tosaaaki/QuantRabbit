@@ -476,7 +476,11 @@ def _sanitize_optional_object(payload: Dict[str, Any], key: str) -> None:
 def _parse_policy_diff(text: str, *, source: str) -> Optional[Dict[str, Any]]:
     payload = _extract_json_payload(text)
     if not isinstance(payload, dict):
-        logging.warning("[OPS_POLICY] no JSON payload returned from LLM.")
+        preview = " ".join((text or "").strip().split())[:200]
+        if preview:
+            logging.warning("[OPS_POLICY] no JSON payload returned from LLM. preview=%s", preview)
+        else:
+            logging.warning("[OPS_POLICY] no JSON payload returned from LLM.")
         return None
     payload["source"] = source
     _normalize_policy_patch(payload)
