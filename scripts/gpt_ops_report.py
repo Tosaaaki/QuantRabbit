@@ -463,6 +463,7 @@ def _sanitize_tuning_overrides(payload: Dict[str, Any]) -> None:
 def _parse_policy_diff(text: str, *, source: str) -> Optional[Dict[str, Any]]:
     payload = _extract_json_payload(text)
     if not isinstance(payload, dict):
+        logging.warning("[OPS_POLICY] no JSON payload returned from LLM.")
         return None
     payload["source"] = source
     _normalize_policy_patch(payload)
@@ -656,7 +657,6 @@ def _vertex_policy_diff(report: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         temperature=0.2,
         max_tokens=_POLICY_MAX_TOKENS,
         timeout_sec=_VERTEX_POLICY_TIMEOUT_SEC,
-        response_mime_type="application/json",
     )
     if not response or not response.text:
         return None
@@ -666,9 +666,16 @@ def _vertex_policy_diff(report: Dict[str, Any]) -> Optional[Dict[str, Any]]:
 def _ops_policy_diff(report: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     provider = _resolve_provider(_POLICY_PROVIDER)
     if provider == "vertex":
-        return _vertex_policy_diff(report)
+        diff = _vertex_policy_diff(report)
+        if diff is None:
+            logging.warning("[OPS_POLICY] vertex policy generation returned empty response.")
+        return diff
     if provider == "openai":
-        return _openai_policy_diff(report)
+        diff = _openai_policy_diff(report)
+        if diff is None:
+            logging.warning("[OPS_POLICY] openai policy generation returned empty response.")
+        return diff
+    logging.warning("[OPS_POLICY] unknown provider=%s", provider)
     return None
 
 
