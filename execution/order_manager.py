@@ -282,6 +282,62 @@ def _min_profit_pips(pocket: Optional[str], strategy_tag: Optional[str]) -> Opti
     return float(selected)
 
 
+def _hold_until_profit_config() -> dict:
+    cfg = _load_strategy_protection_config()
+    hold = cfg.get("hold_until_profit") if isinstance(cfg, dict) else None
+    return hold if isinstance(hold, dict) else {}
+
+
+def _normalize_hold_ids(value: object) -> set[str]:
+    if value is None:
+        return set()
+    if isinstance(value, (list, tuple, set)):
+        items = value
+    else:
+        items = [value]
+    results: set[str] = set()
+    for item in items:
+        text = str(item).strip()
+        if text:
+            results.add(text.lower())
+    return results
+
+
+def _hold_until_profit_targets() -> tuple[set[str], set[str], float, bool]:
+    client_ids = set(_EXIT_HOLD_UNTIL_PROFIT_CLIENT_IDS)
+    trade_ids = set(_EXIT_HOLD_UNTIL_PROFIT_TRADE_IDS)
+    min_pips = _EXIT_HOLD_UNTIL_PROFIT_MIN_PIPS
+    strict = _EXIT_HOLD_UNTIL_PROFIT_STRICT
+    cfg = _hold_until_profit_config()
+    if cfg:
+        client_ids |= _normalize_hold_ids(cfg.get("client_order_ids") or cfg.get("client_ids"))
+        trade_ids |= _normalize_hold_ids(cfg.get("trade_ids"))
+        cfg_min = _as_float(cfg.get("min_profit_pips"))
+        if cfg_min is not None:
+            min_pips = max(0.0, cfg_min)
+        if "strict" in cfg:
+            strict = _coerce_bool(cfg.get("strict"), strict)
+    return client_ids, trade_ids, min_pips, strict
+
+
+def _hold_until_profit_match(
+    trade_id: str,
+    client_order_id: Optional[str],
+) -> tuple[bool, float, bool]:
+    if not _EXIT_HOLD_UNTIL_PROFIT_ENABLED:
+        return False, _EXIT_HOLD_UNTIL_PROFIT_MIN_PIPS, _EXIT_HOLD_UNTIL_PROFIT_STRICT
+    client_ids, trade_ids, min_pips, strict = _hold_until_profit_targets()
+    if not client_ids and not trade_ids:
+        return False, min_pips, strict
+    if client_order_id:
+        if str(client_order_id).strip().lower() in client_ids:
+            return True, min_pips, strict
+    if trade_id:
+        if str(trade_id).strip().lower() in trade_ids:
+            return True, min_pips, strict
+    return False, min_pips, strict
+
+
 def _factor_age_seconds(tf: str = "M1") -> float | None:
     try:
         fac = (all_factors().get(tf.upper()) or {})
@@ -569,6 +625,11 @@ _EXIT_ALLOW_NEGATIVE_REASONS = {
     ).split(",")
     if token.strip()
 }
+_EXIT_HOLD_UNTIL_PROFIT_ENABLED = _env_bool("EXIT_HOLD_UNTIL_PROFIT_ENABLED", True)
+_EXIT_HOLD_UNTIL_PROFIT_CLIENT_IDS = _env_csv_set("EXIT_HOLD_UNTIL_PROFIT_CLIENT_IDS", "")
+_EXIT_HOLD_UNTIL_PROFIT_TRADE_IDS = _env_csv_set("EXIT_HOLD_UNTIL_PROFIT_TRADE_IDS", "")
+_EXIT_HOLD_UNTIL_PROFIT_MIN_PIPS = max(0.0, _env_float("EXIT_HOLD_UNTIL_PROFIT_MIN_PIPS", 0.0))
+_EXIT_HOLD_UNTIL_PROFIT_STRICT = _env_bool("EXIT_HOLD_UNTIL_PROFIT_STRICT", False)
 _EXIT_FORCE_ALLOW_REASONS = {
     token.strip().lower()
     for token in os.getenv(
@@ -2326,6 +2387,7 @@ async def close_trade(
         ask=ask,
         mid=mid,
     )
+    pl: Optional[float] = None
     if min_profit_pips is not None:
         if est_pips is not None and est_pips >= 0 and est_pips < min_profit_pips:
             emergency_allow = _should_allow_negative_close(client_order_id)
@@ -2372,8 +2434,69 @@ async def close_trade(
                     ),
                 )
                 return False
+    hold_match, hold_min_pips, hold_strict = _hold_until_profit_match(trade_id, client_order_id)
+    if hold_match:
+        profit_ok = False
+        if est_pips is not None:
+            profit_ok = est_pips > hold_min_pips
+        else:
+            pl = _current_trade_unrealized_pl(trade_id)
+            profit_ok = pl is not None and pl > 0.0
+        if not profit_ok:
+            if not hold_strict:
+                if emergency_allow is None:
+                    emergency_allow = _should_allow_negative_close(client_order_id)
+                if emergency_allow or _reason_force_allow(exit_reason):
+                    profit_ok = True
+            if not profit_ok:
+                log_metric(
+                    "close_blocked_hold_profit",
+                    float(est_pips if est_pips is not None else (pl or 0.0)),
+                    tags={
+                        "trade_id": str(trade_id),
+                        "min_pips": str(hold_min_pips),
+                        "strict": str(hold_strict),
+                    },
+                )
+                _console_order_log(
+                    "CLOSE_REJECT",
+                    pocket=pocket,
+                    strategy_tag=strategy_tag,
+                    side=None,
+                    units=units,
+                    sl_price=None,
+                    tp_price=None,
+                    client_order_id=client_order_id,
+                    ticket_id=str(trade_id),
+                    note="hold_until_profit",
+                )
+                _log_order(
+                    pocket=pocket,
+                    instrument=instrument,
+                    side=None,
+                    units=units,
+                    sl_price=None,
+                    tp_price=None,
+                    client_order_id=client_order_id,
+                    status="close_reject_hold_profit",
+                    attempt=0,
+                    ticket_id=str(trade_id),
+                    executed_price=None,
+                    request_payload=_with_exit_reason(
+                        {
+                            "trade_id": trade_id,
+                            "data": {
+                                "min_profit_pips": hold_min_pips,
+                                "est_pips": est_pips,
+                                "unrealized_pl": pl,
+                            },
+                        }
+                    ),
+                )
+                return False
     if _EXIT_NO_NEGATIVE_CLOSE:
-        pl = _current_trade_unrealized_pl(trade_id)
+        if pl is None:
+            pl = _current_trade_unrealized_pl(trade_id)
         negative_by_pips = est_pips is not None and est_pips <= 0
         negative_by_pl = pl is not None and pl <= 0
         if negative_by_pips or (est_pips is None and negative_by_pl):

@@ -47,6 +47,16 @@ defaults:
     scalp: {trigger_pips: 1.0, buffer_pips: 0.8}
   tp_move_min_gap_pips: 0.3
 
+hold_until_profit:
+  # Block closes for specific trades until they are in profit.
+  # Matches are case-insensitive.
+  client_order_ids:
+    - "qr-1769197611427-hybrid-ImpulseRetrace-55c1d9c8f"
+  trade_ids:
+    - "181052"
+  min_profit_pips: 0.0
+  strict: false
+
 strategies:
   TrendMA:
     be_profile: {trigger_pips: 7.0, lock_ratio: 0.60, min_lock_pips: 3.0, cooldown_sec: 90}
