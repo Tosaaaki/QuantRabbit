@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Any, Dict, Optional
 
 from fastapi import FastAPI, Form, HTTPException, Header, Request
-from fastapi.responses import JSONResponse, RedirectResponse
+from fastapi.responses import JSONResponse, RedirectResponse, Response
 from fastapi.templating import Jinja2Templates
 
 from autotune.database import (
@@ -898,6 +898,11 @@ def _extract_bearer(authorization: Optional[str]) -> Optional[str]:
 @app.get("/")
 def root_redirect():
     return RedirectResponse(url="/dashboard", status_code=307)
+
+
+@app.get("/favicon.ico")
+def favicon():
+    return Response(status_code=204)
 
 
 @app.get("/api/snapshot")
