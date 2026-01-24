@@ -20,13 +20,14 @@ METRICS_DB = Path("logs/metrics.db")
 ORDERS_DB = Path("logs/orders.db")
 SIGNALS_DB = Path("logs/signals.db")
 TRADES_DB = Path("logs/trades.db")
+DB_READ_TIMEOUT_SEC = float(os.getenv("UI_DB_READ_TIMEOUT_SEC", "0.2"))
 
 
 def _load_latest_metric(metric: str) -> Optional[float]:
     if not METRICS_DB.exists():
         return None
     try:
-        con = sqlite3.connect(METRICS_DB)
+        con = sqlite3.connect(METRICS_DB, timeout=DB_READ_TIMEOUT_SEC)
         cur = con.execute(
             "SELECT value FROM metrics WHERE metric = ? ORDER BY ts DESC LIMIT 1",
             (metric,),
@@ -44,7 +45,7 @@ def _load_last_metric_ts(metric: str) -> Optional[str]:
     if not METRICS_DB.exists():
         return None
     try:
-        con = sqlite3.connect(METRICS_DB)
+        con = sqlite3.connect(METRICS_DB, timeout=DB_READ_TIMEOUT_SEC)
         cur = con.execute(
             "SELECT ts FROM metrics WHERE metric = ? ORDER BY ts DESC LIMIT 1",
             (metric,),
@@ -62,7 +63,7 @@ def _load_last_orders(limit: int = 5) -> list[dict]:
     if not ORDERS_DB.exists():
         return []
     try:
-        con = sqlite3.connect(ORDERS_DB)
+        con = sqlite3.connect(ORDERS_DB, timeout=DB_READ_TIMEOUT_SEC)
         con.row_factory = sqlite3.Row
         cur = con.execute(
             "SELECT ts, pocket, side, units, status, client_order_id "
@@ -80,7 +81,7 @@ def _load_order_status_counts(limit: int = 8, hours: int = 1) -> list[dict]:
     if not ORDERS_DB.exists():
         return []
     try:
-        con = sqlite3.connect(ORDERS_DB)
+        con = sqlite3.connect(ORDERS_DB, timeout=DB_READ_TIMEOUT_SEC)
         con.row_factory = sqlite3.Row
         cur = con.execute(
             "SELECT status, count(*) AS count FROM orders "
@@ -99,7 +100,7 @@ def _load_last_signal_ts_ms() -> Optional[int]:
     if not SIGNALS_DB.exists():
         return None
     try:
-        con = sqlite3.connect(SIGNALS_DB)
+        con = sqlite3.connect(SIGNALS_DB, timeout=DB_READ_TIMEOUT_SEC)
         cur = con.execute("SELECT max(ts_ms) FROM signals")
         row = cur.fetchone()
         con.close()
@@ -115,7 +116,7 @@ def _load_recent_signals(limit: int = 5) -> list[dict]:
     if not SIGNALS_DB.exists():
         return []
     try:
-        con = sqlite3.connect(SIGNALS_DB)
+        con = sqlite3.connect(SIGNALS_DB, timeout=DB_READ_TIMEOUT_SEC)
         cur = con.execute(
             "SELECT ts_ms, payload FROM signals ORDER BY ts_ms DESC LIMIT ?",
             (int(limit),),
@@ -149,7 +150,7 @@ def _load_recent_trades(limit: int = 50) -> list[dict]:
     if not TRADES_DB.exists():
         return []
     try:
-        con = sqlite3.connect(TRADES_DB, timeout=0.2)
+        con = sqlite3.connect(TRADES_DB, timeout=DB_READ_TIMEOUT_SEC)
         con.row_factory = sqlite3.Row
         cur = con.execute(
             """
