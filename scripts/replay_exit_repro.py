@@ -1140,11 +1140,19 @@ async def run(args: argparse.Namespace) -> int:
 
     adapters = _build_adapters()
 
+    replay_start = start
+    replay_end = end
+    if trades:
+        min_entry = min(t.entry_time for t in trades)
+        max_close = max((t.actual_close_time or t.entry_time) for t in trades)
+        replay_start = max(start, min_entry)
+        replay_end = min(end, max_close + timedelta(minutes=args.tail_min))
+
     report_meta = await _replay(
         ticks_dir=ticks_dir,
         instrument=args.instrument,
-        start=start,
-        end=end,
+        start=replay_start,
+        end=replay_end,
         warmup_min=args.warmup_min,
         trades=trades,
         adapters=adapters,
@@ -1154,6 +1162,12 @@ async def run(args: argparse.Namespace) -> int:
     payload: Dict[str, Any] = {
         "summary": summary,
         "replay": report_meta,
+        "range": {
+            "requested_start": start.isoformat(),
+            "requested_end": end.isoformat(),
+            "replay_start": replay_start.isoformat(),
+            "replay_end": replay_end.isoformat(),
+        },
     }
     if not args.no_trades:
         payload["trades"] = [_trade_payload(t) for t in trades]
@@ -1187,6 +1201,7 @@ def main() -> int:
     parser.add_argument("--end", help="End datetime (YYYY-MM-DD or ISO).")
     parser.add_argument("--days", type=int, default=2, help="Auto-range days if start/end omitted.")
     parser.add_argument("--warmup-min", type=int, default=360, help="Warmup minutes before start.")
+    parser.add_argument("--tail-min", type=int, default=60, help="Minutes to extend after latest close.")
     parser.add_argument("--strategies", help="Comma-separated strategy tags to include.")
     parser.add_argument("--pockets", help="Comma-separated pockets to include.")
     parser.add_argument("--out", default="tmp/replay_exit_report.json", help="Output JSON path.")
