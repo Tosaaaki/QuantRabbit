@@ -21,7 +21,6 @@ from autotune.database import (
     set_settings,
     update_status,
 )
-from execution.position_manager import PositionManager
 from utils.secrets import get_secret
 
 try:  # pragma: no cover - optional dependency
@@ -417,6 +416,17 @@ def _load_recent_signals(limit: int = 5) -> list[dict]:
 
 
 def _build_live_snapshot() -> dict:
+    try:
+        from execution.position_manager import PositionManager
+    except Exception:
+        return {
+            "generated_at": datetime.now(timezone.utc).isoformat(),
+            "new_trades": [],
+            "recent_trades": [],
+            "open_positions": {},
+            "metrics": {},
+        }
+
     pm = PositionManager()
     new_trades: list[dict] = []
     if os.getenv("UI_SNAPSHOT_SYNC_TRADES", "").lower() in {"1", "true", "yes"}:
