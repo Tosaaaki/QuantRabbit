@@ -10,7 +10,7 @@ Restart=on-failure
 RestartSec=5
 User=tossaki
 Environment=PYTHONUNBUFFERED=1
-Environment=UI_SNAPSHOT_LITE_MODE=fast
+Environment=UI_SNAPSHOT_LITE_MODE=full
 EnvironmentFile=-/etc/quantrabbit.env
 Environment=AUTOTUNE_BQ_TABLE=quantrabbit.autotune_runs
 Environment=AUTOTUNE_BQ_SETTINGS_TABLE=quantrabbit.autotune_settings
