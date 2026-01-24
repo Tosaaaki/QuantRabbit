@@ -1,0 +1,12 @@
+[Unit]
+Description=QuantRabbit entry_thesis daily analysis timer
+
+[Timer]
+OnBootSec=5min
+OnCalendar=daily
+AccuracySec=30min
+RandomizedDelaySec=20min
+Unit=quant-entry-thesis-daily.service
+
+[Install]
+WantedBy=timers.target
