@@ -234,7 +234,7 @@ def momentum_scale(
     if mode == "reversal" and _MOMENTUM_INVERT_REVERSAL:
         score = 1.0 - score
 
-    min_mult = _env_float("EXIT_MOMENTUM_MULT_MIN", pocket_key, 0.85)
+    min_mult = _env_float("EXIT_MOMENTUM_MULT_MIN", pocket_key, 1.0)
     max_mult = _env_float("EXIT_MOMENTUM_MULT_MAX", pocket_key, 1.6)
     if max_mult < min_mult:
         max_mult = min_mult
