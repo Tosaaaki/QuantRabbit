@@ -177,7 +177,11 @@ FROM (
   SELECT
     *,
     ROW_NUMBER() OVER (
-      PARTITION BY ticket_id, close_time, pl_pips, realized_pl, state
+      PARTITION BY ticket_id,
+        close_time,
+        state,
+        CAST(ROUND(pl_pips, 3) AS STRING),
+        CAST(ROUND(realized_pl, 2) AS STRING)
       ORDER BY
         IF(strategy_tag IS NULL AND strategy IS NULL, 1, 0),
         updated_at DESC
