@@ -87,21 +87,45 @@ class BigQueryExporter:
         schema = [
             bigquery.SchemaField("ticket_id", "STRING", mode="REQUIRED"),
             bigquery.SchemaField("updated_at", "TIMESTAMP", mode="REQUIRED"),
+            bigquery.SchemaField("transaction_id", "INTEGER"),
             bigquery.SchemaField("entry_time", "TIMESTAMP"),
+            bigquery.SchemaField("open_time", "TIMESTAMP"),
             bigquery.SchemaField("close_time", "TIMESTAMP"),
             bigquery.SchemaField("pocket", "STRING"),
             bigquery.SchemaField("instrument", "STRING"),
             bigquery.SchemaField("units", "INTEGER"),
+            bigquery.SchemaField("closed_units", "INTEGER"),
             bigquery.SchemaField("entry_price", "FLOAT"),
             bigquery.SchemaField("close_price", "FLOAT"),
+            bigquery.SchemaField("fill_price", "FLOAT"),
             bigquery.SchemaField("pl_pips", "FLOAT"),
             bigquery.SchemaField("realized_pl", "FLOAT"),
+            bigquery.SchemaField("commission", "FLOAT"),
+            bigquery.SchemaField("financing", "FLOAT"),
             bigquery.SchemaField("state", "STRING"),
             bigquery.SchemaField("close_reason", "STRING"),
+            bigquery.SchemaField("version", "STRING"),
+            bigquery.SchemaField("unrealized_pl", "FLOAT"),
+            bigquery.SchemaField("strategy", "STRING"),
+            bigquery.SchemaField("strategy_tag", "STRING"),
+            bigquery.SchemaField("client_order_id", "STRING"),
+            bigquery.SchemaField("entry_thesis", "STRING"),
+            bigquery.SchemaField("macro_regime", "STRING"),
+            bigquery.SchemaField("micro_regime", "STRING"),
         ]
         try:
-            self.client.get_table(table_ref)
-        except Exception:
+            table = self.client.get_table(table_ref)
+            existing = {field.name for field in table.schema}
+            missing = [field for field in schema if field.name not in existing]
+            if missing:
+                table.schema = table.schema + missing
+                self.client.update_table(table, ["schema"])
+                logging.info(
+                    "[BQ] table %s schema updated (+%s)",
+                    table_ref,
+                    ", ".join(field.name for field in missing),
+                )
+        except gexc.NotFound:
             logging.info("[BQ] table %s を作成します", table_ref)
             table = bigquery.Table(table_ref, schema=schema)
             table.time_partitioning = bigquery.TimePartitioning(field="close_time")
@@ -123,8 +147,11 @@ class BigQueryExporter:
             params.append(last_cursor)
 
         sql = f"""
-SELECT ticket_id, updated_at, entry_time, close_time, pocket, instrument,
-       units, entry_price, close_price, pl_pips, realized_pl, state, close_reason
+SELECT transaction_id, ticket_id, updated_at, entry_time, open_time, close_time,
+       pocket, instrument, units, closed_units, entry_price, close_price, fill_price,
+       pl_pips, realized_pl, commission, financing, state, close_reason, version,
+       unrealized_pl, strategy, strategy_tag, client_order_id, entry_thesis,
+       macro_regime, micro_regime
 FROM trades
 {where_clause}
 ORDER BY datetime(updated_at) ASC
@@ -144,17 +171,31 @@ LIMIT ?
                 {
                     "ticket_id": ticket_id,
                     "updated_at": updated_at.isoformat() if updated_at else None,
+                    "transaction_id": row["transaction_id"],
                     "entry_time": self._iso(row["entry_time"]),
+                    "open_time": self._iso(row["open_time"]),
                     "close_time": self._iso(row["close_time"]),
                     "pocket": row["pocket"],
                     "instrument": row["instrument"],
                     "units": row["units"],
+                    "closed_units": row["closed_units"],
                     "entry_price": row["entry_price"],
                     "close_price": row["close_price"],
+                    "fill_price": row["fill_price"],
                     "pl_pips": row["pl_pips"],
                     "realized_pl": row["realized_pl"],
+                    "commission": row["commission"],
+                    "financing": row["financing"],
                     "state": row["state"],
                     "close_reason": row["close_reason"],
+                    "version": row["version"],
+                    "unrealized_pl": row["unrealized_pl"],
+                    "strategy": row["strategy"],
+                    "strategy_tag": row["strategy_tag"],
+                    "client_order_id": row["client_order_id"],
+                    "entry_thesis": row["entry_thesis"],
+                    "macro_regime": row["macro_regime"],
+                    "micro_regime": row["micro_regime"],
                 }
             )
         return [r for r in payload if r["updated_at"] is not None]
