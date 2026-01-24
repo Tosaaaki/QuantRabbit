@@ -16,7 +16,7 @@ from execution.section_axis import evaluate_section_exit
 from indicators.factor_cache import all_factors
 from market_data import tick_window
 from utils.metrics_logger import log_metric
-from workers.common.exit_scaling import TPScaleConfig, apply_tp_virtual_floor
+from workers.common.exit_scaling import TPScaleConfig, apply_tp_virtual_floor, momentum_scale, scale_value
 
 LOG = logging.getLogger(__name__)
 
@@ -269,9 +269,12 @@ class LondonMomentumExitWorker:
             )
             return section_decision.reason
 
+        thesis = trade.get("entry_thesis") or {}
+        if not isinstance(thesis, dict):
+            thesis = {}
+
         state = self._states.get(trade_id)
         if state is None:
-            thesis = trade.get("entry_thesis") or {}
             hard_stop = thesis.get("hard_stop_pips")
             tp_hint = thesis.get("tp_pips")
             try:
@@ -291,13 +294,43 @@ class LondonMomentumExitWorker:
             ctx.adx is not None and ctx.adx <= self.range_adx and ctx.bbw is not None and ctx.bbw <= self.range_bbw
         )
 
-        profit_take = self.range_profit_take if range_mode else self.profit_take
-        trail_start = self.range_trail_start if range_mode else self.trail_start
-        trail_backoff = self.range_trail_backoff if range_mode else self.trail_backoff
-        stop_loss = self.range_stop_loss if range_mode else self.stop_loss
-        lock_trigger = self.range_lock_trigger if range_mode else self.lock_trigger
-        lock_buffer = self.range_lock_buffer if range_mode else self.lock_buffer
-        max_hold = self.range_max_hold_sec if range_mode else self.max_hold_sec
+        strategy_tag = (
+            thesis.get("strategy_tag")
+            or thesis.get("strategy_tag_raw")
+            or thesis.get("strategy")
+            or thesis.get("tag")
+            or trade.get("strategy_tag")
+            or trade.get("strategy")
+            or "londonmomentum"
+        )
+        scale, _ = momentum_scale(
+            pocket=POCKET,
+            strategy_tag=strategy_tag,
+            entry_thesis=thesis,
+            range_active=range_mode,
+        )
+
+        profit_take = self.range_profit_take if range_mode else scale_value(
+            self.profit_take, scale=scale, floor=self.profit_take
+        )
+        trail_start = self.range_trail_start if range_mode else scale_value(
+            self.trail_start, scale=scale, floor=self.trail_start
+        )
+        trail_backoff = self.range_trail_backoff if range_mode else scale_value(
+            self.trail_backoff, scale=scale, floor=self.trail_backoff
+        )
+        stop_loss = self.range_stop_loss if range_mode else scale_value(
+            self.stop_loss, scale=scale, floor=self.stop_loss
+        )
+        lock_trigger = self.range_lock_trigger if range_mode else scale_value(
+            self.lock_trigger, scale=scale, floor=self.lock_trigger
+        )
+        lock_buffer = self.range_lock_buffer if range_mode else scale_value(
+            self.lock_buffer, scale=scale, floor=self.lock_buffer
+        )
+        max_hold = self.range_max_hold_sec if range_mode else scale_value(
+            self.max_hold_sec, scale=scale, floor=self.max_hold_sec
+        )
 
         # エントリーメタに合わせてEXIT閾値をスケール
         if state.hard_stop:

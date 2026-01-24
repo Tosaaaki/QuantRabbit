@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Dict, Optional, Sequence, Set
 
+from workers.common.exit_scaling import momentum_scale, scale_value
 from workers.common.exit_utils import close_trade
 from execution.position_manager import PositionManager
 from execution.section_axis import evaluate_section_exit
@@ -181,9 +182,12 @@ async def _run_exit_loop(
         opened_at = _parse_time(trade.get("open_time"))
         hold_sec = (now - opened_at).total_seconds() if opened_at else 0.0
 
+        thesis = trade.get("entry_thesis") or {}
+        if not isinstance(thesis, dict):
+            thesis = {}
+
         state = states.get(trade_id)
         if state is None:
-            thesis = trade.get("entry_thesis") or {}
             hard_stop = thesis.get("hard_stop_pips")
             tp_hint = thesis.get("tp_pips")
             try:
@@ -197,11 +201,26 @@ async def _run_exit_loop(
             state = _TradeState(peak=pnl, hard_stop=hard_stop_val, tp_hint=tp_hint_val)
             states[trade_id] = state
 
-        profit_take = params.profit_take
-        trail_start = params.trail_start
-        stop_loss = params.stop_loss
-        max_hold = params.max_hold_sec
-        lock_buffer = params.lock_buffer
+        strategy_tag = (
+            thesis.get("strategy_tag")
+            or thesis.get("strategy_tag_raw")
+            or thesis.get("strategy")
+            or thesis.get("tag")
+            or trade.get("strategy_tag")
+            or trade.get("strategy")
+            or "trend_h1"
+        )
+        scale, _ = momentum_scale(
+            pocket=pocket,
+            strategy_tag=strategy_tag,
+            entry_thesis=thesis,
+        )
+
+        profit_take = scale_value(params.profit_take, scale=scale, floor=params.profit_take)
+        trail_start = scale_value(params.trail_start, scale=scale, floor=params.trail_start)
+        stop_loss = scale_value(params.stop_loss, scale=scale, floor=params.stop_loss)
+        max_hold = scale_value(params.max_hold_sec, scale=scale, floor=params.max_hold_sec)
+        lock_buffer = scale_value(params.lock_buffer, scale=scale, floor=params.lock_buffer)
 
         if params.use_entry_meta:
             if state.tp_hint:

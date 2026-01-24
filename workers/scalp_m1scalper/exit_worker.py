@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Dict, Optional, Sequence, Set
 
+from workers.common.exit_scaling import momentum_scale, scale_value
 from workers.common.exit_utils import close_trade
 from execution.position_manager import PositionManager
 from execution.section_axis import evaluate_section_exit
@@ -194,9 +195,12 @@ async def _run_exit_loop(
         opened_at = _parse_time(trade.get("open_time"))
         hold_sec = (now - opened_at).total_seconds() if opened_at else 0.0
 
+        thesis = trade.get("entry_thesis") or {}
+        if not isinstance(thesis, dict):
+            thesis = {}
+
         state = states.get(trade_id)
         if state is None:
-            thesis = trade.get("entry_thesis") or {}
             hard_stop = thesis.get("hard_stop_pips")
             tp_hint = thesis.get("tp_pips")
             try:
@@ -210,9 +214,29 @@ async def _run_exit_loop(
             state = _TradeState(peak=pnl, hard_stop=hard_stop_val, tp_hint=tp_hint_val)
             states[trade_id] = state
 
-        tp = profit_take
-        ts = trail_start
-        lb = lock_buffer
+        strategy_tag = (
+            thesis.get("strategy_tag")
+            or thesis.get("strategy_tag_raw")
+            or thesis.get("strategy")
+            or thesis.get("tag")
+            or trade.get("strategy_tag")
+            or trade.get("strategy")
+            or "m1scalper"
+        )
+        scale, _ = momentum_scale(
+            pocket=pocket,
+            strategy_tag=strategy_tag,
+            entry_thesis=thesis,
+        )
+
+        min_hold = scale_value(min_hold_sec, scale=scale, floor=min_hold_sec)
+        max_hold = scale_value(max_hold_sec, scale=scale, floor=max_hold_sec)
+        max_adverse = scale_value(max_adverse_pips, scale=scale, floor=max_adverse_pips)
+
+        tp = scale_value(profit_take, scale=scale, floor=profit_take)
+        ts = scale_value(trail_start, scale=scale, floor=trail_start)
+        tb = scale_value(trail_backoff, scale=scale, floor=trail_backoff)
+        lb = scale_value(lock_buffer, scale=scale, floor=lock_buffer)
 
         if state.tp_hint:
             tp = max(tp, max(1.0, state.tp_hint * 0.9))
@@ -227,7 +251,7 @@ async def _run_exit_loop(
             client_id = client_ext.get("id")
 
         # 最低保有時間まではクローズ禁止（スプレッド負け防止）
-        if hold_sec < min_hold_sec:
+        if hold_sec < min_hold:
             return
 
         if not client_id:
@@ -241,7 +265,7 @@ async def _run_exit_loop(
             side=side,
             pocket=pocket,
             hold_sec=hold_sec,
-            min_hold_sec=min_hold_sec,
+            min_hold_sec=min_hold,
             entry_price=price_entry,
         )
         if section_decision.should_exit and section_decision.reason:
@@ -301,13 +325,13 @@ async def _run_exit_loop(
                 states.pop(trade_id, None)
                 return
 
-        if max_adverse_pips > 0 and pnl <= -max_adverse_pips:
+        if max_adverse > 0 and pnl <= -max_adverse:
             log_metric("m1scalp_max_adverse", pnl, tags={"side": side})
             await _close(trade_id, -units, "max_adverse", client_id, allow_negative=allow_negative)
             states.pop(trade_id, None)
             return
 
-        if max_hold_sec > 0 and hold_sec >= max_hold_sec and pnl <= 0:
+        if max_hold > 0 and hold_sec >= max_hold and pnl <= 0:
             log_metric("m1scalp_max_hold", pnl, tags={"side": side})
             await _close(trade_id, -units, "max_hold", client_id, allow_negative=allow_negative)
             states.pop(trade_id, None)
@@ -320,7 +344,7 @@ async def _run_exit_loop(
             state.peak > 0
             and state.peak >= trail_trigger
             and pnl > 0
-            and pnl <= state.peak - trail_backoff
+            and pnl <= state.peak - tb
         ):
             await _close(trade_id, -units, "trail_take", client_id, allow_negative=allow_negative)
             states.pop(trade_id, None)

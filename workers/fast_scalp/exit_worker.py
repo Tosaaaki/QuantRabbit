@@ -10,6 +10,7 @@ from datetime import datetime, timezone
 from typing import Dict, Optional, Sequence, Set
 
 from analysis.range_guard import detect_range_mode
+from workers.common.exit_scaling import momentum_scale, scale_value
 from workers.common.exit_utils import close_trade
 from execution.position_manager import PositionManager
 from execution.section_axis import evaluate_section_exit
@@ -190,9 +191,12 @@ class FastScalpExitWorker:
         opened_at = _parse_time(trade.get("open_time"))
         hold_sec = (now - opened_at).total_seconds() if opened_at else 0.0
 
+        thesis = trade.get("entry_thesis") or {}
+        if not isinstance(thesis, dict):
+            thesis = {}
+
         state = self._states.get(trade_id)
         if state is None:
-            thesis = trade.get("entry_thesis") or {}
             tp_hint = thesis.get("tp_pips")
             try:
                 tp_hint_val = float(tp_hint) if tp_hint is not None else None
@@ -200,15 +204,44 @@ class FastScalpExitWorker:
                 tp_hint_val = None
             state = _TradeState(peak=pnl, tp_hint=tp_hint_val)
             self._states[trade_id] = state
-        state.update(pnl, self.lock_buffer if not range_active else self.range_lock_buffer)
 
-        if hold_sec < self.min_hold_sec:
+        strategy_tag = (
+            thesis.get("strategy_tag")
+            or thesis.get("strategy_tag_raw")
+            or thesis.get("strategy")
+            or thesis.get("tag")
+            or trade.get("strategy_tag")
+            or trade.get("strategy")
+            or "fast_scalp"
+        )
+        scale, _ = momentum_scale(
+            pocket=POCKET,
+            strategy_tag=strategy_tag,
+            entry_thesis=thesis,
+            range_active=range_active,
+        )
+
+        min_hold = self.min_hold_sec
+        if not range_active:
+            min_hold = scale_value(self.min_hold_sec, scale=scale, floor=self.min_hold_sec)
+
+        profit_take = self.range_profit_take if range_active else scale_value(
+            self.profit_take, scale=scale, floor=self.profit_take
+        )
+        trail_start = self.range_trail_start if range_active else scale_value(
+            self.trail_start, scale=scale, floor=self.trail_start
+        )
+        trail_backoff = self.range_trail_backoff if range_active else scale_value(
+            self.trail_backoff, scale=scale, floor=self.trail_backoff
+        )
+        lock_buffer = self.range_lock_buffer if range_active else scale_value(
+            self.lock_buffer, scale=scale, floor=self.lock_buffer
+        )
+
+        state.update(pnl, lock_buffer)
+
+        if hold_sec < min_hold:
             return
-
-        profit_take = self.range_profit_take if range_active else self.profit_take
-        trail_start = self.range_trail_start if range_active else self.trail_start
-        trail_backoff = self.range_trail_backoff if range_active else self.trail_backoff
-        lock_buffer = self.range_lock_buffer if range_active else self.lock_buffer
 
         if state.tp_hint:
             profit_take = max(profit_take, max(1.0, state.tp_hint * 0.9))
@@ -231,7 +264,7 @@ class FastScalpExitWorker:
             side=side,
             pocket=POCKET,
             hold_sec=hold_sec,
-            min_hold_sec=self.min_hold_sec,
+            min_hold_sec=min_hold,
             entry_price=entry,
         )
         if section_decision.should_exit and section_decision.reason:
