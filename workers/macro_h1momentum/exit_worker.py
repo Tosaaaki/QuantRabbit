@@ -21,6 +21,7 @@ LOG = logging.getLogger(__name__)
 
 ALLOWED_TAGS: Set[str] = {"H1Momentum"}
 POCKET = "macro"
+PIP = 0.01
 
 
 def _float_env(key: str, default: float) -> float:
@@ -31,6 +32,20 @@ def _float_env(key: str, default: float) -> float:
         return float(raw)
     except ValueError:
         return default
+
+
+def _bool_env(key: str, default: bool) -> bool:
+    raw = os.getenv(key)
+    if raw is None:
+        return default
+    return raw.strip().lower() not in {"", "0", "false", "no"}
+
+
+def _opt_float(value: object) -> Optional[float]:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
 
 
 def _utc_now() -> datetime:
@@ -57,6 +72,60 @@ def _latest_mid() -> Optional[float]:
         return float(all_factors().get("H1", {}).get("close"))
     except Exception:
         return None
+
+
+def _h1_candle_snapshot() -> Optional[Dict[str, float]]:
+    fac_h1 = all_factors().get("H1") or {}
+    candles = fac_h1.get("candles")
+    if not isinstance(candles, list) or not candles:
+        return None
+    last = candles[-1]
+    if not isinstance(last, dict):
+        return None
+    open_ = _opt_float(last.get("open"))
+    high_ = _opt_float(last.get("high"))
+    low_ = _opt_float(last.get("low"))
+    close_ = _opt_float(last.get("close"))
+    if open_ is None or high_ is None or low_ is None or close_ is None:
+        return None
+    range_pips = max(0.0, (high_ - low_) / PIP)
+    if range_pips <= 0.0:
+        return None
+    body_pips = abs(close_ - open_) / PIP
+    body_ratio = body_pips / range_pips if range_pips > 0.0 else 0.0
+    direction = 1 if close_ > open_ else -1 if close_ < open_ else 0
+    return {
+        "dir": float(direction),
+        "range_pips": range_pips,
+        "body_pips": body_pips,
+        "body_ratio": body_ratio,
+    }
+
+
+def _candle_reversal(
+    candle: Dict[str, float],
+    side: str,
+    *,
+    min_body_pips: float,
+    min_range_pips: float,
+    min_body_ratio: float,
+) -> bool:
+    try:
+        direction = int(candle.get("dir", 0))
+        range_pips = float(candle.get("range_pips", 0.0))
+        body_pips = float(candle.get("body_pips", 0.0))
+        body_ratio = float(candle.get("body_ratio", 0.0))
+    except (TypeError, ValueError):
+        return False
+    if range_pips < min_range_pips or body_pips < min_body_pips:
+        return False
+    if min_body_ratio > 0.0 and body_ratio < min_body_ratio:
+        return False
+    if side == "long" and direction < 0:
+        return True
+    if side == "short" and direction > 0:
+        return True
+    return False
 
 
 def _filter_trades(trades: Sequence[dict], tags: Set[str]) -> list[dict]:
@@ -126,7 +195,18 @@ class H1MomentumExitWorker:
         self.rsi_take_long = _float_env("H1MOMENTUM_EXIT_RSI_TAKE_LONG", 72.0)
         self.rsi_take_short = _float_env("H1MOMENTUM_EXIT_RSI_TAKE_SHORT", 28.0)
 
-    def _context(self) -> tuple[Optional[float], Optional[float], bool]:
+        self.candle_exit_enabled = _bool_env("H1MOMENTUM_EXIT_CANDLE_ENABLED", True)
+        self.candle_exit_min_body_pips = max(
+            1.0, _float_env("H1MOMENTUM_EXIT_CANDLE_MIN_BODY_PIPS", 6.0)
+        )
+        self.candle_exit_min_range_pips = max(
+            1.0, _float_env("H1MOMENTUM_EXIT_CANDLE_MIN_RANGE_PIPS", 30.0)
+        )
+        self.candle_exit_min_body_ratio = max(
+            0.0, _float_env("H1MOMENTUM_EXIT_CANDLE_MIN_BODY_RATIO", 0.45)
+        )
+
+    def _context(self) -> tuple[Optional[float], Optional[float], bool, Optional[Dict[str, float]]]:
         factors = all_factors()
         fac_h1 = factors.get("H1") or {}
         fac_h4 = factors.get("H4") or {}
@@ -148,7 +228,7 @@ class H1MomentumExitWorker:
             atr_threshold=self.range_atr,
         )
         rsi = _safe_float(fac_h1.get("rsi"))
-        return _latest_mid(), rsi, bool(range_ctx.active)
+        return _latest_mid(), rsi, bool(range_ctx.active), _h1_candle_snapshot()
 
     async def _close(
         self,
@@ -173,7 +253,15 @@ class H1MomentumExitWorker:
         else:
             LOG.error("[EXIT-h1momentum] close failed trade=%s units=%s reason=%s", trade_id, units, reason)
 
-    async def _review_trade(self, trade: dict, now: datetime, mid: float, rsi: Optional[float], range_active: bool) -> None:
+    async def _review_trade(
+        self,
+        trade: dict,
+        now: datetime,
+        mid: float,
+        rsi: Optional[float],
+        range_active: bool,
+        candle: Optional[Dict[str, float]],
+    ) -> None:
         trade_id = str(trade.get("trade_id"))
         if not trade_id:
             return
@@ -278,6 +366,22 @@ class H1MomentumExitWorker:
             self._states.pop(trade_id, None)
             return
 
+        if (
+            self.candle_exit_enabled
+            and candle
+            and hold_sec >= min_hold
+            and _candle_reversal(
+                candle,
+                side,
+                min_body_pips=self.candle_exit_min_body_pips,
+                min_range_pips=self.candle_exit_min_range_pips,
+                min_body_ratio=self.candle_exit_min_body_ratio,
+            )
+        ):
+            await self._close(trade_id, -units, "h1_candle_reversal", pnl, client_id, allow_negative=True)
+            self._states.pop(trade_id, None)
+            return
+
         if state.tp_hint:
             profit_take = max(profit_take, max(2.0, state.tp_hint * 0.9))
             trail_start = max(trail_start, profit_take * 0.9)
@@ -327,14 +431,14 @@ class H1MomentumExitWorker:
                 if not trades:
                     continue
 
-                mid, rsi, range_active = self._context()
+                mid, rsi, range_active, candle = self._context()
                 if mid is None:
                     continue
 
                 now = _utc_now()
                 for tr in trades:
                     try:
-                        await self._review_trade(tr, now, mid, rsi, range_active)
+                        await self._review_trade(tr, now, mid, rsi, range_active, candle)
                     except Exception:
                         LOG.exception("[EXIT-h1momentum] review failed trade=%s", tr.get("trade_id"))
                         continue

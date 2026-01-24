@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from typing import Dict, Optional
 
 from indicators.factor_cache import all_factors
@@ -11,6 +12,30 @@ def _safe_float(value: object, default: float = 0.0) -> float:
     try:
         return float(value)
     except (TypeError, ValueError):
+        return default
+
+
+def _opt_float(value: object) -> Optional[float]:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _env_bool(name: str, default: bool) -> bool:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() not in {"", "0", "false", "no"}
+
+
+def _env_float(name: str, default: float) -> float:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    try:
+        return float(raw)
+    except ValueError:
         return default
 
 
@@ -44,6 +69,41 @@ class H1MomentumSwing:
         return factors
 
     @classmethod
+    def _candle_guard(cls, fac_h1: Dict[str, float], direction: str) -> bool:
+        if not _env_bool("H1M_CANDLE_GUARD_ENABLED", True):
+            return True
+        candles = fac_h1.get("candles")
+        if not isinstance(candles, list) or not candles:
+            return True
+        last = candles[-1]
+        if not isinstance(last, dict):
+            return True
+        open_ = _opt_float(last.get("open"))
+        high_ = _opt_float(last.get("high"))
+        low_ = _opt_float(last.get("low"))
+        close_ = _opt_float(last.get("close"))
+        if open_ is None or high_ is None or low_ is None or close_ is None:
+            return True
+
+        range_pips = max(0.0, (high_ - low_) / PIP)
+        if range_pips <= 0:
+            return True
+        body_pips = abs(close_ - open_) / PIP
+        last_dir = 1 if close_ > open_ else -1 if close_ < open_ else 0
+        desired_dir = 1 if direction == "long" else -1 if direction == "short" else 0
+
+        max_range = _env_float("H1M_CANDLE_MAX_RANGE_PIPS", 90.0)
+        if max_range > 0.0 and range_pips >= max_range:
+            return False
+
+        if _env_bool("H1M_CANDLE_DIR_REQUIRED", True):
+            min_body = _env_float("H1M_CANDLE_DIR_MIN_BODY_PIPS", 2.0)
+            if last_dir and desired_dir and last_dir != desired_dir and body_pips >= min_body:
+                return False
+
+        return True
+
+    @classmethod
     def check(cls, fac_m1: Dict) -> Optional[Dict]:
         fac_h1 = cls._h1_factors()
         if not fac_h1:
@@ -68,6 +128,9 @@ class H1MomentumSwing:
 
         direction = "long" if ma10 > ma20 else "short" if ma10 < ma20 else None
         if direction is None:
+            return None
+
+        if not cls._candle_guard(fac_h1, direction):
             return None
 
         # EMA alignment confirms momentum slope; require fast over slow post gap.
