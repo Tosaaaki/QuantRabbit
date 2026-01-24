@@ -3,7 +3,7 @@ Description=QuantRabbit Ops Insights timer
 
 [Timer]
 OnBootSec=2min
-OnUnitActiveSec=5min
+OnUnitActiveSec=2min
 AccuracySec=30s
 RandomizedDelaySec=20s
 
