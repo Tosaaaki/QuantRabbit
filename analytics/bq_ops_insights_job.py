@@ -25,6 +25,7 @@ DEFAULT_HEALTH_TABLE = os.getenv("BQ_OPS_HEALTH_TABLE", "ops_health")
 
 DEFAULT_LOOKBACK_MIN = int(os.getenv("BQ_OPS_INSIGHTS_LOOKBACK_MIN", "120"))
 DEFAULT_RETENTION_HOURS = int(os.getenv("BQ_OPS_INSIGHTS_RETENTION_H", "168"))
+DEFAULT_RANGE_FALLBACK_MIN = int(os.getenv("OPS_RANGE_FALLBACK_MIN", "1440"))
 
 ORDERS_DB = Path(os.getenv("BQ_ORDERS_DB", "logs/orders.db"))
 METRICS_DB = Path(os.getenv("BQ_METRICS_DB", "logs/metrics.db"))
@@ -119,10 +120,13 @@ def _metric_values(con: sqlite3.Connection, metric: str, since_ts: str) -> List[
 
 
 def _range_stats(con: sqlite3.Connection, since_ts: str) -> Dict[str, Any]:
-    rows = con.execute(
-        "SELECT value, tags FROM metrics WHERE metric = ? AND ts >= ?",
-        ("range_mode_active", since_ts),
-    ).fetchall()
+    def _fetch_rows(ts: str) -> List[tuple]:
+        return con.execute(
+            "SELECT value, tags FROM metrics WHERE metric = ? AND ts >= ?",
+            ("range_mode_active", ts),
+        ).fetchall()
+
+    rows = _fetch_rows(since_ts)
     values: List[float] = []
     scores: List[float] = []
     last_tags: Optional[Dict[str, Any]] = None
@@ -144,6 +148,31 @@ def _range_stats(con: sqlite3.Connection, since_ts: str) -> Dict[str, Any]:
                         scores.append(float(score))
                     except Exception:
                         pass
+    if not values and DEFAULT_RANGE_FALLBACK_MIN > 0:
+        fallback_ts = (_utcnow() - timedelta(minutes=DEFAULT_RANGE_FALLBACK_MIN)).isoformat()
+        rows = _fetch_rows(fallback_ts)
+        values = []
+        scores = []
+        last_tags = None
+        for value, tags in rows:
+            try:
+                values.append(float(value))
+            except Exception:
+                continue
+            if tags:
+                try:
+                    parsed = json.loads(tags)
+                except Exception:
+                    parsed = None
+                if isinstance(parsed, dict):
+                    last_tags = parsed
+                    score = parsed.get("score")
+                    if score is not None:
+                        try:
+                            scores.append(float(score))
+                        except Exception:
+                            pass
+
     ratio = (sum(values) / len(values)) if values else None
     score_avg = (sum(scores) / len(scores)) if scores else None
     reason = None
