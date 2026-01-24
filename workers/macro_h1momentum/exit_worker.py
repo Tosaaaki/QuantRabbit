@@ -41,11 +41,37 @@ def _bool_env(key: str, default: bool) -> bool:
     return raw.strip().lower() not in {"", "0", "false", "no"}
 
 
+def _safe_float(value: object, default: float = 0.0) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
 def _opt_float(value: object) -> Optional[float]:
     try:
         return float(value)
     except (TypeError, ValueError):
         return None
+
+
+def _trend_from_ma(
+    fac: Optional[Dict[str, float]],
+) -> tuple[Optional[str], float, bool]:
+    if not fac:
+        return None, 0.0, False
+    ma10 = fac.get("ma10")
+    ma20 = fac.get("ma20")
+    if ma10 is None or ma20 is None:
+        return None, 0.0, False
+    try:
+        ma10_val = float(ma10)
+        ma20_val = float(ma20)
+    except (TypeError, ValueError):
+        return None, 0.0, False
+    gap_pips = abs(ma10_val - ma20_val) / PIP
+    direction = "long" if ma10_val > ma20_val else "short" if ma10_val < ma20_val else None
+    return direction, gap_pips, True
 
 
 def _utc_now() -> datetime:
@@ -74,8 +100,9 @@ def _latest_mid() -> Optional[float]:
         return None
 
 
-def _h1_candle_snapshot() -> Optional[Dict[str, float]]:
-    fac_h1 = all_factors().get("H1") or {}
+def _h1_candle_snapshot(fac_h1: Optional[Dict[str, float]] = None) -> Optional[Dict[str, float]]:
+    if fac_h1 is None:
+        fac_h1 = all_factors().get("H1") or {}
     candles = fac_h1.get("candles")
     if not isinstance(candles, list) or not candles:
         return None
@@ -206,20 +233,27 @@ class H1MomentumExitWorker:
             0.0, _float_env("H1MOMENTUM_EXIT_CANDLE_MIN_BODY_RATIO", 0.45)
         )
 
-    def _context(self) -> tuple[Optional[float], Optional[float], bool, Optional[Dict[str, float]]]:
+        self.mtf_exit_enabled = _bool_env("H1MOMENTUM_EXIT_MTF_ENABLED", True)
+        self.mtf_h4_required = _bool_env("H1M_MTF_H4_REQUIRED", True)
+        self.mtf_d1_veto = _bool_env("H1M_MTF_D1_VETO", True)
+        self.mtf_h4_min_gap = max(0.0, _float_env("H1M_MTF_H4_MIN_GAP_PIPS", 1.6))
+        self.mtf_d1_min_gap = max(0.0, _float_env("H1M_MTF_D1_MIN_GAP_PIPS", 3.5))
+        self.mtf_d1_min_adx = max(0.0, _float_env("H1M_MTF_D1_MIN_ADX", 20.0))
+
+    def _context(
+        self,
+    ) -> tuple[
+        Optional[float],
+        Optional[float],
+        bool,
+        Optional[Dict[str, float]],
+        Dict[str, float],
+        Dict[str, float],
+    ]:
         factors = all_factors()
         fac_h1 = factors.get("H1") or {}
         fac_h4 = factors.get("H4") or {}
-
-        def _safe_float(val: object) -> Optional[float]:
-            try:
-                return float(val)
-            except Exception:
-                return None
-
-        adx = _safe_float(fac_h1.get("adx"))
-        bbw = _safe_float(fac_h1.get("bbw"))
-        atr = _safe_float(fac_h1.get("atr_pips")) or (_safe_float(fac_h1.get("atr")) or 0.0) * 100.0
+        fac_d1 = factors.get("D1") or {}
         range_ctx = detect_range_mode(
             fac_h1,
             fac_h4,
@@ -227,8 +261,29 @@ class H1MomentumExitWorker:
             bbw_threshold=self.range_bbw,
             atr_threshold=self.range_atr,
         )
-        rsi = _safe_float(fac_h1.get("rsi"))
-        return _latest_mid(), rsi, bool(range_ctx.active), _h1_candle_snapshot()
+        rsi = _opt_float(fac_h1.get("rsi"))
+        return _latest_mid(), rsi, bool(range_ctx.active), _h1_candle_snapshot(fac_h1), fac_h4, fac_d1
+
+    def _mtf_exit_reason(
+        self, side: str, fac_h4: Dict[str, float], fac_d1: Dict[str, float]
+    ) -> Optional[str]:
+        if not self.mtf_exit_enabled:
+            return None
+
+        direction = "long" if side == "long" else "short"
+        h4_dir, h4_gap, h4_ready = _trend_from_ma(fac_h4)
+        if self.mtf_h4_required and h4_ready:
+            if h4_dir != direction or h4_gap < self.mtf_h4_min_gap:
+                return "mtf_h4_misaligned"
+
+        if self.mtf_d1_veto:
+            d1_dir, d1_gap, d1_ready = _trend_from_ma(fac_d1)
+            if d1_ready and d1_dir and d1_dir != direction:
+                d1_adx = _safe_float(fac_d1.get("adx"))
+                if d1_gap >= self.mtf_d1_min_gap or d1_adx >= self.mtf_d1_min_adx:
+                    return "mtf_d1_veto"
+
+        return None
 
     async def _close(
         self,
@@ -261,6 +316,8 @@ class H1MomentumExitWorker:
         rsi: Optional[float],
         range_active: bool,
         candle: Optional[Dict[str, float]],
+        fac_h4: Dict[str, float],
+        fac_d1: Dict[str, float],
     ) -> None:
         trade_id = str(trade.get("trade_id"))
         if not trade_id:
@@ -366,6 +423,12 @@ class H1MomentumExitWorker:
             self._states.pop(trade_id, None)
             return
 
+        mtf_reason = self._mtf_exit_reason(side, fac_h4, fac_d1)
+        if mtf_reason:
+            await self._close(trade_id, -units, mtf_reason, pnl, client_id, allow_negative=True)
+            self._states.pop(trade_id, None)
+            return
+
         if (
             self.candle_exit_enabled
             and candle
@@ -431,14 +494,14 @@ class H1MomentumExitWorker:
                 if not trades:
                     continue
 
-                mid, rsi, range_active, candle = self._context()
+                mid, rsi, range_active, candle, fac_h4, fac_d1 = self._context()
                 if mid is None:
                     continue
 
                 now = _utc_now()
                 for tr in trades:
                     try:
-                        await self._review_trade(tr, now, mid, rsi, range_active, candle)
+                        await self._review_trade(tr, now, mid, rsi, range_active, candle, fac_h4, fac_d1)
                     except Exception:
                         LOG.exception("[EXIT-h1momentum] review failed trade=%s", tr.get("trade_id"))
                         continue

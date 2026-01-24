@@ -39,6 +39,25 @@ def _env_float(name: str, default: float) -> float:
         return default
 
 
+def _trend_from_ma(
+    fac: Optional[Dict[str, float]],
+) -> tuple[Optional[str], float, bool]:
+    if not fac:
+        return None, 0.0, False
+    ma10 = fac.get("ma10")
+    ma20 = fac.get("ma20")
+    if ma10 is None or ma20 is None:
+        return None, 0.0, False
+    try:
+        ma10_val = float(ma10)
+        ma20_val = float(ma20)
+    except (TypeError, ValueError):
+        return None, 0.0, False
+    gap_pips = abs(ma10_val - ma20_val) / PIP
+    direction = "long" if ma10_val > ma20_val else "short" if ma10_val < ma20_val else None
+    return direction, gap_pips, True
+
+
 class H1MomentumSwing:
     """
     Intermediate-term (H1) trend follower that bridges macro and micro cadence.
@@ -57,16 +76,51 @@ class H1MomentumSwing:
     _MIN_M1_RSI_SUPPORT = 20.0
 
     @classmethod
-    def _h1_factors(cls) -> Optional[Dict[str, float]]:
-        factors = all_factors().get("H1")
-        if not factors:
+    def _tf_factors(
+        cls, factors: Dict[str, Dict[str, float]], tf: str
+    ) -> Optional[Dict[str, float]]:
+        fac = factors.get(tf)
+        if not fac:
             return None
-        close = factors.get("close")
-        ma10 = factors.get("ma10")
-        ma20 = factors.get("ma20")
+        close = fac.get("close")
+        ma10 = fac.get("ma10")
+        ma20 = fac.get("ma20")
         if close is None or ma10 is None or ma20 is None:
             return None
-        return factors
+        return fac
+
+    @classmethod
+    def _h1_factors(cls, factors: Optional[Dict[str, Dict[str, float]]] = None) -> Optional[Dict[str, float]]:
+        if factors is None:
+            factors = all_factors()
+        return cls._tf_factors(factors, "H1")
+
+    @classmethod
+    def _mtf_guard(cls, factors: Dict[str, Dict[str, float]], direction: str) -> bool:
+        if not _env_bool("H1M_MTF_ENABLED", True):
+            return True
+
+        h4_required = _env_bool("H1M_MTF_H4_REQUIRED", True)
+        h4_min_gap = max(0.0, _env_float("H1M_MTF_H4_MIN_GAP_PIPS", 1.6))
+        fac_h4 = cls._tf_factors(factors, "H4")
+        h4_dir, h4_gap, h4_ready = _trend_from_ma(fac_h4)
+        if h4_required:
+            if not h4_ready:
+                return False
+            if h4_dir != direction or h4_gap < h4_min_gap:
+                return False
+
+        if _env_bool("H1M_MTF_D1_VETO", True):
+            fac_d1 = cls._tf_factors(factors, "D1")
+            d1_dir, d1_gap, d1_ready = _trend_from_ma(fac_d1)
+            if d1_ready and d1_dir and d1_dir != direction:
+                d1_adx = _safe_float(fac_d1.get("adx")) if fac_d1 else 0.0
+                d1_min_gap = max(0.0, _env_float("H1M_MTF_D1_MIN_GAP_PIPS", 3.5))
+                d1_min_adx = max(0.0, _env_float("H1M_MTF_D1_MIN_ADX", 20.0))
+                if d1_gap >= d1_min_gap or d1_adx >= d1_min_adx:
+                    return False
+
+        return True
 
     @classmethod
     def _candle_guard(cls, fac_h1: Dict[str, float], direction: str) -> bool:
@@ -105,7 +159,8 @@ class H1MomentumSwing:
 
     @classmethod
     def check(cls, fac_m1: Dict) -> Optional[Dict]:
-        fac_h1 = cls._h1_factors()
+        factors = all_factors()
+        fac_h1 = cls._h1_factors(factors)
         if not fac_h1:
             return None
 
@@ -131,6 +186,8 @@ class H1MomentumSwing:
             return None
 
         if not cls._candle_guard(fac_h1, direction):
+            return None
+        if not cls._mtf_guard(factors, direction):
             return None
 
         # EMA alignment confirms momentum slope; require fast over slow post gap.
