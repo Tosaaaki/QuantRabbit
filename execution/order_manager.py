@@ -419,16 +419,139 @@ def _min_rr_for(pocket: Optional[str]) -> float:
     return min(value, 5.0)
 
 
-def _tp_cap_for(pocket: Optional[str]) -> float:
-    if not _TP_CAP_ENABLED or not pocket:
-        return 0.0
+def _tp_cap_env_float(name: str, pocket: Optional[str], default: float) -> float:
+    pocket_upper = str(pocket).upper() if pocket else ""
+    if pocket_upper:
+        raw = os.getenv(f"{name}_{pocket_upper}")
+        if raw is not None:
+            try:
+                return float(raw)
+            except Exception:
+                pass
+    return _env_float(name, default)
+
+
+def _tp_cap_env_str(name: str, pocket: Optional[str], default: str) -> str:
+    pocket_upper = str(pocket).upper() if pocket else ""
+    if pocket_upper:
+        raw = os.getenv(f"{name}_{pocket_upper}")
+        if raw:
+            return raw.strip()
+    raw = os.getenv(name)
+    if raw:
+        return raw.strip()
+    return default
+
+
+def _tp_cap_factors(
+    pocket: Optional[str],
+    entry_thesis: Optional[dict],
+) -> tuple[str, dict]:
+    default_tf = _TP_CAP_TF_DEFAULTS.get(str(pocket).lower() if pocket else "", "M1")
+    tf = _tp_cap_env_str("ORDER_TP_CAP_TF", pocket, default_tf).upper()
+    fac: dict = {}
     try:
-        value = float(_TP_CAP_BY_POCKET.get(str(pocket).lower(), 0.0))
+        fac = (all_factors().get(tf) or {}) if tf else {}
     except Exception:
-        return 0.0
-    if value <= 0.0:
-        return 0.0
-    return min(value, 200.0)
+        fac = {}
+    if fac:
+        return tf, fac
+    if isinstance(entry_thesis, dict):
+        thesis_factors = entry_thesis.get("factors")
+        if isinstance(thesis_factors, dict):
+            fallback = thesis_factors.get(tf.lower()) or thesis_factors.get(tf)
+            if isinstance(fallback, dict):
+                return tf, fallback
+    return tf, {}
+
+
+def _tp_cap_normalize(value: Optional[float], low: float, high: float) -> Optional[float]:
+    if value is None:
+        return None
+    if high <= low:
+        return None
+    return max(0.0, min(1.0, (value - low) / (high - low)))
+
+
+def _tp_cap_dynamic_multiplier(
+    pocket: Optional[str],
+    entry_thesis: Optional[dict],
+) -> tuple[float, Optional[dict]]:
+    if not _TP_CAP_DYNAMIC_ENABLED:
+        return 1.0, None
+    tf, fac = _tp_cap_factors(pocket, entry_thesis)
+    if not fac:
+        return 1.0, {"tf": tf, "reason": "no_factors"}
+    adx = _as_float(fac.get("adx"))
+    atr_pips = _as_float(fac.get("atr_pips"))
+    if atr_pips is None:
+        atr = _as_float(fac.get("atr"))
+        if atr is not None:
+            atr_pips = atr * 100.0
+    adx_low = _tp_cap_env_float("ORDER_TP_CAP_ADX_LOW", pocket, 18.0)
+    adx_high = _tp_cap_env_float("ORDER_TP_CAP_ADX_HIGH", pocket, 35.0)
+    atr_low = _tp_cap_env_float("ORDER_TP_CAP_ATR_LOW", pocket, 6.0)
+    atr_high = _tp_cap_env_float("ORDER_TP_CAP_ATR_HIGH", pocket, 14.0)
+    trend_score = _tp_cap_normalize(adx, adx_low, adx_high)
+    vol_score = _tp_cap_normalize(atr_pips, atr_low, atr_high)
+    weight_trend = _tp_cap_env_float("ORDER_TP_CAP_WEIGHT_TREND", pocket, 0.6)
+    weight_vol = _tp_cap_env_float("ORDER_TP_CAP_WEIGHT_VOL", pocket, 0.4)
+    score_sum = 0.0
+    weight_sum = 0.0
+    if trend_score is not None:
+        score_sum += trend_score * weight_trend
+        weight_sum += weight_trend
+    if vol_score is not None:
+        score_sum += vol_score * weight_vol
+        weight_sum += weight_vol
+    if weight_sum <= 0.0:
+        return 1.0, {
+            "tf": tf,
+            "adx": adx,
+            "atr_pips": atr_pips,
+            "reason": "no_scores",
+        }
+    score = score_sum / weight_sum
+    min_mult = _tp_cap_env_float("ORDER_TP_CAP_MULT_MIN", pocket, 0.8)
+    max_mult = _tp_cap_env_float("ORDER_TP_CAP_MULT_MAX", pocket, 1.6)
+    if max_mult < min_mult:
+        min_mult, max_mult = max_mult, min_mult
+    mult = min_mult + (max_mult - min_mult) * score
+    meta = {
+        "tf": tf,
+        "adx": adx,
+        "atr_pips": atr_pips,
+        "trend_score": trend_score,
+        "vol_score": vol_score,
+        "score": score,
+        "min_mult": min_mult,
+        "max_mult": max_mult,
+        "weight_trend": weight_trend,
+        "weight_vol": weight_vol,
+    }
+    return mult, meta
+
+
+def _tp_cap_for(
+    pocket: Optional[str],
+    entry_thesis: Optional[dict] = None,
+) -> tuple[float, Optional[dict]]:
+    if not _TP_CAP_ENABLED or not pocket:
+        return 0.0, None
+    try:
+        base = float(_TP_CAP_BY_POCKET.get(str(pocket).lower(), 0.0))
+    except Exception:
+        return 0.0, None
+    if base <= 0.0:
+        return 0.0, None
+    mult, meta = _tp_cap_dynamic_multiplier(pocket, entry_thesis)
+    if mult <= 0.0:
+        mult = 0.1
+    cap = min(base * mult, 200.0)
+    if meta:
+        meta = dict(meta)
+        meta.update({"cap_base": base, "cap_mult": mult, "cap_final": cap})
+    return cap, meta
 
 
 _EXIT_NO_NEGATIVE_CLOSE = os.getenv("EXIT_NO_NEGATIVE_CLOSE", "1").strip().lower() not in {"", "0", "false", "no"}
@@ -441,9 +564,8 @@ _EXIT_ALLOW_NEGATIVE_REASONS = {
     token.strip().lower()
     for token in os.getenv(
         "EXIT_ALLOW_NEGATIVE_REASONS",
-        "drawdown,max_drawdown,hard_stop,tech_*,health_exit,hazard_exit,"
-        "margin_health,free_margin_low,margin_usage_high,structure_break,reversion_*,"
-        "fast_cut_*,left_behind_*",
+        "hard_stop,tech_hard_stop,drawdown,max_drawdown,health_exit,hazard_exit,"
+        "margin_health,free_margin_low,margin_usage_high",
     ).split(",")
     if token.strip()
 }
@@ -546,6 +668,20 @@ _TP_CAP_BY_POCKET = {
     "scalp": float(os.getenv("ORDER_TP_CAP_SCALP", "6.0")),
     "scalp_fast": float(os.getenv("ORDER_TP_CAP_SCALP_FAST", "3.0")),
     "manual": float(os.getenv("ORDER_TP_CAP_MANUAL", "0.0")),
+}
+# Momentum-aware TP cap scaling (opt-in).
+_TP_CAP_DYNAMIC_ENABLED = os.getenv("ORDER_TP_CAP_DYNAMIC_ENABLED", "0").strip().lower() not in {
+    "",
+    "0",
+    "false",
+    "no",
+}
+_TP_CAP_TF_DEFAULTS = {
+    "macro": "H1",
+    "micro": "M5",
+    "scalp": "M1",
+    "scalp_fast": "M1",
+    "manual": "H1",
 }
 # ワーカーのオーダーをメインの関所に転送するフラグ（reduce_only は除外）
 _FORWARD_TO_SIGNAL_GATE = (
@@ -4564,7 +4700,7 @@ async def market_order(
                 )
 
     if not reduce_only and entry_basis is not None and tp_price is not None:
-        tp_cap = _tp_cap_for(pocket)
+        tp_cap, tp_cap_meta = _tp_cap_for(pocket, entry_thesis)
         if tp_cap > 0.0:
             tp_pips = abs(tp_price - entry_basis) / 0.01
             if tp_pips > tp_cap:
@@ -4584,7 +4720,7 @@ async def market_order(
                             sl_price = round(entry_basis + max_sl_pips * 0.01, 3)
                 if isinstance(entry_thesis, dict):
                     entry_thesis = dict(entry_thesis)
-                    entry_thesis["tp_cap_applied"] = {
+                    payload = {
                         "cap_pips": round(tp_cap, 2),
                         "tp_pips_before": round(tp_pips, 2),
                         "tp_pips_after": round(adj_tp_pips, 2),
@@ -4592,6 +4728,31 @@ async def market_order(
                             abs(entry_basis - sl_price) / 0.01, 2
                         ) if sl_price is not None else None,
                     }
+                    if isinstance(tp_cap_meta, dict):
+                        payload.update(
+                            {
+                                "cap_base": round(float(tp_cap_meta.get("cap_base", tp_cap)), 2),
+                                "cap_mult": round(float(tp_cap_meta.get("cap_mult", 1.0)), 3),
+                                "cap_final": round(float(tp_cap_meta.get("cap_final", tp_cap)), 2),
+                                "cap_tf": tp_cap_meta.get("tf"),
+                                "cap_score": (
+                                    round(float(tp_cap_meta.get("score")), 3)
+                                    if tp_cap_meta.get("score") is not None
+                                    else None
+                                ),
+                                "cap_adx": (
+                                    round(float(tp_cap_meta.get("adx")), 2)
+                                    if tp_cap_meta.get("adx") is not None
+                                    else None
+                                ),
+                                "cap_atr_pips": (
+                                    round(float(tp_cap_meta.get("atr_pips")), 2)
+                                    if tp_cap_meta.get("atr_pips") is not None
+                                    else None
+                                ),
+                            }
+                        )
+                    entry_thesis["tp_cap_applied"] = payload
                 log_metric(
                     "tp_cap_adjust",
                     float(adj_tp_pips),
