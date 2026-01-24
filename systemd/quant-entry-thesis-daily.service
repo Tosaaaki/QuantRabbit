@@ -1,0 +1,12 @@
+[Unit]
+Description=QuantRabbit entry_thesis daily analysis (BigQuery)
+After=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/home/tossaki/QuantRabbit
+ExecStart=/home/tossaki/QuantRabbit/.venv/bin/python analytics/entry_thesis_daily_job.py --log-level INFO
+User=tossaki
+Environment=PYTHONUNBUFFERED=1
+Environment=PYTHONPATH=/home/tossaki/QuantRabbit
+EnvironmentFile=-/etc/quantrabbit.env
