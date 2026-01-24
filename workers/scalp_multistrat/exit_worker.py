@@ -11,6 +11,7 @@ from typing import Dict, Optional, Sequence, Set
 
 from analysis.range_guard import detect_range_mode
 from analysis.technique_engine import evaluate_exit_techniques
+from workers.common.exit_scaling import momentum_scale, scale_value
 from workers.common.exit_utils import close_trade
 from execution.position_manager import PositionManager
 from execution.reversion_failure import evaluate_reversion_failure, evaluate_tp_zone
@@ -276,6 +277,30 @@ class ScalpMultiExitWorker:
         if hold_hint is not None:
             min_hold_sec = max(min_hold_sec, hold_hint)
 
+        strategy_tag = (
+            thesis.get("strategy_tag")
+            or thesis.get("strategy_tag_raw")
+            or thesis.get("strategy")
+            or thesis.get("tag")
+            or trade.get("strategy_tag")
+            or trade.get("strategy")
+            or "scalp_multi"
+        )
+        scale, _ = momentum_scale(
+            pocket=POCKET,
+            strategy_tag=strategy_tag,
+            entry_thesis=thesis,
+            range_active=range_active,
+        )
+        tech_neg_min = self.tech_neg_min_pips
+        tech_neg_hard = self.tech_neg_hard_pips
+        tech_neg_hold = self.tech_neg_hold_sec
+        if not range_active:
+            min_hold_sec = scale_value(min_hold_sec, scale=scale, floor=min_hold_sec)
+            tech_neg_min = scale_value(self.tech_neg_min_pips, scale=scale, floor=self.tech_neg_min_pips)
+            tech_neg_hard = scale_value(self.tech_neg_hard_pips, scale=scale, floor=self.tech_neg_hard_pips)
+            tech_neg_hold = scale_value(self.tech_neg_hold_sec, scale=scale, floor=self.tech_neg_hold_sec)
+
         state = self._states.get(trade_id)
         if state is None:
             tp_hint = thesis.get("tp_pips")
@@ -285,7 +310,24 @@ class ScalpMultiExitWorker:
                 tp_hint_val = None
             state = _TradeState(peak=pnl, tp_hint=tp_hint_val)
             self._states[trade_id] = state
-        state.update(pnl, self.lock_buffer if not range_active else self.range_lock_buffer)
+
+        profit_take = self.range_profit_take if range_active else scale_value(
+            self.profit_take, scale=scale, floor=self.profit_take
+        )
+        trail_start = self.range_trail_start if range_active else scale_value(
+            self.trail_start, scale=scale, floor=self.trail_start
+        )
+        trail_backoff = self.range_trail_backoff if range_active else scale_value(
+            self.trail_backoff, scale=scale, floor=self.trail_backoff
+        )
+        lock_buffer = self.range_lock_buffer if range_active else scale_value(
+            self.lock_buffer, scale=scale, floor=self.lock_buffer
+        )
+        lock_trigger = self.range_lock_trigger if range_active else scale_value(
+            self.lock_trigger, scale=scale, floor=self.lock_trigger
+        )
+
+        state.update(pnl, lock_buffer)
 
         client_ext = trade.get("clientExtensions")
         client_id = trade.get("client_order_id")
@@ -370,9 +412,9 @@ class ScalpMultiExitWorker:
                 return
 
         if pnl < 0 and self.tech_exit_enabled and not _is_reversion_candidate(trade):
-            tech_min_hold_sec = max(self.tech_neg_hold_sec, min_hold_sec)
-            hard_stop_ready = pnl <= -self.tech_neg_hard_pips and hold_sec >= min_hold_sec
-            soft_ready = pnl <= -self.tech_neg_min_pips and hold_sec >= tech_min_hold_sec
+            tech_min_hold_sec = max(tech_neg_hold, min_hold_sec)
+            hard_stop_ready = pnl <= -tech_neg_hard and hold_sec >= min_hold_sec
+            soft_ready = pnl <= -tech_neg_min and hold_sec >= tech_min_hold_sec
             if hard_stop_ready or soft_ready:
                 rsi_val, adx, atr_pips, vwap_gap, ma_pair = self._tech_context()
                 score = 0
@@ -434,12 +476,6 @@ class ScalpMultiExitWorker:
                 await self._close(trade_id, -units, "take_profit_zone", pnl, client_id)
                 self._states.pop(trade_id, None)
                 return
-
-        profit_take = self.range_profit_take if range_active else self.profit_take
-        trail_start = self.range_trail_start if range_active else self.trail_start
-        trail_backoff = self.range_trail_backoff if range_active else self.trail_backoff
-        lock_buffer = self.range_lock_buffer if range_active else self.lock_buffer
-        lock_trigger = self.range_lock_trigger if range_active else self.lock_trigger
 
         if state.tp_hint:
             profit_take = max(profit_take, max(1.0, state.tp_hint * 0.9))
