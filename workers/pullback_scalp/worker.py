@@ -12,6 +12,8 @@ from typing import Optional
 
 from analysis import plan_bus
 from indicators.factor_cache import all_factors
+from execution.order_manager import market_order
+from execution.risk_guard import clamp_sl_tp
 from market_data import spread_monitor, tick_window
 from workers.common.pocket_plan import PocketPlan
 from workers.common.pullback_touch import count_pullback_touches
@@ -293,6 +295,12 @@ async def pullback_scalp_worker() -> None:
                     sl_price = None
                 elif side == "short" and sl_price <= entry_price:
                     sl_price = None
+            sl_price, tp_price = clamp_sl_tp(
+                price=entry_price,
+                sl=sl_price,
+                tp=tp_price,
+                is_buy=side == "long",
+            )
 
             base_units = config.ENTRY_UNITS
             if high_vol and config.HIGH_VOL_UNIT_FACTOR < 0.999:
@@ -376,6 +384,19 @@ async def pullback_scalp_worker() -> None:
                 notes={},
             )
             plan_bus.publish(plan)
+            units = base_units if side == "long" else -base_units
+            client_id = _client_id(side)
+            res = await market_order(
+                instrument="USD_JPY",
+                units=units,
+                sl_price=sl_price,
+                tp_price=tp_price,
+                pocket="scalp",
+                client_order_id=client_id,
+                strategy_tag="pullback_scalp",
+                confidence=confidence,
+                entry_thesis=signal.get("entry_thesis"),
+            )
             touch_count = "n/a" if touch_stats is None else str(touch_stats.count)
             touch_pullback = (
                 "n/a" if touch_pullback_pips is None else f"{touch_pullback_pips:.2f}"
@@ -399,6 +420,15 @@ async def pullback_scalp_worker() -> None:
                 touch_trend,
                 touch_age,
             )
+            if res:
+                LOG.info(
+                    "%s entry sent id=%s units=%s sl=%s tp=%s",
+                    config.LOG_PREFIX,
+                    res,
+                    units,
+                    f"{sl_price:.3f}" if sl_price is not None else "none",
+                    f"{tp_price:.3f}" if tp_price is not None else "none",
+                )
             if touch_stats:
                 log_metric(
                     "pullback_touch_count",

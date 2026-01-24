@@ -23,7 +23,7 @@ QuantRabbit は USD/JPY で 24/7 自律運用する無裁量トレーディン�
 **Runtime defaults（Exit/worker）**
 - `WORKER_ONLY_MODE=true` / `MAIN_TRADING_ENABLED=0` が既定。main は 60s ループのログ/metrics 更新のみを行い、発注/EXIT は各 worker で完結させる。
 - 共通 `execution/exit_manager.py` は互換スタブ（自動EXITなし）。戦略ごとに専用の `exit_worker` を起動し、最低保有＋PnL>0 決済（例外は強制ドローダウン/ヘルスチェック）の運用がデフォルト。
-- 発注はワーカーがシグナルを `logs/signals.db`（`utils/signal_bus.py`）へ enqueue → main の関所が confidence 順に選抜・ロット配分して送信する一本化ルートが既定（`SIGNAL_GATE_ENABLED=1` / `ORDER_FORWARD_TO_SIGNAL_GATE=1`）。ワーカーが直接発注する場合は両方のフラグを `0` にする。
+- 発注はワーカーが `order_manager` 経由で直接送信するのが既定（`SIGNAL_GATE_ENABLED=0` / `ORDER_FORWARD_TO_SIGNAL_GATE=0`）。共通ゲートを使う場合のみ両方のフラグを `1` にする。
 
 ### VM ログの確認
 

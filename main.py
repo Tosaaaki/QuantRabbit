@@ -226,7 +226,7 @@ async def _run_blocking(func, *args):
 # 内蔵ストラテジーはデフォルト停止。動かす場合は環境変数で明示的にONにする。
 MAIN_TRADING_ENABLED = _env_bool("MAIN_TRADING_ENABLED", default=False)
 # ワーカー発のシグナルを関所で集約・順位付けするか
-SIGNAL_GATE_ENABLED = _env_bool("SIGNAL_GATE_ENABLED", default=True)
+SIGNAL_GATE_ENABLED = _env_bool("SIGNAL_GATE_ENABLED", default=False)
 # 関所キューから一度に取り出す件数
 SIGNAL_GATE_FETCH_LIMIT = int(os.getenv("SIGNAL_GATE_FETCH_LIMIT", "120"))
 SIGNAL_GATE_POCKET_ALLOWLIST = _env_csv_set("SIGNAL_GATE_POCKET_ALLOWLIST")
@@ -253,6 +253,8 @@ MICRO_OPENS_DISABLED = _env_bool("MICRO_OPENS_DISABLED", default=False)
 
 # Worker-onlyモード: mainはワーカー起動/データ供給のみ行い、発注/Exitロジックはスキップ
 WORKER_ONLY_MODE = _env_bool("WORKER_ONLY_MODE", default=False)
+# 共通ExitManagerは既定で無効（各exit_workerに任せる）
+EXIT_MANAGER_DISABLED = _env_bool("EXIT_MANAGER_DISABLED", default=True)
 # GPT を完全に無効化するフラグ（誤作動防止用）。設定時はローカル順位付けのみを使用。
 GPT_DISABLED = _env_bool("GPT_DISABLED", default=False)
 GPT_FALLBACK_ENABLED = _env_bool("GPT_FALLBACK_ENABLED", default=False)
@@ -3803,7 +3805,9 @@ async def logic_loop(
     pos_manager = PositionManager()
     metrics_client = RealtimeMetricsClient()
     confidence_policy = ConfidencePolicy()
-    exit_manager = ExitManager()
+    exit_manager = None if EXIT_MANAGER_DISABLED else ExitManager()
+    if EXIT_MANAGER_DISABLED:
+        logging.info("[EXIT_MANAGER] disabled (worker exit only)")
     stage_tracker = StageTracker()
     param_context = ParamContext()
     chart_story = ChartStory()
@@ -6975,7 +6979,7 @@ async def logic_loop(
             }
 
             exit_decisions = []
-            if open_positions_for_exit:
+            if exit_manager and open_positions_for_exit:
                 exit_start = time.monotonic()
                 exit_decisions = exit_manager.plan_closures(
                     open_positions_for_exit,

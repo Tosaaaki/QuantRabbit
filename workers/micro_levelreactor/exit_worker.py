@@ -17,7 +17,7 @@ from market_data import tick_window
 
 LOG = logging.getLogger(__name__)
 
-ALLOWED_TAGS: Set[str] = {"MicroLevelReactor"}
+ALLOWED_TAGS: Set[str] = {"MicroLevelReactor", "MLR"}
 POCKET = "micro"
 
 

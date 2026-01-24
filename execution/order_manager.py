@@ -746,9 +746,17 @@ _TP_CAP_TF_DEFAULTS = {
 }
 # ワーカーのオーダーをメインの関所に転送するフラグ（reduce_only は除外）
 _FORWARD_TO_SIGNAL_GATE = (
-    os.getenv("ORDER_FORWARD_TO_SIGNAL_GATE", "1").strip().lower()
+    os.getenv("ORDER_FORWARD_TO_SIGNAL_GATE", "0").strip().lower()
     not in {"", "0", "false", "no"}
 )
+_WORKER_ONLY_MODE = os.getenv("WORKER_ONLY_MODE", "0").strip().lower() not in {
+    "",
+    "0",
+    "false",
+    "no",
+}
+if _WORKER_ONLY_MODE:
+    _FORWARD_TO_SIGNAL_GATE = False
 # コメントを付けるとリジェクトが発生する場合に強制オフにするトグル（デフォルトで無効化）
 _DISABLE_CLIENT_COMMENT = os.getenv("ORDER_DISABLE_CLIENT_COMMENT", "1").strip().lower() not in {
     "",

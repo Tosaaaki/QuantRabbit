@@ -31,7 +31,7 @@ def _parse_hours(raw: str) -> set[int]:
 
 POCKET = "micro"
 LOOP_INTERVAL_SEC = float(os.getenv("MICRO_MULTI_LOOP_INTERVAL_SEC", "8.0"))
-ENABLED = os.getenv("MICRO_MULTI_ENABLED", "1").strip().lower() not in {"", "0", "false", "no"}
+ENABLED = os.getenv("MICRO_MULTI_ENABLED", "0").strip().lower() not in {"", "0", "false", "no"}
 LOG_PREFIX = "[MicroMulti]"
 
 CONFIDENCE_FLOOR = 35

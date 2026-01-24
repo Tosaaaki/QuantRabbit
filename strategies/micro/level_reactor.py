@@ -53,7 +53,7 @@ class MicroLevelReactor:
             "loss_guard_pips": round(sl_pips, 2),
             "target_tp_pips": round(tp_pips, 2),
             "min_hold_sec": 60.0,
-            "tag": tag,
+            "tag": f"{MicroLevelReactor.name}-{tag}",
         }
 
     @classmethod
@@ -81,27 +81,27 @@ class MicroLevelReactor:
             sl = max(6.0, atr_pips * 1.6)
             tp = max(10.0, sl * 1.4)
             conf = 70 + min(15, int((rsi - 50.0) * 0.6))
-            return cls._mk_decision("OPEN_LONG", sl, tp, conf, "MLR-breakout-long")
+            return cls._mk_decision("OPEN_LONG", sl, tp, conf, "breakout-long")
 
         # Fade short near upper band if stretched and RSI hot
         if price >= up - band and rsi >= 63.0:
             sl = max(7.0, atr_pips * 1.7)
             tp = max(8.0, sl * 1.2)
             conf = 65 + min(20, int((rsi - 60.0) * 0.5))
-            return cls._mk_decision("OPEN_SHORT", sl, tp, conf, "MLR-fade-upper")
+            return cls._mk_decision("OPEN_SHORT", sl, tp, conf, "fade-upper")
 
         # Bounce long near lower band
         if price <= down + band and rsi <= 55.0:
             sl = max(7.0, atr_pips * 1.7)
             tp = max(10.0, sl * 1.3)
             conf = 68 + min(18, int((55.0 - rsi) * 0.4))
-            return cls._mk_decision("OPEN_LONG", sl, tp, conf, "MLR-bounce-lower")
+            return cls._mk_decision("OPEN_LONG", sl, tp, conf, "bounce-lower")
 
         # Breakdown short under lower level with soft RSI
         if price <= down and rsi <= 48.0:
             sl = max(6.0, atr_pips * 1.6)
             tp = max(10.0, sl * 1.4)
             conf = 70 + min(15, int((48.0 - rsi) * 0.6))
-            return cls._mk_decision("OPEN_SHORT", sl, tp, conf, "MLR-breakdown-short")
+            return cls._mk_decision("OPEN_SHORT", sl, tp, conf, "breakdown-short")
 
         return None

@@ -23,8 +23,6 @@ from utils.metrics_logger import log_metric
 LOG = logging.getLogger(__name__)
 
 ALLOWED_TAGS: Set[str] = {
-    "BB_RSI",
-    "BB_RSI_Fast",
     "MomentumBurst",
     "MicroMomentumStack",
     "MicroPullbackEMA",
@@ -36,7 +34,7 @@ ALLOWED_TAGS: Set[str] = {
     "VolCompressionBreak",
     "MomentumPulse",
 }
-REVERSAL_TAG_PREFIXES: Set[str] = {"BB_RSI", "BB_RSI_Fast", "MicroVWAPBound", "MicroVWAPRevert"}
+REVERSAL_TAG_PREFIXES: Set[str] = {"MicroVWAPBound", "MicroVWAPRevert"}
 REVERSAL_PROFILES: Set[str] = {"bb_range_reversion", "micro_vwap_bound", "micro_vwap_revert"}
 OVERLAY_TAG_PREFIXES: Set[str] = {"VolCompressionBreak", "MomentumPulse"}
 POCKET = "micro"
@@ -50,6 +48,16 @@ def _float_env(key: str, default: float) -> float:
         return float(raw)
     except ValueError:
         return default
+
+
+def _bool_env(key: str, default: bool) -> bool:
+    raw = os.getenv(key)
+    if raw is None:
+        return default
+    return raw.strip().lower() not in {"", "0", "false", "no"}
+
+
+EXIT_ENABLED = _bool_env("MICRO_MULTI_EXIT_ENABLED", False)
 
 
 def _utc_now() -> datetime:
@@ -481,6 +489,13 @@ class MicroMultiExitWorker:
             return
 
     async def run(self) -> None:
+        if not EXIT_ENABLED:
+            LOG.info("[EXIT-micro_multistrat] disabled (idle)")
+            try:
+                while True:
+                    await asyncio.sleep(3600.0)
+            except asyncio.CancelledError:
+                return
         LOG.info(
             "[EXIT-micro_multistrat] worker starting (interval=%.2fs tags=%s)",
             self.loop_interval,

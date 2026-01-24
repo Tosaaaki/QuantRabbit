@@ -35,7 +35,7 @@ def _env_bool(name: str, default: bool) -> bool:
 
 POCKET = "scalp"
 LOOP_INTERVAL_SEC = float(os.getenv("SCALP_MULTI_LOOP_INTERVAL_SEC", "6.0"))
-ENABLED = _env_bool("SCALP_MULTI_ENABLED", True)
+ENABLED = _env_bool("SCALP_MULTI_ENABLED", False)
 LOG_PREFIX = os.getenv("SCALP_MULTI_LOG_PREFIX", "[ScalpMulti]")
 
 CONFIDENCE_FLOOR = 30

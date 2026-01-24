@@ -15,6 +15,8 @@ from analysis.range_model import compute_range_snapshot
 from execution.position_manager import PositionManager
 from execution.risk_guard import loss_cooldown_status
 from indicators.factor_cache import all_factors, get_candles_snapshot
+from execution.order_manager import market_order
+from execution.risk_guard import clamp_sl_tp
 from market_data import spread_monitor, tick_window
 from utils.market_hours import is_market_open
 from workers.common import env_guard
@@ -449,6 +451,12 @@ async def vwap_magnet_s5_worker() -> None:
                 if side == "long"
                 else entry_price + sl_pips * config.PIP_VALUE
             )
+            sl_price, tp_price = clamp_sl_tp(
+                price=entry_price,
+                sl=sl_price,
+                tp=tp_price,
+                is_buy=side == "long",
+            )
             # Publish plan
             stage_ratio = _stage_ratio(stage_idx)
             staged_units = int(round(config.ENTRY_UNITS * stage_ratio))
@@ -532,6 +540,19 @@ async def vwap_magnet_s5_worker() -> None:
                 notes={},
             )
             plan_bus.publish(plan)
+            units = staged_units if side == "long" else -staged_units
+            client_id = _client_id(side)
+            res = await market_order(
+                instrument="USD_JPY",
+                units=units,
+                sl_price=sl_price,
+                tp_price=tp_price,
+                pocket="scalp",
+                client_order_id=client_id,
+                strategy_tag="vwap_magnet_s5",
+                confidence=confidence,
+                entry_thesis=entry_thesis,
+            )
             LOG.info(
                 "%s publish plan side=%s units=%s tp=%.2f sl=%.2f vwap_gap=%.3f z=%.2f rsi=%.1f adx=%.1f",
                 config.LOG_PREFIX,
@@ -544,6 +565,15 @@ async def vwap_magnet_s5_worker() -> None:
                 rsi or -1.0,
                 trend_adx or 0.0,
             )
+            if res:
+                LOG.info(
+                    "%s entry sent id=%s units=%s sl=%.3f tp=%.3f",
+                    config.LOG_PREFIX,
+                    res,
+                    units,
+                    sl_price or 0.0,
+                    tp_price or 0.0,
+                )
             cooldown_until = now_monotonic + config.COOLDOWN_SEC
             post_exit_until = now_monotonic + config.POST_EXIT_COOLDOWN_SEC
 

@@ -88,20 +88,20 @@ class PulseBreak:
                 range_pips = 0.0
         range_pips = max(range_pips, atr_pips * 2.0)
         vol_floor = max(
-            0.45,
+            0.30,
             min(
-                1.55,
-                0.42
-                + 0.06 * min(range_pips, 12.0)
-                + 0.14 * min(atr_pips, 4.5)
-                - (spread or 0.0) * 0.08,
+                1.35,
+                0.30
+                + 0.045 * min(range_pips, 12.0)
+                + 0.08 * min(atr_pips, 4.5)
+                - (spread or 0.0) * 0.05,
             ),
         )
         atr_floor_dyn = max(
-            0.58,
+            0.45,
             min(
-                1.8,
-                0.35 + 0.05 * min(range_pips, 12.0) + 0.12 * vol_floor,
+                1.3,
+                0.24 + 0.035 * min(range_pips, 12.0) + 0.08 * vol_floor,
             ),
         )
         if atr_pips < atr_floor_dyn:
@@ -121,7 +121,7 @@ class PulseBreak:
             )
             return None
         adx_dyn_gate = max(
-            14.0, min(32.0, 12.0 + 0.55 * min(range_pips, 12.0) + 0.9 * vol_floor)
+            9.0, min(24.0, 8.5 + 0.40 * min(range_pips, 12.0) + 0.6 * vol_floor)
         )
         if adx < adx_dyn_gate:
             PulseBreak._log_skip(
@@ -136,9 +136,9 @@ class PulseBreak:
         vol_thresh = vol_floor
         short_enabled_env = os.getenv("PULSE_BREAK_ENABLE_SHORT", "1").strip().lower() not in {"", "0", "false", "no"}
         try:
-            short_adx_gate = float(os.getenv("PULSE_BREAK_SHORT_ADX", "28.0"))
+            short_adx_gate = float(os.getenv("PULSE_BREAK_SHORT_ADX", "22.0"))
         except Exception:
-            short_adx_gate = 28.0
+            short_adx_gate = 22.0
         try:
             short_vol_cushion = float(os.getenv("PULSE_BREAK_SHORT_VOL_CUSHION", "0.12"))
         except Exception:
@@ -173,7 +173,7 @@ class PulseBreak:
                 "tag": f"{PulseBreak.name}-{tag_suffix}",
             })
 
-        if momentum > 0 and bias > 0.05:
+        if momentum > 0 and bias > 0.025:
             if ema100 is not None and ema20 < ema100:
                 PulseBreak._log_skip(
                     "ema100_block",
@@ -181,13 +181,13 @@ class PulseBreak:
                     ema100=round(ema100, 5) if ema100 is not None else None,
                 )
                 return None
-            if adx_slope < 0.05:
+            if adx_slope < 0.015:
                 PulseBreak._log_skip("adx_slope_flat", adx_slope=round(adx_slope, 4))
                 return None
             slope_bonus = max(0.0, min(7.0, adx_slope * 35.0 + max(0.0, atr_slope) * 2.0))
             return _build_payload("OPEN_LONG", slope_bonus, "momentum-up")
 
-        if momentum < 0 and bias < -0.06:
+        if momentum < 0 and bias < -0.025:
             allow_short = short_enabled_env or (adx >= short_adx_gate)
             if not allow_short:
                 PulseBreak._log_skip(
@@ -213,7 +213,7 @@ class PulseBreak:
                 )
                 return None
             vol_gate = vol_thresh * (1.0 - short_vol_cushion)
-            vol_gate = max(0.78, vol_gate)
+            vol_gate = max(0.65, vol_gate)
             if vol_5m < vol_gate:
                 PulseBreak._log_skip(
                     "vol_dyn_low_short",
@@ -222,7 +222,7 @@ class PulseBreak:
                     vol_thresh=round(vol_gate, 3),
                 )
                 return None
-            if adx_slope < 0.02:
+            if adx_slope < 0.008:
                 PulseBreak._log_skip("adx_slope_flat_short", adx_slope=round(adx_slope, 4))
                 return None
             slope_bonus = max(0.0, min(7.0, adx_slope * 35.0 + max(0.0, atr_slope) * 2.0))

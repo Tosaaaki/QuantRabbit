@@ -5,7 +5,7 @@
 > 境界: 発注・リスクは機械的、曖昧判断は GPT‑5 系（既定 gpt-5-mini）。
 - ニュース連動パイプラインは撤去済み（`news_fetcher` / `summary_ingestor` / NewsSpike は無効）。
 - 現行デフォルト: `WORKER_ONLY_MODE=true` / `MAIN_TRADING_ENABLED=0`。共通 `exit_manager` はスタブ化され、エントリー/EXIT は各戦略ワーカー＋専用 `exit_worker` が担当。
-- 発注経路はワーカー → `utils/signal_bus.py`（`logs/signals.db`）→ main 関所で confidence 順に選抜・ロット配分 → OANDA の一本化が既定（`SIGNAL_GATE_ENABLED=1` / `ORDER_FORWARD_TO_SIGNAL_GATE=1`）。ワーカー直接発注に戻す場合のみ両フラグを 0 にする。
+- 発注経路はワーカーが直接 OANDA に送信するのが既定（`SIGNAL_GATE_ENABLED=0` / `ORDER_FORWARD_TO_SIGNAL_GATE=0`）。共通ゲート（`utils/signal_bus.py` → main 関所）を使う場合のみ両フラグを 1 にする。
 - 運用モード（2025-12 攻め設定）: マージン活用を 85–92% 目安に引き上げ、ロット上限を拡大（`RISK_MAX_LOT` 既定 10.0 lot）。手動ポジションを含めた総エクスポージャでガードし、PF/勝率の悪い戦略は自動ブロック。必要に応じて `PERF_GUARD_GLOBAL_ENABLED=0` で解除する。
 - エージェントの役割:
   - VM 上で常時ログ・オーダーを監視
@@ -35,7 +35,7 @@
   | Logger | `logs/*.db` | 全コンポーネントが INSERT |
 - ライフサイクル
   - Startup: `env.toml` 読込 → Secrets 確認 → WebSocket 接続。
-  - 60s タクト（main 有効時のみ）: 新ローソク → Factors 更新 → Regime/Focus → GPT decision → Strategy loop（confidence スケーリング + ステージ判定）→ exit_worker → risk_guard → order_manager → `trades.db` / `metrics.db` ログ。ワーカーは発注前に `signal_bus` へ enqueue、main の関所が confidence 順に選択・lot配分して発注。
+  - 60s タクト（main 有効時のみ）: 新ローソク → Factors 更新 → Regime/Focus → GPT decision → Strategy loop（confidence スケーリング + ステージ判定）→ exit_worker → risk_guard → order_manager → `trades.db` / `metrics.db` ログ。ワーカーは `SIGNAL_GATE_ENABLED=1` の場合に `signal_bus` へ enqueue し、main の関所が confidence 順に選択・lot配分して発注。
   - タクト要件: 正秒同期（±500 ms）、締切 55 s 超でサイクル破棄（バックログ禁止）、`monotonic()` で `decision_latency_ms` 計測。
 - Background: `utils/backup_to_gcs.sh` による nightly logs バックアップ + `/etc/cron.hourly/qr-gcs-backup-core` による GCS 退避（自動）。
 

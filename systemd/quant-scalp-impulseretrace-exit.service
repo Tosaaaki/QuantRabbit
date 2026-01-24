@@ -1,0 +1,15 @@
+[Unit]
+Description=QuantRabbit Scalp ImpulseRetrace Exit Worker
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/tossaki/QuantRabbit
+Environment="PYTHONUNBUFFERED=1"
+ExecStart=/home/tossaki/QuantRabbit/.venv/bin/python -m workers.scalp_impulseretrace.exit_worker
+Restart=always
+RestartSec=5
+User=tossaki
+
+[Install]
+WantedBy=multi-user.target

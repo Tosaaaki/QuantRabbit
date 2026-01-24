@@ -1,7 +1,7 @@
 """
 Margin-driven hedge balancer.
 
-マージン使用率が高まったときに逆方向の reduce-only シグナルを signal_bus へ送り、
+マージン使用率が高まったときに逆方向の reduce-only を直接発注し、
 ネットエクスポージャを軽くしつつ余力を回復する。
 """
 
@@ -14,7 +14,8 @@ import time
 from typing import Optional, Tuple
 
 from market_data import tick_window
-from utils import signal_bus
+from execution.order_ids import build_client_order_id
+from execution.order_manager import market_order
 from utils.market_hours import is_market_open
 from utils.oanda_account import AccountSnapshot, get_account_snapshot, get_position_summary
 
@@ -146,41 +147,40 @@ async def hedge_balancer_worker() -> None:
 
         direction = "OPEN_SHORT" if net_units > 0 else "OPEN_LONG"
         proposed_units = min(hedge_units, abs_net)
-        signal_bus.enqueue(
-            {
-                "strategy": "HedgeBalancer",
-                "pocket": config.POCKET,
-                "action": direction,
-                "confidence": config.CONFIDENCE,
-                "sl_pips": config.SL_PIPS,
-                "tp_pips": config.TP_PIPS,
-                "entry_price": price_hint,
-                "reduce_only": True,
-                "reduce_cap_units": abs_net,
-                "proposed_units": proposed_units,
-                "tag": "HedgeBalancer",
-                "entry_type": "market",
-                "source": "hedge_balancer",
-                "meta": {
-                    "net_units": net_units,
-                    "hedge_units": proposed_units,
-                    "margin_usage": usage,
-                    "free_margin_ratio": snapshot.free_margin_ratio,
-                    "target_usage": config.TARGET_MARGIN_USAGE,
-                    "reason": reason,
-                },
-            }
+        units = -abs(proposed_units) if net_units > 0 else abs(proposed_units)
+        client_id = build_client_order_id("hedge", "HedgeBalancer")
+        entry_thesis = {
+            "strategy_tag": "HedgeBalancer",
+            "reduce_only": True,
+            "margin_usage": usage,
+            "free_margin_ratio": snapshot.free_margin_ratio,
+            "target_usage": config.TARGET_MARGIN_USAGE,
+            "reason": reason,
+        }
+        res = await market_order(
+            instrument="USD_JPY",
+            units=units,
+            sl_price=None,
+            tp_price=None,
+            pocket=config.POCKET,
+            client_order_id=client_id,
+            strategy_tag="HedgeBalancer",
+            reduce_only=True,
+            entry_thesis=entry_thesis,
+            confidence=config.CONFIDENCE,
+            arbiter_final=True,
         )
         last_action_ts = time.monotonic()
         LOG.info(
-            "%s enqueue dir=%s units=%d net=%d usage=%.3f free=%.3f reason=%s",
+            "%s hedge dir=%s units=%d net=%d usage=%.3f free=%.3f reason=%s res=%s",
             config.LOG_PREFIX,
             direction,
-            proposed_units,
+            units,
             net_units,
             usage if usage is not None else -1.0,
             snapshot.free_margin_ratio if snapshot.free_margin_ratio is not None else -1.0,
             reason or "unknown",
+            res or "none",
         )
 
 

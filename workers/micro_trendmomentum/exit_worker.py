@@ -18,7 +18,7 @@ from market_data import tick_window
 
 LOG = logging.getLogger(__name__)
 
-ALLOWED_TAGS: Set[str] = {"TrendMomentumMicro", "MicroMomentumStack"}
+ALLOWED_TAGS: Set[str] = {"TrendMomentumMicro"}
 POCKET = "micro"
 
 
@@ -110,7 +110,7 @@ class _TradeState:
 
 class TrendMomentumMicroExitWorker:
     """
-    TrendMomentumMicro / MicroMomentumStack の専用 EXIT。
+    TrendMomentumMicro 専用 EXIT。
     - 最低保有 20s までクローズ禁止
     - PnL>0 のみクローズ（TP/トレール/RSI利確/レンジ長時間微益）
     """

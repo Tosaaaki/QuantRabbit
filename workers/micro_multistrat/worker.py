@@ -226,8 +226,12 @@ def _diversity_bonus(strategy_name: str, now_ts: float) -> float:
 
 async def micro_multi_worker() -> None:
     if not config.ENABLED:
-        LOG.info("%s disabled", config.LOG_PREFIX)
-        return
+        LOG.info("%s disabled (idle)", config.LOG_PREFIX)
+        try:
+            while True:
+                await asyncio.sleep(3600.0)
+        except asyncio.CancelledError:
+            return
     LOG.info("%s worker start (interval=%.1fs)", config.LOG_PREFIX, config.LOOP_INTERVAL_SEC)
     last_trend_block_log = 0.0
     last_stale_log = 0.0

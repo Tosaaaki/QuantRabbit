@@ -45,6 +45,9 @@ def _bool_env(key: str, default: bool) -> bool:
     return raw.strip().lower() not in {"", "0", "false", "no"}
 
 
+EXIT_ENABLED = _bool_env("SCALP_MULTI_EXIT_ENABLED", False)
+
+
 def _safe_float(value: object) -> Optional[float]:
     try:
         return float(value)
@@ -531,6 +534,13 @@ class ScalpMultiExitWorker:
             return
 
     async def run(self) -> None:
+        if not EXIT_ENABLED:
+            LOG.info("[EXIT-scalp_multi] disabled (idle)")
+            try:
+                while True:
+                    await asyncio.sleep(3600.0)
+            except asyncio.CancelledError:
+                return
         LOG.info(
             "[EXIT-scalp_multi] worker starting (interval=%.2fs tags=%s)",
             self.loop_interval,
