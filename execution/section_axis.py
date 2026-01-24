@@ -159,6 +159,23 @@ _DEFAULT_LEFT_BEHIND_NEG_COUNT = {"default": 2}
 _DEFAULT_AXIS_MIN_LOOKBACK_RATIO = {"default": 0.7}
 _DEFAULT_AXIS_MAX_AGE_MULT = {"default": 2.5}
 _DEFAULT_AXIS_MAX_AGE_SEC = {"default": 0.0}
+_DEFAULT_STUCK_HOLD_SEC = {
+    "scalp": 120.0,
+    "scalp_fast": 90.0,
+    "micro": 600.0,
+    "macro": 1800.0,
+    "manual": 3600.0,
+}
+_DEFAULT_STUCK_MIN_PIPS = {
+    "scalp": 1.2,
+    "scalp_fast": 1.0,
+    "micro": 2.5,
+    "macro": 4.0,
+    "manual": 6.0,
+}
+_DEFAULT_STUCK_RETURN_SCORE = {"default": -0.12}
+_DEFAULT_STUCK_MIN_COVERAGE = {"default": 0.6}
+_DEFAULT_STUCK_NEG_COUNT = {"default": 2}
 
 
 @dataclass(slots=True)
@@ -1129,6 +1146,100 @@ def _evaluate_mtf_reversal(
     return SectionExitDecision(True, "mtf_reversal", True, debug)
 
 
+def _evaluate_stuck_reversal(
+    *,
+    pocket: str,
+    hold_sec: float,
+    min_hold: float,
+    pnl_pips: float,
+    tech_debug: Dict[str, object] | None,
+    strategy_keys: tuple[str, ...],
+) -> Optional[SectionExitDecision]:
+    if pocket in {"manual", "unknown"}:
+        return None
+    enabled = _resolve_bool_by_pocket(
+        "SECTION_EXIT_STUCK_ENABLED",
+        pocket,
+        True,
+        strategy_keys,
+    )
+    if enabled is False:
+        return None
+    if pnl_pips >= 0:
+        return None
+
+    hold_req = _resolve_by_pocket(
+        "SECTION_EXIT_STUCK_HOLD_SEC",
+        pocket,
+        _DEFAULT_STUCK_HOLD_SEC,
+        strategy_keys,
+    )
+    if hold_sec < max(min_hold, hold_req):
+        return None
+
+    min_pips = _resolve_by_pocket(
+        "SECTION_EXIT_STUCK_MIN_PIPS",
+        pocket,
+        _DEFAULT_STUCK_MIN_PIPS,
+        strategy_keys,
+    )
+    if pnl_pips > -min_pips:
+        return None
+
+    if not tech_debug:
+        return None
+
+    return_score = _safe_float(tech_debug.get("return_score"))
+    coverage = _safe_float(tech_debug.get("coverage")) or 0.0
+    neg_count = _safe_int(tech_debug.get("neg_count") or 0) or 0
+    pos_count = _safe_int(tech_debug.get("pos_count") or 0) or 0
+
+    min_coverage = _resolve_by_pocket(
+        "SECTION_EXIT_STUCK_MIN_COVERAGE",
+        pocket,
+        _DEFAULT_STUCK_MIN_COVERAGE,
+        strategy_keys,
+    )
+    min_neg_count = _resolve_int_by_pocket(
+        "SECTION_EXIT_STUCK_NEG_COUNT",
+        pocket,
+        _DEFAULT_STUCK_NEG_COUNT,
+        strategy_keys,
+    )
+    return_score_th = _resolve_by_pocket(
+        "SECTION_EXIT_STUCK_RETURN_SCORE",
+        pocket,
+        _DEFAULT_STUCK_RETURN_SCORE,
+        strategy_keys,
+    )
+
+    debug = dict(tech_debug) if isinstance(tech_debug, dict) else {}
+    debug.update(
+        {
+            "stuck_hold_sec": round(hold_req, 3),
+            "stuck_min_pips": round(min_pips, 3),
+            "stuck_min_coverage": round(min_coverage, 3),
+            "stuck_return_score": round(return_score_th, 3),
+            "stuck_neg_count": int(min_neg_count),
+            "hold_sec": round(hold_sec, 3),
+            "pnl_pips": round(pnl_pips, 3),
+        }
+    )
+
+    if coverage < min_coverage:
+        return None
+
+    if return_score is not None and return_score <= return_score_th:
+        debug["stuck_reason"] = "return_score"
+        return SectionExitDecision(True, "stuck_return", True, debug)
+
+    if neg_count >= min_neg_count and pos_count == 0:
+        debug["stuck_reason"] = "neg_count"
+        return SectionExitDecision(True, "stuck_signal", True, debug)
+
+    return None
+
+
 def _axis_is_usable(
     axis: SectionAxis,
     *,
@@ -1312,6 +1423,16 @@ def evaluate_section_exit(
         )
         if mtf_decision:
             return mtf_decision
+        stuck_decision = _evaluate_stuck_reversal(
+            pocket=pocket_key,
+            hold_sec=hold_sec,
+            min_hold=min_hold,
+            pnl_pips=pnl_pips,
+            tech_debug=tech_exit.debug if isinstance(tech_exit.debug, dict) else {},
+            strategy_keys=strategy_keys,
+        )
+        if stuck_decision:
+            return stuck_decision
 
     if pocket_key not in {"manual", "unknown"}:
         left_hold_sec = _resolve_by_pocket(
