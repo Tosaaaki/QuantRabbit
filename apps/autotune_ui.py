@@ -495,16 +495,25 @@ def _fetch_remote_snapshot() -> Optional[dict]:
     url = _get_secret_optional("ui_snapshot_url")
     if not url:
         return None
+    debug = os.getenv("UI_SNAPSHOT_DEBUG", "").lower() in {"1", "true", "yes"}
     token = _get_secret_optional("ui_snapshot_token")
     req = urllib.request.Request(url)
     if token:
         req.add_header("X-QR-Token", token)
         req.add_header("Authorization", f"Bearer {token}")
     try:
+        start = time.monotonic()
         with urllib.request.urlopen(req, timeout=_REMOTE_SNAPSHOT_TIMEOUT_SEC) as resp:
             raw = resp.read()
-        return json.loads(raw)
+        data = json.loads(raw)
+        if debug:
+            elapsed_ms = int((time.monotonic() - start) * 1000)
+            print(f"[ui_snapshot] remote_ok elapsed_ms={elapsed_ms}")
+        return data
     except (urllib.error.URLError, json.JSONDecodeError, TimeoutError, socket.timeout):
+        if debug:
+            elapsed_ms = int((time.monotonic() - start) * 1000)
+            print(f"[ui_snapshot] remote_error elapsed_ms={elapsed_ms}")
         return None
 
 
