@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import os
 import sys
 from pathlib import Path
 from typing import Optional
@@ -21,6 +22,10 @@ ORDERS_DB = Path("logs/orders.db")
 SIGNALS_DB = Path("logs/signals.db")
 TRADES_DB = Path("logs/trades.db")
 DB_READ_TIMEOUT_SEC = float(os.getenv("UI_DB_READ_TIMEOUT_SEC", "0.2"))
+LITE_SNAPSHOT_FAST = (
+    os.getenv("UI_SNAPSHOT_LITE_MODE", "full").strip().lower()
+    in {"fast", "minimal"}
+)
 
 
 def _load_latest_metric(metric: str) -> Optional[float]:
@@ -226,17 +231,18 @@ def main() -> int:
             metrics["data_lag_ms"] = data_lag_ms
         if decision_latency_ms is not None:
             metrics["decision_latency_ms"] = decision_latency_ms
-        last_orders = _load_last_orders()
-        metrics["orders_last"] = last_orders
-        status_counts = _load_order_status_counts()
-        metrics["orders_status_1h"] = status_counts
-        last_signal_ts = _load_last_signal_ts_ms()
-        if last_signal_ts is not None:
-            metrics["signals_last_ts_ms"] = last_signal_ts
-        recent_signals = _load_recent_signals()
-        metrics["signals_recent"] = recent_signals
         healthbeat_ts = _load_last_metric_ts("healthbeat")
         metrics["healthbeat_ts"] = healthbeat_ts
+        if not (args.lite and LITE_SNAPSHOT_FAST):
+            last_orders = _load_last_orders()
+            metrics["orders_last"] = last_orders
+            status_counts = _load_order_status_counts()
+            metrics["orders_status_1h"] = status_counts
+            last_signal_ts = _load_last_signal_ts_ms()
+            if last_signal_ts is not None:
+                metrics["signals_last_ts_ms"] = last_signal_ts
+            recent_signals = _load_recent_signals()
+            metrics["signals_recent"] = recent_signals
 
     try:
         gcs.publish_snapshot(

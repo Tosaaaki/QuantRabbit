@@ -10,5 +10,6 @@ WorkingDirectory=/home/tossaki/QuantRabbit
 Environment="PYTHONUNBUFFERED=1"
 Environment="PYTHONPATH=/home/tossaki/QuantRabbit"
 Environment="UI_SNAPSHOT_ARGS=--lite"
+Environment="UI_SNAPSHOT_LITE_MODE=fast"
 EnvironmentFile=/etc/quantrabbit.env
 ExecStart=/bin/bash /home/tossaki/QuantRabbit/scripts/run_ui_snapshot.sh

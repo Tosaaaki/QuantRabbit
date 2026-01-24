@@ -40,6 +40,10 @@ TRADES_DB = Path("logs/trades.db")
 _LIVE_SNAPSHOT_TTL_SEC = int(os.getenv("LIVE_SNAPSHOT_TTL_SEC", "8"))
 _REMOTE_SNAPSHOT_TIMEOUT_SEC = float(os.getenv("UI_SNAPSHOT_TIMEOUT_SEC", "4.0"))
 _LIVE_SNAPSHOT_LITE_TTL_SEC = int(os.getenv("LIVE_SNAPSHOT_LITE_TTL_SEC", "5"))
+_LITE_SNAPSHOT_FAST = (
+    os.getenv("UI_SNAPSHOT_LITE_MODE", "full").strip().lower()
+    in {"fast", "minimal"}
+)
 _DB_READ_TIMEOUT_SEC = float(os.getenv("UI_DB_READ_TIMEOUT_SEC", "0.2"))
 _live_snapshot_lock = threading.Lock()
 _live_snapshot_cache: dict[str, Any] | None = None
@@ -516,20 +520,21 @@ def _build_lite_snapshot() -> dict:
         metrics["data_lag_ms"] = data_lag_ms
     if decision_latency_ms is not None:
         metrics["decision_latency_ms"] = decision_latency_ms
-    metrics["orders_last"] = _load_last_orders()
-    metrics["orders_status_1h"] = _load_order_status_counts()
-    last_signal_ts = _load_last_signal_ts_ms()
-    if last_signal_ts is not None:
-        metrics["signals_last_ts_ms"] = last_signal_ts
-    metrics["signals_recent"] = _load_recent_signals()
     metrics["healthbeat_ts"] = _load_last_metric_ts("healthbeat")
+    if not _LITE_SNAPSHOT_FAST:
+        metrics["orders_last"] = _load_last_orders()
+        metrics["orders_status_1h"] = _load_order_status_counts()
+        last_signal_ts = _load_last_signal_ts_ms()
+        if last_signal_ts is not None:
+            metrics["signals_last_ts_ms"] = last_signal_ts
+        metrics["signals_recent"] = _load_recent_signals()
     return {
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "new_trades": [],
         "recent_trades": list(recent_trades),
         "open_positions": {},
         "metrics": metrics,
-        "snapshot_mode": "lite",
+        "snapshot_mode": "lite-fast" if _LITE_SNAPSHOT_FAST else "lite",
     }
 
 
