@@ -193,6 +193,15 @@ strategies:
         - free_margin_low
         - margin_usage_high
         - tech_hard_stop
+        - fast_cut_*
+        - time_cut
+        - rsi_fade
+        - vwap_cut
+        - structure_break
+        - tech_reversal_combo
+        - tech_nwave_flip
+        - tech_candle_reversal
+        - section_*
       deny_reasons:
         - tech_return_fail
 
