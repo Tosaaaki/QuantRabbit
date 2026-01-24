@@ -2,12 +2,17 @@ from __future__ import annotations
 
 import json
 import os
+import sqlite3
+import threading
+import time
+import urllib.error
+import urllib.request
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import Any, Dict, Optional
 
-from fastapi import FastAPI, Form, HTTPException, Request
-from fastapi.responses import RedirectResponse
+from fastapi import FastAPI, Form, HTTPException, Header, Request
+from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 
 from autotune.database import (
@@ -16,6 +21,7 @@ from autotune.database import (
     set_settings,
     update_status,
 )
+from execution.position_manager import PositionManager
 from utils.secrets import get_secret
 
 try:  # pragma: no cover - optional dependency
@@ -26,6 +32,14 @@ except Exception:  # pragma: no cover
 REPO_ROOT = Path(__file__).resolve().parents[1]
 TEMPLATE_DIR = REPO_ROOT / "templates" / "autotune"
 CONFIG_PATH = REPO_ROOT / "configs" / "scalp_active_params.json"
+METRICS_DB = Path("logs/metrics.db")
+ORDERS_DB = Path("logs/orders.db")
+SIGNALS_DB = Path("logs/signals.db")
+
+_LIVE_SNAPSHOT_TTL_SEC = int(os.getenv("LIVE_SNAPSHOT_TTL_SEC", "8"))
+_live_snapshot_lock = threading.Lock()
+_live_snapshot_cache: dict[str, Any] | None = None
+_live_snapshot_ts: float = 0.0
 
 app = FastAPI(title="QuantRabbit Console")
 templates = Jinja2Templates(directory=str(TEMPLATE_DIR))
@@ -268,6 +282,218 @@ def _shorten(text: Any, limit: int = 20) -> str:
     if limit <= 3:
         return value[:limit]
     return value[: limit - 3] + "..."
+
+
+def _get_secret_optional(key: str) -> Optional[str]:
+    try:
+        value = get_secret(key)
+    except KeyError:
+        return None
+    value = str(value).strip()
+    return value or None
+
+
+def _load_latest_metric(metric: str) -> Optional[float]:
+    if not METRICS_DB.exists():
+        return None
+    try:
+        con = sqlite3.connect(METRICS_DB)
+        cur = con.execute(
+            "SELECT value FROM metrics WHERE metric = ? ORDER BY ts DESC LIMIT 1",
+            (metric,),
+        )
+        row = cur.fetchone()
+        con.close()
+        if not row:
+            return None
+        return float(row[0])
+    except Exception:
+        return None
+
+
+def _load_last_metric_ts(metric: str) -> Optional[str]:
+    if not METRICS_DB.exists():
+        return None
+    try:
+        con = sqlite3.connect(METRICS_DB)
+        cur = con.execute(
+            "SELECT ts FROM metrics WHERE metric = ? ORDER BY ts DESC LIMIT 1",
+            (metric,),
+        )
+        row = cur.fetchone()
+        con.close()
+        if not row:
+            return None
+        return str(row[0]) if row[0] is not None else None
+    except Exception:
+        return None
+
+
+def _load_last_orders(limit: int = 5) -> list[dict]:
+    if not ORDERS_DB.exists():
+        return []
+    try:
+        con = sqlite3.connect(ORDERS_DB)
+        con.row_factory = sqlite3.Row
+        cur = con.execute(
+            "SELECT ts, pocket, side, units, status, client_order_id "
+            "FROM orders ORDER BY ts DESC LIMIT ?",
+            (int(limit),),
+        )
+        rows = [dict(r) for r in cur.fetchall()]
+        con.close()
+        return rows
+    except Exception:
+        return []
+
+
+def _load_order_status_counts(limit: int = 8, hours: int = 1) -> list[dict]:
+    if not ORDERS_DB.exists():
+        return []
+    try:
+        con = sqlite3.connect(ORDERS_DB)
+        con.row_factory = sqlite3.Row
+        cur = con.execute(
+            "SELECT status, count(*) AS count FROM orders "
+            "WHERE ts >= datetime('now', ?) "
+            "GROUP BY status ORDER BY count DESC LIMIT ?",
+            (f"-{int(hours)} hour", int(limit)),
+        )
+        rows = [dict(r) for r in cur.fetchall()]
+        con.close()
+        return rows
+    except Exception:
+        return []
+
+
+def _load_last_signal_ts_ms() -> Optional[int]:
+    if not SIGNALS_DB.exists():
+        return None
+    try:
+        con = sqlite3.connect(SIGNALS_DB)
+        cur = con.execute("SELECT max(ts_ms) FROM signals")
+        row = cur.fetchone()
+        con.close()
+        if not row:
+            return None
+        val = row[0]
+        return int(val) if val is not None else None
+    except Exception:
+        return None
+
+
+def _load_recent_signals(limit: int = 5) -> list[dict]:
+    if not SIGNALS_DB.exists():
+        return []
+    try:
+        con = sqlite3.connect(SIGNALS_DB)
+        cur = con.execute(
+            "SELECT ts_ms, payload FROM signals ORDER BY ts_ms DESC LIMIT ?",
+            (int(limit),),
+        )
+        rows: list[dict] = []
+        for ts_ms, payload in cur.fetchall():
+            item: dict = {"ts_ms": ts_ms}
+            try:
+                data = json.loads(payload)
+            except Exception:
+                data = None
+            if isinstance(data, dict):
+                for key in (
+                    "pocket",
+                    "strategy",
+                    "confidence",
+                    "action",
+                    "client_order_id",
+                    "proposed_units",
+                ):
+                    if key in data:
+                        item[key] = data[key]
+            rows.append(item)
+        con.close()
+        return rows
+    except Exception:
+        return []
+
+
+def _build_live_snapshot() -> dict:
+    pm = PositionManager()
+    new_trades: list[dict] = []
+    if os.getenv("UI_SNAPSHOT_SYNC_TRADES", "").lower() in {"1", "true", "yes"}:
+        try:
+            new_trades = list(pm.sync_trades())
+        except Exception:
+            new_trades = []
+
+    try:
+        open_positions = pm.get_open_positions()
+    except Exception:
+        open_positions = {}
+
+    try:
+        recent_trades = pm.fetch_recent_trades(limit=50)
+    except Exception:
+        recent_trades = []
+
+    try:
+        metrics = pm.get_performance_summary()
+    except Exception:
+        metrics = {}
+
+    if isinstance(metrics, dict):
+        data_lag_ms = _load_latest_metric("data_lag_ms")
+        decision_latency_ms = _load_latest_metric("decision_latency_ms")
+        if data_lag_ms is not None:
+            metrics["data_lag_ms"] = data_lag_ms
+        if decision_latency_ms is not None:
+            metrics["decision_latency_ms"] = decision_latency_ms
+        metrics["orders_last"] = _load_last_orders()
+        metrics["orders_status_1h"] = _load_order_status_counts()
+        last_signal_ts = _load_last_signal_ts_ms()
+        if last_signal_ts is not None:
+            metrics["signals_last_ts_ms"] = last_signal_ts
+        metrics["signals_recent"] = _load_recent_signals()
+        metrics["healthbeat_ts"] = _load_last_metric_ts("healthbeat")
+
+    return {
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "new_trades": list(new_trades),
+        "recent_trades": list(recent_trades),
+        "open_positions": dict(open_positions),
+        "metrics": dict(metrics) if isinstance(metrics, dict) else {},
+    }
+
+
+def _cached_live_snapshot() -> dict:
+    global _live_snapshot_cache, _live_snapshot_ts
+    now_mono = time.monotonic()
+    if _live_snapshot_cache and (now_mono - _live_snapshot_ts) < _LIVE_SNAPSHOT_TTL_SEC:
+        return _live_snapshot_cache
+    with _live_snapshot_lock:
+        now_mono = time.monotonic()
+        if _live_snapshot_cache and (now_mono - _live_snapshot_ts) < _LIVE_SNAPSHOT_TTL_SEC:
+            return _live_snapshot_cache
+        snapshot = _build_live_snapshot()
+        _live_snapshot_cache = snapshot
+        _live_snapshot_ts = now_mono
+        return snapshot
+
+
+def _fetch_remote_snapshot() -> Optional[dict]:
+    url = _get_secret_optional("ui_snapshot_url")
+    if not url:
+        return None
+    token = _get_secret_optional("ui_snapshot_token")
+    req = urllib.request.Request(url)
+    if token:
+        req.add_header("X-QR-Token", token)
+        req.add_header("Authorization", f"Bearer {token}")
+    try:
+        with urllib.request.urlopen(req, timeout=2.5) as resp:
+            raw = resp.read()
+        return json.loads(raw)
+    except (urllib.error.URLError, json.JSONDecodeError):
+        return None
 
 
 def _summarise_snapshot(snapshot: Dict[str, Any]) -> Dict[str, Any]:
@@ -609,6 +835,10 @@ def _summarise_snapshot(snapshot: Dict[str, Any]) -> Dict[str, Any]:
 
 def _load_dashboard_data() -> Dict[str, Any]:
     base = _dashboard_defaults()
+    remote_snapshot = _fetch_remote_snapshot()
+    if remote_snapshot:
+        return _summarise_snapshot(remote_snapshot)
+
     try:
         bucket_name = get_secret("ui_bucket_name")
         object_path = get_secret("ui_state_object_path")
@@ -632,9 +862,32 @@ def _load_dashboard_data() -> Dict[str, Any]:
     return _summarise_snapshot(snapshot)
 
 
+def _extract_bearer(authorization: Optional[str]) -> Optional[str]:
+    if not authorization:
+        return None
+    parts = authorization.split()
+    if len(parts) == 2 and parts[0].lower() == "bearer":
+        return parts[1]
+    return None
+
+
 @app.get("/")
 def root_redirect():
     return RedirectResponse(url="/dashboard", status_code=307)
+
+
+@app.get("/api/snapshot")
+def api_snapshot(
+    token: Optional[str] = None,
+    x_qr_token: Optional[str] = Header(default=None, alias="X-QR-Token"),
+    authorization: Optional[str] = Header(default=None),
+):
+    required = _get_secret_optional("ui_snapshot_token")
+    provided = token or x_qr_token or _extract_bearer(authorization)
+    if required and provided != required:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    snapshot = _cached_live_snapshot()
+    return JSONResponse(snapshot, headers={"Cache-Control": "no-store"})
 
 
 @app.get("/dashboard")
