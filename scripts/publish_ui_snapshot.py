@@ -149,7 +149,7 @@ def _load_recent_trades(limit: int = 50) -> list[dict]:
     if not TRADES_DB.exists():
         return []
     try:
-        con = sqlite3.connect(TRADES_DB)
+        con = sqlite3.connect(TRADES_DB, timeout=0.2)
         con.row_factory = sqlite3.Row
         cur = con.execute(
             """
@@ -158,7 +158,7 @@ def _load_recent_trades(limit: int = 50) -> list[dict]:
                    entry_time, close_time, close_reason,
                    state, updated_at
             FROM trades
-            ORDER BY datetime(updated_at) DESC
+            ORDER BY id DESC
             LIMIT ?
             """,
             (int(limit),),
