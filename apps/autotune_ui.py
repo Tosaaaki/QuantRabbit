@@ -35,12 +35,17 @@ CONFIG_PATH = REPO_ROOT / "configs" / "scalp_active_params.json"
 METRICS_DB = Path("logs/metrics.db")
 ORDERS_DB = Path("logs/orders.db")
 SIGNALS_DB = Path("logs/signals.db")
+TRADES_DB = Path("logs/trades.db")
 
 _LIVE_SNAPSHOT_TTL_SEC = int(os.getenv("LIVE_SNAPSHOT_TTL_SEC", "8"))
 _REMOTE_SNAPSHOT_TIMEOUT_SEC = float(os.getenv("UI_SNAPSHOT_TIMEOUT_SEC", "4.0"))
+_LIVE_SNAPSHOT_LITE_TTL_SEC = int(os.getenv("LIVE_SNAPSHOT_LITE_TTL_SEC", "5"))
 _live_snapshot_lock = threading.Lock()
 _live_snapshot_cache: dict[str, Any] | None = None
 _live_snapshot_ts: float = 0.0
+_lite_snapshot_lock = threading.Lock()
+_lite_snapshot_cache: dict[str, Any] | None = None
+_lite_snapshot_ts: float = 0.0
 
 app = FastAPI(title="QuantRabbit Console")
 templates = Jinja2Templates(directory=str(TEMPLATE_DIR))
@@ -417,6 +422,31 @@ def _load_recent_signals(limit: int = 5) -> list[dict]:
         return []
 
 
+def _load_recent_trades(limit: int = 50) -> list[dict]:
+    if not TRADES_DB.exists():
+        return []
+    try:
+        con = sqlite3.connect(TRADES_DB)
+        con.row_factory = sqlite3.Row
+        cur = con.execute(
+            """
+            SELECT ticket_id, pocket, instrument, units, closed_units, entry_price, close_price,
+                   fill_price, pl_pips, realized_pl, commission, financing,
+                   entry_time, close_time, close_reason,
+                   state, updated_at
+            FROM trades
+            ORDER BY datetime(updated_at) DESC
+            LIMIT ?
+            """,
+            (int(limit),),
+        )
+        rows = [dict(r) for r in cur.fetchall()]
+        con.close()
+        return rows
+    except Exception:
+        return []
+
+
 def _build_live_snapshot() -> dict:
     try:
         from execution.position_manager import PositionManager
@@ -476,6 +506,32 @@ def _build_live_snapshot() -> dict:
     }
 
 
+def _build_lite_snapshot() -> dict:
+    recent_trades = _load_recent_trades()
+    metrics: dict[str, Any] = {}
+    data_lag_ms = _load_latest_metric("data_lag_ms")
+    decision_latency_ms = _load_latest_metric("decision_latency_ms")
+    if data_lag_ms is not None:
+        metrics["data_lag_ms"] = data_lag_ms
+    if decision_latency_ms is not None:
+        metrics["decision_latency_ms"] = decision_latency_ms
+    metrics["orders_last"] = _load_last_orders()
+    metrics["orders_status_1h"] = _load_order_status_counts()
+    last_signal_ts = _load_last_signal_ts_ms()
+    if last_signal_ts is not None:
+        metrics["signals_last_ts_ms"] = last_signal_ts
+    metrics["signals_recent"] = _load_recent_signals()
+    metrics["healthbeat_ts"] = _load_last_metric_ts("healthbeat")
+    return {
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "new_trades": [],
+        "recent_trades": list(recent_trades),
+        "open_positions": {},
+        "metrics": metrics,
+        "snapshot_mode": "lite",
+    }
+
+
 def _cached_live_snapshot() -> dict:
     global _live_snapshot_cache, _live_snapshot_ts
     now_mono = time.monotonic()
@@ -491,8 +547,23 @@ def _cached_live_snapshot() -> dict:
         return snapshot
 
 
-def _fetch_remote_snapshot() -> Optional[dict]:
-    url = _get_secret_optional("ui_snapshot_url")
+def _cached_lite_snapshot() -> dict:
+    global _lite_snapshot_cache, _lite_snapshot_ts
+    now_mono = time.monotonic()
+    if _lite_snapshot_cache and (now_mono - _lite_snapshot_ts) < _LIVE_SNAPSHOT_LITE_TTL_SEC:
+        return _lite_snapshot_cache
+    with _lite_snapshot_lock:
+        now_mono = time.monotonic()
+        if _lite_snapshot_cache and (now_mono - _lite_snapshot_ts) < _LIVE_SNAPSHOT_LITE_TTL_SEC:
+            return _lite_snapshot_cache
+        snapshot = _build_lite_snapshot()
+        _lite_snapshot_cache = snapshot
+        _lite_snapshot_ts = now_mono
+        return snapshot
+
+
+def _fetch_remote_snapshot(key: str = "ui_snapshot_url") -> Optional[dict]:
+    url = _get_secret_optional(key)
     if not url:
         return None
     debug = os.getenv("UI_SNAPSHOT_DEBUG", "").lower() in {"1", "true", "yes"}
@@ -859,7 +930,9 @@ def _summarise_snapshot(snapshot: Dict[str, Any]) -> Dict[str, Any]:
 
 def _load_dashboard_data() -> Dict[str, Any]:
     base = _dashboard_defaults()
-    remote_snapshot = _fetch_remote_snapshot()
+    remote_snapshot = _fetch_remote_snapshot("ui_snapshot_lite_url")
+    if not remote_snapshot:
+        remote_snapshot = _fetch_remote_snapshot()
     if remote_snapshot:
         return _summarise_snapshot(remote_snapshot)
 
@@ -916,6 +989,20 @@ def api_snapshot(
     if required and provided != required:
         raise HTTPException(status_code=401, detail="Unauthorized")
     snapshot = _cached_live_snapshot()
+    return JSONResponse(snapshot, headers={"Cache-Control": "no-store"})
+
+
+@app.get("/api/snapshot-lite")
+def api_snapshot_lite(
+    token: Optional[str] = None,
+    x_qr_token: Optional[str] = Header(default=None, alias="X-QR-Token"),
+    authorization: Optional[str] = Header(default=None),
+):
+    required = _get_secret_optional("ui_snapshot_token")
+    provided = token or x_qr_token or _extract_bearer(authorization)
+    if required and provided != required:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    snapshot = _cached_lite_snapshot()
     return JSONResponse(snapshot, headers={"Cache-Control": "no-store"})
 
 

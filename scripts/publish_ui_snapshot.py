@@ -19,6 +19,7 @@ from execution.position_manager import PositionManager
 METRICS_DB = Path("logs/metrics.db")
 ORDERS_DB = Path("logs/orders.db")
 SIGNALS_DB = Path("logs/signals.db")
+TRADES_DB = Path("logs/trades.db")
 
 
 def _load_latest_metric(metric: str) -> Optional[float]:
@@ -144,6 +145,31 @@ def _load_recent_signals(limit: int = 5) -> list[dict]:
         return []
 
 
+def _load_recent_trades(limit: int = 50) -> list[dict]:
+    if not TRADES_DB.exists():
+        return []
+    try:
+        con = sqlite3.connect(TRADES_DB)
+        con.row_factory = sqlite3.Row
+        cur = con.execute(
+            """
+            SELECT ticket_id, pocket, instrument, units, closed_units, entry_price, close_price,
+                   fill_price, pl_pips, realized_pl, commission, financing,
+                   entry_time, close_time, close_reason,
+                   state, updated_at
+            FROM trades
+            ORDER BY datetime(updated_at) DESC
+            LIMIT ?
+            """,
+            (int(limit),),
+        )
+        rows = [dict(r) for r in cur.fetchall()]
+        con.close()
+        return rows
+    except Exception:
+        return []
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Publish UI snapshot to GCS.")
     parser.add_argument(
@@ -152,6 +178,11 @@ def main() -> int:
         default=50,
         help="Number of recent trades to include.",
     )
+    parser.add_argument(
+        "--lite",
+        action="store_true",
+        help="Skip OANDA calls and publish a lightweight snapshot.",
+    )
     args = parser.parse_args()
 
     logging.basicConfig(
@@ -159,29 +190,34 @@ def main() -> int:
         format="%(asctime)s - %(levelname)s - %(message)s",
     )
 
-    pm = PositionManager()
     gcs = GCSRealtimePublisher()
     if not gcs.enabled:
         logging.warning("[UI] GCS publisher is disabled")
         return 1
 
-    try:
-        new_trades = pm.sync_trades()
-    except Exception as exc:  # noqa: BLE001
-        logging.warning("[UI] sync_trades failed: %s", exc)
+    metrics: dict = {}
+    if args.lite:
         new_trades = []
-    try:
-        open_positions = pm.get_open_positions()
-    except Exception as exc:  # noqa: BLE001
-        logging.warning("[UI] get_open_positions failed: %s", exc)
         open_positions = {}
-    try:
-        recent_trades = pm.fetch_recent_trades(limit=int(args.recent))
-    except Exception as exc:  # noqa: BLE001
-        logging.warning("[UI] fetch_recent_trades failed: %s", exc)
-        recent_trades = []
-
-    metrics = pm.get_performance_summary()
+        recent_trades = _load_recent_trades(limit=int(args.recent))
+    else:
+        pm = PositionManager()
+        try:
+            new_trades = pm.sync_trades()
+        except Exception as exc:  # noqa: BLE001
+            logging.warning("[UI] sync_trades failed: %s", exc)
+            new_trades = []
+        try:
+            open_positions = pm.get_open_positions()
+        except Exception as exc:  # noqa: BLE001
+            logging.warning("[UI] get_open_positions failed: %s", exc)
+            open_positions = {}
+        try:
+            recent_trades = pm.fetch_recent_trades(limit=int(args.recent))
+        except Exception as exc:  # noqa: BLE001
+            logging.warning("[UI] fetch_recent_trades failed: %s", exc)
+            recent_trades = []
+        metrics = pm.get_performance_summary()
     if isinstance(metrics, dict):
         data_lag_ms = _load_latest_metric("data_lag_ms")
         decision_latency_ms = _load_latest_metric("decision_latency_ms")
