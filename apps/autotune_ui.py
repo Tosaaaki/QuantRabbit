@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json
 import os
-from decimal import Decimal
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import Any, Dict, Optional
@@ -12,12 +11,8 @@ from fastapi.responses import RedirectResponse
 from fastapi.templating import Jinja2Templates
 
 from autotune.database import (
-    USE_BIGQUERY,
     dump_dict,
     get_run,
-    get_stats,
-    get_settings,
-    list_runs,
     set_settings,
     update_status,
 )
@@ -34,57 +29,6 @@ CONFIG_PATH = REPO_ROOT / "configs" / "scalp_active_params.json"
 
 app = FastAPI(title="QuantRabbit Console")
 templates = Jinja2Templates(directory=str(TEMPLATE_DIR))
-
-
-def _excursion_base_dir() -> Path:
-    """エクスカージョン・レポートのベースディレクトリを解決する。
-    優先順: secret(exursion_reports_dir) -> REPO_ROOT/logs/reports/excursion -> /home/tossaki/QuantRabbit/logs/reports/excursion
-    """
-    # Secret 優先
-    try:
-        secret_path = get_secret("excursion_reports_dir")
-        if secret_path:
-            p = Path(secret_path)
-            if p.exists():
-                return p
-    except Exception:
-        pass
-    # リポ内ログ
-    local = REPO_ROOT / "logs" / "reports" / "excursion"
-    if local.exists():
-        return local
-    # VM 既定パス
-    vm_default = Path("/home/tossaki/QuantRabbit/logs/reports/excursion")
-    return vm_default
-
-
-def _read_text(path: Path, limit_bytes: int = 512_000) -> str:
-    try:
-        data = path.read_bytes()
-        if len(data) > limit_bytes:
-            data = data[-limit_bytes:]
-        return data.decode("utf-8", errors="replace")
-    except Exception as exc:
-        return f"[read_error] {exc}"
-
-
-def _normalize_numbers(payload: Optional[dict]) -> dict:
-    if not payload:
-        return {}
-    converted = {}
-    for key, value in payload.items():
-        if isinstance(value, Decimal):
-            converted[key] = int(value) if value == int(value) else float(value)
-        else:
-            converted[key] = value
-    return converted
-
-
-def _normalize_settings(settings: Optional[dict]) -> dict:
-    base = settings or {"enabled": True}
-    result = dict(base)
-    result["enabled"] = bool(base.get("enabled", True))
-    return result
 
 
 def _build_summary(run: dict) -> str:
@@ -162,6 +106,7 @@ def _dashboard_defaults(error: Optional[str] = None) -> Dict[str, Any]:
         "error": error,
         "generated_at": None,
         "generated_label": None,
+        "recent_trades": [],
         "performance": {
             "daily_pl_pips": 0.0,
             "daily_pl_jpy": 0.0,
@@ -222,6 +167,15 @@ def _safe_float(value: Any) -> float:
         return float(value)
     except (TypeError, ValueError):  # pragma: no cover - defensive
         return 0.0
+
+
+def _opt_float(value: Any) -> Optional[float]:
+    try:
+        if value is None:
+            return None
+        return float(value)
+    except (TypeError, ValueError):  # pragma: no cover - defensive
+        return None
 
 
 def _parse_dt(value: Any) -> Optional[datetime]:
@@ -335,6 +289,37 @@ def _summarise_snapshot(snapshot: Dict[str, Any]) -> Dict[str, Any]:
                 "close_label": _format_dt(close_dt),
             }
         )
+
+    recent_trades_display: list[Dict[str, Any]] = []
+    for item in trades_raw[:12]:
+        entry_dt = _parse_dt(item.get("entry_time"))
+        close_dt = _parse_dt(item.get("close_time"))
+        updated_dt = _parse_dt(item.get("updated_at") or item.get("close_time") or item.get("entry_time"))
+        units_val = _safe_float(item.get("units"))
+        direction = "Long" if units_val > 0 else "Short" if units_val < 0 else "Flat"
+        units_abs = int(round(abs(units_val)))
+        pl_pips = _safe_float(item.get("pl_pips"))
+        pl_jpy = _safe_float(item.get("realized_pl"))
+        kind = "gain" if pl_pips > 0 else "loss" if pl_pips < 0 else "neutral"
+        recent_trades_display.append(
+            {
+                "ticket_id": str(item.get("ticket_id") or ""),
+                "pocket": (item.get("pocket") or "-").strip() or "-",
+                "direction": direction,
+                "units_abs": units_abs,
+                "entry_price": _opt_float(item.get("entry_price")),
+                "close_price": _opt_float(item.get("close_price")),
+                "pl_pips": round(pl_pips, 2),
+                "pl_jpy": round(pl_jpy, 2),
+                "state": str(item.get("state") or "-").upper(),
+                "close_reason": item.get("close_reason") or "-",
+                "entry_label": _format_dt(entry_dt) or "-",
+                "close_label": _format_dt(close_dt) or "-",
+                "updated_label": _format_dt(updated_dt) or "-",
+                "kind": kind,
+            }
+        )
+    base["recent_trades"] = recent_trades_display
 
     closed_trades = [t for t in parsed_trades if t["close_time"]]
     closed_trades.sort(key=lambda t: t["close_time"], reverse=True)
@@ -655,108 +640,19 @@ def root_redirect():
 @app.get("/dashboard")
 def dashboard(request: Request):
     dashboard_data = _load_dashboard_data()
-    # Excursion latest and recent list for inline dashboard panel
-    base = _excursion_base_dir()
-    hourly_dir = base / "hourly"
-    latest_path = base / "latest.txt"
-    excursion_hours: list[dict] = []
-    if hourly_dir.exists():
-        files = sorted(hourly_dir.glob("*.txt"), key=lambda p: p.name, reverse=True)[:12]
-        for p in files:
-            try:
-                size = p.stat().st_size
-            except Exception:
-                size = 0
-            excursion_hours.append({"name": p.name, "size": size})
-    excursion_content = ""
-    # 1) まず GCS を試す（Cloud Run での利用を優先）
-    try:
-        if storage is not None:
-            bucket_name = get_secret("ui_bucket_name")
-            try:
-                obj_path = get_secret("excursion_latest_object_path")
-            except Exception:
-                obj_path = "excursion/latest.txt"
-            client = storage.Client()
-            blob = client.bucket(bucket_name).blob(obj_path)
-            excursion_content = blob.download_as_text(timeout=5)
-    except Exception:
-        excursion_content = ""
-    # 2) ローカル（VM）にファイルがあればフォールバック
-    if not excursion_content:
-        if latest_path.exists():
-            excursion_content = _read_text(latest_path, limit_bytes=256_000)
-        elif excursion_hours:
-            excursion_content = _read_text(hourly_dir / excursion_hours[0]["name"], limit_bytes=256_000)
     return templates.TemplateResponse(
         "dashboard.html",
         {
             "request": request,
             "dashboard": dashboard_data,
             "active_tab": "dashboard",
-            "excursion_hours": excursion_hours,
-            "excursion_content": excursion_content,
         },
     )
 
 
 @app.get("/excursion")
 def excursion_report(request: Request, file: Optional[str] = None):
-    base = _excursion_base_dir()
-    hourly_dir = base / "hourly"
-    latest_path = base / "latest.txt"
-    # 一覧（最新順）
-    hours: list[dict] = []
-    if hourly_dir.exists():
-        for p in sorted(hourly_dir.glob("*.txt"), key=lambda x: x.name, reverse=True):
-            hours.append({
-                "name": p.name,
-                "size": p.stat().st_size if p.exists() else 0,
-            })
-    selected_name = (file or "").strip()
-    content = ""
-    if selected_name:
-        target = hourly_dir / Path(selected_name).name
-        if target.exists():
-            content = _read_text(target)
-        else:
-            content = f"[not_found] {target}"
-    else:
-        if latest_path.exists():
-            content = _read_text(latest_path)
-        else:
-            # フォールバック: 最新ファイルを選択
-            if hours:
-                target = hourly_dir / hours[0]["name"]
-                content = _read_text(target)
-                selected_name = hours[0]["name"]
-            else:
-                # GCS からの取得（Cloud Run 用）
-                try:
-                    if storage is not None:
-                        bucket_name = get_secret("ui_bucket_name")
-                        try:
-                            obj_path = get_secret("excursion_latest_object_path")
-                        except Exception:
-                            obj_path = "excursion/latest.txt"
-                        client = storage.Client()
-                        blob = client.bucket(bucket_name).blob(obj_path)
-                        content = blob.download_as_text(timeout=5)
-                        selected_name = obj_path
-                    else:
-                        content = "レポートが見つかりません。ジョブが稼働しているか確認してください。"
-                except Exception:
-                    content = "レポートが見つかりません。ジョブが稼働しているか確認してください。"
-    return templates.TemplateResponse(
-        "excursion.html",
-        {
-            "request": request,
-            "active_tab": "excursion",
-            "hours": hours,
-            "selected": selected_name,
-            "content": content,
-        },
-    )
+    return RedirectResponse(url="/dashboard", status_code=307)
 
 
 @app.get("/autotune")
@@ -769,87 +665,7 @@ def autotune_home(
     page: int = 1,
     page_size: int = 50,
 ):
-    stats = _normalize_numbers(get_stats())
-    settings = _normalize_settings(get_settings())
-
-    # fetch runs (larger limit then filter/sort/paginate in memory)
-    raw_runs = [dump_dict(row) for row in list_runs(status=None if status == "all" else status, limit=500)]
-
-    # normalize fields for sorting/filtering
-    def derive_metrics(run: dict) -> dict:
-        train = run.get("train") or {}
-        valid = run.get("valid") or {}
-        base = valid if valid else train
-        pf = base.get("profit_factor")
-        trades = base.get("trades")
-        dd = base.get("max_dd_pips")
-        wr = base.get("win_rate")
-        run["_pf"] = float(pf) if pf is not None else 0.0
-        run["_trades"] = int(trades) if trades is not None else 0
-        run["_dd"] = float(dd) if dd is not None else 0.0
-        run["_wr"] = float(wr) if wr is not None else 0.0
-        run["_score"] = float(run.get("score") or 0.0)
-        run["_updated"] = run.get("updated_at") or run.get("created_at") or ""
-        run["_created"] = run.get("created_at") or ""
-        run["_summary"] = _build_summary(run)
-        return run
-
-    items = [derive_metrics(r) for r in raw_runs]
-
-    # free-text filter
-    q_norm = (q or "").strip().lower()
-    if q_norm:
-        items = [r for r in items if q_norm in str(r.get("strategy", "")).lower() or q_norm in str(r.get("run_id", "")).lower()]
-
-    # sort
-    keymap = {
-        "score": "_score",
-        "pf": "_pf",
-        "trades": "_trades",
-        "dd": "_dd",
-        "wr": "_wr",
-        "updated": "_updated",
-        "created": "_created",
-    }
-    sort_key = keymap.get((sort or "").lower(), "_updated")
-    reverse = (order or "desc").lower() != "asc"
-    items.sort(key=lambda r: r.get(sort_key) or 0, reverse=reverse)
-
-    # pagination
-    try:
-        page = max(1, int(page))
-    except Exception:
-        page = 1
-    try:
-        page_size = max(10, min(200, int(page_size)))
-    except Exception:
-        page_size = 50
-    total = len(items)
-    start = (page - 1) * page_size
-    end = start + page_size
-    page_items = items[start:end]
-    pages = (total + page_size - 1) // page_size
-    return templates.TemplateResponse(
-        "autotune.html",
-        {
-            "request": request,
-            "stats": stats,
-            "using_bigquery": USE_BIGQUERY,
-            "settings": settings,
-            "active_tab": "autotune",
-            "items": page_items,
-            "filters": {
-                "status": status,
-                "sort": sort,
-                "order": order,
-                "q": q,
-                "page": page,
-                "page_size": page_size,
-                "pages": pages,
-                "total": total,
-            },
-        },
-    )
+    return RedirectResponse(url="/dashboard", status_code=307)
 
 
 @app.get("/runs/{run_id}/{strategy}")

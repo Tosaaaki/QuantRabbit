@@ -245,6 +245,62 @@
   </div>
 
   <div class="card">
+    <h2>最近のトレード</h2>
+    <div class="tagline">更新順で最新12件を表示します。状態/決済理由も併記します。</div>
+    {% if dashboard.recent_trades %}
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>更新</th>
+              <th>Pocket</th>
+              <th>方向</th>
+              <th>数量</th>
+              <th>Entry</th>
+              <th>Close</th>
+              <th>損益 (pips)</th>
+              <th>損益 (JPY)</th>
+              <th>状態</th>
+              <th>決済理由</th>
+            </tr>
+          </thead>
+          <tbody>
+          {% for row in dashboard.recent_trades %}
+            {% set pill_class = 'pill gain' if row.kind == 'gain' else 'pill loss' if row.kind == 'loss' else 'pill neutral' %}
+            <tr>
+              <td class="mono nowrap">{{ row.updated_label }}</td>
+              <td>{{ row.pocket }}</td>
+              <td>{{ row.direction }}</td>
+              <td>{{ "{:,}".format(row.units_abs) }}</td>
+              <td>
+                {% if row.entry_price is not none %}
+                  {{ "%.3f"|format(row.entry_price) }}
+                {% else %}
+                  -
+                {% endif %}
+              </td>
+              <td>
+                {% if row.close_price is not none %}
+                  {{ "%.3f"|format(row.close_price) }}
+                {% else %}
+                  -
+                {% endif %}
+              </td>
+              <td><span class="{{ pill_class }}">{{ "%+.1f"|format(row.pl_pips) }}</span></td>
+              <td>{{ "%+.0f"|format(row.pl_jpy) }}</td>
+              <td>{{ row.state }}</td>
+              <td>{{ row.close_reason }}</td>
+            </tr>
+          {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    {% else %}
+      <p class="tagline">トレード履歴がありません。</p>
+    {% endif %}
+  </div>
+
+  <div class="card">
     <h2>オープンポジション</h2>
     <div class="tagline">
       合計 {{ dashboard.open_summary.total_positions }} 件 /
@@ -352,16 +408,6 @@
         {% else %}
           <p class="tagline">最新トレード情報がまだありません。</p>
         {% endif %}
-      </div>
-    </div>
-  </div>
-
-  <div class="card">
-    <h2 class="section-title">エクスカージョン（毎時）</h2>
-    <div class="tagline">最新の毎時レポート（直近12件は /excursion から一覧参照可能）</div>
-    <div style="display:grid; grid-template-columns: 1fr; gap: 1rem;">
-      <div class="mono-block mono-short">
-        {{ excursion_content or 'レポートが見つかりません。' }}
       </div>
     </div>
   </div>
