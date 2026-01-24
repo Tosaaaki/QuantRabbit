@@ -1,0 +1,12 @@
+[Unit]
+Description=QuantRabbit range mode metrics publisher
+After=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/home/tossaki/QuantRabbit
+ExecStart=/home/tossaki/QuantRabbit/.venv/bin/python scripts/publish_range_mode.py
+User=tossaki
+Environment=PYTHONUNBUFFERED=1
+Environment=PYTHONPATH=/home/tossaki/QuantRabbit
+EnvironmentFile=-/etc/quantrabbit.env
