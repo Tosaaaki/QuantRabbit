@@ -18,6 +18,7 @@ import pandas as pd
 from analysis.range_guard import detect_range_mode
 from indicators.calc_core import IndicatorEngine
 from indicators.factor_cache import all_factors
+from utils.market_hours import is_market_open
 from utils.metrics_logger import log_metric
 
 
@@ -29,6 +30,11 @@ H4_PATH = Path(os.getenv("RANGE_MODE_CANDLES_H4", "logs/oanda/candles_H4_latest.
 H1_PATH = Path(os.getenv("RANGE_MODE_CANDLES_H1", "logs/oanda/candles_H1_latest.json"))
 MACRO_TF = os.getenv("RANGE_MODE_MACRO_TF", "H4").upper()
 REFRESH_ENABLED = os.getenv("RANGE_MODE_PUBLISH_REFRESH", "1").lower() not in {
+    "0",
+    "false",
+    "off",
+}
+ALLOW_CLOSED_STALE = os.getenv("RANGE_MODE_PUBLISH_ALLOW_CLOSED", "1").lower() not in {
     "0",
     "false",
     "off",
@@ -250,9 +256,13 @@ def main() -> None:
     if not fac_m1 or not fac_macro:
         logging.warning("[range_metric] missing factors (source=%s)", source)
         return
+    stale_reason = None
     if age_sec is not None and age_sec > DEFAULT_MAX_DATA_AGE_SEC:
-        logging.warning("[range_metric] data too old (age=%.1fs)", age_sec)
-        return
+        if ALLOW_CLOSED_STALE and not is_market_open(now):
+            stale_reason = "market_closed"
+        else:
+            logging.warning("[range_metric] data too old (age=%.1fs)", age_sec)
+            return
 
     range_ctx = detect_range_mode(fac_m1, fac_macro, env_tf="M1", macro_tf=MACRO_TF)
     tags = {
@@ -264,6 +274,8 @@ def main() -> None:
     }
     if age_sec is not None:
         tags["age_sec"] = int(age_sec)
+    if stale_reason:
+        tags["stale"] = stale_reason
     log_metric("range_mode_active", 1.0 if range_ctx.active else 0.0, tags=tags, ts=now)
     logging.info(
         "[range_metric] logged active=%s source=%s reason=%s",
