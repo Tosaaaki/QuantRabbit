@@ -510,10 +510,13 @@ def _fetch_remote_snapshot() -> Optional[dict]:
             elapsed_ms = int((time.monotonic() - start) * 1000)
             print(f"[ui_snapshot] remote_ok elapsed_ms={elapsed_ms}")
         return data
-    except (urllib.error.URLError, json.JSONDecodeError, TimeoutError, socket.timeout):
+    except (urllib.error.URLError, json.JSONDecodeError, TimeoutError, socket.timeout) as exc:
         if debug:
             elapsed_ms = int((time.monotonic() - start) * 1000)
-            print(f"[ui_snapshot] remote_error elapsed_ms={elapsed_ms}")
+            print(
+                "[ui_snapshot] remote_error elapsed_ms=%s error=%s detail=%s"
+                % (elapsed_ms, type(exc).__name__, exc)
+            )
         return None
 
 
