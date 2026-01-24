@@ -319,6 +319,95 @@ LEFT JOIN ${PROJECT}.${DATASET}.market_hourly_view m_close
 SQL
 fi
 
+# Entry thesis structured view
+if [[ "$HAS_TRADES" -eq 1 && "$HAS_CANDLES" -eq 1 ]]; then
+  echo "[BQ] Creating view entry_thesis_struct_view / entry_thesis_flags_view"
+  BQ_LOC_ARG=""
+  if [[ -n "${DATASET_LOC:-}" ]]; then BQ_LOC_ARG="--location=${DATASET_LOC}"; fi
+  bq --project_id "$PROJECT" ${BQ_LOC_ARG} query --use_legacy_sql=false <<SQL >/dev/null
+CREATE OR REPLACE VIEW ${PROJECT}.${DATASET}.entry_thesis_struct_view AS
+WITH base AS (
+  SELECT
+    t.*,
+    COALESCE(
+      t.strategy_tag,
+      t.strategy,
+      JSON_EXTRACT_SCALAR(CAST(t.entry_thesis AS STRING), '$.strategy_tag'),
+      JSON_EXTRACT_SCALAR(CAST(t.entry_thesis AS STRING), '$.strategy'),
+      'unknown'
+    ) AS strategy_key,
+    SAFE_CAST(JSON_EXTRACT_SCALAR(CAST(t.entry_thesis AS STRING), '$.confidence') AS INT64) AS entry_confidence,
+    JSON_EXTRACT_SCALAR(CAST(t.entry_thesis AS STRING), '$.entry_type') AS entry_type,
+    JSON_EXTRACT_SCALAR(CAST(t.entry_thesis AS STRING), '$.intent') AS entry_intent,
+    JSON_EXTRACT_SCALAR(CAST(t.entry_thesis AS STRING), '$.pattern_tag') AS pattern_tag,
+    JSON_EXTRACT_SCALAR(CAST(t.entry_thesis AS STRING), '$.profile') AS profile,
+    JSON_EXTRACT_SCALAR(CAST(t.entry_thesis AS STRING), '$.env_tf') AS env_tf,
+    JSON_EXTRACT_SCALAR(CAST(t.entry_thesis AS STRING), '$.entry_tf') AS entry_tf,
+    JSON_EXTRACT_SCALAR(CAST(t.entry_thesis AS STRING), '$.struct_tf') AS struct_tf,
+    SAFE_CAST(JSON_EXTRACT_SCALAR(CAST(t.entry_thesis AS STRING), '$.trend_bias') AS BOOL) AS trend_bias,
+    SAFE_CAST(JSON_EXTRACT_SCALAR(CAST(t.entry_thesis AS STRING), '$.trend_score') AS FLOAT64) AS trend_score,
+    SAFE_CAST(COALESCE(
+      JSON_EXTRACT_SCALAR(CAST(t.entry_thesis AS STRING), '$.atr_pips'),
+      JSON_EXTRACT_SCALAR(CAST(t.entry_thesis AS STRING), '$.atr_entry'),
+      JSON_EXTRACT_SCALAR(CAST(t.entry_thesis AS STRING), '$.atr'),
+      JSON_EXTRACT_SCALAR(CAST(t.entry_thesis AS STRING), '$.atr_m1')
+    ) AS FLOAT64) AS atr_pips,
+    SAFE_CAST(JSON_EXTRACT_SCALAR(CAST(t.entry_thesis AS STRING), '$.atr_entry') AS FLOAT64) AS atr_entry,
+    SAFE_CAST(JSON_EXTRACT_SCALAR(CAST(t.entry_thesis AS STRING), '$.vol_5m') AS FLOAT64) AS vol_5m,
+    JSON_EXTRACT_SCALAR(CAST(t.entry_thesis AS STRING), '$.regime') AS regime,
+    JSON_EXTRACT_SCALAR(CAST(t.entry_thesis AS STRING), '$.tp_mode') AS tp_mode,
+    JSON_EXTRACT_SCALAR(CAST(t.entry_thesis AS STRING), '$.tp_target') AS tp_target,
+    JSON_EXTRACT_SCALAR(CAST(t.entry_thesis AS STRING), '$.strategy_mode') AS strategy_mode,
+    JSON_EXTRACT(CAST(t.entry_thesis AS STRING), '$.range_snapshot') AS range_snapshot_json,
+    JSON_EXTRACT(CAST(t.entry_thesis AS STRING), '$.reversion_failure') AS reversion_failure_json,
+    JSON_EXTRACT(CAST(t.entry_thesis AS STRING), '$.mr_guard') AS mr_guard_json,
+    JSON_EXTRACT(CAST(t.entry_thesis AS STRING), '$.section_axis') AS section_axis_json,
+    ARRAY(
+      SELECT JSON_EXTRACT_SCALAR(flag)
+      FROM UNNEST(IFNULL(JSON_EXTRACT_ARRAY(CAST(t.entry_thesis AS STRING), '$.flags'), [])) AS flag
+    ) AS flags
+  FROM ${PROJECT}.${DATASET}.trades_market_hourly_view t
+)
+SELECT
+  base.*,
+  CASE
+    WHEN entry_avg_range_pips IS NULL THEN 'unknown'
+    WHEN entry_avg_range_pips < 2 THEN 'tight'
+    WHEN entry_avg_range_pips < 5 THEN 'low'
+    WHEN entry_avg_range_pips < 8 THEN 'mid'
+    WHEN entry_avg_range_pips < 12 THEN 'high'
+    ELSE 'very_high'
+  END AS entry_range_bucket,
+  CASE
+    WHEN atr_pips IS NULL THEN 'unknown'
+    WHEN atr_pips < 2 THEN '0-2'
+    WHEN atr_pips < 4 THEN '2-4'
+    WHEN atr_pips < 6 THEN '4-6'
+    WHEN atr_pips < 8 THEN '6-8'
+    WHEN atr_pips < 12 THEN '8-12'
+    ELSE '12+'
+  END AS atr_bucket,
+  IF(range_snapshot_json IS NULL, FALSE, TRUE) AS has_range_snapshot,
+  IF(reversion_failure_json IS NULL, FALSE, TRUE) AS has_reversion_failure,
+  IF(mr_guard_json IS NULL, FALSE, TRUE) AS has_mr_guard,
+  IF(section_axis_json IS NULL, FALSE, TRUE) AS has_section_axis,
+  ARRAY(
+    SELECT flag FROM UNNEST(IFNULL(flags, [])) AS flag
+    WHERE STARTS_WITH(flag, 'entry_guard_')
+  ) AS entry_guard_flags
+FROM base;
+SQL
+
+  bq --project_id "$PROJECT" ${BQ_LOC_ARG} query --use_legacy_sql=false <<SQL >/dev/null
+CREATE OR REPLACE VIEW ${PROJECT}.${DATASET}.entry_thesis_flags_view AS
+SELECT
+  t.*,
+  flag
+FROM ${PROJECT}.${DATASET}.entry_thesis_struct_view t,
+UNNEST(IFNULL(t.flags, [])) AS flag;
+SQL
+fi
+
 # ------------ Service account key (local file) ------------
 if [[ -f "$KEY_OUT" ]]; then
   echo "[IAM] Key file already exists: $KEY_OUT (skipping create)"
