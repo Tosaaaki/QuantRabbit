@@ -8,6 +8,8 @@ import json
 import logging
 import os
 import sqlite3
+import subprocess
+import sys
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
 
@@ -26,6 +28,22 @@ M1_PATH = Path(os.getenv("RANGE_MODE_CANDLES_M1", "logs/oanda/candles_M1_latest.
 H4_PATH = Path(os.getenv("RANGE_MODE_CANDLES_H4", "logs/oanda/candles_H4_latest.json"))
 H1_PATH = Path(os.getenv("RANGE_MODE_CANDLES_H1", "logs/oanda/candles_H1_latest.json"))
 MACRO_TF = os.getenv("RANGE_MODE_MACRO_TF", "H4").upper()
+REFRESH_ENABLED = os.getenv("RANGE_MODE_PUBLISH_REFRESH", "1").lower() not in {
+    "0",
+    "false",
+    "off",
+}
+
+
+def _parse_int(value: str, default: int) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
+REFRESH_M1_COUNT = _parse_int(os.getenv("RANGE_MODE_PUBLISH_REFRESH_M1_COUNT", "500"), 500)
+REFRESH_MACRO_COUNT = _parse_int(os.getenv("RANGE_MODE_PUBLISH_REFRESH_MACRO_COUNT", "200"), 200)
 
 
 def _utcnow() -> dt.datetime:
@@ -151,6 +169,52 @@ def _resolve_factors() -> Tuple[Optional[Dict[str, float]], Optional[Dict[str, f
     return fac_m1, fac_macro, "candles", ts_m1, ts_macro
 
 
+def _data_age_sec(now: dt.datetime, ts_m1: Optional[dt.datetime], ts_macro: Optional[dt.datetime]) -> Optional[float]:
+    age_sec = None
+    if ts_m1:
+        age_sec = (now - ts_m1).total_seconds()
+    if ts_macro:
+        macro_age = (now - ts_macro).total_seconds()
+        age_sec = macro_age if age_sec is None else max(age_sec, macro_age)
+    return age_sec
+
+
+def _refresh_candles() -> bool:
+    if not REFRESH_ENABLED:
+        return False
+    macro_tf = MACRO_TF if MACRO_TF in {"H4", "H1"} else "H4"
+    macro_count = REFRESH_MACRO_COUNT
+    m1_count = REFRESH_M1_COUNT
+    try:
+        logging.info("[range_metric] refreshing candles (M1=%d %s=%d)", m1_count, macro_tf, macro_count)
+        subprocess.run(
+            [
+                sys.executable,
+                "scripts/refresh_latest_candles.py",
+                "--granularity",
+                "M1",
+                "--count",
+                str(m1_count),
+            ],
+            check=True,
+        )
+        subprocess.run(
+            [
+                sys.executable,
+                "scripts/refresh_latest_candles.py",
+                "--granularity",
+                macro_tf,
+                "--count",
+                str(macro_count),
+            ],
+            check=True,
+        )
+        return True
+    except Exception as exc:
+        logging.warning("[range_metric] refresh failed: %s", exc)
+        return False
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Publish range_mode_active metric.")
     parser.add_argument("--log-level", default="INFO")
@@ -173,16 +237,19 @@ def main() -> None:
             return
 
     fac_m1, fac_macro, source, ts_m1, ts_macro = _resolve_factors()
+    age_sec = _data_age_sec(now, ts_m1, ts_macro)
+    needs_refresh = (
+        not fac_m1
+        or not fac_macro
+        or (age_sec is not None and age_sec > DEFAULT_MAX_DATA_AGE_SEC)
+    )
+    if needs_refresh and _refresh_candles():
+        fac_m1, fac_macro, source, ts_m1, ts_macro = _resolve_factors()
+        age_sec = _data_age_sec(now, ts_m1, ts_macro)
+
     if not fac_m1 or not fac_macro:
         logging.warning("[range_metric] missing factors (source=%s)", source)
         return
-
-    age_sec = None
-    if ts_m1:
-        age_sec = (now - ts_m1).total_seconds()
-    if ts_macro:
-        macro_age = (now - ts_macro).total_seconds()
-        age_sec = macro_age if age_sec is None else max(age_sec, macro_age)
     if age_sec is not None and age_sec > DEFAULT_MAX_DATA_AGE_SEC:
         logging.warning("[range_metric] data too old (age=%.1fs)", age_sec)
         return
