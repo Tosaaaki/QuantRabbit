@@ -37,6 +37,7 @@ ORDERS_DB = Path("logs/orders.db")
 SIGNALS_DB = Path("logs/signals.db")
 
 _LIVE_SNAPSHOT_TTL_SEC = int(os.getenv("LIVE_SNAPSHOT_TTL_SEC", "8"))
+_REMOTE_SNAPSHOT_TIMEOUT_SEC = float(os.getenv("UI_SNAPSHOT_TIMEOUT_SEC", "4.0"))
 _live_snapshot_lock = threading.Lock()
 _live_snapshot_cache: dict[str, Any] | None = None
 _live_snapshot_ts: float = 0.0
@@ -500,7 +501,7 @@ def _fetch_remote_snapshot() -> Optional[dict]:
         req.add_header("X-QR-Token", token)
         req.add_header("Authorization", f"Bearer {token}")
     try:
-        with urllib.request.urlopen(req, timeout=2.5) as resp:
+        with urllib.request.urlopen(req, timeout=_REMOTE_SNAPSHOT_TIMEOUT_SEC) as resp:
             raw = resp.read()
         return json.loads(raw)
     except (urllib.error.URLError, json.JSONDecodeError, TimeoutError, socket.timeout):
