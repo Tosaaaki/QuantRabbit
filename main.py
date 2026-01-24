@@ -3847,6 +3847,13 @@ async def logic_loop(
     last_spread_gate = False
     last_spread_gate_reason = ""
     last_logged_range_state: Optional[bool] = None
+    last_logged_range_ts = datetime.datetime.min
+    try:
+        range_log_interval_sec = max(
+            10, int(os.getenv("RANGE_MODE_LOG_INTERVAL_SEC", "120"))
+        )
+    except (TypeError, ValueError):
+        range_log_interval_sec = 120
     last_logged_focus: Optional[str] = None
     last_logged_weight: Optional[float] = None
     last_logged_scalp_weight: Optional[float] = None
@@ -5876,7 +5883,12 @@ async def logic_loop(
             )
             clamp_state = stage_tracker.get_clamp_state(now=now)
             recent_profiles = stage_tracker.get_recent_profiles()
-            if last_logged_range_state is None or last_logged_range_state != range_active:
+            should_log_range = (
+                last_logged_range_state is None
+                or last_logged_range_state != range_active
+                or (now - last_logged_range_ts).total_seconds() >= range_log_interval_sec
+            )
+            if should_log_range:
                 log_metric(
                     "range_mode_active",
                     1.0 if range_active else 0.0,
@@ -5887,6 +5899,7 @@ async def logic_loop(
                     ts=now,
                 )
                 last_logged_range_state = range_active
+                last_logged_range_ts = now
             focus_candidates = set(FOCUS_POCKETS.get(focus_tag, ("macro", "micro", "scalp")))
             if not focus_candidates:
                 focus_candidates = {"micro"}
