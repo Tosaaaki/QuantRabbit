@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% block content %}
   <div class="card">
-    <h2>Operations Dashboard</h2>
+    <h2>運用サマリー</h2>
     {% if dashboard.available %}
       {% if dashboard.generated_label %}
         <p class="stat-sub">最終更新: {{ dashboard.generated_label }}</p>
@@ -85,33 +85,35 @@
 
     <div class="section-title">オープンポジション</div>
     {% if dashboard.open_summary.pockets %}
-      <table>
+      <div class="table-wrap">
+        <table>
         <thead>
           <tr>
             <th>Pocket</th>
-            <th>Direction</th>
-            <th>Units</th>
-            <th>Avg Price</th>
-            <th>Unrealized (pips)</th>
-            <th>Unrealized (JPY)</th>
-            <th>Positions</th>
+            <th>方向</th>
+            <th>数量</th>
+            <th>平均価格</th>
+            <th>未実現 (pips)</th>
+            <th>未実現 (JPY)</th>
+            <th>建玉数</th>
           </tr>
         </thead>
-        <tbody>
-        {% for row in dashboard.open_summary.pockets %}
-          {% set pill_class = 'pill gain' if row.unrealized_pips > 0 else 'pill loss' if row.unrealized_pips < 0 else 'pill neutral' %}
-          <tr>
-            <td>{{ row.pocket }}</td>
-            <td>{{ row.direction }}</td>
-            <td>{{ "{:,}".format(row.units_abs) }}</td>
-            <td>{{ "%.3f"|format(row.avg_price) }}</td>
-            <td><span class="{{ pill_class }}">{{ "%+.2f"|format(row.unrealized_pips) }}p</span></td>
-            <td>{{ "%+.0f"|format(row.unrealized_jpy) }}</td>
-            <td>{{ row.trades }}</td>
-          </tr>
-        {% endfor %}
-        </tbody>
-      </table>
+          <tbody>
+          {% for row in dashboard.open_summary.pockets %}
+            {% set pill_class = 'pill gain' if row.unrealized_pips > 0 else 'pill loss' if row.unrealized_pips < 0 else 'pill neutral' %}
+            <tr>
+              <td>{{ row.pocket }}</td>
+              <td>{{ row.direction }}</td>
+              <td>{{ "{:,}".format(row.units_abs) }}</td>
+              <td>{{ "%.3f"|format(row.avg_price) }}</td>
+              <td><span class="{{ pill_class }}">{{ "%+.2f"|format(row.unrealized_pips) }}p</span></td>
+              <td>{{ "%+.0f"|format(row.unrealized_jpy) }}</td>
+              <td>{{ row.trades }}</td>
+            </tr>
+          {% endfor %}
+          </tbody>
+        </table>
+      </div>
     {% else %}
       <p class="tagline">現在オープンポジションはありません。</p>
     {% endif %}
@@ -120,69 +122,73 @@
 
     <h3 class="section-subtitle">トップ勝ち／負け</h3>
     {% if dashboard.highlights_top %}
-      <table>
+      <div class="table-wrap">
+        <table>
         <thead>
           <tr>
-            <th>Ticket</th>
+            <th>チケット</th>
             <th>Pocket</th>
-            <th>P/L (pips)</th>
-            <th>P/L (JPY)</th>
-            <th>Closed</th>
+            <th>損益 (pips)</th>
+            <th>損益 (JPY)</th>
+            <th>決済時刻</th>
           </tr>
         </thead>
-        <tbody>
-        {% for row in dashboard.highlights_top %}
-          {% set pill_class = 'pill gain' if row.kind == 'gain' else 'pill loss' %}
-          <tr>
-            <td>{{ row.ticket_id }}</td>
-            <td>{{ row.pocket }}</td>
-            <td><span class="{{ pill_class }}">{{ "%+.1f"|format(row.pl_pips) }}</span></td>
-            <td>{{ "%+.0f"|format(row.pl_jpy) }}</td>
-            <td>{{ row.closed_at or '-' }}</td>
-          </tr>
-        {% endfor %}
-        </tbody>
-      </table>
+          <tbody>
+          {% for row in dashboard.highlights_top %}
+            {% set pill_class = 'pill gain' if row.kind == 'gain' else 'pill loss' %}
+            <tr>
+              <td>{{ row.ticket_id }}</td>
+              <td>{{ row.pocket }}</td>
+              <td><span class="{{ pill_class }}">{{ "%+.1f"|format(row.pl_pips) }}</span></td>
+              <td>{{ "%+.0f"|format(row.pl_jpy) }}</td>
+              <td>{{ row.closed_at or '-' }}</td>
+            </tr>
+          {% endfor %}
+          </tbody>
+        </table>
+      </div>
     {% else %}
       <p class="tagline">十分なトレード実績がありません。</p>
     {% endif %}
 
     <h3 class="section-subtitle">最新トレード</h3>
     {% if dashboard.highlights_recent %}
-      <table>
+      <div class="table-wrap">
+        <table>
         <thead>
           <tr>
-            <th>Ticket</th>
+            <th>チケット</th>
             <th>Pocket</th>
-            <th>P/L (pips)</th>
-            <th>P/L (JPY)</th>
-            <th>Closed</th>
+            <th>損益 (pips)</th>
+            <th>損益 (JPY)</th>
+            <th>決済時刻</th>
           </tr>
         </thead>
-        <tbody>
-        {% for row in dashboard.highlights_recent %}
-          {% set pill_class = 'pill gain' if row.kind == 'gain' else 'pill loss' if row.kind == 'loss' else 'pill neutral' %}
-          <tr>
-            <td>{{ row.ticket_id }}</td>
-            <td>{{ row.pocket }}</td>
-            <td><span class="{{ pill_class }}">{{ "%+.1f"|format(row.pl_pips) }}</span></td>
-            <td>{{ "%+.0f"|format(row.pl_jpy) }}</td>
-            <td>{{ row.closed_at or '-' }}</td>
-          </tr>
-        {% endfor %}
-        </tbody>
-      </table>
+          <tbody>
+          {% for row in dashboard.highlights_recent %}
+            {% set pill_class = 'pill gain' if row.kind == 'gain' else 'pill loss' if row.kind == 'loss' else 'pill neutral' %}
+            <tr>
+              <td>{{ row.ticket_id }}</td>
+              <td>{{ row.pocket }}</td>
+              <td><span class="{{ pill_class }}">{{ "%+.1f"|format(row.pl_pips) }}</span></td>
+              <td>{{ "%+.0f"|format(row.pl_jpy) }}</td>
+              <td>{{ row.closed_at or '-' }}</td>
+            </tr>
+          {% endfor %}
+          </tbody>
+        </table>
+      </div>
     {% else %}
       <p class="tagline">最新トレード情報がまだありません。</p>
     {% endif %}
   </div>
 
   <div class="card">
-    <h2>Autotune control</h2>
+    <h2>オートチューニング制御</h2>
     <p>現在の状態: <strong>{{ '有効' if settings.enabled else '停止中' }}</strong></p>
     <form method="post" action="/settings/autotune">
       <label>更新者</label>
-      <input type="text" name="reviewer" value="" style="padding:0.4rem; width: 50%; margin-bottom:0.6rem;">
+      <input type="text" name="reviewer" value="" class="input-wide" style="margin-bottom:0.6rem;">
       {% if settings.enabled %}
         <button class="reject" type="submit" name="action" value="disable">オートチューニングを停止</button>
       {% else %}
@@ -195,64 +201,68 @@
   </div>
 
   <div class="card">
-    <h2>Pending approvals</h2>
+    <h2>承認待ち</h2>
     {% if pending %}
-      <table>
+      <div class="table-wrap">
+        <table>
         <thead>
           <tr>
             <th>Run ID</th>
-            <th>Strategy</th>
-            <th>Score</th>
+            <th>戦略</th>
+            <th>スコア</th>
             <th>PF</th>
-            <th>Trades</th>
-            <th>Max DD (pips)</th>
-            <th>Created</th>
+            <th>件数</th>
+            <th>最大DD (pips)</th>
+            <th>作成</th>
           </tr>
         </thead>
-        <tbody>
-        {% for run in pending %}
-          <tr>
-            <td><a href="/runs/{{ run.run_id }}/{{ run.strategy }}">{{ run.run_id }}</a></td>
-            <td>{{ run.strategy }}</td>
-            <td>{{ "%.4f"|format(run.score or 0) }}</td>
-            <td>{{ "%.2f"|format(run.train.profit_factor) if run.train and run.train.profit_factor is not none else "-" }}</td>
-            <td>{{ run.train.trades if run.train else "-" }}</td>
-            <td>{{ run.train.max_dd_pips if run.train else "-" }}</td>
-            <td>{{ run.created_at }}</td>
-          </tr>
-        {% endfor %}
-        </tbody>
-      </table>
+          <tbody>
+          {% for run in pending %}
+            <tr>
+              <td><a href="/runs/{{ run.run_id }}/{{ run.strategy }}">{{ run.run_id }}</a></td>
+              <td>{{ run.strategy }}</td>
+              <td>{{ "%.4f"|format(run.score or 0) }}</td>
+              <td>{{ "%.2f"|format(run.train.profit_factor) if run.train and run.train.profit_factor is not none else "-" }}</td>
+              <td>{{ run.train.trades if run.train else "-" }}</td>
+              <td>{{ run.train.max_dd_pips if run.train else "-" }}</td>
+              <td>{{ run.created_at }}</td>
+            </tr>
+          {% endfor %}
+          </tbody>
+        </table>
+      </div>
     {% else %}
       <p>No pending runs 🎉</p>
     {% endif %}
   </div>
 
   <div class="card">
-    <h2>Recent activity</h2>
+    <h2>最近の更新</h2>
     {% if recent %}
-      <table>
+      <div class="table-wrap">
+        <table>
         <thead>
           <tr>
             <th>Run ID</th>
-            <th>Strategy</th>
-            <th>Status</th>
-            <th>Score</th>
-            <th>Updated</th>
+            <th>戦略</th>
+            <th>状態</th>
+            <th>スコア</th>
+            <th>更新</th>
           </tr>
         </thead>
-        <tbody>
-        {% for run in recent %}
-          <tr>
-            <td><a href="/runs/{{ run.run_id }}/{{ run.strategy }}">{{ run.run_id }}</a></td>
-            <td>{{ run.strategy }}</td>
-            <td><span class="badge {{ run.status }}">{{ run.status }}</span></td>
-            <td>{{ "%.4f"|format(run.score or 0) }}</td>
-            <td>{{ run.updated_at }}</td>
-          </tr>
-        {% endfor %}
-        </tbody>
-      </table>
+          <tbody>
+          {% for run in recent %}
+            <tr>
+              <td><a href="/runs/{{ run.run_id }}/{{ run.strategy }}">{{ run.run_id }}</a></td>
+              <td>{{ run.strategy }}</td>
+              <td><span class="badge {{ run.status }}">{{ run.status }}</span></td>
+              <td>{{ "%.4f"|format(run.score or 0) }}</td>
+              <td>{{ run.updated_at }}</td>
+            </tr>
+          {% endfor %}
+          </tbody>
+        </table>
+      </div>
     {% else %}
       <p>No runs recorded yet.</p>
     {% endif %}

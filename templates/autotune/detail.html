@@ -12,31 +12,31 @@
   </div>
 
   <div class="card">
-    <h3>Parameters</h3>
+    <h3>パラメータ</h3>
     <pre>{{ run.params_pretty }}</pre>
   </div>
 
   <div class="card">
-    <h3>Training metrics</h3>
+    <h3>学習メトリクス</h3>
     <pre>{{ run.train_pretty }}</pre>
   </div>
 
   <div class="card">
-    <h3>Validation metrics</h3>
+    <h3>検証メトリクス</h3>
     <pre>{{ run.valid_pretty }}</pre>
   </div>
 
   <div class="card">
     <h3>評価サマリー</h3>
-    <p style="white-space: pre-line;">{{ run.summary_jp }}</p>
+    <p class="preline">{{ run.summary_jp }}</p>
   </div>
 
   {% if run.status != "approved" %}
   <div class="card">
-    <h3>Decision</h3>
+    <h3>承認/却下</h3>
     <form method="post" action="/runs/{{ run.run_id }}/{{ run.strategy }}/decision">
       <label>Reviewer</label>
-      <input type="text" name="reviewer" value="{{ run.reviewer or '' }}" style="width: 100%; padding: 0.5rem;">
+      <input type="text" name="reviewer" value="{{ run.reviewer or '' }}" class="input-full">
       <label>Comment</label>
       <textarea name="comment">{{ run.comment or '' }}</textarea>
       <div class="buttons">

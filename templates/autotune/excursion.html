@@ -3,15 +3,15 @@
 <div class="card">
   <h2 class="section-title">エクスカージョン・レポート（毎時）</h2>
   <div class="tagline">logs/reports/excursion/hourly に保存された最新レポートを表示します。左の一覧から時刻を選択できます。</div>
-  <div style="display:grid; grid-template-columns: 260px 1fr; gap: 1rem; align-items: start;">
-    <div class="stat-card" style="max-height:70vh; overflow:auto;">
+  <div class="split">
+    <div class="stat-card scroll-panel">
       <div class="section-subtitle">アーカイブ</div>
       {% if hours %}
-        <ul style="list-style:none; padding-left:0; margin:0;">
+        <ul class="list-clean">
         {% for h in hours %}
-          <li style="margin:0.25rem 0;">
+          <li>
             <a href="/excursion?file={{ h.name }}" style="{{ 'font-weight:700;color:#111827;' if selected == h.name else '' }}">{{ h.name }}</a>
-            <span class="tagline" style="float:right; color:#64748b;">{{ h.size }}B</span>
+            <span class="list-meta">{{ h.size }}B</span>
           </li>
         {% endfor %}
         </ul>
@@ -19,10 +19,9 @@
         <div class="warning">ファイルがありません。</div>
       {% endif %}
     </div>
-    <div class="stat-card" style="max-height:70vh; overflow:auto; white-space:pre; font-family:ui-monospace, SFMono-Regular, Menlo, monospace; font-size:13px;">
+    <div class="mono-block">
       {{ content }}
     </div>
   </div>
 </div>
 {% endblock %}
-

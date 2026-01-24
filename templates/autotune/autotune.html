@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% block content %}
   <div class="card">
-    <h2>Autotune</h2>
+    <h2>オートチューニング</h2>
     <div class="toolbar">
       <form method="get" action="/autotune" class="toolbar">
         <label>状態</label>
@@ -45,47 +45,49 @@
   </div>
 
   <div class="card">
-    <h2>Runs</h2>
+    <h2>チューニング結果</h2>
     {% if items %}
-      <table>
-        <thead>
-          <tr>
-            <th>Run ID</th>
-            <th>Strategy</th>
-            <th>Status</th>
-            <th>Score</th>
-            <th>PF</th>
-            <th>Trades</th>
-            <th>Max DD</th>
-            <th>Updated</th>
-            <th>Actions</th>
-          </tr>
-        </thead>
-        <tbody>
-        {% for r in items %}
-          {% set score_class = 'score-high' if r._score>=1.4 else ('score-mid' if r._score>=1.1 else 'score-low') %}
-          {% set pf_class = 'pf-good' if r._pf>=1.3 else ('pf-warn' if r._pf>=1.05 else 'pf-bad') %}
-          <tr>
-            <td><a class="detail-link" href="/runs/{{ r.run_id }}/{{ r.strategy }}">{{ r.run_id }}</a></td>
-            <td>{{ r.strategy }}</td>
-            <td><span class="badge {{ r.status }}">{{ r.status }}</span></td>
-            <td><span class="{{ score_class }}">{{ '%.3f'|format(r._score) }}</span></td>
-            <td class="{{ pf_class }}">{{ '%.2f'|format(r._pf) }}</td>
-            <td>{{ r._trades }}</td>
-            <td>{{ '%.1f'|format(r._dd) }}</td>
-            <td>{{ r.updated_at or r.created_at }}</td>
-            <td>
-              <div class="actions">
-                <a class="detail-link" href="/runs/{{ r.run_id }}/{{ r.strategy }}">詳細</a>
-              </div>
-            </td>
-          </tr>
-          <tr class="summary-row">
-            <td colspan="9" class="stat-sub">{{ r._summary.replace('\n',' ') }}</td>
-          </tr>
-        {% endfor %}
-        </tbody>
-      </table>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Run ID</th>
+              <th>戦略</th>
+              <th>状態</th>
+              <th>スコア</th>
+              <th>PF</th>
+              <th>件数</th>
+              <th>最大DD</th>
+              <th>更新</th>
+              <th>操作</th>
+            </tr>
+          </thead>
+          <tbody>
+          {% for r in items %}
+            {% set score_class = 'score-high' if r._score>=1.4 else ('score-mid' if r._score>=1.1 else 'score-low') %}
+            {% set pf_class = 'pf-good' if r._pf>=1.3 else ('pf-warn' if r._pf>=1.05 else 'pf-bad') %}
+            <tr>
+              <td><a class="detail-link" href="/runs/{{ r.run_id }}/{{ r.strategy }}">{{ r.run_id }}</a></td>
+              <td>{{ r.strategy }}</td>
+              <td><span class="badge {{ r.status }}">{{ r.status }}</span></td>
+              <td><span class="{{ score_class }}">{{ '%.3f'|format(r._score) }}</span></td>
+              <td class="{{ pf_class }}">{{ '%.2f'|format(r._pf) }}</td>
+              <td>{{ r._trades }}</td>
+              <td>{{ '%.1f'|format(r._dd) }}</td>
+              <td>{{ r.updated_at or r.created_at }}</td>
+              <td>
+                <div class="actions">
+                  <a class="detail-link" href="/runs/{{ r.run_id }}/{{ r.strategy }}">詳細</a>
+                </div>
+              </td>
+            </tr>
+            <tr class="summary-row">
+              <td colspan="9" class="stat-sub">{{ r._summary.replace('\n',' ') }}</td>
+            </tr>
+          {% endfor %}
+          </tbody>
+        </table>
+      </div>
 
       <div class="toolbar" style="justify-content:space-between; margin-top:0.8rem;">
         <div class="stat-sub">ページ {{ filters.page }} / {{ filters.pages }}</div>
@@ -104,11 +106,11 @@
   </div>
 
   <div class="card">
-    <h2>Autotune control</h2>
+    <h2>オートチューニング制御</h2>
     <p>現在の状態: <strong>{{ '有効' if settings.enabled else '停止中' }}</strong></p>
     <form method="post" action="/settings/autotune">
       <label>更新者</label>
-      <input type="text" name="reviewer" value="" style="padding:0.4rem; width: 50%; margin-bottom:0.6rem;">
+      <input type="text" name="reviewer" value="" class="input-wide" style="margin-bottom:0.6rem;">
       {% if settings.enabled %}
         <button class="reject" type="submit" name="action" value="disable">オートチューニングを停止</button>
       {% else %}

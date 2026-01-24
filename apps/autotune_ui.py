@@ -184,6 +184,7 @@ def _dashboard_defaults(error: Optional[str] = None) -> Dict[str, Any]:
             "last_trade_at": None,
             "unrealized_pl_pips": 0.0,
             "unrealized_pl_jpy": 0.0,
+            "pockets": [],
         },
         "open_summary": {
             "total_positions": 0,
@@ -191,6 +192,22 @@ def _dashboard_defaults(error: Optional[str] = None) -> Dict[str, Any]:
             "unrealized_pl_pips": 0.0,
             "unrealized_pl_jpy": 0.0,
             "pockets": [],
+        },
+        "system": {
+            "data_lag_ms": None,
+            "data_lag_level": "level-neutral",
+            "decision_latency_ms": None,
+            "decision_latency_level": "level-neutral",
+            "healthbeat_label": None,
+            "healthbeat_age_min": None,
+            "healthbeat_level": "level-neutral",
+            "signals_last_label": None,
+            "signals_last_age_min": None,
+            "signals_last_level": "level-neutral",
+            "orders_total_1h": None,
+            "orders_status_1h": [],
+            "orders_last": [],
+            "signals_recent": [],
         },
         "highlights": [],  # backward compatibility (top winners / losers)
         "highlights_top": [],
@@ -241,6 +258,62 @@ def _format_dt(dt: Optional[datetime]) -> Optional[str]:
     if not dt:
         return None
     return dt.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+
+
+def _parse_ts_ms(ts_ms: Any) -> Optional[datetime]:
+    try:
+        if ts_ms is None:
+            return None
+        return datetime.fromtimestamp(int(ts_ms) / 1000.0, tz=timezone.utc)
+    except Exception:  # pragma: no cover - defensive
+        return None
+
+
+def _age_minutes(dt: Optional[datetime], now: datetime) -> Optional[int]:
+    if not dt:
+        return None
+    delta = now - dt
+    return max(0, int(delta.total_seconds() // 60))
+
+
+def _level_for_value(value: Optional[float], warn: float, bad: float) -> str:
+    if value is None:
+        return "level-neutral"
+    if value <= warn:
+        return "level-ok"
+    if value <= bad:
+        return "level-warn"
+    return "level-bad"
+
+
+def _level_for_age(age_min: Optional[int], warn: int, bad: int) -> str:
+    if age_min is None:
+        return "level-neutral"
+    if age_min <= warn:
+        return "level-ok"
+    if age_min <= bad:
+        return "level-warn"
+    return "level-bad"
+
+
+def _status_level(status: str) -> str:
+    name = (status or "").lower()
+    if any(word in name for word in ("reject", "cancel", "error", "fail")):
+        return "level-bad"
+    if any(word in name for word in ("filled", "accepted", "ok", "success")):
+        return "level-ok"
+    return "level-warn"
+
+
+def _shorten(text: Any, limit: int = 20) -> str:
+    if text is None:
+        return "-"
+    value = str(text)
+    if len(value) <= limit:
+        return value
+    if limit <= 3:
+        return value[:limit]
+    return value[: limit - 3] + "..."
 
 
 def _summarise_snapshot(snapshot: Dict[str, Any]) -> Dict[str, Any]:
@@ -388,6 +461,103 @@ def _summarise_snapshot(snapshot: Dict[str, Any]) -> Dict[str, Any]:
     perf["net_units"] = net_units
     perf["unrealized_pl_pips"] = round(total_unrealized_pips, 2)
     perf["unrealized_pl_jpy"] = round(total_unrealized_jpy, 2)
+
+    pocket_perf = []
+    pocket_raw = metrics_snapshot.get("pockets") or {}
+    order_hint = {"micro": 0, "macro": 1, "scalp": 2, "scalp_fast": 3}
+    for name, raw in pocket_raw.items():
+        pips = raw.get("pips")
+        jpy = raw.get("jpy")
+        trades = raw.get("trades")
+        win_rate = raw.get("win_rate")
+        pf = raw.get("pf")
+        pocket_perf.append(
+            {
+                "pocket": name,
+                "pips": round(_safe_float(pips), 2),
+                "jpy": round(_safe_float(jpy), 2),
+                "trades": int(trades) if trades is not None else 0,
+                "win_rate": round(_safe_float(win_rate) * 100.0, 1) if win_rate is not None else None,
+                "pf": round(_safe_float(pf), 2) if pf is not None else None,
+            }
+        )
+    pocket_perf.sort(key=lambda row: order_hint.get(row["pocket"], 99))
+    perf["pockets"] = pocket_perf
+
+    system = base["system"]
+    data_lag_ms = metrics_snapshot.get("data_lag_ms")
+    if data_lag_ms is not None:
+        data_lag_ms = float(data_lag_ms)
+        system["data_lag_ms"] = round(data_lag_ms, 0)
+        system["data_lag_level"] = _level_for_value(data_lag_ms, 1500.0, 3000.0)
+
+    decision_latency_ms = metrics_snapshot.get("decision_latency_ms")
+    if decision_latency_ms is not None:
+        decision_latency_ms = float(decision_latency_ms)
+        system["decision_latency_ms"] = round(decision_latency_ms, 0)
+        system["decision_latency_level"] = _level_for_value(decision_latency_ms, 2000.0, 4000.0)
+
+    healthbeat_dt = _parse_dt(metrics_snapshot.get("healthbeat_ts"))
+    healthbeat_age = _age_minutes(healthbeat_dt, now)
+    system["healthbeat_label"] = _format_dt(healthbeat_dt)
+    system["healthbeat_age_min"] = healthbeat_age
+    system["healthbeat_level"] = _level_for_age(healthbeat_age, 5, 10)
+
+    signal_dt = _parse_ts_ms(metrics_snapshot.get("signals_last_ts_ms"))
+    signal_age = _age_minutes(signal_dt, now)
+    system["signals_last_label"] = _format_dt(signal_dt)
+    system["signals_last_age_min"] = signal_age
+    system["signals_last_level"] = _level_for_age(signal_age, 5, 15)
+
+    orders_status = []
+    for row in metrics_snapshot.get("orders_status_1h") or []:
+        status = str(row.get("status") or "-")
+        orders_status.append(
+            {
+                "status": status,
+                "count": int(row.get("count") or 0),
+                "level": _status_level(status),
+            }
+        )
+    system["orders_status_1h"] = orders_status
+    system["orders_total_1h"] = sum(row["count"] for row in orders_status)
+
+    orders_last = []
+    for row in metrics_snapshot.get("orders_last") or []:
+        ts_label = _format_dt(_parse_dt(row.get("ts"))) or str(row.get("ts") or "-")
+        order_id = row.get("client_order_id")
+        status = str(row.get("status") or "-")
+        orders_last.append(
+            {
+                "ts_label": ts_label,
+                "pocket": row.get("pocket") or "-",
+                "side": row.get("side") or "-",
+                "units": row.get("units"),
+                "status": status,
+                "status_level": _status_level(status),
+                "id_short": _shorten(order_id, 22),
+                "id_full": str(order_id or ""),
+            }
+        )
+    system["orders_last"] = orders_last
+
+    signals_recent = []
+    for row in metrics_snapshot.get("signals_recent") or []:
+        ts_label = _format_dt(_parse_ts_ms(row.get("ts_ms"))) or str(row.get("ts_ms") or "-")
+        signal_id = row.get("client_order_id")
+        signals_recent.append(
+            {
+                "ts_label": ts_label,
+                "pocket": row.get("pocket") or "-",
+                "strategy": row.get("strategy") or "-",
+                "action": row.get("action") or "-",
+                "confidence": row.get("confidence"),
+                "units": row.get("proposed_units"),
+                "id_short": _shorten(signal_id, 22),
+                "id_full": str(signal_id or ""),
+            }
+        )
+    system["signals_recent"] = signals_recent
 
     winners = sorted(closed_trades, key=lambda t: t["pl_pips"], reverse=True)[:3]
     losers = sorted(closed_trades, key=lambda t: t["pl_pips"])[:3]
