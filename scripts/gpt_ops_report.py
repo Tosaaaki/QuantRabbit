@@ -109,6 +109,12 @@ _BQ_MARKET_TABLE = os.getenv("BQ_MARKET_STATE_TABLE", "market_state")
 _BQ_EXPOSURE_TABLE = os.getenv("BQ_EXPOSURE_TABLE", "exposure_snapshot")
 _BQ_HEALTH_TABLE = os.getenv("BQ_OPS_HEALTH_TABLE", "ops_health")
 _BQ_RANGE_RATIO = _env_float("POLICY_BQ_RANGE_ACTIVE_RATIO", 0.6)
+_BQ_SNAPSHOT_MAX_AGE_MIN = _env_float("POLICY_BQ_SNAPSHOT_MAX_AGE_MIN", 15.0)
+_BQ_EXEC_MIN_ORDERS = int(os.getenv("POLICY_BQ_EXEC_MIN_ORDERS", "10"))
+_BQ_REJECT_RATE_MAX = _env_float("POLICY_BQ_REJECT_RATE_MAX", 0.01)
+_BQ_DATA_LAG_P95_MAX = _env_float("POLICY_BQ_DATA_LAG_P95_MAX", 1500.0)
+_BQ_LATENCY_P95_MAX = _env_float("POLICY_BQ_LATENCY_P95_MAX", 2000.0)
+_BQ_FREE_MARGIN_MIN = _env_float("POLICY_BQ_FREE_MARGIN_MIN", 0.08)
 
 
 def _utc_now() -> dt.datetime:
@@ -148,6 +154,40 @@ def _json_safe(value: Any) -> Any:
     if isinstance(value, list):
         return [_json_safe(val) for val in value]
     return value
+
+
+def _parse_ts(value: Any) -> Optional[dt.datetime]:
+    if isinstance(value, dt.datetime):
+        return value if value.tzinfo else value.replace(tzinfo=dt.timezone.utc)
+    if isinstance(value, str):
+        raw = value.strip()
+        if raw.endswith("Z"):
+            raw = raw[:-1] + "+00:00"
+        try:
+            parsed = dt.datetime.fromisoformat(raw)
+            return parsed if parsed.tzinfo else parsed.replace(tzinfo=dt.timezone.utc)
+        except Exception:
+            return None
+    return None
+
+
+def _age_minutes(ts: Optional[dt.datetime]) -> Optional[float]:
+    if ts is None:
+        return None
+    now = _utc_now()
+    if ts.tzinfo is None:
+        ts = ts.replace(tzinfo=dt.timezone.utc)
+    return (now - ts).total_seconds() / 60.0
+
+
+def _bq_row_is_fresh(row: Optional[Dict[str, Any]]) -> bool:
+    if not isinstance(row, dict):
+        return False
+    ts = _parse_ts(row.get("generated_at"))
+    age = _age_minutes(ts)
+    if age is None:
+        return False
+    return age <= _BQ_SNAPSHOT_MAX_AGE_MIN
 
 
 def _percentile(values: List[float], q: float) -> Optional[float]:
@@ -617,6 +657,7 @@ def _policy_rules_diff(report: Dict[str, Any], latest_path: Path) -> Optional[Di
     bq_ops = bq_ops if isinstance(bq_ops, dict) else {}
     bq_market = bq_ops.get("market_state") if isinstance(bq_ops, dict) else None
     bq_exec = bq_ops.get("execution_quality") if isinstance(bq_ops, dict) else None
+    bq_exposure = bq_ops.get("exposure_snapshot") if isinstance(bq_ops, dict) else None
 
     range_state = report.get("range_state")
     range_active: Optional[bool] = None
@@ -730,6 +771,92 @@ def _policy_rules_diff(report: Dict[str, Any], latest_path: Path) -> Optional[Di
             _set_entry_gate("scalp", True)
             actions.append("spread_throttle_off")
             auto_notes["spread_guard"] = {"state": "cleared"}
+
+    # Execution quality guard (reject/lag/latency from BQ)
+    exec_guard_on = False
+    exec_details: Dict[str, Any] = {}
+    if _bq_row_is_fresh(bq_exec):
+        orders_total = bq_exec.get("orders_total")
+        try:
+            orders_total = int(orders_total)
+        except Exception:
+            orders_total = None
+        reject_rate = bq_exec.get("reject_rate")
+        data_lag_p95 = bq_exec.get("data_lag_p95")
+        latency_p95 = bq_exec.get("decision_latency_p95")
+        if orders_total is None or orders_total >= _BQ_EXEC_MIN_ORDERS:
+            if isinstance(reject_rate, (int, float)) and reject_rate >= _BQ_REJECT_RATE_MAX:
+                exec_guard_on = True
+                exec_details["reject_rate"] = reject_rate
+            if isinstance(data_lag_p95, (int, float)) and data_lag_p95 >= _BQ_DATA_LAG_P95_MAX:
+                exec_guard_on = True
+                exec_details["data_lag_p95"] = data_lag_p95
+            if isinstance(latency_p95, (int, float)) and latency_p95 >= _BQ_LATENCY_P95_MAX:
+                exec_guard_on = True
+                exec_details["latency_p95"] = latency_p95
+            if orders_total is not None:
+                exec_details["orders_total"] = orders_total
+    if exec_guard_on:
+        for pocket in ("macro", "micro", "scalp"):
+            _set_entry_gate(pocket, False)
+        actions.append("exec_guard_on")
+        exec_details.update(
+            {
+                "state": "active",
+                "reject_rate_limit": _BQ_REJECT_RATE_MAX,
+                "data_lag_p95_limit": _BQ_DATA_LAG_P95_MAX,
+                "latency_p95_limit": _BQ_LATENCY_P95_MAX,
+            }
+        )
+        auto_notes["exec_guard"] = exec_details
+    else:
+        if _auto_policy_state(current_notes, "exec_guard") == "active":
+            for pocket in ("macro", "micro", "scalp"):
+                gate = (
+                    patch.get("pockets", {})
+                    .get(pocket, {})
+                    .get("entry_gates", {})
+                    .get("allow_new")
+                )
+                if gate is False:
+                    continue
+                _set_entry_gate(pocket, True)
+            actions.append("exec_guard_off")
+            auto_notes["exec_guard"] = {"state": "cleared"}
+
+    # Exposure guard (free margin) from BQ snapshot
+    exposure_guard_on = False
+    exposure_details: Dict[str, Any] = {}
+    if _bq_row_is_fresh(bq_exposure):
+        free_ratio = bq_exposure.get("free_margin_ratio")
+        if isinstance(free_ratio, (int, float)) and free_ratio < _BQ_FREE_MARGIN_MIN:
+            exposure_guard_on = True
+            exposure_details["free_margin_ratio"] = free_ratio
+    if exposure_guard_on:
+        for pocket in ("macro", "micro", "scalp"):
+            _set_entry_gate(pocket, False)
+        actions.append("exposure_guard_on")
+        exposure_details.update(
+            {
+                "state": "active",
+                "free_margin_min": _BQ_FREE_MARGIN_MIN,
+            }
+        )
+        auto_notes["exposure_guard"] = exposure_details
+    else:
+        if _auto_policy_state(current_notes, "exposure_guard") == "active":
+            for pocket in ("macro", "micro", "scalp"):
+                gate = (
+                    patch.get("pockets", {})
+                    .get(pocket, {})
+                    .get("entry_gates", {})
+                    .get("allow_new")
+                )
+                if gate is False:
+                    continue
+                _set_entry_gate(pocket, True)
+            actions.append("exposure_guard_off")
+            auto_notes["exposure_guard"] = {"state": "cleared"}
 
     if not patch:
         return None
