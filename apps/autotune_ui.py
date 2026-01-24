@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import socket
 import sqlite3
 import threading
 import time
@@ -502,7 +503,7 @@ def _fetch_remote_snapshot() -> Optional[dict]:
         with urllib.request.urlopen(req, timeout=2.5) as resp:
             raw = resp.read()
         return json.loads(raw)
-    except (urllib.error.URLError, json.JSONDecodeError):
+    except (urllib.error.URLError, json.JSONDecodeError, TimeoutError, socket.timeout):
         return None
 
 
