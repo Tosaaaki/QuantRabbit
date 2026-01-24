@@ -8,6 +8,16 @@ defaults:
     allow_reasons:
       - hard_stop
       - tech_hard_stop
+      - tech_return_fail
+      - tech_reversal_combo
+      - tech_candle_reversal
+      - tech_nwave_flip
+      - rsi_fade
+      - vwap_cut
+      - atr_spike
+      - structure_break
+      - trend_failure
+      - trend_exhaust
       - drawdown
       - max_drawdown
       - health_exit
@@ -15,8 +25,7 @@ defaults:
       - margin_health
       - free_margin_low
       - margin_usage_high
-    deny_reasons:
-      - tech_return_fail
+    deny_reasons: []
   min_profit_pips:
     macro: 1.2
     micro: 0.8
@@ -46,6 +55,16 @@ strategies:
       allow_reasons:
         - hard_stop
         - tech_hard_stop
+        - tech_return_fail
+        - tech_reversal_combo
+        - tech_candle_reversal
+        - tech_nwave_flip
+        - rsi_fade
+        - vwap_cut
+        - atr_spike
+        - structure_break
+        - trend_failure
+        - trend_exhaust
         - drawdown
         - max_drawdown
         - health_exit
@@ -61,6 +80,16 @@ strategies:
       allow_reasons:
         - hard_stop
         - tech_hard_stop
+        - tech_return_fail
+        - tech_reversal_combo
+        - tech_candle_reversal
+        - tech_nwave_flip
+        - rsi_fade
+        - vwap_cut
+        - atr_spike
+        - structure_break
+        - trend_failure
+        - trend_exhaust
         - drawdown
         - max_drawdown
         - health_exit
@@ -76,6 +105,16 @@ strategies:
       allow_reasons:
         - hard_stop
         - tech_hard_stop
+        - tech_return_fail
+        - tech_reversal_combo
+        - tech_candle_reversal
+        - tech_nwave_flip
+        - rsi_fade
+        - vwap_cut
+        - atr_spike
+        - structure_break
+        - trend_failure
+        - trend_exhaust
         - drawdown
         - max_drawdown
         - health_exit
@@ -91,6 +130,16 @@ strategies:
       allow_reasons:
         - hard_stop
         - tech_hard_stop
+        - tech_return_fail
+        - tech_reversal_combo
+        - tech_candle_reversal
+        - tech_nwave_flip
+        - rsi_fade
+        - vwap_cut
+        - atr_spike
+        - structure_break
+        - trend_failure
+        - trend_exhaust
         - drawdown
         - max_drawdown
         - health_exit
