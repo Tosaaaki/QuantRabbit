@@ -667,6 +667,7 @@ class TechniquePolicy:
     nwave_min_quality: float
     nwave_min_leg_pips: float
     exit_min_neg_pips: float
+    exit_max_neg_pips: float
     exit_return_score: float
 
 
@@ -754,6 +755,11 @@ def _env_bool(name: str) -> Optional[bool]:
     return raw.strip().lower() not in {"", "0", "false", "no"}
 
 
+def _common_candle_enabled() -> bool:
+    enabled = _env_bool("TECH_COMMON_CANDLE_ENABLED")
+    return True if enabled is None else enabled
+
+
 def _env_float(name: str) -> Optional[float]:
     raw = os.getenv(name)
     if raw is None:
@@ -819,6 +825,7 @@ def _base_policy(mode: str, pocket: str) -> TechniquePolicy:
         exit_min_neg_pips = 3.5
     elif pocket == "macro":
         exit_min_neg_pips = 6.0
+    exit_max_neg_pips = 0.0
     exit_return_score = -0.25
     if pocket in {"scalp", "scalp_fast"}:
         exit_return_score = -0.35
@@ -857,6 +864,7 @@ def _base_policy(mode: str, pocket: str) -> TechniquePolicy:
         nwave_min_quality=0.18,
         nwave_min_leg_pips=3.0,
         exit_min_neg_pips=exit_min_neg_pips,
+        exit_max_neg_pips=exit_max_neg_pips,
         exit_return_score=exit_return_score,
     )
 
@@ -910,6 +918,8 @@ def _resolve_mtf_tfs(
     strategy_tag: Optional[str],
     entry_thesis: Optional[dict],
 ) -> list[str]:
+    if label == "candle" and not _common_candle_enabled():
+        return []
     mtf_enabled = _env_bool("TECH_MTF_ENABLED")
     if mtf_enabled is False:
         return [getattr(policy, f"{label}_tf")]
@@ -1037,6 +1047,7 @@ def _resolve_policy(
         "nwave_min_quality",
         "nwave_min_leg_pips",
         "exit_min_neg_pips",
+        "exit_max_neg_pips",
         "exit_return_score",
     ):
         env_name = f"TECH_{field.upper()}"
@@ -1083,6 +1094,8 @@ def _resolve_policy(
                         policy.nwave_tf = norm
                     elif k == "tech_tf_candle":
                         policy.candle_tf = norm
+    if not _common_candle_enabled():
+        policy = replace(policy, weight_candle=0.0, require_candle=False)
     return policy
 
 
@@ -1693,31 +1706,32 @@ def evaluate_entry_techniques(
 
     candle_score = candle_debug = None
     candle_items: list[tuple[str, float, Dict[str, object]]] = []
-    candle_tfs = _resolve_mtf_tfs(
-        "candle",
-        policy=policy,
-        pocket=pocket,
-        strategy_tag=strategy_tag,
-        entry_thesis=entry_thesis,
-    )
-    for tf in candle_tfs:
-        candle_candles = get_candles_snapshot(tf, limit=4)
-        if candle_candles:
-            score, detail = _score_candle(
-                candles=candle_candles,
-                side=side,
-                min_conf=policy.candle_min_conf,
-            )
-            if score is not None:
-                candle_items.append((tf, score, detail))
-    if candle_items:
-        candle_score, candle_debug = _blend_tf_scores(
-            candle_items,
-            mode=policy.mode,
-            prefer_lower=True,
+    if _common_candle_enabled() and policy.weight_candle > 0:
+        candle_tfs = _resolve_mtf_tfs(
+            "candle",
+            policy=policy,
+            pocket=pocket,
+            strategy_tag=strategy_tag,
+            entry_thesis=entry_thesis,
         )
-    if candle_debug:
-        debug["candle"] = candle_debug
+        for tf in candle_tfs:
+            candle_candles = get_candles_snapshot(tf, limit=4)
+            if candle_candles:
+                score, detail = _score_candle(
+                    candles=candle_candles,
+                    side=side,
+                    min_conf=policy.candle_min_conf,
+                )
+                if score is not None:
+                    candle_items.append((tf, score, detail))
+        if candle_items:
+            candle_score, candle_debug = _blend_tf_scores(
+                candle_items,
+                mode=policy.mode,
+                prefer_lower=True,
+            )
+        if candle_debug:
+            debug["candle"] = candle_debug
 
     weights = [
         ("fib", policy.weight_fib, fib_score),
@@ -1953,29 +1967,30 @@ def evaluate_exit_techniques(
 
     candle_score = candle_debug = None
     candle_items: list[tuple[str, float, Dict[str, object]]] = []
-    candle_tfs = _resolve_mtf_tfs(
-        "candle",
-        policy=policy,
-        pocket=pocket,
-        strategy_tag=strategy_tag,
-        entry_thesis=entry_thesis,
-    )
-    for tf in candle_tfs:
-        candle_candles = get_candles_snapshot(tf, limit=4)
-        if candle_candles:
-            score, detail = _score_candle(
-                candles=candle_candles,
-                side=side,
-                min_conf=policy.candle_min_conf,
-            )
-            if score is not None:
-                candle_items.append((tf, score, detail))
-    if candle_items:
-        candle_score, candle_debug = _blend_tf_scores(
-            candle_items,
-            mode=policy.mode,
-            prefer_lower=True,
+    if _common_candle_enabled() and policy.weight_candle > 0:
+        candle_tfs = _resolve_mtf_tfs(
+            "candle",
+            policy=policy,
+            pocket=pocket,
+            strategy_tag=strategy_tag,
+            entry_thesis=entry_thesis,
         )
+        for tf in candle_tfs:
+            candle_candles = get_candles_snapshot(tf, limit=4)
+            if candle_candles:
+                score, detail = _score_candle(
+                    candles=candle_candles,
+                    side=side,
+                    min_conf=policy.candle_min_conf,
+                )
+                if score is not None:
+                    candle_items.append((tf, score, detail))
+        if candle_items:
+            candle_score, candle_debug = _blend_tf_scores(
+                candle_items,
+                mode=policy.mode,
+                prefer_lower=True,
+            )
 
     weights = [
         ("fib", policy.weight_fib, fib_score),
@@ -2229,18 +2244,35 @@ def evaluate_exit_techniques(
             allow_negative_reversal = False
             debug["exit_guard"] = "momentum_missing"
 
+    if (
+        policy.exit_max_neg_pips
+        and pnl_pips is not None
+        and pnl_pips < 0
+        and abs(pnl_pips) > policy.exit_max_neg_pips
+    ):
+        allow_negative_reversal = False
+        debug["exit_guard"] = "max_neg_pips"
+        debug["exit_max_neg_pips"] = round(policy.exit_max_neg_pips, 3)
+
     debug["reversal_allow_negative"] = allow_negative_reversal
+
+    def _neg_blocked() -> bool:
+        return pnl_pips is not None and pnl_pips < 0 and not allow_negative_reversal
 
     if reversal_signal and reversal_confirmed:
         reason = "tech_candle_reversal" if candle_score is not None and candle_score < 0 else "tech_nwave_flip"
         if reversal_combo:
             reason = "tech_reversal_combo"
+        if _neg_blocked():
+            return TechniqueExitDecision(False, None, False, debug)
         return TechniqueExitDecision(True, reason, allow_negative_reversal, debug)
 
     if pnl_pips is None or pnl_pips > -policy.exit_min_neg_pips:
         return TechniqueExitDecision(False, None, False, {})
 
     if return_score is not None and return_score <= policy.exit_return_score:
+        if _neg_blocked():
+            return TechniqueExitDecision(False, None, False, debug)
         return TechniqueExitDecision(True, "tech_return_fail", allow_negative_reversal, debug)
 
     return TechniqueExitDecision(False, None, False, {})
