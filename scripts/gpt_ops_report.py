@@ -91,6 +91,21 @@ def _env_float(name: str, default: float) -> float:
         return default
 
 
+def _env_csv_list(name: str, default: Optional[List[str]] = None) -> List[str]:
+    raw = os.getenv(name)
+    if raw is None:
+        return list(default or [])
+    items = [item.strip() for item in raw.split(",") if item.strip()]
+    return items if items else list(default or [])
+
+
+def _env_bias(name: str) -> str:
+    raw = (os.getenv(name) or "").strip().lower()
+    if raw in {"long", "short", "neutral"}:
+        return raw
+    return ""
+
+
 _REPLAY_DIR = Path(os.getenv("OPS_REPLAY_DIR", "logs/replay/USD_JPY"))
 _TREND_STRENGTH_MIN = _env_float("POLICY_TREND_STRENGTH_MIN", 1.0)
 _TREND_STRENGTH_MIN_H1 = _env_float("POLICY_TREND_STRENGTH_MIN_H1", _TREND_STRENGTH_MIN)
@@ -99,8 +114,24 @@ _SPREAD_P95_THROTTLE = _env_float(
     _env_float("M1SCALP_MAX_SPREAD_PIPS", 1.4),
 )
 _RANGE_MICRO_STRATEGIES = ["BB_RSI", "BB_RSI_Fast"]
-_TREND_MACRO_STRATEGIES = ["TrendMA", "H1Momentum", "Donchian55"]
-_TREND_MICRO_STRATEGIES = ["MomentumBurst", "MicroPullbackEMA", "TrendMomentumMicro", "MicroMomentumStack"]
+_TREND_MACRO_STRATEGIES = _env_csv_list(
+    "POLICY_TREND_MACRO_STRATEGIES",
+    ["TrendMA", "H1Momentum", "Donchian55"],
+)
+_TREND_MICRO_STRATEGIES = _env_csv_list(
+    "POLICY_TREND_MICRO_STRATEGIES",
+    ["MomentumBurst", "MicroPullbackEMA", "TrendMomentumMicro", "MicroMomentumStack"],
+)
+_POLICY_RULES_ALLOWLISTS = {
+    "macro": _env_csv_list("POLICY_RULES_MACRO_STRATEGIES"),
+    "micro": _env_csv_list("POLICY_RULES_MICRO_STRATEGIES"),
+    "scalp": _env_csv_list("POLICY_RULES_SCALP_STRATEGIES"),
+}
+_POLICY_RULES_BIAS = {
+    "macro": _env_bias("POLICY_RULES_MACRO_BIAS"),
+    "micro": _env_bias("POLICY_RULES_MICRO_BIAS"),
+    "scalp": _env_bias("POLICY_RULES_SCALP_BIAS"),
+}
 _BQ_INSIGHTS_ENABLED = _env_bool("POLICY_BQ_INSIGHTS_ENABLED", False)
 _BQ_PROJECT = os.getenv("BQ_PROJECT") or os.getenv("GOOGLE_CLOUD_PROJECT")
 _BQ_DATASET = os.getenv("BQ_DATASET", "quantrabbit")
@@ -752,6 +783,25 @@ def _policy_rules_diff(report: Dict[str, Any], latest_path: Path) -> Optional[Di
             _set_strategies("micro", [])
             actions.append("micro_trend_clear")
             auto_notes["trend_guard_micro"] = {"state": "cleared"}
+
+    # Manual allowlists / bias overrides (profit-leaning tuning).
+    for pocket, allowlist in _POLICY_RULES_ALLOWLISTS.items():
+        if not allowlist:
+            continue
+        if range_active and pocket == "micro":
+            continue
+        _set_strategies(pocket, list(allowlist))
+        actions.append(f"{pocket}_allowlist")
+        auto_notes.setdefault("allowlist", {})[pocket] = list(allowlist)
+
+    for pocket, bias in _POLICY_RULES_BIAS.items():
+        if not bias:
+            continue
+        if range_active and pocket == "micro":
+            continue
+        _set_bias(pocket, bias)
+        actions.append(f"{pocket}_bias_{bias}")
+        auto_notes.setdefault("bias_override", {})[pocket] = bias
 
     # Spread soft throttle for scalp
     spread_stats = report.get("metrics", {}).get("decision_spread_pips", {})
