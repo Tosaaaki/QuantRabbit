@@ -641,6 +641,23 @@ def _build_live_snapshot() -> dict:
 def _build_lite_snapshot() -> dict:
     recent_trades = _load_recent_trades()
     metrics: dict[str, Any] = {}
+    open_positions: dict[str, Any] = {}
+    if not _LITE_SNAPSHOT_FAST:
+        try:
+            from execution.position_manager import PositionManager
+        except Exception:
+            PositionManager = None  # type: ignore[assignment]
+        if PositionManager is not None:
+            pm = PositionManager()
+            try:
+                open_positions = pm.get_open_positions() or {}
+            except Exception:
+                open_positions = {}
+            finally:
+                try:
+                    pm.close()
+                except Exception:
+                    pass
     data_lag_ms = _load_latest_metric("data_lag_ms")
     decision_latency_ms = _load_latest_metric("decision_latency_ms")
     if data_lag_ms is not None:
@@ -659,7 +676,7 @@ def _build_lite_snapshot() -> dict:
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "new_trades": [],
         "recent_trades": list(recent_trades),
-        "open_positions": {},
+        "open_positions": dict(open_positions) if isinstance(open_positions, dict) else {},
         "metrics": metrics,
         "snapshot_mode": "lite-fast" if _LITE_SNAPSHOT_FAST else "lite",
     }

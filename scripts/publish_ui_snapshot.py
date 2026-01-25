@@ -202,9 +202,18 @@ def main() -> int:
         return 1
 
     metrics: dict = {}
+    pm = None
     if args.lite:
         new_trades = []
-        open_positions = {}
+        if LITE_SNAPSHOT_FAST:
+            open_positions = {}
+        else:
+            try:
+                pm = PositionManager()
+                open_positions = pm.get_open_positions()
+            except Exception as exc:  # noqa: BLE001
+                logging.warning("[UI] get_open_positions failed: %s", exc)
+                open_positions = {}
         recent_trades = _load_recent_trades(limit=int(args.recent))
     else:
         pm = PositionManager()
@@ -254,6 +263,12 @@ def main() -> int:
     except Exception as exc:  # noqa: BLE001
         logging.warning("[UI] publish_snapshot failed: %s", exc)
         return 2
+    finally:
+        if pm is not None:
+            try:
+                pm.close()
+            except Exception:
+                pass
     return 0
 
 
