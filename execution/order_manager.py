@@ -118,6 +118,13 @@ def _coerce_bool(value: object, default: bool = False) -> bool:
         return False
     return default
 
+
+# Apply policy overlay gates even when signal gate is disabled.
+_POLICY_GATE_ENABLED = _env_bool(
+    "ORDER_POLICY_GATE_ENABLED",
+    _env_bool("SIGNAL_GATE_POLICY_ENABLED", False),
+)
+
 # Block entries when factor cache is stale (configurable by env).
 _ENTRY_FACTOR_MAX_AGE_SEC = float(os.getenv("ENTRY_FACTOR_MAX_AGE_SEC", "600"))
 _ENTRY_FACTOR_STALE_ALLOW_POCKETS = _env_csv_set(
@@ -429,6 +436,57 @@ def _entry_guard_override_reason_ok(reason: Optional[str], side_label: str) -> b
     if side_label == "buy":
         return reason in {"entry_guard_mid_far_long", "entry_guard_extreme_long"}
     return False
+
+
+def _policy_gate_allows_entry(
+    pocket: str,
+    side_label: str,
+    strategy_tag: Optional[str],
+    *,
+    reduce_only: bool,
+) -> tuple[bool, Optional[str], dict[str, object]]:
+    if reduce_only or not _POLICY_GATE_ENABLED:
+        return True, None, {}
+    policy = policy_bus.latest()
+    if policy is None:
+        return True, None, {}
+    pockets = policy.pockets if isinstance(policy.pockets, dict) else {}
+    pocket_policy = pockets.get(pocket)
+    if not isinstance(pocket_policy, dict):
+        return True, None, {}
+
+    enabled = pocket_policy.get("enabled")
+    if enabled is not None and not _coerce_bool(enabled, True):
+        return False, "policy_disabled", {"enabled": enabled}
+
+    entry_gates = pocket_policy.get("entry_gates")
+    if isinstance(entry_gates, dict):
+        allow_new = entry_gates.get("allow_new")
+        if allow_new is not None and not _coerce_bool(allow_new, True):
+            return False, "policy_allow_new_false", {"allow_new": allow_new}
+
+    bias = str(pocket_policy.get("bias") or "").strip().lower()
+    if bias == "long" and side_label != "buy":
+        return False, "policy_bias_long", {"bias": bias}
+    if bias == "short" and side_label != "sell":
+        return False, "policy_bias_short", {"bias": bias}
+
+    strategies_raw = pocket_policy.get("strategies")
+    strategy_list: list[str] = []
+    if isinstance(strategies_raw, str):
+        strategy_list = [strategies_raw]
+    elif isinstance(strategies_raw, (list, tuple, set)):
+        strategy_list = [str(item) for item in strategies_raw if item]
+    if strategy_list:
+        if not strategy_tag:
+            return False, "policy_missing_strategy", {}
+        tag_lower = str(strategy_tag).strip().lower()
+        base = tag_lower.split("-", 1)[0]
+        allow = {str(item).strip().lower() for item in strategy_list if str(item).strip()}
+        if tag_lower not in allow and base not in allow:
+            return False, "policy_strategy_block", {"allow": sorted(allow)}
+
+    return True, None, {}
 
 
 def _apply_entry_tech_failopen(
@@ -3635,6 +3693,50 @@ async def market_order(
             tags={"pocket": pocket, "strategy": "missing"},
         )
         return None
+
+    if not reduce_only and pocket != "manual":
+        policy_allowed, policy_reason, policy_details = _policy_gate_allows_entry(
+            pocket,
+            side_label,
+            strategy_tag,
+            reduce_only=reduce_only,
+        )
+        if not policy_allowed:
+            reason = policy_reason or "policy_block"
+            _console_order_log(
+                "OPEN_REJECT",
+                pocket=pocket,
+                strategy_tag=strategy_tag or "unknown",
+                side=side_label,
+                units=units,
+                sl_price=sl_price,
+                tp_price=tp_price,
+                client_order_id=client_order_id,
+                note=reason,
+            )
+            log_order(
+                pocket=pocket,
+                instrument=instrument,
+                side=side_label,
+                units=units,
+                sl_price=sl_price,
+                tp_price=tp_price,
+                client_order_id=client_order_id,
+                status="policy_block",
+                attempt=0,
+                request_payload={
+                    "reason": reason,
+                    "policy": policy_details,
+                    "entry_thesis": entry_thesis,
+                    "meta": meta,
+                },
+            )
+            log_metric(
+                "entry_policy_block",
+                1.0,
+                tags={"pocket": pocket, "strategy": strategy_tag or "unknown", "reason": reason},
+            )
+            return None
 
     log_order(
         pocket=pocket,
