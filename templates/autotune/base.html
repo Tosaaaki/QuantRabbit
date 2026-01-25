@@ -286,6 +286,23 @@
     button:hover { transform: translateY(-1px); box-shadow: 0 16px 26px -20px rgba(15, 23, 42, 0.7); }
     button.approve { background: var(--success); }
     button.reject { background: var(--danger); }
+    button.success { background: var(--success); }
+    button.danger { background: var(--danger); }
+    button.muted { background: #64748b; }
+    .field-grid { display: grid; gap: 0.6rem; }
+    .field-label {
+      font-size: 0.7rem;
+      text-transform: uppercase;
+      letter-spacing: 0.12em;
+      color: #64748b;
+    }
+    .input-compact { max-width: 240px; width: 100%; }
+    .form-block {
+      background: rgba(248, 250, 252, 0.75);
+      border-radius: 14px;
+      padding: 1rem;
+      border: 1px solid rgba(148, 163, 184, 0.2);
+    }
     .toolbar { display:flex; gap:0.6rem; align-items:center; flex-wrap:wrap; margin-bottom:0.8rem; }
     .toolbar input, .toolbar select { min-width: 120px; }
     .actions { display:flex; gap:0.45rem; align-items:center; flex-wrap:wrap; }
@@ -390,6 +407,7 @@
       table { min-width: 640px; }
       .split { grid-template-columns: 1fr; }
       .split-equal { grid-template-columns: 1fr; }
+      .input-compact { max-width: 100%; }
     }
     @media (max-width: 720px) {
       header::after { margin-top: 0.7rem; }
@@ -470,7 +488,10 @@
           });
         });
 
+        const urlParams = new URLSearchParams(window.location.search);
+        const desired = urlParams.get("tab");
         const selected =
+          buttons.find((button) => button.dataset.tabTarget === desired) ||
           buttons.find((button) => button.getAttribute("aria-selected") === "true") ||
           buttons[0];
         if (selected?.dataset.tabTarget) {

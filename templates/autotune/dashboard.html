@@ -325,6 +325,49 @@
       </div>
     </div>
   </div>
+
+      <div class="card">
+        <h2>緊急操作</h2>
+        <div class="tagline">
+          取引ワーカーを一括で停止/再開します。実行には Ops トークンが必要です。
+        </div>
+        {% if ops_notice %}
+          <p class="tagline">{{ ops_notice }}</p>
+        {% endif %}
+        {% if ops_error %}
+          <p class="tagline warning">{{ ops_error }}</p>
+        {% endif %}
+        {% if ops_enabled %}
+          <div class="split-equal">
+            <form method="post" action="/ops/control" class="form-block">
+              <input type="hidden" name="action" value="stop">
+              <div class="field-grid">
+                <label class="field-label" for="ops-stop-confirm">確認テキスト</label>
+                <input id="ops-stop-confirm" name="confirm" class="input-compact" placeholder="STOP" autocomplete="off" required>
+                <label class="field-label" for="ops-stop-token">Ops トークン</label>
+                <input id="ops-stop-token" name="ops_token" type="password" class="input-compact" placeholder="ui_ops_token" required>
+              </div>
+              <div class="buttons" style="margin-top:0.8rem;">
+                <button type="submit" class="danger">緊急停止</button>
+              </div>
+            </form>
+            <form method="post" action="/ops/control" class="form-block">
+              <input type="hidden" name="action" value="start">
+              <div class="field-grid">
+                <label class="field-label" for="ops-start-confirm">確認テキスト</label>
+                <input id="ops-start-confirm" name="confirm" class="input-compact" placeholder="START" autocomplete="off" required>
+                <label class="field-label" for="ops-start-token">Ops トークン</label>
+                <input id="ops-start-token" name="ops_token" type="password" class="input-compact" placeholder="ui_ops_token" required>
+              </div>
+              <div class="buttons" style="margin-top:0.8rem;">
+                <button type="submit" class="success">再開</button>
+              </div>
+            </form>
+          </div>
+        {% else %}
+          <p class="tagline warning">ui_ops_token が未設定のため操作できません。</p>
+        {% endif %}
+      </div>
     </section>
 
     <section class="tab-panel" id="tab-history" role="tabpanel" aria-labelledby="tab-history-button" data-tab-panel="history">

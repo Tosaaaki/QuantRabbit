@@ -4,12 +4,14 @@ import json
 import os
 import socket
 import sqlite3
+import subprocess
 import threading
 import time
 import urllib.error
 import urllib.request
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
+from urllib.parse import urlencode
 from typing import Any, Dict, Optional
 
 from fastapi import FastAPI, Form, HTTPException, Header, Request
@@ -45,6 +47,8 @@ _LITE_SNAPSHOT_FAST = (
     in {"fast", "minimal"}
 )
 _DB_READ_TIMEOUT_SEC = float(os.getenv("UI_DB_READ_TIMEOUT_SEC", "0.2"))
+_OPS_REMOTE_TIMEOUT_SEC = float(os.getenv("UI_OPS_TIMEOUT_SEC", "4.0"))
+_OPS_COMMAND_TIMEOUT_SEC = float(os.getenv("UI_OPS_CMD_TIMEOUT_SEC", "6.0"))
 _live_snapshot_lock = threading.Lock()
 _live_snapshot_cache: dict[str, Any] | None = None
 _live_snapshot_ts: float = 0.0
@@ -302,6 +306,129 @@ def _get_secret_optional(key: str) -> Optional[str]:
         return None
     value = str(value).strip()
     return value or None
+
+
+def _ops_required_token() -> Optional[str]:
+    return _get_secret_optional("ui_ops_token") or _get_secret_optional("ui_snapshot_token")
+
+
+def _ops_remote_url() -> Optional[str]:
+    value = _get_secret_optional("ui_ops_url")
+    return value.rstrip("/") if value else None
+
+
+def _discover_trade_units() -> list[str]:
+    raw = _get_secret_optional("ui_trade_units") or os.getenv("UI_TRADE_UNITS")
+    if raw:
+        return sorted({u.strip() for u in raw.replace(",", " ").split() if u.strip()})
+
+    units: set[str] = set()
+    base = Path("/etc/systemd/system")
+    if base.exists():
+        for path in base.glob("quant-*.service"):
+            try:
+                text = path.read_text(encoding="utf-8", errors="ignore")
+            except Exception:
+                continue
+            if "workers." in text or "/workers/" in text:
+                units.add(path.name)
+        if (base / "quantrabbit.service").exists():
+            units.add("quantrabbit.service")
+    return sorted(units)
+
+
+def _ensure_sudo() -> None:
+    try:
+        result = subprocess.run(
+            ["sudo", "-n", "true"],
+            capture_output=True,
+            text=True,
+            timeout=2.0,
+            check=False,
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"sudo check failed: {exc}") from exc
+    if result.returncode != 0:
+        raise HTTPException(status_code=403, detail="sudo permission is required")
+
+
+def _local_ops_action(action: str) -> dict:
+    units = _discover_trade_units()
+    if not units:
+        return {"ok": False, "error": "trade units not found"}
+    _ensure_sudo()
+    results = []
+    for unit in units:
+        try:
+            proc = subprocess.run(
+                ["sudo", "-n", "systemctl", action, unit],
+                capture_output=True,
+                text=True,
+                timeout=_OPS_COMMAND_TIMEOUT_SEC,
+                check=False,
+            )
+            ok = proc.returncode == 0
+            results.append(
+                {
+                    "unit": unit,
+                    "ok": ok,
+                    "error": (proc.stderr or "").strip() if not ok else "",
+                }
+            )
+        except Exception as exc:
+            results.append({"unit": unit, "ok": False, "error": str(exc)})
+    ok_count = sum(1 for row in results if row["ok"])
+    failed = [row for row in results if not row["ok"]]
+    return {
+        "ok": ok_count == len(results),
+        "action": action,
+        "total": len(results),
+        "ok_count": ok_count,
+        "failed": failed,
+    }
+
+
+def _proxy_ops_action(action: str, confirm: str, token: str) -> dict:
+    ops_url = _ops_remote_url()
+    if not ops_url:
+        return {"ok": False, "error": "ops remote url is not configured"}
+    payload = urlencode({"action": action, "confirm": confirm, "ops_token": token}).encode("utf-8")
+    req = urllib.request.Request(f"{ops_url}/api/ops/control", data=payload, method="POST")
+    if token:
+        req.add_header("X-QR-Token", token)
+        req.add_header("Authorization", f"Bearer {token}")
+    try:
+        with urllib.request.urlopen(req, timeout=_OPS_REMOTE_TIMEOUT_SEC) as resp:
+            raw = resp.read()
+        return json.loads(raw)
+    except Exception as exc:
+        return {"ok": False, "error": str(exc)}
+
+
+def _handle_ops_action(
+    action: str,
+    confirm: str,
+    token: Optional[str],
+    x_qr_token: Optional[str],
+    authorization: Optional[str],
+    *,
+    allow_proxy: bool,
+) -> dict:
+    required = _ops_required_token()
+    if not required:
+        raise HTTPException(status_code=503, detail="ui_ops_token is not configured")
+    provided = token or x_qr_token or _extract_bearer(authorization)
+    if provided != required:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    action = (action or "").strip().lower()
+    if action not in {"stop", "start"}:
+        raise HTTPException(status_code=400, detail="Invalid action")
+    expected = "STOP" if action == "stop" else "START"
+    if (confirm or "").strip().upper() != expected:
+        raise HTTPException(status_code=400, detail=f"Confirm with {expected}")
+    if allow_proxy and _ops_remote_url():
+        return _proxy_ops_action(action, confirm, provided)
+    return _local_ops_action(action)
 
 
 def _load_latest_metric(metric: str) -> Optional[float]:
@@ -1015,14 +1142,75 @@ def api_snapshot_lite(
 @app.get("/dashboard")
 def dashboard(request: Request):
     dashboard_data = _load_dashboard_data()
+    ops_notice = request.query_params.get("ops_notice")
+    ops_error = request.query_params.get("ops_error")
+    ops_enabled = _ops_required_token() is not None
     return templates.TemplateResponse(
         "dashboard.html",
         {
             "request": request,
             "dashboard": dashboard_data,
             "active_tab": "dashboard",
+            "ops_notice": ops_notice,
+            "ops_error": ops_error,
+            "ops_enabled": ops_enabled,
         },
     )
+
+
+@app.post("/api/ops/control")
+def api_ops_control(
+    action: str = Form(...),
+    confirm: str = Form(""),
+    ops_token: Optional[str] = Form(None),
+    x_qr_token: Optional[str] = Header(default=None, alias="X-QR-Token"),
+    authorization: Optional[str] = Header(default=None),
+):
+    result = _handle_ops_action(
+        action,
+        confirm,
+        ops_token,
+        x_qr_token,
+        authorization,
+        allow_proxy=False,
+    )
+    return JSONResponse(result)
+
+
+@app.post("/ops/control")
+def ops_control(
+    request: Request,
+    action: str = Form(...),
+    confirm: str = Form(""),
+    ops_token: Optional[str] = Form(None),
+    x_qr_token: Optional[str] = Header(default=None, alias="X-QR-Token"),
+    authorization: Optional[str] = Header(default=None),
+):
+    accept = request.headers.get("accept", "")
+    try:
+        result = _handle_ops_action(
+            action,
+            confirm,
+            ops_token,
+            x_qr_token,
+            authorization,
+            allow_proxy=True,
+        )
+    except HTTPException as exc:
+        if "application/json" in accept:
+            raise
+        query = urlencode({"tab": "ops", "ops_error": str(exc.detail)})
+        return RedirectResponse(url=f"/dashboard?{query}", status_code=303)
+    if "application/json" in accept:
+        return JSONResponse(result)
+    if result.get("ok"):
+        notice = "停止" if action == "stop" else "再開"
+        summary = f"{notice}しました（成功 {result.get('ok_count', 0)} / {result.get('total', 0)}）"
+        query = urlencode({"tab": "ops", "ops_notice": summary})
+        return RedirectResponse(url=f"/dashboard?{query}", status_code=303)
+    error = result.get("error") or "操作に失敗しました"
+    query = urlencode({"tab": "ops", "ops_error": error})
+    return RedirectResponse(url=f"/dashboard?{query}", status_code=303)
 
 
 @app.get("/excursion")
