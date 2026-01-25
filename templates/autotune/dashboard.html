@@ -1,6 +1,44 @@
 {% extends "base.html" %}
 {% block content %}
-  <div class="card">
+  <div class="tabs" data-tabs>
+    <div class="tabs-bar" role="tablist" aria-label="Dashboard sections">
+      <button
+        type="button"
+        class="tab-button is-active"
+        role="tab"
+        id="tab-summary-button"
+        aria-selected="true"
+        aria-controls="tab-summary"
+        data-tab-button
+        data-tab-target="summary"
+      >サマリー</button>
+      <button
+        type="button"
+        class="tab-button"
+        role="tab"
+        id="tab-ops-button"
+        aria-selected="false"
+        aria-controls="tab-ops"
+        data-tab-button
+        data-tab-target="ops"
+        tabindex="-1"
+      >オペレーション</button>
+      <button
+        type="button"
+        class="tab-button"
+        role="tab"
+        id="tab-history-button"
+        aria-selected="false"
+        aria-controls="tab-history"
+        data-tab-button
+        data-tab-target="history"
+        tabindex="-1"
+      >履歴</button>
+    </div>
+    <div class="tab-meta">セクションを切り替えて表示できます。</div>
+
+    <section class="tab-panel is-active" id="tab-summary" role="tabpanel" aria-labelledby="tab-summary-button" data-tab-panel="summary">
+      <div class="card">
     <h2>運用サマリー</h2>
     {% if dashboard.available %}
       {% if dashboard.generated_label %}
@@ -99,8 +137,52 @@
     {% endif %}
   </div>
 
-  <div class="card">
-    <h2>システムヘルス</h2>
+      <div class="card">
+        <h2>オープンポジション</h2>
+        <div class="tagline">
+          合計 {{ dashboard.open_summary.total_positions }} 件 /
+          ネット units {{ "%+.0f"|format(dashboard.open_summary.net_units) }} /
+          未実現 {{ "%+.1f"|format(dashboard.open_summary.unrealized_pl_pips) }}p / {{ "%+.0f"|format(dashboard.open_summary.unrealized_pl_jpy) }} 円
+        </div>
+        {% if dashboard.open_summary.pockets %}
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Pocket</th>
+                  <th>方向</th>
+                  <th>数量</th>
+                  <th>平均価格</th>
+                  <th>未実現 (pips)</th>
+                  <th>未実現 (JPY)</th>
+                  <th>建玉数</th>
+                </tr>
+              </thead>
+              <tbody>
+              {% for row in dashboard.open_summary.pockets %}
+                {% set pill_class = 'pill gain' if row.unrealized_pips > 0 else 'pill loss' if row.unrealized_pips < 0 else 'pill neutral' %}
+                <tr>
+                  <td>{{ row.pocket }}</td>
+                  <td>{{ row.direction }}</td>
+                  <td>{{ "{:,}".format(row.units_abs) }}</td>
+                  <td>{{ "%.3f"|format(row.avg_price) }}</td>
+                  <td><span class="{{ pill_class }}">{{ "%+.2f"|format(row.unrealized_pips) }}p</span></td>
+                  <td>{{ "%+.0f"|format(row.unrealized_jpy) }}</td>
+                  <td>{{ row.trades }}</td>
+                </tr>
+              {% endfor %}
+              </tbody>
+            </table>
+          </div>
+        {% else %}
+          <p class="tagline">現在オープンポジションはありません。</p>
+        {% endif %}
+      </div>
+    </section>
+
+    <section class="tab-panel" id="tab-ops" role="tabpanel" aria-labelledby="tab-ops-button" data-tab-panel="ops">
+      <div class="card">
+        <h2>システムヘルス</h2>
     <div class="tagline">データ遅延・判断遅延・ヘルスビート・シグナルの最新状況をまとめています。</div>
     <div class="stats-grid">
       <div class="stat-card compact">
@@ -243,9 +325,11 @@
       </div>
     </div>
   </div>
+    </section>
 
-  <div class="card">
-    <h2>最近のトレード</h2>
+    <section class="tab-panel" id="tab-history" role="tabpanel" aria-labelledby="tab-history-button" data-tab-panel="history">
+      <div class="card">
+        <h2>最近のトレード</h2>
     <div class="tagline">更新順で最新12件を表示します。状態/決済理由も併記します。</div>
     {% if dashboard.recent_trades %}
       <div class="table-wrap">
@@ -297,48 +381,6 @@
       </div>
     {% else %}
       <p class="tagline">トレード履歴がありません。</p>
-    {% endif %}
-  </div>
-
-  <div class="card">
-    <h2>オープンポジション</h2>
-    <div class="tagline">
-      合計 {{ dashboard.open_summary.total_positions }} 件 /
-      ネット units {{ "%+.0f"|format(dashboard.open_summary.net_units) }} /
-      未実現 {{ "%+.1f"|format(dashboard.open_summary.unrealized_pl_pips) }}p / {{ "%+.0f"|format(dashboard.open_summary.unrealized_pl_jpy) }} 円
-    </div>
-    {% if dashboard.open_summary.pockets %}
-      <div class="table-wrap">
-        <table>
-          <thead>
-            <tr>
-              <th>Pocket</th>
-              <th>方向</th>
-              <th>数量</th>
-              <th>平均価格</th>
-              <th>未実現 (pips)</th>
-              <th>未実現 (JPY)</th>
-              <th>建玉数</th>
-            </tr>
-          </thead>
-          <tbody>
-          {% for row in dashboard.open_summary.pockets %}
-            {% set pill_class = 'pill gain' if row.unrealized_pips > 0 else 'pill loss' if row.unrealized_pips < 0 else 'pill neutral' %}
-            <tr>
-              <td>{{ row.pocket }}</td>
-              <td>{{ row.direction }}</td>
-              <td>{{ "{:,}".format(row.units_abs) }}</td>
-              <td>{{ "%.3f"|format(row.avg_price) }}</td>
-              <td><span class="{{ pill_class }}">{{ "%+.2f"|format(row.unrealized_pips) }}p</span></td>
-              <td>{{ "%+.0f"|format(row.unrealized_jpy) }}</td>
-              <td>{{ row.trades }}</td>
-            </tr>
-          {% endfor %}
-          </tbody>
-        </table>
-      </div>
-    {% else %}
-      <p class="tagline">現在オープンポジションはありません。</p>
     {% endif %}
   </div>
 
@@ -410,5 +452,7 @@
         {% endif %}
       </div>
     </div>
+  </div>
+    </section>
   </div>
 {% endblock %}

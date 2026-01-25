@@ -120,6 +120,57 @@
       border-color: rgba(226, 232, 240, 0.7);
       box-shadow: 0 10px 24px -18px rgba(15, 23, 42, 0.6);
     }
+    .tabs {
+      margin-bottom: 1.6rem;
+      position: relative;
+      z-index: 2;
+    }
+    .tabs-bar {
+      display: inline-flex;
+      gap: 0.5rem;
+      flex-wrap: wrap;
+      padding: 0.45rem;
+      border-radius: 999px;
+      background: rgba(15, 23, 42, 0.08);
+      border: 1px solid rgba(148, 163, 184, 0.4);
+      box-shadow: 0 18px 40px -36px rgba(15, 23, 42, 0.6);
+    }
+    .tab-button {
+      appearance: none;
+      border: none;
+      padding: 0.45rem 1.1rem;
+      border-radius: 999px;
+      font-weight: 700;
+      font-size: 0.86rem;
+      letter-spacing: 0.02em;
+      color: rgba(15, 23, 42, 0.7);
+      background: transparent;
+      border: 1px solid transparent;
+      box-shadow: none;
+      cursor: pointer;
+      transition: all 0.2s ease;
+    }
+    .tab-button:hover {
+      color: #0f172a;
+      background: rgba(15, 118, 110, 0.12);
+    }
+    .tab-button.is-active {
+      color: #0f172a;
+      background: #ffffff;
+      box-shadow: 0 12px 22px -18px rgba(15, 23, 42, 0.6);
+      border: 1px solid rgba(148, 163, 184, 0.4);
+    }
+    .tab-meta {
+      margin-top: 0.7rem;
+      font-size: 0.9rem;
+      color: #52606d;
+    }
+    body.tabs-ready [data-tab-panel] {
+      display: none;
+    }
+    body.tabs-ready [data-tab-panel].is-active {
+      display: block;
+    }
     main {
       padding: 2.6rem 1.8rem 4rem;
       max-width: 1250px;
@@ -346,6 +397,8 @@
       header .subtitle { font-size: 0.75rem; }
       .stat-value { font-size: 1.4rem; }
       table { min-width: 560px; }
+      .tabs-bar { width: 100%; justify-content: center; }
+      .tab-button { flex: 1 1 auto; text-align: center; }
     }
     @media (prefers-reduced-motion: reduce) {
       * { animation: none !important; transition: none !important; }
@@ -368,5 +421,63 @@
   <main>
     {% block content %}{% endblock %}
   </main>
+  <script>
+    (() => {
+      const containers = document.querySelectorAll("[data-tabs]");
+      if (!containers.length) return;
+      document.body.classList.add("tabs-ready");
+
+      const activateTab = (container, name, options = {}) => {
+        const buttons = Array.from(container.querySelectorAll("[data-tab-button]"));
+        const panels = Array.from(container.querySelectorAll("[data-tab-panel]"));
+        const focus = options.focus ?? true;
+
+        buttons.forEach((button) => {
+          const isActive = button.dataset.tabTarget === name;
+          button.classList.toggle("is-active", isActive);
+          button.setAttribute("aria-selected", isActive ? "true" : "false");
+          button.tabIndex = isActive ? 0 : -1;
+        });
+        panels.forEach((panel) => {
+          panel.classList.toggle("is-active", panel.dataset.tabPanel === name);
+        });
+
+        if (focus) {
+          const target = buttons.find((button) => button.dataset.tabTarget === name);
+          if (target) target.focus();
+        }
+      };
+
+      containers.forEach((container) => {
+        const buttons = Array.from(container.querySelectorAll("[data-tab-button]"));
+        if (!buttons.length) return;
+
+        buttons.forEach((button) => {
+          button.addEventListener("click", () => {
+            const name = button.dataset.tabTarget;
+            if (name) activateTab(container, name);
+          });
+          button.addEventListener("keydown", (event) => {
+            if (!["ArrowLeft", "ArrowRight"].includes(event.key)) return;
+            event.preventDefault();
+            const currentIndex = buttons.indexOf(button);
+            const delta = event.key === "ArrowRight" ? 1 : -1;
+            const nextIndex = (currentIndex + delta + buttons.length) % buttons.length;
+            const nextButton = buttons[nextIndex];
+            if (nextButton?.dataset.tabTarget) {
+              activateTab(container, nextButton.dataset.tabTarget);
+            }
+          });
+        });
+
+        const selected =
+          buttons.find((button) => button.getAttribute("aria-selected") === "true") ||
+          buttons[0];
+        if (selected?.dataset.tabTarget) {
+          activateTab(container, selected.dataset.tabTarget, { focus: false });
+        }
+      });
+    })();
+  </script>
 </body>
 </html>
