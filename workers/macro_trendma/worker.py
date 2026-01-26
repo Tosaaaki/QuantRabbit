@@ -46,6 +46,27 @@ def _latest_mid(fallback: float) -> float:
     return fallback
 
 
+def _recent_extremes(raw_candles: object, window: int) -> Tuple[float, float]:
+    if not isinstance(raw_candles, list) or not raw_candles:
+        return 0.0, 0.0
+    window = max(1, int(window))
+    highs = []
+    lows = []
+    for candle in raw_candles[-window:]:
+        if not isinstance(candle, dict):
+            continue
+        try:
+            high = float(candle.get("high"))
+            low = float(candle.get("low"))
+        except Exception:
+            continue
+        highs.append(high)
+        lows.append(low)
+    if not highs or not lows:
+        return 0.0, 0.0
+    return max(highs), min(lows)
+
+
 def _client_order_id(tag: str) -> str:
     ts_ms = int(time.time() * 1000)
     sanitized = "".join(ch.lower() for ch in tag if ch.isalnum())[:8] or "trendma"
@@ -166,19 +187,32 @@ async def trendma_worker() -> None:
         if tp_pips > tp_cap:
             tp_pips = tp_cap
 
-        # H4直近高値近辺でのロングは見送り（高値掴み防止）
-        try:
-            h4_recent_high = float(fac_h4.get("recent_high") or 0.0)
-        except Exception:
-            h4_recent_high = 0.0
-        if side == "long" and h4_recent_high > 0 and (h4_recent_high - price) <= 0.08:
-            LOG.debug(
-                "%s skip: near_h4_high price=%.3f recent_high=%.3f",
-                config.LOG_PREFIX,
-                price,
-                h4_recent_high,
-            )
-            continue
+        h4_recent_high, h4_recent_low = _recent_extremes(
+            fac_h4.get("candles"),
+            config.H4_EXTREME_WINDOW,
+        )
+        if side == "long" and h4_recent_high > 0:
+            high_gap_pips = (h4_recent_high - price) / PIP
+            if 0.0 <= high_gap_pips <= config.H4_NEAR_HIGH_PIPS:
+                LOG.debug(
+                    "%s skip: near_h4_high price=%.3f recent_high=%.3f gap_pips=%.1f",
+                    config.LOG_PREFIX,
+                    price,
+                    h4_recent_high,
+                    high_gap_pips,
+                )
+                continue
+        if side == "short" and h4_recent_low > 0:
+            low_gap_pips = (price - h4_recent_low) / PIP
+            if 0.0 <= low_gap_pips <= config.H4_NEAR_LOW_PIPS:
+                LOG.debug(
+                    "%s skip: near_h4_low price=%.3f recent_low=%.3f gap_pips=%.1f",
+                    config.LOG_PREFIX,
+                    price,
+                    h4_recent_low,
+                    low_gap_pips,
+                )
+                continue
 
         # TP を手前にクランプ（レンジ気味のため）
         tp_cap = max(12.0, min(20.0, atr_pips * 3.5 + 4.0))
