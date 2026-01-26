@@ -196,6 +196,9 @@ def apply_policy_diff(
     notes = updated.get("notes")
     if not isinstance(notes, dict):
         notes = {}
+    diff_notes = policy_diff.get("notes")
+    if isinstance(diff_notes, dict):
+        notes = _deep_merge(notes, diff_notes)
     notes["policy_id"] = policy_diff.get("policy_id")
     notes["policy_source"] = policy_diff.get("source")
     notes["policy_reason"] = policy_diff.get("reason")
