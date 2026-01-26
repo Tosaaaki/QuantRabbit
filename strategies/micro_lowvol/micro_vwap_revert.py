@@ -92,6 +92,7 @@ class MicroVWAPRevert:
             "notes": {
                 "deviation": round(deviation, 2),
                 "threshold": round(threshold, 2),
+                "vwap": round(vwap, 3),
                 "atr": round(atr, 2),
                 "vol5m": round(vol_5m or 0.0, 2),
                 "drift": round(drift, 2),

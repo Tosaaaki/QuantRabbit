@@ -22,6 +22,7 @@ from strategies.micro.pullback_ema import MicroPullbackEMA
 from strategies.micro.level_reactor import MicroLevelReactor
 from strategies.micro.range_break import MicroRangeBreak
 from strategies.micro.vwap_bound_revert import MicroVWAPBound
+from strategies.micro_lowvol.micro_vwap_revert import MicroVWAPRevert
 from strategies.micro.trend_momentum import TrendMomentumMicro
 from utils.market_hours import is_market_open
 from utils.oanda_account import get_account_snapshot, get_position_summary
@@ -51,6 +52,7 @@ _RANGE_STRATEGIES = {
     MicroRangeBreak.name,
     MicroVWAPBound.name,
     MicroLevelReactor.name,
+    MicroVWAPRevert.name,
 }
 
 
@@ -110,6 +112,7 @@ def _allowed_strategies() -> List:
         MicroLevelReactor,
         MicroRangeBreak,
         MicroVWAPBound,
+        MicroVWAPRevert,
         TrendMomentumMicro,
     ]
     if not allow_raw:
@@ -138,7 +141,7 @@ def _is_mr_signal(tag: str) -> bool:
     if not tag_str:
         return False
     base_tag = tag_str.split("-", 1)[0]
-    if base_tag in {"MicroVWAPBound", "BB_RSI"}:
+    if base_tag in {"MicroVWAPBound", "MicroVWAPRevert", "BB_RSI"}:
         return True
     lower = tag_str.lower()
     return lower.startswith("mlr-fade") or lower.startswith("mlr-bounce")
@@ -456,7 +459,7 @@ async def micro_multi_worker() -> None:
                 entry_thesis["entry_guard_trend"] = False
                 entry_mean = None
                 base_tag = signal_tag.split("-", 1)[0] if signal_tag else ""
-                if base_tag == "MicroVWAPBound":
+                if base_tag in {"MicroVWAPBound", "MicroVWAPRevert"}:
                     notes = signal.get("notes") or {}
                     if isinstance(notes, dict):
                         try:

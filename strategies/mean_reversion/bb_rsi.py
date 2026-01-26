@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import math
+import os
 from typing import Dict, Optional, Sequence, Tuple
 import logging
 
@@ -15,8 +16,24 @@ MAX_TP_REDUCTION = 0.32
 MIN_VOL_5M = 0.35
 PROFILE_NAME = "bb_range_reversion"
 # 距離判定を緩めてバンドタッチ手前でもエントリー可能にする
-MIN_DISTANCE_RANGE = 0.015
-MIN_DISTANCE_TREND = 0.05
+def _env_float(name: str, default: float) -> float:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    try:
+        return float(raw)
+    except (TypeError, ValueError):
+        return default
+
+
+MIN_DISTANCE_RANGE = _env_float("BBRSI_MIN_DISTANCE_RANGE", 0.012)
+MIN_DISTANCE_TREND = _env_float("BBRSI_MIN_DISTANCE_TREND", 0.04)
+RSI_LONG_BASE = _env_float("BBRSI_RSI_LONG_BASE", 45.0)
+RSI_SHORT_BASE = _env_float("BBRSI_RSI_SHORT_BASE", 55.0)
+RSI_LONG_MAX = _env_float("BBRSI_RSI_LONG_MAX", 52.0)
+RSI_SHORT_MIN = _env_float("BBRSI_RSI_SHORT_MIN", 48.0)
+TOUCH_BUFFER_BASE = _env_float("BBRSI_TOUCH_BUFFER_BASE", 0.32)
+TOUCH_BUFFER_MAX = _env_float("BBRSI_TOUCH_BUFFER_MAX", 0.48)
 
 
 class BBRsi:
@@ -124,6 +141,14 @@ class BBRsi:
         except (TypeError, ValueError):
             range_score = 0.0
         range_active = bool(fac.get("range_active"))
+        range_bias = range_score
+        if range_active and range_bias < 0.35:
+            range_bias = 0.35
+        trend_bias = max(0.0, min(1.0, trend_score))
+        rsi_long_gate = RSI_LONG_BASE + 7.0 * range_bias - 2.5 * trend_bias
+        rsi_short_gate = RSI_SHORT_BASE - 7.0 * range_bias + 2.5 * trend_bias
+        rsi_long_gate = min(RSI_LONG_MAX, max(RSI_LONG_BASE - 5.0, rsi_long_gate))
+        rsi_short_gate = max(RSI_SHORT_MIN, min(RSI_SHORT_BASE + 5.0, rsi_short_gate))
 
         def _coerce(val):
             try:
@@ -160,9 +185,14 @@ class BBRsi:
         bbw_eta = fac.get("bbw_squeeze_eta_min")
         bbw_slope = fac.get("bbw_slope_per_bar", 0.0) or 0.0
 
-        touch_buffer = 0.28
-        if atr_hint <= 1.2 or bbw <= 0.22:
-            touch_buffer = 0.32
+        touch_scale = range_bias
+        if atr_hint <= 1.2:
+            touch_scale = max(touch_scale, 0.45)
+        if bbw <= 0.22:
+            touch_scale = max(touch_scale, 0.55)
+        touch_span = max(0.0, TOUCH_BUFFER_MAX - TOUCH_BUFFER_BASE)
+        touch_scale = max(0.0, min(1.0, touch_scale))
+        touch_buffer = TOUCH_BUFFER_BASE + touch_span * touch_scale
 
         # トレンド強でもバンド内は許容（ロング拒否を避ける）
 
@@ -186,7 +216,7 @@ class BBRsi:
 
         distance_lower = _distance_to_lower()
         distance_upper = _distance_to_upper()
-        if distance_lower > 0 and rsi < 45:
+        if distance_lower > 0 and rsi <= rsi_long_gate:
             distance = distance_lower
             if trend_distance_floor and distance < trend_distance_floor:
                 BBRsi._log_skip(
@@ -242,7 +272,7 @@ class BBRsi:
                 "trend_score": round(trend_score, 3) if trend_score > 0 else None,
                 "size_factor_hint": round(size_factor_trend, 3) if trend_score > 0 else None,
             }
-        if distance_upper > 0 and rsi > 55:
+        if distance_upper > 0 and rsi >= rsi_short_gate:
             distance = distance_upper
             if trend_distance_floor and distance < trend_distance_floor:
                 BBRsi._log_skip(
@@ -304,6 +334,8 @@ class BBRsi:
             upper=upper,
             lower=lower,
             rsi=round(rsi, 2),
+            rsi_long_gate=round(rsi_long_gate, 2),
+            rsi_short_gate=round(rsi_short_gate, 2),
             bbw=round(bbw, 4),
             min_distance=round(min_distance_req, 4),
             touch_buffer=round(touch_buffer, 3),
