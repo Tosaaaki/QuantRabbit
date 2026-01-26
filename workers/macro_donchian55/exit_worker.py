@@ -56,17 +56,21 @@ def _parse_time(value: Optional[str]) -> Optional[datetime]:
         return None
 
 
-def _latest_mid() -> Optional[float]:
+def _latest_quote() -> tuple[Optional[float], Optional[float], Optional[float]]:
     tick = tick_window.recent_ticks(seconds=3.0, limit=1)
     if tick:
-        try:
-            return float(tick[-1]["mid"])
-        except Exception:
-            pass
+        latest = tick[-1]
+        bid = _safe_float(latest.get("bid"))
+        ask = _safe_float(latest.get("ask"))
+        mid = _safe_float(latest.get("mid"))
+        if mid is None and bid is not None and ask is not None:
+            mid = (bid + ask) / 2.0
+        if bid is not None or ask is not None or mid is not None:
+            return bid, ask, mid
     try:
-        return float(all_factors().get("H1", {}).get("close"))
+        return None, None, float(all_factors().get("H1", {}).get("close"))
     except Exception:
-        return None
+        return None, None, None
 
 
 def _filter_trades(trades: Sequence[dict], tags: Set[str]) -> list[dict]:
@@ -168,7 +172,7 @@ class DonchianExitWorker:
         self.revert_rsi_long = _float_env("DONCHIAN55_EXIT_REVERT_RSI_LONG", 45.0)
         self.revert_rsi_short = _float_env("DONCHIAN55_EXIT_REVERT_RSI_SHORT", 55.0)
 
-    def _context(self) -> tuple[Optional[float], Optional[float], bool, dict]:
+    def _context(self) -> tuple[Optional[float], Optional[float], Optional[float], Optional[float], bool, dict]:
         factors = all_factors()
         fac_h1 = factors.get("H1") or {}
         fac_h4 = factors.get("H4") or {}
@@ -184,7 +188,8 @@ class DonchianExitWorker:
             atr_threshold=self.range_atr,
         )
         rsi = _safe_float(fac_h1.get("rsi"))
-        return _latest_mid(), rsi, bool(range_ctx.active), fac_h1
+        bid, ask, mid = _latest_quote()
+        return bid, ask, mid, rsi, bool(range_ctx.active), fac_h1
 
     async def _close(
         self,
@@ -213,7 +218,9 @@ class DonchianExitWorker:
         self,
         trade: dict,
         now: datetime,
-        mid: float,
+        bid: Optional[float],
+        ask: Optional[float],
+        mid: Optional[float],
         rsi: Optional[float],
         range_active: bool,
         fac_h1: dict,
@@ -230,7 +237,12 @@ class DonchianExitWorker:
             return
 
         side = "long" if units > 0 else "short"
-        pnl = (mid - entry) * 100.0 if side == "long" else (entry - mid) * 100.0
+        mark_price = bid if side == "long" else ask
+        if mark_price is None:
+            mark_price = mid
+        if mark_price is None:
+            return
+        pnl = (mark_price - entry) * 100.0 if side == "long" else (entry - mark_price) * 100.0
         opened_at = _parse_time(trade.get("open_time"))
         hold_sec = (now - opened_at).total_seconds() if opened_at else 0.0
 
@@ -298,7 +310,7 @@ class DonchianExitWorker:
 
         section_decision = evaluate_section_exit(
             trade,
-            current_price=mid,
+            current_price=mark_price,
             now=now,
             side=side,
             pocket=POCKET,
@@ -353,7 +365,7 @@ class DonchianExitWorker:
         ):
             tech_exit = evaluate_exit_techniques(
                 trade=trade,
-                current_price=mid,
+                current_price=mark_price,
                 side=side,
                 pocket=POCKET,
             )
@@ -434,14 +446,14 @@ class DonchianExitWorker:
                 if not trades:
                     continue
 
-                mid, rsi, range_active, fac_h1 = self._context()
-                if mid is None:
+                bid, ask, mid, rsi, range_active, fac_h1 = self._context()
+                if bid is None and ask is None and mid is None:
                     continue
 
                 now = _utc_now()
                 for tr in trades:
                     try:
-                        await self._review_trade(tr, now, mid, rsi, range_active, fac_h1)
+                        await self._review_trade(tr, now, bid, ask, mid, rsi, range_active, fac_h1)
                     except Exception:
                         LOG.exception("[EXIT-donchian55] review failed trade=%s", tr.get("trade_id"))
                         continue

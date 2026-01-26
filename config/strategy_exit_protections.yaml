@@ -59,6 +59,7 @@ hold_until_profit:
 
 strategies:
   TrendMA:
+    min_profit_pips: 2.0
     be_profile: {trigger_pips: 7.0, lock_ratio: 0.60, min_lock_pips: 3.0, cooldown_sec: 90}
     tp_move: {trigger_pips: 7.5, buffer_pips: 3.0}
     neg_exit:
@@ -84,6 +85,7 @@ strategies:
         - margin_usage_high
 
   Donchian55:
+    min_profit_pips: 2.0
     be_profile: {trigger_pips: 7.5, lock_ratio: 0.60, min_lock_pips: 3.2, cooldown_sec: 90}
     tp_move: {trigger_pips: 8.0, buffer_pips: 3.2}
     neg_exit:
