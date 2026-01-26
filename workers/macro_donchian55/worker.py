@@ -222,7 +222,31 @@ async def donchian55_worker() -> None:
             continue
 
         snap = get_account_snapshot()
-        free_ratio = float(snap.free_margin_ratio or 0.0) if snap.free_margin_ratio is not None else 0.0
+        free_ratio_raw = snap.free_margin_ratio
+        free_ratio = float(free_ratio_raw or 0.0) if free_ratio_raw is not None else 0.0
+        usage_ratio = None
+        if free_ratio_raw is not None:
+            usage_ratio = max(0.0, min(1.0, 1.0 - free_ratio))
+        else:
+            total_margin = float((snap.margin_available or 0.0) + (snap.margin_used or 0.0))
+            if total_margin > 0.0:
+                usage_ratio = float(snap.margin_used or 0.0) / total_margin
+        if free_ratio_raw is not None and free_ratio_raw <= config.MIN_FREE_MARGIN_RATIO:
+            LOG.info(
+                "%s skip: free_margin_low ratio=%.3f limit=%.3f",
+                config.LOG_PREFIX,
+                free_ratio_raw,
+                config.MIN_FREE_MARGIN_RATIO,
+            )
+            continue
+        if usage_ratio is not None and usage_ratio >= config.MAX_MARGIN_USAGE:
+            LOG.info(
+                "%s skip: margin_usage_high usage=%.3f limit=%.3f",
+                config.LOG_PREFIX,
+                usage_ratio,
+                config.MAX_MARGIN_USAGE,
+            )
+            continue
         try:
             atr_pips = float(fac_h1.get("atr_pips") or 0.0)
         except Exception:
