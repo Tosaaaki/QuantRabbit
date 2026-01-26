@@ -65,12 +65,12 @@ def detect_range_mode(
     *,
     env_tf: str = "M1",
     macro_tf: str = "H4",
-    adx_threshold: float = 14.0,
-    bbw_threshold: float = 0.14,
-    atr_threshold: float = 1.3,
-    bbw_pips_threshold: float = 4.0,
+    adx_threshold: float = 24.0,
+    bbw_threshold: float = 0.24,
+    atr_threshold: float = 7.0,
+    bbw_pips_threshold: float = 0.0,
     vol_5m_threshold: float = 0.8,
-    range_score_threshold: float = 0.75,
+    range_score_threshold: float = 0.66,
     trend_score_threshold: float = 0.45,
 ) -> RangeContext:
     """
