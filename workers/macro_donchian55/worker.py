@@ -231,6 +231,21 @@ async def donchian55_worker() -> None:
             adx = float(fac_h1.get("adx") or 0.0)
         except Exception:
             adx = 0.0
+        conf = int(signal.get("confidence", 50))
+        min_conf = (
+            config.CONFIDENCE_MIN_HIGH_VOL
+            if atr_pips >= config.CONFIDENCE_MIN_ATR_PIPS
+            else config.CONFIDENCE_MIN_BASE
+        )
+        if conf < min_conf:
+            LOG.debug(
+                "%s skip: confidence_low conf=%s min=%s atr=%.2f",
+                config.LOG_PREFIX,
+                conf,
+                min_conf,
+                atr_pips,
+            )
+            continue
         pos_bias = 0.0
         try:
             open_positions = snap.positions or {}
@@ -277,7 +292,6 @@ async def donchian55_worker() -> None:
         tp_scale = max(0.25, min(1.05, tp_scale))
         base_units = int(round(config.BASE_ENTRY_UNITS * tp_scale))
 
-        conf = int(signal.get("confidence", 50))
         conf_scale = _confidence_scale(conf)
         conf_frac = _confidence_fraction(conf)
         lot = allowed_lot(
@@ -319,7 +333,7 @@ async def donchian55_worker() -> None:
             "tp_pips": tp_pips,
             "sl_pips": sl_pips,
             "hard_stop_pips": sl_pips,
-            "confidence": int(signal.get("confidence", 0) or 0),
+            "confidence": conf,
         }
 
         res = await market_order(
@@ -330,7 +344,7 @@ async def donchian55_worker() -> None:
             pocket=config.POCKET,
             client_order_id=client_id,
             strategy_tag=strategy_tag,
-            confidence=int(signal.get("confidence", 0)),
+            confidence=conf,
             entry_thesis=entry_thesis,
         )
         LOG.info(
@@ -343,7 +357,7 @@ async def donchian55_worker() -> None:
             price,
             sl_price,
             tp_price,
-            signal.get("confidence", 0),
+            conf,
             cap,
             {**cap_reason, "tp_scale": round(tp_scale, 3)},
             res or "none",
