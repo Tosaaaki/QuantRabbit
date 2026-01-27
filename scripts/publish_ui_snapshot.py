@@ -13,14 +13,24 @@ import sqlite3
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.append(str(PROJECT_ROOT))
+try:
+    os.chdir(PROJECT_ROOT)
+except Exception:
+    pass
+
+LOGS_DIR = PROJECT_ROOT / "logs"
+try:
+    LOGS_DIR.mkdir(parents=True, exist_ok=True)
+except Exception:
+    pass
 
 from analytics.gcs_publisher import GCSRealtimePublisher
 from execution.position_manager import PositionManager
 
-METRICS_DB = Path("logs/metrics.db")
-ORDERS_DB = Path("logs/orders.db")
-SIGNALS_DB = Path("logs/signals.db")
-TRADES_DB = Path("logs/trades.db")
+METRICS_DB = LOGS_DIR / "metrics.db"
+ORDERS_DB = LOGS_DIR / "orders.db"
+SIGNALS_DB = LOGS_DIR / "signals.db"
+TRADES_DB = LOGS_DIR / "trades.db"
 DB_READ_TIMEOUT_SEC = float(os.getenv("UI_DB_READ_TIMEOUT_SEC", "0.2"))
 LITE_SNAPSHOT_FAST = (
     os.getenv("UI_SNAPSHOT_LITE_MODE", "full").strip().lower()
