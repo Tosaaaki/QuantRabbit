@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 from typing import Optional, Tuple
 
@@ -18,6 +19,15 @@ class SizingContext:
 
 def _clamp(v: float, lo: float, hi: float) -> float:
     return max(lo, min(hi, v))
+
+def _env_float(name: str, default: float) -> float:
+    raw = os.getenv(name)
+    if raw is None:
+        return float(default)
+    try:
+        return float(raw)
+    except (TypeError, ValueError):
+        return float(default)
 
 
 def compute_units(
@@ -58,8 +68,10 @@ def compute_units(
     else:
         free_scale = 1.2
 
-    base_risk_pct = 0.01
-    risk_pct = _clamp(base_risk_pct * free_scale, 0.002, 0.03)
+    base_risk_pct = max(0.0005, _env_float("DYN_SIZE_BASE_RISK_PCT", 0.01))
+    min_risk_pct = max(0.0005, _env_float("DYN_SIZE_MIN_RISK_PCT", 0.002))
+    max_risk_pct = max(min_risk_pct, _env_float("DYN_SIZE_MAX_RISK_PCT", 0.03))
+    risk_pct = _clamp(base_risk_pct * free_scale, min_risk_pct, max_risk_pct)
 
     # 2) Allowed lot from risk math (equity/sl)
     lot = allowed_lot(
