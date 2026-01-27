@@ -122,7 +122,7 @@ def _systemd_is_active(unit: str) -> Optional[bool]:
 
 
 def _port_listening(port: int) -> Optional[bool]:
-    pattern = re.compile(rf":{port}\\b")
+    pattern = re.compile(rf":{port}\b")
     commands = []
     if shutil.which("ss"):
         commands.append(["ss", "-ltn"])
