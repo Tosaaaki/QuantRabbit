@@ -35,7 +35,21 @@ if _RAW_RELAX_TAGS is None:
     _RAW_RELAX_TAGS = "M1Scalper,ImpulseRetrace"
 _RELAX_TAGS = {tag.strip().lower() for tag in _RAW_RELAX_TAGS.split(",") if tag.strip()}
 
+# Pocket-level guard (optional; defaults disabled)
+_POCKET_ENABLED = os.getenv("POCKET_PERF_GUARD_ENABLED", "0").strip().lower() not in {
+    "",
+    "0",
+    "false",
+    "no",
+}
+_POCKET_LOOKBACK_DAYS = max(1, int(float(os.getenv("POCKET_PERF_GUARD_LOOKBACK_DAYS", "7"))))
+_POCKET_MIN_TRADES = max(10, int(float(os.getenv("POCKET_PERF_GUARD_MIN_TRADES", "60"))))
+_POCKET_PF_MIN = float(os.getenv("POCKET_PERF_GUARD_PF_MIN", "0.95") or 0.95)
+_POCKET_WIN_MIN = float(os.getenv("POCKET_PERF_GUARD_WIN_MIN", "0.50") or 0.5)
+_POCKET_TTL_SEC = max(30.0, float(os.getenv("POCKET_PERF_GUARD_TTL_SEC", "180")) or 180.0)
+
 _cache: dict[tuple[str, str, Optional[int]], tuple[float, bool, str, int]] = {}
+_pocket_cache: dict[str, tuple[float, bool, str, int]] = {}
 
 
 def _threshold(name: str, pocket: str, default: float) -> float:
@@ -148,6 +162,55 @@ def _query_perf(tag: str, pocket: str, hour: Optional[int]) -> Tuple[bool, str, 
     return True, f"pf={pf:.2f} win={win_rate:.2f} n={n}", n
 
 
+def _query_pocket_perf(pocket: str) -> Tuple[bool, str, int]:
+    if not _DB.exists():
+        return True, "no_db", 0
+    try:
+        con = sqlite3.connect(_DB)
+        con.row_factory = sqlite3.Row
+    except Exception:
+        return True, "db_open_failed", 0
+    try:
+        row = con.execute(
+            """
+            SELECT
+              COUNT(*) AS n,
+              SUM(CASE WHEN pl_pips > 0 THEN pl_pips ELSE 0 END) AS profit,
+              SUM(CASE WHEN pl_pips < 0 THEN ABS(pl_pips) ELSE 0 END) AS loss,
+              SUM(CASE WHEN pl_pips > 0 THEN 1 ELSE 0 END) AS win
+            FROM trades
+            WHERE pocket = ?
+              AND close_time >= datetime('now', ?)
+            """,
+            (pocket, f"-{_POCKET_LOOKBACK_DAYS} day"),
+        ).fetchone()
+    except Exception as exc:
+        LOG.debug("[POCKET_GUARD] query failed pocket=%s err=%s", pocket, exc)
+        return True, "query_failed", 0
+    finally:
+        try:
+            con.close()
+        except Exception:
+            pass
+
+    if not row:
+        return True, "no_rows", 0
+    n = int(row["n"] or 0)
+    if n < _POCKET_MIN_TRADES:
+        return True, f"warmup_n={n}", n
+    profit = float(row["profit"] or 0.0)
+    loss = float(row["loss"] or 0.0)
+    win = float(row["win"] or 0.0)
+    pf = profit / loss if loss > 0 else float("inf")
+    win_rate = win / n if n > 0 else 0.0
+
+    pf_min = _threshold("POCKET_PERF_GUARD_PF_MIN", pocket, _POCKET_PF_MIN)
+    win_min = _threshold("POCKET_PERF_GUARD_WIN_MIN", pocket, _POCKET_WIN_MIN)
+    if pf < pf_min or win_rate < win_min:
+        return False, f"pf={pf:.2f} win={win_rate:.2f} n={n}", n
+    return True, f"pf={pf:.2f} win={win_rate:.2f} n={n}", n
+
+
 def is_allowed(tag: str, pocket: str, *, hour: Optional[int] = None) -> PerfDecision:
     """
     hour: optional UTC hour string (0-23) to apply hourly PF filter. When None, aggregate filter only.
@@ -185,3 +248,21 @@ def is_allowed(tag: str, pocket: str, *, hour: Optional[int] = None) -> PerfDeci
         reason_txt = reason if _MODE == "block" else f"warn:{reason}"
     _cache[key] = (now, allowed, reason_txt, sample)
     return PerfDecision(allowed, reason_txt, sample)
+
+
+def is_pocket_allowed(pocket: str) -> PerfDecision:
+    """
+    Pocket-level PF/win guard. Useful when an entire pocket degrades.
+    """
+    if not _POCKET_ENABLED:
+        return PerfDecision(True, "disabled", 0)
+    pocket_key = (pocket or "").strip().lower()
+    if not pocket_key or pocket_key == "manual":
+        return PerfDecision(True, "skip", 0)
+    now = time.monotonic()
+    cached = _pocket_cache.get(pocket_key)
+    if cached and now - cached[0] <= _POCKET_TTL_SEC:
+        return PerfDecision(cached[1], cached[2], cached[3])
+    allowed, reason, n = _query_pocket_perf(pocket_key)
+    _pocket_cache[pocket_key] = (now, allowed, reason, n)
+    return PerfDecision(allowed, reason, n)

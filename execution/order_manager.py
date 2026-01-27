@@ -3747,6 +3747,46 @@ async def market_order(
         "false",
         "no",
     }
+    if perf_guard_enabled and pocket != "manual":
+        try:
+            pocket_decision = perf_guard.is_pocket_allowed(pocket)
+        except Exception:
+            pocket_decision = None
+        if pocket_decision is not None and not pocket_decision.allowed:
+            note = f"perf_block_pocket:{pocket_decision.reason}"
+            _console_order_log(
+                "OPEN_REJECT",
+                pocket=pocket,
+                strategy_tag=str(strategy_tag or "unknown"),
+                side=side_label,
+                units=units,
+                sl_price=sl_price,
+                tp_price=tp_price,
+                client_order_id=client_order_id,
+                note=note,
+            )
+            log_order(
+                pocket=pocket,
+                instrument=instrument,
+                side=side_label,
+                units=units,
+                sl_price=sl_price,
+                tp_price=tp_price,
+                client_order_id=client_order_id,
+                status="perf_block_pocket",
+                attempt=0,
+                stage_index=stage_index,
+                request_payload={"pocket": pocket, "meta": meta, "entry_thesis": entry_thesis},
+            )
+            log_metric(
+                "order_perf_block_pocket",
+                1.0,
+                tags={
+                    "pocket": pocket,
+                    "reason": pocket_decision.reason,
+                },
+            )
+            return None
     if perf_guard_enabled and pocket != "manual" and strategy_tag:
         _trace("perf_guard")
         try:
