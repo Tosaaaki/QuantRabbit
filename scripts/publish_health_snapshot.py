@@ -123,17 +123,20 @@ def _systemd_is_active(unit: str) -> Optional[bool]:
 
 def _port_listening(port: int) -> Optional[bool]:
     pattern = re.compile(rf":{port}\\b")
+    commands = []
     if shutil.which("ss"):
-        output = _run_cmd(["ss", "-ltn"])
-        if output is None:
-            return None
-        return any(pattern.search(line) for line in output.splitlines())
+        commands.append(["ss", "-ltn"])
     if shutil.which("netstat"):
-        output = _run_cmd(["netstat", "-ltn"])
+        commands.append(["netstat", "-ltn"])
+    if not commands:
+        return None
+    for cmd in commands:
+        output = _run_cmd(cmd)
         if output is None:
-            return None
-        return any(pattern.search(line) for line in output.splitlines())
-    return None
+            continue
+        if any(pattern.search(line) for line in output.splitlines()):
+            return True
+    return False
 
 
 def _disk_usage_pct(path: Path) -> Optional[float]:
