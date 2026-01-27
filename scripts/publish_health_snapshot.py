@@ -8,9 +8,18 @@ import shutil
 import socket
 import sqlite3
 import subprocess
+import sys
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.append(str(PROJECT_ROOT))
+try:
+    os.chdir(PROJECT_ROOT)
+except Exception:
+    pass
 
 try:
     from google.cloud import storage
@@ -208,8 +217,8 @@ def _load_bucket_name() -> Optional[str]:
 
 def _build_snapshot() -> dict[str, Any]:
     hostname = socket.gethostname()
-    repo_dir = Path("/home/tossaki/QuantRabbit")
-    logs_dir = Path("/home/tossaki/QuantRabbit/logs")
+    repo_dir = PROJECT_ROOT
+    logs_dir = PROJECT_ROOT / "logs"
     trades_db = logs_dir / "trades.db"
     signals_db = logs_dir / "signals.db"
     orders_db = logs_dir / "orders.db"
@@ -307,7 +316,7 @@ def _build_snapshot() -> dict[str, Any]:
 
 
 def _write_local(snapshot: dict[str, Any]) -> None:
-    logs_dir = Path("/home/tossaki/QuantRabbit/logs")
+    logs_dir = PROJECT_ROOT / "logs"
     try:
         logs_dir.mkdir(parents=True, exist_ok=True)
         (logs_dir / "health_snapshot.json").write_text(
