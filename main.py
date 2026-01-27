@@ -4122,11 +4122,6 @@ async def logic_loop(
 
         for key in ("trend_bias", "trend_score", "size_factor_hint"):
             _maybe_set(key, signal.get(key))
-        for key in ("entry_guard", "entry_guard_disabled", "entry_guard_tfs"):
-            _maybe_set(key, signal.get(key))
-        for key, value in signal.items():
-            if key.startswith("entry_guard_"):
-                _maybe_set(key, value)
 
     def _augment_entry_thesis_for_mr(
         entry_thesis: dict,

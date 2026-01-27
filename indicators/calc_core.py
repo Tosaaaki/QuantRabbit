@@ -76,6 +76,10 @@ class IndicatorEngine:
 
         upper, middle, lower = _bollinger(close, period=20, std_mult=2.0)
         bbw_series = np.where(middle != 0, (upper - lower) / middle, 0.0)
+        bb_upper = float(upper.iloc[-1]) if not upper.empty else 0.0
+        bb_mid = float(middle.iloc[-1]) if not middle.empty else 0.0
+        bb_lower = float(lower.iloc[-1]) if not lower.empty else 0.0
+        bb_span_pips = (bb_upper - bb_lower) / 0.01 if bb_upper and bb_lower else 0.0
 
         macd_line = ema12 - ema26
         macd_signal = macd_line.ewm(span=9, adjust=False, min_periods=9).mean()
@@ -108,6 +112,10 @@ class IndicatorEngine:
             "atr_pips": (float(atr.iloc[-1]) / 0.01) if not atr.empty else 0.0,
             "adx": float(adx.iloc[-1]) if not adx.empty else 0.0,
             "bbw": float(bbw_series[-1]) if bbw_series.size else 0.0,
+            "bb_upper": float(bb_upper) if np.isfinite(bb_upper) else 0.0,
+            "bb_mid": float(bb_mid) if np.isfinite(bb_mid) else 0.0,
+            "bb_lower": float(bb_lower) if np.isfinite(bb_lower) else 0.0,
+            "bb_span_pips": float(bb_span_pips) if np.isfinite(bb_span_pips) else 0.0,
             "vol_5m": float(vol_5m.iloc[-1]) if not vol_5m.empty else 0.0,
             "macd": float(macd_line.iloc[-1]) if not macd_line.empty else 0.0,
             "macd_signal": float(macd_signal.iloc[-1]) if not macd_signal.empty else 0.0,

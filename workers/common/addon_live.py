@@ -13,7 +13,7 @@ import time
 from execution.order_ids import build_client_order_id
 from execution.order_manager import cancel_order, limit_order, market_order
 from execution.risk_guard import allowed_lot, can_trade, clamp_sl_tp
-from indicators.factor_cache import get_candles_snapshot
+from indicators.factor_cache import all_factors, get_candles_snapshot
 from utils.market_hours import is_market_open
 from utils.oanda_account import get_account_snapshot
 
@@ -385,6 +385,11 @@ class AddonLiveBroker:
 
         risk_pct = self._risk_pct(order)
         snap = get_account_snapshot()
+        strategy_tag_raw = order.get("strategy_tag") or order.get("tag") or ""
+        strategy_tag = str(strategy_tag_raw).strip() or None
+        factors = all_factors()
+        fac_m1 = factors.get("M1") or {}
+        fac_h4 = factors.get("H4") or {}
         lot = allowed_lot(
             float(snap.nav or 0.0),
             float(sl_pips),
@@ -394,6 +399,9 @@ class AddonLiveBroker:
             risk_pct_override=risk_pct,
             pocket=pocket,
             side=side_norm,
+            strategy_tag=strategy_tag,
+            fac_m1=fac_m1,
+            fac_h4=fac_h4,
         )
         units = int(round(lot * 100000))
         if units <= 0:

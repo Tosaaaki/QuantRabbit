@@ -40,7 +40,6 @@
 - **時間帯フィルタ**: 極端にボラがない時間帯のみブロック（基本は時間帯フィルタなし）
 - **同方向オープン抑制**: 同一ワーカーの同方向オープン数や含み損が閾値を超えたら新規を停止
 - **距離が十分離れた場合の例外**: `stack_reentry_pips` を超える逆行距離なら、soft cap を一時的に許可（hard cap は維持）
-- **妥当性チェック**: `stack_reentry_require_tech=true` の場合、MTF テクニック（fib/nwave）で OK のときだけ例外を許可
 
 ### 2-2. 設定フォーマット（案）
 - `config/worker_reentry.yaml`
@@ -59,8 +58,6 @@ defaults:
   max_open_adverse_pips: 0.0
   max_open_trades_hard: 0
   stack_reentry_pips: 0.0
-  stack_reentry_require_tech: false
-  stack_reentry_tech_min_score: 0.0
 
 strategies:
   TrendMA:
@@ -71,8 +68,6 @@ strategies:
     max_open_adverse_pips: 40.0
     max_open_trades_hard: 6
     stack_reentry_pips: 25.0
-    stack_reentry_require_tech: true
-    stack_reentry_tech_min_score: 0.05
     return_wait_bias: favor
   M1Scalper:
     cooldown_loss_sec: 60
@@ -86,7 +81,7 @@ strategies:
 ### 2-3. 実装ポイント（案）
 - `logs/stage_state.db` に `strategy_reentry_state` テーブルを追加
   - `strategy`, `direction`, `last_close_time`, `last_close_price`, `last_result`
-- `execution/reentry_guard.py` を追加し、`order_manager` で最終送信前にチェック
+- `execution/reentry_gate.py` を追加し、`order_manager` で最終送信前にチェック
   - `cooldown` / `same_dir_reentry_pips` / `block_jst_hours` を判定（`allow_jst_hours` があれば優先）
   - `block_jst_hours` はデフォルトで全体共通（global）運用
   - `return_wait_bias` を使い、favor は待ち/距離を強め、avoid は緩める
@@ -95,16 +90,13 @@ strategies:
 
 ## 3. entry_thesis フラグのログ整備
 ### 3-1. 追加したいフラグ（統一キー）
-- `entry_guard_*` / `entry_guard_override` / `trend_bias` / `trend_score`  
+- `trend_bias` / `trend_score`  
 - `range_snapshot` / `entry_mean` / `reversion_failure` / `profile`  
 - `size_factor_hint` / `pattern_tag` / `pattern_meta`
 
 ### 3-2. 正規化方針
 - `entry_thesis.flags = [<trueなキー>...]` を併記し、SQLで集計しやすくする
 - `strategy_tag` の base で統一（`-long/-short` の suffix は別名保持）
-### 3-3. 差異レポート
-- `analytics/entry_thesis_flag_report.py` で flag ごとの勝率/平均損益/PF の差異を出す
-
 ## 4. 分析フロー（案）
 1) `analytics/worker_return_wait_report.py` で日次集計  
 2) `--out-json` で差異のJSON保存、`--out-yaml` で `worker_reentry.yaml` の叩き台を生成  
@@ -123,4 +115,4 @@ strategies:
 ## 5. 直近の実装優先度
 1) entry_thesis フラグの正規化と保存  
 2) ワーカー別の戻り待ち判定レポート  
-3) reentry_guard + worker_reentry.yaml の導入
+3) reentry_gate + worker_reentry.yaml の導入

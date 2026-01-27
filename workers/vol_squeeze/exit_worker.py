@@ -13,6 +13,144 @@ from indicators.factor_cache import all_factors
 from market_data import tick_window
 from workers.common.exit_utils import close_trade
 
+
+_BB_EXIT_ENABLED = os.getenv("BB_EXIT_ENABLED", "1").strip().lower() not in {"", "0", "false", "no"}
+_BB_EXIT_REVERT_PIPS = float(os.getenv("BB_EXIT_REVERT_PIPS", "2.0"))
+_BB_EXIT_REVERT_RATIO = float(os.getenv("BB_EXIT_REVERT_RATIO", "0.20"))
+_BB_EXIT_TREND_EXT_PIPS = float(os.getenv("BB_EXIT_TREND_EXT_PIPS", "3.0"))
+_BB_EXIT_TREND_EXT_RATIO = float(os.getenv("BB_EXIT_TREND_EXT_RATIO", "0.35"))
+_BB_EXIT_SCALP_REVERT_PIPS = float(os.getenv("BB_EXIT_SCALP_REVERT_PIPS", "1.6"))
+_BB_EXIT_SCALP_REVERT_RATIO = float(os.getenv("BB_EXIT_SCALP_REVERT_RATIO", "0.18"))
+_BB_EXIT_SCALP_EXT_PIPS = float(os.getenv("BB_EXIT_SCALP_EXT_PIPS", "2.0"))
+_BB_EXIT_SCALP_EXT_RATIO = float(os.getenv("BB_EXIT_SCALP_EXT_RATIO", "0.28"))
+_BB_EXIT_MID_BUFFER_PIPS = float(os.getenv("BB_EXIT_MID_BUFFER_PIPS", "0.4"))
+_BB_EXIT_BYPASS_TOKENS = {
+    "hard_stop",
+    "structure",
+    "time_stop",
+    "timeout",
+    "max_hold",
+    "max_adverse",
+    "force",
+    "margin",
+    "risk",
+    "health",
+    "event",
+    "session",
+    "halt",
+    "liquid",
+}
+_BB_EXIT_TF = "M1"
+_BB_PIP = 0.01
+
+
+def _bb_float(value):
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _bb_levels(fac):
+    if not fac:
+        return None
+    upper = _bb_float(fac.get("bb_upper"))
+    lower = _bb_float(fac.get("bb_lower"))
+    mid = _bb_float(fac.get("bb_mid")) or _bb_float(fac.get("ma20"))
+    bbw = _bb_float(fac.get("bbw")) or 0.0
+    if upper is None or lower is None:
+        if mid is None or bbw <= 0:
+            return None
+        half = abs(mid) * bbw / 2.0
+        upper = mid + half
+        lower = mid - half
+    span = upper - lower
+    if span <= 0:
+        return None
+    return upper, mid if mid is not None else (upper + lower) / 2.0, lower, span, span / _BB_PIP
+
+
+def _bb_exit_price(fac):
+    price = None
+    latest_mid = globals().get("_latest_mid")
+    if callable(latest_mid):
+        try:
+            price = latest_mid()
+        except Exception:
+            price = None
+    if price is None:
+        latest_quote = globals().get("_latest_quote")
+        if callable(latest_quote):
+            try:
+                _, _, mid = latest_quote()
+                price = mid
+            except Exception:
+                price = None
+    if price is None or price <= 0:
+        try:
+            price = float(fac.get("close") or 0.0)
+        except Exception:
+            price = None
+    return price
+
+
+def _bb_exit_should_bypass(reason, pnl, allow_negative):
+    if allow_negative:
+        return True
+    if pnl is not None:
+        try:
+            if float(pnl) <= 0:
+                return True
+        except Exception:
+            pass
+    if not reason:
+        return False
+    reason_key = str(reason).lower()
+    for token in _BB_EXIT_BYPASS_TOKENS:
+        if token in reason_key:
+            return True
+    return False
+
+
+def _bb_exit_allowed(style, side, price, fac, *, range_active=None):
+    if not _BB_EXIT_ENABLED:
+        return True
+    if price is None or price <= 0:
+        return True
+    levels = _bb_levels(fac)
+    if not levels:
+        return True
+    upper, mid, lower, span, span_pips = levels
+    side_key = str(side or "").lower()
+    if side_key in {"buy", "long", "open_long"}:
+        direction = "long"
+    else:
+        direction = "short"
+    orig_style = style
+    if style == "scalp" and range_active:
+        style = "reversion"
+    mid_buffer = max(_BB_EXIT_MID_BUFFER_PIPS, span_pips * 0.05)
+    if style == "reversion":
+        base_pips = _BB_EXIT_SCALP_REVERT_PIPS if orig_style == "scalp" else _BB_EXIT_REVERT_PIPS
+        base_ratio = _BB_EXIT_SCALP_REVERT_RATIO if orig_style == "scalp" else _BB_EXIT_REVERT_RATIO
+        threshold = max(base_pips, span_pips * base_ratio)
+        if direction == "long":
+            dist = (price - lower) / _BB_PIP
+        else:
+            dist = (upper - price) / _BB_PIP
+        return dist >= threshold
+    band_buffer = max(_BB_EXIT_TREND_EXT_PIPS, span_pips * _BB_EXIT_TREND_EXT_RATIO)
+    if orig_style == "scalp":
+        band_buffer = max(_BB_EXIT_SCALP_EXT_PIPS, span_pips * _BB_EXIT_SCALP_EXT_RATIO)
+    if direction == "long":
+        if price <= mid - mid_buffer * _BB_PIP:
+            return True
+        return price >= (upper - band_buffer * _BB_PIP)
+    if price >= mid + mid_buffer * _BB_PIP:
+        return True
+    return price <= (lower + band_buffer * _BB_PIP)
+
+BB_STYLE = "trend"
 LOG = logging.getLogger(__name__)
 
 ALLOWED_TAGS: Set[str] = {'vol_squeeze', 'vol_squeeze_breakout'}
@@ -150,6 +288,7 @@ class VolSqueezeExitWorker:
             _float_env("VOL_SQUEEZE_EXIT_RANGE_MAX_HOLD_SEC", 2400.0),
         )
 
+
         self._pos_manager = PositionManager()
         self._states: dict[str, _TradeState] = {}
 
@@ -164,6 +303,16 @@ class VolSqueezeExitWorker:
         return _latest_mid(), range_active
 
     async def _close(self, trade_id: str, units: int, reason: str, pnl: float, client_order_id: Optional[str]) -> None:
+        if _BB_EXIT_ENABLED:
+            allow_neg = bool(locals().get("allow_negative"))
+            pnl_val = locals().get("pnl")
+            if not _bb_exit_should_bypass(reason, pnl_val, allow_neg):
+                fac = all_factors().get(_BB_EXIT_TF) or {}
+                price = _bb_exit_price(fac)
+                side = "long" if units > 0 else "short"
+                if not _bb_exit_allowed(BB_STYLE, side, price, fac):
+                    LOG.info("[exit-bb] trade=%s reason=%s price=%.3f", trade_id, reason, price or 0.0)
+                    return
         ok = await close_trade(
             trade_id,
             units,
@@ -202,6 +351,18 @@ class VolSqueezeExitWorker:
 
         if hold_sec < self.min_hold_sec:
             return
+        candle_reason = _exit_candle_reversal("long" if units > 0 else "short")
+        if candle_reason and pnl >= 0:
+            candle_client_id = trade.get("client_order_id")
+            if not candle_client_id:
+                client_ext = trade.get("clientExtensions")
+                if isinstance(client_ext, dict):
+                    candle_client_id = client_ext.get("id")
+            if candle_client_id:
+                await self._close(trade_id, -units, candle_reason, pnl, candle_client_id)
+                if hasattr(self, "_states"):
+                    self._states.pop(trade_id, None)
+                return
         if pnl <= 0:
             return
 
@@ -287,3 +448,121 @@ async def vol_squeeze_exit_worker() -> None:
 
 if __name__ == "__main__":
     asyncio.run(vol_squeeze_exit_worker())
+
+
+_CANDLE_PIP = 0.01
+_CANDLE_EXIT_MIN_CONF = 0.35
+_CANDLE_EXIT_SCORE = -0.5
+_CANDLE_WORKER_NAME = (__file__.replace("\\", "/").split("/")[-2] if "/" in __file__ else "").lower()
+
+
+def _candle_tf_for_worker() -> str:
+    name = _CANDLE_WORKER_NAME
+    if "macro" in name or "trend_h1" in name or "manual" in name:
+        return "H1"
+    if "scalp" in name or "s5" in name or "fast" in name:
+        return "M1"
+    return "M5"
+
+
+def _extract_candles(raw):
+    candles = []
+    for candle in raw or []:
+        try:
+            o = float(candle.get("open", candle.get("o")))
+            h = float(candle.get("high", candle.get("h")))
+            l = float(candle.get("low", candle.get("l")))
+            c = float(candle.get("close", candle.get("c")))
+        except Exception:
+            continue
+        if h <= 0 or l <= 0:
+            continue
+        candles.append((o, h, l, c))
+    return candles
+
+
+def _detect_candlestick_pattern(candles):
+    if len(candles) < 2:
+        return None
+    o0, h0, l0, c0 = candles[-2]
+    o1, h1, l1, c1 = candles[-1]
+    body0 = abs(c0 - o0)
+    body1 = abs(c1 - o1)
+    range1 = max(h1 - l1, _CANDLE_PIP * 0.1)
+    upper_wick = h1 - max(o1, c1)
+    lower_wick = min(o1, c1) - l1
+
+    if body1 <= range1 * 0.1:
+        return {
+            "type": "doji",
+            "confidence": round(min(1.0, (range1 - body1) / range1), 3),
+            "bias": None,
+        }
+
+    if (
+        c1 > o1
+        and c0 < o0
+        and c1 >= max(o0, c0)
+        and o1 <= min(o0, c0)
+        and body1 > body0
+    ):
+        return {
+            "type": "bullish_engulfing",
+            "confidence": round(min(1.0, body1 / range1 + 0.3), 3),
+            "bias": "up",
+        }
+    if (
+        c1 < o1
+        and c0 > o0
+        and o1 >= min(o0, c0)
+        and c1 <= max(o0, c0)
+        and body1 > body0
+    ):
+        return {
+            "type": "bearish_engulfing",
+            "confidence": round(min(1.0, body1 / range1 + 0.3), 3),
+            "bias": "down",
+        }
+    if lower_wick > body1 * 2.5 and upper_wick <= body1 * 0.6:
+        return {
+            "type": "hammer" if c1 >= o1 else "inverted_hammer",
+            "confidence": round(min(1.0, lower_wick / range1 + 0.25), 3),
+            "bias": "up",
+        }
+    if upper_wick > body1 * 2.5 and lower_wick <= body1 * 0.6:
+        return {
+            "type": "shooting_star" if c1 <= o1 else "hanging_man",
+            "confidence": round(min(1.0, upper_wick / range1 + 0.25), 3),
+            "bias": "down",
+        }
+    return None
+
+
+def _score_candle(*, candles, side, min_conf):
+    pattern = _detect_candlestick_pattern(_extract_candles(candles))
+    if not pattern:
+        return None, {}
+    bias = pattern.get("bias")
+    conf = float(pattern.get("confidence") or 0.0)
+    if conf < min_conf:
+        return None, {"type": pattern.get("type"), "confidence": round(conf, 3)}
+    if bias is None:
+        return 0.0, {"type": pattern.get("type"), "confidence": round(conf, 3), "bias": None}
+    match = (side == "long" and bias == "up") or (side == "short" and bias == "down")
+    score = conf if match else -conf * 0.7
+    score = max(-1.0, min(1.0, score))
+    return score, {"type": pattern.get("type"), "confidence": round(conf, 3), "bias": bias}
+
+
+def _exit_candle_reversal(side):
+    tf = _candle_tf_for_worker()
+    candles = (all_factors().get(tf) or {}).get("candles") or []
+    if not candles:
+        return None
+    score, detail = _score_candle(candles=candles, side=side, min_conf=_CANDLE_EXIT_MIN_CONF)
+    if score is None:
+        return None
+    if score <= _CANDLE_EXIT_SCORE:
+        detail_type = detail.get("type") if isinstance(detail, dict) else None
+        return f"candle_{detail_type}" if detail_type else "candle_reversal"
+    return None

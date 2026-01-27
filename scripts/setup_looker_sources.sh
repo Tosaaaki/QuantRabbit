@@ -390,11 +390,7 @@ SELECT
   IF(range_snapshot_json IS NULL, FALSE, TRUE) AS has_range_snapshot,
   IF(reversion_failure_json IS NULL, FALSE, TRUE) AS has_reversion_failure,
   IF(mr_guard_json IS NULL, FALSE, TRUE) AS has_mr_guard,
-  IF(section_axis_json IS NULL, FALSE, TRUE) AS has_section_axis,
-  ARRAY(
-    SELECT flag FROM UNNEST(IFNULL(flags, [])) AS flag
-    WHERE STARTS_WITH(flag, 'entry_guard_')
-  ) AS entry_guard_flags
+  IF(section_axis_json IS NULL, FALSE, TRUE) AS has_section_axis
 FROM base;
 SQL
 

@@ -6,6 +6,7 @@
 - ニュース連動パイプラインは撤去済み（`news_fetcher` / `summary_ingestor` / NewsSpike は無効）。
 - 現行デフォルト: `WORKER_ONLY_MODE=true` / `MAIN_TRADING_ENABLED=0`。共通 `exit_manager` はスタブ化され、エントリー/EXIT は各戦略ワーカー＋専用 `exit_worker` が担当。
 - 発注経路はワーカーが直接 OANDA に送信するのが既定（`SIGNAL_GATE_ENABLED=0` / `ORDER_FORWARD_TO_SIGNAL_GATE=0`）。共通ゲート（`utils/signal_bus.py` → main 関所）を使う場合のみ両フラグを 1 にする。
+- 共通エントリー/テックゲート（`entry_guard` / `entry_tech`）は廃止・使用禁止。判断は各戦略ワーカーの推定(Projection)で行い、ポケット別の共通判定はしない。
 - 運用モード（2025-12 攻め設定）: マージン活用を 85–92% 目安に引き上げ、ロット上限を拡大（`RISK_MAX_LOT` 既定 10.0 lot）。手動ポジションを含めた総エクスポージャでガードし、PF/勝率の悪い戦略は自動ブロック。必要に応じて `PERF_GUARD_GLOBAL_ENABLED=0` で解除する。
 - エージェントの役割:
   - VM 上で常時ログ・オーダーを監視
@@ -116,7 +117,6 @@ class OrderIntent(BaseModel):
 - Strategy フロー: Focus/GPT decision → `ranked_strategies` 順に Strategy Plugin を呼び、`StrategyDecision` または None を返す。`None` はノートレード。
 - Confidence スケーリング: `confidence`(0–100) を pocket 割当 lot に掛け、最小 0.2〜最大 1.0 の段階的エントリー。`STAGE_RATIOS` に従い `_stage_conditions_met` を通過したステージのみ追撃。
 - Exit: 各戦略の `exit_worker` が最低保有時間とテクニカル/レンジ判定を踏まえ、PnL>0 決済が原則（強制 DD/ヘルス/マージン使用率/余力/未実現DDの総合判定のみ例外）。共通 `execution/exit_manager.py` は常に空を返す互換スタブ。`execution/stage_tracker` がクールダウンと方向別ブロックを管理。
-- エントリー詰まり対策（必要時のみ）: `ENTRY_TECH_FAILOPEN=1` で tech ブロック時に小ロットで通す（`ENTRY_TECH_FAILOPEN_MIN_SCORE`, `ENTRY_TECH_FAILOPEN_SIZE_MULT` で緩和幅を制御）
 - Release gate: PF>1.1、勝率>52%、最大 DD<5% を 2 週間連続で満たすと実弾へ昇格。
 - リスク計算とロット:
   - `pocket_equity = account_equity * pocket_ratio`

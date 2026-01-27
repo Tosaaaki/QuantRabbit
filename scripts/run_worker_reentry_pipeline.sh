@@ -10,7 +10,6 @@ BLOCK_HOUR_TOP="${BLOCK_HOUR_TOP:-4}"
 BLOCK_HOUR_WINDOW="${BLOCK_HOUR_WINDOW:-}"
 BLOCK_HOURS_SCOPE="${BLOCK_HOURS_SCOPE:-global}"
 OUT_DIR="${OUT_DIR:-logs/reports/worker_return_wait}"
-FLAG_DIR="${FLAG_DIR:-logs/reports/entry_thesis_flags}"
 PY="${PYTHON:-python}"
 APPLY=0
 
@@ -52,10 +51,6 @@ while [[ $# -gt 0 ]]; do
       BLOCK_HOURS_SCOPE="$2"
       shift 2
       ;;
-    --flag-dir)
-      FLAG_DIR="$2"
-      shift 2
-      ;;
     --apply)
       APPLY=1
       shift 1
@@ -67,7 +62,7 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-mkdir -p "$OUT_DIR" "$FLAG_DIR"
+mkdir -p "$OUT_DIR"
 
 $PY -m analytics.worker_return_wait_report \
   --days "$DAYS" \
@@ -80,11 +75,6 @@ $PY -m analytics.worker_return_wait_report \
   --block-hours-scope "$BLOCK_HOURS_SCOPE" \
   --out-json "$OUT_DIR/latest.json" \
   --out-yaml "$OUT_DIR/worker_reentry.yaml"
-
-$PY -m analytics.entry_thesis_flag_report \
-  --days "$DAYS" \
-  --min-trades "$MIN_TRADES" \
-  --out-json "$FLAG_DIR/latest.json"
 
 if [[ "$APPLY" -eq 1 ]]; then
   $PY utils/yaml_merge.py \

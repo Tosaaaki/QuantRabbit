@@ -330,9 +330,9 @@
   Priority: P2
   Owner: codex
   Scope/Paths: execution/order_manager.py, execution/position_manager.py, analytics/*, docs/hedge_plan.md, docs/weekly/2026-01-19_week.md, docs/TASKS.md
-  Context: entry_thesis の `entry_guard_*` / `trend_bias` が履歴に残らず差異分析が難しい。MFE/MAE と BE までの時間も未分析。
+  Context: entry_thesis の `trend_bias` などが履歴に残らず差異分析が難しい。MFE/MAE と BE までの時間も未分析。
   Acceptance:
-    - `entry_guard_*` / `trend_bias` などのフラグが `entry_thesis` に確実に残り、trades.db 解析で利用できる
+    - `trend_bias` などのフラグが `entry_thesis` に確実に残り、trades.db 解析で利用できる
     - MFE/MAE と BE 到達時間をワーカー別に出力できる（分析スクリプト）
     - 週次ドキュメントに結果を記録する
   Plan:

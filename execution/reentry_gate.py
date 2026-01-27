@@ -18,7 +18,7 @@ except Exception:  # pragma: no cover - optional
 _DB_PATH = Path("logs/stage_state.db")
 _CONFIG_PATH = Path(os.getenv("REENTRY_CONFIG_PATH", "config/worker_reentry.yaml"))
 _CONFIG_TTL_SEC = float(os.getenv("REENTRY_CONFIG_TTL_SEC", "10"))
-_ENABLED = os.getenv("REENTRY_GUARD_ENABLED", "1").strip().lower() in {
+_ENABLED = os.getenv("REENTRY_GATE_ENABLED", "1").strip().lower() in {
     "1",
     "true",
     "yes",
@@ -37,8 +37,6 @@ _DEFAULTS = {
     "max_open_avg_adverse_pips": 0.0,
     "max_open_trades_hard": 0,
     "stack_reentry_pips": 0.0,
-    "stack_reentry_require_tech": False,
-    "stack_reentry_tech_min_score": 0.0,
 }
 _BIAS_COOLDOWN_SCALE = {
     "favor": float(os.getenv("REENTRY_BIAS_FAVOR_COOLDOWN_SCALE", "1.3")),
@@ -429,11 +427,6 @@ def allow_entry(
         if soft_reason:
             if not distance_override:
                 return False, soft_reason, soft_details
-            stack_require_tech = _coerce_bool(merged.get("stack_reentry_require_tech"))
-            try:
-                stack_min_score = float(merged.get("stack_reentry_tech_min_score") or 0.0)
-            except Exception:
-                stack_min_score = 0.0
             override_details = dict(soft_details)
             override_details.update(
                 {
@@ -441,8 +434,6 @@ def allow_entry(
                     "stack_block_reason": soft_reason,
                     "stack_distance_pips": round(distance_pips or 0.0, 2),
                     "stack_reentry_pips": stack_reentry_pips,
-                    "stack_require_tech": stack_require_tech,
-                    "stack_tech_min_score": stack_min_score,
                 }
             )
             return True, "stack_override", override_details

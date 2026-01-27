@@ -29,12 +29,12 @@ _AGG_METRICS = _parse_csv_env(
 )
 _AGG_PREFIXES = _parse_prefix_env(
     "METRICS_AGG_PREFIXES",
-    "fast_scalp_,entry_tech_",
+    "fast_scalp_",
 )
 _AGG_WINDOW_SEC = max(1.0, float(os.getenv("METRICS_AGG_WINDOW_SEC", "10.0")))
 _AGG_VLONG_PREFIXES = _parse_prefix_env(
     "METRICS_AGG_VLONG_PREFIXES",
-    "fast_scalp_skip,entry_tech_",
+    "fast_scalp_skip",
 )
 _AGG_VLONG_WINDOW_SEC = max(1.0, float(os.getenv("METRICS_AGG_VLONG_WINDOW_SEC", "300.0")))
 _AGG_LONG_PREFIXES = _parse_prefix_env(

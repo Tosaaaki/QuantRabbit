@@ -11,8 +11,6 @@ defaults:
   max_open_avg_adverse_pips: 0.0
   max_open_trades_hard: 0
   stack_reentry_pips: 0.0
-  stack_reentry_require_tech: false
-  stack_reentry_tech_min_score: 0.0
 strategies:
   MicroPullbackEMA:
     cooldown_win_sec: 40
@@ -38,8 +36,6 @@ strategies:
     max_open_adverse_pips: 40.0
     max_open_trades_hard: 6
     stack_reentry_pips: 30.0
-    stack_reentry_require_tech: true
-    stack_reentry_tech_min_score: 0.05
     return_wait_bias: avoid
     return_wait_reason: be_post_60_or_hold_skew
     block_jst_hours: []
@@ -60,8 +56,6 @@ strategies:
     max_open_adverse_pips: 40.0
     max_open_trades_hard: 12
     stack_reentry_pips: 20.0
-    stack_reentry_require_tech: false
-    stack_reentry_tech_min_score: 0.0
     return_wait_bias: avoid
     return_wait_reason: be_post_60_or_hold_skew
     block_jst_hours: []
@@ -145,8 +139,6 @@ strategies:
     max_open_adverse_pips: 50.0
     max_open_trades_hard: 12
     stack_reentry_pips: 35.0
-    stack_reentry_require_tech: true
-    stack_reentry_tech_min_score: 0.05
     return_wait_bias: avoid
     return_wait_reason: be_post_60_or_hold_skew
     block_jst_hours: []
@@ -158,8 +150,6 @@ strategies:
     max_open_adverse_pips: 30.0
     max_open_trades_hard: 10
     stack_reentry_pips: 20.0
-    stack_reentry_require_tech: true
-    stack_reentry_tech_min_score: 0.05
     return_wait_bias: avoid
     return_wait_reason: be_post_60_or_hold_skew
     block_jst_hours: []
@@ -172,8 +162,6 @@ strategies:
     max_open_adverse_pips: 30.0
     max_open_trades_hard: 10
     stack_reentry_pips: 20.0
-    stack_reentry_require_tech: true
-    stack_reentry_tech_min_score: 0.05
     return_wait_bias: avoid
     return_wait_reason: be_post_60_or_hold_skew
     block_jst_hours: []

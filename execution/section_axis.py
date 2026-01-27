@@ -9,7 +9,6 @@ import json
 import os
 
 from analysis.range_model import RangeSnapshot, compute_range_snapshot
-from analysis.technique_engine import evaluate_exit_techniques
 from indicators.factor_cache import all_factors, get_candles_snapshot
 
 PIP = 0.01
@@ -1297,7 +1296,7 @@ def _section_exit_enabled(pocket: str, strategy_keys: tuple[str, ...] | None = N
     common = _env_bool("SECTION_EXIT_ENABLED")
     if common is not None:
         return common
-    return True
+    return False
 
 
 def _entry_attach_enabled() -> bool:
@@ -1366,20 +1365,7 @@ def evaluate_section_exit(
     thesis = trade.get("entry_thesis") or {}
     if not isinstance(thesis, dict):
         thesis = {}
-
-    tech_exit = evaluate_exit_techniques(
-        trade=trade,
-        current_price=current_price,
-        side=side,
-        pocket=pocket,
-    )
-    if tech_exit.should_exit:
-        return SectionExitDecision(
-            True,
-            tech_exit.reason,
-            tech_exit.allow_negative,
-            tech_exit.debug,
-        )
+    tech_debug: dict[str, object] = {}
 
     fast_cut_enabled = _resolve_bool_by_pocket(
         "SECTION_EXIT_FAST_CUT_ENABLED",
@@ -1428,7 +1414,7 @@ def evaluate_section_exit(
             hold_sec=hold_sec,
             min_hold=min_hold,
             pnl_pips=pnl_pips,
-            tech_debug=tech_exit.debug if isinstance(tech_exit.debug, dict) else {},
+            tech_debug=tech_debug,
             strategy_keys=strategy_keys,
         )
         if stuck_decision:
@@ -1471,7 +1457,7 @@ def evaluate_section_exit(
             and hold_sec >= left_hold_sec
             and pnl_pips <= -left_min_pips
         ):
-            debug = dict(tech_exit.debug) if isinstance(tech_exit.debug, dict) else {}
+            debug = dict(tech_debug) if isinstance(tech_debug, dict) else {}
             return_score = debug.get("return_score")
             coverage = float(debug.get("coverage") or 0.0)
             neg_count = int(debug.get("neg_count") or 0)
