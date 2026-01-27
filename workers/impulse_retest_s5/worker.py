@@ -627,14 +627,6 @@ async def impulse_retest_s5_worker() -> None:
             LOG.exception("%s failed to close PositionManager", config.LOG_PREFIX)
 
 
-if __name__ == "__main__":  # pragma: no cover
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s - %(levelname)s - %(message)s",
-        force=True,
-    )
-    LOG.info("%s worker boot (loop %.2fs)", config.LOG_PREFIX, config.LOOP_INTERVAL_SEC)
-    asyncio.run(impulse_retest_s5_worker())
 
 
 _CANDLE_PIP = 0.01
@@ -757,3 +749,12 @@ def _entry_candle_guard(side):
     mult = 1.0 + score * _CANDLE_ENTRY_SCALE
     mult = max(_CANDLE_ENTRY_MIN, min(_CANDLE_ENTRY_MAX, mult))
     return True, mult
+
+if __name__ == "__main__":  # pragma: no cover
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s - %(levelname)s - %(message)s",
+        force=True,
+    )
+    LOG.info("%s worker boot (loop %.2fs)", config.LOG_PREFIX, config.LOOP_INTERVAL_SEC)
+    asyncio.run(impulse_retest_s5_worker())

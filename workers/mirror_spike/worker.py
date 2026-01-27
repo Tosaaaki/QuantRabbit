@@ -704,16 +704,6 @@ async def mirror_spike_worker() -> None:
             logger.exception("%s failed to close PositionManager", config.LOG_PREFIX)
 
 
-if __name__ == "__main__":  # pragma: no cover
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s - %(levelname)s - %(message)s",
-        force=True,
-    )
-    logger = logging.getLogger(__name__)
-    loop_sec = getattr(config, "LOOP_INTERVAL_SEC", 0.5)
-    logger.info("%s worker boot (loop %.2fs)", config.LOG_PREFIX, loop_sec)
-    asyncio.run(mirror_spike_worker())
 
 _BB_ENTRY_ENABLED = os.getenv("BB_ENTRY_ENABLED", "1").strip().lower() not in {"", "0", "false", "no"}
 _BB_ENTRY_REVERT_PIPS = float(os.getenv("BB_ENTRY_REVERT_PIPS", "2.4"))
@@ -915,3 +905,14 @@ def _entry_candle_guard(side):
     mult = 1.0 + score * _CANDLE_ENTRY_SCALE
     mult = max(_CANDLE_ENTRY_MIN, min(_CANDLE_ENTRY_MAX, mult))
     return True, mult
+
+if __name__ == "__main__":  # pragma: no cover
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s - %(levelname)s - %(message)s",
+        force=True,
+    )
+    logger = logging.getLogger(__name__)
+    loop_sec = getattr(config, "LOOP_INTERVAL_SEC", 0.5)
+    logger.info("%s worker boot (loop %.2fs)", config.LOG_PREFIX, loop_sec)
+    asyncio.run(mirror_spike_worker())

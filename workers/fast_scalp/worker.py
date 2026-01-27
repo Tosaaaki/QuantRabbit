@@ -1402,8 +1402,6 @@ def _main() -> None:  # pragma: no cover
         asyncio.run(fast_scalp_worker(shared_state=FastScalpState()))
 
 
-if __name__ == "__main__":  # pragma: no cover
-    _main()
 
 _BB_ENTRY_ENABLED = os.getenv("BB_ENTRY_ENABLED", "1").strip().lower() not in {"", "0", "false", "no"}
 _BB_ENTRY_REVERT_PIPS = float(os.getenv("BB_ENTRY_REVERT_PIPS", "2.4"))
@@ -1605,3 +1603,6 @@ def _entry_candle_guard(side):
     mult = 1.0 + score * _CANDLE_ENTRY_SCALE
     mult = max(_CANDLE_ENTRY_MIN, min(_CANDLE_ENTRY_MAX, mult))
     return True, mult
+
+if __name__ == "__main__":  # pragma: no cover
+    _main()

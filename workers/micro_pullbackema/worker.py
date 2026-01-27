@@ -713,8 +713,6 @@ async def micro_pullbackema_worker() -> None:
         )
 
 
-if __name__ == "__main__":
-    asyncio.run(micro_pullbackema_worker())
 
 
 
@@ -838,3 +836,6 @@ def _entry_candle_guard(side):
     mult = 1.0 + score * _CANDLE_ENTRY_SCALE
     mult = max(_CANDLE_ENTRY_MIN, min(_CANDLE_ENTRY_MAX, mult))
     return True, mult
+
+if __name__ == "__main__":
+    asyncio.run(micro_pullbackema_worker())

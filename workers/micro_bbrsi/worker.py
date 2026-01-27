@@ -577,14 +577,6 @@ async def micro_bbrsi_worker() -> None:
         )
 
 
-if __name__ == "__main__":  # pragma: no cover
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s - %(levelname)s - %(message)s",
-        force=True,
-    )
-    LOG.info("%s worker starting", config.LOG_PREFIX)
-    asyncio.run(micro_bbrsi_worker())
 
 
 _CANDLE_PIP = 0.01
@@ -707,3 +699,12 @@ def _entry_candle_guard(side):
     mult = 1.0 + score * _CANDLE_ENTRY_SCALE
     mult = max(_CANDLE_ENTRY_MIN, min(_CANDLE_ENTRY_MAX, mult))
     return True, mult
+
+if __name__ == "__main__":  # pragma: no cover
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s - %(levelname)s - %(message)s",
+        force=True,
+    )
+    LOG.info("%s worker starting", config.LOG_PREFIX)
+    asyncio.run(micro_bbrsi_worker())

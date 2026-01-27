@@ -575,8 +575,6 @@ async def donchian55_worker() -> None:
         )
 
 
-if __name__ == "__main__":
-    asyncio.run(donchian55_worker())
 
 
 _CANDLE_PIP = 0.01
@@ -699,3 +697,6 @@ def _entry_candle_guard(side):
     mult = 1.0 + score * _CANDLE_ENTRY_SCALE
     mult = max(_CANDLE_ENTRY_MIN, min(_CANDLE_ENTRY_MAX, mult))
     return True, mult
+
+if __name__ == "__main__":
+    asyncio.run(donchian55_worker())

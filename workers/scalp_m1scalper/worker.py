@@ -515,11 +515,18 @@ async def scalp_m1_worker() -> None:
         if side == "short":
             units = -abs(units)
 
+        if side == "long":
+            sl_price = round(price - sl_pips * 0.01, 3)
+            tp_price = round(price + tp_pips * 0.01, 3) if tp_pips > 0 else None
+        else:
+            sl_price = round(price + sl_pips * 0.01, 3)
+            tp_price = round(price - tp_pips * 0.01, 3) if tp_pips > 0 else None
+
         sl_price, tp_price = clamp_sl_tp(
             price=price,
-            sl_pips=sl_pips,
-            tp_pips=tp_pips,
-            side="BUY" if side == "long" else "SELL",
+            sl=sl_price,
+            tp=tp_price,
+            is_buy=side == "long",
         )
         client_id = _client_order_id(signal_tag)
         entry_thesis = {
@@ -572,9 +579,6 @@ async def scalp_m1_worker() -> None:
         )
 
 
-if __name__ == "__main__":  # pragma: no cover
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s", force=True)
-    asyncio.run(scalp_m1_worker())
 
 
 _CANDLE_PIP = 0.01
@@ -697,3 +701,7 @@ def _entry_candle_guard(side):
     mult = 1.0 + score * _CANDLE_ENTRY_SCALE
     mult = max(_CANDLE_ENTRY_MIN, min(_CANDLE_ENTRY_MAX, mult))
     return True, mult
+
+if __name__ == "__main__":  # pragma: no cover
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s", force=True)
+    asyncio.run(scalp_m1_worker())
