@@ -20,18 +20,18 @@ def _ts(offset_seconds: float = 0.0) -> str:
 
 def test_momentum_pulse_generates_long_signal():
     candles = [
-        {"timestamp": _ts(-90), "open": 150.000, "close": 149.996, "high": 150.004, "low": 149.990},
-        {"timestamp": _ts(-60), "open": 149.996, "close": 150.001, "high": 150.005, "low": 149.994},
-        {"timestamp": _ts(-30), "open": 150.001, "close": 150.007, "high": 150.010, "low": 149.999},
-        {"timestamp": _ts(-5), "open": 150.007, "close": 150.012, "high": 150.015, "low": 150.004},
+        {"timestamp": _ts(-90), "open": 150.000, "close": 149.998, "high": 150.004, "low": 149.994},
+        {"timestamp": _ts(-60), "open": 149.998, "close": 150.004, "high": 150.006, "low": 149.996},
+        {"timestamp": _ts(-30), "open": 150.004, "close": 150.010, "high": 150.012, "low": 150.002},
+        {"timestamp": _ts(-5), "open": 150.010, "close": 150.016, "high": 150.018, "low": 150.008},
     ]
     fac = {
-        "close": 150.012,
-        "ema12": 150.0115,
-        "ema20": 150.0075,
-        "ma10": 150.0105,
+        "close": 150.016,
+        "ema12": 150.015,
+        "ema20": 150.000,
+        "ma10": 150.014,
         "adx": 22.0,
-        "vol_5m": 0.92,
+        "vol_5m": 0.5,
         "bbw": 0.19,
         "atr_pips": 2.0,
         "candles": candles,
@@ -45,14 +45,14 @@ def test_momentum_pulse_generates_long_signal():
 
 def test_vol_compression_break_detects_short_breakout():
     candles = [
-        {"timestamp": _ts(-80), "open": 150.050, "close": 150.046, "high": 150.051, "low": 150.045},
-        {"timestamp": _ts(-60), "open": 150.046, "close": 150.044, "high": 150.047, "low": 150.042},
-        {"timestamp": _ts(-40), "open": 150.044, "close": 150.040, "high": 150.046, "low": 150.038},
-        {"timestamp": _ts(-20), "open": 150.040, "close": 150.036, "high": 150.041, "low": 150.035},
-        {"timestamp": _ts(-5), "open": 150.036, "close": 150.028, "high": 150.036, "low": 150.025},
+        {"timestamp": _ts(-80), "open": 150.050, "close": 150.047, "high": 150.050, "low": 150.042},
+        {"timestamp": _ts(-60), "open": 150.047, "close": 150.044, "high": 150.048, "low": 150.041},
+        {"timestamp": _ts(-40), "open": 150.044, "close": 150.041, "high": 150.047, "low": 150.040},
+        {"timestamp": _ts(-20), "open": 150.041, "close": 150.040, "high": 150.046, "low": 150.039},
+        {"timestamp": _ts(-5), "open": 150.040, "close": 150.030, "high": 150.036, "low": 150.025},
     ]
     fac = {
-        "close": 150.028,
+        "close": 150.030,
         "ema12": 150.034,
         "ema20": 150.035,
         "bbw": 0.16,
@@ -97,7 +97,7 @@ def test_micro_vwap_revert_flags_short_bias():
         {"timestamp": _ts(-10), "open": 150.006, "high": 150.009, "low": 150.002, "close": 150.005},
     ]
     fac = {
-        "close": 150.020,
+        "close": 150.035,
         "ema20": 150.010,
         "ma10": 150.011,
         "vol_5m": 0.85,

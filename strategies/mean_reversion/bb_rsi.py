@@ -171,7 +171,7 @@ class BBRsi:
         if atr_hint <= 1.1 or bbw <= 0.22:
             min_distance_req = max(MIN_DISTANCE_RANGE * 0.5, min_distance_req - 0.01)
         trend_distance_floor = None
-        if trend_score >= 0.45:
+        if trend_score >= 0.45 and adx >= TREND_ADX_SOFT:
             trend_distance_floor = max(
                 min_distance_req,
                 min(
