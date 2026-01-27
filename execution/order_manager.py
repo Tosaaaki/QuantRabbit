@@ -607,7 +607,7 @@ _EXIT_ALLOW_NEGATIVE_REASONS = {
     for token in os.getenv(
         "EXIT_ALLOW_NEGATIVE_REASONS",
         "hard_stop,tech_hard_stop,drawdown,max_drawdown,health_exit,hazard_exit,"
-        "margin_health,free_margin_low,margin_usage_high,mtf_reversal",
+        "margin_health,free_margin_low,margin_usage_high",
     ).split(",")
     if token.strip()
 }
