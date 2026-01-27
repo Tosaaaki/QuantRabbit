@@ -318,6 +318,7 @@ async def donchian55_worker() -> None:
 
         conf_scale = _confidence_scale(conf)
         conf_frac = _confidence_fraction(conf)
+        strategy_tag = signal.get("tag", Donchian55.name)
         lot = allowed_lot(
             float(snap.nav or 0.0),
             sl_pips,
@@ -325,6 +326,9 @@ async def donchian55_worker() -> None:
             price=price,
             margin_rate=float(snap.margin_rate or 0.0),
             pocket=config.POCKET,
+            strategy_tag=strategy_tag,
+            fac_m1=fac_m1,
+            fac_h4=fac_h4,
         )
         units_risk = int(round(lot * 100000))
         target_units = int(round(base_units * conf_frac))

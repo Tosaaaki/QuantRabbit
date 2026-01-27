@@ -217,6 +217,7 @@ async def scalp_rangefader_worker() -> None:
             base_units = int(round(config.BASE_ENTRY_UNITS * tp_scale))
 
             conf_scale = _confidence_scale(int(signal.get("confidence", 50)), lo=config.CONFIDENCE_FLOOR, hi=config.CONFIDENCE_CEIL)
+            signal_tag = (signal.get("tag") or "").strip() or RangeFader.name
             lot = allowed_lot(
                 float(snap.nav or 0.0),
                 sl_pips,
@@ -224,6 +225,9 @@ async def scalp_rangefader_worker() -> None:
                 price=price,
                 margin_rate=float(snap.margin_rate or 0.0),
                 pocket=config.POCKET,
+                strategy_tag=signal_tag,
+                fac_m1=fac_m1,
+                fac_h4=fac_h4,
             )
             units_risk = int(round(lot * 100000))
             units = int(round(base_units * conf_scale))

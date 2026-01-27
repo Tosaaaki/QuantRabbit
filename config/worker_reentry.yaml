@@ -78,6 +78,24 @@ strategies:
     cooldown_loss_sec: 45
     same_dir_reentry_pips: 0.5
     return_wait_bias: neutral
+  MicroRangeBreak:
+    cooldown_win_sec: 40
+    cooldown_loss_sec: 120
+    same_dir_reentry_pips: 1.2
+    same_dir_mode: both
+    max_open_trades: 2
+    max_open_trades_hard: 4
+    max_open_adverse_pips: 6
+    max_open_avg_adverse_pips: 3
+  MicroVWAPBound:
+    cooldown_win_sec: 40
+    cooldown_loss_sec: 120
+    same_dir_reentry_pips: 1.0
+    same_dir_mode: both
+    max_open_trades: 2
+    max_open_trades_hard: 4
+    max_open_adverse_pips: 6
+    max_open_avg_adverse_pips: 3
   ImpulseRetrace:
     cooldown_win_sec: 46
     cooldown_loss_sec: 106

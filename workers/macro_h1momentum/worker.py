@@ -151,6 +151,7 @@ async def h1momentum_worker() -> None:
         tp_scale = max(0.35, min(1.1, tp_scale))
         base_units = int(round(config.BASE_ENTRY_UNITS * tp_scale))
         conf_scale = _confidence_scale(int(signal.get("confidence", 50)))
+        strategy_tag = signal.get("tag", H1MomentumSwing.name)
         lot = allowed_lot(
             float(snap.nav or 0.0),
             sl_pips,
@@ -158,6 +159,9 @@ async def h1momentum_worker() -> None:
             price=price,
             margin_rate=float(snap.margin_rate or 0.0),
             pocket=config.POCKET,
+            strategy_tag=strategy_tag,
+            fac_m1=fac_m1,
+            fac_h4=fac_h4,
         )
         units_risk = int(round(lot * 100000))
         units = int(round(base_units * conf_scale))

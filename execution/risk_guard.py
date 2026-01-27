@@ -18,6 +18,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Dict, Optional
 
+from analysis.range_guard import detect_range_mode
 from utils.metrics_logger import log_metric
 from utils.secrets import get_secret
 from utils.oanda_account import get_position_summary
@@ -103,6 +104,266 @@ _POCKET_EQUITY_HINT: Dict[str, float] = {
 }
 
 _LOSS_COOLDOWN_CACHE: Dict[str, float] = {}
+
+
+def _env_bool(name: str, default: bool) -> bool:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() not in {"", "0", "false", "no", "off"}
+
+
+def _clamp(value: float, lo: float, hi: float) -> float:
+    return max(lo, min(hi, value))
+
+
+# --- Strategy-aware risk multiplier (performance × regime) ---
+_RISK_MULT_ENABLED = _env_bool("RISK_MULT_ENABLED", True)
+_RISK_MULT_MIN = max(0.1, float(os.getenv("RISK_MULT_MIN", "0.4") or 0.4))
+_RISK_MULT_MAX = max(_RISK_MULT_MIN, float(os.getenv("RISK_MULT_MAX", "1.3") or 1.3))
+
+_RISK_PERF_ENABLED = _env_bool("RISK_PERF_ENABLED", True)
+_RISK_PERF_LOOKBACK_DAYS = max(1, int(float(os.getenv("RISK_PERF_LOOKBACK_DAYS", "14"))))
+_RISK_PERF_MIN_TRADES = max(5, int(float(os.getenv("RISK_PERF_MIN_TRADES", "20"))))
+_RISK_PERF_PF_BAD = float(os.getenv("RISK_PERF_PF_BAD", "0.9") or 0.9)
+_RISK_PERF_PF_REF = max(_RISK_PERF_PF_BAD + 1e-6, float(os.getenv("RISK_PERF_PF_REF", "1.1") or 1.1))
+_RISK_PERF_WIN_BAD = float(os.getenv("RISK_PERF_WIN_BAD", "0.46") or 0.46)
+_RISK_PERF_WIN_REF = max(
+    _RISK_PERF_WIN_BAD + 1e-6,
+    float(os.getenv("RISK_PERF_WIN_REF", "0.52") or 0.52),
+)
+_RISK_PERF_MIN_MULT = float(os.getenv("RISK_PERF_MIN_MULT", "0.5") or 0.5)
+_RISK_PERF_MAX_MULT = float(os.getenv("RISK_PERF_MAX_MULT", "1.25") or 1.25)
+_RISK_PERF_TTL_SEC = max(30.0, float(os.getenv("RISK_PERF_TTL_SEC", "180") or 180.0))
+
+_RISK_REGIME_ENABLED = _env_bool("RISK_REGIME_ENABLED", True)
+_RISK_REGIME_RANGE_PENALTY = float(os.getenv("RISK_REGIME_RANGE_PENALTY", "0.7") or 0.7)
+_RISK_REGIME_RANGE_BONUS = float(os.getenv("RISK_REGIME_RANGE_BONUS", "1.1") or 1.1)
+_RISK_REGIME_TREND_BONUS = float(os.getenv("RISK_REGIME_TREND_BONUS", "1.1") or 1.1)
+_RISK_REGIME_TREND_PENALTY = float(os.getenv("RISK_REGIME_TREND_PENALTY", "0.85") or 0.85)
+
+_PERF_CACHE: dict[tuple[str, str], tuple[float, float, float, int]] = {}
+_TAG_ALIAS = {
+    "m1scalper": "m1scalper",
+    "impulseretrace": "impulseretrace",
+    "rangefader": "rangefader",
+    "microrangebreak": "microrangebreak",
+    "microvwapbound": "microvwapbound",
+    "microvwaprevert": "microvwaprevert",
+    "microlevelreactor": "microlevelreactor",
+}
+_RANGE_HINTS = {
+    "range",
+    "revert",
+    "reversion",
+    "fade",
+    "bbrsi",
+    "bb_rsi",
+    "vwapbound",
+    "vwaprevert",
+    "levelreactor",
+    "magnet",
+}
+_TREND_HINTS = {
+    "trend",
+    "donchian",
+    "break",
+    "breakout",
+    "rangebreak",
+    "pullback",
+    "momentum",
+    "impulse",
+    "trendma",
+    "h1momentum",
+    "m1scalper",
+    "london",
+    "session_open",
+    "squeeze",
+}
+
+
+def _tag_variants(tag: Optional[str]) -> tuple[str, ...]:
+    raw = str(tag or "").strip().lower()
+    if not raw:
+        return ("",)
+    base = raw.split("-", 1)[0].strip()
+    variants = {raw}
+    if base:
+        variants.add(base)
+        alias = _TAG_ALIAS.get(base)
+        if alias:
+            variants.add(alias)
+    return tuple(sorted(v for v in variants if v))
+
+
+def _score_linear(value: float, bad: float, ref: float) -> float:
+    if value <= bad:
+        return 0.0
+    if value >= ref:
+        return 1.0
+    span = max(1e-6, ref - bad)
+    return _clamp((value - bad) / span, 0.0, 1.0)
+
+
+def _query_perf_stats(tag: str, pocket: str) -> tuple[float, float, int]:
+    variants = _tag_variants(tag)
+    if not variants or variants == ("",):
+        return 1.0, 1.0, 0
+    if not _DB.exists():
+        return 1.0, 1.0, 0
+    key = (variants[0], pocket)
+    now_mono = time.monotonic()
+    cached = _PERF_CACHE.get(key)
+    if cached and now_mono - cached[0] <= _RISK_PERF_TTL_SEC:
+        _, pf_cached, win_cached, n_cached = cached
+        return pf_cached, win_cached, n_cached
+
+    placeholders = ",".join("?" for _ in variants)
+    tag_clause = f"LOWER(COALESCE(NULLIF(strategy_tag, ''), strategy)) IN ({placeholders})"
+    params = list(variants)
+    params.extend([pocket, f"-{_RISK_PERF_LOOKBACK_DAYS} day"])
+    con_local: sqlite3.Connection | None = None
+    try:
+        con_local = sqlite3.connect(_DB)
+        con_local.row_factory = sqlite3.Row
+        row = con_local.execute(
+            f"""
+            SELECT
+              COUNT(*) AS n,
+              SUM(CASE WHEN pl_pips > 0 THEN pl_pips ELSE 0 END) AS profit,
+              SUM(CASE WHEN pl_pips < 0 THEN ABS(pl_pips) ELSE 0 END) AS loss,
+              SUM(CASE WHEN pl_pips > 0 THEN 1 ELSE 0 END) AS win
+            FROM trades
+            WHERE {tag_clause}
+              AND pocket = ?
+              AND close_time >= datetime('now', ?)
+            """,
+            params,
+        ).fetchone()
+    except Exception:
+        row = None
+    finally:
+        if con_local is not None:
+            try:
+                con_local.close()
+            except Exception:
+                pass
+    if row is None:
+        return 1.0, 1.0, 0
+
+    if not row:
+        return 1.0, 1.0, 0
+    n = int(row["n"] or 0)
+    profit = float(row["profit"] or 0.0)
+    loss = float(row["loss"] or 0.0)
+    win = float(row["win"] or 0.0)
+    pf = profit / loss if loss > 0 else float("inf")
+    win_rate = win / n if n > 0 else 0.0
+    _PERF_CACHE[key] = (now_mono, pf, win_rate, n)
+    return pf, win_rate, n
+
+
+def _perf_multiplier(tag: Optional[str], pocket: Optional[str]) -> tuple[float, dict[str, float]]:
+    if not _RISK_MULT_ENABLED or not _RISK_PERF_ENABLED or not tag or not pocket:
+        return 1.0, {}
+    pf, win_rate, n = _query_perf_stats(tag, pocket)
+    if n < _RISK_PERF_MIN_TRADES:
+        return 1.0, {"n": float(n), "pf": float(pf), "win": float(win_rate)}
+    pf_score = _score_linear(pf, _RISK_PERF_PF_BAD, _RISK_PERF_PF_REF)
+    win_score = _score_linear(win_rate, _RISK_PERF_WIN_BAD, _RISK_PERF_WIN_REF)
+    combined = _clamp(0.6 * pf_score + 0.4 * win_score, 0.0, 1.0)
+    mult = _RISK_PERF_MIN_MULT + combined * (_RISK_PERF_MAX_MULT - _RISK_PERF_MIN_MULT)
+    details = {
+        "n": float(n),
+        "pf": float(pf),
+        "win": float(win_rate),
+        "pf_score": float(pf_score),
+        "win_score": float(win_score),
+        "perf_mult": float(mult),
+    }
+    return mult, details
+
+
+def _tag_style(tag: Optional[str]) -> str:
+    text = str(tag or "").strip().lower()
+    if not text:
+        return "neutral"
+    base = text.split("-", 1)[0]
+    range_hit = any(token in base for token in _RANGE_HINTS)
+    trend_hit = any(token in base for token in _TREND_HINTS)
+    if range_hit and not trend_hit:
+        return "range"
+    if trend_hit and not range_hit:
+        return "trend"
+    return "neutral"
+
+
+def _regime_multiplier(
+    tag: Optional[str],
+    fac_m1: Optional[dict],
+    fac_h4: Optional[dict],
+) -> tuple[float, dict[str, float]]:
+    if not _RISK_MULT_ENABLED or not _RISK_REGIME_ENABLED:
+        return 1.0, {}
+    if not isinstance(fac_m1, dict) or not isinstance(fac_h4, dict):
+        return 1.0, {}
+    try:
+        ctx = detect_range_mode(fac_m1, fac_h4)
+    except Exception:
+        return 1.0, {}
+    style = _tag_style(tag)
+    score = float(ctx.score or 0.0)
+    severity = _clamp(score, 0.0, 1.0)
+    if ctx.active:
+        if style == "range":
+            mult = 1.0 + severity * (_RISK_REGIME_RANGE_BONUS - 1.0)
+        elif style == "trend":
+            mult = 1.0 - severity * (1.0 - _RISK_REGIME_RANGE_PENALTY)
+        else:
+            mult = 1.0 - severity * 0.1
+    else:
+        if style == "trend":
+            mult = 1.0 + severity * (_RISK_REGIME_TREND_BONUS - 1.0)
+        elif style == "range":
+            mult = 1.0 - severity * (1.0 - _RISK_REGIME_TREND_PENALTY)
+        else:
+            mult = 1.0
+    details = {
+        "range_active": 1.0 if ctx.active else 0.0,
+        "range_score": float(score),
+        "severity": float(severity),
+        "style_range": 1.0 if style == "range" else 0.0,
+        "style_trend": 1.0 if style == "trend" else 0.0,
+        "regime_mult": float(mult),
+    }
+    return mult, details
+
+
+def _risk_multiplier(
+    *,
+    strategy_tag: Optional[str],
+    pocket: Optional[str],
+    fac_m1: Optional[dict],
+    fac_h4: Optional[dict],
+) -> tuple[float, dict[str, float]]:
+    if not _RISK_MULT_ENABLED or not strategy_tag or not pocket:
+        return 1.0, {}
+    perf_mult, perf_details = _perf_multiplier(strategy_tag, pocket)
+    regime_mult, regime_details = _regime_multiplier(strategy_tag, fac_m1, fac_h4)
+    total = _clamp(perf_mult * regime_mult, _RISK_MULT_MIN, _RISK_MULT_MAX)
+    details: dict[str, float] = {"total_mult": float(total)}
+    details.update({f"perf_{k}": v for k, v in perf_details.items()})
+    details.update({f"regime_{k}": v for k, v in regime_details.items()})
+    try:
+        tags = {"strategy": str(strategy_tag), "pocket": str(pocket)}
+        log_metric("risk_mult_total", total, tags=tags)
+        if perf_details:
+            log_metric("risk_mult_perf", perf_mult, tags=tags)
+        if regime_details:
+            log_metric("risk_mult_regime", regime_mult, tags=tags)
+    except Exception:
+        pass
+    return total, details
 
 
 def _parse_close_time(value: str | None) -> datetime | None:
@@ -309,6 +570,9 @@ def allowed_lot(
     side: str | None = None,
     open_long_units: float | None = None,
     open_short_units: float | None = None,
+    strategy_tag: str | None = None,
+    fac_m1: dict | None = None,
+    fac_h4: dict | None = None,
 ) -> float:
     """
     口座全体の許容ロットを概算する。
@@ -316,6 +580,7 @@ def allowed_lot(
     margin_available: 利用可能証拠金
     price: 現在値（USD/JPY mid）
     margin_rate: OANDA口座の証拠金率
+    strategy_tag / fac_m1 / fac_h4: 戦略とレジームに応じたリスク倍率に利用
     """
 
     # Allow override from config/env or environment: key "risk_pct" (e.g. 0.01 = 1%)
@@ -329,6 +594,32 @@ def allowed_lot(
         risk_pct = 0.04
     if risk_pct_override is not None:
         risk_pct = max(0.0005, min(risk_pct_override, 0.4))
+    risk_mult = 1.0
+    risk_details: dict[str, float] = {}
+    try:
+        risk_mult, risk_details = _risk_multiplier(
+            strategy_tag=strategy_tag,
+            pocket=pocket,
+            fac_m1=fac_m1,
+            fac_h4=fac_h4,
+        )
+        risk_pct = max(0.0005, min(risk_pct * risk_mult, 0.4))
+    except Exception:
+        risk_mult = 1.0
+        risk_details = {}
+    if risk_mult != 1.0:
+        try:
+            logging.info(
+                "[RISK] multiplier strategy=%s pocket=%s mult=%.2f pf=%.2f win=%.2f range=%.2f",
+                strategy_tag,
+                pocket,
+                risk_mult,
+                float(risk_details.get("perf_pf") or 0.0),
+                float(risk_details.get("perf_win") or 0.0),
+                float(risk_details.get("regime_range_score") or 0.0),
+            )
+        except Exception:
+            pass
 
     side_norm = (side or "").lower()
     long_units = None if open_long_units is None else float(open_long_units)

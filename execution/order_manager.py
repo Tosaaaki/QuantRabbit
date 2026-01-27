@@ -34,7 +34,7 @@ from analysis import policy_bus
 from analysis.technique_engine import evaluate_entry_techniques, evaluate_exit_techniques
 from utils.secrets import get_secret
 from utils.market_hours import is_market_open
-from indicators.factor_cache import all_factors
+from indicators.factor_cache import all_factors, get_candles_snapshot
 from utils.metrics_logger import log_metric
 from execution import strategy_guard, reentry_guard
 from execution.position_manager import PositionManager, agent_client_prefixes
@@ -846,6 +846,111 @@ _DIR_CAP_WARN_RATIO = float(os.getenv("DIR_CAP_WARN_RATIO", "0.98"))
 # Floor multiplier to avoid crushing frequency when shrinking; 0.0 to disable
 _DIR_CAP_MIN_FRACTION = float(os.getenv("DIR_CAP_MIN_FRACTION", "0.15"))
 _DIR_CAP_CACHE: Optional[PositionManager] = None
+_DIR_CAP_ADVERSE_ENABLE = _env_bool("DIR_CAP_ADVERSE_ENABLE", True)
+_DIR_CAP_ADVERSE_LOOKBACK_MIN = max(5, min(120, _env_int("DIR_CAP_ADVERSE_LOOKBACK_MIN", 20)))
+_DIR_CAP_ADVERSE_START_PIPS = max(0.0, _env_float("DIR_CAP_ADVERSE_START_PIPS", 6.0))
+_DIR_CAP_ADVERSE_FULL_PIPS = max(
+    _DIR_CAP_ADVERSE_START_PIPS + 1e-6,
+    _env_float("DIR_CAP_ADVERSE_FULL_PIPS", 20.0),
+)
+_DIR_CAP_ADVERSE_MIN_SCALE = max(0.05, min(1.0, _env_float("DIR_CAP_ADVERSE_MIN_SCALE", 0.35)))
+_DIR_CAP_ADVERSE_MAX_AGE_SEC = max(30.0, _env_float("DIR_CAP_ADVERSE_MAX_AGE_SEC", 180.0))
+_DIR_CAP_ADVERSE_TTL_SEC = max(1.0, _env_float("DIR_CAP_ADVERSE_TTL_SEC", 5.0))
+_DIR_CAP_ADVERSE_CACHE: dict[str, object] = {
+    "ts": 0.0,
+    "side": "",
+    "lookback": 0,
+    "adverse": 0.0,
+    "details": {},
+}
+
+
+def _parse_iso_ts(value: object) -> Optional[datetime]:
+    if value is None:
+        return None
+    text = str(value).strip()
+    if not text:
+        return None
+    try:
+        if text.endswith("Z"):
+            text = text[:-1] + "+00:00"
+        if "+" not in text:
+            text = text + "+00:00"
+        return datetime.fromisoformat(text).astimezone(timezone.utc)
+    except Exception:
+        return None
+
+
+def _dir_cap_adverse_pips(side_label: str, pocket: str) -> tuple[float, dict[str, float]]:
+    if not _DIR_CAP_ADVERSE_ENABLE:
+        return 0.0, {}
+    lookback = _DIR_CAP_ADVERSE_LOOKBACK_MIN
+    now_mono = time.monotonic()
+    cached_ts = float(_DIR_CAP_ADVERSE_CACHE.get("ts") or 0.0)
+    cached_side = str(_DIR_CAP_ADVERSE_CACHE.get("side") or "")
+    cached_lookback = int(_DIR_CAP_ADVERSE_CACHE.get("lookback") or 0)
+    if (
+        now_mono - cached_ts <= _DIR_CAP_ADVERSE_TTL_SEC
+        and cached_side == side_label
+        and cached_lookback == lookback
+    ):
+        cached_adverse = float(_DIR_CAP_ADVERSE_CACHE.get("adverse") or 0.0)
+        cached_details = _DIR_CAP_ADVERSE_CACHE.get("details")
+        if isinstance(cached_details, dict):
+            return cached_adverse, cached_details  # type: ignore[return-value]
+        return cached_adverse, {}
+
+    candles = get_candles_snapshot("M1", limit=lookback + 1)
+    if len(candles) < lookback + 1:
+        return 0.0, {}
+    try:
+        last = candles[-1]
+        ref = candles[-(lookback + 1)]
+        last_close = float(last.get("close") or 0.0)
+        ref_close = float(ref.get("close") or 0.0)
+    except Exception:
+        return 0.0, {}
+    if last_close <= 0.0 or ref_close <= 0.0:
+        return 0.0, {}
+    drift_pips = (last_close - ref_close) / 0.01
+    if side_label == "buy":
+        adverse_pips = max(0.0, -drift_pips)
+    else:
+        adverse_pips = max(0.0, drift_pips)
+
+    age_sec = 0.0
+    last_ts = _parse_iso_ts(last.get("timestamp"))
+    if last_ts is not None:
+        age_sec = max(0.0, (datetime.now(timezone.utc) - last_ts).total_seconds())
+        if age_sec > _DIR_CAP_ADVERSE_MAX_AGE_SEC:
+            adverse_pips = 0.0
+
+    details = {
+        "lookback_min": float(lookback),
+        "drift_pips": float(drift_pips),
+        "adverse_pips": float(adverse_pips),
+        "last_close": float(last_close),
+        "ref_close": float(ref_close),
+        "age_sec": float(age_sec),
+    }
+    _DIR_CAP_ADVERSE_CACHE.update(
+        {
+            "ts": now_mono,
+            "side": side_label,
+            "lookback": lookback,
+            "adverse": adverse_pips,
+            "details": details,
+        }
+    )
+    try:
+        log_metric(
+            "dir_cap_adverse_pips",
+            adverse_pips,
+            tags={"pocket": pocket, "side": side_label, "lookback": lookback},
+        )
+    except Exception:
+        pass
+    return adverse_pips, details
 
 # ---------- orders logger (logs/orders.db) ----------
 _ORDERS_DB_PATH = pathlib.Path("logs/orders.db")
@@ -1252,6 +1357,38 @@ def _apply_directional_cap(
     notional_cap_units = (snap.nav / price) * MAX_LEVERAGE * _DIR_CAP_RATIO * pocket_ratio
     if notional_cap_units <= 0:
         return units
+    adverse_scale = 1.0
+    adverse_pips = 0.0
+    adverse_details: dict[str, float] = {}
+    if _DIR_CAP_ADVERSE_ENABLE:
+        adverse_pips, adverse_details = _dir_cap_adverse_pips(side_label, pocket)
+        start = _DIR_CAP_ADVERSE_START_PIPS
+        full = _DIR_CAP_ADVERSE_FULL_PIPS
+        if full > start and adverse_pips > start:
+            frac = min(1.0, max(0.0, (adverse_pips - start) / max(1e-6, full - start)))
+            adverse_scale = 1.0 - frac * (1.0 - _DIR_CAP_ADVERSE_MIN_SCALE)
+            notional_cap_units *= adverse_scale
+            try:
+                log_metric(
+                    "dir_cap_adverse_scale",
+                    adverse_scale,
+                    tags={
+                        "pocket": pocket,
+                        "side": side_label,
+                        "adverse_pips": round(adverse_pips, 1),
+                        "lookback": int(adverse_details.get("lookback_min") or _DIR_CAP_ADVERSE_LOOKBACK_MIN),
+                    },
+                )
+            except Exception:
+                pass
+            logging.info(
+                "[DIR_CAP] adverse shrink pocket=%s side=%s adverse=%.1f scale=%.2f cap=%.0f",
+                pocket,
+                side_label,
+                adverse_pips,
+                adverse_scale,
+                notional_cap_units,
+            )
     # fetch cached PositionManager to avoid repeated instantiation
     global _DIR_CAP_CACHE
     if _DIR_CAP_CACHE is None:
