@@ -243,6 +243,19 @@ def _reason_matches_tokens(exit_reason: Optional[str], tokens: list[str]) -> boo
     return False
 
 
+def _allow_negative_near_be(exit_reason: Optional[str], est_pips: Optional[float]) -> bool:
+    if _EXIT_ALLOW_NEGATIVE_NEAR_BE_PIPS <= 0:
+        return False
+    if est_pips is None or est_pips >= 0:
+        return False
+    if est_pips < -_EXIT_ALLOW_NEGATIVE_NEAR_BE_PIPS:
+        return False
+    tokens = list(_EXIT_ALLOW_NEGATIVE_NEAR_BE_REASONS)
+    if not tokens:
+        return False
+    return _reason_matches_tokens(exit_reason, tokens)
+
+
 def _strategy_neg_exit_policy(strategy_tag: Optional[str]) -> dict:
     cfg = _load_strategy_protection_config()
     defaults = {}
@@ -608,6 +621,15 @@ _EXIT_ALLOW_NEGATIVE_REASONS = {
         "EXIT_ALLOW_NEGATIVE_REASONS",
         "hard_stop,tech_hard_stop,drawdown,max_drawdown,health_exit,hazard_exit,"
         "margin_health,free_margin_low,margin_usage_high",
+    ).split(",")
+    if token.strip()
+}
+_EXIT_ALLOW_NEGATIVE_NEAR_BE_PIPS = max(0.0, _env_float("EXIT_ALLOW_NEGATIVE_NEAR_BE_PIPS", 0.6))
+_EXIT_ALLOW_NEGATIVE_NEAR_BE_REASONS = {
+    token.strip().lower()
+    for token in os.getenv(
+        "EXIT_ALLOW_NEGATIVE_NEAR_BE_REASONS",
+        "lock_floor,trail_lock,profit_lock,trail_backoff,lock_trail,near_be",
     ).split(",")
     if token.strip()
 }
@@ -2601,7 +2623,8 @@ async def close_trade(
                     policy_allow = False
             if not policy_enabled:
                 policy_allow = False
-            neg_allowed = emergency_allow or ((reason_allow or worker_allow) and policy_allow)
+            near_be_allow = policy_allow and _allow_negative_near_be(exit_reason, est_pips)
+            neg_allowed = emergency_allow or near_be_allow or ((reason_allow or worker_allow) and policy_allow)
             allow_negative = bool(neg_allowed)
             if not neg_allowed:
                 log_metric(

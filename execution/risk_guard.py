@@ -70,11 +70,10 @@ _MIN_LOT_BY_POCKET = {
     "scalp": max(0.0, float(os.getenv("RISK_MIN_LOT_SCALP", "0.0"))),
     "scalp_fast": max(0.0, float(os.getenv("RISK_MIN_LOT_SCALP_FAST", "0.0"))),
 }
-# 手動ポジはエクスポージャ計算から除外するのをデフォルトにする。
-# manual ポジも含めて総エクスポージャを見たいので、既定で manual は除外しない。
+# manual ポジも含めて総エクスポージャを見たいので、既定で manual/unknown は除外しない。
 _EXPOSURE_IGNORE_POCKETS = {
     token.strip().lower()
-    for token in os.getenv("EXPOSURE_IGNORE_POCKETS", "unknown").split(",")
+    for token in os.getenv("EXPOSURE_IGNORE_POCKETS", "").split(",")
     if token.strip()
 }
 
