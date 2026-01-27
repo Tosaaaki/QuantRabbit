@@ -377,6 +377,8 @@ async def trend_h1_worker() -> None:
                     margin_rate=getattr(snapshot, "margin_rate", None),
                     risk_pct_override=config.RISK_PCT,
                     pocket=config.POCKET,
+                    strategy_tag=signal.get("tag"),
+                    fac_h4=fac_h4,
                 )
                 if lot <= 0.0:
                     _log_skip("lot_zero", skip_state)

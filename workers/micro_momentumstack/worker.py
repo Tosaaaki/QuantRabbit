@@ -309,6 +309,9 @@ async def micro_momentumstack_worker() -> None:
             side=side,
             open_long_units=long_units,
             open_short_units=short_units,
+            strategy_tag=signal.get("tag"),
+            fac_m1=fac_m1,
+            fac_h4=fac_h4,
         )
         units_risk = int(round(lot * 100000))
         units = int(round(base_units * conf_scale))

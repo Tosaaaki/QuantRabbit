@@ -332,6 +332,9 @@ async def scalp_multi_worker() -> None:
                 price=price,
                 margin_rate=float(snap.margin_rate or 0.0),
                 pocket=config.POCKET,
+                strategy_tag=signal.get("tag"),
+                fac_m1=fac_m1,
+                fac_h4=fac_h4,
             )
             units_risk = int(round(lot * 100000))
             units = int(round(base_units * conf_scale))

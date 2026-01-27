@@ -859,6 +859,7 @@ async def fast_scalp_worker(shared_state: Optional[FastScalpState] = None) -> No
                     side=direction,
                     open_long_units=long_units,
                     open_short_units=short_units,
+                    strategy_tag=signal.get("tag"),
                 )
                 lot = min(allowed_lot_raw, config.MAX_LOT)
                 if lot <= 0.0:
