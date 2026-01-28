@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 from analysis.ma_projection import compute_adx_projection, compute_bbw_projection, compute_ma_projection, compute_rsi_projection
+from analysis.range_guard import detect_range_mode
 from indicators.factor_cache import all_factors, get_candles_snapshot
 
 import asyncio
@@ -489,6 +490,14 @@ async def mirror_spike_s5_worker() -> None:
                 continue
             env_block_logged = False
 
+            factors = all_factors()
+            fac_m1 = factors.get("M1") or {}
+            fac_h4 = factors.get("H4") or {}
+            fac_h1 = factors.get("H1") or {}
+            range_ctx = detect_range_mode(fac_m1, fac_h4)
+            if config.RANGE_ONLY and not range_ctx.active:
+                continue
+
             candles = _bucket_ticks(ticks)
             if len(candles) < config.MIN_BUCKETS:
                 continue
@@ -523,7 +532,6 @@ async def mirror_spike_s5_worker() -> None:
             if direction is None:
                 continue
 
-            fac_h1 = all_factors().get("H1") or {}
             htf = _htf_trend_state(fac_h1)
             if htf and config.HTF_BLOCK_COUNTER:
                 htf_dir, htf_gap, htf_adx = htf
@@ -557,6 +565,8 @@ async def mirror_spike_s5_worker() -> None:
             fast_z = _z_score(closes, config.PEAK_WINDOW_BUCKETS + 6)
             slow_z = _z_score(closes, config.LOOKBACK_BUCKETS)
             if fast_z is None or slow_z is None:
+                continue
+            if config.SLOW_Z_BLOCK > 0 and abs(slow_z) >= config.SLOW_Z_BLOCK:
                 continue
             rsi = _rsi(closes[-config.PEAK_WINDOW_BUCKETS :], config.RSI_PERIOD)
             # ショート側はより強いオーバーボートを要求

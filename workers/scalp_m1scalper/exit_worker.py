@@ -158,6 +158,10 @@ BB_STYLE = "scalp"
 LOG = logging.getLogger(__name__)
 
 ALLOWED_TAGS = {"M1Scalper", "m1scalper", "m1_scalper"}
+_REASON_RSI_FADE = "m1_rsi_fade"
+_REASON_VWAP_CUT = "m1_vwap_cut"
+_REASON_STRUCTURE_BREAK = "m1_structure_break"
+_REASON_ATR_SPIKE = "m1_atr_spike"
 
 
 def _float_env(key: str, default: float) -> float:
@@ -441,15 +445,15 @@ async def _run_exit_loop(
             rsi, adx, atr_pips, vwap_gap, ma_pair = _context()
             if rsi is not None:
                 if side == "long" and rsi <= rsi_fade_long:
-                    await _close(trade_id, -units, "rsi_fade", client_id, allow_negative=allow_negative)
+                    await _close(trade_id, -units, _REASON_RSI_FADE, client_id, allow_negative=allow_negative)
                     states.pop(trade_id, None)
                     return
                 if side == "short" and rsi >= rsi_fade_short:
-                    await _close(trade_id, -units, "rsi_fade", client_id, allow_negative=allow_negative)
+                    await _close(trade_id, -units, _REASON_RSI_FADE, client_id, allow_negative=allow_negative)
                     states.pop(trade_id, None)
                     return
             if vwap_gap is not None and abs(vwap_gap) <= vwap_gap_pips:
-                await _close(trade_id, -units, "vwap_cut", client_id, allow_negative=allow_negative)
+                await _close(trade_id, -units, _REASON_VWAP_CUT, client_id, allow_negative=allow_negative)
                 states.pop(trade_id, None)
                 return
             if adx is not None and ma_pair is not None:
@@ -457,11 +461,11 @@ async def _run_exit_loop(
                 gap = abs(ma10 - ma20) / 0.01
                 cross_bad = (side == "long" and ma10 <= ma20) or (side == "short" and ma10 >= ma20)
                 if adx <= structure_adx and (cross_bad or gap <= structure_gap_pips):
-                    await _close(trade_id, -units, "structure_break", client_id, allow_negative=allow_negative)
+                    await _close(trade_id, -units, _REASON_STRUCTURE_BREAK, client_id, allow_negative=allow_negative)
                     states.pop(trade_id, None)
                     return
             if atr_pips is not None and atr_pips >= atr_spike_pips:
-                await _close(trade_id, -units, "atr_spike", client_id, allow_negative=allow_negative)
+                await _close(trade_id, -units, _REASON_ATR_SPIKE, client_id, allow_negative=allow_negative)
                 states.pop(trade_id, None)
                 return
 
@@ -521,8 +525,8 @@ async def _run_exit_loop(
 
 async def m1_scalper_exit_worker() -> None:
     min_hold_sec = 10.0
-    max_hold_sec = max(min_hold_sec + 1.0, _float_env("M1SCALP_EXIT_MAX_HOLD_SEC", 20 * 60))
-    max_adverse_pips = max(0.0, _float_env("M1SCALP_EXIT_MAX_ADVERSE_PIPS", 8.0))
+    max_hold_sec = max(min_hold_sec + 1.0, _float_env("M1SCALP_EXIT_MAX_HOLD_SEC", 12 * 60))
+    max_adverse_pips = max(0.0, _float_env("M1SCALP_EXIT_MAX_ADVERSE_PIPS", 6.0))
     await _run_exit_loop(
         pocket="scalp",
         tags=ALLOWED_TAGS,

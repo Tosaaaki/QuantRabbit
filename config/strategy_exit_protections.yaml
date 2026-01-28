@@ -13,9 +13,13 @@ defaults:
       - tech_candle_reversal
       - tech_nwave_flip
       - rsi_fade
+      - m1_rsi_fade
       - vwap_cut
+      - m1_vwap_cut
       - atr_spike
+      - m1_atr_spike
       - structure_break
+      - m1_structure_break
       - max_hold
       - max_adverse
       - time_stop

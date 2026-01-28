@@ -72,8 +72,6 @@ class H1MomentumSwing:
     _MIN_ADX = 12.0
     _MIN_GAP_PIPS = 2.8
     _MIN_ATR_PIPS = 1.0
-    _MAX_M1_RSI_EXTREME = 80.0
-    _MIN_M1_RSI_SUPPORT = 20.0
 
     @classmethod
     def _tf_factors(
@@ -164,6 +162,12 @@ class H1MomentumSwing:
         if not fac_h1:
             return None
 
+        no_chase_atr_mult = max(0.0, _env_float("H1M_NO_CHASE_ATR_MULT", 0.85))
+        max_m1_rsi_extreme = _env_float("H1M_M1_RSI_MAX_EXTREME", 78.0)
+        min_m1_rsi_support = _env_float("H1M_M1_RSI_MIN_SUPPORT", 28.0)
+        max_h1_rsi_long = _env_float("H1M_H1_RSI_MAX_LONG", 74.0)
+        min_h1_rsi_short = _env_float("H1M_H1_RSI_MIN_SHORT", 26.0)
+
         ma10 = _safe_float(fac_h1.get("ma10"))
         ma20 = _safe_float(fac_h1.get("ma20"))
         ema12 = _safe_float(fac_h1.get("ema12"))
@@ -174,6 +178,7 @@ class H1MomentumSwing:
             fac_h1.get("atr_pips"),
             default=_safe_float(fac_h1.get("atr")) * 100.0,
         )
+        close = _safe_float(fac_h1.get("close"))
         gap_pips = abs(ma10 - ma20) / PIP
 
         if adx < cls._MIN_ADX or gap_pips < cls._MIN_GAP_PIPS:
@@ -184,6 +189,15 @@ class H1MomentumSwing:
         direction = "long" if ma10 > ma20 else "short" if ma10 < ma20 else None
         if direction is None:
             return None
+
+        # Avoid chasing when price is too extended from H1 mean (reduces bottom/peak entries).
+        if no_chase_atr_mult > 0 and close > 0 and ma20 > 0 and atr_pips > 0:
+            dist = close - ma20
+            chase_pips = abs(dist) / PIP
+            chasing_long = direction == "long" and dist > 0
+            chasing_short = direction == "short" and dist < 0
+            if (chasing_long or chasing_short) and chase_pips >= atr_pips * no_chase_atr_mult:
+                return None
 
         if not cls._candle_guard(fac_h1, direction):
             return None
@@ -197,15 +211,15 @@ class H1MomentumSwing:
             return None
 
         # Suppress entries when H1 RSI already at extremes to avoid exhaustion.
-        if direction == "long" and rsi_h1 >= 76.5:
+        if direction == "long" and rsi_h1 >= max_h1_rsi_long:
             return None
-        if direction == "short" and rsi_h1 <= 23.5:
+        if direction == "short" and rsi_h1 <= min_h1_rsi_short:
             return None
 
         rsi_m1 = _safe_float(fac_m1.get("rsi"), 50.0)
-        if direction == "long" and rsi_m1 >= cls._MAX_M1_RSI_EXTREME:
+        if direction == "long" and rsi_m1 >= max_m1_rsi_extreme:
             return None
-        if direction == "short" and rsi_m1 <= cls._MIN_M1_RSI_SUPPORT:
+        if direction == "short" and rsi_m1 <= min_m1_rsi_support:
             return None
 
         # M1短期ドリフトが逆行しているときは方向精度のためスキップ
