@@ -480,15 +480,6 @@ async def trend_h1_exit_worker() -> None:
     )
 
 
-if __name__ == "__main__":  # pragma: no cover
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s %(levelname)s %(message)s",
-        force=True,
-    )
-    asyncio.run(trend_h1_exit_worker())
-
-
 _CANDLE_PIP = 0.01
 _CANDLE_EXIT_MIN_CONF = 0.35
 _CANDLE_EXIT_SCORE = -0.5
@@ -605,3 +596,13 @@ def _exit_candle_reversal(side):
         detail_type = detail.get("type") if isinstance(detail, dict) else None
         return f"candle_{detail_type}" if detail_type else "candle_reversal"
     return None
+
+if __name__ == "__main__":  # pragma: no cover
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)s %(message)s",
+        force=True,
+    )
+    asyncio.run(trend_h1_exit_worker())
+
+
