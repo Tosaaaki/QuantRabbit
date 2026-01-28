@@ -5,6 +5,7 @@ from typing import Dict, Optional, Sequence
 
 from strategies.micro_lowvol.common import (
     clamp,
+    candle_close,
     latest_candles,
     price_delta_pips,
     to_float,
@@ -19,11 +20,12 @@ class MicroVWAPBound:
     pocket = "micro"
 
     VWAP_WINDOW = 20
-    MIN_Z = 1.5
-    MAX_ADX = 16.0
+    MIN_Z = 1.7
+    MAX_ADX = 14.0
     MAX_BBW = 0.28
-    MIN_RANGE_SCORE = 0.65
-    MAX_ATR_PIPS = 3.8
+    MIN_RANGE_SCORE = 0.72
+    MAX_ATR_PIPS = 3.2
+    TREND_GAP_PIPS = 1.8
 
     @staticmethod
     def _vwap_and_sigma(candles: Sequence[Dict[str, object]]) -> tuple[Optional[float], Optional[float]]:
@@ -69,6 +71,26 @@ class MicroVWAPBound:
         z_score = (close - vwap) / sigma
         if abs(z_score) < MicroVWAPBound.MIN_Z:
             return None
+
+        ma10 = to_float(fac.get("ma10"))
+        ma20 = to_float(fac.get("ma20"))
+        if ma10 is not None and ma20 is not None:
+            gap_pips = abs(price_delta_pips(ma10, ma20))
+            if gap_pips >= MicroVWAPBound.TREND_GAP_PIPS:
+                if z_score > 0 and ma10 > ma20:
+                    return None
+                if z_score < 0 and ma10 < ma20:
+                    return None
+
+        candles = latest_candles(fac, 3)
+        if len(candles) >= 2:
+            prev_close = candle_close(candles[-2])
+            last_close = candle_close(candles[-1])
+            if prev_close is not None and last_close is not None:
+                if z_score > 0 and last_close >= prev_close:
+                    return None
+                if z_score < 0 and last_close <= prev_close:
+                    return None
 
         direction = "OPEN_SHORT" if z_score > 0 else "OPEN_LONG"
         deviation_pips = abs(price_delta_pips(close, vwap))

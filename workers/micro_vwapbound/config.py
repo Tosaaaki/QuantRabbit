@@ -16,4 +16,4 @@ CAP_MIN = float(os.getenv("MICRO_VWAP_CAP_MIN", "0.15"))
 CAP_MAX = float(os.getenv("MICRO_VWAP_CAP_MAX", "0.95"))
 
 MAX_FACTOR_AGE_SEC = float(os.getenv("MICRO_VWAP_MAX_FACTOR_AGE_SEC", "90.0"))
-RANGE_ONLY_SCORE = float(os.getenv("MICRO_VWAP_RANGE_ONLY_SCORE", "0.65"))
+RANGE_ONLY_SCORE = float(os.getenv("MICRO_VWAP_RANGE_ONLY_SCORE", "0.72"))

@@ -760,6 +760,17 @@ async def micro_multi_worker() -> None:
                         entry_mean=entry_mean,
                     )
                 )
+                if base_tag in {"MicroVWAPBound", "MicroVWAPRevert"}:
+                    rf = entry_thesis.get("reversion_failure")
+                    if isinstance(rf, dict):
+                        rf["z_ext"] = min(float(rf.get("z_ext") or 0.40), 0.40)
+                        rf["contraction_min"] = max(float(rf.get("contraction_min") or 0.55), 0.55)
+                        bars_budget = rf.get("bars_budget")
+                        if not isinstance(bars_budget, dict):
+                            bars_budget = {}
+                            rf["bars_budget"] = bars_budget
+                        bars_budget["k_per_z"] = min(float(bars_budget.get("k_per_z") or 2.6), 2.6)
+                        bars_budget["max"] = min(int(bars_budget.get("max") or 8), 8)
                 if base_tag == "MicroVWAPBound":
                     notes = signal.get("notes") or {}
                     z_val = None
@@ -775,11 +786,11 @@ async def micro_multi_worker() -> None:
                             bars_budget = {}
                             rf["bars_budget"] = bars_budget
                         if z_val >= 2.5:
-                            bars_budget["k_per_z"] = 4.0
-                            bars_budget["max"] = 14
+                            bars_budget["k_per_z"] = max(float(bars_budget.get("k_per_z") or 0.0), 3.1)
+                            bars_budget["max"] = max(int(bars_budget.get("max") or 0), 10)
                         elif z_val <= 1.4:
-                            bars_budget["k_per_z"] = 3.0
-                            bars_budget["max"] = 10
+                            bars_budget["k_per_z"] = min(float(bars_budget.get("k_per_z") or 2.6), 2.3)
+                            bars_budget["max"] = min(int(bars_budget.get("max") or 8), 7)
 
             proj_mode = None
             if strategy_name in _RANGE_STRATEGIES:

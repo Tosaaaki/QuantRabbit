@@ -387,9 +387,9 @@ def _build_mr_entry_thesis(
         "tp_target": "entry_mean",
         "tp_pad_atr": 0.05,
         "reversion_failure": {
-            "z_ext": 0.55,
-            "contraction_min": 0.50,
-            "bars_budget": {"k_per_z": 3.5, "min": 2, "max": 12},
+            "z_ext": 0.40,
+            "contraction_min": 0.55,
+            "bars_budget": {"k_per_z": 2.6, "min": 2, "max": 8},
             "trend_takeover": {"require_env_trend_bars": 2},
         },
     }
@@ -680,11 +680,11 @@ async def micro_vwapbound_worker() -> None:
                         bars_budget = {}
                         rf["bars_budget"] = bars_budget
                     if z_val >= 2.5:
-                        bars_budget["k_per_z"] = 4.0
-                        bars_budget["max"] = 14
+                        bars_budget["k_per_z"] = max(float(bars_budget.get("k_per_z") or 0.0), 3.1)
+                        bars_budget["max"] = max(int(bars_budget.get("max") or 0), 10)
                     elif z_val <= 1.4:
-                        bars_budget["k_per_z"] = 3.0
-                        bars_budget["max"] = 10
+                        bars_budget["k_per_z"] = min(float(bars_budget.get("k_per_z") or 2.6), 2.3)
+                        bars_budget["max"] = min(int(bars_budget.get("max") or 8), 7)
 
         proj_allow, proj_mult, proj_detail = _projection_decision(side, pocket)
         if not proj_allow:
