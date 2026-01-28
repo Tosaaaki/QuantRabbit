@@ -21,7 +21,7 @@ from strategies.scalping.m1_scalper import M1Scalper
 from utils.market_hours import is_market_open
 from utils.oanda_account import get_account_snapshot, get_position_summary
 from workers.common.dyn_cap import compute_cap
-from workers.common import perf_guard
+from workers.common import perf_guard, env_guard
 from analysis import perf_monitor
 
 from . import config
@@ -107,6 +107,19 @@ def _bb_entry_allowed(style, side, price, fac_m1, *, range_active=None):
 BB_STYLE = "scalp"
 
 LOG = logging.getLogger(__name__)
+
+
+def _htf_trend_state(fac_h1: Dict) -> tuple[str, float, float] | None:
+    adx = _bb_float(fac_h1.get("adx"))
+    close = _bb_float(fac_h1.get("close"))
+    ma20 = _bb_float(fac_h1.get("ma20")) or _bb_float(fac_h1.get("ema20"))
+    if adx is None or close is None or ma20 is None or ma20 <= 0:
+        return None
+    gap_pips = (close - ma20) / _BB_PIP
+    if abs(gap_pips) < config.HTF_GAP_PIPS or adx < config.HTF_ADX_MIN:
+        return None
+    trend_dir = "long" if gap_pips > 0 else "short"
+    return trend_dir, gap_pips, adx
 
 
 
@@ -398,6 +411,7 @@ async def scalp_m1_worker() -> None:
 
         factors = all_factors()
         fac_m1 = factors.get("M1") or {}
+        fac_h1 = factors.get("H1") or {}
         fac_h4 = factors.get("H4") or {}
         range_ctx = detect_range_mode(fac_m1, fac_h4)
         perf = perf_monitor.snapshot()
@@ -410,6 +424,38 @@ async def scalp_m1_worker() -> None:
         signal = M1Scalper.check(fac_m1)
         if not signal:
             continue
+        signal_tag = signal.get("tag", M1Scalper.name)
+        signal_tag_l = str(signal_tag or "").lower()
+        is_reversion = (
+            "buy-dip" in signal_tag_l
+            or "sell-rally" in signal_tag_l
+            or "reversion" in signal_tag_l
+        )
+        if config.ENV_GUARD_ENABLED and is_reversion:
+            ticks = tick_window.recent_ticks(
+                seconds=max(config.ENV_RETURN_WINDOW_SEC, 5.0),
+                limit=int(max(config.ENV_RETURN_WINDOW_SEC, 5.0) * 12),
+            )
+            allowed_env, env_reason = env_guard.mean_reversion_allowed(
+                spread_p50_limit=config.ENV_SPREAD_P50_LIMIT,
+                return_pips_limit=config.ENV_RETURN_PIPS_LIMIT,
+                return_window_sec=config.ENV_RETURN_WINDOW_SEC,
+                instant_move_limit=config.ENV_INSTANT_MOVE_LIMIT,
+                tick_gap_ms_limit=config.ENV_TICK_GAP_MS_LIMIT,
+                tick_gap_move_pips=config.ENV_TICK_GAP_MOVE_PIPS,
+                ticks=ticks,
+            )
+            if not allowed_env:
+                now_mono = time.monotonic()
+                if now_mono - last_block_log > 120.0:
+                    LOG.info(
+                        "%s env_guard_block tag=%s reason=%s",
+                        config.LOG_PREFIX,
+                        signal_tag,
+                        env_reason,
+                    )
+                    last_block_log = now_mono
+                continue
 
         perf_decision = perf_guard.is_allowed(M1Scalper.name, config.POCKET)
         if not perf_decision.allowed:
@@ -477,7 +523,22 @@ async def scalp_m1_worker() -> None:
         tp_pips = float(signal.get("tp_pips") or 0.0)
         if price <= 0.0 or sl_pips <= 0.0:
             continue
-        if not _bb_entry_allowed(BB_STYLE, side, price, fac_m1, range_active=range_ctx.active):
+        htf = _htf_trend_state(fac_h1)
+        if htf and config.HTF_BLOCK_COUNTER:
+            htf_dir, htf_gap, htf_adx = htf
+            if side != htf_dir:
+                LOG.info(
+                    "%s htf_block tag=%s side=%s h1_dir=%s gap=%.2fp adx=%.1f",
+                    config.LOG_PREFIX,
+                    signal_tag,
+                    side,
+                    htf_dir,
+                    htf_gap,
+                    htf_adx,
+                )
+                continue
+        bb_style = "reversion" if is_reversion else BB_STYLE
+        if not _bb_entry_allowed(bb_style, side, price, fac_m1, range_active=range_ctx.active):
             continue
 
         tp_scale = 5.0 / max(1.0, tp_pips)
@@ -485,7 +546,7 @@ async def scalp_m1_worker() -> None:
         base_units = int(round(config.BASE_ENTRY_UNITS * tp_scale))
 
         conf_scale = _confidence_scale(int(signal.get("confidence", 50)))
-        signal_tag = signal.get("tag", M1Scalper.name)
+        signal_tag = signal_tag or M1Scalper.name
         long_units = 0.0
         short_units = 0.0
         try:

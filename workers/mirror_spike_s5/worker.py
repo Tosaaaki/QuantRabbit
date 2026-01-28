@@ -109,6 +109,19 @@ LOG = logging.getLogger(__name__)
 _PROJ_TF_MINUTES = {"M1": 1.0, "M5": 5.0, "H1": 60.0, "H4": 240.0, "D1": 1440.0}
 
 
+def _htf_trend_state(fac_h1: Dict) -> tuple[str, float, float] | None:
+    adx = _bb_float(fac_h1.get("adx"))
+    close = _bb_float(fac_h1.get("close"))
+    ma20 = _bb_float(fac_h1.get("ma20")) or _bb_float(fac_h1.get("ema20"))
+    if adx is None or close is None or ma20 is None or ma20 <= 0:
+        return None
+    gap_pips = (close - ma20) / _BB_PIP
+    if abs(gap_pips) < config.HTF_GAP_PIPS or adx < config.HTF_ADX_MIN:
+        return None
+    trend_dir = "long" if gap_pips > 0 else "short"
+    return trend_dir, gap_pips, adx
+
+
 def _projection_mode(pocket, mode_override=None):
     if mode_override:
         return mode_override
@@ -509,6 +522,21 @@ async def mirror_spike_s5_worker() -> None:
 
             if direction is None:
                 continue
+
+            fac_h1 = all_factors().get("H1") or {}
+            htf = _htf_trend_state(fac_h1)
+            if htf and config.HTF_BLOCK_COUNTER:
+                htf_dir, htf_gap, htf_adx = htf
+                if direction != htf_dir:
+                    LOG.info(
+                        "%s htf_block side=%s h1_dir=%s gap=%.2fp adx=%.1f",
+                        config.LOG_PREFIX,
+                        direction,
+                        htf_dir,
+                        htf_gap,
+                        htf_adx,
+                    )
+                    continue
 
             prev_close = closes[-2] if len(closes) >= 2 else closes[-1]
             body_pips = abs(latest["close"] - prev_close) / config.PIP_VALUE

@@ -16,6 +16,10 @@ defaults:
       - vwap_cut
       - atr_spike
       - structure_break
+      - max_hold
+      - max_adverse
+      - time_stop
+      - timeout
       - trend_failure
       - trend_exhaust
       - drawdown

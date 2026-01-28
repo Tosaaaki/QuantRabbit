@@ -51,8 +51,19 @@ def mean_reversion_allowed(
     Returns:
         Tuple[bool, str]: (allowed flag, blocking reason)
     """
-    # spread guard bypass: always allow
-    return True, ""
+    if spread_p50_limit > 0.0:
+        state = spread_monitor.get_state()
+        if state:
+            baseline_ready = bool(state.get("baseline_ready"))
+            p50 = state.get("baseline_p50_pips") if baseline_ready else state.get("median_pips")
+            try:
+                p50_val = float(p50) if p50 is not None else None
+            except (TypeError, ValueError):
+                p50_val = None
+            if p50_val is not None and p50_val > spread_p50_limit:
+                return False, f"spread_p50={p50_val:.2f}p>limit({spread_p50_limit:.2f}p)"
+            if state.get("stale") and (state.get("stale_for_sec") or 0.0) > (state.get("stale_grace_sec") or 0.0):
+                return False, "spread_stale"
 
     if ticks is None:
         ticks = tick_window.recent_ticks(

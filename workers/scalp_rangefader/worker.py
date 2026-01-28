@@ -109,6 +109,17 @@ MR_RANGE_HI_PCT = 95.0
 MR_RANGE_LO_PCT = 5.0
 
 
+def _range_size_mult(range_score: Optional[float], free_ratio: Optional[float]) -> float:
+    if free_ratio is not None and free_ratio < config.SIZE_MULT_MIN_FMR:
+        return 1.0
+    mult = config.SIZE_MULT_BASE
+    if range_score is not None:
+        extra = max(0.0, float(range_score) - config.SIZE_MULT_SCORE_START)
+        mult *= 1.0 + extra * config.SIZE_MULT_SLOPE
+    mult = max(config.SIZE_MULT_MIN, min(config.SIZE_MULT_MAX, mult))
+    return float(mult)
+
+
 
 _PROJ_TF_MINUTES = {"M1": 1.0, "M5": 5.0, "H1": 60.0, "H4": 240.0, "D1": 1440.0}
 
@@ -471,6 +482,8 @@ async def scalp_rangefader_worker() -> None:
             )
             if cap <= 0.0:
                 continue
+            size_mult = _range_size_mult(range_score, free_ratio)
+            cap_reason["size_mult"] = round(size_mult, 3)
 
             try:
                 price = float(fac_m1.get("close") or 0.0)
@@ -494,7 +507,7 @@ async def scalp_rangefader_worker() -> None:
 
             tp_scale = 4.0 / max(1.0, tp_pips)
             tp_scale = max(0.4, min(1.2, tp_scale))
-            base_units = int(round(config.BASE_ENTRY_UNITS * tp_scale))
+            base_units = int(round(config.BASE_ENTRY_UNITS * tp_scale * size_mult))
 
             conf_scale = _confidence_scale(int(signal.get("confidence", 50)), lo=config.CONFIDENCE_FLOOR, hi=config.CONFIDENCE_CEIL)
             signal_tag = (signal.get("tag") or "").strip() or RangeFader.name

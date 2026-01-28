@@ -95,6 +95,11 @@ MAX_MARGIN_USAGE: float = max(0.1, min(1.0, _float("MIRROR_SPIKE_S5_MAX_MARGIN_U
 MAX_ACTIVE_TRADES: int = max(1, _int("MIRROR_SPIKE_S5_MAX_ACTIVE_TRADES", 1))
 STAGE_MIN_DELTA_PIPS: float = max(0.1, _float("MIRROR_SPIKE_S5_STAGE_MIN_DELTA_PIPS", 1.8))
 
+# Higher timeframe trend guard (H1)
+HTF_ADX_MIN: float = _float("MIRROR_SPIKE_S5_HTF_ADX_MIN", 23.0)
+HTF_GAP_PIPS: float = _float("MIRROR_SPIKE_S5_HTF_GAP_PIPS", 6.0)
+HTF_BLOCK_COUNTER: bool = _bool("MIRROR_SPIKE_S5_HTF_BLOCK_COUNTER", True)
+
 TP_PIPS: float = max(1.0, _float("MIRROR_SPIKE_S5_TP_PIPS", 5.5))
 SL_PIPS: float = max(0.5, _float("MIRROR_SPIKE_S5_SL_PIPS", 2.8))
 
