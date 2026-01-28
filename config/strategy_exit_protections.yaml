@@ -236,6 +236,9 @@ strategies:
     tp_move: {trigger_pips: 0.8, buffer_pips: 0.6}
     start_delay_sec: 8
     max_delay_sec: 20
+    neg_exit:
+      allow_reasons:
+        - reversion_*
 
   PulseBreak:
     be_profile: {trigger_pips: 1.4, lock_ratio: 0.38, min_lock_pips: 0.45, cooldown_sec: 15}
