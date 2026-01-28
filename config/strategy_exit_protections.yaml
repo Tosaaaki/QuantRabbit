@@ -266,8 +266,12 @@ strategies:
         - fast_cut_*
         - time_cut
         - rsi_fade
+        - m1_rsi_fade
         - vwap_cut
+        - m1_vwap_cut
         - structure_break
+        - m1_structure_break
+        - m1_atr_spike
         - tech_reversal_combo
         - tech_nwave_flip
         - tech_candle_reversal
