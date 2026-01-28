@@ -11,6 +11,7 @@ from typing import Dict, Optional, Sequence, Set
 
 from workers.common.exit_scaling import momentum_scale, scale_value
 from workers.common.exit_utils import close_trade
+from execution.order_manager import set_trade_protections
 from execution.position_manager import PositionManager
 from execution.reversion_failure import evaluate_reversion_failure, evaluate_tp_zone
 from indicators.factor_cache import all_factors
@@ -233,6 +234,8 @@ class _TradeState:
     lock_floor: Optional[float] = None
     tp_hint: Optional[float] = None
     trend_hits: int = 0
+    partial_done: bool = False
+    be_moved: bool = False
 
     def update(self, pnl: float, lock_buffer: float) -> None:
         if pnl > self.peak:
@@ -276,6 +279,12 @@ class MicroVWAPBoundExitWorker:
         self.tech_take_min_pips = max(
             0.2, _float_env("MICRO_VWAP_EXIT_TECH_TAKE_MIN_PIPS", self.profit_take * 0.5)
         )
+        self.partial_trigger = max(0.9, _float_env("MICRO_VWAP_EXIT_PARTIAL_TRIGGER_PIPS", 1.1))
+        self.partial_trigger_low_vol = max(0.8, _float_env("MICRO_VWAP_EXIT_PARTIAL_TRIGGER_PIPS_LOWVOL", 0.9))
+        self.partial_fraction = min(0.8, max(0.1, _float_env("MICRO_VWAP_EXIT_PARTIAL_FRACTION", 0.35)))
+        self.partial_min_units = max(20, int(_float_env("MICRO_VWAP_EXIT_PARTIAL_MIN_UNITS", 500)))
+        self.partial_min_remaining = max(20, int(_float_env("MICRO_VWAP_EXIT_PARTIAL_MIN_REMAIN", 500)))
+        self.be_buffer_pips = max(0.05, _float_env("MICRO_VWAP_EXIT_BE_BUFFER_PIPS", 0.2))
 
     def _context(self) -> tuple[Optional[float], Optional[float], bool]:
         factors = all_factors()
@@ -426,6 +435,43 @@ class MicroVWAPBoundExitWorker:
                 if hasattr(self, "_states"):
                     self._states.pop(trade_id, None)
                 return
+        low_vol = bool(thesis.get("low_vol"))
+        if pnl > 0 and not state.partial_done:
+            trigger = self.partial_trigger_low_vol if low_vol else self.partial_trigger
+            if pnl >= trigger:
+                reduce_units = int(abs(units) * self.partial_fraction)
+                remaining = abs(units) - reduce_units
+                if reduce_units >= self.partial_min_units and remaining >= self.partial_min_remaining:
+                    ok = await close_trade(
+                        trade_id,
+                        reduce_units,
+                        client_order_id=client_id,
+                        allow_negative=False,
+                        exit_reason="partial_take",
+                    )
+                    if ok:
+                        state.partial_done = True
+                        log_metric(
+                            "micro_vwap_partial_take",
+                            pnl,
+                            tags={"side": side, "low_vol": str(low_vol)},
+                            ts=now,
+                        )
+                        be = entry + (self.be_buffer_pips * 0.01) if side == "long" else entry - (self.be_buffer_pips * 0.01)
+                        be_ok = await set_trade_protections(trade_id, sl_price=round(be, 3), tp_price=None)
+                        if be_ok:
+                            state.be_moved = True
+                        return
+
+        if state.partial_done and not state.be_moved:
+            be = entry + (self.be_buffer_pips * 0.01) if side == "long" else entry - (self.be_buffer_pips * 0.01)
+            be_ok = False
+            if side == "long" and mid >= be:
+                be_ok = await set_trade_protections(trade_id, sl_price=round(be, 3), tp_price=None)
+            elif side == "short" and mid <= be:
+                be_ok = await set_trade_protections(trade_id, sl_price=round(be, 3), tp_price=None)
+            if be_ok:
+                state.be_moved = True
         if pnl <= 0:
             decision = evaluate_reversion_failure(
                 trade,
@@ -705,5 +751,3 @@ def _exit_candle_reversal(side):
 if __name__ == "__main__":  # pragma: no cover
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levellevel)s %(message)s", force=True)
     asyncio.run(micro_vwapbound_exit_worker())
-
-

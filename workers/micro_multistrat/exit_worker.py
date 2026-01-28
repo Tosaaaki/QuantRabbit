@@ -12,6 +12,7 @@ from typing import Dict, Optional, Sequence, Set
 from analysis.range_guard import detect_range_mode
 from workers.common.exit_scaling import momentum_scale, scale_value
 from workers.common.exit_utils import close_trade
+from execution.order_manager import set_trade_protections
 from execution.position_manager import PositionManager
 from execution.reversion_failure import evaluate_reversion_failure, evaluate_tp_zone
 from indicators.factor_cache import all_factors
@@ -307,6 +308,8 @@ class _TradeState:
     lock_floor: Optional[float] = None
     tp_hint: Optional[float] = None
     trend_hits: int = 0
+    partial_done: bool = False
+    be_moved: bool = False
 
     def update(self, pnl: float, lock_buffer: float) -> None:
         if pnl > self.peak:
@@ -347,6 +350,13 @@ class MicroMultiExitWorker:
 
         self.rsi_take_long = _float_env("MICRO_MULTI_EXIT_RSI_TAKE_LONG", 70.0)
         self.rsi_take_short = _float_env("MICRO_MULTI_EXIT_RSI_TAKE_SHORT", 30.0)
+
+        self.partial_trigger = max(0.9, _float_env("MICRO_MULTI_EXIT_PARTIAL_TRIGGER_PIPS", 1.1))
+        self.partial_trigger_low_vol = max(0.8, _float_env("MICRO_MULTI_EXIT_PARTIAL_TRIGGER_PIPS_LOWVOL", 0.9))
+        self.partial_fraction = min(0.8, max(0.1, _float_env("MICRO_MULTI_EXIT_PARTIAL_FRACTION", 0.35)))
+        self.partial_min_units = max(20, int(_float_env("MICRO_MULTI_EXIT_PARTIAL_MIN_UNITS", 500)))
+        self.partial_min_remaining = max(20, int(_float_env("MICRO_MULTI_EXIT_PARTIAL_MIN_REMAIN", 500)))
+        self.be_buffer_pips = max(0.05, _float_env("MICRO_MULTI_EXIT_BE_BUFFER_PIPS", 0.2))
 
     def _context(self) -> tuple[Optional[float], Optional[float], bool, Optional[float], Optional[float]]:
         factors = all_factors()
@@ -519,6 +529,47 @@ class MicroMultiExitWorker:
                     self._states.pop(trade_id, None)
                 return
         reversion_kind = _reversion_kind(trade)
+        low_vol = bool(thesis.get("low_vol"))
+        if pnl > 0 and reversion_kind and not state.partial_done:
+            trigger = self.partial_trigger_low_vol if low_vol else self.partial_trigger
+            if pnl >= trigger:
+                reduce_units = int(abs(units) * self.partial_fraction)
+                remaining = abs(units) - reduce_units
+                if reduce_units >= self.partial_min_units and remaining >= self.partial_min_remaining:
+                    ok = await close_trade(
+                        trade_id,
+                        reduce_units,
+                        client_order_id=client_id,
+                        allow_negative=False,
+                        exit_reason="partial_take",
+                    )
+                    if ok:
+                        state.partial_done = True
+                        log_metric(
+                            "micro_multi_partial_take",
+                            pnl,
+                            tags={
+                                "side": side,
+                                "kind": reversion_kind,
+                                "low_vol": str(low_vol),
+                            },
+                            ts=now,
+                        )
+                        be = entry + (self.be_buffer_pips * 0.01) if side == "long" else entry - (self.be_buffer_pips * 0.01)
+                        be_ok = await set_trade_protections(trade_id, sl_price=round(be, 3), tp_price=None)
+                        if be_ok:
+                            state.be_moved = True
+                        return
+
+        if state.partial_done and not state.be_moved:
+            be = entry + (self.be_buffer_pips * 0.01) if side == "long" else entry - (self.be_buffer_pips * 0.01)
+            be_ok = False
+            if side == "long" and mid >= be:
+                be_ok = await set_trade_protections(trade_id, sl_price=round(be, 3), tp_price=None)
+            elif side == "short" and mid <= be:
+                be_ok = await set_trade_protections(trade_id, sl_price=round(be, 3), tp_price=None)
+            if be_ok:
+                state.be_moved = True
         if pnl <= 0 and reversion_kind:
             struct_override = [] if reversion_kind == "mr_overlay" else None
             decision = evaluate_reversion_failure(
@@ -815,5 +866,3 @@ def _exit_candle_reversal(side):
 if __name__ == "__main__":  # pragma: no cover
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s", force=True)
     asyncio.run(micro_multistrat_exit_worker())
-
-
