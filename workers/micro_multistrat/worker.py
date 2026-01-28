@@ -791,6 +791,28 @@ async def micro_multi_worker() -> None:
                         elif z_val <= 1.4:
                             bars_budget["k_per_z"] = min(float(bars_budget.get("k_per_z") or 2.6), 2.3)
                             bars_budget["max"] = min(int(bars_budget.get("max") or 8), 7)
+                atr_for_vol = atr_m5 or atr_pips or 0.0
+                low_vol = (
+                    atr_for_vol > 0
+                    and atr_for_vol <= MicroVWAPBound.LOW_VOL_ATR_PIPS
+                    and range_score >= MicroVWAPBound.LOW_VOL_RANGE_SCORE
+                )
+                if low_vol:
+                    rf = entry_thesis.get("reversion_failure")
+                    if isinstance(rf, dict):
+                        bars_budget = rf.get("bars_budget")
+                        if not isinstance(bars_budget, dict):
+                            bars_budget = {}
+                            rf["bars_budget"] = bars_budget
+                        bars_budget["k_per_z"] = max(
+                            float(bars_budget.get("k_per_z") or 0.0),
+                            MicroVWAPBound.LOW_VOL_HOLD_K_PER_Z,
+                        )
+                        bars_budget["max"] = max(
+                            int(bars_budget.get("max") or 0),
+                            MicroVWAPBound.LOW_VOL_HOLD_MAX_BARS,
+                        )
+                    entry_thesis["low_vol"] = True
 
             proj_mode = None
             if strategy_name in _RANGE_STRATEGIES:

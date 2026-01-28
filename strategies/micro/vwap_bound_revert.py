@@ -26,6 +26,16 @@ class MicroVWAPBound:
     MIN_RANGE_SCORE = 0.72
     MAX_ATR_PIPS = 3.2
     TREND_GAP_PIPS = 1.8
+    LOW_VOL_ATR_PIPS = 2.4
+    LOW_VOL_RANGE_SCORE = 0.78
+    LOW_VOL_SL_SCALE = 0.85
+    LOW_VOL_TP_SCALE = 0.85
+    LOW_VOL_SL_MIN = 5.2
+    LOW_VOL_SL_MAX = 7.2
+    LOW_VOL_TP_MIN = 6.8
+    LOW_VOL_TP_MAX = 9.0
+    LOW_VOL_HOLD_K_PER_Z = 3.2
+    LOW_VOL_HOLD_MAX_BARS = 11
 
     @staticmethod
     def _vwap_and_sigma(candles: Sequence[Dict[str, object]]) -> tuple[Optional[float], Optional[float]]:
@@ -96,8 +106,27 @@ class MicroVWAPBound:
         deviation_pips = abs(price_delta_pips(close, vwap))
 
         # SL/TP aligned to spec (6-8p sl, 8-10p tp with ~1.2 RR)
-        sl_pips = clamp(max(6.0, deviation_pips * 0.9), 6.0, 8.0)
-        tp_pips = clamp(sl_pips * 1.22, 8.0, 10.0)
+        sl_base = max(6.0, deviation_pips * 0.9)
+        tp_base = sl_base * 1.22
+        low_vol = (
+            atr_pips > 0
+            and atr_pips <= MicroVWAPBound.LOW_VOL_ATR_PIPS
+            and range_score >= MicroVWAPBound.LOW_VOL_RANGE_SCORE
+        )
+        if low_vol:
+            sl_pips = clamp(
+                sl_base * MicroVWAPBound.LOW_VOL_SL_SCALE,
+                MicroVWAPBound.LOW_VOL_SL_MIN,
+                MicroVWAPBound.LOW_VOL_SL_MAX,
+            )
+            tp_pips = clamp(
+                max(sl_pips * 1.15, tp_base * MicroVWAPBound.LOW_VOL_TP_SCALE),
+                MicroVWAPBound.LOW_VOL_TP_MIN,
+                MicroVWAPBound.LOW_VOL_TP_MAX,
+            )
+        else:
+            sl_pips = clamp(sl_base, 6.0, 8.0)
+            tp_pips = clamp(tp_base, 8.0, 10.0)
 
         z_bonus = clamp(abs(z_score) - MicroVWAPBound.MIN_Z, 0.0, 3.0) * 10.0
         bbw_bonus = clamp(MicroVWAPBound.MAX_BBW - bbw, 0.0, 0.25) * 70.0
@@ -117,5 +146,6 @@ class MicroVWAPBound:
                 "z": round(z_score, 2),
                 "bbw": round(bbw, 3),
                 "vwap": round(vwap, 3),
+                "low_vol": bool(low_vol),
             },
         }
