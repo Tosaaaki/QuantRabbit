@@ -20,6 +20,7 @@ defaults:
       - max_adverse
       - time_stop
       - timeout
+      - mtf_reversal
       - trend_failure
       - trend_exhaust
       - drawdown
