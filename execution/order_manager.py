@@ -610,7 +610,7 @@ def _tp_cap_for(
 
 
 _EXIT_NO_NEGATIVE_CLOSE = os.getenv("EXIT_NO_NEGATIVE_CLOSE", "1").strip().lower() not in {"", "0", "false", "no"}
-_EXIT_ALLOW_NEGATIVE_BY_WORKER = os.getenv("EXIT_ALLOW_NEGATIVE_BY_WORKER", "0").strip().lower() in {
+_EXIT_ALLOW_NEGATIVE_BY_WORKER = os.getenv("EXIT_ALLOW_NEGATIVE_BY_WORKER", "1").strip().lower() in {
     "1",
     "true",
     "yes",

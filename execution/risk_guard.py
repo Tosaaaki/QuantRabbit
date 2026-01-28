@@ -118,21 +118,21 @@ def _clamp(value: float, lo: float, hi: float) -> float:
 
 # --- Strategy-aware risk multiplier (performance × regime) ---
 _RISK_MULT_ENABLED = _env_bool("RISK_MULT_ENABLED", True)
-_RISK_MULT_MIN = max(0.1, float(os.getenv("RISK_MULT_MIN", "0.4") or 0.4))
-_RISK_MULT_MAX = max(_RISK_MULT_MIN, float(os.getenv("RISK_MULT_MAX", "1.3") or 1.3))
+_RISK_MULT_MIN = max(0.1, float(os.getenv("RISK_MULT_MIN", "0.3") or 0.3))
+_RISK_MULT_MAX = max(_RISK_MULT_MIN, float(os.getenv("RISK_MULT_MAX", "1.45") or 1.45))
 
 _RISK_PERF_ENABLED = _env_bool("RISK_PERF_ENABLED", True)
-_RISK_PERF_LOOKBACK_DAYS = max(1, int(float(os.getenv("RISK_PERF_LOOKBACK_DAYS", "14"))))
-_RISK_PERF_MIN_TRADES = max(5, int(float(os.getenv("RISK_PERF_MIN_TRADES", "20"))))
-_RISK_PERF_PF_BAD = float(os.getenv("RISK_PERF_PF_BAD", "0.9") or 0.9)
-_RISK_PERF_PF_REF = max(_RISK_PERF_PF_BAD + 1e-6, float(os.getenv("RISK_PERF_PF_REF", "1.1") or 1.1))
-_RISK_PERF_WIN_BAD = float(os.getenv("RISK_PERF_WIN_BAD", "0.46") or 0.46)
+_RISK_PERF_LOOKBACK_DAYS = max(1, int(float(os.getenv("RISK_PERF_LOOKBACK_DAYS", "7"))))
+_RISK_PERF_MIN_TRADES = max(5, int(float(os.getenv("RISK_PERF_MIN_TRADES", "12"))))
+_RISK_PERF_PF_BAD = float(os.getenv("RISK_PERF_PF_BAD", "0.95") or 0.95)
+_RISK_PERF_PF_REF = max(_RISK_PERF_PF_BAD + 1e-6, float(os.getenv("RISK_PERF_PF_REF", "1.15") or 1.15))
+_RISK_PERF_WIN_BAD = float(os.getenv("RISK_PERF_WIN_BAD", "0.47") or 0.47)
 _RISK_PERF_WIN_REF = max(
     _RISK_PERF_WIN_BAD + 1e-6,
-    float(os.getenv("RISK_PERF_WIN_REF", "0.52") or 0.52),
+    float(os.getenv("RISK_PERF_WIN_REF", "0.55") or 0.55),
 )
-_RISK_PERF_MIN_MULT = float(os.getenv("RISK_PERF_MIN_MULT", "0.5") or 0.5)
-_RISK_PERF_MAX_MULT = float(os.getenv("RISK_PERF_MAX_MULT", "1.25") or 1.25)
+_RISK_PERF_MIN_MULT = float(os.getenv("RISK_PERF_MIN_MULT", "0.4") or 0.4)
+_RISK_PERF_MAX_MULT = float(os.getenv("RISK_PERF_MAX_MULT", "1.4") or 1.4)
 _RISK_PERF_TTL_SEC = max(30.0, float(os.getenv("RISK_PERF_TTL_SEC", "180") or 180.0))
 
 _RISK_REGIME_ENABLED = _env_bool("RISK_REGIME_ENABLED", True)
