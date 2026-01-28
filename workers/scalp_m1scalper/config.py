@@ -65,7 +65,7 @@ LOOP_INTERVAL_SEC = float(os.getenv("M1SCALP_LOOP_INTERVAL_SEC", "6.0"))
 ENABLED = _env_bool("M1SCALP_ENABLED", True)
 LOG_PREFIX = "[M1Scalper]"
 
-CONFIDENCE_FLOOR = 30
+CONFIDENCE_FLOOR = 50
 CONFIDENCE_CEIL = 90
 MIN_UNITS = int(os.getenv("M1SCALP_MIN_UNITS", "1000"))
 BASE_ENTRY_UNITS = int(os.getenv("M1SCALP_BASE_UNITS", "6000"))
@@ -89,7 +89,7 @@ ENV_TICK_GAP_MS_LIMIT = float(os.getenv("M1SCALP_ENV_TICK_GAP_MS_LIMIT", "220"))
 ENV_TICK_GAP_MOVE_PIPS = float(os.getenv("M1SCALP_ENV_TICK_GAP_MOVE_PIPS", "0.7"))
 # クールダウン/同時建玉制御（デフォルトを明示）
 COOLDOWN_SEC = float(os.getenv("M1SCALP_COOLDOWN_SEC", "120"))
-MAX_OPEN_TRADES = int(os.getenv("M1SCALP_MAX_OPEN_TRADES", "2"))
+MAX_OPEN_TRADES = int(os.getenv("M1SCALP_MAX_OPEN_TRADES", "1"))
 # 直近の大敗時間帯を任意でブロック（デフォルト無効）
 BLOCK_HOURS_UTC = frozenset(
     _parse_hours(os.getenv("M1SCALP_BLOCK_HOURS_UTC", ""))

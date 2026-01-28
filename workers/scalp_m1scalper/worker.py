@@ -373,6 +373,7 @@ async def scalp_m1_worker() -> None:
     last_block_log = 0.0
     last_spread_log = 0.0
     last_cap_log = 0.0
+    last_conf_log = 0.0
 
     while True:
         await asyncio.sleep(config.LOOP_INTERVAL_SEC)
@@ -423,6 +424,19 @@ async def scalp_m1_worker() -> None:
 
         signal = M1Scalper.check(fac_m1)
         if not signal:
+            continue
+        conf_val = int(signal.get("confidence", 0) or 0)
+        if conf_val < config.CONFIDENCE_FLOOR:
+            now_mono = time.monotonic()
+            if now_mono - last_conf_log > 120.0:
+                LOG.info(
+                    "%s conf_block conf=%s floor=%s tag=%s",
+                    config.LOG_PREFIX,
+                    conf_val,
+                    config.CONFIDENCE_FLOOR,
+                    signal.get("tag", M1Scalper.name),
+                )
+                last_conf_log = now_mono
             continue
         signal_tag = signal.get("tag", M1Scalper.name)
         signal_tag_l = str(signal_tag or "").lower()

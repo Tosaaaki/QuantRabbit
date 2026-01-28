@@ -482,6 +482,11 @@ class M1Scalper:
         vol5_min = _fallback_float("vol5_min", 0.05)
         adx_min = _fallback_float("adx_min", 5.0)
         momentum_thresh = _fallback_float("momentum_thresh", 0.0010)
+        rsi_long_max = _fallback_float("rsi_long_max", 48.0)
+        rsi_short_min = _fallback_float("rsi_short_min", 52.0)
+        rsi_trend_long_max = _fallback_float("rsi_trend_long_max", 70.0)
+        rsi_trend_short_min = _fallback_float("rsi_trend_short_min", 45.0)
+        rsi_edge_min = _fallback_float("rsi_edge_min", 0.25)
 
         # レンジ・低ボラを検知し、帯付近のみエントリーを許可
         low_vol_range = (adx < 18.0 and bbw > 0.0 and bbw < 0.0016 and atr_pips < 2.4)
@@ -547,7 +552,7 @@ class M1Scalper:
         if atr_pips > 4.0:
             conf_scale = 0.8
 
-        if momentum < -momentum_thresh and rsi < 55:
+        if momentum < -momentum_thresh and rsi < rsi_long_max:
             speed = abs(momentum) / max(0.0005, atr)
             rsi_gap = max(0.0, 55 - rsi) / 10
             confidence = int(
@@ -558,6 +563,9 @@ class M1Scalper:
                 # 強い下落トレンドでは順張りショートに切替
                 action = "OPEN_SHORT"
                 confidence = int(confidence * 0.9)
+                if rsi < rsi_trend_short_min:
+                    _log("trend_block_short_rsi", rsi=round(rsi, 2))
+                    return None
             if action == "OPEN_LONG" and strong_down:
                 _log("trend_block_long", momentum=round(momentum, 5), ema_gap=round(ema_gap_pips, 3), price_gap=round(price_gap_pips, 3))
                 return None
@@ -573,7 +581,7 @@ class M1Scalper:
                 "tag": f"{M1Scalper.name}-buy-dip" if action == "OPEN_LONG" else f"{M1Scalper.name}-trend-short",
             })
             return _attach_kill(signal)
-        if momentum > momentum_thresh and rsi > 45:
+        if momentum > momentum_thresh and rsi > rsi_short_min:
             speed = abs(momentum) / max(0.0005, atr)
             rsi_gap = max(0.0, rsi - 45) / 10
             confidence = int(
@@ -584,6 +592,9 @@ class M1Scalper:
                 # 強い上昇トレンドでは順張りロングに切替
                 action = "OPEN_LONG"
                 confidence = int(confidence * 0.9)
+                if rsi > rsi_trend_long_max:
+                    _log("trend_block_long_rsi", rsi=round(rsi, 2))
+                    return None
             if action == "OPEN_SHORT" and strong_up:
                 _log("trend_block_short", momentum=round(momentum, 5), ema_gap=round(ema_gap_pips, 3), price_gap=round(price_gap_pips, 3))
                 return None
@@ -828,6 +839,9 @@ class M1Scalper:
                 _log("skip_fallback_momentum", mom=round(momentum, 5), mom_norm=round(mom_norm, 2))
                 return None
             rsi_bias = abs(rsi - 50.0) / 25.0
+            if rsi_bias < rsi_edge_min:
+                _log("skip_fallback_rsi_edge", rsi=round(rsi, 2), edge=round(rsi_bias, 2))
+                return None
             conf_base = 58.0 + (mom_norm * 18.0) + (rsi_bias * 14.0)
             if scalp_tactical:
                 conf_base += 6.0

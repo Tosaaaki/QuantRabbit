@@ -452,6 +452,7 @@ async def micro_vwapbound_worker() -> None:
     LOG.info("%s worker start (interval=%.1fs)", log_prefix, loop_interval)
     last_stale_log = 0.0
     last_perf_block_log = 0.0
+    last_conf_log = 0.0
 
     while True:
         await asyncio.sleep(loop_interval)
@@ -499,6 +500,19 @@ async def micro_vwapbound_worker() -> None:
 
         signal = STRATEGY.check(fac_m1)
         if not signal:
+            continue
+        conf_val = int(signal.get("confidence", 0) or 0)
+        if conf_val < conf_floor:
+            now_mono = time.monotonic()
+            if now_mono - last_conf_log > 120.0:
+                LOG.info(
+                    "%s conf_block conf=%s floor=%s tag=%s",
+                    log_prefix,
+                    conf_val,
+                    conf_floor,
+                    signal.get("tag", STRATEGY.name),
+                )
+                last_conf_log = now_mono
             continue
         perf_decision = perf_guard.is_allowed(strategy_name, pocket)
         if not perf_decision.allowed:
