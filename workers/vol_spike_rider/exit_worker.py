@@ -12,7 +12,7 @@ from typing import Dict, Optional
 from indicators.factor_cache import all_factors
 from market_data import tick_window
 from execution.position_manager import PositionManager
-from workers.common.exit_utils import close_trade
+from workers.common.exit_utils import close_trade, mark_pnl_pips
 
 from . import config
 
@@ -151,7 +151,7 @@ class VolSpikeExitWorker:
         if entry <= 0:
             return
         side = "long" if units > 0 else "short"
-        pnl = (mid - entry) * 100.0 if side == "long" else (entry - mid) * 100.0
+        pnl = mark_pnl_pips(entry, units, mid=mid)
 
         opened_at = _parse_time(trade.get("open_time"))
         hold_sec = (now - opened_at).total_seconds() if opened_at else 0.0

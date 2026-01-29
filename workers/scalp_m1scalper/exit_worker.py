@@ -11,7 +11,7 @@ from typing import Dict, Optional, Sequence, Set
 
 from analysis.range_guard import detect_range_mode
 from workers.common.exit_scaling import momentum_scale, scale_value
-from workers.common.exit_utils import close_trade
+from workers.common.exit_utils import close_trade, mark_pnl_pips
 from execution.position_manager import PositionManager
 from indicators.factor_cache import all_factors
 from market_data import tick_window
@@ -350,7 +350,7 @@ async def _run_exit_loop(
         current = _latest_mid()
         if current is None:
             return
-        pnl = (current - price_entry) * 100.0 if side == "long" else (price_entry - current) * 100.0
+        pnl = mark_pnl_pips(price_entry, units, mid=current)
         allow_negative = allow_negative_exit or pnl <= 0
 
         opened_at = _parse_time(trade.get("open_time"))

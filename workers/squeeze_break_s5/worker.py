@@ -556,6 +556,8 @@ async def squeeze_break_s5_worker() -> None:
 
             thesis = {
                 "strategy_tag": "squeeze_break_s5",
+                "entry_price": round(entry_price, 5),
+                "entry_price_source": "bidask",
                 "range_pips": round(range_pips, 3),
                 "atr_pips": round(atr, 3),
                 "rsi": round(rsi, 2),

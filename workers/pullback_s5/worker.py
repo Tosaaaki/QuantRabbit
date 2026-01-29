@@ -735,6 +735,8 @@ async def pullback_s5_worker() -> None:
                 "tag": "pullback_s5",
                 "entry_thesis": {
                     "strategy_tag": "pullback_s5",
+                    "entry_price": round(entry_price, 5),
+                    "entry_price_source": "bidask",
                     "tp_pips": round(tp_pips, 2),
                     "sl_pips": round(sl_base, 2),
                     "hard_stop_pips": round(sl_base, 2),

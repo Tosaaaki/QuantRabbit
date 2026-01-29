@@ -10,7 +10,7 @@ from datetime import datetime, timezone
 from typing import Dict, Optional
 
 from analysis.range_guard import detect_range_mode
-from workers.common.exit_utils import close_trade
+from workers.common.exit_utils import close_trade, mark_pnl_pips
 from execution.position_manager import PositionManager
 from indicators.factor_cache import all_factors
 from market_data import tick_window
@@ -483,7 +483,7 @@ class PullbackRunnerExitWorker:
             return None
 
         side = "long" if units > 0 else "short"
-        pnl = (ctx.mid - entry_price) * 100.0 if side == "long" else (entry_price - ctx.mid) * 100.0
+        pnl = mark_pnl_pips(entry_price, units, mid=ctx.mid)
         opened_at = _parse_time(trade.get("open_time"))
         hold_sec = (now - opened_at).total_seconds() if opened_at else 0.0
         candle_reason = _exit_candle_reversal("long" if units > 0 else "short")
@@ -656,7 +656,7 @@ class PullbackRunnerExitWorker:
                     state = self._states.get(trade_id)
                     touch_count = state.last_touch_count if state else None
                     side = "long" if units > 0 else "short"
-                    pnl = (ctx.mid - float(tr.get("price") or 0.0)) * 100.0 if side == "long" else (float(tr.get("price") or 0.0) - ctx.mid) * 100.0
+                    pnl = mark_pnl_pips(float(tr.get("price") or 0.0), units, mid=ctx.mid)
                     allow_negative = pnl <= 0
                     await self._close(
                         trade_id,

@@ -11,7 +11,7 @@ from analysis.range_guard import detect_range_mode
 from execution.position_manager import PositionManager
 from indicators.factor_cache import all_factors
 from market_data import tick_window
-from workers.common.exit_utils import close_trade
+from workers.common.exit_utils import close_trade, mark_pnl_pips
 
 
 _BB_EXIT_ENABLED = os.getenv("BB_EXIT_ENABLED", "1").strip().lower() not in {"", "0", "false", "no"}
@@ -337,7 +337,7 @@ class RangeFaderExitWorker:
             return
 
         side = "long" if units > 0 else "short"
-        pnl = (mid - entry) * 100.0 if side == "long" else (entry - mid) * 100.0
+        pnl = mark_pnl_pips(entry, units, mid=mid)
         opened_at = _parse_time(trade.get("open_time"))
         hold_sec = (now - opened_at).total_seconds() if opened_at else 0.0
 

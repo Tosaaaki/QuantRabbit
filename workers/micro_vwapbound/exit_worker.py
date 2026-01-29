@@ -10,7 +10,7 @@ from datetime import datetime, timezone
 from typing import Dict, Optional, Sequence, Set
 
 from workers.common.exit_scaling import momentum_scale, scale_value
-from workers.common.exit_utils import close_trade
+from workers.common.exit_utils import close_trade, mark_pnl_pips
 from execution.order_manager import set_trade_protections
 from execution.position_manager import PositionManager
 from execution.reversion_failure import evaluate_reversion_failure, evaluate_tp_zone
@@ -356,7 +356,7 @@ class MicroVWAPBoundExitWorker:
             return
 
         side = "long" if units > 0 else "short"
-        pnl = (mid - entry) * 100.0 if side == "long" else (entry - mid) * 100.0
+        pnl = mark_pnl_pips(entry, units, mid=mid)
         opened_at = _parse_time(trade.get("open_time"))
         hold_sec = (now - opened_at).total_seconds() if opened_at else 0.0
 

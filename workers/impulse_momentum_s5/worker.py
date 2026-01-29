@@ -696,6 +696,8 @@ async def impulse_momentum_s5_worker() -> None:
             client_id = _client_id(direction)
             thesis = {
                 "strategy_tag": "impulse_momentum_s5",
+                "entry_price": round(entry_price, 5),
+                "entry_price_source": "bidask",
                 "direction": direction,
                 "fast_z": None if fast_z is None else round(fast_z, 3),
                 "slow_z": None if slow_z is None else round(slow_z, 3),

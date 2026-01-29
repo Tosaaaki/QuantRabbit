@@ -661,6 +661,8 @@ async def impulse_break_s5_worker() -> None:
             client_id = _client_id(direction)
             entry_thesis = {
                 "strategy_tag": "impulse_break_s5",
+                "entry_price": round(entry_price, 5),
+                "entry_price_source": "bidask",
                 "direction": direction,
                 "fast_z": round(fast_z, 3) if fast_z is not None else None,
                 "slow_z": round(slow_z, 3) if slow_z is not None else None,

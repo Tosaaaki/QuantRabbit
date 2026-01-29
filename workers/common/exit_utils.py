@@ -2,11 +2,16 @@ from __future__ import annotations
 
 import os
 import time
+from typing import Optional, Tuple
 
 from execution.order_manager import close_trade as _close_trade
 from indicators.factor_cache import all_factors
 from utils.metrics_logger import log_metric
 from workers.common.exit_emergency import should_allow_negative_close
+try:  # optional in offline/backtest
+    from market_data import tick_window
+except Exception:  # pragma: no cover
+    tick_window = None
 
 _EXIT_COMPOSITE_ENABLED = os.getenv("EXIT_COMPOSITE_ENABLED", "1").strip().lower() not in {
     "",
@@ -37,6 +42,41 @@ _EXIT_STRUCTURE_GAP_PIPS = float(os.getenv("EXIT_COMPOSITE_STRUCTURE_GAP_PIPS", 
 _EXIT_ATR_SPIKE_PIPS = float(os.getenv("EXIT_COMPOSITE_ATR_SPIKE_PIPS", "5.0"))
 
 _LAST_COMPOSITE_LOG_TS = 0.0
+
+
+def _latest_bid_ask_mid() -> Tuple[Optional[float], Optional[float], Optional[float]]:
+    if tick_window is None:
+        return None, None, None
+    try:
+        ticks = tick_window.recent_ticks(seconds=3.0, limit=1)
+    except Exception:
+        return None, None, None
+    if not ticks:
+        return None, None, None
+    tick = ticks[-1]
+    bid = _safe_float(tick.get("bid"))
+    ask = _safe_float(tick.get("ask"))
+    mid = _safe_float(tick.get("mid"))
+    if mid is None and bid is not None and ask is not None:
+        mid = (bid + ask) / 2.0
+    return bid, ask, mid
+
+
+def mark_pnl_pips(entry_price: float, units: int, *, mid: Optional[float] = None) -> Optional[float]:
+    if entry_price <= 0 or units == 0:
+        return None
+    bid, ask, latest_mid = _latest_bid_ask_mid()
+    if mid is None:
+        mid = latest_mid
+    if units > 0:
+        price = bid if bid is not None else mid
+        if price is None:
+            return None
+        return (price - entry_price) / 0.01
+    price = ask if ask is not None else mid
+    if price is None:
+        return None
+    return (entry_price - price) / 0.01
 
 
 def _safe_float(value: object) -> float | None:

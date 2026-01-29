@@ -607,6 +607,8 @@ async def _runner_loop() -> None:
                     units = sizing.units if side == "long" else -sizing.units
                     thesis = {
                         "strategy_tag": "pullback_runner_s5",
+                        "entry_price": round(entry_price, 5),
+                        "entry_price_source": "bidask",
                         "z_fast": round(z_fast, 2),
                         "z_slow": round(z_slow, 2),
                         "rsi_fast": None if rsi_fast is None else round(rsi_fast, 1),

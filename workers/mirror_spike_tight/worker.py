@@ -737,6 +737,8 @@ async def mirror_spike_tight_worker() -> None:
             entry_mean = 0.5 * (high_val + low_val)
             thesis = {
                 "strategy_tag": "mirror_spike_tight",
+                "entry_price": round(entry_price, 5),
+                "entry_price_source": "bidask",
                 "direction": direction,
                 "range_high": round(high_val, 5),
                 "range_low": round(low_val, 5),
