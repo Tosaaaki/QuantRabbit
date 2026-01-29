@@ -14,6 +14,8 @@ import time
 from dataclasses import dataclass
 from typing import Optional, Tuple
 
+from workers.common.quality_gate import current_regime
+
 LOG = logging.getLogger(__name__)
 
 _DB = pathlib.Path("logs/trades.db")
@@ -35,6 +37,14 @@ if _RAW_RELAX_TAGS is None:
     _RAW_RELAX_TAGS = "M1Scalper,ImpulseRetrace"
 _RELAX_TAGS = {tag.strip().lower() for tag in _RAW_RELAX_TAGS.split(",") if tag.strip()}
 
+_REGIME_FILTER_ENABLED = os.getenv("PERF_GUARD_REGIME_FILTER", "1").strip().lower() not in {
+    "",
+    "0",
+    "false",
+    "no",
+}
+_REGIME_MIN_TRADES = max(5, int(float(os.getenv("PERF_GUARD_REGIME_MIN_TRADES", "20"))))
+
 # Pocket-level guard (optional; defaults disabled)
 _POCKET_ENABLED = os.getenv("POCKET_PERF_GUARD_ENABLED", "0").strip().lower() not in {
     "",
@@ -48,7 +58,7 @@ _POCKET_PF_MIN = float(os.getenv("POCKET_PERF_GUARD_PF_MIN", "0.95") or 0.95)
 _POCKET_WIN_MIN = float(os.getenv("POCKET_PERF_GUARD_WIN_MIN", "0.50") or 0.5)
 _POCKET_TTL_SEC = max(30.0, float(os.getenv("POCKET_PERF_GUARD_TTL_SEC", "180")) or 180.0)
 
-_cache: dict[tuple[str, str, Optional[int]], tuple[float, bool, str, int]] = {}
+_cache: dict[tuple[str, str, Optional[int], Optional[str]], tuple[float, bool, str, int]] = {}
 _pocket_cache: dict[str, tuple[float, bool, str, int]] = {}
 
 
@@ -96,7 +106,61 @@ def _is_relaxed(tag: str) -> bool:
     return False
 
 
-def _query_perf(tag: str, pocket: str, hour: Optional[int]) -> Tuple[bool, str, int]:
+def _pocket_regime_label(pocket: str) -> Optional[str]:
+    if not pocket:
+        return None
+    tf = "H1" if pocket.lower() == "macro" else "M1"
+    return current_regime(tf, event_mode=False)
+
+
+def _query_perf_row(
+    *,
+    con: sqlite3.Connection,
+    tag: str,
+    tag_clause: str,
+    params: list,
+    pocket: str,
+    hour: Optional[int],
+    regime_label: Optional[str],
+) -> Optional[sqlite3.Row]:
+    regime_clause = ""
+    if regime_label:
+        col = "macro_regime" if pocket.lower() == "macro" else "micro_regime"
+        regime_clause = f" AND LOWER(COALESCE({col}, '')) = ?"
+        params.append(regime_label.lower())
+    params.extend(
+        [
+            pocket,
+            f"-{_LOOKBACK_DAYS} day",
+            f"{hour:02d}" if hour is not None else None,
+            f"{hour:02d}" if hour is not None else None,
+        ]
+    )
+    try:
+        return con.execute(
+            f"""
+            SELECT
+              COUNT(*) AS n,
+              SUM(CASE WHEN pl_pips > 0 THEN pl_pips ELSE 0 END) AS profit,
+              SUM(CASE WHEN pl_pips < 0 THEN ABS(pl_pips) ELSE 0 END) AS loss,
+              SUM(CASE WHEN pl_pips > 0 THEN 1 ELSE 0 END) AS win
+            FROM trades
+            WHERE {tag_clause}
+              AND pocket = ?
+              AND close_time >= datetime('now', ?)
+              AND (strftime('%H', close_time) = ? OR ? IS NULL)
+            {regime_clause}
+            """,
+            params,
+        ).fetchone()
+    except Exception as exc:
+        LOG.debug("[PERF_GUARD] query failed tag=%s pocket=%s err=%s", tag, pocket, exc)
+        return None
+
+
+def _query_perf(
+    tag: str, pocket: str, hour: Optional[int], regime_label: Optional[str]
+) -> Tuple[bool, str, int]:
     if not _DB.exists():
         return True, "no_db", 0
     try:
@@ -110,30 +174,32 @@ def _query_perf(tag: str, pocket: str, hour: Optional[int]) -> Tuple[bool, str, 
     placeholders = ",".join("?" for _ in variants)
     tag_clause = f"LOWER(COALESCE(NULLIF(strategy_tag, ''), strategy)) IN ({placeholders})"
     params = list(variants)
-    params.extend(
-        [
-            pocket,
-            f"-{_LOOKBACK_DAYS} day",
-            f"{hour:02d}" if hour is not None else None,
-            f"{hour:02d}" if hour is not None else None,
-        ]
-    )
     try:
-        row = con.execute(
-            f"""
-            SELECT
-              COUNT(*) AS n,
-              SUM(CASE WHEN pl_pips > 0 THEN pl_pips ELSE 0 END) AS profit,
-              SUM(CASE WHEN pl_pips < 0 THEN ABS(pl_pips) ELSE 0 END) AS loss,
-              SUM(CASE WHEN pl_pips > 0 THEN 1 ELSE 0 END) AS win
-            FROM trades
-            WHERE {tag_clause}
-              AND pocket = ?
-              AND close_time >= datetime('now', ?)
-              AND (strftime('%H', close_time) = ? OR ? IS NULL)
-            """,
-            params,
-        ).fetchone()
+        row = None
+        if regime_label:
+            row = _query_perf_row(
+                con=con,
+                tag=tag,
+                tag_clause=tag_clause,
+                params=list(params),
+                pocket=pocket,
+                hour=hour,
+                regime_label=regime_label,
+            )
+            if row is not None:
+                n = int(row["n"] or 0)
+                if n < _REGIME_MIN_TRADES:
+                    row = None
+        if row is None:
+            row = _query_perf_row(
+                con=con,
+                tag=tag,
+                tag_clause=tag_clause,
+                params=list(params),
+                pocket=pocket,
+                hour=hour,
+                regime_label=None,
+            )
     except Exception as exc:
         LOG.debug("[PERF_GUARD] query failed tag=%s pocket=%s err=%s", tag, pocket, exc)
         return True, "query_failed", 0
@@ -218,7 +284,8 @@ def is_allowed(tag: str, pocket: str, *, hour: Optional[int] = None) -> PerfDeci
     if not _ENABLED or _MODE in {"off", "disabled", "false", "no"}:
         return PerfDecision(True, "disabled", 0)
     relaxed = _is_relaxed(tag)
-    key = (tag, pocket, hour if _HOURLY_ENABLED else None)
+    regime_label = _pocket_regime_label(pocket) if _REGIME_FILTER_ENABLED else None
+    key = (tag, pocket, hour if _HOURLY_ENABLED else None, regime_label)
     now = time.monotonic()
     cached = _cache.get(key)
     if cached and now - cached[0] <= _TTL_SEC:
@@ -227,7 +294,7 @@ def is_allowed(tag: str, pocket: str, *, hour: Optional[int] = None) -> PerfDeci
 
     # hourly check first (stricter). If enabled and blocked, return immediately.
     if _HOURLY_ENABLED and hour is not None:
-        ok_hour, reason_hour, sample_hour = _query_perf(tag, pocket, hour)
+        ok_hour, reason_hour, sample_hour = _query_perf(tag, pocket, hour, regime_label)
         if not ok_hour:
             reason_txt = f"hour{hour}:{reason_hour}"
             allowed = ok_hour if _MODE == "block" else True
@@ -239,7 +306,7 @@ def is_allowed(tag: str, pocket: str, *, hour: Optional[int] = None) -> PerfDeci
             _cache[key] = (now, allowed, reason_txt, sample_hour)
             return PerfDecision(allowed, reason_txt, sample_hour)
 
-    ok, reason, sample = _query_perf(tag, pocket, None)
+    ok, reason, sample = _query_perf(tag, pocket, None, regime_label)
     allowed = ok if _MODE == "block" else True
     if not ok and _MODE == "block" and relaxed:
         allowed = True
