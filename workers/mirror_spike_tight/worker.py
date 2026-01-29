@@ -33,6 +33,10 @@ _BB_ENTRY_SCALP_REVERT_RATIO = float(os.getenv("BB_ENTRY_SCALP_REVERT_RATIO", "0
 _BB_ENTRY_SCALP_EXT_PIPS = float(os.getenv("BB_ENTRY_SCALP_EXT_PIPS", "2.4"))
 _BB_ENTRY_SCALP_EXT_RATIO = float(os.getenv("BB_ENTRY_SCALP_EXT_RATIO", "0.30"))
 _BB_PIP = 0.01
+try:
+    from analysis.pattern_stats import derive_pattern_signature
+except Exception:
+    derive_pattern_signature = None  # type: ignore
 
 
 def _bb_float(value):
@@ -40,6 +44,66 @@ def _bb_float(value):
         return float(value)
     except (TypeError, ValueError):
         return None
+
+
+def _pattern_parts(tag: str) -> Dict[str, str]:
+    parts: Dict[str, str] = {}
+    for chunk in tag.split("|"):
+        if ":" not in chunk:
+            continue
+        key, value = chunk.split(":", 1)
+        parts[key] = value
+    return parts
+
+
+def _pattern_trap(direction: str, fac_m1: Dict[str, object], candle: Dict[str, object]):
+    if derive_pattern_signature is None:
+        return False, None, None
+    if direction == "short" and not config.BLOCK_MARU_UP_SHORT:
+        return False, None, None
+    if direction == "long" and not config.BLOCK_MARU_DN_LONG:
+        return False, None, None
+    open_px = _bb_float(candle.get("open") or candle.get("o"))
+    high_px = _bb_float(candle.get("high") or candle.get("h"))
+    low_px = _bb_float(candle.get("low") or candle.get("l"))
+    close_px = _bb_float(candle.get("close") or candle.get("c"))
+    if None in (open_px, high_px, low_px, close_px):
+        return False, None, None
+    pattern_fac = {
+        "open": open_px,
+        "high": high_px,
+        "low": low_px,
+        "close": close_px,
+        "ma10": fac_m1.get("ma10"),
+        "ma20": fac_m1.get("ma20"),
+        "rsi": fac_m1.get("rsi"),
+        "atr_pips": fac_m1.get("atr_pips"),
+        "bbw": fac_m1.get("bbw"),
+    }
+    action = "OPEN_SHORT" if direction == "short" else "OPEN_LONG"
+    tag, meta = derive_pattern_signature(pattern_fac, action=action)
+    if not tag:
+        return False, None, meta
+    parts = _pattern_parts(tag)
+    if direction == "short":
+        is_trap = (
+            parts.get("c") == "maru_up"
+            and parts.get("w") == "upper"
+            and parts.get("vol") == "tight"
+            and parts.get("atr") in {"low", "ultra_low"}
+            and parts.get("rsi") in {"mid_high", "ob"}
+            and parts.get("tr") in {"flat", "dn_mild"}
+        )
+    else:
+        is_trap = (
+            parts.get("c") == "maru_dn"
+            and parts.get("w") == "lower"
+            and parts.get("vol") == "tight"
+            and parts.get("atr") in {"low", "ultra_low"}
+            and parts.get("rsi") in {"mid_low", "os"}
+            and parts.get("tr") in {"flat", "up_mild"}
+        )
+    return is_trap, tag, meta
 
 
 def _bb_levels(fac):
@@ -630,6 +694,15 @@ async def mirror_spike_tight_worker() -> None:
             )
 
             fac_m1 = (factors.get("M1") or {}) if isinstance(factors, dict) else {}
+            trap_hit, pattern_tag, pattern_meta = _pattern_trap(direction, fac_m1, latest)
+            if trap_hit:
+                LOG.info(
+                    "%s pattern_block direction=%s tag=%s",
+                    config.LOG_PREFIX,
+                    direction,
+                    pattern_tag,
+                )
+                continue
             if not _bb_entry_allowed(BB_STYLE, direction, entry_price, fac_m1):
                 continue
 
@@ -690,6 +763,10 @@ async def mirror_spike_tight_worker() -> None:
                     "trend_takeover": {"require_env_trend_bars": 2},
                 },
             }
+            if pattern_tag:
+                thesis["pattern_tag"] = pattern_tag
+            if pattern_meta:
+                thesis["pattern_meta"] = pattern_meta
             rf = thesis.get("reversion_failure")
             if isinstance(rf, dict):
                 bars_budget = rf.get("bars_budget")
