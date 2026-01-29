@@ -7,6 +7,7 @@ Margin-driven hedge balancer.
 
 from __future__ import annotations
 from analysis.ma_projection import compute_adx_projection, compute_bbw_projection, compute_ma_projection, compute_rsi_projection
+from analysis.range_guard import detect_range_mode
 from indicators.factor_cache import all_factors, get_candles_snapshot
 
 import asyncio
@@ -378,6 +379,7 @@ async def hedge_balancer_worker() -> None:
         config.POCKET,
     )
     last_action_ts = 0.0
+    last_lock_ts = 0.0
 
     while True:
         await asyncio.sleep(config.LOOP_INTERVAL_SEC)
@@ -402,6 +404,100 @@ async def hedge_balancer_worker() -> None:
 
         net_units = int(round(long_units - short_units))
         abs_net = abs(net_units)
+        gross_units = int(round(long_units + short_units))
+        factors = all_factors()
+        fac_m1 = factors.get("M1") or {}
+        fac_h4 = factors.get("H4") or {}
+        range_ctx = None
+        try:
+            range_ctx = detect_range_mode(fac_m1, fac_h4)
+        except Exception:
+            range_ctx = None
+        range_active = bool(range_ctx.active) if range_ctx is not None else False
+
+        # Hedge lock unwind: both-side positions with small net exposure
+        if (
+            config.LOCK_ENABLED
+            and gross_units >= config.LOCK_GROSS_MIN_UNITS
+            and abs_net <= config.LOCK_NET_MAX_UNITS
+            and long_units >= config.LOCK_MIN_SIDE_UNITS
+            and short_units >= config.LOCK_MIN_SIDE_UNITS
+            and (time.monotonic() - last_lock_ts) >= config.LOCK_COOLDOWN_SEC
+        ):
+            lock_mode = "range" if range_active else "scalp"
+            allow_long, _, detail_long = _projection_decision("long", "scalp", mode_override=lock_mode)
+            allow_short, _, detail_short = _projection_decision("short", "scalp", mode_override=lock_mode)
+            score_long = float((detail_long or {}).get("score", 0.0))
+            score_short = float((detail_short or {}).get("score", 0.0))
+            score_gap = score_long - score_short
+            min_score = config.LOCK_SCORE_MIN
+            min_gap = config.LOCK_SCORE_GAP
+            if range_active and not config.LOCK_ALLOW_RANGE:
+                min_score += 0.2
+                min_gap += 0.2
+            direction = None
+            if allow_long and score_gap >= min_gap and score_long >= min_score:
+                direction = "long"
+            elif allow_short and (-score_gap) >= min_gap and score_short >= min_score:
+                direction = "short"
+
+            if direction:
+                reduce_side_units = short_units if direction == "long" else long_units
+                planned = min(
+                    float(reduce_side_units) * config.LOCK_MAX_REDUCTION_FRACTION,
+                    config.LOCK_MAX_UNITS,
+                )
+                reduce_units = int(max(config.LOCK_MIN_UNITS, planned))
+                reduce_units = int(min(reduce_units, reduce_side_units))
+                if reduce_units > 0:
+                    units = abs(reduce_units) if direction == "long" else -abs(reduce_units)
+                    if not _bb_entry_allowed(BB_STYLE, "long" if units > 0 else "short", price_hint, fac_m1, range_active=range_active):
+                        direction = None
+                    else:
+                        candle_allow, candle_mult = _entry_candle_guard("long" if units > 0 else "short")
+                        if candle_allow and candle_mult != 1.0:
+                            sign = 1 if units > 0 else -1
+                            units = int(round(abs(units) * candle_mult)) * sign
+                        if candle_allow:
+                            client_id = build_client_order_id("hedge", "HedgeLock")
+                            entry_thesis = {
+                                "strategy_tag": "HedgeLock",
+                                "reduce_only": True,
+                                "hedge_lock": True,
+                                "range_active": range_active,
+                                "score_long": round(score_long, 3),
+                                "score_short": round(score_short, 3),
+                                "score_gap": round(score_gap, 3),
+                                "direction": direction,
+                            }
+                            res = await market_order(
+                                instrument="USD_JPY",
+                                units=units,
+                                sl_price=None,
+                                tp_price=None,
+                                pocket=config.POCKET,
+                                client_order_id=client_id,
+                                strategy_tag="HedgeLock",
+                                reduce_only=True,
+                                entry_thesis=entry_thesis,
+                                confidence=config.CONFIDENCE,
+                                arbiter_final=True,
+                            )
+                            last_lock_ts = time.monotonic()
+                            LOG.info(
+                                "%s hedge_lock dir=%s units=%d gross=%d net=%d range=%s scoreL=%.2f scoreS=%.2f res=%s",
+                                config.LOG_PREFIX,
+                                direction,
+                                units,
+                                gross_units,
+                                net_units,
+                                range_active,
+                                score_long,
+                                score_short,
+                                res or "none",
+                            )
+                            continue
+
         if abs_net < config.MIN_NET_UNITS:
             continue
 
@@ -423,7 +519,7 @@ async def hedge_balancer_worker() -> None:
         direction = "OPEN_SHORT" if net_units > 0 else "OPEN_LONG"
         proposed_units = min(hedge_units, abs_net)
         units = -abs(proposed_units) if net_units > 0 else abs(proposed_units)
-        fac_m1 = all_factors().get("M1") or {}
+        fac_m1 = fac_m1 or {}
         if not _bb_entry_allowed(BB_STYLE, "long" if units > 0 else "short", price_hint, fac_m1):
             continue
         client_id = build_client_order_id("hedge", "HedgeBalancer")
