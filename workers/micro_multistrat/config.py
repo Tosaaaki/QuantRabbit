@@ -29,6 +29,13 @@ def _parse_hours(raw: str) -> set[int]:
             hours.add(h)
     return hours
 
+
+def _bool(key: str, default: bool) -> bool:
+    raw = os.getenv(key)
+    if raw is None:
+        return default
+    return raw.strip().lower() not in {"", "0", "false", "no", "off"}
+
 POCKET = "micro"
 LOOP_INTERVAL_SEC = float(os.getenv("MICRO_MULTI_LOOP_INTERVAL_SEC", "8.0"))
 ENABLED = os.getenv("MICRO_MULTI_ENABLED", "0").strip().lower() not in {"", "0", "false", "no"}
@@ -49,6 +56,16 @@ TREND_BLOCK_HOURS_UTC = frozenset(
 )
 
 MAX_FACTOR_AGE_SEC = float(os.getenv("MICRO_MULTI_MAX_FACTOR_AGE_SEC", "90.0"))
+
+# Trend/Projection reconciliation (avoid counter-trend traps without reducing frequency).
+TREND_FLIP_ENABLED = _bool("MICRO_MULTI_TREND_FLIP_ENABLED", True)
+TREND_FLIP_GAP_PIPS = float(os.getenv("MICRO_MULTI_TREND_FLIP_GAP_PIPS", "0.6"))
+TREND_FLIP_ADX_MIN = float(os.getenv("MICRO_MULTI_TREND_FLIP_ADX_MIN", "20.0"))
+TREND_FLIP_TP_MULT = float(os.getenv("MICRO_MULTI_TREND_FLIP_TP_MULT", "1.12"))
+TREND_FLIP_SL_MULT = float(os.getenv("MICRO_MULTI_TREND_FLIP_SL_MULT", "0.95"))
+
+PROJ_FLIP_ENABLED = _bool("MICRO_MULTI_PROJ_FLIP_ENABLED", True)
+PROJ_CONFLICT_ALLOW = _bool("MICRO_MULTI_PROJ_CONFLICT_ALLOW", True)
 
 # Range-mode selection bias.
 RANGE_ONLY_SCORE = float(os.getenv("MICRO_MULTI_RANGE_ONLY_SCORE", "0.45"))

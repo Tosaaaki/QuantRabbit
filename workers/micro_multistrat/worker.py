@@ -44,6 +44,10 @@ _BB_ENTRY_SCALP_REVERT_RATIO = float(os.getenv("BB_ENTRY_SCALP_REVERT_RATIO", "0
 _BB_ENTRY_SCALP_EXT_PIPS = float(os.getenv("BB_ENTRY_SCALP_EXT_PIPS", "2.4"))
 _BB_ENTRY_SCALP_EXT_RATIO = float(os.getenv("BB_ENTRY_SCALP_EXT_RATIO", "0.30"))
 _BB_PIP = 0.01
+try:
+    from analysis.pattern_stats import derive_pattern_signature
+except Exception:
+    derive_pattern_signature = None  # type: ignore
 
 
 def _bb_float(value):
@@ -110,6 +114,63 @@ def _bb_entry_allowed(style, side, price, fac_m1, *, range_active=None):
     if orig_style == "scalp":
         max_ext = max(_BB_ENTRY_SCALP_EXT_PIPS, span_pips * _BB_ENTRY_SCALP_EXT_RATIO)
     return ext <= max_ext
+
+
+def _trend_snapshot(fac_m1: Dict, fac_m5: Dict, fac_h1: Dict, fac_h4: Dict):
+    for tf_name, fac in (("H4", fac_h4), ("H1", fac_h1), ("M5", fac_m5), ("M1", fac_m1)):
+        if not fac:
+            continue
+        ma10 = fac.get("ma10")
+        ma20 = fac.get("ma20")
+        if ma10 is None or ma20 is None:
+            continue
+        try:
+            gap_pips = (float(ma10) - float(ma20)) / _BB_PIP
+        except Exception:
+            continue
+        if abs(gap_pips) < config.TREND_FLIP_GAP_PIPS:
+            continue
+        try:
+            adx = float(fac.get("adx") or 0.0)
+        except Exception:
+            adx = 0.0
+        direction = "long" if gap_pips > 0 else "short"
+        return {
+            "tf": tf_name,
+            "gap_pips": round(gap_pips, 3),
+            "direction": direction,
+            "adx": round(adx, 2),
+        }
+    return None
+
+
+def _apply_trend_flip(
+    side: str,
+    signal_tag: str,
+    strategy_name: str,
+    fac_m1: Dict,
+    fac_m5: Dict,
+    fac_h1: Dict,
+    fac_h4: Dict,
+):
+    trend = _trend_snapshot(fac_m1, fac_m5, fac_h1, fac_h4)
+    if not config.TREND_FLIP_ENABLED or not trend:
+        return side, signal_tag, None, 1.0, 1.0, trend
+    if trend["direction"] == side:
+        return side, signal_tag, None, 1.0, 1.0, trend
+    if trend["adx"] < config.TREND_FLIP_ADX_MIN:
+        return side, signal_tag, None, 1.0, 1.0, trend
+    if not (_is_mr_signal(signal_tag) or strategy_name in _RANGE_STRATEGIES):
+        return side, signal_tag, None, 1.0, 1.0, trend
+    flipped_side = trend["direction"]
+    flip_meta = {
+        "from": side,
+        "to": flipped_side,
+        "tf": trend["tf"],
+        "gap_pips": trend["gap_pips"],
+        "adx": trend["adx"],
+    }
+    return flipped_side, f"{signal_tag}-trendflip", flip_meta, config.TREND_FLIP_TP_MULT, config.TREND_FLIP_SL_MULT, trend
 
 LOG = logging.getLogger(__name__)
 
@@ -662,13 +723,77 @@ async def micro_multi_worker() -> None:
             long_units, short_units = 0.0, 0.0
         for _, _, signal, strategy_name in selected:
             side = "long" if signal["action"] == "OPEN_LONG" else "short"
+            orig_side = side
+            orig_action = signal.get("action")
             sl_pips = float(signal.get("sl_pips") or 0.0)
             tp_pips = float(signal.get("tp_pips") or 0.0)
             if price <= 0.0 or sl_pips <= 0.0:
                 continue
             signal_tag = signal.get("tag", strategy_name)
+
+            trend_flip_meta = None
+            trend_snapshot = None
+            tp_mult = 1.0
+            sl_mult = 1.0
+            side, signal_tag, trend_flip_meta, tp_mult, sl_mult, trend_snapshot = _apply_trend_flip(
+                side,
+                signal_tag,
+                strategy_name,
+                fac_m1,
+                fac_m5,
+                fac_h1,
+                fac_h4,
+            )
+            if trend_flip_meta:
+                tp_pips = round(tp_pips * tp_mult, 2)
+                sl_pips = round(sl_pips * sl_mult, 2)
+            signal_action = "OPEN_LONG" if side == "long" else "OPEN_SHORT"
+
+            proj_mode = None
+            if strategy_name in _RANGE_STRATEGIES:
+                proj_mode = "range"
+            elif strategy_name in _PULLBACK_STRATEGIES:
+                proj_mode = "pullback"
+            elif strategy_name in _TREND_STRATEGIES:
+                proj_mode = "trend"
+            proj_allow, proj_mult, proj_detail = _projection_decision(
+                side,
+                config.POCKET,
+                mode_override=proj_mode,
+            )
+            proj_flip_meta = None
+            if not proj_allow and config.PROJ_FLIP_ENABLED:
+                opp_side = "short" if side == "long" else "long"
+                opp_allow, opp_mult, opp_detail = _projection_decision(
+                    opp_side,
+                    config.POCKET,
+                    mode_override=proj_mode,
+                )
+                if opp_allow:
+                    proj_flip_meta = {
+                        "from": side,
+                        "to": opp_side,
+                        "mode": proj_mode,
+                    }
+                    side = opp_side
+                    signal_action = "OPEN_LONG" if side == "long" else "OPEN_SHORT"
+                    signal_tag = f"{signal_tag}-projflip"
+                    proj_allow, proj_mult, proj_detail = opp_allow, opp_mult, opp_detail
+            proj_conflict = None
+            if not proj_allow and config.PROJ_CONFLICT_ALLOW:
+                proj_conflict = True
+                proj_allow = True
+                if proj_detail is not None:
+                    proj_detail = dict(proj_detail)
+                    proj_detail["conflict"] = True
+                    proj_detail["conflict_reason"] = "projection_block_override"
+            if not proj_allow:
+                continue
+
             bb_style = "trend"
-            if strategy_name in _RANGE_STRATEGIES or _is_mr_signal(signal_tag):
+            if trend_flip_meta or proj_flip_meta:
+                bb_style = "trend"
+            elif strategy_name in _RANGE_STRATEGIES or _is_mr_signal(signal_tag):
                 bb_style = "reversion"
             elif strategy_name in _PULLBACK_STRATEGIES:
                 bb_style = "trend"
@@ -720,6 +845,10 @@ async def micro_multi_worker() -> None:
             client_id = _client_order_id(signal_tag)
             entry_thesis: Dict[str, object] = {
                 "strategy_tag": signal_tag,
+                "signal_action": orig_action,
+                "signal_side": orig_side,
+                "exec_action": signal_action,
+                "exec_side": side,
                 "profile": signal.get("profile"),
                 "confidence": signal.get("confidence", 0),
                 "tp_pips": tp_pips,
@@ -730,6 +859,39 @@ async def micro_multi_worker() -> None:
                 "range_reason": range_ctx.reason,
                 "range_mode": range_ctx.mode,
             }
+            if trend_snapshot:
+                entry_thesis["trend_snapshot"] = trend_snapshot
+            if trend_flip_meta:
+                entry_thesis["trend_flip"] = trend_flip_meta
+            if proj_flip_meta:
+                entry_thesis["projection_flip"] = proj_flip_meta
+            if proj_conflict:
+                entry_thesis["projection_conflict"] = True
+            if proj_detail:
+                entry_thesis["projection"] = proj_detail
+            if derive_pattern_signature is not None:
+                try:
+                    pattern_fac = {
+                        "open": fac_m1.get("open"),
+                        "high": fac_m1.get("high"),
+                        "low": fac_m1.get("low"),
+                        "close": fac_m1.get("close"),
+                        "ma10": fac_m1.get("ma10"),
+                        "ma20": fac_m1.get("ma20"),
+                        "rsi": fac_m1.get("rsi"),
+                        "atr_pips": fac_m1.get("atr_pips"),
+                        "bbw": fac_m1.get("bbw"),
+                    }
+                    pattern_tag, pattern_meta = derive_pattern_signature(
+                        pattern_fac,
+                        action=signal_action,
+                    )
+                    if pattern_tag:
+                        entry_thesis["pattern_tag"] = pattern_tag
+                    if pattern_meta:
+                        entry_thesis["pattern_meta"] = pattern_meta
+                except Exception:
+                    pass
             if strategy_name in _TREND_STRATEGIES:
                 entry_thesis["entry_guard_trend"] = True
                 entry_thesis["entry_tf"] = "M5"
@@ -814,22 +976,6 @@ async def micro_multi_worker() -> None:
                         )
                     entry_thesis["low_vol"] = True
 
-            proj_mode = None
-            if strategy_name in _RANGE_STRATEGIES:
-                proj_mode = "range"
-            elif strategy_name in _PULLBACK_STRATEGIES:
-                proj_mode = "pullback"
-            elif strategy_name in _TREND_STRATEGIES:
-                proj_mode = "trend"
-            proj_allow, proj_mult, proj_detail = _projection_decision(
-                side,
-                config.POCKET,
-                mode_override=proj_mode,
-            )
-            if not proj_allow:
-                continue
-            if proj_detail:
-                entry_thesis["projection"] = proj_detail
             if proj_mult > 1.0:
                 sign = 1 if units > 0 else -1
                 units = int(round(abs(units) * proj_mult)) * sign
