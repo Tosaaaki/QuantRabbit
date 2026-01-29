@@ -192,17 +192,41 @@ def _parse_time(value: Optional[str]) -> Optional[datetime]:
         return None
 
 
-def _latest_mid() -> Optional[float]:
+def _latest_quote() -> tuple[Optional[float], Optional[float], Optional[float]]:
     tick = tick_window.recent_ticks(seconds=2.0, limit=1)
     if tick:
+        last = tick[-1]
+        bid = last.get("bid")
+        ask = last.get("ask")
+        mid = last.get("mid")
         try:
-            return float(tick[-1]["mid"])
+            bid_f = float(bid) if bid is not None else None
         except Exception:
-            pass
+            bid_f = None
+        try:
+            ask_f = float(ask) if ask is not None else None
+        except Exception:
+            ask_f = None
+        try:
+            mid_f = float(mid) if mid is not None else None
+        except Exception:
+            mid_f = None
+        if mid_f is None and bid_f is not None and ask_f is not None:
+            try:
+                mid_f = (bid_f + ask_f) / 2.0
+            except Exception:
+                mid_f = None
+        return bid_f, ask_f, mid_f
     try:
-        return float(all_factors().get("M1", {}).get("close"))
+        mid_f = float(all_factors().get("M1", {}).get("close"))
     except Exception:
-        return None
+        mid_f = None
+    return None, None, mid_f
+
+
+def _latest_mid() -> Optional[float]:
+    _, _, mid = _latest_quote()
+    return mid
 
 
 def _client_id(trade: dict) -> Optional[str]:
@@ -225,6 +249,8 @@ class _TradeState:
 @dataclass
 class _Context:
     mid: Optional[float]
+    bid: Optional[float]
+    ask: Optional[float]
     rsi: Optional[float]
     adx: Optional[float]
     bbw: Optional[float]
@@ -326,8 +352,11 @@ class MirrorSpikeTightExitWorker:
             atr_threshold=atr_th,
         )
 
+        bid, ask, mid = _latest_quote()
         return _Context(
-            mid=_latest_mid(),
+            mid=mid,
+            bid=bid,
+            ask=ask,
             rsi=_safe_float(fac_m1.get("rsi"), None),
             adx=_safe_float(fac_m1.get("adx"), None),
             bbw=_safe_float(fac_m1.get("bbw"), None),
@@ -399,7 +428,14 @@ class MirrorSpikeTightExitWorker:
             return None
 
         side = "long" if units > 0 else "short"
-        pnl = (ctx.mid - entry_price) * 100.0 if side == "long" else (entry_price - ctx.mid) * 100.0
+        exit_px = None
+        if side == "long":
+            exit_px = ctx.bid if ctx.bid is not None else ctx.mid
+        else:
+            exit_px = ctx.ask if ctx.ask is not None else ctx.mid
+        if exit_px is None:
+            return None
+        pnl = (exit_px - entry_price) * 100.0 if side == "long" else (entry_price - exit_px) * 100.0
         opened_at = _parse_time(trade.get("open_time"))
         hold_sec = (now - opened_at).total_seconds() if opened_at else 0.0
         candle_reason = _exit_candle_reversal("long" if units > 0 else "short")
@@ -575,7 +611,15 @@ class MirrorSpikeTightExitWorker:
                         LOG.warning("[EXIT-mirror_spike_tight] missing client_id trade=%s skip close", trade_id)
                         continue
                     side = "long" if units > 0 else "short"
-                    pnl = (ctx.mid - float(tr.get("price") or 0.0)) * 100.0 if side == "long" else (float(tr.get("price") or 0.0) - ctx.mid) * 100.0
+                    exit_px = None
+                    if side == "long":
+                        exit_px = ctx.bid if ctx.bid is not None else ctx.mid
+                    else:
+                        exit_px = ctx.ask if ctx.ask is not None else ctx.mid
+                    if exit_px is None:
+                        continue
+                    entry_px = float(tr.get("price") or 0.0)
+                    pnl = (exit_px - entry_px) * 100.0 if side == "long" else (entry_px - exit_px) * 100.0
                     allow_negative = pnl <= 0
                     await self._close(
                         trade_id,
