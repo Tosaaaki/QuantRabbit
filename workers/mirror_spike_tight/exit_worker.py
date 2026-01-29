@@ -5,10 +5,12 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Dict, Optional
 
+from analysis.ma_projection import compute_adx_projection, compute_bbw_projection, compute_ma_projection, compute_rsi_projection
 from analysis.range_guard import detect_range_mode
 from workers.common.exit_utils import close_trade
 from execution.position_manager import PositionManager
@@ -47,6 +49,18 @@ _BB_EXIT_BYPASS_TOKENS = {
 }
 _BB_EXIT_TF = "M1"
 _BB_PIP = 0.01
+_NEG_EXIT_GATE_ENABLED = os.getenv("MIRROR_SPIKE_TIGHT_EXIT_NEG_GATE", "1").strip().lower() not in {
+    "",
+    "0",
+    "false",
+    "no",
+}
+_NEG_EXIT_PROJ_SCORE = float(os.getenv("MIRROR_SPIKE_TIGHT_EXIT_NEG_PROJ_SCORE", "0.35"))
+_NEG_EXIT_CANDLE_SCORE = float(os.getenv("MIRROR_SPIKE_TIGHT_EXIT_NEG_CANDLE_SCORE", "0.35"))
+_NEG_EXIT_CANDLE_MIN_CONF = float(os.getenv("MIRROR_SPIKE_TIGHT_EXIT_NEG_CANDLE_MIN_CONF", "0.32"))
+_NEG_EXIT_LOG_INTERVAL_SEC = float(os.getenv("MIRROR_SPIKE_TIGHT_EXIT_NEG_LOG_INTERVAL_SEC", "6.0"))
+_PROJ_TF_MINUTES = {"M1": 1.0, "M5": 5.0, "H1": 60.0, "H4": 240.0, "D1": 1440.0}
+_LAST_NEG_GATE_LOG_TS = 0.0
 
 
 def _bb_float(value):
@@ -154,6 +168,163 @@ def _bb_exit_allowed(style, side, price, fac, *, range_active=None):
     if price >= mid + mid_buffer * _BB_PIP:
         return True
     return price <= (lower + band_buffer * _BB_PIP)
+
+def _proj_score_ma(ma, side, opp_block_bars):
+    if ma is None:
+        return None
+    align = ma.gap_pips >= 0 if side == "long" else ma.gap_pips <= 0
+    cross_soon = ma.projected_cross_bars is not None and ma.projected_cross_bars <= opp_block_bars
+    if align and not cross_soon:
+        return 0.7
+    if align and cross_soon:
+        return -0.4
+    if cross_soon:
+        return -0.8
+    return -0.5
+
+
+def _proj_score_rsi(rsi, side, long_target, short_target, overheat_bars):
+    if rsi is None:
+        return None
+    score = 0.0
+    if side == "long":
+        if rsi.rsi >= long_target and rsi.slope_per_bar > 0:
+            score = 0.4
+        elif rsi.rsi <= (long_target - 8) and rsi.slope_per_bar < 0:
+            score = -0.4
+        if rsi.eta_upper_bars is not None and rsi.eta_upper_bars <= overheat_bars:
+            score -= 0.2
+    else:
+        if rsi.rsi <= short_target and rsi.slope_per_bar < 0:
+            score = 0.4
+        elif rsi.rsi >= (short_target + 8) and rsi.slope_per_bar > 0:
+            score = -0.4
+        if rsi.eta_lower_bars is not None and rsi.eta_lower_bars <= overheat_bars:
+            score -= 0.2
+    return score
+
+
+def _proj_score_adx(adx, trend_mode, threshold):
+    if adx is None:
+        return None
+    if trend_mode:
+        if adx.adx >= threshold and adx.slope_per_bar >= 0:
+            return 0.4
+        if adx.adx <= threshold and adx.slope_per_bar < 0:
+            return -0.4
+        return 0.0
+    if adx.adx >= threshold and adx.slope_per_bar > 0:
+        return -0.5
+    if adx.adx <= threshold and adx.slope_per_bar < 0:
+        return 0.3
+    return 0.0
+
+
+def _proj_score_bbw(bbw, threshold):
+    if bbw is None:
+        return None
+    if bbw.bbw <= threshold and bbw.slope_per_bar <= 0:
+        return 0.5
+    if bbw.bbw > threshold and bbw.slope_per_bar > 0:
+        return -0.5
+    return 0.0
+
+
+def _projection_score(side: str) -> tuple[Optional[float], dict]:
+    fac = all_factors().get("M1") or {}
+    candles = fac.get("candles") or []
+    if not candles or len(candles) < 30:
+        return None, {}
+
+    params = {
+        "adx_threshold": 16.0,
+        "bbw_threshold": 0.14,
+        "opp_block_bars": 4.0,
+        "long_target": 45.0,
+        "short_target": 55.0,
+        "overheat_bars": 3.0,
+        "weights": {"bbw": 0.40, "rsi": 0.35, "adx": 0.25},
+    }
+    minutes = _PROJ_TF_MINUTES.get("M1", 1.0)
+    ma = compute_ma_projection({"candles": candles}, timeframe_minutes=minutes)
+    rsi = compute_rsi_projection(candles, timeframe_minutes=minutes)
+    adx = compute_adx_projection(candles, timeframe_minutes=minutes, trend_threshold=params["adx_threshold"])
+    bbw = compute_bbw_projection(candles, timeframe_minutes=minutes, squeeze_threshold=params["bbw_threshold"])
+
+    scores = {}
+    ma_score = _proj_score_ma(ma, side, params["opp_block_bars"])
+    if ma_score is not None and "ma" in params["weights"]:
+        scores["ma"] = ma_score
+    rsi_score = _proj_score_rsi(rsi, side, params["long_target"], params["short_target"], params["overheat_bars"])
+    if rsi_score is not None and "rsi" in params["weights"]:
+        scores["rsi"] = rsi_score
+    adx_score = _proj_score_adx(adx, False, params["adx_threshold"])
+    if adx_score is not None and "adx" in params["weights"]:
+        scores["adx"] = adx_score
+    bbw_score = _proj_score_bbw(bbw, params["bbw_threshold"])
+    if bbw_score is not None and "bbw" in params["weights"]:
+        scores["bbw"] = bbw_score
+
+    weight_sum = 0.0
+    score_sum = 0.0
+    for key, score in scores.items():
+        weight = params["weights"].get(key, 0.0)
+        weight_sum += weight
+        score_sum += weight * score
+    score = score_sum / weight_sum if weight_sum > 0 else 0.0
+    detail = {
+        "tf": "M1",
+        "mode": "range",
+        "score": round(score, 3),
+        "scores": {k: round(v, 3) for k, v in scores.items()},
+    }
+    return score, detail
+
+
+def _candle_reversal_score(side: str, *, min_conf: float) -> tuple[Optional[float], dict]:
+    tf = _candle_tf_for_worker()
+    candles = (all_factors().get(tf) or {}).get("candles") or []
+    if not candles:
+        return None, {}
+    score, detail = _score_candle(candles=candles, side=side, min_conf=min_conf)
+    detail = detail if isinstance(detail, dict) else {}
+    detail["tf"] = tf
+    return score, detail
+
+
+def _neg_exit_gate(side: str) -> tuple[bool, dict]:
+    if not _NEG_EXIT_GATE_ENABLED:
+        return True, {}
+    candle_score, candle_detail = _candle_reversal_score(side, min_conf=_NEG_EXIT_CANDLE_MIN_CONF)
+    proj_score, proj_detail = _projection_score(side)
+    candle_ok = candle_score is not None and candle_score <= -_NEG_EXIT_CANDLE_SCORE
+    proj_ok = proj_score is not None and proj_score <= -_NEG_EXIT_PROJ_SCORE
+    ok = candle_ok and proj_ok
+    detail = {
+        "candle_ok": candle_ok,
+        "proj_ok": proj_ok,
+        "candle": candle_detail,
+        "projection": proj_detail,
+    }
+    return ok, detail
+
+
+def _log_neg_gate_block(reason: str, pnl: float, detail: dict) -> None:
+    global _LAST_NEG_GATE_LOG_TS
+    now = time.monotonic()
+    if now - _LAST_NEG_GATE_LOG_TS < _NEG_EXIT_LOG_INTERVAL_SEC:
+        return
+    _LAST_NEG_GATE_LOG_TS = now
+    LOG.info("[exit-neg-gate] block reason=%s pnl=%.2f detail=%s", reason, pnl, detail)
+    try:
+        log_metric(
+            "mirror_spike_tight_neg_gate_block",
+            float(pnl),
+            tags={"reason": reason},
+            ts=_utc_now(),
+        )
+    except Exception:
+        pass
 
 BB_STYLE = "reversion"
 LOG = logging.getLogger(__name__)
@@ -441,6 +612,10 @@ class MirrorSpikeTightExitWorker:
         candle_reason = _exit_candle_reversal("long" if units > 0 else "short")
         if candle_reason and pnl >= 0:
             return candle_reason
+        neg_gate_ok = True
+        neg_gate_detail: dict = {}
+        if pnl < 0 and self.allow_negative_exit:
+            neg_gate_ok, neg_gate_detail = _neg_exit_gate(side)
 
         state = self._states.get(trade_id)
         if state is None:
@@ -497,7 +672,9 @@ class MirrorSpikeTightExitWorker:
                 gap = abs(ma10 - ma20) / 0.01
                 dir_long = units > 0
                 if (dir_long and ma10 <= ma20) or ((not dir_long) and ma10 >= ma20) or (ctx.adx < 12.0 and gap < 2.0):
-                    return "structure_break"
+                    if pnl >= 0 or neg_gate_ok:
+                        return "structure_break"
+                    _log_neg_gate_block("structure_break", pnl, neg_gate_detail)
             except Exception:
                 pass
 
@@ -505,18 +682,21 @@ class MirrorSpikeTightExitWorker:
             return "hard_stop"
 
         if pnl <= 0 and self.allow_negative_exit:
-            decision = evaluate_reversion_failure(
-                trade,
-                current_price=ctx.mid,
-                now=now,
-                side=side,
-                env_tf="M5",
-                struct_tf="M1",
-                trend_hits=state.trend_hits,
-            )
-            state.trend_hits = decision.trend_hits
-            if decision.should_exit and decision.reason:
-                return decision.reason
+            if neg_gate_ok:
+                decision = evaluate_reversion_failure(
+                    trade,
+                    current_price=ctx.mid,
+                    now=now,
+                    side=side,
+                    env_tf="M5",
+                    struct_tf="M1",
+                    trend_hits=state.trend_hits,
+                )
+                state.trend_hits = decision.trend_hits
+                if decision.should_exit and decision.reason:
+                    return decision.reason
+            else:
+                _log_neg_gate_block("reversion_failure", pnl, neg_gate_detail)
 
         if pnl > 0:
             tp_decision = evaluate_tp_zone(
@@ -530,19 +710,24 @@ class MirrorSpikeTightExitWorker:
                 return "take_profit_zone"
 
         if pnl < 0 and hold_sec >= self.negative_hold_sec:
-            if self.allow_negative_exit:
+            if self.allow_negative_exit and neg_gate_ok:
                 return "time_cut"
+            _log_neg_gate_block("time_cut", pnl, neg_gate_detail)
 
         if pnl < 0:
             if side == "long" and ctx.rsi is not None and ctx.rsi <= self.rsi_fade_long:
-                if self.allow_negative_exit or atr >= self.atr_hot:
+                if (self.allow_negative_exit and neg_gate_ok) or atr >= self.atr_hot:
                     return "rsi_fade"
+                _log_neg_gate_block("rsi_fade", pnl, neg_gate_detail)
             if side == "short" and ctx.rsi is not None and ctx.rsi >= self.rsi_fade_short:
-                if self.allow_negative_exit or atr >= self.atr_hot:
+                if (self.allow_negative_exit and neg_gate_ok) or atr >= self.atr_hot:
                     return "rsi_fade"
+                _log_neg_gate_block("rsi_fade", pnl, neg_gate_detail)
 
         if hold_sec >= max_hold and pnl <= profit_take * 0.7:
-            return "time_stop"
+            if pnl >= 0 or not self.allow_negative_exit or neg_gate_ok:
+                return "time_stop"
+            _log_neg_gate_block("time_stop", pnl, neg_gate_detail)
 
         if state.lock_floor is None and pnl >= lock_trigger:
             state.lock_floor = max(0.0, pnl - lock_buffer)
@@ -556,7 +741,9 @@ class MirrorSpikeTightExitWorker:
             if pnl > 0.15:
                 return "vwap_gravity"
             if pnl < 0 and self.allow_negative_exit:
-                return "vwap_cut"
+                if neg_gate_ok:
+                    return "vwap_cut"
+                _log_neg_gate_block("vwap_cut", pnl, neg_gate_detail)
 
         if pnl >= profit_take * 0.65 and ctx.rsi is not None:
             if side == "long" and ctx.rsi >= self.rsi_take_long:
