@@ -678,13 +678,26 @@ async def mirror_spike_tight_worker() -> None:
                 ask = float(latest_tick.get("ask") or latest["close"])
             except (TypeError, ValueError):
                 bid = ask = latest["close"]
+            spread_pips_eff = spread_pips
+            if spread_pips_eff <= 0.0 and bid > 0 and ask > 0:
+                spread_pips_eff = abs(ask - bid) / config.PIP_VALUE
+            if spread_pips_eff > config.MAX_SPREAD_PIPS:
+                if now_monotonic - last_spread_log > 30.0:
+                    LOG.info(
+                        "%s spread gate (fallback) spread=%.2fp",
+                        config.LOG_PREFIX,
+                        spread_pips_eff,
+                    )
+                    last_spread_log = now_monotonic
+                continue
 
             sl_pips = max(
                 config.SL_MIN_PIPS,
                 range_pips * config.SL_RANGE_RATIO,
-                spread_pips * config.SL_SPREAD_MULT,
+                spread_pips_eff * config.SL_SPREAD_MULT,
             )
-            sl_pips = min(sl_pips, config.SL_MAX_PIPS)
+            sl_cap = max(config.SL_MAX_PIPS, spread_pips_eff * config.SL_SPREAD_MULT)
+            sl_pips = min(sl_pips, sl_cap)
             tp_pips = max(
                 config.TP_MIN_PIPS,
                 sl_pips * config.TP_SL_RATIO,
@@ -743,7 +756,7 @@ async def mirror_spike_tight_worker() -> None:
                 "range_high": round(high_val, 5),
                 "range_low": round(low_val, 5),
                 "range_pips": round(range_pips, 3),
-                "spread_pips": round(spread_pips, 3),
+                "spread_pips": round(spread_pips_eff, 3),
                 "trend_bias": trend_bias,
                 "trend_adx": None if trend_adx is None else round(trend_adx, 1),
                 "trend_slope_pips": round(slope_pips, 3) if slope_pips is not None else None,

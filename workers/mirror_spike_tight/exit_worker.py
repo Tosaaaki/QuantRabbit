@@ -637,7 +637,7 @@ class MirrorSpikeTightExitWorker:
         max_hold = self.range_max_hold_sec if range_mode else self.max_hold_sec
 
         if state.hard_stop:
-            stop_loss = max(stop_loss, max(0.8, state.hard_stop * 0.5))
+            stop_loss = max(stop_loss, state.hard_stop)
             lock_trigger = max(lock_trigger, max(0.25, state.hard_stop * 0.25))
             trail_start = max(trail_start, max(1.0, state.hard_stop * 0.6))
             max_hold = max(max_hold, self.max_hold_sec * 1.1)
