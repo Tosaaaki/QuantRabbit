@@ -218,6 +218,27 @@ def _normalize_strategy_tag(tag: object | None) -> str | None:
     return tag_str
 
 
+def _normalize_regime(value: object | None) -> str | None:
+    if value is None:
+        return None
+    raw = str(value).strip()
+    return raw or None
+
+
+def _extract_regime(thesis: dict | None) -> tuple[Optional[str], Optional[str]]:
+    if not isinstance(thesis, dict):
+        return None, None
+    reg = thesis.get("regime")
+    macro = None
+    micro = None
+    if isinstance(reg, dict):
+        macro = reg.get("macro") or reg.get("macro_regime") or reg.get("reg_macro")
+        micro = reg.get("micro") or reg.get("micro_regime") or reg.get("reg_micro")
+    macro = macro or thesis.get("macro_regime") or thesis.get("reg_macro")
+    micro = micro or thesis.get("micro_regime") or thesis.get("reg_micro")
+    return _normalize_regime(macro), _normalize_regime(micro)
+
+
 def _apply_strategy_tag_normalization(thesis: dict | None, raw_tag: object | None) -> tuple[dict | None, str | None]:
     """Ensure thesis carries normalized strategy_tag while preserving raw tag."""
     norm = _normalize_strategy_tag(raw_tag)
@@ -594,6 +615,8 @@ class PositionManager:
             "client_order_id": "TEXT",
             "strategy_tag": "TEXT",
             "entry_thesis": "TEXT",
+            "macro_regime": "TEXT",
+            "micro_regime": "TEXT",
         }
         added_cols: set[str] = set()
         for name, ddl in columns.items():
@@ -666,10 +689,12 @@ class PositionManager:
             return 0
         rows = con.execute(
             """
-            SELECT id, pocket, client_order_id, strategy_tag, strategy, entry_thesis
+            SELECT id, pocket, client_order_id, strategy_tag, strategy, entry_thesis, macro_regime, micro_regime
             FROM trades
             WHERE (strategy_tag IS NULL OR strategy_tag = '')
                OR (pocket IS NULL OR pocket = '' OR pocket = 'unknown')
+               OR (macro_regime IS NULL OR macro_regime = '')
+               OR (micro_regime IS NULL OR micro_regime = '')
             ORDER BY id DESC
             LIMIT ?
             """,
@@ -679,13 +704,16 @@ class PositionManager:
         for row in rows:
             current_pocket = row["pocket"] or ""
             current_tag = row["strategy_tag"] or row["strategy"]
-            if not current_tag and row["entry_thesis"]:
+            entry_thesis_obj = None
+            if row["entry_thesis"]:
                 try:
                     payload = json.loads(row["entry_thesis"])
                     if isinstance(payload, dict):
-                        current_tag = payload.get("strategy_tag") or payload.get("strategy")
+                        entry_thesis_obj = payload
+                        if not current_tag:
+                            current_tag = payload.get("strategy_tag") or payload.get("strategy")
                 except Exception:
-                    current_tag = current_tag
+                    entry_thesis_obj = None
             norm_tag = _normalize_strategy_tag(current_tag)
             final_tag = norm_tag or current_tag
             if final_tag:
@@ -698,16 +726,27 @@ class PositionManager:
                 final_tag,
                 row["client_order_id"],
             )
+            macro_regime = row["macro_regime"]
+            micro_regime = row["micro_regime"]
+            reg_macro, reg_micro = _extract_regime(entry_thesis_obj)
+            if not macro_regime:
+                macro_regime = reg_macro
+            if not micro_regime:
+                micro_regime = reg_micro
             if (
                 str(current_pocket or "") == str(final_pocket or "")
                 and (row["strategy_tag"] or "") == (final_tag or "")
                 and (row["strategy"] or "") == (final_strategy or "")
+                and (row["macro_regime"] or "") == (macro_regime or "")
+                and (row["micro_regime"] or "") == (micro_regime or "")
             ):
                 continue
-            updates.append((final_pocket, final_tag, final_strategy, row["id"]))
+            updates.append(
+                (final_pocket, final_tag, final_strategy, macro_regime, micro_regime, row["id"])
+            )
         if updates:
             con.executemany(
-                "UPDATE trades SET pocket = ?, strategy_tag = ?, strategy = ? WHERE id = ?",
+                "UPDATE trades SET pocket = ?, strategy_tag = ?, strategy = ?, macro_regime = ?, micro_regime = ? WHERE id = ?",
                 updates,
             )
             con.commit()
@@ -949,6 +988,9 @@ class PositionManager:
                 details.get("strategy_tag"),
                 client_id,
             )
+            macro_regime, micro_regime = _extract_regime(details.get("entry_thesis"))
+            details["macro_regime"] = macro_regime
+            details["micro_regime"] = micro_regime
             return details
         except requests.HTTPError as exc:
             if exc.response is not None and exc.response.status_code == 404:
@@ -1030,6 +1072,7 @@ class PositionManager:
         if norm_tag:
             strategy_tag = norm_tag
         pocket = _resolve_pocket(row["pocket"], strategy_tag, client_id)
+        macro_regime, micro_regime = _extract_regime(thesis_obj)
         return {
             "entry_price": float(row["executed_price"] or 0.0),
             "entry_time": entry_time,
@@ -1038,6 +1081,8 @@ class PositionManager:
             "client_order_id": client_id,
             "strategy_tag": strategy_tag,
             "entry_thesis": thesis_obj,
+            "macro_regime": macro_regime,
+            "micro_regime": micro_regime,
         }
 
     def _resolve_entry_meta(self, trade_id: str) -> dict | None:
@@ -1141,6 +1186,16 @@ class PositionManager:
                     details.get("strategy_tag"),
                     details.get("client_order_id"),
                 )
+                macro_regime = details.get("macro_regime")
+                micro_regime = details.get("micro_regime")
+                if not macro_regime or not micro_regime:
+                    macro_fallback, micro_fallback = _extract_regime(
+                        details.get("entry_thesis")
+                    )
+                    if not macro_regime:
+                        macro_regime = macro_fallback
+                    if not micro_regime:
+                        micro_regime = micro_fallback
 
                 record_tuple = (
                     transaction_id,
@@ -1168,7 +1223,9 @@ class PositionManager:
                     details.get("client_order_id"),
                     details.get("strategy_tag"),
                     details.get("strategy_tag"),
-                    json.dumps(details.get("entry_thesis"), ensure_ascii=False)
+                    json.dumps(details.get("entry_thesis"), ensure_ascii=False),
+                    macro_regime,
+                    micro_regime,
                 )
                 trades_to_save.append(record_tuple)
                 saved_records.append(
@@ -1196,6 +1253,8 @@ class PositionManager:
                         "client_order_id": details.get("client_order_id"),
                         "strategy": details.get("strategy_tag"),
                         "strategy_tag": details.get("strategy_tag"),
+                        "macro_regime": macro_regime,
+                        "micro_regime": micro_regime,
                     }
                 )
                 if details["pocket"]:
@@ -1235,9 +1294,11 @@ class PositionManager:
                             client_order_id,
                             strategy,
                             strategy_tag,
-                            entry_thesis
+                            entry_thesis,
+                            macro_regime,
+                            micro_regime
                         )
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                         trades_to_save,
                     )
