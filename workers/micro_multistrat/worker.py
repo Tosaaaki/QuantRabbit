@@ -116,6 +116,102 @@ def _bb_entry_allowed(style, side, price, fac_m1, *, range_active=None):
     return ext <= max_ext
 
 
+def _mid_from_tick(tick: Dict) -> Optional[float]:
+    mid = tick.get("mid")
+    if mid is not None:
+        try:
+            return float(mid)
+        except Exception:
+            return None
+    bid = tick.get("bid")
+    ask = tick.get("ask")
+    if bid is not None and ask is not None:
+        try:
+            return (float(bid) + float(ask)) / 2.0
+        except Exception:
+            return None
+    return None
+
+
+def _ts_ms_from_tick(tick: Dict) -> Optional[int]:
+    ts_ms = tick.get("ts_ms") or tick.get("timestamp")
+    if ts_ms is None:
+        return None
+    try:
+        ts_val = int(float(ts_ms))
+    except Exception:
+        return None
+    if ts_val < 10_000_000_000:
+        ts_val *= 1000
+    return ts_val
+
+
+def _build_m1_from_ticks(ticks: List[Dict]) -> Optional[Dict[str, object]]:
+    if not ticks:
+        return None
+    buckets: Dict[int, Dict[str, float]] = {}
+    last_tick = None
+    for tick in sorted(ticks, key=lambda t: (_ts_ms_from_tick(t) or 0)):
+        ts_ms = _ts_ms_from_tick(tick)
+        if ts_ms is None:
+            continue
+        price = _mid_from_tick(tick)
+        if price is None:
+            continue
+        last_tick = tick
+        bucket = ts_ms // 60000
+        candle = buckets.get(bucket)
+        if candle is None:
+            buckets[bucket] = {"open": price, "high": price, "low": price, "close": price}
+        else:
+            candle["high"] = max(candle["high"], price)
+            candle["low"] = min(candle["low"], price)
+            candle["close"] = price
+    if len(buckets) < max(3, config.FRESH_TICKS_MIN_CANDLES):
+        return None
+    items = sorted(buckets.items())
+    candles = []
+    for bucket, ohlc in items:
+        candles.append(
+            {
+                "timestamp": int(bucket * 60),
+                "open": ohlc["open"],
+                "high": ohlc["high"],
+                "low": ohlc["low"],
+                "close": ohlc["close"],
+            }
+        )
+    try:
+        import pandas as pd
+        from indicators.calc_core import IndicatorEngine
+    except Exception:
+        return None
+    df = pd.DataFrame(candles)
+    fac = IndicatorEngine.compute(df[["open", "high", "low", "close"]])
+    last = candles[-1]
+    fac.update(
+        {
+            "open": last["open"],
+            "high": last["high"],
+            "low": last["low"],
+            "close": last["close"],
+            "timestamp": datetime.datetime.utcfromtimestamp(last["timestamp"])
+            .replace(tzinfo=datetime.timezone.utc)
+            .isoformat(),
+            "candles": candles,
+        }
+    )
+    if last_tick is not None:
+        bid = last_tick.get("bid")
+        ask = last_tick.get("ask")
+        if bid is not None and ask is not None:
+            try:
+                fac["spread_pips"] = (float(ask) - float(bid)) / _BB_PIP
+            except Exception:
+                pass
+    return fac
+
+
 def _trend_snapshot(fac_m1: Dict, fac_m5: Dict, fac_h1: Dict, fac_h4: Dict):
     for tf_name, fac in (("H4", fac_h4), ("H1", fac_h1), ("M5", fac_m5), ("M1", fac_m1)):
         if not fac:
@@ -178,6 +274,7 @@ MR_RANGE_LOOKBACK = 20
 MR_RANGE_HI_PCT = 95.0
 MR_RANGE_LO_PCT = 5.0
 _STRATEGY_LAST_TS: Dict[str, float] = {}
+_LAST_FRESH_M1_TS = 0.0
 _TREND_STRATEGIES = {
     MomentumBurstMicro.name,
     MicroMomentumStack.name,
@@ -568,6 +665,7 @@ async def micro_multi_worker() -> None:
         except asyncio.CancelledError:
             return
     LOG.info("%s worker start (interval=%.1fs)", config.LOG_PREFIX, config.LOOP_INTERVAL_SEC)
+    global _LAST_FRESH_M1_TS
     last_trend_block_log = 0.0
     last_stale_log = 0.0
     last_perf_block_log = 0.0
@@ -593,6 +691,27 @@ async def micro_multi_worker() -> None:
         fac_m5 = factors.get("M5") or {}
         age_m1 = _factor_age_seconds(fac_m1)
         if age_m1 > config.MAX_FACTOR_AGE_SEC:
+            # Refresh M1 factors from recent ticks instead of blocking entries.
+            if config.FRESH_TICKS_ON_STALE and now_ts - _LAST_FRESH_M1_TS >= config.FRESH_TICKS_REFRESH_SEC:
+                try:
+                    tick_limit = max(1000, int(config.FRESH_TICKS_LOOKBACK_SEC * 5))
+                    ticks = tick_window.recent_ticks(
+                        seconds=config.FRESH_TICKS_LOOKBACK_SEC,
+                        limit=tick_limit,
+                    )
+                    fresh = _build_m1_from_ticks(ticks)
+                except Exception:
+                    fresh = None
+                if fresh:
+                    fac_m1 = fresh
+                    age_m1 = _factor_age_seconds(fac_m1)
+                    _LAST_FRESH_M1_TS = now_ts
+                    log_metric(
+                        "micro_multi_refresh_m1",
+                        float(age_m1),
+                        tags={"source": "ticks", "candles": len(fresh.get("candles") or [])},
+                        ts=now,
+                    )
             # 入口を止める代わりにログだけ残して評価を継続（データ欠損で固まらないようにする）
             log_metric(
                 "micro_multi_skip",
