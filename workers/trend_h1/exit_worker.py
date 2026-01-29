@@ -155,7 +155,7 @@ def _bb_exit_allowed(style, side, price, fac, *, range_active=None):
 BB_STYLE = "trend"
 LOG = logging.getLogger(__name__)
 
-ALLOWED_TAGS = {"TrendMA", "trend_h1"}
+ALLOWED_TAGS = {"trend_h1"}
 
 
 def _utc_now() -> datetime:
@@ -604,5 +604,4 @@ if __name__ == "__main__":  # pragma: no cover
         force=True,
     )
     asyncio.run(trend_h1_exit_worker())
-
 

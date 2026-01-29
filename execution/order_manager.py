@@ -33,6 +33,7 @@ from analysis import policy_bus
 from utils.secrets import get_secret
 from utils.market_hours import is_market_open
 from indicators.factor_cache import all_factors, get_candles_snapshot
+from analysis.range_guard import detect_range_mode
 from utils.metrics_logger import log_metric
 from execution import strategy_guard, reentry_gate
 from execution.position_manager import PositionManager, agent_client_prefixes
@@ -361,6 +362,18 @@ def _factor_age_seconds(tf: str = "M1") -> float | None:
         fac = (all_factors().get(tf.upper()) or {})
     except Exception:
         return None
+
+
+def _range_active_for_entry() -> bool:
+    try:
+        factors = all_factors()
+        fac_m1 = factors.get("M1") or {}
+        fac_h4 = factors.get("H4") or {}
+        if not fac_m1 or not fac_h4:
+            return False
+        return bool(detect_range_mode(fac_m1, fac_h4).active)
+    except Exception:
+        return False
     ts_raw = fac.get("timestamp")
     if not ts_raw:
         return None
@@ -647,6 +660,12 @@ _EXIT_FORCE_ALLOW_REASONS = {
     if token.strip()
 }
 _EXIT_EMERGENCY_ALLOW_NEGATIVE = os.getenv("EXIT_EMERGENCY_ALLOW_NEGATIVE", "1").strip().lower() not in {
+    "",
+    "0",
+    "false",
+    "no",
+}
+_PROFIT_GUARD_BYPASS_RANGE = os.getenv("PROFIT_GUARD_BYPASS_RANGE", "1").strip().lower() not in {
     "",
     "0",
     "false",
@@ -3835,41 +3854,75 @@ async def market_order(
     if not reduce_only and pocket != "manual":
         decision = profit_guard.is_allowed(pocket, strategy_tag=strategy_tag)
         if not decision.allowed:
-            note = f"profit_guard:{decision.reason}"
-            _console_order_log(
-                "OPEN_REJECT",
-                pocket=pocket,
-                strategy_tag=strategy_tag,
-                side=side_label,
-                units=units,
-                sl_price=sl_price,
-                tp_price=tp_price,
-                client_order_id=client_order_id,
-                note=note,
-            )
-            log_order(
-                pocket=pocket,
-                instrument=instrument,
-                side=side_label,
-                units=units,
-                sl_price=sl_price,
-                tp_price=tp_price,
-                client_order_id=client_order_id,
-                status="profit_guard",
-                attempt=0,
-                stage_index=stage_index,
-                request_payload={"strategy_tag": strategy_tag, "meta": meta, "entry_thesis": entry_thesis},
-            )
-            log_metric(
-                "order_profit_block",
-                1.0,
-                tags={
-                    "pocket": pocket,
-                    "strategy": str(strategy_tag or "unknown"),
-                    "reason": decision.reason,
-                },
-            )
-            return None
+            range_active = False
+            if _PROFIT_GUARD_BYPASS_RANGE and pocket in {"scalp", "micro"}:
+                range_active = _range_active_for_entry()
+            if range_active:
+                log_metric(
+                    "order_profit_guard_bypass",
+                    1.0,
+                    tags={
+                        "pocket": pocket,
+                        "strategy": str(strategy_tag or "unknown"),
+                        "reason": decision.reason,
+                        "mode": "range",
+                    },
+                )
+                log_order(
+                    pocket=pocket,
+                    instrument=instrument,
+                    side=side_label,
+                    units=units,
+                    sl_price=sl_price,
+                    tp_price=tp_price,
+                    client_order_id=client_order_id,
+                    status="profit_guard_bypass",
+                    attempt=0,
+                    stage_index=stage_index,
+                    request_payload={
+                        "strategy_tag": strategy_tag,
+                        "meta": meta,
+                        "entry_thesis": entry_thesis,
+                        "profit_guard_reason": decision.reason,
+                        "range_active": True,
+                    },
+                )
+            else:
+                note = f"profit_guard:{decision.reason}"
+                _console_order_log(
+                    "OPEN_REJECT",
+                    pocket=pocket,
+                    strategy_tag=strategy_tag,
+                    side=side_label,
+                    units=units,
+                    sl_price=sl_price,
+                    tp_price=tp_price,
+                    client_order_id=client_order_id,
+                    note=note,
+                )
+                log_order(
+                    pocket=pocket,
+                    instrument=instrument,
+                    side=side_label,
+                    units=units,
+                    sl_price=sl_price,
+                    tp_price=tp_price,
+                    client_order_id=client_order_id,
+                    status="profit_guard",
+                    attempt=0,
+                    stage_index=stage_index,
+                    request_payload={"strategy_tag": strategy_tag, "meta": meta, "entry_thesis": entry_thesis},
+                )
+                log_metric(
+                    "order_profit_block",
+                    1.0,
+                    tags={
+                        "pocket": pocket,
+                        "strategy": str(strategy_tag or "unknown"),
+                        "reason": decision.reason,
+                    },
+                )
+                return None
 
     exec_cfg = None
     if isinstance(entry_thesis, dict):

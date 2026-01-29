@@ -63,6 +63,26 @@ def _recent_move(window_sec: float) -> Tuple[float, float, float, float]:
     return move_pips, abs(move_pips), span, speed
 
 
+def _tick_range(ticks: list[dict]) -> tuple[float, float] | None:
+    if not ticks:
+        return None
+    highs = []
+    lows = []
+    for tick in ticks:
+        mid = _float(tick.get("mid"))
+        if mid is None:
+            bid = _float(tick.get("bid"))
+            ask = _float(tick.get("ask"))
+            if bid is None or ask is None:
+                continue
+            mid = (bid + ask) / 2.0
+        highs.append(mid)
+        lows.append(mid)
+    if not highs or not lows:
+        return None
+    return max(highs), min(lows)
+
+
 def _spread_pips(tick: Optional[dict]) -> float:
     state = spread_monitor.get_state() or {}
     spread = _float(state.get("spread_pips"))
@@ -196,6 +216,57 @@ async def vol_spike_rider_worker() -> None:
             if atr_pips is None or atr_pips < config.ENTRY_MIN_ATR_PIPS:
                 await asyncio.sleep(config.LOOP_INTERVAL_SEC)
                 continue
+            if abs_move > config.ENTRY_MAX_MOVE_PIPS or abs_move > atr_pips * config.ENTRY_MAX_ATR_MULT:
+                await asyncio.sleep(config.LOOP_INTERVAL_SEC)
+                continue
+
+            recent_move, recent_abs, _, _ = _recent_move(config.ENTRY_RECENT_WINDOW_SEC)
+            if abs_move > 0 and recent_abs / abs_move < config.ENTRY_RECENT_MIN_RATIO:
+                await asyncio.sleep(config.LOOP_INTERVAL_SEC)
+                continue
+
+            latest_mid = _mid_from_tick(tick, _float(fac_m1.get("close")) or 0.0)
+            if latest_mid <= 0:
+                await asyncio.sleep(config.LOOP_INTERVAL_SEC)
+                continue
+
+            tick_range = _tick_range(ticks)
+            if tick_range:
+                high, low = tick_range
+                if direction == "long":
+                    retrace_pips = (high - latest_mid) / config.PIP_VALUE
+                else:
+                    retrace_pips = (latest_mid - low) / config.PIP_VALUE
+                retrace_limit = max(config.ENTRY_RETRACE_PIPS, abs_move * config.ENTRY_RETRACE_RATIO)
+                if retrace_pips >= retrace_limit:
+                    await asyncio.sleep(config.LOOP_INTERVAL_SEC)
+                    continue
+
+            rsi = _float(fac_m1.get("rsi"))
+            if rsi is not None:
+                if direction == "long" and rsi >= config.ENTRY_RSI_MAX_LONG:
+                    await asyncio.sleep(config.LOOP_INTERVAL_SEC)
+                    continue
+                if direction == "short" and rsi <= config.ENTRY_RSI_MIN_SHORT:
+                    await asyncio.sleep(config.LOOP_INTERVAL_SEC)
+                    continue
+
+            high = _float(fac_m1.get("high"))
+            low = _float(fac_m1.get("low"))
+            open_ = _float(fac_m1.get("open"))
+            close_ = _float(fac_m1.get("close"))
+            if None not in (high, low, open_, close_):
+                range_pips = (high - low) / config.PIP_VALUE
+                if range_pips >= config.ENTRY_WICK_MIN_RANGE_PIPS and range_pips > 0:
+                    upper_wick = (high - max(open_, close_)) / config.PIP_VALUE
+                    lower_wick = (min(open_, close_) - low) / config.PIP_VALUE
+                    if direction == "long":
+                        wick_ratio = upper_wick / range_pips
+                    else:
+                        wick_ratio = lower_wick / range_pips
+                    if wick_ratio >= config.ENTRY_MAX_WICK_RATIO:
+                        await asyncio.sleep(config.LOOP_INTERVAL_SEC)
+                        continue
 
             range_active = False
             try:
@@ -209,11 +280,6 @@ async def vol_spike_rider_worker() -> None:
             perf = perf_guard.is_allowed(config.STRATEGY_TAG, "scalp")
             if not perf.allowed:
                 LOG.info("%s perf_guard blocked: %s", config.LOG_PREFIX, perf.reason)
-                await asyncio.sleep(config.LOOP_INTERVAL_SEC)
-                continue
-
-            latest_mid = _mid_from_tick(tick, _float(fac_m1.get("close")) or 0.0)
-            if latest_mid <= 0:
                 await asyncio.sleep(config.LOOP_INTERVAL_SEC)
                 continue
 
