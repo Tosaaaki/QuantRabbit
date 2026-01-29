@@ -536,10 +536,29 @@ async def scalp_m1_worker() -> None:
         except Exception:
             price = 0.0
         price = _latest_mid(price)
-        side = "long" if signal["action"] == "OPEN_LONG" else "short"
+        signal_side = "long" if signal["action"] == "OPEN_LONG" else "short"
+        side = signal_side
         sl_pips = float(signal.get("sl_pips") or 0.0)
         tp_pips = float(signal.get("tp_pips") or 0.0)
         if price <= 0.0 or sl_pips <= 0.0:
+            continue
+        proj_flip = False
+        proj_allow, proj_mult, proj_detail = _projection_decision(side, config.POCKET)
+        if config.PROJ_FLIP_ENABLED and proj_detail:
+            opp_side = "short" if side == "long" else "long"
+            opp_allow, opp_mult, opp_detail = _projection_decision(opp_side, config.POCKET)
+            if opp_detail and opp_allow:
+                score = float(proj_detail.get("score", 0.0))
+                opp_score = float(opp_detail.get("score", 0.0))
+                if (
+                    opp_score >= config.PROJ_FLIP_MIN_SCORE
+                    and score <= config.PROJ_FLIP_MAX_SCORE
+                    and (opp_score - score) >= config.PROJ_FLIP_MARGIN
+                ):
+                    side = opp_side
+                    proj_flip = True
+                    proj_allow, proj_mult, proj_detail = opp_allow, opp_mult, opp_detail
+        if not proj_allow:
             continue
         htf = _htf_trend_state(fac_h1)
         if htf and config.HTF_BLOCK_COUNTER:
@@ -610,6 +629,8 @@ async def scalp_m1_worker() -> None:
         client_id = _client_order_id(signal_tag)
         entry_thesis = {
             "strategy_tag": signal_tag,
+            "signal_side": signal_side,
+            "exec_side": side,
             "confidence": signal.get("confidence", 0),
             "sl_pips": round(sl_pips, 2),
             "tp_pips": round(tp_pips, 2),
@@ -626,9 +647,8 @@ async def scalp_m1_worker() -> None:
             if pattern_meta:
                 entry_thesis["pattern_meta"] = pattern_meta
 
-        proj_allow, proj_mult, proj_detail = _projection_decision(side, config.POCKET)
-        if not proj_allow:
-            continue
+        if proj_flip:
+            entry_thesis["projection_flip"] = True
         if proj_detail:
             entry_thesis["projection"] = proj_detail
         if proj_mult > 1.0:

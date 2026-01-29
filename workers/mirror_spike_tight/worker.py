@@ -679,17 +679,30 @@ async def mirror_spike_tight_worker() -> None:
             except (TypeError, ValueError):
                 bid = ask = latest["close"]
 
+            sl_pips = max(
+                config.SL_MIN_PIPS,
+                range_pips * config.SL_RANGE_RATIO,
+                spread_pips * config.SL_SPREAD_MULT,
+            )
+            sl_pips = min(sl_pips, config.SL_MAX_PIPS)
+            tp_pips = max(
+                config.TP_MIN_PIPS,
+                sl_pips * config.TP_SL_RATIO,
+                range_pips * config.TP_RANGE_RATIO,
+            )
+            tp_pips = min(tp_pips, config.TP_MAX_PIPS)
+
             entry_price = ask if direction == "long" else bid
             tp_price = round(
-                entry_price + config.TP_PIPS * config.PIP_VALUE
+                entry_price + tp_pips * config.PIP_VALUE
                 if direction == "long"
-                else entry_price - config.TP_PIPS * config.PIP_VALUE,
+                else entry_price - tp_pips * config.PIP_VALUE,
                 3,
             )
             sl_price = round(
-                entry_price - config.SL_PIPS * config.PIP_VALUE
+                entry_price - sl_pips * config.PIP_VALUE
                 if direction == "long"
-                else entry_price + config.SL_PIPS * config.PIP_VALUE,
+                else entry_price + sl_pips * config.PIP_VALUE,
                 3,
             )
 
@@ -732,9 +745,9 @@ async def mirror_spike_tight_worker() -> None:
                 "trend_bias": trend_bias,
                 "trend_adx": None if trend_adx is None else round(trend_adx, 1),
                 "trend_slope_pips": round(slope_pips, 3) if slope_pips is not None else None,
-                "tp_pips": round(config.TP_PIPS, 2),
-                "sl_pips": round(config.SL_PIPS, 2),
-                "hard_stop_pips": round(config.SL_PIPS, 2),
+                "tp_pips": round(tp_pips, 2),
+                "sl_pips": round(sl_pips, 2),
+                "hard_stop_pips": round(sl_pips, 2),
                 "env_tf": "M5",
                 "struct_tf": "M1",
                 "entry_mean": round(entry_mean, 5),
