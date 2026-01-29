@@ -46,6 +46,22 @@ def _safe_float(value: object) -> float | None:
         return None
 
 
+def _reason_matches_composite(reason_key: str) -> bool:
+    for token in _EXIT_COMPOSITE_REASONS:
+        t = str(token).strip().lower()
+        if not t:
+            continue
+        if t.endswith("*") and reason_key.startswith(t[:-1]):
+            return True
+        if t.startswith("*") and reason_key.endswith(t[1:]):
+            return True
+        if reason_key == t:
+            return True
+        if reason_key.endswith(t):
+            return True
+    return False
+
+
 def _composite_exit_allowed(
     *,
     reason: str | None,
@@ -56,7 +72,7 @@ def _composite_exit_allowed(
     if not reason:
         return True
     reason_key = str(reason).strip().lower()
-    if reason_key not in _EXIT_COMPOSITE_REASONS:
+    if not _reason_matches_composite(reason_key):
         return True
     if close_units is None or close_units == 0:
         return _EXIT_COMPOSITE_FAILOPEN
