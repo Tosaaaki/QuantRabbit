@@ -109,8 +109,12 @@ def _is_relaxed(tag: str) -> bool:
 def _pocket_regime_label(pocket: str) -> Optional[str]:
     if not pocket:
         return None
-    tf = "H1" if pocket.lower() == "macro" else "M1"
-    return current_regime(tf, event_mode=False)
+    if pocket.lower() == "macro":
+        reg = current_regime("H4", event_mode=False)
+        if reg:
+            return reg
+        return current_regime("H1", event_mode=False)
+    return current_regime("M1", event_mode=False)
 
 
 def _query_perf_row(

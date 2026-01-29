@@ -39,6 +39,7 @@ from execution import strategy_guard, reentry_gate
 from execution.position_manager import PositionManager, agent_client_prefixes
 from execution.risk_guard import POCKET_MAX_RATIOS, MAX_LEVERAGE
 from workers.common import perf_guard, profit_guard
+from workers.common.quality_gate import current_regime
 from utils import signal_bus
 from utils.oanda_account import get_account_snapshot
 try:
@@ -1229,6 +1230,13 @@ _ENTRY_THESIS_FLAG_KEYS = (
     "profile",
 )
 
+_ORDER_THESIS_REGIME_ENABLED = os.getenv("ORDER_THESIS_REGIME_ENABLED", "1").strip().lower() not in {
+    "",
+    "0",
+    "false",
+    "no",
+}
+
 
 def _augment_entry_thesis_flags(entry_thesis: Optional[dict]) -> Optional[dict]:
     if not isinstance(entry_thesis, dict):
@@ -1248,6 +1256,50 @@ def _augment_entry_thesis_flags(entry_thesis: Optional[dict]) -> Optional[dict]:
         return entry_thesis
     merged = dict(entry_thesis)
     merged["flags"] = sorted(flags)
+    return merged
+
+
+def _augment_entry_thesis_regime(entry_thesis: Optional[dict], pocket: str) -> Optional[dict]:
+    if not _ORDER_THESIS_REGIME_ENABLED or not isinstance(entry_thesis, dict):
+        return entry_thesis
+    reg = entry_thesis.get("regime")
+    macro = None
+    micro = None
+    if isinstance(reg, dict):
+        macro = reg.get("macro") or reg.get("macro_regime") or reg.get("reg_macro")
+        micro = reg.get("micro") or reg.get("micro_regime") or reg.get("reg_micro")
+    macro = macro or entry_thesis.get("macro_regime") or entry_thesis.get("reg_macro")
+    micro = micro or entry_thesis.get("micro_regime") or entry_thesis.get("reg_micro")
+    if macro and micro:
+        return entry_thesis
+
+    macro_live = macro
+    micro_live = micro
+    if not macro_live:
+        macro_live = current_regime("H4", event_mode=False) or current_regime("H1", event_mode=False)
+    if not micro_live:
+        micro_live = current_regime("M1", event_mode=False)
+    if not macro_live and not micro_live:
+        return entry_thesis
+
+    merged = dict(entry_thesis)
+    reg_dict = reg if isinstance(reg, dict) else {}
+    if macro_live:
+        reg_dict = dict(reg_dict)
+        reg_dict.setdefault("macro", macro_live)
+        reg_dict.setdefault("macro_regime", macro_live)
+        reg_dict.setdefault("reg_macro", macro_live)
+        merged.setdefault("macro_regime", macro_live)
+        merged.setdefault("reg_macro", macro_live)
+    if micro_live:
+        reg_dict = dict(reg_dict)
+        reg_dict.setdefault("micro", micro_live)
+        reg_dict.setdefault("micro_regime", micro_live)
+        reg_dict.setdefault("reg_micro", micro_live)
+        merged.setdefault("micro_regime", micro_live)
+        merged.setdefault("reg_micro", micro_live)
+    if reg_dict:
+        merged["regime"] = reg_dict
     return merged
 
 
@@ -3640,6 +3692,7 @@ async def market_order(
     if isinstance(entry_thesis, dict) and not reduce_only:
         entry_thesis = attach_section_axis(entry_thesis, pocket=pocket)
     if isinstance(entry_thesis, dict):
+        entry_thesis = _augment_entry_thesis_regime(entry_thesis, pocket)
         entry_thesis = _augment_entry_thesis_flags(entry_thesis)
 
     trace_enabled = os.getenv("ORDER_TRACE_PROGRESS", "0").strip().lower() not in {
@@ -5029,6 +5082,9 @@ async def market_order(
             preflight_units = capped
 
     if isinstance(entry_thesis, dict):
+        entry_thesis = _augment_entry_thesis_flags(entry_thesis)
+    if isinstance(entry_thesis, dict):
+        entry_thesis = _augment_entry_thesis_regime(entry_thesis, pocket)
         entry_thesis = _augment_entry_thesis_flags(entry_thesis)
     comment = _encode_thesis_comment(entry_thesis)
     client_ext = {"tag": f"pocket={pocket}"}
