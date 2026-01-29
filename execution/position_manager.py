@@ -118,6 +118,7 @@ _CANONICAL_STRATEGY_TAGS = {
     "impulse_momentum_s5",
     "squeeze_break_s5",
     "vwap_magnet_s5",
+    "VolSpikeRider",
     "fast_scalp",
     "mm_lite",
     "manual_swing",
@@ -178,6 +179,7 @@ _STRATEGY_POCKET_MAP = {
     "squeeze_break_s5": "scalp",
     "vwap_magnet_s5": "scalp",
     "mm_lite": "scalp",
+    "VolSpikeRider": "scalp",
     "fast_scalp": "scalp_fast",
 }
 
