@@ -107,11 +107,17 @@ def _build_thesis(
     *,
     direction: str,
     move_pips: float,
+    min_move_pips: float,
+    recent_move_pips: float,
     span_sec: float,
     speed_pps: float,
     spread_pips: float,
     atr_pips: Optional[float],
     range_active: bool,
+    trend_dir: Optional[str],
+    trend_gap_pips: Optional[float],
+    trend_adx: Optional[float],
+    body_pips: Optional[float],
     tp_pips: float,
     sl_pips: float,
     confidence: int,
@@ -121,11 +127,17 @@ def _build_thesis(
         "profile": config.PROFILE_TAG,
         "direction": direction,
         "move_pips": round(move_pips, 3),
+        "min_move_pips": round(min_move_pips, 3),
+        "recent_move_pips": round(recent_move_pips, 3),
         "window_sec": round(span_sec, 3),
         "speed_pps": round(speed_pps, 3),
         "spread_pips": round(spread_pips, 3),
         "atr_pips": None if atr_pips is None else round(atr_pips, 3),
         "range_active": bool(range_active),
+        "trend_dir": trend_dir,
+        "trend_gap_pips": None if trend_gap_pips is None else round(trend_gap_pips, 3),
+        "trend_adx": None if trend_adx is None else round(trend_adx, 3),
+        "body_pips": None if body_pips is None else round(body_pips, 3),
         "tp_pips": round(tp_pips, 3),
         "sl_pips": round(sl_pips, 3),
         "hard_stop_pips": round(sl_pips, 3),
@@ -144,11 +156,23 @@ def _calc_sl_tp(abs_move: float, atr_pips: float) -> Tuple[float, float]:
     return sl_pips, tp_pips
 
 
-def _size_mult(abs_move: float, speed_pps: float) -> float:
-    base = abs_move / max(0.1, config.ENTRY_MIN_MOVE_PIPS)
+def _size_mult(abs_move: float, speed_pps: float, min_move_pips: float) -> float:
+    base = abs_move / max(0.1, min_move_pips)
     speed = speed_pps / max(0.1, config.ENTRY_MIN_SPEED_PPS)
     mult = 0.6 * base + 0.4 * speed
     return max(config.ENTRY_SIZE_MIN_MULT, min(config.ENTRY_SIZE_MAX_MULT, mult))
+
+
+def _trend_state(factors: Dict[str, float], fallback_price: float) -> tuple[str, float, float] | None:
+    ma10 = _float(factors.get("ma10"))
+    ma20 = _float(factors.get("ma20"))
+    adx = _float(factors.get("adx")) or 0.0
+    price = _float(factors.get("close")) or fallback_price
+    if not ma10 or not ma20 or not price:
+        return None
+    gap_pips = (ma10 - ma20) / config.PIP_VALUE
+    direction = "long" if ma10 > ma20 else "short"
+    return direction, gap_pips, adx
 
 
 async def vol_spike_rider_worker() -> None:
@@ -193,9 +217,6 @@ async def vol_spike_rider_worker() -> None:
                 continue
 
             move_pips, abs_move, span_sec, speed_pps = _recent_move(config.ENTRY_WINDOW_SEC)
-            if abs_move < config.ENTRY_MIN_MOVE_PIPS or speed_pps < config.ENTRY_MIN_SPEED_PPS:
-                await asyncio.sleep(config.LOOP_INTERVAL_SEC)
-                continue
 
             direction = "long" if move_pips > 0 else "short"
 
@@ -207,6 +228,7 @@ async def vol_spike_rider_worker() -> None:
 
             fac = all_factors()
             fac_m1 = fac.get("M1") or {}
+            fac_m5 = fac.get("M5") or {}
             fac_h4 = fac.get("H4") or {}
             atr_pips = _float(fac_m1.get("atr_pips"))
             if atr_pips is None:
@@ -216,12 +238,19 @@ async def vol_spike_rider_worker() -> None:
             if atr_pips is None or atr_pips < config.ENTRY_MIN_ATR_PIPS:
                 await asyncio.sleep(config.LOOP_INTERVAL_SEC)
                 continue
+            min_move_pips = max(config.ENTRY_MIN_MOVE_PIPS, atr_pips * config.ENTRY_MIN_ATR_MULT)
+            if abs_move < min_move_pips or speed_pps < config.ENTRY_MIN_SPEED_PPS:
+                await asyncio.sleep(config.LOOP_INTERVAL_SEC)
+                continue
             if abs_move > config.ENTRY_MAX_MOVE_PIPS or abs_move > atr_pips * config.ENTRY_MAX_ATR_MULT:
                 await asyncio.sleep(config.LOOP_INTERVAL_SEC)
                 continue
 
             recent_move, recent_abs, _, _ = _recent_move(config.ENTRY_RECENT_WINDOW_SEC)
             if abs_move > 0 and recent_abs / abs_move < config.ENTRY_RECENT_MIN_RATIO:
+                await asyncio.sleep(config.LOOP_INTERVAL_SEC)
+                continue
+            if config.ENTRY_RECENT_DIR_CONFIRM and recent_move and move_pips and recent_move * move_pips <= 0:
                 await asyncio.sleep(config.LOOP_INTERVAL_SEC)
                 continue
 
@@ -255,6 +284,9 @@ async def vol_spike_rider_worker() -> None:
             low = _float(fac_m1.get("low"))
             open_ = _float(fac_m1.get("open"))
             close_ = _float(fac_m1.get("close"))
+            body_pips = None
+            if open_ is not None and close_ is not None:
+                body_pips = (close_ - open_) / config.PIP_VALUE
             if None not in (high, low, open_, close_):
                 range_pips = (high - low) / config.PIP_VALUE
                 if range_pips >= config.ENTRY_WICK_MIN_RANGE_PIPS and range_pips > 0:
@@ -265,6 +297,29 @@ async def vol_spike_rider_worker() -> None:
                     else:
                         wick_ratio = lower_wick / range_pips
                     if wick_ratio >= config.ENTRY_MAX_WICK_RATIO:
+                        await asyncio.sleep(config.LOOP_INTERVAL_SEC)
+                        continue
+                if body_pips is not None and config.ENTRY_BODY_COUNTER_MAX_PIPS > 0:
+                    if direction == "long" and body_pips <= -config.ENTRY_BODY_COUNTER_MAX_PIPS:
+                        await asyncio.sleep(config.LOOP_INTERVAL_SEC)
+                        continue
+                    if direction == "short" and body_pips >= config.ENTRY_BODY_COUNTER_MAX_PIPS:
+                        await asyncio.sleep(config.LOOP_INTERVAL_SEC)
+                        continue
+
+            trend_dir = None
+            trend_gap_pips = None
+            trend_adx = None
+            if config.ENTRY_TREND_BLOCK_COUNTER:
+                trend_fac = fac_m5 if config.ENTRY_TREND_USE_M5 else fac_m1
+                trend = _trend_state(trend_fac, latest_mid)
+                if trend:
+                    trend_dir, trend_gap_pips, trend_adx = trend
+                    if (
+                        abs(trend_gap_pips) >= config.ENTRY_TREND_GAP_PIPS
+                        and trend_adx >= config.ENTRY_TREND_ADX_MIN
+                        and direction != trend_dir
+                    ):
                         await asyncio.sleep(config.LOOP_INTERVAL_SEC)
                         continue
 
@@ -324,7 +379,7 @@ async def vol_spike_rider_worker() -> None:
                 await asyncio.sleep(config.LOOP_INTERVAL_SEC)
                 continue
 
-            size_mult = _size_mult(abs_move, speed_pps)
+            size_mult = _size_mult(abs_move, speed_pps, min_move_pips)
             units = int(round(units * size_mult))
             if units < config.MIN_UNITS:
                 await asyncio.sleep(config.LOOP_INTERVAL_SEC)
@@ -338,11 +393,17 @@ async def vol_spike_rider_worker() -> None:
             thesis = _build_thesis(
                 direction=direction,
                 move_pips=abs_move,
+                min_move_pips=min_move_pips,
+                recent_move_pips=recent_move,
                 span_sec=span_sec,
                 speed_pps=speed_pps,
                 spread_pips=spread_pips,
                 atr_pips=atr_pips,
                 range_active=range_active,
+                trend_dir=trend_dir,
+                trend_gap_pips=trend_gap_pips,
+                trend_adx=trend_adx,
+                body_pips=body_pips,
                 tp_pips=tp_pips,
                 sl_pips=sl_pips,
                 confidence=confidence,
