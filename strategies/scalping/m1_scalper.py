@@ -14,6 +14,11 @@ except ModuleNotFoundError:  # pragma: no cover - fallback when optional module 
     def detect_latest_n_wave(*args, **kwargs):  # type: ignore
         return None
 
+try:
+    from analysis.pattern_stats import derive_pattern_signature
+except ModuleNotFoundError:  # pragma: no cover - optional in slim deployments
+    derive_pattern_signature = None  # type: ignore
+
 from market_data import orderbook_state
 
 _PIP = 0.01
@@ -458,6 +463,50 @@ class M1Scalper:
         if not _liquidity_guard():
             return None
 
+        def _short_trap_pattern() -> tuple[bool, Optional[str]]:
+            if not _env_bool("M1SCALP_BLOCK_MARU_UP_SHORT", True):
+                return False, None
+            if derive_pattern_signature is None:
+                return False, None
+            last = candles[-1] if candles else {}
+            if not isinstance(last, dict):
+                return False, None
+            open_px = _to_float(fac.get("open") or last.get("open") or last.get("o"))
+            high_px = _to_float(fac.get("high") or last.get("high") or last.get("h"))
+            low_px = _to_float(fac.get("low") or last.get("low") or last.get("l"))
+            close_px = _to_float(fac.get("close") or last.get("close") or last.get("c"))
+            if None in (open_px, high_px, low_px, close_px):
+                return False, None
+            pattern_fac = {
+                "open": open_px,
+                "high": high_px,
+                "low": low_px,
+                "close": close_px,
+                "ma10": fac.get("ma10"),
+                "ma20": fac.get("ma20"),
+                "rsi": rsi,
+                "atr_pips": atr_pips,
+                "bbw": bbw,
+            }
+            tag, _ = derive_pattern_signature(pattern_fac, action="OPEN_SHORT")
+            if not tag:
+                return False, None
+            parts = {}
+            for part in tag.split("|"):
+                if ":" not in part:
+                    continue
+                key, value = part.split(":", 1)
+                parts[key] = value
+            is_trap = (
+                parts.get("c") == "maru_up"
+                and parts.get("w") == "upper"
+                and parts.get("tr") == "dn_mild"
+                and parts.get("rsi") == "mid_high"
+                and parts.get("vol") == "tight"
+                and parts.get("atr") == "low"
+            )
+            return is_trap, tag
+
         def _adjust_tp(tp: float, conf: int) -> float:
             """TPを信頼度とボラ/レンジ状態で可変化する。"""
             if low_vol_range:
@@ -598,6 +647,17 @@ class M1Scalper:
             if action == "OPEN_SHORT" and strong_up:
                 _log("trend_block_short", momentum=round(momentum, 5), ema_gap=round(ema_gap_pips, 3), price_gap=round(price_gap_pips, 3))
                 return None
+            if action == "OPEN_SHORT":
+                trap_hit, trap_tag = _short_trap_pattern()
+                if trap_hit:
+                    _log(
+                        "pattern_block_short_trap",
+                        tag=trap_tag,
+                        rsi=round(rsi, 2),
+                        atr=round(atr_pips, 2),
+                        bbw=round(bbw, 5),
+                    )
+                    return None
             tp_dyn_adj = _adjust_tp(tp_dyn, confidence)
             signal = _apply_mult({
                 "action": action,

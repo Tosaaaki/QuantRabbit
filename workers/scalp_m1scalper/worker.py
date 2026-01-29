@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 from analysis.ma_projection import compute_adx_projection, compute_bbw_projection, compute_ma_projection, compute_rsi_projection
+try:
+    from analysis.pattern_stats import derive_pattern_signature
+except ModuleNotFoundError:  # pragma: no cover - optional in slim deployments
+    derive_pattern_signature = None  # type: ignore
 
 import asyncio
 import datetime
@@ -613,6 +617,14 @@ async def scalp_m1_worker() -> None:
             "fast_cut_pips": signal.get("fast_cut_pips"),
             "fast_cut_time_sec": signal.get("fast_cut_time_sec"),
         }
+        if derive_pattern_signature is not None and isinstance(entry_thesis, dict):
+            pattern_tag, pattern_meta = derive_pattern_signature(
+                fac_m1, action="OPEN_LONG" if units > 0 else "OPEN_SHORT"
+            )
+            if pattern_tag:
+                entry_thesis["pattern_tag"] = pattern_tag
+            if pattern_meta:
+                entry_thesis["pattern_meta"] = pattern_meta
 
         proj_allow, proj_mult, proj_detail = _projection_decision(side, config.POCKET)
         if not proj_allow:
