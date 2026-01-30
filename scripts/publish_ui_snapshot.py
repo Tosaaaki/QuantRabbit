@@ -294,7 +294,7 @@ def main() -> int:
     parser.add_argument(
         "--recent",
         type=int,
-        default=50,
+        default=int(os.getenv("UI_RECENT_TRADES_LIMIT", "80")),
         help="Number of recent trades to include.",
     )
     parser.add_argument(

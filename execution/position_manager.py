@@ -65,6 +65,9 @@ _DB_FILE_LOCK_TIMEOUT = float(os.getenv("POSITION_MANAGER_DB_FILE_LOCK_TIMEOUT",
 _METRICS_READ_TIMEOUT_SEC = float(
     os.getenv("POSITION_MANAGER_METRICS_TIMEOUT_SEC", "0.2")
 )
+_HOURLY_LOOKBACK_HOURS = max(
+    6, int(os.getenv("POSITION_MANAGER_HOURLY_LOOKBACK_HOURS", "24"))
+)
 _BACKFILL_ENABLED = os.getenv("POSITION_MANAGER_BACKFILL_ATTR", "1").strip().lower() not in {
     "",
     "0",
@@ -1913,6 +1916,18 @@ class PositionManager:
             "wins": 0,
             "losses": 0,
         }
+        hourly_buckets: dict[datetime, dict[str, float | int]] = {}
+        now_hour = now_jst.replace(minute=0, second=0, microsecond=0)
+        start_hour = now_hour - timedelta(hours=_HOURLY_LOOKBACK_HOURS - 1)
+        for i in range(_HOURLY_LOOKBACK_HOURS):
+            hour = now_hour - timedelta(hours=i)
+            hourly_buckets[hour] = {
+                "pips": 0.0,
+                "jpy": 0.0,
+                "trades": 0,
+                "wins": 0,
+                "losses": 0,
+            }
 
         def _is_agent_trade(pocket: str, client_id: str | None) -> bool:
             if pocket in _KNOWN_POCKETS:
@@ -1998,6 +2013,19 @@ class PositionManager:
                         ytd_bot["wins"] += 1
                     elif pl_pips < 0:
                         ytd_bot["losses"] += 1
+
+            if close_dt_jst >= start_hour and pocket != _MANUAL_POCKET_NAME:
+                if _is_agent_trade(pocket, client_id):
+                    hour_key = close_dt_jst.replace(minute=0, second=0, microsecond=0)
+                    bucket = hourly_buckets.get(hour_key)
+                    if bucket is not None:
+                        bucket["pips"] += pl_pips
+                        bucket["jpy"] += pl_jpy
+                        bucket["trades"] += 1
+                        if pl_pips > 0:
+                            bucket["wins"] += 1
+                        elif pl_pips < 0:
+                            bucket["losses"] += 1
 
         def _finalise(data: dict) -> dict:
             trades = data["trades"]
@@ -2181,6 +2209,31 @@ class PositionManager:
         _apply_start_balance(profit_tables["weekly"], weekly_start)
         _apply_start_balance(profit_tables["monthly"], monthly_start)
 
+        hourly_rows: list[dict] = []
+        for hour in sorted(hourly_buckets.keys(), reverse=True):
+            data = hourly_buckets[hour]
+            trades = int(data["trades"])
+            win_rate = (data["wins"] / trades) if trades else 0.0
+            hourly_rows.append(
+                {
+                    "key": hour.isoformat(),
+                    "label": hour.strftime("%m/%d %H:00"),
+                    "pips": round(float(data["pips"]), 2),
+                    "jpy": round(float(data["jpy"]), 2),
+                    "trades": trades,
+                    "wins": int(data["wins"]),
+                    "losses": int(data["losses"]),
+                    "win_rate": win_rate,
+                }
+            )
+
+        hourly_trades = {
+            "timezone": "JST",
+            "lookback_hours": _HOURLY_LOOKBACK_HOURS,
+            "exclude_manual": True,
+            "hours": hourly_rows,
+        }
+
         return {
             "daily": daily,
             "yesterday": yesterday,
@@ -2191,6 +2244,7 @@ class PositionManager:
             "pockets": pockets_final,
             "profit_tables": profit_tables,
             "ytd_summary": ytd_summary,
+            "hourly_trades": hourly_trades,
         }
 
     def fetch_recent_trades(self, limit: int = 50) -> list[dict]:

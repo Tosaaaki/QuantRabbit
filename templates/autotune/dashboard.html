@@ -514,8 +514,45 @@
 
     <section class="tab-panel" id="tab-history" role="tabpanel" aria-labelledby="tab-history-button" data-tab-panel="history">
       <div class="card">
+        <h2>1時間ごとのトレード</h2>
+        <div class="tagline">
+          直近 {{ dashboard.hourly_trades.lookback_hours }}h / {{ dashboard.hourly_trades.timezone }}
+          {% if dashboard.hourly_trades.exclude_manual %}/ 手動除外{% endif %}
+        </div>
+        {% if dashboard.hourly_trades.hours %}
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>時間</th>
+                  <th>損益 (pips)</th>
+                  <th>損益 (JPY)</th>
+                  <th>件数</th>
+                  <th>勝率</th>
+                </tr>
+              </thead>
+              <tbody>
+              {% for row in dashboard.hourly_trades.hours %}
+                {% set pill_class = 'pill gain' if row.pips > 0 else 'pill loss' if row.pips < 0 else 'pill neutral' %}
+                <tr>
+                  <td class="mono nowrap">{{ row.label }}</td>
+                  <td><span class="{{ pill_class }}">{{ "%+.1f"|format(row.pips) }}</span></td>
+                  <td>{{ "%+.0f"|format(row.jpy) }}</td>
+                  <td>{{ row.trades }}</td>
+                  <td>{{ "%.1f"|format(row.win_rate * 100.0) }}%</td>
+                </tr>
+              {% endfor %}
+              </tbody>
+            </table>
+          </div>
+        {% else %}
+          <p class="tagline">直近のトレードがありません。</p>
+        {% endif %}
+      </div>
+
+      <div class="card">
         <h2>最近のトレード</h2>
-    <div class="tagline">更新順で最新12件を表示します。状態/決済理由も併記します。</div>
+    <div class="tagline">更新順で最新{{ dashboard.recent_trades_limit }}件を表示します。状態/決済理由も併記します。</div>
     {% if dashboard.recent_trades %}
       <div class="table-wrap">
         <table>

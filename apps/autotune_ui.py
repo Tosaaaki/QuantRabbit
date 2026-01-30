@@ -47,6 +47,11 @@ _LITE_SNAPSHOT_FAST = (
     in {"fast", "minimal"}
 )
 _AUTO_REFRESH_SEC = max(5, int(os.getenv("UI_AUTO_REFRESH_SEC", "15")))
+_RECENT_TRADES_LIMIT = max(20, int(os.getenv("UI_RECENT_TRADES_LIMIT", "80")))
+_RECENT_TRADES_DISPLAY = max(
+    10, min(int(os.getenv("UI_RECENT_TRADES_DISPLAY", "30")), _RECENT_TRADES_LIMIT)
+)
+_HOURLY_TRADES_LOOKBACK = max(6, int(os.getenv("UI_HOURLY_LOOKBACK_HOURS", "24")))
 _DB_READ_TIMEOUT_SEC = float(os.getenv("UI_DB_READ_TIMEOUT_SEC", "0.2"))
 _OPS_REMOTE_TIMEOUT_SEC = float(os.getenv("UI_OPS_TIMEOUT_SEC", "4.0"))
 _OPS_COMMAND_TIMEOUT_SEC = float(os.getenv("UI_OPS_CMD_TIMEOUT_SEC", "6.0"))
@@ -200,6 +205,7 @@ def _dashboard_defaults(error: Optional[str] = None) -> Dict[str, Any]:
         "generated_at": None,
         "generated_label": None,
         "auto_refresh_sec": _AUTO_REFRESH_SEC,
+        "recent_trades_limit": _RECENT_TRADES_DISPLAY,
         "recent_trades": [],
         "performance": {
             "daily_pl_pips": 0.0,
@@ -262,6 +268,12 @@ def _dashboard_defaults(error: Optional[str] = None) -> Dict[str, Any]:
             "daily": [],
             "weekly": [],
             "monthly": [],
+        },
+        "hourly_trades": {
+            "timezone": "JST",
+            "lookback_hours": _HOURLY_TRADES_LOOKBACK,
+            "exclude_manual": True,
+            "hours": [],
         },
         "ytd_summary": {
             "year_start": None,
@@ -773,6 +785,66 @@ def _load_recent_trades(limit: int = 50) -> list[dict]:
         return []
 
 
+def _build_hourly_fallback(trades: list[dict]) -> dict:
+    now = datetime.now(timezone.utc)
+    jst = timezone(timedelta(hours=9))
+    now_jst = now.astimezone(jst)
+    now_hour = now_jst.replace(minute=0, second=0, microsecond=0)
+    start_hour = now_hour - timedelta(hours=_HOURLY_TRADES_LOOKBACK - 1)
+    buckets: dict[datetime, dict[str, float | int]] = {}
+    for i in range(_HOURLY_TRADES_LOOKBACK):
+        hour = now_hour - timedelta(hours=i)
+        buckets[hour] = {"pips": 0.0, "jpy": 0.0, "trades": 0, "wins": 0, "losses": 0}
+
+    for item in trades or []:
+        pocket = (item.get("pocket") or "").lower()
+        if pocket == "manual":
+            continue
+        close_dt = _parse_dt(item.get("close_time") or item.get("updated_at"))
+        if not close_dt:
+            continue
+        close_jst = close_dt.astimezone(jst)
+        if close_jst < start_hour:
+            continue
+        hour_key = close_jst.replace(minute=0, second=0, microsecond=0)
+        bucket = buckets.get(hour_key)
+        if not bucket:
+            continue
+        pl_pips = _safe_float(item.get("pl_pips"))
+        pl_jpy = _safe_float(item.get("realized_pl"))
+        bucket["pips"] += pl_pips
+        bucket["jpy"] += pl_jpy
+        bucket["trades"] += 1
+        if pl_pips > 0:
+            bucket["wins"] += 1
+        elif pl_pips < 0:
+            bucket["losses"] += 1
+
+    rows: list[dict] = []
+    for hour in sorted(buckets.keys(), reverse=True):
+        data = buckets[hour]
+        trades = data["trades"]
+        win_rate = (data["wins"] / trades) if trades else 0.0
+        rows.append(
+            {
+                "key": hour.isoformat(),
+                "label": hour.strftime("%m/%d %H:00"),
+                "pips": round(float(data["pips"]), 2),
+                "jpy": round(float(data["jpy"]), 2),
+                "trades": int(trades),
+                "wins": int(data["wins"]),
+                "losses": int(data["losses"]),
+                "win_rate": win_rate,
+            }
+        )
+    return {
+        "timezone": "JST",
+        "lookback_hours": _HOURLY_TRADES_LOOKBACK,
+        "exclude_manual": True,
+        "hours": rows,
+    }
+
+
 def _build_live_snapshot() -> dict:
     try:
         from execution.position_manager import PositionManager
@@ -799,7 +871,7 @@ def _build_live_snapshot() -> dict:
         open_positions = {}
 
     try:
-        recent_trades = pm.fetch_recent_trades(limit=50)
+        recent_trades = pm.fetch_recent_trades(limit=_RECENT_TRADES_LIMIT)
     except Exception:
         recent_trades = []
 
@@ -833,7 +905,7 @@ def _build_live_snapshot() -> dict:
 
 
 def _build_lite_snapshot() -> dict:
-    recent_trades = _load_recent_trades()
+    recent_trades = _load_recent_trades(limit=_RECENT_TRADES_LIMIT)
     metrics: dict[str, Any] = {}
     open_positions: dict[str, Any] = {}
     if not _LITE_SNAPSHOT_FAST:
@@ -960,7 +1032,7 @@ def _summarise_snapshot(snapshot: Dict[str, Any]) -> Dict[str, Any]:
         )
 
     recent_trades_display: list[Dict[str, Any]] = []
-    for item in trades_raw[:12]:
+    for item in trades_raw[:_RECENT_TRADES_DISPLAY]:
         entry_dt = _parse_dt(item.get("entry_time"))
         close_dt = _parse_dt(item.get("close_time"))
         updated_dt = _parse_dt(item.get("updated_at") or item.get("close_time") or item.get("entry_time"))
@@ -991,6 +1063,12 @@ def _summarise_snapshot(snapshot: Dict[str, Any]) -> Dict[str, Any]:
             }
         )
     base["recent_trades"] = recent_trades_display
+
+    hourly_trades = metrics_snapshot.get("hourly_trades")
+    if isinstance(hourly_trades, dict):
+        base["hourly_trades"] = hourly_trades
+    else:
+        base["hourly_trades"] = _build_hourly_fallback(trades_raw)
 
     closed_trades = [t for t in parsed_trades if t["close_time"]]
     closed_trades.sort(key=lambda t: t["close_time"], reverse=True)
