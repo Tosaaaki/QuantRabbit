@@ -7,6 +7,10 @@ from typing import Dict
 import numpy as np
 import pandas as pd
 
+from indicators.divergence import compute_divergence, DEFAULT_MIN_MACD_PIPS
+
+PIP = 0.01
+
 
 class IndicatorEngine:
     """Compute technical indicators from OHLC DataFrame."""
@@ -54,6 +58,21 @@ class IndicatorEngine:
                 "low_hits": 0.0,
                 "high_hit_interval": 0.0,
                 "low_hit_interval": 0.0,
+                "div_rsi_kind": 0.0,
+                "div_rsi_score": 0.0,
+                "div_rsi_age": 0.0,
+                "div_rsi_strength": 0.0,
+                "div_rsi_price_pips": 0.0,
+                "div_rsi_osc_delta": 0.0,
+                "div_rsi_pivot_gap": 0.0,
+                "div_macd_kind": 0.0,
+                "div_macd_score": 0.0,
+                "div_macd_age": 0.0,
+                "div_macd_strength": 0.0,
+                "div_macd_price_pips": 0.0,
+                "div_macd_osc_delta": 0.0,
+                "div_macd_pivot_gap": 0.0,
+                "div_score": 0.0,
             }
 
         close = df["close"].astype(float)
@@ -101,6 +120,20 @@ class IndicatorEngine:
         upper_wick_avg, lower_wick_avg = _wick_ratios(df, window=20)
         high_hits, low_hits, high_int, low_int = _hit_stats(high, low, window=30, band=0.0008)
 
+        rsi_div = compute_divergence(
+            price_high=high.values,
+            price_low=low.values,
+            osc=rsi.values,
+        )
+        macd_hist_pips = (macd_hist / PIP) if not macd_hist.empty else macd_hist
+        macd_div = compute_divergence(
+            price_high=high.values,
+            price_low=low.values,
+            osc=macd_hist_pips.values if not macd_hist_pips.empty else [],
+            min_osc=DEFAULT_MIN_MACD_PIPS,
+        )
+        div_score = rsi_div.score * 0.6 + macd_div.score * 0.4
+
         out: Dict[str, float] = {
             "ma10": float(ma10.iloc[-1]) if not ma10.empty else 0.0,
             "ma20": float(ma20.iloc[-1]) if not ma20.empty else 0.0,
@@ -146,6 +179,21 @@ class IndicatorEngine:
             "low_hits": float(low_hits),
             "high_hit_interval": float(high_int),
             "low_hit_interval": float(low_int),
+            "div_rsi_kind": int(rsi_div.kind),
+            "div_rsi_score": float(rsi_div.score),
+            "div_rsi_age": float(rsi_div.age_bars),
+            "div_rsi_strength": float(rsi_div.strength),
+            "div_rsi_price_pips": float(rsi_div.price_delta_pips),
+            "div_rsi_osc_delta": float(rsi_div.osc_delta),
+            "div_rsi_pivot_gap": float(rsi_div.pivot_gap),
+            "div_macd_kind": int(macd_div.kind),
+            "div_macd_score": float(macd_div.score),
+            "div_macd_age": float(macd_div.age_bars),
+            "div_macd_strength": float(macd_div.strength),
+            "div_macd_price_pips": float(macd_div.price_delta_pips),
+            "div_macd_osc_delta": float(macd_div.osc_delta),
+            "div_macd_pivot_gap": float(macd_div.pivot_gap),
+            "div_score": float(div_score),
         }
 
         for k, v in out.items():

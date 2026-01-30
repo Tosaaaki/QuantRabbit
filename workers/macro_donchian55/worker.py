@@ -16,6 +16,7 @@ from execution.order_manager import market_order
 from execution.risk_guard import allowed_lot, can_trade, clamp_sl_tp
 from market_data import tick_window
 from strategies.breakout.donchian55 import Donchian55
+from utils.divergence import apply_divergence_confidence, divergence_bias
 from utils.market_hours import is_market_open
 from utils.oanda_account import get_account_snapshot
 from workers.common.dyn_cap import compute_cap
@@ -397,6 +398,22 @@ async def donchian55_worker() -> None:
         signal = Donchian55.check(fac_h1, range_active=range_ctx.active)
         if not signal:
             continue
+        div_bias = divergence_bias(
+            fac_h1,
+            signal.get("action") or "",
+            mode="trend",
+            max_age_bars=8,
+        )
+        if div_bias:
+            base_conf = int(signal.get("confidence", 0) or 0)
+            signal["confidence"] = apply_divergence_confidence(
+                base_conf,
+                div_bias,
+                max_bonus=6.0,
+                max_penalty=10.0,
+                floor=40.0,
+                ceil=95.0,
+            )
 
         snap = get_account_snapshot()
         free_ratio_raw = snap.free_margin_ratio

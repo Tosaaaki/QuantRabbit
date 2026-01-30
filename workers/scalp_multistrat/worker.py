@@ -22,6 +22,7 @@ from strategies.scalping.range_fader import RangeFader
 from strategies.scalping.pulse_break import PulseBreak
 from strategies.scalping.impulse_retrace import ImpulseRetraceScalp
 from strategies.scalping.m1_scalper import M1Scalper
+from utils.divergence import apply_divergence_confidence, divergence_bias
 from utils.market_hours import is_market_open
 from utils.oanda_account import get_account_snapshot, get_position_summary
 from workers.common.dyn_cap import compute_cap
@@ -601,6 +602,36 @@ async def scalp_multi_worker() -> None:
                 bb_style = "reversion"
             if not _bb_entry_allowed(bb_style, side, price, fac_m1, range_active=range_ctx.active):
                 continue
+
+            div_mode = "neutral"
+            if strategy_name in _RANGE_STRATEGIES or _is_mr_signal(signal_tag):
+                div_mode = "reversion"
+            elif strategy_name in _TREND_STRATEGIES:
+                div_mode = "trend"
+            max_age = 12
+            if strategy_name == ImpulseRetraceScalp.name:
+                max_age = 18
+            elif strategy_name in _RANGE_STRATEGIES:
+                max_age = 14
+            div_bias = divergence_bias(
+                fac_m1,
+                signal.get("action") or "",
+                mode=div_mode,
+                max_age_bars=max_age,
+            )
+            if div_bias:
+                base_conf = int(signal.get("confidence", 0) or 0)
+                max_bonus = 7.0 if div_mode == "reversion" else 6.0
+                max_penalty = 9.0 if div_mode == "reversion" else 8.0
+                ceil = 90.0 if div_mode == "reversion" else 95.0
+                signal["confidence"] = apply_divergence_confidence(
+                    base_conf,
+                    div_bias,
+                    max_bonus=max_bonus,
+                    max_penalty=max_penalty,
+                    floor=40.0,
+                    ceil=ceil,
+                )
 
             tp_scale = 4.0 / max(1.0, tp_pips)
             tp_scale = max(0.4, min(1.2, tp_scale))

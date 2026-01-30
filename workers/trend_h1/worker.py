@@ -22,6 +22,7 @@ from execution.risk_guard import (
 )
 from market_data import spread_monitor, tick_window
 from strategies.trend.ma_cross import MovingAverageCross
+from utils.divergence import apply_divergence_confidence, divergence_bias
 from utils.market_hours import is_market_open
 from utils.oanda_account import get_account_snapshot
 from workers.common.quality_gate import current_regime
@@ -554,6 +555,22 @@ async def trend_h1_worker() -> None:
                 if not decision:
                     _log_skip("no_signal", skip_state)
                     continue
+                div_bias = divergence_bias(
+                    fac_h1,
+                    decision.get("action") or "",
+                    mode="trend",
+                    max_age_bars=8,
+                )
+                if div_bias:
+                    base_conf = int(decision.get("confidence", 0) or 0)
+                    decision["confidence"] = apply_divergence_confidence(
+                        base_conf,
+                        div_bias,
+                        max_bonus=6.0,
+                        max_penalty=10.0,
+                        floor=40.0,
+                        ceil=96.0,
+                    )
 
                 confidence = int(decision.get("confidence", 0))
                 if confidence < config.MIN_CONFIDENCE:

@@ -23,6 +23,7 @@ from workers.common.pocket_plan import PocketPlan
 from workers.common.quality_gate import current_regime
 from workers.common.pullback_touch import count_pullback_touches
 from utils.metrics_logger import log_metric
+from utils.divergence import apply_divergence_confidence, divergence_bias
 
 from . import config
 
@@ -728,6 +729,21 @@ async def pullback_s5_worker() -> None:
             fac_h4 = factors.get("H4") or {}
             if not _bb_entry_allowed(BB_STYLE, side, entry_price, fac_m1):
                 continue
+            div_bias = divergence_bias(
+                fac_m1,
+                "OPEN_LONG" if side == "long" else "OPEN_SHORT",
+                mode="trend",
+                max_age_bars=10,
+            )
+            if div_bias:
+                confidence = apply_divergence_confidence(
+                    confidence,
+                    div_bias,
+                    max_bonus=5.0,
+                    max_penalty=8.0,
+                    floor=40.0,
+                    ceil=95.0,
+                )
             signal = {
                 "action": "OPEN_LONG" if side == "long" else "OPEN_SHORT",
                 "pocket": "scalp",

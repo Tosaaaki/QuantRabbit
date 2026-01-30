@@ -19,6 +19,7 @@ from execution.order_manager import market_order
 from execution.risk_guard import allowed_lot, can_trade, clamp_sl_tp
 from market_data import tick_window
 from strategies.mean_reversion.bb_rsi import BBRsi
+from utils.divergence import apply_divergence_confidence, divergence_bias
 from utils.market_hours import is_market_open
 from utils.oanda_account import get_account_snapshot
 from workers.common.dyn_cap import compute_cap
@@ -433,6 +434,22 @@ async def micro_bbrsi_worker() -> None:
         signal = BBRsi.check(fac_m1)
         if not signal:
             continue
+        div_bias = divergence_bias(
+            fac_m1,
+            signal.get("action") or "",
+            mode="reversion",
+            max_age_bars=16,
+        )
+        if div_bias:
+            base_conf = int(signal.get("confidence", 0) or 0)
+            signal["confidence"] = apply_divergence_confidence(
+                base_conf,
+                div_bias,
+                max_bonus=10.0,
+                max_penalty=12.0,
+                floor=30.0,
+                ceil=95.0,
+            )
 
         snap = get_account_snapshot()
         free_ratio = float(snap.free_margin_ratio or 0.0) if snap.free_margin_ratio is not None else 0.0

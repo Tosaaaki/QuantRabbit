@@ -24,6 +24,7 @@ from strategies.micro.range_break import MicroRangeBreak
 from strategies.micro.vwap_bound_revert import MicroVWAPBound
 from strategies.micro_lowvol.micro_vwap_revert import MicroVWAPRevert
 from strategies.micro.trend_momentum import TrendMomentumMicro
+from utils.divergence import apply_divergence_confidence, divergence_bias
 from utils.market_hours import is_market_open
 from utils.oanda_account import get_account_snapshot, get_position_summary
 from utils.metrics_logger import log_metric
@@ -918,6 +919,47 @@ async def micro_multi_worker() -> None:
                 bb_style = "trend"
             if not _bb_entry_allowed(bb_style, side, price, fac_m1, range_active=range_ctx.active):
                 continue
+
+            base_tag = signal_tag.split("-", 1)[0] if signal_tag else ""
+            if base_tag in {"MicroVWAPBound", "MicroVWAPRevert"}:
+                div_mode = "reversion"
+                max_age = 18
+                max_bonus = 8.0
+                max_penalty = 10.0
+                floor = 45.0
+                ceil = 92.0
+            elif base_tag == "BB_RSI":
+                div_mode = "reversion"
+                max_age = 16
+                max_bonus = 10.0
+                max_penalty = 12.0
+                floor = 30.0
+                ceil = 95.0
+            else:
+                div_mode = "trend" if strategy_name in _TREND_STRATEGIES else "neutral"
+                if strategy_name in _PULLBACK_STRATEGIES:
+                    div_mode = "trend"
+                max_age = 12
+                max_bonus = 6.0
+                max_penalty = 8.0
+                floor = 40.0
+                ceil = 95.0
+            div_bias = divergence_bias(
+                fac_m1,
+                signal_action,
+                mode=div_mode,
+                max_age_bars=max_age,
+            )
+            if div_bias:
+                base_conf = int(signal.get("confidence", 0) or 0)
+                signal["confidence"] = apply_divergence_confidence(
+                    base_conf,
+                    div_bias,
+                    max_bonus=max_bonus,
+                    max_penalty=max_penalty,
+                    floor=floor,
+                    ceil=ceil,
+                )
 
             tp_scale = 10.0 / max(1.0, tp_pips)
             tp_scale = max(0.4, min(1.1, tp_scale))

@@ -16,6 +16,7 @@ from execution.risk_guard import allowed_lot, can_trade, clamp_sl_tp
 from indicators.factor_cache import all_factors, get_candles_snapshot
 from market_data import tick_window
 from strategies.scalping.range_fader import RangeFader
+from utils.divergence import apply_divergence_confidence, divergence_bias
 from utils.market_hours import is_market_open
 from utils.oanda_account import get_account_snapshot, get_position_summary
 from workers.common.dyn_cap import compute_cap
@@ -454,6 +455,22 @@ async def scalp_rangefader_worker() -> None:
             signal = RangeFader.check(fac_m1)
             if not signal:
                 continue
+            div_bias = divergence_bias(
+                fac_m1,
+                signal.get("action") or "",
+                mode="reversion",
+                max_age_bars=14,
+            )
+            if div_bias:
+                base_conf = int(signal.get("confidence", 0) or 0)
+                signal["confidence"] = apply_divergence_confidence(
+                    base_conf,
+                    div_bias,
+                    max_bonus=7.0,
+                    max_penalty=9.0,
+                    floor=40.0,
+                    ceil=90.0,
+                )
 
             snap = get_account_snapshot()
             free_ratio = float(snap.free_margin_ratio or 0.0) if snap.free_margin_ratio is not None else 0.0
