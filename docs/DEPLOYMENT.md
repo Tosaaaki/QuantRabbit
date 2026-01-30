@@ -1,6 +1,6 @@
 デプロイ手順（更新版 / gcloud デフォルト不要）
 
-この手順は gcloud の「アクティブなアカウント/プロジェクト」を設定せずに、その都度 `--project`/`--zone`/`--account` を明示して実行します。
+この手順は gcloud の「アクティブなアカウント/プロジェクト」を設定せずに、その都度 `--project`/`--zone`/`--account` を明示して実行します。新規 VM 作成は `docs/VM_BOOTSTRAP.md` を参照してください。
 
 前提
 - gcloud が利用可能で、必要なアカウントで認証済み（必要なら `gcloud auth login <ACCOUNT>`）

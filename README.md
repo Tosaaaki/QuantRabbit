@@ -13,6 +13,8 @@ QuantRabbit は USD/JPY で 24/7 自律運用する無裁量トレーディン�
   1) `gcloud compute ssh fx-trader-vm --project=quantrabbit --zone=asia-northeast1-a --tunnel-through-iap --ssh-key-file ~/.ssh/gcp_oslogin_quantrabbit --command "sudo -u tossaki -H bash -lc 'cd /home/tossaki/QuantRabbit && git fetch --all -q || true && git checkout -q main || git checkout -b main origin/main || true && git pull --ff-only && if [ -d .venv ]; then source .venv/bin/activate && pip install -r requirements.txt; fi'"`
   2) `gcloud compute ssh fx-trader-vm --project=quantrabbit --zone=asia-northeast1-a --tunnel-through-iap --ssh-key-file ~/.ssh/gcp_oslogin_quantrabbit --command "sudo systemctl daemon-reload && sudo systemctl restart quantrabbit.service && sudo systemctl status --no-pager -l quantrabbit.service || true"`
 
+新規 VM のブートストラップ手順は `docs/VM_BOOTSTRAP.md` に集約しています。
+
 * **テクニカル** : ta‑lib で計算した MA / BB / RSI / ADX …  
 * **ニュース** : 廃止（ニュース連動なし）  
 * **GPT** : レジーム補足 + 戦略順位 + lot 配分を 60 秒ごとに判断  

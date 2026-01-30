@@ -1,6 +1,6 @@
 # GCP Deploy Setup – gcloud 前提のゼロトラブル手順
 
-gcloud 未導入・設定不備・IAP/OS Login/Compute API の典型エラーを潰すための実践手順です。初回セットアップとトラブル時の再診断に使用します。
+gcloud 未導入・設定不備・IAP/OS Login/Compute API の典型エラーを潰すための実践手順です。初回セットアップとトラブル時の再診断に使用します。新規 VM 作成の流れは `docs/VM_BOOTSTRAP.md` を参照してください。
 
 ## 1. SDK インストール
 
