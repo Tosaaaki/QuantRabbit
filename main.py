@@ -345,7 +345,6 @@ from analytics.realtime_metrics_client import (
 )
 from strategies.trend.ma_cross import MovingAverageCross
 from strategies.trend.h1_momentum import H1MomentumSwing
-from strategies.breakout.donchian55 import Donchian55
 from strategies.mean_reversion.bb_rsi import BBRsi
 from strategies.scalping.m1_scalper import M1Scalper
 from strategies.scalping.range_fader import RangeFader
@@ -396,7 +395,6 @@ TrendMA = MovingAverageCross
 # 内蔵ストラテジーでも、既に独立ワーカー化されているものはメイン側で発注しない
 DISABLE_MAIN_STRATEGIES = {
     "TrendMA",
-    "Donchian55",
     "BB_RSI",
     "MicroRangeBreak",
     "M1Scalper",
@@ -507,7 +505,7 @@ def _dynamic_entry_cooldown_seconds(
 PIP = 0.01
 
 MACRO_DISABLED = _env_bool("MACRO_DISABLE", False)
-MACRO_STRATEGIES = {"TrendMA", "Donchian55"}
+MACRO_STRATEGIES = {"TrendMA"}
 
 POCKET_MAX_ACTIVE_TRADES = {
     "macro": 20,
@@ -750,8 +748,6 @@ WORKER_SERVICES = {
     # Macro
     "macro_trendma": "quant-trendma.service",
     "macro_trendma_exit": "quant-trendma-exit.service",
-    "macro_donchian55": "quant-donchian55.service",
-    "macro_donchian55_exit": "quant-donchian55-exit.service",
     "macro_h1momentum": "quant-h1momentum.service",
     "macro_h1momentum_exit": "quant-h1momentum-exit.service",
     "macro_trend_h1": "quant-trend-h1.service",
@@ -1004,7 +1000,7 @@ def _apply_tech_overlays(signal: dict, fac_m1: dict, fac_m5: Optional[dict] = No
 
     # クラスタ/VWAP振り分け: 近接なら逆張り系を優遇、遠いならブレイク系を優遇（拒否せずスケールのみ）
     mean_rev_strats = {"BB_RSI", "RangeFader", "pullback_s5", "pullback_scalp", "pullback_runner_s5"}
-    breakout_strats = {"TrendMA", "Donchian55", "LondonMomentum", "SqueezeBreak", "ImpulseBreak", "impulse_break_s5"}
+    breakout_strats = {"TrendMA", "LondonMomentum", "SqueezeBreak", "ImpulseBreak", "impulse_break_s5"}
     strat = str(sig.get("strategy") or sig.get("tag") or "").strip()
     cluster_gap = cluster_high if action == "OPEN_LONG" else cluster_low
     if cluster_gap > 0:
@@ -1628,7 +1624,6 @@ def _reset_strategy_registry() -> None:
 
     strategy_classes = [
         TrendMA,
-        Donchian55,
         BBRsi,
         BBRsiFast,
         RangeFader,
@@ -1946,7 +1941,7 @@ ALLOWED_RANGE_STRATEGIES = {
     "impulse_momentum_s5",
     "impulse_retest_s5",
 }
-SOFT_RANGE_SUPPRESS_STRATEGIES = {"TrendMA", "Donchian55"}
+SOFT_RANGE_SUPPRESS_STRATEGIES = {"TrendMA"}
 LOW_TREND_ADX_THRESHOLD = 18.0
 LOW_TREND_SLOPE_THRESHOLD = 0.00035
 LOW_TREND_WEIGHT_CAP = 0.35
@@ -6696,7 +6691,7 @@ async def logic_loop(
                         and action_dir != 0
                         and trend_dir != 0
                         and action_dir == trend_dir
-                        and (strategy_name == "TrendMA" or strategy_name.startswith("Donchian55"))
+                        and strategy_name == "TrendMA"
                     ):
                         prev_conf = int(sig.get("confidence", 0) or 0)
                         new_conf = max(0, int(prev_conf * HIGH_ZONE_MACRO_CONF_SCALE))

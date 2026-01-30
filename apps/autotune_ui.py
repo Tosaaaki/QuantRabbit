@@ -72,7 +72,6 @@ templates = Jinja2Templates(directory=str(TEMPLATE_DIR))
 
 _WORKER_TAG_MAP = {
     "TrendMA": "macro_trendma",
-    "Donchian55": "macro_donchian55",
     "H1Momentum": "macro_h1momentum",
     "LondonMomentum": "london_momentum",
     "trend_h1": "trend_h1",

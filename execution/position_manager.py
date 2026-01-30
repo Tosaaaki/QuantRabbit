@@ -65,7 +65,6 @@ _WORKER_TAG_MAP = {
     "PulseBreak": "scalp_pulsebreak",
     "MicroMA": "micro_ma",
     "TrendMA": "macro_trendma",
-    "Donchian55": "macro_donchian55",
     "DonchianM1": "micro_donchian",
     "H1Momentum": "macro_h1momentum",
     "BB_RSI": "micro_bbrsi",

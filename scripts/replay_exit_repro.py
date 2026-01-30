@@ -839,7 +839,6 @@ class M1ScalperExitAdapter(BaseAdapter):
 def _build_class_adapters() -> List[WorkerAdapter]:
     modules = [
         ("workers.macro_trendma.exit_worker", "TrendMAExitWorker"),
-        ("workers.macro_donchian55.exit_worker", "DonchianExitWorker"),
         ("workers.macro_h1momentum.exit_worker", "H1MomentumExitWorker"),
         ("workers.micro_momentumburst.exit_worker", "MomentumBurstExitWorker"),
         ("workers.micro_trendmomentum.exit_worker", "TrendMomentumMicroExitWorker"),

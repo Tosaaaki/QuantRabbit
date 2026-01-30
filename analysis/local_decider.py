@@ -12,7 +12,6 @@ from typing import Dict, Iterable, List, Optional
 _ALLOWED_STRATEGIES = (
     "TrendMA",
     "H1Momentum",
-    "Donchian55",
     "BB_RSI",
     "MicroVWAPBound",
     "M1Scalper",
@@ -167,8 +166,6 @@ def heuristic_decision(
             _enqueue_unique(ranked, ("H1Momentum",))
         if macro_adx >= 20 or macro_gap >= 0.032:
             _enqueue_unique(ranked, ("TrendMA",))
-        if macro_adx >= 25 or macro_gap >= 0.05:
-            _enqueue_unique(ranked, ("Donchian55",))
 
     if focus_tag in {"micro", "hybrid"}:
         if micro_rsi >= 62 or micro_rsi <= 38 or micro_adx <= 22:

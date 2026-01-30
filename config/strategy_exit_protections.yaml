@@ -93,32 +93,6 @@ strategies:
         - free_margin_low
         - margin_usage_high
 
-  Donchian55:
-    min_profit_pips: 2.0
-    be_profile: {trigger_pips: 7.5, lock_ratio: 0.60, min_lock_pips: 3.2, cooldown_sec: 90}
-    tp_move: {trigger_pips: 8.0, buffer_pips: 3.2}
-    neg_exit:
-      allow_reasons:
-        - hard_stop
-        - tech_hard_stop
-        - tech_return_fail
-        - tech_reversal_combo
-        - tech_candle_reversal
-        - tech_nwave_flip
-        - rsi_fade
-        - vwap_cut
-        - atr_spike
-        - structure_break
-        - trend_failure
-        - trend_exhaust
-        - drawdown
-        - max_drawdown
-        - health_exit
-        - hazard_exit
-        - margin_health
-        - free_margin_low
-        - margin_usage_high
-
   H1Momentum:
     be_profile: {trigger_pips: 6.5, lock_ratio: 0.55, min_lock_pips: 2.8, cooldown_sec: 80}
     tp_move: {trigger_pips: 7.0, buffer_pips: 2.8}
