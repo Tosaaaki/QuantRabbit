@@ -40,6 +40,7 @@ from execution.position_manager import PositionManager, agent_client_prefixes
 from execution.risk_guard import POCKET_MAX_RATIOS, MAX_LEVERAGE
 from workers.common import perf_guard, profit_guard
 from workers.common.quality_gate import current_regime
+from indicators.factor_cache import get_last_regime
 from utils import signal_bus
 from utils.oanda_account import get_account_snapshot
 try:
@@ -1279,8 +1280,19 @@ def _augment_entry_thesis_regime(entry_thesis: Optional[dict], pocket: str) -> O
         macro_live = current_regime("H4", event_mode=False) or current_regime("H1", event_mode=False)
     if not micro_live:
         micro_live = current_regime("M1", event_mode=False)
-    if not macro_live and not micro_live:
-        return entry_thesis
+    if not macro_live:
+        macro_live, _ = get_last_regime("H4")
+        if not macro_live:
+            macro_live, _ = get_last_regime("H1")
+    if not micro_live:
+        micro_live, _ = get_last_regime("M1")
+    fallback_used = False
+    if not macro_live:
+        macro_live = "Mixed"
+        fallback_used = True
+    if not micro_live:
+        micro_live = "Mixed"
+        fallback_used = True
 
     merged = dict(entry_thesis)
     reg_dict = reg if isinstance(reg, dict) else {}
@@ -1300,6 +1312,8 @@ def _augment_entry_thesis_regime(entry_thesis: Optional[dict], pocket: str) -> O
         merged.setdefault("reg_micro", micro_live)
     if reg_dict:
         merged["regime"] = reg_dict
+    if fallback_used:
+        merged.setdefault("regime_source", "fallback")
     return merged
 
 

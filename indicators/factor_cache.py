@@ -19,6 +19,7 @@ from typing import Dict, Literal
 import pandas as pd
 
 from indicators.calc_core import IndicatorEngine
+from analysis.regime_classifier import classify
 
 TimeFrame = Literal["M1", "M5", "H1", "H4", "D1"]
 
@@ -39,6 +40,7 @@ _CANDLES: Dict[TimeFrame, deque] = {
 _FACTORS: Dict[TimeFrame, Dict[str, float]] = defaultdict(dict)
 _CACHE_PATH = Path("logs/factor_cache.json")
 _LAST_RESTORE_MTIME: float | None = None
+_LAST_REGIME: Dict[TimeFrame, dict] = {}
 
 _LOCK = asyncio.Lock()
 
@@ -58,6 +60,21 @@ def _atomic_write_text(path: Path, payload: str) -> None:
                 os.unlink(tmp_name)
         except Exception:
             pass
+
+
+def _update_regime(tf: TimeFrame, factors: Dict[str, float]) -> None:
+    if tf not in {"M1", "H1", "H4"}:
+        return
+    try:
+        label = classify(factors, tf)
+    except Exception:
+        return
+    if not label:
+        return
+    ts = factors.get("timestamp")
+    factors["regime"] = label
+    factors["regime_ts"] = ts
+    _LAST_REGIME[tf] = {"regime": label, "timestamp": ts}
 
 
 def _persist_cache() -> None:
@@ -127,6 +144,12 @@ def _restore_cache() -> bool:
         if tf not in _CANDLES:
             continue
         try:
+            label = snapshot.get("regime") or snapshot.get("regime_label")
+            if label:
+                _LAST_REGIME[tf] = {
+                    "regime": str(label),
+                    "timestamp": snapshot.get("regime_ts") or snapshot.get("timestamp"),
+                }
             candles = snapshot.get("candles") or []
             dq = _CANDLES[tf]
             dq.clear()
@@ -154,6 +177,8 @@ def _restore_cache() -> bool:
                 factors.setdefault("timestamp", last.get("timestamp"))
             _FACTORS[tf].clear()
             _FACTORS[tf].update(factors)
+            if "regime" not in _FACTORS[tf]:
+                _update_regime(tf, _FACTORS[tf])
         except Exception as exc:  # noqa: BLE001
             logging.warning("[FACTOR_CACHE] failed to restore timeframe %s: %s", tf, exc)
     return True
@@ -178,6 +203,7 @@ for tf, dq in _CANDLES.items():
                 "timestamp": last.get("timestamp"),
             }
         )
+        _update_regime(tf, factors)
         _FACTORS[tf].clear()
         _FACTORS[tf].update(factors)
     except Exception as exc:  # noqa: BLE001
@@ -239,6 +265,55 @@ def get_candles_snapshot(tf: TimeFrame, *, limit: int | None = None) -> list[dic
     return candles
 
 
+def ensure_factors(tf: TimeFrame) -> Dict[str, float] | None:
+    """Ensure factors exist for the timeframe (best-effort from cached candles)."""
+    try:
+        refresh_cache_from_disk()
+    except Exception:
+        pass
+    existing = _FACTORS.get(tf)
+    if existing:
+        return existing
+    dq = _CANDLES.get(tf)
+    if not dq or len(dq) < 20:
+        return None
+    try:
+        df = pd.DataFrame(list(dq))
+        factors = IndicatorEngine.compute(df)
+        factors["candles"] = list(dq)
+        last = dq[-1]
+        factors.update(
+            {
+                "close": last.get("close"),
+                "open": last.get("open"),
+                "high": last.get("high"),
+                "low": last.get("low"),
+                "timestamp": last.get("timestamp"),
+            }
+        )
+        _update_regime(tf, factors)
+        _FACTORS[tf].clear()
+        _FACTORS[tf].update(factors)
+        _persist_cache()
+        return _FACTORS[tf]
+    except Exception:
+        return None
+
+
+def get_last_regime(tf: TimeFrame) -> tuple[str | None, object | None]:
+    """Return last known regime label and timestamp for timeframe."""
+    try:
+        refresh_cache_from_disk()
+    except Exception:
+        pass
+    factors = _FACTORS.get(tf) or {}
+    label = factors.get("regime") or factors.get("regime_label")
+    if label:
+        return str(label), factors.get("regime_ts") or factors.get("timestamp")
+    cached = _LAST_REGIME.get(tf) or {}
+    return cached.get("regime"), cached.get("timestamp")
+
+
 async def on_candle(tf: TimeFrame, candle: Dict[str, float]):
     """
     market_data.candle_fetcher から呼ばれる想定
@@ -273,6 +348,7 @@ async def on_candle(tf: TimeFrame, candle: Dict[str, float]):
                 "timestamp": last["timestamp"],
             }
         )
+        _update_regime(tf, factors)
 
         _FACTORS[tf].clear()
         _FACTORS[tf].update(factors)

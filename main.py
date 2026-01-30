@@ -3745,14 +3745,18 @@ async def worker_only_loop() -> None:
         if FACTOR_CACHE_REFRESH_ENABLED and FACTOR_CACHE_STALE_SEC > 0:
             age_sec = _factor_age_seconds("M1")
             now_mono = time.monotonic()
-            if (
-                age_sec is not None
-                and age_sec > FACTOR_CACHE_STALE_SEC
-                and now_mono - last_factor_refresh > FACTOR_CACHE_REFRESH_MIN_INTERVAL_SEC
-            ):
+            should_refresh = False
+            reason = ""
+            if age_sec is None:
+                should_refresh = True
+                reason = "missing"
+            elif age_sec > FACTOR_CACHE_STALE_SEC:
+                should_refresh = True
+                reason = f"stale age={age_sec:.1f}s"
+            if should_refresh and now_mono - last_factor_refresh > FACTOR_CACHE_REFRESH_MIN_INTERVAL_SEC:
                 logging.warning(
-                    "[FACTOR_CACHE] stale age=%.1fs -> reseed history",
-                    age_sec,
+                    "[FACTOR_CACHE] %s -> reseed history",
+                    reason or "stale",
                 )
                 try:
                     seeded = await initialize_history("USD_JPY")

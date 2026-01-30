@@ -9,7 +9,7 @@ import time
 from typing import Optional
 
 from analysis.regime_classifier import classify
-from indicators.factor_cache import all_factors
+from indicators.factor_cache import all_factors, ensure_factors, get_last_regime
 
 _REGIME_CACHE_TTL_SEC = 5.0
 
@@ -30,7 +30,7 @@ def current_regime(tf: str = "M1", *, event_mode: bool = False) -> Optional[str]
         return cached_value
 
     try:
-        fac = all_factors().get(tf_key)
+        fac = ensure_factors(tf_key) or all_factors().get(tf_key)
     except Exception as exc:  # noqa: BLE001
         LOG.warning("[GATE] factor lookup failed: %s", exc)
         fac = None
@@ -38,10 +38,19 @@ def current_regime(tf: str = "M1", *, event_mode: bool = False) -> Optional[str]
     regime = None
     if fac:
         try:
-            regime = classify(fac, tf_key, event_mode=event_mode)
-        except Exception as exc:  # noqa: BLE001
-            LOG.warning("[GATE] regime classification failed: %s", exc)
+            regime = str(fac.get("regime") or "")
+        except Exception:
             regime = None
+        if not regime:
+            try:
+                regime = classify(fac, tf_key, event_mode=event_mode)
+            except Exception as exc:  # noqa: BLE001
+                LOG.warning("[GATE] regime classification failed: %s", exc)
+                regime = None
+    if not regime:
+        last_regime, _ = get_last_regime(tf_key)
+        if last_regime:
+            regime = last_regime
 
     _regime_cache[cache_key] = (now, regime)
     return regime
