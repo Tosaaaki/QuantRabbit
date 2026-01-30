@@ -29,6 +29,7 @@ HEADERS = {"Authorization": f"Bearer {TOKEN}"}
 
 _DB = pathlib.Path("logs/trades.db")
 _ORDERS_DB = pathlib.Path("logs/orders.db")
+_METRICS_DB = pathlib.Path("logs/metrics.db")
 _CHUNK_SIZE = 100
 _MAX_FETCH = int(os.getenv("POSITION_MANAGER_MAX_FETCH", "1000"))
 _REQUEST_TIMEOUT = float(os.getenv("POSITION_MANAGER_HTTP_TIMEOUT", "7.0"))
@@ -61,6 +62,9 @@ _DB_SYNCHRONOUS = os.getenv("POSITION_MANAGER_DB_SYNCHRONOUS", "NORMAL")
 _DB_TEMP_STORE = os.getenv("POSITION_MANAGER_DB_TEMP_STORE", "MEMORY")
 _DB_LOCK_PATH = pathlib.Path(os.getenv("POSITION_MANAGER_DB_LOCK_PATH", "logs/trades.db.lock"))
 _DB_FILE_LOCK_TIMEOUT = float(os.getenv("POSITION_MANAGER_DB_FILE_LOCK_TIMEOUT", "30.0"))
+_METRICS_READ_TIMEOUT_SEC = float(
+    os.getenv("POSITION_MANAGER_METRICS_TIMEOUT_SEC", "0.2")
+)
 _BACKFILL_ENABLED = os.getenv("POSITION_MANAGER_BACKFILL_ATTR", "1").strip().lower() not in {
     "",
     "0",
@@ -461,6 +465,24 @@ def _parse_timestamp(ts: str) -> datetime:
     frac = frac[:6].ljust(6, "0")
     dt = datetime.fromisoformat(f"{head}.{frac}{tz}")
     return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
+
+
+def _load_latest_metric(metric: str) -> float | None:
+    if not _METRICS_DB.exists():
+        return None
+    try:
+        con = sqlite3.connect(_METRICS_DB, timeout=_METRICS_READ_TIMEOUT_SEC)
+        cur = con.execute(
+            "SELECT value FROM metrics WHERE metric = ? ORDER BY ts DESC LIMIT 1",
+            (metric,),
+        )
+        row = cur.fetchone()
+        con.close()
+        if not row:
+            return None
+        return float(row[0])
+    except Exception:
+        return None
 
 
 class PositionManager:
@@ -1787,7 +1809,9 @@ class PositionManager:
 
     def get_performance_summary(self, now: datetime | None = None) -> dict:
         now = now or datetime.now(timezone.utc)
-        today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+        jst = timezone(timedelta(hours=9))
+        now_jst = now.astimezone(jst)
+        today_start = now_jst.replace(hour=0, minute=0, second=0, microsecond=0)
         yesterday_start = today_start - timedelta(days=1)
         week_start = today_start - timedelta(days=6)
 
@@ -1834,6 +1858,7 @@ class PositionManager:
                 continue
             if latest_close is None or close_dt > latest_close:
                 latest_close = close_dt
+            close_dt_jst = close_dt.astimezone(jst)
             pl_pips = float(row["pl_pips"] or 0.0)
             pl_jpy = float(row["realized_pl"] or 0.0)
             pocket = (row["pocket"] or "unknown").lower()
@@ -1853,11 +1878,11 @@ class PositionManager:
 
             _apply(buckets["total"])
             _apply(pkt)
-            if close_dt >= week_start:
+            if close_dt_jst >= week_start:
                 _apply(buckets["weekly"])
-            if close_dt >= today_start:
+            if close_dt_jst >= today_start:
                 _apply(buckets["daily"])
-            elif close_dt >= yesterday_start:
+            elif close_dt_jst >= yesterday_start:
                 _apply(buckets["yesterday"])
 
         def _finalise(data: dict) -> dict:
@@ -1888,16 +1913,29 @@ class PositionManager:
         total = _finalise(buckets["total"])
         yesterday = _finalise(buckets["yesterday"])
 
-        def _growth_rate(today: float, prev: float) -> float | None:
-            if prev == 0:
+        def _growth_rate_equity(delta: float, equity: float | None) -> float | None:
+            if equity is None or equity <= 0:
                 return None
-            return round((today - prev) * 100.0 / abs(prev), 2)
+            return round(delta * 100.0 / equity, 2)
+
+        equity_nav = _load_latest_metric("account.nav")
+        equity_source = "nav"
+        if equity_nav is None or equity_nav <= 0:
+            equity_nav = _load_latest_metric("account.balance")
+            equity_source = "balance"
+        if equity_nav is None or equity_nav <= 0:
+            equity_source = "unknown"
+            equity_nav = None
 
         daily_change = {
             "pips": round(daily["pips"] - yesterday["pips"], 2),
             "jpy": round(daily["jpy"] - yesterday["jpy"], 2),
-            "pips_pct": _growth_rate(daily["pips"], yesterday["pips"]),
-            "jpy_pct": _growth_rate(daily["jpy"], yesterday["jpy"]),
+            "pips_pct": None,
+            "jpy_pct": _growth_rate_equity(
+                round(daily["jpy"] - yesterday["jpy"], 2), equity_nav
+            ),
+            "equity_nav": equity_nav,
+            "equity_source": equity_source,
         }
 
         return {

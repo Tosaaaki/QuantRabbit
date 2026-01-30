@@ -101,6 +101,16 @@ def get_account_snapshot(timeout: float = 7.0, *, cache_ttl_sec: float = 1.0) ->
     # record a small set of health metrics for downstream hazard tuning
     try:
         log_metric(
+            "account.nav",
+            nav,
+            tags={"practice": str(practice).lower()},
+        )
+        log_metric(
+            "account.balance",
+            balance,
+            tags={"practice": str(practice).lower()},
+        )
+        log_metric(
             "account.health_buffer",
             health_buffer if health_buffer is not None else -1.0,
             tags={"practice": str(practice).lower()},

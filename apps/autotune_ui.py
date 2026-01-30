@@ -145,6 +145,8 @@ def _dashboard_defaults(error: Optional[str] = None) -> Dict[str, Any]:
             "daily_change_pips": 0.0,
             "daily_change_jpy": 0.0,
             "daily_change_pct": None,
+            "daily_change_equity": None,
+            "daily_change_equity_source": None,
             "weekly_pl_pips": 0.0,
             "weekly_pl_jpy": 0.0,
             "weekly_pl_eq1l": 0.0,
@@ -749,12 +751,15 @@ def _fetch_remote_snapshot(key: str = "ui_snapshot_url") -> Optional[dict]:
 def _summarise_snapshot(snapshot: Dict[str, Any]) -> Dict[str, Any]:
     base = _dashboard_defaults()
     now = datetime.now(timezone.utc)
+    jst = timezone(timedelta(hours=9))
+    now_jst = now.astimezone(jst)
 
     metrics_snapshot = snapshot.get("metrics") or {}
     trades_raw = snapshot.get("recent_trades") or []
     parsed_trades: list[Dict[str, Any]] = []
     for item in trades_raw:
         close_dt = _parse_dt(item.get("close_time") or item.get("updated_at"))
+        close_dt_jst = close_dt.astimezone(jst) if close_dt else None
         parsed_trades.append(
             {
                 "ticket_id": str(item.get("ticket_id") or ""),
@@ -762,6 +767,7 @@ def _summarise_snapshot(snapshot: Dict[str, Any]) -> Dict[str, Any]:
                 "pl_pips": _safe_float(item.get("pl_pips")),
                 "pl_jpy": _safe_float(item.get("realized_pl")),
                 "close_time": close_dt,
+                "close_time_jst": close_dt_jst,
                 "close_label": _format_dt(close_dt),
             }
         )
@@ -799,8 +805,8 @@ def _summarise_snapshot(snapshot: Dict[str, Any]) -> Dict[str, Any]:
 
     closed_trades = [t for t in parsed_trades if t["close_time"]]
     closed_trades.sort(key=lambda t: t["close_time"], reverse=True)
-    week_cutoff = now - timedelta(days=7)
-    today_date = now.date()
+    week_cutoff = now_jst - timedelta(days=7)
+    today_date = now_jst.date()
 
     def _sum_if(predicate) -> float:
         return sum(t["pl_pips"] for t in closed_trades if predicate(t))
@@ -825,6 +831,8 @@ def _summarise_snapshot(snapshot: Dict[str, Any]) -> Dict[str, Any]:
             perf["daily_change_pips"] = data.get("pips", 0.0)
             perf["daily_change_jpy"] = data.get("jpy", 0.0)
             perf["daily_change_pct"] = data.get("jpy_pct")
+            perf["daily_change_equity"] = data.get("equity_nav")
+            perf["daily_change_equity_source"] = data.get("equity_source")
         elif target == "weekly":
             perf["weekly_pl_pips"] = data.get("pips", 0.0)
             perf["weekly_pl_jpy"] = data.get("jpy", 0.0)
@@ -851,19 +859,52 @@ def _summarise_snapshot(snapshot: Dict[str, Any]) -> Dict[str, Any]:
 
     if perf.get("daily_pl_pips") is None:
         perf["daily_pl_pips"] = round(
-            _sum_if(lambda t: t["close_time"].date() == today_date), 2
+            _sum_if(
+                lambda t: t.get("close_time_jst")
+                and t["close_time_jst"].date() == today_date
+            ),
+            2,
         ) if closed_trades else 0.0
     if perf.get("daily_pl_jpy") is None:
         perf["daily_pl_jpy"] = round(
-            _sum_jpy(lambda t: t["close_time"].date() == today_date), 2
+            _sum_jpy(
+                lambda t: t.get("close_time_jst")
+                and t["close_time_jst"].date() == today_date
+            ),
+            2,
         ) if closed_trades else 0.0
     if perf.get("weekly_pl_pips") is None:
         perf["weekly_pl_pips"] = round(
-            _sum_if(lambda t: t["close_time"] >= week_cutoff), 2
+            _sum_if(
+                lambda t: t.get("close_time_jst")
+                and t["close_time_jst"] >= week_cutoff
+            ),
+            2,
         ) if closed_trades else 0.0
     if perf.get("weekly_pl_jpy") is None:
         perf["weekly_pl_jpy"] = round(
-            _sum_jpy(lambda t: t["close_time"] >= week_cutoff), 2
+            _sum_jpy(
+                lambda t: t.get("close_time_jst")
+                and t["close_time_jst"] >= week_cutoff
+            ),
+            2,
+        ) if closed_trades else 0.0
+
+    if metrics_snapshot.get("yesterday") is None:
+        yesterday_date = today_date - timedelta(days=1)
+        perf["yesterday_pl_pips"] = round(
+            _sum_if(
+                lambda t: t.get("close_time_jst")
+                and t["close_time_jst"].date() == yesterday_date
+            ),
+            2,
+        ) if closed_trades else 0.0
+        perf["yesterday_pl_jpy"] = round(
+            _sum_jpy(
+                lambda t: t.get("close_time_jst")
+                and t["close_time_jst"].date() == yesterday_date
+            ),
+            2,
         ) if closed_trades else 0.0
     if perf.get("total_pips") is None:
         perf["total_pips"] = round(sum(t["pl_pips"] for t in closed_trades), 2)
@@ -881,9 +922,19 @@ def _summarise_snapshot(snapshot: Dict[str, Any]) -> Dict[str, Any]:
         yest_jpy = perf.get("yesterday_pl_jpy", 0.0) or 0.0
         perf["daily_change_pips"] = round(today_pips - yest_pips, 2)
         perf["daily_change_jpy"] = round(today_jpy - yest_jpy, 2)
-        if yest_jpy:
+        equity_val = perf.get("daily_change_equity")
+        if equity_val in (None, 0.0):
+            equity_val = _load_latest_metric("account.nav")
+            equity_source = "nav"
+            if equity_val in (None, 0.0):
+                equity_val = _load_latest_metric("account.balance")
+                equity_source = "balance"
+            if equity_val:
+                perf["daily_change_equity"] = equity_val
+                perf["daily_change_equity_source"] = equity_source
+        if equity_val:
             perf["daily_change_pct"] = round(
-                (today_jpy - yest_jpy) * 100.0 / abs(yest_jpy), 2
+                (today_jpy - yest_jpy) * 100.0 / float(equity_val), 2
             )
         else:
             perf["daily_change_pct"] = None
