@@ -220,6 +220,7 @@ class _TradeState:
     hard_stop: Optional[float] = None
     tp_hint: Optional[float] = None
     last_touch_count: Optional[int] = None
+    hard_stop_triggered_at: Optional[datetime] = None
 
 
 @dataclass
@@ -257,6 +258,17 @@ class PullbackRunnerExitWorker:
         self.range_max_hold_sec = max(45.0, _float_env("PULLBACK_RUNNER_S5_EXIT_RANGE_MAX_HOLD_SEC", 17 * 60))
         self.range_lock_trigger = max(0.35, _float_env("PULLBACK_RUNNER_S5_EXIT_RANGE_LOCK_TRIGGER_PIPS", 0.8))
         self.range_lock_buffer = max(0.1, _float_env("PULLBACK_RUNNER_S5_EXIT_RANGE_LOCK_BUFFER_PIPS", 0.35))
+
+        # Hard-stop confirmation for high-quality entries to avoid whipsaw exits
+        self.hard_stop_confirm_sec = max(
+            0.0, _float_env("PULLBACK_RUNNER_S5_EXIT_HARD_STOP_CONFIRM_SEC", 20.0)
+        )
+        self.hard_stop_emergency_mult = max(
+            1.0, _float_env("PULLBACK_RUNNER_S5_EXIT_HARD_STOP_EMERGENCY_MULT", 1.6)
+        )
+        self.hard_stop_score_min = _float_env(
+            "PULLBACK_RUNNER_S5_EXIT_HARD_STOP_SCORE_MIN", 0.25
+        )
 
         self.range_adx = max(5.0, _float_env("PULLBACK_RUNNER_S5_EXIT_RANGE_ADX", 22.0))
         self.range_bbw = max(0.02, _float_env("PULLBACK_RUNNER_S5_EXIT_RANGE_BBW", 0.20))
@@ -567,6 +579,32 @@ class PullbackRunnerExitWorker:
                 pass
 
         if pnl <= -stop_loss:
+            thesis = trade.get("entry_thesis") or {}
+            proj_score = None
+            micro_regime = None
+            try:
+                proj = thesis.get("projection") if isinstance(thesis, dict) else None
+                if isinstance(proj, dict) and proj.get("score") is not None:
+                    proj_score = float(proj.get("score"))
+            except Exception:
+                proj_score = None
+            if isinstance(thesis, dict):
+                micro_regime = thesis.get("micro_regime") or thesis.get("reg_micro")
+            delay_hard_stop = (
+                self.hard_stop_confirm_sec > 0
+                and proj_score is not None
+                and proj_score >= self.hard_stop_score_min
+                and str(micro_regime or "").lower() != "range"
+            )
+            if delay_hard_stop:
+                # Emergency stop if loss expands too far beyond threshold
+                if pnl <= -(stop_loss * self.hard_stop_emergency_mult):
+                    return "hard_stop"
+                if state.hard_stop_triggered_at is None:
+                    state.hard_stop_triggered_at = now
+                    return None
+                if (now - state.hard_stop_triggered_at).total_seconds() < self.hard_stop_confirm_sec:
+                    return None
             return "hard_stop"
 
         if pnl < 0 and hold_sec >= self.negative_hold_sec:
@@ -574,6 +612,9 @@ class PullbackRunnerExitWorker:
                 return "time_cut"
 
         if pnl < 0:
+            # Reset hard-stop trigger if price recovers meaningfully
+            if state.hard_stop_triggered_at is not None and pnl > -(stop_loss * 0.6):
+                state.hard_stop_triggered_at = None
             if side == "long" and ctx.rsi is not None and ctx.rsi <= self.rsi_fade_long:
                 if self.allow_negative_exit or atr >= self.atr_hot:
                     return "rsi_fade"
@@ -804,5 +845,4 @@ def _exit_candle_reversal(side):
 if __name__ == "__main__":  # pragma: no cover
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s", force=True)
     asyncio.run(pullback_runner_s5_exit_worker())
-
 
