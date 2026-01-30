@@ -244,6 +244,12 @@
                   <button type="button" class="range-button" data-range="1y">年</button>
                 </div>
                 <div class="chart-meta" data-chart-meta="price"></div>
+                <div class="chart-legend">
+                  <span class="legend-item"><span class="legend-shape legend-entry" aria-hidden="true"></span>Entry</span>
+                  <span class="legend-item"><span class="legend-shape legend-exit" aria-hidden="true"></span>Exit</span>
+                  <span class="legend-item"><span class="legend-dot legend-long" aria-hidden="true"></span>Long</span>
+                  <span class="legend-item"><span class="legend-dot legend-short" aria-hidden="true"></span>Short</span>
+                </div>
               </div>
               <div class="chart-wrap">
                 <svg class="chart-svg" data-chart-canvas="price" aria-label="Price chart"></svg>
@@ -1367,15 +1373,18 @@
           let sideColor = "#64748b";
           if (side === "long") sideColor = "#16a34a";
           if (side === "short") sideColor = "#dc2626";
-          const color = sideColor;
           const size = 6;
-          const points = isEntry
-            ? `${x},${y - size} ${x - size},${y + size} ${x + size},${y + size}`
-            : `${x},${y + size} ${x - size},${y - size} ${x + size},${y - size}`;
-          const opacity = isEntry ? 0.9 : 0.6;
+          let shape = "";
+          if (isEntry) {
+            const points = `${x},${y - size} ${x - size},${y + size} ${x + size},${y + size}`;
+            shape = `<polygon points="${points}" fill="${sideColor}" stroke="#ffffff" stroke-width="0.6"/>`;
+          } else {
+            const box = size * 1.1;
+            shape = `<rect x="${(x - box).toFixed(2)}" y="${(y - box).toFixed(2)}" width="${(box * 2).toFixed(2)}" height="${(box * 2).toFixed(2)}" fill="rgba(255,255,255,0.95)" stroke="${sideColor}" stroke-width="1.6" rx="1.5" ry="1.5"/>`;
+          }
           markersSvg += `
             <g class="chart-marker" data-marker-idx="${idx}">
-              <polygon points="${points}" fill="${color}" opacity="${opacity}"></polygon>
+              ${shape}
             </g>
           `;
         });
