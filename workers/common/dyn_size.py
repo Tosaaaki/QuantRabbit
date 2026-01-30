@@ -84,6 +84,7 @@ def compute_units(
         margin_rate=margin_rate,
         risk_pct_override=risk_pct,
         pocket=pocket,
+        strategy_tag=strategy_tag,
     )
     units_risk = int(round(lot * 100000))
 
