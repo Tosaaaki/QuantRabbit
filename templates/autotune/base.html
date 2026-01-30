@@ -583,6 +583,40 @@
         statusEl.textContent = `次の更新 ${remaining}s`;
       };
 
+      const rememberScroll = () => {
+        try {
+          const activeTab = document.querySelector("[data-tab-button].is-active")?.dataset?.tabTarget;
+          const payload = {
+            y: window.scrollY || 0,
+            at: Date.now(),
+            path: window.location.pathname,
+            tab: activeTab || null,
+          };
+          sessionStorage.setItem("qr_scroll_state", JSON.stringify(payload));
+        } catch (err) {
+          // ignore storage errors
+        }
+      };
+
+      const restoreScroll = () => {
+        const params = new URLSearchParams(window.location.search);
+        if (!params.has("t")) return;
+        try {
+          const raw = sessionStorage.getItem("qr_scroll_state");
+          if (!raw) return;
+          const state = JSON.parse(raw);
+          if (!state || typeof state.y !== "number") return;
+          if (state.path && state.path !== window.location.pathname) return;
+          const maxAgeMs = 120000;
+          if (state.at && Date.now() - state.at > maxAgeMs) return;
+          window.requestAnimationFrame(() => {
+            window.scrollTo({ top: state.y, behavior: "auto" });
+          });
+        } catch (err) {
+          // ignore parse errors
+        }
+      };
+
       const schedule = () => {
         if (timerId) clearTimeout(timerId);
         nextAt = Date.now() + intervalSec * 1000;
@@ -593,6 +627,7 @@
             return;
           }
           if (statusEl) statusEl.textContent = "更新中...";
+          rememberScroll();
           window.location.assign(buildRefreshUrl());
         }, intervalSec * 1000);
       };
@@ -600,11 +635,13 @@
       if (refreshButton) {
         refreshButton.addEventListener("click", () => {
           if (statusEl) statusEl.textContent = "更新中...";
+          rememberScroll();
           window.location.assign(buildRefreshUrl());
         });
       }
 
       window.setInterval(updateCountdown, 1000);
+      restoreScroll();
       schedule();
 
       document.addEventListener("visibilitychange", () => {
