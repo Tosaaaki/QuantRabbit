@@ -8,7 +8,6 @@ from typing import Optional, Sequence, Tuple
 from utils.metrics_logger import log_metric
 from indicators.factor_cache import all_factors
 
-
 @dataclass
 class ReentryConfig:
     enabled: bool
@@ -22,7 +21,6 @@ class ReentryConfig:
     log_interval_sec: float
     name: str
 
-
 @dataclass
 class ReentryDecision:
     action: Optional[str]
@@ -33,9 +31,7 @@ class ReentryDecision:
     min_adverse: float
     enabled: bool
 
-
 _LAST_LOG_TS: dict[str, float] = {}
-
 
 def _env_bool(name: str, default: bool) -> bool:
     raw = os.getenv(name)
@@ -43,13 +39,11 @@ def _env_bool(name: str, default: bool) -> bool:
         return default
     return str(raw).strip().lower() in {"1", "true", "yes"}
 
-
 def _env_bool_opt(name: str) -> Optional[bool]:
     raw = os.getenv(name)
     if raw is None:
         return None
     return str(raw).strip().lower() in {"1", "true", "yes"}
-
 
 def _env_float(name: str, default: float) -> float:
     raw = os.getenv(name)
@@ -65,7 +59,6 @@ def _safe_float(value: object) -> Optional[float]:
         return float(value)
     except (TypeError, ValueError):
         return None
-
 
 
 def _clamp01(value: Optional[float]) -> Optional[float]:
@@ -168,13 +161,11 @@ def _reentry_scores(
 
     return revert_score, trend_score
 
-
 def _reentry_edge(adverse_pips: float, atr_pips: Optional[float]) -> float:
     if adverse_pips <= 0:
         return 0.0
     base = adverse_pips / max(atr_pips or 6.0, 0.1)
     return float(_clamp01((base - 0.8) / 1.4) or 0.0)
-
 
 def _load_config(prefix: str) -> ReentryConfig:
     name = prefix.strip().upper()
@@ -201,7 +192,6 @@ def _load_config(prefix: str) -> ReentryConfig:
         name=name,
     )
 
-
 def _log_decision(prefix: str, decision: str, tags: dict, interval_sec: float) -> None:
     now = time.monotonic()
     last = _LAST_LOG_TS.get(prefix, 0.0)
@@ -212,7 +202,6 @@ def _log_decision(prefix: str, decision: str, tags: dict, interval_sec: float) -
     payload["decision"] = decision
     payload["name"] = prefix
     log_metric("reentry_decision", 1.0, tags=payload)
-
 
 def decide_reentry_from_factors(
     *,
@@ -246,7 +235,6 @@ def decide_reentry_from_factors(
         range_active=range_active,
         log_tags=log_tags,
     )
-
 
 def decide_reentry(
     *,

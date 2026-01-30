@@ -11,6 +11,7 @@ from typing import Dict, Optional, Set
 
 from analysis.range_guard import detect_range_mode
 from workers.common.exit_utils import close_trade, mark_pnl_pips
+from workers.common.reentry_decider import decide_reentry
 from execution.position_manager import PositionManager
 from indicators.factor_cache import all_factors
 from market_data import tick_window
@@ -462,6 +463,35 @@ class ManualSwingExitWorker:
         if not client_id:
             LOG.warning("[EXIT-manual_swing] missing client_id trade=%s skip close", trade_id)
             return None
+
+        if pnl < 0:
+            factors = all_factors().get("H1") or {}
+            try:
+                ma10 = float(factors.get("ma10"))
+            except Exception:
+                ma10 = None
+            try:
+                ma20 = float(factors.get("ma20"))
+            except Exception:
+                ma20 = None
+            ma_pair = (ma10, ma20) if ma10 is not None and ma20 is not None else None
+            reentry = decide_reentry(
+                prefix="MANUAL_SWING",
+                side=side,
+                pnl_pips=pnl,
+                rsi=ctx.rsi,
+                adx=ctx.adx,
+                atr_pips=ctx.atr_pips,
+                bbw=ctx.bbw,
+                vwap_gap=ctx.vwap_gap_pips,
+                ma_pair=ma_pair,
+                range_active=range_mode,
+                log_tags={"trade": trade_id},
+            )
+            if reentry.action == "hold":
+                return None
+            if reentry.action == "exit_reentry" and not reentry.shadow:
+                return "reentry_reset"
 
         # 構造崩れ（H1 MA逆転/ADX低下＋ギャップ縮小）で撤退
         if ctx.adx is not None and ctx.adx < self.range_adx:

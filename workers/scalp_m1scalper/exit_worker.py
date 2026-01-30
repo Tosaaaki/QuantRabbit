@@ -48,8 +48,30 @@ _BB_EXIT_BYPASS_TOKENS = {
 _BB_EXIT_TF = "M1"
 _BB_PIP = 0.01
 
-_REENTRY_ENABLED = os.getenv("M1SCALP_REENTRY_ENABLE", "0").strip().lower() in {"1", "true", "yes"}
-_REENTRY_SHADOW = os.getenv("M1SCALP_REENTRY_SHADOW", "1").strip().lower() in {"1", "true", "yes"}
+def _env_bool_opt(name: str) -> Optional[bool]:
+    raw = os.getenv(name)
+    if raw is None:
+        return None
+    return raw.strip().lower() in {"1", "true", "yes"}
+
+
+def _env_bool(name: str, default: bool) -> bool:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in {"1", "true", "yes"}
+
+
+_REENTRY_ENABLED = _env_bool_opt("M1SCALP_REENTRY_ENABLE")
+if _REENTRY_ENABLED is None:
+    _REENTRY_ENABLED = _env_bool_opt("REENTRY_ENABLE_ALL")
+if _REENTRY_ENABLED is None:
+    _REENTRY_ENABLED = False
+_REENTRY_SHADOW = _env_bool_opt("M1SCALP_REENTRY_SHADOW")
+if _REENTRY_SHADOW is None:
+    _REENTRY_SHADOW = _env_bool_opt("REENTRY_SHADOW_ALL")
+if _REENTRY_SHADOW is None:
+    _REENTRY_SHADOW = True
 _REENTRY_REVERT_MIN = float(os.getenv("M1SCALP_REENTRY_REVERT_MIN", "0.65"))
 _REENTRY_TREND_MIN = float(os.getenv("M1SCALP_REENTRY_TREND_MIN", "0.60"))
 _REENTRY_TREND_MAX = float(os.getenv("M1SCALP_REENTRY_TREND_MAX", "0.45"))
@@ -406,27 +428,27 @@ async def _run_exit_loop(
         "no",
     }
 
-def _context() -> tuple[
-    Optional[float],
-    Optional[float],
-    Optional[float],
-    Optional[float],
-    Optional[tuple[float, float]],
-    Optional[float],
-]:
-    fac_m1 = all_factors().get("M1") or {}
-    rsi = _safe_float(fac_m1.get("rsi"))
-    adx = _safe_float(fac_m1.get("adx"))
-    atr_pips = _safe_float(fac_m1.get("atr_pips"))
-    if atr_pips is None:
-        atr_val = _safe_float(fac_m1.get("atr"))
-        if atr_val is not None:
-            atr_pips = atr_val * 100.0
-    vwap_gap = _safe_float(fac_m1.get("vwap_gap"))
-    ma10 = _safe_float(fac_m1.get("ma10"))
-    ma20 = _safe_float(fac_m1.get("ma20"))
-    bbw = _safe_float(fac_m1.get("bbw"))
-    return rsi, adx, atr_pips, vwap_gap, (ma10, ma20) if ma10 is not None and ma20 is not None else None, bbw
+    def _context() -> tuple[
+        Optional[float],
+        Optional[float],
+        Optional[float],
+        Optional[float],
+        Optional[tuple[float, float]],
+        Optional[float],
+    ]:
+        fac_m1 = all_factors().get("M1") or {}
+        rsi = _safe_float(fac_m1.get("rsi"))
+        adx = _safe_float(fac_m1.get("adx"))
+        atr_pips = _safe_float(fac_m1.get("atr_pips"))
+        if atr_pips is None:
+            atr_val = _safe_float(fac_m1.get("atr"))
+            if atr_val is not None:
+                atr_pips = atr_val * 100.0
+        vwap_gap = _safe_float(fac_m1.get("vwap_gap"))
+        ma10 = _safe_float(fac_m1.get("ma10"))
+        ma20 = _safe_float(fac_m1.get("ma20"))
+        bbw = _safe_float(fac_m1.get("bbw"))
+        return rsi, adx, atr_pips, vwap_gap, (ma10, ma20) if ma10 is not None and ma20 is not None else None, bbw
 
 
     async def _close(

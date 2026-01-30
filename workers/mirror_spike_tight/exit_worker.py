@@ -13,6 +13,7 @@ from typing import Dict, Optional
 from analysis.ma_projection import compute_adx_projection, compute_bbw_projection, compute_ma_projection, compute_rsi_projection
 from analysis.range_guard import detect_range_mode
 from workers.common.exit_utils import close_trade
+from workers.common.reentry_decider import decide_reentry
 from execution.position_manager import PositionManager
 from execution.reversion_failure import evaluate_reversion_failure, evaluate_tp_zone
 from indicators.factor_cache import all_factors

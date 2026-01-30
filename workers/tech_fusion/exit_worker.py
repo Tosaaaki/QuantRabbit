@@ -12,6 +12,7 @@ from execution.position_manager import PositionManager
 from indicators.factor_cache import all_factors
 from market_data import tick_window
 from workers.common.exit_utils import close_trade, mark_pnl_pips
+from workers.common.reentry_decider import decide_reentry
 
 from . import config
 
@@ -201,11 +202,40 @@ class TechFusionExitWorker:
             return
 
         atr_pips = _atr_pips()
+        if pnl < 0:
+            fac_m1 = all_factors().get("M1") or {}
+            rsi = _float(fac_m1.get("rsi"))
+            adx = _float(fac_m1.get("adx"))
+            atr_ref = _float(fac_m1.get("atr_pips"))
+            bbw = _float(fac_m1.get("bbw"))
+            vwap_gap = _float(fac_m1.get("vwap_gap"))
+            ma10 = _float(fac_m1.get("ma10"))
+            ma20 = _float(fac_m1.get("ma20"))
+            ma_pair = (ma10, ma20) if ma10 is not None and ma20 is not None else None
+            reentry = decide_reentry(
+                prefix="TECH_FUSION",
+                side=side,
+                pnl_pips=pnl,
+                rsi=rsi,
+                adx=adx,
+                atr_pips=atr_ref,
+                bbw=bbw,
+                vwap_gap=vwap_gap,
+                ma_pair=ma_pair,
+                range_active=False,
+                log_tags={"trade": trade_id},
+            )
+            if reentry.action == "hold":
+                return
+            if reentry.action == "exit_reentry" and not reentry.shadow:
+                await self._close(trade_id, -units, "reentry_reset", pnl, client_id)
+                self._states.pop(trade_id, None)
+                return
+
         if pnl <= -self.hard_stop_pips:
             await self._close(trade_id, -units, "hazard_exit", pnl, client_id)
             self._states.pop(trade_id, None)
             return
-
         if atr_pips is not None and atr_pips >= self.atr_spike_pips and pnl < 0:
             await self._close(trade_id, -units, "atr_spike", pnl, client_id)
             self._states.pop(trade_id, None)

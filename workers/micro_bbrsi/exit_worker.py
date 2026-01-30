@@ -303,7 +303,7 @@ class MicroBBRsiExitWorker:
             range_active = False
         return _latest_mid(), range_active
 
-    async def _close(self, trade_id: str, units: int, reason: str, pnl: float, client_order_id: Optional[str]) -> None:
+    async def _close(self, trade_id: str, units: int, reason: str, pnl: float, client_order_id: Optional[str], allow_negative: bool = False) -> None:
         if _BB_EXIT_ENABLED:
             allow_neg = bool(locals().get("allow_negative"))
             pnl_val = locals().get("pnl")
@@ -314,11 +314,13 @@ class MicroBBRsiExitWorker:
                 if not _bb_exit_allowed(BB_STYLE, side, price, fac):
                     LOG.info("[exit-bb] trade=%s reason=%s price=%.3f", trade_id, reason, price or 0.0)
                     return
+        if pnl <= 0:
+            allow_negative = True
         ok = await close_trade(
             trade_id,
             units,
             client_order_id=client_order_id,
-            allow_negative=False,
+            allow_negative=allow_negative,
             exit_reason=reason,
         )
         if ok:
