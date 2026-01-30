@@ -53,6 +53,36 @@ _OPEN_TRADES_FAIL_BACKOFF_MAX = float(
 )
 _MANUAL_POCKET_NAME = os.getenv("POSITION_MANAGER_MANUAL_POCKET", "manual")
 _KNOWN_POCKETS = {"micro", "macro", "scalp", "scalp_fast"}
+_WORKER_TAG_MAP = {
+    "OnePipMakerS1": "onepip_maker_s1",
+    "M1Scalper": "scalp_m1scalper",
+    "M1Scalpe68edca63a": "scalp_m1scalper",
+    "M1Scalpeb247b7f0a": "scalp_m1scalper",
+    "M1Scalpe05efa5a71": "scalp_m1scalper",
+    "ImpulseRetrace": "scalp_impulseretrace",
+    "ImpulseRetraceScalp": "scalp_impulseretrace",
+    "RangeFader": "scalp_rangefader",
+    "PulseBreak": "scalp_pulsebreak",
+    "MicroMA": "micro_ma",
+    "TrendMA": "macro_trendma",
+    "Donchian55": "macro_donchian55",
+    "DonchianM1": "micro_donchian",
+    "H1Momentum": "macro_h1momentum",
+    "BB_RSI": "micro_bbrsi",
+    "BB_RSI_Fast": "micro_bbrsi",
+    "MicroLevelReactor": "micro_levelreactor",
+    "MicroMomentumBurst": "micro_momentumburst",
+    "MicroMomentumStack": "micro_momentumstack",
+    "MicroPullbackEMA": "micro_pullbackema",
+    "MicroRangeBreak": "micro_rangebreak",
+    "MicroVWAPBound": "micro_vwapbound",
+    "MicroVWAPRevert": "micro_vwapbound",
+    "TrendMomentumMicro": "micro_trendmomentum",
+    "MomentumBurst": "micro_momentumburst",
+    "MomentumPulse": "micro_momentumburst",
+    "VolCompressionBreak": "micro_multistrat",
+    "VolSpikeRider": "vol_spike_rider",
+}
 # SQLite locking周り
 # ロック頻発に備えてデフォルトを広めに取る
 _DB_BUSY_TIMEOUT_MS = int(os.getenv("POSITION_MANAGER_DB_BUSY_TIMEOUT_MS", "20000"))
@@ -620,16 +650,21 @@ def _build_chart_data(
         return int(dt.timestamp() * 1000)
 
     perf_specs = {
-        "24h": {"delta": timedelta(hours=24), "max_points": min(_CHART_MAX_POINTS, 240)},
-        "7d": {"delta": timedelta(days=7), "max_points": _CHART_MAX_POINTS},
-        "30d": {"delta": timedelta(days=30), "max_points": _CHART_MAX_POINTS},
-        "ytd": {"start": year_start, "max_points": max(_CHART_MAX_POINTS, 320)},
+        "5m": {"delta": timedelta(minutes=5), "max_points": min(_CHART_MAX_POINTS, 120)},
+        "1h": {"delta": timedelta(hours=1), "max_points": min(_CHART_MAX_POINTS, 200)},
+        "1d": {"delta": timedelta(days=1), "max_points": _CHART_MAX_POINTS},
+        "1w": {"delta": timedelta(days=7), "max_points": _CHART_MAX_POINTS},
+        "1m": {"delta": timedelta(days=30), "max_points": _CHART_MAX_POINTS},
+        "1y": {"start": year_start, "max_points": max(_CHART_MAX_POINTS, 320)},
     }
 
     price_specs = {
-        "24h": {"delta": timedelta(hours=24), "tf": "M1", "max_points": _CHART_PRICE_MAX_POINTS},
-        "7d": {"delta": timedelta(days=7), "tf": "H1", "max_points": _CHART_PRICE_MAX_POINTS},
-        "30d": {"delta": timedelta(days=30), "tf": "H4", "max_points": _CHART_PRICE_MAX_POINTS},
+        "5m": {"delta": timedelta(minutes=5), "tf": "M1", "max_points": min(_CHART_PRICE_MAX_POINTS, 120)},
+        "1h": {"delta": timedelta(hours=1), "tf": "M1", "max_points": min(_CHART_PRICE_MAX_POINTS, 200)},
+        "1d": {"delta": timedelta(days=1), "tf": "M1", "max_points": _CHART_PRICE_MAX_POINTS},
+        "1w": {"delta": timedelta(days=7), "tf": "H1", "max_points": _CHART_PRICE_MAX_POINTS},
+        "1m": {"delta": timedelta(days=30), "tf": "H4", "max_points": _CHART_PRICE_MAX_POINTS},
+        "1y": {"start": year_start, "tf": "H4", "max_points": _CHART_PRICE_MAX_POINTS},
     }
 
     closed_events.sort(key=lambda row: row[0])
@@ -696,23 +731,33 @@ def _build_chart_data(
         kind: str,
         side: str,
         pocket: str,
+        worker: str | None,
         strategy: str | None,
         ts: datetime,
         price: float,
+        units_abs: int | None,
     ) -> str:
         ts_label = ts.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
         parts = [kind.capitalize(), side.capitalize(), pocket]
+        if worker:
+            parts.append(worker)
         if strategy:
             parts.append(strategy)
         parts.append(ts_label)
         parts.append(f"@ {price:.3f}")
+        if units_abs:
+            parts.append(f"{int(units_abs)}u")
         return " ".join(p for p in parts if p)
 
     price_ranges: dict[str, dict] = {}
-    earliest_price_start = min(
-        (now - spec["delta"] for spec in price_specs.values()),
-        default=now - timedelta(days=1),
-    )
+    earliest_candidates: list[datetime] = []
+    for spec in price_specs.values():
+        start_dt = spec.get("start")
+        if isinstance(start_dt, datetime):
+            earliest_candidates.append(start_dt)
+        else:
+            earliest_candidates.append(now - spec["delta"])
+    earliest_price_start = min(earliest_candidates) if earliest_candidates else now - timedelta(days=1)
     markers: list[dict] = []
     agent_prefixes = ("qr-", "qs-")
 
@@ -726,7 +771,7 @@ def _build_chart_data(
     try:
         cur = con.execute(
             "SELECT entry_time, close_time, entry_price, close_price, fill_price, "
-            "units, pocket, strategy_tag, strategy, client_order_id "
+            "units, pocket, strategy_tag, strategy, client_order_id, entry_thesis "
             "FROM trades WHERE entry_time IS NOT NULL OR close_time IS NOT NULL"
         )
         rows = cur.fetchall()
@@ -743,10 +788,39 @@ def _build_chart_data(
         if side == "flat":
             continue
         strategy = row["strategy_tag"] or row["strategy"]
+        strategy_label = None
+        if strategy is not None:
+            strategy_label = str(strategy).strip() or None
+        thesis = row["entry_thesis"]
+        if isinstance(thesis, str) and thesis:
+            try:
+                thesis = json.loads(thesis)
+            except Exception:
+                thesis = None
+        if not isinstance(thesis, dict):
+            thesis = None
+        worker = None
+        if isinstance(thesis, dict):
+            worker = thesis.get("worker_id") or thesis.get("worker")
+            if worker:
+                worker = str(worker)
+            else:
+                worker = None
+            if not strategy_label:
+                thesis_tag = thesis.get("strategy_tag") or thesis.get("strategy")
+                if thesis_tag is not None:
+                    strategy_label = str(thesis_tag).strip() or None
+        if not worker and strategy_label:
+            worker = (
+                _WORKER_TAG_MAP.get(strategy_label)
+                or _WORKER_TAG_MAP.get(strategy_label.lower())
+                or strategy_label
+            )
         entry_time = row["entry_time"]
         close_time = row["close_time"]
         entry_price = _coerce_float(row["entry_price"]) or _coerce_float(row["fill_price"])
         close_price = _coerce_float(row["close_price"])
+        units_abs = int(abs(units)) if units else None
 
         if entry_time and entry_price is not None:
             try:
@@ -761,14 +835,18 @@ def _build_chart_data(
                         "side": side,
                         "kind": "entry",
                         "pocket": pocket,
-                        "strategy": strategy,
+                        "worker": worker,
+                        "strategy": strategy_label,
+                        "units_abs": units_abs,
                         "label": _marker_label(
                             kind="entry",
                             side=side,
                             pocket=pocket,
-                            strategy=strategy,
+                            worker=worker,
+                            strategy=strategy_label,
                             ts=entry_dt,
                             price=entry_price,
+                            units_abs=units_abs,
                         ),
                     }
                 )
@@ -785,14 +863,18 @@ def _build_chart_data(
                         "side": side,
                         "kind": "exit",
                         "pocket": pocket,
-                        "strategy": strategy,
+                        "worker": worker,
+                        "strategy": strategy_label,
+                        "units_abs": units_abs,
                         "label": _marker_label(
                             kind="exit",
                             side=side,
                             pocket=pocket,
-                            strategy=strategy,
+                            worker=worker,
+                            strategy=strategy_label,
                             ts=close_dt,
                             price=close_price,
+                            units_abs=units_abs,
                         ),
                     }
                 )
@@ -802,7 +884,7 @@ def _build_chart_data(
         markers = markers[-_CHART_MARKERS_MAX :]
 
     for key, spec in price_specs.items():
-        start_dt = now - spec["delta"]
+        start_dt = spec.get("start") or (now - spec["delta"])
         candles = _load_latest_candles(spec["tf"])
         if candles:
             candles = [row for row in candles if row[0] >= start_dt]
@@ -841,11 +923,11 @@ def _build_chart_data(
         "available": bool(has_perf or has_price),
         "generated_at": now.isoformat(),
         "performance": {
-            "default_range": "7d",
+            "default_range": "1d",
             "ranges": perf_ranges,
         },
         "price": {
-            "default_range": "24h",
+            "default_range": "1d",
             "ranges": price_ranges,
         },
     }

@@ -217,10 +217,12 @@
             <div data-chart="performance">
               <div class="chart-toolbar">
                 <div class="range-buttons">
-                  <button type="button" class="range-button is-active" data-range="24h">24h</button>
-                  <button type="button" class="range-button" data-range="7d">7d</button>
-                  <button type="button" class="range-button" data-range="30d">30d</button>
-                  <button type="button" class="range-button" data-range="ytd">YTD</button>
+                  <button type="button" class="range-button" data-range="5m">5分</button>
+                  <button type="button" class="range-button" data-range="1h">1時間</button>
+                  <button type="button" class="range-button is-active" data-range="1d">1日</button>
+                  <button type="button" class="range-button" data-range="1w">週</button>
+                  <button type="button" class="range-button" data-range="1m">月</button>
+                  <button type="button" class="range-button" data-range="1y">年</button>
                 </div>
                 <div class="chart-meta" data-chart-meta="performance"></div>
               </div>
@@ -234,15 +236,38 @@
             <div data-chart="price">
               <div class="chart-toolbar">
                 <div class="range-buttons">
-                  <button type="button" class="range-button is-active" data-range="24h">24h</button>
-                  <button type="button" class="range-button" data-range="7d">7d</button>
-                  <button type="button" class="range-button" data-range="30d">30d</button>
+                  <button type="button" class="range-button" data-range="5m">5分</button>
+                  <button type="button" class="range-button" data-range="1h">1時間</button>
+                  <button type="button" class="range-button is-active" data-range="1d">1日</button>
+                  <button type="button" class="range-button" data-range="1w">週</button>
+                  <button type="button" class="range-button" data-range="1m">月</button>
+                  <button type="button" class="range-button" data-range="1y">年</button>
                 </div>
                 <div class="chart-meta" data-chart-meta="price"></div>
               </div>
               <div class="chart-wrap">
                 <svg class="chart-svg" data-chart-canvas="price" aria-label="Price chart"></svg>
                 <div class="chart-empty" data-chart-empty="price">NO DATA</div>
+              </div>
+              <div class="chart-markers" data-chart-markers="price">
+                <div class="section-subtitle">エントリーポイント</div>
+                <div class="table-wrap chart-marker-table">
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>時刻</th>
+                        <th>Side</th>
+                        <th>Pocket</th>
+                        <th>Worker</th>
+                        <th>Strategy</th>
+                        <th>Units</th>
+                        <th>Price</th>
+                      </tr>
+                    </thead>
+                    <tbody data-chart-markers-body="price"></tbody>
+                  </table>
+                </div>
+                <p class="tagline" data-chart-markers-empty="price">レンジ内エントリーがありません。</p>
               </div>
             </div>
           </div>
@@ -990,6 +1015,18 @@
       };
 
       const clamp = (val, min, max) => Math.max(min, Math.min(max, val));
+      const escapeHtml = (value) => String(value ?? "")
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/\"/g, "&quot;")
+        .replace(/'/g, "&#39;");
+      const formatTs = (ts) => {
+        const dt = new Date(ts);
+        if (Number.isNaN(dt.getTime())) return "-";
+        const iso = dt.toISOString().replace("T", " ").slice(0, 16);
+        return `${iso} UTC`;
+      };
 
       const renderPerformance = (key) => {
         if (!perfContainer) return;
@@ -1052,7 +1089,8 @@
         const lastY = last[1];
         const lastX = xFor(last[0]);
         const lastYPos = yFor(lastY);
-        const label = `${key.toUpperCase()} / trades ${range.trades ?? 0} / ${lastY >= 0 ? "+" : ""}${lastY.toFixed(0)}円` +
+        const labelKey = range.label || key;
+        const label = `${labelKey} / trades ${range.trades ?? 0} / ${lastY >= 0 ? "+" : ""}${lastY.toFixed(0)}円` +
           (lastPips !== null ? ` / ${lastPips >= 0 ? "+" : ""}${Number(lastPips).toFixed(1)}p` : "");
         if (meta) meta.textContent = label;
 
@@ -1157,7 +1195,8 @@
           `;
         });
 
-        const label = `${key.toUpperCase()} / ${range.tf} / candles ${candleCount}` +
+        const labelKey = range.label || key;
+        const label = `${labelKey} / ${range.tf} / candles ${candleCount}` +
           (range.range_label ? ` / ${range.range_label}` : "");
         if (meta) meta.textContent = label;
 
@@ -1166,6 +1205,38 @@
           ${candlesSvg}
           ${markersSvg}
         `;
+
+        const markerBody = priceContainer.querySelector('[data-chart-markers-body="price"]');
+        const markerEmpty = priceContainer.querySelector('[data-chart-markers-empty="price"]');
+        if (markerBody) {
+          const entryMarkers = markers.filter((m) => m && m.kind === "entry");
+          if (!entryMarkers.length) {
+            markerBody.innerHTML = "";
+            if (markerEmpty) markerEmpty.style.display = "block";
+          } else {
+            const rows = entryMarkers.map((m) => {
+              const side = m.side ? String(m.side).toUpperCase() : "-";
+              const pocket = m.pocket || "-";
+              const worker = m.worker || "-";
+              const strategy = m.strategy || "-";
+              const units = typeof m.units_abs === "number" ? m.units_abs.toLocaleString() : "-";
+              const price = typeof m.price === "number" ? m.price.toFixed(3) : "-";
+              return `
+                <tr>
+                  <td class="mono nowrap">${escapeHtml(formatTs(m.ts_ms))}</td>
+                  <td>${escapeHtml(side)}</td>
+                  <td>${escapeHtml(pocket)}</td>
+                  <td class="mono nowrap">${escapeHtml(worker)}</td>
+                  <td>${escapeHtml(strategy)}</td>
+                  <td class="mono">${escapeHtml(units)}</td>
+                  <td class="mono">${escapeHtml(price)}</td>
+                </tr>
+              `;
+            });
+            markerBody.innerHTML = rows.join("");
+            if (markerEmpty) markerEmpty.style.display = "none";
+          }
+        }
       };
 
       const bindRange = (container, renderFn, storageKey, defaultKey) => {
@@ -1193,13 +1264,13 @@
         perfContainer,
         renderPerformance,
         "qr_chart_range_perf",
-        chartData.performance?.default_range || "7d"
+        chartData.performance?.default_range || "1d"
       );
       bindRange(
         priceContainer,
         renderPrice,
         "qr_chart_range_price",
-        chartData.price?.default_range || "24h"
+        chartData.price?.default_range || "1d"
       );
 
       const chartTabButtons = document.querySelectorAll('[data-chart-tabs] [data-tab-button]');
