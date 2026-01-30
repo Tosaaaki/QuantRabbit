@@ -404,7 +404,7 @@ async def _runner_loop() -> None:
 
             # Regime guard
             regime_label = current_regime("M1", event_mode=False)
-            if regime_label and regime_label in (os.environ.get("PULLBACK_RUNNER_S5_BLOCK_REGIMES", "Event").split(",")):
+            if regime_label and regime_label in (os.environ.get("PULLBACK_RUNNER_S5_BLOCK_REGIMES", "Event,Range").split(",")):
                 if regime_block_logged != regime_label:
                     LOG.info("%s blocked by regime=%s", config.LOG_PREFIX, regime_label)
                     regime_block_logged = regime_label
@@ -636,6 +636,19 @@ async def _runner_loop() -> None:
                         "scalp",
                         mode_override="pullback",
                     )
+                    if proj_detail and proj_detail.get("score") is not None:
+                        try:
+                            proj_score = float(proj_detail.get("score"))
+                        except (TypeError, ValueError):
+                            proj_score = None
+                        if proj_score is not None and proj_score < 0.0:
+                            LOG.info(
+                                "%s projection score below 0 (%.3f); skip entry",
+                                config.LOG_PREFIX,
+                                proj_score,
+                            )
+                            cooldown_until = now_mono + config.COOLDOWN_SEC
+                            continue
                     if not proj_allow:
                         cooldown_until = now_mono + config.COOLDOWN_SEC
                         continue
