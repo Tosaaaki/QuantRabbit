@@ -12,6 +12,7 @@ from execution.position_manager import PositionManager
 from indicators.factor_cache import all_factors
 from market_data import tick_window
 from workers.common.exit_utils import close_trade, mark_pnl_pips
+from workers.common.reentry_decider import decide_reentry
 
 
 _BB_EXIT_ENABLED = os.getenv("BB_EXIT_ENABLED", "1").strip().lower() not in {"", "0", "false", "no"}
@@ -364,6 +365,34 @@ class StopRunReversalExitWorker:
                     self._states.pop(trade_id, None)
                 return
         if pnl <= 0:
+            fac_m1 = all_factors().get("M1") or {}
+            rsi = _bb_float(fac_m1.get("rsi"))
+            adx = _bb_float(fac_m1.get("adx"))
+            atr_pips = _bb_float(fac_m1.get("atr_pips"))
+            bbw = _bb_float(fac_m1.get("bbw"))
+            vwap_gap = _bb_float(fac_m1.get("vwap_gap"))
+            ma10 = _bb_float(fac_m1.get("ma10"))
+            ma20 = _bb_float(fac_m1.get("ma20"))
+            ma_pair = (ma10, ma20) if ma10 is not None and ma20 is not None else None
+            reentry = decide_reentry(
+                prefix="STOP_RUN_REVERSAL",
+                side=side,
+                pnl_pips=pnl,
+                rsi=rsi,
+                adx=adx,
+                atr_pips=atr_pips,
+                bbw=bbw,
+                vwap_gap=vwap_gap,
+                ma_pair=ma_pair,
+                range_active=range_active,
+                log_tags={"trade": trade_id},
+            )
+            if reentry.action == "hold":
+                return
+            if reentry.action == "exit_reentry" and not reentry.shadow:
+                await self._close(trade_id, -units, "reentry_reset", pnl, client_id)
+                self._states.pop(trade_id, None)
+                return
             return
 
         lock_buffer = self.range_lock_buffer if range_active else self.lock_buffer

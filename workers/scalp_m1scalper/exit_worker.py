@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Dict, Optional, Sequence, Set
@@ -46,6 +47,17 @@ _BB_EXIT_BYPASS_TOKENS = {
 }
 _BB_EXIT_TF = "M1"
 _BB_PIP = 0.01
+
+_REENTRY_ENABLED = os.getenv("M1SCALP_REENTRY_ENABLE", "0").strip().lower() in {"1", "true", "yes"}
+_REENTRY_SHADOW = os.getenv("M1SCALP_REENTRY_SHADOW", "1").strip().lower() in {"1", "true", "yes"}
+_REENTRY_REVERT_MIN = float(os.getenv("M1SCALP_REENTRY_REVERT_MIN", "0.65"))
+_REENTRY_TREND_MIN = float(os.getenv("M1SCALP_REENTRY_TREND_MIN", "0.60"))
+_REENTRY_TREND_MAX = float(os.getenv("M1SCALP_REENTRY_TREND_MAX", "0.45"))
+_REENTRY_EDGE_MIN = float(os.getenv("M1SCALP_REENTRY_EDGE_MIN", "0.55"))
+_REENTRY_MIN_ADVERSE_PIPS = float(os.getenv("M1SCALP_REENTRY_MIN_ADVERSE_PIPS", "2.5"))
+_REENTRY_MIN_ADVERSE_ATR = float(os.getenv("M1SCALP_REENTRY_MIN_ADVERSE_ATR", "1.0"))
+_REENTRY_LOG_INTERVAL_SEC = float(os.getenv("M1SCALP_REENTRY_LOG_INTERVAL_SEC", "8.0"))
+_LAST_REENTRY_LOG_TS: float = 0.0
 
 
 def _bb_float(value):
@@ -153,6 +165,125 @@ def _bb_exit_allowed(style, side, price, fac, *, range_active=None):
     if price >= mid + mid_buffer * _BB_PIP:
         return True
     return price <= (lower + band_buffer * _BB_PIP)
+
+
+def _clamp01(value: Optional[float]) -> Optional[float]:
+    if value is None:
+        return None
+    if value < 0.0:
+        return 0.0
+    if value > 1.0:
+        return 1.0
+    return float(value)
+
+
+def _norm(value: Optional[float], low: float, high: float) -> Optional[float]:
+    if value is None:
+        return None
+    if high <= low:
+        return 0.0
+    return _clamp01((float(value) - low) / (high - low))
+
+
+def _weighted_score(items: Sequence[tuple[Optional[float], float]]) -> Optional[float]:
+    total = 0.0
+    weight = 0.0
+    for value, w in items:
+        if value is None:
+            continue
+        total += float(value) * float(w)
+        weight += float(w)
+    if weight <= 0:
+        return None
+    return _clamp01(total / weight)
+
+
+def _reentry_scores(
+    *,
+    side: str,
+    rsi: Optional[float],
+    adx: Optional[float],
+    atr_pips: Optional[float],
+    bbw: Optional[float],
+    vwap_gap: Optional[float],
+    ma_pair: Optional[tuple[float, float]],
+    range_active: bool,
+) -> tuple[Optional[float], Optional[float]]:
+    side_key = str(side).lower()
+    is_short = side_key in {"short", "sell"}
+
+    rsi_score = None
+    if rsi is not None:
+        if is_short:
+            rsi_score = _norm(rsi, 55.0, 70.0)
+        else:
+            rsi_score = _norm(45.0 - rsi, 0.0, 15.0)
+
+    adx_revert = _norm(25.0 - adx, 0.0, 10.0) if adx is not None else None
+    bbw_revert = _norm(0.22 - bbw, 0.0, 0.12) if bbw is not None else None
+
+    vwap_revert = None
+    if vwap_gap is not None:
+        gap = vwap_gap if is_short else -vwap_gap
+        vwap_revert = _norm(gap, 0.6, 2.4)
+
+    revert_score = _weighted_score(
+        [
+            (rsi_score, 0.35),
+            (adx_revert, 0.25),
+            (bbw_revert, 0.25),
+            (vwap_revert, 0.15),
+        ]
+    )
+
+    adx_trend = _norm(adx, 18.0, 35.0) if adx is not None else None
+    atr_trend = _norm(atr_pips, 6.0, 14.0) if atr_pips is not None else None
+    ma_trend = None
+    if ma_pair is not None:
+        ma10, ma20 = ma_pair
+        if is_short:
+            ma_trend = 1.0 if ma10 > ma20 else 0.0
+        else:
+            ma_trend = 1.0 if ma10 < ma20 else 0.0
+    vwap_trend = None
+    if vwap_gap is not None:
+        gap = vwap_gap if is_short else -vwap_gap
+        vwap_trend = _norm(gap, 0.6, 2.6)
+
+    trend_score = _weighted_score(
+        [
+            (adx_trend, 0.35),
+            (atr_trend, 0.30),
+            (ma_trend, 0.25),
+            (vwap_trend, 0.10),
+        ]
+    )
+
+    if range_active:
+        if revert_score is not None:
+            revert_score = _clamp01(revert_score + 0.15)
+        if trend_score is not None:
+            trend_score = _clamp01(trend_score - 0.15)
+
+    return revert_score, trend_score
+
+
+def _reentry_edge(adverse_pips: float, atr_pips: Optional[float]) -> float:
+    if adverse_pips <= 0:
+        return 0.0
+    base = adverse_pips / max(atr_pips or 6.0, 0.1)
+    return float(_clamp01((base - 0.8) / 1.4) or 0.0)
+
+
+def _log_reentry_decision(*, decision: str, tags: dict) -> None:
+    global _LAST_REENTRY_LOG_TS
+    now = time.monotonic()
+    if now - _LAST_REENTRY_LOG_TS < _REENTRY_LOG_INTERVAL_SEC:
+        return
+    _LAST_REENTRY_LOG_TS = now
+    payload = dict(tags)
+    payload["decision"] = decision
+    log_metric("m1scalp_reentry_decision", 1.0, tags=payload)
 
 BB_STYLE = "scalp"
 LOG = logging.getLogger(__name__)
@@ -275,25 +406,27 @@ async def _run_exit_loop(
         "no",
     }
 
-    def _context() -> tuple[
-        Optional[float],
-        Optional[float],
-        Optional[float],
-        Optional[float],
-        Optional[tuple[float, float]],
-    ]:
-        fac_m1 = all_factors().get("M1") or {}
-        rsi = _safe_float(fac_m1.get("rsi"))
-        adx = _safe_float(fac_m1.get("adx"))
-        atr_pips = _safe_float(fac_m1.get("atr_pips"))
-        if atr_pips is None:
-            atr_val = _safe_float(fac_m1.get("atr"))
-            if atr_val is not None:
-                atr_pips = atr_val * 100.0
-        vwap_gap = _safe_float(fac_m1.get("vwap_gap"))
-        ma10 = _safe_float(fac_m1.get("ma10"))
-        ma20 = _safe_float(fac_m1.get("ma20"))
-        return rsi, adx, atr_pips, vwap_gap, (ma10, ma20) if ma10 is not None and ma20 is not None else None
+def _context() -> tuple[
+    Optional[float],
+    Optional[float],
+    Optional[float],
+    Optional[float],
+    Optional[tuple[float, float]],
+    Optional[float],
+]:
+    fac_m1 = all_factors().get("M1") or {}
+    rsi = _safe_float(fac_m1.get("rsi"))
+    adx = _safe_float(fac_m1.get("adx"))
+    atr_pips = _safe_float(fac_m1.get("atr_pips"))
+    if atr_pips is None:
+        atr_val = _safe_float(fac_m1.get("atr"))
+        if atr_val is not None:
+            atr_pips = atr_val * 100.0
+    vwap_gap = _safe_float(fac_m1.get("vwap_gap"))
+    ma10 = _safe_float(fac_m1.get("ma10"))
+    ma20 = _safe_float(fac_m1.get("ma20"))
+    bbw = _safe_float(fac_m1.get("bbw"))
+    return rsi, adx, atr_pips, vwap_gap, (ma10, ma20) if ma10 is not None and ma20 is not None else None, bbw
 
 
     async def _close(
@@ -442,32 +575,134 @@ async def _run_exit_loop(
             return
 
         if pnl < 0:
-            rsi, adx, atr_pips, vwap_gap, ma_pair = _context()
-            if rsi is not None:
-                if side == "long" and rsi <= rsi_fade_long:
-                    await _close(trade_id, -units, _REASON_RSI_FADE, client_id, allow_negative=allow_negative)
-                    states.pop(trade_id, None)
-                    return
-                if side == "short" and rsi >= rsi_fade_short:
-                    await _close(trade_id, -units, _REASON_RSI_FADE, client_id, allow_negative=allow_negative)
-                    states.pop(trade_id, None)
-                    return
-            if vwap_gap is not None and abs(vwap_gap) <= vwap_gap_pips:
-                await _close(trade_id, -units, _REASON_VWAP_CUT, client_id, allow_negative=allow_negative)
-                states.pop(trade_id, None)
-                return
-            if adx is not None and ma_pair is not None:
-                ma10, ma20 = ma_pair
-                gap = abs(ma10 - ma20) / 0.01
-                cross_bad = (side == "long" and ma10 <= ma20) or (side == "short" and ma10 >= ma20)
-                if adx <= structure_adx and (cross_bad or gap <= structure_gap_pips):
-                    await _close(trade_id, -units, _REASON_STRUCTURE_BREAK, client_id, allow_negative=allow_negative)
-                    states.pop(trade_id, None)
-                    return
-            if atr_pips is not None and atr_pips >= atr_spike_pips:
-                await _close(trade_id, -units, _REASON_ATR_SPIKE, client_id, allow_negative=allow_negative)
-                states.pop(trade_id, None)
-                return
+            rsi, adx, atr_pips, vwap_gap, ma_pair, bbw = _context()
+            skip_soft = False
+            if _REENTRY_ENABLED:
+                range_active = False
+                try:
+                    factors = all_factors()
+                    fac_m1 = factors.get("M1") or {}
+                    fac_h4 = factors.get("H4") or {}
+                    range_active = bool(detect_range_mode(fac_m1, fac_h4).active)
+                except Exception:
+                    range_active = False
+
+                adverse_pips = abs(float(pnl))
+                edge = _reentry_edge(adverse_pips, atr_pips)
+                revert_score, trend_score = _reentry_scores(
+                    side=side,
+                    rsi=rsi,
+                    adx=adx,
+                    atr_pips=atr_pips,
+                    bbw=bbw,
+                    vwap_gap=vwap_gap,
+                    ma_pair=ma_pair,
+                    range_active=range_active,
+                )
+
+                min_adverse = _REENTRY_MIN_ADVERSE_PIPS
+                if atr_pips is not None:
+                    min_adverse = max(min_adverse, atr_pips * _REENTRY_MIN_ADVERSE_ATR)
+
+                decision = None
+                if adverse_pips >= min_adverse and revert_score is not None and trend_score is not None:
+                    if revert_score >= _REENTRY_REVERT_MIN and trend_score <= _REENTRY_TREND_MAX:
+                        decision = "hold"
+                    elif trend_score >= _REENTRY_TREND_MIN and edge >= _REENTRY_EDGE_MIN:
+                        decision = "exit_reentry"
+
+                if decision:
+                    _log_reentry_decision(
+                        decision=decision,
+                        tags={
+                            "side": side,
+                            "revert": f"{revert_score:.2f}" if revert_score is not None else "na",
+                            "trend": f"{trend_score:.2f}" if trend_score is not None else "na",
+                            "edge": f"{edge:.2f}",
+                            "pnl": f"{pnl:.2f}",
+                        },
+                    )
+                    if decision == "hold":
+                        skip_soft = True
+                    elif decision == "exit_reentry":
+                        if not _REENTRY_SHADOW:
+                            ok = await _close(
+                                trade_id,
+                                -units,
+                                "reentry_reset",
+                                client_id,
+                                allow_negative=True,
+                            )
+                            if ok:
+                                states.pop(trade_id, None)
+                                return
+
+            if not skip_soft:
+                soft_failed = False
+                if rsi is not None:
+                    if side == "long" and rsi <= rsi_fade_long:
+                        ok = await _close(
+                            trade_id,
+                            -units,
+                            _REASON_RSI_FADE,
+                            client_id,
+                            allow_negative=allow_negative,
+                        )
+                        if ok:
+                            states.pop(trade_id, None)
+                            return
+                        soft_failed = True
+                    if side == "short" and rsi >= rsi_fade_short:
+                        ok = await _close(
+                            trade_id,
+                            -units,
+                            _REASON_RSI_FADE,
+                            client_id,
+                            allow_negative=allow_negative,
+                        )
+                        if ok:
+                            states.pop(trade_id, None)
+                            return
+                        soft_failed = True
+                if not soft_failed and vwap_gap is not None and abs(vwap_gap) <= vwap_gap_pips:
+                    ok = await _close(
+                        trade_id,
+                        -units,
+                        _REASON_VWAP_CUT,
+                        client_id,
+                        allow_negative=allow_negative,
+                    )
+                    if ok:
+                        states.pop(trade_id, None)
+                        return
+                    soft_failed = True
+                if not soft_failed and adx is not None and ma_pair is not None:
+                    ma10, ma20 = ma_pair
+                    gap = abs(ma10 - ma20) / 0.01
+                    cross_bad = (side == "long" and ma10 <= ma20) or (side == "short" and ma10 >= ma20)
+                    if adx <= structure_adx and (cross_bad or gap <= structure_gap_pips):
+                        ok = await _close(
+                            trade_id,
+                            -units,
+                            _REASON_STRUCTURE_BREAK,
+                            client_id,
+                            allow_negative=allow_negative,
+                        )
+                        if ok:
+                            states.pop(trade_id, None)
+                            return
+                        soft_failed = True
+                if not soft_failed and atr_pips is not None and atr_pips >= atr_spike_pips:
+                    ok = await _close(
+                        trade_id,
+                        -units,
+                        _REASON_ATR_SPIKE,
+                        client_id,
+                        allow_negative=allow_negative,
+                    )
+                    if ok:
+                        states.pop(trade_id, None)
+                        return
 
         if max_adverse > 0 and pnl <= -max_adverse:
             log_metric("m1scalp_max_adverse", pnl, tags={"side": side})

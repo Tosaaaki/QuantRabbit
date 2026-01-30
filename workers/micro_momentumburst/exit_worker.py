@@ -11,6 +11,7 @@ from typing import Dict, Optional, Sequence, Set
 
 from workers.common.exit_scaling import momentum_scale, scale_value
 from workers.common.exit_utils import close_trade, mark_pnl_pips
+from workers.common.reentry_decider import decide_reentry
 from execution.position_manager import PositionManager
 from indicators.factor_cache import all_factors
 from market_data import tick_window
@@ -469,6 +470,30 @@ class MomentumBurstExitWorker:
             soft_ready = pnl <= -tech_neg_min and hold_sec >= tech_neg_hold
             if hard_stop_ready or soft_ready:
                 rsi_val, adx, atr_pips, vwap_gap, ma_pair = self._tech_context()
+                bbw = None
+                try:
+                    bbw = _safe_float((all_factors().get("M1") or {}).get("bbw"))
+                except Exception:
+                    bbw = None
+                reentry = decide_reentry(
+                    prefix="MOMB",
+                    side=side,
+                    pnl_pips=pnl,
+                    rsi=rsi_val,
+                    adx=adx,
+                    atr_pips=atr_pips,
+                    bbw=bbw,
+                    vwap_gap=vwap_gap,
+                    ma_pair=ma_pair,
+                    range_active=range_active,
+                    log_tags={"trade": trade_id},
+                )
+                if reentry.action == "hold":
+                    return
+                if reentry.action == "exit_reentry" and not reentry.shadow:
+                    await self._close(trade_id, -units, "reentry_reset", pnl, client_id, allow_negative=True)
+                    self._states.pop(trade_id, None)
+                    return
                 score = 0
                 reason = None
                 if atr_pips is not None and atr_pips >= self.atr_spike_pips:
@@ -725,5 +750,4 @@ def _exit_candle_reversal(side):
 if __name__ == "__main__":  # pragma: no cover
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s", force=True)
     asyncio.run(micro_momentumburst_exit_worker())
-
 

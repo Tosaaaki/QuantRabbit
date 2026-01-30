@@ -12,6 +12,7 @@ from typing import Dict, Optional, Sequence, Set
 from analysis.range_guard import detect_range_mode
 from workers.common.exit_scaling import momentum_scale, scale_value
 from workers.common.exit_utils import close_trade, mark_pnl_pips
+from workers.common.reentry_decider import decide_reentry
 from execution.order_manager import set_trade_protections
 from execution.position_manager import PositionManager
 from execution.reversion_failure import evaluate_reversion_failure, evaluate_tp_zone
@@ -97,6 +98,13 @@ def _bb_exit_price(fac):
         except Exception:
             price = None
     return price
+
+
+def _safe_float(value: object) -> Optional[float]:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
 
 
 def _bb_exit_should_bypass(reason, pnl, allow_negative):
@@ -451,6 +459,7 @@ class MicroMultiExitWorker:
         thesis = trade.get("entry_thesis") or {}
         if not isinstance(thesis, dict):
             thesis = {}
+        reversion_kind = _reversion_kind(trade)
 
         state = self._states.get(trade_id)
         if state is None:
@@ -508,6 +517,48 @@ class MicroMultiExitWorker:
         if hold_sec < min_hold:
             return
 
+        if pnl < 0 and not reversion_kind:
+            fac_m1 = all_factors().get("M1") or {}
+            rsi_val = rsi
+            adx_val = adx
+            bbw_val = bbw
+            atr_pips = _safe_float(fac_m1.get("atr_pips"))
+            if atr_pips is None:
+                atr_val = _safe_float(fac_m1.get("atr"))
+                if atr_val is not None:
+                    atr_pips = atr_val * 100.0
+            vwap_gap = _safe_float(fac_m1.get("vwap_gap"))
+            ma10 = _safe_float(fac_m1.get("ma10"))
+            ma20 = _safe_float(fac_m1.get("ma20"))
+            ma_pair = (ma10, ma20) if ma10 is not None and ma20 is not None else None
+            reentry = decide_reentry(
+                prefix="MICRO_MULTI",
+                side=side,
+                pnl_pips=pnl,
+                rsi=rsi_val,
+                adx=adx_val,
+                atr_pips=atr_pips,
+                bbw=bbw_val,
+                vwap_gap=vwap_gap,
+                ma_pair=ma_pair,
+                range_active=range_active,
+                log_tags={"trade": trade_id},
+            )
+            if reentry.action == "hold":
+                return
+            if reentry.action == "exit_reentry" and not reentry.shadow:
+                await self._close(
+                    trade_id,
+                    -units,
+                    "reentry_reset",
+                    pnl,
+                    client_id,
+                    bb_style=bb_style,
+                    allow_negative=True,
+                )
+                self._states.pop(trade_id, None)
+                return
+
         candle_reason = _exit_candle_reversal("long" if units > 0 else "short")
         if candle_reason and pnl >= 0:
             candle_client_id = trade.get("client_order_id")
@@ -528,7 +579,6 @@ class MicroMultiExitWorker:
                 if hasattr(self, "_states"):
                     self._states.pop(trade_id, None)
                 return
-        reversion_kind = _reversion_kind(trade)
         low_vol = bool(thesis.get("low_vol"))
         if pnl > 0 and reversion_kind and not state.partial_done:
             trigger = self.partial_trigger_low_vol if low_vol else self.partial_trigger

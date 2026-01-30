@@ -11,6 +11,7 @@ from typing import Dict, Optional, Sequence, Set
 
 from analysis.range_guard import detect_range_mode
 from workers.common.exit_utils import close_trade, mark_pnl_pips
+from workers.common.reentry_decider import decide_reentry
 from execution.position_manager import PositionManager
 from indicators.factor_cache import all_factors
 from market_data import tick_window
@@ -365,6 +366,47 @@ class ImpulseMomentumExitWorker:
         # 最低保有時間内は絶対にクローズしない（スプレッド負け防止）
         if hold_sec < self.min_hold_sec:
             return
+
+        if pnl < 0:
+            fac_m1 = all_factors().get("M1") or {}
+            def _opt(val):
+                try:
+                    return float(val)
+                except (TypeError, ValueError):
+                    return None
+            adx = _opt(fac_m1.get("adx"))
+            atr_pips = _opt(fac_m1.get("atr_pips"))
+            bbw = _opt(fac_m1.get("bbw"))
+            vwap_gap = _opt(fac_m1.get("vwap_gap"))
+            ma10 = _opt(fac_m1.get("ma10"))
+            ma20 = _opt(fac_m1.get("ma20"))
+            ma_pair = (ma10, ma20) if ma10 is not None and ma20 is not None else None
+            reentry = decide_reentry(
+                prefix="IMPULSE_MOMENTUM_S5",
+                side=side,
+                pnl_pips=pnl,
+                rsi=rsi,
+                adx=adx,
+                atr_pips=atr_pips,
+                bbw=bbw,
+                vwap_gap=vwap_gap,
+                ma_pair=ma_pair,
+                range_active=range_active,
+                log_tags={"trade": trade_id},
+            )
+            if reentry.action == "hold":
+                return
+            if reentry.action == "exit_reentry" and not reentry.shadow:
+                await self._close(
+                    trade_id,
+                    -units,
+                    "reentry_reset",
+                    pnl,
+                    client_id,
+                    allow_negative=True,
+                )
+                self._states.pop(trade_id, None)
+                return
 
         candle_reason = _exit_candle_reversal("long" if units > 0 else "short")
         if candle_reason and pnl >= 0:

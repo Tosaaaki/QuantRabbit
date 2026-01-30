@@ -158,6 +158,7 @@ _STRATEGY_ALIAS_BASE = {
     "microrangebreak": "MicroRangeBreak",
     "microvwapbound": "MicroVWAPBound",
     "momentumburst": "MomentumBurst",
+    "techfusion": "TechFusion",
 }
 
 

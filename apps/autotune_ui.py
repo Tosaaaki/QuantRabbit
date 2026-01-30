@@ -358,10 +358,13 @@ def _parse_dt(value: Any) -> Optional[datetime]:
         return None
 
 
+_JST = timezone(timedelta(hours=9))
+
+
 def _format_dt(dt: Optional[datetime]) -> Optional[str]:
     if not dt:
         return None
-    return dt.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+    return dt.astimezone(_JST).strftime("%Y-%m-%d %H:%M JST")
 
 
 def _parse_ts_ms(ts_ms: Any) -> Optional[datetime]:

@@ -1,19 +1,17 @@
-"""Exit worker for Volatility Spike Rider."""
+"""Exit worker for Tech Fusion."""
 
 from __future__ import annotations
 
 import asyncio
 import logging
-import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Dict, Optional
 
+from execution.position_manager import PositionManager
 from indicators.factor_cache import all_factors
 from market_data import tick_window
-from execution.position_manager import PositionManager
 from workers.common.exit_utils import close_trade, mark_pnl_pips
-from workers.common.reentry_decider import decide_reentry
 
 from . import config
 
@@ -88,19 +86,13 @@ def _atr_pips() -> Optional[float]:
 def _strategy_tag(trade: dict) -> Optional[str]:
     thesis = trade.get("entry_thesis") or {}
     tag = thesis.get("strategy_tag") or trade.get("strategy_tag")
-    return str(tag) if tag else None
+    if not tag:
+        return None
+    base = str(tag).split("-", 1)[0].strip()
+    return base or None
 
 
-def _exit_threshold(mapping: Dict[str, float], tag: Optional[str], default: float) -> float:
-    if not mapping or not tag:
-        return default
-    for key, value in mapping.items():
-        if key.lower() == tag.lower():
-            return float(value)
-    return default
-
-
-class VolSpikeExitWorker:
+class TechFusionExitWorker:
     def __init__(self) -> None:
         self.loop_interval = config.EXIT_LOOP_INTERVAL_SEC
         self.min_hold_sec = config.EXIT_MIN_HOLD_SEC
@@ -136,9 +128,9 @@ class VolSpikeExitWorker:
             exit_reason=reason,
         )
         if ok:
-            LOG.info("[EXIT-vol_spike] trade=%s units=%s reason=%s pnl=%.2fp", trade_id, units, reason, pnl)
+            LOG.info("[EXIT-tech_fusion] trade=%s units=%s reason=%s pnl=%.2fp", trade_id, units, reason, pnl)
         else:
-            LOG.error("[EXIT-vol_spike] close failed trade=%s units=%s reason=%s", trade_id, units, reason)
+            LOG.error("[EXIT-tech_fusion] close failed trade=%s units=%s reason=%s", trade_id, units, reason)
 
     async def _review_trade(self, trade: dict, now: datetime, mid: float) -> None:
         trade_id = str(trade.get("trade_id") or "")
@@ -209,61 +201,22 @@ class VolSpikeExitWorker:
             return
 
         atr_pips = _atr_pips()
-        tag = _strategy_tag(trade)
-        atr_th = _exit_threshold(config.EXIT_ATR_BY_TAG, tag, self.atr_spike_pips)
-        rev_th = _exit_threshold(config.EXIT_REV_BY_TAG, tag, self.rev_pips)
-
-        if pnl < 0:
-            fac_m1 = all_factors().get("M1") or {}
-            def _opt(val):
-                try:
-                    return float(val)
-                except (TypeError, ValueError):
-                    return None
-            rsi = _opt(fac_m1.get("rsi"))
-            adx = _opt(fac_m1.get("adx"))
-            atr_ref = _opt(fac_m1.get("atr_pips"))
-            bbw = _opt(fac_m1.get("bbw"))
-            vwap_gap = _opt(fac_m1.get("vwap_gap"))
-            ma10 = _opt(fac_m1.get("ma10"))
-            ma20 = _opt(fac_m1.get("ma20"))
-            ma_pair = (ma10, ma20) if ma10 is not None and ma20 is not None else None
-            reentry = decide_reentry(
-                prefix="VOL_SPIKE_RIDER",
-                side=side,
-                pnl_pips=pnl,
-                rsi=rsi,
-                adx=adx,
-                atr_pips=atr_ref,
-                bbw=bbw,
-                vwap_gap=vwap_gap,
-                ma_pair=ma_pair,
-                range_active=False,
-                log_tags={"trade": trade_id},
-            )
-            if reentry.action == "hold":
-                return
-            if reentry.action == "exit_reentry" and not reentry.shadow:
-                await self._close(trade_id, -units, "reentry_reset", pnl, client_id)
-                self._states.pop(trade_id, None)
-                return
-
         if pnl <= -self.hard_stop_pips:
             await self._close(trade_id, -units, "hazard_exit", pnl, client_id)
             self._states.pop(trade_id, None)
             return
 
-        if atr_pips is not None and atr_pips >= atr_th and pnl < 0:
+        if atr_pips is not None and atr_pips >= self.atr_spike_pips and pnl < 0:
             await self._close(trade_id, -units, "atr_spike", pnl, client_id)
             self._states.pop(trade_id, None)
             return
 
         recent_move = _recent_move_pips(self.rev_window_sec)
-        if side == "long" and recent_move <= -rev_th:
+        if side == "long" and recent_move <= -self.rev_pips:
             await self._close(trade_id, -units, "hazard_exit", pnl, client_id)
             self._states.pop(trade_id, None)
             return
-        if side == "short" and recent_move >= rev_th:
+        if side == "short" and recent_move >= self.rev_pips:
             await self._close(trade_id, -units, "hazard_exit", pnl, client_id)
             self._states.pop(trade_id, None)
             return
@@ -274,7 +227,7 @@ class VolSpikeExitWorker:
             return
 
     async def run(self) -> None:
-        LOG.info("[EXIT-vol_spike] worker starting (interval=%.2fs)", self.loop_interval)
+        LOG.info("[EXIT-tech_fusion] worker starting (interval=%.2fs)", self.loop_interval)
         while True:
             await asyncio.sleep(self.loop_interval)
             now = datetime.now(timezone.utc)
@@ -282,8 +235,8 @@ class VolSpikeExitWorker:
             if mid <= 0:
                 continue
             positions = self._pos_manager.get_open_positions()
-            scalp = positions.get("scalp") or {}
-            trades = scalp.get("open_trades") or []
+            pocket = positions.get(config.POCKET) or {}
+            trades = pocket.get("open_trades") or []
             if not trades:
                 continue
             for tr in trades:
@@ -292,22 +245,22 @@ class VolSpikeExitWorker:
                 try:
                     await self._review_trade(tr, now, mid)
                 except Exception:
-                    LOG.exception("[EXIT-vol_spike] review failed")
+                    LOG.exception("[EXIT-tech_fusion] review failed")
 
 
-async def vol_spike_rider_exit_worker() -> None:
-    worker = VolSpikeExitWorker()
+async def tech_fusion_exit_worker() -> None:
+    worker = TechFusionExitWorker()
     try:
         await worker.run()
     except asyncio.CancelledError:
-        LOG.info("[EXIT-vol_spike] worker cancelled")
+        LOG.info("[EXIT-tech_fusion] worker cancelled")
         raise
     finally:
         try:
             worker._pos_manager.close()
-        except Exception:  # noqa: BLE001
-            LOG.exception("[EXIT-vol_spike] failed to close PositionManager")
+        except Exception:
+            LOG.exception("[EXIT-tech_fusion] failed to close PositionManager")
 
 
 if __name__ == "__main__":
-    asyncio.run(vol_spike_rider_exit_worker())
+    asyncio.run(tech_fusion_exit_worker())

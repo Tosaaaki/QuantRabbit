@@ -11,6 +11,7 @@ from typing import Dict, Optional, Sequence, Set
 
 from workers.common.exit_scaling import momentum_scale, scale_value
 from workers.common.exit_utils import close_trade, mark_pnl_pips
+from workers.common.reentry_decider import decide_reentry
 from execution.position_manager import PositionManager
 from indicators.factor_cache import all_factors
 from market_data import tick_window
@@ -392,6 +393,36 @@ async def _run_exit_loop(
         if not client_id:
             LOG.warning("[EXIT-%s] missing client_id trade=%s skip close", pocket, trade_id)
             return
+
+        if pnl < 0:
+            fac_h1 = all_factors().get("H1") or {}
+            rsi = _bb_float(fac_h1.get("rsi"))
+            adx = _bb_float(fac_h1.get("adx"))
+            atr_pips = _bb_float(fac_h1.get("atr_pips"))
+            bbw = _bb_float(fac_h1.get("bbw"))
+            vwap_gap = _bb_float(fac_h1.get("vwap_gap"))
+            ma10 = _bb_float(fac_h1.get("ma10"))
+            ma20 = _bb_float(fac_h1.get("ma20"))
+            ma_pair = (ma10, ma20) if ma10 is not None and ma20 is not None else None
+            reentry = decide_reentry(
+                prefix="TREND_H1",
+                side=side,
+                pnl_pips=pnl,
+                rsi=rsi,
+                adx=adx,
+                atr_pips=atr_pips,
+                bbw=bbw,
+                vwap_gap=vwap_gap,
+                ma_pair=ma_pair,
+                range_active=False,
+                log_tags={"trade": trade_id},
+            )
+            if reentry.action == "hold":
+                return
+            if reentry.action == "exit_reentry" and not reentry.shadow:
+                await _close(trade_id, -units, "reentry_reset", client_id, allow_negative=True)
+                states.pop(trade_id, None)
+                return
 
         if _structure_break(units):
             await _close(trade_id, -units, "structure_break", client_id, allow_negative=allow_negative)

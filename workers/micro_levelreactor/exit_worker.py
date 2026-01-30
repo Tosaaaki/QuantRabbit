@@ -10,6 +10,7 @@ from datetime import datetime, timezone
 from typing import Dict, Optional, Sequence, Set
 
 from workers.common.exit_utils import close_trade, mark_pnl_pips
+from workers.common.reentry_decider import decide_reentry
 from execution.position_manager import PositionManager
 from indicators.factor_cache import all_factors
 from market_data import tick_window
@@ -417,6 +418,33 @@ class MicroLevelReactorExitWorker:
             soft_ready = pnl <= -self.tech_neg_min_pips and hold_sec >= self.tech_neg_hold_sec
             if hard_stop_ready or soft_ready:
                 rsi_val, adx, atr_pips, vwap_gap, ma_pair = self._tech_context()
+                bbw = _safe_float((all_factors().get("M1") or {}).get("bbw"))
+                reentry = decide_reentry(
+                    prefix="MICRO_LEVEL",
+                    side=side,
+                    pnl_pips=pnl,
+                    rsi=rsi_val,
+                    adx=adx,
+                    atr_pips=atr_pips,
+                    bbw=bbw,
+                    vwap_gap=vwap_gap,
+                    ma_pair=ma_pair,
+                    range_active=range_active,
+                    log_tags={"trade": trade_id},
+                )
+                if reentry.action == "hold":
+                    return
+                if reentry.action == "exit_reentry" and not reentry.shadow:
+                    await self._close(
+                        trade_id,
+                        -units,
+                        "reentry_reset",
+                        pnl,
+                        client_id,
+                        allow_negative=True,
+                    )
+                    self._states.pop(trade_id, None)
+                    return
                 score = 0
                 reason = None
                 if atr_pips is not None and atr_pips >= self.atr_spike_pips:

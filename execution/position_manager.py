@@ -53,6 +53,7 @@ _OPEN_TRADES_FAIL_BACKOFF_MAX = float(
 )
 _MANUAL_POCKET_NAME = os.getenv("POSITION_MANAGER_MANUAL_POCKET", "manual")
 _KNOWN_POCKETS = {"micro", "macro", "scalp", "scalp_fast"}
+_JST = timezone(timedelta(hours=9))
 _WORKER_TAG_MAP = {
     "OnePipMakerS1": "onepip_maker_s1",
     "M1Scalper": "scalp_m1scalper",
@@ -81,6 +82,7 @@ _WORKER_TAG_MAP = {
     "MomentumPulse": "micro_momentumburst",
     "VolCompressionBreak": "micro_multistrat",
     "VolSpikeRider": "vol_spike_rider",
+    "TechFusion": "tech_fusion",
 }
 # SQLite locking周り
 # ロック頻発に備えてデフォルトを広めに取る
@@ -172,6 +174,7 @@ _CANONICAL_STRATEGY_TAGS = {
     "manual_swing",
     "OnePipMakerS1",
     "LondonMomentum",
+    "TechFusion",
 }
 _CANONICAL_TAGS_LOWER = {tag.lower(): tag for tag in _CANONICAL_STRATEGY_TAGS}
 _TAG_ALIAS_PREFIXES = {
@@ -186,6 +189,7 @@ _TAG_ALIAS_PREFIXES = {
     "mmlite": "mm_lite",
     "bbrsi": "BB_RSI",
     "bb_rsi": "BB_RSI",
+    "techfusion": "TechFusion",
 }
 
 _STRATEGY_POCKET_MAP = {
@@ -736,7 +740,7 @@ def _build_chart_data(
         price: float,
         units_abs: int | None,
     ) -> str:
-        ts_label = ts.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+        ts_label = ts.astimezone(_JST).strftime("%Y-%m-%d %H:%M JST")
         parts = [kind.capitalize(), side.capitalize(), pocket]
         if worker:
             parts.append(worker)
@@ -893,9 +897,9 @@ def _build_chart_data(
         if candles:
             range_start_ms = _to_ms(candles[0][0])
             range_end_ms = _to_ms(candles[-1][0])
-            start_label = candles[0][0].astimezone(timezone.utc).strftime("%m/%d %H:%M")
-            end_label = candles[-1][0].astimezone(timezone.utc).strftime("%m/%d %H:%M")
-            range_label = f"{start_label} - {end_label} UTC"
+            start_label = candles[0][0].astimezone(_JST).strftime("%m/%d %H:%M")
+            end_label = candles[-1][0].astimezone(_JST).strftime("%m/%d %H:%M")
+            range_label = f"{start_label} - {end_label} JST"
         else:
             range_label = None
         range_markers = [

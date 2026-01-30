@@ -1035,8 +1035,9 @@
       const formatTs = (ts) => {
         const dt = new Date(ts);
         if (Number.isNaN(dt.getTime())) return "-";
-        const iso = dt.toISOString().replace("T", " ").slice(0, 16);
-        return `${iso} UTC`;
+        const jst = new Date(dt.getTime() + 9 * 60 * 60 * 1000);
+        const iso = jst.toISOString().replace("T", " ").slice(0, 16);
+        return `${iso} JST`;
       };
       const getOrInitView = (chartKey, rangeKey, baseMin, baseMax, defaultMin, defaultMax) => {
         if (!viewState[chartKey]) viewState[chartKey] = {};

@@ -11,6 +11,7 @@ from typing import Dict, Optional
 
 from analysis.range_guard import detect_range_mode
 from workers.common.exit_utils import close_trade, mark_pnl_pips
+from workers.common.reentry_decider import decide_reentry
 from execution.position_manager import PositionManager
 from indicators.factor_cache import all_factors
 from market_data import tick_window
@@ -553,6 +554,35 @@ class PullbackScalpExitWorker:
             trail_backoff = max(0.2, trail_backoff * self.touch_tighten_ratio)
             lock_trigger = max(0.25, lock_trigger * self.touch_tighten_ratio)
             lock_buffer = max(0.1, lock_buffer * self.touch_tighten_ratio)
+
+        if pnl < 0:
+            factors = all_factors().get("M1") or {}
+            try:
+                ma10 = float(factors.get("ma10"))
+            except Exception:
+                ma10 = None
+            try:
+                ma20 = float(factors.get("ma20"))
+            except Exception:
+                ma20 = None
+            ma_pair = (ma10, ma20) if ma10 is not None and ma20 is not None else None
+            reentry = decide_reentry(
+                prefix="PULLBACK_SCALP",
+                side=side,
+                pnl_pips=pnl,
+                rsi=ctx.rsi,
+                adx=ctx.adx,
+                atr_pips=ctx.atr_pips,
+                bbw=ctx.bbw,
+                vwap_gap=ctx.vwap_gap_pips,
+                ma_pair=ma_pair,
+                range_active=range_mode,
+                log_tags={"trade": trade_id},
+            )
+            if reentry.action == "hold":
+                return None
+            if reentry.action == "exit_reentry" and not reentry.shadow:
+                return "reentry_reset"
 
         # 構造崩れ（M1 MA逆転/ADX低下＋ギャップ縮小）で撤退
         if ctx.adx is not None and ctx.adx < self.range_adx:

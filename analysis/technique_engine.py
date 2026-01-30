@@ -679,6 +679,16 @@ class TechniqueExitDecision:
     debug: Dict[str, object]
 
 
+@dataclass(slots=True)
+class TechniqueEntryDecision:
+    allowed: bool
+    reason: Optional[str]
+    score: Optional[float]
+    coverage: Optional[float]
+    size_mult: float
+    debug: Dict[str, object]
+
+
 def _normalize_tf(value: Optional[str]) -> Optional[str]:
     if not value:
         return None
@@ -910,7 +920,8 @@ def _resolve_mtf_tfs(
     entry_thesis: Optional[dict],
 ) -> list[str]:
     if label == "candle" and not _common_candle_enabled():
-        return []
+        if not (isinstance(entry_thesis, dict) and entry_thesis.get("tech_allow_candle")):
+            return []
     mtf_enabled = _env_bool("TECH_MTF_ENABLED")
     if mtf_enabled is False:
         return [getattr(policy, f"{label}_tf")]
@@ -994,6 +1005,7 @@ def _resolve_policy(
     strategy_tag: Optional[str],
     pocket: str,
     entry_thesis: Optional[dict],
+    allow_candle: Optional[bool] = None,
 ) -> TechniquePolicy:
     mode = _infer_mode(strategy_tag, pocket)
     policy = _base_policy(mode, pocket)
@@ -1085,11 +1097,234 @@ def _resolve_policy(
                         policy.nwave_tf = norm
                     elif k == "tech_tf_candle":
                         policy.candle_tf = norm
-    if not _common_candle_enabled():
+    if allow_candle is None:
+        allow_candle = _common_candle_enabled()
+    if not allow_candle:
         policy = replace(policy, weight_candle=0.0, require_candle=False)
     return policy
 
 
+
+
+def evaluate_entry_techniques(
+    *,
+    entry_price: float,
+    side: str,
+    pocket: str,
+    strategy_tag: Optional[str] = None,
+    entry_thesis: Optional[dict] = None,
+    allow_candle: Optional[bool] = None,
+) -> TechniqueEntryDecision:
+    price_dbg = round(float(entry_price), 5) if entry_price else 0.0
+    policy = _resolve_policy(
+        strategy_tag=strategy_tag,
+        pocket=pocket,
+        entry_thesis=entry_thesis,
+        allow_candle=allow_candle,
+    )
+
+    fib_score = fib_debug = None
+    fib_items: list[tuple[str, float, Dict[str, object]]] = []
+    fib_tfs = _resolve_mtf_tfs(
+        "fib",
+        policy=policy,
+        pocket=pocket,
+        strategy_tag=strategy_tag,
+        entry_thesis=entry_thesis,
+    )
+    axis_override = _axis_from_thesis(entry_thesis or {}) if isinstance(entry_thesis, dict) else None
+    for tf in fib_tfs:
+        axis = axis_override or _range_from_policy(policy, tf=tf, entry_thesis=entry_thesis)
+        if axis:
+            score, detail = _score_fib(
+                entry_price=entry_price,
+                axis=axis,
+                side=side,
+                mode=policy.mode,
+                fib_trigger=policy.fib_trigger,
+            )
+            if score is not None:
+                fib_items.append((tf, score, detail))
+    if fib_items:
+        fib_score, fib_debug = _blend_tf_scores(fib_items, mode=policy.mode)
+
+    median_score = median_debug = None
+    median_items: list[tuple[str, float, Dict[str, object]]] = []
+    median_tfs = _resolve_mtf_tfs(
+        "median",
+        policy=policy,
+        pocket=pocket,
+        strategy_tag=strategy_tag,
+        entry_thesis=entry_thesis,
+    )
+    for tf in median_tfs:
+        axis = axis_override or _range_from_policy(policy, tf=tf, entry_thesis=entry_thesis)
+        if axis:
+            dist_scale = _tf_length_scale(tf)
+            score, detail = _score_median(
+                entry_price=entry_price,
+                axis=axis,
+                side=side,
+                mode=policy.mode,
+                mid_distance_pips=policy.mid_distance_pips * dist_scale,
+            )
+            if score is not None:
+                median_items.append((tf, score, detail))
+    if median_items:
+        median_score, median_debug = _blend_tf_scores(median_items, mode=policy.mode)
+
+    nwave_score = nwave_debug = None
+    nwave_items: list[tuple[str, float, Dict[str, object]]] = []
+    nwave_tfs = _resolve_mtf_tfs(
+        "nwave",
+        policy=policy,
+        pocket=pocket,
+        strategy_tag=strategy_tag,
+        entry_thesis=entry_thesis,
+    )
+    for tf in nwave_tfs:
+        lookback = _LOOKBACK_BY_TF.get(tf, policy.lookback)
+        nwave_candles = get_candles_snapshot(tf, limit=lookback)
+        if nwave_candles:
+            leg_scale = _tf_length_scale(tf)
+            score, detail = _score_nwave(
+                candles=nwave_candles,
+                side=side,
+                min_quality=policy.nwave_min_quality,
+                min_leg_pips=policy.nwave_min_leg_pips * leg_scale,
+            )
+            if score is not None:
+                nwave_items.append((tf, score, detail))
+    if nwave_items:
+        nwave_score, nwave_debug = _blend_tf_scores(
+            nwave_items,
+            mode=policy.mode,
+            prefer_lower=True,
+        )
+
+    candle_score = candle_debug = None
+    candle_items: list[tuple[str, float, Dict[str, object]]] = []
+    if policy.weight_candle > 0:
+        candle_tfs = _resolve_mtf_tfs(
+            "candle",
+            policy=policy,
+            pocket=pocket,
+            strategy_tag=strategy_tag,
+            entry_thesis=entry_thesis,
+        )
+        for tf in candle_tfs:
+            candle_candles = get_candles_snapshot(tf, limit=4)
+            if candle_candles:
+                score, detail = _score_candle(
+                    candles=candle_candles,
+                    side=side,
+                    min_conf=policy.candle_min_conf,
+                )
+                if score is not None:
+                    candle_items.append((tf, score, detail))
+        if candle_items:
+            candle_score, candle_debug = _blend_tf_scores(
+                candle_items,
+                mode=policy.mode,
+                prefer_lower=True,
+            )
+
+    weights = [
+        ("fib", policy.weight_fib, fib_score),
+        ("median", policy.weight_median, median_score),
+        ("nwave", policy.weight_nwave, nwave_score),
+        ("candle", policy.weight_candle, candle_score),
+    ]
+    weight_sum = 0.0
+    score_sum = 0.0
+    pos_count = 0
+    neg_count = 0
+    for _, weight, score in weights:
+        if score is None:
+            continue
+        weight_sum += weight
+        score_sum += weight * score
+        if score > 0:
+            pos_count += 1
+        elif score < 0:
+            neg_count += 1
+
+    debug = {
+        "price": price_dbg,
+        "pos_count": pos_count,
+        "neg_count": neg_count,
+    }
+    if fib_debug:
+        debug["fib"] = fib_debug
+    if median_debug:
+        debug["median"] = median_debug
+    if nwave_debug:
+        debug["nwave"] = nwave_debug
+    if candle_debug:
+        debug["candle"] = candle_debug
+
+    score = None
+    coverage = None
+    if weight_sum > 0:
+        score = _clamp(score_sum / weight_sum, -1.0, 1.0)
+        coverage = weight_sum / max(
+            policy.weight_fib + policy.weight_median + policy.weight_nwave + policy.weight_candle,
+            1e-6,
+        )
+        debug["score"] = round(score, 3)
+        debug["coverage"] = round(coverage, 3)
+
+    allowed = True
+    reason = None
+    if score is None:
+        allowed = False
+        reason = "no_score"
+    elif score < policy.min_score:
+        allowed = False
+        reason = "low_score"
+    if allowed and coverage is not None and coverage < policy.min_coverage:
+        allowed = False
+        reason = "low_coverage"
+
+    def _entry_require_failed(required: bool, score_val: Optional[float], label: str) -> bool:
+        if not required:
+            return False
+        if score_val is None:
+            debug["entry_guard"] = f"{label}_missing"
+            return True
+        if score_val <= 0:
+            debug["entry_guard"] = f"{label}_weak"
+            return True
+        return False
+
+    if allowed:
+        if _entry_require_failed(policy.require_fib, fib_score, "fib"):
+            allowed = False
+            reason = "fib_required"
+        elif _entry_require_failed(policy.require_median, median_score, "median"):
+            allowed = False
+            reason = "median_required"
+        elif _entry_require_failed(policy.require_nwave, nwave_score, "nwave"):
+            allowed = False
+            reason = "nwave_required"
+        elif _entry_require_failed(policy.require_candle, candle_score, "candle"):
+            allowed = False
+            reason = "candle_required"
+
+    size_mult = 1.0
+    if score is not None:
+        size_mult = 1.0 + max(0.0, score) * policy.size_scale
+        size_mult = max(policy.size_min, min(policy.size_max, size_mult))
+    debug["size_mult"] = round(size_mult, 3)
+
+    return TechniqueEntryDecision(
+        allowed=allowed,
+        reason=reason,
+        score=score,
+        coverage=coverage,
+        size_mult=size_mult,
+        debug=debug,
+    )
 def _axis_from_thesis(thesis: dict) -> Optional[RangeSnapshot]:
     if not isinstance(thesis, dict):
         return None

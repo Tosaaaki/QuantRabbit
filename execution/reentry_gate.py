@@ -55,6 +55,7 @@ _ALIAS_BASE = {
     "m1scalper": "M1Scalper",
     "bbrsi": "BB_RSI",
     "bb_rsi": "BB_RSI",
+    "techfusion": "TechFusion",
 }
 _CACHE: Dict[str, object] = {"ts": 0.0, "data": None}
 

@@ -150,6 +150,7 @@ _TAG_ALIAS = {
     "microvwapbound": "microvwapbound",
     "microvwaprevert": "microvwaprevert",
     "microlevelreactor": "microlevelreactor",
+    "techfusion": "techfusion",
 }
 _RANGE_HINTS = {
     "range",

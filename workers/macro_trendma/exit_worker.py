@@ -12,6 +12,7 @@ from typing import Dict, Optional, Sequence, Set
 from analysis.range_guard import detect_range_mode
 from workers.common.exit_scaling import momentum_scale, scale_value
 from workers.common.exit_utils import close_trade
+from workers.common.reentry_decider import decide_reentry
 from execution.position_manager import PositionManager
 from indicators.factor_cache import all_factors
 from market_data import tick_window
@@ -458,6 +459,37 @@ class TrendMAExitWorker:
         adx = _safe_float(fac_h1.get("adx"))
         ma10 = _safe_float(fac_h1.get("ma10"))
         ma20 = _safe_float(fac_h1.get("ma20"))
+        if pnl < 0:
+            bbw = _safe_float(fac_h1.get("bbw"))
+            atr_pips = _safe_float(fac_h1.get("atr_pips"))
+            vwap_gap = _safe_float(fac_h1.get("vwap_gap"))
+            ma_pair = (ma10, ma20) if ma10 is not None and ma20 is not None else None
+            reentry = decide_reentry(
+                prefix="TRENDMA",
+                side=side,
+                pnl_pips=pnl,
+                rsi=rsi,
+                adx=adx,
+                atr_pips=atr_pips,
+                bbw=bbw,
+                vwap_gap=vwap_gap,
+                ma_pair=ma_pair,
+                range_active=range_active,
+                log_tags={"trade": trade_id},
+            )
+            if reentry.action == "hold":
+                return
+            if reentry.action == "exit_reentry" and not reentry.shadow:
+                await self._close(
+                    trade_id,
+                    -units,
+                    "reentry_reset",
+                    pnl,
+                    client_id,
+                    allow_negative=True,
+                )
+                self._states.pop(trade_id, None)
+                return
         if (
             pnl < 0
             and rsi is not None

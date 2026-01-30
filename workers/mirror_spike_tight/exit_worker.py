@@ -664,6 +664,35 @@ class MirrorSpikeTightExitWorker:
             LOG.warning("[EXIT-mirror_spike_tight] missing client_id trade=%s skip close", trade_id)
             return None
 
+        if pnl < 0:
+            factors = all_factors().get("M1") or {}
+            try:
+                ma10 = float(factors.get("ma10"))
+            except Exception:
+                ma10 = None
+            try:
+                ma20 = float(factors.get("ma20"))
+            except Exception:
+                ma20 = None
+            ma_pair = (ma10, ma20) if ma10 is not None and ma20 is not None else None
+            reentry = decide_reentry(
+                prefix="MIRROR_SPIKE_TIGHT",
+                side=side,
+                pnl_pips=pnl,
+                rsi=ctx.rsi,
+                adx=ctx.adx,
+                atr_pips=ctx.atr_pips,
+                bbw=ctx.bbw,
+                vwap_gap=ctx.vwap_gap_pips,
+                ma_pair=ma_pair,
+                range_active=range_mode,
+                log_tags={"trade": trade_id},
+            )
+            if reentry.action == "hold":
+                return None
+            if reentry.action == "exit_reentry" and not reentry.shadow:
+                return "reentry_reset"
+
         if ctx.adx is not None and ctx.adx < self.range_adx:
             try:
                 factors = all_factors().get("M1") or {}
