@@ -1007,6 +1007,10 @@
 
       const perfContainer = document.querySelector('[data-chart="performance"]');
       const priceContainer = document.querySelector('[data-chart="price"]');
+      const viewState = {
+        performance: {},
+        price: {},
+      };
 
       const setActiveButton = (container, key) => {
         const buttons = Array.from(container.querySelectorAll(".range-button"));
@@ -1027,6 +1031,39 @@
         if (Number.isNaN(dt.getTime())) return "-";
         const iso = dt.toISOString().replace("T", " ").slice(0, 16);
         return `${iso} UTC`;
+      };
+      const getOrInitView = (chartKey, rangeKey, baseMin, baseMax, defaultMin, defaultMax) => {
+        if (!viewState[chartKey]) viewState[chartKey] = {};
+        let state = viewState[chartKey][rangeKey];
+        if (!state || typeof state.min !== "number" || typeof state.max !== "number") {
+          const min = typeof defaultMin === "number" ? defaultMin : baseMin;
+          const max = typeof defaultMax === "number" ? defaultMax : baseMax;
+          state = { min, max };
+          viewState[chartKey][rangeKey] = state;
+        }
+        const baseSpan = Math.max(1, baseMax - baseMin);
+        let minSpan = Math.max(baseSpan / 200, 60000);
+        minSpan = Math.min(minSpan, baseSpan);
+        let min = state.min;
+        let max = state.max;
+        let span = max - min;
+        if (span < minSpan) {
+          const center = min + span / 2;
+          min = center - minSpan / 2;
+          max = center + minSpan / 2;
+        }
+        if (min < baseMin) {
+          max += baseMin - min;
+          min = baseMin;
+        }
+        if (max > baseMax) {
+          min -= max - baseMax;
+          max = baseMax;
+        }
+        if (min < baseMin) min = baseMin;
+        if (max > baseMax) max = baseMax;
+        viewState[chartKey][rangeKey] = { min, max };
+        return { min, max };
       };
 
       const renderPerformance = (key) => {
@@ -1059,16 +1096,20 @@
           minY -= 1;
           maxY += 1;
         }
-        const tsSpan = Math.max(1, maxTs - minTs);
+        const view = getOrInitView("performance", key, minTs, maxTs, minTs, maxTs);
+        const tsSpan = Math.max(1, view.max - view.min);
         const ySpan = Math.max(1, maxY - minY);
-        const xFor = (ts) => pad.l + ((ts - minTs) / tsSpan) * innerW;
+        const xFor = (ts) => pad.l + ((ts - view.min) / tsSpan) * innerW;
         const yFor = (val) => pad.t + ((maxY - val) / ySpan) * innerH;
 
         let path = "";
-        range.pnl_jpy.forEach((row, idx) => {
+        let started = false;
+        range.pnl_jpy.forEach((row) => {
+          if (row[0] < view.min || row[0] > view.max) return;
           const x = xFor(row[0]);
           const y = yFor(row[1]);
-          path += `${idx === 0 ? "M" : "L"}${x.toFixed(2)} ${y.toFixed(2)} `;
+          path += `${started ? "L" : "M"}${x.toFixed(2)} ${y.toFixed(2)} `;
+          started = true;
         });
 
         let grid = "";
@@ -1107,6 +1148,107 @@
           <path d="${path}" fill="none" stroke="url(#perfLine)" stroke-width="2.2" />
           <circle cx="${lastX}" cy="${lastYPos}" r="4" fill="#0f766e" stroke="#fff" stroke-width="1"/>
         `;
+
+        if (svg) {
+          svg.dataset.rangeKey = key;
+          svg.style.touchAction = "none";
+          if (!svg.dataset.zoomBound) {
+            svg.dataset.zoomBound = "1";
+            const dragState = { active: false, startX: 0, startRange: null, key: null };
+            const getRangeInfo = () => {
+              const currentKey = svg.dataset.rangeKey;
+              const currentRange = chartData.performance?.ranges?.[currentKey];
+              if (!currentRange || !Array.isArray(currentRange.pnl_jpy) || currentRange.pnl_jpy.length < 2) {
+                return null;
+              }
+              const tsVals = currentRange.pnl_jpy.map((row) => row[0]);
+              const min = Math.min(...tsVals);
+              const max = Math.max(...tsVals);
+              return { key: currentKey, min, max };
+            };
+            svg.addEventListener("wheel", (event) => {
+              const info = getRangeInfo();
+              if (!info) return;
+              event.preventDefault();
+              const width = svg.clientWidth || 640;
+              const localPad = { l: 42, r: 16, t: 18, b: 26 };
+              const inner = Math.max(10, width - localPad.l - localPad.r);
+              const rect = svg.getBoundingClientRect();
+              const x = event.clientX - rect.left;
+              const xRatio = clamp((x - localPad.l) / inner, 0, 1);
+              const current = getOrInitView("performance", info.key, info.min, info.max, info.min, info.max);
+              const span = current.max - current.min;
+              const baseSpan = Math.max(1, info.max - info.min);
+              let minSpan = Math.max(baseSpan / 200, 60000);
+              minSpan = Math.min(minSpan, baseSpan);
+              const zoom = Math.exp(-event.deltaY * 0.0012);
+              let newSpan = clamp(span / zoom, minSpan, baseSpan);
+              const center = current.min + xRatio * span;
+              let newMin = center - (center - current.min) * (newSpan / span);
+              let newMax = newMin + newSpan;
+              if (newMin < info.min) {
+                newMax += info.min - newMin;
+                newMin = info.min;
+              }
+              if (newMax > info.max) {
+                newMin -= newMax - info.max;
+                newMax = info.max;
+              }
+              viewState.performance[info.key] = { min: newMin, max: newMax };
+              renderPerformance(info.key);
+            }, { passive: false });
+            svg.addEventListener("pointerdown", (event) => {
+              const info = getRangeInfo();
+              if (!info) return;
+              dragState.active = true;
+              dragState.startX = event.clientX;
+              dragState.startRange = getOrInitView("performance", info.key, info.min, info.max, info.min, info.max);
+              dragState.key = info.key;
+              svg.setPointerCapture(event.pointerId);
+            });
+            svg.addEventListener("pointermove", (event) => {
+              if (!dragState.active || !dragState.startRange || !dragState.key) return;
+              const info = getRangeInfo();
+              if (!info) return;
+              const width = svg.clientWidth || 640;
+              const localPad = { l: 42, r: 16, t: 18, b: 26 };
+              const inner = Math.max(10, width - localPad.l - localPad.r);
+              const deltaX = event.clientX - dragState.startX;
+              const span = dragState.startRange.max - dragState.startRange.min;
+              const shift = -(deltaX / inner) * span;
+              let newMin = dragState.startRange.min + shift;
+              let newMax = dragState.startRange.max + shift;
+              if (newMin < info.min) {
+                newMax += info.min - newMin;
+                newMin = info.min;
+              }
+              if (newMax > info.max) {
+                newMin -= newMax - info.max;
+                newMax = info.max;
+              }
+              viewState.performance[dragState.key] = { min: newMin, max: newMax };
+              renderPerformance(dragState.key);
+            });
+            const endDrag = (event) => {
+              dragState.active = false;
+              dragState.startRange = null;
+              dragState.key = null;
+              try {
+                svg.releasePointerCapture(event.pointerId);
+              } catch (err) {
+                // ignore
+              }
+            };
+            svg.addEventListener("pointerup", endDrag);
+            svg.addEventListener("pointerleave", endDrag);
+            svg.addEventListener("dblclick", () => {
+              const info = getRangeInfo();
+              if (!info) return;
+              viewState.performance[info.key] = { min: info.min, max: info.max };
+              renderPerformance(info.key);
+            });
+          }
+        }
       };
 
       const buildMarkerTooltip = (marker) => {
@@ -1159,17 +1301,16 @@
         const lows = range.candles.map((row) => row[3]);
         const minTs = Math.min(...times);
         const maxTs = Math.max(...times);
-        let tsSpan = Math.max(1, maxTs - minTs);
-        let minTsAdj = minTs;
-        let maxTsAdj = maxTs;
         const candleCount = range.candles.length;
         const targetCount = 20;
+        let defaultMin = minTs;
+        let defaultMax = maxTs;
+        const baseSpan = Math.max(1, maxTs - minTs);
         if (candleCount > 0 && candleCount < targetCount) {
-          const paddedSpan = tsSpan * (targetCount / candleCount);
-          const padSpan = (paddedSpan - tsSpan) / 2;
-          minTsAdj -= padSpan;
-          maxTsAdj += padSpan;
-          tsSpan = paddedSpan;
+          const paddedSpan = baseSpan * (targetCount / candleCount);
+          const padSpan = (paddedSpan - baseSpan) / 2;
+          defaultMin -= padSpan;
+          defaultMax += padSpan;
         }
         let minY = Math.min(...lows);
         let maxY = Math.max(...highs);
@@ -1177,11 +1318,14 @@
           minY -= 0.5;
           maxY += 0.5;
         }
+        const view = getOrInitView("price", key, minTs, maxTs, defaultMin, defaultMax);
+        const tsSpan = Math.max(1, view.max - view.min);
         const ySpan = Math.max(1e-6, maxY - minY);
-        const xFor = (ts) => pad.l + ((ts - minTsAdj) / tsSpan) * innerW;
+        const xFor = (ts) => pad.l + ((ts - view.min) / tsSpan) * innerW;
         const yFor = (val) => pad.t + ((maxY - val) / ySpan) * innerH;
 
-        const candleSpacing = innerW / candleCount;
+        const visibleCandles = range.candles.filter((row) => row[0] >= view.min && row[0] <= view.max);
+        const candleSpacing = innerW / Math.max(1, visibleCandles.length);
         const bodyWidth = clamp(candleSpacing * 0.6, 1.5, 7.5);
 
         let grid = "";
@@ -1191,7 +1335,7 @@
         }
 
         let candlesSvg = "";
-        range.candles.forEach((row) => {
+        visibleCandles.forEach((row) => {
           const x = xFor(row[0]);
           const open = row[1];
           const high = row[2];
@@ -1215,6 +1359,7 @@
         const markers = Array.isArray(range.markers) ? range.markers : [];
         markers.forEach((m, idx) => {
           if (!m || typeof m.ts_ms !== "number" || typeof m.price !== "number") return;
+          if (m.ts_ms < view.min || m.ts_ms > view.max) return;
           const x = xFor(m.ts_ms);
           const y = yFor(m.price);
           const isEntry = m.kind === "entry";
@@ -1276,6 +1421,117 @@
             el.addEventListener("mousemove", (event) => showTooltip(event, marker));
             el.addEventListener("mouseleave", hideTooltip);
           });
+        }
+
+        if (svg) {
+          svg.dataset.rangeKey = key;
+          svg.style.touchAction = "none";
+          if (!svg.dataset.zoomBound) {
+            svg.dataset.zoomBound = "1";
+            const dragState = { active: false, startX: 0, startRange: null, key: null };
+            const getRangeInfo = () => {
+              const currentKey = svg.dataset.rangeKey;
+              const currentRange = chartData.price?.ranges?.[currentKey];
+              if (!currentRange || !Array.isArray(currentRange.candles) || currentRange.candles.length < 2) {
+                return null;
+              }
+              const times = currentRange.candles.map((row) => row[0]);
+              const min = Math.min(...times);
+              const max = Math.max(...times);
+              const candleLen = currentRange.candles.length;
+              const targetLen = 20;
+              let defaultMin = min;
+              let defaultMax = max;
+              const span = Math.max(1, max - min);
+              if (candleLen > 0 && candleLen < targetLen) {
+                const paddedSpan = span * (targetLen / candleLen);
+                const padSpan = (paddedSpan - span) / 2;
+                defaultMin -= padSpan;
+                defaultMax += padSpan;
+              }
+              return { key: currentKey, min, max, defaultMin, defaultMax, span };
+            };
+            svg.addEventListener("wheel", (event) => {
+              const info = getRangeInfo();
+              if (!info) return;
+              event.preventDefault();
+              const width = svg.clientWidth || 640;
+              const localPad = { l: 40, r: 16, t: 18, b: 26 };
+              const inner = Math.max(10, width - localPad.l - localPad.r);
+              const rect = svg.getBoundingClientRect();
+              const x = event.clientX - rect.left;
+              const xRatio = clamp((x - localPad.l) / inner, 0, 1);
+              const current = getOrInitView("price", info.key, info.min, info.max, info.defaultMin, info.defaultMax);
+              const viewSpan = current.max - current.min;
+              let minSpan = Math.max(info.span / 200, 60000);
+              minSpan = Math.min(minSpan, info.span);
+              const zoom = Math.exp(-event.deltaY * 0.0012);
+              let newSpan = clamp(viewSpan / zoom, minSpan, info.span);
+              const center = current.min + xRatio * viewSpan;
+              let newMin = center - (center - current.min) * (newSpan / viewSpan);
+              let newMax = newMin + newSpan;
+              if (newMin < info.min) {
+                newMax += info.min - newMin;
+                newMin = info.min;
+              }
+              if (newMax > info.max) {
+                newMin -= newMax - info.max;
+                newMax = info.max;
+              }
+              viewState.price[info.key] = { min: newMin, max: newMax };
+              renderPrice(info.key);
+            }, { passive: false });
+            svg.addEventListener("pointerdown", (event) => {
+              const info = getRangeInfo();
+              if (!info) return;
+              dragState.active = true;
+              dragState.startX = event.clientX;
+              dragState.startRange = getOrInitView("price", info.key, info.min, info.max, info.defaultMin, info.defaultMax);
+              dragState.key = info.key;
+              svg.setPointerCapture(event.pointerId);
+            });
+            svg.addEventListener("pointermove", (event) => {
+              if (!dragState.active || !dragState.startRange || !dragState.key) return;
+              const info = getRangeInfo();
+              if (!info) return;
+              const width = svg.clientWidth || 640;
+              const localPad = { l: 40, r: 16, t: 18, b: 26 };
+              const inner = Math.max(10, width - localPad.l - localPad.r);
+              const deltaX = event.clientX - dragState.startX;
+              const viewSpan = dragState.startRange.max - dragState.startRange.min;
+              const shift = -(deltaX / inner) * viewSpan;
+              let newMin = dragState.startRange.min + shift;
+              let newMax = dragState.startRange.max + shift;
+              if (newMin < info.min) {
+                newMax += info.min - newMin;
+                newMin = info.min;
+              }
+              if (newMax > info.max) {
+                newMin -= newMax - info.max;
+                newMax = info.max;
+              }
+              viewState.price[dragState.key] = { min: newMin, max: newMax };
+              renderPrice(dragState.key);
+            });
+            const endDrag = (event) => {
+              dragState.active = false;
+              dragState.startRange = null;
+              dragState.key = null;
+              try {
+                svg.releasePointerCapture(event.pointerId);
+              } catch (err) {
+                // ignore
+              }
+            };
+            svg.addEventListener("pointerup", endDrag);
+            svg.addEventListener("pointerleave", endDrag);
+            svg.addEventListener("dblclick", () => {
+              const info = getRangeInfo();
+              if (!info) return;
+              viewState.price[info.key] = { min: info.defaultMin, max: info.defaultMax };
+              renderPrice(info.key);
+            });
+          }
         }
 
         const markerBody = priceContainer.querySelector('[data-chart-markers-body="price"]');
