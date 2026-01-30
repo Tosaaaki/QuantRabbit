@@ -76,7 +76,7 @@ class Factors(BaseModel):
     rsi: float
     vol_5m: float
 
-class GPTDecision(BaseModel):
+class LocalDecision(BaseModel):
     focus_tag: Literal["micro","macro","hybrid","event"]
     weight_macro: float = Field(ge=0.0, le=1.0)
     weight_scalp: float = Field(ge=0.0, le=1.0)  # macro + scalp <= 1.0, remainder = micro
@@ -115,7 +115,7 @@ class OrderIntent(BaseModel):
 - `client_order_id = f"qr-{ts_ms}-{focus_tag}-{tag}"`（9 桁以内のハッシュで重複防止）。Exit も同形式で 90 日ユニーク。
 
 ## 4. エントリー / Exit / リスク制御
-- Strategy フロー: Focus/GPT decision → `ranked_strategies` 順に Strategy Plugin を呼び、`StrategyDecision` または None を返す。`None` はノートレード。
+- Strategy フロー: Focus/Local decision → `ranked_strategies` 順に Strategy Plugin を呼び、`StrategyDecision` または None を返す。`None` はノートレード。
 - Confidence スケーリング: `confidence`(0–100) を pocket 割当 lot に掛け、最小 0.2〜最大 1.0 の段階的エントリー。`STAGE_RATIOS` に従い `_stage_conditions_met` を通過したステージのみ追撃。
 - Exit: 各戦略の `exit_worker` が最低保有時間とテクニカル/レンジ判定を踏まえ、PnL>0 決済が原則（強制 DD/ヘルス/マージン使用率/余力/未実現DDの総合判定のみ例外）。共通 `execution/exit_manager.py` は常に空を返す互換スタブ。`execution/stage_tracker` がクールダウンと方向別ブロックを管理。
 - Release gate: PF>1.1、勝率>52%、最大 DD<5% を 2 週間連続で満たすと実弾へ昇格。
@@ -155,10 +155,10 @@ class OrderIntent(BaseModel):
     gcloud compute ssh fx-trader-vm --project=quantrabbit --zone=asia-northeast1-a --tunnel-through-iap --ssh-key-file ~/.ssh/gcp_oslogin_quantrabbit --command "sqlite3 /home/tossaki/QuantRabbit/logs/orders.db 'select ts,pocket,side,units,client_order_id,status from orders order by ts desc limit 5;'"
     ```
 - 検証パイプライン: `logs/replay/*.jsonl` で Record、Strategy Plugin は Backtest で再現性確認、Shadow では本番 tick + 仮想アカウントで `OrderIntent` と `risk_guard` 拒否理由を比較。
-- 観測指標: `decision_latency_ms`, `data_lag_ms`, `order_success_rate`, `reject_rate`, `gpt_timeout_rate`, `pnl_day_pips`, `drawdown_pct`。SLO: `decision_latency_ms p95 < 2000`, `order_success_rate ≥ 0.995`, `data_lag_ms p95 < 1500`, `drawdown_pct max < 0.18`, `gpt_timeout_rate < 0.05`。Alert: SLO 違反、`healthbeat` 欠損 5 分超、`token_usage ≥ 0.8 * max_month_tokens`, `order reject` 連続 3 件。
+- 観測指標: `decision_latency_ms`, `data_lag_ms`, `order_success_rate`, `reject_rate`, `pnl_day_pips`, `drawdown_pct`。SLO: `decision_latency_ms p95 < 2000`, `order_success_rate ≥ 0.995`, `data_lag_ms p95 < 1500`, `drawdown_pct max < 0.18`。Alert: SLO 違反、`healthbeat` 欠損 5 分超、`order reject` 連続 3 件。
 
 ## 6. 安全装置と状態遷移
-- 安全装置: Pocket DD micro 5% / macro 15% / scalp 3% / scalp_fast 2% で該当 pocket 新規停止、Global DD 20% でプロセス終了、Event モード（指標 ±30 min）は micro 新規禁止、Timeout: GPT 7 s / OANDA REST 5 s 再試行、Healthbeat は `main.py` から 5 min ping。
+- 安全装置: Pocket DD micro 5% / macro 15% / scalp 3% / scalp_fast 2% で該当 pocket 新規停止、Global DD 20% でプロセス終了、Event モード（指標 ±30 min）は micro 新規禁止、Timeout: OANDA REST 5 s 再試行、Healthbeat は `main.py` から 5 min ping。
 - 状態遷移
 
   | 状態 | 遷移条件 | 動作 |
@@ -170,12 +170,7 @@ class OrderIntent(BaseModel):
   | `RECOVERY` | DD が閾値の 80% 未満、24h 経過 | 新規建玉再開前に `main.py` ドライラン |
 
 ## 7. トークン & コストガード
-- `.cache/token_usage.json` に月累計。`env.toml` の `openai_max_month_tokens` で上限を設定。
-- 超過時のフォールバック JSON:
-  ```json
-  {"focus_tag":"hybrid","weight_macro":0.5,"weight_scalp":0.15,"ranked_strategies":["TrendMA","H1Momentum","Donchian55","BB_RSI"],"reason":"fallback"}
-  ```
-- GPT 失敗時は過去 5 分の決定を再利用し、`reason="reuse_previous"` / `decision_latency_ms=9000` として記録。フォールバックは最後の手段とし、影響（focus 固定・重複注文リスクなど）を共有して限定的に許可する。
+- LLM は未使用のため、本章の運用はありません（将来の再導入時に再定義）。
 
 ## 8. レンジモードとオンラインチューニング
 - レンジモード強化（2025-10）
@@ -267,7 +262,7 @@ gcloud compute ssh fx-trader-vm --project=quantrabbit --zone=asia-northeast1-a -
 - `systemd/*.service` / `ops/systemd/quantrabbit.service` は `User=tossaki` と `/home/tossaki/QuantRabbit` 前提のため、VM ユーザが異なる場合は編集する
 - `/etc/quantrabbit.env` と `config/env.toml` は内容を一致させる（systemd とアプリの参照元が異なる）
 - `scripts/vm.sh` を使う場合は `scripts/vm.env` に PROJECT/ZONE/INSTANCE を固定
-- `startup_script.sh` は OpenAI/OANDA の最小キーと `TUNER_*` を `/etc/quantrabbit.env` に固定で書き込むため、GCS/BQ/リスク系は手動追記が必要
+- `startup_script.sh` は OANDA の最小キーと `TUNER_*` を `/etc/quantrabbit.env` に固定で書き込むため、GCS/BQ/リスク系は手動追記が必要
 - VM 内ブートストラップ（最小）
 
 ```bash
@@ -283,8 +278,7 @@ sudo -u <user> -H bash -lc '
 
 - cloud-init 注意: `user-data` の `bootcmd` で長時間タスク（git/pip/サービス起動など）を走らせると、起動シーケンスが止まり SSH が立ち上がらないことがある。重い処理は systemd の oneshot/timer へ逃がし、詰まった場合は metadata の `user-data` を削除して `/var/lib/cloud/instances/*` と `/var/lib/cloud/sem` をクリア後に再起動する。
 
-- `config/env.toml` 最低限: `gcp_project_id`, `gcp_location`, `GCS_BACKUP_BUCKET`, `ui_bucket_name`, `BQ_PROJECT/BQ_DATASET/BQ_TRADES_TABLE`, `oanda_account_id`, `oanda_token`, `oanda_practice`, `openai_model_decider`  
-  Secret Manager を使わない場合は `openai_api_key` を追加
+- `config/env.toml` 最低限: `gcp_project_id`, `gcp_location`, `GCS_BACKUP_BUCKET`, `ui_bucket_name`, `BQ_PROJECT/BQ_DATASET/BQ_TRADES_TABLE`, `oanda_account_id`, `oanda_token`, `oanda_practice`
 - デプロイは上記の `gcloud_doctor.sh` / `deploy_to_vm.sh` を使用
 
 ### 9.3 Storage / GCS
@@ -322,43 +316,15 @@ sudo -u <user> -H bash -lc '
 - `RealtimeMetricsClient` の適用閾値は `REALTIME_METRICS_TTL` / `CONF_POLICY_*` で調整可能
 
 ### 9.5 Secret Manager / 認証情報
-- 参照順: `openai_api_key` は Secret Manager を優先、その他は `PREFER_GCP_SECRET_MANAGER=1` で優先化
-- Secret 名は `config/env.toml` のキー名と同一（例: `openai_api_key`, `oanda_token`, `oanda_account_id`）
+- Secret 名は `config/env.toml` のキー名と同一（例: `oanda_token`, `oanda_account_id`）
 - 推奨シークレット（最低限）
-  - `openai_api_key`, `oanda_token`, `oanda_account_id`
-  - 任意: `openai_model_decider`, `openai_model_summarizer`, `openai_max_month_tokens`
+  - `oanda_token`, `oanda_account_id`
 - Secret Manager の参照プロジェクトは `GCP_PROJECT` / `GOOGLE_CLOUD_PROJECT` / `GOOGLE_CLOUD_PROJECT_NUMBER` で決定（未設定だと `quantrabbit`）
 - `scripts/refresh_env_from_gcp.py` で Secret/環境変数から `config/env.toml` を生成できる
-- 例（作成）
-
-```bash
-gcloud secrets create openai_api_key --replication-policy="automatic"
-printf "sk-..." | gcloud secrets versions add openai_api_key --data-file=-
-```
-
 - Secret Manager を使わない場合は `DISABLE_GCP_SECRET_MANAGER=1`
 
-### 9.6 GPT 設定（Decider/Advisors）
-- ※ LLM 機能は廃止済み。本節は legacy（運用では参照しない）。
-- 参照順: GCP Secret Manager → 環境変数 → `config/env.toml`
-- 必須キー（`config/env.toml` 例）
-
-```toml
-openai_api_key = "sk-..."
-openai_model_decider = "gpt-5-mini"
-openai_model_summarizer = "gpt-4o-mini"
-openai_max_month_tokens = "300000"
-```
-
-- 環境変数マップ: `OPENAI_API_KEY`, `OPENAI_DECIDER_MODEL`, `OPENAI_SUMMARIZER_MODEL`, `OPENAI_MAX_MONTH_TOKENS`
-- モデル解決: `openai_model_decider` → `openai_model` → `gpt-4o-mini`（`analysis/gpt_prompter.py`）
-- GPT Decider 主要環境変数: `GPT_DECIDER_MAX_TOKENS`, `GPT_MAX_MODEL_ATTEMPTS`, `GPT_RETRY_BASE_SEC`, `GPT_RETRY_JITTER_SEC`, `GPT_MIN_CALL_INTERVAL_SEC`, `GPT_DECIDER_TEMPERATURE`
-- Advisors の個別モデル: `OPENAI_MODEL_EXIT_ADVISOR`, `OPENAI_MODEL_STAGE_PLAN`, `OPENAI_MODEL_VOLATILITY`, `OPENAI_MODEL_PARTIAL_ADVISOR`, `OPENAI_MODEL_STRATEGY_CONF`, `OPENAI_MODEL_FOCUS_ADVISOR`, `OPENAI_MODEL_RR_ADVISOR`
-- その他: `OPENAI_MODEL`（共通フォールバック）, `OPENAI_MODEL_OPTIMIZER`（戦略最適化の要約用）
-- いずれも Secret Manager / `config/env.toml` に同名キーで設定可
-- `OPENAI_API_KEY` が無い場合は Advisors が自動無効化される
-- 強制優先は `PREFER_GCP_SECRET_MANAGER=1`
-- GPT 失敗時の挙動・フォールバックは「7. トークン & コストガード」に準拠
+### 9.6 LLM
+- LLM は現行運用で使用しない。再導入時に設計を作り直す。
 
 ## 10. チーム / タスク運用ルール
 - 変更は必ず `git commit` → `git push` → VM 反映（`scripts/vm.sh ... deploy -i -t` 推奨）で行う。未コミット状態やローカル差し替えでの運用は不可。
