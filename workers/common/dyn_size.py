@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from typing import Optional, Tuple
 
 from execution.risk_guard import allowed_lot
+from workers.common import perf_guard
 from utils.oanda_account import get_account_snapshot
 
 
@@ -42,6 +43,7 @@ def compute_units(
     adx: Optional[float] = None,
     signal_score: Optional[float] = None,  # 0..1 (confidence-like)
     pocket: Optional[str] = None,
+    strategy_tag: Optional[str] = None,
 ) -> SizingContext:
     """Flexible unit sizing with risk/volatility/margin awareness.
 
@@ -115,6 +117,15 @@ def compute_units(
 
     # 6) Aggregate scaling
     scaled_units = int(round(units_risk * s_spread * s_adx * s_sig))
+    perf_mult = 1.0
+    if strategy_tag and pocket:
+        try:
+            perf = perf_guard.perf_scale(strategy_tag, pocket)
+            perf_mult = float(perf.multiplier or 1.0)
+            if perf_mult > 1.0:
+                scaled_units = int(round(scaled_units * perf_mult))
+        except Exception:
+            perf_mult = 1.0
     # Soft floor: prefer base_entry_units but allow going below when conditions are poor
     if scaled_units < base_entry_units:
         # Blend towards base by 50%
@@ -147,5 +158,6 @@ def compute_units(
             "s_adx": s_adx,
             "s_sig": s_sig,
             "free_ratio": free_ratio,
+            "perf_mult": perf_mult,
         },
     )

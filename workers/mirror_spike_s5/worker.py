@@ -693,6 +693,7 @@ async def mirror_spike_s5_worker() -> None:
                 adx=None,
                 signal_score=sig_strength,
                 pocket="scalp",
+                strategy_tag="mirror_spike_s5",
             )
             if sizing.units <= 0:
                 continue

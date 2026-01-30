@@ -652,6 +652,7 @@ async def _runner_loop() -> None:
                     adx=adx_value,
                     signal_score=None,
                     pocket="scalp",
+                    strategy_tag="pullback_runner_s5",
                 )
                 if sizing.units >= int(config.MIN_UNITS):
                     units = sizing.units if side == "long" else -sizing.units

@@ -58,8 +58,20 @@ _POCKET_PF_MIN = float(os.getenv("POCKET_PERF_GUARD_PF_MIN", "0.95") or 0.95)
 _POCKET_WIN_MIN = float(os.getenv("POCKET_PERF_GUARD_WIN_MIN", "0.50") or 0.5)
 _POCKET_TTL_SEC = max(30.0, float(os.getenv("POCKET_PERF_GUARD_TTL_SEC", "180")) or 180.0)
 
+# Performance-based sizing (boost only)
+_SCALE_ENABLED = os.getenv("PERF_SCALE_ENABLED", "1").strip().lower() not in {"", "0", "false", "no"}
+_SCALE_LOOKBACK_DAYS = max(1, int(float(os.getenv("PERF_SCALE_LOOKBACK_DAYS", "7"))))
+_SCALE_MIN_TRADES = max(5, int(float(os.getenv("PERF_SCALE_MIN_TRADES", "20"))))
+_SCALE_PF_MIN = float(os.getenv("PERF_SCALE_PF_MIN", "1.15") or 1.15)
+_SCALE_WIN_MIN = float(os.getenv("PERF_SCALE_WIN_MIN", "0.55") or 0.55)
+_SCALE_AVG_PIPS_MIN = float(os.getenv("PERF_SCALE_AVG_PIPS_MIN", "0.20") or 0.20)
+_SCALE_STEP = max(0.0, float(os.getenv("PERF_SCALE_STEP", "0.05") or 0.05))
+_SCALE_MAX_MULT = max(1.0, float(os.getenv("PERF_SCALE_MAX_MULT", "1.25") or 1.25))
+_SCALE_TTL_SEC = max(30.0, float(os.getenv("PERF_SCALE_TTL_SEC", "180")) or 180.0)
+
 _cache: dict[tuple[str, str, Optional[int], Optional[str]], tuple[float, bool, str, int]] = {}
 _pocket_cache: dict[str, tuple[float, bool, str, int]] = {}
+_scale_cache: dict[tuple[str, str], tuple[float, float, str, int, float, float, float]] = {}
 
 
 def _threshold(name: str, pocket: str, default: float) -> float:
@@ -85,6 +97,16 @@ class PerfDecision:
     allowed: bool
     reason: str
     sample: int
+
+
+@dataclass(frozen=True, slots=True)
+class PerfScaleDecision:
+    multiplier: float
+    reason: str
+    sample: int
+    pf: float
+    win_rate: float
+    avg_pips: float
 
 
 def _tag_variants(tag: str) -> Tuple[str, ...]:
@@ -147,7 +169,8 @@ def _query_perf_row(
               COUNT(*) AS n,
               SUM(CASE WHEN pl_pips > 0 THEN pl_pips ELSE 0 END) AS profit,
               SUM(CASE WHEN pl_pips < 0 THEN ABS(pl_pips) ELSE 0 END) AS loss,
-              SUM(CASE WHEN pl_pips > 0 THEN 1 ELSE 0 END) AS win
+              SUM(CASE WHEN pl_pips > 0 THEN 1 ELSE 0 END) AS win,
+              SUM(pl_pips) AS sum_pips
             FROM trades
             WHERE {tag_clause}
               AND pocket = ?
@@ -160,6 +183,53 @@ def _query_perf_row(
     except Exception as exc:
         LOG.debug("[PERF_GUARD] query failed tag=%s pocket=%s err=%s", tag, pocket, exc)
         return None
+
+
+def _query_perf_scale(tag: str, pocket: str) -> Tuple[float, float, float, int]:
+    if not _DB.exists():
+        return 1.0, 0.0, 0.0, 0
+    try:
+        con = sqlite3.connect(_DB)
+        con.row_factory = sqlite3.Row
+    except Exception:
+        return 1.0, 0.0, 0.0, 0
+    variants = _tag_variants(tag)
+    if not variants or variants == ("",):
+        return 1.0, 0.0, 0.0, 0
+    placeholders = ",".join("?" for _ in variants)
+    tag_clause = f"LOWER(COALESCE(NULLIF(strategy_tag, ''), strategy)) IN ({placeholders})"
+    params = list(variants)
+    params.extend([pocket, f"-{_SCALE_LOOKBACK_DAYS} day"])
+    try:
+        row = con.execute(
+            f"""
+            SELECT
+              COUNT(*) AS n,
+              SUM(CASE WHEN pl_pips > 0 THEN pl_pips ELSE 0 END) AS profit,
+              SUM(CASE WHEN pl_pips < 0 THEN ABS(pl_pips) ELSE 0 END) AS loss,
+              SUM(CASE WHEN pl_pips > 0 THEN 1 ELSE 0 END) AS win,
+              SUM(pl_pips) AS sum_pips
+            FROM trades
+            WHERE {tag_clause}
+              AND pocket = ?
+              AND close_time >= datetime('now', ?)
+            """,
+            params,
+        ).fetchone()
+    except Exception as exc:
+        LOG.debug("[PERF_SCALE] query failed tag=%s pocket=%s err=%s", tag, pocket, exc)
+        return 1.0, 0.0, 0.0, 0
+    n = int(row["n"] or 0) if row else 0
+    if n <= 0:
+        return 1.0, 0.0, 0.0, 0
+    profit = float(row["profit"] or 0.0)
+    loss = float(row["loss"] or 0.0)
+    win = float(row["win"] or 0.0)
+    sum_pips = float(row["sum_pips"] or 0.0)
+    pf = profit / loss if loss > 0 else float("inf")
+    win_rate = win / n if n else 0.0
+    avg_pips = sum_pips / n if n else 0.0
+    return pf, win_rate, avg_pips, n
 
 
 def _query_perf(
@@ -337,3 +407,34 @@ def is_pocket_allowed(pocket: str) -> PerfDecision:
     allowed, reason, n = _query_pocket_perf(pocket_key)
     _pocket_cache[pocket_key] = (now, allowed, reason, n)
     return PerfDecision(allowed, reason, n)
+
+
+def perf_scale(tag: str, pocket: str) -> PerfScaleDecision:
+    if not _SCALE_ENABLED:
+        return PerfScaleDecision(1.0, "disabled", 0, 1.0, 0.0, 0.0)
+    key = (str(tag).strip().lower(), str(pocket).strip().lower())
+    now = time.time()
+    cached = _scale_cache.get(key)
+    if cached and (now - cached[0]) < _SCALE_TTL_SEC:
+        return PerfScaleDecision(cached[1], cached[2], cached[3], cached[4], cached[5], cached[6])
+
+    pf, win_rate, avg_pips, n = _query_perf_scale(tag, pocket)
+    if n < _SCALE_MIN_TRADES:
+        dec = PerfScaleDecision(1.0, "insufficient", n, pf, win_rate, avg_pips)
+        _scale_cache[key] = (now, dec.multiplier, dec.reason, dec.sample, dec.pf, dec.win_rate, dec.avg_pips)
+        return dec
+
+    score = 0
+    if pf >= _SCALE_PF_MIN:
+        score += 1
+    if win_rate >= _SCALE_WIN_MIN:
+        score += 1
+    if avg_pips >= _SCALE_AVG_PIPS_MIN:
+        score += 1
+    mult = min(_SCALE_MAX_MULT, 1.0 + score * _SCALE_STEP)
+    if mult < 1.0:
+        mult = 1.0
+    reason = "boost" if mult > 1.0 else "flat"
+    dec = PerfScaleDecision(mult, reason, n, pf, win_rate, avg_pips)
+    _scale_cache[key] = (now, dec.multiplier, dec.reason, dec.sample, dec.pf, dec.win_rate, dec.avg_pips)
+    return dec
