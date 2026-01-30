@@ -1379,8 +1379,8 @@
             const points = `${x},${y - size} ${x - size},${y + size} ${x + size},${y + size}`;
             shape = `<polygon points="${points}" fill="${sideColor}" stroke="#ffffff" stroke-width="0.6"/>`;
           } else {
-            const box = size * 1.1;
-            shape = `<rect x="${(x - box).toFixed(2)}" y="${(y - box).toFixed(2)}" width="${(box * 2).toFixed(2)}" height="${(box * 2).toFixed(2)}" fill="rgba(255,255,255,0.95)" stroke="${sideColor}" stroke-width="1.6" rx="1.5" ry="1.5"/>`;
+            const box = size * 0.85;
+            shape = `<rect x="${(x - box).toFixed(2)}" y="${(y - box).toFixed(2)}" width="${(box * 2).toFixed(2)}" height="${(box * 2).toFixed(2)}" fill="rgba(255,255,255,0.95)" stroke="${sideColor}" stroke-width="1.2" rx="1.2" ry="1.2"/>`;
           }
           markersSvg += `
             <g class="chart-marker" data-marker-idx="${idx}">
