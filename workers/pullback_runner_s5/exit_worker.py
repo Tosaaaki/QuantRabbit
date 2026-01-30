@@ -540,7 +540,8 @@ class PullbackRunnerExitWorker:
 
         # エントリーメタに合わせてEXIT閾値をスケール
         if state.hard_stop:
-            stop_loss = max(stop_loss, max(0.8, state.hard_stop * 0.7))
+            hard_stop_factor = 1.0 if range_mode else 0.7
+            stop_loss = max(stop_loss, max(0.8, state.hard_stop * hard_stop_factor))
             lock_trigger = max(lock_trigger, max(0.25, state.hard_stop * 0.25))
             trail_start = max(trail_start, max(1.0, state.hard_stop * 0.6))
             max_hold = max(max_hold, self.max_hold_sec * 1.05)
