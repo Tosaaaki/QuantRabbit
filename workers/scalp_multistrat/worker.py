@@ -22,7 +22,7 @@ from strategies.scalping.range_fader import RangeFader
 from strategies.scalping.pulse_break import PulseBreak
 from strategies.scalping.impulse_retrace import ImpulseRetraceScalp
 from strategies.scalping.m1_scalper import M1Scalper
-from utils.divergence import apply_divergence_confidence, divergence_bias
+from utils.divergence import apply_divergence_confidence, divergence_bias, divergence_snapshot
 from utils.market_hours import is_market_open
 from utils.oanda_account import get_account_snapshot, get_position_summary
 from workers.common.dyn_cap import compute_cap
@@ -613,6 +613,7 @@ async def scalp_multi_worker() -> None:
                 max_age = 18
             elif strategy_name in _RANGE_STRATEGIES:
                 max_age = 14
+            div_meta = {}
             div_bias = divergence_bias(
                 fac_m1,
                 signal.get("action") or "",
@@ -632,6 +633,7 @@ async def scalp_multi_worker() -> None:
                     floor=40.0,
                     ceil=ceil,
                 )
+            div_meta = divergence_snapshot(fac_m1, max_age_bars=max_age)
 
             tp_scale = 4.0 / max(1.0, tp_pips)
             tp_scale = max(0.4, min(1.2, tp_scale))
@@ -687,6 +689,8 @@ async def scalp_multi_worker() -> None:
                 "range_reason": range_ctx.reason,
                 "range_mode": range_ctx.mode,
             }
+            if div_meta:
+                entry_thesis["divergence"] = div_meta
             if strategy_name in _TREND_STRATEGIES:
                 entry_thesis["entry_guard_trend"] = True
             if strategy_name in _PULLBACK_STRATEGIES:

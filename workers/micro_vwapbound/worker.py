@@ -20,7 +20,7 @@ from execution.risk_guard import allowed_lot, can_trade, clamp_sl_tp
 from indicators.factor_cache import all_factors, get_candles_snapshot, refresh_cache_from_disk
 from market_data import tick_window
 from strategies.micro.vwap_bound_revert import MicroVWAPBound
-from utils.divergence import apply_divergence_confidence, divergence_bias
+from utils.divergence import apply_divergence_confidence, divergence_bias, divergence_snapshot
 from utils.market_hours import is_market_open
 from utils.oanda_account import get_account_snapshot, get_position_summary
 from workers.common.dyn_cap import compute_cap
@@ -518,6 +518,7 @@ async def micro_vwapbound_worker() -> None:
                 floor=45.0,
                 ceil=92.0,
             )
+        div_meta = divergence_snapshot(fac_m1, max_age_bars=18)
         conf_val = int(signal.get("confidence", 0) or 0)
         if conf_val < conf_floor:
             now_mono = time.monotonic()
@@ -654,6 +655,8 @@ async def micro_vwapbound_worker() -> None:
             "range_reason": range_ctx.reason,
             "range_mode": range_ctx.mode,
         }
+        if div_meta:
+            entry_thesis["divergence"] = div_meta
         if IS_TREND:
             entry_thesis["entry_tf"] = "M5"
         if IS_PULLBACK:

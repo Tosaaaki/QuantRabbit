@@ -23,7 +23,7 @@ from workers.common.pocket_plan import PocketPlan
 from workers.common.quality_gate import current_regime
 from workers.common.pullback_touch import count_pullback_touches
 from utils.metrics_logger import log_metric
-from utils.divergence import apply_divergence_confidence, divergence_bias
+from utils.divergence import apply_divergence_confidence, divergence_bias, divergence_snapshot
 
 from . import config
 
@@ -744,6 +744,7 @@ async def pullback_s5_worker() -> None:
                     floor=40.0,
                     ceil=95.0,
                 )
+            div_meta = divergence_snapshot(fac_m1, max_age_bars=10)
             signal = {
                 "action": "OPEN_LONG" if side == "long" else "OPEN_SHORT",
                 "pocket": "scalp",
@@ -789,6 +790,8 @@ async def pullback_s5_worker() -> None:
                     else round(touch_last_age_sec, 1),
                 },
             }
+            if div_meta:
+                signal["entry_thesis"]["divergence"] = div_meta
             plan = PocketPlan(
                 generated_at=datetime.datetime.utcnow(),
                 pocket="scalp",

@@ -24,7 +24,7 @@ from strategies.micro.range_break import MicroRangeBreak
 from strategies.micro.vwap_bound_revert import MicroVWAPBound
 from strategies.micro_lowvol.micro_vwap_revert import MicroVWAPRevert
 from strategies.micro.trend_momentum import TrendMomentumMicro
-from utils.divergence import apply_divergence_confidence, divergence_bias
+from utils.divergence import apply_divergence_confidence, divergence_bias, divergence_snapshot
 from utils.market_hours import is_market_open
 from utils.oanda_account import get_account_snapshot, get_position_summary
 from utils.metrics_logger import log_metric
@@ -944,6 +944,7 @@ async def micro_multi_worker() -> None:
                 max_penalty = 8.0
                 floor = 40.0
                 ceil = 95.0
+            div_meta = {}
             div_bias = divergence_bias(
                 fac_m1,
                 signal_action,
@@ -960,6 +961,7 @@ async def micro_multi_worker() -> None:
                     floor=floor,
                     ceil=ceil,
                 )
+            div_meta = divergence_snapshot(fac_m1, max_age_bars=max_age)
 
             tp_scale = 10.0 / max(1.0, tp_pips)
             tp_scale = max(0.4, min(1.1, tp_scale))
@@ -1020,6 +1022,8 @@ async def micro_multi_worker() -> None:
                 "range_reason": range_ctx.reason,
                 "range_mode": range_ctx.mode,
             }
+            if div_meta:
+                entry_thesis["divergence"] = div_meta
             if trend_snapshot:
                 entry_thesis["trend_snapshot"] = trend_snapshot
             if trend_flip_meta:

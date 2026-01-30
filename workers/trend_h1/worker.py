@@ -22,7 +22,7 @@ from execution.risk_guard import (
 )
 from market_data import spread_monitor, tick_window
 from strategies.trend.ma_cross import MovingAverageCross
-from utils.divergence import apply_divergence_confidence, divergence_bias
+from utils.divergence import apply_divergence_confidence, divergence_bias, divergence_snapshot
 from utils.market_hours import is_market_open
 from utils.oanda_account import get_account_snapshot
 from workers.common.quality_gate import current_regime
@@ -571,6 +571,7 @@ async def trend_h1_worker() -> None:
                         floor=40.0,
                         ceil=96.0,
                     )
+                div_meta = divergence_snapshot(fac_h1, max_age_bars=8)
 
                 confidence = int(decision.get("confidence", 0))
                 if confidence < config.MIN_CONFIDENCE:
@@ -728,6 +729,8 @@ async def trend_h1_worker() -> None:
                     "sl_pips": sl_pips,
                     "hard_stop_pips": sl_pips,
                 }
+                if div_meta:
+                    thesis["divergence"] = div_meta
                 entry_meta = decision.get("_meta") or {}
                 entry_meta["stage_index"] = stage_idx
 

@@ -99,6 +99,61 @@ def divergence_bias(
     return max(-1.0, min(1.0, raw))
 
 
+def divergence_snapshot(
+    fac: Mapping[str, object],
+    *,
+    max_age_bars: int | None = None,
+) -> dict:
+    if not fac:
+        return {}
+    max_age = DIV_BIAS_MAX_AGE_BARS if max_age_bars is None else max(0, max_age_bars)
+
+    def _as_int(value, default=0):
+        try:
+            return int(round(float(value)))
+        except (TypeError, ValueError):
+            return default
+
+    def _as_float(value, default=0.0):
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return default
+
+    def _extract(prefix: str) -> dict:
+        kind = _as_int(fac.get(f"div_{prefix}_kind"), 0)
+        score = _as_float(fac.get(f"div_{prefix}_score"), 0.0)
+        age = _as_int(fac.get(f"div_{prefix}_age"), 10**9)
+        strength = _as_float(fac.get(f"div_{prefix}_strength"), 0.0)
+        price_pips = _as_float(fac.get(f"div_{prefix}_price_pips"), 0.0)
+        osc_delta = _as_float(fac.get(f"div_{prefix}_osc_delta"), 0.0)
+        pivot_gap = _as_int(fac.get(f"div_{prefix}_pivot_gap"), 0)
+        active = bool(kind != 0 and age <= max_age)
+        return {
+            "kind": kind,
+            "score": score,
+            "age": age,
+            "strength": strength,
+            "price_pips": price_pips,
+            "osc_delta": osc_delta,
+            "pivot_gap": pivot_gap,
+            "active": active,
+        }
+
+    rsi = _extract("rsi")
+    macd = _extract("macd")
+    if rsi["kind"] == 0 and macd["kind"] == 0:
+        return {}
+    score = _as_float(fac.get("div_score"), 0.0)
+    return {
+        "active": bool(rsi["active"] or macd["active"]),
+        "max_age_bars": max_age,
+        "score": score,
+        "rsi": rsi,
+        "macd": macd,
+    }
+
+
 def apply_divergence_confidence(
     confidence: float | int,
     bias: float,
@@ -120,4 +175,3 @@ def apply_divergence_confidence(
     value = base + adj
     value = max(floor, min(ceil, value))
     return int(round(value))
-

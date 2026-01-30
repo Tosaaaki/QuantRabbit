@@ -20,7 +20,7 @@ from execution.risk_guard import allowed_lot, can_trade, clamp_sl_tp
 from indicators.factor_cache import all_factors, get_candles_snapshot, refresh_cache_from_disk
 from market_data import tick_window
 from strategies.micro.pullback_ema import MicroPullbackEMA
-from utils.divergence import apply_divergence_confidence, divergence_bias
+from utils.divergence import apply_divergence_confidence, divergence_bias, divergence_snapshot
 from utils.market_hours import is_market_open
 from utils.oanda_account import get_account_snapshot, get_position_summary
 from workers.common.dyn_cap import compute_cap
@@ -517,6 +517,7 @@ async def micro_pullbackema_worker() -> None:
                 floor=40.0,
                 ceil=95.0,
             )
+        div_meta = divergence_snapshot(fac_m1, max_age_bars=12)
         perf_decision = perf_guard.is_allowed(strategy_name, pocket)
         if not perf_decision.allowed:
             now_mono = time.monotonic()
@@ -640,6 +641,8 @@ async def micro_pullbackema_worker() -> None:
             "range_reason": range_ctx.reason,
             "range_mode": range_ctx.mode,
         }
+        if div_meta:
+            entry_thesis["divergence"] = div_meta
         if IS_TREND:
             entry_thesis["entry_tf"] = "M5"
         if IS_PULLBACK:

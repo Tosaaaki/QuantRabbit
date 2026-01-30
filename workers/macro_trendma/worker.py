@@ -16,7 +16,7 @@ from execution.order_manager import market_order
 from execution.risk_guard import allowed_lot, can_trade, clamp_sl_tp
 from market_data import tick_window
 from strategies.trend.ma_cross import MovingAverageCross
-from utils.divergence import apply_divergence_confidence, divergence_bias
+from utils.divergence import apply_divergence_confidence, divergence_bias, divergence_snapshot
 from utils.market_hours import is_market_open
 from utils.oanda_account import get_account_snapshot
 from workers.common.dyn_cap import compute_cap
@@ -584,6 +584,9 @@ async def trendma_worker() -> None:
             "hard_stop_pips": sl_pips,
             "confidence": conf,
         }
+        div_meta = divergence_snapshot(fac_h1, max_age_bars=8)
+        if div_meta:
+            entry_thesis["divergence"] = div_meta
 
         proj_allow, proj_mult, proj_detail = _projection_decision(side, config.POCKET)
         if not proj_allow:
