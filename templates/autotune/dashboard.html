@@ -50,6 +50,16 @@
         GCS の設定と `run_sync_pipeline.py` の動作を確認してください。
       </p>
     {% endif %}
+    <div class="refresh-row" data-auto-refresh data-auto-refresh-sec="{{ dashboard.auto_refresh_sec }}">
+      <div class="refresh-meta">
+        <span class="refresh-dot" aria-hidden="true"></span>
+        <span class="refresh-text">自動更新 {{ dashboard.auto_refresh_sec }}s</span>
+        <span class="refresh-status" data-refresh-status></span>
+      </div>
+      <div class="refresh-actions">
+        <button type="button" class="btn-ghost" data-refresh-now>更新</button>
+      </div>
+    </div>
     <div class="stats-grid">
       {% set daily_class = 'stat-positive' if dashboard.performance.daily_pl_pips >= 0 else 'stat-negative' %}
       <div class="stat-card">

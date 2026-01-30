@@ -289,6 +289,46 @@
     button.success { background: var(--success); }
     button.danger { background: var(--danger); }
     button.muted { background: #64748b; }
+    .btn-ghost {
+      padding: 0.4rem 1rem;
+      background: rgba(15, 118, 110, 0.12);
+      color: #0f172a;
+      border: 1px solid rgba(15, 118, 110, 0.25);
+      box-shadow: none;
+      font-size: 0.82rem;
+    }
+    .btn-ghost:hover {
+      transform: translateY(-1px);
+      box-shadow: 0 14px 22px -18px rgba(15, 23, 42, 0.6);
+    }
+    .refresh-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 0.8rem;
+      flex-wrap: wrap;
+      margin-top: 0.8rem;
+    }
+    .refresh-meta {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      font-size: 0.8rem;
+      color: #52606d;
+      flex-wrap: wrap;
+    }
+    .refresh-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--accent-strong);
+      box-shadow: 0 0 0 4px rgba(14, 165, 164, 0.18);
+    }
+    .refresh-status {
+      font-family: var(--font-mono);
+      font-size: 0.74rem;
+      color: #64748b;
+    }
     .field-grid { display: grid; gap: 0.6rem; }
     .field-label {
       font-size: 0.7rem;
@@ -449,6 +489,7 @@
         const buttons = Array.from(container.querySelectorAll("[data-tab-button]"));
         const panels = Array.from(container.querySelectorAll("[data-tab-panel]"));
         const focus = options.focus ?? true;
+        const updateUrl = options.updateUrl ?? true;
 
         buttons.forEach((button) => {
           const isActive = button.dataset.tabTarget === name;
@@ -459,6 +500,12 @@
         panels.forEach((panel) => {
           panel.classList.toggle("is-active", panel.dataset.tabPanel === name);
         });
+
+        if (updateUrl && name) {
+          const url = new URL(window.location.href);
+          url.searchParams.set("tab", name);
+          window.history.replaceState(null, "", url);
+        }
 
         if (focus) {
           const target = buttons.find((button) => button.dataset.tabTarget === name);
@@ -495,7 +542,76 @@
           buttons.find((button) => button.getAttribute("aria-selected") === "true") ||
           buttons[0];
         if (selected?.dataset.tabTarget) {
-          activateTab(container, selected.dataset.tabTarget, { focus: false });
+          activateTab(container, selected.dataset.tabTarget, {
+            focus: false,
+            updateUrl: false,
+          });
+        }
+      });
+    })();
+  </script>
+  <script>
+    (() => {
+      const refreshRoot = document.querySelector("[data-auto-refresh]");
+      if (!refreshRoot) return;
+
+      const intervalSec = parseInt(refreshRoot.dataset.autoRefreshSec || "15", 10);
+      const statusEl = refreshRoot.querySelector("[data-refresh-status]");
+      const refreshButton = refreshRoot.querySelector("[data-refresh-now]");
+      let timerId = null;
+      let nextAt = 0;
+
+      const isEditing = () => {
+        const active = document.activeElement;
+        if (!active) return false;
+        const tag = active.tagName?.toLowerCase();
+        return tag === "input" || tag === "textarea" || active.isContentEditable;
+      };
+
+      const buildRefreshUrl = () => {
+        const url = new URL(window.location.href);
+        const activeTab = document.querySelector("[data-tab-button].is-active")?.dataset?.tabTarget;
+        if (activeTab) url.searchParams.set("tab", activeTab);
+        url.searchParams.set("t", Date.now().toString());
+        return url.toString();
+      };
+
+      const updateCountdown = () => {
+        if (!statusEl) return;
+        if (!nextAt) return;
+        const remaining = Math.max(0, Math.ceil((nextAt - Date.now()) / 1000));
+        statusEl.textContent = `次の更新 ${remaining}s`;
+      };
+
+      const schedule = () => {
+        if (timerId) clearTimeout(timerId);
+        nextAt = Date.now() + intervalSec * 1000;
+        updateCountdown();
+        timerId = window.setTimeout(() => {
+          if (document.hidden || isEditing()) {
+            schedule();
+            return;
+          }
+          if (statusEl) statusEl.textContent = "更新中...";
+          window.location.assign(buildRefreshUrl());
+        }, intervalSec * 1000);
+      };
+
+      if (refreshButton) {
+        refreshButton.addEventListener("click", () => {
+          if (statusEl) statusEl.textContent = "更新中...";
+          window.location.assign(buildRefreshUrl());
+        });
+      }
+
+      window.setInterval(updateCountdown, 1000);
+      schedule();
+
+      document.addEventListener("visibilitychange", () => {
+        if (document.hidden) {
+          if (timerId) clearTimeout(timerId);
+        } else {
+          schedule();
         }
       });
     })();

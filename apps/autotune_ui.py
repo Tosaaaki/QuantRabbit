@@ -46,6 +46,7 @@ _LITE_SNAPSHOT_FAST = (
     os.getenv("UI_SNAPSHOT_LITE_MODE", "full").strip().lower()
     in {"fast", "minimal"}
 )
+_AUTO_REFRESH_SEC = max(5, int(os.getenv("UI_AUTO_REFRESH_SEC", "15")))
 _DB_READ_TIMEOUT_SEC = float(os.getenv("UI_DB_READ_TIMEOUT_SEC", "0.2"))
 _OPS_REMOTE_TIMEOUT_SEC = float(os.getenv("UI_OPS_TIMEOUT_SEC", "4.0"))
 _OPS_COMMAND_TIMEOUT_SEC = float(os.getenv("UI_OPS_CMD_TIMEOUT_SEC", "6.0"))
@@ -135,6 +136,7 @@ def _dashboard_defaults(error: Optional[str] = None) -> Dict[str, Any]:
         "error": error,
         "generated_at": None,
         "generated_label": None,
+        "auto_refresh_sec": _AUTO_REFRESH_SEC,
         "recent_trades": [],
         "performance": {
             "daily_pl_pips": 0.0,
@@ -1272,7 +1274,7 @@ def dashboard(request: Request):
     ops_notice = request.query_params.get("ops_notice")
     ops_error = request.query_params.get("ops_error")
     ops_enabled = _ops_required_token() is not None
-    return templates.TemplateResponse(
+    response = templates.TemplateResponse(
         "dashboard.html",
         {
             "request": request,
@@ -1283,6 +1285,8 @@ def dashboard(request: Request):
             "ops_enabled": ops_enabled,
         },
     )
+    response.headers["Cache-Control"] = "no-store"
+    return response
 
 
 @app.post("/api/ops/control")
