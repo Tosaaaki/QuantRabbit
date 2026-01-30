@@ -6,6 +6,7 @@ import json
 import logging
 import os
 import sys
+import time
 from pathlib import Path
 from typing import Optional
 import sqlite3
@@ -33,6 +34,15 @@ ORDERS_DB = LOGS_DIR / "orders.db"
 SIGNALS_DB = LOGS_DIR / "signals.db"
 TRADES_DB = LOGS_DIR / "trades.db"
 DB_READ_TIMEOUT_SEC = float(os.getenv("UI_DB_READ_TIMEOUT_SEC", "0.2"))
+SYNC_TRADES_ENABLED = os.getenv("UI_SNAPSHOT_SYNC_TRADES", "1").strip().lower() in {
+    "1",
+    "true",
+    "yes",
+}
+SYNC_TRADES_TTL_SEC = float(os.getenv("UI_SNAPSHOT_SYNC_TTL_SEC", "60"))
+SYNC_TRADES_MARKER = Path(
+    os.getenv("UI_SNAPSHOT_SYNC_MARKER", "logs/ui_snapshot_sync.json")
+)
 LITE_SNAPSHOT_FAST = (
     os.getenv("UI_SNAPSHOT_LITE_MODE", "full").strip().lower()
     in {"fast", "minimal"}
@@ -289,6 +299,32 @@ def _load_recent_trades(limit: int = 50) -> list[dict]:
         return []
 
 
+def _should_sync_trades() -> bool:
+    if not SYNC_TRADES_ENABLED:
+        return False
+    if SYNC_TRADES_TTL_SEC <= 0:
+        return True
+    if not SYNC_TRADES_MARKER.exists():
+        return True
+    try:
+        data = json.loads(SYNC_TRADES_MARKER.read_text(encoding="utf-8"))
+    except Exception:
+        return True
+    last_ts = float(data.get("ts") or 0.0)
+    return (time.time() - last_ts) >= SYNC_TRADES_TTL_SEC
+
+
+def _mark_sync_trades(count: int) -> None:
+    try:
+        SYNC_TRADES_MARKER.parent.mkdir(parents=True, exist_ok=True)
+        SYNC_TRADES_MARKER.write_text(
+            json.dumps({"ts": time.time(), "count": int(count)}),
+            encoding="utf-8",
+        )
+    except Exception:
+        pass
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Publish UI snapshot to GCS.")
     parser.add_argument(
@@ -323,6 +359,13 @@ def main() -> int:
         try:
             pm = PositionManager()
             try:
+                if _should_sync_trades():
+                    try:
+                        synced = pm.sync_trades()
+                        _mark_sync_trades(len(synced or []))
+                    except Exception as exc:  # noqa: BLE001
+                        logging.warning("[UI] sync_trades(lite) failed: %s", exc)
+                recent_trades = pm.fetch_recent_trades(limit=int(args.recent))
                 metrics = pm.get_performance_summary()
             except Exception as exc:  # noqa: BLE001
                 logging.warning("[UI] get_performance_summary failed: %s", exc)

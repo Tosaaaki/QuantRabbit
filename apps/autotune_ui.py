@@ -241,9 +241,13 @@ def _dashboard_defaults(error: Optional[str] = None) -> Dict[str, Any]:
         "open_summary": {
             "total_positions": 0,
             "net_units": 0.0,
+            "long_units": 0.0,
+            "short_units": 0.0,
             "unrealized_pl_pips": 0.0,
             "unrealized_pl_jpy": 0.0,
             "pockets": [],
+            "open_trades": [],
+            "meta": {},
         },
         "system": {
             "data_lag_ms": None,
@@ -1224,9 +1228,12 @@ def _summarise_snapshot(snapshot: Dict[str, Any]) -> Dict[str, Any]:
 
     open_positions = snapshot.get("open_positions") or {}
     open_entries: list[Dict[str, Any]] = []
+    open_trades_detail: list[Dict[str, Any]] = []
     total_positions = 0
     total_unrealized_pips = 0.0
     total_unrealized_jpy = 0.0
+    total_long_units = 0.0
+    total_short_units = 0.0
     for name, info in open_positions.items():
         if name == "__net__":
             continue
@@ -1238,6 +1245,10 @@ def _summarise_snapshot(snapshot: Dict[str, Any]) -> Dict[str, Any]:
         unrealized_jpy = round(_safe_float(info.get("unrealized_pl")), 2)
         total_unrealized_pips += unrealized_pips
         total_unrealized_jpy += unrealized_jpy
+        long_units = _safe_float(info.get("long_units"))
+        short_units = _safe_float(info.get("short_units"))
+        total_long_units += max(long_units, 0.0)
+        total_short_units += max(short_units, 0.0)
         units_abs = abs(units_val)
         open_entries.append(
             {
@@ -1245,21 +1256,58 @@ def _summarise_snapshot(snapshot: Dict[str, Any]) -> Dict[str, Any]:
                 "direction": direction,
                 "units": units_val,
                 "units_abs": int(round(units_abs)),
+                "long_units": int(round(max(long_units, 0.0))),
+                "short_units": int(round(max(short_units, 0.0))),
+                "long_avg_price": _opt_float(info.get("long_avg_price")),
+                "short_avg_price": _opt_float(info.get("short_avg_price")),
                 "avg_price": _safe_float(info.get("avg_price")),
                 "unrealized_pips": unrealized_pips,
                 "unrealized_jpy": unrealized_jpy,
                 "trades": len(trades),
             }
         )
+        for trade in trades:
+            trade_units = _safe_float(trade.get("units"))
+            trade_side = trade.get("side") or ("Long" if trade_units > 0 else "Short" if trade_units < 0 else "Flat")
+            if isinstance(trade_side, str):
+                trade_side = trade_side.capitalize()
+            open_dt = _parse_dt(trade.get("open_time"))
+            worker = _infer_worker_name(trade)
+            strategy = trade.get("strategy_tag") or trade.get("strategy") or "-"
+            open_trades_detail.append(
+                {
+                    "trade_id": trade.get("trade_id") or "-",
+                    "pocket": name,
+                    "worker": worker or "-",
+                    "strategy": strategy,
+                    "side": trade_side,
+                    "units_abs": int(round(abs(trade_units))),
+                    "entry_price": _opt_float(trade.get("price")),
+                    "open_label": _format_dt(open_dt) or "-",
+                    "open_time": open_dt,
+                    "unrealized_pips": round(_safe_float(trade.get("unrealized_pl_pips")), 2),
+                    "unrealized_jpy": round(_safe_float(trade.get("unrealized_pl")), 2),
+                }
+            )
     open_entries.sort(key=lambda row: row["pocket"])
+    open_trades_detail.sort(
+        key=lambda row: row.get("open_time") or datetime.min.replace(tzinfo=timezone.utc),
+        reverse=True,
+    )
+    if len(open_trades_detail) > int(os.getenv("UI_OPEN_TRADES_LIMIT", "50")):
+        open_trades_detail = open_trades_detail[: int(os.getenv("UI_OPEN_TRADES_LIMIT", "50"))]
 
     net_units = _safe_float((open_positions.get("__net__") or {}).get("units"))
     base["open_summary"] = {
         "pockets": open_entries,
         "total_positions": total_positions,
         "net_units": net_units,
+        "long_units": total_long_units,
+        "short_units": total_short_units,
         "unrealized_pl_pips": round(total_unrealized_pips, 2),
         "unrealized_pl_jpy": round(total_unrealized_jpy, 2),
+        "open_trades": open_trades_detail,
+        "meta": open_positions.get("__meta__", {}) if isinstance(open_positions, dict) else {},
     }
     perf["open_positions"] = total_positions
     perf["net_units"] = net_units

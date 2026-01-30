@@ -283,8 +283,17 @@
         <h2>オープンポジション</h2>
         <div class="tagline">
           合計 {{ dashboard.open_summary.total_positions }} 件 /
+          ロング units {{ "%+.0f"|format(dashboard.open_summary.long_units) }} /
+          ショート units {{ "%+.0f"|format(-dashboard.open_summary.short_units) }} /
           ネット units {{ "%+.0f"|format(dashboard.open_summary.net_units) }} /
           未実現 {{ "%+.1f"|format(dashboard.open_summary.unrealized_pl_pips) }}p / {{ "%+.0f"|format(dashboard.open_summary.unrealized_pl_jpy) }} 円
+          {% if dashboard.open_summary.meta %}
+            {% if dashboard.open_summary.meta.stale %}
+              / 更新 {{ dashboard.open_summary.meta.age_sec }}s前 (stale)
+            {% else %}
+              / 更新 {{ dashboard.open_summary.meta.age_sec }}s前
+            {% endif %}
+          {% endif %}
         </div>
         {% if dashboard.open_summary.pockets %}
           <div class="table-wrap">
@@ -292,9 +301,11 @@
               <thead>
                 <tr>
                   <th>Pocket</th>
-                  <th>方向</th>
-                  <th>数量</th>
-                  <th>平均価格</th>
+                  <th>Long</th>
+                  <th>Short</th>
+                  <th>Net</th>
+                  <th>Avg L</th>
+                  <th>Avg S</th>
                   <th>未実現 (pips)</th>
                   <th>未実現 (JPY)</th>
                   <th>建玉数</th>
@@ -305,9 +316,23 @@
                 {% set pill_class = 'pill gain' if row.unrealized_pips > 0 else 'pill loss' if row.unrealized_pips < 0 else 'pill neutral' %}
                 <tr>
                   <td>{{ row.pocket }}</td>
-                  <td>{{ row.direction }}</td>
-                  <td>{{ "{:,}".format(row.units_abs) }}</td>
-                  <td>{{ "%.3f"|format(row.avg_price) }}</td>
+                  <td>{{ "{:,}".format(row.long_units) }}</td>
+                  <td>{{ "{:,}".format(row.short_units) }}</td>
+                  <td>{{ "%+.0f"|format(row.units) }}</td>
+                  <td>
+                    {% if row.long_avg_price is not none %}
+                      {{ "%.3f"|format(row.long_avg_price) }}
+                    {% else %}
+                      -
+                    {% endif %}
+                  </td>
+                  <td>
+                    {% if row.short_avg_price is not none %}
+                      {{ "%.3f"|format(row.short_avg_price) }}
+                    {% else %}
+                      -
+                    {% endif %}
+                  </td>
                   <td><span class="{{ pill_class }}">{{ "%+.2f"|format(row.unrealized_pips) }}p</span></td>
                   <td>{{ "%+.0f"|format(row.unrealized_jpy) }}</td>
                   <td>{{ row.trades }}</td>
@@ -316,6 +341,48 @@
               </tbody>
             </table>
           </div>
+          {% if dashboard.open_summary.open_trades %}
+            <div class="section-subtitle" style="margin-top:1rem;">各ポジション</div>
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Open</th>
+                    <th>Pocket</th>
+                    <th>Worker</th>
+                    <th>Strategy</th>
+                    <th>Side</th>
+                    <th>Units</th>
+                    <th>Entry</th>
+                    <th>未実現 (pips)</th>
+                    <th>未実現 (JPY)</th>
+                  </tr>
+                </thead>
+                <tbody>
+                {% for row in dashboard.open_summary.open_trades %}
+                  {% set pill_class = 'pill gain' if row.unrealized_pips > 0 else 'pill loss' if row.unrealized_pips < 0 else 'pill neutral' %}
+                  <tr>
+                    <td class="mono nowrap">{{ row.open_label }}</td>
+                    <td>{{ row.pocket }}</td>
+                    <td class="mono nowrap">{{ row.worker }}</td>
+                    <td>{{ row.strategy }}</td>
+                    <td>{{ row.side }}</td>
+                    <td>{{ "{:,}".format(row.units_abs) }}</td>
+                    <td>
+                      {% if row.entry_price is not none %}
+                        {{ "%.3f"|format(row.entry_price) }}
+                      {% else %}
+                        -
+                      {% endif %}
+                    </td>
+                    <td><span class="{{ pill_class }}">{{ "%+.2f"|format(row.unrealized_pips) }}p</span></td>
+                    <td>{{ "%+.0f"|format(row.unrealized_jpy) }}</td>
+                  </tr>
+                {% endfor %}
+                </tbody>
+              </table>
+            </div>
+          {% endif %}
         {% else %}
           <p class="tagline">現在オープンポジションはありません。</p>
         {% endif %}
