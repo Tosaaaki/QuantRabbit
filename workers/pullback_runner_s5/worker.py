@@ -387,6 +387,7 @@ async def _runner_loop() -> None:
     range_block_logged: Optional[str] = None
     loss_block_logged = False
     last_touch_block_log = 0.0
+    last_extreme_log = 0.0
     managed_state: Dict[str, float] = {}  # trade_id -> last_update_monotonic
     try:
         while True:
@@ -406,7 +407,7 @@ async def _runner_loop() -> None:
 
             # Regime guard
             regime_label = current_regime("M1", event_mode=False)
-            if regime_label and regime_label in (os.environ.get("PULLBACK_RUNNER_S5_BLOCK_REGIMES", "Event,Range").split(",")):
+            if regime_label and regime_label in (os.environ.get("PULLBACK_RUNNER_S5_BLOCK_REGIMES", "Event").split(",")):
                 if regime_block_logged != regime_label:
                     LOG.info("%s blocked by regime=%s", config.LOG_PREFIX, regime_label)
                     regime_block_logged = regime_label
@@ -587,9 +588,38 @@ async def _runner_loop() -> None:
                 bid = float(latest_tick.get("bid") or closes[-1])
                 ask = float(latest_tick.get("ask") or closes[-1])
                 entry_price = ask if side == "long" else bid
-                fac_m1 = all_factors().get("M1") or {}
-                if not _bb_entry_allowed(BB_STYLE, side, entry_price, fac_m1):
-                    side = None
+                if config.EXTREME_GUARD_ENABLED and entry_price > 0:
+                    lookback = int(config.EXTREME_LOOKBACK_SEC / config.BUCKET_SECONDS)
+                    lookback = max(4, min(len(candles), lookback))
+                    recent = candles[-lookback:] if lookback > 0 else candles
+                    if recent:
+                        recent_high = max(float(c["high"]) for c in recent)
+                        recent_low = min(float(c["low"]) for c in recent)
+                        guard_pips = max(config.EXTREME_MIN_PIPS, atr_fast * config.EXTREME_ATR_MULT)
+                        guard_pips = min(guard_pips, config.EXTREME_MAX_PIPS)
+                        guard_price = guard_pips * config.PIP_VALUE
+                        block = False
+                        if side == "long" and entry_price >= recent_high - guard_price:
+                            block = True
+                        elif side == "short" and entry_price <= recent_low + guard_price:
+                            block = True
+                        if block:
+                            if now_mono - last_extreme_log > 30.0:
+                                LOG.info(
+                                    "%s extreme guard block side=%s entry=%.3f hi=%.3f lo=%.3f guard=%.2fp",
+                                    config.LOG_PREFIX,
+                                    side,
+                                    entry_price,
+                                    recent_high,
+                                    recent_low,
+                                    guard_pips,
+                                )
+                                last_extreme_log = now_mono
+                            side = None
+                if side:
+                    fac_m1 = all_factors().get("M1") or {}
+                    if not _bb_entry_allowed(BB_STYLE, side, entry_price, fac_m1):
+                        side = None
             if side:
 
                 # SL/TP baseline
@@ -655,19 +685,6 @@ async def _runner_loop() -> None:
                         "scalp",
                         mode_override="pullback",
                     )
-                    if proj_detail and proj_detail.get("score") is not None:
-                        try:
-                            proj_score = float(proj_detail.get("score"))
-                        except (TypeError, ValueError):
-                            proj_score = None
-                        if proj_score is not None and proj_score < 0.0:
-                            LOG.info(
-                                "%s projection score below 0 (%.3f); skip entry",
-                                config.LOG_PREFIX,
-                                proj_score,
-                            )
-                            cooldown_until = now_mono + config.COOLDOWN_SEC
-                            continue
                     if not proj_allow:
                         cooldown_until = now_mono + config.COOLDOWN_SEC
                         continue
