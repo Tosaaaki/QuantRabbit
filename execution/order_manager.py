@@ -807,6 +807,7 @@ _DIR_CAP_WARN_RATIO = float(os.getenv("DIR_CAP_WARN_RATIO", "0.98"))
 # Floor multiplier to avoid crushing frequency when shrinking; 0.0 to disable
 _DIR_CAP_MIN_FRACTION = float(os.getenv("DIR_CAP_MIN_FRACTION", "0.15"))
 _DIR_CAP_CACHE: Optional[PositionManager] = None
+_BLOCK_MANUAL_NETTING = _env_bool("BLOCK_MANUAL_NETTING", True)
 _DIR_CAP_ADVERSE_ENABLE = _env_bool("DIR_CAP_ADVERSE_ENABLE", True)
 _DIR_CAP_ADVERSE_LOOKBACK_MIN = max(5, min(120, _env_int("DIR_CAP_ADVERSE_LOOKBACK_MIN", 20)))
 _DIR_CAP_ADVERSE_START_PIPS = max(0.0, _env_float("DIR_CAP_ADVERSE_START_PIPS", 6.0))
@@ -912,6 +913,45 @@ def _dir_cap_adverse_pips(side_label: str, pocket: str) -> tuple[float, dict[str
     except Exception:
         pass
     return adverse_pips, details
+
+
+def _manual_net_units(positions: Optional[dict] = None) -> tuple[int, int]:
+    """Return (net_units, trade_count) for manual/unknown pockets."""
+    if positions is None:
+        try:
+            global _DIR_CAP_CACHE
+            if _DIR_CAP_CACHE is None:
+                _DIR_CAP_CACHE = PositionManager()
+            positions = _DIR_CAP_CACHE.get_open_positions()
+        except Exception:
+            return 0, 0
+    if not isinstance(positions, dict):
+        return 0, 0
+    net_units = 0
+    trade_count = 0
+    for pocket in ("manual", "unknown"):
+        info = positions.get(pocket) or {}
+        trades = info.get("open_trades") or []
+        if trades:
+            trade_count += len(trades)
+            for tr in trades:
+                try:
+                    net_units += int(tr.get("units") or 0)
+                except (TypeError, ValueError):
+                    continue
+            continue
+        try:
+            net_units += int(info.get("units") or 0)
+        except (TypeError, ValueError):
+            pass
+    meta = positions.get("__meta__") or {}
+    try:
+        manual_trades = int(meta.get("manual_trades") or 0)
+        if manual_trades > trade_count:
+            trade_count = manual_trades
+    except (TypeError, ValueError):
+        pass
+    return net_units, trade_count
 
 # ---------- orders logger (logs/orders.db) ----------
 _ORDERS_DB_PATH = pathlib.Path("logs/orders.db")
@@ -3701,6 +3741,57 @@ async def market_order(
     if isinstance(entry_thesis, dict) and strategy_tag and not entry_thesis.get("strategy_tag"):
         entry_thesis = dict(entry_thesis)
         entry_thesis["strategy_tag"] = strategy_tag
+    if _BLOCK_MANUAL_NETTING and not reduce_only and (pocket or "").lower() != "manual":
+        manual_net, manual_trades = _manual_net_units()
+        if manual_trades > 0 or manual_net != 0:
+            block = False
+            note = "manual_netting_block"
+            if manual_net == 0:
+                # Conservative: if manual trades exist but net is zero, block all new entries.
+                block = True
+                note = "manual_netting_block_zero_net"
+            elif manual_net > 0 and units < 0:
+                block = True
+            elif manual_net < 0 and units > 0:
+                block = True
+            if block:
+                _console_order_log(
+                    "OPEN_REJECT",
+                    pocket=pocket,
+                    strategy_tag=str(strategy_tag or "unknown"),
+                    side="buy" if units > 0 else "sell",
+                    units=units,
+                    sl_price=sl_price,
+                    tp_price=tp_price,
+                    client_order_id=client_order_id,
+                    note=note,
+                )
+                log_order(
+                    pocket=pocket,
+                    instrument=instrument,
+                    side="buy" if units > 0 else "sell",
+                    units=units,
+                    sl_price=sl_price,
+                    tp_price=tp_price,
+                    client_order_id=client_order_id,
+                    status=note,
+                    attempt=0,
+                    request_payload={
+                        "manual_net_units": manual_net,
+                        "manual_trades": manual_trades,
+                        "strategy_tag": strategy_tag,
+                    },
+                )
+                log_metric(
+                    "order_manual_netting_block",
+                    1.0,
+                    tags={
+                        "pocket": pocket,
+                        "strategy": str(strategy_tag or "unknown"),
+                        "manual_net_units": str(manual_net),
+                    },
+                )
+                return None
     if not reduce_only and pocket != "manual":
         entry_thesis = _apply_default_entry_thesis_tfs(entry_thesis, pocket)
     if isinstance(entry_thesis, dict) and not reduce_only:

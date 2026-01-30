@@ -1916,21 +1916,21 @@ class PositionManager:
             cached_pocket = self._pocket_cache.get(str(trade_id), "") if trade_id else ""
 
             pocket: str
-            if client_id.startswith(agent_client_prefixes):
+            is_agent_client = client_id.startswith(agent_client_prefixes)
+            if is_agent_client:
                 if tag.startswith("pocket="):
                     pocket = tag.split("=", 1)[1]
                 elif cached_pocket in agent_pockets:
                     pocket = cached_pocket
                 else:
                     pocket = "unknown"
-            elif cached_pocket in agent_pockets:
-                pocket = cached_pocket
-            elif tag.startswith("pocket="):
-                candidate = tag.split("=", 1)[1]
-                pocket = candidate if candidate in agent_pockets else "manual"
             else:
+                # Non-agent trades are always treated as manual, even if tags hint a pocket.
+                # This prevents manual orders from being managed/closed by bot workers.
                 trade_id = tr.get("id") or tr.get("tradeID")
                 pocket = self._pocket_cache.get(str(trade_id), _MANUAL_POCKET_NAME)
+                if pocket in agent_pockets:
+                    pocket = _MANUAL_POCKET_NAME
             if pocket not in _KNOWN_POCKETS:
                 if not (include_unknown and pocket == "unknown"):
                     pocket = _MANUAL_POCKET_NAME
