@@ -6,6 +6,7 @@ extends TP in steps when momentum/trend supports letting profits run.
 
 from __future__ import annotations
 from analysis.ma_projection import compute_adx_projection, compute_bbw_projection, compute_ma_projection, compute_rsi_projection
+from analysis.range_guard import detect_range_mode
 
 import asyncio
 import datetime
@@ -383,6 +384,7 @@ async def _runner_loop() -> None:
     cooldown_until = 0.0
     last_spread_log = 0.0
     regime_block_logged: Optional[str] = None
+    range_block_logged: Optional[str] = None
     loss_block_logged = False
     last_touch_block_log = 0.0
     managed_state: Dict[str, float] = {}  # trade_id -> last_update_monotonic
@@ -410,6 +412,23 @@ async def _runner_loop() -> None:
                     regime_block_logged = regime_label
                 continue
             regime_block_logged = None
+
+            # Range mode guard (block entries during compression)
+            if config.BLOCK_RANGE_MODE:
+                fac_m1 = all_factors().get("M1") or {}
+                fac_h4 = all_factors().get("H4") or {}
+                range_ctx = detect_range_mode(fac_m1, fac_h4, env_tf="M1", macro_tf="H4")
+                if range_ctx.active:
+                    if range_block_logged != range_ctx.reason:
+                        LOG.info(
+                            "%s blocked by range_mode reason=%s score=%.2f",
+                            config.LOG_PREFIX,
+                            range_ctx.reason,
+                            range_ctx.score,
+                        )
+                        range_block_logged = range_ctx.reason
+                    continue
+                range_block_logged = None
 
             # Build S5 buckets
             ticks = tick_window.recent_ticks(seconds=config.WINDOW_SEC, limit=3600)

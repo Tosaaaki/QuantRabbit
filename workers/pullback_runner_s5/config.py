@@ -75,6 +75,7 @@ BLOCKED_WEEKDAYS = tuple(
     for day in os.getenv("PULLBACK_RUNNER_S5_BLOCKED_WEEKDAYS", "4").split(",")
     if day.strip()
 )
+BLOCK_RANGE_MODE: bool = _bool("PULLBACK_RUNNER_S5_BLOCK_RANGE_MODE", True)
 
 WINDOW_SEC: float = max(60.0, _float("PULLBACK_RUNNER_S5_WINDOW_SEC", 360.0))
 BUCKET_SECONDS: float = max(1.0, _float("PULLBACK_RUNNER_S5_BUCKET_SECONDS", 5.0))
