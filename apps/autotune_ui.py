@@ -1019,10 +1019,12 @@ def _summarise_snapshot(snapshot: Dict[str, Any]) -> Dict[str, Any]:
     for item in trades_raw:
         close_dt = _parse_dt(item.get("close_time") or item.get("updated_at"))
         close_dt_jst = close_dt.astimezone(jst) if close_dt else None
+        worker = _infer_worker_name(item)
         parsed_trades.append(
             {
                 "ticket_id": str(item.get("ticket_id") or ""),
                 "pocket": (item.get("pocket") or "-").strip() or "-",
+                "worker": worker or "-",
                 "pl_pips": _safe_float(item.get("pl_pips")),
                 "pl_jpy": _safe_float(item.get("realized_pl")),
                 "close_time": close_dt,
@@ -1374,6 +1376,7 @@ def _summarise_snapshot(snapshot: Dict[str, Any]) -> Dict[str, Any]:
             {
                 "ticket_id": tr["ticket_id"],
                 "pocket": tr["pocket"],
+                "worker": tr.get("worker") or "-",
                 "pl_pips": round(tr["pl_pips"], 2),
                 "pl_jpy": round(tr["pl_jpy"], 2),
                 "closed_at": tr["close_label"],
@@ -1390,6 +1393,7 @@ def _summarise_snapshot(snapshot: Dict[str, Any]) -> Dict[str, Any]:
             {
                 "ticket_id": tr["ticket_id"],
                 "pocket": tr["pocket"],
+                "worker": tr.get("worker") or "-",
                 "pl_pips": round(tr["pl_pips"], 2),
                 "pl_jpy": round(tr["pl_jpy"], 2),
                 "closed_at": tr["close_label"],
@@ -1405,6 +1409,7 @@ def _summarise_snapshot(snapshot: Dict[str, Any]) -> Dict[str, Any]:
             {
                 "ticket_id": tr["ticket_id"],
                 "pocket": tr["pocket"],
+                "worker": tr.get("worker") or "-",
                 "pl_pips": round(tr["pl_pips"], 2),
                 "pl_jpy": round(tr["pl_jpy"], 2),
                 "closed_at": tr["close_label"],

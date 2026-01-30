@@ -620,6 +620,7 @@
                 <tr>
                   <th>チケット</th>
                   <th>Pocket</th>
+                  <th>Worker</th>
                   <th>損益 (pips)</th>
                   <th>損益 (JPY)</th>
                   <th>決済時刻</th>
@@ -631,6 +632,7 @@
                 <tr>
                   <td>{{ row.ticket_id }}</td>
                   <td>{{ row.pocket }}</td>
+                  <td class="mono nowrap">{{ row.worker }}</td>
                   <td><span class="{{ pill_class }}">{{ "%+.1f"|format(row.pl_pips) }}</span></td>
                   <td>{{ "%+.0f"|format(row.pl_jpy) }}</td>
                   <td>{{ row.closed_at or '-' }}</td>
@@ -652,6 +654,7 @@
                 <tr>
                   <th>チケット</th>
                   <th>Pocket</th>
+                  <th>Worker</th>
                   <th>損益 (pips)</th>
                   <th>損益 (JPY)</th>
                   <th>決済時刻</th>
@@ -663,6 +666,7 @@
                 <tr>
                   <td>{{ row.ticket_id }}</td>
                   <td>{{ row.pocket }}</td>
+                  <td class="mono nowrap">{{ row.worker }}</td>
                   <td><span class="{{ pill_class }}">{{ "%+.1f"|format(row.pl_pips) }}</span></td>
                   <td>{{ "%+.0f"|format(row.pl_jpy) }}</td>
                   <td>{{ row.closed_at or '-' }}</td>
