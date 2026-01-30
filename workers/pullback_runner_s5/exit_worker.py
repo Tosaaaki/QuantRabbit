@@ -220,7 +220,7 @@ class _TradeState:
     hard_stop: Optional[float] = None
     tp_hint: Optional[float] = None
     last_touch_count: Optional[int] = None
-    hard_stop_triggered_at: Optional[datetime] = None
+    hard_stop_breach_count: int = 0
 
 
 @dataclass
@@ -259,18 +259,21 @@ class PullbackRunnerExitWorker:
         self.range_lock_trigger = max(0.35, _float_env("PULLBACK_RUNNER_S5_EXIT_RANGE_LOCK_TRIGGER_PIPS", 0.8))
         self.range_lock_buffer = max(0.1, _float_env("PULLBACK_RUNNER_S5_EXIT_RANGE_LOCK_BUFFER_PIPS", 0.35))
 
-        # Hard-stop confirmation for high-quality entries to avoid whipsaw exits
-        self.hard_stop_confirm_sec = max(
-            0.0, _float_env("PULLBACK_RUNNER_S5_EXIT_HARD_STOP_CONFIRM_SEC", 20.0)
-        )
         self.hard_stop_emergency_mult = max(
             1.0, _float_env("PULLBACK_RUNNER_S5_EXIT_HARD_STOP_EMERGENCY_MULT", 1.6)
         )
-        self.hard_stop_score_min = _float_env(
-            "PULLBACK_RUNNER_S5_EXIT_HARD_STOP_SCORE_MIN", 0.25
+        self.hard_stop_score_count = max(
+            1, int(_float_env("PULLBACK_RUNNER_S5_EXIT_HARD_STOP_SCORE_COUNT", 2))
         )
-        self.structure_break_min_hold_sec = max(
-            0.0, _float_env("PULLBACK_RUNNER_S5_EXIT_STRUCTURE_MIN_HOLD_SEC", 45.0)
+        self.hard_stop_confirm_ticks = max(
+            0, int(_float_env("PULLBACK_RUNNER_S5_EXIT_HARD_STOP_CONFIRM_TICKS", 2))
+        )
+        self.structure_score_neg = max(
+            1, int(_float_env("PULLBACK_RUNNER_S5_EXIT_STRUCTURE_SCORE_NEG", 2))
+        )
+        self.structure_score_pos = max(
+            self.structure_score_neg,
+            int(_float_env("PULLBACK_RUNNER_S5_EXIT_STRUCTURE_SCORE_POS", 3)),
         )
 
         self.range_adx = max(5.0, _float_env("PULLBACK_RUNNER_S5_EXIT_RANGE_ADX", 22.0))
@@ -569,40 +572,67 @@ class PullbackRunnerExitWorker:
             lock_trigger = max(0.35, lock_trigger * self.touch_tighten_ratio)
             lock_buffer = max(0.1, lock_buffer * self.touch_tighten_ratio)
 
-        # 構造崩れ（M1 MA逆転/ADX低下＋ギャップ縮小）で撤退
+        rsi_fade = False
+        if ctx.rsi is not None:
+            if side == "long" and ctx.rsi <= self.rsi_fade_long:
+                rsi_fade = True
+            if side == "short" and ctx.rsi >= self.rsi_fade_short:
+                rsi_fade = True
+        vwap_tight = ctx.vwap_gap_pips is not None and abs(ctx.vwap_gap_pips) <= self.vwap_grab_gap
+
+        structure_signal = False
+        structure_score = 0
+        structure_reason = None
         if ctx.adx is not None and ctx.adx < self.range_adx:
             try:
                 factors = all_factors().get("M1") or {}
                 ma10 = float(factors.get("ma10"))
                 ma20 = float(factors.get("ma20"))
                 gap = abs(ma10 - ma20) / 0.01
-                if (side == "long" and ma10 <= ma20) or (side == "short" and ma10 >= ma20) or (ctx.adx < 14.0 and gap < 2.0):
-                    if pnl <= 0 or hold_sec >= self.structure_break_min_hold_sec:
-                        return "structure_break"
+                cross_bad = (side == "long" and ma10 <= ma20) or (side == "short" and ma10 >= ma20)
+                if cross_bad or (ctx.adx < 14.0 and gap < 2.0):
+                    structure_signal = True
+                    structure_score += 1
+                    structure_reason = "structure_break"
             except Exception:
                 pass
+        if structure_signal:
+            if rsi_fade:
+                structure_score += 1
+                if structure_reason is None:
+                    structure_reason = "rsi_fade"
+            if vwap_tight:
+                structure_score += 1
+                if structure_reason is None:
+                    structure_reason = "vwap_cut"
+            if touch_stats and touch_stats.count >= self.touch_tighten_count:
+                structure_score += 1
+                if structure_reason is None:
+                    structure_reason = "touch_exhaust"
+
+        if structure_signal:
+            score_req = self.structure_score_pos if pnl > 0 else self.structure_score_neg
+            if structure_score >= score_req:
+                return structure_reason or "structure_break"
 
         if pnl <= -stop_loss:
-            thesis = trade.get("entry_thesis") or {}
-            proj_score = None
-            try:
-                proj = thesis.get("projection") if isinstance(thesis, dict) else None
-                if isinstance(proj, dict) and proj.get("score") is not None:
-                    proj_score = float(proj.get("score"))
-            except Exception:
-                proj_score = None
-            confirm_sec = self.hard_stop_confirm_sec
-            if proj_score is not None and proj_score < self.hard_stop_score_min:
-                confirm_sec = max(0.0, self.hard_stop_confirm_sec * 0.5)
-            if confirm_sec > 0:
-                # Emergency stop if loss expands too far beyond threshold
-                if pnl <= -(stop_loss * self.hard_stop_emergency_mult):
-                    return "hard_stop"
-                if state.hard_stop_triggered_at is None:
-                    state.hard_stop_triggered_at = now
-                    return None
-                if (now - state.hard_stop_triggered_at).total_seconds() < confirm_sec:
-                    return None
+            # Emergency stop if loss expands too far beyond threshold
+            if pnl <= -(stop_loss * self.hard_stop_emergency_mult):
+                return "hard_stop"
+            neg_score = 0
+            if structure_signal:
+                neg_score += 1
+            if rsi_fade:
+                neg_score += 1
+            if vwap_tight:
+                neg_score += 1
+            if touch_stats and touch_stats.count >= self.touch_tighten_count:
+                neg_score += 1
+            if neg_score >= self.hard_stop_score_count:
+                return "hard_stop"
+            state.hard_stop_breach_count += 1
+            if self.hard_stop_confirm_ticks > 0 and state.hard_stop_breach_count < self.hard_stop_confirm_ticks:
+                return None
             return "hard_stop"
 
         if pnl < 0 and hold_sec >= self.negative_hold_sec:
@@ -611,8 +641,8 @@ class PullbackRunnerExitWorker:
 
         if pnl < 0:
             # Reset hard-stop trigger if price recovers meaningfully
-            if state.hard_stop_triggered_at is not None and pnl > -(stop_loss * 0.6):
-                state.hard_stop_triggered_at = None
+            if state.hard_stop_breach_count and pnl > -(stop_loss * 0.6):
+                state.hard_stop_breach_count = 0
             if side == "long" and ctx.rsi is not None and ctx.rsi <= self.rsi_fade_long:
                 if self.allow_negative_exit or atr >= self.atr_hot:
                     return "rsi_fade"
