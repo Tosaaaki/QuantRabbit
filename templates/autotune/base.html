@@ -561,38 +561,41 @@
       if (!containers.length) return;
       document.body.classList.add("tabs-ready");
 
-      const activateTab = (container, name, options = {}) => {
-        const buttons = Array.from(container.querySelectorAll("[data-tab-button]"));
-        const panels = Array.from(container.querySelectorAll("[data-tab-panel]"));
-        const focus = options.focus ?? true;
-        const updateUrl = options.updateUrl ?? true;
-
-        buttons.forEach((button) => {
-          const isActive = button.dataset.tabTarget === name;
-          button.classList.toggle("is-active", isActive);
-          button.setAttribute("aria-selected", isActive ? "true" : "false");
-          button.tabIndex = isActive ? 0 : -1;
-        });
-        panels.forEach((panel) => {
-          panel.classList.toggle("is-active", panel.dataset.tabPanel === name);
-        });
-
-        if (updateUrl && name) {
-          const url = new URL(window.location.href);
-          url.searchParams.set("tab", name);
-          window.history.replaceState(null, "", url);
-        }
-
-        if (focus) {
-          const target = buttons.find((button) => button.dataset.tabTarget === name);
-          if (target) target.focus();
-        }
-      };
-
       containers.forEach((container) => {
-        const buttons = Array.from(container.querySelectorAll("[data-tab-button]"));
+        const buttons = Array.from(container.querySelectorAll("[data-tab-button]")).filter(
+          (button) => button.closest("[data-tabs]") === container
+        );
+        const panels = Array.from(container.querySelectorAll("[data-tab-panel]")).filter(
+          (panel) => panel.closest("[data-tabs]") === container
+        );
         const isLocal = container.hasAttribute("data-tabs-local");
         if (!buttons.length) return;
+
+        const activateTab = (name, options = {}) => {
+          const focus = options.focus ?? true;
+          const updateUrl = options.updateUrl ?? true;
+
+          buttons.forEach((button) => {
+            const isActive = button.dataset.tabTarget === name;
+            button.classList.toggle("is-active", isActive);
+            button.setAttribute("aria-selected", isActive ? "true" : "false");
+            button.tabIndex = isActive ? 0 : -1;
+          });
+          panels.forEach((panel) => {
+            panel.classList.toggle("is-active", panel.dataset.tabPanel === name);
+          });
+
+          if (updateUrl && name) {
+            const url = new URL(window.location.href);
+            url.searchParams.set("tab", name);
+            window.history.replaceState(null, "", url);
+          }
+
+          if (focus) {
+            const target = buttons.find((button) => button.dataset.tabTarget === name);
+            if (target) target.focus();
+          }
+        };
 
         buttons.forEach((button) => {
           button.addEventListener("click", () => {
