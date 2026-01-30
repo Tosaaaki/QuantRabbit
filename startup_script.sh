@@ -61,7 +61,6 @@ def read_secret(name: str) -> str:
         return ""
 
 pairs = {
-    "OPENAI_API_KEY": read_secret("openai_api_key"),
     "OANDA_TOKEN": read_secret("oanda_token"),
     "OANDA_ACCOUNT": read_secret("oanda_account_id"),
     "OANDA_PRACTICE": read_secret("oanda_practice"),

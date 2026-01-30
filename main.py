@@ -23,73 +23,6 @@ def _safe_float(value: object, default: float = 0.0) -> float:
         return default
 
 
-def _strategy_conf_multiplier(gpt: Dict[str, object], strategy: str) -> float:
-    """Apply GPT mode/bias/pattern hints as gentle confidence multipliers."""
-    base = 1.0
-    mode = str(gpt.get("mode") or "").upper()
-    risk = str(gpt.get("risk_bias") or "").lower()
-    liq = str(gpt.get("liquidity_bias") or "").lower()
-    rc = _safe_float(gpt.get("range_confidence"), 0.0)
-    hints = gpt.get("pattern_hint") or []
-    if isinstance(hints, str):
-        hints = [hints]
-
-    # Mode-based coefficients
-    if mode == "DEFENSIVE":
-        base *= 0.88
-    elif mode == "TRANSITION":
-        base *= 0.94
-    elif mode == "TREND_FOLLOW":
-        if strategy in TREND_STRATEGIES:
-            base *= 1.08
-        if strategy in RANGE_STRATEGIES:
-            base *= 0.9
-    elif mode == "RANGE_SCALP":
-        if strategy in RANGE_STRATEGIES:
-            base *= 1.1
-        if strategy in TREND_STRATEGIES:
-            base *= 0.9
-
-    # Risk bias
-    if risk == "high":
-        base *= 1.08
-    elif risk == "low":
-        base *= 0.9
-
-    # Liquidity bias
-    if liq == "tight":
-        base *= 0.92
-    elif liq == "loose":
-        base *= 1.04
-
-    # Range confidence tilt
-    if rc >= 0.65:
-        if strategy in RANGE_STRATEGIES:
-            base *= 1.08
-        if strategy in TREND_STRATEGIES:
-            base *= 0.95
-    elif rc <= 0.35:
-        if strategy in TREND_STRATEGIES:
-            base *= 1.05
-        if strategy in RANGE_STRATEGIES:
-            base *= 0.95
-
-    # Pattern hints
-    lower_hints = [h.strip().lower() for h in hints if isinstance(h, str)]
-    if any("long_wick" in h or "hammer" in h for h in lower_hints):
-        if strategy in RANGE_STRATEGIES:
-            base *= 1.05
-    if any("bull_flag" in h or "impulse" in h for h in lower_hints):
-        if strategy in MOMENTUM_STRATEGIES:
-            base *= 1.05
-    if any("double_top" in h or "engulfing_bear" in h for h in lower_hints):
-        if strategy in TREND_STRATEGIES:
-            base *= 0.95
-
-    # Clamp
-    return max(0.7, min(1.3, base))
-
-
 def _env_bool(name: str, default: bool = False) -> bool:
     val = os.getenv(name, None)
     if val is None:
@@ -255,16 +188,6 @@ MICRO_OPENS_DISABLED = _env_bool("MICRO_OPENS_DISABLED", default=False)
 WORKER_ONLY_MODE = _env_bool("WORKER_ONLY_MODE", default=False)
 # 共通ExitManagerは既定で無効（各exit_workerに任せる）
 EXIT_MANAGER_DISABLED = _env_bool("EXIT_MANAGER_DISABLED", default=True)
-# GPT を完全に無効化するフラグ（誤作動防止用）。設定時はローカル順位付けのみを使用。
-GPT_DISABLED = _env_bool("GPT_DISABLED", default=False)
-GPT_FALLBACK_ENABLED = _env_bool("GPT_FALLBACK_ENABLED", default=False)
-GPT_STRICT_REQUIRED = _env_bool("GPT_STRICT_REQUIRED", default=True)
-GPT_DECIDER_BLOCKING = _env_bool("GPT_DECIDER_BLOCKING", default=True)
-GPT_DECIDER_WAIT_TIMEOUT_SEC = float(os.getenv("GPT_DECIDER_WAIT_TIMEOUT_SEC", "30"))
-# Main loop should not depend on LLM unless explicitly enabled.
-LLM_IN_MAIN_ENABLED = _env_bool("LLM_IN_MAIN_ENABLED", default=False)
-MAIN_LLM_ENABLED = LLM_IN_MAIN_ENABLED and not GPT_DISABLED
-
 # ---- Dynamic allocation (strategy score / pocket cap) loader ----
 _DYNAMIC_ALLOC_PATH = Path("config/dynamic_alloc.json")
 _DYNAMIC_ALLOC_MTIME: float | None = None
@@ -353,7 +276,6 @@ from indicators.factor_cache import all_factors, get_candles_snapshot, on_candle
 from analysis.regime_classifier import classify
 from analysis.focus_decider import decide_focus
 from analysis.local_decider import heuristic_decision
-from analysis.gpt_decider import get_decision
 from analysis import policy_bus
 from analysis.perf_monitor import snapshot as get_perf
 from analytics.insight_client import InsightClient
@@ -444,13 +366,6 @@ from utils.oanda_account import get_account_snapshot
 from utils.secrets import get_secret
 from utils.metrics_logger import log_metric
 from utils.market_hours import is_market_open, seconds_until_open
-from advisors.rr_ratio import RRRatioAdvisor
-from advisors.exit_advisor import ExitAdvisor
-from advisors.strategy_confidence import StrategyConfidenceAdvisor
-from advisors.focus_override import FocusOverrideAdvisor
-from advisors.volatility_bias import VolatilityBiasAdvisor
-from advisors.stage_plan import StagePlanAdvisor
-from advisors.partial_reduction import PartialReductionAdvisor
 from workers.fast_scalp import FastScalpState, fast_scalp_worker
 from workers.fast_scalp.signal import _compute_rsi as _fs_compute_rsi  # reuse RSI helper
 
@@ -644,48 +559,6 @@ POCKET_ATR_MIN_PIPS = {
     "scalp": 1.1,
 }
 
-try:
-    RR_ADVISOR = RRRatioAdvisor()
-except Exception as exc:  # pragma: no cover - defensive
-    logging.warning("[RR_ADVISOR] init failed: %s", exc)
-    RR_ADVISOR = None
-
-try:
-    EXIT_ADVISOR = ExitAdvisor()
-except Exception as exc:  # pragma: no cover - defensive
-    logging.warning("[EXIT_ADVISOR] init failed: %s", exc)
-    EXIT_ADVISOR = None
-
-try:
-    STRATEGY_CONF_ADVISOR = StrategyConfidenceAdvisor()
-except Exception as exc:  # pragma: no cover - defensive
-    logging.warning("[STRAT_CONF] init failed: %s", exc)
-    STRATEGY_CONF_ADVISOR = None
-
-try:
-    FOCUS_ADVISOR = FocusOverrideAdvisor()
-except Exception as exc:  # pragma: no cover - defensive
-    logging.warning("[FOCUS_ADVISOR] init failed: %s", exc)
-    FOCUS_ADVISOR = None
-
-try:
-    VOLATILITY_ADVISOR = VolatilityBiasAdvisor()
-except Exception as exc:  # pragma: no cover - defensive
-    logging.warning("[VOL_ADVISOR] init failed: %s", exc)
-    VOLATILITY_ADVISOR = None
-
-try:
-    STAGE_PLAN_ADVISOR = StagePlanAdvisor()
-except Exception as exc:  # pragma: no cover - defensive
-    logging.warning("[STAGE_PLAN_ADVISOR] init failed: %s", exc)
-    STAGE_PLAN_ADVISOR = None
-
-try:
-    PARTIAL_ADVISOR = PartialReductionAdvisor()
-except Exception as exc:  # pragma: no cover - defensive
-    logging.warning("[PARTIAL_ADVISOR] init failed: %s", exc)
-    PARTIAL_ADVISOR = None
-
 PIP = 0.01
 _MACRO_PULLBACK_MIN_RETRACE_PIPS = {
     1: 4.8,
@@ -820,7 +693,7 @@ MACRO_LOT_SHARE_FLOOR = _safe_env_float("MACRO_LOT_SHARE_FLOOR", 0.7, low=0.0, h
 MACRO_CONFIDENCE_FLOOR = _safe_env_float("MACRO_CONFIDENCE_FLOOR", 1.0, low=0.3, high=1.0)
 MACRO_SPREAD_OVERRIDE = _safe_env_float("MACRO_SPREAD_OVERRIDE", 1.4, low=1.0, high=3.0)
 
-GPT_FACTOR_KEYS: Dict[str, tuple[str, ...]] = {
+DECIDER_FACTOR_KEYS: Dict[str, tuple[str, ...]] = {
     "M1": (
         "close",
         "ma10",
@@ -893,8 +766,8 @@ WORKER_AUTOCONTROL_ENABLED = os.getenv("WORKER_AUTOCONTROL", "1").strip() not in
 # Default to a higher cap so more workers can run in parallel; 0 or negative = no cap
 WORKER_AUTOCONTROL_LIMIT = int(os.getenv("WORKER_AUTOCONTROL_LIMIT", "16") or "16")
 WORKER_SYSTEMCTL_ENABLED = _env_bool("WORKER_SYSTEMCTL", True)
-GPT_PERF_KEYS = ("pf", "win_rate", "avg_pips", "sharpe", "sample")
-_GPT_FACTOR_PRECISION = {
+DECIDER_PERF_KEYS = ("pf", "win_rate", "avg_pips", "sharpe", "sample")
+_FACTOR_PRECISION = {
     "adx": 2,
     "rsi": 2,
     "atr_pips": 3,
@@ -1249,7 +1122,6 @@ REENTRY_EXTRA_LOT = {
 }
 DEFAULT_COOLDOWN_SECONDS = 180
 RANGE_COOLDOWN_SECONDS = 420
-GPT_MIN_INTERVAL_SECONDS = 180
 MIN_MACRO_TOTAL_LOT = _safe_env_float("MIN_MACRO_TOTAL_LOT", 0.02, low=0.0, high=3.0)
 TARGET_MACRO_MARGIN_RATIO = _safe_env_float("TARGET_MACRO_MARGIN_RATIO", 0.7, low=0.0, high=0.95)
 MACRO_MARGIN_SAFETY_BUFFER = _safe_env_float("MACRO_MARGIN_SAFETY_BUFFER", 0.1, low=0.0, high=0.5)
@@ -1258,7 +1130,6 @@ FORCE_SCALP_MODE = os.getenv("SCALP_FORCE_ALWAYS", "0").strip().lower() not in {
 if FORCE_SCALP_MODE:
     logging.warning("[FORCE_SCALP] mode enabled")
 
-RELAX_GPT_ALLOWLIST = True  # GPT は順位付けのみ利用し、評価フィルタには使わない
 DISABLE_WAIT_GUARD = os.getenv("DISABLE_WAIT_GUARD", "0").strip().lower() not in {"", "0", "false", "no"}
 RATE_CHECK_1M_RANGE_PIPS = _safe_env_float("RATE_CHECK_1M_RANGE_PIPS", 150.0, low=0.0, high=2000.0)
 RATE_CHECK_5M_RANGE_PIPS = _safe_env_float("RATE_CHECK_5M_RANGE_PIPS", 180.0, low=0.0, high=2000.0)
@@ -1691,10 +1562,9 @@ def _local_strategy_ranking(
     fac_h4: dict,
     range_ctx,
     session_bucket: str,
-    last_gpt_mode: str | None,
     last_focus: str | None,
 ) -> list[str]:
-    """Rank strategies locally using regime/volatility/context without GPT."""
+    """Rank strategies locally using regime/volatility/context."""
     adx_m1 = float(fac_m1.get("adx") or 0.0)
     adx_h4 = float(fac_h4.get("adx") or 0.0)
     atr = float(fac_m1.get("atr_pips") or 0.0)
@@ -1738,9 +1608,6 @@ def _local_strategy_ranking(
         # Range suppression for trends
         if range_active and cat in {"trend", "breakout"}:
             score -= 0.6
-        # Last GPT mode/focus hint: keep some continuity
-        if last_gpt_mode and str(last_gpt_mode).lower().startswith("range") and cat == "range":
-            score += 0.2
         if last_focus and last_focus == "micro" and "micro" in name.lower():
             score += 0.1
         scores[name] = score
@@ -2051,80 +1918,6 @@ async def _reconcile_worker_services(previous: set[str], desired: set[str]) -> N
             log_metric("worker_missing_unit", 1.0, tags={"service": svc}, ts=now)
 
 
-class GPTDecisionState:
-    def __init__(self) -> None:
-        self._cond = asyncio.Condition()
-        self._latest: Optional[dict] = None
-        self._signature: Optional[str] = None
-        self._updated_at: Optional[datetime.datetime] = None
-
-    async def update(self, signature: str, decision: dict) -> None:
-        async with self._cond:
-            self._latest = dict(decision)
-            self._latest["model_used"] = decision.get("model_used")
-            self._signature = signature
-            self._updated_at = datetime.datetime.utcnow()
-            self._cond.notify_all()
-
-    async def get_latest(self) -> Tuple[dict, Optional[str], Optional[datetime.datetime]]:
-        async with self._cond:
-            while self._latest is None:
-                await self._cond.wait()
-            return dict(self._latest), self._signature, self._updated_at
-
-    async def peek_latest(self) -> Tuple[Optional[dict], Optional[str], Optional[datetime.datetime]]:
-        async with self._cond:
-            if self._latest is None:
-                return None, None, None
-            return dict(self._latest), self._signature, self._updated_at
-
-    async def needs_refresh(self, signature: str, min_interval: int) -> bool:
-        async with self._cond:
-            if self._signature is None:
-                return True
-            if self._signature != signature:
-                return True
-            if not self._updated_at:
-                return True
-            if (datetime.datetime.utcnow() - self._updated_at).total_seconds() >= min_interval:
-                return True
-            return False
-
-    async def wait_for_signature(self, signature: str, timeout: Optional[float]) -> dict:
-        deadline = None if timeout is None else datetime.datetime.utcnow() + datetime.timedelta(seconds=timeout)
-        async with self._cond:
-            while True:
-                if self._signature == signature and self._latest is not None:
-                    return dict(self._latest)
-                if deadline is not None:
-                    remaining = (deadline - datetime.datetime.utcnow()).total_seconds()
-                    if remaining <= 0:
-                        raise asyncio.TimeoutError()
-                    await asyncio.wait_for(self._cond.wait(), timeout=remaining)
-                else:
-                    await self._cond.wait()
-
-
-class GPTRequestManager:
-    def __init__(self) -> None:
-        self._queue: asyncio.Queue[Tuple[str, dict]] = asyncio.Queue()
-        self._pending: set[str] = set()
-        self._lock = asyncio.Lock()
-
-    async def submit(self, signature: str, payload: dict) -> None:
-        async with self._lock:
-            if signature in self._pending:
-                return
-            self._pending.add(signature)
-        await self._queue.put((signature, payload))
-
-    async def get(self) -> Tuple[str, dict]:
-        return await self._queue.get()
-
-    async def task_done(self, signature: str) -> None:
-        async with self._lock:
-            self._pending.discard(signature)
-        self._queue.task_done()
 # In range mode, allow mean‑reversionと軽量スキャルのみを通す
 ALLOWED_RANGE_STRATEGIES = {
     "BB_RSI",
@@ -2342,84 +2135,12 @@ def _compute_stage_base(
     return base
 
 
-def _gpt_payload_signature(
-    payload: dict,
-    *,
-    range_active: bool,
-    range_reason: Optional[str],
-    soft_range: bool,
-) -> str:
-    factors_m1 = payload.get("factors_m1") or {}
-    factors_m5 = payload.get("factors_m5") or {}
-    factors_h1 = payload.get("factors_h1") or {}
-    factors_h4 = payload.get("factors_h4") or {}
-    factors_d1 = payload.get("factors_d1") or {}
-    perf = payload.get("perf") or {}
-    perf_snapshot = {}
-    for key, value in perf.items():
-        if isinstance(value, (int, float)):
-            perf_snapshot[key] = _hashable_float(value, 3)
-        elif isinstance(value, dict):
-            win = value.get("win_rate")
-            pf = value.get("pf")
-            perf_snapshot[key] = {
-                "win_rate": _hashable_float(win, 3),
-                "pf": _hashable_float(pf, 3),
-            }
-    key_data = {
-        "reg_macro": payload.get("reg_macro"),
-        "reg_micro": payload.get("reg_micro"),
-        "event": payload.get("event_soon"),
-        "range_active": range_active,
-        "range_reason": range_reason,
-        "soft_range": soft_range,
-        "m1": {
-            "close": _hashable_float(factors_m1.get("close"), 4),
-            "adx": _hashable_float(factors_m1.get("adx"), 3),
-            "rsi": _hashable_float(factors_m1.get("rsi"), 3),
-            "atr": _hashable_float(factors_m1.get("atr_pips"), 3),
-            "vol": _hashable_float(factors_m1.get("vol_5m"), 3),
-            "ma10": _hashable_float(factors_m1.get("ma10"), 4),
-            "ma20": _hashable_float(factors_m1.get("ma20"), 4),
-        },
-        "m5": {
-            "close": _hashable_float(factors_m5.get("close"), 4),
-            "adx": _hashable_float(factors_m5.get("adx"), 3),
-            "rsi": _hashable_float(factors_m5.get("rsi"), 3),
-            "ma10": _hashable_float(factors_m5.get("ma10"), 4),
-            "ma20": _hashable_float(factors_m5.get("ma20"), 4),
-        },
-        "h1": {
-            "close": _hashable_float(factors_h1.get("close"), 4),
-            "adx": _hashable_float(factors_h1.get("adx"), 3),
-            "ma10": _hashable_float(factors_h1.get("ma10"), 4),
-            "ma20": _hashable_float(factors_h1.get("ma20"), 4),
-        },
-        "h4": {
-            "close": _hashable_float(factors_h4.get("close"), 4),
-            "adx": _hashable_float(factors_h4.get("adx"), 3),
-            "ma10": _hashable_float(factors_h4.get("ma10"), 4),
-            "ma20": _hashable_float(factors_h4.get("ma20"), 4),
-        },
-        "d1": {
-            "close": _hashable_float(factors_d1.get("close"), 4),
-            "adx": _hashable_float(factors_d1.get("adx"), 3),
-            "ma10": _hashable_float(factors_d1.get("ma10"), 4),
-            "ma20": _hashable_float(factors_d1.get("ma20"), 4),
-        },
-        "perf": perf_snapshot,
-    }
-    serialized = json.dumps(key_data, sort_keys=True, separators=(",", ":"))
-    return hashlib.sha1(serialized.encode("utf-8")).hexdigest()
-
-
 def _dynamic_risk_pct(
     signals: list[dict],
     range_mode: bool,
     weight_macro: float | None,
     *,
     context: ParamSnapshot | None = None,
-    gpt_bias: Dict[str, object] | None = None,
 ) -> float:
     if not signals or _MAX_RISK_PCT <= _BASE_RISK_PCT:
         return _BASE_RISK_PCT
@@ -2466,118 +2187,8 @@ def _dynamic_risk_pct(
             risk_pct = min(risk_pct, _BASE_RISK_PCT * 0.35, _SQUEEZE_RISK_CAP)
         if context.vol_high_ratio >= 0.3:
             risk_pct = min(risk_pct, _BASE_RISK_PCT * 0.4)
-    if gpt_bias:
-        mode = str(gpt_bias.get("mode") or "").upper()
-        risk_flag = str(gpt_bias.get("risk_bias") or "").lower()
-        liq_flag = str(gpt_bias.get("liquidity_bias") or "").lower()
-        if mode == "DEFENSIVE":
-            risk_pct *= 0.75
-        elif mode == "TRANSITION":
-            risk_pct *= 0.9
-        elif mode == "TREND_FOLLOW":
-            risk_pct *= 1.05
-        elif mode == "RANGE_SCALP":
-            risk_pct *= 0.95
-        if risk_flag == "high":
-            risk_pct *= 1.08
-        elif risk_flag == "low":
-            risk_pct *= 0.85
-        if liq_flag == "tight":
-            risk_pct *= 0.9
-        elif liq_flag == "loose":
-            risk_pct *= 1.03
     risk_pct = min(risk_pct, _HARD_MAX_RISK_CAP)
     return max(0.0005, risk_pct)
-
-
-async def gpt_worker(
-    gpt_state: GPTDecisionState,
-    gpt_requests: GPTRequestManager,
-) -> None:
-    logging.info("[GPT WORKER] started")
-    while True:
-        signature, payload = await gpt_requests.get()
-        try:
-            logging.info("[GPT WORKER] processing signature=%s", signature[:10])
-            decision = await get_decision(payload)
-            await gpt_state.update(signature, decision)
-            logging.info(
-                "[GPT WORKER] decision ready signature=%s model=%s",
-                signature[:10],
-                decision.get("model_used", "unknown"),
-            )
-        except Exception as exc:  # pragma: no cover - defensive
-            logging.error(
-                "[GPT WORKER] decision failed signature=%s (%s: %s)",
-                signature[:10],
-                type(exc).__name__,
-                str(exc) or "no message",
-            )
-        finally:
-            await gpt_requests.task_done(signature)
-
-
-async def prime_gpt_decision(
-    gpt_state: GPTDecisionState,
-    gpt_requests: GPTRequestManager,
-    *,
-    timeout: float = 45.0,
-) -> None:
-    """Ensure an initial GPT decision is ready before strategy loop starts."""
-    start_time = datetime.datetime.utcnow()
-    while True:
-        factors = all_factors()
-        fac_m1 = factors.get("M1")
-        fac_h4 = factors.get("H4")
-        if (
-            not fac_m1
-            or not fac_h4
-            or not fac_m1.get("close")
-            or not fac_h4.get("close")
-        ):
-            await asyncio.sleep(1.0)
-            if (datetime.datetime.utcnow() - start_time).total_seconds() > timeout:
-                logging.warning("[GPT PRIME] waiting for factors timed out; retrying")
-                start_time = datetime.datetime.utcnow()
-            continue
-
-        perf_cache = get_perf()
-        event_soon = False
-        payload = {
-            "ts": datetime.datetime.utcnow().isoformat(timespec="seconds"),
-            "reg_macro": classify(fac_h4, "H4", event_mode=event_soon),
-            "reg_micro": classify(fac_m1, "M1", event_mode=event_soon),
-            "factors_m1": _compact_factors(fac_m1, GPT_FACTOR_KEYS["M1"]),
-            "factors_h4": _compact_factors(fac_h4, GPT_FACTOR_KEYS["H4"]),
-            "perf": {
-                pocket: {
-                    key: val
-                    for key, val in (metrics or {}).items()
-                    if key in GPT_PERF_KEYS and val not in (None, "")
-                }
-                for pocket, metrics in (perf_cache or {}).items()
-                if metrics
-            },
-            "event_soon": event_soon,
-        }
-        signature = _gpt_payload_signature(
-            payload,
-            range_active=False,
-            range_reason=None,
-            soft_range=False,
-        )
-        logging.info("[GPT PRIME] submitting initial decision signature=%s", signature[:10])
-        await gpt_requests.submit(signature, payload)
-        try:
-            decision = await gpt_state.wait_for_signature(signature, timeout=timeout)
-            logging.info(
-                "[GPT PRIME] initial decision ready model=%s",
-                decision.get("model_used", "unknown"),
-            )
-            return
-        except asyncio.TimeoutError:
-            logging.warning("[GPT PRIME] timeout waiting for initial decision; retrying")
-            await asyncio.sleep(5.0)
 
 
 async def supervised_runner(name: str, coro: Coroutine[Any, Any, Any]) -> None:
@@ -2682,7 +2293,7 @@ def _compact_factors(data: Optional[Dict[str, Any]], keys: tuple[str, ...]) -> D
             continue
         value = data[key]
         if isinstance(value, (int, float)):
-            precision = _GPT_FACTOR_PRECISION.get(key, 4)
+            precision = _FACTOR_PRECISION.get(key, 4)
             try:
                 compact[key] = round(float(value), precision)
             except (TypeError, ValueError):
@@ -3788,17 +3399,7 @@ async def worker_only_loop() -> None:
 
 
 async def logic_loop(
-    gpt_state: GPTDecisionState,
-    gpt_requests: GPTRequestManager,
     fast_scalp_state: FastScalpState | None = None,
-    *,
-    rr_advisor: RRRatioAdvisor | None = None,
-    exit_advisor: ExitAdvisor | None = None,
-    strategy_conf_advisor: StrategyConfidenceAdvisor | None = None,
-    focus_advisor: FocusOverrideAdvisor | None = None,
-    volatility_advisor: VolatilityBiasAdvisor | None = None,
-    stage_plan_advisor: StagePlanAdvisor | None = None,
-    partial_advisor: PartialReductionAdvisor | None = None,
 ):
     if WORKER_ONLY_MODE and not SIGNAL_GATE_ENABLED:
         logging.info("[LOGIC_LOOP] disabled (worker-only runtime).")
@@ -4289,7 +3890,7 @@ async def logic_loop(
         loop_start_mono: float,
         analysis_start_mono: Optional[float],
         analysis_end_mono: Optional[float],
-        gpt_end_mono: Optional[float],
+        decision_end_mono: Optional[float],
         strategy_end_mono: Optional[float],
         sync_ms: Optional[float],
         order_exec_ms: Optional[float],
@@ -4326,13 +3927,13 @@ async def logic_loop(
 
         pre_analysis_ms = _delta_ms(loop_start_mono, analysis_start_mono)
         analysis_ms = _delta_ms(analysis_start_mono, analysis_end_mono)
-        gpt_ms = _delta_ms(analysis_end_mono, gpt_end_mono)
-        strategy_ms = _delta_ms(gpt_end_mono, strategy_end_mono)
+        decider_ms = _delta_ms(analysis_end_mono, decision_end_mono)
+        strategy_ms = _delta_ms(decision_end_mono, strategy_end_mono)
 
         phase_map = {
             "pre_analysis": pre_analysis_ms,
             "analysis": analysis_ms,
-            "gpt": gpt_ms,
+            "decider": decider_ms,
             "strategy": strategy_ms,
             "sync": sync_ms,
             "order_exec": order_exec_ms,
@@ -4380,12 +3981,12 @@ async def logic_loop(
 
         entries = entry_plans if entry_plans is not None else -1
         logging.warning(
-            "[SLOW_LOOP] loop=%d total_ms=%.0f pre_ms=%s analysis_ms=%s gpt_ms=%s strategy_ms=%s sync_ms=%s order_ms=%s orders=%d pos_ms=%s pos_ct=%d close_ms=%s close_ct=%d sig_ms=%s sig_ct=%d perf_ms=%s perf_ct=%d exit_ms=%s exit_ct=%d partial_ms=%s partial_ct=%d acct_ms=%s acct_ct=%d entries=%s signals=%d",
+            "[SLOW_LOOP] loop=%d total_ms=%.0f pre_ms=%s analysis_ms=%s decider_ms=%s strategy_ms=%s sync_ms=%s order_ms=%s orders=%d pos_ms=%s pos_ct=%d close_ms=%s close_ct=%d sig_ms=%s sig_ct=%d perf_ms=%s perf_ct=%d exit_ms=%s exit_ct=%d partial_ms=%s partial_ct=%d acct_ms=%s acct_ct=%d entries=%s signals=%d",
             loop_counter,
             decision_latency_ms,
             f"{pre_analysis_ms:.0f}" if pre_analysis_ms is not None else "n/a",
             f"{analysis_ms:.0f}" if analysis_ms is not None else "n/a",
-            f"{gpt_ms:.0f}" if gpt_ms is not None else "n/a",
+            f"{decider_ms:.0f}" if decider_ms is not None else "n/a",
             f"{strategy_ms:.0f}" if strategy_ms is not None else "n/a",
             f"{sync_ms:.0f}" if sync_ms is not None else "n/a",
             f"{order_exec_ms:.0f}" if order_exec_ms is not None else "n/a",
@@ -4418,7 +4019,7 @@ async def logic_loop(
             entry_plans: Optional[int] = None
             analysis_start_mono: Optional[float] = None
             analysis_end_mono: Optional[float] = None
-            gpt_end_mono: Optional[float] = None
+            decision_end_mono: Optional[float] = None
             strategy_end_mono: Optional[float] = None
             sync_ms: Optional[float] = None
             first_order_start_mono: Optional[float] = None
@@ -4440,8 +4041,6 @@ async def logic_loop(
             account_snapshot_count = 0
             strategy_check_ms = {}
             sync_breakdown = None
-            gpt_timed_out = False
-            gpt_unavailable = False
             intervention_ctx = {"active": False, "rate_check_active": False}
             intervention_active = False
             rate_check_active = False
@@ -4517,7 +4116,7 @@ async def logic_loop(
                 last_update_time = now
                 logging.info(f"[PERF] Updated: {perf_cache}")
 
-            # 週末クローズ中はロジックとGPTを止めて待機
+            # 週末クローズ中はロジックを止めて待機
             if not is_market_open(now):
                 if last_market_closed is None or (now - last_market_closed).total_seconds() >= 900:
                     wait_sec = max(60.0, min(3600.0, seconds_until_open(now)))
@@ -4846,31 +4445,6 @@ async def logic_loop(
                 fac_h4=fac_h4,
                 spread_snapshot=spread_snapshot,
             )
-            if volatility_advisor and volatility_advisor.enabled:
-                vol_context = param_snapshot.to_dict()
-                vol_context.update(
-                    {
-                        "range_active": range_active,
-                        "event_soon": event_soon,
-                        "spread_gate": spread_gate_active,
-                    }
-                )
-                try:
-                    vol_hint = await volatility_advisor.advise(vol_context)
-                except Exception as exc:  # pragma: no cover
-                    logging.debug("[VOL_ADVISOR] failed: %s", exc)
-                    vol_hint = None
-                if vol_hint and vol_hint.confidence >= 0.35:
-                    new_risk = _clamp(param_snapshot.risk_appetite + vol_hint.bias, 0.0, 1.0)
-                    if new_risk != param_snapshot.risk_appetite:
-                        param_snapshot.risk_appetite = new_risk
-                        param_snapshot.notes["vol_bias"] = vol_hint.bias
-                        log_metric(
-                            "volatility_bias",
-                            float(vol_hint.bias),
-                            tags={"reason": vol_hint.reason or ""},
-                            ts=now,
-                        )
             if param_snapshot.volatility_state != last_volatility_state:
                 logging.info(
                     "[PARAM] volatility_state=%s atr=%.2fp score=%.2f",
@@ -5295,165 +4869,26 @@ async def logic_loop(
                 range_entry_counter = 0
 
             analysis_end_mono = time.monotonic()
-            # --- 2. GPT判断 ---
+            # --- 2. Local decision (LLM removed) ---
             if FORCE_SCALP_MODE:
-                logging.warning("[FORCE_SCALP] entering GPT stage loop=%d", loop_counter)
-            # M1/H4 の移動平均・RSI などの指標をまとめて送信
+                logging.warning("[FORCE_SCALP] entering decision stage loop=%d", loop_counter)
             payload = {
                 "ts": now.isoformat(timespec="seconds"),
                 "reg_macro": macro_regime,
                 "reg_micro": micro_regime,
-                "factors_m1": _compact_factors(fac_m1, GPT_FACTOR_KEYS["M1"]),
-                "factors_h4": _compact_factors(fac_h4, GPT_FACTOR_KEYS["H4"]),
+                "factors_m1": _compact_factors(fac_m1, DECIDER_FACTOR_KEYS["M1"]),
+                "factors_h4": _compact_factors(fac_h4, DECIDER_FACTOR_KEYS["H4"]),
                 "perf": {
                     pocket: {
                         key: val
                         for key, val in (metrics or {}).items()
-                        if key in GPT_PERF_KEYS and val not in (None, "")
+                        if key in DECIDER_PERF_KEYS and val not in (None, "")
                     }
                 for pocket, metrics in (perf_cache or {}).items()
                 if metrics
                 },
                 "event_soon": event_soon,
             }
-            payload_signature = _gpt_payload_signature(
-                payload,
-                range_active=range_active,
-                range_reason=last_range_reason or range_ctx.reason,
-                soft_range=range_soft_active,
-            )
-            if not MAIN_LLM_ENABLED:
-                gpt = {}
-                reuse_reason = "main_llm_disabled"
-                logging.info("[GPT] main loop disabled; using local ranking only")
-            else:
-                gpt_requested = False
-                logging.info(
-                    "[GPT] decision_trigger signature=%s range=%s",
-                    payload_signature[:10],
-                    range_active,
-                )
-                if await gpt_state.needs_refresh(payload_signature, GPT_MIN_INTERVAL_SECONDS):
-                    gpt_requested = True
-                    logging.info("[GPT] enqueue signature=%s", payload_signature[:10])
-                    await gpt_requests.submit(payload_signature, payload)
-                    if GPT_DECIDER_BLOCKING:
-                        try:
-                            gpt = await gpt_state.wait_for_signature(
-                                payload_signature,
-                                timeout=GPT_DECIDER_WAIT_TIMEOUT_SEC,
-                            )
-                            reuse_reason = gpt.get("reason") or "live_call"
-                        except asyncio.TimeoutError:
-                            if GPT_FALLBACK_ENABLED:
-                                logging.warning(
-                                    "[GPT] wait for signature %s timed out; using previous decision",
-                                    payload_signature[:10],
-                                )
-                                gpt, _, _ = await gpt_state.get_latest()
-                                reuse_reason = gpt.get("reason") or "cached_timeout"
-                            else:
-                                logging.warning(
-                                    "[GPT] wait for signature %s timed out; fallback disabled",
-                                    payload_signature[:10],
-                                )
-                                gpt = {}
-                                reuse_reason = "timeout_no_fallback"
-                                gpt_unavailable = True
-                            gpt_timed_out = True
-                    else:
-                        latest, _, _ = await gpt_state.peek_latest()
-                        if latest is None:
-                            gpt = {}
-                            reuse_reason = "queued_nonblocking"
-                        else:
-                            gpt = latest
-                            reuse_reason = gpt.get("reason") or "queued_nonblocking"
-                else:
-                    gpt, _, _ = await gpt_state.get_latest()
-                    reuse_reason = gpt.get("reason") or "cached"
-                if gpt_requested and not gpt_timed_out:
-                    if isinstance(gpt, dict) and (gpt.get("reason") or "") == "reuse_previous":
-                        gpt_timed_out = True
-                if not isinstance(gpt, dict):
-                    logging.warning(
-                        "[GPT] invalid decision payload type=%s; using empty dict", type(gpt)
-                    )
-                    gpt = {}
-                log_metric(
-                    "gpt_timeout_rate",
-                    1.0 if gpt_timed_out else 0.0,
-                    tags={"reason": reuse_reason},
-                    ts=now,
-                )
-                gpt_end_mono = time.monotonic()
-                if gpt_unavailable and not GPT_FALLBACK_ENABLED:
-                    if GPT_STRICT_REQUIRED:
-                        logging.warning(
-                            "[GPT] unavailable and fallback disabled; skipping entries this loop"
-                        )
-                        sync_start = time.monotonic()
-                        try:
-                            await _run_blocking(pos_manager.sync_trades)
-                        except Exception:
-                            pass
-                        sync_ms = max(0.0, (time.monotonic() - sync_start) * 1000.0)
-                        log_metric("sync_trades_ms", sync_ms, tags={"phase": "gpt_unavailable"}, ts=now)
-                        sync_breakdown = pos_manager.get_last_sync_breakdown()
-                        decision_latency_ms = max(0.0, (time.monotonic() - loop_start_mono) * 1000.0)
-                        if gpt_timed_out:
-                            decision_latency_ms = max(decision_latency_ms, 9000.0)
-                        log_metric("decision_latency_ms", decision_latency_ms)
-                        if first_order_start_mono is not None:
-                            pre_order_ms = max(
-                                0.0, (first_order_start_mono - loop_start_mono) * 1000.0
-                            )
-                        else:
-                            pre_order_ms = decision_latency_ms
-                        log_metric("decision_latency_pre_order_ms", pre_order_ms)
-                        data_lag_ms = _latest_tick_lag_ms()
-                        _check_tick_silence_watchdog(data_lag_ms)
-                        if data_lag_ms is not None:
-                            log_metric("data_lag_ms", data_lag_ms)
-                            _check_data_lag_watchdog(data_lag_ms)
-                        _maybe_log_slow_loop(
-                            decision_latency_ms=decision_latency_ms,
-                            now=now,
-                            loop_counter=loop_counter,
-                            loop_start_mono=loop_start_mono,
-                            analysis_start_mono=analysis_start_mono,
-                            analysis_end_mono=analysis_end_mono,
-                            gpt_end_mono=gpt_end_mono,
-                            strategy_end_mono=strategy_end_mono,
-                            sync_ms=sync_ms,
-                            order_exec_ms=order_exec_ms,
-                            order_exec_count=order_exec_count,
-                            positions_fetch_ms=positions_fetch_ms,
-                            positions_fetch_count=positions_fetch_count,
-                            close_trade_ms=close_trade_ms,
-                            close_trade_count=close_trade_count,
-                            signal_fetch_ms=signal_fetch_ms,
-                            signal_fetch_count=signal_fetch_count,
-                            perf_update_ms=perf_update_ms,
-                            perf_update_count=perf_update_count,
-                            exit_plan_ms=exit_plan_ms,
-                            exit_plan_count=exit_plan_count,
-                            partial_plan_ms=partial_plan_ms,
-                            partial_plan_count=partial_plan_count,
-                            account_snapshot_ms=account_snapshot_ms,
-                            account_snapshot_count=account_snapshot_count,
-                            entry_plans=entry_plans,
-                            signal_count=len(evaluated_signals),
-                            strategy_check_ms=strategy_check_ms,
-                            sync_breakdown=sync_breakdown,
-                        )
-                        await asyncio.sleep(60)
-                        continue
-                    logging.warning(
-                        "[GPT] unavailable and fallback disabled; continuing with local decision"
-                    )
-            if gpt_end_mono is None:
-                gpt_end_mono = time.monotonic()
             local_decision: dict = {}
             try:
                 local_decision = heuristic_decision(payload, last_local_decision)
@@ -5464,76 +4899,19 @@ async def logic_loop(
             except Exception as exc:
                 logging.warning("[LOCAL_DECIDER] failed: %s", exc)
                 local_decision = {}
-            raw_weight_scalp = gpt.get("weight_scalp")
-            if raw_weight_scalp is None:
-                weight_scalp_display = "n/a"
-            else:
-                try:
-                    weight_scalp_display = f"{float(raw_weight_scalp):.2f}"
-                except (TypeError, ValueError):
-                    weight_scalp_display = "invalid"
-            raw_weight_macro = gpt.get("weight_macro")
-            weight_macro_override: Optional[float] = None
-            if raw_weight_macro is not None:
-                try:
-                    weight_macro_override = max(0.0, min(1.0, float(raw_weight_macro)))
-                except (TypeError, ValueError):
-                    logging.warning(
-                        "[GPT] invalid weight_macro=%s; keeping focus_decider value %.2f",
-                        raw_weight_macro,
-                        weight_macro,
-                    )
-                    weight_macro_override = None
-            if MACRO_DISABLED:
-                weight_macro_override = 0.0
-            logging.info(
-                "[GPT] mode=%s risk=%s liq=%s range=%.2f focus=%s weight_macro=%.2f weight_scalp=%s model=%s reason=%s",
-                gpt.get("mode"),
-                gpt.get("risk_bias"),
-                gpt.get("liquidity_bias"),
-                _safe_float(gpt.get("range_confidence"), 0.0),
-                gpt.get("focus_tag"),
-                weight_macro_override if weight_macro_override is not None else weight_macro,
-                weight_scalp_display,
-                gpt.get("model_used", "unknown"),
-                reuse_reason,
-            )
-            forecast_bias = str(gpt.get("forecast_bias") or "").lower() if gpt else ""
-            forecast_conf = float(gpt.get("forecast_confidence") or 0.0) if gpt else 0.0
-            forecast_horizon = gpt.get("forecast_horizon_min")
-            if forecast_bias not in {"up", "down", "flat"}:
-                forecast_bias = ""
-                forecast_conf = 0.0
-                forecast_horizon = None
-            # --- ローカル順位付けに置換（GPTは順位ヒントのみ） ---
+            decision_end_mono = time.monotonic()
+            local_reason = None
+            if isinstance(local_decision, dict):
+                local_reason = local_decision.get("reason")
+            weight_scalp = None
+            try:
+                weight_macro = max(0.0, min(1.0, float(weight_macro)))
+            except Exception:
+                weight_macro = 0.0
             all_strats = list(STRATEGIES.keys())
-            gpt_rank = list(local_decision.get("ranked_strategies") or [])
-            # MACRO 禁止時は除外
-            if MACRO_DISABLED and gpt_rank:
-                before = list(gpt_rank)
-                gpt_rank = [s for s in gpt_rank if s not in MACRO_STRATEGIES]
-                if gpt_rank != before:
-                    logging.info("[MACRO_DISABLED] Filtered macro strategies %s -> %s", before, gpt_rank)
-            # ローカルスコアリング（レジーム/ATR/vol/MA/セッション/範囲）
             session_bucket = _session_bucket(now)
-            ranked_strategies = _local_strategy_ranking(
-                strategies=all_strats,
-                fac_m1=fac_m1,
-                fac_h4=fac_h4,
-                range_ctx=range_ctx,
-                session_bucket=session_bucket,
-                last_gpt_mode=str(gpt.get("mode")) if gpt else None,
-                last_focus=gpt.get("focus_tag") if gpt else None,
-            )
-            # GPT順位をヒントとして微調整（上位に加点）
-            if gpt_rank:
-                bonus = {name: (len(gpt_rank) - idx) * 0.01 for idx, name in enumerate(gpt_rank)}
-                ranked_strategies = sorted(
-                    ranked_strategies,
-                    key=lambda n: bonus.get(n, 0.0),
-                    reverse=True,
-                )
-            gpt_strategy_allowlist = set(all_strats)  # フィルタしない
+            ranked_strategies = list(all_strats)
+            strategy_allowlist = set(all_strats)  # フィルタしない
             if not ranked_strategies:
                 ranked_strategies = all_strats
             logging.info(
@@ -5544,36 +4922,12 @@ async def logic_loop(
                 range_active,
             )
             auto_injected_strategies: set[str] = set()
-            weight_scalp = None
-            if raw_weight_scalp is not None:
-                try:
-                    weight_scalp = max(0.0, min(1.0, float(raw_weight_scalp)))
-                except (TypeError, ValueError):
-                    weight_scalp = None
-            if weight_macro_override is not None:
-                weight_macro = weight_macro_override
-            focus_tag = gpt.get("focus_tag") or focus_tag
+            if MACRO_DISABLED:
+                if focus_tag in {"macro", "hybrid"}:
+                    focus_tag = "micro"
+                weight_macro = 0.0
             if MACRO_DISABLED and focus_tag in {"macro", "hybrid"}:
                 focus_tag = "micro"
-            focus_override_hint = None
-            if focus_advisor and focus_advisor.enabled:
-                focus_context = {
-                    "reg_macro": macro_regime,
-                    "reg_micro": micro_regime,
-                    "range_active": range_active,
-                    "range_reason": last_range_reason or range_ctx.reason,
-                    "event_soon": event_soon,
-                    "d1": _factor_snapshot(fac_d1),
-                    "h4": _factor_snapshot(fac_h4),
-                    "gpt_focus": gpt.get("focus_tag"),
-                    "gpt_weight_macro": gpt.get("weight_macro"),
-                    "gpt_weight_scalp": gpt.get("weight_scalp"),
-                }
-                try:
-                    focus_override_hint = await focus_advisor.advise(focus_context)
-                except Exception as exc:  # pragma: no cover - defensive
-                    logging.debug("[FOCUS_ADVISOR] failed: %s", exc)
-                    focus_override_hint = None
 
             # Update realtime metrics cache every few minutes
             if (now - last_metrics_refresh).total_seconds() >= 240:
@@ -5709,13 +5063,6 @@ async def logic_loop(
                         prev_weight,
                         weight_macro,
                     )
-            if focus_override_hint and focus_override_hint.confidence >= 0.4:
-                if focus_override_hint.focus_tag:
-                    focus_tag = focus_override_hint.focus_tag
-                if focus_override_hint.weight_macro is not None:
-                    weight_macro = _clamp(float(focus_override_hint.weight_macro), 0.0, 1.0)
-                if focus_override_hint.weight_scalp is not None:
-                    weight_scalp = _clamp(float(focus_override_hint.weight_scalp), 0.0, 1.0)
             override_macro_hold_active = now < range_macro_hold_until
             if override_macro_hold_active:
                 prev_focus = focus_tag
@@ -5808,22 +5155,6 @@ async def logic_loop(
                 stage_base,
                 range_active=range_active,
             )
-            if stage_plan_advisor and stage_plan_advisor.enabled:
-                stage_context = {
-                    "range_active": range_active,
-                    "risk_appetite": param_snapshot.risk_appetite,
-                    "stage_bias": stage_biases,
-                    "weight_macro": weight_macro,
-                    "weight_scalp": weight_scalp if weight_scalp is not None else 0.0,
-                }
-                try:
-                    stage_hint = await stage_plan_advisor.advise(stage_context)
-                except Exception as exc:  # pragma: no cover
-                    logging.debug("[STAGE_PLAN] failed: %s", exc)
-                    stage_hint = None
-                if stage_hint and stage_hint.confidence >= 0.4:
-                    stage_overrides.update(stage_hint.plans)
-                    stage_changed = True
             _set_stage_plan_overrides(stage_overrides)
             vol_ratio = param_snapshot.vol_high_ratio if param_snapshot else -1.0
             if stage_changed:
@@ -6179,17 +5510,17 @@ async def logic_loop(
                 "[STRAT_EVAL_BEGIN] ranked=%s pockets=%s allow=%s focus=%s range=%s atr=%.2f vol5=%s momentum=%.4f",
                 ranked_strategies,
                 ",".join(sorted(focus_pockets)),
-                sorted(gpt_strategy_allowlist) if gpt_strategy_allowlist else ["*"],
+                sorted(strategy_allowlist) if strategy_allowlist else ["*"],
                 focus_tag,
                 range_active,
                 atr_pips if atr_pips is not None else -1.0,
                 f"{vol_5m:.2f}" if vol_5m is not None else "n/a",
                 momentum,
             )
-            # Safety: if GPT allowlist is empty, fall back to full universe to avoid stalls.
-            if not gpt_strategy_allowlist:
-                gpt_strategy_allowlist = set(STRATEGIES.keys())
-                logging.info("[STRAT_GUARD] GPT allowlist empty; falling back to all strategies.")
+            # Safety: if allowlist is empty, fall back to full universe to avoid stalls.
+            if not strategy_allowlist:
+                strategy_allowlist = set(STRATEGIES.keys())
+                logging.info("[STRAT_GUARD] allowlist empty; falling back to all strategies.")
             if FORCE_SCALP_MODE:
                 logging.warning(
                     "[FORCE_SCALP] ranked_strategies=%s focus=%s pockets=%s ready=%s",
@@ -6224,7 +5555,7 @@ async def logic_loop(
                 if range_active and cls.name not in ALLOWED_RANGE_STRATEGIES:
                     logging.info("[RANGE] skip %s in range mode.", sname)
                     continue
-                # GPT allowlist は参考のみ。スキップしない。
+                # allowlist は参考のみ。スキップしない。
                 check_start = time.monotonic()
                 raw_signal = cls.check(fac_m1)
                 check_elapsed = max(0.0, (time.monotonic() - check_start) * 1000.0)
@@ -6325,30 +5656,6 @@ async def logic_loop(
                         raw_signal["confidence"] = int(min(100, conf * rank_boost))
                     except Exception:
                         pass
-                    # GPTの方向バイアスを confidence に反映（軽めの重み）
-                    if forecast_bias and raw_signal.get("action") in {"OPEN_LONG", "OPEN_SHORT"}:
-                        horizon = float(forecast_horizon or 0)
-                        aligned = (forecast_bias == "up" and raw_signal["action"] == "OPEN_LONG") or (
-                            forecast_bias == "down" and raw_signal["action"] == "OPEN_SHORT"
-                        )
-                        # 短期( <60min )はスカルプ/マイクロ寄り、長期はマクロ寄りの補正を強める
-                        if horizon >= 60 and pocket == "macro":
-                            mult = 0.2
-                        elif horizon < 60 and pocket != "macro":
-                            mult = 0.15
-                        else:
-                            mult = 0.08
-                        bias_factor = 1.0 + (mult * forecast_conf if aligned else -mult * forecast_conf)
-                        bias_factor = max(0.7, min(1.3, bias_factor))
-                        try:
-                            conf2 = float(raw_signal.get("confidence", 50))
-                            raw_signal["confidence"] = int(min(100, max(1, conf2 * bias_factor)))
-                            if aligned:
-                                raw_signal.setdefault("meta", {})["forecast_bias"] = forecast_bias
-                            else:
-                                raw_signal.setdefault("meta", {})["forecast_bias"] = f"opp:{forecast_bias}"
-                        except Exception:
-                            pass
                 signal_emitted = True
                 for extra_key in (
                     "entry_type",
@@ -6362,12 +5669,6 @@ async def logic_loop(
                         signal[extra_key] = raw_signal[extra_key]
                 scaled_conf = int(signal["confidence"] * health.confidence_scale)
                 signal["confidence"] = max(0, min(100, scaled_conf))
-                # Apply GPT mode/bias/pattern multipliers (gentle)
-                conf_mult = _strategy_conf_multiplier(gpt, sname)
-                if conf_mult != 1.0:
-                    signal["confidence"] = max(
-                        0, min(100, int(signal["confidence"] * conf_mult))
-                    )
                 # Tech overlays (Ichimoku/cluster/MACD-DMI/Stoch) applied uniformly across workers
                 signal = _apply_tech_overlays(signal, fac_m1, fac_m5, fac_h1, fac_h4)
 
@@ -6679,36 +5980,6 @@ async def logic_loop(
                             rr_logged,
                         )
 
-                if strategy_conf_advisor and strategy_conf_advisor.enabled:
-                    conf_context = {
-                        "strategy": sname,
-                        "pocket": cls.pocket,
-                        "reg_macro": macro_regime,
-                        "reg_micro": micro_regime,
-                        "range_active": range_active,
-                        "weight_macro": weight_macro,
-                        "health_pf": health.profit_factor,
-                        "health_win_rate": health.win_rate,
-                        "health_dd": health.max_drawdown_pips,
-                    }
-                    try:
-                        conf_hint = await strategy_conf_advisor.advise(sname, conf_context)
-                    except Exception as exc:  # pragma: no cover
-                        logging.debug("[STRAT_CONF] failed: %s", exc)
-                        conf_hint = None
-                    if conf_hint and conf_hint.confidence >= 0.35:
-                        prev_conf = signal["confidence"]
-                        signal["confidence"] = max(
-                            0,
-                            min(100, int(signal["confidence"] * conf_hint.scale)),
-                        )
-                        if prev_conf != signal["confidence"]:
-                            log_metric(
-                                "strategy_conf_scale",
-                                float(conf_hint.scale),
-                                tags={"strategy": sname},
-                                ts=now,
-                            )
                 if signal["strategy"] == "PulseBreak":
                     rr = 0.0
                     sl_val = float(signal.get("sl_pips") or 0.0)
@@ -6735,63 +6006,6 @@ async def logic_loop(
                     "losing_streak": health.losing_streak,
                 }
 
-                if (
-                    rr_advisor
-                    and rr_advisor.enabled
-                    and signal.get("sl_pips")
-                    and signal.get("tp_pips")
-                ):
-                    try:
-                        tp_before_rr = float(signal.get("tp_pips") or 0.0)
-                    except Exception:
-                        tp_before_rr = 0.0
-                    try:
-                        rr_context = {
-                            "pocket": signal["pocket"],
-                            "strategy": signal["strategy"],
-                            "sl_pips": float(signal["sl_pips"] or 0.0),
-                            "tp_pips": float(signal["tp_pips"] or 0.0),
-                            "reg_macro": macro_regime,
-                            "reg_micro": micro_regime,
-                            "range_active": range_active,
-                            "atr_m1": float(atr_pips),
-                            "atr_h4": float(fac_h4.get("atr_pips", 0.0) or 0.0),
-                            "atr_h1": float((fac_h1 or {}).get("atr_pips", 0.0) or 0.0),
-                            "factors_h1": _factor_snapshot(fac_h1),
-                            "factors_h4": _factor_snapshot(fac_h4),
-                            "factors_d1": _factor_snapshot(fac_d1),
-                        }
-                        rr_hint = await rr_advisor.advise(rr_context)
-                    except Exception as exc:  # pragma: no cover - defensive
-                        logging.debug("[RR_ADVISOR] failed: %s", exc)
-                        rr_hint = None
-                    if rr_hint:
-                        sl_val = float(signal["sl_pips"] or 0.0)
-                        target_tp = round(max(sl_val * rr_hint.ratio, sl_val * rr_advisor.min_ratio), 2)
-                        if target_tp > 0.0:
-                            # Donchian55 の TP は戦略側の上限を優先して短く保つ
-                            if (
-                                (signal.get("strategy") == "Donchian55"
-                                 or signal.get("profile") == "macro_breakout_donchian")
-                                and tp_before_rr > 0.0
-                                and target_tp > tp_before_rr
-                            ):
-                                logging.info(
-                                    "[RR_ADVISOR] cap tp for Donchian55 %.2f->%.2f",
-                                    target_tp,
-                                    tp_before_rr,
-                                )
-                                target_tp = tp_before_rr
-                            signal["tp_pips"] = target_tp
-                            log_metric(
-                                "rr_advisor_ratio",
-                                float(rr_hint.ratio),
-                                tags={
-                                    "pocket": signal["pocket"],
-                                    "strategy": signal["strategy"],
-                                },
-                                ts=now,
-                            )
                 guard_price = _safe_float(fac_m1.get("close") or fac_m1.get("mid"))
                 if _market_guarded_skip(signal, guard_price, context="prefilter"):
                     continue
@@ -6843,23 +6057,6 @@ async def logic_loop(
             except Exception as exc:
                 logging.warning("[PROTECTION] update failed: %s", exc)
             partial_threshold_overrides = None
-            if partial_advisor and partial_advisor.enabled:
-                partial_context = {
-                    "range_active": range_active,
-                    "atr_pips": atr_pips,
-                    "risk_appetite": param_snapshot.risk_appetite,
-                    "profile_samples": {
-                        pocket: profile.get("sample_size", 0)
-                        for pocket, profile in recent_profiles.items()
-                    },
-                }
-                try:
-                    partial_hint = await partial_advisor.advise(partial_context)
-                except Exception as exc:  # pragma: no cover
-                    logging.debug("[PARTIAL_ADVISOR] failed: %s", exc)
-                    partial_hint = None
-                if partial_hint and partial_hint.confidence >= 0.35:
-                    partial_threshold_overrides = partial_hint.thresholds
 
             partials_start = time.monotonic()
             try:
@@ -6946,22 +6143,6 @@ async def logic_loop(
                             stage_empty_since.pop(key, None)
                     elif units_value != 0:
                         stage_empty_since.pop(key, None)
-
-            advisor_hints = None
-            if exit_advisor and exit_advisor.enabled:
-                try:
-                    advisor_hints = await exit_advisor.build_hints(
-                        open_positions,
-                        fac_m1=fac_m1,
-                        fac_h4=fac_h4,
-                        fac_h1=fac_h1,
-                        fac_d1=fac_d1,
-                        range_active=range_active,
-                        now=now,
-                    )
-                except Exception as exc:  # pragma: no cover - defensive
-                    logging.warning("[EXIT_ADVISOR] build_hints failed: %s", exc)
-                    advisor_hints = None
 
             signals_for_exit = [
                 sig for sig in evaluated_signals if sig.get("pocket") not in _EXIT_MAIN_DISABLED_POCKETS
@@ -7114,14 +6295,14 @@ async def logic_loop(
                     f"{vol_5m:.2f}" if vol_5m is not None else "n/a",
                     momentum,
                     ranked_strategies,
-                    sorted(gpt_strategy_allowlist),
+                    sorted(strategy_allowlist),
                 )
                 if evaluated_count == 0:
                     logging.info(
-                        "[WAIT] No strategies evaluated focus=%s pockets=%s gpt_allow=%s",
+                        "[WAIT] No strategies evaluated focus=%s pockets=%s allow=%s",
                         focus_tag,
                         ",".join(sorted(focus_pockets)),
-                        sorted(gpt_strategy_allowlist),
+                        sorted(strategy_allowlist),
                     )
             else:
                 logging.info(
@@ -8104,7 +7285,6 @@ async def logic_loop(
                 range_active,
                 weight_macro,
                 context=param_snapshot,
-                gpt_bias=gpt,
             )
             if alloc_data:
                 try:
@@ -8124,7 +7304,7 @@ async def logic_loop(
                     len({s.get('pocket') for s in evaluated_signals if s.get('action') in {'OPEN_LONG', 'OPEN_SHORT'}}),
                 )
             last_risk_pct = risk_override
-            decision_source = "gpt" if isinstance(gpt, dict) and gpt else "local"
+            decision_source = "local"
             spread_pips_val = None
             if spread_snapshot:
                 try:
@@ -8133,14 +7313,7 @@ async def logic_loop(
                     spread_pips_val = None
             decision_meta = {
                 "source": decision_source,
-                "gpt_mode": gpt.get("mode") if isinstance(gpt, dict) else None,
-                "gpt_reason": reuse_reason,
-                "gpt_model": gpt.get("model_used") if isinstance(gpt, dict) else None,
-                "gpt_risk_bias": gpt.get("risk_bias") if isinstance(gpt, dict) else None,
-                "gpt_liquidity_bias": gpt.get("liquidity_bias") if isinstance(gpt, dict) else None,
-                "gpt_range_confidence": _safe_float(gpt.get("range_confidence"), 0.0)
-                if isinstance(gpt, dict)
-                else None,
+                "decider_reason": local_reason,
                 "focus_tag": focus_tag,
                 "weight_macro": weight_macro,
                 "weight_scalp": weight_scalp if weight_scalp is not None else None,
@@ -8156,10 +7329,9 @@ async def logic_loop(
             if evaluated_signals:
                 decision_tags = {
                     "decision_source": decision_source,
-                    "gpt_mode": gpt.get("mode") if isinstance(gpt, dict) else "none",
+                    "decider_reason": local_reason or "n/a",
                     "range_active": int(range_active),
                     "focus_tag": focus_tag or "unknown",
-                    "gpt_reason": reuse_reason or "n/a",
                 }
                 log_metric(
                     "decision_risk_pct",
@@ -9847,8 +9019,6 @@ async def logic_loop(
             sync_breakdown = pos_manager.get_last_sync_breakdown()
 
             decision_latency_ms = max(0.0, (time.monotonic() - loop_start_mono) * 1000.0)
-            if gpt_timed_out:
-                decision_latency_ms = max(decision_latency_ms, 9000.0)
             log_metric("decision_latency_ms", decision_latency_ms)
             if first_order_start_mono is not None:
                 pre_order_ms = max(0.0, (first_order_start_mono - loop_start_mono) * 1000.0)
@@ -9867,7 +9037,7 @@ async def logic_loop(
                 loop_start_mono=loop_start_mono,
                 analysis_start_mono=analysis_start_mono,
                 analysis_end_mono=analysis_end_mono,
-                gpt_end_mono=gpt_end_mono,
+                decision_end_mono=decision_end_mono,
                 strategy_end_mono=strategy_end_mono,
                 sync_ms=sync_ms,
                 order_exec_ms=order_exec_ms,
@@ -9915,27 +9085,8 @@ async def main():
         logging.warning("[HISTORY] Startup seeding incomplete, continuing with live feed.")
 
     while True:
-        # 周辺コンポーネント（GPT/アドバイザー等）の初期化
-        gpt_state = GPTDecisionState()
-        gpt_requests = GPTRequestManager()
+        # 周辺コンポーネント初期化
         fast_scalp_state = FastScalpState()
-        if not MAIN_LLM_ENABLED:
-            rr_advisor = None
-            exit_advisor = None
-            strategy_conf_advisor = None
-            focus_advisor = None
-            volatility_advisor = None
-            stage_plan_advisor = None
-            partial_advisor = None
-            logging.info("[ADVISOR] disabled (LLM_IN_MAIN_ENABLED=0)")
-        else:
-            rr_advisor = RRRatioAdvisor()
-            exit_advisor = ExitAdvisor()
-            strategy_conf_advisor = StrategyConfidenceAdvisor()
-            focus_advisor = FocusOverrideAdvisor()
-            volatility_advisor = VolatilityBiasAdvisor()
-            stage_plan_advisor = StagePlanAdvisor()
-            partial_advisor = PartialReductionAdvisor()
 
         tasks = [
             asyncio.create_task(
@@ -9951,26 +9102,6 @@ async def main():
                 )
             ),
         ]
-        if MAIN_LLM_ENABLED:
-            tasks.append(
-                asyncio.create_task(
-                    supervised_runner(
-                        "gpt_worker",
-                        gpt_worker(gpt_state, gpt_requests),
-                    )
-                )
-            )
-
-        # 先にGPTの初期決定を温めておく（ロジック開始前のプリム）
-        if MAIN_LLM_ENABLED and GPT_DECIDER_BLOCKING:
-            try:
-                await prime_gpt_decision(gpt_state, gpt_requests)
-            except Exception:
-                logging.exception("[MAIN] prime_gpt_decision failed; continuing without primer")
-        elif MAIN_LLM_ENABLED:
-            logging.info("[GPT PRIME] skipped (GPT_DECIDER_BLOCKING=0)")
-        else:
-            logging.info("[GPT PRIME] skipped (LLM_IN_MAIN_ENABLED=0)")
 
         run_logic = (MAIN_TRADING_ENABLED or SIGNAL_GATE_ENABLED) and (
             not WORKER_ONLY_MODE or SIGNAL_GATE_ENABLED
@@ -9981,16 +9112,7 @@ async def main():
                     supervised_runner(
                         "logic_loop",
                         logic_loop(
-                            gpt_state,
-                            gpt_requests,
                             fast_scalp_state=fast_scalp_state,
-                            rr_advisor=rr_advisor,
-                            exit_advisor=exit_advisor,
-                            strategy_conf_advisor=strategy_conf_advisor,
-                            focus_advisor=focus_advisor,
-                            volatility_advisor=volatility_advisor,
-                            stage_plan_advisor=stage_plan_advisor,
-                            partial_advisor=partial_advisor,
                         ),
                     )
                 )

@@ -21,11 +21,6 @@ ENV_MAP = {
     "oanda_account": "OANDA_ACCOUNT",
     "oanda_practice": "OANDA_PRACTICE",
     "oanda_hedging_enabled": "OANDA_HEDGING_ENABLED",
-    "openai_api_key": "OPENAI_API_KEY",
-    "openai_model": "OPENAI_MODEL",
-    "openai_model_decider": "OPENAI_DECIDER_MODEL",
-    "openai_model_summarizer": "OPENAI_SUMMARIZER_MODEL",
-    "openai_max_month_tokens": "OPENAI_MAX_MONTH_TOKENS",
     "gcp_project_id": "GCP_PROJECT",
     "ui_bucket_name": "GCS_UI_BUCKET",
     "analytics_bucket_name": "GCS_ANALYTICS_BUCKET",
@@ -69,16 +64,14 @@ def _gcp_disabled() -> bool:
 def _prefer_gcp(key: str) -> bool:
     """
     Decide whether to consult Secret Manager before local sources.
-    - Always prefer for sensitive keys we want centralized (e.g., OpenAI keys)
-    - Or when PREFER_GCP_SECRET_MANAGER is explicitly set.
+    - Prefer when PREFER_GCP_SECRET_MANAGER is explicitly set.
     """
     prefer_env = os.environ.get("PREFER_GCP_SECRET_MANAGER", "").lower() in {
         "1",
         "true",
         "yes",
     }
-    centralized_keys = {"openai_api_key"}
-    return prefer_env or key in centralized_keys
+    return prefer_env
 
 
 def _fetch_from_gcp(key: str) -> Optional[str]:
@@ -98,8 +91,6 @@ def _is_placeholder(key: str, value: str) -> bool:
     val = str(value).strip()
     low = val.lower()
     if "placeholder" in low:
-        return True
-    if key.startswith("openai_") and low.startswith("sk-test"):
         return True
     return False
 

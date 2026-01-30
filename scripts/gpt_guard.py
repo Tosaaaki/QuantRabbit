@@ -21,7 +21,7 @@ def heuristic_review(agg: Dict[str, Any]) -> (bool, str):
     return ok, msg
 
 def review_with_llm(agg: Dict[str, Any], use_llm: bool=False) -> (bool, str):
-    # NOTE: 実装はダミー。必要なら OpenAI/Vertex などのクライアントをここで呼び出してください。
+    # NOTE: 実装はダミー（LLM 無効）。必要なら別実装へ差し替え。
     # ここでは常にヒューリスティックにフォールバックします。
     return heuristic_review(agg)
 

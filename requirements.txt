@@ -1,6 +1,5 @@
 # --- Core ---
 oandapyV20==0.7.2
-openai==1.78.0           # GPT‑4o / GPT‑4o‑mini
 pandas==2.2.3
 numpy==1.24.4
 websockets==12.0

@@ -35,7 +35,7 @@ sudo -u <user> -H bash -lc '
   cp config/env.example.toml config/env.toml
 '
 ```
-- `config/env.toml` を埋める（最低限）: `gcp_project_id`, `gcp_location`, `GCS_BACKUP_BUCKET`, `ui_bucket_name`, `BQ_PROJECT/BQ_DATASET/BQ_TRADES_TABLE`, `OPENAI_API_KEY`, `OPENAI_MODEL_DECIDER`, `OANDA_ACCOUNT`, `OANDA_TOKEN`, `oanda_practice`。  
+- `config/env.toml` を埋める（最低限）: `gcp_project_id`, `gcp_location`, `GCS_BACKUP_BUCKET`, `ui_bucket_name`, `BQ_PROJECT/BQ_DATASET/BQ_TRADES_TABLE`, `OANDA_ACCOUNT`, `OANDA_TOKEN`, `oanda_practice`。  
 - SA キー運用なら `export GOOGLE_APPLICATION_CREDENTIALS=/path/to/key.json`。
 
 ## 4. デプロイ・起動

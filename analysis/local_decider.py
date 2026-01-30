@@ -1,7 +1,7 @@
 """
 analysis.local_decider
 ~~~~~~~~~~~~~~~~~~~~~~
-OpenAI が利用できない場合に備えたフォールバック用ヒューリスティック判定。
+LLM なしで動作するヒューリスティック判定。
 市場レジームとテクニカル指標から簡易的に focus / macro/micro/scalp の重み / strategies を生成する。
 """
 

@@ -2,8 +2,9 @@
 
 ## 1. ミッション / 運用前提
 > 狙い: USD/JPY で 1 日 +100 pips を狙う 24/7 無裁量トレーディング・エージェント。  
-> 境界: 発注・リスクは機械的、曖昧判断は GPT‑5 系（既定 gpt-5-mini）。
+> 境界: 発注・リスクは機械的、曖昧判断はローカルルール（LLMなし）。
 - ニュース連動パイプラインは撤去済み（`news_fetcher` / `summary_ingestor` / NewsSpike は無効）。
+- LLM（GPT/Vertex）関連は廃止。`analysis/local_decider.py` のローカル判定のみを使用。
 - 現行デフォルト: `WORKER_ONLY_MODE=true` / `MAIN_TRADING_ENABLED=0`。共通 `exit_manager` はスタブ化され、エントリー/EXIT は各戦略ワーカー＋専用 `exit_worker` が担当。
 - 発注経路はワーカーが直接 OANDA に送信するのが既定（`SIGNAL_GATE_ENABLED=0` / `ORDER_FORWARD_TO_SIGNAL_GATE=0`）。共通ゲート（`utils/signal_bus.py` → main 関所）を使う場合のみ両フラグを 1 にする。
 - 共通エントリー/テックゲート（`entry_guard` / `entry_tech`）は廃止・使用禁止。判断は各戦略ワーカーの推定(Projection)で行い、ポケット別の共通判定はしない。
@@ -19,7 +20,7 @@
 - マージン余力判定の落とし穴（2025-12-29対応済み）: fast_scalp が shared_state 欠落時に余力0と誤判定し全シグナルをスキップした事象あり。`workers/fast_scalp/worker.py` で `get_account_snapshot()` フォールバックを追加済み。再発時はログに `refreshed account snapshot equity=... margin_available=...` が出ることを確認し、0判定が続く場合は OANDA snapshot 取得を先に疑う。
 
 ## 2. システム概要とフロー
-- データ → 判定 → 発注: Tick 取得 → Candle 確定 → Factors 算出 → Regime/Focus → GPT Decider → Strategy Plugins → Risk Guard → Order Manager → ログ。
+- データ → 判定 → 発注: Tick 取得 → Candle 確定 → Factors 算出 → Regime/Focus → Local Decider → Strategy Plugins → Risk Guard → Order Manager → ログ。
 - コンポーネントと I/O
 
   | レイヤ | 担当 | 主な入出力 |
@@ -27,7 +28,7 @@
   | DataFetcher | `market_data/*` | Tick JSON, Candle dict |
   | IndicatorEngine | `indicators/*` | Candle deque → Factors dict {ma10, rsi, …} |
   | Regime & Focus | `analysis/regime_classifier.py` / `analysis/focus_decider.py` | Factors → macro/micro レジーム・`weight_macro` |
-  | GPT Decider | `analysis/gpt_decider.py` | focus + perf → `GPTDecision` |
+  | Local Decider | `analysis/local_decider.py` | focus + perf → ローカル判定 |
   | Strategy Plugin | `strategies/*` | Factors → `StrategyDecision` または None |
   | Exit (専用ワーカー) | `workers/*/exit_worker.py` | pocket 別 open positions → exit 指示（PnL>0 決済が原則） |
   | Signal Gate | `utils/signal_bus.py` / `main.py` | ワーカー enqueue → confidence 順に選抜・ロット配分 → OrderIntent |
@@ -36,7 +37,7 @@
   | Logger | `logs/*.db` | 全コンポーネントが INSERT |
 - ライフサイクル
   - Startup: `env.toml` 読込 → Secrets 確認 → WebSocket 接続。
-  - 60s タクト（main 有効時のみ）: 新ローソク → Factors 更新 → Regime/Focus → GPT decision → Strategy loop（confidence スケーリング + ステージ判定）→ exit_worker → risk_guard → order_manager → `trades.db` / `metrics.db` ログ。ワーカーは `SIGNAL_GATE_ENABLED=1` の場合に `signal_bus` へ enqueue し、main の関所が confidence 順に選択・lot配分して発注。
+  - 60s タクト（main 有効時のみ）: 新ローソク → Factors 更新 → Regime/Focus → Local decision → Strategy loop（confidence スケーリング + ステージ判定）→ exit_worker → risk_guard → order_manager → `trades.db` / `metrics.db` ログ。ワーカーは `SIGNAL_GATE_ENABLED=1` の場合に `signal_bus` へ enqueue し、main の関所が confidence 順に選択・lot配分して発注。
   - タクト要件: 正秒同期（±500 ms）、締切 55 s 超でサイクル破棄（バックログ禁止）、`monotonic()` で `decision_latency_ms` 計測。
 - Background: `utils/backup_to_gcs.sh` による nightly logs バックアップ + `/etc/cron.hourly/qr-gcs-backup-core` による GCS 退避（自動）。
 
@@ -338,6 +339,7 @@ printf "sk-..." | gcloud secrets versions add openai_api_key --data-file=-
 - Secret Manager を使わない場合は `DISABLE_GCP_SECRET_MANAGER=1`
 
 ### 9.6 GPT 設定（Decider/Advisors）
+- ※ LLM 機能は廃止済み。本節は legacy（運用では参照しない）。
 - 参照順: GCP Secret Manager → 環境変数 → `config/env.toml`
 - 必須キー（`config/env.toml` 例）
 

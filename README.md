@@ -50,7 +50,7 @@ Make を使わない場合は `scripts/vm.sh -p <PROJECT> -z <ZONE> -m <INSTANCE
 ├── requirements.txt         # ライブラリ pin
 │
 ├── config/
-│   ├── env.toml             # OPENAI / OANDA / GCP 設定
+│   ├── env.toml             # OANDA / GCP 設定
 │   └── pool.yaml            # 手法メタ定義
 │
 ├── market_data/             # ⇢ データ取得
@@ -64,8 +64,7 @@ Make を使わない場合は `scripts/vm.sh -p <PROJECT> -z <ZONE> -m <INSTANCE
 ├── analysis/                # ⇢ 判断ロジック
 │   ├── regime_classifier.py # Trend / Range / Breakout
 │   ├── focus_decider.py     # micro/macro/event 判定
-│   ├── gpt_prompter.py      # GPT 入力生成
-│   ├── gpt_decider.py       # OpenAI 呼び出し
+│   ├── local_decider.py     # ローカル判定（LLMなし）
 │   ├── perf_monitor.py      # PF / Sharpe 更新
 │
 ├── strategies/              # ⇢ 手法プラグイン
@@ -82,7 +81,6 @@ Make を使わない場合は `scripts/vm.sh -p <PROJECT> -z <ZONE> -m <INSTANCE
 │   └── position_manager.py  # (今後追加)
 │
 ├── utils/
-│   ├── cost_guard.py        # GPT トークン累計管理
 │   └── backup_to_gcs.sh     # SQLite/logs nightly backup
 │
 ├── logs/                    # SQLite DB 等
@@ -101,7 +99,7 @@ Make を使わない場合は `scripts/vm.sh -p <PROJECT> -z <ZONE> -m <INSTANCE
 
 ## Architecture Snapshot
 - Tick/Candle 取得は `market_data/*` が担当し、`indicators/*` でテクニカル要因を集計する
-- レジーム判定とフォーカス決定 (`analysis/regime_classifier.py` / `focus_decider.py`) を経由し、`analysis/gpt_decider.py` が GPT 系モデルで戦略配分を指示
+- レジーム判定とフォーカス決定 (`analysis/regime_classifier.py` / `focus_decider.py`) を経由し、`analysis/local_decider.py` がローカル指標で戦略配分を補正
 - `strategies/*` が pocket 別のエントリー候補を返し、`execution/*` がステージ管理、リスク審査、発注、クローズまでを連結
 - 運用要件、リスクガード、トークン制御、デプロイ戦略などの詳細は `AGENTS.md` に記載
 

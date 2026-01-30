@@ -6,8 +6,6 @@ import os
 import time
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
-import requests
-
 from analytics.policy_diff import (
     POLICY_DIFF_SCHEMA,
     aggregate_rows,
@@ -16,21 +14,9 @@ from analytics.policy_diff import (
     validate_policy_diff,
 )
 
-try:
-    import google.auth  # type: ignore
-    from google.auth.transport.requests import Request as GoogleAuthRequest  # type: ignore
-except Exception:  # pragma: no cover
-    google = None  # type: ignore
-    GoogleAuthRequest = None  # type: ignore
-
-try:
-    from openai import OpenAI  # type: ignore
-except Exception:  # pragma: no cover
-    OpenAI = None  # type: ignore
-
+# Legacy constants kept for interface compatibility (LLM disabled).
 DEFAULT_VERTEX_LOCATION = os.getenv("VERTEX_LOCATION", "us-central1")
 DEFAULT_VERTEX_MODEL = os.getenv("VERTEX_POLICY_MODEL", "gemini-2.0-flash")
-DEFAULT_OPENAI_MODEL = os.getenv("POLICY_SHADOW_MODEL", "gpt-5-mini")
 
 
 def _env_bool(name: str, default: bool = False) -> bool:
@@ -169,94 +155,6 @@ def parse_policy_diff(text: str, *, source: str) -> Optional[Dict[str, Any]]:
     return payload
 
 
-def _vertex_token(project_id: Optional[str]) -> Tuple[Optional[str], Optional[str]]:
-    if google is None or GoogleAuthRequest is None:
-        return None, project_id
-    try:
-        creds, project = google.auth.default(scopes=["https://www.googleapis.com/auth/cloud-platform"])
-        creds.refresh(GoogleAuthRequest())
-        return creds.token, project_id or project
-    except Exception:
-        return None, project_id
-
-
-def call_vertex_gemini(
-    prompt: str,
-    *,
-    project_id: Optional[str],
-    location: str,
-    model: str,
-    temperature: float = 0.2,
-    max_tokens: int = 1024,
-    timeout_sec: float = 20.0,
-) -> Optional[str]:
-    token, resolved_project = _vertex_token(project_id)
-    if not token or not resolved_project:
-        logging.warning("[POLICY_GEN] Vertex auth unavailable.")
-        return None
-    url = (
-        f"https://{location}-aiplatform.googleapis.com/v1/projects/{resolved_project}"
-        f"/locations/{location}/publishers/google/models/{model}:generateContent"
-    )
-    payload = {
-        "contents": [{"role": "user", "parts": [{"text": prompt}]}],
-        "generationConfig": {
-            "temperature": temperature,
-            "maxOutputTokens": max_tokens,
-        },
-    }
-    headers = {"Authorization": f"Bearer {token}"}
-    try:
-        resp = requests.post(url, headers=headers, json=payload, timeout=timeout_sec)
-        resp.raise_for_status()
-        data = resp.json()
-        candidates = data.get("candidates") or []
-        if not candidates:
-            return None
-        content = candidates[0].get("content") or {}
-        parts = content.get("parts") or []
-        if parts and isinstance(parts[0], dict):
-            return parts[0].get("text")
-        return None
-    except Exception as exc:
-        logging.warning("[POLICY_GEN] Vertex call failed: %s", exc)
-        return None
-
-
-def call_openai(
-    prompt: str,
-    *,
-    api_key: Optional[str] = None,
-    model: str = DEFAULT_OPENAI_MODEL,
-    temperature: float = 0.2,
-    max_tokens: int = 1024,
-) -> Optional[str]:
-    if OpenAI is None:
-        logging.warning("[POLICY_GEN] openai package not available.")
-        return None
-    try:
-        client = OpenAI(api_key=api_key) if api_key else OpenAI()
-        resp = client.responses.create(
-            model=model,
-            input=[{"role": "user", "content": prompt}],
-            max_output_tokens=max_tokens,
-            temperature=temperature,
-        )
-        text = getattr(resp, "output_text", None)
-        if text:
-            return text
-        # fallback parse
-        output = getattr(resp, "output", None) or []
-        if output:
-            content = output[0].content or []
-            if content:
-                return content[0].text
-        return None
-    except Exception as exc:
-        logging.warning("[POLICY_GEN] OpenAI call failed: %s", exc)
-        return None
-
-
 def heuristic_policy_diff(
     summary: Dict[str, Any],
     *,
@@ -324,21 +222,10 @@ def generate_policy_diff(
     max_tokens: int = 1024,
     fallback_min_trades: int = 12,
 ) -> Tuple[Dict[str, Any], Dict[str, Any]]:
-    summary = summarize_policy_rows(rows)
-    prompt = _build_prompt(summary)
+    """Generate policy diff without any LLM calls."""
     if use_vertex:
-        text = call_vertex_gemini(
-            prompt,
-            project_id=project_id,
-            location=location,
-            model=model,
-            temperature=temperature,
-            max_tokens=max_tokens,
-        )
-        if text:
-            payload = parse_policy_diff(text, source="vertex_ai")
-            if payload:
-                return payload, summary
+        logging.info("[POLICY_GEN] LLM disabled; using heuristic diff only.")
+    summary = summarize_policy_rows(rows)
     diff = heuristic_policy_diff(summary, min_trades=fallback_min_trades)
     diff = normalize_policy_diff(diff, source="heuristic")
     return diff, summary

@@ -5,7 +5,7 @@
 ## 0) 先に決めること
 - **ユーザー**: 既定は `tossaki`（`startup_script.sh` もこれを前提に準備）
   - 変更したい場合は `QR_USER=<user>` を付けて実行すると systemd も自動で上書きされます。
-- **Secret Manager を使うか**: 使う場合は `openai_api_key` / `oanda_token` などを事前に作成。
+- **Secret Manager を使うか**: 使う場合は `oanda_token` などを事前に作成。
 - **IAP/OS Login**: 既定は OS Login + IAP 前提（外部 IP なしでも運用可能）。
 
 ## 1) 必須 IAM / API（新プロジェクト時）
@@ -18,13 +18,11 @@
 ## 2) シークレット / 環境変数
 ### A. Secret Manager を使う場合（推奨）
 最低限の Secret を作成:
-- `openai_api_key`
 - `oanda_token`
 - `oanda_account_id`
 - `oanda_practice`
 
 運用で必要なら追加:
-- `openai_model_decider`, `openai_model_summarizer`, `openai_max_month_tokens`
 - `gcp_project_id`, `ui_bucket_name`, `GCS_BACKUP_BUCKET`, `BQ_PROJECT`, `BQ_DATASET`, `BQ_TRADES_TABLE`
 
 `startup_script.sh` は `/etc/quantrabbit.env` を作成し、`scripts/refresh_env_from_gcp.py` で `config/env.toml` も同期します。
@@ -33,7 +31,6 @@
 `/etc/quantrabbit.env` に最低限を手で書く（または `deploy_via_metadata.sh -e` で注入）:
 
 ```bash
-OPENAI_API_KEY=sk-...
 OANDA_TOKEN=...
 OANDA_ACCOUNT=...
 OANDA_PRACTICE=true
