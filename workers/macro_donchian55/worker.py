@@ -42,6 +42,12 @@ _REGIME_GUARD_ENABLED = os.getenv("DON55_REGIME_GUARD_ENABLED", "1").strip().low
     "false",
     "no",
 }
+_REGIME_COMBO_GUARD_ENABLED = os.getenv("DON55_REGIME_COMBO_GUARD_ENABLED", "1").strip().lower() not in {
+    "",
+    "0",
+    "false",
+    "no",
+}
 
 
 def _apply_regime_bias(conf: int, macro_regime: str | None, micro_regime: str | None):
@@ -68,6 +74,23 @@ def _apply_regime_bias(conf: int, macro_regime: str | None, micro_regime: str | 
         bonus -= 1
     adj = max(0, min(100, int(round(conf + bonus))))
     return adj, {"macro": macro, "micro": micro, "bonus": bonus}
+
+
+def _combo_guard(strategy_tag: str | None, macro_regime: str | None, micro_regime: str | None):
+    if not _REGIME_COMBO_GUARD_ENABLED:
+        return True, None
+    macro = macro_regime or "NA"
+    micro = micro_regime or "NA"
+    if macro == "NA" or micro == "NA":
+        return False, "regime_na"
+    tag = strategy_tag or ""
+    if tag == "Donchian55-breakout-up":
+        if macro == "Mixed" and micro == "Mixed":
+            return False, "mixed_mixed"
+    if tag == "Donchian55-breakout-down":
+        if micro == "Mixed" and macro in {"Mixed", "Range"}:
+            return False, "mixed_micro"
+    return True, None
 
 
 def _bb_float(value):
@@ -463,6 +486,18 @@ async def donchian55_worker() -> None:
         if conf_adj != conf:
             signal["confidence"] = conf_adj
             conf = conf_adj
+        strategy_tag = signal.get("tag", Donchian55.name)
+        combo_allow, combo_reason = _combo_guard(strategy_tag, macro_regime, micro_regime)
+        if not combo_allow:
+            LOG.info(
+                "%s skip: regime_combo_guard tag=%s macro=%s micro=%s reason=%s",
+                config.LOG_PREFIX,
+                strategy_tag,
+                macro_regime,
+                micro_regime,
+                combo_reason,
+            )
+            continue
 
         snap = get_account_snapshot()
         free_ratio_raw = snap.free_margin_ratio
@@ -551,7 +586,6 @@ async def donchian55_worker() -> None:
 
         conf_scale = _confidence_scale(conf)
         conf_frac = _confidence_fraction(conf)
-        strategy_tag = signal.get("tag", Donchian55.name)
         lot = allowed_lot(
             float(snap.nav or 0.0),
             sl_pips,

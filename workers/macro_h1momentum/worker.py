@@ -42,6 +42,19 @@ _REGIME_GUARD_ENABLED = os.getenv("H1M_REGIME_GUARD_ENABLED", "1").strip().lower
     "false",
     "no",
 }
+_H1M_REQUIRE_MACRO_TREND = os.getenv("H1M_REQUIRE_MACRO_TREND", "1").strip().lower() not in {
+    "",
+    "0",
+    "false",
+    "no",
+}
+_H1M_BLOCK_MICRO_RANGE = os.getenv("H1M_BLOCK_MICRO_RANGE", "1").strip().lower() not in {
+    "",
+    "0",
+    "false",
+    "no",
+}
+_H1M_MIN_ATR_PIPS = float(os.getenv("H1M_MIN_ATR_PIPS", "1.2"))
 
 
 def _apply_regime_bias(conf: int, macro_regime: str | None, micro_regime: str | None):
@@ -68,6 +81,18 @@ def _apply_regime_bias(conf: int, macro_regime: str | None, micro_regime: str | 
         bonus -= 1
     adj = max(0, min(100, int(round(conf + bonus))))
     return adj, {"macro": macro, "micro": micro, "bonus": bonus}
+
+
+def _quality_guard(strategy_tag: str | None, macro_regime: str | None, micro_regime: str | None, atr_pips: float):
+    macro = macro_regime or "NA"
+    micro = micro_regime or "NA"
+    if _H1M_REQUIRE_MACRO_TREND and macro not in {"Trend", "Breakout"}:
+        return False, "macro_not_trend"
+    if _H1M_BLOCK_MICRO_RANGE and micro == "Range":
+        return False, "micro_range"
+    if _H1M_MIN_ATR_PIPS > 0 and atr_pips < _H1M_MIN_ATR_PIPS:
+        return False, "atr_low"
+    return True, None
 
 
 def _bb_float(value):
@@ -450,10 +475,23 @@ async def h1momentum_worker() -> None:
         if conf_adj != conf:
             signal["confidence"] = conf_adj
             conf = conf_adj
+        strategy_tag = signal.get("tag", H1MomentumSwing.name)
 
         snap = get_account_snapshot()
         free_ratio = float(snap.free_margin_ratio or 0.0) if snap.free_margin_ratio is not None else 0.0
         atr_pips = float(fac_h1.get("atr_pips") or 0.0)
+        q_allow, q_reason = _quality_guard(strategy_tag, macro_regime, micro_regime, atr_pips)
+        if not q_allow:
+            LOG.info(
+                "%s skip: quality_guard tag=%s macro=%s micro=%s atr=%.2f reason=%s",
+                config.LOG_PREFIX,
+                strategy_tag,
+                macro_regime,
+                micro_regime,
+                atr_pips,
+                q_reason,
+            )
+            continue
         pos_bias = 0.0
         try:
             open_positions = snap.positions or {}
@@ -493,7 +531,6 @@ async def h1momentum_worker() -> None:
         tp_scale = max(0.35, min(1.1, tp_scale))
         base_units = int(round(config.BASE_ENTRY_UNITS * tp_scale))
         conf_scale = _confidence_scale(int(signal.get("confidence", 50)))
-        strategy_tag = signal.get("tag", H1MomentumSwing.name)
         lot = allowed_lot(
             float(snap.nav or 0.0),
             sl_pips,
