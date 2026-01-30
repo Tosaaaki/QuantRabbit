@@ -9,6 +9,7 @@ import sys
 from pathlib import Path
 from typing import Optional
 import sqlite3
+from datetime import datetime, timezone
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
@@ -113,23 +114,115 @@ def _load_order_status_counts(limit: int = 8, hours: int = 1) -> list[dict]:
 
 def _load_last_signal_ts_ms() -> Optional[int]:
     if not SIGNALS_DB.exists():
-        return None
+        return _load_last_order_ts_ms()
     try:
         con = sqlite3.connect(SIGNALS_DB, timeout=DB_READ_TIMEOUT_SEC)
         cur = con.execute("SELECT max(ts_ms) FROM signals")
         row = cur.fetchone()
         con.close()
         if not row:
-            return None
+            return _load_last_order_ts_ms()
         val = row[0]
-        return int(val) if val is not None else None
+        sig_ts = int(val) if val is not None else None
+    except Exception:
+        sig_ts = None
+    order_ts = _load_last_order_ts_ms()
+    if order_ts is None:
+        return sig_ts
+    if sig_ts is None:
+        return order_ts
+    if order_ts > sig_ts + 30 * 60 * 1000:
+        return order_ts
+    return sig_ts
+
+
+def _parse_ts_ms(ts: object) -> Optional[int]:
+    if ts is None:
+        return None
+    try:
+        dt = datetime.fromisoformat(str(ts))
+    except Exception:
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return int(dt.timestamp() * 1000)
+
+
+def _load_last_order_ts_ms() -> Optional[int]:
+    if not ORDERS_DB.exists():
+        return None
+    try:
+        con = sqlite3.connect(ORDERS_DB, timeout=DB_READ_TIMEOUT_SEC)
+        cur = con.execute("SELECT max(ts) FROM orders WHERE request_json IS NOT NULL")
+        row = cur.fetchone()
+        con.close()
+        if not row:
+            return None
+        return _parse_ts_ms(row[0])
     except Exception:
         return None
 
 
+def _load_recent_order_signals(limit: int = 5) -> list[dict]:
+    if not ORDERS_DB.exists():
+        return []
+    try:
+        con = sqlite3.connect(ORDERS_DB, timeout=DB_READ_TIMEOUT_SEC)
+        con.row_factory = sqlite3.Row
+        cur = con.execute(
+            "SELECT ts, pocket, side, units, status, client_order_id, request_json "
+            "FROM orders WHERE request_json IS NOT NULL "
+            "AND status NOT LIKE 'close_%' "
+            "ORDER BY ts DESC LIMIT ?",
+            (int(limit),),
+        )
+        rows = [dict(r) for r in cur.fetchall()]
+        con.close()
+    except Exception:
+        return []
+
+    results: list[dict] = []
+    for row in rows:
+        ts_ms = _parse_ts_ms(row.get("ts"))
+        if ts_ms is None:
+            continue
+        try:
+            payload = json.loads(row.get("request_json") or "{}")
+        except Exception:
+            payload = {}
+        if not isinstance(payload, dict):
+            payload = {}
+        entry_thesis = payload.get("entry_thesis") or {}
+        if not isinstance(entry_thesis, dict):
+            entry_thesis = {}
+        strategy = (
+            entry_thesis.get("strategy_tag")
+            or payload.get("strategy_tag")
+            or payload.get("strategy")
+            or (payload.get("meta") or {}).get("strategy_tag")
+        )
+        if not strategy:
+            continue
+        confidence = entry_thesis.get("confidence") or payload.get("confidence")
+        side = (row.get("side") or "").lower()
+        action = "OPEN_LONG" if side == "buy" else "OPEN_SHORT" if side == "sell" else None
+        results.append(
+            {
+                "ts_ms": ts_ms,
+                "pocket": row.get("pocket"),
+                "strategy": strategy,
+                "confidence": confidence,
+                "action": action,
+                "client_order_id": row.get("client_order_id"),
+                "proposed_units": row.get("units"),
+            }
+        )
+    return results
+
+
 def _load_recent_signals(limit: int = 5) -> list[dict]:
     if not SIGNALS_DB.exists():
-        return []
+        return _load_recent_order_signals(limit=limit)
     try:
         con = sqlite3.connect(SIGNALS_DB, timeout=DB_READ_TIMEOUT_SEC)
         cur = con.execute(
@@ -156,9 +249,18 @@ def _load_recent_signals(limit: int = 5) -> list[dict]:
                         item[key] = data[key]
             rows.append(item)
         con.close()
-        return rows
+        if rows:
+            order_signals = _load_recent_order_signals(limit=limit)
+            if order_signals:
+                sig_ts = rows[0].get("ts_ms")
+                ord_ts = order_signals[0].get("ts_ms")
+                if isinstance(sig_ts, int) and isinstance(ord_ts, int):
+                    if ord_ts > sig_ts + 30 * 60 * 1000:
+                        return order_signals
+            return rows
+        return _load_recent_order_signals(limit=limit)
     except Exception:
-        return []
+        return _load_recent_order_signals(limit=limit)
 
 
 def _load_recent_trades(limit: int = 50) -> list[dict]:
