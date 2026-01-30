@@ -140,6 +140,11 @@ def _dashboard_defaults(error: Optional[str] = None) -> Dict[str, Any]:
             "daily_pl_pips": 0.0,
             "daily_pl_jpy": 0.0,
             "daily_pl_eq1l": 0.0,
+            "yesterday_pl_pips": 0.0,
+            "yesterday_pl_jpy": 0.0,
+            "daily_change_pips": 0.0,
+            "daily_change_jpy": 0.0,
+            "daily_change_pct": None,
             "weekly_pl_pips": 0.0,
             "weekly_pl_jpy": 0.0,
             "weekly_pl_eq1l": 0.0,
@@ -813,6 +818,13 @@ def _summarise_snapshot(snapshot: Dict[str, Any]) -> Dict[str, Any]:
             perf["daily_pl_pips"] = data.get("pips", 0.0)
             perf["daily_pl_jpy"] = data.get("jpy", 0.0)
             perf["recent_closed"] = data.get("trades", 0)
+        elif target == "yesterday":
+            perf["yesterday_pl_pips"] = data.get("pips", 0.0)
+            perf["yesterday_pl_jpy"] = data.get("jpy", 0.0)
+        elif target == "daily_change":
+            perf["daily_change_pips"] = data.get("pips", 0.0)
+            perf["daily_change_jpy"] = data.get("jpy", 0.0)
+            perf["daily_change_pct"] = data.get("jpy_pct")
         elif target == "weekly":
             perf["weekly_pl_pips"] = data.get("pips", 0.0)
             perf["weekly_pl_jpy"] = data.get("jpy", 0.0)
@@ -827,6 +839,8 @@ def _summarise_snapshot(snapshot: Dict[str, Any]) -> Dict[str, Any]:
             perf["total_trades"] = data.get("trades", 0)
 
     _apply_metrics(metrics_snapshot.get("daily"), target="daily")
+    _apply_metrics(metrics_snapshot.get("yesterday"), target="yesterday")
+    _apply_metrics(metrics_snapshot.get("daily_change"), target="daily_change")
     _apply_metrics(metrics_snapshot.get("weekly"), target="weekly")
     _apply_metrics(metrics_snapshot.get("total"), target="total")
 
@@ -859,6 +873,20 @@ def _summarise_snapshot(snapshot: Dict[str, Any]) -> Dict[str, Any]:
     perf["daily_pl_eq1l"] = round((perf.get("daily_pl_jpy", 0.0) or 0.0) / 1000.0, 2)
     perf["weekly_pl_eq1l"] = round((perf.get("weekly_pl_jpy", 0.0) or 0.0) / 1000.0, 2)
     perf["total_eq1l"] = round((perf.get("total_jpy", 0.0) or 0.0) / 1000.0, 2)
+
+    if metrics_snapshot.get("daily_change") is None or perf.get("daily_change_pct") is None:
+        today_pips = perf.get("daily_pl_pips", 0.0) or 0.0
+        yest_pips = perf.get("yesterday_pl_pips", 0.0) or 0.0
+        today_jpy = perf.get("daily_pl_jpy", 0.0) or 0.0
+        yest_jpy = perf.get("yesterday_pl_jpy", 0.0) or 0.0
+        perf["daily_change_pips"] = round(today_pips - yest_pips, 2)
+        perf["daily_change_jpy"] = round(today_jpy - yest_jpy, 2)
+        if yest_jpy:
+            perf["daily_change_pct"] = round(
+                (today_jpy - yest_jpy) * 100.0 / abs(yest_jpy), 2
+            )
+        else:
+            perf["daily_change_pct"] = None
 
     if perf.get("wins") is None or perf.get("losses") is None:
         wins = sum(1 for t in closed_trades if t["pl_pips"] > 0)

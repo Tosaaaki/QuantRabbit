@@ -215,16 +215,24 @@ def main() -> int:
     pm = None
     if args.lite:
         new_trades = []
-        if LITE_SNAPSHOT_FAST:
-            open_positions = {}
-        else:
-            try:
-                pm = PositionManager()
-                open_positions = pm.get_open_positions()
-            except Exception as exc:  # noqa: BLE001
-                logging.warning("[UI] get_open_positions failed: %s", exc)
-                open_positions = {}
         recent_trades = _load_recent_trades(limit=int(args.recent))
+        open_positions = {}
+        try:
+            pm = PositionManager()
+            try:
+                metrics = pm.get_performance_summary()
+            except Exception as exc:  # noqa: BLE001
+                logging.warning("[UI] get_performance_summary failed: %s", exc)
+                metrics = {}
+            if not LITE_SNAPSHOT_FAST:
+                try:
+                    open_positions = pm.get_open_positions()
+                except Exception as exc:  # noqa: BLE001
+                    logging.warning("[UI] get_open_positions failed: %s", exc)
+                    open_positions = {}
+        except Exception as exc:  # noqa: BLE001
+            logging.warning("[UI] PositionManager init failed: %s", exc)
+            open_positions = {}
     else:
         pm = PositionManager()
         try:

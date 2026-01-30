@@ -58,6 +58,17 @@
         <div class="stat-sub">{{ "%+.0f"|format(dashboard.performance.daily_pl_jpy) }} 円</div>
         <div class="stat-sub">1L eq {{ "%+.1f"|format(dashboard.performance.daily_pl_eq1l) }}p</div>
       </div>
+      <div class="stat-card">
+        <div class="stat-label">前日比</div>
+        {% if dashboard.performance.daily_change_pct is not none %}
+          {% set change_class = 'stat-positive' if dashboard.performance.daily_change_pct >= 0 else 'stat-negative' %}
+          <div class="stat-value {{ change_class }}">{{ "%+.1f"|format(dashboard.performance.daily_change_pct) }}%</div>
+        {% else %}
+          <div class="stat-value">-</div>
+        {% endif %}
+        <div class="stat-sub">差分 {{ "%+.0f"|format(dashboard.performance.daily_change_jpy) }} 円</div>
+        <div class="stat-sub">昨日 {{ "%+.0f"|format(dashboard.performance.yesterday_pl_jpy) }} 円</div>
+      </div>
       {% set weekly_class = 'stat-positive' if dashboard.performance.weekly_pl_pips >= 0 else 'stat-negative' %}
       <div class="stat-card">
         <div class="stat-label">週次損益</div>

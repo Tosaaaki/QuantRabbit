@@ -1788,10 +1788,18 @@ class PositionManager:
     def get_performance_summary(self, now: datetime | None = None) -> dict:
         now = now or datetime.now(timezone.utc)
         today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+        yesterday_start = today_start - timedelta(days=1)
         week_start = today_start - timedelta(days=6)
 
         buckets = {
             "daily": {
+                "pips": 0.0,
+                "jpy": 0.0,
+                "trades": 0,
+                "wins": 0,
+                "losses": 0,
+            },
+            "yesterday": {
                 "pips": 0.0,
                 "jpy": 0.0,
                 "trades": 0,
@@ -1849,6 +1857,8 @@ class PositionManager:
                 _apply(buckets["weekly"])
             if close_dt >= today_start:
                 _apply(buckets["daily"])
+            elif close_dt >= yesterday_start:
+                _apply(buckets["yesterday"])
 
         def _finalise(data: dict) -> dict:
             trades = data["trades"]
@@ -1873,10 +1883,29 @@ class PositionManager:
         for name, raw in pocket_raw.items():
             pockets_final[name] = _finalise(raw)
 
+        daily = _finalise(buckets["daily"])
+        weekly = _finalise(buckets["weekly"])
+        total = _finalise(buckets["total"])
+        yesterday = _finalise(buckets["yesterday"])
+
+        def _growth_rate(today: float, prev: float) -> float | None:
+            if prev == 0:
+                return None
+            return round((today - prev) * 100.0 / abs(prev), 2)
+
+        daily_change = {
+            "pips": round(daily["pips"] - yesterday["pips"], 2),
+            "jpy": round(daily["jpy"] - yesterday["jpy"], 2),
+            "pips_pct": _growth_rate(daily["pips"], yesterday["pips"]),
+            "jpy_pct": _growth_rate(daily["jpy"], yesterday["jpy"]),
+        }
+
         return {
-            "daily": _finalise(buckets["daily"]),
-            "weekly": _finalise(buckets["weekly"]),
-            "total": _finalise(buckets["total"]),
+            "daily": daily,
+            "yesterday": yesterday,
+            "daily_change": daily_change,
+            "weekly": weekly,
+            "total": total,
             "last_trade_at": latest_close.isoformat() if latest_close else None,
             "pockets": pockets_final,
         }
