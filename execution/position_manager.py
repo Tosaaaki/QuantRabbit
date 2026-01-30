@@ -503,6 +503,37 @@ def _load_first_metric_since(metric: str, since_ts: str) -> float | None:
         return None
 
 
+def _load_metric_series(metric: str, since_ts: str) -> list[tuple[datetime, float]]:
+    if not _METRICS_DB.exists():
+        return []
+    try:
+        con = sqlite3.connect(_METRICS_DB, timeout=_METRICS_READ_TIMEOUT_SEC)
+        cur = con.execute(
+            "SELECT ts, value FROM metrics WHERE metric = ? AND ts >= ? ORDER BY ts ASC",
+            (metric, since_ts),
+        )
+        rows = cur.fetchall()
+        con.close()
+    except Exception:
+        return []
+    series: list[tuple[datetime, float]] = []
+    for ts_raw, val_raw in rows:
+        if ts_raw is None:
+            continue
+        try:
+            dt = datetime.fromisoformat(str(ts_raw))
+        except ValueError:
+            continue
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        try:
+            val = float(val_raw)
+        except (TypeError, ValueError):
+            continue
+        series.append((dt, val))
+    return series
+
+
 class PositionManager:
     def __init__(self):
         self.con = _open_trades_db()
@@ -2040,6 +2071,7 @@ class PositionManager:
                     pf = data["win_pips"] / data["loss_pips"]
                 rows.append(
                     {
+                        "key": key,
                         "label": label_fn(key),
                         "pips": round(data["pips"], 2),
                         "jpy": round(data["jpy"], 2),
@@ -2067,6 +2099,60 @@ class PositionManager:
         profit_tables["weekly"].sort(key=lambda r: r["label"], reverse=True)
         profit_tables["monthly"].sort(key=lambda r: r["label"], reverse=True)
 
+        balance_series = _load_metric_series("account.balance", year_start_utc)
+
+        def _period_bounds_for_key(key: str, kind: str) -> tuple[datetime, datetime]:
+            if kind == "daily":
+                start_jst = datetime.fromisoformat(key).replace(tzinfo=jst)
+                end_jst = start_jst + timedelta(days=1)
+            elif kind == "weekly":
+                start_jst = datetime.fromisoformat(key).replace(tzinfo=jst)
+                end_jst = start_jst + timedelta(days=7)
+            else:
+                year, month = key.split("-", 1)
+                start_jst = datetime(int(year), int(month), 1, tzinfo=jst)
+                if int(month) == 12:
+                    end_jst = datetime(int(year) + 1, 1, 1, tzinfo=jst)
+                else:
+                    end_jst = datetime(int(year), int(month) + 1, 1, tzinfo=jst)
+            return (
+                start_jst.astimezone(timezone.utc),
+                end_jst.astimezone(timezone.utc),
+            )
+
+        def _start_balance_map(keys: list[str], kind: str) -> dict[str, float | None]:
+            if not balance_series:
+                return {key: None for key in keys}
+            intervals: list[tuple[str, datetime, datetime]] = []
+            for key in keys:
+                start_utc, end_utc = _period_bounds_for_key(key, kind)
+                intervals.append((key, start_utc, end_utc))
+            intervals.sort(key=lambda item: item[1])
+            idx = 0
+            out: dict[str, float | None] = {}
+            for key, start_utc, end_utc in intervals:
+                while idx < len(balance_series) and balance_series[idx][0] < start_utc:
+                    idx += 1
+                if idx < len(balance_series) and balance_series[idx][0] < end_utc:
+                    out[key] = balance_series[idx][1]
+                else:
+                    out[key] = None
+            return out
+
+        daily_start = _start_balance_map(list(daily_table.keys()), "daily")
+        weekly_start = _start_balance_map(list(weekly_table.keys()), "weekly")
+        monthly_start = _start_balance_map(list(monthly_table.keys()), "monthly")
+
+        def _apply_start_balance(rows: list[dict], start_map: dict[str, float | None]) -> None:
+            for row in rows:
+                key = row.get("key")
+                start_balance = start_map.get(key)
+                row["start_balance"] = start_balance
+                if start_balance:
+                    row["return_pct"] = round(row["jpy"] * 100.0 / start_balance, 2)
+                else:
+                    row["return_pct"] = None
+
         ytd_summary = {
             "year_start": year_start.date().isoformat(),
             "timezone": "JST",
@@ -2090,6 +2176,10 @@ class PositionManager:
             ytd_summary["bot_return_pct"] = round(
                 ytd_summary["bot_profit_jpy"] * 100.0 / start_balance, 2
             )
+
+        _apply_start_balance(profit_tables["daily"], daily_start)
+        _apply_start_balance(profit_tables["weekly"], weekly_start)
+        _apply_start_balance(profit_tables["monthly"], monthly_start)
 
         return {
             "daily": daily,

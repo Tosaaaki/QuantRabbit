@@ -184,6 +184,8 @@
               <th>日次</th>
               <th>損益 (pips)</th>
               <th>損益 (JPY)</th>
+              <th>開始残高</th>
+              <th>残高比</th>
               <th>件数</th>
               <th>勝率</th>
             </tr>
@@ -195,6 +197,8 @@
                 <td>{{ row.label }}</td>
                 <td><span class="{{ pill_class }}">{{ "%+.1f"|format(row.pips) }}</span></td>
                 <td>{{ "%+.0f"|format(row.jpy) }}</td>
+                <td>{% if row.start_balance %}{{ "%.0f"|format(row.start_balance) }}{% else %}-{% endif %}</td>
+                <td>{% if row.return_pct is not none %}{{ "%+.2f"|format(row.return_pct) }}%{% else %}-{% endif %}</td>
                 <td>{{ row.trades }}</td>
                 <td>{{ "%.1f"|format(row.win_rate * 100.0) }}%</td>
               </tr>
@@ -210,6 +214,8 @@
               <th>週次</th>
               <th>損益 (pips)</th>
               <th>損益 (JPY)</th>
+              <th>開始残高</th>
+              <th>残高比</th>
               <th>件数</th>
               <th>勝率</th>
             </tr>
@@ -221,6 +227,8 @@
                 <td>{{ row.label }}</td>
                 <td><span class="{{ pill_class }}">{{ "%+.1f"|format(row.pips) }}</span></td>
                 <td>{{ "%+.0f"|format(row.jpy) }}</td>
+                <td>{% if row.start_balance %}{{ "%.0f"|format(row.start_balance) }}{% else %}-{% endif %}</td>
+                <td>{% if row.return_pct is not none %}{{ "%+.2f"|format(row.return_pct) }}%{% else %}-{% endif %}</td>
                 <td>{{ row.trades }}</td>
                 <td>{{ "%.1f"|format(row.win_rate * 100.0) }}%</td>
               </tr>
@@ -236,6 +244,8 @@
               <th>月次</th>
               <th>損益 (pips)</th>
               <th>損益 (JPY)</th>
+              <th>開始残高</th>
+              <th>残高比</th>
               <th>件数</th>
               <th>勝率</th>
             </tr>
@@ -247,6 +257,8 @@
                 <td>{{ row.label }}</td>
                 <td><span class="{{ pill_class }}">{{ "%+.1f"|format(row.pips) }}</span></td>
                 <td>{{ "%+.0f"|format(row.jpy) }}</td>
+                <td>{% if row.start_balance %}{{ "%.0f"|format(row.start_balance) }}{% else %}-{% endif %}</td>
+                <td>{% if row.return_pct is not none %}{{ "%+.2f"|format(row.return_pct) }}%{% else %}-{% endif %}</td>
                 <td>{{ row.trades }}</td>
                 <td>{{ "%.1f"|format(row.win_rate * 100.0) }}%</td>
               </tr>
