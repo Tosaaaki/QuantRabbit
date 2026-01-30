@@ -18,6 +18,14 @@ MAX_REDUCTION_FRACTION = float(os.getenv("HEDGE_MAX_REDUCTION_FRACTION", "0.55")
 COOLDOWN_SEC = float(os.getenv("HEDGE_COOLDOWN_SEC", "20.0") or 20.0)
 POCKET = os.getenv("HEDGE_POCKET", "macro").strip() or "macro"
 CONFIDENCE = int(os.getenv("HEDGE_CONFIDENCE", "90") or 90)
+SKIP_FOREIGN_TRADES = os.getenv("HEDGE_SKIP_FOREIGN_TRADES", "1").strip().lower() not in {
+    "",
+    "0",
+    "false",
+    "off",
+    "no",
+}
+FOREIGN_TRADE_LOG_SEC = float(os.getenv("HEDGE_FOREIGN_TRADE_LOG_SEC", "60.0") or 60.0)
 SL_PIPS = float(os.getenv("HEDGE_SL_PIPS", "5.0") or 5.0)
 TP_PIPS = float(os.getenv("HEDGE_TP_PIPS", "5.0") or 5.0)
 MIN_PRICE = float(os.getenv("HEDGE_MIN_PRICE", "90.0") or 90.0)

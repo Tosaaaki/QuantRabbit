@@ -1408,6 +1408,8 @@ class PositionManager:
         """tradeIDを使ってOANDAから取引詳細を取得する"""
         local = self._resolve_entry_meta(trade_id)
         if local:
+            if not local.get("details_source"):
+                local["details_source"] = "orders"
             return local
         url = f"{REST_HOST}/v3/accounts/{ACCOUNT}/trades/{trade_id}"
         try:
@@ -1426,6 +1428,7 @@ class PositionManager:
                 "client_order_id": client_id,
                 "strategy_tag": None,
                 "entry_thesis": None,
+                "details_source": "oanda",
             }
             # Heuristic mapping from client id prefix
             try:
@@ -1465,13 +1468,21 @@ class PositionManager:
             if exc.response is not None and exc.response.status_code == 404:
                 fallback = self._get_trade_details_from_orders(trade_id)
                 if fallback:
+                    if not fallback.get("details_source"):
+                        fallback["details_source"] = "orders"
                     return fallback
             print(f"[PositionManager] Error fetching trade details for {trade_id}: {exc}")
-            return self._get_trade_details_from_orders(trade_id)
+            fallback = self._get_trade_details_from_orders(trade_id)
+            if fallback and not fallback.get("details_source"):
+                fallback["details_source"] = "orders"
+            return fallback
         except requests.RequestException as e:
             print(f"[PositionManager] Error fetching trade details for {trade_id}: {e}")
             self._reset_http_if_needed(e)
-            return self._get_trade_details_from_orders(trade_id)
+            fallback = self._get_trade_details_from_orders(trade_id)
+            if fallback and not fallback.get("details_source"):
+                fallback["details_source"] = "orders"
+            return fallback
 
     def _get_trade_details_from_orders(self, trade_id: str) -> dict | None:
         try:
@@ -1552,6 +1563,7 @@ class PositionManager:
             "entry_thesis": thesis_obj,
             "macro_regime": macro_regime,
             "micro_regime": micro_regime,
+            "details_source": "orders",
         }
 
     def _resolve_entry_meta(self, trade_id: str) -> dict | None:
@@ -1562,6 +1574,8 @@ class PositionManager:
             return cached
         details = self._get_trade_details_from_orders(trade_id)
         if details:
+            if not details.get("details_source"):
+                details["details_source"] = "orders"
             self._entry_meta_cache[trade_id] = details
         return details
 
@@ -1617,6 +1631,19 @@ class PositionManager:
                 )
                 if inferred_tag and not details.get("strategy_tag"):
                     details["strategy_tag"] = inferred_tag
+                client_trade_id = closed_trade.get("clientTradeID") or closed_trade.get("client_trade_id")
+                if client_trade_id:
+                    if not details.get("client_order_id") or details.get("details_source") != "oanda":
+                        details["client_order_id"] = client_trade_id
+                    inferred_from_trade = self._infer_strategy_tag(
+                        details.get("entry_thesis"),
+                        client_trade_id,
+                        details.get("pocket"),
+                    )
+                    if inferred_from_trade and (
+                        not details.get("strategy_tag") or details.get("details_source") != "oanda"
+                    ):
+                        details["strategy_tag"] = inferred_from_trade
 
                 close_price = float(tx.get("price", 0.0))
                 close_time = _parse_timestamp(tx.get("time"))
@@ -1632,12 +1659,25 @@ class PositionManager:
                     closed_units = abs(int(float(closed_units_raw))) if closed_units_raw is not None else 0
                 except Exception:
                     closed_units = 0
-                if units > 0:  # Buy
-                    pl_pips = (close_price - entry_price) * 100
-                else:  # Sell
-                    pl_pips = (entry_price - close_price) * 100
 
                 realized_pl = float(closed_trade.get("realizedPL", 0.0) or 0.0)
+                details_source = details.get("details_source") or "unknown"
+                pip_units = abs(closed_units or units)
+                pip_value = 0.01
+                if (
+                    details_source == "oanda"
+                    and units != 0
+                    and entry_price > 0.0
+                    and close_price > 0.0
+                ):
+                    if units > 0:  # Buy
+                        pl_pips = (close_price - entry_price) * 100
+                    else:  # Sell
+                        pl_pips = (entry_price - close_price) * 100
+                    if pip_units > 0 and abs(pl_pips) < 0.2 and abs(realized_pl) >= 100:
+                        pl_pips = realized_pl / (pip_units * pip_value)
+                else:
+                    pl_pips = realized_pl / (pip_units * pip_value) if pip_units else 0.0
                 # 取引コスト類（存在すれば保存）
                 try:
                     commission = float(tx.get("commission", 0.0) or 0.0)

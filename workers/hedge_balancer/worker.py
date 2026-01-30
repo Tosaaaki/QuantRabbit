@@ -19,6 +19,7 @@ from typing import Optional, Tuple
 from market_data import tick_window
 from execution.order_ids import build_client_order_id
 from execution.order_manager import market_order
+from execution.position_manager import PositionManager
 from utils.market_hours import is_market_open
 from utils.oanda_account import AccountSnapshot, get_account_snapshot, get_position_summary
 
@@ -105,6 +106,35 @@ def _bb_entry_allowed(style, side, price, fac_m1, *, range_active=None):
 BB_STYLE = "trend"
 
 LOG = logging.getLogger(__name__)
+
+_HEDGE_ALLOWED_TAGS = {"hedgebalancer", "hedgelock"}
+_HEDGE_ALLOWED_CLIENT_HINTS = ("-hedge-", "hedgebalancer", "hedgelock")
+
+
+def _is_hedge_trade(entry: dict, pocket: str) -> bool:
+    if pocket == "manual":
+        return False
+    tag = str(entry.get("strategy_tag") or "").lower()
+    if any(t in tag for t in _HEDGE_ALLOWED_TAGS):
+        return True
+    client_id = str(entry.get("client_order_id") or entry.get("client_id") or "").lower()
+    return any(hint in client_id for hint in _HEDGE_ALLOWED_CLIENT_HINTS)
+
+
+def _has_foreign_trades(pos_manager: PositionManager) -> bool:
+    positions = pos_manager.get_open_positions(include_unknown=True)
+    if not positions:
+        return False
+    for pocket, info in positions.items():
+        if not isinstance(info, dict):
+            continue
+        trades = info.get("open_trades")
+        if not trades:
+            continue
+        for tr in trades:
+            if not _is_hedge_trade(tr, pocket):
+                return True
+    return False
 
 
 
@@ -380,6 +410,8 @@ async def hedge_balancer_worker() -> None:
     )
     last_action_ts = 0.0
     last_lock_ts = 0.0
+    last_foreign_log_ts = 0.0
+    pos_manager = PositionManager()
 
     while True:
         await asyncio.sleep(config.LOOP_INTERVAL_SEC)
@@ -414,6 +446,20 @@ async def hedge_balancer_worker() -> None:
         except Exception:
             range_ctx = None
         range_active = bool(range_ctx.active) if range_ctx is not None else False
+
+        foreign_present = False
+        if config.SKIP_FOREIGN_TRADES:
+            try:
+                foreign_present = _has_foreign_trades(pos_manager)
+            except Exception as exc:  # noqa: BLE001
+                LOG.warning("%s foreign trade check failed: %s", config.LOG_PREFIX, exc)
+                foreign_present = False
+            if foreign_present and (time.monotonic() - last_foreign_log_ts) >= config.FOREIGN_TRADE_LOG_SEC:
+                LOG.info("%s skip hedge: foreign open trades detected", config.LOG_PREFIX)
+                last_foreign_log_ts = time.monotonic()
+
+        if foreign_present:
+            continue
 
         # Hedge lock unwind: both-side positions with small net exposure
         if (

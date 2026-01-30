@@ -3334,6 +3334,7 @@ async def worker_only_loop() -> None:
     last_factor_refresh = 0.0
 
     while True:
+        loop_start_mono = time.monotonic()
         now = datetime.datetime.utcnow()
         if not is_market_open(now):
             if last_market_closed is None or (now - last_market_closed).total_seconds() >= 900:
@@ -3389,6 +3390,14 @@ async def worker_only_loop() -> None:
                 ",".join(sorted(last_worker_plan)) if last_worker_plan else "unknown",
             )
             last_heartbeat_time = now
+
+        data_lag_ms = _latest_tick_lag_ms()
+        _check_tick_silence_watchdog(data_lag_ms)
+        if data_lag_ms is not None:
+            log_metric("data_lag_ms", data_lag_ms, tags={"mode": "worker_only"}, ts=now)
+            _check_data_lag_watchdog(data_lag_ms)
+        decision_latency_ms = max(0.0, (time.monotonic() - loop_start_mono) * 1000.0)
+        log_metric("decision_latency_ms", decision_latency_ms, tags={"mode": "worker_only"}, ts=now)
 
         await asyncio.sleep(10)
 
