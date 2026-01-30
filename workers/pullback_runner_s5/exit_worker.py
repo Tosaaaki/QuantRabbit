@@ -160,6 +160,7 @@ LOG = logging.getLogger(__name__)
 
 ALLOWED_TAGS = {"pullback_runner_s5"}
 POCKET = "scalp"
+STRICT_TAG = _bool_env("PULLBACK_RUNNER_S5_EXIT_STRICT_TAG", True)
 
 
 def _float_env(key: str, default: float) -> float:
@@ -350,8 +351,12 @@ class PullbackRunnerExitWorker:
                 continue
             tag_str = str(tag)
             base_tag = tag_str.split("-", 1)[0]
-            if tag_str in ALLOWED_TAGS or base_tag in ALLOWED_TAGS:
-                filtered.append(tr)
+            if STRICT_TAG:
+                if tag_str in ALLOWED_TAGS:
+                    filtered.append(tr)
+            else:
+                if tag_str in ALLOWED_TAGS or base_tag in ALLOWED_TAGS:
+                    filtered.append(tr)
         return filtered
 
     def _context(self) -> _Context:
