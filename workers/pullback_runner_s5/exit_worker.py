@@ -269,6 +269,9 @@ class PullbackRunnerExitWorker:
         self.hard_stop_score_min = _float_env(
             "PULLBACK_RUNNER_S5_EXIT_HARD_STOP_SCORE_MIN", 0.25
         )
+        self.structure_break_min_hold_sec = max(
+            0.0, _float_env("PULLBACK_RUNNER_S5_EXIT_STRUCTURE_MIN_HOLD_SEC", 45.0)
+        )
 
         self.range_adx = max(5.0, _float_env("PULLBACK_RUNNER_S5_EXIT_RANGE_ADX", 22.0))
         self.range_bbw = max(0.02, _float_env("PULLBACK_RUNNER_S5_EXIT_RANGE_BBW", 0.20))
@@ -534,7 +537,7 @@ class PullbackRunnerExitWorker:
 
         # エントリーメタに合わせてEXIT閾値をスケール
         if state.hard_stop:
-            stop_loss = max(stop_loss, max(0.8, state.hard_stop * 0.5))
+            stop_loss = max(stop_loss, max(0.8, state.hard_stop * 0.7))
             lock_trigger = max(lock_trigger, max(0.25, state.hard_stop * 0.25))
             trail_start = max(trail_start, max(1.0, state.hard_stop * 0.6))
             max_hold = max(max_hold, self.max_hold_sec * 1.05)
@@ -574,36 +577,31 @@ class PullbackRunnerExitWorker:
                 ma20 = float(factors.get("ma20"))
                 gap = abs(ma10 - ma20) / 0.01
                 if (side == "long" and ma10 <= ma20) or (side == "short" and ma10 >= ma20) or (ctx.adx < 14.0 and gap < 2.0):
-                    return "structure_break"
+                    if pnl <= 0 or hold_sec >= self.structure_break_min_hold_sec:
+                        return "structure_break"
             except Exception:
                 pass
 
         if pnl <= -stop_loss:
             thesis = trade.get("entry_thesis") or {}
             proj_score = None
-            micro_regime = None
             try:
                 proj = thesis.get("projection") if isinstance(thesis, dict) else None
                 if isinstance(proj, dict) and proj.get("score") is not None:
                     proj_score = float(proj.get("score"))
             except Exception:
                 proj_score = None
-            if isinstance(thesis, dict):
-                micro_regime = thesis.get("micro_regime") or thesis.get("reg_micro")
-            delay_hard_stop = (
-                self.hard_stop_confirm_sec > 0
-                and proj_score is not None
-                and proj_score >= self.hard_stop_score_min
-                and str(micro_regime or "").lower() != "range"
-            )
-            if delay_hard_stop:
+            confirm_sec = self.hard_stop_confirm_sec
+            if proj_score is not None and proj_score < self.hard_stop_score_min:
+                confirm_sec = max(0.0, self.hard_stop_confirm_sec * 0.5)
+            if confirm_sec > 0:
                 # Emergency stop if loss expands too far beyond threshold
                 if pnl <= -(stop_loss * self.hard_stop_emergency_mult):
                     return "hard_stop"
                 if state.hard_stop_triggered_at is None:
                     state.hard_stop_triggered_at = now
                     return None
-                if (now - state.hard_stop_triggered_at).total_seconds() < self.hard_stop_confirm_sec:
+                if (now - state.hard_stop_triggered_at).total_seconds() < confirm_sec:
                     return None
             return "hard_stop"
 
@@ -845,4 +843,3 @@ def _exit_candle_reversal(side):
 if __name__ == "__main__":  # pragma: no cover
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s", force=True)
     asyncio.run(pullback_runner_s5_exit_worker())
-
