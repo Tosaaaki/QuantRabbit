@@ -498,6 +498,9 @@
       color: #52606d;
       font-family: var(--font-mono);
     }
+    .chart-markers { margin-top: 1rem; }
+    .chart-marker-table { max-height: 260px; overflow: auto; }
+    .chart-marker-table table { min-width: 680px; }
 
     main .card {
       opacity: 0;
@@ -600,7 +603,7 @@
         buttons.forEach((button) => {
           button.addEventListener("click", () => {
             const name = button.dataset.tabTarget;
-            if (name) activateTab(container, name, { updateUrl: !isLocal });
+            if (name) activateTab(name, { updateUrl: !isLocal });
           });
           button.addEventListener("keydown", (event) => {
             if (!["ArrowLeft", "ArrowRight"].includes(event.key)) return;
@@ -610,7 +613,7 @@
             const nextIndex = (currentIndex + delta + buttons.length) % buttons.length;
             const nextButton = buttons[nextIndex];
             if (nextButton?.dataset.tabTarget) {
-              activateTab(container, nextButton.dataset.tabTarget, { updateUrl: !isLocal });
+              activateTab(nextButton.dataset.tabTarget, { updateUrl: !isLocal });
             }
           });
         });
@@ -622,7 +625,7 @@
           buttons.find((button) => button.getAttribute("aria-selected") === "true") ||
           buttons[0];
         if (selected?.dataset.tabTarget) {
-          activateTab(container, selected.dataset.tabTarget, {
+          activateTab(selected.dataset.tabTarget, {
             focus: false,
             updateUrl: false,
           });
