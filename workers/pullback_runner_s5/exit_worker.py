@@ -160,7 +160,6 @@ LOG = logging.getLogger(__name__)
 
 ALLOWED_TAGS = {"pullback_runner_s5"}
 POCKET = "scalp"
-STRICT_TAG = _bool_env("PULLBACK_RUNNER_S5_EXIT_STRICT_TAG", True)
 
 
 def _float_env(key: str, default: float) -> float:
@@ -178,6 +177,9 @@ def _bool_env(key: str, default: bool) -> bool:
     if raw is None:
         return default
     return raw.strip().lower() not in {"", "0", "false", "no", "off"}
+
+
+STRICT_TAG = _bool_env("PULLBACK_RUNNER_S5_EXIT_STRICT_TAG", True)
 
 
 def _utc_now() -> datetime:
