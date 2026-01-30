@@ -1848,8 +1848,35 @@ class PositionManager:
         latest_close: datetime | None = None
 
         rows = self.con.execute(
-            "SELECT pl_pips, realized_pl, close_time, pocket FROM trades WHERE close_time IS NOT NULL"
+            "SELECT pl_pips, realized_pl, close_time, pocket, client_order_id "
+            "FROM trades WHERE close_time IS NOT NULL"
         ).fetchall()
+        year_start = now_jst.replace(month=1, day=1, hour=0, minute=0, second=0, microsecond=0)
+        agent_prefixes = tuple(p for p in ("qr-", "qs-") if p)
+        daily_table: dict[str, dict] = {}
+        weekly_table: dict[str, dict] = {}
+        monthly_table: dict[str, dict] = {}
+
+        def _is_agent_trade(pocket: str, client_id: str | None) -> bool:
+            if pocket in _KNOWN_POCKETS:
+                return True
+            if not client_id:
+                return False
+            cid = str(client_id)
+            return cid.startswith(agent_prefixes)
+
+        def _bucket(table: dict[str, dict], key: str) -> dict:
+            if key not in table:
+                table[key] = {
+                    "pips": 0.0,
+                    "jpy": 0.0,
+                    "trades": 0,
+                    "wins": 0,
+                    "losses": 0,
+                    "win_pips": 0.0,
+                    "loss_pips": 0.0,
+                }
+            return table[key]
         pocket_raw: dict[str, dict[str, float | int]] = {}
         for row in rows:
             try:
@@ -1862,6 +1889,7 @@ class PositionManager:
             pl_pips = float(row["pl_pips"] or 0.0)
             pl_jpy = float(row["realized_pl"] or 0.0)
             pocket = (row["pocket"] or "unknown").lower()
+            client_id = row["client_order_id"]
             pkt = pocket_raw.setdefault(
                 pocket,
                 {"pips": 0.0, "jpy": 0.0, "trades": 0, "wins": 0, "losses": 0},
@@ -1884,6 +1912,28 @@ class PositionManager:
                 _apply(buckets["daily"])
             elif close_dt_jst >= yesterday_start:
                 _apply(buckets["yesterday"])
+
+            if close_dt_jst >= year_start and pocket != _MANUAL_POCKET_NAME:
+                if _is_agent_trade(pocket, client_id):
+                    day_key = close_dt_jst.date().isoformat()
+                    week_start_date = close_dt_jst.date() - timedelta(days=close_dt_jst.weekday())
+                    week_key = week_start_date.isoformat()
+                    month_key = close_dt_jst.strftime("%Y-%m")
+                    for key, table in (
+                        (day_key, daily_table),
+                        (week_key, weekly_table),
+                        (month_key, monthly_table),
+                    ):
+                        bkt = _bucket(table, key)
+                        bkt["pips"] += pl_pips
+                        bkt["jpy"] += pl_jpy
+                        bkt["trades"] += 1
+                        if pl_pips > 0:
+                            bkt["wins"] += 1
+                            bkt["win_pips"] += pl_pips
+                        elif pl_pips < 0:
+                            bkt["losses"] += 1
+                            bkt["loss_pips"] += abs(pl_pips)
 
         def _finalise(data: dict) -> dict:
             trades = data["trades"]
@@ -1938,6 +1988,43 @@ class PositionManager:
             "equity_source": equity_source,
         }
 
+        def _finalise_table(table: dict[str, dict], *, label_fn) -> list[dict]:
+            rows: list[dict] = []
+            for key, data in table.items():
+                trades = data["trades"]
+                win_rate = (data["wins"] / trades) if trades else 0.0
+                pf = None
+                if data["loss_pips"] > 0:
+                    pf = data["win_pips"] / data["loss_pips"]
+                rows.append(
+                    {
+                        "label": label_fn(key),
+                        "pips": round(data["pips"], 2),
+                        "jpy": round(data["jpy"], 2),
+                        "trades": trades,
+                        "wins": data["wins"],
+                        "losses": data["losses"],
+                        "win_rate": win_rate,
+                        "pf": pf,
+                    }
+                )
+            return rows
+
+        profit_tables = {
+            "timezone": "JST",
+            "year_start": year_start.date().isoformat(),
+            "exclude_manual": True,
+            "daily": _finalise_table(daily_table, label_fn=lambda key: key),
+            "weekly": _finalise_table(
+                weekly_table,
+                label_fn=lambda key: f"{key} (Mon)",
+            ),
+            "monthly": _finalise_table(monthly_table, label_fn=lambda key: key),
+        }
+        profit_tables["daily"].sort(key=lambda r: r["label"], reverse=True)
+        profit_tables["weekly"].sort(key=lambda r: r["label"], reverse=True)
+        profit_tables["monthly"].sort(key=lambda r: r["label"], reverse=True)
+
         return {
             "daily": daily,
             "yesterday": yesterday,
@@ -1946,6 +2033,7 @@ class PositionManager:
             "total": total,
             "last_trade_at": latest_close.isoformat() if latest_close else None,
             "pockets": pockets_final,
+            "profit_tables": profit_tables,
         }
 
     def fetch_recent_trades(self, limit: int = 50) -> list[dict]:

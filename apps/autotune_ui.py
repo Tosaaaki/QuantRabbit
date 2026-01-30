@@ -190,6 +190,14 @@ def _dashboard_defaults(error: Optional[str] = None) -> Dict[str, Any]:
             "orders_last": [],
             "signals_recent": [],
         },
+        "profit_tables": {
+            "timezone": "JST",
+            "year_start": None,
+            "exclude_manual": True,
+            "daily": [],
+            "weekly": [],
+            "monthly": [],
+        },
         "highlights": [],  # backward compatibility (top winners / losers)
         "highlights_top": [],
         "highlights_recent": [],
@@ -1148,6 +1156,10 @@ def _summarise_snapshot(snapshot: Dict[str, Any]) -> Dict[str, Any]:
     base["highlights"] = highlights
     base["highlights_top"] = highlights
     base["highlights_recent"] = latest_highlights
+
+    profit_tables = metrics_snapshot.get("profit_tables")
+    if isinstance(profit_tables, dict):
+        base["profit_tables"] = profit_tables
 
     gen_dt = _parse_dt(snapshot.get("generated_at"))
     base["generated_at"] = snapshot.get("generated_at")

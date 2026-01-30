@@ -154,6 +154,88 @@
         </table>
       </div>
     {% endif %}
+
+    {% if dashboard.profit_tables and dashboard.profit_tables.daily %}
+      <div class="section-title">利益表（{{ dashboard.profit_tables.year_start }}〜 / {{ dashboard.profit_tables.timezone }} / 手動除外）</div>
+
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>日次</th>
+              <th>損益 (pips)</th>
+              <th>損益 (JPY)</th>
+              <th>件数</th>
+              <th>勝率</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for row in dashboard.profit_tables.daily %}
+              {% set pill_class = 'pill gain' if row.pips > 0 else 'pill loss' if row.pips < 0 else 'pill neutral' %}
+              <tr>
+                <td>{{ row.label }}</td>
+                <td><span class="{{ pill_class }}">{{ "%+.1f"|format(row.pips) }}</span></td>
+                <td>{{ "%+.0f"|format(row.jpy) }}</td>
+                <td>{{ row.trades }}</td>
+                <td>{{ "%.1f"|format(row.win_rate * 100.0) }}%</td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>週次</th>
+              <th>損益 (pips)</th>
+              <th>損益 (JPY)</th>
+              <th>件数</th>
+              <th>勝率</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for row in dashboard.profit_tables.weekly %}
+              {% set pill_class = 'pill gain' if row.pips > 0 else 'pill loss' if row.pips < 0 else 'pill neutral' %}
+              <tr>
+                <td>{{ row.label }}</td>
+                <td><span class="{{ pill_class }}">{{ "%+.1f"|format(row.pips) }}</span></td>
+                <td>{{ "%+.0f"|format(row.jpy) }}</td>
+                <td>{{ row.trades }}</td>
+                <td>{{ "%.1f"|format(row.win_rate * 100.0) }}%</td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>月次</th>
+              <th>損益 (pips)</th>
+              <th>損益 (JPY)</th>
+              <th>件数</th>
+              <th>勝率</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for row in dashboard.profit_tables.monthly %}
+              {% set pill_class = 'pill gain' if row.pips > 0 else 'pill loss' if row.pips < 0 else 'pill neutral' %}
+              <tr>
+                <td>{{ row.label }}</td>
+                <td><span class="{{ pill_class }}">{{ "%+.1f"|format(row.pips) }}</span></td>
+                <td>{{ "%+.0f"|format(row.jpy) }}</td>
+                <td>{{ row.trades }}</td>
+                <td>{{ "%.1f"|format(row.win_rate * 100.0) }}%</td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    {% endif %}
   </div>
 
       <div class="card">
