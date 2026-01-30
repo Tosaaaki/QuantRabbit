@@ -248,6 +248,7 @@
               <div class="chart-wrap">
                 <svg class="chart-svg" data-chart-canvas="price" aria-label="Price chart"></svg>
                 <div class="chart-empty" data-chart-empty="price">NO DATA</div>
+                <div class="chart-tooltip" data-chart-tooltip="price" aria-hidden="true"></div>
               </div>
               <div class="chart-markers" data-chart-markers="price">
                 <div class="section-subtitle">エントリーポイント</div>
@@ -1108,16 +1109,41 @@
         `;
       };
 
+      const buildMarkerTooltip = (marker) => {
+        if (!marker) return "";
+        const kind = marker.kind ? String(marker.kind).toUpperCase() : "ENTRY";
+        const side = marker.side ? String(marker.side).toUpperCase() : "-";
+        const pocket = marker.pocket || "-";
+        const worker = marker.worker || "-";
+        const strategy = marker.strategy || "-";
+        const price = typeof marker.price === "number" ? marker.price.toFixed(3) : "-";
+        const units = typeof marker.units_abs === "number" ? marker.units_abs.toLocaleString() : "-";
+        const lines = [
+          `${kind} ${side} / ${pocket}`,
+          `worker: ${worker}`,
+          `strategy: ${strategy}`,
+          `${formatTs(marker.ts_ms)} @ ${price}`,
+          `units: ${units}`,
+        ];
+        return lines.join("\n");
+      };
+
       const renderPrice = (key) => {
         if (!priceContainer) return;
         const range = chartData.price?.ranges?.[key];
         const svg = priceContainer.querySelector('[data-chart-canvas="price"]');
         const empty = priceContainer.querySelector('[data-chart-empty="price"]');
         const meta = priceContainer.querySelector('[data-chart-meta="price"]');
+        const tooltip = priceContainer.querySelector('[data-chart-tooltip="price"]');
+        const wrap = priceContainer.querySelector(".chart-wrap");
         if (!range || !Array.isArray(range.candles) || range.candles.length < 2) {
           if (svg) svg.innerHTML = "";
           if (empty) empty.style.display = "flex";
           if (meta) meta.textContent = "データなし";
+          if (tooltip) {
+            tooltip.classList.remove("is-visible");
+            tooltip.style.transform = "translate(-9999px, -9999px)";
+          }
           return;
         }
         if (empty) empty.style.display = "none";
@@ -1133,18 +1159,28 @@
         const lows = range.candles.map((row) => row[3]);
         const minTs = Math.min(...times);
         const maxTs = Math.max(...times);
+        let tsSpan = Math.max(1, maxTs - minTs);
+        let minTsAdj = minTs;
+        let maxTsAdj = maxTs;
+        const candleCount = range.candles.length;
+        const targetCount = 20;
+        if (candleCount > 0 && candleCount < targetCount) {
+          const paddedSpan = tsSpan * (targetCount / candleCount);
+          const padSpan = (paddedSpan - tsSpan) / 2;
+          minTsAdj -= padSpan;
+          maxTsAdj += padSpan;
+          tsSpan = paddedSpan;
+        }
         let minY = Math.min(...lows);
         let maxY = Math.max(...highs);
         if (minY === maxY) {
           minY -= 0.5;
           maxY += 0.5;
         }
-        const tsSpan = Math.max(1, maxTs - minTs);
         const ySpan = Math.max(1e-6, maxY - minY);
-        const xFor = (ts) => pad.l + ((ts - minTs) / tsSpan) * innerW;
+        const xFor = (ts) => pad.l + ((ts - minTsAdj) / tsSpan) * innerW;
         const yFor = (val) => pad.t + ((maxY - val) / ySpan) * innerH;
 
-        const candleCount = range.candles.length;
         const candleSpacing = innerW / candleCount;
         const bodyWidth = clamp(candleSpacing * 0.6, 1.5, 7.5);
 
@@ -1177,20 +1213,24 @@
 
         let markersSvg = "";
         const markers = Array.isArray(range.markers) ? range.markers : [];
-        markers.forEach((m) => {
+        markers.forEach((m, idx) => {
           if (!m || typeof m.ts_ms !== "number" || typeof m.price !== "number") return;
           const x = xFor(m.ts_ms);
           const y = yFor(m.price);
           const isEntry = m.kind === "entry";
-          const color = isEntry ? "#0f766e" : "#b91c1c";
+          const side = (m.side || "").toLowerCase();
+          let sideColor = "#64748b";
+          if (side === "long") sideColor = "#16a34a";
+          if (side === "short") sideColor = "#dc2626";
+          const color = sideColor;
           const size = 6;
           const points = isEntry
             ? `${x},${y - size} ${x - size},${y + size} ${x + size},${y + size}`
             : `${x},${y + size} ${x - size},${y - size} ${x + size},${y - size}`;
+          const opacity = isEntry ? 0.9 : 0.6;
           markersSvg += `
-            <g>
-              <polygon points="${points}" fill="${color}" opacity="0.85"></polygon>
-              ${m.label ? `<title>${m.label}</title>` : ""}
+            <g class="chart-marker" data-marker-idx="${idx}">
+              <polygon points="${points}" fill="${color}" opacity="${opacity}"></polygon>
             </g>
           `;
         });
@@ -1205,6 +1245,38 @@
           ${candlesSvg}
           ${markersSvg}
         `;
+
+        if (tooltip && wrap) {
+          const showTooltip = (event, marker) => {
+            const label = buildMarkerTooltip(marker);
+            if (!label) return;
+            tooltip.textContent = label;
+            const rect = wrap.getBoundingClientRect();
+            const x = event.clientX - rect.left;
+            const y = event.clientY - rect.top;
+            tooltip.classList.add("is-visible");
+            const tooltipRect = tooltip.getBoundingClientRect();
+            let left = x + 12;
+            let top = y + 12;
+            const maxLeft = rect.width - tooltipRect.width - 8;
+            const maxTop = rect.height - tooltipRect.height - 8;
+            if (left > maxLeft) left = Math.max(8, x - tooltipRect.width - 12);
+            if (top > maxTop) top = Math.max(8, y - tooltipRect.height - 12);
+            tooltip.style.transform = `translate(${left}px, ${top}px)`;
+          };
+          const hideTooltip = () => {
+            tooltip.classList.remove("is-visible");
+            tooltip.style.transform = "translate(-9999px, -9999px)";
+          };
+          svg.querySelectorAll(".chart-marker").forEach((el) => {
+            const idx = parseInt(el.getAttribute("data-marker-idx") || "-1", 10);
+            const marker = markers[idx];
+            if (!marker) return;
+            el.addEventListener("mouseenter", (event) => showTooltip(event, marker));
+            el.addEventListener("mousemove", (event) => showTooltip(event, marker));
+            el.addEventListener("mouseleave", hideTooltip);
+          });
+        }
 
         const markerBody = priceContainer.querySelector('[data-chart-markers-body="price"]');
         const markerEmpty = priceContainer.querySelector('[data-chart-markers-empty="price"]');

@@ -501,6 +501,26 @@
     .chart-markers { margin-top: 1rem; }
     .chart-marker-table { max-height: 260px; overflow: auto; }
     .chart-marker-table table { min-width: 680px; }
+    .chart-svg .chart-marker { cursor: pointer; }
+    .chart-tooltip {
+      position: absolute;
+      top: 0;
+      left: 0;
+      transform: translate(-9999px, -9999px);
+      background: rgba(15, 23, 42, 0.92);
+      color: #f8fafc;
+      font-size: 0.75rem;
+      padding: 0.45rem 0.6rem;
+      border-radius: 10px;
+      box-shadow: 0 10px 22px -18px rgba(15, 23, 42, 0.6);
+      max-width: 260px;
+      white-space: pre-line;
+      pointer-events: none;
+      opacity: 0;
+      transition: opacity 0.12s ease;
+      z-index: 4;
+    }
+    .chart-tooltip.is-visible { opacity: 1; }
 
     main .card {
       opacity: 0;
