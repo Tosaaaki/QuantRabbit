@@ -691,9 +691,22 @@ async def _runner_loop() -> None:
                         continue
                     if proj_detail:
                         thesis["projection"] = proj_detail
+                    proj_score = None
+                    try:
+                        if isinstance(proj_detail, dict) and proj_detail.get("score") is not None:
+                            proj_score = float(proj_detail.get("score"))
+                    except Exception:
+                        proj_score = None
                     if proj_mult > 1.0:
                         sign = 1 if units > 0 else -1
                         units = int(round(abs(units) * proj_mult)) * sign
+                    if proj_score is not None and proj_score <= config.NEG_SCORE_THRESHOLD:
+                        sign = 1 if units > 0 else -1
+                        reduced = int(round(abs(units) * config.NEG_SCORE_UNIT_FACTOR))
+                        reduced = max(int(config.MIN_UNITS), reduced)
+                        if reduced != abs(units):
+                            units = reduced * sign
+                            thesis["neg_score_unit_factor"] = round(config.NEG_SCORE_UNIT_FACTOR, 3)
                     try:
                         candle_allow, candle_mult = _entry_candle_guard("long" if units > 0 else "short")
                         if not candle_allow:

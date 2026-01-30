@@ -163,3 +163,9 @@ TOUCH_RESET_RATIO: float = max(0.1, min(0.9, _float("PULLBACK_RUNNER_S5_TOUCH_RE
 TOUCH_SOFT_COUNT: int = max(1, _int("PULLBACK_RUNNER_S5_TOUCH_SOFT_COUNT", 2))
 TOUCH_HARD_COUNT: int = max(TOUCH_SOFT_COUNT + 1, _int("PULLBACK_RUNNER_S5_TOUCH_HARD_COUNT", 4))
 TOUCH_UNIT_FACTOR: float = max(0.1, min(1.0, _float("PULLBACK_RUNNER_S5_TOUCH_UNIT_FACTOR", 0.7)))
+
+# Reduce position size when projection score is negative
+NEG_SCORE_THRESHOLD: float = _float("PULLBACK_RUNNER_S5_NEG_SCORE_THRESHOLD", -0.1)
+NEG_SCORE_UNIT_FACTOR: float = max(
+    0.3, min(1.0, _float("PULLBACK_RUNNER_S5_NEG_SCORE_UNIT_FACTOR", 0.7))
+)
