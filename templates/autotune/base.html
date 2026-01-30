@@ -619,7 +619,16 @@
         });
 
         const urlParams = new URLSearchParams(window.location.search);
-        const desired = isLocal ? null : urlParams.get("tab");
+        const validTargets = new Set(
+          buttons.map((button) => button.dataset.tabTarget).filter(Boolean)
+        );
+        let desired = isLocal ? null : urlParams.get("tab");
+        if (!isLocal && desired && !validTargets.has(desired)) {
+          const url = new URL(window.location.href);
+          url.searchParams.delete("tab");
+          window.history.replaceState(null, "", url);
+          desired = null;
+        }
         const selected =
           buttons.find((button) => button.dataset.tabTarget === desired) ||
           buttons.find((button) => button.getAttribute("aria-selected") === "true") ||
@@ -653,7 +662,8 @@
 
       const buildRefreshUrl = () => {
         const url = new URL(window.location.href);
-        const activeTab = document.querySelector("[data-tab-button].is-active")?.dataset?.tabTarget;
+        const rootTabs = document.querySelector("[data-tabs]:not([data-tabs-local])");
+        const activeTab = rootTabs?.querySelector("[data-tab-button].is-active")?.dataset?.tabTarget;
         if (activeTab) url.searchParams.set("tab", activeTab);
         url.searchParams.set("t", Date.now().toString());
         return url.toString();
