@@ -60,6 +60,69 @@ _lite_snapshot_ts: float = 0.0
 app = FastAPI(title="QuantRabbit Console")
 templates = Jinja2Templates(directory=str(TEMPLATE_DIR))
 
+_WORKER_TAG_MAP = {
+    "TrendMA": "macro_trendma",
+    "Donchian55": "macro_donchian55",
+    "H1Momentum": "macro_h1momentum",
+    "LondonMomentum": "london_momentum",
+    "trend_h1": "trend_h1",
+    "manual_swing": "manual_swing",
+    "OnePipMakerS1": "onepip_maker_s1",
+    "M1Scalper": "scalp_m1scalper",
+    "ImpulseRetrace": "scalp_impulseretrace",
+    "ImpulseRetraceScalp": "scalp_impulseretrace",
+    "RangeFader": "scalp_rangefader",
+    "PulseBreak": "scalp_pulsebreak",
+    "BB_RSI": "micro_bbrsi",
+    "BB_RSI_Fast": "micro_bbrsi",
+    "MicroLevelReactor": "micro_levelreactor",
+    "MicroMomentumBurst": "micro_momentumburst",
+    "MicroMomentumStack": "micro_momentumstack",
+    "MicroPullbackEMA": "micro_pullbackema",
+    "MicroRangeBreak": "micro_rangebreak",
+    "MicroVWAPBound": "micro_vwapbound",
+    "MicroVWAPRevert": "micro_vwapbound",
+    "TrendMomentumMicro": "micro_trendmomentum",
+    "MomentumBurst": "micro_momentumburst",
+    "MomentumPulse": "micro_momentumburst",
+    "VolCompressionBreak": "micro_multistrat",
+    "VolSpikeRider": "vol_spike_rider",
+}
+
+
+def _coerce_thesis(value: Any) -> Optional[dict]:
+    if isinstance(value, dict):
+        return value
+    if isinstance(value, str) and value:
+        try:
+            parsed = json.loads(value)
+        except Exception:
+            return None
+        return parsed if isinstance(parsed, dict) else None
+    return None
+
+
+def _infer_worker_name(item: dict) -> Optional[str]:
+    thesis = _coerce_thesis(item.get("entry_thesis"))
+    if isinstance(thesis, dict):
+        worker = thesis.get("worker_id") or thesis.get("worker")
+        if worker:
+            return str(worker)
+        tag = thesis.get("strategy_tag") or thesis.get("strategy")
+    else:
+        tag = None
+
+    if not tag:
+        tag = item.get("strategy_tag") or item.get("strategy")
+    if not tag:
+        return None
+
+    tag_str = str(tag).strip()
+    if not tag_str:
+        return None
+
+    return _WORKER_TAG_MAP.get(tag_str) or _WORKER_TAG_MAP.get(tag_str.lower()) or tag_str
+
 
 def _build_summary(run: dict) -> str:
     lines: list[str] = []
@@ -597,7 +660,8 @@ def _load_recent_trades(limit: int = 50) -> list[dict]:
             SELECT ticket_id, pocket, instrument, units, closed_units, entry_price, close_price,
                    fill_price, pl_pips, realized_pl, commission, financing,
                    entry_time, close_time, close_reason,
-                   state, updated_at
+                   state, updated_at,
+                   strategy_tag, strategy, client_order_id, entry_thesis
             FROM trades
             ORDER BY id DESC
             LIMIT ?
@@ -808,10 +872,12 @@ def _summarise_snapshot(snapshot: Dict[str, Any]) -> Dict[str, Any]:
         pl_pips = _safe_float(item.get("pl_pips"))
         pl_jpy = _safe_float(item.get("realized_pl"))
         kind = "gain" if pl_pips > 0 else "loss" if pl_pips < 0 else "neutral"
+        worker = _infer_worker_name(item)
         recent_trades_display.append(
             {
                 "ticket_id": str(item.get("ticket_id") or ""),
                 "pocket": (item.get("pocket") or "-").strip() or "-",
+                "worker": worker or "-",
                 "direction": direction,
                 "units_abs": units_abs,
                 "entry_price": _opt_float(item.get("entry_price")),

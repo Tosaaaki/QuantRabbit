@@ -2200,7 +2200,8 @@ class PositionManager:
             SELECT ticket_id, pocket, instrument, units, closed_units, entry_price, close_price,
                    fill_price, pl_pips, realized_pl, commission, financing,
                    entry_time, close_time, close_reason,
-                   state, updated_at
+                   state, updated_at,
+                   strategy_tag, strategy, client_order_id, entry_thesis
             FROM trades
             ORDER BY datetime(updated_at) DESC
             LIMIT ?
@@ -2227,6 +2228,10 @@ class PositionManager:
                 "close_reason": row["close_reason"],
                 "state": row["state"],
                 "updated_at": row["updated_at"],
+                "strategy_tag": row["strategy_tag"],
+                "strategy": row["strategy"],
+                "client_order_id": row["client_order_id"],
+                "entry_thesis": row["entry_thesis"],
             }
             for row in rows
         ]

@@ -172,7 +172,8 @@ def _load_recent_trades(limit: int = 50) -> list[dict]:
             SELECT ticket_id, pocket, instrument, units, closed_units, entry_price, close_price,
                    fill_price, pl_pips, realized_pl, commission, financing,
                    entry_time, close_time, close_reason,
-                   state, updated_at
+                   state, updated_at,
+                   strategy_tag, strategy, client_order_id, entry_thesis
             FROM trades
             ORDER BY id DESC
             LIMIT ?
