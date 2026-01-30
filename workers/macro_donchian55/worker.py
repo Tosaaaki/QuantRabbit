@@ -20,6 +20,7 @@ from utils.divergence import apply_divergence_confidence, divergence_bias, diver
 from utils.market_hours import is_market_open
 from utils.oanda_account import get_account_snapshot
 from workers.common.dyn_cap import compute_cap
+from workers.common.quality_gate import current_regime
 from analysis import perf_monitor
 
 from . import config
@@ -35,6 +36,38 @@ _BB_ENTRY_SCALP_REVERT_RATIO = float(os.getenv("BB_ENTRY_SCALP_REVERT_RATIO", "0
 _BB_ENTRY_SCALP_EXT_PIPS = float(os.getenv("BB_ENTRY_SCALP_EXT_PIPS", "2.4"))
 _BB_ENTRY_SCALP_EXT_RATIO = float(os.getenv("BB_ENTRY_SCALP_EXT_RATIO", "0.30"))
 _BB_PIP = 0.01
+_REGIME_GUARD_ENABLED = os.getenv("DON55_REGIME_GUARD_ENABLED", "1").strip().lower() not in {
+    "",
+    "0",
+    "false",
+    "no",
+}
+
+
+def _apply_regime_bias(conf: int, macro_regime: str | None, micro_regime: str | None):
+    if not _REGIME_GUARD_ENABLED:
+        return conf, {"macro": macro_regime, "micro": micro_regime, "bonus": 0}
+    macro = macro_regime or "Mixed"
+    micro = micro_regime or "Mixed"
+    if macro == "Range":
+        return None, {"macro": macro, "micro": micro, "decision": "skip_macro_range"}
+    bonus = 0
+    if macro == "Trend":
+        bonus += 4
+    elif macro == "Breakout":
+        bonus += 3
+    elif macro == "Mixed":
+        bonus -= 2
+    if micro == "Trend":
+        bonus += 2
+    elif micro == "Breakout":
+        bonus += 2
+    elif micro == "Range":
+        bonus -= 3
+    elif micro == "Mixed":
+        bonus -= 1
+    adj = max(0, min(100, int(round(conf + bonus))))
+    return adj, {"macro": macro, "micro": micro, "bonus": bonus}
 
 
 def _bb_float(value):
@@ -415,6 +448,22 @@ async def donchian55_worker() -> None:
                 ceil=95.0,
             )
 
+        macro_regime = current_regime("H4", event_mode=False) or current_regime("H1", event_mode=False)
+        micro_regime = current_regime("M1", event_mode=False)
+        conf = int(signal.get("confidence", 50))
+        conf_adj, regime_meta = _apply_regime_bias(conf, macro_regime, micro_regime)
+        if conf_adj is None:
+            LOG.info(
+                "%s skip: regime_guard macro=%s micro=%s",
+                config.LOG_PREFIX,
+                macro_regime,
+                micro_regime,
+            )
+            continue
+        if conf_adj != conf:
+            signal["confidence"] = conf_adj
+            conf = conf_adj
+
         snap = get_account_snapshot()
         free_ratio_raw = snap.free_margin_ratio
         free_ratio = float(free_ratio_raw or 0.0) if free_ratio_raw is not None else 0.0
@@ -449,7 +498,6 @@ async def donchian55_worker() -> None:
             adx = float(fac_h1.get("adx") or 0.0)
         except Exception:
             adx = 0.0
-        conf = int(signal.get("confidence", 50))
         min_conf = (
             config.CONFIDENCE_MIN_HIGH_VOL
             if atr_pips >= config.CONFIDENCE_MIN_ATR_PIPS
@@ -548,6 +596,8 @@ async def donchian55_worker() -> None:
             "hard_stop_pips": sl_pips,
             "confidence": conf,
         }
+        if regime_meta:
+            entry_thesis["regime_bias"] = regime_meta
         div_meta = divergence_snapshot(fac_h1, max_age_bars=8)
         if div_meta:
             entry_thesis["divergence"] = div_meta

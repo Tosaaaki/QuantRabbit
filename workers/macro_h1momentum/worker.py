@@ -20,6 +20,7 @@ from utils.divergence import apply_divergence_confidence, divergence_bias, diver
 from utils.market_hours import is_market_open
 from utils.oanda_account import get_account_snapshot
 from workers.common.dyn_cap import compute_cap
+from workers.common.quality_gate import current_regime
 from analysis import perf_monitor
 
 from . import config
@@ -35,6 +36,38 @@ _BB_ENTRY_SCALP_REVERT_RATIO = float(os.getenv("BB_ENTRY_SCALP_REVERT_RATIO", "0
 _BB_ENTRY_SCALP_EXT_PIPS = float(os.getenv("BB_ENTRY_SCALP_EXT_PIPS", "2.4"))
 _BB_ENTRY_SCALP_EXT_RATIO = float(os.getenv("BB_ENTRY_SCALP_EXT_RATIO", "0.30"))
 _BB_PIP = 0.01
+_REGIME_GUARD_ENABLED = os.getenv("H1M_REGIME_GUARD_ENABLED", "1").strip().lower() not in {
+    "",
+    "0",
+    "false",
+    "no",
+}
+
+
+def _apply_regime_bias(conf: int, macro_regime: str | None, micro_regime: str | None):
+    if not _REGIME_GUARD_ENABLED:
+        return conf, {"macro": macro_regime, "micro": micro_regime, "bonus": 0}
+    macro = macro_regime or "Mixed"
+    micro = micro_regime or "Mixed"
+    if macro == "Range":
+        return None, {"macro": macro, "micro": micro, "decision": "skip_macro_range"}
+    bonus = 0
+    if macro == "Trend":
+        bonus += 4
+    elif macro == "Breakout":
+        bonus += 3
+    elif macro == "Mixed":
+        bonus -= 2
+    if micro == "Trend":
+        bonus += 2
+    elif micro == "Breakout":
+        bonus += 2
+    elif micro == "Range":
+        bonus -= 3
+    elif micro == "Mixed":
+        bonus -= 1
+    adj = max(0, min(100, int(round(conf + bonus))))
+    return adj, {"macro": macro, "micro": micro, "bonus": bonus}
 
 
 def _bb_float(value):
@@ -402,6 +435,22 @@ async def h1momentum_worker() -> None:
                 ceil=90.0,
             )
 
+        macro_regime = current_regime("H4", event_mode=False) or current_regime("H1", event_mode=False)
+        micro_regime = current_regime("M1", event_mode=False)
+        conf = int(signal.get("confidence", 50))
+        conf_adj, regime_meta = _apply_regime_bias(conf, macro_regime, micro_regime)
+        if conf_adj is None:
+            LOG.info(
+                "%s skip: regime_guard macro=%s micro=%s",
+                config.LOG_PREFIX,
+                macro_regime,
+                micro_regime,
+            )
+            continue
+        if conf_adj != conf:
+            signal["confidence"] = conf_adj
+            conf = conf_adj
+
         snap = get_account_snapshot()
         free_ratio = float(snap.free_margin_ratio or 0.0) if snap.free_margin_ratio is not None else 0.0
         atr_pips = float(fac_h1.get("atr_pips") or 0.0)
@@ -488,6 +537,8 @@ async def h1momentum_worker() -> None:
             "hard_stop_pips": sl_pips,
             "confidence": int(signal.get("confidence", 0) or 0),
         }
+        if regime_meta:
+            entry_thesis["regime_bias"] = regime_meta
         div_meta = divergence_snapshot(fac_h1, max_age_bars=6)
         if div_meta:
             entry_thesis["divergence"] = div_meta

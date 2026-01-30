@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import pathlib
 import sqlite3
 import time
@@ -36,6 +37,13 @@ _RAW_RELAX_TAGS = os.getenv("PERF_GUARD_RELAX_TAGS")
 if _RAW_RELAX_TAGS is None:
     _RAW_RELAX_TAGS = "M1Scalper,ImpulseRetrace"
 _RELAX_TAGS = {tag.strip().lower() for tag in _RAW_RELAX_TAGS.split(",") if tag.strip()}
+_SPLIT_DIRECTIONAL = os.getenv("PERF_GUARD_SPLIT_DIRECTIONAL", "1").strip().lower() not in {
+    "",
+    "0",
+    "false",
+    "no",
+}
+_DIRECTIONAL_TOKENS = {"bear", "bull", "long", "short"}
 
 _REGIME_FILTER_ENABLED = os.getenv("PERF_GUARD_REGIME_FILTER", "1").strip().lower() not in {
     "",
@@ -109,10 +117,25 @@ class PerfScaleDecision:
     avg_pips: float
 
 
+def _is_directional_tag(raw: str) -> bool:
+    tokens = [t for t in re.split(r"[-_/]+", raw) if t]
+    if not tokens:
+        return False
+    if "breakout" in tokens and ("up" in tokens or "down" in tokens):
+        return True
+    if any(t in _DIRECTIONAL_TOKENS for t in tokens):
+        return True
+    if "up" in tokens or "down" in tokens:
+        return True
+    return False
+
+
 def _tag_variants(tag: str) -> Tuple[str, ...]:
     raw = str(tag).strip().lower()
     if not raw:
         return ("",)
+    if _SPLIT_DIRECTIONAL and _is_directional_tag(raw):
+        return (raw,)
     base = raw.split("-", 1)[0].strip()
     if base and base != raw:
         return (raw, base)
