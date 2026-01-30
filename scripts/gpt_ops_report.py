@@ -10,8 +10,14 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import os
+import sys
 from datetime import datetime, timezone
 from pathlib import Path
+
+ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if ROOT_DIR not in sys.path:
+    sys.path.insert(0, ROOT_DIR)
 
 from analytics.policy_diff import normalize_policy_diff
 
