@@ -599,9 +599,10 @@ async def _runner_loop() -> None:
                         guard_pips = min(guard_pips, config.EXTREME_MAX_PIPS)
                         guard_price = guard_pips * config.PIP_VALUE
                         block = False
-                        if side == "long" and entry_price >= recent_high - guard_price:
+                        # Avoid catching exact bottoms/tops: require a small bounce
+                        if side == "long" and entry_price <= recent_low + guard_price:
                             block = True
-                        elif side == "short" and entry_price <= recent_low + guard_price:
+                        elif side == "short" and entry_price >= recent_high - guard_price:
                             block = True
                         if block:
                             if now_mono - last_extreme_log > 30.0:
