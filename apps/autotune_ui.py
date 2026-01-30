@@ -198,6 +198,21 @@ def _dashboard_defaults(error: Optional[str] = None) -> Dict[str, Any]:
             "weekly": [],
             "monthly": [],
         },
+        "ytd_summary": {
+            "year_start": None,
+            "timezone": "JST",
+            "exclude_manual": True,
+            "start_balance": None,
+            "start_balance_source": None,
+            "current_balance": None,
+            "balance_growth_pct": None,
+            "bot_profit_jpy": 0.0,
+            "bot_profit_pips": 0.0,
+            "bot_return_pct": None,
+            "trades": 0,
+            "wins": 0,
+            "losses": 0,
+        },
         "highlights": [],  # backward compatibility (top winners / losers)
         "highlights_top": [],
         "highlights_recent": [],
@@ -1160,6 +1175,10 @@ def _summarise_snapshot(snapshot: Dict[str, Any]) -> Dict[str, Any]:
     profit_tables = metrics_snapshot.get("profit_tables")
     if isinstance(profit_tables, dict):
         base["profit_tables"] = profit_tables
+
+    ytd_summary = metrics_snapshot.get("ytd_summary")
+    if isinstance(ytd_summary, dict):
+        base["ytd_summary"] = ytd_summary
 
     gen_dt = _parse_dt(snapshot.get("generated_at"))
     base["generated_at"] = snapshot.get("generated_at")

@@ -85,6 +85,25 @@
         <div class="stat-sub">1L eq {{ "%+.1f"|format(dashboard.performance.weekly_pl_eq1l) }}p</div>
       </div>
       <div class="stat-card">
+        <div class="stat-label">年初残高比（手動除外）</div>
+        {% if dashboard.ytd_summary.bot_return_pct is not none %}
+          {% set ytd_class = 'stat-positive' if dashboard.ytd_summary.bot_return_pct >= 0 else 'stat-negative' %}
+          <div class="stat-value {{ ytd_class }}">{{ "%+.2f"|format(dashboard.ytd_summary.bot_return_pct) }}%</div>
+        {% else %}
+          <div class="stat-value">-</div>
+        {% endif %}
+        <div class="stat-sub">YTD {{ "%+.0f"|format(dashboard.ytd_summary.bot_profit_jpy) }} 円</div>
+        {% if dashboard.ytd_summary.start_balance %}
+          {% if dashboard.ytd_summary.start_balance_source == "metric" %}
+            <div class="stat-sub">開始残高 {{ "%.0f"|format(dashboard.ytd_summary.start_balance) }} 円</div>
+          {% else %}
+            <div class="stat-sub">開始残高 -</div>
+          {% endif %}
+        {% else %}
+          <div class="stat-sub">開始残高 -</div>
+        {% endif %}
+      </div>
+      <div class="stat-card">
         <div class="stat-label">勝率</div>
         {% if dashboard.performance.recent_closed %}
           <div class="stat-value">{{ "%.1f"|format(dashboard.performance.win_rate_percent) }}%</div>

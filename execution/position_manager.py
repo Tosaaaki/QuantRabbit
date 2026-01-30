@@ -485,6 +485,24 @@ def _load_latest_metric(metric: str) -> float | None:
         return None
 
 
+def _load_first_metric_since(metric: str, since_ts: str) -> float | None:
+    if not _METRICS_DB.exists():
+        return None
+    try:
+        con = sqlite3.connect(_METRICS_DB, timeout=_METRICS_READ_TIMEOUT_SEC)
+        cur = con.execute(
+            "SELECT value FROM metrics WHERE metric = ? AND ts >= ? ORDER BY ts ASC LIMIT 1",
+            (metric, since_ts),
+        )
+        row = cur.fetchone()
+        con.close()
+        if not row:
+            return None
+        return float(row[0])
+    except Exception:
+        return None
+
+
 class PositionManager:
     def __init__(self):
         self.con = _open_trades_db()
@@ -1852,10 +1870,18 @@ class PositionManager:
             "FROM trades WHERE close_time IS NOT NULL"
         ).fetchall()
         year_start = now_jst.replace(month=1, day=1, hour=0, minute=0, second=0, microsecond=0)
+        year_start_utc = year_start.astimezone(timezone.utc).replace(tzinfo=None).isoformat()
         agent_prefixes = tuple(p for p in ("qr-", "qs-") if p)
         daily_table: dict[str, dict] = {}
         weekly_table: dict[str, dict] = {}
         monthly_table: dict[str, dict] = {}
+        ytd_bot = {
+            "pips": 0.0,
+            "jpy": 0.0,
+            "trades": 0,
+            "wins": 0,
+            "losses": 0,
+        }
 
         def _is_agent_trade(pocket: str, client_id: str | None) -> bool:
             if pocket in _KNOWN_POCKETS:
@@ -1934,6 +1960,13 @@ class PositionManager:
                         elif pl_pips < 0:
                             bkt["losses"] += 1
                             bkt["loss_pips"] += abs(pl_pips)
+                    ytd_bot["pips"] += pl_pips
+                    ytd_bot["jpy"] += pl_jpy
+                    ytd_bot["trades"] += 1
+                    if pl_pips > 0:
+                        ytd_bot["wins"] += 1
+                    elif pl_pips < 0:
+                        ytd_bot["losses"] += 1
 
         def _finalise(data: dict) -> dict:
             trades = data["trades"]
@@ -1976,6 +2009,15 @@ class PositionManager:
         if equity_nav is None or equity_nav <= 0:
             equity_source = "unknown"
             equity_nav = None
+
+        start_balance = _load_first_metric_since("account.balance", year_start_utc)
+        start_balance_source = "metric"
+        if start_balance is None or start_balance <= 0:
+            start_balance = None
+            start_balance_source = "missing"
+        current_balance = _load_latest_metric("account.balance")
+        if current_balance is not None and current_balance <= 0:
+            current_balance = None
 
         daily_change = {
             "pips": round(daily["pips"] - yesterday["pips"], 2),
@@ -2025,6 +2067,30 @@ class PositionManager:
         profit_tables["weekly"].sort(key=lambda r: r["label"], reverse=True)
         profit_tables["monthly"].sort(key=lambda r: r["label"], reverse=True)
 
+        ytd_summary = {
+            "year_start": year_start.date().isoformat(),
+            "timezone": "JST",
+            "exclude_manual": True,
+            "start_balance": start_balance,
+            "start_balance_source": start_balance_source,
+            "current_balance": current_balance,
+            "balance_growth_pct": None,
+            "bot_profit_jpy": round(ytd_bot["jpy"], 2),
+            "bot_profit_pips": round(ytd_bot["pips"], 2),
+            "bot_return_pct": None,
+            "trades": ytd_bot["trades"],
+            "wins": ytd_bot["wins"],
+            "losses": ytd_bot["losses"],
+        }
+        if start_balance and current_balance:
+            ytd_summary["balance_growth_pct"] = round(
+                (current_balance - start_balance) * 100.0 / start_balance, 2
+            )
+        if start_balance:
+            ytd_summary["bot_return_pct"] = round(
+                ytd_summary["bot_profit_jpy"] * 100.0 / start_balance, 2
+            )
+
         return {
             "daily": daily,
             "yesterday": yesterday,
@@ -2034,6 +2100,7 @@ class PositionManager:
             "last_trade_at": latest_close.isoformat() if latest_close else None,
             "pockets": pockets_final,
             "profit_tables": profit_tables,
+            "ytd_summary": ytd_summary,
         }
 
     def fetch_recent_trades(self, limit: int = 50) -> list[dict]:
