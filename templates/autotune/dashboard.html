@@ -186,7 +186,7 @@
 
   </div>
 
-      <div class="card" data-tabs data-tabs-local data-chart-tabs>
+      <div class="card" data-tabs data-tabs-local data-tabs-no-persist data-chart-tabs>
         <div class="chart-header">
           <div>
             <h2>パフォーマンスチャート</h2>
@@ -386,7 +386,7 @@
         {% endif %}
       </div>
 
-      <div class="card" data-tabs data-tabs-local>
+      <div class="card" data-tabs data-tabs-local data-tabs-key="profit">
         <div class="chart-header">
           <div>
             <h2>利益表（{{ dashboard.profit_tables.year_start or '-' }}〜 / {{ dashboard.profit_tables.timezone }} / 手動除外）</h2>

@@ -527,6 +527,11 @@
       transform: translateY(12px);
       animation: cardIn 0.6s ease forwards;
     }
+    .no-anim main .card {
+      opacity: 1;
+      transform: none;
+      animation: none;
+    }
     main .card:nth-of-type(1) { animation-delay: 0.06s; }
     main .card:nth-of-type(2) { animation-delay: 0.12s; }
     main .card:nth-of-type(3) { animation-delay: 0.18s; }
@@ -562,6 +567,18 @@
       main .card { opacity: 1; transform: none; }
     }
   </style>
+  <script>
+    (() => {
+      try {
+        if (sessionStorage.getItem("qr_refreshing") === "1") {
+          document.documentElement.classList.add("no-anim");
+          sessionStorage.removeItem("qr_refreshing");
+        }
+      } catch (err) {
+        // ignore storage errors
+      }
+    })();
+  </script>
 </head>
 <body>
   <header>
@@ -584,7 +601,7 @@
       if (!containers.length) return;
       document.body.classList.add("tabs-ready");
 
-      containers.forEach((container) => {
+      containers.forEach((container, index) => {
         const buttons = Array.from(container.querySelectorAll("[data-tab-button]")).filter(
           (button) => button.closest("[data-tabs]") === container
         );
@@ -592,6 +609,9 @@
           (panel) => panel.closest("[data-tabs]") === container
         );
         const isLocal = container.hasAttribute("data-tabs-local");
+        const persistDisabled = container.hasAttribute("data-tabs-no-persist");
+        const keyBase = container.getAttribute("data-tabs-key") || container.getAttribute("id") || `tabs-${index}`;
+        const storageKey = isLocal ? `qr_tabs_local_${keyBase}` : "qr_tabs_root";
         if (!buttons.length) return;
 
         const activateTab = (name, options = {}) => {
@@ -612,6 +632,14 @@
             const url = new URL(window.location.href);
             url.searchParams.set("tab", name);
             window.history.replaceState(null, "", url);
+          }
+
+          if (!persistDisabled && name) {
+            try {
+              sessionStorage.setItem(storageKey, name);
+            } catch (err) {
+              // ignore storage errors
+            }
           }
 
           if (focus) {
@@ -642,12 +670,31 @@
         const validTargets = new Set(
           buttons.map((button) => button.dataset.tabTarget).filter(Boolean)
         );
-        let desired = isLocal ? null : urlParams.get("tab");
-        if (!isLocal && desired && !validTargets.has(desired)) {
-          const url = new URL(window.location.href);
-          url.searchParams.delete("tab");
-          window.history.replaceState(null, "", url);
-          desired = null;
+        let desired = null;
+        if (isLocal) {
+          if (!persistDisabled) {
+            try {
+              desired = sessionStorage.getItem(storageKey);
+            } catch (err) {
+              desired = null;
+            }
+          }
+        } else {
+          desired = urlParams.get("tab");
+          if (desired && !validTargets.has(desired)) {
+            const url = new URL(window.location.href);
+            url.searchParams.delete("tab");
+            window.history.replaceState(null, "", url);
+            desired = null;
+          }
+          if (!desired) {
+            try {
+              const stored = sessionStorage.getItem(storageKey);
+              if (stored && validTargets.has(stored)) desired = stored;
+            } catch (err) {
+              // ignore storage errors
+            }
+          }
         }
         const selected =
           buttons.find((button) => button.dataset.tabTarget === desired) ||
@@ -698,7 +745,8 @@
 
       const rememberScroll = () => {
         try {
-          const activeTab = document.querySelector("[data-tab-button].is-active")?.dataset?.tabTarget;
+          const rootTabs = document.querySelector("[data-tabs]:not([data-tabs-local])");
+          const activeTab = rootTabs?.querySelector("[data-tab-button].is-active")?.dataset?.tabTarget;
           const payload = {
             y: window.scrollY || 0,
             at: Date.now(),
@@ -740,6 +788,11 @@
             return;
           }
           if (statusEl) statusEl.textContent = "更新中...";
+          try {
+            sessionStorage.setItem("qr_refreshing", "1");
+          } catch (err) {
+            // ignore storage errors
+          }
           rememberScroll();
           window.location.assign(buildRefreshUrl());
         }, intervalSec * 1000);
@@ -748,6 +801,11 @@
       if (refreshButton) {
         refreshButton.addEventListener("click", () => {
           if (statusEl) statusEl.textContent = "更新中...";
+          try {
+            sessionStorage.setItem("qr_refreshing", "1");
+          } catch (err) {
+            // ignore storage errors
+          }
           rememberScroll();
           window.location.assign(buildRefreshUrl());
         });
