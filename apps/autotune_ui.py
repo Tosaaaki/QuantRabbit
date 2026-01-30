@@ -881,7 +881,7 @@ def _build_live_snapshot() -> dict:
             new_trades = []
 
     try:
-        open_positions = pm.get_open_positions()
+        open_positions = pm.get_open_positions(include_unknown=True)
     except Exception:
         open_positions = {}
 
@@ -931,7 +931,7 @@ def _build_lite_snapshot() -> dict:
         if PositionManager is not None:
             pm = PositionManager()
             try:
-                open_positions = pm.get_open_positions() or {}
+                open_positions = pm.get_open_positions(include_unknown=True) or {}
             except Exception:
                 open_positions = {}
             finally:
@@ -1248,7 +1248,7 @@ def _summarise_snapshot(snapshot: Dict[str, Any]) -> Dict[str, Any]:
     total_long_units = 0.0
     total_short_units = 0.0
     for name, info in open_positions.items():
-        if name == "__net__":
+        if name.startswith("__"):
             continue
         trades = info.get("open_trades") or []
         total_positions += len(trades)

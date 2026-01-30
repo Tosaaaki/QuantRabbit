@@ -1781,7 +1781,7 @@ class PositionManager:
         if client_id and trade_id:
             self._client_cache[client_id] = trade_id
 
-    def get_open_positions(self) -> dict[str, dict]:
+    def get_open_positions(self, include_unknown: bool = False) -> dict[str, dict]:
         """現在の保有ポジションを pocket 単位で集計して返す"""
         now_mono = time.monotonic()
         if self._last_positions and now_mono < self._next_open_fetch_after:
@@ -1851,7 +1851,8 @@ class PositionManager:
                 trade_id = tr.get("id") or tr.get("tradeID")
                 pocket = self._pocket_cache.get(str(trade_id), _MANUAL_POCKET_NAME)
             if pocket not in _KNOWN_POCKETS:
-                pocket = _MANUAL_POCKET_NAME
+                if not (include_unknown and pocket == "unknown"):
+                    pocket = _MANUAL_POCKET_NAME
             units = int(tr.get("currentUnits", 0))
             if units == 0:
                 continue
@@ -1953,13 +1954,17 @@ class PositionManager:
                 trade_entry["strategy_tag"] = norm_tag
             # EXIT誤爆防止: エージェント管理ポケットかつ strategy_tag 不明なら除外
             if pocket in agent_pockets and not trade_entry.get("strategy_tag"):
-                logging.warning(
-                    "[PositionManager] skip open trade without strategy_tag pocket=%s trade_id=%s client_id=%s",
-                    pocket,
-                    trade_id,
-                    trade_entry.get("client_id"),
-                )
-                continue
+                if include_unknown:
+                    trade_entry["strategy_tag"] = "unknown"
+                    trade_entry["missing_strategy_tag"] = True
+                else:
+                    logging.warning(
+                        "[PositionManager] skip open trade without strategy_tag pocket=%s trade_id=%s client_id=%s",
+                        pocket,
+                        trade_id,
+                        trade_entry.get("client_id"),
+                    )
+                    continue
             info["open_trades"].append(trade_entry)
             prev_total_units = info["units"]
             new_total_units = prev_total_units + units

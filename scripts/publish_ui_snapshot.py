@@ -377,7 +377,7 @@ def main() -> int:
                 metrics = {}
             if (not LITE_SNAPSHOT_FAST) or INCLUDE_POSITIONS:
                 try:
-                    open_positions = pm.get_open_positions()
+                    open_positions = pm.get_open_positions(include_unknown=True)
                 except Exception as exc:  # noqa: BLE001
                     logging.warning("[UI] get_open_positions failed: %s", exc)
                     open_positions = {}
@@ -392,7 +392,7 @@ def main() -> int:
             logging.warning("[UI] sync_trades failed: %s", exc)
             new_trades = []
         try:
-            open_positions = pm.get_open_positions()
+            open_positions = pm.get_open_positions(include_unknown=True)
         except Exception as exc:  # noqa: BLE001
             logging.warning("[UI] get_open_positions failed: %s", exc)
             open_positions = {}
