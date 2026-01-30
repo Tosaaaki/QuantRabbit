@@ -740,6 +740,8 @@ def _build_chart_data(
             continue
         units = _coerce_float(row["units"]) or 0.0
         side = "long" if units > 0 else "short" if units < 0 else "flat"
+        if side == "flat":
+            continue
         strategy = row["strategy_tag"] or row["strategy"]
         entry_time = row["entry_time"]
         close_time = row["close_time"]
@@ -805,20 +807,26 @@ def _build_chart_data(
         if candles:
             candles = [row for row in candles if row[0] >= start_dt]
         candles = _downsample_rows(candles, spec["max_points"])
+        range_start_ms = _to_ms(start_dt)
+        range_end_ms = _to_ms(now)
         if candles:
+            range_start_ms = _to_ms(candles[0][0])
+            range_end_ms = _to_ms(candles[-1][0])
             start_label = candles[0][0].astimezone(timezone.utc).strftime("%m/%d %H:%M")
             end_label = candles[-1][0].astimezone(timezone.utc).strftime("%m/%d %H:%M")
             range_label = f"{start_label} - {end_label} UTC"
         else:
             range_label = None
-        range_markers = [m for m in markers if m["ts_ms"] >= _to_ms(start_dt)]
+        range_markers = [
+            m for m in markers if range_start_ms <= m["ts_ms"] <= range_end_ms
+        ]
         if _CHART_MARKERS_MAX > 0 and len(range_markers) > _CHART_MARKERS_MAX:
             range_markers = range_markers[-_CHART_MARKERS_MAX :]
         price_ranges[key] = {
             "label": key,
             "tf": spec["tf"],
-            "start_ts": _to_ms(start_dt),
-            "end_ts": _to_ms(now),
+            "start_ts": range_start_ms,
+            "end_ts": range_end_ms,
             "candles": [
                 [_to_ms(dt), round(o, 5), round(h, 5), round(l, 5), round(c, 5)]
                 for dt, o, h, l, c in candles
