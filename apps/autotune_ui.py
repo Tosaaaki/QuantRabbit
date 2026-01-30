@@ -46,6 +46,11 @@ _LITE_SNAPSHOT_FAST = (
     os.getenv("UI_SNAPSHOT_LITE_MODE", "full").strip().lower()
     in {"fast", "minimal"}
 )
+_INCLUDE_POSITIONS = os.getenv("UI_SNAPSHOT_INCLUDE_POSITIONS", "1").strip().lower() in {
+    "1",
+    "true",
+    "yes",
+}
 _AUTO_REFRESH_SEC = max(5, int(os.getenv("UI_AUTO_REFRESH_SEC", "15")))
 _RECENT_TRADES_LIMIT = max(20, int(os.getenv("UI_RECENT_TRADES_LIMIT", "80")))
 _RECENT_TRADES_DISPLAY = max(
@@ -294,6 +299,12 @@ def _dashboard_defaults(error: Optional[str] = None) -> Dict[str, Any]:
             "wins": 0,
             "losses": 0,
         },
+        "charts": {
+            "available": False,
+            "performance": {"default_range": None, "ranges": {}},
+            "price": {"default_range": None, "ranges": {}},
+        },
+        "charts_json": "{}",
         "highlights": [],  # backward compatibility (top winners / losers)
         "highlights_top": [],
         "highlights_recent": [],
@@ -912,7 +923,7 @@ def _build_lite_snapshot() -> dict:
     recent_trades = _load_recent_trades(limit=_RECENT_TRADES_LIMIT)
     metrics: dict[str, Any] = {}
     open_positions: dict[str, Any] = {}
-    if not _LITE_SNAPSHOT_FAST:
+    if (not _LITE_SNAPSHOT_FAST) or _INCLUDE_POSITIONS:
         try:
             from execution.position_manager import PositionManager
         except Exception:
@@ -1049,11 +1060,13 @@ def _summarise_snapshot(snapshot: Dict[str, Any]) -> Dict[str, Any]:
         pl_jpy = _safe_float(item.get("realized_pl"))
         kind = "gain" if pl_pips > 0 else "loss" if pl_pips < 0 else "neutral"
         worker = _infer_worker_name(item)
+        strategy = item.get("strategy_tag") or item.get("strategy") or "-"
         recent_trades_display.append(
             {
                 "ticket_id": str(item.get("ticket_id") or ""),
                 "pocket": (item.get("pocket") or "-").strip() or "-",
                 "worker": worker or "-",
+                "strategy": strategy,
                 "direction": direction,
                 "units_abs": units_abs,
                 "entry_price": _opt_float(item.get("entry_price")),
@@ -1476,6 +1489,15 @@ def _summarise_snapshot(snapshot: Dict[str, Any]) -> Dict[str, Any]:
     ytd_summary = metrics_snapshot.get("ytd_summary")
     if isinstance(ytd_summary, dict):
         base["ytd_summary"] = ytd_summary
+
+    chart_data = metrics_snapshot.get("chart_data")
+    if isinstance(chart_data, dict) and chart_data:
+        base["charts"] = chart_data
+        try:
+            payload = json.dumps(chart_data, ensure_ascii=True, separators=(",", ":"))
+            base["charts_json"] = payload.replace("<", "\\u003c")
+        except Exception:
+            base["charts_json"] = "{}"
 
     gen_dt = _parse_dt(snapshot.get("generated_at"))
     base["generated_at"] = snapshot.get("generated_at")

@@ -8,6 +8,8 @@ import copy
 import sqlite3
 import pathlib
 import fcntl
+import math
+from bisect import bisect_left
 from contextlib import contextmanager
 from datetime import datetime, timezone, timedelta
 from typing import Dict, Tuple
@@ -65,6 +67,16 @@ _DB_FILE_LOCK_TIMEOUT = float(os.getenv("POSITION_MANAGER_DB_FILE_LOCK_TIMEOUT",
 _METRICS_READ_TIMEOUT_SEC = float(
     os.getenv("POSITION_MANAGER_METRICS_TIMEOUT_SEC", "0.2")
 )
+_CANDLE_DIR = pathlib.Path(os.getenv("UI_CANDLE_DIR", "logs/oanda"))
+_CHARTS_ENABLED = os.getenv("UI_CHARTS_ENABLED", "1").strip().lower() not in {
+    "",
+    "0",
+    "false",
+    "no",
+}
+_CHART_MAX_POINTS = int(os.getenv("UI_CHART_MAX_POINTS", "260"))
+_CHART_PRICE_MAX_POINTS = int(os.getenv("UI_CHART_PRICE_MAX_POINTS", "320"))
+_CHART_MARKERS_MAX = int(os.getenv("UI_CHART_MARKERS_MAX", "140"))
 _HOURLY_LOOKBACK_HOURS = max(
     6, int(os.getenv("POSITION_MANAGER_HOURLY_LOOKBACK_HOURS", "24"))
 )
@@ -535,6 +547,300 @@ def _load_metric_series(metric: str, since_ts: str) -> list[tuple[datetime, floa
             continue
         series.append((dt, val))
     return series
+
+
+def _coerce_float(value: object) -> float | None:
+    try:
+        if value is None:
+            return None
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _downsample_rows(rows: list[tuple], max_points: int) -> list[tuple]:
+    if max_points <= 0 or len(rows) <= max_points:
+        return rows
+    step = max(1, int(math.ceil(len(rows) / float(max_points))))
+    sampled = rows[::step]
+    if sampled and sampled[-1] != rows[-1]:
+        sampled.append(rows[-1])
+    return sampled
+
+
+def _load_latest_candles(tf: str) -> list[tuple[datetime, float, float, float, float]]:
+    path = _CANDLE_DIR / f"candles_{tf}_latest.json"
+    if not path.exists():
+        return []
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return []
+    raw = payload.get("candles") or []
+    candles: list[tuple[datetime, float, float, float, float]] = []
+    for item in raw:
+        ts = item.get("time") or item.get("timestamp")
+        if not ts:
+            continue
+        try:
+            dt = _parse_timestamp(ts)
+        except Exception:
+            continue
+        if not isinstance(dt, datetime):
+            continue
+        open_v = _coerce_float(item.get("open"))
+        high_v = _coerce_float(item.get("high"))
+        low_v = _coerce_float(item.get("low"))
+        close_v = _coerce_float(item.get("close"))
+        if open_v is None or high_v is None or low_v is None or close_v is None:
+            mid = item.get("mid") or {}
+            if isinstance(mid, dict):
+                open_v = open_v if open_v is not None else _coerce_float(mid.get("o"))
+                high_v = high_v if high_v is not None else _coerce_float(mid.get("h"))
+                low_v = low_v if low_v is not None else _coerce_float(mid.get("l"))
+                close_v = close_v if close_v is not None else _coerce_float(mid.get("c"))
+        if open_v is None or high_v is None or low_v is None or close_v is None:
+            continue
+        candles.append((dt, open_v, high_v, low_v, close_v))
+    candles.sort(key=lambda row: row[0])
+    return candles
+
+
+def _build_chart_data(
+    *,
+    now: datetime,
+    year_start: datetime,
+    closed_events: list[tuple[datetime, float, float]],
+    con: sqlite3.Connection,
+) -> dict:
+    if not _CHARTS_ENABLED:
+        return {}
+
+    def _to_ms(dt: datetime) -> int:
+        return int(dt.timestamp() * 1000)
+
+    perf_specs = {
+        "24h": {"delta": timedelta(hours=24), "max_points": min(_CHART_MAX_POINTS, 240)},
+        "7d": {"delta": timedelta(days=7), "max_points": _CHART_MAX_POINTS},
+        "30d": {"delta": timedelta(days=30), "max_points": _CHART_MAX_POINTS},
+        "ytd": {"start": year_start, "max_points": max(_CHART_MAX_POINTS, 320)},
+    }
+
+    price_specs = {
+        "24h": {"delta": timedelta(hours=24), "tf": "M1", "max_points": _CHART_PRICE_MAX_POINTS},
+        "7d": {"delta": timedelta(days=7), "tf": "H1", "max_points": _CHART_PRICE_MAX_POINTS},
+        "30d": {"delta": timedelta(days=30), "tf": "H4", "max_points": _CHART_PRICE_MAX_POINTS},
+    }
+
+    closed_events.sort(key=lambda row: row[0])
+    event_times = [row[0] for row in closed_events]
+    cum_jpy: list[float] = []
+    cum_pips: list[float] = []
+    total_jpy = 0.0
+    total_pips = 0.0
+    for _, jpy, pips in closed_events:
+        total_jpy += float(jpy)
+        total_pips += float(pips)
+        cum_jpy.append(total_jpy)
+        cum_pips.append(total_pips)
+
+    def _series_since(start_dt: datetime) -> tuple[list[tuple[datetime, float]], list[tuple[datetime, float]], int]:
+        if not event_times:
+            return [], [], 0
+        idx = bisect_left(event_times, start_dt)
+        base_jpy = cum_jpy[idx - 1] if idx > 0 else 0.0
+        base_pips = cum_pips[idx - 1] if idx > 0 else 0.0
+        jpy_points: list[tuple[datetime, float]] = []
+        pips_points: list[tuple[datetime, float]] = []
+        if idx < len(event_times):
+            jpy_points.append((start_dt, 0.0))
+            pips_points.append((start_dt, 0.0))
+        for i in range(idx, len(event_times)):
+            jpy_points.append((event_times[i], cum_jpy[i] - base_jpy))
+            pips_points.append((event_times[i], cum_pips[i] - base_pips))
+        if jpy_points:
+            last_val_jpy = jpy_points[-1][1]
+            last_val_pips = pips_points[-1][1]
+            if event_times[-1] < now:
+                jpy_points.append((now, last_val_jpy))
+                pips_points.append((now, last_val_pips))
+        return jpy_points, pips_points, max(0, len(event_times) - idx)
+
+    perf_ranges: dict[str, dict] = {}
+    for key, spec in perf_specs.items():
+        start_dt = spec.get("start") or (now - spec["delta"])
+        jpy_points, pips_points, trade_count = _series_since(start_dt)
+        if not jpy_points:
+            perf_ranges[key] = {
+                "label": key,
+                "start_ts": _to_ms(start_dt),
+                "end_ts": _to_ms(now),
+                "pnl_jpy": [],
+                "pnl_pips": [],
+                "trades": trade_count,
+            }
+            continue
+        jpy_points = _downsample_rows(jpy_points, spec["max_points"])
+        pips_points = _downsample_rows(pips_points, spec["max_points"])
+        perf_ranges[key] = {
+            "label": key,
+            "start_ts": _to_ms(start_dt),
+            "end_ts": _to_ms(now),
+            "pnl_jpy": [[_to_ms(dt), round(val, 2)] for dt, val in jpy_points],
+            "pnl_pips": [[_to_ms(dt), round(val, 2)] for dt, val in pips_points],
+            "trades": trade_count,
+        }
+
+    def _marker_label(
+        *,
+        kind: str,
+        side: str,
+        pocket: str,
+        strategy: str | None,
+        ts: datetime,
+        price: float,
+    ) -> str:
+        ts_label = ts.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+        parts = [kind.capitalize(), side.capitalize(), pocket]
+        if strategy:
+            parts.append(strategy)
+        parts.append(ts_label)
+        parts.append(f"@ {price:.3f}")
+        return " ".join(p for p in parts if p)
+
+    price_ranges: dict[str, dict] = {}
+    earliest_price_start = min(
+        (now - spec["delta"] for spec in price_specs.values()),
+        default=now - timedelta(days=1),
+    )
+    markers: list[dict] = []
+    agent_prefixes = ("qr-", "qs-")
+
+    def _is_agent_trade(pocket: str, client_id: str | None) -> bool:
+        if pocket in _KNOWN_POCKETS:
+            return True
+        if client_id:
+            return str(client_id).startswith(agent_prefixes)
+        return False
+
+    try:
+        cur = con.execute(
+            "SELECT entry_time, close_time, entry_price, close_price, fill_price, "
+            "units, pocket, strategy_tag, strategy, client_order_id "
+            "FROM trades WHERE entry_time IS NOT NULL OR close_time IS NOT NULL"
+        )
+        rows = cur.fetchall()
+    except Exception:
+        rows = []
+
+    for row in rows:
+        pocket = (row["pocket"] or "unknown").lower()
+        client_id = row["client_order_id"]
+        if pocket == _MANUAL_POCKET_NAME or not _is_agent_trade(pocket, client_id):
+            continue
+        units = _coerce_float(row["units"]) or 0.0
+        side = "long" if units > 0 else "short" if units < 0 else "flat"
+        strategy = row["strategy_tag"] or row["strategy"]
+        entry_time = row["entry_time"]
+        close_time = row["close_time"]
+        entry_price = _coerce_float(row["entry_price"]) or _coerce_float(row["fill_price"])
+        close_price = _coerce_float(row["close_price"])
+
+        if entry_time and entry_price is not None:
+            try:
+                entry_dt = _parse_timestamp(entry_time)
+            except Exception:
+                entry_dt = None
+            if entry_dt and entry_dt >= earliest_price_start:
+                markers.append(
+                    {
+                        "ts_ms": _to_ms(entry_dt),
+                        "price": round(entry_price, 5),
+                        "side": side,
+                        "kind": "entry",
+                        "pocket": pocket,
+                        "strategy": strategy,
+                        "label": _marker_label(
+                            kind="entry",
+                            side=side,
+                            pocket=pocket,
+                            strategy=strategy,
+                            ts=entry_dt,
+                            price=entry_price,
+                        ),
+                    }
+                )
+        if close_time and close_price is not None:
+            try:
+                close_dt = _parse_timestamp(close_time)
+            except Exception:
+                close_dt = None
+            if close_dt and close_dt >= earliest_price_start:
+                markers.append(
+                    {
+                        "ts_ms": _to_ms(close_dt),
+                        "price": round(close_price, 5),
+                        "side": side,
+                        "kind": "exit",
+                        "pocket": pocket,
+                        "strategy": strategy,
+                        "label": _marker_label(
+                            kind="exit",
+                            side=side,
+                            pocket=pocket,
+                            strategy=strategy,
+                            ts=close_dt,
+                            price=close_price,
+                        ),
+                    }
+                )
+
+    markers.sort(key=lambda m: m["ts_ms"])
+    if _CHART_MARKERS_MAX > 0 and len(markers) > _CHART_MARKERS_MAX:
+        markers = markers[-_CHART_MARKERS_MAX :]
+
+    for key, spec in price_specs.items():
+        start_dt = now - spec["delta"]
+        candles = _load_latest_candles(spec["tf"])
+        if candles:
+            candles = [row for row in candles if row[0] >= start_dt]
+        candles = _downsample_rows(candles, spec["max_points"])
+        if candles:
+            start_label = candles[0][0].astimezone(timezone.utc).strftime("%m/%d %H:%M")
+            end_label = candles[-1][0].astimezone(timezone.utc).strftime("%m/%d %H:%M")
+            range_label = f"{start_label} - {end_label} UTC"
+        else:
+            range_label = None
+        range_markers = [m for m in markers if m["ts_ms"] >= _to_ms(start_dt)]
+        if _CHART_MARKERS_MAX > 0 and len(range_markers) > _CHART_MARKERS_MAX:
+            range_markers = range_markers[-_CHART_MARKERS_MAX :]
+        price_ranges[key] = {
+            "label": key,
+            "tf": spec["tf"],
+            "start_ts": _to_ms(start_dt),
+            "end_ts": _to_ms(now),
+            "candles": [
+                [_to_ms(dt), round(o, 5), round(h, 5), round(l, 5), round(c, 5)]
+                for dt, o, h, l, c in candles
+            ],
+            "markers": range_markers,
+            "range_label": range_label,
+        }
+
+    has_perf = any(r.get("pnl_jpy") for r in perf_ranges.values())
+    has_price = any(r.get("candles") for r in price_ranges.values())
+    return {
+        "available": bool(has_perf or has_price),
+        "generated_at": now.isoformat(),
+        "performance": {
+            "default_range": "7d",
+            "ranges": perf_ranges,
+        },
+        "price": {
+            "default_range": "24h",
+            "ranges": price_ranges,
+        },
+    }
 
 
 class PositionManager:
@@ -1928,6 +2234,7 @@ class PositionManager:
                 "wins": 0,
                 "losses": 0,
             }
+        closed_events: list[tuple[datetime, float, float]] = []
 
         def _is_agent_trade(pocket: str, client_id: str | None) -> bool:
             if pocket in _KNOWN_POCKETS:
@@ -2013,6 +2320,8 @@ class PositionManager:
                         ytd_bot["wins"] += 1
                     elif pl_pips < 0:
                         ytd_bot["losses"] += 1
+            if pocket != _MANUAL_POCKET_NAME and _is_agent_trade(pocket, client_id):
+                closed_events.append((close_dt, pl_jpy, pl_pips))
 
             if close_dt_jst >= start_hour and pocket != _MANUAL_POCKET_NAME:
                 if _is_agent_trade(pocket, client_id):
@@ -2234,6 +2543,13 @@ class PositionManager:
             "hours": hourly_rows,
         }
 
+        chart_data = _build_chart_data(
+            now=now,
+            year_start=year_start,
+            closed_events=closed_events,
+            con=self.con,
+        )
+
         return {
             "daily": daily,
             "yesterday": yesterday,
@@ -2245,6 +2561,7 @@ class PositionManager:
             "profit_tables": profit_tables,
             "ytd_summary": ytd_summary,
             "hourly_trades": hourly_trades,
+            "chart_data": chart_data,
         }
 
     def fetch_recent_trades(self, limit: int = 50) -> list[dict]:

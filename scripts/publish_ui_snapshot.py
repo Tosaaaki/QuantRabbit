@@ -47,6 +47,11 @@ LITE_SNAPSHOT_FAST = (
     os.getenv("UI_SNAPSHOT_LITE_MODE", "full").strip().lower()
     in {"fast", "minimal"}
 )
+INCLUDE_POSITIONS = os.getenv("UI_SNAPSHOT_INCLUDE_POSITIONS", "1").strip().lower() in {
+    "1",
+    "true",
+    "yes",
+}
 
 
 def _load_latest_metric(metric: str) -> Optional[float]:
@@ -370,7 +375,7 @@ def main() -> int:
             except Exception as exc:  # noqa: BLE001
                 logging.warning("[UI] get_performance_summary failed: %s", exc)
                 metrics = {}
-            if not LITE_SNAPSHOT_FAST:
+            if (not LITE_SNAPSHOT_FAST) or INCLUDE_POSITIONS:
                 try:
                     open_positions = pm.get_open_positions()
                 except Exception as exc:  # noqa: BLE001

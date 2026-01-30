@@ -184,100 +184,72 @@
       </div>
     {% endif %}
 
-    {% if dashboard.profit_tables and dashboard.profit_tables.daily %}
-      <div class="section-title">利益表（{{ dashboard.profit_tables.year_start }}〜 / {{ dashboard.profit_tables.timezone }} / 手動除外）</div>
-
-      <div class="table-wrap">
-        <table>
-          <thead>
-            <tr>
-              <th>日次</th>
-              <th>損益 (pips)</th>
-              <th>損益 (JPY)</th>
-              <th>開始残高</th>
-              <th>残高比</th>
-              <th>件数</th>
-              <th>勝率</th>
-            </tr>
-          </thead>
-          <tbody>
-            {% for row in dashboard.profit_tables.daily %}
-              {% set pill_class = 'pill gain' if row.pips > 0 else 'pill loss' if row.pips < 0 else 'pill neutral' %}
-              <tr>
-                <td>{{ row.label }}</td>
-                <td><span class="{{ pill_class }}">{{ "%+.1f"|format(row.pips) }}</span></td>
-                <td>{{ "%+.0f"|format(row.jpy) }}</td>
-                <td>{% if row.start_balance %}{{ "%.0f"|format(row.start_balance) }}{% else %}-{% endif %}</td>
-                <td>{% if row.return_pct is not none %}{{ "%+.2f"|format(row.return_pct) }}%{% else %}-{% endif %}</td>
-                <td>{{ row.trades }}</td>
-                <td>{{ "%.1f"|format(row.win_rate * 100.0) }}%</td>
-              </tr>
-            {% endfor %}
-          </tbody>
-        </table>
-      </div>
-
-      <div class="table-wrap">
-        <table>
-          <thead>
-            <tr>
-              <th>週次</th>
-              <th>損益 (pips)</th>
-              <th>損益 (JPY)</th>
-              <th>開始残高</th>
-              <th>残高比</th>
-              <th>件数</th>
-              <th>勝率</th>
-            </tr>
-          </thead>
-          <tbody>
-            {% for row in dashboard.profit_tables.weekly %}
-              {% set pill_class = 'pill gain' if row.pips > 0 else 'pill loss' if row.pips < 0 else 'pill neutral' %}
-              <tr>
-                <td>{{ row.label }}</td>
-                <td><span class="{{ pill_class }}">{{ "%+.1f"|format(row.pips) }}</span></td>
-                <td>{{ "%+.0f"|format(row.jpy) }}</td>
-                <td>{% if row.start_balance %}{{ "%.0f"|format(row.start_balance) }}{% else %}-{% endif %}</td>
-                <td>{% if row.return_pct is not none %}{{ "%+.2f"|format(row.return_pct) }}%{% else %}-{% endif %}</td>
-                <td>{{ row.trades }}</td>
-                <td>{{ "%.1f"|format(row.win_rate * 100.0) }}%</td>
-              </tr>
-            {% endfor %}
-          </tbody>
-        </table>
-      </div>
-
-      <div class="table-wrap">
-        <table>
-          <thead>
-            <tr>
-              <th>月次</th>
-              <th>損益 (pips)</th>
-              <th>損益 (JPY)</th>
-              <th>開始残高</th>
-              <th>残高比</th>
-              <th>件数</th>
-              <th>勝率</th>
-            </tr>
-          </thead>
-          <tbody>
-            {% for row in dashboard.profit_tables.monthly %}
-              {% set pill_class = 'pill gain' if row.pips > 0 else 'pill loss' if row.pips < 0 else 'pill neutral' %}
-              <tr>
-                <td>{{ row.label }}</td>
-                <td><span class="{{ pill_class }}">{{ "%+.1f"|format(row.pips) }}</span></td>
-                <td>{{ "%+.0f"|format(row.jpy) }}</td>
-                <td>{% if row.start_balance %}{{ "%.0f"|format(row.start_balance) }}{% else %}-{% endif %}</td>
-                <td>{% if row.return_pct is not none %}{{ "%+.2f"|format(row.return_pct) }}%{% else %}-{% endif %}</td>
-                <td>{{ row.trades }}</td>
-                <td>{{ "%.1f"|format(row.win_rate * 100.0) }}%</td>
-              </tr>
-            {% endfor %}
-          </tbody>
-        </table>
-      </div>
-    {% endif %}
   </div>
+
+      <div class="card" data-tabs data-tabs-local data-chart-tabs>
+        <div class="chart-header">
+          <div>
+            <h2>パフォーマンスチャート</h2>
+            <div class="tagline">損益とエントリー位置を切り替えて確認できます。</div>
+          </div>
+          <div class="tabs-bar" role="tablist" aria-label="Chart mode">
+            <button
+              type="button"
+              class="tab-button is-active"
+              role="tab"
+              aria-selected="true"
+              data-tab-button
+              data-tab-target="chart-performance"
+            >損益</button>
+            <button
+              type="button"
+              class="tab-button"
+              role="tab"
+              aria-selected="false"
+              data-tab-button
+              data-tab-target="chart-price"
+              tabindex="-1"
+            >価格</button>
+          </div>
+        </div>
+        {% if dashboard.charts and dashboard.charts.available %}
+          <div class="tab-panel is-active" data-tab-panel="chart-performance">
+            <div data-chart="performance">
+              <div class="chart-toolbar">
+                <div class="range-buttons">
+                  <button type="button" class="range-button is-active" data-range="24h">24h</button>
+                  <button type="button" class="range-button" data-range="7d">7d</button>
+                  <button type="button" class="range-button" data-range="30d">30d</button>
+                  <button type="button" class="range-button" data-range="ytd">YTD</button>
+                </div>
+                <div class="chart-meta" data-chart-meta="performance"></div>
+              </div>
+              <div class="chart-wrap">
+                <svg class="chart-svg" data-chart-canvas="performance" aria-label="Performance chart"></svg>
+                <div class="chart-empty" data-chart-empty="performance">NO DATA</div>
+              </div>
+            </div>
+          </div>
+          <div class="tab-panel" data-tab-panel="chart-price">
+            <div data-chart="price">
+              <div class="chart-toolbar">
+                <div class="range-buttons">
+                  <button type="button" class="range-button is-active" data-range="24h">24h</button>
+                  <button type="button" class="range-button" data-range="7d">7d</button>
+                  <button type="button" class="range-button" data-range="30d">30d</button>
+                </div>
+                <div class="chart-meta" data-chart-meta="price"></div>
+              </div>
+              <div class="chart-wrap">
+                <svg class="chart-svg" data-chart-canvas="price" aria-label="Price chart"></svg>
+                <div class="chart-empty" data-chart-empty="price">NO DATA</div>
+              </div>
+            </div>
+          </div>
+        {% else %}
+          <p class="tagline">チャートデータがありません。</p>
+        {% endif %}
+      </div>
 
       <div class="card">
         <h2>オープンポジション</h2>
@@ -386,6 +358,247 @@
         {% else %}
           <p class="tagline">現在オープンポジションはありません。</p>
         {% endif %}
+      </div>
+
+      <div class="card" data-tabs data-tabs-local>
+        <div class="chart-header">
+          <div>
+            <h2>利益表（{{ dashboard.profit_tables.year_start or '-' }}〜 / {{ dashboard.profit_tables.timezone }} / 手動除外）</h2>
+            <div class="tagline">日次・週次・月次を切り替えて確認できます。</div>
+          </div>
+          <div class="tabs-bar" role="tablist" aria-label="Profit table range">
+            <button
+              type="button"
+              class="tab-button is-active"
+              role="tab"
+              aria-selected="true"
+              data-tab-button
+              data-tab-target="profit-daily"
+            >日次</button>
+            <button
+              type="button"
+              class="tab-button"
+              role="tab"
+              aria-selected="false"
+              data-tab-button
+              data-tab-target="profit-weekly"
+              tabindex="-1"
+            >週次</button>
+            <button
+              type="button"
+              class="tab-button"
+              role="tab"
+              aria-selected="false"
+              data-tab-button
+              data-tab-target="profit-monthly"
+              tabindex="-1"
+            >月次</button>
+          </div>
+        </div>
+        {% if dashboard.profit_tables and dashboard.profit_tables.daily %}
+          <div class="tab-panel is-active" data-tab-panel="profit-daily">
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>日次</th>
+                    <th>損益 (pips)</th>
+                    <th>損益 (JPY)</th>
+                    <th>開始残高</th>
+                    <th>残高比</th>
+                    <th>件数</th>
+                    <th>勝率</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {% for row in dashboard.profit_tables.daily %}
+                    {% set pill_class = 'pill gain' if row.pips > 0 else 'pill loss' if row.pips < 0 else 'pill neutral' %}
+                    <tr>
+                      <td>{{ row.label }}</td>
+                      <td><span class="{{ pill_class }}">{{ "%+.1f"|format(row.pips) }}</span></td>
+                      <td>{{ "%+.0f"|format(row.jpy) }}</td>
+                      <td>{% if row.start_balance %}{{ "%.0f"|format(row.start_balance) }}{% else %}-{% endif %}</td>
+                      <td>{% if row.return_pct is not none %}{{ "%+.2f"|format(row.return_pct) }}%{% else %}-{% endif %}</td>
+                      <td>{{ row.trades }}</td>
+                      <td>{{ "%.1f"|format(row.win_rate * 100.0) }}%</td>
+                    </tr>
+                  {% endfor %}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <div class="tab-panel" data-tab-panel="profit-weekly">
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>週次</th>
+                    <th>損益 (pips)</th>
+                    <th>損益 (JPY)</th>
+                    <th>開始残高</th>
+                    <th>残高比</th>
+                    <th>件数</th>
+                    <th>勝率</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {% for row in dashboard.profit_tables.weekly %}
+                    {% set pill_class = 'pill gain' if row.pips > 0 else 'pill loss' if row.pips < 0 else 'pill neutral' %}
+                    <tr>
+                      <td>{{ row.label }}</td>
+                      <td><span class="{{ pill_class }}">{{ "%+.1f"|format(row.pips) }}</span></td>
+                      <td>{{ "%+.0f"|format(row.jpy) }}</td>
+                      <td>{% if row.start_balance %}{{ "%.0f"|format(row.start_balance) }}{% else %}-{% endif %}</td>
+                      <td>{% if row.return_pct is not none %}{{ "%+.2f"|format(row.return_pct) }}%{% else %}-{% endif %}</td>
+                      <td>{{ row.trades }}</td>
+                      <td>{{ "%.1f"|format(row.win_rate * 100.0) }}%</td>
+                    </tr>
+                  {% endfor %}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <div class="tab-panel" data-tab-panel="profit-monthly">
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>月次</th>
+                    <th>損益 (pips)</th>
+                    <th>損益 (JPY)</th>
+                    <th>開始残高</th>
+                    <th>残高比</th>
+                    <th>件数</th>
+                    <th>勝率</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {% for row in dashboard.profit_tables.monthly %}
+                    {% set pill_class = 'pill gain' if row.pips > 0 else 'pill loss' if row.pips < 0 else 'pill neutral' %}
+                    <tr>
+                      <td>{{ row.label }}</td>
+                      <td><span class="{{ pill_class }}">{{ "%+.1f"|format(row.pips) }}</span></td>
+                      <td>{{ "%+.0f"|format(row.jpy) }}</td>
+                      <td>{% if row.start_balance %}{{ "%.0f"|format(row.start_balance) }}{% else %}-{% endif %}</td>
+                      <td>{% if row.return_pct is not none %}{{ "%+.2f"|format(row.return_pct) }}%{% else %}-{% endif %}</td>
+                      <td>{{ row.trades }}</td>
+                      <td>{{ "%.1f"|format(row.win_rate * 100.0) }}%</td>
+                    </tr>
+                  {% endfor %}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        {% else %}
+          <p class="tagline">利益表データがありません。</p>
+        {% endif %}
+      </div>
+
+      <div class="card">
+        <h2>最近のトレード</h2>
+        <div class="tagline">最新15件を表示します。詳細は履歴タブで確認できます。</div>
+        {% set summary_trades = dashboard.recent_trades[:15] %}
+        {% if summary_trades %}
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>更新</th>
+                  <th>Pocket</th>
+                  <th>Worker</th>
+                  <th>Strategy</th>
+                  <th>方向</th>
+                  <th>数量</th>
+                  <th>損益 (pips)</th>
+                  <th>損益 (JPY)</th>
+                  <th>決済理由</th>
+                </tr>
+              </thead>
+              <tbody>
+              {% for row in summary_trades %}
+                {% set pill_class = 'pill gain' if row.kind == 'gain' else 'pill loss' if row.kind == 'loss' else 'pill neutral' %}
+                <tr>
+                  <td class="mono nowrap">{{ row.updated_label }}</td>
+                  <td>{{ row.pocket }}</td>
+                  <td class="mono nowrap">{{ row.worker }}</td>
+                  <td>{{ row.strategy }}</td>
+                  <td>{{ row.direction }}</td>
+                  <td>{{ "{:,}".format(row.units_abs) }}</td>
+                  <td><span class="{{ pill_class }}">{{ "%+.1f"|format(row.pl_pips) }}</span></td>
+                  <td>{{ "%+.0f"|format(row.pl_jpy) }}</td>
+                  <td>{{ row.close_reason }}</td>
+                </tr>
+              {% endfor %}
+              </tbody>
+            </table>
+          </div>
+        {% else %}
+          <p class="tagline">トレード履歴がありません。</p>
+        {% endif %}
+      </div>
+
+      <div class="card">
+        <h2>システムヘルス</h2>
+        <div class="tagline">リアルタイム指標の概要です（詳細はオペレーション）。</div>
+        <div class="stats-grid">
+          <div class="stat-card compact">
+            <div class="stat-label">データ遅延</div>
+            <div class="stat-value {{ dashboard.system.data_lag_level }}">
+              {% if dashboard.system.data_lag_ms is not none %}
+                {{ "%.0f"|format(dashboard.system.data_lag_ms) }}ms
+              {% else %}
+                -
+              {% endif %}
+            </div>
+            <div class="stat-sub">SLO 1500ms</div>
+          </div>
+          <div class="stat-card compact">
+            <div class="stat-label">判断遅延</div>
+            <div class="stat-value {{ dashboard.system.decision_latency_level }}">
+              {% if dashboard.system.decision_latency_ms is not none %}
+                {{ "%.0f"|format(dashboard.system.decision_latency_ms) }}ms
+              {% else %}
+                -
+              {% endif %}
+            </div>
+            <div class="stat-sub">SLO 2000ms</div>
+          </div>
+          <div class="stat-card compact">
+            <div class="stat-label">ヘルスビート</div>
+            <div class="stat-value {{ dashboard.system.healthbeat_level }}">
+              {% if dashboard.system.healthbeat_age_min is not none %}
+                {{ dashboard.system.healthbeat_age_min }}分前
+              {% else %}
+                -
+              {% endif %}
+            </div>
+            <div class="stat-sub">最終 {{ dashboard.system.healthbeat_label or '-' }}</div>
+          </div>
+          <div class="stat-card compact">
+            <div class="stat-label">最終シグナル</div>
+            <div class="stat-value {{ dashboard.system.signals_last_level }}">
+              {% if dashboard.system.signals_last_age_min is not none %}
+                {{ dashboard.system.signals_last_age_min }}分前
+              {% else %}
+                -
+              {% endif %}
+            </div>
+            <div class="stat-sub">最終 {{ dashboard.system.signals_last_label or '-' }}</div>
+          </div>
+          <div class="stat-card compact">
+            <div class="stat-label">注文 (1h)</div>
+            <div class="stat-value">
+              {% if dashboard.system.orders_total_1h is not none %}
+                {{ dashboard.system.orders_total_1h }}
+              {% else %}
+                -
+              {% endif %}
+            </div>
+            <div class="stat-sub">status集計</div>
+          </div>
+        </div>
       </div>
     </section>
 
@@ -628,6 +841,7 @@
               <th>更新</th>
               <th>Pocket</th>
               <th>Worker</th>
+              <th>Strategy</th>
               <th>方向</th>
               <th>数量</th>
               <th>Entry</th>
@@ -645,6 +859,7 @@
               <td class="mono nowrap">{{ row.updated_label }}</td>
               <td>{{ row.pocket }}</td>
               <td class="mono nowrap">{{ row.worker }}</td>
+              <td>{{ row.strategy }}</td>
               <td>{{ row.direction }}</td>
               <td>{{ "{:,}".format(row.units_abs) }}</td>
               <td>
@@ -747,7 +962,268 @@
         {% endif %}
       </div>
     </div>
-  </div>
+      </div>
     </section>
   </div>
+
+  <script id="qr-chart-data" type="application/json">{{ dashboard.charts_json | safe }}</script>
+  <script>
+    (() => {
+      const dataEl = document.getElementById("qr-chart-data");
+      if (!dataEl) return;
+      let chartData = null;
+      try {
+        chartData = JSON.parse(dataEl.textContent || "{}");
+      } catch (err) {
+        return;
+      }
+      if (!chartData || !chartData.available) return;
+
+      const perfContainer = document.querySelector('[data-chart="performance"]');
+      const priceContainer = document.querySelector('[data-chart="price"]');
+
+      const setActiveButton = (container, key) => {
+        const buttons = Array.from(container.querySelectorAll(".range-button"));
+        buttons.forEach((btn) => {
+          btn.classList.toggle("is-active", btn.dataset.range === key);
+        });
+      };
+
+      const clamp = (val, min, max) => Math.max(min, Math.min(max, val));
+
+      const renderPerformance = (key) => {
+        if (!perfContainer) return;
+        const range = chartData.performance?.ranges?.[key];
+        const svg = perfContainer.querySelector('[data-chart-canvas="performance"]');
+        const empty = perfContainer.querySelector('[data-chart-empty="performance"]');
+        const meta = perfContainer.querySelector('[data-chart-meta="performance"]');
+        if (!range || !Array.isArray(range.pnl_jpy) || range.pnl_jpy.length < 2) {
+          if (svg) svg.innerHTML = "";
+          if (empty) empty.style.display = "flex";
+          if (meta) meta.textContent = "データなし";
+          return;
+        }
+        if (empty) empty.style.display = "none";
+        const width = svg.clientWidth || 640;
+        const height = svg.clientHeight || 280;
+        svg.setAttribute("viewBox", `0 0 ${width} ${height}`);
+        const pad = { l: 42, r: 16, t: 18, b: 26 };
+        const innerW = Math.max(10, width - pad.l - pad.r);
+        const innerH = Math.max(10, height - pad.t - pad.b);
+
+        const tsVals = range.pnl_jpy.map((row) => row[0]);
+        const yVals = range.pnl_jpy.map((row) => row[1]);
+        const minTs = Math.min(...tsVals);
+        const maxTs = Math.max(...tsVals);
+        let minY = Math.min(...yVals);
+        let maxY = Math.max(...yVals);
+        if (minY === maxY) {
+          minY -= 1;
+          maxY += 1;
+        }
+        const tsSpan = Math.max(1, maxTs - minTs);
+        const ySpan = Math.max(1, maxY - minY);
+        const xFor = (ts) => pad.l + ((ts - minTs) / tsSpan) * innerW;
+        const yFor = (val) => pad.t + ((maxY - val) / ySpan) * innerH;
+
+        let path = "";
+        range.pnl_jpy.forEach((row, idx) => {
+          const x = xFor(row[0]);
+          const y = yFor(row[1]);
+          path += `${idx === 0 ? "M" : "L"}${x.toFixed(2)} ${y.toFixed(2)} `;
+        });
+
+        let grid = "";
+        const gridCount = 4;
+        for (let i = 0; i <= gridCount; i += 1) {
+          const y = pad.t + (innerH * i) / gridCount;
+          grid += `<line x1="${pad.l}" x2="${width - pad.r}" y1="${y}" y2="${y}" stroke="rgba(148,163,184,0.35)" stroke-dasharray="4 6"/>`;
+        }
+        const zeroLineY = (0 >= minY && 0 <= maxY) ? yFor(0) : null;
+        let zeroLine = "";
+        if (zeroLineY !== null) {
+          zeroLine = `<line x1="${pad.l}" x2="${width - pad.r}" y1="${zeroLineY}" y2="${zeroLineY}" stroke="rgba(15,118,110,0.5)" stroke-width="1"/>`;
+        }
+
+        const last = range.pnl_jpy[range.pnl_jpy.length - 1];
+        const lastPips = Array.isArray(range.pnl_pips) && range.pnl_pips.length
+          ? range.pnl_pips[range.pnl_pips.length - 1][1]
+          : null;
+        const lastY = last[1];
+        const lastX = xFor(last[0]);
+        const lastYPos = yFor(lastY);
+        const label = `${key.toUpperCase()} / trades ${range.trades ?? 0} / ${lastY >= 0 ? "+" : ""}${lastY.toFixed(0)}円` +
+          (lastPips !== null ? ` / ${lastPips >= 0 ? "+" : ""}${Number(lastPips).toFixed(1)}p` : "");
+        if (meta) meta.textContent = label;
+
+        svg.innerHTML = `
+          <defs>
+            <linearGradient id="perfLine" x1="0" y1="0" x2="1" y2="0">
+              <stop offset="0%" stop-color="#0f766e" />
+              <stop offset="100%" stop-color="#2563eb" />
+            </linearGradient>
+          </defs>
+          ${grid}
+          ${zeroLine}
+          <path d="${path}" fill="none" stroke="url(#perfLine)" stroke-width="2.2" />
+          <circle cx="${lastX}" cy="${lastYPos}" r="4" fill="#0f766e" stroke="#fff" stroke-width="1"/>
+        `;
+      };
+
+      const renderPrice = (key) => {
+        if (!priceContainer) return;
+        const range = chartData.price?.ranges?.[key];
+        const svg = priceContainer.querySelector('[data-chart-canvas="price"]');
+        const empty = priceContainer.querySelector('[data-chart-empty="price"]');
+        const meta = priceContainer.querySelector('[data-chart-meta="price"]');
+        if (!range || !Array.isArray(range.candles) || range.candles.length < 2) {
+          if (svg) svg.innerHTML = "";
+          if (empty) empty.style.display = "flex";
+          if (meta) meta.textContent = "データなし";
+          return;
+        }
+        if (empty) empty.style.display = "none";
+        const width = svg.clientWidth || 640;
+        const height = svg.clientHeight || 280;
+        svg.setAttribute("viewBox", `0 0 ${width} ${height}`);
+        const pad = { l: 40, r: 16, t: 18, b: 26 };
+        const innerW = Math.max(10, width - pad.l - pad.r);
+        const innerH = Math.max(10, height - pad.t - pad.b);
+
+        const times = range.candles.map((row) => row[0]);
+        const highs = range.candles.map((row) => row[2]);
+        const lows = range.candles.map((row) => row[3]);
+        const minTs = Math.min(...times);
+        const maxTs = Math.max(...times);
+        let minY = Math.min(...lows);
+        let maxY = Math.max(...highs);
+        if (minY === maxY) {
+          minY -= 0.5;
+          maxY += 0.5;
+        }
+        const tsSpan = Math.max(1, maxTs - minTs);
+        const ySpan = Math.max(1e-6, maxY - minY);
+        const xFor = (ts) => pad.l + ((ts - minTs) / tsSpan) * innerW;
+        const yFor = (val) => pad.t + ((maxY - val) / ySpan) * innerH;
+
+        const candleCount = range.candles.length;
+        const candleSpacing = innerW / candleCount;
+        const bodyWidth = clamp(candleSpacing * 0.6, 1.5, 7.5);
+
+        let grid = "";
+        for (let i = 0; i <= 4; i += 1) {
+          const y = pad.t + (innerH * i) / 4;
+          grid += `<line x1="${pad.l}" x2="${width - pad.r}" y1="${y}" y2="${y}" stroke="rgba(148,163,184,0.3)" stroke-dasharray="4 6"/>`;
+        }
+
+        let candlesSvg = "";
+        range.candles.forEach((row) => {
+          const x = xFor(row[0]);
+          const open = row[1];
+          const high = row[2];
+          const low = row[3];
+          const close = row[4];
+          const isUp = close >= open;
+          const color = isUp ? "#16a34a" : "#dc2626";
+          const yOpen = yFor(open);
+          const yClose = yFor(close);
+          const yHigh = yFor(high);
+          const yLow = yFor(low);
+          const bodyTop = Math.min(yOpen, yClose);
+          const bodyHeight = Math.max(1.5, Math.abs(yClose - yOpen));
+          candlesSvg += `
+            <line x1="${x}" x2="${x}" y1="${yHigh}" y2="${yLow}" stroke="${color}" stroke-width="1"/>
+            <rect x="${x - bodyWidth / 2}" y="${bodyTop}" width="${bodyWidth}" height="${bodyHeight}" fill="${color}" rx="1" ry="1"/>
+          `;
+        });
+
+        let markersSvg = "";
+        const markers = Array.isArray(range.markers) ? range.markers : [];
+        markers.forEach((m) => {
+          if (!m || typeof m.ts_ms !== "number" || typeof m.price !== "number") return;
+          const x = xFor(m.ts_ms);
+          const y = yFor(m.price);
+          const isEntry = m.kind === "entry";
+          const color = isEntry ? "#0f766e" : "#b91c1c";
+          const size = 6;
+          const points = isEntry
+            ? `${x},${y - size} ${x - size},${y + size} ${x + size},${y + size}`
+            : `${x},${y + size} ${x - size},${y - size} ${x + size},${y - size}`;
+          markersSvg += `
+            <g>
+              <polygon points="${points}" fill="${color}" opacity="0.85"></polygon>
+              ${m.label ? `<title>${m.label}</title>` : ""}
+            </g>
+          `;
+        });
+
+        const label = `${key.toUpperCase()} / ${range.tf} / candles ${candleCount}` +
+          (range.range_label ? ` / ${range.range_label}` : "");
+        if (meta) meta.textContent = label;
+
+        svg.innerHTML = `
+          ${grid}
+          ${candlesSvg}
+          ${markersSvg}
+        `;
+      };
+
+      const bindRange = (container, renderFn, storageKey, defaultKey) => {
+        if (!container) return;
+        const buttons = Array.from(container.querySelectorAll(".range-button"));
+        if (!buttons.length) return;
+        const saved = sessionStorage.getItem(storageKey);
+        const initial = saved && buttons.some((btn) => btn.dataset.range === saved)
+          ? saved
+          : defaultKey || buttons[0].dataset.range;
+        setActiveButton(container, initial);
+        renderFn(initial);
+        buttons.forEach((btn) => {
+          btn.addEventListener("click", () => {
+            const key = btn.dataset.range;
+            if (!key) return;
+            sessionStorage.setItem(storageKey, key);
+            setActiveButton(container, key);
+            renderFn(key);
+          });
+        });
+      };
+
+      bindRange(
+        perfContainer,
+        renderPerformance,
+        "qr_chart_range_perf",
+        chartData.performance?.default_range || "7d"
+      );
+      bindRange(
+        priceContainer,
+        renderPrice,
+        "qr_chart_range_price",
+        chartData.price?.default_range || "24h"
+      );
+
+      const chartTabButtons = document.querySelectorAll('[data-chart-tabs] [data-tab-button]');
+      chartTabButtons.forEach((btn) => {
+        btn.addEventListener("click", () => {
+          const target = btn.dataset.tabTarget;
+          if (!target) return;
+          sessionStorage.setItem("qr_chart_mode", target);
+        });
+      });
+      const chartMode = sessionStorage.getItem("qr_chart_mode");
+      if (chartMode) {
+        const chartTab = document.querySelector('[data-chart-tabs] [data-tab-button][data-tab-target="' + chartMode + '"]');
+        if (chartTab) {
+          chartTab.click();
+        }
+      }
+
+      window.addEventListener("resize", () => {
+        const perfActive = document.querySelector("[data-chart='performance'] .range-button.is-active");
+        if (perfActive) renderPerformance(perfActive.dataset.range);
+        const priceActive = document.querySelector("[data-chart='price'] .range-button.is-active");
+        if (priceActive) renderPrice(priceActive.dataset.range);
+      });
+    })();
+  </script>
 {% endblock %}
