@@ -409,6 +409,16 @@ def main() -> int:
             metrics["data_lag_ms"] = data_lag_ms
         if decision_latency_ms is not None:
             metrics["decision_latency_ms"] = decision_latency_ms
+        for key in (
+            "account.nav",
+            "account.balance",
+            "account.free_margin_ratio",
+            "account.margin_usage_ratio",
+            "account.health_buffer",
+        ):
+            value = _load_latest_metric(key)
+            if value is not None:
+                metrics[key] = value
         healthbeat_ts = _load_last_metric_ts("healthbeat")
         metrics["healthbeat_ts"] = healthbeat_ts
         if not (args.lite and LITE_SNAPSHOT_FAST):
@@ -422,12 +432,20 @@ def main() -> int:
             recent_signals = _load_recent_signals()
             metrics["signals_recent"] = recent_signals
 
+    snapshot_mode = (
+        "lite-fast"
+        if args.lite and LITE_SNAPSHOT_FAST
+        else ("lite" if args.lite else "full")
+    )
+
     try:
         gcs.publish_snapshot(
             new_trades=new_trades,
             recent_trades=recent_trades,
             open_positions=open_positions,
             metrics=metrics,
+            snapshot_mode=snapshot_mode,
+            snapshot_source="gcs",
         )
     except Exception as exc:  # noqa: BLE001
         logging.warning("[UI] publish_snapshot failed: %s", exc)

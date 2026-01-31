@@ -208,6 +208,22 @@ def _dashboard_defaults(error: Optional[str] = None) -> Dict[str, Any]:
         "error": error,
         "generated_at": None,
         "generated_label": None,
+        "snapshot": {
+            "mode": None,
+            "source": None,
+            "age_sec": None,
+            "stale": False,
+        },
+        "account": {
+            "nav": None,
+            "balance": None,
+            "margin_usage_ratio": None,
+            "margin_usage_pct": None,
+            "free_margin_ratio": None,
+            "free_margin_pct": None,
+            "health_buffer": None,
+            "health_buffer_pct": None,
+        },
         "auto_refresh_sec": _AUTO_REFRESH_SEC,
         "recent_trades_limit": _RECENT_TRADES_DISPLAY,
         "recent_trades": [],
@@ -904,6 +920,16 @@ def _build_live_snapshot() -> dict:
             metrics["data_lag_ms"] = data_lag_ms
         if decision_latency_ms is not None:
             metrics["decision_latency_ms"] = decision_latency_ms
+        for key in (
+            "account.nav",
+            "account.balance",
+            "account.free_margin_ratio",
+            "account.margin_usage_ratio",
+            "account.health_buffer",
+        ):
+            value = _load_latest_metric(key)
+            if value is not None:
+                metrics[key] = value
         metrics["orders_last"] = _load_last_orders()
         metrics["orders_status_1h"] = _load_order_status_counts()
         last_signal_ts = _load_last_signal_ts_ms()
@@ -918,6 +944,8 @@ def _build_live_snapshot() -> dict:
         "recent_trades": list(recent_trades),
         "open_positions": dict(open_positions),
         "metrics": dict(metrics) if isinstance(metrics, dict) else {},
+        "snapshot_mode": "live",
+        "snapshot_source": "local",
     }
 
 
@@ -947,6 +975,16 @@ def _build_lite_snapshot() -> dict:
         metrics["data_lag_ms"] = data_lag_ms
     if decision_latency_ms is not None:
         metrics["decision_latency_ms"] = decision_latency_ms
+    for key in (
+        "account.nav",
+        "account.balance",
+        "account.free_margin_ratio",
+        "account.margin_usage_ratio",
+        "account.health_buffer",
+    ):
+        value = _load_latest_metric(key)
+        if value is not None:
+            metrics[key] = value
     metrics["healthbeat_ts"] = _load_last_metric_ts("healthbeat")
     if not _LITE_SNAPSHOT_FAST:
         metrics["orders_last"] = _load_last_orders()
@@ -962,6 +1000,7 @@ def _build_lite_snapshot() -> dict:
         "open_positions": dict(open_positions) if isinstance(open_positions, dict) else {},
         "metrics": metrics,
         "snapshot_mode": "lite-fast" if _LITE_SNAPSHOT_FAST else "lite",
+        "snapshot_source": "local",
     }
 
 
@@ -1031,6 +1070,31 @@ def _summarise_snapshot(snapshot: Dict[str, Any]) -> Dict[str, Any]:
     now_jst = now.astimezone(jst)
 
     metrics_snapshot = snapshot.get("metrics") or {}
+    account = base.get("account") or {}
+    account_nav = _opt_float(metrics_snapshot.get("account.nav"))
+    account_balance = _opt_float(metrics_snapshot.get("account.balance"))
+    margin_usage_ratio = _opt_float(metrics_snapshot.get("account.margin_usage_ratio"))
+    free_margin_ratio = _opt_float(metrics_snapshot.get("account.free_margin_ratio"))
+    health_buffer = _opt_float(metrics_snapshot.get("account.health_buffer"))
+    account.update(
+        {
+            "nav": account_nav,
+            "balance": account_balance,
+            "margin_usage_ratio": margin_usage_ratio,
+            "margin_usage_pct": round(margin_usage_ratio * 100.0, 1)
+            if margin_usage_ratio is not None
+            else None,
+            "free_margin_ratio": free_margin_ratio,
+            "free_margin_pct": round(free_margin_ratio * 100.0, 1)
+            if free_margin_ratio is not None
+            else None,
+            "health_buffer": health_buffer,
+            "health_buffer_pct": round(health_buffer * 100.0, 1)
+            if health_buffer is not None
+            else None,
+        }
+    )
+    base["account"] = account
     trades_raw = snapshot.get("recent_trades") or []
     parsed_trades: list[Dict[str, Any]] = []
     for item in trades_raw:
@@ -1502,6 +1566,19 @@ def _summarise_snapshot(snapshot: Dict[str, Any]) -> Dict[str, Any]:
             base["charts_json"] = "{}"
 
     gen_dt = _parse_dt(snapshot.get("generated_at"))
+    snapshot_mode = snapshot.get("snapshot_mode")
+    snapshot_source = snapshot.get("snapshot_source")
+    age_sec = None
+    stale = False
+    if gen_dt:
+        age_sec = int(max(0, (now - gen_dt).total_seconds()))
+        stale = age_sec > max(60, _AUTO_REFRESH_SEC * 2)
+    base["snapshot"] = {
+        "mode": snapshot_mode,
+        "source": snapshot_source,
+        "age_sec": age_sec,
+        "stale": stale,
+    }
     base["generated_at"] = snapshot.get("generated_at")
     base["generated_label"] = _format_dt(gen_dt) or snapshot.get("generated_at")
     base["available"] = True
@@ -1515,7 +1592,10 @@ def _load_dashboard_data() -> Dict[str, Any]:
     if not remote_snapshot:
         remote_snapshot = _fetch_remote_snapshot()
     if remote_snapshot:
-        return _summarise_snapshot(remote_snapshot)
+        base = _summarise_snapshot(remote_snapshot)
+        if not base.get("snapshot", {}).get("source"):
+            base.setdefault("snapshot", {})["source"] = "remote"
+        return base
 
     try:
         bucket_name = get_secret("ui_bucket_name")
@@ -1537,7 +1617,10 @@ def _load_dashboard_data() -> Dict[str, Any]:
         base["error"] = str(exc)
         return base
 
-    return _summarise_snapshot(snapshot)
+    base = _summarise_snapshot(snapshot)
+    if not base.get("snapshot", {}).get("source"):
+        base.setdefault("snapshot", {})["source"] = "gcs"
+    return base
 
 
 def _extract_bearer(authorization: Optional[str]) -> Optional[str]:

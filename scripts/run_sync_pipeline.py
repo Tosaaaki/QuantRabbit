@@ -193,6 +193,16 @@ def _run_cycle(
                 metrics["data_lag_ms"] = data_lag_ms
             if decision_latency_ms is not None:
                 metrics["decision_latency_ms"] = decision_latency_ms
+            for key in (
+                "account.nav",
+                "account.balance",
+                "account.free_margin_ratio",
+                "account.margin_usage_ratio",
+                "account.health_buffer",
+            ):
+                value = _load_latest_metric(key)
+                if value is not None:
+                    metrics[key] = value
             last_orders = _load_last_orders()
             metrics["orders_last"] = last_orders
             status_counts = _load_order_status_counts()
@@ -210,6 +220,8 @@ def _run_cycle(
                 recent_trades=recent_trades,
                 open_positions=open_positions,
                 metrics=metrics,
+                snapshot_mode="full",
+                snapshot_source="gcs",
             )
         except Exception as exc:  # noqa: BLE001
             logging.exception("[PIPELINE] GCS スナップショット更新に失敗: %s", exc)

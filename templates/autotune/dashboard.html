@@ -37,6 +37,36 @@
     </div>
     <div class="tab-meta">セクションを切り替えて表示できます。</div>
 
+    <div class="status-bar" data-auto-refresh data-auto-refresh-sec="{{ dashboard.auto_refresh_sec }}">
+      <div class="status-left">
+        <div class="refresh-meta">
+          <span class="refresh-dot" aria-hidden="true"></span>
+          <span class="refresh-text">自動更新 {{ dashboard.auto_refresh_sec }}s</span>
+          <span class="refresh-status" data-refresh-status></span>
+        </div>
+        <div class="status-pills">
+          {% if dashboard.generated_label %}
+            <span class="status-pill">更新 {{ dashboard.generated_label }}</span>
+          {% endif %}
+          {% if dashboard.snapshot.mode %}
+            <span class="status-pill">モード {{ dashboard.snapshot.mode }}</span>
+          {% endif %}
+          {% if dashboard.snapshot.source %}
+            <span class="status-pill">ソース {{ dashboard.snapshot.source }}</span>
+          {% endif %}
+          {% if dashboard.snapshot.age_sec is not none %}
+            <span class="status-pill {{ 'stale' if dashboard.snapshot.stale else 'ok' }}">経過 {{ dashboard.snapshot.age_sec }}s</span>
+          {% endif %}
+          {% if not dashboard.available %}
+            <span class="status-pill warn">snapshot unavailable</span>
+          {% endif %}
+        </div>
+      </div>
+      <div class="status-actions">
+        <button type="button" class="btn-ghost" data-refresh-now>更新</button>
+      </div>
+    </div>
+
     <section class="tab-panel is-active" id="tab-summary" role="tabpanel" aria-labelledby="tab-summary-button" data-tab-panel="summary">
       <div class="card">
     <h2>運用サマリー</h2>
@@ -50,16 +80,6 @@
         GCS の設定と `run_sync_pipeline.py` の動作を確認してください。
       </p>
     {% endif %}
-    <div class="refresh-row" data-auto-refresh data-auto-refresh-sec="{{ dashboard.auto_refresh_sec }}">
-      <div class="refresh-meta">
-        <span class="refresh-dot" aria-hidden="true"></span>
-        <span class="refresh-text">自動更新 {{ dashboard.auto_refresh_sec }}s</span>
-        <span class="refresh-status" data-refresh-status></span>
-      </div>
-      <div class="refresh-actions">
-        <button type="button" class="btn-ghost" data-refresh-now>更新</button>
-      </div>
-    </div>
     <div class="stats-grid">
       {% set daily_class = 'stat-positive' if dashboard.performance.daily_pl_pips >= 0 else 'stat-negative' %}
       <div class="stat-card">
@@ -138,6 +158,60 @@
         <div class="stat-label">新規トレード</div>
         <div class="stat-value">{{ dashboard.performance.new_trades }}</div>
         <div class="stat-sub">最終トレード {{ dashboard.performance.last_trade_at or '-' }}</div>
+      </div>
+    </div>
+
+    <div class="section-title">リスク / マージン</div>
+    <div class="stats-grid">
+      <div class="stat-card compact">
+        <div class="stat-label">Margin使用率</div>
+        {% if dashboard.account.margin_usage_pct is not none %}
+          <div class="stat-value">{{ "%.1f"|format(dashboard.account.margin_usage_pct) }}%</div>
+          <div class="stat-sub">ratio {{ "%.3f"|format(dashboard.account.margin_usage_ratio) }}</div>
+        {% else %}
+          <div class="stat-value">-</div>
+          <div class="stat-sub">ratio -</div>
+        {% endif %}
+      </div>
+      <div class="stat-card compact">
+        <div class="stat-label">Free margin</div>
+        {% if dashboard.account.free_margin_pct is not none %}
+          <div class="stat-value">{{ "%.1f"|format(dashboard.account.free_margin_pct) }}%</div>
+          <div class="stat-sub">ratio {{ "%.3f"|format(dashboard.account.free_margin_ratio) }}</div>
+        {% else %}
+          <div class="stat-value">-</div>
+          <div class="stat-sub">ratio -</div>
+        {% endif %}
+      </div>
+      <div class="stat-card compact">
+        <div class="stat-label">Health buffer</div>
+        {% if dashboard.account.health_buffer_pct is not none %}
+          <div class="stat-value">{{ "%.1f"|format(dashboard.account.health_buffer_pct) }}%</div>
+          <div class="stat-sub">ratio {{ "%.3f"|format(dashboard.account.health_buffer) }}</div>
+        {% else %}
+          <div class="stat-value">-</div>
+          <div class="stat-sub">ratio -</div>
+        {% endif %}
+      </div>
+      <div class="stat-card compact">
+        <div class="stat-label">NAV (JPY)</div>
+        {% if dashboard.account.nav is not none %}
+          <div class="stat-value">{{ "{:,.0f}".format(dashboard.account.nav) }}</div>
+          <div class="stat-sub">metric: account.nav</div>
+        {% else %}
+          <div class="stat-value">-</div>
+          <div class="stat-sub">metric: account.nav</div>
+        {% endif %}
+      </div>
+      <div class="stat-card compact">
+        <div class="stat-label">Balance (JPY)</div>
+        {% if dashboard.account.balance is not none %}
+          <div class="stat-value">{{ "{:,.0f}".format(dashboard.account.balance) }}</div>
+          <div class="stat-sub">metric: account.balance</div>
+        {% else %}
+          <div class="stat-value">-</div>
+          <div class="stat-sub">metric: account.balance</div>
+        {% endif %}
       </div>
     </div>
 

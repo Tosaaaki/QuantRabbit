@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en">
+<html lang="ja">
 <head>
   <meta charset="utf-8">
   <title>{{ title or "QuantRabbit Autotune" }}</title>
@@ -308,6 +308,59 @@
       gap: 0.8rem;
       flex-wrap: wrap;
       margin-top: 0.8rem;
+    }
+    .status-bar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 0.8rem;
+      flex-wrap: wrap;
+      margin: 0.9rem 0 1.4rem;
+      padding: 0.75rem 0.9rem;
+      background: rgba(255, 255, 255, 0.78);
+      border: 1px solid rgba(148, 163, 184, 0.4);
+      border-radius: 16px;
+      box-shadow: 0 16px 32px -28px rgba(15, 23, 42, 0.55);
+    }
+    .status-left {
+      display: flex;
+      align-items: center;
+      gap: 0.9rem;
+      flex-wrap: wrap;
+    }
+    .status-actions {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      flex-wrap: wrap;
+    }
+    .status-pills {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      flex-wrap: wrap;
+    }
+    .status-pill {
+      padding: 0.25rem 0.7rem;
+      border-radius: 999px;
+      font-size: 0.72rem;
+      font-weight: 700;
+      background: rgba(148, 163, 184, 0.2);
+      color: #334155;
+      letter-spacing: 0.03em;
+      text-transform: uppercase;
+    }
+    .status-pill.ok {
+      background: rgba(22, 163, 74, 0.18);
+      color: #166534;
+    }
+    .status-pill.warn {
+      background: rgba(245, 158, 11, 0.18);
+      color: #92400e;
+    }
+    .status-pill.stale {
+      background: rgba(239, 68, 68, 0.16);
+      color: #991b1b;
     }
     .refresh-meta {
       display: flex;

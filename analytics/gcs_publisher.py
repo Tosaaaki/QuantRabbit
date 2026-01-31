@@ -100,18 +100,24 @@ class GCSRealtimePublisher:
         open_positions: Mapping[str, Any],
         metrics: Mapping[str, Any] | None = None,
         generated_at: str | None = None,
+        snapshot_mode: str | None = None,
+        snapshot_source: str | None = None,
     ) -> None:
         """UI が参照するスナップショットを GCS に保存する。"""
         if not self.enabled:
             return
 
-        payload = {
+        payload: dict[str, Any] = {
             "generated_at": generated_at or _utcnow_iso(),
             "new_trades": list(new_trades),
             "recent_trades": list(recent_trades),
             "open_positions": dict(open_positions),
             "metrics": dict(metrics) if metrics else {},
         }
+        if snapshot_mode:
+            payload["snapshot_mode"] = snapshot_mode
+        if snapshot_source:
+            payload["snapshot_source"] = snapshot_source
 
         serialized = json.dumps(payload, ensure_ascii=True, separators=(",", ":"))
         if self._bucket is not None:
