@@ -20,6 +20,7 @@ from utils.divergence import apply_divergence_confidence, divergence_bias, diver
 from utils.market_hours import is_market_open
 from utils.oanda_account import get_account_snapshot, get_position_summary
 from workers.common.dyn_cap import compute_cap
+from workers.common.air_state import evaluate_air
 
 from . import config
 
@@ -427,6 +428,9 @@ async def scalp_rangefader_worker() -> None:
             fac_m1 = factors.get("M1") or {}
             fac_h4 = factors.get("H4") or {}
             range_ctx = detect_range_mode(fac_m1, fac_h4)
+            air = evaluate_air(fac_m1, fac_h4, range_ctx=range_ctx, tag="RangeFader")
+            if air.enabled and not air.allow_entry:
+                continue
             range_score = 0.0
             try:
                 range_score = float(range_ctx.score or 0.0)
@@ -511,6 +515,8 @@ async def scalp_rangefader_worker() -> None:
             if cap <= 0.0:
                 continue
             size_mult = _range_size_mult(range_score, free_ratio)
+            size_mult *= air.size_mult
+            size_mult = max(0.6, min(1.6, size_mult))
             cap_reason["size_mult"] = round(size_mult, 3)
 
             try:
@@ -587,6 +593,13 @@ async def scalp_rangefader_worker() -> None:
                 "range_score": round(range_score, 3),
                 "range_reason": range_ctx.reason,
                 "range_mode": range_ctx.mode,
+                "air_score": air.air_score,
+                "air_pressure": air.pressure_score,
+                "air_pressure_dir": air.pressure_dir,
+                "air_spread_state": air.spread_state,
+                "air_exec_quality": air.exec_quality,
+                "air_regime_shift": air.regime_shift,
+                "air_range_pref": air.range_pref,
             }
             if div_meta:
                 entry_thesis["divergence"] = div_meta

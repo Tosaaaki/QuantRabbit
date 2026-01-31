@@ -19,6 +19,7 @@ from market_data import tick_window, spread_monitor
 from utils.market_hours import is_market_open
 from utils.oanda_account import get_account_snapshot, get_position_summary
 from workers.common.dyn_cap import compute_cap
+from workers.common.air_state import evaluate_air, adjust_signal
 
 from . import config
 from .common import (
@@ -1052,6 +1053,13 @@ def _build_entry_thesis(signal: Dict[str, object], fac_m1: Dict[str, object], ra
         "vwap_gap": _vwap_gap_pips(fac_m1),
         "ema_slope_10_pips": _ema_slope_pips(fac_m1, "ema_slope_10"),
         "div_score": _div_score(fac_m1),
+        "air_score": signal.get("air_score"),
+        "air_pressure": signal.get("air_pressure"),
+        "air_pressure_dir": signal.get("air_pressure_dir"),
+        "air_spread_state": signal.get("air_spread_state"),
+        "air_exec_quality": signal.get("air_exec_quality"),
+        "air_regime_shift": signal.get("air_regime_shift"),
+        "air_range_pref": signal.get("air_range_pref"),
     }
 
 
@@ -1185,6 +1193,10 @@ async def scalp_precision_worker() -> None:
 
             range_ctx = detect_range_mode(fac_m1, fac_h4)
 
+            air = evaluate_air(fac_m1, fac_h4, range_ctx=range_ctx, tag=config.MODE)
+            if air.enabled and not air.allow_entry:
+                continue
+
             # max open trades guard
             if config.MAX_OPEN_TRADES > 0 or config.MAX_OPEN_TRADES_GLOBAL > 0:
                 try:
@@ -1264,7 +1276,9 @@ async def scalp_precision_worker() -> None:
                 else:
                     signal = fn(fac_m1, **kwargs)
                 if signal:
-                    signals.append(signal)
+                    signal = adjust_signal(signal, air)
+                    if signal:
+                        signals.append(signal)
 
             if not signals:
                 continue

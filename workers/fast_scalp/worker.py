@@ -32,6 +32,7 @@ from utils.metrics_logger import log_metric
 from utils.secrets import get_secret
 from utils.oanda_account import get_account_snapshot, get_position_summary
 from workers.common.quality_gate import current_regime
+from workers.common.air_state import evaluate_air
 
 from . import config
 from .rate_limiter import SlidingWindowRateLimiter
@@ -1065,6 +1066,20 @@ async def fast_scalp_worker(shared_state: Optional[FastScalpState] = None) -> No
 
             profile_sl_pips = profile.sl_pips if profile.sl_pips is not None else config.SL_PIPS
             adjusted_lot = False
+            fac_m1 = {}
+            fac_h4 = {}
+            try:
+                factors = all_factors()
+                fac_m1 = factors.get("M1") or {}
+                fac_h4 = factors.get("H4") or {}
+            except Exception:
+                fac_m1 = {}
+                fac_h4 = {}
+            air = evaluate_air(fac_m1, fac_h4, range_active=range_active_flag, tag=config.STRATEGY_TAG)
+            if air.enabled and not air.allow_entry:
+                log_metric("fast_scalp_skip", 1.0, tags={"reason": "air_block", "pref": air.range_pref}, ts=now)
+                await asyncio.sleep(config.LOOP_INTERVAL_SEC)
+                continue
             if config.FIXED_UNITS and abs(config.FIXED_UNITS) >= config.MIN_UNITS:
                 units = abs(int(config.FIXED_UNITS))
                 units = units if direction == "long" else -units
@@ -1077,9 +1092,6 @@ async def fast_scalp_worker(shared_state: Optional[FastScalpState] = None) -> No
                     long_units, short_units = get_position_summary("USD_JPY", timeout=3.0)
                 except Exception:
                     long_units, short_units = 0.0, 0.0
-                factors = all_factors()
-                fac_m1 = factors.get("M1") or {}
-                fac_h4 = factors.get("H4") or {}
                 strategy_tag = config.STRATEGY_TAG
                 allowed_lot_raw = allowed_lot(
                     equity,
@@ -1126,6 +1138,8 @@ async def fast_scalp_worker(shared_state: Optional[FastScalpState] = None) -> No
             if not config.FIXED_UNITS:
                 if direction == "short":
                     units = -units
+            if air.enabled:
+                units = int(round(units * air.size_mult))
             if abs(units) < config.MIN_UNITS:
                 await asyncio.sleep(config.LOOP_INTERVAL_SEC)
                 continue
@@ -1268,6 +1282,13 @@ async def fast_scalp_worker(shared_state: Optional[FastScalpState] = None) -> No
                 "pattern_score": None if pattern_prob is None else round(pattern_prob, 3),
                 "signal_age_ms": None if last_tick_age_ms is None else float(last_tick_age_ms),
                 "price_drift_pips": round(drift_pips, 4),
+                "air_score": round(air.air_score, 3) if air.enabled else None,
+                "air_pressure": round(air.pressure_score, 3) if air.enabled else None,
+                "air_pressure_dir": air.pressure_dir if air.enabled else None,
+                "air_spread_state": air.spread_state if air.enabled else None,
+                "air_exec_quality": round(air.exec_quality, 3) if air.enabled else None,
+                "air_regime_shift": round(air.regime_shift, 3) if air.enabled else None,
+                "air_range_pref": air.range_pref if air.enabled else None,
             }
 
             fac_m1 = all_factors().get("M1") or {}
