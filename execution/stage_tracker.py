@@ -70,6 +70,10 @@ _STRATEGY_ALIAS_BASE = {
     "bbrsi": "BB_RSI",
     "bb_rsi": "BB_RSI",
     "techfusion": "TechFusion",
+    "macrotechfusion": "MacroTechFusion",
+    "micropullbackfib": "MicroPullbackFib",
+    "scalpreversalnwave": "ScalpReversalNWave",
+    "rangecompressionbreak": "RangeCompressionBreak",
 }
 
 

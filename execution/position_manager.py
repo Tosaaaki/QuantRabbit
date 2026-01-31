@@ -83,6 +83,10 @@ _WORKER_TAG_MAP = {
     "VolCompressionBreak": "micro_multistrat",
     "VolSpikeRider": "vol_spike_rider",
     "TechFusion": "tech_fusion",
+    "MacroTechFusion": "macro_tech_fusion",
+    "MicroPullbackFib": "micro_pullback_fib",
+    "ScalpReversalNWave": "scalp_reversal_nwave",
+    "RangeCompressionBreak": "range_compression_break",
 }
 # SQLite locking周り
 # ロック頻発に備えてデフォルトを広めに取る
@@ -175,6 +179,10 @@ _CANONICAL_STRATEGY_TAGS = {
     "OnePipMakerS1",
     "LondonMomentum",
     "TechFusion",
+    "MacroTechFusion",
+    "MicroPullbackFib",
+    "ScalpReversalNWave",
+    "RangeCompressionBreak",
 }
 _CANONICAL_TAGS_LOWER = {tag.lower(): tag for tag in _CANONICAL_STRATEGY_TAGS}
 _TAG_ALIAS_PREFIXES = {
@@ -190,6 +198,10 @@ _TAG_ALIAS_PREFIXES = {
     "bbrsi": "BB_RSI",
     "bb_rsi": "BB_RSI",
     "techfusion": "TechFusion",
+    "macrotechfusion": "MacroTechFusion",
+    "micropullbackfib": "MicroPullbackFib",
+    "scalpreversalnwave": "ScalpReversalNWave",
+    "rangecompressionbreak": "RangeCompressionBreak",
 }
 
 _STRATEGY_POCKET_MAP = {
@@ -233,6 +245,10 @@ _STRATEGY_POCKET_MAP = {
     "mm_lite": "scalp",
     "VolSpikeRider": "scalp",
     "fast_scalp": "scalp_fast",
+    "MacroTechFusion": "macro",
+    "MicroPullbackFib": "micro",
+    "ScalpReversalNWave": "scalp",
+    "RangeCompressionBreak": "micro",
 }
 
 

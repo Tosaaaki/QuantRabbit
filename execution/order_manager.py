@@ -159,6 +159,10 @@ _STRATEGY_ALIAS_BASE = {
     "microvwapbound": "MicroVWAPBound",
     "momentumburst": "MomentumBurst",
     "techfusion": "TechFusion",
+    "macrotechfusion": "MacroTechFusion",
+    "micropullbackfib": "MicroPullbackFib",
+    "scalpreversalnwave": "ScalpReversalNWave",
+    "rangecompressionbreak": "RangeCompressionBreak",
 }
 
 

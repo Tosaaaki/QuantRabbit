@@ -151,6 +151,10 @@ _TAG_ALIAS = {
     "microvwaprevert": "microvwaprevert",
     "microlevelreactor": "microlevelreactor",
     "techfusion": "techfusion",
+    "macrotechfusion": "macrotechfusion",
+    "micropullbackfib": "micropullbackfib",
+    "scalpreversalnwave": "scalpreversalnwave",
+    "rangecompressionbreak": "rangecompressionbreak",
 }
 _RANGE_HINTS = {
     "range",
