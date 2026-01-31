@@ -42,7 +42,11 @@
       "tp_cap_tactical": 1.8,
       "tp_floor": 1.2,
       "tp_floor_tactical": 1.0,
-      "wick_min": 0.00088
+      "wick_min": 0.00088,
+      "buy_dip_rsi_avoid_min": 40.0,
+      "buy_dip_rsi_avoid_max": 45.0,
+      "buy_dip_min_atr": 2.1,
+      "buy_dip_min_vol5": 1.16
     },
     "nwave": {
       "hard_sl_atr_mult": 1.8,

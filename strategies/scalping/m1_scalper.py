@@ -580,6 +580,10 @@ class M1Scalper:
         rsi_trend_long_max = _fallback_float("rsi_trend_long_max", 70.0)
         rsi_trend_short_min = _fallback_float("rsi_trend_short_min", 45.0)
         rsi_edge_min = _fallback_float("rsi_edge_min", 0.25)
+        buy_dip_rsi_avoid_min = _fallback_float("buy_dip_rsi_avoid_min", 0.0)
+        buy_dip_rsi_avoid_max = _fallback_float("buy_dip_rsi_avoid_max", 0.0)
+        buy_dip_min_atr = _fallback_float("buy_dip_min_atr", 0.0)
+        buy_dip_min_vol = _fallback_float("buy_dip_min_vol5", 0.0)
 
         # レンジ・低ボラを検知し、帯付近のみエントリーを許可
         low_vol_range = (adx < 18.0 and bbw > 0.0 and bbw < 0.0016 and atr_pips < 2.4)
@@ -658,6 +662,28 @@ class M1Scalper:
                 confidence = int(confidence * 0.9)
                 if rsi < rsi_trend_short_min:
                     _log("trend_block_short_rsi", rsi=round(rsi, 2))
+                    return None
+            if action == "OPEN_LONG":
+                if buy_dip_rsi_avoid_max > buy_dip_rsi_avoid_min and buy_dip_rsi_avoid_min <= rsi <= buy_dip_rsi_avoid_max:
+                    _log(
+                        "buy_dip_block_rsi_band",
+                        rsi=round(rsi, 2),
+                        band=f"{buy_dip_rsi_avoid_min:.1f}-{buy_dip_rsi_avoid_max:.1f}",
+                    )
+                    return None
+                if buy_dip_min_atr > 0.0 and atr_pips < buy_dip_min_atr:
+                    _log(
+                        "buy_dip_block_atr",
+                        atr_pips=round(atr_pips, 2),
+                        min_atr=round(buy_dip_min_atr, 2),
+                    )
+                    return None
+                if buy_dip_min_vol > 0.0 and vol5 < buy_dip_min_vol:
+                    _log(
+                        "buy_dip_block_vol",
+                        vol5=round(vol5, 2),
+                        min_vol=round(buy_dip_min_vol, 2),
+                    )
                     return None
             if action == "OPEN_LONG" and strong_down:
                 _log("trend_block_long", momentum=round(momentum, 5), ema_gap=round(ema_gap_pips, 3), price_gap=round(price_gap_pips, 3))
