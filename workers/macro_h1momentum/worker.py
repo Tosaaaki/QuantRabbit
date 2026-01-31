@@ -23,6 +23,8 @@ from workers.common.dyn_cap import compute_cap
 from workers.common.quality_gate import current_regime
 from analysis import perf_monitor
 
+from workers.common.size_utils import scale_base_units
+
 from . import config
 
 import os
@@ -478,6 +480,9 @@ async def h1momentum_worker() -> None:
         strategy_tag = signal.get("tag", H1MomentumSwing.name)
 
         snap = get_account_snapshot()
+        equity = float(snap.nav or snap.balance or 0.0)
+
+        balance = float(snap.balance or snap.nav or 0.0)
         free_ratio = float(snap.free_margin_ratio or 0.0) if snap.free_margin_ratio is not None else 0.0
         atr_pips = float(fac_h1.get("atr_pips") or 0.0)
         q_allow, q_reason = _quality_guard(strategy_tag, macro_regime, micro_regime, atr_pips)
@@ -529,7 +534,7 @@ async def h1momentum_worker() -> None:
         # 長めのTPはロットを薄く、短めはやや厚めにする
         tp_scale = 14.0 / max(1.0, tp_pips)
         tp_scale = max(0.35, min(1.1, tp_scale))
-        base_units = int(round(config.BASE_ENTRY_UNITS * tp_scale))
+        base_units = int(round(scale_base_units(config.BASE_ENTRY_UNITS, equity=balance if balance > 0 else equity, ref_equity=balance) * tp_scale))
         conf_scale = _confidence_scale(int(signal.get("confidence", 50)))
         lot = allowed_lot(
             float(snap.nav or 0.0),

@@ -25,6 +25,8 @@ from utils.oanda_account import get_account_snapshot
 from workers.common.dyn_cap import compute_cap
 from analysis import perf_monitor
 
+from workers.common.size_utils import scale_base_units
+
 from . import config
 
 import os
@@ -452,6 +454,9 @@ async def micro_bbrsi_worker() -> None:
             )
 
         snap = get_account_snapshot()
+        equity = float(snap.nav or snap.balance or 0.0)
+
+        balance = float(snap.balance or snap.nav or 0.0)
         free_ratio = float(snap.free_margin_ratio or 0.0) if snap.free_margin_ratio is not None else 0.0
         try:
             atr_pips = float(fac_m1.get("atr_pips") or 0.0)
@@ -494,7 +499,7 @@ async def micro_bbrsi_worker() -> None:
 
         tp_scale = 8.0 / max(1.0, tp_pips)
         tp_scale = max(0.4, min(1.1, tp_scale))
-        base_units = int(round(config.BASE_ENTRY_UNITS * tp_scale))
+        base_units = int(round(scale_base_units(config.BASE_ENTRY_UNITS, equity=balance if balance > 0 else equity, ref_equity=balance) * tp_scale))
 
         conf_scale = _confidence_scale(int(signal.get("confidence", 50)))
         signal_tag = signal.get("tag", BBRsi.name)

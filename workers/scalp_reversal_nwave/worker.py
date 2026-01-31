@@ -21,6 +21,8 @@ from workers.common.dyn_cap import compute_cap
 from workers.common import perf_guard
 from analysis import perf_monitor
 
+from workers.common.size_utils import scale_base_units
+
 from . import config
 
 LOG = logging.getLogger(__name__)
@@ -270,6 +272,9 @@ async def scalp_reversal_nwave_worker() -> None:
             pf = None
 
         snap = get_account_snapshot()
+        equity = float(snap.nav or snap.balance or 0.0)
+
+        balance = float(snap.balance or snap.nav or 0.0)
         free_ratio = float(snap.free_margin_ratio or 0.0) if snap.free_margin_ratio is not None else 0.0
         pos_bias = 0.0
         try:
@@ -303,7 +308,7 @@ async def scalp_reversal_nwave_worker() -> None:
 
         tp_scale = 6.0 / max(1.0, tp_pips)
         tp_scale = max(0.45, min(1.1, tp_scale))
-        base_units = int(round(config.BASE_ENTRY_UNITS * tp_scale))
+        base_units = int(round(scale_base_units(config.BASE_ENTRY_UNITS, equity=balance if balance > 0 else equity, ref_equity=balance) * tp_scale))
         conf_scale = _confidence_scale(conf, config.CONFIDENCE_FLOOR, config.CONFIDENCE_CEIL)
 
         lot = allowed_lot(

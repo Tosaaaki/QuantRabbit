@@ -19,6 +19,8 @@ from utils.market_hours import is_market_open
 from utils.oanda_account import get_account_snapshot, get_position_summary
 from workers.common.dyn_cap import compute_cap
 
+from workers.common.size_utils import scale_base_units
+
 from . import config
 
 import os
@@ -396,6 +398,9 @@ async def scalp_pulsebreak_worker() -> None:
                 continue
 
             snap = get_account_snapshot()
+            equity = float(snap.nav or snap.balance or 0.0)
+
+            balance = float(snap.balance or snap.nav or 0.0)
             free_ratio = float(snap.free_margin_ratio or 0.0) if snap.free_margin_ratio is not None else 0.0
             try:
                 atr_pips = float(fac_m1.get("atr_pips") or 0.0)
@@ -445,7 +450,7 @@ async def scalp_pulsebreak_worker() -> None:
 
             tp_scale = 4.0 / max(1.0, tp_pips)
             tp_scale = max(0.4, min(1.2, tp_scale))
-            base_units = int(round(config.BASE_ENTRY_UNITS * tp_scale))
+            base_units = int(round(scale_base_units(config.BASE_ENTRY_UNITS, equity=balance if balance > 0 else equity, ref_equity=balance) * tp_scale))
 
             conf_scale = _confidence_scale(int(signal.get("confidence", 50)), lo=config.CONFIDENCE_FLOOR, hi=config.CONFIDENCE_CEIL)
             signal_tag = (signal.get("tag") or "").strip() or PulseBreak.name

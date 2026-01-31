@@ -6,6 +6,7 @@ from typing import Optional, Tuple
 
 from execution.risk_guard import allowed_lot
 from workers.common import perf_guard
+from workers.common.size_utils import scale_base_units
 from utils.oanda_account import get_account_snapshot
 
 
@@ -51,9 +52,12 @@ def compute_units(
     """
     snap = get_account_snapshot()
     equity = snap.nav or snap.balance or 0.0
+    balance = float(snap.balance or snap.nav or 0.0)
     margin_avail = float(snap.margin_available or 0.0)
     margin_rate = float(snap.margin_rate or 0.0)
     free_ratio = float(snap.free_margin_ratio or 0.0) if snap.free_margin_ratio is not None else 0.0
+
+    base_entry_units = scale_base_units(base_entry_units, equity=balance if balance > 0 else equity, ref_equity=balance, min_units=min_units)
 
     # 1) Dynamic risk based on free margin ratio
     #    Very low free margin -> scale down aggressively

@@ -28,6 +28,8 @@ from utils.oanda_account import get_account_snapshot, get_position_summary
 from workers.common.dyn_cap import compute_cap
 from analysis import perf_monitor
 
+from workers.common.size_utils import scale_base_units
+
 from . import config
 
 import os
@@ -537,6 +539,9 @@ async def scalp_multi_worker() -> None:
         candidates.sort(key=lambda item: (item[0], item[1]), reverse=True)
 
         snap = get_account_snapshot()
+        equity = float(snap.nav or snap.balance or 0.0)
+
+        balance = float(snap.balance or snap.nav or 0.0)
         # 同ポケットのオープントレード数制限
         available_slots = None
         try:
@@ -637,7 +642,7 @@ async def scalp_multi_worker() -> None:
 
             tp_scale = 4.0 / max(1.0, tp_pips)
             tp_scale = max(0.4, min(1.2, tp_scale))
-            base_units = int(round(config.BASE_ENTRY_UNITS * tp_scale))
+            base_units = int(round(scale_base_units(config.BASE_ENTRY_UNITS, equity=balance if balance > 0 else equity, ref_equity=balance) * tp_scale))
 
             conf_scale = _confidence_scale(int(signal.get("confidence", 50)))
             lot = allowed_lot(

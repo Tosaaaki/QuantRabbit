@@ -22,6 +22,8 @@ from utils.oanda_account import get_account_snapshot
 from workers.common.dyn_cap import compute_cap
 from analysis import perf_monitor
 
+from workers.common.size_utils import scale_base_units
+
 from . import config
 
 import os
@@ -427,6 +429,9 @@ async def trendma_worker() -> None:
             )
 
         snap = get_account_snapshot()
+        equity = float(snap.nav or snap.balance or 0.0)
+
+        balance = float(snap.balance or snap.nav or 0.0)
         free_ratio_raw = snap.free_margin_ratio
         free_ratio = float(free_ratio_raw or 0.0) if free_ratio_raw is not None else 0.0
         usage_ratio = None
@@ -538,7 +543,7 @@ async def trendma_worker() -> None:
 
         tp_scale = 14.0 / max(1.0, tp_pips)
         tp_scale = max(0.35, min(1.1, tp_scale))
-        base_units = int(round(config.BASE_ENTRY_UNITS * tp_scale))
+        base_units = int(round(scale_base_units(config.BASE_ENTRY_UNITS, equity=balance if balance > 0 else equity, ref_equity=balance) * tp_scale))
 
         conf_scale = _confidence_scale(conf)
         strategy_tag = signal.get("tag", MovingAverageCross.name)
