@@ -25,6 +25,8 @@ CAP_MAX = float(os.getenv("RANGEFADER_CAP_MAX", "0.95"))
 
 COOLDOWN_SEC = float(os.getenv("RANGEFADER_COOLDOWN_SEC", "45.0"))
 MAX_OPEN_TRADES = int(os.getenv("RANGEFADER_MAX_OPEN_TRADES", "3"))
+MAX_OPEN_TRADES_GLOBAL = int(os.getenv("RANGEFADER_MAX_OPEN_TRADES_GLOBAL", "0"))
+OPEN_TRADES_SCOPE = os.getenv("RANGEFADER_OPEN_TRADES_SCOPE", "tag").strip().lower()
 RANGE_ONLY_SCORE = float(os.getenv("RANGEFADER_RANGE_ONLY_SCORE", "0.45"))
 
 # Size boost for strong range setups

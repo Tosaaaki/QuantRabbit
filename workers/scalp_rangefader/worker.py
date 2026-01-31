@@ -436,12 +436,22 @@ async def scalp_rangefader_worker() -> None:
             if not range_only:
                 continue
 
-            if config.MAX_OPEN_TRADES > 0:
+            if config.MAX_OPEN_TRADES > 0 or config.MAX_OPEN_TRADES_GLOBAL > 0:
                 try:
                     positions = pos_manager.get_open_positions()
                     scalp_info = positions.get(config.POCKET) or {}
-                    open_trades = len(scalp_info.get("open_trades") or [])
-                    if open_trades >= config.MAX_OPEN_TRADES:
+                    open_trades_all = scalp_info.get("open_trades") or []
+                    if config.MAX_OPEN_TRADES_GLOBAL > 0 and len(open_trades_all) >= config.MAX_OPEN_TRADES_GLOBAL:
+                        continue
+                    open_trades = open_trades_all
+                    if config.OPEN_TRADES_SCOPE == "tag":
+                        tag_lower = RangeFader.name.lower()
+                        open_trades = [
+                            tr
+                            for tr in open_trades_all
+                            if str(tr.get("strategy_tag") or "").lower() == tag_lower
+                        ]
+                    if config.MAX_OPEN_TRADES > 0 and len(open_trades) >= config.MAX_OPEN_TRADES:
                         continue
                 except Exception:
                     pass

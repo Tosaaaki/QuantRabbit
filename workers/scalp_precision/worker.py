@@ -37,6 +37,25 @@ from .common import (
 
 LOG = logging.getLogger(__name__)
 
+_MODE_TAG_MAP = {
+    'spread_revert': 'SpreadRangeRevert',
+    'rangefaderpro': 'RangeFaderPro',
+    'vwap_revert': 'VwapRevertS',
+    'stoch_bounce': 'StochBollBounce',
+    'divergence_revert': 'DivergenceRevert',
+    'compression_retest': 'CompressionRetest',
+    'htf_pullback': 'HTFPullbackS',
+    'macd_trend': 'MacdTrendRide',
+    'ema_slope_pull': 'EmaSlopePull',
+    'tick_imbalance': 'TickImbalance',
+    'level_reject': 'LevelReject',
+    'wick_reversal': 'WickReversal',
+    'session_edge': 'SessionEdge',
+}
+
+def _mode_to_tag(mode: str) -> Optional[str]:
+    return _MODE_TAG_MAP.get((mode or '').strip().lower())
+
 # --- env helpers ---
 
 def _env_float(key: str, default: float) -> float:
@@ -1167,12 +1186,24 @@ async def scalp_precision_worker() -> None:
             range_ctx = detect_range_mode(fac_m1, fac_h4)
 
             # max open trades guard
-            if config.MAX_OPEN_TRADES > 0:
+            if config.MAX_OPEN_TRADES > 0 or config.MAX_OPEN_TRADES_GLOBAL > 0:
                 try:
                     positions = pos_manager.get_open_positions()
                     scalp_info = positions.get(config.POCKET) or {}
-                    open_trades = len(scalp_info.get("open_trades") or [])
-                    if open_trades >= config.MAX_OPEN_TRADES:
+                    open_trades_all = scalp_info.get("open_trades") or []
+                    if config.MAX_OPEN_TRADES_GLOBAL > 0 and len(open_trades_all) >= config.MAX_OPEN_TRADES_GLOBAL:
+                        continue
+                    open_trades = open_trades_all
+                    if config.OPEN_TRADES_SCOPE == "tag":
+                        mode_tag = _mode_to_tag(config.MODE)
+                        if mode_tag:
+                            tag_lower = mode_tag.lower()
+                            open_trades = [
+                                tr
+                                for tr in open_trades_all
+                                if str(tr.get("strategy_tag") or "").lower() == tag_lower
+                            ]
+                    if config.MAX_OPEN_TRADES > 0 and len(open_trades) >= config.MAX_OPEN_TRADES:
                         continue
                 except Exception:
                     pass
