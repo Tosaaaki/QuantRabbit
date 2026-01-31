@@ -156,7 +156,7 @@ LOG = logging.getLogger(__name__)
 LOG_PREFIX = os.getenv("SCALP_PRECISION_EXIT_LOG_PREFIX", "[ScalpPrecisionExit]")
 
 
-ALLOWED_TAGS: Set[str] = {'SpreadRangeRevert','RangeFaderPro','CompressionRetest','HTFPullbackS','TickImbalance','LevelReject','WickReversal','SessionEdge'}
+ALLOWED_TAGS: Set[str] = {'SpreadRangeRevert','RangeFaderPro','VwapRevertS','StochBollBounce','DivergenceRevert','CompressionRetest','HTFPullbackS','MacdTrendRide','EmaSlopePull','TickImbalance','LevelReject','WickReversal','SessionEdge'}
 
 
 def _tags_env(key: str, default: Set[str]) -> Set[str]:

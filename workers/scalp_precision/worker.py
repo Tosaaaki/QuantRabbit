@@ -112,6 +112,61 @@ WICK_BBW_MAX = _env_float("WICK_REV_BBW_MAX", 0.28)
 SESSION_ALLOW_HOURS = parse_hours(os.getenv("SESSION_EDGE_ALLOW_HOURS_JST", "12,13,18-22"))
 SESSION_BLOCK_HOURS = parse_hours(os.getenv("SESSION_EDGE_BLOCK_HOURS_JST", "00-02,16"))
 
+VWAP_REV_GAP_MIN = _env_float("VWAP_REV_GAP_MIN", 1.2)
+VWAP_REV_BB_TOUCH_PIPS = _env_float("VWAP_REV_BB_TOUCH_PIPS", 0.9)
+VWAP_REV_RSI_LONG_MAX = _env_float("VWAP_REV_RSI_LONG_MAX", 46.0)
+VWAP_REV_RSI_SHORT_MIN = _env_float("VWAP_REV_RSI_SHORT_MIN", 54.0)
+VWAP_REV_STOCH_LONG_MAX = _env_float("VWAP_REV_STOCH_LONG_MAX", 0.2)
+VWAP_REV_STOCH_SHORT_MIN = _env_float("VWAP_REV_STOCH_SHORT_MIN", 0.8)
+VWAP_REV_ADX_MAX = _env_float("VWAP_REV_ADX_MAX", 22.0)
+VWAP_REV_BBW_MAX = _env_float("VWAP_REV_BBW_MAX", 0.26)
+VWAP_REV_ATR_MIN = _env_float("VWAP_REV_ATR_MIN", 0.7)
+VWAP_REV_ATR_MAX = _env_float("VWAP_REV_ATR_MAX", 3.2)
+VWAP_REV_SPREAD_P25 = _env_float("VWAP_REV_SPREAD_P25", 0.9)
+VWAP_REV_RANGE_SCORE = _env_float("VWAP_REV_RANGE_SCORE", 0.4)
+
+STOCH_BOUNCE_STOCH_LONG_MAX = _env_float("STOCH_BOUNCE_STOCH_LONG_MAX", 0.18)
+STOCH_BOUNCE_STOCH_SHORT_MIN = _env_float("STOCH_BOUNCE_STOCH_SHORT_MIN", 0.82)
+STOCH_BOUNCE_RSI_LONG_MAX = _env_float("STOCH_BOUNCE_RSI_LONG_MAX", 46.0)
+STOCH_BOUNCE_RSI_SHORT_MIN = _env_float("STOCH_BOUNCE_RSI_SHORT_MIN", 54.0)
+STOCH_BOUNCE_ADX_MAX = _env_float("STOCH_BOUNCE_ADX_MAX", 22.0)
+STOCH_BOUNCE_BBW_MAX = _env_float("STOCH_BOUNCE_BBW_MAX", 0.26)
+STOCH_BOUNCE_ATR_MIN = _env_float("STOCH_BOUNCE_ATR_MIN", 0.7)
+STOCH_BOUNCE_ATR_MAX = _env_float("STOCH_BOUNCE_ATR_MAX", 3.0)
+STOCH_BOUNCE_MACD_ABS_MAX = _env_float("STOCH_BOUNCE_MACD_ABS_MAX", 0.6)
+STOCH_BOUNCE_BB_TOUCH_PIPS = _env_float("STOCH_BOUNCE_BB_TOUCH_PIPS", 0.9)
+STOCH_BOUNCE_RANGE_SCORE = _env_float("STOCH_BOUNCE_RANGE_SCORE", 0.35)
+
+MACD_TREND_ADX_MIN = _env_float("MACD_TREND_ADX_MIN", 20.0)
+MACD_TREND_BBW_MIN = _env_float("MACD_TREND_BBW_MIN", 0.16)
+MACD_TREND_ATR_MIN = _env_float("MACD_TREND_ATR_MIN", 0.9)
+MACD_TREND_HIST_MIN = _env_float("MACD_TREND_HIST_MIN", 0.25)
+MACD_TREND_SLOPE_MIN = _env_float("MACD_TREND_SLOPE_MIN", 0.05)
+MACD_TREND_RSI_LONG_MIN = _env_float("MACD_TREND_RSI_LONG_MIN", 52.0)
+MACD_TREND_RSI_SHORT_MAX = _env_float("MACD_TREND_RSI_SHORT_MAX", 48.0)
+MACD_TREND_VWAP_GAP_MAX = _env_float("MACD_TREND_VWAP_GAP_MAX", 2.2)
+MACD_TREND_M5_SLOPE_MIN = _env_float("MACD_TREND_M5_SLOPE_MIN", 0.03)
+
+DIV_REVERT_SCORE_MIN = _env_float("DIV_REVERT_SCORE_MIN", 0.32)
+DIV_REVERT_MAX_AGE = _env_int("DIV_REVERT_MAX_AGE", 6)
+DIV_REVERT_MIN_STRENGTH = _env_float("DIV_REVERT_MIN_STRENGTH", 0.35)
+DIV_REVERT_RSI_LONG_MAX = _env_float("DIV_REVERT_RSI_LONG_MAX", 47.0)
+DIV_REVERT_RSI_SHORT_MIN = _env_float("DIV_REVERT_RSI_SHORT_MIN", 53.0)
+DIV_REVERT_BB_TOUCH_PIPS = _env_float("DIV_REVERT_BB_TOUCH_PIPS", 0.9)
+DIV_REVERT_ADX_MAX = _env_float("DIV_REVERT_ADX_MAX", 24.0)
+
+EMA_PULL_SLOPE_MIN = _env_float("EMA_PULL_SLOPE_MIN", 0.04)
+EMA_PULL_BAND_PIPS = _env_float("EMA_PULL_BAND_PIPS", 0.8)
+EMA_PULL_RSI_LONG_MIN = _env_float("EMA_PULL_RSI_LONG_MIN", 46.0)
+EMA_PULL_RSI_LONG_MAX = _env_float("EMA_PULL_RSI_LONG_MAX", 60.0)
+EMA_PULL_RSI_SHORT_MIN = _env_float("EMA_PULL_RSI_SHORT_MIN", 40.0)
+EMA_PULL_RSI_SHORT_MAX = _env_float("EMA_PULL_RSI_SHORT_MAX", 54.0)
+EMA_PULL_VWAP_GAP_MAX = _env_float("EMA_PULL_VWAP_GAP_MAX", 1.0)
+EMA_PULL_MACD_ABS_MAX = _env_float("EMA_PULL_MACD_ABS_MAX", 0.8)
+EMA_PULL_ADX_MIN = _env_float("EMA_PULL_ADX_MIN", 16.0)
+EMA_PULL_STOCH_MIN = _env_float("EMA_PULL_STOCH_MIN", 0.25)
+EMA_PULL_STOCH_MAX = _env_float("EMA_PULL_STOCH_MAX", 0.75)
+
 
 @dataclass
 class RetestState:
@@ -175,6 +230,60 @@ def _bbw(fac_m1: Dict[str, object]) -> float:
         return float(fac_m1.get("bbw") or 0.0)
     except Exception:
         return 0.0
+
+def _stoch_rsi(fac_m1: Dict[str, object]) -> float:
+    try:
+        return float(fac_m1.get("stoch_rsi") or 0.0)
+    except Exception:
+        return 0.0
+
+
+def _macd_hist_pips(fac_m1: Dict[str, object]) -> float:
+    try:
+        return float(fac_m1.get("macd_hist") or 0.0) / PIP
+    except Exception:
+        return 0.0
+
+
+def _macd_pips(fac_m1: Dict[str, object]) -> float:
+    try:
+        return float(fac_m1.get("macd") or 0.0) / PIP
+    except Exception:
+        return 0.0
+
+
+def _macd_signal_pips(fac_m1: Dict[str, object]) -> float:
+    try:
+        return float(fac_m1.get("macd_signal") or 0.0) / PIP
+    except Exception:
+        return 0.0
+
+
+def _ema_slope_pips(fac_m1: Dict[str, object], key: str) -> float:
+    try:
+        return float(fac_m1.get(key) or 0.0) / PIP
+    except Exception:
+        return 0.0
+
+
+def _vwap_gap_pips(fac_m1: Dict[str, object]) -> float:
+    try:
+        return float(fac_m1.get("vwap_gap") or 0.0)
+    except Exception:
+        return 0.0
+
+
+def _div_score(fac_m1: Dict[str, object]) -> float:
+    try:
+        rsi_score = float(fac_m1.get("div_rsi_score") or 0.0)
+    except Exception:
+        rsi_score = 0.0
+    try:
+        macd_score = float(fac_m1.get("div_macd_score") or 0.0)
+    except Exception:
+        macd_score = 0.0
+    return rsi_score * 0.6 + macd_score * 0.4
+
 
 
 def _signal_spread_revert(
@@ -510,6 +619,390 @@ def _signal_wick_reversal(
     }
 
 
+def _signal_vwap_revert(
+    fac_m1: Dict[str, object],
+    range_ctx,
+    *,
+    tag: str,
+) -> Optional[Dict[str, object]]:
+    price = _latest_price(fac_m1)
+    if price <= 0:
+        return None
+    levels = bb_levels(fac_m1)
+    if not levels:
+        return None
+    upper, _, lower, _, span_pips = levels
+
+    range_score = float(range_ctx.score or 0.0) if range_ctx else 0.0
+    range_ok = bool(range_ctx and (range_ctx.active or range_score >= VWAP_REV_RANGE_SCORE))
+    if not range_ok:
+        return None
+
+    ok_spread, _ = spread_ok(max_pips=config.MAX_SPREAD_PIPS, p25_max=VWAP_REV_SPREAD_P25)
+    if not ok_spread:
+        return None
+
+    adx = _adx(fac_m1)
+    bbw = _bbw(fac_m1)
+    atr = _atr_pips(fac_m1)
+    if adx > VWAP_REV_ADX_MAX or bbw > VWAP_REV_BBW_MAX:
+        return None
+    if atr < VWAP_REV_ATR_MIN or atr > VWAP_REV_ATR_MAX:
+        return None
+
+    vgap = _vwap_gap_pips(fac_m1)
+    if abs(vgap) < VWAP_REV_GAP_MIN:
+        return None
+
+    rsi = _rsi(fac_m1)
+    stoch = _stoch_rsi(fac_m1)
+    dist_lower = (price - lower) / PIP
+    dist_upper = (upper - price) / PIP
+
+    mids, _ = tick_snapshot(6.0, limit=80)
+    rev_ok, rev_dir, rev_strength = tick_reversal(mids, min_ticks=6)
+    if not rev_ok:
+        return None
+
+    side = None
+    if vgap <= -VWAP_REV_GAP_MIN and dist_lower <= max(VWAP_REV_BB_TOUCH_PIPS, span_pips * 0.18):
+        if rsi <= VWAP_REV_RSI_LONG_MAX and stoch <= VWAP_REV_STOCH_LONG_MAX and rev_dir == "long":
+            side = "long"
+    elif vgap >= VWAP_REV_GAP_MIN and dist_upper <= max(VWAP_REV_BB_TOUCH_PIPS, span_pips * 0.18):
+        if rsi >= VWAP_REV_RSI_SHORT_MIN and stoch >= VWAP_REV_STOCH_SHORT_MIN and rev_dir == "short":
+            side = "short"
+    if not side:
+        return None
+
+    proj_allow, size_mult, proj_detail = projection_decision(side, mode="range")
+    if not proj_allow:
+        return None
+
+    sl = max(1.2, min(1.8, atr * 0.7))
+    tp = max(1.4, min(2.2, atr * 0.95))
+    conf = 60 + int(min(10, abs(vgap) * 1.6)) + int(min(8, rev_strength * 3.5))
+    return {
+        "action": "OPEN_LONG" if side == "long" else "OPEN_SHORT",
+        "sl_pips": round(sl, 2),
+        "tp_pips": round(tp, 2),
+        "confidence": int(max(45, min(92, conf))),
+        "tag": tag,
+        "reason": "vwap_revert",
+        "size_mult": round(size_mult, 3),
+        "projection": proj_detail,
+    }
+
+
+def _signal_stoch_bounce(
+    fac_m1: Dict[str, object],
+    range_ctx,
+    *,
+    tag: str,
+) -> Optional[Dict[str, object]]:
+    price = _latest_price(fac_m1)
+    if price <= 0:
+        return None
+    levels = bb_levels(fac_m1)
+    if not levels:
+        return None
+    upper, _, lower, _, span_pips = levels
+
+    range_score = float(range_ctx.score or 0.0) if range_ctx else 0.0
+    range_ok = bool(range_ctx and (range_ctx.active or range_score >= STOCH_BOUNCE_RANGE_SCORE))
+    if not range_ok:
+        return None
+
+    adx = _adx(fac_m1)
+    bbw = _bbw(fac_m1)
+    atr = _atr_pips(fac_m1)
+    if adx > STOCH_BOUNCE_ADX_MAX or bbw > STOCH_BOUNCE_BBW_MAX:
+        return None
+    if atr < STOCH_BOUNCE_ATR_MIN or atr > STOCH_BOUNCE_ATR_MAX:
+        return None
+
+    ok_spread, _ = spread_ok(max_pips=config.MAX_SPREAD_PIPS, p25_max=VWAP_REV_SPREAD_P25)
+    if not ok_spread:
+        return None
+
+    stoch = _stoch_rsi(fac_m1)
+    rsi = _rsi(fac_m1)
+    macd_abs = abs(_macd_hist_pips(fac_m1))
+    if macd_abs > STOCH_BOUNCE_MACD_ABS_MAX:
+        return None
+
+    mids, _ = tick_snapshot(6.0, limit=80)
+    rev_ok, rev_dir, rev_strength = tick_reversal(mids, min_ticks=6)
+    if not rev_ok:
+        return None
+
+    dist_lower = (price - lower) / PIP
+    dist_upper = (upper - price) / PIP
+    side = None
+    if stoch <= STOCH_BOUNCE_STOCH_LONG_MAX and dist_lower <= max(STOCH_BOUNCE_BB_TOUCH_PIPS, span_pips * 0.18):
+        if rsi <= STOCH_BOUNCE_RSI_LONG_MAX and rev_dir == "long":
+            side = "long"
+    elif stoch >= STOCH_BOUNCE_STOCH_SHORT_MIN and dist_upper <= max(STOCH_BOUNCE_BB_TOUCH_PIPS, span_pips * 0.18):
+        if rsi >= STOCH_BOUNCE_RSI_SHORT_MIN and rev_dir == "short":
+            side = "short"
+    if not side:
+        return None
+
+    proj_allow, size_mult, proj_detail = projection_decision(side, mode="range")
+    if not proj_allow:
+        return None
+
+    sl = max(1.2, min(1.9, atr * 0.8))
+    tp = max(1.4, min(2.2, atr * 1.0))
+    conf = 58 + int(min(12, abs(stoch - 0.5) * 28.0)) + int(min(6, rev_strength * 3.0))
+    return {
+        "action": "OPEN_LONG" if side == "long" else "OPEN_SHORT",
+        "sl_pips": round(sl, 2),
+        "tp_pips": round(tp, 2),
+        "confidence": int(max(45, min(92, conf))),
+        "tag": tag,
+        "reason": "stoch_bounce",
+        "size_mult": round(size_mult, 3),
+        "projection": proj_detail,
+    }
+
+
+def _signal_macd_trend(
+    fac_m1: Dict[str, object],
+    fac_m5: Dict[str, object],
+    *,
+    tag: str,
+) -> Optional[Dict[str, object]]:
+    price = _latest_price(fac_m1)
+    if price <= 0:
+        return None
+
+    adx = _adx(fac_m1)
+    bbw = _bbw(fac_m1)
+    atr = _atr_pips(fac_m1)
+    if adx < MACD_TREND_ADX_MIN or bbw < MACD_TREND_BBW_MIN or atr < MACD_TREND_ATR_MIN:
+        return None
+
+    macd_hist = _macd_hist_pips(fac_m1)
+    if abs(macd_hist) < MACD_TREND_HIST_MIN:
+        return None
+
+    slope_10 = _ema_slope_pips(fac_m1, "ema_slope_10")
+    slope_20 = _ema_slope_pips(fac_m1, "ema_slope_20")
+    if abs(slope_10) < MACD_TREND_SLOPE_MIN or abs(slope_20) < MACD_TREND_SLOPE_MIN:
+        return None
+
+    direction = None
+    if macd_hist > 0 and slope_10 > 0 and slope_20 > 0:
+        direction = "long"
+    elif macd_hist < 0 and slope_10 < 0 and slope_20 < 0:
+        direction = "short"
+    if not direction:
+        return None
+
+    m5_slope = _ema_slope_pips(fac_m5, "ema_slope_20")
+    if direction == "long" and m5_slope < MACD_TREND_M5_SLOPE_MIN:
+        return None
+    if direction == "short" and m5_slope > -MACD_TREND_M5_SLOPE_MIN:
+        return None
+
+    vgap = _vwap_gap_pips(fac_m1)
+    if abs(vgap) > MACD_TREND_VWAP_GAP_MAX:
+        return None
+
+    rsi = _rsi(fac_m1)
+    if direction == "long" and rsi < MACD_TREND_RSI_LONG_MIN:
+        return None
+    if direction == "short" and rsi > MACD_TREND_RSI_SHORT_MAX:
+        return None
+
+    proj_allow, size_mult, proj_detail = projection_decision(direction, mode="trend")
+    if not proj_allow:
+        return None
+
+    sl = max(1.6, min(2.3, atr * 0.95))
+    tp = max(2.2, min(3.2, atr * 1.35))
+    conf = 64 + int(min(12, abs(macd_hist) * 2.2)) + int(min(8, abs(slope_10) * 10.0))
+
+    return {
+        "action": "OPEN_LONG" if direction == "long" else "OPEN_SHORT",
+        "sl_pips": round(sl, 2),
+        "tp_pips": round(tp, 2),
+        "confidence": int(max(48, min(92, conf))),
+        "tag": tag,
+        "reason": "macd_trend",
+        "size_mult": round(size_mult, 3),
+        "projection": proj_detail,
+    }
+
+
+def _signal_divergence_revert(
+    fac_m1: Dict[str, object],
+    range_ctx,
+    *,
+    tag: str,
+) -> Optional[Dict[str, object]]:
+    price = _latest_price(fac_m1)
+    if price <= 0:
+        return None
+    levels = bb_levels(fac_m1)
+    if not levels:
+        return None
+    upper, _, lower, _, span_pips = levels
+
+    adx = _adx(fac_m1)
+    if adx > DIV_REVERT_ADX_MAX:
+        return None
+
+    range_ok = bool(range_ctx and range_ctx.active)
+    if not range_ok:
+        return None
+
+    div_score = _div_score(fac_m1)
+    try:
+        rsi_strength = float(fac_m1.get("div_rsi_strength") or 0.0)
+    except Exception:
+        rsi_strength = 0.0
+    try:
+        macd_strength = float(fac_m1.get("div_macd_strength") or 0.0)
+    except Exception:
+        macd_strength = 0.0
+    strength = max(rsi_strength, macd_strength)
+
+    if abs(div_score) < DIV_REVERT_SCORE_MIN or strength < DIV_REVERT_MIN_STRENGTH:
+        return None
+
+    try:
+        rsi_age = int(fac_m1.get("div_rsi_age") or 0)
+    except Exception:
+        rsi_age = 0
+    try:
+        macd_age = int(fac_m1.get("div_macd_age") or 0)
+    except Exception:
+        macd_age = 0
+    age = min([a for a in (rsi_age, macd_age) if a > 0] or [0])
+    if age > DIV_REVERT_MAX_AGE:
+        return None
+
+    rsi = _rsi(fac_m1)
+    dist_lower = (price - lower) / PIP
+    dist_upper = (upper - price) / PIP
+
+    mids, _ = tick_snapshot(6.0, limit=80)
+    rev_ok, rev_dir, rev_strength = tick_reversal(mids, min_ticks=6)
+    if not rev_ok:
+        return None
+
+    side = None
+    if div_score > 0 and dist_lower <= max(DIV_REVERT_BB_TOUCH_PIPS, span_pips * 0.18):
+        if rsi <= DIV_REVERT_RSI_LONG_MAX and rev_dir == "long":
+            side = "long"
+    elif div_score < 0 and dist_upper <= max(DIV_REVERT_BB_TOUCH_PIPS, span_pips * 0.18):
+        if rsi >= DIV_REVERT_RSI_SHORT_MIN and rev_dir == "short":
+            side = "short"
+    if not side:
+        return None
+
+    proj_allow, size_mult, proj_detail = projection_decision(side, mode="range")
+    if not proj_allow:
+        return None
+
+    atr = _atr_pips(fac_m1)
+    sl = max(1.2, min(1.9, atr * 0.8))
+    tp = max(1.4, min(2.2, atr * 1.0))
+    conf = 60 + int(min(14, abs(div_score) * 40.0)) + int(min(6, rev_strength * 3.0))
+
+    return {
+        "action": "OPEN_LONG" if side == "long" else "OPEN_SHORT",
+        "sl_pips": round(sl, 2),
+        "tp_pips": round(tp, 2),
+        "confidence": int(max(45, min(92, conf))),
+        "tag": tag,
+        "reason": "divergence_revert",
+        "size_mult": round(size_mult, 3),
+        "projection": proj_detail,
+    }
+
+
+def _signal_ema_slope_pull(
+    fac_m1: Dict[str, object],
+    fac_m5: Dict[str, object],
+    *,
+    tag: str,
+) -> Optional[Dict[str, object]]:
+    price = _latest_price(fac_m1)
+    if price <= 0:
+        return None
+    ema12 = float(fac_m1.get("ema12") or 0.0)
+    ema20 = float(fac_m1.get("ema20") or fac_m1.get("ma20") or 0.0)
+    if ema12 <= 0 or ema20 <= 0:
+        return None
+
+    slope_10 = _ema_slope_pips(fac_m1, "ema_slope_10")
+    slope_20 = _ema_slope_pips(fac_m1, "ema_slope_20")
+    if abs(slope_10) < EMA_PULL_SLOPE_MIN or abs(slope_20) < EMA_PULL_SLOPE_MIN:
+        return None
+
+    direction = None
+    if ema12 > ema20 and slope_10 > 0 and slope_20 > 0:
+        direction = "long"
+    elif ema12 < ema20 and slope_10 < 0 and slope_20 < 0:
+        direction = "short"
+    if not direction:
+        return None
+
+    adx = _adx(fac_m1)
+    if adx < EMA_PULL_ADX_MIN:
+        return None
+
+    vgap = _vwap_gap_pips(fac_m1)
+    if abs(vgap) > EMA_PULL_VWAP_GAP_MAX:
+        return None
+
+    macd_abs = abs(_macd_hist_pips(fac_m1))
+    if macd_abs > EMA_PULL_MACD_ABS_MAX:
+        return None
+
+    stoch = _stoch_rsi(fac_m1)
+    if stoch < EMA_PULL_STOCH_MIN or stoch > EMA_PULL_STOCH_MAX:
+        return None
+
+    dist = abs(price - ema20) / PIP
+    if dist > EMA_PULL_BAND_PIPS:
+        return None
+
+    rsi = _rsi(fac_m1)
+    if direction == "long" and not (EMA_PULL_RSI_LONG_MIN <= rsi <= EMA_PULL_RSI_LONG_MAX):
+        return None
+    if direction == "short" and not (EMA_PULL_RSI_SHORT_MIN <= rsi <= EMA_PULL_RSI_SHORT_MAX):
+        return None
+
+    m5_slope = _ema_slope_pips(fac_m5, "ema_slope_20")
+    if direction == "long" and m5_slope < 0:
+        return None
+    if direction == "short" and m5_slope > 0:
+        return None
+
+    proj_allow, size_mult, proj_detail = projection_decision(direction, mode="pullback")
+    if not proj_allow:
+        return None
+
+    atr = _atr_pips(fac_m1)
+    sl = max(1.4, min(2.1, atr * 0.9))
+    tp = max(1.8, min(2.6, atr * 1.15))
+    conf = 62 + int(min(10, abs(slope_10) * 10.0))
+
+    return {
+        "action": "OPEN_LONG" if direction == "long" else "OPEN_SHORT",
+        "sl_pips": round(sl, 2),
+        "tp_pips": round(tp, 2),
+        "confidence": int(max(45, min(92, conf))),
+        "tag": tag,
+        "reason": "ema_slope_pull",
+        "size_mult": round(size_mult, 3),
+        "projection": proj_detail,
+    }
+
+
 def _signal_session_edge(
     fac_m1: Dict[str, object],
     range_ctx,
@@ -535,6 +1028,11 @@ def _build_entry_thesis(signal: Dict[str, object], fac_m1: Dict[str, object], ra
         "adx": _adx(fac_m1),
         "atr_pips": _atr_pips(fac_m1),
         "bbw": _bbw(fac_m1),
+        "stoch_rsi": _stoch_rsi(fac_m1),
+        "macd_hist_pips": _macd_hist_pips(fac_m1),
+        "vwap_gap": _vwap_gap_pips(fac_m1),
+        "ema_slope_10_pips": _ema_slope_pips(fac_m1, "ema_slope_10"),
+        "div_score": _div_score(fac_m1),
     }
 
 
@@ -699,10 +1197,20 @@ async def scalp_precision_worker() -> None:
                 strategies.append(("SpreadRangeRevert", _signal_spread_revert, {"tag": "SpreadRangeRevert"}))
             if enabled("rangefaderpro"):
                 strategies.append(("RangeFaderPro", _signal_spread_revert, {"tag": "RangeFaderPro"}))
+            if enabled("vwap_revert"):
+                strategies.append(("VwapRevertS", _signal_vwap_revert, {"tag": "VwapRevertS"}))
+            if enabled("stoch_bounce"):
+                strategies.append(("StochBollBounce", _signal_stoch_bounce, {"tag": "StochBollBounce"}))
+            if enabled("divergence_revert"):
+                strategies.append(("DivergenceRevert", _signal_divergence_revert, {"tag": "DivergenceRevert"}))
             if enabled("compression_retest"):
                 strategies.append(("CompressionRetest", _signal_compression_retest, {"tag": "CompressionRetest"}))
             if enabled("htf_pullback"):
                 strategies.append(("HTFPullbackS", _signal_htf_pullback, {"tag": "HTFPullbackS"}))
+            if enabled("macd_trend"):
+                strategies.append(("MacdTrendRide", _signal_macd_trend, {"tag": "MacdTrendRide"}))
+            if enabled("ema_slope_pull"):
+                strategies.append(("EmaSlopePull", _signal_ema_slope_pull, {"tag": "EmaSlopePull"}))
             if enabled("tick_imbalance"):
                 strategies.append(("TickImbalance", _signal_tick_imbalance, {"tag": "TickImbalance"}))
             if enabled("level_reject"):
@@ -716,9 +1224,11 @@ async def scalp_precision_worker() -> None:
             for name, fn, kwargs in strategies:
                 if fn is _signal_htf_pullback:
                     signal = fn(fac_m1, fac_h1, fac_m5, **kwargs)
+                elif fn in (_signal_macd_trend, _signal_ema_slope_pull):
+                    signal = fn(fac_m1, fac_m5, **kwargs)
                 elif fn is _signal_session_edge:
                     signal = fn(fac_m1, range_ctx, now_utc=now, **kwargs)
-                elif fn is _signal_spread_revert:
+                elif fn in (_signal_spread_revert, _signal_vwap_revert, _signal_stoch_bounce, _signal_divergence_revert):
                     signal = fn(fac_m1, range_ctx, **kwargs)
                 else:
                     signal = fn(fac_m1, **kwargs)
