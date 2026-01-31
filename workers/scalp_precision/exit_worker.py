@@ -153,7 +153,7 @@ def _bb_exit_allowed(style, side, price, fac, *, range_active=None):
 
 BB_STYLE = "scalp"
 LOG = logging.getLogger(__name__)
-LOG_PREFIX = '[ScalpPrecisionExit]'
+LOG_PREFIX = os.getenv("SCALP_PRECISION_EXIT_LOG_PREFIX", "[ScalpPrecisionExit]")
 
 
 ALLOWED_TAGS: Set[str] = {'SpreadRangeRevert','RangeFaderPro','CompressionRetest','HTFPullbackS','TickImbalance','LevelReject','WickReversal','SessionEdge'}
