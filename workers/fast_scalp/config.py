@@ -35,17 +35,17 @@ SL_POST_ADJUST_BUFFER_PIPS: float = max(
     0.0, float(os.getenv("FAST_SCALP_SL_POST_ADJUST_BUFFER_PIPS", "5.0"))
 )
 MAX_SPREAD_PIPS: float = max(0.1, float(os.getenv("FAST_SCALP_MAX_SPREAD_PIPS", "1.3")))
-ENTRY_THRESHOLD_PIPS: float = max(0.002, float(os.getenv("FAST_SCALP_ENTRY_MOM_PIPS", "0.003")))
+ENTRY_THRESHOLD_PIPS: float = max(0.002, float(os.getenv("FAST_SCALP_ENTRY_MOM_PIPS", "0.0025")))
 ENTRY_SHORT_THRESHOLD_PIPS: float = max(
-    0.002, float(os.getenv("FAST_SCALP_ENTRY_SHORT_MOM_PIPS", "0.003"))
+    0.002, float(os.getenv("FAST_SCALP_ENTRY_SHORT_MOM_PIPS", "0.0025"))
 )
-ENTRY_RANGE_FLOOR_PIPS: float = max(0.005, float(os.getenv("FAST_SCALP_RANGE_FLOOR_PIPS", "0.02")))
+ENTRY_RANGE_FLOOR_PIPS: float = max(0.005, float(os.getenv("FAST_SCALP_RANGE_FLOOR_PIPS", "0.015")))
 ENTRY_COOLDOWN_SEC: float = max(2.0, float(os.getenv("FAST_SCALP_ENTRY_COOLDOWN_SEC", "3.0")))
-MAX_ORDERS_PER_MINUTE: int = max(1, int(float(os.getenv("FAST_SCALP_MAX_ORDERS_PER_MIN", "6"))))
+MAX_ORDERS_PER_MINUTE: int = max(1, int(float(os.getenv("FAST_SCALP_MAX_ORDERS_PER_MIN", "10"))))
 MIN_ORDER_SPACING_SEC: float = max(
-    0.5, float(os.getenv("FAST_SCALP_MIN_ORDER_SPACING_SEC", "2.0"))
+    0.5, float(os.getenv("FAST_SCALP_MIN_ORDER_SPACING_SEC", "1.0"))
 )
-MAX_LOT: float = max(0.001, float(os.getenv("FAST_SCALP_MAX_LOT", "0.1")))
+MAX_LOT: float = max(0.001, float(os.getenv("FAST_SCALP_MAX_LOT", "0.35")))
 SYNC_INTERVAL_SEC: float = max(5.0, float(os.getenv("FAST_SCALP_SYNC_INTERVAL_SEC", "45.0")))
 TIMEOUT_SEC: float = max(10.0, float(os.getenv("FAST_SCALP_TIMEOUT_SEC", "55.0")))
 TIMEOUT_MIN_GAIN_PIPS: float = float(os.getenv("FAST_SCALP_TIMEOUT_MIN_GAIN_PIPS", "0.6"))
@@ -61,7 +61,8 @@ JST_OFF_HOURS_START: int = min(23, max(0, int(float(os.getenv("FAST_SCALP_OFF_HO
 JST_OFF_HOURS_END: int = min(23, max(0, int(float(os.getenv("FAST_SCALP_OFF_HOURS_END_JST", "5")))))
 OFF_HOURS_ENABLED: bool = _bool_env("FAST_SCALP_OFF_HOURS_ENABLED", False)
 LOG_PREFIX_TICK = "[SCALP-TICK]"
-MIN_UNITS: int = max(0, int(float(os.getenv("FAST_SCALP_MIN_UNITS", "1000"))))
+STRATEGY_TAG: str = os.getenv("FAST_SCALP_STRATEGY_TAG", "fast_scalp").strip() or "fast_scalp"
+MIN_UNITS: int = max(0, int(float(os.getenv("FAST_SCALP_MIN_UNITS", "1500"))))
 MAX_ACTIVE_TRADES: int = max(1, int(float(os.getenv("FAST_SCALP_MAX_ACTIVE", "2"))))
 MAX_PER_DIRECTION: int = max(1, int(float(os.getenv("FAST_SCALP_MAX_PER_DIRECTION", "2"))))
 STALE_TICK_MAX_SEC: float = max(0.5, float(os.getenv("FAST_SCALP_STALE_TICK_MAX_SEC", "3.0")))
@@ -83,7 +84,7 @@ NO_LOSS_CLOSE: bool = _bool_env("FAST_SCALP_NO_LOSS_CLOSE", True)
 
 # --- entry gating / quality thresholds ---
 MIN_ENTRY_ATR_PIPS: float = max(0.0, float(os.getenv("FAST_SCALP_MIN_ENTRY_ATR_PIPS", "0.08")))
-MIN_ENTRY_TICK_COUNT: int = max(2, int(float(os.getenv("FAST_SCALP_MIN_ENTRY_TICK_COUNT", "4"))))
+MIN_ENTRY_TICK_COUNT: int = max(2, int(float(os.getenv("FAST_SCALP_MIN_ENTRY_TICK_COUNT", "3"))))
 RSI_ENTRY_OVERBOUGHT: float = float(os.getenv("FAST_SCALP_RSI_ENTRY_OVERBOUGHT", "70"))
 RSI_ENTRY_OVERSOLD: float = float(os.getenv("FAST_SCALP_RSI_ENTRY_OVERSOLD", "30"))
 LOW_VOL_COOLDOWN_SEC: float = max(0.0, float(os.getenv("FAST_SCALP_LOW_VOL_COOLDOWN_SEC", "0.0")))
@@ -188,6 +189,17 @@ TIMEOUT_HIGH_VOL_MULT: float = max(0.1, float(os.getenv("FAST_SCALP_TIMEOUT_HIGH
 M1_RSI_LONG_MIN: float = float(os.getenv("FAST_SCALP_M1_RSI_LONG_MIN", "45"))
 M1_RSI_SHORT_MAX: float = float(os.getenv("FAST_SCALP_M1_RSI_SHORT_MAX", "55"))
 M1_RSI_CONFIRM_SPAN_SEC: float = max(5.0, float(os.getenv("FAST_SCALP_M1_RSI_CONFIRM_SPAN_SEC", "30.0")))
+
+
+# --- optional precision filters ---
+FAST_SCALP_RANGE_ONLY: bool = _bool_env("FAST_SCALP_RANGE_ONLY", False)
+
+
+def _parse_tags(raw: str) -> set[str]:
+    return {t.strip().lower() for t in raw.split(",") if t.strip()}
+
+FAST_SCALP_PATTERN_ALLOWLIST: set[str] = _parse_tags(os.getenv("FAST_SCALP_PATTERN_ALLOWLIST", ""))
+FAST_SCALP_PATTERN_BLOCKLIST: set[str] = _parse_tags(os.getenv("FAST_SCALP_PATTERN_BLOCKLIST", ""))
 
 # --- dynamic entry tuning ---
 # エントリー閾値を ATR/スプレッドに応じて可変化

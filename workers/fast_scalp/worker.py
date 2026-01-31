@@ -367,8 +367,10 @@ async def _fetch_price_snapshot(logger: logging.Logger) -> Optional[_SnapshotTic
 
 def _build_client_order_id(side: str) -> str:
     ts_ms = int(time.time() * 1000)
-    digest = hashlib.sha1(f"{ts_ms}-{side}".encode("utf-8")).hexdigest()[:6]
-    return f"qr-fast-{ts_ms}-{side[0]}{digest}"
+    tag = (config.STRATEGY_TAG or "fast_scalp").lower()
+    tag = "".join(ch for ch in tag if ch.isalnum())[:6] or "fast"
+    digest = hashlib.sha1(f"{ts_ms}-{side}-{tag}".encode("utf-8")).hexdigest()[:6]
+    return f"qr-fast-{ts_ms}-{tag}{side[0]}{digest}"
 
 
 def _pips(delta_price: float) -> float:
@@ -939,6 +941,37 @@ async def fast_scalp_worker(shared_state: Optional[FastScalpState] = None) -> No
                 await asyncio.sleep(config.LOOP_INTERVAL_SEC)
                 continue
 
+            if config.FAST_SCALP_RANGE_ONLY and not range_active_flag:
+                log_metric(
+                    "fast_scalp_skip",
+                    1.0,
+                    tags={"reason": "range_only"},
+                    ts=now,
+                )
+                await asyncio.sleep(config.LOOP_INTERVAL_SEC)
+                continue
+
+            if config.FAST_SCALP_PATTERN_ALLOWLIST:
+                if features.pattern_tag.lower() not in config.FAST_SCALP_PATTERN_ALLOWLIST:
+                    log_metric(
+                        "fast_scalp_skip",
+                        1.0,
+                        tags={"reason": "pattern_allowlist", "pattern": features.pattern_tag},
+                        ts=now,
+                    )
+                    await asyncio.sleep(config.LOOP_INTERVAL_SEC)
+                    continue
+            if config.FAST_SCALP_PATTERN_BLOCKLIST:
+                if features.pattern_tag.lower() in config.FAST_SCALP_PATTERN_BLOCKLIST:
+                    log_metric(
+                        "fast_scalp_skip",
+                        1.0,
+                        tags={"reason": "pattern_blocklist", "pattern": features.pattern_tag},
+                        ts=now,
+                    )
+                    await asyncio.sleep(config.LOOP_INTERVAL_SEC)
+                    continue
+
             action = evaluate_signal(
                 features,
                 m1_rsi=m1_rsi_snapshot,
@@ -1047,7 +1080,7 @@ async def fast_scalp_worker(shared_state: Optional[FastScalpState] = None) -> No
                 factors = all_factors()
                 fac_m1 = factors.get("M1") or {}
                 fac_h4 = factors.get("H4") or {}
-                strategy_tag = "fast_scalp"
+                strategy_tag = config.STRATEGY_TAG
                 allowed_lot_raw = allowed_lot(
                     equity,
                     sl_pips=profile_sl_pips,
@@ -1194,7 +1227,7 @@ async def fast_scalp_worker(shared_state: Optional[FastScalpState] = None) -> No
             tp_price_initial = None if tp_price is None else round(tp_price, 5)
 
             thesis = {
-                "strategy_tag": "fast_scalp",
+                "strategy_tag": config.STRATEGY_TAG,
                 "momentum_pips": round(features.momentum_pips, 3),
                 "short_momentum_pips": round(features.short_momentum_pips, 3),
                 "range_pips": round(features.range_pips, 3),
@@ -1265,9 +1298,9 @@ async def fast_scalp_worker(shared_state: Optional[FastScalpState] = None) -> No
                     sl_price,
                     tp_price,
                     "scalp_fast",
-                    strategy_tag="fast_scalp",
+                    strategy_tag=config.STRATEGY_TAG,
                     client_order_id=client_id,
-                    entry_thesis={**thesis, "strategy_tag": "fast_scalp"},
+                    entry_thesis={**thesis, "strategy_tag": config.STRATEGY_TAG},
                 )
             except Exception as exc:
                 logger.error(

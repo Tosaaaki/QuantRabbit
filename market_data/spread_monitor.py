@@ -193,6 +193,7 @@ def update_from_tick(tick) -> None:  # type: ignore[no-untyped-def]
     min_spread = min(values)
     avg_spread = sum(values) / len(values)
     median_spread = _percentile(values, 50.0)
+    p25_spread = _percentile(values, 25.0)
     p95_spread = _percentile(values, 95.0)
 
     # ガード完全無効化（エントリー阻害しない）
@@ -290,6 +291,7 @@ def get_state() -> Optional[dict]:
     min_spread = min(values)
     avg_spread = sum(values) / len(values)
     median_spread = _percentile(values, 50.0)
+    p25_spread = _percentile(values, 25.0)
     p95_spread = _percentile(values, 95.0)
     high_count = sum(1 for val in values if val >= MAX_SPREAD_PIPS)
     stale = age_ms > MAX_AGE_MS
@@ -309,6 +311,7 @@ def get_state() -> Optional[dict]:
         sum(baseline_values) / len(baseline_values) if baseline_ready else None
     )
     baseline_p50 = _percentile(baseline_values, 50.0) if baseline_ready else None
+    baseline_p25 = _percentile(baseline_values, 25.0) if baseline_ready else None
     baseline_p95 = _percentile(baseline_values, 95.0) if baseline_ready else None
 
     return {
@@ -319,6 +322,7 @@ def get_state() -> Optional[dict]:
         "max_pips": max_spread,
         "min_pips": min_spread,
         "median_pips": median_spread,
+        "p25_pips": p25_spread,
         "p95_pips": p95_spread,
         "samples": len(values),
         "age_ms": age_ms,
@@ -336,6 +340,7 @@ def get_state() -> Optional[dict]:
         "baseline_samples": len(baseline_values),
         "baseline_avg_pips": baseline_avg,
         "baseline_p50_pips": baseline_p50,
+        "baseline_p25_pips": baseline_p25,
         "baseline_p95_pips": baseline_p95,
     }
 

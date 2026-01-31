@@ -1,0 +1,17 @@
+[Unit]
+Description=QuantRabbit Scalp Precision Compression Retest Worker
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/tossaki/QuantRabbit
+Environment=PYTHONUNBUFFERED=1
+Environment=SCALP_PRECISION_ENABLED=1
+Environment=SCALP_PRECISION_MODE=compression_retest
+ExecStart=/home/tossaki/QuantRabbit/.venv/bin/python -m workers.scalp_precision.worker
+Restart=always
+RestartSec=5
+User=tossaki
+
+[Install]
+WantedBy=multi-user.target

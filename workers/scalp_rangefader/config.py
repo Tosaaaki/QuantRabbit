@@ -11,26 +11,26 @@ def _env_bool(name: str, default: bool) -> bool:
 
 
 POCKET = "scalp"
-LOOP_INTERVAL_SEC = float(os.getenv("RANGEFADER_LOOP_INTERVAL_SEC", "6.0"))
+LOOP_INTERVAL_SEC = float(os.getenv("RANGEFADER_LOOP_INTERVAL_SEC", "4.0"))
 ENABLED = _env_bool("RANGEFADER_ENABLED", True)
 LOG_PREFIX = os.getenv("RANGEFADER_LOG_PREFIX", "[RangeFader]")
 
-CONFIDENCE_FLOOR = 30
+CONFIDENCE_FLOOR = 25
 CONFIDENCE_CEIL = 90
-MIN_UNITS = int(os.getenv("RANGEFADER_MIN_UNITS", "1000"))
-BASE_ENTRY_UNITS = int(os.getenv("RANGEFADER_BASE_UNITS", "6000"))
+MIN_UNITS = int(os.getenv("RANGEFADER_MIN_UNITS", "1500"))
+BASE_ENTRY_UNITS = int(os.getenv("RANGEFADER_BASE_UNITS", "10000"))
 
 CAP_MIN = float(os.getenv("RANGEFADER_CAP_MIN", "0.1"))
-CAP_MAX = float(os.getenv("RANGEFADER_CAP_MAX", "0.9"))
+CAP_MAX = float(os.getenv("RANGEFADER_CAP_MAX", "0.95"))
 
-COOLDOWN_SEC = float(os.getenv("RANGEFADER_COOLDOWN_SEC", "90.0"))
-MAX_OPEN_TRADES = int(os.getenv("RANGEFADER_MAX_OPEN_TRADES", "2"))
+COOLDOWN_SEC = float(os.getenv("RANGEFADER_COOLDOWN_SEC", "45.0"))
+MAX_OPEN_TRADES = int(os.getenv("RANGEFADER_MAX_OPEN_TRADES", "3"))
 RANGE_ONLY_SCORE = float(os.getenv("RANGEFADER_RANGE_ONLY_SCORE", "0.45"))
 
 # Size boost for strong range setups
-SIZE_MULT_BASE = float(os.getenv("RANGEFADER_SIZE_MULT_BASE", "1.10"))
+SIZE_MULT_BASE = float(os.getenv("RANGEFADER_SIZE_MULT_BASE", "1.18"))
 SIZE_MULT_SCORE_START = float(os.getenv("RANGEFADER_SIZE_MULT_SCORE_START", "0.45"))
 SIZE_MULT_SLOPE = float(os.getenv("RANGEFADER_SIZE_MULT_SLOPE", "0.6"))
 SIZE_MULT_MIN = float(os.getenv("RANGEFADER_SIZE_MULT_MIN", "0.9"))
-SIZE_MULT_MAX = float(os.getenv("RANGEFADER_SIZE_MULT_MAX", "1.25"))
+SIZE_MULT_MAX = float(os.getenv("RANGEFADER_SIZE_MULT_MAX", "1.4"))
 SIZE_MULT_MIN_FMR = float(os.getenv("RANGEFADER_SIZE_MULT_MIN_FMR", "0.12"))
