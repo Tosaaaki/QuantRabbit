@@ -592,6 +592,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--bq-instrument", default="USD_JPY", help="Instrument symbol for BigQuery candles.")
     parser.add_argument("--bq-timeframe", default="M1", help="Timeframe for BigQuery candles.")
     parser.add_argument("--bq-limit", type=int, default=None, help="Optional BigQuery row limit.")
+    parser.add_argument("--bq-no-dedupe", action="store_true", help="Disable ts dedupe for BigQuery candles.")
     parser.add_argument("--bq-out", type=Path, help="Optional output path for fetched BigQuery candles JSON.")
     parser.add_argument("--synthetic-spread", type=float, default=0.32, help="Spread (pips) used when synthesizing ticks from candles.")
     return parser.parse_args()
@@ -621,6 +622,7 @@ def main() -> None:
             dataset=args.bq_dataset,
             table=args.bq_table,
             limit=args.bq_limit,
+            dedupe=not args.bq_no_dedupe,
         )
         if args.bq_out:
             bq_out_path = args.bq_out

@@ -38,20 +38,37 @@ def fetch_bq_candles(
     dataset: str = DEFAULT_DATASET,
     table: str = DEFAULT_TABLE,
     limit: Optional[int] = None,
+    dedupe: bool = True,
 ) -> tuple[List[dict], str]:
     client = bigquery.Client(project=project) if project else bigquery.Client()
     table_fqn = f"{client.project}.{dataset}.{table}"
 
     start_dt = _parse_datetime(start)
     end_dt = _parse_datetime(end)
-    sql = (
-        "SELECT ts, open, high, low, close, volume "
-        f"FROM `{table_fqn}` "
-        "WHERE instrument = @instrument "
-        "AND timeframe = @timeframe "
-        "AND ts >= @start AND ts < @end "
-        "ORDER BY ts ASC"
-    )
+    if dedupe:
+        sql = (
+            "SELECT ts, "
+            "ANY_VALUE(open) AS open, "
+            "ANY_VALUE(high) AS high, "
+            "ANY_VALUE(low) AS low, "
+            "ANY_VALUE(close) AS close, "
+            "ANY_VALUE(volume) AS volume "
+            f"FROM `{table_fqn}` "
+            "WHERE instrument = @instrument "
+            "AND timeframe = @timeframe "
+            "AND ts >= @start AND ts < @end "
+            "GROUP BY ts "
+            "ORDER BY ts ASC"
+        )
+    else:
+        sql = (
+            "SELECT ts, open, high, low, close, volume "
+            f"FROM `{table_fqn}` "
+            "WHERE instrument = @instrument "
+            "AND timeframe = @timeframe "
+            "AND ts >= @start AND ts < @end "
+            "ORDER BY ts ASC"
+        )
     if limit is not None:
         sql += f" LIMIT {int(limit)}"
 
