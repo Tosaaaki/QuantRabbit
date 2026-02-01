@@ -6,11 +6,13 @@ import os
 import random
 import datetime
 import time
+import logging
 from dataclasses import dataclass
 from typing import Callable, Awaitable, Optional, Tuple
 
 import httpx
 from utils.secrets import get_secret
+from utils.market_hours import is_market_open
 from market_data.replay_logger import log_tick
 
 # ---------- 読み込み：env.toml ----------
@@ -26,8 +28,9 @@ _STREAM_READ_TIMEOUT = float(os.getenv("TICK_STREAM_READ_TIMEOUT_SEC", "12"))
 _STREAM_CONNECT_TIMEOUT = float(os.getenv("TICK_STREAM_CONNECT_TIMEOUT_SEC", "5"))
 _STREAM_WRITE_TIMEOUT = float(os.getenv("TICK_STREAM_WRITE_TIMEOUT_SEC", "5"))
 _STREAM_POOL_TIMEOUT = float(os.getenv("TICK_STREAM_POOL_TIMEOUT_SEC", "5"))
-_STREAM_MAX_IDLE_SEC = float(os.getenv("TICK_STREAM_MAX_IDLE_SEC", "10"))
-_STREAM_MAX_IDLE_STRIKES = int(os.getenv("TICK_STREAM_MAX_IDLE_STRIKES", "2"))
+_STREAM_MAX_IDLE_SEC = float(os.getenv("TICK_STREAM_MAX_IDLE_SEC", "20"))
+_STREAM_MAX_IDLE_STRIKES = int(os.getenv("TICK_STREAM_MAX_IDLE_STRIKES", "3"))
+_STREAM_IDLE_IGNORE_CLOSED = os.getenv("TICK_STREAM_IDLE_IGNORE_CLOSED", "1").strip().lower() not in {"0","false","no","off",""}
 
 STREAM_HOST = (
     "stream-fxtrade.oanda.com" if not PRACTICE else "stream-fxpractice.oanda.com"
@@ -37,6 +40,8 @@ STREAM_URL = f"https://{STREAM_HOST}/v3/accounts/{ACCOUNT}/pricing/stream"
 
 DepthLevels = Tuple[Tuple[float, float], ...]
 
+
+LOG = logging.getLogger(__name__)
 
 @dataclass
 class Tick:
@@ -111,6 +116,8 @@ async def _connect(instrument: str, callback: Callable[[Tick], Awaitable[None]])
                             ):
                                 idle_for = time.monotonic() - last_price_mono
                                 if idle_for >= _STREAM_MAX_IDLE_SEC:
+                                    if _STREAM_IDLE_IGNORE_CLOSED and not is_market_open():
+                                        continue
                                     idle_strikes += 1
                                     if idle_strikes >= _STREAM_MAX_IDLE_STRIKES:
                                         raise RuntimeError(
@@ -157,7 +164,7 @@ async def _connect(instrument: str, callback: Callable[[Tick], Awaitable[None]])
                             print(f"[replay] failed to log tick: {exc}")
                         await callback(tick)
         except Exception as e:
-            print("tick_fetcher reconnect:", e)
+            LOG.warning("tick_fetcher reconnect: %s", e)
             await asyncio.sleep(3)  # バックオフして再接続
 
 

@@ -1,7 +1,7 @@
 # AGENTS.md – QuantRabbit Agent Specification（整理版）
 
 ## 1. ミッション / 運用前提
-> 狙い: USD/JPY で 1 日 +100 pips を狙う 24/7 無裁量トレーディング・エージェント。  
+> 狙い: USD/JPY で 資産の10%増を狙う 24/7 無裁量トレーディング・エージェント。  
 > 境界: 発注・リスクは機械的、曖昧判断はローカルルール（LLMなし）。
 - ニュース連動パイプラインは撤去済み（`news_fetcher` / `summary_ingestor` / NewsSpike は無効）。
 - LLM（GPT/Vertex）関連は廃止。`analysis/local_decider.py` のローカル判定のみを使用。

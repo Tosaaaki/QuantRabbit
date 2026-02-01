@@ -1,7 +1,7 @@
 # QuantRabbit – GPT × OANDA USD/JPY Auto‑Trading Bot
 
 QuantRabbit は **テクニカル × GPT 裁量判断** を組み合わせ、  
-USD/JPY で 1 日 +100 pips を狙う完全自動売買システムです（ニュース連動は撤去済み）。  
+USD/JPY で 資産の10%増を狙う完全自動売買システムです（ニュース連動は撤去済み）。  
 
 * **テクニカル** : ta‑lib で計算した MA / BB / RSI / ADX …  
 * **GPT** : レジーム補足 + 戦略順位 + lot 配分を 60 秒ごとに判断  
