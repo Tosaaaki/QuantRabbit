@@ -17,6 +17,7 @@ LOG_PREFIX = os.getenv("SCALP_PRECISION_LOG_PREFIX", "[ScalpPrecision]")
 
 CONFIDENCE_FLOOR = int(float(os.getenv("SCALP_PRECISION_CONF_FLOOR", "32")))
 CONFIDENCE_CEIL = int(float(os.getenv("SCALP_PRECISION_CONF_CEIL", "92")))
+MIN_ENTRY_CONF = int(float(os.getenv("SCALP_PRECISION_MIN_ENTRY_CONF", str(CONFIDENCE_FLOOR))))
 
 MIN_UNITS = int(float(os.getenv("SCALP_PRECISION_MIN_UNITS", "1000")))
 BASE_ENTRY_UNITS = int(float(os.getenv("SCALP_PRECISION_BASE_UNITS", "9000")))

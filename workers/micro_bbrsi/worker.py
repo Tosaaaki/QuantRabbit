@@ -23,6 +23,7 @@ from utils.divergence import apply_divergence_confidence, divergence_bias, diver
 from utils.market_hours import is_market_open
 from utils.oanda_account import get_account_snapshot
 from workers.common.dyn_cap import compute_cap
+from workers.common.air_state import evaluate_air, adjust_signal
 from analysis import perf_monitor
 
 from workers.common.size_utils import scale_base_units
@@ -414,6 +415,9 @@ async def micro_bbrsi_worker() -> None:
         fac_h4 = factors.get("H4") or {}
         fac_m5 = factors.get("M5") or {}
         range_ctx = detect_range_mode(fac_m1, fac_h4)
+        air = evaluate_air(fac_m1, fac_h4, range_ctx=range_ctx, tag=BBRsi.name)
+        if air.enabled and not air.allow_entry:
+            continue
         range_score = 0.0
         try:
             range_score = float(range_ctx.score or 0.0)
@@ -436,6 +440,9 @@ async def micro_bbrsi_worker() -> None:
         signal = BBRsi.check(fac_m1)
         if not signal:
             continue
+        signal = adjust_signal(signal, air)
+        if not signal:
+            continue
         div_bias = divergence_bias(
             fac_m1,
             signal.get("action") or "",
@@ -452,6 +459,8 @@ async def micro_bbrsi_worker() -> None:
                 floor=30.0,
                 ceil=95.0,
             )
+        if config.MIN_ENTRY_CONF > 0 and int(signal.get("confidence", 0) or 0) < config.MIN_ENTRY_CONF:
+            continue
 
         snap = get_account_snapshot()
         equity = float(snap.nav or snap.balance or 0.0)

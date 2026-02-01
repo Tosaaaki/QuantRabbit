@@ -20,6 +20,7 @@ from utils.market_hours import is_market_open
 from utils.oanda_account import get_account_snapshot, get_position_summary
 from workers.common.dyn_cap import compute_cap
 from workers.common.air_state import evaluate_air, adjust_signal
+from workers.common.dyn_size import compute_units
 
 from . import config
 from .common import (
@@ -1098,10 +1099,11 @@ async def _place_order(
         return None
 
     conf = int(signal.get("confidence", 0) or 0)
+    if config.MIN_ENTRY_CONF > 0 and conf < config.MIN_ENTRY_CONF:
+        return None
     conf_scale = _confidence_scale(conf, lo=config.CONFIDENCE_FLOOR, hi=config.CONFIDENCE_CEIL)
     size_mult = float(signal.get("size_mult", 1.0) or 1.0)
     size_mult = max(0.6, min(1.4, size_mult))
-    base_units = int(round(config.BASE_ENTRY_UNITS * conf_scale * size_mult))
 
     long_units = 0.0
     short_units = 0.0
@@ -1110,23 +1112,27 @@ async def _place_order(
     except Exception:
         long_units, short_units = 0.0, 0.0
 
-    lot = allowed_lot(
-        float(snap.nav or 0.0),
-        sl_pips,
-        margin_available=float(snap.margin_available or 0.0),
-        price=price,
-        margin_rate=float(snap.margin_rate or 0.0),
+    spread_pips = None
+    try:
+        state = spread_monitor.get_state()
+        if state is not None:
+            spread_pips = float(state.get("spread_pips") or 0.0)
+    except Exception:
+        spread_pips = None
+    sizing = compute_units(
+        entry_price=price,
+        sl_pips=sl_pips,
+        base_entry_units=config.BASE_ENTRY_UNITS,
+        min_units=config.MIN_UNITS,
+        max_margin_usage=config.MAX_MARGIN_USAGE,
+        spread_pips=float(spread_pips or 0.0),
+        spread_soft_cap=config.MAX_SPREAD_PIPS,
+        adx=_adx(fac_m1),
+        signal_score=float(conf) / 100.0,
         pocket=config.POCKET,
-        side=side,
-        open_long_units=long_units,
-        open_short_units=short_units,
         strategy_tag=str(signal.get("tag") or "scalp_precision"),
-        fac_m1=fac_m1,
-        fac_h4=fac_h4,
     )
-    units_risk = int(round(lot * 100000))
-    units = min(base_units, units_risk)
-    units = int(round(units * cap))
+    units = int(round(sizing.units * cap * size_mult))
     if abs(units) < config.MIN_UNITS:
         return None
     if side == "short":
@@ -1145,6 +1151,7 @@ async def _place_order(
     meta = {
         "cap": round(cap, 3),
         "conf_scale": round(conf_scale, 3),
+        "sizing": sizing.factors,
     }
 
     return await market_order(
@@ -1228,7 +1235,7 @@ async def scalp_precision_worker() -> None:
             strategies = []
             allowlist = set([s.lower() for s in _env_csv("SCALP_PRECISION_ALLOWLIST", config.ALLOWLIST_RAW)])
             mode = config.MODE
-            if mode:
+            if mode and not allowlist:
                 allowlist.add(mode)
 
             def enabled(name: str) -> bool:
@@ -1278,6 +1285,9 @@ async def scalp_precision_worker() -> None:
                 if signal:
                     signal = adjust_signal(signal, air)
                     if signal:
+                        conf = int(signal.get("confidence", 0) or 0)
+                        if config.MIN_ENTRY_CONF > 0 and conf < config.MIN_ENTRY_CONF:
+                            continue
                         signals.append(signal)
 
             if not signals:

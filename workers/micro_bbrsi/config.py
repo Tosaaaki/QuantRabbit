@@ -7,8 +7,9 @@ LOOP_INTERVAL_SEC = float(os.getenv("BBRSI_LOOP_INTERVAL_SEC", "8.0"))
 ENABLED = os.getenv("BBRSI_ENABLED", "1").strip().lower() not in {"", "0", "false", "no"}
 LOG_PREFIX = "[BB_RSI]"
 
-CONFIDENCE_FLOOR = 35
-CONFIDENCE_CEIL = 90
+CONFIDENCE_FLOOR = int(float(os.getenv("BBRSI_CONF_FLOOR", "35")))
+CONFIDENCE_CEIL = int(float(os.getenv("BBRSI_CONF_CEIL", "90")))
+MIN_ENTRY_CONF = int(float(os.getenv("BBRSI_MIN_ENTRY_CONF", str(CONFIDENCE_FLOOR))))
 MIN_UNITS = int(os.getenv("BBRSI_MIN_UNITS", "1500"))
 BASE_ENTRY_UNITS = int(os.getenv("BBRSI_BASE_UNITS", "20000"))
 MAX_MARGIN_USAGE = float(os.getenv("BBRSI_MAX_MARGIN_USAGE", "0.9"))
