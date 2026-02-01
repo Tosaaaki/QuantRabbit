@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 from collections import Counter, deque
 from dataclasses import dataclass
 from datetime import datetime, timezone, timedelta
@@ -189,6 +190,23 @@ def load_candles(paths: Sequence[Path]) -> List[Tuple[datetime, float, float, fl
             except Exception:
                 continue
             candles.append((ts, o, h, l, c))
+    candles.sort(key=lambda c: c[0])
+    return candles
+
+
+def load_candles_payload(items: Sequence[Dict[str, object]]) -> List[Tuple[datetime, float, float, float, float]]:
+    candles: List[Tuple[datetime, float, float, float, float]] = []
+    for cndl in items:
+        mid = cndl.get("mid") or cndl
+        try:
+            ts = _parse_candle_time(str(cndl["time"]))
+            o = float(mid.get("o", mid.get("open", 0.0)))
+            h = float(mid.get("h", mid.get("high", 0.0)))
+            l = float(mid.get("l", mid.get("low", 0.0)))
+            c = float(mid.get("c", mid.get("close", 0.0)))
+        except Exception:
+            continue
+        candles.append((ts, o, h, l, c))
     candles.sort(key=lambda c: c[0])
     return candles
 
@@ -565,6 +583,16 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--json-out", type=Path, help="Write detailed trade log JSON to this path.")
     parser.add_argument("--print-trades", action="store_true", help="Print each trade result to stdout.")
     parser.add_argument("--candles", nargs="*", help="M1 candle JSON (OANDA format) to synthesize ticks from.")
+    parser.add_argument("--bq", action="store_true", help="Load M1 candles from BigQuery.")
+    parser.add_argument("--bq-start", help="ISO timestamp (UTC) start for BigQuery candles.")
+    parser.add_argument("--bq-end", help="ISO timestamp (UTC) end for BigQuery candles.")
+    parser.add_argument("--bq-project", default=os.getenv("BQ_PROJECT") or os.getenv("GOOGLE_CLOUD_PROJECT"), help="BigQuery project override.")
+    parser.add_argument("--bq-dataset", default=os.getenv("BQ_DATASET", "quantrabbit"), help="BigQuery dataset.")
+    parser.add_argument("--bq-table", default=os.getenv("BQ_CANDLES_TABLE", "candles_m1"), help="BigQuery candles table.")
+    parser.add_argument("--bq-instrument", default="USD_JPY", help="Instrument symbol for BigQuery candles.")
+    parser.add_argument("--bq-timeframe", default="M1", help="Timeframe for BigQuery candles.")
+    parser.add_argument("--bq-limit", type=int, default=None, help="Optional BigQuery row limit.")
+    parser.add_argument("--bq-out", type=Path, help="Optional output path for fetched BigQuery candles JSON.")
     parser.add_argument("--synthetic-spread", type=float, default=0.32, help="Spread (pips) used when synthesizing ticks from candles.")
     return parser.parse_args()
 
@@ -576,6 +604,45 @@ def main() -> None:
     if tick_paths:
         ticks.extend(load_ticks(tick_paths, args.instrument))
 
+    bq_candles: List[Dict[str, object]] = []
+    bq_source = ""
+    bq_out_path: Optional[Path] = None
+    if args.bq:
+        if not args.bq_start or not args.bq_end:
+            raise SystemExit("--bq-start and --bq-end are required when using --bq")
+        from analytics.bq_candles_loader import fetch_bq_candles, write_candles_json
+
+        bq_candles, bq_source = fetch_bq_candles(
+            instrument=args.bq_instrument,
+            timeframe=args.bq_timeframe,
+            start=args.bq_start,
+            end=args.bq_end,
+            project=args.bq_project,
+            dataset=args.bq_dataset,
+            table=args.bq_table,
+            limit=args.bq_limit,
+        )
+        if args.bq_out:
+            bq_out_path = args.bq_out
+        else:
+            try:
+                start_tag = _parse_candle_time(str(args.bq_start)).strftime("%Y%m%dT%H%M%SZ")
+                end_tag = _parse_candle_time(str(args.bq_end)).strftime("%Y%m%dT%H%M%SZ")
+            except Exception:
+                start_tag = "start"
+                end_tag = "end"
+            bq_out_path = Path("tmp") / f"bq_candles_{start_tag}_{end_tag}.json"
+        write_candles_json(
+            bq_candles,
+            instrument=args.bq_instrument,
+            timeframe=args.bq_timeframe,
+            start=args.bq_start,
+            end=args.bq_end,
+            table_fqn=bq_source,
+            out_path=bq_out_path,
+        )
+        print(f"[bq] candles={len(bq_candles)} table={bq_source} out={bq_out_path}")
+
     candle_paths: List[Path] = []
     if args.candles:
         for item in args.candles:
@@ -586,6 +653,14 @@ def main() -> None:
                 candle_paths.append(p)
     if candle_paths:
         candle_payload = load_candles(candle_paths)
+        synthetic = synth_ticks_from_candles(
+            candle_payload,
+            spread_pips=max(0.05, args.synthetic_spread),
+        )
+        ticks.extend(synthetic)
+
+    if bq_candles:
+        candle_payload = load_candles_payload(bq_candles)
         synthetic = synth_ticks_from_candles(
             candle_payload,
             spread_pips=max(0.05, args.synthetic_spread),
@@ -623,7 +698,7 @@ def main() -> None:
 
     summary = replayer.summary()
     print("----- FastScalp Tick Replay Summary -----")
-    print(f"tick_files: {len(tick_paths)} candle_files: {len(candle_paths)}")
+    print(f"tick_files: {len(tick_paths)} candle_files: {len(candle_paths)} bq_candles: {len(bq_candles)}")
     print(f"ticks_total: {len(ticks)}")
     for key, value in summary.items():
         print(f"{key}: {value}")
