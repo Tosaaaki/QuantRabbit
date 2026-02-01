@@ -21,7 +21,7 @@ def _bool_env(key: str, default: bool) -> bool:
 
 # Hard stop: disable fast scalp worker regardless of environment.
 FAST_SCALP_ENABLED: bool = _bool_env("FAST_SCALP_ENABLED", True)
-LOOP_INTERVAL_SEC: float = max(0.1, float(os.getenv("FAST_SCALP_LOOP_INTERVAL_SEC", "0.25")))
+LOOP_INTERVAL_SEC: float = max(0.1, float(os.getenv("FAST_SCALP_LOOP_INTERVAL_SEC", "0.2")))
 TP_BASE_PIPS: float = max(0.2, float(os.getenv("FAST_SCALP_TP_BASE_PIPS", "0.6")))
 TP_SPREAD_BUFFER_PIPS: float = max(0.05, float(os.getenv("FAST_SCALP_SPREAD_BUFFER_PIPS", "0.2")))
 TP_SAFE_MARGIN_PIPS: float = max(
@@ -35,17 +35,17 @@ SL_POST_ADJUST_BUFFER_PIPS: float = max(
     0.0, float(os.getenv("FAST_SCALP_SL_POST_ADJUST_BUFFER_PIPS", "5.0"))
 )
 MAX_SPREAD_PIPS: float = max(0.1, float(os.getenv("FAST_SCALP_MAX_SPREAD_PIPS", "1.3")))
-ENTRY_THRESHOLD_PIPS: float = max(0.002, float(os.getenv("FAST_SCALP_ENTRY_MOM_PIPS", "0.0025")))
+ENTRY_THRESHOLD_PIPS: float = max(0.002, float(os.getenv("FAST_SCALP_ENTRY_MOM_PIPS", "0.0020")))
 ENTRY_SHORT_THRESHOLD_PIPS: float = max(
-    0.002, float(os.getenv("FAST_SCALP_ENTRY_SHORT_MOM_PIPS", "0.0025"))
+    0.002, float(os.getenv("FAST_SCALP_ENTRY_SHORT_MOM_PIPS", "0.0020"))
 )
-ENTRY_RANGE_FLOOR_PIPS: float = max(0.005, float(os.getenv("FAST_SCALP_RANGE_FLOOR_PIPS", "0.015")))
-ENTRY_COOLDOWN_SEC: float = max(2.0, float(os.getenv("FAST_SCALP_ENTRY_COOLDOWN_SEC", "3.0")))
-MAX_ORDERS_PER_MINUTE: int = max(1, int(float(os.getenv("FAST_SCALP_MAX_ORDERS_PER_MIN", "10"))))
+ENTRY_RANGE_FLOOR_PIPS: float = max(0.005, float(os.getenv("FAST_SCALP_RANGE_FLOOR_PIPS", "0.012")))
+ENTRY_COOLDOWN_SEC: float = max(2.0, float(os.getenv("FAST_SCALP_ENTRY_COOLDOWN_SEC", "2.0")))
+MAX_ORDERS_PER_MINUTE: int = max(1, int(float(os.getenv("FAST_SCALP_MAX_ORDERS_PER_MIN", "16"))))
 MIN_ORDER_SPACING_SEC: float = max(
-    0.5, float(os.getenv("FAST_SCALP_MIN_ORDER_SPACING_SEC", "1.0"))
+    0.5, float(os.getenv("FAST_SCALP_MIN_ORDER_SPACING_SEC", "0.8"))
 )
-MAX_LOT: float = max(0.001, float(os.getenv("FAST_SCALP_MAX_LOT", "0.35")))
+MAX_LOT: float = max(0.001, float(os.getenv("FAST_SCALP_MAX_LOT", "0.5")))
 SYNC_INTERVAL_SEC: float = max(5.0, float(os.getenv("FAST_SCALP_SYNC_INTERVAL_SEC", "45.0")))
 TIMEOUT_SEC: float = max(10.0, float(os.getenv("FAST_SCALP_TIMEOUT_SEC", "55.0")))
 TIMEOUT_MIN_GAIN_PIPS: float = float(os.getenv("FAST_SCALP_TIMEOUT_MIN_GAIN_PIPS", "0.6"))
@@ -62,9 +62,9 @@ JST_OFF_HOURS_END: int = min(23, max(0, int(float(os.getenv("FAST_SCALP_OFF_HOUR
 OFF_HOURS_ENABLED: bool = _bool_env("FAST_SCALP_OFF_HOURS_ENABLED", False)
 LOG_PREFIX_TICK = "[SCALP-TICK]"
 STRATEGY_TAG: str = os.getenv("FAST_SCALP_STRATEGY_TAG", "fast_scalp").strip() or "fast_scalp"
-MIN_UNITS: int = max(0, int(float(os.getenv("FAST_SCALP_MIN_UNITS", "1500"))))
-MAX_ACTIVE_TRADES: int = max(1, int(float(os.getenv("FAST_SCALP_MAX_ACTIVE", "2"))))
-MAX_PER_DIRECTION: int = max(1, int(float(os.getenv("FAST_SCALP_MAX_PER_DIRECTION", "2"))))
+MIN_UNITS: int = max(0, int(float(os.getenv("FAST_SCALP_MIN_UNITS", "2000"))))
+MAX_ACTIVE_TRADES: int = max(1, int(float(os.getenv("FAST_SCALP_MAX_ACTIVE", "3"))))
+MAX_PER_DIRECTION: int = max(1, int(float(os.getenv("FAST_SCALP_MAX_PER_DIRECTION", "3"))))
 STALE_TICK_MAX_SEC: float = max(0.5, float(os.getenv("FAST_SCALP_STALE_TICK_MAX_SEC", "3.0")))
 MAX_SIGNAL_AGE_MS: float = max(200.0, float(os.getenv("FAST_SCALP_MAX_SIGNAL_AGE_MS", "6000.0")))
 SNAPSHOT_MIN_INTERVAL_SEC: float = max(
@@ -84,7 +84,7 @@ NO_LOSS_CLOSE: bool = _bool_env("FAST_SCALP_NO_LOSS_CLOSE", True)
 
 # --- entry gating / quality thresholds ---
 MIN_ENTRY_ATR_PIPS: float = max(0.0, float(os.getenv("FAST_SCALP_MIN_ENTRY_ATR_PIPS", "0.08")))
-MIN_ENTRY_TICK_COUNT: int = max(2, int(float(os.getenv("FAST_SCALP_MIN_ENTRY_TICK_COUNT", "3"))))
+MIN_ENTRY_TICK_COUNT: int = max(2, int(float(os.getenv("FAST_SCALP_MIN_ENTRY_TICK_COUNT", "2"))))
 RSI_ENTRY_OVERBOUGHT: float = float(os.getenv("FAST_SCALP_RSI_ENTRY_OVERBOUGHT", "70"))
 RSI_ENTRY_OVERSOLD: float = float(os.getenv("FAST_SCALP_RSI_ENTRY_OVERSOLD", "30"))
 LOW_VOL_COOLDOWN_SEC: float = max(0.0, float(os.getenv("FAST_SCALP_LOW_VOL_COOLDOWN_SEC", "0.0")))

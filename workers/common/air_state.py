@@ -42,7 +42,7 @@ def _env_bool(name: str, default: bool) -> bool:
     return raw.strip().lower() not in {"", "0", "false", "no"}
 
 
-AIR_ENABLED = _env_bool("AIR_ENABLED", True)
+AIR_ENABLED = _env_bool("AIR_ENABLED", False)
 AIR_TICK_WINDOW_SEC = _env_float("AIR_TICK_WINDOW_SEC", 6.0)
 AIR_TICK_MIN_SAMPLES = _env_int("AIR_TICK_MIN_SAMPLES", 12)
 AIR_TICK_RATE_REF = _env_float("AIR_TICK_RATE_REF", 2.5)
