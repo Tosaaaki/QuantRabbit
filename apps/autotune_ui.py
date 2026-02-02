@@ -471,6 +471,35 @@ def _resolve_ui_state_object_path() -> str:
     return value or _DEFAULT_UI_STATE_OBJECT
 
 
+def _snapshot_sort_key(source: str, snapshot: dict) -> tuple[float, int]:
+    dt = _parse_dt(snapshot.get("generated_at"))
+    ts = dt.timestamp() if dt else 0.0
+    priority = {"local": 0, "gcs": 1, "remote": 2}.get(source, 0)
+    return (ts, priority)
+
+
+def _pick_latest_snapshot(candidates: list[tuple[str, dict]]) -> Optional[tuple[str, dict]]:
+    if not candidates:
+        return None
+    return max(candidates, key=lambda item: _snapshot_sort_key(item[0], item[1]))
+
+
+def _fetch_gcs_snapshot() -> tuple[Optional[dict], Optional[str]]:
+    bucket_name = _get_secret_optional("ui_bucket_name")
+    if not bucket_name:
+        return None, "ui_bucket_name が未設定です"
+    if storage is None:
+        return None, "google-cloud-storage クライアントが利用できません"
+    object_path = _resolve_ui_state_object_path()
+    try:
+        client = storage.Client()
+        blob = client.bucket(bucket_name).blob(object_path)
+        raw = blob.download_as_text(timeout=5)
+        return json.loads(raw), None
+    except Exception as exc:  # pragma: no cover - network/credential issues
+        return None, str(exc)
+
+
 def _should_sync_trades() -> bool:
     if not _LITE_SYNC_TRADES_ENABLED:
         return False
@@ -1677,54 +1706,33 @@ def _summarise_snapshot(snapshot: Dict[str, Any]) -> Dict[str, Any]:
 
 def _load_dashboard_data() -> Dict[str, Any]:
     base = _dashboard_defaults()
+    candidates: list[tuple[str, dict]] = []
+
     remote_snapshot = _fetch_remote_snapshot("ui_snapshot_lite_url")
     if not remote_snapshot:
         remote_snapshot = _fetch_remote_snapshot()
     if remote_snapshot:
-        base = _summarise_snapshot(remote_snapshot)
-        if not base.get("snapshot", {}).get("source"):
-            base.setdefault("snapshot", {})["source"] = "remote"
-        if base.get("snapshot", {}).get("stale"):
-            fallback = _fallback_dashboard_local()
-            if fallback:
-                return fallback
+        candidates.append(("remote", remote_snapshot))
+
+    gcs_snapshot, gcs_error = _fetch_gcs_snapshot()
+    if gcs_snapshot:
+        candidates.append(("gcs", gcs_snapshot))
+
+    local_snapshot = _build_local_snapshot()
+    if local_snapshot:
+        candidates.append(("local", local_snapshot))
+
+    picked = _pick_latest_snapshot(candidates)
+    if picked:
+        source, snapshot = picked
+        base = _summarise_snapshot(snapshot)
+        base.setdefault("snapshot", {})["source"] = source
         return base
 
-    bucket_name = _get_secret_optional("ui_bucket_name")
-    object_path = _resolve_ui_state_object_path()
-    if not bucket_name:  # pragma: no cover - missing config
-        fallback = _fallback_dashboard_local()
-        if fallback:
-            return fallback
-        base["error"] = "ui_bucket_name が未設定です"
-        return base
-
-    if storage is None:  # pragma: no cover - optional dependency
-        fallback = _fallback_dashboard_local()
-        if fallback:
-            return fallback
-        base["error"] = "google-cloud-storage クライアントが利用できません"
-        return base
-
-    try:
-        client = storage.Client()
-        blob = client.bucket(bucket_name).blob(object_path)
-        raw = blob.download_as_text(timeout=5)
-        snapshot = json.loads(raw)
-    except Exception as exc:  # pragma: no cover - network/credential issues
-        fallback = _fallback_dashboard_local()
-        if fallback:
-            return fallback
-        base["error"] = str(exc)
-        return base
-
-    base = _summarise_snapshot(snapshot)
-    if not base.get("snapshot", {}).get("source"):
-        base.setdefault("snapshot", {})["source"] = "gcs"
-    if base.get("snapshot", {}).get("stale"):
-        fallback = _fallback_dashboard_local()
-        if fallback:
-            return fallback
+    if gcs_error:
+        base["error"] = gcs_error
+    else:
+        base["error"] = "スナップショットを取得できませんでした"
     return base
 
 
