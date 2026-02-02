@@ -6,7 +6,7 @@ After=network.target
 Type=simple
 WorkingDirectory=/home/tossaki/QuantRabbit
 Environment=PYTHONUNBUFFERED=1
-Environment=FAST_SCALP_ENABLED=1
+Environment=FAST_SCALP_ENABLED=0
 Environment=FAST_SCALP_RANGE_ONLY=1
 Environment=FAST_SCALP_STRATEGY_TAG=fast_scalp_range
 Environment=FAST_SCALP_PATTERN_ALLOWLIST=flat_chop,neutral,narrow_range,pullback_after_impulse_up,pullback_after_impulse_down
