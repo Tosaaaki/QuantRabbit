@@ -60,6 +60,23 @@ _HOURLY_TRADES_LOOKBACK = max(6, int(os.getenv("UI_HOURLY_LOOKBACK_HOURS", "24")
 _DB_READ_TIMEOUT_SEC = float(os.getenv("UI_DB_READ_TIMEOUT_SEC", "0.2"))
 _OPS_REMOTE_TIMEOUT_SEC = float(os.getenv("UI_OPS_TIMEOUT_SEC", "4.0"))
 _OPS_COMMAND_TIMEOUT_SEC = float(os.getenv("UI_OPS_CMD_TIMEOUT_SEC", "6.0"))
+_DEFAULT_UI_STATE_OBJECT = "realtime/ui_state.json"
+_LOCAL_FALLBACK_ENABLED = os.getenv("UI_DASHBOARD_LOCAL_FALLBACK", "1").strip().lower() not in {
+    "",
+    "0",
+    "false",
+    "no",
+}
+_LOCAL_FALLBACK_MODE = os.getenv("UI_DASHBOARD_LOCAL_MODE", "lite").strip().lower()
+_LITE_SYNC_TRADES_ENABLED = os.getenv("UI_SNAPSHOT_SYNC_TRADES", "1").strip().lower() in {
+    "1",
+    "true",
+    "yes",
+}
+_LITE_SYNC_TTL_SEC = float(os.getenv("UI_SNAPSHOT_SYNC_TTL_SEC", "60"))
+_LITE_SYNC_MARKER = Path(
+    os.getenv("UI_SNAPSHOT_SYNC_MARKER", "logs/ui_snapshot_sync.json")
+)
 _live_snapshot_lock = threading.Lock()
 _live_snapshot_cache: dict[str, Any] | None = None
 _live_snapshot_ts: float = 0.0
@@ -446,6 +463,59 @@ def _get_secret_optional(key: str) -> Optional[str]:
         return None
     value = str(value).strip()
     return value or None
+
+
+def _resolve_ui_state_object_path() -> str:
+    value = _get_secret_optional("ui_state_object_path") or os.getenv("UI_STATE_OBJECT_PATH")
+    value = (value or _DEFAULT_UI_STATE_OBJECT).strip()
+    return value or _DEFAULT_UI_STATE_OBJECT
+
+
+def _should_sync_trades() -> bool:
+    if not _LITE_SYNC_TRADES_ENABLED:
+        return False
+    if _LITE_SYNC_TTL_SEC <= 0:
+        return True
+    if not _LITE_SYNC_MARKER.exists():
+        return True
+    try:
+        data = json.loads(_LITE_SYNC_MARKER.read_text(encoding="utf-8"))
+    except Exception:
+        return True
+    last_ts = float(data.get("ts") or 0.0)
+    return (time.time() - last_ts) >= _LITE_SYNC_TTL_SEC
+
+
+def _mark_sync_trades(count: int) -> None:
+    try:
+        _LITE_SYNC_MARKER.parent.mkdir(parents=True, exist_ok=True)
+        _LITE_SYNC_MARKER.write_text(
+            json.dumps({"ts": time.time(), "count": int(count)}),
+            encoding="utf-8",
+        )
+    except Exception:
+        pass
+
+
+def _build_local_snapshot() -> Optional[dict]:
+    if not _LOCAL_FALLBACK_ENABLED:
+        return None
+    try:
+        if _LOCAL_FALLBACK_MODE in {"live", "full"}:
+            return _cached_live_snapshot()
+        return _cached_lite_snapshot()
+    except Exception:
+        return None
+
+
+def _fallback_dashboard_local() -> Optional[Dict[str, Any]]:
+    snapshot = _build_local_snapshot()
+    if not snapshot:
+        return None
+    base = _summarise_snapshot(snapshot)
+    if not base.get("snapshot", {}).get("source"):
+        base.setdefault("snapshot", {})["source"] = "local"
+    return base
 
 
 def _ops_required_token() -> Optional[str]:
@@ -953,22 +1023,41 @@ def _build_lite_snapshot() -> dict:
     recent_trades = _load_recent_trades(limit=_RECENT_TRADES_LIMIT)
     metrics: dict[str, Any] = {}
     open_positions: dict[str, Any] = {}
-    if (not _LITE_SNAPSHOT_FAST) or _INCLUDE_POSITIONS:
+    pm = None
+    sync_needed = _should_sync_trades()
+    try:
+        from execution.position_manager import PositionManager
+    except Exception:
+        PositionManager = None  # type: ignore[assignment]
+    if PositionManager is not None and (
+        sync_needed or (not _LITE_SNAPSHOT_FAST) or _INCLUDE_POSITIONS
+    ):
+        pm = PositionManager()
         try:
-            from execution.position_manager import PositionManager
-        except Exception:
-            PositionManager = None  # type: ignore[assignment]
-        if PositionManager is not None:
-            pm = PositionManager()
-            try:
-                open_positions = pm.get_open_positions(include_unknown=True) or {}
-            except Exception:
-                open_positions = {}
-            finally:
+            if sync_needed:
                 try:
-                    pm.close()
+                    synced = pm.sync_trades()
+                    _mark_sync_trades(len(synced or []))
                 except Exception:
                     pass
+            try:
+                metrics = pm.get_performance_summary()
+            except Exception:
+                metrics = {}
+            try:
+                recent_trades = pm.fetch_recent_trades(limit=_RECENT_TRADES_LIMIT)
+            except Exception:
+                recent_trades = _load_recent_trades(limit=_RECENT_TRADES_LIMIT)
+            if (not _LITE_SNAPSHOT_FAST) or _INCLUDE_POSITIONS:
+                try:
+                    open_positions = pm.get_open_positions(include_unknown=True) or {}
+                except Exception:
+                    open_positions = {}
+        finally:
+            try:
+                pm.close()
+            except Exception:
+                pass
     data_lag_ms = _load_latest_metric("data_lag_ms")
     decision_latency_ms = _load_latest_metric("decision_latency_ms")
     if data_lag_ms is not None:
@@ -1595,16 +1684,25 @@ def _load_dashboard_data() -> Dict[str, Any]:
         base = _summarise_snapshot(remote_snapshot)
         if not base.get("snapshot", {}).get("source"):
             base.setdefault("snapshot", {})["source"] = "remote"
+        if base.get("snapshot", {}).get("stale"):
+            fallback = _fallback_dashboard_local()
+            if fallback:
+                return fallback
         return base
 
-    try:
-        bucket_name = get_secret("ui_bucket_name")
-        object_path = get_secret("ui_state_object_path")
-    except KeyError as exc:  # pragma: no cover - missing config
-        base["error"] = f"{exc.args[0]} が未設定です"
+    bucket_name = _get_secret_optional("ui_bucket_name")
+    object_path = _resolve_ui_state_object_path()
+    if not bucket_name:  # pragma: no cover - missing config
+        fallback = _fallback_dashboard_local()
+        if fallback:
+            return fallback
+        base["error"] = "ui_bucket_name が未設定です"
         return base
 
     if storage is None:  # pragma: no cover - optional dependency
+        fallback = _fallback_dashboard_local()
+        if fallback:
+            return fallback
         base["error"] = "google-cloud-storage クライアントが利用できません"
         return base
 
@@ -1614,12 +1712,19 @@ def _load_dashboard_data() -> Dict[str, Any]:
         raw = blob.download_as_text(timeout=5)
         snapshot = json.loads(raw)
     except Exception as exc:  # pragma: no cover - network/credential issues
+        fallback = _fallback_dashboard_local()
+        if fallback:
+            return fallback
         base["error"] = str(exc)
         return base
 
     base = _summarise_snapshot(snapshot)
     if not base.get("snapshot", {}).get("source"):
         base.setdefault("snapshot", {})["source"] = "gcs"
+    if base.get("snapshot", {}).get("stale"):
+        fallback = _fallback_dashboard_local()
+        if fallback:
+            return fallback
     return base
 
 

@@ -27,7 +27,15 @@ class GCSRealtimePublisher:
 
     def __init__(self, object_path: str | None = None) -> None:
         self._enabled = True
-        self._object_path = object_path or _DEFAULT_OBJECT
+        if object_path:
+            self._object_path = object_path
+        else:
+            try:
+                configured = get_secret("ui_state_object_path")
+            except KeyError:
+                configured = None
+            configured = str(configured).strip() if configured is not None else ""
+            self._object_path = configured or _DEFAULT_OBJECT
         self._bucket_name: str | None = None
         self._use_cli = False
         self._use_metadata = False
