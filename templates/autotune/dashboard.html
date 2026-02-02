@@ -37,7 +37,7 @@
     </div>
     <div class="tab-meta">セクションを切り替えて表示できます。</div>
 
-    <div class="status-bar" data-auto-refresh data-auto-refresh-sec="{{ dashboard.auto_refresh_sec }}">
+    <div class="status-bar" data-auto-refresh data-auto-refresh-sec="{{ dashboard.auto_refresh_sec }}" data-auto-refresh-mode="soft">
       <div class="status-left">
         <div class="refresh-meta">
           <span class="refresh-dot" aria-hidden="true"></span>
@@ -1701,12 +1701,18 @@
         }
       }
 
-      window.addEventListener("resize", () => {
+      if (window.__qrDashboardResizeHandler) {
+        window.removeEventListener("resize", window.__qrDashboardResizeHandler);
+        window.__qrDashboardResizeHandler = null;
+      }
+      const resizeHandler = () => {
         const perfActive = document.querySelector("[data-chart='performance'] .range-button.is-active");
         if (perfActive) renderPerformance(perfActive.dataset.range);
         const priceActive = document.querySelector("[data-chart='price'] .range-button.is-active");
         if (priceActive) renderPrice(priceActive.dataset.range);
-      });
+      };
+      window.__qrDashboardResizeHandler = resizeHandler;
+      window.addEventListener("resize", resizeHandler);
     })();
   </script>
 {% endblock %}

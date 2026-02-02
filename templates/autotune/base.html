@@ -681,133 +681,150 @@
       </nav>
     </div>
   </header>
-  <main>
+  <main id="qr-main">
     {% block content %}{% endblock %}
   </main>
   <script>
-    (() => {
-      const containers = document.querySelectorAll("[data-tabs]");
-      if (!containers.length) return;
-      document.body.classList.add("tabs-ready");
+    window.qrInitTabs = (() => {
+      const init = () => {
+        const containers = document.querySelectorAll("[data-tabs]");
+        if (!containers.length) return;
+        document.body.classList.add("tabs-ready");
 
-      containers.forEach((container, index) => {
-        const buttons = Array.from(container.querySelectorAll("[data-tab-button]")).filter(
-          (button) => button.closest("[data-tabs]") === container
-        );
-        const panels = Array.from(container.querySelectorAll("[data-tab-panel]")).filter(
-          (panel) => panel.closest("[data-tabs]") === container
-        );
-        const isLocal = container.hasAttribute("data-tabs-local");
-        const persistDisabled = container.hasAttribute("data-tabs-no-persist");
-        const keyBase = container.getAttribute("data-tabs-key") || container.getAttribute("id") || `tabs-${index}`;
-        const storageKey = isLocal ? `qr_tabs_local_${keyBase}` : "qr_tabs_root";
-        if (!buttons.length) return;
+        containers.forEach((container, index) => {
+          const buttons = Array.from(container.querySelectorAll("[data-tab-button]")).filter(
+            (button) => button.closest("[data-tabs]") === container
+          );
+          const panels = Array.from(container.querySelectorAll("[data-tab-panel]")).filter(
+            (panel) => panel.closest("[data-tabs]") === container
+          );
+          const isLocal = container.hasAttribute("data-tabs-local");
+          const persistDisabled = container.hasAttribute("data-tabs-no-persist");
+          const keyBase = container.getAttribute("data-tabs-key") || container.getAttribute("id") || `tabs-${index}`;
+          const storageKey = isLocal ? `qr_tabs_local_${keyBase}` : "qr_tabs_root";
+          if (!buttons.length) return;
 
-        const activateTab = (name, options = {}) => {
-          const focus = options.focus ?? true;
-          const updateUrl = options.updateUrl ?? true;
+          const activateTab = (name, options = {}) => {
+            const focus = options.focus ?? true;
+            const updateUrl = options.updateUrl ?? true;
+
+            buttons.forEach((button) => {
+              const isActive = button.dataset.tabTarget === name;
+              button.classList.toggle("is-active", isActive);
+              button.setAttribute("aria-selected", isActive ? "true" : "false");
+              button.tabIndex = isActive ? 0 : -1;
+            });
+            panels.forEach((panel) => {
+              panel.classList.toggle("is-active", panel.dataset.tabPanel === name);
+            });
+
+            if (updateUrl && name) {
+              const url = new URL(window.location.href);
+              url.searchParams.set("tab", name);
+              window.history.replaceState(null, "", url);
+            }
+
+            if (!persistDisabled && name) {
+              try {
+                sessionStorage.setItem(storageKey, name);
+              } catch (err) {
+                // ignore storage errors
+              }
+            }
+
+            if (focus) {
+              const target = buttons.find((button) => button.dataset.tabTarget === name);
+              if (target) target.focus();
+            }
+          };
 
           buttons.forEach((button) => {
-            const isActive = button.dataset.tabTarget === name;
-            button.classList.toggle("is-active", isActive);
-            button.setAttribute("aria-selected", isActive ? "true" : "false");
-            button.tabIndex = isActive ? 0 : -1;
-          });
-          panels.forEach((panel) => {
-            panel.classList.toggle("is-active", panel.dataset.tabPanel === name);
+            button.addEventListener("click", () => {
+              const name = button.dataset.tabTarget;
+              if (name) activateTab(name, { updateUrl: !isLocal });
+            });
+            button.addEventListener("keydown", (event) => {
+              if (!["ArrowLeft", "ArrowRight"].includes(event.key)) return;
+              event.preventDefault();
+              const currentIndex = buttons.indexOf(button);
+              const delta = event.key === "ArrowRight" ? 1 : -1;
+              const nextIndex = (currentIndex + delta + buttons.length) % buttons.length;
+              const nextButton = buttons[nextIndex];
+              if (nextButton?.dataset.tabTarget) {
+                activateTab(nextButton.dataset.tabTarget, { updateUrl: !isLocal });
+              }
+            });
           });
 
-          if (updateUrl && name) {
-            const url = new URL(window.location.href);
-            url.searchParams.set("tab", name);
-            window.history.replaceState(null, "", url);
-          }
-
-          if (!persistDisabled && name) {
-            try {
-              sessionStorage.setItem(storageKey, name);
-            } catch (err) {
-              // ignore storage errors
+          const urlParams = new URLSearchParams(window.location.search);
+          const validTargets = new Set(
+            buttons.map((button) => button.dataset.tabTarget).filter(Boolean)
+          );
+          let desired = null;
+          if (isLocal) {
+            if (!persistDisabled) {
+              try {
+                desired = sessionStorage.getItem(storageKey);
+              } catch (err) {
+                desired = null;
+              }
             }
-          }
-
-          if (focus) {
-            const target = buttons.find((button) => button.dataset.tabTarget === name);
-            if (target) target.focus();
-          }
-        };
-
-        buttons.forEach((button) => {
-          button.addEventListener("click", () => {
-            const name = button.dataset.tabTarget;
-            if (name) activateTab(name, { updateUrl: !isLocal });
-          });
-          button.addEventListener("keydown", (event) => {
-            if (!["ArrowLeft", "ArrowRight"].includes(event.key)) return;
-            event.preventDefault();
-            const currentIndex = buttons.indexOf(button);
-            const delta = event.key === "ArrowRight" ? 1 : -1;
-            const nextIndex = (currentIndex + delta + buttons.length) % buttons.length;
-            const nextButton = buttons[nextIndex];
-            if (nextButton?.dataset.tabTarget) {
-              activateTab(nextButton.dataset.tabTarget, { updateUrl: !isLocal });
-            }
-          });
-        });
-
-        const urlParams = new URLSearchParams(window.location.search);
-        const validTargets = new Set(
-          buttons.map((button) => button.dataset.tabTarget).filter(Boolean)
-        );
-        let desired = null;
-        if (isLocal) {
-          if (!persistDisabled) {
-            try {
-              desired = sessionStorage.getItem(storageKey);
-            } catch (err) {
+          } else {
+            desired = urlParams.get("tab");
+            if (desired && !validTargets.has(desired)) {
+              const url = new URL(window.location.href);
+              url.searchParams.delete("tab");
+              window.history.replaceState(null, "", url);
               desired = null;
             }
-          }
-        } else {
-          desired = urlParams.get("tab");
-          if (desired && !validTargets.has(desired)) {
-            const url = new URL(window.location.href);
-            url.searchParams.delete("tab");
-            window.history.replaceState(null, "", url);
-            desired = null;
-          }
-          if (!desired) {
-            try {
-              const stored = sessionStorage.getItem(storageKey);
-              if (stored && validTargets.has(stored)) desired = stored;
-            } catch (err) {
-              // ignore storage errors
+            if (!desired) {
+              try {
+                const stored = sessionStorage.getItem(storageKey);
+                if (stored && validTargets.has(stored)) desired = stored;
+              } catch (err) {
+                // ignore storage errors
+              }
             }
           }
-        }
-        const selected =
-          buttons.find((button) => button.dataset.tabTarget === desired) ||
-          buttons.find((button) => button.getAttribute("aria-selected") === "true") ||
-          buttons[0];
-        if (selected?.dataset.tabTarget) {
-          activateTab(selected.dataset.tabTarget, {
-            focus: false,
-            updateUrl: false,
-          });
-        }
-      });
+          const selected =
+            buttons.find((button) => button.dataset.tabTarget === desired) ||
+            buttons.find((button) => button.getAttribute("aria-selected") === "true") ||
+            buttons[0];
+          if (selected?.dataset.tabTarget) {
+            activateTab(selected.dataset.tabTarget, {
+              focus: false,
+              updateUrl: false,
+            });
+          }
+        });
+      };
+      return init;
     })();
+    window.qrInitTabs();
   </script>
   <script>
-    (() => {
-      const refreshRoot = document.querySelector("[data-auto-refresh]");
-      if (!refreshRoot) return;
+    window.qrInitAutoRefresh = (() => {
+      const state = {
+        timerId: null,
+        countdownId: null,
+        refreshInFlight: false,
+        visibilityBound: false,
+      };
 
-      const intervalSec = parseInt(refreshRoot.dataset.autoRefreshSec || "15", 10);
-      const statusEl = refreshRoot.querySelector("[data-refresh-status]");
-      const refreshButton = refreshRoot.querySelector("[data-refresh-now]");
-      let timerId = null;
-      let nextAt = 0;
+      const assignAnchors = () => {
+        const cards = Array.from(document.querySelectorAll("main .card"));
+        cards.forEach((card, idx) => {
+          if (!card.dataset.scrollAnchor) {
+            card.dataset.scrollAnchor = `card-${idx}`;
+          }
+        });
+        const panels = Array.from(document.querySelectorAll("main [data-tab-panel]"));
+        panels.forEach((panel) => {
+          if (!panel.dataset.scrollAnchor && panel.id) {
+            panel.dataset.scrollAnchor = `panel-${panel.id}`;
+          }
+        });
+      };
 
       const isEditing = () => {
         const active = document.activeElement;
@@ -825,93 +842,251 @@
         return url.toString();
       };
 
-      const updateCountdown = () => {
-        if (!statusEl) return;
-        if (!nextAt) return;
-        const remaining = Math.max(0, Math.ceil((nextAt - Date.now()) / 1000));
-        statusEl.textContent = `次の更新 ${remaining}s`;
-      };
-
-      const rememberScroll = () => {
+      const captureScrollState = () => {
+        assignAnchors();
+        let anchorKey = null;
+        let anchorOffset = null;
         try {
-          const rootTabs = document.querySelector("[data-tabs]:not([data-tabs-local])");
-          const activeTab = rootTabs?.querySelector("[data-tab-button].is-active")?.dataset?.tabTarget;
-          const payload = {
-            y: window.scrollY || 0,
-            at: Date.now(),
-            path: window.location.pathname,
-            tab: activeTab || null,
-          };
+          const sampleY = Math.min(window.innerHeight * 0.2, 180);
+          const probe = document.elementFromPoint(32, sampleY);
+          const anchor = probe?.closest("[data-scroll-anchor]");
+          if (anchor?.dataset?.scrollAnchor) {
+            anchorKey = anchor.dataset.scrollAnchor;
+            anchorOffset = anchor.getBoundingClientRect().top;
+          }
+        } catch (err) {
+          anchorKey = null;
+        }
+        const rootTabs = document.querySelector("[data-tabs]:not([data-tabs-local])");
+        const activeTab = rootTabs?.querySelector("[data-tab-button].is-active")?.dataset?.tabTarget;
+        const payload = {
+          y: window.scrollY || 0,
+          at: Date.now(),
+          path: window.location.pathname,
+          tab: activeTab || null,
+          anchor: anchorKey,
+          offset: anchorOffset,
+        };
+        try {
           sessionStorage.setItem("qr_scroll_state", JSON.stringify(payload));
         } catch (err) {
           // ignore storage errors
         }
+        return payload;
       };
 
-      const restoreScroll = () => {
+      const restoreScrollState = (payload) => {
+        if (!payload) return;
+        assignAnchors();
+        const maxAgeMs = 120000;
+        if (payload.at && Date.now() - payload.at > maxAgeMs) return;
+        if (payload.path && payload.path !== window.location.pathname) return;
+        if (payload.anchor) {
+          const anchorEl = document.querySelector(`[data-scroll-anchor="${payload.anchor}"]`);
+          if (anchorEl && typeof payload.offset === "number") {
+            const currentTop = anchorEl.getBoundingClientRect().top;
+            const delta = currentTop - payload.offset;
+            window.scrollTo({ top: (window.scrollY || 0) + delta, behavior: "auto" });
+            return;
+          }
+        }
+        if (typeof payload.y === "number") {
+          window.scrollTo({ top: payload.y, behavior: "auto" });
+        }
+      };
+
+      const restoreScrollFromStorage = () => {
         const params = new URLSearchParams(window.location.search);
         if (!params.has("t")) return;
         try {
           const raw = sessionStorage.getItem("qr_scroll_state");
           if (!raw) return;
-          const state = JSON.parse(raw);
-          if (!state || typeof state.y !== "number") return;
-          if (state.path && state.path !== window.location.pathname) return;
-          const maxAgeMs = 120000;
-          if (state.at && Date.now() - state.at > maxAgeMs) return;
+          const saved = JSON.parse(raw);
+          if (!saved) return;
           window.requestAnimationFrame(() => {
-            window.scrollTo({ top: state.y, behavior: "auto" });
+            restoreScrollState(saved);
           });
         } catch (err) {
           // ignore parse errors
         }
       };
 
-      const schedule = () => {
-        if (timerId) clearTimeout(timerId);
-        nextAt = Date.now() + intervalSec * 1000;
-        updateCountdown();
-        timerId = window.setTimeout(() => {
-          if (document.hidden || isEditing()) {
-            schedule();
-            return;
-          }
-          if (statusEl) statusEl.textContent = "更新中...";
+      const executeInlineScripts = (root) => {
+        const scripts = Array.from(root.querySelectorAll("script"));
+        scripts.forEach((script) => {
+          const type = (script.getAttribute("type") || "").trim();
+          if (type && type !== "text/javascript" && type !== "application/javascript") return;
+          const code = script.textContent || "";
+          if (!code.trim()) return;
           try {
-            sessionStorage.setItem("qr_refreshing", "1");
+            new Function(code)();
           } catch (err) {
-            // ignore storage errors
+            console.warn("qr inline script failed", err);
           }
-          rememberScroll();
-          window.location.assign(buildRefreshUrl());
-        }, intervalSec * 1000);
+        });
       };
 
-      if (refreshButton) {
-        refreshButton.addEventListener("click", () => {
-          if (statusEl) statusEl.textContent = "更新中...";
-          try {
-            sessionStorage.setItem("qr_refreshing", "1");
-          } catch (err) {
-            // ignore storage errors
-          }
-          rememberScroll();
-          window.location.assign(buildRefreshUrl());
-        });
-      }
-
-      window.setInterval(updateCountdown, 1000);
-      restoreScroll();
-      schedule();
-
-      document.addEventListener("visibilitychange", () => {
-        if (document.hidden) {
-          if (timerId) clearTimeout(timerId);
-        } else {
-          schedule();
+      const applySwap = (newMain, scrollState) => {
+        const oldMain = document.getElementById("qr-main") || document.querySelector("main");
+        if (!oldMain) return;
+        if (oldMain.id !== "qr-main") {
+          oldMain.id = "qr-main";
         }
-      });
+        oldMain.replaceWith(newMain);
+        if (!newMain.id) newMain.id = "qr-main";
+        executeInlineScripts(newMain);
+        if (window.qrInitTabs) window.qrInitTabs();
+        window.setTimeout(() => {
+          if (window.qrInitAutoRefresh) window.qrInitAutoRefresh();
+        }, 0);
+        window.requestAnimationFrame(() => {
+          restoreScrollState(scrollState);
+        });
+      };
+
+      const softRefresh = async (url, scrollState) => {
+        const resp = await fetch(url, {
+          cache: "no-store",
+          headers: {
+            "X-QR-Refresh": "1",
+            "Cache-Control": "no-store",
+          },
+        });
+        if (!resp.ok) throw new Error(`refresh failed ${resp.status}`);
+        const html = await resp.text();
+        const doc = new DOMParser().parseFromString(html, "text/html");
+        const newMain = doc.getElementById("qr-main") || doc.querySelector("main");
+        if (!newMain) throw new Error("main missing");
+        const title = doc.querySelector("title");
+        if (title && title.textContent) {
+          document.title = title.textContent;
+        }
+        if (document.startViewTransition) {
+          await document.startViewTransition(() => {
+            applySwap(newMain, scrollState);
+          }).finished;
+        } else {
+          applySwap(newMain, scrollState);
+        }
+      };
+
+      const init = () => {
+        const refreshRoot = document.querySelector("[data-auto-refresh]");
+        if (!refreshRoot) return;
+
+        const intervalSec = parseInt(refreshRoot.dataset.autoRefreshSec || "15", 10);
+        const mode = (refreshRoot.dataset.autoRefreshMode || "soft").toLowerCase();
+
+        if (state.timerId) {
+          clearTimeout(state.timerId);
+          state.timerId = null;
+        }
+        if (state.countdownId) {
+          clearInterval(state.countdownId);
+          state.countdownId = null;
+        }
+
+        const updateCountdown = (statusEl, nextAt) => {
+          if (!statusEl || !nextAt) return;
+          const remaining = Math.max(0, Math.ceil((nextAt - Date.now()) / 1000));
+          statusEl.textContent = `次の更新 ${remaining}s`;
+        };
+
+        const schedule = () => {
+          const statusEl = refreshRoot.querySelector("[data-refresh-status]");
+          const refreshButton = refreshRoot.querySelector("[data-refresh-now]");
+          const nextAt = Date.now() + intervalSec * 1000;
+          updateCountdown(statusEl, nextAt);
+
+          if (refreshButton) {
+            refreshButton.onclick = async () => {
+              if (state.refreshInFlight) return;
+              if (statusEl) statusEl.textContent = "更新中...";
+              const scrollState = captureScrollState();
+              const url = buildRefreshUrl();
+              if (mode === "hard") {
+                try {
+                  sessionStorage.setItem("qr_refreshing", "1");
+                } catch (err) {
+                  // ignore storage errors
+                }
+                window.location.assign(url);
+                return;
+              }
+              state.refreshInFlight = true;
+              try {
+                await softRefresh(url, scrollState);
+              } catch (err) {
+                try {
+                  sessionStorage.setItem("qr_refreshing", "1");
+                } catch (e) {
+                  // ignore storage errors
+                }
+                window.location.assign(url);
+              } finally {
+                state.refreshInFlight = false;
+              }
+            };
+          }
+
+          state.timerId = window.setTimeout(async () => {
+            if (document.hidden || isEditing()) {
+              schedule();
+              return;
+            }
+            if (statusEl) statusEl.textContent = "更新中...";
+            const scrollState = captureScrollState();
+            const url = buildRefreshUrl();
+            if (mode === "hard") {
+              try {
+                sessionStorage.setItem("qr_refreshing", "1");
+              } catch (err) {
+                // ignore storage errors
+              }
+              window.location.assign(url);
+              return;
+            }
+            state.refreshInFlight = true;
+            try {
+              await softRefresh(url, scrollState);
+            } catch (err) {
+              try {
+                sessionStorage.setItem("qr_refreshing", "1");
+              } catch (e) {
+                // ignore storage errors
+              }
+              window.location.assign(url);
+            } finally {
+              state.refreshInFlight = false;
+            }
+          }, intervalSec * 1000);
+
+          state.countdownId = window.setInterval(() => {
+            updateCountdown(
+              refreshRoot.querySelector("[data-refresh-status]"),
+              nextAt
+            );
+          }, 1000);
+        };
+
+        restoreScrollFromStorage();
+        schedule();
+
+        if (!state.visibilityBound) {
+          document.addEventListener("visibilitychange", () => {
+            if (document.hidden) {
+              if (state.timerId) clearTimeout(state.timerId);
+            } else {
+              schedule();
+            }
+          });
+          state.visibilityBound = true;
+        }
+      };
+
+      return init;
     })();
+    window.qrInitAutoRefresh();
   </script>
 </body>
 </html>
