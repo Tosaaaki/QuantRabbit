@@ -5,6 +5,7 @@ After=network.target
 [Service]
 Type=simple
 WorkingDirectory=/home/tossaki/QuantRabbit
+EnvironmentFile=/etc/quantrabbit.env
 Environment=PYTHONUNBUFFERED=1
 Environment=SCALP_PRECISION_ENABLED=1
 Environment=SCALP_PRECISION_MODE=spread_revert
