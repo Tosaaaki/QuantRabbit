@@ -1,7 +1,7 @@
 from __future__ import annotations
+import glob
 import json
 import os
-import json
 import logging
 import time
 import copy
@@ -125,6 +125,22 @@ _BACKFILL_TTL_SEC = float(os.getenv("POSITION_MANAGER_BACKFILL_TTL_SEC", "86400"
 _BACKFILL_MAX_ROWS = int(os.getenv("POSITION_MANAGER_BACKFILL_MAX_ROWS", "5000"))
 _BACKFILL_MARKER = pathlib.Path(
     os.getenv("POSITION_MANAGER_BACKFILL_MARKER", "logs/position_manager_backfill.json")
+)
+_CASHFLOW_TYPES = {"TRANSFER_FUNDS", "CASH_TRANSFER"}
+_CASHFLOW_BACKFILL_ENABLED = os.getenv(
+    "POSITION_MANAGER_CASHFLOW_BACKFILL", "1"
+).strip().lower() not in {"", "0", "false", "no"}
+_CASHFLOW_BACKFILL_TTL_SEC = float(
+    os.getenv("POSITION_MANAGER_CASHFLOW_BACKFILL_TTL_SEC", "86400")
+)
+_CASHFLOW_BACKFILL_MARKER = pathlib.Path(
+    os.getenv(
+        "POSITION_MANAGER_CASHFLOW_BACKFILL_MARKER",
+        "logs/position_manager_cashflow_backfill.json",
+    )
+)
+_CASHFLOW_BACKFILL_GLOB = os.getenv(
+    "POSITION_MANAGER_CASHFLOW_BACKFILL_GLOB", "logs/oanda/transactions_*.jsonl"
 )
 
 # Agent-generated client order ID prefixes (qr-...), used to classify pockets.
@@ -529,6 +545,38 @@ def _parse_timestamp(ts: str) -> datetime:
     frac = frac[:6].ljust(6, "0")
     dt = datetime.fromisoformat(f"{head}.{frac}{tz}")
     return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
+
+
+def _extract_cashflow_tx(
+    tx: dict,
+) -> tuple[int, str, float, float | None, str, str | None] | None:
+    tx_type = str(tx.get("type") or "")
+    if tx_type not in _CASHFLOW_TYPES:
+        return None
+    try:
+        tx_id = int(tx.get("id") or 0)
+    except (TypeError, ValueError):
+        return None
+    if tx_id <= 0:
+        return None
+    amount = _coerce_float(
+        tx.get("amount") or tx.get("transferAmount") or tx.get("amountTransferred")
+    )
+    if amount is None:
+        return None
+    balance = _coerce_float(tx.get("accountBalance"))
+    ts = tx.get("time") or tx.get("timestamp")
+    if not ts:
+        return None
+    funding_reason = tx.get("fundingReason") or tx.get("reason")
+    return (
+        tx_id,
+        str(ts),
+        float(amount),
+        float(balance) if balance is not None else None,
+        tx_type,
+        str(funding_reason) if funding_reason is not None else None,
+    )
 
 
 def _load_latest_metric(metric: str) -> float | None:
@@ -969,6 +1017,10 @@ class PositionManager:
             self._maybe_backfill_attribution()
         except Exception as exc:
             logging.warning("[PositionManager] attribution backfill skipped: %s", exc)
+        try:
+            self._maybe_backfill_cashflows()
+        except Exception as exc:
+            logging.warning("[PositionManager] cashflow backfill skipped: %s", exc)
         self._last_tx_id = self._get_last_transaction_id_with_retry()
         self._pocket_cache: dict[str, str] = {}
         self._client_cache: dict[str, str] = {}
@@ -1139,6 +1191,22 @@ class PositionManager:
         self.con.execute(
             "CREATE INDEX IF NOT EXISTS idx_trades_close_time ON trades(close_time)"
         )
+        self.con.execute(
+            """
+            CREATE TABLE IF NOT EXISTS cashflows (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              transaction_id INTEGER UNIQUE,
+              time TEXT,
+              amount REAL,
+              balance REAL,
+              type TEXT,
+              funding_reason TEXT
+            )
+            """
+        )
+        self.con.execute(
+            "CREATE INDEX IF NOT EXISTS idx_cashflows_time ON cashflows(time)"
+        )
         self._commit_with_retry()
 
     def _maybe_backfill_attribution(self) -> None:
@@ -1163,6 +1231,75 @@ class PositionManager:
             _BACKFILL_MARKER.parent.mkdir(parents=True, exist_ok=True)
             _BACKFILL_MARKER.write_text(
                 json.dumps({"ts": now, "updated": updated}),
+                encoding="utf-8",
+            )
+        except Exception:
+            pass
+
+    def _maybe_backfill_cashflows(self) -> None:
+        if not _CASHFLOW_BACKFILL_ENABLED:
+            return
+        now = time.time()
+        if _CASHFLOW_BACKFILL_TTL_SEC > 0 and _CASHFLOW_BACKFILL_MARKER.exists():
+            try:
+                data = json.loads(_CASHFLOW_BACKFILL_MARKER.read_text(encoding="utf-8"))
+                last_ts = float(data.get("ts") or 0.0)
+                if last_ts > 0 and now - last_ts < _CASHFLOW_BACKFILL_TTL_SEC:
+                    return
+            except Exception:
+                pass
+        paths = sorted(glob.glob(_CASHFLOW_BACKFILL_GLOB))
+        if not paths:
+            return
+
+        def _flush_batch(batch: list[tuple]) -> int:
+            if not batch:
+                return 0
+            try:
+                with _file_lock(_DB_LOCK_PATH):
+                    self._executemany_with_retry(
+                        """
+                        INSERT OR IGNORE INTO cashflows (
+                            transaction_id, time, amount, balance, type, funding_reason
+                        ) VALUES (?, ?, ?, ?, ?, ?)
+                        """,
+                        batch,
+                    )
+                    self._commit_with_retry()
+                return len(batch)
+            except TimeoutError:
+                logging.warning("[PositionManager] cashflow backfill lock busy; skip batch")
+                return 0
+
+        total_inserted = 0
+        batch: list[tuple] = []
+        for path in paths:
+            try:
+                with open(path, "r", encoding="utf-8") as fh:
+                    for line in fh:
+                        if "TRANSFER_FUNDS" not in line and "CASH_TRANSFER" not in line:
+                            continue
+                        try:
+                            tx = json.loads(line)
+                        except Exception:
+                            continue
+                        record = _extract_cashflow_tx(tx)
+                        if not record:
+                            continue
+                        batch.append(record)
+                        if len(batch) >= 500:
+                            total_inserted += _flush_batch(batch)
+                            batch.clear()
+            except FileNotFoundError:
+                continue
+            except Exception as exc:
+                logging.warning("[PositionManager] cashflow backfill read failed: %s", exc)
+        if batch:
+            total_inserted += _flush_batch(batch)
+        try:
+            _CASHFLOW_BACKFILL_MARKER.parent.mkdir(parents=True, exist_ok=True)
+            _CASHFLOW_BACKFILL_MARKER.write_text(
+                json.dumps({"ts": now, "inserted": total_inserted}),
                 encoding="utf-8",
             )
         except Exception:
@@ -1256,12 +1393,21 @@ class PositionManager:
         """DBに記録済みの最新トランザクションIDを取得"""
         # 旧スキーマ互換のため、transaction_id 優先で取得する
         cursor = self.con.cursor()
+        max_tx = 0
         try:
             row = cursor.execute("SELECT MAX(transaction_id) FROM trades").fetchone()
             if row and row[0]:
-                return int(row[0])
+                max_tx = max(max_tx, int(row[0]))
         except sqlite3.OperationalError:
             pass
+        try:
+            row = cursor.execute("SELECT MAX(transaction_id) FROM cashflows").fetchone()
+            if row and row[0]:
+                max_tx = max(max_tx, int(row[0]))
+        except sqlite3.OperationalError:
+            pass
+        if max_tx > 0:
+            return max_tx
 
         row = cursor.execute("SELECT MAX(id) FROM trades").fetchone()
         return int(row[0]) if row and row[0] else 0
@@ -1606,6 +1752,7 @@ class PositionManager:
         details_calls = 0
         db_ms = 0.0
         trades_to_save = []
+        cashflows_to_save: list[tuple] = []
         saved_records: list[dict] = []
         processed_tx_ids = set()
 
@@ -1615,6 +1762,9 @@ class PositionManager:
                 tx_id = int(tx_id_raw)
             except (TypeError, ValueError):
                 continue
+            cashflow_record = _extract_cashflow_tx(tx)
+            if cashflow_record:
+                cashflows_to_save.append(cashflow_record)
             # ORDER_FILLのみ処理（クローズ/部分約定両対応）
             if tx.get("type") != "ORDER_FILL":
                 processed_tx_ids.add(tx_id)
@@ -1849,6 +1999,24 @@ class PositionManager:
                 }
                 return []
             print(f"[PositionManager] Saved {len(trades_to_save)} new trades.")
+
+        if cashflows_to_save:
+            try:
+                with _file_lock(_DB_LOCK_PATH):
+                    self._executemany_with_retry(
+                        """
+                        INSERT OR IGNORE INTO cashflows (
+                            transaction_id, time, amount, balance, type, funding_reason
+                        ) VALUES (?, ?, ?, ?, ?, ?)
+                        """,
+                        cashflows_to_save,
+                    )
+                    self._commit_with_retry()
+            except TimeoutError:
+                logging.warning(
+                    "[PositionManager] file lock busy; defer saving %d cashflows",
+                    len(cashflows_to_save),
+                )
 
         if processed_tx_ids:
             self._last_tx_id = max(processed_tx_ids)
@@ -2319,6 +2487,16 @@ class PositionManager:
             result[cid] = thesis
         return result
 
+    def _load_cashflows(self) -> list[dict]:
+        try:
+            cur = self.con.execute(
+                "SELECT transaction_id, time, amount, balance, type, funding_reason "
+                "FROM cashflows ORDER BY time ASC"
+            )
+            return [dict(row) for row in cur.fetchall()]
+        except sqlite3.Error:
+            return []
+
     def get_performance_summary(self, now: datetime | None = None) -> dict:
         now = now or datetime.now(timezone.utc)
         jst = timezone(timedelta(hours=9))
@@ -2389,6 +2567,42 @@ class PositionManager:
                 "losses": 0,
             }
         closed_events: list[tuple[datetime, float, float]] = []
+        cashflow_rows = self._load_cashflows()
+        cashflow_buckets = {
+            "daily": {"net": 0.0, "in": 0.0, "out": 0.0, "count": 0},
+            "yesterday": {"net": 0.0, "in": 0.0, "out": 0.0, "count": 0},
+            "weekly": {"net": 0.0, "in": 0.0, "out": 0.0, "count": 0},
+            "total": {"net": 0.0, "in": 0.0, "out": 0.0, "count": 0},
+            "ytd": {"net": 0.0, "in": 0.0, "out": 0.0, "count": 0},
+        }
+
+        def _apply_cashflow(bucket: dict, amount: float) -> None:
+            bucket["net"] += amount
+            bucket["count"] += 1
+            if amount >= 0:
+                bucket["in"] += amount
+            else:
+                bucket["out"] += abs(amount)
+
+        for row in cashflow_rows:
+            ts = row.get("time")
+            if not ts:
+                continue
+            try:
+                flow_dt = _parse_timestamp(str(ts))
+            except Exception:
+                continue
+            amount = float(row.get("amount") or 0.0)
+            flow_dt_jst = flow_dt.astimezone(jst)
+            _apply_cashflow(cashflow_buckets["total"], amount)
+            if flow_dt_jst >= week_start:
+                _apply_cashflow(cashflow_buckets["weekly"], amount)
+            if flow_dt_jst >= today_start:
+                _apply_cashflow(cashflow_buckets["daily"], amount)
+            elif flow_dt_jst >= yesterday_start:
+                _apply_cashflow(cashflow_buckets["yesterday"], amount)
+            if flow_dt_jst >= year_start:
+                _apply_cashflow(cashflow_buckets["ytd"], amount)
 
         def _is_agent_trade(pocket: str, client_id: str | None) -> bool:
             if pocket in _KNOWN_POCKETS:
@@ -2509,6 +2723,14 @@ class PositionManager:
                 "pf": pf,
             }
 
+        def _finalise_cashflow(data: dict) -> dict:
+            return {
+                "net": round(data["net"], 2),
+                "in": round(data["in"], 2),
+                "out": round(data["out"], 2),
+                "count": int(data["count"]),
+            }
+
         pockets_final: dict[str, dict] = {}
         for name, raw in pocket_raw.items():
             pockets_final[name] = _finalise(raw)
@@ -2517,6 +2739,13 @@ class PositionManager:
         weekly = _finalise(buckets["weekly"])
         total = _finalise(buckets["total"])
         yesterday = _finalise(buckets["yesterday"])
+        cashflow_summary = {
+            "daily": _finalise_cashflow(cashflow_buckets["daily"]),
+            "yesterday": _finalise_cashflow(cashflow_buckets["yesterday"]),
+            "weekly": _finalise_cashflow(cashflow_buckets["weekly"]),
+            "total": _finalise_cashflow(cashflow_buckets["total"]),
+            "ytd": _finalise_cashflow(cashflow_buckets["ytd"]),
+        }
 
         def _growth_rate_equity(delta: float, equity: float | None) -> float | None:
             if equity is None or equity <= 0:
@@ -2652,16 +2881,27 @@ class PositionManager:
             "start_balance_source": start_balance_source,
             "current_balance": current_balance,
             "balance_growth_pct": None,
+            "balance_growth_ex_cashflow_jpy": None,
+            "balance_growth_ex_cashflow_pct": None,
             "bot_profit_jpy": round(ytd_bot["jpy"], 2),
             "bot_profit_pips": round(ytd_bot["pips"], 2),
             "bot_return_pct": None,
             "trades": ytd_bot["trades"],
             "wins": ytd_bot["wins"],
             "losses": ytd_bot["losses"],
+            "cashflow_net": cashflow_summary["ytd"]["net"],
+            "cashflow_in": cashflow_summary["ytd"]["in"],
+            "cashflow_out": cashflow_summary["ytd"]["out"],
         }
         if start_balance and current_balance:
+            net_growth = current_balance - start_balance
             ytd_summary["balance_growth_pct"] = round(
-                (current_balance - start_balance) * 100.0 / start_balance, 2
+                net_growth * 100.0 / start_balance, 2
+            )
+            adj_growth = net_growth - cashflow_summary["ytd"]["net"]
+            ytd_summary["balance_growth_ex_cashflow_jpy"] = round(adj_growth, 2)
+            ytd_summary["balance_growth_ex_cashflow_pct"] = round(
+                adj_growth * 100.0 / start_balance, 2
             )
         if start_balance:
             ytd_summary["bot_return_pct"] = round(
@@ -2716,6 +2956,7 @@ class PositionManager:
             "ytd_summary": ytd_summary,
             "hourly_trades": hourly_trades,
             "chart_data": chart_data,
+            "cashflow": cashflow_summary,
         }
 
     def fetch_recent_trades(self, limit: int = 50) -> list[dict]:

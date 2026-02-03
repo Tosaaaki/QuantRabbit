@@ -275,6 +275,13 @@ def _dashboard_defaults(error: Optional[str] = None) -> Dict[str, Any]:
             "unrealized_pl_jpy": 0.0,
             "pockets": [],
         },
+        "cashflow": {
+            "daily": {"net": 0.0, "in": 0.0, "out": 0.0, "count": 0},
+            "yesterday": {"net": 0.0, "in": 0.0, "out": 0.0, "count": 0},
+            "weekly": {"net": 0.0, "in": 0.0, "out": 0.0, "count": 0},
+            "total": {"net": 0.0, "in": 0.0, "out": 0.0, "count": 0},
+            "ytd": {"net": 0.0, "in": 0.0, "out": 0.0, "count": 0},
+        },
         "open_summary": {
             "total_positions": 0,
             "net_units": 0.0,
@@ -324,12 +331,17 @@ def _dashboard_defaults(error: Optional[str] = None) -> Dict[str, Any]:
             "start_balance_source": None,
             "current_balance": None,
             "balance_growth_pct": None,
+            "balance_growth_ex_cashflow_jpy": None,
+            "balance_growth_ex_cashflow_pct": None,
             "bot_profit_jpy": 0.0,
             "bot_profit_pips": 0.0,
             "bot_return_pct": None,
             "trades": 0,
             "wins": 0,
             "losses": 0,
+            "cashflow_net": 0.0,
+            "cashflow_in": 0.0,
+            "cashflow_out": 0.0,
         },
         "charts": {
             "available": False,
@@ -1669,6 +1681,10 @@ def _summarise_snapshot(snapshot: Dict[str, Any]) -> Dict[str, Any]:
     profit_tables = metrics_snapshot.get("profit_tables")
     if isinstance(profit_tables, dict):
         base["profit_tables"] = profit_tables
+
+    cashflow = metrics_snapshot.get("cashflow")
+    if isinstance(cashflow, dict):
+        base["cashflow"] = cashflow
 
     ytd_summary = metrics_snapshot.get("ytd_summary")
     if isinstance(ytd_summary, dict):

@@ -134,6 +134,29 @@
         {% endif %}
       </div>
       <div class="stat-card">
+        <div class="stat-label">入出金（YTD）</div>
+        {% set cf = dashboard.cashflow.ytd if dashboard.cashflow else None %}
+        {% if cf %}
+          {% set cf_class = 'stat-positive' if cf.net >= 0 else 'stat-negative' %}
+          <div class="stat-value {{ cf_class }}">{{ "%+.0f"|format(cf.net) }} 円</div>
+          <div class="stat-sub">入金 {{ "%.0f"|format(cf.in) }} / 出金 {{ "%.0f"|format(cf.out) }}</div>
+        {% else %}
+          <div class="stat-value">-</div>
+          <div class="stat-sub">データなし</div>
+        {% endif %}
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">残高成長（入出金除外）</div>
+        {% if dashboard.ytd_summary.balance_growth_ex_cashflow_pct is not none %}
+          {% set adj_class = 'stat-positive' if dashboard.ytd_summary.balance_growth_ex_cashflow_pct >= 0 else 'stat-negative' %}
+          <div class="stat-value {{ adj_class }}">{{ "%+.2f"|format(dashboard.ytd_summary.balance_growth_ex_cashflow_pct) }}%</div>
+          <div class="stat-sub">差分 {{ "%+.0f"|format(dashboard.ytd_summary.balance_growth_ex_cashflow_jpy) }} 円</div>
+        {% else %}
+          <div class="stat-value">-</div>
+          <div class="stat-sub">算出不可</div>
+        {% endif %}
+      </div>
+      <div class="stat-card">
         <div class="stat-label">勝率</div>
         {% if dashboard.performance.recent_closed %}
           <div class="stat-value">{{ "%.1f"|format(dashboard.performance.win_rate_percent) }}%</div>
