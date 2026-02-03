@@ -1,0 +1,27 @@
+[Unit]
+Description=QuantRabbit Scalp Precision LowVol Precision Worker
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/tossaki/QuantRabbit
+EnvironmentFile=/etc/quantrabbit.env
+Environment=PYTHONUNBUFFERED=1
+Environment=SCALP_PRECISION_ENABLED=1
+Environment=SCALP_PRECISION_MODE=precision_lowvol
+Environment=SCALP_PRECISION_ALLOWLIST=precision_lowvol
+Environment=SCALP_PRECISION_MIN_ENTRY_CONF=60
+Environment=SCALP_PRECISION_CONF_FLOOR=60
+Environment=SCALP_PRECISION_CONF_CEIL=92
+Environment=SCALP_PRECISION_MAX_SIGNALS_PER_CYCLE=1
+Environment=SCALP_PRECISION_COOLDOWN_SEC=60
+Environment=SCALP_PRECISION_MAX_OPEN_TRADES=1
+Environment=SCALP_PRECISION_MAX_OPEN_TRADES_GLOBAL=1
+Environment=SCALP_PRECISION_MAX_SPREAD_PIPS=1.0
+ExecStart=/home/tossaki/QuantRabbit/.venv/bin/python -m workers.scalp_precision.worker
+Restart=always
+RestartSec=5
+User=tossaki
+
+[Install]
+WantedBy=multi-user.target
