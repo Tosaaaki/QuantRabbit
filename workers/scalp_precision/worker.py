@@ -5,6 +5,7 @@ import datetime
 import hashlib
 import logging
 import os
+import sqlite3
 import time
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Tuple
@@ -53,6 +54,8 @@ _MODE_TAG_MAP = {
     'level_reject': 'LevelReject',
     'wick_reversal': 'WickReversal',
     'session_edge': 'SessionEdge',
+    'drought_revert': 'DroughtRevert',
+    'precision_lowvol': 'PrecisionLowVol',
 }
 
 def _mode_to_tag(mode: str) -> Optional[str]:
@@ -84,6 +87,87 @@ def _env_csv(key: str, default: str = "") -> List[str]:
     raw = os.getenv(key, default)
     items = [s.strip() for s in raw.split(",") if s.strip()]
     return items
+
+
+_DROUGHT_CACHE_TS = 0.0
+_DROUGHT_LAST_ENTRY: Optional[datetime.datetime] = None
+_DROUGHT_LAST_OK: Optional[bool] = None
+
+
+def _parse_iso_ts(raw: Optional[str]) -> Optional[datetime.datetime]:
+    if not raw:
+        return None
+    ts = raw.strip()
+    if ts.endswith("Z"):
+        ts = ts[:-1] + "+00:00"
+    try:
+        parsed = datetime.datetime.fromisoformat(ts)
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=datetime.timezone.utc)
+        return parsed
+    except ValueError:
+        if "." in ts:
+            head, tail = ts.split(".", 1)
+            for sep in ("+", "-"):
+                if sep in tail:
+                    frac, tz = tail.split(sep, 1)
+                    frac = frac[:6]
+                    ts = f"{head}.{frac}{sep}{tz}"
+                    break
+            else:
+                ts = head
+            try:
+                parsed = datetime.datetime.fromisoformat(ts)
+                if parsed.tzinfo is None:
+                    parsed = parsed.replace(tzinfo=datetime.timezone.utc)
+                return parsed
+            except ValueError:
+                return None
+        return None
+
+
+def _fetch_last_entry_time() -> Optional[datetime.datetime]:
+    source = (config.DROUGHT_SOURCE or "trades").strip().lower()
+    if source == "orders":
+        db_path = "logs/orders.db"
+        query = "select max(ts) from orders"
+    else:
+        db_path = "logs/trades.db"
+        query = "select max(entry_time) from trades"
+    try:
+        con = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True, timeout=1.0)
+        cur = con.execute(query)
+        row = cur.fetchone()
+    except sqlite3.Error:
+        return None
+    finally:
+        try:
+            con.close()
+        except Exception:
+            pass
+    if not row or not row[0]:
+        return None
+    return _parse_iso_ts(str(row[0]))
+
+
+def _entry_drought_ok(now_utc: datetime.datetime) -> bool:
+    if not config.DROUGHT_ENABLED:
+        return True
+    global _DROUGHT_CACHE_TS, _DROUGHT_LAST_ENTRY, _DROUGHT_LAST_OK
+    now_mono = time.monotonic()
+    if now_mono - _DROUGHT_CACHE_TS >= max(1.0, config.DROUGHT_REFRESH_SEC):
+        _DROUGHT_LAST_ENTRY = _fetch_last_entry_time()
+        _DROUGHT_CACHE_TS = now_mono
+        _DROUGHT_LAST_OK = None
+    if _DROUGHT_LAST_ENTRY is None:
+        return bool(config.DROUGHT_FAIL_OPEN)
+    now_ts = now_utc
+    if now_ts.tzinfo is None:
+        now_ts = now_ts.replace(tzinfo=datetime.timezone.utc)
+    if _DROUGHT_LAST_OK is None:
+        delta_sec = (now_ts - _DROUGHT_LAST_ENTRY).total_seconds()
+        _DROUGHT_LAST_OK = delta_sec >= max(0.0, config.DROUGHT_MINUTES) * 60.0
+    return bool(_DROUGHT_LAST_OK)
 
 
 # --- strategy params (defaults follow requested spec) ---
@@ -369,6 +453,163 @@ def _signal_spread_revert(
         "tag": tag,
         "reason": "spread_range_revert",
         "range_score": round(range_score, 3),
+    }
+
+
+def _signal_drought_revert(
+    fac_m1: Dict[str, object],
+    range_ctx,
+    *,
+    tag: str,
+) -> Optional[Dict[str, object]]:
+    price = _latest_price(fac_m1)
+    if price <= 0:
+        return None
+    levels = bb_levels(fac_m1)
+    if not levels:
+        return None
+    upper, _, lower, _, span_pips = levels
+
+    range_score = float(range_ctx.score or 0.0) if range_ctx else 0.0
+    range_ok = bool(range_ctx and (range_ctx.active or range_score >= config.DROUGHT_RANGE_SCORE))
+    if not range_ok:
+        return None
+
+    ok_spread, _ = spread_ok(max_pips=config.MAX_SPREAD_PIPS, p25_max=config.DROUGHT_SPREAD_P25)
+    if not ok_spread:
+        return None
+
+    adx = _adx(fac_m1)
+    bbw = _bbw(fac_m1)
+    atr = _atr_pips(fac_m1)
+    rsi = _rsi(fac_m1)
+    if adx > config.DROUGHT_ADX_MAX or bbw > config.DROUGHT_BBW_MAX:
+        return None
+    if atr < config.DROUGHT_ATR_MIN or atr > config.DROUGHT_ATR_MAX:
+        return None
+
+    mids, _ = tick_snapshot(6.0, limit=60)
+    rev_ok, rev_dir, rev_strength = tick_reversal(mids, min_ticks=max(4, SPREAD_REV_TICK_MIN - 2))
+    if not rev_ok:
+        return None
+
+    side = None
+    band = max(config.DROUGHT_BB_TOUCH_PIPS, span_pips * 0.2)
+    dist_lower = (price - lower) / PIP
+    dist_upper = (upper - price) / PIP
+    if dist_lower <= band and rsi <= config.DROUGHT_RSI_LONG_MAX:
+        side = "long"
+    elif dist_upper <= band and rsi >= config.DROUGHT_RSI_SHORT_MIN:
+        side = "short"
+    if not side or rev_dir != side:
+        return None
+
+    sl = max(1.0, min(1.7, atr * 0.75))
+    tp = max(0.9, min(1.7, atr * 0.9))
+    conf = 52
+    conf += int(min(10, abs(rsi - 50.0) * 0.5))
+    conf += int(min(8, rev_strength * 4.0))
+    conf -= int(min(6, max(0.0, adx - 20.0) * 0.4))
+
+    return {
+        "action": "OPEN_LONG" if side == "long" else "OPEN_SHORT",
+        "sl_pips": round(sl, 2),
+        "tp_pips": round(tp, 2),
+        "confidence": int(max(40, min(90, conf))),
+        "tag": tag,
+        "reason": "drought_revert",
+        "range_score": round(range_score, 3),
+        "size_mult": 0.9,
+    }
+
+
+def _signal_precision_lowvol(
+    fac_m1: Dict[str, object],
+    range_ctx,
+    *,
+    tag: str,
+) -> Optional[Dict[str, object]]:
+    price = _latest_price(fac_m1)
+    if price <= 0:
+        return None
+    levels = bb_levels(fac_m1)
+    if not levels:
+        return None
+    upper, _, lower, _, span_pips = levels
+
+    range_score = float(range_ctx.score or 0.0) if range_ctx else 0.0
+    range_ok = bool(range_ctx and (range_ctx.active or range_score >= config.PREC_LOWVOL_RANGE_SCORE))
+    if not range_ok:
+        return None
+
+    ok_spread, _ = spread_ok(max_pips=config.MAX_SPREAD_PIPS, p25_max=config.PREC_LOWVOL_SPREAD_P25)
+    if not ok_spread:
+        return None
+
+    adx = _adx(fac_m1)
+    bbw = _bbw(fac_m1)
+    atr = _atr_pips(fac_m1)
+    rsi = _rsi(fac_m1)
+    stoch = _stoch_rsi(fac_m1)
+    vgap = _vwap_gap_pips(fac_m1)
+
+    if adx > config.PREC_LOWVOL_ADX_MAX or bbw > config.PREC_LOWVOL_BBW_MAX:
+        return None
+    if atr < config.PREC_LOWVOL_ATR_MIN or atr > config.PREC_LOWVOL_ATR_MAX:
+        return None
+    if abs(vgap) < config.PREC_LOWVOL_VWAP_GAP_MIN:
+        return None
+
+    mids, _ = tick_snapshot(7.0, limit=80)
+    rev_ok, rev_dir, rev_strength = tick_reversal(mids, min_ticks=8)
+    if not rev_ok or rev_strength < config.PREC_LOWVOL_REV_MIN_STRENGTH:
+        return None
+
+    band = max(config.PREC_LOWVOL_BB_TOUCH_PIPS, span_pips * 0.16)
+    dist_lower = (price - lower) / PIP
+    dist_upper = (upper - price) / PIP
+
+    side = None
+    if (
+        dist_lower <= band
+        and rsi <= config.PREC_LOWVOL_RSI_LONG_MAX
+        and stoch <= config.PREC_LOWVOL_STOCH_LONG_MAX
+        and vgap <= -config.PREC_LOWVOL_VWAP_GAP_MIN
+        and rev_dir == "long"
+    ):
+        side = "long"
+    elif (
+        dist_upper <= band
+        and rsi >= config.PREC_LOWVOL_RSI_SHORT_MIN
+        and stoch >= config.PREC_LOWVOL_STOCH_SHORT_MIN
+        and vgap >= config.PREC_LOWVOL_VWAP_GAP_MIN
+        and rev_dir == "short"
+    ):
+        side = "short"
+    if not side:
+        return None
+
+    proj_allow, size_mult, proj_detail = projection_decision(side, mode="range")
+    if not proj_allow:
+        return None
+
+    sl = max(1.1, min(1.6, atr * 0.8))
+    tp = max(1.0, min(1.7, atr * 0.9))
+    conf = 64
+    conf += int(min(10, abs(rsi - 50.0) * 0.6))
+    conf += int(min(8, rev_strength * 3.5))
+    conf += int(min(6, abs(vgap) * 1.8))
+
+    return {
+        "action": "OPEN_LONG" if side == "long" else "OPEN_SHORT",
+        "sl_pips": round(sl, 2),
+        "tp_pips": round(tp, 2),
+        "confidence": int(max(50, min(92, conf))),
+        "tag": tag,
+        "reason": "precision_lowvol",
+        "range_score": round(range_score, 3),
+        "size_mult": round(max(0.8, min(1.2, size_mult)), 3),
+        "projection": proj_detail,
     }
 
 
@@ -1180,6 +1421,7 @@ async def scalp_precision_worker() -> None:
     LOG.info("%s worker start (interval=%.1fs mode=%s)", config.LOG_PREFIX, config.LOOP_INTERVAL_SEC, config.MODE)
     pos_manager = PositionManager()
     last_entry_ts = 0.0
+    bypass_common_guard = config.MODE in config.GUARD_BYPASS_MODES
 
     try:
         while True:
@@ -1189,7 +1431,13 @@ async def scalp_precision_worker() -> None:
                 continue
             if not can_trade(config.POCKET):
                 continue
-            if config.COOLDOWN_SEC > 0.0 and time.monotonic() - last_entry_ts < config.COOLDOWN_SEC:
+            if (
+                not bypass_common_guard
+                and config.COOLDOWN_SEC > 0.0
+                and time.monotonic() - last_entry_ts < config.COOLDOWN_SEC
+            ):
+                continue
+            if config.MODE == "drought_revert" and not _entry_drought_ok(now):
                 continue
 
             factors = all_factors()
@@ -1201,11 +1449,11 @@ async def scalp_precision_worker() -> None:
             range_ctx = detect_range_mode(fac_m1, fac_h4)
 
             air = evaluate_air(fac_m1, fac_h4, range_ctx=range_ctx, tag=config.MODE)
-            if air.enabled and not air.allow_entry:
+            if air.enabled and not air.allow_entry and not bypass_common_guard:
                 continue
 
             # max open trades guard
-            if config.MAX_OPEN_TRADES > 0 or config.MAX_OPEN_TRADES_GLOBAL > 0:
+            if (config.MAX_OPEN_TRADES > 0 or config.MAX_OPEN_TRADES_GLOBAL > 0) and not bypass_common_guard:
                 try:
                     positions = pos_manager.get_open_positions()
                     scalp_info = positions.get(config.POCKET) or {}
@@ -1228,9 +1476,10 @@ async def scalp_precision_worker() -> None:
                     pass
 
             # spread guard
-            blocked, _, _, _ = spread_monitor.is_blocked()
-            if blocked:
-                continue
+            if not bypass_common_guard:
+                blocked, _, _, _ = spread_monitor.is_blocked()
+                if blocked:
+                    continue
 
             strategies = []
             allowlist = set([s.lower() for s in _env_csv("SCALP_PRECISION_ALLOWLIST", config.ALLOWLIST_RAW)])
@@ -1245,6 +1494,10 @@ async def scalp_precision_worker() -> None:
 
             if enabled("spread_revert"):
                 strategies.append(("SpreadRangeRevert", _signal_spread_revert, {"tag": "SpreadRangeRevert"}))
+            if enabled("drought_revert"):
+                strategies.append(("DroughtRevert", _signal_drought_revert, {"tag": "DroughtRevert"}))
+            if enabled("precision_lowvol"):
+                strategies.append(("PrecisionLowVol", _signal_precision_lowvol, {"tag": "PrecisionLowVol"}))
             if enabled("rangefaderpro"):
                 strategies.append(("RangeFaderPro", _signal_spread_revert, {"tag": "RangeFaderPro"}))
             if enabled("vwap_revert"):

@@ -155,6 +155,15 @@ class OrderIntent(BaseModel):
     gcloud compute ssh fx-trader-vm --project=quantrabbit --zone=asia-northeast1-a --tunnel-through-iap --ssh-key-file ~/.ssh/gcp_oslogin_quantrabbit --command "sqlite3 /home/tossaki/QuantRabbit/logs/orders.db 'select ts,pocket,side,units,client_order_id,status from orders order by ts desc limit 5;'"
     ```
 - 検証パイプライン: `logs/replay/*.jsonl` で Record、Strategy Plugin は Backtest で再現性確認、Shadow では本番 tick + 仮想アカウントで `OrderIntent` と `risk_guard` 拒否理由を比較。
+- 標準リプレイ（実運用寄せの既定）: `scripts/replay_exit_workers_groups.py` を使用し **ハードTPあり / ハードSLなし** で回す。`--no-hard-sl` を付け、TPはデフォ有効（`--no-hard-tp` は付けない）。end_of_replay 強制決済は原則除外（`--exclude-end-of-replay`）。出力は `summary_all.json` を採用。
+  ```bash
+  python scripts/replay_exit_workers_groups.py \
+    --ticks tmp/ticks_USDJPY_YYYYMM_all.jsonl \
+    --workers impulse_break_s5,impulse_momentum_s5,impulse_retest_s5,pullback_s5 \
+    --no-hard-sl \
+    --exclude-end-of-replay \
+    --out-dir tmp/replay_exit_workers_groups_YYYYMM_all
+  ```
 - 観測指標: `decision_latency_ms`, `data_lag_ms`, `order_success_rate`, `reject_rate`, `pnl_day_pips`, `drawdown_pct`。SLO: `decision_latency_ms p95 < 2000`, `order_success_rate ≥ 0.995`, `data_lag_ms p95 < 1500`, `drawdown_pct max < 0.18`。Alert: SLO 違反、`healthbeat` 欠損 5 分超、`order reject` 連続 3 件。
 
 ## 6. 安全装置と状態遷移

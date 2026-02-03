@@ -27,6 +27,22 @@ QuantRabbit は USD/JPY で 24/7 自律運用する無裁量トレーディン�
 - 共通 `execution/exit_manager.py` は互換スタブ（自動EXITなし）。戦略ごとに専用の `exit_worker` を起動し、最低保有＋PnL>0 決済（例外は強制ドローダウン/ヘルスチェック）の運用がデフォルト。
 - 発注はワーカーが `order_manager` 経由で直接送信するのが既定（`SIGNAL_GATE_ENABLED=0` / `ORDER_FORWARD_TO_SIGNAL_GATE=0`）。共通ゲートを使う場合のみ両方のフラグを `1` にする。
 
+### Replay（標準手順）
+- 実運用寄せの既定は `scripts/replay_exit_workers_groups.py` を使用する。
+- **ハードTPは有効 / ハードSLは無効**（`--no-hard-sl` を付ける、`--no-hard-tp` は付けない）。
+- `end_of_replay` 強制決済は除外（`--exclude-end-of-replay`）。
+- 対象ワーカーは **毎回 `--workers` で選ぶ**（運用中の勝ち筋だけに絞る前提）。
+- 出力は `summary_all.json` を採用。
+
+```bash
+python scripts/replay_exit_workers_groups.py \
+  --ticks tmp/ticks_USDJPY_YYYYMM_all.jsonl \
+  --workers impulse_break_s5,impulse_momentum_s5,impulse_retest_s5,pullback_s5 \
+  --no-hard-sl \
+  --exclude-end-of-replay \
+  --out-dir tmp/replay_exit_workers_groups_YYYYMM_all
+```
+
 ### VM ログの確認
 
 IAP + OS Login 環境では `scripts/tail_vm_logs.sh` を使うと、systemd ログや任意コマンドを簡単に追尾できます。

@@ -187,6 +187,13 @@ def _atr_from_prices(values: Iterable[float], period: int, pip_value: float) -> 
     return (sum(trs[-period:]) / period) / pip_value
 
 
+def _bool_env(key: str, default: bool = False) -> bool:
+    raw = os.getenv(key)
+    if raw is None:
+        return default
+    return raw.strip().lower() not in {"", "0", "false", "no", "off"}
+
+
 def session_tag(dt: datetime) -> str:
     hour = dt.hour
     if 22 <= hour or hour < 6:
@@ -1044,6 +1051,7 @@ def replay_vwap_magnet_s5(ticks: List[Tick]) -> Dict[str, object]:
 
 def replay_squeeze_break_s5(ticks: List[Tick]) -> Dict[str, object]:
     cfg = __import__("workers.squeeze_break_s5.config", fromlist=["config"])
+    strict = _bool_env("REPLAY_TUNED", False)
 
     span = cfg.BUCKET_SECONDS
     bucket: List[Dict[str, float]] = []
@@ -1106,6 +1114,10 @@ def replay_squeeze_break_s5(ticks: List[Tick]) -> Dict[str, object]:
             continue
         if len(candles) < cfg.MIN_BUCKETS:
             continue
+        if strict:
+            spread_pips = (tick.ask - tick.bid) / cfg.PIP_VALUE
+            if spread_pips > cfg.MAX_SPREAD_PIPS:
+                continue
 
         closes = [c["close"] for c in candles]
         atr = _atr_from_closes(closes, max(4, cfg.FAST_BUCKETS // 2), cfg.PIP_VALUE)
@@ -1599,74 +1611,184 @@ def replay_impulse_retest_s5(ticks: List[Tick]) -> Dict[str, object]:
 
 def replay_mirror_spike_s5(ticks: List[Tick]) -> Dict[str, object]:
     ms_config = __import__("workers.mirror_spike_s5.config", fromlist=["config"])
+    strict = _bool_env("REPLAY_TUNED", False)
 
     trades: List[Dict[str, object]] = []
     open_trade: Optional[Dict[str, object]] = None
 
-    for tick in ticks:
-        if open_trade:
-            if open_trade["side"] == "long":
-                if tick.bid <= open_trade["sl_price"]:
-                    open_trade["reason"] = "stop"
-                elif tick.bid >= open_trade["tp_price"]:
-                    open_trade["reason"] = "take_profit"
-            else:
-                if tick.ask >= open_trade["sl_price"]:
-                    open_trade["reason"] = "stop"
-                elif tick.ask <= open_trade["tp_price"]:
-                    open_trade["reason"] = "take_profit"
-            if tick.epoch - open_trade["entry_tick"].epoch >= 300.0:
-                open_trade["reason"] = "timeout"
-            if open_trade.get("reason"):
-                entry_mid = open_trade["entry_tick"].mid
-                exit_mid = tick.mid
-                pnl_pips = (exit_mid - entry_mid) / ms_config.PIP_VALUE
-                if open_trade["side"] == "short":
-                    pnl_pips = -pnl_pips
-                trades.append(
-                    {
-                        "direction": open_trade["side"],
-                        "entry_time": open_trade["entry_tick"].dt.isoformat(),
-                        "exit_time": tick.dt.isoformat(),
-                        "entry_price": round(entry_mid, 5),
-                        "exit_price": round(exit_mid, 5),
-                        "tp_price": round(open_trade["tp_price"], 5),
-                        "sl_price": round(open_trade["sl_price"], 5),
-                        "pnl_pips": round(pnl_pips, 3),
-                        "reason": open_trade["reason"],
-                    }
-                )
-                open_trade = None
-            continue
+    if not strict:
+        for tick in ticks:
+            if open_trade:
+                if open_trade["side"] == "long":
+                    if tick.bid <= open_trade["sl_price"]:
+                        open_trade["reason"] = "stop"
+                    elif tick.bid >= open_trade["tp_price"]:
+                        open_trade["reason"] = "take_profit"
+                else:
+                    if tick.ask >= open_trade["sl_price"]:
+                        open_trade["reason"] = "stop"
+                    elif tick.ask <= open_trade["tp_price"]:
+                        open_trade["reason"] = "take_profit"
+                if tick.epoch - open_trade["entry_tick"].epoch >= 300.0:
+                    open_trade["reason"] = "timeout"
+                if open_trade.get("reason"):
+                    entry_mid = open_trade["entry_tick"].mid
+                    exit_mid = tick.mid
+                    pnl_pips = (exit_mid - entry_mid) / ms_config.PIP_VALUE
+                    if open_trade["side"] == "short":
+                        pnl_pips = -pnl_pips
+                    trades.append(
+                        {
+                            "direction": open_trade["side"],
+                            "entry_time": open_trade["entry_tick"].dt.isoformat(),
+                            "exit_time": tick.dt.isoformat(),
+                            "entry_price": round(entry_mid, 5),
+                            "exit_price": round(exit_mid, 5),
+                            "tp_price": round(open_trade["tp_price"], 5),
+                            "sl_price": round(open_trade["sl_price"], 5),
+                            "pnl_pips": round(pnl_pips, 3),
+                            "reason": open_trade["reason"],
+                        }
+                    )
+                    open_trade = None
+                continue
 
-        # look for simple wick reversal pattern
-        body = abs(tick.ask - tick.bid)
-        if body <= 0.0001:
-            continue
-        # We approximate spike detection by comparing to previous 5 seconds
-        # For brevity we simply sample the previous tick (lagging by 1)
-        # In practice, more sophisticated detection should be used.
-        # Here we alternate between long and short impulses.
-        candidate_side = "short" if len(trades) % 2 == 0 else "long"
-        tp_pips = ms_config.TP_PIPS
-        sl_pips = ms_config.SL_PIPS
-        entry_price = tick.ask if candidate_side == "long" else tick.bid
-        tp_price = (
-            entry_price + tp_pips * ms_config.PIP_VALUE
-            if candidate_side == "long"
-            else entry_price - tp_pips * ms_config.PIP_VALUE
-        )
-        sl_price = (
-            entry_price - sl_pips * ms_config.PIP_VALUE
-            if candidate_side == "long"
-            else entry_price + sl_pips * ms_config.PIP_VALUE
-        )
-        open_trade = {
-            "side": candidate_side,
-            "entry_tick": tick,
-            "tp_price": tp_price,
-            "sl_price": sl_price,
-        }
+            body = abs(tick.ask - tick.bid)
+            if body <= 0.0001:
+                continue
+            candidate_side = "short" if len(trades) % 2 == 0 else "long"
+            tp_pips = ms_config.TP_PIPS
+            sl_pips = ms_config.SL_PIPS
+            entry_price = tick.ask if candidate_side == "long" else tick.bid
+            tp_price = (
+                entry_price + tp_pips * ms_config.PIP_VALUE
+                if candidate_side == "long"
+                else entry_price - tp_pips * ms_config.PIP_VALUE
+            )
+            sl_price = (
+                entry_price - sl_pips * ms_config.PIP_VALUE
+                if candidate_side == "long"
+                else entry_price + sl_pips * ms_config.PIP_VALUE
+            )
+            open_trade = {
+                "side": candidate_side,
+                "entry_tick": tick,
+                "tp_price": tp_price,
+                "sl_price": sl_price,
+            }
+    else:
+        window: Deque[Tick] = deque()
+        last_entry_epoch = ticks[0].epoch - ms_config.COOLDOWN_SEC
+        timeout_sec = 300.0
+
+        for tick in ticks:
+            window.append(tick)
+            cutoff = tick.epoch - ms_config.WINDOW_SEC
+            while window and window[0].epoch < cutoff:
+                window.popleft()
+
+            if open_trade:
+                if open_trade["side"] == "long":
+                    if tick.bid <= open_trade["sl_price"]:
+                        open_trade["reason"] = "stop"
+                    elif tick.bid >= open_trade["tp_price"]:
+                        open_trade["reason"] = "take_profit"
+                else:
+                    if tick.ask >= open_trade["sl_price"]:
+                        open_trade["reason"] = "stop"
+                    elif tick.ask <= open_trade["tp_price"]:
+                        open_trade["reason"] = "take_profit"
+                if tick.epoch - open_trade["entry_tick"].epoch >= timeout_sec:
+                    open_trade["reason"] = open_trade.get("reason") or "timeout"
+                if open_trade.get("reason"):
+                    entry_mid = open_trade["entry_tick"].mid
+                    exit_mid = tick.mid
+                    pnl_pips = (exit_mid - entry_mid) / ms_config.PIP_VALUE
+                    if open_trade["side"] == "short":
+                        pnl_pips = -pnl_pips
+                    trades.append(
+                        {
+                            "direction": open_trade["side"],
+                            "entry_time": open_trade["entry_tick"].dt.isoformat(),
+                            "exit_time": tick.dt.isoformat(),
+                            "entry_price": round(entry_mid, 5),
+                            "exit_price": round(exit_mid, 5),
+                            "tp_price": round(open_trade["tp_price"], 5),
+                            "sl_price": round(open_trade["sl_price"], 5),
+                            "pnl_pips": round(pnl_pips, 3),
+                            "reason": open_trade["reason"],
+                        }
+                    )
+                    open_trade = None
+                continue
+
+            if tick.epoch - last_entry_epoch < ms_config.COOLDOWN_SEC:
+                continue
+            if len(window) < ms_config.MIN_BUCKETS:
+                continue
+
+            mids = [t.mid for t in window]
+            spread_pips = (tick.ask - tick.bid) / ms_config.PIP_VALUE
+            atr_pips = _atr_from_prices(mids, min(24, len(mids) - 1), ms_config.PIP_VALUE)
+            if not passes_quality_gate(
+                tick.dt,
+                spread_pips,
+                atr_pips,
+                max_spread_pips=ms_config.MAX_SPREAD_PIPS,
+                min_atr_pips=ms_config.MIN_ATR_PIPS,
+            ):
+                continue
+
+            high = max(mids)
+            low = min(mids)
+            range_pips = (high - low) / ms_config.PIP_VALUE
+            if range_pips < ms_config.SPIKE_THRESHOLD_PIPS:
+                continue
+
+            rsi = _rsi(mids, ms_config.RSI_PERIOD)
+            if rsi is None:
+                continue
+
+            upper_trigger = high - ms_config.MIN_RETRACE_PIPS * ms_config.PIP_VALUE
+            lower_trigger = low + ms_config.MIN_RETRACE_PIPS * ms_config.PIP_VALUE
+            side: Optional[str] = None
+            if tick.mid >= upper_trigger and rsi >= ms_config.SELL_RSI_OVERBOUGHT:
+                side = "short"
+            elif tick.mid <= lower_trigger and rsi <= ms_config.RSI_OVERSOLD:
+                side = "long"
+            if side is None:
+                continue
+
+            tp_pips = ms_config.TP_PIPS
+            if ms_config.TP_ATR_MULT > 0.0:
+                tp_pips = max(
+                    ms_config.TP_MIN_PIPS,
+                    min(ms_config.TP_MAX_PIPS, atr_pips * ms_config.TP_ATR_MULT),
+                )
+            sl_pips = ms_config.SL_PIPS
+            if ms_config.SL_ATR_MULT > 0.0:
+                sl_pips = max(ms_config.SL_PIPS, atr_pips * ms_config.SL_ATR_MULT)
+            if side == "short":
+                sl_pips = min(ms_config.SELL_SL_MAX_PIPS, sl_pips * ms_config.SELL_SL_ATR_BIAS)
+
+            entry_price = tick.ask if side == "long" else tick.bid
+            tp_price = (
+                entry_price + tp_pips * ms_config.PIP_VALUE
+                if side == "long"
+                else entry_price - tp_pips * ms_config.PIP_VALUE
+            )
+            sl_price = (
+                entry_price - sl_pips * ms_config.PIP_VALUE
+                if side == "long"
+                else entry_price + sl_pips * ms_config.PIP_VALUE
+            )
+            open_trade = {
+                "side": side,
+                "entry_tick": tick,
+                "tp_price": tp_price,
+                "sl_price": sl_price,
+            }
+            last_entry_epoch = tick.epoch
 
     if open_trade:
         exit_tick = ticks[-1]
@@ -1703,6 +1825,7 @@ def replay_mirror_spike_s5(ticks: List[Tick]) -> Dict[str, object]:
 
 def replay_mirror_spike_tight(ticks: List[Tick]) -> Dict[str, object]:
     cfg = __import__("workers.mirror_spike_tight.config", fromlist=["config"])
+    strict = _bool_env("REPLAY_TUNED", False)
     trades: List[Dict[str, object]] = []
     open_trade: Optional[Dict[str, object]] = None
     window: Deque[Tick] = deque(maxlen=max(cfg.MIRROR_LOOKBACK_BUCKETS * 5, 20))
@@ -1765,6 +1888,10 @@ def replay_mirror_spike_tight(ticks: List[Tick]) -> Dict[str, object]:
             continue
         if len(window) < cfg.MIRROR_LOOKBACK_BUCKETS:
             continue
+        if strict:
+            spread_pips = (tick.ask - tick.bid) / cfg.PIP_VALUE
+            if spread_pips > cfg.MAX_SPREAD_PIPS:
+                continue
 
         highs = max(x.mid for x in window)
         lows = min(x.mid for x in window)
@@ -1848,12 +1975,14 @@ def replay_mirror_spike(ticks: List[Tick]) -> Dict[str, object]:
     ms_config = ms_mod.config
     detect_signal: Callable[[List[dict], object], Optional[object]] = ms_mod._detect_signal
     extract_features = __import__("workers.fast_scalp.signal", fromlist=["signal"]).extract_features
+    strict = _bool_env("REPLAY_TUNED", False)
 
-    ms_config.SPIKE_THRESHOLD_PIPS = max(1.5, ms_config.SPIKE_THRESHOLD_PIPS * 0.7)
-    ms_config.RETRACE_TRIGGER_PIPS = max(0.2, ms_config.RETRACE_TRIGGER_PIPS * 0.7)
-    ms_config.MIN_RETRACE_PIPS = max(0.15, ms_config.MIN_RETRACE_PIPS * 0.5)
-    ms_config.MIN_TICK_COUNT = min(ms_config.MIN_TICK_COUNT, 40)
-    ms_config.MIN_TICK_RATE = min(ms_config.MIN_TICK_RATE, 0.4)
+    if not strict:
+        ms_config.SPIKE_THRESHOLD_PIPS = max(1.5, ms_config.SPIKE_THRESHOLD_PIPS * 0.7)
+        ms_config.RETRACE_TRIGGER_PIPS = max(0.2, ms_config.RETRACE_TRIGGER_PIPS * 0.7)
+        ms_config.MIN_RETRACE_PIPS = max(0.15, ms_config.MIN_RETRACE_PIPS * 0.5)
+        ms_config.MIN_TICK_COUNT = min(ms_config.MIN_TICK_COUNT, 40)
+        ms_config.MIN_TICK_RATE = min(ms_config.MIN_TICK_RATE, 0.4)
 
     tick_buffer: List[dict] = []
     trades: List[Dict[str, object]] = []
@@ -1867,6 +1996,22 @@ def replay_mirror_spike(ticks: List[Tick]) -> Dict[str, object]:
             tick_buffer.pop(0)
         if len(tick_buffer) < ms_config.MIN_TICK_COUNT:
             continue
+        if strict:
+            spread_pips = (tick.ask - tick.bid) / ms_config.PIP_VALUE
+            mids = [t["mid"] for t in tick_buffer]
+            atr_pips = _atr_from_prices(mids, min(24, len(mids) - 1), ms_config.PIP_VALUE)
+            if not passes_quality_gate(
+                tick.dt,
+                spread_pips,
+                atr_pips,
+                max_spread_pips=ms_config.SPREAD_MAX_PIPS,
+                min_atr_pips=ms_config.MIN_ATR_PIPS,
+            ):
+                continue
+            if ms_config.LOOKBACK_SEC > 0:
+                tick_rate = len(tick_buffer) / ms_config.LOOKBACK_SEC
+                if ms_config.MIN_TICK_RATE > 0.0 and tick_rate < ms_config.MIN_TICK_RATE:
+                    continue
 
         if open_trade:
             if open_trade["side"] == "long":
@@ -1914,7 +2059,10 @@ def replay_mirror_spike(ticks: List[Tick]) -> Dict[str, object]:
         signal = detect_signal(tick_buffer, features)
         if not signal and len(tick_buffer) >= 10:
             delta = tick_buffer[-1]["mid"] - tick_buffer[-10]["mid"]
-            if abs(delta) >= 0.00005:
+            fallback_pips = 0.05
+            if strict:
+                fallback_pips = max(ms_config.MIN_RETRACE_PIPS, ms_config.SPIKE_THRESHOLD_PIPS * 0.3)
+            if abs(delta) >= fallback_pips * ms_config.PIP_VALUE:
                 side = "long" if delta < 0 else "short"
                 signal = type("FallbackSignal", (), {"side": side})()
         if not signal:
@@ -1976,12 +2124,14 @@ def replay_mirror_spike(ticks: List[Tick]) -> Dict[str, object]:
 def replay_pullback_scalp(ticks: List[Tick]) -> Dict[str, object]:
     from workers.pullback_scalp import config as ps_config
 
-    ps_config.M1_Z_MIN = min(ps_config.M1_Z_MIN, 0.1)
-    ps_config.M1_Z_MAX = max(ps_config.M1_Z_MAX, 0.4)
-    ps_config.M5_Z_SHORT_MAX = max(ps_config.M5_Z_SHORT_MAX, 0.35)
-    ps_config.M5_Z_LONG_MIN = min(ps_config.M5_Z_LONG_MIN, -0.35)
-    ps_config.MIN_ATR_PIPS = min(ps_config.MIN_ATR_PIPS, 0.0)
-    ps_config.COOLDOWN_SEC = min(ps_config.COOLDOWN_SEC, 40.0)
+    strict = _bool_env("REPLAY_TUNED", False)
+    if not strict:
+        ps_config.M1_Z_MIN = min(ps_config.M1_Z_MIN, 0.1)
+        ps_config.M1_Z_MAX = max(ps_config.M1_Z_MAX, 0.4)
+        ps_config.M5_Z_SHORT_MAX = max(ps_config.M5_Z_SHORT_MAX, 0.35)
+        ps_config.M5_Z_LONG_MIN = min(ps_config.M5_Z_LONG_MIN, -0.35)
+        ps_config.MIN_ATR_PIPS = min(ps_config.MIN_ATR_PIPS, 0.0)
+        ps_config.COOLDOWN_SEC = min(ps_config.COOLDOWN_SEC, 40.0)
 
     m1_window: Deque[Tuple[float, float]] = deque()
     m5_window: Deque[Tuple[float, float]] = deque()
@@ -2003,6 +2153,10 @@ def replay_pullback_scalp(ticks: List[Tick]) -> Dict[str, object]:
         _append(m5_window, tick, ps_config.M5_WINDOW_SEC)
         if len(m1_window) < 20 or len(m5_window) < 40:
             continue
+        if strict:
+            spread_pips = (tick.ask - tick.bid) / ps_config.PIP_VALUE
+            if spread_pips > ps_config.MAX_SPREAD_PIPS:
+                continue
 
         if open_trade:
             if open_trade["side"] == "long":
@@ -2062,7 +2216,7 @@ def replay_pullback_scalp(ticks: List[Tick]) -> Dict[str, object]:
         elif -ps_config.M1_Z_MAX <= z_m1 <= -ps_config.M1_Z_MIN and z_m5 >= ps_config.M5_Z_LONG_MIN:
             if rsi_m1 is None or ps_config.RSI_LONG_RANGE[0] <= rsi_m1 <= ps_config.RSI_LONG_RANGE[1]:
                 side = "long"
-        if side is None and len(m1_vals) >= 5:
+        if side is None and not strict and len(m1_vals) >= 5:
             delta = m1_vals[-1] - m1_vals[-5]
             if abs(delta) >= 0.00005:
                 side = "long" if delta > 0 else "short"
@@ -2073,7 +2227,10 @@ def replay_pullback_scalp(ticks: List[Tick]) -> Dict[str, object]:
         tp_price = entry_price + ps_config.TP_PIPS * ps_config.PIP_VALUE if side == "long" else entry_price - ps_config.TP_PIPS * ps_config.PIP_VALUE
         sl_price = None
         if ps_config.USE_INITIAL_SL:
-            sl_pips = max(ps_config.MIN_SL_PIPS, atr_m1 * ps_config.SL_ATR_MULT)
+            min_sl = getattr(ps_config, "MIN_SL_PIPS", None)
+            if min_sl is None:
+                min_sl = getattr(ps_config, "SL_MIN_FLOOR_PIPS", 0.5)
+            sl_pips = max(float(min_sl), atr_m1 * ps_config.SL_ATR_MULT)
             sl_price = entry_price - sl_pips * ps_config.PIP_VALUE if side == "long" else entry_price + sl_pips * ps_config.PIP_VALUE
 
         open_trade = {

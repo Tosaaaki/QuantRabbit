@@ -43,8 +43,20 @@ from workers.fast_scalp.timeout_controller import TimeoutController  # noqa: E40
 PIP_VALUE = config.PIP_VALUE
 
 
-def parse_iso8601(ts: str) -> datetime:
-    ts = ts.strip()
+def parse_reason_set(raw: str) -> set[str]:
+    return {t.strip().lower() for t in raw.split(",") if t.strip()}
+
+
+def parse_iso8601(ts: str | float | int) -> datetime:
+    if isinstance(ts, (int, float)):
+        return datetime.fromtimestamp(float(ts), tz=timezone.utc)
+    ts = str(ts).strip()
+    if ts and "T" not in ts:
+        try:
+            epoch = float(ts)
+            return datetime.fromtimestamp(epoch, tz=timezone.utc)
+        except ValueError:
+            pass
     if ts.endswith("Z"):
         ts = ts[:-1] + "+00:00"
     if "." in ts and "+" in ts[ts.index(".") :]:
@@ -80,10 +92,13 @@ class SimTrade:
     units: int
     entry_price: float
     entry_expected: float
+    entry_fill_quote: float
     entry_slip_pips: float
     entry_latency_ms: float
     entry_epoch: float
     entry_time: datetime
+    signal_time: datetime
+    signal_epoch: float
     profile: StrategyProfile
     tp_price: float
     sl_price: float
@@ -101,12 +116,16 @@ class TradeResult:
     units: int
     entry_time: datetime
     exit_time: datetime
+    signal_time: datetime
+    trigger_time: Optional[datetime]
     hold_seconds: float
     entry_price: float
     entry_expected: float
+    entry_fill_quote: float
     entry_slip_pips: float
     exit_price: float
     exit_expected: float
+    exit_fill_quote: float
     exit_slip_pips: float
     tp_price: float
     sl_price: float
@@ -148,6 +167,8 @@ class PendingExit:
     trigger_time: datetime
     trigger_epoch: float
     trigger_price: float
+    trigger_spread_pips: float
+    trigger_atr_pips: Optional[float]
     tick_rate: float
     latency_ms: float
 
@@ -160,7 +181,10 @@ def load_ticks(paths: Sequence[Path], instrument: str) -> List[ReplayTick]:
                 line = line.strip()
                 if not line:
                     continue
-                data = json.loads(line)
+                try:
+                    data = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
                 if data.get("instrument") and data["instrument"] != instrument:
                     continue
                 bid = data.get("bid")
@@ -172,7 +196,7 @@ def load_ticks(paths: Sequence[Path], instrument: str) -> List[ReplayTick]:
                     ask_f = float(ask)
                 except (TypeError, ValueError):
                     continue
-                ts_raw = data.get("ts") or data.get("time")
+                ts_raw = data.get("ts") or data.get("time") or data.get("timestamp")
                 if not ts_raw:
                     continue
                 ts = parse_iso8601(str(ts_raw))
@@ -338,6 +362,15 @@ class FastScalpReplayer:
         slip_spread_coef: float,
         slip_atr_coef: float,
         slip_latency_coef: float,
+        fill_mode: str,
+        price_mode: str,
+        spread_mode: str,
+        no_sl: bool,
+        positive_exit_only: bool,
+        min_hold_sec: float,
+        no_loss_close: bool,
+        exit_min_loss_pips: float,
+        exit_ignore_reasons: set[str],
     ) -> None:
         self.units = units
         self.range_active = range_active
@@ -356,6 +389,16 @@ class FastScalpReplayer:
         self.slip_spread_coef = max(0.0, float(slip_spread_coef))
         self.slip_atr_coef = max(0.0, float(slip_atr_coef))
         self.slip_latency_coef = max(0.0, float(slip_latency_coef))
+        self.fill_mode = fill_mode
+        self.price_mode = price_mode
+        self.spread_mode = spread_mode
+        self.last_tick: Optional[ReplayTick] = None
+        self.no_sl = bool(no_sl)
+        self.positive_exit_only = bool(positive_exit_only)
+        self.min_hold_sec = max(0.0, float(min_hold_sec))
+        self.no_loss_close = bool(no_loss_close)
+        self.exit_min_loss_pips = max(0.0, float(exit_min_loss_pips))
+        self.exit_ignore_reasons = {r.lower() for r in exit_ignore_reasons}
 
     def _update_buffer(self, tick: ReplayTick) -> None:
         self.buffer.append({"epoch": tick.epoch, "mid": tick.mid})
@@ -363,11 +406,11 @@ class FastScalpReplayer:
         while self.buffer and self.buffer[0]["epoch"] < cutoff:
             self.buffer.popleft()
 
-    def _extract_features(self, tick: ReplayTick) -> Optional[SignalFeatures]:
+    def _extract_features(self, tick: ReplayTick, *, spread_pips: float) -> Optional[SignalFeatures]:
         if len(self.buffer) < config.MIN_TICK_COUNT:
             return None
         ticks_list = list(self.buffer)
-        return extract_features(tick.spread_pips, ticks=ticks_list)
+        return extract_features(spread_pips, ticks=ticks_list)
 
     def _calc_slip_pips(
         self,
@@ -385,11 +428,23 @@ class FastScalpReplayer:
         )
         return max(0.0, slip)
 
+    def _effective_bid_ask(self, tick: ReplayTick) -> Tuple[float, float]:
+        if self.price_mode == "mid":
+            return tick.mid, tick.mid
+        return tick.bid, tick.ask
+
+    def _effective_spread_pips(self, tick: ReplayTick) -> float:
+        if self.spread_mode == "zero":
+            return 0.0
+        return tick.spread_pips
+
     def _expected_entry_price(self, tick: ReplayTick, direction: str) -> float:
-        return tick.ask if direction == "long" else tick.bid
+        bid, ask = self._effective_bid_ask(tick)
+        return ask if direction == "long" else bid
 
     def _expected_exit_price(self, tick: ReplayTick, direction: str) -> float:
-        return tick.bid if direction == "long" else tick.ask
+        bid, ask = self._effective_bid_ask(tick)
+        return bid if direction == "long" else ask
 
     def _apply_slip(self, price: float, direction: str, *, is_entry: bool, slip_pips: float) -> float:
         slip = slip_pips * PIP_VALUE
@@ -405,31 +460,53 @@ class FastScalpReplayer:
         expected_exit_price: float,
         tick_rate: float,
         latency_ms: float,
+        atr_pips: Optional[float],
     ) -> None:
         if self.pending_exit is not None:
             return
         ready_epoch = tick.epoch + max(0.0, latency_ms) / 1000.0
+        spread_pips = self._effective_spread_pips(tick)
         self.pending_exit = PendingExit(
             reason=reason,
             ready_epoch=ready_epoch,
             trigger_time=tick.ts,
             trigger_epoch=tick.epoch,
             trigger_price=expected_exit_price,
+            trigger_spread_pips=spread_pips,
+            trigger_atr_pips=atr_pips,
             tick_rate=tick_rate,
             latency_ms=latency_ms,
         )
+
+    def _resolve_fill_tick(self, ready_epoch: float, current_tick: ReplayTick) -> ReplayTick:
+        if self.fill_mode == "next_tick":
+            return current_tick
+        if current_tick.epoch <= ready_epoch:
+            return current_tick
+        prev = self.last_tick
+        if prev is not None and prev.epoch <= ready_epoch:
+            return prev
+        return current_tick
 
     def _execute_entry(self, tick: ReplayTick) -> None:
         if self.pending_entry is None or self.active_trade is not None:
             return
         pending = self.pending_entry
-        expected = self._expected_entry_price(tick, pending.direction)
+        fill_tick = self._resolve_fill_tick(pending.ready_epoch, tick)
+        expected = self._expected_entry_price(fill_tick, pending.direction)
+        spread_pips = self._effective_spread_pips(fill_tick)
         slip_pips = self._calc_slip_pips(
-            spread_pips=tick.spread_pips,
+            spread_pips=spread_pips,
             atr_pips=pending.features.atr_pips,
             latency_ms=pending.latency_ms,
         )
         entry_price = self._apply_slip(expected, pending.direction, is_entry=True, slip_pips=slip_pips)
+
+        if self.fill_mode == "next_tick":
+            fill_epoch = tick.epoch
+        else:
+            fill_epoch = min(pending.ready_epoch, tick.epoch)
+        fill_time = datetime.fromtimestamp(fill_epoch, tz=timezone.utc)
 
         sl_price = pending.sl_price
         tp_price = pending.tp_price
@@ -443,11 +520,14 @@ class FastScalpReplayer:
             direction=pending.direction,
             units=trade_units,
             entry_price=entry_price,
-            entry_expected=expected,
+            entry_expected=pending.signal_price,
+            entry_fill_quote=expected,
             entry_slip_pips=slip_pips,
             entry_latency_ms=pending.latency_ms,
-            entry_epoch=tick.epoch,
-            entry_time=tick.ts,
+            entry_epoch=fill_epoch,
+            entry_time=fill_time,
+            signal_time=pending.signal_time,
+            signal_epoch=pending.signal_epoch,
             profile=pending.profile,
             tp_price=tp_price,
             sl_price=sl_price,
@@ -462,9 +542,9 @@ class FastScalpReplayer:
             trade_id,
             side=pending.direction,
             entry_price=entry_price,
-            entry_monotonic=tick.epoch,
+            entry_monotonic=fill_epoch,
             features=pending.features,
-            spread_pips=tick.spread_pips,
+            spread_pips=spread_pips,
             tick_rate=pending.tick_rate,
             latency_ms=pending.latency_ms,
         )
@@ -477,41 +557,58 @@ class FastScalpReplayer:
         pending = self.pending_exit
         trade = self.active_trade
         expected_exit = pending.trigger_price
-        atr_pips = features.atr_pips if features is not None else None
+        atr_pips = pending.trigger_atr_pips if pending.trigger_atr_pips is not None else None
+        if atr_pips is None and features is not None:
+            atr_pips = features.atr_pips
+        fill_tick = self._resolve_fill_tick(pending.ready_epoch, tick)
+        spread_pips = self._effective_spread_pips(fill_tick)
         slip_pips = self._calc_slip_pips(
-            spread_pips=tick.spread_pips,
+            spread_pips=spread_pips,
             atr_pips=atr_pips,
             latency_ms=pending.latency_ms,
         )
-        raw_exit = self._expected_exit_price(tick, trade.direction)
+        raw_exit = self._expected_exit_price(fill_tick, trade.direction)
         exit_price = self._apply_slip(raw_exit, trade.direction, is_entry=False, slip_pips=slip_pips)
         if trade.direction == "long":
             gain_pips = (exit_price - trade.entry_price) / PIP_VALUE
         else:
             gain_pips = (trade.entry_price - exit_price) / PIP_VALUE
+        if self.fill_mode == "next_tick":
+            exit_epoch = tick.epoch
+        else:
+            exit_epoch = min(pending.ready_epoch, tick.epoch)
+        exit_time = datetime.fromtimestamp(exit_epoch, tz=timezone.utc)
         self._close_trade(
-            tick,
             pending.reason,
             exit_price=exit_price,
             expected_exit_price=expected_exit,
+            exit_fill_quote=raw_exit,
             exit_slip_pips=slip_pips,
             latency_ms=pending.latency_ms,
             gain_pips=gain_pips,
             tick_rate=pending.tick_rate,
+            exit_epoch=exit_epoch,
+            exit_time=exit_time,
+            spread_pips=spread_pips,
+            trigger_time=pending.trigger_time,
         )
         self.pending_exit = None
 
     def _close_trade(
         self,
-        tick: ReplayTick,
         reason: str,
         *,
         exit_price: float,
         expected_exit_price: float,
+        exit_fill_quote: float,
         exit_slip_pips: float,
         latency_ms: float,
         gain_pips: float,
         tick_rate: float,
+        exit_epoch: float,
+        exit_time: datetime,
+        spread_pips: float,
+        trigger_time: Optional[datetime],
     ) -> None:
         if not self.active_trade:
             return
@@ -523,20 +620,24 @@ class FastScalpReplayer:
             reason=reason,
             pips_gain=pnl_pips,
             tick_rate=tick_rate,
-            spread_pips=tick.spread_pips,
+            spread_pips=spread_pips,
         )
         self.results.append(
             TradeResult(
                 direction=trade.direction,
                 units=trade.units,
                 entry_time=trade.entry_time,
-                exit_time=tick.ts,
-                hold_seconds=tick.epoch - trade.entry_epoch,
+                exit_time=exit_time,
+                signal_time=trade.signal_time,
+                trigger_time=trigger_time,
+                hold_seconds=exit_epoch - trade.entry_epoch,
                 entry_price=trade.entry_price,
                 entry_expected=trade.entry_expected,
+                entry_fill_quote=trade.entry_fill_quote,
                 entry_slip_pips=trade.entry_slip_pips,
                 exit_price=exit_price,
                 exit_expected=expected_exit_price,
+                exit_fill_quote=exit_fill_quote,
                 exit_slip_pips=exit_slip_pips,
                 tp_price=trade.tp_price,
                 sl_price=trade.sl_price,
@@ -577,15 +678,17 @@ class FastScalpReplayer:
                     expected_exit_price=price,
                     tick_rate=tick_rate,
                     latency_ms=latency_ms,
+                    atr_pips=features.atr_pips if features is not None else None,
                 )
                 return
-            if price <= trade.sl_price:
+            if not self.no_sl and price <= trade.sl_price:
                 self._schedule_exit(
                     reason="sl_hit",
                     tick=tick,
                     expected_exit_price=price,
                     tick_rate=tick_rate,
                     latency_ms=latency_ms,
+                    atr_pips=features.atr_pips if features is not None else None,
                 )
                 return
         else:
@@ -597,15 +700,17 @@ class FastScalpReplayer:
                     expected_exit_price=price,
                     tick_rate=tick_rate,
                     latency_ms=latency_ms,
+                    atr_pips=features.atr_pips if features is not None else None,
                 )
                 return
-            if price >= trade.sl_price:
+            if not self.no_sl and price >= trade.sl_price:
                 self._schedule_exit(
                     reason="sl_hit",
                     tick=tick,
                     expected_exit_price=price,
                     tick_rate=tick_rate,
                     latency_ms=latency_ms,
+                    atr_pips=features.atr_pips if features is not None else None,
                 )
                 return
 
@@ -648,12 +753,33 @@ class FastScalpReplayer:
             reason = decision.reason or "timeout_controller"
 
         if reason is not None:
+            forced_exit_reasons = {"drawdown", "health_exit"}
+            if (
+                elapsed < self.min_hold_sec
+                and reason not in forced_exit_reasons
+                and gain_pips > -trade.max_drawdown_close
+            ):
+                return
+            reason_key = reason.lower()
+            if reason_key in self.exit_ignore_reasons and reason not in forced_exit_reasons:
+                return
+            if (
+                self.exit_min_loss_pips > 0.0
+                and reason not in forced_exit_reasons
+                and gain_pips > -self.exit_min_loss_pips
+            ):
+                return
+            if self.no_loss_close and gain_pips < 0 and reason not in forced_exit_reasons:
+                return
+            if self.positive_exit_only and gain_pips <= 0 and reason not in forced_exit_reasons:
+                return
             self._schedule_exit(
                 reason=reason,
                 tick=tick,
                 expected_exit_price=price,
                 tick_rate=tick_rate,
                 latency_ms=latency_ms,
+                atr_pips=features.atr_pips if features is not None else None,
             )
 
     def _is_low_quality(self, features: SignalFeatures) -> bool:
@@ -667,98 +793,101 @@ class FastScalpReplayer:
 
     def on_tick(self, tick: ReplayTick) -> None:
         self._update_buffer(tick)
-        features = self._extract_features(tick)
-
-        if self.pending_exit is not None and self.active_trade and tick.epoch >= self.pending_exit.ready_epoch:
-            self._execute_exit(tick, features)
-            return
-
-        if self.active_trade:
-            self._check_exit(tick, features)
-            if self.pending_exit is not None:
+        spread_pips = self._effective_spread_pips(tick)
+        features = self._extract_features(tick, spread_pips=spread_pips)
+        try:
+            if self.pending_exit is not None and self.active_trade and tick.epoch >= self.pending_exit.ready_epoch:
+                self._execute_exit(tick, features)
                 return
+
             if self.active_trade:
+                self._check_exit(tick, features)
+                if self.pending_exit is not None:
+                    return
+                if self.active_trade:
+                    return
+
+            if self.pending_entry is not None:
+                if self.active_trade is None and tick.epoch >= self.pending_entry.ready_epoch:
+                    self._execute_entry(tick)
                 return
 
-        if self.pending_entry is not None:
-            if self.active_trade is None and tick.epoch >= self.pending_entry.ready_epoch:
-                self._execute_entry(tick)
-            return
+            if spread_pips > config.MAX_SPREAD_PIPS and not config.FORCE_ENTRIES:
+                return
 
-        if tick.spread_pips > config.MAX_SPREAD_PIPS and not config.FORCE_ENTRIES:
-            return
+            if not features:
+                return
 
-        if not features:
-            return
+            if self._is_low_quality(features):
+                return
 
-        if self._is_low_quality(features):
-            return
+            action = evaluate_signal(
+                features,
+                m1_rsi=self.m1_rsi,
+                range_active=self.range_active,
+            )
+            if not action:
+                return
 
-        action = evaluate_signal(
-            features,
-            m1_rsi=self.m1_rsi,
-            range_active=self.range_active,
-        )
-        if not action:
-            return
+            pattern_prob: Optional[float] = None
+            if features.pattern_features is not None:
+                direction = "long" if action.endswith("LONG") else "short"
+                pattern_prob = pattern_score(features.pattern_features, direction)
+                if pattern_prob is not None and pattern_prob < config.PATTERN_MIN_PROB:
+                    return
 
-        pattern_prob: Optional[float] = None
-        if features.pattern_features is not None:
+            profile = select_profile(action, features, range_active=self.range_active)
             direction = "long" if action.endswith("LONG") else "short"
-            pattern_prob = pattern_score(features.pattern_features, direction)
-            if pattern_prob is not None and pattern_prob < config.PATTERN_MIN_PROB:
-                return
 
-        profile = select_profile(action, features, range_active=self.range_active)
-        direction = "long" if action.endswith("LONG") else "short"
+            spread_padding = max(spread_pips, config.TP_SPREAD_BUFFER_PIPS)
+            tp_margin = max(config.TP_SAFE_MARGIN_PIPS, spread_pips * 0.5)
+            base_tp = config.TP_BASE_PIPS + spread_padding + tp_margin
+            tp_pips = max(0.2, base_tp * profile.tp_margin_multiplier + profile.tp_adjust)
+            sl_pips = profile.sl_pips if profile.sl_pips is not None else config.SL_PIPS
 
-        spread_padding = max(tick.spread_pips, config.TP_SPREAD_BUFFER_PIPS)
-        tp_margin = max(config.TP_SAFE_MARGIN_PIPS, tick.spread_pips * 0.5)
-        base_tp = config.TP_BASE_PIPS + spread_padding + tp_margin
-        tp_pips = max(0.2, base_tp * profile.tp_margin_multiplier + profile.tp_adjust)
-        sl_pips = profile.sl_pips if profile.sl_pips is not None else config.SL_PIPS
+            entry_price = self._expected_entry_price(tick, direction)
+            if direction == "long":
+                sl_price = entry_price - sl_pips * PIP_VALUE
+                tp_price = entry_price + tp_pips * PIP_VALUE
+            else:
+                sl_price = entry_price + sl_pips * PIP_VALUE
+                tp_price = entry_price - tp_pips * PIP_VALUE
 
-        entry_price = self._expected_entry_price(tick, direction)
-        if direction == "long":
-            sl_price = entry_price - sl_pips * PIP_VALUE
-            tp_price = entry_price + tp_pips * PIP_VALUE
-        else:
-            sl_price = entry_price + sl_pips * PIP_VALUE
-            tp_price = entry_price - tp_pips * PIP_VALUE
+            sl_price, tp_price = clamp_sl_tp(entry_price, sl_price, tp_price, direction == "long")
+            sl_adjust = sl_pips + config.SL_POST_ADJUST_BUFFER_PIPS
+            if direction == "long":
+                sl_price = entry_price - sl_adjust * PIP_VALUE
+            else:
+                sl_price = entry_price + sl_adjust * PIP_VALUE
 
-        sl_price, tp_price = clamp_sl_tp(entry_price, sl_price, tp_price, direction == "long")
-        sl_adjust = sl_pips + config.SL_POST_ADJUST_BUFFER_PIPS
-        if direction == "long":
-            sl_price = entry_price - sl_adjust * PIP_VALUE
-        else:
-            sl_price = entry_price + sl_adjust * PIP_VALUE
-
-        entry_tick_rate = (
-            features.tick_count / max(features.span_seconds, 0.5)
-            if features.span_seconds > 0.0
-            else float(features.tick_count)
-        )
-        entry_tick_rate = entry_tick_rate if entry_tick_rate > 0.0 else 0.1
-        entry_latency_ms = self.latency_ms if self.latency_ms > 0.0 else 1000.0 / max(entry_tick_rate, 0.1)
-        ready_epoch = tick.epoch + max(0.0, entry_latency_ms) / 1000.0
-        self.pending_entry = PendingEntry(
-            direction=direction,
-            ready_epoch=ready_epoch,
-            signal_time=tick.ts,
-            signal_epoch=tick.epoch,
-            signal_price=entry_price,
-            tp_price=tp_price,
-            sl_price=sl_price,
-            tp_pips=tp_pips,
-            sl_pips=sl_pips,
-            profile=profile,
-            pattern_score=pattern_prob,
-            pattern_tag=features.pattern_tag,
-            signal=action,
-            features=features,
-            tick_rate=entry_tick_rate,
-            latency_ms=entry_latency_ms,
-        )
+            entry_tick_rate = (
+                features.tick_count / max(features.span_seconds, 0.5)
+                if features.span_seconds > 0.0
+                else float(features.tick_count)
+            )
+            entry_tick_rate = entry_tick_rate if entry_tick_rate > 0.0 else 0.1
+            entry_latency_ms = self.latency_ms if self.latency_ms > 0.0 else 1000.0 / max(entry_tick_rate, 0.1)
+            ready_epoch = tick.epoch + max(0.0, entry_latency_ms) / 1000.0
+            self.pending_entry = PendingEntry(
+                direction=direction,
+                ready_epoch=ready_epoch,
+                signal_time=tick.ts,
+                signal_epoch=tick.epoch,
+                signal_price=entry_price,
+                tp_price=tp_price,
+                sl_price=sl_price,
+                tp_pips=tp_pips,
+                sl_pips=sl_pips,
+                profile=profile,
+                pattern_score=pattern_prob,
+                pattern_tag=features.pattern_tag,
+                signal=action,
+                features=features,
+                tick_rate=entry_tick_rate,
+                latency_ms=entry_latency_ms,
+            )
+        finally:
+            self.last_tick = tick
 
     def summary(self) -> dict:
         total_pips = sum(r.pnl_pips for r in self.results)
@@ -774,6 +903,34 @@ class FastScalpReplayer:
             if self.results
             else 0.0
         )
+        reason_counts: Counter[str] = Counter()
+        reason_loss_counts: Counter[str] = Counter()
+        reason_win_counts: Counter[str] = Counter()
+        reason_loss_pips: Counter[str] = Counter()
+        reason_win_pips: Counter[str] = Counter()
+        for r in self.results:
+            reason_counts[r.reason] += 1
+            if r.pnl_pips < 0:
+                reason_loss_counts[r.reason] += 1
+                reason_loss_pips[r.reason] += abs(r.pnl_pips)
+            elif r.pnl_pips > 0:
+                reason_win_counts[r.reason] += 1
+                reason_win_pips[r.reason] += r.pnl_pips
+        reason_stats: Dict[str, Dict[str, float | int]] = {}
+        for reason, total in reason_counts.items():
+            losses = reason_loss_counts.get(reason, 0)
+            wins = reason_win_counts.get(reason, 0)
+            loss_pips = round(float(reason_loss_pips.get(reason, 0.0)), 3)
+            win_pips = round(float(reason_win_pips.get(reason, 0.0)), 3)
+            loss_ratio = round(losses / total, 4) if total else 0.0
+            reason_stats[reason] = {
+                "total": total,
+                "wins": wins,
+                "losses": losses,
+                "loss_ratio": loss_ratio,
+                "loss_pips": loss_pips,
+                "win_pips": win_pips,
+            }
         return {
             "trades": len(self.results),
             "total_pnl_pips": round(total_pips, 3),
@@ -782,6 +939,18 @@ class FastScalpReplayer:
             "profit_factor": round(profit_factor, 4) if math.isfinite(profit_factor) else float("inf"),
             "avg_hold_seconds": round(avg_hold, 2),
             "profiles": dict(self.profile_counter),
+            "reason_stats": reason_stats,
+            "fill_mode": self.fill_mode,
+            "price_mode": self.price_mode,
+            "spread_mode": self.spread_mode,
+            "filters": {
+                "min_hold_sec": round(self.min_hold_sec, 3),
+                "no_loss_close": self.no_loss_close,
+                "exit_min_loss_pips": round(self.exit_min_loss_pips, 3),
+                "exit_ignore_reasons": sorted(self.exit_ignore_reasons),
+                "positive_exit_only": self.positive_exit_only,
+                "no_sl": self.no_sl,
+            },
         }
 
 
@@ -828,6 +997,52 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--slip-atr-coef", type=float, default=0.0, help="Slippage coefficient for ATR.")
     parser.add_argument("--slip-latency-coef", type=float, default=0.0, help="Slippage coefficient for latency (per ms).")
     parser.add_argument("--synthetic-spread", type=float, default=0.32, help="Spread (pips) used when synthesizing ticks from candles.")
+    parser.add_argument(
+        "--fill-mode",
+        choices=["lko", "next_tick"],
+        default="lko",
+        help="Fill policy: lko=last known quote at/before latency target, next_tick=first tick after latency.",
+    )
+    parser.add_argument(
+        "--price-mode",
+        choices=["bidask", "mid"],
+        default="bidask",
+        help="Quote source for execution/trigger (bidask or mid for debug).",
+    )
+    parser.add_argument(
+        "--spread-mode",
+        choices=["actual", "zero"],
+        default="actual",
+        help="Spread handling for filters/slippage (actual or zero).",
+    )
+    parser.add_argument("--no-sl", action="store_true", help="Disable SL-triggered exits.")
+    parser.add_argument(
+        "--positive-exit-only",
+        action="store_true",
+        help="Only allow non-TP exits when pnl > 0 (approx exit worker).",
+    )
+    parser.add_argument(
+        "--min-hold-sec",
+        type=float,
+        default=config.MIN_HOLD_SEC,
+        help="Minimum hold time before non-forced exits (default: FAST_SCALP_MIN_HOLD_SEC).",
+    )
+    parser.add_argument(
+        "--allow-loss-close",
+        action="store_true",
+        help="Allow loss exits for non-forced reasons (ignore FAST_SCALP_NO_LOSS_CLOSE).",
+    )
+    parser.add_argument(
+        "--exit-min-loss-pips",
+        type=float,
+        default=config.EXIT_MIN_LOSS_PIPS,
+        help="Skip non-forced exits unless loss exceeds this (pips).",
+    )
+    parser.add_argument(
+        "--exit-ignore-reasons",
+        default="",
+        help="Comma-separated exit reasons to ignore (non-forced).",
+    )
     return parser.parse_args()
 
 
@@ -905,6 +1120,8 @@ def main() -> None:
     if not ticks:
         raise SystemExit("No valid ticks or candles found for replay.")
 
+    exit_ignore_reasons = parse_reason_set(args.exit_ignore_reasons)
+    no_loss_close = config.NO_LOSS_CLOSE and not args.allow_loss_close
     replayer = FastScalpReplayer(
         units=max(config.MIN_UNITS, abs(args.units)),
         range_active=args.range_active,
@@ -915,6 +1132,15 @@ def main() -> None:
         slip_spread_coef=args.slip_spread_coef,
         slip_atr_coef=args.slip_atr_coef,
         slip_latency_coef=args.slip_latency_coef,
+        fill_mode=args.fill_mode,
+        price_mode=args.price_mode,
+        spread_mode=args.spread_mode,
+        no_sl=args.no_sl,
+        positive_exit_only=args.positive_exit_only,
+        min_hold_sec=args.min_hold_sec,
+        no_loss_close=no_loss_close,
+        exit_min_loss_pips=args.exit_min_loss_pips,
+        exit_ignore_reasons=exit_ignore_reasons,
     )
 
     ticks.sort(key=lambda t: t.epoch)
@@ -926,8 +1152,9 @@ def main() -> None:
         closing_tick = ticks[-1]
         trade = replayer.active_trade
         expected_exit = replayer._expected_exit_price(closing_tick, trade.direction)
+        spread_pips = replayer._effective_spread_pips(closing_tick)
         slip_pips = replayer._calc_slip_pips(
-            spread_pips=closing_tick.spread_pips,
+            spread_pips=spread_pips,
             atr_pips=None,
             latency_ms=0.0,
         )
@@ -937,14 +1164,18 @@ def main() -> None:
         else:
             final_gain = (trade.entry_price - exit_price) / PIP_VALUE
         replayer._close_trade(
-            closing_tick,
             "end_of_replay",
             exit_price=exit_price,
             expected_exit_price=expected_exit,
+            exit_fill_quote=expected_exit,
             exit_slip_pips=slip_pips,
             latency_ms=0.0,
             gain_pips=final_gain,
             tick_rate=8.0,
+            exit_epoch=closing_tick.epoch,
+            exit_time=closing_tick.ts,
+            spread_pips=spread_pips,
+            trigger_time=None,
         )
 
     summary = replayer.summary()
@@ -970,12 +1201,16 @@ def main() -> None:
                     "units": tr.units,
                     "entry_time": tr.entry_time.isoformat(),
                     "exit_time": tr.exit_time.isoformat(),
+                    "signal_time": tr.signal_time.isoformat(),
+                    "trigger_time": tr.trigger_time.isoformat() if tr.trigger_time is not None else None,
                     "hold_seconds": tr.hold_seconds,
                     "entry_price": round(tr.entry_price, 5),
                     "entry_expected": round(tr.entry_expected, 5),
+                    "entry_fill_quote": round(tr.entry_fill_quote, 5),
                     "entry_slip_pips": round(tr.entry_slip_pips, 4),
                     "exit_price": round(tr.exit_price, 5),
                     "exit_expected": round(tr.exit_expected, 5),
+                    "exit_fill_quote": round(tr.exit_fill_quote, 5),
                     "exit_slip_pips": round(tr.exit_slip_pips, 4),
                     "tp_price": round(tr.tp_price, 5),
                     "sl_price": round(tr.sl_price, 5),

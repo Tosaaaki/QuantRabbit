@@ -531,6 +531,275 @@ async def _run_exit_loop(
         pass
 
 
+class MirrorSpikeExitWorker:
+    def __init__(self) -> None:
+        self.loop_interval = 0.8
+        self.pocket = "scalp"
+        self.params = _ExitParams(
+            profit_take=1.8,
+            trail_start=2.4,
+            trail_backoff=0.8,
+            stop_loss=1.2,
+            max_hold_sec=18 * 60,
+            lock_buffer=0.45,
+        )
+        self._states: Dict[str, _TradeState] = {}
+
+    def _filter_trades(self, trades: Sequence[dict]) -> list[dict]:
+        return _filter_trades(trades, ALLOWED_TAGS)
+
+    async def _close(
+        self,
+        trade_id: str,
+        units: int,
+        reason: str,
+        client_id: str,
+        allow_negative: bool = False,
+        pnl: Optional[float] = None,
+    ) -> bool:
+        if _BB_EXIT_ENABLED:
+            allow_neg = bool(locals().get("allow_negative"))
+            pnl_val = locals().get("pnl")
+            if not _bb_exit_should_bypass(reason, pnl_val, allow_neg):
+                fac = all_factors().get(_BB_EXIT_TF) or {}
+                price = _bb_exit_price(fac)
+                side = "long" if units > 0 else "short"
+                if not _bb_exit_allowed(BB_STYLE, side, price, fac):
+                    LOG.info("[exit-bb] trade=%s reason=%s price=%.3f", trade_id, reason, price or 0.0)
+                    return False
+        ok = await close_trade(
+            trade_id,
+            units,
+            client_order_id=client_id,
+            allow_negative=allow_negative,
+            exit_reason=reason,
+        )
+        if ok:
+            LOG.info("[EXIT-%s] trade=%s units=%s reason=%s", self.pocket, trade_id, units, reason)
+        else:
+            LOG.error("[EXIT-%s] close failed trade=%s units=%s reason=%s", self.pocket, trade_id, units, reason)
+        return ok
+
+    def _structure_break(self, units: int) -> bool:
+        if not self.params.structure_break:
+            return False
+        try:
+            factors = all_factors().get(self.params.structure_timeframe) or {}
+            adx = float(factors.get("adx"))
+            ma10 = float(factors.get("ma10"))
+            ma20 = float(factors.get("ma20"))
+            gap = abs(ma10 - ma20) / 0.01
+
+            if adx < self.params.structure_adx:
+                dir_long = units > 0
+                if (dir_long and ma10 <= ma20) or ((not dir_long) and ma10 >= ma20) or (
+                    adx < self.params.structure_adx_cold and gap < self.params.structure_gap_pips
+                ):
+                    return True
+        except Exception:
+            return False
+        return False
+
+    async def _review_trade(self, trade: dict, now: datetime) -> None:
+        trade_id = str(trade.get("trade_id"))
+        if not trade_id:
+            return
+        units = int(trade.get("units", 0) or 0)
+        if units == 0:
+            return
+
+        price_entry = float(trade.get("price") or 0.0)
+        if price_entry <= 0.0:
+            return
+
+        side = "long" if units > 0 else "short"
+        current = _latest_mid()
+        if current is None:
+            return
+        pnl = mark_pnl_pips(price_entry, units, mid=current)
+        allow_negative = pnl <= 0
+
+        opened_at = _parse_time(trade.get("open_time"))
+        hold_sec = (now - opened_at).total_seconds() if opened_at else 0.0
+
+        state = self._states.get(trade_id)
+        if state is None:
+            thesis = trade.get("entry_thesis") or {}
+            hard_stop = thesis.get("hard_stop_pips")
+            tp_hint = thesis.get("tp_pips")
+            try:
+                hard_stop_val = float(hard_stop) if hard_stop is not None else None
+            except Exception:
+                hard_stop_val = None
+            try:
+                tp_hint_val = float(tp_hint) if tp_hint is not None else None
+            except Exception:
+                tp_hint_val = None
+            state = _TradeState(peak=pnl, hard_stop=hard_stop_val, tp_hint=tp_hint_val)
+            self._states[trade_id] = state
+
+        profit_take = self.params.profit_take
+        trail_start = self.params.trail_start
+        stop_loss = self.params.stop_loss
+        max_hold = self.params.max_hold_sec
+        lock_buffer = self.params.lock_buffer
+
+        if self.params.use_entry_meta:
+            if state.tp_hint:
+                profit_take = max(profit_take, max(1.0, state.tp_hint * self.params.tp_floor_ratio))
+                trail_start = max(trail_start, max(1.0, profit_take * self.params.trail_from_tp_ratio))
+                lock_buffer = max(lock_buffer, profit_take * self.params.lock_from_tp_ratio)
+            if state.hard_stop:
+                stop_loss = max(stop_loss, max(0.8, state.hard_stop * 0.5))
+                lock_buffer = max(lock_buffer, stop_loss * 0.35)
+                trail_start = max(trail_start, max(1.0, state.hard_stop * 0.6))
+                max_hold = max(max_hold, self.params.max_hold_sec * 1.05)
+
+        stop_loss = max(stop_loss, profit_take * self.params.virtual_sl_ratio)
+        trail_start = max(trail_start, profit_take * self.params.trail_from_tp_ratio)
+        lock_buffer = max(lock_buffer, profit_take * self.params.lock_from_tp_ratio)
+
+        state.update(pnl, lock_buffer)
+
+        client_id = _client_id(trade)
+        if not client_id:
+            LOG.warning("[EXIT-%s] missing client_id trade=%s skip close", self.pocket, trade_id)
+            return
+
+        if pnl < 0:
+            fac_m1 = all_factors().get("M1") or {}
+
+            def _opt(val):
+                try:
+                    return float(val)
+                except (TypeError, ValueError):
+                    return None
+
+            rsi = _opt(fac_m1.get("rsi"))
+            adx = _opt(fac_m1.get("adx"))
+            atr_pips = _opt(fac_m1.get("atr_pips"))
+            bbw = _opt(fac_m1.get("bbw"))
+            vwap_gap = _opt(fac_m1.get("vwap_gap"))
+            ma10 = _opt(fac_m1.get("ma10"))
+            ma20 = _opt(fac_m1.get("ma20"))
+            ma_pair = (ma10, ma20) if ma10 is not None and ma20 is not None else None
+            reentry = decide_reentry(
+                prefix="MIRROR_SPIKE",
+                side=side,
+                pnl_pips=pnl,
+                rsi=rsi,
+                adx=adx,
+                atr_pips=atr_pips,
+                bbw=bbw,
+                vwap_gap=vwap_gap,
+                ma_pair=ma_pair,
+                range_active=False,
+                log_tags={"trade": trade_id},
+            )
+            if reentry.action == "hold":
+                return
+            if reentry.action == "exit_reentry" and not reentry.shadow:
+                await self._close(trade_id, -units, "reentry_reset", client_id, allow_negative=True, pnl=pnl)
+                self._states.pop(trade_id, None)
+                return
+
+        if self._structure_break(units):
+            await self._close(trade_id, -units, "structure_break", client_id, allow_negative=True, pnl=pnl)
+            self._states.pop(trade_id, None)
+            return
+
+        if pnl <= -stop_loss:
+            await self._close(trade_id, -units, "hard_stop", client_id, allow_negative=True, pnl=pnl)
+            self._states.pop(trade_id, None)
+            return
+
+        if pnl <= 0:
+            decision = evaluate_reversion_failure(
+                trade,
+                current_price=current,
+                now=now,
+                side=side,
+                env_tf="M5",
+                struct_tf="M1",
+                trend_hits=state.trend_hits,
+            )
+            state.trend_hits = decision.trend_hits
+            if decision.should_exit and decision.reason:
+                log_metric(
+                    "mirror_spike_reversion_exit",
+                    pnl,
+                    tags={"reason": decision.reason, "side": side},
+                    ts=now,
+                )
+                await self._close(
+                    trade_id,
+                    -units,
+                    decision.reason,
+                    client_id,
+                    allow_negative=True,
+                    pnl=pnl,
+                )
+                self._states.pop(trade_id, None)
+                return
+
+        if pnl > 0:
+            tp_decision = evaluate_tp_zone(
+                trade,
+                current_price=current,
+                side=side,
+                env_tf="M5",
+                struct_tf="M1",
+            )
+            if tp_decision.should_exit:
+                log_metric(
+                    "mirror_spike_tp_zone",
+                    pnl,
+                    tags={"side": side},
+                    ts=now,
+                )
+                await self._close(trade_id, -units, "take_profit_zone", client_id, allow_negative=allow_negative, pnl=pnl)
+                self._states.pop(trade_id, None)
+                return
+
+        if hold_sec >= max_hold and pnl <= profit_take * 0.5:
+            await self._close(trade_id, -units, "time_stop", client_id, allow_negative=allow_negative, pnl=pnl)
+            self._states.pop(trade_id, None)
+            return
+
+        candle_reason = _exit_candle_reversal("long" if units > 0 else "short")
+        if candle_reason and pnl >= 0:
+            candle_client_id = trade.get("client_order_id")
+            if not candle_client_id:
+                client_ext = trade.get("clientExtensions")
+                if isinstance(client_ext, dict):
+                    candle_client_id = client_ext.get("id")
+            if candle_client_id:
+                await self._close(
+                    trade_id,
+                    -units,
+                    candle_reason,
+                    candle_client_id,
+                    allow_negative=allow_negative,
+                    pnl=pnl,
+                )
+                self._states.pop(trade_id, None)
+                return
+        if state.lock_floor is not None and pnl <= state.lock_floor:
+            await self._close(trade_id, -units, "lock_release", client_id, allow_negative=allow_negative, pnl=pnl)
+            self._states.pop(trade_id, None)
+            return
+
+        if state.peak >= trail_start and pnl <= state.peak - self.params.trail_backoff:
+            await self._close(trade_id, -units, "trail_take", client_id, allow_negative=allow_negative, pnl=pnl)
+            self._states.pop(trade_id, None)
+            return
+
+        if pnl >= profit_take:
+            await self._close(trade_id, -units, "take_profit", client_id, allow_negative=allow_negative, pnl=pnl)
+            self._states.pop(trade_id, None)
+            return
+
+
 async def mirror_spike_exit_worker() -> None:
     await _run_exit_loop(
         pocket="scalp",
@@ -667,5 +936,4 @@ def _exit_candle_reversal(side):
 if __name__ == "__main__":  # pragma: no cover
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s", force=True)
     asyncio.run(mirror_spike_exit_worker())
-
 

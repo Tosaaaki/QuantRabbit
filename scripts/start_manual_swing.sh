@@ -23,13 +23,5 @@ python3 "$ROOT/scripts/backfill_candles.py" \
   --output-dir "$ROOT/logs/oanda_candles" \
   --fetch-missing || true
 
-# 3. リプレイ（オプション：直近 30 日の挙動チェック）
-python3 "$ROOT/scripts/replay_manual_swing.py" \
-  --start-date "$START_DATE" \
-  --end-date "$END_DATE" \
-  --initial-nav 500000 \
-  --margin-rate 0.02 \
-  --out "$ROOT/tmp/replay_manual_swing_latest.json" || true
-
-# 4. 実トレードワーカー起動
+# 3. 実トレードワーカー起動
 exec python3 -u -c "import asyncio; from workers.manual_swing.worker import manual_swing_worker as W; asyncio.run(W())"

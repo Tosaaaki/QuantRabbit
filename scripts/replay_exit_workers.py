@@ -18,6 +18,7 @@ import asyncio
 import json
 import logging
 import os
+import dataclasses
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -35,6 +36,9 @@ from analysis.range_guard import detect_range_mode
 from workers.common.air_state import evaluate_air, adjust_signal
 from workers.scalp_precision import config as sp_config
 import workers.scalp_precision.worker as sp_worker
+from utils.market_hours import is_market_open
+import utils.oanda_account as oanda_account
+import execution.order_manager as order_manager
 from execution.risk_guard import clamp_sl_tp, allowed_lot
 from signals.pocket_allocator import alloc, DEFAULT_SCALP_SHARE
 from analysis.focus_decider import decide_focus
@@ -49,6 +53,7 @@ from scripts.replay_fast_scalp_ticks import (
     PIP_VALUE,
 )
 
+import workers.fast_scalp.config as fast_config
 import workers.fast_scalp.exit_worker as fast_exit
 import workers.scalp_precision.exit_worker as sp_exit
 import workers.micro_bbrsi.exit_worker as bbrsi_exit
@@ -209,6 +214,12 @@ def _signal_map():
         "RangeFaderPro": lambda fac_m1, fac_m5, fac_h1, range_ctx, now: sp_worker._signal_spread_revert(  # type: ignore[attr-defined]
             fac_m1, range_ctx, tag="RangeFaderPro"
         ),
+        "DroughtRevert": lambda fac_m1, fac_m5, fac_h1, range_ctx, now: sp_worker._signal_drought_revert(  # type: ignore[attr-defined]
+            fac_m1, range_ctx, tag="DroughtRevert"
+        ),
+        "PrecisionLowVol": lambda fac_m1, fac_m5, fac_h1, range_ctx, now: sp_worker._signal_precision_lowvol(  # type: ignore[attr-defined]
+            fac_m1, range_ctx, tag="PrecisionLowVol"
+        ),
         "VwapRevertS": lambda fac_m1, fac_m5, fac_h1, range_ctx, now: sp_worker._signal_vwap_revert(  # type: ignore[attr-defined]
             fac_m1, range_ctx, tag="VwapRevertS"
         ),
@@ -248,6 +259,8 @@ def _signal_map():
 _TAG_TO_MODE = {
     "SpreadRangeRevert": "spread_revert",
     "RangeFaderPro": "rangefaderpro",
+    "DroughtRevert": "drought_revert",
+    "PrecisionLowVol": "precision_lowvol",
     "VwapRevertS": "vwap_revert",
     "StochBollBounce": "stoch_bounce",
     "DivergenceRevert": "divergence_revert",
@@ -271,11 +284,15 @@ class SimBroker:
         slip_atr_coef: float = 0.0,
         slip_latency_coef: float = 0.0,
         latency_ms: float = 0.0,
+        fill_mode: str = "lko",
     ) -> None:
         self._seq = 0
         self.open_trades: Dict[str, dict] = {}
         self.closed_trades: List[dict] = []
         self.last_tick: Optional[TickRow] = None
+        self.prev_tick: Optional[TickRow] = None
+        self.pending_opens: List[dict] = []
+        self.pending_closes: List[dict] = []
         self.on_close = None
         self.hard_sl = True
         self.hard_tp = True
@@ -284,16 +301,19 @@ class SimBroker:
         self.slip_atr_coef = float(slip_atr_coef)
         self.slip_latency_coef = float(slip_latency_coef)
         self.latency_ms = float(latency_ms)
+        self.fill_mode = (fill_mode or "lko").strip().lower()
 
     def set_last_tick(self, tick: TickRow) -> None:
+        self.prev_tick = self.last_tick
         self.last_tick = tick
+        self._flush_pending(tick)
 
     def _next_id(self) -> str:
         self._seq += 1
         return f"sim-{self._seq}"
 
-    def _calc_slip_pips(self) -> float:
-        tick = self.last_tick
+    def _calc_slip_pips(self, tick: Optional[TickRow] = None) -> float:
+        tick = tick or self.last_tick
         if tick is None:
             return 0.0
         spread_pips = max(0.0, tick.ask - tick.bid) / PIP
@@ -326,26 +346,43 @@ class SimBroker:
             return price + slip if is_entry else price - slip
         return price - slip if is_entry else price + slip
 
-    def open_trade(
+    def _resolve_fill_tick(
+        self,
+        ready_epoch: float,
+        current_tick: TickRow,
+        prev_tick: Optional[TickRow],
+    ) -> TickRow:
+        if self.fill_mode == "next_tick":
+            return current_tick
+        if prev_tick is not None and prev_tick.epoch <= ready_epoch:
+            return prev_tick
+        return current_tick
+
+    def _create_trade(
         self,
         *,
+        trade_id: Optional[str],
         pocket: str,
         strategy_tag: str,
         direction: str,
         entry_price: float,
         entry_time: datetime,
-        tp_pips: Optional[float] = None,
-        sl_pips: Optional[float] = None,
-        timeout_sec: Optional[float] = None,
-        units: int = 10000,
-        source: str = "",
+        tp_pips: Optional[float],
+        sl_pips: Optional[float],
+        timeout_sec: Optional[float],
+        units: int,
+        source: str,
+        signal_time: Optional[datetime] = None,
+        signal_price: Optional[float] = None,
+        latency_ms: Optional[float] = None,
+        slip_tick: Optional[TickRow] = None,
     ) -> dict:
-        trade_id = self._next_id()
+        trade_id = trade_id or self._next_id()
         signed_units = units if direction == "long" else -units
         client_id = f"sim-{trade_id}"
         slip_pips = 0.0
         if source != "fast_scalp":
-            slip_pips = self._calc_slip_pips()
+            slip_pips = self._calc_slip_pips(slip_tick)
             entry_price = self._apply_slip(entry_price, direction, is_entry=True, slip_pips=slip_pips)
         thesis = {
             "strategy_tag": strategy_tag,
@@ -384,16 +421,25 @@ class SimBroker:
             "tp_price": tp_price,
             "entry_slip_pips": slip_pips,
         }
+        if signal_time is not None:
+            trade["signal_time"] = signal_time.isoformat()
+        if signal_price is not None:
+            trade["signal_price"] = signal_price
+        if latency_ms is not None:
+            trade["entry_latency_ms"] = latency_ms
         self.open_trades[trade_id] = trade
         return trade
 
-    def close_trade(self, trade_id: str, reason: str, *, exit_price_override: Optional[float] = None) -> bool:
-        trade = self.open_trades.pop(trade_id, None)
-        if trade is None:
-            return False
-        tick = self.last_tick
-        if tick is None:
-            return False
+    def _close_trade_record(
+        self,
+        trade: dict,
+        tick: TickRow,
+        reason: str,
+        *,
+        exit_price_override: Optional[float] = None,
+        slip_tick: Optional[TickRow] = None,
+        latency_ms: Optional[float] = None,
+    ) -> dict:
         units = int(trade.get("units", 0) or 0)
         entry_price = float(trade.get("price") or 0.0)
         if exit_price_override is not None:
@@ -403,7 +449,7 @@ class SimBroker:
         slip_pips = 0.0
         if trade.get("source") != "fast_scalp":
             direction = "long" if units > 0 else "short"
-            slip_pips = self._calc_slip_pips()
+            slip_pips = self._calc_slip_pips(slip_tick)
             exit_price = self._apply_slip(exit_price, direction, is_entry=False, slip_pips=slip_pips)
         if units > 0:
             pnl_pips = (exit_price - entry_price) / PIP
@@ -411,7 +457,7 @@ class SimBroker:
             pnl_pips = (entry_price - exit_price) / PIP
         pnl_jpy = pnl_pips * (abs(units) * PIP)
         record = {
-            "trade_id": trade_id,
+            "trade_id": trade.get("trade_id"),
             "pocket": trade.get("pocket"),
             "strategy_tag": trade.get("strategy_tag"),
             "entry_time": trade.get("open_time"),
@@ -425,9 +471,156 @@ class SimBroker:
             "units": units,
             "exit_slip_pips": slip_pips,
         }
+        if latency_ms is not None:
+            record["exit_latency_ms"] = latency_ms
         self.closed_trades.append(record)
         if callable(self.on_close):
             self.on_close(trade)
+        return record
+
+    def _flush_pending(self, tick: TickRow) -> None:
+        if not self.pending_opens and not self.pending_closes:
+            return
+        now_epoch = tick.epoch
+        prev_tick = self.prev_tick
+
+        if self.pending_opens:
+            remaining_opens: List[dict] = []
+            for pending in self.pending_opens:
+                if now_epoch < pending["ready_epoch"]:
+                    remaining_opens.append(pending)
+                    continue
+                fill_tick = self._resolve_fill_tick(pending["ready_epoch"], tick, prev_tick)
+                direction = pending["direction"]
+                expected_entry = fill_tick.ask if direction == "long" else fill_tick.bid
+                if self.fill_mode == "next_tick":
+                    fill_epoch = tick.epoch
+                else:
+                    fill_epoch = min(pending["ready_epoch"], tick.epoch)
+                fill_time = datetime.fromtimestamp(fill_epoch, tz=timezone.utc)
+                self._create_trade(
+                    trade_id=pending["trade_id"],
+                    pocket=pending["pocket"],
+                    strategy_tag=pending["strategy_tag"],
+                    direction=direction,
+                    entry_price=expected_entry,
+                    entry_time=fill_time,
+                    tp_pips=pending.get("tp_pips"),
+                    sl_pips=pending.get("sl_pips"),
+                    timeout_sec=pending.get("timeout_sec"),
+                    units=pending.get("units", 0),
+                    source=pending.get("source", ""),
+                    signal_time=pending.get("signal_time"),
+                    signal_price=pending.get("signal_price"),
+                    latency_ms=pending.get("latency_ms"),
+                    slip_tick=fill_tick,
+                )
+            self.pending_opens = remaining_opens
+
+        if self.pending_closes:
+            remaining_closes: List[dict] = []
+            for pending in self.pending_closes:
+                if now_epoch < pending["ready_epoch"]:
+                    remaining_closes.append(pending)
+                    continue
+                trade = self.open_trades.pop(pending["trade_id"], None)
+                if trade is None:
+                    continue
+                fill_tick = self._resolve_fill_tick(pending["ready_epoch"], tick, prev_tick)
+                self._close_trade_record(
+                    trade,
+                    fill_tick,
+                    pending["reason"],
+                    slip_tick=fill_tick,
+                    latency_ms=pending.get("latency_ms"),
+                )
+            self.pending_closes = remaining_closes
+
+    def open_trade(
+        self,
+        *,
+        pocket: str,
+        strategy_tag: str,
+        direction: str,
+        entry_price: float,
+        entry_time: datetime,
+        tp_pips: Optional[float] = None,
+        sl_pips: Optional[float] = None,
+        timeout_sec: Optional[float] = None,
+        units: int = 10000,
+        source: str = "",
+    ) -> dict:
+        if self.latency_ms > 0.0 and source != "fast_scalp":
+            trade_id = self._next_id()
+            ready_epoch = entry_time.timestamp() + (self.latency_ms / 1000.0)
+            pending = {
+                "trade_id": trade_id,
+                "pocket": pocket,
+                "strategy_tag": strategy_tag,
+                "direction": direction,
+                "entry_price": entry_price,
+                "signal_price": entry_price,
+                "entry_time": entry_time,
+                "signal_time": entry_time,
+                "tp_pips": tp_pips,
+                "sl_pips": sl_pips,
+                "timeout_sec": timeout_sec,
+                "units": units,
+                "source": source,
+                "ready_epoch": ready_epoch,
+                "latency_ms": self.latency_ms,
+            }
+            self.pending_opens.append(pending)
+            return {"trade_id": trade_id, "pending": True, "ready_epoch": ready_epoch}
+        return self._create_trade(
+            trade_id=None,
+            pocket=pocket,
+            strategy_tag=strategy_tag,
+            direction=direction,
+            entry_price=entry_price,
+            entry_time=entry_time,
+            tp_pips=tp_pips,
+            sl_pips=sl_pips,
+            timeout_sec=timeout_sec,
+            units=units,
+            source=source,
+            latency_ms=0.0,
+        )
+
+    def close_trade(self, trade_id: str, reason: str, *, exit_price_override: Optional[float] = None) -> bool:
+        trade = self.open_trades.get(trade_id)
+        if trade is None:
+            return False
+        tick = self.last_tick
+        if tick is None:
+            return False
+        force_close = reason == "end_of_replay" or exit_price_override is not None
+        if not force_close and self.latency_ms > 0.0:
+            if trade.get("closing"):
+                return True
+            ready_epoch = tick.epoch + (self.latency_ms / 1000.0)
+            self.pending_closes.append(
+                {
+                    "trade_id": trade_id,
+                    "reason": reason,
+                    "ready_epoch": ready_epoch,
+                    "latency_ms": self.latency_ms,
+                }
+            )
+            trade["closing"] = True
+            trade["close_requested_at"] = tick.ts.isoformat()
+            return True
+        trade = self.open_trades.pop(trade_id, None)
+        if trade is None:
+            return False
+        self._close_trade_record(
+            trade,
+            tick,
+            reason,
+            exit_price_override=exit_price_override,
+            slip_tick=tick,
+            latency_ms=0.0 if force_close else self.latency_ms,
+        )
         return True
 
     def check_sl_tp(self, tick: TickRow) -> None:
@@ -463,6 +656,59 @@ class SimBroker:
         return pockets
 
 
+class SimAccount:
+    def __init__(self, *, balance: float, margin_rate: float) -> None:
+        self.balance = float(balance)
+        self.margin_rate = float(margin_rate)
+        self.unrealized_pl = 0.0
+
+    def _calc_unrealized(self, broker: SimBroker) -> float:
+        tick = broker.last_tick
+        if tick is None:
+            return 0.0
+        total = 0.0
+        for trade in broker.open_trades.values():
+            units = int(trade.get("units", 0) or 0)
+            entry_price = float(trade.get("price") or 0.0)
+            if units == 0 or entry_price <= 0:
+                continue
+            if units > 0:
+                pnl_pips = (tick.bid - entry_price) / PIP
+            else:
+                pnl_pips = (entry_price - tick.ask) / PIP
+            total += pnl_pips * (abs(units) * PIP)
+        return total
+
+    def snapshot(self, broker: SimBroker) -> oanda_account.AccountSnapshot:
+        unrealized = self._calc_unrealized(broker)
+        self.unrealized_pl = unrealized
+        nav = self.balance + unrealized
+        tick = broker.last_tick
+        margin_used = 0.0
+        if tick is not None and self.margin_rate > 0.0:
+            price = tick.mid
+            for trade in broker.open_trades.values():
+                units = abs(int(trade.get("units", 0) or 0))
+                if units <= 0:
+                    continue
+                margin_used += units * price * self.margin_rate
+        margin_available = max(0.0, nav - margin_used)
+        free_ratio = margin_available / nav if nav > 0 else 0.0
+        return oanda_account.AccountSnapshot(
+            nav=nav,
+            balance=self.balance,
+            margin_available=margin_available,
+            margin_used=margin_used,
+            margin_rate=self.margin_rate,
+            unrealized_pl=unrealized,
+            free_margin_ratio=free_ratio,
+            health_buffer=free_ratio,
+        )
+
+    def apply_realized(self, pnl_jpy: float) -> None:
+        self.balance += float(pnl_jpy)
+
+
 class SimPositionManager:
     def __init__(self, broker: SimBroker) -> None:
         self._broker = broker
@@ -472,6 +718,78 @@ class SimPositionManager:
 
     def close(self) -> None:
         return None
+
+
+def _patch_live_deps(broker: SimBroker, account: SimAccount) -> None:
+    def _snapshot_stub(*args, **kwargs):
+        return account.snapshot(broker)
+
+    def _pos_summary_stub(instrument: str = "USD_JPY", timeout: float = 7.0) -> tuple[float, float]:
+        long_units = 0.0
+        short_units = 0.0
+        for trade in broker.open_trades.values():
+            units = float(trade.get("units") or 0.0)
+            if units > 0:
+                long_units += units
+            elif units < 0:
+                short_units += abs(units)
+        return long_units, short_units
+
+    async def _market_order_stub(
+        instrument: str,
+        units: int,
+        sl_price: Optional[float],
+        tp_price: Optional[float],
+        pocket: str,
+        *,
+        client_order_id: Optional[str] = None,
+        strategy_tag: Optional[str] = None,
+        reduce_only: bool = False,
+        entry_thesis: Optional[dict] = None,
+        meta: Optional[dict] = None,
+        confidence: Optional[int] = None,
+        stage_index: Optional[int] = None,
+        arbiter_final: bool = False,
+    ) -> Optional[str]:
+        tick = broker.last_tick
+        if tick is None or units == 0:
+            return None
+        direction = "long" if units > 0 else "short"
+        entry_price = tick.ask if units > 0 else tick.bid
+        sl_pips = abs(entry_price - sl_price) / PIP if sl_price else None
+        tp_pips = abs(entry_price - tp_price) / PIP if tp_price else None
+        trade = broker.open_trade(
+            pocket=pocket,
+            strategy_tag=strategy_tag or "scalp_precision",
+            direction=direction,
+            entry_price=entry_price,
+            entry_time=tick.ts,
+            tp_pips=tp_pips,
+            sl_pips=sl_pips,
+            timeout_sec=None,
+            units=abs(units),
+            source="scalp_precision",
+        )
+        return str(trade.get("trade_id"))
+
+    oanda_account.get_account_snapshot = _snapshot_stub
+    oanda_account.get_position_summary = _pos_summary_stub
+    sp_worker.get_account_snapshot = _snapshot_stub
+    sp_worker.get_position_summary = _pos_summary_stub
+    order_manager.market_order = _market_order_stub
+    sp_worker.market_order = _market_order_stub
+    try:
+        import workers.common.dyn_size as dyn_size
+
+        dyn_size.get_account_snapshot = _snapshot_stub
+    except Exception:
+        pass
+    try:
+        import execution.risk_guard as risk_guard
+
+        risk_guard.get_position_summary = _pos_summary_stub
+    except Exception:
+        pass
 
 
 def _patch_exit_module(module, broker: SimBroker) -> None:
@@ -530,6 +848,10 @@ class FastScalpEntryEngine:
             spread_mode="actual",
             no_sl=False,
             positive_exit_only=False,
+            min_hold_sec=fast_config.MIN_HOLD_SEC,
+            no_loss_close=fast_config.NO_LOSS_CLOSE,
+            exit_min_loss_pips=fast_config.EXIT_MIN_LOSS_PIPS,
+            exit_ignore_reasons=fast_config.EXIT_IGNORE_REASONS,
         )
         self._replayer._check_exit = lambda *args, **kwargs: None  # type: ignore[assignment]
 
@@ -1159,19 +1481,35 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Exclude end_of_replay forced closes from summary.",
     )
+    parser.add_argument(
+        "--fast-only",
+        action="store_true",
+        help="Replay fast_scalp only (skip other entry/exit workers).",
+    )
     parser.add_argument("--disable-macro", action="store_true", help="Disable macro entries/exit.")
     parser.add_argument("--no-main-strategies", action="store_true", help="Disable main strategy entries.")
     parser.add_argument("--slip-base-pips", type=float, default=0.0)
     parser.add_argument("--slip-spread-coef", type=float, default=0.0)
     parser.add_argument("--slip-atr-coef", type=float, default=0.0)
     parser.add_argument("--slip-latency-coef", type=float, default=0.0)
-    parser.add_argument("--latency-ms", type=float, default=0.0)
+    parser.add_argument("--latency-ms", type=float, default=150.0)
+    parser.add_argument(
+        "--fill-mode",
+        choices=("lko", "next_tick"),
+        default="lko",
+        help="Fill policy: lko=last known quote at/before latency target, next_tick=first tick after latency.",
+    )
     return parser.parse_args()
 
 
 def main() -> None:
     args = parse_args()
-    logging.disable(logging.INFO)
+    if args.fast_only:
+        args.no_main_strategies = True
+        args.disable_macro = True
+        logging.disable(logging.CRITICAL)
+    else:
+        logging.disable(logging.INFO)
     start = parse_iso8601(args.start) if args.start else None
     end = parse_iso8601(args.end) if args.end else None
 
@@ -1184,6 +1522,7 @@ def main() -> None:
         slip_atr_coef=args.slip_atr_coef,
         slip_latency_coef=args.slip_latency_coef,
         latency_ms=args.latency_ms,
+        fill_mode=args.fill_mode,
     )
     hard_sl = True
     hard_tp = True
@@ -1198,7 +1537,9 @@ def main() -> None:
     broker.hard_tp = hard_tp
     fast_entry = FastScalpEntryEngine(broker)
     broker.on_close = fast_entry.on_closed
-    sp_entry = ScalpPrecisionEntryEngine(broker)
+    sp_entry: Optional[ScalpPrecisionEntryEngine] = None
+    if not args.fast_only:
+        sp_entry = ScalpPrecisionEntryEngine(broker)
     strat_entry = StrategyEntryEngine(
         broker,
         equity=args.equity,
@@ -1208,18 +1549,23 @@ def main() -> None:
     )
 
     _patch_exit_module(fast_exit, broker)
-    _patch_exit_module(sp_exit, broker)
-    _patch_exit_module(bbrsi_exit, broker)
-    _patch_exit_module(trendma_exit, broker)
-    _patch_exit_module(m1_exit, broker)
+    if not args.fast_only:
+        _patch_exit_module(sp_exit, broker)
+        _patch_exit_module(bbrsi_exit, broker)
+        _patch_exit_module(trendma_exit, broker)
+        _patch_exit_module(m1_exit, broker)
 
     fast_runner = ExitRunner("fast_scalp", fast_exit, fast_exit.FastScalpExitWorker(), broker)
-    sp_runner = ExitRunner("scalp_precision", sp_exit, sp_exit.RangeFaderExitWorker(), broker)
-    bbrsi_runner = ExitRunner("micro_bbrsi", bbrsi_exit, bbrsi_exit.MicroBBRsiExitWorker(), broker)
+    sp_runner = None
+    bbrsi_runner = None
     trend_runner = None
-    if not args.disable_macro:
-        trend_runner = ExitRunner("macro_trendma", trendma_exit, trendma_exit.TrendMAExitWorker(), broker)
-    m1_runner = M1ScalperExitSim(broker)
+    m1_runner = None
+    if not args.fast_only:
+        sp_runner = ExitRunner("scalp_precision", sp_exit, sp_exit.RangeFaderExitWorker(), broker)
+        bbrsi_runner = ExitRunner("micro_bbrsi", bbrsi_exit, bbrsi_exit.MicroBBRsiExitWorker(), broker)
+        if not args.disable_macro:
+            trend_runner = ExitRunner("macro_trendma", trendma_exit, trendma_exit.TrendMAExitWorker(), broker)
+        m1_runner = M1ScalperExitSim(broker)
 
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
@@ -1268,17 +1614,21 @@ def main() -> None:
 
         broker.check_sl_tp(tick)
         fast_entry.on_tick(tick)
-        sp_entry.on_tick(tick)
+        if sp_entry is not None:
+            sp_entry.on_tick(tick)
         broker.check_sl_tp(tick)
 
         now_dt = tick.ts
         if not args.no_exit_worker:
             loop.run_until_complete(fast_runner.step(now_dt))
-            loop.run_until_complete(sp_runner.step(now_dt))
-            loop.run_until_complete(bbrsi_runner.step(now_dt))
+            if sp_runner is not None:
+                loop.run_until_complete(sp_runner.step(now_dt))
+            if bbrsi_runner is not None:
+                loop.run_until_complete(bbrsi_runner.step(now_dt))
             if trend_runner is not None:
                 loop.run_until_complete(trend_runner.step(now_dt))
-            loop.run_until_complete(m1_runner.step(now_dt))
+            if m1_runner is not None:
+                loop.run_until_complete(m1_runner.step(now_dt))
 
     # close remaining at end
     for trade_id in list(broker.open_trades.keys()):

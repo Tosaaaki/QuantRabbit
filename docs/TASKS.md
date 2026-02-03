@@ -690,7 +690,7 @@
     - リプレイ/紙上テスト手順を README or コメントで案内
   Completed: 2025-11-17
   PR: <pending>
-  Summary: factors now include H1 caches and workers/trend_h1/worker.py consumes them, with main.py exposing enable flags and scripts/replay_trendma.py documenting replay/testing, fulfilling the Trend H1 worker rollout.
+  Summary: factors now include H1 caches and workers/trend_h1/worker.py consumes them, with main.py exposing enable flags and replay/testing notes documenting the Trend H1 worker rollout.
 
 - [x] ID: T-20251104-001
   Title: Impulse Momentum S5 派生ワーカーの実装
