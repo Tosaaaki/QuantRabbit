@@ -731,7 +731,7 @@
       </div>
     </section>
 
-    <section class="tab-panel" id="tab-ops" role="tabpanel" aria-labelledby="tab-ops-button" data-tab-panel="ops">
+    <section class="tab-panel" id="tab-ops" role="tabpanel" aria-labelledby="tab-ops-button" data-tab-panel="ops" data-filter-scope="ops">
       <div class="card">
         <h2>システムヘルス</h2>
     <div class="tagline">データ遅延・判断遅延・ヘルスビート・シグナルの最新状況をまとめています。</div>
@@ -805,12 +805,18 @@
     {% endif %}
 
     <div class="section-title">最近のシグナル / 注文</div>
+    <div class="filter-row">
+      <span class="filter-title">Quick Filter</span>
+      <input class="input-compact input-full" data-filter-input placeholder="pocket / strategy / worker / error / id" autocomplete="off">
+      <button type="button" class="btn-ghost" data-filter-clear>クリア</button>
+      <span class="filter-count" data-filter-count></span>
+    </div>
     <div class="split-equal">
       <div>
         <div class="section-subtitle">最近のシグナル</div>
         {% if dashboard.system.signals_recent %}
           <div class="table-wrap">
-            <table>
+            <table data-filter-table="signals">
               <thead>
                 <tr>
                   <th>時刻</th>
@@ -847,7 +853,7 @@
         <div class="section-subtitle">最近の注文</div>
         {% if dashboard.system.orders_last %}
           <div class="table-wrap">
-            <table>
+            <table data-filter-table="orders">
               <thead>
                 <tr>
                   <th>時刻</th>
@@ -898,12 +904,12 @@
           <div>
             <div class="section-subtitle">注文エラー（直近）</div>
             {% if dashboard.system.orders_errors %}
-              <div class="table-wrap">
-                <table>
-                  <thead>
-                    <tr>
-                      <th>時刻</th>
-                      <th>Pocket</th>
+          <div class="table-wrap">
+            <table data-filter-table="order-errors">
+              <thead>
+                <tr>
+                  <th>時刻</th>
+                  <th>Pocket</th>
                       <th>戦略</th>
                       <th>Worker</th>
                       <th>方向</th>
@@ -938,7 +944,7 @@
             <div class="section-subtitle">ログエラー（直近）</div>
             {% if dashboard.system.log_errors %}
               <div class="table-wrap">
-                <table>
+                <table data-filter-table="log-errors">
                   <thead>
                     <tr>
                       <th>時刻</th>
@@ -996,7 +1002,7 @@
         {% if dashboard.health.service_info %}
           <div class="section-title">サービス詳細</div>
           <div class="table-wrap">
-            <table>
+            <table data-filter-table="service-info">
               <thead>
                 <tr>
                   <th>Service</th>
@@ -1023,6 +1029,95 @@
           <p class="tagline">サービス詳細は未取得です。</p>
         {% endif %}
       </div>
+
+      <script>
+        (() => {
+          const scope = document.querySelector('[data-filter-scope="ops"]');
+          if (!scope) return;
+          const input = scope.querySelector('[data-filter-input]');
+          const clearBtn = scope.querySelector('[data-filter-clear]');
+          const countEl = scope.querySelector('[data-filter-count]');
+          const tables = Array.from(scope.querySelectorAll('[data-filter-table]'));
+          if (!input || !tables.length) return;
+          const storageKey = "qr_ops_filter";
+
+          const getRows = () =>
+            tables.flatMap((table) => Array.from(table.querySelectorAll("tbody tr")));
+
+          const prepareRows = () => {
+            getRows().forEach((row) => {
+              if (!row.dataset.filterText) {
+                row.dataset.filterText = row.textContent.toLowerCase().replace(/\s+/g, " ").trim();
+              }
+            });
+          };
+
+          const applyFilter = (value) => {
+            const term = (value || "").toLowerCase().trim();
+            prepareRows();
+            let total = 0;
+            let visible = 0;
+            getRows().forEach((row) => {
+              total += 1;
+              if (!term) {
+                row.style.display = "";
+                visible += 1;
+                return;
+              }
+              const hay = row.dataset.filterText || "";
+              const match = hay.includes(term);
+              row.style.display = match ? "" : "none";
+              if (match) visible += 1;
+            });
+            if (countEl) {
+              countEl.textContent = `表示 ${visible}/${total}`;
+            }
+          };
+
+          const restore = () => {
+            let saved = "";
+            try {
+              saved = sessionStorage.getItem(storageKey) || "";
+            } catch (err) {
+              saved = "";
+            }
+            if (saved) {
+              input.value = saved;
+              applyFilter(saved);
+            } else {
+              applyFilter("");
+            }
+          };
+
+          input.addEventListener("input", (event) => {
+            const value = event.target.value || "";
+            try {
+              if (value) {
+                sessionStorage.setItem(storageKey, value);
+              } else {
+                sessionStorage.removeItem(storageKey);
+              }
+            } catch (err) {
+              // ignore storage errors
+            }
+            applyFilter(value);
+          });
+
+          if (clearBtn) {
+            clearBtn.addEventListener("click", () => {
+              input.value = "";
+              try {
+                sessionStorage.removeItem(storageKey);
+              } catch (err) {
+                // ignore storage errors
+              }
+              applyFilter("");
+            });
+          }
+
+          restore();
+        })();
+      </script>
 
       <div class="card">
         <h2>緊急操作</h2>
