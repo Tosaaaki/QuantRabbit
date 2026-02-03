@@ -22,28 +22,28 @@ def _bool_env(key: str, default: bool) -> bool:
 # Hard stop: disable fast scalp worker regardless of environment.
 FAST_SCALP_ENABLED: bool = _bool_env("FAST_SCALP_ENABLED", True)
 LOOP_INTERVAL_SEC: float = max(0.1, float(os.getenv("FAST_SCALP_LOOP_INTERVAL_SEC", "0.2")))
-TP_BASE_PIPS: float = max(0.2, float(os.getenv("FAST_SCALP_TP_BASE_PIPS", "0.6")))
+TP_BASE_PIPS: float = max(0.2, float(os.getenv("FAST_SCALP_TP_BASE_PIPS", "1.0")))
 TP_SPREAD_BUFFER_PIPS: float = max(0.05, float(os.getenv("FAST_SCALP_SPREAD_BUFFER_PIPS", "0.2")))
 TP_SAFE_MARGIN_PIPS: float = max(
     0.1, float(os.getenv("FAST_SCALP_TP_SAFE_MARGIN_PIPS", "0.4"))
 )
 TP_NET_MIN_PIPS: float = max(
-    0.2, float(os.getenv("FAST_SCALP_TP_NET_MIN_PIPS", "0.6"))
+    0.2, float(os.getenv("FAST_SCALP_TP_NET_MIN_PIPS", "0.9"))
 )
 SL_PIPS: float = max(10.0, float(os.getenv("FAST_SCALP_SL_PIPS", "60.0")))
 SL_POST_ADJUST_BUFFER_PIPS: float = max(
     0.0, float(os.getenv("FAST_SCALP_SL_POST_ADJUST_BUFFER_PIPS", "5.0"))
 )
-MAX_SPREAD_PIPS: float = max(0.1, float(os.getenv("FAST_SCALP_MAX_SPREAD_PIPS", "1.3")))
-ENTRY_THRESHOLD_PIPS: float = max(0.002, float(os.getenv("FAST_SCALP_ENTRY_MOM_PIPS", "0.0020")))
+MAX_SPREAD_PIPS: float = max(0.1, float(os.getenv("FAST_SCALP_MAX_SPREAD_PIPS", "1.1")))
+ENTRY_THRESHOLD_PIPS: float = max(0.002, float(os.getenv("FAST_SCALP_ENTRY_MOM_PIPS", "0.0025")))
 ENTRY_SHORT_THRESHOLD_PIPS: float = max(
-    0.002, float(os.getenv("FAST_SCALP_ENTRY_SHORT_MOM_PIPS", "0.0020"))
+    0.002, float(os.getenv("FAST_SCALP_ENTRY_SHORT_MOM_PIPS", "0.0025"))
 )
 ENTRY_RANGE_FLOOR_PIPS: float = max(0.005, float(os.getenv("FAST_SCALP_RANGE_FLOOR_PIPS", "0.012")))
-ENTRY_COOLDOWN_SEC: float = max(2.0, float(os.getenv("FAST_SCALP_ENTRY_COOLDOWN_SEC", "2.0")))
-MAX_ORDERS_PER_MINUTE: int = max(1, int(float(os.getenv("FAST_SCALP_MAX_ORDERS_PER_MIN", "16"))))
+ENTRY_COOLDOWN_SEC: float = max(2.0, float(os.getenv("FAST_SCALP_ENTRY_COOLDOWN_SEC", "2.5")))
+MAX_ORDERS_PER_MINUTE: int = max(1, int(float(os.getenv("FAST_SCALP_MAX_ORDERS_PER_MIN", "10"))))
 MIN_ORDER_SPACING_SEC: float = max(
-    0.5, float(os.getenv("FAST_SCALP_MIN_ORDER_SPACING_SEC", "0.8"))
+    0.5, float(os.getenv("FAST_SCALP_MIN_ORDER_SPACING_SEC", "1.2"))
 )
 MAX_LOT: float = max(0.001, float(os.getenv("FAST_SCALP_MAX_LOT", "0.5")))
 SYNC_INTERVAL_SEC: float = max(5.0, float(os.getenv("FAST_SCALP_SYNC_INTERVAL_SEC", "45.0")))
@@ -81,10 +81,11 @@ SNAPSHOT_BURST_INTERVAL_SEC: float = max(
 # True の場合、scalp_fast は含み損の間は worker/exit_manager による決済を行わず、
 # 利益確定条件のみでクローズする（グローバルDDや手動クローズは別扱い）。
 NO_LOSS_CLOSE: bool = _bool_env("FAST_SCALP_NO_LOSS_CLOSE", True)
+EXIT_MIN_LOSS_PIPS: float = max(0.0, float(os.getenv("FAST_SCALP_EXIT_MIN_LOSS_PIPS", "0.0")))
 
 # --- entry gating / quality thresholds ---
-MIN_ENTRY_ATR_PIPS: float = max(0.0, float(os.getenv("FAST_SCALP_MIN_ENTRY_ATR_PIPS", "0.08")))
-MIN_ENTRY_TICK_COUNT: int = max(2, int(float(os.getenv("FAST_SCALP_MIN_ENTRY_TICK_COUNT", "2"))))
+MIN_ENTRY_ATR_PIPS: float = max(0.0, float(os.getenv("FAST_SCALP_MIN_ENTRY_ATR_PIPS", "0.12")))
+MIN_ENTRY_TICK_COUNT: int = max(2, int(float(os.getenv("FAST_SCALP_MIN_ENTRY_TICK_COUNT", "3"))))
 RSI_ENTRY_OVERBOUGHT: float = float(os.getenv("FAST_SCALP_RSI_ENTRY_OVERBOUGHT", "70"))
 RSI_ENTRY_OVERSOLD: float = float(os.getenv("FAST_SCALP_RSI_ENTRY_OVERSOLD", "30"))
 LOW_VOL_COOLDOWN_SEC: float = max(0.0, float(os.getenv("FAST_SCALP_LOW_VOL_COOLDOWN_SEC", "0.0")))
@@ -95,10 +96,10 @@ IMPULSE_LOOKBACK_SEC: float = max(
     0.2, float(os.getenv("FAST_SCALP_IMPULSE_WINDOW_SEC", "1.8"))
 )
 MIN_IMPULSE_PIPS: float = max(
-    0.0, float(os.getenv("FAST_SCALP_MIN_IMPULSE_PIPS", "0.7"))
+    0.0, float(os.getenv("FAST_SCALP_MIN_IMPULSE_PIPS", "0.3"))
 )
 IMPULSE_MIN_TICKS: int = max(
-    2, int(float(os.getenv("FAST_SCALP_IMPULSE_MIN_TICKS", "6")))
+    2, int(float(os.getenv("FAST_SCALP_IMPULSE_MIN_TICKS", "4")))
 )
 CONSOLIDATION_WINDOW_SEC: float = max(
     0.2, float(os.getenv("FAST_SCALP_CONSOLIDATION_WINDOW_SEC", "3.2"))
@@ -109,7 +110,7 @@ CONSOLIDATION_MAX_RANGE_PIPS: float = max(
 CONSOLIDATION_MIN_TICKS: int = max(
     2, int(float(os.getenv("FAST_SCALP_CONSOLIDATION_MIN_TICKS", "8")))
 )
-REQUIRE_CONSOLIDATION: bool = _bool_env("FAST_SCALP_REQUIRE_CONSOLIDATION", True)
+REQUIRE_CONSOLIDATION: bool = _bool_env("FAST_SCALP_REQUIRE_CONSOLIDATION", False)
 ENTRY_MIN_VELOCITY_PIPS_PER_SEC: float = max(
     0.0, float(os.getenv("FAST_SCALP_ENTRY_MIN_VELOCITY_PIPS_PER_SEC", "0.0"))
 )
@@ -198,6 +199,7 @@ FAST_SCALP_RANGE_ONLY: bool = _bool_env("FAST_SCALP_RANGE_ONLY", False)
 def _parse_tags(raw: str) -> set[str]:
     return {t.strip().lower() for t in raw.split(",") if t.strip()}
 
+EXIT_IGNORE_REASONS: set[str] = _parse_tags(os.getenv("FAST_SCALP_EXIT_IGNORE_REASONS", ""))
 FAST_SCALP_PATTERN_ALLOWLIST: set[str] = _parse_tags(os.getenv("FAST_SCALP_PATTERN_ALLOWLIST", ""))
 FAST_SCALP_PATTERN_BLOCKLIST: set[str] = _parse_tags(os.getenv("FAST_SCALP_PATTERN_BLOCKLIST", ""))
 
@@ -208,7 +210,7 @@ ENTRY_MOM_SPREAD_COEF: float = max(0.0, float(os.getenv("FAST_SCALP_ENTRY_MOM_SP
 ENTRY_RANGE_SPREAD_COEF: float = max(0.0, float(os.getenv("FAST_SCALP_ENTRY_RANGE_SPREAD_COEF", "0.15")))
 
 # テスト/検証用（広いスプレッド時は無効）
-FORCE_ENTRIES: bool = _bool_env("FAST_SCALP_FORCE_ENTRIES", True)
+FORCE_ENTRIES: bool = _bool_env("FAST_SCALP_FORCE_ENTRIES", False)
 
 # --- advanced timeout control ---
 TIMEOUT_EVENT_BUDGET: int = max(1, int(float(os.getenv("FAST_SCALP_TIMEOUT_EVENT_BUDGET", "12"))))

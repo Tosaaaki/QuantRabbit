@@ -750,6 +750,24 @@ async def fast_scalp_worker(shared_state: Optional[FastScalpState] = None) -> No
                         and pips_gain > -max_drawdown_close
                     ):
                         close_reason = None
+                    if close_reason is not None and close_reason not in forced_exit_reasons:
+                        reason_key = close_reason.lower()
+                        if reason_key in config.EXIT_IGNORE_REASONS:
+                            log_metric(
+                                "fast_scalp_skip",
+                                float(pips_gain),
+                                tags={"reason": "exit_ignore", "exit": reason_key},
+                                ts=now,
+                            )
+                            close_reason = None
+                        elif config.EXIT_MIN_LOSS_PIPS > 0 and pips_gain > -config.EXIT_MIN_LOSS_PIPS:
+                            log_metric(
+                                "fast_scalp_skip",
+                                float(pips_gain),
+                                tags={"reason": "exit_min_loss", "exit": reason_key},
+                                ts=now,
+                            )
+                            close_reason = None
 
                     if close_reason is not None:
                         # "損切り禁止" が有効な場合、含み損では決済せず見送り
