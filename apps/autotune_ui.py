@@ -307,7 +307,18 @@ def _dashboard_defaults(error: Optional[str] = None) -> Dict[str, Any]:
             "orders_total_1h": None,
             "orders_status_1h": [],
             "orders_last": [],
+            "orders_errors": [],
+            "log_errors": [],
             "signals_recent": [],
+        },
+        "health": {
+            "hostname": None,
+            "deploy_id": None,
+            "git_rev": None,
+            "uptime_sec": None,
+            "uptime_label": None,
+            "service_active": {},
+            "service_info": [],
         },
         "profit_tables": {
             "timezone": "JST",
@@ -426,6 +437,37 @@ def _age_minutes(dt: Optional[datetime], now: datetime) -> Optional[int]:
         return None
     delta = now - dt
     return max(0, int(delta.total_seconds() // 60))
+
+
+def _format_uptime(uptime_sec: Optional[float]) -> Optional[str]:
+    if uptime_sec is None:
+        return None
+    try:
+        total = int(uptime_sec)
+    except Exception:
+        return None
+    days, rem = divmod(total, 86400)
+    hours, rem = divmod(rem, 3600)
+    minutes, _ = divmod(rem, 60)
+    if days > 0:
+        return f"{days}d {hours}h {minutes}m"
+    if hours > 0:
+        return f"{hours}h {minutes}m"
+    return f"{minutes}m"
+
+
+def _pocket_label(pocket: Optional[str]) -> str:
+    if not pocket:
+        return "-"
+    key = str(pocket).strip().lower()
+    labels = {
+        "micro": "micro/短期",
+        "macro": "macro/中期",
+        "scalp": "scalp/超短期",
+        "scalp_fast": "scalp_fast/超短期+",
+        "manual": "manual/手動",
+    }
+    return labels.get(key, str(pocket))
 
 
 def _level_for_value(value: Optional[float], warn: float, bad: float) -> str:
@@ -1588,14 +1630,25 @@ def _summarise_snapshot(snapshot: Dict[str, Any]) -> Dict[str, Any]:
         ts_label = _format_dt(_parse_dt(row.get("ts"))) or str(row.get("ts") or "-")
         order_id = row.get("client_order_id")
         status = str(row.get("status") or "-")
+        strategy = row.get("strategy") or row.get("strategy_tag") or "-"
+        worker = row.get("worker")
+        if not worker:
+            worker = _infer_worker_name(
+                {"entry_thesis": row.get("entry_thesis"), "strategy": strategy}
+            )
         orders_last.append(
             {
                 "ts_label": ts_label,
                 "pocket": row.get("pocket") or "-",
+                "pocket_label": _pocket_label(row.get("pocket")),
+                "strategy": strategy,
+                "worker": worker or "-",
                 "side": row.get("side") or "-",
                 "units": row.get("units"),
                 "status": status,
                 "status_level": _status_level(status),
+                "error_code": row.get("error_code"),
+                "error_message": row.get("error_message"),
                 "id_short": _shorten(order_id, 22),
                 "id_full": str(order_id or ""),
             }
@@ -1606,11 +1659,14 @@ def _summarise_snapshot(snapshot: Dict[str, Any]) -> Dict[str, Any]:
     for row in metrics_snapshot.get("signals_recent") or []:
         ts_label = _format_dt(_parse_ts_ms(row.get("ts_ms"))) or str(row.get("ts_ms") or "-")
         signal_id = row.get("client_order_id")
+        worker = _infer_worker_name(row)
         signals_recent.append(
             {
                 "ts_label": ts_label,
                 "pocket": row.get("pocket") or "-",
+                "pocket_label": _pocket_label(row.get("pocket")),
                 "strategy": row.get("strategy") or "-",
+                "worker": worker or "-",
                 "action": row.get("action") or "-",
                 "confidence": row.get("confidence"),
                 "units": row.get("proposed_units"),
@@ -1619,6 +1675,77 @@ def _summarise_snapshot(snapshot: Dict[str, Any]) -> Dict[str, Any]:
             }
         )
     system["signals_recent"] = signals_recent
+
+    orders_errors = []
+    for row in metrics_snapshot.get("orders_errors_recent") or []:
+        ts_label = _format_dt(_parse_dt(row.get("ts"))) or str(row.get("ts") or "-")
+        order_id = row.get("client_order_id")
+        status = str(row.get("status") or "-")
+        strategy = row.get("strategy") or row.get("strategy_tag") or "-"
+        worker = row.get("worker")
+        if not worker:
+            worker = _infer_worker_name(
+                {"entry_thesis": row.get("entry_thesis"), "strategy": strategy}
+            )
+        orders_errors.append(
+            {
+                "ts_label": ts_label,
+                "pocket": row.get("pocket") or "-",
+                "pocket_label": _pocket_label(row.get("pocket")),
+                "strategy": strategy,
+                "worker": worker or "-",
+                "side": row.get("side") or "-",
+                "units": row.get("units"),
+                "status": status,
+                "status_level": _status_level(status),
+                "error_code": row.get("error_code") or "-",
+                "error_message": row.get("error_message") or "-",
+                "id_short": _shorten(order_id, 22),
+                "id_full": str(order_id or ""),
+            }
+        )
+    system["orders_errors"] = orders_errors
+
+    log_errors = []
+    for row in metrics_snapshot.get("log_errors_recent") or []:
+        log_errors.append(
+            {
+                "ts": row.get("ts"),
+                "level": row.get("level"),
+                "message": row.get("message"),
+                "source": row.get("source"),
+            }
+        )
+    system["log_errors"] = log_errors
+
+    health_snapshot = metrics_snapshot.get("health_snapshot")
+    if isinstance(health_snapshot, dict):
+        health = base["health"]
+        health["hostname"] = health_snapshot.get("hostname")
+        health["deploy_id"] = health_snapshot.get("deploy_id")
+        health["git_rev"] = health_snapshot.get("git_rev")
+        health["uptime_sec"] = health_snapshot.get("uptime_sec")
+        health["uptime_label"] = _format_uptime(_safe_float(health_snapshot.get("uptime_sec")))
+        health["service_active"] = health_snapshot.get("service_active") or {}
+        service_info_rows = []
+        for unit, info in (health_snapshot.get("service_info") or {}).items():
+            if not isinstance(info, dict):
+                continue
+            service_info_rows.append(
+                {
+                    "unit": unit,
+                    "active_state": info.get("ActiveState"),
+                    "sub_state": info.get("SubState"),
+                    "result": info.get("Result"),
+                    "n_restarts": info.get("NRestarts"),
+                    "active_enter_ts": info.get("ActiveEnterTimestamp"),
+                    "exec_start_ts": info.get("ExecMainStartTimestamp"),
+                    "exec_exit_ts": info.get("ExecMainExitTimestamp"),
+                    "exec_status": info.get("ExecMainStatus"),
+                }
+            )
+        service_info_rows.sort(key=lambda row: row["unit"])
+        health["service_info"] = service_info_rows
 
     winners = sorted(closed_trades, key=lambda t: t["pl_pips"], reverse=True)[:3]
     losers = sorted(closed_trades, key=lambda t: t["pl_pips"])[:3]

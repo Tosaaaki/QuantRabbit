@@ -164,6 +164,45 @@ def _load_last_metric_ts(metric: str) -> Optional[str]:
         return None
 
 
+def _extract_order_meta(payload: dict) -> dict:
+    meta: dict = {}
+    entry_thesis = payload.get("entry_thesis") or (payload.get("meta") or {}).get("entry_thesis")
+    if isinstance(entry_thesis, dict):
+        limited: dict = {}
+        for key in (
+            "strategy_tag",
+            "strategy",
+            "worker_id",
+            "worker",
+            "focus_tag",
+            "macro_regime",
+            "micro_regime",
+        ):
+            if key in entry_thesis and entry_thesis.get(key) is not None:
+                limited[key] = entry_thesis.get(key)
+        if limited:
+            meta["entry_thesis"] = limited
+        strategy = entry_thesis.get("strategy_tag") or entry_thesis.get("strategy")
+        if strategy:
+            meta["strategy"] = strategy
+        worker = entry_thesis.get("worker_id") or entry_thesis.get("worker")
+        if worker:
+            meta["worker"] = worker
+        focus_tag = entry_thesis.get("focus_tag") or entry_thesis.get("focus")
+        if focus_tag:
+            meta["focus_tag"] = focus_tag
+    if "strategy" not in meta:
+        strategy = (
+            payload.get("strategy_tag")
+            or payload.get("strategy")
+            or (payload.get("meta") or {}).get("strategy_tag")
+            or (payload.get("meta") or {}).get("strategy")
+        )
+        if strategy:
+            meta["strategy"] = strategy
+    return meta
+
+
 def _load_last_orders(limit: int = 5) -> list[dict]:
     if not ORDERS_DB.exists():
         return []
@@ -171,13 +210,63 @@ def _load_last_orders(limit: int = 5) -> list[dict]:
         con = sqlite3.connect(ORDERS_DB, timeout=DB_READ_TIMEOUT_SEC)
         con.row_factory = sqlite3.Row
         cur = con.execute(
-            "SELECT ts, pocket, side, units, status, client_order_id "
+            "SELECT ts, pocket, side, units, status, client_order_id, "
+            "error_code, error_message, request_json "
             "FROM orders ORDER BY ts DESC LIMIT ?",
             (int(limit),),
         )
         rows = [dict(r) for r in cur.fetchall()]
         con.close()
-        return rows
+        results: list[dict] = []
+        for row in rows:
+            payload = {}
+            try:
+                payload = json.loads(row.get("request_json") or "{}")
+            except Exception:
+                payload = {}
+            if not isinstance(payload, dict):
+                payload = {}
+            meta = _extract_order_meta(payload)
+            row.update(meta)
+            row.pop("request_json", None)
+            results.append(row)
+        return results
+    except Exception:
+        return []
+
+
+def _load_recent_order_errors(limit: int = 8, hours: int = 24) -> list[dict]:
+    if not ORDERS_DB.exists():
+        return []
+    try:
+        con = sqlite3.connect(ORDERS_DB, timeout=DB_READ_TIMEOUT_SEC)
+        con.row_factory = sqlite3.Row
+        cur = con.execute(
+            "SELECT ts, pocket, side, units, status, client_order_id, "
+            "error_code, error_message, request_json "
+            "FROM orders "
+            "WHERE ts >= datetime('now', ?) "
+            "AND (error_code IS NOT NULL AND error_code != '' "
+            "OR status LIKE 'error%' OR status LIKE 'reject%') "
+            "ORDER BY ts DESC LIMIT ?",
+            (f"-{int(hours)} hour", int(limit)),
+        )
+        rows = [dict(r) for r in cur.fetchall()]
+        con.close()
+        results: list[dict] = []
+        for row in rows:
+            payload = {}
+            try:
+                payload = json.loads(row.get("request_json") or "{}")
+            except Exception:
+                payload = {}
+            if not isinstance(payload, dict):
+                payload = {}
+            meta = _extract_order_meta(payload)
+            row.update(meta)
+            row.pop("request_json", None)
+            results.append(row)
+        return results
     except Exception:
         return []
 
@@ -493,6 +582,9 @@ def main() -> int:
             value = _load_latest_metric(key)
             if value is not None:
                 metrics[key] = value
+        health_snapshot = _load_health_snapshot()
+        if health_snapshot:
+            metrics["health_snapshot"] = health_snapshot
         healthbeat_ts = _load_last_metric_ts("healthbeat")
         metrics["healthbeat_ts"] = healthbeat_ts
         if not (args.lite and LITE_SNAPSHOT_FAST):
@@ -500,6 +592,10 @@ def main() -> int:
             metrics["orders_last"] = last_orders
             status_counts = _load_order_status_counts()
             metrics["orders_status_1h"] = status_counts
+            metrics["orders_errors_recent"] = _load_recent_order_errors()
+            metrics["log_errors_recent"] = _load_recent_log_errors(
+                limit=ERROR_LOG_MAX_LINES
+            )
             last_signal_ts = _load_last_signal_ts_ms()
             if last_signal_ts is not None:
                 metrics["signals_last_ts_ms"] = last_signal_ts

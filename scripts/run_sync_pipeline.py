@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import os
 import shutil
 import signal
 import sys
@@ -23,10 +24,22 @@ from analytics.gcs_publisher import GCSRealtimePublisher
 from analytics.lot_pattern_analyzer import LotPatternAnalyzer
 from execution.position_manager import PositionManager
 
+LOGS_DIR = Path("logs")
 LOG_FILE = Path("logs/pipeline.log")
 METRICS_DB = Path("logs/metrics.db")
 ORDERS_DB = Path("logs/orders.db")
 SIGNALS_DB = Path("logs/signals.db")
+HEALTH_SNAPSHOT = LOGS_DIR / "health_snapshot.json"
+ERROR_LOG_PATHS = [
+    p.strip()
+    for p in os.getenv(
+        "UI_ERROR_LOG_PATHS",
+        f"{LOG_FILE},{LOGS_DIR / 'autotune_ui.log'}",
+    ).split(",")
+    if p.strip()
+]
+ERROR_LOG_MAX_LINES = int(os.getenv("UI_ERROR_LOG_MAX_LINES", "10"))
+ERROR_LOG_MAX_BYTES = int(os.getenv("UI_ERROR_LOG_MAX_BYTES", "180000"))
 
 
 def _load_latest_metric(metric: str) -> Optional[float]:
@@ -47,6 +60,107 @@ def _load_latest_metric(metric: str) -> Optional[float]:
         return None
 
 
+def _tail_text(path: Path, max_bytes: int) -> str:
+    try:
+        size = path.stat().st_size
+    except Exception:
+        return ""
+    if size <= 0:
+        return ""
+    try:
+        with path.open("rb") as fh:
+            if size > max_bytes:
+                fh.seek(-max_bytes, os.SEEK_END)
+            data = fh.read()
+    except Exception:
+        return ""
+    try:
+        return data.decode("utf-8", errors="ignore")
+    except Exception:
+        return ""
+
+
+def _parse_log_line(line: str) -> dict:
+    parts = line.split(" - ", 3)
+    if len(parts) >= 3:
+        ts = parts[0].strip()
+        level = parts[1].strip()
+        msg = parts[3].strip() if len(parts) >= 4 else ""
+        return {"ts": ts, "level": level, "message": msg or line.strip()}
+    return {"ts": None, "level": None, "message": line.strip()}
+
+
+def _load_recent_log_errors(limit: int = 10) -> list[dict]:
+    results: list[dict] = []
+    for raw_path in ERROR_LOG_PATHS:
+        path = Path(raw_path)
+        if not path.exists():
+            continue
+        text = _tail_text(path, ERROR_LOG_MAX_BYTES)
+        if not text:
+            continue
+        lines = [line for line in text.splitlines() if line.strip()]
+        for line in reversed(lines):
+            if len(results) >= limit:
+                return results
+            upper = line.upper()
+            if "ERROR" not in upper and "CRITICAL" not in upper and "TRACEBACK" not in upper:
+                continue
+            parsed = _parse_log_line(line)
+            parsed["source"] = path.name
+            results.append(parsed)
+    return results
+
+
+def _load_health_snapshot() -> Optional[dict]:
+    if not HEALTH_SNAPSHOT.exists():
+        return None
+    try:
+        data = json.loads(HEALTH_SNAPSHOT.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def _extract_order_meta(payload: dict) -> dict:
+    meta: dict = {}
+    entry_thesis = payload.get("entry_thesis") or (payload.get("meta") or {}).get("entry_thesis")
+    if isinstance(entry_thesis, dict):
+        limited: dict = {}
+        for key in (
+            "strategy_tag",
+            "strategy",
+            "worker_id",
+            "worker",
+            "focus_tag",
+            "macro_regime",
+            "micro_regime",
+        ):
+            if key in entry_thesis and entry_thesis.get(key) is not None:
+                limited[key] = entry_thesis.get(key)
+        if limited:
+            meta["entry_thesis"] = limited
+        strategy = entry_thesis.get("strategy_tag") or entry_thesis.get("strategy")
+        if strategy:
+            meta["strategy"] = strategy
+        worker = entry_thesis.get("worker_id") or entry_thesis.get("worker")
+        if worker:
+            meta["worker"] = worker
+        focus_tag = entry_thesis.get("focus_tag") or entry_thesis.get("focus")
+        if focus_tag:
+            meta["focus_tag"] = focus_tag
+    if "strategy" not in meta:
+        strategy = (
+            payload.get("strategy_tag")
+            or payload.get("strategy")
+            or (payload.get("meta") or {}).get("strategy_tag")
+            or (payload.get("meta") or {}).get("strategy")
+        )
+        if strategy:
+            meta["strategy"] = strategy
+    return meta
+
+
 def _load_last_orders(limit: int = 5) -> list[dict]:
     if not ORDERS_DB.exists():
         return []
@@ -54,13 +168,63 @@ def _load_last_orders(limit: int = 5) -> list[dict]:
         con = sqlite3.connect(ORDERS_DB)
         con.row_factory = sqlite3.Row
         cur = con.execute(
-            "SELECT ts, pocket, side, units, status, client_order_id "
+            "SELECT ts, pocket, side, units, status, client_order_id, "
+            "error_code, error_message, request_json "
             "FROM orders ORDER BY ts DESC LIMIT ?",
             (limit,),
         )
         rows = [dict(r) for r in cur.fetchall()]
         con.close()
-        return rows
+        results: list[dict] = []
+        for row in rows:
+            payload = {}
+            try:
+                payload = json.loads(row.get("request_json") or "{}")
+            except Exception:
+                payload = {}
+            if not isinstance(payload, dict):
+                payload = {}
+            meta = _extract_order_meta(payload)
+            row.update(meta)
+            row.pop("request_json", None)
+            results.append(row)
+        return results
+    except Exception:
+        return []
+
+
+def _load_recent_order_errors(limit: int = 8, hours: int = 24) -> list[dict]:
+    if not ORDERS_DB.exists():
+        return []
+    try:
+        con = sqlite3.connect(ORDERS_DB)
+        con.row_factory = sqlite3.Row
+        cur = con.execute(
+            "SELECT ts, pocket, side, units, status, client_order_id, "
+            "error_code, error_message, request_json "
+            "FROM orders "
+            "WHERE ts >= datetime('now', ?) "
+            "AND (error_code IS NOT NULL AND error_code != '' "
+            "OR status LIKE 'error%' OR status LIKE 'reject%') "
+            "ORDER BY ts DESC LIMIT ?",
+            (f"-{int(hours)} hour", int(limit)),
+        )
+        rows = [dict(r) for r in cur.fetchall()]
+        con.close()
+        results: list[dict] = []
+        for row in rows:
+            payload = {}
+            try:
+                payload = json.loads(row.get("request_json") or "{}")
+            except Exception:
+                payload = {}
+            if not isinstance(payload, dict):
+                payload = {}
+            meta = _extract_order_meta(payload)
+            row.update(meta)
+            row.pop("request_json", None)
+            results.append(row)
+        return results
     except Exception:
         return []
 
@@ -203,10 +367,17 @@ def _run_cycle(
                 value = _load_latest_metric(key)
                 if value is not None:
                     metrics[key] = value
+            health_snapshot = _load_health_snapshot()
+            if health_snapshot:
+                metrics["health_snapshot"] = health_snapshot
             last_orders = _load_last_orders()
             metrics["orders_last"] = last_orders
             status_counts = _load_order_status_counts()
             metrics["orders_status_1h"] = status_counts
+            metrics["orders_errors_recent"] = _load_recent_order_errors()
+            metrics["log_errors_recent"] = _load_recent_log_errors(
+                limit=ERROR_LOG_MAX_LINES
+            )
             last_signal_ts = _load_last_signal_ts_ms()
             if last_signal_ts is not None:
                 metrics["signals_last_ts_ms"] = last_signal_ts

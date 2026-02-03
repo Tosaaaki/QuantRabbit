@@ -816,6 +816,7 @@
                   <th>時刻</th>
                   <th>Pocket</th>
                   <th>戦略</th>
+                  <th>Worker</th>
                   <th>アクション</th>
                   <th>信頼度</th>
                   <th>Units</th>
@@ -826,8 +827,9 @@
               {% for row in dashboard.system.signals_recent %}
                 <tr>
                   <td class="mono nowrap">{{ row.ts_label }}</td>
-                  <td>{{ row.pocket }}</td>
+                  <td>{{ row.pocket_label }}</td>
                   <td>{{ row.strategy }}</td>
+                  <td>{{ row.worker }}</td>
                   <td>{{ row.action }}</td>
                   <td>{{ row.confidence if row.confidence is not none else '-' }}</td>
                   <td>{{ row.units if row.units is not none else '-' }}</td>
@@ -850,9 +852,12 @@
                 <tr>
                   <th>時刻</th>
                   <th>Pocket</th>
+                  <th>戦略</th>
+                  <th>Worker</th>
                   <th>方向</th>
                   <th>Units</th>
                   <th>状態</th>
+                  <th>エラー</th>
                   <th>ID</th>
                 </tr>
               </thead>
@@ -860,10 +865,19 @@
               {% for row in dashboard.system.orders_last %}
                 <tr>
                   <td class="mono nowrap">{{ row.ts_label }}</td>
-                  <td>{{ row.pocket }}</td>
+                  <td>{{ row.pocket_label }}</td>
+                  <td>{{ row.strategy }}</td>
+                  <td>{{ row.worker }}</td>
                   <td>{{ row.side }}</td>
                   <td>{{ row.units if row.units is not none else '-' }}</td>
                   <td class="{{ row.status_level }}">{{ row.status }}</td>
+                  <td>
+                    {% if row.error_code or row.error_message %}
+                      <span class="pill loss" title="{{ row.error_message }}">{{ row.error_code or 'ERR' }}</span>
+                    {% else %}
+                      -
+                    {% endif %}
+                  </td>
                   <td class="mono"><span title="{{ row.id_full }}">{{ row.id_short }}</span></td>
                 </tr>
               {% endfor %}
@@ -876,6 +890,139 @@
       </div>
     </div>
   </div>
+
+      <div class="card">
+        <h2>エラー / ログ</h2>
+        <div class="tagline">注文エラーとアプリログの直近エラーをまとめて表示します。</div>
+        <div class="split-equal">
+          <div>
+            <div class="section-subtitle">注文エラー（直近）</div>
+            {% if dashboard.system.orders_errors %}
+              <div class="table-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>時刻</th>
+                      <th>Pocket</th>
+                      <th>戦略</th>
+                      <th>Worker</th>
+                      <th>方向</th>
+                      <th>Units</th>
+                      <th>状態</th>
+                      <th>コード</th>
+                      <th>メッセージ</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                  {% for row in dashboard.system.orders_errors %}
+                    <tr>
+                      <td class="mono nowrap">{{ row.ts_label }}</td>
+                      <td>{{ row.pocket_label }}</td>
+                      <td>{{ row.strategy }}</td>
+                      <td>{{ row.worker }}</td>
+                      <td>{{ row.side }}</td>
+                      <td>{{ row.units if row.units is not none else '-' }}</td>
+                      <td class="{{ row.status_level }}">{{ row.status }}</td>
+                      <td class="mono">{{ row.error_code }}</td>
+                      <td class="mono" title="{{ row.error_message }}">{{ row.error_message }}</td>
+                    </tr>
+                  {% endfor %}
+                  </tbody>
+                </table>
+              </div>
+            {% else %}
+              <p class="tagline">直近の注文エラーはありません。</p>
+            {% endif %}
+          </div>
+          <div>
+            <div class="section-subtitle">ログエラー（直近）</div>
+            {% if dashboard.system.log_errors %}
+              <div class="table-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>時刻</th>
+                      <th>Level</th>
+                      <th>Source</th>
+                      <th>Message</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                  {% for row in dashboard.system.log_errors %}
+                    <tr>
+                      <td class="mono nowrap">{{ row.ts or '-' }}</td>
+                      <td>{{ row.level or '-' }}</td>
+                      <td class="mono">{{ row.source or '-' }}</td>
+                      <td class="mono" title="{{ row.message }}">{{ row.message }}</td>
+                    </tr>
+                  {% endfor %}
+                  </tbody>
+                </table>
+              </div>
+            {% else %}
+              <p class="tagline">直近のログエラーはありません。</p>
+            {% endif %}
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>再起動 / デプロイ</h2>
+        <div class="tagline">サービスの稼働状況と再起動回数を確認できます。</div>
+        <div class="stats-grid">
+          <div class="stat-card compact">
+            <div class="stat-label">ホスト</div>
+            <div class="stat-value">{{ dashboard.health.hostname or '-' }}</div>
+            <div class="stat-sub">Git {{ dashboard.health.git_rev or '-' }}</div>
+          </div>
+          <div class="stat-card compact">
+            <div class="stat-label">Deploy ID</div>
+            <div class="stat-value">{{ dashboard.health.deploy_id or '-' }}</div>
+            <div class="stat-sub">稼働 {{ dashboard.health.uptime_label or '-' }}</div>
+          </div>
+          <div class="stat-card compact">
+            <div class="stat-label">Service Active</div>
+            <div class="stat-value">
+              {% if dashboard.health.service_active %}
+                {{ dashboard.health.service_active.quantrabbit if dashboard.health.service_active.quantrabbit is not none else '-' }}
+              {% else %}
+                -
+              {% endif %}
+            </div>
+            <div class="stat-sub">quantrabbit.service</div>
+          </div>
+        </div>
+
+        {% if dashboard.health.service_info %}
+          <div class="section-title">サービス詳細</div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Service</th>
+                  <th>State</th>
+                  <th>Restarts</th>
+                  <th>Last Start</th>
+                  <th>Exit</th>
+                </tr>
+              </thead>
+              <tbody>
+              {% for row in dashboard.health.service_info %}
+                <tr>
+                  <td class="mono">{{ row.unit }}</td>
+                  <td>{{ row.active_state or '-' }} / {{ row.sub_state or '-' }}</td>
+                  <td>{{ row.n_restarts or '-' }}</td>
+                  <td class="mono">{{ row.active_enter_ts or row.exec_start_ts or '-' }}</td>
+                  <td class="mono">{{ row.exec_exit_ts or '-' }}</td>
+                </tr>
+              {% endfor %}
+              </tbody>
+            </table>
+          </div>
+        {% else %}
+          <p class="tagline">サービス詳細は未取得です。</p>
+        {% endif %}
+      </div>
 
       <div class="card">
         <h2>緊急操作</h2>

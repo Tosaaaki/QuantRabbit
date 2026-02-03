@@ -121,6 +121,46 @@ def _systemd_is_active(unit: str) -> Optional[bool]:
     return output.strip() == "active"
 
 
+def _systemd_unit_info(unit: str) -> Optional[dict[str, Any]]:
+    if not shutil.which("systemctl"):
+        return None
+    output = _run_cmd(
+        [
+            "systemctl",
+            "show",
+            unit,
+            "-p",
+            "ActiveState",
+            "-p",
+            "SubState",
+            "-p",
+            "Result",
+            "-p",
+            "NRestarts",
+            "-p",
+            "ActiveEnterTimestamp",
+            "-p",
+            "ExecMainStartTimestamp",
+            "-p",
+            "ExecMainExitTimestamp",
+            "-p",
+            "ExecMainStatus",
+        ]
+    )
+    if output is None:
+        return None
+    info: dict[str, Any] = {}
+    for line in output.splitlines():
+        if "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        info[key] = value
+    if not info:
+        return None
+    info["unit"] = unit
+    return info
+
+
 def _port_listening(port: int) -> Optional[bool]:
     pattern = re.compile(rf":{port}\b")
     commands = []
@@ -235,6 +275,20 @@ def _build_snapshot() -> dict[str, Any]:
     except Exception:
         pass
 
+    service_units = [
+        "quantrabbit.service",
+        "quant-ui-snapshot.service",
+        "quant-health-snapshot.service",
+        "quant-autotune-ui.service",
+        "quant-ssh-watchdog.service",
+        "quant-bq-sync.service",
+    ]
+    service_info: dict[str, Any] = {}
+    for unit in service_units:
+        info = _systemd_unit_info(unit)
+        if info:
+            service_info[unit] = info
+
     snapshot = {
         "snapshot_version": 2,
         "generated_at": _utcnow_iso(),
@@ -303,6 +357,7 @@ def _build_snapshot() -> dict[str, Any]:
             "quant_ssh_timer": _systemd_is_active("quant-ssh-watchdog.timer"),
             "quant_bq_sync": _systemd_is_active("quant-bq-sync.service"),
         },
+        "service_info": service_info,
         "ssh_active": _systemd_is_active("ssh"),
         "sshd_active": _systemd_is_active("sshd"),
         "guest_agent_active": _systemd_is_active("google-guest-agent"),
