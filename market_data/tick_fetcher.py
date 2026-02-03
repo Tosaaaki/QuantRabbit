@@ -43,6 +43,48 @@ DepthLevels = Tuple[Tuple[float, float], ...]
 
 LOG = logging.getLogger(__name__)
 
+_STREAM_RESET_EVENT = asyncio.Event()
+_STREAM_RESET_REASON: Optional[str] = None
+_STREAM_RESET_TS: float = 0.0
+
+
+def request_stream_reset(reason: str = "unspecified") -> None:
+    """Request a soft reset of the pricing stream (reconnect without full process restart)."""
+    global _STREAM_RESET_REASON, _STREAM_RESET_TS
+    _STREAM_RESET_REASON = reason or "unspecified"
+    _STREAM_RESET_TS = time.time()
+    try:
+        _STREAM_RESET_EVENT.set()
+    except Exception:  # pragma: no cover - defensive
+        LOG.warning("tick_fetcher reset request failed to signal event")
+
+
+async def _await_stream_reset(response: httpx.Response) -> None:
+    await _STREAM_RESET_EVENT.wait()
+    _STREAM_RESET_EVENT.clear()
+    reason = _STREAM_RESET_REASON or "unspecified"
+    age = time.time() - _STREAM_RESET_TS if _STREAM_RESET_TS else 0.0
+    if age > 0:
+        LOG.warning("tick_fetcher reset requested: %s (age=%.1fs)", reason, age)
+    else:
+        LOG.warning("tick_fetcher reset requested: %s", reason)
+    try:
+        await response.aclose()
+    except Exception:
+        pass
+
+
+def _log_stream_reset_done(task: asyncio.Task) -> None:
+    if task.cancelled():
+        return
+    try:
+        exc = task.exception()
+    except Exception:
+        return
+    if exc:
+        LOG.debug("tick_fetcher reset waiter ended with error: %s", exc)
+
+
 @dataclass
 class Tick:
     instrument: str
@@ -103,66 +145,77 @@ async def _connect(instrument: str, callback: Callable[[Tick], Awaitable[None]])
                     r.raise_for_status()
                     last_price_mono: Optional[float] = None
                     idle_strikes = 0
-                    async for raw in r.aiter_lines():
-                        if not raw:
-                            continue
-                        msg = json.loads(raw)
-                        msg_type = msg.get("type")
-                        if msg_type == "HEARTBEAT":
-                            if (
-                                last_price_mono is not None
-                                and _STREAM_MAX_IDLE_SEC > 0
-                                and _STREAM_MAX_IDLE_STRIKES > 0
-                            ):
-                                idle_for = time.monotonic() - last_price_mono
-                                if idle_for >= _STREAM_MAX_IDLE_SEC:
-                                    if _STREAM_IDLE_IGNORE_CLOSED and not is_market_open():
-                                        continue
-                                    idle_strikes += 1
-                                    if idle_strikes >= _STREAM_MAX_IDLE_STRIKES:
-                                        raise RuntimeError(
-                                            f"stream idle {idle_for:.1f}s without PRICE"
-                                        )
-                            continue
-                        if msg_type != "PRICE":
-                            continue
-                        last_price_mono = time.monotonic()
-                        idle_strikes = 0
-                        raw_bids = msg.get("bids", [])
-                        raw_asks = msg.get("asks", [])
-                        bids = tuple(
-                            (
-                                float(entry.get("price")),
-                                float(entry.get("liquidity", 0.0)),
+                    reset_task = asyncio.create_task(_await_stream_reset(r))
+                    reset_task.add_done_callback(_log_stream_reset_done)
+                    try:
+                        async for raw in r.aiter_lines():
+                            if not raw:
+                                continue
+                            msg = json.loads(raw)
+                            msg_type = msg.get("type")
+                            if msg_type == "HEARTBEAT":
+                                if (
+                                    last_price_mono is not None
+                                    and _STREAM_MAX_IDLE_SEC > 0
+                                    and _STREAM_MAX_IDLE_STRIKES > 0
+                                ):
+                                    idle_for = time.monotonic() - last_price_mono
+                                    if idle_for >= _STREAM_MAX_IDLE_SEC:
+                                        if _STREAM_IDLE_IGNORE_CLOSED and not is_market_open():
+                                            continue
+                                        idle_strikes += 1
+                                        if idle_strikes >= _STREAM_MAX_IDLE_STRIKES:
+                                            raise RuntimeError(
+                                                f"stream idle {idle_for:.1f}s without PRICE"
+                                            )
+                                continue
+                            if msg_type != "PRICE":
+                                continue
+                            last_price_mono = time.monotonic()
+                            idle_strikes = 0
+                            raw_bids = msg.get("bids", [])
+                            raw_asks = msg.get("asks", [])
+                            bids = tuple(
+                                (
+                                    float(entry.get("price")),
+                                    float(entry.get("liquidity", 0.0)),
+                                )
+                                for entry in raw_bids
+                                if entry.get("price") is not None
                             )
-                            for entry in raw_bids
-                            if entry.get("price") is not None
-                        )
-                        asks = tuple(
-                            (
-                                float(entry.get("price")),
-                                float(entry.get("liquidity", 0.0)),
+                            asks = tuple(
+                                (
+                                    float(entry.get("price")),
+                                    float(entry.get("liquidity", 0.0)),
+                                )
+                                for entry in raw_asks
+                                if entry.get("price") is not None
                             )
-                            for entry in raw_asks
-                            if entry.get("price") is not None
-                        )
-                        top_bid = bids[0][0] if bids else float(raw_bids[0]["price"]) if raw_bids else 0.0
-                        top_ask = asks[0][0] if asks else float(raw_asks[0]["price"]) if raw_asks else 0.0
-                        top_liquidity = int(raw_bids[0].get("liquidity", 0)) if raw_bids else 0
-                        tick = Tick(
-                            instrument=msg["instrument"],
-                            time=_parse_time(msg["time"]),
-                            bid=top_bid,
-                            ask=top_ask,
-                            liquidity=top_liquidity,
-                            bids=bids,
-                            asks=asks,
-                        )
+                            top_bid = bids[0][0] if bids else float(raw_bids[0]["price"]) if raw_bids else 0.0
+                            top_ask = asks[0][0] if asks else float(raw_asks[0]["price"]) if raw_asks else 0.0
+                            top_liquidity = int(raw_bids[0].get("liquidity", 0)) if raw_bids else 0
+                            tick = Tick(
+                                instrument=msg["instrument"],
+                                time=_parse_time(msg["time"]),
+                                bid=top_bid,
+                                ask=top_ask,
+                                liquidity=top_liquidity,
+                                bids=bids,
+                                asks=asks,
+                            )
+                            try:
+                                log_tick(tick)
+                            except Exception as exc:  # noqa: BLE001
+                                print(f"[replay] failed to log tick: {exc}")
+                            await callback(tick)
+                    finally:
+                        reset_task.cancel()
                         try:
-                            log_tick(tick)
-                        except Exception as exc:  # noqa: BLE001
-                            print(f"[replay] failed to log tick: {exc}")
-                        await callback(tick)
+                            await reset_task
+                        except asyncio.CancelledError:
+                            pass
+                        except Exception:
+                            pass
         except Exception as e:
             LOG.warning("tick_fetcher reconnect: %s", e)
             await asyncio.sleep(3)  # バックオフして再接続

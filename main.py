@@ -86,6 +86,10 @@ DATA_LAG_RESTART_MS = float(os.getenv("DATA_LAG_RESTART_MS", "8000"))
 DATA_LAG_RESTART_STRIKES = int(os.getenv("DATA_LAG_RESTART_STRIKES", "3"))
 _data_lag_strikes = 0
 
+STREAM_RECOVERY_MODE = os.getenv("STREAM_RECOVERY_MODE", "stream").strip().lower()
+STREAM_RESET_COOLDOWN_SEC = float(os.getenv("STREAM_RESET_COOLDOWN_SEC", "30"))
+_stream_reset_last_mono = 0.0
+
 TICK_SILENCE_RESTART_SEC = float(os.getenv("TICK_SILENCE_RESTART_SEC", "20"))
 TICK_SILENCE_RESTART_STRIKES = int(os.getenv("TICK_SILENCE_RESTART_STRIKES", "3"))
 TICK_SILENCE_GRACE_SEC = float(os.getenv("TICK_SILENCE_GRACE_SEC", "120"))
@@ -94,6 +98,30 @@ _tick_silence_last_seen_mono: Optional[float] = None
 _tick_silence_start_mono = time.monotonic()
 SLOW_LOOP_LOG_MS = float(os.getenv("SLOW_LOOP_LOG_MS", "8000"))
 SLOW_LOOP_LOG_MIN_INTERVAL_SEC = float(os.getenv("SLOW_LOOP_LOG_MIN_INTERVAL_SEC", "60"))
+
+
+def _maybe_request_stream_reset(reason: str, detail: str) -> bool:
+    """Request a stream-only reset instead of restarting the whole process."""
+    global _stream_reset_last_mono
+    if STREAM_RECOVERY_MODE not in {"stream", "soft", "reset_stream"}:
+        return False
+    now_mono = time.monotonic()
+    if now_mono - _stream_reset_last_mono < STREAM_RESET_COOLDOWN_SEC:
+        logging.warning(
+            "[WATCHDOG] %s -> stream reset suppressed (cooldown %.1fs)",
+            detail or reason,
+            STREAM_RESET_COOLDOWN_SEC,
+        )
+        return True
+    logging.error("[WATCHDOG] %s -> stream reset", detail or reason)
+    try:
+        from market_data.tick_fetcher import request_stream_reset
+
+        request_stream_reset(reason)
+    except Exception as exc:  # pragma: no cover - defensive
+        logging.warning("[WATCHDOG] stream reset failed: %s", exc)
+    _stream_reset_last_mono = now_mono
+    return True
 
 
 def _check_data_lag_watchdog(data_lag_ms: float) -> None:
@@ -105,12 +133,14 @@ def _check_data_lag_watchdog(data_lag_ms: float) -> None:
     if data_lag_ms >= DATA_LAG_RESTART_MS:
         _data_lag_strikes += 1
         if _data_lag_strikes >= DATA_LAG_RESTART_STRIKES:
-            logging.error(
-                "[WATCHDOG] data_lag_ms=%.1f strikes=%d/%d -> restarting",
-                data_lag_ms,
-                _data_lag_strikes,
-                DATA_LAG_RESTART_STRIKES,
+            detail = (
+                f"data_lag_ms={data_lag_ms:.1f} "
+                f"strikes={_data_lag_strikes}/{DATA_LAG_RESTART_STRIKES}"
             )
+            if _maybe_request_stream_reset("data_lag_watchdog", detail):
+                _data_lag_strikes = 0
+                return
+            logging.error("[WATCHDOG] %s -> restarting", detail)
             raise SystemExit("data_lag_watchdog")
     else:
         if _data_lag_strikes:
@@ -139,12 +169,14 @@ def _check_tick_silence_watchdog(data_lag_ms: Optional[float]) -> None:
     if silence_for >= TICK_SILENCE_RESTART_SEC:
         _tick_silence_strikes += 1
         if _tick_silence_strikes >= TICK_SILENCE_RESTART_STRIKES:
-            logging.error(
-                "[WATCHDOG] no ticks for %.1fs strikes=%d/%d -> restarting",
-                silence_for,
-                _tick_silence_strikes,
-                TICK_SILENCE_RESTART_STRIKES,
+            detail = (
+                f"no_ticks_for={silence_for:.1f}s "
+                f"strikes={_tick_silence_strikes}/{TICK_SILENCE_RESTART_STRIKES}"
             )
+            if _maybe_request_stream_reset("tick_silence_watchdog", detail):
+                _tick_silence_strikes = 0
+                return
+            logging.error("[WATCHDOG] %s -> restarting", detail)
             raise SystemExit("tick_silence_watchdog")
 
 

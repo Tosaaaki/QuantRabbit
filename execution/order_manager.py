@@ -352,6 +352,8 @@ def _hold_until_profit_match(
 ) -> tuple[bool, float, bool]:
     if not _EXIT_HOLD_UNTIL_PROFIT_ENABLED:
         return False, _EXIT_HOLD_UNTIL_PROFIT_MIN_PIPS, _EXIT_HOLD_UNTIL_PROFIT_STRICT
+    if _EXIT_HOLD_UNTIL_PROFIT_ALL:
+        return True, _EXIT_HOLD_UNTIL_PROFIT_MIN_PIPS, _EXIT_HOLD_UNTIL_PROFIT_STRICT
     client_ids, trade_ids, min_pips, strict = _hold_until_profit_targets()
     if not client_ids and not trade_ids:
         return False, min_pips, strict
@@ -658,6 +660,7 @@ _EXIT_HOLD_UNTIL_PROFIT_CLIENT_IDS = _env_csv_set("EXIT_HOLD_UNTIL_PROFIT_CLIENT
 _EXIT_HOLD_UNTIL_PROFIT_TRADE_IDS = _env_csv_set("EXIT_HOLD_UNTIL_PROFIT_TRADE_IDS", "")
 _EXIT_HOLD_UNTIL_PROFIT_MIN_PIPS = max(0.0, _env_float("EXIT_HOLD_UNTIL_PROFIT_MIN_PIPS", 0.0))
 _EXIT_HOLD_UNTIL_PROFIT_STRICT = _env_bool("EXIT_HOLD_UNTIL_PROFIT_STRICT", False)
+_EXIT_HOLD_UNTIL_PROFIT_ALL = _env_bool("EXIT_HOLD_UNTIL_PROFIT_ALL", False)
 _EXIT_FORCE_ALLOW_REASONS = {
     token.strip().lower()
     for token in os.getenv(
