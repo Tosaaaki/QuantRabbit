@@ -202,11 +202,13 @@ TICK_IMB_RATIO_MIN = _env_float("TICK_IMB_RATIO_MIN", 0.68)
 TICK_IMB_MOM_MIN_PIPS = _env_float("TICK_IMB_MOM_MIN_PIPS", 0.45)
 TICK_IMB_RANGE_MIN_PIPS = _env_float("TICK_IMB_RANGE_MIN_PIPS", 0.25)
 TICK_IMB_ATR_MIN = _env_float("TICK_IMB_ATR_MIN", 0.7)
+TICK_IMB_SIZE_MULT = _env_float("TICK_IMB_SIZE_MULT", 1.25)
 
 LEVEL_LOOKBACK = _env_int("LEVEL_REJECT_LOOKBACK", 20)
 LEVEL_BAND_PIPS = _env_float("LEVEL_REJECT_BAND_PIPS", 0.8)
 LEVEL_RSI_LONG_MAX = _env_float("LEVEL_REJECT_RSI_LONG_MAX", 48.0)
 LEVEL_RSI_SHORT_MIN = _env_float("LEVEL_REJECT_RSI_SHORT_MIN", 52.0)
+LEVEL_REJECT_SIZE_MULT = _env_float("LEVEL_REJECT_SIZE_MULT", 1.15)
 
 WICK_RANGE_MIN_PIPS = _env_float("WICK_REV_RANGE_MIN_PIPS", 2.0)
 WICK_BODY_MAX_PIPS = _env_float("WICK_REV_BODY_MAX_PIPS", 0.9)
@@ -537,15 +539,6 @@ def _signal_precision_lowvol(
         return None
     upper, _, lower, _, span_pips = levels
 
-    range_score = float(range_ctx.score or 0.0) if range_ctx else 0.0
-    range_ok = bool(range_ctx and (range_ctx.active or range_score >= config.PREC_LOWVOL_RANGE_SCORE))
-    if not range_ok:
-        return None
-
-    ok_spread, _ = spread_ok(max_pips=config.MAX_SPREAD_PIPS, p25_max=config.PREC_LOWVOL_SPREAD_P25)
-    if not ok_spread:
-        return None
-
     adx = _adx(fac_m1)
     bbw = _bbw(fac_m1)
     atr = _atr_pips(fac_m1)
@@ -553,62 +546,88 @@ def _signal_precision_lowvol(
     stoch = _stoch_rsi(fac_m1)
     vgap = _vwap_gap_pips(fac_m1)
 
+    range_score = float(range_ctx.score or 0.0) if range_ctx else 0.0
+    range_ok = bool(range_ctx and (range_ctx.active or range_score >= config.PREC_LOWVOL_RANGE_SCORE))
+    if not range_ok:
+        range_ok = adx <= config.PREC_LOWVOL_ADX_MAX and bbw <= config.PREC_LOWVOL_BBW_MAX
+    if not range_ok:
+        return None
+
+    ok_spread, _ = spread_ok(max_pips=config.MAX_SPREAD_PIPS, p25_max=config.PREC_LOWVOL_SPREAD_P25)
+    if not ok_spread:
+        return None
+
     if adx > config.PREC_LOWVOL_ADX_MAX or bbw > config.PREC_LOWVOL_BBW_MAX:
         return None
     if atr < config.PREC_LOWVOL_ATR_MIN or atr > config.PREC_LOWVOL_ATR_MAX:
         return None
-    if abs(vgap) < config.PREC_LOWVOL_VWAP_GAP_MIN:
-        return None
 
-    mids, _ = tick_snapshot(7.0, limit=80)
-    rev_ok, rev_dir, rev_strength = tick_reversal(mids, min_ticks=8)
+    mids, _ = tick_snapshot(6.0, limit=70)
+    rev_ok, rev_dir, rev_strength = tick_reversal(mids, min_ticks=4)
     if not rev_ok or rev_strength < config.PREC_LOWVOL_REV_MIN_STRENGTH:
         return None
 
-    band = max(config.PREC_LOWVOL_BB_TOUCH_PIPS, span_pips * 0.16)
+    band = max(config.PREC_LOWVOL_BB_TOUCH_PIPS, span_pips * 0.28)
     dist_lower = (price - lower) / PIP
     dist_upper = (upper - price) / PIP
 
     side = None
-    if (
-        dist_lower <= band
-        and rsi <= config.PREC_LOWVOL_RSI_LONG_MAX
-        and stoch <= config.PREC_LOWVOL_STOCH_LONG_MAX
-        and vgap <= -config.PREC_LOWVOL_VWAP_GAP_MIN
-        and rev_dir == "long"
-    ):
+    long_osc_ok = rsi <= config.PREC_LOWVOL_RSI_LONG_MAX or stoch <= config.PREC_LOWVOL_STOCH_LONG_MAX
+    short_osc_ok = rsi >= config.PREC_LOWVOL_RSI_SHORT_MIN or stoch >= config.PREC_LOWVOL_STOCH_SHORT_MIN
+    if dist_lower <= band and long_osc_ok and rev_dir == "long":
         side = "long"
-    elif (
-        dist_upper <= band
-        and rsi >= config.PREC_LOWVOL_RSI_SHORT_MIN
-        and stoch >= config.PREC_LOWVOL_STOCH_SHORT_MIN
-        and vgap >= config.PREC_LOWVOL_VWAP_GAP_MIN
-        and rev_dir == "short"
-    ):
+    elif dist_upper <= band and short_osc_ok and rev_dir == "short":
         side = "short"
     if not side:
         return None
+
+    vgap_block = config.PREC_LOWVOL_VWAP_GAP_BLOCK
+    if vgap_block > 0.0:
+        if side == "long" and vgap > vgap_block:
+            return None
+        if side == "short" and vgap < -vgap_block:
+            return None
+
+    vgap_bias_min = config.PREC_LOWVOL_VWAP_GAP_MIN
+    vgap_bias_ok = (vgap <= -vgap_bias_min and side == "long") or (vgap >= vgap_bias_min and side == "short")
 
     proj_allow, size_mult, proj_detail = projection_decision(side, mode="range")
     if not proj_allow:
         return None
 
-    sl = max(1.1, min(1.6, atr * 0.8))
-    tp = max(1.0, min(1.7, atr * 0.9))
-    conf = 64
+    dist = dist_lower if side == "long" else dist_upper
+    touch_ratio = max(0.0, (band - dist) / max(0.2, band))
+
+    sl = max(1.0, min(1.6, atr * 0.75))
+    tp = max(1.1, min(2.0, atr * (0.9 + min(0.2, rev_strength * 0.2))))
+    conf = 58
     conf += int(min(10, abs(rsi - 50.0) * 0.6))
-    conf += int(min(8, rev_strength * 3.5))
-    conf += int(min(6, abs(vgap) * 1.8))
+    conf += int(min(10, rev_strength * 4.0))
+    conf += int(min(6, touch_ratio * 6.0))
+    conf += int(min(4, range_score * 4.0))
+    if vgap_bias_ok:
+        conf += 3
+    if range_ctx and getattr(range_ctx, "active", False):
+        conf += 2
+
+    size_boost = 0.0
+    if vgap_bias_ok:
+        size_boost += 0.05
+    if touch_ratio >= 0.5:
+        size_boost += 0.06
+    if rev_strength >= 0.7:
+        size_boost += 0.06
+    size_mult = max(0.85, min(1.25, size_mult + size_boost))
 
     return {
         "action": "OPEN_LONG" if side == "long" else "OPEN_SHORT",
         "sl_pips": round(sl, 2),
         "tp_pips": round(tp, 2),
-        "confidence": int(max(50, min(92, conf))),
+        "confidence": int(max(45, min(92, conf))),
         "tag": tag,
         "reason": "precision_lowvol",
         "range_score": round(range_score, 3),
-        "size_mult": round(max(0.8, min(1.2, size_mult)), 3),
+        "size_mult": round(size_mult, 3),
         "projection": proj_detail,
     }
 
@@ -784,6 +803,7 @@ def _signal_tick_imbalance(
         "confidence": int(max(45, min(92, conf))),
         "tag": tag,
         "reason": "tick_imbalance",
+        "size_mult": round(TICK_IMB_SIZE_MULT, 3),
         "imbalance": {"ratio": round(imb.ratio, 3), "momentum_pips": round(imb.momentum_pips, 3)},
     }
 
@@ -829,6 +849,7 @@ def _signal_level_reject(
         "confidence": int(max(45, min(92, conf))),
         "tag": tag,
         "reason": "level_reject",
+        "size_mult": round(LEVEL_REJECT_SIZE_MULT, 3),
     }
 
 
@@ -1483,9 +1504,19 @@ async def scalp_precision_worker() -> None:
 
             strategies = []
             allowlist = set([s.lower() for s in _env_csv("SCALP_PRECISION_ALLOWLIST", config.ALLOWLIST_RAW)])
-            mode = config.MODE
-            if mode and not allowlist:
-                allowlist.add(mode)
+            mode = (config.MODE or "").strip().lower()
+            if mode:
+                if config.MODE_FILTER_ALLOWLIST:
+                    if allowlist:
+                        if mode in allowlist:
+                            allowlist = {mode}
+                        else:
+                            allowlist = {"__none__"}
+                    else:
+                        allowlist.add(mode)
+                else:
+                    if not allowlist:
+                        allowlist.add(mode)
 
             def enabled(name: str) -> bool:
                 if not allowlist:
