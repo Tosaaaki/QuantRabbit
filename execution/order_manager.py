@@ -4193,8 +4193,16 @@ async def market_order(
                 soft_cap = min(float(os.getenv("MAX_MARGIN_USAGE", "0.92") or 0.92), 0.99)
                 hard_cap = min(float(os.getenv("MAX_MARGIN_USAGE_HARD", "0.96") or 0.96), 0.995)
                 cap = min(hard_cap, max(soft_cap, 0.0))
+                side_cap_enabled = str(os.getenv("MARGIN_SIDE_CAP_ENABLED", "0")).strip().lower() not in {
+                    "",
+                    "0",
+                    "false",
+                    "off",
+                }
                 net_reducing = False
                 net_before_units = 0.0
+                long_u = None
+                short_u = None
                 try:
                     from utils.oanda_account import get_position_summary
 
@@ -4208,7 +4216,8 @@ async def market_order(
                     net_reducing = False
                     net_before_units = 0.0
                 if nav > 0:
-                    usage = margin_used / nav
+                    usage_total = margin_used / nav
+                    usage = usage_total
                     projected_usage = _projected_usage_with_netting(
                         nav,
                         margin_rate,
@@ -4218,6 +4227,22 @@ async def market_order(
                         meta=meta,
                     )
                     usage_for_cap = projected_usage if projected_usage is not None else usage
+                    side_units = None
+                    side_usage = None
+                    side_projected = None
+                    if side_cap_enabled and long_u is not None and short_u is not None and margin_rate > 0:
+                        price_hint = _estimate_price(meta) or _latest_mid_price() or 0.0
+                        if price_hint > 0:
+                            if side_label.lower() == "buy":
+                                side_units = abs(float(long_u))
+                            else:
+                                side_units = abs(float(short_u))
+                            side_usage = (side_units * price_hint * margin_rate) / nav
+                            side_projected = ((side_units + abs(units)) * price_hint * margin_rate) / nav
+                            usage = side_usage
+                            projected_usage = side_projected
+                            usage_for_cap = side_projected
+                            net_reducing = False
                     if (
                         usage_for_cap >= hard_cap * 0.995
                         and not (
@@ -4230,7 +4255,14 @@ async def market_order(
                         price_hint = _estimate_price(meta) or _latest_mid_price() or 0.0
                         scaled_units = 0
                         cap_target = hard_cap * 0.99
-                        if projected_usage and projected_usage > 0 and abs(units) > 0:
+                        if side_cap_enabled and side_units is not None and price_hint > 0 and margin_rate > 0:
+                            try:
+                                allowed_side = (cap_target * nav) / (price_hint * margin_rate) - side_units
+                                if allowed_side > 0:
+                                    scaled_units = int(math.floor(min(abs(units), allowed_side)))
+                            except Exception:
+                                scaled_units = 0
+                        elif projected_usage and projected_usage > 0 and abs(units) > 0:
                             factor = cap_target / projected_usage
                             scaled_units = int(math.floor(abs(units) * factor))
                         elif nav > 0 and margin_rate > 0 and price_hint > 0:
@@ -4280,6 +4312,9 @@ async def market_order(
                                     "entry_thesis": entry_thesis,
                                     "margin_usage": usage,
                                     "projected_usage": projected_usage,
+                                    "margin_usage_total": usage_total,
+                                    "side_usage": side_usage,
+                                    "side_projected": side_projected,
                                     "cap": hard_cap,
                                 },
                             )
@@ -4310,18 +4345,25 @@ async def market_order(
                 price_hint = _estimate_price(meta) or 0.0
                 projected_usage = None
                 if nav > 0 and margin_rate > 0:
-                    projected_usage = _projected_usage_with_netting(
-                        nav,
-                        margin_rate,
-                        side_label,
-                        units,
-                        margin_used=margin_used,
-                        meta=meta,
-                    )
-                    if projected_usage is None and price_hint > 0:
-                        # フォールバック: 片側加算のみ
-                        projected_used = margin_used + abs(units) * price_hint * margin_rate
-                        projected_usage = projected_used / nav
+                    if side_cap_enabled and long_u is not None and short_u is not None and price_hint > 0:
+                        if side_label.lower() == "buy":
+                            side_units = abs(float(long_u))
+                        else:
+                            side_units = abs(float(short_u))
+                        projected_usage = ((side_units + abs(units)) * price_hint * margin_rate) / nav
+                    else:
+                        projected_usage = _projected_usage_with_netting(
+                            nav,
+                            margin_rate,
+                            side_label,
+                            units,
+                            margin_used=margin_used,
+                            meta=meta,
+                        )
+                        if projected_usage is None and price_hint > 0:
+                            # フォールバック: 片側加算のみ
+                            projected_used = margin_used + abs(units) * price_hint * margin_rate
+                            projected_usage = projected_used / nav
 
                 if (
                     projected_usage is not None
@@ -4332,13 +4374,22 @@ async def market_order(
                     scaled_units = 0
                     cap_target = cap * 0.99
                     try:
-                        factor = cap_target / projected_usage if projected_usage > 0 else 0.0
-                        if factor > 0 and abs(units) > 0:
-                            scaled_units = int(math.floor(abs(units) * factor))
-                        elif nav > 0 and margin_rate > 0 and price_hint > 0:
-                            allowed_net = (cap_target * nav) / (price_hint * margin_rate)
-                            room = allowed_net - abs(net_before_units)
-                            scaled_units = int(math.floor(min(abs(units), room)))
+                        if side_cap_enabled and long_u is not None and short_u is not None and price_hint > 0:
+                            if side_label.lower() == "buy":
+                                side_units = abs(float(long_u))
+                            else:
+                                side_units = abs(float(short_u))
+                            allowed_side = (cap_target * nav) / (price_hint * margin_rate) - side_units
+                            if allowed_side > 0:
+                                scaled_units = int(math.floor(min(abs(units), allowed_side)))
+                        else:
+                            factor = cap_target / projected_usage if projected_usage > 0 else 0.0
+                            if factor > 0 and abs(units) > 0:
+                                scaled_units = int(math.floor(abs(units) * factor))
+                            elif nav > 0 and margin_rate > 0 and price_hint > 0:
+                                allowed_net = (cap_target * nav) / (price_hint * margin_rate)
+                                room = allowed_net - abs(net_before_units)
+                                scaled_units = int(math.floor(min(abs(units), room)))
                     except Exception:
                         scaled_units = 0
                     if scaled_units > 0:
