@@ -48,6 +48,7 @@ _DEFAULT_BASE_EQUITY = {
 }
 _LOOKBACK_DAYS = 7
 MAX_MARGIN_USAGE = float(os.getenv("MAX_MARGIN_USAGE", "0.85"))
+MAX_MARGIN_USAGE_HARD = float(os.getenv("MAX_MARGIN_USAGE_HARD", "0.90"))
 
 _DISABLE_POCKET_DD = os.getenv("DISABLE_POCKET_DD", "false").lower() in {
     "1",
@@ -717,8 +718,9 @@ def allowed_lot(
     if margin_available is not None and price is not None and margin_rate:
         margin_per_lot = price * margin_rate * 100000
         if margin_per_lot > 0:
-            # 基準: MAX_MARGIN_USAGE を絶対上限（デフォルト0.88、運用上限0.92にクランプ）
-            margin_cap = max(0.0, min(MAX_MARGIN_USAGE, 0.92))
+            # 基準: MAX_MARGIN_USAGE を上限（MAX_MARGIN_USAGE_HARD で更に制限）
+            hard_cap = max(0.0, min(MAX_MARGIN_USAGE_HARD, 0.995))
+            margin_cap = max(0.0, min(MAX_MARGIN_USAGE, hard_cap))
             hard_margin_cap = margin_cap
             # margin_cap=0 の場合は強制停止
             if margin_cap <= 0.0:
