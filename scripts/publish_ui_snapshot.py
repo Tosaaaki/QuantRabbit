@@ -33,6 +33,8 @@ METRICS_DB = LOGS_DIR / "metrics.db"
 ORDERS_DB = LOGS_DIR / "orders.db"
 SIGNALS_DB = LOGS_DIR / "signals.db"
 TRADES_DB = LOGS_DIR / "trades.db"
+HEALTH_SNAPSHOT = LOGS_DIR / "health_snapshot.json"
+PIPELINE_LOG = LOGS_DIR / "pipeline.log"
 DB_READ_TIMEOUT_SEC = float(os.getenv("UI_DB_READ_TIMEOUT_SEC", "0.2"))
 SYNC_TRADES_ENABLED = os.getenv("UI_SNAPSHOT_SYNC_TRADES", "1").strip().lower() in {
     "1",
@@ -52,6 +54,16 @@ INCLUDE_POSITIONS = os.getenv("UI_SNAPSHOT_INCLUDE_POSITIONS", "1").strip().lowe
     "true",
     "yes",
 }
+ERROR_LOG_PATHS = [
+    p.strip()
+    for p in os.getenv(
+        "UI_ERROR_LOG_PATHS",
+        f"{PIPELINE_LOG},{LOGS_DIR / 'autotune_ui.log'}",
+    ).split(",")
+    if p.strip()
+]
+ERROR_LOG_MAX_LINES = int(os.getenv("UI_ERROR_LOG_MAX_LINES", "10"))
+ERROR_LOG_MAX_BYTES = int(os.getenv("UI_ERROR_LOG_MAX_BYTES", "180000"))
 
 
 def _load_latest_metric(metric: str) -> Optional[float]:
@@ -70,6 +82,68 @@ def _load_latest_metric(metric: str) -> Optional[float]:
         return float(row[0])
     except Exception:
         return None
+
+
+def _tail_text(path: Path, max_bytes: int) -> str:
+    try:
+        size = path.stat().st_size
+    except Exception:
+        return ""
+    if size <= 0:
+        return ""
+    try:
+        with path.open("rb") as fh:
+            if size > max_bytes:
+                fh.seek(-max_bytes, os.SEEK_END)
+            data = fh.read()
+    except Exception:
+        return ""
+    try:
+        return data.decode("utf-8", errors="ignore")
+    except Exception:
+        return ""
+
+
+def _parse_log_line(line: str) -> dict:
+    parts = line.split(" - ", 3)
+    if len(parts) >= 3:
+        ts = parts[0].strip()
+        level = parts[1].strip()
+        msg = parts[3].strip() if len(parts) >= 4 else ""
+        return {"ts": ts, "level": level, "message": msg or line.strip()}
+    return {"ts": None, "level": None, "message": line.strip()}
+
+
+def _load_recent_log_errors(limit: int = 10) -> list[dict]:
+    results: list[dict] = []
+    for raw_path in ERROR_LOG_PATHS:
+        path = Path(raw_path)
+        if not path.exists():
+            continue
+        text = _tail_text(path, ERROR_LOG_MAX_BYTES)
+        if not text:
+            continue
+        lines = [line for line in text.splitlines() if line.strip()]
+        for line in reversed(lines):
+            if len(results) >= limit:
+                return results
+            upper = line.upper()
+            if "ERROR" not in upper and "CRITICAL" not in upper and "TRACEBACK" not in upper:
+                continue
+            parsed = _parse_log_line(line)
+            parsed["source"] = path.name
+            results.append(parsed)
+    return results
+
+
+def _load_health_snapshot() -> Optional[dict]:
+    if not HEALTH_SNAPSHOT.exists():
+        return None
+    try:
+        data = json.loads(HEALTH_SNAPSHOT.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+    return data if isinstance(data, dict) else None
 
 
 def _load_last_metric_ts(metric: str) -> Optional[str]:

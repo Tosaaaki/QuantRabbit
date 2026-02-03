@@ -29,52 +29,32 @@ import scripts.replay_exit_workers as rew
 import scripts.replay_workers as rw
 
 # exit workers
-import workers.mirror_spike_s5.exit_worker as mirror_s5_exit
-import workers.mirror_spike_tight.exit_worker as mirror_tight_exit
-import workers.mirror_spike.exit_worker as mirror_exit
-import workers.squeeze_break_s5.exit_worker as squeeze_exit
 import workers.impulse_break_s5.exit_worker as impulse_break_exit
 import workers.impulse_retest_s5.exit_worker as impulse_retest_exit
 import workers.impulse_momentum_s5.exit_worker as impulse_momentum_exit
 import workers.pullback_s5.exit_worker as pullback_s5_exit
-import workers.pullback_scalp.exit_worker as pullback_scalp_exit
 
 PIP = 0.01
 
 WORKER_TAGS = {
-    "mirror_spike": "mirror_spike",
-    "mirror_spike_s5": "mirror_spike_s5",
-    "mirror_spike_tight": "mirror_spike_tight",
-    "squeeze_break_s5": "squeeze_break_s5",
     "impulse_break_s5": "impulse_break_s5",
     "impulse_retest_s5": "impulse_retest_s5",
     "impulse_momentum_s5": "impulse_momentum_s5",
     "pullback_s5": "pullback_s5",
-    "pullback_scalp": "pullback_scalp",
 }
 
 EXIT_MODULES = {
-    "mirror_spike": mirror_exit,
-    "mirror_spike_s5": mirror_s5_exit,
-    "mirror_spike_tight": mirror_tight_exit,
-    "squeeze_break_s5": squeeze_exit,
     "impulse_break_s5": impulse_break_exit,
     "impulse_retest_s5": impulse_retest_exit,
     "impulse_momentum_s5": impulse_momentum_exit,
     "pullback_s5": pullback_s5_exit,
-    "pullback_scalp": pullback_scalp_exit,
 }
 
 EXIT_WORKER_CLASSES = {
-    "mirror_spike": "MirrorSpikeExitWorker",
-    "mirror_spike_s5": "MirrorSpikeExitWorker",
-    "mirror_spike_tight": "MirrorSpikeTightExitWorker",
-    "squeeze_break_s5": "SqueezeBreakExitWorker",
     "impulse_break_s5": "ImpulseBreakExitWorker",
     "impulse_retest_s5": "ImpulseRetestExitWorker",
     "impulse_momentum_s5": "ImpulseMomentumExitWorker",
     "pullback_s5": "PullbackExitWorker",
-    "pullback_scalp": "PullbackScalpExitWorker",
 }
 
 
@@ -148,19 +128,10 @@ def _run_replay_workers(
         os.environ.update(env)
     try:
         module_names = {
-            "mirror_spike": [
-                "workers.mirror_spike.config",
-                "workers.mirror_spike.worker",
-                "workers.fast_scalp.signal",
-            ],
-            "mirror_spike_s5": ["workers.mirror_spike_s5.config"],
-            "mirror_spike_tight": ["workers.mirror_spike_tight.config"],
-            "squeeze_break_s5": ["workers.squeeze_break_s5.config"],
             "impulse_break_s5": ["workers.impulse_break_s5.config"],
             "impulse_retest_s5": ["workers.impulse_retest_s5.config"],
             "impulse_momentum_s5": ["workers.impulse_momentum_s5.config"],
             "pullback_s5": ["workers.pullback_s5.config"],
-            "pullback_scalp": ["workers.pullback_scalp.config"],
         }
         for mod_name in module_names.get(worker, []):
             mod = sys.modules.get(mod_name)
@@ -185,38 +156,6 @@ def _tuning_env(worker: str) -> Dict[str, str]:
     base = {"REPLAY_TUNED": "1"}
     # conservative tighten rules
     mapping = {
-        "mirror_spike": {
-            "MIRROR_SPIKE_MAX_SPREAD_PIPS": "1.00",
-            "MIRROR_SPIKE_MIN_ATR_PIPS": "0.30",
-            "MIRROR_SPIKE_THRESHOLD_PIPS": "3.00",
-            "MIRROR_SPIKE_MIN_TICK_RATE": "0.60",
-            "MIRROR_SPIKE_MIN_TICK_COUNT": "30",
-        },
-        "mirror_spike_s5": {
-            "MIRROR_SPIKE_S5_MAX_SPREAD_PIPS": "0.80",
-            "MIRROR_SPIKE_S5_MIN_ATR_PIPS": "0.60",
-            "MIRROR_SPIKE_S5_THRESHOLD_PIPS": "3.00",
-            "MIRROR_SPIKE_S5_MIN_RETRACE_PIPS": "0.60",
-            "MIRROR_SPIKE_S5_SELL_RSI_OVERBOUGHT": "68.0",
-            "MIRROR_SPIKE_S5_RSI_OVERSOLD": "32.0",
-            "MIRROR_SPIKE_S5_COOLDOWN_SEC": "420",
-        },
-        "mirror_spike_tight": {
-            "MIRROR_SPIKE_TIGHT_MAX_SPREAD_PIPS": "0.20",
-            "MIRROR_SPIKE_TIGHT_SPIKE_THRESHOLD_PIPS": "1.35",
-            "MIRROR_SPIKE_TIGHT_CONFIRM_RANGE_PIPS": "0.45",
-            "MIRROR_SPIKE_TIGHT_TREND_SLOPE_MIN_PIPS": "0.22",
-            "MIRROR_SPIKE_TIGHT_COOLDOWN_SEC": "240",
-        },
-        "squeeze_break_s5": {
-            "SQUEEZE_BREAK_S5_MAX_SPREAD_PIPS": "0.55",
-            "SQUEEZE_BREAK_S5_MIN_ATR_PIPS": "0.35",
-            "SQUEEZE_BREAK_S5_BBW_THRESHOLD": "0.20",
-            "SQUEEZE_BREAK_S5_BREAK_BUFFER_PIPS": "0.14",
-            "SQUEEZE_BREAK_S5_RSI_LONG_MAX": "72.0",
-            "SQUEEZE_BREAK_S5_RSI_SHORT_MIN": "28.0",
-            "SQUEEZE_BREAK_S5_COOLDOWN_SEC": "90",
-        },
         "impulse_break_s5": {
             "IMPULSE_BREAK_S5_MAX_SPREAD_PIPS": "0.9",
             "IMPULSE_BREAK_S5_MIN_ATR_PIPS": "1.1",
@@ -232,15 +171,6 @@ def _tuning_env(worker: str) -> Dict[str, str]:
         "pullback_s5": {
             "PULLBACK_S5_MAX_SPREAD_PIPS": "0.9",
             "PULLBACK_S5_MIN_ATR_PIPS": "1.2",
-        },
-        "pullback_scalp": {
-            "PULLBACK_SCALP_MAX_SPREAD_PIPS": "0.90",
-            "PULLBACK_SCALP_MIN_ATR_PIPS": "0.45",
-            "PULLBACK_SCALP_M1_Z_MIN": "0.18",
-            "PULLBACK_SCALP_M1_Z_TRIGGER": "0.05",
-            "PULLBACK_SCALP_M5_Z_SHORT_MAX": "0.35",
-            "PULLBACK_SCALP_M5_Z_LONG_MIN": "-0.35",
-            "PULLBACK_SCALP_COOLDOWN_SEC": "50",
         },
     }
     tuned = mapping.get(worker, {})

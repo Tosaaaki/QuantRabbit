@@ -192,13 +192,6 @@ strategies:
     cooldown_win_sec: 30
     cooldown_loss_sec: 60
     same_dir_reentry_pips: 0.8
-  mirror_spike:
-    return_wait_bias: avoid
-    return_wait_reason: be_post_60_or_hold_skew
-    block_jst_hours: []
-    cooldown_win_sec: 157
-    cooldown_loss_sec: 60
-    same_dir_reentry_pips: 1.8
   unknown:
     return_wait_bias: avoid
     return_wait_reason: be_post_60_or_hold_skew

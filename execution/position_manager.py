@@ -177,16 +177,11 @@ _CANONICAL_STRATEGY_TAGS = {
     "TrendMomentumMicro",
     # Worker-only tags
     "trend_h1",
-    "mirror_spike",
-    "mirror_spike_s5",
-    "mirror_spike_tight",
     "pullback_s5",
-    "pullback_scalp",
     "pullback_runner_s5",
     "impulse_break_s5",
     "impulse_retest_s5",
     "impulse_momentum_s5",
-    "squeeze_break_s5",
     "vwap_magnet_s5",
     "VolSpikeRider",
     "fast_scalp",
@@ -247,16 +242,11 @@ _STRATEGY_POCKET_MAP = {
     "ImpulseRetrace": "scalp",
     "RangeFader": "scalp",
     "PulseBreak": "scalp",
-    "mirror_spike": "scalp",
-    "mirror_spike_s5": "scalp",
-    "mirror_spike_tight": "scalp",
     "pullback_s5": "scalp",
-    "pullback_scalp": "scalp",
     "pullback_runner_s5": "scalp",
     "impulse_break_s5": "scalp",
     "impulse_retest_s5": "scalp",
     "impulse_momentum_s5": "scalp",
-    "squeeze_break_s5": "scalp",
     "vwap_magnet_s5": "scalp",
     "mm_lite": "scalp",
     "VolSpikeRider": "scalp",
@@ -1059,10 +1049,6 @@ class PositionManager:
                 return _normalize_strategy_tag("fast_scalp")
             if cid.startswith("qr-pullback-s5-"):
                 return _normalize_strategy_tag("pullback_s5")
-            if cid.startswith("qr-pullback-"):
-                return _normalize_strategy_tag("pullback_scalp")
-            if cid.startswith("qr-mirror-s5-"):
-                return _normalize_strategy_tag("mirror_spike_s5")
             # qr-<ts>-<pocket>-<tag...>
             m = re.match(r"^qr-\d+-(micro|macro|scalp|event|hybrid)-(.+)$", cid)
             if m:

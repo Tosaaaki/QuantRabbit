@@ -26,16 +26,11 @@ def _classify_from_client_id(client_id: str | None) -> str | None:
     cid = client_id.strip()
     mapping = (
         ("qr-fast-", "fast_scalp"),
-        ("qr-mirror-tight-", "mirror_spike_tight"),
-        ("qr-mirror-s5-", "mirror_spike_s5"),
-        ("qr-mirror-", "mirror_spike"),
         ("qr-impulse-s5-", "impulse_break_s5"),
         ("qr-imp-retest-", "impulse_retest_s5"),
         ("qr-imp-momo-", "impulse_momentum_s5"),
-        ("qr-sqz-s5-", "squeeze_break_s5"),
         ("qr-pullrun-s5-", "pullback_runner_s5"),
         ("qr-pullback-s5-", "pullback_s5"),
-        ("qr-pullback-", "pullback_scalp"),
         ("qr-vwap-s5-", "vwap_magnet_s5"),
     )
     for pref, tag in mapping:

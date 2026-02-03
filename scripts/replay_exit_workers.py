@@ -18,7 +18,6 @@ import asyncio
 import json
 import logging
 import os
-import dataclasses
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -893,8 +892,17 @@ class FastScalpEntryEngine:
 
 
 class ScalpPrecisionEntryEngine:
-    def __init__(self, broker: SimBroker) -> None:
+    def __init__(
+        self,
+        broker: SimBroker,
+        *,
+        live_entry: bool = False,
+        loop: Optional[asyncio.AbstractEventLoop] = None,
+    ) -> None:
         self._broker = broker
+        self._live_entry = bool(live_entry)
+        self._loop = loop
+        self._bypass_common_guard = (sp_config.MODE or "").strip().lower() in sp_config.GUARD_BYPASS_MODES
         raw_allow = os.getenv("SCALP_PRECISION_ALLOWLIST", sp_config.ALLOWLIST_RAW)
         allowlist = {s.strip().lower() for s in (raw_allow or "").split(",") if s.strip()}
         mode = (sp_config.MODE or "").strip().lower()
@@ -920,6 +928,11 @@ class ScalpPrecisionEntryEngine:
             if tick.epoch - self._last_eval_epoch < sp_config.LOOP_INTERVAL_SEC:
                 return
         self._last_eval_epoch = tick.epoch
+        if self._live_entry:
+            if not is_market_open(tick.ts):
+                return
+            if not sp_worker.can_trade(sp_config.POCKET):
+                return
         factors = factor_cache.all_factors()
         fac_m1 = factors.get("M1") or {}
         fac_m5 = factors.get("M5") or {}
@@ -927,6 +940,31 @@ class ScalpPrecisionEntryEngine:
         fac_h4 = factors.get("H4") or {}
         range_ctx = detect_range_mode(fac_m1, fac_h4)
         air = evaluate_air(fac_m1, fac_h4, range_ctx=range_ctx, tag="scalp_precision")
+        if self._live_entry and air.enabled and not air.allow_entry and not self._bypass_common_guard:
+            return
+        if self._live_entry and not self._bypass_common_guard:
+            blocked, _, _, _ = spread_monitor.is_blocked()
+            if blocked:
+                return
+            if sp_config.MAX_OPEN_TRADES > 0 or sp_config.MAX_OPEN_TRADES_GLOBAL > 0:
+                positions = self._broker.get_open_positions().get(sp_config.POCKET) or {}
+                open_trades_all = positions.get("open_trades") or []
+                if sp_config.MAX_OPEN_TRADES_GLOBAL > 0 and len(open_trades_all) >= sp_config.MAX_OPEN_TRADES_GLOBAL:
+                    return
+                open_trades = open_trades_all
+                if sp_config.OPEN_TRADES_SCOPE == "tag":
+                    mode_name = (sp_config.MODE or "").strip().lower()
+                    tag_filter = None
+                    for tag, mode in _TAG_TO_MODE.items():
+                        if mode == mode_name:
+                            tag_filter = tag.lower()
+                            break
+                    if tag_filter:
+                        open_trades = [
+                            tr for tr in open_trades_all if str(tr.get("strategy_tag") or "").lower() == tag_filter
+                        ]
+                if sp_config.MAX_OPEN_TRADES > 0 and len(open_trades) >= sp_config.MAX_OPEN_TRADES:
+                    return
 
         for mode, fn in self._modes.items():
             if sp_config.COOLDOWN_SEC > 0.0:
@@ -949,6 +987,15 @@ class ScalpPrecisionEntryEngine:
             sl_pips = float(signal.get("sl_pips") or 0.0)
             tp_pips = float(signal.get("tp_pips") or 0.0)
             if sl_pips <= 0:
+                continue
+            if self._live_entry:
+                if self._loop is None:
+                    continue
+                order_id = self._loop.run_until_complete(
+                    sp_worker._place_order(signal, fac_m1=fac_m1, fac_h4=fac_h4, range_ctx=range_ctx, now=tick.ts)
+                )
+                if order_id:
+                    self._state[mode]["last_entry"] = tick.epoch
                 continue
             entry_price = tick.ask if direction == "long" else tick.bid
             if direction == "long":
@@ -1486,6 +1533,16 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Replay fast_scalp only (skip other entry/exit workers).",
     )
+    parser.add_argument(
+        "--sp-only",
+        action="store_true",
+        help="Replay scalp_precision only (skip fast_scalp entry/exit).",
+    )
+    parser.add_argument(
+        "--sp-live-entry",
+        action="store_true",
+        help="Use live scalp_precision entry path (market_order + risk/size guards).",
+    )
     parser.add_argument("--disable-macro", action="store_true", help="Disable macro entries/exit.")
     parser.add_argument("--no-main-strategies", action="store_true", help="Disable main strategy entries.")
     parser.add_argument("--slip-base-pips", type=float, default=0.0)
@@ -1535,11 +1592,33 @@ def main() -> None:
         hard_tp = False
     broker.hard_sl = hard_sl
     broker.hard_tp = hard_tp
-    fast_entry = FastScalpEntryEngine(broker)
-    broker.on_close = fast_entry.on_closed
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+
+    fast_entry: Optional[FastScalpEntryEngine] = None
+    if not args.sp_only:
+        fast_entry = FastScalpEntryEngine(broker)
+    sim_account: Optional[SimAccount] = None
+    if args.sp_live_entry and not args.fast_only:
+        sim_account = SimAccount(balance=args.equity, margin_rate=args.margin_rate)
+        _patch_live_deps(broker, sim_account)
+        def _on_close(trade: dict) -> None:
+            if fast_entry is not None:
+                fast_entry.on_closed(trade)
+            pnl_jpy = trade.get("pnl_jpy")
+            if pnl_jpy is not None and sim_account is not None:
+                sim_account.apply_realized(float(pnl_jpy))
+        broker.on_close = _on_close
+    else:
+        if fast_entry is not None:
+            broker.on_close = fast_entry.on_closed
     sp_entry: Optional[ScalpPrecisionEntryEngine] = None
     if not args.fast_only:
-        sp_entry = ScalpPrecisionEntryEngine(broker)
+        sp_entry = ScalpPrecisionEntryEngine(
+            broker,
+            live_entry=args.sp_live_entry,
+            loop=loop if args.sp_live_entry else None,
+        )
     strat_entry = StrategyEntryEngine(
         broker,
         equity=args.equity,
@@ -1555,7 +1634,9 @@ def main() -> None:
         _patch_exit_module(trendma_exit, broker)
         _patch_exit_module(m1_exit, broker)
 
-    fast_runner = ExitRunner("fast_scalp", fast_exit, fast_exit.FastScalpExitWorker(), broker)
+    fast_runner = None
+    if not args.sp_only:
+        fast_runner = ExitRunner("fast_scalp", fast_exit, fast_exit.FastScalpExitWorker(), broker)
     sp_runner = None
     bbrsi_runner = None
     trend_runner = None
@@ -1566,9 +1647,6 @@ def main() -> None:
         if not args.disable_macro:
             trend_runner = ExitRunner("macro_trendma", trendma_exit, trendma_exit.TrendMAExitWorker(), broker)
         m1_runner = M1ScalperExitSim(broker)
-
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
 
     # Pre-feed H4 candles (system_backtest-style) to align macro context.
     prefeed_h4: List[dict] = []
@@ -1613,14 +1691,16 @@ def main() -> None:
                 strat_entry.on_candle_close(tick)
 
         broker.check_sl_tp(tick)
-        fast_entry.on_tick(tick)
+        if fast_entry is not None:
+            fast_entry.on_tick(tick)
         if sp_entry is not None:
             sp_entry.on_tick(tick)
         broker.check_sl_tp(tick)
 
         now_dt = tick.ts
         if not args.no_exit_worker:
-            loop.run_until_complete(fast_runner.step(now_dt))
+            if fast_runner is not None:
+                loop.run_until_complete(fast_runner.step(now_dt))
             if sp_runner is not None:
                 loop.run_until_complete(sp_runner.step(now_dt))
             if bbrsi_runner is not None:
@@ -1674,6 +1754,7 @@ def main() -> None:
             "latency_ms": args.latency_ms,
             "scalp_precision_min_entry_conf": sp_config.MIN_ENTRY_CONF,
             "scalp_precision_allowlist": os.getenv("SCALP_PRECISION_ALLOWLIST", sp_config.ALLOWLIST_RAW),
+            "scalp_precision_live_entry": bool(args.sp_live_entry),
             "bbrsi_min_entry_conf": os.getenv("BBRSI_MIN_ENTRY_CONF"),
             "exclude_end_of_replay": args.exclude_end_of_replay,
         },

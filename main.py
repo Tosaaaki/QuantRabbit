@@ -758,18 +758,8 @@ WORKER_SERVICES = {
     "pullback_s5_exit": "quant-pullback-s5-exit.service",
     "pullback_runner_s5": "quant-pullback-runner-s5.service",
     "pullback_runner_s5_exit": "quant-pullback-runner-s5-exit.service",
-    "pullback_scalp": "quant-pullback-scalp.service",
-    "pullback_scalp_exit": "quant-pullback-scalp-exit.service",
-    "squeeze_break_s5": "quant-squeeze-break-s5.service",
-    "squeeze_break_s5_exit": "quant-squeeze-break-s5-exit.service",
     "vwap_magnet_s5": "quant-vwap-magnet-s5.service",
     "vwap_magnet_s5_exit": "quant-vwap-magnet-s5-exit.service",
-    "mirror_spike_s5": "quant-mirror-spike-s5.service",
-    "mirror_spike_s5_exit": "quant-mirror-spike-s5-exit.service",
-    "mirror_spike_tight": "quant-mirror-spike-tight.service",
-    "mirror_spike_tight_exit": "quant-mirror-spike-tight-exit.service",
-    "mirror_spike": "quant-mirror-spike.service",
-    "mirror_spike_exit": "quant-mirror-spike-exit.service",
     "scalp_multi": "quant-scalp-multi.service",
     "scalp_multi_exit": "quant-scalp-multi-exit.service",
     "m1_scalper": "quant-m1scalper.service",
@@ -1031,7 +1021,7 @@ def _apply_tech_overlays(signal: dict, fac_m1: dict, fac_m5: Optional[dict] = No
             mult_conf -= 0.01
 
     # クラスタ/VWAP振り分け: 近接なら逆張り系を優遇、遠いならブレイク系を優遇（拒否せずスケールのみ）
-    mean_rev_strats = {"BB_RSI", "RangeFader", "pullback_s5", "pullback_scalp", "pullback_runner_s5"}
+    mean_rev_strats = {"BB_RSI", "RangeFader", "pullback_s5", "pullback_runner_s5"}
     breakout_strats = {"TrendMA", "LondonMomentum", "SqueezeBreak", "ImpulseBreak", "impulse_break_s5"}
     strat = str(sig.get("strategy") or sig.get("tag") or "").strip()
     cluster_gap = cluster_high if action == "OPEN_LONG" else cluster_low
@@ -1815,15 +1805,11 @@ def _select_worker_targets(
 
     # Range/低ボラ
     if low_vol or range_like:
-        bump("pullback_scalp", 0.9, "range_low_vol")
         bump("vol_squeeze", 0.45, "range_compression")
         bump("pullback_s5", 0.6, "range_s5")
         bump("pullback_runner_s5", 0.55, "range_runner")
         bump("vwap_magnet_s5", 0.55, "vwap_range")
-        if compression:
-            bump("squeeze_break_s5", 0.5, "compression_break")
     elif soft_range:
-        bump("pullback_scalp", 0.78, "soft_range")
         bump("pullback_s5", 0.65, "soft_range")
         bump("vwap_magnet_s5", 0.6, "soft_range")
         bump("vol_squeeze", 0.45, "soft_range")
@@ -1834,9 +1820,6 @@ def _select_worker_targets(
         bump("impulse_momentum_s5", 0.4, "impulse_momentum")
         bump("impulse_retest_s5", 0.35, "impulse_retest")
         bump("stop_run_reversal", 0.35, "stop_run")
-        bump("mirror_spike", 0.4, "spike_reversal")
-        bump("mirror_spike_s5", 0.35, "spike_reversal_s5")
-        bump("mirror_spike_tight", 0.35, "spike_reversal_tight")
 
     # Session open bias
     if now.minute < 20:
@@ -1852,12 +1835,10 @@ def _select_worker_targets(
 
     # Diversity nudge: 低〜中ボラではレンジ系が一つも選ばれていない場合に補充する
     range_workers = {
-        "pullback_scalp",
         "pullback_s5",
         "vwap_magnet_s5",
         "vol_squeeze",
         "pullback_runner_s5",
-        "squeeze_break_s5",
     }
     if (low_vol or range_like or soft_range) and not (selected & range_workers):
         candidates = [(name, scores[name]) for name in range_workers if name in scores]
@@ -1963,12 +1944,7 @@ ALLOWED_RANGE_STRATEGIES = {
     # S5/スカルプ系（レンジでも評価を通す）
     "vwap_magnet_s5",
     "pullback_runner_s5",
-    "squeeze_break_s5",
-    "mirror_spike",
-    "mirror_spike_tight",
-    "mirror_spike_s5",
     "pullback_s5",
-    "pullback_scalp",
     "impulse_break_s5",
     "impulse_momentum_s5",
     "impulse_retest_s5",
@@ -3721,9 +3697,6 @@ async def logic_loop(
         "MicroVWAPRevert",
         "RangeFader",
         "vwap_magnet_s5",
-        "mirror_spike",
-        "mirror_spike_tight",
-        "mirror_spike_s5",
     }
     MR_OVERLAY_TAGS = {"VolCompressionBreak", "MomentumPulse"}
 

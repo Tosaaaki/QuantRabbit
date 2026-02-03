@@ -615,9 +615,10 @@ def _signal_precision_lowvol(
         size_boost += 0.05
     if touch_ratio >= 0.5:
         size_boost += 0.06
-    if rev_strength >= 0.7:
+    if rev_strength >= 0.75:
         size_boost += 0.06
-    size_mult = max(0.85, min(1.25, size_mult + size_boost))
+    size_cap = 1.35 if rev_strength >= 0.75 else 1.25
+    size_mult = max(0.85, min(size_cap, size_mult + size_boost))
 
     return {
         "action": "OPEN_LONG" if side == "long" else "OPEN_SHORT",

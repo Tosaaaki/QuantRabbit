@@ -1206,14 +1206,6 @@ def _strategy_tag_from_client_id(client_order_id: Optional[str]) -> Optional[str
         return "fast_scalp"
     if cid.startswith("qr-pullback-s5-"):
         return "pullback_s5"
-    if cid.startswith("qr-pullback-"):
-        return "pullback_scalp"
-    if cid.startswith("qr-mirror-tight-"):
-        return "mirror_spike_tight"
-    if cid.startswith("qr-mirror-s5-"):
-        return "mirror_spike_s5"
-    if cid.startswith("qr-mirror-"):
-        return "mirror_spike"
     match = re.match(
         r"^qr-(\d+)-(micro|macro|scalp|event|hybrid)-([A-Za-z0-9]+)(?:-[A-Za-z0-9]+)?$",
         cid,
