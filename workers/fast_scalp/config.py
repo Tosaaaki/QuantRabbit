@@ -6,10 +6,10 @@ from __future__ import annotations
 
 import os
 
-from execution.stop_loss_policy import stop_loss_disabled
+from execution.stop_loss_policy import stop_loss_disabled_for_pocket
 
 PIP_VALUE = 0.01
-STOP_LOSS_DISABLED = stop_loss_disabled()
+STOP_LOSS_DISABLED = stop_loss_disabled_for_pocket("scalp_fast")
 
 
 def _bool_env(key: str, default: bool) -> bool:

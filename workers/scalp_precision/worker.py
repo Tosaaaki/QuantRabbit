@@ -1304,6 +1304,8 @@ def _build_entry_thesis(signal: Dict[str, object], fac_m1: Dict[str, object], ra
         "strategy_tag": signal.get("tag"),
         "confidence": signal.get("confidence", 0),
         "reason": signal.get("reason"),
+        "sl_pips": signal.get("sl_pips"),
+        "tp_pips": signal.get("tp_pips"),
         "range_active": bool(getattr(range_ctx, "active", False)),
         "range_score": float(getattr(range_ctx, "score", 0.0) or 0.0),
         "range_reason": getattr(range_ctx, "reason", None),

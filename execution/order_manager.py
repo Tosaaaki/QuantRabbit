@@ -26,7 +26,7 @@ from oandapyV20.endpoints.orders import OrderCancel, OrderCreate
 from oandapyV20.endpoints.trades import TradeCRCDO, TradeClose, TradeDetails
 
 from execution.order_ids import build_client_order_id
-from execution.stop_loss_policy import stop_loss_disabled, trailing_sl_allowed
+from execution.stop_loss_policy import stop_loss_disabled_for_pocket, trailing_sl_allowed
 from execution.section_axis import attach_section_axis
 
 from analysis import policy_bus
@@ -118,6 +118,27 @@ def _coerce_bool(value: object, default: bool = False) -> bool:
     if text in {"0", "false", "no", "off"}:
         return False
     return default
+
+
+def _entry_execution_deadline_sec(pocket: Optional[str]) -> float:
+    """Return entry preflight deadline seconds (0 = disabled).
+
+    NOTE: This is opt-in to avoid changing existing trading behavior.
+    """
+
+    p = (pocket or "").strip().lower()
+    suffix = p.upper() if p else ""
+    raw = None
+    if suffix:
+        raw = os.getenv(f"ENTRY_EXECUTION_DEADLINE_SEC_{suffix}")
+    if raw is None:
+        raw = os.getenv("ENTRY_EXECUTION_DEADLINE_SEC")
+    if raw is None:
+        return 0.0
+    try:
+        return max(0.0, float(raw))
+    except Exception:
+        return 0.0
 
 
 # Apply policy overlay gates even when signal gate is disabled.
@@ -417,10 +438,52 @@ _DEFAULT_ENTRY_THESIS_TFS: dict[str, tuple[str, str]] = {
     "scalp": ("M5", "M1"),
     "scalp_fast": ("M5", "M1"),
 }
-# Raise scalp floor to avoid tiny entries; can override via env ORDER_MIN_UNITS_SCALP
-# If true, do not attach stopLossOnFill (TP is still sent).
-STOP_LOSS_DISABLED = stop_loss_disabled()
+# Entry stop-loss is controlled by execution.stop_loss_policy (global + per-pocket overrides).
 TRAILING_SL_ALLOWED = trailing_sl_allowed()
+
+_ENTRY_HARD_STOP_PIPS_DEFAULT = max(0.0, _env_float("ORDER_ENTRY_HARD_STOP_PIPS", 0.0))
+
+
+def _strategy_env_key(strategy_tag: Optional[str]) -> Optional[str]:
+    raw = str(strategy_tag or "").strip()
+    if not raw:
+        return None
+    key = re.sub(r"[^0-9A-Za-z]+", "_", raw).upper().strip("_")
+    return key or None
+
+
+def _entry_hard_stop_pips(pocket: Optional[str], *, strategy_tag: Optional[str] = None) -> float:
+    """Return the entry hard SL distance in pips (0 = disabled)."""
+
+    strategy_key = _strategy_env_key(strategy_tag)
+    if strategy_key:
+        raw = os.getenv(f"ORDER_ENTRY_HARD_STOP_PIPS_STRATEGY_{strategy_key}")
+        if raw is not None:
+            try:
+                return max(0.0, float(raw))
+            except Exception:
+                pass
+    if not pocket:
+        return _ENTRY_HARD_STOP_PIPS_DEFAULT
+    pocket_key = str(pocket).strip().upper()
+    if not pocket_key:
+        return _ENTRY_HARD_STOP_PIPS_DEFAULT
+    return max(
+        0.0,
+        _env_float(
+            f"ORDER_ENTRY_HARD_STOP_PIPS_{pocket_key}",
+            _ENTRY_HARD_STOP_PIPS_DEFAULT,
+        ),
+    )
+
+
+def _sl_price_from_pips(entry_price: float, units: int, sl_pips: float) -> Optional[float]:
+    if entry_price <= 0 or units == 0 or sl_pips <= 0:
+        return None
+    offset = round(sl_pips * 0.01, 3)
+    if units > 0:
+        return round(entry_price - offset, 3)
+    return round(entry_price + offset, 3)
 
 
 def min_units_for_pocket(pocket: Optional[str]) -> int:
@@ -637,6 +700,10 @@ _EXIT_ALLOW_NEGATIVE_BY_WORKER = os.getenv("EXIT_ALLOW_NEGATIVE_BY_WORKER", "1")
     "true",
     "yes",
 }
+_ORDER_ALLOW_SL_ON_FILL_WITH_EXIT_NO_NEGATIVE = _env_bool(
+    "ORDER_ALLOW_STOP_LOSS_WITH_EXIT_NO_NEGATIVE_CLOSE",
+    False,
+)
 _EXIT_ALLOW_NEGATIVE_REASONS = {
     token.strip().lower()
     for token in os.getenv(
@@ -675,6 +742,28 @@ _EXIT_EMERGENCY_ALLOW_NEGATIVE = os.getenv("EXIT_EMERGENCY_ALLOW_NEGATIVE", "1")
     "false",
     "no",
 }
+
+
+def _allow_stop_loss_on_fill(pocket: Optional[str]) -> bool:
+    """Return whether broker stopLossOnFill can be attached for entries.
+
+    By default, EXIT_NO_NEGATIVE_CLOSE=1 disables stopLossOnFill to preserve
+    profit-only exit behavior. This can be overridden globally or per-pocket
+    for hard-stop rollouts.
+    """
+
+    if not _EXIT_NO_NEGATIVE_CLOSE:
+        return True
+    if _ORDER_ALLOW_SL_ON_FILL_WITH_EXIT_NO_NEGATIVE:
+        return True
+    if pocket:
+        pocket_key = str(pocket).strip().upper()
+        if pocket_key and _env_bool(
+            f"ORDER_ALLOW_STOP_LOSS_WITH_EXIT_NO_NEGATIVE_CLOSE_{pocket_key}",
+            False,
+        ):
+            return True
+    return False
 _PROFIT_GUARD_BYPASS_RANGE = os.getenv("PROFIT_GUARD_BYPASS_RANGE", "1").strip().lower() not in {
     "",
     "0",
@@ -1503,6 +1592,37 @@ def _apply_directional_cap(
 
 def _fetch_quote(instrument: str) -> dict[str, float] | None:
     """Fetch a single pricing snapshot to derive bid/ask/spread."""
+    # Prefer tick_window (shared disk cache) to avoid per-order REST calls.
+    if tick_window is not None:
+        try:
+            max_age = _env_float("ORDER_TICK_QUOTE_MAX_AGE_SEC", 3.0)
+            now = time.time()
+            ticks = tick_window.recent_ticks(seconds=max(0.5, max_age), limit=1)
+            if ticks:
+                tick = ticks[-1]
+                epoch = _as_float(tick.get("epoch"))
+                bid = _as_float(tick.get("bid"))
+                ask = _as_float(tick.get("ask"))
+                mid = _as_float(tick.get("mid"))
+                if bid is not None and ask is not None:
+                    if epoch is not None and max_age > 0 and abs(now - float(epoch)) > max_age:
+                        # Stale tick (stream stalled) – fall back to REST snapshot.
+                        pass
+                    else:
+                        spread_pips = (ask - bid) / 0.01
+                        ts_iso = datetime.fromtimestamp(
+                            float(epoch) if epoch is not None else now, tz=timezone.utc
+                        ).isoformat()
+                        return {
+                            "bid": bid,
+                            "ask": ask,
+                            "mid": mid if mid is not None else (bid + ask) / 2.0,
+                            "spread_pips": spread_pips,
+                            "ts": ts_iso,
+                        }
+        except Exception:
+            # tick_window is best-effort; ignore and fall back to REST.
+            pass
     try:
         base = "https://api-fxpractice.oanda.com" if PRACTICE_FLAG else "https://api-fxtrade.oanda.com"
         url = f"{base}/v3/accounts/{ACCOUNT}/pricing"
@@ -3640,6 +3760,7 @@ async def market_order(
     units : +10000 = buy 0.1 lot, ‑10000 = sell 0.1 lot
     returns order ticket id（決済のみの fill でも tradeID を返却）
     """
+    sl_disabled = stop_loss_disabled_for_pocket(pocket)
     # client_order_id は必須。欠損したまま送れば OANDA 側で空白になり、追跡不能となる。
     if not client_order_id:
         _console_order_log(
@@ -3684,6 +3805,8 @@ async def market_order(
     virtual_sl_price: Optional[float] = None
     virtual_tp_price: Optional[float] = None
     side_label = "buy" if units > 0 else "sell"
+    order_t0 = time.monotonic()
+    entry_deadline_sec = _entry_execution_deadline_sec(pocket) if not reduce_only else 0.0
 
     def _merge_virtual(payload: Optional[dict] = None) -> dict:
         base: dict = {}
@@ -4647,7 +4770,7 @@ async def market_order(
     except Exception:
         pass
 
-    if STOP_LOSS_DISABLED:
+    if sl_disabled:
         sl_price = None
 
     if (
@@ -4778,7 +4901,7 @@ async def market_order(
         and (pocket or "").lower() in _DYNAMIC_SL_POCKETS
         and not reduce_only
         and entry_price_meta is not None
-        and not STOP_LOSS_DISABLED
+        and not sl_disabled
     ):
         loss_guard = None
         sl_hint = None
@@ -5108,8 +5231,38 @@ async def market_order(
                 units,
             )
 
+    if not reduce_only and not sl_disabled and estimated_entry is not None:
+        hard_stop_pips = _entry_hard_stop_pips(pocket, strategy_tag=strategy_tag)
+        if hard_stop_pips > 0.0:
+            hard_sl_price = _sl_price_from_pips(estimated_entry, units, hard_stop_pips)
+            if hard_sl_price is not None:
+                current_gap_pips: float | None = None
+                wrong_side = False
+                if sl_price is not None:
+                    wrong_side = (units > 0 and sl_price >= estimated_entry) or (
+                        units < 0 and sl_price <= estimated_entry
+                    )
+                    try:
+                        current_gap_pips = abs(estimated_entry - sl_price) / 0.01
+                    except Exception:
+                        current_gap_pips = None
+                if (
+                    sl_price is None
+                    or wrong_side
+                    or current_gap_pips is None
+                    or current_gap_pips < hard_stop_pips - 1e-6
+                ):
+                    logging.info(
+                        "[ORDER] hard SL on fill applied pocket=%s pips=%.1f sl=%s client=%s",
+                        pocket,
+                        hard_stop_pips,
+                        f"{hard_sl_price:.3f}",
+                        client_order_id or "-",
+                    )
+                    sl_price = hard_sl_price
+
     if not reduce_only and estimated_entry is not None:
-        norm_sl = None if STOP_LOSS_DISABLED else sl_price
+        norm_sl = None if sl_disabled else sl_price
         norm_tp = tp_price
         norm_sl, norm_tp, normalized = _normalize_protections(
             estimated_entry,
@@ -5117,7 +5270,7 @@ async def market_order(
             norm_tp,
             units > 0,
         )
-        sl_price = None if STOP_LOSS_DISABLED else norm_sl
+        sl_price = None if sl_disabled else norm_sl
         tp_price = norm_tp
         if normalized:
             logging.debug(
@@ -5142,6 +5295,48 @@ async def market_order(
         virtual_sl_price = sl_price
     if tp_price is not None:
         virtual_tp_price = tp_price
+
+    # Real-time freshness: if preflight takes too long, skip to avoid stale fills.
+    if not reduce_only and entry_deadline_sec > 0:
+        elapsed = time.monotonic() - order_t0
+        if elapsed > entry_deadline_sec:
+            note = f"stale_deadline elapsed={elapsed:.2f}s cap={entry_deadline_sec:.2f}s"
+            _console_order_log(
+                "OPEN_SKIP",
+                pocket=pocket,
+                strategy_tag=strategy_tag,
+                side=side_label,
+                units=units,
+                sl_price=sl_price,
+                tp_price=tp_price,
+                client_order_id=client_order_id,
+                note=note,
+            )
+            log_order(
+                pocket=pocket,
+                instrument=instrument,
+                side=side_label,
+                units=units,
+                sl_price=sl_price,
+                tp_price=tp_price,
+                client_order_id=client_order_id,
+                status="stale_deadline_skip",
+                attempt=0,
+                stage_index=stage_index,
+                request_payload={
+                    "note": "stale_deadline_skip",
+                    "elapsed_sec": round(elapsed, 3),
+                    "deadline_sec": float(entry_deadline_sec),
+                    "entry_thesis": entry_thesis,
+                    "meta": meta,
+                },
+            )
+            log_metric(
+                "order_stale_skip",
+                1.0,
+                tags={"pocket": pocket, "strategy": strategy_tag or "unknown"},
+            )
+            return None
 
     # Directional exposure cap: scale down instead of rejecting
     if not reduce_only:
@@ -5262,7 +5457,7 @@ async def market_order(
     if client_order_id:
         order_data["order"]["clientExtensions"]["id"] = client_order_id
         order_data["order"]["tradeClientExtensions"]["id"] = client_order_id
-    if (not STOP_LOSS_DISABLED) and sl_price is not None and not _EXIT_NO_NEGATIVE_CLOSE:
+    if (not sl_disabled) and (not reduce_only) and sl_price is not None and _allow_stop_loss_on_fill(pocket):
         order_data["order"]["stopLossOnFill"] = {"price": f"{sl_price:.3f}"}
     if tp_price is not None:
         order_data["order"]["takeProfitOnFill"] = {"price": f"{tp_price:.3f}"}
@@ -5380,10 +5575,10 @@ async def market_order(
                         sl_gap_pips=thesis_sl_pips,
                         tp_gap_pips=thesis_tp_pips,
                     )
-                    if STOP_LOSS_DISABLED:
+                    if sl_disabled:
                         fallback_sl = None
                     if fallback_sl is not None or fallback_tp is not None:
-                        if fallback_sl is not None and not _EXIT_NO_NEGATIVE_CLOSE:
+                        if fallback_sl is not None and (not reduce_only) and _allow_stop_loss_on_fill(pocket):
                             order_data["order"]["stopLossOnFill"] = {
                                 "price": f"{fallback_sl:.3f}"
                             }
@@ -5472,7 +5667,7 @@ async def market_order(
                     ticket_id=trade_id,
                     note=f"attempt={attempt+1}",
                 )
-                target_sl = None if STOP_LOSS_DISABLED else sl_price
+                target_sl = None if sl_disabled else sl_price
                 _maybe_update_protections(
                     trade_id,
                     target_sl,
@@ -5624,11 +5819,43 @@ async def limit_order(
 ) -> tuple[Optional[str], Optional[str]]:
     """Place a passive limit order. Returns (trade_id, order_id)."""
 
+    sl_disabled = stop_loss_disabled_for_pocket(pocket)
+    if sl_disabled:
+        sl_price = None
+
     if units == 0:
         return None, None
 
     if _soft_tp_mode(entry_thesis):
         tp_price = None
+
+    if not reduce_only and not sl_disabled and price > 0:
+        hard_stop_pips = _entry_hard_stop_pips(pocket, strategy_tag=strategy_tag)
+        if hard_stop_pips > 0.0:
+            hard_sl_price = _sl_price_from_pips(price, units, hard_stop_pips)
+            if hard_sl_price is not None:
+                current_gap_pips: float | None = None
+                wrong_side = False
+                if sl_price is not None:
+                    wrong_side = (units > 0 and sl_price >= price) or (units < 0 and sl_price <= price)
+                    try:
+                        current_gap_pips = abs(price - sl_price) / 0.01
+                    except Exception:
+                        current_gap_pips = None
+                if (
+                    sl_price is None
+                    or wrong_side
+                    or current_gap_pips is None
+                    or current_gap_pips < hard_stop_pips - 1e-6
+                ):
+                    logging.info(
+                        "[ORDER] hard SL on fill applied (limit) pocket=%s pips=%.1f sl=%s client=%s",
+                        pocket,
+                        hard_stop_pips,
+                        f"{hard_sl_price:.3f}",
+                        client_order_id or "-",
+                    )
+                    sl_price = hard_sl_price
 
     strategy_tag = _strategy_tag_from_thesis(entry_thesis)
 
@@ -6064,7 +6291,7 @@ async def limit_order(
     if client_order_id:
         payload["order"]["clientExtensions"]["id"] = client_order_id
         payload["order"]["tradeClientExtensions"]["id"] = client_order_id
-    if (not STOP_LOSS_DISABLED) and sl_price is not None and not _EXIT_NO_NEGATIVE_CLOSE:
+    if (not sl_disabled) and (not reduce_only) and sl_price is not None and _allow_stop_loss_on_fill(pocket):
         payload["order"]["stopLossOnFill"] = {"price": f"{sl_price:.3f}"}
     if tp_price is not None:
         payload["order"]["takeProfitOnFill"] = {"price": f"{tp_price:.3f}"}

@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Optional, Sequence, Set
@@ -186,6 +187,13 @@ def _float_env(key: str, default: float) -> float:
         return default
 
 
+def _bool_env(key: str, default: bool) -> bool:
+    raw = os.getenv(key)
+    if raw is None:
+        return default
+    return raw.strip().lower() in {"1", "true", "yes"}
+
+
 def _parse_time(value: Optional[str]) -> Optional[datetime]:
     if not value:
         return None
@@ -291,9 +299,29 @@ class RangeFaderExitWorker:
             _float_env("RANGEFADER_EXIT_RANGE_MAX_HOLD_SEC", 600.0),
         )
 
+        self.loss_cut_enabled = _bool_env("RANGEFADER_EXIT_LOSS_CUT_ENABLED", False)
+        self.loss_cut_require_sl = _bool_env("RANGEFADER_EXIT_LOSS_CUT_REQUIRE_SL", True)
+        self.loss_cut_soft_pips = max(0.0, _float_env("RANGEFADER_EXIT_LOSS_CUT_SOFT_PIPS", 12.0))
+        self.loss_cut_hard_pips = max(
+            self.loss_cut_soft_pips,
+            _float_env("RANGEFADER_EXIT_LOSS_CUT_HARD_PIPS", 30.0),
+        )
+        self.loss_cut_max_hold_sec = max(0.0, _float_env("RANGEFADER_EXIT_LOSS_CUT_MAX_HOLD_SEC", 1200.0))
+        self.loss_cut_cooldown_sec = max(0.0, _float_env("RANGEFADER_EXIT_LOSS_CUT_COOLDOWN_SEC", 8.0))
+        self.loss_cut_reason_soft = (
+            os.getenv("RANGEFADER_EXIT_LOSS_CUT_REASON_SOFT", "m1_structure_break").strip()
+            or "m1_structure_break"
+        )
+        self.loss_cut_reason_hard = (
+            os.getenv("RANGEFADER_EXIT_LOSS_CUT_REASON_HARD", "max_adverse").strip() or "max_adverse"
+        )
+        self.loss_cut_reason_time = (
+            os.getenv("RANGEFADER_EXIT_LOSS_CUT_REASON_TIME", "time_stop").strip() or "time_stop"
+        )
 
         self._pos_manager = PositionManager()
         self._states: dict[str, _TradeState] = {}
+        self._loss_cut_last_ts: dict[str, float] = {}
 
     def _context(self) -> tuple[Optional[float], bool]:
         fac_m1 = all_factors().get("M1") or {}
@@ -304,6 +332,23 @@ class RangeFaderExitWorker:
         except Exception:
             range_active = False
         return _latest_mid(), range_active
+
+    def _trade_has_stop_loss(self, trade: dict) -> bool:
+        sl = trade.get("stop_loss")
+        if isinstance(sl, dict):
+            price = sl.get("price")
+            try:
+                return float(price) > 0.0
+            except (TypeError, ValueError):
+                return False
+        return False
+
+    def _loss_cut_eligible(self, trade: dict) -> bool:
+        if not self.loss_cut_enabled:
+            return False
+        if not self.loss_cut_require_sl:
+            return True
+        return self._trade_has_stop_loss(trade)
 
     async def _close(self, trade_id: str, units: int, reason: str, pnl: float, client_order_id: Optional[str], allow_negative: bool = False) -> None:
         if _BB_EXIT_ENABLED:
@@ -343,6 +388,8 @@ class RangeFaderExitWorker:
 
         side = "long" if units > 0 else "short"
         pnl = mark_pnl_pips(entry, units, mid=mid)
+        if pnl is None:
+            return
         opened_at = _parse_time(trade.get("open_time"))
         hold_sec = (now - opened_at).total_seconds() if opened_at else 0.0
 
@@ -392,11 +439,32 @@ class RangeFaderExitWorker:
                 log_tags={"trade": trade_id},
             )
             if reentry.action == "hold":
-                return
+                if not self._loss_cut_eligible(trade):
+                    return
             if reentry.action == "exit_reentry" and not reentry.shadow:
                 await self._close(trade_id, -units, "reentry_reset", pnl, client_id)
                 self._states.pop(trade_id, None)
                 return
+
+            if not self._loss_cut_eligible(trade):
+                return
+            now_mono = time.monotonic()
+            last = self._loss_cut_last_ts.get(trade_id, 0.0)
+            if self.loss_cut_cooldown_sec > 0 and (now_mono - last) < self.loss_cut_cooldown_sec:
+                return
+
+            adverse_pips = abs(float(pnl))
+            reason = None
+            if self.loss_cut_max_hold_sec > 0 and hold_sec >= self.loss_cut_max_hold_sec:
+                reason = self.loss_cut_reason_time
+            elif self.loss_cut_hard_pips > 0 and adverse_pips >= self.loss_cut_hard_pips:
+                reason = self.loss_cut_reason_hard
+            elif self.loss_cut_soft_pips > 0 and adverse_pips >= self.loss_cut_soft_pips:
+                reason = self.loss_cut_reason_soft
+            if not reason:
+                return
+            self._loss_cut_last_ts[trade_id] = now_mono
+            await self._close(trade_id, -units, reason, pnl, client_id, allow_negative=True)
             return
 
         lock_buffer = self.range_lock_buffer if range_active else self.lock_buffer
@@ -452,6 +520,9 @@ class RangeFaderExitWorker:
                 for tid in list(self._states.keys()):
                     if tid not in active_ids:
                         self._states.pop(tid, None)
+                for tid in list(self._loss_cut_last_ts.keys()):
+                    if tid not in active_ids:
+                        self._loss_cut_last_ts.pop(tid, None)
                 if not trades:
                     continue
 
@@ -597,5 +668,4 @@ def _exit_candle_reversal(side):
     return None
 if __name__ == "__main__":
     asyncio.run(scalp_precision_exit_worker())
-
 

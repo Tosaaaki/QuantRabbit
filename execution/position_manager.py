@@ -2200,6 +2200,25 @@ class PositionManager:
                 "unrealized_pl_pips": unrealized_pl_pips,
                 "open_time": open_time_iso or open_time_raw,
             }
+            tp_order = tr.get("takeProfitOrder") or {}
+            if isinstance(tp_order, dict):
+                tp_price_raw = tp_order.get("price")
+                try:
+                    tp_price = float(tp_price_raw) if tp_price_raw is not None else None
+                except (TypeError, ValueError):
+                    tp_price = None
+                if tp_price is not None and tp_price > 0:
+                    trade_entry["take_profit"] = {"price": tp_price}
+
+            sl_order = tr.get("stopLossOrder") or {}
+            if isinstance(sl_order, dict):
+                sl_price_raw = sl_order.get("price")
+                try:
+                    sl_price = float(sl_price_raw) if sl_price_raw is not None else None
+                except (TypeError, ValueError):
+                    sl_price = None
+                if sl_price is not None and sl_price > 0:
+                    trade_entry["stop_loss"] = {"price": sl_price}
             # Fallback: decode clientExtensions.comment to recover entry meta for EXIT判定
             thesis_from_comment = None
             try:

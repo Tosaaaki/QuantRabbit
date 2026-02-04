@@ -23,6 +23,7 @@ defaults:
       - reentry_reset
       - max_hold
       - max_adverse
+      - lock_floor
       - time_stop
       - timeout
       - mtf_reversal
