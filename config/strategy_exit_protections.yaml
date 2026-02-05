@@ -337,6 +337,8 @@ strategies:
         - tech_return_fail
 
   fast_scalp:
+    min_profit_ratio: 0.80
+    min_profit_ratio_min_tp_pips: 0.6
     be_profile: {trigger_pips: 1.2, lock_ratio: 0.40, min_lock_pips: 0.45, cooldown_sec: 12}
     tp_move: {trigger_pips: 0.9, buffer_pips: 0.6}
     pro_stop: {soft_pips: 1.2, hard_pips: 2.3, min_hold_sec: 15, max_hold_sec: 120, soft_atr_mult: 0.5, hard_atr_mult: 0.9}
