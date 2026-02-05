@@ -15,6 +15,7 @@ from analysis.range_model import compute_range_snapshot
 from execution.order_manager import market_order
 from execution.position_manager import PositionManager
 from execution.risk_guard import allowed_lot, can_trade, clamp_sl_tp
+from execution.stage_tracker import StageTracker
 from indicators.factor_cache import all_factors, get_candles_snapshot
 from market_data import tick_window, spread_monitor
 from utils.market_hours import is_market_open
@@ -22,6 +23,7 @@ from utils.oanda_account import get_account_snapshot, get_position_summary
 from workers.common.dyn_cap import compute_cap
 from workers.common.air_state import evaluate_air, adjust_signal
 from workers.common.dyn_size import compute_units
+from workers.common import perf_guard
 
 from . import config
 from .common import (
@@ -168,6 +170,37 @@ def _entry_drought_ok(now_utc: datetime.datetime) -> bool:
         delta_sec = (now_ts - _DROUGHT_LAST_ENTRY).total_seconds()
         _DROUGHT_LAST_OK = delta_sec >= max(0.0, config.DROUGHT_MINUTES) * 60.0
     return bool(_DROUGHT_LAST_OK)
+
+
+def _entry_guard_ok(snapshot) -> bool:
+    if not config.ENTRY_GUARD_ENABLED or snapshot is None:
+        return True
+    try:
+        free_ratio = snapshot.free_margin_ratio
+    except Exception:
+        free_ratio = None
+    if free_ratio is not None and free_ratio < config.ENTRY_GUARD_MIN_FREE_MARGIN_RATIO:
+        return False
+    try:
+        nav = float(snapshot.nav or 0.0)
+        margin_used = float(snapshot.margin_used or 0.0)
+    except Exception:
+        nav = 0.0
+        margin_used = 0.0
+    if nav > 0.0 and margin_used > 0.0:
+        usage = margin_used / nav
+        if usage >= config.ENTRY_GUARD_MAX_MARGIN_USAGE:
+            return False
+    return True
+
+
+def _signal_direction(signal: Dict[str, object]) -> Optional[str]:
+    action = str(signal.get("action") or "").upper()
+    if action == "OPEN_LONG":
+        return "long"
+    if action == "OPEN_SHORT":
+        return "short"
+    return None
 
 
 # --- strategy params (defaults follow requested spec) ---
@@ -1444,13 +1477,18 @@ async def scalp_precision_worker() -> None:
 
     LOG.info("%s worker start (interval=%.1fs mode=%s)", config.LOG_PREFIX, config.LOOP_INTERVAL_SEC, config.MODE)
     pos_manager = PositionManager()
+    stage_tracker = StageTracker()
     last_entry_ts = 0.0
+    last_perf_sync = 0.0
+    last_stage_sync = 0.0
+    last_guard_log = 0.0
     bypass_common_guard = config.MODE in config.GUARD_BYPASS_MODES
 
     try:
         while True:
             await asyncio.sleep(config.LOOP_INTERVAL_SEC)
             now = datetime.datetime.utcnow()
+            now_mono = time.monotonic()
             if not is_market_open(now):
                 continue
             if not can_trade(config.POCKET):
@@ -1463,6 +1501,14 @@ async def scalp_precision_worker() -> None:
                 continue
             if config.MODE == "drought_revert" and not _entry_drought_ok(now):
                 continue
+            snapshot = None
+            if not bypass_common_guard and config.ENTRY_GUARD_ENABLED:
+                try:
+                    snapshot = get_account_snapshot()
+                except Exception:
+                    snapshot = None
+                if not _entry_guard_ok(snapshot):
+                    continue
 
             factors = all_factors()
             fac_m1 = factors.get("M1") or {}
@@ -1472,9 +1518,23 @@ async def scalp_precision_worker() -> None:
 
             range_ctx = detect_range_mode(fac_m1, fac_h4)
 
+            if (
+                not bypass_common_guard
+                and config.PERF_REFRESH_SEC > 0.0
+                and now_mono - last_perf_sync >= config.PERF_REFRESH_SEC
+            ):
+                try:
+                    pos_manager.sync_trades()
+                except Exception as exc:
+                    LOG.debug("%s sync_trades error: %s", config.LOG_PREFIX, exc)
+                last_perf_sync = now_mono
+
             air = evaluate_air(fac_m1, fac_h4, range_ctx=range_ctx, tag=config.MODE)
             if air.enabled and not air.allow_entry and not bypass_common_guard:
                 continue
+
+            positions = None
+            open_trades_all = None
 
             # max open trades guard
             if (config.MAX_OPEN_TRADES > 0 or config.MAX_OPEN_TRADES_GLOBAL > 0) and not bypass_common_guard:
@@ -1498,6 +1558,31 @@ async def scalp_precision_worker() -> None:
                         continue
                 except Exception:
                     pass
+
+            if (
+                not bypass_common_guard
+                and config.STAGE_REFRESH_SEC > 0.0
+                and now_mono - last_stage_sync >= config.STAGE_REFRESH_SEC
+            ):
+                try:
+                    if positions is None:
+                        positions = pos_manager.get_open_positions()
+                        scalp_info = positions.get(config.POCKET) or {}
+                        open_trades_all = scalp_info.get("open_trades") or []
+                    snap = snapshot or get_account_snapshot()
+                    stage_tracker.update_loss_streaks(
+                        now=now,
+                        range_active=bool(range_ctx.active),
+                        atr_pips=_atr_pips(fac_m1),
+                        vol_5m=float(fac_m1.get("vol_5m") or 0.0),
+                        adx_m1=float(fac_m1.get("adx") or 0.0),
+                        nav=float(snap.nav or snap.balance or 0.0),
+                        open_scalp_positions=len(open_trades_all or []),
+                        atr_m5_pips=float(fac_m5.get("atr_pips") or 0.0),
+                    )
+                except Exception as exc:
+                    LOG.debug("%s stage_tracker update error: %s", config.LOG_PREFIX, exc)
+                last_stage_sync = now_mono
 
             # spread guard
             if not bypass_common_guard:
@@ -1575,6 +1660,59 @@ async def scalp_precision_worker() -> None:
                         conf = int(signal.get("confidence", 0) or 0)
                         if config.MIN_ENTRY_CONF > 0 and conf < config.MIN_ENTRY_CONF:
                             continue
+                        if not bypass_common_guard:
+                            tag = str(signal.get("tag") or "").strip()
+                            if tag:
+                                pocket_decision = perf_guard.is_pocket_allowed(config.POCKET)
+                                if not pocket_decision.allowed:
+                                    if now_mono - last_guard_log > 30.0:
+                                        LOG.info(
+                                            "%s pocket guard blocked pocket=%s reason=%s",
+                                            config.LOG_PREFIX,
+                                            config.POCKET,
+                                            pocket_decision.reason,
+                                        )
+                                        last_guard_log = now_mono
+                                    continue
+                                perf_decision = perf_guard.is_allowed(tag, config.POCKET, hour=now.hour)
+                                if not perf_decision.allowed:
+                                    if now_mono - last_guard_log > 30.0:
+                                        LOG.info(
+                                            "%s perf guard blocked tag=%s reason=%s",
+                                            config.LOG_PREFIX,
+                                            tag,
+                                            perf_decision.reason,
+                                        )
+                                        last_guard_log = now_mono
+                                    continue
+                                blocked, remain, reason = stage_tracker.is_strategy_blocked(tag, now=now)
+                                if blocked:
+                                    if now_mono - last_guard_log > 30.0:
+                                        LOG.info(
+                                            "%s strategy cooldown tag=%s remain=%ss reason=%s",
+                                            config.LOG_PREFIX,
+                                            tag,
+                                            remain,
+                                            reason,
+                                        )
+                                        last_guard_log = now_mono
+                                    continue
+                                direction = _signal_direction(signal)
+                                if direction:
+                                    blocked, remain, reason = stage_tracker.is_blocked(
+                                        config.POCKET, direction, now=now
+                                    )
+                                    if blocked:
+                                        if now_mono - last_guard_log > 30.0:
+                                            LOG.info(
+                                                "%s pocket cooldown dir=%s remain=%ss reason=%s",
+                                                config.LOG_PREFIX,
+                                                direction,
+                                                remain,
+                                                reason,
+                                            )
+                                            last_guard_log = now_mono
+                                        continue
                         signals.append(signal)
 
             if not signals:
@@ -1589,6 +1727,15 @@ async def scalp_precision_worker() -> None:
                     last_entry_ts = time.monotonic()
     except asyncio.CancelledError:
         return
+    finally:
+        try:
+            stage_tracker.close()
+        except Exception:
+            LOG.debug("%s stage_tracker close error", config.LOG_PREFIX)
+        try:
+            pos_manager.close()
+        except Exception:
+            LOG.debug("%s pos_manager close error", config.LOG_PREFIX)
 
 
 def main() -> None:

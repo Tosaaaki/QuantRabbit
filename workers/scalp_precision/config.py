@@ -44,6 +44,25 @@ GUARD_BYPASS_MODES = {
     if s.strip()
 }
 
+# Performance / cooldown sync
+PERF_REFRESH_SEC = float(os.getenv("SCALP_PRECISION_PERF_REFRESH_SEC", "30"))
+STAGE_REFRESH_SEC = float(os.getenv("SCALP_PRECISION_STAGE_REFRESH_SEC", "15"))
+
+# Entry guard based on account health (fail-open on missing values)
+ENTRY_GUARD_ENABLED = _env_bool("SCALP_PRECISION_ENTRY_GUARD_ENABLED", True)
+ENTRY_GUARD_MIN_FREE_MARGIN_RATIO = float(
+    os.getenv(
+        "SCALP_PRECISION_ENTRY_MIN_FREE_MARGIN_RATIO",
+        os.getenv("EXIT_EMERGENCY_FREE_MARGIN_RATIO", "0.12"),
+    )
+)
+ENTRY_GUARD_MAX_MARGIN_USAGE = float(
+    os.getenv(
+        "SCALP_PRECISION_ENTRY_MAX_MARGIN_USAGE",
+        os.getenv("EXIT_EMERGENCY_MARGIN_USAGE_RATIO", "0.92"),
+    )
+)
+
 # Entry drought guard (global entry gap filler)
 DROUGHT_ENABLED = _env_bool("SCALP_PRECISION_DROUGHT_ENABLED", True)
 DROUGHT_MINUTES = float(os.getenv("SCALP_PRECISION_DROUGHT_MINUTES", "15"))
