@@ -442,6 +442,7 @@ _DEFAULT_ENTRY_THESIS_TFS: dict[str, tuple[str, str]] = {
 TRAILING_SL_ALLOWED = trailing_sl_allowed()
 
 _ENTRY_HARD_STOP_PIPS_DEFAULT = max(0.0, _env_float("ORDER_ENTRY_HARD_STOP_PIPS", 0.0))
+_ENTRY_MAX_SL_PIPS_DEFAULT = max(0.0, _env_float("ORDER_ENTRY_MAX_SL_PIPS", 0.0))
 
 
 def _strategy_env_key(strategy_tag: Optional[str]) -> Optional[str]:
@@ -473,6 +474,31 @@ def _entry_hard_stop_pips(pocket: Optional[str], *, strategy_tag: Optional[str] 
         _env_float(
             f"ORDER_ENTRY_HARD_STOP_PIPS_{pocket_key}",
             _ENTRY_HARD_STOP_PIPS_DEFAULT,
+        ),
+    )
+
+
+def _entry_max_sl_pips(pocket: Optional[str], *, strategy_tag: Optional[str] = None) -> float:
+    """Return the maximum entry SL distance in pips (0 = disabled)."""
+
+    strategy_key = _strategy_env_key(strategy_tag)
+    if strategy_key:
+        raw = os.getenv(f"ORDER_ENTRY_MAX_SL_PIPS_STRATEGY_{strategy_key}")
+        if raw is not None:
+            try:
+                return max(0.0, float(raw))
+            except Exception:
+                pass
+    if not pocket:
+        return _ENTRY_MAX_SL_PIPS_DEFAULT
+    pocket_key = str(pocket).strip().upper()
+    if not pocket_key:
+        return _ENTRY_MAX_SL_PIPS_DEFAULT
+    return max(
+        0.0,
+        _env_float(
+            f"ORDER_ENTRY_MAX_SL_PIPS_{pocket_key}",
+            _ENTRY_MAX_SL_PIPS_DEFAULT,
         ),
     )
 
@@ -5158,6 +5184,39 @@ async def market_order(
                         "pocket": pocket or "unknown",
                         "strategy": strategy_tag or "unknown",
                     },
+                )
+
+    if not reduce_only and entry_basis is not None and sl_price is not None:
+        max_sl_pips = _entry_max_sl_pips(pocket, strategy_tag=strategy_tag)
+        if max_sl_pips > 0.0:
+            sl_pips = abs(entry_basis - sl_price) / 0.01
+            if sl_pips > max_sl_pips + 1e-6:
+                if units > 0:
+                    sl_price = round(entry_basis - max_sl_pips * 0.01, 3)
+                else:
+                    sl_price = round(entry_basis + max_sl_pips * 0.01, 3)
+                thesis_sl_pips = max_sl_pips
+                if isinstance(entry_thesis, dict):
+                    entry_thesis = dict(entry_thesis)
+                    entry_thesis["sl_pips"] = round(max_sl_pips, 2)
+                    entry_thesis["sl_cap_applied"] = {
+                        "sl_pips_before": round(sl_pips, 2),
+                        "sl_pips_after": round(max_sl_pips, 2),
+                    }
+                log_metric(
+                    "entry_sl_cap",
+                    float(max_sl_pips),
+                    tags={
+                        "pocket": pocket or "unknown",
+                        "strategy": strategy_tag or "unknown",
+                    },
+                )
+                logging.warning(
+                    "[ORDER] entry SL cap applied pocket=%s strategy=%s sl=%.2fp (cap=%.2fp)",
+                    pocket,
+                    strategy_tag or "-",
+                    sl_pips,
+                    max_sl_pips,
                 )
 
     # Margin preflight (new entriesのみ)
