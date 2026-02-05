@@ -29,6 +29,7 @@ _DEFAULTS = {
     "cooldown_loss_sec": 180,
     "same_dir_reentry_pips": 1.8,
     "same_dir_mode": "return",
+    "loss_dir_mode": "",
     "allow_jst_hours": [],
     "block_jst_hours": [],
     "return_wait_bias": "neutral",
@@ -447,21 +448,22 @@ def allow_entry(
     if not state:
         return True, "no_state", {}
 
-    cooldown = cooldown_win if state.result == "win" else cooldown_loss
-    if cooldown > 0:
-        elapsed = (now_dt - state.close_time).total_seconds()
-        if elapsed < cooldown:
-            remaining = int(max(1, cooldown - elapsed))
-            return False, "cooldown", {
-                "cooldown_remaining_sec": remaining,
-                "last_close_time": state.close_time.isoformat(),
-                "last_result": state.result,
-                "return_wait_bias": bias,
-            }
-
+    distance_ok: Optional[bool] = None
+    distance_details: Dict[str, object] = {}
+    distance_mode = ""
     if min_pips > 0.0 and price is not None and state.close_price is not None:
         threshold = min_pips * 0.01
         mode = str(merged.get("same_dir_mode") or "return").strip().lower()
+        if mode not in {"return", "follow", "both"}:
+            mode = "return"
+        if state.result == "loss":
+            loss_mode = str(merged.get("loss_dir_mode") or "").strip().lower()
+            if loss_mode in {"return", "follow", "both"}:
+                mode = loss_mode
+            elif mode == "return":
+                # After a loss, allow either return or follow to avoid bottom-stop stalls.
+                mode = "both"
+        distance_mode = mode
         if direction == "long":
             allow_return = price <= state.close_price - threshold
             allow_follow = price >= state.close_price + threshold
@@ -474,13 +476,41 @@ def allow_entry(
             allow = allow_return or allow_follow
         else:
             allow = allow_return
+        distance_ok = allow
         if not allow:
-            return False, "price_distance", {
+            distance_details = {
                 "price": float(price),
                 "last_close_price": state.close_price,
                 "same_dir_reentry_pips": min_pips,
                 "same_dir_mode": mode,
                 "return_wait_bias": bias,
             }
+
+    cooldown = cooldown_win if state.result == "win" else cooldown_loss
+    if cooldown > 0:
+        elapsed = (now_dt - state.close_time).total_seconds()
+        if elapsed < cooldown:
+            remaining = int(max(1, cooldown - elapsed))
+            if state.result == "loss" and distance_ok:
+                allow_early = merged.get("loss_cooldown_allow_distance")
+                if allow_early is None or _coerce_bool(allow_early):
+                    details = {
+                        "cooldown_remaining_sec": remaining,
+                        "last_close_time": state.close_time.isoformat(),
+                        "last_result": state.result,
+                        "return_wait_bias": bias,
+                        "same_dir_mode": distance_mode,
+                    }
+                    if distance_details:
+                        details.update(distance_details)
+                    return True, "cooldown_override_distance", details
+            return False, "cooldown", {
+                "cooldown_remaining_sec": remaining,
+                "last_close_time": state.close_time.isoformat(),
+                "last_result": state.result,
+                "return_wait_bias": bias,
+            }
+    if distance_ok is False:
+        return False, "price_distance", distance_details
 
     return True, "ok", {}
