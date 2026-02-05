@@ -12,6 +12,7 @@ import re
 import pathlib
 import sqlite3
 import time
+from datetime import datetime, timezone
 from dataclasses import dataclass
 from typing import Optional, Tuple
 
@@ -37,6 +38,27 @@ _RAW_RELAX_TAGS = os.getenv("PERF_GUARD_RELAX_TAGS")
 if _RAW_RELAX_TAGS is None:
     _RAW_RELAX_TAGS = "M1Scalper,ImpulseRetrace"
 _RELAX_TAGS = {tag.strip().lower() for tag in _RAW_RELAX_TAGS.split(",") if tag.strip()}
+
+_RAW_RESET_AT = (os.getenv("PERF_GUARD_RESET_AT") or os.getenv("PERF_GUARD_RESET_TS") or "").strip()
+_RAW_RESET_TAGS = (os.getenv("PERF_GUARD_RESET_TAGS") or "").strip()
+_RESET_TAGS = {tag.strip().lower() for tag in _RAW_RESET_TAGS.split(",") if tag.strip()}
+
+_PERF_METRIC = (os.getenv("PERF_GUARD_METRIC", "realized_pl") or "realized_pl").strip().lower()
+_POCKET_METRIC = (os.getenv("POCKET_PERF_GUARD_METRIC", _PERF_METRIC) or _PERF_METRIC).strip().lower()
+
+
+def _metric_expr(metric: str) -> str:
+    if metric in {"pips", "pip", "pl_pips"}:
+        return "COALESCE(pl_pips, 0)"
+    if metric in {"realized_pl", "realized", "pl"}:
+        return "COALESCE(realized_pl, 0)"
+    if metric in {"net_pl", "net", "net_realized"}:
+        return "(COALESCE(realized_pl, 0) + COALESCE(commission, 0) + COALESCE(financing, 0))"
+    return "COALESCE(pl_pips, 0)"
+
+
+_PERF_EXPR = _metric_expr(_PERF_METRIC)
+_POCKET_EXPR = _metric_expr(_POCKET_METRIC)
 _SPLIT_DIRECTIONAL = os.getenv("PERF_GUARD_SPLIT_DIRECTIONAL", "1").strip().lower() not in {
     "",
     "0",
@@ -151,6 +173,53 @@ def _is_relaxed(tag: str) -> bool:
     return False
 
 
+def _parse_reset_at(raw: str) -> Optional[datetime]:
+    if not raw:
+        return None
+    try:
+        if raw.isdigit():
+            return datetime.fromtimestamp(float(raw), tz=timezone.utc)
+    except ValueError:
+        pass
+    try:
+        cleaned = raw.replace("Z", "+00:00") if raw.endswith("Z") else raw
+        dt = datetime.fromisoformat(cleaned)
+        if dt.tzinfo is None:
+            return dt.replace(tzinfo=timezone.utc)
+        return dt.astimezone(timezone.utc)
+    except ValueError:
+        return None
+
+
+_RESET_AT = _parse_reset_at(_RAW_RESET_AT)
+
+
+def _reset_at_for_tag(tag: str) -> Optional[datetime]:
+    if _RESET_AT is None:
+        return None
+    if not _RESET_TAGS:
+        return _RESET_AT
+    for variant in _tag_variants(tag):
+        if variant in _RESET_TAGS:
+            return _RESET_AT
+    return None
+
+
+def _effective_lookback(tag: str) -> str:
+    base = f"-{_LOOKBACK_DAYS} day"
+    reset_at = _reset_at_for_tag(tag)
+    if reset_at is None:
+        return base
+    now = datetime.now(timezone.utc)
+    delta_sec = (now - reset_at).total_seconds()
+    if delta_sec <= 0:
+        return "-0 second"
+    max_sec = _LOOKBACK_DAYS * 86400
+    if delta_sec < max_sec:
+        return f"-{int(delta_sec)} seconds"
+    return base
+
+
 def _pocket_regime_label(pocket: str) -> Optional[str]:
     if not pocket:
         return None
@@ -171,6 +240,7 @@ def _query_perf_row(
     pocket: str,
     hour: Optional[int],
     regime_label: Optional[str],
+    lookback: str,
 ) -> Optional[sqlite3.Row]:
     regime_clause = ""
     if regime_label:
@@ -180,7 +250,7 @@ def _query_perf_row(
     params.extend(
         [
             pocket,
-            f"-{_LOOKBACK_DAYS} day",
+            lookback,
             f"{hour:02d}" if hour is not None else None,
             f"{hour:02d}" if hour is not None else None,
         ]
@@ -190,10 +260,10 @@ def _query_perf_row(
             f"""
             SELECT
               COUNT(*) AS n,
-              SUM(CASE WHEN pl_pips > 0 THEN pl_pips ELSE 0 END) AS profit,
-              SUM(CASE WHEN pl_pips < 0 THEN ABS(pl_pips) ELSE 0 END) AS loss,
-              SUM(CASE WHEN pl_pips > 0 THEN 1 ELSE 0 END) AS win,
-              SUM(pl_pips) AS sum_pips
+              SUM(CASE WHEN {_PERF_EXPR} > 0 THEN {_PERF_EXPR} ELSE 0 END) AS profit,
+              SUM(CASE WHEN {_PERF_EXPR} < 0 THEN ABS({_PERF_EXPR}) ELSE 0 END) AS loss,
+              SUM(CASE WHEN {_PERF_EXPR} > 0 THEN 1 ELSE 0 END) AS win,
+              SUM({_PERF_EXPR}) AS sum_metric
             FROM trades
             WHERE {tag_clause}
               AND pocket = ?
@@ -273,6 +343,7 @@ def _query_perf(
     params = list(variants)
     try:
         row = None
+        lookback = _effective_lookback(tag)
         if regime_label:
             row = _query_perf_row(
                 con=con,
@@ -282,6 +353,7 @@ def _query_perf(
                 pocket=pocket,
                 hour=hour,
                 regime_label=regime_label,
+                lookback=lookback,
             )
             if row is not None:
                 n = int(row["n"] or 0)
@@ -296,6 +368,7 @@ def _query_perf(
                 pocket=pocket,
                 hour=hour,
                 regime_label=None,
+                lookback=lookback,
             )
     except Exception as exc:
         LOG.debug("[PERF_GUARD] query failed tag=%s pocket=%s err=%s", tag, pocket, exc)
@@ -338,13 +411,13 @@ def _query_pocket_perf(pocket: str) -> Tuple[bool, str, int]:
             """
             SELECT
               COUNT(*) AS n,
-              SUM(CASE WHEN pl_pips > 0 THEN pl_pips ELSE 0 END) AS profit,
-              SUM(CASE WHEN pl_pips < 0 THEN ABS(pl_pips) ELSE 0 END) AS loss,
-              SUM(CASE WHEN pl_pips > 0 THEN 1 ELSE 0 END) AS win
+              SUM(CASE WHEN {expr} > 0 THEN {expr} ELSE 0 END) AS profit,
+              SUM(CASE WHEN {expr} < 0 THEN ABS({expr}) ELSE 0 END) AS loss,
+              SUM(CASE WHEN {expr} > 0 THEN 1 ELSE 0 END) AS win
             FROM trades
             WHERE pocket = ?
               AND close_time >= datetime('now', ?)
-            """,
+            """.format(expr=_POCKET_EXPR),
             (pocket, f"-{_POCKET_LOOKBACK_DAYS} day"),
         ).fetchone()
     except Exception as exc:
