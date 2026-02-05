@@ -9,6 +9,7 @@
 - 発注経路はワーカーが直接 OANDA に送信するのが既定（`SIGNAL_GATE_ENABLED=0` / `ORDER_FORWARD_TO_SIGNAL_GATE=0`）。共通ゲート（`utils/signal_bus.py` → main 関所）を使う場合のみ両フラグを 1 にする。
 - 共通エントリー/テックゲート（`entry_guard` / `entry_tech`）は廃止・使用禁止。判断は各戦略ワーカーの推定(Projection)で行い、ポケット別の共通判定はしない。
 - 運用モード（2025-12 攻め設定）: マージン活用を 85–92% 目安に引き上げ、ロット上限を拡大（`RISK_MAX_LOT` 既定 10.0 lot）。手動ポジションを含めた総エクスポージャでガードし、PF/勝率の悪い戦略は自動ブロック。必要に応じて `PERF_GUARD_GLOBAL_ENABLED=0` で解除する。
+- **重要**: 本番稼働は VM。運用上の指摘・報告・判断は必ず VM（ログ/DB/プロセス）または OANDA API を確認して行い、ローカルの `logs/*.db` やスナップショット/コード差分だけで断定しない。
 - エージェントの役割:
   - VM 上で常時ログ・オーダーを監視
   - 手動玉を含めたエクスポージャを高水準で維持
@@ -139,7 +140,7 @@ class OrderIntent(BaseModel):
 
 ## 5. データ鮮度・ログ・検証
 - データ鮮度: `max_data_lag_ms = 3000` 超は `DataFetcher` が `stale=True` を返し Risk Guard が発注拒否。Candle 確定は `tick.ts_ms // 60000` 変化で判定し、終値は最後の mid。`volume=0` は `missing_bar` としてログ。
-- ログ永続化: 本番ログは VM `/home/tossaki/QuantRabbit/logs/` のみを真とする。ローカル `logs/*.db` は参考扱い。
+- ログ永続化: 本番ログは VM `/home/tossaki/QuantRabbit/logs/` のみを真とする。ローカル `logs/*.db` は参考扱い（指摘/報告/判断の前に必ず VM を確認する）。
   - GCS 自動退避: `GCS_BACKUP_BUCKET` を `/etc/quantrabbit.env` に設定し、`/etc/cron.hourly/qr-gcs-backup-core` で毎時アップロード。保存先は `gs://$GCS_BACKUP_BUCKET/qr-logs/<hostname>/core_*.tar`。
   - Storage から読むとき（VM 上）:
     - 一覧: `sudo -u tossaki -H /usr/local/bin/qr-gcs-fetch-core list`
@@ -339,6 +340,11 @@ sudo -u <user> -H bash -lc '
 - 変更は必ず `git commit` → `git push` → VM 反映（`scripts/vm.sh ... deploy -i -t` 推奨）で行う。未コミット状態やローカル差し替えでの運用は不可。
 - チームルール: 1 ファイル = 1 PR、Squash Merge、CI green。コード規約 black / ruff / mypy(optional)。秘匿情報は Git に置かない。Issue 管理: bug/feat/doc/ops ラベル。
 - タスク台帳: `docs/TASKS.md` を正本とし、Open→進行→Archive の流れで更新。テンプレート・Plan 記載済み。オンラインチューニング ToDo は `docs/autotune_taskboard.md` に追記し完了後アーカイブ。
+### 10.1 スキル運用
+- 日次運用/調査/デプロイ/リプレイ/リスク監査は専用スキルを優先利用する。
+- スキル一覧: `qr-log-triage`, `qr-deploy-ops`, `qr-replay-backtest`, `qr-risk-guard-audit`
+- 明示的に使う場合は `$qr-log-triage` のようにスキル名を付けて依頼する（自動発火も許容）。
+- スキル定義は `~/.codex/skills/<skill>/SKILL.md` を参照する。
 - ポジション問い合わせ対応: 直近ログを優先し最新建玉/サイズ/向き/TP/SL/時刻を即答。オープン無しなら「今はフラット」＋直近クローズ理由。サイズ異常時は決定した設定（`ORDER_MIN_UNITS_*` など）を明示。
   - 損益報告は `sum(realized_pl)` (JPY) と `sum(pl_pips)` を必ず併記し、未実現損益は別枠で提示する。JPY がマイナスなら勝ち扱いしない。UTC/JST を明記する。
   - マージン/エクスポージャは OANDA snapshot の total を使用し、手動玉を含めて確認する。
