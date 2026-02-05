@@ -24,6 +24,7 @@ from strategies.micro.range_break import MicroRangeBreak
 from strategies.micro.vwap_bound_revert import MicroVWAPBound
 from strategies.micro_lowvol.micro_vwap_revert import MicroVWAPRevert
 from strategies.micro_lowvol.compression_revert import MicroCompressionRevert
+from strategies.micro_lowvol.momentum_pulse import MomentumPulse
 from strategies.micro.trend_momentum import TrendMomentumMicro
 from strategies.micro.trend_retest import MicroTrendRetest
 from utils.divergence import apply_divergence_confidence, divergence_bias, divergence_snapshot
@@ -549,6 +550,7 @@ def _allowed_strategies() -> List:
         MicroRangeBreak,
         MicroVWAPBound,
         MicroVWAPRevert,
+        MomentumPulse,
         TrendMomentumMicro,
         MicroTrendRetest,
         MicroCompressionRevert,

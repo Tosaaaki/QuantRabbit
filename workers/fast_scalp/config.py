@@ -9,7 +9,8 @@ import os
 from execution.stop_loss_policy import stop_loss_disabled_for_pocket
 
 PIP_VALUE = 0.01
-STOP_LOSS_DISABLED = stop_loss_disabled_for_pocket("scalp_fast")
+POCKET = os.getenv("FAST_SCALP_POCKET", "scalp_fast").strip() or "scalp_fast"
+STOP_LOSS_DISABLED = stop_loss_disabled_for_pocket(POCKET)
 
 
 def _bool_env(key: str, default: bool) -> bool:
