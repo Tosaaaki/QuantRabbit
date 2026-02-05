@@ -14,9 +14,9 @@ class MicroTrendRetest:
     _LOOKBACK = 20
     _MIN_GAP_PIPS = 0.6
     _MIN_ADX = 20.0
-    _RETEST_BUFFER_PIPS = 0.6
-    _BREAKOUT_BUFFER_PIPS = 0.2
-    _MAX_RETEST_DIST_PIPS = 2.8
+    _RETEST_BUFFER_PIPS = 0.8
+    _BREAKOUT_BUFFER_PIPS = 0.3
+    _MAX_RETEST_DIST_PIPS = 3.2
 
     @staticmethod
     def _to_float(value: object, default: Optional[float] = None) -> Optional[float]:
@@ -79,26 +79,32 @@ class MicroTrendRetest:
 
         prev_close = MicroTrendRetest._to_float(prev.get("close"), 0.0) or 0.0
         last_close = MicroTrendRetest._to_float(last.get("close"), 0.0) or 0.0
+        last_low = MicroTrendRetest._to_float(last.get("low"), 0.0) or 0.0
+        last_high = MicroTrendRetest._to_float(last.get("high"), 0.0) or 0.0
 
         if direction == "OPEN_LONG":
             if prev_close < level_high + MicroTrendRetest._BREAKOUT_BUFFER_PIPS * PIP:
+                return None
+            if last_low > level_high + MicroTrendRetest._RETEST_BUFFER_PIPS * PIP:
                 return None
             if abs(last_close - level_high) > MicroTrendRetest._RETEST_BUFFER_PIPS * PIP:
                 return None
             retest_dist = abs(price - level_high) / PIP
             if retest_dist > MicroTrendRetest._MAX_RETEST_DIST_PIPS:
                 return None
-            if last_close > prev_close:
+            if last_close > prev_close + 0.1 * PIP:
                 return None
         else:
             if prev_close > level_low - MicroTrendRetest._BREAKOUT_BUFFER_PIPS * PIP:
+                return None
+            if last_high < level_low - MicroTrendRetest._RETEST_BUFFER_PIPS * PIP:
                 return None
             if abs(last_close - level_low) > MicroTrendRetest._RETEST_BUFFER_PIPS * PIP:
                 return None
             retest_dist = abs(price - level_low) / PIP
             if retest_dist > MicroTrendRetest._MAX_RETEST_DIST_PIPS:
                 return None
-            if last_close < prev_close:
+            if last_close < prev_close - 0.1 * PIP:
                 return None
 
         atr_hint = fac.get("atr_pips") or (fac.get("atr") or 0.0) * 100.0 or 5.0

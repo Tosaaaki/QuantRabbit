@@ -9,9 +9,16 @@ EnvironmentFile=/etc/quantrabbit.env
 Environment=PYTHONUNBUFFERED=1
 Environment=SCALP_PRECISION_ENABLED=1
 Environment=SCALP_PRECISION_MODE=liquidity_sweep
-Environment=SCALP_PRECISION_MIN_ENTRY_CONF=62
+Environment=SCALP_PRECISION_MIN_ENTRY_CONF=60
 Environment=LSR_REQUIRE_TICK_REVERSAL=1
-Environment=LSR_RANGE_SCORE_MIN=0.40
+Environment=LSR_RANGE_SCORE_MIN=0.35
+Environment=LSR_SWEEP_PIPS=0.45
+Environment=LSR_RECLAIM_PIPS=0.10
+Environment=LSR_BODY_MAX_PIPS=1.4
+Environment=LSR_RANGE_MIN_PIPS=1.2
+Environment=LSR_WICK_RATIO_MIN=0.5
+Environment=LSR_ADX_MAX=30.0
+Environment=LSR_BBW_MAX=0.36
 Environment=LSR_SIZE_MULT=1.0
 ExecStart=/home/tossaki/QuantRabbit/.venv/bin/python -m workers.scalp_precision.worker
 Restart=always

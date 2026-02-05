@@ -271,14 +271,14 @@ WICK_ADX_MAX = _env_float("WICK_REV_ADX_MAX", 24.0)
 WICK_BBW_MAX = _env_float("WICK_REV_BBW_MAX", 0.28)
 
 LSR_LOOKBACK = _env_int("LSR_LOOKBACK", 20)
-LSR_SWEEP_PIPS = _env_float("LSR_SWEEP_PIPS", 0.6)
-LSR_RECLAIM_PIPS = _env_float("LSR_RECLAIM_PIPS", 0.2)
-LSR_BODY_MAX_PIPS = _env_float("LSR_BODY_MAX_PIPS", 1.1)
-LSR_RANGE_MIN_PIPS = _env_float("LSR_RANGE_MIN_PIPS", 1.6)
-LSR_WICK_RATIO_MIN = _env_float("LSR_WICK_RATIO_MIN", 0.55)
-LSR_ADX_MAX = _env_float("LSR_ADX_MAX", 28.0)
-LSR_BBW_MAX = _env_float("LSR_BBW_MAX", 0.34)
-LSR_RANGE_SCORE_MIN = _env_float("LSR_RANGE_SCORE_MIN", 0.40)
+LSR_SWEEP_PIPS = _env_float("LSR_SWEEP_PIPS", 0.45)
+LSR_RECLAIM_PIPS = _env_float("LSR_RECLAIM_PIPS", 0.1)
+LSR_BODY_MAX_PIPS = _env_float("LSR_BODY_MAX_PIPS", 1.4)
+LSR_RANGE_MIN_PIPS = _env_float("LSR_RANGE_MIN_PIPS", 1.2)
+LSR_WICK_RATIO_MIN = _env_float("LSR_WICK_RATIO_MIN", 0.5)
+LSR_ADX_MAX = _env_float("LSR_ADX_MAX", 30.0)
+LSR_BBW_MAX = _env_float("LSR_BBW_MAX", 0.36)
+LSR_RANGE_SCORE_MIN = _env_float("LSR_RANGE_SCORE_MIN", 0.35)
 LSR_REQUIRE_TICK_REVERSAL = _env_bool("LSR_REQUIRE_TICK_REVERSAL", True)
 LSR_SIZE_MULT = _env_float("LSR_SIZE_MULT", 1.0)
 
@@ -1022,12 +1022,12 @@ def _signal_liquidity_sweep(
     if h >= level_high + LSR_SWEEP_PIPS * PIP and c < level_high - LSR_RECLAIM_PIPS * PIP:
         side = "short"
         sweep_dist = (h - level_high) / PIP
-        if upper_wick < max(LSR_SWEEP_PIPS, 0.5):
+        if upper_wick < max(LSR_SWEEP_PIPS, 0.4):
             return None
     elif l <= level_low - LSR_SWEEP_PIPS * PIP and c > level_low + LSR_RECLAIM_PIPS * PIP:
         side = "long"
         sweep_dist = (level_low - l) / PIP
-        if lower_wick < max(LSR_SWEEP_PIPS, 0.5):
+        if lower_wick < max(LSR_SWEEP_PIPS, 0.4):
             return None
     else:
         return None

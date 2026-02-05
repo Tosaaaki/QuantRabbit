@@ -11,12 +11,13 @@ class MicroCompressionRevert:
     name = "MicroCompressionRevert"
     pocket = "micro"
 
-    _ADX_MAX = 24.0
-    _BBW_MAX = 0.24
-    _ATR_MAX = 7.0
-    _TOUCH_PIPS = 0.8
-    _RSI_LONG_MAX = 45.0
-    _RSI_SHORT_MIN = 55.0
+    _ADX_MAX = 22.0
+    _BBW_MAX = 0.21
+    _ATR_MAX = 5.5
+    _TOUCH_PIPS = 0.7
+    _SPAN_MIN_PIPS = 1.4
+    _RSI_LONG_MAX = 42.0
+    _RSI_SHORT_MIN = 58.0
 
     @staticmethod
     def _bb_levels(fac: Dict[str, object]) -> Optional[tuple[float, float, float, float, float]]:
@@ -58,7 +59,9 @@ class MicroCompressionRevert:
         if not levels:
             return None
         upper, mid, lower, span, span_pips = levels
-        touch_pips = max(MicroCompressionRevert._TOUCH_PIPS, span_pips * 0.10)
+        if span_pips < MicroCompressionRevert._SPAN_MIN_PIPS:
+            return None
+        touch_pips = max(MicroCompressionRevert._TOUCH_PIPS, span_pips * 0.12)
 
         rsi = to_float(fac.get("rsi"), 50.0) or 50.0
         side = None
@@ -69,11 +72,11 @@ class MicroCompressionRevert:
         if side is None:
             return None
 
-        sl_pips = max(1.0, min(2.4, atr * 0.75))
-        tp_pips = max(1.2, min(2.8, atr * 0.95))
+        sl_pips = max(1.0, min(2.2, atr * 0.70))
+        tp_pips = max(1.2, min(2.6, atr * 0.90))
 
         compression_score = max(0.0, min(1.0, (MicroCompressionRevert._BBW_MAX - bbw) / max(MicroCompressionRevert._BBW_MAX, 1e-6)))
-        confidence = 54 + int(min(18.0, compression_score * 22.0 + max(0.0, (MicroCompressionRevert._ATR_MAX - atr)) * 1.5))
+        confidence = 56 + int(min(18.0, compression_score * 24.0 + max(0.0, (MicroCompressionRevert._ATR_MAX - atr)) * 1.6))
         confidence = max(45, min(92, confidence))
 
         return {
