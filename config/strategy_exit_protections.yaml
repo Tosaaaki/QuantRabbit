@@ -38,9 +38,28 @@ defaults:
       - margin_usage_high
     deny_reasons: []
   min_profit_pips:
-    macro: 1.2
-    micro: 0.8
-    scalp: 0.6
+    macro: 1.6
+    micro: 1.2
+    scalp: 1.0
+  min_profit_ratio:
+    macro: 0.45
+    micro: 0.40
+    scalp: 0.35
+  min_profit_ratio_min_tp_pips: 1.5
+  min_profit_ratio_reasons:
+    - fast_cut_time
+    - lock_floor
+    - take_profit
+    - range_timeout
+    - time_stop
+    - trail_take
+    - lock_release
+    - take_profit_zone
+    - rsi_take
+    - trail_lock
+    - profit_lock
+    - lock_trail
+    - near_be
   be_profile:
     macro: {trigger_pips: 6.8, lock_ratio: 0.55, min_lock_pips: 2.6, cooldown_sec: 90}
     micro: {trigger_pips: 2.2, lock_ratio: 0.50, min_lock_pips: 0.60, cooldown_sec: 45}
@@ -198,6 +217,14 @@ strategies:
     neg_exit:
       allow_reasons:
         - reversion_*
+
+  TickImbalance:
+    min_profit_pips: 1.4
+    min_profit_ratio: 0.40
+
+  LevelReject:
+    min_profit_pips: 1.4
+    min_profit_ratio: 0.40
 
   MomentumPulse:
     be_profile: {trigger_pips: 1.7, lock_ratio: 0.50, min_lock_pips: 0.60, cooldown_sec: 35}

@@ -329,6 +329,70 @@ def _min_profit_pips(pocket: Optional[str], strategy_tag: Optional[str]) -> Opti
     return float(selected)
 
 
+def _min_profit_ratio(pocket: Optional[str], strategy_tag: Optional[str]) -> Optional[float]:
+    cfg = _load_strategy_protection_config()
+    defaults = cfg.get("defaults") if isinstance(cfg, dict) else {}
+
+    def _pick(value: object) -> Optional[float]:
+        if value is None:
+            return None
+        if isinstance(value, dict) and pocket:
+            for key in (pocket, str(pocket).lower(), str(pocket).upper()):
+                if key in value:
+                    return _as_float(value.get(key))
+            return None
+        return _as_float(value)
+
+    selected = _pick(defaults.get("min_profit_ratio"))
+    override = _strategy_override(cfg, strategy_tag)
+    if isinstance(override, dict):
+        picked = _pick(override.get("min_profit_ratio"))
+        if picked is not None:
+            selected = picked
+
+    if selected is None and pocket:
+        selected = _as_float(os.getenv(f"EXIT_MIN_PROFIT_RATIO_{str(pocket).upper()}"))
+    if selected is None:
+        selected = _as_float(os.getenv("EXIT_MIN_PROFIT_RATIO"))
+    if selected is None or selected <= 0:
+        return None
+    return float(selected)
+
+
+def _min_profit_ratio_reasons(strategy_tag: Optional[str]) -> set[str]:
+    cfg = _load_strategy_protection_config()
+    defaults = cfg.get("defaults") if isinstance(cfg, dict) else {}
+    override = _strategy_override(cfg, strategy_tag)
+    raw = None
+    if isinstance(override, dict) and override.get("min_profit_ratio_reasons") is not None:
+        raw = override.get("min_profit_ratio_reasons")
+    if raw is None:
+        raw = defaults.get("min_profit_ratio_reasons")
+    if raw is None:
+        raw = os.getenv("EXIT_MIN_PROFIT_RATIO_REASONS", "")
+    if isinstance(raw, (list, tuple, set)):
+        items = raw
+    else:
+        items = str(raw).split(",") if raw else []
+    return {str(item).strip().lower() for item in items if str(item).strip()}
+
+
+def _min_profit_ratio_min_tp_pips(strategy_tag: Optional[str]) -> float:
+    cfg = _load_strategy_protection_config()
+    defaults = cfg.get("defaults") if isinstance(cfg, dict) else {}
+    override = _strategy_override(cfg, strategy_tag)
+    value = None
+    if isinstance(override, dict) and override.get("min_profit_ratio_min_tp_pips") is not None:
+        value = _as_float(override.get("min_profit_ratio_min_tp_pips"))
+    if value is None:
+        value = _as_float(defaults.get("min_profit_ratio_min_tp_pips"))
+    if value is None:
+        value = _as_float(os.getenv("EXIT_MIN_PROFIT_RATIO_MIN_TP_PIPS"))
+    if value is None or value < 0:
+        return 0.0
+    return float(value)
+
+
 def _hold_until_profit_config() -> dict:
     cfg = _load_strategy_protection_config()
     hold = cfg.get("hold_until_profit") if isinstance(cfg, dict) else None
@@ -2094,7 +2158,7 @@ def _load_exit_trade_context(
         con.row_factory = sqlite3.Row
         row = con.execute(
             """
-            SELECT pocket, units, executed_price, client_order_id, instrument
+            SELECT pocket, units, executed_price, client_order_id, instrument, tp_price
             FROM orders
             WHERE ticket_id = ?
               AND status = 'filled'
@@ -2138,11 +2202,17 @@ def _load_exit_trade_context(
         parts = client_id.split("-", 3)
         if len(parts) == 4 and parts[3]:
             strategy_tag = parts[3]
+    tp_price = _as_float(row["tp_price"])
+    if tp_price is None:
+        cached = _LAST_PROTECTIONS.get(str(trade_id))
+        if isinstance(cached, dict):
+            tp_price = _as_float(cached.get("tp"))
     return {
         "entry_price": _as_float(row["executed_price"]) or 0.0,
         "units": int(row["units"] or 0),
         "pocket": row["pocket"] or "unknown",
         "instrument": row["instrument"] if row["instrument"] else None,
+        "tp_price": tp_price,
         "strategy_tag": strategy_tag,
         "entry_thesis": entry_thesis if isinstance(entry_thesis, dict) else None,
     }
@@ -2809,6 +2879,67 @@ async def close_trade(
                     ),
                 )
                 return False
+    ratio = _min_profit_ratio(pocket, strategy_tag)
+    if ratio is not None and ratio > 0:
+        ratio_reasons = _min_profit_ratio_reasons(strategy_tag)
+        if exit_reason and _reason_matches_tokens(exit_reason, list(ratio_reasons)):
+            tp_price = _as_float((ctx or {}).get("tp_price"))
+            tp_min = _min_profit_ratio_min_tp_pips(strategy_tag)
+            if tp_price is not None and entry_price > 0:
+                tp_pips = abs(tp_price - entry_price) / 0.01
+                if tp_pips >= tp_min and est_pips is not None and est_pips >= 0:
+                    min_ratio_pips = tp_pips * ratio
+                    if est_pips < min_ratio_pips:
+                        emergency_allow = _should_allow_negative_close(client_order_id)
+                        if not emergency_allow and not _reason_force_allow(exit_reason):
+                            log_metric(
+                                "close_blocked_profit_ratio",
+                                float(est_pips),
+                                tags={
+                                    "trade_id": str(trade_id),
+                                    "pocket": str(pocket or "unknown"),
+                                    "strategy": str(strategy_tag or "unknown"),
+                                    "min_ratio": str(ratio),
+                                    "tp_pips": str(round(tp_pips, 3)),
+                                },
+                            )
+                            _console_order_log(
+                                "CLOSE_REJECT",
+                                pocket=pocket,
+                                strategy_tag=strategy_tag,
+                                side=None,
+                                units=units,
+                                sl_price=None,
+                                tp_price=None,
+                                client_order_id=client_order_id,
+                                ticket_id=str(trade_id),
+                                note="profit_ratio",
+                            )
+                            _log_order(
+                                pocket=pocket,
+                                instrument=instrument,
+                                side=None,
+                                units=units,
+                                sl_price=None,
+                                tp_price=None,
+                                client_order_id=client_order_id,
+                                status="close_reject_profit_ratio",
+                                attempt=0,
+                                ticket_id=str(trade_id),
+                                executed_price=None,
+                                request_payload=_with_exit_reason(
+                                    {
+                                        "trade_id": trade_id,
+                                        "data": {
+                                            "min_ratio": ratio,
+                                            "tp_pips": round(tp_pips, 3),
+                                            "min_ratio_pips": round(min_ratio_pips, 3),
+                                            "est_pips": est_pips,
+                                        },
+                                    }
+                                ),
+                            )
+                            return False
     hold_match, hold_min_pips, hold_strict = _hold_until_profit_match(trade_id, client_order_id)
     if hold_match:
         profit_ok = False
