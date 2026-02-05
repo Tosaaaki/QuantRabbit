@@ -44,9 +44,10 @@ defaults:
   min_profit_ratio:
     macro: 0.45
     micro: 0.40
-    scalp: 0.35
+    scalp: 0.80
   min_profit_ratio_min_tp_pips: 1.5
   min_profit_ratio_reasons:
+    - partial_take
     - fast_cut_time
     - lock_floor
     - take_profit
@@ -255,12 +256,12 @@ strategies:
 
   TickImbalance:
     min_profit_pips: 1.4
-    min_profit_ratio: 0.40
+    min_profit_ratio: 0.80
     pro_stop: {soft_pips: 6.4, hard_pips: 12.07, min_hold_sec: 1200, max_hold_sec: 3600, soft_atr_mult: 0.6, hard_atr_mult: 1.0}
 
   LevelReject:
     min_profit_pips: 1.4
-    min_profit_ratio: 0.40
+    min_profit_ratio: 0.80
     pro_stop: {soft_pips: 0.8, hard_pips: 14.1, min_hold_sec: 175, max_hold_sec: 5899, soft_atr_mult: 0.6, hard_atr_mult: 1.0}
 
   MomentumPulse:
