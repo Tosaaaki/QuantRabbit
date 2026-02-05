@@ -236,7 +236,6 @@ TICK_IMB_MOM_MIN_PIPS = _env_float("TICK_IMB_MOM_MIN_PIPS", 0.45)
 TICK_IMB_RANGE_MIN_PIPS = _env_float("TICK_IMB_RANGE_MIN_PIPS", 0.25)
 TICK_IMB_ATR_MIN = _env_float("TICK_IMB_ATR_MIN", 0.7)
 TICK_IMB_SIZE_MULT = _env_float("TICK_IMB_SIZE_MULT", 1.25)
-TICK_IMB_BLOCK_HOURS_UTC = parse_hours(os.getenv("TICK_IMB_BLOCK_HOURS_UTC", ""))
 
 LEVEL_LOOKBACK = _env_int("LEVEL_REJECT_LOOKBACK", 20)
 LEVEL_BAND_PIPS = _env_float("LEVEL_REJECT_BAND_PIPS", 0.8)
@@ -813,12 +812,6 @@ def _signal_tick_imbalance(
     *,
     tag: str,
 ) -> Optional[Dict[str, object]]:
-    if TICK_IMB_BLOCK_HOURS_UTC:
-        try:
-            if datetime.datetime.utcnow().hour in TICK_IMB_BLOCK_HOURS_UTC:
-                return None
-        except Exception:
-            pass
     mids, span = tick_snapshot(TICK_IMB_WINDOW_SEC, limit=160)
     imb = tick_imbalance(mids, span)
     if not imb:
