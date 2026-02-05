@@ -5,6 +5,7 @@ After=network.target
 [Service]
 Type=simple
 WorkingDirectory=/home/tossaki/QuantRabbit
+EnvironmentFile=-/etc/quantrabbit.env
 Environment="PYTHONUNBUFFERED=1"
 ExecStart=/home/tossaki/QuantRabbit/.venv/bin/python -m workers.manual_swing.exit_worker
 Restart=always
