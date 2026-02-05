@@ -26,6 +26,7 @@ _DB_TIMEOUT = float(os.getenv("BRAIN_DB_TIMEOUT_SEC", "3.0"))
 
 _ENABLED = os.getenv("BRAIN_ENABLED", "0").strip().lower() not in {"", "0", "false", "no", "off"}
 _ALLOWLIST = {item.strip().lower() for item in os.getenv("BRAIN_STRATEGY_ALLOWLIST", "").split(",") if item.strip()}
+_BLOCKLIST = {item.strip().lower() for item in os.getenv("BRAIN_STRATEGY_BLOCKLIST", "").split(",") if item.strip()}
 _POCKET_ALLOWLIST = {item.strip().lower() for item in os.getenv("BRAIN_POCKET_ALLOWLIST", "").split(",") if item.strip()}
 _SAMPLE_RATE = max(0.0, min(1.0, float(os.getenv("BRAIN_SAMPLE_RATE", "1.0") or 1.0)))
 
@@ -153,6 +154,11 @@ def _should_use(strategy_tag: Optional[str], pocket: Optional[str]) -> bool:
         return False
     if not strategy_tag or not pocket:
         return False
+    if _BLOCKLIST:
+        tag_key = strategy_tag.strip().lower()
+        base = tag_key.split("-", 1)[0]
+        if tag_key in _BLOCKLIST or base in _BLOCKLIST:
+            return False
     if _ALLOWLIST:
         tag_key = strategy_tag.strip().lower()
         base = tag_key.split("-", 1)[0]
