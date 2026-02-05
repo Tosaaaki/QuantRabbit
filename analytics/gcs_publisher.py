@@ -16,6 +16,27 @@ from utils.secrets import get_secret
 from utils.gcs_uploader import metadata_available, upload_json_via_metadata
 
 _DEFAULT_OBJECT = "realtime/ui_state.json"
+_DEFAULT_BUCKET_KEYS = ("ui_bucket_name", "GCS_BACKUP_BUCKET")
+
+
+def _is_placeholder(value: str) -> bool:
+    return "placeholder" in str(value).strip().lower()
+
+
+def _resolve_bucket_name() -> str | None:
+    for key in _DEFAULT_BUCKET_KEYS:
+        try:
+            value = get_secret(key)
+        except KeyError:
+            continue
+        if not value or _is_placeholder(value):
+            continue
+        if key != "ui_bucket_name":
+            logging.warning(
+                "[GCS] ui_bucket_name が未設定のため %s にフォールバックします。", key
+            )
+        return str(value)
+    return None
 
 
 def _utcnow_iso() -> str:
@@ -44,9 +65,8 @@ class GCSRealtimePublisher:
         except KeyError:
             project_id = None
 
-        try:
-            bucket_name = get_secret("ui_bucket_name")
-        except KeyError:
+        bucket_name = _resolve_bucket_name()
+        if not bucket_name:
             logging.warning(
                 "[GCS] ui_bucket_name が設定されていないため、リアルタイム出力は無効化されます。"
             )
@@ -54,7 +74,7 @@ class GCSRealtimePublisher:
             self._client = None
             self._bucket = None
             return
-        self._bucket_name = bucket_name
+        self._bucket_name = str(bucket_name)
         self._use_metadata = metadata_available()
 
         try:

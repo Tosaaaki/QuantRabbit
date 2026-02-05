@@ -27,7 +27,6 @@ except Exception:
     pass
 
 from analytics.gcs_publisher import GCSRealtimePublisher
-from execution.position_manager import PositionManager
 
 METRICS_DB = LOGS_DIR / "metrics.db"
 ORDERS_DB = LOGS_DIR / "orders.db"
@@ -64,6 +63,11 @@ ERROR_LOG_PATHS = [
 ]
 ERROR_LOG_MAX_LINES = int(os.getenv("UI_ERROR_LOG_MAX_LINES", "10"))
 ERROR_LOG_MAX_BYTES = int(os.getenv("UI_ERROR_LOG_MAX_BYTES", "180000"))
+SKIP_OANDA = os.getenv("UI_SNAPSHOT_SKIP_OANDA", "").strip().lower() in {
+    "1",
+    "true",
+    "yes",
+}
 
 
 def _load_latest_metric(metric: str) -> Optional[float]:
@@ -493,6 +497,22 @@ def _mark_sync_trades(count: int) -> None:
         pass
 
 
+def _init_position_manager():
+    if SKIP_OANDA:
+        logging.info("[UI] UI_SNAPSHOT_SKIP_OANDA=1 -> OANDA 呼び出しをスキップします。")
+        return None
+    try:
+        from execution.position_manager import PositionManager
+    except Exception as exc:  # noqa: BLE001
+        logging.warning("[UI] PositionManager import failed: %s", exc)
+        return None
+    try:
+        return PositionManager()
+    except Exception as exc:  # noqa: BLE001
+        logging.warning("[UI] PositionManager init failed: %s", exc)
+        return None
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Publish UI snapshot to GCS.")
     parser.add_argument(
@@ -519,13 +539,12 @@ def main() -> int:
         return 1
 
     metrics: dict = {}
-    pm = None
-    if args.lite:
-        new_trades = []
-        recent_trades = _load_recent_trades(limit=int(args.recent))
-        open_positions = {}
-        try:
-            pm = PositionManager()
+    new_trades: list = []
+    recent_trades = _load_recent_trades(limit=int(args.recent))
+    open_positions: dict = {}
+    pm = _init_position_manager()
+    if pm is not None:
+        if args.lite:
             try:
                 if _should_sync_trades():
                     try:
@@ -544,27 +563,27 @@ def main() -> int:
                 except Exception as exc:  # noqa: BLE001
                     logging.warning("[UI] get_open_positions failed: %s", exc)
                     open_positions = {}
-        except Exception as exc:  # noqa: BLE001
-            logging.warning("[UI] PositionManager init failed: %s", exc)
-            open_positions = {}
-    else:
-        pm = PositionManager()
-        try:
-            new_trades = pm.sync_trades()
-        except Exception as exc:  # noqa: BLE001
-            logging.warning("[UI] sync_trades failed: %s", exc)
-            new_trades = []
-        try:
-            open_positions = pm.get_open_positions(include_unknown=True)
-        except Exception as exc:  # noqa: BLE001
-            logging.warning("[UI] get_open_positions failed: %s", exc)
-            open_positions = {}
-        try:
-            recent_trades = pm.fetch_recent_trades(limit=int(args.recent))
-        except Exception as exc:  # noqa: BLE001
-            logging.warning("[UI] fetch_recent_trades failed: %s", exc)
-            recent_trades = []
-        metrics = pm.get_performance_summary()
+        else:
+            try:
+                new_trades = pm.sync_trades()
+            except Exception as exc:  # noqa: BLE001
+                logging.warning("[UI] sync_trades failed: %s", exc)
+                new_trades = []
+            try:
+                open_positions = pm.get_open_positions(include_unknown=True)
+            except Exception as exc:  # noqa: BLE001
+                logging.warning("[UI] get_open_positions failed: %s", exc)
+                open_positions = {}
+            try:
+                recent_trades = pm.fetch_recent_trades(limit=int(args.recent))
+            except Exception as exc:  # noqa: BLE001
+                logging.warning("[UI] fetch_recent_trades failed: %s", exc)
+                recent_trades = []
+            try:
+                metrics = pm.get_performance_summary()
+            except Exception as exc:  # noqa: BLE001
+                logging.warning("[UI] get_performance_summary failed: %s", exc)
+                metrics = {}
     if isinstance(metrics, dict):
         data_lag_ms = _load_latest_metric("data_lag_ms")
         decision_latency_ms = _load_latest_metric("decision_latency_ms")
