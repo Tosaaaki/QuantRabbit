@@ -697,6 +697,7 @@ async def micro_multi_worker() -> None:
         factors = all_factors()
         fac_m1 = factors.get("M1") or {}
         fac_h4 = factors.get("H4") or {}
+        fac_h1 = factors.get("H1") or {}
         fac_m5 = factors.get("M5") or {}
         age_m1 = _factor_age_seconds(fac_m1)
         if age_m1 > config.MAX_FACTOR_AGE_SEC:
