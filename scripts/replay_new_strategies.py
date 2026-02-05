@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 from collections import defaultdict, deque
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -10,6 +11,10 @@ from pathlib import Path
 from typing import Dict, Iterable, List, Optional
 
 import pandas as pd
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
 
 from analysis.range_guard import detect_range_mode
 from indicators.calc_core import IndicatorEngine
