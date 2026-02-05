@@ -9,6 +9,7 @@ EnvironmentFile=/etc/quantrabbit.env
 Environment=PYTHONUNBUFFERED=1
 Environment=SCALP_PRECISION_ENABLED=1
 Environment=SCALP_PRECISION_MODE=level_reject
+Environment=LEVEL_REJECT_SIZE_MULT=1.4
 ExecStart=/home/tossaki/QuantRabbit/.venv/bin/python -m workers.scalp_precision.worker
 Restart=always
 RestartSec=5
