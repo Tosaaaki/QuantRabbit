@@ -9,11 +9,14 @@ from datetime import datetime, timezone
 from typing import Optional, Sequence, Set
 
 from analysis.range_guard import detect_range_mode
+from execution.order_manager import set_trade_protections
 from execution.position_manager import PositionManager
 from indicators.factor_cache import all_factors
 from market_data import tick_window
+from utils.metrics_logger import log_metric
 from workers.common.exit_utils import close_trade, mark_pnl_pips
 from workers.common.reentry_decider import decide_reentry
+from workers.common.pro_stop import maybe_close_pro_stop
 
 
 _BB_EXIT_ENABLED = os.getenv("BB_EXIT_ENABLED", "1").strip().lower() not in {"", "0", "false", "no"}
@@ -243,6 +246,8 @@ def _filter_trades(trades: Sequence[dict], tags: Set[str]) -> list[dict]:
 class _TradeState:
     peak: float
     lock_floor: Optional[float] = None
+    partial_done: bool = False
+    be_moved: bool = False
 
     def update(self, pnl: float, lock_buffer: float) -> None:
         if pnl > self.peak:
@@ -319,6 +324,25 @@ class RangeFaderExitWorker:
             os.getenv("RANGEFADER_EXIT_LOSS_CUT_REASON_TIME", "time_stop").strip() or "time_stop"
         )
 
+        self.tick_imb_tags = _tags_env("TICK_IMB_EXIT_TAGS", {"TickImbalance"})
+        self.tick_imb_partial_enabled = _bool_env("TICK_IMB_EXIT_PARTIAL_ENABLED", True)
+        self.tick_imb_partial_trigger = max(0.4, _float_env("TICK_IMB_EXIT_PARTIAL_TRIGGER_PIPS", 1.0))
+        self.tick_imb_partial_fraction = min(
+            0.8, max(0.1, _float_env("TICK_IMB_EXIT_PARTIAL_FRACTION", 0.4))
+        )
+        self.tick_imb_partial_min_units = max(20, int(_float_env("TICK_IMB_EXIT_PARTIAL_MIN_UNITS", 1000)))
+        self.tick_imb_partial_min_remaining = max(
+            20, int(_float_env("TICK_IMB_EXIT_PARTIAL_MIN_REMAIN", 1000))
+        )
+        self.tick_imb_be_buffer_pips = max(0.05, _float_env("TICK_IMB_EXIT_BE_BUFFER_PIPS", 0.2))
+        self.tick_imb_min_hold_sec = max(0.0, _float_env("TICK_IMB_EXIT_MIN_HOLD_SEC", 0.0))
+        self.tick_imb_profit_take = max(0.0, _float_env("TICK_IMB_EXIT_PROFIT_PIPS", 0.0))
+        self.tick_imb_trail_start = max(0.0, _float_env("TICK_IMB_EXIT_TRAIL_START_PIPS", 0.0))
+        self.tick_imb_trail_backoff = max(0.0, _float_env("TICK_IMB_EXIT_TRAIL_BACKOFF_PIPS", 0.0))
+        self.tick_imb_lock_buffer = max(0.0, _float_env("TICK_IMB_EXIT_LOCK_BUFFER_PIPS", 0.0))
+        self.tick_imb_max_hold_sec = max(0.0, _float_env("TICK_IMB_EXIT_MAX_HOLD_SEC", 0.0))
+        self.tick_imb_max_adverse_pips = max(0.0, _float_env("TICK_IMB_EXIT_MAX_ADVERSE_PIPS", 0.0))
+
         self._pos_manager = PositionManager()
         self._states: dict[str, _TradeState] = {}
         self._loss_cut_last_ts: dict[str, float] = {}
@@ -393,6 +417,21 @@ class RangeFaderExitWorker:
         opened_at = _parse_time(trade.get("open_time"))
         hold_sec = (now - opened_at).total_seconds() if opened_at else 0.0
 
+        thesis = trade.get("entry_thesis") or {}
+        if not isinstance(thesis, dict):
+            thesis = {}
+        strategy_tag = (
+            thesis.get("strategy_tag")
+            or thesis.get("strategy_tag_raw")
+            or thesis.get("strategy")
+            or thesis.get("tag")
+            or trade.get("strategy_tag")
+            or trade.get("strategy")
+            or ""
+        )
+        base_tag = str(strategy_tag).split("-", 1)[0] if strategy_tag else ""
+        is_tick_imb = bool(base_tag and base_tag in self.tick_imb_tags)
+
         client_ext = trade.get("clientExtensions")
         client_id = trade.get("client_order_id")
         if not client_id and isinstance(client_ext, dict):
@@ -400,8 +439,13 @@ class RangeFaderExitWorker:
         if not client_id:
             LOG.warning("[exit-rangefader] missing client_id trade=%s skip close", trade_id)
             return
+        if await maybe_close_pro_stop(trade, now=now):
+            return
 
-        if hold_sec < self.min_hold_sec:
+        min_hold_sec = self.min_hold_sec
+        if is_tick_imb and self.tick_imb_min_hold_sec > 0:
+            min_hold_sec = max(min_hold_sec, self.tick_imb_min_hold_sec)
+        if hold_sec < min_hold_sec:
             return
         candle_reason = _exit_candle_reversal("long" if units > 0 else "short")
         if candle_reason and pnl >= 0:
@@ -414,6 +458,50 @@ class RangeFaderExitWorker:
                 await self._close(trade_id, -units, candle_reason, pnl, candle_client_id)
                 if hasattr(self, "_states"):
                     self._states.pop(trade_id, None)
+                return
+        if is_tick_imb:
+            state = self._states.get(trade_id)
+            if state is None:
+                state = _TradeState(peak=pnl)
+                self._states[trade_id] = state
+            if (
+                self.tick_imb_partial_enabled
+                and pnl > 0
+                and not state.partial_done
+                and pnl >= self.tick_imb_partial_trigger
+            ):
+                reduce_units = int(abs(units) * self.tick_imb_partial_fraction)
+                remaining = abs(units) - reduce_units
+                if reduce_units >= self.tick_imb_partial_min_units and remaining >= self.tick_imb_partial_min_remaining:
+                    ok = await close_trade(
+                        trade_id,
+                        reduce_units,
+                        client_order_id=client_id,
+                        allow_negative=False,
+                        exit_reason="partial_take",
+                    )
+                    if ok:
+                        state.partial_done = True
+                        log_metric(
+                            "scalp_precision_tick_imb_partial_take",
+                            pnl,
+                            tags={"side": side},
+                            ts=now,
+                        )
+                        be = entry + (self.tick_imb_be_buffer_pips * 0.01) if side == "long" else entry - (
+                            self.tick_imb_be_buffer_pips * 0.01
+                        )
+                        be_ok = await set_trade_protections(trade_id, sl_price=round(be, 3), tp_price=None)
+                        if be_ok:
+                            state.be_moved = True
+                        return
+            if self.tick_imb_max_adverse_pips > 0 and pnl <= -self.tick_imb_max_adverse_pips:
+                await self._close(trade_id, -units, "max_adverse", pnl, client_id, allow_negative=True)
+                self._states.pop(trade_id, None)
+                return
+            if self.tick_imb_max_hold_sec > 0 and hold_sec >= self.tick_imb_max_hold_sec and pnl <= 0:
+                await self._close(trade_id, -units, "time_stop", pnl, client_id, allow_negative=True)
+                self._states.pop(trade_id, None)
                 return
         if pnl <= 0:
             fac_m1 = all_factors().get("M1") or {}
@@ -471,6 +559,15 @@ class RangeFaderExitWorker:
         profit_take = self.range_profit_take if range_active else self.profit_take
         trail_start = self.range_trail_start if range_active else self.trail_start
         trail_backoff = self.range_trail_backoff if range_active else self.trail_backoff
+        if is_tick_imb:
+            if self.tick_imb_lock_buffer > 0:
+                lock_buffer = self.tick_imb_lock_buffer
+            if self.tick_imb_profit_take > 0:
+                profit_take = self.tick_imb_profit_take
+            if self.tick_imb_trail_start > 0:
+                trail_start = self.tick_imb_trail_start
+            if self.tick_imb_trail_backoff > 0:
+                trail_backoff = self.tick_imb_trail_backoff
 
         state = self._states.get(trade_id)
         if state is None:
