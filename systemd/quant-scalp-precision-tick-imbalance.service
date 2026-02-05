@@ -10,10 +10,18 @@ Environment=PYTHONUNBUFFERED=1
 Environment=SCALP_PRECISION_ENABLED=1
 Environment=SCALP_PRECISION_MODE=tick_imbalance
 Environment=SCALP_PRECISION_GUARD_BYPASS_MODES=level_reject
+Environment=SCALP_PRECISION_MIN_ENTRY_CONF=65
 Environment=PERF_GUARD_RELAX_TAGS=TickImbalance
 Environment=ORDER_DISABLE_STOP_LOSS_SCALP=false
 Environment=ORDER_ALLOW_STOP_LOSS_WITH_EXIT_NO_NEGATIVE_CLOSE_SCALP=true
 Environment=ORDER_ENTRY_HARD_STOP_PIPS_STRATEGY_TICKIMBALANCE=0
+Environment=TICK_IMB_RATIO_MIN=0.72
+Environment=TICK_IMB_MOM_MIN_PIPS=0.60
+Environment=TICK_IMB_RANGE_MIN_PIPS=0.35
+Environment=TICK_IMB_ATR_MIN=0.90
+Environment=TICK_IMB_SIZE_MULT=1.00
+Environment=TICK_IMB_ALLOWED_REGIMES=Trend,Breakout
+Environment=TICK_IMB_BLOCK_RANGE_MODE=1
 ExecStart=/home/tossaki/QuantRabbit/.venv/bin/python -m workers.scalp_precision.worker
 Restart=always
 RestartSec=5

@@ -24,6 +24,7 @@ from workers.common.dyn_cap import compute_cap
 from workers.common.air_state import evaluate_air, adjust_signal
 from workers.common.dyn_size import compute_units
 from workers.common import perf_guard
+from workers.common.quality_gate import current_regime
 
 from . import config
 from .common import (
@@ -83,6 +84,13 @@ def _env_int(key: str, default: int) -> int:
         return int(float(raw))
     except Exception:
         return default
+
+
+def _env_bool(key: str, default: bool) -> bool:
+    raw = os.getenv(key)
+    if raw is None:
+        return default
+    return raw.strip().lower() not in {"", "0", "false", "no"}
 
 
 def _env_csv(key: str, default: str = "") -> List[str]:
@@ -236,6 +244,12 @@ TICK_IMB_MOM_MIN_PIPS = _env_float("TICK_IMB_MOM_MIN_PIPS", 0.45)
 TICK_IMB_RANGE_MIN_PIPS = _env_float("TICK_IMB_RANGE_MIN_PIPS", 0.25)
 TICK_IMB_ATR_MIN = _env_float("TICK_IMB_ATR_MIN", 0.7)
 TICK_IMB_SIZE_MULT = _env_float("TICK_IMB_SIZE_MULT", 1.25)
+TICK_IMB_ALLOWED_REGIMES = {
+    s.strip().lower()
+    for s in _env_csv("TICK_IMB_ALLOWED_REGIMES", "")
+    if s.strip()
+}
+TICK_IMB_BLOCK_RANGE_MODE = _env_bool("TICK_IMB_BLOCK_RANGE_MODE", True)
 
 LEVEL_LOOKBACK = _env_int("LEVEL_REJECT_LOOKBACK", 20)
 LEVEL_BAND_PIPS = _env_float("LEVEL_REJECT_BAND_PIPS", 0.8)
@@ -809,9 +823,21 @@ def _signal_htf_pullback(
 
 def _signal_tick_imbalance(
     fac_m1: Dict[str, object],
+    range_ctx=None,
     *,
     tag: str,
 ) -> Optional[Dict[str, object]]:
+    if TICK_IMB_BLOCK_RANGE_MODE and range_ctx and getattr(range_ctx, "active", False):
+        return None
+    if TICK_IMB_ALLOWED_REGIMES:
+        regime = str(fac_m1.get("regime") or "").strip()
+        if not regime:
+            try:
+                regime = str(current_regime("M1", event_mode=False) or "").strip()
+            except Exception:
+                regime = ""
+        if regime and regime.lower() not in TICK_IMB_ALLOWED_REGIMES:
+            return None
     mids, span = tick_snapshot(TICK_IMB_WINDOW_SEC, limit=160)
     imb = tick_imbalance(mids, span)
     if not imb:
@@ -1650,7 +1676,13 @@ async def scalp_precision_worker() -> None:
                     signal = fn(fac_m1, fac_m5, **kwargs)
                 elif fn is _signal_session_edge:
                     signal = fn(fac_m1, range_ctx, now_utc=now, **kwargs)
-                elif fn in (_signal_spread_revert, _signal_vwap_revert, _signal_stoch_bounce, _signal_divergence_revert):
+                elif fn in (
+                    _signal_spread_revert,
+                    _signal_vwap_revert,
+                    _signal_stoch_bounce,
+                    _signal_divergence_revert,
+                    _signal_tick_imbalance,
+                ):
                     signal = fn(fac_m1, range_ctx, **kwargs)
                 else:
                     signal = fn(fac_m1, **kwargs)
