@@ -2,9 +2,12 @@
 
 ## 1. ミッション / 運用前提
 > 狙い: USD/JPY で 資産の10%増を狙う 24/7 無裁量トレーディング・エージェント。  
-> 境界: 発注・リスクは機械的、曖昧判断はローカルルール（LLMなし）。
+> 境界: 発注・リスクは機械的、曖昧判断はローカルルール（LLMは任意のゲートのみ）。
 - ニュース連動パイプラインは撤去済み（`news_fetcher` / `summary_ingestor` / NewsSpike は無効）。
-- LLM（GPT/Vertex）関連は廃止。`analysis/local_decider.py` のローカル判定のみを使用。
+- LLM（Vertex）は **任意の「Brainゲート」** に限定して使用可。メインの判定は `analysis/local_decider.py` のローカル判定のみ。
+  - Brainゲート: `workers/common/brain.py` を `execution/order_manager.py` の preflight に適用し、**許可/縮小/拒否**を返す（default: disabled）。
+  - Brainは **strategy_tag ごとに persona（性格）を持ち、記憶は戦略単位で分離**される。
+  - 有効化は `BRAIN_ENABLED=1` と Vertex 認証（`VERTEX_PROJECT_ID` / `VERTEX_LOCATION` 等）が必須。
 - 現行デフォルト: `WORKER_ONLY_MODE=true` / `MAIN_TRADING_ENABLED=0`。共通 `exit_manager` はスタブ化され、エントリー/EXIT は各戦略ワーカー＋専用 `exit_worker` が担当。
 - 発注経路はワーカーが直接 OANDA に送信するのが既定（`SIGNAL_GATE_ENABLED=0` / `ORDER_FORWARD_TO_SIGNAL_GATE=0`）。共通ゲート（`utils/signal_bus.py` → main 関所）を使う場合のみ両フラグを 1 にする。
 - 共通エントリー/テックゲート（`entry_guard` / `entry_tech`）は廃止・使用禁止。判断は各戦略ワーカーの推定(Projection)で行い、ポケット別の共通判定はしない。
@@ -21,7 +24,7 @@
 - マージン余力判定の落とし穴（2025-12-29対応済み）: fast_scalp が shared_state 欠落時に余力0と誤判定し全シグナルをスキップした事象あり。`workers/fast_scalp/worker.py` で `get_account_snapshot()` フォールバックを追加済み。再発時はログに `refreshed account snapshot equity=... margin_available=...` が出ることを確認し、0判定が続く場合は OANDA snapshot 取得を先に疑う。
 
 ## 2. システム概要とフロー
-- データ → 判定 → 発注: Tick 取得 → Candle 確定 → Factors 算出 → Regime/Focus → Local Decider → Strategy Plugins → Risk Guard → Order Manager → ログ。
+- データ → 判定 → 発注: Tick 取得 → Candle 確定 → Factors 算出 → Regime/Focus → Local Decider → Strategy Plugins → Risk Guard → Order Manager（Brainゲート任意） → ログ。
 - コンポーネントと I/O
 
   | レイヤ | 担当 | 主な入出力 |
@@ -31,6 +34,7 @@
   | Regime & Focus | `analysis/regime_classifier.py` / `analysis/focus_decider.py` | Factors → macro/micro レジーム・`weight_macro` |
   | Local Decider | `analysis/local_decider.py` | focus + perf → ローカル判定 |
   | Strategy Plugin | `strategies/*` | Factors → `StrategyDecision` または None |
+  | Brain Gate (optional) | `workers/common/brain.py` | order preflight → allow/reduce/block |
   | Exit (専用ワーカー) | `workers/*/exit_worker.py` | pocket 別 open positions → exit 指示（PnL>0 決済が原則） |
   | Signal Gate | `utils/signal_bus.py` / `main.py` | ワーカー enqueue → confidence 順に選抜・ロット配分 → OrderIntent |
   | Risk Guard | `execution/risk_guard.py` | lot/SL/TP/pocket → 可否・調整値 |
@@ -118,6 +122,7 @@ class OrderIntent(BaseModel):
 ## 4. エントリー / Exit / リスク制御
 - Strategy フロー: Focus/Local decision → `ranked_strategies` 順に Strategy Plugin を呼び、`StrategyDecision` または None を返す。`None` はノートレード。
 - Confidence スケーリング: `confidence`(0–100) を pocket 割当 lot に掛け、最小 0.2〜最大 1.0 の段階的エントリー。`STAGE_RATIOS` に従い `_stage_conditions_met` を通過したステージのみ追撃。
+- Brainゲート（任意）: `execution/order_manager.py` で LLM 判断を実行し、**ALLOW/REDUCE/BLOCK** を返す。`REDUCE` は units 縮小のみ（増加は禁止）。
 - Exit: 各戦略の `exit_worker` が最低保有時間とテクニカル/レンジ判定を踏まえ、PnL>0 決済が原則（強制 DD/ヘルス/マージン使用率/余力/未実現DDの総合判定のみ例外）。共通 `execution/exit_manager.py` は常に空を返す互換スタブ。`execution/stage_tracker` がクールダウンと方向別ブロックを管理。
 - Release gate: PF>1.1、勝率>52%、最大 DD<5% を 2 週間連続で満たすと実弾へ昇格。
 - リスク計算とロット:
@@ -290,6 +295,50 @@ sudo -u <user> -H bash -lc '
 
 - `config/env.toml` 最低限: `gcp_project_id`, `gcp_location`, `GCS_BACKUP_BUCKET`, `ui_bucket_name`, `BQ_PROJECT/BQ_DATASET/BQ_TRADES_TABLE`, `oanda_account_id`, `oanda_token`, `oanda_practice`
 - デプロイは上記の `gcloud_doctor.sh` / `deploy_to_vm.sh` を使用
+
+### 9.2.1 運用負荷ゼロ化（systemd mask）
+- 目的: 不要戦略ユニットの誤起動を完全に遮断する（`/etc/quantrabbit.env` の誤設定でも起動しない）。
+- 方針: 対象ユニットを `/dev/null` へ symlink して mask。バックアップは `/etc/systemd/system/qr_mask_backup_<UTC timestamp>/` に保存。
+- 解除: `sudo systemctl unmask <unit>` → `sudo systemctl daemon-reload`。必要ならバックアップから unit を復元。
+- 参考コマンド（例）
+
+```bash
+ts=$(date -u +%Y%m%dT%H%M%SZ)
+backup_dir=/etc/systemd/system/qr_mask_backup_$ts
+sudo mkdir -p "$backup_dir"
+sudo cp -a /etc/systemd/system/<unit>.service "$backup_dir/" 2>/dev/null || true
+sudo ln -sf /dev/null /etc/systemd/system/<unit>.service
+sudo systemctl daemon-reload
+```
+
+- 2026-02-05 JST に `fx-trader-vm` で mask 済みユニット
+
+```
+quant-scalp-impulseretrace.service
+quant-scalp-impulseretrace-exit.service
+quant-m1scalper.service
+quant-m1scalper-exit.service
+quant-scalp-multi.service
+quant-scalp-multi-exit.service
+quant-pullback-s5.service
+quant-pullback-s5-exit.service
+quant-pullback-runner-s5.service
+quant-pullback-runner-s5-exit.service
+quant-range-comp-break.service
+quant-range-comp-break-exit.service
+quant-scalp-reversal-nwave.service
+quant-scalp-reversal-nwave-exit.service
+quant-vol-spike-rider.service
+quant-vol-spike-rider-exit.service
+quant-tech-fusion.service
+quant-tech-fusion-exit.service
+quant-macro-tech-fusion.service
+quant-macro-tech-fusion-exit.service
+quant-micro-pullback-fib.service
+quant-micro-pullback-fib-exit.service
+quant-manual-swing.service
+quant-manual-swing-exit.service
+```
 
 ### 9.3 Storage / GCS
 - バケット

@@ -7,6 +7,7 @@ LLM なしで動作するヒューリスティック判定。
 
 from __future__ import annotations
 
+import os
 from typing import Dict, Iterable, List, Optional
 
 _ALLOWED_STRATEGIES = (
@@ -33,6 +34,59 @@ def _safe_float(value: object, default: float = 0.0) -> float:
         return float(value)
     except (TypeError, ValueError):
         return default
+
+
+def _env_bool(name: str, default: bool) -> bool:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() not in {"", "0", "false", "no", "off"}
+
+
+def _env_float(name: str, default: float) -> float:
+    raw = os.getenv(name)
+    if raw is None:
+        return float(default)
+    try:
+        return float(raw)
+    except (TypeError, ValueError):
+        return float(default)
+
+
+def _clamp(value: float, lo: float, hi: float) -> float:
+    return max(lo, min(hi, value))
+
+
+def _score_linear(value: float, bad: float, ref: float) -> float:
+    if value <= bad:
+        return 0.0
+    if value >= ref:
+        return 1.0
+    span = max(1e-6, ref - bad)
+    return _clamp((value - bad) / span, 0.0, 1.0)
+
+
+_DECIDER_PERF_ENABLED = _env_bool("DECIDER_PERF_ENABLED", True)
+_DECIDER_PERF_HOURLY_ENABLED = _env_bool("DECIDER_PERF_HOURLY_ENABLED", True)
+_DECIDER_PERF_MIN_TRADES = max(5, int(_env_float("DECIDER_PERF_MIN_TRADES", 12)))
+_DECIDER_PERF_PF_BAD = _env_float("DECIDER_PERF_PF_BAD", 0.9)
+_DECIDER_PERF_PF_REF = _env_float("DECIDER_PERF_PF_REF", 1.15)
+_DECIDER_PERF_WIN_BAD = _env_float("DECIDER_PERF_WIN_BAD", 0.48)
+_DECIDER_PERF_WIN_REF = _env_float("DECIDER_PERF_WIN_REF", 0.55)
+_DECIDER_PERF_MULT_MIN = _env_float("DECIDER_PERF_MULT_MIN", 0.85)
+_DECIDER_PERF_MULT_MAX = _env_float("DECIDER_PERF_MULT_MAX", 1.1)
+
+_DECIDER_PERF_HOURLY_MIN_TRADES = max(
+    5, int(_env_float("DECIDER_PERF_HOURLY_MIN_TRADES", 8))
+)
+_DECIDER_PERF_HOURLY_PF_BAD = _env_float("DECIDER_PERF_HOURLY_PF_BAD", 0.85)
+_DECIDER_PERF_HOURLY_PF_REF = _env_float("DECIDER_PERF_HOURLY_PF_REF", 1.1)
+_DECIDER_PERF_HOURLY_WIN_BAD = _env_float("DECIDER_PERF_HOURLY_WIN_BAD", 0.46)
+_DECIDER_PERF_HOURLY_WIN_REF = _env_float("DECIDER_PERF_HOURLY_WIN_REF", 0.54)
+_DECIDER_PERF_HOURLY_MULT_MIN = _env_float("DECIDER_PERF_HOURLY_MULT_MIN", 0.8)
+_DECIDER_PERF_HOURLY_MULT_MAX = _env_float("DECIDER_PERF_HOURLY_MULT_MAX", 1.05)
+_DECIDER_PERF_TOTAL_MULT_MIN = _env_float("DECIDER_PERF_TOTAL_MULT_MIN", 0.7)
+_DECIDER_PERF_TOTAL_MULT_MAX = _env_float("DECIDER_PERF_TOTAL_MULT_MAX", 1.15)
 
 
 def _atr_pips(factors: Optional[Dict]) -> float:
@@ -63,6 +117,37 @@ def _pocket_pf(perf: Dict, pocket: str, default: float = 1.0) -> float:
     return _safe_float(perf.get(f"{pocket}_pf"), default)
 
 
+def _pocket_metric(perf: Dict, pocket: str, key: str, default: float = 0.0) -> float:
+    """Fetch pocket metric from nested or flattened dicts."""
+    if not perf:
+        return default
+    direct = perf.get(pocket)
+    if isinstance(direct, dict):
+        return _safe_float(direct.get(key), default)
+    return _safe_float(perf.get(f"{pocket}_{key}"), default)
+
+
+def _perf_multiplier(
+    pf: float,
+    win_rate: float,
+    sample: float,
+    *,
+    min_trades: int,
+    pf_bad: float,
+    pf_ref: float,
+    win_bad: float,
+    win_ref: float,
+    mult_min: float,
+    mult_max: float,
+) -> float:
+    if sample < min_trades:
+        return 1.0
+    pf_score = _score_linear(pf, pf_bad, pf_ref)
+    win_score = _score_linear(win_rate, win_bad, win_ref)
+    combined = _clamp(0.6 * pf_score + 0.4 * win_score, 0.0, 1.0)
+    return _clamp(mult_min + combined * (mult_max - mult_min), mult_min, mult_max)
+
+
 def heuristic_decision(
     payload: Dict,
     last_decision: Optional[Dict[str, object]] = None,
@@ -81,6 +166,7 @@ def heuristic_decision(
 
     event_soon = bool(payload.get("event_soon"))
     perf = payload.get("perf") or {}
+    perf_hourly = payload.get("perf_hourly") or {}
 
     macro_adx = _safe_float(factors_h4.get("adx"))
     macro_gap = abs(_safe_float(factors_h4.get("ma10")) - _safe_float(factors_h4.get("ma20")))
@@ -141,6 +227,63 @@ def heuristic_decision(
         weight_scalp = min(weight_scalp, 0.06)
     elif scalp_pf > 1.15:
         weight_scalp = max(weight_scalp, 0.14)
+
+    # Performance-aware weight scaling (overall + hourly)
+    if _DECIDER_PERF_ENABLED:
+        macro_win = _pocket_metric(perf, "macro", "win_rate", 0.5)
+        micro_win = _pocket_metric(perf, "micro", "win_rate", 0.5)
+        scalp_win = _pocket_metric(perf, "scalp", "win_rate", 0.5)
+        macro_n = _pocket_metric(perf, "macro", "sample", 0.0)
+        micro_n = _pocket_metric(perf, "micro", "sample", 0.0)
+        scalp_n = _pocket_metric(perf, "scalp", "sample", 0.0)
+
+        def _combined_mult(pocket: str, pf: float, win: float, sample: float) -> float:
+            mult = _perf_multiplier(
+                pf,
+                win,
+                sample,
+                min_trades=_DECIDER_PERF_MIN_TRADES,
+                pf_bad=_DECIDER_PERF_PF_BAD,
+                pf_ref=_DECIDER_PERF_PF_REF,
+                win_bad=_DECIDER_PERF_WIN_BAD,
+                win_ref=_DECIDER_PERF_WIN_REF,
+                mult_min=_DECIDER_PERF_MULT_MIN,
+                mult_max=_DECIDER_PERF_MULT_MAX,
+            )
+            if _DECIDER_PERF_HOURLY_ENABLED and perf_hourly:
+                h_pf = _pocket_metric(perf_hourly, pocket, "pf", pf)
+                h_win = _pocket_metric(perf_hourly, pocket, "win_rate", win)
+                h_n = _pocket_metric(perf_hourly, pocket, "sample", 0.0)
+                h_mult = _perf_multiplier(
+                    h_pf,
+                    h_win,
+                    h_n,
+                    min_trades=_DECIDER_PERF_HOURLY_MIN_TRADES,
+                    pf_bad=_DECIDER_PERF_HOURLY_PF_BAD,
+                    pf_ref=_DECIDER_PERF_HOURLY_PF_REF,
+                    win_bad=_DECIDER_PERF_HOURLY_WIN_BAD,
+                    win_ref=_DECIDER_PERF_HOURLY_WIN_REF,
+                    mult_min=_DECIDER_PERF_HOURLY_MULT_MIN,
+                    mult_max=_DECIDER_PERF_HOURLY_MULT_MAX,
+                )
+                mult *= h_mult
+            return _clamp(mult, _DECIDER_PERF_TOTAL_MULT_MIN, _DECIDER_PERF_TOTAL_MULT_MAX)
+
+        base_macro = max(0.0, weight_macro)
+        base_scalp = max(0.0, weight_scalp)
+        base_micro = max(0.0, 1.0 - base_macro - base_scalp)
+
+        macro_mult = _combined_mult("macro", macro_pf, macro_win, macro_n)
+        micro_mult = _combined_mult("micro", micro_pf, micro_win, micro_n)
+        scalp_mult = _combined_mult("scalp", scalp_pf, scalp_win, scalp_n)
+
+        macro_w = base_macro * macro_mult
+        scalp_w = base_scalp * scalp_mult
+        micro_w = base_micro * micro_mult
+        total = macro_w + scalp_w + micro_w
+        if total > 0:
+            weight_macro = macro_w / total
+            weight_scalp = scalp_w / total
 
     max_total = 0.9
     total_weight = weight_macro + weight_scalp
