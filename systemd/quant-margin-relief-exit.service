@@ -1,5 +1,5 @@
 [Unit]
-Description=QuantRabbit Tech Fusion Exit Worker
+Description=QuantRabbit Margin Relief Exit Worker
 After=network.target
 
 [Service]
@@ -7,7 +7,7 @@ Type=simple
 WorkingDirectory=/home/tossaki/QuantRabbit
 EnvironmentFile=-/etc/quantrabbit.env
 Environment="PYTHONUNBUFFERED=1"
-ExecStart=/home/tossaki/QuantRabbit/.venv/bin/python -m workers.tech_fusion.exit_worker
+ExecStart=/home/tossaki/QuantRabbit/.venv/bin/python -m workers.margin_relief_exit.exit_worker
 Restart=always
 RestartSec=5
 User=tossaki
