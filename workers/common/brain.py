@@ -17,6 +17,7 @@ from datetime import datetime, timezone
 from typing import Any, Optional
 
 from utils.vertex_client import call_vertex_text
+from utils.metrics_logger import log_metric
 
 LOG = logging.getLogger(__name__)
 
@@ -97,6 +98,9 @@ _PERSONA_PRESETS = {
         "avoid": "Avoid conflicting signals.",
     },
 }
+
+_COST_INPUT_PER_1K = float(os.getenv("BRAIN_COST_INPUT_PER_1K", "0") or 0.0)
+_COST_OUTPUT_PER_1K = float(os.getenv("BRAIN_COST_OUTPUT_PER_1K", "0") or 0.0)
 
 _CACHE: dict[tuple[str, str], tuple[float, "BrainDecision"]] = {}
 
@@ -413,6 +417,7 @@ def decide(
         "meta": meta or {},
     }
     prompt = _build_prompt(context)
+    call_start = time.monotonic()
     resp = call_vertex_text(
         prompt,
         model=_MODEL,
@@ -421,10 +426,48 @@ def decide(
         timeout_sec=_TIMEOUT_SEC,
         response_mime_type="application/json",
     )
+    call_ms = max(0.0, (time.monotonic() - call_start) * 1000.0)
+    try:
+        log_metric(
+            "brain_latency_ms",
+            call_ms,
+            tags={"strategy": tag, "pocket": pocket_key, "ok": bool(resp and resp.text)},
+        )
+    except Exception:
+        pass
     if resp is None or not resp.text:
         decision = BrainDecision(True, 1.0, "no_llm", "ALLOW", memory=memory)
         _CACHE[cache_key] = (now, decision)
         return decision
+
+    try:
+        log_metric(
+            "brain_tokens_prompt",
+            float(resp.prompt_tokens or 0),
+            tags={"strategy": tag, "pocket": pocket_key},
+        )
+        log_metric(
+            "brain_tokens_output",
+            float(resp.output_tokens or 0),
+            tags={"strategy": tag, "pocket": pocket_key},
+        )
+        log_metric(
+            "brain_tokens_total",
+            float(resp.total_tokens or 0),
+            tags={"strategy": tag, "pocket": pocket_key},
+        )
+        if _COST_INPUT_PER_1K > 0 or _COST_OUTPUT_PER_1K > 0:
+            est_cost = (
+                (float(resp.prompt_tokens or 0) / 1000.0) * _COST_INPUT_PER_1K
+                + (float(resp.output_tokens or 0) / 1000.0) * _COST_OUTPUT_PER_1K
+            )
+            log_metric(
+                "brain_cost_est",
+                float(est_cost),
+                tags={"strategy": tag, "pocket": pocket_key},
+            )
+    except Exception:
+        pass
 
     payload = _parse_response(resp.text)
     if not isinstance(payload, dict):
