@@ -175,18 +175,26 @@ ALLOWED_TAGS: Set[str] = {
     "MicroRangeBreak",
     "MicroVWAPBound",
     "MicroVWAPRevert",
+    "MicroCompressionRevert",
+    "MicroTrendRetest",
     "TrendMomentumMicro",
     "VolCompressionBreak",
     "MomentumPulse",
 }
-REVERSAL_TAG_PREFIXES: Set[str] = {"MicroVWAPBound", "MicroVWAPRevert"}
-REVERSAL_PROFILES: Set[str] = {"bb_range_reversion", "micro_vwap_bound", "micro_vwap_revert"}
+REVERSAL_TAG_PREFIXES: Set[str] = {"MicroVWAPBound", "MicroVWAPRevert", "MicroCompressionRevert"}
+REVERSAL_PROFILES: Set[str] = {
+    "bb_range_reversion",
+    "micro_vwap_bound",
+    "micro_vwap_revert",
+    "compression_revert",
+}
 OVERLAY_TAG_PREFIXES: Set[str] = {"VolCompressionBreak", "MomentumPulse"}
 REVERSAL_BASE_TAGS: Set[str] = {
     "MicroVWAPBound",
     "MicroVWAPRevert",
     "MicroRangeBreak",
     "MicroLevelReactor",
+    "MicroCompressionRevert",
     "BB_RSI",
 }
 POCKET = "micro"

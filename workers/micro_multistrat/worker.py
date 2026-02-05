@@ -23,7 +23,9 @@ from strategies.micro.level_reactor import MicroLevelReactor
 from strategies.micro.range_break import MicroRangeBreak
 from strategies.micro.vwap_bound_revert import MicroVWAPBound
 from strategies.micro_lowvol.micro_vwap_revert import MicroVWAPRevert
+from strategies.micro_lowvol.compression_revert import MicroCompressionRevert
 from strategies.micro.trend_momentum import TrendMomentumMicro
+from strategies.micro.trend_retest import MicroTrendRetest
 from utils.divergence import apply_divergence_confidence, divergence_bias, divergence_snapshot
 from utils.market_hours import is_market_open
 from utils.oanda_account import get_account_snapshot, get_position_summary
@@ -283,6 +285,7 @@ _TREND_STRATEGIES = {
     MicroMomentumStack.name,
     MicroPullbackEMA.name,
     TrendMomentumMicro.name,
+    MicroTrendRetest.name,
 }
 _PULLBACK_STRATEGIES = {
     MicroPullbackEMA.name,
@@ -292,6 +295,7 @@ _RANGE_STRATEGIES = {
     MicroVWAPBound.name,
     MicroLevelReactor.name,
     MicroVWAPRevert.name,
+    MicroCompressionRevert.name,
 }
 
 
@@ -546,6 +550,8 @@ def _allowed_strategies() -> List:
         MicroVWAPBound,
         MicroVWAPRevert,
         TrendMomentumMicro,
+        MicroTrendRetest,
+        MicroCompressionRevert,
     ]
     if not allow_raw:
         return all_classes
@@ -573,7 +579,7 @@ def _is_mr_signal(tag: str) -> bool:
     if not tag_str:
         return False
     base_tag = tag_str.split("-", 1)[0]
-    if base_tag in {"MicroVWAPBound", "MicroVWAPRevert", "BB_RSI"}:
+    if base_tag in {"MicroVWAPBound", "MicroVWAPRevert", "MicroCompressionRevert", "BB_RSI"}:
         return True
     lower = tag_str.lower()
     return lower.startswith("mlr-fade") or lower.startswith("mlr-bounce")

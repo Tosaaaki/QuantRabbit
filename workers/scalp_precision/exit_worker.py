@@ -157,7 +157,7 @@ LOG = logging.getLogger(__name__)
 LOG_PREFIX = os.getenv("SCALP_PRECISION_EXIT_LOG_PREFIX", "[ScalpPrecisionExit]")
 
 
-ALLOWED_TAGS: Set[str] = {'SpreadRangeRevert','RangeFaderPro','VwapRevertS','StochBollBounce','DivergenceRevert','CompressionRetest','HTFPullbackS','MacdTrendRide','EmaSlopePull','TickImbalance','LevelReject','WickReversal','SessionEdge'}
+ALLOWED_TAGS: Set[str] = {'SpreadRangeRevert','RangeFaderPro','VwapRevertS','StochBollBounce','DivergenceRevert','CompressionRetest','HTFPullbackS','MacdTrendRide','EmaSlopePull','TickImbalance','LevelReject','LiquiditySweep','WickReversal','SessionEdge'}
 
 
 def _tags_env(key: str, default: Set[str]) -> Set[str]:
@@ -668,4 +668,3 @@ def _exit_candle_reversal(side):
     return None
 if __name__ == "__main__":
     asyncio.run(scalp_precision_exit_worker())
-

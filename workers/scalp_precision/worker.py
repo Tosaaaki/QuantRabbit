@@ -59,6 +59,7 @@ _MODE_TAG_MAP = {
     'session_edge': 'SessionEdge',
     'drought_revert': 'DroughtRevert',
     'precision_lowvol': 'PrecisionLowVol',
+    'liquidity_sweep': 'LiquiditySweep',
 }
 
 def _mode_to_tag(mode: str) -> Optional[str]:
@@ -268,6 +269,18 @@ WICK_BODY_MAX_PIPS = _env_float("WICK_REV_BODY_MAX_PIPS", 0.9)
 WICK_RATIO_MIN = _env_float("WICK_REV_RATIO_MIN", 0.55)
 WICK_ADX_MAX = _env_float("WICK_REV_ADX_MAX", 24.0)
 WICK_BBW_MAX = _env_float("WICK_REV_BBW_MAX", 0.28)
+
+LSR_LOOKBACK = _env_int("LSR_LOOKBACK", 20)
+LSR_SWEEP_PIPS = _env_float("LSR_SWEEP_PIPS", 0.6)
+LSR_RECLAIM_PIPS = _env_float("LSR_RECLAIM_PIPS", 0.2)
+LSR_BODY_MAX_PIPS = _env_float("LSR_BODY_MAX_PIPS", 1.1)
+LSR_RANGE_MIN_PIPS = _env_float("LSR_RANGE_MIN_PIPS", 1.6)
+LSR_WICK_RATIO_MIN = _env_float("LSR_WICK_RATIO_MIN", 0.55)
+LSR_ADX_MAX = _env_float("LSR_ADX_MAX", 28.0)
+LSR_BBW_MAX = _env_float("LSR_BBW_MAX", 0.34)
+LSR_RANGE_SCORE_MIN = _env_float("LSR_RANGE_SCORE_MIN", 0.40)
+LSR_REQUIRE_TICK_REVERSAL = _env_bool("LSR_REQUIRE_TICK_REVERSAL", True)
+LSR_SIZE_MULT = _env_float("LSR_SIZE_MULT", 1.0)
 
 SESSION_ALLOW_HOURS = parse_hours(os.getenv("SESSION_EDGE_ALLOW_HOURS_JST", "12,13,18-22"))
 SESSION_BLOCK_HOURS = parse_hours(os.getenv("SESSION_EDGE_BLOCK_HOURS_JST", "00-02,16"))
@@ -944,6 +957,101 @@ def _signal_level_reject(
         "confidence": int(max(45, min(92, conf))),
         "tag": tag,
         "reason": "level_reject",
+        "size_mult": round(LSR_SIZE_MULT, 3),
+    }
+
+
+def _signal_liquidity_sweep(
+    fac_m1: Dict[str, object],
+    range_ctx=None,
+    *,
+    tag: str,
+) -> Optional[Dict[str, object]]:
+    if _adx(fac_m1) > LSR_ADX_MAX or _bbw(fac_m1) > LSR_BBW_MAX:
+        return None
+    if range_ctx is not None:
+        try:
+            range_score = float(getattr(range_ctx, "score", 0.0) or 0.0)
+            if LSR_RANGE_SCORE_MIN > 0.0 and range_score < LSR_RANGE_SCORE_MIN:
+                return None
+        except Exception:
+            pass
+
+    candles = get_candles_snapshot("M1", limit=LSR_LOOKBACK + 2)
+    if not candles or len(candles) < LSR_LOOKBACK + 2:
+        return None
+    last = candles[-1]
+    try:
+        o = float(last.get("open") or last.get("o") or 0.0)
+        h = float(last.get("high") or last.get("h") or 0.0)
+        l = float(last.get("low") or last.get("l") or 0.0)
+        c = float(last.get("close") or last.get("c") or 0.0)
+    except Exception:
+        return None
+    if h <= 0 or l <= 0:
+        return None
+    rng_pips = (h - l) / PIP
+    if rng_pips < LSR_RANGE_MIN_PIPS:
+        return None
+
+    body_pips = abs(c - o) / PIP
+    if body_pips > LSR_BODY_MAX_PIPS:
+        return None
+    upper_wick = (h - max(o, c)) / PIP
+    lower_wick = (min(o, c) - l) / PIP
+    wick_ratio = max(upper_wick, lower_wick) / max(rng_pips, 0.01)
+    if wick_ratio < LSR_WICK_RATIO_MIN:
+        return None
+
+    history = candles[-(LSR_LOOKBACK + 1):-1]
+    highs = []
+    lows = []
+    for candle in history:
+        try:
+            highs.append(float(candle.get("high") or candle.get("h") or 0.0))
+            lows.append(float(candle.get("low") or candle.get("l") or 0.0))
+        except Exception:
+            continue
+    if not highs or not lows:
+        return None
+    level_high = max(highs)
+    level_low = min(lows)
+
+    side = None
+    sweep_dist = 0.0
+    if h >= level_high + LSR_SWEEP_PIPS * PIP and c < level_high - LSR_RECLAIM_PIPS * PIP:
+        side = "short"
+        sweep_dist = (h - level_high) / PIP
+        if upper_wick < max(LSR_SWEEP_PIPS, 0.5):
+            return None
+    elif l <= level_low - LSR_SWEEP_PIPS * PIP and c > level_low + LSR_RECLAIM_PIPS * PIP:
+        side = "long"
+        sweep_dist = (level_low - l) / PIP
+        if lower_wick < max(LSR_SWEEP_PIPS, 0.5):
+            return None
+    else:
+        return None
+
+    mids, _ = tick_snapshot(6.0, limit=90)
+    rev_ok, rev_dir, rev_strength = tick_reversal(mids, min_ticks=6) if mids else (False, None, 0.0)
+    if LSR_REQUIRE_TICK_REVERSAL and (not rev_ok or rev_dir != side):
+        return None
+
+    atr = _atr_pips(fac_m1)
+    sl = max(1.4, min(2.6, atr * 0.8))
+    tp = max(1.8, min(3.2, atr * 1.15))
+    conf = 58 + int(min(14.0, sweep_dist * 3.0 + wick_ratio * 8.0))
+    if rev_ok and rev_strength is not None:
+        conf += int(min(6.0, max(0.0, rev_strength) * 6.0))
+    conf = max(45, min(92, conf))
+
+    return {
+        "action": "OPEN_LONG" if side == "long" else "OPEN_SHORT",
+        "sl_pips": round(sl, 2),
+        "tp_pips": round(tp, 2),
+        "confidence": conf,
+        "tag": tag,
+        "reason": "liquidity_sweep",
         "size_mult": round(LEVEL_REJECT_SIZE_MULT, 3),
     }
 
@@ -1698,6 +1806,8 @@ async def scalp_precision_worker() -> None:
                 strategies.append(("TickImbalance", _signal_tick_imbalance, {"tag": "TickImbalance"}))
             if enabled("level_reject"):
                 strategies.append(("LevelReject", _signal_level_reject, {"tag": "LevelReject"}))
+            if enabled("liquidity_sweep"):
+                strategies.append(("LiquiditySweep", _signal_liquidity_sweep, {"tag": "LiquiditySweep"}))
             if enabled("wick_reversal"):
                 strategies.append(("WickReversal", _signal_wick_reversal, {"tag": "WickReversal"}))
             if enabled("session_edge"):
