@@ -241,7 +241,7 @@ def _signal_map():
             fac_m1, fac_m5, tag="EmaSlopePull"
         ),
         "TickImbalance": lambda fac_m1, fac_m5, fac_h1, range_ctx, now: sp_worker._signal_tick_imbalance(  # type: ignore[attr-defined]
-            fac_m1, tag="TickImbalance"
+            fac_m1, range_ctx, tag="TickImbalance"
         ),
         "LevelReject": lambda fac_m1, fac_m5, fac_h1, range_ctx, now: sp_worker._signal_level_reject(  # type: ignore[attr-defined]
             fac_m1, tag="LevelReject"

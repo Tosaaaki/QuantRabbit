@@ -243,6 +243,12 @@ TICK_IMB_RATIO_MIN = _env_float("TICK_IMB_RATIO_MIN", 0.68)
 TICK_IMB_MOM_MIN_PIPS = _env_float("TICK_IMB_MOM_MIN_PIPS", 0.45)
 TICK_IMB_RANGE_MIN_PIPS = _env_float("TICK_IMB_RANGE_MIN_PIPS", 0.25)
 TICK_IMB_ATR_MIN = _env_float("TICK_IMB_ATR_MIN", 0.7)
+TICK_IMB_ADX_MIN = _env_float("TICK_IMB_ADX_MIN", 18.0)
+TICK_IMB_BBW_MIN = _env_float("TICK_IMB_BBW_MIN", 0.20)
+TICK_IMB_RANGE_SCORE_MAX = _env_float("TICK_IMB_RANGE_SCORE_MAX", 0.60)
+TICK_IMB_REQUIRE_MA_ALIGN = _env_int("TICK_IMB_REQUIRE_MA_ALIGN", 1)
+TICK_IMB_MA_GAP_MIN_PIPS = _env_float("TICK_IMB_MA_GAP_MIN_PIPS", 0.0)
+TICK_IMB_MA_ALIGN_STRICT = _env_int("TICK_IMB_MA_ALIGN_STRICT", 0)
 TICK_IMB_SIZE_MULT = _env_float("TICK_IMB_SIZE_MULT", 1.25)
 TICK_IMB_ALLOWED_REGIMES = {
     s.strip().lower()
@@ -827,8 +833,17 @@ def _signal_tick_imbalance(
     *,
     tag: str,
 ) -> Optional[Dict[str, object]]:
-    if TICK_IMB_BLOCK_RANGE_MODE and range_ctx and getattr(range_ctx, "active", False):
-        return None
+    if range_ctx is not None:
+        try:
+            range_active = bool(getattr(range_ctx, "active", False))
+            range_score = float(getattr(range_ctx, "score", 0.0) or 0.0)
+        except Exception:
+            range_active = False
+            range_score = 0.0
+        if TICK_IMB_BLOCK_RANGE_MODE and range_active:
+            return None
+        if TICK_IMB_RANGE_SCORE_MAX > 0.0 and range_score >= TICK_IMB_RANGE_SCORE_MAX:
+            return None
     if TICK_IMB_ALLOWED_REGIMES:
         regime = str(fac_m1.get("regime") or "").strip()
         if not regime:
@@ -838,6 +853,10 @@ def _signal_tick_imbalance(
                 regime = ""
         if regime and regime.lower() not in TICK_IMB_ALLOWED_REGIMES:
             return None
+    if _adx(fac_m1) < TICK_IMB_ADX_MIN:
+        return None
+    if _bbw(fac_m1) < TICK_IMB_BBW_MIN:
+        return None
     mids, span = tick_snapshot(TICK_IMB_WINDOW_SEC, limit=160)
     imb = tick_imbalance(mids, span)
     if not imb:
@@ -853,6 +872,22 @@ def _signal_tick_imbalance(
         return None
 
     direction = "long" if imb.momentum_pips > 0 else "short"
+    if TICK_IMB_REQUIRE_MA_ALIGN:
+        try:
+            ma10 = float(fac_m1.get("ma10") or 0.0)
+            ma20 = float(fac_m1.get("ma20") or 0.0)
+        except Exception:
+            ma10 = 0.0
+            ma20 = 0.0
+        if ma10 <= 0.0 or ma20 <= 0.0:
+            if TICK_IMB_MA_ALIGN_STRICT:
+                return None
+        else:
+            gap_pips = (ma10 - ma20) / PIP
+            if direction == "long" and gap_pips < TICK_IMB_MA_GAP_MIN_PIPS:
+                return None
+            if direction == "short" and gap_pips > -TICK_IMB_MA_GAP_MIN_PIPS:
+                return None
     sl = max(1.2, min(2.0, atr * 0.8))
     tp = max(1.5, min(2.5, atr * 1.05))
     conf = 60 + int(min(15, imb.ratio * 20.0))
