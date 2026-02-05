@@ -76,6 +76,14 @@ defaults:
     micro: {trigger_pips: 2.0, buffer_pips: 1.0}
     scalp: {trigger_pips: 1.0, buffer_pips: 0.8}
   tp_move_min_gap_pips: 0.3
+  pro_stop:
+    enabled: true
+    score_min: 2
+    require_signal: true
+    soft_pips: 3.4
+    hard_pips: 9.5
+    min_hold_sec: 203
+    max_hold_sec: 1760
 
 hold_until_profit:
   # Block closes for specific trades until they are in profit.
@@ -92,6 +100,7 @@ strategies:
     min_profit_pips: 2.0
     be_profile: {trigger_pips: 7.0, lock_ratio: 0.60, min_lock_pips: 3.0, cooldown_sec: 90}
     tp_move: {trigger_pips: 7.5, buffer_pips: 3.0}
+    pro_stop: {soft_pips: 1.6, hard_pips: 9.8, min_hold_sec: 113, max_hold_sec: 3437}
     neg_exit:
       allow_reasons:
         - hard_stop
@@ -117,6 +126,7 @@ strategies:
   H1Momentum:
     be_profile: {trigger_pips: 6.5, lock_ratio: 0.55, min_lock_pips: 2.8, cooldown_sec: 80}
     tp_move: {trigger_pips: 7.0, buffer_pips: 2.8}
+    pro_stop: {soft_pips: 2.2, hard_pips: 34.1, min_hold_sec: 160, max_hold_sec: 1484}
     neg_exit:
       allow_reasons:
         - hard_stop
@@ -142,6 +152,7 @@ strategies:
   trend_h1:
     be_profile: {trigger_pips: 5.5, lock_ratio: 0.55, min_lock_pips: 2.4, cooldown_sec: 75}
     tp_move: {trigger_pips: 6.2, buffer_pips: 2.4}
+    pro_stop: {soft_pips: 2.2, hard_pips: 34.1, min_hold_sec: 160, max_hold_sec: 1484}
     neg_exit:
       allow_reasons:
         - hard_stop
@@ -175,6 +186,7 @@ strategies:
   BB_RSI:
     be_profile: {trigger_pips: 1.8, lock_ratio: 0.52, min_lock_pips: 0.60, cooldown_sec: 35}
     tp_move: {trigger_pips: 1.4, buffer_pips: 0.9}
+    pro_stop: {soft_pips: 2.14, hard_pips: 4.03, min_hold_sec: 121, max_hold_sec: 364}
 
   BB_RSI_Fast:
     be_profile: {trigger_pips: 1.6, lock_ratio: 0.55, min_lock_pips: 0.55, cooldown_sec: 30}
@@ -183,6 +195,7 @@ strategies:
   MicroRangeBreak:
     be_profile: {trigger_pips: 1.8, lock_ratio: 0.50, min_lock_pips: 0.60, cooldown_sec: 35}
     tp_move: {trigger_pips: 1.5, buffer_pips: 0.9}
+    pro_stop: {soft_pips: 3.4, hard_pips: 9.5, min_hold_sec: 203, max_hold_sec: 1760}
 
   MicroVWAPBound:
     be_profile: {trigger_pips: 1.6, lock_ratio: 0.55, min_lock_pips: 0.60, cooldown_sec: 35}
@@ -194,14 +207,28 @@ strategies:
   MomentumBurst:
     be_profile: {trigger_pips: 1.8, lock_ratio: 0.50, min_lock_pips: 0.60, cooldown_sec: 35}
     tp_move: {trigger_pips: 1.5, buffer_pips: 0.9}
+    pro_stop: {soft_pips: 4.8, hard_pips: 8.12, min_hold_sec: 306, max_hold_sec: 2382}
 
   MicroLevelReactor:
     be_profile: {trigger_pips: 1.7, lock_ratio: 0.50, min_lock_pips: 0.60, cooldown_sec: 35}
     tp_move: {trigger_pips: 1.4, buffer_pips: 0.9}
 
+  mirror_spike:
+    pro_stop: {soft_pips: 5.22, hard_pips: 11.69, min_hold_sec: 660, max_hold_sec: 1979}
+
+  mirror_spike_tight:
+    pro_stop: {soft_pips: 2.4, hard_pips: 4.13, min_hold_sec: 34, max_hold_sec: 288}
+
+  Donchian55:
+    pro_stop: {soft_pips: 9.84, hard_pips: 31.19, min_hold_sec: 815, max_hold_sec: 2836}
+
+  Donchian5:
+    pro_stop: {soft_pips: 6.84, hard_pips: 21.36, min_hold_sec: 859, max_hold_sec: 7200}
+
   MicroPullbackEMA:
     be_profile: {trigger_pips: 2.0, lock_ratio: 0.48, min_lock_pips: 0.65, cooldown_sec: 40}
     tp_move: {trigger_pips: 1.6, buffer_pips: 1.0}
+    pro_stop: {soft_pips: 3.74, hard_pips: 6.82, min_hold_sec: 151, max_hold_sec: 1245}
 
   MicroMomentumStack:
     be_profile: {trigger_pips: 2.2, lock_ratio: 0.45, min_lock_pips: 0.70, cooldown_sec: 45}
@@ -210,6 +237,7 @@ strategies:
   TrendMomentumMicro:
     be_profile: {trigger_pips: 2.3, lock_ratio: 0.45, min_lock_pips: 0.70, cooldown_sec: 45}
     tp_move: {trigger_pips: 1.9, buffer_pips: 1.1}
+    pro_stop: {soft_pips: 1.7, hard_pips: 2.4, min_hold_sec: 71, max_hold_sec: 312}
 
   MicroVWAPRevert:
     be_profile: {trigger_pips: 1.6, lock_ratio: 0.55, min_lock_pips: 0.60, cooldown_sec: 35}
@@ -221,24 +249,29 @@ strategies:
   TickImbalance:
     min_profit_pips: 1.4
     min_profit_ratio: 0.40
+    pro_stop: {soft_pips: 6.4, hard_pips: 12.07, min_hold_sec: 1200, max_hold_sec: 3600}
 
   LevelReject:
     min_profit_pips: 1.4
     min_profit_ratio: 0.40
+    pro_stop: {soft_pips: 0.8, hard_pips: 14.1, min_hold_sec: 175, max_hold_sec: 5899}
 
   MomentumPulse:
     be_profile: {trigger_pips: 1.7, lock_ratio: 0.50, min_lock_pips: 0.60, cooldown_sec: 35}
     tp_move: {trigger_pips: 1.4, buffer_pips: 0.9}
+    pro_stop: {soft_pips: 3.4, hard_pips: 4.94, min_hold_sec: 112, max_hold_sec: 3601}
 
   VolCompressionBreak:
     be_profile: {trigger_pips: 1.8, lock_ratio: 0.48, min_lock_pips: 0.60, cooldown_sec: 40}
     tp_move: {trigger_pips: 1.5, buffer_pips: 0.9}
+    pro_stop: {soft_pips: 1.4, hard_pips: 3.8, min_hold_sec: 20, max_hold_sec: 7200}
 
   RangeFader:
     be_profile: {trigger_pips: 1.0, lock_ratio: 0.45, min_lock_pips: 0.40, cooldown_sec: 12}
     tp_move: {trigger_pips: 0.8, buffer_pips: 0.6}
     start_delay_sec: 8
     max_delay_sec: 20
+    pro_stop: {soft_pips: 4.68, hard_pips: 14.84, min_hold_sec: 353, max_hold_sec: 7200}
     neg_exit:
       allow_reasons:
         - reversion_*
@@ -254,6 +287,7 @@ strategies:
     tp_move: {trigger_pips: 0.9, buffer_pips: 0.65}
     start_delay_sec: 10
     max_delay_sec: 25
+    pro_stop: {soft_pips: 4.5, hard_pips: 19.5, min_hold_sec: 224, max_hold_sec: 1695}
 
   ImpulseRetraceScalp:
     be_profile: {trigger_pips: 1.2, lock_ratio: 0.40, min_lock_pips: 0.45, cooldown_sec: 15}
@@ -264,6 +298,7 @@ strategies:
   M1Scalper:
     be_profile: {trigger_pips: 1.6, lock_ratio: 0.35, min_lock_pips: 0.50, cooldown_sec: 20}
     tp_move: {trigger_pips: 1.2, buffer_pips: 0.8}
+    pro_stop: {soft_pips: 1.8, hard_pips: 6.8, min_hold_sec: 22, max_hold_sec: 1140}
     neg_exit:
       allow_reasons:
         - hard_stop
@@ -294,6 +329,7 @@ strategies:
   fast_scalp:
     be_profile: {trigger_pips: 1.2, lock_ratio: 0.40, min_lock_pips: 0.45, cooldown_sec: 12}
     tp_move: {trigger_pips: 0.9, buffer_pips: 0.6}
+    pro_stop: {soft_pips: 1.2, hard_pips: 2.3, min_hold_sec: 15, max_hold_sec: 120}
 
   OnePipMakerS1:
     be_profile: {trigger_pips: 0.9, lock_ratio: 0.45, min_lock_pips: 0.35, cooldown_sec: 10}
@@ -314,6 +350,7 @@ strategies:
   impulse_retest_s5:
     be_profile: {trigger_pips: 1.3, lock_ratio: 0.40, min_lock_pips: 0.45, cooldown_sec: 15}
     tp_move: {trigger_pips: 1.0, buffer_pips: 0.7}
+    pro_stop: {soft_pips: 5.0, hard_pips: 9.8, min_hold_sec: 282, max_hold_sec: 2141}
 
   impulse_momentum_s5:
     be_profile: {trigger_pips: 1.5, lock_ratio: 0.38, min_lock_pips: 0.50, cooldown_sec: 16}

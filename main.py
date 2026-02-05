@@ -309,7 +309,7 @@ from analysis.regime_classifier import classify
 from analysis.focus_decider import decide_focus
 from analysis.local_decider import heuristic_decision
 from analysis import policy_bus
-from analysis.perf_monitor import snapshot as get_perf
+from analysis.perf_monitor import snapshot as get_perf, snapshot_hourly as get_perf_hourly
 from analytics.insight_client import InsightClient
 try:
     from analytics.firestore_strategy_client import (
@@ -367,6 +367,7 @@ from execution.order_manager import (
     plan_partial_reductions,
     set_trade_protections,
 )
+from execution.pro_stop import plan_pro_stop_closes
 from execution.exit_manager import ExitManager
 from execution.position_manager import PositionManager
 from execution.stage_tracker import StageTracker
@@ -3429,6 +3430,7 @@ async def logic_loop(
     param_context = ParamContext()
     chart_story = ChartStory()
     perf_cache = {}
+    perf_hourly_cache = {}
     insight = InsightClient()
     fs_strategy_enabled = firestore_strategy_enabled()
     fs_strategy_client = FirestoreStrategyClient(enable=fs_strategy_enabled) if fs_strategy_enabled else None
@@ -4069,6 +4071,10 @@ async def logic_loop(
             if (now - last_update_time).total_seconds() >= 300:
                 perf_start = time.monotonic()
                 perf_cache = get_perf()
+                try:
+                    perf_hourly_cache = get_perf_hourly()
+                except Exception:
+                    perf_hourly_cache = {}
                 try:
                     insight.refresh()
                 except Exception:
@@ -4881,8 +4887,22 @@ async def logic_loop(
             # --- 2. Local decision (LLM removed) ---
             if FORCE_SCALP_MODE:
                 logging.warning("[FORCE_SCALP] entering decision stage loop=%d", loop_counter)
+            hour_utc = now.hour
+            perf_hourly_current: dict[str, dict[str, float]] = {}
+            if isinstance(perf_hourly_cache, dict) and perf_hourly_cache:
+                for pocket, hourly in perf_hourly_cache.items():
+                    if not isinstance(hourly, dict):
+                        continue
+                    metrics = hourly.get(hour_utc)
+                    if isinstance(metrics, dict) and metrics:
+                        perf_hourly_current[pocket] = {
+                            key: val
+                            for key, val in metrics.items()
+                            if key in DECIDER_PERF_KEYS and val not in (None, "")
+                        }
             payload = {
                 "ts": now.isoformat(timespec="seconds"),
+                "hour_utc": hour_utc,
                 "reg_macro": macro_regime,
                 "reg_micro": micro_regime,
                 "factors_m1": _compact_factors(fac_m1, DECIDER_FACTOR_KEYS["M1"]),
@@ -4896,6 +4916,7 @@ async def logic_loop(
                 for pocket, metrics in (perf_cache or {}).items()
                 if metrics
                 },
+                "perf_hourly": perf_hourly_current,
                 "event_soon": event_soon,
             }
             local_decision: dict = {}
@@ -6065,6 +6086,51 @@ async def logic_loop(
                 update_dynamic_protections(open_positions, fac_m1, fac_h4)
             except Exception as exc:
                 logging.warning("[PROTECTION] update failed: %s", exc)
+            pro_stop_closed = False
+            try:
+                pro_stop_actions = plan_pro_stop_closes(
+                    open_positions,
+                    fac_m1,
+                    fac_h4,
+                    now=now,
+                )
+            except Exception as exc:
+                logging.warning("[PRO_STOP] planning failed: %s", exc)
+                pro_stop_actions = []
+            for action in pro_stop_actions:
+                trade_id = action.get("trade_id")
+                client_id = action.get("client_id")
+                reason = action.get("reason") or "hard_stop"
+                if not trade_id:
+                    continue
+                close_start = time.monotonic()
+                try:
+                    ok = await close_trade(
+                        trade_id,
+                        None,
+                        client_order_id=client_id,
+                        allow_negative=True,
+                        exit_reason=reason,
+                    )
+                finally:
+                    close_trade_ms += max(0.0, (time.monotonic() - close_start) * 1000.0)
+                    close_trade_count += 1
+                if ok:
+                    pro_stop_closed = True
+            if pro_stop_closed:
+                positions_start = time.monotonic()
+                open_positions = pos_manager.get_open_positions()
+                positions_fetch_ms += max(0.0, (time.monotonic() - positions_start) * 1000.0)
+                positions_fetch_count += 1
+                open_positions_snapshot = open_positions
+                stage_snapshot = {}
+                for pocket_name, position_info in open_positions.items():
+                    if pocket_name == "__net__":
+                        continue
+                    stage_snapshot[pocket_name] = {
+                        "long": stage_tracker.get_stage(pocket_name, "long"),
+                        "short": stage_tracker.get_stage(pocket_name, "short"),
+                    }
             partial_threshold_overrides = None
 
             partials_start = time.monotonic()
