@@ -1,14 +1,17 @@
 from __future__ import annotations
 from typing import Any, Dict, List, Optional, Protocol
 import asyncio
+import datetime as dt
 import logging
 import os
+from zoneinfo import ZoneInfo
 from analysis.ma_projection import compute_adx_projection, compute_bbw_projection, compute_ma_projection, compute_rsi_projection
 from indicators.factor_cache import all_factors, get_candles_snapshot
 
 class DataFeed(Protocol):
     def get_bars(self, symbol: str, tf: str, n: int) -> Any: ...
     def last(self, symbol: str) -> float: ...
+    def best_bid_ask(self, symbol: str) -> Optional[tuple[float, float]]: ...
 
 class Broker(Protocol):
     def send(self, order: Dict[str, Any]) -> Any: ...
@@ -25,6 +28,7 @@ _BB_ENTRY_SCALP_REVERT_RATIO = float(os.getenv("BB_ENTRY_SCALP_REVERT_RATIO", "0
 _BB_ENTRY_SCALP_EXT_PIPS = float(os.getenv("BB_ENTRY_SCALP_EXT_PIPS", "2.4"))
 _BB_ENTRY_SCALP_EXT_RATIO = float(os.getenv("BB_ENTRY_SCALP_EXT_RATIO", "0.30"))
 _BB_PIP = 0.01
+_PIP = 0.01
 
 
 def _bb_float(value):
@@ -289,13 +293,28 @@ def _projection_decision(side, pocket, mode_override=None):
         "scores": {k: round(v, 3) for k, v in scores.items()},
     }
     return allow, size_mult, detail
+
+
 def _as_bars(bars: Any):
-    if not bars: return []
+    if not bars:
+        return []
     if isinstance(bars, list) and bars and isinstance(bars[0], dict):
-        return [{"open":float(x.get("open", x.get("o",0))),
-                 "high":float(x.get("high", x.get("h",0))),
-                 "low": float(x.get("low",  x.get("l",0))),
-                 "close":float(x.get("close",x.get("c",0)))} for x in bars]
+        out = []
+        for x in bars:
+            bar = {
+                "open": float(x.get("open", x.get("o", 0))),
+                "high": float(x.get("high", x.get("h", 0))),
+                "low": float(x.get("low", x.get("l", 0))),
+                "close": float(x.get("close", x.get("c", 0))),
+            }
+            ts = x.get("timestamp", x.get("ts", x.get("time")))
+            if ts is not None:
+                try:
+                    bar["timestamp"] = float(ts)
+                except Exception:
+                    pass
+            out.append(bar)
+        return out
     return []
 
 def _median(vals):
@@ -316,6 +335,101 @@ def _atr(bars, n=14):
         pc = bars[-i - 1]["close"]
         trs.append(max(h - l, abs(h - pc), abs(l - pc)))
     return sum(trs) / len(trs)
+
+
+def _parse_hhmm(value: str) -> Optional[tuple[int, int]]:
+    if not value:
+        return None
+    try:
+        hh, mm = value.split(":", 1)
+        hour = int(hh)
+        minute = int(mm)
+    except Exception:
+        return None
+    if not (0 <= hour <= 23 and 0 <= minute <= 59):
+        return None
+    return hour, minute
+
+
+def _session_duration_minutes(session: Dict[str, Any]) -> int:
+    start_hm = _parse_hhmm(str(session.get("start", "")))
+    if not start_hm:
+        return 0
+    duration = session.get("duration_minutes")
+    if duration is None and session.get("end"):
+        end_hm = _parse_hhmm(str(session.get("end")))
+        if end_hm:
+            start_minutes = start_hm[0] * 60 + start_hm[1]
+            end_minutes = end_hm[0] * 60 + end_hm[1]
+            delta = end_minutes - start_minutes
+            if delta <= 0:
+                delta += 24 * 60
+            duration = delta
+    try:
+        return int(duration)
+    except Exception:
+        return 0
+
+
+def _last_completed_session(now_ts: float, sessions: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    if not sessions:
+        return None
+    now_utc = dt.datetime.fromtimestamp(now_ts, dt.timezone.utc)
+    best: Optional[Dict[str, Any]] = None
+    for session in sessions:
+        start_hm = _parse_hhmm(str(session.get("start", "")))
+        if not start_hm:
+            continue
+        duration = _session_duration_minutes(session)
+        if duration <= 0:
+            continue
+        tz_name = str(session.get("tz") or "UTC")
+        try:
+            tz = ZoneInfo(tz_name)
+        except Exception:
+            tz = dt.timezone.utc
+            tz_name = "UTC"
+        now_local = now_utc.astimezone(tz)
+        start_local = now_local.replace(
+            hour=start_hm[0],
+            minute=start_hm[1],
+            second=0,
+            microsecond=0,
+        )
+        end_local = start_local + dt.timedelta(minutes=duration)
+        if now_local < end_local:
+            start_local -= dt.timedelta(days=1)
+            end_local -= dt.timedelta(days=1)
+        start_ts = start_local.astimezone(dt.timezone.utc).timestamp()
+        end_ts = end_local.astimezone(dt.timezone.utc).timestamp()
+        if best is None or end_ts > float(best["end_ts"]):
+            best = {
+                "name": session.get("name"),
+                "tz": tz_name,
+                "start_ts": start_ts,
+                "end_ts": end_ts,
+            }
+    return best
+
+
+def _session_high_low(
+    bars: List[Dict[str, float]], start_ts: float, end_ts: float
+) -> Optional[tuple[float, float]]:
+    hi = None
+    lo = None
+    for bar in bars:
+        ts = bar.get("timestamp")
+        if ts is None:
+            continue
+        if ts < start_ts or ts >= end_ts:
+            continue
+        h = bar["high"]
+        l = bar["low"]
+        hi = h if hi is None else max(hi, h)
+        lo = l if lo is None else min(lo, l)
+    if hi is None or lo is None:
+        return None
+    return lo, hi
 
 class StopRunReversalWorker:
     """
@@ -351,6 +465,7 @@ class StopRunReversalWorker:
                         size *= proj_mult
                     order = {"symbol": sym, "side": "sell" if ti["side"]=="short" else "buy", "type": "market",
                              "size": size,
+                             "strategy_tag": str(self.c.get("id", "stop_run_reversal")),
                              "meta": {"worker_id": self.c.get("id"), "intent": ti}}
                     if self.exit_mgr:
                         order = self.exit_mgr.attach(order)
@@ -361,6 +476,22 @@ class StopRunReversalWorker:
         bars = _as_bars(self.d.get_bars(sym, self.tf, 200))
         if len(bars) < 50:
             return None
+        now_ts = float(bars[-1].get("timestamp") or dt.datetime.now(tz=dt.timezone.utc).timestamp())
+        max_spread_pips = float(self.c.get("max_spread_pips", 0.0) or 0.0)
+        max_spread_bp = float(self.c.get("max_spread_bp", 0.0) or 0.0)
+        try:
+            ba = self.d.best_bid_ask(sym)
+        except Exception:
+            ba = None
+        if ba and (max_spread_pips > 0.0 or max_spread_bp > 0.0):
+            bid, ask = ba
+            if bid and ask and bid > 0:
+                sp_pips = (ask - bid) / _PIP
+                sp_bp = (ask / bid - 1.0) * 1e4
+                if max_spread_pips > 0.0 and sp_pips > max_spread_pips:
+                    return None
+                if max_spread_bp > 0.0 and sp_bp > max_spread_bp:
+                    return None
         atr = _atr(bars, n=int(self.c.get("atr_len", 14)))
 
         rngs = [b["high"] - b["low"] for b in bars[-50:]]
@@ -368,6 +499,19 @@ class StopRunReversalWorker:
         k = float(self.c.get("min_range_mult", 1.8))
         wick_ratio = float(self.c.get("wick_ratio", 0.6))
         confirm = int(self.c.get("confirm_bars", 2))
+        sessions = self.c.get("sessions") or []
+        session_sweep_required = bool(self.c.get("session_sweep_required", False))
+        session_sweep_pips = float(self.c.get("session_sweep_pips", 0.0) or 0.0)
+        session_info = _last_completed_session(now_ts, sessions) if sessions else None
+        session_range = None
+        if session_info:
+            session_range = _session_high_low(
+                bars, float(session_info["start_ts"]), float(session_info["end_ts"])
+            )
+        if (session_sweep_required or session_sweep_pips > 0.0) and not session_range:
+            return None
+        session_low = session_range[0] if session_range else None
+        session_high = session_range[1] if session_range else None
 
         # last complete bar as trigger candle
         t = bars[-2]
@@ -382,6 +526,9 @@ class StopRunReversalWorker:
 
         # bull trap: long upper wick + small body near lows
         if up_wick / (rng + 1e-9) >= wick_ratio and body <= 0.5 * rng:
+            if session_high is not None and session_sweep_pips > 0.0:
+                if t["high"] < session_high + session_sweep_pips * _PIP:
+                    return None
             # failure to extend: next bars do not make new highs, then break prior low
             nxt = bars[-confirm:]
             if max(x["high"] for x in nxt) <= t["high"] and bars[-1]["close"] < t["low"]:
@@ -397,11 +544,17 @@ class StopRunReversalWorker:
                         "trigger_high": t["high"],
                         "trigger_low": t["low"],
                         "atr": atr,
+                        "session_high": session_high,
+                        "session_low": session_low,
+                        "session_name": session_info.get("name") if session_info else None,
                     },
                 }
 
         # bear trap: long lower wick + small body near highs
         if dn_wick / (rng + 1e-9) >= wick_ratio and body <= 0.5 * rng:
+            if session_low is not None and session_sweep_pips > 0.0:
+                if t["low"] > session_low - session_sweep_pips * _PIP:
+                    return None
             nxt = bars[-confirm:]
             if min(x["low"] for x in nxt) >= t["low"] and bars[-1]["close"] > t["high"]:
                 fac_m1 = all_factors().get("M1") or {}
@@ -416,6 +569,9 @@ class StopRunReversalWorker:
                         "trigger_high": t["high"],
                         "trigger_low": t["low"],
                         "atr": atr,
+                        "session_high": session_high,
+                        "session_low": session_low,
+                        "session_name": session_info.get("name") if session_info else None,
                     },
                 }
 

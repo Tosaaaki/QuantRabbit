@@ -13,6 +13,7 @@ from indicators.factor_cache import all_factors
 from market_data import tick_window
 from workers.common.exit_utils import close_trade, mark_pnl_pips
 from workers.common.reentry_decider import decide_reentry
+from workers.common.pro_stop import maybe_close_pro_stop
 
 
 _BB_EXIT_ENABLED = os.getenv("BB_EXIT_ENABLED", "1").strip().lower() not in {"", "0", "false", "no"}
@@ -154,7 +155,7 @@ def _bb_exit_allowed(style, side, price, fac, *, range_active=None):
 BB_STYLE = "trend"
 LOG = logging.getLogger(__name__)
 
-ALLOWED_TAGS: Set[str] = {'session_open_breakout', 'session_open'}
+ALLOWED_TAGS: Set[str] = {'session_open_breakout', 'session_open', 'session_open_fail'}
 
 
 def _tags_env(key: str, default: Set[str]) -> Set[str]:
@@ -227,6 +228,37 @@ def _filter_trades(trades: Sequence[dict], tags: Set[str]) -> list[dict]:
         if tag_str in tags or base_tag in tags:
             filtered.append(tr)
     return filtered
+
+
+REVERSAL_TAGS: Set[str] = {"session_open_fail", "session_open_reversion", "session_open_flip"}
+
+
+def _base_tag(trade: dict) -> Optional[str]:
+    thesis = trade.get("entry_thesis") or {}
+    tag = (
+        thesis.get("strategy_tag_raw")
+        or thesis.get("strategy_tag")
+        or thesis.get("strategy")
+        or thesis.get("tag")
+        or trade.get("strategy_tag")
+        or trade.get("strategy")
+    )
+    if not tag:
+        return None
+    return str(tag).split("-", 1)[0]
+
+
+def _bb_style_for_trade(trade: dict) -> str:
+    thesis = trade.get("entry_thesis") or {}
+    intent = thesis.get("intent")
+    if isinstance(intent, dict):
+        style = str(intent.get("style") or intent.get("mode") or "").lower()
+        if style in {"reversion", "mean_reversion", "fade"}:
+            return "reversion"
+    base = _base_tag(trade) or ""
+    if base in REVERSAL_TAGS:
+        return "reversion"
+    return BB_STYLE
 
 
 @dataclass
@@ -303,7 +335,17 @@ class SessionOpenExitWorker:
             range_active = False
         return _latest_mid(), range_active
 
-    async def _close(self, trade_id: str, units: int, reason: str, pnl: float, client_order_id: Optional[str], allow_negative: bool = False) -> None:
+    async def _close(
+        self,
+        trade_id: str,
+        units: int,
+        reason: str,
+        pnl: float,
+        client_order_id: Optional[str],
+        allow_negative: bool = False,
+        bb_style: Optional[str] = None,
+        range_active: Optional[bool] = None,
+    ) -> None:
         if _BB_EXIT_ENABLED:
             allow_neg = bool(locals().get("allow_negative"))
             pnl_val = locals().get("pnl")
@@ -311,8 +353,15 @@ class SessionOpenExitWorker:
                 fac = all_factors().get(_BB_EXIT_TF) or {}
                 price = _bb_exit_price(fac)
                 side = "long" if units > 0 else "short"
-                if not _bb_exit_allowed(BB_STYLE, side, price, fac):
-                    LOG.info("[exit-bb] trade=%s reason=%s price=%.3f", trade_id, reason, price or 0.0)
+                style = bb_style or BB_STYLE
+                if not _bb_exit_allowed(style, side, price, fac, range_active=range_active):
+                    LOG.info(
+                        "[exit-bb] trade=%s reason=%s price=%.3f style=%s",
+                        trade_id,
+                        reason,
+                        price or 0.0,
+                        style,
+                    )
                     return
         if pnl <= 0:
             allow_negative = True
@@ -341,6 +390,7 @@ class SessionOpenExitWorker:
 
         side = "long" if units > 0 else "short"
         pnl = mark_pnl_pips(entry, units, mid=mid)
+        bb_style = _bb_style_for_trade(trade)
         opened_at = _parse_time(trade.get("open_time"))
         hold_sec = (now - opened_at).total_seconds() if opened_at else 0.0
 
@@ -350,6 +400,8 @@ class SessionOpenExitWorker:
             client_id = client_ext.get("id")
         if not client_id:
             LOG.warning("[exit-session-open] missing client_id trade=%s skip close", trade_id)
+            return
+        if await maybe_close_pro_stop(trade, now=now):
             return
 
         if hold_sec < self.min_hold_sec:
@@ -362,7 +414,15 @@ class SessionOpenExitWorker:
                 if isinstance(client_ext, dict):
                     candle_client_id = client_ext.get("id")
             if candle_client_id:
-                await self._close(trade_id, -units, candle_reason, pnl, candle_client_id)
+                await self._close(
+                    trade_id,
+                    -units,
+                    candle_reason,
+                    pnl,
+                    candle_client_id,
+                    bb_style=bb_style,
+                    range_active=range_active,
+                )
                 if hasattr(self, "_states"):
                     self._states.pop(trade_id, None)
                 return
@@ -392,7 +452,15 @@ class SessionOpenExitWorker:
             if reentry.action == "hold":
                 return
             if reentry.action == "exit_reentry" and not reentry.shadow:
-                await self._close(trade_id, -units, "reentry_reset", pnl, client_id)
+                await self._close(
+                    trade_id,
+                    -units,
+                    "reentry_reset",
+                    pnl,
+                    client_id,
+                    bb_style=bb_style,
+                    range_active=range_active,
+                )
                 self._states.pop(trade_id, None)
                 return
             return
@@ -413,17 +481,41 @@ class SessionOpenExitWorker:
             state.lock_floor = candidate if state.lock_floor is None else max(state.lock_floor, candidate)
 
         if pnl >= profit_take:
-            await self._close(trade_id, -units, "take_profit", pnl, client_id)
+            await self._close(
+                trade_id,
+                -units,
+                "take_profit",
+                pnl,
+                client_id,
+                bb_style=bb_style,
+                range_active=range_active,
+            )
             self._states.pop(trade_id, None)
             return
 
         if state.lock_floor is not None and pnl <= state.lock_floor:
-            await self._close(trade_id, -units, "lock_floor", pnl, client_id)
+            await self._close(
+                trade_id,
+                -units,
+                "lock_floor",
+                pnl,
+                client_id,
+                bb_style=bb_style,
+                range_active=range_active,
+            )
             self._states.pop(trade_id, None)
             return
 
         if range_active and hold_sec >= self.range_max_hold_sec:
-            await self._close(trade_id, -units, "range_timeout", pnl, client_id)
+            await self._close(
+                trade_id,
+                -units,
+                "range_timeout",
+                pnl,
+                client_id,
+                bb_style=bb_style,
+                range_active=range_active,
+            )
             self._states.pop(trade_id, None)
 
     async def run(self) -> None:
@@ -595,5 +687,3 @@ def _exit_candle_reversal(side):
     return None
 if __name__ == "__main__":
     asyncio.run(session_open_exit_worker())
-
-

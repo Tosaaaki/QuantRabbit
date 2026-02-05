@@ -353,6 +353,8 @@ class SessionOpenWorker:
         self.d = datafeed
         self.log = logger
         self._last_entry_bar = {}  # symbol -> idx
+        self._last_breakout = {}   # symbol -> {"session": ts, "side": str, "bar": int}
+        self._last_fail_bar = {}   # symbol -> idx
 
         self.tf = self.c.get("timeframe_entry", "1m")
         self.cooldown = int(self.c.get("cooldown_bars", 3))
@@ -361,6 +363,12 @@ class SessionOpenWorker:
         self.exit_cfg = self.c.get("exit", {})
         self.filters = self.c.get("filters", {})
         self.sessions = self.c.get("sessions", [])
+        self.fail_window_bars = int(self.c.get("fail_window_bars", 4))
+        self.fail_reentry_bp = float(self.c.get("fail_reentry_bp", 1.0))
+        self.fail_sl_pips = float(self.c.get("fail_sl_pips", 1.2))
+        self.fail_tp_pips = float(self.c.get("fail_tp_pips", 1.2))
+        self.breakout_tag = str(self.c.get("breakout_tag", "session_open_breakout"))
+        self.fail_tag = str(self.c.get("fail_tag", "session_open_fail"))
 
         self.exit_mgr = build_exit_manager(self.exit_cfg)
 
@@ -372,7 +380,9 @@ class SessionOpenWorker:
             if not ti: 
                 continue
             pocket = str(self.c.get("pocket", "micro"))
-            proj_allow, proj_mult, proj_detail = _projection_decision(ti["side"], pocket)
+            style = str(ti.get("style") or ti.get("mode") or "").lower()
+            mode_override = "range" if style in {"reversion", "mean_reversion", "fade"} else None
+            proj_allow, proj_mult, proj_detail = _projection_decision(ti["side"], pocket, mode_override=mode_override)
             if not proj_allow:
                 continue
             if proj_detail:
@@ -427,6 +437,7 @@ class SessionOpenWorker:
             lo = rng["low"]
             up_trig = hi * (1 + self.pad_bp / 1e4)
             dn_trig = lo * (1 - self.pad_bp / 1e4)
+            session_key = int(t0)
 
             # cooldown on bar index edge:
             if len(bars) - 1 == self._last_entry_bar.get(sym, -999):
@@ -437,13 +448,83 @@ class SessionOpenWorker:
                 if not _bb_entry_allowed(BB_STYLE, "long", last, fac_m1):
                     continue
                 self._last_entry_bar[sym] = len(bars) - 1
-                return {"symbol": sym, "side": "long", "px": last, "meta": {"atr": atr, "rng": (lo, hi), "session": ses}}
+                self._last_breakout[sym] = {"session": session_key, "side": "long", "bar": len(bars) - 1}
+                return {
+                    "symbol": sym,
+                    "side": "long",
+                    "px": last,
+                    "style": "trend",
+                    "tag": self.breakout_tag,
+                    "meta": {"atr": atr, "rng": (lo, hi), "session": ses},
+                }
             if last < dn_trig:
                 fac_m1 = all_factors().get("M1") or {}
                 if not _bb_entry_allowed(BB_STYLE, "short", last, fac_m1):
                     continue
                 self._last_entry_bar[sym] = len(bars) - 1
-                return {"symbol": sym, "side": "short", "px": last, "meta": {"atr": atr, "rng": (lo, hi), "session": ses}}
+                self._last_breakout[sym] = {"session": session_key, "side": "short", "bar": len(bars) - 1}
+                return {
+                    "symbol": sym,
+                    "side": "short",
+                    "px": last,
+                    "style": "trend",
+                    "tag": self.breakout_tag,
+                    "meta": {"atr": atr, "rng": (lo, hi), "session": ses},
+                }
+
+            if self.fail_window_bars > 0:
+                state = self._last_breakout.get(sym)
+                if state and state.get("session") == session_key:
+                    if (len(bars) - 1) - int(state.get("bar", -999)) > self.fail_window_bars:
+                        self._last_breakout.pop(sym, None)
+                    else:
+                        if len(bars) - 1 == self._last_fail_bar.get(sym, -999):
+                            return None
+                        reentry_bp = self.fail_reentry_bp / 1e4
+                        if state.get("side") == "long" and last <= hi * (1 - reentry_bp):
+                            fac_m1 = all_factors().get("M1") or {}
+                            if not _bb_entry_allowed("reversion", "short", last, fac_m1, range_active=True):
+                                return None
+                            self._last_entry_bar[sym] = len(bars) - 1
+                            self._last_fail_bar[sym] = len(bars) - 1
+                            self._last_breakout.pop(sym, None)
+                            return {
+                                "symbol": sym,
+                                "side": "short",
+                                "px": last,
+                                "style": "reversion",
+                                "tag": self.fail_tag,
+                                "sl_pips": self.fail_sl_pips,
+                                "tp_pips": self.fail_tp_pips,
+                                "meta": {
+                                    "atr": atr,
+                                    "rng": (lo, hi),
+                                    "session": ses,
+                                    "fail_of": "long",
+                                },
+                            }
+                        if state.get("side") == "short" and last >= lo * (1 + reentry_bp):
+                            fac_m1 = all_factors().get("M1") or {}
+                            if not _bb_entry_allowed("reversion", "long", last, fac_m1, range_active=True):
+                                return None
+                            self._last_entry_bar[sym] = len(bars) - 1
+                            self._last_fail_bar[sym] = len(bars) - 1
+                            self._last_breakout.pop(sym, None)
+                            return {
+                                "symbol": sym,
+                                "side": "long",
+                                "px": last,
+                                "style": "reversion",
+                                "tag": self.fail_tag,
+                                "sl_pips": self.fail_sl_pips,
+                                "tp_pips": self.fail_tp_pips,
+                                "meta": {
+                                    "atr": atr,
+                                    "rng": (lo, hi),
+                                    "session": ses,
+                                    "fail_of": "short",
+                                },
+                            }
 
         return None
 
@@ -453,8 +534,10 @@ class SessionOpenWorker:
         size = max(0.0, float(self.c.get("budget_bps", 25)) / 10000.0)
         if size_mult > 1.0:
             size *= size_mult
+        tag = str(intent.get("tag") or self.breakout_tag)
         return {
             "symbol": sym, "side": side, "type": "market", "size": size,
+            "strategy_tag": tag,
             "meta": {"worker_id": self.c.get("id", "session_open_breakout"), "intent": intent}
         }
 

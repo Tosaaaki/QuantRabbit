@@ -8,6 +8,12 @@ DEFAULT_CONFIG = {
     ],
     "pad_bp": 2.0,                  # breakout padding in bps (avoid micro fakeouts)
     "cooldown_bars": 3,             # M bars to wait after an entry
+    "breakout_tag": "session_open_breakout",
+    "fail_tag": "session_open_fail",
+    "fail_window_bars": 4,          # bars after breakout to detect failure
+    "fail_reentry_bp": 1.2,         # price back inside range by this buffer
+    "fail_sl_pips": 1.2,            # tight SL for fail flip
+    "fail_tp_pips": 1.2,            # tight TP for fail flip
     "edge_threshold": 0.0,          # optional: accept-all once breakout happens
     "place_orders": False,          # dry-run first; set True after validation
     "exit": {"stop_atr": 1.5, "tp_atr": 2.4, "trail_mult": None, "breakeven_mult": 0.6},
