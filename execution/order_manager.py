@@ -38,7 +38,7 @@ from utils.metrics_logger import log_metric
 from execution import strategy_guard, reentry_gate
 from execution.position_manager import PositionManager, agent_client_prefixes
 from execution.risk_guard import POCKET_MAX_RATIOS, MAX_LEVERAGE
-from workers.common import perf_guard, profit_guard
+from workers.common import perf_guard, profit_guard, brain
 from workers.common.quality_gate import current_regime
 from indicators.factor_cache import get_last_regime
 from utils import signal_bus
@@ -4361,6 +4361,128 @@ async def market_order(
                     },
                 )
                 return None
+
+    # LLM brain gate (per-strategy human-like filter)
+    if not reduce_only and pocket != "manual":
+        try:
+            brain_decision = brain.decide(
+                strategy_tag=strategy_tag,
+                pocket=pocket,
+                side=side_label,
+                units=units,
+                sl_price=sl_price,
+                tp_price=tp_price,
+                entry_thesis=entry_thesis if isinstance(entry_thesis, dict) else None,
+                meta=meta if isinstance(meta, dict) else None,
+                confidence=confidence,
+            )
+        except Exception as exc:
+            brain_decision = None
+            logging.debug("[BRAIN] decision failed: %s", exc)
+        if brain_decision is not None:
+            if not brain_decision.allowed:
+                note = f"brain_block:{brain_decision.reason}"
+                _console_order_log(
+                    "OPEN_REJECT",
+                    pocket=pocket,
+                    strategy_tag=str(strategy_tag or "unknown"),
+                    side=side_label,
+                    units=units,
+                    sl_price=sl_price,
+                    tp_price=tp_price,
+                    client_order_id=client_order_id,
+                    note=note,
+                )
+                log_order(
+                    pocket=pocket,
+                    instrument=instrument,
+                    side=side_label,
+                    units=units,
+                    sl_price=sl_price,
+                    tp_price=tp_price,
+                    client_order_id=client_order_id,
+                    status="brain_block",
+                    attempt=0,
+                    stage_index=stage_index,
+                    request_payload={
+                        "strategy_tag": strategy_tag,
+                        "meta": meta,
+                        "entry_thesis": entry_thesis,
+                        "brain_reason": brain_decision.reason,
+                        "brain_action": brain_decision.action,
+                    },
+                )
+                log_metric(
+                    "order_brain_block",
+                    1.0,
+                    tags={
+                        "pocket": pocket,
+                        "strategy": str(strategy_tag or "unknown"),
+                        "reason": brain_decision.reason,
+                    },
+                )
+                return None
+            if 0.0 < brain_decision.scale < 1.0:
+                scaled_units = int(round(abs(units) * brain_decision.scale))
+                min_allowed = min_units_for_pocket(pocket)
+                if scaled_units < min_allowed:
+                    note = f"brain_scale_below_min:{brain_decision.reason}"
+                    _console_order_log(
+                        "OPEN_REJECT",
+                        pocket=pocket,
+                        strategy_tag=str(strategy_tag or "unknown"),
+                        side=side_label,
+                        units=units,
+                        sl_price=sl_price,
+                        tp_price=tp_price,
+                        client_order_id=client_order_id,
+                        note=note,
+                    )
+                    log_order(
+                        pocket=pocket,
+                        instrument=instrument,
+                        side=side_label,
+                        units=units,
+                        sl_price=sl_price,
+                        tp_price=tp_price,
+                        client_order_id=client_order_id,
+                        status="brain_scale_below_min",
+                        attempt=0,
+                        stage_index=stage_index,
+                        request_payload={
+                            "strategy_tag": strategy_tag,
+                            "meta": meta,
+                            "entry_thesis": entry_thesis,
+                            "brain_reason": brain_decision.reason,
+                            "brain_action": brain_decision.action,
+                            "brain_scale": brain_decision.scale,
+                            "scaled_units": scaled_units,
+                            "min_units": min_allowed,
+                        },
+                    )
+                    log_metric(
+                        "order_brain_block",
+                        1.0,
+                        tags={
+                            "pocket": pocket,
+                            "strategy": str(strategy_tag or "unknown"),
+                            "reason": "scale_below_min",
+                        },
+                    )
+                    return None
+                if scaled_units > 0 and scaled_units != abs(units):
+                    sign = 1 if units > 0 else -1
+                    units = int(sign * scaled_units)
+                    log_metric(
+                        "order_brain_scale",
+                        1.0,
+                        tags={
+                            "pocket": pocket,
+                            "strategy": str(strategy_tag or "unknown"),
+                            "reason": brain_decision.reason,
+                            "scale": f"{brain_decision.scale:.2f}",
+                        },
+                    )
 
     exec_cfg = None
     if isinstance(entry_thesis, dict):
