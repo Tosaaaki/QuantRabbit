@@ -1035,7 +1035,9 @@ def _signal_liquidity_sweep(
     mids, _ = tick_snapshot(6.0, limit=90)
     rev_ok, rev_dir, rev_strength = tick_reversal(mids, min_ticks=6) if mids else (False, None, 0.0)
     if LSR_REQUIRE_TICK_REVERSAL and (not rev_ok or rev_dir != side):
-        return None
+        hard_sweep_ok = sweep_dist >= (LSR_SWEEP_PIPS * 2.0) and wick_ratio >= (LSR_WICK_RATIO_MIN + 0.15)
+        if not hard_sweep_ok:
+            return None
 
     atr = _atr_pips(fac_m1)
     sl = max(1.4, min(2.6, atr * 0.8))
