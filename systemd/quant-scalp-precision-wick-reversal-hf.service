@@ -1,0 +1,46 @@
+[Unit]
+Description=QuantRabbit Scalp Precision WickReversalHF Worker
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/tossaki/QuantRabbit
+EnvironmentFile=/etc/quantrabbit.env
+Environment=PYTHONUNBUFFERED=1
+Environment=SCALP_PRECISION_ENABLED=1
+Environment=SCALP_PRECISION_MODE=wick_reversal_hf
+Environment=SCALP_PRECISION_ALLOWLIST=wick_reversal_hf
+Environment=SCALP_PRECISION_MODE_FILTER_ALLOWLIST=1
+Environment=SCALP_PRECISION_LOOP_INTERVAL_SEC=3.0
+Environment=SCALP_PRECISION_COOLDOWN_SEC=15
+Environment=SCALP_PRECISION_MAX_OPEN_TRADES=1
+Environment=SCALP_PRECISION_OPEN_TRADES_SCOPE=tag
+Environment=SCALP_PRECISION_BASE_UNITS=8000
+Environment=SCALP_PRECISION_CAP_MAX=0.55
+Environment=SCALP_PRECISION_LOG_PREFIX=[ScalpPrecision:WickRevHF]
+
+# HF tuning (looser than WickReversalPro; tick confirmed).
+Environment=WICK_HF_RANGE_SCORE_MIN=0.55
+Environment=WICK_HF_RANGE_MIN_PIPS=1.6
+Environment=WICK_HF_BODY_MAX_PIPS=1.1
+Environment=WICK_HF_RATIO_MIN=0.50
+Environment=WICK_HF_ADX_MAX=28.0
+Environment=WICK_HF_BBW_MAX=0.0016
+Environment=WICK_HF_SPREAD_P25=1.0
+Environment=WICK_HF_REQUIRE_BB_TOUCH=1
+Environment=WICK_HF_BB_TOUCH_PIPS=0.9
+Environment=WICK_HF_REQUIRE_TICK_REV=1
+Environment=WICK_HF_TICK_WINDOW_SEC=8.0
+Environment=WICK_HF_TICK_MIN_TICKS=10
+Environment=WICK_HF_TICK_MIN_STRENGTH=0.25
+
+# Attach entry SL/TP at the broker to cap tail losses.
+Environment=ORDER_ENABLE_STOP_LOSS_SCALP=1
+
+ExecStart=/home/tossaki/QuantRabbit/.venv/bin/python -m workers.scalp_precision.worker
+Restart=always
+RestartSec=5
+User=tossaki
+
+[Install]
+WantedBy=multi-user.target

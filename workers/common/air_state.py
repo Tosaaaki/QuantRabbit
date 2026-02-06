@@ -134,6 +134,7 @@ _RANGE_TAGS = {
     "levelreject",
     "wickreversal",
     "wickreversalpro",
+    "wickreversalhf",
     "tickwickreversal",
     "rangefader",
 }
