@@ -317,6 +317,7 @@ LEVEL_LOOKBACK = _env_int("LEVEL_REJECT_LOOKBACK", 20)
 LEVEL_BAND_PIPS = _env_float("LEVEL_REJECT_BAND_PIPS", 0.8)
 LEVEL_RSI_LONG_MAX = _env_float("LEVEL_REJECT_RSI_LONG_MAX", 48.0)
 LEVEL_RSI_SHORT_MIN = _env_float("LEVEL_REJECT_RSI_SHORT_MIN", 52.0)
+LEVEL_REJECT_ADX_MAX = _env_float("LEVEL_REJECT_ADX_MAX", 30.0)
 LEVEL_REJECT_SIZE_MULT = _env_float("LEVEL_REJECT_SIZE_MULT", 1.15)
 
 WICK_RANGE_MIN_PIPS = _env_float("WICK_REV_RANGE_MIN_PIPS", 2.0)
@@ -1590,6 +1591,8 @@ def _signal_level_reject(
     *,
     tag: str,
 ) -> Optional[Dict[str, object]]:
+    if LEVEL_REJECT_ADX_MAX > 0 and _adx(fac_m1) > LEVEL_REJECT_ADX_MAX:
+        return None
     price = _latest_price(fac_m1)
     if price <= 0:
         return None

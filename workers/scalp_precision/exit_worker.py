@@ -681,21 +681,11 @@ class RangeFaderExitWorker:
             or self.loss_cut_reason_time
         )
         if str(base_tag).lower() == "levelreject":
-            try:
-                thesis_vgap = float(thesis.get("vwap_gap") or 0.0)
-            except (TypeError, ValueError):
-                thesis_vgap = 0.0
-            vgap_abs = abs(thesis_vgap)
-            if vgap_abs >= 20.0:
-                adaptive = 20.0
-            elif vgap_abs >= 5.0:
-                adaptive = 8.0
-            else:
-                adaptive = 4.0
+            # LevelReject is tuned via config/strategy_exit_protections.yaml.
+            # Keep that configuration authoritative (avoid VWAP-gap-based overrides that
+            # tended to cause premature max_adverse closes and occasional tail risk).
             loss_cut_enabled = True
             loss_cut_require_sl = False
-            loss_cut_soft_pips = adaptive
-            loss_cut_hard_pips = adaptive
         tick_imb_profile = exit_profile.get("tick_imb")
         if not isinstance(tick_imb_profile, dict):
             tick_imb_profile = {}
