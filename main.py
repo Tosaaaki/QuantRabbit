@@ -85,6 +85,12 @@ def _latest_tick_lag_ms() -> Optional[float]:
 DATA_LAG_RESTART_MS = float(os.getenv("DATA_LAG_RESTART_MS", "8000"))
 DATA_LAG_RESTART_STRIKES = int(os.getenv("DATA_LAG_RESTART_STRIKES", "3"))
 _data_lag_strikes = 0
+DATA_LAG_ACTIVITY_WINDOW_SEC = float(os.getenv("DATA_LAG_ACTIVITY_WINDOW_SEC", "60"))
+DATA_LAG_ACTIVITY_MIN_TICKS = int(os.getenv("DATA_LAG_ACTIVITY_MIN_TICKS", "3"))
+DATA_LAG_ACTIVITY_LOG_MIN_INTERVAL_SEC = float(
+    os.getenv("DATA_LAG_ACTIVITY_LOG_MIN_INTERVAL_SEC", "300")
+)
+_data_lag_activity_last_log_mono = 0.0
 
 STREAM_RECOVERY_MODE = os.getenv("STREAM_RECOVERY_MODE", "stream").strip().lower()
 STREAM_RESET_COOLDOWN_SEC = float(os.getenv("STREAM_RESET_COOLDOWN_SEC", "30"))
@@ -127,10 +133,34 @@ def _maybe_request_stream_reset(reason: str, detail: str) -> bool:
 def _check_data_lag_watchdog(data_lag_ms: float) -> None:
     """Restart the process if tick lag stays high across multiple loops."""
     global _data_lag_strikes
+    global _data_lag_activity_last_log_mono
     if DATA_LAG_RESTART_MS <= 0 or DATA_LAG_RESTART_STRIKES <= 0:
         _data_lag_strikes = 0
         return
     if data_lag_ms >= DATA_LAG_RESTART_MS:
+        if DATA_LAG_ACTIVITY_WINDOW_SEC > 0 and DATA_LAG_ACTIVITY_MIN_TICKS > 0:
+            tick_count = None
+            try:
+                tick_count = len(tick_window.recent_ticks(seconds=DATA_LAG_ACTIVITY_WINDOW_SEC))
+            except Exception:
+                tick_count = None
+            if tick_count is not None and tick_count < DATA_LAG_ACTIVITY_MIN_TICKS:
+                if _data_lag_strikes:
+                    _data_lag_strikes = 0
+                now_mono = time.monotonic()
+                if (
+                    DATA_LAG_ACTIVITY_LOG_MIN_INTERVAL_SEC > 0
+                    and now_mono - _data_lag_activity_last_log_mono
+                    >= DATA_LAG_ACTIVITY_LOG_MIN_INTERVAL_SEC
+                ):
+                    logging.warning(
+                        "[WATCHDOG] data_lag_ms=%.1f but low tick activity (%s ticks/%.0fs) -> ignore strikes",
+                        data_lag_ms,
+                        tick_count,
+                        DATA_LAG_ACTIVITY_WINDOW_SEC,
+                    )
+                    _data_lag_activity_last_log_mono = now_mono
+                return
         _data_lag_strikes += 1
         if _data_lag_strikes >= DATA_LAG_RESTART_STRIKES:
             detail = (
@@ -379,7 +409,6 @@ from analytics.realtime_metrics_client import (
 from strategies.trend.ma_cross import MovingAverageCross
 from strategies.trend.h1_momentum import H1MomentumSwing
 from strategies.mean_reversion.bb_rsi import BBRsi
-from strategies.scalping.m1_scalper import M1Scalper
 from strategies.scalping.range_fader import RangeFader
 from strategies.scalping.pulse_break import PulseBreak
 from strategies.scalping.impulse_retrace import ImpulseRetraceScalp
@@ -430,7 +459,6 @@ DISABLE_MAIN_STRATEGIES = {
     "TrendMA",
     "BB_RSI",
     "MicroRangeBreak",
-    "M1Scalper",
 }
 
 # メイン側では内蔵ストラテジーを発注しない（ワーカーに移行済み）
@@ -700,9 +728,6 @@ HIGH_ZONE_IMPULSE_COUNTER_SCALE = _safe_env_float(
 )
 HIGH_ZONE_SCALP_COUNTER_SCALE = _safe_env_float(
     "HIGH_ZONE_SCALP_COUNTER_SCALE", 0.4, low=0.0, high=1.0
-)
-M1SCALPER_COUNTER_MIN_CONF = _safe_env_float(
-    "M1SCALPER_COUNTER_MIN_CONF", 8.0, low=0.0, high=50.0
 )
 HIGH_ZONE_REVERSAL_RSI_SHORT = _safe_env_float(
     "HIGH_ZONE_REVERSAL_RSI_SHORT", 58.0, low=40.0, high=70.0
@@ -1648,7 +1673,6 @@ def _reset_strategy_registry() -> None:
         BBRsi,
         BBRsiFast,
         RangeFader,
-        M1Scalper,
         PulseBreak,
         ImpulseRetraceScalp,
         MomentumBurstMicro,
@@ -1930,7 +1954,6 @@ ALLOWED_RANGE_STRATEGIES = {
     "BB_RSI",
     "BB_RSI_Fast",
     "RangeFader",
-    "M1Scalper",
     "MicroRangeBreak",
     "MicroVWAPRevert",
     "MicroVWAPBound",
@@ -5308,13 +5331,6 @@ async def logic_loop(
                 "[SCALP_READY] %s",
                 " ".join(f"{k}={v}" for k, v in diag_fields.items()),
             )
-            if "scalp" in focus_pockets and "M1Scalper" not in ranked_strategies:
-                logging.info(
-                    "[SCALP_FLOW] missing_strategy ready=%s weight=%s strategies=%s",
-                    scalp_ready,
-                    f"{weight_scalp:.3f}" if weight_scalp is not None else "n/a",
-                    ranked_strategies,
-                )
             if range_active and "macro" in focus_pockets:
                 logging.info(
                     "[RANGE_MACRO_KEEP] range_active macro_regime=%s macro pocket kept",
@@ -5375,30 +5391,24 @@ async def logic_loop(
             scalp_weight_ok = weight_scalp is None or weight_scalp >= SCALP_AUTO_MIN_WEIGHT
             if FORCE_SCALP_MODE:
                 scalp_weight_ok = True
-            if (
-                scalp_ready
-                and "scalp" in focus_pockets
-                and "M1Scalper" not in ranked_strategies
-                and scalp_weight_ok
-            ):
-                ranked_strategies.append("M1Scalper")
-                auto_injected_strategies.add("M1Scalper")
-            if os.getenv("SCALP_TACTICAL", "0").strip().lower() not in {"","0","false","no"}:
+            if os.getenv("SCALP_TACTICAL", "0").strip().lower() not in {"", "0", "false", "no"}:
                 focus_pockets.add("scalp")
-                if "M1Scalper" not in ranked_strategies:
-                    ranked_strategies.append("M1Scalper")
-                    auto_injected_strategies.add("M1Scalper")
-                if "BB_RSI" not in ranked_strategies:
-                    ranked_strategies.append("BB_RSI")
-                    auto_injected_strategies.add("BB_RSI")
+                injected: list[str] = []
+                for sname in ("PulseBreak", "RangeFader", "BB_RSI"):
+                    if sname not in ranked_strategies:
+                        ranked_strategies.append(sname)
+                        auto_injected_strategies.add(sname)
+                        injected.append(sname)
 
-                logging.info(
-                    "[SCALP-MAIN] Auto-added M1Scalper (mode=%s ATR %.2f momentum %.4f vol5m %.2f).",
-                    "range" if range_active else "trend",
-                    atr_pips,
-                    momentum,
-                    vol_5m,
-                )
+                if injected:
+                    logging.info(
+                        "[SCALP-MAIN] Tactical auto-added %s (mode=%s ATR %.2f momentum %.4f vol5m %.2f).",
+                        ",".join(injected),
+                        "range" if range_active else "trend",
+                        atr_pips,
+                        momentum,
+                        vol_5m,
+                    )
 
             # Range mode: prefer mean-reversion scalping. Ensure RangeFader is present.
             if (
@@ -5712,7 +5722,7 @@ async def logic_loop(
                     except Exception:
                         adx_h1_val = 0.0
                     strong_trend = (adx_h4_val >= 28.0) or (adx_h1_val >= 28.0)
-                    if strong_trend and signal.get("strategy") in {"M1Scalper", "ImpulseRetrace", "ImpulseBreak", "ImpulseMomentum"}:
+                    if strong_trend and signal.get("strategy") in {"ImpulseRetrace", "ImpulseBreak", "ImpulseMomentum"}:
                         base = tp_val
                         boosted = max(base * 1.2, base + 2.0)
                         atr_cap = None
@@ -6800,7 +6810,7 @@ async def logic_loop(
                                     adx_max,
                                 )
                     # Impulse系/Scalper: trend強なら順方向強め、逆は薄め
-                    if strategy_name in {"ImpulseRe", "ImpulseRetrace", "M1Scalper"}:
+                    if strategy_name in {"ImpulseRe", "ImpulseRetrace"}:
                         adj = 1.0
                         # 強トレンドで逆方向のImpulse系はほぼ封印
                         if (
@@ -6843,31 +6853,6 @@ async def logic_loop(
                                         adx_max,
                                     )
                                     continue
-                        # 強トレンドでM1Scalper逆方向も大きく抑制
-                        if (
-                            strategy_name == "M1Scalper"
-                            and trend_dir != 0
-                            and action_dir != trend_dir
-                            and adx_max >= 25.0
-                        ):
-                            prev_conf = int(sig.get("confidence", 0) or 0)
-                            counter_scale = 0.25
-                            if (
-                                high_zone
-                                and dist_norm is not None
-                                and dist_norm >= HIGH_ZONE_DIST_ATR
-                            ):
-                                counter_scale = max(counter_scale, HIGH_ZONE_SCALP_COUNTER_SCALE)
-                            new_conf = max(0, int(prev_conf * counter_scale))
-                            sig["confidence"] = new_conf
-                            logging.info(
-                                "[DIR_STRAT] M1Scalper oppose strong trend conf=%d->%d h1=%d h4=%d adx=%.1f",
-                                prev_conf,
-                                new_conf,
-                                bias_h1,
-                                bias_h4,
-                                adx_max,
-                            )
                         # use normalized distance to avoid chasing stretched moves
                         if strategy_name in {"ImpulseRe", "ImpulseRetrace"} and dist_norm is not None:
                             if trend_dir != 0 and action_dir == trend_dir:
@@ -6880,17 +6865,6 @@ async def logic_loop(
                                     adj *= 0.3
                                 else:
                                     adj *= 0.5
-                        if strategy_name == "M1Scalper" and dist_norm is not None:
-                            if trend_dir != 0 and action_dir == trend_dir:
-                                if dist_norm >= 1.5:
-                                    adj *= 0.6
-                                elif dist_norm <= 0.9:
-                                    adj *= 1.05
-                            elif trend_dir != 0 and action_dir != trend_dir:
-                                if adx_max >= 25.0:
-                                    adj *= 0.5
-                                elif dist_norm <= 1.0 and adx_max <= 18.0:
-                                    adj *= 0.9
                         if adx_max >= 25.0:
                             if aligned_h4 or aligned_h1:
                                 adj *= 1.1
@@ -6910,24 +6884,6 @@ async def logic_loop(
                                 bias_h4,
                                 adx_max,
                             )
-                            if (
-                                strategy_name == "M1Scalper"
-                                and trend_dir != 0
-                                and action_dir != trend_dir
-                                and M1SCALPER_COUNTER_MIN_CONF > 0
-                            ):
-                                floor_conf = int(M1SCALPER_COUNTER_MIN_CONF)
-                                if sig["confidence"] < floor_conf:
-                                    logging.info(
-                                        "[DIR_STRAT] M1Scalper counter floor post-adj conf=%d->%d min=%d h1=%d h4=%d adx_max=%.1f",
-                                        sig["confidence"],
-                                        floor_conf,
-                                        floor_conf,
-                                        bias_h1,
-                                        bias_h4,
-                                        adx_max,
-                                    )
-                                    sig["confidence"] = floor_conf
                 macro_hedge_enabled = os.getenv("MACRO_HEDGE_ENABLE", "0").strip().lower() not in {
                     "",
                     "0",

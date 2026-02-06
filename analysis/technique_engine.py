@@ -96,7 +96,7 @@ _TREND_HINTS = {
     "session_open",
     "mtf",
 }
-_SCALP_HINTS = {"scalp", "m1scalper"}
+_SCALP_HINTS = {"scalp"}
 
 _REQUIRE_MEDIAN_EPS = float(os.getenv("TECH_REQUIRE_MEDIAN_EPS", "0.03"))
 
@@ -173,20 +173,6 @@ _STRATEGY_POLICY_OVERRIDES: dict[str, dict[str, object]] = {
         "weight_candle": 0.2,
     },
     # scalp
-    "m1scalper": {
-        "mode": "trend",
-        "fib_tf": "M1",
-        "median_tf": "M1",
-        "nwave_tf": "M1",
-        "candle_tf": "M1",
-        "min_score": 0.03,
-        "min_coverage": 0.5,
-        "weight_fib": 0.15,
-        "weight_median": 0.15,
-        "weight_nwave": 0.5,
-        "weight_candle": 0.2,
-        "size_scale": 0.45,
-    },
     "pulsebreak": {
         "mode": "trend",
         "fib_tf": "M1",
@@ -2027,16 +2013,6 @@ def evaluate_exit_techniques(
             reversal_confirmed = True
     debug["reversal_combo"] = reversal_combo
     debug["reversal_confirmed"] = reversal_confirmed
-    if tag_key == "m1scalper" and pocket in {"scalp", "scalp_fast"} and reversal_signal:
-        coverage_floor = _env_float("M1SCALP_EXIT_MIN_COVERAGE")
-        if coverage_floor is None:
-            coverage_floor = 0.7
-        coverage_pnl = _env_float("M1SCALP_EXIT_COVERAGE_PNL")
-        if coverage_pnl is None:
-            coverage_pnl = -3.5
-        if pnl_pips is not None and pnl_pips <= coverage_pnl and exit_min_coverage > coverage_floor:
-            exit_min_coverage = coverage_floor
-            debug["exit_min_coverage"] = round(exit_min_coverage, 3)
 
     allow_negative_reversal = allow_negative
     if pnl_pips is not None and pnl_pips <= -policy.exit_min_neg_pips:
@@ -2161,13 +2137,6 @@ def evaluate_exit_techniques(
     skip_momentum_guard = False
     if allow_negative_reversal and reversal_combo and reversal_confirmed:
         tag_key = _normalize_tag_key(strategy_tag) if strategy_tag else ""
-        if tag_key == "m1scalper" and pocket in {"scalp", "scalp_fast"}:
-            bypass = _env_bool("TECH_EXIT_MOMENTUM_BYPASS_M1SCALPER")
-            if bypass is None:
-                bypass = True
-            if bypass:
-                skip_momentum_guard = True
-                debug["momentum_guard"] = "bypass_m1scalper"
 
     momentum_guard = _env_bool("TECH_EXIT_MOMENTUM_GUARD")
     if momentum_guard is None:

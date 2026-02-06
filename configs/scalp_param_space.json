@@ -1,31 +1,4 @@
 {
-  "M1Scalper": {
-    "sl_pips": {
-      "type": "int",
-      "min": 3,
-      "max": 6
-    },
-    "tp_pips": {
-      "type": "int",
-      "min": 3,
-      "max": 8
-    },
-    "timeout_sec": {
-      "type": "int",
-      "min": 600,
-      "max": 1800
-    },
-    "rsi_entry_low": {
-      "type": "int",
-      "min": 34,
-      "max": 44
-    },
-    "rsi_entry_high": {
-      "type": "int",
-      "min": 56,
-      "max": 66
-    }
-  },
   "PulseBreak": {
     "sl_pips": {
       "type": "int",

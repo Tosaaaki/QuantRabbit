@@ -303,7 +303,7 @@ def _select_persona_key(tag: str) -> str:
         return "trend"
     if "momentum" in token_set or "impulse" in token_set or "burst" in token_set or "squeeze" in token_set:
         return "momentum"
-    if "scalp" in token_set or "m1scalper" in token_set:
+    if "scalp" in token_set:
         return "scalp"
     return "neutral"
 

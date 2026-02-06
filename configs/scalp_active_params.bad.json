@@ -16,15 +16,6 @@
     "timeout_sec": 172800,
     "tp_factor": 2.0
   },
-  "M1Scalper": {
-    "timeout_sec": 960,
-    "nwave": {
-      "min_leg_pips": "bad"
-    },
-    "fallback": {
-      "momentum_thresh": "bad"
-    }
-  },
   "PulseBreak": {
     "adx_min": 24.0,
     "atr_pips_max": 6.2,

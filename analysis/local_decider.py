@@ -15,7 +15,6 @@ _ALLOWED_STRATEGIES = (
     "H1Momentum",
     "BB_RSI",
     "MicroVWAPBound",
-    "M1Scalper",
     "MomentumPulse",
     "VolCompressionBreak",
     "BB_RSI_Fast",
@@ -314,7 +313,7 @@ def heuristic_decision(
         if micro_rsi >= 62 or micro_rsi <= 38 or micro_adx <= 22:
             _enqueue_unique(ranked, ("BB_RSI",))
         if atr_pips >= 6.0 or vol_5m >= 1.15:
-            _enqueue_unique(ranked, ("M1Scalper",))
+            _enqueue_unique(ranked, ("MomentumPulse", "VolCompressionBreak"))
         if atr_pips <= 3.8 and vol_5m <= 1.3:
             _enqueue_unique(
                 ranked,
@@ -339,12 +338,8 @@ def heuristic_decision(
         if micro_adx <= 26 and vol_5m <= 1.1:
             _enqueue_unique(ranked, ("MicroLevelReactor",))
 
-    # 低ボラ時はスキャル戦略を抑制
-    if atr_pips < 4.0 and "M1Scalper" in ranked:
-        ranked.remove("M1Scalper")
-
     # 偏り防止: 最低限のスキャル/レンジ系を常に候補に含める
-    _enqueue_unique(ranked, ("M1Scalper", "BB_RSI"))
+    _enqueue_unique(ranked, ("BB_RSI", "MomentumPulse"))
     # macro 側のデフォルトも1本は入れておく
     _enqueue_unique(ranked, ("TrendMA",))
 

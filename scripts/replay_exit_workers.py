@@ -8,7 +8,6 @@ Targets:
   - scalp_precision (exit_worker)
   - micro BB_RSI (exit_worker)
   - macro TrendMA (exit_worker)
-  - scalp M1Scalper (exit_worker logic)
 """
 
 from __future__ import annotations
@@ -57,7 +56,6 @@ import workers.fast_scalp.exit_worker as fast_exit
 import workers.scalp_precision.exit_worker as sp_exit
 import workers.micro_bbrsi.exit_worker as bbrsi_exit
 import workers.macro_trendma.exit_worker as trendma_exit
-import workers.scalp_m1scalper.exit_worker as m1_exit
 
 
 PIP = 0.01
@@ -1122,7 +1120,7 @@ class StrategyEntryEngine:
 
         for sig in signals:
             name = sig.get("strategy")
-            if name not in {"TrendMA", "BB_RSI", "M1Scalper"}:
+            if name not in {"TrendMA", "BB_RSI"}:
                 continue
             pocket = sig.get("pocket") or "macro"
             if pocket == "macro" and not self._macro_enabled:
@@ -1200,313 +1198,6 @@ class ExitRunner:
                 return
             for tr in trades:
                 await self.worker._review_trade(tr, now, bid, ask, mid, rsi, range_active, fac_h1)
-
-
-class M1ScalperExitSim:
-    def __init__(self, broker: SimBroker) -> None:
-        self._broker = broker
-        self.last_eval = 0.0
-        self.interval = 0.8
-        self.states: Dict[str, m1_exit._TradeState] = {}
-
-        self.min_hold_sec = 10.0
-        self.max_hold_sec = max(self.min_hold_sec + 1.0, m1_exit._float_env("M1SCALP_EXIT_MAX_HOLD_SEC", 12 * 60))
-        self.max_adverse_pips = max(0.0, m1_exit._float_env("M1SCALP_EXIT_MAX_ADVERSE_PIPS", 6.0))
-        self.profit_take = 2.2
-        self.trail_start = 2.8
-        self.trail_backoff = 0.9
-        self.lock_buffer = 0.5
-        self.trail_from_tp_ratio = 0.82
-        self.lock_from_tp_ratio = 0.45
-
-    async def step(self, now: datetime) -> None:
-        if now.timestamp() - self.last_eval < self.interval:
-            return
-        self.last_eval = now.timestamp()
-        positions = self._broker.get_open_positions()
-        pocket_info = positions.get("scalp") or {}
-        trades = pocket_info.get("open_trades") or []
-        if hasattr(m1_exit, "_filter_trades"):
-            trades = m1_exit._filter_trades(trades, m1_exit.ALLOWED_TAGS)
-        if not trades:
-            return
-        for tr in trades:
-            await self._review_trade(tr, now)
-
-    async def _review_trade(self, trade: dict, now: datetime) -> None:
-        trade_id = str(trade.get("trade_id"))
-        if not trade_id:
-            return
-        units = int(trade.get("units", 0) or 0)
-        if units == 0:
-            return
-        price_entry = float(trade.get("price") or 0.0)
-        if price_entry <= 0.0:
-            return
-        side = "long" if units > 0 else "short"
-        current = m1_exit._latest_mid()
-        if current is None:
-            return
-        pnl = m1_exit.mark_pnl_pips(price_entry, units, mid=current)
-        allow_negative = m1_exit._float_env("M1SCALP_EXIT_ALLOW_NEGATIVE", 1.0) >= 0.5 or (pnl or 0) <= 0
-
-        opened_at = m1_exit._parse_time(trade.get("open_time"))
-        hold_sec = (now - opened_at).total_seconds() if opened_at else 0.0
-
-        thesis = trade.get("entry_thesis") or {}
-        if not isinstance(thesis, dict):
-            thesis = {}
-
-        state = self.states.get(trade_id)
-        if state is None:
-            hard_stop = thesis.get("hard_stop_pips")
-            tp_hint = thesis.get("tp_pips")
-            try:
-                hard_stop_val = float(hard_stop) if hard_stop is not None else None
-            except Exception:
-                hard_stop_val = None
-            try:
-                tp_hint_val = float(tp_hint) if tp_hint is not None else None
-            except Exception:
-                tp_hint_val = None
-            state = m1_exit._TradeState(peak=pnl, hard_stop=hard_stop_val, tp_hint=tp_hint_val)
-            self.states[trade_id] = state
-
-        strategy_tag = (
-            thesis.get("strategy_tag")
-            or thesis.get("strategy_tag_raw")
-            or thesis.get("strategy")
-            or thesis.get("tag")
-            or trade.get("strategy_tag")
-            or trade.get("strategy")
-            or "m1scalper"
-        )
-        scale, _ = m1_exit.momentum_scale(pocket="scalp", strategy_tag=strategy_tag, entry_thesis=thesis)
-
-        min_hold = m1_exit.scale_value(self.min_hold_sec, scale=scale, floor=self.min_hold_sec)
-        max_hold = m1_exit.scale_value(self.max_hold_sec, scale=scale, floor=self.max_hold_sec)
-        max_adverse = m1_exit.scale_value(self.max_adverse_pips, scale=scale, floor=self.max_adverse_pips)
-
-        tp = m1_exit.scale_value(self.profit_take, scale=scale, floor=self.profit_take)
-        ts = m1_exit.scale_value(self.trail_start, scale=scale, floor=self.trail_start)
-        tb = m1_exit.scale_value(self.trail_backoff, scale=scale, floor=self.trail_backoff)
-        lb = m1_exit.scale_value(self.lock_buffer, scale=scale, floor=self.lock_buffer)
-
-        if state.tp_hint:
-            tp = max(tp, max(1.0, state.tp_hint * 0.9))
-            ts = max(ts, max(1.0, tp * self.trail_from_tp_ratio))
-            lb = max(lb, tp * self.lock_from_tp_ratio)
-
-        state.update(pnl, lb)
-
-        client_ext = trade.get("clientExtensions")
-        client_id = trade.get("client_order_id")
-        if not client_id and isinstance(client_ext, dict):
-            client_id = client_ext.get("id")
-
-        if hold_sec < min_hold:
-            return
-
-        candle_reason = m1_exit._exit_candle_reversal("long" if units > 0 else "short")
-        if candle_reason and pnl >= 0:
-            candle_client_id = trade.get("client_order_id")
-            if not candle_client_id:
-                if isinstance(client_ext, dict):
-                    candle_client_id = client_ext.get("id")
-            if candle_client_id:
-                await m1_exit.close_trade(trade_id, -units, client_order_id=candle_client_id, allow_negative=allow_negative, exit_reason=candle_reason)
-                self.states.pop(trade_id, None)
-                return
-        if not client_id:
-            return
-
-        lock_trigger = max(0.6, tp * 0.35)
-        if state.lock_floor is not None and state.peak >= lock_trigger and pnl > 0 and pnl <= state.lock_floor:
-            await m1_exit.close_trade(trade_id, -units, client_order_id=client_id, allow_negative=allow_negative, exit_reason="lock_floor")
-            self.states.pop(trade_id, None)
-            return
-
-        if pnl < 0:
-            rsi, adx, atr_pips, vwap_gap, ma_pair, bbw = self._context()
-            skip_soft = False
-            if m1_exit._REENTRY_ENABLED:
-                range_active = False
-                try:
-                    factors = factor_cache.all_factors()
-                    fac_m1 = factors.get("M1") or {}
-                    fac_h4 = factors.get("H4") or {}
-                    range_active = bool(detect_range_mode(fac_m1, fac_h4).active)
-                except Exception:
-                    range_active = False
-
-                adverse_pips = abs(float(pnl))
-                edge = m1_exit._reentry_edge(adverse_pips, atr_pips)
-                revert_score, trend_score = m1_exit._reentry_scores(
-                    side=side,
-                    rsi=rsi,
-                    adx=adx,
-                    atr_pips=atr_pips,
-                    bbw=bbw,
-                    vwap_gap=vwap_gap,
-                    ma_pair=ma_pair,
-                    range_active=range_active,
-                )
-
-                min_adverse = m1_exit._REENTRY_MIN_ADVERSE_PIPS
-                if atr_pips is not None:
-                    min_adverse = max(min_adverse, atr_pips * m1_exit._REENTRY_MIN_ADVERSE_ATR)
-
-                decision = None
-                if adverse_pips >= min_adverse and revert_score is not None and trend_score is not None:
-                    if revert_score >= m1_exit._REENTRY_REVERT_MIN and trend_score <= m1_exit._REENTRY_TREND_MAX:
-                        decision = "hold"
-                    elif trend_score >= m1_exit._REENTRY_TREND_MIN and edge >= m1_exit._REENTRY_EDGE_MIN:
-                        decision = "exit_reentry"
-
-                if decision:
-                    m1_exit._log_reentry_decision(
-                        decision=decision,
-                        tags={
-                            "side": side,
-                            "revert": f"{revert_score:.2f}" if revert_score is not None else "na",
-                            "trend": f"{trend_score:.2f}" if trend_score is not None else "na",
-                            "edge": f"{edge:.2f}",
-                            "pnl": f"{pnl:.2f}",
-                        },
-                    )
-                    if decision == "hold":
-                        skip_soft = True
-                    elif decision == "exit_reentry":
-                        if not m1_exit._REENTRY_SHADOW:
-                            ok = await m1_exit.close_trade(
-                                trade_id,
-                                -units,
-                                client_order_id=client_id,
-                                allow_negative=True,
-                                exit_reason="reentry_reset",
-                            )
-                            if ok:
-                                self.states.pop(trade_id, None)
-                                return
-
-            if not skip_soft:
-                soft_failed = False
-                if rsi is not None:
-                    if side == "long" and rsi <= m1_exit._float_env("M1SCALP_EXIT_RSI_FADE_LONG", 44.0):
-                        ok = await m1_exit.close_trade(
-                            trade_id,
-                            -units,
-                            client_order_id=client_id,
-                            allow_negative=allow_negative,
-                            exit_reason=m1_exit._REASON_RSI_FADE,
-                        )
-                        if ok:
-                            self.states.pop(trade_id, None)
-                            return
-                        soft_failed = True
-                    if side == "short" and rsi >= m1_exit._float_env("M1SCALP_EXIT_RSI_FADE_SHORT", 56.0):
-                        ok = await m1_exit.close_trade(
-                            trade_id,
-                            -units,
-                            client_order_id=client_id,
-                            allow_negative=allow_negative,
-                            exit_reason=m1_exit._REASON_RSI_FADE,
-                        )
-                        if ok:
-                            self.states.pop(trade_id, None)
-                            return
-                        soft_failed = True
-                if not soft_failed and vwap_gap is not None and abs(vwap_gap) <= m1_exit._float_env("M1SCALP_EXIT_VWAP_GAP_PIPS", 0.8):
-                    ok = await m1_exit.close_trade(
-                        trade_id,
-                        -units,
-                        client_order_id=client_id,
-                        allow_negative=allow_negative,
-                        exit_reason=m1_exit._REASON_VWAP_CUT,
-                    )
-                    if ok:
-                        self.states.pop(trade_id, None)
-                        return
-                    soft_failed = True
-                if not soft_failed and adx is not None and ma_pair is not None:
-                    ma10, ma20 = ma_pair
-                    gap = abs(ma10 - ma20) / 0.01
-                    cross_bad = (side == "long" and ma10 <= ma20) or (side == "short" and ma10 >= ma20)
-                    if adx <= m1_exit._float_env("M1SCALP_EXIT_STRUCTURE_ADX", 20.0) and (
-                        cross_bad or gap <= m1_exit._float_env("M1SCALP_EXIT_STRUCTURE_GAP_PIPS", 1.8)
-                    ):
-                        ok = await m1_exit.close_trade(
-                            trade_id,
-                            -units,
-                            client_order_id=client_id,
-                            allow_negative=allow_negative,
-                            exit_reason=m1_exit._REASON_STRUCTURE_BREAK,
-                        )
-                        if ok:
-                            self.states.pop(trade_id, None)
-                            return
-                        soft_failed = True
-                if not soft_failed and atr_pips is not None and atr_pips >= m1_exit._float_env("M1SCALP_EXIT_ATR_SPIKE_PIPS", 5.0):
-                    ok = await m1_exit.close_trade(
-                        trade_id,
-                        -units,
-                        client_order_id=client_id,
-                        allow_negative=allow_negative,
-                        exit_reason=m1_exit._REASON_ATR_SPIKE,
-                    )
-                    if ok:
-                        self.states.pop(trade_id, None)
-                        return
-
-        if max_adverse > 0 and pnl <= -max_adverse:
-            await m1_exit.close_trade(
-                trade_id, -units, client_order_id=client_id, allow_negative=allow_negative, exit_reason="max_adverse"
-            )
-            self.states.pop(trade_id, None)
-            return
-        if max_hold > 0 and hold_sec >= max_hold and pnl <= 0:
-            await m1_exit.close_trade(
-                trade_id, -units, client_order_id=client_id, allow_negative=allow_negative, exit_reason="max_hold"
-            )
-            self.states.pop(trade_id, None)
-            return
-        trail_trigger = max(ts, 0.0)
-        if state.peak > 0 and state.peak >= trail_trigger and pnl > 0 and pnl <= state.peak - tb:
-            await m1_exit.close_trade(
-                trade_id, -units, client_order_id=client_id, allow_negative=allow_negative, exit_reason="trail_take"
-            )
-            self.states.pop(trade_id, None)
-            return
-        if pnl >= tp:
-            await m1_exit.close_trade(
-                trade_id, -units, client_order_id=client_id, allow_negative=allow_negative, exit_reason="take_profit"
-            )
-            self.states.pop(trade_id, None)
-            return
-
-    @staticmethod
-    def _context() -> tuple[
-        Optional[float],
-        Optional[float],
-        Optional[float],
-        Optional[float],
-        Optional[tuple[float, float]],
-        Optional[float],
-    ]:
-        fac_m1 = factor_cache.all_factors().get("M1") or {}
-        rsi = m1_exit._safe_float(fac_m1.get("rsi"))
-        adx = m1_exit._safe_float(fac_m1.get("adx"))
-        atr_pips = m1_exit._safe_float(fac_m1.get("atr_pips"))
-        if atr_pips is None:
-            atr_val = m1_exit._safe_float(fac_m1.get("atr"))
-            if atr_val is not None:
-                atr_pips = atr_val * 100.0
-        vwap_gap = m1_exit._safe_float(fac_m1.get("vwap_gap"))
-        ma10 = m1_exit._safe_float(fac_m1.get("ma10"))
-        ma20 = m1_exit._safe_float(fac_m1.get("ma20"))
-        bbw = m1_exit._safe_float(fac_m1.get("bbw"))
-        ma_pair = (ma10, ma20) if ma10 is not None and ma20 is not None else None
-        return rsi, adx, atr_pips, vwap_gap, ma_pair, bbw
 
 
 def parse_args() -> argparse.Namespace:
@@ -1632,7 +1323,6 @@ def main() -> None:
         _patch_exit_module(sp_exit, broker)
         _patch_exit_module(bbrsi_exit, broker)
         _patch_exit_module(trendma_exit, broker)
-        _patch_exit_module(m1_exit, broker)
 
     fast_runner = None
     if not args.sp_only:
@@ -1640,13 +1330,11 @@ def main() -> None:
     sp_runner = None
     bbrsi_runner = None
     trend_runner = None
-    m1_runner = None
     if not args.fast_only:
         sp_runner = ExitRunner("scalp_precision", sp_exit, sp_exit.RangeFaderExitWorker(), broker)
         bbrsi_runner = ExitRunner("micro_bbrsi", bbrsi_exit, bbrsi_exit.MicroBBRsiExitWorker(), broker)
         if not args.disable_macro:
             trend_runner = ExitRunner("macro_trendma", trendma_exit, trendma_exit.TrendMAExitWorker(), broker)
-        m1_runner = M1ScalperExitSim(broker)
 
     # Pre-feed H4 candles (system_backtest-style) to align macro context.
     prefeed_h4: List[dict] = []
@@ -1707,8 +1395,6 @@ def main() -> None:
                 loop.run_until_complete(bbrsi_runner.step(now_dt))
             if trend_runner is not None:
                 loop.run_until_complete(trend_runner.step(now_dt))
-            if m1_runner is not None:
-                loop.run_until_complete(m1_runner.step(now_dt))
 
     # close remaining at end
     for trade_id in list(broker.open_trades.keys()):

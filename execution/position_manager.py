@@ -56,10 +56,6 @@ _KNOWN_POCKETS = {"micro", "macro", "scalp", "scalp_fast"}
 _JST = timezone(timedelta(hours=9))
 _WORKER_TAG_MAP = {
     "OnePipMakerS1": "onepip_maker_s1",
-    "M1Scalper": "scalp_m1scalper",
-    "M1Scalpe68edca63a": "scalp_m1scalper",
-    "M1Scalpeb247b7f0a": "scalp_m1scalper",
-    "M1Scalpe05efa5a71": "scalp_m1scalper",
     "ImpulseRetrace": "scalp_impulseretrace",
     "ImpulseRetraceScalp": "scalp_impulseretrace",
     "RangeFader": "scalp_rangefader",
@@ -159,7 +155,6 @@ _CANONICAL_STRATEGY_TAGS = {
     "TrendMA",
     "Donchian55",
     "H1Momentum",
-    "M1Scalper",
     "ImpulseRetrace",
     "RangeFader",
     "PulseBreak",
@@ -201,7 +196,6 @@ _TAG_ALIAS_PREFIXES = {
     "trendma": "TrendMA",
     "donchian": "Donchian55",
     "h1momentum": "H1Momentum",
-    "m1scalper": "M1Scalper",
     "impulsere": "ImpulseRetrace",
     "impulser": "ImpulseRetrace",
     "rangefad": "RangeFader",
@@ -238,7 +232,6 @@ _STRATEGY_POCKET_MAP = {
     "BB_RSI": "micro",
     "BB_RSI_Fast": "micro",
     # Scalp
-    "M1Scalper": "scalp",
     "ImpulseRetrace": "scalp",
     "RangeFader": "scalp",
     "PulseBreak": "scalp",

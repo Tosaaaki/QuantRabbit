@@ -35,7 +35,7 @@ _HOURLY_ENABLED = os.getenv("PERF_GUARD_HOURLY", "0").strip().lower() not in {""
 _HOURLY_MIN_TRADES = max(5, int(float(os.getenv("PERF_GUARD_HOURLY_MIN_TRADES", "12"))))
 _RAW_RELAX_TAGS = os.getenv("PERF_GUARD_RELAX_TAGS")
 if _RAW_RELAX_TAGS is None:
-    _RAW_RELAX_TAGS = "M1Scalper,ImpulseRetrace"
+    _RAW_RELAX_TAGS = "ImpulseRetrace"
 _RELAX_TAGS = {tag.strip().lower() for tag in _RAW_RELAX_TAGS.split(",") if tag.strip()}
 _SPLIT_DIRECTIONAL = os.getenv("PERF_GUARD_SPLIT_DIRECTIONAL", "1").strip().lower() not in {
     "",

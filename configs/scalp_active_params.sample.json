@@ -1,11 +1,4 @@
 {
-  "M1Scalper": {
-    "sl_pips": 5,
-    "tp_pips": 6,
-    "timeout_sec": 1200,
-    "rsi_entry_low": 38,
-    "rsi_entry_high": 62
-  },
   "PulseBreak": {
     "sl_pips": 5,
     "tp_pips": 7,

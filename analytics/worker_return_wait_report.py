@@ -24,7 +24,6 @@ _ALIAS_BASE = {
     "trendma": "TrendMA",
     "donchian": "Donchian55",
     "h1momentum": "H1Momentum",
-    "m1scalper": "M1Scalper",
     "bbrsi": "BB_RSI",
     "bb_rsi": "BB_RSI",
 }

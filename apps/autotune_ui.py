@@ -95,7 +95,6 @@ _WORKER_TAG_MAP = {
     "trend_h1": "trend_h1",
     "manual_swing": "manual_swing",
     "OnePipMakerS1": "onepip_maker_s1",
-    "M1Scalper": "scalp_m1scalper",
     "ImpulseRetrace": "scalp_impulseretrace",
     "ImpulseRetraceScalp": "scalp_impulseretrace",
     "RangeFader": "scalp_rangefader",

@@ -51,7 +51,7 @@ PROFILE_CONFIGS: Dict[str, Dict[str, Any]] = {
     "scalp": {
         "label": "Scalping (M1)",
         "timeframe": "M1",
-        "strategies": ["M1Scalper", "PulseBreak", "RangeFader"],
+        "strategies": ["PulseBreak", "RangeFader"],
         "candles_glob": "candles_M1_*.json",
         "valid_ratio": 0.3,
         "trials_per_strategy": 40,
@@ -211,7 +211,7 @@ def compute_metrics(result: ResultDict) -> Dict[str, Any]:
     {
       "date": "2025-10-22",
       "summary": {"profit_pips": 3.0, "trades": 10, "win_rate": 0.40, "profit_factor": 1.07, "max_dd_pips": 8.4},
-      "by_strategy": {"M1Scalper": {...}, "PulseBreak": {...}},
+      "by_strategy": {"PulseBreak": {...}, "RangeFader": {...}},
       "trades": [...]  # 任意
     }
     """

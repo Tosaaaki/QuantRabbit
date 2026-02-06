@@ -6,7 +6,7 @@ Scalp strategy backtester with JSON output and parameter overrides.
 Examples:
   python scripts/backtest_scalp.py --candles logs/candles_M1_20251022.json
   python scripts/backtest_scalp.py --candles logs/candles_M1_20251022.json \
-        --strategies M1Scalper,PulseBreak \
+        --strategies PulseBreak,RangeFader \
         --params-json configs/scalp_active_params.json \
         --json-out logs/tuning/sample.json
 """
@@ -31,7 +31,6 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from strategies.scalping.m1_scalper import M1Scalper
 from strategies.scalping.range_fader import RangeFader
 from strategies.scalping.pulse_break import PulseBreak
 from strategies.mean_reversion.bb_rsi import BBRsi
@@ -64,7 +63,6 @@ TIMEFRAME_RULES = {
 }
 
 STRATEGY_MAP = {
-    M1Scalper.name: M1Scalper,
     RangeFader.name: RangeFader,
     PulseBreak.name: PulseBreak,
     BBRsi.name: BBRsi,
@@ -364,13 +362,6 @@ def apply_signal_overrides(
     # Strategy specific filters
     rsi = fac.get("rsi")
     action = signal.get("action")
-    if strat_name == M1Scalper.name and rsi is not None:
-        low = params.get("rsi_entry_low")
-        high = params.get("rsi_entry_high")
-        if action == "OPEN_LONG" and low is not None and rsi > float(low):
-            return None
-        if action == "OPEN_SHORT" and high is not None and rsi < float(high):
-            return None
 
     if strat_name == RangeFader.name and rsi is not None:
         lower = params.get("rsi_lower")
@@ -769,7 +760,7 @@ def main() -> None:
     parser.add_argument(
         "--strategies",
         default="",
-        help="Comma separated strategy names (e.g. M1Scalper,PulseBreak)",
+        help="Comma separated strategy names (e.g. PulseBreak,RangeFader)",
     )
     parser.add_argument("--json-out", default="", help="Output JSON path")
     parser.add_argument(

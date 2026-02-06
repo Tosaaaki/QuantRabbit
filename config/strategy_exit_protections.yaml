@@ -387,37 +387,6 @@ strategies:
     max_delay_sec: 25
     pro_stop: {soft_atr_mult: 0.6, hard_atr_mult: 1.0}
 
-  M1Scalper:
-    be_profile: {trigger_pips: 1.6, lock_ratio: 0.35, min_lock_pips: 0.50, cooldown_sec: 20}
-    tp_move: {trigger_pips: 1.2, buffer_pips: 0.8}
-    pro_stop: {soft_pips: 1.8, hard_pips: 6.8, min_hold_sec: 22, max_hold_sec: 1140, soft_atr_mult: 0.6, hard_atr_mult: 1.0}
-    neg_exit:
-      allow_reasons:
-        - hard_stop
-        - drawdown
-        - max_drawdown
-        - health_exit
-        - hazard_exit
-        - margin_health
-        - free_margin_low
-        - margin_usage_high
-        - tech_hard_stop
-        - fast_cut_*
-        - time_cut
-        - rsi_fade
-        - m1_rsi_fade
-        - vwap_cut
-        - m1_vwap_cut
-        - structure_break
-        - m1_structure_break
-        - m1_atr_spike
-        - tech_reversal_combo
-        - tech_nwave_flip
-        - tech_candle_reversal
-        - section_*
-      deny_reasons:
-        - tech_return_fail
-
   fast_scalp:
     min_profit_ratio: 0.80
     min_profit_ratio_min_tp_pips: 0.6

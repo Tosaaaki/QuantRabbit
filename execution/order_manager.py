@@ -174,7 +174,6 @@ _STRATEGY_ALIAS_BASE = {
     "donchian": "Donchian55",
     "donchian55": "Donchian55",
     "h1momentum": "H1Momentum",
-    "m1scalper": "M1Scalper",
     "microlevelreactor": "MicroLevelReactor",
     "microrangebreak": "MicroRangeBreak",
     "microvwapbound": "MicroVWAPBound",

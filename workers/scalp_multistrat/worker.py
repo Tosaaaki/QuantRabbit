@@ -10,7 +10,6 @@ import logging
 import time
 from typing import Dict, List, Optional, Tuple
 
-from autotune.scalp_trainer import AUTO_INTERVAL_SEC, start_background_autotune
 from analysis.range_guard import detect_range_mode
 from analysis.range_model import compute_range_snapshot
 from indicators.factor_cache import all_factors, get_candles_snapshot
@@ -21,7 +20,6 @@ from market_data import tick_window
 from strategies.scalping.range_fader import RangeFader
 from strategies.scalping.pulse_break import PulseBreak
 from strategies.scalping.impulse_retrace import ImpulseRetraceScalp
-from strategies.scalping.m1_scalper import M1Scalper
 from utils.divergence import apply_divergence_confidence, divergence_bias, divergence_snapshot
 from utils.market_hours import is_market_open
 from utils.oanda_account import get_account_snapshot, get_position_summary
@@ -123,7 +121,6 @@ _TREND_STRATEGIES = {
 }
 _PULLBACK_STRATEGIES = {
     ImpulseRetraceScalp.name,
-    M1Scalper.name,
 }
 _RANGE_STRATEGIES = {
     RangeFader.name,
@@ -441,7 +438,6 @@ def _strategy_list() -> List:
         "PulseBreak": PulseBreak,
         "ImpulseRetrace": ImpulseRetraceScalp,
         "ImpulseRetraceScalp": ImpulseRetraceScalp,
-        "M1Scalper": M1Scalper,
     }
     if not allowlist:
         return list(catalog.values())
@@ -474,13 +470,6 @@ async def scalp_multi_worker() -> None:
         config.LOOP_INTERVAL_SEC,
         [getattr(s, "name", s.__name__) for s in strategies],
     )
-    if config.AUTOTUNE_ENABLED:
-        start_background_autotune()
-        LOG.info(
-            "%s scalp_autotune enabled interval_sec=%s",
-            config.LOG_PREFIX,
-            AUTO_INTERVAL_SEC,
-        )
 
     while True:
         await asyncio.sleep(config.LOOP_INTERVAL_SEC)
@@ -701,8 +690,6 @@ async def scalp_multi_worker() -> None:
             if strategy_name in _PULLBACK_STRATEGIES:
                 entry_thesis["entry_guard_pullback"] = True
                 entry_thesis["entry_guard_pullback_only"] = True
-            if strategy_name == M1Scalper.name:
-                entry_thesis["entry_guard_trend"] = True
             if _is_mr_signal(signal_tag):
                 entry_thesis["entry_guard_trend"] = False
                 entry_mean = None

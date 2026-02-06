@@ -144,7 +144,6 @@ _RISK_REGIME_TREND_PENALTY = float(os.getenv("RISK_REGIME_TREND_PENALTY", "0.85"
 
 _PERF_CACHE: dict[tuple[str, str], tuple[float, float, float, int]] = {}
 _TAG_ALIAS = {
-    "m1scalper": "m1scalper",
     "impulseretrace": "impulseretrace",
     "rangefader": "rangefader",
     "microrangebreak": "microrangebreak",
@@ -180,7 +179,6 @@ _TREND_HINTS = {
     "impulse",
     "trendma",
     "h1momentum",
-    "m1scalper",
     "london",
     "session_open",
     "squeeze",
