@@ -1,0 +1,45 @@
+[Unit]
+Description=QuantRabbit Scalp Precision LevelRejectPlus Worker
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/tossaki/QuantRabbit
+EnvironmentFile=/etc/quantrabbit.env
+Environment=PYTHONUNBUFFERED=1
+Environment=SCALP_PRECISION_ENABLED=1
+Environment=SCALP_PRECISION_MODE=level_reject_plus
+Environment=SCALP_PRECISION_ALLOWLIST=level_reject_plus
+Environment=SCALP_PRECISION_MODE_FILTER_ALLOWLIST=1
+Environment=SCALP_PRECISION_LOOP_INTERVAL_SEC=3.0
+Environment=SCALP_PRECISION_COOLDOWN_SEC=12
+Environment=SCALP_PRECISION_MAX_OPEN_TRADES=1
+Environment=SCALP_PRECISION_OPEN_TRADES_SCOPE=tag
+
+# Conservative sizing to avoid doubling exposure with LevelReject.
+Environment=SCALP_PRECISION_UNIT_BASE_UNITS=4500
+Environment=SCALP_PRECISION_UNIT_CAP_MAX=0.55
+Environment=SCALP_PRECISION_LOG_PREFIX=[ScalpPrecision:LevelRejectPlus]
+
+# Entry precision gates (tune cautiously; entry is the main edge).
+Environment=LRP_RANGE_SCORE_MIN=0.52
+Environment=LRP_ADX_MAX=28.0
+Environment=LRP_BBW_MAX=0.0016
+Environment=LRP_SPREAD_P25=1.0
+Environment=LRP_BAND_PIPS=0.9
+Environment=LRP_TICK_MIN_STRENGTH=0.18
+Environment=LRP_WICK_RATIO_MIN=0.30
+Environment=LRP_BODY_MAX_PIPS=1.4
+Environment=LRP_BODY_RATIO_MAX=0.70
+Environment=LRP_SIZE_MULT=1.05
+
+# Broker SL/TP enabled (insurance).
+Environment=ORDER_ENABLE_STOP_LOSS_SCALP=1
+
+ExecStart=/home/tossaki/QuantRabbit/.venv/bin/python -m workers.scalp_precision.worker
+Restart=always
+RestartSec=5
+User=tossaki
+
+[Install]
+WantedBy=multi-user.target

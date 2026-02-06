@@ -56,6 +56,7 @@ _MODE_TAG_MAP = {
     'tick_imbalance': 'TickImbalance',
     'tick_imbalance_rrplus': 'TickImbalanceRRPlus',
     'level_reject': 'LevelReject',
+    'level_reject_plus': 'LevelRejectPlus',
     'wick_reversal': 'WickReversal',
     'wick_reversal_hf': 'WickReversalHF',
     'wick_reversal_blend': 'WickReversalBlend',
@@ -319,6 +320,24 @@ LEVEL_BAND_PIPS = _env_float("LEVEL_REJECT_BAND_PIPS", 0.8)
 LEVEL_RSI_LONG_MAX = _env_float("LEVEL_REJECT_RSI_LONG_MAX", 48.0)
 LEVEL_RSI_SHORT_MIN = _env_float("LEVEL_REJECT_RSI_SHORT_MIN", 52.0)
 LEVEL_REJECT_SIZE_MULT = _env_float("LEVEL_REJECT_SIZE_MULT", 1.15)
+
+# LevelRejectPlus (precision-focused variant; still aims for decent frequency).
+LRP_LOOKBACK = _env_int("LRP_LOOKBACK", LEVEL_LOOKBACK)
+LRP_BAND_PIPS = _env_float("LRP_BAND_PIPS", 0.9)
+LRP_RSI_LONG_MAX = _env_float("LRP_RSI_LONG_MAX", LEVEL_RSI_LONG_MAX)
+LRP_RSI_SHORT_MIN = _env_float("LRP_RSI_SHORT_MIN", LEVEL_RSI_SHORT_MIN)
+LRP_ADX_MAX = _env_float("LRP_ADX_MAX", 28.0)
+LRP_BBW_MAX = _env_float("LRP_BBW_MAX", 0.0016)
+LRP_RANGE_SCORE_MIN = _env_float("LRP_RANGE_SCORE_MIN", 0.50)
+LRP_SPREAD_P25 = _env_float("LRP_SPREAD_P25", 1.0)
+LRP_TICK_WINDOW_SEC = _env_float("LRP_TICK_WINDOW_SEC", 6.0)
+LRP_TICK_MIN_TICKS = _env_int("LRP_TICK_MIN_TICKS", 6)
+LRP_TICK_MIN_STRENGTH = _env_float("LRP_TICK_MIN_STRENGTH", 0.18)
+LRP_REQUIRE_WICK = _env_bool("LRP_REQUIRE_WICK", True)
+LRP_WICK_RATIO_MIN = _env_float("LRP_WICK_RATIO_MIN", 0.30)
+LRP_BODY_MAX_PIPS = _env_float("LRP_BODY_MAX_PIPS", 1.4)
+LRP_BODY_RATIO_MAX = _env_float("LRP_BODY_RATIO_MAX", 0.70)
+LRP_SIZE_MULT = _env_float("LRP_SIZE_MULT", 1.05)
 
 WICK_RANGE_MIN_PIPS = _env_float("WICK_REV_RANGE_MIN_PIPS", 2.0)
 WICK_BODY_MAX_PIPS = _env_float("WICK_REV_BODY_MAX_PIPS", 0.9)
@@ -1914,6 +1933,134 @@ def _signal_level_reject(
     }
 
 
+def _signal_level_reject_plus(
+    fac_m1: Dict[str, object],
+    range_ctx=None,
+    *,
+    tag: str,
+) -> Optional[Dict[str, object]]:
+    """LevelReject with extra entry precision filters (still intended to trade often)."""
+    price = _latest_price(fac_m1)
+    if price <= 0:
+        return None
+
+    range_active = False
+    range_score = 0.0
+    if range_ctx is not None:
+        try:
+            range_active = bool(getattr(range_ctx, "active", False))
+            range_score = float(getattr(range_ctx, "score", 0.0) or 0.0)
+        except Exception:
+            range_active = False
+            range_score = 0.0
+    if not range_active and LRP_RANGE_SCORE_MIN > 0.0 and range_score < LRP_RANGE_SCORE_MIN:
+        return None
+
+    ok_spread, _ = spread_ok(max_pips=config.MAX_SPREAD_PIPS, p25_max=LRP_SPREAD_P25)
+    if not ok_spread:
+        return None
+
+    adx = _adx(fac_m1)
+    bbw = _bbw(fac_m1)
+    if LRP_ADX_MAX > 0.0 and adx > LRP_ADX_MAX:
+        return None
+    if LRP_BBW_MAX > 0.0 and bbw > LRP_BBW_MAX:
+        return None
+
+    candles = get_candles_snapshot("M1", limit=max(60, LRP_LOOKBACK + 2))
+    snap = compute_range_snapshot(candles or [], lookback=LRP_LOOKBACK, hi_pct=95.0, lo_pct=5.0)
+    if not snap:
+        return None
+
+    mids, _ = tick_snapshot(LRP_TICK_WINDOW_SEC, limit=120)
+    rev_ok, rev_dir, rev_strength = tick_reversal(mids, min_ticks=LRP_TICK_MIN_TICKS) if mids else (False, None, 0.0)
+    if not rev_ok:
+        return None
+    try:
+        strength = float(rev_strength or 0.0)
+    except Exception:
+        strength = 0.0
+    if LRP_TICK_MIN_STRENGTH > 0.0 and strength < LRP_TICK_MIN_STRENGTH:
+        return None
+
+    rsi = _rsi(fac_m1)
+    dist_high = abs(price - snap.high) / PIP
+    dist_low = abs(price - snap.low) / PIP
+
+    if dist_high <= LRP_BAND_PIPS and rsi >= LRP_RSI_SHORT_MIN and rev_dir == "short":
+        side = "short"
+    elif dist_low <= LRP_BAND_PIPS and rsi <= LRP_RSI_LONG_MAX and rev_dir == "long":
+        side = "long"
+    else:
+        return None
+
+    wick_ratio = 0.0
+    if LRP_REQUIRE_WICK:
+        last = (candles or [])[-1] if candles else None
+        if not isinstance(last, dict):
+            return None
+        try:
+            o = float(last.get("open") or last.get("o") or 0.0)
+            h = float(last.get("high") or last.get("h") or 0.0)
+            l = float(last.get("low") or last.get("l") or 0.0)
+            c = float(last.get("close") or last.get("c") or 0.0)
+        except Exception:
+            return None
+        if h <= 0 or l <= 0 or h < l:
+            return None
+        rng_pips = (h - l) / PIP
+        if rng_pips <= 0.0:
+            return None
+        body_pips = abs(c - o) / PIP
+        if LRP_BODY_MAX_PIPS > 0.0 and body_pips > LRP_BODY_MAX_PIPS:
+            return None
+        body_ratio = body_pips / max(rng_pips, 0.01)
+        if LRP_BODY_RATIO_MAX > 0.0 and body_ratio > LRP_BODY_RATIO_MAX:
+            return None
+        upper_wick = (h - max(o, c)) / PIP
+        lower_wick = (min(o, c) - l) / PIP
+        if side == "short":
+            wick_ratio = upper_wick / max(rng_pips, 0.01)
+        else:
+            wick_ratio = lower_wick / max(rng_pips, 0.01)
+        if wick_ratio < LRP_WICK_RATIO_MIN:
+            return None
+
+    proj_allow, proj_mult, proj_detail = projection_decision(side, mode="range")
+    if not proj_allow:
+        return None
+
+    atr = _atr_pips(fac_m1)
+    sl = max(1.2, min(2.0, atr * 0.85))
+    tp = max(sl * 1.35, min(2.8, atr * 1.10))
+    conf = 60 + int(min(14, abs(rsi - 50.0) * 0.6))
+    conf += int(min(8, max(0.0, strength) * 8.0))
+    if wick_ratio > 0.0:
+        conf += int(min(8, wick_ratio * 30.0))
+    conf = int(max(45, min(92, conf)))
+
+    return {
+        "action": "OPEN_LONG" if side == "long" else "OPEN_SHORT",
+        "sl_pips": round(sl, 2),
+        "tp_pips": round(tp, 2),
+        "confidence": conf,
+        "tag": tag,
+        "reason": "level_reject_plus",
+        "size_mult": round(LRP_SIZE_MULT * float(proj_mult or 1.0), 3),
+        "projection": proj_detail,
+        "lrp": {
+            "dist_high_pips": round(dist_high, 2),
+            "dist_low_pips": round(dist_low, 2),
+            "rsi": round(rsi, 2),
+            "tick_strength": round(strength, 3),
+            "wick_ratio": round(wick_ratio, 3),
+            "range_score": round(range_score, 3),
+            "adx": round(adx, 2),
+            "bbw": round(bbw, 6),
+        },
+    }
+
+
 def _signal_liquidity_sweep(
     fac_m1: Dict[str, object],
     range_ctx=None,
@@ -3220,7 +3367,7 @@ async def scalp_precision_worker() -> None:
     # Guard bypass is risky for modes that can generate large tail losses when data/exits degrade.
     # In particular, tick_imbalance suffered margin closeouts when common guards (spread/air/perf/stage)
     # were skipped. Keep these modes under the common guardrails regardless of env settings.
-    if config.MODE in {"level_reject", "tick_imbalance", "tick_imbalance_rrplus"}:
+    if config.MODE in {"level_reject", "level_reject_plus", "tick_imbalance", "tick_imbalance_rrplus"}:
         if bypass_common_guard:
             LOG.warning(
                 "%s guard bypass requested but disabled for mode=%s",
@@ -3387,6 +3534,8 @@ async def scalp_precision_worker() -> None:
                 strategies.append(("TickImbalanceRRPlus", _signal_tick_imbalance_rrplus, {"tag": "TickImbalanceRRPlus"}))
             if enabled("level_reject"):
                 strategies.append(("LevelReject", _signal_level_reject, {"tag": "LevelReject"}))
+            if enabled("level_reject_plus"):
+                strategies.append(("LevelRejectPlus", _signal_level_reject_plus, {"tag": "LevelRejectPlus"}))
             if enabled("liquidity_sweep"):
                 strategies.append(("LiquiditySweep", _signal_liquidity_sweep, {"tag": "LiquiditySweep"}))
             if enabled("wick_reversal"):
@@ -3421,6 +3570,7 @@ async def scalp_precision_worker() -> None:
                     _signal_divergence_revert,
                     _signal_tick_imbalance,
                     _signal_tick_imbalance_rrplus,
+                    _signal_level_reject_plus,
                     _signal_wick_reversal_hf,
                     _signal_wick_reversal_blend,
                     _signal_wick_reversal_pro,

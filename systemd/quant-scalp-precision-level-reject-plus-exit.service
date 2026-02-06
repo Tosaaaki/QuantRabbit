@@ -1,0 +1,20 @@
+[Unit]
+Description=QuantRabbit Scalp Precision LevelRejectPlus Exit Worker
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/tossaki/QuantRabbit
+EnvironmentFile=/etc/quantrabbit.env
+Environment=PYTHONUNBUFFERED=1
+Environment=SCALP_PRECISION_EXIT_TAGS=LevelRejectPlus
+Environment=SCALP_PRECISION_EXIT_LOG_PREFIX=[ScalpPrecisionExit:LevelRejectPlus]
+Environment=RANGEFADER_REENTRY_ENABLE=0
+Environment=RANGEFADER_REENTRY_SHADOW=1
+ExecStart=/home/tossaki/QuantRabbit/.venv/bin/python -m workers.scalp_precision.exit_worker
+Restart=always
+RestartSec=5
+User=tossaki
+
+[Install]
+WantedBy=multi-user.target
