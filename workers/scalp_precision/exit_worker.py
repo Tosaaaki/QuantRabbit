@@ -49,6 +49,32 @@ _BB_EXIT_TF = "M1"
 _BB_PIP = 0.01
 
 
+def _reentry_prefix_for_tag(tag: str) -> Optional[str]:
+    raw = str(tag or "").strip()
+    if not raw:
+        return None
+    base = raw.split("-", 1)[0].strip()
+    if not base:
+        return None
+    out = []
+    for ch in base:
+        if ch.isalnum():
+            out.append(ch.upper())
+        else:
+            out.append("_")
+    prefix = "".join(out).strip("_")
+    return prefix or None
+
+
+def _reentry_enabled_for_tag(prefix: Optional[str]) -> bool:
+    if not prefix:
+        return False
+    raw = os.getenv(f"{prefix}_REENTRY_ENABLE")
+    if raw is None:
+        return False
+    return str(raw).strip().lower() in {"1", "true", "yes"}
+
+
 def _bb_float(value):
     try:
         return float(value)
@@ -513,23 +539,26 @@ class RangeFaderExitWorker:
             ma10 = _bb_float(fac_m1.get("ma10"))
             ma20 = _bb_float(fac_m1.get("ma20"))
             ma_pair = (ma10, ma20) if ma10 is not None and ma20 is not None else None
-            reentry = decide_reentry(
-                prefix="RANGEFADER",
-                side=side,
-                pnl_pips=pnl,
-                rsi=rsi,
-                adx=adx,
-                atr_pips=atr_pips,
-                bbw=bbw,
-                vwap_gap=vwap_gap,
-                ma_pair=ma_pair,
-                range_active=range_active,
-                log_tags={"trade": trade_id},
-            )
-            if reentry.action == "hold":
+            reentry_prefix = _reentry_prefix_for_tag(base_tag)
+            reentry = None
+            if _reentry_enabled_for_tag(reentry_prefix):
+                reentry = decide_reentry(
+                    prefix=reentry_prefix or "RANGEFADER",
+                    side=side,
+                    pnl_pips=pnl,
+                    rsi=rsi,
+                    adx=adx,
+                    atr_pips=atr_pips,
+                    bbw=bbw,
+                    vwap_gap=vwap_gap,
+                    ma_pair=ma_pair,
+                    range_active=range_active,
+                    log_tags={"trade": trade_id},
+                )
+            if reentry and reentry.action == "hold":
                 if not self._loss_cut_eligible(trade):
                     return
-            if reentry.action == "exit_reentry" and not reentry.shadow:
+            if reentry and reentry.action == "exit_reentry" and not reentry.shadow:
                 await self._close(trade_id, -units, "reentry_reset", pnl, client_id)
                 self._states.pop(trade_id, None)
                 return
