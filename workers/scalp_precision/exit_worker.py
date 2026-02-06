@@ -612,6 +612,9 @@ class RangeFaderExitWorker:
         trail_start = _pick_float(exit_profile.get("trail_start_pips"), self.trail_start)
         trail_backoff = _pick_float(exit_profile.get("trail_backoff_pips"), self.trail_backoff)
         lock_buffer = _pick_float(exit_profile.get("lock_buffer_pips"), self.lock_buffer)
+        lock_floor_min_hold_sec = max(
+            0.0, _pick_float(exit_profile.get("lock_floor_min_hold_sec"), 0.0)
+        )
         range_profit_take = _pick_float(exit_profile.get("range_profit_pips"), self.range_profit_take)
         range_trail_start = _pick_float(exit_profile.get("range_trail_start_pips"), self.range_trail_start)
         range_trail_backoff = _pick_float(exit_profile.get("range_trail_backoff_pips"), self.range_trail_backoff)
@@ -855,7 +858,11 @@ class RangeFaderExitWorker:
             self._states.pop(trade_id, None)
             return
 
-        if state.lock_floor is not None and pnl <= state.lock_floor:
+        if (
+            state.lock_floor is not None
+            and hold_sec >= lock_floor_min_hold_sec
+            and pnl <= state.lock_floor
+        ):
             await self._close(trade_id, -units, "lock_floor", pnl, client_id)
             self._states.pop(trade_id, None)
             return
