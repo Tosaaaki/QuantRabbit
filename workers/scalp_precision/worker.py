@@ -1981,6 +1981,8 @@ async def scalp_precision_worker() -> None:
     last_guard_log = 0.0
     last_diag_log = 0.0
     bypass_common_guard = config.MODE in config.GUARD_BYPASS_MODES
+    if config.MODE == "level_reject":
+        bypass_common_guard = False
 
     try:
         while True:
