@@ -113,14 +113,22 @@ async def micro_trendretest_worker() -> None:
     last_entry_mono = 0.0
     last_signal_key: str | None = None
     last_block_log_mono = 0.0
+    last_heartbeat_mono = 0.0
 
     try:
         while True:
             await asyncio.sleep(config.LOOP_INTERVAL_SEC)
 
-            if not is_market_open():
+            now_mono = time.monotonic()
+            market_open = is_market_open()
+            trade_ok = can_trade(config.POCKET)
+            if now_mono - last_heartbeat_mono > 120.0:
+                LOG.info("%s heartbeat market_open=%s can_trade=%s", config.LOG_PREFIX, market_open, trade_ok)
+                last_heartbeat_mono = now_mono
+
+            if not market_open:
                 continue
-            if not can_trade(config.POCKET):
+            if not trade_ok:
                 continue
 
             now = _utc_now()
@@ -202,7 +210,6 @@ async def micro_trendretest_worker() -> None:
             fac_ts = fac_signal.get("timestamp")
             signal_key = f"{config.SIGNAL_TF}:{fac_ts}:{signal_tag}"
 
-            now_mono = time.monotonic()
             if config.MIN_ENTRY_INTERVAL_SEC > 0 and (now_mono - last_entry_mono) < config.MIN_ENTRY_INTERVAL_SEC:
                 continue
             if last_signal_key and signal_key == last_signal_key:
@@ -345,4 +352,5 @@ async def micro_trendretest_worker() -> None:
 
 
 if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s", force=True)
     asyncio.run(micro_trendretest_worker())
