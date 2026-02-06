@@ -361,6 +361,8 @@ WICK_HF_TICK_MIN_TICKS = _env_int("WICK_HF_TICK_MIN_TICKS", 8)
 WICK_HF_TICK_MIN_STRENGTH = _env_float("WICK_HF_TICK_MIN_STRENGTH", 0.25)
 WICK_HF_REQUIRE_BB_TOUCH = _env_bool("WICK_HF_REQUIRE_BB_TOUCH", True)
 WICK_HF_BB_TOUCH_PIPS = _env_float("WICK_HF_BB_TOUCH_PIPS", 0.9)
+WICK_HF_DIAG = _env_bool("WICK_HF_DIAG", False)
+WICK_HF_DIAG_INTERVAL_SEC = _env_float("WICK_HF_DIAG_INTERVAL_SEC", 20.0)
 
 # Tick-window wick reversal (higher-frequency range-reversion).
 TICK_WICK_WINDOW_SEC = _env_float("TICK_WICK_WINDOW_SEC", 9.0)
@@ -1059,6 +1061,176 @@ def _spb_diag_metrics(fac_m1: Dict[str, object], range_ctx) -> Dict[str, object]
         "tick_range_pips": round(tick_range_pips, 3),
         "imb_ratio": round(imb_ratio, 3),
         "imb_mom_pips": round(imb_mom, 3),
+    }
+
+
+def _wick_hf_diag_metrics(fac_m1: Dict[str, object], range_ctx) -> Dict[str, object]:
+    """Lightweight diag snapshot for WickReversalHF tuning."""
+    adx = _adx(fac_m1)
+    bbw = _bbw(fac_m1)
+    atr = _atr_pips(fac_m1)
+
+    ok_spread, spread_state = spread_ok(max_pips=config.MAX_SPREAD_PIPS, p25_max=WICK_HF_SPREAD_P25)
+    spread_pips = 0.0
+    p25_pips = 0.0
+    if isinstance(spread_state, dict):
+        try:
+            spread_pips = float(spread_state.get("spread_pips") or 0.0)
+        except Exception:
+            spread_pips = 0.0
+        try:
+            p25_pips = float(spread_state.get("p25_pips") or 0.0)
+        except Exception:
+            p25_pips = 0.0
+
+    range_active = False
+    range_score = 0.0
+    if range_ctx is not None:
+        try:
+            range_active = bool(getattr(range_ctx, "active", False))
+            range_score = float(getattr(range_ctx, "score", 0.0) or 0.0)
+        except Exception:
+            range_active = False
+            range_score = 0.0
+    range_ok = True
+    if not range_active and WICK_HF_RANGE_SCORE_MIN > 0.0 and range_score < WICK_HF_RANGE_SCORE_MIN:
+        range_ok = False
+
+    rng_pips = 0.0
+    body_pips = 0.0
+    upper_wick_pips = 0.0
+    lower_wick_pips = 0.0
+    wick_ratio = 0.0
+    side = ""
+    candle_high = 0.0
+    candle_low = 0.0
+    try:
+        candles = get_candles_snapshot("M1", limit=2) or []
+        last = candles[-1] if candles else None
+        if isinstance(last, dict):
+            o = float(last.get("open") or last.get("o") or 0.0)
+            h = float(last.get("high") or last.get("h") or 0.0)
+            l = float(last.get("low") or last.get("l") or 0.0)
+            c = float(last.get("close") or last.get("c") or 0.0)
+            if h > 0 and l > 0 and h >= l:
+                candle_high = h
+                candle_low = l
+                rng_pips = (h - l) / PIP
+                body_pips = abs(c - o) / PIP
+                upper_wick_pips = (h - max(o, c)) / PIP
+                lower_wick_pips = (min(o, c) - l) / PIP
+                wick_ratio = max(upper_wick_pips, lower_wick_pips) / max(rng_pips, 0.01)
+                side = "short" if upper_wick_pips > lower_wick_pips else "long"
+    except Exception:
+        pass
+
+    rng_ok = rng_pips >= WICK_HF_RANGE_MIN_PIPS
+    body_ok = body_pips <= WICK_HF_BODY_MAX_PIPS
+    ratio_ok = wick_ratio >= WICK_HF_RATIO_MIN
+    adx_ok = not (WICK_HF_ADX_MAX > 0.0 and adx > WICK_HF_ADX_MAX)
+    bbw_ok = not (WICK_HF_BBW_MAX > 0.0 and bbw > WICK_HF_BBW_MAX)
+    atr_ok = not (
+        (WICK_HF_ATR_MIN > 0.0 and atr < WICK_HF_ATR_MIN) or (WICK_HF_ATR_MAX > 0.0 and atr > WICK_HF_ATR_MAX)
+    )
+
+    bb_ok = True
+    bb_touch_pips = 0.0
+    if WICK_HF_REQUIRE_BB_TOUCH:
+        bb_ok = False
+        levels = bb_levels(fac_m1)
+        if levels:
+            try:
+                upper, _, lower, _, span_pips = levels
+                bb_touch_pips = max(WICK_HF_BB_TOUCH_PIPS, float(span_pips or 0.0) * 0.18)
+                if side == "short":
+                    bb_ok = upper_wick_pips > 0 and (candle_high >= float(upper) - bb_touch_pips * PIP)
+                elif side == "long":
+                    bb_ok = lower_wick_pips > 0 and (candle_low <= float(lower) + bb_touch_pips * PIP)
+            except Exception:
+                bb_ok = False
+
+    tick_n = 0
+    tick_ok = True
+    tick_dir = None
+    tick_strength = 0.0
+    tick_gate_ok = True
+    if WICK_HF_REQUIRE_TICK_REV:
+        tick_ok = False
+        tick_gate_ok = False
+        mids, _ = tick_snapshot(WICK_HF_TICK_WINDOW_SEC, limit=160)
+        tick_n = len(mids or [])
+        rev_ok, rev_dir, rev_strength = (
+            tick_reversal(mids, min_ticks=WICK_HF_TICK_MIN_TICKS) if mids else (False, None, 0.0)
+        )
+        tick_ok = bool(rev_ok)
+        tick_dir = rev_dir
+        try:
+            tick_strength = float(rev_strength or 0.0)
+        except Exception:
+            tick_strength = 0.0
+        tick_gate_ok = tick_ok and (tick_dir == side) and (WICK_HF_TICK_MIN_STRENGTH <= 0.0 or tick_strength >= WICK_HF_TICK_MIN_STRENGTH)
+
+    proj_allow = None
+    try:
+        allow, _, _ = projection_decision(side, mode="range")
+        proj_allow = bool(allow)
+    except Exception:
+        proj_allow = None
+
+    block = "ok"
+    if not range_ok:
+        block = "range"
+    elif not ok_spread:
+        block = "spread"
+    elif not rng_ok:
+        block = "rng"
+    elif not body_ok:
+        block = "body"
+    elif not ratio_ok:
+        block = "ratio"
+    elif not adx_ok:
+        block = "adx"
+    elif not bbw_ok:
+        block = "bbw"
+    elif not atr_ok:
+        block = "atr"
+    elif not bb_ok:
+        block = "bb_touch"
+    elif not tick_gate_ok:
+        block = "tick_rev"
+    elif proj_allow is False:
+        block = "projection"
+
+    return {
+        "block": block,
+        "range_ok": bool(range_ok),
+        "range_active": bool(range_active),
+        "range_score": round(range_score, 3),
+        "spread_ok": bool(ok_spread),
+        "spread_pips": round(spread_pips, 3),
+        "p25_pips": round(p25_pips, 3),
+        "rng_pips": round(rng_pips, 2),
+        "body_pips": round(body_pips, 2),
+        "wick_ratio": round(wick_ratio, 3),
+        "upper_wick_pips": round(upper_wick_pips, 2),
+        "lower_wick_pips": round(lower_wick_pips, 2),
+        "side": side,
+        "rng_ok": bool(rng_ok),
+        "body_ok": bool(body_ok),
+        "ratio_ok": bool(ratio_ok),
+        "adx": round(adx, 2),
+        "bbw": round(bbw, 6),
+        "atr": round(atr, 3),
+        "adx_ok": bool(adx_ok),
+        "bbw_ok": bool(bbw_ok),
+        "atr_ok": bool(atr_ok),
+        "bb_ok": bool(bb_ok),
+        "bb_touch_pips": round(bb_touch_pips, 2),
+        "tick_n": int(tick_n),
+        "tick_ok": bool(tick_ok),
+        "tick_dir": tick_dir,
+        "tick_strength": round(tick_strength, 3),
+        "proj_allow": proj_allow,
     }
 
 
@@ -2864,6 +3036,34 @@ async def scalp_precision_worker() -> None:
                             _adx(fac_m1),
                             _bbw(fac_m1),
                         )
+                if WICK_HF_DIAG and config.MODE == "wick_reversal_hf":
+                    if now_mono - last_diag_log >= max(1.0, WICK_HF_DIAG_INTERVAL_SEC):
+                        last_diag_log = now_mono
+                        m = _wick_hf_diag_metrics(fac_m1, range_ctx)
+                        LOG.info(
+                            "%s wick_hf diag signals=0 block=%s spread_ok=%s spread=%.2fp p25=%.2fp range_ok=%s range_score=%.3f rng=%.2fp body=%.2fp ratio=%.3f side=%s bb_ok=%s bb_touch=%.2fp tick_n=%d tick_ok=%s tick_dir=%s tick_strength=%.2f proj=%s adx=%.1f bbw=%.6f atr=%.2f",
+                            config.LOG_PREFIX,
+                            str(m.get("block") or ""),
+                            bool(m.get("spread_ok")),
+                            float(m.get("spread_pips") or 0.0),
+                            float(m.get("p25_pips") or 0.0),
+                            bool(m.get("range_ok")),
+                            float(m.get("range_score") or 0.0),
+                            float(m.get("rng_pips") or 0.0),
+                            float(m.get("body_pips") or 0.0),
+                            float(m.get("wick_ratio") or 0.0),
+                            str(m.get("side") or ""),
+                            bool(m.get("bb_ok")),
+                            float(m.get("bb_touch_pips") or 0.0),
+                            int(m.get("tick_n") or 0),
+                            bool(m.get("tick_ok")),
+                            str(m.get("tick_dir") or ""),
+                            float(m.get("tick_strength") or 0.0),
+                            bool(m.get("proj_allow")) if m.get("proj_allow") is not None else None,
+                            float(m.get("adx") or 0.0),
+                            float(m.get("bbw") or 0.0),
+                            float(m.get("atr") or 0.0),
+                        )
                 if SPB_DIAG and config.MODE == "squeeze_pulse_break":
                     if now_mono - last_diag_log >= max(1.0, SPB_DIAG_INTERVAL_SEC):
                         last_diag_log = now_mono
@@ -2896,6 +3096,37 @@ async def scalp_precision_worker() -> None:
                         len(signals),
                         top.get("confidence"),
                         top.get("action"),
+                        float(getattr(air, "air_score", 0.0) or 0.0),
+                        bool(getattr(air, "allow_entry", True)),
+                        bool(getattr(range_ctx, "active", False)),
+                        float(getattr(range_ctx, "score", 0.0) or 0.0),
+                    )
+            if WICK_HF_DIAG and config.MODE == "wick_reversal_hf":
+                if now_mono - last_diag_log >= max(1.0, WICK_HF_DIAG_INTERVAL_SEC):
+                    last_diag_log = now_mono
+                    top = signals[0]
+                    wick = top.get("wick") if isinstance(top, dict) else None
+                    try:
+                        rng_pips = float((wick or {}).get("rng_pips") or 0.0)
+                    except Exception:
+                        rng_pips = 0.0
+                    try:
+                        ratio = float((wick or {}).get("ratio") or 0.0)
+                    except Exception:
+                        ratio = 0.0
+                    try:
+                        tick_strength = float((wick or {}).get("tick_strength") or 0.0)
+                    except Exception:
+                        tick_strength = 0.0
+                    LOG.info(
+                        "%s wick_hf diag signals=%d top_conf=%s top_action=%s rng=%.2fp ratio=%.3f tick_strength=%.2f air_score=%.3f allow_entry=%s range_active=%s range_score=%.3f",
+                        config.LOG_PREFIX,
+                        len(signals),
+                        top.get("confidence"),
+                        top.get("action"),
+                        rng_pips,
+                        ratio,
+                        tick_strength,
                         float(getattr(air, "air_score", 0.0) or 0.0),
                         bool(getattr(air, "allow_entry", True)),
                         bool(getattr(range_ctx, "active", False)),
