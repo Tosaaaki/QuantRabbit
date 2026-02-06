@@ -327,13 +327,14 @@ strategies:
   LevelReject:
     min_profit_pips: 1.4
     min_profit_ratio: 0.80
-    pro_stop: {soft_pips: 0.8, hard_pips: 14.1, min_hold_sec: 175, max_hold_sec: 5899, soft_atr_mult: 0.6, hard_atr_mult: 1.0}
+    pro_stop: {enabled: false}
     exit_profile:
       min_hold_sec: 10
       profit_pips: 2.3
       trail_start_pips: 2.6
       trail_backoff_pips: 0.6
       lock_buffer_pips: 0.3
+      lock_floor_min_hold_sec: 60
       range_profit_pips: 2.3
       range_trail_start_pips: 2.6
       range_trail_backoff_pips: 0.55
