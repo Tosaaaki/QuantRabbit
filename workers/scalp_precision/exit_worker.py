@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import math
 import os
 import pathlib
 import time
@@ -494,6 +495,42 @@ class RangeFaderExitWorker:
         self._states: dict[str, _TradeState] = {}
         self._loss_cut_last_ts: dict[str, float] = {}
 
+    def _unrealized_pnl_pips(
+        self,
+        trade: dict,
+        *,
+        entry: float,
+        units: int,
+        mid: Optional[float],
+    ) -> Optional[float]:
+        """Return current PnL in pips for EXIT decisions.
+
+        Prefer OANDA-provided unrealized PnL (already normalized to pips by PositionManager) so the exit loop
+        doesn't stall when local tick data is stale/missing.
+        """
+        raw = trade.get("unrealized_pl_pips")
+        if raw is not None:
+            try:
+                value = float(raw)
+                if math.isfinite(value):
+                    return value
+            except Exception:
+                pass
+        raw_pl = trade.get("unrealized_pl")
+        if raw_pl is not None:
+            try:
+                unrealized_pl = float(raw_pl)
+                pip_value = abs(int(units)) * 0.01
+                if pip_value > 0:
+                    value = unrealized_pl / pip_value
+                    if math.isfinite(value):
+                        return value
+            except Exception:
+                pass
+        if mid is not None:
+            return mark_pnl_pips(entry, units, mid=mid)
+        return None
+
     def _context(self) -> tuple[Optional[float], bool]:
         fac_m1 = all_factors().get("M1") or {}
         fac_h4 = all_factors().get("H4") or {}
@@ -554,7 +591,7 @@ class RangeFaderExitWorker:
         else:
             LOG.error("[exit-rangefader] close failed trade=%s units=%s reason=%s", trade_id, units, reason)
 
-    async def _review_trade(self, trade: dict, now: datetime, mid: float, range_active: bool) -> None:
+    async def _review_trade(self, trade: dict, now: datetime, mid: Optional[float], range_active: bool) -> None:
         trade_id = str(trade.get("trade_id"))
         if not trade_id:
             return
@@ -566,7 +603,7 @@ class RangeFaderExitWorker:
             return
 
         side = "long" if units > 0 else "short"
-        pnl = mark_pnl_pips(entry, units, mid=mid)
+        pnl = self._unrealized_pnl_pips(trade, entry=entry, units=units, mid=mid)
         if pnl is None:
             return
         opened_at = _parse_time(trade.get("open_time"))
@@ -872,8 +909,6 @@ class RangeFaderExitWorker:
                     continue
 
                 mid, range_active = self._context()
-                if mid is None:
-                    continue
                 now = datetime.now(timezone.utc)
                 for tr in trades:
                     try:
