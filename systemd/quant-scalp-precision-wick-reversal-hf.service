@@ -41,9 +41,9 @@ Environment=WICK_HF_SPREAD_P25=1.0
 Environment=WICK_HF_REQUIRE_BB_TOUCH=0
 Environment=WICK_HF_BB_TOUCH_PIPS=0.9
 Environment=WICK_HF_REQUIRE_TICK_REV=1
-Environment=WICK_HF_TICK_WINDOW_SEC=12.0
-Environment=WICK_HF_TICK_MIN_TICKS=6
-Environment=WICK_HF_TICK_MIN_STRENGTH=0.20
+Environment=WICK_HF_TICK_WINDOW_SEC=18.0
+Environment=WICK_HF_TICK_MIN_TICKS=4
+Environment=WICK_HF_TICK_MIN_STRENGTH=0.12
 
 # Entry precision first: avoid fading strong momentum.
 Environment=WICK_HF_MOMENTUM_FILTER_ENABLED=1
