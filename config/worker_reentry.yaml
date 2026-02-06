@@ -64,6 +64,12 @@ strategies:
     cooldown_loss_sec: 45
     same_dir_reentry_pips: 0.5
     return_wait_bias: neutral
+  TickWickReversal:
+    cooldown_win_sec: 20
+    cooldown_loss_sec: 45
+    same_dir_reentry_pips: 0.8
+    same_dir_mode: both
+    return_wait_bias: neutral
   MicroRangeBreak:
     cooldown_win_sec: 40
     cooldown_loss_sec: 120
