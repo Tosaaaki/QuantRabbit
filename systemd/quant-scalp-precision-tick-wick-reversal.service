@@ -33,8 +33,8 @@ Environment=TICK_WICK_MIN_UNITS_CLAMP_RATIO=0.75
 Environment=TICK_WICK_DIAG=1
 Environment=TICK_WICK_DIAG_INTERVAL_SEC=15
 
-# Attach entry SL/TP at the broker for this worker to cap tail losses.
-Environment=ORDER_ENABLE_STOP_LOSS_SCALP=1
+# Broker SL/TP disabled (no entry stop-loss). Re-enable by setting:
+# Environment=ORDER_ENABLE_STOP_LOSS_SCALP=1
 
 ExecStart=/home/tossaki/QuantRabbit/.venv/bin/python -m workers.scalp_precision.worker
 Restart=always
