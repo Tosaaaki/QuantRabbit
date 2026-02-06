@@ -396,6 +396,7 @@ class _TradeState:
     lock_floor: Optional[float] = None
     partial_done: bool = False
     be_moved: bool = False
+    runner_armed: bool = False
 
     def update(self, pnl: float, lock_buffer: float) -> None:
         if pnl > self.peak:
@@ -490,6 +491,20 @@ class RangeFaderExitWorker:
         self.tick_imb_lock_buffer = max(0.0, _float_env("TICK_IMB_EXIT_LOCK_BUFFER_PIPS", 0.0))
         self.tick_imb_max_hold_sec = max(0.0, _float_env("TICK_IMB_EXIT_MAX_HOLD_SEC", 0.0))
         self.tick_imb_max_adverse_pips = max(0.0, _float_env("TICK_IMB_EXIT_MAX_ADVERSE_PIPS", 0.0))
+
+        self.levelrej_runner_enabled = _bool_env("LEVELREJ_RUNNER_ENABLED", True)
+        self.levelrej_runner_min_tp_pips = max(0.0, _float_env("LEVELREJ_RUNNER_MIN_TP_PIPS", 2.0))
+        self.levelrej_runner_trigger_min_pips = max(0.0, _float_env("LEVELREJ_RUNNER_TRIGGER_MIN_PIPS", 1.9))
+        self.levelrej_runner_trigger_buffer_pips = max(0.05, _float_env("LEVELREJ_RUNNER_TRIGGER_BUFFER_PIPS", 0.2))
+        self.levelrej_runner_target_base_pips = max(0.0, _float_env("LEVELREJ_RUNNER_TP_BASE_PIPS", 10.0))
+        self.levelrej_runner_target_atr_mult = max(0.0, _float_env("LEVELREJ_RUNNER_TP_ATR_MULT", 4.0))
+        self.levelrej_runner_target_min_gap_pips = max(0.0, _float_env("LEVELREJ_RUNNER_TP_MIN_GAP_PIPS", 2.0))
+        self.levelrej_runner_target_max_pips = max(
+            self.levelrej_runner_target_base_pips,
+            _float_env("LEVELREJ_RUNNER_TP_MAX_PIPS", 20.0),
+        )
+        self.levelrej_runner_lock_buffer_pips = max(0.05, _float_env("LEVELREJ_RUNNER_LOCK_BUFFER_PIPS", 1.0))
+        self.levelrej_runner_min_adx = max(0.0, _float_env("LEVELREJ_RUNNER_MIN_ADX", 0.0))
 
         self._pos_manager = PositionManager()
         self._states: dict[str, _TradeState] = {}
@@ -703,11 +718,13 @@ class RangeFaderExitWorker:
                 if hasattr(self, "_states"):
                     self._states.pop(trade_id, None)
                 return
+
+        state = self._states.get(trade_id)
+        if state is None:
+            state = _TradeState(peak=pnl)
+            self._states[trade_id] = state
+
         if is_tick_imb:
-            state = self._states.get(trade_id)
-            if state is None:
-                state = _TradeState(peak=pnl)
-                self._states[trade_id] = state
             if (
                 tick_imb_partial_enabled
                 and pnl > 0
@@ -818,17 +835,74 @@ class RangeFaderExitWorker:
             if tick_imb_trail_backoff > 0:
                 trail_backoff = tick_imb_trail_backoff
 
-        state = self._states.get(trade_id)
-        if state is None:
-            state = _TradeState(peak=pnl)
-            self._states[trade_id] = state
+        is_level_reject = base_tag == "LevelReject"
+        if is_level_reject and self.levelrej_runner_enabled and not state.runner_armed:
+            tp_price = None
+            tp_info = trade.get("take_profit")
+            if isinstance(tp_info, dict):
+                raw_price = tp_info.get("price")
+                try:
+                    tp_price = float(raw_price) if raw_price is not None else None
+                except (TypeError, ValueError):
+                    tp_price = None
+            tp_pips = None
+            if tp_price is not None and tp_price > 0:
+                tp_pips = (tp_price - entry) / 0.01 if side == "long" else (entry - tp_price) / 0.01
+            if tp_pips is not None and tp_pips >= self.levelrej_runner_min_tp_pips:
+                trigger_pips = max(
+                    self.levelrej_runner_trigger_min_pips,
+                    tp_pips - self.levelrej_runner_trigger_buffer_pips,
+                )
+                if pnl >= trigger_pips:
+                    fac_m1 = all_factors().get("M1") or {}
+                    try:
+                        adx = float(fac_m1.get("adx")) if fac_m1.get("adx") is not None else None
+                    except (TypeError, ValueError):
+                        adx = None
+                    if adx is None or adx >= self.levelrej_runner_min_adx:
+                        try:
+                            atr_pips = (
+                                float(fac_m1.get("atr_pips")) if fac_m1.get("atr_pips") is not None else None
+                            )
+                        except (TypeError, ValueError):
+                            atr_pips = None
+                        target_pips = self.levelrej_runner_target_base_pips
+                        if atr_pips is not None:
+                            target_pips = max(target_pips, atr_pips * self.levelrej_runner_target_atr_mult)
+                        target_pips = max(target_pips, pnl + self.levelrej_runner_target_min_gap_pips)
+                        target_pips = min(target_pips, self.levelrej_runner_target_max_pips)
+                        tp_new = entry + (target_pips * 0.01) if side == "long" else entry - (target_pips * 0.01)
+                        tp_new = round(tp_new, 3)
+                        tp_ok = await set_trade_protections(trade_id, sl_price=None, tp_price=tp_new)
+                        if tp_ok:
+                            state.runner_armed = True
+                            # Relax the trailing floor to allow follow-through beyond the original small TP.
+                            state.lock_floor = max(0.0, pnl - self.levelrej_runner_lock_buffer_pips)
+                            log_metric(
+                                "scalp_precision_level_reject_runner_armed",
+                                pnl,
+                                tags={"side": side},
+                                ts=now,
+                            )
+                            LOG.info(
+                                "[exit-rangefader] LevelReject runner armed trade=%s pnl=%.2fp tp=%.3f trigger=%.2fp target=%.1fp",
+                                trade_id,
+                                pnl,
+                                tp_new,
+                                trigger_pips,
+                                target_pips,
+                            )
+
+        if is_level_reject and state.runner_armed:
+            lock_buffer = max(lock_buffer, self.levelrej_runner_lock_buffer_pips)
+            trail_backoff = max(trail_backoff, self.levelrej_runner_lock_buffer_pips)
         state.update(pnl, lock_buffer)
 
         if pnl >= trail_start:
             candidate = max(0.0, pnl - trail_backoff)
             state.lock_floor = candidate if state.lock_floor is None else max(state.lock_floor, candidate)
 
-        if pnl >= profit_take:
+        if pnl >= profit_take and not (is_level_reject and state.runner_armed):
             await self._close(trade_id, -units, "take_profit", pnl, client_id)
             self._states.pop(trade_id, None)
             return
