@@ -11,7 +11,11 @@ Environment=SCALP_PRECISION_ENABLED=1
 Environment=SCALP_PRECISION_MODE=level_reject
 Environment=SCALP_PRECISION_ALLOWLIST=level_reject
 Environment=SCALP_PRECISION_MODE_FILTER_ALLOWLIST=1
-Environment=LEVEL_REJECT_SIZE_MULT=1.6
+Environment=SCALP_PRECISION_LOG_PREFIX=[ScalpPrecision:LevelReject]
+# Shift scalp allocation toward LevelReject (high win rate and PF>1 in trades.db)
+Environment=SCALP_PRECISION_BASE_UNITS=8500
+Environment=SCALP_PRECISION_CAP_MAX=0.90
+Environment=LSR_SIZE_MULT=1.10
 ExecStart=/home/tossaki/QuantRabbit/.venv/bin/python -m workers.scalp_precision.worker
 Restart=always
 RestartSec=5

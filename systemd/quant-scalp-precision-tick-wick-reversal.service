@@ -7,7 +7,10 @@ Type=simple
 WorkingDirectory=/home/tossaki/QuantRabbit
 EnvironmentFile=/etc/quantrabbit.env
 Environment=PYTHONUNBUFFERED=1
-Environment=SCALP_PRECISION_ENABLED=1
+#
+# Disabled: PF/win degraded (see trades.db). Re-enable only after entry logic is improved
+# and the strategy re-proves in practice.
+Environment=SCALP_PRECISION_ENABLED=0
 Environment=SCALP_PRECISION_MODE=tick_wick_reversal
 Environment=SCALP_PRECISION_UNIT_ALLOWLIST=tick_wick_reversal
 Environment=SCALP_PRECISION_MODE_FILTER_ALLOWLIST=1
