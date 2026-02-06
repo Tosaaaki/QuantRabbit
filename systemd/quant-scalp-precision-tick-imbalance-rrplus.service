@@ -1,0 +1,29 @@
+[Unit]
+Description=QuantRabbit Scalp Precision Tick Imbalance RRPlus Worker
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/tossaki/QuantRabbit
+EnvironmentFile=/etc/quantrabbit.env
+Environment=PYTHONUNBUFFERED=1
+Environment=SCALP_PRECISION_ENABLED=1
+Environment=SCALP_PRECISION_MODE=tick_imbalance_rrplus
+Environment=SCALP_PRECISION_UNIT_ALLOWLIST=tick_imbalance_rrplus
+Environment=SCALP_PRECISION_MODE_FILTER_ALLOWLIST=1
+Environment=SCALP_PRECISION_LOOP_INTERVAL_SEC=2.0
+Environment=SCALP_PRECISION_COOLDOWN_SEC=10
+Environment=SCALP_PRECISION_MAX_OPEN_TRADES=1
+Environment=SCALP_PRECISION_OPEN_TRADES_SCOPE=tag
+Environment=SCALP_PRECISION_LOG_PREFIX=[ScalpPrecision:TickImbRRPlus]
+
+# Attach entry SL/TP at the broker for this worker to cap tail losses.
+Environment=ORDER_ENABLE_STOP_LOSS_SCALP=1
+
+ExecStart=/home/tossaki/QuantRabbit/.venv/bin/python -m workers.scalp_precision.worker
+Restart=always
+RestartSec=5
+User=tossaki
+
+[Install]
+WantedBy=multi-user.target
