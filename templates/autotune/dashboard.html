@@ -89,14 +89,14 @@
         <div class="stat-sub">1L eq {{ "%+.1f"|format(dashboard.performance.daily_pl_eq1l) }}p</div>
       </div>
       <div class="stat-card">
-        <div class="stat-label">前日比（口座比）</div>
+        <div class="stat-label">日次リターン（口座比）</div>
         {% if dashboard.performance.daily_change_pct is not none %}
           {% set change_class = 'stat-positive' if dashboard.performance.daily_change_pct >= 0 else 'stat-negative' %}
           <div class="stat-value {{ change_class }}">{{ "%+.1f"|format(dashboard.performance.daily_change_pct) }}%</div>
         {% else %}
           <div class="stat-value">-</div>
         {% endif %}
-        <div class="stat-sub">差分 {{ "%+.0f"|format(dashboard.performance.daily_change_jpy) }} 円</div>
+        <div class="stat-sub">確定 {{ "%+.0f"|format(dashboard.performance.daily_change_jpy) }} 円</div>
         {% if dashboard.performance.daily_change_equity %}
           {% if dashboard.performance.daily_change_equity_source == "balance" %}
             <div class="stat-sub">基準Balance {{ "%.0f"|format(dashboard.performance.daily_change_equity) }} 円</div>
@@ -160,7 +160,7 @@
         <div class="stat-label">勝率</div>
         {% if dashboard.performance.recent_closed %}
           <div class="stat-value">{{ "%.1f"|format(dashboard.performance.win_rate_percent) }}%</div>
-          <div class="stat-sub">{{ dashboard.performance.wins }} 勝 / {{ dashboard.performance.losses }} 敗</div>
+          <div class="stat-sub">{{ dashboard.performance.wins }} 勝 / {{ dashboard.performance.losses }} 敗{% if dashboard.performance.breakevens %} / {{ dashboard.performance.breakevens }} 分{% endif %}</div>
         {% else %}
           <div class="stat-value">-</div>
           <div class="stat-sub">十分な検証データがありません</div>

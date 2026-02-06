@@ -267,6 +267,7 @@ def _dashboard_defaults(error: Optional[str] = None) -> Dict[str, Any]:
             "win_rate_percent": 0.0,
             "wins": 0,
             "losses": 0,
+            "breakevens": 0,
             "open_positions": 0,
             "net_units": 0.0,
             "new_trades": 0,
@@ -1400,6 +1401,7 @@ def _summarise_snapshot(snapshot: Dict[str, Any]) -> Dict[str, Any]:
             perf["recent_closed"] = trades
             perf["wins"] = int(data.get("wins", 0) or 0)
             perf["losses"] = int(data.get("losses", 0) or 0)
+            perf["breakevens"] = max(0, trades - perf["wins"] - perf["losses"])
             wr = data.get("win_rate")
             if wr is None:
                 wr = (perf["wins"] / trades) if trades else 0.0
@@ -1431,6 +1433,7 @@ def _summarise_snapshot(snapshot: Dict[str, Any]) -> Dict[str, Any]:
         losses = sum(1 for t in recent_trades if t["pl_pips"] < 0)
         perf["wins"] = wins
         perf["losses"] = losses
+        perf["breakevens"] = max(0, perf["recent_closed"] - wins - losses)
         perf["win_rate"] = (wins / perf["recent_closed"]) if perf["recent_closed"] else 0.0
         perf["win_rate_percent"] = round(perf["win_rate"] * 100.0, 1)
 
@@ -1492,29 +1495,33 @@ def _summarise_snapshot(snapshot: Dict[str, Any]) -> Dict[str, Any]:
     perf["weekly_pl_eq1l"] = round((perf.get("weekly_pl_jpy", 0.0) or 0.0) / 1000.0, 2)
     perf["total_eq1l"] = round((perf.get("total_jpy", 0.0) or 0.0) / 1000.0, 2)
 
-    if metrics_snapshot.get("daily_change") is None or perf.get("daily_change_pct") is None:
-        today_pips = perf.get("daily_pl_pips", 0.0) or 0.0
-        yest_pips = perf.get("yesterday_pl_pips", 0.0) or 0.0
-        today_jpy = perf.get("daily_pl_jpy", 0.0) or 0.0
-        yest_jpy = perf.get("yesterday_pl_jpy", 0.0) or 0.0
-        perf["daily_change_pips"] = round(today_pips - yest_pips, 2)
-        perf["daily_change_jpy"] = round(today_jpy - yest_jpy, 2)
-        equity_val = perf.get("daily_change_equity")
-        if equity_val in (None, 0.0):
-            equity_val = _load_latest_metric("account.nav")
+    # Daily return (account-based): show today's realized P/L as a % of equity.
+    # The previous "daily_change" metric (today - yesterday) was misleading in the UI.
+    today_pips = perf.get("daily_pl_pips", 0.0) or 0.0
+    today_jpy = perf.get("daily_pl_jpy", 0.0) or 0.0
+    perf["daily_change_pips"] = round(today_pips, 2)
+    perf["daily_change_jpy"] = round(today_jpy, 2)
+    equity_val = perf.get("daily_change_equity")
+    equity_source = perf.get("daily_change_equity_source")
+    if equity_val in (None, 0.0):
+        if account_nav not in (None, 0.0):
+            equity_val = account_nav
             equity_source = "nav"
-            if equity_val in (None, 0.0):
-                equity_val = _load_latest_metric("account.balance")
-                equity_source = "balance"
-            if equity_val:
-                perf["daily_change_equity"] = equity_val
-                perf["daily_change_equity_source"] = equity_source
-        if equity_val:
-            perf["daily_change_pct"] = round(
-                (today_jpy - yest_jpy) * 100.0 / float(equity_val), 2
-            )
-        else:
-            perf["daily_change_pct"] = None
+        elif account_balance not in (None, 0.0):
+            equity_val = account_balance
+            equity_source = "balance"
+    if equity_val in (None, 0.0):
+        equity_val = _load_latest_metric("account.nav")
+        equity_source = "nav"
+        if equity_val in (None, 0.0):
+            equity_val = _load_latest_metric("account.balance")
+            equity_source = "balance"
+    if equity_val not in (None, 0.0):
+        perf["daily_change_equity"] = equity_val
+        perf["daily_change_equity_source"] = equity_source
+        perf["daily_change_pct"] = round(today_jpy * 100.0 / float(equity_val), 2)
+    else:
+        perf["daily_change_pct"] = None
 
     if perf.get("last_trade_at") is None:
         last_trade = metrics_snapshot.get("last_trade_at")
