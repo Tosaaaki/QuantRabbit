@@ -17,6 +17,7 @@ from execution.position_manager import PositionManager
 from indicators.factor_cache import all_factors
 from market_data import tick_window
 from utils.metrics_logger import log_metric
+from workers.common.pro_stop import maybe_close_pro_stop
 
 
 _BB_EXIT_ENABLED = os.getenv("BB_EXIT_ENABLED", "1").strip().lower() not in {"", "0", "false", "no"}
@@ -568,6 +569,8 @@ async def _run_exit_loop(
 
         # 最低保有時間まではクローズ禁止（スプレッド負け防止）
         if hold_sec < min_hold:
+            return
+        if await maybe_close_pro_stop(trade, now=now):
             return
 
         candle_reason = _exit_candle_reversal("long" if units > 0 else "short")

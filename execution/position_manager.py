@@ -250,7 +250,7 @@ _STRATEGY_POCKET_MAP = {
     "vwap_magnet_s5": "scalp",
     "mm_lite": "scalp",
     "VolSpikeRider": "scalp",
-    "fast_scalp": "scalp_fast",
+    "fast_scalp": "scalp",
     "MacroTechFusion": "macro",
     "MicroPullbackFib": "micro",
     "ScalpReversalNWave": "scalp",
@@ -334,7 +334,7 @@ def _infer_pocket_from_client_id(client_id: object | None) -> str | None:
     if not cid:
         return None
     if cid.startswith(("qr-fast-", "qs-fast-")):
-        return "scalp_fast"
+        return "scalp"
     try:
         import re
         match = re.match(r"^(?:qr|qs)-\d+-(micro|macro|scalp|scalp_fast)-", cid)

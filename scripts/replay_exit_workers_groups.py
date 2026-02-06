@@ -33,6 +33,9 @@ import workers.impulse_break_s5.exit_worker as impulse_break_exit
 import workers.impulse_retest_s5.exit_worker as impulse_retest_exit
 import workers.impulse_momentum_s5.exit_worker as impulse_momentum_exit
 import workers.pullback_s5.exit_worker as pullback_s5_exit
+import workers.session_open.exit_worker as session_open_exit
+import workers.stop_run_reversal.exit_worker as stop_run_exit
+import workers.vwap_magnet_s5.exit_worker as vwap_magnet_exit
 
 PIP = 0.01
 
@@ -41,6 +44,9 @@ WORKER_TAGS = {
     "impulse_retest_s5": "impulse_retest_s5",
     "impulse_momentum_s5": "impulse_momentum_s5",
     "pullback_s5": "pullback_s5",
+    "vwap_magnet_s5": "vwap_magnet_s5",
+    "stop_run_reversal": "stop_run_reversal",
+    "session_open": "session_open_breakout",
 }
 
 EXIT_MODULES = {
@@ -48,6 +54,9 @@ EXIT_MODULES = {
     "impulse_retest_s5": impulse_retest_exit,
     "impulse_momentum_s5": impulse_momentum_exit,
     "pullback_s5": pullback_s5_exit,
+    "vwap_magnet_s5": vwap_magnet_exit,
+    "stop_run_reversal": stop_run_exit,
+    "session_open": session_open_exit,
 }
 
 EXIT_WORKER_CLASSES = {
@@ -55,6 +64,9 @@ EXIT_WORKER_CLASSES = {
     "impulse_retest_s5": "ImpulseRetestExitWorker",
     "impulse_momentum_s5": "ImpulseMomentumExitWorker",
     "pullback_s5": "PullbackExitWorker",
+    "vwap_magnet_s5": "VWAPMagnetExitWorker",
+    "stop_run_reversal": "StopRunReversalExitWorker",
+    "session_open": "SessionOpenExitWorker",
 }
 
 
@@ -66,6 +78,7 @@ class EntryEvent:
     tp_pips: Optional[float]
     sl_pips: Optional[float]
     units: int
+    strategy_tag: Optional[str] = None
 
 
 def _parse_iso(ts: str) -> datetime:
@@ -101,6 +114,7 @@ def _load_entries_from_replay(path: Path) -> List[EntryEvent]:
         except Exception:
             sl_pips = None
         units = int(tr.get("units") or 10000)
+        strategy_tag = tr.get("strategy_tag") or tr.get("strategy") or tr.get("tag")
         entries.append(
             EntryEvent(
                 ts=_parse_iso(str(entry_time)),
@@ -109,6 +123,7 @@ def _load_entries_from_replay(path: Path) -> List[EntryEvent]:
                 tp_pips=tp_pips,
                 sl_pips=sl_pips,
                 units=abs(units),
+                strategy_tag=str(strategy_tag) if strategy_tag else None,
             )
         )
     entries.sort(key=lambda e: e.ts)
@@ -132,6 +147,9 @@ def _run_replay_workers(
             "impulse_retest_s5": ["workers.impulse_retest_s5.config"],
             "impulse_momentum_s5": ["workers.impulse_momentum_s5.config"],
             "pullback_s5": ["workers.pullback_s5.config"],
+            "vwap_magnet_s5": ["workers.vwap_magnet_s5.config"],
+            "stop_run_reversal": ["workers.stop_run_reversal.config"],
+            "session_open": ["workers.session_open.config"],
         }
         for mod_name in module_names.get(worker, []):
             mod = sys.modules.get(mod_name)
@@ -452,9 +470,10 @@ def _simulate(
             if direction not in {"long", "short"}:
                 entry_idx += 1
                 continue
+            tag = ent.strategy_tag or WORKER_TAGS[worker]
             broker.open_trade(
                 pocket="scalp",
-                strategy_tag=WORKER_TAGS[worker],
+                strategy_tag=tag,
                 direction=direction,
                 entry_price=ent.entry_price,
                 entry_time=ent.ts,
@@ -580,6 +599,14 @@ def main() -> None:
             ticks_cache=replay_ticks,
         )
         entries = _load_entries_from_replay(replay_out)
+        if not entries:
+            empty_summary = rew._summarize([])
+            base_out.write_text(
+                json.dumps({"summary": empty_summary, "trades": []}, ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
+            results[worker] = {"base": empty_summary}
+            continue
         base_summary = _simulate(
             ticks_path=args.ticks,
             ticks_cache=replay_ticks,

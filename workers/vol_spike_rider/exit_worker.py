@@ -16,6 +16,7 @@ from workers.common.exit_utils import close_trade, mark_pnl_pips
 from workers.common.reentry_decider import decide_reentry
 
 from . import config
+from workers.common.pro_stop import maybe_close_pro_stop
 
 LOG = logging.getLogger(__name__)
 
@@ -167,6 +168,8 @@ class VolSpikeExitWorker:
         if not client_id and isinstance(client_ext, dict):
             client_id = client_ext.get("id")
         if not client_id:
+            return
+        if await maybe_close_pro_stop(trade, now=now):
             return
 
         if hold_sec < self.min_hold_sec:

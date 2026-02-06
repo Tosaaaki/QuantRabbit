@@ -14,6 +14,7 @@ from workers.common.reentry_decider import decide_reentry
 from execution.position_manager import PositionManager
 from indicators.factor_cache import all_factors
 from market_data import tick_window
+from workers.common.pro_stop import maybe_close_pro_stop
 
 
 _BB_EXIT_ENABLED = os.getenv("BB_EXIT_ENABLED", "1").strip().lower() not in {"", "0", "false", "no"}
@@ -353,6 +354,8 @@ async def _run_exit_loop(
         if not client_id:
             LOG.warning("[EXIT-impulse_break_s5] missing client_id trade=%s skip close", trade_id)
             return
+        if await maybe_close_pro_stop(trade, now=now):
+            return
 
         # 最低保有時間内はクローズ禁止（スプレッド負け防止）
         if hold_sec < params.min_hold_sec:
@@ -573,6 +576,8 @@ class ImpulseBreakExitWorker:
         if not client_id:
             LOG.warning("[EXIT-impulse_break_s5] missing client_id trade=%s skip close", trade_id)
             return
+        if await maybe_close_pro_stop(trade, now=now):
+            return
 
         if hold_sec < self.params.min_hold_sec:
             return
@@ -786,4 +791,3 @@ def _exit_candle_reversal(side):
 if __name__ == "__main__":  # pragma: no cover
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s", force=True)
     asyncio.run(impulse_break_s5_exit_worker())
-

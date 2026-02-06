@@ -1,6 +1,6 @@
 # GCP マルチ環境 手順書
 
-「別プロジェクトの GCP で QuantRabbit を動かす」ための最短手順です。新規 VM 作成の流れは `docs/VM_BOOTSTRAP.md` に集約しています。詳細は `AGENTS.md`, `docs/GCP_DEPLOY_SETUP.md`, `README.md` を参照してください。
+「別プロジェクトの GCP で QuantRabbit を動かす」ための最短手順です。新規 VM 作成の流れは `docs/VM_BOOTSTRAP.md` に集約しています。詳細は `AGENTS.md`, `docs/OPS_GCP_RUNBOOK.md`, `docs/GCP_DEPLOY_SETUP.md`, `README.md` を参照してください。
 
 ## 0. 前提ロール
 - デプロイ/運用: `roles/compute.osAdminLogin`, `roles/compute.instanceAdmin.v1`, `roles/iap.tunnelResourceAccessor`（IAP 経由なら）
@@ -65,5 +65,5 @@ scripts/deploy_to_vm.sh -p <PROJECT> -z <ZONE> -m <INSTANCE> -i -t -k ~/.ssh/gcp
 
 ## 8. 参考
 - OS Login/IAP/Doctor 詳細: `docs/GCP_DEPLOY_SETUP.md`
-- 安全装置・リスク基準: `AGENTS.md` 6.x
+- 安全装置・リスク基準: `docs/RISK_AND_EXECUTION.md`
 - ダッシュボード/Looker: `scripts/setup_looker_sources.sh`, `cloudrun/autotune_ui/`

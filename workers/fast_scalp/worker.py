@@ -35,6 +35,8 @@ from workers.common.quality_gate import current_regime
 from workers.common.air_state import evaluate_air
 
 from . import config
+
+POCKET = config.POCKET
 from .rate_limiter import SlidingWindowRateLimiter
 from .patterns import pattern_score
 from .signal import (
@@ -488,7 +490,7 @@ async def fast_scalp_worker(shared_state: Optional[FastScalpState] = None) -> No
             off_hours_logged = False
 
             # Drawdown guard is monitored externally; keep warnings but do not block entries.
-            if not can_trade("scalp_fast"):
+            if not can_trade(POCKET):
                 if not dd_block_logged:
                     logger.warning(
                         "%s drawdown guard triggered, proceeding without block (external override).",
@@ -662,7 +664,7 @@ async def fast_scalp_worker(shared_state: Optional[FastScalpState] = None) -> No
                     )
                     for direction in ("long", "short"):
                         stage_tracker.set_cooldown(
-                            "scalp_fast",
+                            POCKET,
                             direction,
                             reason="low_volatility",
                             seconds=int(config.LOW_VOL_COOLDOWN_SEC),
@@ -785,7 +787,7 @@ async def fast_scalp_worker(shared_state: Optional[FastScalpState] = None) -> No
                             )
                             # 短いクールダウンで再エントリーを抑制
                             stage_tracker.set_cooldown(
-                                "scalp_fast",
+                                POCKET,
                                 active.side,
                                 reason="no_loss_close",
                                 seconds=int(config.ENTRY_COOLDOWN_SEC),
@@ -811,7 +813,7 @@ async def fast_scalp_worker(shared_state: Optional[FastScalpState] = None) -> No
                                     spread_pips=features.spread_pips,
                                 )
                                 stage_tracker.set_cooldown(
-                                    "scalp_fast",
+                                    POCKET,
                                     active.side,
                                     reason="manual_exit",
                                     seconds=int(config.ENTRY_COOLDOWN_SEC),
@@ -855,7 +857,7 @@ async def fast_scalp_worker(shared_state: Optional[FastScalpState] = None) -> No
                 except Exception as exc:
                     logger.warning("%s sync positions failed: %s", config.LOG_PREFIX_TICK, exc)
                 else:
-                    pocket = positions.get("scalp_fast")
+                    pocket = positions.get(POCKET)
                     open_trades = (pocket or {}).get("open_trades") or []
                     updated: dict[str, ActiveTrade] = {}
                     for tr in open_trades:
@@ -1044,11 +1046,12 @@ async def fast_scalp_worker(shared_state: Optional[FastScalpState] = None) -> No
                 await asyncio.sleep(config.LOOP_INTERVAL_SEC)
                 continue
 
-            cooldown = stage_tracker.get_cooldown("scalp_fast", direction, now=now)
+            cooldown = stage_tracker.get_cooldown(POCKET, direction, now=now)
             if cooldown and not reversal:
                 logger.debug(
-                    "%s cooldown active pocket=scalp_fast dir=%s until=%s reason=%s",
+                    "%s cooldown active pocket=%s dir=%s until=%s reason=%s",
                     config.LOG_PREFIX_TICK,
+                    POCKET,
                     direction,
                     cooldown.cooldown_until,
                     cooldown.reason,
@@ -1056,7 +1059,7 @@ async def fast_scalp_worker(shared_state: Optional[FastScalpState] = None) -> No
                 await asyncio.sleep(config.LOOP_INTERVAL_SEC)
                 continue
             if cooldown and reversal:
-                stage_tracker.clear_cooldown("scalp_fast", direction, reason=cooldown.reason)
+                stage_tracker.clear_cooldown(POCKET, direction, reason=cooldown.reason)
 
             monotonic_now = time.monotonic()
             if monotonic_now < next_order_after:
@@ -1314,7 +1317,7 @@ async def fast_scalp_worker(shared_state: Optional[FastScalpState] = None) -> No
                 await asyncio.sleep(config.LOOP_INTERVAL_SEC)
                 continue
 
-            proj_allow, proj_mult, proj_detail = _projection_decision(direction, "scalp_fast")
+            proj_allow, proj_mult, proj_detail = _projection_decision(direction, POCKET)
             if not proj_allow:
                 await asyncio.sleep(config.LOOP_INTERVAL_SEC)
                 continue
@@ -1336,7 +1339,7 @@ async def fast_scalp_worker(shared_state: Optional[FastScalpState] = None) -> No
                     units,
                     sl_price,
                     tp_price,
-                    "scalp_fast",
+                    POCKET,
                     strategy_tag=config.STRATEGY_TAG,
                     client_order_id=client_id,
                     entry_thesis={**thesis, "strategy_tag": config.STRATEGY_TAG},
@@ -1369,7 +1372,7 @@ async def fast_scalp_worker(shared_state: Optional[FastScalpState] = None) -> No
             order_backoff = 0.0
             rate_limiter.record()
             stage_tracker.set_cooldown(
-                "scalp_fast",
+                POCKET,
                 direction,
                 reason="reversal_entry" if reversal else "entry",
                 seconds=int(config.ENTRY_COOLDOWN_SEC),

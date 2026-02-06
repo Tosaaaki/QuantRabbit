@@ -277,6 +277,7 @@ def _build_snapshot() -> dict[str, Any]:
 
     service_units = [
         "quantrabbit.service",
+        "quant-main.service",
         "quant-ui-snapshot.service",
         "quant-health-snapshot.service",
         "quant-autotune-ui.service",
@@ -351,6 +352,7 @@ def _build_snapshot() -> dict[str, Any]:
         },
         "service_active": {
             "quantrabbit": _systemd_is_active("quantrabbit.service"),
+            "quant_main": _systemd_is_active("quant-main.service"),
             "quant_health_snapshot": _systemd_is_active("quant-health-snapshot.service"),
             "quant_health_timer": _systemd_is_active("quant-health-snapshot.timer"),
             "quant_ssh_watchdog": _systemd_is_active("quant-ssh-watchdog.service"),

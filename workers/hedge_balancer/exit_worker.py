@@ -14,6 +14,7 @@ from market_data import tick_window
 from workers.common.exit_utils import close_trade, mark_pnl_pips
 from workers.common.reentry_decider import decide_reentry_from_factors
 from workers.common.reentry_decider import decide_reentry
+from workers.common.pro_stop import maybe_close_pro_stop
 
 
 _BB_EXIT_ENABLED = os.getenv("BB_EXIT_ENABLED", "1").strip().lower() not in {"", "0", "false", "no"}
@@ -352,6 +353,8 @@ class HedgeBalancerExitWorker:
         if not client_id:
             LOG.warning("[exit-hedge-balancer] missing client_id trade=%s skip close", trade_id)
             return
+        if await maybe_close_pro_stop(trade, now=now):
+            return
 
         if hold_sec < self.min_hold_sec:
             return
@@ -596,5 +599,4 @@ def _exit_candle_reversal(side):
     return None
 if __name__ == "__main__":
     asyncio.run(hedge_balancer_exit_worker())
-
 

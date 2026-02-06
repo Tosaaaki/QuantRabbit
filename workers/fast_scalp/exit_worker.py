@@ -1,4 +1,4 @@
-"""Exit loop for fast_scalp (scalp_fast pocket) – プラス決済専用。"""
+"""Exit loop for fast_scalp (configurable pocket) – プラス決済専用。"""
 
 from __future__ import annotations
 
@@ -16,6 +16,9 @@ from workers.common.reentry_decider import decide_reentry
 from execution.position_manager import PositionManager
 from indicators.factor_cache import all_factors
 from market_data import tick_window
+from workers.common.pro_stop import maybe_close_pro_stop
+
+from . import config
 
 
 _BB_EXIT_ENABLED = os.getenv("BB_EXIT_ENABLED", "1").strip().lower() not in {"", "0", "false", "no"}
@@ -158,7 +161,7 @@ BB_STYLE = "scalp"
 LOG = logging.getLogger(__name__)
 
 ALLOWED_TAGS: Set[str] = {"fast_scalp"}
-POCKET = "scalp_fast"
+POCKET = config.POCKET
 
 
 def _float_env(key: str, default: float) -> float:
@@ -467,6 +470,8 @@ class FastScalpExitWorker:
         if not client_id:
             LOG.warning("[EXIT-fast_scalp] missing client_id trade=%s skip close", trade_id)
             return
+        if await maybe_close_pro_stop(trade, now=now):
+            return
 
         if state.peak > 0 and state.peak >= trail_start and pnl > 0 and pnl <= state.peak - trail_backoff:
             await self._close(trade_id, -units, "trail_take", pnl, client_id, range_active=range_active)
@@ -658,5 +663,3 @@ def _exit_candle_reversal(side):
 if __name__ == "__main__":  # pragma: no cover
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s", force=True)
     asyncio.run(fast_scalp_exit_worker())
-
-

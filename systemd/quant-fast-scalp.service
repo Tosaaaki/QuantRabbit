@@ -7,6 +7,7 @@ Type=simple
 WorkingDirectory=/home/tossaki/QuantRabbit
 Environment="PYTHONUNBUFFERED=1"
 Environment=FAST_SCALP_ENABLED=1
+Environment=FAST_SCALP_POCKET=scalp
 ExecStart=/home/tossaki/QuantRabbit/.venv/bin/python -m workers.fast_scalp.worker
 Restart=always
 RestartSec=5

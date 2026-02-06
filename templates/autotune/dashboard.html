@@ -990,12 +990,18 @@
             <div class="stat-label">Service Active</div>
             <div class="stat-value">
               {% if dashboard.health.service_active %}
-                {{ dashboard.health.service_active.quantrabbit if dashboard.health.service_active.quantrabbit is not none else '-' }}
+                {% if dashboard.health.service_active.quant_main is not none %}
+                  {{ dashboard.health.service_active.quant_main }}
+                {% elif dashboard.health.service_active.quantrabbit is not none %}
+                  {{ dashboard.health.service_active.quantrabbit }}
+                {% else %}
+                  -
+                {% endif %}
               {% else %}
                 -
               {% endif %}
             </div>
-            <div class="stat-sub">quantrabbit.service</div>
+            <div class="stat-sub">quant-main.service / quantrabbit.service</div>
           </div>
         </div>
 
