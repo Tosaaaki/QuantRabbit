@@ -506,6 +506,14 @@ class RangeFaderExitWorker:
         self.levelrej_runner_lock_buffer_pips = max(0.05, _float_env("LEVELREJ_RUNNER_LOCK_BUFFER_PIPS", 1.0))
         self.levelrej_runner_min_adx = max(0.0, _float_env("LEVELREJ_RUNNER_MIN_ADX", 0.0))
 
+        self.levelrej_hard_stop_enabled = _bool_env("LEVELREJ_HARD_STOP_ENABLED", True)
+        self.levelrej_hard_stop_buffer_pips = max(0.0, _float_env("LEVELREJ_HARD_STOP_BUFFER_PIPS", 0.6))
+        self.levelrej_hard_stop_min_pips = max(0.4, _float_env("LEVELREJ_HARD_STOP_MIN_PIPS", 1.8))
+        self.levelrej_hard_stop_max_pips = max(
+            self.levelrej_hard_stop_min_pips,
+            _float_env("LEVELREJ_HARD_STOP_MAX_PIPS", 4.0),
+        )
+
         self._pos_manager = PositionManager()
         self._states: dict[str, _TradeState] = {}
         self._loss_cut_last_ts: dict[str, float] = {}
@@ -701,6 +709,36 @@ class RangeFaderExitWorker:
             return
         if await maybe_close_pro_stop(trade, now=now):
             return
+
+        if base_tag == "LevelReject" and self.levelrej_hard_stop_enabled and pnl <= 0 and not self._trade_has_stop_loss(trade):
+            sl_pips = None
+            try:
+                value = thesis.get("sl_pips")
+                if value is not None:
+                    sl_pips = float(value)
+            except (TypeError, ValueError):
+                sl_pips = None
+            if sl_pips is not None and sl_pips > 0.0:
+                hard_stop_pips = max(
+                    self.levelrej_hard_stop_min_pips,
+                    min(self.levelrej_hard_stop_max_pips, sl_pips + self.levelrej_hard_stop_buffer_pips),
+                )
+                if pnl <= -hard_stop_pips:
+                    await self._close(trade_id, -units, "hard_stop", pnl, client_id, allow_negative=True)
+                    self._states.pop(trade_id, None)
+                    log_metric(
+                        "scalp_precision_level_reject_hard_stop",
+                        pnl,
+                        tags={"side": side},
+                        ts=now,
+                    )
+                    LOG.info(
+                        "[exit-rangefader] LevelReject hard stop trade=%s pnl=%.2fp stop=%.2fp",
+                        trade_id,
+                        pnl,
+                        hard_stop_pips,
+                    )
+                    return
 
         if is_tick_imb and tick_imb_min_hold_sec > 0:
             min_hold_sec = max(min_hold_sec, tick_imb_min_hold_sec)
