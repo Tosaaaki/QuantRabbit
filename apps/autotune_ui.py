@@ -424,7 +424,7 @@ def _format_dt(dt: Optional[datetime]) -> Optional[str]:
     return dt.astimezone(_JST).strftime("%Y-%m-%d %H:%M JST")
 
 
-def _parse_ts_ms(ts_ms: Any) -> Optional[datetime]:
+def _ts_ms_to_dt(ts_ms: Any) -> Optional[datetime]:
     try:
         if ts_ms is None:
             return None
@@ -832,7 +832,7 @@ def _load_last_signal_ts_ms() -> Optional[int]:
     return sig_ts
 
 
-def _parse_ts_ms(ts: object) -> Optional[int]:
+def _dt_to_ts_ms(ts: object) -> Optional[int]:
     dt = _parse_dt(ts)
     if not dt:
         return None
@@ -851,7 +851,7 @@ def _load_last_order_ts_ms() -> Optional[int]:
         con.close()
         if not row:
             return None
-        return _parse_ts_ms(row[0])
+        return _dt_to_ts_ms(row[0])
     except Exception:
         return None
 
@@ -876,7 +876,7 @@ def _load_recent_order_signals(limit: int = 5) -> list[dict]:
 
     results: list[dict] = []
     for row in rows:
-        ts_ms = _parse_ts_ms(row.get("ts"))
+        ts_ms = _dt_to_ts_ms(row.get("ts"))
         if ts_ms is None:
             continue
         try:
@@ -1346,7 +1346,9 @@ def _summarise_snapshot(snapshot: Dict[str, Any]) -> Dict[str, Any]:
 
     closed_trades = [t for t in parsed_trades if t["close_time"]]
     closed_trades.sort(key=lambda t: t["close_time"], reverse=True)
-    week_cutoff = now_jst - timedelta(days=7)
+    today_start_jst = now_jst.replace(hour=0, minute=0, second=0, microsecond=0)
+    # Rolling 7-day window in JST (includes today).
+    week_cutoff = today_start_jst - timedelta(days=6)
     today_date = now_jst.date()
 
     def _sum_if(predicate) -> float:
@@ -1364,7 +1366,6 @@ def _summarise_snapshot(snapshot: Dict[str, Any]) -> Dict[str, Any]:
         if target == "daily":
             perf["daily_pl_pips"] = data.get("pips", 0.0)
             perf["daily_pl_jpy"] = data.get("jpy", 0.0)
-            perf["recent_closed"] = data.get("trades", 0)
         elif target == "yesterday":
             perf["yesterday_pl_pips"] = data.get("pips", 0.0)
             perf["yesterday_pl_jpy"] = data.get("jpy", 0.0)
@@ -1377,14 +1378,19 @@ def _summarise_snapshot(snapshot: Dict[str, Any]) -> Dict[str, Any]:
         elif target == "weekly":
             perf["weekly_pl_pips"] = data.get("pips", 0.0)
             perf["weekly_pl_jpy"] = data.get("jpy", 0.0)
+            # "recent_*" metrics in the UI correspond to the same rolling 7-day window.
+            trades = int(data.get("trades", 0) or 0)
+            perf["recent_closed"] = trades
+            perf["wins"] = int(data.get("wins", 0) or 0)
+            perf["losses"] = int(data.get("losses", 0) or 0)
+            wr = data.get("win_rate")
+            if wr is None:
+                wr = (perf["wins"] / trades) if trades else 0.0
+            perf["win_rate"] = float(wr)
+            perf["win_rate_percent"] = round(float(wr) * 100.0, 1)
         elif target == "total":
             perf["total_pips"] = data.get("pips", 0.0)
             perf["total_jpy"] = data.get("jpy", 0.0)
-            perf["wins"] = data.get("wins", 0)
-            perf["losses"] = data.get("losses", 0)
-            wr = data.get("win_rate", 0.0)
-            perf["win_rate"] = wr
-            perf["win_rate_percent"] = round(wr * 100.0, 1)
             perf["total_trades"] = data.get("trades", 0)
 
     _apply_metrics(metrics_snapshot.get("daily"), target="daily")
@@ -1393,10 +1399,23 @@ def _summarise_snapshot(snapshot: Dict[str, Any]) -> Dict[str, Any]:
     _apply_metrics(metrics_snapshot.get("weekly"), target="weekly")
     _apply_metrics(metrics_snapshot.get("total"), target="total")
 
-    if perf.get("recent_closed", 0) == 0:
-        perf["recent_closed"] = len(closed_trades)
     if perf.get("total_trades") in (None, 0):
         perf["total_trades"] = len(parsed_trades)
+
+    weekly_metrics = metrics_snapshot.get("weekly")
+    if not isinstance(weekly_metrics, dict) or not weekly_metrics:
+        recent_trades = [
+            t
+            for t in closed_trades
+            if t.get("close_time_jst") and t["close_time_jst"] >= week_cutoff
+        ]
+        perf["recent_closed"] = len(recent_trades)
+        wins = sum(1 for t in recent_trades if t["pl_pips"] > 0)
+        losses = sum(1 for t in recent_trades if t["pl_pips"] < 0)
+        perf["wins"] = wins
+        perf["losses"] = losses
+        perf["win_rate"] = (wins / perf["recent_closed"]) if perf["recent_closed"] else 0.0
+        perf["win_rate_percent"] = round(perf["win_rate"] * 100.0, 1)
 
     if perf.get("daily_pl_pips") is None:
         perf["daily_pl_pips"] = round(
@@ -1479,14 +1498,6 @@ def _summarise_snapshot(snapshot: Dict[str, Any]) -> Dict[str, Any]:
             )
         else:
             perf["daily_change_pct"] = None
-
-    if perf.get("wins") is None or perf.get("losses") is None:
-        wins = sum(1 for t in closed_trades if t["pl_pips"] > 0)
-        losses = sum(1 for t in closed_trades if t["pl_pips"] < 0)
-        perf["wins"] = wins
-        perf["losses"] = losses
-        perf["win_rate"] = (wins / perf["recent_closed"]) if perf["recent_closed"] else 0.0
-        perf["win_rate_percent"] = round(perf["win_rate"] * 100.0, 1)
 
     if perf.get("last_trade_at") is None:
         last_trade = metrics_snapshot.get("last_trade_at")
@@ -1623,7 +1634,7 @@ def _summarise_snapshot(snapshot: Dict[str, Any]) -> Dict[str, Any]:
     system["healthbeat_age_min"] = healthbeat_age
     system["healthbeat_level"] = _level_for_age(healthbeat_age, 5, 10)
 
-    signal_dt = _parse_ts_ms(metrics_snapshot.get("signals_last_ts_ms"))
+    signal_dt = _ts_ms_to_dt(metrics_snapshot.get("signals_last_ts_ms"))
     signal_age = _age_minutes(signal_dt, now)
     system["signals_last_label"] = _format_dt(signal_dt)
     system["signals_last_age_min"] = signal_age
@@ -1674,7 +1685,7 @@ def _summarise_snapshot(snapshot: Dict[str, Any]) -> Dict[str, Any]:
 
     signals_recent = []
     for row in metrics_snapshot.get("signals_recent") or []:
-        ts_label = _format_dt(_parse_ts_ms(row.get("ts_ms"))) or str(row.get("ts_ms") or "-")
+        ts_label = _format_dt(_ts_ms_to_dt(row.get("ts_ms"))) or str(row.get("ts_ms") or "-")
         signal_id = row.get("client_order_id")
         worker = _infer_worker_name(row)
         signals_recent.append(
