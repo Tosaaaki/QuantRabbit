@@ -133,6 +133,7 @@ _RANGE_TAGS = {
     "divergencerevert",
     "levelreject",
     "wickreversal",
+    "tickwickreversal",
     "rangefader",
 }
 _TREND_TAGS = {

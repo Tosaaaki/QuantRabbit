@@ -346,6 +346,30 @@ strategies:
       loss_cut_max_hold_sec: 1800
       loss_cut_cooldown_sec: 6
 
+  TickWickReversal:
+    min_profit_pips: 1.2
+    min_profit_ratio: 0.80
+    exit_profile:
+      min_hold_sec: 6
+      profit_pips: 1.1
+      trail_start_pips: 1.5
+      trail_backoff_pips: 0.55
+      lock_buffer_pips: 0.25
+      range_profit_pips: 1.0
+      range_trail_start_pips: 1.4
+      range_trail_backoff_pips: 0.5
+      range_lock_buffer_pips: 0.22
+      range_max_hold_sec: 240
+      loss_cut_enabled: true
+      loss_cut_require_sl: false
+      loss_cut_soft_pips: 3.2
+      loss_cut_hard_pips: 6.0
+      loss_cut_max_hold_sec: 240
+      loss_cut_cooldown_sec: 4
+      loss_cut_reason_soft: max_adverse
+      loss_cut_reason_hard: max_adverse
+      loss_cut_reason_time: time_stop
+
   MomentumPulse:
     be_profile: {trigger_pips: 1.7, lock_ratio: 0.50, min_lock_pips: 0.60, cooldown_sec: 35}
     tp_move: {trigger_pips: 1.4, buffer_pips: 0.9}
