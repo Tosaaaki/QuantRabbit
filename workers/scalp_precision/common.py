@@ -205,6 +205,10 @@ def tick_imbalance(mids: Sequence[float], span_seconds: float) -> Optional[TickI
 
 def spread_ok(*, max_pips: Optional[float] = None, p25_max: Optional[float] = None) -> tuple[bool, Optional[dict]]:
     state = spread_monitor.get_state()
+    # Some standalone workers don't continuously feed spread_monitor, which can leave a stale snapshot
+    # and incorrectly block entries. When stale, fall back to the cross-process tick cache.
+    if state is not None and state.get("stale"):
+        state = None
     if state is None:
         # spread_monitor is process-local; fall back to the cross-process tick cache so
         # standalone scalp workers can still gate on spread.

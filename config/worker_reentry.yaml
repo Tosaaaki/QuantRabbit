@@ -65,15 +65,21 @@ strategies:
     same_dir_reentry_pips: 0.5
     return_wait_bias: neutral
   WickReversal:
-    cooldown_win_sec: 60
-    cooldown_loss_sec: 180
-    same_dir_reentry_pips: 1.8
+    cooldown_win_sec: 45
+    cooldown_loss_sec: 150
+    same_dir_reentry_pips: 1.4
     same_dir_mode: both
     return_wait_bias: neutral
   WickReversalHF:
-    cooldown_win_sec: 45
+    cooldown_win_sec: 30
     cooldown_loss_sec: 90
-    same_dir_reentry_pips: 1.2
+    same_dir_reentry_pips: 1.0
+    same_dir_mode: both
+    return_wait_bias: neutral
+  WickReversalBlend:
+    cooldown_win_sec: 25
+    cooldown_loss_sec: 60
+    same_dir_reentry_pips: 0.9
     same_dir_mode: both
     return_wait_bias: neutral
   TickWickReversal:

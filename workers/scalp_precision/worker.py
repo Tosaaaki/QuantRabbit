@@ -58,6 +58,7 @@ _MODE_TAG_MAP = {
     'level_reject': 'LevelReject',
     'wick_reversal': 'WickReversal',
     'wick_reversal_hf': 'WickReversalHF',
+    'wick_reversal_blend': 'WickReversalBlend',
     'wick_reversal_pro': 'WickReversalPro',
     'tick_wick_reversal': 'TickWickReversal',
     'session_edge': 'SessionEdge',
@@ -363,6 +364,22 @@ WICK_HF_REQUIRE_BB_TOUCH = _env_bool("WICK_HF_REQUIRE_BB_TOUCH", True)
 WICK_HF_BB_TOUCH_PIPS = _env_float("WICK_HF_BB_TOUCH_PIPS", 0.9)
 WICK_HF_DIAG = _env_bool("WICK_HF_DIAG", False)
 WICK_HF_DIAG_INTERVAL_SEC = _env_float("WICK_HF_DIAG_INTERVAL_SEC", 20.0)
+
+# WickReversal Blend (band-touch + tick reversal; wick adds confidence).
+WICK_BLEND_RANGE_SCORE_MIN = _env_float("WICK_BLEND_RANGE_SCORE_MIN", 0.45)
+WICK_BLEND_SPREAD_P25 = _env_float("WICK_BLEND_SPREAD_P25", 1.0)
+WICK_BLEND_ADX_MAX = _env_float("WICK_BLEND_ADX_MAX", 24.0)
+WICK_BLEND_BBW_MAX = _env_float("WICK_BLEND_BBW_MAX", 0.0014)
+WICK_BLEND_ATR_MIN = _env_float("WICK_BLEND_ATR_MIN", 0.7)
+WICK_BLEND_ATR_MAX = _env_float("WICK_BLEND_ATR_MAX", 6.0)
+WICK_BLEND_BB_TOUCH_PIPS = _env_float("WICK_BLEND_BB_TOUCH_PIPS", 1.1)
+WICK_BLEND_BB_TOUCH_RATIO = _env_float("WICK_BLEND_BB_TOUCH_RATIO", 0.22)
+WICK_BLEND_REQUIRE_TICK_REV = _env_bool("WICK_BLEND_REQUIRE_TICK_REV", True)
+WICK_BLEND_TICK_WINDOW_SEC = _env_float("WICK_BLEND_TICK_WINDOW_SEC", 10.0)
+WICK_BLEND_TICK_MIN_TICKS = _env_int("WICK_BLEND_TICK_MIN_TICKS", 6)
+WICK_BLEND_TICK_MIN_STRENGTH = _env_float("WICK_BLEND_TICK_MIN_STRENGTH", 0.25)
+WICK_BLEND_DIAG = _env_bool("WICK_BLEND_DIAG", False)
+WICK_BLEND_DIAG_INTERVAL_SEC = _env_float("WICK_BLEND_DIAG_INTERVAL_SEC", 20.0)
 
 # Tick-window wick reversal (higher-frequency range-reversion).
 TICK_WICK_WINDOW_SEC = _env_float("TICK_WICK_WINDOW_SEC", 9.0)
@@ -1234,6 +1251,170 @@ def _wick_hf_diag_metrics(fac_m1: Dict[str, object], range_ctx) -> Dict[str, obj
     }
 
 
+def _wick_blend_diag_metrics(fac_m1: Dict[str, object], range_ctx) -> Dict[str, object]:
+    """Lightweight diag snapshot for WickReversalBlend tuning."""
+    adx = _adx(fac_m1)
+    bbw = _bbw(fac_m1)
+    atr = _atr_pips(fac_m1)
+
+    ok_spread, spread_state = spread_ok(max_pips=config.MAX_SPREAD_PIPS, p25_max=WICK_BLEND_SPREAD_P25)
+    spread_pips = 0.0
+    p25_pips = 0.0
+    if isinstance(spread_state, dict):
+        try:
+            spread_pips = float(spread_state.get("spread_pips") or 0.0)
+        except Exception:
+            spread_pips = 0.0
+        try:
+            p25_pips = float(spread_state.get("p25_pips") or 0.0)
+        except Exception:
+            p25_pips = 0.0
+
+    range_active = False
+    range_score = 0.0
+    if range_ctx is not None:
+        try:
+            range_active = bool(getattr(range_ctx, "active", False))
+            range_score = float(getattr(range_ctx, "score", 0.0) or 0.0)
+        except Exception:
+            range_active = False
+            range_score = 0.0
+    range_ok = True
+    if not range_active and WICK_BLEND_RANGE_SCORE_MIN > 0.0 and range_score < WICK_BLEND_RANGE_SCORE_MIN:
+        range_ok = False
+
+    price = _latest_price(fac_m1)
+
+    band_pips = 0.0
+    dist_lower = None
+    dist_upper = None
+    side = ""
+    bb_ok = False
+    try:
+        levels = bb_levels(fac_m1)
+        if levels and price > 0:
+            upper, _, lower, _, span_pips = levels
+            band_pips = max(WICK_BLEND_BB_TOUCH_PIPS, float(span_pips or 0.0) * max(0.0, WICK_BLEND_BB_TOUCH_RATIO))
+            dist_lower = (price - float(lower)) / PIP
+            dist_upper = (float(upper) - price) / PIP
+            long_ok = dist_lower <= band_pips
+            short_ok = dist_upper <= band_pips
+            if long_ok and not short_ok:
+                side = "long"
+            elif short_ok and not long_ok:
+                side = "short"
+            elif long_ok and short_ok:
+                side = "long" if dist_lower <= dist_upper else "short"
+            bb_ok = bool(side)
+    except Exception:
+        bb_ok = False
+
+    wick_ratio = 0.0
+    rng_pips = 0.0
+    body_pips = 0.0
+    try:
+        candles = get_candles_snapshot("M1", limit=2) or []
+        last = candles[-1] if candles else None
+        if isinstance(last, dict):
+            o = float(last.get("open") or last.get("o") or 0.0)
+            h = float(last.get("high") or last.get("h") or 0.0)
+            l = float(last.get("low") or last.get("l") or 0.0)
+            c = float(last.get("close") or last.get("c") or 0.0)
+            if h > 0 and l > 0 and h >= l:
+                rng_pips = (h - l) / PIP
+                body_pips = abs(c - o) / PIP
+                upper_wick = (h - max(o, c)) / PIP
+                lower_wick = (min(o, c) - l) / PIP
+                wick_ratio = max(upper_wick, lower_wick) / max(rng_pips, 0.01)
+    except Exception:
+        pass
+
+    adx_ok = not (WICK_BLEND_ADX_MAX > 0.0 and adx > WICK_BLEND_ADX_MAX)
+    bbw_ok = not (WICK_BLEND_BBW_MAX > 0.0 and bbw > WICK_BLEND_BBW_MAX)
+    atr_ok = not (
+        (WICK_BLEND_ATR_MIN > 0.0 and atr < WICK_BLEND_ATR_MIN)
+        or (WICK_BLEND_ATR_MAX > 0.0 and atr > WICK_BLEND_ATR_MAX)
+    )
+
+    tick_n = 0
+    tick_ok = True
+    tick_dir = None
+    tick_strength = 0.0
+    if WICK_BLEND_REQUIRE_TICK_REV:
+        tick_ok = False
+        mids, _ = tick_snapshot(WICK_BLEND_TICK_WINDOW_SEC, limit=160)
+        tick_n = len(mids or [])
+        rev_ok, rev_dir, rev_strength = (
+            tick_reversal(mids, min_ticks=WICK_BLEND_TICK_MIN_TICKS) if mids else (False, None, 0.0)
+        )
+        tick_dir = rev_dir
+        try:
+            tick_strength = float(rev_strength or 0.0)
+        except Exception:
+            tick_strength = 0.0
+        tick_ok = bool(rev_ok) and (rev_dir == side) and (
+            WICK_BLEND_TICK_MIN_STRENGTH <= 0.0 or tick_strength >= WICK_BLEND_TICK_MIN_STRENGTH
+        )
+
+    proj_allow = None
+    try:
+        if side:
+            allow, _, _ = projection_decision(side, mode="range")
+            proj_allow = bool(allow)
+    except Exception:
+        proj_allow = None
+
+    block = "ok"
+    if not range_ok:
+        block = "range"
+    elif not ok_spread:
+        block = "spread"
+    elif not bb_ok:
+        block = "bb_touch"
+    elif not adx_ok:
+        block = "adx"
+    elif not bbw_ok:
+        block = "bbw"
+    elif not atr_ok:
+        block = "atr"
+    elif WICK_BLEND_REQUIRE_TICK_REV and not tick_ok:
+        block = "tick_rev"
+    elif proj_allow is False:
+        block = "projection"
+
+    dist_pips = None
+    if side == "long" and dist_lower is not None:
+        dist_pips = dist_lower
+    if side == "short" and dist_upper is not None:
+        dist_pips = dist_upper
+
+    return {
+        "block": block,
+        "range_ok": bool(range_ok),
+        "range_active": bool(range_active),
+        "range_score": round(range_score, 3),
+        "spread_ok": bool(ok_spread),
+        "spread_pips": round(spread_pips, 3),
+        "p25_pips": round(p25_pips, 3),
+        "price": round(float(price or 0.0), 5),
+        "side": side,
+        "bb_ok": bool(bb_ok),
+        "bb_touch_pips": round(band_pips, 2),
+        "bb_dist_pips": round(float(dist_pips or 0.0), 2) if dist_pips is not None else None,
+        "adx": round(adx, 2),
+        "bbw": round(bbw, 6),
+        "atr": round(atr, 3),
+        "wick_ratio": round(wick_ratio, 3),
+        "rng_pips": round(rng_pips, 2),
+        "body_pips": round(body_pips, 2),
+        "tick_n": int(tick_n),
+        "tick_ok": bool(tick_ok),
+        "tick_dir": tick_dir,
+        "tick_strength": round(tick_strength, 3),
+        "proj_allow": proj_allow,
+    }
+
+
 def _signal_false_break_fade(
     fac_m1: Dict[str, object],
     range_ctx,
@@ -1894,6 +2075,138 @@ def _signal_wick_reversal_hf(
             "ratio": round(wick_ratio, 3),
             "tick_strength": round(strength, 3),
         },
+    }
+
+
+def _signal_wick_reversal_blend(
+    fac_m1: Dict[str, object],
+    range_ctx=None,
+    *,
+    tag: str,
+) -> Optional[Dict[str, object]]:
+    """
+    Higher-frequency range-reversion that blends band-touch + tick reversal, using wick as a confidence bonus.
+
+    Goal: trade more often than WickReversalHF while keeping precision by enforcing:
+    - range-active / range-score context
+    - low ADX + low BBW (avoid trend)
+    - tick reversal confirmation
+    """
+    range_score = 0.0
+    range_active = False
+    if range_ctx is not None:
+        try:
+            range_active = bool(getattr(range_ctx, "active", False))
+            range_score = float(getattr(range_ctx, "score", 0.0) or 0.0)
+        except Exception:
+            range_active = False
+            range_score = 0.0
+    if not range_active and WICK_BLEND_RANGE_SCORE_MIN > 0.0 and range_score < WICK_BLEND_RANGE_SCORE_MIN:
+        return None
+
+    ok_spread, _ = spread_ok(max_pips=config.MAX_SPREAD_PIPS, p25_max=WICK_BLEND_SPREAD_P25)
+    if not ok_spread:
+        return None
+
+    price = _latest_price(fac_m1)
+    if price <= 0:
+        return None
+    levels = bb_levels(fac_m1)
+    if not levels:
+        return None
+    upper, _, lower, _, span_pips = levels
+
+    band_pips = max(WICK_BLEND_BB_TOUCH_PIPS, span_pips * max(0.0, WICK_BLEND_BB_TOUCH_RATIO))
+    dist_lower = (price - lower) / PIP
+    dist_upper = (upper - price) / PIP
+    long_ok = dist_lower <= band_pips
+    short_ok = dist_upper <= band_pips
+    if not long_ok and not short_ok:
+        return None
+    if long_ok and not short_ok:
+        side = "long"
+        dist = dist_lower
+    elif short_ok and not long_ok:
+        side = "short"
+        dist = dist_upper
+    else:
+        # Extremely tight band: choose the nearer extreme.
+        if dist_lower <= dist_upper:
+            side = "long"
+            dist = dist_lower
+        else:
+            side = "short"
+            dist = dist_upper
+
+    adx = _adx(fac_m1)
+    bbw = _bbw(fac_m1)
+    atr = _atr_pips(fac_m1)
+    if WICK_BLEND_ADX_MAX > 0.0 and adx > WICK_BLEND_ADX_MAX:
+        return None
+    if WICK_BLEND_BBW_MAX > 0.0 and bbw > WICK_BLEND_BBW_MAX:
+        return None
+    if (WICK_BLEND_ATR_MIN > 0.0 and atr < WICK_BLEND_ATR_MIN) or (WICK_BLEND_ATR_MAX > 0.0 and atr > WICK_BLEND_ATR_MAX):
+        return None
+
+    tick_strength = 0.0
+    if WICK_BLEND_REQUIRE_TICK_REV:
+        mids, _ = tick_snapshot(WICK_BLEND_TICK_WINDOW_SEC, limit=160)
+        rev_ok, rev_dir, rev_strength = (
+            tick_reversal(mids, min_ticks=WICK_BLEND_TICK_MIN_TICKS) if mids else (False, None, 0.0)
+        )
+        if not rev_ok or rev_dir != side:
+            return None
+        try:
+            tick_strength = float(rev_strength or 0.0)
+        except Exception:
+            tick_strength = 0.0
+        if WICK_BLEND_TICK_MIN_STRENGTH > 0.0 and tick_strength < WICK_BLEND_TICK_MIN_STRENGTH:
+            return None
+
+    proj_allow, size_mult, proj_detail = projection_decision(side, mode="range")
+    if not proj_allow:
+        return None
+
+    wick_ratio = 0.0
+    try:
+        candles = get_candles_snapshot("M1", limit=2) or []
+        last = candles[-1] if candles else None
+        if isinstance(last, dict):
+            o = float(last.get("open") or last.get("o") or 0.0)
+            h = float(last.get("high") or last.get("h") or 0.0)
+            l = float(last.get("low") or last.get("l") or 0.0)
+            c = float(last.get("close") or last.get("c") or 0.0)
+            if h > 0 and l > 0 and h >= l:
+                rng = (h - l) / PIP
+                upper_wick = (h - max(o, c)) / PIP
+                lower_wick = (min(o, c) - l) / PIP
+                wick_ratio = max(upper_wick, lower_wick) / max(rng, 0.01)
+    except Exception:
+        wick_ratio = 0.0
+
+    touch_ratio = max(0.0, (band_pips - dist) / max(0.2, band_pips))
+    sl = max(1.1, min(1.9, atr * 0.75))
+    tp = max(sl * 1.25, min(2.8, atr * 1.0))
+    conf = 62
+    conf += int(min(8.0, touch_ratio * 10.0))
+    conf += int(min(10.0, tick_strength * 10.0)) if tick_strength > 0.0 else 0
+    conf += int(min(8.0, wick_ratio * 12.0)) if wick_ratio > 0.0 else 0
+    conf += int(min(6.0, max(0.0, range_score) * 6.0))
+    conf -= int(min(8.0, max(0.0, adx - 18.0) * 0.5))
+    conf = int(max(45, min(92, conf)))
+
+    return {
+        "action": "OPEN_LONG" if side == "long" else "OPEN_SHORT",
+        "sl_pips": round(sl, 2),
+        "tp_pips": round(tp, 2),
+        "confidence": conf,
+        "tag": tag,
+        "reason": "wick_reversal_blend",
+        "size_mult": round(size_mult, 3),
+        "projection": proj_detail,
+        "range_score": round(range_score, 3),
+        "band": {"touch_pips": round(band_pips, 2), "dist_pips": round(dist, 2)},
+        "wick": {"ratio": round(wick_ratio, 3), "tick_strength": round(tick_strength, 3)},
     }
 
 def _signal_wick_reversal_pro(
@@ -2904,6 +3217,8 @@ async def scalp_precision_worker() -> None:
                 strategies.append(("WickReversal", _signal_wick_reversal, {"tag": "WickReversal"}))
             if enabled("wick_reversal_hf"):
                 strategies.append(("WickReversalHF", _signal_wick_reversal_hf, {"tag": "WickReversalHF"}))
+            if enabled("wick_reversal_blend"):
+                strategies.append(("WickReversalBlend", _signal_wick_reversal_blend, {"tag": "WickReversalBlend"}))
             if enabled("wick_reversal_pro"):
                 strategies.append(("WickReversalPro", _signal_wick_reversal_pro, {"tag": "WickReversalPro"}))
             if enabled("tick_wick_reversal"):
@@ -2931,6 +3246,7 @@ async def scalp_precision_worker() -> None:
                     _signal_tick_imbalance,
                     _signal_tick_imbalance_rrplus,
                     _signal_wick_reversal_hf,
+                    _signal_wick_reversal_blend,
                     _signal_wick_reversal_pro,
                     _signal_tick_wick_reversal,
                     _signal_squeeze_pulse_break,
@@ -3064,6 +3380,33 @@ async def scalp_precision_worker() -> None:
                             float(m.get("bbw") or 0.0),
                             float(m.get("atr") or 0.0),
                         )
+                if WICK_BLEND_DIAG and config.MODE == "wick_reversal_blend":
+                    if now_mono - last_diag_log >= max(1.0, WICK_BLEND_DIAG_INTERVAL_SEC):
+                        last_diag_log = now_mono
+                        m = _wick_blend_diag_metrics(fac_m1, range_ctx)
+                        LOG.info(
+                            "%s wick_blend diag signals=0 block=%s spread_ok=%s spread=%.2fp p25=%.2fp range_ok=%s range_score=%.3f bb_ok=%s side=%s band=%.2fp dist=%s tick_n=%d tick_ok=%s tick_dir=%s tick_strength=%.2f proj=%s adx=%.1f bbw=%.6f atr=%.2f wick_ratio=%.3f",
+                            config.LOG_PREFIX,
+                            str(m.get("block") or ""),
+                            bool(m.get("spread_ok")),
+                            float(m.get("spread_pips") or 0.0),
+                            float(m.get("p25_pips") or 0.0),
+                            bool(m.get("range_ok")),
+                            float(m.get("range_score") or 0.0),
+                            bool(m.get("bb_ok")),
+                            str(m.get("side") or ""),
+                            float(m.get("bb_touch_pips") or 0.0),
+                            str(m.get("bb_dist_pips")),
+                            int(m.get("tick_n") or 0),
+                            bool(m.get("tick_ok")),
+                            str(m.get("tick_dir") or ""),
+                            float(m.get("tick_strength") or 0.0),
+                            bool(m.get("proj_allow")) if m.get("proj_allow") is not None else None,
+                            float(m.get("adx") or 0.0),
+                            float(m.get("bbw") or 0.0),
+                            float(m.get("atr") or 0.0),
+                            float(m.get("wick_ratio") or 0.0),
+                        )
                 if SPB_DIAG and config.MODE == "squeeze_pulse_break":
                     if now_mono - last_diag_log >= max(1.0, SPB_DIAG_INTERVAL_SEC):
                         last_diag_log = now_mono
@@ -3126,6 +3469,43 @@ async def scalp_precision_worker() -> None:
                         top.get("action"),
                         rng_pips,
                         ratio,
+                        tick_strength,
+                        float(getattr(air, "air_score", 0.0) or 0.0),
+                        bool(getattr(air, "allow_entry", True)),
+                        bool(getattr(range_ctx, "active", False)),
+                        float(getattr(range_ctx, "score", 0.0) or 0.0),
+                    )
+            if WICK_BLEND_DIAG and config.MODE == "wick_reversal_blend":
+                if now_mono - last_diag_log >= max(1.0, WICK_BLEND_DIAG_INTERVAL_SEC):
+                    last_diag_log = now_mono
+                    top = signals[0]
+                    band = top.get("band") if isinstance(top, dict) else None
+                    wick = top.get("wick") if isinstance(top, dict) else None
+                    try:
+                        band_touch = float((band or {}).get("touch_pips") or 0.0)
+                    except Exception:
+                        band_touch = 0.0
+                    try:
+                        band_dist = float((band or {}).get("dist_pips") or 0.0)
+                    except Exception:
+                        band_dist = 0.0
+                    try:
+                        wick_ratio = float((wick or {}).get("ratio") or 0.0)
+                    except Exception:
+                        wick_ratio = 0.0
+                    try:
+                        tick_strength = float((wick or {}).get("tick_strength") or 0.0)
+                    except Exception:
+                        tick_strength = 0.0
+                    LOG.info(
+                        "%s wick_blend diag signals=%d top_conf=%s top_action=%s band=%.2fp dist=%.2fp wick_ratio=%.3f tick_strength=%.2f air_score=%.3f allow_entry=%s range_active=%s range_score=%.3f",
+                        config.LOG_PREFIX,
+                        len(signals),
+                        top.get("confidence"),
+                        top.get("action"),
+                        band_touch,
+                        band_dist,
+                        wick_ratio,
                         tick_strength,
                         float(getattr(air, "air_score", 0.0) or 0.0),
                         bool(getattr(air, "allow_entry", True)),
