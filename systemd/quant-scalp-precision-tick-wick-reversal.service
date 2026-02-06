@@ -21,7 +21,7 @@ Environment=SCALP_PRECISION_LOG_PREFIX=[ScalpPrecision:TickWickRev]
 
 # TickWickReversal is currently in recovery after a run of tight broker SLs.
 # Keep perf_guard enabled, but relax thresholds for this service so it can trade and re-prove.
-Environment=PERF_GUARD_PF_MIN_SCALP=0.35
+Environment=PERF_GUARD_PF_MIN_SCALP=0.30
 Environment=PERF_GUARD_WIN_MIN_SCALP=0.25
 
 # Tune: keep it high-frequency, but stand down when ADX says the market is trending
@@ -36,6 +36,13 @@ Environment=TICK_WICK_REQUIRE_BB_TOUCH=1
 Environment=TICK_WICK_BB_TOUCH_PIPS=0.9
 Environment=TICK_WICK_REQUIRE_TICK_REV=1
 Environment=TICK_WICK_MIN_REV_STRENGTH=0.45
+
+# Entry precision first: avoid shorting into bullish momentum (and vice versa).
+Environment=TICK_WICK_MOMENTUM_FILTER_ENABLED=1
+Environment=TICK_WICK_MACD_HIST_LONG_MIN=0.0
+Environment=TICK_WICK_MACD_HIST_SHORT_MAX=0.0
+Environment=TICK_WICK_EMA_SLOPE_10_SHORT_MAX=0.12
+
 Environment=TICK_WICK_MIN_AIR_SCORE=0.74
 Environment=TICK_WICK_MIN_UNITS_CLAMP_RATIO=0.75
 Environment=TICK_WICK_DIAG=1

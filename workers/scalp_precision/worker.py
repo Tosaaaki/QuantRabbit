@@ -396,6 +396,12 @@ TICK_WICK_BB_TOUCH_PIPS = _env_float("TICK_WICK_BB_TOUCH_PIPS", 0.9)
 TICK_WICK_REQUIRE_TICK_REV = _env_bool("TICK_WICK_REQUIRE_TICK_REV", True)
 TICK_WICK_MIN_REV_STRENGTH = _env_float("TICK_WICK_MIN_REV_STRENGTH", 0.25)
 
+# Momentum confirmation (entry precision first). Values are in pips.
+TICK_WICK_MOMENTUM_FILTER_ENABLED = _env_bool("TICK_WICK_MOMENTUM_FILTER_ENABLED", True)
+TICK_WICK_MACD_HIST_LONG_MIN = _env_float("TICK_WICK_MACD_HIST_LONG_MIN", 0.0)
+TICK_WICK_MACD_HIST_SHORT_MAX = _env_float("TICK_WICK_MACD_HIST_SHORT_MAX", 0.0)
+TICK_WICK_EMA_SLOPE_10_SHORT_MAX = _env_float("TICK_WICK_EMA_SLOPE_10_SHORT_MAX", 0.12)
+
 # Optional extra gates based on AIR (applied after adjust_signal)
 TICK_WICK_MIN_AIR_SCORE = _env_float("TICK_WICK_MIN_AIR_SCORE", 0.72)
 TICK_WICK_MIN_EXEC_QUALITY = _env_float("TICK_WICK_MIN_EXEC_QUALITY", 0.97)
@@ -2379,6 +2385,18 @@ def _signal_tick_wick_reversal(
 
     side = "short" if upper_wick > lower_wick else "long"
 
+    if TICK_WICK_MOMENTUM_FILTER_ENABLED:
+        macd_hist_pips = _macd_hist_pips(fac_m1)
+        ema_slope_10_pips = _ema_slope_pips(fac_m1, "ema_slope_10")
+        if side == "long":
+            if macd_hist_pips < TICK_WICK_MACD_HIST_LONG_MIN:
+                return None
+        else:
+            if macd_hist_pips > TICK_WICK_MACD_HIST_SHORT_MAX:
+                return None
+            if ema_slope_10_pips > TICK_WICK_EMA_SLOPE_10_SHORT_MAX:
+                return None
+
     if TICK_WICK_REQUIRE_BB_TOUCH:
         levels = bb_levels(fac_m1)
         if not levels:
@@ -3343,7 +3361,7 @@ async def scalp_precision_worker() -> None:
                     if now_mono - last_diag_log >= max(1.0, TICK_WICK_DIAG_INTERVAL_SEC):
                         last_diag_log = now_mono
                         LOG.info(
-                            "%s tick_wick diag signals=0 air_score=%.3f allow_entry=%s range_active=%s range_score=%.3f adx=%.1f bbw=%.3f",
+                            "%s tick_wick diag signals=0 air_score=%.3f allow_entry=%s range_active=%s range_score=%.3f adx=%.1f bbw=%.3f macd_hist=%.3fp slope10=%.3fp",
                             config.LOG_PREFIX,
                             float(getattr(air, "air_score", 0.0) or 0.0),
                             bool(getattr(air, "allow_entry", True)),
@@ -3351,6 +3369,8 @@ async def scalp_precision_worker() -> None:
                             float(getattr(range_ctx, "score", 0.0) or 0.0),
                             _adx(fac_m1),
                             _bbw(fac_m1),
+                            _macd_hist_pips(fac_m1),
+                            _ema_slope_pips(fac_m1, "ema_slope_10"),
                         )
                 if WICK_HF_DIAG and config.MODE == "wick_reversal_hf":
                     if now_mono - last_diag_log >= max(1.0, WICK_HF_DIAG_INTERVAL_SEC):
@@ -3434,7 +3454,7 @@ async def scalp_precision_worker() -> None:
                     last_diag_log = now_mono
                     top = signals[0]
                     LOG.info(
-                        "%s tick_wick diag signals=%d top_conf=%s top_action=%s air_score=%.3f allow_entry=%s range_active=%s range_score=%.3f",
+                        "%s tick_wick diag signals=%d top_conf=%s top_action=%s air_score=%.3f allow_entry=%s range_active=%s range_score=%.3f macd_hist=%.3fp slope10=%.3fp",
                         config.LOG_PREFIX,
                         len(signals),
                         top.get("confidence"),
@@ -3443,6 +3463,8 @@ async def scalp_precision_worker() -> None:
                         bool(getattr(air, "allow_entry", True)),
                         bool(getattr(range_ctx, "active", False)),
                         float(getattr(range_ctx, "score", 0.0) or 0.0),
+                        _macd_hist_pips(fac_m1),
+                        _ema_slope_pips(fac_m1, "ema_slope_10"),
                     )
             if WICK_HF_DIAG and config.MODE == "wick_reversal_hf":
                 if now_mono - last_diag_log >= max(1.0, WICK_HF_DIAG_INTERVAL_SEC):
