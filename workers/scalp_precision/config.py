@@ -20,11 +20,26 @@ CONFIDENCE_CEIL = int(float(os.getenv("SCALP_PRECISION_CONF_CEIL", "92")))
 MIN_ENTRY_CONF = int(float(os.getenv("SCALP_PRECISION_MIN_ENTRY_CONF", str(CONFIDENCE_FLOOR))))
 
 MIN_UNITS = int(float(os.getenv("SCALP_PRECISION_MIN_UNITS", "1000")))
-BASE_ENTRY_UNITS = int(float(os.getenv("SCALP_PRECISION_BASE_UNITS", "9000")))
+# /etc/quantrabbit.env may define global sizing for the whole pocket. For per-unit tuning,
+# prefer an explicit unit override so a single strategy can be resized without editing the
+# global env file.
+BASE_ENTRY_UNITS = int(
+    float(
+        os.getenv(
+            "SCALP_PRECISION_UNIT_BASE_UNITS",
+            os.getenv("SCALP_PRECISION_BASE_UNITS", "9000"),
+        )
+    )
+)
 MAX_MARGIN_USAGE = float(os.getenv("SCALP_PRECISION_MAX_MARGIN_USAGE", "0.92"))
 
 CAP_MIN = float(os.getenv("SCALP_PRECISION_CAP_MIN", "0.12"))
-CAP_MAX = float(os.getenv("SCALP_PRECISION_CAP_MAX", "0.95"))
+CAP_MAX = float(
+    os.getenv(
+        "SCALP_PRECISION_UNIT_CAP_MAX",
+        os.getenv("SCALP_PRECISION_CAP_MAX", "0.95"),
+    )
+)
 
 COOLDOWN_SEC = float(os.getenv("SCALP_PRECISION_COOLDOWN_SEC", "45"))
 MAX_OPEN_TRADES = int(float(os.getenv("SCALP_PRECISION_MAX_OPEN_TRADES", "2")))

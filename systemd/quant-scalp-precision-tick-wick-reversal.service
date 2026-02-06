@@ -18,8 +18,8 @@ Environment=SCALP_PRECISION_LOOP_INTERVAL_SEC=3.0
 Environment=SCALP_PRECISION_COOLDOWN_SEC=12
 Environment=SCALP_PRECISION_MAX_OPEN_TRADES=1
 Environment=SCALP_PRECISION_OPEN_TRADES_SCOPE=tag
-Environment=SCALP_PRECISION_BASE_UNITS=6000
-Environment=SCALP_PRECISION_CAP_MAX=0.45
+Environment=SCALP_PRECISION_UNIT_BASE_UNITS=6000
+Environment=SCALP_PRECISION_UNIT_CAP_MAX=0.45
 Environment=SCALP_PRECISION_LOG_PREFIX=[ScalpPrecision:TickWickRev]
 
 # TickWickReversal is currently in recovery after a run of tight broker SLs.
