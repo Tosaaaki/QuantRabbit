@@ -330,12 +330,12 @@ strategies:
     pro_stop: {soft_pips: 0.8, hard_pips: 14.1, min_hold_sec: 175, max_hold_sec: 5899, soft_atr_mult: 0.6, hard_atr_mult: 1.0}
     exit_profile:
       min_hold_sec: 10
-      profit_pips: 1.4
-      trail_start_pips: 1.9
+      profit_pips: 2.3
+      trail_start_pips: 2.6
       trail_backoff_pips: 0.6
       lock_buffer_pips: 0.3
-      range_profit_pips: 1.1
-      range_trail_start_pips: 1.6
+      range_profit_pips: 2.3
+      range_trail_start_pips: 2.6
       range_trail_backoff_pips: 0.55
       range_lock_buffer_pips: 0.26
       range_max_hold_sec: 1800
