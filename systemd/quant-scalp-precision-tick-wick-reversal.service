@@ -16,13 +16,13 @@ Environment=SCALP_PRECISION_COOLDOWN_SEC=12
 Environment=SCALP_PRECISION_MAX_OPEN_TRADES=1
 Environment=SCALP_PRECISION_OPEN_TRADES_SCOPE=tag
 
-# Tune: reduce "instant SL" by tightening the wick pattern + requiring tick reversal,
-# and stand down when ADX says the market is trending (this is a range-reversion entry).
-Environment=TICK_WICK_WINDOW_SEC=25
-Environment=TICK_WICK_MIN_TICKS=22
-Environment=TICK_WICK_RANGE_MIN_PIPS=0.75
-Environment=TICK_WICK_BODY_MAX_PIPS=0.9
-Environment=TICK_WICK_RATIO_MIN=0.45
+# Tune: keep it high-frequency, but stand down when ADX says the market is trending
+# and require tick reversal confirmation to avoid "instant SL" entries.
+Environment=TICK_WICK_WINDOW_SEC=90
+Environment=TICK_WICK_MIN_TICKS=40
+Environment=TICK_WICK_RANGE_MIN_PIPS=0.9
+Environment=TICK_WICK_BODY_MAX_PIPS=1.8
+Environment=TICK_WICK_RATIO_MIN=0.25
 Environment=TICK_WICK_ADX_MAX=27.0
 Environment=TICK_WICK_REQUIRE_BB_TOUCH=0
 Environment=TICK_WICK_BB_TOUCH_PIPS=1.2
