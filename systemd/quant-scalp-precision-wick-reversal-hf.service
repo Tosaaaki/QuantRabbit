@@ -47,7 +47,7 @@ Environment=WICK_HF_TICK_MIN_STRENGTH=0.20
 # Entry precision first: avoid fading strong momentum.
 Environment=WICK_HF_MOMENTUM_FILTER_ENABLED=1
 Environment=WICK_HF_MACD_HIST_LONG_MIN=-0.15
-Environment=WICK_HF_MACD_HIST_SHORT_MAX=0.15
+Environment=WICK_HF_MACD_HIST_SHORT_MAX=0.35
 Environment=WICK_HF_EMA_SLOPE_10_SHORT_MAX=0.15
 
 # Allow hard-wick fallback when tick reversal is missing/weak (direction mismatch stays blocked).
