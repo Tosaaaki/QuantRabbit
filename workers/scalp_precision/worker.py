@@ -2737,7 +2737,16 @@ async def scalp_precision_worker() -> None:
     last_guard_log = 0.0
     last_diag_log = 0.0
     bypass_common_guard = config.MODE in config.GUARD_BYPASS_MODES
-    if config.MODE == "level_reject":
+    # Guard bypass is risky for modes that can generate large tail losses when data/exits degrade.
+    # In particular, tick_imbalance suffered margin closeouts when common guards (spread/air/perf/stage)
+    # were skipped. Keep these modes under the common guardrails regardless of env settings.
+    if config.MODE in {"level_reject", "tick_imbalance", "tick_imbalance_rrplus"}:
+        if bypass_common_guard:
+            LOG.warning(
+                "%s guard bypass requested but disabled for mode=%s",
+                config.LOG_PREFIX,
+                config.MODE,
+            )
         bypass_common_guard = False
 
     try:
