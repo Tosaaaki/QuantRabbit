@@ -1,0 +1,18 @@
+[Unit]
+Description=QuantRabbit Micro Trend Retest Exit Worker
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/tossaki/QuantRabbit
+EnvironmentFile=-/etc/quantrabbit.env
+Environment="PYTHONUNBUFFERED=1"
+Environment=MICRO_TRT_EXIT_ENABLED=1
+ExecStart=/home/tossaki/QuantRabbit/.venv/bin/python -m workers.micro_trendretest.exit_worker
+Restart=always
+RestartSec=5
+User=tossaki
+
+[Install]
+WantedBy=multi-user.target
+

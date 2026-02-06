@@ -177,7 +177,6 @@ ALLOWED_TAGS: Set[str] = {
     "MicroVWAPBound",
     "MicroVWAPRevert",
     "MicroCompressionRevert",
-    "MicroTrendRetest",
     "TrendMomentumMicro",
     "VolCompressionBreak",
     "MomentumPulse",
