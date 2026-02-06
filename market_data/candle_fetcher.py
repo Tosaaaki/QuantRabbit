@@ -11,6 +11,7 @@ import asyncio
 import datetime
 from collections import defaultdict
 import logging
+import os
 from typing import Awaitable, Callable, Dict, List, Literal, Tuple
 
 import httpx
@@ -25,17 +26,35 @@ from market_data import orderbook_state
 Candle = dict[str, float]  # open, high, low, close
 TimeFrame = Literal["M1", "M5", "H1", "H4", "D1"]
 
+_OANDA_TOKEN: str | None = None
+_OANDA_PRACTICE: bool | None = None
 
-TOKEN = get_secret("oanda_token")
-# Secret Manager または env.toml の `oanda_practice` を参照（未設定なら本番）
-try:
-    PRACT = str(get_secret("oanda_practice")).lower() == "true"
-except Exception:
-    PRACT = False
-REST_HOST = (
-    "https://api-fxpractice.oanda.com" if PRACT else "https://api-fxtrade.oanda.com"
-)
-HEADERS = {"Authorization": f"Bearer {TOKEN}"}
+
+def _load_rest_config() -> tuple[str, dict[str, str]]:
+    # Avoid resolving secrets at import time; defer until first REST call.
+    global _OANDA_TOKEN, _OANDA_PRACTICE
+    if _OANDA_TOKEN and _OANDA_PRACTICE is not None:
+        host = "https://api-fxpractice.oanda.com" if _OANDA_PRACTICE else "https://api-fxtrade.oanda.com"
+        return host, {"Authorization": f"Bearer {_OANDA_TOKEN}"}
+
+    token = os.environ.get("OANDA_TOKEN") or None
+    practice_raw = os.environ.get("OANDA_PRACTICE")
+    practice: bool | None = None
+    if practice_raw is not None:
+        practice = str(practice_raw).strip().lower() == "true"
+
+    if not token:
+        token = str(get_secret("oanda_token"))
+    if practice is None:
+        try:
+            practice = str(get_secret("oanda_practice")).lower() == "true"
+        except Exception:
+            practice = False
+
+    _OANDA_TOKEN = token
+    _OANDA_PRACTICE = bool(practice)
+    host = "https://api-fxpractice.oanda.com" if _OANDA_PRACTICE else "https://api-fxtrade.oanda.com"
+    return host, {"Authorization": f"Bearer {token}"}
 
 
 class CandleAggregator:
@@ -179,7 +198,8 @@ async def fetch_historical_candles(
     instrument: str, granularity: TimeFrame, count: int
 ) -> List[Candle]:
     """OANDA REST から過去ローソク足を取得する（失敗時は空配列）。"""
-    url = f"{REST_HOST}/v3/instruments/{instrument}/candles"
+    rest_host, headers = _load_rest_config()
+    url = f"{rest_host}/v3/instruments/{instrument}/candles"
     # Map internal TF to OANDA API granularity
     gran = granularity
     if granularity == "D1":
@@ -187,7 +207,7 @@ async def fetch_historical_candles(
     params = {"granularity": gran, "count": count, "price": "M"}
     try:
         async with httpx.AsyncClient() as client:
-            r = await client.get(url, headers=HEADERS, params=params, timeout=7)
+            r = await client.get(url, headers=headers, params=params, timeout=7)
             r.raise_for_status()
             data = r.json()
     except Exception as exc:

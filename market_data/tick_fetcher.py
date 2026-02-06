@@ -16,13 +16,39 @@ from utils.market_hours import is_market_open
 from market_data.replay_logger import log_tick
 
 # ---------- 読み込み：env.toml ----------
-TOKEN: str = get_secret("oanda_token")
-ACCOUNT: str = get_secret("oanda_account_id")
-# Secret Manager または env.toml の `oanda_practice` を参照（未設定なら本番）
-try:
-    PRACTICE: bool = str(get_secret("oanda_practice")).lower() == "true"
-except Exception:
-    PRACTICE = False
+# NOTE: Don't resolve secrets at import time. Unit tests and fresh checkouts may not
+# have env.toml/Secret Manager configured; defer until first network use.
+_OANDA_TOKEN: str | None = None
+_OANDA_ACCOUNT: str | None = None
+_OANDA_PRACTICE: bool | None = None
+
+
+def _load_oanda_config() -> tuple[str, str, bool]:
+    global _OANDA_TOKEN, _OANDA_ACCOUNT, _OANDA_PRACTICE
+    if _OANDA_TOKEN and _OANDA_ACCOUNT and _OANDA_PRACTICE is not None:
+        return _OANDA_TOKEN, _OANDA_ACCOUNT, _OANDA_PRACTICE
+
+    token = os.environ.get("OANDA_TOKEN") or None
+    account = os.environ.get("OANDA_ACCOUNT") or None
+    practice_raw = os.environ.get("OANDA_PRACTICE")
+    practice: bool | None = None
+    if practice_raw is not None:
+        practice = str(practice_raw).strip().lower() == "true"
+
+    if not token:
+        token = str(get_secret("oanda_token"))
+    if not account:
+        account = str(get_secret("oanda_account_id"))
+    if practice is None:
+        try:
+            practice = str(get_secret("oanda_practice")).lower() == "true"
+        except Exception:
+            practice = False
+
+    _OANDA_TOKEN = token
+    _OANDA_ACCOUNT = account
+    _OANDA_PRACTICE = bool(practice)
+    return token, account, bool(practice)
 MOCK_STREAM: bool = os.getenv("MOCK_TICK_STREAM", "0") == "1"
 _STREAM_READ_TIMEOUT = float(os.getenv("TICK_STREAM_READ_TIMEOUT_SEC", "25"))
 _STREAM_CONNECT_TIMEOUT = float(os.getenv("TICK_STREAM_CONNECT_TIMEOUT_SEC", "5"))
@@ -31,11 +57,6 @@ _STREAM_POOL_TIMEOUT = float(os.getenv("TICK_STREAM_POOL_TIMEOUT_SEC", "5"))
 _STREAM_MAX_IDLE_SEC = float(os.getenv("TICK_STREAM_MAX_IDLE_SEC", "20"))
 _STREAM_MAX_IDLE_STRIKES = int(os.getenv("TICK_STREAM_MAX_IDLE_STRIKES", "3"))
 _STREAM_IDLE_IGNORE_CLOSED = os.getenv("TICK_STREAM_IDLE_IGNORE_CLOSED", "1").strip().lower() not in {"0","false","no","off",""}
-
-STREAM_HOST = (
-    "stream-fxtrade.oanda.com" if not PRACTICE else "stream-fxpractice.oanda.com"
-)
-STREAM_URL = f"https://{STREAM_HOST}/v3/accounts/{ACCOUNT}/pricing/stream"
 
 
 DepthLevels = Tuple[Tuple[float, float], ...]
@@ -124,9 +145,12 @@ async def _connect(instrument: str, callback: Callable[[Tick], Awaitable[None]])
     """
     内部：リコネクトループ
     """
+    token, account, practice = _load_oanda_config()
+    stream_host = "stream-fxtrade.oanda.com" if not practice else "stream-fxpractice.oanda.com"
+    stream_url = f"https://{stream_host}/v3/accounts/{account}/pricing/stream"
     params = {"instruments": instrument}
     headers = {
-        "Authorization": f"Bearer {TOKEN}",
+        "Authorization": f"Bearer {token}",
         "Accept-Datetime-Format": "RFC3339",
     }
 
@@ -140,7 +164,7 @@ async def _connect(instrument: str, callback: Callable[[Tick], Awaitable[None]])
             )
             async with httpx.AsyncClient(timeout=timeout) as client:
                 async with client.stream(
-                    "GET", STREAM_URL, headers=headers, params=params
+                    "GET", stream_url, headers=headers, params=params
                 ) as r:
                     r.raise_for_status()
                     last_price_mono: Optional[float] = None

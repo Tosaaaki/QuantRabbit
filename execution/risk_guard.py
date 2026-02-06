@@ -78,9 +78,22 @@ _EXPOSURE_IGNORE_POCKETS = {
     if token.strip()
 }
 
-_DB = pathlib.Path("logs/trades.db")
-con = sqlite3.connect(_DB)
-con.row_factory = sqlite3.Row
+_DB = pathlib.Path(os.getenv("TRADES_DB_PATH", "logs/trades.db"))
+
+
+def _open_trades_db() -> sqlite3.Connection | None:
+    """
+    trades.db is an ops artifact and may not exist in fresh checkouts / unit tests.
+    Keep imports fail-safe and open the DB lazily (read-only).
+    """
+    if not _DB.exists():
+        return None
+    try:
+        con = sqlite3.connect(f"file:{_DB}?mode=ro", uri=True, timeout=1.0)
+        con.row_factory = sqlite3.Row
+        return con
+    except Exception:
+        return None
 
 
 def _guard_enabled() -> bool:
@@ -523,16 +536,25 @@ def update_dd_context(
 
 
 def _pocket_dd(pocket: str) -> float:
-    rows = con.execute(
-        """
-        SELECT COALESCE(SUM(realized_pl), 0) AS loss_sum
-        FROM trades
-        WHERE pocket = ?
-          AND realized_pl < 0
-          AND substr(close_time, 1, 10) >= date('now', ?)
-        """,
-        (pocket, f"-{_LOOKBACK_DAYS} day"),
-    ).fetchone()
+    con = _open_trades_db()
+    if con is None:
+        return 0.0
+    try:
+        rows = con.execute(
+            """
+            SELECT COALESCE(SUM(realized_pl), 0) AS loss_sum
+            FROM trades
+            WHERE pocket = ?
+              AND realized_pl < 0
+              AND substr(close_time, 1, 10) >= date('now', ?)
+            """,
+            (pocket, f"-{_LOOKBACK_DAYS} day"),
+        ).fetchone()
+    finally:
+        try:
+            con.close()
+        except Exception:
+            pass
     loss_jpy = abs(rows["loss_sum"]) if rows else 0.0
     equity = _POCKET_EQUITY_HINT.get(pocket, _DEFAULT_BASE_EQUITY[pocket])
     if equity <= 0:
@@ -544,8 +566,17 @@ def check_global_drawdown() -> bool:
     """口座全体のドローダウンが閾値を超えているかチェック"""
     if _DISABLE_GLOBAL_DD:
         return False
-    # 全ての取引の損益合計を取得
-    rows = con.execute("SELECT SUM(pl_pips) FROM trades").fetchone()
+    con = _open_trades_db()
+    if con is None:
+        return False
+    try:
+        # 全ての取引の損益合計を取得
+        rows = con.execute("SELECT SUM(pl_pips) FROM trades").fetchone()
+    finally:
+        try:
+            con.close()
+        except Exception:
+            pass
     total_pl_pips = rows[0] or 0.0
 
     # 損失の場合のみドローダウンとして計算
@@ -1094,17 +1125,26 @@ def loss_cooldown_status(
             return True, remaining
         _LOSS_COOLDOWN_CACHE.pop(key, None)
 
-    rows = con.execute(
-        """
-        SELECT pl_pips, close_time
-        FROM trades
-        WHERE pocket = ?
-          AND close_time IS NOT NULL
-        ORDER BY datetime(close_time) DESC
-        LIMIT ?
-        """,
-        (pocket, max_losses),
-    ).fetchall()
+    con = _open_trades_db()
+    if con is None:
+        return False, 0.0
+    try:
+        rows = con.execute(
+            """
+            SELECT pl_pips, close_time
+            FROM trades
+            WHERE pocket = ?
+              AND close_time IS NOT NULL
+            ORDER BY datetime(close_time) DESC
+            LIMIT ?
+            """,
+            (pocket, max_losses),
+        ).fetchall()
+    finally:
+        try:
+            con.close()
+        except Exception:
+            pass
 
     if not rows:
         return False, 0.0
