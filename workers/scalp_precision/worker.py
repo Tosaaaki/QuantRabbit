@@ -362,6 +362,18 @@ WICK_HF_TICK_MIN_TICKS = _env_int("WICK_HF_TICK_MIN_TICKS", 8)
 WICK_HF_TICK_MIN_STRENGTH = _env_float("WICK_HF_TICK_MIN_STRENGTH", 0.25)
 WICK_HF_REQUIRE_BB_TOUCH = _env_bool("WICK_HF_REQUIRE_BB_TOUCH", True)
 WICK_HF_BB_TOUCH_PIPS = _env_float("WICK_HF_BB_TOUCH_PIPS", 0.9)
+
+# Optional momentum confirmation (entry precision first). Values are in pips.
+WICK_HF_MOMENTUM_FILTER_ENABLED = _env_bool("WICK_HF_MOMENTUM_FILTER_ENABLED", True)
+WICK_HF_MACD_HIST_LONG_MIN = _env_float("WICK_HF_MACD_HIST_LONG_MIN", -0.15)
+WICK_HF_MACD_HIST_SHORT_MAX = _env_float("WICK_HF_MACD_HIST_SHORT_MAX", 0.15)
+WICK_HF_EMA_SLOPE_10_SHORT_MAX = _env_float("WICK_HF_EMA_SLOPE_10_SHORT_MAX", 0.15)
+
+# Allow bypassing the tick-reversal gate only for "hard" wick rejections.
+WICK_HF_TICK_FALLBACK_HARD_WICK = _env_bool("WICK_HF_TICK_FALLBACK_HARD_WICK", True)
+WICK_HF_HARD_WICK_EXTRA_RATIO = _env_float("WICK_HF_HARD_WICK_EXTRA_RATIO", 0.18)
+WICK_HF_HARD_WICK_RANGE_MULT = _env_float("WICK_HF_HARD_WICK_RANGE_MULT", 1.4)
+
 WICK_HF_DIAG = _env_bool("WICK_HF_DIAG", False)
 WICK_HF_DIAG_INTERVAL_SEC = _env_float("WICK_HF_DIAG_INTERVAL_SEC", 20.0)
 
@@ -1092,6 +1104,8 @@ def _wick_hf_diag_metrics(fac_m1: Dict[str, object], range_ctx) -> Dict[str, obj
     adx = _adx(fac_m1)
     bbw = _bbw(fac_m1)
     atr = _atr_pips(fac_m1)
+    macd_hist_pips = _macd_hist_pips(fac_m1)
+    ema_slope_10_pips = _ema_slope_pips(fac_m1, "ema_slope_10")
 
     ok_spread, spread_state = spread_ok(max_pips=config.MAX_SPREAD_PIPS, p25_max=WICK_HF_SPREAD_P25)
     spread_pips = 0.0
@@ -1156,6 +1170,23 @@ def _wick_hf_diag_metrics(fac_m1: Dict[str, object], range_ctx) -> Dict[str, obj
         (WICK_HF_ATR_MIN > 0.0 and atr < WICK_HF_ATR_MIN) or (WICK_HF_ATR_MAX > 0.0 and atr > WICK_HF_ATR_MAX)
     )
 
+    momentum_ok = True
+    if WICK_HF_MOMENTUM_FILTER_ENABLED and side:
+        if side == "long":
+            momentum_ok = macd_hist_pips >= WICK_HF_MACD_HIST_LONG_MIN
+        else:
+            momentum_ok = (
+                macd_hist_pips <= WICK_HF_MACD_HIST_SHORT_MAX
+                and ema_slope_10_pips <= WICK_HF_EMA_SLOPE_10_SHORT_MAX
+            )
+
+    hard_wick_ok = bool(
+        side
+        and WICK_HF_TICK_FALLBACK_HARD_WICK
+        and wick_ratio >= (WICK_HF_RATIO_MIN + WICK_HF_HARD_WICK_EXTRA_RATIO)
+        and rng_pips >= (WICK_HF_RANGE_MIN_PIPS * WICK_HF_HARD_WICK_RANGE_MULT)
+    )
+
     bb_ok = True
     bb_touch_pips = 0.0
     if WICK_HF_REQUIRE_BB_TOUCH:
@@ -1177,6 +1208,7 @@ def _wick_hf_diag_metrics(fac_m1: Dict[str, object], range_ctx) -> Dict[str, obj
     tick_dir = None
     tick_strength = 0.0
     tick_gate_ok = True
+    tick_dir_mismatch = False
     if WICK_HF_REQUIRE_TICK_REV:
         tick_ok = False
         tick_gate_ok = False
@@ -1191,7 +1223,14 @@ def _wick_hf_diag_metrics(fac_m1: Dict[str, object], range_ctx) -> Dict[str, obj
             tick_strength = float(rev_strength or 0.0)
         except Exception:
             tick_strength = 0.0
-        tick_gate_ok = tick_ok and (tick_dir == side) and (WICK_HF_TICK_MIN_STRENGTH <= 0.0 or tick_strength >= WICK_HF_TICK_MIN_STRENGTH)
+        tick_dir_mismatch = bool(tick_ok and tick_dir != side)
+        tick_gate_ok = (
+            tick_ok
+            and not tick_dir_mismatch
+            and (WICK_HF_TICK_MIN_STRENGTH <= 0.0 or tick_strength >= WICK_HF_TICK_MIN_STRENGTH)
+        )
+        if not tick_gate_ok and not tick_dir_mismatch and hard_wick_ok:
+            tick_gate_ok = True
 
     proj_allow = None
     try:
@@ -1211,6 +1250,8 @@ def _wick_hf_diag_metrics(fac_m1: Dict[str, object], range_ctx) -> Dict[str, obj
         block = "body"
     elif not ratio_ok:
         block = "ratio"
+    elif not momentum_ok:
+        block = "momentum"
     elif not adx_ok:
         block = "adx"
     elif not bbw_ok:
@@ -1244,9 +1285,13 @@ def _wick_hf_diag_metrics(fac_m1: Dict[str, object], range_ctx) -> Dict[str, obj
         "adx": round(adx, 2),
         "bbw": round(bbw, 6),
         "atr": round(atr, 3),
+        "macd_hist_pips": round(macd_hist_pips, 3),
+        "ema_slope_10_pips": round(ema_slope_10_pips, 3),
         "adx_ok": bool(adx_ok),
         "bbw_ok": bool(bbw_ok),
         "atr_ok": bool(atr_ok),
+        "momentum_ok": bool(momentum_ok),
+        "hard_wick_ok": bool(hard_wick_ok),
         "bb_ok": bool(bb_ok),
         "bb_touch_pips": round(bb_touch_pips, 2),
         "tick_n": int(tick_n),
@@ -2023,6 +2068,18 @@ def _signal_wick_reversal_hf(
 
     side = "short" if upper_wick > lower_wick else "long"
 
+    if WICK_HF_MOMENTUM_FILTER_ENABLED:
+        macd_hist_pips = _macd_hist_pips(fac_m1)
+        ema_slope_10_pips = _ema_slope_pips(fac_m1, "ema_slope_10")
+        if side == "long":
+            if macd_hist_pips < WICK_HF_MACD_HIST_LONG_MIN:
+                return None
+        else:
+            if macd_hist_pips > WICK_HF_MACD_HIST_SHORT_MAX:
+                return None
+            if ema_slope_10_pips > WICK_HF_EMA_SLOPE_10_SHORT_MAX:
+                return None
+
     if WICK_HF_REQUIRE_BB_TOUCH:
         levels = bb_levels(fac_m1)
         if not levels:
@@ -2036,20 +2093,31 @@ def _signal_wick_reversal_hf(
             if l > lower + touch_pips * PIP:
                 return None
 
+    hard_wick_ok = bool(
+        WICK_HF_TICK_FALLBACK_HARD_WICK
+        and wick_ratio >= (WICK_HF_RATIO_MIN + WICK_HF_HARD_WICK_EXTRA_RATIO)
+        and rng >= (WICK_HF_RANGE_MIN_PIPS * WICK_HF_HARD_WICK_RANGE_MULT)
+    )
+
     strength = 0.0
     if WICK_HF_REQUIRE_TICK_REV:
         mids, _ = tick_snapshot(WICK_HF_TICK_WINDOW_SEC, limit=160)
         rev_ok, rev_dir, rev_strength = (
             tick_reversal(mids, min_ticks=WICK_HF_TICK_MIN_TICKS) if mids else (False, None, 0.0)
         )
-        if not rev_ok or rev_dir != side:
+        if not rev_ok:
+            if not hard_wick_ok:
+                return None
+        elif rev_dir != side:
+            # Direction mismatch is a hard no (no fallback).
             return None
         try:
             strength = float(rev_strength or 0.0)
         except Exception:
             strength = 0.0
-        if WICK_HF_TICK_MIN_STRENGTH > 0.0 and strength < WICK_HF_TICK_MIN_STRENGTH:
-            return None
+        if rev_ok and WICK_HF_TICK_MIN_STRENGTH > 0.0 and strength < WICK_HF_TICK_MIN_STRENGTH:
+            if not hard_wick_ok:
+                return None
 
     proj_allow, size_mult, proj_detail = projection_decision(side, mode="range")
     if not proj_allow:
@@ -3377,7 +3445,7 @@ async def scalp_precision_worker() -> None:
                         last_diag_log = now_mono
                         m = _wick_hf_diag_metrics(fac_m1, range_ctx)
                         LOG.info(
-                            "%s wick_hf diag signals=0 block=%s spread_ok=%s spread=%.2fp p25=%.2fp range_ok=%s range_score=%.3f rng=%.2fp body=%.2fp ratio=%.3f side=%s bb_ok=%s bb_touch=%.2fp tick_n=%d tick_ok=%s tick_dir=%s tick_strength=%.2f proj=%s adx=%.1f bbw=%.6f atr=%.2f",
+                            "%s wick_hf diag signals=0 block=%s spread_ok=%s spread=%.2fp p25=%.2fp range_ok=%s range_score=%.3f rng=%.2fp body=%.2fp ratio=%.3f side=%s bb_ok=%s bb_touch=%.2fp tick_n=%d tick_ok=%s tick_dir=%s tick_strength=%.2f proj=%s adx=%.1f bbw=%.6f atr=%.2f macd_hist=%.3fp slope10=%.3fp",
                             config.LOG_PREFIX,
                             str(m.get("block") or ""),
                             bool(m.get("spread_ok")),
@@ -3399,6 +3467,8 @@ async def scalp_precision_worker() -> None:
                             float(m.get("adx") or 0.0),
                             float(m.get("bbw") or 0.0),
                             float(m.get("atr") or 0.0),
+                            float(m.get("macd_hist_pips") or 0.0),
+                            float(m.get("ema_slope_10_pips") or 0.0),
                         )
                 if WICK_BLEND_DIAG and config.MODE == "wick_reversal_blend":
                     if now_mono - last_diag_log >= max(1.0, WICK_BLEND_DIAG_INTERVAL_SEC):
