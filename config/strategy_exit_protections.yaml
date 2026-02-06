@@ -77,6 +77,40 @@ defaults:
     micro: {trigger_pips: 2.0, buffer_pips: 1.0}
     scalp: {trigger_pips: 1.0, buffer_pips: 0.8}
   tp_move_min_gap_pips: 0.3
+  exit_profile:
+    min_hold_sec: 10
+    profit_pips: 1.5
+    trail_start_pips: 2.1
+    trail_backoff_pips: 0.7
+    lock_buffer_pips: 0.35
+    range_profit_pips: 1.2
+    range_trail_start_pips: 1.7
+    range_trail_backoff_pips: 0.55
+    range_lock_buffer_pips: 0.25
+    range_max_hold_sec: 600
+    loss_cut_enabled: false
+    loss_cut_require_sl: true
+    loss_cut_soft_pips: 12
+    loss_cut_hard_pips: 30
+    loss_cut_max_hold_sec: 1200
+    loss_cut_cooldown_sec: 8
+    loss_cut_reason_soft: m1_structure_break
+    loss_cut_reason_hard: max_adverse
+    loss_cut_reason_time: time_stop
+    tick_imb:
+      partial_enabled: true
+      partial_trigger_pips: 1.0
+      partial_fraction: 0.4
+      partial_min_units: 1000
+      partial_min_remaining: 1000
+      be_buffer_pips: 0.2
+      min_hold_sec: 0
+      profit_pips: 0
+      trail_start_pips: 0
+      trail_backoff_pips: 0
+      lock_buffer_pips: 0
+      max_hold_sec: 0
+      max_adverse_pips: 0
   pro_stop:
     enabled: true
     score_min: 2

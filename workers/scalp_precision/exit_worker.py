@@ -3,10 +3,11 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import pathlib
 import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Optional, Sequence, Set
+from typing import Any, Optional, Sequence, Set
 
 from analysis.range_guard import detect_range_mode
 from execution.order_manager import set_trade_protections
@@ -17,6 +18,11 @@ from utils.metrics_logger import log_metric
 from workers.common.exit_utils import close_trade, mark_pnl_pips
 from workers.common.reentry_decider import decide_reentry
 from workers.common.pro_stop import maybe_close_pro_stop
+
+try:  # optional config
+    import yaml  # type: ignore
+except Exception:  # pragma: no cover - optional
+    yaml = None
 
 
 _BB_EXIT_ENABLED = os.getenv("BB_EXIT_ENABLED", "1").strip().lower() not in {"", "0", "false", "no"}
@@ -47,6 +53,122 @@ _BB_EXIT_BYPASS_TOKENS = {
 }
 _BB_EXIT_TF = "M1"
 _BB_PIP = 0.01
+
+_FALSEY = {"", "0", "false", "no", "off"}
+_STRATEGY_PROTECTION_PATH = pathlib.Path(
+    os.getenv("SCALP_PRECISION_EXIT_PROFILE_PATH", os.getenv("STRATEGY_PROTECTION_PATH", "config/strategy_exit_protections.yaml"))
+)
+_STRATEGY_PROTECTION_ENABLED = os.getenv("SCALP_PRECISION_EXIT_PROFILE_ENABLED", "1").strip().lower() not in _FALSEY
+_STRATEGY_PROTECTION_TTL_SEC = max(
+    2.0, float(os.getenv("SCALP_PRECISION_EXIT_PROFILE_TTL_SEC", "12.0") or 12.0)
+)
+_STRATEGY_PROTECTION_CACHE: dict[str, Any] = {"ts": 0.0, "data": None}
+_STRATEGY_ALIAS_BASE = {
+    "bbrsi": "BB_RSI",
+    "bb_rsi": "BB_RSI",
+    "trendma": "TrendMA",
+    "donchian": "Donchian55",
+    "donchian55": "Donchian55",
+    "h1momentum": "H1Momentum",
+    "m1scalper": "M1Scalper",
+    "microlevelreactor": "MicroLevelReactor",
+    "microrangebreak": "MicroRangeBreak",
+    "microvwapbound": "MicroVWAPBound",
+    "momentumburst": "MomentumBurst",
+    "techfusion": "TechFusion",
+    "macrotechfusion": "MacroTechFusion",
+    "micropullbackfib": "MicroPullbackFib",
+    "scalpreversalnwave": "ScalpReversalNWave",
+    "rangecompressionbreak": "RangeCompressionBreak",
+}
+
+
+def _coerce_bool(value: object, default: bool) -> bool:
+    if value is None:
+        return default
+    text = str(value).strip().lower()
+    if text in _FALSEY:
+        return False
+    if text in {"1", "true", "yes", "on"}:
+        return True
+    return default
+
+
+def _base_strategy_tag(tag: Optional[str]) -> str:
+    if not tag:
+        return ""
+    text = str(tag).strip()
+    if not text:
+        return ""
+    base = text.split("-", 1)[0].strip() or text
+    alias = _STRATEGY_ALIAS_BASE.get(base.lower())
+    return alias or base
+
+
+def _load_strategy_protection_config() -> dict:
+    if not _STRATEGY_PROTECTION_ENABLED:
+        return {"defaults": {}, "strategies": {}}
+    now = time.monotonic()
+    cached_ts = float(_STRATEGY_PROTECTION_CACHE.get("ts") or 0.0)
+    if (now - cached_ts) < _STRATEGY_PROTECTION_TTL_SEC and isinstance(
+        _STRATEGY_PROTECTION_CACHE.get("data"), dict
+    ):
+        return _STRATEGY_PROTECTION_CACHE["data"]  # type: ignore[return-value]
+    payload: dict[str, Any] = {"defaults": {}, "strategies": {}}
+    if yaml is not None and _STRATEGY_PROTECTION_PATH.exists():
+        try:
+            loaded = yaml.safe_load(_STRATEGY_PROTECTION_PATH.read_text(encoding="utf-8")) or {}
+            if isinstance(loaded, dict):
+                payload = loaded
+        except Exception:
+            payload = {"defaults": {}, "strategies": {}}
+    _STRATEGY_PROTECTION_CACHE["ts"] = now
+    _STRATEGY_PROTECTION_CACHE["data"] = payload
+    return payload
+
+
+def _strategy_override(config: dict, strategy_tag: Optional[str]) -> dict:
+    if not isinstance(config, dict):
+        return {}
+    strategies = config.get("strategies")
+    if not isinstance(strategies, dict) or not strategy_tag:
+        return {}
+    base = _base_strategy_tag(strategy_tag)
+    candidates = [
+        strategy_tag,
+        base,
+        strategy_tag.lower(),
+        base.lower(),
+    ]
+    for key in candidates:
+        if not key:
+            continue
+        override = strategies.get(key)
+        if isinstance(override, dict):
+            return override
+    return {}
+
+
+def _merge_profile(base: Optional[dict], override: Optional[dict]) -> dict:
+    merged = dict(base) if isinstance(base, dict) else {}
+    if isinstance(override, dict):
+        for key, value in override.items():
+            if isinstance(value, dict) and isinstance(merged.get(key), dict):
+                nested = dict(merged.get(key) or {})
+                nested.update(value)
+                merged[key] = nested
+            else:
+                merged[key] = value
+    return merged
+
+
+def _exit_profile_for_tag(strategy_tag: Optional[str]) -> dict:
+    cfg = _load_strategy_protection_config()
+    defaults = cfg.get("defaults") if isinstance(cfg, dict) else {}
+    defaults_profile = defaults.get("exit_profile") if isinstance(defaults, dict) else None
+    override = _strategy_override(cfg, strategy_tag)
+    override_profile = override.get("exit_profile") if isinstance(override, dict) else None
+    return _merge_profile(defaults_profile, override_profile)
 
 
 def _reentry_prefix_for_tag(tag: str) -> Optional[str]:
@@ -393,10 +515,18 @@ class RangeFaderExitWorker:
                 return False
         return False
 
-    def _loss_cut_eligible(self, trade: dict) -> bool:
-        if not self.loss_cut_enabled:
+    def _loss_cut_eligible(
+        self,
+        trade: dict,
+        *,
+        enabled: Optional[bool] = None,
+        require_sl: Optional[bool] = None,
+    ) -> bool:
+        loss_cut_enabled = self.loss_cut_enabled if enabled is None else bool(enabled)
+        if not loss_cut_enabled:
             return False
-        if not self.loss_cut_require_sl:
+        loss_cut_require_sl = self.loss_cut_require_sl if require_sl is None else bool(require_sl)
+        if not loss_cut_require_sl:
             return True
         return self._trade_has_stop_loss(trade)
 
@@ -457,6 +587,95 @@ class RangeFaderExitWorker:
         )
         base_tag = str(strategy_tag).split("-", 1)[0] if strategy_tag else ""
         is_tick_imb = bool(base_tag and base_tag in self.tick_imb_tags)
+        exit_profile = _exit_profile_for_tag(base_tag or strategy_tag)
+
+        def _pick_float(value: object, default: float) -> float:
+            try:
+                return float(value)
+            except (TypeError, ValueError):
+                return default
+
+        def _pick_int(value: object, default: int) -> int:
+            try:
+                return int(value)
+            except (TypeError, ValueError):
+                return default
+
+        min_hold_sec = _pick_float(exit_profile.get("min_hold_sec"), self.min_hold_sec)
+        profit_take = _pick_float(exit_profile.get("profit_pips"), self.profit_take)
+        trail_start = _pick_float(exit_profile.get("trail_start_pips"), self.trail_start)
+        trail_backoff = _pick_float(exit_profile.get("trail_backoff_pips"), self.trail_backoff)
+        lock_buffer = _pick_float(exit_profile.get("lock_buffer_pips"), self.lock_buffer)
+        range_profit_take = _pick_float(exit_profile.get("range_profit_pips"), self.range_profit_take)
+        range_trail_start = _pick_float(exit_profile.get("range_trail_start_pips"), self.range_trail_start)
+        range_trail_backoff = _pick_float(exit_profile.get("range_trail_backoff_pips"), self.range_trail_backoff)
+        range_lock_buffer = _pick_float(exit_profile.get("range_lock_buffer_pips"), self.range_lock_buffer)
+        range_max_hold_sec = _pick_float(exit_profile.get("range_max_hold_sec"), self.range_max_hold_sec)
+        loss_cut_enabled = _coerce_bool(exit_profile.get("loss_cut_enabled"), self.loss_cut_enabled)
+        loss_cut_require_sl = _coerce_bool(exit_profile.get("loss_cut_require_sl"), self.loss_cut_require_sl)
+        loss_cut_soft_pips = _pick_float(exit_profile.get("loss_cut_soft_pips"), self.loss_cut_soft_pips)
+        loss_cut_hard_pips = max(
+            loss_cut_soft_pips,
+            _pick_float(exit_profile.get("loss_cut_hard_pips"), self.loss_cut_hard_pips),
+        )
+        loss_cut_max_hold_sec = _pick_float(exit_profile.get("loss_cut_max_hold_sec"), self.loss_cut_max_hold_sec)
+        loss_cut_cooldown_sec = _pick_float(
+            exit_profile.get("loss_cut_cooldown_sec"), self.loss_cut_cooldown_sec
+        )
+        loss_cut_reason_soft = (
+            str(exit_profile.get("loss_cut_reason_soft") or self.loss_cut_reason_soft).strip()
+            or self.loss_cut_reason_soft
+        )
+        loss_cut_reason_hard = (
+            str(exit_profile.get("loss_cut_reason_hard") or self.loss_cut_reason_hard).strip()
+            or self.loss_cut_reason_hard
+        )
+        loss_cut_reason_time = (
+            str(exit_profile.get("loss_cut_reason_time") or self.loss_cut_reason_time).strip()
+            or self.loss_cut_reason_time
+        )
+        tick_imb_profile = exit_profile.get("tick_imb")
+        if not isinstance(tick_imb_profile, dict):
+            tick_imb_profile = {}
+        tick_imb_partial_enabled = _coerce_bool(
+            tick_imb_profile.get("partial_enabled"), self.tick_imb_partial_enabled
+        )
+        tick_imb_partial_trigger = _pick_float(
+            tick_imb_profile.get("partial_trigger_pips"), self.tick_imb_partial_trigger
+        )
+        tick_imb_partial_fraction = min(
+            0.8, max(0.1, _pick_float(tick_imb_profile.get("partial_fraction"), self.tick_imb_partial_fraction))
+        )
+        tick_imb_partial_min_units = max(
+            20, _pick_int(tick_imb_profile.get("partial_min_units"), self.tick_imb_partial_min_units)
+        )
+        tick_imb_partial_min_remaining = max(
+            20, _pick_int(tick_imb_profile.get("partial_min_remaining"), self.tick_imb_partial_min_remaining)
+        )
+        tick_imb_be_buffer_pips = _pick_float(
+            tick_imb_profile.get("be_buffer_pips"), self.tick_imb_be_buffer_pips
+        )
+        tick_imb_min_hold_sec = max(
+            0.0, _pick_float(tick_imb_profile.get("min_hold_sec"), self.tick_imb_min_hold_sec)
+        )
+        tick_imb_profit_take = max(
+            0.0, _pick_float(tick_imb_profile.get("profit_pips"), self.tick_imb_profit_take)
+        )
+        tick_imb_trail_start = max(
+            0.0, _pick_float(tick_imb_profile.get("trail_start_pips"), self.tick_imb_trail_start)
+        )
+        tick_imb_trail_backoff = max(
+            0.0, _pick_float(tick_imb_profile.get("trail_backoff_pips"), self.tick_imb_trail_backoff)
+        )
+        tick_imb_lock_buffer = max(
+            0.0, _pick_float(tick_imb_profile.get("lock_buffer_pips"), self.tick_imb_lock_buffer)
+        )
+        tick_imb_max_hold_sec = max(
+            0.0, _pick_float(tick_imb_profile.get("max_hold_sec"), self.tick_imb_max_hold_sec)
+        )
+        tick_imb_max_adverse_pips = max(
+            0.0, _pick_float(tick_imb_profile.get("max_adverse_pips"), self.tick_imb_max_adverse_pips)
+        )
 
         client_ext = trade.get("clientExtensions")
         client_id = trade.get("client_order_id")
@@ -468,9 +687,8 @@ class RangeFaderExitWorker:
         if await maybe_close_pro_stop(trade, now=now):
             return
 
-        min_hold_sec = self.min_hold_sec
-        if is_tick_imb and self.tick_imb_min_hold_sec > 0:
-            min_hold_sec = max(min_hold_sec, self.tick_imb_min_hold_sec)
+        if is_tick_imb and tick_imb_min_hold_sec > 0:
+            min_hold_sec = max(min_hold_sec, tick_imb_min_hold_sec)
         if hold_sec < min_hold_sec:
             return
         candle_reason = _exit_candle_reversal("long" if units > 0 else "short")
@@ -491,14 +709,14 @@ class RangeFaderExitWorker:
                 state = _TradeState(peak=pnl)
                 self._states[trade_id] = state
             if (
-                self.tick_imb_partial_enabled
+                tick_imb_partial_enabled
                 and pnl > 0
                 and not state.partial_done
-                and pnl >= self.tick_imb_partial_trigger
+                and pnl >= tick_imb_partial_trigger
             ):
-                reduce_units = int(abs(units) * self.tick_imb_partial_fraction)
+                reduce_units = int(abs(units) * tick_imb_partial_fraction)
                 remaining = abs(units) - reduce_units
-                if reduce_units >= self.tick_imb_partial_min_units and remaining >= self.tick_imb_partial_min_remaining:
+                if reduce_units >= tick_imb_partial_min_units and remaining >= tick_imb_partial_min_remaining:
                     ok = await close_trade(
                         trade_id,
                         reduce_units,
@@ -514,18 +732,18 @@ class RangeFaderExitWorker:
                             tags={"side": side},
                             ts=now,
                         )
-                        be = entry + (self.tick_imb_be_buffer_pips * 0.01) if side == "long" else entry - (
-                            self.tick_imb_be_buffer_pips * 0.01
+                        be = entry + (tick_imb_be_buffer_pips * 0.01) if side == "long" else entry - (
+                            tick_imb_be_buffer_pips * 0.01
                         )
                         be_ok = await set_trade_protections(trade_id, sl_price=round(be, 3), tp_price=None)
                         if be_ok:
                             state.be_moved = True
                         return
-            if self.tick_imb_max_adverse_pips > 0 and pnl <= -self.tick_imb_max_adverse_pips:
+            if tick_imb_max_adverse_pips > 0 and pnl <= -tick_imb_max_adverse_pips:
                 await self._close(trade_id, -units, "max_adverse", pnl, client_id, allow_negative=True)
                 self._states.pop(trade_id, None)
                 return
-            if self.tick_imb_max_hold_sec > 0 and hold_sec >= self.tick_imb_max_hold_sec and pnl <= 0:
+            if tick_imb_max_hold_sec > 0 and hold_sec >= tick_imb_max_hold_sec and pnl <= 0:
                 await self._close(trade_id, -units, "time_stop", pnl, client_id, allow_negative=True)
                 self._states.pop(trade_id, None)
                 return
@@ -556,47 +774,49 @@ class RangeFaderExitWorker:
                     log_tags={"trade": trade_id},
                 )
             if reentry and reentry.action == "hold":
-                if not self._loss_cut_eligible(trade):
+                if not self._loss_cut_eligible(
+                    trade, enabled=loss_cut_enabled, require_sl=loss_cut_require_sl
+                ):
                     return
             if reentry and reentry.action == "exit_reentry" and not reentry.shadow:
                 await self._close(trade_id, -units, "reentry_reset", pnl, client_id)
                 self._states.pop(trade_id, None)
                 return
 
-            if not self._loss_cut_eligible(trade):
+            if not self._loss_cut_eligible(trade, enabled=loss_cut_enabled, require_sl=loss_cut_require_sl):
                 return
             now_mono = time.monotonic()
             last = self._loss_cut_last_ts.get(trade_id, 0.0)
-            if self.loss_cut_cooldown_sec > 0 and (now_mono - last) < self.loss_cut_cooldown_sec:
+            if loss_cut_cooldown_sec > 0 and (now_mono - last) < loss_cut_cooldown_sec:
                 return
 
             adverse_pips = abs(float(pnl))
             reason = None
-            if self.loss_cut_max_hold_sec > 0 and hold_sec >= self.loss_cut_max_hold_sec:
-                reason = self.loss_cut_reason_time
-            elif self.loss_cut_hard_pips > 0 and adverse_pips >= self.loss_cut_hard_pips:
-                reason = self.loss_cut_reason_hard
-            elif self.loss_cut_soft_pips > 0 and adverse_pips >= self.loss_cut_soft_pips:
-                reason = self.loss_cut_reason_soft
+            if loss_cut_max_hold_sec > 0 and hold_sec >= loss_cut_max_hold_sec:
+                reason = loss_cut_reason_time
+            elif loss_cut_hard_pips > 0 and adverse_pips >= loss_cut_hard_pips:
+                reason = loss_cut_reason_hard
+            elif loss_cut_soft_pips > 0 and adverse_pips >= loss_cut_soft_pips:
+                reason = loss_cut_reason_soft
             if not reason:
                 return
             self._loss_cut_last_ts[trade_id] = now_mono
             await self._close(trade_id, -units, reason, pnl, client_id, allow_negative=True)
             return
 
-        lock_buffer = self.range_lock_buffer if range_active else self.lock_buffer
-        profit_take = self.range_profit_take if range_active else self.profit_take
-        trail_start = self.range_trail_start if range_active else self.trail_start
-        trail_backoff = self.range_trail_backoff if range_active else self.trail_backoff
+        lock_buffer = range_lock_buffer if range_active else lock_buffer
+        profit_take = range_profit_take if range_active else profit_take
+        trail_start = range_trail_start if range_active else trail_start
+        trail_backoff = range_trail_backoff if range_active else trail_backoff
         if is_tick_imb:
-            if self.tick_imb_lock_buffer > 0:
-                lock_buffer = self.tick_imb_lock_buffer
-            if self.tick_imb_profit_take > 0:
-                profit_take = self.tick_imb_profit_take
-            if self.tick_imb_trail_start > 0:
-                trail_start = self.tick_imb_trail_start
-            if self.tick_imb_trail_backoff > 0:
-                trail_backoff = self.tick_imb_trail_backoff
+            if tick_imb_lock_buffer > 0:
+                lock_buffer = tick_imb_lock_buffer
+            if tick_imb_profit_take > 0:
+                profit_take = tick_imb_profit_take
+            if tick_imb_trail_start > 0:
+                trail_start = tick_imb_trail_start
+            if tick_imb_trail_backoff > 0:
+                trail_backoff = tick_imb_trail_backoff
 
         state = self._states.get(trade_id)
         if state is None:
@@ -618,7 +838,7 @@ class RangeFaderExitWorker:
             self._states.pop(trade_id, None)
             return
 
-        if range_active and hold_sec >= self.range_max_hold_sec:
+        if range_active and hold_sec >= range_max_hold_sec:
             await self._close(trade_id, -units, "range_timeout", pnl, client_id)
             self._states.pop(trade_id, None)
 
