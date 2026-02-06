@@ -17,15 +17,16 @@ Environment=SCALP_PRECISION_MAX_OPEN_TRADES=1
 Environment=SCALP_PRECISION_OPEN_TRADES_SCOPE=tag
 
 # Tune to actually fire under low-volatility compression (tested on VM).
-Environment=TICK_WICK_WINDOW_SEC=120
-Environment=TICK_WICK_MIN_TICKS=60
+Environment=TICK_WICK_WINDOW_SEC=90
+Environment=TICK_WICK_MIN_TICKS=40
 Environment=TICK_WICK_RANGE_MIN_PIPS=0.9
 Environment=TICK_WICK_BODY_MAX_PIPS=1.8
-Environment=TICK_WICK_RATIO_MIN=0.40
+Environment=TICK_WICK_RATIO_MIN=0.25
 Environment=TICK_WICK_ADX_MAX=40.0
-Environment=TICK_WICK_REQUIRE_BB_TOUCH=1
+Environment=TICK_WICK_REQUIRE_BB_TOUCH=0
 Environment=TICK_WICK_BB_TOUCH_PIPS=2.0
 Environment=TICK_WICK_REQUIRE_TICK_REV=0
+Environment=TICK_WICK_MIN_AIR_SCORE=0.62
 
 # Attach entry SL/TP at the broker for this worker to cap tail losses.
 Environment=ORDER_ENABLE_STOP_LOSS_SCALP=1
