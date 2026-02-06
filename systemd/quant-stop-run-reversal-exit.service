@@ -1,0 +1,17 @@
+[Unit]
+Description=QuantRabbit Stop-Run Reversal Exit Worker
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/tossaki/QuantRabbit
+Environment="PYTHONUNBUFFERED=1"
+EnvironmentFile=-/etc/quantrabbit.env
+ExecStart=/home/tossaki/QuantRabbit/.venv/bin/python -m workers.stop_run_reversal.exit_worker
+Restart=always
+RestartSec=5
+User=tossaki
+
+[Install]
+WantedBy=multi-user.target

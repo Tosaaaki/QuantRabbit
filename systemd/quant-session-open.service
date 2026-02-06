@@ -1,0 +1,17 @@
+[Unit]
+Description=QuantRabbit Session-Open Worker
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/tossaki/QuantRabbit
+Environment="PYTHONUNBUFFERED=1"
+EnvironmentFile=-/etc/quantrabbit.env
+ExecStart=/home/tossaki/QuantRabbit/.venv/bin/python -m workers.session_open.worker
+Restart=always
+RestartSec=5
+User=tossaki
+
+[Install]
+WantedBy=multi-user.target
