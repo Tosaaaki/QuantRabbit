@@ -53,6 +53,19 @@ _REGIME_FILTER_ENABLED = os.getenv("PERF_GUARD_REGIME_FILTER", "1").strip().lowe
 }
 _REGIME_MIN_TRADES = max(5, int(float(os.getenv("PERF_GUARD_REGIME_MIN_TRADES", "20"))))
 
+# --- Fail-fast / tail-risk guards (applied before warmup) ---
+# When PERF_GUARD_MIN_TRADES is large (e.g., 30+), high-frequency strategies can bleed for too long.
+# These guards only trigger when performance is clearly poor and enough samples exist.
+_FAILFAST_MIN_TRADES = max(0, int(float(os.getenv("PERF_GUARD_FAILFAST_MIN_TRADES", "12") or 12)))
+_FAILFAST_PF = max(0.0, float(os.getenv("PERF_GUARD_FAILFAST_PF", "0.75") or 0.75))
+_FAILFAST_WIN = max(0.0, float(os.getenv("PERF_GUARD_FAILFAST_WIN", "0.40") or 0.40))
+
+# Stop-loss loss-rate guard. Enabled by default for scalp pockets (can be overridden per pocket).
+_SL_LOSS_RATE_MIN_TRADES = max(
+    0, int(float(os.getenv("PERF_GUARD_SL_LOSS_RATE_MIN_TRADES", "12") or 12))
+)
+_SL_LOSS_RATE_MAX_DEFAULT = float(os.getenv("PERF_GUARD_SL_LOSS_RATE_MAX", "") or 0.0)
+
 # Pocket-level guard (optional; defaults disabled)
 _POCKET_ENABLED = os.getenv("POCKET_PERF_GUARD_ENABLED", "0").strip().lower() not in {
     "",
@@ -98,6 +111,14 @@ def _threshold(name: str, pocket: str, default: float) -> float:
         except ValueError:
             pass
     return default
+
+
+def _sl_loss_rate_max(pocket: str) -> float:
+    # Default: enabled only for scalp pockets; other pockets default disabled.
+    p = (pocket or "").strip().lower()
+    if p.startswith("scalp"):
+        return _threshold("PERF_GUARD_SL_LOSS_RATE_MAX", pocket, 0.65)
+    return _threshold("PERF_GUARD_SL_LOSS_RATE_MAX", pocket, _SL_LOSS_RATE_MAX_DEFAULT)
 
 
 @dataclass(frozen=True, slots=True)
@@ -193,7 +214,11 @@ def _query_perf_row(
               SUM(CASE WHEN pl_pips > 0 THEN pl_pips ELSE 0 END) AS profit,
               SUM(CASE WHEN pl_pips < 0 THEN ABS(pl_pips) ELSE 0 END) AS loss,
               SUM(CASE WHEN pl_pips > 0 THEN 1 ELSE 0 END) AS win,
-              SUM(pl_pips) AS sum_pips
+              SUM(pl_pips) AS sum_pips,
+              -- Stop-loss exits that actually realized a loss (exclude BE/lock SL profits).
+              SUM(CASE WHEN close_reason = 'STOP_LOSS_ORDER' AND pl_pips < 0 THEN 1 ELSE 0 END) AS sl_loss_n,
+              -- Emergency: broker forced liquidation.
+              SUM(CASE WHEN close_reason = 'MARKET_ORDER_MARGIN_CLOSEOUT' THEN 1 ELSE 0 END) AS margin_closeout_n
             FROM trades
             WHERE {tag_clause}
               AND pocket = ?
@@ -309,14 +334,33 @@ def _query_perf(
     if not row:
         return True, "no_rows", 0
     n = int(row["n"] or 0)
-    min_trades = _HOURLY_MIN_TRADES if hour is not None else _MIN_TRADES
-    if n < min_trades:
-        return True, f"warmup_n={n}", n
     profit = float(row["profit"] or 0.0)
     loss = float(row["loss"] or 0.0)
     win = float(row["win"] or 0.0)
+    sl_loss_n = int(row["sl_loss_n"] or 0)
+    margin_closeout_n = int(row["margin_closeout_n"] or 0)
     pf = profit / loss if loss > 0 else float("inf")
     win_rate = win / n if n > 0 else 0.0
+
+    # Emergency block: broker forced liquidation observed in this window.
+    if margin_closeout_n > 0:
+        return False, f"margin_closeout_n={margin_closeout_n} n={n}", n
+
+    # Fail-fast (before warmup) when stats are clearly bad.
+    if _FAILFAST_MIN_TRADES > 0 and n >= _FAILFAST_MIN_TRADES:
+        if (_FAILFAST_PF > 0 and pf < _FAILFAST_PF) or (_FAILFAST_WIN > 0 and win_rate < _FAILFAST_WIN):
+            return False, f"failfast:pf={pf:.2f} win={win_rate:.2f} n={n}", n
+
+    # Stop-loss (loss) rate guard (before warmup). Only apply when PF < 1.0 (already losing).
+    sl_rate_max = _sl_loss_rate_max(pocket)
+    if sl_rate_max > 0 and _SL_LOSS_RATE_MIN_TRADES > 0 and n >= _SL_LOSS_RATE_MIN_TRADES and pf < 1.0:
+        sl_rate = (float(sl_loss_n) / float(n)) if n > 0 else 0.0
+        if sl_rate >= sl_rate_max:
+            return False, f"sl_loss_rate={sl_rate:.2f} pf={pf:.2f} n={n}", n
+
+    min_trades = _HOURLY_MIN_TRADES if hour is not None else _MIN_TRADES
+    if n < min_trades:
+        return True, f"warmup_n={n}", n
 
     pf_min = _threshold("PERF_GUARD_PF_MIN", pocket, _PF_MIN)
     win_min = _threshold("PERF_GUARD_WIN_MIN", pocket, _WIN_MIN)
