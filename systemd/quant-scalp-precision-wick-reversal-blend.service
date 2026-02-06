@@ -9,7 +9,7 @@ EnvironmentFile=/etc/quantrabbit.env
 Environment=PYTHONUNBUFFERED=1
 Environment=SCALP_PRECISION_ENABLED=1
 Environment=SCALP_PRECISION_MODE=wick_reversal_blend
-Environment=SCALP_PRECISION_ALLOWLIST=wick_reversal_blend
+Environment=SCALP_PRECISION_UNIT_ALLOWLIST=wick_reversal_blend
 Environment=SCALP_PRECISION_MODE_FILTER_ALLOWLIST=1
 Environment=SCALP_PRECISION_LOOP_INTERVAL_SEC=3.0
 Environment=SCALP_PRECISION_COOLDOWN_SEC=12
