@@ -57,6 +57,7 @@ _MODE_TAG_MAP = {
     'tick_imbalance_rrplus': 'TickImbalanceRRPlus',
     'level_reject': 'LevelReject',
     'wick_reversal': 'WickReversal',
+    'wick_reversal_hf': 'WickReversalHF',
     'wick_reversal_pro': 'WickReversalPro',
     'tick_wick_reversal': 'TickWickReversal',
     'session_edge': 'SessionEdge',
