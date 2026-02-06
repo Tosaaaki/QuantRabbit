@@ -32,6 +32,8 @@ Environment=SPB_IMB_RATIO_MIN=0.58
 Environment=SPB_MOM_MIN_PIPS=0.45
 Environment=SPB_SPREAD_P25=1.0
 Environment=SPB_SIZE_MULT=1.15
+Environment=SPB_DIAG=1
+Environment=SPB_DIAG_INTERVAL_SEC=15
 
 # Attach entry SL/TP at the broker for this worker to cap tail losses.
 Environment=ORDER_ENABLE_STOP_LOSS_SCALP=1

@@ -278,6 +278,8 @@ SPB_IMB_RATIO_MIN = _env_float("SPB_IMB_RATIO_MIN", 0.60)
 SPB_MOM_MIN_PIPS = _env_float("SPB_MOM_MIN_PIPS", 0.55)
 SPB_SPREAD_P25 = _env_float("SPB_SPREAD_P25", 1.0)
 SPB_SIZE_MULT = _env_float("SPB_SIZE_MULT", 1.15)
+SPB_DIAG = _env_bool("SPB_DIAG", False)
+SPB_DIAG_INTERVAL_SEC = _env_float("SPB_DIAG_INTERVAL_SEC", 15.0)
 
 FBF_BBW_MAX = _env_float("FBF_BBW_MAX", 0.0026)
 FBF_ATR_MIN = _env_float("FBF_ATR_MIN", 0.7)
@@ -965,6 +967,68 @@ def _signal_squeeze_pulse_break(
             "tick_range_pips": round(tick_range_pips, 3),
             "momentum_pips": round(imb.momentum_pips, 3),
         },
+    }
+
+
+def _spb_diag_metrics(fac_m1: Dict[str, object], range_ctx) -> Dict[str, object]:
+    """Lightweight diag snapshot for SqueezePulseBreak tuning."""
+    price = _latest_price(fac_m1)
+    bbw = _bbw(fac_m1)
+    atr = _atr_pips(fac_m1)
+    ok_spread, spread_pips = spread_ok(max_pips=config.MAX_SPREAD_PIPS, p25_max=SPB_SPREAD_P25)
+
+    range_active = False
+    range_score = 0.0
+    if range_ctx is not None:
+        try:
+            range_active = bool(getattr(range_ctx, "active", False))
+            range_score = float(getattr(range_ctx, "score", 0.0) or 0.0)
+        except Exception:
+            range_active = False
+            range_score = 0.0
+
+    snap = None
+    try:
+        candles = get_candles_snapshot("M1", limit=max(40, SPB_LOOKBACK + 6))
+        snap = compute_range_snapshot(
+            candles or [],
+            lookback=max(10, SPB_LOOKBACK),
+            hi_pct=float(SPB_HI_PCT),
+            lo_pct=float(SPB_LO_PCT),
+        )
+    except Exception:
+        snap = None
+
+    breakout_long = False
+    breakout_short = False
+    if snap and price > 0:
+        breakout_long = price >= float(snap.high) + SPB_BREAKOUT_PIPS * PIP
+        breakout_short = price <= float(snap.low) - SPB_BREAKOUT_PIPS * PIP
+
+    mids, span = tick_snapshot(SPB_TICK_WINDOW_SEC, limit=200)
+    tick_n = len(mids or [])
+    tick_range_pips = 0.0
+    if mids:
+        tick_range_pips = (max(mids) - min(mids)) / PIP
+
+    imb = tick_imbalance(mids, span) if mids else None
+    imb_ratio = float(getattr(imb, "ratio", 0.0) or 0.0) if imb else 0.0
+    imb_mom = float(getattr(imb, "momentum_pips", 0.0) or 0.0) if imb else 0.0
+
+    return {
+        "price": round(price, 3),
+        "bbw": round(bbw, 6),
+        "atr": round(atr, 3),
+        "spread_ok": bool(ok_spread),
+        "spread_pips": round(float(spread_pips or 0.0), 3),
+        "range_active": bool(range_active),
+        "range_score": round(range_score, 3),
+        "breakout_long": bool(breakout_long),
+        "breakout_short": bool(breakout_short),
+        "tick_n": int(tick_n),
+        "tick_range_pips": round(tick_range_pips, 3),
+        "imb_ratio": round(imb_ratio, 3),
+        "imb_mom_pips": round(imb_mom, 3),
     }
 
 
@@ -2646,6 +2710,26 @@ async def scalp_precision_worker() -> None:
                             _adx(fac_m1),
                             _bbw(fac_m1),
                         )
+                if SPB_DIAG and config.MODE == "squeeze_pulse_break":
+                    if now_mono - last_diag_log >= max(1.0, SPB_DIAG_INTERVAL_SEC):
+                        last_diag_log = now_mono
+                        m = _spb_diag_metrics(fac_m1, range_ctx)
+                        LOG.info(
+                            "%s spb diag signals=0 spread_ok=%s spread=%.2fp bbw=%.6f atr=%.2f range_active=%s range_score=%.3f tick_n=%d tick_range=%.2fp imb_ratio=%.2f mom=%.2fp brk_long=%s brk_short=%s",
+                            config.LOG_PREFIX,
+                            bool(m.get("spread_ok")),
+                            float(m.get("spread_pips") or 0.0),
+                            float(m.get("bbw") or 0.0),
+                            float(m.get("atr") or 0.0),
+                            bool(m.get("range_active")),
+                            float(m.get("range_score") or 0.0),
+                            int(m.get("tick_n") or 0),
+                            float(m.get("tick_range_pips") or 0.0),
+                            float(m.get("imb_ratio") or 0.0),
+                            float(m.get("imb_mom_pips") or 0.0),
+                            bool(m.get("breakout_long")),
+                            bool(m.get("breakout_short")),
+                        )
                 continue
 
             if TICK_WICK_DIAG and config.MODE == "tick_wick_reversal":
@@ -2662,6 +2746,29 @@ async def scalp_precision_worker() -> None:
                         bool(getattr(air, "allow_entry", True)),
                         bool(getattr(range_ctx, "active", False)),
                         float(getattr(range_ctx, "score", 0.0) or 0.0),
+                    )
+            if SPB_DIAG and config.MODE == "squeeze_pulse_break":
+                if now_mono - last_diag_log >= max(1.0, SPB_DIAG_INTERVAL_SEC):
+                    last_diag_log = now_mono
+                    top = signals[0]
+                    m = _spb_diag_metrics(fac_m1, range_ctx)
+                    LOG.info(
+                        "%s spb diag signals=%d top_conf=%s top_action=%s spread_ok=%s bbw=%.6f atr=%.2f range_active=%s range_score=%.3f tick_n=%d tick_range=%.2fp imb_ratio=%.2f mom=%.2fp brk_long=%s brk_short=%s",
+                        config.LOG_PREFIX,
+                        len(signals),
+                        top.get("confidence"),
+                        top.get("action"),
+                        bool(m.get("spread_ok")),
+                        float(m.get("bbw") or 0.0),
+                        float(m.get("atr") or 0.0),
+                        bool(m.get("range_active")),
+                        float(m.get("range_score") or 0.0),
+                        int(m.get("tick_n") or 0),
+                        float(m.get("tick_range_pips") or 0.0),
+                        float(m.get("imb_ratio") or 0.0),
+                        float(m.get("imb_mom_pips") or 0.0),
+                        bool(m.get("breakout_long")),
+                        bool(m.get("breakout_short")),
                     )
 
             # rank by confidence
