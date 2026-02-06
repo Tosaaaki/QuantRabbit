@@ -350,6 +350,7 @@ WICK_PRO_MAX_REGIME_SHIFT = _env_float("WICK_PRO_MAX_REGIME_SHIFT", 0.04)
 WICK_HF_RANGE_SCORE_MIN = _env_float("WICK_HF_RANGE_SCORE_MIN", 0.45)
 WICK_HF_RANGE_MIN_PIPS = _env_float("WICK_HF_RANGE_MIN_PIPS", 1.6)
 WICK_HF_BODY_MAX_PIPS = _env_float("WICK_HF_BODY_MAX_PIPS", 1.1)
+WICK_HF_BODY_RATIO_MAX = _env_float("WICK_HF_BODY_RATIO_MAX", 0.0)
 WICK_HF_RATIO_MIN = _env_float("WICK_HF_RATIO_MIN", 0.50)
 WICK_HF_ADX_MAX = _env_float("WICK_HF_ADX_MAX", 28.0)
 WICK_HF_BBW_MAX = _env_float("WICK_HF_BBW_MAX", 0.0016)
@@ -1171,8 +1172,10 @@ def _wick_hf_diag_metrics(fac_m1: Dict[str, object], range_ctx) -> Dict[str, obj
         pass
 
     rng_ok = rng_pips >= WICK_HF_RANGE_MIN_PIPS
-    body_ok = body_pips <= WICK_HF_BODY_MAX_PIPS
     ratio_ok = wick_ratio >= WICK_HF_RATIO_MIN
+    body_ratio = body_pips / max(rng_pips, 0.01)
+    body_ratio_ok = not (WICK_HF_BODY_RATIO_MAX > 0.0 and body_ratio > WICK_HF_BODY_RATIO_MAX)
+    body_ok = body_pips <= WICK_HF_BODY_MAX_PIPS
     adx_too_high = bool(WICK_HF_ADX_MAX > 0.0 and adx > WICK_HF_ADX_MAX)
     adx_override_ok = False
     bbw_ok = not (WICK_HF_BBW_MAX > 0.0 and bbw > WICK_HF_BBW_MAX)
@@ -1289,10 +1292,12 @@ def _wick_hf_diag_metrics(fac_m1: Dict[str, object], range_ctx) -> Dict[str, obj
         block = "spread"
     elif not rng_ok:
         block = "rng"
-    elif not body_ok:
-        block = "body"
     elif not ratio_ok:
         block = "ratio"
+    elif not body_ratio_ok:
+        block = "body_ratio"
+    elif not body_ok:
+        block = "body"
     elif not momentum_ok:
         block = "momentum"
     elif not adx_ok:
@@ -1318,12 +1323,14 @@ def _wick_hf_diag_metrics(fac_m1: Dict[str, object], range_ctx) -> Dict[str, obj
         "p25_pips": round(p25_pips, 3),
         "rng_pips": round(rng_pips, 2),
         "body_pips": round(body_pips, 2),
+        "body_ratio": round(body_ratio, 3),
         "wick_ratio": round(wick_ratio, 3),
         "upper_wick_pips": round(upper_wick_pips, 2),
         "lower_wick_pips": round(lower_wick_pips, 2),
         "side": side,
         "rng_ok": bool(rng_ok),
         "body_ok": bool(body_ok),
+        "body_ratio_ok": bool(body_ratio_ok),
         "ratio_ok": bool(ratio_ok),
         "adx": round(adx, 2),
         "bbw": round(bbw, 6),
@@ -2092,13 +2099,16 @@ def _signal_wick_reversal_hf(
     if rng < WICK_HF_RANGE_MIN_PIPS:
         return None
     body = abs(c - o) / PIP
-    if body > WICK_HF_BODY_MAX_PIPS:
-        return None
 
     upper_wick = (h - max(o, c)) / PIP
     lower_wick = (min(o, c) - l) / PIP
     wick_ratio = max(upper_wick, lower_wick) / max(rng, 0.01)
     if wick_ratio < WICK_HF_RATIO_MIN:
+        return None
+    body_ratio = body / max(rng, 0.01)
+    if WICK_HF_BODY_RATIO_MAX > 0.0 and body_ratio > WICK_HF_BODY_RATIO_MAX:
+        return None
+    if body > WICK_HF_BODY_MAX_PIPS:
         return None
 
     adx = _adx(fac_m1)
@@ -3525,7 +3535,7 @@ async def scalp_precision_worker() -> None:
                         last_diag_log = now_mono
                         m = _wick_hf_diag_metrics(fac_m1, range_ctx)
                         LOG.info(
-                            "%s wick_hf diag signals=0 block=%s spread_ok=%s spread=%.2fp p25=%.2fp range_ok=%s range_score=%.3f rng=%.2fp body=%.2fp ratio=%.3f side=%s bb_ok=%s bb_touch=%.2fp tick_n=%d tick_ok=%s tick_dir=%s tick_strength=%.2f proj=%s adx=%.1f bbw=%.6f atr=%.2f macd_hist=%.3fp slope10=%.3fp",
+                            "%s wick_hf diag signals=0 block=%s spread_ok=%s spread=%.2fp p25=%.2fp range_ok=%s range_score=%.3f rng=%.2fp body=%.2fp body_r=%.2f ratio=%.3f side=%s bb_ok=%s bb_touch=%.2fp tick_n=%d tick_ok=%s tick_dir=%s tick_strength=%.2f proj=%s adx=%.1f bbw=%.6f atr=%.2f macd_hist=%.3fp slope10=%.3fp",
                             config.LOG_PREFIX,
                             str(m.get("block") or ""),
                             bool(m.get("spread_ok")),
@@ -3535,6 +3545,7 @@ async def scalp_precision_worker() -> None:
                             float(m.get("range_score") or 0.0),
                             float(m.get("rng_pips") or 0.0),
                             float(m.get("body_pips") or 0.0),
+                            float(m.get("body_ratio") or 0.0),
                             float(m.get("wick_ratio") or 0.0),
                             str(m.get("side") or ""),
                             bool(m.get("bb_ok")),

@@ -24,7 +24,8 @@ Environment=SCALP_PRECISION_ENTRY_MIN_FREE_MARGIN_RATIO=0.08
 # HF tuning (looser than WickReversalPro; tick confirmed).
 Environment=WICK_HF_RANGE_SCORE_MIN=0.45
 Environment=WICK_HF_RANGE_MIN_PIPS=0.85
-Environment=WICK_HF_BODY_MAX_PIPS=2.00
+Environment=WICK_HF_BODY_MAX_PIPS=6.00
+Environment=WICK_HF_BODY_RATIO_MAX=0.55
 Environment=WICK_HF_RATIO_MIN=0.40
 Environment=WICK_HF_ADX_MAX=35.0
 # In higher-ADX regimes, only allow entries when wick rejection + tick reversal are exceptionally strong.
