@@ -1319,19 +1319,16 @@ def _signal_tick_wick_reversal(
     side = "short" if upper_wick > lower_wick else "long"
 
     if TICK_WICK_REQUIRE_BB_TOUCH:
-        price = _latest_price(fac_m1)
-        if price <= 0:
-            return None
         levels = bb_levels(fac_m1)
         if not levels:
             return None
         upper, _, lower, _, span_pips = levels
         band = max(TICK_WICK_BB_TOUCH_PIPS, span_pips * 0.18)
-        dist_lower = (price - lower) / PIP
-        dist_upper = (upper - price) / PIP
-        if side == "long" and dist_lower > band:
+        # Use tick-window extremes (h/l) rather than the latest price. Wick patterns
+        # are defined by the probe + rejection, so the extreme should be near the band.
+        if side == "long" and l > lower + band * PIP:
             return None
-        if side == "short" and dist_upper > band:
+        if side == "short" and h < upper - band * PIP:
             return None
 
     rev_ok, rev_dir, rev_strength = tick_reversal(mids, min_ticks=max(6, int(TICK_WICK_MIN_TICKS * 0.35)))
