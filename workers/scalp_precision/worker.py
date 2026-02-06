@@ -56,6 +56,7 @@ _MODE_TAG_MAP = {
     'tick_imbalance': 'TickImbalance',
     'level_reject': 'LevelReject',
     'wick_reversal': 'WickReversal',
+    'wick_reversal_pro': 'WickReversalPro',
     'session_edge': 'SessionEdge',
     'drought_revert': 'DroughtRevert',
     'precision_lowvol': 'PrecisionLowVol',
@@ -269,6 +270,26 @@ WICK_BODY_MAX_PIPS = _env_float("WICK_REV_BODY_MAX_PIPS", 0.9)
 WICK_RATIO_MIN = _env_float("WICK_REV_RATIO_MIN", 0.55)
 WICK_ADX_MAX = _env_float("WICK_REV_ADX_MAX", 24.0)
 WICK_BBW_MAX = _env_float("WICK_REV_BBW_MAX", 0.28)
+
+# Higher-precision variant (intended to reduce false positives; fewer trades)
+WICK_PRO_RANGE_SCORE_MIN = _env_float("WICK_PRO_RANGE_SCORE_MIN", 0.48)
+WICK_PRO_RANGE_MIN_PIPS = _env_float("WICK_PRO_RANGE_MIN_PIPS", WICK_RANGE_MIN_PIPS)
+WICK_PRO_BODY_MAX_PIPS = _env_float("WICK_PRO_BODY_MAX_PIPS", WICK_BODY_MAX_PIPS)
+WICK_PRO_RATIO_MIN = _env_float("WICK_PRO_RATIO_MIN", 0.60)
+WICK_PRO_ADX_MAX = _env_float("WICK_PRO_ADX_MAX", 22.0)
+WICK_PRO_BBW_MAX = _env_float("WICK_PRO_BBW_MAX", 0.0011)
+WICK_PRO_ATR_MIN = _env_float("WICK_PRO_ATR_MIN", 0.7)
+WICK_PRO_ATR_MAX = _env_float("WICK_PRO_ATR_MAX", 6.0)
+WICK_PRO_SPREAD_P25 = _env_float("WICK_PRO_SPREAD_P25", 1.0)
+WICK_PRO_REQUIRE_TICK_REV = _env_bool("WICK_PRO_REQUIRE_TICK_REV", True)
+WICK_PRO_TICK_WINDOW_SEC = _env_float("WICK_PRO_TICK_WINDOW_SEC", 6.0)
+WICK_PRO_TICK_MIN_TICKS = _env_int("WICK_PRO_TICK_MIN_TICKS", 6)
+WICK_PRO_TICK_MIN_STRENGTH = _env_float("WICK_PRO_TICK_MIN_STRENGTH", 0.25)
+WICK_PRO_REQUIRE_BB_TOUCH = _env_bool("WICK_PRO_REQUIRE_BB_TOUCH", True)
+WICK_PRO_BB_TOUCH_PIPS = _env_float("WICK_PRO_BB_TOUCH_PIPS", 0.9)
+WICK_PRO_MIN_AIR_SCORE = _env_float("WICK_PRO_MIN_AIR_SCORE", 0.74)
+WICK_PRO_MIN_EXEC_QUALITY = _env_float("WICK_PRO_MIN_EXEC_QUALITY", 0.98)
+WICK_PRO_MAX_REGIME_SHIFT = _env_float("WICK_PRO_MAX_REGIME_SHIFT", 0.04)
 
 LSR_LOOKBACK = _env_int("LSR_LOOKBACK", 20)
 LSR_SWEEP_PIPS = _env_float("LSR_SWEEP_PIPS", 0.45)
@@ -1106,6 +1127,119 @@ def _signal_wick_reversal(
         "reason": "wick_reversal",
     }
 
+def _signal_wick_reversal_pro(
+    fac_m1: Dict[str, object],
+    range_ctx=None,
+    *,
+    tag: str,
+) -> Optional[Dict[str, object]]:
+    # Intentionally strict gates to improve precision and reduce "timeout/market-close" losers.
+    if range_ctx is not None:
+        try:
+            range_active = bool(getattr(range_ctx, "active", False))
+            range_score = float(getattr(range_ctx, "score", 0.0) or 0.0)
+        except Exception:
+            range_active = False
+            range_score = 0.0
+        if not range_active:
+            return None
+        if WICK_PRO_RANGE_SCORE_MIN > 0.0 and range_score < WICK_PRO_RANGE_SCORE_MIN:
+            return None
+
+    ok_spread, _ = spread_ok(max_pips=config.MAX_SPREAD_PIPS, p25_max=WICK_PRO_SPREAD_P25)
+    if not ok_spread:
+        return None
+
+    candles = get_candles_snapshot("M1", limit=2)
+    if not candles:
+        return None
+    last = candles[-1]
+    try:
+        o = float(last.get("open") or last.get("o") or 0.0)
+        h = float(last.get("high") or last.get("h") or 0.0)
+        l = float(last.get("low") or last.get("l") or 0.0)
+        c = float(last.get("close") or last.get("c") or 0.0)
+    except Exception:
+        return None
+    if h <= 0 or l <= 0:
+        return None
+
+    rng = (h - l) / PIP
+    if rng < WICK_PRO_RANGE_MIN_PIPS:
+        return None
+    body = abs(c - o) / PIP
+    if body > WICK_PRO_BODY_MAX_PIPS:
+        return None
+    upper_wick = (h - max(o, c)) / PIP
+    lower_wick = (min(o, c) - l) / PIP
+    wick_ratio = max(upper_wick, lower_wick) / max(rng, 0.01)
+    if wick_ratio < WICK_PRO_RATIO_MIN:
+        return None
+
+    adx = _adx(fac_m1)
+    bbw = _bbw(fac_m1)
+    if WICK_PRO_ADX_MAX > 0.0 and adx > WICK_PRO_ADX_MAX:
+        return None
+    if WICK_PRO_BBW_MAX > 0.0 and bbw > WICK_PRO_BBW_MAX:
+        return None
+
+    atr = _atr_pips(fac_m1)
+    if (WICK_PRO_ATR_MIN > 0.0 and atr < WICK_PRO_ATR_MIN) or (WICK_PRO_ATR_MAX > 0.0 and atr > WICK_PRO_ATR_MAX):
+        return None
+
+    side = "short" if upper_wick > lower_wick else "long"
+
+    if WICK_PRO_REQUIRE_BB_TOUCH:
+        levels = bb_levels(fac_m1)
+        if not levels:
+            return None
+        upper, _, lower, _, span_pips = levels
+        touch_pips = max(WICK_PRO_BB_TOUCH_PIPS, span_pips * 0.18)
+        if side == "short":
+            # Require the rejection candle to probe the upper band.
+            if h < upper - touch_pips * PIP:
+                return None
+        else:
+            if l > lower + touch_pips * PIP:
+                return None
+
+    if WICK_PRO_REQUIRE_TICK_REV:
+        mids, _ = tick_snapshot(WICK_PRO_TICK_WINDOW_SEC, limit=90)
+        rev_ok, rev_dir, rev_strength = tick_reversal(mids, min_ticks=WICK_PRO_TICK_MIN_TICKS) if mids else (False, None, 0.0)
+        if not rev_ok or rev_dir != side:
+            return None
+        try:
+            strength = float(rev_strength or 0.0)
+        except Exception:
+            strength = 0.0
+        if WICK_PRO_TICK_MIN_STRENGTH > 0.0 and strength < WICK_PRO_TICK_MIN_STRENGTH:
+            return None
+    else:
+        strength = 0.0
+
+    sl = max(1.1, min(1.9, atr * 0.8))
+    tp = max(1.4, min(2.3, atr * 1.0))
+    conf = 62 + int(min(12.0, wick_ratio * 22.0))
+    if strength > 0.0:
+        conf += int(min(8.0, strength * 8.0))
+
+    return {
+        "action": "OPEN_LONG" if side == "long" else "OPEN_SHORT",
+        "sl_pips": round(sl, 2),
+        "tp_pips": round(tp, 2),
+        "confidence": int(max(45, min(92, conf))),
+        "tag": tag,
+        "reason": "wick_reversal_pro",
+        "wick": {
+            "rng_pips": round(rng, 2),
+            "body_pips": round(body, 2),
+            "upper_wick_pips": round(upper_wick, 2),
+            "lower_wick_pips": round(lower_wick, 2),
+            "ratio": round(wick_ratio, 3),
+            "tick_strength": round(strength, 3),
+        },
+    }
+
 
 def _signal_vwap_revert(
     fac_m1: Dict[str, object],
@@ -1812,6 +1946,8 @@ async def scalp_precision_worker() -> None:
                 strategies.append(("LiquiditySweep", _signal_liquidity_sweep, {"tag": "LiquiditySweep"}))
             if enabled("wick_reversal"):
                 strategies.append(("WickReversal", _signal_wick_reversal, {"tag": "WickReversal"}))
+            if enabled("wick_reversal_pro"):
+                strategies.append(("WickReversalPro", _signal_wick_reversal_pro, {"tag": "WickReversalPro"}))
             if enabled("session_edge"):
                 strategies.append(("SessionEdge", _signal_session_edge, {"tag": "SessionEdge"}))
 
@@ -1829,6 +1965,7 @@ async def scalp_precision_worker() -> None:
                     _signal_stoch_bounce,
                     _signal_divergence_revert,
                     _signal_tick_imbalance,
+                    _signal_wick_reversal_pro,
                 ):
                     signal = fn(fac_m1, range_ctx, **kwargs)
                 else:
@@ -1839,8 +1976,28 @@ async def scalp_precision_worker() -> None:
                         conf = int(signal.get("confidence", 0) or 0)
                         if config.MIN_ENTRY_CONF > 0 and conf < config.MIN_ENTRY_CONF:
                             continue
+                        tag = str(signal.get("tag") or "").strip()
+                        if tag.lower() == "wickreversalpro" and air.enabled:
+                            # Require good "air" for the pro variant; this avoids low-quality fills and regime shifts.
+                            try:
+                                air_score = float(signal.get("air_score", 0.0) or 0.0)
+                            except Exception:
+                                air_score = 0.0
+                            try:
+                                exec_q = float(signal.get("air_exec_quality", 0.0) or 0.0)
+                            except Exception:
+                                exec_q = 0.0
+                            try:
+                                reg_shift = float(signal.get("air_regime_shift", 0.0) or 0.0)
+                            except Exception:
+                                reg_shift = 0.0
+                            if WICK_PRO_MIN_AIR_SCORE > 0.0 and air_score < WICK_PRO_MIN_AIR_SCORE:
+                                continue
+                            if WICK_PRO_MIN_EXEC_QUALITY > 0.0 and exec_q < WICK_PRO_MIN_EXEC_QUALITY:
+                                continue
+                            if WICK_PRO_MAX_REGIME_SHIFT > 0.0 and reg_shift > WICK_PRO_MAX_REGIME_SHIFT:
+                                continue
                         if not bypass_common_guard:
-                            tag = str(signal.get("tag") or "").strip()
                             if tag:
                                 pocket_decision = perf_guard.is_pocket_allowed(config.POCKET)
                                 if not pocket_decision.allowed:

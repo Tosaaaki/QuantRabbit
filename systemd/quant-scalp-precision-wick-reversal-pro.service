@@ -1,0 +1,35 @@
+[Unit]
+Description=QuantRabbit Scalp Precision Wick Reversal Pro Worker
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/tossaki/QuantRabbit
+EnvironmentFile=/etc/quantrabbit.env
+Environment=PYTHONUNBUFFERED=1
+Environment=SCALP_PRECISION_ENABLED=1
+Environment=SCALP_PRECISION_MODE=wick_reversal_pro
+Environment=SCALP_PRECISION_MAX_OPEN_TRADES=1
+Environment=SCALP_PRECISION_LOG_PREFIX=[ScalpPrecision:WickRevPro]
+
+# Pro tuning (stricter than WickReversal; expect fewer trades but higher precision).
+Environment=WICK_PRO_RANGE_SCORE_MIN=0.48
+Environment=WICK_PRO_ADX_MAX=20.0
+Environment=WICK_PRO_BBW_MAX=0.0010
+Environment=WICK_PRO_SPREAD_P25=1.0
+Environment=WICK_PRO_REQUIRE_TICK_REV=1
+Environment=WICK_PRO_TICK_MIN_STRENGTH=0.25
+Environment=WICK_PRO_REQUIRE_BB_TOUCH=1
+Environment=WICK_PRO_BB_TOUCH_PIPS=0.9
+Environment=WICK_PRO_MIN_AIR_SCORE=0.74
+Environment=WICK_PRO_MIN_EXEC_QUALITY=0.98
+Environment=WICK_PRO_MAX_REGIME_SHIFT=0.04
+
+ExecStart=/home/tossaki/QuantRabbit/.venv/bin/python -m workers.scalp_precision.worker
+Restart=always
+RestartSec=5
+User=tossaki
+
+[Install]
+WantedBy=multi-user.target
+
