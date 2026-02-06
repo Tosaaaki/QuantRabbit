@@ -249,6 +249,9 @@ def _signal_map():
         "LevelReject": lambda fac_m1, fac_m5, fac_h1, range_ctx, now: sp_worker._signal_level_reject(  # type: ignore[attr-defined]
             fac_m1, tag="LevelReject"
         ),
+        "LiquiditySweep": lambda fac_m1, fac_m5, fac_h1, range_ctx, now: sp_worker._signal_liquidity_sweep(  # type: ignore[attr-defined]
+            fac_m1, range_ctx, tag="LiquiditySweep"
+        ),
         "WickReversal": lambda fac_m1, fac_m5, fac_h1, range_ctx, now: sp_worker._signal_wick_reversal(  # type: ignore[attr-defined]
             fac_m1, tag="WickReversal"
         ),
@@ -282,6 +285,7 @@ _TAG_TO_MODE = {
     "TickImbalance": "tick_imbalance",
     "TickImbalanceRRPlus": "tick_imbalance_rrplus",
     "LevelReject": "level_reject",
+    "LiquiditySweep": "liquidity_sweep",
     "WickReversal": "wick_reversal",
     "TickWickReversal": "tick_wick_reversal",
     "SessionEdge": "session_edge",
