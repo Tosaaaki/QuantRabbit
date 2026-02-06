@@ -1,0 +1,21 @@
+[Unit]
+Description=QuantRabbit FastScalp Exit Worker (Practice)
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/tossaki/QuantRabbit_practice
+EnvironmentFile=/etc/quantrabbit_practice.env
+Environment="PYTHONUNBUFFERED=1"
+Environment="DISABLE_GCP_SECRET_MANAGER=true"
+Environment=FAST_SCALP_POCKET=scalp
+ExecStartPre=/bin/bash -lc '[[ -d /home/tossaki/QuantRabbit_practice ]]'
+ExecStartPre=/bin/bash -lc '[[ "${OANDA_PRACTICE:-}" == "true" ]]'
+ExecStartPre=/bin/bash -lc '[[ -n "${OANDA_TOKEN:-}" && -n "${OANDA_ACCOUNT:-}" ]]'
+ExecStart=/home/tossaki/QuantRabbit/.venv/bin/python -m workers.fast_scalp.exit_worker
+Restart=always
+RestartSec=5
+User=tossaki
+
+[Install]
+WantedBy=multi-user.target
