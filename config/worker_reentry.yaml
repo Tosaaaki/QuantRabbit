@@ -51,6 +51,8 @@ strategies:
     return_wait_bias: avoid
     return_wait_reason: be_post_60_or_hold_skew
     block_jst_hours: []
+  LevelReject:
+    same_dir_mode: both
   fast_scalp:
     cooldown_win_sec: 177
     cooldown_loss_sec: 174
