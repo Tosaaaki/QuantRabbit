@@ -312,6 +312,9 @@ TICK_WICK_MIN_AIR_SCORE = _env_float("TICK_WICK_MIN_AIR_SCORE", 0.72)
 TICK_WICK_MIN_EXEC_QUALITY = _env_float("TICK_WICK_MIN_EXEC_QUALITY", 0.97)
 TICK_WICK_MAX_REGIME_SHIFT = _env_float("TICK_WICK_MAX_REGIME_SHIFT", 0.06)
 
+TICK_WICK_DIAG = _env_bool("TICK_WICK_DIAG", False)
+TICK_WICK_DIAG_INTERVAL_SEC = _env_float("TICK_WICK_DIAG_INTERVAL_SEC", 15.0)
+
 LSR_LOOKBACK = _env_int("LSR_LOOKBACK", 20)
 LSR_SWEEP_PIPS = _env_float("LSR_SWEEP_PIPS", 0.45)
 LSR_RECLAIM_PIPS = _env_float("LSR_RECLAIM_PIPS", 0.1)
@@ -1920,6 +1923,7 @@ async def scalp_precision_worker() -> None:
     last_perf_sync = 0.0
     last_stage_sync = 0.0
     last_guard_log = 0.0
+    last_diag_log = 0.0
     bypass_common_guard = config.MODE in config.GUARD_BYPASS_MODES
 
     try:
@@ -2193,7 +2197,36 @@ async def scalp_precision_worker() -> None:
                         signals.append(signal)
 
             if not signals:
+                if TICK_WICK_DIAG and config.MODE == "tick_wick_reversal":
+                    if now_mono - last_diag_log >= max(1.0, TICK_WICK_DIAG_INTERVAL_SEC):
+                        last_diag_log = now_mono
+                        LOG.info(
+                            "%s tick_wick diag signals=0 air_score=%.3f allow_entry=%s range_active=%s range_score=%.3f adx=%.1f bbw=%.3f",
+                            config.LOG_PREFIX,
+                            float(getattr(air, "air_score", 0.0) or 0.0),
+                            bool(getattr(air, "allow_entry", True)),
+                            bool(getattr(range_ctx, "active", False)),
+                            float(getattr(range_ctx, "score", 0.0) or 0.0),
+                            _adx(fac_m1),
+                            _bbw(fac_m1),
+                        )
                 continue
+
+            if TICK_WICK_DIAG and config.MODE == "tick_wick_reversal":
+                if now_mono - last_diag_log >= max(1.0, TICK_WICK_DIAG_INTERVAL_SEC):
+                    last_diag_log = now_mono
+                    top = signals[0]
+                    LOG.info(
+                        "%s tick_wick diag signals=%d top_conf=%s top_action=%s air_score=%.3f allow_entry=%s range_active=%s range_score=%.3f",
+                        config.LOG_PREFIX,
+                        len(signals),
+                        top.get("confidence"),
+                        top.get("action"),
+                        float(getattr(air, "air_score", 0.0) or 0.0),
+                        bool(getattr(air, "allow_entry", True)),
+                        bool(getattr(range_ctx, "active", False)),
+                        float(getattr(range_ctx, "score", 0.0) or 0.0),
+                    )
 
             # rank by confidence
             signals.sort(key=lambda s: int(s.get("confidence", 0)), reverse=True)

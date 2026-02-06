@@ -27,6 +27,8 @@ Environment=TICK_WICK_REQUIRE_BB_TOUCH=0
 Environment=TICK_WICK_BB_TOUCH_PIPS=2.0
 Environment=TICK_WICK_REQUIRE_TICK_REV=0
 Environment=TICK_WICK_MIN_AIR_SCORE=0.62
+Environment=TICK_WICK_DIAG=1
+Environment=TICK_WICK_DIAG_INTERVAL_SEC=15
 
 # Attach entry SL/TP at the broker for this worker to cap tail losses.
 Environment=ORDER_ENABLE_STOP_LOSS_SCALP=1
