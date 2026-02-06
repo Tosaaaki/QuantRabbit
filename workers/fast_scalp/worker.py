@@ -920,9 +920,9 @@ async def fast_scalp_worker(shared_state: Optional[FastScalpState] = None) -> No
                                 features=features,
                                 spread_pips=spread_pips,
                                 tick_rate=tick_rate,
-                                latency_ms=float(age_ms)
-                                if isinstance(age_ms, (int, float))
-                                else None,
+                                latency_ms=float(last_tick_age_ms)
+                                if isinstance(last_tick_age_ms, (int, float))
+                                else (float(age_ms) if isinstance(age_ms, (int, float)) else None),
                             )
                     removed_ids = set(active_trades.keys()) - set(updated.keys())
                     for removed_id in removed_ids:
