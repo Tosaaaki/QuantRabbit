@@ -1003,6 +1003,8 @@ class PositionManager:
             logging.warning(
                 "[PositionManager] schema lock busy; skipping schema check to avoid startup timeout"
             )
+        # Must be ready before any backfill that calls OANDA endpoints.
+        self._http = _build_http_session()
         try:
             self._maybe_backfill_attribution()
         except Exception as exc:
@@ -1014,7 +1016,6 @@ class PositionManager:
         self._last_tx_id = self._get_last_transaction_id_with_retry()
         self._pocket_cache: dict[str, str] = {}
         self._client_cache: dict[str, str] = {}
-        self._http = _build_http_session()
         self._last_positions: dict[str, dict] = {}
         self._last_positions_ts: float = 0.0
         self._open_trade_failures: int = 0
