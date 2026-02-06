@@ -23,7 +23,11 @@ from utils.secrets import get_secret
 # env.toml から OANDA 設定を取得
 TOKEN = get_secret("oanda_token")
 ACCOUNT = get_secret("oanda_account_id")
-PRACT = False  # env.tomlから取得しないため、ここでは固定値とする
+# Secret Manager または env.toml の `oanda_practice` を参照（未設定なら本番）
+try:
+    PRACT = str(get_secret("oanda_practice")).strip().lower() in {"1", "true", "yes"}
+except KeyError:
+    PRACT = False
 REST_HOST = (
     "https://api-fxpractice.oanda.com" if PRACT else "https://api-fxtrade.oanda.com"
 )
