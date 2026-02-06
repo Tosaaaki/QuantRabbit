@@ -425,10 +425,28 @@ def _format_dt(dt: Optional[datetime]) -> Optional[str]:
 
 
 def _ts_ms_to_dt(ts_ms: Any) -> Optional[datetime]:
-    try:
-        if ts_ms is None:
+    if ts_ms is None:
+        return None
+    # Primary: ms since epoch (int/float or digit strings).
+    if isinstance(ts_ms, (int, float)):
+        try:
+            return datetime.fromtimestamp(float(ts_ms) / 1000.0, tz=timezone.utc)
+        except Exception:  # pragma: no cover - defensive
             return None
-        return datetime.fromtimestamp(int(ts_ms) / 1000.0, tz=timezone.utc)
+    text = str(ts_ms).strip()
+    if not text:
+        return None
+    if text.isdigit():
+        try:
+            return datetime.fromtimestamp(int(text) / 1000.0, tz=timezone.utc)
+        except Exception:  # pragma: no cover - defensive
+            return None
+    # Fallback: ISO-like timestamp strings.
+    dt = _parse_dt(text)
+    if dt:
+        return dt
+    try:
+        return datetime.fromtimestamp(int(text) / 1000.0, tz=timezone.utc)
     except Exception:  # pragma: no cover - defensive
         return None
 
