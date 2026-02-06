@@ -38,6 +38,8 @@ ui-dashboard-sa.json
 # Local caches / artifacts
 .cache/
 .gcloud/
+.gcloud_config/
+.worktrees/
 local/
 remote_logs_vm/
 remote_logs/
@@ -53,6 +55,9 @@ config/env.local.toml
 # Ad-hoc local artifacts
 pipeline.log
 tick_sample.json
+candles_*.json
+candles_*.jsonl
+remote_trades_*.jsonl
 
 # Accidental local files (avoid committing secrets or placeholders)
 $HOME/

@@ -1,0 +1,106 @@
+# Architecture Overview
+
+## 1. システム概要とフロー
+- データ → 判定 → 発注: Tick 取得 → Candle 確定 → Factors 算出 → Regime/Focus → Local Decider → Strategy Plugins → Risk Guard → Order Manager（Brainゲート任意） → ログ。
+
+## 2. コンポーネントと I/O
+
+| レイヤ | 担当 | 主な入出力 |
+|--------|------|------------|
+| DataFetcher | `market_data/*` | Tick JSON, Candle dict |
+| IndicatorEngine | `indicators/*` | Candle deque → Factors dict {ma10, rsi, …} |
+| Regime & Focus | `analysis/regime_classifier.py` / `analysis/focus_decider.py` | Factors → macro/micro レジーム・`weight_macro` |
+| Local Decider | `analysis/local_decider.py` | focus + perf → ローカル判定 |
+| Strategy Plugin | `strategies/*` | Factors → `StrategyDecision` または None |
+| Brain Gate (optional) | `workers/common/brain.py` | order preflight → allow/reduce/block |
+| Exit (専用ワーカー) | `workers/*/exit_worker.py` | pocket 別 open positions → exit 指示（PnL>0 決済が原則） |
+| Signal Gate | `utils/signal_bus.py` / `main.py` | ワーカー enqueue → confidence 順に選抜・ロット配分 → OrderIntent |
+| Risk Guard | `execution/risk_guard.py` | lot/SL/TP/pocket → 可否・調整値 |
+| Order Manager | `execution/order_manager.py` | units/sl/tp/client_order_id/tag → OANDA ticket |
+| Logger | `logs/*.db` | 全コンポーネントが INSERT |
+
+## 3. ライフサイクル
+- Startup: `env.toml` 読込 → Secrets 確認 → WebSocket 接続。
+- 60s タクト（main 有効時のみ）: 新ローソク → Factors 更新 → Regime/Focus → Local decision → Strategy loop（confidence スケーリング + ステージ判定）→ exit_worker → risk_guard → order_manager → `trades.db` / `metrics.db` ログ。
+- ワーカーは `SIGNAL_GATE_ENABLED=1` の場合に `signal_bus` へ enqueue し、main の関所が confidence 順に選択・lot配分して発注。
+- タクト要件: 正秒同期（±500ms）、締切 55s 超でサイクル破棄（バックログ禁止）、`monotonic()` で `decision_latency_ms` 計測。
+- Background: `utils/backup_to_gcs.sh` による nightly logs バックアップ + `/etc/cron.hourly/qr-gcs-backup-core` による GCS 退避（自動）。
+
+## 4. データスキーマと単位
+
+### 共通スキーマ（pydantic 互換）
+
+```python
+from pydantic import BaseModel, Field
+from typing import Literal, Optional, List
+
+class Tick(BaseModel):
+    ts_ms: int
+    instrument: Literal["USD_JPY"]
+    bid: float
+    ask: float
+    mid: float
+    volume: int
+
+class Candle(BaseModel):
+    ts_ms: int                # epoch ms (UTC)
+    instrument: Literal["USD_JPY"]
+    timeframe: Literal["M1","M5","H1","H4","D1"]
+    o: float; h: float; l: float; c: float
+    volume: int
+    bid_close: Optional[float] = None
+    ask_close: Optional[float] = None
+
+class Factors(BaseModel):
+    instrument: Literal["USD_JPY"]
+    timeframe: Literal["M1","M5","H4","D1"]
+    adx: float
+    ma10: float
+    ma20: float
+    bbw: float
+    atr_pips: float
+    rsi: float
+    vol_5m: float
+
+class LocalDecision(BaseModel):
+    focus_tag: Literal["micro","macro","hybrid","event"]
+    weight_macro: float = Field(ge=0.0, le=1.0)
+    weight_scalp: float = Field(ge=0.0, le=1.0)  # macro + scalp <= 1.0, remainder = micro
+    ranked_strategies: List[str]
+    reason: Optional[str] = None
+
+class StrategyDecision(BaseModel):
+    pocket: Literal["micro","macro","scalp"]
+    action: Literal["OPEN_LONG","OPEN_SHORT","CLOSE","HOLD"]
+    sl_pips: float = Field(gt=0)
+    tp_pips: float = Field(gt=0)
+    confidence: int = Field(ge=0, le=100)
+    tag: str
+
+class OrderIntent(BaseModel):
+    instrument: Literal["USD_JPY"]
+    units: int                      # +buy / -sell
+    entry_price: float
+    sl_price: float
+    tp_price: float
+    pocket: Literal["micro","macro","scalp"]
+    client_order_id: str
+```
+
+### 単位と用語
+
+| 用語 | 定義 |
+|------|------|
+| `pip` | USD/JPY の 1 pip = 0.01。入力/出力は pip 単位を明記。 |
+| `point` | 0.001。OANDA REST 価格の丸め単位。 |
+| `lot` | 1 lot = 100,000 units。`units = round(lot * 100000)`。 |
+| `pocket` | `micro` = 短期テクニカル、`macro` = レジーム、`scalp` = スカルプ。口座資金を `pocket_ratio` で按分。 |
+| `weight_macro` | 0.0〜1.0。`pocket_macro = pocket_total * weight_macro`（運用では macro 上限 30%）。 |
+
+### 価格計算
+- `price_from_pips("BUY", entry, sl_pips) = round(entry - sl_pips * 0.01, 3)`
+- `price_from_pips("SELL", entry, sl_pips) = round(entry + sl_pips * 0.01, 3)`
+
+### client_order_id
+- `client_order_id = f"qr-{ts_ms}-{focus_tag}-{tag}"`（9桁以内のハッシュで重複防止）。
+- Exit も同形式で 90 日ユニーク。

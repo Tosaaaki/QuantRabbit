@@ -11,6 +11,7 @@ from typing import Dict, Optional
 
 from analysis.range_guard import detect_range_mode
 from workers.common.exit_utils import close_trade, mark_pnl_pips
+from workers.common.pro_stop import maybe_close_pro_stop
 from workers.common.reentry_decider import decide_reentry
 from execution.position_manager import PositionManager
 from indicators.factor_cache import all_factors
@@ -603,6 +604,11 @@ class LondonMomentumExitWorker:
 
                 now = _utc_now()
                 for tr in trades:
+                    trade_id = str(tr.get("trade_id"))
+                    if await maybe_close_pro_stop(tr, now=now):
+                        if trade_id:
+                            self._states.pop(trade_id, None)
+                        continue
                     try:
                         reason = self._evaluate(tr, ctx, now)
                     except Exception:
@@ -768,5 +774,4 @@ if __name__ == "__main__":  # pragma: no cover
         force=True,
     )
     asyncio.run(london_momentum_exit_worker())
-
 

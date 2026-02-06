@@ -17,10 +17,10 @@ QuantRabbit は USD/JPY で 24/7 自律運用する無裁量トレーディン�
 
 * **テクニカル** : ta‑lib で計算した MA / BB / RSI / ADX …  
 * **ニュース** : 廃止（ニュース連動なし）  
-* **GPT** : レジーム補足 + 戦略順位 + lot 配分を 60 秒ごとに判断  
+* **LLM (Brain gate)** : 任意の preflight でのみ使用可。既定は無効で `analysis/local_decider.py` のローカル判定が主。  
 * **Pocket 方式** : 同じ口座内で _micro_（スキャル）／_macro_（順張り）を tag 管理  
 * **インフラ** : GCE VM（ニュースパイプライン廃止）  
-* **月額コスト** : VM ≈ $19 + GPT ≈ $4.5 ＝ **$ <25**  
+* **月額コスト** : VM が中心。LLM は未使用（有効化時のみ追加）。  
 
 **Runtime defaults（Exit/worker）**
 - `WORKER_ONLY_MODE=true` / `MAIN_TRADING_ENABLED=0` が既定。main は 60s ループのログ/metrics 更新のみを行い、発注/EXIT は各 worker で完結させる。
@@ -117,7 +117,7 @@ Make を使わない場合は `scripts/vm.sh -p <PROJECT> -z <ZONE> -m <INSTANCE
 - Tick/Candle 取得は `market_data/*` が担当し、`indicators/*` でテクニカル要因を集計する
 - レジーム判定とフォーカス決定 (`analysis/regime_classifier.py` / `focus_decider.py`) を経由し、`analysis/local_decider.py` がローカル指標で戦略配分を補正
 - `strategies/*` が pocket 別のエントリー候補を返し、`execution/*` がステージ管理、リスク審査、発注、クローズまでを連結
-- 運用要件、リスクガード、トークン制御、デプロイ戦略などの詳細は `AGENTS.md` に記載
+- 運用要件、リスクガード、トークン制御、デプロイ戦略などの詳細は `AGENTS.md` と `docs/INDEX.md` を参照
 
 ## 市場前提（USD/JPY）
 
@@ -137,7 +137,7 @@ Make を使わない場合は `scripts/vm.sh -p <PROJECT> -z <ZONE> -m <INSTANCE
 ## Logs / DB Access
 - ログ同期: `scripts/vm.sh ... pull-logs -r /home/tossaki/QuantRabbit/logs -o ./remote_logs -t`
 - SQLite 実行: `scripts/vm.sh ... sql -f /home/tossaki/QuantRabbit/logs/trades.db -q "SELECT COUNT(*) FROM trades;" -t`
-- `logs/*.db` のスキーマや運用メモは `AGENTS.md` セクション 2.5 を参照
+- `logs/*.db` のスキーマや運用メモは `docs/OBSERVABILITY.md` を参照
 
 # 3. run (practice account, small lot)
 python main.py
@@ -171,8 +171,7 @@ strategies:
 Trade Loop Overview
 	1.	Tick → Candle(M1) 生成 → factor_cache 更新
 	2.	regime_classifier で Macro/Micro レジーム判定
-	3.	GPT デシジョン（既定は gpt-5-mini、env で切り替え）に指標 + 成績だけを渡し
-	→ focus_tag + weight_macro + 戦略順位 を受け取る（ニュース連動なし）
+	3.	local_decider が指標 + 成績から focus_tag / weight_macro / 戦略順位 を決定（LLM なし）
 	4.	pocket_allocator で lot を micro/macro に分配
 	5.	Strategy プラグイン (MA クロス / Donchian55 / BB+RSI) がシグナルを返す
 	6.	risk_guard が lot/SL/TP をクランプし OANDA REST 発注

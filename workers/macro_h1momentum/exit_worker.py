@@ -16,6 +16,7 @@ from workers.common.reentry_decider import decide_reentry
 from execution.position_manager import PositionManager
 from indicators.factor_cache import all_factors
 from market_data import tick_window
+from workers.common.pro_stop import maybe_close_pro_stop
 
 
 _BB_EXIT_ENABLED = os.getenv("BB_EXIT_ENABLED", "1").strip().lower() not in {"", "0", "false", "no"}
@@ -540,6 +541,8 @@ class H1MomentumExitWorker:
         if not client_id:
             LOG.warning("[EXIT-h1momentum] missing client_id trade=%s skip close", trade_id)
             return
+        if await maybe_close_pro_stop(trade, now=now):
+            return
 
         if hold_sec < min_hold:
             return
@@ -808,5 +811,4 @@ def _exit_candle_reversal(side):
 if __name__ == "__main__":  # pragma: no cover
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s", force=True)
     asyncio.run(macro_h1momentum_exit_worker())
-
 

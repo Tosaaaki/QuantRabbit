@@ -1,0 +1,54 @@
+# Observability & Logs
+
+## 1. データ鮮度
+- `max_data_lag_ms = 3000` 超は `DataFetcher` が `stale=True` を返し Risk Guard が発注拒否。
+- Candle 確定は `tick.ts_ms // 60000` 変化で判定し、終値は最後の mid。
+- `volume=0` は `missing_bar` としてログ。
+
+## 2. ログの真偽と参照ルール
+- 本番ログは VM `/home/tossaki/QuantRabbit/logs/` のみを真とする。
+- ローカル `logs/*.db` は参考扱い。
+- 運用上の指摘・報告・判断は必ず VM（ログ/DB/プロセス）または OANDA API を確認して行う。
+
+## 3. ログ永続化とバックアップ
+- GCS 自動退避: `GCS_BACKUP_BUCKET` を `/etc/quantrabbit.env` に設定し、`/etc/cron.hourly/qr-gcs-backup-core` で毎時アップロード。
+- 保存先: `gs://$GCS_BACKUP_BUCKET/qr-logs/<hostname>/core_*.tar`
+
+### Storage から読むとき（VM 上）
+- 一覧: `sudo -u tossaki -H /usr/local/bin/qr-gcs-fetch-core list`
+- 最新を展開: `sudo -u tossaki -H /usr/local/bin/qr-gcs-fetch-core latest /tmp/qr_gcs_restore`
+- 指定取得: `sudo -u tossaki -H /usr/local/bin/qr-gcs-fetch-core get gs://<bucket>/qr-logs/<host>/core_YYYYmmddTHHMMSSZ.tar /tmp/qr_gcs_restore`
+- 参照時の補助: `QR_BACKUP_HOST=<hostname>` を指定すると別ホストの退避も読める。
+
+## 4. 例: 日次集計 / 直近オーダー
+
+### 日次集計
+```bash
+scripts/vm.sh -p quantrabbit -z asia-northeast1-a -m fx-trader-vm sql \
+  -f /home/tossaki/QuantRabbit/logs/trades.db \
+  -q "SELECT DATE(close_time), COUNT(*), ROUND(SUM(pl_pips),2) FROM trades WHERE DATE(close_time)=DATE('now') GROUP BY 1;" -t
+```
+
+### 直近オーダー
+```bash
+gcloud compute ssh fx-trader-vm --project=quantrabbit --zone=asia-northeast1-a --tunnel-through-iap \
+  --ssh-key-file ~/.ssh/gcp_oslogin_quantrabbit \
+  --command "sqlite3 /home/tossaki/QuantRabbit/logs/orders.db 'select ts,pocket,side,units,client_order_id,status from orders order by ts desc limit 5;'"
+```
+
+## 5. 検証パイプライン
+- `logs/replay/*.jsonl` で Record。
+- Strategy Plugin は Backtest で再現性確認。
+- Shadow では本番 tick + 仮想アカウントで `OrderIntent` と `risk_guard` 拒否理由を比較。
+- 標準リプレイ手順は `docs/REPLAY_STANDARD.md` を参照。
+
+## 6. 観測指標と SLO
+- 観測指標: `decision_latency_ms`, `data_lag_ms`, `order_success_rate`, `reject_rate`, `pnl_day_pips`, `drawdown_pct`。
+- SLO: `decision_latency_ms p95 < 2000`, `order_success_rate ≥ 0.995`, `data_lag_ms p95 < 1500`, `drawdown_pct max < 0.18`。
+- Alert: SLO 違反、`healthbeat` 欠損 5min 超、`order reject` 連続 3 件。
+
+## 7. マージン余力判定の落とし穴（2025-12-29 対応済み）
+- fast_scalp が shared_state 欠落時に余力0と誤判定し全シグナルをスキップした事象あり。
+- `workers/fast_scalp/worker.py` で `get_account_snapshot()` フォールバックを追加済み。
+- 再発時はログに `refreshed account snapshot equity=... margin_available=...` が出ることを確認。
+- 0 判定が続く場合は OANDA snapshot 取得を先に疑う。

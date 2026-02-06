@@ -15,6 +15,7 @@ from workers.common.reentry_decider import decide_reentry
 from execution.position_manager import PositionManager
 from indicators.factor_cache import all_factors
 from market_data import tick_window
+from workers.common.pro_stop import maybe_close_pro_stop
 
 
 _BB_EXIT_ENABLED = os.getenv("BB_EXIT_ENABLED", "1").strip().lower() not in {"", "0", "false", "no"}
@@ -393,6 +394,8 @@ async def _run_exit_loop(
         if not client_id:
             LOG.warning("[EXIT-%s] missing client_id trade=%s skip close", pocket, trade_id)
             return
+        if await maybe_close_pro_stop(trade, now=now):
+            return
 
         if pnl < 0:
             fac_h1 = all_factors().get("H1") or {}
@@ -635,4 +638,3 @@ if __name__ == "__main__":  # pragma: no cover
         force=True,
     )
     asyncio.run(trend_h1_exit_worker())
-

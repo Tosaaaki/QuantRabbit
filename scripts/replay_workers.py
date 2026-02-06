@@ -12,6 +12,8 @@ Supported workers:
   * fast_scalp
   * pullback_s5
   * vwap_magnet_s5
+  * stop_run_reversal
+  * session_open
   * impulse_break_s5
   * impulse_momentum_s5
   * impulse_retest_s5
@@ -1043,6 +1045,351 @@ def replay_vwap_magnet_s5(ticks: List[Tick]) -> Dict[str, object]:
         "total_pnl_jpy": round(total_pnl * 100, 3),
         "win_rate": round(wins / len(trades), 4) if trades else 0.0,
     }
+    for trade in trades:
+        trade.setdefault("strategy_tag", "vwap_magnet_s5")
+    return {"summary": summary, "trades": trades}
+
+
+# ---------------------------------------------------------------------------
+# Stop-run reversal + Session-open replays (entry-only, high-fidelity gates)
+# ---------------------------------------------------------------------------
+
+
+def _reset_factor_cache_for_replay() -> None:
+    from indicators import factor_cache
+    from pathlib import Path
+
+    try:
+        for tf in factor_cache._CANDLES:  # type: ignore[attr-defined]
+            factor_cache._CANDLES[tf].clear()  # type: ignore[index]
+        factor_cache._FACTORS.clear()  # type: ignore[attr-defined]
+        factor_cache._LAST_REGIME.clear()  # type: ignore[attr-defined]
+        factor_cache._CACHE_PATH = Path("tmp/factor_cache_replay_workers.json")  # type: ignore[attr-defined]
+        factor_cache._LAST_RESTORE_MTIME = float("inf")  # type: ignore[attr-defined]
+    except Exception:
+        pass
+    try:
+        factor_cache._persist_cache = lambda: None  # type: ignore[assignment]
+    except Exception:
+        pass
+
+
+class _BarBuilder:
+    def __init__(self, span_sec: int) -> None:
+        self.span_sec = span_sec
+        self.bucket = None
+        self.open = 0.0
+        self.high = 0.0
+        self.low = 0.0
+        self.close = 0.0
+        self.last_epoch: Optional[float] = None
+
+    def update(self, tick: Tick) -> Optional[Dict[str, float]]:
+        bucket = int(tick.epoch // self.span_sec)
+        if self.bucket is None:
+            self.bucket = bucket
+            self.open = tick.mid
+            self.high = tick.mid
+            self.low = tick.mid
+            self.close = tick.mid
+            self.last_epoch = tick.epoch
+            return None
+        if bucket != self.bucket:
+            bar = {
+                "open": self.open,
+                "high": self.high,
+                "low": self.low,
+                "close": self.close,
+                "timestamp": self.last_epoch or tick.epoch,
+            }
+            self.bucket = bucket
+            self.open = tick.mid
+            self.high = tick.mid
+            self.low = tick.mid
+            self.close = tick.mid
+            self.last_epoch = tick.epoch
+            return bar
+        self.high = max(self.high, tick.mid)
+        self.low = min(self.low, tick.mid)
+        self.close = tick.mid
+        self.last_epoch = tick.epoch
+        return None
+
+
+def _resolve_exit_pips(exit_cfg: Dict[str, object], atr_pips: float, intent: Dict[str, object]) -> Tuple[float, float]:
+    sl_pips = 0.0
+    tp_pips = 0.0
+    for key in ("sl_pips", "stop_pips", "stop_loss_pips"):
+        if key in intent:
+            try:
+                sl_pips = float(intent[key])
+            except (TypeError, ValueError):
+                sl_pips = 0.0
+            if sl_pips > 0:
+                break
+    for key in ("tp_pips", "take_profit_pips"):
+        if key in intent:
+            try:
+                tp_pips = float(intent[key])
+            except (TypeError, ValueError):
+                tp_pips = 0.0
+            if tp_pips > 0:
+                break
+    if sl_pips <= 0.0:
+        try:
+            sl_pips = float(exit_cfg.get("stop_pips") or 0.0)
+        except Exception:
+            sl_pips = 0.0
+    if tp_pips <= 0.0:
+        try:
+            tp_pips = float(exit_cfg.get("tp_pips") or 0.0)
+        except Exception:
+            tp_pips = 0.0
+    if sl_pips <= 0.0:
+        try:
+            stop_atr = float(exit_cfg.get("stop_atr") or 0.0)
+        except Exception:
+            stop_atr = 0.0
+        if stop_atr > 0.0 and atr_pips > 0.0:
+            sl_pips = stop_atr * atr_pips
+    if tp_pips <= 0.0:
+        try:
+            tp_atr = float(exit_cfg.get("tp_atr") or 0.0)
+        except Exception:
+            tp_atr = 0.0
+        if tp_atr > 0.0 and atr_pips > 0.0:
+            tp_pips = tp_atr * atr_pips
+    return float(sl_pips or 0.0), float(tp_pips or 0.0)
+
+
+def replay_stop_run_reversal(ticks: List[Tick]) -> Dict[str, object]:
+    import asyncio
+    from datetime import datetime, timezone
+
+    from indicators import factor_cache
+    from workers.stop_run_reversal import config as sr_cfg
+    from workers.stop_run_reversal.worker import StopRunReversalWorker, _projection_decision
+
+    cfg = dict(sr_cfg.DEFAULT_CONFIG)
+    cfg["universe"] = ["USD_JPY"]
+
+    _reset_factor_cache_for_replay()
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+
+    class _ReplayFeed:
+        def __init__(self) -> None:
+            self._bars: Dict[str, List[Dict[str, float]]] = {"1m": [], "5m": []}
+            self._last_bid: Optional[float] = None
+            self._last_ask: Optional[float] = None
+
+        def update_tick(self, tick: Tick) -> None:
+            self._last_bid = tick.bid
+            self._last_ask = tick.ask
+
+        def add_bar(self, tf: str, bar: Dict[str, float]) -> None:
+            self._bars[tf].append(bar)
+
+        def get_bars(self, symbol: str, tf: str, n: int) -> Any:
+            key = str(tf).lower()
+            key = "1m" if key in {"m1", "1m"} else "5m" if key in {"m5", "5m"} else key
+            return self._bars.get(key, [])[-n:]
+
+        def last(self, symbol: str) -> float:
+            bars = self._bars.get("5m") or []
+            return float(bars[-1]["close"]) if bars else 0.0
+
+        def best_bid_ask(self, symbol: str) -> Optional[Tuple[float, float]]:
+            if self._last_bid is None or self._last_ask is None:
+                return None
+            return float(self._last_bid), float(self._last_ask)
+
+    feed = _ReplayFeed()
+    worker = StopRunReversalWorker(cfg, broker=None, datafeed=feed, logger=None)
+
+    m1_builder = _BarBuilder(60)
+    m5_builder = _BarBuilder(300)
+    trades: List[Dict[str, object]] = []
+
+    for tick in ticks:
+        feed.update_tick(tick)
+
+        closed_m1 = m1_builder.update(tick)
+        if closed_m1:
+            feed.add_bar("1m", closed_m1)
+            candle = {
+                "open": closed_m1["open"],
+                "high": closed_m1["high"],
+                "low": closed_m1["low"],
+                "close": closed_m1["close"],
+                "time": datetime.fromtimestamp(float(closed_m1["timestamp"]), tz=timezone.utc),
+            }
+            loop.run_until_complete(factor_cache.on_candle("M1", candle))
+
+        closed_m5 = m5_builder.update(tick)
+        if not closed_m5:
+            continue
+        feed.add_bar("5m", closed_m5)
+        candle_m5 = {
+            "open": closed_m5["open"],
+            "high": closed_m5["high"],
+            "low": closed_m5["low"],
+            "close": closed_m5["close"],
+            "time": datetime.fromtimestamp(float(closed_m5["timestamp"]), tz=timezone.utc),
+        }
+        loop.run_until_complete(factor_cache.on_candle("M5", candle_m5))
+
+        intent = worker.edge("USD_JPY")
+        if not intent:
+            continue
+        pocket = str(cfg.get("pocket", "micro"))
+        proj_allow, _, _ = _projection_decision(intent["side"], pocket, mode_override="range")
+        if not proj_allow:
+            continue
+
+        entry_price = float(intent.get("px") or closed_m5["close"])
+        atr_val = 0.0
+        if isinstance(intent.get("meta"), dict):
+            atr_val = float(intent["meta"].get("atr") or 0.0)
+        atr_pips = atr_val / 0.01 if atr_val > 0 else 0.0
+        sl_pips, tp_pips = _resolve_exit_pips(cfg.get("exit", {}), atr_pips, intent)
+        if sl_pips <= 0.0 or tp_pips <= 0.0:
+            continue
+        direction = "long" if intent.get("side") == "long" else "short"
+        if direction == "long":
+            sl_price = entry_price - sl_pips * 0.01
+            tp_price = entry_price + tp_pips * 0.01
+        else:
+            sl_price = entry_price + sl_pips * 0.01
+            tp_price = entry_price - tp_pips * 0.01
+        trades.append(
+            {
+                "direction": direction,
+                "entry_time": datetime.fromtimestamp(float(closed_m5["timestamp"]), tz=timezone.utc).isoformat(),
+                "entry_price": round(entry_price, 5),
+                "tp_price": round(tp_price, 5),
+                "sl_price": round(sl_price, 5),
+                "units": 10000,
+                "strategy_tag": "stop_run_reversal",
+            }
+        )
+
+    loop.close()
+    summary = {
+        "trades": len(trades),
+        "total_pnl_pips": 0.0,
+        "total_pnl_jpy": 0.0,
+        "win_rate": 0.0,
+    }
+    return {"summary": summary, "trades": trades}
+
+
+def replay_session_open(ticks: List[Tick]) -> Dict[str, object]:
+    import asyncio
+    from datetime import datetime, timezone
+
+    from indicators import factor_cache
+    from workers.session_open import config as so_cfg
+    from workers.session_open.worker import SessionOpenWorker, _projection_decision
+
+    cfg = dict(so_cfg.DEFAULT_CONFIG)
+    cfg["universe"] = ["USD_JPY"]
+
+    _reset_factor_cache_for_replay()
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+
+    class _ReplayFeed:
+        def __init__(self) -> None:
+            self._bars: List[Dict[str, float]] = []
+            self._last_bid: Optional[float] = None
+            self._last_ask: Optional[float] = None
+
+        def update_tick(self, tick: Tick) -> None:
+            self._last_bid = tick.bid
+            self._last_ask = tick.ask
+
+        def add_bar(self, bar: Dict[str, float]) -> None:
+            self._bars.append(bar)
+
+        def get_bars(self, symbol: str, tf: str, n: int) -> Any:
+            return self._bars[-n:]
+
+        def last(self, symbol: str) -> float:
+            return float(self._bars[-1]["close"]) if self._bars else 0.0
+
+        def best_bid_ask(self, symbol: str) -> Optional[Tuple[float, float]]:
+            if self._last_bid is None or self._last_ask is None:
+                return None
+            return float(self._last_bid), float(self._last_ask)
+
+    feed = _ReplayFeed()
+    worker = SessionOpenWorker(cfg, broker=None, datafeed=feed, logger=None)
+
+    m1_builder = _BarBuilder(60)
+    trades: List[Dict[str, object]] = []
+
+    for tick in ticks:
+        feed.update_tick(tick)
+        closed_m1 = m1_builder.update(tick)
+        if not closed_m1:
+            continue
+        feed.add_bar(closed_m1)
+        candle = {
+            "open": closed_m1["open"],
+            "high": closed_m1["high"],
+            "low": closed_m1["low"],
+            "close": closed_m1["close"],
+            "time": datetime.fromtimestamp(float(closed_m1["timestamp"]), tz=timezone.utc),
+        }
+        loop.run_until_complete(factor_cache.on_candle("M1", candle))
+
+        now_ts = float(closed_m1["timestamp"])
+        intent = worker.edge("USD_JPY", now_ts)
+        if not intent:
+            continue
+        style = str(intent.get("style") or intent.get("mode") or "").lower()
+        mode_override = "range" if style in {"reversion", "mean_reversion", "fade"} else None
+        pocket = str(cfg.get("pocket", "micro"))
+        proj_allow, _, _ = _projection_decision(intent["side"], pocket, mode_override=mode_override)
+        if not proj_allow:
+            continue
+
+        entry_price = float(intent.get("px") or closed_m1["close"])
+        atr_val = 0.0
+        if isinstance(intent.get("meta"), dict):
+            atr_val = float(intent["meta"].get("atr") or 0.0)
+        atr_pips = atr_val / 0.01 if atr_val > 0 else 0.0
+        sl_pips, tp_pips = _resolve_exit_pips(cfg.get("exit", {}), atr_pips, intent)
+        if sl_pips <= 0.0 or tp_pips <= 0.0:
+            continue
+        direction = "long" if intent.get("side") == "long" else "short"
+        if direction == "long":
+            sl_price = entry_price - sl_pips * 0.01
+            tp_price = entry_price + tp_pips * 0.01
+        else:
+            sl_price = entry_price + sl_pips * 0.01
+            tp_price = entry_price - tp_pips * 0.01
+        strategy_tag = str(intent.get("tag") or "session_open_breakout")
+        trades.append(
+            {
+                "direction": direction,
+                "entry_time": datetime.fromtimestamp(now_ts, tz=timezone.utc).isoformat(),
+                "entry_price": round(entry_price, 5),
+                "tp_price": round(tp_price, 5),
+                "sl_price": round(sl_price, 5),
+                "units": 10000,
+                "strategy_tag": strategy_tag,
+            }
+        )
+
+    loop.close()
+    summary = {
+        "trades": len(trades),
+        "total_pnl_pips": 0.0,
+        "total_pnl_jpy": 0.0,
+        "win_rate": 0.0,
+    }
     return {"summary": summary, "trades": trades}
 
 
@@ -1481,6 +1828,8 @@ def main() -> None:
             "fast_scalp",
             "pullback_s5",
             "vwap_magnet_s5",
+            "stop_run_reversal",
+            "session_open",
             "impulse_break_s5",
             "impulse_momentum_s5",
             "impulse_retest_s5",
@@ -1677,6 +2026,10 @@ def main() -> None:
         result = replay_pullback_s5(ticks)
     elif args.worker == "vwap_magnet_s5":
         result = replay_vwap_magnet_s5(ticks)
+    elif args.worker == "stop_run_reversal":
+        result = replay_stop_run_reversal(ticks)
+    elif args.worker == "session_open":
+        result = replay_session_open(ticks)
     elif args.worker == "impulse_break_s5":
         result = replay_impulse_break_s5(ticks)
     elif args.worker == "impulse_momentum_s5":

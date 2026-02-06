@@ -1,6 +1,6 @@
 # TASKS – Repository Task Board
 
-本リポジトリの全タスクを一元管理する台帳。タスクが発生したら本ファイルへ逐次追記し、作業中は本ファイルを参照しながら進め、完了後はアーカイブへ移してください。詳細ポリシーは `AGENTS.md` の「11. タスク運用ルール（共通）」を参照。  
+本リポジトリの全タスクを一元管理する台帳。タスクが発生したら本ファイルへ逐次追記し、作業中は本ファイルを参照しながら進め、完了後はアーカイブへ移してください。詳細ポリシーは `AGENTS.md` のタスク運用ルールを参照。  
 ※ `micro_core` / `macro_core` / `scalp_core` と `core_executor` は廃止済み。本文に残るコア関連タスク/記述はレガシーとして扱ってください。  
 ※ 2025-12-26 時点で共通 `execution/exit_manager.py` はスタブ化（自動EXITなし）。Archive に残る ExitManager 改修タスクは履歴としてのみ参照してください。
 
@@ -34,6 +34,23 @@
 ```
 
 ## Open Tasks
+- [ ] ID: T-20260205-001
+  Title: 損失拡大の抑止（perf_guard金額ベース化・scalp停止・リスク上限の是正）
+  Status: in-progress
+  Priority: P1
+  Owner: codex
+  Scope/Paths: workers/common/perf_guard.py, config/env.toml, config/env.example.toml, local/vm_env_overrides.env, docs/TASKS.md
+  Context: 直近でPF悪化・損失が拡大しており、pips基準のガードとscalp強化設定が主因の可能性がある。
+  Acceptance:
+    - perf_guard が realized_pl/net_pl を基準に評価できる
+    - RELAX タグの既定緩和を撤廃する
+    - 攻め過ぎのサイズ/許可設定を抑制し、損失源の scalp を停止できる
+  Plan:
+    - perf_guard を金額ベースに対応
+    - env/config と VM override を安全寄りへ修正
+  Notes:
+    - 反映は deploy 経由で行う
+
 - [ ] ID: T-20260123-001
   Title: GPT運用レポート/提案の要件整理と活用フロー設計
   Status: in-progress

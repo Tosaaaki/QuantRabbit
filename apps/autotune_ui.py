@@ -38,6 +38,7 @@ METRICS_DB = Path("logs/metrics.db")
 ORDERS_DB = Path("logs/orders.db")
 SIGNALS_DB = Path("logs/signals.db")
 TRADES_DB = Path("logs/trades.db")
+HEALTH_SNAPSHOT = Path("logs/health_snapshot.json")
 
 _LIVE_SNAPSHOT_TTL_SEC = int(os.getenv("LIVE_SNAPSHOT_TTL_SEC", "8"))
 _REMOTE_SNAPSHOT_TIMEOUT_SEC = float(os.getenv("UI_SNAPSHOT_TIMEOUT_SEC", "4.0"))
@@ -517,6 +518,16 @@ def _get_secret_optional(key: str) -> Optional[str]:
         return None
     value = str(value).strip()
     return value or None
+
+
+def _load_health_snapshot_local() -> Optional[dict]:
+    if not HEALTH_SNAPSHOT.exists():
+        return None
+    try:
+        data = json.loads(HEALTH_SNAPSHOT.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+    return data if isinstance(data, dict) else None
 
 
 def _resolve_ui_state_object_path() -> str:
@@ -1073,6 +1084,9 @@ def _build_live_snapshot() -> dict:
             metrics["data_lag_ms"] = data_lag_ms
         if decision_latency_ms is not None:
             metrics["decision_latency_ms"] = decision_latency_ms
+        health_snapshot = _load_health_snapshot_local()
+        if health_snapshot:
+            metrics["health_snapshot"] = health_snapshot
         for key in (
             "account.nav",
             "account.balance",
@@ -1157,6 +1171,9 @@ def _build_lite_snapshot() -> dict:
         value = _load_latest_metric(key)
         if value is not None:
             metrics[key] = value
+    health_snapshot = _load_health_snapshot_local()
+    if health_snapshot:
+        metrics["health_snapshot"] = health_snapshot
     metrics["healthbeat_ts"] = _load_last_metric_ts("healthbeat")
     if not _LITE_SNAPSHOT_FAST:
         metrics["orders_last"] = _load_last_orders()
