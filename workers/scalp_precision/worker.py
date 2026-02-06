@@ -54,6 +54,7 @@ _MODE_TAG_MAP = {
     'macd_trend': 'MacdTrendRide',
     'ema_slope_pull': 'EmaSlopePull',
     'tick_imbalance': 'TickImbalance',
+    'tick_imbalance_rrplus': 'TickImbalanceRRPlus',
     'level_reject': 'LevelReject',
     'wick_reversal': 'WickReversal',
     'wick_reversal_pro': 'WickReversalPro',
@@ -62,6 +63,8 @@ _MODE_TAG_MAP = {
     'drought_revert': 'DroughtRevert',
     'precision_lowvol': 'PrecisionLowVol',
     'liquidity_sweep': 'LiquiditySweep',
+    'squeeze_pulse_break': 'SqueezePulseBreak',
+    'false_break_fade': 'FalseBreakFade',
 }
 
 def _mode_to_tag(mode: str) -> Optional[str]:
@@ -260,6 +263,53 @@ TICK_IMB_ALLOWED_REGIMES = {
 }
 TICK_IMB_BLOCK_RANGE_MODE = _env_bool("TICK_IMB_BLOCK_RANGE_MODE", True)
 
+SPB_BBW_MAX = _env_float("SPB_BBW_MAX", 0.0016)
+SPB_ATR_MIN = _env_float("SPB_ATR_MIN", 0.7)
+SPB_ATR_MAX = _env_float("SPB_ATR_MAX", 4.2)
+SPB_LOOKBACK = _env_int("SPB_LOOKBACK", 24)
+SPB_HI_PCT = _env_float("SPB_HI_PCT", 95.0)
+SPB_LO_PCT = _env_float("SPB_LO_PCT", 5.0)
+SPB_BREAKOUT_PIPS = _env_float("SPB_BREAKOUT_PIPS", 0.9)
+SPB_RANGE_SCORE_MIN = _env_float("SPB_RANGE_SCORE_MIN", 0.34)
+SPB_TICK_WINDOW_SEC = _env_float("SPB_TICK_WINDOW_SEC", 6.0)
+SPB_MIN_TICKS = _env_int("SPB_MIN_TICKS", 10)
+SPB_TICK_RANGE_MAX_PIPS = _env_float("SPB_TICK_RANGE_MAX_PIPS", 1.6)
+SPB_IMB_RATIO_MIN = _env_float("SPB_IMB_RATIO_MIN", 0.60)
+SPB_MOM_MIN_PIPS = _env_float("SPB_MOM_MIN_PIPS", 0.55)
+SPB_SPREAD_P25 = _env_float("SPB_SPREAD_P25", 1.0)
+SPB_SIZE_MULT = _env_float("SPB_SIZE_MULT", 1.15)
+
+FBF_BBW_MAX = _env_float("FBF_BBW_MAX", 0.0026)
+FBF_ATR_MIN = _env_float("FBF_ATR_MIN", 0.7)
+FBF_ATR_MAX = _env_float("FBF_ATR_MAX", 5.5)
+FBF_ADX_MAX = _env_float("FBF_ADX_MAX", 32.0)
+FBF_LOOKBACK = _env_int("FBF_LOOKBACK", 24)
+FBF_HI_PCT = _env_float("FBF_HI_PCT", 95.0)
+FBF_LO_PCT = _env_float("FBF_LO_PCT", 5.0)
+FBF_BREAKOUT_PIPS = _env_float("FBF_BREAKOUT_PIPS", 0.8)
+FBF_RECLAIM_PIPS = _env_float("FBF_RECLAIM_PIPS", 0.4)
+FBF_TIMEOUT_SEC = _env_float("FBF_TIMEOUT_SEC", 55.0)
+FBF_MIN_SWEEP_PIPS = _env_float("FBF_MIN_SWEEP_PIPS", 0.9)
+FBF_RANGE_SCORE_MIN = _env_float("FBF_RANGE_SCORE_MIN", 0.30)
+FBF_TICK_WINDOW_SEC = _env_float("FBF_TICK_WINDOW_SEC", 6.0)
+FBF_REQUIRE_TICK_REVERSAL = _env_bool("FBF_REQUIRE_TICK_REVERSAL", True)
+FBF_SPREAD_P25 = _env_float("FBF_SPREAD_P25", 1.1)
+FBF_SIZE_MULT = _env_float("FBF_SIZE_MULT", 1.10)
+
+TIRP_WINDOW_SEC = _env_float("TIRP_WINDOW_SEC", 5.5)
+TIRP_RATIO_MIN = _env_float("TIRP_RATIO_MIN", 0.72)
+TIRP_MOM_MIN_PIPS = _env_float("TIRP_MOM_MIN_PIPS", 0.55)
+TIRP_RANGE_MIN_PIPS = _env_float("TIRP_RANGE_MIN_PIPS", 0.30)
+TIRP_ATR_MIN = _env_float("TIRP_ATR_MIN", 0.8)
+TIRP_ATR_MAX = _env_float("TIRP_ATR_MAX", 10.0)
+TIRP_ADX_MIN = _env_float("TIRP_ADX_MIN", 18.0)
+TIRP_BBW_MIN = _env_float("TIRP_BBW_MIN", 0.00085)
+TIRP_RANGE_SCORE_MAX = _env_float("TIRP_RANGE_SCORE_MAX", 0.58)
+TIRP_REQUIRE_MA_ALIGN = _env_int("TIRP_REQUIRE_MA_ALIGN", 1)
+TIRP_MA_GAP_MIN_PIPS = _env_float("TIRP_MA_GAP_MIN_PIPS", 0.10)
+TIRP_BLOCK_RANGE_MODE = _env_bool("TIRP_BLOCK_RANGE_MODE", False)
+TIRP_SIZE_MULT = _env_float("TIRP_SIZE_MULT", 1.20)
+
 LEVEL_LOOKBACK = _env_int("LEVEL_REJECT_LOOKBACK", 20)
 LEVEL_BAND_PIPS = _env_float("LEVEL_REJECT_BAND_PIPS", 0.8)
 LEVEL_RSI_LONG_MAX = _env_float("LEVEL_REJECT_RSI_LONG_MAX", 48.0)
@@ -400,6 +450,18 @@ class RetestState:
 
 
 _RETEST_STATE: Dict[str, RetestState] = {}
+
+@dataclass
+class FalseBreakState:
+    direction: str  # fade direction
+    side: str  # "high" or "low"
+    level: float
+    started_ts: float
+    expires_ts: float
+    extreme: float
+
+
+_FALSE_BREAK_STATE: Dict[str, FalseBreakState] = {}
 
 
 def _confidence_scale(conf: int, *, lo: int, hi: int) -> float:
@@ -813,6 +875,217 @@ def _signal_compression_retest(
     return None
 
 
+def _signal_squeeze_pulse_break(
+    fac_m1: Dict[str, object],
+    range_ctx,
+    *,
+    tag: str,
+) -> Optional[Dict[str, object]]:
+    price = _latest_price(fac_m1)
+    if price <= 0:
+        return None
+    ok_spread, _ = spread_ok(max_pips=config.MAX_SPREAD_PIPS, p25_max=SPB_SPREAD_P25)
+    if not ok_spread:
+        return None
+
+    bbw = _bbw(fac_m1)
+    atr = _atr_pips(fac_m1)
+    if bbw <= 0.0 or atr <= 0.0:
+        return None
+    if bbw > SPB_BBW_MAX:
+        return None
+    if atr < SPB_ATR_MIN or atr > SPB_ATR_MAX:
+        return None
+
+    if range_ctx is not None:
+        try:
+            score = float(getattr(range_ctx, "score", 0.0) or 0.0)
+            active = bool(getattr(range_ctx, "active", False))
+        except Exception:
+            score = 0.0
+            active = False
+        if not active and SPB_RANGE_SCORE_MIN > 0.0 and score < SPB_RANGE_SCORE_MIN:
+            return None
+
+    candles = get_candles_snapshot("M1", limit=max(40, SPB_LOOKBACK + 6))
+    snap = compute_range_snapshot(
+        candles or [],
+        lookback=max(10, SPB_LOOKBACK),
+        hi_pct=float(SPB_HI_PCT),
+        lo_pct=float(SPB_LO_PCT),
+    )
+    if not snap:
+        return None
+
+    mids, span = tick_snapshot(SPB_TICK_WINDOW_SEC, limit=200)
+    if not mids or len(mids) < SPB_MIN_TICKS:
+        return None
+    tick_range_pips = (max(mids) - min(mids)) / PIP
+    if tick_range_pips > SPB_TICK_RANGE_MAX_PIPS:
+        return None
+
+    imb = tick_imbalance(mids, span)
+    if not imb:
+        return None
+    if imb.ratio < SPB_IMB_RATIO_MIN:
+        return None
+    if abs(imb.momentum_pips) < SPB_MOM_MIN_PIPS:
+        return None
+
+    breakout_long = price >= snap.high + SPB_BREAKOUT_PIPS * PIP
+    breakout_short = price <= snap.low - SPB_BREAKOUT_PIPS * PIP
+    if not breakout_long and not breakout_short:
+        return None
+
+    side = "long" if breakout_long else "short"
+    # Require tick momentum in the breakout direction.
+    if (side == "long" and imb.momentum_pips <= 0) or (side == "short" and imb.momentum_pips >= 0):
+        return None
+
+    sl = max(1.3, min(2.4, atr * 0.85))
+    tp = max(sl * 1.45, min(4.2, atr * 1.35))
+    conf = 62
+    conf += int(min(12.0, abs(imb.momentum_pips) * 4.0))
+    conf += int(min(10.0, (SPB_TICK_RANGE_MAX_PIPS - tick_range_pips) * 3.0))
+    conf = int(max(45, min(92, conf)))
+
+    size_mult = 1.0 + min(0.35, abs(imb.momentum_pips) * 0.08)
+    size_mult = max(0.6, min(1.4, size_mult * SPB_SIZE_MULT))
+
+    return {
+        "action": "OPEN_LONG" if side == "long" else "OPEN_SHORT",
+        "sl_pips": round(sl, 2),
+        "tp_pips": round(tp, 2),
+        "confidence": conf,
+        "tag": tag,
+        "reason": "squeeze_pulse_break",
+        "size_mult": round(size_mult, 3),
+        "compression": {
+            "bbw": round(bbw, 6),
+            "tick_range_pips": round(tick_range_pips, 3),
+            "momentum_pips": round(imb.momentum_pips, 3),
+        },
+    }
+
+
+def _signal_false_break_fade(
+    fac_m1: Dict[str, object],
+    range_ctx,
+    *,
+    tag: str,
+) -> Optional[Dict[str, object]]:
+    price = _latest_price(fac_m1)
+    if price <= 0:
+        return None
+    ok_spread, _ = spread_ok(max_pips=config.MAX_SPREAD_PIPS, p25_max=FBF_SPREAD_P25)
+    if not ok_spread:
+        return None
+
+    bbw = _bbw(fac_m1)
+    atr = _atr_pips(fac_m1)
+    adx = _adx(fac_m1)
+    if bbw <= 0.0 or atr <= 0.0:
+        return None
+    if bbw > FBF_BBW_MAX:
+        return None
+    if atr < FBF_ATR_MIN or atr > FBF_ATR_MAX:
+        return None
+    if adx > FBF_ADX_MAX:
+        return None
+
+    range_score = 0.0
+    range_active = False
+    if range_ctx is not None:
+        try:
+            range_score = float(getattr(range_ctx, "score", 0.0) or 0.0)
+            range_active = bool(getattr(range_ctx, "active", False))
+        except Exception:
+            range_score = 0.0
+            range_active = False
+    if not range_active and FBF_RANGE_SCORE_MIN > 0.0 and range_score < FBF_RANGE_SCORE_MIN:
+        return None
+
+    candles = get_candles_snapshot("M1", limit=max(40, FBF_LOOKBACK + 6))
+    snap = compute_range_snapshot(
+        candles or [],
+        lookback=max(10, FBF_LOOKBACK),
+        hi_pct=float(FBF_HI_PCT),
+        lo_pct=float(FBF_LO_PCT),
+    )
+    if not snap:
+        return None
+
+    now = time.monotonic()
+    state = _FALSE_BREAK_STATE.get(tag)
+    if state and now > state.expires_ts:
+        _FALSE_BREAK_STATE.pop(tag, None)
+        state = None
+
+    # If a state exists, wait for reclaim + (optional) tick reversal then fade.
+    if state and now <= state.expires_ts:
+        if state.side == "high":
+            state.extreme = max(state.extreme, price)
+            sweep_pips = (state.extreme - state.level) / PIP
+            reclaimed = price <= state.level - FBF_RECLAIM_PIPS * PIP
+            want_dir = "short"
+        else:
+            state.extreme = min(state.extreme, price)
+            sweep_pips = (state.level - state.extreme) / PIP
+            reclaimed = price >= state.level + FBF_RECLAIM_PIPS * PIP
+            want_dir = "long"
+        if not reclaimed:
+            return None
+        if sweep_pips < FBF_MIN_SWEEP_PIPS:
+            return None
+
+        mids, _ = tick_snapshot(FBF_TICK_WINDOW_SEC, limit=140)
+        rev_ok, rev_dir, rev_strength = tick_reversal(mids, min_ticks=6) if mids else (False, None, 0.0)
+        if FBF_REQUIRE_TICK_REVERSAL and (not rev_ok or rev_dir != want_dir):
+            return None
+
+        sl = max(1.4, min(2.8, atr * 0.9))
+        tp = max(sl * 1.35, min(4.0, atr * 1.25))
+        conf = 60 + int(min(12.0, sweep_pips * 3.0)) + int(min(10.0, rev_strength * 4.0))
+        conf = int(max(45, min(92, conf)))
+
+        size_mult = max(0.6, min(1.4, FBF_SIZE_MULT * (1.0 + min(0.25, sweep_pips * 0.05))))
+        _FALSE_BREAK_STATE.pop(tag, None)
+        return {
+            "action": "OPEN_LONG" if want_dir == "long" else "OPEN_SHORT",
+            "sl_pips": round(sl, 2),
+            "tp_pips": round(tp, 2),
+            "confidence": conf,
+            "tag": tag,
+            "reason": "false_break_fade",
+            "size_mult": round(size_mult, 3),
+            "fade": {
+                "side": state.side,
+                "sweep_pips": round(sweep_pips, 2),
+                "range_score": round(range_score, 3),
+            },
+        }
+
+    # Detect a fresh breakout beyond the range and arm a fade state.
+    breakout_high = price >= snap.high + FBF_BREAKOUT_PIPS * PIP
+    breakout_low = price <= snap.low - FBF_BREAKOUT_PIPS * PIP
+    if not breakout_high and not breakout_low:
+        return None
+
+    side = "high" if breakout_high else "low"
+    level = snap.high if breakout_high else snap.low
+    extreme = price
+    direction = "short" if breakout_high else "long"
+    _FALSE_BREAK_STATE[tag] = FalseBreakState(
+        direction=direction,
+        side=side,
+        level=level,
+        started_ts=now,
+        expires_ts=now + FBF_TIMEOUT_SEC,
+        extreme=extreme,
+    )
+    return None
+
+
 def _signal_htf_pullback(
     fac_m1: Dict[str, object],
     fac_h1: Dict[str, object],
@@ -962,6 +1235,87 @@ def _signal_tick_imbalance(
         "reason": "tick_imbalance",
         "size_mult": round(TICK_IMB_SIZE_MULT, 3),
         "imbalance": {"ratio": round(imb.ratio, 3), "momentum_pips": round(imb.momentum_pips, 3)},
+    }
+
+
+def _signal_tick_imbalance_rrplus(
+    fac_m1: Dict[str, object],
+    range_ctx=None,
+    *,
+    tag: str,
+) -> Optional[Dict[str, object]]:
+    price = _latest_price(fac_m1)
+    if price <= 0:
+        return None
+
+    ok_spread, _ = spread_ok(max_pips=config.MAX_SPREAD_PIPS, p25_max=1.2)
+    if not ok_spread:
+        return None
+
+    if range_ctx is not None:
+        try:
+            range_active = bool(getattr(range_ctx, "active", False))
+            range_score = float(getattr(range_ctx, "score", 0.0) or 0.0)
+        except Exception:
+            range_active = False
+            range_score = 0.0
+        if TIRP_BLOCK_RANGE_MODE and range_active:
+            return None
+        if TIRP_RANGE_SCORE_MAX > 0.0 and range_score >= TIRP_RANGE_SCORE_MAX:
+            return None
+
+    atr = _atr_pips(fac_m1)
+    if atr < TIRP_ATR_MIN or atr > TIRP_ATR_MAX:
+        return None
+    if _adx(fac_m1) < TIRP_ADX_MIN:
+        return None
+    if _bbw(fac_m1) < TIRP_BBW_MIN:
+        return None
+
+    mids, span = tick_snapshot(TIRP_WINDOW_SEC, limit=200)
+    imb = tick_imbalance(mids, span)
+    if not imb:
+        return None
+    if imb.ratio < TIRP_RATIO_MIN:
+        return None
+    if abs(imb.momentum_pips) < TIRP_MOM_MIN_PIPS:
+        return None
+    if imb.range_pips < TIRP_RANGE_MIN_PIPS:
+        return None
+
+    direction = "long" if imb.momentum_pips > 0 else "short"
+    if TIRP_REQUIRE_MA_ALIGN:
+        try:
+            ma10 = float(fac_m1.get("ma10") or 0.0)
+            ma20 = float(fac_m1.get("ma20") or 0.0)
+        except Exception:
+            ma10 = 0.0
+            ma20 = 0.0
+        if ma10 > 0.0 and ma20 > 0.0:
+            gap_pips = (ma10 - ma20) / PIP
+            if direction == "long" and gap_pips < TIRP_MA_GAP_MIN_PIPS:
+                return None
+            if direction == "short" and gap_pips > -TIRP_MA_GAP_MIN_PIPS:
+                return None
+
+    sl = max(1.3, min(2.4, atr * 0.75 + 0.3))
+    tp = max(sl * 1.55, min(4.4, atr * 1.45))
+    conf = 62 + int(min(16.0, (imb.ratio - 0.6) * 30.0)) + int(min(10.0, abs(imb.momentum_pips) * 3.0))
+    conf = int(max(45, min(92, conf)))
+
+    return {
+        "action": "OPEN_LONG" if direction == "long" else "OPEN_SHORT",
+        "sl_pips": round(sl, 2),
+        "tp_pips": round(tp, 2),
+        "confidence": conf,
+        "tag": tag,
+        "reason": "tick_imbalance_rrplus",
+        "size_mult": round(TIRP_SIZE_MULT, 3),
+        "imbalance": {
+            "ratio": round(imb.ratio, 3),
+            "momentum_pips": round(imb.momentum_pips, 3),
+            "range_pips": round(imb.range_pips, 3),
+        },
     }
 
 
@@ -2153,6 +2507,8 @@ async def scalp_precision_worker() -> None:
                 strategies.append(("EmaSlopePull", _signal_ema_slope_pull, {"tag": "EmaSlopePull"}))
             if enabled("tick_imbalance"):
                 strategies.append(("TickImbalance", _signal_tick_imbalance, {"tag": "TickImbalance"}))
+            if enabled("tick_imbalance_rrplus"):
+                strategies.append(("TickImbalanceRRPlus", _signal_tick_imbalance_rrplus, {"tag": "TickImbalanceRRPlus"}))
             if enabled("level_reject"):
                 strategies.append(("LevelReject", _signal_level_reject, {"tag": "LevelReject"}))
             if enabled("liquidity_sweep"):
@@ -2165,6 +2521,10 @@ async def scalp_precision_worker() -> None:
                 strategies.append(("TickWickReversal", _signal_tick_wick_reversal, {"tag": "TickWickReversal"}))
             if enabled("session_edge"):
                 strategies.append(("SessionEdge", _signal_session_edge, {"tag": "SessionEdge"}))
+            if enabled("squeeze_pulse_break"):
+                strategies.append(("SqueezePulseBreak", _signal_squeeze_pulse_break, {"tag": "SqueezePulseBreak"}))
+            if enabled("false_break_fade"):
+                strategies.append(("FalseBreakFade", _signal_false_break_fade, {"tag": "FalseBreakFade"}))
 
             signals: List[Dict[str, object]] = []
             for name, fn, kwargs in strategies:
@@ -2180,8 +2540,11 @@ async def scalp_precision_worker() -> None:
                     _signal_stoch_bounce,
                     _signal_divergence_revert,
                     _signal_tick_imbalance,
+                    _signal_tick_imbalance_rrplus,
                     _signal_wick_reversal_pro,
                     _signal_tick_wick_reversal,
+                    _signal_squeeze_pulse_break,
+                    _signal_false_break_fade,
                 ):
                     signal = fn(fac_m1, range_ctx, **kwargs)
                 else:

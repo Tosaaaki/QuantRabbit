@@ -243,6 +243,9 @@ def _signal_map():
         "TickImbalance": lambda fac_m1, fac_m5, fac_h1, range_ctx, now: sp_worker._signal_tick_imbalance(  # type: ignore[attr-defined]
             fac_m1, range_ctx, tag="TickImbalance"
         ),
+        "TickImbalanceRRPlus": lambda fac_m1, fac_m5, fac_h1, range_ctx, now: sp_worker._signal_tick_imbalance_rrplus(  # type: ignore[attr-defined]
+            fac_m1, range_ctx, tag="TickImbalanceRRPlus"
+        ),
         "LevelReject": lambda fac_m1, fac_m5, fac_h1, range_ctx, now: sp_worker._signal_level_reject(  # type: ignore[attr-defined]
             fac_m1, tag="LevelReject"
         ),
@@ -254,6 +257,12 @@ def _signal_map():
         ),
         "SessionEdge": lambda fac_m1, fac_m5, fac_h1, range_ctx, now: sp_worker._signal_session_edge(  # type: ignore[attr-defined]
             fac_m1, range_ctx, tag="SessionEdge", now_utc=now
+        ),
+        "SqueezePulseBreak": lambda fac_m1, fac_m5, fac_h1, range_ctx, now: sp_worker._signal_squeeze_pulse_break(  # type: ignore[attr-defined]
+            fac_m1, range_ctx, tag="SqueezePulseBreak"
+        ),
+        "FalseBreakFade": lambda fac_m1, fac_m5, fac_h1, range_ctx, now: sp_worker._signal_false_break_fade(  # type: ignore[attr-defined]
+            fac_m1, range_ctx, tag="FalseBreakFade"
         ),
     }
 
@@ -271,10 +280,13 @@ _TAG_TO_MODE = {
     "MacdTrendRide": "macd_trend",
     "EmaSlopePull": "ema_slope_pull",
     "TickImbalance": "tick_imbalance",
+    "TickImbalanceRRPlus": "tick_imbalance_rrplus",
     "LevelReject": "level_reject",
     "WickReversal": "wick_reversal",
     "TickWickReversal": "tick_wick_reversal",
     "SessionEdge": "session_edge",
+    "SqueezePulseBreak": "squeeze_pulse_break",
+    "FalseBreakFade": "false_break_fade",
 }
 
 
