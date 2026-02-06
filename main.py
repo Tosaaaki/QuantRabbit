@@ -85,6 +85,12 @@ def _latest_tick_lag_ms() -> Optional[float]:
 DATA_LAG_RESTART_MS = float(os.getenv("DATA_LAG_RESTART_MS", "8000"))
 DATA_LAG_RESTART_STRIKES = int(os.getenv("DATA_LAG_RESTART_STRIKES", "3"))
 _data_lag_strikes = 0
+DATA_LAG_ACTIVITY_WINDOW_SEC = float(os.getenv("DATA_LAG_ACTIVITY_WINDOW_SEC", "60"))
+DATA_LAG_ACTIVITY_MIN_TICKS = int(os.getenv("DATA_LAG_ACTIVITY_MIN_TICKS", "3"))
+DATA_LAG_ACTIVITY_LOG_MIN_INTERVAL_SEC = float(
+    os.getenv("DATA_LAG_ACTIVITY_LOG_MIN_INTERVAL_SEC", "300")
+)
+_data_lag_activity_last_log_mono = 0.0
 
 STREAM_RECOVERY_MODE = os.getenv("STREAM_RECOVERY_MODE", "stream").strip().lower()
 STREAM_RESET_COOLDOWN_SEC = float(os.getenv("STREAM_RESET_COOLDOWN_SEC", "30"))
@@ -127,10 +133,34 @@ def _maybe_request_stream_reset(reason: str, detail: str) -> bool:
 def _check_data_lag_watchdog(data_lag_ms: float) -> None:
     """Restart the process if tick lag stays high across multiple loops."""
     global _data_lag_strikes
+    global _data_lag_activity_last_log_mono
     if DATA_LAG_RESTART_MS <= 0 or DATA_LAG_RESTART_STRIKES <= 0:
         _data_lag_strikes = 0
         return
     if data_lag_ms >= DATA_LAG_RESTART_MS:
+        if DATA_LAG_ACTIVITY_WINDOW_SEC > 0 and DATA_LAG_ACTIVITY_MIN_TICKS > 0:
+            tick_count = None
+            try:
+                tick_count = len(tick_window.recent_ticks(seconds=DATA_LAG_ACTIVITY_WINDOW_SEC))
+            except Exception:
+                tick_count = None
+            if tick_count is not None and tick_count < DATA_LAG_ACTIVITY_MIN_TICKS:
+                if _data_lag_strikes:
+                    _data_lag_strikes = 0
+                now_mono = time.monotonic()
+                if (
+                    DATA_LAG_ACTIVITY_LOG_MIN_INTERVAL_SEC > 0
+                    and now_mono - _data_lag_activity_last_log_mono
+                    >= DATA_LAG_ACTIVITY_LOG_MIN_INTERVAL_SEC
+                ):
+                    logging.warning(
+                        "[WATCHDOG] data_lag_ms=%.1f but low tick activity (%s ticks/%.0fs) -> ignore strikes",
+                        data_lag_ms,
+                        tick_count,
+                        DATA_LAG_ACTIVITY_WINDOW_SEC,
+                    )
+                    _data_lag_activity_last_log_mono = now_mono
+                return
         _data_lag_strikes += 1
         if _data_lag_strikes >= DATA_LAG_RESTART_STRIKES:
             detail = (
