@@ -29,9 +29,9 @@ Environment=WICK_HF_RATIO_MIN=0.46
 Environment=WICK_HF_ADX_MAX=28.0
 # In higher-ADX regimes, only allow entries when wick rejection + tick reversal are exceptionally strong.
 Environment=WICK_HF_ADX_OVERRIDE_ENABLED=1
-Environment=WICK_HF_ADX_OVERRIDE_MAX_ADX=45.0
-Environment=WICK_HF_ADX_OVERRIDE_MIN_RATIO=0.72
-Environment=WICK_HF_ADX_OVERRIDE_MIN_TICK_STRENGTH=0.35
+Environment=WICK_HF_ADX_OVERRIDE_MAX_ADX=55.0
+Environment=WICK_HF_ADX_OVERRIDE_MIN_RATIO=0.65
+Environment=WICK_HF_ADX_OVERRIDE_MIN_TICK_STRENGTH=0.25
 Environment=WICK_HF_BBW_MAX=0.0016
 Environment=WICK_HF_SPREAD_P25=1.0
 Environment=WICK_HF_REQUIRE_BB_TOUCH=0
