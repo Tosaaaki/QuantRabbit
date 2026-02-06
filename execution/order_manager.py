@@ -6001,6 +6001,35 @@ async def market_order(
                     note=f"attempt={attempt+1}",
                 )
                 target_sl = None if sl_disabled else sl_price
+                # EXIT_NO_NEGATIVE_CLOSE=1 is meant to enforce profit-only exits. Honor that policy by not
+                # attaching a broker SL on the loss side unless explicitly allowed (rollout flag).
+                if target_sl is not None and not _allow_stop_loss_on_fill(pocket):
+                    basis = executed_price if executed_price is not None else estimated_entry
+                    try:
+                        basis_val = float(basis) if basis is not None else None
+                    except Exception:
+                        basis_val = None
+                    if not basis_val or basis_val <= 0.0:
+                        logging.info(
+                            "[ORDER] on_fill_protection skipped SL (no basis) pocket=%s client=%s sl=%s",
+                            pocket,
+                            client_order_id or "-",
+                            f"{target_sl:.3f}",
+                        )
+                        target_sl = None
+                    else:
+                        loss_side = (units_to_send > 0 and target_sl < basis_val - 1e-6) or (
+                            units_to_send < 0 and target_sl > basis_val + 1e-6
+                        )
+                        if loss_side:
+                            logging.info(
+                                "[ORDER] on_fill_protection skipped SL (EXIT_NO_NEGATIVE_CLOSE) pocket=%s client=%s sl=%s basis=%s",
+                                pocket,
+                                client_order_id or "-",
+                                f"{target_sl:.3f}",
+                                f"{basis_val:.3f}",
+                            )
+                            target_sl = None
                 _maybe_update_protections(
                     trade_id,
                     target_sl,
