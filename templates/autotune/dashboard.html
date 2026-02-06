@@ -694,32 +694,21 @@
             </div>
             <div class="stat-sub">SLO 2000ms</div>
           </div>
-          <div class="stat-card compact">
-            <div class="stat-label">ヘルスビート</div>
-            <div class="stat-value {{ dashboard.system.healthbeat_level }}">
-              {% if dashboard.system.healthbeat_age_min is not none %}
-                {{ dashboard.system.healthbeat_age_min }}分前
-              {% else %}
-                -
-              {% endif %}
-            </div>
-            <div class="stat-sub">最終 {{ dashboard.system.healthbeat_label or '-' }}</div>
-          </div>
-          <div class="stat-card compact">
-            <div class="stat-label">最終シグナル</div>
-            <div class="stat-value {{ dashboard.system.signals_last_level }}">
-              {% if dashboard.system.signals_last_age_min is not none %}
-                {{ dashboard.system.signals_last_age_min }}分前
-              {% else %}
-                -
-              {% endif %}
-            </div>
-            <div class="stat-sub">最終 {{ dashboard.system.signals_last_label or '-' }}</div>
-          </div>
-          <div class="stat-card compact">
-            <div class="stat-label">注文 (1h)</div>
-            <div class="stat-value">
-              {% if dashboard.system.orders_total_1h is not none %}
+	          <div class="stat-card compact">
+	            <div class="stat-label">ヘルスビート</div>
+	            <div class="stat-value {{ dashboard.system.healthbeat_level }}">
+	              {% if dashboard.system.healthbeat_age_min is not none %}
+	                {{ dashboard.system.healthbeat_age_min }}分前
+	              {% else %}
+	                -
+	              {% endif %}
+	            </div>
+	            <div class="stat-sub">最終 {{ dashboard.system.healthbeat_label or '-' }}</div>
+	          </div>
+	          <div class="stat-card compact">
+	            <div class="stat-label">注文 (1h)</div>
+	            <div class="stat-value">
+	              {% if dashboard.system.orders_total_1h is not none %}
                 {{ dashboard.system.orders_total_1h }}
               {% else %}
                 -
@@ -731,14 +720,14 @@
       </div>
     </section>
 
-    <section class="tab-panel" id="tab-ops" role="tabpanel" aria-labelledby="tab-ops-button" data-tab-panel="ops" data-filter-scope="ops">
-      <div class="card">
-        <h2>システムヘルス</h2>
-    <div class="tagline">データ遅延・判断遅延・ヘルスビート・シグナルの最新状況をまとめています。</div>
-    <div class="stats-grid">
-      <div class="stat-card compact">
-        <div class="stat-label">データ遅延</div>
-        <div class="stat-value {{ dashboard.system.data_lag_level }}">
+	    <section class="tab-panel" id="tab-ops" role="tabpanel" aria-labelledby="tab-ops-button" data-tab-panel="ops" data-filter-scope="ops">
+	      <div class="card">
+	        <h2>システムヘルス</h2>
+	    <div class="tagline">データ遅延・判断遅延・ヘルスビートの最新状況をまとめています。</div>
+	    <div class="stats-grid">
+	      <div class="stat-card compact">
+	        <div class="stat-label">データ遅延</div>
+	        <div class="stat-value {{ dashboard.system.data_lag_level }}">
           {% if dashboard.system.data_lag_ms is not none %}
             {{ "%.0f"|format(dashboard.system.data_lag_ms) }}ms
           {% else %}
@@ -758,32 +747,21 @@
         </div>
         <div class="stat-sub">SLO 2000ms</div>
       </div>
-      <div class="stat-card compact">
-        <div class="stat-label">ヘルスビート</div>
-        <div class="stat-value {{ dashboard.system.healthbeat_level }}">
-          {% if dashboard.system.healthbeat_age_min is not none %}
+	      <div class="stat-card compact">
+	        <div class="stat-label">ヘルスビート</div>
+	        <div class="stat-value {{ dashboard.system.healthbeat_level }}">
+	          {% if dashboard.system.healthbeat_age_min is not none %}
             {{ dashboard.system.healthbeat_age_min }}分前
           {% else %}
             -
           {% endif %}
-        </div>
-        <div class="stat-sub">最終 {{ dashboard.system.healthbeat_label or '-' }}</div>
-      </div>
-      <div class="stat-card compact">
-        <div class="stat-label">最終シグナル</div>
-        <div class="stat-value {{ dashboard.system.signals_last_level }}">
-          {% if dashboard.system.signals_last_age_min is not none %}
-            {{ dashboard.system.signals_last_age_min }}分前
-          {% else %}
-            -
-          {% endif %}
-        </div>
-        <div class="stat-sub">最終 {{ dashboard.system.signals_last_label or '-' }}</div>
-      </div>
-      <div class="stat-card compact">
-        <div class="stat-label">注文 (1h)</div>
-        <div class="stat-value">
-          {% if dashboard.system.orders_total_1h is not none %}
+	        </div>
+	        <div class="stat-sub">最終 {{ dashboard.system.healthbeat_label or '-' }}</div>
+	      </div>
+	      <div class="stat-card compact">
+	        <div class="stat-label">注文 (1h)</div>
+	        <div class="stat-value">
+	          {% if dashboard.system.orders_total_1h is not none %}
             {{ dashboard.system.orders_total_1h }}
           {% else %}
             -
@@ -800,105 +778,66 @@
           <span class="pill {{ row.level }}">{{ row.status }} {{ row.count }}</span>
         {% endfor %}
       </div>
-    {% else %}
-      <p class="tagline">直近1時間の注文データがありません。</p>
-    {% endif %}
+	    {% else %}
+	      <p class="tagline">直近1時間の注文データがありません。</p>
+	    {% endif %}
 
-    <div class="section-title">最近のシグナル / 注文</div>
-    <div class="filter-row">
-      <span class="filter-title">Quick Filter</span>
-      <input class="input-compact input-full" data-filter-input placeholder="pocket / strategy / worker / error / id" autocomplete="off">
-      <button type="button" class="btn-ghost" data-filter-clear>クリア</button>
-      <span class="filter-count" data-filter-count></span>
-    </div>
-    <div class="split-equal">
-      <div>
-        <div class="section-subtitle">最近のシグナル</div>
-        {% if dashboard.system.signals_recent %}
-          <div class="table-wrap">
-            <table data-filter-table="signals">
-              <thead>
-                <tr>
-                  <th>時刻</th>
-                  <th>Pocket</th>
-                  <th>戦略</th>
-                  <th>Worker</th>
-                  <th>アクション</th>
-                  <th>信頼度</th>
-                  <th>Units</th>
-                  <th>ID</th>
-                </tr>
-              </thead>
-              <tbody>
-              {% for row in dashboard.system.signals_recent %}
-                <tr>
-                  <td class="mono nowrap">{{ row.ts_label }}</td>
-                  <td>{{ row.pocket_label }}</td>
-                  <td>{{ row.strategy }}</td>
-                  <td>{{ row.worker }}</td>
-                  <td>{{ row.action }}</td>
-                  <td>{{ row.confidence if row.confidence is not none else '-' }}</td>
-                  <td>{{ row.units if row.units is not none else '-' }}</td>
-                  <td class="mono"><span title="{{ row.id_full }}">{{ row.id_short }}</span></td>
-                </tr>
-              {% endfor %}
-              </tbody>
-            </table>
-          </div>
-        {% else %}
-          <p class="tagline">シグナルの直近履歴がありません。</p>
-        {% endif %}
-      </div>
-      <div>
-        <div class="section-subtitle">最近の注文</div>
-        {% if dashboard.system.orders_last %}
-          <div class="table-wrap">
-            <table data-filter-table="orders">
-              <thead>
-                <tr>
-                  <th>時刻</th>
-                  <th>Pocket</th>
-                  <th>戦略</th>
-                  <th>Worker</th>
-                  <th>方向</th>
-                  <th>Units</th>
-                  <th>状態</th>
-                  <th>エラー</th>
-                  <th>ID</th>
-                </tr>
-              </thead>
-              <tbody>
-              {% for row in dashboard.system.orders_last %}
-                <tr>
-                  <td class="mono nowrap">{{ row.ts_label }}</td>
-                  <td>{{ row.pocket_label }}</td>
-                  <td>{{ row.strategy }}</td>
-                  <td>{{ row.worker }}</td>
-                  <td>{{ row.side }}</td>
-                  <td>{{ row.units if row.units is not none else '-' }}</td>
-                  <td class="{{ row.status_level }}">{{ row.status }}</td>
-                  <td>
-                    {% if row.error_code or row.error_message %}
-                      <span class="pill loss" title="{{ row.error_message }}">{{ row.error_code or 'ERR' }}</span>
-                    {% else %}
-                      -
-                    {% endif %}
-                  </td>
-                  <td class="mono"><span title="{{ row.id_full }}">{{ row.id_short }}</span></td>
-                </tr>
-              {% endfor %}
-              </tbody>
-            </table>
-          </div>
-        {% else %}
-          <p class="tagline">注文の直近履歴がありません。</p>
-        {% endif %}
-      </div>
-    </div>
-  </div>
+	    <div class="section-title">最近の注文</div>
+	    <div class="filter-row">
+	      <span class="filter-title">Quick Filter</span>
+	      <input class="input-compact input-full" data-filter-input placeholder="pocket / strategy / worker / error / id" autocomplete="off">
+	      <button type="button" class="btn-ghost" data-filter-clear>クリア</button>
+	      <span class="filter-count" data-filter-count></span>
+	    </div>
+	    <div>
+	      <div class="section-subtitle">最近の注文</div>
+	      {% if dashboard.system.orders_last %}
+	        <div class="table-wrap">
+	          <table data-filter-table="orders">
+	            <thead>
+	              <tr>
+	                <th>時刻</th>
+	                <th>Pocket</th>
+	                <th>戦略</th>
+	                <th>Worker</th>
+	                <th>方向</th>
+	                <th>Units</th>
+	                <th>状態</th>
+	                <th>エラー</th>
+	                <th>ID</th>
+	              </tr>
+	            </thead>
+	            <tbody>
+	            {% for row in dashboard.system.orders_last %}
+	              <tr>
+	                <td class="mono nowrap">{{ row.ts_label }}</td>
+	                <td>{{ row.pocket_label }}</td>
+	                <td>{{ row.strategy }}</td>
+	                <td>{{ row.worker }}</td>
+	                <td>{{ row.side }}</td>
+	                <td>{{ row.units if row.units is not none else '-' }}</td>
+	                <td class="{{ row.status_level }}">{{ row.status }}</td>
+	                <td>
+	                  {% if row.error_code or row.error_message %}
+	                    <span class="pill loss" title="{{ row.error_message }}">{{ row.error_code or 'ERR' }}</span>
+	                  {% else %}
+	                    -
+	                  {% endif %}
+	                </td>
+	                <td class="mono"><span title="{{ row.id_full }}">{{ row.id_short }}</span></td>
+	              </tr>
+	            {% endfor %}
+	            </tbody>
+	          </table>
+	        </div>
+	      {% else %}
+	        <p class="tagline">注文の直近履歴がありません。</p>
+	      {% endif %}
+	    </div>
+	  </div>
 
-      <div class="card">
-        <h2>エラー / ログ</h2>
+	      <div class="card">
+	        <h2>エラー / ログ</h2>
         <div class="tagline">注文エラーとアプリログの直近エラーをまとめて表示します。</div>
         <div class="split-equal">
           <div>
