@@ -1906,9 +1906,14 @@ def _load_dashboard_data() -> Dict[str, Any]:
     if gcs_snapshot:
         candidates.append(("gcs", gcs_snapshot))
 
-    local_snapshot = _build_local_snapshot()
-    if local_snapshot:
-        candidates.append(("local", local_snapshot))
+    # On Cloud Run, the local snapshot is almost always empty (no logs/*.db),
+    # but it will have a fresh generated_at timestamp and can incorrectly win
+    # over the real GCS/remote snapshot. Treat local as a VM-only fallback.
+    on_cloud_run = bool(os.getenv("K_SERVICE") or os.getenv("K_REVISION"))
+    if not on_cloud_run:
+        local_snapshot = _build_local_snapshot()
+        if local_snapshot:
+            candidates.append(("local", local_snapshot))
 
     picked = _pick_latest_snapshot(candidates)
     if picked:
