@@ -3,7 +3,12 @@ import toml
 import pathlib
 from functools import lru_cache
 from typing import Optional
-from google.cloud import secretmanager
+
+# NOTE:
+#   Importing google.cloud.secretmanager pulls in grpc (cygrpc) which installs fork handlers.
+#   In local replay/backtest we sometimes spawn subprocesses; on macOS that can deadlock in
+#   grpc atfork prepare. Keep the import lazy so grpc is only loaded when we actually need
+#   to call GCP Secret Manager.
 
 _ENV_PATH = pathlib.Path("config/env.toml")
 # プロジェクトIDは複数の一般的な環境変数を順に参照
@@ -78,6 +83,8 @@ def _fetch_from_gcp(key: str) -> Optional[str]:
     if _gcp_disabled():
         return None
     try:
+        from google.cloud import secretmanager  # type: ignore
+
         client = secretmanager.SecretManagerServiceClient()
         secret_name = f"projects/{PROJECT_ID}/secrets/{key}/versions/latest"
         response = client.access_secret_version(name=secret_name, timeout=2.0)
