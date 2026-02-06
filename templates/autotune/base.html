@@ -627,9 +627,11 @@
     .chart-tooltip.is-visible { opacity: 1; }
 
     main .card {
-      opacity: 0;
-      transform: translateY(12px);
-      animation: cardIn 0.6s ease forwards;
+      /* Default visible, so UI doesn't go blank if animations are disabled. */
+      opacity: 1;
+      transform: none;
+      /* Apply the starting keyframe during delay to avoid flashing before the animation starts. */
+      animation: cardIn 0.6s ease both;
     }
     .no-anim main .card {
       opacity: 1;
