@@ -20,10 +20,10 @@ Environment=SCALP_PRECISION_OPEN_TRADES_SCOPE=tag
 Environment=SPB_BBW_MAX=0.0020
 Environment=SPB_ATR_MIN=0.9
 Environment=SPB_ATR_MAX=4.6
-Environment=SPB_LOOKBACK=24
+Environment=SPB_LOOKBACK=18
 Environment=SPB_HI_PCT=95.0
 Environment=SPB_LO_PCT=5.0
-Environment=SPB_BREAKOUT_PIPS=0.60
+Environment=SPB_BREAKOUT_PIPS=0.35
 Environment=SPB_RANGE_SCORE_MIN=0.34
 Environment=SPB_TICK_WINDOW_SEC=12.0
 Environment=SPB_MIN_TICKS=10
