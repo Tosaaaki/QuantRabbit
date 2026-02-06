@@ -2029,7 +2029,10 @@ async def scalp_precision_worker() -> None:
                     continue
 
             strategies = []
-            allowlist = set([s.lower() for s in _env_csv("SCALP_PRECISION_ALLOWLIST", config.ALLOWLIST_RAW)])
+            # /etc/quantrabbit.env may define a global allowlist shared across multiple scalp_precision units.
+            # Prefer a per-unit override when present so a single unit can run an extra mode without editing
+            # the global env file.
+            allowlist = set([s.lower() for s in _env_csv("SCALP_PRECISION_UNIT_ALLOWLIST", config.ALLOWLIST_RAW)])
             mode = (config.MODE or "").strip().lower()
             if mode:
                 if config.MODE_FILTER_ALLOWLIST:
