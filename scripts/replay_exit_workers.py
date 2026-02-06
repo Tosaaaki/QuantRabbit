@@ -249,6 +249,9 @@ def _signal_map():
         "WickReversal": lambda fac_m1, fac_m5, fac_h1, range_ctx, now: sp_worker._signal_wick_reversal(  # type: ignore[attr-defined]
             fac_m1, tag="WickReversal"
         ),
+        "TickWickReversal": lambda fac_m1, fac_m5, fac_h1, range_ctx, now: sp_worker._signal_tick_wick_reversal(  # type: ignore[attr-defined]
+            fac_m1, range_ctx, tag="TickWickReversal"
+        ),
         "SessionEdge": lambda fac_m1, fac_m5, fac_h1, range_ctx, now: sp_worker._signal_session_edge(  # type: ignore[attr-defined]
             fac_m1, range_ctx, tag="SessionEdge", now_utc=now
         ),
@@ -270,6 +273,7 @@ _TAG_TO_MODE = {
     "TickImbalance": "tick_imbalance",
     "LevelReject": "level_reject",
     "WickReversal": "wick_reversal",
+    "TickWickReversal": "tick_wick_reversal",
     "SessionEdge": "session_edge",
 }
 

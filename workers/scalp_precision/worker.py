@@ -56,6 +56,7 @@ _MODE_TAG_MAP = {
     'tick_imbalance': 'TickImbalance',
     'level_reject': 'LevelReject',
     'wick_reversal': 'WickReversal',
+    'tick_wick_reversal': 'TickWickReversal',
     'session_edge': 'SessionEdge',
     'drought_revert': 'DroughtRevert',
     'precision_lowvol': 'PrecisionLowVol',
@@ -269,6 +270,26 @@ WICK_BODY_MAX_PIPS = _env_float("WICK_REV_BODY_MAX_PIPS", 0.9)
 WICK_RATIO_MIN = _env_float("WICK_REV_RATIO_MIN", 0.55)
 WICK_ADX_MAX = _env_float("WICK_REV_ADX_MAX", 24.0)
 WICK_BBW_MAX = _env_float("WICK_REV_BBW_MAX", 0.28)
+
+# Tick-window wick reversal (higher-frequency range-reversion).
+TICK_WICK_WINDOW_SEC = _env_float("TICK_WICK_WINDOW_SEC", 9.0)
+TICK_WICK_MIN_TICKS = _env_int("TICK_WICK_MIN_TICKS", 18)
+TICK_WICK_RANGE_MIN_PIPS = _env_float("TICK_WICK_RANGE_MIN_PIPS", 0.75)
+TICK_WICK_BODY_MAX_PIPS = _env_float("TICK_WICK_BODY_MAX_PIPS", 0.25)
+TICK_WICK_RATIO_MIN = _env_float("TICK_WICK_RATIO_MIN", 0.62)
+TICK_WICK_RANGE_SCORE_MIN = _env_float("TICK_WICK_RANGE_SCORE_MIN", 0.48)
+TICK_WICK_ADX_MAX = _env_float("TICK_WICK_ADX_MAX", 23.0)
+TICK_WICK_BBW_MAX = _env_float("TICK_WICK_BBW_MAX", 0.24)
+TICK_WICK_SPREAD_P25 = _env_float("TICK_WICK_SPREAD_P25", 1.0)
+TICK_WICK_REQUIRE_BB_TOUCH = _env_bool("TICK_WICK_REQUIRE_BB_TOUCH", True)
+TICK_WICK_BB_TOUCH_PIPS = _env_float("TICK_WICK_BB_TOUCH_PIPS", 0.9)
+TICK_WICK_REQUIRE_TICK_REV = _env_bool("TICK_WICK_REQUIRE_TICK_REV", True)
+TICK_WICK_MIN_REV_STRENGTH = _env_float("TICK_WICK_MIN_REV_STRENGTH", 0.25)
+
+# Optional extra gates based on AIR (applied after adjust_signal)
+TICK_WICK_MIN_AIR_SCORE = _env_float("TICK_WICK_MIN_AIR_SCORE", 0.72)
+TICK_WICK_MIN_EXEC_QUALITY = _env_float("TICK_WICK_MIN_EXEC_QUALITY", 0.97)
+TICK_WICK_MAX_REGIME_SHIFT = _env_float("TICK_WICK_MAX_REGIME_SHIFT", 0.06)
 
 LSR_LOOKBACK = _env_int("LSR_LOOKBACK", 20)
 LSR_SWEEP_PIPS = _env_float("LSR_SWEEP_PIPS", 0.45)
@@ -1107,6 +1128,117 @@ def _signal_wick_reversal(
     }
 
 
+def _signal_tick_wick_reversal(
+    fac_m1: Dict[str, object],
+    range_ctx=None,
+    *,
+    tag: str,
+) -> Optional[Dict[str, object]]:
+    # Higher-frequency wick reversal built from a short tick window (no M1 close dependency).
+    range_score = 0.0
+    range_ok = False
+    if range_ctx is not None:
+        try:
+            range_score = float(getattr(range_ctx, "score", 0.0) or 0.0)
+            range_ok = bool(getattr(range_ctx, "active", False)) or range_score >= TICK_WICK_RANGE_SCORE_MIN
+        except Exception:
+            range_score = 0.0
+            range_ok = False
+    if not range_ok:
+        return None
+
+    ok_spread, _ = spread_ok(max_pips=config.MAX_SPREAD_PIPS, p25_max=TICK_WICK_SPREAD_P25)
+    if not ok_spread:
+        return None
+
+    if _adx(fac_m1) > TICK_WICK_ADX_MAX or _bbw(fac_m1) > TICK_WICK_BBW_MAX:
+        return None
+
+    mids, span = tick_snapshot(TICK_WICK_WINDOW_SEC, limit=max(60, int(TICK_WICK_MIN_TICKS * 5)))
+    if not mids or len(mids) < TICK_WICK_MIN_TICKS or span <= 0.0:
+        return None
+
+    o = float(mids[0])
+    c = float(mids[-1])
+    h = float(max(mids))
+    l = float(min(mids))
+    if h <= 0 or l <= 0 or h <= l:
+        return None
+
+    rng_pips = (h - l) / PIP
+    if rng_pips < TICK_WICK_RANGE_MIN_PIPS:
+        return None
+    body_pips = abs(c - o) / PIP
+    if body_pips > TICK_WICK_BODY_MAX_PIPS:
+        return None
+
+    upper_wick = (h - max(o, c)) / PIP
+    lower_wick = (min(o, c) - l) / PIP
+    wick_ratio = max(upper_wick, lower_wick) / max(rng_pips, 0.01)
+    if wick_ratio < TICK_WICK_RATIO_MIN:
+        return None
+
+    side = "short" if upper_wick > lower_wick else "long"
+
+    if TICK_WICK_REQUIRE_BB_TOUCH:
+        price = _latest_price(fac_m1)
+        if price <= 0:
+            return None
+        levels = bb_levels(fac_m1)
+        if not levels:
+            return None
+        upper, _, lower, _, span_pips = levels
+        band = max(TICK_WICK_BB_TOUCH_PIPS, span_pips * 0.18)
+        dist_lower = (price - lower) / PIP
+        dist_upper = (upper - price) / PIP
+        if side == "long" and dist_lower > band:
+            return None
+        if side == "short" and dist_upper > band:
+            return None
+
+    rev_ok, rev_dir, rev_strength = tick_reversal(mids, min_ticks=max(6, int(TICK_WICK_MIN_TICKS * 0.35)))
+    if TICK_WICK_REQUIRE_TICK_REV:
+        if not rev_ok or rev_dir != side or (rev_strength is not None and rev_strength < TICK_WICK_MIN_REV_STRENGTH):
+            hard_wick_ok = wick_ratio >= (TICK_WICK_RATIO_MIN + 0.12) and rng_pips >= (TICK_WICK_RANGE_MIN_PIPS * 1.35)
+            if not hard_wick_ok:
+                return None
+
+    proj_allow, size_mult, proj_detail = projection_decision(side, mode="range")
+    if not proj_allow:
+        return None
+
+    atr = _atr_pips(fac_m1)
+    sl = max(1.1, min(1.9, atr * 0.75))
+    tp = max(1.2, min(2.2, atr * 0.95))
+    conf = 60
+    conf += int(min(12.0, wick_ratio * 18.0))
+    conf += int(min(8.0, max(0.0, rng_pips - 0.6) * 5.0))
+    if rev_ok and rev_strength is not None:
+        conf += int(min(6.0, max(0.0, rev_strength) * 4.0))
+    conf += int(min(8.0, range_score * 12.0))
+    conf = int(max(45, min(92, conf)))
+
+    return {
+        "action": "OPEN_LONG" if side == "long" else "OPEN_SHORT",
+        "sl_pips": round(sl, 2),
+        "tp_pips": round(tp, 2),
+        "confidence": conf,
+        "tag": tag,
+        "reason": "tick_wick_reversal",
+        "size_mult": round(size_mult, 3),
+        "projection": proj_detail,
+        "tick_span_sec": round(span, 3),
+        "tick_wick": {
+            "range_pips": round(rng_pips, 3),
+            "body_pips": round(body_pips, 3),
+            "wick_ratio": round(wick_ratio, 3),
+            "upper_wick": round(upper_wick, 3),
+            "lower_wick": round(lower_wick, 3),
+        },
+        "range_score": round(range_score, 3),
+    }
+
+
 def _signal_vwap_revert(
     fac_m1: Dict[str, object],
     range_ctx,
@@ -1812,6 +1944,8 @@ async def scalp_precision_worker() -> None:
                 strategies.append(("LiquiditySweep", _signal_liquidity_sweep, {"tag": "LiquiditySweep"}))
             if enabled("wick_reversal"):
                 strategies.append(("WickReversal", _signal_wick_reversal, {"tag": "WickReversal"}))
+            if enabled("tick_wick_reversal"):
+                strategies.append(("TickWickReversal", _signal_tick_wick_reversal, {"tag": "TickWickReversal"}))
             if enabled("session_edge"):
                 strategies.append(("SessionEdge", _signal_session_edge, {"tag": "SessionEdge"}))
 
@@ -1829,6 +1963,7 @@ async def scalp_precision_worker() -> None:
                     _signal_stoch_bounce,
                     _signal_divergence_revert,
                     _signal_tick_imbalance,
+                    _signal_tick_wick_reversal,
                 ):
                     signal = fn(fac_m1, range_ctx, **kwargs)
                 else:
@@ -1836,6 +1971,17 @@ async def scalp_precision_worker() -> None:
                 if signal:
                     signal = adjust_signal(signal, air)
                     if signal:
+                        if (
+                            str(signal.get("tag") or "").strip() == "TickWickReversal"
+                            and air.enabled
+                            and not bypass_common_guard
+                        ):
+                            if air.air_score < TICK_WICK_MIN_AIR_SCORE:
+                                continue
+                            if air.exec_quality < TICK_WICK_MIN_EXEC_QUALITY:
+                                continue
+                            if air.regime_shift > TICK_WICK_MAX_REGIME_SHIFT:
+                                continue
                         conf = int(signal.get("confidence", 0) or 0)
                         if config.MIN_ENTRY_CONF > 0 and conf < config.MIN_ENTRY_CONF:
                             continue
