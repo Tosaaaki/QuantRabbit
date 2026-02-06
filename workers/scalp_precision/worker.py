@@ -315,6 +315,8 @@ TICK_WICK_MAX_REGIME_SHIFT = _env_float("TICK_WICK_MAX_REGIME_SHIFT", 0.06)
 TICK_WICK_DIAG = _env_bool("TICK_WICK_DIAG", False)
 TICK_WICK_DIAG_INTERVAL_SEC = _env_float("TICK_WICK_DIAG_INTERVAL_SEC", 15.0)
 
+_LAST_TICK_WICK_PLACE_DIAG_TS = 0.0
+
 LSR_LOOKBACK = _env_int("LSR_LOOKBACK", 20)
 LSR_SWEEP_PIPS = _env_float("LSR_SWEEP_PIPS", 0.45)
 LSR_RECLAIM_PIPS = _env_float("LSR_RECLAIM_PIPS", 0.1)
@@ -1811,13 +1813,23 @@ async def _place_order(
     range_ctx,
     now: datetime.datetime,
 ) -> Optional[str]:
+    global _LAST_TICK_WICK_PLACE_DIAG_TS
+    diag_tick_wick = (
+        TICK_WICK_DIAG and str(signal.get("tag") or "").strip() == "TickWickReversal"
+    )
     price = _latest_price(fac_m1)
     if price <= 0:
+        if diag_tick_wick and time.monotonic() - _LAST_TICK_WICK_PLACE_DIAG_TS >= TICK_WICK_DIAG_INTERVAL_SEC:
+            _LAST_TICK_WICK_PLACE_DIAG_TS = time.monotonic()
+            LOG.info("%s tick_wick place skip reason=bad_price price=%s", config.LOG_PREFIX, price)
         return None
     side = "long" if signal.get("action") == "OPEN_LONG" else "short"
     sl_pips = float(signal.get("sl_pips") or 0.0)
     tp_pips = float(signal.get("tp_pips") or 0.0)
     if sl_pips <= 0:
+        if diag_tick_wick and time.monotonic() - _LAST_TICK_WICK_PLACE_DIAG_TS >= TICK_WICK_DIAG_INTERVAL_SEC:
+            _LAST_TICK_WICK_PLACE_DIAG_TS = time.monotonic()
+            LOG.info("%s tick_wick place skip reason=bad_sl sl_pips=%s", config.LOG_PREFIX, sl_pips)
         return None
 
     snap = get_account_snapshot()
@@ -1835,10 +1847,28 @@ async def _place_order(
     )
     cap = cap_res.cap
     if cap <= 0.0:
+        if diag_tick_wick and time.monotonic() - _LAST_TICK_WICK_PLACE_DIAG_TS >= TICK_WICK_DIAG_INTERVAL_SEC:
+            _LAST_TICK_WICK_PLACE_DIAG_TS = time.monotonic()
+            LOG.info(
+                "%s tick_wick place skip reason=cap_zero cap=%s free_ratio=%s atr=%s range_active=%s",
+                config.LOG_PREFIX,
+                cap,
+                free_ratio,
+                atr,
+                bool(getattr(range_ctx, "active", False)),
+            )
         return None
 
     conf = int(signal.get("confidence", 0) or 0)
     if config.MIN_ENTRY_CONF > 0 and conf < config.MIN_ENTRY_CONF:
+        if diag_tick_wick and time.monotonic() - _LAST_TICK_WICK_PLACE_DIAG_TS >= TICK_WICK_DIAG_INTERVAL_SEC:
+            _LAST_TICK_WICK_PLACE_DIAG_TS = time.monotonic()
+            LOG.info(
+                "%s tick_wick place skip reason=conf_low conf=%s min=%s",
+                config.LOG_PREFIX,
+                conf,
+                config.MIN_ENTRY_CONF,
+            )
         return None
     conf_scale = _confidence_scale(conf, lo=config.CONFIDENCE_FLOOR, hi=config.CONFIDENCE_CEIL)
     size_mult = float(signal.get("size_mult", 1.0) or 1.0)
@@ -1873,6 +1903,18 @@ async def _place_order(
     )
     units = int(round(sizing.units * cap * size_mult))
     if abs(units) < config.MIN_UNITS:
+        if diag_tick_wick and time.monotonic() - _LAST_TICK_WICK_PLACE_DIAG_TS >= TICK_WICK_DIAG_INTERVAL_SEC:
+            _LAST_TICK_WICK_PLACE_DIAG_TS = time.monotonic()
+            LOG.info(
+                "%s tick_wick place skip reason=units_too_small units=%s min=%s cap=%s size_mult=%s base_units=%s free_ratio=%s",
+                config.LOG_PREFIX,
+                units,
+                config.MIN_UNITS,
+                cap,
+                size_mult,
+                config.BASE_ENTRY_UNITS,
+                free_ratio,
+            )
         return None
     if side == "short":
         units = -abs(units)
@@ -1893,7 +1935,7 @@ async def _place_order(
         "sizing": sizing.factors,
     }
 
-    return await market_order(
+    order_id = await market_order(
         instrument="USD_JPY",
         units=units,
         sl_price=sl_price,
@@ -1905,6 +1947,20 @@ async def _place_order(
         meta=meta,
         confidence=conf,
     )
+    if diag_tick_wick and time.monotonic() - _LAST_TICK_WICK_PLACE_DIAG_TS >= TICK_WICK_DIAG_INTERVAL_SEC:
+        _LAST_TICK_WICK_PLACE_DIAG_TS = time.monotonic()
+        LOG.info(
+            "%s tick_wick place result order_id=%s units=%s side=%s sl=%s tp=%s conf=%s cap=%s",
+            config.LOG_PREFIX,
+            order_id,
+            units,
+            side,
+            sl_price,
+            tp_price,
+            conf,
+            cap,
+        )
+    return order_id
 
 
 async def scalp_precision_worker() -> None:
