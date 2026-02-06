@@ -26,6 +26,7 @@ defaults:
       - lock_floor
       - time_stop
       - timeout
+      - range_timeout
       - mtf_reversal
       - trend_failure
       - trend_exhaust
@@ -442,6 +443,12 @@ strategies:
         - tech_hard_stop
         - fast_cut_*
         - time_cut
+        - time_stop
+        - timeout
+        - range_timeout
+        - reentry_reset
+        - max_hold
+        - max_adverse
         - rsi_fade
         - m1_rsi_fade
         - vwap_cut
