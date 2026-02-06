@@ -363,6 +363,13 @@ WICK_HF_TICK_MIN_STRENGTH = _env_float("WICK_HF_TICK_MIN_STRENGTH", 0.25)
 WICK_HF_REQUIRE_BB_TOUCH = _env_bool("WICK_HF_REQUIRE_BB_TOUCH", True)
 WICK_HF_BB_TOUCH_PIPS = _env_float("WICK_HF_BB_TOUCH_PIPS", 0.9)
 
+# Allow trading in higher-ADX regimes only when the rejection is unusually strong.
+# Default disabled to avoid broad behavior changes; enable per-unit in systemd.
+WICK_HF_ADX_OVERRIDE_ENABLED = _env_bool("WICK_HF_ADX_OVERRIDE_ENABLED", False)
+WICK_HF_ADX_OVERRIDE_MAX_ADX = _env_float("WICK_HF_ADX_OVERRIDE_MAX_ADX", 40.0)
+WICK_HF_ADX_OVERRIDE_MIN_RATIO = _env_float("WICK_HF_ADX_OVERRIDE_MIN_RATIO", 0.72)
+WICK_HF_ADX_OVERRIDE_MIN_TICK_STRENGTH = _env_float("WICK_HF_ADX_OVERRIDE_MIN_TICK_STRENGTH", 0.35)
+
 # Optional momentum confirmation (entry precision first). Values are in pips.
 WICK_HF_MOMENTUM_FILTER_ENABLED = _env_bool("WICK_HF_MOMENTUM_FILTER_ENABLED", True)
 WICK_HF_MACD_HIST_LONG_MIN = _env_float("WICK_HF_MACD_HIST_LONG_MIN", -0.15)
@@ -1164,7 +1171,8 @@ def _wick_hf_diag_metrics(fac_m1: Dict[str, object], range_ctx) -> Dict[str, obj
     rng_ok = rng_pips >= WICK_HF_RANGE_MIN_PIPS
     body_ok = body_pips <= WICK_HF_BODY_MAX_PIPS
     ratio_ok = wick_ratio >= WICK_HF_RATIO_MIN
-    adx_ok = not (WICK_HF_ADX_MAX > 0.0 and adx > WICK_HF_ADX_MAX)
+    adx_too_high = bool(WICK_HF_ADX_MAX > 0.0 and adx > WICK_HF_ADX_MAX)
+    adx_override_ok = False
     bbw_ok = not (WICK_HF_BBW_MAX > 0.0 and bbw > WICK_HF_BBW_MAX)
     atr_ok = not (
         (WICK_HF_ATR_MIN > 0.0 and atr < WICK_HF_ATR_MIN) or (WICK_HF_ATR_MAX > 0.0 and atr > WICK_HF_ATR_MAX)
@@ -1232,6 +1240,23 @@ def _wick_hf_diag_metrics(fac_m1: Dict[str, object], range_ctx) -> Dict[str, obj
         if not tick_gate_ok and not tick_dir_mismatch and hard_wick_ok:
             tick_gate_ok = True
 
+    if (
+        adx_too_high
+        and WICK_HF_ADX_OVERRIDE_ENABLED
+        and WICK_HF_ADX_OVERRIDE_MAX_ADX > 0.0
+        and adx <= WICK_HF_ADX_OVERRIDE_MAX_ADX
+        and tick_ok
+        and not tick_dir_mismatch
+        and (
+            WICK_HF_ADX_OVERRIDE_MIN_TICK_STRENGTH <= 0.0
+            or tick_strength >= WICK_HF_ADX_OVERRIDE_MIN_TICK_STRENGTH
+        )
+        and wick_ratio >= WICK_HF_ADX_OVERRIDE_MIN_RATIO
+    ):
+        adx_override_ok = True
+
+    adx_ok = bool((not adx_too_high) or adx_override_ok)
+
     proj_allow = None
     try:
         allow, _, _ = projection_decision(side, mode="range")
@@ -1287,6 +1312,7 @@ def _wick_hf_diag_metrics(fac_m1: Dict[str, object], range_ctx) -> Dict[str, obj
         "atr": round(atr, 3),
         "macd_hist_pips": round(macd_hist_pips, 3),
         "ema_slope_10_pips": round(ema_slope_10_pips, 3),
+        "adx_override_ok": bool(adx_override_ok),
         "adx_ok": bool(adx_ok),
         "bbw_ok": bool(bbw_ok),
         "atr_ok": bool(atr_ok),
@@ -2059,8 +2085,7 @@ def _signal_wick_reversal_hf(
     adx = _adx(fac_m1)
     bbw = _bbw(fac_m1)
     atr = _atr_pips(fac_m1)
-    if WICK_HF_ADX_MAX > 0.0 and adx > WICK_HF_ADX_MAX:
-        return None
+    adx_too_high = bool(WICK_HF_ADX_MAX > 0.0 and adx > WICK_HF_ADX_MAX)
     if WICK_HF_BBW_MAX > 0.0 and bbw > WICK_HF_BBW_MAX:
         return None
     if (WICK_HF_ATR_MIN > 0.0 and atr < WICK_HF_ATR_MIN) or (WICK_HF_ATR_MAX > 0.0 and atr > WICK_HF_ATR_MAX):
@@ -2100,6 +2125,7 @@ def _signal_wick_reversal_hf(
     )
 
     strength = 0.0
+    adx_override_ok = False
     if WICK_HF_REQUIRE_TICK_REV:
         mids, _ = tick_snapshot(WICK_HF_TICK_WINDOW_SEC, limit=160)
         rev_ok, rev_dir, rev_strength = (
@@ -2118,6 +2144,19 @@ def _signal_wick_reversal_hf(
         if rev_ok and WICK_HF_TICK_MIN_STRENGTH > 0.0 and strength < WICK_HF_TICK_MIN_STRENGTH:
             if not hard_wick_ok:
                 return None
+        if (
+            adx_too_high
+            and WICK_HF_ADX_OVERRIDE_ENABLED
+            and WICK_HF_ADX_OVERRIDE_MAX_ADX > 0.0
+            and adx <= WICK_HF_ADX_OVERRIDE_MAX_ADX
+            and rev_ok
+            and (WICK_HF_ADX_OVERRIDE_MIN_TICK_STRENGTH <= 0.0 or strength >= WICK_HF_ADX_OVERRIDE_MIN_TICK_STRENGTH)
+            and wick_ratio >= WICK_HF_ADX_OVERRIDE_MIN_RATIO
+        ):
+            adx_override_ok = True
+
+    if adx_too_high and not adx_override_ok:
+        return None
 
     proj_allow, size_mult, proj_detail = projection_decision(side, mode="range")
     if not proj_allow:
