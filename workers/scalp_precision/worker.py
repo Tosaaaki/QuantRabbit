@@ -369,6 +369,8 @@ WICK_HF_ADX_OVERRIDE_ENABLED = _env_bool("WICK_HF_ADX_OVERRIDE_ENABLED", False)
 WICK_HF_ADX_OVERRIDE_MAX_ADX = _env_float("WICK_HF_ADX_OVERRIDE_MAX_ADX", 40.0)
 WICK_HF_ADX_OVERRIDE_MIN_RATIO = _env_float("WICK_HF_ADX_OVERRIDE_MIN_RATIO", 0.72)
 WICK_HF_ADX_OVERRIDE_MIN_TICK_STRENGTH = _env_float("WICK_HF_ADX_OVERRIDE_MIN_TICK_STRENGTH", 0.35)
+WICK_HF_ADX_OVERRIDE_ALLOW_NO_TICK_REV = _env_bool("WICK_HF_ADX_OVERRIDE_ALLOW_NO_TICK_REV", False)
+WICK_HF_ADX_OVERRIDE_NO_TICK_MIN_RATIO = _env_float("WICK_HF_ADX_OVERRIDE_NO_TICK_MIN_RATIO", 0.80)
 
 # Optional momentum confirmation (entry precision first). Values are in pips.
 WICK_HF_MOMENTUM_FILTER_ENABLED = _env_bool("WICK_HF_MOMENTUM_FILTER_ENABLED", True)
@@ -1240,6 +1242,19 @@ def _wick_hf_diag_metrics(fac_m1: Dict[str, object], range_ctx) -> Dict[str, obj
         if not tick_gate_ok and not tick_dir_mismatch and hard_wick_ok:
             tick_gate_ok = True
 
+    adx_override_no_tick_ok = bool(
+        adx_too_high
+        and WICK_HF_ADX_OVERRIDE_ENABLED
+        and WICK_HF_ADX_OVERRIDE_MAX_ADX > 0.0
+        and adx <= WICK_HF_ADX_OVERRIDE_MAX_ADX
+        and WICK_HF_ADX_OVERRIDE_ALLOW_NO_TICK_REV
+        and (not tick_ok)
+        and (not tick_dir_mismatch)
+        and wick_ratio >= WICK_HF_ADX_OVERRIDE_NO_TICK_MIN_RATIO
+    )
+    if WICK_HF_REQUIRE_TICK_REV and (not tick_gate_ok) and (not tick_dir_mismatch) and adx_override_no_tick_ok:
+        tick_gate_ok = True
+
     if (
         adx_too_high
         and WICK_HF_ADX_OVERRIDE_ENABLED
@@ -1253,6 +1268,9 @@ def _wick_hf_diag_metrics(fac_m1: Dict[str, object], range_ctx) -> Dict[str, obj
         )
         and wick_ratio >= WICK_HF_ADX_OVERRIDE_MIN_RATIO
     ):
+        adx_override_ok = True
+
+    if adx_override_no_tick_ok:
         adx_override_ok = True
 
     adx_ok = bool((not adx_too_high) or adx_override_ok)
@@ -1313,6 +1331,7 @@ def _wick_hf_diag_metrics(fac_m1: Dict[str, object], range_ctx) -> Dict[str, obj
         "macd_hist_pips": round(macd_hist_pips, 3),
         "ema_slope_10_pips": round(ema_slope_10_pips, 3),
         "adx_override_ok": bool(adx_override_ok),
+        "adx_override_no_tick_ok": bool(adx_override_no_tick_ok),
         "adx_ok": bool(adx_ok),
         "bbw_ok": bool(bbw_ok),
         "atr_ok": bool(atr_ok),
@@ -2131,8 +2150,21 @@ def _signal_wick_reversal_hf(
         rev_ok, rev_dir, rev_strength = (
             tick_reversal(mids, min_ticks=WICK_HF_TICK_MIN_TICKS) if mids else (False, None, 0.0)
         )
+        override_ctx = bool(
+            adx_too_high
+            and WICK_HF_ADX_OVERRIDE_ENABLED
+            and WICK_HF_ADX_OVERRIDE_MAX_ADX > 0.0
+            and adx <= WICK_HF_ADX_OVERRIDE_MAX_ADX
+        )
+        allow_no_tick = bool(
+            override_ctx
+            and WICK_HF_ADX_OVERRIDE_ALLOW_NO_TICK_REV
+            and wick_ratio >= WICK_HF_ADX_OVERRIDE_NO_TICK_MIN_RATIO
+        )
         if not rev_ok:
-            if not hard_wick_ok:
+            if allow_no_tick:
+                adx_override_ok = True
+            elif not hard_wick_ok:
                 return None
         elif rev_dir != side:
             # Direction mismatch is a hard no (no fallback).
@@ -2145,12 +2177,12 @@ def _signal_wick_reversal_hf(
             if not hard_wick_ok:
                 return None
         if (
-            adx_too_high
-            and WICK_HF_ADX_OVERRIDE_ENABLED
-            and WICK_HF_ADX_OVERRIDE_MAX_ADX > 0.0
-            and adx <= WICK_HF_ADX_OVERRIDE_MAX_ADX
+            override_ctx
             and rev_ok
-            and (WICK_HF_ADX_OVERRIDE_MIN_TICK_STRENGTH <= 0.0 or strength >= WICK_HF_ADX_OVERRIDE_MIN_TICK_STRENGTH)
+            and (
+                WICK_HF_ADX_OVERRIDE_MIN_TICK_STRENGTH <= 0.0
+                or strength >= WICK_HF_ADX_OVERRIDE_MIN_TICK_STRENGTH
+            )
             and wick_ratio >= WICK_HF_ADX_OVERRIDE_MIN_RATIO
         ):
             adx_override_ok = True

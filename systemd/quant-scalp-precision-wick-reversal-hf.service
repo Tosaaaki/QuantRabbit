@@ -32,6 +32,9 @@ Environment=WICK_HF_ADX_OVERRIDE_ENABLED=1
 Environment=WICK_HF_ADX_OVERRIDE_MAX_ADX=55.0
 Environment=WICK_HF_ADX_OVERRIDE_MIN_RATIO=0.65
 Environment=WICK_HF_ADX_OVERRIDE_MIN_TICK_STRENGTH=0.20
+# If tick reversal detection is missing but wick rejection is extreme, allow entry even in high ADX.
+Environment=WICK_HF_ADX_OVERRIDE_ALLOW_NO_TICK_REV=1
+Environment=WICK_HF_ADX_OVERRIDE_NO_TICK_MIN_RATIO=0.80
 Environment=WICK_HF_BBW_MAX=0.0016
 Environment=WICK_HF_SPREAD_P25=1.0
 Environment=WICK_HF_REQUIRE_BB_TOUCH=0
