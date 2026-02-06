@@ -371,6 +371,19 @@ strategies:
       loss_cut_reason_hard: max_adverse
       loss_cut_reason_time: time_stop
 
+  SqueezePulseBreak:
+    min_profit_pips: 1.2
+    min_profit_ratio: 0.80
+    exit_profile:
+      # Defaults have loss_cut disabled + require SL; SqueezePulseBreak often runs without broker SL.
+      # Enable deterministic loss cuts to avoid tail losses when the breakout fails.
+      loss_cut_enabled: true
+      loss_cut_require_sl: false
+      loss_cut_soft_pips: 3.8
+      loss_cut_hard_pips: 7.0
+      loss_cut_max_hold_sec: 420
+      loss_cut_cooldown_sec: 4
+
   MomentumPulse:
     be_profile: {trigger_pips: 1.7, lock_ratio: 0.50, min_lock_pips: 0.60, cooldown_sec: 35}
     tp_move: {trigger_pips: 1.4, buffer_pips: 0.9}
