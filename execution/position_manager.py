@@ -133,6 +133,15 @@ _CASHFLOW_BACKFILL_ENABLED = os.getenv(
 _CASHFLOW_BACKFILL_OANDA_ENABLED = os.getenv(
     "POSITION_MANAGER_CASHFLOW_BACKFILL_OANDA", "1"
 ).strip().lower() not in {"", "0", "false", "no"}
+_CASHFLOW_OANDA_QUERY_TYPES = tuple(
+    t.strip()
+    for t in os.getenv(
+        "POSITION_MANAGER_CASHFLOW_BACKFILL_OANDA_TYPES",
+        # OANDA production accounts accept TRANSFER_FUNDS; some older names return 400.
+        "TRANSFER_FUNDS",
+    ).split(",")
+    if t.strip()
+)
 _CASHFLOW_BACKFILL_TTL_SEC = float(
     os.getenv("POSITION_MANAGER_CASHFLOW_BACKFILL_TTL_SEC", "86400")
 )
@@ -1312,9 +1321,9 @@ class PositionManager:
 
         # Backfill directly from OANDA using the transaction type filter (YTD in JST). This keeps
         # cashflow metrics and "balance growth ex cashflow" accurate without requiring local jsonl archives.
-        if _CASHFLOW_BACKFILL_OANDA_ENABLED:
+        if _CASHFLOW_BACKFILL_OANDA_ENABLED and _CASHFLOW_OANDA_QUERY_TYPES:
             url = f"{REST_HOST}/v3/accounts/{ACCOUNT}/transactions"
-            for tx_type in sorted(_CASHFLOW_TYPES):
+            for tx_type in _CASHFLOW_OANDA_QUERY_TYPES:
                 try:
                     summary = self._request_json(
                         url,
