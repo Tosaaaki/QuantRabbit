@@ -18,6 +18,8 @@ Environment=SCALP_PRECISION_OPEN_TRADES_SCOPE=tag
 Environment=SCALP_PRECISION_BASE_UNITS=8000
 Environment=SCALP_PRECISION_CAP_MAX=0.55
 Environment=SCALP_PRECISION_LOG_PREFIX=[ScalpPrecision:WickRevHF]
+# Allow entries down to the same safety level as EXIT_EMERGENCY_MARGIN_USAGE_RATIO (0.92 => 0.08 free).
+Environment=SCALP_PRECISION_ENTRY_MIN_FREE_MARGIN_RATIO=0.08
 
 # HF tuning (looser than WickReversalPro; tick confirmed).
 Environment=WICK_HF_RANGE_SCORE_MIN=0.45
