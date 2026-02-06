@@ -747,7 +747,6 @@ DECIDER_FACTOR_KEYS: Dict[str, tuple[str, ...]] = {
 # systemd service mapping for worker/exit processes (names must match .service files)
 WORKER_SERVICES = {
     # Scalp / S5
-    "fast_scalp": "quant-fast-scalp.service",
     "fast_scalp_exit": "quant-fast-scalp-exit.service",
     "impulse_break_s5": "quant-impulse-break-s5.service",
     "impulse_break_s5_exit": "quant-impulse-break-s5-exit.service",
@@ -1793,7 +1792,6 @@ def _select_worker_targets(
             reasons[name] = reason
 
     # Baseline set
-    bump("fast_scalp", 0.9, "baseline_scalp")
     bump("mm_lite", 0.3, "baseline_mm_lite")
 
     # Macro/trend
