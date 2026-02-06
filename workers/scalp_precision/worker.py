@@ -975,7 +975,18 @@ def _spb_diag_metrics(fac_m1: Dict[str, object], range_ctx) -> Dict[str, object]
     price = _latest_price(fac_m1)
     bbw = _bbw(fac_m1)
     atr = _atr_pips(fac_m1)
-    ok_spread, spread_pips = spread_ok(max_pips=config.MAX_SPREAD_PIPS, p25_max=SPB_SPREAD_P25)
+    ok_spread, spread_state = spread_ok(max_pips=config.MAX_SPREAD_PIPS, p25_max=SPB_SPREAD_P25)
+    spread_pips = 0.0
+    p25_pips = 0.0
+    if isinstance(spread_state, dict):
+        try:
+            spread_pips = float(spread_state.get("spread_pips") or 0.0)
+        except Exception:
+            spread_pips = 0.0
+        try:
+            p25_pips = float(spread_state.get("p25_pips") or 0.0)
+        except Exception:
+            p25_pips = 0.0
 
     range_active = False
     range_score = 0.0
@@ -1020,7 +1031,8 @@ def _spb_diag_metrics(fac_m1: Dict[str, object], range_ctx) -> Dict[str, object]
         "bbw": round(bbw, 6),
         "atr": round(atr, 3),
         "spread_ok": bool(ok_spread),
-        "spread_pips": round(float(spread_pips or 0.0), 3),
+        "spread_pips": round(spread_pips, 3),
+        "p25_pips": round(p25_pips, 3),
         "range_active": bool(range_active),
         "range_score": round(range_score, 3),
         "breakout_long": bool(breakout_long),
