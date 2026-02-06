@@ -24,6 +24,22 @@ def _as_float(value: object, default: float | None = None) -> float | None:
         return default
 
 
+def _percentile(values: list[float], pct: float) -> float:
+    if not values:
+        return 0.0
+    pct = max(0.0, min(pct, 100.0))
+    if len(values) == 1:
+        return values[0]
+    sorted_vals = sorted(values)
+    if pct == 100.0:
+        return sorted_vals[-1]
+    rank = pct / 100.0 * (len(sorted_vals) - 1)
+    lower = int(rank)
+    upper = min(lower + 1, len(sorted_vals) - 1)
+    frac = rank - lower
+    return sorted_vals[lower] * (1.0 - frac) + sorted_vals[upper] * frac
+
+
 def latest_mid(fallback: float) -> float:
     ticks = tick_window.recent_ticks(seconds=8.0, limit=1)
     if ticks:
@@ -190,7 +206,38 @@ def tick_imbalance(mids: Sequence[float], span_seconds: float) -> Optional[TickI
 def spread_ok(*, max_pips: Optional[float] = None, p25_max: Optional[float] = None) -> tuple[bool, Optional[dict]]:
     state = spread_monitor.get_state()
     if state is None:
-        return False, None
+        # spread_monitor is process-local; fall back to the cross-process tick cache so
+        # standalone scalp workers can still gate on spread.
+        ticks = tick_window.recent_ticks(seconds=8.0, limit=120)
+        if not ticks:
+            return False, None
+        spreads: list[float] = []
+        for tick in ticks:
+            try:
+                bid = float(tick.get("bid") or 0.0)
+                ask = float(tick.get("ask") or 0.0)
+            except Exception:
+                continue
+            if bid <= 0.0 or ask <= 0.0 or ask < bid:
+                continue
+            spreads.append((ask - bid) / PIP)
+        if not spreads:
+            return False, None
+        try:
+            last_epoch = float(ticks[-1].get("epoch") or 0.0)
+        except Exception:
+            last_epoch = 0.0
+        age_ms = int(max(0.0, (time.time() - (last_epoch or time.time())) * 1000.0))
+        state = {
+            "spread_pips": spreads[-1],
+            "p25_pips": _percentile(spreads, 25.0),
+            "median_pips": _percentile(spreads, 50.0),
+            "p95_pips": _percentile(spreads, 95.0),
+            "samples": len(spreads),
+            "age_ms": age_ms,
+            "stale": age_ms > 5000,
+            "source": "tick_cache",
+        }
     if state.get("stale"):
         return False, state
     spread = _as_float(state.get("spread_pips"), 999.0) or 999.0
