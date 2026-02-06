@@ -1282,10 +1282,71 @@ class PositionManager:
                 logging.warning("[PositionManager] cashflow backfill read failed: %s", exc)
         if batch:
             total_inserted += _flush_batch(batch)
+
+        # If we don't have recent cashflows (e.g., the DB was bootstrapped after a deposit/withdraw),
+        # backfill directly from OANDA using the transaction type filter. This keeps YTD cashflow and
+        # "balance growth ex cashflow" accurate without requiring local jsonl archives.
+        oanda_inserted = 0
+        if _CASHFLOW_BACKFILL_OANDA_ENABLED and not _has_cashflows_since(year_start_iso):
+            url = f"{REST_HOST}/v3/accounts/{ACCOUNT}/transactions"
+            now_iso = now_dt.isoformat().replace("+00:00", "Z")
+            for tx_type in sorted(_CASHFLOW_TYPES):
+                try:
+                    summary = self._request_json(
+                        url,
+                        params={
+                            "from": year_start_iso,
+                            "to": now_iso,
+                            "pageSize": 1000,
+                            "type": tx_type,
+                        },
+                    ) or {}
+                except requests.RequestException as exc:
+                    logging.warning(
+                        "[PositionManager] cashflow backfill summary failed type=%s: %s",
+                        tx_type,
+                        exc,
+                    )
+                    self._reset_http_if_needed(exc)
+                    continue
+                pages = summary.get("pages") or []
+                if not isinstance(pages, list) or not pages:
+                    continue
+                for page_url in pages:
+                    if not isinstance(page_url, str) or not page_url:
+                        continue
+                    try:
+                        payload = self._request_json(page_url) or {}
+                    except requests.RequestException as exc:
+                        logging.warning(
+                            "[PositionManager] cashflow backfill page failed: %s", exc
+                        )
+                        self._reset_http_if_needed(exc)
+                        continue
+                    for tx in payload.get("transactions") or []:
+                        if not isinstance(tx, dict):
+                            continue
+                        record = _extract_cashflow_tx(tx)
+                        if record:
+                            batch.append(record)
+                            if len(batch) >= 200:
+                                oanda_inserted += _flush_batch(batch)
+                                batch.clear()
+            if batch:
+                oanda_inserted += _flush_batch(batch)
+                batch.clear()
         try:
             _CASHFLOW_BACKFILL_MARKER.parent.mkdir(parents=True, exist_ok=True)
             _CASHFLOW_BACKFILL_MARKER.write_text(
-                json.dumps({"ts": now, "inserted": total_inserted}),
+                json.dumps(
+                    {
+                        "ts": now,
+                        "version": _CASHFLOW_BACKFILL_MARKER_VERSION,
+                        "inserted": total_inserted,
+                        "oanda_inserted": oanda_inserted,
+                        "from": year_start_iso,
+                    }
+                ),
                 encoding="utf-8",
             )
         except Exception:
