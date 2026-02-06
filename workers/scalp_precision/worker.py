@@ -314,6 +314,8 @@ TICK_WICK_MAX_REGIME_SHIFT = _env_float("TICK_WICK_MAX_REGIME_SHIFT", 0.06)
 
 TICK_WICK_DIAG = _env_bool("TICK_WICK_DIAG", False)
 TICK_WICK_DIAG_INTERVAL_SEC = _env_float("TICK_WICK_DIAG_INTERVAL_SEC", 15.0)
+TICK_WICK_CLAMP_MIN_UNITS = _env_bool("TICK_WICK_CLAMP_MIN_UNITS", True)
+TICK_WICK_MIN_UNITS_CLAMP_RATIO = _env_float("TICK_WICK_MIN_UNITS_CLAMP_RATIO", 0.85)
 
 _LAST_TICK_WICK_PLACE_DIAG_TS = 0.0
 
@@ -1903,19 +1905,32 @@ async def _place_order(
     )
     units = int(round(sizing.units * cap * size_mult))
     if abs(units) < config.MIN_UNITS:
-        if diag_tick_wick and time.monotonic() - _LAST_TICK_WICK_PLACE_DIAG_TS >= TICK_WICK_DIAG_INTERVAL_SEC:
-            _LAST_TICK_WICK_PLACE_DIAG_TS = time.monotonic()
-            LOG.info(
-                "%s tick_wick place skip reason=units_too_small units=%s min=%s cap=%s size_mult=%s base_units=%s free_ratio=%s",
-                config.LOG_PREFIX,
-                units,
-                config.MIN_UNITS,
-                cap,
-                size_mult,
-                config.BASE_ENTRY_UNITS,
-                free_ratio,
-            )
-        return None
+        if (
+            str(signal.get("tag") or "").strip() == "TickWickReversal"
+            and TICK_WICK_CLAMP_MIN_UNITS
+            and config.MIN_UNITS > 0
+            and abs(units) >= int(config.MIN_UNITS * TICK_WICK_MIN_UNITS_CLAMP_RATIO)
+        ):
+            # TickWickReversal is intentionally high-frequency; when the calculated size is very close to the
+            # minimum tradable units, clamp up instead of skipping entirely to avoid "never enters".
+            units = config.MIN_UNITS if units >= 0 else -config.MIN_UNITS
+        else:
+            if (
+                diag_tick_wick
+                and time.monotonic() - _LAST_TICK_WICK_PLACE_DIAG_TS >= TICK_WICK_DIAG_INTERVAL_SEC
+            ):
+                _LAST_TICK_WICK_PLACE_DIAG_TS = time.monotonic()
+                LOG.info(
+                    "%s tick_wick place skip reason=units_too_small units=%s min=%s cap=%s size_mult=%s base_units=%s free_ratio=%s",
+                    config.LOG_PREFIX,
+                    units,
+                    config.MIN_UNITS,
+                    cap,
+                    size_mult,
+                    config.BASE_ENTRY_UNITS,
+                    free_ratio,
+                )
+            return None
     if side == "short":
         units = -abs(units)
 
