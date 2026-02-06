@@ -17,19 +17,19 @@ Environment=SCALP_PRECISION_MAX_OPEN_TRADES=1
 Environment=SCALP_PRECISION_OPEN_TRADES_SCOPE=tag
 
 # Compression breakout tuned for frequent "pulse" moves, with spread/ATR guards.
-Environment=SPB_BBW_MAX=0.0016
+Environment=SPB_BBW_MAX=0.0020
 Environment=SPB_ATR_MIN=0.9
 Environment=SPB_ATR_MAX=4.6
 Environment=SPB_LOOKBACK=24
 Environment=SPB_HI_PCT=95.0
 Environment=SPB_LO_PCT=5.0
-Environment=SPB_BREAKOUT_PIPS=0.85
+Environment=SPB_BREAKOUT_PIPS=0.60
 Environment=SPB_RANGE_SCORE_MIN=0.34
 Environment=SPB_TICK_WINDOW_SEC=6.0
 Environment=SPB_MIN_TICKS=10
-Environment=SPB_TICK_RANGE_MAX_PIPS=1.6
-Environment=SPB_IMB_RATIO_MIN=0.62
-Environment=SPB_MOM_MIN_PIPS=0.60
+Environment=SPB_TICK_RANGE_MAX_PIPS=2.2
+Environment=SPB_IMB_RATIO_MIN=0.58
+Environment=SPB_MOM_MIN_PIPS=0.45
 Environment=SPB_SPREAD_P25=1.0
 Environment=SPB_SIZE_MULT=1.15
 
@@ -43,4 +43,3 @@ User=tossaki
 
 [Install]
 WantedBy=multi-user.target
-
