@@ -49,7 +49,7 @@ _CLAMP_IMPULSE_STOP = {
 }
 _CLAMP_SCALP_FACTORS = {1: 0.6, 2: 0.4, 3: 0.1}
 _CLAMP_IMPULSE_THIN_SCALE = float(os.getenv("SCALP_CLAMP_IMPULSE_THIN_SCALE", "0.2"))
-AGGRESSIVE_TRADING = os.getenv("AGGRESSIVE_TRADING", "1").strip().lower() in {
+AGGRESSIVE_TRADING = os.getenv("AGGRESSIVE_TRADING", "0").strip().lower() in {
     "1",
     "true",
     "yes",
@@ -839,8 +839,14 @@ class StageTracker:
             )
             self._con.commit()
             return None
+        # For historical compatibility, expose cooldown_until as a naive UTC datetime.
+        # Internally we normalize comparisons to UTC-aware datetimes via _coerce_utc/_parse_timestamp.
+        limit_out = limit.replace(tzinfo=None)
         return CooldownInfo(
-            pocket=pocket, direction=direction, reason=row["reason"] or "", cooldown_until=limit
+            pocket=pocket,
+            direction=direction,
+            reason=row["reason"] or "",
+            cooldown_until=limit_out,
         )
 
     def is_blocked(
