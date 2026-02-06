@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import os
 import pathlib
@@ -574,6 +575,11 @@ class RangeFaderExitWorker:
         hold_sec = (now - opened_at).total_seconds() if opened_at else 0.0
 
         thesis = trade.get("entry_thesis") or {}
+        if isinstance(thesis, str):
+            try:
+                thesis = json.loads(thesis) or {}
+            except Exception:
+                thesis = {}
         if not isinstance(thesis, dict):
             thesis = {}
         strategy_tag = (
@@ -634,6 +640,22 @@ class RangeFaderExitWorker:
             str(exit_profile.get("loss_cut_reason_time") or self.loss_cut_reason_time).strip()
             or self.loss_cut_reason_time
         )
+        if str(base_tag).lower() == "levelreject":
+            try:
+                thesis_vgap = float(thesis.get("vwap_gap") or 0.0)
+            except (TypeError, ValueError):
+                thesis_vgap = 0.0
+            vgap_abs = abs(thesis_vgap)
+            if vgap_abs >= 20.0:
+                adaptive = 20.0
+            elif vgap_abs >= 5.0:
+                adaptive = 8.0
+            else:
+                adaptive = 4.0
+            loss_cut_enabled = True
+            loss_cut_require_sl = False
+            loss_cut_soft_pips = adaptive
+            loss_cut_hard_pips = adaptive
         tick_imb_profile = exit_profile.get("tick_imb")
         if not isinstance(tick_imb_profile, dict):
             tick_imb_profile = {}
