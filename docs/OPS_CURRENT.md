@@ -1,4 +1,4 @@
-# Ops Current (2026-02-05 JST)
+# Ops Current (2026-02-06 JST)
 
 ## 1. 運用モード（2025-12 攻め設定）
 - マージン活用を 85–92% 目安に引き上げ。
@@ -7,12 +7,10 @@
 - PF/勝率の悪い戦略は自動ブロック。
 - 必要に応じて `PERF_GUARD_GLOBAL_ENABLED=0` で解除。
 
-## 2. 2026-02-05 JST に `fx-trader-vm` で mask 済みユニット
+## 2. 2026-02-06 JST 時点の `fx-trader-vm` mask 済みユニット
 ```
 quant-scalp-impulseretrace.service
 quant-scalp-impulseretrace-exit.service
-quant-m1scalper.service
-quant-m1scalper-exit.service
 quant-scalp-multi.service
 quant-scalp-multi-exit.service
 quant-pullback-s5.service
@@ -34,3 +32,5 @@ quant-micro-pullback-fib-exit.service
 quant-manual-swing.service
 quant-manual-swing-exit.service
 ```
+
+- 2026-02-06 JST: `quant-m1scalper*.service` は VM からアンインストール（ユニット削除）済み。

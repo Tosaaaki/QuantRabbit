@@ -763,8 +763,6 @@ WORKER_SERVICES = {
     "vwap_magnet_s5_exit": "quant-vwap-magnet-s5-exit.service",
     "scalp_multi": "quant-scalp-multi.service",
     "scalp_multi_exit": "quant-scalp-multi-exit.service",
-    "m1_scalper": "quant-m1scalper.service",
-    "m1_scalper_exit": "quant-m1scalper-exit.service",
     # Micro
     "micro_multi": "quant-micro-multi.service",
     "micro_multi_exit": "quant-micro-multi-exit.service",
