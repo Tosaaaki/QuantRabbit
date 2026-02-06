@@ -135,6 +135,10 @@ _RISK_PERF_WIN_REF = max(
 _RISK_PERF_MIN_MULT = float(os.getenv("RISK_PERF_MIN_MULT", "0.4") or 0.4)
 _RISK_PERF_MAX_MULT = float(os.getenv("RISK_PERF_MAX_MULT", "1.4") or 1.4)
 _RISK_PERF_TTL_SEC = max(30.0, float(os.getenv("RISK_PERF_TTL_SEC", "180") or 180.0))
+# Risk performance metrics in trades.db:
+# - Default to realized_pl so the multiplier tracks actual account P&L (position sizing included),
+#   not just raw pips which can be misleading when units vary by setup/regime.
+_RISK_PERF_USE_REALIZED_PL = _env_bool("RISK_PERF_USE_REALIZED_PL", True)
 
 _RISK_REGIME_ENABLED = _env_bool("RISK_REGIME_ENABLED", True)
 _RISK_REGIME_RANGE_PENALTY = float(os.getenv("RISK_REGIME_RANGE_PENALTY", "0.7") or 0.7)
@@ -142,7 +146,7 @@ _RISK_REGIME_RANGE_BONUS = float(os.getenv("RISK_REGIME_RANGE_BONUS", "1.1") or 
 _RISK_REGIME_TREND_BONUS = float(os.getenv("RISK_REGIME_TREND_BONUS", "1.1") or 1.1)
 _RISK_REGIME_TREND_PENALTY = float(os.getenv("RISK_REGIME_TREND_PENALTY", "0.85") or 0.85)
 
-_PERF_CACHE: dict[tuple[str, str], tuple[float, float, float, int]] = {}
+_PERF_CACHE: dict[tuple[str, str, str], tuple[float, float, float, int]] = {}
 _TAG_ALIAS = {
     "m1scalper": "m1scalper",
     "impulseretrace": "impulseretrace",
@@ -216,7 +220,8 @@ def _query_perf_stats(tag: str, pocket: str) -> tuple[float, float, int]:
         return 1.0, 1.0, 0
     if not _DB.exists():
         return 1.0, 1.0, 0
-    key = (variants[0], pocket)
+    metric = "realized_pl" if _RISK_PERF_USE_REALIZED_PL else "pl_pips"
+    key = (variants[0], pocket, metric)
     now_mono = time.monotonic()
     cached = _PERF_CACHE.get(key)
     if cached and now_mono - cached[0] <= _RISK_PERF_TTL_SEC:
@@ -228,6 +233,7 @@ def _query_perf_stats(tag: str, pocket: str) -> tuple[float, float, int]:
     params = list(variants)
     params.extend([pocket, f"-{_RISK_PERF_LOOKBACK_DAYS} day"])
     con_local: sqlite3.Connection | None = None
+    value_col = "realized_pl" if _RISK_PERF_USE_REALIZED_PL else "pl_pips"
     try:
         con_local = sqlite3.connect(_DB)
         con_local.row_factory = sqlite3.Row
@@ -235,13 +241,13 @@ def _query_perf_stats(tag: str, pocket: str) -> tuple[float, float, int]:
             f"""
             SELECT
               COUNT(*) AS n,
-              SUM(CASE WHEN pl_pips > 0 THEN pl_pips ELSE 0 END) AS profit,
-              SUM(CASE WHEN pl_pips < 0 THEN ABS(pl_pips) ELSE 0 END) AS loss,
-              SUM(CASE WHEN pl_pips > 0 THEN 1 ELSE 0 END) AS win
+              SUM(CASE WHEN {value_col} > 0 THEN {value_col} ELSE 0 END) AS profit,
+              SUM(CASE WHEN {value_col} < 0 THEN ABS({value_col}) ELSE 0 END) AS loss,
+              SUM(CASE WHEN {value_col} > 0 THEN 1 ELSE 0 END) AS win
             FROM trades
             WHERE {tag_clause}
               AND pocket = ?
-              AND close_time >= datetime('now', ?)
+              AND datetime(close_time) >= datetime('now', ?)
             """,
             params,
         ).fetchone()

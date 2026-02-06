@@ -456,18 +456,6 @@ def _factor_age_seconds(tf: str = "M1") -> float | None:
         fac = (all_factors().get(tf.upper()) or {})
     except Exception:
         return None
-
-
-def _range_active_for_entry() -> bool:
-    try:
-        factors = all_factors()
-        fac_m1 = factors.get("M1") or {}
-        fac_h4 = factors.get("H4") or {}
-        if not fac_m1 or not fac_h4:
-            return False
-        return bool(detect_range_mode(fac_m1, fac_h4).active)
-    except Exception:
-        return False
     ts_raw = fac.get("timestamp")
     if not ts_raw:
         return None
@@ -485,6 +473,18 @@ def _range_active_for_entry() -> bool:
         return max(0.0, (now - ts_dt).total_seconds())
     except Exception:
         return None
+
+
+def _range_active_for_entry() -> bool:
+    try:
+        factors = all_factors()
+        fac_m1 = factors.get("M1") or {}
+        fac_h4 = factors.get("H4") or {}
+        if not fac_m1 or not fac_h4:
+            return False
+        return bool(detect_range_mode(fac_m1, fac_h4).active)
+    except Exception:
+        return False
 # エントリーが詰まらないようデフォルトの最小ユニットを下げる。
 _DEFAULT_MIN_UNITS = _env_int("ORDER_MIN_UNITS_DEFAULT", 1_000)
 # Macro も環境変数で可変（デフォルト 2,000 units、最低でも DEFAULT_MIN を確保）
