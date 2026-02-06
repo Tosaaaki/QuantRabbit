@@ -88,8 +88,8 @@ is_worker_unit() {
 list_running_units() {
   systemctl list-units --type=service --state=running --no-legend \
     | awk '{print $1}' \
-    | grep -E '^quant-.*\\.service$' \
-    | grep -Ev -- '-practice\\.service$' \
+    | grep -E '^quant-.*\.service$' \
+    | grep -Ev -- '-practice\.service$' \
     || true
 }
 
@@ -195,4 +195,3 @@ echo "[practice-mirror] Done. Practice units:"
 for unit in "${created_units[@]}"; do
   echo "  - $unit"
 done
-
