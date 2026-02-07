@@ -404,7 +404,17 @@ async def tech_fusion_worker() -> None:
 
         tp_scale = 10.0 / max(1.0, tp_pips)
         tp_scale = max(0.4, min(1.1, tp_scale))
-        base_units = int(round(scale_base_units(config.BASE_ENTRY_UNITS, equity=balance if balance > 0 else equity, ref_equity=balance) * tp_scale))
+        base_units = int(
+            round(
+                scale_base_units(
+                    config.BASE_ENTRY_UNITS,
+                    equity=balance if balance > 0 else equity,
+                    ref_equity=balance,
+                    env_prefix=config.ENV_PREFIX,
+                )
+                * tp_scale
+            )
+        )
         conf_scale = _confidence_scale(conf, config.CONFIDENCE_FLOOR, config.CONFIDENCE_CEIL)
 
         lot = allowed_lot(

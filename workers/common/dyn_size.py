@@ -50,7 +50,13 @@ def compute_units(
     margin_rate = float(snap.margin_rate or 0.0)
     free_ratio = float(snap.free_margin_ratio or 0.0) if snap.free_margin_ratio is not None else 0.0
 
-    base_entry_units = scale_base_units(base_entry_units, equity=balance if balance > 0 else equity, ref_equity=balance, min_units=min_units)
+    base_entry_units = scale_base_units(
+        base_entry_units,
+        equity=balance if balance > 0 else equity,
+        ref_equity=balance,
+        min_units=min_units,
+        env_prefix=env_prefix,
+    )
 
     # 1) Dynamic risk based on free margin ratio
     #    Very low free margin -> scale down aggressively

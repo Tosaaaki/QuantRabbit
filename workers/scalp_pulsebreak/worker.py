@@ -454,7 +454,17 @@ async def scalp_pulsebreak_worker() -> None:
 
             tp_scale = 4.0 / max(1.0, tp_pips)
             tp_scale = max(0.4, min(1.2, tp_scale))
-            base_units = int(round(scale_base_units(config.BASE_ENTRY_UNITS, equity=balance if balance > 0 else equity, ref_equity=balance) * tp_scale))
+            base_units = int(
+                round(
+                    scale_base_units(
+                        config.BASE_ENTRY_UNITS,
+                        equity=balance if balance > 0 else equity,
+                        ref_equity=balance,
+                        env_prefix=config.ENV_PREFIX,
+                    )
+                    * tp_scale
+                )
+            )
 
             conf_scale = _confidence_scale(int(signal.get("confidence", 50)), lo=config.CONFIDENCE_FLOOR, hi=config.CONFIDENCE_CEIL)
             signal_tag = (signal.get("tag") or "").strip() or PulseBreak.name

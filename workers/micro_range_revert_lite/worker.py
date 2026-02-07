@@ -219,6 +219,7 @@ async def micro_range_revert_lite_worker() -> None:
                     config.BASE_ENTRY_UNITS,
                     equity=balance if balance > 0 else equity,
                     ref_equity=balance,
+                    env_prefix=config.ENV_PREFIX,
                 )
             )
         )

@@ -538,7 +538,17 @@ async def h1momentum_worker() -> None:
         # 長めのTPはロットを薄く、短めはやや厚めにする
         tp_scale = 14.0 / max(1.0, tp_pips)
         tp_scale = max(0.35, min(1.1, tp_scale))
-        base_units = int(round(scale_base_units(config.BASE_ENTRY_UNITS, equity=balance if balance > 0 else equity, ref_equity=balance) * tp_scale))
+        base_units = int(
+            round(
+                scale_base_units(
+                    config.BASE_ENTRY_UNITS,
+                    equity=balance if balance > 0 else equity,
+                    ref_equity=balance,
+                    env_prefix=config.ENV_PREFIX,
+                )
+                * tp_scale
+            )
+        )
         conf_scale = _confidence_scale(int(signal.get("confidence", 50)))
         lot = allowed_lot(
             float(snap.nav or 0.0),

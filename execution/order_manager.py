@@ -4459,7 +4459,7 @@ async def market_order(
             return None
 
     if not reduce_only and pocket != "manual":
-        decision = profit_guard.is_allowed(pocket, strategy_tag=strategy_tag)
+        decision = profit_guard.is_allowed(pocket, strategy_tag=strategy_tag, env_prefix=env_prefix)
         if not decision.allowed:
             range_active = False
             if _PROFIT_GUARD_BYPASS_RANGE and pocket in {"scalp", "micro"}:

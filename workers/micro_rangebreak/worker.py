@@ -618,7 +618,18 @@ async def micro_rangebreak_worker() -> None:
 
         tp_scale = 10.0 / max(1.0, tp_pips)
         tp_scale = max(0.4, min(1.1, tp_scale))
-        base_units = int(round(scale_base_units(base_units_cfg, equity=balance if balance > 0 else equity, ref_equity=balance) * tp_scale * size_mult))
+        base_units = int(
+            round(
+                scale_base_units(
+                    base_units_cfg,
+                    equity=balance if balance > 0 else equity,
+                    ref_equity=balance,
+                    env_prefix=config.ENV_PREFIX,
+                )
+                * tp_scale
+                * size_mult
+            )
+        )
         conf_scale = _confidence_scale(int(signal.get("confidence", 50)), lo=conf_floor, hi=conf_ceil)
         lot = allowed_lot(
             float(snap.nav or 0.0),

@@ -589,7 +589,17 @@ async def scalp_m1_worker() -> None:
 
         tp_scale = 5.0 / max(1.0, tp_pips)
         tp_scale = max(0.45, min(1.15, tp_scale))
-        base_units = int(round(scale_base_units(config.BASE_ENTRY_UNITS, equity=balance if balance > 0 else equity, ref_equity=balance) * tp_scale))
+        base_units = int(
+            round(
+                scale_base_units(
+                    config.BASE_ENTRY_UNITS,
+                    equity=balance if balance > 0 else equity,
+                    ref_equity=balance,
+                    env_prefix=config.ENV_PREFIX,
+                )
+                * tp_scale
+            )
+        )
 
         conf_scale = _confidence_scale(int(signal.get("confidence", 50)))
         signal_tag = signal_tag or M1Scalper.name
