@@ -2241,6 +2241,60 @@ def _retry_close_with_actual_units(
     try:
         req = TradeClose(accountID=ACCOUNT, tradeID=trade_id, data=data)
         api.request(req)
+        response = req.response if isinstance(getattr(req, "response", None), dict) else {}
+        reject = response.get("orderRejectTransaction") or response.get("orderCancelTransaction")
+        if reject:
+            reason = reject.get("rejectReason") or reject.get("reason")
+            reason_key = str(reason or "").upper() or "rejected"
+            _log_order(
+                pocket=None,
+                instrument=None,
+                side=None,
+                units=target_units,
+                sl_price=None,
+                tp_price=None,
+                client_order_id=None,
+                status="close_retry_failed",
+                attempt=2,
+                ticket_id=str(trade_id),
+                executed_price=None,
+                error_code=str(reject.get("errorCode") or reason_key),
+                error_message=reject.get("errorMessage") or str(reason_key),
+                response_payload=response,
+                request_payload={"retry": True, "data": data, "reason": reason_key},
+            )
+            _console_order_log(
+                "CLOSE_FAIL",
+                pocket=None,
+                strategy_tag=None,
+                side=None,
+                units=target_units,
+                sl_price=None,
+                tp_price=None,
+                client_order_id=None,
+                ticket_id=str(trade_id),
+                note=f"retry:{reason_key}",
+            )
+            return False
+        if not (response.get("orderFillTransaction") or {}):
+            _log_order(
+                pocket=None,
+                instrument=None,
+                side=None,
+                units=target_units,
+                sl_price=None,
+                tp_price=None,
+                client_order_id=None,
+                status="close_retry_failed",
+                attempt=2,
+                ticket_id=str(trade_id),
+                executed_price=None,
+                error_code="missing_fill",
+                error_message="missing orderFillTransaction in TradeClose retry response",
+                response_payload=response,
+                request_payload={"retry": True, "data": data},
+            )
+            return False
         _LAST_PROTECTIONS.pop(trade_id, None)
         _PARTIAL_STAGE.pop(trade_id, None)
         _log_order(
@@ -2492,6 +2546,13 @@ _PARTIAL_FRACTIONS = (0.4, 0.3)
 # micro の平均建玉（~160u）でも段階利確が動作するよう下限を緩和
 _PARTIAL_MIN_UNITS = 20
 _PARTIAL_RANGE_MACRO_MIN_AGE_MIN = 6.0
+
+# Rate limit market-closed close attempts. When the market is halted (weekend/daily halt),
+# OANDA returns HTTP 200 with an orderCancelTransaction (reason=MARKET_HALTED). Treat that
+# as a failed close and back off to avoid flooding the broker / orders.db.
+_CLOSE_MARKET_CLOSED_LOG_TS: dict[str, float] = {}
+_CLOSE_MARKET_CLOSED_LOG_INTERVAL_SEC = 900.0
+_CLOSE_MARKET_CLOSED_BACKOFF_SEC = 60.0
 
 
 def _extract_trade_id(response: dict) -> Optional[str]:
@@ -3089,14 +3150,43 @@ async def close_trade(
                 target_units = actual_units
         # OANDA expects the absolute size; the trade side is derived from trade_id.
         data = {"units": str(target_units)}
+
+    if not is_market_open():
+        # OANDA returns HTTP 200 with orderCancelTransaction(reason=MARKET_HALTED) during weekend/daily halt.
+        # Don't spam the broker nor orders.db with repeated close attempts.
+        now_mono = time.monotonic()
+        key = str(trade_id)
+        last_log = _CLOSE_MARKET_CLOSED_LOG_TS.get(key, 0.0)
+        if now_mono - last_log >= _CLOSE_MARKET_CLOSED_LOG_INTERVAL_SEC:
+            _CLOSE_MARKET_CLOSED_LOG_TS[key] = now_mono
+            logging.info(
+                "[ORDER] Market closed. Skip TradeClose trade=%s units=%s client=%s",
+                trade_id,
+                units if units is not None else "ALL",
+                client_order_id or "-",
+            )
+            _console_order_log(
+                "CLOSE_SKIP",
+                pocket=pocket,
+                strategy_tag=strategy_tag,
+                side=None,
+                units=units,
+                sl_price=None,
+                tp_price=None,
+                client_order_id=client_order_id,
+                ticket_id=str(trade_id),
+                note="market_closed",
+            )
+        await asyncio.sleep(_CLOSE_MARKET_CLOSED_BACKOFF_SEC)
+        return False
     req = TradeClose(accountID=ACCOUNT, tradeID=trade_id, data=data)
     if not client_order_id:
         log_metric("close_missing_client_id", 1.0, tags={"trade_id": str(trade_id)})
         client_order_id = None
     _console_order_log(
         "CLOSE_REQ",
-        pocket=None,
-        strategy_tag=None,
+        pocket=pocket,
+        strategy_tag=strategy_tag,
         side=None,
         units=units,
         sl_price=None,
@@ -3106,8 +3196,8 @@ async def close_trade(
     )
     try:
         _log_order(
-            pocket=None,
-            instrument=None,
+            pocket=pocket,
+            instrument=instrument,
             side=None,
             units=units,
             sl_price=None,
@@ -3120,11 +3210,87 @@ async def close_trade(
             request_payload=_with_exit_reason({"trade_id": trade_id, "data": data or {}}),
         )
         api.request(req)
+        response = req.response if isinstance(getattr(req, "response", None), dict) else {}
+        reject = response.get("orderRejectTransaction") or response.get("orderCancelTransaction")
+        if reject:
+            reason = reject.get("rejectReason") or reject.get("reason")
+            reason_key = str(reason or "").upper() or "rejected"
+            err_code = str(reject.get("errorCode") or reason_key)
+            _log_order(
+                pocket=pocket,
+                instrument=instrument,
+                side=None,
+                units=units,
+                sl_price=None,
+                tp_price=None,
+                client_order_id=client_order_id,
+                status="close_failed",
+                attempt=1,
+                ticket_id=str(trade_id),
+                executed_price=None,
+                error_code=err_code,
+                error_message=reject.get("errorMessage") or str(reason_key),
+                response_payload=response,
+                request_payload=_with_exit_reason({"trade_id": trade_id, "data": data or {}}),
+            )
+            _console_order_log(
+                "CLOSE_FAIL",
+                pocket=pocket,
+                strategy_tag=strategy_tag,
+                side=None,
+                units=units,
+                sl_price=None,
+                tp_price=None,
+                client_order_id=client_order_id,
+                ticket_id=str(trade_id),
+                note=f"cancel:{reason_key}",
+            )
+            if reason_key == "MARKET_HALTED":
+                await asyncio.sleep(_CLOSE_MARKET_CLOSED_BACKOFF_SEC)
+            return False
+        fill = response.get("orderFillTransaction") or {}
+        if not fill:
+            _log_order(
+                pocket=pocket,
+                instrument=instrument,
+                side=None,
+                units=units,
+                sl_price=None,
+                tp_price=None,
+                client_order_id=client_order_id,
+                status="close_failed",
+                attempt=1,
+                ticket_id=str(trade_id),
+                executed_price=None,
+                error_code="missing_fill",
+                error_message="missing orderFillTransaction in TradeClose response",
+                response_payload=response,
+                request_payload=_with_exit_reason({"trade_id": trade_id, "data": data or {}}),
+            )
+            _console_order_log(
+                "CLOSE_FAIL",
+                pocket=pocket,
+                strategy_tag=strategy_tag,
+                side=None,
+                units=units,
+                sl_price=None,
+                tp_price=None,
+                client_order_id=client_order_id,
+                ticket_id=str(trade_id),
+                note="missing_fill",
+            )
+            return False
+        executed_price = None
+        if fill.get("price"):
+            try:
+                executed_price = float(fill.get("price"))
+            except Exception:
+                executed_price = None
         _LAST_PROTECTIONS.pop(trade_id, None)
         _PARTIAL_STAGE.pop(trade_id, None)
         _log_order(
-            pocket=None,
-            instrument=None,
+            pocket=pocket,
+            instrument=instrument,
             side=None,
             units=units,
             sl_price=None,
@@ -3133,13 +3299,13 @@ async def close_trade(
             status="close_ok",
             attempt=1,
             ticket_id=str(trade_id),
-            executed_price=None,
+            executed_price=executed_price,
             request_payload=_with_exit_reason({"trade_id": trade_id}),
         )
         _console_order_log(
             "CLOSE_OK",
-            pocket=None,
-            strategy_tag=None,
+            pocket=pocket,
+            strategy_tag=strategy_tag,
             side=None,
             units=units,
             sl_price=None,
@@ -3163,8 +3329,8 @@ async def close_trade(
         )
         log_error_code = str(error_code) if error_code is not None else str(exc.code)
         _log_order(
-            pocket=None,
-            instrument=None,
+            pocket=pocket,
+            instrument=instrument,
             side=None,
             units=units,
             sl_price=None,
@@ -3181,8 +3347,8 @@ async def close_trade(
         )
         _console_order_log(
             "CLOSE_FAIL",
-            pocket=None,
-            strategy_tag=None,
+            pocket=pocket,
+            strategy_tag=strategy_tag,
             side=None,
             units=units,
             sl_price=None,
@@ -3214,8 +3380,8 @@ async def close_trade(
             "[ORDER] Failed to close trade %s units=%s: %s", trade_id, units, exc
         )
         _log_order(
-            pocket=None,
-            instrument=None,
+            pocket=pocket,
+            instrument=instrument,
             side=None,
             units=units,
             sl_price=None,
@@ -3229,8 +3395,8 @@ async def close_trade(
         )
         _console_order_log(
             "CLOSE_FAIL",
-            pocket=None,
-            strategy_tag=None,
+            pocket=pocket,
+            strategy_tag=strategy_tag,
             side=None,
             units=units,
             sl_price=None,
