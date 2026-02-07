@@ -317,7 +317,8 @@ LEVEL_LOOKBACK = _env_int("LEVEL_REJECT_LOOKBACK", 20)
 LEVEL_BAND_PIPS = _env_float("LEVEL_REJECT_BAND_PIPS", 0.8)
 LEVEL_RSI_LONG_MAX = _env_float("LEVEL_REJECT_RSI_LONG_MAX", 48.0)
 LEVEL_RSI_SHORT_MIN = _env_float("LEVEL_REJECT_RSI_SHORT_MIN", 52.0)
-LEVEL_REJECT_ADX_MAX = _env_float("LEVEL_REJECT_ADX_MAX", 30.0)
+LEVEL_REJECT_ADX_MAX = _env_float("LEVEL_REJECT_ADX_MAX", 35.0)
+LEVEL_REJECT_VWAP_GAP_MIN_PIPS = _env_float("LEVEL_REJECT_VWAP_GAP_MIN_PIPS", 5.0)
 LEVEL_REJECT_SIZE_MULT = _env_float("LEVEL_REJECT_SIZE_MULT", 1.15)
 
 WICK_RANGE_MIN_PIPS = _env_float("WICK_REV_RANGE_MIN_PIPS", 2.0)
@@ -1617,6 +1618,17 @@ def _signal_level_reject(
     else:
         return None
 
+    if LEVEL_REJECT_VWAP_GAP_MIN_PIPS > 0:
+        vgap = _vwap_gap_pips(fac_m1)
+        # Keep only mean-reversion-aligned entries:
+        # long -> price sufficiently below VWAP (vgap negative), short -> price sufficiently above VWAP (vgap positive)
+        if side == "long":
+            if vgap > -LEVEL_REJECT_VWAP_GAP_MIN_PIPS:
+                return None
+        else:
+            if vgap < LEVEL_REJECT_VWAP_GAP_MIN_PIPS:
+                return None
+
     atr = _atr_pips(fac_m1)
     sl = max(1.2, min(1.8, atr * 0.8))
     tp = max(1.5, min(2.2, atr * 1.1))
@@ -1629,7 +1641,7 @@ def _signal_level_reject(
         "confidence": int(max(45, min(92, conf))),
         "tag": tag,
         "reason": "level_reject",
-        "size_mult": round(LSR_SIZE_MULT, 3),
+        "size_mult": round(LEVEL_REJECT_SIZE_MULT, 3),
     }
 
 
