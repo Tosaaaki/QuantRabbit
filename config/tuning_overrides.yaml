@@ -1,13 +1,26 @@
 meta:
   promoted_from_shadow: '2025-11-02T02:17:31.817667Z'
   window_min: 15
+  generated_at: '2026-02-07T02:49:44.425368Z'
+  explore: true
 exit:
   lowvol:
-    upper_bound_max_sec: 3.4
+    upper_bound_max_sec: 3.7
     hazard_debounce_ticks: 1
     hazard_cost_spread_base: 0.23
     hazard_cost_latency_base_ms: 220
+    min_grace_before_scratch_ms: 100
+    scratch_requires_events: 0
 alloc:
   regime:
     quiet_low_vol:
       micro_share: 0.3
+strategies:
+  MomentumPulse:
+    min_confidence: 0.67
+  MicroVWAPRevert:
+    vwap_z_min: 2.3
+  VolCompressionBreak:
+    accel_pctile: 77
+  BB_RSI_Fast:
+    reentry_block_s: 17
