@@ -1,5 +1,16 @@
 from __future__ import annotations
 
+import sys
+from pathlib import Path
+
+# Allow running this worker file directly (for local replay/debug) without requiring `python -m`.
+# When executed as a script, Python does not add the repo root to sys.path and relative imports fail.
+if __name__ == "__main__" and (__package__ is None or __package__ == ""):
+    REPO_ROOT = Path(__file__).resolve().parents[2]
+    if str(REPO_ROOT) not in sys.path:
+        sys.path.insert(0, str(REPO_ROOT))
+    __package__ = "workers.scalp_precision"
+
 import asyncio
 import datetime
 import hashlib
