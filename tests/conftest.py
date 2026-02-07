@@ -16,5 +16,5 @@ if str(ROOT) not in sys.path:
 # Unit tests should be deterministic and must not depend on the operator's
 # current tuning overlays (which are frequently updated for live trading).
 # Keep presets enabled (baseline), but disable overlay/overrides in tests.
-os.environ.setdefault("TUNING_OVERLAY_PATH", str(ROOT / "config" / "__disabled_for_tests__.yaml"))
-os.environ.setdefault("TUNING_OVERRIDES_PATH", str(ROOT / "config" / "__disabled_for_tests__.yaml"))
+os.environ["TUNING_OVERLAY_PATH"] = str(ROOT / "config" / "__disabled_for_tests__.yaml")
+os.environ["TUNING_OVERRIDES_PATH"] = str(ROOT / "config" / "__disabled_for_tests__.yaml")

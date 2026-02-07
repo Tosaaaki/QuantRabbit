@@ -34,9 +34,13 @@ Environment=WICK_BLEND_REQUIRE_TICK_REV=1
 Environment=WICK_BLEND_TICK_WINDOW_SEC=10.0
 Environment=WICK_BLEND_TICK_MIN_TICKS=6
 Environment=WICK_BLEND_TICK_MIN_STRENGTH=0.28
+# Avoid "too early / too shallow" fades: require price to pull back inside the band by N pips.
+Environment=WICK_BLEND_FOLLOW_PIPS=0.45
 Environment=WICK_BLEND_DIAG=1
 Environment=WICK_BLEND_DIAG_INTERVAL_SEC=20
 
+# Ensure broker stop-loss stays disabled even if global env enables it for other pockets.
+Environment=ORDER_DISABLE_STOP_LOSS_SCALP=1
 # Broker SL/TP disabled (no entry stop-loss). Re-enable by setting:
 # Environment=ORDER_ENABLE_STOP_LOSS_SCALP=1
 
@@ -47,4 +51,3 @@ User=tossaki
 
 [Install]
 WantedBy=multi-user.target
-
