@@ -41,11 +41,16 @@ python3 ~/.codex/skills/qr-tick-entry-validate/scripts/tick_entry_validate.py \
   --trades-db tmp/trades_vm.db \
   --ticks tmp/USD_JPY_ticks_YYYYMMDD.jsonl \
   --instrument USD_JPY \
-  --open-from '2026-02-06T18:15:00+00:00' \
-  --open-to   '2026-02-06T18:48:00+00:00'
+  --open-from '2026-02-07T03:15:00+09:00' \
+  --open-to   '2026-02-07T03:48:00+09:00' \
+  --strategy-tag WickReversalBlend
 ```
 
 解釈の目安:
 - SL-hit が数秒〜数十秒で多発し、かつ TP-touch が数分以内に多い: SL 過小/フォロー不足/入りが早い可能性。
 - TP-touch がほぼ無い: エントリーの方向/条件が悪い（精度課題）。
 - `close_reason=MARKET_ORDER_TRADE_CLOSE` なのに post-close で TP-touch 多発: EXIT が早すぎる可能性。
+
+補足:
+- ticket指定で狙い撃ちしたい場合: `--ticket 313288,313272`
+- 日跨ぎ/複数日の tick が必要な場合: `--ticks` を複数回渡す（例: `--ticks a.jsonl --ticks b.jsonl`）
