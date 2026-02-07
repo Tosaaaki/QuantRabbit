@@ -56,7 +56,9 @@ _MODE_TAG_MAP = {
     'tick_imbalance': 'TickImbalance',
     'tick_imbalance_rrplus': 'TickImbalanceRRPlus',
     'level_reject': 'LevelReject',
+    'level_reject_plus': 'LevelRejectPlus',
     'wick_reversal': 'WickReversal',
+    'wick_reversal_blend': 'WickReversalBlend',
     'wick_reversal_hf': 'WickReversalHF',
     'wick_reversal_pro': 'WickReversalPro',
     'tick_wick_reversal': 'TickWickReversal',
@@ -322,6 +324,20 @@ LEVEL_RSI_SHORT_MIN = _env_float("LEVEL_REJECT_RSI_SHORT_MIN", 52.0)
 LEVEL_REJECT_ADX_MAX = _env_float("LEVEL_REJECT_ADX_MAX", 30.0)
 LEVEL_REJECT_SIZE_MULT = _env_float("LEVEL_REJECT_SIZE_MULT", 1.15)
 
+# LevelRejectPlus (stricter + tick-confirmed variant; intended for higher precision)
+LRP_RANGE_SCORE_MIN = _env_float("LRP_RANGE_SCORE_MIN", 0.52)
+LRP_ADX_MAX = _env_float("LRP_ADX_MAX", 28.0)
+LRP_BBW_MAX = _env_float("LRP_BBW_MAX", 0.0016)
+LRP_SPREAD_P25 = _env_float("LRP_SPREAD_P25", 1.0)
+LRP_BAND_PIPS = _env_float("LRP_BAND_PIPS", 0.9)
+LRP_TICK_WINDOW_SEC = _env_float("LRP_TICK_WINDOW_SEC", 6.0)
+LRP_TICK_MIN_TICKS = _env_int("LRP_TICK_MIN_TICKS", 6)
+LRP_TICK_MIN_STRENGTH = _env_float("LRP_TICK_MIN_STRENGTH", 0.18)
+LRP_WICK_RATIO_MIN = _env_float("LRP_WICK_RATIO_MIN", 0.30)
+LRP_BODY_MAX_PIPS = _env_float("LRP_BODY_MAX_PIPS", 1.4)
+LRP_BODY_RATIO_MAX = _env_float("LRP_BODY_RATIO_MAX", 0.70)
+LRP_SIZE_MULT = _env_float("LRP_SIZE_MULT", 1.05)
+
 WICK_RANGE_MIN_PIPS = _env_float("WICK_REV_RANGE_MIN_PIPS", 2.0)
 WICK_BODY_MAX_PIPS = _env_float("WICK_REV_BODY_MAX_PIPS", 0.9)
 WICK_RATIO_MIN = _env_float("WICK_REV_RATIO_MIN", 0.55)
@@ -367,6 +383,28 @@ WICK_HF_BB_TOUCH_PIPS = _env_float("WICK_HF_BB_TOUCH_PIPS", 0.9)
 WICK_HF_DIAG = _env_bool("WICK_HF_DIAG", False)
 WICK_HF_DIAG_INTERVAL_SEC = _env_float("WICK_HF_DIAG_INTERVAL_SEC", 20.0)
 
+# WickReversal Blend (band-touch + tick reversal; strict trend filters)
+WICK_BLEND_RANGE_SCORE_MIN = _env_float("WICK_BLEND_RANGE_SCORE_MIN", 0.45)
+WICK_BLEND_SPREAD_P25 = _env_float("WICK_BLEND_SPREAD_P25", 1.0)
+WICK_BLEND_ADX_MAX = _env_float("WICK_BLEND_ADX_MAX", 24.0)
+WICK_BLEND_BBW_MAX = _env_float("WICK_BLEND_BBW_MAX", 0.0014)
+WICK_BLEND_ATR_MIN = _env_float("WICK_BLEND_ATR_MIN", 0.8)
+WICK_BLEND_ATR_MAX = _env_float("WICK_BLEND_ATR_MAX", 4.0)
+WICK_BLEND_RANGE_MIN_PIPS = _env_float("WICK_BLEND_RANGE_MIN_PIPS", 1.0)
+WICK_BLEND_BODY_MAX_PIPS = _env_float("WICK_BLEND_BODY_MAX_PIPS", 2.2)
+WICK_BLEND_BODY_RATIO_MAX = _env_float("WICK_BLEND_BODY_RATIO_MAX", 0.75)
+WICK_BLEND_WICK_RATIO_MIN = _env_float("WICK_BLEND_WICK_RATIO_MIN", 0.35)
+WICK_BLEND_BB_TOUCH_PIPS = _env_float("WICK_BLEND_BB_TOUCH_PIPS", 1.1)
+WICK_BLEND_BB_TOUCH_RATIO = _env_float("WICK_BLEND_BB_TOUCH_RATIO", 0.22)
+WICK_BLEND_REQUIRE_TICK_REV = _env_bool("WICK_BLEND_REQUIRE_TICK_REV", True)
+WICK_BLEND_TICK_WINDOW_SEC = _env_float("WICK_BLEND_TICK_WINDOW_SEC", 10.0)
+WICK_BLEND_TICK_MIN_TICKS = _env_int("WICK_BLEND_TICK_MIN_TICKS", 6)
+WICK_BLEND_TICK_MIN_STRENGTH = _env_float("WICK_BLEND_TICK_MIN_STRENGTH", 0.28)
+# Require a small follow-through away from the band after the rejection candle to avoid "too early" fades.
+WICK_BLEND_FOLLOW_PIPS = _env_float("WICK_BLEND_FOLLOW_PIPS", 0.0)
+WICK_BLEND_DIAG = _env_bool("WICK_BLEND_DIAG", False)
+WICK_BLEND_DIAG_INTERVAL_SEC = _env_float("WICK_BLEND_DIAG_INTERVAL_SEC", 20.0)
+
 # Tick-window wick reversal (higher-frequency range-reversion).
 TICK_WICK_WINDOW_SEC = _env_float("TICK_WICK_WINDOW_SEC", 9.0)
 TICK_WICK_MIN_TICKS = _env_int("TICK_WICK_MIN_TICKS", 18)
@@ -393,6 +431,7 @@ TICK_WICK_CLAMP_MIN_UNITS = _env_bool("TICK_WICK_CLAMP_MIN_UNITS", True)
 TICK_WICK_MIN_UNITS_CLAMP_RATIO = _env_float("TICK_WICK_MIN_UNITS_CLAMP_RATIO", 0.85)
 
 _LAST_TICK_WICK_PLACE_DIAG_TS = 0.0
+_LAST_WICK_BLEND_DIAG_TS = 0.0
 
 LSR_LOOKBACK = _env_int("LSR_LOOKBACK", 20)
 LSR_SWEEP_PIPS = _env_float("LSR_SWEEP_PIPS", 0.45)
@@ -1634,6 +1673,132 @@ def _signal_level_reject(
         "size_mult": round(LEVEL_REJECT_SIZE_MULT, 3),
     }
 
+def _signal_level_reject_plus(
+    fac_m1: Dict[str, object],
+    range_ctx=None,
+    *,
+    tag: str,
+) -> Optional[Dict[str, object]]:
+    """A stricter LevelReject with wick + tick confirmation (higher precision, fewer trades)."""
+    price = _latest_price(fac_m1)
+    if price <= 0:
+        return None
+
+    ok_spread, _ = spread_ok(max_pips=config.MAX_SPREAD_PIPS, p25_max=LRP_SPREAD_P25)
+    if not ok_spread:
+        return None
+
+    range_active = False
+    range_score = 0.0
+    if range_ctx is not None:
+        try:
+            range_active = bool(getattr(range_ctx, "active", False))
+            range_score = float(getattr(range_ctx, "score", 0.0) or 0.0)
+        except Exception:
+            range_active = False
+            range_score = 0.0
+    if not range_active and LRP_RANGE_SCORE_MIN > 0.0 and range_score < LRP_RANGE_SCORE_MIN:
+        return None
+
+    adx = _adx(fac_m1)
+    bbw = _bbw(fac_m1)
+    if LRP_ADX_MAX > 0.0 and adx > LRP_ADX_MAX:
+        return None
+    if LRP_BBW_MAX > 0.0 and bbw > LRP_BBW_MAX:
+        return None
+
+    candles = get_candles_snapshot("M1", limit=max(60, LEVEL_LOOKBACK + 10))
+    snap = compute_range_snapshot(candles or [], lookback=LEVEL_LOOKBACK, hi_pct=95.0, lo_pct=5.0)
+    if not snap:
+        return None
+
+    # Require a rejection candle shape (wick-based evidence).
+    try:
+        last = (candles or [])[-1]
+        o = float(last.get("open") or last.get("o") or 0.0)
+        h = float(last.get("high") or last.get("h") or 0.0)
+        l = float(last.get("low") or last.get("l") or 0.0)
+        c = float(last.get("close") or last.get("c") or 0.0)
+    except Exception:
+        return None
+    if h <= 0 or l <= 0 or h <= l:
+        return None
+    rng_pips = (h - l) / PIP
+    body_pips = abs(c - o) / PIP
+    body_ratio = body_pips / max(0.01, rng_pips)
+    upper_wick = (h - max(o, c)) / PIP
+    lower_wick = (min(o, c) - l) / PIP
+    wick_ratio = max(upper_wick, lower_wick) / max(0.01, rng_pips)
+    if wick_ratio < LRP_WICK_RATIO_MIN:
+        return None
+    if body_pips > LRP_BODY_MAX_PIPS or body_ratio > LRP_BODY_RATIO_MAX:
+        return None
+
+    mids, _ = tick_snapshot(LRP_TICK_WINDOW_SEC, limit=200)
+    rev_ok, rev_dir, rev_strength = (
+        tick_reversal(mids, min_ticks=LRP_TICK_MIN_TICKS) if mids else (False, None, 0.0)
+    )
+    if not rev_ok:
+        return None
+    try:
+        tick_strength = float(rev_strength or 0.0)
+    except Exception:
+        tick_strength = 0.0
+    if LRP_TICK_MIN_STRENGTH > 0.0 and tick_strength < LRP_TICK_MIN_STRENGTH:
+        return None
+
+    rsi = _rsi(fac_m1)
+    dist_high = abs(price - snap.high) / PIP
+    dist_low = abs(price - snap.low) / PIP
+
+    side = None
+    if (
+        dist_high <= LRP_BAND_PIPS
+        and rsi >= LEVEL_RSI_SHORT_MIN
+        and str(rev_dir or "") == "short"
+        and upper_wick >= lower_wick
+    ):
+        side = "short"
+    elif (
+        dist_low <= LRP_BAND_PIPS
+        and rsi <= LEVEL_RSI_LONG_MAX
+        and str(rev_dir or "") == "long"
+        and lower_wick >= upper_wick
+    ):
+        side = "long"
+    else:
+        return None
+
+    proj_allow, size_mult, proj_detail = projection_decision(side, mode="range")
+    if not proj_allow:
+        return None
+
+    atr = _atr_pips(fac_m1)
+    sl = max(1.2, min(2.2, atr * 0.85))
+    tp = max(sl * 1.35, min(3.4, atr * 1.15))
+    conf = 62
+    conf += int(min(10.0, abs(rsi - 50.0) * 0.6))
+    conf += int(min(10.0, wick_ratio * 18.0))
+    conf += int(min(8.0, max(0.0, tick_strength) * 7.0))
+    conf = int(max(45, min(92, conf)))
+
+    return {
+        "action": "OPEN_LONG" if side == "long" else "OPEN_SHORT",
+        "sl_pips": round(sl, 2),
+        "tp_pips": round(tp, 2),
+        "confidence": conf,
+        "tag": tag,
+        "reason": "level_reject_plus",
+        "size_mult": round(LRP_SIZE_MULT * float(size_mult or 1.0), 3),
+        "projection": proj_detail,
+        "lrp": {
+            "dist_high_pips": round(dist_high, 2),
+            "dist_low_pips": round(dist_low, 2),
+            "wick_ratio": round(wick_ratio, 3),
+            "tick_strength": round(tick_strength, 3),
+        },
+    }
+
 
 def _signal_liquidity_sweep(
     fac_m1: Dict[str, object],
@@ -1778,6 +1943,162 @@ def _signal_wick_reversal(
         "confidence": int(max(45, min(92, conf))),
         "tag": tag,
         "reason": "wick_reversal",
+    }
+
+def _signal_wick_reversal_blend(
+    fac_m1: Dict[str, object],
+    range_ctx=None,
+    *,
+    tag: str,
+) -> Optional[Dict[str, object]]:
+    """Band-touch + tick-confirmed wick fade with strict trend filters."""
+    if range_ctx is not None:
+        try:
+            range_active = bool(getattr(range_ctx, "active", False))
+            range_score = float(getattr(range_ctx, "score", 0.0) or 0.0)
+        except Exception:
+            range_active = False
+            range_score = 0.0
+        if not range_active and WICK_BLEND_RANGE_SCORE_MIN > 0.0 and range_score < WICK_BLEND_RANGE_SCORE_MIN:
+            return None
+    elif WICK_BLEND_RANGE_SCORE_MIN > 0.0:
+        return None
+
+    ok_spread, _ = spread_ok(max_pips=config.MAX_SPREAD_PIPS, p25_max=WICK_BLEND_SPREAD_P25)
+    if not ok_spread:
+        return None
+
+    candles = get_candles_snapshot("M1", limit=2)
+    if not candles:
+        return None
+    last = candles[-1]
+    try:
+        o = float(last.get("open") or last.get("o") or 0.0)
+        h = float(last.get("high") or last.get("h") or 0.0)
+        l = float(last.get("low") or last.get("l") or 0.0)
+        c = float(last.get("close") or last.get("c") or 0.0)
+    except Exception:
+        return None
+    if h <= 0 or l <= 0:
+        return None
+
+    rng = (h - l) / PIP
+    if rng < WICK_BLEND_RANGE_MIN_PIPS:
+        return None
+    body = abs(c - o) / PIP
+    if body > WICK_BLEND_BODY_MAX_PIPS:
+        return None
+    body_ratio = body / max(rng, 0.01)
+    if body_ratio > WICK_BLEND_BODY_RATIO_MAX:
+        return None
+
+    upper_wick = (h - max(o, c)) / PIP
+    lower_wick = (min(o, c) - l) / PIP
+    wick_ratio = max(upper_wick, lower_wick) / max(rng, 0.01)
+    if wick_ratio < WICK_BLEND_WICK_RATIO_MIN:
+        return None
+
+    side = "short" if upper_wick > lower_wick else "long"
+
+    adx = _adx(fac_m1)
+    bbw = _bbw(fac_m1)
+    atr = _atr_pips(fac_m1)
+    if WICK_BLEND_ADX_MAX > 0.0 and adx > WICK_BLEND_ADX_MAX:
+        return None
+    if WICK_BLEND_BBW_MAX > 0.0 and bbw > WICK_BLEND_BBW_MAX:
+        return None
+    if (WICK_BLEND_ATR_MIN > 0.0 and atr < WICK_BLEND_ATR_MIN) or (
+        WICK_BLEND_ATR_MAX > 0.0 and atr > WICK_BLEND_ATR_MAX
+    ):
+        return None
+
+    levels = bb_levels(fac_m1)
+    if not levels:
+        return None
+    upper, _, lower, _, span_pips = levels
+    touch_pips = max(WICK_BLEND_BB_TOUCH_PIPS, span_pips * max(0.0, WICK_BLEND_BB_TOUCH_RATIO))
+    if side == "short":
+        if h < upper - touch_pips * PIP:
+            return None
+    else:
+        if l > lower + touch_pips * PIP:
+            return None
+
+    strength = 0.0
+    if WICK_BLEND_REQUIRE_TICK_REV:
+        mids, _ = tick_snapshot(WICK_BLEND_TICK_WINDOW_SEC, limit=160)
+        rev_ok, rev_dir, rev_strength = (
+            tick_reversal(mids, min_ticks=WICK_BLEND_TICK_MIN_TICKS) if mids else (False, None, 0.0)
+        )
+        if not rev_ok or rev_dir != side:
+            return None
+        try:
+            strength = float(rev_strength or 0.0)
+        except Exception:
+            strength = 0.0
+        if WICK_BLEND_TICK_MIN_STRENGTH > 0.0 and strength < WICK_BLEND_TICK_MIN_STRENGTH:
+            return None
+
+    if WICK_BLEND_FOLLOW_PIPS > 0.0:
+        price = _latest_price(fac_m1)
+        if price <= 0.0:
+            return None
+        if side == "short":
+            follow = (upper - price) / PIP
+            if follow < WICK_BLEND_FOLLOW_PIPS:
+                return None
+        else:
+            follow = (price - lower) / PIP
+            if follow < WICK_BLEND_FOLLOW_PIPS:
+                return None
+
+    proj_allow, size_mult, proj_detail = projection_decision(side, mode="range")
+    if not proj_allow:
+        return None
+
+    sl = max(1.2, min(2.2, atr * 0.85))
+    tp = max(sl * 1.30, min(3.6, atr * 1.15))
+    conf = 64
+    conf += int(min(12.0, wick_ratio * 22.0))
+    conf += int(min(6.0, max(0.0, rng - 1.0) * 3.0))
+    if strength > 0.0:
+        conf += int(min(10.0, strength * 8.0))
+    conf = int(max(45, min(92, conf)))
+
+    global _LAST_WICK_BLEND_DIAG_TS
+    if WICK_BLEND_DIAG and time.monotonic() - _LAST_WICK_BLEND_DIAG_TS >= WICK_BLEND_DIAG_INTERVAL_SEC:
+        _LAST_WICK_BLEND_DIAG_TS = time.monotonic()
+        LOG.info(
+            "%s wick_blend signal side=%s rng=%s body=%s ratio=%s adx=%s bbw=%s atr=%s strength=%s touch_pips=%s",
+            config.LOG_PREFIX,
+            side,
+            round(rng, 2),
+            round(body, 2),
+            round(wick_ratio, 3),
+            round(adx, 2),
+            round(bbw, 6),
+            round(atr, 2),
+            round(strength, 3),
+            round(touch_pips, 2),
+        )
+
+    return {
+        "action": "OPEN_LONG" if side == "long" else "OPEN_SHORT",
+        "sl_pips": round(sl, 2),
+        "tp_pips": round(tp, 2),
+        "confidence": conf,
+        "tag": tag,
+        "reason": "wick_reversal_blend",
+        "size_mult": round(size_mult, 3),
+        "projection": proj_detail,
+        "wick": {
+            "rng_pips": round(rng, 2),
+            "body_pips": round(body, 2),
+            "upper_wick_pips": round(upper_wick, 2),
+            "lower_wick_pips": round(lower_wick, 2),
+            "ratio": round(wick_ratio, 3),
+            "tick_strength": round(strength, 3),
+        },
     }
 
 
@@ -2750,7 +3071,7 @@ async def scalp_precision_worker() -> None:
     # Guard bypass is risky for modes that can generate large tail losses when data/exits degrade.
     # In particular, tick_imbalance suffered margin closeouts when common guards (spread/air/perf/stage)
     # were skipped. Keep these modes under the common guardrails regardless of env settings.
-    if config.MODE in {"level_reject", "tick_imbalance", "tick_imbalance_rrplus"}:
+    if config.MODE in {"level_reject", "level_reject_plus", "tick_imbalance", "tick_imbalance_rrplus"}:
         if bypass_common_guard:
             LOG.warning(
                 "%s guard bypass requested but disabled for mode=%s",
@@ -2917,10 +3238,14 @@ async def scalp_precision_worker() -> None:
                 strategies.append(("TickImbalanceRRPlus", _signal_tick_imbalance_rrplus, {"tag": "TickImbalanceRRPlus"}))
             if enabled("level_reject"):
                 strategies.append(("LevelReject", _signal_level_reject, {"tag": "LevelReject"}))
+            if enabled("level_reject_plus"):
+                strategies.append(("LevelRejectPlus", _signal_level_reject_plus, {"tag": "LevelRejectPlus"}))
             if enabled("liquidity_sweep"):
                 strategies.append(("LiquiditySweep", _signal_liquidity_sweep, {"tag": "LiquiditySweep"}))
             if enabled("wick_reversal"):
                 strategies.append(("WickReversal", _signal_wick_reversal, {"tag": "WickReversal"}))
+            if enabled("wick_reversal_blend"):
+                strategies.append(("WickReversalBlend", _signal_wick_reversal_blend, {"tag": "WickReversalBlend"}))
             if enabled("wick_reversal_hf"):
                 strategies.append(("WickReversalHF", _signal_wick_reversal_hf, {"tag": "WickReversalHF"}))
             if enabled("wick_reversal_pro"):
@@ -2949,6 +3274,8 @@ async def scalp_precision_worker() -> None:
                     _signal_divergence_revert,
                     _signal_tick_imbalance,
                     _signal_tick_imbalance_rrplus,
+                    _signal_level_reject_plus,
+                    _signal_wick_reversal_blend,
                     _signal_wick_reversal_hf,
                     _signal_wick_reversal_pro,
                     _signal_tick_wick_reversal,
