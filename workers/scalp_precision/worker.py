@@ -368,8 +368,18 @@ WICK_PRO_MAX_REGIME_SHIFT = _env_float("WICK_PRO_MAX_REGIME_SHIFT", 0.04)
 WICK_HF_RANGE_SCORE_MIN = _env_float("WICK_HF_RANGE_SCORE_MIN", 0.45)
 WICK_HF_RANGE_MIN_PIPS = _env_float("WICK_HF_RANGE_MIN_PIPS", 1.6)
 WICK_HF_BODY_MAX_PIPS = _env_float("WICK_HF_BODY_MAX_PIPS", 1.1)
+WICK_HF_BODY_RATIO_MAX = _env_float("WICK_HF_BODY_RATIO_MAX", 0.55)
 WICK_HF_RATIO_MIN = _env_float("WICK_HF_RATIO_MIN", 0.50)
 WICK_HF_ADX_MAX = _env_float("WICK_HF_ADX_MAX", 28.0)
+# In higher-ADX regimes, only allow entries when wick rejection + tick reversal are exceptionally strong.
+WICK_HF_ADX_OVERRIDE_ENABLED = _env_bool("WICK_HF_ADX_OVERRIDE_ENABLED", False)
+WICK_HF_ADX_OVERRIDE_MAX_ADX = _env_float("WICK_HF_ADX_OVERRIDE_MAX_ADX", 55.0)
+WICK_HF_ADX_OVERRIDE_MIN_RATIO = _env_float("WICK_HF_ADX_OVERRIDE_MIN_RATIO", 0.65)
+WICK_HF_ADX_OVERRIDE_MIN_TICK_STRENGTH = _env_float("WICK_HF_ADX_OVERRIDE_MIN_TICK_STRENGTH", 0.20)
+# If tick reversal detection is missing but wick rejection is extreme, allow entry even in high ADX.
+WICK_HF_ADX_OVERRIDE_ALLOW_NO_TICK_REV = _env_bool("WICK_HF_ADX_OVERRIDE_ALLOW_NO_TICK_REV", True)
+WICK_HF_ADX_OVERRIDE_NO_TICK_MIN_RATIO = _env_float("WICK_HF_ADX_OVERRIDE_NO_TICK_MIN_RATIO", 0.80)
+
 WICK_HF_BBW_MAX = _env_float("WICK_HF_BBW_MAX", 0.0016)
 WICK_HF_ATR_MIN = _env_float("WICK_HF_ATR_MIN", 0.7)
 WICK_HF_ATR_MAX = _env_float("WICK_HF_ATR_MAX", 7.0)
@@ -378,6 +388,17 @@ WICK_HF_REQUIRE_TICK_REV = _env_bool("WICK_HF_REQUIRE_TICK_REV", True)
 WICK_HF_TICK_WINDOW_SEC = _env_float("WICK_HF_TICK_WINDOW_SEC", 8.0)
 WICK_HF_TICK_MIN_TICKS = _env_int("WICK_HF_TICK_MIN_TICKS", 8)
 WICK_HF_TICK_MIN_STRENGTH = _env_float("WICK_HF_TICK_MIN_STRENGTH", 0.25)
+# Entry precision first: avoid fading strong momentum.
+WICK_HF_MOMENTUM_FILTER_ENABLED = _env_bool("WICK_HF_MOMENTUM_FILTER_ENABLED", False)
+WICK_HF_MACD_HIST_LONG_MIN = _env_float("WICK_HF_MACD_HIST_LONG_MIN", -0.15)
+WICK_HF_MACD_HIST_SHORT_MAX = _env_float("WICK_HF_MACD_HIST_SHORT_MAX", 0.35)
+WICK_HF_EMA_SLOPE_10_SHORT_MAX = _env_float("WICK_HF_EMA_SLOPE_10_SHORT_MAX", 0.15)
+
+# Allow hard-wick fallback when tick reversal is missing/weak (direction mismatch stays blocked).
+WICK_HF_TICK_FALLBACK_HARD_WICK = _env_bool("WICK_HF_TICK_FALLBACK_HARD_WICK", False)
+WICK_HF_HARD_WICK_EXTRA_RATIO = _env_float("WICK_HF_HARD_WICK_EXTRA_RATIO", 0.18)
+WICK_HF_HARD_WICK_RANGE_MULT = _env_float("WICK_HF_HARD_WICK_RANGE_MULT", 1.40)
+
 WICK_HF_REQUIRE_BB_TOUCH = _env_bool("WICK_HF_REQUIRE_BB_TOUCH", True)
 WICK_HF_BB_TOUCH_PIPS = _env_float("WICK_HF_BB_TOUCH_PIPS", 0.9)
 WICK_HF_DIAG = _env_bool("WICK_HF_DIAG", False)
@@ -2143,6 +2164,9 @@ def _signal_wick_reversal_hf(
     body = abs(c - o) / PIP
     if body > WICK_HF_BODY_MAX_PIPS:
         return None
+    body_ratio = body / max(rng, 0.01)
+    if WICK_HF_BODY_RATIO_MAX > 0.0 and body_ratio > WICK_HF_BODY_RATIO_MAX:
+        return None
 
     upper_wick = (h - max(o, c)) / PIP
     lower_wick = (min(o, c) - l) / PIP
@@ -2153,14 +2177,25 @@ def _signal_wick_reversal_hf(
     adx = _adx(fac_m1)
     bbw = _bbw(fac_m1)
     atr = _atr_pips(fac_m1)
-    if WICK_HF_ADX_MAX > 0.0 and adx > WICK_HF_ADX_MAX:
-        return None
     if WICK_HF_BBW_MAX > 0.0 and bbw > WICK_HF_BBW_MAX:
         return None
     if (WICK_HF_ATR_MIN > 0.0 and atr < WICK_HF_ATR_MIN) or (WICK_HF_ATR_MAX > 0.0 and atr > WICK_HF_ATR_MAX):
         return None
+    if WICK_HF_ADX_MAX > 0.0 and adx > WICK_HF_ADX_MAX and not WICK_HF_ADX_OVERRIDE_ENABLED:
+        return None
 
     side = "short" if upper_wick > lower_wick else "long"
+
+    if WICK_HF_MOMENTUM_FILTER_ENABLED:
+        macd_hist = _macd_hist_pips(fac_m1)
+        if side == "long" and macd_hist < WICK_HF_MACD_HIST_LONG_MIN:
+            return None
+        if side == "short":
+            if macd_hist > WICK_HF_MACD_HIST_SHORT_MAX:
+                return None
+            slope_10 = _ema_slope_pips(fac_m1, "ema_slope_10")
+            if slope_10 > WICK_HF_EMA_SLOPE_10_SHORT_MAX:
+                return None
 
     if WICK_HF_REQUIRE_BB_TOUCH:
         levels = bb_levels(fac_m1)
@@ -2176,19 +2211,46 @@ def _signal_wick_reversal_hf(
                 return None
 
     strength = 0.0
-    if WICK_HF_REQUIRE_TICK_REV:
+    tick_ok = not WICK_HF_REQUIRE_TICK_REV
+    if WICK_HF_REQUIRE_TICK_REV or WICK_HF_ADX_OVERRIDE_ENABLED:
         mids, _ = tick_snapshot(WICK_HF_TICK_WINDOW_SEC, limit=160)
         rev_ok, rev_dir, rev_strength = (
             tick_reversal(mids, min_ticks=WICK_HF_TICK_MIN_TICKS) if mids else (False, None, 0.0)
         )
-        if not rev_ok or rev_dir != side:
+        # Direction mismatch stays blocked even if hard-wick fallback is enabled.
+        if rev_ok and rev_dir != side:
             return None
         try:
             strength = float(rev_strength or 0.0)
         except Exception:
             strength = 0.0
-        if WICK_HF_TICK_MIN_STRENGTH > 0.0 and strength < WICK_HF_TICK_MIN_STRENGTH:
+        tick_ok = bool(rev_ok) and (rev_dir == side) and (
+            WICK_HF_TICK_MIN_STRENGTH <= 0.0 or strength >= WICK_HF_TICK_MIN_STRENGTH
+        )
+        if WICK_HF_REQUIRE_TICK_REV and not tick_ok:
+            if not WICK_HF_TICK_FALLBACK_HARD_WICK:
+                return None
+            hard_wick_ok = (
+                wick_ratio >= (WICK_HF_RATIO_MIN + max(0.0, WICK_HF_HARD_WICK_EXTRA_RATIO))
+                and rng >= (WICK_HF_RANGE_MIN_PIPS * max(1.0, WICK_HF_HARD_WICK_RANGE_MULT))
+            )
+            if not hard_wick_ok:
+                return None
+
+    if WICK_HF_ADX_MAX > 0.0 and adx > WICK_HF_ADX_MAX:
+        # In high-ADX regimes, require exceptionally strong rejections.
+        if adx > WICK_HF_ADX_OVERRIDE_MAX_ADX:
             return None
+        if wick_ratio < WICK_HF_ADX_OVERRIDE_MIN_RATIO:
+            return None
+        if tick_ok:
+            if strength < WICK_HF_ADX_OVERRIDE_MIN_TICK_STRENGTH:
+                return None
+        else:
+            if not WICK_HF_ADX_OVERRIDE_ALLOW_NO_TICK_REV:
+                return None
+            if wick_ratio < WICK_HF_ADX_OVERRIDE_NO_TICK_MIN_RATIO:
+                return None
 
     proj_allow, size_mult, proj_detail = projection_decision(side, mode="range")
     if not proj_allow:
