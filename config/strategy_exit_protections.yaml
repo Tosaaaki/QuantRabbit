@@ -128,7 +128,8 @@ hold_until_profit:
     - "313425"  # scalp LevelReject short opened 2026-02-07 06:40 JST
     - "313411"  # scalp WickReversal short opened 2026-02-07 06:25 JST
   min_profit_pips: 9999.0
-  strict: false
+  # strict=true blocks closes even for emergency / margin-relief reasons.
+  strict: true
 
 strategies:
   TrendMA:
