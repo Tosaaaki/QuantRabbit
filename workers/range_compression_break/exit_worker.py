@@ -128,6 +128,7 @@ class RangeCompressionBreakExitWorker:
             client_order_id=client_order_id,
             allow_negative=allow_negative,
             exit_reason=reason,
+            env_prefix=config.ENV_PREFIX,
         )
         if ok:
             LOG.info("[EXIT-range_comp_break] trade=%s units=%s reason=%s pnl=%.2fp", trade_id, units, reason, pnl)

@@ -1,3 +1,5 @@
+ENV_PREFIX = "STOP_RUN_REVERSAL"
+
 DEFAULT_CONFIG = {
     "id": "stop_run_reversal",
     "universe": [],

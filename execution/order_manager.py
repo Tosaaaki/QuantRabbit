@@ -4361,19 +4361,17 @@ async def market_order(
     _trace("preflight_start")
 
 
-    # 成績ガード（直近 PF/勝率が悪いタグは全ポケットでブロック。manual は除外）
-    perf_guard_flag = os.getenv("PERF_GUARD_GLOBAL_ENABLED")
-    if perf_guard_flag is None:
-        perf_guard_flag = os.getenv("PERF_GUARD_ENABLED", "1")
-    perf_guard_enabled = str(perf_guard_flag).strip().lower() not in {
-        "",
-        "0",
-        "false",
-        "no",
-    }
-    if perf_guard_enabled and pocket != "manual":
+    # Perf guard (PF/win-rate gate). Support per-strategy overrides by passing env_prefix
+    # via meta/entry_thesis so a multi-strategy worker can tune each strategy independently.
+    env_prefix = None
+    if isinstance(meta, dict):
+        env_prefix = meta.get("env_prefix") or meta.get("ENV_PREFIX")
+    if env_prefix is None and isinstance(entry_thesis, dict):
+        env_prefix = entry_thesis.get("env_prefix") or entry_thesis.get("ENV_PREFIX")
+
+    if pocket != "manual":
         try:
-            pocket_decision = perf_guard.is_pocket_allowed(pocket)
+            pocket_decision = perf_guard.is_pocket_allowed(pocket, env_prefix=env_prefix)
         except Exception:
             pocket_decision = None
         if pocket_decision is not None and not pocket_decision.allowed:
@@ -4411,13 +4409,18 @@ async def market_order(
                 },
             )
             return None
-    if perf_guard_enabled and pocket != "manual" and strategy_tag:
+    if pocket != "manual" and strategy_tag:
         _trace("perf_guard")
         try:
             current_hour = datetime.now(timezone.utc).hour
         except Exception:
             current_hour = None
-        decision = perf_guard.is_allowed(str(strategy_tag), pocket, hour=current_hour)
+        decision = perf_guard.is_allowed(
+            str(strategy_tag),
+            pocket,
+            hour=current_hour,
+            env_prefix=env_prefix,
+        )
         if not decision.allowed:
             note = f"perf_block:{decision.reason}"
             _console_order_log(

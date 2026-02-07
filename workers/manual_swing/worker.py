@@ -22,15 +22,18 @@ from workers.common.quality_gate import current_regime
 from . import config
 
 import os
-_BB_ENTRY_ENABLED = os.getenv("BB_ENTRY_ENABLED", "1").strip().lower() not in {"", "0", "false", "no"}
-_BB_ENTRY_REVERT_PIPS = float(os.getenv("BB_ENTRY_REVERT_PIPS", "2.4"))
-_BB_ENTRY_REVERT_RATIO = float(os.getenv("BB_ENTRY_REVERT_RATIO", "0.22"))
-_BB_ENTRY_TREND_EXT_PIPS = float(os.getenv("BB_ENTRY_TREND_EXT_PIPS", "3.5"))
-_BB_ENTRY_TREND_EXT_RATIO = float(os.getenv("BB_ENTRY_TREND_EXT_RATIO", "0.40"))
-_BB_ENTRY_SCALP_REVERT_PIPS = float(os.getenv("BB_ENTRY_SCALP_REVERT_PIPS", "2.0"))
-_BB_ENTRY_SCALP_REVERT_RATIO = float(os.getenv("BB_ENTRY_SCALP_REVERT_RATIO", "0.20"))
-_BB_ENTRY_SCALP_EXT_PIPS = float(os.getenv("BB_ENTRY_SCALP_EXT_PIPS", "2.4"))
-_BB_ENTRY_SCALP_EXT_RATIO = float(os.getenv("BB_ENTRY_SCALP_EXT_RATIO", "0.30"))
+from utils.env_utils import env_bool, env_float
+
+_BB_ENV_PREFIX = getattr(config, "ENV_PREFIX", "")
+_BB_ENTRY_ENABLED = env_bool("BB_ENTRY_ENABLED", True, prefix=_BB_ENV_PREFIX)
+_BB_ENTRY_REVERT_PIPS = env_float("BB_ENTRY_REVERT_PIPS", 2.4, prefix=_BB_ENV_PREFIX)
+_BB_ENTRY_REVERT_RATIO = env_float("BB_ENTRY_REVERT_RATIO", 0.22, prefix=_BB_ENV_PREFIX)
+_BB_ENTRY_TREND_EXT_PIPS = env_float("BB_ENTRY_TREND_EXT_PIPS", 3.5, prefix=_BB_ENV_PREFIX)
+_BB_ENTRY_TREND_EXT_RATIO = env_float("BB_ENTRY_TREND_EXT_RATIO", 0.40, prefix=_BB_ENV_PREFIX)
+_BB_ENTRY_SCALP_REVERT_PIPS = env_float("BB_ENTRY_SCALP_REVERT_PIPS", 2.0, prefix=_BB_ENV_PREFIX)
+_BB_ENTRY_SCALP_REVERT_RATIO = env_float("BB_ENTRY_SCALP_REVERT_RATIO", 0.20, prefix=_BB_ENV_PREFIX)
+_BB_ENTRY_SCALP_EXT_PIPS = env_float("BB_ENTRY_SCALP_EXT_PIPS", 2.4, prefix=_BB_ENV_PREFIX)
+_BB_ENTRY_SCALP_EXT_RATIO = env_float("BB_ENTRY_SCALP_EXT_RATIO", 0.30, prefix=_BB_ENV_PREFIX)
 _BB_PIP = 0.01
 
 
@@ -649,7 +652,11 @@ async def manual_swing_worker() -> None:
                     reduce_only=True,
                     client_order_id=_client_order_id("close"),
                     strategy_tag=STRATEGY_TAG,
-                    entry_thesis={"exit_reason": exit_reason, "strategy_tag": STRATEGY_TAG},
+                    entry_thesis={
+                        "exit_reason": exit_reason,
+                        "strategy_tag": STRATEGY_TAG,
+                        "env_prefix": config.ENV_PREFIX,
+                    },
                 )
                 stage_cooldown_until["long"] = now_mono + 300.0
                 stage_cooldown_until["short"] = now_mono + 300.0
@@ -751,7 +758,7 @@ async def manual_swing_worker() -> None:
                 side,
                 price,
             )
-            entry_thesis = {**entry_meta, "strategy_tag": STRATEGY_TAG}
+            entry_thesis = {**entry_meta, "strategy_tag": STRATEGY_TAG, "env_prefix": config.ENV_PREFIX}
             proj_allow, proj_mult, proj_detail = _projection_decision(side, config.POCKET)
             if not proj_allow:
                 continue

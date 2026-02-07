@@ -193,7 +193,8 @@ def _reset_replay_state(sim_clock: SimClock) -> None:
             factor_cache._CANDLES[tf].clear()  # type: ignore[index]
         factor_cache._FACTORS.clear()  # type: ignore[attr-defined]
         factor_cache._LAST_REGIME.clear()  # type: ignore[attr-defined]
-        factor_cache._CACHE_PATH = Path("tmp/factor_cache_exit_replay.json")  # type: ignore[attr-defined]
+        # Use a per-process cache path so parallel replays don't trample each other.
+        factor_cache._CACHE_PATH = Path(f"tmp/factor_cache_exit_replay_{os.getpid()}.json")  # type: ignore[attr-defined]
         factor_cache._LAST_RESTORE_MTIME = float("inf")  # type: ignore[attr-defined]
     except Exception:
         pass
@@ -311,12 +312,48 @@ class SimBroker:
         self.on_close = None
         self.hard_sl = True
         self.hard_tp = True
+        # Cache strategy protection lookups so replay doesn't waste time re-loading YAML/config
+        # on repeated close attempts.
+        self._close_guard_cache: Dict[tuple[str, str], dict] = {}
         self.slip_base_pips = float(slip_base_pips)
         self.slip_spread_coef = float(slip_spread_coef)
         self.slip_atr_coef = float(slip_atr_coef)
         self.slip_latency_coef = float(slip_latency_coef)
         self.latency_ms = float(latency_ms)
         self.fill_mode = (fill_mode or "lko").strip().lower()
+
+    def _close_guard_params(self, pocket: Optional[str], strategy_tag: Optional[str]) -> dict:
+        key = (str(pocket or "").strip().lower(), str(strategy_tag or "").strip())
+        cached = self._close_guard_cache.get(key)
+        if isinstance(cached, dict):
+            return cached
+        try:
+            min_profit_pips = order_manager._min_profit_pips(pocket, strategy_tag)  # type: ignore[attr-defined]
+        except Exception:
+            min_profit_pips = None
+        try:
+            ratio = order_manager._min_profit_ratio(pocket, strategy_tag)  # type: ignore[attr-defined]
+        except Exception:
+            ratio = None
+        ratio_reasons: set[str] = set()
+        tp_min = 0.0
+        if ratio is not None and float(ratio) > 0:
+            try:
+                ratio_reasons = set(order_manager._min_profit_ratio_reasons(strategy_tag))  # type: ignore[attr-defined]
+            except Exception:
+                ratio_reasons = set()
+            try:
+                tp_min = float(order_manager._min_profit_ratio_min_tp_pips(strategy_tag))  # type: ignore[attr-defined]
+            except Exception:
+                tp_min = 0.0
+        payload = {
+            "min_profit_pips": min_profit_pips,
+            "ratio": ratio,
+            "ratio_reasons": ratio_reasons,
+            "tp_min": tp_min,
+        }
+        self._close_guard_cache[key] = payload
+        return payload
 
     def set_last_tick(self, tick: TickRow) -> None:
         self.prev_tick = self.last_tick
@@ -387,6 +424,8 @@ class SimBroker:
         timeout_sec: Optional[float],
         units: int,
         source: str,
+        entry_thesis: Optional[dict] = None,
+        meta: Optional[dict] = None,
         signal_time: Optional[datetime] = None,
         signal_price: Optional[float] = None,
         latency_ms: Optional[float] = None,
@@ -399,13 +438,24 @@ class SimBroker:
         if source != "fast_scalp":
             slip_pips = self._calc_slip_pips(slip_tick)
             entry_price = self._apply_slip(entry_price, direction, is_entry=True, slip_pips=slip_pips)
-        thesis = {
+        thesis: dict = {
             "strategy_tag": strategy_tag,
             "strategy": strategy_tag,
             "tp_pips": tp_pips,
             "sl_pips": sl_pips,
             "timeout_sec": timeout_sec,
         }
+        if isinstance(entry_thesis, dict) and entry_thesis:
+            merged = dict(entry_thesis)
+            merged.setdefault("strategy_tag", strategy_tag)
+            merged.setdefault("strategy", strategy_tag)
+            if tp_pips is not None:
+                merged["tp_pips"] = tp_pips
+            if sl_pips is not None:
+                merged["sl_pips"] = sl_pips
+            if timeout_sec is not None:
+                merged.setdefault("timeout_sec", timeout_sec)
+            thesis = merged
         sl_price = None
         tp_price = None
         if sl_pips and sl_pips > 0:
@@ -436,6 +486,8 @@ class SimBroker:
             "tp_price": tp_price,
             "entry_slip_pips": slip_pips,
         }
+        if isinstance(meta, dict) and meta:
+            trade["entry_meta"] = meta
         if signal_time is not None:
             trade["signal_time"] = signal_time.isoformat()
         if signal_price is not None:
@@ -525,6 +577,8 @@ class SimBroker:
                     timeout_sec=pending.get("timeout_sec"),
                     units=pending.get("units", 0),
                     source=pending.get("source", ""),
+                    entry_thesis=pending.get("entry_thesis"),
+                    meta=pending.get("meta"),
                     signal_time=pending.get("signal_time"),
                     signal_price=pending.get("signal_price"),
                     latency_ms=pending.get("latency_ms"),
@@ -564,6 +618,8 @@ class SimBroker:
         timeout_sec: Optional[float] = None,
         units: int = 10000,
         source: str = "",
+        entry_thesis: Optional[dict] = None,
+        meta: Optional[dict] = None,
     ) -> dict:
         if self.latency_ms > 0.0 and source != "fast_scalp":
             trade_id = self._next_id()
@@ -582,6 +638,8 @@ class SimBroker:
                 "timeout_sec": timeout_sec,
                 "units": units,
                 "source": source,
+                "entry_thesis": entry_thesis,
+                "meta": meta,
                 "ready_epoch": ready_epoch,
                 "latency_ms": self.latency_ms,
             }
@@ -599,6 +657,8 @@ class SimBroker:
             timeout_sec=timeout_sec,
             units=units,
             source=source,
+            entry_thesis=entry_thesis,
+            meta=meta,
             latency_ms=0.0,
         )
 
@@ -609,7 +669,61 @@ class SimBroker:
         tick = self.last_tick
         if tick is None:
             return False
+
         force_close = reason == "end_of_replay" or exit_price_override is not None
+        if not force_close:
+            # Match execution/order_manager.py profit-buffer behavior so replay results reflect
+            # production close rejections (min_profit_pips / min_profit_ratio).
+            units = int(trade.get("units", 0) or 0)
+            entry_price = float(trade.get("price") or 0.0)
+            if units != 0 and entry_price > 0:
+                if units > 0:
+                    est_pips = (tick.bid - entry_price) / PIP
+                else:
+                    est_pips = (entry_price - tick.ask) / PIP
+                pocket = str(trade.get("pocket") or "").strip() or None
+                strategy_tag = str(trade.get("strategy_tag") or "").strip() or None
+                reason_key = str(reason or "").strip()
+                try:
+                    force_allow = bool(order_manager._reason_force_allow(reason_key))  # type: ignore[attr-defined]
+                except Exception:
+                    force_allow = False
+
+                guard = self._close_guard_params(pocket, strategy_tag)
+                min_profit_pips = guard.get("min_profit_pips")
+                if (
+                    min_profit_pips is not None
+                    and est_pips >= 0
+                    and est_pips < float(min_profit_pips)
+                    and not force_allow
+                ):
+                    return False
+
+                ratio = guard.get("ratio")
+                ratio_reasons = guard.get("ratio_reasons") if isinstance(guard.get("ratio_reasons"), set) else set()
+                tp_min = float(guard.get("tp_min") or 0.0)
+                if ratio is not None and float(ratio) > 0 and est_pips >= 0 and not force_allow:
+                    try:
+                        matches = bool(
+                            reason_key
+                            and ratio_reasons
+                            and order_manager._reason_matches_tokens(reason_key, list(ratio_reasons))  # type: ignore[attr-defined]
+                        )
+                    except Exception:
+                        matches = False
+                    if matches:
+                        tp_price = trade.get("tp_price")
+                        try:
+                            tp_price_f = float(tp_price) if tp_price is not None else None
+                        except Exception:
+                            tp_price_f = None
+                        if tp_price_f is not None:
+                            tp_pips = abs(tp_price_f - entry_price) / PIP
+                            if tp_pips >= tp_min:
+                                min_ratio_pips = tp_pips * float(ratio)
+                                if est_pips < min_ratio_pips:
+                                    return False
+
         if not force_close and self.latency_ms > 0.0:
             if trade.get("closing"):
                 return True
@@ -769,13 +883,38 @@ def _patch_live_deps(broker: SimBroker, account: SimAccount) -> None:
         tick = broker.last_tick
         if tick is None or units == 0:
             return None
+        thesis = entry_thesis if isinstance(entry_thesis, dict) else {}
         direction = "long" if units > 0 else "short"
         entry_price = tick.ask if units > 0 else tick.bid
         sl_pips = abs(entry_price - sl_price) / PIP if sl_price else None
         tp_pips = abs(entry_price - tp_price) / PIP if tp_price else None
+        if (sl_pips is None or sl_pips <= 0.0) and thesis:
+            for key in ("sl_pips", "hard_stop_pips", "loss_guard_pips", "fast_cut_pips"):
+                raw = thesis.get(key)
+                try:
+                    hint = float(raw) if raw is not None else None
+                except Exception:
+                    hint = None
+                if hint is not None and hint > 0.0:
+                    sl_pips = hint
+                    break
+        if (tp_pips is None or tp_pips <= 0.0) and thesis:
+            raw = thesis.get("tp_pips")
+            try:
+                hint = float(raw) if raw is not None else None
+            except Exception:
+                hint = None
+            if hint is not None and hint > 0.0:
+                tp_pips = hint
+        tag = (
+            strategy_tag
+            or thesis.get("strategy_tag")
+            or thesis.get("strategy")
+            or "scalp_precision"
+        )
         trade = broker.open_trade(
             pocket=pocket,
-            strategy_tag=strategy_tag or "scalp_precision",
+            strategy_tag=str(tag),
             direction=direction,
             entry_price=entry_price,
             entry_time=tick.ts,
@@ -784,6 +923,8 @@ def _patch_live_deps(broker: SimBroker, account: SimAccount) -> None:
             timeout_sec=None,
             units=abs(units),
             source="scalp_precision",
+            entry_thesis=thesis if thesis else None,
+            meta=meta if isinstance(meta, dict) else None,
         )
         return str(trade.get("trade_id"))
 
@@ -816,6 +957,7 @@ def _patch_exit_module(module, broker: SimBroker) -> None:
         client_order_id: str | None = None,
         allow_negative: bool = False,
         exit_reason: str | None = None,
+        **_kwargs,
     ) -> bool:
         return broker.close_trade(str(trade_id), exit_reason or "exit_worker")
 
@@ -1532,6 +1674,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--start", default="", help="ISO start (UTC).")
     parser.add_argument("--end", default="", help="ISO end (UTC).")
     parser.add_argument("--out", type=Path, default=Path("tmp/replay_exit_workers.json"))
+    parser.add_argument("--quiet", action="store_true", help="Disable logging output (CRITICAL only).")
+    parser.add_argument("--no-stdout", action="store_true", help="Do not print replay JSON to stdout (still writes --out).")
     parser.add_argument("--equity", type=float, default=12000.0)
     parser.add_argument("--margin-available", type=float, default=9000.0)
     parser.add_argument("--margin-rate", type=float, default=0.04)
@@ -1577,7 +1721,9 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
-    if args.fast_only:
+    if args.quiet:
+        logging.disable(logging.CRITICAL)
+    elif args.fast_only:
         args.no_main_strategies = True
         args.disable_macro = True
         logging.disable(logging.CRITICAL)
@@ -1781,7 +1927,8 @@ def main() -> None:
     }
     args.out.parent.mkdir(parents=True, exist_ok=True)
     args.out.write_text(json.dumps(out_payload, ensure_ascii=False, indent=2), encoding="utf-8")
-    print(json.dumps(out_payload, ensure_ascii=False))
+    if not args.no_stdout:
+        print(json.dumps(out_payload, ensure_ascii=False))
 
 
 if __name__ == "__main__":

@@ -33,15 +33,18 @@ from workers.common.size_utils import scale_base_units
 from . import config
 
 import os
-_BB_ENTRY_ENABLED = os.getenv("BB_ENTRY_ENABLED", "1").strip().lower() not in {"", "0", "false", "no"}
-_BB_ENTRY_REVERT_PIPS = float(os.getenv("BB_ENTRY_REVERT_PIPS", "2.4"))
-_BB_ENTRY_REVERT_RATIO = float(os.getenv("BB_ENTRY_REVERT_RATIO", "0.22"))
-_BB_ENTRY_TREND_EXT_PIPS = float(os.getenv("BB_ENTRY_TREND_EXT_PIPS", "3.5"))
-_BB_ENTRY_TREND_EXT_RATIO = float(os.getenv("BB_ENTRY_TREND_EXT_RATIO", "0.40"))
-_BB_ENTRY_SCALP_REVERT_PIPS = float(os.getenv("BB_ENTRY_SCALP_REVERT_PIPS", "2.0"))
-_BB_ENTRY_SCALP_REVERT_RATIO = float(os.getenv("BB_ENTRY_SCALP_REVERT_RATIO", "0.20"))
-_BB_ENTRY_SCALP_EXT_PIPS = float(os.getenv("BB_ENTRY_SCALP_EXT_PIPS", "2.4"))
-_BB_ENTRY_SCALP_EXT_RATIO = float(os.getenv("BB_ENTRY_SCALP_EXT_RATIO", "0.30"))
+from utils.env_utils import env_bool, env_float
+
+_BB_ENV_PREFIX = getattr(config, "ENV_PREFIX", "")
+_BB_ENTRY_ENABLED = env_bool("BB_ENTRY_ENABLED", True, prefix=_BB_ENV_PREFIX)
+_BB_ENTRY_REVERT_PIPS = env_float("BB_ENTRY_REVERT_PIPS", 2.4, prefix=_BB_ENV_PREFIX)
+_BB_ENTRY_REVERT_RATIO = env_float("BB_ENTRY_REVERT_RATIO", 0.22, prefix=_BB_ENV_PREFIX)
+_BB_ENTRY_TREND_EXT_PIPS = env_float("BB_ENTRY_TREND_EXT_PIPS", 3.5, prefix=_BB_ENV_PREFIX)
+_BB_ENTRY_TREND_EXT_RATIO = env_float("BB_ENTRY_TREND_EXT_RATIO", 0.40, prefix=_BB_ENV_PREFIX)
+_BB_ENTRY_SCALP_REVERT_PIPS = env_float("BB_ENTRY_SCALP_REVERT_PIPS", 2.0, prefix=_BB_ENV_PREFIX)
+_BB_ENTRY_SCALP_REVERT_RATIO = env_float("BB_ENTRY_SCALP_REVERT_RATIO", 0.20, prefix=_BB_ENV_PREFIX)
+_BB_ENTRY_SCALP_EXT_PIPS = env_float("BB_ENTRY_SCALP_EXT_PIPS", 2.4, prefix=_BB_ENV_PREFIX)
+_BB_ENTRY_SCALP_EXT_RATIO = env_float("BB_ENTRY_SCALP_EXT_RATIO", 0.30, prefix=_BB_ENV_PREFIX)
 _BB_PIP = 0.01
 
 
@@ -362,6 +365,7 @@ def _confidence_scale(conf: int) -> float:
 
 
 def _compute_cap(*args, **kwargs) -> Tuple[float, Dict[str, float]]:
+    kwargs.setdefault("env_prefix", config.ENV_PREFIX)
     res = compute_cap(cap_min=config.CAP_MIN, cap_max=config.CAP_MAX, *args, **kwargs)
     return res.cap, res.reasons
 
@@ -685,6 +689,7 @@ async def scalp_multi_worker() -> None:
             client_id = _client_order_id(signal_tag)
             entry_thesis = {
                 "strategy_tag": signal_tag,
+                "env_prefix": config.ENV_PREFIX,
                 "tp_pips": tp_pips,
                 "sl_pips": sl_pips,
                 "hard_stop_pips": sl_pips,
@@ -759,6 +764,7 @@ async def scalp_multi_worker() -> None:
             if candle_mult != 1.0:
                 sign = 1 if units > 0 else -1
                 units = int(round(abs(units) * candle_mult)) * sign
+            entry_thesis.setdefault("env_prefix", config.ENV_PREFIX)
             res = await market_order(
                 instrument="USD_JPY",
                 units=units,

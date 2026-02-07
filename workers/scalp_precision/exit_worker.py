@@ -27,16 +27,20 @@ except Exception:  # pragma: no cover - optional
     yaml = None
 
 
-_BB_EXIT_ENABLED = os.getenv("BB_EXIT_ENABLED", "1").strip().lower() not in {"", "0", "false", "no"}
-_BB_EXIT_REVERT_PIPS = float(os.getenv("BB_EXIT_REVERT_PIPS", "2.0"))
-_BB_EXIT_REVERT_RATIO = float(os.getenv("BB_EXIT_REVERT_RATIO", "0.20"))
-_BB_EXIT_TREND_EXT_PIPS = float(os.getenv("BB_EXIT_TREND_EXT_PIPS", "3.0"))
-_BB_EXIT_TREND_EXT_RATIO = float(os.getenv("BB_EXIT_TREND_EXT_RATIO", "0.35"))
-_BB_EXIT_SCALP_REVERT_PIPS = float(os.getenv("BB_EXIT_SCALP_REVERT_PIPS", "1.6"))
-_BB_EXIT_SCALP_REVERT_RATIO = float(os.getenv("BB_EXIT_SCALP_REVERT_RATIO", "0.18"))
-_BB_EXIT_SCALP_EXT_PIPS = float(os.getenv("BB_EXIT_SCALP_EXT_PIPS", "2.0"))
-_BB_EXIT_SCALP_EXT_RATIO = float(os.getenv("BB_EXIT_SCALP_EXT_RATIO", "0.28"))
-_BB_EXIT_MID_BUFFER_PIPS = float(os.getenv("BB_EXIT_MID_BUFFER_PIPS", "0.4"))
+from . import config
+from utils.env_utils import env_bool, env_float
+
+_BB_ENV_PREFIX = getattr(config, "ENV_PREFIX", "")
+_BB_EXIT_ENABLED = env_bool("BB_EXIT_ENABLED", True, prefix=_BB_ENV_PREFIX)
+_BB_EXIT_REVERT_PIPS = env_float("BB_EXIT_REVERT_PIPS", 2.0, prefix=_BB_ENV_PREFIX)
+_BB_EXIT_REVERT_RATIO = env_float("BB_EXIT_REVERT_RATIO", 0.20, prefix=_BB_ENV_PREFIX)
+_BB_EXIT_TREND_EXT_PIPS = env_float("BB_EXIT_TREND_EXT_PIPS", 3.0, prefix=_BB_ENV_PREFIX)
+_BB_EXIT_TREND_EXT_RATIO = env_float("BB_EXIT_TREND_EXT_RATIO", 0.35, prefix=_BB_ENV_PREFIX)
+_BB_EXIT_SCALP_REVERT_PIPS = env_float("BB_EXIT_SCALP_REVERT_PIPS", 1.6, prefix=_BB_ENV_PREFIX)
+_BB_EXIT_SCALP_REVERT_RATIO = env_float("BB_EXIT_SCALP_REVERT_RATIO", 0.18, prefix=_BB_ENV_PREFIX)
+_BB_EXIT_SCALP_EXT_PIPS = env_float("BB_EXIT_SCALP_EXT_PIPS", 2.0, prefix=_BB_ENV_PREFIX)
+_BB_EXIT_SCALP_EXT_RATIO = env_float("BB_EXIT_SCALP_EXT_RATIO", 0.28, prefix=_BB_ENV_PREFIX)
+_BB_EXIT_MID_BUFFER_PIPS = env_float("BB_EXIT_MID_BUFFER_PIPS", 0.4, prefix=_BB_ENV_PREFIX)
 _BB_EXIT_BYPASS_TOKENS = {
     "hard_stop",
     "structure",
@@ -310,7 +314,30 @@ LOG = logging.getLogger(__name__)
 LOG_PREFIX = os.getenv("SCALP_PRECISION_EXIT_LOG_PREFIX", "[ScalpPrecisionExit]")
 
 
-ALLOWED_TAGS: Set[str] = {'SpreadRangeRevert','RangeFaderPro','VwapRevertS','StochBollBounce','DivergenceRevert','CompressionRetest','HTFPullbackS','MacdTrendRide','EmaSlopePull','TickImbalance','TickImbalanceRRPlus','LevelReject','LiquiditySweep','WickReversal','SessionEdge','SqueezePulseBreak','FalseBreakFade'}
+# Tags that scalp_precision exit_worker is allowed to manage. Missing tags effectively disable
+# exit protections (loss cuts, max-hold, etc.) for those strategies, so keep this list complete.
+ALLOWED_TAGS: Set[str] = {
+    "SpreadRangeRevert",
+    "RangeFaderPro",
+    "VwapRevertS",
+    "StochBollBounce",
+    "DivergenceRevert",
+    "CompressionRetest",
+    "HTFPullbackS",
+    "MacdTrendRide",
+    "EmaSlopePull",
+    "TickImbalance",
+    "TickImbalanceRRPlus",
+    "LevelReject",
+    "LiquiditySweep",
+    "WickReversal",
+    "WickReversalHF",
+    "WickReversalPro",
+    "TickWickReversal",
+    "SessionEdge",
+    "SqueezePulseBreak",
+    "FalseBreakFade",
+}
 
 
 def _tags_env(key: str, default: Set[str]) -> Set[str]:
@@ -369,6 +396,22 @@ def _latest_mid() -> Optional[float]:
         return None
 
 
+def _latest_bid_ask() -> tuple[Optional[float], Optional[float]]:
+    tick = tick_window.recent_ticks(seconds=2.0, limit=1)
+    if not tick:
+        return None, None
+    last = tick[-1] or {}
+    try:
+        bid = float(last.get("bid")) if last.get("bid") is not None else None
+    except Exception:
+        bid = None
+    try:
+        ask = float(last.get("ask")) if last.get("ask") is not None else None
+    except Exception:
+        ask = None
+    return bid, ask
+
+
 def _filter_trades(trades: Sequence[dict], tags: Set[str]) -> list[dict]:
     if not tags:
         return []
@@ -398,6 +441,7 @@ class _TradeState:
     lock_floor: Optional[float] = None
     partial_done: bool = False
     be_moved: bool = False
+    be_floor_price: Optional[float] = None
 
     def update(self, pnl: float, lock_buffer: float) -> None:
         if pnl > self.peak:
@@ -474,7 +518,7 @@ class RangeFaderExitWorker:
             os.getenv("RANGEFADER_EXIT_LOSS_CUT_REASON_TIME", "time_stop").strip() or "time_stop"
         )
 
-        self.tick_imb_tags = _tags_env("TICK_IMB_EXIT_TAGS", {"TickImbalance"})
+        self.tick_imb_tags = _tags_env("TICK_IMB_EXIT_TAGS", {"TickImbalance", "TickImbalanceRRPlus"})
         self.tick_imb_partial_enabled = _bool_env("TICK_IMB_EXIT_PARTIAL_ENABLED", True)
         self.tick_imb_partial_trigger = max(0.4, _float_env("TICK_IMB_EXIT_PARTIAL_TRIGGER_PIPS", 1.0))
         self.tick_imb_partial_fraction = min(
@@ -486,12 +530,34 @@ class RangeFaderExitWorker:
         )
         self.tick_imb_be_buffer_pips = max(0.05, _float_env("TICK_IMB_EXIT_BE_BUFFER_PIPS", 0.2))
         self.tick_imb_min_hold_sec = max(0.0, _float_env("TICK_IMB_EXIT_MIN_HOLD_SEC", 0.0))
+        # NOTE: these envs default to 0.0 and are intended as opt-in overrides during tuning.
+        # If the key is not set, config/strategy_exit_protections.yaml remains authoritative.
+        self._tick_imb_profit_take_override = os.getenv("TICK_IMB_EXIT_PROFIT_PIPS") is not None
         self.tick_imb_profit_take = max(0.0, _float_env("TICK_IMB_EXIT_PROFIT_PIPS", 0.0))
+        self._tick_imb_trail_start_override = os.getenv("TICK_IMB_EXIT_TRAIL_START_PIPS") is not None
         self.tick_imb_trail_start = max(0.0, _float_env("TICK_IMB_EXIT_TRAIL_START_PIPS", 0.0))
+        self._tick_imb_trail_backoff_override = os.getenv("TICK_IMB_EXIT_TRAIL_BACKOFF_PIPS") is not None
         self.tick_imb_trail_backoff = max(0.0, _float_env("TICK_IMB_EXIT_TRAIL_BACKOFF_PIPS", 0.0))
+        self._tick_imb_lock_buffer_override = os.getenv("TICK_IMB_EXIT_LOCK_BUFFER_PIPS") is not None
         self.tick_imb_lock_buffer = max(0.0, _float_env("TICK_IMB_EXIT_LOCK_BUFFER_PIPS", 0.0))
+        self._tick_imb_max_hold_sec_override = os.getenv("TICK_IMB_EXIT_MAX_HOLD_SEC") is not None
         self.tick_imb_max_hold_sec = max(0.0, _float_env("TICK_IMB_EXIT_MAX_HOLD_SEC", 0.0))
         self.tick_imb_max_adverse_pips = max(0.0, _float_env("TICK_IMB_EXIT_MAX_ADVERSE_PIPS", 0.0))
+        # Safety knob: cap config-driven max_adverse without editing YAML (useful for rollouts/tests).
+        self.tick_imb_max_adverse_cap_pips = max(
+            0.0, _float_env("TICK_IMB_EXIT_MAX_ADVERSE_CAP_PIPS", 0.0)
+        )
+        # When hard SL is disabled, cap tail losses mechanically using the intended entry SL as a reference.
+        # These are used only when max_adverse_pips is not explicitly configured.
+        self.tick_imb_max_adverse_from_sl_mult = max(
+            0.0, _float_env("TICK_IMB_EXIT_MAX_ADVERSE_FROM_SL_MULT", 1.6)
+        )
+        self.tick_imb_max_adverse_from_sl_min = max(
+            0.0, _float_env("TICK_IMB_EXIT_MAX_ADVERSE_FROM_SL_MIN_PIPS", 2.0)
+        )
+        self.tick_imb_max_adverse_from_sl_max = max(
+            0.0, _float_env("TICK_IMB_EXIT_MAX_ADVERSE_FROM_SL_MAX_PIPS", 6.0)
+        )
 
         self._pos_manager = PositionManager()
         self._states: dict[str, _TradeState] = {}
@@ -587,6 +653,7 @@ class RangeFaderExitWorker:
             client_order_id=client_order_id,
             allow_negative=allow_negative,
             exit_reason=reason,
+            env_prefix=_BB_ENV_PREFIX,
         )
         if ok:
             LOG.info("[exit-rangefader] trade=%s units=%s reason=%s pnl=%.2fp", trade_id, units, reason, pnl)
@@ -725,9 +792,42 @@ class RangeFaderExitWorker:
         tick_imb_max_hold_sec = max(
             0.0, _pick_float(tick_imb_profile.get("max_hold_sec"), self.tick_imb_max_hold_sec)
         )
-        tick_imb_max_adverse_pips = max(
-            0.0, _pick_float(tick_imb_profile.get("max_adverse_pips"), self.tick_imb_max_adverse_pips)
+        if is_tick_imb:
+            # Opt-in overrides to enable fast replay sweeps without editing YAML.
+            if self._tick_imb_profit_take_override:
+                tick_imb_profit_take = float(self.tick_imb_profit_take or 0.0)
+            if self._tick_imb_trail_start_override:
+                tick_imb_trail_start = float(self.tick_imb_trail_start or 0.0)
+            if self._tick_imb_trail_backoff_override:
+                tick_imb_trail_backoff = float(self.tick_imb_trail_backoff or 0.0)
+            if self._tick_imb_lock_buffer_override:
+                tick_imb_lock_buffer = float(self.tick_imb_lock_buffer or 0.0)
+            if self._tick_imb_max_hold_sec_override:
+                tick_imb_max_hold_sec = float(self.tick_imb_max_hold_sec or 0.0)
+        cfg_tick_imb_max_adverse_pips = _pick_float(tick_imb_profile.get("max_adverse_pips"), 0.0)
+        # Treat non-positive config values as "unset" so env-derived defaults still work.
+        # (config/strategy_exit_protections.yaml uses 0 for "no override" in most fields.)
+        tick_imb_max_adverse_pips = (
+            cfg_tick_imb_max_adverse_pips
+            if cfg_tick_imb_max_adverse_pips > 0.0
+            else max(0.0, float(self.tick_imb_max_adverse_pips or 0.0))
         )
+        if is_tick_imb and tick_imb_max_adverse_pips <= 0.0:
+            thesis_sl_hint = _pick_float(thesis.get("sl_pips"), 0.0)
+            mult = float(self.tick_imb_max_adverse_from_sl_mult or 0.0)
+            if thesis_sl_hint > 0.0 and mult > 0.0:
+                derived = thesis_sl_hint * mult
+                lo = float(self.tick_imb_max_adverse_from_sl_min or 0.0)
+                hi = float(self.tick_imb_max_adverse_from_sl_max or 0.0)
+                if lo > 0.0:
+                    derived = max(lo, derived)
+                if hi > 0.0:
+                    derived = min(hi, derived)
+                tick_imb_max_adverse_pips = derived
+        if is_tick_imb and tick_imb_max_adverse_pips > 0.0:
+            cap = float(self.tick_imb_max_adverse_cap_pips or 0.0)
+            if cap > 0.0:
+                tick_imb_max_adverse_pips = min(tick_imb_max_adverse_pips, cap)
 
         client_ext = trade.get("clientExtensions")
         client_id = trade.get("client_order_id")
@@ -735,6 +835,13 @@ class RangeFaderExitWorker:
             client_id = client_ext.get("id")
         if not client_id:
             LOG.warning("[exit-rangefader] missing client_id trade=%s skip close", trade_id)
+            return
+        # For TickImbalance, enforce max-adverse loss cap before any other pro-stop logic.
+        # This is critical when hard SL is disabled; otherwise a structure-based stop can realize
+        # much larger losses than the intended entry SL.
+        if is_tick_imb and tick_imb_max_adverse_pips > 0.0 and pnl <= -tick_imb_max_adverse_pips:
+            await self._close(trade_id, -units, "max_adverse", pnl, client_id, allow_negative=True)
+            self._states.pop(trade_id, None)
             return
         if await maybe_close_pro_stop(trade, now=now):
             return
@@ -760,6 +867,19 @@ class RangeFaderExitWorker:
             if state is None:
                 state = _TradeState(peak=pnl)
                 self._states[trade_id] = state
+            # When hard SL is disabled, TickImbalance still needs a deterministic break-even stop
+            # after partial take. In live this is typically enforced via set_trade_protections();
+            # in replay/offline modes we enforce it internally using bid/ask.
+            if state.partial_done and state.be_floor_price is not None:
+                bid, ask = _latest_bid_ask()
+                if side == "long" and bid is not None and bid <= state.be_floor_price:
+                    await self._close(trade_id, -units, "be_stop", pnl, client_id, allow_negative=True)
+                    self._states.pop(trade_id, None)
+                    return
+                if side == "short" and ask is not None and ask >= state.be_floor_price:
+                    await self._close(trade_id, -units, "be_stop", pnl, client_id, allow_negative=True)
+                    self._states.pop(trade_id, None)
+                    return
             if (
                 tick_imb_partial_enabled
                 and pnl > 0
@@ -775,6 +895,7 @@ class RangeFaderExitWorker:
                         client_order_id=client_id,
                         allow_negative=False,
                         exit_reason="partial_take",
+                        env_prefix=_BB_ENV_PREFIX,
                     )
                     if ok:
                         state.partial_done = True
@@ -787,6 +908,8 @@ class RangeFaderExitWorker:
                         be = entry + (tick_imb_be_buffer_pips * 0.01) if side == "long" else entry - (
                             tick_imb_be_buffer_pips * 0.01
                         )
+                        # Always arm the internal BE stop, even if broker protections are disabled/ignored.
+                        state.be_floor_price = round(be, 3)
                         be_ok = await set_trade_protections(trade_id, sl_price=round(be, 3), tp_price=None)
                         if be_ok:
                             state.be_moved = True

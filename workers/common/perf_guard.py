@@ -16,95 +16,179 @@ from dataclasses import dataclass
 from typing import Optional, Tuple
 
 from workers.common.quality_gate import current_regime
+from utils.env_utils import env_bool, env_float, env_get, env_int
 
 LOG = logging.getLogger(__name__)
 
 _DB = pathlib.Path("logs/trades.db")
 
-_RAW_ENABLED = os.getenv("PERF_GUARD_ENABLED")
-if _RAW_ENABLED is None:
-    _RAW_ENABLED = os.getenv("PERF_GUARD_GLOBAL_ENABLED", "1")
-_ENABLED = str(_RAW_ENABLED).strip().lower() not in {"", "0", "false", "no"}
-_MODE = os.getenv("PERF_GUARD_MODE", "block").strip().lower()
-_LOOKBACK_DAYS = max(1, int(float(os.getenv("PERF_GUARD_LOOKBACK_DAYS", "3"))))
-_MIN_TRADES = max(5, int(float(os.getenv("PERF_GUARD_MIN_TRADES", "12"))))
-_PF_MIN = float(os.getenv("PERF_GUARD_PF_MIN", "0.9") or 0.9)
-_WIN_MIN = float(os.getenv("PERF_GUARD_WIN_MIN", "0.48") or 0.48)
-_TTL_SEC = max(30.0, float(os.getenv("PERF_GUARD_TTL_SEC", "120")) or 120.0)
-_HOURLY_ENABLED = os.getenv("PERF_GUARD_HOURLY", "0").strip().lower() not in {"", "0", "false", "no"}
-_HOURLY_MIN_TRADES = max(5, int(float(os.getenv("PERF_GUARD_HOURLY_MIN_TRADES", "12"))))
-_RAW_RELAX_TAGS = os.getenv("PERF_GUARD_RELAX_TAGS")
-if _RAW_RELAX_TAGS is None:
-    _RAW_RELAX_TAGS = "M1Scalper,ImpulseRetrace"
-_RELAX_TAGS = {tag.strip().lower() for tag in _RAW_RELAX_TAGS.split(",") if tag.strip()}
-_SPLIT_DIRECTIONAL = os.getenv("PERF_GUARD_SPLIT_DIRECTIONAL", "1").strip().lower() not in {
-    "",
-    "0",
-    "false",
-    "no",
-}
+
+@dataclass(frozen=True, slots=True)
+class PerfGuardCfg:
+    env_prefix: Optional[str]
+
+    enabled: bool
+    mode: str
+    lookback_days: int
+    min_trades: int
+    pf_min_default: float
+    win_min_default: float
+    ttl_sec: float
+
+    hourly_enabled: bool
+    hourly_min_trades: int
+
+    relax_tags: set[str]
+    split_directional: bool
+
+    regime_filter_enabled: bool
+    regime_min_trades: int
+
+    failfast_min_trades: int
+    failfast_pf: float
+    failfast_win: float
+
+    sl_loss_rate_min_trades: int
+    sl_loss_rate_max_default: float
+
+    pocket_enabled: bool
+    pocket_lookback_days: int
+    pocket_min_trades: int
+    pocket_pf_min_default: float
+    pocket_win_min_default: float
+    pocket_ttl_sec: float
+
+    scale_enabled: bool
+    scale_lookback_days: int
+    scale_min_trades: int
+    scale_pf_min: float
+    scale_win_min: float
+    scale_avg_pips_min: float
+    scale_step: float
+    scale_max_mult: float
+    scale_ttl_sec: float
+
+
+_CFG_CACHE: dict[str, PerfGuardCfg] = {}
+
+
+def _cfg_key(env_prefix: Optional[str]) -> str:
+    return str(env_prefix or "").strip().upper()
+
+
+def _get_cfg(env_prefix: Optional[str]) -> PerfGuardCfg:
+    key = _cfg_key(env_prefix)
+    cached = _CFG_CACHE.get(key)
+    if cached is not None:
+        return cached
+
+    raw_enabled = env_get("PERF_GUARD_ENABLED", None, prefix=env_prefix)
+    if raw_enabled is None:
+        raw_enabled = env_get("PERF_GUARD_GLOBAL_ENABLED", "1", prefix=env_prefix)
+    enabled = str(raw_enabled).strip().lower() not in {"", "0", "false", "no", "off"}
+
+    mode = str(env_get("PERF_GUARD_MODE", "block", prefix=env_prefix) or "block").strip().lower()
+    lookback_days = max(1, env_int("PERF_GUARD_LOOKBACK_DAYS", 3, prefix=env_prefix))
+    min_trades = max(5, env_int("PERF_GUARD_MIN_TRADES", 12, prefix=env_prefix))
+    pf_min_default = float(env_float("PERF_GUARD_PF_MIN", 0.9, prefix=env_prefix) or 0.9)
+    win_min_default = float(env_float("PERF_GUARD_WIN_MIN", 0.48, prefix=env_prefix) or 0.48)
+    ttl_sec = max(30.0, float(env_float("PERF_GUARD_TTL_SEC", 120.0, prefix=env_prefix) or 120.0))
+
+    hourly_enabled = env_bool("PERF_GUARD_HOURLY", False, prefix=env_prefix)
+    hourly_min_trades = max(5, env_int("PERF_GUARD_HOURLY_MIN_TRADES", 12, prefix=env_prefix))
+
+    relax_raw = env_get("PERF_GUARD_RELAX_TAGS", None, prefix=env_prefix)
+    if relax_raw is None:
+        relax_raw = "M1Scalper,ImpulseRetrace"
+    relax_tags = {tag.strip().lower() for tag in str(relax_raw).split(",") if tag.strip()}
+    split_directional = env_bool("PERF_GUARD_SPLIT_DIRECTIONAL", True, prefix=env_prefix)
+
+    regime_filter_enabled = env_bool("PERF_GUARD_REGIME_FILTER", True, prefix=env_prefix)
+    regime_min_trades = max(5, env_int("PERF_GUARD_REGIME_MIN_TRADES", 20, prefix=env_prefix))
+
+    failfast_min_trades = max(0, env_int("PERF_GUARD_FAILFAST_MIN_TRADES", 12, prefix=env_prefix))
+    failfast_pf = max(0.0, env_float("PERF_GUARD_FAILFAST_PF", 0.75, prefix=env_prefix))
+    failfast_win = max(0.0, env_float("PERF_GUARD_FAILFAST_WIN", 0.40, prefix=env_prefix))
+
+    sl_loss_rate_min_trades = max(0, env_int("PERF_GUARD_SL_LOSS_RATE_MIN_TRADES", 12, prefix=env_prefix))
+    sl_loss_rate_max_default = env_float("PERF_GUARD_SL_LOSS_RATE_MAX", 0.0, prefix=env_prefix)
+
+    pocket_enabled = env_bool("POCKET_PERF_GUARD_ENABLED", False, prefix=env_prefix)
+    pocket_lookback_days = max(1, env_int("POCKET_PERF_GUARD_LOOKBACK_DAYS", 7, prefix=env_prefix))
+    pocket_min_trades = max(10, env_int("POCKET_PERF_GUARD_MIN_TRADES", 60, prefix=env_prefix))
+    pocket_pf_min_default = env_float("POCKET_PERF_GUARD_PF_MIN", 0.95, prefix=env_prefix)
+    pocket_win_min_default = env_float("POCKET_PERF_GUARD_WIN_MIN", 0.50, prefix=env_prefix)
+    pocket_ttl_sec = max(30.0, env_float("POCKET_PERF_GUARD_TTL_SEC", 180.0, prefix=env_prefix))
+
+    scale_enabled = env_bool("PERF_SCALE_ENABLED", True, prefix=env_prefix)
+    scale_lookback_days = max(1, env_int("PERF_SCALE_LOOKBACK_DAYS", 7, prefix=env_prefix))
+    scale_min_trades = max(5, env_int("PERF_SCALE_MIN_TRADES", 20, prefix=env_prefix))
+    scale_pf_min = env_float("PERF_SCALE_PF_MIN", 1.15, prefix=env_prefix)
+    scale_win_min = env_float("PERF_SCALE_WIN_MIN", 0.55, prefix=env_prefix)
+    scale_avg_pips_min = env_float("PERF_SCALE_AVG_PIPS_MIN", 0.20, prefix=env_prefix)
+    scale_step = max(0.0, env_float("PERF_SCALE_STEP", 0.05, prefix=env_prefix))
+    scale_max_mult = max(1.0, env_float("PERF_SCALE_MAX_MULT", 1.25, prefix=env_prefix))
+    scale_ttl_sec = max(30.0, env_float("PERF_SCALE_TTL_SEC", 180.0, prefix=env_prefix))
+
+    cfg = PerfGuardCfg(
+        env_prefix=env_prefix,
+        enabled=enabled,
+        mode=mode,
+        lookback_days=lookback_days,
+        min_trades=min_trades,
+        pf_min_default=pf_min_default,
+        win_min_default=win_min_default,
+        ttl_sec=ttl_sec,
+        hourly_enabled=hourly_enabled,
+        hourly_min_trades=hourly_min_trades,
+        relax_tags=relax_tags,
+        split_directional=split_directional,
+        regime_filter_enabled=regime_filter_enabled,
+        regime_min_trades=regime_min_trades,
+        failfast_min_trades=failfast_min_trades,
+        failfast_pf=failfast_pf,
+        failfast_win=failfast_win,
+        sl_loss_rate_min_trades=sl_loss_rate_min_trades,
+        sl_loss_rate_max_default=sl_loss_rate_max_default,
+        pocket_enabled=pocket_enabled,
+        pocket_lookback_days=pocket_lookback_days,
+        pocket_min_trades=pocket_min_trades,
+        pocket_pf_min_default=pocket_pf_min_default,
+        pocket_win_min_default=pocket_win_min_default,
+        pocket_ttl_sec=pocket_ttl_sec,
+        scale_enabled=scale_enabled,
+        scale_lookback_days=scale_lookback_days,
+        scale_min_trades=scale_min_trades,
+        scale_pf_min=scale_pf_min,
+        scale_win_min=scale_win_min,
+        scale_avg_pips_min=scale_avg_pips_min,
+        scale_step=scale_step,
+        scale_max_mult=scale_max_mult,
+        scale_ttl_sec=scale_ttl_sec,
+    )
+    _CFG_CACHE[key] = cfg
+    return cfg
+
+
 _DIRECTIONAL_TOKENS = {"bear", "bull", "long", "short"}
 
-_REGIME_FILTER_ENABLED = os.getenv("PERF_GUARD_REGIME_FILTER", "1").strip().lower() not in {
-    "",
-    "0",
-    "false",
-    "no",
-}
-_REGIME_MIN_TRADES = max(5, int(float(os.getenv("PERF_GUARD_REGIME_MIN_TRADES", "20"))))
-
-# --- Fail-fast / tail-risk guards (applied before warmup) ---
-# When PERF_GUARD_MIN_TRADES is large (e.g., 30+), high-frequency strategies can bleed for too long.
-# These guards only trigger when performance is clearly poor and enough samples exist.
-_FAILFAST_MIN_TRADES = max(0, int(float(os.getenv("PERF_GUARD_FAILFAST_MIN_TRADES", "12") or 12)))
-_FAILFAST_PF = max(0.0, float(os.getenv("PERF_GUARD_FAILFAST_PF", "0.75") or 0.75))
-_FAILFAST_WIN = max(0.0, float(os.getenv("PERF_GUARD_FAILFAST_WIN", "0.40") or 0.40))
-
-# Stop-loss loss-rate guard. Enabled by default for scalp pockets (can be overridden per pocket).
-_SL_LOSS_RATE_MIN_TRADES = max(
-    0, int(float(os.getenv("PERF_GUARD_SL_LOSS_RATE_MIN_TRADES", "12") or 12))
-)
-_SL_LOSS_RATE_MAX_DEFAULT = float(os.getenv("PERF_GUARD_SL_LOSS_RATE_MAX", "") or 0.0)
-
-# Pocket-level guard (optional; defaults disabled)
-_POCKET_ENABLED = os.getenv("POCKET_PERF_GUARD_ENABLED", "0").strip().lower() not in {
-    "",
-    "0",
-    "false",
-    "no",
-}
-_POCKET_LOOKBACK_DAYS = max(1, int(float(os.getenv("POCKET_PERF_GUARD_LOOKBACK_DAYS", "7"))))
-_POCKET_MIN_TRADES = max(10, int(float(os.getenv("POCKET_PERF_GUARD_MIN_TRADES", "60"))))
-_POCKET_PF_MIN = float(os.getenv("POCKET_PERF_GUARD_PF_MIN", "0.95") or 0.95)
-_POCKET_WIN_MIN = float(os.getenv("POCKET_PERF_GUARD_WIN_MIN", "0.50") or 0.5)
-_POCKET_TTL_SEC = max(30.0, float(os.getenv("POCKET_PERF_GUARD_TTL_SEC", "180")) or 180.0)
-
-# Performance-based sizing (boost only)
-_SCALE_ENABLED = os.getenv("PERF_SCALE_ENABLED", "1").strip().lower() not in {"", "0", "false", "no"}
-_SCALE_LOOKBACK_DAYS = max(1, int(float(os.getenv("PERF_SCALE_LOOKBACK_DAYS", "7"))))
-_SCALE_MIN_TRADES = max(5, int(float(os.getenv("PERF_SCALE_MIN_TRADES", "20"))))
-_SCALE_PF_MIN = float(os.getenv("PERF_SCALE_PF_MIN", "1.15") or 1.15)
-_SCALE_WIN_MIN = float(os.getenv("PERF_SCALE_WIN_MIN", "0.55") or 0.55)
-_SCALE_AVG_PIPS_MIN = float(os.getenv("PERF_SCALE_AVG_PIPS_MIN", "0.20") or 0.20)
-_SCALE_STEP = max(0.0, float(os.getenv("PERF_SCALE_STEP", "0.05") or 0.05))
-_SCALE_MAX_MULT = max(1.0, float(os.getenv("PERF_SCALE_MAX_MULT", "1.25") or 1.25))
-_SCALE_TTL_SEC = max(30.0, float(os.getenv("PERF_SCALE_TTL_SEC", "180")) or 180.0)
-
-_cache: dict[tuple[str, str, Optional[int], Optional[str]], tuple[float, bool, str, int]] = {}
-_pocket_cache: dict[str, tuple[float, bool, str, int]] = {}
-_scale_cache: dict[tuple[str, str], tuple[float, float, str, int, float, float, float]] = {}
+_cache: dict[tuple[str, str, str, Optional[int], Optional[str]], tuple[float, bool, str, int]] = {}
+_pocket_cache: dict[tuple[str, str], tuple[float, bool, str, int]] = {}
+_scale_cache: dict[
+    tuple[str, str, str], tuple[float, float, str, int, float, float, float]
+] = {}
 
 
-def _threshold(name: str, pocket: str, default: float) -> float:
+def _threshold(name: str, pocket: str, default: float, cfg: PerfGuardCfg) -> float:
     pocket_key = (pocket or "").strip().upper()
     if pocket_key:
-        raw = os.getenv(f"{name}_{pocket_key}")
+        raw = env_get(f"{name}_{pocket_key}", None, prefix=cfg.env_prefix)
         if raw is not None:
             try:
                 return float(raw)
             except ValueError:
                 pass
-    raw = os.getenv(name)
+    raw = env_get(name, None, prefix=cfg.env_prefix)
     if raw is not None:
         try:
             return float(raw)
@@ -113,12 +197,12 @@ def _threshold(name: str, pocket: str, default: float) -> float:
     return default
 
 
-def _sl_loss_rate_max(pocket: str) -> float:
+def _sl_loss_rate_max(pocket: str, cfg: PerfGuardCfg) -> float:
     # Default: enabled only for scalp pockets; other pockets default disabled.
     p = (pocket or "").strip().lower()
     if p.startswith("scalp"):
-        return _threshold("PERF_GUARD_SL_LOSS_RATE_MAX", pocket, 0.65)
-    return _threshold("PERF_GUARD_SL_LOSS_RATE_MAX", pocket, _SL_LOSS_RATE_MAX_DEFAULT)
+        return _threshold("PERF_GUARD_SL_LOSS_RATE_MAX", pocket, 0.65, cfg)
+    return _threshold("PERF_GUARD_SL_LOSS_RATE_MAX", pocket, cfg.sl_loss_rate_max_default, cfg)
 
 
 @dataclass(frozen=True, slots=True)
@@ -151,11 +235,11 @@ def _is_directional_tag(raw: str) -> bool:
     return False
 
 
-def _tag_variants(tag: str) -> Tuple[str, ...]:
+def _tag_variants(tag: str, *, split_directional: bool) -> Tuple[str, ...]:
     raw = str(tag).strip().lower()
     if not raw:
         return ("",)
-    if _SPLIT_DIRECTIONAL and _is_directional_tag(raw):
+    if split_directional and _is_directional_tag(raw):
         return (raw,)
     base = raw.split("-", 1)[0].strip()
     if base and base != raw:
@@ -163,11 +247,11 @@ def _tag_variants(tag: str) -> Tuple[str, ...]:
     return (raw,)
 
 
-def _is_relaxed(tag: str) -> bool:
-    if not _RELAX_TAGS:
+def _is_relaxed(tag: str, cfg: PerfGuardCfg) -> bool:
+    if not cfg.relax_tags:
         return False
-    for variant in _tag_variants(tag):
-        if variant in _RELAX_TAGS:
+    for variant in _tag_variants(tag, split_directional=cfg.split_directional):
+        if variant in cfg.relax_tags:
             return True
     return False
 
@@ -192,6 +276,7 @@ def _query_perf_row(
     pocket: str,
     hour: Optional[int],
     regime_label: Optional[str],
+    cfg: PerfGuardCfg,
 ) -> Optional[sqlite3.Row]:
     regime_clause = ""
     if regime_label:
@@ -201,7 +286,7 @@ def _query_perf_row(
     params.extend(
         [
             pocket,
-            f"-{_LOOKBACK_DAYS} day",
+            f"-{cfg.lookback_days} day",
             f"{hour:02d}" if hour is not None else None,
             f"{hour:02d}" if hour is not None else None,
         ]
@@ -233,7 +318,7 @@ def _query_perf_row(
         return None
 
 
-def _query_perf_scale(tag: str, pocket: str) -> Tuple[float, float, float, int]:
+def _query_perf_scale(tag: str, pocket: str, cfg: PerfGuardCfg) -> Tuple[float, float, float, int]:
     if not _DB.exists():
         return 1.0, 0.0, 0.0, 0
     try:
@@ -241,13 +326,13 @@ def _query_perf_scale(tag: str, pocket: str) -> Tuple[float, float, float, int]:
         con.row_factory = sqlite3.Row
     except Exception:
         return 1.0, 0.0, 0.0, 0
-    variants = _tag_variants(tag)
+    variants = _tag_variants(tag, split_directional=cfg.split_directional)
     if not variants or variants == ("",):
         return 1.0, 0.0, 0.0, 0
     placeholders = ",".join("?" for _ in variants)
     tag_clause = f"LOWER(COALESCE(NULLIF(strategy_tag, ''), strategy)) IN ({placeholders})"
     params = list(variants)
-    params.extend([pocket, f"-{_SCALE_LOOKBACK_DAYS} day"])
+    params.extend([pocket, f"-{cfg.scale_lookback_days} day"])
     try:
         row = con.execute(
             f"""
@@ -281,7 +366,7 @@ def _query_perf_scale(tag: str, pocket: str) -> Tuple[float, float, float, int]:
 
 
 def _query_perf(
-    tag: str, pocket: str, hour: Optional[int], regime_label: Optional[str]
+    tag: str, pocket: str, hour: Optional[int], regime_label: Optional[str], cfg: PerfGuardCfg
 ) -> Tuple[bool, str, int]:
     if not _DB.exists():
         return True, "no_db", 0
@@ -290,7 +375,7 @@ def _query_perf(
         con.row_factory = sqlite3.Row
     except Exception:
         return True, "db_open_failed", 0
-    variants = _tag_variants(tag)
+    variants = _tag_variants(tag, split_directional=cfg.split_directional)
     if not variants or variants == ("",):
         return True, "empty_tag", 0
     placeholders = ",".join("?" for _ in variants)
@@ -307,10 +392,11 @@ def _query_perf(
                 pocket=pocket,
                 hour=hour,
                 regime_label=regime_label,
+                cfg=cfg,
             )
             if row is not None:
                 n = int(row["n"] or 0)
-                if n < _REGIME_MIN_TRADES:
+                if n < cfg.regime_min_trades:
                     row = None
         if row is None:
             row = _query_perf_row(
@@ -321,6 +407,7 @@ def _query_perf(
                 pocket=pocket,
                 hour=hour,
                 regime_label=None,
+                cfg=cfg,
             )
     except Exception as exc:
         LOG.debug("[PERF_GUARD] query failed tag=%s pocket=%s err=%s", tag, pocket, exc)
@@ -347,29 +434,34 @@ def _query_perf(
         return False, f"margin_closeout_n={margin_closeout_n} n={n}", n
 
     # Fail-fast (before warmup) when stats are clearly bad.
-    if _FAILFAST_MIN_TRADES > 0 and n >= _FAILFAST_MIN_TRADES:
-        if (_FAILFAST_PF > 0 and pf < _FAILFAST_PF) or (_FAILFAST_WIN > 0 and win_rate < _FAILFAST_WIN):
+    if cfg.failfast_min_trades > 0 and n >= cfg.failfast_min_trades:
+        if (cfg.failfast_pf > 0 and pf < cfg.failfast_pf) or (cfg.failfast_win > 0 and win_rate < cfg.failfast_win):
             return False, f"failfast:pf={pf:.2f} win={win_rate:.2f} n={n}", n
 
     # Stop-loss (loss) rate guard (before warmup). Only apply when PF < 1.0 (already losing).
-    sl_rate_max = _sl_loss_rate_max(pocket)
-    if sl_rate_max > 0 and _SL_LOSS_RATE_MIN_TRADES > 0 and n >= _SL_LOSS_RATE_MIN_TRADES and pf < 1.0:
+    sl_rate_max = _sl_loss_rate_max(pocket, cfg)
+    if (
+        sl_rate_max > 0
+        and cfg.sl_loss_rate_min_trades > 0
+        and n >= cfg.sl_loss_rate_min_trades
+        and pf < 1.0
+    ):
         sl_rate = (float(sl_loss_n) / float(n)) if n > 0 else 0.0
         if sl_rate >= sl_rate_max:
             return False, f"sl_loss_rate={sl_rate:.2f} pf={pf:.2f} n={n}", n
 
-    min_trades = _HOURLY_MIN_TRADES if hour is not None else _MIN_TRADES
+    min_trades = cfg.hourly_min_trades if hour is not None else cfg.min_trades
     if n < min_trades:
         return True, f"warmup_n={n}", n
 
-    pf_min = _threshold("PERF_GUARD_PF_MIN", pocket, _PF_MIN)
-    win_min = _threshold("PERF_GUARD_WIN_MIN", pocket, _WIN_MIN)
+    pf_min = _threshold("PERF_GUARD_PF_MIN", pocket, cfg.pf_min_default, cfg)
+    win_min = _threshold("PERF_GUARD_WIN_MIN", pocket, cfg.win_min_default, cfg)
     if pf < pf_min or win_rate < win_min:
         return False, f"pf={pf:.2f} win={win_rate:.2f} n={n}", n
     return True, f"pf={pf:.2f} win={win_rate:.2f} n={n}", n
 
 
-def _query_pocket_perf(pocket: str) -> Tuple[bool, str, int]:
+def _query_pocket_perf(pocket: str, cfg: PerfGuardCfg) -> Tuple[bool, str, int]:
     if not _DB.exists():
         return True, "no_db", 0
     try:
@@ -389,7 +481,7 @@ def _query_pocket_perf(pocket: str) -> Tuple[bool, str, int]:
             WHERE pocket = ?
               AND close_time >= datetime('now', ?)
             """,
-            (pocket, f"-{_POCKET_LOOKBACK_DAYS} day"),
+            (pocket, f"-{cfg.pocket_lookback_days} day"),
         ).fetchone()
     except Exception as exc:
         LOG.debug("[POCKET_GUARD] query failed pocket=%s err=%s", pocket, exc)
@@ -403,7 +495,7 @@ def _query_pocket_perf(pocket: str) -> Tuple[bool, str, int]:
     if not row:
         return True, "no_rows", 0
     n = int(row["n"] or 0)
-    if n < _POCKET_MIN_TRADES:
+    if n < cfg.pocket_min_trades:
         return True, f"warmup_n={n}", n
     profit = float(row["profit"] or 0.0)
     loss = float(row["loss"] or 0.0)
@@ -411,35 +503,42 @@ def _query_pocket_perf(pocket: str) -> Tuple[bool, str, int]:
     pf = profit / loss if loss > 0 else float("inf")
     win_rate = win / n if n > 0 else 0.0
 
-    pf_min = _threshold("POCKET_PERF_GUARD_PF_MIN", pocket, _POCKET_PF_MIN)
-    win_min = _threshold("POCKET_PERF_GUARD_WIN_MIN", pocket, _POCKET_WIN_MIN)
+    pf_min = _threshold("POCKET_PERF_GUARD_PF_MIN", pocket, cfg.pocket_pf_min_default, cfg)
+    win_min = _threshold("POCKET_PERF_GUARD_WIN_MIN", pocket, cfg.pocket_win_min_default, cfg)
     if pf < pf_min or win_rate < win_min:
         return False, f"pf={pf:.2f} win={win_rate:.2f} n={n}", n
     return True, f"pf={pf:.2f} win={win_rate:.2f} n={n}", n
 
 
-def is_allowed(tag: str, pocket: str, *, hour: Optional[int] = None) -> PerfDecision:
+def is_allowed(
+    tag: str,
+    pocket: str,
+    *,
+    hour: Optional[int] = None,
+    env_prefix: Optional[str] = None,
+) -> PerfDecision:
     """
     hour: optional UTC hour string (0-23) to apply hourly PF filter. When None, aggregate filter only.
     """
-    if not _ENABLED or _MODE in {"off", "disabled", "false", "no"}:
+    cfg = _get_cfg(env_prefix)
+    if not cfg.enabled or cfg.mode in {"off", "disabled", "false", "no"}:
         return PerfDecision(True, "disabled", 0)
-    relaxed = _is_relaxed(tag)
-    regime_label = _pocket_regime_label(pocket) if _REGIME_FILTER_ENABLED else None
-    key = (tag, pocket, hour if _HOURLY_ENABLED else None, regime_label)
+    relaxed = _is_relaxed(tag, cfg)
+    regime_label = _pocket_regime_label(pocket) if cfg.regime_filter_enabled else None
+    key = (_cfg_key(env_prefix), tag, pocket, hour if cfg.hourly_enabled else None, regime_label)
     now = time.monotonic()
     cached = _cache.get(key)
-    if cached and now - cached[0] <= _TTL_SEC:
+    if cached and now - cached[0] <= cfg.ttl_sec:
         _, ok, reason, sample = cached
         return PerfDecision(ok, reason, sample)
 
     # hourly check first (stricter). If enabled and blocked, return immediately.
-    if _HOURLY_ENABLED and hour is not None:
-        ok_hour, reason_hour, sample_hour = _query_perf(tag, pocket, hour, regime_label)
+    if cfg.hourly_enabled and hour is not None:
+        ok_hour, reason_hour, sample_hour = _query_perf(tag, pocket, hour, regime_label, cfg)
         if not ok_hour:
             reason_txt = f"hour{hour}:{reason_hour}"
-            allowed = ok_hour if _MODE == "block" else True
-            if _MODE != "block":
+            allowed = ok_hour if cfg.mode == "block" else True
+            if cfg.mode != "block":
                 reason_txt = f"warn:{reason_txt}"
             elif relaxed:
                 allowed = True
@@ -447,58 +546,61 @@ def is_allowed(tag: str, pocket: str, *, hour: Optional[int] = None) -> PerfDeci
             _cache[key] = (now, allowed, reason_txt, sample_hour)
             return PerfDecision(allowed, reason_txt, sample_hour)
 
-    ok, reason, sample = _query_perf(tag, pocket, None, regime_label)
-    allowed = ok if _MODE == "block" else True
-    if not ok and _MODE == "block" and relaxed:
+    ok, reason, sample = _query_perf(tag, pocket, None, regime_label, cfg)
+    allowed = ok if cfg.mode == "block" else True
+    if not ok and cfg.mode == "block" and relaxed:
         allowed = True
         reason_txt = f"relaxed:{reason}"
     else:
-        reason_txt = reason if _MODE == "block" else f"warn:{reason}"
+        reason_txt = reason if cfg.mode == "block" else f"warn:{reason}"
     _cache[key] = (now, allowed, reason_txt, sample)
     return PerfDecision(allowed, reason_txt, sample)
 
 
-def is_pocket_allowed(pocket: str) -> PerfDecision:
+def is_pocket_allowed(pocket: str, *, env_prefix: Optional[str] = None) -> PerfDecision:
     """
     Pocket-level PF/win guard. Useful when an entire pocket degrades.
     """
-    if not _POCKET_ENABLED:
+    cfg = _get_cfg(env_prefix)
+    if not cfg.pocket_enabled:
         return PerfDecision(True, "disabled", 0)
     pocket_key = (pocket or "").strip().lower()
     if not pocket_key or pocket_key == "manual":
         return PerfDecision(True, "skip", 0)
+    key = (_cfg_key(env_prefix), pocket_key)
     now = time.monotonic()
-    cached = _pocket_cache.get(pocket_key)
-    if cached and now - cached[0] <= _POCKET_TTL_SEC:
+    cached = _pocket_cache.get(key)
+    if cached and now - cached[0] <= cfg.pocket_ttl_sec:
         return PerfDecision(cached[1], cached[2], cached[3])
-    allowed, reason, n = _query_pocket_perf(pocket_key)
-    _pocket_cache[pocket_key] = (now, allowed, reason, n)
+    allowed, reason, n = _query_pocket_perf(pocket_key, cfg)
+    _pocket_cache[key] = (now, allowed, reason, n)
     return PerfDecision(allowed, reason, n)
 
 
-def perf_scale(tag: str, pocket: str) -> PerfScaleDecision:
-    if not _SCALE_ENABLED:
+def perf_scale(tag: str, pocket: str, *, env_prefix: Optional[str] = None) -> PerfScaleDecision:
+    cfg = _get_cfg(env_prefix)
+    if not cfg.scale_enabled:
         return PerfScaleDecision(1.0, "disabled", 0, 1.0, 0.0, 0.0)
-    key = (str(tag).strip().lower(), str(pocket).strip().lower())
+    key = (_cfg_key(env_prefix), str(tag).strip().lower(), str(pocket).strip().lower())
     now = time.time()
     cached = _scale_cache.get(key)
-    if cached and (now - cached[0]) < _SCALE_TTL_SEC:
+    if cached and (now - cached[0]) < cfg.scale_ttl_sec:
         return PerfScaleDecision(cached[1], cached[2], cached[3], cached[4], cached[5], cached[6])
 
-    pf, win_rate, avg_pips, n = _query_perf_scale(tag, pocket)
-    if n < _SCALE_MIN_TRADES:
+    pf, win_rate, avg_pips, n = _query_perf_scale(tag, pocket, cfg)
+    if n < cfg.scale_min_trades:
         dec = PerfScaleDecision(1.0, "insufficient", n, pf, win_rate, avg_pips)
         _scale_cache[key] = (now, dec.multiplier, dec.reason, dec.sample, dec.pf, dec.win_rate, dec.avg_pips)
         return dec
 
     score = 0
-    if pf >= _SCALE_PF_MIN:
+    if pf >= cfg.scale_pf_min:
         score += 1
-    if win_rate >= _SCALE_WIN_MIN:
+    if win_rate >= cfg.scale_win_min:
         score += 1
-    if avg_pips >= _SCALE_AVG_PIPS_MIN:
+    if avg_pips >= cfg.scale_avg_pips_min:
         score += 1
-    mult = min(_SCALE_MAX_MULT, 1.0 + score * _SCALE_STEP)
+    mult = min(cfg.scale_max_mult, 1.0 + score * cfg.scale_step)
     if mult < 1.0:
         mult = 1.0
     reason = "boost" if mult > 1.0 else "flat"

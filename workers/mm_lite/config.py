@@ -1,3 +1,5 @@
+ENV_PREFIX = "MM_LITE"
+
 DEFAULT_CONFIG = {
     "id": "mm_lite",
     "universe": [],

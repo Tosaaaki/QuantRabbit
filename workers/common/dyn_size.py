@@ -7,6 +7,7 @@ from typing import Optional, Tuple
 from execution.risk_guard import allowed_lot
 from workers.common import perf_guard
 from workers.common.size_utils import scale_base_units
+from utils.env_utils import env_float
 from utils.oanda_account import get_account_snapshot
 
 
@@ -22,15 +23,6 @@ class SizingContext:
 def _clamp(v: float, lo: float, hi: float) -> float:
     return max(lo, min(hi, v))
 
-def _env_float(name: str, default: float) -> float:
-    raw = os.getenv(name)
-    if raw is None:
-        return float(default)
-    try:
-        return float(raw)
-    except (TypeError, ValueError):
-        return float(default)
-
 
 def compute_units(
     *,
@@ -45,6 +37,7 @@ def compute_units(
     signal_score: Optional[float] = None,  # 0..1 (confidence-like)
     pocket: Optional[str] = None,
     strategy_tag: Optional[str] = None,
+    env_prefix: Optional[str] = None,
 ) -> SizingContext:
     """Flexible unit sizing with risk/volatility/margin awareness.
 
@@ -74,9 +67,9 @@ def compute_units(
     else:
         free_scale = 1.2
 
-    base_risk_pct = max(0.0005, _env_float("DYN_SIZE_BASE_RISK_PCT", 0.01))
-    min_risk_pct = max(0.0005, _env_float("DYN_SIZE_MIN_RISK_PCT", 0.002))
-    max_risk_pct = max(min_risk_pct, _env_float("DYN_SIZE_MAX_RISK_PCT", 0.03))
+    base_risk_pct = max(0.0005, env_float("DYN_SIZE_BASE_RISK_PCT", 0.01, prefix=env_prefix))
+    min_risk_pct = max(0.0005, env_float("DYN_SIZE_MIN_RISK_PCT", 0.002, prefix=env_prefix))
+    max_risk_pct = max(min_risk_pct, env_float("DYN_SIZE_MAX_RISK_PCT", 0.03, prefix=env_prefix))
     risk_pct = _clamp(base_risk_pct * free_scale, min_risk_pct, max_risk_pct)
 
     # 2) Allowed lot from risk math (equity/sl)
@@ -125,7 +118,7 @@ def compute_units(
     perf_mult = 1.0
     if strategy_tag and pocket:
         try:
-            perf = perf_guard.perf_scale(strategy_tag, pocket)
+            perf = perf_guard.perf_scale(strategy_tag, pocket, env_prefix=env_prefix)
             perf_mult = float(perf.multiplier or 1.0)
             if perf_mult > 1.0:
                 scaled_units = int(round(scaled_units * perf_mult))

@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 
 PIP_VALUE = 0.01
+ENV_PREFIX = "MICRO_PULLBACK_FIB"
 LOG_PREFIX = "[MICRO-PULLBACK-FIB]"
 STRATEGY_TAG = "MicroPullbackFib"
 PROFILE_TAG = "micro_pullback_fib"

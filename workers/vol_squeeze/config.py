@@ -1,3 +1,5 @@
+ENV_PREFIX = "VOL_SQUEEZE"
+
 DEFAULT_CONFIG = {
     "id": "vol_squeeze_breakout",
     "universe": [],

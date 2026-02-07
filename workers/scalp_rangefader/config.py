@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 
+ENV_PREFIX = "RANGEFADER"
 
 def _env_bool(name: str, default: bool) -> bool:
     raw = os.getenv(name)

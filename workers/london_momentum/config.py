@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 
+ENV_PREFIX = "LONDON_MOMENTUM"
 
 def _bool(key: str, default: bool) -> bool:
     raw = os.getenv(key)

@@ -251,7 +251,7 @@ async def scalp_reversal_nwave_worker() -> None:
             )
         div_meta = divergence_snapshot(fac_m1, max_age_bars=6)
 
-        perf_decision = perf_guard.is_allowed(config.STRATEGY_TAG, pocket)
+        perf_decision = perf_guard.is_allowed(config.STRATEGY_TAG, pocket, env_prefix=config.ENV_PREFIX)
         if not perf_decision.allowed:
             now_mono = time.monotonic()
             if now_mono - last_perf_block_log > 60.0:
@@ -294,6 +294,7 @@ async def scalp_reversal_nwave_worker() -> None:
             pos_bias=pos_bias,
             cap_min=config.CAP_MIN,
             cap_max=config.CAP_MAX,
+            env_prefix=config.ENV_PREFIX,
         )
         cap = cap_res.cap
         if cap <= 0.0:
@@ -346,6 +347,7 @@ async def scalp_reversal_nwave_worker() -> None:
 
         entry_thesis: Dict[str, object] = {
             "strategy_tag": signal_tag,
+            "env_prefix": config.ENV_PREFIX,
             "profile": config.PROFILE_TAG,
             "confidence": int(conf),
             "tp_pips": tp_pips,

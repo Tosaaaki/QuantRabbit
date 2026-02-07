@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import os
 import time
+from dataclasses import dataclass
 from typing import Optional, Tuple
 
 from execution.order_manager import close_trade as _close_trade
 from indicators.factor_cache import all_factors
+from utils.env_utils import env_bool, env_float, env_get
 from utils.metrics_logger import log_metric
 from workers.common.exit_emergency import should_allow_negative_close
 try:  # optional in offline/backtest
@@ -13,33 +15,60 @@ try:  # optional in offline/backtest
 except Exception:  # pragma: no cover
     tick_window = None
 
-_EXIT_COMPOSITE_ENABLED = os.getenv("EXIT_COMPOSITE_ENABLED", "1").strip().lower() not in {
-    "",
-    "0",
-    "false",
-    "no",
-}
-_EXIT_COMPOSITE_REASONS = {
-    token.strip().lower()
-    for token in os.getenv(
+@dataclass(frozen=True, slots=True)
+class ExitCompositeCfg:
+    enabled: bool
+    reasons: set[str]
+    min_score: float
+    failopen: bool
+    rsi_fade_long: float
+    rsi_fade_short: float
+    vwap_gap_pips: float
+    structure_adx: float
+    structure_gap_pips: float
+    atr_spike_pips: float
+
+
+_EXIT_COMPOSITE_CFG_CACHE: dict[str, ExitCompositeCfg] = {}
+
+
+def _env_bool_truey(name: str, default: bool, *, env_prefix: str | None = None) -> bool:
+    raw = env_get(name, None, prefix=env_prefix)
+    if raw is None:
+        return bool(default)
+    return str(raw).strip().lower() in {"1", "true", "yes"}
+
+
+def _get_exit_composite_cfg(env_prefix: str | None) -> ExitCompositeCfg:
+    key = str(env_prefix or "").strip()
+    cached = _EXIT_COMPOSITE_CFG_CACHE.get(key)
+    if cached is not None:
+        return cached
+
+    reasons_raw = env_get(
         "EXIT_COMPOSITE_REASONS",
         "rsi_fade,vwap_cut,atr_spike,structure_break,tech_hard_stop",
-    ).split(",")
-    if token.strip()
-}
-_EXIT_COMPOSITE_MIN_SCORE = float(os.getenv("EXIT_COMPOSITE_MIN_SCORE", "3"))
-_EXIT_COMPOSITE_FAILOPEN = os.getenv("EXIT_COMPOSITE_FAILOPEN", "0").strip().lower() in {
-    "1",
-    "true",
-    "yes",
-}
-
-_EXIT_RSI_FADE_LONG = float(os.getenv("EXIT_COMPOSITE_RSI_FADE_LONG", "44.0"))
-_EXIT_RSI_FADE_SHORT = float(os.getenv("EXIT_COMPOSITE_RSI_FADE_SHORT", "56.0"))
-_EXIT_VWAP_GAP_PIPS = float(os.getenv("EXIT_COMPOSITE_VWAP_GAP_PIPS", "0.8"))
-_EXIT_STRUCTURE_ADX = float(os.getenv("EXIT_COMPOSITE_STRUCTURE_ADX", "20.0"))
-_EXIT_STRUCTURE_GAP_PIPS = float(os.getenv("EXIT_COMPOSITE_STRUCTURE_GAP_PIPS", "1.8"))
-_EXIT_ATR_SPIKE_PIPS = float(os.getenv("EXIT_COMPOSITE_ATR_SPIKE_PIPS", "5.0"))
+        prefix=env_prefix,
+    )
+    reasons = {
+        token.strip().lower()
+        for token in str(reasons_raw or "").split(",")
+        if token.strip()
+    }
+    cfg = ExitCompositeCfg(
+        enabled=env_bool("EXIT_COMPOSITE_ENABLED", True, prefix=env_prefix),
+        reasons=reasons,
+        min_score=env_float("EXIT_COMPOSITE_MIN_SCORE", 3.0, prefix=env_prefix),
+        failopen=_env_bool_truey("EXIT_COMPOSITE_FAILOPEN", False, env_prefix=env_prefix),
+        rsi_fade_long=env_float("EXIT_COMPOSITE_RSI_FADE_LONG", 44.0, prefix=env_prefix),
+        rsi_fade_short=env_float("EXIT_COMPOSITE_RSI_FADE_SHORT", 56.0, prefix=env_prefix),
+        vwap_gap_pips=env_float("EXIT_COMPOSITE_VWAP_GAP_PIPS", 0.8, prefix=env_prefix),
+        structure_adx=env_float("EXIT_COMPOSITE_STRUCTURE_ADX", 20.0, prefix=env_prefix),
+        structure_gap_pips=env_float("EXIT_COMPOSITE_STRUCTURE_GAP_PIPS", 1.8, prefix=env_prefix),
+        atr_spike_pips=env_float("EXIT_COMPOSITE_ATR_SPIKE_PIPS", 5.0, prefix=env_prefix),
+    )
+    _EXIT_COMPOSITE_CFG_CACHE[key] = cfg
+    return cfg
 
 _LAST_COMPOSITE_LOG_TS = 0.0
 
@@ -86,8 +115,8 @@ def _safe_float(value: object) -> float | None:
         return None
 
 
-def _reason_matches_composite(reason_key: str) -> bool:
-    for token in _EXIT_COMPOSITE_REASONS:
+def _reason_matches_composite(reason_key: str, reasons: set[str]) -> bool:
+    for token in reasons:
         t = str(token).strip().lower()
         if not t:
             continue
@@ -106,23 +135,24 @@ def _composite_exit_allowed(
     *,
     reason: str | None,
     close_units: int | None,
+    cfg: ExitCompositeCfg,
 ) -> bool:
-    if not _EXIT_COMPOSITE_ENABLED:
+    if not cfg.enabled:
         return True
     if not reason:
         return True
     reason_key = str(reason).strip().lower()
-    if not _reason_matches_composite(reason_key):
+    if not _reason_matches_composite(reason_key, cfg.reasons):
         return True
     if close_units is None or close_units == 0:
-        return _EXIT_COMPOSITE_FAILOPEN
+        return cfg.failopen
     side = "long" if close_units < 0 else "short"
     try:
         fac = (all_factors().get("M1") or {})
     except Exception:
         fac = {}
     if not fac:
-        return _EXIT_COMPOSITE_FAILOPEN
+        return cfg.failopen
 
     rsi = _safe_float(fac.get("rsi"))
     adx = _safe_float(fac.get("adx"))
@@ -137,19 +167,19 @@ def _composite_exit_allowed(
 
     rsi_fade = False
     if rsi is not None:
-        rsi_fade = (side == "long" and rsi <= _EXIT_RSI_FADE_LONG) or (
-            side == "short" and rsi >= _EXIT_RSI_FADE_SHORT
+        rsi_fade = (side == "long" and rsi <= cfg.rsi_fade_long) or (
+            side == "short" and rsi >= cfg.rsi_fade_short
         )
 
-    vwap_cut = vwap_gap is not None and abs(vwap_gap) <= _EXIT_VWAP_GAP_PIPS
+    vwap_cut = vwap_gap is not None and abs(vwap_gap) <= cfg.vwap_gap_pips
 
-    atr_spike = atr_pips is not None and atr_pips >= _EXIT_ATR_SPIKE_PIPS
+    atr_spike = atr_pips is not None and atr_pips >= cfg.atr_spike_pips
 
     structure_break = False
     if adx is not None and ma10 is not None and ma20 is not None:
         gap = abs(ma10 - ma20) / 0.01
         cross_bad = (side == "long" and ma10 <= ma20) or (side == "short" and ma10 >= ma20)
-        structure_break = adx <= _EXIT_STRUCTURE_ADX and (cross_bad or gap <= _EXIT_STRUCTURE_GAP_PIPS)
+        structure_break = adx <= cfg.structure_adx and (cross_bad or gap <= cfg.structure_gap_pips)
 
     score = 0
     if rsi_fade:
@@ -161,7 +191,7 @@ def _composite_exit_allowed(
     if structure_break:
         score += 2
 
-    ok = score >= _EXIT_COMPOSITE_MIN_SCORE
+    ok = score >= cfg.min_score
     if not ok:
         global _LAST_COMPOSITE_LOG_TS
         now = time.monotonic()
@@ -172,7 +202,7 @@ def _composite_exit_allowed(
                 tags={
                     "reason": reason_key,
                     "side": side,
-                    "min_score": _EXIT_COMPOSITE_MIN_SCORE,
+                    "min_score": cfg.min_score,
                 },
             )
             _LAST_COMPOSITE_LOG_TS = now
@@ -185,10 +215,15 @@ async def close_trade(
     client_order_id: str | None = None,
     allow_negative: bool = False,
     exit_reason: str | None = None,
+    env_prefix: str | None = None,
 ) -> bool:
     if not allow_negative:
         allow_negative = should_allow_negative_close()
-    if allow_negative and not _composite_exit_allowed(reason=exit_reason, close_units=units):
+    if allow_negative and not _composite_exit_allowed(
+        reason=exit_reason,
+        close_units=units,
+        cfg=_get_exit_composite_cfg(env_prefix),
+    ):
         return False
     return await _close_trade(
         trade_id,

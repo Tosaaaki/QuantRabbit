@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 
 _ENV_CACHE: dict | None = None
+ENV_PREFIX = "M1SCALP"
 
 
 def _load_env_file() -> dict:

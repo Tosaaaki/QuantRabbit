@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 
 PIP_VALUE = 0.01
+ENV_PREFIX = "MACRO_TECH_FUSION"
 LOG_PREFIX = "[MACRO-TECH-FUSION]"
 STRATEGY_TAG = "MacroTechFusion"
 PROFILE_TAG = "macro_tech_fusion"

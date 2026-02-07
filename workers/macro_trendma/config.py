@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 
+ENV_PREFIX = "TRENDMA"
 POCKET = "macro"
 LOOP_INTERVAL_SEC = float(os.getenv("TRENDMA_LOOP_INTERVAL_SEC", "15.0"))
 ENABLED = os.getenv("TRENDMA_ENABLED", "1").strip().lower() not in {"", "0", "false", "no"}

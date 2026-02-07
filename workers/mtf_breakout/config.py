@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+ENV_PREFIX = "MTF_BREAKOUT"
+
 DEFAULT_CONFIG: dict[str, object] = {
     "id": "mtf_breakout_m5_h1",
     # Symbols are provided by the caller. In QR ops this maps to USD_JPY only,

@@ -221,7 +221,8 @@ def _signal_direction(signal: Dict[str, object]) -> Optional[str]:
 # --- strategy params (defaults follow requested spec) ---
 SPREAD_REV_SPREAD_P25 = _env_float("SPREAD_REV_SPREAD_P25", 0.9)
 SPREAD_REV_ADX_MAX = _env_float("SPREAD_REV_ADX_MAX", 24.0)
-SPREAD_REV_BBW_MAX = _env_float("SPREAD_REV_BBW_MAX", 0.24)
+# BBW is (upper-lower)/mid ratio (typical USD/JPY M1 ~= 0.0002..0.0020).
+SPREAD_REV_BBW_MAX = _env_float("SPREAD_REV_BBW_MAX", 0.0012)
 SPREAD_REV_ATR_MIN = _env_float("SPREAD_REV_ATR_MIN", 0.7)
 SPREAD_REV_ATR_MAX = _env_float("SPREAD_REV_ATR_MAX", 3.2)
 SPREAD_REV_RSI_LONG_MAX = _env_float("SPREAD_REV_RSI_LONG_MAX", 47.0)
@@ -230,7 +231,7 @@ SPREAD_REV_BB_TOUCH_PIPS = _env_float("SPREAD_REV_BB_TOUCH_PIPS", 0.8)
 SPREAD_REV_TICK_MIN = _env_int("SPREAD_REV_TICK_MIN", 6)
 SPREAD_REV_RANGE_ONLY_SCORE = _env_float("SPREAD_REV_RANGE_ONLY_SCORE", 0.45)
 
-COMPRESS_BBW_MAX = _env_float("COMPRESS_BBW_MAX", 0.20)
+COMPRESS_BBW_MAX = _env_float("COMPRESS_BBW_MAX", 0.00055)
 COMPRESS_ATR_MAX = _env_float("COMPRESS_ATR_MAX", 2.2)
 COMPRESS_BREAKOUT_PIPS = _env_float("COMPRESS_BREAKOUT_PIPS", 1.2)
 COMPRESS_RETEST_BAND_PIPS = _env_float("COMPRESS_RETEST_BAND_PIPS", 0.6)
@@ -243,7 +244,7 @@ HTF_GAP_PIPS = _env_float("HTF_PULLBACK_GAP_PIPS", 3.0)
 HTF_PULLBACK_BAND_PIPS = _env_float("HTF_PULLBACK_BAND_PIPS", 0.9)
 HTF_RSI_LONG_MAX = _env_float("HTF_PULLBACK_RSI_LONG_MAX", 48.0)
 HTF_RSI_SHORT_MIN = _env_float("HTF_PULLBACK_RSI_SHORT_MIN", 52.0)
-HTF_M5_BBW_MAX = _env_float("HTF_PULLBACK_BBW_MAX", 0.32)
+HTF_M5_BBW_MAX = _env_float("HTF_PULLBACK_BBW_MAX", 0.0032)
 
 TICK_IMB_WINDOW_SEC = _env_float("TICK_IMB_WINDOW_SEC", 4.5)
 TICK_IMB_RATIO_MIN = _env_float("TICK_IMB_RATIO_MIN", 0.68)
@@ -251,7 +252,8 @@ TICK_IMB_MOM_MIN_PIPS = _env_float("TICK_IMB_MOM_MIN_PIPS", 0.45)
 TICK_IMB_RANGE_MIN_PIPS = _env_float("TICK_IMB_RANGE_MIN_PIPS", 0.25)
 TICK_IMB_ATR_MIN = _env_float("TICK_IMB_ATR_MIN", 0.7)
 TICK_IMB_ADX_MIN = _env_float("TICK_IMB_ADX_MIN", 18.0)
-TICK_IMB_BBW_MIN = _env_float("TICK_IMB_BBW_MIN", 0.20)
+# BBW is (upper-lower)/mid ratio (typical USD/JPY M1 ~= 0.0003..0.0020).
+TICK_IMB_BBW_MIN = _env_float("TICK_IMB_BBW_MIN", 0.00075)
 TICK_IMB_RANGE_SCORE_MAX = _env_float("TICK_IMB_RANGE_SCORE_MAX", 0.60)
 TICK_IMB_REQUIRE_MA_ALIGN = _env_int("TICK_IMB_REQUIRE_MA_ALIGN", 1)
 TICK_IMB_MA_GAP_MIN_PIPS = _env_float("TICK_IMB_MA_GAP_MIN_PIPS", 0.0)
@@ -324,7 +326,7 @@ WICK_RANGE_MIN_PIPS = _env_float("WICK_REV_RANGE_MIN_PIPS", 2.0)
 WICK_BODY_MAX_PIPS = _env_float("WICK_REV_BODY_MAX_PIPS", 0.9)
 WICK_RATIO_MIN = _env_float("WICK_REV_RATIO_MIN", 0.55)
 WICK_ADX_MAX = _env_float("WICK_REV_ADX_MAX", 24.0)
-WICK_BBW_MAX = _env_float("WICK_REV_BBW_MAX", 0.28)
+WICK_BBW_MAX = _env_float("WICK_REV_BBW_MAX", 0.0016)
 
 # WickReversal Pro (strict gates; expects fewer trades but higher precision).
 WICK_PRO_RANGE_SCORE_MIN = _env_float("WICK_PRO_RANGE_SCORE_MIN", 0.48)
@@ -373,7 +375,7 @@ TICK_WICK_BODY_MAX_PIPS = _env_float("TICK_WICK_BODY_MAX_PIPS", 0.25)
 TICK_WICK_RATIO_MIN = _env_float("TICK_WICK_RATIO_MIN", 0.62)
 TICK_WICK_RANGE_SCORE_MIN = _env_float("TICK_WICK_RANGE_SCORE_MIN", 0.48)
 TICK_WICK_ADX_MAX = _env_float("TICK_WICK_ADX_MAX", 23.0)
-TICK_WICK_BBW_MAX = _env_float("TICK_WICK_BBW_MAX", 0.24)
+TICK_WICK_BBW_MAX = _env_float("TICK_WICK_BBW_MAX", 0.0016)
 TICK_WICK_SPREAD_P25 = _env_float("TICK_WICK_SPREAD_P25", 1.0)
 TICK_WICK_REQUIRE_BB_TOUCH = _env_bool("TICK_WICK_REQUIRE_BB_TOUCH", True)
 TICK_WICK_BB_TOUCH_PIPS = _env_float("TICK_WICK_BB_TOUCH_PIPS", 0.9)
@@ -399,7 +401,7 @@ LSR_BODY_MAX_PIPS = _env_float("LSR_BODY_MAX_PIPS", 1.4)
 LSR_RANGE_MIN_PIPS = _env_float("LSR_RANGE_MIN_PIPS", 1.2)
 LSR_WICK_RATIO_MIN = _env_float("LSR_WICK_RATIO_MIN", 0.5)
 LSR_ADX_MAX = _env_float("LSR_ADX_MAX", 30.0)
-LSR_BBW_MAX = _env_float("LSR_BBW_MAX", 0.36)
+LSR_BBW_MAX = _env_float("LSR_BBW_MAX", 0.0018)
 LSR_RANGE_SCORE_MIN = _env_float("LSR_RANGE_SCORE_MIN", 0.35)
 LSR_REQUIRE_TICK_REVERSAL = _env_bool("LSR_REQUIRE_TICK_REVERSAL", True)
 LSR_SIZE_MULT = _env_float("LSR_SIZE_MULT", 1.0)
@@ -414,7 +416,7 @@ VWAP_REV_RSI_SHORT_MIN = _env_float("VWAP_REV_RSI_SHORT_MIN", 54.0)
 VWAP_REV_STOCH_LONG_MAX = _env_float("VWAP_REV_STOCH_LONG_MAX", 0.2)
 VWAP_REV_STOCH_SHORT_MIN = _env_float("VWAP_REV_STOCH_SHORT_MIN", 0.8)
 VWAP_REV_ADX_MAX = _env_float("VWAP_REV_ADX_MAX", 22.0)
-VWAP_REV_BBW_MAX = _env_float("VWAP_REV_BBW_MAX", 0.26)
+VWAP_REV_BBW_MAX = _env_float("VWAP_REV_BBW_MAX", 0.0014)
 VWAP_REV_ATR_MIN = _env_float("VWAP_REV_ATR_MIN", 0.7)
 VWAP_REV_ATR_MAX = _env_float("VWAP_REV_ATR_MAX", 3.2)
 VWAP_REV_SPREAD_P25 = _env_float("VWAP_REV_SPREAD_P25", 0.9)
@@ -425,7 +427,7 @@ STOCH_BOUNCE_STOCH_SHORT_MIN = _env_float("STOCH_BOUNCE_STOCH_SHORT_MIN", 0.82)
 STOCH_BOUNCE_RSI_LONG_MAX = _env_float("STOCH_BOUNCE_RSI_LONG_MAX", 46.0)
 STOCH_BOUNCE_RSI_SHORT_MIN = _env_float("STOCH_BOUNCE_RSI_SHORT_MIN", 54.0)
 STOCH_BOUNCE_ADX_MAX = _env_float("STOCH_BOUNCE_ADX_MAX", 22.0)
-STOCH_BOUNCE_BBW_MAX = _env_float("STOCH_BOUNCE_BBW_MAX", 0.26)
+STOCH_BOUNCE_BBW_MAX = _env_float("STOCH_BOUNCE_BBW_MAX", 0.0014)
 STOCH_BOUNCE_ATR_MIN = _env_float("STOCH_BOUNCE_ATR_MIN", 0.7)
 STOCH_BOUNCE_ATR_MAX = _env_float("STOCH_BOUNCE_ATR_MAX", 3.0)
 STOCH_BOUNCE_MACD_ABS_MAX = _env_float("STOCH_BOUNCE_MACD_ABS_MAX", 0.6)
@@ -433,7 +435,7 @@ STOCH_BOUNCE_BB_TOUCH_PIPS = _env_float("STOCH_BOUNCE_BB_TOUCH_PIPS", 0.9)
 STOCH_BOUNCE_RANGE_SCORE = _env_float("STOCH_BOUNCE_RANGE_SCORE", 0.35)
 
 MACD_TREND_ADX_MIN = _env_float("MACD_TREND_ADX_MIN", 20.0)
-MACD_TREND_BBW_MIN = _env_float("MACD_TREND_BBW_MIN", 0.16)
+MACD_TREND_BBW_MIN = _env_float("MACD_TREND_BBW_MIN", 0.00075)
 MACD_TREND_ATR_MIN = _env_float("MACD_TREND_ATR_MIN", 0.9)
 MACD_TREND_HIST_MIN = _env_float("MACD_TREND_HIST_MIN", 0.25)
 MACD_TREND_SLOPE_MIN = _env_float("MACD_TREND_SLOPE_MIN", 0.05)
@@ -1629,7 +1631,7 @@ def _signal_level_reject(
         "confidence": int(max(45, min(92, conf))),
         "tag": tag,
         "reason": "level_reject",
-        "size_mult": round(LSR_SIZE_MULT, 3),
+        "size_mult": round(LEVEL_REJECT_SIZE_MULT, 3),
     }
 
 
@@ -1726,7 +1728,7 @@ def _signal_liquidity_sweep(
         "confidence": conf,
         "tag": tag,
         "reason": "liquidity_sweep",
-        "size_mult": round(LEVEL_REJECT_SIZE_MULT, 3),
+        "size_mult": round(LSR_SIZE_MULT, 3),
     }
 
 
@@ -2524,6 +2526,7 @@ def _signal_session_edge(
 def _build_entry_thesis(signal: Dict[str, object], fac_m1: Dict[str, object], range_ctx) -> Dict[str, object]:
     return {
         "strategy_tag": signal.get("tag"),
+        "env_prefix": config.ENV_PREFIX,
         "confidence": signal.get("confidence", 0),
         "reason": signal.get("reason"),
         "sl_pips": signal.get("sl_pips"),
@@ -2590,6 +2593,7 @@ async def _place_order(
         pos_bias=0.0,
         cap_min=config.CAP_MIN,
         cap_max=config.CAP_MAX,
+        env_prefix=config.ENV_PREFIX,
     )
     cap = cap_res.cap
     if cap <= 0.0:
@@ -2646,6 +2650,7 @@ async def _place_order(
         signal_score=float(conf) / 100.0,
         pocket=config.POCKET,
         strategy_tag=str(signal.get("tag") or "scalp_precision"),
+        env_prefix=config.ENV_PREFIX,
     )
     units = int(round(sizing.units * cap * size_mult))
     if abs(units) < config.MIN_UNITS:
@@ -2688,6 +2693,8 @@ async def _place_order(
     sl_price, tp_price = clamp_sl_tp(price=price, sl=sl_price, tp=tp_price, is_buy=side == "long")
     client_id = _client_order_id(str(signal.get("tag") or "scalp_precision"))
     entry_thesis = _build_entry_thesis(signal, fac_m1, range_ctx)
+    if isinstance(entry_thesis, dict):
+        entry_thesis.setdefault("env_prefix", config.ENV_PREFIX)
     meta = {
         "cap": round(cap, 3),
         "conf_scale": round(conf_scale, 3),
@@ -2982,7 +2989,10 @@ async def scalp_precision_worker() -> None:
                         if not bypass_common_guard:
                             tag = str(signal.get("tag") or "").strip()
                             if tag:
-                                pocket_decision = perf_guard.is_pocket_allowed(config.POCKET)
+                                pocket_decision = perf_guard.is_pocket_allowed(
+                                    config.POCKET,
+                                    env_prefix=config.ENV_PREFIX,
+                                )
                                 if not pocket_decision.allowed:
                                     if now_mono - last_guard_log > 30.0:
                                         LOG.info(
@@ -2993,7 +3003,12 @@ async def scalp_precision_worker() -> None:
                                         )
                                         last_guard_log = now_mono
                                     continue
-                                perf_decision = perf_guard.is_allowed(tag, config.POCKET, hour=now.hour)
+                                perf_decision = perf_guard.is_allowed(
+                                    tag,
+                                    config.POCKET,
+                                    hour=now.hour,
+                                    env_prefix=config.ENV_PREFIX,
+                                )
                                 if not perf_decision.allowed:
                                     if now_mono - last_guard_log > 30.0:
                                         LOG.info(

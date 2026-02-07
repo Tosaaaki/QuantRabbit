@@ -6,6 +6,7 @@ import os
 from typing import Dict
 
 PIP_VALUE = 0.01
+ENV_PREFIX = "VOL_SPIKE_RIDER"
 LOG_PREFIX = "[VOL-SPIKE]"
 STRATEGY_TAG = "VolSpikeRider"
 PROFILE_TAG = "vol_spike_rider"
