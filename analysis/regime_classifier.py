@@ -13,7 +13,9 @@ TimeFrame = Literal["M1", "H1", "H4"]
 
 THRESH_ADX_TREND = {"M1": 25.0, "H1": 24.0, "H4": 22.0}
 THRESH_MA_SLOPE = {"M1": 0.0003, "H1": 0.00055, "H4": 0.001}
-THRESH_BBW_RANGE = {"M1": 0.25, "H1": 0.30, "H4": 0.35}
+# BBW is (upper-lower)/mid ratio (typical USD/JPY M1 ~= 0.0002..0.0020).
+# Thresholds are expressed as ratios (e.g. 0.0025 == 0.25%).
+THRESH_BBW_RANGE = {"M1": 0.0025, "H1": 0.0030, "H4": 0.0035}
 
 
 def classify(
