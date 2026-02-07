@@ -371,6 +371,58 @@ strategies:
       loss_cut_reason_hard: max_adverse
       loss_cut_reason_time: time_stop
 
+  WickReversalHF:
+    min_profit_pips: 1.0
+    min_profit_ratio: 0.80
+    exit_profile:
+      # Wick-based fades are prone to small whipsaws; avoid a tight "soft" cut (hidden hard-SL).
+      # Keep only a tail cap + time stop when running without broker SL.
+      loss_cut_enabled: true
+      loss_cut_require_sl: false
+      loss_cut_soft_pips: 0.0
+      loss_cut_hard_pips: 6.0
+      loss_cut_max_hold_sec: 900
+      loss_cut_cooldown_sec: 5
+
+  WickReversalBlend:
+    min_profit_pips: 1.0
+    min_profit_ratio: 0.80
+    exit_profile:
+      # Blend is a higher-quality wick fade with tick confirmation; still cap tail risk mechanically.
+      loss_cut_enabled: true
+      loss_cut_require_sl: false
+      loss_cut_soft_pips: 0.0
+      loss_cut_hard_pips: 6.0
+      loss_cut_max_hold_sec: 900
+      loss_cut_cooldown_sec: 5
+
+  LevelRejectPlus:
+    min_profit_pips: 1.0
+    min_profit_ratio: 0.80
+    exit_profile:
+      # Level-based rejects can need room; avoid a small soft cut while still preventing tail blowups.
+      loss_cut_enabled: true
+      loss_cut_require_sl: false
+      loss_cut_soft_pips: 0.0
+      loss_cut_hard_pips: 8.0
+      loss_cut_max_hold_sec: 1800
+      loss_cut_cooldown_sec: 6
+
+  VwapRevertS:
+    min_profit_pips: 1.0
+    min_profit_ratio: 0.80
+    exit_profile:
+      # VWAP reversion can need time to mean-revert; avoid a tight "soft" loss cut which
+      # behaves like a hidden hard-SL and can stop out winners. Keep only:
+      # - a wide tail cap (hard)
+      # - a time-based stop for trades that stay underwater too long
+      loss_cut_enabled: true
+      loss_cut_require_sl: false
+      loss_cut_soft_pips: 0.0
+      loss_cut_hard_pips: 12.0
+      loss_cut_max_hold_sec: 2400
+      loss_cut_cooldown_sec: 5
+
   SqueezePulseBreak:
     min_profit_pips: 1.2
     min_profit_ratio: 0.80
@@ -383,6 +435,18 @@ strategies:
       loss_cut_hard_pips: 7.0
       loss_cut_max_hold_sec: 420
       loss_cut_cooldown_sec: 4
+
+  FalseBreakFade:
+    min_profit_pips: 1.0
+    min_profit_ratio: 0.80
+    exit_profile:
+      # Fade setups can bleed for a long time if reclaim fails; cut deterministically without broker SL.
+      loss_cut_enabled: true
+      loss_cut_require_sl: false
+      loss_cut_soft_pips: 3.8
+      loss_cut_hard_pips: 7.5
+      loss_cut_max_hold_sec: 900
+      loss_cut_cooldown_sec: 5
 
   MomentumPulse:
     be_profile: {trigger_pips: 1.7, lock_ratio: 0.50, min_lock_pips: 0.60, cooldown_sec: 35}

@@ -35,8 +35,8 @@ Environment=SPB_SIZE_MULT=1.15
 Environment=SPB_DIAG=1
 Environment=SPB_DIAG_INTERVAL_SEC=15
 
-# Attach entry SL/TP at the broker for this worker to cap tail losses.
-Environment=ORDER_ENABLE_STOP_LOSS_SCALP=1
+# Broker SL/TP disabled (no entry stop-loss). Re-enable by setting:
+# Environment=ORDER_ENABLE_STOP_LOSS_SCALP=1
 
 ExecStart=/home/tossaki/QuantRabbit/.venv/bin/python -m workers.scalp_precision.worker
 Restart=always
