@@ -121,13 +121,13 @@ defaults:
     max_hold_sec: 1760
 
 hold_until_profit:
-  # Block closes for specific trades until they are in profit.
-  # Matches are case-insensitive.
-  client_order_ids:
-    - "qr-1769197611427-hybrid-ImpulseRetrace-55c1d9c8f"
+  # TEMP (2026-02-07 JST): user requested "do not close" for specific scalp trades.
+  # This blocks bot-initiated closes until the trade exceeds min_profit_pips.
+  # Note: broker-side takeProfit/stopLoss can still close independently.
   trade_ids:
-    - "181052"
-  min_profit_pips: 0.0
+    - "313425"  # scalp LevelReject short opened 2026-02-07 06:40 JST
+    - "313411"  # scalp WickReversal short opened 2026-02-07 06:25 JST
+  min_profit_pips: 9999.0
   strict: false
 
 strategies:
