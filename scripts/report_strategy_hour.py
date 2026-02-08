@@ -46,6 +46,9 @@ def _load_df(
     time_from: str,
     time_to: str,
     include_open: bool,
+    instrument: str,
+    pocket: str,
+    strategies: list[str],
 ) -> pd.DataFrame:
     if not db_path.exists():
         return pd.DataFrame()
@@ -59,6 +62,16 @@ def _load_df(
         params: list[Any] = []
         if not include_open:
             where.append("close_time IS NOT NULL")
+        if instrument:
+            where.append("instrument = ?")
+            params.append(instrument)
+        if pocket:
+            where.append("LOWER(pocket) = LOWER(?)")
+            params.append(pocket)
+        if strategies:
+            placeholders = ",".join(["?"] * len(strategies))
+            where.append(f"LOWER(strategy_tag) IN ({placeholders})")
+            params.extend([s.lower() for s in strategies])
         if time_from:
             where.append(f"datetime({time_col}) >= datetime(?)")
             params.append(time_from)
@@ -71,7 +84,7 @@ def _load_df(
 
         where_sql = " AND ".join(where)
         query = """
-        SELECT open_time, close_time, close_reason, state, pocket,
+        SELECT instrument, open_time, close_time, close_reason, state, pocket,
                strategy_tag, strategy, units, pl_pips, realized_pl,
                commission, financing, entry_thesis
         FROM trades
@@ -140,10 +153,18 @@ def main() -> None:
         action="store_true",
         help="Include OPEN trades (NOTE: unrealized metrics are not computed here)",
     )
+    ap.add_argument("--instrument", default="", help="Optional filter (e.g. USD_JPY)")
+    ap.add_argument("--pocket", default="", help="Optional filter (e.g. scalp)")
+    ap.add_argument(
+        "--strategy-tag",
+        default="",
+        help="Optional filter by strategy_tag (comma-separated, case-insensitive)",
+    )
     ap.add_argument("--min-trades", type=int, default=8, help="Min trades per group")
     ap.add_argument("--by-pocket", action="store_true", help="Group by pocket")
     ap.add_argument("--by-source", action="store_true", help="Group by decision source")
     ap.add_argument("--by-range", action="store_true", help="Group by range_active flag")
+    ap.add_argument("--by-instrument", action="store_true", help="Group by instrument")
     ap.add_argument("--top", type=int, default=60, help="Max rows to display")
     args = ap.parse_args()
 
@@ -163,6 +184,10 @@ def main() -> None:
     if args.time_to:
         time_to = _parse_time(args.time_to).astimezone(dt.timezone.utc).isoformat()
 
+    strategies: list[str] = []
+    if args.strategy_tag:
+        strategies = [s.strip() for s in str(args.strategy_tag).split(",") if s.strip()]
+
     df = _load_df(
         Path(args.db),
         lookback_days=args.lookback_days,
@@ -170,6 +195,9 @@ def main() -> None:
         time_from=time_from,
         time_to=time_to,
         include_open=bool(args.include_open),
+        instrument=str(args.instrument).strip(),
+        pocket=str(args.pocket).strip(),
+        strategies=strategies,
     )
     if df.empty:
         print("[report] no trades")
@@ -211,6 +239,8 @@ def main() -> None:
     df["market_close_flag"] = (df.get("close_reason") == "MARKET_ORDER_TRADE_CLOSE").astype(int)
 
     group_cols = ["strategy", "bucket_hour"]
+    if args.by_instrument:
+        group_cols.append("instrument")
     if args.by_pocket:
         group_cols.append("pocket")
     if args.by_source:
