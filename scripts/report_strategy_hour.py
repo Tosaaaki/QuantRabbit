@@ -165,6 +165,12 @@ def main() -> None:
     ap.add_argument("--by-source", action="store_true", help="Group by decision source")
     ap.add_argument("--by-range", action="store_true", help="Group by range_active flag")
     ap.add_argument("--by-instrument", action="store_true", help="Group by instrument")
+    ap.add_argument(
+        "--order",
+        choices=("best", "worst"),
+        default="best",
+        help="Sort order for sum_jpy/sum_pips (default: best)",
+    )
     ap.add_argument("--top", type=int, default=60, help="Max rows to display")
     args = ap.parse_args()
 
@@ -270,7 +276,8 @@ def main() -> None:
     agg["market_close_rate"] = (agg["market_close"] / agg["trades"]).round(3)
     agg = agg.reset_index()
     agg = agg[agg["trades"] >= int(args.min_trades)]
-    agg = agg.sort_values(["sum_jpy", "sum_pips"], ascending=False).head(int(args.top))
+    ascending = bool(args.order == "worst")
+    agg = agg.sort_values(["sum_jpy", "sum_pips"], ascending=ascending).head(int(args.top))
 
     cols = group_cols + [
         "trades",
