@@ -278,15 +278,15 @@ TICK_IMB_ALLOWED_REGIMES = {
     if s.strip()
 }
 TICK_IMB_BLOCK_RANGE_MODE = _env_bool("TICK_IMB_BLOCK_RANGE_MODE", True)
-TICK_IMB_DISABLE_LONG = _env_bool("TICK_IMB_DISABLE_LONG", False)
-# Validation of 2026-02-02..2026-02-09 showed short side dominates drawdown for TickImbalance.
-TICK_IMB_DISABLE_SHORT = _env_bool("TICK_IMB_DISABLE_SHORT", True)
-TICK_IMB_ALLOW_HOURS = parse_hours(os.getenv("TICK_IMB_ALLOW_HOURS_JST", ""))
-TICK_IMB_BLOCK_HOURS = parse_hours(os.getenv("TICK_IMB_BLOCK_HOURS_JST", ""))
-TICK_IMB_LONG_BLOCK_HOURS = parse_hours(os.getenv("TICK_IMB_LONG_BLOCK_HOURS_JST", "01,21,22"))
-TICK_IMB_SHORT_BLOCK_HOURS = parse_hours(os.getenv("TICK_IMB_SHORT_BLOCK_HOURS_JST", ""))
-TICK_IMB_SHORT_RATIO_MIN = _env_float("TICK_IMB_SHORT_RATIO_MIN", max(0.0, TICK_IMB_RATIO_MIN + 0.08))
-TICK_IMB_SHORT_MOM_MIN_PIPS = _env_float("TICK_IMB_SHORT_MOM_MIN_PIPS", TICK_IMB_MOM_MIN_PIPS + 0.15)
+# Entry-quality gates (precision-first, no side/hour hard block).
+TICK_IMB_ENTRY_QUALITY_ENABLED = _env_bool("TICK_IMB_ENTRY_QUALITY_ENABLED", True)
+TICK_IMB_QUALITY_RATIO_MIN = _env_float("TICK_IMB_QUALITY_RATIO_MIN", 0.76)
+TICK_IMB_QUALITY_MOM_MIN_PIPS = _env_float("TICK_IMB_QUALITY_MOM_MIN_PIPS", 0.65)
+TICK_IMB_QUALITY_RANGE_MIN_PIPS = _env_float("TICK_IMB_QUALITY_RANGE_MIN_PIPS", 0.70)
+TICK_IMB_CONFIRM_WINDOW_SEC = _env_float("TICK_IMB_CONFIRM_WINDOW_SEC", 8.0)
+TICK_IMB_CONFIRM_RATIO_MIN = _env_float("TICK_IMB_CONFIRM_RATIO_MIN", 0.68)
+TICK_IMB_CONFIRM_SIGNED_MOM_MIN_PIPS = _env_float("TICK_IMB_CONFIRM_SIGNED_MOM_MIN_PIPS", 0.20)
+TICK_IMB_REQUIRE_CONFIRM_SIGN = _env_bool("TICK_IMB_REQUIRE_CONFIRM_SIGN", True)
 
 SPB_BBW_MAX = _env_float("SPB_BBW_MAX", 0.0016)
 SPB_ATR_MIN = _env_float("SPB_ATR_MIN", 0.7)
@@ -1556,23 +1556,23 @@ def _signal_tick_imbalance(
         return None
 
     direction = "long" if imb.momentum_pips > 0 else "short"
-    now_utc = datetime.datetime.now(datetime.timezone.utc)
-    if not session_allowed(now_utc.hour, allow_hours=TICK_IMB_ALLOW_HOURS, block_hours=TICK_IMB_BLOCK_HOURS):
-        return None
-    hour_jst = (now_utc.hour + 9) % 24
-    if direction == "long":
-        if TICK_IMB_DISABLE_LONG:
+    if TICK_IMB_ENTRY_QUALITY_ENABLED:
+        if imb.ratio < TICK_IMB_QUALITY_RATIO_MIN:
             return None
-        if TICK_IMB_LONG_BLOCK_HOURS and hour_jst in TICK_IMB_LONG_BLOCK_HOURS:
+        if abs(imb.momentum_pips) < TICK_IMB_QUALITY_MOM_MIN_PIPS:
             return None
-    else:
-        if TICK_IMB_DISABLE_SHORT:
+        if imb.range_pips < TICK_IMB_QUALITY_RANGE_MIN_PIPS:
             return None
-        if TICK_IMB_SHORT_BLOCK_HOURS and hour_jst in TICK_IMB_SHORT_BLOCK_HOURS:
+        mids_confirm, span_confirm = tick_snapshot(TICK_IMB_CONFIRM_WINDOW_SEC, limit=220)
+        imb_confirm = tick_imbalance(mids_confirm, span_confirm)
+        if not imb_confirm:
             return None
-        if imb.ratio < TICK_IMB_SHORT_RATIO_MIN:
+        if imb_confirm.ratio < TICK_IMB_CONFIRM_RATIO_MIN:
             return None
-        if abs(imb.momentum_pips) < TICK_IMB_SHORT_MOM_MIN_PIPS:
+        confirm_signed_mom = imb_confirm.momentum_pips if direction == "long" else -imb_confirm.momentum_pips
+        if confirm_signed_mom <= TICK_IMB_CONFIRM_SIGNED_MOM_MIN_PIPS:
+            return None
+        if TICK_IMB_REQUIRE_CONFIRM_SIGN and (imb_confirm.momentum_pips > 0.0) != (imb.momentum_pips > 0.0):
             return None
     if TICK_IMB_REQUIRE_MA_ALIGN:
         try:
