@@ -278,6 +278,15 @@ TICK_IMB_ALLOWED_REGIMES = {
     if s.strip()
 }
 TICK_IMB_BLOCK_RANGE_MODE = _env_bool("TICK_IMB_BLOCK_RANGE_MODE", True)
+TICK_IMB_DISABLE_LONG = _env_bool("TICK_IMB_DISABLE_LONG", False)
+# Validation of 2026-02-02..2026-02-09 showed short side dominates drawdown for TickImbalance.
+TICK_IMB_DISABLE_SHORT = _env_bool("TICK_IMB_DISABLE_SHORT", True)
+TICK_IMB_ALLOW_HOURS = parse_hours(os.getenv("TICK_IMB_ALLOW_HOURS_JST", ""))
+TICK_IMB_BLOCK_HOURS = parse_hours(os.getenv("TICK_IMB_BLOCK_HOURS_JST", ""))
+TICK_IMB_LONG_BLOCK_HOURS = parse_hours(os.getenv("TICK_IMB_LONG_BLOCK_HOURS_JST", "01,21,22"))
+TICK_IMB_SHORT_BLOCK_HOURS = parse_hours(os.getenv("TICK_IMB_SHORT_BLOCK_HOURS_JST", ""))
+TICK_IMB_SHORT_RATIO_MIN = _env_float("TICK_IMB_SHORT_RATIO_MIN", max(0.0, TICK_IMB_RATIO_MIN + 0.08))
+TICK_IMB_SHORT_MOM_MIN_PIPS = _env_float("TICK_IMB_SHORT_MOM_MIN_PIPS", TICK_IMB_MOM_MIN_PIPS + 0.15)
 
 SPB_BBW_MAX = _env_float("SPB_BBW_MAX", 0.0016)
 SPB_ATR_MIN = _env_float("SPB_ATR_MIN", 0.7)
@@ -1547,6 +1556,24 @@ def _signal_tick_imbalance(
         return None
 
     direction = "long" if imb.momentum_pips > 0 else "short"
+    now_utc = datetime.datetime.now(datetime.timezone.utc)
+    if not session_allowed(now_utc.hour, allow_hours=TICK_IMB_ALLOW_HOURS, block_hours=TICK_IMB_BLOCK_HOURS):
+        return None
+    hour_jst = (now_utc.hour + 9) % 24
+    if direction == "long":
+        if TICK_IMB_DISABLE_LONG:
+            return None
+        if TICK_IMB_LONG_BLOCK_HOURS and hour_jst in TICK_IMB_LONG_BLOCK_HOURS:
+            return None
+    else:
+        if TICK_IMB_DISABLE_SHORT:
+            return None
+        if TICK_IMB_SHORT_BLOCK_HOURS and hour_jst in TICK_IMB_SHORT_BLOCK_HOURS:
+            return None
+        if imb.ratio < TICK_IMB_SHORT_RATIO_MIN:
+            return None
+        if abs(imb.momentum_pips) < TICK_IMB_SHORT_MOM_MIN_PIPS:
+            return None
     if TICK_IMB_REQUIRE_MA_ALIGN:
         try:
             ma10 = float(fac_m1.get("ma10") or 0.0)
