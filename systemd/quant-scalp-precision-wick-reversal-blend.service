@@ -37,6 +37,7 @@ Environment=WICK_BLEND_TICK_MIN_TICKS=6
 Environment=WICK_BLEND_TICK_MIN_STRENGTH=0.40
 # Avoid "too early / too shallow" fades: require price to pull back inside the band by N pips.
 Environment=WICK_BLEND_FOLLOW_PIPS=0.80
+Environment=WICK_BLEND_EXTREME_RETRACE_MIN_PIPS=0.45
 Environment=WICK_BLEND_DIAG=1
 Environment=WICK_BLEND_DIAG_INTERVAL_SEC=20
 

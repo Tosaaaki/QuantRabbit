@@ -180,6 +180,47 @@ def _fetch_last_entry_time() -> Optional[datetime.datetime]:
     return _parse_iso_ts(str(row[0]))
 
 
+def _fetch_latest_closed_trade(tag: str) -> Optional[Tuple[datetime.datetime, float, float, int]]:
+    if not tag:
+        return None
+    query = (
+        "select close_time, entry_price, pl_pips, units "
+        "from trades where strategy_tag = ? and close_time is not null "
+        "order by close_time desc limit 1"
+    )
+    try:
+        con = sqlite3.connect("file:logs/trades.db?mode=ro", uri=True, timeout=1.0)
+        cur = con.execute(query, (tag,))
+        row = cur.fetchone()
+    except sqlite3.Error:
+        return None
+    finally:
+        try:
+            con.close()
+        except Exception:
+            pass
+    if not row:
+        return None
+    close_ts = _parse_iso_ts(str(row[0] or ""))
+    if close_ts is None:
+        return None
+    try:
+        entry_price = float(row[1] or 0.0)
+    except Exception:
+        entry_price = 0.0
+    try:
+        pl_pips = float(row[2] or 0.0)
+    except Exception:
+        pl_pips = 0.0
+    try:
+        units = int(row[3] or 0)
+    except Exception:
+        units = 0
+    if entry_price <= 0.0:
+        return None
+    return close_ts, entry_price, pl_pips, units
+
+
 def _entry_drought_ok(now_utc: datetime.datetime) -> bool:
     if not config.DROUGHT_ENABLED:
         return True
@@ -287,6 +328,9 @@ TICK_IMB_CONFIRM_WINDOW_SEC = _env_float("TICK_IMB_CONFIRM_WINDOW_SEC", 8.0)
 TICK_IMB_CONFIRM_RATIO_MIN = _env_float("TICK_IMB_CONFIRM_RATIO_MIN", 0.68)
 TICK_IMB_CONFIRM_SIGNED_MOM_MIN_PIPS = _env_float("TICK_IMB_CONFIRM_SIGNED_MOM_MIN_PIPS", 0.20)
 TICK_IMB_REQUIRE_CONFIRM_SIGN = _env_bool("TICK_IMB_REQUIRE_CONFIRM_SIGN", True)
+TICK_IMB_REENTRY_LOOKBACK_SEC = _env_float("TICK_IMB_REENTRY_LOOKBACK_SEC", 0.0)
+TICK_IMB_REENTRY_MIN_PRICE_GAP_PIPS = _env_float("TICK_IMB_REENTRY_MIN_PRICE_GAP_PIPS", 0.0)
+TICK_IMB_REENTRY_REQUIRE_LAST_PROFIT = _env_bool("TICK_IMB_REENTRY_REQUIRE_LAST_PROFIT", True)
 
 SPB_BBW_MAX = _env_float("SPB_BBW_MAX", 0.0016)
 SPB_ATR_MIN = _env_float("SPB_ATR_MIN", 0.7)
@@ -325,6 +369,7 @@ FBF_SIZE_MULT = _env_float("FBF_SIZE_MULT", 1.10)
 # Precision filters: avoid fading against strong one-way pressure.
 FBF_MAX_COUNTER_SLOPE_PIPS = _env_float("FBF_MAX_COUNTER_SLOPE_PIPS", 0.0)
 FBF_MAX_COUNTER_VWAP_GAP_PIPS = _env_float("FBF_MAX_COUNTER_VWAP_GAP_PIPS", 0.0)
+FBF_TICK_MIN_STRENGTH = _env_float("FBF_TICK_MIN_STRENGTH", 0.0)
 
 TIRP_WINDOW_SEC = _env_float("TIRP_WINDOW_SEC", 5.5)
 TIRP_RATIO_MIN = _env_float("TIRP_RATIO_MIN", 0.72)
@@ -449,6 +494,7 @@ WICK_BLEND_TICK_MIN_TICKS = _env_int("WICK_BLEND_TICK_MIN_TICKS", 6)
 WICK_BLEND_TICK_MIN_STRENGTH = _env_float("WICK_BLEND_TICK_MIN_STRENGTH", 0.28)
 # Require a small follow-through away from the band after the rejection candle to avoid "too early" fades.
 WICK_BLEND_FOLLOW_PIPS = _env_float("WICK_BLEND_FOLLOW_PIPS", 0.0)
+WICK_BLEND_EXTREME_RETRACE_MIN_PIPS = _env_float("WICK_BLEND_EXTREME_RETRACE_MIN_PIPS", 0.0)
 WICK_BLEND_DIAG = _env_bool("WICK_BLEND_DIAG", False)
 WICK_BLEND_DIAG_INTERVAL_SEC = _env_float("WICK_BLEND_DIAG_INTERVAL_SEC", 20.0)
 
@@ -1410,6 +1456,13 @@ def _signal_false_break_fade(
         rev_ok, rev_dir, rev_strength = tick_reversal(mids, min_ticks=6) if mids else (False, None, 0.0)
         if FBF_REQUIRE_TICK_REVERSAL and (not rev_ok or rev_dir != want_dir):
             return None
+        if FBF_TICK_MIN_STRENGTH > 0.0:
+            try:
+                rev_strength_f = float(rev_strength or 0.0)
+            except Exception:
+                rev_strength_f = 0.0
+            if rev_strength_f < FBF_TICK_MIN_STRENGTH:
+                return None
 
         sl = max(1.4, min(2.8, atr * 0.9))
         tp = max(sl * 1.35, min(4.0, atr * 1.25))
@@ -1530,6 +1583,34 @@ def _signal_htf_pullback(
     }
 
 
+def _tick_imb_reentry_gap_ok(
+    fac_m1: Dict[str, object],
+    *,
+    direction: str,
+    tag: str,
+) -> bool:
+    if TICK_IMB_REENTRY_LOOKBACK_SEC <= 0.0 or TICK_IMB_REENTRY_MIN_PRICE_GAP_PIPS <= 0.0:
+        return True
+    latest = _fetch_latest_closed_trade(tag)
+    if latest is None:
+        return True
+    close_ts, last_entry_price, last_pl_pips, last_units = latest
+    now_utc = datetime.datetime.now(datetime.timezone.utc)
+    age_sec = (now_utc - close_ts).total_seconds()
+    if age_sec < 0.0 or age_sec > TICK_IMB_REENTRY_LOOKBACK_SEC:
+        return True
+    if TICK_IMB_REENTRY_REQUIRE_LAST_PROFIT and last_pl_pips <= 0.0:
+        return True
+    last_dir = "long" if last_units > 0 else "short"
+    if last_units == 0 or last_dir != direction:
+        return True
+    price = _latest_price(fac_m1)
+    if price <= 0.0:
+        return True
+    gap_pips = abs(price - last_entry_price) / PIP
+    return gap_pips >= TICK_IMB_REENTRY_MIN_PRICE_GAP_PIPS
+
+
 def _signal_tick_imbalance(
     fac_m1: Dict[str, object],
     range_ctx=None,
@@ -1575,6 +1656,8 @@ def _signal_tick_imbalance(
         return None
 
     direction = "long" if imb.momentum_pips > 0 else "short"
+    if not _tick_imb_reentry_gap_ok(fac_m1, direction=direction, tag=tag):
+        return None
     if TICK_IMB_ENTRY_QUALITY_ENABLED:
         if imb.ratio < TICK_IMB_QUALITY_RATIO_MIN:
             return None
@@ -2125,10 +2208,10 @@ def _signal_wick_reversal_blend(
         if WICK_BLEND_TICK_MIN_STRENGTH > 0.0 and strength < WICK_BLEND_TICK_MIN_STRENGTH:
             return None
 
+    price = _latest_price(fac_m1)
+    if price <= 0.0:
+        return None
     if WICK_BLEND_FOLLOW_PIPS > 0.0:
-        price = _latest_price(fac_m1)
-        if price <= 0.0:
-            return None
         if side == "short":
             follow = (upper - price) / PIP
             if follow < WICK_BLEND_FOLLOW_PIPS:
@@ -2137,6 +2220,13 @@ def _signal_wick_reversal_blend(
             follow = (price - lower) / PIP
             if follow < WICK_BLEND_FOLLOW_PIPS:
                 return None
+    if WICK_BLEND_EXTREME_RETRACE_MIN_PIPS > 0.0:
+        if side == "short":
+            retrace_from_extreme = (h - price) / PIP
+        else:
+            retrace_from_extreme = (price - l) / PIP
+        if retrace_from_extreme < WICK_BLEND_EXTREME_RETRACE_MIN_PIPS:
+            return None
 
     proj_allow, size_mult, proj_detail = projection_decision(side, mode="range")
     if not proj_allow:

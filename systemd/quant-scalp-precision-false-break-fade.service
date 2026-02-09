@@ -26,6 +26,7 @@ Environment=FBF_RANGE_SCORE_MIN=0.45
 Environment=FBF_ATR_MAX=4.2
 Environment=FBF_MAX_COUNTER_SLOPE_PIPS=0.45
 Environment=FBF_MAX_COUNTER_VWAP_GAP_PIPS=45.0
+Environment=FBF_TICK_MIN_STRENGTH=0.35
 Environment=FBF_LOOKBACK=30
 Environment=FBF_HI_PCT=97.0
 Environment=FBF_LO_PCT=3.0

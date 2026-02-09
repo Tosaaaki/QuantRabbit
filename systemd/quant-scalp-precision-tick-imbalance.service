@@ -19,6 +19,9 @@ Environment=TICK_IMB_MOM_MIN_PIPS=0.65
 Environment=TICK_IMB_RANGE_MIN_PIPS=0.35
 Environment=TICK_IMB_ADX_MIN=22.0
 Environment=TICK_IMB_MA_GAP_MIN_PIPS=0.12
+Environment=TICK_IMB_REENTRY_LOOKBACK_SEC=420
+Environment=TICK_IMB_REENTRY_MIN_PRICE_GAP_PIPS=1.0
+Environment=TICK_IMB_REENTRY_REQUIRE_LAST_PROFIT=1
 
 # Broker SL/TP disabled (no entry stop-loss).  Re-enable by setting:
 # Environment=ORDER_ENABLE_STOP_LOSS_SCALP=1
