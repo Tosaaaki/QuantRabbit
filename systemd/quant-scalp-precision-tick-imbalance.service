@@ -7,7 +7,9 @@ Type=simple
 WorkingDirectory=/home/tossaki/QuantRabbit
 EnvironmentFile=/etc/quantrabbit.env
 Environment=PYTHONUNBUFFERED=1
-Environment=SCALP_PRECISION_ENABLED=1
+# 2026-02-09 JST: TickImbalance が短期で期待値悪化（本日 -8.2 pips / 3 trades）。
+# まず停止して資金を他 scalp_precision モードへ再配分する。
+Environment=SCALP_PRECISION_ENABLED=0
 Environment=SCALP_PRECISION_MODE=tick_imbalance
 Environment=SCALP_PRECISION_ALLOWLIST=tick_imbalance
 Environment=SCALP_PRECISION_MODE_FILTER_ALLOWLIST=1
