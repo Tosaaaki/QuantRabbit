@@ -343,8 +343,18 @@ strategies:
       range_max_hold_sec: 1800
       loss_cut_enabled: true
       loss_cut_require_sl: false
-      loss_cut_soft_pips: 5.5
+      # Soft cut acts like a hidden hard SL for this strategy. Keep disabled.
+      loss_cut_soft_pips: 0.0
       loss_cut_hard_pips: 10.5
+      # Raise hard cut with volatility; base still applies when ATR is small.
+      loss_cut_hard_atr_mult: 2.2
+      # In stretched reversion context, allow more room instead of forcing max_adverse early.
+      loss_cut_reversion_enabled: true
+      loss_cut_reversion_hard_pips: 18.0
+      loss_cut_reversion_vwap_gap_min: 18.0
+      loss_cut_reversion_adx_max: 22.0
+      loss_cut_reversion_rsi_short_min: 62.0
+      loss_cut_reversion_rsi_long_max: 38.0
       loss_cut_max_hold_sec: 1800
       loss_cut_cooldown_sec: 6
 

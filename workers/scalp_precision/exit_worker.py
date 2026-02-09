@@ -747,6 +747,30 @@ class RangeFaderExitWorker:
             str(exit_profile.get("loss_cut_reason_time") or self.loss_cut_reason_time).strip()
             or self.loss_cut_reason_time
         )
+        loss_cut_hard_atr_mult = max(
+            0.0, _pick_float(exit_profile.get("loss_cut_hard_atr_mult"), 0.0)
+        )
+        loss_cut_hard_cap_pips = max(
+            0.0, _pick_float(exit_profile.get("loss_cut_hard_cap_pips"), 0.0)
+        )
+        loss_cut_reversion_enabled = _coerce_bool(
+            exit_profile.get("loss_cut_reversion_enabled"), False
+        )
+        loss_cut_reversion_hard_pips = max(
+            0.0, _pick_float(exit_profile.get("loss_cut_reversion_hard_pips"), 0.0)
+        )
+        loss_cut_reversion_vwap_gap_min = max(
+            0.0, _pick_float(exit_profile.get("loss_cut_reversion_vwap_gap_min"), 0.0)
+        )
+        loss_cut_reversion_adx_max = max(
+            0.0, _pick_float(exit_profile.get("loss_cut_reversion_adx_max"), 0.0)
+        )
+        loss_cut_reversion_rsi_short_min = _pick_float(
+            exit_profile.get("loss_cut_reversion_rsi_short_min"), 100.0
+        )
+        loss_cut_reversion_rsi_long_max = _pick_float(
+            exit_profile.get("loss_cut_reversion_rsi_long_max"), 0.0
+        )
         if str(base_tag).lower() == "levelreject":
             # LevelReject is tuned via config/strategy_exit_protections.yaml.
             # Keep that configuration authoritative (avoid VWAP-gap-based overrides that
@@ -949,14 +973,54 @@ class RangeFaderExitWorker:
                     log_tags={"trade": trade_id},
                 )
             if reentry and reentry.action == "hold":
-                if not self._loss_cut_eligible(
-                    trade, enabled=loss_cut_enabled, require_sl=loss_cut_require_sl
-                ):
-                    return
+                return
             if reentry and reentry.action == "exit_reentry" and not reentry.shadow:
                 await self._close(trade_id, -units, "reentry_reset", pnl, client_id)
                 self._states.pop(trade_id, None)
                 return
+
+            eff_loss_cut_soft_pips = max(0.0, float(loss_cut_soft_pips))
+            eff_loss_cut_hard_pips = max(
+                eff_loss_cut_soft_pips, float(loss_cut_hard_pips)
+            )
+            if (
+                atr_pips is not None
+                and atr_pips > 0.0
+                and loss_cut_hard_atr_mult > 0.0
+            ):
+                eff_loss_cut_hard_pips = max(
+                    eff_loss_cut_hard_pips, atr_pips * loss_cut_hard_atr_mult
+                )
+            if (
+                loss_cut_reversion_enabled
+                and loss_cut_reversion_hard_pips > 0.0
+                and vwap_gap is not None
+            ):
+                signed_gap = vwap_gap if side == "short" else -vwap_gap
+                if signed_gap >= loss_cut_reversion_vwap_gap_min:
+                    adx_ok = (
+                        loss_cut_reversion_adx_max <= 0.0
+                        or (adx is not None and adx <= loss_cut_reversion_adx_max)
+                    )
+                    if side == "short":
+                        rsi_ok = (
+                            rsi is not None and rsi >= loss_cut_reversion_rsi_short_min
+                        )
+                    else:
+                        rsi_ok = (
+                            rsi is not None and rsi <= loss_cut_reversion_rsi_long_max
+                        )
+                    if adx_ok and rsi_ok:
+                        eff_loss_cut_hard_pips = max(
+                            eff_loss_cut_hard_pips, loss_cut_reversion_hard_pips
+                        )
+            if loss_cut_hard_cap_pips > 0.0:
+                eff_loss_cut_hard_pips = min(
+                    eff_loss_cut_hard_pips, loss_cut_hard_cap_pips
+                )
+            eff_loss_cut_hard_pips = max(
+                eff_loss_cut_hard_pips, eff_loss_cut_soft_pips
+            )
 
             if not self._loss_cut_eligible(trade, enabled=loss_cut_enabled, require_sl=loss_cut_require_sl):
                 return
@@ -969,9 +1033,9 @@ class RangeFaderExitWorker:
             reason = None
             if loss_cut_max_hold_sec > 0 and hold_sec >= loss_cut_max_hold_sec:
                 reason = loss_cut_reason_time
-            elif loss_cut_hard_pips > 0 and adverse_pips >= loss_cut_hard_pips:
+            elif eff_loss_cut_hard_pips > 0 and adverse_pips >= eff_loss_cut_hard_pips:
                 reason = loss_cut_reason_hard
-            elif loss_cut_soft_pips > 0 and adverse_pips >= loss_cut_soft_pips:
+            elif eff_loss_cut_soft_pips > 0 and adverse_pips >= eff_loss_cut_soft_pips:
                 reason = loss_cut_reason_soft
             if not reason:
                 return
