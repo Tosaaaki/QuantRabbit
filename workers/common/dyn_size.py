@@ -11,6 +11,15 @@ from utils.env_utils import env_float
 from utils.oanda_account import get_account_snapshot
 
 
+def _strategy_env_float(name: str, default: float, *, env_prefix: Optional[str]) -> float:
+    return env_float(
+        name,
+        default,
+        prefix=env_prefix,
+        allow_global_fallback=False,
+    )
+
+
 @dataclass
 class SizingContext:
     units: int
@@ -73,9 +82,9 @@ def compute_units(
     else:
         free_scale = 1.2
 
-    base_risk_pct = max(0.0005, env_float("DYN_SIZE_BASE_RISK_PCT", 0.01, prefix=env_prefix))
-    min_risk_pct = max(0.0005, env_float("DYN_SIZE_MIN_RISK_PCT", 0.002, prefix=env_prefix))
-    max_risk_pct = max(min_risk_pct, env_float("DYN_SIZE_MAX_RISK_PCT", 0.03, prefix=env_prefix))
+    base_risk_pct = max(0.0005, _strategy_env_float("DYN_SIZE_BASE_RISK_PCT", 0.01, env_prefix=env_prefix))
+    min_risk_pct = max(0.0005, _strategy_env_float("DYN_SIZE_MIN_RISK_PCT", 0.002, env_prefix=env_prefix))
+    max_risk_pct = max(min_risk_pct, _strategy_env_float("DYN_SIZE_MAX_RISK_PCT", 0.03, env_prefix=env_prefix))
     risk_pct = _clamp(base_risk_pct * free_scale, min_risk_pct, max_risk_pct)
 
     # 2) Allowed lot from risk math (equity/sl)

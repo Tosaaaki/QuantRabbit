@@ -76,59 +76,95 @@ def _cfg_key(env_prefix: Optional[str]) -> str:
     return str(env_prefix or "").strip().upper()
 
 
+def _strategy_env_get(name: str, default: Optional[str], *, env_prefix: Optional[str]) -> Optional[str]:
+    return env_get(
+        name,
+        default,
+        prefix=env_prefix,
+        allow_global_fallback=False,
+    )
+
+
+def _strategy_env_bool(name: str, default: bool, *, env_prefix: Optional[str]) -> bool:
+    return env_bool(
+        name,
+        default,
+        prefix=env_prefix,
+        allow_global_fallback=False,
+    )
+
+
+def _strategy_env_int(name: str, default: int, *, env_prefix: Optional[str]) -> int:
+    return env_int(
+        name,
+        default,
+        prefix=env_prefix,
+        allow_global_fallback=False,
+    )
+
+
+def _strategy_env_float(name: str, default: float, *, env_prefix: Optional[str]) -> float:
+    return env_float(
+        name,
+        default,
+        prefix=env_prefix,
+        allow_global_fallback=False,
+    )
+
+
 def _get_cfg(env_prefix: Optional[str]) -> PerfGuardCfg:
     key = _cfg_key(env_prefix)
     cached = _CFG_CACHE.get(key)
     if cached is not None:
         return cached
 
-    raw_enabled = env_get("PERF_GUARD_ENABLED", None, prefix=env_prefix)
+    raw_enabled = _strategy_env_get("PERF_GUARD_ENABLED", None, env_prefix=env_prefix)
     if raw_enabled is None:
-        raw_enabled = env_get("PERF_GUARD_GLOBAL_ENABLED", "1", prefix=env_prefix)
+        raw_enabled = _strategy_env_get("PERF_GUARD_GLOBAL_ENABLED", "1", env_prefix=env_prefix)
     enabled = str(raw_enabled).strip().lower() not in {"", "0", "false", "no", "off"}
 
-    mode = str(env_get("PERF_GUARD_MODE", "block", prefix=env_prefix) or "block").strip().lower()
-    lookback_days = max(1, env_int("PERF_GUARD_LOOKBACK_DAYS", 3, prefix=env_prefix))
-    min_trades = max(5, env_int("PERF_GUARD_MIN_TRADES", 12, prefix=env_prefix))
-    pf_min_default = float(env_float("PERF_GUARD_PF_MIN", 0.9, prefix=env_prefix) or 0.9)
-    win_min_default = float(env_float("PERF_GUARD_WIN_MIN", 0.48, prefix=env_prefix) or 0.48)
-    ttl_sec = max(30.0, float(env_float("PERF_GUARD_TTL_SEC", 120.0, prefix=env_prefix) or 120.0))
+    mode = str(_strategy_env_get("PERF_GUARD_MODE", "block", env_prefix=env_prefix) or "block").strip().lower()
+    lookback_days = max(1, _strategy_env_int("PERF_GUARD_LOOKBACK_DAYS", 3, env_prefix=env_prefix))
+    min_trades = max(5, _strategy_env_int("PERF_GUARD_MIN_TRADES", 12, env_prefix=env_prefix))
+    pf_min_default = float(_strategy_env_float("PERF_GUARD_PF_MIN", 0.9, env_prefix=env_prefix) or 0.9)
+    win_min_default = float(_strategy_env_float("PERF_GUARD_WIN_MIN", 0.48, env_prefix=env_prefix) or 0.48)
+    ttl_sec = max(30.0, float(_strategy_env_float("PERF_GUARD_TTL_SEC", 120.0, env_prefix=env_prefix) or 120.0))
 
-    hourly_enabled = env_bool("PERF_GUARD_HOURLY", False, prefix=env_prefix)
-    hourly_min_trades = max(5, env_int("PERF_GUARD_HOURLY_MIN_TRADES", 12, prefix=env_prefix))
+    hourly_enabled = _strategy_env_bool("PERF_GUARD_HOURLY", False, env_prefix=env_prefix)
+    hourly_min_trades = max(5, _strategy_env_int("PERF_GUARD_HOURLY_MIN_TRADES", 12, env_prefix=env_prefix))
 
-    relax_raw = env_get("PERF_GUARD_RELAX_TAGS", None, prefix=env_prefix)
+    relax_raw = _strategy_env_get("PERF_GUARD_RELAX_TAGS", None, env_prefix=env_prefix)
     if relax_raw is None:
         relax_raw = "M1Scalper,ImpulseRetrace"
     relax_tags = {tag.strip().lower() for tag in str(relax_raw).split(",") if tag.strip()}
-    split_directional = env_bool("PERF_GUARD_SPLIT_DIRECTIONAL", True, prefix=env_prefix)
+    split_directional = _strategy_env_bool("PERF_GUARD_SPLIT_DIRECTIONAL", True, env_prefix=env_prefix)
 
-    regime_filter_enabled = env_bool("PERF_GUARD_REGIME_FILTER", True, prefix=env_prefix)
-    regime_min_trades = max(5, env_int("PERF_GUARD_REGIME_MIN_TRADES", 20, prefix=env_prefix))
+    regime_filter_enabled = _strategy_env_bool("PERF_GUARD_REGIME_FILTER", True, env_prefix=env_prefix)
+    regime_min_trades = max(5, _strategy_env_int("PERF_GUARD_REGIME_MIN_TRADES", 20, env_prefix=env_prefix))
 
-    failfast_min_trades = max(0, env_int("PERF_GUARD_FAILFAST_MIN_TRADES", 12, prefix=env_prefix))
-    failfast_pf = max(0.0, env_float("PERF_GUARD_FAILFAST_PF", 0.75, prefix=env_prefix))
-    failfast_win = max(0.0, env_float("PERF_GUARD_FAILFAST_WIN", 0.40, prefix=env_prefix))
+    failfast_min_trades = max(0, _strategy_env_int("PERF_GUARD_FAILFAST_MIN_TRADES", 12, env_prefix=env_prefix))
+    failfast_pf = max(0.0, _strategy_env_float("PERF_GUARD_FAILFAST_PF", 0.75, env_prefix=env_prefix))
+    failfast_win = max(0.0, _strategy_env_float("PERF_GUARD_FAILFAST_WIN", 0.40, env_prefix=env_prefix))
 
-    sl_loss_rate_min_trades = max(0, env_int("PERF_GUARD_SL_LOSS_RATE_MIN_TRADES", 12, prefix=env_prefix))
-    sl_loss_rate_max_default = env_float("PERF_GUARD_SL_LOSS_RATE_MAX", 0.0, prefix=env_prefix)
+    sl_loss_rate_min_trades = max(0, _strategy_env_int("PERF_GUARD_SL_LOSS_RATE_MIN_TRADES", 12, env_prefix=env_prefix))
+    sl_loss_rate_max_default = _strategy_env_float("PERF_GUARD_SL_LOSS_RATE_MAX", 0.0, env_prefix=env_prefix)
 
-    pocket_enabled = env_bool("POCKET_PERF_GUARD_ENABLED", False, prefix=env_prefix)
-    pocket_lookback_days = max(1, env_int("POCKET_PERF_GUARD_LOOKBACK_DAYS", 7, prefix=env_prefix))
-    pocket_min_trades = max(10, env_int("POCKET_PERF_GUARD_MIN_TRADES", 60, prefix=env_prefix))
-    pocket_pf_min_default = env_float("POCKET_PERF_GUARD_PF_MIN", 0.95, prefix=env_prefix)
-    pocket_win_min_default = env_float("POCKET_PERF_GUARD_WIN_MIN", 0.50, prefix=env_prefix)
-    pocket_ttl_sec = max(30.0, env_float("POCKET_PERF_GUARD_TTL_SEC", 180.0, prefix=env_prefix))
+    pocket_enabled = _strategy_env_bool("POCKET_PERF_GUARD_ENABLED", False, env_prefix=env_prefix)
+    pocket_lookback_days = max(1, _strategy_env_int("POCKET_PERF_GUARD_LOOKBACK_DAYS", 7, env_prefix=env_prefix))
+    pocket_min_trades = max(10, _strategy_env_int("POCKET_PERF_GUARD_MIN_TRADES", 60, env_prefix=env_prefix))
+    pocket_pf_min_default = _strategy_env_float("POCKET_PERF_GUARD_PF_MIN", 0.95, env_prefix=env_prefix)
+    pocket_win_min_default = _strategy_env_float("POCKET_PERF_GUARD_WIN_MIN", 0.50, env_prefix=env_prefix)
+    pocket_ttl_sec = max(30.0, _strategy_env_float("POCKET_PERF_GUARD_TTL_SEC", 180.0, env_prefix=env_prefix))
 
-    scale_enabled = env_bool("PERF_SCALE_ENABLED", True, prefix=env_prefix)
-    scale_lookback_days = max(1, env_int("PERF_SCALE_LOOKBACK_DAYS", 7, prefix=env_prefix))
-    scale_min_trades = max(5, env_int("PERF_SCALE_MIN_TRADES", 20, prefix=env_prefix))
-    scale_pf_min = env_float("PERF_SCALE_PF_MIN", 1.15, prefix=env_prefix)
-    scale_win_min = env_float("PERF_SCALE_WIN_MIN", 0.55, prefix=env_prefix)
-    scale_avg_pips_min = env_float("PERF_SCALE_AVG_PIPS_MIN", 0.20, prefix=env_prefix)
-    scale_step = max(0.0, env_float("PERF_SCALE_STEP", 0.05, prefix=env_prefix))
-    scale_max_mult = max(1.0, env_float("PERF_SCALE_MAX_MULT", 1.25, prefix=env_prefix))
-    scale_ttl_sec = max(30.0, env_float("PERF_SCALE_TTL_SEC", 180.0, prefix=env_prefix))
+    scale_enabled = _strategy_env_bool("PERF_SCALE_ENABLED", True, env_prefix=env_prefix)
+    scale_lookback_days = max(1, _strategy_env_int("PERF_SCALE_LOOKBACK_DAYS", 7, env_prefix=env_prefix))
+    scale_min_trades = max(5, _strategy_env_int("PERF_SCALE_MIN_TRADES", 20, env_prefix=env_prefix))
+    scale_pf_min = _strategy_env_float("PERF_SCALE_PF_MIN", 1.15, env_prefix=env_prefix)
+    scale_win_min = _strategy_env_float("PERF_SCALE_WIN_MIN", 0.55, env_prefix=env_prefix)
+    scale_avg_pips_min = _strategy_env_float("PERF_SCALE_AVG_PIPS_MIN", 0.20, env_prefix=env_prefix)
+    scale_step = max(0.0, _strategy_env_float("PERF_SCALE_STEP", 0.05, env_prefix=env_prefix))
+    scale_max_mult = max(1.0, _strategy_env_float("PERF_SCALE_MAX_MULT", 1.25, env_prefix=env_prefix))
+    scale_ttl_sec = max(30.0, _strategy_env_float("PERF_SCALE_TTL_SEC", 180.0, env_prefix=env_prefix))
 
     cfg = PerfGuardCfg(
         env_prefix=env_prefix,
@@ -182,13 +218,23 @@ _scale_cache: dict[
 def _threshold(name: str, pocket: str, default: float, cfg: PerfGuardCfg) -> float:
     pocket_key = (pocket or "").strip().upper()
     if pocket_key:
-        raw = env_get(f"{name}_{pocket_key}", None, prefix=cfg.env_prefix)
+        raw = env_get(
+            f"{name}_{pocket_key}",
+            None,
+            prefix=cfg.env_prefix,
+            allow_global_fallback=False,
+        )
         if raw is not None:
             try:
                 return float(raw)
             except ValueError:
                 pass
-    raw = env_get(name, None, prefix=cfg.env_prefix)
+    raw = env_get(
+        name,
+        None,
+        prefix=cfg.env_prefix,
+        allow_global_fallback=False,
+    )
     if raw is not None:
         try:
             return float(raw)

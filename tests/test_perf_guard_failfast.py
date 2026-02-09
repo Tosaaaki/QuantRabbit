@@ -199,3 +199,41 @@ def test_perf_guard_margin_closeout_blocks_immediately(monkeypatch, tmp_path: Pa
     assert dec.allowed is False
     assert dec.reason.startswith("margin_closeout_n=")
 
+
+def test_perf_guard_prefix_does_not_fallback_to_global(monkeypatch, tmp_path: Path) -> None:
+    db_path = tmp_path / "trades.db"
+    _init_trades_db(db_path)
+
+    now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+    for _ in range(12):
+        _insert_trade(
+            db_path,
+            pocket="scalp",
+            strategy_tag="BadStrat",
+            close_reason="STOP_LOSS_ORDER",
+            pl_pips=-1.0,
+            close_time=now,
+        )
+
+    perf_guard = _reload_perf_guard(
+        monkeypatch,
+        db_path=db_path,
+        env={
+            "PERF_GUARD_ENABLED": "0",
+            "M1SCALP_PERF_GUARD_ENABLED": "1",
+            "M1SCALP_PERF_GUARD_MODE": "block",
+            "M1SCALP_PERF_GUARD_LOOKBACK_DAYS": "3",
+            "M1SCALP_PERF_GUARD_MIN_TRADES": "30",
+            "M1SCALP_PERF_GUARD_PF_MIN": "1.0",
+            "M1SCALP_PERF_GUARD_WIN_MIN": "0.50",
+            "M1SCALP_PERF_GUARD_REGIME_FILTER": "0",
+            "M1SCALP_PERF_GUARD_RELAX_TAGS": "",
+            "M1SCALP_PERF_GUARD_FAILFAST_MIN_TRADES": "12",
+            "M1SCALP_PERF_GUARD_FAILFAST_PF": "0.75",
+            "M1SCALP_PERF_GUARD_FAILFAST_WIN": "0.40",
+        },
+    )
+
+    dec = perf_guard.is_allowed("BadStrat", "scalp", env_prefix="M1SCALP")
+    assert dec.allowed is False
+    assert "failfast:" in dec.reason

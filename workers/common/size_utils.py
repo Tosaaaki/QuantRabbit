@@ -2,6 +2,34 @@ from typing import Optional
 
 from utils.env_utils import env_bool, env_float, env_get
 
+
+def _strategy_env_bool(name: str, default: bool, *, env_prefix: Optional[str]) -> bool:
+    return env_bool(
+        name,
+        default,
+        prefix=env_prefix,
+        allow_global_fallback=False,
+    )
+
+
+def _strategy_env_float(name: str, default: float, *, env_prefix: Optional[str]) -> float:
+    return env_float(
+        name,
+        default,
+        prefix=env_prefix,
+        allow_global_fallback=False,
+    )
+
+
+def _strategy_env_get(name: str, default: Optional[str], *, env_prefix: Optional[str]) -> Optional[str]:
+    return env_get(
+        name,
+        default,
+        prefix=env_prefix,
+        allow_global_fallback=False,
+    )
+
+
 def scale_base_units(
     base_units: int,
     *,
@@ -24,10 +52,10 @@ def scale_base_units(
         return base_units
     if equity <= 0:
         return base_units
-    if not env_bool("BASE_UNITS_EQUITY_SCALE_ENABLED", True, prefix=env_prefix):
+    if not _strategy_env_bool("BASE_UNITS_EQUITY_SCALE_ENABLED", True, env_prefix=env_prefix):
         return base_units
 
-    raw_ref = env_get("BASE_UNITS_EQUITY_REF", "1000000", prefix=env_prefix)
+    raw_ref = _strategy_env_get("BASE_UNITS_EQUITY_REF", "1000000", env_prefix=env_prefix)
     ref_value = None
     if raw_ref is not None and str(raw_ref).strip() != "":
         try:
@@ -45,11 +73,11 @@ def scale_base_units(
         return base_units
 
     scale = equity / ref_value
-    scale_min = max(0.0, env_float("BASE_UNITS_EQUITY_SCALE_MIN", 1.0, prefix=env_prefix))
+    scale_min = max(0.0, _strategy_env_float("BASE_UNITS_EQUITY_SCALE_MIN", 1.0, env_prefix=env_prefix))
     scale = max(scale, scale_min)
 
     scale_max = None
-    raw_max = env_get("BASE_UNITS_EQUITY_SCALE_MAX", None, prefix=env_prefix)
+    raw_max = _strategy_env_get("BASE_UNITS_EQUITY_SCALE_MAX", None, env_prefix=env_prefix)
     if raw_max is not None and str(raw_max).strip() != "":
         try:
             scale_max = float(raw_max)
