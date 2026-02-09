@@ -23,6 +23,9 @@ Environment=FBF_RECLAIM_PIPS=0.6
 Environment=FBF_MIN_SWEEP_PIPS=1.6
 Environment=FBF_ADX_MAX=26.0
 Environment=FBF_RANGE_SCORE_MIN=0.45
+Environment=FBF_ATR_MAX=4.2
+Environment=FBF_MAX_COUNTER_SLOPE_PIPS=0.45
+Environment=FBF_MAX_COUNTER_VWAP_GAP_PIPS=45.0
 Environment=FBF_LOOKBACK=30
 Environment=FBF_HI_PCT=97.0
 Environment=FBF_LO_PCT=3.0
@@ -37,4 +40,3 @@ User=tossaki
 
 [Install]
 WantedBy=multi-user.target
-

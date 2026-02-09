@@ -322,6 +322,9 @@ FBF_TICK_WINDOW_SEC = _env_float("FBF_TICK_WINDOW_SEC", 6.0)
 FBF_REQUIRE_TICK_REVERSAL = _env_bool("FBF_REQUIRE_TICK_REVERSAL", True)
 FBF_SPREAD_P25 = _env_float("FBF_SPREAD_P25", 1.1)
 FBF_SIZE_MULT = _env_float("FBF_SIZE_MULT", 1.10)
+# Precision filters: avoid fading against strong one-way pressure.
+FBF_MAX_COUNTER_SLOPE_PIPS = _env_float("FBF_MAX_COUNTER_SLOPE_PIPS", 0.0)
+FBF_MAX_COUNTER_VWAP_GAP_PIPS = _env_float("FBF_MAX_COUNTER_VWAP_GAP_PIPS", 0.0)
 
 TIRP_WINDOW_SEC = _env_float("TIRP_WINDOW_SEC", 5.5)
 TIRP_RATIO_MIN = _env_float("TIRP_RATIO_MIN", 0.72)
@@ -342,6 +345,8 @@ LEVEL_BAND_PIPS = _env_float("LEVEL_REJECT_BAND_PIPS", 0.8)
 LEVEL_RSI_LONG_MAX = _env_float("LEVEL_REJECT_RSI_LONG_MAX", 48.0)
 LEVEL_RSI_SHORT_MIN = _env_float("LEVEL_REJECT_RSI_SHORT_MIN", 52.0)
 LEVEL_REJECT_ADX_MAX = _env_float("LEVEL_REJECT_ADX_MAX", 30.0)
+LEVEL_REJECT_ATR_MAX = _env_float("LEVEL_REJECT_ATR_MAX", 0.0)
+LEVEL_REJECT_SPREAD_P25 = _env_float("LEVEL_REJECT_SPREAD_P25", 0.0)
 LEVEL_REJECT_SIZE_MULT = _env_float("LEVEL_REJECT_SIZE_MULT", 1.15)
 
 # LevelRejectPlus (stricter + tick-confirmed variant; intended for higher precision)
@@ -427,6 +432,7 @@ WICK_HF_DIAG_INTERVAL_SEC = _env_float("WICK_HF_DIAG_INTERVAL_SEC", 20.0)
 # WickReversal Blend (band-touch + tick reversal; strict trend filters)
 WICK_BLEND_RANGE_SCORE_MIN = _env_float("WICK_BLEND_RANGE_SCORE_MIN", 0.45)
 WICK_BLEND_SPREAD_P25 = _env_float("WICK_BLEND_SPREAD_P25", 1.0)
+WICK_BLEND_ADX_MIN = _env_float("WICK_BLEND_ADX_MIN", 0.0)
 WICK_BLEND_ADX_MAX = _env_float("WICK_BLEND_ADX_MAX", 24.0)
 WICK_BLEND_BBW_MAX = _env_float("WICK_BLEND_BBW_MAX", 0.0014)
 WICK_BLEND_ATR_MIN = _env_float("WICK_BLEND_ATR_MIN", 0.8)
@@ -1387,6 +1393,19 @@ def _signal_false_break_fade(
         if sweep_pips < FBF_MIN_SWEEP_PIPS:
             return None
 
+        slope_10_pips = _ema_slope_pips(fac_m1, "ema_slope_10")
+        vwap_gap_pips = _vwap_gap_pips(fac_m1)
+        if want_dir == "long":
+            if FBF_MAX_COUNTER_SLOPE_PIPS > 0.0 and slope_10_pips < -FBF_MAX_COUNTER_SLOPE_PIPS:
+                return None
+            if FBF_MAX_COUNTER_VWAP_GAP_PIPS > 0.0 and vwap_gap_pips < -FBF_MAX_COUNTER_VWAP_GAP_PIPS:
+                return None
+        else:
+            if FBF_MAX_COUNTER_SLOPE_PIPS > 0.0 and slope_10_pips > FBF_MAX_COUNTER_SLOPE_PIPS:
+                return None
+            if FBF_MAX_COUNTER_VWAP_GAP_PIPS > 0.0 and vwap_gap_pips > FBF_MAX_COUNTER_VWAP_GAP_PIPS:
+                return None
+
         mids, _ = tick_snapshot(FBF_TICK_WINDOW_SEC, limit=140)
         rev_ok, rev_dir, rev_strength = tick_reversal(mids, min_ticks=6) if mids else (False, None, 0.0)
         if FBF_REQUIRE_TICK_REVERSAL and (not rev_ok or rev_dir != want_dir):
@@ -1691,7 +1710,14 @@ def _signal_level_reject(
     *,
     tag: str,
 ) -> Optional[Dict[str, object]]:
+    if LEVEL_REJECT_SPREAD_P25 > 0.0:
+        ok_spread, _ = spread_ok(max_pips=config.MAX_SPREAD_PIPS, p25_max=LEVEL_REJECT_SPREAD_P25)
+        if not ok_spread:
+            return None
     if LEVEL_REJECT_ADX_MAX > 0 and _adx(fac_m1) > LEVEL_REJECT_ADX_MAX:
+        return None
+    atr = _atr_pips(fac_m1)
+    if LEVEL_REJECT_ATR_MAX > 0.0 and atr > LEVEL_REJECT_ATR_MAX:
         return None
     price = _latest_price(fac_m1)
     if price <= 0:
@@ -1717,7 +1743,6 @@ def _signal_level_reject(
     else:
         return None
 
-    atr = _atr_pips(fac_m1)
     sl = max(1.2, min(1.8, atr * 0.8))
     tp = max(1.5, min(2.2, atr * 1.1))
     conf = 58 + int(min(12, abs(rsi - 50.0) * 0.6))
@@ -2062,6 +2087,8 @@ def _signal_wick_reversal_blend(
     adx = _adx(fac_m1)
     bbw = _bbw(fac_m1)
     atr = _atr_pips(fac_m1)
+    if WICK_BLEND_ADX_MIN > 0.0 and adx < WICK_BLEND_ADX_MIN:
+        return None
     if WICK_BLEND_ADX_MAX > 0.0 and adx > WICK_BLEND_ADX_MAX:
         return None
     if WICK_BLEND_BBW_MAX > 0.0 and bbw > WICK_BLEND_BBW_MAX:
