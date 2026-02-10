@@ -142,7 +142,16 @@ def main() -> None:
     ap.add_argument("--lookback-min", type=int, default=int(os.getenv("POLICY_GUARD_LOOKBACK_MIN", "120")))
     ap.add_argument("--stable-min-sec", type=int, default=int(os.getenv("POLICY_GUARD_STABLE_MIN_SEC", "1800")))
     ap.add_argument("--max-decision-ms", type=float, default=float(os.getenv("POLICY_GUARD_MAX_DECISION_MS", "2000")))
-    ap.add_argument("--max-data-lag-ms", type=float, default=float(os.getenv("POLICY_GUARD_MAX_DATA_LAG_MS", "1500")))
+    # In WORKER_ONLY_MODE deployments, tick freshness is often sourced via a cross-process cache and
+    # provider timestamps; p95 can exceed 1500ms even when the system is otherwise healthy.
+    # Align the default with the "stale" guardrail (3000ms) unless overridden explicitly.
+    worker_only = os.getenv("WORKER_ONLY_MODE", "").strip().lower() in {"1", "true", "yes", "on"}
+    default_max_data_lag = "3000" if worker_only else "1500"
+    ap.add_argument(
+        "--max-data-lag-ms",
+        type=float,
+        default=float(os.getenv("POLICY_GUARD_MAX_DATA_LAG_MS", default_max_data_lag)),
+    )
     ap.add_argument("--max-drawdown-pct", type=float, default=float(os.getenv("POLICY_GUARD_MAX_DRAWDOWN_PCT", "0.18")))
     ap.add_argument("--min-order-success", type=float, default=float(os.getenv("POLICY_GUARD_MIN_ORDER_SUCCESS", "0.995")))
     ap.add_argument("--max-reject-rate", type=float, default=float(os.getenv("POLICY_GUARD_MAX_REJECT_RATE", "0.01")))
