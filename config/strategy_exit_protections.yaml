@@ -319,6 +319,9 @@ strategies:
       loss_cut_enabled: true
       loss_cut_require_sl: false
       loss_cut_soft_pips: 6.0
+      # NOTE: m1_structure_break is subject to EXIT_COMPOSITE gating and can block deterministic soft loss-cuts.
+      # Use a non-composite reason so soft loss-cuts actually execute when needed.
+      loss_cut_reason_soft: hard_stop
       loss_cut_hard_pips: 12.0
       loss_cut_max_hold_sec: 1800
       loss_cut_cooldown_sec: 6
@@ -484,6 +487,9 @@ strategies:
       loss_cut_enabled: true
       loss_cut_require_sl: false
       loss_cut_soft_pips: 3.8
+      # NOTE: m1_structure_break is subject to EXIT_COMPOSITE gating and can block deterministic soft loss-cuts.
+      # Use a non-composite reason so soft loss-cuts actually execute when needed.
+      loss_cut_reason_soft: hard_stop
       loss_cut_hard_pips: 7.5
       loss_cut_max_hold_sec: 900
       loss_cut_cooldown_sec: 5
