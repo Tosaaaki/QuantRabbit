@@ -360,7 +360,7 @@ def _load_recent_order_errors(limit: int = 8, hours: int = 24) -> list[dict]:
             "SELECT ts, pocket, side, units, status, client_order_id, "
             "ticket_id, error_code, error_message, request_json "
             "FROM orders "
-            "WHERE ts >= datetime('now', ?) "
+            "WHERE ts >= strftime('%Y-%m-%dT%H:%M:%S', 'now', ?) "
             "AND (error_code IS NOT NULL AND error_code != '' "
             "OR status LIKE 'error%' OR status LIKE 'reject%') "
             "ORDER BY ts DESC LIMIT ?",
@@ -382,7 +382,7 @@ def _load_order_status_counts(limit: int = 8, hours: int = 1) -> list[dict]:
         con.row_factory = sqlite3.Row
         cur = con.execute(
             "SELECT status, count(*) AS count FROM orders "
-            "WHERE ts >= datetime('now', ?) "
+            "WHERE ts >= strftime('%Y-%m-%dT%H:%M:%S', 'now', ?) "
             "GROUP BY status ORDER BY count DESC LIMIT ?",
             (f"-{int(hours)} hour", int(limit)),
         )

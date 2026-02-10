@@ -961,7 +961,7 @@ def _load_order_status_counts(limit: int = 8, hours: int = 1) -> list[dict]:
         con.row_factory = sqlite3.Row
         cur = con.execute(
             "SELECT status, count(*) AS count FROM orders "
-            "WHERE ts >= datetime('now', ?) "
+            "WHERE ts >= strftime('%Y-%m-%dT%H:%M:%S', 'now', ?) "
             "GROUP BY status ORDER BY count DESC LIMIT ?",
             (f"-{int(hours)} hour", int(limit)),
         )
