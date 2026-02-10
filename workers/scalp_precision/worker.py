@@ -349,6 +349,9 @@ SPB_SPREAD_P25 = _env_float("SPB_SPREAD_P25", 1.0)
 SPB_SIZE_MULT = _env_float("SPB_SIZE_MULT", 1.15)
 SPB_DIAG = _env_bool("SPB_DIAG", False)
 SPB_DIAG_INTERVAL_SEC = _env_float("SPB_DIAG_INTERVAL_SEC", 15.0)
+SPB_ALLOWED_REGIMES = {
+    s.strip().lower() for s in _env_csv("SPB_ALLOWED_REGIMES", "") if s.strip()
+}
 
 FBF_BBW_MAX = _env_float("FBF_BBW_MAX", 0.0026)
 FBF_ATR_MIN = _env_float("FBF_ATR_MIN", 0.7)
@@ -540,6 +543,9 @@ LSR_BBW_MAX = _env_float("LSR_BBW_MAX", 0.0018)
 LSR_RANGE_SCORE_MIN = _env_float("LSR_RANGE_SCORE_MIN", 0.35)
 LSR_REQUIRE_TICK_REVERSAL = _env_bool("LSR_REQUIRE_TICK_REVERSAL", True)
 LSR_SIZE_MULT = _env_float("LSR_SIZE_MULT", 1.0)
+LSR_ALLOWED_REGIMES = {
+    s.strip().lower() for s in _env_csv("LSR_ALLOWED_REGIMES", "") if s.strip()
+}
 
 SESSION_ALLOW_HOURS = parse_hours(os.getenv("SESSION_EDGE_ALLOW_HOURS_JST", "12,13,18-22"))
 SESSION_BLOCK_HOURS = parse_hours(os.getenv("SESSION_EDGE_BLOCK_HOURS_JST", "00-02,16"))
@@ -1047,6 +1053,15 @@ def _signal_squeeze_pulse_break(
     ok_spread, _ = spread_ok(max_pips=config.MAX_SPREAD_PIPS, p25_max=SPB_SPREAD_P25)
     if not ok_spread:
         return None
+    if SPB_ALLOWED_REGIMES:
+        regime = str(fac_m1.get("regime") or "").strip()
+        if not regime:
+            try:
+                regime = str(current_regime("M1", event_mode=False) or "").strip()
+            except Exception:
+                regime = ""
+        if regime and regime.lower() not in SPB_ALLOWED_REGIMES:
+            return None
 
     bbw = _bbw(fac_m1)
     atr = _atr_pips(fac_m1)
@@ -1985,6 +2000,15 @@ def _signal_liquidity_sweep(
     *,
     tag: str,
 ) -> Optional[Dict[str, object]]:
+    if LSR_ALLOWED_REGIMES:
+        regime = str(fac_m1.get("regime") or "").strip()
+        if not regime:
+            try:
+                regime = str(current_regime("M1", event_mode=False) or "").strip()
+            except Exception:
+                regime = ""
+        if regime and regime.lower() not in LSR_ALLOWED_REGIMES:
+            return None
     if _adx(fac_m1) > LSR_ADX_MAX or _bbw(fac_m1) > LSR_BBW_MAX:
         return None
     if range_ctx is not None:
