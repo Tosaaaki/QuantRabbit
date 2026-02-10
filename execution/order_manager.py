@@ -889,6 +889,41 @@ _DYNAMIC_SL_POCKETS = {
 }
 _DYNAMIC_SL_RATIO = float(os.getenv("ORDER_DYNAMIC_SL_RATIO", "1.2"))
 _DYNAMIC_SL_MAX_PIPS = float(os.getenv("ORDER_DYNAMIC_SL_MAX_PIPS", "8.0"))
+_ENTRY_QUALITY_GATE_ENABLED = _env_bool("ORDER_ENTRY_QUALITY_GATE_ENABLED", True)
+_ENTRY_QUALITY_POCKETS = _env_csv_set(
+    "ORDER_ENTRY_QUALITY_POCKETS",
+    "micro,macro,scalp,scalp_fast",
+)
+_ENTRY_QUALITY_BASE_MIN_CONF = {
+    "macro": 54.0,
+    "micro": 58.0,
+    "scalp": 62.0,
+    "scalp_fast": 65.0,
+}
+_ENTRY_QUALITY_SPREAD_SL_MAX_RATIO = {
+    "macro": 0.26,
+    "micro": 0.34,
+    "scalp": 0.46,
+    "scalp_fast": 0.52,
+}
+_ENTRY_QUALITY_SPREAD_TP_MAX_RATIO = {
+    "macro": 0.14,
+    "micro": 0.20,
+    "scalp": 0.28,
+    "scalp_fast": 0.34,
+}
+_ENTRY_QUALITY_ATR_BANDS = {
+    "macro": (9.0, 24.0),
+    "micro": (1.2, 4.0),
+    "scalp": (0.9, 3.0),
+    "scalp_fast": (0.8, 2.6),
+}
+_ENTRY_QUALITY_VOL_BANDS = {
+    "macro": (0.85, 1.7),
+    "micro": (0.8, 1.6),
+    "scalp": (0.75, 1.55),
+    "scalp_fast": (0.75, 1.5),
+}
 
 _LAST_PROTECTIONS: dict[str, dict[str, float | None]] = {}
 MACRO_BE_GRACE_SECONDS = 45
@@ -1364,6 +1399,276 @@ def _entry_price_hint(entry_thesis: Optional[dict], meta: Optional[dict]) -> Opt
     if est is not None:
         return est
     return _latest_mid_price()
+
+
+def _pocket_env_float(name: str, pocket: Optional[str], default: float) -> float:
+    pocket_upper = str(pocket).strip().upper() if pocket else ""
+    if pocket_upper:
+        raw = os.getenv(f"{name}_{pocket_upper}")
+        if raw is not None:
+            try:
+                return float(raw)
+            except Exception:
+                pass
+    return _env_float(name, default)
+
+
+def _entry_confidence_score(
+    confidence: Optional[float],
+    entry_thesis: Optional[dict],
+    *,
+    default: float = 50.0,
+) -> float:
+    raw: object = confidence
+    if raw is None and isinstance(entry_thesis, dict):
+        raw = entry_thesis.get("confidence")
+    conf = _as_float(raw, default)
+    if conf is None:
+        conf = default
+    return max(0.0, min(100.0, float(conf)))
+
+
+def _entry_market_snapshot(
+    pocket: Optional[str],
+    entry_thesis: Optional[dict],
+) -> dict[str, float | str | None]:
+    tf, fac = _tp_cap_factors(pocket, entry_thesis)
+    atr_pips = _as_float(fac.get("atr_pips"))
+    if atr_pips is None:
+        atr_raw = _as_float(fac.get("atr"))
+        if atr_raw is not None:
+            atr_pips = atr_raw * 100.0
+    vol_5m = _as_float(fac.get("vol_5m"))
+    adx = _as_float(fac.get("adx"))
+
+    if isinstance(entry_thesis, dict):
+        if atr_pips is None:
+            atr_pips = _as_float(entry_thesis.get("atr_pips"))
+            if atr_pips is None:
+                atr_raw = _as_float(entry_thesis.get("atr"))
+                if atr_raw is not None:
+                    atr_pips = atr_raw * 100.0
+        if vol_5m is None:
+            vol_5m = _as_float(entry_thesis.get("vol_5m"))
+
+    return {
+        "tf": tf,
+        "atr_pips": atr_pips,
+        "vol_5m": vol_5m,
+        "adx": adx,
+    }
+
+
+def _dynamic_entry_sl_target_pips(
+    pocket: Optional[str],
+    *,
+    entry_thesis: Optional[dict],
+    quote: Optional[dict],
+    sl_hint_pips: Optional[float],
+    loss_guard_pips: Optional[float],
+) -> tuple[Optional[float], dict[str, float | str | None]]:
+    pocket_key = str(pocket or "").strip().lower()
+    if not _DYNAMIC_SL_ENABLE or pocket_key not in _DYNAMIC_SL_POCKETS:
+        return None, {"enabled": 0.0}
+
+    base_sl = 0.0
+    for cand in (sl_hint_pips, loss_guard_pips):
+        if cand is not None and cand > base_sl:
+            base_sl = float(cand)
+    if base_sl <= 0.0:
+        return None, {"enabled": 1.0, "reason": "no_sl_hint"}
+
+    snap = _entry_market_snapshot(pocket, entry_thesis)
+    atr_pips = _as_float(snap.get("atr_pips"))
+    vol_5m = _as_float(snap.get("vol_5m"))
+    spread_pips = _as_float((quote or {}).get("spread_pips")) if isinstance(quote, dict) else None
+
+    ratio = max(1.0, _pocket_env_float("ORDER_DYNAMIC_SL_RATIO", pocket, _DYNAMIC_SL_RATIO))
+    target = base_sl * ratio
+
+    atr_mult = max(0.0, _pocket_env_float("ORDER_DYNAMIC_SL_ATR_MULT", pocket, 0.72))
+    if atr_pips is not None and atr_pips > 0.0 and atr_mult > 0.0:
+        target = max(target, atr_pips * atr_mult)
+
+    spread_mult = max(0.0, _pocket_env_float("ORDER_DYNAMIC_SL_SPREAD_MULT", pocket, 2.8))
+    if spread_pips is not None and spread_pips > 0.0 and spread_mult > 0.0:
+        target = max(target, spread_pips * spread_mult)
+
+    vol_low = _pocket_env_float("ORDER_DYNAMIC_SL_VOL5M_LOW", pocket, 0.8)
+    vol_high = max(vol_low + 1e-6, _pocket_env_float("ORDER_DYNAMIC_SL_VOL5M_HIGH", pocket, 1.6))
+    if vol_5m is not None:
+        if vol_5m > vol_high:
+            target *= min(1.35, 1.0 + (vol_5m - vol_high) * 0.14)
+        elif vol_5m < vol_low:
+            target *= max(0.90, 1.0 - (vol_low - vol_5m) * 0.06)
+
+    max_pips = max(0.0, _pocket_env_float("ORDER_DYNAMIC_SL_MAX_PIPS", pocket, _DYNAMIC_SL_MAX_PIPS))
+    if max_pips > 0.0:
+        target = min(target, max_pips)
+    min_pips = max(0.0, _pocket_env_float("ORDER_DYNAMIC_SL_MIN_PIPS", pocket, 0.0))
+    target = max(base_sl, target, min_pips)
+    target = round(float(target), 4)
+
+    return target, {
+        "enabled": 1.0,
+        "base_sl_pips": base_sl,
+        "target_sl_pips": target,
+        "atr_pips": atr_pips,
+        "vol_5m": vol_5m,
+        "spread_pips": spread_pips,
+        "ratio": ratio,
+        "atr_mult": atr_mult,
+        "spread_mult": spread_mult,
+        "tf": str(snap.get("tf") or ""),
+    }
+
+
+def _entry_quality_gate(
+    pocket: Optional[str],
+    *,
+    confidence: Optional[float],
+    entry_thesis: Optional[dict],
+    quote: Optional[dict],
+    sl_pips: Optional[float],
+    tp_pips: Optional[float],
+) -> tuple[bool, Optional[str], dict[str, float | str | None]]:
+    pocket_key = str(pocket or "").strip().lower()
+    if not _ENTRY_QUALITY_GATE_ENABLED or pocket_key not in _ENTRY_QUALITY_POCKETS:
+        return True, None, {"enabled": 0.0}
+
+    conf = _entry_confidence_score(confidence, entry_thesis)
+    base_default = _ENTRY_QUALITY_BASE_MIN_CONF.get(pocket_key, 56.0)
+    required = _pocket_env_float("ORDER_ENTRY_QUALITY_MIN_CONF", pocket, base_default)
+    max_conf = max(required, _pocket_env_float("ORDER_ENTRY_QUALITY_MAX_CONF", pocket, 95.0))
+    bypass_conf = _pocket_env_float("ORDER_ENTRY_QUALITY_BYPASS_CONF", pocket, 92.0)
+
+    snap = _entry_market_snapshot(pocket, entry_thesis)
+    atr_pips = _as_float(snap.get("atr_pips"))
+    vol_5m = _as_float(snap.get("vol_5m"))
+    spread_pips = _as_float((quote or {}).get("spread_pips")) if isinstance(quote, dict) else None
+
+    atr_low_d, atr_high_d = _ENTRY_QUALITY_ATR_BANDS.get(pocket_key, (1.2, 4.0))
+    atr_low = _pocket_env_float("ORDER_ENTRY_QUALITY_ATR_LOW", pocket, atr_low_d)
+    atr_high = max(atr_low + 1e-6, _pocket_env_float("ORDER_ENTRY_QUALITY_ATR_HIGH", pocket, atr_high_d))
+    if atr_pips is not None:
+        if atr_pips >= atr_high:
+            required += _pocket_env_float("ORDER_ENTRY_QUALITY_HIGH_ATR_BONUS", pocket, 4.0)
+        elif atr_pips <= atr_low:
+            required += _pocket_env_float("ORDER_ENTRY_QUALITY_LOW_ATR_BONUS", pocket, 2.0)
+
+    vol_low_d, vol_high_d = _ENTRY_QUALITY_VOL_BANDS.get(pocket_key, (0.8, 1.6))
+    vol_low = _pocket_env_float("ORDER_ENTRY_QUALITY_VOL5M_LOW", pocket, vol_low_d)
+    vol_high = max(vol_low + 1e-6, _pocket_env_float("ORDER_ENTRY_QUALITY_VOL5M_HIGH", pocket, vol_high_d))
+    if vol_5m is not None:
+        if vol_5m >= vol_high:
+            required += _pocket_env_float("ORDER_ENTRY_QUALITY_HIGH_VOL_BONUS", pocket, 3.0)
+        elif vol_5m <= vol_low:
+            required += _pocket_env_float("ORDER_ENTRY_QUALITY_LOW_VOL_BONUS", pocket, 1.0)
+
+    spread_bonus = 0.0
+    if spread_pips is not None and spread_pips > 0.0:
+        spread_ref_default = max(0.25, _ORDER_SPREAD_BLOCK_PIPS * 0.55)
+        spread_ref = max(
+            0.05,
+            _pocket_env_float("ORDER_ENTRY_QUALITY_SPREAD_REF_PIPS", pocket, spread_ref_default),
+        )
+        spread_gain = max(
+            0.0,
+            _pocket_env_float("ORDER_ENTRY_QUALITY_SPREAD_BONUS_GAIN", pocket, 6.0),
+        )
+        spread_max_bonus = max(
+            0.0,
+            _pocket_env_float("ORDER_ENTRY_QUALITY_SPREAD_MAX_BONUS", pocket, 10.0),
+        )
+        spread_pressure = spread_pips / spread_ref
+        if spread_pressure > 1.0:
+            spread_bonus = min(spread_max_bonus, (spread_pressure - 1.0) * spread_gain)
+            required += spread_bonus
+
+    spread_sl_ratio = None
+    spread_tp_ratio = None
+    if spread_pips is not None and spread_pips > 0.0:
+        if sl_pips is not None and sl_pips > 0.0:
+            spread_sl_ratio = spread_pips / sl_pips
+        if tp_pips is not None and tp_pips > 0.0:
+            spread_tp_ratio = spread_pips / tp_pips
+
+    max_spread_sl_ratio = _pocket_env_float(
+        "ORDER_ENTRY_QUALITY_SPREAD_SL_MAX_RATIO",
+        pocket,
+        _ENTRY_QUALITY_SPREAD_SL_MAX_RATIO.get(pocket_key, 0.36),
+    )
+    max_spread_tp_ratio = _pocket_env_float(
+        "ORDER_ENTRY_QUALITY_SPREAD_TP_MAX_RATIO",
+        pocket,
+        _ENTRY_QUALITY_SPREAD_TP_MAX_RATIO.get(pocket_key, 0.24),
+    )
+    if spread_sl_ratio is not None and spread_sl_ratio > max_spread_sl_ratio and conf < bypass_conf:
+        return False, "entry_quality_spread_sl", {
+            "enabled": 1.0,
+            "confidence": conf,
+            "required_conf": required,
+            "spread_pips": spread_pips,
+            "sl_pips": sl_pips,
+            "spread_sl_ratio": spread_sl_ratio,
+            "max_spread_sl_ratio": max_spread_sl_ratio,
+            "bypass_conf": bypass_conf,
+            "atr_pips": atr_pips,
+            "vol_5m": vol_5m,
+            "tf": str(snap.get("tf") or ""),
+        }
+    if spread_tp_ratio is not None and spread_tp_ratio > max_spread_tp_ratio and conf < bypass_conf:
+        return False, "entry_quality_spread_tp", {
+            "enabled": 1.0,
+            "confidence": conf,
+            "required_conf": required,
+            "spread_pips": spread_pips,
+            "tp_pips": tp_pips,
+            "spread_tp_ratio": spread_tp_ratio,
+            "max_spread_tp_ratio": max_spread_tp_ratio,
+            "bypass_conf": bypass_conf,
+            "atr_pips": atr_pips,
+            "vol_5m": vol_5m,
+            "tf": str(snap.get("tf") or ""),
+        }
+
+    required = max(0.0, min(max_conf, required))
+    if conf + 1e-6 < required:
+        return False, "entry_quality_confidence", {
+            "enabled": 1.0,
+            "confidence": conf,
+            "required_conf": required,
+            "spread_pips": spread_pips,
+            "spread_bonus": spread_bonus,
+            "atr_pips": atr_pips,
+            "vol_5m": vol_5m,
+            "sl_pips": sl_pips,
+            "tp_pips": tp_pips,
+            "spread_sl_ratio": spread_sl_ratio,
+            "spread_tp_ratio": spread_tp_ratio,
+            "max_spread_sl_ratio": max_spread_sl_ratio,
+            "max_spread_tp_ratio": max_spread_tp_ratio,
+            "bypass_conf": bypass_conf,
+            "tf": str(snap.get("tf") or ""),
+        }
+
+    return True, None, {
+        "enabled": 1.0,
+        "confidence": conf,
+        "required_conf": required,
+        "spread_pips": spread_pips,
+        "spread_bonus": spread_bonus,
+        "atr_pips": atr_pips,
+        "vol_5m": vol_5m,
+        "sl_pips": sl_pips,
+        "tp_pips": tp_pips,
+        "spread_sl_ratio": spread_sl_ratio,
+        "spread_tp_ratio": spread_tp_ratio,
+        "max_spread_sl_ratio": max_spread_sl_ratio,
+        "max_spread_tp_ratio": max_spread_tp_ratio,
+        "bypass_conf": bypass_conf,
+        "tf": str(snap.get("tf") or ""),
+    }
 
 
 def _strategy_tag_from_thesis(entry_thesis: Optional[dict]) -> Optional[str]:
@@ -5335,11 +5640,7 @@ async def market_order(
             sl_pips_hint = abs(price_hint - sl_price) / 0.01
         if tp_pips_hint is None and price_hint is not None and tp_price is not None:
             tp_pips_hint = abs(price_hint - tp_price) / 0.01
-        try:
-            conf_val = int(confidence if confidence is not None else (entry_thesis or {}).get("confidence", 50))
-        except Exception:
-            conf_val = 50
-        conf_val = max(0, min(100, conf_val))
+        conf_val = int(round(_entry_confidence_score(confidence, entry_thesis)))
         payload = {
             "source": "order_manager",
             "strategy": strategy_tag,
@@ -5386,33 +5687,6 @@ async def market_order(
             return None
         except Exception as exc:
             logging.warning("[ORDER_GATE] enqueue failed, fall back to live order: %s", exc)
-
-    if (
-        _DYNAMIC_SL_ENABLE
-        and (pocket or "").lower() in _DYNAMIC_SL_POCKETS
-        and not reduce_only
-        and entry_price_meta is not None
-        and not sl_disabled
-    ):
-        loss_guard = None
-        sl_hint = None
-        if isinstance(entry_thesis, dict):
-            loss_guard = _as_float(entry_thesis.get("loss_guard_pips"))
-            if loss_guard is None:
-                loss_guard = _as_float(entry_thesis.get("loss_guard"))
-            sl_hint = _as_float(entry_thesis.get("sl_pips"))
-        target_pips = 0.0
-        for cand in (sl_hint, loss_guard):
-            if cand and cand > target_pips:
-                target_pips = cand
-        if target_pips > 0.0:
-            dynamic_pips = min(_DYNAMIC_SL_MAX_PIPS, target_pips * _DYNAMIC_SL_RATIO)
-            target_pips = max(target_pips, dynamic_pips)
-            offset = round(target_pips * 0.01, 3)
-            if units > 0:
-                sl_price = round(entry_price_meta - offset, 3)
-            else:
-                sl_price = round(entry_price_meta + offset, 3)
 
     if not is_market_open():
         _trace("market_closed")
@@ -5491,6 +5765,51 @@ async def market_order(
         estimated_entry = entry_basis
     if entry_basis is None and entry_price_meta is not None:
         entry_basis = entry_price_meta
+
+    # Market-adaptive SL: widen loss buffer when volatility/spread expands.
+    if (
+        _DYNAMIC_SL_ENABLE
+        and (pocket or "").lower() in _DYNAMIC_SL_POCKETS
+        and not reduce_only
+        and not sl_disabled
+    ):
+        loss_guard_pips = None
+        sl_hint_pips = thesis_sl_pips
+        if isinstance(entry_thesis, dict):
+            loss_guard_pips = _as_float(entry_thesis.get("loss_guard_pips"))
+            if loss_guard_pips is None:
+                loss_guard_pips = _as_float(entry_thesis.get("loss_guard"))
+            if sl_hint_pips is None:
+                sl_hint_pips = _as_float(entry_thesis.get("sl_pips"))
+        if sl_hint_pips is None and entry_basis is not None and sl_price is not None:
+            sl_hint_pips = abs(entry_basis - sl_price) / 0.01
+
+        dynamic_sl_pips, dynamic_sl_meta = _dynamic_entry_sl_target_pips(
+            pocket,
+            entry_thesis=entry_thesis if isinstance(entry_thesis, dict) else None,
+            quote=quote,
+            sl_hint_pips=sl_hint_pips,
+            loss_guard_pips=loss_guard_pips,
+        )
+        if dynamic_sl_pips is not None and (
+            thesis_sl_pips is None or dynamic_sl_pips > thesis_sl_pips + 1e-6
+        ):
+            thesis_sl_pips = dynamic_sl_pips
+            ref_price = entry_basis if entry_basis is not None else entry_price_meta
+            if ref_price is not None:
+                sl_price = _sl_price_from_pips(ref_price, units, dynamic_sl_pips)
+            if isinstance(entry_thesis, dict):
+                entry_thesis = dict(entry_thesis)
+                entry_thesis["sl_pips"] = round(dynamic_sl_pips, 3)
+                entry_thesis["dynamic_sl_applied"] = dynamic_sl_meta
+            log_metric(
+                "entry_dynamic_sl_pips",
+                float(dynamic_sl_pips),
+                tags={
+                    "pocket": pocket or "unknown",
+                    "strategy": strategy_tag or "unknown",
+                },
+            )
 
     # Recalculate SL/TP from thesis gaps using live quote to preserve intended RR
     if entry_basis is not None:
@@ -5683,6 +6002,74 @@ async def market_order(
                     sl_pips,
                     max_sl_pips,
                 )
+
+    if not reduce_only:
+        conf_score = _entry_confidence_score(confidence, entry_thesis)
+        sl_pips_live: Optional[float] = None
+        tp_pips_live: Optional[float] = None
+        if entry_basis is not None:
+            if sl_price is not None:
+                sl_pips_live = abs(entry_basis - sl_price) / 0.01
+            elif thesis_sl_pips is not None:
+                sl_pips_live = float(thesis_sl_pips)
+            if tp_price is not None:
+                tp_pips_live = abs(tp_price - entry_basis) / 0.01
+            elif thesis_tp_pips is not None:
+                tp_pips_live = float(thesis_tp_pips)
+        if sl_pips_live is None and thesis_sl_pips is not None:
+            sl_pips_live = float(thesis_sl_pips)
+        if tp_pips_live is None and thesis_tp_pips is not None:
+            tp_pips_live = float(thesis_tp_pips)
+
+        quality_ok, quality_reason, quality_meta = _entry_quality_gate(
+            pocket,
+            confidence=conf_score,
+            entry_thesis=entry_thesis if isinstance(entry_thesis, dict) else None,
+            quote=quote,
+            sl_pips=sl_pips_live,
+            tp_pips=tp_pips_live,
+        )
+        if not quality_ok:
+            reason = quality_reason or "entry_quality_block"
+            _console_order_log(
+                "OPEN_SKIP",
+                pocket=pocket,
+                strategy_tag=strategy_tag,
+                side=side_label,
+                units=units,
+                sl_price=sl_price,
+                tp_price=tp_price,
+                client_order_id=client_order_id,
+                note=reason,
+            )
+            log_order(
+                pocket=pocket,
+                instrument=instrument,
+                side=side_label,
+                units=units,
+                sl_price=sl_price,
+                tp_price=tp_price,
+                client_order_id=client_order_id,
+                status=reason,
+                attempt=0,
+                request_payload={
+                    "reason": reason,
+                    "quality": quality_meta,
+                    "confidence": conf_score,
+                    "entry_thesis": entry_thesis,
+                    "meta": meta,
+                },
+            )
+            log_metric(
+                "entry_quality_block",
+                1.0,
+                tags={
+                    "pocket": pocket or "unknown",
+                    "strategy": strategy_tag or "unknown",
+                    "reason": reason,
+                },
+            )
+            return None
 
     # Margin preflight (new entriesのみ)
     preflight_units = units

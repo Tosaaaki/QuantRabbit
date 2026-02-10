@@ -7,7 +7,10 @@ PROJECT_ROOT = pathlib.Path(__file__).resolve().parents[2]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
+import execution.order_manager as order_manager
 from execution.order_manager import (
+    _dynamic_entry_sl_target_pips,
+    _entry_quality_gate,
     _preflight_units,
     _projected_usage_with_netting,
 )
@@ -71,3 +74,69 @@ def test_projected_usage_with_netting_allows_reduction(monkeypatch):
     # margin_used after hedge ≈ 30k * 156.8 * 0.04
     expected_usage = (30_000 * 156.8 * margin_rate) / nav
     assert abs(usage - expected_usage) < 1e-6
+
+
+def test_dynamic_entry_sl_target_pips_reflects_market_volatility(monkeypatch) -> None:
+    monkeypatch.setattr(
+        order_manager,
+        "_tp_cap_factors",
+        lambda pocket, entry_thesis: (
+            "M5",
+            {"atr_pips": 3.4, "vol_5m": 1.9, "adx": 29.0},
+        ),
+    )
+    target, meta = _dynamic_entry_sl_target_pips(
+        "micro",
+        entry_thesis={"strategy_tag": "MicroRangeBreak"},
+        quote={"spread_pips": 1.1},
+        sl_hint_pips=1.6,
+        loss_guard_pips=None,
+    )
+    assert target is not None
+    assert target > 2.8
+    assert target >= 1.6
+    assert meta.get("spread_pips") == 1.1
+
+
+def test_entry_quality_gate_blocks_low_confidence_on_wide_spread(monkeypatch) -> None:
+    monkeypatch.setattr(
+        order_manager,
+        "_tp_cap_factors",
+        lambda pocket, entry_thesis: (
+            "M5",
+            {"atr_pips": 3.1, "vol_5m": 1.75},
+        ),
+    )
+    allowed, reason, details = _entry_quality_gate(
+        "micro",
+        confidence=56.0,
+        entry_thesis={"strategy_tag": "MicroRangeBreak"},
+        quote={"spread_pips": 1.0},
+        sl_pips=2.0,
+        tp_pips=4.0,
+    )
+    assert allowed is False
+    assert reason == "entry_quality_spread_sl"
+    assert details.get("spread_sl_ratio") is not None
+
+
+def test_entry_quality_gate_allows_high_confidence_bypass(monkeypatch) -> None:
+    monkeypatch.setattr(
+        order_manager,
+        "_tp_cap_factors",
+        lambda pocket, entry_thesis: (
+            "M1",
+            {"atr_pips": 2.8, "vol_5m": 1.6},
+        ),
+    )
+    allowed, reason, details = _entry_quality_gate(
+        "micro",
+        confidence=95.0,
+        entry_thesis={"strategy_tag": "MicroRangeBreak"},
+        quote={"spread_pips": 1.0},
+        sl_pips=2.0,
+        tp_pips=4.0,
+    )
+    assert allowed is True
+    assert reason is None
+    assert details.get("confidence") == 95.0
