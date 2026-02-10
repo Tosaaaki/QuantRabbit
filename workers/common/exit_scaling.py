@@ -9,6 +9,7 @@ from typing import Any, Optional, Tuple
 
 from indicators.factor_cache import all_factors
 from utils.metrics_logger import log_metric
+from utils.env_utils import env_get, env_float, env_bool
 
 
 @dataclass
@@ -116,31 +117,32 @@ def _safe_float(value: object) -> Optional[float]:
         return None
 
 
-def _env_float(name: str, pocket: Optional[str], default: float) -> float:
+def _env_bool_truey(name: str, default: bool, *, env_prefix: Optional[str] = None) -> bool:
+    raw = env_get(name, None, prefix=env_prefix)
+    if raw is None:
+        return bool(default)
+    return str(raw).strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _env_float(name: str, pocket: Optional[str], default: float, *, env_prefix: Optional[str] = None) -> float:
     if pocket:
         key = f"{name}_{str(pocket).upper()}"
-        raw = os.getenv(key)
+        raw = env_get(key, None, prefix=env_prefix)
         if raw is not None:
             try:
                 return float(raw)
             except ValueError:
                 return default
-    raw = os.getenv(name)
-    if raw is None:
-        return default
-    try:
-        return float(raw)
-    except ValueError:
-        return default
+    return env_float(name, default, prefix=env_prefix)
 
 
-def _env_str(name: str, pocket: Optional[str], default: str) -> str:
+def _env_str(name: str, pocket: Optional[str], default: str, *, env_prefix: Optional[str] = None) -> str:
     if pocket:
         key = f"{name}_{str(pocket).upper()}"
-        raw = os.getenv(key)
+        raw = env_get(key, None, prefix=env_prefix)
         if raw is not None and str(raw).strip():
             return str(raw).strip()
-    raw = os.getenv(name)
+    raw = env_get(name, None, prefix=env_prefix)
     if raw is None:
         return default
     raw = str(raw).strip()
@@ -185,13 +187,22 @@ def momentum_scale(
     strategy_tag: Optional[str] = None,
     entry_thesis: Optional[dict] = None,
     range_active: Optional[bool] = None,
+    env_prefix: Optional[str] = None,
 ) -> tuple[float, dict]:
-    if not _MOMENTUM_ENABLED:
+    enabled = env_bool("EXIT_MOMENTUM_SCALE_ENABLED", _MOMENTUM_ENABLED, prefix=env_prefix)
+    if not enabled:
         return 1.0, {"enabled": False}
+
+    log_enabled = _env_bool_truey("EXIT_MOMENTUM_SCALE_LOG", _MOMENTUM_LOG_ENABLED, env_prefix=env_prefix)
+    invert_reversal = env_bool(
+        "EXIT_MOMENTUM_INVERT_REVERSAL",
+        _MOMENTUM_INVERT_REVERSAL,
+        prefix=env_prefix,
+    )
 
     pocket_key = str(pocket or "").lower()
     tf_default = _MOMENTUM_DEFAULT_TF.get(pocket_key, "M1")
-    tf = _env_str("EXIT_MOMENTUM_TF", pocket_key, tf_default).upper()
+    tf = _env_str("EXIT_MOMENTUM_TF", pocket_key, tf_default, env_prefix=env_prefix).upper()
     if tf not in _MOMENTUM_VALID_TF:
         tf = tf_default
 
@@ -208,15 +219,15 @@ def momentum_scale(
         if atr_val is not None:
             atr_pips = atr_val * 100.0
 
-    adx_low = _env_float("EXIT_MOMENTUM_ADX_LOW", pocket_key, 18.0)
-    adx_high = _env_float("EXIT_MOMENTUM_ADX_HIGH", pocket_key, 35.0)
-    atr_low = _env_float("EXIT_MOMENTUM_ATR_LOW", pocket_key, 6.0)
-    atr_high = _env_float("EXIT_MOMENTUM_ATR_HIGH", pocket_key, 14.0)
+    adx_low = _env_float("EXIT_MOMENTUM_ADX_LOW", pocket_key, 18.0, env_prefix=env_prefix)
+    adx_high = _env_float("EXIT_MOMENTUM_ADX_HIGH", pocket_key, 35.0, env_prefix=env_prefix)
+    atr_low = _env_float("EXIT_MOMENTUM_ATR_LOW", pocket_key, 6.0, env_prefix=env_prefix)
+    atr_high = _env_float("EXIT_MOMENTUM_ATR_HIGH", pocket_key, 14.0, env_prefix=env_prefix)
     trend_score = _normalize_score(adx, adx_low, adx_high)
     vol_score = _normalize_score(atr_pips, atr_low, atr_high)
 
-    weight_trend = _env_float("EXIT_MOMENTUM_WEIGHT_TREND", pocket_key, 0.6)
-    weight_vol = _env_float("EXIT_MOMENTUM_WEIGHT_VOL", pocket_key, 0.4)
+    weight_trend = _env_float("EXIT_MOMENTUM_WEIGHT_TREND", pocket_key, 0.6, env_prefix=env_prefix)
+    weight_vol = _env_float("EXIT_MOMENTUM_WEIGHT_VOL", pocket_key, 0.4, env_prefix=env_prefix)
     weight_sum = 0.0
     score_sum = 0.0
     if trend_score is not None:
@@ -231,17 +242,17 @@ def momentum_scale(
 
     score = max(0.0, min(1.0, score_sum / weight_sum))
     mode = _resolve_strategy_mode(strategy_tag, entry_thesis)
-    if mode == "reversal" and _MOMENTUM_INVERT_REVERSAL:
+    if mode == "reversal" and invert_reversal:
         score = 1.0 - score
 
-    min_mult = _env_float("EXIT_MOMENTUM_MULT_MIN", pocket_key, 1.0)
-    max_mult = _env_float("EXIT_MOMENTUM_MULT_MAX", pocket_key, 1.6)
+    min_mult = _env_float("EXIT_MOMENTUM_MULT_MIN", pocket_key, 1.0, env_prefix=env_prefix)
+    max_mult = _env_float("EXIT_MOMENTUM_MULT_MAX", pocket_key, 1.6, env_prefix=env_prefix)
     if max_mult < min_mult:
         max_mult = min_mult
     scale = min_mult + (max_mult - min_mult) * score
 
     if range_active:
-        range_mult = _env_float("EXIT_MOMENTUM_RANGE_MULT", pocket_key, 1.0)
+        range_mult = _env_float("EXIT_MOMENTUM_RANGE_MULT", pocket_key, 1.0, env_prefix=env_prefix)
         scale = min(scale, range_mult)
 
     meta = {
@@ -254,7 +265,7 @@ def momentum_scale(
         "atr_pips": round(atr_pips, 2) if atr_pips is not None else None,
     }
 
-    if _MOMENTUM_LOG_ENABLED:
+    if log_enabled:
         global _LAST_MOMENTUM_LOG_TS
         now = time.monotonic()
         if now - _LAST_MOMENTUM_LOG_TS >= 30.0:

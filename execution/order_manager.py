@@ -206,14 +206,20 @@ def _load_strategy_protection_config() -> dict:
         _STRATEGY_PROTECTION_CACHE.get("data"), dict
     ):
         return _STRATEGY_PROTECTION_CACHE["data"]  # type: ignore[return-value]
+    # Keep last-known-good config on transient read/parse errors (deploy writes, partial files, etc).
     payload: dict[str, Any] = {"defaults": {}, "strategies": {}}
+    if isinstance(_STRATEGY_PROTECTION_CACHE.get("data"), dict):
+        payload = _STRATEGY_PROTECTION_CACHE.get("data")  # type: ignore[assignment]
     if yaml is not None and _STRATEGY_PROTECTION_PATH.exists():
         try:
             loaded = yaml.safe_load(_STRATEGY_PROTECTION_PATH.read_text(encoding="utf-8")) or {}
             if isinstance(loaded, dict):
                 payload = loaded
-        except Exception:
-            payload = {"defaults": {}, "strategies": {}}
+        except Exception as exc:  # noqa: BLE001
+            logging.warning(
+                "[ORDER] Strategy protection config load failed (using cached): %s",
+                exc,
+            )
     _STRATEGY_PROTECTION_CACHE["ts"] = now
     _STRATEGY_PROTECTION_CACHE["data"] = payload
     return payload
@@ -455,18 +461,6 @@ def _factor_age_seconds(tf: str = "M1") -> float | None:
         fac = (all_factors().get(tf.upper()) or {})
     except Exception:
         return None
-
-
-def _range_active_for_entry() -> bool:
-    try:
-        factors = all_factors()
-        fac_m1 = factors.get("M1") or {}
-        fac_h4 = factors.get("H4") or {}
-        if not fac_m1 or not fac_h4:
-            return False
-        return bool(detect_range_mode(fac_m1, fac_h4).active)
-    except Exception:
-        return False
     ts_raw = fac.get("timestamp")
     if not ts_raw:
         return None
@@ -484,6 +478,18 @@ def _range_active_for_entry() -> bool:
         return max(0.0, (now - ts_dt).total_seconds())
     except Exception:
         return None
+
+
+def _range_active_for_entry() -> bool:
+    try:
+        factors = all_factors()
+        fac_m1 = factors.get("M1") or {}
+        fac_h4 = factors.get("H4") or {}
+        if not fac_m1 or not fac_h4:
+            return False
+        return bool(detect_range_mode(fac_m1, fac_h4).active)
+    except Exception:
+        return False
 # エントリーが詰まらないようデフォルトの最小ユニットを下げる。
 _DEFAULT_MIN_UNITS = _env_int("ORDER_MIN_UNITS_DEFAULT", 1_000)
 # Macro も環境変数で可変（デフォルト 2,000 units、最低でも DEFAULT_MIN を確保）
@@ -888,6 +894,57 @@ _DYNAMIC_SL_POCKETS = {
 }
 _DYNAMIC_SL_RATIO = float(os.getenv("ORDER_DYNAMIC_SL_RATIO", "1.2"))
 _DYNAMIC_SL_MAX_PIPS = float(os.getenv("ORDER_DYNAMIC_SL_MAX_PIPS", "8.0"))
+_ENTRY_QUALITY_GATE_ENABLED = _env_bool("ORDER_ENTRY_QUALITY_GATE_ENABLED", True)
+_ENTRY_QUALITY_POCKETS = _env_csv_set(
+    "ORDER_ENTRY_QUALITY_POCKETS",
+    "micro,macro,scalp,scalp_fast",
+)
+_ENTRY_QUALITY_BASE_MIN_CONF = {
+    "macro": 54.0,
+    "micro": 58.0,
+    "scalp": 62.0,
+    "scalp_fast": 65.0,
+}
+_ENTRY_QUALITY_SPREAD_SL_MAX_RATIO = {
+    "macro": 0.26,
+    "micro": 0.34,
+    "scalp": 0.46,
+    "scalp_fast": 0.52,
+}
+_ENTRY_QUALITY_SPREAD_TP_MAX_RATIO = {
+    "macro": 0.14,
+    "micro": 0.20,
+    "scalp": 0.28,
+    "scalp_fast": 0.34,
+}
+_ENTRY_QUALITY_ATR_BANDS = {
+    "macro": (9.0, 24.0),
+    "micro": (1.2, 4.0),
+    "scalp": (0.9, 3.0),
+    "scalp_fast": (0.8, 2.6),
+}
+_ENTRY_QUALITY_VOL_BANDS = {
+    "macro": (0.85, 1.7),
+    "micro": (0.8, 1.6),
+    "scalp": (0.75, 1.55),
+    "scalp_fast": (0.75, 1.5),
+}
+_ENTRY_QUALITY_STRAT_ENABLED = _env_bool("ORDER_ENTRY_QUALITY_STRAT_ENABLED", True)
+_ENTRY_QUALITY_STRAT_LOOKBACK_DAYS = max(
+    1, _env_int("ORDER_ENTRY_QUALITY_STRAT_LOOKBACK_DAYS", 5)
+)
+_ENTRY_QUALITY_STRAT_MIN_TRADES = max(
+    5, _env_int("ORDER_ENTRY_QUALITY_STRAT_MIN_TRADES", 12)
+)
+_ENTRY_QUALITY_STRAT_TTL_SEC = max(
+    15.0, _env_float("ORDER_ENTRY_QUALITY_STRAT_TTL_SEC", 120.0)
+)
+_ENTRY_QUALITY_STRAT_DB_PATH = pathlib.Path(
+    os.getenv("TRADES_DB_PATH", "logs/trades.db")
+)
+_ENTRY_QUALITY_STRAT_CACHE: dict[
+    tuple[str, str], tuple[float, dict[str, float]]
+] = {}
 
 _LAST_PROTECTIONS: dict[str, dict[str, float | None]] = {}
 MACRO_BE_GRACE_SECONDS = 45
@@ -1363,6 +1420,486 @@ def _entry_price_hint(entry_thesis: Optional[dict], meta: Optional[dict]) -> Opt
     if est is not None:
         return est
     return _latest_mid_price()
+
+
+def _pocket_env_float(name: str, pocket: Optional[str], default: float) -> float:
+    pocket_upper = str(pocket).strip().upper() if pocket else ""
+    if pocket_upper:
+        raw = os.getenv(f"{name}_{pocket_upper}")
+        if raw is not None:
+            try:
+                return float(raw)
+            except Exception:
+                pass
+    return _env_float(name, default)
+
+
+def _entry_confidence_score(
+    confidence: Optional[float],
+    entry_thesis: Optional[dict],
+    *,
+    default: float = 50.0,
+) -> float:
+    raw: object = confidence
+    if raw is None and isinstance(entry_thesis, dict):
+        raw = entry_thesis.get("confidence")
+    conf = _as_float(raw, default)
+    if conf is None:
+        conf = default
+    return max(0.0, min(100.0, float(conf)))
+
+
+def _entry_market_snapshot(
+    pocket: Optional[str],
+    entry_thesis: Optional[dict],
+) -> dict[str, float | str | None]:
+    tf, fac = _tp_cap_factors(pocket, entry_thesis)
+    atr_pips = _as_float(fac.get("atr_pips"))
+    if atr_pips is None:
+        atr_raw = _as_float(fac.get("atr"))
+        if atr_raw is not None:
+            atr_pips = atr_raw * 100.0
+    vol_5m = _as_float(fac.get("vol_5m"))
+    adx = _as_float(fac.get("adx"))
+
+    if isinstance(entry_thesis, dict):
+        if atr_pips is None:
+            atr_pips = _as_float(entry_thesis.get("atr_pips"))
+            if atr_pips is None:
+                atr_raw = _as_float(entry_thesis.get("atr"))
+                if atr_raw is not None:
+                    atr_pips = atr_raw * 100.0
+        if vol_5m is None:
+            vol_5m = _as_float(entry_thesis.get("vol_5m"))
+
+    return {
+        "tf": tf,
+        "atr_pips": atr_pips,
+        "vol_5m": vol_5m,
+        "adx": adx,
+    }
+
+
+def _entry_quality_tag_variants(strategy_tag: Optional[str]) -> tuple[str, ...]:
+    raw = str(strategy_tag or "").strip()
+    if not raw:
+        return tuple()
+    base = _base_strategy_tag(raw)
+    root = raw.split("-", 1)[0].strip()
+    variants = {raw.lower()}
+    if base:
+        variants.add(str(base).strip().lower())
+    if root:
+        variants.add(root.lower())
+    return tuple(sorted(v for v in variants if v))
+
+
+def _entry_strategy_quality_snapshot(
+    strategy_tag: Optional[str],
+    pocket: Optional[str],
+) -> Optional[dict[str, float]]:
+    if not _ENTRY_QUALITY_STRAT_ENABLED:
+        return None
+    pocket_key = str(pocket or "").strip().lower()
+    if not pocket_key:
+        return None
+    variants = _entry_quality_tag_variants(strategy_tag)
+    if not variants:
+        return None
+    db_path = _ENTRY_QUALITY_STRAT_DB_PATH
+    if not db_path.exists():
+        return None
+
+    cache_key = (pocket_key, str(strategy_tag or "").strip().lower())
+    now_mono = time.monotonic()
+    cached = _ENTRY_QUALITY_STRAT_CACHE.get(cache_key)
+    if cached and now_mono - cached[0] <= _ENTRY_QUALITY_STRAT_TTL_SEC:
+        return dict(cached[1])
+
+    placeholders = ",".join("?" for _ in variants)
+    params: list[Any] = list(variants)
+    params.extend([pocket_key, f"-{_ENTRY_QUALITY_STRAT_LOOKBACK_DAYS} day"])
+
+    row = None
+    con: Optional[sqlite3.Connection] = None
+    try:
+        con = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True, timeout=1.0)
+        con.row_factory = sqlite3.Row
+        row = con.execute(
+            f"""
+            SELECT
+              COUNT(*) AS n,
+              SUM(CASE WHEN pl_pips > 0 THEN pl_pips ELSE 0 END) AS profit,
+              SUM(CASE WHEN pl_pips < 0 THEN ABS(pl_pips) ELSE 0 END) AS loss,
+              SUM(CASE WHEN pl_pips > 0 THEN 1 ELSE 0 END) AS win_n,
+              SUM(CASE WHEN pl_pips < 0 THEN 1 ELSE 0 END) AS loss_n,
+              SUM(pl_pips) AS sum_pips
+            FROM trades
+            WHERE LOWER(COALESCE(NULLIF(strategy_tag, ''), strategy)) IN ({placeholders})
+              AND pocket = ?
+              AND close_time >= datetime('now', ?)
+            """,
+            params,
+        ).fetchone()
+    except Exception:
+        row = None
+    finally:
+        if con is not None:
+            try:
+                con.close()
+            except Exception:
+                pass
+
+    if not row:
+        return None
+
+    sample = int(row["n"] or 0)
+    profit = float(row["profit"] or 0.0)
+    loss = float(row["loss"] or 0.0)
+    win_n = int(row["win_n"] or 0)
+    loss_n = int(row["loss_n"] or 0)
+    sum_pips = float(row["sum_pips"] or 0.0)
+
+    pf = profit / loss if loss > 0.0 else float("inf")
+    win_rate = (float(win_n) / float(sample)) if sample > 0 else 0.0
+    avg_pips = (sum_pips / float(sample)) if sample > 0 else 0.0
+    avg_win = (profit / float(win_n)) if win_n > 0 else 0.0
+    avg_loss = (loss / float(loss_n)) if loss_n > 0 else 0.0
+    payoff = (avg_win / avg_loss) if avg_loss > 0 else float("inf")
+
+    stats = {
+        "sample": float(sample),
+        "pf": float(pf),
+        "win_rate": float(win_rate),
+        "avg_pips": float(avg_pips),
+        "avg_win_pips": float(avg_win),
+        "avg_loss_pips": float(avg_loss),
+        "payoff": float(payoff),
+    }
+    _ENTRY_QUALITY_STRAT_CACHE[cache_key] = (now_mono, dict(stats))
+    return stats
+
+
+def _dynamic_entry_sl_target_pips(
+    pocket: Optional[str],
+    *,
+    entry_thesis: Optional[dict],
+    quote: Optional[dict],
+    sl_hint_pips: Optional[float],
+    loss_guard_pips: Optional[float],
+) -> tuple[Optional[float], dict[str, float | str | None]]:
+    pocket_key = str(pocket or "").strip().lower()
+    if not _DYNAMIC_SL_ENABLE or pocket_key not in _DYNAMIC_SL_POCKETS:
+        return None, {"enabled": 0.0}
+
+    base_sl = 0.0
+    for cand in (sl_hint_pips, loss_guard_pips):
+        if cand is not None and cand > base_sl:
+            base_sl = float(cand)
+    if base_sl <= 0.0:
+        return None, {"enabled": 1.0, "reason": "no_sl_hint"}
+
+    snap = _entry_market_snapshot(pocket, entry_thesis)
+    atr_pips = _as_float(snap.get("atr_pips"))
+    vol_5m = _as_float(snap.get("vol_5m"))
+    spread_pips = _as_float((quote or {}).get("spread_pips")) if isinstance(quote, dict) else None
+
+    ratio = max(1.0, _pocket_env_float("ORDER_DYNAMIC_SL_RATIO", pocket, _DYNAMIC_SL_RATIO))
+    target = base_sl * ratio
+
+    atr_mult = max(0.0, _pocket_env_float("ORDER_DYNAMIC_SL_ATR_MULT", pocket, 0.72))
+    if atr_pips is not None and atr_pips > 0.0 and atr_mult > 0.0:
+        target = max(target, atr_pips * atr_mult)
+
+    spread_mult = max(0.0, _pocket_env_float("ORDER_DYNAMIC_SL_SPREAD_MULT", pocket, 2.8))
+    if spread_pips is not None and spread_pips > 0.0 and spread_mult > 0.0:
+        target = max(target, spread_pips * spread_mult)
+
+    vol_low = _pocket_env_float("ORDER_DYNAMIC_SL_VOL5M_LOW", pocket, 0.8)
+    vol_high = max(vol_low + 1e-6, _pocket_env_float("ORDER_DYNAMIC_SL_VOL5M_HIGH", pocket, 1.6))
+    if vol_5m is not None:
+        if vol_5m > vol_high:
+            target *= min(1.35, 1.0 + (vol_5m - vol_high) * 0.14)
+        elif vol_5m < vol_low:
+            target *= max(0.90, 1.0 - (vol_low - vol_5m) * 0.06)
+
+    max_pips = max(0.0, _pocket_env_float("ORDER_DYNAMIC_SL_MAX_PIPS", pocket, _DYNAMIC_SL_MAX_PIPS))
+    if max_pips > 0.0:
+        target = min(target, max_pips)
+    min_pips = max(0.0, _pocket_env_float("ORDER_DYNAMIC_SL_MIN_PIPS", pocket, 0.0))
+    target = max(base_sl, target, min_pips)
+    target = round(float(target), 4)
+
+    return target, {
+        "enabled": 1.0,
+        "base_sl_pips": base_sl,
+        "target_sl_pips": target,
+        "atr_pips": atr_pips,
+        "vol_5m": vol_5m,
+        "spread_pips": spread_pips,
+        "ratio": ratio,
+        "atr_mult": atr_mult,
+        "spread_mult": spread_mult,
+        "tf": str(snap.get("tf") or ""),
+    }
+
+
+def _entry_quality_gate(
+    pocket: Optional[str],
+    *,
+    confidence: Optional[float],
+    strategy_tag: Optional[str],
+    entry_thesis: Optional[dict],
+    quote: Optional[dict],
+    sl_pips: Optional[float],
+    tp_pips: Optional[float],
+) -> tuple[bool, Optional[str], dict[str, float | str | None]]:
+    pocket_key = str(pocket or "").strip().lower()
+    if not _ENTRY_QUALITY_GATE_ENABLED or pocket_key not in _ENTRY_QUALITY_POCKETS:
+        return True, None, {"enabled": 0.0}
+
+    conf = _entry_confidence_score(confidence, entry_thesis)
+    base_default = _ENTRY_QUALITY_BASE_MIN_CONF.get(pocket_key, 56.0)
+    required = _pocket_env_float("ORDER_ENTRY_QUALITY_MIN_CONF", pocket, base_default)
+    max_conf = max(required, _pocket_env_float("ORDER_ENTRY_QUALITY_MAX_CONF", pocket, 95.0))
+    bypass_conf = _pocket_env_float("ORDER_ENTRY_QUALITY_BYPASS_CONF", pocket, 92.0)
+
+    snap = _entry_market_snapshot(pocket, entry_thesis)
+    atr_pips = _as_float(snap.get("atr_pips"))
+    vol_5m = _as_float(snap.get("vol_5m"))
+    spread_pips = _as_float((quote or {}).get("spread_pips")) if isinstance(quote, dict) else None
+
+    atr_low_d, atr_high_d = _ENTRY_QUALITY_ATR_BANDS.get(pocket_key, (1.2, 4.0))
+    atr_low = _pocket_env_float("ORDER_ENTRY_QUALITY_ATR_LOW", pocket, atr_low_d)
+    atr_high = max(atr_low + 1e-6, _pocket_env_float("ORDER_ENTRY_QUALITY_ATR_HIGH", pocket, atr_high_d))
+    if atr_pips is not None:
+        if atr_pips >= atr_high:
+            required += _pocket_env_float("ORDER_ENTRY_QUALITY_HIGH_ATR_BONUS", pocket, 4.0)
+        elif atr_pips <= atr_low:
+            required += _pocket_env_float("ORDER_ENTRY_QUALITY_LOW_ATR_BONUS", pocket, 2.0)
+
+    vol_low_d, vol_high_d = _ENTRY_QUALITY_VOL_BANDS.get(pocket_key, (0.8, 1.6))
+    vol_low = _pocket_env_float("ORDER_ENTRY_QUALITY_VOL5M_LOW", pocket, vol_low_d)
+    vol_high = max(vol_low + 1e-6, _pocket_env_float("ORDER_ENTRY_QUALITY_VOL5M_HIGH", pocket, vol_high_d))
+    if vol_5m is not None:
+        if vol_5m >= vol_high:
+            required += _pocket_env_float("ORDER_ENTRY_QUALITY_HIGH_VOL_BONUS", pocket, 3.0)
+        elif vol_5m <= vol_low:
+            required += _pocket_env_float("ORDER_ENTRY_QUALITY_LOW_VOL_BONUS", pocket, 1.0)
+
+    strategy_sample = None
+    strategy_pf = None
+    strategy_win_rate = None
+    strategy_avg_pips = None
+    strategy_payoff = None
+    strategy_penalty = 0.0
+    if _ENTRY_QUALITY_STRAT_ENABLED and strategy_tag:
+        stats = _entry_strategy_quality_snapshot(strategy_tag, pocket)
+        if stats:
+            strategy_sample = int(stats.get("sample", 0.0) or 0.0)
+            strategy_pf = _as_float(stats.get("pf"))
+            strategy_win_rate = _as_float(stats.get("win_rate"))
+            strategy_avg_pips = _as_float(stats.get("avg_pips"))
+            strategy_payoff = _as_float(stats.get("payoff"))
+
+            strat_min_trades = int(
+                max(
+                    5.0,
+                    _pocket_env_float(
+                        "ORDER_ENTRY_QUALITY_STRAT_MIN_TRADES",
+                        pocket,
+                        float(_ENTRY_QUALITY_STRAT_MIN_TRADES),
+                    ),
+                )
+            )
+            if strategy_sample >= strat_min_trades:
+                pf_floor = max(
+                    0.0,
+                    _pocket_env_float("ORDER_ENTRY_QUALITY_STRAT_PF_MIN", pocket, 0.90),
+                )
+                payoff_floor = max(
+                    0.0,
+                    _pocket_env_float("ORDER_ENTRY_QUALITY_STRAT_PAYOFF_MIN", pocket, 0.30),
+                )
+                avg_pips_floor = _pocket_env_float(
+                    "ORDER_ENTRY_QUALITY_STRAT_AVG_PIPS_MIN",
+                    pocket,
+                    0.0,
+                )
+                bonus_gain = max(
+                    0.0,
+                    _pocket_env_float("ORDER_ENTRY_QUALITY_STRAT_BONUS_GAIN", pocket, 7.0),
+                )
+                bonus_max = max(
+                    0.0,
+                    _pocket_env_float("ORDER_ENTRY_QUALITY_STRAT_BONUS_MAX", pocket, 10.0),
+                )
+
+                pf_gap = 0.0
+                if (
+                    pf_floor > 0.0
+                    and strategy_pf is not None
+                    and math.isfinite(strategy_pf)
+                    and strategy_pf < pf_floor
+                ):
+                    pf_gap = (pf_floor - strategy_pf) / pf_floor
+
+                payoff_gap = 0.0
+                if (
+                    payoff_floor > 0.0
+                    and strategy_payoff is not None
+                    and math.isfinite(strategy_payoff)
+                    and strategy_payoff < payoff_floor
+                ):
+                    payoff_gap = (payoff_floor - strategy_payoff) / payoff_floor
+
+                avg_gap = 0.0
+                if (
+                    strategy_avg_pips is not None
+                    and math.isfinite(strategy_avg_pips)
+                    and strategy_avg_pips < avg_pips_floor
+                ):
+                    denom = max(0.6, abs(avg_pips_floor) + 0.6)
+                    avg_gap = (avg_pips_floor - strategy_avg_pips) / denom
+
+                severity = max(0.0, pf_gap, payoff_gap, avg_gap)
+                if severity > 0.0 and bonus_gain > 0.0 and bonus_max > 0.0:
+                    strategy_penalty = min(bonus_max, severity * bonus_gain)
+                    required += strategy_penalty
+
+    spread_bonus = 0.0
+    if spread_pips is not None and spread_pips > 0.0:
+        spread_ref_default = max(0.25, _ORDER_SPREAD_BLOCK_PIPS * 0.55)
+        spread_ref = max(
+            0.05,
+            _pocket_env_float("ORDER_ENTRY_QUALITY_SPREAD_REF_PIPS", pocket, spread_ref_default),
+        )
+        spread_gain = max(
+            0.0,
+            _pocket_env_float("ORDER_ENTRY_QUALITY_SPREAD_BONUS_GAIN", pocket, 6.0),
+        )
+        spread_max_bonus = max(
+            0.0,
+            _pocket_env_float("ORDER_ENTRY_QUALITY_SPREAD_MAX_BONUS", pocket, 10.0),
+        )
+        spread_pressure = spread_pips / spread_ref
+        if spread_pressure > 1.0:
+            spread_bonus = min(spread_max_bonus, (spread_pressure - 1.0) * spread_gain)
+            required += spread_bonus
+
+    spread_sl_ratio = None
+    spread_tp_ratio = None
+    if spread_pips is not None and spread_pips > 0.0:
+        if sl_pips is not None and sl_pips > 0.0:
+            spread_sl_ratio = spread_pips / sl_pips
+        if tp_pips is not None and tp_pips > 0.0:
+            spread_tp_ratio = spread_pips / tp_pips
+
+    max_spread_sl_ratio = _pocket_env_float(
+        "ORDER_ENTRY_QUALITY_SPREAD_SL_MAX_RATIO",
+        pocket,
+        _ENTRY_QUALITY_SPREAD_SL_MAX_RATIO.get(pocket_key, 0.36),
+    )
+    max_spread_tp_ratio = _pocket_env_float(
+        "ORDER_ENTRY_QUALITY_SPREAD_TP_MAX_RATIO",
+        pocket,
+        _ENTRY_QUALITY_SPREAD_TP_MAX_RATIO.get(pocket_key, 0.24),
+    )
+    if spread_sl_ratio is not None and spread_sl_ratio > max_spread_sl_ratio and conf < bypass_conf:
+        return False, "entry_quality_spread_sl", {
+            "enabled": 1.0,
+            "confidence": conf,
+            "required_conf": required,
+            "spread_pips": spread_pips,
+            "sl_pips": sl_pips,
+            "spread_sl_ratio": spread_sl_ratio,
+            "max_spread_sl_ratio": max_spread_sl_ratio,
+            "bypass_conf": bypass_conf,
+            "atr_pips": atr_pips,
+            "vol_5m": vol_5m,
+            "strategy_tag": str(strategy_tag or ""),
+            "strategy_sample": strategy_sample,
+            "strategy_pf": strategy_pf,
+            "strategy_win_rate": strategy_win_rate,
+            "strategy_avg_pips": strategy_avg_pips,
+            "strategy_payoff": strategy_payoff,
+            "strategy_penalty": strategy_penalty,
+            "tf": str(snap.get("tf") or ""),
+        }
+    if spread_tp_ratio is not None and spread_tp_ratio > max_spread_tp_ratio and conf < bypass_conf:
+        return False, "entry_quality_spread_tp", {
+            "enabled": 1.0,
+            "confidence": conf,
+            "required_conf": required,
+            "spread_pips": spread_pips,
+            "tp_pips": tp_pips,
+            "spread_tp_ratio": spread_tp_ratio,
+            "max_spread_tp_ratio": max_spread_tp_ratio,
+            "bypass_conf": bypass_conf,
+            "atr_pips": atr_pips,
+            "vol_5m": vol_5m,
+            "strategy_tag": str(strategy_tag or ""),
+            "strategy_sample": strategy_sample,
+            "strategy_pf": strategy_pf,
+            "strategy_win_rate": strategy_win_rate,
+            "strategy_avg_pips": strategy_avg_pips,
+            "strategy_payoff": strategy_payoff,
+            "strategy_penalty": strategy_penalty,
+            "tf": str(snap.get("tf") or ""),
+        }
+
+    required = max(0.0, min(max_conf, required))
+    if conf + 1e-6 < required:
+        reason = "entry_quality_strategy_confidence" if strategy_penalty > 0.0 else "entry_quality_confidence"
+        return False, reason, {
+            "enabled": 1.0,
+            "confidence": conf,
+            "required_conf": required,
+            "spread_pips": spread_pips,
+            "spread_bonus": spread_bonus,
+            "atr_pips": atr_pips,
+            "vol_5m": vol_5m,
+            "sl_pips": sl_pips,
+            "tp_pips": tp_pips,
+            "spread_sl_ratio": spread_sl_ratio,
+            "spread_tp_ratio": spread_tp_ratio,
+            "max_spread_sl_ratio": max_spread_sl_ratio,
+            "max_spread_tp_ratio": max_spread_tp_ratio,
+            "bypass_conf": bypass_conf,
+            "strategy_tag": str(strategy_tag or ""),
+            "strategy_sample": strategy_sample,
+            "strategy_pf": strategy_pf,
+            "strategy_win_rate": strategy_win_rate,
+            "strategy_avg_pips": strategy_avg_pips,
+            "strategy_payoff": strategy_payoff,
+            "strategy_penalty": strategy_penalty,
+            "tf": str(snap.get("tf") or ""),
+        }
+
+    return True, None, {
+        "enabled": 1.0,
+        "confidence": conf,
+        "required_conf": required,
+        "spread_pips": spread_pips,
+        "spread_bonus": spread_bonus,
+        "atr_pips": atr_pips,
+        "vol_5m": vol_5m,
+        "sl_pips": sl_pips,
+        "tp_pips": tp_pips,
+        "spread_sl_ratio": spread_sl_ratio,
+        "spread_tp_ratio": spread_tp_ratio,
+        "max_spread_sl_ratio": max_spread_sl_ratio,
+        "max_spread_tp_ratio": max_spread_tp_ratio,
+        "bypass_conf": bypass_conf,
+        "strategy_tag": str(strategy_tag or ""),
+        "strategy_sample": strategy_sample,
+        "strategy_pf": strategy_pf,
+        "strategy_win_rate": strategy_win_rate,
+        "strategy_avg_pips": strategy_avg_pips,
+        "strategy_payoff": strategy_payoff,
+        "strategy_penalty": strategy_penalty,
+        "tf": str(snap.get("tf") or ""),
+    }
 
 
 def _strategy_tag_from_thesis(entry_thesis: Optional[dict]) -> Optional[str]:
@@ -2117,6 +2654,58 @@ def _reason_force_allow(exit_reason: Optional[str]) -> bool:
     return False
 
 
+def _neg_exit_decision(
+    *,
+    exit_reason: Optional[str],
+    est_pips: Optional[float],
+    emergency_allow: bool,
+    reason_allow: bool,
+    worker_allow: bool,
+    neg_policy: Optional[dict],
+) -> tuple[bool, bool]:
+    """Return (neg_allowed, near_be_allow) for negative close policy.
+
+    Behavior:
+    - Emergency/near-BE allowances are always honored.
+    - Strategy allow_reasons are treated as explicit permissions, even when
+      global EXIT_ALLOW_NEGATIVE_REASONS does not include the reason.
+    - If no strategy allow_reasons are defined, global/worker gates are used.
+    """
+    neg_policy = neg_policy if isinstance(neg_policy, dict) else {}
+    policy_enabled = _coerce_bool(neg_policy.get("enabled"), True)
+    allow_tokens = neg_policy.get("allow_reasons")
+    deny_tokens = neg_policy.get("deny_reasons")
+
+    policy_reason_match = False
+    if allow_tokens is None:
+        policy_allow = policy_enabled
+    else:
+        if isinstance(allow_tokens, (list, tuple, set)):
+            allow_list = [str(token) for token in allow_tokens]
+        else:
+            allow_list = [str(allow_tokens)]
+        policy_reason_match = _reason_matches_tokens(exit_reason, allow_list)
+        policy_allow = policy_enabled and policy_reason_match
+
+    if deny_tokens is not None:
+        if isinstance(deny_tokens, (list, tuple, set)):
+            deny_list = [str(token) for token in deny_tokens]
+        else:
+            deny_list = [str(deny_tokens)]
+        if _reason_matches_tokens(exit_reason, deny_list):
+            policy_allow = False
+            policy_reason_match = False
+
+    near_be_allow = policy_allow and _allow_negative_near_be(exit_reason, est_pips)
+    policy_explicit_allow = policy_allow and policy_reason_match
+    neg_allowed = bool(
+        emergency_allow
+        or near_be_allow
+        or (policy_allow and (reason_allow or worker_allow or policy_explicit_allow))
+    )
+    return neg_allowed, near_be_allow
+
+
 def _latest_exit_price() -> Optional[float]:
     price = _latest_mid_price()
     if price is not None:
@@ -2240,6 +2829,60 @@ def _retry_close_with_actual_units(
     try:
         req = TradeClose(accountID=ACCOUNT, tradeID=trade_id, data=data)
         api.request(req)
+        response = req.response if isinstance(getattr(req, "response", None), dict) else {}
+        reject = response.get("orderRejectTransaction") or response.get("orderCancelTransaction")
+        if reject:
+            reason = reject.get("rejectReason") or reject.get("reason")
+            reason_key = str(reason or "").upper() or "rejected"
+            _log_order(
+                pocket=None,
+                instrument=None,
+                side=None,
+                units=target_units,
+                sl_price=None,
+                tp_price=None,
+                client_order_id=None,
+                status="close_retry_failed",
+                attempt=2,
+                ticket_id=str(trade_id),
+                executed_price=None,
+                error_code=str(reject.get("errorCode") or reason_key),
+                error_message=reject.get("errorMessage") or str(reason_key),
+                response_payload=response,
+                request_payload={"retry": True, "data": data, "reason": reason_key},
+            )
+            _console_order_log(
+                "CLOSE_FAIL",
+                pocket=None,
+                strategy_tag=None,
+                side=None,
+                units=target_units,
+                sl_price=None,
+                tp_price=None,
+                client_order_id=None,
+                ticket_id=str(trade_id),
+                note=f"retry:{reason_key}",
+            )
+            return False
+        if not (response.get("orderFillTransaction") or {}):
+            _log_order(
+                pocket=None,
+                instrument=None,
+                side=None,
+                units=target_units,
+                sl_price=None,
+                tp_price=None,
+                client_order_id=None,
+                status="close_retry_failed",
+                attempt=2,
+                ticket_id=str(trade_id),
+                executed_price=None,
+                error_code="missing_fill",
+                error_message="missing orderFillTransaction in TradeClose retry response",
+                response_payload=response,
+                request_payload={"retry": True, "data": data},
+            )
+            return False
         _LAST_PROTECTIONS.pop(trade_id, None)
         _PARTIAL_STAGE.pop(trade_id, None)
         _log_order(
@@ -2491,6 +3134,13 @@ _PARTIAL_FRACTIONS = (0.4, 0.3)
 # micro の平均建玉（~160u）でも段階利確が動作するよう下限を緩和
 _PARTIAL_MIN_UNITS = 20
 _PARTIAL_RANGE_MACRO_MIN_AGE_MIN = 6.0
+
+# Rate limit market-closed close attempts. When the market is halted (weekend/daily halt),
+# OANDA returns HTTP 200 with an orderCancelTransaction (reason=MARKET_HALTED). Treat that
+# as a failed close and back off to avoid flooding the broker / orders.db.
+_CLOSE_MARKET_CLOSED_LOG_TS: dict[str, float] = {}
+_CLOSE_MARKET_CLOSED_LOG_INTERVAL_SEC = 900.0
+_CLOSE_MARKET_CLOSED_BACKOFF_SEC = 60.0
 
 
 def _extract_trade_id(response: dict) -> Optional[str]:
@@ -3002,6 +3652,23 @@ async def close_trade(
     if _EXIT_NO_NEGATIVE_CLOSE:
         if pl is None:
             pl = _current_trade_unrealized_pl(trade_id)
+        pl_pips: Optional[float] = None
+        if pl is not None and units_ctx:
+            # Fallback pips estimate based on OANDA unrealizedPL. This makes near-BE exits
+            # (lock_floor/trail_lock/etc) robust even when quote-based est_pips is missing
+            # or rounds to 0 around the spread.
+            try:
+                pip = 0.01 if str(instrument or "").upper().endswith("_JPY") else 0.0001
+                denom = abs(int(units_ctx)) * pip
+                if denom > 0:
+                    pl_pips = float(pl) / denom
+            except Exception:
+                pl_pips = None
+        if pl_pips is not None:
+            if est_pips is None:
+                est_pips = pl_pips
+            elif est_pips >= 0 and pl_pips < 0 and abs(est_pips) <= 0.2:
+                est_pips = pl_pips
         negative_by_pips = est_pips is not None and est_pips <= 0
         negative_by_pl = pl is not None and pl <= 0
         if negative_by_pips or (est_pips is None and negative_by_pl):
@@ -3010,23 +3677,14 @@ async def close_trade(
             reason_allow = _reason_allows_negative(exit_reason)
             worker_allow = _EXIT_ALLOW_NEGATIVE_BY_WORKER and allow_negative
             neg_policy = _strategy_neg_exit_policy(strategy_tag)
-            policy_enabled = _coerce_bool(neg_policy.get("enabled"), True)
-            allow_tokens = neg_policy.get("allow_reasons")
-            deny_tokens = neg_policy.get("deny_reasons")
-            policy_allow = True
-            if allow_tokens is not None:
-                if isinstance(allow_tokens, (list, tuple, set)):
-                    policy_allow = _reason_matches_tokens(exit_reason, list(allow_tokens))
-                else:
-                    policy_allow = _reason_matches_tokens(exit_reason, [str(allow_tokens)])
-            if deny_tokens is not None:
-                deny_list = list(deny_tokens) if isinstance(deny_tokens, (list, tuple, set)) else [str(deny_tokens)]
-                if _reason_matches_tokens(exit_reason, deny_list):
-                    policy_allow = False
-            if not policy_enabled:
-                policy_allow = False
-            near_be_allow = policy_allow and _allow_negative_near_be(exit_reason, est_pips)
-            neg_allowed = emergency_allow or near_be_allow or ((reason_allow or worker_allow) and policy_allow)
+            neg_allowed, near_be_allow = _neg_exit_decision(
+                exit_reason=exit_reason,
+                est_pips=est_pips,
+                emergency_allow=bool(emergency_allow),
+                reason_allow=reason_allow,
+                worker_allow=worker_allow,
+                neg_policy=neg_policy,
+            )
             allow_negative = bool(neg_allowed)
             if not neg_allowed:
                 log_metric(
@@ -3088,14 +3746,43 @@ async def close_trade(
                 target_units = actual_units
         # OANDA expects the absolute size; the trade side is derived from trade_id.
         data = {"units": str(target_units)}
+
+    if not is_market_open():
+        # OANDA returns HTTP 200 with orderCancelTransaction(reason=MARKET_HALTED) during weekend/daily halt.
+        # Don't spam the broker nor orders.db with repeated close attempts.
+        now_mono = time.monotonic()
+        key = str(trade_id)
+        last_log = _CLOSE_MARKET_CLOSED_LOG_TS.get(key, 0.0)
+        if now_mono - last_log >= _CLOSE_MARKET_CLOSED_LOG_INTERVAL_SEC:
+            _CLOSE_MARKET_CLOSED_LOG_TS[key] = now_mono
+            logging.info(
+                "[ORDER] Market closed. Skip TradeClose trade=%s units=%s client=%s",
+                trade_id,
+                units if units is not None else "ALL",
+                client_order_id or "-",
+            )
+            _console_order_log(
+                "CLOSE_SKIP",
+                pocket=pocket,
+                strategy_tag=strategy_tag,
+                side=None,
+                units=units,
+                sl_price=None,
+                tp_price=None,
+                client_order_id=client_order_id,
+                ticket_id=str(trade_id),
+                note="market_closed",
+            )
+        await asyncio.sleep(_CLOSE_MARKET_CLOSED_BACKOFF_SEC)
+        return False
     req = TradeClose(accountID=ACCOUNT, tradeID=trade_id, data=data)
     if not client_order_id:
         log_metric("close_missing_client_id", 1.0, tags={"trade_id": str(trade_id)})
         client_order_id = None
     _console_order_log(
         "CLOSE_REQ",
-        pocket=None,
-        strategy_tag=None,
+        pocket=pocket,
+        strategy_tag=strategy_tag,
         side=None,
         units=units,
         sl_price=None,
@@ -3105,8 +3792,8 @@ async def close_trade(
     )
     try:
         _log_order(
-            pocket=None,
-            instrument=None,
+            pocket=pocket,
+            instrument=instrument,
             side=None,
             units=units,
             sl_price=None,
@@ -3119,11 +3806,87 @@ async def close_trade(
             request_payload=_with_exit_reason({"trade_id": trade_id, "data": data or {}}),
         )
         api.request(req)
+        response = req.response if isinstance(getattr(req, "response", None), dict) else {}
+        reject = response.get("orderRejectTransaction") or response.get("orderCancelTransaction")
+        if reject:
+            reason = reject.get("rejectReason") or reject.get("reason")
+            reason_key = str(reason or "").upper() or "rejected"
+            err_code = str(reject.get("errorCode") or reason_key)
+            _log_order(
+                pocket=pocket,
+                instrument=instrument,
+                side=None,
+                units=units,
+                sl_price=None,
+                tp_price=None,
+                client_order_id=client_order_id,
+                status="close_failed",
+                attempt=1,
+                ticket_id=str(trade_id),
+                executed_price=None,
+                error_code=err_code,
+                error_message=reject.get("errorMessage") or str(reason_key),
+                response_payload=response,
+                request_payload=_with_exit_reason({"trade_id": trade_id, "data": data or {}}),
+            )
+            _console_order_log(
+                "CLOSE_FAIL",
+                pocket=pocket,
+                strategy_tag=strategy_tag,
+                side=None,
+                units=units,
+                sl_price=None,
+                tp_price=None,
+                client_order_id=client_order_id,
+                ticket_id=str(trade_id),
+                note=f"cancel:{reason_key}",
+            )
+            if reason_key == "MARKET_HALTED":
+                await asyncio.sleep(_CLOSE_MARKET_CLOSED_BACKOFF_SEC)
+            return False
+        fill = response.get("orderFillTransaction") or {}
+        if not fill:
+            _log_order(
+                pocket=pocket,
+                instrument=instrument,
+                side=None,
+                units=units,
+                sl_price=None,
+                tp_price=None,
+                client_order_id=client_order_id,
+                status="close_failed",
+                attempt=1,
+                ticket_id=str(trade_id),
+                executed_price=None,
+                error_code="missing_fill",
+                error_message="missing orderFillTransaction in TradeClose response",
+                response_payload=response,
+                request_payload=_with_exit_reason({"trade_id": trade_id, "data": data or {}}),
+            )
+            _console_order_log(
+                "CLOSE_FAIL",
+                pocket=pocket,
+                strategy_tag=strategy_tag,
+                side=None,
+                units=units,
+                sl_price=None,
+                tp_price=None,
+                client_order_id=client_order_id,
+                ticket_id=str(trade_id),
+                note="missing_fill",
+            )
+            return False
+        executed_price = None
+        if fill.get("price"):
+            try:
+                executed_price = float(fill.get("price"))
+            except Exception:
+                executed_price = None
         _LAST_PROTECTIONS.pop(trade_id, None)
         _PARTIAL_STAGE.pop(trade_id, None)
         _log_order(
-            pocket=None,
-            instrument=None,
+            pocket=pocket,
+            instrument=instrument,
             side=None,
             units=units,
             sl_price=None,
@@ -3132,13 +3895,13 @@ async def close_trade(
             status="close_ok",
             attempt=1,
             ticket_id=str(trade_id),
-            executed_price=None,
+            executed_price=executed_price,
             request_payload=_with_exit_reason({"trade_id": trade_id}),
         )
         _console_order_log(
             "CLOSE_OK",
-            pocket=None,
-            strategy_tag=None,
+            pocket=pocket,
+            strategy_tag=strategy_tag,
             side=None,
             units=units,
             sl_price=None,
@@ -3162,8 +3925,8 @@ async def close_trade(
         )
         log_error_code = str(error_code) if error_code is not None else str(exc.code)
         _log_order(
-            pocket=None,
-            instrument=None,
+            pocket=pocket,
+            instrument=instrument,
             side=None,
             units=units,
             sl_price=None,
@@ -3180,8 +3943,8 @@ async def close_trade(
         )
         _console_order_log(
             "CLOSE_FAIL",
-            pocket=None,
-            strategy_tag=None,
+            pocket=pocket,
+            strategy_tag=strategy_tag,
             side=None,
             units=units,
             sl_price=None,
@@ -3213,8 +3976,8 @@ async def close_trade(
             "[ORDER] Failed to close trade %s units=%s: %s", trade_id, units, exc
         )
         _log_order(
-            pocket=None,
-            instrument=None,
+            pocket=pocket,
+            instrument=instrument,
             side=None,
             units=units,
             sl_price=None,
@@ -3228,8 +3991,8 @@ async def close_trade(
         )
         _console_order_log(
             "CLOSE_FAIL",
-            pocket=None,
-            strategy_tag=None,
+            pocket=pocket,
+            strategy_tag=strategy_tag,
             side=None,
             units=units,
             sl_price=None,
@@ -4020,7 +4783,15 @@ async def market_order(
     if isinstance(entry_thesis, dict) and strategy_tag and not entry_thesis.get("strategy_tag"):
         entry_thesis = dict(entry_thesis)
         entry_thesis["strategy_tag"] = strategy_tag
-    if _BLOCK_MANUAL_NETTING and not reduce_only and (pocket or "").lower() != "manual":
+    # In non-hedging (netting) accounts, an opposite-direction entry can net out / close
+    # the user's manual trades. In hedging mode (positionFill=OPEN_ONLY) this cannot happen,
+    # so allow opposite-direction entries and rely on exposure/risk guards instead.
+    if (
+        _BLOCK_MANUAL_NETTING
+        and not HEDGING_ENABLED
+        and not reduce_only
+        and (pocket or "").lower() != "manual"
+    ):
         manual_net, manual_trades = _manual_net_units()
         if manual_trades > 0 or manual_net != 0:
             block = False
@@ -4194,19 +4965,17 @@ async def market_order(
     _trace("preflight_start")
 
 
-    # 成績ガード（直近 PF/勝率が悪いタグは全ポケットでブロック。manual は除外）
-    perf_guard_flag = os.getenv("PERF_GUARD_GLOBAL_ENABLED")
-    if perf_guard_flag is None:
-        perf_guard_flag = os.getenv("PERF_GUARD_ENABLED", "1")
-    perf_guard_enabled = str(perf_guard_flag).strip().lower() not in {
-        "",
-        "0",
-        "false",
-        "no",
-    }
-    if perf_guard_enabled and pocket != "manual":
+    # Perf guard (PF/win-rate gate). Support per-strategy overrides by passing env_prefix
+    # via meta/entry_thesis so a multi-strategy worker can tune each strategy independently.
+    env_prefix = None
+    if isinstance(meta, dict):
+        env_prefix = meta.get("env_prefix") or meta.get("ENV_PREFIX")
+    if env_prefix is None and isinstance(entry_thesis, dict):
+        env_prefix = entry_thesis.get("env_prefix") or entry_thesis.get("ENV_PREFIX")
+
+    if pocket != "manual":
         try:
-            pocket_decision = perf_guard.is_pocket_allowed(pocket)
+            pocket_decision = perf_guard.is_pocket_allowed(pocket, env_prefix=env_prefix)
         except Exception:
             pocket_decision = None
         if pocket_decision is not None and not pocket_decision.allowed:
@@ -4244,13 +5013,18 @@ async def market_order(
                 },
             )
             return None
-    if perf_guard_enabled and pocket != "manual" and strategy_tag:
+    if pocket != "manual" and strategy_tag:
         _trace("perf_guard")
         try:
             current_hour = datetime.now(timezone.utc).hour
         except Exception:
             current_hour = None
-        decision = perf_guard.is_allowed(str(strategy_tag), pocket, hour=current_hour)
+        decision = perf_guard.is_allowed(
+            str(strategy_tag),
+            pocket,
+            hour=current_hour,
+            env_prefix=env_prefix,
+        )
         if not decision.allowed:
             note = f"perf_block:{decision.reason}"
             _console_order_log(
@@ -4289,7 +5063,7 @@ async def market_order(
             return None
 
     if not reduce_only and pocket != "manual":
-        decision = profit_guard.is_allowed(pocket, strategy_tag=strategy_tag)
+        decision = profit_guard.is_allowed(pocket, strategy_tag=strategy_tag, env_prefix=env_prefix)
         if not decision.allowed:
             range_active = False
             if _PROFIT_GUARD_BYPASS_RANGE and pocket in {"scalp", "micro"}:
@@ -5122,11 +5896,7 @@ async def market_order(
             sl_pips_hint = abs(price_hint - sl_price) / 0.01
         if tp_pips_hint is None and price_hint is not None and tp_price is not None:
             tp_pips_hint = abs(price_hint - tp_price) / 0.01
-        try:
-            conf_val = int(confidence if confidence is not None else (entry_thesis or {}).get("confidence", 50))
-        except Exception:
-            conf_val = 50
-        conf_val = max(0, min(100, conf_val))
+        conf_val = int(round(_entry_confidence_score(confidence, entry_thesis)))
         payload = {
             "source": "order_manager",
             "strategy": strategy_tag,
@@ -5173,33 +5943,6 @@ async def market_order(
             return None
         except Exception as exc:
             logging.warning("[ORDER_GATE] enqueue failed, fall back to live order: %s", exc)
-
-    if (
-        _DYNAMIC_SL_ENABLE
-        and (pocket or "").lower() in _DYNAMIC_SL_POCKETS
-        and not reduce_only
-        and entry_price_meta is not None
-        and not sl_disabled
-    ):
-        loss_guard = None
-        sl_hint = None
-        if isinstance(entry_thesis, dict):
-            loss_guard = _as_float(entry_thesis.get("loss_guard_pips"))
-            if loss_guard is None:
-                loss_guard = _as_float(entry_thesis.get("loss_guard"))
-            sl_hint = _as_float(entry_thesis.get("sl_pips"))
-        target_pips = 0.0
-        for cand in (sl_hint, loss_guard):
-            if cand and cand > target_pips:
-                target_pips = cand
-        if target_pips > 0.0:
-            dynamic_pips = min(_DYNAMIC_SL_MAX_PIPS, target_pips * _DYNAMIC_SL_RATIO)
-            target_pips = max(target_pips, dynamic_pips)
-            offset = round(target_pips * 0.01, 3)
-            if units > 0:
-                sl_price = round(entry_price_meta - offset, 3)
-            else:
-                sl_price = round(entry_price_meta + offset, 3)
 
     if not is_market_open():
         _trace("market_closed")
@@ -5278,6 +6021,51 @@ async def market_order(
         estimated_entry = entry_basis
     if entry_basis is None and entry_price_meta is not None:
         entry_basis = entry_price_meta
+
+    # Market-adaptive SL: widen loss buffer when volatility/spread expands.
+    # NOTE: This updates thesis_sl_pips (virtual SL) even when stopLossOnFill is disabled.
+    if (
+        _DYNAMIC_SL_ENABLE
+        and (pocket or "").lower() in _DYNAMIC_SL_POCKETS
+        and not reduce_only
+    ):
+        loss_guard_pips = None
+        sl_hint_pips = thesis_sl_pips
+        if isinstance(entry_thesis, dict):
+            loss_guard_pips = _as_float(entry_thesis.get("loss_guard_pips"))
+            if loss_guard_pips is None:
+                loss_guard_pips = _as_float(entry_thesis.get("loss_guard"))
+            if sl_hint_pips is None:
+                sl_hint_pips = _as_float(entry_thesis.get("sl_pips"))
+        if sl_hint_pips is None and entry_basis is not None and sl_price is not None:
+            sl_hint_pips = abs(entry_basis - sl_price) / 0.01
+
+        dynamic_sl_pips, dynamic_sl_meta = _dynamic_entry_sl_target_pips(
+            pocket,
+            entry_thesis=entry_thesis if isinstance(entry_thesis, dict) else None,
+            quote=quote,
+            sl_hint_pips=sl_hint_pips,
+            loss_guard_pips=loss_guard_pips,
+        )
+        if dynamic_sl_pips is not None and (
+            thesis_sl_pips is None or dynamic_sl_pips > thesis_sl_pips + 1e-6
+        ):
+            thesis_sl_pips = dynamic_sl_pips
+            ref_price = entry_basis if entry_basis is not None else entry_price_meta
+            if ref_price is not None:
+                sl_price = _sl_price_from_pips(ref_price, units, dynamic_sl_pips)
+            if isinstance(entry_thesis, dict):
+                entry_thesis = dict(entry_thesis)
+                entry_thesis["sl_pips"] = round(dynamic_sl_pips, 3)
+                entry_thesis["dynamic_sl_applied"] = dynamic_sl_meta
+            log_metric(
+                "entry_dynamic_sl_pips",
+                float(dynamic_sl_pips),
+                tags={
+                    "pocket": pocket or "unknown",
+                    "strategy": strategy_tag or "unknown",
+                },
+            )
 
     # Recalculate SL/TP from thesis gaps using live quote to preserve intended RR
     if entry_basis is not None:
@@ -5471,6 +6259,75 @@ async def market_order(
                     max_sl_pips,
                 )
 
+    if not reduce_only:
+        conf_score = _entry_confidence_score(confidence, entry_thesis)
+        sl_pips_live: Optional[float] = None
+        tp_pips_live: Optional[float] = None
+        if entry_basis is not None:
+            if sl_price is not None:
+                sl_pips_live = abs(entry_basis - sl_price) / 0.01
+            elif thesis_sl_pips is not None:
+                sl_pips_live = float(thesis_sl_pips)
+            if tp_price is not None:
+                tp_pips_live = abs(tp_price - entry_basis) / 0.01
+            elif thesis_tp_pips is not None:
+                tp_pips_live = float(thesis_tp_pips)
+        if sl_pips_live is None and thesis_sl_pips is not None:
+            sl_pips_live = float(thesis_sl_pips)
+        if tp_pips_live is None and thesis_tp_pips is not None:
+            tp_pips_live = float(thesis_tp_pips)
+
+        quality_ok, quality_reason, quality_meta = _entry_quality_gate(
+            pocket,
+            confidence=conf_score,
+            strategy_tag=strategy_tag,
+            entry_thesis=entry_thesis if isinstance(entry_thesis, dict) else None,
+            quote=quote,
+            sl_pips=sl_pips_live,
+            tp_pips=tp_pips_live,
+        )
+        if not quality_ok:
+            reason = quality_reason or "entry_quality_block"
+            _console_order_log(
+                "OPEN_SKIP",
+                pocket=pocket,
+                strategy_tag=strategy_tag,
+                side=side_label,
+                units=units,
+                sl_price=sl_price,
+                tp_price=tp_price,
+                client_order_id=client_order_id,
+                note=reason,
+            )
+            log_order(
+                pocket=pocket,
+                instrument=instrument,
+                side=side_label,
+                units=units,
+                sl_price=sl_price,
+                tp_price=tp_price,
+                client_order_id=client_order_id,
+                status=reason,
+                attempt=0,
+                request_payload={
+                    "reason": reason,
+                    "quality": quality_meta,
+                    "confidence": conf_score,
+                    "entry_thesis": entry_thesis,
+                    "meta": meta,
+                },
+            )
+            log_metric(
+                "entry_quality_block",
+                1.0,
+                tags={
+                    "pocket": pocket or "unknown",
+                    "strategy": strategy_tag or "unknown",
+                    "reason": reason,
+                },
+            )
+            return None
+
     # Margin preflight (new entriesのみ)
     preflight_units = units
     original_units = units
@@ -5545,6 +6402,16 @@ async def market_order(
     if not reduce_only and not sl_disabled and estimated_entry is not None:
         hard_stop_pips = _entry_hard_stop_pips(pocket, strategy_tag=strategy_tag)
         if hard_stop_pips > 0.0:
+            max_sl_pips = _entry_max_sl_pips(pocket, strategy_tag=strategy_tag)
+            if max_sl_pips > 0.0 and hard_stop_pips > max_sl_pips + 1e-6:
+                logging.warning(
+                    "[ORDER] entry hard SL exceeds max SL cap; clamping pocket=%s strategy=%s hard=%.2fp cap=%.2fp",
+                    pocket,
+                    strategy_tag or "-",
+                    hard_stop_pips,
+                    max_sl_pips,
+                )
+                hard_stop_pips = max_sl_pips
             hard_sl_price = _sl_price_from_pips(estimated_entry, units, hard_stop_pips)
             if hard_sl_price is not None:
                 current_gap_pips: float | None = None
@@ -5571,6 +6438,17 @@ async def market_order(
                         client_order_id or "-",
                     )
                     sl_price = hard_sl_price
+                    thesis_sl_pips = hard_stop_pips
+                    if isinstance(entry_thesis, dict):
+                        entry_thesis = dict(entry_thesis)
+                        entry_thesis["sl_pips"] = round(float(hard_stop_pips), 2)
+                        entry_thesis["entry_hard_sl_applied"] = {
+                            "pips": round(float(hard_stop_pips), 2),
+                            "sl_price": round(float(hard_sl_price), 3),
+                            "prev_gap_pips": round(float(current_gap_pips), 2)
+                            if current_gap_pips is not None
+                            else None,
+                        }
 
     if not reduce_only and estimated_entry is not None:
         norm_sl = None if sl_disabled else sl_price
@@ -5979,6 +6857,35 @@ async def market_order(
                     note=f"attempt={attempt+1}",
                 )
                 target_sl = None if sl_disabled else sl_price
+                # EXIT_NO_NEGATIVE_CLOSE=1 is meant to enforce profit-only exits. Honor that policy by not
+                # attaching a broker SL on the loss side unless explicitly allowed (rollout flag).
+                if target_sl is not None and not _allow_stop_loss_on_fill(pocket):
+                    basis = executed_price if executed_price is not None else estimated_entry
+                    try:
+                        basis_val = float(basis) if basis is not None else None
+                    except Exception:
+                        basis_val = None
+                    if not basis_val or basis_val <= 0.0:
+                        logging.info(
+                            "[ORDER] on_fill_protection skipped SL (no basis) pocket=%s client=%s sl=%s",
+                            pocket,
+                            client_order_id or "-",
+                            f"{target_sl:.3f}",
+                        )
+                        target_sl = None
+                    else:
+                        loss_side = (units_to_send > 0 and target_sl < basis_val - 1e-6) or (
+                            units_to_send < 0 and target_sl > basis_val + 1e-6
+                        )
+                        if loss_side:
+                            logging.info(
+                                "[ORDER] on_fill_protection skipped SL (EXIT_NO_NEGATIVE_CLOSE) pocket=%s client=%s sl=%s basis=%s",
+                                pocket,
+                                client_order_id or "-",
+                                f"{target_sl:.3f}",
+                                f"{basis_val:.3f}",
+                            )
+                            target_sl = None
                 _maybe_update_protections(
                     trade_id,
                     target_sl,
@@ -6130,6 +7037,8 @@ async def limit_order(
 ) -> tuple[Optional[str], Optional[str]]:
     """Place a passive limit order. Returns (trade_id, order_id)."""
 
+    strategy_tag = _strategy_tag_from_thesis(entry_thesis)
+
     sl_disabled = stop_loss_disabled_for_pocket(pocket)
     if sl_disabled:
         sl_price = None
@@ -6167,8 +7076,6 @@ async def limit_order(
                         client_order_id or "-",
                     )
                     sl_price = hard_sl_price
-
-    strategy_tag = _strategy_tag_from_thesis(entry_thesis)
 
     if not reduce_only and pocket != "manual":
         entry_thesis = _apply_default_entry_thesis_tfs(entry_thesis, pocket)
@@ -6571,9 +7478,13 @@ async def limit_order(
                 return None, None
 
     ttl_sec = max(0.0, ttl_ms / 1000.0)
+    # OANDA GTD granularity is seconds; clamp sub-second TTL up to 1s instead
+    # of accidentally leaving a GTC limit order around.
+    if 0.0 < ttl_sec < 1.0:
+        ttl_sec = 1.0
     time_in_force = "GTC"
     gtd_time = None
-    if ttl_sec >= 1.0:
+    if ttl_sec > 0.0:
         expiry = datetime.now(timezone.utc) + timedelta(seconds=ttl_sec)
         gtd_time = expiry.strftime("%Y-%m-%dT%H:%M:%S.%fZ")
         time_in_force = "GTD"

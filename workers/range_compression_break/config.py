@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 
 PIP_VALUE = 0.01
+ENV_PREFIX = "RANGE_COMPRESSION_BREAK"
 LOG_PREFIX = "[RANGE-COMP-BREAK]"
 STRATEGY_TAG = "RangeCompressionBreak"
 PROFILE_TAG = "range_compression_break"

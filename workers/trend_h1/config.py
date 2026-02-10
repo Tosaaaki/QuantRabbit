@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 from typing import FrozenSet
 
+ENV_PREFIX = "TREND_H1"
 
 def _bool(key: str, default: bool) -> bool:
     raw = os.getenv(key)

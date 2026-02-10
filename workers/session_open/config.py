@@ -1,3 +1,5 @@
+ENV_PREFIX = "SESSION_OPEN"
+
 DEFAULT_CONFIG = {
     "id": "session_open_breakout",
     "universe": [],                 # e.g. ["BTCUSDT", "ETHUSDT"]

@@ -1,5 +1,6 @@
 import os
 
+ENV_PREFIX = "HEDGE"
 ENABLED = os.getenv("HEDGE_BALANCER_ENABLED", "1").strip().lower() not in {
     "",
     "0",

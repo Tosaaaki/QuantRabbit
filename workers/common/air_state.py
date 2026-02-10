@@ -132,7 +132,12 @@ _RANGE_TAGS = {
     "stochbollbounce",
     "divergencerevert",
     "levelreject",
+    "levelrejectplus",
     "wickreversal",
+    "wickreversalblend",
+    "wickreversalpro",
+    "wickreversalhf",
+    "tickwickreversal",
     "rangefader",
 }
 _TREND_TAGS = {

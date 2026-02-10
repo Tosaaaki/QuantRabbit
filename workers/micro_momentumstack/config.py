@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 
+ENV_PREFIX = "MSTACK"
 
 def _parse_hours(raw: str) -> set[int]:
     hours: set[int] = set()

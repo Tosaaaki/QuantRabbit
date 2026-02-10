@@ -1,22 +1,33 @@
-import os
 from typing import Optional
 
-
-def _env_bool(name: str, default: bool) -> bool:
-    raw = os.getenv(name)
-    if raw is None:
-        return default
-    return raw.strip().lower() not in {"", "0", "false", "no", "off"}
+from utils.env_utils import env_bool, env_float, env_get
 
 
-def _env_float(name: str, default: float) -> float:
-    raw = os.getenv(name)
-    if raw is None or str(raw).strip() == "":
-        return float(default)
-    try:
-        return float(raw)
-    except (TypeError, ValueError):
-        return float(default)
+def _strategy_env_bool(name: str, default: bool, *, env_prefix: Optional[str]) -> bool:
+    return env_bool(
+        name,
+        default,
+        prefix=env_prefix,
+        allow_global_fallback=False,
+    )
+
+
+def _strategy_env_float(name: str, default: float, *, env_prefix: Optional[str]) -> float:
+    return env_float(
+        name,
+        default,
+        prefix=env_prefix,
+        allow_global_fallback=False,
+    )
+
+
+def _strategy_env_get(name: str, default: Optional[str], *, env_prefix: Optional[str]) -> Optional[str]:
+    return env_get(
+        name,
+        default,
+        prefix=env_prefix,
+        allow_global_fallback=False,
+    )
 
 
 def scale_base_units(
@@ -26,6 +37,7 @@ def scale_base_units(
     ref_equity: Optional[float] = None,
     min_units: Optional[int] = None,
     max_units: Optional[int] = None,
+    env_prefix: Optional[str] = None,
 ) -> int:
     """Scale base entry units by equity to allow compounding.
 
@@ -40,10 +52,10 @@ def scale_base_units(
         return base_units
     if equity <= 0:
         return base_units
-    if not _env_bool("BASE_UNITS_EQUITY_SCALE_ENABLED", True):
+    if not _strategy_env_bool("BASE_UNITS_EQUITY_SCALE_ENABLED", True, env_prefix=env_prefix):
         return base_units
 
-    raw_ref = os.getenv("BASE_UNITS_EQUITY_REF", "1000000")
+    raw_ref = _strategy_env_get("BASE_UNITS_EQUITY_REF", "1000000", env_prefix=env_prefix)
     ref_value = None
     if raw_ref is not None and str(raw_ref).strip() != "":
         try:
@@ -61,11 +73,11 @@ def scale_base_units(
         return base_units
 
     scale = equity / ref_value
-    scale_min = max(0.0, _env_float("BASE_UNITS_EQUITY_SCALE_MIN", 1.0))
+    scale_min = max(0.0, _strategy_env_float("BASE_UNITS_EQUITY_SCALE_MIN", 1.0, env_prefix=env_prefix))
     scale = max(scale, scale_min)
 
     scale_max = None
-    raw_max = os.getenv("BASE_UNITS_EQUITY_SCALE_MAX")
+    raw_max = _strategy_env_get("BASE_UNITS_EQUITY_SCALE_MAX", None, env_prefix=env_prefix)
     if raw_max is not None and str(raw_max).strip() != "":
         try:
             scale_max = float(raw_max)

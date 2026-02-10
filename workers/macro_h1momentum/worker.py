@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 from analysis.ma_projection import compute_adx_projection, compute_bbw_projection, compute_ma_projection, compute_rsi_projection
+from analysis.ma_projection import score_ma_for_side
 
 import asyncio
 import datetime
@@ -28,15 +29,18 @@ from workers.common.size_utils import scale_base_units
 from . import config
 
 import os
-_BB_ENTRY_ENABLED = os.getenv("BB_ENTRY_ENABLED", "1").strip().lower() not in {"", "0", "false", "no"}
-_BB_ENTRY_REVERT_PIPS = float(os.getenv("BB_ENTRY_REVERT_PIPS", "2.4"))
-_BB_ENTRY_REVERT_RATIO = float(os.getenv("BB_ENTRY_REVERT_RATIO", "0.22"))
-_BB_ENTRY_TREND_EXT_PIPS = float(os.getenv("BB_ENTRY_TREND_EXT_PIPS", "3.5"))
-_BB_ENTRY_TREND_EXT_RATIO = float(os.getenv("BB_ENTRY_TREND_EXT_RATIO", "0.40"))
-_BB_ENTRY_SCALP_REVERT_PIPS = float(os.getenv("BB_ENTRY_SCALP_REVERT_PIPS", "2.0"))
-_BB_ENTRY_SCALP_REVERT_RATIO = float(os.getenv("BB_ENTRY_SCALP_REVERT_RATIO", "0.20"))
-_BB_ENTRY_SCALP_EXT_PIPS = float(os.getenv("BB_ENTRY_SCALP_EXT_PIPS", "2.4"))
-_BB_ENTRY_SCALP_EXT_RATIO = float(os.getenv("BB_ENTRY_SCALP_EXT_RATIO", "0.30"))
+from utils.env_utils import env_bool, env_float
+
+_BB_ENV_PREFIX = getattr(config, "ENV_PREFIX", "")
+_BB_ENTRY_ENABLED = env_bool("BB_ENTRY_ENABLED", True, prefix=_BB_ENV_PREFIX)
+_BB_ENTRY_REVERT_PIPS = env_float("BB_ENTRY_REVERT_PIPS", 2.4, prefix=_BB_ENV_PREFIX)
+_BB_ENTRY_REVERT_RATIO = env_float("BB_ENTRY_REVERT_RATIO", 0.22, prefix=_BB_ENV_PREFIX)
+_BB_ENTRY_TREND_EXT_PIPS = env_float("BB_ENTRY_TREND_EXT_PIPS", 3.5, prefix=_BB_ENV_PREFIX)
+_BB_ENTRY_TREND_EXT_RATIO = env_float("BB_ENTRY_TREND_EXT_RATIO", 0.40, prefix=_BB_ENV_PREFIX)
+_BB_ENTRY_SCALP_REVERT_PIPS = env_float("BB_ENTRY_SCALP_REVERT_PIPS", 2.0, prefix=_BB_ENV_PREFIX)
+_BB_ENTRY_SCALP_REVERT_RATIO = env_float("BB_ENTRY_SCALP_REVERT_RATIO", 0.20, prefix=_BB_ENV_PREFIX)
+_BB_ENTRY_SCALP_EXT_PIPS = env_float("BB_ENTRY_SCALP_EXT_PIPS", 2.4, prefix=_BB_ENV_PREFIX)
+_BB_ENTRY_SCALP_EXT_RATIO = env_float("BB_ENTRY_SCALP_EXT_RATIO", 0.30, prefix=_BB_ENV_PREFIX)
 _BB_PIP = 0.01
 _REGIME_GUARD_ENABLED = os.getenv("H1M_REGIME_GUARD_ENABLED", "1").strip().lower() not in {
     "",
@@ -205,15 +209,7 @@ def _projection_candles(tfs):
 def _score_ma(ma, side, opp_block_bars):
     if ma is None:
         return None
-    align = ma.gap_pips >= 0 if side == "long" else ma.gap_pips <= 0
-    cross_soon = ma.projected_cross_bars is not None and ma.projected_cross_bars <= opp_block_bars
-    if align and not cross_soon:
-        return 0.7
-    if align and cross_soon:
-        return -0.4
-    if cross_soon:
-        return -0.8
-    return -0.5
+    return score_ma_for_side(ma, side, opp_block_bars)
 
 
 def _score_rsi(rsi, side, long_target, short_target, overheat_bars):
@@ -404,6 +400,7 @@ def _compute_cap(
     *args,
     **kwargs,
 ) -> Tuple[float, Dict[str, float]]:
+    kwargs.setdefault("env_prefix", config.ENV_PREFIX)
     res = compute_cap(
         cap_min=config.CAP_MIN,
         cap_max=config.CAP_MAX,
@@ -534,7 +531,17 @@ async def h1momentum_worker() -> None:
         # 長めのTPはロットを薄く、短めはやや厚めにする
         tp_scale = 14.0 / max(1.0, tp_pips)
         tp_scale = max(0.35, min(1.1, tp_scale))
-        base_units = int(round(scale_base_units(config.BASE_ENTRY_UNITS, equity=balance if balance > 0 else equity, ref_equity=balance) * tp_scale))
+        base_units = int(
+            round(
+                scale_base_units(
+                    config.BASE_ENTRY_UNITS,
+                    equity=balance if balance > 0 else equity,
+                    ref_equity=balance,
+                    env_prefix=config.ENV_PREFIX,
+                )
+                * tp_scale
+            )
+        )
         conf_scale = _confidence_scale(int(signal.get("confidence", 50)))
         lot = allowed_lot(
             float(snap.nav or 0.0),
@@ -574,6 +581,7 @@ async def h1momentum_worker() -> None:
         client_id = _client_order_id(strategy_tag)
         entry_thesis = {
             "strategy_tag": strategy_tag,
+            "env_prefix": config.ENV_PREFIX,
             "tp_pips": tp_pips,
             "sl_pips": sl_pips,
             "hard_stop_pips": sl_pips,

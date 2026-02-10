@@ -44,7 +44,7 @@ defaults:
   min_profit_ratio:
     macro: 0.45
     micro: 0.40
-    scalp: 0.80
+    scalp: 0.45
   min_profit_ratio_min_tp_pips: 1.5
   min_profit_ratio_reasons:
     - partial_take
@@ -121,18 +121,26 @@ defaults:
     max_hold_sec: 1760
 
 hold_until_profit:
-  # Block closes for specific trades until they are in profit.
-  # Matches are case-insensitive.
-  client_order_ids:
-    - "qr-1769197611427-hybrid-ImpulseRetrace-55c1d9c8f"
+  # TEMP (2026-02-07 JST): user requested "do not close" for specific scalp trades.
+  # This blocks bot-initiated closes until the trade exceeds min_profit_pips.
+  # Note: broker-side takeProfit/stopLoss can still close independently.
   trade_ids:
-    - "181052"
-  min_profit_pips: 0.0
-  strict: false
+    - "313425"  # scalp LevelReject short opened 2026-02-07 06:40 JST
+    - "313411"  # scalp WickReversal short opened 2026-02-07 06:25 JST
+  min_profit_pips: 9999.0
+  # strict=true blocks closes even for emergency / margin-relief reasons.
+  strict: true
 
 strategies:
   TrendMA:
-    min_profit_pips: 2.0
+    min_profit_pips: 1.0
+    min_profit_ratio_reasons:
+      - partial_take
+      - lock_floor
+      - trail_take
+      - trail_lock
+      - profit_lock
+      - lock_trail
     be_profile: {trigger_pips: 7.0, lock_ratio: 0.60, min_lock_pips: 3.0, cooldown_sec: 90}
     tp_move: {trigger_pips: 7.5, buffer_pips: 3.0}
     pro_stop: {soft_pips: 1.6, hard_pips: 9.8, min_hold_sec: 113, max_hold_sec: 3437, soft_atr_mult: 1.0, hard_atr_mult: 1.8}
@@ -150,6 +158,11 @@ strategies:
         - structure_break
         - trend_failure
         - trend_exhaust
+        - reentry_reset
+        - max_hold
+        - max_adverse
+        - time_stop
+        - timeout
         - drawdown
         - max_drawdown
         - health_exit
@@ -234,6 +247,15 @@ strategies:
     be_profile: {trigger_pips: 1.8, lock_ratio: 0.50, min_lock_pips: 0.60, cooldown_sec: 35}
     tp_move: {trigger_pips: 1.5, buffer_pips: 0.9}
     pro_stop: {soft_pips: 3.4, hard_pips: 9.5, min_hold_sec: 203, max_hold_sec: 1760, soft_atr_mult: 0.8, hard_atr_mult: 1.4}
+    exit_profile:
+      # Micro trades often run without broker SL; cap tail loss mechanically using intended SL as a reference.
+      loss_cut_enabled: true
+      loss_cut_require_sl: false
+      loss_cut_soft_pips: 0.0
+      loss_cut_hard_pips: 0.0
+      loss_cut_hard_sl_mult: 1.35
+      loss_cut_max_hold_sec: 1800
+      loss_cut_cooldown_sec: 6
 
   MicroVWAPBound:
     be_profile: {trigger_pips: 1.6, lock_ratio: 0.55, min_lock_pips: 0.60, cooldown_sec: 35}
@@ -242,16 +264,41 @@ strategies:
     neg_exit:
       allow_reasons:
         - reversion_*
+    exit_profile:
+      # VWAP-bound mean reversion can need room; avoid a tight "soft" cut while still capping tail risk.
+      loss_cut_enabled: true
+      loss_cut_require_sl: false
+      loss_cut_soft_pips: 0.0
+      loss_cut_hard_pips: 0.0
+      loss_cut_hard_sl_mult: 1.60
+      loss_cut_max_hold_sec: 2400
+      loss_cut_cooldown_sec: 6
 
   MomentumBurst:
     be_profile: {trigger_pips: 1.8, lock_ratio: 0.50, min_lock_pips: 0.60, cooldown_sec: 35}
     tp_move: {trigger_pips: 1.5, buffer_pips: 0.9}
     pro_stop: {soft_pips: 4.8, hard_pips: 8.12, min_hold_sec: 306, max_hold_sec: 2382, soft_atr_mult: 0.8, hard_atr_mult: 1.4}
+    exit_profile:
+      loss_cut_enabled: true
+      loss_cut_require_sl: false
+      loss_cut_soft_pips: 0.0
+      loss_cut_hard_pips: 0.0
+      loss_cut_hard_sl_mult: 1.35
+      loss_cut_max_hold_sec: 1800
+      loss_cut_cooldown_sec: 6
 
   MicroLevelReactor:
     be_profile: {trigger_pips: 1.7, lock_ratio: 0.50, min_lock_pips: 0.60, cooldown_sec: 35}
     tp_move: {trigger_pips: 1.4, buffer_pips: 0.9}
     pro_stop: {soft_atr_mult: 0.7, hard_atr_mult: 1.2}
+    exit_profile:
+      loss_cut_enabled: true
+      loss_cut_require_sl: false
+      loss_cut_soft_pips: 0.0
+      loss_cut_hard_pips: 0.0
+      loss_cut_hard_sl_mult: 1.35
+      loss_cut_max_hold_sec: 1800
+      loss_cut_cooldown_sec: 6
 
   mirror_spike:
     pro_stop: {soft_pips: 5.22, hard_pips: 11.69, min_hold_sec: 660, max_hold_sec: 1979, soft_atr_mult: 0.6, hard_atr_mult: 1.0}
@@ -269,16 +316,40 @@ strategies:
     be_profile: {trigger_pips: 2.0, lock_ratio: 0.48, min_lock_pips: 0.65, cooldown_sec: 40}
     tp_move: {trigger_pips: 1.6, buffer_pips: 1.0}
     pro_stop: {soft_pips: 3.74, hard_pips: 6.82, min_hold_sec: 151, max_hold_sec: 1245, soft_atr_mult: 0.8, hard_atr_mult: 1.4}
+    exit_profile:
+      loss_cut_enabled: true
+      loss_cut_require_sl: false
+      loss_cut_soft_pips: 0.0
+      loss_cut_hard_pips: 0.0
+      loss_cut_hard_sl_mult: 1.35
+      loss_cut_max_hold_sec: 1800
+      loss_cut_cooldown_sec: 6
 
   MicroMomentumStack:
     be_profile: {trigger_pips: 2.2, lock_ratio: 0.45, min_lock_pips: 0.70, cooldown_sec: 45}
     tp_move: {trigger_pips: 1.8, buffer_pips: 1.1}
     pro_stop: {soft_atr_mult: 0.8, hard_atr_mult: 1.4}
+    exit_profile:
+      loss_cut_enabled: true
+      loss_cut_require_sl: false
+      loss_cut_soft_pips: 0.0
+      loss_cut_hard_pips: 0.0
+      loss_cut_hard_sl_mult: 1.35
+      loss_cut_max_hold_sec: 1800
+      loss_cut_cooldown_sec: 6
 
   TrendMomentumMicro:
     be_profile: {trigger_pips: 2.3, lock_ratio: 0.45, min_lock_pips: 0.70, cooldown_sec: 45}
     tp_move: {trigger_pips: 1.9, buffer_pips: 1.1}
     pro_stop: {soft_pips: 1.7, hard_pips: 2.4, min_hold_sec: 71, max_hold_sec: 312, soft_atr_mult: 0.8, hard_atr_mult: 1.4}
+    exit_profile:
+      loss_cut_enabled: true
+      loss_cut_require_sl: false
+      loss_cut_soft_pips: 0.0
+      loss_cut_hard_pips: 0.0
+      loss_cut_hard_sl_mult: 1.30
+      loss_cut_max_hold_sec: 1500
+      loss_cut_cooldown_sec: 6
 
   MicroVWAPRevert:
     be_profile: {trigger_pips: 1.6, lock_ratio: 0.55, min_lock_pips: 0.60, cooldown_sec: 35}
@@ -287,27 +358,66 @@ strategies:
     neg_exit:
       allow_reasons:
         - reversion_*
+    exit_profile:
+      loss_cut_enabled: true
+      loss_cut_require_sl: false
+      loss_cut_soft_pips: 0.0
+      loss_cut_hard_pips: 0.0
+      loss_cut_hard_sl_mult: 1.60
+      loss_cut_max_hold_sec: 2400
+      loss_cut_cooldown_sec: 6
+
+  MicroCompressionRevert:
+    exit_profile:
+      loss_cut_enabled: true
+      loss_cut_require_sl: false
+      loss_cut_soft_pips: 0.0
+      loss_cut_hard_pips: 0.0
+      loss_cut_hard_sl_mult: 1.60
+      loss_cut_max_hold_sec: 2400
+      loss_cut_cooldown_sec: 6
+
+  MicroTrendRetest:
+    exit_profile:
+      loss_cut_enabled: true
+      loss_cut_require_sl: false
+      loss_cut_soft_pips: 0.0
+      loss_cut_hard_pips: 0.0
+      loss_cut_hard_sl_mult: 1.35
+      loss_cut_max_hold_sec: 1800
+      loss_cut_cooldown_sec: 6
 
   TickImbalance:
-    min_profit_pips: 1.4
-    min_profit_ratio: 0.80
+    # TickImbalance is a fast scalp; keep profit-buffer low enough so partial/locks can execute.
+    # Allow tiny-profit exits (lock_floor/range_timeout) to actually execute; otherwise they get rejected
+    # and can turn into large time_stop losses.
+    min_profit_pips: 0.3
+    min_profit_ratio: 0.45
+    # TickImbalance TP is small (<= ~2.5p). Disable min-profit-ratio gating for this strategy by requiring
+    # a larger TP before the ratio check applies.
+    min_profit_ratio_min_tp_pips: 3.0
     pro_stop: {soft_pips: 6.4, hard_pips: 12.07, min_hold_sec: 1200, max_hold_sec: 3600, soft_atr_mult: 0.6, hard_atr_mult: 1.0}
     exit_profile:
-      min_hold_sec: 8
-      profit_pips: 1.1
-      trail_start_pips: 1.5
-      trail_backoff_pips: 0.55
-      lock_buffer_pips: 0.28
-      range_profit_pips: 1.0
-      range_trail_start_pips: 1.4
-      range_trail_backoff_pips: 0.5
-      range_lock_buffer_pips: 0.24
-      range_max_hold_sec: 1500
+      # Let partial_take / BE arm quickly; holding 8s often misses the initial impulse.
+      min_hold_sec: 2
+      # Avoid profit-buffer rejects: keep take-profit >= min_profit_pips.
+      profit_pips: 2.0
+      trail_start_pips: 2.1
+      trail_backoff_pips: 0.7
+      lock_buffer_pips: 0.35
+      range_profit_pips: 1.6
+      range_trail_start_pips: 2.0
+      range_trail_backoff_pips: 0.65
+      range_lock_buffer_pips: 0.3
+      range_max_hold_sec: 900
       loss_cut_enabled: true
       loss_cut_require_sl: false
       loss_cut_soft_pips: 6.0
+      # NOTE: m1_structure_break is subject to EXIT_COMPOSITE gating and can block deterministic soft loss-cuts.
+      # Use a non-composite reason so soft loss-cuts actually execute when needed.
+      loss_cut_reason_soft: hard_stop
       loss_cut_hard_pips: 12.0
-      loss_cut_max_hold_sec: 1800
+      loss_cut_max_hold_sec: 900
       loss_cut_cooldown_sec: 6
       tick_imb:
         partial_enabled: true
@@ -315,46 +425,214 @@ strategies:
         partial_fraction: 0.4
         partial_min_units: 1000
         partial_min_remaining: 1000
-        be_buffer_pips: 0.2
+        # After partial take, lock meaningful profit so a reversal doesn't bleed into time_stop/max_adverse.
+        be_buffer_pips: 0.6
         min_hold_sec: 0
-        profit_pips: 1.0
-        trail_start_pips: 1.3
-        trail_backoff_pips: 0.5
-        lock_buffer_pips: 0.25
-        max_hold_sec: 1500
-        max_adverse_pips: 12.0
+        # Use the main exit_profile (above) for profit/trailing; here we only tune TickImbalance-specific safety.
+        profit_pips: 0.0
+        trail_start_pips: 0.0
+        trail_backoff_pips: 0.0
+        lock_buffer_pips: 0.0
+        max_hold_sec: 420
+        max_adverse_pips: 4.0
 
   LevelReject:
     min_profit_pips: 1.4
-    min_profit_ratio: 0.80
-    pro_stop: {soft_pips: 0.8, hard_pips: 14.1, min_hold_sec: 175, max_hold_sec: 5899, soft_atr_mult: 0.6, hard_atr_mult: 1.0}
+    min_profit_ratio: 0.45
+    pro_stop: {enabled: false}
     exit_profile:
       min_hold_sec: 10
-      profit_pips: 1.4
-      trail_start_pips: 1.9
+      profit_pips: 2.3
+      trail_start_pips: 2.6
       trail_backoff_pips: 0.6
       lock_buffer_pips: 0.3
-      range_profit_pips: 1.1
-      range_trail_start_pips: 1.6
+      lock_floor_min_hold_sec: 60
+      range_profit_pips: 2.3
+      range_trail_start_pips: 2.6
       range_trail_backoff_pips: 0.55
       range_lock_buffer_pips: 0.26
       range_max_hold_sec: 1800
       loss_cut_enabled: true
       loss_cut_require_sl: false
-      loss_cut_soft_pips: 5.5
+      # Soft cut acts like a hidden hard SL for this strategy. Keep disabled.
+      loss_cut_soft_pips: 0.0
       loss_cut_hard_pips: 10.5
+      # Raise hard cut with volatility; base still applies when ATR is small.
+      loss_cut_hard_atr_mult: 2.2
+      # In stretched reversion context, allow more room instead of forcing max_adverse early.
+      loss_cut_reversion_enabled: true
+      loss_cut_reversion_hard_pips: 18.0
+      loss_cut_reversion_vwap_gap_min: 18.0
+      loss_cut_reversion_adx_max: 22.0
+      loss_cut_reversion_rsi_short_min: 62.0
+      loss_cut_reversion_rsi_long_max: 38.0
       loss_cut_max_hold_sec: 1800
       loss_cut_cooldown_sec: 6
+
+  LiquiditySweep:
+    min_profit_pips: 1.0
+    min_profit_ratio: 0.45
+    exit_profile:
+      # LiquiditySweep often runs without broker SL (stopLossOnFill). Without a deterministic
+      # loss cut, it can bleed until margin relief closes the trade. Cap tail risk mechanically.
+      loss_cut_enabled: true
+      loss_cut_require_sl: false
+      # Avoid a tight "soft" cut (hidden hard-SL); keep only a tail cap + time stop.
+      loss_cut_soft_pips: 0.0
+      loss_cut_hard_pips: 12.0
+      loss_cut_max_hold_sec: 1800
+      loss_cut_cooldown_sec: 6
+
+  TickWickReversal:
+    min_profit_pips: 1.2
+    min_profit_ratio: 0.45
+    exit_profile:
+      min_hold_sec: 6
+      profit_pips: 1.1
+      trail_start_pips: 1.5
+      trail_backoff_pips: 0.55
+      lock_buffer_pips: 0.25
+      range_profit_pips: 1.0
+      range_trail_start_pips: 1.4
+      range_trail_backoff_pips: 0.5
+      range_lock_buffer_pips: 0.22
+      range_max_hold_sec: 240
+      loss_cut_enabled: true
+      loss_cut_require_sl: false
+      loss_cut_soft_pips: 3.2
+      loss_cut_hard_pips: 6.0
+      loss_cut_max_hold_sec: 240
+      loss_cut_cooldown_sec: 4
+      loss_cut_reason_soft: max_adverse
+      loss_cut_reason_hard: max_adverse
+      loss_cut_reason_time: time_stop
+
+  WickReversalHF:
+    min_profit_pips: 1.0
+    min_profit_ratio: 0.45
+    exit_profile:
+      # Wick-based fades are prone to small whipsaws; avoid a tight "soft" cut (hidden hard-SL).
+      # Keep only a tail cap + time stop when running without broker SL.
+      loss_cut_enabled: true
+      loss_cut_require_sl: false
+      loss_cut_soft_pips: 0.0
+      loss_cut_hard_pips: 6.0
+      # Use a composite reason so loss-cuts are allowed only on stronger invalidation signals.
+      loss_cut_reason_hard: m1_structure_break
+      loss_cut_max_hold_sec: 900
+      loss_cut_cooldown_sec: 5
+
+  WickReversalBlend:
+    min_profit_pips: 1.0
+    min_profit_ratio: 0.45
+    exit_profile:
+      # Blend is a higher-quality wick fade with tick confirmation; still cap tail risk mechanically.
+      loss_cut_enabled: true
+      loss_cut_require_sl: false
+      loss_cut_soft_pips: 0.0
+      loss_cut_hard_pips: 6.0
+      loss_cut_max_hold_sec: 900
+      loss_cut_cooldown_sec: 5
+
+  WickReversalPro:
+    min_profit_pips: 1.0
+    min_profit_ratio: 0.45
+    exit_profile:
+      loss_cut_enabled: true
+      loss_cut_require_sl: false
+      loss_cut_soft_pips: 0.0
+      loss_cut_hard_pips: 6.0
+      loss_cut_max_hold_sec: 900
+      loss_cut_cooldown_sec: 5
+
+  LevelRejectPlus:
+    min_profit_pips: 1.0
+    min_profit_ratio: 0.45
+    exit_profile:
+      # Level-based rejects can need room; avoid a small soft cut while still preventing tail blowups.
+      loss_cut_enabled: true
+      loss_cut_require_sl: false
+      loss_cut_soft_pips: 0.0
+      loss_cut_hard_pips: 8.0
+      # Composite-gated: avoid stopping out reversion winners on a simple adverse spike.
+      loss_cut_reason_hard: m1_structure_break
+      loss_cut_max_hold_sec: 1800
+      loss_cut_cooldown_sec: 6
+
+  VwapRevertS:
+    min_profit_pips: 1.0
+    min_profit_ratio: 0.45
+    exit_profile:
+      # VWAP reversion can need time to mean-revert; avoid a tight "soft" loss cut which
+      # behaves like a hidden hard-SL and can stop out winners. Keep only:
+      # - a wide tail cap (hard)
+      # - a time-based stop for trades that stay underwater too long
+      loss_cut_enabled: true
+      loss_cut_require_sl: false
+      loss_cut_soft_pips: 0.0
+      loss_cut_hard_pips: 12.0
+      loss_cut_max_hold_sec: 2400
+      loss_cut_cooldown_sec: 5
+
+  SqueezePulseBreak:
+    min_profit_pips: 1.2
+    min_profit_ratio: 0.45
+    # Lock profits earlier for breakout scalps: once in profit, move SL to protect gains.
+    be_profile: {trigger_pips: 1.2, lock_ratio: 0.50, min_lock_pips: 0.60, cooldown_sec: 20}
+    exit_profile:
+      # Defaults have loss_cut disabled + require SL; SqueezePulseBreak often runs without broker SL.
+      # Enable deterministic loss cuts to avoid tail losses when the breakout fails.
+      loss_cut_enabled: true
+      loss_cut_require_sl: false
+      loss_cut_soft_pips: 3.8
+      # Composite-gated: avoid stopping out trades that can still recover to TP.
+      loss_cut_reason_soft: m1_structure_break
+      loss_cut_hard_pips: 7.0
+      loss_cut_reason_hard: m1_structure_break
+      # Many TP-touches happen >7min after entry; don't time-stop too early while underwater.
+      loss_cut_max_hold_sec: 1800
+      loss_cut_cooldown_sec: 4
+
+  FalseBreakFade:
+    min_profit_pips: 1.0
+    min_profit_ratio: 0.45
+    exit_profile:
+      # Fade setups can bleed for a long time if reclaim fails; cut deterministically without broker SL.
+      loss_cut_enabled: true
+      loss_cut_require_sl: false
+      loss_cut_soft_pips: 3.8
+      # Composite-gated: avoid stopping out short-lived fades that often mean-revert to TP.
+      loss_cut_reason_soft: m1_structure_break
+      loss_cut_hard_pips: 7.5
+      loss_cut_reason_hard: m1_structure_break
+      loss_cut_max_hold_sec: 1800
+      loss_cut_cooldown_sec: 5
 
   MomentumPulse:
     be_profile: {trigger_pips: 1.7, lock_ratio: 0.50, min_lock_pips: 0.60, cooldown_sec: 35}
     tp_move: {trigger_pips: 1.4, buffer_pips: 0.9}
     pro_stop: {soft_pips: 3.4, hard_pips: 4.94, min_hold_sec: 112, max_hold_sec: 3601, soft_atr_mult: 0.8, hard_atr_mult: 1.4}
+    exit_profile:
+      loss_cut_enabled: true
+      loss_cut_require_sl: false
+      loss_cut_soft_pips: 0.0
+      loss_cut_hard_pips: 0.0
+      loss_cut_hard_sl_mult: 1.35
+      loss_cut_max_hold_sec: 1800
+      loss_cut_cooldown_sec: 6
 
   VolCompressionBreak:
     be_profile: {trigger_pips: 1.8, lock_ratio: 0.48, min_lock_pips: 0.60, cooldown_sec: 40}
     tp_move: {trigger_pips: 1.5, buffer_pips: 0.9}
     pro_stop: {soft_pips: 1.4, hard_pips: 3.8, min_hold_sec: 20, max_hold_sec: 7200, soft_atr_mult: 0.8, hard_atr_mult: 1.4}
+    exit_profile:
+      loss_cut_enabled: true
+      loss_cut_require_sl: false
+      loss_cut_soft_pips: 0.0
+      loss_cut_hard_pips: 0.0
+      loss_cut_hard_sl_mult: 1.30
+      loss_cut_max_hold_sec: 1800
+      loss_cut_cooldown_sec: 6
 
   RangeFader:
     be_profile: {trigger_pips: 1.0, lock_ratio: 0.45, min_lock_pips: 0.40, cooldown_sec: 12}
@@ -387,12 +665,33 @@ strategies:
     max_delay_sec: 25
     pro_stop: {soft_atr_mult: 0.6, hard_atr_mult: 1.0}
 
+  WickReversal:
+    min_profit_pips: 1.0
+    min_profit_ratio: 0.45
+    exit_profile:
+      loss_cut_enabled: true
+      loss_cut_require_sl: false
+      loss_cut_soft_pips: 0.0
+      loss_cut_hard_pips: 6.0
+      loss_cut_max_hold_sec: 900
+      loss_cut_cooldown_sec: 5
   fast_scalp:
-    min_profit_ratio: 0.80
+    min_profit_ratio: 0.45
     min_profit_ratio_min_tp_pips: 0.6
     be_profile: {trigger_pips: 1.2, lock_ratio: 0.40, min_lock_pips: 0.45, cooldown_sec: 12}
     tp_move: {trigger_pips: 0.9, buffer_pips: 0.6}
     pro_stop: {soft_pips: 1.2, hard_pips: 2.3, min_hold_sec: 15, max_hold_sec: 120, soft_atr_mult: 0.5, hard_atr_mult: 0.9}
+    exit_profile:
+      # Exit at a profile-defined drawdown threshold (see workers.fast_scalp.worker thesis hints).
+      loss_cut_enabled: true
+      loss_cut_require_sl: false
+      loss_cut_soft_pips: 0.0
+      # Hard/max-hold are injected from entry_thesis in workers.fast_scalp.exit_worker.
+      loss_cut_hard_pips: 0.0
+      loss_cut_max_hold_sec: 0.0
+      loss_cut_cooldown_sec: 2
+      loss_cut_reason_hard: drawdown
+      loss_cut_reason_time: timeout
 
   OnePipMakerS1:
     be_profile: {trigger_pips: 0.9, lock_ratio: 0.45, min_lock_pips: 0.35, cooldown_sec: 10}
@@ -418,6 +717,14 @@ strategies:
     be_profile: {trigger_pips: 1.3, lock_ratio: 0.40, min_lock_pips: 0.45, cooldown_sec: 15}
     tp_move: {trigger_pips: 1.0, buffer_pips: 0.7}
     pro_stop: {soft_pips: 5.0, hard_pips: 9.8, min_hold_sec: 282, max_hold_sec: 2141, soft_atr_mult: 0.6, hard_atr_mult: 1.0}
+    exit_profile:
+      loss_cut_enabled: true
+      loss_cut_require_sl: false
+      loss_cut_soft_pips: 0.0
+      loss_cut_hard_pips: 0.0
+      loss_cut_hard_sl_mult: 1.20
+      loss_cut_max_hold_sec: 900
+      loss_cut_cooldown_sec: 4
 
   impulse_momentum_s5:
     be_profile: {trigger_pips: 1.5, lock_ratio: 0.38, min_lock_pips: 0.50, cooldown_sec: 16}

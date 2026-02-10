@@ -12,6 +12,7 @@ from indicators.factor_cache import all_factors
 from market_data import tick_window
 from workers.common.pro_stop import maybe_close_pro_stop
 
+from . import config
 
 LOG = logging.getLogger(__name__)
 
@@ -268,6 +269,7 @@ class MicroRangeRevertLiteExitWorker:
             client_order_id=client_id,
             allow_negative=allow_negative,
             exit_reason=reason,
+            env_prefix=config.ENV_PREFIX,
         )
         if ok:
             LOG.info("[exit-rrl] trade=%s units=%s reason=%s", trade_id, units, reason)

@@ -42,7 +42,8 @@ _DEFAULT_REENTRY_CONFIG = {
 }
 _REENTRY_COOLDOWN_WIN_RANGE = (30, 300)
 _REENTRY_COOLDOWN_LOSS_RANGE = (60, 900)
-_REENTRY_PIPS_RANGE = (0.8, 8.0)
+# Allow sub-1pip thresholds (some ultra-short strategies work with ~0.5p).
+_REENTRY_PIPS_RANGE = (0.2, 8.0)
 
 
 def _parse_iso(ts: Optional[str]) -> Optional[dt.datetime]:
@@ -73,17 +74,22 @@ def _parse_iso(ts: Optional[str]) -> Optional[dt.datetime]:
 
 
 def _resolve_strategy_tag(raw_tag: Optional[str], thesis_raw: Optional[str]) -> str:
-    tag = (raw_tag or "").strip()
-    if tag:
-        return tag
+    # Prefer entry_thesis over the raw DB column.
+    #
+    # Rationale: older datasets sometimes have truncated/mangled strategy_tag values
+    # (e.g. "ImpulseRe") while entry_thesis keeps the full logical strategy name.
     if thesis_raw:
         try:
             payload = json.loads(thesis_raw)
-            if isinstance(payload, dict):
-                tag = payload.get("strategy_tag") or payload.get("strategy")
         except Exception:
-            tag = None
-    return str(tag).strip() if tag else "unknown"
+            payload = None
+        if isinstance(payload, dict):
+            for key in ("strategy_tag", "strategy", "tag", "name"):
+                val = payload.get(key)
+                if isinstance(val, str) and val.strip():
+                    return val.strip()
+    tag = (raw_tag or "").strip()
+    return tag if tag else "unknown"
 
 
 def _base_strategy_tag(tag: str) -> str:
@@ -110,6 +116,47 @@ def _load_m1_for_dates(dates: Iterable[dt.date]) -> Dict[dt.date, List[Candle]]:
     for d in sorted(set(dates)):
         path = LOGS / f"candles_M1_{d.strftime('%Y%m%d')}.json"
         if not path.exists():
+            # Prefer replay JSONL if present (this is what live workers write).
+            jsonl = (
+                LOGS
+                / "replay"
+                / "USD_JPY"
+                / f"USD_JPY_M1_{d.strftime('%Y%m%d')}.jsonl"
+            )
+            if jsonl.exists():
+                entries: List[Candle] = []
+                try:
+                    for line in jsonl.read_text(encoding="utf-8").splitlines():
+                        line = line.strip()
+                        if not line:
+                            continue
+                        try:
+                            row = json.loads(line)
+                        except Exception:
+                            continue
+                        if not isinstance(row, dict):
+                            continue
+                        t = _parse_iso(row.get("ts") or row.get("time"))
+                        if not t:
+                            continue
+                        try:
+                            entries.append(
+                                Candle(
+                                    ts=t,
+                                    o=float(row.get("open")),
+                                    h=float(row.get("high")),
+                                    l=float(row.get("low")),
+                                    c=float(row.get("close")),
+                                )
+                            )
+                        except Exception:
+                            continue
+                except Exception:
+                    entries = []
+                if entries:
+                    entries.sort(key=lambda c: c.ts)
+                    out[d] = entries
+                    continue
             agg = LOGS / "candles_M1_20251001_20251022.json"
             if agg.exists():
                 path = agg
@@ -289,14 +336,22 @@ def _classify_return_wait(stats: dict, min_trades: int) -> Tuple[str, str]:
         return "neutral", "low_sample"
     avg_mfe = stats["mfe_sum"] / stats["mfe_count"] if stats["mfe_count"] else None
     avg_mae = stats["mae_sum"] / stats["mae_count"] if stats["mae_count"] else None
-    be_post_30 = stats["be_post_hit"].get(30, 0) / max(1, count)
-    be_post_60 = stats["be_post_hit"].get(60, 0) / max(1, count)
+    be_seen = stats.get("be_post_seen") or {}
+    seen_30 = int(be_seen.get(30, 0) or 0)
+    seen_60 = int(be_seen.get(60, 0) or 0)
+    be_post_30 = (
+        stats["be_post_hit"].get(30, 0) / max(1, seen_30) if seen_30 > 0 else None
+    )
+    be_post_60 = (
+        stats["be_post_hit"].get(60, 0) / max(1, seen_60) if seen_60 > 0 else None
+    )
     avg_be_time = stats["be_hold_sum"] / stats["be_hold_hits"] if stats["be_hold_hits"] else None
     win_p50 = _percentile(stats["hold_win"], 50) if stats["hold_win"] else None
     loss_p50 = _percentile(stats["hold_loss"], 50) if stats["hold_loss"] else None
 
     if (
-        be_post_30 >= 0.35
+        be_post_30 is not None
+        and be_post_30 >= 0.35
         and avg_be_time is not None
         and avg_be_time <= 60.0
         and avg_mae is not None
@@ -305,7 +360,7 @@ def _classify_return_wait(stats: dict, min_trades: int) -> Tuple[str, str]:
     ):
         return "favor", "be_post_30+mae"
     if (
-        be_post_60 <= 0.20
+        (be_post_60 is not None and be_post_60 <= 0.20)
         or (
             avg_mae is not None
             and avg_mfe is not None
@@ -348,7 +403,14 @@ def _recommend_reentry_params(stats: dict) -> dict:
     elif avg_mfe is not None and avg_mfe > 0:
         reentry_pips = avg_mfe * 0.6
     else:
-        reentry_pips = _DEFAULT_REENTRY_CONFIG["same_dir_reentry_pips"]
+        # Fallback: derive from realized loss size (often approximates SL distance).
+        loss_abs_pips = stats.get("loss_abs_pips") or []
+        abs_pips = stats.get("abs_pips") or []
+        scale = _percentile(loss_abs_pips, 50) or _percentile(abs_pips, 50)
+        if scale is not None and scale > 0:
+            reentry_pips = scale * 0.4
+        else:
+            reentry_pips = _DEFAULT_REENTRY_CONFIG["same_dir_reentry_pips"]
     reentry_pips = round(_clamp(reentry_pips, *_REENTRY_PIPS_RANGE), 3)
     return {
         "cooldown_win_sec": cooldown_win,
@@ -512,12 +574,17 @@ def main() -> None:
                 "be_hold_hits": 0,
                 "be_hold_sum": 0.0,
                 "be_post_hit": {w: 0 for w in post_windows},
+                "be_post_seen": {w: 0 for w in post_windows},
+                "abs_pips": [],
+                "loss_abs_pips": [],
                 "hours": {},
             },
         )
         hold_min = max(0.0, (tr.close_time - tr.open_time).total_seconds() / 60.0)
         stats["count"] += 1
         stats["pips_sum"] += tr.pl_pips
+        abs_pips = abs(float(tr.pl_pips or 0.0))
+        stats["abs_pips"].append(abs_pips)
         stats["hold_sum"] += hold_min
         if tr.pl_pips > 0:
             stats["wins"] += 1
@@ -527,6 +594,7 @@ def main() -> None:
             stats["losses"] += 1
             stats["hold_loss"].append(hold_min)
             stats["gross_loss"] += abs(tr.pl_pips)
+            stats["loss_abs_pips"].append(abs_pips)
         entry_hour = int((tr.open_time + dt.timedelta(hours=9)).hour)
         hour_stats = stats["hours"].setdefault(
             entry_hour,
@@ -561,6 +629,9 @@ def main() -> None:
             stats["be_hold_sum"] += be_min
         for window in post_windows:
             hit = _be_post_hit(tr, candles_by_day, window)
+            if hit is None:
+                continue
+            stats["be_post_seen"][window] += 1
             if hit:
                 stats["be_post_hit"][window] += 1
 
@@ -598,8 +669,12 @@ def main() -> None:
         )
         parts = []
         for window in post_windows:
-            ratio = stats["be_post_hit"][window] / max(1, count)
-            parts.append(f"BE_post{window}={ratio:.2f}")
+            seen = int((stats.get("be_post_seen") or {}).get(window, 0) or 0)
+            if seen <= 0:
+                parts.append(f"BE_post{window}=NA")
+            else:
+                ratio = stats["be_post_hit"][window] / max(1, seen)
+                parts.append(f"BE_post{window}={ratio:.2f}")
         block_hours: list[int] = []
         if args.block_hours_scope == "per_strategy":
             block_hours = _suggest_block_hours(
@@ -682,7 +757,12 @@ def main() -> None:
                 "avg_mae": stats["mae_sum"] / stats["mae_count"] if stats["mae_count"] else None,
                 "avg_be_min": stats["be_hold_sum"] / stats["be_hold_hits"] if stats["be_hold_hits"] else None,
                 "be_post_hit": {
-                    str(w): stats["be_post_hit"][w] / max(1, count) for w in post_windows
+                    str(w): (
+                        stats["be_post_hit"][w] / max(1, int((stats.get("be_post_seen") or {}).get(w, 0) or 0))
+                        if int((stats.get("be_post_seen") or {}).get(w, 0) or 0) > 0
+                        else None
+                    )
+                    for w in post_windows
                 },
                 "block_jst_hours": block_hours,
                 "return_wait_bias": bias,
@@ -697,7 +777,7 @@ def main() -> None:
     if args.out_yaml:
         yaml_strategies: Dict[str, dict] = {}
         for tag, stats in ranked:
-            if stats["count"] < args.min_trades:
+            if tag == "unknown":
                 continue
             bias, reason = _classify_return_wait(stats, args.min_trades)
             block_hours: list[int] = []

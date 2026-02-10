@@ -1,7 +1,13 @@
 """TrendMA dedicated macro worker with dynamic cap."""
 
 from __future__ import annotations
-from analysis.ma_projection import compute_adx_projection, compute_bbw_projection, compute_ma_projection, compute_rsi_projection
+from analysis.ma_projection import (
+    compute_adx_projection,
+    compute_bbw_projection,
+    compute_ma_projection,
+    compute_rsi_projection,
+    score_ma_for_side,
+)
 
 import asyncio
 import datetime
@@ -12,7 +18,7 @@ from typing import Dict, Optional, Tuple
 
 from analysis.range_guard import detect_range_mode
 from indicators.factor_cache import all_factors, get_candles_snapshot
-from execution.order_manager import market_order
+from execution.order_manager import limit_order, market_order
 from execution.risk_guard import allowed_lot, can_trade, clamp_sl_tp
 from market_data import tick_window
 from strategies.trend.ma_cross import MovingAverageCross
@@ -27,15 +33,18 @@ from workers.common.size_utils import scale_base_units
 from . import config
 
 import os
-_BB_ENTRY_ENABLED = os.getenv("BB_ENTRY_ENABLED", "1").strip().lower() not in {"", "0", "false", "no"}
-_BB_ENTRY_REVERT_PIPS = float(os.getenv("BB_ENTRY_REVERT_PIPS", "2.4"))
-_BB_ENTRY_REVERT_RATIO = float(os.getenv("BB_ENTRY_REVERT_RATIO", "0.22"))
-_BB_ENTRY_TREND_EXT_PIPS = float(os.getenv("BB_ENTRY_TREND_EXT_PIPS", "3.5"))
-_BB_ENTRY_TREND_EXT_RATIO = float(os.getenv("BB_ENTRY_TREND_EXT_RATIO", "0.40"))
-_BB_ENTRY_SCALP_REVERT_PIPS = float(os.getenv("BB_ENTRY_SCALP_REVERT_PIPS", "2.0"))
-_BB_ENTRY_SCALP_REVERT_RATIO = float(os.getenv("BB_ENTRY_SCALP_REVERT_RATIO", "0.20"))
-_BB_ENTRY_SCALP_EXT_PIPS = float(os.getenv("BB_ENTRY_SCALP_EXT_PIPS", "2.4"))
-_BB_ENTRY_SCALP_EXT_RATIO = float(os.getenv("BB_ENTRY_SCALP_EXT_RATIO", "0.30"))
+from utils.env_utils import env_bool, env_float
+
+_BB_ENV_PREFIX = getattr(config, "ENV_PREFIX", "")
+_BB_ENTRY_ENABLED = env_bool("BB_ENTRY_ENABLED", True, prefix=_BB_ENV_PREFIX)
+_BB_ENTRY_REVERT_PIPS = env_float("BB_ENTRY_REVERT_PIPS", 2.4, prefix=_BB_ENV_PREFIX)
+_BB_ENTRY_REVERT_RATIO = env_float("BB_ENTRY_REVERT_RATIO", 0.22, prefix=_BB_ENV_PREFIX)
+_BB_ENTRY_TREND_EXT_PIPS = env_float("BB_ENTRY_TREND_EXT_PIPS", 3.5, prefix=_BB_ENV_PREFIX)
+_BB_ENTRY_TREND_EXT_RATIO = env_float("BB_ENTRY_TREND_EXT_RATIO", 0.40, prefix=_BB_ENV_PREFIX)
+_BB_ENTRY_SCALP_REVERT_PIPS = env_float("BB_ENTRY_SCALP_REVERT_PIPS", 2.0, prefix=_BB_ENV_PREFIX)
+_BB_ENTRY_SCALP_REVERT_RATIO = env_float("BB_ENTRY_SCALP_REVERT_RATIO", 0.20, prefix=_BB_ENV_PREFIX)
+_BB_ENTRY_SCALP_EXT_PIPS = env_float("BB_ENTRY_SCALP_EXT_PIPS", 2.4, prefix=_BB_ENV_PREFIX)
+_BB_ENTRY_SCALP_EXT_RATIO = env_float("BB_ENTRY_SCALP_EXT_RATIO", 0.30, prefix=_BB_ENV_PREFIX)
 _BB_PIP = 0.01
 
 
@@ -109,6 +118,11 @@ BB_STYLE = "trend"
 LOG = logging.getLogger(__name__)
 PIP = 0.01
 
+_LIMIT_ENTRY_ENABLED = os.getenv("TRENDMA_USE_LIMIT_ENTRY", "0").strip().lower() not in {"", "0", "false", "no"}
+_LIMIT_ENTRY_TTL_SEC = float(os.getenv("TRENDMA_LIMIT_TTL_SEC", "180") or 180.0)
+_PENDING_LIMIT_UNTIL_TS: float = 0.0
+_PENDING_LIMIT_ORDER_ID: Optional[str] = None
+
 
 
 _PROJ_TF_MINUTES = {"M1": 1.0, "M5": 5.0, "H1": 60.0, "H4": 240.0, "D1": 1440.0}
@@ -147,15 +161,7 @@ def _projection_candles(tfs):
 def _score_ma(ma, side, opp_block_bars):
     if ma is None:
         return None
-    align = ma.gap_pips >= 0 if side == "long" else ma.gap_pips <= 0
-    cross_soon = ma.projected_cross_bars is not None and ma.projected_cross_bars <= opp_block_bars
-    if align and not cross_soon:
-        return 0.7
-    if align and cross_soon:
-        return -0.4
-    if cross_soon:
-        return -0.8
-    return -0.5
+    return score_ma_for_side(ma, side, opp_block_bars)
 
 
 def _score_rsi(rsi, side, long_target, short_target, overheat_bars):
@@ -366,6 +372,7 @@ def _compute_cap(
     *args,
     **kwargs,
 ) -> Tuple[float, Dict[str, float]]:
+    kwargs.setdefault("env_prefix", config.ENV_PREFIX)
     res = compute_cap(
         cap_min=config.CAP_MIN,
         cap_max=config.CAP_MAX,
@@ -376,6 +383,7 @@ def _compute_cap(
 
 
 async def trendma_worker() -> None:
+    global _PENDING_LIMIT_UNTIL_TS, _PENDING_LIMIT_ORDER_ID
     if not config.ENABLED:
         LOG.info("%s disabled", config.LOG_PREFIX)
         return
@@ -383,6 +391,10 @@ async def trendma_worker() -> None:
 
     while True:
         await asyncio.sleep(config.LOOP_INTERVAL_SEC)
+        now_epoch = time.time()
+        if _PENDING_LIMIT_UNTIL_TS and now_epoch >= _PENDING_LIMIT_UNTIL_TS:
+            _PENDING_LIMIT_UNTIL_TS = 0.0
+            _PENDING_LIMIT_ORDER_ID = None
         now = datetime.datetime.utcnow()
         if not is_market_open(now):
             LOG.debug("%s skip: market closed", config.LOG_PREFIX)
@@ -406,6 +418,14 @@ async def trendma_worker() -> None:
         # レンジ判定が出ているときは TrendMA での新規を抑止
         if range_ctx.active:
             LOG.debug("%s skip: range_active", config.LOG_PREFIX)
+            continue
+        if _PENDING_LIMIT_UNTIL_TS and now_epoch < _PENDING_LIMIT_UNTIL_TS:
+            LOG.debug(
+                "%s skip: pending_limit order_id=%s until=%.0f",
+                config.LOG_PREFIX,
+                _PENDING_LIMIT_ORDER_ID or "-",
+                _PENDING_LIMIT_UNTIL_TS,
+            )
             continue
 
         signal = MovingAverageCross.check(fac_m1)
@@ -495,6 +515,14 @@ async def trendma_worker() -> None:
             price = float(fac_m1.get("close") or fac_h1.get("close") or 0.0)
         except Exception:
             price = 0.0
+        # Prefer fresh bid/ask from tick cache for limit passivity checks.
+        current_bid = None
+        current_ask = None
+        ticks = tick_window.recent_ticks(seconds=15.0, limit=1)
+        if ticks:
+            tick = ticks[-1]
+            current_bid = _bb_float(tick.get("bid"))
+            current_ask = _bb_float(tick.get("ask"))
         price = _latest_mid(price)
         side = "long" if signal["action"] == "OPEN_LONG" else "short"
         sl_pips = float(signal.get("sl_pips") or 0.0)
@@ -543,15 +571,52 @@ async def trendma_worker() -> None:
 
         tp_scale = 14.0 / max(1.0, tp_pips)
         tp_scale = max(0.35, min(1.1, tp_scale))
-        base_units = int(round(scale_base_units(config.BASE_ENTRY_UNITS, equity=balance if balance > 0 else equity, ref_equity=balance) * tp_scale))
+        base_units = int(
+            round(
+                scale_base_units(
+                    config.BASE_ENTRY_UNITS,
+                    equity=balance if balance > 0 else equity,
+                    ref_equity=balance,
+                    env_prefix=config.ENV_PREFIX,
+                )
+                * tp_scale
+            )
+        )
 
         conf_scale = _confidence_scale(conf)
         strategy_tag = signal.get("tag", MovingAverageCross.name)
+        entry_kind = "market"
+        entry_ref_price = price
+        entry_signal_price = None
+        entry_tolerance_pips = None
+        if _LIMIT_ENTRY_ENABLED:
+            entry_type = str(signal.get("entry_type") or "").strip().lower()
+            entry_price = _bb_float(signal.get("entry_price"))
+            entry_tol = _bb_float(signal.get("entry_tolerance_pips")) or 0.6
+            if (
+                entry_type == "limit"
+                and entry_price is not None
+                and entry_price > 0
+                and current_bid is not None
+                and current_ask is not None
+            ):
+                entry_signal_price = float(entry_price)
+                entry_tolerance_pips = float(entry_tol)
+                # If we're already close enough, take a market fill. Otherwise, stage a pullback entry.
+                if side == "long" and current_ask <= (entry_signal_price + entry_tolerance_pips * PIP):
+                    entry_kind = "market"
+                    entry_ref_price = price
+                elif side == "short" and current_bid >= (entry_signal_price - entry_tolerance_pips * PIP):
+                    entry_kind = "market"
+                    entry_ref_price = price
+                else:
+                    entry_kind = "limit"
+                    entry_ref_price = entry_signal_price
         lot = allowed_lot(
             float(snap.nav or 0.0),
             sl_pips,
             margin_available=float(snap.margin_available or 0.0),
-            price=price,
+            price=entry_ref_price,
             margin_rate=float(snap.margin_rate or 0.0),
             pocket=config.POCKET,
             side=side,
@@ -569,14 +634,14 @@ async def trendma_worker() -> None:
             units = -abs(units)
 
         if side == "long":
-            sl_price = round(price - sl_pips * 0.01, 3)
-            tp_price = round(price + tp_pips * 0.01, 3) if tp_pips > 0 else None
+            sl_price = round(entry_ref_price - sl_pips * 0.01, 3)
+            tp_price = round(entry_ref_price + tp_pips * 0.01, 3) if tp_pips > 0 else None
         else:
-            sl_price = round(price + sl_pips * 0.01, 3)
-            tp_price = round(price - tp_pips * 0.01, 3) if tp_pips > 0 else None
+            sl_price = round(entry_ref_price + sl_pips * 0.01, 3)
+            tp_price = round(entry_ref_price - tp_pips * 0.01, 3) if tp_pips > 0 else None
 
         sl_price, tp_price = clamp_sl_tp(
-            price=price,
+            price=entry_ref_price,
             sl=sl_price,
             tp=tp_price,
             is_buy=side == "long",
@@ -584,11 +649,18 @@ async def trendma_worker() -> None:
         client_id = _client_order_id(strategy_tag)
         entry_thesis = {
             "strategy_tag": strategy_tag,
+            "env_prefix": config.ENV_PREFIX,
             "tp_pips": tp_pips,
             "sl_pips": sl_pips,
             "hard_stop_pips": sl_pips,
             "confidence": conf,
         }
+        if entry_kind == "limit":
+            entry_thesis["entry_type"] = "limit"
+            entry_thesis["entry_price"] = round(float(entry_ref_price), 3)
+            if entry_tolerance_pips is not None:
+                entry_thesis["entry_tolerance_pips"] = round(float(entry_tolerance_pips), 2)
+            entry_thesis["limit_ttl_sec"] = round(max(0.0, _LIMIT_ENTRY_TTL_SEC), 1)
         div_meta = divergence_snapshot(fac_h1, max_age_bars=8)
         if div_meta:
             entry_thesis["divergence"] = div_meta
@@ -608,30 +680,63 @@ async def trendma_worker() -> None:
         if candle_mult != 1.0:
             sign = 1 if units > 0 else -1
             units = int(round(abs(units) * candle_mult)) * sign
-        res = await market_order(
-            instrument="USD_JPY",
-            units=units,
-            sl_price=sl_price,
-            tp_price=tp_price,
-            pocket=config.POCKET,
-            client_order_id=client_id,
-            strategy_tag=strategy_tag,
-            confidence=conf,
-            entry_thesis=entry_thesis,
-        )
-        LOG.info(
-            "%s sent units=%s side=%s price=%.3f sl=%.3f tp=%.3f conf=%.0f cap=%.2f reasons=%s res=%s",
-            config.LOG_PREFIX,
-            units,
-            side,
-            price,
-            sl_price,
-            tp_price,
-            conf,
-            cap,
-            {**cap_reason, "tp_scale": round(tp_scale, 3)},
-            res or "none",
-        )
+        if entry_kind == "limit":
+            trade_id, order_id = await limit_order(
+                instrument="USD_JPY",
+                units=units,
+                price=float(entry_ref_price),
+                sl_price=sl_price,
+                tp_price=tp_price,
+                pocket=config.POCKET,
+                current_bid=float(current_bid) if current_bid is not None else None,
+                current_ask=float(current_ask) if current_ask is not None else None,
+                require_passive=True,
+                client_order_id=client_id,
+                ttl_ms=max(1.0, _LIMIT_ENTRY_TTL_SEC) * 1000.0,
+                entry_thesis=entry_thesis,
+            )
+            if order_id and not trade_id:
+                _PENDING_LIMIT_ORDER_ID = order_id
+                _PENDING_LIMIT_UNTIL_TS = time.time() + max(0.0, _LIMIT_ENTRY_TTL_SEC)
+            LOG.info(
+                "%s sent(limit) units=%s side=%s ref=%.3f sl=%.3f tp=%s conf=%.0f cap=%.2f reasons=%s trade_id=%s order_id=%s",
+                config.LOG_PREFIX,
+                units,
+                side,
+                entry_ref_price,
+                sl_price,
+                f"{tp_price:.3f}" if tp_price is not None else "NA",
+                conf,
+                cap,
+                {**cap_reason, "tp_scale": round(tp_scale, 3)},
+                trade_id or "none",
+                order_id or "none",
+            )
+        else:
+            res = await market_order(
+                instrument="USD_JPY",
+                units=units,
+                sl_price=sl_price,
+                tp_price=tp_price,
+                pocket=config.POCKET,
+                client_order_id=client_id,
+                strategy_tag=strategy_tag,
+                confidence=conf,
+                entry_thesis=entry_thesis,
+            )
+            LOG.info(
+                "%s sent units=%s side=%s price=%.3f sl=%.3f tp=%.3f conf=%.0f cap=%.2f reasons=%s res=%s",
+                config.LOG_PREFIX,
+                units,
+                side,
+                price,
+                sl_price,
+                tp_price,
+                conf,
+                cap,
+                {**cap_reason, "tp_scale": round(tp_scale, 3)},
+                res or "none",
+            )
 
 
 

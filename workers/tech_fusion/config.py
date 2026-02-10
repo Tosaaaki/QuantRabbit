@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 
 PIP_VALUE = 0.01
+ENV_PREFIX = "TECH_FUSION"
 LOG_PREFIX = "[TECH-FUSION]"
 STRATEGY_TAG = "TechFusion"
 PROFILE_TAG = "tech_fusion"
@@ -102,5 +103,4 @@ EXIT_REVERSAL_PIPS: float = max(0.5, _float("TECH_FUSION_EXIT_REV_PIPS", 8.0))
 EXIT_ATR_SPIKE_PIPS: float = max(1.0, _float("TECH_FUSION_EXIT_ATR_SPIKE_PIPS", 12.0))
 EXIT_HARD_STOP_PIPS: float = max(1.0, _float("TECH_FUSION_EXIT_HARD_STOP_PIPS", 14.0))
 EXIT_TP_HINT_RATIO: float = max(0.2, _float("TECH_FUSION_EXIT_TP_HINT_RATIO", 0.75))
-
 

@@ -784,8 +784,8 @@ WORKER_SERVICES = {
     "pullback_s5_exit": "quant-pullback-s5-exit.service",
     "pullback_runner_s5": "quant-pullback-runner-s5.service",
     "pullback_runner_s5_exit": "quant-pullback-runner-s5-exit.service",
-    "vwap_magnet_s5": "quant-vwap-magnet-s5.service",
-    "vwap_magnet_s5_exit": "quant-vwap-magnet-s5-exit.service",
+    "session_open": "quant-session-open.service",
+    "session_open_exit": "quant-session-open-exit.service",
     "scalp_multi": "quant-scalp-multi.service",
     "scalp_multi_exit": "quant-scalp-multi-exit.service",
     # Micro
@@ -1831,10 +1831,8 @@ def _select_worker_targets(
         bump("vol_squeeze", 0.45, "range_compression")
         bump("pullback_s5", 0.6, "range_s5")
         bump("pullback_runner_s5", 0.55, "range_runner")
-        bump("vwap_magnet_s5", 0.55, "vwap_range")
     elif soft_range:
         bump("pullback_s5", 0.65, "soft_range")
-        bump("vwap_magnet_s5", 0.6, "soft_range")
         bump("vol_squeeze", 0.45, "soft_range")
 
     # Spike/impulse style entries
@@ -1842,7 +1840,6 @@ def _select_worker_targets(
         bump("impulse_break_s5", 0.45, "impulse_break")
         bump("impulse_momentum_s5", 0.4, "impulse_momentum")
         bump("impulse_retest_s5", 0.35, "impulse_retest")
-        bump("stop_run_reversal", 0.35, "stop_run")
 
     # Session open bias
     if now.minute < 20:
@@ -1859,7 +1856,6 @@ def _select_worker_targets(
     # Diversity nudge: 低〜中ボラではレンジ系が一つも選ばれていない場合に補充する
     range_workers = {
         "pullback_s5",
-        "vwap_magnet_s5",
         "vol_squeeze",
         "pullback_runner_s5",
     }
@@ -1964,7 +1960,6 @@ ALLOWED_RANGE_STRATEGIES = {
     "MicroLevelReactor",
     "MicroMomentumStack",
     # S5/スカルプ系（レンジでも評価を通す）
-    "vwap_magnet_s5",
     "pullback_runner_s5",
     "pullback_s5",
     "impulse_break_s5",
@@ -3719,7 +3714,6 @@ async def logic_loop(
         "MicroVWAPBound",
         "MicroVWAPRevert",
         "RangeFader",
-        "vwap_magnet_s5",
     }
     MR_OVERLAY_TAGS = {"VolCompressionBreak", "MomentumPulse"}
 

@@ -1,5 +1,7 @@
 import os
 
+ENV_PREFIX = "MARGIN_RELIEF"
+
 
 def _bool_env(key: str, default: bool) -> bool:
     raw = os.getenv(key)

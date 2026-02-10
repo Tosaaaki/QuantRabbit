@@ -4,6 +4,8 @@ import os
 from dataclasses import dataclass
 from typing import Dict, Optional
 
+from utils.env_utils import env_float
+
 
 @dataclass
 class CapResult:
@@ -20,6 +22,8 @@ def compute_cap(
     pos_bias: float,
     cap_min: float = 0.25,
     cap_max: float = 0.95,
+    target_margin_usage: Optional[float] = None,
+    env_prefix: Optional[str] = None,
 ) -> CapResult:
     """Dynamic cap based on market/position state."""
     # Aggressive: start near the upper bound to target high utilization
@@ -27,7 +31,11 @@ def compute_cap(
     reasons: Dict[str, float] = {}
 
     # Aim for target margin usage (e.g., 0.9 = use 90% of equity)
-    target_usage = max(0.1, min(0.99, float(os.getenv("TARGET_MARGIN_USAGE", "0.85") or 0.85)))
+    if target_margin_usage is None:
+        target_usage = env_float("TARGET_MARGIN_USAGE", 0.85, prefix=env_prefix)
+    else:
+        target_usage = float(target_margin_usage)
+    target_usage = max(0.1, min(0.99, target_usage))
     current_usage = max(0.0, min(1.0, 1.0 - free_ratio))
     if current_usage > 0:
         adj = target_usage / current_usage

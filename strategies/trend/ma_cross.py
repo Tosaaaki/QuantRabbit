@@ -623,7 +623,7 @@ class MovingAverageCross:
             "mtf_support": int(locals().get("support", 0)) if isinstance(mtf, dict) else 0,
             "mtf_oppose": int(locals().get("oppose", 0)) if isinstance(mtf, dict) else 0,
         }
-        return {
+        payload = {
             "action": action,
             "sl_pips": sl_pips,
             "tp_pips": tp_pips,
@@ -635,17 +635,14 @@ class MovingAverageCross:
             "tag": f"{MovingAverageCross.name}-{tag_suffix}",
             "_meta": meta,
         }
-        if entry_type and entry_price is not None:
+        if entry_type and entry_price is not None and entry_price > 0:
             payload["entry_type"] = entry_type
             payload["entry_price"] = entry_price
             payload["entry_tolerance_pips"] = entry_tolerance or 0.6
-            payload["meta"] = {
-                "pullback_pips": pullback,
-                "gap_slope_pips": projection.gap_slope_pips,
-                "gap_pips": projection.gap_pips,
-                "momentum_gap": momentum_gap,
-                "macd_slope": macd_slope,
-            }
+            # Attach entry hints into meta for observability / replay.
+            if isinstance(payload.get("_meta"), dict):
+                payload["_meta"]["pullback_pips"] = pullback
+                payload["_meta"]["entry_tolerance_pips"] = entry_tolerance
         return payload
 
     @staticmethod

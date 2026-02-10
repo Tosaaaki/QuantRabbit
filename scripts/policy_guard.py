@@ -142,7 +142,8 @@ def main() -> None:
     ap.add_argument("--lookback-min", type=int, default=int(os.getenv("POLICY_GUARD_LOOKBACK_MIN", "120")))
     ap.add_argument("--stable-min-sec", type=int, default=int(os.getenv("POLICY_GUARD_STABLE_MIN_SEC", "1800")))
     ap.add_argument("--max-decision-ms", type=float, default=float(os.getenv("POLICY_GUARD_MAX_DECISION_MS", "2000")))
-    ap.add_argument("--max-data-lag-ms", type=float, default=float(os.getenv("POLICY_GUARD_MAX_DATA_LAG_MS", "1500")))
+    # Data lag p95 default: align with the "stale" guardrail (3000ms) unless overridden explicitly.
+    ap.add_argument("--max-data-lag-ms", type=float, default=float(os.getenv("POLICY_GUARD_MAX_DATA_LAG_MS", "3000")))
     ap.add_argument("--max-drawdown-pct", type=float, default=float(os.getenv("POLICY_GUARD_MAX_DRAWDOWN_PCT", "0.18")))
     ap.add_argument("--min-order-success", type=float, default=float(os.getenv("POLICY_GUARD_MIN_ORDER_SUCCESS", "0.995")))
     ap.add_argument("--max-reject-rate", type=float, default=float(os.getenv("POLICY_GUARD_MAX_REJECT_RATE", "0.01")))

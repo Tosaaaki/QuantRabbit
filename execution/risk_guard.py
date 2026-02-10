@@ -78,9 +78,22 @@ _EXPOSURE_IGNORE_POCKETS = {
     if token.strip()
 }
 
-_DB = pathlib.Path("logs/trades.db")
-con = sqlite3.connect(_DB)
-con.row_factory = sqlite3.Row
+_DB = pathlib.Path(os.getenv("TRADES_DB_PATH", "logs/trades.db"))
+
+
+def _open_trades_db() -> sqlite3.Connection | None:
+    """
+    trades.db is an ops artifact and may not exist in fresh checkouts / unit tests.
+    Keep imports fail-safe and open the DB lazily (read-only).
+    """
+    if not _DB.exists():
+        return None
+    try:
+        con = sqlite3.connect(f"file:{_DB}?mode=ro", uri=True, timeout=1.0)
+        con.row_factory = sqlite3.Row
+        return con
+    except Exception:
+        return None
 
 
 def _guard_enabled() -> bool:
@@ -135,6 +148,10 @@ _RISK_PERF_WIN_REF = max(
 _RISK_PERF_MIN_MULT = float(os.getenv("RISK_PERF_MIN_MULT", "0.4") or 0.4)
 _RISK_PERF_MAX_MULT = float(os.getenv("RISK_PERF_MAX_MULT", "1.4") or 1.4)
 _RISK_PERF_TTL_SEC = max(30.0, float(os.getenv("RISK_PERF_TTL_SEC", "180") or 180.0))
+# Risk performance metrics in trades.db:
+# - Default to realized_pl so the multiplier tracks actual account P&L (position sizing included),
+#   not just raw pips which can be misleading when units vary by setup/regime.
+_RISK_PERF_USE_REALIZED_PL = _env_bool("RISK_PERF_USE_REALIZED_PL", True)
 
 _RISK_REGIME_ENABLED = _env_bool("RISK_REGIME_ENABLED", True)
 _RISK_REGIME_RANGE_PENALTY = float(os.getenv("RISK_REGIME_RANGE_PENALTY", "0.7") or 0.7)
@@ -142,7 +159,7 @@ _RISK_REGIME_RANGE_BONUS = float(os.getenv("RISK_REGIME_RANGE_BONUS", "1.1") or 
 _RISK_REGIME_TREND_BONUS = float(os.getenv("RISK_REGIME_TREND_BONUS", "1.1") or 1.1)
 _RISK_REGIME_TREND_PENALTY = float(os.getenv("RISK_REGIME_TREND_PENALTY", "0.85") or 0.85)
 
-_PERF_CACHE: dict[tuple[str, str], tuple[float, float, float, int]] = {}
+_PERF_CACHE: dict[tuple[str, str, str], tuple[float, float, float, int]] = {}
 _TAG_ALIAS = {
     "impulseretrace": "impulseretrace",
     "rangefader": "rangefader",
@@ -214,7 +231,8 @@ def _query_perf_stats(tag: str, pocket: str) -> tuple[float, float, int]:
         return 1.0, 1.0, 0
     if not _DB.exists():
         return 1.0, 1.0, 0
-    key = (variants[0], pocket)
+    metric = "realized_pl" if _RISK_PERF_USE_REALIZED_PL else "pl_pips"
+    key = (variants[0], pocket, metric)
     now_mono = time.monotonic()
     cached = _PERF_CACHE.get(key)
     if cached and now_mono - cached[0] <= _RISK_PERF_TTL_SEC:
@@ -226,6 +244,7 @@ def _query_perf_stats(tag: str, pocket: str) -> tuple[float, float, int]:
     params = list(variants)
     params.extend([pocket, f"-{_RISK_PERF_LOOKBACK_DAYS} day"])
     con_local: sqlite3.Connection | None = None
+    value_col = "realized_pl" if _RISK_PERF_USE_REALIZED_PL else "pl_pips"
     try:
         con_local = sqlite3.connect(_DB)
         con_local.row_factory = sqlite3.Row
@@ -233,13 +252,13 @@ def _query_perf_stats(tag: str, pocket: str) -> tuple[float, float, int]:
             f"""
             SELECT
               COUNT(*) AS n,
-              SUM(CASE WHEN pl_pips > 0 THEN pl_pips ELSE 0 END) AS profit,
-              SUM(CASE WHEN pl_pips < 0 THEN ABS(pl_pips) ELSE 0 END) AS loss,
-              SUM(CASE WHEN pl_pips > 0 THEN 1 ELSE 0 END) AS win
+              SUM(CASE WHEN {value_col} > 0 THEN {value_col} ELSE 0 END) AS profit,
+              SUM(CASE WHEN {value_col} < 0 THEN ABS({value_col}) ELSE 0 END) AS loss,
+              SUM(CASE WHEN {value_col} > 0 THEN 1 ELSE 0 END) AS win
             FROM trades
             WHERE {tag_clause}
               AND pocket = ?
-              AND close_time >= datetime('now', ?)
+              AND datetime(close_time) >= datetime('now', ?)
             """,
             params,
         ).fetchone()
@@ -274,7 +293,9 @@ def _perf_multiplier(tag: Optional[str], pocket: Optional[str]) -> tuple[float, 
         return 1.0, {"n": float(n), "pf": float(pf), "win": float(win_rate)}
     pf_score = _score_linear(pf, _RISK_PERF_PF_BAD, _RISK_PERF_PF_REF)
     win_score = _score_linear(win_rate, _RISK_PERF_WIN_BAD, _RISK_PERF_WIN_REF)
-    combined = _clamp(0.6 * pf_score + 0.4 * win_score, 0.0, 1.0)
+    # PF is the primary expectancy metric. A high win rate must not offset a bad PF
+    # (high-win/low-PF trap where losses are larger than wins).
+    combined = _clamp(pf_score * (0.7 + 0.3 * win_score), 0.0, 1.0)
     mult = _RISK_PERF_MIN_MULT + combined * (_RISK_PERF_MAX_MULT - _RISK_PERF_MIN_MULT)
     details = {
         "n": float(n),
@@ -282,6 +303,7 @@ def _perf_multiplier(tag: Optional[str], pocket: Optional[str]) -> tuple[float, 
         "win": float(win_rate),
         "pf_score": float(pf_score),
         "win_score": float(win_score),
+        "combined": float(combined),
         "perf_mult": float(mult),
     }
     return mult, details
@@ -515,16 +537,25 @@ def update_dd_context(
 
 
 def _pocket_dd(pocket: str) -> float:
-    rows = con.execute(
-        """
-        SELECT COALESCE(SUM(realized_pl), 0) AS loss_sum
-        FROM trades
-        WHERE pocket = ?
-          AND realized_pl < 0
-          AND substr(close_time, 1, 10) >= date('now', ?)
-        """,
-        (pocket, f"-{_LOOKBACK_DAYS} day"),
-    ).fetchone()
+    con = _open_trades_db()
+    if con is None:
+        return 0.0
+    try:
+        rows = con.execute(
+            """
+            SELECT COALESCE(SUM(realized_pl), 0) AS loss_sum
+            FROM trades
+            WHERE pocket = ?
+              AND realized_pl < 0
+              AND substr(close_time, 1, 10) >= date('now', ?)
+            """,
+            (pocket, f"-{_LOOKBACK_DAYS} day"),
+        ).fetchone()
+    finally:
+        try:
+            con.close()
+        except Exception:
+            pass
     loss_jpy = abs(rows["loss_sum"]) if rows else 0.0
     equity = _POCKET_EQUITY_HINT.get(pocket, _DEFAULT_BASE_EQUITY[pocket])
     if equity <= 0:
@@ -536,8 +567,18 @@ def check_global_drawdown() -> bool:
     """口座全体のドローダウンが閾値を超えているかチェック"""
     if _DISABLE_GLOBAL_DD:
         return False
+    con = _open_trades_db()
+    if con is None:
+        return False
+    try:
+        # 全ての取引の損益合計を取得
+        rows = con.execute("SELECT SUM(pl_pips) FROM trades").fetchone()
+    finally:
+        try:
+            con.close()
+        except Exception:
+            pass
     # 全ての取引の損益合計を取得
-    rows = con.execute("SELECT SUM(pl_pips) FROM trades").fetchone()
     total_pl_pips = rows[0] or 0.0
 
     # 損失の場合のみドローダウンとして計算
@@ -1086,17 +1127,26 @@ def loss_cooldown_status(
             return True, remaining
         _LOSS_COOLDOWN_CACHE.pop(key, None)
 
-    rows = con.execute(
-        """
-        SELECT pl_pips, close_time
-        FROM trades
-        WHERE pocket = ?
-          AND close_time IS NOT NULL
-        ORDER BY datetime(close_time) DESC
-        LIMIT ?
-        """,
-        (pocket, max_losses),
-    ).fetchall()
+    con = _open_trades_db()
+    if con is None:
+        return False, 0.0
+    try:
+        rows = con.execute(
+            """
+            SELECT pl_pips, close_time
+            FROM trades
+            WHERE pocket = ?
+              AND close_time IS NOT NULL
+            ORDER BY datetime(close_time) DESC
+            LIMIT ?
+            """,
+            (pocket, max_losses),
+        ).fetchall()
+    finally:
+        try:
+            con.close()
+        except Exception:
+            pass
 
     if not rows:
         return False, 0.0

@@ -1,0 +1,48 @@
+[Unit]
+Description=QuantRabbit Scalp Precision Tick Wick Reversal Worker
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/tossaki/QuantRabbit
+EnvironmentFile=/etc/quantrabbit.env
+Environment=PYTHONUNBUFFERED=1
+Environment=SCALP_PRECISION_ENABLED=1
+Environment=SCALP_PRECISION_MODE=tick_wick_reversal
+Environment=SCALP_PRECISION_UNIT_ALLOWLIST=tick_wick_reversal
+Environment=SCALP_PRECISION_MODE_FILTER_ALLOWLIST=1
+Environment=SCALP_PRECISION_LOOP_INTERVAL_SEC=3.0
+Environment=SCALP_PRECISION_COOLDOWN_SEC=12
+Environment=SCALP_PRECISION_MAX_OPEN_TRADES=1
+Environment=SCALP_PRECISION_OPEN_TRADES_SCOPE=tag
+Environment=SCALP_PRECISION_BASE_UNITS=6000
+Environment=SCALP_PRECISION_CAP_MAX=0.45
+Environment=SCALP_PRECISION_LOG_PREFIX=[ScalpPrecision:TickWickRev]
+
+# Tune: keep it high-frequency, but stand down when ADX says the market is trending
+# and require tick reversal confirmation to avoid "instant SL" entries.
+Environment=TICK_WICK_WINDOW_SEC=90
+Environment=TICK_WICK_MIN_TICKS=40
+Environment=TICK_WICK_RANGE_MIN_PIPS=1.2
+Environment=TICK_WICK_BODY_MAX_PIPS=0.9
+Environment=TICK_WICK_RATIO_MIN=0.45
+Environment=TICK_WICK_ADX_MAX=24.0
+Environment=TICK_WICK_REQUIRE_BB_TOUCH=1
+Environment=TICK_WICK_BB_TOUCH_PIPS=0.9
+Environment=TICK_WICK_REQUIRE_TICK_REV=1
+Environment=TICK_WICK_MIN_REV_STRENGTH=0.45
+Environment=TICK_WICK_MIN_AIR_SCORE=0.74
+Environment=TICK_WICK_MIN_UNITS_CLAMP_RATIO=0.75
+Environment=TICK_WICK_DIAG=1
+Environment=TICK_WICK_DIAG_INTERVAL_SEC=15
+
+# Broker SL/TP disabled (no entry stop-loss). Re-enable by setting:
+# Environment=ORDER_ENABLE_STOP_LOSS_SCALP=1
+
+ExecStart=/home/tossaki/QuantRabbit/.venv/bin/python -m workers.scalp_precision.worker
+Restart=always
+RestartSec=5
+User=tossaki
+
+[Install]
+WantedBy=multi-user.target

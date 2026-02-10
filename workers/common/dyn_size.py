@@ -7,7 +7,17 @@ from typing import Optional, Tuple
 from execution.risk_guard import allowed_lot
 from workers.common import perf_guard
 from workers.common.size_utils import scale_base_units
+from utils.env_utils import env_float
 from utils.oanda_account import get_account_snapshot
+
+
+def _strategy_env_float(name: str, default: float, *, env_prefix: Optional[str]) -> float:
+    return env_float(
+        name,
+        default,
+        prefix=env_prefix,
+        allow_global_fallback=False,
+    )
 
 
 @dataclass
@@ -21,15 +31,6 @@ class SizingContext:
 
 def _clamp(v: float, lo: float, hi: float) -> float:
     return max(lo, min(hi, v))
-
-def _env_float(name: str, default: float) -> float:
-    raw = os.getenv(name)
-    if raw is None:
-        return float(default)
-    try:
-        return float(raw)
-    except (TypeError, ValueError):
-        return float(default)
 
 
 def compute_units(
@@ -45,6 +46,7 @@ def compute_units(
     signal_score: Optional[float] = None,  # 0..1 (confidence-like)
     pocket: Optional[str] = None,
     strategy_tag: Optional[str] = None,
+    env_prefix: Optional[str] = None,
 ) -> SizingContext:
     """Flexible unit sizing with risk/volatility/margin awareness.
 
@@ -57,7 +59,13 @@ def compute_units(
     margin_rate = float(snap.margin_rate or 0.0)
     free_ratio = float(snap.free_margin_ratio or 0.0) if snap.free_margin_ratio is not None else 0.0
 
-    base_entry_units = scale_base_units(base_entry_units, equity=balance if balance > 0 else equity, ref_equity=balance, min_units=min_units)
+    base_entry_units = scale_base_units(
+        base_entry_units,
+        equity=balance if balance > 0 else equity,
+        ref_equity=balance,
+        min_units=min_units,
+        env_prefix=env_prefix,
+    )
 
     # 1) Dynamic risk based on free margin ratio
     #    Very low free margin -> scale down aggressively
@@ -74,9 +82,9 @@ def compute_units(
     else:
         free_scale = 1.2
 
-    base_risk_pct = max(0.0005, _env_float("DYN_SIZE_BASE_RISK_PCT", 0.01))
-    min_risk_pct = max(0.0005, _env_float("DYN_SIZE_MIN_RISK_PCT", 0.002))
-    max_risk_pct = max(min_risk_pct, _env_float("DYN_SIZE_MAX_RISK_PCT", 0.03))
+    base_risk_pct = max(0.0005, _strategy_env_float("DYN_SIZE_BASE_RISK_PCT", 0.01, env_prefix=env_prefix))
+    min_risk_pct = max(0.0005, _strategy_env_float("DYN_SIZE_MIN_RISK_PCT", 0.002, env_prefix=env_prefix))
+    max_risk_pct = max(min_risk_pct, _strategy_env_float("DYN_SIZE_MAX_RISK_PCT", 0.03, env_prefix=env_prefix))
     risk_pct = _clamp(base_risk_pct * free_scale, min_risk_pct, max_risk_pct)
 
     # 2) Allowed lot from risk math (equity/sl)
@@ -125,7 +133,7 @@ def compute_units(
     perf_mult = 1.0
     if strategy_tag and pocket:
         try:
-            perf = perf_guard.perf_scale(strategy_tag, pocket)
+            perf = perf_guard.perf_scale(strategy_tag, pocket, env_prefix=env_prefix)
             perf_mult = float(perf.multiplier or 1.0)
             if perf_mult > 1.0:
                 scaled_units = int(round(scaled_units * perf_mult))

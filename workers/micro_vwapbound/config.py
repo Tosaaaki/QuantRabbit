@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 
+ENV_PREFIX = "MICRO_VWAP"
 POCKET = "micro"
 LOOP_INTERVAL_SEC = float(os.getenv("MICRO_VWAP_LOOP_INTERVAL_SEC", "8.0"))
 ENABLED = os.getenv("MICRO_VWAP_ENABLED", "1").strip().lower() not in {"", "0", "false", "no"}

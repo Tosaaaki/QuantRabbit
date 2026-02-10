@@ -1,0 +1,21 @@
+[Unit]
+Description=QuantRabbit Session Open Worker
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/tossaki/QuantRabbit
+EnvironmentFile=-/etc/quantrabbit.env
+Environment="PYTHONUNBUFFERED=1"
+Environment=SESSION_OPEN_LIVE=1
+# SessionOpen (micro) expects a tight SL derived from ATR; without stopLossOnFill it can get
+# widened to a catastrophe SL by the hard-stop backfill service, which breaks risk.
+Environment=ORDER_ENABLE_STOP_LOSS_MICRO=1
+Environment=ORDER_ALLOW_STOP_LOSS_WITH_EXIT_NO_NEGATIVE_CLOSE_MICRO=true
+ExecStart=/home/tossaki/QuantRabbit/.venv/bin/python -m workers.session_open.worker
+Restart=always
+RestartSec=5
+User=tossaki
+
+[Install]
+WantedBy=multi-user.target

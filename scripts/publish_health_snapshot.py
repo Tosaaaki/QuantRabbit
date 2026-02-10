@@ -305,7 +305,7 @@ def _build_snapshot() -> dict[str, Any]:
         ),
         "trades_count_24h": _safe_query(
             trades_db,
-            "select count(*) from trades where entry_time >= datetime('now','-1 day');",
+            "select count(*) from trades where entry_time >= strftime('%Y-%m-%dT%H:%M:%S','now','-1 day');",
         ),
         "trades_recent": _safe_query_rows(
             trades_db,
@@ -323,7 +323,7 @@ def _build_snapshot() -> dict[str, Any]:
         "orders_status_1h": _safe_query_rows(
             orders_db,
             "select status,count(*) as count from orders "
-            "where ts >= datetime('now','-1 hour') "
+            "where ts >= strftime('%Y-%m-%dT%H:%M:%S','now','-1 hour') "
             "group by status order by count desc limit 8;",
         ),
         "data_lag_ms": _safe_query(

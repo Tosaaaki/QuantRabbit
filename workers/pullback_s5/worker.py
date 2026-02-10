@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 from analysis.ma_projection import compute_adx_projection, compute_bbw_projection, compute_ma_projection, compute_rsi_projection
+from analysis.ma_projection import score_ma_for_side
 
 import asyncio
 import datetime
@@ -28,15 +29,18 @@ from utils.divergence import apply_divergence_confidence, divergence_bias, diver
 from . import config
 
 import os
-_BB_ENTRY_ENABLED = os.getenv("BB_ENTRY_ENABLED", "1").strip().lower() not in {"", "0", "false", "no"}
-_BB_ENTRY_REVERT_PIPS = float(os.getenv("BB_ENTRY_REVERT_PIPS", "2.4"))
-_BB_ENTRY_REVERT_RATIO = float(os.getenv("BB_ENTRY_REVERT_RATIO", "0.22"))
-_BB_ENTRY_TREND_EXT_PIPS = float(os.getenv("BB_ENTRY_TREND_EXT_PIPS", "3.5"))
-_BB_ENTRY_TREND_EXT_RATIO = float(os.getenv("BB_ENTRY_TREND_EXT_RATIO", "0.40"))
-_BB_ENTRY_SCALP_REVERT_PIPS = float(os.getenv("BB_ENTRY_SCALP_REVERT_PIPS", "2.0"))
-_BB_ENTRY_SCALP_REVERT_RATIO = float(os.getenv("BB_ENTRY_SCALP_REVERT_RATIO", "0.20"))
-_BB_ENTRY_SCALP_EXT_PIPS = float(os.getenv("BB_ENTRY_SCALP_EXT_PIPS", "2.4"))
-_BB_ENTRY_SCALP_EXT_RATIO = float(os.getenv("BB_ENTRY_SCALP_EXT_RATIO", "0.30"))
+from utils.env_utils import env_bool, env_float
+
+_BB_ENV_PREFIX = getattr(config, "ENV_PREFIX", "")
+_BB_ENTRY_ENABLED = env_bool("BB_ENTRY_ENABLED", True, prefix=_BB_ENV_PREFIX)
+_BB_ENTRY_REVERT_PIPS = env_float("BB_ENTRY_REVERT_PIPS", 2.4, prefix=_BB_ENV_PREFIX)
+_BB_ENTRY_REVERT_RATIO = env_float("BB_ENTRY_REVERT_RATIO", 0.22, prefix=_BB_ENV_PREFIX)
+_BB_ENTRY_TREND_EXT_PIPS = env_float("BB_ENTRY_TREND_EXT_PIPS", 3.5, prefix=_BB_ENV_PREFIX)
+_BB_ENTRY_TREND_EXT_RATIO = env_float("BB_ENTRY_TREND_EXT_RATIO", 0.40, prefix=_BB_ENV_PREFIX)
+_BB_ENTRY_SCALP_REVERT_PIPS = env_float("BB_ENTRY_SCALP_REVERT_PIPS", 2.0, prefix=_BB_ENV_PREFIX)
+_BB_ENTRY_SCALP_REVERT_RATIO = env_float("BB_ENTRY_SCALP_REVERT_RATIO", 0.20, prefix=_BB_ENV_PREFIX)
+_BB_ENTRY_SCALP_EXT_PIPS = env_float("BB_ENTRY_SCALP_EXT_PIPS", 2.4, prefix=_BB_ENV_PREFIX)
+_BB_ENTRY_SCALP_EXT_RATIO = env_float("BB_ENTRY_SCALP_EXT_RATIO", 0.30, prefix=_BB_ENV_PREFIX)
 _BB_PIP = 0.01
 
 
@@ -147,15 +151,7 @@ def _projection_candles(tfs):
 def _score_ma(ma, side, opp_block_bars):
     if ma is None:
         return None
-    align = ma.gap_pips >= 0 if side == "long" else ma.gap_pips <= 0
-    cross_soon = ma.projected_cross_bars is not None and ma.projected_cross_bars <= opp_block_bars
-    if align and not cross_soon:
-        return 0.7
-    if align and cross_soon:
-        return -0.4
-    if cross_soon:
-        return -0.8
-    return -0.5
+    return score_ma_for_side(ma, side, opp_block_bars)
 
 
 def _score_rsi(rsi, side, long_target, short_target, overheat_bars):
@@ -816,6 +812,11 @@ async def pullback_s5_worker() -> None:
             )
             plan_bus.publish(plan)
             entry_thesis = signal.get("entry_thesis")
+            if not isinstance(entry_thesis, dict):
+                entry_thesis = {}
+            entry_thesis = dict(entry_thesis)
+            entry_thesis.setdefault("strategy_tag", "pullback_s5")
+            entry_thesis.setdefault("env_prefix", config.ENV_PREFIX)
             proj_allow, proj_mult, proj_detail = _projection_decision(
                 side,
                 "scalp",
@@ -823,8 +824,7 @@ async def pullback_s5_worker() -> None:
             )
             if not proj_allow:
                 continue
-            if proj_detail and isinstance(entry_thesis, dict):
-                entry_thesis = dict(entry_thesis)
+            if proj_detail:
                 entry_thesis["projection"] = proj_detail
             units = base_units if side == "long" else -base_units
             if proj_mult > 1.0:

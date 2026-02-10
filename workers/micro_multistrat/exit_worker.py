@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Dict, Optional, Sequence, Set
@@ -20,17 +21,23 @@ from indicators.factor_cache import all_factors
 from market_data import tick_window
 from utils.metrics_logger import log_metric
 from workers.common.pro_stop import maybe_close_pro_stop
+from workers.common.loss_cut import pick_loss_cut_reason, resolve_loss_cut
 
-_BB_EXIT_ENABLED = os.getenv("BB_EXIT_ENABLED", "1").strip().lower() not in {"", "0", "false", "no"}
-_BB_EXIT_REVERT_PIPS = float(os.getenv("BB_EXIT_REVERT_PIPS", "2.0"))
-_BB_EXIT_REVERT_RATIO = float(os.getenv("BB_EXIT_REVERT_RATIO", "0.20"))
-_BB_EXIT_TREND_EXT_PIPS = float(os.getenv("BB_EXIT_TREND_EXT_PIPS", "3.0"))
-_BB_EXIT_TREND_EXT_RATIO = float(os.getenv("BB_EXIT_TREND_EXT_RATIO", "0.35"))
-_BB_EXIT_SCALP_REVERT_PIPS = float(os.getenv("BB_EXIT_SCALP_REVERT_PIPS", "1.6"))
-_BB_EXIT_SCALP_REVERT_RATIO = float(os.getenv("BB_EXIT_SCALP_REVERT_RATIO", "0.18"))
-_BB_EXIT_SCALP_EXT_PIPS = float(os.getenv("BB_EXIT_SCALP_EXT_PIPS", "2.0"))
-_BB_EXIT_SCALP_EXT_RATIO = float(os.getenv("BB_EXIT_SCALP_EXT_RATIO", "0.28"))
-_BB_EXIT_MID_BUFFER_PIPS = float(os.getenv("BB_EXIT_MID_BUFFER_PIPS", "0.4"))
+from . import config
+from utils.env_utils import env_bool, env_float
+from utils.strategy_protection import exit_profile_for_tag
+
+_BB_ENV_PREFIX = getattr(config, "ENV_PREFIX", "")
+_BB_EXIT_ENABLED = env_bool("BB_EXIT_ENABLED", True, prefix=_BB_ENV_PREFIX)
+_BB_EXIT_REVERT_PIPS = env_float("BB_EXIT_REVERT_PIPS", 2.0, prefix=_BB_ENV_PREFIX)
+_BB_EXIT_REVERT_RATIO = env_float("BB_EXIT_REVERT_RATIO", 0.20, prefix=_BB_ENV_PREFIX)
+_BB_EXIT_TREND_EXT_PIPS = env_float("BB_EXIT_TREND_EXT_PIPS", 3.0, prefix=_BB_ENV_PREFIX)
+_BB_EXIT_TREND_EXT_RATIO = env_float("BB_EXIT_TREND_EXT_RATIO", 0.35, prefix=_BB_ENV_PREFIX)
+_BB_EXIT_SCALP_REVERT_PIPS = env_float("BB_EXIT_SCALP_REVERT_PIPS", 1.6, prefix=_BB_ENV_PREFIX)
+_BB_EXIT_SCALP_REVERT_RATIO = env_float("BB_EXIT_SCALP_REVERT_RATIO", 0.18, prefix=_BB_ENV_PREFIX)
+_BB_EXIT_SCALP_EXT_PIPS = env_float("BB_EXIT_SCALP_EXT_PIPS", 2.0, prefix=_BB_ENV_PREFIX)
+_BB_EXIT_SCALP_EXT_RATIO = env_float("BB_EXIT_SCALP_EXT_RATIO", 0.28, prefix=_BB_ENV_PREFIX)
+_BB_EXIT_MID_BUFFER_PIPS = env_float("BB_EXIT_MID_BUFFER_PIPS", 0.4, prefix=_BB_ENV_PREFIX)
 _BB_EXIT_BYPASS_TOKENS = {
     "hard_stop",
     "structure",
@@ -348,6 +355,7 @@ class MicroMultiExitWorker:
         self.loop_interval = max(0.3, _float_env("MICRO_MULTI_EXIT_LOOP_INTERVAL_SEC", 1.0))
         self._pos_manager = PositionManager()
         self._states: Dict[str, _TradeState] = {}
+        self._loss_cut_last_ts: Dict[str, float] = {}
 
         self.profit_take = max(1.2, _float_env("MICRO_MULTI_EXIT_PROFIT_PIPS", 2.0))
         self.trail_start = max(1.4, _float_env("MICRO_MULTI_EXIT_TRAIL_START_PIPS", 2.8))
@@ -399,6 +407,16 @@ class MicroMultiExitWorker:
         rsi = _safe_float(fac_m1.get("rsi"))
         return _latest_mid(), rsi, bool(range_ctx.active), _safe_float(fac_m1.get("adx")), _safe_float(fac_m1.get("bbw"))
 
+    def _trade_has_stop_loss(self, trade: dict) -> bool:
+        sl = trade.get("stop_loss")
+        if isinstance(sl, dict):
+            price = sl.get("price")
+            try:
+                return float(price) > 0.0
+            except (TypeError, ValueError):
+                return False
+        return False
+
     async def _close(
         self,
         trade_id: str,
@@ -432,6 +450,7 @@ class MicroMultiExitWorker:
             client_order_id=client_order_id,
             allow_negative=allow_negative,
             exit_reason=reason,
+            env_prefix=_BB_ENV_PREFIX,
         )
         if ok:
             LOG.info("[EXIT-micro_multi] trade=%s units=%s reason=%s pnl=%.2fp", trade_id, units, reason, pnl)
@@ -494,6 +513,7 @@ class MicroMultiExitWorker:
             strategy_tag=strategy_tag,
             entry_thesis=thesis,
             range_active=range_active,
+            env_prefix=_BB_ENV_PREFIX,
         )
 
         min_hold = self.min_hold_sec
@@ -527,6 +547,37 @@ class MicroMultiExitWorker:
 
         if hold_sec < min_hold:
             return
+
+        # Strategy-level "loss-cut": once a trade is beyond the point of return, exit and redeploy.
+        # Configured per-strategy via config/strategy_exit_protections.yaml -> exit_profile.loss_cut_*.
+        if pnl <= 0:
+            base_tag = _base_tag(trade) or str(strategy_tag).split("-", 1)[0]
+            exit_profile = exit_profile_for_tag(base_tag or str(strategy_tag))
+            sl_hint = _safe_float(thesis.get("hard_stop_pips") or thesis.get("sl_pips"))
+            params = resolve_loss_cut(exit_profile, sl_pips=sl_hint)
+            reason = pick_loss_cut_reason(
+                pnl_pips=float(pnl),
+                hold_sec=float(hold_sec),
+                params=params,
+                has_stop_loss=self._trade_has_stop_loss(trade),
+            )
+            if reason:
+                now_mono = time.monotonic()
+                last = self._loss_cut_last_ts.get(trade_id, 0.0)
+                if params.cooldown_sec > 0.0 and (now_mono - last) < params.cooldown_sec:
+                    return
+                self._loss_cut_last_ts[trade_id] = now_mono
+                await self._close(
+                    trade_id,
+                    -units,
+                    reason,
+                    pnl,
+                    client_id,
+                    bb_style=bb_style,
+                    allow_negative=True,
+                )
+                self._states.pop(trade_id, None)
+                return
 
         if pnl < 0 and not reversion_kind:
             fac_m1 = all_factors().get("M1") or {}
@@ -603,6 +654,7 @@ class MicroMultiExitWorker:
                         client_order_id=client_id,
                         allow_negative=False,
                         exit_reason="partial_take",
+                        env_prefix=_BB_ENV_PREFIX,
                     )
                     if ok:
                         state.partial_done = True
@@ -778,6 +830,9 @@ class MicroMultiExitWorker:
                 for tid in list(self._states.keys()):
                     if tid not in active_ids:
                         self._states.pop(tid, None)
+                for tid in list(self._loss_cut_last_ts.keys()):
+                    if tid not in active_ids:
+                        self._loss_cut_last_ts.pop(tid, None)
                 if not trades:
                     continue
 

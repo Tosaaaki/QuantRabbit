@@ -1,0 +1,25 @@
+[Unit]
+Description=QuantRabbit Scalp Precision WickReversal Worker
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/tossaki/QuantRabbit
+EnvironmentFile=/etc/quantrabbit.env
+Environment=PYTHONUNBUFFERED=1
+Environment=SCALP_PRECISION_ENABLED=1
+Environment=SCALP_PRECISION_MODE=wick_reversal
+Environment=SCALP_PRECISION_ALLOWLIST=wick_reversal
+Environment=SCALP_PRECISION_MODE_FILTER_ALLOWLIST=1
+Environment=SCALP_PRECISION_MAX_OPEN_TRADES=1
+Environment=SCALP_PRECISION_LOG_PREFIX=[ScalpPrecision:WickReversal]
+# Allow entries down to the same safety level as EXIT_EMERGENCY_MARGIN_USAGE_RATIO (0.92 => 0.08 free).
+Environment=SCALP_PRECISION_ENTRY_MIN_FREE_MARGIN_RATIO=0.08
+
+ExecStart=/home/tossaki/QuantRabbit/.venv/bin/python -m workers.scalp_precision.worker
+Restart=always
+RestartSec=5
+User=tossaki
+
+[Install]
+WantedBy=multi-user.target

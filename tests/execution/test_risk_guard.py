@@ -82,3 +82,49 @@ def test_exposure_state_uses_margin_pool(monkeypatch):
         ratio
         - ((expected_manual_margin + expected_bot_margin) / expected_pool)
     ) < 1e-6
+
+
+def test_perf_multiplier_pf_gates_win_score(monkeypatch):
+    # Ensure a high win rate does not keep risk near 1.0 when PF is clearly bad.
+    monkeypatch.setattr(risk_guard, "_RISK_MULT_ENABLED", True, raising=False)
+    monkeypatch.setattr(risk_guard, "_RISK_PERF_ENABLED", True, raising=False)
+    monkeypatch.setattr(risk_guard, "_RISK_PERF_MIN_TRADES", 30, raising=False)
+    monkeypatch.setattr(risk_guard, "_RISK_PERF_PF_BAD", 0.95, raising=False)
+    monkeypatch.setattr(risk_guard, "_RISK_PERF_PF_REF", 1.30, raising=False)
+    monkeypatch.setattr(risk_guard, "_RISK_PERF_WIN_BAD", 0.47, raising=False)
+    monkeypatch.setattr(risk_guard, "_RISK_PERF_WIN_REF", 0.58, raising=False)
+    monkeypatch.setattr(risk_guard, "_RISK_PERF_MIN_MULT", 0.25, raising=False)
+    monkeypatch.setattr(risk_guard, "_RISK_PERF_MAX_MULT", 2.0, raising=False)
+
+    # Typical failure mode: win rate looks great but PF is terrible because losses are larger.
+    monkeypatch.setattr(
+        risk_guard,
+        "_query_perf_stats",
+        lambda tag, pocket: (0.40, 0.76, 500),
+        raising=False,
+    )
+    mult, details = risk_guard._perf_multiplier("TickImbalance", "scalp_fast")
+    assert abs(mult - 0.25) < 1e-9
+    assert abs(details["pf_score"] - 0.0) < 1e-9
+    assert abs(details["win_score"] - 1.0) < 1e-9
+
+
+def test_perf_multiplier_rewards_good_pf(monkeypatch):
+    monkeypatch.setattr(risk_guard, "_RISK_MULT_ENABLED", True, raising=False)
+    monkeypatch.setattr(risk_guard, "_RISK_PERF_ENABLED", True, raising=False)
+    monkeypatch.setattr(risk_guard, "_RISK_PERF_MIN_TRADES", 30, raising=False)
+    monkeypatch.setattr(risk_guard, "_RISK_PERF_PF_BAD", 0.95, raising=False)
+    monkeypatch.setattr(risk_guard, "_RISK_PERF_PF_REF", 1.30, raising=False)
+    monkeypatch.setattr(risk_guard, "_RISK_PERF_WIN_BAD", 0.47, raising=False)
+    monkeypatch.setattr(risk_guard, "_RISK_PERF_WIN_REF", 0.58, raising=False)
+    monkeypatch.setattr(risk_guard, "_RISK_PERF_MIN_MULT", 0.25, raising=False)
+    monkeypatch.setattr(risk_guard, "_RISK_PERF_MAX_MULT", 2.0, raising=False)
+
+    monkeypatch.setattr(
+        risk_guard,
+        "_query_perf_stats",
+        lambda tag, pocket: (1.50, 0.60, 500),
+        raising=False,
+    )
+    mult, _ = risk_guard._perf_multiplier("TrendMA", "macro")
+    assert abs(mult - 2.0) < 1e-9

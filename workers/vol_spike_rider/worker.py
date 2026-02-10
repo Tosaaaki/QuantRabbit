@@ -124,6 +124,7 @@ def _build_thesis(
 ) -> Dict[str, object]:
     return {
         "strategy_tag": config.STRATEGY_TAG,
+        "env_prefix": config.ENV_PREFIX,
         "profile": config.PROFILE_TAG,
         "direction": direction,
         "move_pips": round(move_pips, 3),
@@ -332,7 +333,7 @@ async def vol_spike_rider_worker() -> None:
                 await asyncio.sleep(config.LOOP_INTERVAL_SEC)
                 continue
 
-            perf = perf_guard.is_allowed(config.STRATEGY_TAG, "scalp")
+            perf = perf_guard.is_allowed(config.STRATEGY_TAG, "scalp", env_prefix=config.ENV_PREFIX)
             if not perf.allowed:
                 LOG.info("%s perf_guard blocked: %s", config.LOG_PREFIX, perf.reason)
                 await asyncio.sleep(config.LOOP_INTERVAL_SEC)

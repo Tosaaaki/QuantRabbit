@@ -6,6 +6,7 @@ import os
 from typing import List, Set
 
 PIP_VALUE = 0.01
+ENV_PREFIX = "MANUAL_SWING"
 
 
 def _float(key: str, default: float) -> float:

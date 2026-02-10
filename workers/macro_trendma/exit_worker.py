@@ -20,16 +20,20 @@ from utils.metrics_logger import log_metric
 from workers.common.pro_stop import maybe_close_pro_stop
 
 
-_BB_EXIT_ENABLED = os.getenv("BB_EXIT_ENABLED", "1").strip().lower() not in {"", "0", "false", "no"}
-_BB_EXIT_REVERT_PIPS = float(os.getenv("BB_EXIT_REVERT_PIPS", "2.0"))
-_BB_EXIT_REVERT_RATIO = float(os.getenv("BB_EXIT_REVERT_RATIO", "0.20"))
-_BB_EXIT_TREND_EXT_PIPS = float(os.getenv("BB_EXIT_TREND_EXT_PIPS", "3.0"))
-_BB_EXIT_TREND_EXT_RATIO = float(os.getenv("BB_EXIT_TREND_EXT_RATIO", "0.35"))
-_BB_EXIT_SCALP_REVERT_PIPS = float(os.getenv("BB_EXIT_SCALP_REVERT_PIPS", "1.6"))
-_BB_EXIT_SCALP_REVERT_RATIO = float(os.getenv("BB_EXIT_SCALP_REVERT_RATIO", "0.18"))
-_BB_EXIT_SCALP_EXT_PIPS = float(os.getenv("BB_EXIT_SCALP_EXT_PIPS", "2.0"))
-_BB_EXIT_SCALP_EXT_RATIO = float(os.getenv("BB_EXIT_SCALP_EXT_RATIO", "0.28"))
-_BB_EXIT_MID_BUFFER_PIPS = float(os.getenv("BB_EXIT_MID_BUFFER_PIPS", "0.4"))
+from . import config
+from utils.env_utils import env_bool, env_float
+
+_BB_ENV_PREFIX = getattr(config, "ENV_PREFIX", "")
+_BB_EXIT_ENABLED = env_bool("BB_EXIT_ENABLED", True, prefix=_BB_ENV_PREFIX)
+_BB_EXIT_REVERT_PIPS = env_float("BB_EXIT_REVERT_PIPS", 2.0, prefix=_BB_ENV_PREFIX)
+_BB_EXIT_REVERT_RATIO = env_float("BB_EXIT_REVERT_RATIO", 0.20, prefix=_BB_ENV_PREFIX)
+_BB_EXIT_TREND_EXT_PIPS = env_float("BB_EXIT_TREND_EXT_PIPS", 3.0, prefix=_BB_ENV_PREFIX)
+_BB_EXIT_TREND_EXT_RATIO = env_float("BB_EXIT_TREND_EXT_RATIO", 0.35, prefix=_BB_ENV_PREFIX)
+_BB_EXIT_SCALP_REVERT_PIPS = env_float("BB_EXIT_SCALP_REVERT_PIPS", 1.6, prefix=_BB_ENV_PREFIX)
+_BB_EXIT_SCALP_REVERT_RATIO = env_float("BB_EXIT_SCALP_REVERT_RATIO", 0.18, prefix=_BB_ENV_PREFIX)
+_BB_EXIT_SCALP_EXT_PIPS = env_float("BB_EXIT_SCALP_EXT_PIPS", 2.0, prefix=_BB_ENV_PREFIX)
+_BB_EXIT_SCALP_EXT_RATIO = env_float("BB_EXIT_SCALP_EXT_RATIO", 0.28, prefix=_BB_ENV_PREFIX)
+_BB_EXIT_MID_BUFFER_PIPS = env_float("BB_EXIT_MID_BUFFER_PIPS", 0.4, prefix=_BB_ENV_PREFIX)
 _BB_EXIT_BYPASS_TOKENS = {
     "hard_stop",
     "structure",
@@ -48,6 +52,22 @@ _BB_EXIT_BYPASS_TOKENS = {
 }
 _BB_EXIT_TF = "H1"
 _BB_PIP = 0.01
+_NEG_EXIT_ALLOW_REASONS = {
+    token.strip().lower()
+    for token in os.getenv(
+        "EXIT_ALLOW_NEGATIVE_REASONS",
+        "hard_stop,tech_hard_stop,time_stop,max_adverse,max_hold,structure_break,"
+        "atr_spike,rsi_fade,vwap_cut,reentry_reset,drawdown,max_drawdown,health_exit,"
+        "hazard_exit,margin_health,free_margin_low,margin_usage_high",
+    ).split(",")
+    if token.strip()
+}
+_NEG_EXIT_REASON_ALIAS = {
+    "trend_failure": "max_adverse",
+    "trend_exhaust": "structure_break",
+    "range_timeout": "time_stop",
+}
+_NEG_EXIT_REASON_FALLBACK = "max_adverse"
 
 
 def _bb_float(value):
@@ -156,6 +176,21 @@ def _bb_exit_allowed(style, side, price, fac, *, range_active=None):
         return True
     return price <= (lower + band_buffer * _BB_PIP)
 
+
+def _normalize_negative_exit_reason(reason: str) -> str:
+    key = str(reason or "").strip().lower()
+    if not key:
+        return _NEG_EXIT_REASON_FALLBACK
+    mapped = _NEG_EXIT_REASON_ALIAS.get(key, key)
+    if mapped in _NEG_EXIT_ALLOW_REASONS:
+        return mapped
+    if key in _NEG_EXIT_ALLOW_REASONS:
+        return key
+    if _NEG_EXIT_REASON_FALLBACK in _NEG_EXIT_ALLOW_REASONS:
+        return _NEG_EXIT_REASON_FALLBACK
+    return mapped
+
+
 BB_STYLE = "trend"
 LOG = logging.getLogger(__name__)
 
@@ -263,8 +298,8 @@ class _TradeState:
 class TrendMAExitWorker:
     """
     TrendMA 専用 EXIT（マクロ）。
-    - 最低保有15分以上
-    - PnL>0 のみクローズ（TP/トレール/RSI利確/レンジ長時間微益）
+    - 利確系（TP/トレール/RSI）
+    - 損失拡大を避ける max_adverse / time_stop
     """
 
     def __init__(self) -> None:
@@ -276,7 +311,9 @@ class TrendMAExitWorker:
         self.trail_start = max(5.0, _float_env("TRENDMA_EXIT_TRAIL_START_PIPS", 7.0))
         self.trail_backoff = max(0.6, _float_env("TRENDMA_EXIT_TRAIL_BACKOFF_PIPS", 2.5))
         self.lock_buffer = max(0.5, _float_env("TRENDMA_EXIT_LOCK_BUFFER_PIPS", 1.0))
-        self.min_hold_sec = max(900.0, _float_env("TRENDMA_EXIT_MIN_HOLD_SEC", 15 * 60))
+        self.min_hold_sec = max(120.0, _float_env("TRENDMA_EXIT_MIN_HOLD_SEC", 5 * 60))
+        self.max_hold_negative_sec = max(300.0, _float_env("TRENDMA_EXIT_MAX_HOLD_NEG_SEC", 20 * 60))
+        self.max_adverse_pips = max(8.0, _float_env("TRENDMA_EXIT_MAX_ADVERSE_PIPS", 16.0))
 
         self.range_profit_take = max(3.0, _float_env("TRENDMA_EXIT_RANGE_PROFIT_PIPS", 4.8))
         self.range_trail_start = max(4.0, _float_env("TRENDMA_EXIT_RANGE_TRAIL_START_PIPS", 6.0))
@@ -290,7 +327,7 @@ class TrendMAExitWorker:
 
         self.rsi_take_long = _float_env("TRENDMA_EXIT_RSI_TAKE_LONG", 72.0)
         self.rsi_take_short = _float_env("TRENDMA_EXIT_RSI_TAKE_SHORT", 28.0)
-        self.trend_fail_pips = max(8.0, _float_env("TRENDMA_EXIT_TREND_FAIL_PIPS", 24.0))
+        self.trend_fail_pips = max(6.0, _float_env("TRENDMA_EXIT_TREND_FAIL_PIPS", 14.0))
         self.trend_fail_buffer_pips = max(0.2, _float_env("TRENDMA_EXIT_TREND_FAIL_BUFFER_PIPS", 1.2))
         self.exhaust_adx = max(5.0, _float_env("TRENDMA_EXIT_EXHAUST_ADX", 18.0))
 
@@ -338,12 +375,14 @@ class TrendMAExitWorker:
                     return
         if pnl <= 0:
             allow_negative = True
+            reason = _normalize_negative_exit_reason(reason)
         ok = await close_trade(
             trade_id,
             units,
             client_order_id=client_order_id,
             allow_negative=allow_negative,
             exit_reason=reason,
+            env_prefix=_BB_ENV_PREFIX,
         )
         if ok:
             LOG.info("[EXIT-trendma] trade=%s units=%s reason=%s pnl=%.2fp", trade_id, units, reason, pnl)
@@ -410,6 +449,7 @@ class TrendMAExitWorker:
             strategy_tag=strategy_tag,
             entry_thesis=thesis,
             range_active=range_active,
+            env_prefix=_BB_ENV_PREFIX,
         )
 
         min_hold = self.min_hold_sec
@@ -440,10 +480,35 @@ class TrendMAExitWorker:
         if not client_id:
             LOG.warning("[EXIT-trendma] missing client_id trade=%s skip close", trade_id)
             return
+
+        if pnl <= -self.max_adverse_pips:
+            await self._close(
+                trade_id,
+                -units,
+                "max_adverse",
+                pnl,
+                client_id,
+                allow_negative=True,
+            )
+            self._states.pop(trade_id, None)
+            return
+
+        if pnl < 0 and hold_sec >= self.max_hold_negative_sec:
+            await self._close(
+                trade_id,
+                -units,
+                "time_stop",
+                pnl,
+                client_id,
+                allow_negative=True,
+            )
+            self._states.pop(trade_id, None)
+            return
+
         if await maybe_close_pro_stop(trade, now=now):
             return
 
-        # マクロは最低15分はホールドしてノイズ決済を防止
+        # 早すぎる微小ノイズ決済だけ抑止
         if hold_sec < min_hold:
             return
 
@@ -480,8 +545,6 @@ class TrendMAExitWorker:
                 range_active=range_active,
                 log_tags={"trade": trade_id},
             )
-            if reentry.action == "hold":
-                return
             if reentry.action == "exit_reentry" and not reentry.shadow:
                 await self._close(
                     trade_id,
@@ -744,4 +807,3 @@ def _exit_candle_reversal(side):
 if __name__ == "__main__":  # pragma: no cover
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s", force=True)
     asyncio.run(macro_trendma_exit_worker())
-

@@ -67,6 +67,7 @@ def _confidence_scale(conf: int) -> float:
 
 
 def _compute_cap(*args, **kwargs) -> Tuple[float, Dict[str, float]]:
+    kwargs.setdefault("env_prefix", config.ENV_PREFIX)
     res = compute_cap(cap_min=config.CAP_MIN, cap_max=config.CAP_MAX, *args, **kwargs)
     return res.cap, res.reasons
 
@@ -85,6 +86,7 @@ def _build_entry_thesis(signal: Dict, *, range_ctx, atr_entry: float) -> Dict:
     tag = signal.get("tag", RangeRevertLite.name)
     thesis: Dict[str, object] = {
         "strategy_tag": tag,
+        "env_prefix": config.ENV_PREFIX,
         "profile": signal.get("profile"),
         "confidence": signal.get("confidence", 0),
         "tp_pips": signal.get("tp_pips"),
@@ -217,6 +219,7 @@ async def micro_range_revert_lite_worker() -> None:
                     config.BASE_ENTRY_UNITS,
                     equity=balance if balance > 0 else equity,
                     ref_equity=balance,
+                    env_prefix=config.ENV_PREFIX,
                 )
             )
         )

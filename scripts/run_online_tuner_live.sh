@@ -5,6 +5,13 @@ REPO_DIR="${REPO_DIR:-/home/tossaki/QuantRabbit}"
 PY_BIN="${PY_BIN:-$REPO_DIR/.venv/bin/python}"
 WINDOW_MIN="${TUNER_WINDOW_MINUTES:-15}"
 EXPORT_LIMIT="${TUNER_EXPORT_LIMIT:-4000}"
+
+# NOTE: These outputs are written by online tuning. Keep them outside tracked paths
+# to avoid dirty git worktrees on the VM (which can silently break deploy pulls).
+PRESETS_PATH="${TUNING_PRESETS_PATH:-config/tuning_presets.yaml}"
+OVERRIDES_OUT="${TUNING_OVERRIDES_PATH:-config/tuning_overrides.yaml}"
+OVERLAY_OUT="${TUNING_OVERLAY_PATH:-config/tuning_overlay.yaml}"
+HISTORY_DIR="${TUNING_HISTORY_DIR:-config/tuning_history}"
 LOGS_CSV="${TUNER_LOGS_CSV:-tmp/exit_eval_live.csv}"
 
 cd "$REPO_DIR"
@@ -20,7 +27,15 @@ if [[ -n "${TUNER_ENABLE-}" ]]; then
   esac
 fi
 
-mkdir -p tmp
+mkdir -p "$(dirname "$LOGS_CSV")"
+mkdir -p "$(dirname "$OVERRIDES_OUT")"
+mkdir -p "$(dirname "$OVERLAY_OUT")"
+mkdir -p "$HISTORY_DIR"
+
+if [[ ! -f "$PRESETS_PATH" ]]; then
+  echo "[online_tuner] missing presets: $PRESETS_PATH" >&2
+  exit 0
+fi
 
 PYTHONPATH=. "$PY_BIN" scripts/export_exit_eval.py \
   --db logs/trades.db \
@@ -29,11 +44,12 @@ PYTHONPATH=. "$PY_BIN" scripts/export_exit_eval.py \
 
 PYTHONPATH=. "$PY_BIN" scripts/run_online_tuner.py \
   --logs-glob "$LOGS_CSV" \
-  --presets config/tuning_presets.yaml \
-  --overrides-out config/tuning_overrides.yaml \
+  --presets "$PRESETS_PATH" \
+  --overrides-out "$OVERRIDES_OUT" \
+  --history-dir "$HISTORY_DIR" \
   --minutes "$WINDOW_MIN"
 
 PYTHONPATH=. "$PY_BIN" scripts/apply_override.py \
-  --base config/tuning_presets.yaml \
-  --over config/tuning_overrides.yaml \
-  --out config/tuning_overlay.yaml
+  --base "$PRESETS_PATH" \
+  --over "$OVERRIDES_OUT" \
+  --out "$OVERLAY_OUT"

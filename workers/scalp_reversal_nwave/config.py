@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 
 PIP_VALUE = 0.01
+ENV_PREFIX = "SCALP_REVERSAL_NWAVE"
 LOG_PREFIX = "[SCALP-REV-NWAVE]"
 STRATEGY_TAG = "ScalpReversalNWave"
 PROFILE_TAG = "scalp_reversal_nwave"

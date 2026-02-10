@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 
+ENV_PREFIX = "SCALP_PRECISION"
 
 def _env_bool(name: str, default: bool) -> bool:
     raw = os.getenv(name)
@@ -36,7 +37,10 @@ MAX_SPREAD_PIPS = float(os.getenv("SCALP_PRECISION_MAX_SPREAD_PIPS", "1.2"))
 MAX_SIGNALS_PER_CYCLE = int(float(os.getenv("SCALP_PRECISION_MAX_SIGNALS_PER_CYCLE", "1")))
 
 MODE = os.getenv("SCALP_PRECISION_MODE", "spread_revert").strip().lower()
-ALLOWLIST_RAW = os.getenv("SCALP_PRECISION_ALLOWLIST", "").strip()
+# /etc/quantrabbit.env may define a global allowlist shared by multiple units. Prefer an explicit
+# per-unit override when present so a single-strategy unit can run a new mode without editing
+# the global env file.
+ALLOWLIST_RAW = os.getenv("SCALP_PRECISION_UNIT_ALLOWLIST", os.getenv("SCALP_PRECISION_ALLOWLIST", "")).strip()
 MODE_FILTER_ALLOWLIST = _env_bool("SCALP_PRECISION_MODE_FILTER_ALLOWLIST", False)
 GUARD_BYPASS_MODES = {
     s.strip().lower()
@@ -73,7 +77,8 @@ DROUGHT_FAIL_OPEN = _env_bool("SCALP_PRECISION_DROUGHT_FAIL_OPEN", False)
 # Drought mode tuning (looser range/revert gates)
 DROUGHT_RANGE_SCORE = float(os.getenv("SCALP_PRECISION_DROUGHT_RANGE_SCORE", "0.38"))
 DROUGHT_ADX_MAX = float(os.getenv("SCALP_PRECISION_DROUGHT_ADX_MAX", "26.0"))
-DROUGHT_BBW_MAX = float(os.getenv("SCALP_PRECISION_DROUGHT_BBW_MAX", "0.28"))
+# BBW is (upper-lower)/mid ratio (typical USD/JPY M1 ~= 0.0002..0.0020).
+DROUGHT_BBW_MAX = float(os.getenv("SCALP_PRECISION_DROUGHT_BBW_MAX", "0.0016"))
 DROUGHT_ATR_MIN = float(os.getenv("SCALP_PRECISION_DROUGHT_ATR_MIN", "0.5"))
 DROUGHT_ATR_MAX = float(os.getenv("SCALP_PRECISION_DROUGHT_ATR_MAX", "4.0"))
 DROUGHT_BB_TOUCH_PIPS = float(os.getenv("SCALP_PRECISION_DROUGHT_BB_TOUCH_PIPS", "1.0"))
@@ -84,7 +89,7 @@ DROUGHT_SPREAD_P25 = float(os.getenv("SCALP_PRECISION_DROUGHT_SPREAD_P25", "1.0"
 # Precision low-volatility mode tuning (strict entry filters)
 PREC_LOWVOL_RANGE_SCORE = float(os.getenv("SCALP_PRECISION_PREC_LOWVOL_RANGE_SCORE", "0.25"))
 PREC_LOWVOL_ADX_MAX = float(os.getenv("SCALP_PRECISION_PREC_LOWVOL_ADX_MAX", "30.0"))
-PREC_LOWVOL_BBW_MAX = float(os.getenv("SCALP_PRECISION_PREC_LOWVOL_BBW_MAX", "0.38"))
+PREC_LOWVOL_BBW_MAX = float(os.getenv("SCALP_PRECISION_PREC_LOWVOL_BBW_MAX", "0.0010"))
 PREC_LOWVOL_ATR_MIN = float(os.getenv("SCALP_PRECISION_PREC_LOWVOL_ATR_MIN", "0.3"))
 PREC_LOWVOL_ATR_MAX = float(os.getenv("SCALP_PRECISION_PREC_LOWVOL_ATR_MAX", "6.0"))
 PREC_LOWVOL_BB_TOUCH_PIPS = float(os.getenv("SCALP_PRECISION_PREC_LOWVOL_BB_TOUCH_PIPS", "1.6"))

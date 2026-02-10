@@ -284,7 +284,7 @@ async def micro_pullback_fib_worker() -> None:
             )
         div_meta = divergence_snapshot(fac_m1, max_age_bars=10)
 
-        perf_decision = perf_guard.is_allowed(config.STRATEGY_TAG, pocket)
+        perf_decision = perf_guard.is_allowed(config.STRATEGY_TAG, pocket, env_prefix=config.ENV_PREFIX)
         if not perf_decision.allowed:
             now_mono = time.monotonic()
             if now_mono - last_perf_block_log > 120.0:
@@ -327,6 +327,7 @@ async def micro_pullback_fib_worker() -> None:
             pos_bias=pos_bias,
             cap_min=config.CAP_MIN,
             cap_max=config.CAP_MAX,
+            env_prefix=config.ENV_PREFIX,
         )
         cap = cap_res.cap
         if cap <= 0.0:
@@ -341,7 +342,17 @@ async def micro_pullback_fib_worker() -> None:
 
         tp_scale = 10.0 / max(1.0, tp_pips)
         tp_scale = max(0.4, min(1.1, tp_scale))
-        base_units = int(round(scale_base_units(config.BASE_ENTRY_UNITS, equity=balance if balance > 0 else equity, ref_equity=balance) * tp_scale))
+        base_units = int(
+            round(
+                scale_base_units(
+                    config.BASE_ENTRY_UNITS,
+                    equity=balance if balance > 0 else equity,
+                    ref_equity=balance,
+                    env_prefix=config.ENV_PREFIX,
+                )
+                * tp_scale
+            )
+        )
         conf_scale = _confidence_scale(conf, config.CONFIDENCE_FLOOR, config.CONFIDENCE_CEIL)
 
         lot = allowed_lot(
@@ -379,6 +390,7 @@ async def micro_pullback_fib_worker() -> None:
 
         entry_thesis: Dict[str, object] = {
             "strategy_tag": signal_tag,
+            "env_prefix": config.ENV_PREFIX,
             "profile": config.PROFILE_TAG,
             "confidence": int(conf),
             "tp_pips": tp_pips,

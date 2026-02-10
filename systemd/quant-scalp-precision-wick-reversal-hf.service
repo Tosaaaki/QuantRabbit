@@ -1,0 +1,73 @@
+[Unit]
+Description=QuantRabbit Scalp Precision WickReversalHF Worker
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/tossaki/QuantRabbit
+EnvironmentFile=/etc/quantrabbit.env
+Environment=PYTHONUNBUFFERED=1
+Environment=SCALP_PRECISION_ENABLED=1
+Environment=SCALP_PRECISION_MODE=wick_reversal_hf
+Environment=SCALP_PRECISION_UNIT_ALLOWLIST=wick_reversal_hf
+Environment=SCALP_PRECISION_MODE_FILTER_ALLOWLIST=1
+Environment=SCALP_PRECISION_LOOP_INTERVAL_SEC=3.0
+Environment=SCALP_PRECISION_COOLDOWN_SEC=10
+Environment=SCALP_PRECISION_MAX_OPEN_TRADES=1
+Environment=SCALP_PRECISION_OPEN_TRADES_SCOPE=tag
+Environment=SCALP_PRECISION_UNIT_BASE_UNITS=8000
+Environment=SCALP_PRECISION_UNIT_CAP_MAX=0.55
+Environment=SCALP_PRECISION_LOG_PREFIX=[ScalpPrecision:WickRevHF]
+# Allow entries down to the same safety level as EXIT_EMERGENCY_MARGIN_USAGE_RATIO (0.92 => 0.08 free).
+Environment=SCALP_PRECISION_ENTRY_MIN_FREE_MARGIN_RATIO=0.08
+
+# HF tuning (looser than WickReversalPro; tick confirmed).
+Environment=WICK_HF_RANGE_SCORE_MIN=0.45
+Environment=WICK_HF_RANGE_MIN_PIPS=0.85
+Environment=WICK_HF_BODY_MAX_PIPS=6.00
+Environment=WICK_HF_BODY_RATIO_MAX=0.55
+Environment=WICK_HF_RATIO_MIN=0.35
+Environment=WICK_HF_ADX_MAX=35.0
+# In higher-ADX regimes, only allow entries when wick rejection + tick reversal are exceptionally strong.
+Environment=WICK_HF_ADX_OVERRIDE_ENABLED=1
+Environment=WICK_HF_ADX_OVERRIDE_MAX_ADX=55.0
+Environment=WICK_HF_ADX_OVERRIDE_MIN_RATIO=0.65
+Environment=WICK_HF_ADX_OVERRIDE_MIN_TICK_STRENGTH=0.20
+# If tick reversal detection is missing but wick rejection is extreme, allow entry even in high ADX.
+Environment=WICK_HF_ADX_OVERRIDE_ALLOW_NO_TICK_REV=1
+Environment=WICK_HF_ADX_OVERRIDE_NO_TICK_MIN_RATIO=0.80
+Environment=WICK_HF_BBW_MAX=0.0016
+Environment=WICK_HF_SPREAD_P25=1.0
+Environment=WICK_HF_REQUIRE_BB_TOUCH=0
+Environment=WICK_HF_BB_TOUCH_PIPS=0.9
+Environment=WICK_HF_REQUIRE_TICK_REV=1
+Environment=WICK_HF_TICK_WINDOW_SEC=18.0
+Environment=WICK_HF_TICK_MIN_TICKS=4
+Environment=WICK_HF_TICK_MIN_STRENGTH=0.12
+
+# Entry precision first: avoid fading strong momentum.
+Environment=WICK_HF_MOMENTUM_FILTER_ENABLED=1
+Environment=WICK_HF_MACD_HIST_LONG_MIN=-0.15
+Environment=WICK_HF_MACD_HIST_SHORT_MAX=0.35
+Environment=WICK_HF_EMA_SLOPE_10_SHORT_MAX=0.15
+
+# Allow hard-wick fallback when tick reversal is missing/weak (direction mismatch stays blocked).
+Environment=WICK_HF_TICK_FALLBACK_HARD_WICK=1
+Environment=WICK_HF_HARD_WICK_EXTRA_RATIO=0.18
+Environment=WICK_HF_HARD_WICK_RANGE_MULT=1.40
+
+Environment=WICK_HF_DIAG=1
+Environment=WICK_HF_DIAG_INTERVAL_SEC=20
+
+# Safety: attach broker stopLossOnFill (scalp) so tail risk is capped even if the exit
+# worker is down or close requests get blocked/delayed.
+Environment=ORDER_ENABLE_STOP_LOSS_SCALP=1
+Environment=ORDER_ALLOW_STOP_LOSS_WITH_EXIT_NO_NEGATIVE_CLOSE_SCALP=true
+
+ExecStart=/home/tossaki/QuantRabbit/.venv/bin/python -m workers.scalp_precision.worker
+Restart=always
+RestartSec=5
+User=tossaki
+
+[Install]
+WantedBy=multi-user.target

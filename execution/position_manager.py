@@ -126,9 +126,22 @@ _CASHFLOW_TYPES = {"TRANSFER_FUNDS", "CASH_TRANSFER"}
 _CASHFLOW_BACKFILL_ENABLED = os.getenv(
     "POSITION_MANAGER_CASHFLOW_BACKFILL", "1"
 ).strip().lower() not in {"", "0", "false", "no"}
+_CASHFLOW_BACKFILL_OANDA_ENABLED = os.getenv(
+    "POSITION_MANAGER_CASHFLOW_BACKFILL_OANDA", "1"
+).strip().lower() not in {"", "0", "false", "no"}
+_CASHFLOW_OANDA_QUERY_TYPES = tuple(
+    t.strip()
+    for t in os.getenv(
+        "POSITION_MANAGER_CASHFLOW_BACKFILL_OANDA_TYPES",
+        # OANDA production accounts accept TRANSFER_FUNDS; some older names return 400.
+        "TRANSFER_FUNDS",
+    ).split(",")
+    if t.strip()
+)
 _CASHFLOW_BACKFILL_TTL_SEC = float(
     os.getenv("POSITION_MANAGER_CASHFLOW_BACKFILL_TTL_SEC", "86400")
 )
+_CASHFLOW_BACKFILL_MARKER_VERSION = 1
 _CASHFLOW_BACKFILL_MARKER = pathlib.Path(
     os.getenv(
         "POSITION_MANAGER_CASHFLOW_BACKFILL_MARKER",
@@ -996,6 +1009,8 @@ class PositionManager:
             logging.warning(
                 "[PositionManager] schema lock busy; skipping schema check to avoid startup timeout"
             )
+        # Must be ready before any backfill that calls OANDA endpoints.
+        self._http = _build_http_session()
         try:
             self._maybe_backfill_attribution()
         except Exception as exc:
@@ -1007,7 +1022,6 @@ class PositionManager:
         self._last_tx_id = self._get_last_transaction_id_with_retry()
         self._pocket_cache: dict[str, str] = {}
         self._client_cache: dict[str, str] = {}
-        self._http = _build_http_session()
         self._last_positions: dict[str, dict] = {}
         self._last_positions_ts: float = 0.0
         self._open_trade_failures: int = 0
@@ -1218,18 +1232,34 @@ class PositionManager:
     def _maybe_backfill_cashflows(self) -> None:
         if not _CASHFLOW_BACKFILL_ENABLED:
             return
-        now = time.time()
+        now_ts = time.time()
+        now_dt = datetime.now(timezone.utc)
+        now_iso = now_dt.isoformat().replace("+00:00", "Z")
+        now_jst = now_dt.astimezone(_JST)
+        year_start_jst = now_jst.replace(
+            month=1, day=1, hour=0, minute=0, second=0, microsecond=0
+        )
+        year_start_utc = year_start_jst.astimezone(timezone.utc)
+        year_start_iso = year_start_utc.isoformat().replace("+00:00", "Z")
+
+        # Skip if we already ran recently for this YTD window.
         if _CASHFLOW_BACKFILL_TTL_SEC > 0 and _CASHFLOW_BACKFILL_MARKER.exists():
             try:
-                data = json.loads(_CASHFLOW_BACKFILL_MARKER.read_text(encoding="utf-8"))
+                data = json.loads(
+                    _CASHFLOW_BACKFILL_MARKER.read_text(encoding="utf-8")
+                )
                 last_ts = float(data.get("ts") or 0.0)
-                if last_ts > 0 and now - last_ts < _CASHFLOW_BACKFILL_TTL_SEC:
+                marker_ver = int(data.get("version") or 0)
+                marker_from = str(data.get("from") or "")
+                if (
+                    last_ts > 0
+                    and now_ts - last_ts < _CASHFLOW_BACKFILL_TTL_SEC
+                    and marker_ver == _CASHFLOW_BACKFILL_MARKER_VERSION
+                    and marker_from == year_start_iso
+                ):
                     return
             except Exception:
                 pass
-        paths = sorted(glob.glob(_CASHFLOW_BACKFILL_GLOB))
-        if not paths:
-            return
 
         def _flush_batch(batch: list[tuple]) -> int:
             if not batch:
@@ -1245,13 +1275,18 @@ class PositionManager:
                         batch,
                     )
                     self._commit_with_retry()
-                return len(batch)
+                inserted = len(batch)
+                batch.clear()
+                return inserted
             except TimeoutError:
                 logging.warning("[PositionManager] cashflow backfill lock busy; skip batch")
+                batch.clear()
                 return 0
 
-        total_inserted = 0
+        inserted_file = 0
+        inserted_oanda = 0
         batch: list[tuple] = []
+        paths = sorted(glob.glob(_CASHFLOW_BACKFILL_GLOB))
         for path in paths:
             try:
                 with open(path, "r", encoding="utf-8") as fh:
@@ -1267,18 +1302,90 @@ class PositionManager:
                             continue
                         batch.append(record)
                         if len(batch) >= 500:
-                            total_inserted += _flush_batch(batch)
-                            batch.clear()
+                            inserted_file += _flush_batch(batch)
             except FileNotFoundError:
                 continue
             except Exception as exc:
-                logging.warning("[PositionManager] cashflow backfill read failed: %s", exc)
+                logging.warning(
+                    "[PositionManager] cashflow backfill read failed: %s", exc
+                )
         if batch:
-            total_inserted += _flush_batch(batch)
+            inserted_file += _flush_batch(batch)
+
+        # Backfill directly from OANDA using the transaction type filter (YTD in JST). This keeps
+        # cashflow metrics and "balance growth ex cashflow" accurate without requiring local jsonl archives.
+        if _CASHFLOW_BACKFILL_OANDA_ENABLED and _CASHFLOW_OANDA_QUERY_TYPES:
+            url = f"{REST_HOST}/v3/accounts/{ACCOUNT}/transactions"
+            for tx_type in _CASHFLOW_OANDA_QUERY_TYPES:
+                try:
+                    summary = self._request_json(
+                        url,
+                        params={
+                            "from": year_start_iso,
+                            "to": now_iso,
+                            "pageSize": 1000,
+                            "type": tx_type,
+                        },
+                    ) or {}
+                except requests.RequestException as exc:
+                    logging.warning(
+                        "[PositionManager] cashflow backfill summary failed type=%s: %s",
+                        tx_type,
+                        exc,
+                    )
+                    self._reset_http_if_needed(exc)
+                    continue
+
+                # Some OANDA responses may include transactions directly.
+                txs = summary.get("transactions") or []
+                if isinstance(txs, list):
+                    for tx in txs:
+                        if not isinstance(tx, dict):
+                            continue
+                        record = _extract_cashflow_tx(tx)
+                        if record:
+                            batch.append(record)
+                            if len(batch) >= 200:
+                                inserted_oanda += _flush_batch(batch)
+
+                pages = summary.get("pages") or []
+                if isinstance(pages, list):
+                    for page_url in pages:
+                        if not isinstance(page_url, str) or not page_url:
+                            continue
+                        try:
+                            payload = self._request_json(page_url) or {}
+                        except requests.RequestException as exc:
+                            logging.warning(
+                                "[PositionManager] cashflow backfill page failed: %s",
+                                exc,
+                            )
+                            self._reset_http_if_needed(exc)
+                            continue
+                        for tx in payload.get("transactions") or []:
+                            if not isinstance(tx, dict):
+                                continue
+                            record = _extract_cashflow_tx(tx)
+                            if record:
+                                batch.append(record)
+                                if len(batch) >= 200:
+                                    inserted_oanda += _flush_batch(batch)
+            if batch:
+                inserted_oanda += _flush_batch(batch)
         try:
             _CASHFLOW_BACKFILL_MARKER.parent.mkdir(parents=True, exist_ok=True)
             _CASHFLOW_BACKFILL_MARKER.write_text(
-                json.dumps({"ts": now, "inserted": total_inserted}),
+                json.dumps(
+                    {
+                        "ts": now_ts,
+                        "version": _CASHFLOW_BACKFILL_MARKER_VERSION,
+                        "inserted_file": inserted_file,
+                        "inserted_oanda": inserted_oanda,
+                        "from": year_start_iso,
+                        "to": now_iso,
+                        "paths": len(paths),
+                    }
+                ),
                 encoding="utf-8",
             )
         except Exception:
@@ -2222,7 +2329,10 @@ class PositionManager:
                         thesis_from_comment = parsed
             except Exception:
                 thesis_from_comment = None
-            meta = self._resolve_entry_meta(trade_id)
+            # Only resolve entry meta for bot-managed trades.
+            # Manual trades can be long-lived; resolving meta for them triggers repeated orders.db scans
+            # across many workers, which increases CPU load and data lag.
+            meta = self._resolve_entry_meta(trade_id) if is_agent_client else None
             if meta:
                 thesis = meta.get("entry_thesis")
                 if isinstance(thesis, str):

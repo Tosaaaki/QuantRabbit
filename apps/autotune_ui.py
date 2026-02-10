@@ -128,6 +128,168 @@ def _coerce_thesis(value: Any) -> Optional[dict]:
     return None
 
 
+def _extract_order_meta(payload: dict) -> dict:
+    meta: dict = {}
+    entry_thesis = payload.get("entry_thesis") or (payload.get("meta") or {}).get("entry_thesis")
+    if isinstance(entry_thesis, dict):
+        limited: dict = {}
+        for key in (
+            "strategy_tag",
+            "strategy",
+            "worker_id",
+            "worker",
+            "focus_tag",
+            "macro_regime",
+            "micro_regime",
+        ):
+            if key in entry_thesis and entry_thesis.get(key) is not None:
+                limited[key] = entry_thesis.get(key)
+        if limited:
+            meta["entry_thesis"] = limited
+        strategy = entry_thesis.get("strategy_tag") or entry_thesis.get("strategy")
+        if strategy:
+            meta["strategy"] = strategy
+        worker = entry_thesis.get("worker_id") or entry_thesis.get("worker")
+        if worker:
+            meta["worker"] = worker
+        focus_tag = entry_thesis.get("focus_tag") or entry_thesis.get("focus")
+        if focus_tag:
+            meta["focus_tag"] = focus_tag
+    if "strategy" not in meta:
+        strategy = (
+            payload.get("strategy_tag")
+            or payload.get("strategy")
+            or (payload.get("meta") or {}).get("strategy_tag")
+            or (payload.get("meta") or {}).get("strategy")
+        )
+        if strategy:
+            meta["strategy"] = strategy
+    return meta
+
+
+def _parse_json_object(raw: object) -> dict:
+    if isinstance(raw, dict):
+        return raw
+    if isinstance(raw, str) and raw:
+        try:
+            parsed = json.loads(raw)
+        except Exception:
+            return {}
+        return parsed if isinstance(parsed, dict) else {}
+    return {}
+
+
+def _normalize_order_side(side: object, units: object) -> Optional[str]:
+    side_str = str(side or "").strip().lower()
+    if side_str in {"buy", "sell"}:
+        return side_str
+    try:
+        units_val = float(units or 0)
+    except Exception:
+        return None
+    if units_val > 0:
+        return "buy"
+    if units_val < 0:
+        return "sell"
+    return None
+
+
+def _load_order_context_rows(con: sqlite3.Connection, rows: list[dict]) -> tuple[dict[str, dict], dict[str, dict]]:
+    client_ids = sorted({str(row.get("client_order_id") or "").strip() for row in rows if row.get("client_order_id")})
+    ticket_ids = sorted({str(row.get("ticket_id") or "").strip() for row in rows if row.get("ticket_id")})
+    if not client_ids and not ticket_ids:
+        return {}, {}
+
+    clauses: list[str] = []
+    params: list[str] = []
+    if client_ids:
+        placeholders = ",".join("?" for _ in client_ids)
+        clauses.append(f"client_order_id IN ({placeholders})")
+        params.extend(client_ids)
+    if ticket_ids:
+        placeholders = ",".join("?" for _ in ticket_ids)
+        clauses.append(f"ticket_id IN ({placeholders})")
+        params.extend(ticket_ids)
+
+    if not clauses:
+        return {}, {}
+
+    cur = con.execute(
+        "SELECT ts, status, client_order_id, ticket_id, pocket, side, units, request_json "
+        "FROM orders "
+        f"WHERE ({' OR '.join(clauses)}) "
+        "AND status NOT LIKE 'close_%' "
+        "ORDER BY "
+        "CASE status "
+        "WHEN 'submit_attempt' THEN 0 "
+        "WHEN 'filled' THEN 1 "
+        "WHEN 'accepted' THEN 2 "
+        "WHEN 'preflight_start' THEN 3 "
+        "ELSE 9 END, "
+        "ts ASC"
+        ,
+        tuple(params),
+    )
+    refs = [dict(r) for r in cur.fetchall()]
+
+    by_client: dict[str, dict] = {}
+    by_ticket: dict[str, dict] = {}
+    for ref in refs:
+        client_id = str(ref.get("client_order_id") or "").strip()
+        ticket_id = str(ref.get("ticket_id") or "").strip()
+        if client_id and client_id not in by_client:
+            by_client[client_id] = ref
+        if ticket_id and ticket_id not in by_ticket:
+            by_ticket[ticket_id] = ref
+    return by_client, by_ticket
+
+
+def _merge_order_meta(primary_payload: dict, fallback_payload: dict) -> dict:
+    primary = _extract_order_meta(primary_payload)
+    if not fallback_payload:
+        return primary
+    fallback = _extract_order_meta(fallback_payload)
+    if not fallback:
+        return primary
+    merged = dict(fallback)
+    merged.update(primary)
+    if isinstance(fallback.get("entry_thesis"), dict) and isinstance(primary.get("entry_thesis"), dict):
+        thesis = dict(fallback["entry_thesis"])
+        thesis.update(primary["entry_thesis"])
+        merged["entry_thesis"] = thesis
+    return merged
+
+
+def _enrich_order_rows(rows: list[dict], con: sqlite3.Connection) -> list[dict]:
+    by_client, by_ticket = _load_order_context_rows(con, rows)
+    enriched: list[dict] = []
+    for row in rows:
+        client_id = str(row.get("client_order_id") or "").strip()
+        ticket_id = str(row.get("ticket_id") or "").strip()
+        ref = by_client.get(client_id) or by_ticket.get(ticket_id) or {}
+
+        if not str(row.get("pocket") or "").strip():
+            pocket_ref = str(ref.get("pocket") or "").strip()
+            if pocket_ref:
+                row["pocket"] = pocket_ref
+
+        side = _normalize_order_side(row.get("side"), row.get("units"))
+        if not side:
+            side = _normalize_order_side(ref.get("side"), row.get("units"))
+        if side:
+            row["side"] = side
+
+        payload = _parse_json_object(row.get("request_json"))
+        ref_payload = _parse_json_object(ref.get("request_json"))
+        meta = _merge_order_meta(payload, ref_payload)
+        if meta:
+            row.update(meta)
+
+        row.pop("request_json", None)
+        enriched.append(row)
+    return enriched
+
+
 def _infer_worker_name(item: dict) -> Optional[str]:
     thesis = _coerce_thesis(item.get("entry_thesis"))
     if isinstance(thesis, dict):
@@ -777,11 +939,13 @@ def _load_last_orders(limit: int = 5) -> list[dict]:
         con = sqlite3.connect(ORDERS_DB, timeout=_DB_READ_TIMEOUT_SEC)
         con.row_factory = sqlite3.Row
         cur = con.execute(
-            "SELECT ts, pocket, side, units, status, client_order_id "
+            "SELECT ts, pocket, side, units, status, client_order_id, "
+            "ticket_id, error_code, error_message, request_json "
             "FROM orders ORDER BY ts DESC LIMIT ?",
             (int(limit),),
         )
         rows = [dict(r) for r in cur.fetchall()]
+        rows = _enrich_order_rows(rows, con)
         con.close()
         return rows
     except Exception:
@@ -796,7 +960,7 @@ def _load_order_status_counts(limit: int = 8, hours: int = 1) -> list[dict]:
         con.row_factory = sqlite3.Row
         cur = con.execute(
             "SELECT status, count(*) AS count FROM orders "
-            "WHERE ts >= datetime('now', ?) "
+            "WHERE ts >= strftime('%Y-%m-%dT%H:%M:%S', 'now', ?) "
             "GROUP BY status ORDER BY count DESC LIMIT ?",
             (f"-{int(hours)} hour", int(limit)),
         )

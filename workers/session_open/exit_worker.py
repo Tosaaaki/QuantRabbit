@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Optional, Sequence, Set
@@ -13,18 +14,24 @@ from indicators.factor_cache import all_factors
 from market_data import tick_window
 from workers.common.exit_utils import close_trade, mark_pnl_pips
 from workers.common.reentry_decider import decide_reentry
+from workers.common.loss_cut import pick_loss_cut_reason, resolve_loss_cut
+from utils.strategy_protection import exit_profile_for_tag
 
 
-_BB_EXIT_ENABLED = os.getenv("BB_EXIT_ENABLED", "1").strip().lower() not in {"", "0", "false", "no"}
-_BB_EXIT_REVERT_PIPS = float(os.getenv("BB_EXIT_REVERT_PIPS", "2.0"))
-_BB_EXIT_REVERT_RATIO = float(os.getenv("BB_EXIT_REVERT_RATIO", "0.20"))
-_BB_EXIT_TREND_EXT_PIPS = float(os.getenv("BB_EXIT_TREND_EXT_PIPS", "3.0"))
-_BB_EXIT_TREND_EXT_RATIO = float(os.getenv("BB_EXIT_TREND_EXT_RATIO", "0.35"))
-_BB_EXIT_SCALP_REVERT_PIPS = float(os.getenv("BB_EXIT_SCALP_REVERT_PIPS", "1.6"))
-_BB_EXIT_SCALP_REVERT_RATIO = float(os.getenv("BB_EXIT_SCALP_REVERT_RATIO", "0.18"))
-_BB_EXIT_SCALP_EXT_PIPS = float(os.getenv("BB_EXIT_SCALP_EXT_PIPS", "2.0"))
-_BB_EXIT_SCALP_EXT_RATIO = float(os.getenv("BB_EXIT_SCALP_EXT_RATIO", "0.28"))
-_BB_EXIT_MID_BUFFER_PIPS = float(os.getenv("BB_EXIT_MID_BUFFER_PIPS", "0.4"))
+from . import config
+from utils.env_utils import env_bool, env_float
+
+_BB_ENV_PREFIX = getattr(config, "ENV_PREFIX", "")
+_BB_EXIT_ENABLED = env_bool("BB_EXIT_ENABLED", True, prefix=_BB_ENV_PREFIX)
+_BB_EXIT_REVERT_PIPS = env_float("BB_EXIT_REVERT_PIPS", 2.0, prefix=_BB_ENV_PREFIX)
+_BB_EXIT_REVERT_RATIO = env_float("BB_EXIT_REVERT_RATIO", 0.20, prefix=_BB_ENV_PREFIX)
+_BB_EXIT_TREND_EXT_PIPS = env_float("BB_EXIT_TREND_EXT_PIPS", 3.0, prefix=_BB_ENV_PREFIX)
+_BB_EXIT_TREND_EXT_RATIO = env_float("BB_EXIT_TREND_EXT_RATIO", 0.35, prefix=_BB_ENV_PREFIX)
+_BB_EXIT_SCALP_REVERT_PIPS = env_float("BB_EXIT_SCALP_REVERT_PIPS", 1.6, prefix=_BB_ENV_PREFIX)
+_BB_EXIT_SCALP_REVERT_RATIO = env_float("BB_EXIT_SCALP_REVERT_RATIO", 0.18, prefix=_BB_ENV_PREFIX)
+_BB_EXIT_SCALP_EXT_PIPS = env_float("BB_EXIT_SCALP_EXT_PIPS", 2.0, prefix=_BB_ENV_PREFIX)
+_BB_EXIT_SCALP_EXT_RATIO = env_float("BB_EXIT_SCALP_EXT_RATIO", 0.28, prefix=_BB_ENV_PREFIX)
+_BB_EXIT_MID_BUFFER_PIPS = env_float("BB_EXIT_MID_BUFFER_PIPS", 0.4, prefix=_BB_ENV_PREFIX)
 _BB_EXIT_BYPASS_TOKENS = {
     "hard_stop",
     "structure",
@@ -229,6 +236,17 @@ def _filter_trades(trades: Sequence[dict], tags: Set[str]) -> list[dict]:
     return filtered
 
 
+def _trade_has_stop_loss(trade: dict) -> bool:
+    sl = trade.get("stop_loss")
+    if isinstance(sl, dict):
+        price = sl.get("price")
+        try:
+            return float(price) > 0.0
+        except (TypeError, ValueError):
+            return False
+    return False
+
+
 @dataclass
 class _TradeState:
     peak: float
@@ -292,6 +310,7 @@ class SessionOpenExitWorker:
 
         self._pos_manager = PositionManager()
         self._states: dict[str, _TradeState] = {}
+        self._loss_cut_last_ts: dict[str, float] = {}
 
     def _context(self) -> tuple[Optional[float], bool]:
         fac_m1 = all_factors().get("M1") or {}
@@ -322,6 +341,7 @@ class SessionOpenExitWorker:
             client_order_id=client_order_id,
             allow_negative=allow_negative,
             exit_reason=reason,
+            env_prefix=_BB_ENV_PREFIX,
         )
         if ok:
             LOG.info("[exit-session-open] trade=%s units=%s reason=%s pnl=%.2fp", trade_id, units, reason, pnl)
@@ -354,6 +374,44 @@ class SessionOpenExitWorker:
 
         if hold_sec < self.min_hold_sec:
             return
+
+        # Strategy-level "loss-cut" (disabled by default): once beyond the point of return, exit and redeploy.
+        if pnl <= 0:
+            thesis = trade.get("entry_thesis") or {}
+            if not isinstance(thesis, dict):
+                thesis = {}
+            strategy_tag = (
+                thesis.get("strategy_tag")
+                or thesis.get("strategy_tag_raw")
+                or thesis.get("strategy")
+                or thesis.get("tag")
+                or trade.get("strategy_tag")
+                or trade.get("strategy")
+                or ""
+            )
+            base_tag = str(strategy_tag).split("-", 1)[0] if strategy_tag else ""
+            exit_profile = exit_profile_for_tag(base_tag or strategy_tag)
+            sl_hint = None
+            try:
+                sl_hint = float(thesis.get("hard_stop_pips") or thesis.get("sl_pips"))  # type: ignore[arg-type]
+            except Exception:
+                sl_hint = None
+            params = resolve_loss_cut(exit_profile, sl_pips=sl_hint)
+            reason = pick_loss_cut_reason(
+                pnl_pips=float(pnl),
+                hold_sec=float(hold_sec),
+                params=params,
+                has_stop_loss=_trade_has_stop_loss(trade),
+            )
+            if reason:
+                now_mono = time.monotonic()
+                last = self._loss_cut_last_ts.get(trade_id, 0.0)
+                if params.cooldown_sec > 0.0 and (now_mono - last) < params.cooldown_sec:
+                    return
+                self._loss_cut_last_ts[trade_id] = now_mono
+                await self._close(trade_id, -units, reason, pnl, client_id, allow_negative=True)
+                self._states.pop(trade_id, None)
+                return
         candle_reason = _exit_candle_reversal("long" if units > 0 else "short")
         if candle_reason and pnl >= 0:
             candle_client_id = trade.get("client_order_id")
@@ -450,6 +508,9 @@ class SessionOpenExitWorker:
                 for tid in list(self._states.keys()):
                     if tid not in active_ids:
                         self._states.pop(tid, None)
+                for tid in list(self._loss_cut_last_ts.keys()):
+                    if tid not in active_ids:
+                        self._loss_cut_last_ts.pop(tid, None)
                 if not trades:
                     continue
 
@@ -595,5 +656,3 @@ def _exit_candle_reversal(side):
     return None
 if __name__ == "__main__":
     asyncio.run(session_open_exit_worker())
-
-

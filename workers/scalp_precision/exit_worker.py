@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
+import math
 import os
 import pathlib
 import time
@@ -25,16 +27,20 @@ except Exception:  # pragma: no cover - optional
     yaml = None
 
 
-_BB_EXIT_ENABLED = os.getenv("BB_EXIT_ENABLED", "1").strip().lower() not in {"", "0", "false", "no"}
-_BB_EXIT_REVERT_PIPS = float(os.getenv("BB_EXIT_REVERT_PIPS", "2.0"))
-_BB_EXIT_REVERT_RATIO = float(os.getenv("BB_EXIT_REVERT_RATIO", "0.20"))
-_BB_EXIT_TREND_EXT_PIPS = float(os.getenv("BB_EXIT_TREND_EXT_PIPS", "3.0"))
-_BB_EXIT_TREND_EXT_RATIO = float(os.getenv("BB_EXIT_TREND_EXT_RATIO", "0.35"))
-_BB_EXIT_SCALP_REVERT_PIPS = float(os.getenv("BB_EXIT_SCALP_REVERT_PIPS", "1.6"))
-_BB_EXIT_SCALP_REVERT_RATIO = float(os.getenv("BB_EXIT_SCALP_REVERT_RATIO", "0.18"))
-_BB_EXIT_SCALP_EXT_PIPS = float(os.getenv("BB_EXIT_SCALP_EXT_PIPS", "2.0"))
-_BB_EXIT_SCALP_EXT_RATIO = float(os.getenv("BB_EXIT_SCALP_EXT_RATIO", "0.28"))
-_BB_EXIT_MID_BUFFER_PIPS = float(os.getenv("BB_EXIT_MID_BUFFER_PIPS", "0.4"))
+from . import config
+from utils.env_utils import env_bool, env_float
+
+_BB_ENV_PREFIX = getattr(config, "ENV_PREFIX", "")
+_BB_EXIT_ENABLED = env_bool("BB_EXIT_ENABLED", True, prefix=_BB_ENV_PREFIX)
+_BB_EXIT_REVERT_PIPS = env_float("BB_EXIT_REVERT_PIPS", 2.0, prefix=_BB_ENV_PREFIX)
+_BB_EXIT_REVERT_RATIO = env_float("BB_EXIT_REVERT_RATIO", 0.20, prefix=_BB_ENV_PREFIX)
+_BB_EXIT_TREND_EXT_PIPS = env_float("BB_EXIT_TREND_EXT_PIPS", 3.0, prefix=_BB_ENV_PREFIX)
+_BB_EXIT_TREND_EXT_RATIO = env_float("BB_EXIT_TREND_EXT_RATIO", 0.35, prefix=_BB_ENV_PREFIX)
+_BB_EXIT_SCALP_REVERT_PIPS = env_float("BB_EXIT_SCALP_REVERT_PIPS", 1.6, prefix=_BB_ENV_PREFIX)
+_BB_EXIT_SCALP_REVERT_RATIO = env_float("BB_EXIT_SCALP_REVERT_RATIO", 0.18, prefix=_BB_ENV_PREFIX)
+_BB_EXIT_SCALP_EXT_PIPS = env_float("BB_EXIT_SCALP_EXT_PIPS", 2.0, prefix=_BB_ENV_PREFIX)
+_BB_EXIT_SCALP_EXT_RATIO = env_float("BB_EXIT_SCALP_EXT_RATIO", 0.28, prefix=_BB_ENV_PREFIX)
+_BB_EXIT_MID_BUFFER_PIPS = env_float("BB_EXIT_MID_BUFFER_PIPS", 0.4, prefix=_BB_ENV_PREFIX)
 _BB_EXIT_BYPASS_TOKENS = {
     "hard_stop",
     "structure",
@@ -168,6 +174,31 @@ def _exit_profile_for_tag(strategy_tag: Optional[str]) -> dict:
     override = _strategy_override(cfg, strategy_tag)
     override_profile = override.get("exit_profile") if isinstance(override, dict) else None
     return _merge_profile(defaults_profile, override_profile)
+
+
+def _be_profile_for_tag(strategy_tag: Optional[str], *, pocket: str) -> dict:
+    cfg = _load_strategy_protection_config()
+    defaults = cfg.get("defaults") if isinstance(cfg, dict) else {}
+    be_defaults = defaults.get("be_profile") if isinstance(defaults, dict) else None
+    pocket_defaults = be_defaults.get(pocket) if isinstance(be_defaults, dict) else None
+    if not isinstance(pocket_defaults, dict):
+        pocket_defaults = {}
+    override = _strategy_override(cfg, strategy_tag)
+    override_profile = override.get("be_profile") if isinstance(override, dict) else None
+    if not isinstance(override_profile, dict):
+        return {}
+    return _merge_profile(pocket_defaults, override_profile)
+
+
+def _trade_stop_loss_price(trade: dict) -> Optional[float]:
+    sl = trade.get("stop_loss")
+    if not isinstance(sl, dict):
+        return None
+    try:
+        price = sl.get("price")
+        return float(price) if price is not None else None
+    except Exception:
+        return None
 
 
 def _reentry_prefix_for_tag(tag: str) -> Optional[str]:
@@ -307,7 +338,30 @@ LOG = logging.getLogger(__name__)
 LOG_PREFIX = os.getenv("SCALP_PRECISION_EXIT_LOG_PREFIX", "[ScalpPrecisionExit]")
 
 
-ALLOWED_TAGS: Set[str] = {'SpreadRangeRevert','RangeFaderPro','VwapRevertS','StochBollBounce','DivergenceRevert','CompressionRetest','HTFPullbackS','MacdTrendRide','EmaSlopePull','TickImbalance','LevelReject','LiquiditySweep','WickReversal','SessionEdge'}
+# Tags that scalp_precision exit_worker is allowed to manage. Missing tags effectively disable
+# exit protections (loss cuts, max-hold, etc.) for those strategies, so keep this list complete.
+ALLOWED_TAGS: Set[str] = {
+    "SpreadRangeRevert",
+    "RangeFaderPro",
+    "VwapRevertS",
+    "StochBollBounce",
+    "DivergenceRevert",
+    "CompressionRetest",
+    "HTFPullbackS",
+    "MacdTrendRide",
+    "EmaSlopePull",
+    "TickImbalance",
+    "TickImbalanceRRPlus",
+    "LevelReject",
+    "LiquiditySweep",
+    "WickReversal",
+    "WickReversalHF",
+    "WickReversalPro",
+    "TickWickReversal",
+    "SessionEdge",
+    "SqueezePulseBreak",
+    "FalseBreakFade",
+}
 
 
 def _tags_env(key: str, default: Set[str]) -> Set[str]:
@@ -366,6 +420,22 @@ def _latest_mid() -> Optional[float]:
         return None
 
 
+def _latest_bid_ask() -> tuple[Optional[float], Optional[float]]:
+    tick = tick_window.recent_ticks(seconds=2.0, limit=1)
+    if not tick:
+        return None, None
+    last = tick[-1] or {}
+    try:
+        bid = float(last.get("bid")) if last.get("bid") is not None else None
+    except Exception:
+        bid = None
+    try:
+        ask = float(last.get("ask")) if last.get("ask") is not None else None
+    except Exception:
+        ask = None
+    return bid, ask
+
+
 def _filter_trades(trades: Sequence[dict], tags: Set[str]) -> list[dict]:
     if not tags:
         return []
@@ -395,6 +465,9 @@ class _TradeState:
     lock_floor: Optional[float] = None
     partial_done: bool = False
     be_moved: bool = False
+    be_floor_price: Optional[float] = None
+    be_last_ts: float = 0.0
+    be_last_sl: Optional[float] = None
 
     def update(self, pnl: float, lock_buffer: float) -> None:
         if pnl > self.peak:
@@ -409,6 +482,12 @@ class RangeFaderExitWorker:
         self.loop_interval = max(
             0.5,
             _float_env("RANGEFADER_EXIT_LOOP_INTERVAL_SEC", 0.7),
+        )
+        # When no relevant open trades exist, poll much less frequently to avoid
+        # N exit workers hammering PositionManager/OANDA in parallel.
+        self.idle_interval = max(
+            self.loop_interval,
+            _float_env("RANGEFADER_EXIT_IDLE_INTERVAL_SEC", 3.0),
         )
         self.min_hold_sec = max(
             5.0,
@@ -471,7 +550,7 @@ class RangeFaderExitWorker:
             os.getenv("RANGEFADER_EXIT_LOSS_CUT_REASON_TIME", "time_stop").strip() or "time_stop"
         )
 
-        self.tick_imb_tags = _tags_env("TICK_IMB_EXIT_TAGS", {"TickImbalance"})
+        self.tick_imb_tags = _tags_env("TICK_IMB_EXIT_TAGS", {"TickImbalance", "TickImbalanceRRPlus"})
         self.tick_imb_partial_enabled = _bool_env("TICK_IMB_EXIT_PARTIAL_ENABLED", True)
         self.tick_imb_partial_trigger = max(0.4, _float_env("TICK_IMB_EXIT_PARTIAL_TRIGGER_PIPS", 1.0))
         self.tick_imb_partial_fraction = min(
@@ -483,16 +562,74 @@ class RangeFaderExitWorker:
         )
         self.tick_imb_be_buffer_pips = max(0.05, _float_env("TICK_IMB_EXIT_BE_BUFFER_PIPS", 0.2))
         self.tick_imb_min_hold_sec = max(0.0, _float_env("TICK_IMB_EXIT_MIN_HOLD_SEC", 0.0))
+        # NOTE: these envs default to 0.0 and are intended as opt-in overrides during tuning.
+        # If the key is not set, config/strategy_exit_protections.yaml remains authoritative.
+        self._tick_imb_profit_take_override = os.getenv("TICK_IMB_EXIT_PROFIT_PIPS") is not None
         self.tick_imb_profit_take = max(0.0, _float_env("TICK_IMB_EXIT_PROFIT_PIPS", 0.0))
+        self._tick_imb_trail_start_override = os.getenv("TICK_IMB_EXIT_TRAIL_START_PIPS") is not None
         self.tick_imb_trail_start = max(0.0, _float_env("TICK_IMB_EXIT_TRAIL_START_PIPS", 0.0))
+        self._tick_imb_trail_backoff_override = os.getenv("TICK_IMB_EXIT_TRAIL_BACKOFF_PIPS") is not None
         self.tick_imb_trail_backoff = max(0.0, _float_env("TICK_IMB_EXIT_TRAIL_BACKOFF_PIPS", 0.0))
+        self._tick_imb_lock_buffer_override = os.getenv("TICK_IMB_EXIT_LOCK_BUFFER_PIPS") is not None
         self.tick_imb_lock_buffer = max(0.0, _float_env("TICK_IMB_EXIT_LOCK_BUFFER_PIPS", 0.0))
+        self._tick_imb_max_hold_sec_override = os.getenv("TICK_IMB_EXIT_MAX_HOLD_SEC") is not None
         self.tick_imb_max_hold_sec = max(0.0, _float_env("TICK_IMB_EXIT_MAX_HOLD_SEC", 0.0))
         self.tick_imb_max_adverse_pips = max(0.0, _float_env("TICK_IMB_EXIT_MAX_ADVERSE_PIPS", 0.0))
+        # Safety knob: cap config-driven max_adverse without editing YAML (useful for rollouts/tests).
+        self.tick_imb_max_adverse_cap_pips = max(
+            0.0, _float_env("TICK_IMB_EXIT_MAX_ADVERSE_CAP_PIPS", 0.0)
+        )
+        # When hard SL is disabled, cap tail losses mechanically using the intended entry SL as a reference.
+        # These are used only when max_adverse_pips is not explicitly configured.
+        self.tick_imb_max_adverse_from_sl_mult = max(
+            0.0, _float_env("TICK_IMB_EXIT_MAX_ADVERSE_FROM_SL_MULT", 1.6)
+        )
+        self.tick_imb_max_adverse_from_sl_min = max(
+            0.0, _float_env("TICK_IMB_EXIT_MAX_ADVERSE_FROM_SL_MIN_PIPS", 2.0)
+        )
+        self.tick_imb_max_adverse_from_sl_max = max(
+            0.0, _float_env("TICK_IMB_EXIT_MAX_ADVERSE_FROM_SL_MAX_PIPS", 6.0)
+        )
 
         self._pos_manager = PositionManager()
         self._states: dict[str, _TradeState] = {}
         self._loss_cut_last_ts: dict[str, float] = {}
+
+    def _unrealized_pnl_pips(
+        self,
+        trade: dict,
+        *,
+        entry: float,
+        units: int,
+        mid: Optional[float],
+    ) -> Optional[float]:
+        """Return current PnL in pips for EXIT decisions.
+
+        Prefer OANDA-provided unrealized PnL (already normalized to pips by PositionManager) so the exit loop
+        doesn't stall when local tick data is stale/missing.
+        """
+        raw = trade.get("unrealized_pl_pips")
+        if raw is not None:
+            try:
+                value = float(raw)
+                if math.isfinite(value):
+                    return value
+            except Exception:
+                pass
+        raw_pl = trade.get("unrealized_pl")
+        if raw_pl is not None:
+            try:
+                unrealized_pl = float(raw_pl)
+                pip_value = abs(int(units)) * 0.01
+                if pip_value > 0:
+                    value = unrealized_pl / pip_value
+                    if math.isfinite(value):
+                        return value
+            except Exception:
+                pass
+        if mid is not None:
+            return mark_pnl_pips(entry, units, mid=mid)
+        return None
 
     def _context(self) -> tuple[Optional[float], bool]:
         fac_m1 = all_factors().get("M1") or {}
@@ -548,13 +685,14 @@ class RangeFaderExitWorker:
             client_order_id=client_order_id,
             allow_negative=allow_negative,
             exit_reason=reason,
+            env_prefix=_BB_ENV_PREFIX,
         )
         if ok:
             LOG.info("[exit-rangefader] trade=%s units=%s reason=%s pnl=%.2fp", trade_id, units, reason, pnl)
         else:
             LOG.error("[exit-rangefader] close failed trade=%s units=%s reason=%s", trade_id, units, reason)
 
-    async def _review_trade(self, trade: dict, now: datetime, mid: float, range_active: bool) -> None:
+    async def _review_trade(self, trade: dict, now: datetime, mid: Optional[float], range_active: bool) -> None:
         trade_id = str(trade.get("trade_id"))
         if not trade_id:
             return
@@ -566,13 +704,18 @@ class RangeFaderExitWorker:
             return
 
         side = "long" if units > 0 else "short"
-        pnl = mark_pnl_pips(entry, units, mid=mid)
+        pnl = self._unrealized_pnl_pips(trade, entry=entry, units=units, mid=mid)
         if pnl is None:
             return
         opened_at = _parse_time(trade.get("open_time"))
         hold_sec = (now - opened_at).total_seconds() if opened_at else 0.0
 
         thesis = trade.get("entry_thesis") or {}
+        if isinstance(thesis, str):
+            try:
+                thesis = json.loads(thesis) or {}
+            except Exception:
+                thesis = {}
         if not isinstance(thesis, dict):
             thesis = {}
         strategy_tag = (
@@ -605,6 +748,9 @@ class RangeFaderExitWorker:
         trail_start = _pick_float(exit_profile.get("trail_start_pips"), self.trail_start)
         trail_backoff = _pick_float(exit_profile.get("trail_backoff_pips"), self.trail_backoff)
         lock_buffer = _pick_float(exit_profile.get("lock_buffer_pips"), self.lock_buffer)
+        lock_floor_min_hold_sec = max(
+            0.0, _pick_float(exit_profile.get("lock_floor_min_hold_sec"), 0.0)
+        )
         range_profit_take = _pick_float(exit_profile.get("range_profit_pips"), self.range_profit_take)
         range_trail_start = _pick_float(exit_profile.get("range_trail_start_pips"), self.range_trail_start)
         range_trail_backoff = _pick_float(exit_profile.get("range_trail_backoff_pips"), self.range_trail_backoff)
@@ -633,6 +779,36 @@ class RangeFaderExitWorker:
             str(exit_profile.get("loss_cut_reason_time") or self.loss_cut_reason_time).strip()
             or self.loss_cut_reason_time
         )
+        loss_cut_hard_atr_mult = max(
+            0.0, _pick_float(exit_profile.get("loss_cut_hard_atr_mult"), 0.0)
+        )
+        loss_cut_hard_cap_pips = max(
+            0.0, _pick_float(exit_profile.get("loss_cut_hard_cap_pips"), 0.0)
+        )
+        loss_cut_reversion_enabled = _coerce_bool(
+            exit_profile.get("loss_cut_reversion_enabled"), False
+        )
+        loss_cut_reversion_hard_pips = max(
+            0.0, _pick_float(exit_profile.get("loss_cut_reversion_hard_pips"), 0.0)
+        )
+        loss_cut_reversion_vwap_gap_min = max(
+            0.0, _pick_float(exit_profile.get("loss_cut_reversion_vwap_gap_min"), 0.0)
+        )
+        loss_cut_reversion_adx_max = max(
+            0.0, _pick_float(exit_profile.get("loss_cut_reversion_adx_max"), 0.0)
+        )
+        loss_cut_reversion_rsi_short_min = _pick_float(
+            exit_profile.get("loss_cut_reversion_rsi_short_min"), 100.0
+        )
+        loss_cut_reversion_rsi_long_max = _pick_float(
+            exit_profile.get("loss_cut_reversion_rsi_long_max"), 0.0
+        )
+        if str(base_tag).lower() == "levelreject":
+            # LevelReject is tuned via config/strategy_exit_protections.yaml.
+            # Keep that configuration authoritative (avoid VWAP-gap-based overrides that
+            # tended to cause premature max_adverse closes and occasional tail risk).
+            loss_cut_enabled = True
+            loss_cut_require_sl = False
         tick_imb_profile = exit_profile.get("tick_imb")
         if not isinstance(tick_imb_profile, dict):
             tick_imb_profile = {}
@@ -672,9 +848,42 @@ class RangeFaderExitWorker:
         tick_imb_max_hold_sec = max(
             0.0, _pick_float(tick_imb_profile.get("max_hold_sec"), self.tick_imb_max_hold_sec)
         )
-        tick_imb_max_adverse_pips = max(
-            0.0, _pick_float(tick_imb_profile.get("max_adverse_pips"), self.tick_imb_max_adverse_pips)
+        if is_tick_imb:
+            # Opt-in overrides to enable fast replay sweeps without editing YAML.
+            if self._tick_imb_profit_take_override:
+                tick_imb_profit_take = float(self.tick_imb_profit_take or 0.0)
+            if self._tick_imb_trail_start_override:
+                tick_imb_trail_start = float(self.tick_imb_trail_start or 0.0)
+            if self._tick_imb_trail_backoff_override:
+                tick_imb_trail_backoff = float(self.tick_imb_trail_backoff or 0.0)
+            if self._tick_imb_lock_buffer_override:
+                tick_imb_lock_buffer = float(self.tick_imb_lock_buffer or 0.0)
+            if self._tick_imb_max_hold_sec_override:
+                tick_imb_max_hold_sec = float(self.tick_imb_max_hold_sec or 0.0)
+        cfg_tick_imb_max_adverse_pips = _pick_float(tick_imb_profile.get("max_adverse_pips"), 0.0)
+        # Treat non-positive config values as "unset" so env-derived defaults still work.
+        # (config/strategy_exit_protections.yaml uses 0 for "no override" in most fields.)
+        tick_imb_max_adverse_pips = (
+            cfg_tick_imb_max_adverse_pips
+            if cfg_tick_imb_max_adverse_pips > 0.0
+            else max(0.0, float(self.tick_imb_max_adverse_pips or 0.0))
         )
+        if is_tick_imb and tick_imb_max_adverse_pips <= 0.0:
+            thesis_sl_hint = _pick_float(thesis.get("sl_pips"), 0.0)
+            mult = float(self.tick_imb_max_adverse_from_sl_mult or 0.0)
+            if thesis_sl_hint > 0.0 and mult > 0.0:
+                derived = thesis_sl_hint * mult
+                lo = float(self.tick_imb_max_adverse_from_sl_min or 0.0)
+                hi = float(self.tick_imb_max_adverse_from_sl_max or 0.0)
+                if lo > 0.0:
+                    derived = max(lo, derived)
+                if hi > 0.0:
+                    derived = min(hi, derived)
+                tick_imb_max_adverse_pips = derived
+        if is_tick_imb and tick_imb_max_adverse_pips > 0.0:
+            cap = float(self.tick_imb_max_adverse_cap_pips or 0.0)
+            if cap > 0.0:
+                tick_imb_max_adverse_pips = min(tick_imb_max_adverse_pips, cap)
 
         client_ext = trade.get("clientExtensions")
         client_id = trade.get("client_order_id")
@@ -682,6 +891,13 @@ class RangeFaderExitWorker:
             client_id = client_ext.get("id")
         if not client_id:
             LOG.warning("[exit-rangefader] missing client_id trade=%s skip close", trade_id)
+            return
+        # For TickImbalance, enforce max-adverse loss cap before any other pro-stop logic.
+        # This is critical when hard SL is disabled; otherwise a structure-based stop can realize
+        # much larger losses than the intended entry SL.
+        if is_tick_imb and tick_imb_max_adverse_pips > 0.0 and pnl <= -tick_imb_max_adverse_pips:
+            await self._close(trade_id, -units, "max_adverse", pnl, client_id, allow_negative=True)
+            self._states.pop(trade_id, None)
             return
         if await maybe_close_pro_stop(trade, now=now):
             return
@@ -707,6 +923,19 @@ class RangeFaderExitWorker:
             if state is None:
                 state = _TradeState(peak=pnl)
                 self._states[trade_id] = state
+            # When hard SL is disabled, TickImbalance still needs a deterministic break-even stop
+            # after partial take. In live this is typically enforced via set_trade_protections();
+            # in replay/offline modes we enforce it internally using bid/ask.
+            if state.partial_done and state.be_floor_price is not None:
+                bid, ask = _latest_bid_ask()
+                if side == "long" and bid is not None and bid <= state.be_floor_price:
+                    await self._close(trade_id, -units, "be_stop", pnl, client_id, allow_negative=True)
+                    self._states.pop(trade_id, None)
+                    return
+                if side == "short" and ask is not None and ask >= state.be_floor_price:
+                    await self._close(trade_id, -units, "be_stop", pnl, client_id, allow_negative=True)
+                    self._states.pop(trade_id, None)
+                    return
             if (
                 tick_imb_partial_enabled
                 and pnl > 0
@@ -722,6 +951,7 @@ class RangeFaderExitWorker:
                         client_order_id=client_id,
                         allow_negative=False,
                         exit_reason="partial_take",
+                        env_prefix=_BB_ENV_PREFIX,
                     )
                     if ok:
                         state.partial_done = True
@@ -734,6 +964,8 @@ class RangeFaderExitWorker:
                         be = entry + (tick_imb_be_buffer_pips * 0.01) if side == "long" else entry - (
                             tick_imb_be_buffer_pips * 0.01
                         )
+                        # Always arm the internal BE stop, even if broker protections are disabled/ignored.
+                        state.be_floor_price = round(be, 3)
                         be_ok = await set_trade_protections(trade_id, sl_price=round(be, 3), tp_price=None)
                         if be_ok:
                             state.be_moved = True
@@ -773,14 +1005,54 @@ class RangeFaderExitWorker:
                     log_tags={"trade": trade_id},
                 )
             if reentry and reentry.action == "hold":
-                if not self._loss_cut_eligible(
-                    trade, enabled=loss_cut_enabled, require_sl=loss_cut_require_sl
-                ):
-                    return
+                return
             if reentry and reentry.action == "exit_reentry" and not reentry.shadow:
                 await self._close(trade_id, -units, "reentry_reset", pnl, client_id)
                 self._states.pop(trade_id, None)
                 return
+
+            eff_loss_cut_soft_pips = max(0.0, float(loss_cut_soft_pips))
+            eff_loss_cut_hard_pips = max(
+                eff_loss_cut_soft_pips, float(loss_cut_hard_pips)
+            )
+            if (
+                atr_pips is not None
+                and atr_pips > 0.0
+                and loss_cut_hard_atr_mult > 0.0
+            ):
+                eff_loss_cut_hard_pips = max(
+                    eff_loss_cut_hard_pips, atr_pips * loss_cut_hard_atr_mult
+                )
+            if (
+                loss_cut_reversion_enabled
+                and loss_cut_reversion_hard_pips > 0.0
+                and vwap_gap is not None
+            ):
+                signed_gap = vwap_gap if side == "short" else -vwap_gap
+                if signed_gap >= loss_cut_reversion_vwap_gap_min:
+                    adx_ok = (
+                        loss_cut_reversion_adx_max <= 0.0
+                        or (adx is not None and adx <= loss_cut_reversion_adx_max)
+                    )
+                    if side == "short":
+                        rsi_ok = (
+                            rsi is not None and rsi >= loss_cut_reversion_rsi_short_min
+                        )
+                    else:
+                        rsi_ok = (
+                            rsi is not None and rsi <= loss_cut_reversion_rsi_long_max
+                        )
+                    if adx_ok and rsi_ok:
+                        eff_loss_cut_hard_pips = max(
+                            eff_loss_cut_hard_pips, loss_cut_reversion_hard_pips
+                        )
+            if loss_cut_hard_cap_pips > 0.0:
+                eff_loss_cut_hard_pips = min(
+                    eff_loss_cut_hard_pips, loss_cut_hard_cap_pips
+                )
+            eff_loss_cut_hard_pips = max(
+                eff_loss_cut_hard_pips, eff_loss_cut_soft_pips
+            )
 
             if not self._loss_cut_eligible(trade, enabled=loss_cut_enabled, require_sl=loss_cut_require_sl):
                 return
@@ -793,9 +1065,9 @@ class RangeFaderExitWorker:
             reason = None
             if loss_cut_max_hold_sec > 0 and hold_sec >= loss_cut_max_hold_sec:
                 reason = loss_cut_reason_time
-            elif loss_cut_hard_pips > 0 and adverse_pips >= loss_cut_hard_pips:
+            elif eff_loss_cut_hard_pips > 0 and adverse_pips >= eff_loss_cut_hard_pips:
                 reason = loss_cut_reason_hard
-            elif loss_cut_soft_pips > 0 and adverse_pips >= loss_cut_soft_pips:
+            elif eff_loss_cut_soft_pips > 0 and adverse_pips >= eff_loss_cut_soft_pips:
                 reason = loss_cut_reason_soft
             if not reason:
                 return
@@ -827,12 +1099,92 @@ class RangeFaderExitWorker:
             candidate = max(0.0, pnl - trail_backoff)
             state.lock_floor = candidate if state.lock_floor is None else max(state.lock_floor, candidate)
 
+        # Attach a broker-side "profit lock" stop-loss once SqueezePulseBreak is in profit.
+        # This reduces give-back risk in worker-only mode where global dynamic protections
+        # are not applied from main.py.
+        if base_tag == "SqueezePulseBreak" and pnl > 0 and pnl < profit_take:
+            be_profile = _be_profile_for_tag(base_tag, pocket=POCKET)
+            if isinstance(be_profile, dict):
+                trigger_pips = _pick_float(be_profile.get("trigger_pips"), 0.0)
+                lock_ratio = max(0.0, min(1.0, _pick_float(be_profile.get("lock_ratio"), 0.0)))
+                min_lock_pips = max(0.0, _pick_float(be_profile.get("min_lock_pips"), 0.0))
+                cooldown_sec = max(0.0, _pick_float(be_profile.get("cooldown_sec"), 0.0))
+                if trigger_pips > 0.0 and pnl >= trigger_pips and lock_ratio > 0.0:
+                    now_mono = time.monotonic()
+                    if cooldown_sec <= 0.0 or (now_mono - float(state.be_last_ts or 0.0)) >= cooldown_sec:
+                        lock_pips = max(min_lock_pips, float(pnl) * lock_ratio)
+                        desired_sl: Optional[float] = None
+                        bid, ask = _latest_bid_ask()
+                        current_sl = _trade_stop_loss_price(trade)
+                        if side == "long":
+                            desired_sl = entry + lock_pips * _BB_PIP
+                            ref_price = bid if bid is not None else mid
+                            if ref_price is not None:
+                                desired_sl = min(desired_sl, float(ref_price) - 0.003)
+                            if (
+                                desired_sl is not None
+                                and desired_sl > entry + 1e-6
+                                and (current_sl is None or desired_sl > current_sl + 1e-6)
+                            ):
+                                sl_price = round(desired_sl, 3)
+                                state.be_last_ts = now_mono
+                                ok = await set_trade_protections(trade_id, sl_price=sl_price, tp_price=None)
+                                if ok:
+                                    state.be_last_sl = sl_price
+                                    log_metric(
+                                        "scalp_precision_profit_lock_sl",
+                                        lock_pips,
+                                        tags={"strategy": base_tag, "side": side},
+                                        ts=now,
+                                    )
+                                    LOG.info(
+                                        "[exit-rangefader] profit_lock trade=%s tag=%s pnl=%.2fp lock=%.2fp sl=%.3f",
+                                        trade_id,
+                                        base_tag,
+                                        pnl,
+                                        lock_pips,
+                                        sl_price,
+                                    )
+                        else:
+                            desired_sl = entry - lock_pips * _BB_PIP
+                            ref_price = ask if ask is not None else mid
+                            if ref_price is not None:
+                                desired_sl = max(desired_sl, float(ref_price) + 0.003)
+                            if (
+                                desired_sl is not None
+                                and desired_sl < entry - 1e-6
+                                and (current_sl is None or desired_sl < current_sl - 1e-6)
+                            ):
+                                sl_price = round(desired_sl, 3)
+                                state.be_last_ts = now_mono
+                                ok = await set_trade_protections(trade_id, sl_price=sl_price, tp_price=None)
+                                if ok:
+                                    state.be_last_sl = sl_price
+                                    log_metric(
+                                        "scalp_precision_profit_lock_sl",
+                                        lock_pips,
+                                        tags={"strategy": base_tag, "side": side},
+                                        ts=now,
+                                    )
+                                    LOG.info(
+                                        "[exit-rangefader] profit_lock trade=%s tag=%s pnl=%.2fp lock=%.2fp sl=%.3f",
+                                        trade_id,
+                                        base_tag,
+                                        pnl,
+                                        lock_pips,
+                                        sl_price,
+                                    )
+
         if pnl >= profit_take:
             await self._close(trade_id, -units, "take_profit", pnl, client_id)
             self._states.pop(trade_id, None)
             return
 
-        if state.lock_floor is not None and pnl <= state.lock_floor:
+        if (
+            state.lock_floor is not None
+            and hold_sec >= lock_floor_min_hold_sec
+            and pnl <= state.lock_floor
+        ):
             await self._close(trade_id, -units, "lock_floor", pnl, client_id)
             self._states.pop(trade_id, None)
             return
@@ -843,8 +1195,9 @@ class RangeFaderExitWorker:
 
     async def run(self) -> None:
         LOG.info(
-            "[exit-rangefader] exit worker start interval=%.2fs tags=%s pocket=%s",
+            "[exit-rangefader] exit worker start interval=%.2fs idle=%.2fs tags=%s pocket=%s",
             self.loop_interval,
+            self.idle_interval,
             ",".join(sorted(ALLOWED_TAGS)) if ALLOWED_TAGS else "none",
             POCKET,
         )
@@ -856,11 +1209,13 @@ class RangeFaderExitWorker:
             except asyncio.CancelledError:
                 return
         try:
+            had_trades = False
             while True:
-                await asyncio.sleep(self.loop_interval)
+                await asyncio.sleep(self.loop_interval if had_trades else self.idle_interval)
                 positions = self._pos_manager.get_open_positions()
                 pocket_info = positions.get(POCKET) or {}
                 trades = _filter_trades(pocket_info.get("open_trades") or [], ALLOWED_TAGS)
+                had_trades = bool(trades)
                 active_ids = {str(tr.get("trade_id")) for tr in trades if tr.get("trade_id")}
                 for tid in list(self._states.keys()):
                     if tid not in active_ids:
@@ -872,8 +1227,6 @@ class RangeFaderExitWorker:
                     continue
 
                 mid, range_active = self._context()
-                if mid is None:
-                    continue
                 now = datetime.now(timezone.utc)
                 for tr in trades:
                     try:

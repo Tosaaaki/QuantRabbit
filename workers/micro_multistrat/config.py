@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import os
 
+ENV_PREFIX = "MICRO_MULTI"
+
 def _parse_hours(raw: str) -> set[int]:
     hours: set[int] = set()
     for token in raw.split(","):
