@@ -433,9 +433,11 @@ class AddonLiveBroker:
                     if conf_raw is None:
                         score = proj.get("score")
                         try:
-                            score_f = abs(float(score))
+                            # projection.score is typically in [-1..+1]; treat only
+                            # positive scores as supporting the entry direction.
+                            score_f = float(score)
                             score_f = max(0.0, min(1.0, score_f))
-                            conf_raw = 50.0 + score_f * 50.0
+                            conf_raw = 50.0 + score_f * 80.0
                         except (TypeError, ValueError):
                             conf_raw = None
             if conf_raw is not None:
