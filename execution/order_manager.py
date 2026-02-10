@@ -4784,7 +4784,15 @@ async def market_order(
     if isinstance(entry_thesis, dict) and strategy_tag and not entry_thesis.get("strategy_tag"):
         entry_thesis = dict(entry_thesis)
         entry_thesis["strategy_tag"] = strategy_tag
-    if _BLOCK_MANUAL_NETTING and not reduce_only and (pocket or "").lower() != "manual":
+    # In non-hedging (netting) accounts, an opposite-direction entry can net out / close
+    # the user's manual trades. In hedging mode (positionFill=OPEN_ONLY) this cannot happen,
+    # so allow opposite-direction entries and rely on exposure/risk guards instead.
+    if (
+        _BLOCK_MANUAL_NETTING
+        and not HEDGING_ENABLED
+        and not reduce_only
+        and (pocket or "").lower() != "manual"
+    ):
         manual_net, manual_trades = _manual_net_units()
         if manual_trades > 0 or manual_net != 0:
             block = False
