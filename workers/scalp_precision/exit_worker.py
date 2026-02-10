@@ -457,6 +457,12 @@ class RangeFaderExitWorker:
             0.5,
             _float_env("RANGEFADER_EXIT_LOOP_INTERVAL_SEC", 0.7),
         )
+        # When no relevant open trades exist, poll much less frequently to avoid
+        # N exit workers hammering PositionManager/OANDA in parallel.
+        self.idle_interval = max(
+            self.loop_interval,
+            _float_env("RANGEFADER_EXIT_IDLE_INTERVAL_SEC", 3.0),
+        )
         self.min_hold_sec = max(
             5.0,
             _float_env("RANGEFADER_EXIT_MIN_HOLD_SEC", 10.0),
@@ -1087,8 +1093,9 @@ class RangeFaderExitWorker:
 
     async def run(self) -> None:
         LOG.info(
-            "[exit-rangefader] exit worker start interval=%.2fs tags=%s pocket=%s",
+            "[exit-rangefader] exit worker start interval=%.2fs idle=%.2fs tags=%s pocket=%s",
             self.loop_interval,
+            self.idle_interval,
             ",".join(sorted(ALLOWED_TAGS)) if ALLOWED_TAGS else "none",
             POCKET,
         )
@@ -1100,11 +1107,13 @@ class RangeFaderExitWorker:
             except asyncio.CancelledError:
                 return
         try:
+            had_trades = False
             while True:
-                await asyncio.sleep(self.loop_interval)
+                await asyncio.sleep(self.loop_interval if had_trades else self.idle_interval)
                 positions = self._pos_manager.get_open_positions()
                 pocket_info = positions.get(POCKET) or {}
                 trades = _filter_trades(pocket_info.get("open_trades") or [], ALLOWED_TAGS)
+                had_trades = bool(trades)
                 active_ids = {str(tr.get("trade_id")) for tr in trades if tr.get("trade_id")}
                 for tid in list(self._states.keys()):
                     if tid not in active_ids:
