@@ -393,6 +393,9 @@ LEVEL_REJECT_ADX_MAX = _env_float("LEVEL_REJECT_ADX_MAX", 30.0)
 LEVEL_REJECT_ATR_MAX = _env_float("LEVEL_REJECT_ATR_MAX", 0.0)
 LEVEL_REJECT_SPREAD_P25 = _env_float("LEVEL_REJECT_SPREAD_P25", 0.0)
 LEVEL_REJECT_SIZE_MULT = _env_float("LEVEL_REJECT_SIZE_MULT", 1.15)
+LEVEL_REJECT_ALLOWED_REGIMES = {
+    s.strip().lower() for s in _env_csv("LEVEL_REJECT_ALLOWED_REGIMES", "") if s.strip()
+}
 
 # LevelRejectPlus (stricter + tick-confirmed variant; intended for higher precision)
 LRP_RANGE_SCORE_MIN = _env_float("LRP_RANGE_SCORE_MIN", 0.52)
@@ -1793,6 +1796,15 @@ def _signal_level_reject(
     *,
     tag: str,
 ) -> Optional[Dict[str, object]]:
+    if LEVEL_REJECT_ALLOWED_REGIMES:
+        regime = str(fac_m1.get("regime") or "").strip()
+        if not regime:
+            try:
+                regime = str(current_regime("M1", event_mode=False) or "").strip()
+            except Exception:
+                regime = ""
+        if regime and regime.lower() not in LEVEL_REJECT_ALLOWED_REGIMES:
+            return None
     if LEVEL_REJECT_SPREAD_P25 > 0.0:
         ok_spread, _ = spread_ok(max_pips=config.MAX_SPREAD_PIPS, p25_max=LEVEL_REJECT_SPREAD_P25)
         if not ok_spread:
