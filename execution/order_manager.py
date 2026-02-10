@@ -2118,6 +2118,58 @@ def _reason_force_allow(exit_reason: Optional[str]) -> bool:
     return False
 
 
+def _neg_exit_decision(
+    *,
+    exit_reason: Optional[str],
+    est_pips: Optional[float],
+    emergency_allow: bool,
+    reason_allow: bool,
+    worker_allow: bool,
+    neg_policy: Optional[dict],
+) -> tuple[bool, bool]:
+    """Return (neg_allowed, near_be_allow) for negative close policy.
+
+    Behavior:
+    - Emergency/near-BE allowances are always honored.
+    - Strategy allow_reasons are treated as explicit permissions, even when
+      global EXIT_ALLOW_NEGATIVE_REASONS does not include the reason.
+    - If no strategy allow_reasons are defined, global/worker gates are used.
+    """
+    neg_policy = neg_policy if isinstance(neg_policy, dict) else {}
+    policy_enabled = _coerce_bool(neg_policy.get("enabled"), True)
+    allow_tokens = neg_policy.get("allow_reasons")
+    deny_tokens = neg_policy.get("deny_reasons")
+
+    policy_reason_match = False
+    if allow_tokens is None:
+        policy_allow = policy_enabled
+    else:
+        if isinstance(allow_tokens, (list, tuple, set)):
+            allow_list = [str(token) for token in allow_tokens]
+        else:
+            allow_list = [str(allow_tokens)]
+        policy_reason_match = _reason_matches_tokens(exit_reason, allow_list)
+        policy_allow = policy_enabled and policy_reason_match
+
+    if deny_tokens is not None:
+        if isinstance(deny_tokens, (list, tuple, set)):
+            deny_list = [str(token) for token in deny_tokens]
+        else:
+            deny_list = [str(deny_tokens)]
+        if _reason_matches_tokens(exit_reason, deny_list):
+            policy_allow = False
+            policy_reason_match = False
+
+    near_be_allow = policy_allow and _allow_negative_near_be(exit_reason, est_pips)
+    policy_explicit_allow = policy_allow and policy_reason_match
+    neg_allowed = bool(
+        emergency_allow
+        or near_be_allow
+        or (policy_allow and (reason_allow or worker_allow or policy_explicit_allow))
+    )
+    return neg_allowed, near_be_allow
+
+
 def _latest_exit_price() -> Optional[float]:
     price = _latest_mid_price()
     if price is not None:
@@ -3072,23 +3124,14 @@ async def close_trade(
             reason_allow = _reason_allows_negative(exit_reason)
             worker_allow = _EXIT_ALLOW_NEGATIVE_BY_WORKER and allow_negative
             neg_policy = _strategy_neg_exit_policy(strategy_tag)
-            policy_enabled = _coerce_bool(neg_policy.get("enabled"), True)
-            allow_tokens = neg_policy.get("allow_reasons")
-            deny_tokens = neg_policy.get("deny_reasons")
-            policy_allow = True
-            if allow_tokens is not None:
-                if isinstance(allow_tokens, (list, tuple, set)):
-                    policy_allow = _reason_matches_tokens(exit_reason, list(allow_tokens))
-                else:
-                    policy_allow = _reason_matches_tokens(exit_reason, [str(allow_tokens)])
-            if deny_tokens is not None:
-                deny_list = list(deny_tokens) if isinstance(deny_tokens, (list, tuple, set)) else [str(deny_tokens)]
-                if _reason_matches_tokens(exit_reason, deny_list):
-                    policy_allow = False
-            if not policy_enabled:
-                policy_allow = False
-            near_be_allow = policy_allow and _allow_negative_near_be(exit_reason, est_pips)
-            neg_allowed = emergency_allow or near_be_allow or ((reason_allow or worker_allow) and policy_allow)
+            neg_allowed, near_be_allow = _neg_exit_decision(
+                exit_reason=exit_reason,
+                est_pips=est_pips,
+                emergency_allow=bool(emergency_allow),
+                reason_allow=reason_allow,
+                worker_allow=worker_allow,
+                neg_policy=neg_policy,
+            )
             allow_negative = bool(neg_allowed)
             if not neg_allowed:
                 log_metric(

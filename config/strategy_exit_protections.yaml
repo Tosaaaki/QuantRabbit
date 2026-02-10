@@ -133,7 +133,14 @@ hold_until_profit:
 
 strategies:
   TrendMA:
-    min_profit_pips: 2.0
+    min_profit_pips: 1.0
+    min_profit_ratio_reasons:
+      - partial_take
+      - lock_floor
+      - trail_take
+      - trail_lock
+      - profit_lock
+      - lock_trail
     be_profile: {trigger_pips: 7.0, lock_ratio: 0.60, min_lock_pips: 3.0, cooldown_sec: 90}
     tp_move: {trigger_pips: 7.5, buffer_pips: 3.0}
     pro_stop: {soft_pips: 1.6, hard_pips: 9.8, min_hold_sec: 113, max_hold_sec: 3437, soft_atr_mult: 1.0, hard_atr_mult: 1.8}
@@ -151,6 +158,11 @@ strategies:
         - structure_break
         - trend_failure
         - trend_exhaust
+        - reentry_reset
+        - max_hold
+        - max_adverse
+        - time_stop
+        - timeout
         - drawdown
         - max_drawdown
         - health_exit
@@ -507,6 +519,11 @@ strategies:
     neg_exit:
       allow_reasons:
         - hard_stop
+        - max_adverse
+        - max_hold
+        - reentry_reset
+        - time_stop
+        - timeout
         - drawdown
         - max_drawdown
         - health_exit
@@ -530,6 +547,17 @@ strategies:
         - section_*
       deny_reasons:
         - tech_return_fail
+
+  WickReversal:
+    min_profit_pips: 1.0
+    min_profit_ratio: 0.80
+    exit_profile:
+      loss_cut_enabled: true
+      loss_cut_require_sl: false
+      loss_cut_soft_pips: 0.0
+      loss_cut_hard_pips: 6.0
+      loss_cut_max_hold_sec: 900
+      loss_cut_cooldown_sec: 5
 
   fast_scalp:
     min_profit_ratio: 0.80
