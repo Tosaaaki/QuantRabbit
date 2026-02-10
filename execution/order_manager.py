@@ -28,6 +28,11 @@ from oandapyV20.endpoints.trades import TradeCRCDO, TradeClose, TradeDetails
 from execution.order_ids import build_client_order_id
 from execution.stop_loss_policy import stop_loss_disabled_for_pocket, trailing_sl_allowed
 from execution.section_axis import attach_section_axis
+from execution.entry_quality_context import (
+    compute_microstructure_snapshot,
+    infer_regime_group,
+    infer_strategy_style,
+)
 
 from analysis import policy_bus
 from utils.secrets import get_secret
@@ -930,6 +935,46 @@ _ENTRY_QUALITY_VOL_BANDS = {
     "scalp": (0.75, 1.55),
     "scalp_fast": (0.75, 1.5),
 }
+_ENTRY_QUALITY_REGIME_PENALTY_ENABLED = _env_bool(
+    "ORDER_ENTRY_QUALITY_REGIME_PENALTY_ENABLED",
+    False,  # opt-in to avoid changing existing trading behavior
+)
+_ENTRY_QUALITY_REGIME_PENALTY_BY_POCKET = {
+    "macro": _env_float("ORDER_ENTRY_QUALITY_REGIME_PENALTY_MACRO", 3.0),
+    "micro": _env_float("ORDER_ENTRY_QUALITY_REGIME_PENALTY_MICRO", 5.0),
+    "scalp": _env_float("ORDER_ENTRY_QUALITY_REGIME_PENALTY_SCALP", 6.0),
+    "scalp_fast": _env_float("ORDER_ENTRY_QUALITY_REGIME_PENALTY_SCALP_FAST", 6.0),
+}
+_ENTRY_QUALITY_REGIME_BREAKOUT_MULT = max(
+    1.0,
+    _env_float("ORDER_ENTRY_QUALITY_REGIME_BREAKOUT_MULT", 1.25),
+)
+_ENTRY_QUALITY_MICROSTRUCTURE_ENABLED = _env_bool(
+    "ORDER_ENTRY_QUALITY_MICROSTRUCTURE_ENABLED",
+    False,  # opt-in; depends on tick cache availability
+)
+_ENTRY_QUALITY_MICROSTRUCTURE_WINDOW_SEC = max(
+    1.0,
+    _env_float("ORDER_ENTRY_QUALITY_MICROSTRUCTURE_WINDOW_SEC", 8.0),
+)
+_ENTRY_QUALITY_MICROSTRUCTURE_MAX_AGE_MS = max(
+    0,
+    _env_int("ORDER_ENTRY_QUALITY_MICROSTRUCTURE_MAX_AGE_MS", 5000),
+)
+_ENTRY_QUALITY_MICROSTRUCTURE_MIN_SPAN_RATIO = max(
+    0.0,
+    min(
+        1.0,
+        _env_float("ORDER_ENTRY_QUALITY_MICROSTRUCTURE_MIN_SPAN_RATIO", 0.5),
+    ),
+)
+_ENTRY_QUALITY_MICROSTRUCTURE_MIN_TICK_DENSITY = {
+    "macro": _env_float("ORDER_ENTRY_QUALITY_MICROSTRUCTURE_MIN_TICK_DENSITY_MACRO", 0.0),
+    "micro": _env_float("ORDER_ENTRY_QUALITY_MICROSTRUCTURE_MIN_TICK_DENSITY_MICRO", 0.0),
+    # Keep defaults in line with fast_scalp (ENTRY_MIN_TICK_DENSITY).
+    "scalp": _env_float("ORDER_ENTRY_QUALITY_MICROSTRUCTURE_MIN_TICK_DENSITY_SCALP", 0.2),
+    "scalp_fast": _env_float("ORDER_ENTRY_QUALITY_MICROSTRUCTURE_MIN_TICK_DENSITY_SCALP_FAST", 0.25),
+}
 _ENTRY_QUALITY_STRAT_ENABLED = _env_bool("ORDER_ENTRY_QUALITY_STRAT_ENABLED", True)
 _ENTRY_QUALITY_STRAT_LOOKBACK_DAYS = max(
     1, _env_int("ORDER_ENTRY_QUALITY_STRAT_LOOKBACK_DAYS", 5)
@@ -1688,6 +1733,165 @@ def _entry_quality_gate(
         elif vol_5m <= vol_low:
             required += _pocket_env_float("ORDER_ENTRY_QUALITY_LOW_VOL_BONUS", pocket, 1.0)
 
+    # --- Regime alignment penalty (opt-in) ---
+    strategy_style = infer_strategy_style(strategy_tag)
+    regime_label: Optional[str] = None
+    if isinstance(entry_thesis, dict):
+        reg = entry_thesis.get("regime")
+        if pocket_key == "macro":
+            regime_label = (
+                entry_thesis.get("macro_regime")
+                or entry_thesis.get("reg_macro")
+                or (reg.get("macro") if isinstance(reg, dict) else None)
+                or (reg.get("macro_regime") if isinstance(reg, dict) else None)
+                or (reg.get("reg_macro") if isinstance(reg, dict) else None)
+            )
+        else:
+            regime_label = (
+                entry_thesis.get("micro_regime")
+                or entry_thesis.get("reg_micro")
+                or (reg.get("micro") if isinstance(reg, dict) else None)
+                or (reg.get("micro_regime") if isinstance(reg, dict) else None)
+                or (reg.get("reg_micro") if isinstance(reg, dict) else None)
+            )
+    if not regime_label and _ENTRY_QUALITY_REGIME_PENALTY_ENABLED:
+        if pocket_key == "macro":
+            regime_label = current_regime("H4", event_mode=False) or current_regime(
+                "H1", event_mode=False
+            )
+        else:
+            regime_label = current_regime("M1", event_mode=False)
+    regime_group = infer_regime_group(regime_label)
+    regime_penalty = 0.0
+    if _ENTRY_QUALITY_REGIME_PENALTY_ENABLED and strategy_style and regime_group:
+        mismatch = False
+        if strategy_style == "range" and regime_group in {"trend", "breakout"}:
+            mismatch = True
+        elif strategy_style == "trend" and regime_group == "range":
+            mismatch = True
+        if mismatch:
+            regime_penalty = float(
+                _ENTRY_QUALITY_REGIME_PENALTY_BY_POCKET.get(pocket_key, 0.0) or 0.0
+            )
+            if regime_group == "breakout":
+                regime_penalty *= _ENTRY_QUALITY_REGIME_BREAKOUT_MULT
+            if regime_penalty > 0.0:
+                required += regime_penalty
+
+    # --- Microstructure gate (opt-in; uses shared tick cache if available) ---
+    ms = None
+    ms_min_density = float(
+        _ENTRY_QUALITY_MICROSTRUCTURE_MIN_TICK_DENSITY.get(pocket_key, 0.0) or 0.0
+    )
+    ms_enabled_for_pocket = (
+        _ENTRY_QUALITY_MICROSTRUCTURE_ENABLED
+        and ms_min_density > 0.0
+        and tick_window is not None
+    )
+    if ms_enabled_for_pocket:
+        try:
+            ticks = tick_window.recent_ticks(
+                seconds=_ENTRY_QUALITY_MICROSTRUCTURE_WINDOW_SEC,
+                limit=240,
+            )
+        except Exception:
+            ticks = []
+        try:
+            ms = compute_microstructure_snapshot(
+                ticks,
+                now_epoch=time.time(),
+                source="tick_cache",
+            )
+        except Exception:
+            ms = None
+
+    extra_details: dict[str, float | str | None] = {
+        "strategy_style": strategy_style,
+        "regime_label": str(regime_label) if regime_label else None,
+        "regime_group": regime_group,
+        "regime_penalty": round(float(regime_penalty), 4) if regime_penalty else None,
+    }
+    if ms is not None:
+        extra_details.update(
+            {
+                "ms_age_ms": float(ms.age_ms),
+                "ms_tick_count": float(ms.tick_count),
+                "ms_span_seconds": float(ms.span_seconds),
+                "ms_tick_density": float(ms.tick_density),
+                "ms_spread_pips": float(ms.spread_pips),
+                "ms_spread_p25": float(ms.spread_p25),
+                "ms_spread_median": float(ms.spread_median),
+                "ms_spread_p95": float(ms.spread_p95),
+                "ms_spread_max": float(ms.spread_max),
+                "ms_momentum_pips": float(ms.momentum_pips),
+                "ms_velocity_pips_per_sec": float(ms.velocity_pips_per_sec),
+                "ms_source": str(ms.source),
+            }
+        )
+
+    if ms_enabled_for_pocket:
+        if ms is None:
+            details = {
+                "enabled": 1.0,
+                "confidence": conf,
+                "required_conf": required,
+                "bypass_conf": bypass_conf,
+                "atr_pips": atr_pips,
+                "vol_5m": vol_5m,
+                "spread_pips": spread_pips,
+                "ms_window_sec": float(_ENTRY_QUALITY_MICROSTRUCTURE_WINDOW_SEC),
+            }
+            details.update(extra_details)
+            return False, "entry_quality_microstructure_missing", details
+
+        # Stale ticks are a hard block (safety > confidence).
+        if ms.age_ms > _ENTRY_QUALITY_MICROSTRUCTURE_MAX_AGE_MS:
+            details = {
+                "enabled": 1.0,
+                "confidence": conf,
+                "required_conf": required,
+                "bypass_conf": bypass_conf,
+                "atr_pips": atr_pips,
+                "vol_5m": vol_5m,
+                "spread_pips": spread_pips,
+                "ms_max_age_ms": float(_ENTRY_QUALITY_MICROSTRUCTURE_MAX_AGE_MS),
+            }
+            details.update(extra_details)
+            return False, "entry_quality_microstructure_stale", details
+
+        if conf < bypass_conf:
+            min_span = float(_ENTRY_QUALITY_MICROSTRUCTURE_WINDOW_SEC) * float(
+                _ENTRY_QUALITY_MICROSTRUCTURE_MIN_SPAN_RATIO
+            )
+            if min_span > 0.0 and ms.span_seconds + 1e-6 < min_span:
+                details = {
+                    "enabled": 1.0,
+                    "confidence": conf,
+                    "required_conf": required,
+                    "bypass_conf": bypass_conf,
+                    "atr_pips": atr_pips,
+                    "vol_5m": vol_5m,
+                    "spread_pips": spread_pips,
+                    "ms_min_span_sec": round(min_span, 3),
+                    "ms_window_sec": float(_ENTRY_QUALITY_MICROSTRUCTURE_WINDOW_SEC),
+                }
+                details.update(extra_details)
+                return False, "entry_quality_microstructure_span", details
+
+            if ms_min_density > 0.0 and ms.tick_density + 1e-6 < ms_min_density:
+                details = {
+                    "enabled": 1.0,
+                    "confidence": conf,
+                    "required_conf": required,
+                    "bypass_conf": bypass_conf,
+                    "atr_pips": atr_pips,
+                    "vol_5m": vol_5m,
+                    "spread_pips": spread_pips,
+                    "ms_min_tick_density": round(ms_min_density, 4),
+                }
+                details.update(extra_details)
+                return False, "entry_quality_microstructure_density", details
+
     strategy_sample = None
     strategy_pf = None
     strategy_win_rate = None
@@ -1807,7 +2011,7 @@ def _entry_quality_gate(
         _ENTRY_QUALITY_SPREAD_TP_MAX_RATIO.get(pocket_key, 0.24),
     )
     if spread_sl_ratio is not None and spread_sl_ratio > max_spread_sl_ratio and conf < bypass_conf:
-        return False, "entry_quality_spread_sl", {
+        details = {
             "enabled": 1.0,
             "confidence": conf,
             "required_conf": required,
@@ -1827,8 +2031,10 @@ def _entry_quality_gate(
             "strategy_penalty": strategy_penalty,
             "tf": str(snap.get("tf") or ""),
         }
+        details.update(extra_details)
+        return False, "entry_quality_spread_sl", details
     if spread_tp_ratio is not None and spread_tp_ratio > max_spread_tp_ratio and conf < bypass_conf:
-        return False, "entry_quality_spread_tp", {
+        details = {
             "enabled": 1.0,
             "confidence": conf,
             "required_conf": required,
@@ -1848,11 +2054,17 @@ def _entry_quality_gate(
             "strategy_penalty": strategy_penalty,
             "tf": str(snap.get("tf") or ""),
         }
+        details.update(extra_details)
+        return False, "entry_quality_spread_tp", details
 
     required = max(0.0, min(max_conf, required))
     if conf + 1e-6 < required:
-        reason = "entry_quality_strategy_confidence" if strategy_penalty > 0.0 else "entry_quality_confidence"
-        return False, reason, {
+        reason = "entry_quality_confidence"
+        if strategy_penalty > 0.0:
+            reason = "entry_quality_strategy_confidence"
+        elif regime_penalty > 0.0:
+            reason = "entry_quality_regime_confidence"
+        details = {
             "enabled": 1.0,
             "confidence": conf,
             "required_conf": required,
@@ -1876,8 +2088,10 @@ def _entry_quality_gate(
             "strategy_penalty": strategy_penalty,
             "tf": str(snap.get("tf") or ""),
         }
+        details.update(extra_details)
+        return False, reason, details
 
-    return True, None, {
+    details = {
         "enabled": 1.0,
         "confidence": conf,
         "required_conf": required,
@@ -1901,6 +2115,8 @@ def _entry_quality_gate(
         "strategy_penalty": strategy_penalty,
         "tf": str(snap.get("tf") or ""),
     }
+    details.update(extra_details)
+    return True, None, details
 
 
 def _strategy_tag_from_thesis(entry_thesis: Optional[dict]) -> Optional[str]:

@@ -216,3 +216,80 @@ def test_entry_quality_gate_strategy_penalty_skips_warmup(monkeypatch) -> None:
     assert allowed is True
     assert reason is None
     assert float(details.get("strategy_penalty") or 0.0) == 0.0
+
+
+def test_entry_quality_gate_regime_penalty_blocks_misaligned_strategy(monkeypatch) -> None:
+    monkeypatch.setattr(order_manager, "_ENTRY_QUALITY_REGIME_PENALTY_ENABLED", True)
+    monkeypatch.setattr(order_manager, "_ENTRY_QUALITY_REGIME_PENALTY_BY_POCKET", {"micro": 10.0})
+    monkeypatch.setattr(order_manager, "_ENTRY_QUALITY_REGIME_BREAKOUT_MULT", 1.0)
+    monkeypatch.setattr(order_manager, "_ENTRY_QUALITY_MICROSTRUCTURE_ENABLED", False)
+    monkeypatch.setattr(
+        order_manager,
+        "_tp_cap_factors",
+        lambda pocket, entry_thesis: (
+            "M1",
+            {"atr_pips": 2.0, "vol_5m": 1.1},
+        ),
+    )
+
+    allowed, reason, details = _entry_quality_gate(
+        "micro",
+        confidence=60.0,
+        strategy_tag="MicroVWAPRevert",
+        entry_thesis={"strategy_tag": "MicroVWAPRevert", "micro_regime": "Trend"},
+        quote={"spread_pips": 0.3},
+        sl_pips=2.2,
+        tp_pips=4.2,
+    )
+    assert allowed is False
+    assert reason == "entry_quality_regime_confidence"
+    assert details.get("strategy_style") == "range"
+    assert details.get("regime_group") == "trend"
+    assert float(details.get("regime_penalty") or 0.0) > 0.0
+
+
+def test_entry_quality_gate_microstructure_density_blocks(monkeypatch) -> None:
+    monkeypatch.setattr(order_manager, "_ENTRY_QUALITY_MICROSTRUCTURE_ENABLED", True)
+    monkeypatch.setattr(order_manager, "_ENTRY_QUALITY_MICROSTRUCTURE_WINDOW_SEC", 8.0)
+    monkeypatch.setattr(order_manager, "_ENTRY_QUALITY_MICROSTRUCTURE_MIN_SPAN_RATIO", 0.5)
+    monkeypatch.setattr(order_manager, "_ENTRY_QUALITY_MICROSTRUCTURE_MAX_AGE_MS", 5000)
+    monkeypatch.setattr(
+        order_manager, "_ENTRY_QUALITY_MICROSTRUCTURE_MIN_TICK_DENSITY", {"scalp": 1.0}
+    )
+    monkeypatch.setattr(order_manager, "_ENTRY_QUALITY_REGIME_PENALTY_ENABLED", False)
+    monkeypatch.setattr(
+        order_manager,
+        "_tp_cap_factors",
+        lambda pocket, entry_thesis: (
+            "M1",
+            {"atr_pips": 2.0, "vol_5m": 1.1},
+        ),
+    )
+
+    class _StubTickWindow:
+        def __init__(self, ticks):
+            self._ticks = ticks
+
+        def recent_ticks(self, seconds: float = 60.0, *, limit: int | None = None):
+            return list(self._ticks)
+
+    # Two ticks over 8 seconds -> density = 0.25 ticks/sec (below min=1.0).
+    ticks = [
+        {"epoch": 100.0, "bid": 150.000, "ask": 150.010, "mid": 150.005},
+        {"epoch": 108.0, "bid": 150.002, "ask": 150.012, "mid": 150.007},
+    ]
+    monkeypatch.setattr(order_manager, "tick_window", _StubTickWindow(ticks))
+    monkeypatch.setattr(order_manager.time, "time", lambda: 108.1)
+
+    allowed, reason, details = _entry_quality_gate(
+        "scalp",
+        confidence=60.0,
+        strategy_tag="M1Scalper",
+        entry_thesis={"strategy_tag": "M1Scalper"},
+        quote={"spread_pips": 0.3},
+        sl_pips=2.2,
+        tp_pips=4.2,
+    )
+    assert allowed is False
+    assert reason == "entry_quality_microstructure_density"
+    assert float(details.get("ms_tick_density") or 0.0) < 1.0
