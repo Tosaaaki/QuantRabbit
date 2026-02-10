@@ -295,7 +295,9 @@ def _perf_multiplier(tag: Optional[str], pocket: Optional[str]) -> tuple[float, 
         return 1.0, {"n": float(n), "pf": float(pf), "win": float(win_rate)}
     pf_score = _score_linear(pf, _RISK_PERF_PF_BAD, _RISK_PERF_PF_REF)
     win_score = _score_linear(win_rate, _RISK_PERF_WIN_BAD, _RISK_PERF_WIN_REF)
-    combined = _clamp(0.6 * pf_score + 0.4 * win_score, 0.0, 1.0)
+    # PF is the primary expectancy metric. A high win rate must not offset a bad PF
+    # (high-win/low-PF trap where losses are larger than wins).
+    combined = _clamp(pf_score * (0.7 + 0.3 * win_score), 0.0, 1.0)
     mult = _RISK_PERF_MIN_MULT + combined * (_RISK_PERF_MAX_MULT - _RISK_PERF_MIN_MULT)
     details = {
         "n": float(n),
@@ -303,6 +305,7 @@ def _perf_multiplier(tag: Optional[str], pocket: Optional[str]) -> tuple[float, 
         "win": float(win_rate),
         "pf_score": float(pf_score),
         "win_score": float(win_score),
+        "combined": float(combined),
         "perf_mult": float(mult),
     }
     return mult, details
