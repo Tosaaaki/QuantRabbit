@@ -11,6 +11,8 @@ import execution.order_manager as order_manager
 from execution.order_manager import (
     _dynamic_entry_sl_target_pips,
     _entry_quality_gate,
+    _entry_quality_microstructure_gate_decision,
+    _entry_quality_regime_gate_decision,
     _preflight_units,
     _projected_usage_with_netting,
 )
@@ -216,3 +218,53 @@ def test_entry_quality_gate_strategy_penalty_skips_warmup(monkeypatch) -> None:
     assert allowed is True
     assert reason is None
     assert float(details.get("strategy_penalty") or 0.0) == 0.0
+
+def test_entry_quality_regime_gate_blocks_on_mismatch_low_conf(monkeypatch):
+    monkeypatch.setenv("ORDER_ENTRY_QUALITY_REGIME_PENALTY_ENABLED", "1")
+    monkeypatch.setenv("ORDER_ENTRY_QUALITY_REGIME_MISMATCH_MIN_CONF_MICRO", "70")
+
+    entry_thesis = {
+        "confidence": 60,
+        "micro_regime": "Range",
+    }
+    allowed, reason, details = _entry_quality_regime_gate_decision(
+        pocket="micro",
+        strategy_tag="micro_trendmomentum",
+        entry_thesis=entry_thesis,
+        confidence=None,
+    )
+
+    assert allowed is False
+    assert reason == "entry_quality_regime_confidence"
+    assert details.get("mismatch_reason") == "trend_in_range"
+
+
+def test_entry_quality_microstructure_gate_blocks_on_low_density(monkeypatch):
+    import time
+
+    class _TickWindow:
+        def __init__(self, ticks):
+            self._ticks = ticks
+
+        def recent_ticks(self, seconds=60.0, *, limit=None):
+            return self._ticks
+
+    monkeypatch.setenv("ORDER_ENTRY_QUALITY_MICROSTRUCTURE_ENABLED", "1")
+    monkeypatch.setenv("ORDER_ENTRY_QUALITY_MICROSTRUCTURE_WINDOW_SEC", "60")
+    monkeypatch.setenv("ORDER_ENTRY_QUALITY_MICROSTRUCTURE_MAX_AGE_MS", "10000")
+    monkeypatch.setenv("ORDER_ENTRY_QUALITY_MICROSTRUCTURE_MIN_SPAN_RATIO", "0.7")
+    monkeypatch.setenv("ORDER_ENTRY_QUALITY_MICROSTRUCTURE_MIN_TICK_DENSITY_SCALP", "1.0")
+
+    now = time.time()
+    ticks = []
+    # 10 ticks over ~60s -> density ~0.166 tick/sec (should block)
+    for i in range(10):
+        epoch = now - 59.0 + i * (59.0 / 9.0)
+        ticks.append({"epoch": epoch, "bid": 150.0, "ask": 150.01, "mid": 150.005})
+    monkeypatch.setattr("execution.order_manager.tick_window", _TickWindow(ticks))
+
+    allowed, reason, details = _entry_quality_microstructure_gate_decision(pocket="scalp")
+
+    assert allowed is False
+    assert reason == "entry_quality_microstructure_density"
+    assert details.get("tick_count") == 10
