@@ -312,7 +312,7 @@ class TrendMAExitWorker:
         self.trail_backoff = max(0.6, _float_env("TRENDMA_EXIT_TRAIL_BACKOFF_PIPS", 2.5))
         self.lock_buffer = max(0.5, _float_env("TRENDMA_EXIT_LOCK_BUFFER_PIPS", 1.0))
         self.min_hold_sec = max(120.0, _float_env("TRENDMA_EXIT_MIN_HOLD_SEC", 5 * 60))
-        self.max_hold_negative_sec = max(600.0, _float_env("TRENDMA_EXIT_MAX_HOLD_NEG_SEC", 45 * 60))
+        self.max_hold_negative_sec = max(300.0, _float_env("TRENDMA_EXIT_MAX_HOLD_NEG_SEC", 20 * 60))
         self.max_adverse_pips = max(8.0, _float_env("TRENDMA_EXIT_MAX_ADVERSE_PIPS", 16.0))
 
         self.range_profit_take = max(3.0, _float_env("TRENDMA_EXIT_RANGE_PROFIT_PIPS", 4.8))
