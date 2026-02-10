@@ -6392,56 +6392,66 @@ async def market_order(
                 units,
             )
 
-    if not reduce_only and not sl_disabled and estimated_entry is not None:
+    if not reduce_only and estimated_entry is not None:
         hard_stop_pips = _entry_hard_stop_pips(pocket, strategy_tag=strategy_tag)
         if hard_stop_pips > 0.0:
-            max_sl_pips = _entry_max_sl_pips(pocket, strategy_tag=strategy_tag)
-            if max_sl_pips > 0.0 and hard_stop_pips > max_sl_pips + 1e-6:
-                logging.warning(
-                    "[ORDER] entry hard SL exceeds max SL cap; clamping pocket=%s strategy=%s hard=%.2fp cap=%.2fp",
-                    pocket,
-                    strategy_tag or "-",
-                    hard_stop_pips,
-                    max_sl_pips,
-                )
-                hard_stop_pips = max_sl_pips
-            hard_sl_price = _sl_price_from_pips(estimated_entry, units, hard_stop_pips)
-            if hard_sl_price is not None:
-                current_gap_pips: float | None = None
-                wrong_side = False
-                if sl_price is not None:
-                    wrong_side = (units > 0 and sl_price >= estimated_entry) or (
-                        units < 0 and sl_price <= estimated_entry
-                    )
-                    try:
-                        current_gap_pips = abs(estimated_entry - sl_price) / 0.01
-                    except Exception:
-                        current_gap_pips = None
-                if (
-                    sl_price is None
-                    or wrong_side
-                    or current_gap_pips is None
-                    or current_gap_pips < hard_stop_pips - 1e-6
-                ):
-                    logging.info(
-                        "[ORDER] hard SL on fill applied pocket=%s pips=%.1f sl=%s client=%s",
+            # Catastrophe hard-stop is separate from "entry SL enabled".
+            # If configured and broker SL is allowed for this pocket, force-enable
+            # stopLossOnFill even when entry SL is generally disabled.
+            if sl_disabled and _allow_stop_loss_on_fill(pocket):
+                sl_disabled = False
+                if isinstance(entry_thesis, dict):
+                    entry_thesis = dict(entry_thesis)
+                    entry_thesis["entry_hard_sl_forced"] = True
+
+            if not sl_disabled:
+                max_sl_pips = _entry_max_sl_pips(pocket, strategy_tag=strategy_tag)
+                if max_sl_pips > 0.0 and hard_stop_pips > max_sl_pips + 1e-6:
+                    logging.warning(
+                        "[ORDER] entry hard SL exceeds max SL cap; clamping pocket=%s strategy=%s hard=%.2fp cap=%.2fp",
                         pocket,
+                        strategy_tag or "-",
                         hard_stop_pips,
-                        f"{hard_sl_price:.3f}",
-                        client_order_id or "-",
+                        max_sl_pips,
                     )
-                    sl_price = hard_sl_price
-                    thesis_sl_pips = hard_stop_pips
-                    if isinstance(entry_thesis, dict):
-                        entry_thesis = dict(entry_thesis)
-                        entry_thesis["sl_pips"] = round(float(hard_stop_pips), 2)
-                        entry_thesis["entry_hard_sl_applied"] = {
-                            "pips": round(float(hard_stop_pips), 2),
-                            "sl_price": round(float(hard_sl_price), 3),
-                            "prev_gap_pips": round(float(current_gap_pips), 2)
-                            if current_gap_pips is not None
-                            else None,
-                        }
+                    hard_stop_pips = max_sl_pips
+                hard_sl_price = _sl_price_from_pips(estimated_entry, units, hard_stop_pips)
+                if hard_sl_price is not None:
+                    current_gap_pips: float | None = None
+                    wrong_side = False
+                    if sl_price is not None:
+                        wrong_side = (units > 0 and sl_price >= estimated_entry) or (
+                            units < 0 and sl_price <= estimated_entry
+                        )
+                        try:
+                            current_gap_pips = abs(estimated_entry - sl_price) / 0.01
+                        except Exception:
+                            current_gap_pips = None
+                    if (
+                        sl_price is None
+                        or wrong_side
+                        or current_gap_pips is None
+                        or current_gap_pips < hard_stop_pips - 1e-6
+                    ):
+                        logging.info(
+                            "[ORDER] hard SL on fill applied pocket=%s pips=%.1f sl=%s client=%s",
+                            pocket,
+                            hard_stop_pips,
+                            f"{hard_sl_price:.3f}",
+                            client_order_id or "-",
+                        )
+                        sl_price = hard_sl_price
+                        thesis_sl_pips = hard_stop_pips
+                        if isinstance(entry_thesis, dict):
+                            entry_thesis = dict(entry_thesis)
+                            entry_thesis["sl_pips"] = round(float(hard_stop_pips), 2)
+                            entry_thesis["entry_hard_sl_applied"] = {
+                                "pips": round(float(hard_stop_pips), 2),
+                                "sl_price": round(float(hard_sl_price), 3),
+                                "prev_gap_pips": round(float(current_gap_pips), 2)
+                                if current_gap_pips is not None
+                                else None,
+                            }
 
     if not reduce_only and estimated_entry is not None:
         norm_sl = None if sl_disabled else sl_price
@@ -7042,33 +7052,43 @@ async def limit_order(
     if _soft_tp_mode(entry_thesis):
         tp_price = None
 
-    if not reduce_only and not sl_disabled and price > 0:
+    if not reduce_only and price > 0:
         hard_stop_pips = _entry_hard_stop_pips(pocket, strategy_tag=strategy_tag)
         if hard_stop_pips > 0.0:
-            hard_sl_price = _sl_price_from_pips(price, units, hard_stop_pips)
-            if hard_sl_price is not None:
-                current_gap_pips: float | None = None
-                wrong_side = False
-                if sl_price is not None:
-                    wrong_side = (units > 0 and sl_price >= price) or (units < 0 and sl_price <= price)
-                    try:
-                        current_gap_pips = abs(price - sl_price) / 0.01
-                    except Exception:
-                        current_gap_pips = None
-                if (
-                    sl_price is None
-                    or wrong_side
-                    or current_gap_pips is None
-                    or current_gap_pips < hard_stop_pips - 1e-6
-                ):
-                    logging.info(
-                        "[ORDER] hard SL on fill applied (limit) pocket=%s pips=%.1f sl=%s client=%s",
-                        pocket,
-                        hard_stop_pips,
-                        f"{hard_sl_price:.3f}",
-                        client_order_id or "-",
-                    )
-                    sl_price = hard_sl_price
+            # See market_order: catastrophe hard-stop can be enforced even when entry SL is generally disabled.
+            if sl_disabled and _allow_stop_loss_on_fill(pocket):
+                sl_disabled = False
+                if isinstance(entry_thesis, dict):
+                    entry_thesis = dict(entry_thesis)
+                    entry_thesis["entry_hard_sl_forced"] = True
+
+            if not sl_disabled:
+                hard_sl_price = _sl_price_from_pips(price, units, hard_stop_pips)
+                if hard_sl_price is not None:
+                    current_gap_pips: float | None = None
+                    wrong_side = False
+                    if sl_price is not None:
+                        wrong_side = (units > 0 and sl_price >= price) or (
+                            units < 0 and sl_price <= price
+                        )
+                        try:
+                            current_gap_pips = abs(price - sl_price) / 0.01
+                        except Exception:
+                            current_gap_pips = None
+                    if (
+                        sl_price is None
+                        or wrong_side
+                        or current_gap_pips is None
+                        or current_gap_pips < hard_stop_pips - 1e-6
+                    ):
+                        logging.info(
+                            "[ORDER] hard SL on fill applied (limit) pocket=%s pips=%.1f sl=%s client=%s",
+                            pocket,
+                            hard_stop_pips,
+                            f"{hard_sl_price:.3f}",
+                            client_order_id or "-",
+                        )
+                        sl_price = hard_sl_price
 
     if not reduce_only and pocket != "manual":
         entry_thesis = _apply_default_entry_thesis_tfs(entry_thesis, pocket)
