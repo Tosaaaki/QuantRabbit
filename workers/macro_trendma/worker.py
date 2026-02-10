@@ -690,7 +690,7 @@ async def trendma_worker() -> None:
                 pocket=config.POCKET,
                 current_bid=float(current_bid) if current_bid is not None else None,
                 current_ask=float(current_ask) if current_ask is not None else None,
-                require_passive=False,
+                require_passive=True,
                 client_order_id=client_id,
                 ttl_ms=max(1.0, _LIMIT_ENTRY_TTL_SEC) * 1000.0,
                 entry_thesis=entry_thesis,
