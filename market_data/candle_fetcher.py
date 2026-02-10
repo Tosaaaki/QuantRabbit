@@ -47,10 +47,17 @@ class CandleAggregator:
         self.subscribers: Dict[TimeFrame, List[Callable[[Candle], Awaitable[None]]]] = (
             defaultdict(list)
         )
+        self.live_subscribers: Dict[TimeFrame, List[Callable[[Candle], Awaitable[None]]]] = (
+            defaultdict(list)
+        )
 
     def subscribe(self, tf: TimeFrame, coro: Callable[[Candle], Awaitable[None]]):
         if tf in self.timeframes:
             self.subscribers[tf].append(coro)
+
+    def subscribe_live(self, tf: TimeFrame, coro: Callable[[Candle], Awaitable[None]]):
+        if tf in self.timeframes:
+            self.live_subscribers[tf].append(coro)
 
     def _get_key(self, tf: TimeFrame, ts: datetime.datetime) -> str:
         # normalize timeframe to handle stray whitespace / case
@@ -107,6 +114,14 @@ class CandleAggregator:
                 c["close"] = price
                 c["time"] = ts
 
+            live_candle = self.current_candles.get(tf)
+            if live_candle:
+                for sub in self.live_subscribers[tf]:
+                    try:
+                        await sub(dict(live_candle))
+                    except Exception as exc:  # noqa: BLE001
+                        logging.debug("[candle] live subscriber failed tf=%s err=%s", tf, exc)
+
 
 # ------ 便利ラッパ ------
 
@@ -123,6 +138,13 @@ async def start_candle_stream(
     agg = CandleAggregator(timeframes, instrument)
     for tf, handler in handlers:
         agg.subscribe(tf, handler)
+    try:
+        from indicators.factor_cache import on_candle_live
+    except Exception:
+        on_candle_live = None
+    if on_candle_live is not None:
+        for tf in timeframes:
+            agg.subscribe_live(tf, on_candle_live)
 
     async def tick_cb(tick: Tick):
         try:

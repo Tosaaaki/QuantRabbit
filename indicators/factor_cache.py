@@ -12,7 +12,9 @@ import json
 import logging
 import os
 import tempfile
+import time
 from collections import deque, defaultdict
+from datetime import datetime
 from pathlib import Path
 from typing import Dict, Literal
 
@@ -22,6 +24,34 @@ from indicators.calc_core import IndicatorEngine
 from analysis.regime_classifier import classify
 
 TimeFrame = Literal["M1", "M5", "H1", "H4", "D1"]
+
+
+def _env_bool(name: str, default: bool) -> bool:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() not in {"", "0", "false", "no"}
+
+
+def _env_float(name: str, default: float) -> float:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    try:
+        return float(raw)
+    except Exception:
+        return default
+
+
+def _env_tf_set(name: str, default: str) -> set[TimeFrame]:
+    raw = os.getenv(name, default)
+    allowed: set[TimeFrame] = {"M1", "M5", "H1", "H4", "D1"}
+    out: set[TimeFrame] = set()
+    for token in raw.split(","):
+        tf = token.strip().upper()
+        if tf in allowed:
+            out.add(tf)  # type: ignore[arg-type]
+    return out
 
 _CANDLES_MAX = {
     "M1": 2000,
@@ -41,6 +71,18 @@ _FACTORS: Dict[TimeFrame, Dict[str, float]] = defaultdict(dict)
 _CACHE_PATH = Path("logs/factor_cache.json")
 _LAST_RESTORE_MTIME: float | None = None
 _LAST_REGIME: Dict[TimeFrame, dict] = {}
+_LIVE_CANDLES: Dict[TimeFrame, Dict[str, float]] = {}
+_LIVE_LAST_COMPUTE_MONO: Dict[TimeFrame, float] = defaultdict(float)
+
+_LIVE_UPDATE_ENABLED = _env_bool("FACTOR_CACHE_LIVE_UPDATE_ENABLED", True)
+_LIVE_UPDATE_TFS = _env_tf_set("FACTOR_CACHE_LIVE_UPDATE_TFS", "M1")
+if not _LIVE_UPDATE_TFS:
+    _LIVE_UPDATE_TFS = {"M1"}
+_LIVE_UPDATE_MIN_INTERVAL_SEC = max(
+    0.05,
+    _env_float("FACTOR_CACHE_LIVE_MIN_INTERVAL_SEC", 0.35),
+)
+_INCLUDE_LIVE_CANDLE_DEFAULT = _env_bool("FACTOR_CACHE_INCLUDE_LIVE_CANDLE", True)
 
 _LOCK = asyncio.Lock()
 
@@ -75,6 +117,41 @@ def _update_regime(tf: TimeFrame, factors: Dict[str, float]) -> None:
     factors["regime"] = label
     factors["regime_ts"] = ts
     _LAST_REGIME[tf] = {"regime": label, "timestamp": ts}
+
+
+def _normalize_candle(candle: Dict[str, float]) -> Dict[str, float] | None:
+    try:
+        open_px = float(candle["open"])
+        high_px = float(candle["high"])
+        low_px = float(candle["low"])
+        close_px = float(candle["close"])
+    except Exception:
+        return None
+    ts_raw = candle.get("time") or candle.get("timestamp")
+    if isinstance(ts_raw, datetime):
+        ts = ts_raw.isoformat()
+    elif isinstance(ts_raw, str):
+        ts = ts_raw
+    else:
+        return None
+    return {
+        "timestamp": ts,
+        "open": open_px,
+        "high": high_px,
+        "low": low_px,
+        "close": close_px,
+    }
+
+
+def _merge_live_candle(candles: list[dict], live_candle: Dict[str, float] | None) -> list[dict]:
+    if not live_candle:
+        return candles
+    merged = list(candles)
+    if merged and merged[-1].get("timestamp") == live_candle.get("timestamp"):
+        merged[-1] = dict(live_candle)
+    else:
+        merged.append(dict(live_candle))
+    return merged
 
 
 def _persist_cache() -> None:
@@ -175,8 +252,11 @@ def _restore_cache() -> bool:
                 factors.setdefault("high", last.get("high"))
                 factors.setdefault("low", last.get("low"))
                 factors.setdefault("timestamp", last.get("timestamp"))
+                factors.setdefault("last_closed_timestamp", last.get("timestamp"))
+                factors.setdefault("live_candle", False)
             _FACTORS[tf].clear()
             _FACTORS[tf].update(factors)
+            _LIVE_CANDLES.pop(tf, None)
             if "regime" not in _FACTORS[tf]:
                 _update_regime(tf, _FACTORS[tf])
         except Exception as exc:  # noqa: BLE001
@@ -201,6 +281,8 @@ for tf, dq in _CANDLES.items():
                 "high": last.get("high"),
                 "low": last.get("low"),
                 "timestamp": last.get("timestamp"),
+                "last_closed_timestamp": last.get("timestamp"),
+                "live_candle": False,
             }
         )
         _update_regime(tf, factors)
@@ -250,7 +332,12 @@ def _serialize(value: object) -> object:
     return value
 
 
-def get_candles_snapshot(tf: TimeFrame, *, limit: int | None = None) -> list[dict]:
+def get_candles_snapshot(
+    tf: TimeFrame,
+    *,
+    limit: int | None = None,
+    include_live: bool | None = None,
+) -> list[dict]:
     """Return a shallow copy of cached candles for a timeframe."""
     try:
         refresh_cache_from_disk()
@@ -260,6 +347,9 @@ def get_candles_snapshot(tf: TimeFrame, *, limit: int | None = None) -> list[dic
     if not dq:
         return []
     candles = list(dq)
+    use_live = _INCLUDE_LIVE_CANDLE_DEFAULT if include_live is None else bool(include_live)
+    if use_live:
+        candles = _merge_live_candle(candles, _LIVE_CANDLES.get(tf))
     if limit is not None and limit > 0:
         return candles[-limit:]
     return candles
@@ -289,6 +379,8 @@ def ensure_factors(tf: TimeFrame) -> Dict[str, float] | None:
                 "high": last.get("high"),
                 "low": last.get("low"),
                 "timestamp": last.get("timestamp"),
+                "last_closed_timestamp": last.get("timestamp"),
+                "live_candle": False,
             }
         )
         _update_regime(tf, factors)
@@ -318,17 +410,14 @@ async def on_candle(tf: TimeFrame, candle: Dict[str, float]):
     """
     market_data.candle_fetcher から呼ばれる想定
     """
+    normalized = _normalize_candle(candle)
+    if normalized is None:
+        return
     async with _LOCK:
         q = _CANDLES[tf]
-        q.append(
-            {
-                "timestamp": candle["time"].isoformat(),
-                "open": candle["open"],
-                "high": candle["high"],
-                "low": candle["low"],
-                "close": candle["close"],
-            }
-        )
+        q.append(normalized)
+        _LIVE_CANDLES.pop(tf, None)
+        _LIVE_LAST_COMPUTE_MONO.pop(tf, None)
 
         if len(q) < 20:  # 計算に必要な最小限のデータを待つ
             return
@@ -346,6 +435,8 @@ async def on_candle(tf: TimeFrame, candle: Dict[str, float]):
                 "high": last["high"],
                 "low": last["low"],
                 "timestamp": last["timestamp"],
+                "last_closed_timestamp": last["timestamp"],
+                "live_candle": False,
             }
         )
         _update_regime(tf, factors)
@@ -353,6 +444,51 @@ async def on_candle(tf: TimeFrame, candle: Dict[str, float]):
         _FACTORS[tf].clear()
         _FACTORS[tf].update(factors)
         _persist_cache()
+
+
+async def on_candle_live(tf: TimeFrame, candle: Dict[str, float]) -> None:
+    """Update factors with an in-flight (not yet finalized) candle."""
+    if not _LIVE_UPDATE_ENABLED or tf not in _LIVE_UPDATE_TFS:
+        return
+    normalized = _normalize_candle(candle)
+    if normalized is None:
+        return
+    now_mono = time.monotonic()
+    async with _LOCK:
+        _LIVE_CANDLES[tf] = normalized
+        last_mono = _LIVE_LAST_COMPUTE_MONO.get(tf, 0.0)
+        if now_mono - last_mono < _LIVE_UPDATE_MIN_INTERVAL_SEC:
+            return
+        q = _CANDLES.get(tf)
+        if not q or len(q) < 20:
+            return
+        merged = _merge_live_candle(list(q), normalized)
+        if len(merged) < 20:
+            return
+        try:
+            df = pd.DataFrame(merged)
+            factors = IndicatorEngine.compute(df)
+        except Exception as exc:  # noqa: BLE001
+            logging.debug("[FACTOR_CACHE] live compute failed tf=%s err=%s", tf, exc)
+            return
+        factors["candles"] = merged if _INCLUDE_LIVE_CANDLE_DEFAULT else list(q)
+        last = merged[-1]
+        factors.update(
+            {
+                "close": last.get("close"),
+                "open": last.get("open"),
+                "high": last.get("high"),
+                "low": last.get("low"),
+                "timestamp": last.get("timestamp"),
+                "last_closed_timestamp": q[-1].get("timestamp"),
+                "live_candle": True,
+                "live_updated_ts": time.time(),
+            }
+        )
+        _update_regime(tf, factors)
+        _FACTORS[tf].clear()
+        _FACTORS[tf].update(factors)
+        _LIVE_LAST_COMPUTE_MONO[tf] = now_mono
 
 
 def all_factors() -> Dict[TimeFrame, Dict[str, float]]:
