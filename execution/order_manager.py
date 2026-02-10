@@ -7007,6 +7007,8 @@ async def limit_order(
 ) -> tuple[Optional[str], Optional[str]]:
     """Place a passive limit order. Returns (trade_id, order_id)."""
 
+    strategy_tag = _strategy_tag_from_thesis(entry_thesis)
+
     sl_disabled = stop_loss_disabled_for_pocket(pocket)
     if sl_disabled:
         sl_price = None
@@ -7044,8 +7046,6 @@ async def limit_order(
                         client_order_id or "-",
                     )
                     sl_price = hard_sl_price
-
-    strategy_tag = _strategy_tag_from_thesis(entry_thesis)
 
     if not reduce_only and pocket != "manual":
         entry_thesis = _apply_default_entry_thesis_tfs(entry_thesis, pocket)
@@ -7448,9 +7448,13 @@ async def limit_order(
                 return None, None
 
     ttl_sec = max(0.0, ttl_ms / 1000.0)
+    # OANDA GTD granularity is seconds; clamp sub-second TTL up to 1s instead
+    # of accidentally leaving a GTC limit order around.
+    if 0.0 < ttl_sec < 1.0:
+        ttl_sec = 1.0
     time_in_force = "GTC"
     gtd_time = None
-    if ttl_sec >= 1.0:
+    if ttl_sec > 0.0:
         expiry = datetime.now(timezone.utc) + timedelta(seconds=ttl_sec)
         gtd_time = expiry.strftime("%Y-%m-%dT%H:%M:%S.%fZ")
         time_in_force = "GTD"
