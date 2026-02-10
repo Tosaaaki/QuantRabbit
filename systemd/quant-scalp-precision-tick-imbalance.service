@@ -24,8 +24,11 @@ Environment=TICK_IMB_REENTRY_LOOKBACK_SEC=420
 Environment=TICK_IMB_REENTRY_MIN_PRICE_GAP_PIPS=1.0
 Environment=TICK_IMB_REENTRY_REQUIRE_LAST_PROFIT=1
 
-# Broker SL/TP disabled (no entry stop-loss).  Re-enable by setting:
-# Environment=ORDER_ENABLE_STOP_LOSS_SCALP=1
+# Safety: attach broker stopLossOnFill for TickImbalance so tail risk is capped even
+# if the exit worker is down or close requests get blocked/delayed.
+Environment=ORDER_ENABLE_STOP_LOSS_SCALP=1
+Environment=ORDER_ALLOW_STOP_LOSS_WITH_EXIT_NO_NEGATIVE_CLOSE_SCALP=true
+Environment=ORDER_ENTRY_HARD_STOP_PIPS_STRATEGY_TICKIMBALANCE=25
 
 ExecStart=/home/tossaki/QuantRabbit/.venv/bin/python -m workers.scalp_precision.worker
 Restart=always
