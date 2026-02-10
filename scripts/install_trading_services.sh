@@ -95,6 +95,13 @@ install_unit "$MAIN_UNIT_SRC"
 if [[ $INSTALL_ALL -eq 1 ]]; then
   for unit in systemd/*.service systemd/*.timer; do
     [[ -e "$unit" ]] || continue
+    base="$(basename "$unit")"
+    # Never auto-enable practice units on the production VM via --all.
+    # If practice is needed, install explicitly with --units.
+    if [[ "$base" == *-practice.service || "$base" == *-practice.timer ]]; then
+      echo "Skip practice unit (use --units to install explicitly): $unit"
+      continue
+    fi
     install_unit "$unit"
   done
 fi
