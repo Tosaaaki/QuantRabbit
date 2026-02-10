@@ -1,7 +1,13 @@
 """TrendMA dedicated macro worker with dynamic cap."""
 
 from __future__ import annotations
-from analysis.ma_projection import compute_adx_projection, compute_bbw_projection, compute_ma_projection, compute_rsi_projection
+from analysis.ma_projection import (
+    compute_adx_projection,
+    compute_bbw_projection,
+    compute_ma_projection,
+    compute_rsi_projection,
+    score_ma_for_side,
+)
 
 import asyncio
 import datetime
@@ -150,15 +156,7 @@ def _projection_candles(tfs):
 def _score_ma(ma, side, opp_block_bars):
     if ma is None:
         return None
-    align = ma.gap_pips >= 0 if side == "long" else ma.gap_pips <= 0
-    cross_soon = ma.projected_cross_bars is not None and ma.projected_cross_bars <= opp_block_bars
-    if align and not cross_soon:
-        return 0.7
-    if align and cross_soon:
-        return -0.4
-    if cross_soon:
-        return -0.8
-    return -0.5
+    return score_ma_for_side(ma, side, opp_block_bars)
 
 
 def _score_rsi(rsi, side, long_target, short_target, overheat_bars):

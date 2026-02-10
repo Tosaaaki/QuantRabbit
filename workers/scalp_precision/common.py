@@ -10,6 +10,7 @@ from analysis.ma_projection import (
     compute_ma_projection,
     compute_rsi_projection,
 )
+from analysis.ma_projection import score_ma_for_side
 from indicators.factor_cache import get_candles_snapshot
 from market_data import tick_window, spread_monitor
 
@@ -263,15 +264,7 @@ def _projection_candles(tfs: Sequence[str]) -> tuple[Optional[str], Optional[lis
 def _score_ma(ma, side: str, opp_block_bars: float) -> Optional[float]:
     if ma is None:
         return None
-    align = ma.gap_pips >= 0 if side == "long" else ma.gap_pips <= 0
-    cross_soon = ma.projected_cross_bars is not None and ma.projected_cross_bars <= opp_block_bars
-    if align and not cross_soon:
-        return 0.7
-    if align and cross_soon:
-        return -0.4
-    if cross_soon:
-        return -0.8
-    return -0.5
+    return score_ma_for_side(ma, side, opp_block_bars)
 
 
 def _score_rsi(rsi, side: str, long_target: float, short_target: float, overheat_bars: float) -> Optional[float]:

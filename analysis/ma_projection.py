@@ -6,10 +6,30 @@ Utility helpers to estimate moving-average and MACD cross dynamics.
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 from typing import Dict, Iterable, List, Optional, Sequence, Tuple
 
 PIP = 0.01
+
+
+def _env_bool(name: str, default: bool) -> bool:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() not in {"", "0", "false", "no", "off"}
+
+
+_PROJ_MA_LOOKAHEAD_ENABLED = _env_bool("PROJ_MA_LOOKAHEAD_ENABLED", True)
+
+
+def _normalize_side(value: object) -> Optional[str]:
+    side = str(value or "").strip().lower()
+    if side in {"long", "buy", "open_long"}:
+        return "long"
+    if side in {"short", "sell", "open_short"}:
+        return "short"
+    return None
 
 
 @dataclass
@@ -124,6 +144,83 @@ def compute_ma_projection(
         macd_cross_bars=macd_cross_bars,
         macd_cross_minutes=macd_cross_minutes,
     )
+
+
+def score_ma_for_side(
+    ma: MACrossProjection,
+    side: str,
+    opp_block_bars: float,
+    *,
+    lookahead_enabled: Optional[bool] = None,
+) -> float:
+    """
+    Direction-aware MA projection score used by workers' projection gates.
+
+    Legacy behavior treated any projected cross as a negative. When lookahead is enabled
+    (default), a projected cross *towards* the intended side becomes a small positive
+    "pre-cross" signal so workers can react earlier during flips.
+
+    Returns a score in roughly [-0.8, 0.7].
+    """
+
+    side_norm = _normalize_side(side)
+    if side_norm not in {"long", "short"}:
+        # Unknown side -> be conservative (treat as opposing / weakly negative).
+        side_norm = "long"
+    is_long = side_norm == "long"
+
+    try:
+        gap = float(ma.gap_pips)
+    except Exception:
+        gap = 0.0
+    try:
+        slope = float(ma.gap_slope_pips)
+    except Exception:
+        slope = 0.0
+    eta = ma.projected_cross_bars
+
+    align_now = gap >= 0 if is_long else gap <= 0
+    cross_soon = eta is not None and eta <= float(opp_block_bars or 0.0)
+
+    enabled = _PROJ_MA_LOOKAHEAD_ENABLED if lookahead_enabled is None else bool(lookahead_enabled)
+    if not enabled:
+        if align_now and not cross_soon:
+            return 0.7
+        if align_now and cross_soon:
+            return -0.4
+        if cross_soon:
+            return -0.8
+        return -0.5
+
+    if not cross_soon:
+        return 0.7 if align_now else -0.5
+
+    # Cross direction is implied by (gap sign, slope sign) because projected_cross_bars
+    # is only defined when the gap is closing toward zero.
+    bullish_cross = gap < 0 and slope > 0  # ma10 below ma20 but rising -> bullish cross
+    bearish_cross = gap > 0 and slope < 0  # ma10 above ma20 but falling -> bearish cross
+
+    cross_favorable = (bullish_cross and is_long) or (bearish_cross and not is_long)
+    cross_adverse = (bullish_cross and not is_long) or (bearish_cross and is_long)
+
+    if align_now and cross_adverse:
+        # Trend weakening towards an opposite cross (legacy: mild negative).
+        return -0.4
+
+    if (not align_now) and cross_favorable:
+        # Lookahead: allow small positive bias when the cross is imminent.
+        eta_val = float(eta) if eta is not None else 999.0
+        if eta_val <= 1.2:
+            return 0.55
+        if eta_val <= 2.5:
+            return 0.45
+        return 0.35
+
+    if cross_adverse:
+        return -0.8
+
+    # Fallback: cross soon but direction unclear (should be rare).
+    return -0.5
 
 
 def _simple_ma(values: Sequence[float], window: int) -> Optional[float]:
