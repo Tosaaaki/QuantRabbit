@@ -2336,7 +2336,10 @@ class PositionManager:
                         thesis_from_comment = parsed
             except Exception:
                 thesis_from_comment = None
-            meta = self._resolve_entry_meta(trade_id)
+            # Only resolve entry meta for bot-managed trades.
+            # Manual trades can be long-lived; resolving meta for them triggers repeated orders.db scans
+            # across many workers, which increases CPU load and data lag.
+            meta = self._resolve_entry_meta(trade_id) if is_agent_client else None
             if meta:
                 thesis = meta.get("entry_thesis")
                 if isinstance(thesis, str):
