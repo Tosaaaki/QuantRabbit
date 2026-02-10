@@ -61,6 +61,14 @@ def _parse_hours(raw: str) -> set[int]:
             hours.add(h)
     return hours
 
+def _parse_csv_lower(raw: str) -> set[str]:
+    items: set[str] = set()
+    for token in str(raw or "").split(","):
+        t = token.strip().lower()
+        if t:
+            items.add(t)
+    return items
+
 POCKET = "scalp"
 LOOP_INTERVAL_SEC = float(os.getenv("M1SCALP_LOOP_INTERVAL_SEC", "6.0"))
 ENABLED = _env_bool("M1SCALP_ENABLED", True)
@@ -106,3 +114,12 @@ BLOCK_HOURS_ENABLED = os.getenv("M1SCALP_BLOCK_HOURS_ENABLED", "0").strip().lowe
     "false",
     "no",
 }
+
+# Optional regime filter: comma-separated {"range","trend","breakout","mixed"} etc.
+# Empty = allow all (preserves current behavior).
+ALLOWED_REGIMES = frozenset(
+    _parse_csv_lower(
+        os.getenv("M1SCALP_ALLOWED_REGIMES")
+        or _load_env_file().get("M1SCALP_ALLOWED_REGIMES", "")
+    )
+)

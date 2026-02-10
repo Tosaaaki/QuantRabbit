@@ -6,6 +6,7 @@ After=network.target
 Type=simple
 WorkingDirectory=/home/tossaki/QuantRabbit
 Environment="PYTHONUNBUFFERED=1"
+Environment=M1SCALP_ALLOWED_REGIMES=range,trend,breakout
 ExecStart=/home/tossaki/QuantRabbit/.venv/bin/python -m workers.scalp_m1scalper.worker
 Restart=always
 RestartSec=5

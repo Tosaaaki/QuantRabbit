@@ -425,6 +425,19 @@ async def scalp_m1_worker() -> None:
         fac_h1 = factors.get("H1") or {}
         fac_h4 = factors.get("H4") or {}
         range_ctx = detect_range_mode(fac_m1, fac_h4)
+        if config.ALLOWED_REGIMES:
+            regime = str(fac_m1.get("regime") or "").strip().lower()
+            if regime not in config.ALLOWED_REGIMES:
+                now_mono = time.monotonic()
+                if now_mono - last_block_log > 300.0:
+                    LOG.info(
+                        "%s blocked by regime regime=%s allowed=%s",
+                        config.LOG_PREFIX,
+                        regime or "-",
+                        sorted(config.ALLOWED_REGIMES),
+                    )
+                    last_block_log = now_mono
+                continue
         perf = perf_monitor.snapshot()
         pf = None
         try:
