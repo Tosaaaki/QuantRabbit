@@ -141,6 +141,229 @@ def _entry_execution_deadline_sec(pocket: Optional[str]) -> float:
         return 0.0
 
 
+_ENTRY_QUALITY_RANGE_TAG_HINTS = (
+    "range",
+    "revert",
+    "reversal",
+    "fader",
+    "magnet",
+    "mean",
+    "vwap",
+)
+_ENTRY_QUALITY_TREND_TAG_HINTS = (
+    "trend",
+    "momentum",
+    "break",
+    "burst",
+    "impulse",
+    "runner",
+    "pullback",
+    "spike",
+    "rider",
+)
+
+
+def _normalize_regime_label(label: object) -> str | None:
+    if label in (None, "", 0, False):
+        return None
+    text = str(label).strip()
+    if not text:
+        return None
+    key = text.strip().lower()
+    if key == "trend":
+        return "Trend"
+    if key == "range":
+        return "Range"
+    if key == "breakout":
+        return "Breakout"
+    if key == "mixed":
+        return "Mixed"
+    if key == "event":
+        return "Event"
+    return None
+
+
+def _entry_quality_regime_from_thesis(entry_thesis: Optional[dict], pocket: str) -> str | None:
+    if not isinstance(entry_thesis, dict):
+        return None
+    reg = entry_thesis.get("regime")
+    macro = None
+    micro = None
+    if isinstance(reg, dict):
+        macro = reg.get("macro") or reg.get("macro_regime") or reg.get("reg_macro")
+        micro = reg.get("micro") or reg.get("micro_regime") or reg.get("reg_micro")
+    macro = macro or entry_thesis.get("macro_regime") or entry_thesis.get("reg_macro")
+    micro = micro or entry_thesis.get("micro_regime") or entry_thesis.get("reg_micro")
+    if (pocket or "").strip().lower() == "macro":
+        return _normalize_regime_label(macro)
+    return _normalize_regime_label(micro)
+
+
+def _infer_entry_quality_style(
+    strategy_tag: Optional[str],
+    entry_thesis: Optional[dict],
+) -> Literal["trend", "range"] | None:
+    range_votes = 0
+    trend_votes = 0
+    if isinstance(entry_thesis, dict):
+        if entry_thesis.get("range_active") not in (None, False, "", 0):
+            range_votes += 1
+        profile = entry_thesis.get("profile")
+        if profile:
+            p = str(profile).strip().lower()
+            if any(key in p for key in ("range", "revert", "mean", "mr")):
+                range_votes += 1
+            if any(key in p for key in ("trend", "momentum", "break", "impulse")):
+                trend_votes += 1
+        for key in ("mr_guard", "mr_overlay", "entry_mean", "reversion_failure"):
+            if entry_thesis.get(key) not in (None, False, "", 0):
+                range_votes += 1
+                break
+        for key in ("trend_bias", "trend_score"):
+            if entry_thesis.get(key) not in (None, False, "", 0):
+                trend_votes += 1
+                break
+    tag = str(strategy_tag or "").strip().lower()
+    if tag:
+        if any(key in tag for key in _ENTRY_QUALITY_RANGE_TAG_HINTS):
+            range_votes += 1
+        if any(key in tag for key in _ENTRY_QUALITY_TREND_TAG_HINTS):
+            trend_votes += 1
+    if range_votes and not trend_votes:
+        return "range"
+    if trend_votes and not range_votes:
+        return "trend"
+    return None
+
+
+def _entry_quality_confidence_value(confidence: Optional[int], entry_thesis: Optional[dict]) -> int | None:
+    raw = confidence
+    if raw is None and isinstance(entry_thesis, dict):
+        raw = entry_thesis.get("confidence")  # type: ignore[assignment]
+    if raw is None:
+        return None
+    try:
+        val = int(raw)
+    except Exception:
+        return None
+    return max(0, min(100, val))
+
+
+def _entry_quality_regime_gate_decision(
+    *,
+    pocket: str,
+    strategy_tag: Optional[str],
+    entry_thesis: Optional[dict],
+    confidence: Optional[int],
+) -> tuple[bool, str | None, dict]:
+    """
+    Opt-in gate: when strategy style and current regime disagree, require higher confidence.
+    """
+    if not _env_bool("ORDER_ENTRY_QUALITY_REGIME_PENALTY_ENABLED", False):
+        return True, None, {}
+    pocket_key = (pocket or "").strip().lower()
+    if not pocket_key or pocket_key == "manual":
+        return True, None, {}
+    required = _env_int(
+        f"ORDER_ENTRY_QUALITY_REGIME_MISMATCH_MIN_CONF_{pocket_key.upper()}",
+        0,
+    )
+    if required <= 0:
+        return True, None, {}
+    style = _infer_entry_quality_style(strategy_tag=strategy_tag, entry_thesis=entry_thesis)
+    regime = _entry_quality_regime_from_thesis(entry_thesis=entry_thesis, pocket=pocket_key)
+    details: dict[str, object] = {
+        "style": style,
+        "regime": regime,
+        "required_conf": required,
+    }
+    if style is None or regime in (None, "Mixed", "Event"):
+        return True, None, details
+
+    mismatch_reason = None
+    if style == "trend" and regime == "Range":
+        mismatch_reason = "trend_in_range"
+    elif style == "range" and regime == "Trend":
+        mismatch_reason = "range_in_trend"
+    elif style == "range" and regime == "Breakout":
+        mismatch_reason = "range_in_breakout"
+    if mismatch_reason is None:
+        details["mismatch"] = False
+        return True, None, details
+
+    conf_val = _entry_quality_confidence_value(confidence, entry_thesis)
+    details["mismatch"] = True
+    details["mismatch_reason"] = mismatch_reason
+    details["confidence"] = conf_val
+    if conf_val is None:
+        # If we don't have a confidence score, do not block (safe default).
+        return True, None, details
+    if conf_val < required:
+        return False, "entry_quality_regime_confidence", details
+    return True, None, details
+
+
+def _entry_quality_microstructure_gate_decision(
+    *,
+    pocket: str,
+) -> tuple[bool, str | None, dict]:
+    """
+    Opt-in gate: require healthy tick window (fresh + dense enough) for scalp-style entries.
+    """
+    if not _env_bool("ORDER_ENTRY_QUALITY_MICROSTRUCTURE_ENABLED", False):
+        return True, None, {}
+    pocket_key = (pocket or "").strip().lower()
+    if not pocket_key or pocket_key == "manual":
+        return True, None, {}
+    min_density = _env_float(
+        f"ORDER_ENTRY_QUALITY_MICROSTRUCTURE_MIN_TICK_DENSITY_{pocket_key.upper()}",
+        0.0,
+    )
+    if min_density <= 0.0:
+        return True, None, {}
+    window_sec = max(1.0, _env_float("ORDER_ENTRY_QUALITY_MICROSTRUCTURE_WINDOW_SEC", 60.0))
+    max_age_ms = max(0.0, _env_float("ORDER_ENTRY_QUALITY_MICROSTRUCTURE_MAX_AGE_MS", 2500.0))
+    min_span_ratio = _env_float("ORDER_ENTRY_QUALITY_MICROSTRUCTURE_MIN_SPAN_RATIO", 0.7)
+    min_span_ratio = max(0.0, min(1.0, float(min_span_ratio)))
+    details: dict[str, object] = {
+        "window_sec": round(window_sec, 3),
+        "min_tick_density": round(float(min_density), 4),
+        "max_age_ms": round(float(max_age_ms), 1),
+        "min_span_ratio": round(float(min_span_ratio), 3),
+    }
+    if tick_window is None:
+        return False, "entry_quality_microstructure_missing", details
+    try:
+        ticks = tick_window.recent_ticks(seconds=window_sec)
+    except Exception as exc:
+        details["error"] = str(exc)
+        return False, "entry_quality_microstructure_error", details
+    if not ticks:
+        details["tick_count"] = 0
+        return False, "entry_quality_microstructure_empty", details
+    details["tick_count"] = len(ticks)
+    last_epoch = _as_float(ticks[-1].get("epoch"))
+    if last_epoch is None:
+        return False, "entry_quality_microstructure_bad_epoch", details
+    now = time.time()
+    age_ms = max(0.0, (now - float(last_epoch)) * 1000.0)
+    details["age_ms"] = round(age_ms, 1)
+    if max_age_ms > 0.0 and age_ms > max_age_ms:
+        return False, "entry_quality_microstructure_stale", details
+    first_epoch = _as_float(ticks[0].get("epoch")) or last_epoch
+    span_sec = max(0.0, float(last_epoch) - float(first_epoch))
+    span_ratio = span_sec / window_sec if window_sec > 0.0 else 0.0
+    details["span_sec"] = round(span_sec, 3)
+    details["span_ratio"] = round(span_ratio, 3)
+    if min_span_ratio > 0.0 and span_ratio < min_span_ratio:
+        return False, "entry_quality_microstructure_span", details
+    tick_density = len(ticks) / window_sec if window_sec > 0.0 else 0.0
+    details["tick_density"] = round(tick_density, 4)
+    if tick_density < min_density:
+        return False, "entry_quality_microstructure_density", details
+    return True, None, details
+
+
 # Apply policy overlay gates even when signal gate is disabled.
 _POLICY_GATE_ENABLED = _env_bool(
     "ORDER_POLICY_GATE_ENABLED",
@@ -5238,6 +5461,103 @@ async def market_order(
             request_payload=attempt_payload,
         )
         return None
+
+    # Entry-quality gates (opt-in): these are deterministic and can be enabled per VM
+    # via systemd Environment overrides.
+    if not reduce_only and (pocket or "").lower() != "manual":
+        allowed, reason, details = _entry_quality_regime_gate_decision(
+            pocket=str(pocket or ""),
+            strategy_tag=strategy_tag,
+            entry_thesis=entry_thesis if isinstance(entry_thesis, dict) else None,
+            confidence=confidence,
+        )
+        if not allowed and reason:
+            _console_order_log(
+                "OPEN_SKIP",
+                pocket=pocket,
+                strategy_tag=strategy_tag,
+                side=side_label,
+                units=units,
+                sl_price=sl_price,
+                tp_price=tp_price,
+                client_order_id=client_order_id,
+                note=reason,
+            )
+            log_order(
+                pocket=pocket,
+                instrument=instrument,
+                side=side_label,
+                units=units,
+                sl_price=sl_price,
+                tp_price=tp_price,
+                client_order_id=client_order_id,
+                status=reason,
+                attempt=0,
+                stage_index=stage_index,
+                request_payload={
+                    "entry_thesis": entry_thesis,
+                    "meta": meta,
+                    "details": details,
+                },
+            )
+            log_metric(
+                "entry_quality_regime_block",
+                1.0,
+                tags={
+                    "pocket": pocket or "unknown",
+                    "strategy": strategy_tag or "unknown",
+                    "reason": str(details.get("mismatch_reason") or "regime_confidence"),
+                },
+            )
+            return None
+
+    if (
+        instrument == "USD_JPY"
+        and not reduce_only
+        and (pocket or "").lower() != "manual"
+    ):
+        allowed, reason, details = _entry_quality_microstructure_gate_decision(
+            pocket=str(pocket or ""),
+        )
+        if not allowed and reason:
+            _console_order_log(
+                "OPEN_SKIP",
+                pocket=pocket,
+                strategy_tag=strategy_tag,
+                side=side_label,
+                units=units,
+                sl_price=sl_price,
+                tp_price=tp_price,
+                client_order_id=client_order_id,
+                note=reason,
+            )
+            log_order(
+                pocket=pocket,
+                instrument=instrument,
+                side=side_label,
+                units=units,
+                sl_price=sl_price,
+                tp_price=tp_price,
+                client_order_id=client_order_id,
+                status=reason,
+                attempt=0,
+                stage_index=stage_index,
+                request_payload={
+                    "entry_thesis": entry_thesis,
+                    "meta": meta,
+                    "details": details,
+                },
+            )
+            log_metric(
+                "entry_quality_microstructure_block",
+                1.0,
+                tags={
+                    "pocket": pocket or "unknown",
+                    "strategy": strategy_tag or "unknown",
+                    "reason": reason,
+                },
+            )
+            return None
 
     quote = _fetch_quote(instrument)
     if quote and quote.get("spread_pips") is not None:
