@@ -389,11 +389,17 @@ strategies:
 
   TickImbalance:
     # TickImbalance is a fast scalp; keep profit-buffer low enough so partial/locks can execute.
-    min_profit_pips: 0.9
+    # Allow tiny-profit exits (lock_floor/range_timeout) to actually execute; otherwise they get rejected
+    # and can turn into large time_stop losses.
+    min_profit_pips: 0.3
     min_profit_ratio: 0.45
+    # TickImbalance TP is small (<= ~2.5p). Disable min-profit-ratio gating for this strategy by requiring
+    # a larger TP before the ratio check applies.
+    min_profit_ratio_min_tp_pips: 3.0
     pro_stop: {soft_pips: 6.4, hard_pips: 12.07, min_hold_sec: 1200, max_hold_sec: 3600, soft_atr_mult: 0.6, hard_atr_mult: 1.0}
     exit_profile:
-      min_hold_sec: 8
+      # Let partial_take / BE arm quickly; holding 8s often misses the initial impulse.
+      min_hold_sec: 2
       # Avoid profit-buffer rejects: keep take-profit >= min_profit_pips.
       profit_pips: 2.0
       trail_start_pips: 2.1
@@ -419,7 +425,8 @@ strategies:
         partial_fraction: 0.4
         partial_min_units: 1000
         partial_min_remaining: 1000
-        be_buffer_pips: 0.2
+        # After partial take, lock meaningful profit so a reversal doesn't bleed into time_stop/max_adverse.
+        be_buffer_pips: 0.6
         min_hold_sec: 0
         # Use the main exit_profile (above) for profit/trailing; here we only tune TickImbalance-specific safety.
         profit_pips: 0.0
@@ -427,7 +434,7 @@ strategies:
         trail_backoff_pips: 0.0
         lock_buffer_pips: 0.0
         max_hold_sec: 420
-        max_adverse_pips: 6.0
+        max_adverse_pips: 4.0
 
   LevelReject:
     min_profit_pips: 1.4
