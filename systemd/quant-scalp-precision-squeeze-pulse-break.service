@@ -25,6 +25,7 @@ Environment=SPB_HI_PCT=85.0
 Environment=SPB_LO_PCT=15.0
 Environment=SPB_BREAKOUT_PIPS=0.6
 Environment=SPB_RANGE_SCORE_MIN=0.34
+Environment=SPB_ALLOWED_REGIMES=range,trend
 Environment=SPB_TICK_WINDOW_SEC=12.0
 Environment=SPB_MIN_TICKS=10
 Environment=SPB_TICK_RANGE_MAX_PIPS=1.8
