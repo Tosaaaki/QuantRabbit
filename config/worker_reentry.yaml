@@ -314,6 +314,7 @@ strategies:
     cooldown_win_sec: 30
     cooldown_loss_sec: 60
     same_dir_reentry_pips: 0.8
+    same_dir_mode: both
   impulser6c29c8c05:
     return_wait_bias: neutral
     return_wait_reason: low_sample
