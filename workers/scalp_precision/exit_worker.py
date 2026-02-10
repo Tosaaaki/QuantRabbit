@@ -177,6 +177,31 @@ def _exit_profile_for_tag(strategy_tag: Optional[str]) -> dict:
     return _merge_profile(defaults_profile, override_profile)
 
 
+def _be_profile_for_tag(strategy_tag: Optional[str], *, pocket: str) -> dict:
+    cfg = _load_strategy_protection_config()
+    defaults = cfg.get("defaults") if isinstance(cfg, dict) else {}
+    be_defaults = defaults.get("be_profile") if isinstance(defaults, dict) else None
+    pocket_defaults = be_defaults.get(pocket) if isinstance(be_defaults, dict) else None
+    if not isinstance(pocket_defaults, dict):
+        pocket_defaults = {}
+    override = _strategy_override(cfg, strategy_tag)
+    override_profile = override.get("be_profile") if isinstance(override, dict) else None
+    if not isinstance(override_profile, dict):
+        return {}
+    return _merge_profile(pocket_defaults, override_profile)
+
+
+def _trade_stop_loss_price(trade: dict) -> Optional[float]:
+    sl = trade.get("stop_loss")
+    if not isinstance(sl, dict):
+        return None
+    try:
+        price = sl.get("price")
+        return float(price) if price is not None else None
+    except Exception:
+        return None
+
+
 def _reentry_prefix_for_tag(tag: str) -> Optional[str]:
     raw = str(tag or "").strip()
     if not raw:
@@ -442,6 +467,8 @@ class _TradeState:
     partial_done: bool = False
     be_moved: bool = False
     be_floor_price: Optional[float] = None
+    be_last_ts: float = 0.0
+    be_last_sl: Optional[float] = None
 
     def update(self, pnl: float, lock_buffer: float) -> None:
         if pnl > self.peak:
@@ -1072,6 +1099,82 @@ class RangeFaderExitWorker:
         if pnl >= trail_start:
             candidate = max(0.0, pnl - trail_backoff)
             state.lock_floor = candidate if state.lock_floor is None else max(state.lock_floor, candidate)
+
+        # Attach a broker-side "profit lock" stop-loss once SqueezePulseBreak is in profit.
+        # This reduces give-back risk in worker-only mode where global dynamic protections
+        # are not applied from main.py.
+        if base_tag == "SqueezePulseBreak" and pnl > 0 and pnl < profit_take:
+            be_profile = _be_profile_for_tag(base_tag, pocket=POCKET)
+            if isinstance(be_profile, dict):
+                trigger_pips = _pick_float(be_profile.get("trigger_pips"), 0.0)
+                lock_ratio = max(0.0, min(1.0, _pick_float(be_profile.get("lock_ratio"), 0.0)))
+                min_lock_pips = max(0.0, _pick_float(be_profile.get("min_lock_pips"), 0.0))
+                cooldown_sec = max(0.0, _pick_float(be_profile.get("cooldown_sec"), 0.0))
+                if trigger_pips > 0.0 and pnl >= trigger_pips and lock_ratio > 0.0:
+                    now_mono = time.monotonic()
+                    if cooldown_sec <= 0.0 or (now_mono - float(state.be_last_ts or 0.0)) >= cooldown_sec:
+                        lock_pips = max(min_lock_pips, float(pnl) * lock_ratio)
+                        desired_sl: Optional[float] = None
+                        bid, ask = _latest_bid_ask()
+                        current_sl = _trade_stop_loss_price(trade)
+                        if side == "long":
+                            desired_sl = entry + lock_pips * _BB_PIP
+                            ref_price = bid if bid is not None else mid
+                            if ref_price is not None:
+                                desired_sl = min(desired_sl, float(ref_price) - 0.003)
+                            if (
+                                desired_sl is not None
+                                and desired_sl > entry + 1e-6
+                                and (current_sl is None or desired_sl > current_sl + 1e-6)
+                            ):
+                                sl_price = round(desired_sl, 3)
+                                state.be_last_ts = now_mono
+                                ok = await set_trade_protections(trade_id, sl_price=sl_price, tp_price=None)
+                                if ok:
+                                    state.be_last_sl = sl_price
+                                    log_metric(
+                                        "scalp_precision_profit_lock_sl",
+                                        lock_pips,
+                                        tags={"strategy": base_tag, "side": side},
+                                        ts=now,
+                                    )
+                                    LOG.info(
+                                        "[exit-rangefader] profit_lock trade=%s tag=%s pnl=%.2fp lock=%.2fp sl=%.3f",
+                                        trade_id,
+                                        base_tag,
+                                        pnl,
+                                        lock_pips,
+                                        sl_price,
+                                    )
+                        else:
+                            desired_sl = entry - lock_pips * _BB_PIP
+                            ref_price = ask if ask is not None else mid
+                            if ref_price is not None:
+                                desired_sl = max(desired_sl, float(ref_price) + 0.003)
+                            if (
+                                desired_sl is not None
+                                and desired_sl < entry - 1e-6
+                                and (current_sl is None or desired_sl < current_sl - 1e-6)
+                            ):
+                                sl_price = round(desired_sl, 3)
+                                state.be_last_ts = now_mono
+                                ok = await set_trade_protections(trade_id, sl_price=sl_price, tp_price=None)
+                                if ok:
+                                    state.be_last_sl = sl_price
+                                    log_metric(
+                                        "scalp_precision_profit_lock_sl",
+                                        lock_pips,
+                                        tags={"strategy": base_tag, "side": side},
+                                        ts=now,
+                                    )
+                                    LOG.info(
+                                        "[exit-rangefader] profit_lock trade=%s tag=%s pnl=%.2fp lock=%.2fp sl=%.3f",
+                                        trade_id,
+                                        base_tag,
+                                        pnl,
+                                        lock_pips,
+                                        sl_price,
+                                    )
 
         if pnl >= profit_take:
             await self._close(trade_id, -units, "take_profit", pnl, client_id)
