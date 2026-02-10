@@ -818,6 +818,9 @@ _EXIT_ALLOW_NEGATIVE_NEAR_BE_REASONS = {
     ).split(",")
     if token.strip()
 }
+# These are "profit" exits that can flip slightly negative due to spread/stale quotes.
+# Keep them eligible for near-BE allowances without requiring env edits.
+_EXIT_ALLOW_NEGATIVE_NEAR_BE_REASONS.update({"take_profit", "candle_*"})
 _EXIT_HOLD_UNTIL_PROFIT_ENABLED = _env_bool("EXIT_HOLD_UNTIL_PROFIT_ENABLED", True)
 _EXIT_HOLD_UNTIL_PROFIT_CLIENT_IDS = _env_csv_set("EXIT_HOLD_UNTIL_PROFIT_CLIENT_IDS", "")
 _EXIT_HOLD_UNTIL_PROFIT_TRADE_IDS = _env_csv_set("EXIT_HOLD_UNTIL_PROFIT_TRADE_IDS", "")
@@ -2668,25 +2671,17 @@ def _neg_exit_decision(
 
     Behavior:
     - Emergency/near-BE allowances are always honored.
-    - Strategy allow_reasons are treated as explicit permissions, even when
-      global EXIT_ALLOW_NEGATIVE_REASONS does not include the reason.
-    - If no strategy allow_reasons are defined, global/worker gates are used.
+    - Global EXIT_ALLOW_NEGATIVE_REASONS / worker overrides are honored.
+    - Strategy allow_reasons are treated as additional explicit permissions.
+    - Strategy deny_reasons (when set) override everything except emergency_allow.
     """
     neg_policy = neg_policy if isinstance(neg_policy, dict) else {}
     policy_enabled = _coerce_bool(neg_policy.get("enabled"), True)
     allow_tokens = neg_policy.get("allow_reasons")
     deny_tokens = neg_policy.get("deny_reasons")
 
-    policy_reason_match = False
-    if allow_tokens is None:
-        policy_allow = policy_enabled
-    else:
-        if isinstance(allow_tokens, (list, tuple, set)):
-            allow_list = [str(token) for token in allow_tokens]
-        else:
-            allow_list = [str(allow_tokens)]
-        policy_reason_match = _reason_matches_tokens(exit_reason, allow_list)
-        policy_allow = policy_enabled and policy_reason_match
+    if not policy_enabled:
+        return bool(emergency_allow), False
 
     if deny_tokens is not None:
         if isinstance(deny_tokens, (list, tuple, set)):
@@ -2694,15 +2689,23 @@ def _neg_exit_decision(
         else:
             deny_list = [str(deny_tokens)]
         if _reason_matches_tokens(exit_reason, deny_list):
-            policy_allow = False
-            policy_reason_match = False
+            return bool(emergency_allow), False
 
-    near_be_allow = policy_allow and _allow_negative_near_be(exit_reason, est_pips)
-    policy_explicit_allow = policy_allow and policy_reason_match
+    policy_reason_match = False
+    if allow_tokens is not None:
+        if isinstance(allow_tokens, (list, tuple, set)):
+            allow_list = [str(token) for token in allow_tokens]
+        else:
+            allow_list = [str(allow_tokens)]
+        policy_reason_match = _reason_matches_tokens(exit_reason, allow_list)
+
+    near_be_allow = _allow_negative_near_be(exit_reason, est_pips)
     neg_allowed = bool(
         emergency_allow
         or near_be_allow
-        or (policy_allow and (reason_allow or worker_allow or policy_explicit_allow))
+        or reason_allow
+        or worker_allow
+        or policy_reason_match
     )
     return neg_allowed, near_be_allow
 
@@ -3666,10 +3669,9 @@ async def close_trade(
             except Exception:
                 pl_pips = None
         if pl_pips is not None:
-            if est_pips is None:
-                est_pips = pl_pips
-            elif est_pips >= 0 and pl_pips < 0 and abs(est_pips) <= 0.2:
-                est_pips = pl_pips
+            # For negative-close gating, prefer the broker-normalized PnL (unrealizedPL)
+            # over quote-based estimates which can be stale / flip sign around the spread.
+            est_pips = pl_pips
         negative_by_pips = est_pips is not None and est_pips <= 0
         negative_by_pl = pl is not None and pl <= 0
         if negative_by_pips or (est_pips is None and negative_by_pl):
