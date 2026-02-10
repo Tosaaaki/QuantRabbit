@@ -59,10 +59,10 @@ Environment=WICK_HF_HARD_WICK_RANGE_MULT=1.40
 Environment=WICK_HF_DIAG=1
 Environment=WICK_HF_DIAG_INTERVAL_SEC=20
 
-# Ensure broker stop-loss stays disabled even if global env enables it for other pockets.
-Environment=ORDER_DISABLE_STOP_LOSS_SCALP=1
-# Broker SL/TP disabled (no entry stop-loss). Re-enable by setting:
-# Environment=ORDER_ENABLE_STOP_LOSS_SCALP=1
+# Safety: attach broker stopLossOnFill (scalp) so tail risk is capped even if the exit
+# worker is down or close requests get blocked/delayed.
+Environment=ORDER_ENABLE_STOP_LOSS_SCALP=1
+Environment=ORDER_ALLOW_STOP_LOSS_WITH_EXIT_NO_NEGATIVE_CLOSE_SCALP=true
 
 ExecStart=/home/tossaki/QuantRabbit/.venv/bin/python -m workers.scalp_precision.worker
 Restart=always
