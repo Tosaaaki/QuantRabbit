@@ -6024,11 +6024,11 @@ async def market_order(
         entry_basis = entry_price_meta
 
     # Market-adaptive SL: widen loss buffer when volatility/spread expands.
+    # NOTE: This updates thesis_sl_pips (virtual SL) even when stopLossOnFill is disabled.
     if (
         _DYNAMIC_SL_ENABLE
         and (pocket or "").lower() in _DYNAMIC_SL_POCKETS
         and not reduce_only
-        and not sl_disabled
     ):
         loss_guard_pips = None
         sl_hint_pips = thesis_sl_pips
