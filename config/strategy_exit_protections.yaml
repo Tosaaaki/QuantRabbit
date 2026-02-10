@@ -44,7 +44,7 @@ defaults:
   min_profit_ratio:
     macro: 0.45
     micro: 0.40
-    scalp: 0.80
+    scalp: 0.45
   min_profit_ratio_min_tp_pips: 1.5
   min_profit_ratio_reasons:
     - partial_take
@@ -303,7 +303,7 @@ strategies:
 
   TickImbalance:
     min_profit_pips: 1.4
-    min_profit_ratio: 0.80
+    min_profit_ratio: 0.45
     pro_stop: {soft_pips: 6.4, hard_pips: 12.07, min_hold_sec: 1200, max_hold_sec: 3600, soft_atr_mult: 0.6, hard_atr_mult: 1.0}
     exit_profile:
       min_hold_sec: 8
@@ -342,7 +342,7 @@ strategies:
 
   LevelReject:
     min_profit_pips: 1.4
-    min_profit_ratio: 0.80
+    min_profit_ratio: 0.45
     pro_stop: {enabled: false}
     exit_profile:
       min_hold_sec: 10
@@ -375,7 +375,7 @@ strategies:
 
   LiquiditySweep:
     min_profit_pips: 1.0
-    min_profit_ratio: 0.80
+    min_profit_ratio: 0.45
     exit_profile:
       # LiquiditySweep often runs without broker SL (stopLossOnFill). Without a deterministic
       # loss cut, it can bleed until margin relief closes the trade. Cap tail risk mechanically.
@@ -389,7 +389,7 @@ strategies:
 
   TickWickReversal:
     min_profit_pips: 1.2
-    min_profit_ratio: 0.80
+    min_profit_ratio: 0.45
     exit_profile:
       min_hold_sec: 6
       profit_pips: 1.1
@@ -413,7 +413,7 @@ strategies:
 
   WickReversalHF:
     min_profit_pips: 1.0
-    min_profit_ratio: 0.80
+    min_profit_ratio: 0.45
     exit_profile:
       # Wick-based fades are prone to small whipsaws; avoid a tight "soft" cut (hidden hard-SL).
       # Keep only a tail cap + time stop when running without broker SL.
@@ -426,7 +426,7 @@ strategies:
 
   WickReversalBlend:
     min_profit_pips: 1.0
-    min_profit_ratio: 0.80
+    min_profit_ratio: 0.45
     exit_profile:
       # Blend is a higher-quality wick fade with tick confirmation; still cap tail risk mechanically.
       loss_cut_enabled: true
@@ -438,7 +438,7 @@ strategies:
 
   LevelRejectPlus:
     min_profit_pips: 1.0
-    min_profit_ratio: 0.80
+    min_profit_ratio: 0.45
     exit_profile:
       # Level-based rejects can need room; avoid a small soft cut while still preventing tail blowups.
       loss_cut_enabled: true
@@ -450,7 +450,7 @@ strategies:
 
   VwapRevertS:
     min_profit_pips: 1.0
-    min_profit_ratio: 0.80
+    min_profit_ratio: 0.45
     exit_profile:
       # VWAP reversion can need time to mean-revert; avoid a tight "soft" loss cut which
       # behaves like a hidden hard-SL and can stop out winners. Keep only:
@@ -465,7 +465,7 @@ strategies:
 
   SqueezePulseBreak:
     min_profit_pips: 1.2
-    min_profit_ratio: 0.80
+    min_profit_ratio: 0.45
     exit_profile:
       # Defaults have loss_cut disabled + require SL; SqueezePulseBreak often runs without broker SL.
       # Enable deterministic loss cuts to avoid tail losses when the breakout fails.
@@ -481,7 +481,7 @@ strategies:
 
   FalseBreakFade:
     min_profit_pips: 1.0
-    min_profit_ratio: 0.80
+    min_profit_ratio: 0.45
     exit_profile:
       # Fade setups can bleed for a long time if reclaim fails; cut deterministically without broker SL.
       loss_cut_enabled: true
@@ -573,7 +573,7 @@ strategies:
 
   WickReversal:
     min_profit_pips: 1.0
-    min_profit_ratio: 0.80
+    min_profit_ratio: 0.45
     exit_profile:
       loss_cut_enabled: true
       loss_cut_require_sl: false
@@ -583,7 +583,7 @@ strategies:
       loss_cut_cooldown_sec: 5
 
   fast_scalp:
-    min_profit_ratio: 0.80
+    min_profit_ratio: 0.45
     min_profit_ratio_min_tp_pips: 0.6
     be_profile: {trigger_pips: 1.2, lock_ratio: 0.40, min_lock_pips: 0.45, cooldown_sec: 12}
     tp_move: {trigger_pips: 0.9, buffer_pips: 0.6}
