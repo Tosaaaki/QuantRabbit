@@ -5,7 +5,13 @@ After=network.target
 [Service]
 Type=simple
 WorkingDirectory=/home/tossaki/QuantRabbit
+EnvironmentFile=-/etc/quantrabbit.env
 Environment="PYTHONUNBUFFERED=1"
+
+# Safety: attach broker stopLossOnFill for TrendMA (macro) so tail risk is capped
+# even when EXIT_NO_NEGATIVE_CLOSE=1 blocks loss-side closes.
+Environment=ORDER_ENABLE_STOP_LOSS_MACRO=1
+Environment=ORDER_ALLOW_STOP_LOSS_WITH_EXIT_NO_NEGATIVE_CLOSE_MACRO=true
 ExecStart=/home/tossaki/QuantRabbit/.venv/bin/python -m workers.macro_trendma.worker
 Restart=always
 RestartSec=5
