@@ -929,7 +929,7 @@ _ENTRY_QUALITY_STRAT_LOOKBACK_DAYS = max(
     1, _env_int("ORDER_ENTRY_QUALITY_STRAT_LOOKBACK_DAYS", 5)
 )
 _ENTRY_QUALITY_STRAT_MIN_TRADES = max(
-    5, _env_int("ORDER_ENTRY_QUALITY_STRAT_MIN_TRADES", 18)
+    5, _env_int("ORDER_ENTRY_QUALITY_STRAT_MIN_TRADES", 12)
 )
 _ENTRY_QUALITY_STRAT_TTL_SEC = max(
     15.0, _env_float("ORDER_ENTRY_QUALITY_STRAT_TTL_SEC", 120.0)
@@ -1710,11 +1710,11 @@ def _entry_quality_gate(
             if strategy_sample >= strat_min_trades:
                 pf_floor = max(
                     0.0,
-                    _pocket_env_float("ORDER_ENTRY_QUALITY_STRAT_PF_MIN", pocket, 0.95),
+                    _pocket_env_float("ORDER_ENTRY_QUALITY_STRAT_PF_MIN", pocket, 0.90),
                 )
                 payoff_floor = max(
                     0.0,
-                    _pocket_env_float("ORDER_ENTRY_QUALITY_STRAT_PAYOFF_MIN", pocket, 0.35),
+                    _pocket_env_float("ORDER_ENTRY_QUALITY_STRAT_PAYOFF_MIN", pocket, 0.30),
                 )
                 avg_pips_floor = _pocket_env_float(
                     "ORDER_ENTRY_QUALITY_STRAT_AVG_PIPS_MIN",
@@ -1723,7 +1723,7 @@ def _entry_quality_gate(
                 )
                 bonus_gain = max(
                     0.0,
-                    _pocket_env_float("ORDER_ENTRY_QUALITY_STRAT_BONUS_GAIN", pocket, 8.0),
+                    _pocket_env_float("ORDER_ENTRY_QUALITY_STRAT_BONUS_GAIN", pocket, 7.0),
                 )
                 bonus_max = max(
                     0.0,
@@ -1754,7 +1754,7 @@ def _entry_quality_gate(
                     and math.isfinite(strategy_avg_pips)
                     and strategy_avg_pips < avg_pips_floor
                 ):
-                    denom = max(0.25, abs(avg_pips_floor) + 0.25)
+                    denom = max(0.6, abs(avg_pips_floor) + 0.6)
                     avg_gap = (avg_pips_floor - strategy_avg_pips) / denom
 
                 severity = max(0.0, pf_gap, payoff_gap, avg_gap)
