@@ -110,6 +110,7 @@ def test_entry_quality_gate_blocks_low_confidence_on_wide_spread(monkeypatch) ->
     allowed, reason, details = _entry_quality_gate(
         "micro",
         confidence=56.0,
+        strategy_tag="MicroRangeBreak",
         entry_thesis={"strategy_tag": "MicroRangeBreak"},
         quote={"spread_pips": 1.0},
         sl_pips=2.0,
@@ -132,6 +133,7 @@ def test_entry_quality_gate_allows_high_confidence_bypass(monkeypatch) -> None:
     allowed, reason, details = _entry_quality_gate(
         "micro",
         confidence=95.0,
+        strategy_tag="MicroRangeBreak",
         entry_thesis={"strategy_tag": "MicroRangeBreak"},
         quote={"spread_pips": 1.0},
         sl_pips=2.0,
@@ -140,3 +142,77 @@ def test_entry_quality_gate_allows_high_confidence_bypass(monkeypatch) -> None:
     assert allowed is True
     assert reason is None
     assert details.get("confidence") == 95.0
+
+
+def test_entry_quality_gate_strategy_penalty_blocks_low_quality_tag(monkeypatch) -> None:
+    monkeypatch.setattr(
+        order_manager,
+        "_tp_cap_factors",
+        lambda pocket, entry_thesis: (
+            "M1",
+            {"atr_pips": 2.0, "vol_5m": 1.1},
+        ),
+    )
+    monkeypatch.setattr(
+        order_manager,
+        "_entry_strategy_quality_snapshot",
+        lambda strategy_tag, pocket: {
+            "sample": 80.0,
+            "pf": 0.62,
+            "win_rate": 0.73,
+            "avg_pips": -0.8,
+            "avg_win_pips": 1.2,
+            "avg_loss_pips": 3.8,
+            "payoff": 0.32,
+        },
+    )
+
+    allowed, reason, details = _entry_quality_gate(
+        "micro",
+        confidence=60.0,
+        strategy_tag="TickImbalance",
+        entry_thesis={"strategy_tag": "TickImbalance"},
+        quote={"spread_pips": 0.3},
+        sl_pips=2.2,
+        tp_pips=4.2,
+    )
+    assert allowed is False
+    assert reason == "entry_quality_strategy_confidence"
+    assert float(details.get("strategy_penalty") or 0.0) > 0.0
+
+
+def test_entry_quality_gate_strategy_penalty_skips_warmup(monkeypatch) -> None:
+    monkeypatch.setattr(
+        order_manager,
+        "_tp_cap_factors",
+        lambda pocket, entry_thesis: (
+            "M1",
+            {"atr_pips": 2.0, "vol_5m": 1.1},
+        ),
+    )
+    monkeypatch.setattr(
+        order_manager,
+        "_entry_strategy_quality_snapshot",
+        lambda strategy_tag, pocket: {
+            "sample": 6.0,
+            "pf": 0.5,
+            "win_rate": 0.4,
+            "avg_pips": -1.0,
+            "avg_win_pips": 0.8,
+            "avg_loss_pips": 2.0,
+            "payoff": 0.4,
+        },
+    )
+
+    allowed, reason, details = _entry_quality_gate(
+        "micro",
+        confidence=60.0,
+        strategy_tag="TickImbalance",
+        entry_thesis={"strategy_tag": "TickImbalance"},
+        quote={"spread_pips": 0.3},
+        sl_pips=2.2,
+        tp_pips=4.2,
+    )
+    assert allowed is True
+    assert reason is None
+    assert float(details.get("strategy_penalty") or 0.0) == 0.0

@@ -924,6 +924,22 @@ _ENTRY_QUALITY_VOL_BANDS = {
     "scalp": (0.75, 1.55),
     "scalp_fast": (0.75, 1.5),
 }
+_ENTRY_QUALITY_STRAT_ENABLED = _env_bool("ORDER_ENTRY_QUALITY_STRAT_ENABLED", True)
+_ENTRY_QUALITY_STRAT_LOOKBACK_DAYS = max(
+    1, _env_int("ORDER_ENTRY_QUALITY_STRAT_LOOKBACK_DAYS", 5)
+)
+_ENTRY_QUALITY_STRAT_MIN_TRADES = max(
+    5, _env_int("ORDER_ENTRY_QUALITY_STRAT_MIN_TRADES", 18)
+)
+_ENTRY_QUALITY_STRAT_TTL_SEC = max(
+    15.0, _env_float("ORDER_ENTRY_QUALITY_STRAT_TTL_SEC", 120.0)
+)
+_ENTRY_QUALITY_STRAT_DB_PATH = pathlib.Path(
+    os.getenv("TRADES_DB_PATH", "logs/trades.db")
+)
+_ENTRY_QUALITY_STRAT_CACHE: dict[
+    tuple[str, str], tuple[float, dict[str, float]]
+] = {}
 
 _LAST_PROTECTIONS: dict[str, dict[str, float | None]] = {}
 MACRO_BE_GRACE_SECONDS = 45
@@ -1459,6 +1475,106 @@ def _entry_market_snapshot(
     }
 
 
+def _entry_quality_tag_variants(strategy_tag: Optional[str]) -> tuple[str, ...]:
+    raw = str(strategy_tag or "").strip()
+    if not raw:
+        return tuple()
+    base = _base_strategy_tag(raw)
+    root = raw.split("-", 1)[0].strip()
+    variants = {raw.lower()}
+    if base:
+        variants.add(str(base).strip().lower())
+    if root:
+        variants.add(root.lower())
+    return tuple(sorted(v for v in variants if v))
+
+
+def _entry_strategy_quality_snapshot(
+    strategy_tag: Optional[str],
+    pocket: Optional[str],
+) -> Optional[dict[str, float]]:
+    if not _ENTRY_QUALITY_STRAT_ENABLED:
+        return None
+    pocket_key = str(pocket or "").strip().lower()
+    if not pocket_key:
+        return None
+    variants = _entry_quality_tag_variants(strategy_tag)
+    if not variants:
+        return None
+    db_path = _ENTRY_QUALITY_STRAT_DB_PATH
+    if not db_path.exists():
+        return None
+
+    cache_key = (pocket_key, str(strategy_tag or "").strip().lower())
+    now_mono = time.monotonic()
+    cached = _ENTRY_QUALITY_STRAT_CACHE.get(cache_key)
+    if cached and now_mono - cached[0] <= _ENTRY_QUALITY_STRAT_TTL_SEC:
+        return dict(cached[1])
+
+    placeholders = ",".join("?" for _ in variants)
+    params: list[Any] = list(variants)
+    params.extend([pocket_key, f"-{_ENTRY_QUALITY_STRAT_LOOKBACK_DAYS} day"])
+
+    row = None
+    con: Optional[sqlite3.Connection] = None
+    try:
+        con = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True, timeout=1.0)
+        con.row_factory = sqlite3.Row
+        row = con.execute(
+            f"""
+            SELECT
+              COUNT(*) AS n,
+              SUM(CASE WHEN pl_pips > 0 THEN pl_pips ELSE 0 END) AS profit,
+              SUM(CASE WHEN pl_pips < 0 THEN ABS(pl_pips) ELSE 0 END) AS loss,
+              SUM(CASE WHEN pl_pips > 0 THEN 1 ELSE 0 END) AS win_n,
+              SUM(CASE WHEN pl_pips < 0 THEN 1 ELSE 0 END) AS loss_n,
+              SUM(pl_pips) AS sum_pips
+            FROM trades
+            WHERE LOWER(COALESCE(NULLIF(strategy_tag, ''), strategy)) IN ({placeholders})
+              AND pocket = ?
+              AND close_time >= datetime('now', ?)
+            """,
+            params,
+        ).fetchone()
+    except Exception:
+        row = None
+    finally:
+        if con is not None:
+            try:
+                con.close()
+            except Exception:
+                pass
+
+    if not row:
+        return None
+
+    sample = int(row["n"] or 0)
+    profit = float(row["profit"] or 0.0)
+    loss = float(row["loss"] or 0.0)
+    win_n = int(row["win_n"] or 0)
+    loss_n = int(row["loss_n"] or 0)
+    sum_pips = float(row["sum_pips"] or 0.0)
+
+    pf = profit / loss if loss > 0.0 else float("inf")
+    win_rate = (float(win_n) / float(sample)) if sample > 0 else 0.0
+    avg_pips = (sum_pips / float(sample)) if sample > 0 else 0.0
+    avg_win = (profit / float(win_n)) if win_n > 0 else 0.0
+    avg_loss = (loss / float(loss_n)) if loss_n > 0 else 0.0
+    payoff = (avg_win / avg_loss) if avg_loss > 0 else float("inf")
+
+    stats = {
+        "sample": float(sample),
+        "pf": float(pf),
+        "win_rate": float(win_rate),
+        "avg_pips": float(avg_pips),
+        "avg_win_pips": float(avg_win),
+        "avg_loss_pips": float(avg_loss),
+        "payoff": float(payoff),
+    }
+    _ENTRY_QUALITY_STRAT_CACHE[cache_key] = (now_mono, dict(stats))
+    return stats
+
+
 def _dynamic_entry_sl_target_pips(
     pocket: Optional[str],
     *,
@@ -1527,6 +1643,7 @@ def _entry_quality_gate(
     pocket: Optional[str],
     *,
     confidence: Optional[float],
+    strategy_tag: Optional[str],
     entry_thesis: Optional[dict],
     quote: Optional[dict],
     sl_pips: Optional[float],
@@ -1564,6 +1681,86 @@ def _entry_quality_gate(
             required += _pocket_env_float("ORDER_ENTRY_QUALITY_HIGH_VOL_BONUS", pocket, 3.0)
         elif vol_5m <= vol_low:
             required += _pocket_env_float("ORDER_ENTRY_QUALITY_LOW_VOL_BONUS", pocket, 1.0)
+
+    strategy_sample = None
+    strategy_pf = None
+    strategy_win_rate = None
+    strategy_avg_pips = None
+    strategy_payoff = None
+    strategy_penalty = 0.0
+    if _ENTRY_QUALITY_STRAT_ENABLED and strategy_tag:
+        stats = _entry_strategy_quality_snapshot(strategy_tag, pocket)
+        if stats:
+            strategy_sample = int(stats.get("sample", 0.0) or 0.0)
+            strategy_pf = _as_float(stats.get("pf"))
+            strategy_win_rate = _as_float(stats.get("win_rate"))
+            strategy_avg_pips = _as_float(stats.get("avg_pips"))
+            strategy_payoff = _as_float(stats.get("payoff"))
+
+            strat_min_trades = int(
+                max(
+                    5.0,
+                    _pocket_env_float(
+                        "ORDER_ENTRY_QUALITY_STRAT_MIN_TRADES",
+                        pocket,
+                        float(_ENTRY_QUALITY_STRAT_MIN_TRADES),
+                    ),
+                )
+            )
+            if strategy_sample >= strat_min_trades:
+                pf_floor = max(
+                    0.0,
+                    _pocket_env_float("ORDER_ENTRY_QUALITY_STRAT_PF_MIN", pocket, 0.95),
+                )
+                payoff_floor = max(
+                    0.0,
+                    _pocket_env_float("ORDER_ENTRY_QUALITY_STRAT_PAYOFF_MIN", pocket, 0.35),
+                )
+                avg_pips_floor = _pocket_env_float(
+                    "ORDER_ENTRY_QUALITY_STRAT_AVG_PIPS_MIN",
+                    pocket,
+                    0.0,
+                )
+                bonus_gain = max(
+                    0.0,
+                    _pocket_env_float("ORDER_ENTRY_QUALITY_STRAT_BONUS_GAIN", pocket, 8.0),
+                )
+                bonus_max = max(
+                    0.0,
+                    _pocket_env_float("ORDER_ENTRY_QUALITY_STRAT_BONUS_MAX", pocket, 10.0),
+                )
+
+                pf_gap = 0.0
+                if (
+                    pf_floor > 0.0
+                    and strategy_pf is not None
+                    and math.isfinite(strategy_pf)
+                    and strategy_pf < pf_floor
+                ):
+                    pf_gap = (pf_floor - strategy_pf) / pf_floor
+
+                payoff_gap = 0.0
+                if (
+                    payoff_floor > 0.0
+                    and strategy_payoff is not None
+                    and math.isfinite(strategy_payoff)
+                    and strategy_payoff < payoff_floor
+                ):
+                    payoff_gap = (payoff_floor - strategy_payoff) / payoff_floor
+
+                avg_gap = 0.0
+                if (
+                    strategy_avg_pips is not None
+                    and math.isfinite(strategy_avg_pips)
+                    and strategy_avg_pips < avg_pips_floor
+                ):
+                    denom = max(0.25, abs(avg_pips_floor) + 0.25)
+                    avg_gap = (avg_pips_floor - strategy_avg_pips) / denom
+
+                severity = max(0.0, pf_gap, payoff_gap, avg_gap)
+                if severity > 0.0 and bonus_gain > 0.0 and bonus_max > 0.0:
+                    strategy_penalty = min(bonus_max, severity * bonus_gain)
+                    required += strategy_penalty
 
     spread_bonus = 0.0
     if spread_pips is not None and spread_pips > 0.0:
@@ -1615,6 +1812,13 @@ def _entry_quality_gate(
             "bypass_conf": bypass_conf,
             "atr_pips": atr_pips,
             "vol_5m": vol_5m,
+            "strategy_tag": str(strategy_tag or ""),
+            "strategy_sample": strategy_sample,
+            "strategy_pf": strategy_pf,
+            "strategy_win_rate": strategy_win_rate,
+            "strategy_avg_pips": strategy_avg_pips,
+            "strategy_payoff": strategy_payoff,
+            "strategy_penalty": strategy_penalty,
             "tf": str(snap.get("tf") or ""),
         }
     if spread_tp_ratio is not None and spread_tp_ratio > max_spread_tp_ratio and conf < bypass_conf:
@@ -1629,12 +1833,20 @@ def _entry_quality_gate(
             "bypass_conf": bypass_conf,
             "atr_pips": atr_pips,
             "vol_5m": vol_5m,
+            "strategy_tag": str(strategy_tag or ""),
+            "strategy_sample": strategy_sample,
+            "strategy_pf": strategy_pf,
+            "strategy_win_rate": strategy_win_rate,
+            "strategy_avg_pips": strategy_avg_pips,
+            "strategy_payoff": strategy_payoff,
+            "strategy_penalty": strategy_penalty,
             "tf": str(snap.get("tf") or ""),
         }
 
     required = max(0.0, min(max_conf, required))
     if conf + 1e-6 < required:
-        return False, "entry_quality_confidence", {
+        reason = "entry_quality_strategy_confidence" if strategy_penalty > 0.0 else "entry_quality_confidence"
+        return False, reason, {
             "enabled": 1.0,
             "confidence": conf,
             "required_conf": required,
@@ -1649,6 +1861,13 @@ def _entry_quality_gate(
             "max_spread_sl_ratio": max_spread_sl_ratio,
             "max_spread_tp_ratio": max_spread_tp_ratio,
             "bypass_conf": bypass_conf,
+            "strategy_tag": str(strategy_tag or ""),
+            "strategy_sample": strategy_sample,
+            "strategy_pf": strategy_pf,
+            "strategy_win_rate": strategy_win_rate,
+            "strategy_avg_pips": strategy_avg_pips,
+            "strategy_payoff": strategy_payoff,
+            "strategy_penalty": strategy_penalty,
             "tf": str(snap.get("tf") or ""),
         }
 
@@ -1667,6 +1886,13 @@ def _entry_quality_gate(
         "max_spread_sl_ratio": max_spread_sl_ratio,
         "max_spread_tp_ratio": max_spread_tp_ratio,
         "bypass_conf": bypass_conf,
+        "strategy_tag": str(strategy_tag or ""),
+        "strategy_sample": strategy_sample,
+        "strategy_pf": strategy_pf,
+        "strategy_win_rate": strategy_win_rate,
+        "strategy_avg_pips": strategy_avg_pips,
+        "strategy_payoff": strategy_payoff,
+        "strategy_penalty": strategy_penalty,
         "tf": str(snap.get("tf") or ""),
     }
 
@@ -6024,6 +6250,7 @@ async def market_order(
         quality_ok, quality_reason, quality_meta = _entry_quality_gate(
             pocket,
             confidence=conf_score,
+            strategy_tag=strategy_tag,
             entry_thesis=entry_thesis if isinstance(entry_thesis, dict) else None,
             quote=quote,
             sl_pips=sl_pips_live,
