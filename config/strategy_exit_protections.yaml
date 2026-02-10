@@ -470,6 +470,8 @@ strategies:
   SqueezePulseBreak:
     min_profit_pips: 1.2
     min_profit_ratio: 0.45
+    # Lock profits earlier for breakout scalps: once in profit, move SL to protect gains.
+    be_profile: {trigger_pips: 1.2, lock_ratio: 0.50, min_lock_pips: 0.60, cooldown_sec: 20}
     exit_profile:
       # Defaults have loss_cut disabled + require SL; SqueezePulseBreak often runs without broker SL.
       # Enable deterministic loss cuts to avoid tail losses when the breakout fails.
