@@ -24,6 +24,7 @@ from . import config
 from utils.env_utils import env_bool, env_float
 from utils.strategy_protection import exit_profile_for_tag
 from workers.common.loss_cut import pick_loss_cut_reason, resolve_loss_cut
+from workers.common.tech_exit import maybe_tech_exit
 
 _BB_ENV_PREFIX = getattr(config, "ENV_PREFIX", "")
 _BB_EXIT_ENABLED = env_bool("BB_EXIT_ENABLED", True, prefix=_BB_ENV_PREFIX)
@@ -429,6 +430,29 @@ class FastScalpExitWorker:
             base_tag = str(strategy_tag).split("-", 1)[0]
             exit_profile = exit_profile_for_tag(base_tag or str(strategy_tag))
             exit_profile = dict(exit_profile) if isinstance(exit_profile, dict) else {}
+
+            tech_exit, tech_reason, tech_allow_negative = maybe_tech_exit(
+                trade=trade,
+                side=side,
+                pocket=POCKET,
+                pnl_pips=float(pnl),
+                hold_sec=float(hold_sec),
+                current_price=mid,
+                strategy_tag=base_tag or str(strategy_tag),
+                exit_profile=exit_profile,
+            )
+            if tech_exit and tech_reason:
+                await self._close(
+                    trade_id,
+                    -units,
+                    tech_reason,
+                    pnl,
+                    client_id,
+                    range_active=range_active,
+                    allow_negative=tech_allow_negative,
+                )
+                self._states.pop(trade_id, None)
+                return
 
             # FastScalp emits profile-specific drawdown/timeout hints in entry_thesis; prefer them.
             def _opt_float(val: object) -> Optional[float]:

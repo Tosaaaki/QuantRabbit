@@ -18,6 +18,7 @@ from indicators.factor_cache import all_factors
 from market_data import tick_window
 from utils.metrics_logger import log_metric
 from workers.common.pro_stop import maybe_close_pro_stop
+from workers.common.tech_exit import maybe_tech_exit
 
 
 from . import config
@@ -606,6 +607,27 @@ async def _run_exit_loop(
             return
 
         if pnl < 0:
+            tech_exit, tech_reason, tech_allow_negative = maybe_tech_exit(
+                trade=trade,
+                side=side,
+                pocket=pocket,
+                pnl_pips=float(pnl),
+                hold_sec=float(hold_sec),
+                current_price=current,
+                strategy_tag=strategy_tag,
+            )
+            if tech_exit and tech_reason:
+                ok = await _close(
+                    trade_id,
+                    -units,
+                    tech_reason,
+                    client_id,
+                    allow_negative=tech_allow_negative,
+                )
+                if ok:
+                    states.pop(trade_id, None)
+                    return
+
             rsi, adx, atr_pips, vwap_gap, ma_pair, bbw = _context()
             skip_soft = False
             if _REENTRY_ENABLED:

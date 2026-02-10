@@ -18,6 +18,7 @@ from indicators.factor_cache import all_factors
 from market_data import tick_window
 from utils.metrics_logger import log_metric
 from workers.common.pro_stop import maybe_close_pro_stop
+from workers.common.tech_exit import maybe_tech_exit
 
 
 from . import config
@@ -56,9 +57,10 @@ _NEG_EXIT_ALLOW_REASONS = {
     token.strip().lower()
     for token in os.getenv(
         "EXIT_ALLOW_NEGATIVE_REASONS",
-        "hard_stop,tech_hard_stop,time_stop,max_adverse,max_hold,structure_break,"
-        "atr_spike,rsi_fade,vwap_cut,reentry_reset,drawdown,max_drawdown,health_exit,"
-        "hazard_exit,margin_health,free_margin_low,margin_usage_high",
+        "hard_stop,tech_hard_stop,tech_return_fail,tech_reversal_combo,tech_candle_reversal,"
+        "tech_nwave_flip,time_stop,max_adverse,max_hold,structure_break,atr_spike,rsi_fade,"
+        "vwap_cut,reentry_reset,drawdown,max_drawdown,health_exit,hazard_exit,margin_health,"
+        "free_margin_low,margin_usage_high",
     ).split(",")
     if token.strip()
 }
@@ -511,6 +513,28 @@ class TrendMAExitWorker:
         # 早すぎる微小ノイズ決済だけ抑止
         if hold_sec < min_hold:
             return
+
+        if pnl < 0:
+            tech_exit, tech_reason, tech_allow_negative = maybe_tech_exit(
+                trade=trade,
+                side=side,
+                pocket=POCKET,
+                pnl_pips=float(pnl),
+                hold_sec=float(hold_sec),
+                current_price=mid if mid is not None else float(mark_price),
+                strategy_tag=strategy_tag,
+            )
+            if tech_exit and tech_reason:
+                await self._close(
+                    trade_id,
+                    -units,
+                    tech_reason,
+                    pnl,
+                    client_id,
+                    allow_negative=tech_allow_negative,
+                )
+                self._states.pop(trade_id, None)
+                return
 
         candle_reason = _exit_candle_reversal("long" if units > 0 else "short")
         if candle_reason and pnl >= 0:

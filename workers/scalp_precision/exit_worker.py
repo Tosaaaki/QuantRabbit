@@ -20,6 +20,7 @@ from utils.metrics_logger import log_metric
 from workers.common.exit_utils import close_trade, mark_pnl_pips
 from workers.common.reentry_decider import decide_reentry
 from workers.common.pro_stop import maybe_close_pro_stop
+from workers.common.tech_exit import maybe_tech_exit
 
 try:  # optional config
     import yaml  # type: ignore
@@ -980,6 +981,28 @@ class RangeFaderExitWorker:
                 self._states.pop(trade_id, None)
                 return
         if pnl <= 0:
+            tech_exit, tech_reason, tech_allow_negative = maybe_tech_exit(
+                trade=trade,
+                side=side,
+                pocket=POCKET,
+                pnl_pips=float(pnl),
+                hold_sec=float(hold_sec),
+                current_price=mid,
+                strategy_tag=base_tag or strategy_tag,
+                exit_profile=exit_profile,
+            )
+            if tech_exit and tech_reason:
+                await self._close(
+                    trade_id,
+                    -units,
+                    tech_reason,
+                    pnl,
+                    client_id,
+                    allow_negative=tech_allow_negative,
+                )
+                self._states.pop(trade_id, None)
+                return
+
             fac_m1 = all_factors().get("M1") or {}
             rsi = _bb_float(fac_m1.get("rsi"))
             adx = _bb_float(fac_m1.get("adx"))

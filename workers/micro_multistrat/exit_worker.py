@@ -22,6 +22,7 @@ from market_data import tick_window
 from utils.metrics_logger import log_metric
 from workers.common.pro_stop import maybe_close_pro_stop
 from workers.common.loss_cut import pick_loss_cut_reason, resolve_loss_cut
+from workers.common.tech_exit import maybe_tech_exit
 
 from . import config
 from utils.env_utils import env_bool, env_float
@@ -553,6 +554,30 @@ class MicroMultiExitWorker:
         if pnl <= 0:
             base_tag = _base_tag(trade) or str(strategy_tag).split("-", 1)[0]
             exit_profile = exit_profile_for_tag(base_tag or str(strategy_tag))
+
+            tech_exit, tech_reason, tech_allow_negative = maybe_tech_exit(
+                trade=trade,
+                side=side,
+                pocket=POCKET,
+                pnl_pips=float(pnl),
+                hold_sec=float(hold_sec),
+                current_price=mid,
+                strategy_tag=base_tag or str(strategy_tag),
+                exit_profile=exit_profile,
+            )
+            if tech_exit and tech_reason:
+                await self._close(
+                    trade_id,
+                    -units,
+                    tech_reason,
+                    pnl,
+                    client_id,
+                    bb_style=bb_style,
+                    allow_negative=tech_allow_negative,
+                )
+                self._states.pop(trade_id, None)
+                return
+
             sl_hint = _safe_float(thesis.get("hard_stop_pips") or thesis.get("sl_pips"))
             params = resolve_loss_cut(exit_profile, sl_pips=sl_hint)
             reason = pick_loss_cut_reason(

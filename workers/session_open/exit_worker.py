@@ -15,6 +15,7 @@ from market_data import tick_window
 from workers.common.exit_utils import close_trade, mark_pnl_pips
 from workers.common.reentry_decider import decide_reentry
 from workers.common.loss_cut import pick_loss_cut_reason, resolve_loss_cut
+from workers.common.tech_exit import maybe_tech_exit
 from utils.strategy_protection import exit_profile_for_tag
 
 
@@ -391,6 +392,29 @@ class SessionOpenExitWorker:
             )
             base_tag = str(strategy_tag).split("-", 1)[0] if strategy_tag else ""
             exit_profile = exit_profile_for_tag(base_tag or strategy_tag)
+
+            tech_exit, tech_reason, tech_allow_negative = maybe_tech_exit(
+                trade=trade,
+                side=side,
+                pocket=POCKET,
+                pnl_pips=float(pnl),
+                hold_sec=float(hold_sec),
+                current_price=mid,
+                strategy_tag=base_tag or strategy_tag,
+                exit_profile=exit_profile,
+            )
+            if tech_exit and tech_reason:
+                await self._close(
+                    trade_id,
+                    -units,
+                    tech_reason,
+                    pnl,
+                    client_id,
+                    allow_negative=tech_allow_negative,
+                )
+                self._states.pop(trade_id, None)
+                return
+
             sl_hint = None
             try:
                 sl_hint = float(thesis.get("hard_stop_pips") or thesis.get("sl_pips"))  # type: ignore[arg-type]

@@ -97,6 +97,10 @@ defaults:
     loss_cut_reason_soft: m1_structure_break
     loss_cut_reason_hard: max_adverse
     loss_cut_reason_time: time_stop
+    # Technical composite "beyond point of return" loss-cut (analysis.technique_engine.evaluate_exit_techniques).
+    tech_exit_enabled: true
+    tech_exit_max_pnl_pips: 0.0
+    tech_exit_cooldown_sec: 4
     tick_imb:
       partial_enabled: true
       partial_trigger_pips: 1.0
@@ -144,6 +148,8 @@ strategies:
     be_profile: {trigger_pips: 7.0, lock_ratio: 0.60, min_lock_pips: 3.0, cooldown_sec: 90}
     tp_move: {trigger_pips: 7.5, buffer_pips: 3.0}
     pro_stop: {soft_pips: 1.6, hard_pips: 9.8, min_hold_sec: 113, max_hold_sec: 3437, soft_atr_mult: 1.0, hard_atr_mult: 1.8}
+    exit_profile:
+      tech_exit_cooldown_sec: 8
     neg_exit:
       allow_reasons:
         - hard_stop
@@ -266,6 +272,8 @@ strategies:
         - reversion_*
     exit_profile:
       # VWAP-bound mean reversion can need room; avoid a tight "soft" cut while still capping tail risk.
+      tech_exit_min_neg_pips: 6.0
+      tech_exit_cooldown_sec: 6
       loss_cut_enabled: true
       loss_cut_require_sl: false
       loss_cut_soft_pips: 0.0
@@ -292,6 +300,8 @@ strategies:
     tp_move: {trigger_pips: 1.4, buffer_pips: 0.9}
     pro_stop: {soft_atr_mult: 0.7, hard_atr_mult: 1.2}
     exit_profile:
+      tech_exit_min_neg_pips: 5.0
+      tech_exit_cooldown_sec: 6
       loss_cut_enabled: true
       loss_cut_require_sl: false
       loss_cut_soft_pips: 0.0
@@ -359,6 +369,8 @@ strategies:
       allow_reasons:
         - reversion_*
     exit_profile:
+      tech_exit_min_neg_pips: 6.0
+      tech_exit_cooldown_sec: 6
       loss_cut_enabled: true
       loss_cut_require_sl: false
       loss_cut_soft_pips: 0.0
@@ -369,6 +381,8 @@ strategies:
 
   MicroCompressionRevert:
     exit_profile:
+      tech_exit_min_neg_pips: 6.0
+      tech_exit_cooldown_sec: 6
       loss_cut_enabled: true
       loss_cut_require_sl: false
       loss_cut_soft_pips: 0.0
@@ -410,6 +424,7 @@ strategies:
       range_trail_backoff_pips: 0.65
       range_lock_buffer_pips: 0.3
       range_max_hold_sec: 900
+      tech_exit_cooldown_sec: 2
       loss_cut_enabled: true
       loss_cut_require_sl: false
       loss_cut_soft_pips: 6.0
@@ -441,6 +456,8 @@ strategies:
     min_profit_ratio: 0.45
     pro_stop: {enabled: false}
     exit_profile:
+      tech_exit_min_neg_pips: 4.0
+      tech_exit_cooldown_sec: 4
       min_hold_sec: 10
       profit_pips: 2.3
       trail_start_pips: 2.6
@@ -475,6 +492,8 @@ strategies:
     exit_profile:
       # LiquiditySweep often runs without broker SL (stopLossOnFill). Without a deterministic
       # loss cut, it can bleed until margin relief closes the trade. Cap tail risk mechanically.
+      tech_exit_min_neg_pips: 3.0
+      tech_exit_cooldown_sec: 4
       loss_cut_enabled: true
       loss_cut_require_sl: false
       # Avoid a tight "soft" cut (hidden hard-SL); keep only a tail cap + time stop.
@@ -487,6 +506,8 @@ strategies:
     min_profit_pips: 1.2
     min_profit_ratio: 0.45
     exit_profile:
+      tech_exit_min_neg_pips: 2.6
+      tech_exit_cooldown_sec: 3
       min_hold_sec: 6
       profit_pips: 1.1
       trail_start_pips: 1.5
@@ -513,6 +534,8 @@ strategies:
     exit_profile:
       # Wick-based fades are prone to small whipsaws; avoid a tight "soft" cut (hidden hard-SL).
       # Keep only a tail cap + time stop when running without broker SL.
+      tech_exit_min_neg_pips: 2.8
+      tech_exit_cooldown_sec: 4
       loss_cut_enabled: true
       loss_cut_require_sl: false
       loss_cut_soft_pips: 0.0
@@ -527,6 +550,8 @@ strategies:
     min_profit_ratio: 0.45
     exit_profile:
       # Blend is a higher-quality wick fade with tick confirmation; still cap tail risk mechanically.
+      tech_exit_min_neg_pips: 2.8
+      tech_exit_cooldown_sec: 4
       loss_cut_enabled: true
       loss_cut_require_sl: false
       loss_cut_soft_pips: 0.0
@@ -538,6 +563,8 @@ strategies:
     min_profit_pips: 1.0
     min_profit_ratio: 0.45
     exit_profile:
+      tech_exit_min_neg_pips: 2.8
+      tech_exit_cooldown_sec: 4
       loss_cut_enabled: true
       loss_cut_require_sl: false
       loss_cut_soft_pips: 0.0
@@ -550,6 +577,8 @@ strategies:
     min_profit_ratio: 0.45
     exit_profile:
       # Level-based rejects can need room; avoid a small soft cut while still preventing tail blowups.
+      tech_exit_min_neg_pips: 4.0
+      tech_exit_cooldown_sec: 4
       loss_cut_enabled: true
       loss_cut_require_sl: false
       loss_cut_soft_pips: 0.0
@@ -567,6 +596,8 @@ strategies:
       # behaves like a hidden hard-SL and can stop out winners. Keep only:
       # - a wide tail cap (hard)
       # - a time-based stop for trades that stay underwater too long
+      tech_exit_min_neg_pips: 6.0
+      tech_exit_cooldown_sec: 6
       loss_cut_enabled: true
       loss_cut_require_sl: false
       loss_cut_soft_pips: 0.0
@@ -582,6 +613,8 @@ strategies:
     exit_profile:
       # Defaults have loss_cut disabled + require SL; SqueezePulseBreak often runs without broker SL.
       # Enable deterministic loss cuts to avoid tail losses when the breakout fails.
+      tech_exit_min_neg_pips: 2.5
+      tech_exit_cooldown_sec: 4
       loss_cut_enabled: true
       loss_cut_require_sl: false
       loss_cut_soft_pips: 3.8
@@ -598,6 +631,8 @@ strategies:
     min_profit_ratio: 0.45
     exit_profile:
       # Fade setups can bleed for a long time if reclaim fails; cut deterministically without broker SL.
+      tech_exit_min_neg_pips: 2.5
+      tech_exit_cooldown_sec: 4
       loss_cut_enabled: true
       loss_cut_require_sl: false
       loss_cut_soft_pips: 3.8
@@ -705,6 +740,8 @@ strategies:
     min_profit_pips: 1.0
     min_profit_ratio: 0.45
     exit_profile:
+      tech_exit_min_neg_pips: 2.8
+      tech_exit_cooldown_sec: 4
       loss_cut_enabled: true
       loss_cut_require_sl: false
       loss_cut_soft_pips: 0.0
@@ -719,6 +756,7 @@ strategies:
     tp_move: {trigger_pips: 0.9, buffer_pips: 0.6}
     pro_stop: {soft_pips: 1.2, hard_pips: 2.3, min_hold_sec: 15, max_hold_sec: 120, soft_atr_mult: 0.5, hard_atr_mult: 0.9}
     exit_profile:
+      tech_exit_cooldown_sec: 2
       # Exit at a profile-defined drawdown threshold (see workers.fast_scalp.worker thesis hints).
       loss_cut_enabled: true
       loss_cut_require_sl: false
@@ -755,6 +793,8 @@ strategies:
     tp_move: {trigger_pips: 1.0, buffer_pips: 0.7}
     pro_stop: {soft_pips: 5.0, hard_pips: 9.8, min_hold_sec: 282, max_hold_sec: 2141, soft_atr_mult: 0.6, hard_atr_mult: 1.0}
     exit_profile:
+      tech_exit_min_neg_pips: 2.0
+      tech_exit_cooldown_sec: 3
       loss_cut_enabled: true
       loss_cut_require_sl: false
       loss_cut_soft_pips: 0.0
