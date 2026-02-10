@@ -14,6 +14,9 @@ Environment=SCALP_PRECISION_MODE_FILTER_ALLOWLIST=1
 Environment=SCALP_PRECISION_MAX_OPEN_TRADES=1
 Environment=SCALP_PRECISION_COOLDOWN_SEC=180
 Environment=SCALP_PRECISION_LOG_PREFIX=[ScalpPrecision:TickImb]
+# Isolate profit-guard evaluation to TickImbalance itself (not the entire scalp pocket),
+# otherwise other scalp strategies can starve TickImbalance entries.
+Environment=SCALP_PRECISION_UNIT_PROFIT_GUARD_SCOPE=strategy
 Environment=TICK_IMB_RATIO_MIN=0.74
 Environment=TICK_IMB_MOM_MIN_PIPS=0.65
 Environment=TICK_IMB_RANGE_MIN_PIPS=0.35
