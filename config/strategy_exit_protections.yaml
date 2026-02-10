@@ -370,6 +370,20 @@ strategies:
       loss_cut_max_hold_sec: 1800
       loss_cut_cooldown_sec: 6
 
+  LiquiditySweep:
+    min_profit_pips: 1.0
+    min_profit_ratio: 0.80
+    exit_profile:
+      # LiquiditySweep often runs without broker SL (stopLossOnFill). Without a deterministic
+      # loss cut, it can bleed until margin relief closes the trade. Cap tail risk mechanically.
+      loss_cut_enabled: true
+      loss_cut_require_sl: false
+      # Avoid a tight "soft" cut (hidden hard-SL); keep only a tail cap + time stop.
+      loss_cut_soft_pips: 0.0
+      loss_cut_hard_pips: 12.0
+      loss_cut_max_hold_sec: 1800
+      loss_cut_cooldown_sec: 6
+
   TickWickReversal:
     min_profit_pips: 1.2
     min_profit_ratio: 0.80
