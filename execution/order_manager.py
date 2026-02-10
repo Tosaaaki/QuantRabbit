@@ -207,14 +207,20 @@ def _load_strategy_protection_config() -> dict:
         _STRATEGY_PROTECTION_CACHE.get("data"), dict
     ):
         return _STRATEGY_PROTECTION_CACHE["data"]  # type: ignore[return-value]
+    # Keep last-known-good config on transient read/parse errors (deploy writes, partial files, etc).
     payload: dict[str, Any] = {"defaults": {}, "strategies": {}}
+    if isinstance(_STRATEGY_PROTECTION_CACHE.get("data"), dict):
+        payload = _STRATEGY_PROTECTION_CACHE.get("data")  # type: ignore[assignment]
     if yaml is not None and _STRATEGY_PROTECTION_PATH.exists():
         try:
             loaded = yaml.safe_load(_STRATEGY_PROTECTION_PATH.read_text(encoding="utf-8")) or {}
             if isinstance(loaded, dict):
                 payload = loaded
-        except Exception:
-            payload = {"defaults": {}, "strategies": {}}
+        except Exception as exc:  # noqa: BLE001
+            logging.warning(
+                "[ORDER] Strategy protection config load failed (using cached): %s",
+                exc,
+            )
     _STRATEGY_PROTECTION_CACHE["ts"] = now
     _STRATEGY_PROTECTION_CACHE["data"] = payload
     return payload
@@ -3647,6 +3653,23 @@ async def close_trade(
     if _EXIT_NO_NEGATIVE_CLOSE:
         if pl is None:
             pl = _current_trade_unrealized_pl(trade_id)
+        pl_pips: Optional[float] = None
+        if pl is not None and units_ctx:
+            # Fallback pips estimate based on OANDA unrealizedPL. This makes near-BE exits
+            # (lock_floor/trail_lock/etc) robust even when quote-based est_pips is missing
+            # or rounds to 0 around the spread.
+            try:
+                pip = 0.01 if str(instrument or "").upper().endswith("_JPY") else 0.0001
+                denom = abs(int(units_ctx)) * pip
+                if denom > 0:
+                    pl_pips = float(pl) / denom
+            except Exception:
+                pl_pips = None
+        if pl_pips is not None:
+            if est_pips is None:
+                est_pips = pl_pips
+            elif est_pips >= 0 and pl_pips < 0 and abs(est_pips) <= 0.2:
+                est_pips = pl_pips
         negative_by_pips = est_pips is not None and est_pips <= 0
         negative_by_pl = pl is not None and pl <= 0
         if negative_by_pips or (est_pips is None and negative_by_pl):
