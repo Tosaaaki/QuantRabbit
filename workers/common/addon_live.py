@@ -420,6 +420,29 @@ class AddonLiveBroker:
             "hard_stop_pips": round(sl_pips, 3),
             "worker_id": self.worker_id,
         }
+        # OrderManager's entry-quality gate blocks low-confidence entries.
+        # Many addon workers (e.g. session_open) attach a "projection.score" to intent.meta
+        # but omit an explicit confidence, which would otherwise default to 50.0 and be
+        # rejected for micro/macro. Derive a reasonable confidence from projection.score.
+        if "confidence" not in entry_thesis:
+            conf_raw = order.get("confidence") or meta.get("confidence")
+            if conf_raw is None and intent:
+                proj = (intent.get("meta") or {}).get("projection") if isinstance(intent, dict) else None
+                if isinstance(proj, dict):
+                    conf_raw = proj.get("confidence")
+                    if conf_raw is None:
+                        score = proj.get("score")
+                        try:
+                            score_f = abs(float(score))
+                            score_f = max(0.0, min(1.0, score_f))
+                            conf_raw = 50.0 + score_f * 50.0
+                        except (TypeError, ValueError):
+                            conf_raw = None
+            if conf_raw is not None:
+                try:
+                    entry_thesis["confidence"] = int(round(float(conf_raw)))
+                except (TypeError, ValueError):
+                    pass
         if atr_pips > 0:
             entry_thesis["atr_pips"] = round(atr_pips, 3)
         if intent:
