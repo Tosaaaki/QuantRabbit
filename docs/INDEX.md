@@ -23,6 +23,7 @@
 - `docs/REPLAY_STANDARD.md`: 実運用寄せの標準リプレイ手順
 - `docs/ONLINE_TUNER.md`: オンラインチューナの詳細
 - `docs/autotune_taskboard.md`: チューニング関連タスク
+- `docs/FORECAST.md`: オフライン予測（scikit-learn）と足履歴 backfill/学習手順
 
 ## タスク / 変更管理
 - `docs/TASKS.md`: リポジトリ全体タスク台帳

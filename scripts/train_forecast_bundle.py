@@ -8,6 +8,8 @@ Prefers replay candle logs produced by market_data.replay_logger:
   logs/replay/USD_JPY/USD_JPY_M5_YYYYMMDD.jsonl
   logs/replay/USD_JPY/USD_JPY_H1_YYYYMMDD.jsonl
   logs/replay/USD_JPY/USD_JPY_D1_YYYYMMDD.jsonl
+If the replay logs are missing/insufficient, backfill them from OANDA:
+  python scripts/backfill_replay_candles.py --instrument USD_JPY --timeframes M5,H1,D1
 
 Outputs
 -------
@@ -172,4 +174,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
