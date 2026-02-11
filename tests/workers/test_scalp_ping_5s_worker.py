@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 
+import pytest
 
 os.environ.setdefault("DISABLE_GCP_SECRET_MANAGER", "1")
 
@@ -69,6 +70,22 @@ def test_compute_targets_is_spread_aware() -> None:
     from workers.scalp_ping_5s import worker
 
     tp_pips, sl_pips = worker._compute_targets(spread_pips=0.9, momentum_pips=2.4)
-    assert tp_pips >= (0.9 + worker.config.TP_NET_MIN_PIPS)
+    assert tp_pips >= min(
+        worker.config.TP_MAX_PIPS,
+        max(worker.config.TP_BASE_PIPS, 0.9 + worker.config.TP_NET_MIN_PIPS),
+    )
+    assert tp_pips <= worker.config.TP_MAX_PIPS
     assert sl_pips >= (0.9 * worker.config.SL_SPREAD_MULT + worker.config.SL_SPREAD_BUFFER_PIPS)
     assert sl_pips <= worker.config.SL_MAX_PIPS
+
+
+def test_compute_targets_uses_spread_plus_micro_edge(monkeypatch) -> None:
+    from workers.scalp_ping_5s import worker
+
+    monkeypatch.setattr(worker.config, "TP_BASE_PIPS", 0.2)
+    monkeypatch.setattr(worker.config, "TP_NET_MIN_PIPS", 0.25)
+    monkeypatch.setattr(worker.config, "TP_MOMENTUM_BONUS_MAX", 0.0)
+    monkeypatch.setattr(worker.config, "TP_MAX_PIPS", 1.0)
+
+    tp_pips, _ = worker._compute_targets(spread_pips=0.30, momentum_pips=0.1)
+    assert tp_pips == pytest.approx(0.55, abs=1e-6)

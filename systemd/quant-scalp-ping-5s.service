@@ -15,8 +15,11 @@ Environment=SCALP_PING_5S_REQUIRE_PRACTICE=1
 Environment=SCALP_PING_5S_POCKET=scalp_fast
 Environment=SCALP_PING_5S_STRATEGY_TAG=scalp_ping_5s
 Environment=SCALP_PING_5S_LOOP_INTERVAL_SEC=0.2
-Environment=SCALP_PING_5S_MAX_SPREAD_PIPS=0.9
-Environment=SCALP_PING_5S_TP_BASE_PIPS=1.7
+Environment=SCALP_PING_5S_MAX_SPREAD_PIPS=0.35
+Environment=SCALP_PING_5S_TP_BASE_PIPS=0.2
+Environment=SCALP_PING_5S_TP_NET_MIN_PIPS=0.25
+Environment=SCALP_PING_5S_TP_MAX_PIPS=1.0
+Environment=SCALP_PING_5S_TP_MOMENTUM_BONUS_MAX=0.2
 Environment=SCALP_PING_5S_SL_BASE_PIPS=2.4
 ExecStart=/home/tossaki/QuantRabbit/.venv/bin/python -m workers.scalp_ping_5s.worker
 Restart=always

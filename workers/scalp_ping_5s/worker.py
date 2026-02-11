@@ -229,7 +229,9 @@ def _confidence_scale(conf: int) -> float:
 
 
 def _compute_targets(*, spread_pips: float, momentum_pips: float) -> tuple[float, float]:
-    tp_pips = max(config.TP_BASE_PIPS, spread_pips + config.TP_NET_MIN_PIPS)
+    # Fast scalp default: set TP from current spread + tiny net edge.
+    tp_floor = spread_pips + config.TP_NET_MIN_PIPS
+    tp_pips = max(config.TP_BASE_PIPS, tp_floor)
     tp_bonus_raw = max(0.0, abs(momentum_pips) - tp_pips)
     tp_pips += min(config.TP_MOMENTUM_BONUS_MAX, tp_bonus_raw * 0.25)
     tp_pips = min(config.TP_MAX_PIPS, tp_pips)
