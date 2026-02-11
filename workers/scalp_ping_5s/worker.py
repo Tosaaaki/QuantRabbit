@@ -80,6 +80,18 @@ class TickSignal:
     mid: float
 
 
+@dataclass(slots=True)
+class TrapState:
+    active: bool
+    long_units: float
+    short_units: float
+    net_ratio: float
+    long_dd_pips: float
+    short_dd_pips: float
+    combined_dd_pips: float
+    unrealized_pl: float
+
+
 def _safe_float(value: object, default: float = 0.0) -> float:
     try:
         return float(value)
@@ -277,6 +289,72 @@ def _strategy_trade_counts(pocket_info: dict, strategy_tag: str) -> tuple[int, i
     return total, long_count, short_count
 
 
+def _compute_trap_state(positions: dict, *, mid_price: float) -> TrapState:
+    if not isinstance(positions, dict):
+        return TrapState(False, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0)
+
+    long_units = 0.0
+    short_units = 0.0
+    long_weighted = 0.0
+    short_weighted = 0.0
+    unrealized_pl = 0.0
+
+    for pocket, info in positions.items():
+        if str(pocket).startswith("__") or not isinstance(info, dict):
+            continue
+        pocket_long = max(0.0, _safe_float(info.get("long_units"), 0.0))
+        pocket_short = max(0.0, _safe_float(info.get("short_units"), 0.0))
+        long_avg = _safe_float(info.get("long_avg_price"), 0.0)
+        short_avg = _safe_float(info.get("short_avg_price"), 0.0)
+        long_units += pocket_long
+        short_units += pocket_short
+        if pocket_long > 0.0 and long_avg > 0.0:
+            long_weighted += pocket_long * long_avg
+        if pocket_short > 0.0 and short_avg > 0.0:
+            short_weighted += pocket_short * short_avg
+        unrealized_pl += _safe_float(info.get("unrealized_pl"), 0.0)
+
+    total_units = long_units + short_units
+    if total_units <= 0.0:
+        return TrapState(False, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0)
+
+    net_ratio = abs(long_units - short_units) / max(total_units, 1.0)
+    mid = _safe_float(mid_price, 0.0)
+    long_avg_all = long_weighted / long_units if long_units > 0.0 else 0.0
+    short_avg_all = short_weighted / short_units if short_units > 0.0 else 0.0
+    long_dd_pips = (
+        max(0.0, (long_avg_all - mid) / config.PIP_VALUE)
+        if (long_avg_all > 0.0 and mid > 0.0)
+        else 0.0
+    )
+    short_dd_pips = (
+        max(0.0, (mid - short_avg_all) / config.PIP_VALUE)
+        if (short_avg_all > 0.0 and mid > 0.0)
+        else 0.0
+    )
+    combined_dd_pips = long_dd_pips + short_dd_pips
+
+    active = (
+        long_units >= float(config.TRAP_MIN_LONG_UNITS)
+        and short_units >= float(config.TRAP_MIN_SHORT_UNITS)
+        and net_ratio <= config.TRAP_MAX_NET_RATIO
+        and combined_dd_pips >= config.TRAP_MIN_COMBINED_DD_PIPS
+    )
+    if active and config.TRAP_REQUIRE_NET_LOSS and unrealized_pl > 0.0:
+        active = False
+
+    return TrapState(
+        active=active,
+        long_units=long_units,
+        short_units=short_units,
+        net_ratio=net_ratio,
+        long_dd_pips=long_dd_pips,
+        short_dd_pips=short_dd_pips,
+        combined_dd_pips=combined_dd_pips,
+        unrealized_pl=unrealized_pl,
+    )
+
+
 def _client_order_id(side: str) -> str:
     ts_ms = int(time.time() * 1000)
     digest = hashlib.sha1(f"{config.STRATEGY_TAG}-{side}-{ts_ms}".encode("utf-8")).hexdigest()[:8]
@@ -364,6 +442,7 @@ async def scalp_ping_5s_worker() -> None:
     last_entry_mono = 0.0
     last_snapshot_fetch = 0.0
     last_stale_log_mono = 0.0
+    last_trap_log_mono = 0.0
 
     try:
         while True:
@@ -451,9 +530,25 @@ async def scalp_ping_5s_worker() -> None:
             if signal.side == "short" and active_short >= config.MAX_PER_DIRECTION:
                 continue
 
+            trap_state = _compute_trap_state(positions, mid_price=signal.mid)
+            if trap_state.active and now_mono - last_trap_log_mono >= config.TRAP_LOG_INTERVAL_SEC:
+                LOG.info(
+                    "%s trap_active long=%.0f short=%.0f net=%.2f dd=(L%.2f/S%.2f/C%.2f)p unreal=%.0f",
+                    config.LOG_PREFIX,
+                    trap_state.long_units,
+                    trap_state.short_units,
+                    trap_state.net_ratio,
+                    trap_state.long_dd_pips,
+                    trap_state.short_dd_pips,
+                    trap_state.combined_dd_pips,
+                    trap_state.unrealized_pl,
+                )
+                last_trap_log_mono = now_mono
+
             long_units = _safe_float(pocket_info.get("long_units"), 0.0)
             short_units = _safe_float(pocket_info.get("short_units"), 0.0)
-            if config.NO_HEDGE_ENTRY:
+            trap_hedge_bypass = trap_state.active and config.TRAP_BYPASS_NO_HEDGE
+            if config.NO_HEDGE_ENTRY and not trap_hedge_bypass:
                 if signal.side == "long" and short_units > 0.0:
                     continue
                 if signal.side == "short" and long_units > 0.0:
@@ -553,7 +648,18 @@ async def scalp_ping_5s_worker() -> None:
                 "tp_pips": round(tp_pips, 3),
                 "sl_pips": round(sl_pips, 3),
                 "entry_mode": "market_ping_5s",
+                "trap_active": bool(trap_state.active),
             }
+            if trap_state.active:
+                entry_thesis.update(
+                    {
+                        "trap_long_units": int(round(trap_state.long_units)),
+                        "trap_short_units": int(round(trap_state.short_units)),
+                        "trap_net_ratio": round(trap_state.net_ratio, 3),
+                        "trap_combined_dd_pips": round(trap_state.combined_dd_pips, 3),
+                        "trap_unrealized_pl": round(trap_state.unrealized_pl, 1),
+                    }
+                )
 
             client_order_id = _client_order_id(signal.side)
             result = await market_order(
