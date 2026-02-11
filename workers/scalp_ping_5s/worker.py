@@ -10,6 +10,8 @@ import asyncio
 import datetime
 import hashlib
 import logging
+import pathlib
+import sqlite3
 import time
 from dataclasses import dataclass
 from types import SimpleNamespace
@@ -53,6 +55,17 @@ _PRICING_HOST = (
 )
 _PRICING_URL = f"{_PRICING_HOST}/v3/accounts/{_OANDA_ACCOUNT}/pricing"
 _PRICING_HEADERS = {"Authorization": f"Bearer {_OANDA_TOKEN}"} if _OANDA_TOKEN else {}
+_TRADES_DB = pathlib.Path("logs/trades.db")
+
+
+@dataclass(slots=True)
+class TpTimingProfile:
+    multiplier: float = 1.0
+    avg_tp_sec: float = 0.0
+    sample: int = 0
+
+
+_TP_TIMING_CACHE: dict[tuple[str, str], tuple[float, TpTimingProfile]] = {}
 
 
 def _mask_value(value: str, *, head: int = 4, tail: int = 2) -> str:
@@ -78,6 +91,74 @@ class TickSignal:
     bid: float
     ask: float
     mid: float
+
+
+def _load_tp_timing_profile(strategy_tag: str, pocket: str) -> TpTimingProfile:
+    if not config.TP_TIME_ADAPT_ENABLED:
+        return TpTimingProfile()
+
+    key = ((strategy_tag or "").strip().lower(), (pocket or "").strip().lower())
+    now_mono = time.monotonic()
+    cached = _TP_TIMING_CACHE.get(key)
+    if cached and now_mono - cached[0] <= config.TP_HOLD_STATS_TTL_SEC:
+        return cached[1]
+
+    profile = TpTimingProfile()
+    if not _TRADES_DB.exists():
+        _TP_TIMING_CACHE[key] = (now_mono, profile)
+        return profile
+
+    lookback_minutes = max(1, int(round(config.TP_HOLD_LOOKBACK_HOURS * 60.0)))
+    lookback_expr = f"-{lookback_minutes} minutes"
+    tag_key = key[0]
+    pocket_key = key[1]
+
+    try:
+        con = sqlite3.connect(_TRADES_DB)
+        row = con.execute(
+            """
+            SELECT
+              COUNT(*) AS n,
+              AVG((julianday(close_time) - julianday(open_time)) * 86400.0) AS avg_hold_sec
+            FROM trades
+            WHERE close_time IS NOT NULL
+              AND close_time >= datetime('now', ?)
+              AND lower(coalesce(strategy_tag, '')) = ?
+              AND lower(coalesce(pocket, '')) = ?
+              AND close_reason = 'TAKE_PROFIT_ORDER'
+            """,
+            (lookback_expr, tag_key, pocket_key),
+        ).fetchone()
+    except Exception:
+        row = None
+    finally:
+        try:
+            con.close()
+        except Exception:
+            pass
+
+    try:
+        sample = int(row[0] or 0) if row else 0
+    except Exception:
+        sample = 0
+    try:
+        avg_tp_sec = float(row[1] or 0.0) if row else 0.0
+    except Exception:
+        avg_tp_sec = 0.0
+
+    multiplier = 1.0
+    if sample >= config.TP_HOLD_MIN_TRADES and avg_tp_sec > 0.0:
+        ratio = config.TP_TARGET_HOLD_SEC / max(1.0, avg_tp_sec)
+        multiplier = ratio ** 0.5
+    multiplier = max(config.TP_TIME_MULT_MIN, min(config.TP_TIME_MULT_MAX, multiplier))
+
+    profile = TpTimingProfile(
+        multiplier=float(multiplier),
+        avg_tp_sec=max(0.0, float(avg_tp_sec)),
+        sample=max(0, sample),
+    )
+    _TP_TIMING_CACHE[key] = (now_mono, profile)
+    return profile
 
 
 def _safe_float(value: object, default: float = 0.0) -> float:
@@ -228,12 +309,19 @@ def _confidence_scale(conf: int) -> float:
     return 0.65 + ratio * 0.5
 
 
-def _compute_targets(*, spread_pips: float, momentum_pips: float) -> tuple[float, float]:
-    # Fast scalp default: set TP from current spread + tiny net edge.
-    tp_floor = spread_pips + config.TP_NET_MIN_PIPS
-    tp_pips = max(config.TP_BASE_PIPS, tp_floor)
+def _compute_targets(
+    *, spread_pips: float, momentum_pips: float, tp_profile: TpTimingProfile
+) -> tuple[float, float]:
+    # Time-aware TP scaling for ping scalp:
+    # if average TP holding time drifts too long, reduce TP net edge.
+    tp_mult = max(config.TP_TIME_MULT_MIN, min(config.TP_TIME_MULT_MAX, tp_profile.multiplier))
+    tp_base = max(0.1, config.TP_BASE_PIPS * tp_mult)
+    tp_net_edge = max(config.TP_NET_MIN_FLOOR_PIPS, config.TP_NET_MIN_PIPS * tp_mult)
+    tp_floor = spread_pips + tp_net_edge
+    tp_pips = max(tp_base, tp_floor)
     tp_bonus_raw = max(0.0, abs(momentum_pips) - tp_pips)
-    tp_pips += min(config.TP_MOMENTUM_BONUS_MAX, tp_bonus_raw * 0.25)
+    tp_bonus_cap = config.TP_MOMENTUM_BONUS_MAX * max(0.6, tp_mult)
+    tp_pips += min(tp_bonus_cap, tp_bonus_raw * 0.25)
     tp_pips = min(config.TP_MAX_PIPS, tp_pips)
 
     sl_floor = spread_pips * config.SL_SPREAD_MULT + config.SL_SPREAD_BUFFER_PIPS
@@ -469,9 +557,11 @@ async def scalp_ping_5s_worker() -> None:
             if free_ratio > 0.0 and free_ratio < config.MIN_FREE_MARGIN_RATIO:
                 continue
 
+            tp_profile = _load_tp_timing_profile(config.STRATEGY_TAG, config.POCKET)
             tp_pips, sl_pips = _compute_targets(
                 spread_pips=signal.spread_pips,
                 momentum_pips=signal.momentum_pips,
+                tp_profile=tp_profile,
             )
             conf_mult = _confidence_scale(signal.confidence)
             strength_mult = max(
@@ -552,7 +642,20 @@ async def scalp_ping_5s_worker() -> None:
                 "confidence": int(signal.confidence),
                 "tp_pips": round(tp_pips, 3),
                 "sl_pips": round(sl_pips, 3),
+                "tp_time_mult": round(tp_profile.multiplier, 3),
+                "tp_time_avg_sec": (
+                    round(tp_profile.avg_tp_sec, 1) if tp_profile.avg_tp_sec > 0.0 else None
+                ),
+                "tp_time_target_sec": round(config.TP_TARGET_HOLD_SEC, 1),
+                "tp_time_sample": int(tp_profile.sample),
                 "entry_mode": "market_ping_5s",
+                "entry_ref": round(entry_price, 3),
+                "execution": {
+                    "order_policy": "market_guarded",
+                    "ideal_entry": round(entry_price, 3),
+                    "chase_max": round(config.ENTRY_CHASE_MAX_PIPS * config.PIP_VALUE, 4),
+                    "chase_max_pips": round(config.ENTRY_CHASE_MAX_PIPS, 3),
+                },
             }
 
             client_order_id = _client_order_id(signal.side)
@@ -573,7 +676,7 @@ async def scalp_ping_5s_worker() -> None:
             rate_limiter.record(now_mono)
 
             LOG.info(
-                "%s open side=%s units=%s conf=%d mom=%.2fp trig=%.2fp sp=%.2fp tp=%.2fp sl=%.2fp res=%s",
+                "%s open side=%s units=%s conf=%d mom=%.2fp trig=%.2fp sp=%.2fp tp=%.2fp sl=%.2fp tp_mult=%.2f tp_avg=%.0fs res=%s",
                 config.LOG_PREFIX,
                 signal.side,
                 units,
@@ -583,6 +686,8 @@ async def scalp_ping_5s_worker() -> None:
                 signal.spread_pips,
                 tp_pips,
                 sl_pips,
+                tp_profile.multiplier,
+                tp_profile.avg_tp_sec,
                 result or "none",
             )
 

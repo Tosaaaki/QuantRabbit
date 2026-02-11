@@ -72,6 +72,32 @@ TP_MAX_PIPS: float = max(TP_BASE_PIPS, float(os.getenv("SCALP_PING_5S_TP_MAX_PIP
 TP_MOMENTUM_BONUS_MAX: float = max(
     0.0, float(os.getenv("SCALP_PING_5S_TP_MOMENTUM_BONUS_MAX", "0.2"))
 )
+TP_TIME_ADAPT_ENABLED: bool = _bool_env("SCALP_PING_5S_TP_TIME_ADAPT_ENABLED", True)
+TP_TARGET_HOLD_SEC: float = max(
+    5.0, float(os.getenv("SCALP_PING_5S_TP_TARGET_HOLD_SEC", "120.0"))
+)
+TP_HOLD_LOOKBACK_HOURS: float = max(
+    1.0, float(os.getenv("SCALP_PING_5S_TP_HOLD_LOOKBACK_HOURS", "24.0"))
+)
+TP_HOLD_MIN_TRADES: int = max(
+    5, int(float(os.getenv("SCALP_PING_5S_TP_HOLD_MIN_TRADES", "30")))
+)
+TP_HOLD_STATS_TTL_SEC: float = max(
+    5.0, float(os.getenv("SCALP_PING_5S_TP_HOLD_STATS_TTL_SEC", "30.0"))
+)
+TP_TIME_MULT_MIN: float = max(
+    0.1, min(1.0, float(os.getenv("SCALP_PING_5S_TP_TIME_MULT_MIN", "0.55")))
+)
+TP_TIME_MULT_MAX: float = max(
+    TP_TIME_MULT_MIN,
+    min(1.2, float(os.getenv("SCALP_PING_5S_TP_TIME_MULT_MAX", "1.0"))),
+)
+TP_NET_MIN_FLOOR_PIPS: float = max(
+    0.0, float(os.getenv("SCALP_PING_5S_TP_NET_MIN_FLOOR_PIPS", "0.10"))
+)
+ENTRY_CHASE_MAX_PIPS: float = max(
+    0.1, float(os.getenv("SCALP_PING_5S_ENTRY_CHASE_MAX_PIPS", "1.4"))
+)
 
 SL_BASE_PIPS: float = max(0.2, float(os.getenv("SCALP_PING_5S_SL_BASE_PIPS", "2.4")))
 SL_MIN_PIPS: float = max(0.2, float(os.getenv("SCALP_PING_5S_SL_MIN_PIPS", "1.9")))
