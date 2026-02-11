@@ -3,7 +3,7 @@ set -euo pipefail
 
 # Install and enable QuantRabbit systemd units so they survive VM reboots.
 # Usage:
-#   sudo bash scripts/install_trading_services.sh [--repo /home/tossaki/QuantRabbit] [--all] [--units "quant-fast-scalp.service quant-fast-scalp-exit.service"]
+#   sudo bash scripts/install_trading_services.sh [--repo /home/tossaki/QuantRabbit] [--all] [--units "quant-impulse-break-s5.service quant-impulse-break-s5-exit.service"]
 # Defaults: only installs/enables the main gate `quantrabbit.service`.
 
 REPO_DIR="/home/tossaki/QuantRabbit"
@@ -25,7 +25,7 @@ while [[ $# -gt 0 ]]; do
       shift 2
       ;;
     -h|--help)
-      echo "Usage: sudo bash scripts/install_trading_services.sh [--repo /path/to/QuantRabbit] [--all] [--units \"quant-fast-scalp.service ...\"]"
+      echo "Usage: sudo bash scripts/install_trading_services.sh [--repo /path/to/QuantRabbit] [--all] [--units \"quant-impulse-break-s5.service ...\"]"
       exit 0
       ;;
     *)

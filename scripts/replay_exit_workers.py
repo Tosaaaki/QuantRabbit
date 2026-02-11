@@ -20,7 +20,7 @@ import os
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Dict, Iterable, List, Optional, Tuple
+from typing import Dict, Iterable, List, Optional, Tuple, Any
 
 import sys
 
@@ -44,21 +44,48 @@ from analysis.local_decider import heuristic_decision
 from analysis.regime_classifier import classify
 import main as main_mod
 
-from scripts.replay_fast_scalp_ticks import (
-    FastScalpReplayer,
-    ReplayTick,
-    parse_iso8601,
-    PIP_VALUE,
-)
-
-import workers.fast_scalp.config as fast_config
-import workers.fast_scalp.exit_worker as fast_exit
 import workers.scalp_precision.exit_worker as sp_exit
 import workers.micro_bbrsi.exit_worker as bbrsi_exit
-import workers.macro_trendma.exit_worker as trendma_exit
 
 
 PIP = 0.01
+PIP_VALUE = PIP
+
+
+def parse_iso8601(value: str) -> datetime:
+    text = (value or "").strip()
+    if text.endswith("Z"):
+        text = text[:-1] + "+00:00"
+    dt = datetime.fromisoformat(text)
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc)
+
+
+_FAST_SCALP_AVAILABLE = False
+FastScalpReplayer: Any = None
+ReplayTick: Any = None
+fast_config: Any = None
+fast_exit: Any = None
+try:
+    from scripts.replay_fast_scalp_ticks import (
+        FastScalpReplayer as _FastScalpReplayer,
+        ReplayTick as _ReplayTick,
+    )
+    import workers.fast_scalp.config as fast_config
+    import workers.fast_scalp.exit_worker as fast_exit
+
+    FastScalpReplayer = _FastScalpReplayer
+    ReplayTick = _ReplayTick
+    _FAST_SCALP_AVAILABLE = True
+except Exception:
+    _FAST_SCALP_AVAILABLE = False
+
+trendma_exit: Any = None
+try:
+    import workers.macro_trendma.exit_worker as trendma_exit
+except Exception:
+    trendma_exit = None
 
 
 @dataclass
@@ -986,6 +1013,8 @@ def _summarize(trades: List[dict]) -> dict:
 
 class FastScalpEntryEngine:
     def __init__(self, broker: SimBroker) -> None:
+        if not _FAST_SCALP_AVAILABLE or FastScalpReplayer is None or fast_config is None:
+            raise RuntimeError("fast_scalp replay modules are unavailable")
         self._broker = broker
         self._active_trade_id: Optional[str] = None
         self._replayer = FastScalpReplayer(
@@ -1018,6 +1047,8 @@ class FastScalpEntryEngine:
         self._replayer.pending_entry = None
 
     def on_tick(self, tick: TickRow) -> None:
+        if ReplayTick is None:
+            return
         rtick = ReplayTick(
             ts=tick.ts,
             epoch=tick.epoch,
@@ -1412,6 +1443,8 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
+    if args.fast_only and not _FAST_SCALP_AVAILABLE:
+        raise SystemExit("--fast-only is unavailable because fast_scalp modules were removed")
     if args.quiet:
         logging.disable(logging.CRITICAL)
     elif args.fast_only:
@@ -1449,7 +1482,7 @@ def main() -> None:
     asyncio.set_event_loop(loop)
 
     fast_entry: Optional[FastScalpEntryEngine] = None
-    if not args.sp_only:
+    if not args.sp_only and _FAST_SCALP_AVAILABLE:
         fast_entry = FastScalpEntryEngine(broker)
     sim_account: Optional[SimAccount] = None
     if args.sp_live_entry and not args.fast_only:
@@ -1480,14 +1513,16 @@ def main() -> None:
         macro_enabled=not args.disable_macro,
     )
 
-    _patch_exit_module(fast_exit, broker)
+    if fast_exit is not None:
+        _patch_exit_module(fast_exit, broker)
     if not args.fast_only:
         _patch_exit_module(sp_exit, broker)
         _patch_exit_module(bbrsi_exit, broker)
-        _patch_exit_module(trendma_exit, broker)
+        if trendma_exit is not None:
+            _patch_exit_module(trendma_exit, broker)
 
     fast_runner = None
-    if not args.sp_only:
+    if not args.sp_only and fast_exit is not None:
         fast_runner = ExitRunner("fast_scalp", fast_exit, fast_exit.FastScalpExitWorker(), broker)
     sp_runner = None
     bbrsi_runner = None
@@ -1495,7 +1530,7 @@ def main() -> None:
     if not args.fast_only:
         sp_runner = ExitRunner("scalp_precision", sp_exit, sp_exit.RangeFaderExitWorker(), broker)
         bbrsi_runner = ExitRunner("micro_bbrsi", bbrsi_exit, bbrsi_exit.MicroBBRsiExitWorker(), broker)
-        if not args.disable_macro:
+        if not args.disable_macro and trendma_exit is not None:
             trend_runner = ExitRunner("macro_trendma", trendma_exit, trendma_exit.TrendMAExitWorker(), broker)
 
     # Pre-feed H4 candles (system_backtest-style) to align macro context.

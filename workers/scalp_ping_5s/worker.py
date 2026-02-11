@@ -25,8 +25,8 @@ from market_data.tick_fetcher import _parse_time
 from utils.market_hours import is_market_open
 from utils.oanda_account import get_account_snapshot
 from utils.secrets import get_secret
+from workers.common.rate_limiter import SlidingWindowRateLimiter
 from workers.common.size_utils import scale_base_units
-from workers.fast_scalp.rate_limiter import SlidingWindowRateLimiter
 
 from . import config
 

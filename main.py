@@ -23,6 +23,34 @@ def _safe_float(value: object, default: float = 0.0) -> float:
         return default
 
 
+def _compute_rsi(prices: Sequence[float], period: int) -> Optional[float]:
+    if len(prices) < 2:
+        return None
+    effective_period = min(period, len(prices) - 1)
+    gains = []
+    losses = []
+    for i in range(1, len(prices)):
+        diff = float(prices[i]) - float(prices[i - 1])
+        if diff >= 0.0:
+            gains.append(diff)
+            losses.append(0.0)
+        else:
+            gains.append(0.0)
+            losses.append(-diff)
+    if not gains:
+        return 50.0
+    avg_gain = sum(gains[-effective_period:]) / effective_period
+    avg_loss = sum(losses[-effective_period:]) / effective_period
+    if avg_gain == 0.0 and avg_loss == 0.0:
+        return 50.0
+    if avg_loss == 0.0:
+        return 100.0
+    if avg_gain == 0.0:
+        return 0.0
+    rs = avg_gain / avg_loss
+    return 100.0 - (100.0 / (1.0 + rs))
+
+
 def _env_bool(name: str, default: bool = False) -> bool:
     val = os.getenv(name, None)
     if val is None:
@@ -427,8 +455,6 @@ from utils.oanda_account import get_account_snapshot
 from utils.secrets import get_secret
 from utils.metrics_logger import log_metric
 from utils.market_hours import is_market_open, seconds_until_open
-from workers.fast_scalp import FastScalpState, fast_scalp_worker
-from workers.fast_scalp.signal import _compute_rsi as _fs_compute_rsi  # reuse RSI helper
 
 # Configure logging (stdout + file)
 LOG_PATH = Path("logs/pipeline.log")
@@ -715,7 +741,6 @@ SCALP_WEIGHT_READY_FLOOR = _safe_env_float(
 BASE_SIGNAL_BIAS_MACRO = 14.0
 BASE_SIGNAL_BIAS_MICRO = 10.0
 BASE_SIGNAL_BIAS_SCALP = -8.0
-BASE_SIGNAL_BIAS_FAST_SCALP = -14.0
 HIGH_ZONE_ENABLED = _env_bool("HIGH_ZONE_ENABLED", True)
 HIGH_ZONE_RSI_H1 = _safe_env_float("HIGH_ZONE_RSI_H1", 66.0, low=50.0, high=90.0)
 HIGH_ZONE_DIST_ATR = _safe_env_float("HIGH_ZONE_DIST_ATR", 1.25, low=0.4, high=4.0)
@@ -772,8 +797,6 @@ DECIDER_FACTOR_KEYS: Dict[str, tuple[str, ...]] = {
 # systemd service mapping for worker/exit processes (names must match .service files)
 WORKER_SERVICES = {
     # Scalp / S5
-    "fast_scalp": "quant-fast-scalp.service",
-    "fast_scalp_exit": "quant-fast-scalp-exit.service",
     "impulse_break_s5": "quant-impulse-break-s5.service",
     "impulse_break_s5_exit": "quant-impulse-break-s5-exit.service",
     "impulse_momentum_s5": "quant-impulse-momentum-s5.service",
@@ -793,8 +816,6 @@ WORKER_SERVICES = {
     "micro_multi": "quant-micro-multi.service",
     "micro_multi_exit": "quant-micro-multi-exit.service",
     # Macro
-    "macro_trendma": "quant-trendma.service",
-    "macro_trendma_exit": "quant-trendma-exit.service",
     "macro_h1momentum": "quant-h1momentum.service",
     "macro_h1momentum_exit": "quant-h1momentum-exit.service",
     "macro_trend_h1": "quant-trend-h1.service",
@@ -1816,7 +1837,6 @@ def _select_worker_targets(
             reasons[name] = reason
 
     # Baseline set
-    bump("fast_scalp", 0.9, "baseline_scalp")
     bump("mm_lite", 0.3, "baseline_mm_lite")
 
     # Macro/trend
@@ -2816,10 +2836,10 @@ def _recompute_m1_technicals(fac_m1: Dict) -> Tuple[Optional[float], Optional[fl
     if len(tr_list) >= 14:
         atr_pips = sum(tr_list[-14:]) / 14.0
 
-    # RSI (reuse fast_scalp helper)
+    # RSI
     rsi_val = None
     try:
-        rsi_val = _fs_compute_rsi(closes[-30:], 14)
+        rsi_val = _compute_rsi(closes[-30:], 14)
     except Exception:
         rsi_val = None
 
@@ -3428,9 +3448,7 @@ async def worker_only_loop() -> None:
         await asyncio.sleep(10)
 
 
-async def logic_loop(
-    fast_scalp_state: FastScalpState | None = None,
-):
+async def logic_loop():
     if WORKER_ONLY_MODE and not SIGNAL_GATE_ENABLED:
         logging.info("[LOGIC_LOOP] disabled (worker-only runtime).")
         return
@@ -7189,7 +7207,6 @@ async def logic_loop(
             except Exception:
                 pass
             # 同一サイクルで全体からconfidence上位のみを通す（最大3本）。
-            # fast_scalp 偏重を避けるため、戦略ごとのブースト/ペナルティを適用し、fast_scalpは原則1本。
             max_signals = 3
             conf_floor = 0  # 両建て/ヘッジ運用ではconfidence下限でロングを落とさない
             if margin_usage is not None and margin_usage >= 0.88:
@@ -7211,17 +7228,13 @@ async def logic_loop(
                     if action not in {"OPEN_LONG", "OPEN_SHORT"}:
                         continue
                     raw_conf = int(s.get("confidence", 0) or 0)
-                    tag = s.get("strategy") or s.get("strategy_tag") or s.get("tag") or ""
                     pocket = s.get("pocket") or ""
                     adj = raw_conf
-                    # 戦略別バイアス: fast_scalpを強めに抑え、macro/microを押し上げる
-                    if tag == "fast_scalp":
-                        adj += BASE_SIGNAL_BIAS_FAST_SCALP
-                    elif pocket == "scalp":
+                    if pocket == "scalp":
                         adj += scalp_bias
-                    elif s.get("pocket") == "macro":
+                    elif pocket == "macro":
                         adj += macro_bias
-                    elif s.get("pocket") == "micro":
+                    elif pocket == "micro":
                         adj += micro_bias
                     s["conf_adj"] = float(adj)
                     candidates.append(s)
@@ -7252,23 +7265,15 @@ async def logic_loop(
                             pass
                     candidates = list(deduped.values())
 
-                fast_candidates = []
                 scalp_candidates = []
                 macro_micro_candidates = []
                 for s in candidates:
-                    tag = s.get("strategy") or s.get("strategy_tag") or s.get("tag") or ""
                     pocket = s.get("pocket") or ""
-                    if tag == "fast_scalp":
-                        fast_candidates.append(s)
-                    elif pocket == "scalp":
+                    if pocket == "scalp":
                         scalp_candidates.append(s)
                     else:
                         macro_micro_candidates.append(s)
                 macro_micro_candidates.sort(
-                    key=lambda s: int(s.get("conf_adj", s.get("confidence", 0)) or 0),
-                    reverse=True,
-                )
-                fast_candidates.sort(
                     key=lambda s: int(s.get("conf_adj", s.get("confidence", 0)) or 0),
                     reverse=True,
                 )
@@ -7277,7 +7282,6 @@ async def logic_loop(
                     reverse=True,
                 )
 
-                fast_limit = 1
                 scalp_limit = 1
                 selected: list[dict] = []
                 # まず macro/micro を優先的に詰める
@@ -7292,32 +7296,23 @@ async def logic_loop(
                         break
                     selected.append(sig)
                     scalp_added += 1
-                # 残枠に fast_scalp を1本だけ許容
-                fast_added = 0
-                for sig in fast_candidates:
-                    if len(selected) >= max_signals or fast_added >= fast_limit:
-                        break
-                    selected.append(sig)
-                    fast_added += 1
 
                 if len(selected) != len(candidates):
                     try:
                         logging.info(
-                            "[SIGNAL_SELECT] picked=%d out_of=%d margin=%.2f conf_floor=%s strategies=%s fast_used=%d",
+                            "[SIGNAL_SELECT] picked=%d out_of=%d margin=%.2f conf_floor=%s strategies=%s",
                             len(selected),
                             len(candidates),
                             margin_usage if margin_usage is not None else -1.0,
                             conf_floor if conf_floor > 0 else "none",
                             ",".join(sorted({s.get('strategy') or s.get('strategy_tag') or 'unknown' for s in selected})),
-                            fast_added,
                         )
                     except Exception:
                         pass
                 try:
                     logging.info(
-                        "[SIGNAL_SELECT] selected=%d fast=%d confs=%s tags=%s",
+                        "[SIGNAL_SELECT] selected=%d confs=%s tags=%s",
                         len(selected),
-                        sum(1 for sig in selected if (sig.get('strategy') or sig.get('strategy_tag') or sig.get('tag')) == 'fast_scalp'),
                         ",".join(str(sig.get("conf_adj", sig.get("confidence"))) for sig in selected),
                         ",".join(sig.get("strategy") or sig.get("strategy_tag") or sig.get("tag") or "unknown" for sig in selected),
                     )
@@ -7407,19 +7402,6 @@ async def logic_loop(
                         tags=decision_tags,
                         ts=now,
                     )
-
-            if fast_scalp_state:
-                fast_scalp_state.update_from_main(
-                    account_equity=account_equity,
-                    margin_available=float(margin_available or 0.0),
-                    margin_rate=float(margin_rate or 0.0),
-                    weight_scalp=weight_scalp,
-                    focus_tag=focus_tag,
-                    risk_pct_override=risk_override,
-                    range_active=range_active,
-                    m1_rsi=_safe_float(fac_m1.get("rsi")),
-                    m1_rsi_age_sec=None,
-                )
 
             base_price_val = fac_m1.get("close")
             try:
@@ -9146,9 +9128,6 @@ async def main():
         logging.warning("[HISTORY] Startup seeding incomplete, continuing with live feed.")
 
     while True:
-        # 周辺コンポーネント初期化
-        fast_scalp_state = FastScalpState()
-
         tasks = [
             asyncio.create_task(
                 supervised_runner(
@@ -9172,9 +9151,7 @@ async def main():
                 asyncio.create_task(
                     supervised_runner(
                         "logic_loop",
-                        logic_loop(
-                            fast_scalp_state=fast_scalp_state,
-                        ),
+                        logic_loop(),
                     )
                 )
             )
