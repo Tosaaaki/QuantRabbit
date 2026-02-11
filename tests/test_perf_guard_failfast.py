@@ -442,3 +442,99 @@ def test_perf_guard_setup_strategy_override_global_fallback_with_prefix(
         env_prefix="M1SCALP",
     )
     assert dec.allowed is True
+
+
+def test_perf_guard_setup_strategy_min_trades_override(monkeypatch, tmp_path: Path) -> None:
+    db_path = tmp_path / "trades.db"
+    _init_trades_db(db_path)
+
+    now_dt = datetime.now(timezone.utc).replace(minute=0, second=0, microsecond=0)
+    now = now_dt.strftime("%Y-%m-%d %H:%M:%S")
+    current_hour = now_dt.hour
+    for _ in range(6):
+        _insert_trade(
+            db_path,
+            pocket="scalp",
+            strategy_tag="QuickBlock",
+            close_reason="STOP_LOSS_ORDER",
+            pl_pips=-1.0,
+            close_time=now,
+            units=100.0,
+            micro_regime="trend",
+        )
+
+    perf_guard = _reload_perf_guard(
+        monkeypatch,
+        db_path=db_path,
+        env={
+            "PERF_GUARD_ENABLED": "1",
+            "PERF_GUARD_MODE": "block",
+            "PERF_GUARD_LOOKBACK_DAYS": "3",
+            "PERF_GUARD_MIN_TRADES": "50",
+            "PERF_GUARD_PF_MIN": "0.1",
+            "PERF_GUARD_WIN_MIN": "0.0",
+            "PERF_GUARD_REGIME_FILTER": "0",
+            "PERF_GUARD_RELAX_TAGS": "",
+            "PERF_GUARD_FAILFAST_MIN_TRADES": "0",
+            "PERF_GUARD_SL_LOSS_RATE_MAX_SCALP": "0",
+            "PERF_GUARD_SETUP_ENABLED": "1",
+            "PERF_GUARD_SETUP_USE_HOUR": "1",
+            "PERF_GUARD_SETUP_USE_DIRECTION": "1",
+            "PERF_GUARD_SETUP_USE_REGIME": "0",
+            "PERF_GUARD_SETUP_MIN_TRADES": "10",
+            "PERF_GUARD_SETUP_PF_MIN": "0.1",
+            "PERF_GUARD_SETUP_WIN_MIN": "0.0",
+            "PERF_GUARD_SETUP_AVG_PIPS_MIN": "-10.0",
+            "PERF_GUARD_SETUP_MIN_TRADES_STRATEGY_QUICKBLOCK": "6",
+            "PERF_GUARD_SETUP_PF_MIN_STRATEGY_QUICKBLOCK": "1.1",
+            "PERF_GUARD_SETUP_WIN_MIN_STRATEGY_QUICKBLOCK": "0.55",
+            "PERF_GUARD_SETUP_AVG_PIPS_MIN_STRATEGY_QUICKBLOCK": "0.0",
+        },
+    )
+
+    dec = perf_guard.is_allowed("QuickBlock", "scalp", hour=current_hour, side="buy")
+    assert dec.allowed is False
+    assert dec.reason.startswith("setup_pf=")
+
+
+def test_perf_guard_strategy_min_trades_override_for_base_guard(
+    monkeypatch, tmp_path: Path
+) -> None:
+    db_path = tmp_path / "trades.db"
+    _init_trades_db(db_path)
+
+    now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+    for _ in range(6):
+        _insert_trade(
+            db_path,
+            pocket="scalp",
+            strategy_tag="QuickBase",
+            close_reason="STOP_LOSS_ORDER",
+            pl_pips=-1.0,
+            close_time=now,
+        )
+
+    perf_guard = _reload_perf_guard(
+        monkeypatch,
+        db_path=db_path,
+        env={
+            "PERF_GUARD_ENABLED": "1",
+            "PERF_GUARD_MODE": "block",
+            "PERF_GUARD_LOOKBACK_DAYS": "3",
+            "PERF_GUARD_MIN_TRADES": "20",
+            "PERF_GUARD_PF_MIN": "0.1",
+            "PERF_GUARD_WIN_MIN": "0.0",
+            "PERF_GUARD_REGIME_FILTER": "0",
+            "PERF_GUARD_RELAX_TAGS": "",
+            "PERF_GUARD_FAILFAST_MIN_TRADES": "0",
+            "PERF_GUARD_SL_LOSS_RATE_MAX_SCALP": "0",
+            "PERF_GUARD_SETUP_ENABLED": "0",
+            "PERF_GUARD_MIN_TRADES_STRATEGY_QUICKBASE": "6",
+            "PERF_GUARD_PF_MIN_STRATEGY_QUICKBASE": "1.1",
+            "PERF_GUARD_WIN_MIN_STRATEGY_QUICKBASE": "0.55",
+        },
+    )
+
+    dec = perf_guard.is_allowed("QuickBase", "scalp")
+    assert dec.allowed is False
+    assert dec.reason.startswith("pf=")
