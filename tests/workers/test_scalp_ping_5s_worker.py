@@ -258,6 +258,92 @@ def test_tick_density_uses_window_cutoff() -> None:
     assert density == pytest.approx(1.5, abs=1e-9)
 
 
+def test_tick_span_ratio_uses_first_and_last_epoch() -> None:
+    from workers.scalp_ping_5s import worker
+
+    rows = [
+        _tick(100.0, 150.000, 150.002, 150.001),
+        _tick(101.0, 150.001, 150.003, 150.002),
+        _tick(103.0, 150.003, 150.005, 150.004),
+    ]
+    span_ratio = worker._tick_span_ratio(rows, 5.0)
+    assert span_ratio == pytest.approx(0.6, abs=1e-9)
+
+
+@pytest.mark.asyncio
+async def test_maybe_keepalive_snapshot_fetches_when_stale(monkeypatch) -> None:
+    from workers.scalp_ping_5s import worker
+
+    monkeypatch.setattr(worker.config, "SNAPSHOT_FALLBACK_ENABLED", True)
+    monkeypatch.setattr(worker.config, "SNAPSHOT_KEEPALIVE_ENABLED", True)
+    monkeypatch.setattr(worker.config, "SNAPSHOT_KEEPALIVE_MIN_INTERVAL_SEC", 0.8)
+    monkeypatch.setattr(worker.config, "SNAPSHOT_KEEPALIVE_MAX_AGE_MS", 2500.0)
+    monkeypatch.setattr(worker.config, "SNAPSHOT_KEEPALIVE_MIN_DENSITY", 0.0)
+    monkeypatch.setattr(worker.config, "SNAPSHOT_KEEPALIVE_MIN_SPAN_RATIO", 0.0)
+    monkeypatch.setattr(worker.config, "ENTRY_QUALITY_WINDOW_SEC", 30.0)
+
+    snapshot_calls: list[bool] = []
+
+    async def _fake_snapshot(_logger) -> bool:
+        snapshot_calls.append(True)
+        return True
+
+    monkeypatch.setattr(worker, "_fetch_price_snapshot", _fake_snapshot)
+
+    last_fetch, stats = await worker._maybe_keepalive_snapshot(
+        now_mono=10.0,
+        last_snapshot_fetch=0.0,
+        rows=[_tick(100.0, 150.000, 150.002, 150.001)],
+        latest_tick_age_ms=5300.0,
+        logger=worker.LOG,
+    )
+
+    assert snapshot_calls == [True]
+    assert last_fetch == pytest.approx(10.0)
+    assert stats is not None
+    assert stats["reason"] == "stale"
+    assert float(stats["age_ms"]) == pytest.approx(5300.0)
+
+
+@pytest.mark.asyncio
+async def test_maybe_keepalive_snapshot_skips_when_microstructure_is_healthy(monkeypatch) -> None:
+    from workers.scalp_ping_5s import worker
+
+    monkeypatch.setattr(worker.config, "SNAPSHOT_FALLBACK_ENABLED", True)
+    monkeypatch.setattr(worker.config, "SNAPSHOT_KEEPALIVE_ENABLED", True)
+    monkeypatch.setattr(worker.config, "SNAPSHOT_KEEPALIVE_MIN_INTERVAL_SEC", 0.8)
+    monkeypatch.setattr(worker.config, "SNAPSHOT_KEEPALIVE_MAX_AGE_MS", 2500.0)
+    monkeypatch.setattr(worker.config, "SNAPSHOT_KEEPALIVE_MIN_DENSITY", 0.8)
+    monkeypatch.setattr(worker.config, "SNAPSHOT_KEEPALIVE_MIN_SPAN_RATIO", 0.6)
+    monkeypatch.setattr(worker.config, "ENTRY_QUALITY_WINDOW_SEC", 30.0)
+
+    snapshot_calls: list[bool] = []
+
+    async def _fake_snapshot(_logger) -> bool:
+        snapshot_calls.append(True)
+        return True
+
+    monkeypatch.setattr(worker, "_fetch_price_snapshot", _fake_snapshot)
+
+    rows = [
+        _tick(70.0, 150.000, 150.002, 150.001),
+        _tick(80.0, 150.001, 150.003, 150.002),
+        _tick(90.0, 150.002, 150.004, 150.003),
+        _tick(100.0, 150.003, 150.005, 150.004),
+    ]
+    last_fetch, stats = await worker._maybe_keepalive_snapshot(
+        now_mono=10.0,
+        last_snapshot_fetch=0.0,
+        rows=rows,
+        latest_tick_age_ms=800.0,
+        logger=worker.LOG,
+    )
+
+    assert snapshot_calls == []
+    assert last_fetch == pytest.approx(0.0)
+    assert stats is None
+
+
 @pytest.mark.asyncio
 async def test_maybe_topup_micro_density_fetches_snapshot_when_below_target(monkeypatch) -> None:
     from workers.scalp_ping_5s import worker

@@ -326,6 +326,17 @@ def _tick_density(rows: Sequence[dict], window_sec: float) -> float:
     return max(0.0, count / window_sec)
 
 
+def _tick_span_ratio(rows: Sequence[dict], window_sec: float) -> float:
+    if window_sec <= 0.0 or not rows:
+        return 0.0
+    latest_epoch = _safe_float(rows[-1].get("epoch"), 0.0)
+    if latest_epoch <= 0.0:
+        return 0.0
+    first_epoch = _safe_float(rows[0].get("epoch"), latest_epoch)
+    span_sec = max(0.0, latest_epoch - first_epoch)
+    return max(0.0, min(1.0, span_sec / window_sec))
+
+
 def _tick_density_over_window(window_sec: float) -> float:
     if window_sec <= 0.0:
         return 0.0
@@ -334,6 +345,50 @@ def _tick_density_over_window(window_sec: float) -> float:
         limit=int(window_sec * 25) + 50,
     )
     return _tick_density(rows, window_sec)
+
+
+async def _maybe_keepalive_snapshot(
+    *,
+    now_mono: float,
+    last_snapshot_fetch: float,
+    rows: Sequence[dict],
+    latest_tick_age_ms: float,
+    logger: logging.Logger,
+) -> tuple[float, Optional[dict[str, float | str]]]:
+    if not config.SNAPSHOT_FALLBACK_ENABLED or not config.SNAPSHOT_KEEPALIVE_ENABLED:
+        return last_snapshot_fetch, None
+    if now_mono - last_snapshot_fetch < config.SNAPSHOT_KEEPALIVE_MIN_INTERVAL_SEC:
+        return last_snapshot_fetch, None
+
+    window_sec = float(config.ENTRY_QUALITY_WINDOW_SEC)
+    density_before = _tick_density(rows, window_sec)
+    span_ratio_before = _tick_span_ratio(rows, window_sec)
+    reasons: list[str] = []
+    if (
+        config.SNAPSHOT_KEEPALIVE_MAX_AGE_MS > 0.0
+        and latest_tick_age_ms > config.SNAPSHOT_KEEPALIVE_MAX_AGE_MS
+    ):
+        reasons.append("stale")
+    if (
+        config.SNAPSHOT_KEEPALIVE_MIN_DENSITY > 0.0
+        and density_before < config.SNAPSHOT_KEEPALIVE_MIN_DENSITY
+    ):
+        reasons.append("density")
+    if (
+        config.SNAPSHOT_KEEPALIVE_MIN_SPAN_RATIO > 0.0
+        and span_ratio_before < config.SNAPSHOT_KEEPALIVE_MIN_SPAN_RATIO
+    ):
+        reasons.append("span")
+    if not reasons:
+        return last_snapshot_fetch, None
+    if not await _fetch_price_snapshot(logger):
+        return last_snapshot_fetch, None
+    return now_mono, {
+        "reason": ",".join(reasons),
+        "age_ms": float(latest_tick_age_ms),
+        "density": float(density_before),
+        "span_ratio": float(span_ratio_before),
+    }
 
 
 async def _maybe_topup_micro_density(
@@ -689,6 +744,7 @@ async def scalp_ping_5s_worker() -> None:
     last_stale_log_mono = 0.0
     last_trap_log_mono = 0.0
     last_density_topup_log_mono = 0.0
+    last_keepalive_log_mono = 0.0
 
     try:
         while True:
@@ -728,6 +784,32 @@ async def scalp_ping_5s_worker() -> None:
                 limit=int(config.WINDOW_SEC * 25) + 50,
             )
             latest_tick_age_ms = _latest_tick_age_ms(ticks)
+
+            now_mono = time.monotonic()
+            last_snapshot_fetch, keepalive = await _maybe_keepalive_snapshot(
+                now_mono=now_mono,
+                last_snapshot_fetch=last_snapshot_fetch,
+                rows=ticks,
+                latest_tick_age_ms=latest_tick_age_ms,
+                logger=LOG,
+            )
+            if keepalive:
+                ticks = tick_window.recent_ticks(
+                    seconds=config.WINDOW_SEC,
+                    limit=int(config.WINDOW_SEC * 25) + 50,
+                )
+                latest_tick_age_ms = _latest_tick_age_ms(ticks)
+                if now_mono - last_keepalive_log_mono >= 5.0:
+                    LOG.info(
+                        "%s snapshot_keepalive reason=%s age=%.0fms density=%.3f span=%.3f",
+                        config.LOG_PREFIX,
+                        keepalive["reason"],
+                        keepalive["age_ms"],
+                        keepalive["density"],
+                        keepalive["span_ratio"],
+                    )
+                    last_keepalive_log_mono = now_mono
+
             needs_snapshot = (len(ticks) < config.MIN_TICKS) or (
                 latest_tick_age_ms > config.MAX_TICK_AGE_MS
             )

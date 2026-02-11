@@ -133,6 +133,14 @@ ENTRY_QUALITY_WINDOW_SEC: float = max(
     1.0,
     float(os.getenv("ORDER_ENTRY_QUALITY_MICROSTRUCTURE_WINDOW_SEC", "30.0")),
 )
+ENTRY_QUALITY_MAX_AGE_MS: float = max(
+    0.0,
+    float(os.getenv("ORDER_ENTRY_QUALITY_MICROSTRUCTURE_MAX_AGE_MS", "2500.0")),
+)
+ENTRY_QUALITY_MIN_SPAN_RATIO: float = max(
+    0.0,
+    min(1.0, float(os.getenv("ORDER_ENTRY_QUALITY_MICROSTRUCTURE_MIN_SPAN_RATIO", "0.7"))),
+)
 ENTRY_QUALITY_MIN_DENSITY: float = max(
     0.0,
     float(
@@ -154,6 +162,41 @@ SNAPSHOT_TOPUP_TARGET_DENSITY: float = max(
             "SCALP_PING_5S_SNAPSHOT_TOPUP_TARGET_DENSITY",
             str(ENTRY_QUALITY_MIN_DENSITY),
         )
+    ),
+)
+SNAPSHOT_KEEPALIVE_ENABLED: bool = _bool_env("SCALP_PING_5S_SNAPSHOT_KEEPALIVE_ENABLED", True)
+SNAPSHOT_KEEPALIVE_MIN_INTERVAL_SEC: float = max(
+    SNAPSHOT_MIN_INTERVAL_SEC,
+    float(os.getenv("SCALP_PING_5S_SNAPSHOT_KEEPALIVE_MIN_INTERVAL_SEC", "0.8")),
+)
+SNAPSHOT_KEEPALIVE_MAX_AGE_MS: float = max(
+    0.0,
+    float(
+        os.getenv(
+            "SCALP_PING_5S_SNAPSHOT_KEEPALIVE_MAX_AGE_MS",
+            str(ENTRY_QUALITY_MAX_AGE_MS),
+        )
+    ),
+)
+SNAPSHOT_KEEPALIVE_MIN_DENSITY: float = max(
+    0.0,
+    float(
+        os.getenv(
+            "SCALP_PING_5S_SNAPSHOT_KEEPALIVE_MIN_DENSITY",
+            str(ENTRY_QUALITY_MIN_DENSITY),
+        )
+    ),
+)
+SNAPSHOT_KEEPALIVE_MIN_SPAN_RATIO: float = max(
+    0.0,
+    min(
+        1.0,
+        float(
+            os.getenv(
+                "SCALP_PING_5S_SNAPSHOT_KEEPALIVE_MIN_SPAN_RATIO",
+                str(ENTRY_QUALITY_MIN_SPAN_RATIO),
+            )
+        ),
     ),
 )
 
