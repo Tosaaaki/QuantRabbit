@@ -352,6 +352,16 @@ SPB_DIAG_INTERVAL_SEC = _env_float("SPB_DIAG_INTERVAL_SEC", 15.0)
 SPB_ALLOWED_REGIMES = {
     s.strip().lower() for s in _env_csv("SPB_ALLOWED_REGIMES", "") if s.strip()
 }
+SPB_REQUIRE_AIR_MATCH = _env_bool("SPB_REQUIRE_AIR_MATCH", False)
+SPB_MIN_AIR_SCORE = _env_float("SPB_MIN_AIR_SCORE", 0.0)
+SPB_ALLOW_LONG = _env_bool("SPB_ALLOW_LONG", True)
+SPB_ALLOW_SHORT = _env_bool("SPB_ALLOW_SHORT", True)
+SPB_MAX_ADX = _env_float("SPB_MAX_ADX", 0.0)
+SPB_LONG_RSI_MIN = _env_float("SPB_LONG_RSI_MIN", 0.0)
+SPB_LONG_RSI_MAX = _env_float("SPB_LONG_RSI_MAX", 100.0)
+SPB_SHORT_RSI_MIN = _env_float("SPB_SHORT_RSI_MIN", 0.0)
+SPB_SHORT_RSI_MAX = _env_float("SPB_SHORT_RSI_MAX", 100.0)
+SPB_BLOCK_JST_HOURS = parse_hours(os.getenv("SPB_BLOCK_JST_HOURS", ""))
 
 FBF_BBW_MAX = _env_float("FBF_BBW_MAX", 0.0026)
 FBF_ATR_MIN = _env_float("FBF_ATR_MIN", 0.7)
@@ -1075,11 +1085,9 @@ def _signal_squeeze_pulse_break(
     if range_ctx is not None:
         try:
             score = float(getattr(range_ctx, "score", 0.0) or 0.0)
-            active = bool(getattr(range_ctx, "active", False))
         except Exception:
             score = 0.0
-            active = False
-        if not active and SPB_RANGE_SCORE_MIN > 0.0 and score < SPB_RANGE_SCORE_MIN:
+        if SPB_RANGE_SCORE_MIN > 0.0 and score < SPB_RANGE_SCORE_MIN:
             return None
 
     candles = get_candles_snapshot("M1", limit=max(40, SPB_LOOKBACK + 6))
@@ -1141,6 +1149,58 @@ def _signal_squeeze_pulse_break(
             "momentum_pips": round(imb.momentum_pips, 3),
         },
     }
+
+
+def _spb_post_entry_guard(
+    signal: Dict[str, object],
+    fac_m1: Dict[str, object],
+    now_utc: datetime.datetime,
+) -> Tuple[bool, str]:
+    if str(signal.get("tag") or "").strip() != "SqueezePulseBreak":
+        return True, "not_spb"
+
+    action = str(signal.get("action") or "").strip().upper()
+    side = "long" if action == "OPEN_LONG" else "short" if action == "OPEN_SHORT" else ""
+    if not side:
+        return False, "unknown_side"
+
+    if side == "long" and not SPB_ALLOW_LONG:
+        return False, "long_disabled"
+    if side == "short" and not SPB_ALLOW_SHORT:
+        return False, "short_disabled"
+
+    if SPB_BLOCK_JST_HOURS:
+        jst_hour = now_utc.astimezone(
+            datetime.timezone(datetime.timedelta(hours=9))
+        ).hour
+        if jst_hour in SPB_BLOCK_JST_HOURS:
+            return False, f"jst_block_{jst_hour}"
+
+    adx = _adx(fac_m1)
+    if SPB_MAX_ADX > 0.0 and adx > SPB_MAX_ADX:
+        return False, "adx_cap"
+
+    rsi = _rsi(fac_m1)
+    if side == "long" and not (SPB_LONG_RSI_MIN <= rsi <= SPB_LONG_RSI_MAX):
+        return False, "rsi_long_band"
+    if side == "short" and not (SPB_SHORT_RSI_MIN <= rsi <= SPB_SHORT_RSI_MAX):
+        return False, "rsi_short_band"
+
+    try:
+        air_score = float(signal.get("air_score") or 0.0)
+    except Exception:
+        air_score = 0.0
+    if SPB_MIN_AIR_SCORE > 0.0 and air_score < SPB_MIN_AIR_SCORE:
+        return False, "air_score_low"
+
+    if SPB_REQUIRE_AIR_MATCH:
+        air_dir = str(signal.get("air_pressure_dir") or "").strip().lower()
+        if air_dir not in {"long", "short"}:
+            return False, "air_dir_missing"
+        if air_dir != side:
+            return False, "air_dir_mismatch"
+
+    return True, "ok"
 
 
 def _spb_diag_metrics(fac_m1: Dict[str, object], range_ctx) -> Dict[str, object]:
@@ -3541,6 +3601,21 @@ async def scalp_precision_worker() -> None:
                 if signal:
                     signal = adjust_signal(signal, air)
                     if signal:
+                        if str(signal.get("tag") or "").strip() == "SqueezePulseBreak":
+                            ok_spb, spb_reason = _spb_post_entry_guard(signal, fac_m1, now)
+                            if not ok_spb:
+                                if SPB_DIAG and config.MODE == "squeeze_pulse_break":
+                                    LOG.info(
+                                        "%s spb guard blocked reason=%s action=%s rsi=%.1f adx=%.1f air_dir=%s air_score=%.3f",
+                                        config.LOG_PREFIX,
+                                        spb_reason,
+                                        signal.get("action"),
+                                        _rsi(fac_m1),
+                                        _adx(fac_m1),
+                                        signal.get("air_pressure_dir"),
+                                        float(signal.get("air_score") or 0.0),
+                                    )
+                                continue
                         if (
                             str(signal.get("tag") or "").strip() == "WickReversalPro"
                             and air.enabled
