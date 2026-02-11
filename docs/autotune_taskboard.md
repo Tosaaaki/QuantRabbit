@@ -52,13 +52,13 @@
   受け入れ条件: Scalp 自己調整を再導入しても git を汚さない。
 
 ### Phase 1: “暴れない”オンライン学習にする（安全弁）
-- [ ] `autotune/online_tuner.py`: データ不足/偏り時の freeze（min trades, pocket/strategy のカバレッジ、reason 欠落）を追加。  
+- [x] `autotune/online_tuner.py`: データ不足/偏り時の freeze（min trades, pocket/strategy のカバレッジ、reason 欠落）を追加。  
   受け入れ条件: trades が少ない時間帯に micro_share 等が連続で同方向へ寄らない。
-- [ ] `autotune/online_tuner.py`: LKG（last known good）と自動ロールバックを追加（EV/PF/勝率の下振れ検知で 1 つ前に戻す）。  
+- [x] `autotune/online_tuner.py`: LKG（last known good）と自動ロールバックを追加（EV/PF/勝率の下振れ検知で 1 つ前に戻す）。  
   受け入れ条件: 劣化時に自動で shadow に戻るか、前回値へ復帰できる。
 
 ### Phase 2: “何が効いているか”を可視化する（運用の短縮）
-- [ ] `scripts/run_online_tuner_live.sh`: run 毎に “採用/不採用理由” と “差分” を構造化ログで残す（journalctl で追える）。  
+- [x] `autotune/online_tuner.py`: run 毎に “採用/不採用理由” と “差分” を構造化ログ(JSON)で残す（journalctl で追える）。  
   受け入れ条件: 直近 24h の変更履歴と理由が VM のログだけで追跡できる。
 - [ ] `docs/ONLINE_TUNER.md`: 現行の systemd 構成（timer/service、出力先、disable 方法）を最新に更新。  
   受け入れ条件: 新規運用者がこのドキュメントだけで停止/再開/確認できる。
