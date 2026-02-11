@@ -111,6 +111,6 @@ echo "[INFO] Recent order blocks (entry quality/factor stale) ..."
 run_vm exec -- "sqlite3 -readonly /home/tossaki/QuantRabbit/logs/orders.db \"WITH r AS (SELECT * FROM orders WHERE ts>=datetime('now','-30 minutes')) SELECT status, COUNT(*) c FROM r WHERE status LIKE 'entry_quality_%' OR status IN('factor_stale','forecast_scale_below_min','spread_block') GROUP BY status ORDER BY c DESC, status;\""
 
 echo "[INFO] submit_attempt payload (stopLossOnFill/takeProfitOnFill) ..."
-run_vm exec -- "sqlite3 -readonly /home/tossaki/QuantRabbit/logs/orders.db \"SELECT ts,pocket,status,json_extract(request_payload,'$.oanda.order.stopLossOnFill.price') AS sl_on_fill,json_extract(request_payload,'$.oanda.order.takeProfitOnFill.price') AS tp_on_fill FROM orders WHERE ts>=datetime('now','-2 hours') AND status='submit_attempt' AND pocket IN ('micro','scalp','macro') ORDER BY ts DESC LIMIT 20;\""
+run_vm exec -- "sqlite3 -readonly /home/tossaki/QuantRabbit/logs/orders.db \"SELECT ts,pocket,status,json_extract(request_json,'$.oanda.order.stopLossOnFill.price') AS sl_on_fill,json_extract(request_json,'$.oanda.order.takeProfitOnFill.price') AS tp_on_fill FROM orders WHERE ts>=strftime('%Y-%m-%dT%H:%M:%S','now','-2 hours') AND status='submit_attempt' AND pocket IN ('micro','scalp','macro') ORDER BY ts DESC LIMIT 20;\""
 
 echo "[DONE]"
