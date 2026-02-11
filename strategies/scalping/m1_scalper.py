@@ -191,7 +191,9 @@ def _shock_guard(candles: list[dict], atr_pips: Optional[float]) -> bool:
 
 
 def _liquidity_guard() -> bool:
-    if not _env_bool("M1SCALP_LIQ_GUARD_ENABLED", True):
+    # Disabled by default: orderbook "liquidity" snapshots are noisy and can unintentionally
+    # freeze entries for long periods depending on the stream/provider.
+    if not _env_bool("M1SCALP_LIQ_GUARD_ENABLED", False):
         return True
     if _force_mode():
         return True

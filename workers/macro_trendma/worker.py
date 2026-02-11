@@ -24,7 +24,7 @@ from market_data import tick_window
 from strategies.trend.ma_cross import MovingAverageCross
 from utils.divergence import apply_divergence_confidence, divergence_bias, divergence_snapshot
 from utils.market_hours import is_market_open
-from utils.oanda_account import get_account_snapshot
+from utils.oanda_account import get_account_snapshot, get_position_summary
 from workers.common.dyn_cap import compute_cap
 from analysis import perf_monitor
 
@@ -415,10 +415,6 @@ async def trendma_worker() -> None:
         except Exception:
             pf = None
 
-        # レンジ判定が出ているときは TrendMA での新規を抑止
-        if range_ctx.active:
-            LOG.debug("%s skip: range_active", config.LOG_PREFIX)
-            continue
         if _PENDING_LIMIT_UNTIL_TS and now_epoch < _PENDING_LIMIT_UNTIL_TS:
             LOG.debug(
                 "%s skip: pending_limit order_id=%s until=%.0f",
@@ -431,6 +427,25 @@ async def trendma_worker() -> None:
         signal = MovingAverageCross.check(fac_m1)
         if not signal:
             continue
+
+        action = str(signal.get("action") or "").strip().upper()
+        if action in {"OPEN_LONG", "BUY", "LONG"}:
+            side = "long"
+        elif action in {"OPEN_SHORT", "SELL", "SHORT"}:
+            side = "short"
+        else:
+            continue
+
+        # Netting-aware guard: when free margin is tight, allow only entries that reduce net exposure.
+        long_units = 0.0
+        short_units = 0.0
+        try:
+            long_units, short_units = get_position_summary("USD_JPY", timeout=3.0)
+        except Exception:
+            long_units, short_units = 0.0, 0.0
+        net_units = float(long_units) - float(short_units)
+        netting_reduce = (side == "short" and net_units > 0) or (side == "long" and net_units < 0)
+
         div_bias = divergence_bias(
             fac_h1,
             signal.get("action") or "",
@@ -461,7 +476,7 @@ async def trendma_worker() -> None:
             total_margin = float((snap.margin_available or 0.0) + (snap.margin_used or 0.0))
             if total_margin > 0.0:
                 usage_ratio = float(snap.margin_used or 0.0) / total_margin
-        if free_ratio_raw is not None and free_ratio_raw <= config.MIN_FREE_MARGIN_RATIO:
+        if free_ratio_raw is not None and free_ratio_raw <= config.MIN_FREE_MARGIN_RATIO and not netting_reduce:
             LOG.info(
                 "%s skip: free_margin_low ratio=%.3f limit=%.3f",
                 config.LOG_PREFIX,
@@ -469,7 +484,7 @@ async def trendma_worker() -> None:
                 config.MIN_FREE_MARGIN_RATIO,
             )
             continue
-        if usage_ratio is not None and usage_ratio >= config.MAX_MARGIN_USAGE:
+        if usage_ratio is not None and usage_ratio >= config.MAX_MARGIN_USAGE and not netting_reduce:
             LOG.info(
                 "%s skip: margin_usage_high usage=%.3f limit=%.3f",
                 config.LOG_PREFIX,
@@ -524,7 +539,6 @@ async def trendma_worker() -> None:
             current_bid = _bb_float(tick.get("bid"))
             current_ask = _bb_float(tick.get("ask"))
         price = _latest_mid(price)
-        side = "long" if signal["action"] == "OPEN_LONG" else "short"
         sl_pips = float(signal.get("sl_pips") or 0.0)
         tp_pips = float(signal.get("tp_pips") or 0.0)
         if price <= 0.0 or sl_pips <= 0.0:
@@ -616,10 +630,13 @@ async def trendma_worker() -> None:
             float(snap.nav or 0.0),
             sl_pips,
             margin_available=float(snap.margin_available or 0.0),
+            margin_used=float(snap.margin_used or 0.0),
             price=entry_ref_price,
             margin_rate=float(snap.margin_rate or 0.0),
             pocket=config.POCKET,
             side=side,
+            open_long_units=long_units,
+            open_short_units=short_units,
             strategy_tag=strategy_tag,
             fac_m1=fac_m1,
             fac_h4=fac_h4,
