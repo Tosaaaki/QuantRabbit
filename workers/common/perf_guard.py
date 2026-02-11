@@ -28,6 +28,7 @@ class PerfGuardCfg:
 
     enabled: bool
     mode: str
+    metric: str
     lookback_days: int
     min_trades: int
     pf_min_default: float
@@ -51,6 +52,7 @@ class PerfGuardCfg:
     sl_loss_rate_max_default: float
 
     pocket_enabled: bool
+    pocket_metric: str
     pocket_lookback_days: int
     pocket_min_trades: int
     pocket_pf_min_default: float
@@ -69,6 +71,31 @@ class PerfGuardCfg:
 
 
 _CFG_CACHE: dict[str, PerfGuardCfg] = {}
+
+_ALLOWED_METRICS = {"pips", "pl_pips", "realized_pl", "net_pl"}
+
+
+def _normalize_metric(raw: Optional[str], *, default: str) -> str:
+    metric = str(raw or "").strip().lower()
+    if not metric:
+        metric = str(default).strip().lower()
+    if metric not in _ALLOWED_METRICS:
+        metric = str(default).strip().lower()
+    if metric == "pl_pips":
+        return "pips"
+    return metric
+
+
+def _metric_expr(metric: str) -> str:
+    """Return an SQL expression for the metric used to compute PF / win-rate."""
+    m = _normalize_metric(metric, default="pips")
+    if m == "pips":
+        return "pl_pips"
+    if m == "realized_pl":
+        return "COALESCE(realized_pl, 0)"
+    if m == "net_pl":
+        return "COALESCE(realized_pl, 0) + COALESCE(commission, 0) + COALESCE(financing, 0)"
+    return "pl_pips"
 
 
 def _cfg_key(env_prefix: Optional[str]) -> str:
@@ -123,6 +150,10 @@ def _get_cfg(env_prefix: Optional[str]) -> PerfGuardCfg:
     enabled = str(raw_enabled).strip().lower() not in {"", "0", "false", "no", "off"}
 
     mode = str(_strategy_env_get("PERF_GUARD_MODE", "block", env_prefix=env_prefix) or "block").strip().lower()
+    metric = _normalize_metric(
+        _strategy_env_get("PERF_GUARD_METRIC", "realized_pl", env_prefix=env_prefix),
+        default="realized_pl",
+    )
     lookback_days = max(1, _strategy_env_int("PERF_GUARD_LOOKBACK_DAYS", 3, env_prefix=env_prefix))
     min_trades = max(5, _strategy_env_int("PERF_GUARD_MIN_TRADES", 12, env_prefix=env_prefix))
     pf_min_default = float(_strategy_env_float("PERF_GUARD_PF_MIN", 0.9, env_prefix=env_prefix) or 0.9)
@@ -134,7 +165,7 @@ def _get_cfg(env_prefix: Optional[str]) -> PerfGuardCfg:
 
     relax_raw = _strategy_env_get("PERF_GUARD_RELAX_TAGS", None, env_prefix=env_prefix)
     if relax_raw is None:
-        relax_raw = "M1Scalper,ImpulseRetrace"
+        relax_raw = ""
     relax_tags = {tag.strip().lower() for tag in str(relax_raw).split(",") if tag.strip()}
     split_directional = _strategy_env_bool("PERF_GUARD_SPLIT_DIRECTIONAL", True, env_prefix=env_prefix)
 
@@ -149,6 +180,10 @@ def _get_cfg(env_prefix: Optional[str]) -> PerfGuardCfg:
     sl_loss_rate_max_default = _strategy_env_float("PERF_GUARD_SL_LOSS_RATE_MAX", 0.0, env_prefix=env_prefix)
 
     pocket_enabled = _strategy_env_bool("POCKET_PERF_GUARD_ENABLED", False, env_prefix=env_prefix)
+    pocket_metric = _normalize_metric(
+        _strategy_env_get("POCKET_PERF_GUARD_METRIC", metric, env_prefix=env_prefix),
+        default=metric,
+    )
     pocket_lookback_days = max(1, _strategy_env_int("POCKET_PERF_GUARD_LOOKBACK_DAYS", 7, env_prefix=env_prefix))
     pocket_min_trades = max(10, _strategy_env_int("POCKET_PERF_GUARD_MIN_TRADES", 60, env_prefix=env_prefix))
     pocket_pf_min_default = _strategy_env_float("POCKET_PERF_GUARD_PF_MIN", 0.95, env_prefix=env_prefix)
@@ -169,6 +204,7 @@ def _get_cfg(env_prefix: Optional[str]) -> PerfGuardCfg:
         env_prefix=env_prefix,
         enabled=enabled,
         mode=mode,
+        metric=metric,
         lookback_days=lookback_days,
         min_trades=min_trades,
         pf_min_default=pf_min_default,
@@ -186,6 +222,7 @@ def _get_cfg(env_prefix: Optional[str]) -> PerfGuardCfg:
         sl_loss_rate_min_trades=sl_loss_rate_min_trades,
         sl_loss_rate_max_default=sl_loss_rate_max_default,
         pocket_enabled=pocket_enabled,
+        pocket_metric=pocket_metric,
         pocket_lookback_days=pocket_lookback_days,
         pocket_min_trades=pocket_min_trades,
         pocket_pf_min_default=pocket_pf_min_default,
@@ -321,6 +358,7 @@ def _query_perf_row(
     hour: Optional[int],
     regime_label: Optional[str],
     cfg: PerfGuardCfg,
+    metric_expr: str,
 ) -> Optional[sqlite3.Row]:
     regime_clause = ""
     if regime_label:
@@ -340,12 +378,12 @@ def _query_perf_row(
             f"""
             SELECT
               COUNT(*) AS n,
-              SUM(CASE WHEN pl_pips > 0 THEN pl_pips ELSE 0 END) AS profit,
-              SUM(CASE WHEN pl_pips < 0 THEN ABS(pl_pips) ELSE 0 END) AS loss,
-              SUM(CASE WHEN pl_pips > 0 THEN 1 ELSE 0 END) AS win,
+              SUM(CASE WHEN {metric_expr} > 0 THEN {metric_expr} ELSE 0 END) AS profit,
+              SUM(CASE WHEN {metric_expr} < 0 THEN ABS({metric_expr}) ELSE 0 END) AS loss,
+              SUM(CASE WHEN {metric_expr} > 0 THEN 1 ELSE 0 END) AS win,
               SUM(pl_pips) AS sum_pips,
               -- Stop-loss exits that actually realized a loss (exclude BE/lock SL profits).
-              SUM(CASE WHEN close_reason = 'STOP_LOSS_ORDER' AND pl_pips < 0 THEN 1 ELSE 0 END) AS sl_loss_n,
+              SUM(CASE WHEN close_reason = 'STOP_LOSS_ORDER' AND {metric_expr} < 0 THEN 1 ELSE 0 END) AS sl_loss_n,
               -- Emergency: broker forced liquidation.
               SUM(CASE WHEN close_reason = 'MARKET_ORDER_MARGIN_CLOSEOUT' THEN 1 ELSE 0 END) AS margin_closeout_n
             FROM trades
@@ -370,43 +408,65 @@ def _query_perf_scale(tag: str, pocket: str, cfg: PerfGuardCfg) -> Tuple[float, 
         con.row_factory = sqlite3.Row
     except Exception:
         return 1.0, 0.0, 0.0, 0
-    variants = _tag_variants(tag, split_directional=cfg.split_directional)
-    if not variants or variants == ("",):
-        return 1.0, 0.0, 0.0, 0
-    placeholders = ",".join("?" for _ in variants)
-    tag_clause = f"LOWER(COALESCE(NULLIF(strategy_tag, ''), strategy)) IN ({placeholders})"
-    params = list(variants)
-    params.extend([pocket, f"-{cfg.scale_lookback_days} day"])
     try:
-        row = con.execute(
-            f"""
-            SELECT
-              COUNT(*) AS n,
-              SUM(CASE WHEN pl_pips > 0 THEN pl_pips ELSE 0 END) AS profit,
-              SUM(CASE WHEN pl_pips < 0 THEN ABS(pl_pips) ELSE 0 END) AS loss,
-              SUM(CASE WHEN pl_pips > 0 THEN 1 ELSE 0 END) AS win,
-              SUM(pl_pips) AS sum_pips
-            FROM trades
-            WHERE {tag_clause}
-              AND pocket = ?
-              AND close_time >= datetime('now', ?)
-            """,
-            params,
-        ).fetchone()
-    except Exception as exc:
-        LOG.debug("[PERF_SCALE] query failed tag=%s pocket=%s err=%s", tag, pocket, exc)
-        return 1.0, 0.0, 0.0, 0
-    n = int(row["n"] or 0) if row else 0
-    if n <= 0:
-        return 1.0, 0.0, 0.0, 0
-    profit = float(row["profit"] or 0.0)
-    loss = float(row["loss"] or 0.0)
-    win = float(row["win"] or 0.0)
-    sum_pips = float(row["sum_pips"] or 0.0)
-    pf = profit / loss if loss > 0 else float("inf")
-    win_rate = win / n if n else 0.0
-    avg_pips = sum_pips / n if n else 0.0
-    return pf, win_rate, avg_pips, n
+        variants = _tag_variants(tag, split_directional=cfg.split_directional)
+        if not variants or variants == ("",):
+            return 1.0, 0.0, 0.0, 0
+        placeholders = ",".join("?" for _ in variants)
+        tag_clause = f"LOWER(COALESCE(NULLIF(strategy_tag, ''), strategy)) IN ({placeholders})"
+        params = list(variants)
+        params.extend([pocket, f"-{cfg.scale_lookback_days} day"])
+
+        metric_expr = _metric_expr(cfg.metric)
+        fallback_expr = _metric_expr("pips")
+
+        def _try(expr: str) -> Optional[sqlite3.Row]:
+            try:
+                return con.execute(
+                    f"""
+                    SELECT
+                      COUNT(*) AS n,
+                      SUM(CASE WHEN {expr} > 0 THEN {expr} ELSE 0 END) AS profit,
+                      SUM(CASE WHEN {expr} < 0 THEN ABS({expr}) ELSE 0 END) AS loss,
+                      SUM(CASE WHEN {expr} > 0 THEN 1 ELSE 0 END) AS win,
+                      SUM(pl_pips) AS sum_pips
+                    FROM trades
+                    WHERE {tag_clause}
+                      AND pocket = ?
+                      AND close_time >= datetime('now', ?)
+                    """,
+                    params,
+                ).fetchone()
+            except Exception as exc:  # noqa: BLE001
+                LOG.debug(
+                    "[PERF_SCALE] query failed tag=%s pocket=%s metric=%s err=%s",
+                    tag,
+                    pocket,
+                    expr,
+                    exc,
+                )
+                return None
+
+        row = _try(metric_expr)
+        if row is None and metric_expr != fallback_expr:
+            row = _try(fallback_expr)
+
+        n = int(row["n"] or 0) if row else 0
+        if n <= 0:
+            return 1.0, 0.0, 0.0, 0
+        profit = float(row["profit"] or 0.0)
+        loss = float(row["loss"] or 0.0)
+        win = float(row["win"] or 0.0)
+        sum_pips = float(row["sum_pips"] or 0.0)
+        pf = profit / loss if loss > 0 else float("inf")
+        win_rate = win / n if n else 0.0
+        avg_pips = sum_pips / n if n else 0.0
+        return pf, win_rate, avg_pips, n
+    finally:
+        try:
+            con.close()
+        except Exception:
+            pass
 
 
 def _query_perf(
@@ -425,6 +485,8 @@ def _query_perf(
     placeholders = ",".join("?" for _ in variants)
     tag_clause = f"LOWER(COALESCE(NULLIF(strategy_tag, ''), strategy)) IN ({placeholders})"
     params = list(variants)
+    metric_expr = _metric_expr(cfg.metric)
+    fallback_expr = _metric_expr("pips")
     try:
         row = None
         if regime_label:
@@ -437,7 +499,20 @@ def _query_perf(
                 hour=hour,
                 regime_label=regime_label,
                 cfg=cfg,
+                metric_expr=metric_expr,
             )
+            if row is None and metric_expr != fallback_expr:
+                row = _query_perf_row(
+                    con=con,
+                    tag=tag,
+                    tag_clause=tag_clause,
+                    params=list(params),
+                    pocket=pocket,
+                    hour=hour,
+                    regime_label=regime_label,
+                    cfg=cfg,
+                    metric_expr=fallback_expr,
+                )
             if row is not None:
                 n = int(row["n"] or 0)
                 if n < cfg.regime_min_trades:
@@ -452,7 +527,20 @@ def _query_perf(
                 hour=hour,
                 regime_label=None,
                 cfg=cfg,
+                metric_expr=metric_expr,
             )
+            if row is None and metric_expr != fallback_expr:
+                row = _query_perf_row(
+                    con=con,
+                    tag=tag,
+                    tag_clause=tag_clause,
+                    params=list(params),
+                    pocket=pocket,
+                    hour=hour,
+                    regime_label=None,
+                    cfg=cfg,
+                    metric_expr=fallback_expr,
+                )
     except Exception as exc:
         LOG.debug("[PERF_GUARD] query failed tag=%s pocket=%s err=%s", tag, pocket, exc)
         return True, "query_failed", 0
@@ -513,14 +601,16 @@ def _query_pocket_perf(pocket: str, cfg: PerfGuardCfg) -> Tuple[bool, str, int]:
         con.row_factory = sqlite3.Row
     except Exception:
         return True, "db_open_failed", 0
+    metric_expr = _metric_expr(cfg.pocket_metric)
+    fallback_expr = _metric_expr("pips")
     try:
         row = con.execute(
-            """
+            f"""
             SELECT
               COUNT(*) AS n,
-              SUM(CASE WHEN pl_pips > 0 THEN pl_pips ELSE 0 END) AS profit,
-              SUM(CASE WHEN pl_pips < 0 THEN ABS(pl_pips) ELSE 0 END) AS loss,
-              SUM(CASE WHEN pl_pips > 0 THEN 1 ELSE 0 END) AS win
+              SUM(CASE WHEN {metric_expr} > 0 THEN {metric_expr} ELSE 0 END) AS profit,
+              SUM(CASE WHEN {metric_expr} < 0 THEN ABS({metric_expr}) ELSE 0 END) AS loss,
+              SUM(CASE WHEN {metric_expr} > 0 THEN 1 ELSE 0 END) AS win
             FROM trades
             WHERE pocket = ?
               AND close_time >= datetime('now', ?)
@@ -528,8 +618,26 @@ def _query_pocket_perf(pocket: str, cfg: PerfGuardCfg) -> Tuple[bool, str, int]:
             (pocket, f"-{cfg.pocket_lookback_days} day"),
         ).fetchone()
     except Exception as exc:
-        LOG.debug("[POCKET_GUARD] query failed pocket=%s err=%s", pocket, exc)
-        return True, "query_failed", 0
+        if metric_expr == fallback_expr:
+            LOG.debug("[POCKET_GUARD] query failed pocket=%s err=%s", pocket, exc)
+            return True, "query_failed", 0
+        try:
+            row = con.execute(
+                f"""
+                SELECT
+                  COUNT(*) AS n,
+                  SUM(CASE WHEN {fallback_expr} > 0 THEN {fallback_expr} ELSE 0 END) AS profit,
+                  SUM(CASE WHEN {fallback_expr} < 0 THEN ABS({fallback_expr}) ELSE 0 END) AS loss,
+                  SUM(CASE WHEN {fallback_expr} > 0 THEN 1 ELSE 0 END) AS win
+                FROM trades
+                WHERE pocket = ?
+                  AND close_time >= datetime('now', ?)
+                """,
+                (pocket, f"-{cfg.pocket_lookback_days} day"),
+            ).fetchone()
+        except Exception as exc2:  # noqa: BLE001
+            LOG.debug("[POCKET_GUARD] query failed pocket=%s err=%s", pocket, exc2)
+            return True, "query_failed", 0
     finally:
         try:
             con.close()
