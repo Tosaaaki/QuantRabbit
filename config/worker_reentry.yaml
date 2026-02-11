@@ -29,17 +29,17 @@ strategies:
     return_wait_reason: be_post_60_or_hold_skew
     block_jst_hours: []
   MicroLevelReactor:
-    cooldown_win_sec: 6
-    cooldown_loss_sec: 15
-    same_dir_reentry_pips: 0.25
+    cooldown_win_sec: 4
+    cooldown_loss_sec: 10
+    same_dir_reentry_pips: 0.15
     same_dir_mode: both
     return_wait_bias: neutral
     return_wait_reason: recovery_day
-    max_open_trades: 4
-    max_open_trades_hard: 8
+    max_open_trades: 6
+    max_open_trades_hard: 10
     max_open_adverse_pips: 10.0
     max_open_avg_adverse_pips: 5.0
-    stack_reentry_pips: 4.0
+    stack_reentry_pips: 2.0
     block_jst_hours: []
   Donchian5:
     cooldown_win_sec: 300
@@ -90,15 +90,15 @@ strategies:
     same_dir_mode: both
     return_wait_bias: neutral
   MicroRangeBreak:
-    cooldown_win_sec: 12
-    cooldown_loss_sec: 30
-    same_dir_reentry_pips: 0.4
+    cooldown_win_sec: 8
+    cooldown_loss_sec: 20
+    same_dir_reentry_pips: 0.2
     same_dir_mode: both
-    max_open_trades: 3
-    max_open_trades_hard: 6
+    max_open_trades: 4
+    max_open_trades_hard: 8
     max_open_adverse_pips: 8
     max_open_avg_adverse_pips: 4
-    stack_reentry_pips: 2.5
+    stack_reentry_pips: 1.5
   MicroVWAPBound:
     cooldown_win_sec: 40
     cooldown_loss_sec: 120
@@ -124,25 +124,28 @@ strategies:
     return_wait_reason: be_post_60_or_hold_skew
     block_jst_hours: []
   MomentumPulse:
-    cooldown_win_sec: 12
-    cooldown_loss_sec: 30
-    same_dir_reentry_pips: 0.4
+    cooldown_win_sec: 8
+    cooldown_loss_sec: 20
+    same_dir_reentry_pips: 0.2
     same_dir_mode: both
     return_wait_bias: avoid
     return_wait_reason: be_post_60_or_hold_skew
+    max_open_trades: 3
+    max_open_trades_hard: 6
+    stack_reentry_pips: 1.5
     block_jst_hours: []
   M1Scalper:
-    cooldown_win_sec: 4
-    cooldown_loss_sec: 8
-    same_dir_reentry_pips: 0.15
+    cooldown_win_sec: 2
+    cooldown_loss_sec: 4
+    same_dir_reentry_pips: 0.05
     same_dir_mode: both
     return_wait_bias: neutral
     return_wait_reason: recovery_scalp_push
-    max_open_trades: 2
-    max_open_trades_hard: 4
+    max_open_trades: 3
+    max_open_trades_hard: 6
     max_open_adverse_pips: 8.0
     max_open_avg_adverse_pips: 4.0
-    stack_reentry_pips: 2.0
+    stack_reentry_pips: 1.0
     block_jst_hours: []
   TrendMA:
     cooldown_win_sec: 300
@@ -298,15 +301,15 @@ strategies:
     return_wait_bias: neutral
     return_wait_reason: default
     block_jst_hours: []
-    cooldown_win_sec: 12
-    cooldown_loss_sec: 30
-    same_dir_reentry_pips: 0.4
+    cooldown_win_sec: 8
+    cooldown_loss_sec: 20
+    same_dir_reentry_pips: 0.2
     same_dir_mode: both
-    max_open_trades: 3
-    max_open_trades_hard: 6
+    max_open_trades: 4
+    max_open_trades_hard: 8
     max_open_adverse_pips: 8.0
     max_open_avg_adverse_pips: 4.0
-    stack_reentry_pips: 2.5
+    stack_reentry_pips: 1.5
   TickImbalance:
     return_wait_bias: neutral
     return_wait_reason: default
