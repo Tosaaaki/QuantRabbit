@@ -11,6 +11,8 @@ import asyncio
 import datetime
 from collections import defaultdict
 import logging
+import os
+import time
 from typing import Awaitable, Callable, Dict, List, Literal, Tuple
 
 import httpx
@@ -38,6 +40,30 @@ REST_HOST = (
 HEADERS = {"Authorization": f"Bearer {TOKEN}"}
 
 
+def _env_bool(name: str, default: bool = False) -> bool:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    return str(raw).strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _env_float(name: str, default: float) -> float:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    try:
+        return float(raw)
+    except (TypeError, ValueError):
+        return default
+
+
+ORDERBOOK_DEBUG_LOG = _env_bool("ORDERBOOK_DEBUG_LOG", default=False)
+ORDERBOOK_DEBUG_LOG_INTERVAL_SEC = max(
+    1.0,
+    _env_float("ORDERBOOK_DEBUG_LOG_INTERVAL_SEC", 30.0),
+)
+
+
 class CandleAggregator:
     def __init__(self, timeframes: List[TimeFrame], instrument: str):
         self.timeframes = timeframes
@@ -50,6 +76,9 @@ class CandleAggregator:
         self.live_subscribers: Dict[TimeFrame, List[Callable[[Candle], Awaitable[None]]]] = (
             defaultdict(list)
         )
+        # Keep live updates non-blocking: if a prior live update task is still running,
+        # skip enqueuing another one for that subscriber.
+        self._live_tasks: Dict[Tuple[TimeFrame, int], asyncio.Task[None]] = {}
 
     def subscribe(self, tf: TimeFrame, coro: Callable[[Candle], Awaitable[None]]):
         if tf in self.timeframes:
@@ -58,6 +87,17 @@ class CandleAggregator:
     def subscribe_live(self, tf: TimeFrame, coro: Callable[[Candle], Awaitable[None]]):
         if tf in self.timeframes:
             self.live_subscribers[tf].append(coro)
+
+    @staticmethod
+    def _log_live_task_done(task: asyncio.Task[None], tf: TimeFrame) -> None:
+        if task.cancelled():
+            return
+        try:
+            exc = task.exception()
+        except Exception:
+            return
+        if exc:
+            logging.debug("[candle] live subscriber failed tf=%s err=%s", tf, exc)
 
     def _get_key(self, tf: TimeFrame, ts: datetime.datetime) -> str:
         # normalize timeframe to handle stray whitespace / case
@@ -116,11 +156,16 @@ class CandleAggregator:
 
             live_candle = self.current_candles.get(tf)
             if live_candle:
-                for sub in self.live_subscribers[tf]:
-                    try:
-                        await sub(dict(live_candle))
-                    except Exception as exc:  # noqa: BLE001
-                        logging.debug("[candle] live subscriber failed tf=%s err=%s", tf, exc)
+                for idx, sub in enumerate(self.live_subscribers[tf]):
+                    task_key = (tf, idx)
+                    prev = self._live_tasks.get(task_key)
+                    if prev is not None and not prev.done():
+                        continue
+                    task = asyncio.create_task(sub(dict(live_candle)))
+                    task.add_done_callback(
+                        lambda done, tf=tf: self._log_live_task_done(done, tf)
+                    )
+                    self._live_tasks[task_key] = task
 
 
 # ------ 便利ラッパ ------
@@ -146,7 +191,10 @@ async def start_candle_stream(
         for tf in timeframes:
             agg.subscribe_live(tf, on_candle_live)
 
+    last_orderbook_log_mono = 0.0
+
     async def tick_cb(tick: Tick):
+        nonlocal last_orderbook_log_mono
         try:
             spread_monitor.update_from_tick(tick)
         except Exception as exc:  # noqa: BLE001
@@ -171,23 +219,24 @@ async def start_candle_stream(
                 provider="oanda-stream",
                 latency_ms=latency_ms,
             )
-            # Debug log every few seconds to verify orderbook updates
-            ts_mon = datetime.datetime.utcnow().timestamp()
-            if int(ts_mon) % 10 == 0:
-                snap = orderbook_state.get_latest()
-                if snap:
-                    try:
-                        print(
-                            "[orderbook] updated mid=%.3f spread=%.3f provider=%s latency=%.1fms"
-                            % (
-                                snap.mid,
-                                snap.spread,
-                                snap.provider or "oanda-stream",
-                                snap.latency_ms or -1.0,
+            if ORDERBOOK_DEBUG_LOG:
+                now_mono = time.monotonic()
+                if now_mono - last_orderbook_log_mono >= ORDERBOOK_DEBUG_LOG_INTERVAL_SEC:
+                    last_orderbook_log_mono = now_mono
+                    snap = orderbook_state.get_latest()
+                    if snap:
+                        try:
+                            logging.info(
+                                "[orderbook] updated mid=%.3f spread=%.3f provider=%s latency=%.1fms"
+                                % (
+                                    snap.mid,
+                                    snap.spread,
+                                    snap.provider or "oanda-stream",
+                                    snap.latency_ms or -1.0,
+                                )
                             )
-                        )
-                    except Exception:
-                        pass
+                        except Exception:
+                            pass
         except Exception as exc:  # noqa: BLE001
             print(f"[orderbook] failed to update snapshot: {exc}")
         await agg.on_tick(tick)
