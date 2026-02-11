@@ -370,3 +370,75 @@ def test_perf_guard_setup_strategy_override_relaxes_threshold(monkeypatch, tmp_p
 
     dec = perf_guard.is_allowed("Tag-A", "scalp", hour=current_hour, side="buy")
     assert dec.allowed is True
+
+
+def test_perf_guard_setup_strategy_override_global_fallback_with_prefix(
+    monkeypatch, tmp_path: Path
+) -> None:
+    db_path = tmp_path / "trades.db"
+    _init_trades_db(db_path)
+
+    now_dt = datetime.now(timezone.utc).replace(minute=0, second=0, microsecond=0)
+    now = now_dt.strftime("%Y-%m-%d %H:%M:%S")
+    current_hour = now_dt.hour
+    for _ in range(7):
+        _insert_trade(
+            db_path,
+            pocket="scalp",
+            strategy_tag="Tag-A",
+            close_reason="STOP_LOSS_ORDER",
+            pl_pips=-1.0,
+            close_time=now,
+            units=100.0,
+            micro_regime="trend",
+        )
+    for _ in range(3):
+        _insert_trade(
+            db_path,
+            pocket="scalp",
+            strategy_tag="Tag-A",
+            close_reason="TAKE_PROFIT_ORDER",
+            pl_pips=0.6,
+            close_time=now,
+            units=100.0,
+            micro_regime="trend",
+        )
+
+    perf_guard = _reload_perf_guard(
+        monkeypatch,
+        db_path=db_path,
+        env={
+            "PERF_GUARD_ENABLED": "0",
+            "M1SCALP_PERF_GUARD_ENABLED": "1",
+            "M1SCALP_PERF_GUARD_MODE": "block",
+            "M1SCALP_PERF_GUARD_LOOKBACK_DAYS": "3",
+            "M1SCALP_PERF_GUARD_MIN_TRADES": "50",
+            "M1SCALP_PERF_GUARD_PF_MIN": "1.0",
+            "M1SCALP_PERF_GUARD_WIN_MIN": "0.50",
+            "M1SCALP_PERF_GUARD_REGIME_FILTER": "0",
+            "M1SCALP_PERF_GUARD_RELAX_TAGS": "",
+            "M1SCALP_PERF_GUARD_FAILFAST_MIN_TRADES": "0",
+            "M1SCALP_PERF_GUARD_SL_LOSS_RATE_MAX_SCALP": "0",
+            "M1SCALP_PERF_GUARD_SETUP_ENABLED": "1",
+            "M1SCALP_PERF_GUARD_SETUP_USE_HOUR": "1",
+            "M1SCALP_PERF_GUARD_SETUP_USE_DIRECTION": "1",
+            "M1SCALP_PERF_GUARD_SETUP_USE_REGIME": "0",
+            "M1SCALP_PERF_GUARD_SETUP_MIN_TRADES": "10",
+            "M1SCALP_PERF_GUARD_SETUP_PF_MIN": "1.00",
+            "M1SCALP_PERF_GUARD_SETUP_WIN_MIN": "0.50",
+            "M1SCALP_PERF_GUARD_SETUP_AVG_PIPS_MIN": "0.00",
+            # global strategy override should still apply as fallback
+            "PERF_GUARD_SETUP_PF_MIN_STRATEGY_TAG_A": "0.20",
+            "PERF_GUARD_SETUP_WIN_MIN_STRATEGY_TAG_A": "0.25",
+            "PERF_GUARD_SETUP_AVG_PIPS_MIN_STRATEGY_TAG_A": "-0.60",
+        },
+    )
+
+    dec = perf_guard.is_allowed(
+        "Tag-A",
+        "scalp",
+        hour=current_hour,
+        side="buy",
+        env_prefix="M1SCALP",
+    )
+    assert dec.allowed is True
