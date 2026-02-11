@@ -377,6 +377,23 @@ _ENTRY_FACTOR_STALE_ALLOW_POCKETS = _env_csv_set(
     "micro,scalp,scalp_fast",
 )
 _EXIT_CONTEXT_ENABLED = _env_bool("ORDER_EXIT_CONTEXT_ENABLED", True)
+_EXIT_END_REVERSAL_ENABLED = _env_bool("EXIT_END_REVERSAL_ENABLED", True)
+_EXIT_END_REVERSAL_SCORE_MIN = max(0.0, min(1.0, _env_float("EXIT_END_REVERSAL_SCORE_MIN", 0.58)))
+_EXIT_END_REVERSAL_MIN_PROFIT_PIPS = max(0.0, _env_float("EXIT_END_REVERSAL_MIN_PROFIT_PIPS", 0.2))
+_EXIT_END_REVERSAL_MAX_FACTOR_AGE_SEC = max(0.0, _env_float("EXIT_END_REVERSAL_MAX_FACTOR_AGE_SEC", 150.0))
+_EXIT_END_REVERSAL_DEFAULT_REASONS = (
+    "take_profit",
+    "take_profit_zone",
+    "rsi_take",
+    "lock_floor",
+    "trail_take",
+    "trail_lock",
+    "profit_lock",
+    "lock_trail",
+    "near_be",
+    "range_timeout",
+    "candle_*",
+)
 
 # Strategy-level BE/TP protection overrides (YAML).
 try:  # optional dependency
@@ -619,6 +636,229 @@ def _min_profit_ratio_min_tp_pips(strategy_tag: Optional[str]) -> float:
     if value is None or value < 0:
         return 0.0
     return float(value)
+
+
+def _bounded01(value: float) -> float:
+    return max(0.0, min(1.0, float(value)))
+
+
+def _first_float(*values: object) -> Optional[float]:
+    for value in values:
+        parsed = _as_float(value)
+        if parsed is not None:
+            return parsed
+    return None
+
+
+def _reason_tokens(raw: object, fallback: tuple[str, ...]) -> list[str]:
+    if raw is None:
+        return [str(token) for token in fallback]
+    if isinstance(raw, (list, tuple, set)):
+        items = [str(item).strip() for item in raw if str(item).strip()]
+    else:
+        items = [item.strip() for item in str(raw).split(",") if item.strip()]
+    return items or [str(token) for token in fallback]
+
+
+def _end_reversal_policy(strategy_tag: Optional[str]) -> dict[str, Any]:
+    cfg = _load_strategy_protection_config()
+    defaults = cfg.get("defaults") if isinstance(cfg, dict) else {}
+    merged: dict[str, Any] = {}
+    defaults_cfg = defaults.get("end_reversal_exit") if isinstance(defaults, dict) else None
+    if isinstance(defaults_cfg, dict):
+        merged.update(defaults_cfg)
+    override = _strategy_override(cfg, strategy_tag)
+    override_cfg = override.get("end_reversal_exit") if isinstance(override, dict) else None
+    if isinstance(override_cfg, dict):
+        merged.update(override_cfg)
+
+    score_min = _as_float(merged.get("score_min"), _EXIT_END_REVERSAL_SCORE_MIN)
+    min_profit_pips = _as_float(merged.get("min_profit_pips"), _EXIT_END_REVERSAL_MIN_PROFIT_PIPS)
+    max_factor_age_sec = _as_float(
+        merged.get("max_factor_age_sec"),
+        _EXIT_END_REVERSAL_MAX_FACTOR_AGE_SEC,
+    )
+    rsi_center = _as_float(merged.get("rsi_center"), 35.0)
+    rsi_band = _as_float(merged.get("rsi_band"), 12.0)
+    adx_center = _as_float(merged.get("adx_center"), 24.0)
+    adx_band = _as_float(merged.get("adx_band"), 12.0)
+    gap_ref_pips = _as_float(merged.get("gap_ref_pips"), 8.0)
+    gap_band_pips = _as_float(merged.get("gap_band_pips"), 10.0)
+    vwap_ref = _as_float(merged.get("vwap_ref"), 16.0)
+    slope_ref_pips = _as_float(merged.get("slope_ref_pips"), 6.0)
+
+    return {
+        "enabled": _coerce_bool(merged.get("enabled"), _EXIT_END_REVERSAL_ENABLED),
+        "score_min": _bounded01(score_min if score_min is not None else _EXIT_END_REVERSAL_SCORE_MIN),
+        "min_profit_pips": max(0.0, min_profit_pips if min_profit_pips is not None else _EXIT_END_REVERSAL_MIN_PROFIT_PIPS),
+        "max_factor_age_sec": max(0.0, max_factor_age_sec if max_factor_age_sec is not None else _EXIT_END_REVERSAL_MAX_FACTOR_AGE_SEC),
+        "reasons": _reason_tokens(merged.get("reasons"), _EXIT_END_REVERSAL_DEFAULT_REASONS),
+        "rsi_center": max(1.0, rsi_center if rsi_center is not None else 35.0),
+        "rsi_band": max(0.5, rsi_band if rsi_band is not None else 12.0),
+        "adx_center": max(1.0, adx_center if adx_center is not None else 24.0),
+        "adx_band": max(0.5, adx_band if adx_band is not None else 12.0),
+        "gap_ref_pips": max(0.1, gap_ref_pips if gap_ref_pips is not None else 8.0),
+        "gap_band_pips": max(0.1, gap_band_pips if gap_band_pips is not None else 10.0),
+        "vwap_ref": max(0.1, vwap_ref if vwap_ref is not None else 16.0),
+        "slope_ref_pips": max(0.1, slope_ref_pips if slope_ref_pips is not None else 6.0),
+    }
+
+
+def _exit_end_reversal_eval(
+    *,
+    exit_reason: Optional[str],
+    strategy_tag: Optional[str],
+    units_ctx: int,
+    est_pips: Optional[float],
+    exit_context: Optional[dict],
+    instrument: Optional[str],
+    policy: Optional[dict[str, Any]] = None,
+) -> dict[str, Any]:
+    cfg = dict(policy) if isinstance(policy, dict) else _end_reversal_policy(strategy_tag)
+    enabled = bool(cfg.get("enabled"))
+    reason_tokens = list(cfg.get("reasons") or [])
+    reason_match = _reason_matches_tokens(exit_reason, reason_tokens)
+    min_profit_pips = float(cfg.get("min_profit_pips") or 0.0)
+    score_min = _bounded01(float(cfg.get("score_min") or 0.0))
+    factor_age = _as_float((exit_context or {}).get("factor_age_m1_sec"))
+    max_age = max(0.0, float(cfg.get("max_factor_age_sec") or 0.0))
+    side = "long" if units_ctx > 0 else ("short" if units_ctx < 0 else "flat")
+    pip = 0.01 if str(instrument or "").upper().endswith("_JPY") else 0.0001
+
+    result: dict[str, Any] = {
+        "enabled": enabled,
+        "triggered": False,
+        "score": 0.0,
+        "score_min": score_min,
+        "side": side,
+        "reason": exit_reason,
+        "reason_match": reason_match,
+        "min_profit_pips": min_profit_pips,
+        "est_pips": _as_float(est_pips),
+        "components": {},
+    }
+    if not enabled:
+        result["state"] = "disabled"
+        return result
+    if side == "flat":
+        result["state"] = "no_units"
+        return result
+    if not reason_match:
+        result["state"] = "reason_mismatch"
+        return result
+    if est_pips is None or est_pips < min_profit_pips:
+        result["state"] = "insufficient_profit"
+        return result
+    if max_age > 0 and factor_age is not None and factor_age > max_age:
+        result["state"] = "stale_factors"
+        result["factor_age_m1_sec"] = factor_age
+        return result
+
+    factors = (exit_context or {}).get("factors") if isinstance(exit_context, dict) else None
+    if not isinstance(factors, dict):
+        result["state"] = "missing_factors"
+        return result
+
+    def _f(tf: str, key: str) -> Optional[float]:
+        bucket = factors.get(tf)
+        if not isinstance(bucket, dict):
+            return None
+        return _as_float(bucket.get(key))
+
+    rsi = _first_float(_f("M1", "rsi"), _f("M5", "rsi"), _f("H1", "rsi"))
+    adx = _first_float(_f("M1", "adx"), _f("M5", "adx"), _f("H1", "adx"))
+    vwap_gap = _first_float(_f("M1", "vwap_gap"), _f("M5", "vwap_gap"))
+    ma10_m1 = _f("M1", "ma10")
+    ma20_m1 = _f("M1", "ma20")
+    ma10_m5 = _f("M5", "ma10")
+    ma20_m5 = _f("M5", "ma20")
+    gap_m1 = None if ma10_m1 is None or ma20_m1 is None else (ma10_m1 - ma20_m1) / pip
+    gap_m5 = None if ma10_m5 is None or ma20_m5 is None else (ma10_m5 - ma20_m5) / pip
+
+    rsi_center = float(cfg.get("rsi_center") or 35.0)
+    rsi_band = max(0.5, float(cfg.get("rsi_band") or 12.0))
+    if rsi is not None:
+        if side == "short":
+            rsi_component = _bounded01((rsi_center - rsi) / rsi_band)
+        else:
+            rsi_component = _bounded01((rsi - (100.0 - rsi_center)) / rsi_band)
+    else:
+        rsi_component = None
+
+    gap_ref = max(0.1, float(cfg.get("gap_ref_pips") or 8.0))
+    gap_band = max(0.1, float(cfg.get("gap_band_pips") or 10.0))
+    if gap_m1 is not None:
+        if side == "short":
+            gap_component_m1 = _bounded01((gap_m1 + gap_ref) / gap_band)
+        else:
+            gap_component_m1 = _bounded01(((-gap_m1) + gap_ref) / gap_band)
+    else:
+        gap_component_m1 = None
+    if gap_m5 is not None:
+        if side == "short":
+            gap_component_m5 = _bounded01((gap_m5 + gap_ref) / gap_band)
+        else:
+            gap_component_m5 = _bounded01(((-gap_m5) + gap_ref) / gap_band)
+    else:
+        gap_component_m5 = None
+    if gap_component_m1 is not None and gap_component_m5 is not None:
+        gap_component = 0.6 * gap_component_m1 + 0.4 * gap_component_m5
+    elif gap_component_m1 is not None:
+        gap_component = gap_component_m1
+    else:
+        gap_component = gap_component_m5
+
+    adx_center = max(1.0, float(cfg.get("adx_center") or 24.0))
+    adx_band = max(0.5, float(cfg.get("adx_band") or 12.0))
+    adx_component = None if adx is None else _bounded01((adx_center - adx) / adx_band)
+
+    vwap_ref = max(0.1, float(cfg.get("vwap_ref") or 16.0))
+    vwap_component = None if vwap_gap is None else _bounded01(1.0 - abs(vwap_gap) / vwap_ref)
+
+    slope_ref = max(0.1, float(cfg.get("slope_ref_pips") or 6.0))
+    slope_component = None
+    if gap_m1 is not None and gap_m5 is not None:
+        if side == "short":
+            slope_component = _bounded01((gap_m1 - gap_m5) / slope_ref)
+        else:
+            slope_component = _bounded01((gap_m5 - gap_m1) / slope_ref)
+
+    weighted_components = {
+        "rsi": (rsi_component, 0.32),
+        "gap": (gap_component, 0.30),
+        "adx": (adx_component, 0.18),
+        "vwap": (vwap_component, 0.10),
+        "slope": (slope_component, 0.10),
+    }
+    score_num = 0.0
+    score_den = 0.0
+    components: dict[str, Any] = {
+        "rsi": rsi,
+        "adx": adx,
+        "vwap_gap": vwap_gap,
+        "gap_pips_m1": gap_m1,
+        "gap_pips_m5": gap_m5,
+    }
+    for key, (value, weight) in weighted_components.items():
+        if value is None:
+            continue
+        score_num += float(value) * weight
+        score_den += weight
+        components[f"{key}_score"] = round(float(value), 6)
+    if score_den <= 0.0:
+        result["state"] = "insufficient_signals"
+        result["components"] = components
+        return result
+
+    score = _bounded01(score_num / score_den)
+    triggered = bool(score >= score_min)
+    result["score"] = round(score, 6)
+    result["triggered"] = triggered
+    result["state"] = "triggered" if triggered else "below_threshold"
+    result["components"] = components
+    if factor_age is not None:
+        result["factor_age_m1_sec"] = round(float(factor_age), 3)
+    return result
 
 
 def _hold_until_profit_config() -> dict:
@@ -3712,10 +3952,66 @@ async def close_trade(
         mid=mid,
     )
     pl: Optional[float] = None
+    end_reversal = _exit_end_reversal_eval(
+        exit_reason=exit_reason,
+        strategy_tag=strategy_tag,
+        units_ctx=units_ctx,
+        est_pips=est_pips,
+        exit_context=exit_context,
+        instrument=instrument,
+    )
+    if isinstance(exit_context, dict):
+        exit_context["end_reversal"] = end_reversal
+    bypass_gates: set[str] = set()
+
+    def _log_end_reversal_bypass(gate: str, payload: dict) -> None:
+        if gate in bypass_gates:
+            return
+        bypass_gates.add(gate)
+        score = _as_float(end_reversal.get("score"), 0.0) or 0.0
+        log_metric(
+            "close_guard_bypass_end_reversal",
+            float(est_pips if est_pips is not None else 0.0),
+            tags={
+                "trade_id": str(trade_id),
+                "pocket": str(pocket or "unknown"),
+                "strategy": str(strategy_tag or "unknown"),
+                "gate": gate,
+                "exit_reason": str(exit_reason or "unknown"),
+                "score": f"{score:.3f}",
+            },
+        )
+        _console_order_log(
+            "CLOSE_BYPASS",
+            pocket=pocket,
+            strategy_tag=strategy_tag,
+            side=None,
+            units=units,
+            sl_price=None,
+            tp_price=None,
+            client_order_id=client_order_id,
+            ticket_id=str(trade_id),
+            note=f"{gate}:end_reversal",
+        )
+        _log_order(
+            pocket=pocket,
+            instrument=instrument,
+            side=None,
+            units=units,
+            sl_price=None,
+            tp_price=None,
+            client_order_id=client_order_id,
+            status="close_guard_bypass_end_reversal",
+            attempt=0,
+            ticket_id=str(trade_id),
+            executed_price=None,
+            request_payload=_with_exit_reason(payload),
+        )
     if min_profit_pips is not None:
         if est_pips is not None and est_pips >= 0 and est_pips < min_profit_pips:
             emergency_allow = _should_allow_negative_close(client_order_id)
-            if not emergency_allow and not _reason_force_allow(exit_reason):
+            bypass_by_end_reversal = bool(end_reversal.get("triggered"))
+            if not emergency_allow and not _reason_force_allow(exit_reason) and not bypass_by_end_reversal:
                 log_metric(
                     "close_blocked_profit_buffer",
                     float(est_pips),
@@ -3758,6 +4054,19 @@ async def close_trade(
                     ),
                 )
                 return False
+            if bypass_by_end_reversal and not emergency_allow and not _reason_force_allow(exit_reason):
+                _log_end_reversal_bypass(
+                    "profit_buffer",
+                    {
+                        "trade_id": trade_id,
+                        "data": {
+                            "gate": "profit_buffer",
+                            "min_profit_pips": min_profit_pips,
+                            "est_pips": est_pips,
+                            "end_reversal": end_reversal,
+                        },
+                    },
+                )
     ratio = _min_profit_ratio(pocket, strategy_tag)
     if ratio is not None and ratio > 0:
         ratio_reasons = _min_profit_ratio_reasons(strategy_tag)
@@ -3770,7 +4079,8 @@ async def close_trade(
                     min_ratio_pips = tp_pips * ratio
                     if est_pips < min_ratio_pips:
                         emergency_allow = _should_allow_negative_close(client_order_id)
-                        if not emergency_allow and not _reason_force_allow(exit_reason):
+                        bypass_by_end_reversal = bool(end_reversal.get("triggered"))
+                        if not emergency_allow and not _reason_force_allow(exit_reason) and not bypass_by_end_reversal:
                             log_metric(
                                 "close_blocked_profit_ratio",
                                 float(est_pips),
@@ -3819,6 +4129,21 @@ async def close_trade(
                                 ),
                             )
                             return False
+                        if bypass_by_end_reversal and not emergency_allow and not _reason_force_allow(exit_reason):
+                            _log_end_reversal_bypass(
+                                "profit_ratio",
+                                {
+                                    "trade_id": trade_id,
+                                    "data": {
+                                        "gate": "profit_ratio",
+                                        "min_ratio": ratio,
+                                        "tp_pips": round(tp_pips, 3),
+                                        "min_ratio_pips": round(min_ratio_pips, 3),
+                                        "est_pips": est_pips,
+                                        "end_reversal": end_reversal,
+                                    },
+                                },
+                            )
     hold_match, hold_min_pips, hold_strict = _hold_until_profit_match(trade_id, client_order_id)
     if hold_match:
         profit_ok = False
@@ -5627,6 +5952,103 @@ async def market_order(
                             "scale": f"{fc_decision.scale:.2f}",
                         },
                     )
+            edge_strength = max(0.0, min(1.0, (float(fc_decision.edge) - 0.5) / 0.5))
+            tp_hint = _as_float(fc_decision.tp_pips_hint)
+            sl_cap = _as_float(fc_decision.sl_pips_cap)
+            rr_floor = _as_float(fc_decision.rr_floor)
+            base_tp_hint = thesis_tp_pips
+            base_sl_hint = thesis_sl_pips
+
+            if isinstance(entry_thesis, dict):
+                entry_thesis = dict(entry_thesis)
+            elif any(v is not None for v in (tp_hint, sl_cap, rr_floor)):
+                entry_thesis = {}
+            if isinstance(entry_thesis, dict):
+                forecast_meta = dict(entry_thesis.get("forecast") or {})
+                forecast_meta.update(
+                    {
+                        "reason": fc_decision.reason,
+                        "horizon": fc_decision.horizon,
+                        "source": fc_decision.source,
+                        "style": fc_decision.style,
+                        "edge": round(float(fc_decision.edge), 6),
+                        "p_up": round(float(fc_decision.p_up), 6),
+                        "trend_strength": (
+                            round(float(fc_decision.trend_strength), 6)
+                            if fc_decision.trend_strength is not None
+                            else None
+                        ),
+                        "range_pressure": (
+                            round(float(fc_decision.range_pressure), 6)
+                            if fc_decision.range_pressure is not None
+                            else None
+                        ),
+                        "expected_pips": (
+                            round(float(fc_decision.expected_pips), 4)
+                            if fc_decision.expected_pips is not None
+                            else None
+                        ),
+                        "feature_ts": fc_decision.feature_ts,
+                        "edge_strength": round(edge_strength, 6),
+                    }
+                )
+                if tp_hint is not None and tp_hint > 0.0:
+                    forecast_meta["tp_pips_hint"] = round(float(tp_hint), 4)
+                if sl_cap is not None and sl_cap > 0.0:
+                    forecast_meta["sl_pips_cap"] = round(float(sl_cap), 4)
+                if rr_floor is not None and rr_floor > 0.0:
+                    forecast_meta["rr_floor"] = round(float(rr_floor), 4)
+                entry_thesis["forecast"] = forecast_meta
+
+            if tp_hint is not None and tp_hint > 0.0:
+                blend = max(0.25, min(0.9, 0.35 + 0.45 * edge_strength))
+                if thesis_tp_pips is None or thesis_tp_pips <= 0.0:
+                    thesis_tp_pips = float(tp_hint)
+                else:
+                    thesis_tp_pips = (1.0 - blend) * float(thesis_tp_pips) + blend * float(tp_hint)
+                thesis_tp_pips = max(0.5, float(thesis_tp_pips))
+
+            if sl_cap is not None and sl_cap > 0.0 and thesis_sl_pips is not None and thesis_sl_pips > sl_cap:
+                thesis_sl_pips = float(sl_cap)
+
+            if (
+                rr_floor is not None
+                and rr_floor > 0.0
+                and thesis_sl_pips is not None
+                and thesis_tp_pips is not None
+            ):
+                min_tp = float(thesis_sl_pips) * float(rr_floor)
+                if thesis_tp_pips < min_tp:
+                    thesis_tp_pips = min_tp
+
+            if isinstance(entry_thesis, dict):
+                if thesis_tp_pips is not None and thesis_tp_pips > 0.0:
+                    entry_thesis["tp_pips"] = round(float(thesis_tp_pips), 3)
+                if thesis_sl_pips is not None and thesis_sl_pips > 0.0:
+                    entry_thesis["sl_pips"] = round(float(thesis_sl_pips), 3)
+                entry_thesis["forecast_execution"] = {
+                    "tp_before": round(float(base_tp_hint), 4) if base_tp_hint is not None else None,
+                    "tp_after": round(float(thesis_tp_pips), 4) if thesis_tp_pips is not None else None,
+                    "sl_before": round(float(base_sl_hint), 4) if base_sl_hint is not None else None,
+                    "sl_after": round(float(thesis_sl_pips), 4) if thesis_sl_pips is not None else None,
+                    "tp_hint": round(float(tp_hint), 4) if tp_hint is not None else None,
+                    "sl_cap": round(float(sl_cap), 4) if sl_cap is not None else None,
+                    "rr_floor": round(float(rr_floor), 4) if rr_floor is not None else None,
+                    "edge_strength": round(edge_strength, 6),
+                }
+
+            if base_tp_hint != thesis_tp_pips or base_sl_hint != thesis_sl_pips:
+                log_metric(
+                    "order_forecast_exec_profile",
+                    1.0,
+                    tags={
+                        "pocket": pocket,
+                        "strategy": str(strategy_tag or "unknown"),
+                        "horizon": fc_decision.horizon,
+                        "source": str(fc_decision.source or "unknown"),
+                        "style": str(fc_decision.style or "n/a"),
+                    },
+                )
 
     exec_cfg = None
     if isinstance(entry_thesis, dict):

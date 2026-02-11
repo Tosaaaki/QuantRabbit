@@ -61,6 +61,34 @@ defaults:
     - profit_lock
     - lock_trail
     - near_be
+  end_reversal_exit:
+    # Allow early profit-taking when trend exhaustion signs cluster (to catch small rebounds).
+    enabled: true
+    score_min: 0.58
+    min_profit_pips: 0.2
+    max_factor_age_sec: 150
+    reasons:
+      - take_profit
+      - take_profit_zone
+      - rsi_take
+      - lock_floor
+      - trail_take
+      - trail_lock
+      - profit_lock
+      - lock_trail
+      - near_be
+      - range_timeout
+      - candle_*
+    # Score components are normalized in order_manager:
+    # RSI extreme, MA gap compression, ADX cooldown, VWAP gap compression, M1-M5 gap slope.
+    rsi_center: 35.0
+    rsi_band: 12.0
+    adx_center: 24.0
+    adx_band: 12.0
+    gap_ref_pips: 8.0
+    gap_band_pips: 10.0
+    vwap_ref: 16.0
+    slope_ref_pips: 6.0
   be_profile:
     macro: {trigger_pips: 6.8, lock_ratio: 0.55, min_lock_pips: 2.6, cooldown_sec: 90}
     micro: {trigger_pips: 2.2, lock_ratio: 0.50, min_lock_pips: 0.60, cooldown_sec: 45}
