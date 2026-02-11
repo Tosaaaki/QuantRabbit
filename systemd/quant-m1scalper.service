@@ -1,0 +1,25 @@
+[Unit]
+Description=QuantRabbit M1Scalper Worker
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/tossaki/QuantRabbit
+Environment="PYTHONUNBUFFERED=1"
+Environment="FORECAST_GATE_ENABLED=0"
+Environment="M1SCALP_ALLOWED_REGIMES=range,trend,breakout"
+Environment="M1SCALP_USE_LIMIT_ENTRY=0"
+Environment="M1SCALP_HTF_BLOCK_COUNTER=0"
+Environment="M1SCALP_ENV_TICK_GAP_MS_LIMIT=900"
+Environment="M1SCALP_ENV_TICK_GAP_MOVE_PIPS=1.2"
+Environment="M1SCALP_COOLDOWN_SEC=45"
+Environment="M1SCALP_MAX_OPEN_TRADES=2"
+Environment="M1SCALP_BASE_UNITS=10000"
+EnvironmentFile=-/etc/quantrabbit.env
+ExecStart=/home/tossaki/QuantRabbit/.venv/bin/python -m workers.scalp_m1scalper.worker
+Restart=always
+RestartSec=5
+User=tossaki
+
+[Install]
+WantedBy=multi-user.target

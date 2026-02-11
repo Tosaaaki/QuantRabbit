@@ -288,17 +288,17 @@ strategies:
       loss_cut_cooldown_sec: 6
 
   MicroLevelReactor:
-    be_profile: {trigger_pips: 1.7, lock_ratio: 0.50, min_lock_pips: 0.60, cooldown_sec: 35}
-    tp_move: {trigger_pips: 1.4, buffer_pips: 0.9}
+    be_profile: {trigger_pips: 1.4, lock_ratio: 0.56, min_lock_pips: 0.65, cooldown_sec: 30}
+    tp_move: {trigger_pips: 1.2, buffer_pips: 0.8}
     pro_stop: {soft_atr_mult: 0.7, hard_atr_mult: 1.2}
     exit_profile:
       loss_cut_enabled: true
       loss_cut_require_sl: false
       loss_cut_soft_pips: 0.0
       loss_cut_hard_pips: 0.0
-      loss_cut_hard_sl_mult: 1.35
-      loss_cut_max_hold_sec: 1800
-      loss_cut_cooldown_sec: 6
+      loss_cut_hard_sl_mult: 1.55
+      loss_cut_max_hold_sec: 2100
+      loss_cut_cooldown_sec: 8
 
   mirror_spike:
     pro_stop: {soft_pips: 5.22, hard_pips: 11.69, min_hold_sec: 660, max_hold_sec: 1979, soft_atr_mult: 0.6, hard_atr_mult: 1.0}
