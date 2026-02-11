@@ -47,6 +47,21 @@ def test_technical_prediction_direction_changes_with_trend() -> None:
     assert float(down_row["p_up"]) < 0.5
 
 
+def test_technical_prediction_projection_score_tracks_direction() -> None:
+    up = _synthetic_candles(n=520, freq="5min", drift=0.0032)
+    down = _synthetic_candles(n=520, freq="5min", drift=-0.0032)
+
+    up_row = forecast_gate._technical_prediction_for_horizon(up, horizon="1h", step_bars=12)
+    down_row = forecast_gate._technical_prediction_for_horizon(down, horizon="1h", step_bars=12)
+
+    assert isinstance(up_row, dict)
+    assert isinstance(down_row, dict)
+    assert float(up_row.get("projection_score") or 0.0) > 0.0
+    assert float(down_row.get("projection_score") or 0.0) < 0.0
+    assert 0.0 <= float(up_row.get("projection_confidence") or 0.0) <= 1.0
+    assert 0.0 <= float(down_row.get("projection_confidence") or 0.0) <= 1.0
+
+
 def test_decide_blocks_opposite_side_when_only_technical_source_available(monkeypatch) -> None:
     candles_m5 = _synthetic_candles(n=600, freq="5min", drift=0.0025)
     candles_h1 = _synthetic_candles(n=520, freq="1h", drift=0.018)
@@ -188,3 +203,32 @@ def test_decide_uses_strategy_specific_style_override(monkeypatch) -> None:
     assert decision.allowed is False
     assert decision.reason == "style_mismatch_range"
     assert decision.style == "range"
+
+
+def test_decide_projection_penalty_blocks_borderline_edge(monkeypatch) -> None:
+    monkeypatch.setattr(forecast_gate, "_load_bundle_cached", lambda: None)
+    monkeypatch.setattr(
+        forecast_gate,
+        "_ensure_predictions",
+        lambda bundle: {
+            "1d": {
+                "p_up": 0.46,
+                "expected_pips": -0.4,
+                "source": "technical",
+                "trend_strength": 0.78,
+                "range_pressure": 0.22,
+                "projection_score": -1.0,
+                "projection_confidence": 0.9,
+            }
+        },
+    )
+    decision = forecast_gate.decide(
+        strategy_tag="TrendMA",
+        pocket="macro",
+        side="buy",
+        units=20_000,
+        meta={"instrument": "USD_JPY"},
+    )
+    assert decision is not None
+    assert decision.allowed is False
+    assert decision.reason == "edge_block"

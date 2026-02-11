@@ -63,6 +63,11 @@ _AUTO_BLEND_TECH = max(0.0, min(1.0, _env_float("FORECAST_GATE_AUTO_BLEND_TECH",
 _TECH_ENABLED = _env_bool("FORECAST_TECH_ENABLED", True)
 _TECH_SCORE_GAIN = max(0.1, _env_float("FORECAST_TECH_SCORE_GAIN", 1.0))
 _TECH_PROB_STRENGTH = max(0.0, min(1.0, _env_float("FORECAST_TECH_PROB_STRENGTH", 0.75)))
+_TECH_PROJECTION_WEIGHT = max(
+    0.0,
+    min(1.2, _env_float("FORECAST_TECH_PROJECTION_WEIGHT", 0.38)),
+)
+_TECH_PROJECTION_GAIN = max(0.1, _env_float("FORECAST_TECH_PROJECTION_GAIN", 1.0))
 _STYLE_GUARD_ENABLED = _env_bool("FORECAST_GATE_STYLE_GUARD_ENABLED", True)
 _STYLE_TREND_MIN_STRENGTH = max(
     0.0, min(1.0, _env_float("FORECAST_GATE_STYLE_TREND_MIN_STRENGTH", 0.52))
@@ -81,6 +86,14 @@ _EDGE_BLOCK_RANGE = max(
 _EDGE_BAD = max(0.0, min(1.0, _env_float("FORECAST_GATE_EDGE_BAD", 0.45)))
 _EDGE_REF = max(0.0, min(1.0, _env_float("FORECAST_GATE_EDGE_REF", 0.55)))
 _SCALE_MIN = max(0.0, min(1.0, _env_float("FORECAST_GATE_SCALE_MIN", 0.5)))
+_EDGE_PROJECTION_BONUS = max(
+    0.0,
+    min(0.3, _env_float("FORECAST_GATE_PROJECTION_EDGE_BONUS", 0.08)),
+)
+_EDGE_PROJECTION_PENALTY = max(
+    0.0,
+    min(0.4, _env_float("FORECAST_GATE_PROJECTION_EDGE_PENALTY", 0.12)),
+)
 
 _REQUIRE_FRESH = _env_bool("FORECAST_GATE_REQUIRE_FRESH", False)
 _MAX_AGE_SEC = max(1.0, _env_float("FORECAST_GATE_MAX_AGE_SEC", 120.0))
@@ -118,6 +131,7 @@ _HORIZON_META_DEFAULT = {
     "1w": {"timeframe": "D1", "step_bars": 5},
     "1m": {"timeframe": "D1", "step_bars": 21},
 }
+_TF_MINUTES = {"M1": 1.0, "M5": 5.0, "H1": 60.0, "H4": 240.0, "D1": 1440.0}
 _TECH_HORIZON_CFG = {
     # shorter horizons allow more mean-reversion influence
     "1h": {"trend_w": 0.56, "mr_w": 0.44, "temp": 1.35},
@@ -381,11 +395,151 @@ def _predict_bundle_latest(bundle, candles_by_tf: dict[str, list[dict]]) -> dict
     return out
 
 
+def _timeframe_minutes(timeframe: str) -> float:
+    return float(_TF_MINUTES.get(str(timeframe or "").strip().upper(), 5.0))
+
+
+def _projection_bias_from_candles(
+    candles: list[dict],
+    *,
+    timeframe_minutes: float,
+    step_bars: int,
+    atr_pips: float,
+    trend_hint: float,
+) -> dict[str, Any]:
+    try:
+        from analysis.ma_projection import (
+            compute_adx_projection,
+            compute_bbw_projection,
+            compute_ma_projection,
+            compute_rsi_projection,
+        )
+    except Exception:
+        return {
+            "score": 0.0,
+            "confidence": 0.0,
+            "trend_boost": 0.0,
+            "range_boost": 0.0,
+            "components": {},
+        }
+
+    if not candles or len(candles) < 30:
+        return {
+            "score": 0.0,
+            "confidence": 0.0,
+            "trend_boost": 0.0,
+            "range_boost": 0.0,
+            "components": {},
+        }
+
+    try:
+        ma = compute_ma_projection({"candles": candles}, timeframe_minutes=timeframe_minutes)
+        rsi = compute_rsi_projection(candles, timeframe_minutes=timeframe_minutes)
+        adx = compute_adx_projection(
+            candles,
+            timeframe_minutes=timeframe_minutes,
+            trend_threshold=20.0,
+        )
+        bbw = compute_bbw_projection(
+            candles,
+            timeframe_minutes=timeframe_minutes,
+            squeeze_threshold=0.16,
+        )
+    except Exception as exc:
+        LOG.debug("[FORECAST] projection build failed: %s", exc)
+        return {
+            "score": 0.0,
+            "confidence": 0.0,
+            "trend_boost": 0.0,
+            "range_boost": 0.0,
+            "components": {},
+        }
+
+    score = 0.0
+    trend_boost = 0.0
+    range_boost = 0.0
+    components: dict[str, float] = {}
+    norm_atr = max(0.6, float(atr_pips or 0.0))
+
+    if ma is not None:
+        gap_norm = ma.gap_pips / max(1.0, norm_atr)
+        slope_norm = ma.gap_slope_pips / max(0.6, norm_atr * 0.45)
+        ma_score = 0.58 * math.tanh(gap_norm * 1.2) + 0.42 * math.tanh(slope_norm * 1.3)
+        cross_score = 0.0
+        if ma.projected_cross_bars is not None and ma.projected_cross_bars > 0.0:
+            horizon_eta = max(1.5, float(step_bars) * 0.28)
+            eta_scale = _clamp(1.0 - (float(ma.projected_cross_bars) / horizon_eta), 0.0, 1.0)
+            if ma.gap_pips < 0.0 and ma.gap_slope_pips > 0.0:
+                cross_score = 0.28 * eta_scale
+            elif ma.gap_pips > 0.0 and ma.gap_slope_pips < 0.0:
+                cross_score = -0.28 * eta_scale
+        ma_total = ma_score + cross_score
+        score += ma_total
+        trend_boost += 0.12 * abs(math.tanh(gap_norm * 1.1))
+        components["ma"] = round(ma_total, 6)
+
+    if rsi is not None:
+        rsi_center = (rsi.rsi - 50.0) / 17.0
+        rsi_slope = math.tanh(rsi.slope_per_bar / 1.9)
+        rsi_score = 0.55 * math.tanh(rsi_center) + 0.45 * rsi_slope
+        horizon_eta = max(2.0, float(step_bars) * 0.35)
+        exhaustion = 0.0
+        if rsi.eta_upper_bars is not None and rsi.eta_upper_bars <= horizon_eta:
+            exhaustion -= 0.18 * _clamp(1.0 - (rsi.eta_upper_bars / horizon_eta), 0.0, 1.0)
+        if rsi.eta_lower_bars is not None and rsi.eta_lower_bars <= horizon_eta:
+            exhaustion += 0.18 * _clamp(1.0 - (rsi.eta_lower_bars / horizon_eta), 0.0, 1.0)
+        rsi_total = 0.7 * (rsi_score + exhaustion)
+        score += rsi_total
+        components["rsi"] = round(rsi_total, 6)
+
+    if adx is not None:
+        adx_level = _clamp((adx.adx - 16.0) / 18.0, 0.0, 1.0)
+        adx_slope = math.tanh(adx.slope_per_bar / 2.2)
+        adx_total = 0.34 * adx_slope
+        score += adx_total
+        trend_boost += 0.18 * adx_level + 0.1 * max(0.0, adx_slope)
+        components["adx"] = round(adx_total, 6)
+
+    if bbw is not None:
+        squeeze = _clamp((0.16 - bbw.bbw) / 0.10, 0.0, 1.0)
+        expansion = max(0.0, math.tanh(bbw.slope_per_bar / 0.015))
+        quiet = _clamp(1.0 - expansion, 0.0, 1.0)
+        hint_sign = 0.0
+        if trend_hint > 0.05:
+            hint_sign = 1.0
+        elif trend_hint < -0.05:
+            hint_sign = -1.0
+        else:
+            hint_sign = 1.0 if score >= 0.0 else -1.0
+        bbw_total = 0.26 * hint_sign * squeeze * expansion
+        score += bbw_total
+        trend_boost += 0.1 * squeeze * expansion
+        range_boost += 0.16 * squeeze * quiet
+        components["bbw"] = round(bbw_total, 6)
+
+    score = math.tanh(score * float(_TECH_PROJECTION_GAIN))
+    trend_boost = _clamp(trend_boost, 0.0, 0.45)
+    range_boost = _clamp(range_boost, 0.0, 0.45)
+    confidence = _clamp(
+        0.25 + 0.55 * abs(score) + 0.2 * max(trend_boost, range_boost),
+        0.0,
+        1.0,
+    )
+    return {
+        "score": round(score, 6),
+        "confidence": round(confidence, 6),
+        "trend_boost": round(trend_boost, 6),
+        "range_boost": round(range_boost, 6),
+        "components": components,
+    }
+
+
 def _technical_prediction_for_horizon(
     candles: list[dict],
     *,
     horizon: str,
     step_bars: int,
+    timeframe: str = "M5",
 ) -> dict | None:
     if not candles:
         return None
@@ -428,6 +582,18 @@ def _technical_prediction_for_horizon(
         - 0.58 * math.tanh(range_pos * 1.4)
         - 0.42 * math.tanh(rsi * 1.1)
     )
+    trend_hint = math.tanh(trend_score * 0.8)
+    proj = _projection_bias_from_candles(
+        candles,
+        timeframe_minutes=_timeframe_minutes(timeframe),
+        step_bars=step_bars,
+        atr_pips=atr,
+        trend_hint=trend_hint,
+    )
+    projection_score = _safe_float(proj.get("score"), 0.0)
+    projection_confidence = _safe_float(proj.get("confidence"), 0.0)
+    trend_boost = _safe_float(proj.get("trend_boost"), 0.0)
+    range_boost = _safe_float(proj.get("range_boost"), 0.0)
 
     trend_strength = _clamp(
         0.18
@@ -437,12 +603,19 @@ def _technical_prediction_for_horizon(
         0.0,
         1.0,
     )
+    trend_strength = _clamp(
+        trend_strength + trend_boost - 0.35 * range_boost + 0.05 * abs(projection_score),
+        0.0,
+        1.0,
+    )
     range_pressure = _clamp(1.0 - trend_strength, 0.0, 1.0)
+    range_pressure = _clamp(range_pressure + 0.45 * range_boost - 0.15 * trend_boost, 0.0, 1.0)
 
     cfg = _TECH_HORIZON_CFG.get(horizon, _TECH_HORIZON_CFG["8h"])
     combo = (
         cfg["trend_w"] * trend_score * (1.0 - 0.55 * range_pressure)
         + cfg["mr_w"] * mean_revert_score * range_pressure
+        + _TECH_PROJECTION_WEIGHT * projection_score
     )
     raw_prob = _sigmoid(float(cfg["temp"]) * float(_TECH_SCORE_GAIN) * combo)
 
@@ -453,7 +626,7 @@ def _technical_prediction_for_horizon(
     p_up = _clamp(p_up, 0.02, 0.98)
 
     step_scale = math.sqrt(max(1.0, float(step_bars)) / 12.0)
-    expected_move = max(0.35, vol * step_scale)
+    expected_move = max(0.35, vol * step_scale * (0.92 + 0.25 * projection_confidence))
     expected_pips = (p_up - 0.5) * 2.0 * expected_move
 
     feature_ts = None
@@ -470,6 +643,9 @@ def _technical_prediction_for_horizon(
         "source": "technical",
         "trend_strength": round(float(trend_strength), 6),
         "range_pressure": round(float(range_pressure), 6),
+        "projection_score": round(float(projection_score), 6),
+        "projection_confidence": round(float(projection_confidence), 6),
+        "projection_components": proj.get("components"),
     }
 
 
@@ -485,6 +661,7 @@ def _predict_technical_latest(candles_by_tf: dict[str, list[dict]]) -> dict[str,
             candles,
             horizon=horizon,
             step_bars=step_bars,
+            timeframe=timeframe,
         )
         if isinstance(row, dict):
             preds[horizon] = row
@@ -499,12 +676,29 @@ def _blend_prediction_rows(base_row: dict, tech_row: dict) -> dict:
     p_tech = _safe_float(tech_row.get("p_up"), p_base)
     e_base = _safe_float(base_row.get("expected_pips"), 0.0)
     e_tech = _safe_float(tech_row.get("expected_pips"), e_base)
+    proj_base = _safe_float(
+        base_row.get("projection_score"),
+        _safe_float(tech_row.get("projection_score"), 0.0),
+    )
+    proj_tech = _safe_float(tech_row.get("projection_score"), proj_base)
+    proj_conf_base = _safe_float(
+        base_row.get("projection_confidence"),
+        _safe_float(tech_row.get("projection_confidence"), 0.0),
+    )
+    proj_conf_tech = _safe_float(tech_row.get("projection_confidence"), proj_conf_base)
     return {
         **base_row,
         "p_up": round((1.0 - alpha) * p_base + alpha * p_tech, 6),
         "expected_pips": round((1.0 - alpha) * e_base + alpha * e_tech, 4),
         "feature_ts": base_row.get("feature_ts") or tech_row.get("feature_ts"),
         "source": "blend",
+        "projection_score": round((1.0 - alpha) * proj_base + alpha * proj_tech, 6),
+        "projection_confidence": round(
+            (1.0 - alpha) * proj_conf_base + alpha * proj_conf_tech,
+            6,
+        ),
+        "projection_components": tech_row.get("projection_components")
+        or base_row.get("projection_components"),
         "trend_strength": round(
             (1.0 - alpha) * _safe_float(base_row.get("trend_strength"), _safe_float(tech_row.get("trend_strength"), 0.5))
             + alpha * _safe_float(tech_row.get("trend_strength"), 0.5),
@@ -627,6 +821,17 @@ def decide(
     side_key = (side or "").strip().lower()
     edge = p_up if side_key == "buy" or units > 0 else 1.0 - p_up
     edge = max(0.0, min(1.0, float(edge)))
+    projection_score = _safe_float(row.get("projection_score"), 0.0)
+    if projection_score != 0.0:
+        signed_alignment = projection_score if (side_key == "buy" or units > 0) else -projection_score
+        if signed_alignment > 0.0:
+            edge = _clamp(edge + _EDGE_PROJECTION_BONUS * min(1.0, signed_alignment), 0.0, 1.0)
+        elif signed_alignment < 0.0:
+            edge = _clamp(
+                edge - _EDGE_PROJECTION_PENALTY * min(1.0, abs(signed_alignment)),
+                0.0,
+                1.0,
+            )
 
     if style_guard_enabled and style == "trend" and trend_strength < trend_min_strength:
         log_metric(
