@@ -100,3 +100,38 @@ def test_trend_flip_still_applies_when_allowed(monkeypatch):
     }
     assert tp_mult == 1.12
     assert sl_mult == 0.95
+
+
+def test_mlr_strict_range_gate_blocks_without_range_context(monkeypatch):
+    monkeypatch.setattr(worker.config, "MLR_STRICT_RANGE_GATE", True)
+    monkeypatch.setattr(worker.config, "MLR_MIN_RANGE_SCORE", 0.62)
+    monkeypatch.setattr(worker.config, "MLR_MAX_ADX", 20.0)
+    monkeypatch.setattr(worker.config, "MLR_MAX_MA_GAP_PIPS", 2.2)
+
+    ok, diag = worker._mlr_strict_range_ok(
+        {"adx": 24.0, "ma10": 150.050, "ma20": 150.020},
+        range_active=False,
+        range_score=0.48,
+    )
+
+    assert ok is False
+    assert diag["adx"] == 24.0
+    assert diag["range_score"] == 0.48
+    assert diag["ma_gap_pips"] > 2.2
+
+
+def test_mlr_strict_range_gate_allows_strong_range_context(monkeypatch):
+    monkeypatch.setattr(worker.config, "MLR_STRICT_RANGE_GATE", True)
+    monkeypatch.setattr(worker.config, "MLR_MIN_RANGE_SCORE", 0.62)
+    monkeypatch.setattr(worker.config, "MLR_MAX_ADX", 20.0)
+    monkeypatch.setattr(worker.config, "MLR_MAX_MA_GAP_PIPS", 2.2)
+
+    ok, diag = worker._mlr_strict_range_ok(
+        {"adx": 16.0, "ma10": 150.023, "ma20": 150.010},
+        range_active=True,
+        range_score=0.70,
+    )
+
+    assert ok is True
+    assert diag["adx"] == 16.0
+    assert diag["range_active"] == 1.0

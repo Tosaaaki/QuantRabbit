@@ -578,6 +578,36 @@ def _strategy_list() -> List:
     return _allowed_strategies()
 
 
+def _mlr_strict_range_ok(
+    fac_m1: Dict,
+    *,
+    range_active: bool,
+    range_score: float,
+) -> tuple[bool, Dict[str, float]]:
+    if not config.MLR_STRICT_RANGE_GATE:
+        return True, {}
+
+    adx_val = _bb_float(fac_m1.get("adx")) or 0.0
+    ma_fast = _bb_float(fac_m1.get("ma10")) or _bb_float(fac_m1.get("ema10"))
+    ma_slow = _bb_float(fac_m1.get("ma20")) or _bb_float(fac_m1.get("ema20"))
+    ma_gap_pips = 0.0
+    if ma_fast is not None and ma_slow is not None:
+        ma_gap_pips = abs(ma_fast - ma_slow) / _BB_PIP
+
+    range_ready = bool(range_active) or range_score >= config.MLR_MIN_RANGE_SCORE
+    adx_ok = config.MLR_MAX_ADX <= 0.0 or adx_val <= config.MLR_MAX_ADX
+    ma_gap_ok = config.MLR_MAX_MA_GAP_PIPS <= 0.0 or ma_gap_pips <= config.MLR_MAX_MA_GAP_PIPS
+    allow = bool(range_ready and adx_ok and ma_gap_ok)
+
+    diag = {
+        "range_active": 1.0 if range_active else 0.0,
+        "range_score": float(range_score),
+        "adx": float(adx_val),
+        "ma_gap_pips": float(ma_gap_pips),
+    }
+    return allow, diag
+
+
 def _is_mr_signal(tag: str) -> bool:
     tag_str = (tag or "").strip()
     if not tag_str:
@@ -682,6 +712,7 @@ async def micro_multi_worker() -> None:
     last_trend_block_log = 0.0
     last_stale_log = 0.0
     last_perf_block_log = 0.0
+    last_mlr_block_log = 0.0
 
     while True:
         await asyncio.sleep(config.LOOP_INTERVAL_SEC)
@@ -781,6 +812,25 @@ async def micro_multi_worker() -> None:
                 continue
             if range_only and strategy_name not in _RANGE_STRATEGIES:
                 continue
+            if strategy_name == MicroLevelReactor.name:
+                mlr_ok, mlr_diag = _mlr_strict_range_ok(
+                    fac_m1,
+                    range_active=bool(range_ctx.active),
+                    range_score=range_score,
+                )
+                if not mlr_ok:
+                    now_mono = time.monotonic()
+                    if now_mono - last_mlr_block_log > 120.0:
+                        LOG.info(
+                            "%s mlr_range_gate_block active=%s score=%.3f adx=%.2f ma_gap=%.2f",
+                            config.LOG_PREFIX,
+                            bool(mlr_diag.get("range_active")),
+                            float(mlr_diag.get("range_score", 0.0)),
+                            float(mlr_diag.get("adx", 0.0)),
+                            float(mlr_diag.get("ma_gap_pips", 0.0)),
+                        )
+                        last_mlr_block_log = now_mono
+                    continue
             cand = strat.check(fac_m1)
             if not cand:
                 continue
