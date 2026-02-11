@@ -22,8 +22,6 @@ Environment=SCALP_PING_5S_TP_NET_MIN_PIPS=0.25
 Environment=SCALP_PING_5S_TP_MAX_PIPS=1.0
 Environment=SCALP_PING_5S_TP_MOMENTUM_BONUS_MAX=0.2
 Environment=SCALP_PING_5S_SL_BASE_PIPS=2.4
-Environment=ORDER_ENABLE_STOP_LOSS_SCALP_FAST=1
-Environment=ORDER_ALLOW_STOP_LOSS_WITH_EXIT_NO_NEGATIVE_CLOSE_SCALP_FAST=1
 ExecStart=/home/tossaki/QuantRabbit/.venv/bin/python -m workers.scalp_ping_5s.worker
 Restart=always
 RestartSec=5

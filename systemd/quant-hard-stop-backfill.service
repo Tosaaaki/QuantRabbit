@@ -9,7 +9,7 @@ EnvironmentFile=-/etc/quantrabbit.env
 Environment="PYTHONUNBUFFERED=1"
 # Attach a wide, catastrophe-only SL to agent-managed trades that currently have no SL.
 # Uses the existing script (tighten-only) and runs periodically.
-ExecStart=/usr/bin/env bash -lc 'set -euo pipefail; cd /home/tossaki/QuantRabbit; while true; do /home/tossaki/QuantRabbit/.venv/bin/python -m scripts.attach_hard_stop_sl --pockets scalp,scalp_fast,micro --min-sl-pips 12 --max-sl-pips 45 --fallback-sl-pips 24 --max-sl-to-tp-ratio 3.0 --apply; /home/tossaki/QuantRabbit/.venv/bin/python -m scripts.attach_hard_stop_sl --pockets macro --min-sl-pips 40 --max-sl-pips 120 --fallback-sl-pips 80 --max-sl-to-tp-ratio 4.0 --apply; sleep 60; done'
+ExecStart=/usr/bin/env bash -lc 'set -euo pipefail; cd /home/tossaki/QuantRabbit; while true; do /home/tossaki/QuantRabbit/.venv/bin/python -m scripts.attach_hard_stop_sl --pockets scalp,micro --min-sl-pips 12 --max-sl-pips 45 --fallback-sl-pips 24 --max-sl-to-tp-ratio 3.0 --apply; /home/tossaki/QuantRabbit/.venv/bin/python -m scripts.attach_hard_stop_sl --pockets macro --min-sl-pips 40 --max-sl-pips 120 --fallback-sl-pips 80 --max-sl-to-tp-ratio 4.0 --apply; sleep 60; done'
 Restart=always
 RestartSec=5
 User=tossaki
