@@ -1460,6 +1460,8 @@
             svg.addEventListener("wheel", (event) => {
               const info = getRangeInfo();
               if (!info) return;
+              // Keep normal page scrolling; zoom only with modifier keys.
+              if (!event.ctrlKey && !event.metaKey) return;
               event.preventDefault();
               const width = svg.clientWidth || 640;
               const localPad = { l: 42, r: 16, t: 18, b: 26 };
@@ -1748,6 +1750,8 @@
             svg.addEventListener("wheel", (event) => {
               const info = getRangeInfo();
               if (!info) return;
+              // Keep normal page scrolling; zoom only with modifier keys.
+              if (!event.ctrlKey && !event.metaKey) return;
               event.preventDefault();
               const width = svg.clientWidth || 640;
               const localPad = { l: 40, r: 16, t: 18, b: 26 };
