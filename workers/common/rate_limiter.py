@@ -1,6 +1,4 @@
-"""
-Simple sliding window rate limiter used by the FastScalp worker.
-"""
+"""Simple sliding-window rate limiter shared across workers."""
 
 from __future__ import annotations
 
@@ -36,4 +34,3 @@ class SlidingWindowRateLimiter:
         if not self._last_event:
             return float("inf")
         return time.monotonic() - self._last_event
-
