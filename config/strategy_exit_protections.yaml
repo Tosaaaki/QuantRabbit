@@ -245,7 +245,7 @@ strategies:
 
   MicroRangeBreak:
     min_profit_pips: 0.2
-    min_profit_ratio: 0.22
+    min_profit_ratio: 0.0
     be_profile: {trigger_pips: 1.8, lock_ratio: 0.50, min_lock_pips: 0.60, cooldown_sec: 35}
     tp_move: {trigger_pips: 1.5, buffer_pips: 0.9}
     pro_stop: {soft_pips: 3.4, hard_pips: 9.5, min_hold_sec: 203, max_hold_sec: 1760, soft_atr_mult: 0.8, hard_atr_mult: 1.4}
@@ -291,7 +291,7 @@ strategies:
 
   MicroLevelReactor:
     min_profit_pips: 0.2
-    min_profit_ratio: 0.22
+    min_profit_ratio: 0.0
     be_profile: {trigger_pips: 1.4, lock_ratio: 0.56, min_lock_pips: 0.65, cooldown_sec: 30}
     tp_move: {trigger_pips: 1.2, buffer_pips: 0.8}
     pro_stop: {soft_atr_mult: 0.7, hard_atr_mult: 1.2}
@@ -681,7 +681,7 @@ strategies:
       loss_cut_cooldown_sec: 5
   M1Scalper:
     min_profit_pips: 0.2
-    min_profit_ratio: 0.22
+    min_profit_ratio: 0.0
     min_profit_ratio_min_tp_pips: 0.8
     exit_profile:
       min_hold_sec: 2
