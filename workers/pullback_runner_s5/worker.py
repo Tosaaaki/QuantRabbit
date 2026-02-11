@@ -7,6 +7,7 @@ extends TP in steps when momentum/trend supports letting profits run.
 from __future__ import annotations
 from analysis.ma_projection import compute_adx_projection, compute_bbw_projection, compute_ma_projection, compute_rsi_projection
 from analysis.ma_projection import score_ma_for_side
+from analysis.mtf_heat import evaluate_mtf_heat
 from analysis.range_guard import detect_range_mode
 
 import asyncio
@@ -44,6 +45,9 @@ _BB_ENTRY_SCALP_REVERT_PIPS = env_float("BB_ENTRY_SCALP_REVERT_PIPS", 2.0, prefi
 _BB_ENTRY_SCALP_REVERT_RATIO = env_float("BB_ENTRY_SCALP_REVERT_RATIO", 0.20, prefix=_BB_ENV_PREFIX)
 _BB_ENTRY_SCALP_EXT_PIPS = env_float("BB_ENTRY_SCALP_EXT_PIPS", 2.4, prefix=_BB_ENV_PREFIX)
 _BB_ENTRY_SCALP_EXT_RATIO = env_float("BB_ENTRY_SCALP_EXT_RATIO", 0.30, prefix=_BB_ENV_PREFIX)
+_BB_ENTRY_RANGE_FORCE_REVERT = env_bool("BB_ENTRY_RANGE_FORCE_REVERT", True, prefix=_BB_ENV_PREFIX)
+_BB_ENTRY_RANGE_BREAK_PIPS = env_float("BB_ENTRY_RANGE_BREAK_PIPS", 1.2, prefix=_BB_ENV_PREFIX)
+_BB_ENTRY_RANGE_BREAK_RATIO = env_float("BB_ENTRY_RANGE_BREAK_RATIO", 0.12, prefix=_BB_ENV_PREFIX)
 _BB_PIP = 0.01
 
 
@@ -88,8 +92,18 @@ def _bb_entry_allowed(style, side, price, fac_m1, *, range_active=None):
     else:
         direction = "short"
     orig_style = style
-    if style == "scalp" and range_active:
-        style = "reversion"
+    if range_active and style != "reversion":
+        if _BB_ENTRY_RANGE_FORCE_REVERT:
+            break_threshold = max(0.0, _BB_ENTRY_RANGE_BREAK_PIPS, span_pips * max(0.0, _BB_ENTRY_RANGE_BREAK_RATIO))
+            break_px = break_threshold * _BB_PIP
+            breakout = (
+                (direction == "long" and price >= upper + break_px)
+                or (direction == "short" and price <= lower - break_px)
+            )
+            if not breakout:
+                style = "reversion"
+        elif style == "scalp":
+            style = "reversion"
     if style == "reversion":
         base_pips = _BB_ENTRY_SCALP_REVERT_PIPS if orig_style == "scalp" else _BB_ENTRY_REVERT_PIPS
         base_ratio = _BB_ENTRY_SCALP_REVERT_RATIO if orig_style == "scalp" else _BB_ENTRY_REVERT_RATIO
@@ -410,22 +424,35 @@ async def _runner_loop() -> None:
                 continue
             regime_block_logged = None
 
+            # Range context is reused by BB edge guard even when full range block is disabled.
+            fac_for_range = all_factors()
+            fac_m1_range = fac_for_range.get("M1") or {}
+            fac_h4_range = fac_for_range.get("H4") or {}
+            try:
+                range_ctx = detect_range_mode(
+                    fac_m1_range,
+                    fac_h4_range,
+                    env_tf="M1",
+                    macro_tf="H4",
+                )
+            except Exception:
+                range_ctx = None
+            range_active = bool(range_ctx.active) if range_ctx else False
+
             # Range mode guard (block entries during compression)
-            if config.BLOCK_RANGE_MODE:
-                fac_m1 = all_factors().get("M1") or {}
-                fac_h4 = all_factors().get("H4") or {}
-                range_ctx = detect_range_mode(fac_m1, fac_h4, env_tf="M1", macro_tf="H4")
-                if range_ctx.active:
-                    if range_block_logged != range_ctx.reason:
-                        LOG.info(
-                            "%s blocked by range_mode reason=%s score=%.2f",
-                            config.LOG_PREFIX,
-                            range_ctx.reason,
-                            range_ctx.score,
-                        )
-                        range_block_logged = range_ctx.reason
-                    continue
-                range_block_logged = None
+            if config.BLOCK_RANGE_MODE and range_active:
+                reason = "range_active" if range_ctx is None else str(range_ctx.reason or "range_active")
+                score = 0.0 if range_ctx is None else float(range_ctx.score or 0.0)
+                if range_block_logged != reason:
+                    LOG.info(
+                        "%s blocked by range_mode reason=%s score=%.2f",
+                        config.LOG_PREFIX,
+                        reason,
+                        score,
+                    )
+                    range_block_logged = reason
+                continue
+            range_block_logged = None
 
             # Build S5 buckets
             ticks = tick_window.recent_ticks(seconds=config.WINDOW_SEC, limit=3600)
@@ -584,6 +611,17 @@ async def _runner_loop() -> None:
                 bid = float(latest_tick.get("bid") or closes[-1])
                 ask = float(latest_tick.get("ask") or closes[-1])
                 entry_price = ask if side == "long" else bid
+                heat_decision = evaluate_mtf_heat(
+                    side,
+                    fac_for_range,
+                    price=entry_price,
+                    env_prefix=config.ENV_PREFIX,
+                    short_tf="M1",
+                    mid_tf="M5",
+                    long_tf="H1",
+                    macro_tf="H4",
+                    pivot_tfs=("H1", "H4"),
+                )
                 if config.EXTREME_GUARD_ENABLED and entry_price > 0:
                     lookback = int(config.EXTREME_LOOKBACK_SEC / config.BUCKET_SECONDS)
                     lookback = max(4, min(len(candles), lookback))
@@ -614,8 +652,14 @@ async def _runner_loop() -> None:
                                 last_extreme_log = now_mono
                             side = None
                 if side:
-                    fac_m1 = all_factors().get("M1") or {}
-                    if not _bb_entry_allowed(BB_STYLE, side, entry_price, fac_m1):
+                    fac_m1 = fac_m1_range or (all_factors().get("M1") or {})
+                    if not _bb_entry_allowed(
+                        BB_STYLE,
+                        side,
+                        entry_price,
+                        fac_m1,
+                        range_active=range_active,
+                    ):
                         side = None
             if side:
 
@@ -629,6 +673,13 @@ async def _runner_loop() -> None:
                     tp_pips = min(config.TP_ATR_MAX_PIPS, max(config.TP_ATR_MIN_PIPS, atr_fast * config.TP_ATR_MULT))
                 min_tp = sl_base * config.MIN_RR + spread_pips * config.TP_SPREAD_BUFFER_PIPS
                 tp_pips = max(tp_pips, min_tp)
+                tp_pips = max(
+                    min_tp,
+                    min(
+                        config.TP_ATR_MAX_PIPS,
+                        max(config.TP_ATR_MIN_PIPS, tp_pips * heat_decision.tp_mult),
+                    ),
+                )
                 tp_price = round(entry_price + (tp_pips * config.PIP_VALUE if side == "long" else -tp_pips * config.PIP_VALUE), 3)
                 sl_price = round(entry_price - (sl_base * config.PIP_VALUE if side == "long" else -sl_base * config.PIP_VALUE), 3)
 
@@ -653,6 +704,9 @@ async def _runner_loop() -> None:
                 )
                 if sizing.units >= int(config.MIN_UNITS):
                     units = sizing.units if side == "long" else -sizing.units
+                    sign = 1 if units > 0 else -1
+                    scaled_units = int(round(abs(units) * heat_decision.lot_mult))
+                    units = max(int(config.MIN_UNITS), scaled_units) * sign
                     thesis = {
                         "strategy_tag": "pullback_runner_s5",
                         "env_prefix": config.ENV_PREFIX,
@@ -679,6 +733,15 @@ async def _runner_loop() -> None:
                         "touch_last_age_sec": None
                         if touch_last_age_sec is None
                         else round(touch_last_age_sec, 1),
+                        "range_active": range_active,
+                        "range_mode": None if range_ctx is None else range_ctx.mode,
+                        "range_reason": None if range_ctx is None else range_ctx.reason,
+                        "range_score": None if range_ctx is None else round(float(range_ctx.score or 0.0), 3),
+                        "mtf_heat_score": round(heat_decision.score, 3),
+                        "mtf_heat_conf_delta": round(heat_decision.confidence_delta, 2),
+                        "mtf_heat_lot_mult": round(heat_decision.lot_mult, 3),
+                        "mtf_heat_tp_mult": round(heat_decision.tp_mult, 3),
+                        "mtf_heat": heat_decision.debug,
                     }
                     proj_allow, proj_mult, proj_detail = _projection_decision(
                         side,
@@ -730,7 +793,7 @@ async def _runner_loop() -> None:
 
                     if trade_id:
                         LOG.info(
-                            "%s entry trade=%s side=%s units=%s tp=%.3f sl=%.3f zf=%.2f zs=%.2f atr=%.2f touch=%s pullback=%s trend=%s",
+                            "%s entry trade=%s side=%s units=%s tp=%.3f sl=%.3f zf=%.2f zs=%.2f atr=%.2f heat=%.2f touch=%s pullback=%s trend=%s",
                             config.LOG_PREFIX,
                             trade_id,
                             side,
@@ -740,6 +803,7 @@ async def _runner_loop() -> None:
                             z_fast,
                             z_slow,
                             atr_fast,
+                            heat_decision.score,
                             "n/a" if touch_stats is None else str(touch_stats.count),
                             "n/a"
                             if touch_pullback_pips is None
