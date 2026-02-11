@@ -245,3 +245,33 @@ def test_clamp_sl_tp_limits_tp_shrink_when_pf_is_bad(monkeypatch):
     # PF bad: TP shrink is capped at 10% and SL is not expanded.
     assert sl == 149.9
     assert tp == 150.18
+
+
+def test_clamp_sl_tp_infers_strategy_and_pocket_from_caller(monkeypatch):
+    monkeypatch.setattr(risk_guard, "_RR_NORMALIZE_ENABLED", True, raising=False)
+    monkeypatch.setattr(risk_guard, "_RR_MIN_RATIO", 1.0, raising=False)
+    monkeypatch.setattr(risk_guard, "_RR_MAX_RATIO", 3.0, raising=False)
+    monkeypatch.setattr(risk_guard, "_RR_MIN_SAMPLES", 999, raising=False)
+
+    captured: dict[str, object] = {}
+
+    def _capture(tag, pocket):
+        captured["tag"] = tag
+        captured["pocket"] = pocket
+        return {}
+
+    monkeypatch.setattr(risk_guard, "_query_rr_outcome_stats", _capture, raising=False)
+
+    def _caller() -> tuple[float | None, float | None]:
+        strategy_tag = "MyEdge"
+        pocket = "scalp"
+        return risk_guard.clamp_sl_tp(
+            price=150.0,
+            sl=149.9,
+            tp=150.2,
+            is_buy=True,
+        )
+
+    _caller()
+    assert captured.get("tag") == "MyEdge"
+    assert captured.get("pocket") == "scalp"
