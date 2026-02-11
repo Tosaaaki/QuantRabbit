@@ -4746,15 +4746,41 @@ def _apply_dynamic_protections_v2(
             "min_lock": _env_float("BE_TRAIL_MIN_LOCK_SCALP", 0.50),
             "cooldown": _env_float("BE_TRAIL_COOLDOWN_SCALP_SEC", 20.0),
         },
+        "scalp_fast": {
+            "trigger": _env_float(
+                "BE_TRAIL_TRIGGER_SCALP_FAST",
+                _env_float("BE_TRAIL_TRIGGER_SCALP", 1.6),
+            ),
+            "lock_ratio": _env_float(
+                "BE_TRAIL_LOCK_RATIO_SCALP_FAST",
+                _env_float("BE_TRAIL_LOCK_RATIO_SCALP", 0.35),
+            ),
+            "min_lock": _env_float(
+                "BE_TRAIL_MIN_LOCK_SCALP_FAST",
+                _env_float("BE_TRAIL_MIN_LOCK_SCALP", 0.50),
+            ),
+            "cooldown": _env_float(
+                "BE_TRAIL_COOLDOWN_SCALP_FAST_SEC",
+                _env_float("BE_TRAIL_COOLDOWN_SCALP_SEC", 20.0),
+            ),
+        },
     }
     # トレーリング開始を ATR/ボラで動的に決める（micro/scalp）
     base_start_delay = {
         "micro": _env_float("BE_TRAIL_START_DELAY_MICRO_SEC", 25.0),
         "scalp": _env_float("BE_TRAIL_START_DELAY_SCALP_SEC", 12.0),
+        "scalp_fast": _env_float(
+            "BE_TRAIL_START_DELAY_SCALP_FAST_SEC",
+            _env_float("BE_TRAIL_START_DELAY_SCALP_SEC", 12.0),
+        ),
     }
     max_start_delay = {
         "micro": _env_float("BE_TRAIL_MAX_DELAY_MICRO_SEC", 70.0),
         "scalp": _env_float("BE_TRAIL_MAX_DELAY_SCALP_SEC", 35.0),
+        "scalp_fast": _env_float(
+            "BE_TRAIL_MAX_DELAY_SCALP_FAST_SEC",
+            _env_float("BE_TRAIL_MAX_DELAY_SCALP_SEC", 35.0),
+        ),
     }
     tp_move_enabled = _env_bool("TP_MOVE_ENABLED", True)
     tp_move_cfg = {
@@ -4770,13 +4796,25 @@ def _apply_dynamic_protections_v2(
             "trigger": _env_float("TP_MOVE_TRIGGER_SCALP", 1.0),
             "buffer": _env_float("TP_MOVE_BUFFER_SCALP", 0.8),
         },
+        "scalp_fast": {
+            "trigger": _env_float(
+                "TP_MOVE_TRIGGER_SCALP_FAST",
+                _env_float("TP_MOVE_TRIGGER_SCALP", 1.0),
+            ),
+            "buffer": _env_float(
+                "TP_MOVE_BUFFER_SCALP_FAST",
+                _env_float("TP_MOVE_BUFFER_SCALP", 0.8),
+            ),
+        },
     }
 
     if isinstance(defaults_cfg, dict):
         be_defaults = defaults_cfg.get("be_profile")
         if isinstance(be_defaults, dict):
-            for pocket_key in ("macro", "micro", "scalp"):
+            for pocket_key in ("macro", "micro", "scalp", "scalp_fast"):
                 override = be_defaults.get(pocket_key)
+                if not isinstance(override, dict) and pocket_key == "scalp_fast":
+                    override = be_defaults.get("scalp")
                 if isinstance(override, dict):
                     defaults[pocket_key]["trigger"] = _coerce(
                         override.get("trigger_pips"), defaults[pocket_key]["trigger"]
@@ -4798,6 +4836,10 @@ def _apply_dynamic_protections_v2(
             base_start_delay["scalp"] = _coerce(
                 start_defaults.get("scalp"), base_start_delay.get("scalp", 12.0)
             )
+            base_start_delay["scalp_fast"] = _coerce(
+                start_defaults.get("scalp_fast", start_defaults.get("scalp")),
+                base_start_delay.get("scalp_fast", base_start_delay.get("scalp", 12.0)),
+            )
         max_delay_defaults = defaults_cfg.get("max_delay_sec")
         if isinstance(max_delay_defaults, dict):
             max_start_delay["micro"] = _coerce(
@@ -4806,13 +4848,19 @@ def _apply_dynamic_protections_v2(
             max_start_delay["scalp"] = _coerce(
                 max_delay_defaults.get("scalp"), max_start_delay.get("scalp", 35.0)
             )
+            max_start_delay["scalp_fast"] = _coerce(
+                max_delay_defaults.get("scalp_fast", max_delay_defaults.get("scalp")),
+                max_start_delay.get("scalp_fast", max_start_delay.get("scalp", 35.0)),
+            )
         tp_defaults = defaults_cfg.get("tp_move")
         if isinstance(tp_defaults, dict):
             tp_enabled = tp_defaults.get("enabled")
             if tp_enabled is not None:
                 tp_move_enabled = _coerce_bool(tp_enabled, tp_move_enabled)
-            for pocket_key in ("macro", "micro", "scalp"):
+            for pocket_key in ("macro", "micro", "scalp", "scalp_fast"):
                 override = tp_defaults.get(pocket_key)
+                if not isinstance(override, dict) and pocket_key == "scalp_fast":
+                    override = tp_defaults.get("scalp")
                 if isinstance(override, dict):
                     tp_move_cfg[pocket_key]["trigger"] = _coerce(
                         override.get("trigger_pips"), tp_move_cfg[pocket_key]["trigger"]
@@ -4866,7 +4914,7 @@ def _apply_dynamic_protections_v2(
                 lock_ratio = max(lock_ratio, 0.42)
             min_lock = max(min_lock, atr_val * 0.22)
             trigger = min(trigger, _env_float("BE_TRAIL_MAX_TRIGGER_MICRO", 4.0))
-        elif pocket == "scalp":
+        elif pocket in {"scalp", "scalp_fast"}:
             if vol_5m < 0.8:
                 trigger = max(trigger, atr_val * 0.6)
                 lock_ratio = max(lock_ratio, 0.32)
@@ -4877,7 +4925,10 @@ def _apply_dynamic_protections_v2(
                 trigger = max(trigger, atr_val * 0.7)
                 lock_ratio = max(lock_ratio, 0.33)
             min_lock = max(min_lock, atr_val * 0.20)
-            trigger = min(trigger, _env_float("BE_TRAIL_MAX_TRIGGER_SCALP", 3.0))
+            trigger_cap = _env_float("BE_TRAIL_MAX_TRIGGER_SCALP", 3.0)
+            if pocket == "scalp_fast":
+                trigger_cap = _env_float("BE_TRAIL_MAX_TRIGGER_SCALP_FAST", trigger_cap)
+            trigger = min(trigger, trigger_cap)
         base_trigger = trigger
         base_lock_ratio = lock_ratio
         base_min_lock = min_lock
@@ -4957,9 +5008,14 @@ def _apply_dynamic_protections_v2(
 
             # micro/scalp: ATR/ボラに応じた開始遅延＋経過時間でロック強化
             opened_at = _parse_trade_open_time(tr.get("open_time"))
-            if pocket in {"micro", "scalp"} and opened_at:
+            if pocket in {"micro", "scalp", "scalp_fast"} and opened_at:
                 age_sec = max(0.0, (datetime.now(timezone.utc) - opened_at).total_seconds())
-                delay_mult = 10.0 if pocket == "micro" else 6.0
+                if pocket == "micro":
+                    delay_mult = 10.0
+                elif pocket == "scalp_fast":
+                    delay_mult = 5.0
+                else:
+                    delay_mult = 6.0
                 start_delay = max(start_delay, atr_val * delay_mult)
                 if vol_5m > 1.6:
                     start_delay *= 0.75
