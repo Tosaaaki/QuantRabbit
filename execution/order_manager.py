@@ -975,6 +975,12 @@ TRAILING_SL_ALLOWED = trailing_sl_allowed()
 
 _ENTRY_HARD_STOP_PIPS_DEFAULT = max(0.0, _env_float("ORDER_ENTRY_HARD_STOP_PIPS", 0.0))
 _ENTRY_MAX_SL_PIPS_DEFAULT = max(0.0, _env_float("ORDER_ENTRY_MAX_SL_PIPS", 0.0))
+_ENTRY_LOSS_CAP_JPY_DEFAULT = max(0.0, _env_float("ORDER_ENTRY_LOSS_CAP_JPY", 0.0))
+_ENTRY_LOSS_CAP_BUFFER_PIPS_DEFAULT = max(
+    0.0, _env_float("ORDER_ENTRY_LOSS_CAP_BUFFER_PIPS", 0.0)
+)
+_ENTRY_POLICY_GENERATION = os.getenv("ORDER_ENTRY_POLICY_GENERATION", "").strip()
+_JPY_PER_PIP_PER_UNIT_USDJPY = 0.01
 
 
 def _strategy_env_key(strategy_tag: Optional[str]) -> Optional[str]:
@@ -1033,6 +1039,118 @@ def _entry_max_sl_pips(pocket: Optional[str], *, strategy_tag: Optional[str] = N
             _ENTRY_MAX_SL_PIPS_DEFAULT,
         ),
     )
+
+
+def _entry_loss_cap_jpy(
+    pocket: Optional[str],
+    *,
+    strategy_tag: Optional[str] = None,
+    entry_thesis: Optional[dict] = None,
+) -> float:
+    """Return per-trade loss cap in JPY (0 = disabled)."""
+
+    if isinstance(entry_thesis, dict):
+        thesis_cap = _as_float(entry_thesis.get("loss_cap_jpy"))
+        if thesis_cap is not None and thesis_cap > 0.0:
+            return float(thesis_cap)
+    strategy_key = _strategy_env_key(strategy_tag)
+    if strategy_key:
+        raw = os.getenv(f"ORDER_ENTRY_LOSS_CAP_JPY_STRATEGY_{strategy_key}")
+        if raw is not None:
+            try:
+                return max(0.0, float(raw))
+            except Exception:
+                pass
+    return max(
+        0.0,
+        _pocket_env_float("ORDER_ENTRY_LOSS_CAP_JPY", pocket, _ENTRY_LOSS_CAP_JPY_DEFAULT),
+    )
+
+
+def _entry_loss_cap_buffer_pips(
+    pocket: Optional[str],
+    *,
+    strategy_tag: Optional[str] = None,
+    entry_thesis: Optional[dict] = None,
+) -> float:
+    """Return pips buffer for loss-cap sizing (spread/slippage allowance)."""
+
+    if isinstance(entry_thesis, dict):
+        thesis_buf = _as_float(entry_thesis.get("loss_cap_buffer_pips"))
+        if thesis_buf is not None and thesis_buf >= 0.0:
+            return float(thesis_buf)
+    strategy_key = _strategy_env_key(strategy_tag)
+    if strategy_key:
+        raw = os.getenv(f"ORDER_ENTRY_LOSS_CAP_BUFFER_PIPS_STRATEGY_{strategy_key}")
+        if raw is not None:
+            try:
+                return max(0.0, float(raw))
+            except Exception:
+                pass
+    return max(
+        0.0,
+        _pocket_env_float(
+            "ORDER_ENTRY_LOSS_CAP_BUFFER_PIPS",
+            pocket,
+            _ENTRY_LOSS_CAP_BUFFER_PIPS_DEFAULT,
+        ),
+    )
+
+
+def _loss_cap_units_from_sl(*, loss_cap_jpy: float, sl_pips: float) -> int:
+    if loss_cap_jpy <= 0.0 or sl_pips <= 0.0:
+        return 0
+    try:
+        return max(0, int(math.floor(loss_cap_jpy / (sl_pips * _JPY_PER_PIP_PER_UNIT_USDJPY))))
+    except Exception:
+        return 0
+
+
+def _order_spread_block_pips(
+    pocket: Optional[str],
+    *,
+    strategy_tag: Optional[str] = None,
+    entry_thesis: Optional[dict] = None,
+) -> float:
+    if isinstance(entry_thesis, dict):
+        thesis_val = _as_float(entry_thesis.get("spread_block_pips"))
+        if thesis_val is None:
+            thesis_val = _as_float(entry_thesis.get("max_spread_pips"))
+        if thesis_val is not None and thesis_val > 0.0:
+            return float(thesis_val)
+    strategy_key = _strategy_env_key(strategy_tag)
+    if strategy_key:
+        raw = os.getenv(f"ORDER_SPREAD_BLOCK_PIPS_STRATEGY_{strategy_key}")
+        if raw is not None:
+            try:
+                return max(0.0, float(raw))
+            except Exception:
+                pass
+    if pocket:
+        pocket_key = str(pocket).strip().upper()
+        if pocket_key:
+            raw = os.getenv(f"ORDER_SPREAD_BLOCK_PIPS_{pocket_key}")
+            if raw is not None:
+                try:
+                    return max(0.0, float(raw))
+                except Exception:
+                    pass
+    return max(0.0, float(_ORDER_SPREAD_BLOCK_PIPS))
+
+
+def _augment_entry_thesis_policy_generation(
+    entry_thesis: Optional[dict],
+    *,
+    reduce_only: bool,
+) -> Optional[dict]:
+    if reduce_only or not isinstance(entry_thesis, dict):
+        return entry_thesis
+    if not _ENTRY_POLICY_GENERATION:
+        return entry_thesis
+    merged = dict(entry_thesis)
+    merged.setdefault("policy_generation", _ENTRY_POLICY_GENERATION)
+    merged.setdefault("policy_scope", "new_entries_only")
+    return merged
 
 
 def _sl_price_from_pips(entry_price: float, units: int, sl_pips: float) -> Optional[float]:
@@ -5463,6 +5581,10 @@ async def market_order(
     if isinstance(entry_thesis, dict):
         entry_thesis = _augment_entry_thesis_regime(entry_thesis, pocket)
         entry_thesis = _augment_entry_thesis_flags(entry_thesis)
+        entry_thesis = _augment_entry_thesis_policy_generation(
+            entry_thesis,
+            reduce_only=reduce_only,
+        )
 
     trace_enabled = os.getenv("ORDER_TRACE_PROGRESS", "0").strip().lower() not in {
         "",
@@ -6935,7 +7057,12 @@ async def market_order(
     quote = _fetch_quote(instrument)
     if quote and quote.get("spread_pips") is not None:
         _trace("spread_check")
-        if quote["spread_pips"] >= _ORDER_SPREAD_BLOCK_PIPS and not reduce_only:
+        spread_threshold = _order_spread_block_pips(
+            pocket,
+            strategy_tag=strategy_tag,
+            entry_thesis=entry_thesis if isinstance(entry_thesis, dict) else None,
+        )
+        if spread_threshold > 0.0 and quote["spread_pips"] >= spread_threshold and not reduce_only:
             note = f"spread_block:{quote['spread_pips']:.2f}p"
             _console_order_log(
                 "OPEN_SKIP",
@@ -6958,7 +7085,7 @@ async def market_order(
                 client_order_id=client_order_id,
                 status="spread_block",
                 attempt=0,
-                request_payload={"quote": quote, "threshold": _ORDER_SPREAD_BLOCK_PIPS},
+                request_payload={"quote": quote, "threshold": spread_threshold},
             )
             return None
 
@@ -7420,6 +7547,149 @@ async def market_order(
                 estimated_entry,
             )
 
+    if not reduce_only:
+        loss_cap_jpy = _entry_loss_cap_jpy(
+            pocket,
+            strategy_tag=strategy_tag,
+            entry_thesis=entry_thesis if isinstance(entry_thesis, dict) else None,
+        )
+        if loss_cap_jpy > 0.0:
+            sl_pips_for_cap: float | None = None
+            if estimated_entry is not None and sl_price is not None:
+                try:
+                    sl_pips_for_cap = abs(estimated_entry - sl_price) / 0.01
+                except Exception:
+                    sl_pips_for_cap = None
+            if sl_pips_for_cap is None and thesis_sl_pips is not None:
+                try:
+                    sl_pips_for_cap = float(thesis_sl_pips)
+                except Exception:
+                    sl_pips_for_cap = None
+            if sl_pips_for_cap is None or sl_pips_for_cap <= 0.0:
+                logging.warning(
+                    "[ORDER] loss-cap requested but SL unavailable pocket=%s strategy=%s cap=%.1f",
+                    pocket,
+                    strategy_tag or "-",
+                    loss_cap_jpy,
+                )
+            else:
+                cap_buffer_pips = _entry_loss_cap_buffer_pips(
+                    pocket,
+                    strategy_tag=strategy_tag,
+                    entry_thesis=entry_thesis if isinstance(entry_thesis, dict) else None,
+                )
+                effective_sl_pips = max(0.0, float(sl_pips_for_cap) + max(0.0, cap_buffer_pips))
+                capped_abs_units = _loss_cap_units_from_sl(
+                    loss_cap_jpy=loss_cap_jpy,
+                    sl_pips=effective_sl_pips,
+                )
+                if capped_abs_units <= 0:
+                    _console_order_log(
+                        "OPEN_SKIP",
+                        pocket=pocket,
+                        strategy_tag=strategy_tag,
+                        side=side_label,
+                        units=preflight_units,
+                        sl_price=sl_price,
+                        tp_price=tp_price,
+                        client_order_id=client_order_id,
+                        note="loss_cap_zero",
+                    )
+                    log_order(
+                        pocket=pocket,
+                        instrument=instrument,
+                        side=side_label,
+                        units=preflight_units,
+                        sl_price=sl_price,
+                        tp_price=tp_price,
+                        client_order_id=client_order_id,
+                        status="loss_cap_skip",
+                        attempt=0,
+                        request_payload={
+                            "loss_cap_jpy": loss_cap_jpy,
+                            "sl_pips": sl_pips_for_cap,
+                            "buffer_pips": cap_buffer_pips,
+                            "effective_sl_pips": effective_sl_pips,
+                            "reason": "zero_units",
+                        },
+                    )
+                    return None
+                if abs(preflight_units) > capped_abs_units:
+                    if min_allowed_units > 0 and capped_abs_units < min_allowed_units:
+                        _console_order_log(
+                            "OPEN_SKIP",
+                            pocket=pocket,
+                            strategy_tag=strategy_tag,
+                            side=side_label,
+                            units=preflight_units,
+                            sl_price=sl_price,
+                            tp_price=tp_price,
+                            client_order_id=client_order_id,
+                            note="loss_cap_lt_min_units",
+                        )
+                        log_order(
+                            pocket=pocket,
+                            instrument=instrument,
+                            side=side_label,
+                            units=preflight_units,
+                            sl_price=sl_price,
+                            tp_price=tp_price,
+                            client_order_id=client_order_id,
+                            status="loss_cap_skip",
+                            attempt=0,
+                            request_payload={
+                                "loss_cap_jpy": loss_cap_jpy,
+                                "sl_pips": sl_pips_for_cap,
+                                "buffer_pips": cap_buffer_pips,
+                                "effective_sl_pips": effective_sl_pips,
+                                "loss_cap_units": capped_abs_units,
+                                "min_units": min_allowed_units,
+                                "reason": "below_min_units",
+                            },
+                        )
+                        return None
+                    pre_loss_cap_units = preflight_units
+                    capped_units = capped_abs_units if preflight_units > 0 else -capped_abs_units
+                    log_order(
+                        pocket=pocket,
+                        instrument=instrument,
+                        side=side_label,
+                        units=preflight_units,
+                        sl_price=sl_price,
+                        tp_price=tp_price,
+                        client_order_id=client_order_id,
+                        status="loss_cap_applied",
+                        attempt=0,
+                        request_payload={
+                            "from_units": pre_loss_cap_units,
+                            "to_units": capped_units,
+                            "loss_cap_jpy": loss_cap_jpy,
+                            "sl_pips": sl_pips_for_cap,
+                            "buffer_pips": cap_buffer_pips,
+                            "effective_sl_pips": effective_sl_pips,
+                        },
+                    )
+                    preflight_units = capped_units
+                    if isinstance(entry_thesis, dict):
+                        entry_thesis = dict(entry_thesis)
+                        entry_thesis["loss_cap_applied"] = {
+                            "loss_cap_jpy": round(loss_cap_jpy, 2),
+                            "sl_pips": round(float(sl_pips_for_cap), 3),
+                            "buffer_pips": round(float(cap_buffer_pips), 3),
+                            "effective_sl_pips": round(float(effective_sl_pips), 3),
+                            "units_before": int(abs(pre_loss_cap_units)),
+                            "units_after": int(abs(preflight_units)),
+                        }
+                    logging.info(
+                        "[ORDER] loss-cap scaled units %s -> %s pocket=%s strategy=%s cap=%.1f sl=%.2fp",
+                        units,
+                        preflight_units,
+                        pocket,
+                        strategy_tag or "-",
+                        loss_cap_jpy,
+                        effective_sl_pips,
+                    )
+
     # Virtual SL/TP logging (even if SL is disabled)
     if estimated_entry is not None:
         if thesis_sl_pips is not None:
@@ -7572,10 +7842,12 @@ async def market_order(
             preflight_units = capped
 
     if isinstance(entry_thesis, dict):
-        entry_thesis = _augment_entry_thesis_flags(entry_thesis)
-    if isinstance(entry_thesis, dict):
         entry_thesis = _augment_entry_thesis_regime(entry_thesis, pocket)
         entry_thesis = _augment_entry_thesis_flags(entry_thesis)
+        entry_thesis = _augment_entry_thesis_policy_generation(
+            entry_thesis,
+            reduce_only=reduce_only,
+        )
     comment = _encode_thesis_comment(entry_thesis)
     client_ext = {"tag": f"pocket={pocket}"}
     trade_ext = {"tag": f"pocket={pocket}"}
@@ -8029,6 +8301,114 @@ async def limit_order(
 
     if not reduce_only and pocket != "manual":
         entry_thesis = _apply_default_entry_thesis_tfs(entry_thesis, pocket)
+    if isinstance(entry_thesis, dict):
+        entry_thesis = _augment_entry_thesis_regime(entry_thesis, pocket)
+        entry_thesis = _augment_entry_thesis_flags(entry_thesis)
+        entry_thesis = _augment_entry_thesis_policy_generation(
+            entry_thesis,
+            reduce_only=reduce_only,
+        )
+
+    if not reduce_only:
+        loss_cap_jpy = _entry_loss_cap_jpy(
+            pocket,
+            strategy_tag=strategy_tag,
+            entry_thesis=entry_thesis if isinstance(entry_thesis, dict) else None,
+        )
+        if loss_cap_jpy > 0.0:
+            sl_pips_for_cap: float | None = None
+            if sl_price is not None and price > 0.0:
+                try:
+                    sl_pips_for_cap = abs(price - sl_price) / 0.01
+                except Exception:
+                    sl_pips_for_cap = None
+            if sl_pips_for_cap is None and isinstance(entry_thesis, dict):
+                sl_pips_for_cap = _as_float(entry_thesis.get("sl_pips"))
+            if sl_pips_for_cap is not None and sl_pips_for_cap > 0.0:
+                cap_buffer_pips = _entry_loss_cap_buffer_pips(
+                    pocket,
+                    strategy_tag=strategy_tag,
+                    entry_thesis=entry_thesis if isinstance(entry_thesis, dict) else None,
+                )
+                effective_sl_pips = max(0.0, float(sl_pips_for_cap) + max(0.0, cap_buffer_pips))
+                capped_abs_units = _loss_cap_units_from_sl(
+                    loss_cap_jpy=loss_cap_jpy,
+                    sl_pips=effective_sl_pips,
+                )
+                min_allowed_units = min_units_for_pocket(pocket)
+                if capped_abs_units <= 0 or (
+                    min_allowed_units > 0 and capped_abs_units < min_allowed_units
+                ):
+                    _console_order_log(
+                        "OPEN_SKIP",
+                        pocket=pocket,
+                        strategy_tag=str(strategy_tag or "unknown"),
+                        side="buy" if units > 0 else "sell",
+                        units=units,
+                        sl_price=sl_price,
+                        tp_price=tp_price,
+                        client_order_id=client_order_id,
+                        note="loss_cap_skip",
+                    )
+                    _log_order(
+                        pocket=pocket,
+                        instrument=instrument,
+                        side="buy" if units > 0 else "sell",
+                        units=units,
+                        sl_price=sl_price,
+                        tp_price=tp_price,
+                        client_order_id=client_order_id,
+                        status="loss_cap_skip",
+                        attempt=0,
+                        request_payload={
+                            "loss_cap_jpy": loss_cap_jpy,
+                            "sl_pips": sl_pips_for_cap,
+                            "buffer_pips": cap_buffer_pips,
+                            "effective_sl_pips": effective_sl_pips,
+                            "loss_cap_units": capped_abs_units,
+                            "min_units": min_allowed_units,
+                        },
+                    )
+                    return None, None
+                if abs(units) > capped_abs_units:
+                    prev_units = units
+                    units = capped_abs_units if units > 0 else -capped_abs_units
+                    _log_order(
+                        pocket=pocket,
+                        instrument=instrument,
+                        side="buy" if prev_units > 0 else "sell",
+                        units=prev_units,
+                        sl_price=sl_price,
+                        tp_price=tp_price,
+                        client_order_id=client_order_id,
+                        status="loss_cap_applied",
+                        attempt=0,
+                        request_payload={
+                            "from_units": prev_units,
+                            "to_units": units,
+                            "loss_cap_jpy": loss_cap_jpy,
+                            "sl_pips": sl_pips_for_cap,
+                            "buffer_pips": cap_buffer_pips,
+                            "effective_sl_pips": effective_sl_pips,
+                        },
+                    )
+                    if isinstance(entry_thesis, dict):
+                        entry_thesis = dict(entry_thesis)
+                        entry_thesis["loss_cap_applied"] = {
+                            "loss_cap_jpy": round(loss_cap_jpy, 2),
+                            "sl_pips": round(float(sl_pips_for_cap), 3),
+                            "buffer_pips": round(float(cap_buffer_pips), 3),
+                            "effective_sl_pips": round(float(effective_sl_pips), 3),
+                            "units_before": int(abs(prev_units)),
+                            "units_after": int(abs(units)),
+                        }
+            elif loss_cap_jpy > 0.0:
+                logging.warning(
+                    "[ORDER] limit loss-cap requested but SL unavailable pocket=%s strategy=%s cap=%.1f",
+                    pocket,
+                    strategy_tag or "-",
+                    loss_cap_jpy,
+                )
 
     if require_passive and not _is_passive_price(
         units=units,

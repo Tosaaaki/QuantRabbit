@@ -9,10 +9,14 @@ if str(PROJECT_ROOT) not in sys.path:
 
 import execution.order_manager as order_manager
 from execution.order_manager import (
+    _augment_entry_thesis_policy_generation,
     _dynamic_entry_sl_target_pips,
+    _entry_loss_cap_jpy,
     _entry_quality_gate,
     _entry_quality_microstructure_gate_decision,
     _entry_quality_regime_gate_decision,
+    _loss_cap_units_from_sl,
+    _order_spread_block_pips,
     _preflight_units,
     _projected_usage_with_netting,
 )
@@ -268,3 +272,41 @@ def test_entry_quality_microstructure_gate_blocks_on_low_density(monkeypatch):
     assert allowed is False
     assert reason == "entry_quality_microstructure_density"
     assert details.get("tick_count") == 10
+
+
+def test_loss_cap_units_from_sl_uses_jpy_per_pip_formula() -> None:
+    units = _loss_cap_units_from_sl(loss_cap_jpy=150.0, sl_pips=2.5)
+    assert units == 6000
+
+
+def test_entry_loss_cap_jpy_uses_strategy_override(monkeypatch) -> None:
+    monkeypatch.setenv("ORDER_ENTRY_LOSS_CAP_JPY_STRATEGY_SCALP_PING_5S_LIVE", "150")
+    cap = _entry_loss_cap_jpy(
+        "scalp_fast",
+        strategy_tag="scalp_ping_5s_live",
+        entry_thesis=None,
+    )
+    assert cap == 150.0
+
+
+def test_order_spread_block_pips_prefers_strategy_override(monkeypatch) -> None:
+    monkeypatch.setattr(order_manager, "_ORDER_SPREAD_BLOCK_PIPS", 1.6)
+    monkeypatch.setenv("ORDER_SPREAD_BLOCK_PIPS_STRATEGY_SCALP_PING_5S_LIVE", "2.4")
+    threshold = _order_spread_block_pips(
+        "scalp_fast",
+        strategy_tag="scalp_ping_5s_live",
+        entry_thesis=None,
+    )
+    assert threshold == 2.4
+
+
+def test_policy_generation_marker_applies_only_to_new_entries(monkeypatch) -> None:
+    monkeypatch.setattr(order_manager, "_ENTRY_POLICY_GENERATION", "2026-02-11-losscap-v1")
+    thesis = {"strategy_tag": "scalp_ping_5s_live"}
+    augmented = _augment_entry_thesis_policy_generation(thesis, reduce_only=False)
+    assert augmented is not None
+    assert augmented.get("policy_generation") == "2026-02-11-losscap-v1"
+    assert augmented.get("policy_scope") == "new_entries_only"
+
+    reduced = _augment_entry_thesis_policy_generation(thesis, reduce_only=True)
+    assert reduced == thesis
