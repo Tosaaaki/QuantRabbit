@@ -16,6 +16,7 @@
 ## アーキテクチャ / 仕様
 - `docs/ARCHITECTURE.md`: システム全体フロー、コンポーネント、データスキーマ
 - `docs/RISK_AND_EXECUTION.md`: エントリー/EXIT/リスク制御、状態遷移、OANDA マッピング
+- `docs/SL_POLICY.md`: SL（損切り）決定フロー、環境変数、VMでの確認手順
 - `docs/OBSERVABILITY.md`: データ鮮度、ログ、SLO/アラート、検証パイプライン
 - `docs/RANGE_MODE.md`: レンジモード強化とオンラインチューニングの運用要点
 

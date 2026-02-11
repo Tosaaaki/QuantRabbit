@@ -97,7 +97,7 @@ EOC
   echo "[OK] Applied env overrides from $ENV_FILE"
   echo "[OK] Active quant services restarted: \${#active_quant[@]}"
   echo "--- effective env keys ---"
-  grep -E "^(ENTRY_FACTOR_MAX_AGE_SEC|ENTRY_FACTOR_STALE_ALLOW_POCKETS|ORDER_ENTRY_QUALITY_MICROSTRUCTURE_ENABLED|ORDER_ENTRY_QUALITY_MICROSTRUCTURE_WINDOW_SEC|ORDER_ENTRY_QUALITY_MICROSTRUCTURE_MAX_AGE_MS|ORDER_ENTRY_QUALITY_MICROSTRUCTURE_MIN_SPAN_RATIO|ORDER_ENTRY_QUALITY_MICROSTRUCTURE_MIN_TICK_DENSITY_MICRO)=" /etc/quantrabbit.env || true
+  grep -E "^(ENTRY_FACTOR_MAX_AGE_SEC|ENTRY_FACTOR_STALE_ALLOW_POCKETS|ORDER_ENTRY_QUALITY_MICROSTRUCTURE_ENABLED|ORDER_ENTRY_QUALITY_MICROSTRUCTURE_WINDOW_SEC|ORDER_ENTRY_QUALITY_MICROSTRUCTURE_MAX_AGE_MS|ORDER_ENTRY_QUALITY_MICROSTRUCTURE_MIN_SPAN_RATIO|ORDER_ENTRY_QUALITY_MICROSTRUCTURE_MIN_TICK_DENSITY_MICRO|ORDER_ENABLE_STOP_LOSS_(MICRO|SCALP|MACRO)|ORDER_ALLOW_STOP_LOSS_WITH_EXIT_NO_NEGATIVE_CLOSE_(MICRO|SCALP|MACRO))=" /etc/quantrabbit.env || true
 '
 EOF
 
@@ -109,5 +109,8 @@ run_vm exec -- "sudo systemctl is-active quantrabbit.service && sudo systemctl s
 
 echo "[INFO] Recent order blocks (entry quality/factor stale) ..."
 run_vm exec -- "sqlite3 -readonly /home/tossaki/QuantRabbit/logs/orders.db \"WITH r AS (SELECT * FROM orders WHERE ts>=datetime('now','-30 minutes')) SELECT status, COUNT(*) c FROM r WHERE status LIKE 'entry_quality_%' OR status IN('factor_stale','forecast_scale_below_min','spread_block') GROUP BY status ORDER BY c DESC, status;\""
+
+echo "[INFO] submit_attempt payload (stopLossOnFill/takeProfitOnFill) ..."
+run_vm exec -- "sqlite3 -readonly /home/tossaki/QuantRabbit/logs/orders.db \"SELECT ts,pocket,status,json_extract(request_payload,'$.oanda.order.stopLossOnFill.price') AS sl_on_fill,json_extract(request_payload,'$.oanda.order.takeProfitOnFill.price') AS tp_on_fill FROM orders WHERE ts>=datetime('now','-2 hours') AND status='submit_attempt' AND pocket IN ('micro','scalp','macro') ORDER BY ts DESC LIMIT 20;\""
 
 echo "[DONE]"
