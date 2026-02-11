@@ -490,6 +490,26 @@ async def scalp_m1_worker() -> None:
             or "sell-rally" in signal_tag_l
             or "reversion" in signal_tag_l
         )
+        if is_reversion and not config.ALLOW_REVERSION:
+            now_mono = time.monotonic()
+            if now_mono - last_block_log > 120.0:
+                LOG.info(
+                    "%s reversion_disabled tag=%s",
+                    config.LOG_PREFIX,
+                    signal_tag,
+                )
+                last_block_log = now_mono
+            continue
+        if (not is_reversion) and (not config.ALLOW_TREND):
+            now_mono = time.monotonic()
+            if now_mono - last_block_log > 120.0:
+                LOG.info(
+                    "%s trend_disabled tag=%s",
+                    config.LOG_PREFIX,
+                    signal_tag,
+                )
+                last_block_log = now_mono
+            continue
         if config.ENV_GUARD_ENABLED and is_reversion:
             ticks = tick_window.recent_ticks(
                 seconds=max(config.ENV_RETURN_WINDOW_SEC, 5.0),
