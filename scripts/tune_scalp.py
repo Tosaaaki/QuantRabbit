@@ -17,7 +17,13 @@ DEFAULT_LOG_DIR = REPO_ROOT / "logs"
 DEFAULT_CANDLES_GLOB = "candles_M1_*.json"
 BACKTEST_SCRIPT = REPO_ROOT / "scripts" / "backtest_scalp.py"
 PARAM_SPACE_PATH = REPO_ROOT / "configs" / "scalp_param_space.json"
-ACTIVE_PARAMS_PATH = REPO_ROOT / "configs" / "scalp_active_params.json"  # 実運用で読み込む想定ファイル
+_ACTIVE_PARAMS_OVERRIDE = os.getenv("SCALP_ACTIVE_PARAMS_PATH")
+ACTIVE_PARAMS_PATH = (
+    pathlib.Path(_ACTIVE_PARAMS_OVERRIDE)
+    if _ACTIVE_PARAMS_OVERRIDE
+    else (REPO_ROOT / "logs" / "tuning" / "scalp_active_params.json")
+)
+LEGACY_ACTIVE_PARAMS_PATH = REPO_ROOT / "configs" / "scalp_active_params.json"  # tracked legacy path
 DEFAULT_DB_PATH = REPO_ROOT / "logs" / "autotune.db"
 
 if str(REPO_ROOT) not in sys.path:
@@ -284,7 +290,11 @@ def main():
     ap.add_argument("--strategies", default="", help="カンマ区切りで明示指定（単一プロファイル時のみ有効）")
     ap.add_argument("--trials-per-strategy", type=int, default=0, help="各ストラテジーの試行数。0 ならプロファイル既定")
     ap.add_argument("--seed", type=int, default=42)
-    ap.add_argument("--write-best", action="store_true", help="改善あれば configs/scalp_active_params.json を上書き")
+    ap.add_argument(
+        "--write-best",
+        action="store_true",
+        help="改善あれば logs/tuning/scalp_active_params.json を上書き（SCALP_ACTIVE_PARAMS_PATH で変更可）",
+    )
     ap.add_argument("--outdir", default=str(REPO_ROOT / "logs" / "tuning"))
     ap.add_argument(
         "--record-db",
@@ -472,15 +482,27 @@ def main():
 
     if args.write_best:
         active: Dict[str, Any] = {}
-        if ACTIVE_PARAMS_PATH.exists():
+        if _ACTIVE_PARAMS_OVERRIDE:
+            read_paths = (ACTIVE_PARAMS_PATH,)
+        else:
+            read_paths = (
+                (ACTIVE_PARAMS_PATH, LEGACY_ACTIVE_PARAMS_PATH)
+                if ACTIVE_PARAMS_PATH != LEGACY_ACTIVE_PARAMS_PATH
+                else (ACTIVE_PARAMS_PATH,)
+            )
+        for path in read_paths:
+            if not path.exists():
+                continue
             try:
-                with open(ACTIVE_PARAMS_PATH, "r") as f:
+                with open(path, "r") as f:
                     active = json.load(f)
             except Exception:
                 active = {}
+            break
         for strat, rec in aggregated_best.items():
             active[strat] = rec["params"]
         tmp = ACTIVE_PARAMS_PATH.with_suffix(".json.tmp")
+        tmp.parent.mkdir(parents=True, exist_ok=True)
         with open(tmp, "w") as f:
             json.dump(active, f, ensure_ascii=False, indent=2)
         os.replace(tmp, ACTIVE_PARAMS_PATH)
