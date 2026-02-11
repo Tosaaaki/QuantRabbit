@@ -243,3 +243,81 @@ async def test_enforce_new_entry_time_stop_respects_policy_generation(monkeypatc
     assert calls[0][2] == "qr-new"
     assert calls[0][3] is True
     assert calls[0][4] == "time_stop"
+
+
+def test_tick_density_uses_window_cutoff() -> None:
+    from workers.scalp_ping_5s import worker
+
+    rows = [
+        _tick(100.0, 150.000, 150.002, 150.001),
+        _tick(101.0, 150.001, 150.003, 150.002),
+        _tick(102.0, 150.002, 150.004, 150.003),
+        _tick(103.0, 150.003, 150.005, 150.004),
+    ]
+    density = worker._tick_density(rows, 2.0)
+    assert density == pytest.approx(1.5, abs=1e-9)
+
+
+@pytest.mark.asyncio
+async def test_maybe_topup_micro_density_fetches_snapshot_when_below_target(monkeypatch) -> None:
+    from workers.scalp_ping_5s import worker
+
+    monkeypatch.setattr(worker.config, "SNAPSHOT_FALLBACK_ENABLED", True)
+    monkeypatch.setattr(worker.config, "SNAPSHOT_TOPUP_ENABLED", True)
+    monkeypatch.setattr(worker.config, "SNAPSHOT_TOPUP_TARGET_DENSITY", 1.4)
+    monkeypatch.setattr(worker.config, "SNAPSHOT_TOPUP_MIN_INTERVAL_SEC", 1.0)
+    monkeypatch.setattr(worker.config, "ENTRY_QUALITY_WINDOW_SEC", 30.0)
+
+    density_values = iter([0.6, 1.5])
+    monkeypatch.setattr(worker, "_tick_density_over_window", lambda _sec: next(density_values))
+
+    snapshot_calls: list[bool] = []
+
+    async def _fake_snapshot(_logger) -> bool:
+        snapshot_calls.append(True)
+        return True
+
+    monkeypatch.setattr(worker, "_fetch_price_snapshot", _fake_snapshot)
+
+    last_fetch, stats = await worker._maybe_topup_micro_density(
+        now_mono=10.0,
+        last_snapshot_fetch=0.0,
+        logger=worker.LOG,
+    )
+
+    assert snapshot_calls == [True]
+    assert last_fetch == pytest.approx(10.0)
+    assert stats is not None
+    assert stats["before"] == pytest.approx(0.6)
+    assert stats["after"] == pytest.approx(1.5)
+    assert stats["target"] == pytest.approx(1.4)
+
+
+@pytest.mark.asyncio
+async def test_maybe_topup_micro_density_skips_when_density_is_enough(monkeypatch) -> None:
+    from workers.scalp_ping_5s import worker
+
+    monkeypatch.setattr(worker.config, "SNAPSHOT_FALLBACK_ENABLED", True)
+    monkeypatch.setattr(worker.config, "SNAPSHOT_TOPUP_ENABLED", True)
+    monkeypatch.setattr(worker.config, "SNAPSHOT_TOPUP_TARGET_DENSITY", 1.4)
+    monkeypatch.setattr(worker.config, "SNAPSHOT_TOPUP_MIN_INTERVAL_SEC", 1.0)
+    monkeypatch.setattr(worker.config, "ENTRY_QUALITY_WINDOW_SEC", 30.0)
+    monkeypatch.setattr(worker, "_tick_density_over_window", lambda _sec: 1.6)
+
+    snapshot_calls: list[bool] = []
+
+    async def _fake_snapshot(_logger) -> bool:
+        snapshot_calls.append(True)
+        return True
+
+    monkeypatch.setattr(worker, "_fetch_price_snapshot", _fake_snapshot)
+
+    last_fetch, stats = await worker._maybe_topup_micro_density(
+        now_mono=10.0,
+        last_snapshot_fetch=0.0,
+        logger=worker.LOG,
+    )
+
+    assert snapshot_calls == []
+    assert last_fetch == pytest.approx(0.0)
+    assert stats is None

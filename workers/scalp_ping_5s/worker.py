@@ -312,6 +312,60 @@ def _latest_tick_age_ms(rows: Sequence[dict]) -> float:
     return max(0.0, (time.time() - latest_epoch) * 1000.0)
 
 
+def _tick_density(rows: Sequence[dict], window_sec: float) -> float:
+    if window_sec <= 0.0 or not rows:
+        return 0.0
+    latest_epoch = _safe_float(rows[-1].get("epoch"), 0.0)
+    if latest_epoch <= 0.0:
+        return 0.0
+    cutoff = latest_epoch - window_sec
+    count = 0
+    for row in rows:
+        if _safe_float(row.get("epoch"), 0.0) >= cutoff:
+            count += 1
+    return max(0.0, count / window_sec)
+
+
+def _tick_density_over_window(window_sec: float) -> float:
+    if window_sec <= 0.0:
+        return 0.0
+    rows = tick_window.recent_ticks(
+        seconds=window_sec,
+        limit=int(window_sec * 25) + 50,
+    )
+    return _tick_density(rows, window_sec)
+
+
+async def _maybe_topup_micro_density(
+    *,
+    now_mono: float,
+    last_snapshot_fetch: float,
+    logger: logging.Logger,
+) -> tuple[float, Optional[dict[str, float]]]:
+    if not config.SNAPSHOT_FALLBACK_ENABLED or not config.SNAPSHOT_TOPUP_ENABLED:
+        return last_snapshot_fetch, None
+    target_density = float(config.SNAPSHOT_TOPUP_TARGET_DENSITY)
+    if target_density <= 0.0:
+        return last_snapshot_fetch, None
+    if now_mono - last_snapshot_fetch < config.SNAPSHOT_TOPUP_MIN_INTERVAL_SEC:
+        return last_snapshot_fetch, None
+
+    window_sec = float(config.ENTRY_QUALITY_WINDOW_SEC)
+    density_before = _tick_density_over_window(window_sec)
+    if density_before >= target_density:
+        return last_snapshot_fetch, None
+    if not await _fetch_price_snapshot(logger):
+        return last_snapshot_fetch, None
+
+    density_after = _tick_density_over_window(window_sec)
+    return now_mono, {
+        "before": float(density_before),
+        "after": float(density_after),
+        "target": float(target_density),
+        "window_sec": float(window_sec),
+    }
+
+
 def _build_tick_signal(rows: Sequence[dict], spread_pips: float) -> Optional[TickSignal]:
     if len(rows) < config.MIN_TICKS:
         return None
@@ -634,6 +688,7 @@ async def scalp_ping_5s_worker() -> None:
     last_snapshot_fetch = 0.0
     last_stale_log_mono = 0.0
     last_trap_log_mono = 0.0
+    last_density_topup_log_mono = 0.0
 
     try:
         while True:
@@ -714,6 +769,25 @@ async def scalp_ping_5s_worker() -> None:
                 continue
 
             now_mono = time.monotonic()
+            last_snapshot_fetch, density_topup = await _maybe_topup_micro_density(
+                now_mono=now_mono,
+                last_snapshot_fetch=last_snapshot_fetch,
+                logger=LOG,
+            )
+            if (
+                density_topup
+                and now_mono - last_density_topup_log_mono >= 5.0
+            ):
+                LOG.info(
+                    "%s snapshot_topup density=%.3f->%.3f target=%.3f window=%.0fs",
+                    config.LOG_PREFIX,
+                    density_topup["before"],
+                    density_topup["after"],
+                    density_topup["target"],
+                    density_topup["window_sec"],
+                )
+                last_density_topup_log_mono = now_mono
+
             if now_mono - last_entry_mono < config.ENTRY_COOLDOWN_SEC:
                 continue
             if not rate_limiter.allow(now_mono):

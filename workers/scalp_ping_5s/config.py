@@ -129,6 +129,33 @@ SNAPSHOT_FALLBACK_ENABLED: bool = _bool_env("SCALP_PING_5S_SNAPSHOT_FALLBACK_ENA
 SNAPSHOT_MIN_INTERVAL_SEC: float = max(
     0.1, float(os.getenv("SCALP_PING_5S_SNAPSHOT_MIN_INTERVAL_SEC", "0.2"))
 )
+ENTRY_QUALITY_WINDOW_SEC: float = max(
+    1.0,
+    float(os.getenv("ORDER_ENTRY_QUALITY_MICROSTRUCTURE_WINDOW_SEC", "30.0")),
+)
+ENTRY_QUALITY_MIN_DENSITY: float = max(
+    0.0,
+    float(
+        os.getenv(
+            f"ORDER_ENTRY_QUALITY_MICROSTRUCTURE_MIN_TICK_DENSITY_{POCKET.upper()}",
+            os.getenv("ORDER_ENTRY_QUALITY_MICROSTRUCTURE_MIN_TICK_DENSITY", "0.0"),
+        )
+    ),
+)
+SNAPSHOT_TOPUP_ENABLED: bool = _bool_env("SCALP_PING_5S_SNAPSHOT_TOPUP_ENABLED", True)
+SNAPSHOT_TOPUP_MIN_INTERVAL_SEC: float = max(
+    SNAPSHOT_MIN_INTERVAL_SEC,
+    float(os.getenv("SCALP_PING_5S_SNAPSHOT_TOPUP_MIN_INTERVAL_SEC", "1.0")),
+)
+SNAPSHOT_TOPUP_TARGET_DENSITY: float = max(
+    0.0,
+    float(
+        os.getenv(
+            "SCALP_PING_5S_SNAPSHOT_TOPUP_TARGET_DENSITY",
+            str(ENTRY_QUALITY_MIN_DENSITY),
+        )
+    ),
+)
 
 FORCE_EXIT_MAX_HOLD_SEC: float = max(
     0.0, float(os.getenv("SCALP_PING_5S_FORCE_EXIT_MAX_HOLD_SEC", "0.0"))
