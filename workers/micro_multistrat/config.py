@@ -99,6 +99,12 @@ RANGE_BIAS_SCORE = float(os.getenv("MICRO_MULTI_RANGE_BIAS_SCORE", "0.30"))
 RANGE_STRATEGY_BONUS = float(os.getenv("MICRO_MULTI_RANGE_STRATEGY_BONUS", "12"))
 RANGE_TREND_PENALTY = float(os.getenv("MICRO_MULTI_RANGE_TREND_PENALTY", "10"))
 
+# MicroLevelReactor safety gate: require stronger range context to avoid trend-side stop cascades.
+MLR_STRICT_RANGE_GATE = _bool("MICRO_MULTI_MLR_STRICT_RANGE_GATE", True)
+MLR_MIN_RANGE_SCORE = float(os.getenv("MICRO_MULTI_MLR_MIN_RANGE_SCORE", "0.62"))
+MLR_MAX_ADX = float(os.getenv("MICRO_MULTI_MLR_MAX_ADX", "20.0"))
+MLR_MAX_MA_GAP_PIPS = float(os.getenv("MICRO_MULTI_MLR_MAX_MA_GAP_PIPS", "2.2"))
+
 # Strategy diversity: promote idle strategies without inflating risk sizing.
 DIVERSITY_ENABLED = os.getenv("MICRO_MULTI_DIVERSITY_ENABLED", "1").strip().lower() not in {
     "",
