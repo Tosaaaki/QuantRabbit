@@ -437,6 +437,16 @@ async def scalp_m1_worker() -> None:
         fac_h1 = factors.get("H1") or {}
         fac_h4 = factors.get("H4") or {}
         range_ctx = detect_range_mode(fac_m1, fac_h4)
+        range_score = 0.0
+        try:
+            range_score = float(range_ctx.score or 0.0)
+        except Exception:
+            range_score = 0.0
+        fac_m1 = dict(fac_m1)
+        fac_m1["range_active"] = bool(range_ctx.active)
+        fac_m1["range_score"] = range_score
+        fac_m1["range_reason"] = range_ctx.reason
+        fac_m1["range_mode"] = range_ctx.mode
         if config.ALLOWED_REGIMES:
             regime = str(fac_m1.get("regime") or "").strip().lower()
             if regime not in config.ALLOWED_REGIMES:

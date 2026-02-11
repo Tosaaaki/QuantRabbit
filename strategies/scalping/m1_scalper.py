@@ -597,6 +597,10 @@ class M1Scalper:
         buy_dip_rsi_avoid_max = _fallback_float("buy_dip_rsi_avoid_max", 0.0)
         buy_dip_min_atr = _fallback_float("buy_dip_min_atr", 0.0)
         buy_dip_min_vol = _fallback_float("buy_dip_min_vol5", 0.0)
+        range_flip_block_score = _fallback_float("range_flip_block_score", 0.58)
+        range_active = _to_bool(fac.get("range_active"), False)
+        range_score = _to_float(fac.get("range_score"), 0.0) or 0.0
+        range_mode = str(fac.get("range_mode") or "").strip().upper()
 
         # レンジ・低ボラを検知し、帯付近のみエントリーを許可
         low_vol_range = (adx < 18.0 and bbw > 0.0 and bbw < 0.0016 and atr_pips < 2.4)
@@ -631,6 +635,12 @@ class M1Scalper:
                     return None
                 # allow but log when explicitly configured
                 _log("range_allow_far_band", bbw=round(bbw, 5), adx=round(adx, 2), atr_pips=round(atr_pips, 2))
+        range_reversion_only = (
+            low_vol_range
+            or range_active
+            or range_mode == "RANGE"
+            or range_score >= range_flip_block_score
+        )
 
         # Tighten gates to reduce low-quality entries
         if atr_pips < atr_floor:
@@ -670,12 +680,20 @@ class M1Scalper:
             )
             action = "OPEN_LONG"
             if trend_down:
-                # 強い下落トレンドでは順張りショートに切替
-                action = "OPEN_SHORT"
-                confidence = int(confidence * 0.9)
-                if rsi < rsi_trend_short_min:
-                    _log("trend_block_short_rsi", rsi=round(rsi, 2))
-                    return None
+                if range_reversion_only:
+                    _log(
+                        "range_hold_reversion_long",
+                        trend="down",
+                        range_score=round(range_score, 3),
+                        mode=range_mode or "-",
+                    )
+                else:
+                    # 強い下落トレンドでは順張りショートに切替
+                    action = "OPEN_SHORT"
+                    confidence = int(confidence * 0.9)
+                    if rsi < rsi_trend_short_min:
+                        _log("trend_block_short_rsi", rsi=round(rsi, 2))
+                        return None
             if action == "OPEN_LONG":
                 if buy_dip_rsi_avoid_max > buy_dip_rsi_avoid_min and buy_dip_rsi_avoid_min <= rsi <= buy_dip_rsi_avoid_max:
                     _log(
@@ -732,12 +750,20 @@ class M1Scalper:
             )
             action = "OPEN_SHORT"
             if trend_up:
-                # 強い上昇トレンドでは順張りロングに切替
-                action = "OPEN_LONG"
-                confidence = int(confidence * 0.9)
-                if rsi > rsi_trend_long_max:
-                    _log("trend_block_long_rsi", rsi=round(rsi, 2))
-                    return None
+                if range_reversion_only:
+                    _log(
+                        "range_hold_reversion_short",
+                        trend="up",
+                        range_score=round(range_score, 3),
+                        mode=range_mode or "-",
+                    )
+                else:
+                    # 強い上昇トレンドでは順張りロングに切替
+                    action = "OPEN_LONG"
+                    confidence = int(confidence * 0.9)
+                    if rsi > rsi_trend_long_max:
+                        _log("trend_block_long_rsi", rsi=round(rsi, 2))
+                        return None
             if action == "OPEN_SHORT" and strong_up:
                 _log("trend_block_short", momentum=round(momentum, 5), ema_gap=round(ema_gap_pips, 3), price_gap=round(price_gap_pips, 3))
                 return None
@@ -1019,11 +1045,13 @@ class M1Scalper:
             action = "OPEN_LONG" if direction == "long" else "OPEN_SHORT"
             # トレンドと逆なら方向をスイッチ
             if action == "OPEN_LONG" and trend_down:
-                action = "OPEN_SHORT"
-                confidence = int(confidence * 0.9)
+                if not range_reversion_only:
+                    action = "OPEN_SHORT"
+                    confidence = int(confidence * 0.9)
             elif action == "OPEN_SHORT" and trend_up:
-                action = "OPEN_LONG"
-                confidence = int(confidence * 0.9)
+                if not range_reversion_only:
+                    action = "OPEN_LONG"
+                    confidence = int(confidence * 0.9)
             entry_type = "limit"
             limit_expiry = 35 if scalp_tactical else 50
             entry_price_out = entry_price
