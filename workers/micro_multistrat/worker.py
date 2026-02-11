@@ -263,6 +263,10 @@ def _apply_trend_flip(
     trend = _trend_snapshot(fac_m1, fac_m5, fac_h1, fac_h4)
     if not config.TREND_FLIP_ENABLED or not trend:
         return side, signal_tag, None, 1.0, 1.0, trend
+    if config.TREND_FLIP_STRATEGY_ALLOWLIST and strategy_name not in config.TREND_FLIP_STRATEGY_ALLOWLIST:
+        return side, signal_tag, None, 1.0, 1.0, trend
+    if strategy_name in config.TREND_FLIP_STRATEGY_BLOCKLIST:
+        return side, signal_tag, None, 1.0, 1.0, trend
     if trend["direction"] == side:
         return side, signal_tag, None, 1.0, 1.0, trend
     if trend["adx"] < config.TREND_FLIP_ADX_MIN:
