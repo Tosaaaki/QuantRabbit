@@ -35,11 +35,11 @@ strategies:
     same_dir_mode: both
     return_wait_bias: neutral
     return_wait_reason: recovery_day
-    max_open_trades: 6
-    max_open_trades_hard: 10
-    max_open_adverse_pips: 10.0
-    max_open_avg_adverse_pips: 5.0
-    stack_reentry_pips: 2.0
+    max_open_trades: 10
+    max_open_trades_hard: 18
+    max_open_adverse_pips: 12.0
+    max_open_avg_adverse_pips: 6.0
+    stack_reentry_pips: 0.8
     block_jst_hours: []
   Donchian5:
     cooldown_win_sec: 300
@@ -94,11 +94,11 @@ strategies:
     cooldown_loss_sec: 20
     same_dir_reentry_pips: 0.2
     same_dir_mode: both
-    max_open_trades: 4
-    max_open_trades_hard: 8
-    max_open_adverse_pips: 8
-    max_open_avg_adverse_pips: 4
-    stack_reentry_pips: 1.5
+    max_open_trades: 8
+    max_open_trades_hard: 14
+    max_open_adverse_pips: 10
+    max_open_avg_adverse_pips: 5
+    stack_reentry_pips: 0.8
   MicroVWAPBound:
     cooldown_win_sec: 40
     cooldown_loss_sec: 120
@@ -130,9 +130,9 @@ strategies:
     same_dir_mode: both
     return_wait_bias: avoid
     return_wait_reason: be_post_60_or_hold_skew
-    max_open_trades: 3
-    max_open_trades_hard: 6
-    stack_reentry_pips: 1.5
+    max_open_trades: 6
+    max_open_trades_hard: 12
+    stack_reentry_pips: 0.8
     block_jst_hours: []
   M1Scalper:
     cooldown_win_sec: 2
@@ -141,11 +141,11 @@ strategies:
     same_dir_mode: both
     return_wait_bias: neutral
     return_wait_reason: recovery_scalp_push
-    max_open_trades: 3
-    max_open_trades_hard: 6
-    max_open_adverse_pips: 8.0
-    max_open_avg_adverse_pips: 4.0
-    stack_reentry_pips: 1.0
+    max_open_trades: 8
+    max_open_trades_hard: 16
+    max_open_adverse_pips: 12.0
+    max_open_avg_adverse_pips: 6.0
+    stack_reentry_pips: 0.35
     block_jst_hours: []
   TrendMA:
     cooldown_win_sec: 300
@@ -305,11 +305,11 @@ strategies:
     cooldown_loss_sec: 20
     same_dir_reentry_pips: 0.2
     same_dir_mode: both
-    max_open_trades: 4
-    max_open_trades_hard: 8
-    max_open_adverse_pips: 8.0
-    max_open_avg_adverse_pips: 4.0
-    stack_reentry_pips: 1.5
+    max_open_trades: 8
+    max_open_trades_hard: 14
+    max_open_adverse_pips: 10.0
+    max_open_avg_adverse_pips: 5.0
+    stack_reentry_pips: 0.8
   TickImbalance:
     return_wait_bias: neutral
     return_wait_reason: default
