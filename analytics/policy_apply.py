@@ -19,9 +19,12 @@ DEFAULT_HISTORY_DIR = Path(os.getenv("POLICY_HISTORY_DIR", "logs/policy_history"
 DEFAULT_LATEST_PATH = Path(os.getenv("POLICY_LATEST_PATH", "logs/policy_latest.json"))
 
 REENTRY_CONFIG_PATH = Path(os.getenv("REENTRY_CONFIG_PATH", "config/worker_reentry.yaml"))
-TUNING_OVERRIDES_PATH = Path(os.getenv("TUNING_OVERRIDES_PATH", "config/tuning_overrides.yaml"))
+_TUNING_RUNTIME_DIR = os.getenv("TUNING_RUNTIME_DIR", "logs/tuning")
+TUNING_OVERRIDES_PATH = Path(
+    os.getenv("TUNING_OVERRIDES_PATH", f"{_TUNING_RUNTIME_DIR}/tuning_overrides.yaml")
+)
 TUNING_PRESETS_PATH = Path(os.getenv("TUNING_PRESETS_PATH", "config/tuning_presets.yaml"))
-TUNING_OVERLAY_PATH = Path(os.getenv("TUNING_OVERLAY_PATH", "config/tuning_overlay.yaml"))
+TUNING_OVERLAY_PATH = Path(os.getenv("TUNING_OVERLAY_PATH", f"{_TUNING_RUNTIME_DIR}/tuning_overlay.yaml"))
 
 
 def _read_json(path: Path) -> Optional[Dict[str, Any]]:
@@ -123,4 +126,3 @@ def apply_policy_diff_to_paths(
     if apply_tuning and isinstance(policy_diff.get("tuning_overrides"), dict):
         applied_flags["tuning"] = _apply_tuning_overrides(policy_diff["tuning_overrides"])
     return updated, changed, applied_flags
-
