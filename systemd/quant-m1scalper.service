@@ -24,6 +24,9 @@ Environment="M1SCALP_DYN_ALLOC_LOSER_BLOCK=1"
 Environment="M1SCALP_DYN_ALLOC_MIN_TRADES=8"
 Environment="M1SCALP_DYN_ALLOC_LOSER_SCORE=0.30"
 Environment="M1SCALP_DYN_ALLOC_TTL_SEC=20"
+Environment="DIR_CAP_OPPOSITE_BLOCK=1"
+Environment="DIR_CAP_OPPOSITE_BLOCK_MODE=net_bias"
+Environment="DIR_CAP_OPPOSITE_BLOCK_POCKETS=scalp"
 EnvironmentFile=-/etc/quantrabbit.env
 ExecStart=/home/tossaki/QuantRabbit/.venv/bin/python -m workers.scalp_m1scalper.worker
 Restart=always

@@ -1272,6 +1272,12 @@ _DIR_CAP_RATIO = float(os.getenv("DIR_CAP_RATIO", "0.70"))
 _DIR_CAP_WARN_RATIO = float(os.getenv("DIR_CAP_WARN_RATIO", "0.98"))
 # Floor multiplier to avoid crushing frequency when shrinking; 0.0 to disable
 _DIR_CAP_MIN_FRACTION = float(os.getenv("DIR_CAP_MIN_FRACTION", "0.15"))
+_DIR_CAP_OPPOSITE_BLOCK = _env_bool("DIR_CAP_OPPOSITE_BLOCK", False)
+_DIR_CAP_OPPOSITE_BLOCK_POCKETS = _env_csv_set(
+    "DIR_CAP_OPPOSITE_BLOCK_POCKETS",
+    "micro,scalp,scalp_fast",
+)
+_DIR_CAP_OPPOSITE_BLOCK_MODE = os.getenv("DIR_CAP_OPPOSITE_BLOCK_MODE", "net_bias").strip().lower()
 _DIR_CAP_CACHE: Optional[PositionManager] = None
 _BLOCK_MANUAL_NETTING = _env_bool("BLOCK_MANUAL_NETTING", True)
 _DIR_CAP_ADVERSE_ENABLE = _env_bool("DIR_CAP_ADVERSE_ENABLE", True)
@@ -2394,9 +2400,54 @@ def _apply_directional_cap(
         _DIR_CAP_CACHE = PositionManager()
     positions = _DIR_CAP_CACHE.get_open_positions()
     info = positions.get(pocket) or {}
+    pocket_key = str(pocket or "").strip().lower()
+    side_buy = side_label == "buy"
+    long_units = int(info.get("long_units", 0) or 0)
+    short_units = int(info.get("short_units", 0) or 0)
+    current_same_dir = long_units if side_buy else short_units
+    current_opp_dir = short_units if side_buy else long_units
+    if (
+        _DIR_CAP_OPPOSITE_BLOCK
+        and pocket_key in _DIR_CAP_OPPOSITE_BLOCK_POCKETS
+        and current_opp_dir > 0
+    ):
+        block = False
+        if _DIR_CAP_OPPOSITE_BLOCK_MODE == "strict":
+            block = True
+        else:
+            # net_bias: allow adds only in current net direction, block opposite adds.
+            net_units = long_units - short_units
+            if side_buy and net_units <= 0:
+                block = True
+            elif not side_buy and net_units >= 0:
+                block = True
+            elif current_same_dir <= 0:
+                block = True
+        if block:
+            logging.warning(
+                "[DIR_CAP] opposite_mix_block pocket=%s side=%s long=%s short=%s mode=%s",
+                pocket,
+                side_label,
+                long_units,
+                short_units,
+                _DIR_CAP_OPPOSITE_BLOCK_MODE,
+            )
+            try:
+                log_metric(
+                    "dir_cap_opposite_mix_block",
+                    1.0,
+                    tags={
+                        "pocket": pocket,
+                        "side": side_label,
+                        "mode": _DIR_CAP_OPPOSITE_BLOCK_MODE,
+                    },
+                )
+            except Exception:
+                pass
+            return 0
     current_same_dir = 0
     try:
-        if side_label == "buy":
+        if side_buy:
             current_same_dir = int(info.get("long_units", 0) or 0)
         else:
             current_same_dir = int(info.get("short_units", 0) or 0)
