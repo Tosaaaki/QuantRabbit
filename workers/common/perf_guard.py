@@ -312,6 +312,13 @@ def _strategy_threshold(
                 prefix=cfg.env_prefix,
                 allow_global_fallback=False,
             )
+            if raw is None and cfg.env_prefix:
+                raw = env_get(
+                    key,
+                    None,
+                    prefix=None,
+                    allow_global_fallback=False,
+                )
             if raw is None:
                 continue
             try:
@@ -334,6 +341,13 @@ def _strategy_bool_override(name: str, tag: str, default: bool, cfg: PerfGuardCf
             prefix=cfg.env_prefix,
             allow_global_fallback=False,
         )
+        if raw is None and cfg.env_prefix:
+            raw = env_get(
+                f"{name}_STRATEGY_{suffix}",
+                None,
+                prefix=None,
+                allow_global_fallback=False,
+            )
         if raw is None:
             continue
         token = str(raw).strip().lower()
