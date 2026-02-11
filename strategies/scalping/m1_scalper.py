@@ -22,8 +22,11 @@ except ModuleNotFoundError:  # pragma: no cover - optional in slim deployments
 from market_data import orderbook_state
 
 _PIP = 0.01
-_CONFIG_PATH = Path(__file__).resolve().parents[2] / "configs" / "scalp_active_params.json"
-_PARAM_CACHE: Dict[str, Dict] = {"mtime": None, "data": {}}
+_ROOT = Path(__file__).resolve().parents[2]
+_RUNTIME_CONFIG_PATH = _ROOT / "logs" / "tuning" / "scalp_active_params.json"
+_LEGACY_CONFIG_PATH = _ROOT / "configs" / "scalp_active_params.json"
+_CONFIG_OVERRIDE = os.getenv("SCALP_ACTIVE_PARAMS_PATH")
+_PARAM_CACHE: Dict[str, Dict] = {"path": None, "mtime": None, "data": {}}
 _LOGGER = logging.getLogger(__name__)
 _EMPTY_TICK_LOG_DEBOUNCE_SEC = 20.0
 _last_no_tick_log_ts = 0.0
@@ -62,17 +65,25 @@ def _attach_kill(signal: Dict) -> Dict:
 
 
 def _load_scalper_config() -> Dict:
+    if _CONFIG_OVERRIDE:
+        path = Path(_CONFIG_OVERRIDE)
+    elif _RUNTIME_CONFIG_PATH.exists():
+        path = _RUNTIME_CONFIG_PATH
+    else:
+        path = _LEGACY_CONFIG_PATH
     try:
-        mtime = _CONFIG_PATH.stat().st_mtime
+        mtime = path.stat().st_mtime
     except FileNotFoundError:
         return {}
+    cached_path = _PARAM_CACHE.get("path")
     cached_mtime = _PARAM_CACHE.get("mtime")
-    if cached_mtime != mtime:
+    if cached_path != str(path) or cached_mtime != mtime:
         try:
-            with _CONFIG_PATH.open("r", encoding="utf-8") as f:
+            with path.open("r", encoding="utf-8") as f:
                 data = json.load(f)
         except Exception:
             data = {}
+        _PARAM_CACHE["path"] = str(path)
         _PARAM_CACHE["mtime"] = mtime
         _PARAM_CACHE["data"] = data.get("M1Scalper", data.get("m1scalper", {}))
     return _PARAM_CACHE.get("data", {})

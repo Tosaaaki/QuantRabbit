@@ -180,8 +180,8 @@ Trade Loop Overview
 
 ## オンラインチューナ影運用
 - `scripts/run_online_tuner.py` が 5〜15 分間隔で低リスクなノブ（Exit 感度・入口ゲート・quiet_low_vol 配分）だけを微調整します。  
-- 既定は **シャドウモード**（`TUNER_ENABLE=true`, `TUNER_SHADOW_MODE=true`）で、`config/tuning_history/` に提案を記録するだけ。本番パラメータは変更されません。  
-- 本適用時は `TUNER_SHADOW_MODE=false` に切り替え、`scripts/apply_override.py` で `config/tuning_overlay.yaml` を生成して読み込ませます。  
+- 出力は既定で `logs/tuning/` 配下（`tuning_overrides.yaml`, `tuning_overlay.yaml`, `history/`）に書きます（deploy の `git pull` と競合させないため）。必要なら `TUNING_*_PATH` / `TUNING_RUNTIME_DIR` で上書きします。  
+- ランタイムの読込は `utils/tuning_loader.py` が `logs/tuning/` → 旧 `config/` → `config/tuning_presets.yaml` の順で解決します（`TUNING_*_PATH` を明示した場合はそのパスのみ）。  
 - 進行中の検証タスク・レビュー項目は `docs/autotune_taskboard.md` に集約しているので、運用状況の確認や ToDo 更新はここを参照してください。  
 - 詳細な導入手順・設計方針は `docs/ONLINE_TUNER.md` を参照。
 
@@ -280,7 +280,7 @@ FastAPI 製の承認 UI を Cloud Run 上で公開し、チューニング結果
    ```
 
 4. **アクセス**  
-   デプロイ後に表示される `https://autotune-ui-xxxx.run.app` が承認ダッシュボードの URL です。テーブルの `status` を更新すると、VM が参照する `configs/scalp_active_params.json` を人手で戻す前にレビュー履歴を残せます。
+   デプロイ後に表示される `https://autotune-ui-xxxx.run.app` が承認ダッシュボードの URL です。テーブルの `status` を更新すると、VM が参照する `logs/tuning/scalp_active_params.json`（`SCALP_ACTIVE_PARAMS_PATH` で上書き可）へ反映され、レビュー履歴を残せます。
 
 BigQuery では `status` 列が `pending/approved/rejected` を保持し、UI からの承認・却下操作で更新されます。VM 上の FastAPI UI も同じテーブルを参照するため、ブラウザからの操作でどちらも同期します。
 

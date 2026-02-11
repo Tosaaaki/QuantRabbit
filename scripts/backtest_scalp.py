@@ -7,7 +7,7 @@ Examples:
   python scripts/backtest_scalp.py --candles logs/candles_M1_20251022.json
   python scripts/backtest_scalp.py --candles logs/candles_M1_20251022.json \
         --strategies PulseBreak,RangeFader \
-        --params-json configs/scalp_active_params.json \
+        --params-json logs/tuning/scalp_active_params.json \
         --json-out logs/tuning/sample.json
 """
 
@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 from collections import defaultdict
 from dataclasses import asdict, dataclass
 from datetime import datetime, timedelta
@@ -51,7 +52,10 @@ from utils.pips import CostBreakdown, apply_costs, from_pips, to_pips
 INSTRUMENT = "USD_JPY"
 PIP_VALUE = from_pips(INSTRUMENT, 1.0)
 DEFAULT_TIMEOUT_SEC = 30 * 60  # 30 minutes
-DEFAULT_PARAM_FILE = REPO_ROOT / "configs" / "scalp_active_params.json"
+_SCALP_PARAMS_OVERRIDE = os.getenv("SCALP_ACTIVE_PARAMS_PATH")
+_RUNTIME_PARAM_FILE = REPO_ROOT / "logs" / "tuning" / "scalp_active_params.json"
+_LEGACY_PARAM_FILE = REPO_ROOT / "configs" / "scalp_active_params.json"
+DEFAULT_PARAM_FILE = Path(_SCALP_PARAMS_OVERRIDE) if _SCALP_PARAMS_OVERRIDE else _RUNTIME_PARAM_FILE
 
 TIMEFRAME_RULES = {
     "M1": None,
@@ -715,7 +719,12 @@ def run_backtest(
     df = load_candles(candles_file, timeframe=timeframe)
     df = compute_indicators(df, timeframe=timeframe)
 
-    active_params = load_params(DEFAULT_PARAM_FILE if DEFAULT_PARAM_FILE.exists() else None)
+    param_path = None
+    if DEFAULT_PARAM_FILE.exists():
+        param_path = DEFAULT_PARAM_FILE
+    elif not _SCALP_PARAMS_OVERRIDE and _LEGACY_PARAM_FILE.exists():
+        param_path = _LEGACY_PARAM_FILE
+    active_params = load_params(param_path)
     overrides = params_overrides or {}
     merged_params = merge_params(active_params, overrides)
 

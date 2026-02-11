@@ -11,11 +11,34 @@ except Exception:  # pragma: no cover - optional
     yaml = None
 
 _ROOT = Path(__file__).resolve().parents[1]
-_PATHS = [
-    Path(os.getenv("TUNING_OVERLAY_PATH", _ROOT / "config" / "tuning_overlay.yaml")),
-    Path(os.getenv("TUNING_OVERRIDES_PATH", _ROOT / "config" / "tuning_overrides.yaml")),
-    Path(os.getenv("TUNING_PRESETS_PATH", _ROOT / "config" / "tuning_presets.yaml")),
-]
+_RUNTIME_DIR = _ROOT / "logs" / "tuning"
+
+_OVERLAY_ENV = os.getenv("TUNING_OVERLAY_PATH")
+_OVERRIDES_ENV = os.getenv("TUNING_OVERRIDES_PATH")
+_PRESETS_ENV = os.getenv("TUNING_PRESETS_PATH")
+
+# Precedence: runtime overlay/overrides (git-untracked) -> legacy config overlay/overrides -> presets.
+# If the operator explicitly sets TUNING_*_PATH, honor only that path (no fallback) to keep tests/ops deterministic.
+_overlay_paths = (
+    [Path(_OVERLAY_ENV)]
+    if _OVERLAY_ENV
+    else [_RUNTIME_DIR / "tuning_overlay.yaml", _ROOT / "config" / "tuning_overlay.yaml"]
+)
+_override_paths = (
+    [Path(_OVERRIDES_ENV)]
+    if _OVERRIDES_ENV
+    else [_RUNTIME_DIR / "tuning_overrides.yaml", _ROOT / "config" / "tuning_overrides.yaml"]
+)
+_preset_paths = [Path(_PRESETS_ENV)] if _PRESETS_ENV else [_ROOT / "config" / "tuning_presets.yaml"]
+
+_PATHS: list[Path] = []
+_SEEN: set[str] = set()
+for _p in [*_overlay_paths, *_override_paths, *_preset_paths]:
+    key = str(_p)
+    if key in _SEEN:
+        continue
+    _SEEN.add(key)
+    _PATHS.append(_p)
 
 _CACHE_LOCK = threading.Lock()
 _CACHE: dict[str, Any] = {"data": None, "mtimes": {}}
@@ -77,4 +100,3 @@ def get_tuning_value(keys: Iterable[str], default: Any = None) -> Any:
         if value is not None:
             return value
     return default
-

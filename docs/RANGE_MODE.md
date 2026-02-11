@@ -27,8 +27,7 @@
 
 ## 2. オンライン自動チューニング
 - 5〜15 分間隔で `scripts/run_online_tuner.py` を呼び、Exit 感度や入口ゲート・quiet_low_vol 配分を小幅調整（ホットパスは対象外）。
-- 既定: `TUNER_ENABLE=true`, `TUNER_SHADOW_MODE=true`。
-- `config/tuning_history/` に履歴だけを残し、本番パラメータ (`config/tuning_overrides.yaml`) は書き換えない。
-- 本適用時: `TUNER_SHADOW_MODE=false` → `scripts/apply_override.py` で `config/tuning_overlay.yaml` を生成しランタイム読み込み。
+- 生成物は既定で `logs/tuning/` 配下（`tuning_overrides.yaml`, `tuning_overlay.yaml`, `history/`）に書く（deploy の `git pull` と競合させないため）。
+- ランタイムの読込は `utils/tuning_loader.py` が `logs/tuning/` → 旧 `config/` → `config/tuning_presets.yaml` の順で解決（`TUNING_*_PATH` を明示した場合はそのパスのみ）。
 - ToDo/検証タスクは `docs/autotune_taskboard.md` に集約し、完了後は同ファイルでアーカイブ。
 - 詳細手順は `docs/ONLINE_TUNER.md` を参照。

@@ -12,7 +12,10 @@ from statistics import mean
 from typing import Iterable, List
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-CONFIG_PATH = REPO_ROOT / "configs" / "scalp_active_params.json"
+RUNTIME_DIR = REPO_ROOT / "logs" / "tuning"
+LEGACY_CONFIG_PATH = REPO_ROOT / "configs" / "scalp_active_params.json"
+_CONFIG_OVERRIDE = os.getenv("SCALP_ACTIVE_PARAMS_PATH")
+CONFIG_PATH = Path(_CONFIG_OVERRIDE) if _CONFIG_OVERRIDE else (RUNTIME_DIR / "scalp_active_params.json")
 TRADES_DB_PATH = REPO_ROOT / "logs" / "trades.db"
 ORDERS_DB_PATH = REPO_ROOT / "logs" / "orders.db"
 STATE_PATH = REPO_ROOT / "logs" / "tuning" / "scalp_autotune_state.json"
@@ -185,9 +188,20 @@ def _percentile(values: Iterable[float], pct: float) -> float:
 
 
 def _load_config() -> dict:
-    if CONFIG_PATH.exists():
-        with CONFIG_PATH.open("r", encoding="utf-8") as f:
-            return json.load(f)
+    # Prefer runtime state (git-untracked). Fall back to the legacy tracked configs file
+    # only to bootstrap the first runtime write after migration.
+    if _CONFIG_OVERRIDE:
+        paths = (CONFIG_PATH,)
+    else:
+        paths = (CONFIG_PATH, LEGACY_CONFIG_PATH) if CONFIG_PATH != LEGACY_CONFIG_PATH else (CONFIG_PATH,)
+    for path in paths:
+        if not path.exists():
+            continue
+        try:
+            with path.open("r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception:
+            continue
     return {}
 
 
