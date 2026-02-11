@@ -26,9 +26,8 @@
 ## 最優先の問題（今すぐ直す）
 1. **自動学習が tracked file を書き換えて deploy を壊す**
    - `scripts/vm.sh deploy` は VM 上で `git pull --ff-only` を実行しており、tracked file が書き換わっていると pull が失敗し、しかも `|| true` で握りつぶされる。
-   - 現状、以下が tracked のまま書き換わり得る:
-     - `config/tuning_overrides.yaml`, `config/tuning_overlay.yaml`, `config/tuning_history/*`
-     - `configs/scalp_active_params.json`
+   - 旧方針では `config/*.yaml` / `configs/*.json` を直接更新し得たため、deploy を壊しやすかった。
+   - 対応: runtime state は `logs/tuning/` に集約し、読込も runtime 優先に変更する（git 管理外）。
 2. **“効いているか/止まっているか”が VM 上で一目で分からない**
    - チューナ/ポリシーの最終適用時刻・差分・ガード判定が散在し、停止と劣化の切り分けが遅い。
 3. **データ不足/偏りでノブがドリフトし得る**
@@ -43,13 +42,13 @@
 ## フェーズ別タスク（1PR=1ファイルで切る）
 
 ### Phase 0: デプロイ破壊の根絶（最短で収束）
-- [ ] `utils/tuning_loader.py`: 参照先の優先順位を `logs/` 系の runtime state → `config/` の presets に変更（後方互換: config の既存ファイルも読める）。  
+- [x] `utils/tuning_loader.py`: 参照先の優先順位を `logs/` 系の runtime state → `config/` の presets に変更（後方互換: config の既存ファイルも読める）。  
   受け入れ条件: VM 上で tracked file に触れずに tuning が反映される構成が取れる。
-- [ ] `scripts/run_online_tuner_live.sh`: 出力先デフォルトを `logs/tuning/*.yaml` に変更（環境変数で上書き可）。  
+- [x] `scripts/run_online_tuner_live.sh`: 出力先デフォルトを `logs/tuning/*.yaml` に変更（環境変数で上書き可）。  
   受け入れ条件: `git status` が汚れないまま 10 分周期で走る。
-- [ ] `analytics/policy_apply.py`: tuning の出力先デフォルトを `logs/tuning/*.yaml` に変更（policy 自体は `logs/policy_*.json` のまま）。  
+- [x] `analytics/policy_apply.py`: tuning の出力先デフォルトを `logs/tuning/*.yaml` に変更（policy 自体は `logs/policy_*.json` のまま）。  
   受け入れ条件: `systemd/quant-policy-cycle.timer` が走っても deploy を阻害しない。
-- [ ] `autotune/scalp_trainer.py`: `configs/scalp_active_params.json` への直接書き込みを廃止し、runtime state（例: `logs/tuning/scalp_active_params.json`）へ移動。  
+- [x] `autotune/scalp_trainer.py`: `configs/scalp_active_params.json` への直接書き込みを廃止し、runtime state（例: `logs/tuning/scalp_active_params.json`）へ移動。  
   受け入れ条件: Scalp 自己調整を再導入しても git を汚さない。
 
 ### Phase 1: “暴れない”オンライン学習にする（安全弁）
