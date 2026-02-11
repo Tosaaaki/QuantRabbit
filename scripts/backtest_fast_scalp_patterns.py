@@ -57,7 +57,8 @@ def _load_dataset(limit: int, min_abs_pips: float) -> tuple[np.ndarray, np.ndarr
             payload = json.loads(order_row["request_json"])
         except json.JSONDecodeError:
             continue
-        thesis = (payload.get("meta") or {}).get("entry_thesis") or {}
+        # Compatibility: old layout stored entry_thesis under meta; new layout stores it top-level.
+        thesis = payload.get("entry_thesis") or (payload.get("meta") or {}).get("entry_thesis") or {}
         feat = thesis.get("pattern_features")
         if not feat:
             continue
