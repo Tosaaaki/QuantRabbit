@@ -33,7 +33,10 @@ except Exception:  # pragma: no cover
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 TEMPLATE_DIR = REPO_ROOT / "templates" / "autotune"
-CONFIG_PATH = REPO_ROOT / "configs" / "scalp_active_params.json"
+_SCALP_PARAMS_OVERRIDE = os.getenv("SCALP_ACTIVE_PARAMS_PATH")
+_SCALP_PARAMS_RUNTIME = REPO_ROOT / "logs" / "tuning" / "scalp_active_params.json"
+_SCALP_PARAMS_LEGACY = REPO_ROOT / "configs" / "scalp_active_params.json"
+CONFIG_PATH = Path(_SCALP_PARAMS_OVERRIDE) if _SCALP_PARAMS_OVERRIDE else _SCALP_PARAMS_RUNTIME
 METRICS_DB = Path("logs/metrics.db")
 ORDERS_DB = Path("logs/orders.db")
 SIGNALS_DB = Path("logs/signals.db")
@@ -2255,14 +2258,20 @@ def _apply_params_to_config(run: dict) -> None:
     if not params or not strategy:
         return
 
-    try:
-        if CONFIG_PATH.exists():
-            with CONFIG_PATH.open("r", encoding="utf-8") as f:
+    current: dict = {}
+    if _SCALP_PARAMS_OVERRIDE:
+        read_paths = (CONFIG_PATH,)
+    else:
+        read_paths = (CONFIG_PATH, _SCALP_PARAMS_LEGACY) if CONFIG_PATH != _SCALP_PARAMS_LEGACY else (CONFIG_PATH,)
+    for path in read_paths:
+        if not path.exists():
+            continue
+        try:
+            with path.open("r", encoding="utf-8") as f:
                 current = json.load(f)
-        else:
+        except Exception:
             current = {}
-    except Exception:
-        current = {}
+        break
 
     current[strategy] = params
 
