@@ -16,7 +16,7 @@ import sqlite3
 import time
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
-from typing import Dict, Optional
+from typing import Dict, Optional, Tuple
 
 from analysis.range_guard import detect_range_mode
 from utils.metrics_logger import log_metric
@@ -160,6 +160,7 @@ _RISK_REGIME_TREND_BONUS = float(os.getenv("RISK_REGIME_TREND_BONUS", "1.1") or 
 _RISK_REGIME_TREND_PENALTY = float(os.getenv("RISK_REGIME_TREND_PENALTY", "0.85") or 0.85)
 
 _PERF_CACHE: dict[tuple[str, str, str], tuple[float, float, float, int]] = {}
+_RR_CACHE: dict[tuple[str, str], tuple[float, dict[str, float]]] = {}
 _TAG_ALIAS = {
     "impulseretrace": "impulseretrace",
     "rangefader": "rangefader",
@@ -200,6 +201,38 @@ _TREND_HINTS = {
     "session_open",
     "squeeze",
 }
+
+# --- Dynamic RR normalization (TP/SL shape) ---
+PIP = 0.01  # USD/JPY
+_RR_NORMALIZE_ENABLED = _env_bool("RR_NORMALIZE_ENABLED", True)
+_RR_LOOKBACK_DAYS = max(1, int(float(os.getenv("RR_LOOKBACK_DAYS", "7") or 7)))
+_RR_MIN_SAMPLES = max(8, int(float(os.getenv("RR_MIN_SAMPLES", "40") or 40)))
+_RR_CACHE_TTL_SEC = max(30.0, float(os.getenv("RR_CACHE_TTL_SEC", "180") or 180.0))
+_RR_MIN_RATIO = max(0.2, float(os.getenv("RR_MIN_RATIO", "1.00") or 1.00))
+_RR_MAX_RATIO = max(_RR_MIN_RATIO, float(os.getenv("RR_MAX_RATIO", "2.40") or 2.40))
+_RR_TARGET_TP_RATE = _clamp(
+    float(os.getenv("RR_TARGET_TP_RATE", "0.54") or 0.54),
+    0.35,
+    0.90,
+)
+_RR_ADAPT_GAIN = max(0.0, float(os.getenv("RR_ADAPT_GAIN", "1.0") or 1.0))
+_RR_TP_SHRINK_MAX = _clamp(
+    float(os.getenv("RR_TP_SHRINK_MAX", "0.25") or 0.25),
+    0.0,
+    0.80,
+)
+_RR_SL_EXPAND_MAX = _clamp(
+    float(os.getenv("RR_SL_EXPAND_MAX", "0.10") or 0.10),
+    0.0,
+    0.60,
+)
+_RR_ALLOW_SL_EXPAND_PF = float(os.getenv("RR_ALLOW_SL_EXPAND_PF", "1.05") or 1.05)
+_RR_PF_HARD_GUARD = float(os.getenv("RR_PF_HARD_GUARD", "0.95") or 0.95)
+_RR_PF_HARD_GUARD_TP_SHRINK_CAP = _clamp(
+    float(os.getenv("RR_PF_HARD_GUARD_TP_SHRINK_CAP", "0.10") or 0.10),
+    0.0,
+    0.40,
+)
 
 
 def _tag_variants(tag: Optional[str]) -> tuple[str, ...]:
@@ -283,6 +316,168 @@ def _query_perf_stats(tag: str, pocket: str) -> tuple[float, float, int]:
     win_rate = win / n if n > 0 else 0.0
     _PERF_CACHE[key] = (now_mono, pf, win_rate, n)
     return pf, win_rate, n
+
+
+def _query_rr_outcome_stats(tag: Optional[str], pocket: Optional[str]) -> dict[str, float]:
+    """
+    Fetch recent TP/SL outcome balance used by RR normalization.
+    """
+    if not _DB.exists():
+        return {}
+    variants = _tag_variants(tag)
+    cache_key = (
+        "|".join(variants) if variants and variants != ("",) else "*",
+        str(pocket or "*").lower(),
+    )
+    now_mono = time.monotonic()
+    cached = _RR_CACHE.get(cache_key)
+    if cached and now_mono - cached[0] <= _RR_CACHE_TTL_SEC:
+        return dict(cached[1])
+
+    where = [
+        "close_time IS NOT NULL",
+        "datetime(close_time) >= datetime('now', ?)",
+        "close_reason IN ('TAKE_PROFIT_ORDER', 'STOP_LOSS_ORDER')",
+    ]
+    params: list[object] = [f"-{_RR_LOOKBACK_DAYS} day"]
+    pocket_norm = str(pocket or "").strip().lower()
+    if pocket_norm:
+        where.append("LOWER(COALESCE(pocket, '')) = ?")
+        params.append(pocket_norm)
+    if variants and variants != ("",):
+        placeholders = ",".join("?" for _ in variants)
+        where.append(
+            f"LOWER(COALESCE(NULLIF(strategy_tag, ''), strategy, '')) IN ({placeholders})"
+        )
+        params.extend(list(variants))
+
+    con = _open_trades_db()
+    if con is None:
+        return {}
+    try:
+        row = con.execute(
+            f"""
+            SELECT
+              SUM(CASE WHEN close_reason = 'TAKE_PROFIT_ORDER' THEN 1 ELSE 0 END) AS tp_hits,
+              SUM(CASE WHEN close_reason = 'STOP_LOSS_ORDER' THEN 1 ELSE 0 END) AS sl_hits,
+              AVG(CASE WHEN close_reason = 'TAKE_PROFIT_ORDER' THEN ABS(pl_pips) END) AS avg_tp_pips,
+              AVG(CASE WHEN close_reason = 'STOP_LOSS_ORDER' THEN ABS(pl_pips) END) AS avg_sl_pips,
+              SUM(
+                CASE
+                  WHEN close_reason = 'TAKE_PROFIT_ORDER' THEN MAX(COALESCE(realized_pl, 0), 0)
+                  ELSE 0
+                END
+              ) AS profit,
+              SUM(
+                CASE
+                  WHEN close_reason = 'STOP_LOSS_ORDER' THEN ABS(MIN(COALESCE(realized_pl, 0), 0))
+                  ELSE 0
+                END
+              ) AS loss
+            FROM trades
+            WHERE {' AND '.join(where)}
+            """,
+            params,
+        ).fetchone()
+    except Exception:
+        row = None
+    finally:
+        try:
+            con.close()
+        except Exception:
+            pass
+    if not row:
+        return {}
+
+    tp_hits = int(row["tp_hits"] or 0)
+    sl_hits = int(row["sl_hits"] or 0)
+    n = tp_hits + sl_hits
+    if n <= 0:
+        stats: dict[str, float] = {
+            "n": 0.0,
+            "tp_hits": 0.0,
+            "sl_hits": 0.0,
+            "tp_rate": 0.0,
+            "pf": 1.0,
+            "avg_tp_pips": 0.0,
+            "avg_sl_pips": 0.0,
+        }
+        _RR_CACHE[cache_key] = (now_mono, stats)
+        return stats
+
+    profit = float(row["profit"] or 0.0)
+    loss = float(row["loss"] or 0.0)
+    stats = {
+        "n": float(n),
+        "tp_hits": float(tp_hits),
+        "sl_hits": float(sl_hits),
+        "tp_rate": float(tp_hits / max(n, 1)),
+        "pf": float(profit / loss if loss > 0 else (float("inf") if profit > 0 else 1.0)),
+        "avg_tp_pips": float(row["avg_tp_pips"] or 0.0),
+        "avg_sl_pips": float(row["avg_sl_pips"] or 0.0),
+    }
+    _RR_CACHE[cache_key] = (now_mono, stats)
+    return stats
+
+
+def _normalize_sl_tp_rr(
+    *,
+    price: float,
+    sl: Optional[float],
+    tp: Optional[float],
+    is_buy: bool,
+    strategy_tag: Optional[str],
+    pocket: Optional[str],
+) -> Tuple[Optional[float], Optional[float]]:
+    if not _RR_NORMALIZE_ENABLED:
+        return sl, tp
+    if sl is None or tp is None:
+        return sl, tp
+    try:
+        sl_dist = abs(float(price) - float(sl))
+        tp_dist = abs(float(tp) - float(price))
+    except Exception:
+        return sl, tp
+    if sl_dist <= 0.0 or tp_dist <= 0.0:
+        return sl, tp
+
+    sl_pips = sl_dist / PIP
+    tp_pips = tp_dist / PIP
+    rr = tp_pips / max(sl_pips, 1e-6)
+    rr = _clamp(rr, _RR_MIN_RATIO, _RR_MAX_RATIO)
+    tp_pips = sl_pips * rr
+
+    stats = _query_rr_outcome_stats(strategy_tag, pocket)
+    n = int(stats.get("n") or 0)
+    tp_rate = float(stats.get("tp_rate") or 0.0)
+    pf = float(stats.get("pf") or 1.0)
+    if n >= _RR_MIN_SAMPLES and _RR_ADAPT_GAIN > 0.0:
+        pressure = _clamp(
+            (_RR_TARGET_TP_RATE - tp_rate) / max(_RR_TARGET_TP_RATE, 1e-6),
+            0.0,
+            1.0,
+        )
+        if pressure > 0.0:
+            tp_shrink_cap = _RR_TP_SHRINK_MAX
+            # PF が悪化しているときは TP 圧縮を抑制して過度な値幅縮小を防ぐ。
+            if pf < _RR_PF_HARD_GUARD:
+                tp_shrink_cap = min(tp_shrink_cap, _RR_PF_HARD_GUARD_TP_SHRINK_CAP)
+            tp_shrink = min(tp_shrink_cap, pressure * _RR_ADAPT_GAIN)
+            tp_pips *= max(0.2, 1.0 - tp_shrink)
+            if pf >= _RR_ALLOW_SL_EXPAND_PF and _RR_SL_EXPAND_MAX > 0.0:
+                sl_expand = min(_RR_SL_EXPAND_MAX, pressure * _RR_ADAPT_GAIN)
+                sl_pips *= 1.0 + sl_expand
+
+    rr = _clamp(tp_pips / max(sl_pips, 1e-6), _RR_MIN_RATIO, _RR_MAX_RATIO)
+    tp_pips = sl_pips * rr
+
+    if is_buy:
+        sl = price - sl_pips * PIP
+        tp = price + tp_pips * PIP
+    else:
+        sl = price + sl_pips * PIP
+        tp = price - tp_pips * PIP
+    return sl, tp
 
 
 def _perf_multiplier(tag: Optional[str], pocket: Optional[str]) -> tuple[float, dict[str, float]]:
@@ -1193,12 +1388,33 @@ def clamp_sl_tp(
     sl: Optional[float],
     tp: Optional[float],
     is_buy: bool,
+    *,
+    strategy_tag: Optional[str] = None,
+    pocket: Optional[str] = None,
 ) -> Tuple[Optional[float], Optional[float]]:
     """
     SL/TP が逆転していないかチェックし妥当な値を返す
     """
     adj_sl = sl
     adj_tp = tp
+    if adj_tp is not None:
+        if is_buy and adj_tp <= price:
+            adj_tp = price + 0.1
+        if not is_buy and adj_tp >= price:
+            adj_tp = price - 0.1
+    if adj_sl is not None:
+        if is_buy and adj_sl >= price:
+            adj_sl = price - 0.1
+        if not is_buy and adj_sl <= price:
+            adj_sl = price + 0.1
+    adj_sl, adj_tp = _normalize_sl_tp_rr(
+        price=price,
+        sl=adj_sl,
+        tp=adj_tp,
+        is_buy=is_buy,
+        strategy_tag=strategy_tag,
+        pocket=pocket,
+    )
     if adj_tp is not None:
         if is_buy and adj_tp <= price:
             adj_tp = price + 0.1

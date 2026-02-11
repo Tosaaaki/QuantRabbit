@@ -164,3 +164,84 @@ def test_allowed_lot_allows_flatten_when_risk_overshoots(monkeypatch):
         open_short_units=0.0,
     )
     assert abs(lot - 0.300) < 1e-9
+
+
+def test_clamp_sl_tp_applies_rr_floor(monkeypatch):
+    monkeypatch.setattr(risk_guard, "_RR_NORMALIZE_ENABLED", True, raising=False)
+    monkeypatch.setattr(risk_guard, "_RR_MIN_RATIO", 1.20, raising=False)
+    monkeypatch.setattr(risk_guard, "_RR_MAX_RATIO", 2.40, raising=False)
+    monkeypatch.setattr(risk_guard, "_RR_MIN_SAMPLES", 999, raising=False)
+    monkeypatch.setattr(
+        risk_guard,
+        "_query_rr_outcome_stats",
+        lambda tag, pocket: {},
+        raising=False,
+    )
+
+    sl, tp = risk_guard.clamp_sl_tp(
+        price=150.0,
+        sl=149.9,   # 10 pips
+        tp=150.05,  # 5 pips -> RR 0.5
+        is_buy=True,
+    )
+    assert sl == 149.9
+    assert tp == 150.12  # 10 pips * RR min 1.2
+
+
+def test_clamp_sl_tp_adapts_for_low_tp_rate(monkeypatch):
+    monkeypatch.setattr(risk_guard, "_RR_NORMALIZE_ENABLED", True, raising=False)
+    monkeypatch.setattr(risk_guard, "_RR_MIN_RATIO", 1.00, raising=False)
+    monkeypatch.setattr(risk_guard, "_RR_MAX_RATIO", 3.00, raising=False)
+    monkeypatch.setattr(risk_guard, "_RR_TARGET_TP_RATE", 0.54, raising=False)
+    monkeypatch.setattr(risk_guard, "_RR_ADAPT_GAIN", 1.0, raising=False)
+    monkeypatch.setattr(risk_guard, "_RR_TP_SHRINK_MAX", 0.25, raising=False)
+    monkeypatch.setattr(risk_guard, "_RR_SL_EXPAND_MAX", 0.10, raising=False)
+    monkeypatch.setattr(risk_guard, "_RR_ALLOW_SL_EXPAND_PF", 1.05, raising=False)
+    monkeypatch.setattr(risk_guard, "_RR_PF_HARD_GUARD", 0.95, raising=False)
+    monkeypatch.setattr(risk_guard, "_RR_PF_HARD_GUARD_TP_SHRINK_CAP", 0.10, raising=False)
+    monkeypatch.setattr(risk_guard, "_RR_MIN_SAMPLES", 40, raising=False)
+    monkeypatch.setattr(
+        risk_guard,
+        "_query_rr_outcome_stats",
+        lambda tag, pocket: {"n": 120.0, "tp_rate": 0.30, "pf": 1.20},
+        raising=False,
+    )
+
+    sl, tp = risk_guard.clamp_sl_tp(
+        price=150.0,
+        sl=149.9,  # 10 pips
+        tp=150.2,  # 20 pips
+        is_buy=True,
+    )
+    assert sl == 149.89  # SL 10% expansion when PF is healthy
+    assert tp == 150.15  # TP shrinks by capped 25%
+
+
+def test_clamp_sl_tp_limits_tp_shrink_when_pf_is_bad(monkeypatch):
+    monkeypatch.setattr(risk_guard, "_RR_NORMALIZE_ENABLED", True, raising=False)
+    monkeypatch.setattr(risk_guard, "_RR_MIN_RATIO", 1.00, raising=False)
+    monkeypatch.setattr(risk_guard, "_RR_MAX_RATIO", 3.00, raising=False)
+    monkeypatch.setattr(risk_guard, "_RR_TARGET_TP_RATE", 0.54, raising=False)
+    monkeypatch.setattr(risk_guard, "_RR_ADAPT_GAIN", 1.0, raising=False)
+    monkeypatch.setattr(risk_guard, "_RR_TP_SHRINK_MAX", 0.25, raising=False)
+    monkeypatch.setattr(risk_guard, "_RR_SL_EXPAND_MAX", 0.10, raising=False)
+    monkeypatch.setattr(risk_guard, "_RR_ALLOW_SL_EXPAND_PF", 1.05, raising=False)
+    monkeypatch.setattr(risk_guard, "_RR_PF_HARD_GUARD", 0.95, raising=False)
+    monkeypatch.setattr(risk_guard, "_RR_PF_HARD_GUARD_TP_SHRINK_CAP", 0.10, raising=False)
+    monkeypatch.setattr(risk_guard, "_RR_MIN_SAMPLES", 40, raising=False)
+    monkeypatch.setattr(
+        risk_guard,
+        "_query_rr_outcome_stats",
+        lambda tag, pocket: {"n": 120.0, "tp_rate": 0.20, "pf": 0.80},
+        raising=False,
+    )
+
+    sl, tp = risk_guard.clamp_sl_tp(
+        price=150.0,
+        sl=149.9,  # 10 pips
+        tp=150.2,  # 20 pips
+        is_buy=True,
+    )
+    # PF bad: TP shrink is capped at 10% and SL is not expanded.
+    assert sl == 149.9
+    assert tp == 150.18
