@@ -18,7 +18,7 @@ import tempfile
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from threading import Lock
+from threading import Lock, Thread
 from typing import Iterable, Optional, Sequence, Tuple
 
 
@@ -72,6 +72,9 @@ _cache_mtime: float = 0.0
 _last_persist_error_ts: float = 0.0
 _last_regen_ts: float = 0.0
 _regen_cooldown_sec: float = 2.0
+_PERSIST_LOCK = Lock()
+_persist_inflight = False
+_persist_payload: dict[str, object] | None = None
 
 
 def _normalize_levels(levels: Iterable[Tuple[float, float]]) -> Tuple[OrderBookLevel, ...]:
@@ -191,69 +194,83 @@ def has_sufficient_depth(
     return True
 
 
-def _write_snapshot_payload(payload: dict[str, object]) -> None:
-    with _SNAPSHOT_PATH.open("w", encoding="utf-8") as fh:
-        json.dump(payload, fh, separators=(",", ":"))
-        fh.flush()
-        os.fsync(fh.fileno())
+def _write_snapshot_payload_sync(payload: dict[str, object]) -> None:
+    global _cache_mtime
+    _SNAPSHOT_PATH.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = None
+    try:
+        # Ensure write -> fsync -> atomic replace order for readers.
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            encoding="utf-8",
+            dir=str(_SNAPSHOT_PATH.parent),
+            prefix=f"{_SNAPSHOT_PATH.stem}.",
+            suffix=".tmp",
+            delete=False,
+        ) as fh:
+            json.dump(payload, fh, separators=(",", ":"))
+            fh.flush()
+            os.fsync(fh.fileno())
+            tmp_path = Path(fh.name)
+        if tmp_path is not None and tmp_path.exists():
+            os.replace(tmp_path, _SNAPSHOT_PATH)
+        else:
+            with _SNAPSHOT_PATH.open("w", encoding="utf-8") as fallback:
+                json.dump(payload, fallback, separators=(",", ":"))
+                fallback.flush()
+                os.fsync(fallback.fileno())
+    finally:
+        if tmp_path is not None and tmp_path.exists():
+            try:
+                tmp_path.unlink()
+            except Exception:
+                pass
+    try:
+        _cache_mtime = float(_SNAPSHOT_PATH.stat().st_mtime)
+    except Exception:
+        pass
+
+
+def _persist_worker() -> None:
+    global _persist_inflight, _persist_payload, _last_persist_error_ts
+    while True:
+        with _PERSIST_LOCK:
+            payload = _persist_payload
+            _persist_payload = None
+            if payload is None:
+                _persist_inflight = False
+                return
+        try:
+            _write_snapshot_payload_sync(payload)
+        except Exception as exc:  # noqa: BLE001
+            now = time.time()
+            if now - _last_persist_error_ts >= 30.0:
+                _LOGGER.warning("[ORDERBOOK] persist failed: %s", exc)
+                _last_persist_error_ts = now
 
 
 def _persist_snapshot(snapshot: OrderBookSnapshot, *, force: bool = False) -> None:
     """Persist the latest snapshot for cross-process consumers."""
 
-    global _last_flush_ts, _last_persist_error_ts, _cache_mtime
+    global _last_flush_ts, _persist_inflight, _persist_payload
     now = time.time()
     if (not force) and now - _last_flush_ts < _FLUSH_INTERVAL_SEC:
         return
     _last_flush_ts = now
-    try:
-        payload = {
-            "epoch_ts": snapshot.epoch_ts,
-            "provider": snapshot.provider,
-            "latency_ms": snapshot.latency_ms,
-            "seq": snapshot.seq,
-            "bid_levels": [[lvl.price, lvl.size] for lvl in snapshot.bid_levels],
-            "ask_levels": [[lvl.price, lvl.size] for lvl in snapshot.ask_levels],
-        }
-        _SNAPSHOT_PATH.parent.mkdir(parents=True, exist_ok=True)
-        tmp_path = None
-        try:
-            # Ensure write -> fsync -> atomic replace order for readers.
-            with tempfile.NamedTemporaryFile(
-                mode="w",
-                encoding="utf-8",
-                dir=str(_SNAPSHOT_PATH.parent),
-                prefix=f"{_SNAPSHOT_PATH.stem}.",
-                suffix=".tmp",
-                delete=False,
-            ) as fh:
-                json.dump(payload, fh, separators=(",", ":"))
-                fh.flush()
-                os.fsync(fh.fileno())
-                tmp_path = Path(fh.name)
-            replaced = False
-            if tmp_path is not None and tmp_path.exists():
-                try:
-                    os.replace(tmp_path, _SNAPSHOT_PATH)
-                    replaced = True
-                except FileNotFoundError:
-                    replaced = False
-            if not replaced:
-                _write_snapshot_payload(payload)
-        finally:
-            if tmp_path is not None and tmp_path.exists():
-                try:
-                    tmp_path.unlink()
-                except Exception:
-                    pass
-        try:
-            _cache_mtime = float(_SNAPSHOT_PATH.stat().st_mtime)
-        except Exception:
-            pass
-    except Exception as exc:  # noqa: BLE001
-        if now - _last_persist_error_ts >= 30.0:
-            _LOGGER.warning("[ORDERBOOK] persist failed: %s", exc)
-            _last_persist_error_ts = now
+    payload = {
+        "epoch_ts": snapshot.epoch_ts,
+        "provider": snapshot.provider,
+        "latency_ms": snapshot.latency_ms,
+        "seq": snapshot.seq,
+        "bid_levels": [[lvl.price, lvl.size] for lvl in snapshot.bid_levels],
+        "ask_levels": [[lvl.price, lvl.size] for lvl in snapshot.ask_levels],
+    }
+    with _PERSIST_LOCK:
+        _persist_payload = payload
+        if _persist_inflight:
+            return
+        _persist_inflight = True
+    Thread(target=_persist_worker, name="orderbook-persist", daemon=True).start()
 
 
 def _reload_snapshot_if_updated() -> None:

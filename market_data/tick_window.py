@@ -11,6 +11,7 @@ import time
 from collections import deque
 import os
 import json
+import threading
 from pathlib import Path
 from dataclasses import dataclass
 from typing import Deque, Dict, Iterable, List, Tuple
@@ -54,6 +55,9 @@ _last_flush_ts: float = 0.0
 _last_persist_error_ts: float = 0.0
 _cache_mtime: float = 0.0
 _last_reload_ts: float = 0.0
+_persist_lock = threading.Lock()
+_persist_inflight = False
+_persist_payload: list[dict[str, float]] | None = None
 
 
 def _load_cache() -> None:
@@ -90,29 +94,54 @@ def _load_cache() -> None:
         _LOGGER.info("[TICK_CACHE] no cached ticks found")
 
 
-def _persist_cache() -> None:
-    global _last_flush_ts, _last_persist_error_ts
-    now = time.time()
-    if now - _last_flush_ts < _FLUSH_INTERVAL_SEC:
-        return
-    _last_flush_ts = now
+def _write_cache_payload(payload: list[dict[str, float]]) -> None:
+    global _last_persist_error_ts, _cache_mtime
     try:
         _CACHE_PATH.parent.mkdir(parents=True, exist_ok=True)
-        window = list(_TICKS)[-min(len(_TICKS), _CACHE_LIMIT) :]
-        data = [
-            {"epoch": row.epoch, "bid": row.bid, "ask": row.ask, "mid": row.mid}
-            for row in window
-        ]
         tmp_path = _CACHE_PATH.with_suffix(".tmp")
-        tmp_path.write_text(json.dumps(data, separators=(",", ":")), encoding="utf-8")
+        tmp_path.write_text(json.dumps(payload, separators=(",", ":")), encoding="utf-8")
         tmp_path.replace(_CACHE_PATH)
-        _LOGGER.debug("[TICK_CACHE] persisted=%d path=%s", len(window), _CACHE_PATH)
+        try:
+            _cache_mtime = float(_CACHE_PATH.stat().st_mtime)
+        except Exception:
+            pass
+        _LOGGER.debug("[TICK_CACHE] persisted=%d path=%s", len(payload), _CACHE_PATH)
     except Exception as exc:
         if time.time() - _last_persist_error_ts >= 30.0:
             _LOGGER.warning("[TICK_CACHE] persist failed: %s", exc)
             _last_persist_error_ts = time.time()
-        # Persistence best-effort; ignore failures
+
+
+def _persist_worker() -> None:
+    global _persist_inflight, _persist_payload
+    while True:
+        with _persist_lock:
+            payload = _persist_payload
+            _persist_payload = None
+            if payload is None:
+                _persist_inflight = False
+                return
+        _write_cache_payload(payload)
+
+
+def _persist_cache() -> None:
+    global _last_flush_ts, _persist_inflight, _persist_payload
+    now = time.time()
+    if now - _last_flush_ts < _FLUSH_INTERVAL_SEC:
         return
+    _last_flush_ts = now
+    window = list(_TICKS)[-min(len(_TICKS), _CACHE_LIMIT) :]
+    payload = [
+        {"epoch": row.epoch, "bid": row.bid, "ask": row.ask, "mid": row.mid}
+        for row in window
+    ]
+    with _persist_lock:
+        _persist_payload = payload
+        if _persist_inflight:
+            return
+        _persist_inflight = True
+    thread = threading.Thread(target=_persist_worker, name="tick-cache-persist", daemon=True)
+    thread.start()
 
 
 _load_cache()
