@@ -13,6 +13,13 @@ Environment="MICRO_MULTI_BASE_UNITS=28000"
 Environment="MICRO_MULTI_MAX_MARGIN_USAGE=0.92"
 Environment="MICRO_MULTI_MAX_SIGNALS_PER_CYCLE=3"
 Environment="MICRO_MULTI_MULTI_SIGNAL_MIN_SCALE=0.70"
+Environment="MICRO_MULTI_DYN_ALLOC_ENABLED=1"
+Environment="MICRO_MULTI_DYN_ALLOC_WINNER_ONLY=1"
+Environment="MICRO_MULTI_DYN_ALLOC_LOSER_BLOCK=1"
+Environment="MICRO_MULTI_DYN_ALLOC_MIN_TRADES=10"
+Environment="MICRO_MULTI_DYN_ALLOC_WINNER_SCORE=0.62"
+Environment="MICRO_MULTI_DYN_ALLOC_LOSER_SCORE=0.28"
+Environment="MICRO_MULTI_DYN_ALLOC_TTL_SEC=20"
 ExecStart=/home/tossaki/QuantRabbit/.venv/bin/python -m workers.micro_multistrat.worker
 Restart=always
 RestartSec=5

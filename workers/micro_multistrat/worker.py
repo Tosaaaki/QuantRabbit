@@ -33,6 +33,7 @@ from utils.market_hours import is_market_open
 from utils.oanda_account import get_account_snapshot, get_position_summary
 from utils.metrics_logger import log_metric
 from workers.common.dyn_cap import compute_cap
+from workers.common.dynamic_alloc import load_strategy_profile
 from workers.common import perf_guard
 from analysis import perf_monitor
 
@@ -756,7 +757,7 @@ async def micro_multi_worker() -> None:
         except Exception:
             pf = None
 
-        candidates: List[Tuple[float, int, Dict, str]] = []
+        candidates: List[Tuple[float, int, Dict, str, Dict[str, object]]] = []
         for strat in _strategy_list():
             strategy_name = getattr(strat, "name", strat.__name__)
             if (
@@ -791,6 +792,22 @@ async def micro_multi_worker() -> None:
                     )
                     last_perf_block_log = now_mono
                 continue
+            dyn_profile: Dict[str, object] = {}
+            if config.DYN_ALLOC_ENABLED:
+                dyn_profile = load_strategy_profile(
+                    strategy_name,
+                    config.POCKET,
+                    path=config.DYN_ALLOC_PATH,
+                    ttl_sec=config.DYN_ALLOC_TTL_SEC,
+                )
+                if config.DYN_ALLOC_LOSER_BLOCK and bool(dyn_profile.get("found")):
+                    dyn_trades = int(dyn_profile.get("trades", 0) or 0)
+                    dyn_score = float(dyn_profile.get("score", 0.0) or 0.0)
+                    if (
+                        dyn_trades >= config.DYN_ALLOC_MIN_TRADES
+                        and dyn_score <= config.DYN_ALLOC_LOSER_SCORE
+                    ):
+                        continue
             base_conf = int(cand.get("confidence", 0) or 0)
             bonus = _diversity_bonus(strategy_name, now_ts)
             score = base_conf + bonus
@@ -799,12 +816,24 @@ async def micro_multi_worker() -> None:
                     score += config.RANGE_STRATEGY_BONUS * range_score
                 else:
                     score -= config.RANGE_TREND_PENALTY * range_score
-            candidates.append((score, base_conf, cand, strategy_name))
+            if config.DYN_ALLOC_ENABLED and bool(dyn_profile.get("found")):
+                score += config.DYN_ALLOC_SCORE_BONUS * float(dyn_profile.get("score", 0.0) or 0.0)
+            candidates.append((score, base_conf, cand, strategy_name, dyn_profile))
         if not candidates:
             continue
         candidates.sort(key=lambda item: (item[0], item[1]), reverse=True)
         max_signals = max(1, int(config.MAX_SIGNALS_PER_CYCLE))
         selected = candidates[:max_signals]
+        if config.DYN_ALLOC_ENABLED and config.DYN_ALLOC_WINNER_ONLY:
+            winners = [
+                item
+                for item in candidates
+                if bool(item[4].get("found"))
+                and int(item[4].get("trades", 0) or 0) >= config.DYN_ALLOC_MIN_TRADES
+                and float(item[4].get("score", 0.0) or 0.0) >= config.DYN_ALLOC_WINNER_SCORE
+            ]
+            if winners:
+                selected = winners[:max_signals]
 
         snap = get_account_snapshot()
         equity = float(snap.nav or snap.balance or 0.0)
@@ -852,7 +881,7 @@ async def micro_multi_worker() -> None:
             long_units, short_units = get_position_summary("USD_JPY", timeout=3.0)
         except Exception:
             long_units, short_units = 0.0, 0.0
-        for _, _, signal, strategy_name in selected:
+        for _, _, signal, strategy_name, dyn_profile in selected:
             side = "long" if signal["action"] == "OPEN_LONG" else "short"
             orig_side = side
             orig_action = signal.get("action")
@@ -989,6 +1018,14 @@ async def micro_multi_worker() -> None:
             )
 
             conf_scale = _confidence_scale(int(signal.get("confidence", 50)))
+            dyn_mult = 1.0
+            dyn_score = 0.0
+            dyn_trades = 0
+            if config.DYN_ALLOC_ENABLED and bool(dyn_profile.get("found")):
+                dyn_mult = float(dyn_profile.get("lot_multiplier", 1.0) or 1.0)
+                dyn_mult = max(config.DYN_ALLOC_MULT_MIN, min(config.DYN_ALLOC_MULT_MAX, dyn_mult))
+                dyn_score = float(dyn_profile.get("score", 0.0) or 0.0)
+                dyn_trades = int(dyn_profile.get("trades", 0) or 0)
             lot = allowed_lot(
                 float(snap.nav or 0.0),
                 sl_pips,
@@ -1008,6 +1045,7 @@ async def micro_multi_worker() -> None:
             units = min(units, units_risk)
             units = int(round(units * cap))
             units = int(round(units * multi_scale))
+            units = int(round(units * dyn_mult))
             if units < config.MIN_UNITS:
                 continue
             if side == "short":
@@ -1043,6 +1081,13 @@ async def micro_multi_worker() -> None:
                 "range_reason": range_ctx.reason,
                 "range_mode": range_ctx.mode,
             }
+            if config.DYN_ALLOC_ENABLED and bool(dyn_profile.get("found")):
+                entry_thesis["dynamic_alloc"] = {
+                    "strategy_key": dyn_profile.get("strategy_key"),
+                    "score": round(dyn_score, 3),
+                    "trades": dyn_trades,
+                    "lot_multiplier": round(dyn_mult, 3),
+                }
             if div_meta:
                 entry_thesis["divergence"] = div_meta
             if trend_snapshot:
@@ -1187,7 +1232,7 @@ async def micro_multi_worker() -> None:
             )
             _STRATEGY_LAST_TS[strategy_name] = time.time()
             LOG.info(
-                "%s strat=%s sent units=%s side=%s price=%.3f sl=%.3f tp=%.3f conf=%.0f cap=%.2f multi=%.2f reasons=%s res=%s",
+                "%s strat=%s sent units=%s side=%s price=%.3f sl=%.3f tp=%.3f conf=%.0f cap=%.2f multi=%.2f dyn=%.2f dyn_score=%.2f dyn_n=%s reasons=%s res=%s",
                 config.LOG_PREFIX,
                 strategy_name,
                 units,
@@ -1198,6 +1243,9 @@ async def micro_multi_worker() -> None:
                 signal.get("confidence", 0),
                 cap,
                 multi_scale,
+                dyn_mult,
+                dyn_score,
+                dyn_trades,
                 {**cap_reason, "tp_scale": round(tp_scale, 3)},
                 res or "none",
             )

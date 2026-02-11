@@ -123,3 +123,13 @@ ALLOWED_REGIMES = frozenset(
         or _load_env_file().get("M1SCALP_ALLOWED_REGIMES", "")
     )
 )
+
+# Dynamic winner routing from config/dynamic_alloc.json
+DYN_ALLOC_ENABLED = _env_bool("M1SCALP_DYN_ALLOC_ENABLED", True)
+DYN_ALLOC_PATH = os.getenv("M1SCALP_DYN_ALLOC_PATH", "config/dynamic_alloc.json")
+DYN_ALLOC_TTL_SEC = float(os.getenv("M1SCALP_DYN_ALLOC_TTL_SEC", "20"))
+DYN_ALLOC_MIN_TRADES = int(os.getenv("M1SCALP_DYN_ALLOC_MIN_TRADES", "8"))
+DYN_ALLOC_LOSER_SCORE = float(os.getenv("M1SCALP_DYN_ALLOC_LOSER_SCORE", "0.30"))
+DYN_ALLOC_LOSER_BLOCK = _env_bool("M1SCALP_DYN_ALLOC_LOSER_BLOCK", True)
+DYN_ALLOC_MULT_MIN = float(os.getenv("M1SCALP_DYN_ALLOC_MULT_MIN", "0.7"))
+DYN_ALLOC_MULT_MAX = float(os.getenv("M1SCALP_DYN_ALLOC_MULT_MAX", "1.8"))

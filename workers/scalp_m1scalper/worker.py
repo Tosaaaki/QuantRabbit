@@ -26,6 +26,7 @@ from strategies.scalping.m1_scalper import M1Scalper
 from utils.market_hours import is_market_open
 from utils.oanda_account import get_account_snapshot, get_position_summary
 from workers.common.dyn_cap import compute_cap
+from workers.common.dynamic_alloc import load_strategy_profile
 from workers.common import perf_guard, env_guard
 from analysis import perf_monitor
 
@@ -517,6 +518,36 @@ async def scalp_m1_worker() -> None:
                 )
                 last_block_log = now_mono
             continue
+        dyn_profile: Dict[str, object] = {}
+        if config.DYN_ALLOC_ENABLED:
+            dyn_profile = load_strategy_profile(
+                str(signal_tag),
+                config.POCKET,
+                path=config.DYN_ALLOC_PATH,
+                ttl_sec=config.DYN_ALLOC_TTL_SEC,
+            )
+            if not bool(dyn_profile.get("found")):
+                dyn_profile = load_strategy_profile(
+                    M1Scalper.name,
+                    config.POCKET,
+                    path=config.DYN_ALLOC_PATH,
+                    ttl_sec=config.DYN_ALLOC_TTL_SEC,
+                )
+            if config.DYN_ALLOC_LOSER_BLOCK and bool(dyn_profile.get("found")):
+                dyn_trades = int(dyn_profile.get("trades", 0) or 0)
+                dyn_score = float(dyn_profile.get("score", 0.0) or 0.0)
+                if dyn_trades >= config.DYN_ALLOC_MIN_TRADES and dyn_score <= config.DYN_ALLOC_LOSER_SCORE:
+                    now_mono = time.monotonic()
+                    if now_mono - last_block_log > 120.0:
+                        LOG.info(
+                            "%s dyn_alloc_block tag=%s score=%.3f trades=%s",
+                            config.LOG_PREFIX,
+                            signal_tag,
+                            dyn_score,
+                            dyn_trades,
+                        )
+                        last_block_log = now_mono
+                    continue
 
         snap = get_account_snapshot()
         equity = float(snap.nav or snap.balance or 0.0)
@@ -692,6 +723,15 @@ async def scalp_m1_worker() -> None:
         units = int(round(base_units * conf_scale))
         units = min(units, units_risk)
         units = int(round(units * cap))
+        dyn_mult = 1.0
+        dyn_score = 0.0
+        dyn_trades = 0
+        if config.DYN_ALLOC_ENABLED and bool(dyn_profile.get("found")):
+            dyn_mult = float(dyn_profile.get("lot_multiplier", 1.0) or 1.0)
+            dyn_mult = max(config.DYN_ALLOC_MULT_MIN, min(config.DYN_ALLOC_MULT_MAX, dyn_mult))
+            dyn_score = float(dyn_profile.get("score", 0.0) or 0.0)
+            dyn_trades = int(dyn_profile.get("trades", 0) or 0)
+        units = int(round(units * dyn_mult))
         if units < config.MIN_UNITS:
             continue
         if side == "short":
@@ -723,6 +763,13 @@ async def scalp_m1_worker() -> None:
             "fast_cut_pips": signal.get("fast_cut_pips"),
             "fast_cut_time_sec": signal.get("fast_cut_time_sec"),
         }
+        if config.DYN_ALLOC_ENABLED and bool(dyn_profile.get("found")):
+            entry_thesis["dynamic_alloc"] = {
+                "strategy_key": dyn_profile.get("strategy_key"),
+                "score": round(dyn_score, 3),
+                "trades": dyn_trades,
+                "lot_multiplier": round(dyn_mult, 3),
+            }
         if derive_pattern_signature is not None and isinstance(entry_thesis, dict):
             pattern_tag, pattern_meta = derive_pattern_signature(
                 fac_m1, action="OPEN_LONG" if units > 0 else "OPEN_SHORT"
@@ -769,7 +816,7 @@ async def scalp_m1_worker() -> None:
                 _PENDING_LIMIT_ORDER_ID = order_id
                 _PENDING_LIMIT_UNTIL_TS = time.time() + max(1.0, limit_ttl_sec)
             LOG.info(
-                "%s sent(limit) units=%s side=%s ref=%.3f mid=%.3f sl=%.3f tp=%s conf=%.0f cap=%.2f reasons=%s trade_id=%s order_id=%s",
+                "%s sent(limit) units=%s side=%s ref=%.3f mid=%.3f sl=%.3f tp=%s conf=%.0f cap=%.2f dyn=%.2f dyn_score=%.2f dyn_n=%s reasons=%s trade_id=%s order_id=%s",
                 config.LOG_PREFIX,
                 units,
                 side,
@@ -779,6 +826,9 @@ async def scalp_m1_worker() -> None:
                 f"{tp_price:.3f}" if tp_price is not None else "NA",
                 signal.get("confidence", 0),
                 cap,
+                dyn_mult,
+                dyn_score,
+                dyn_trades,
                 {**cap_reason, "tp_scale": round(tp_scale, 3)},
                 trade_id or "none",
                 order_id or "none",
@@ -795,7 +845,7 @@ async def scalp_m1_worker() -> None:
                 entry_thesis=entry_thesis,
             )
             LOG.info(
-                "%s sent units=%s side=%s price=%.3f sl=%.3f tp=%.3f conf=%.0f cap=%.2f reasons=%s res=%s",
+                "%s sent units=%s side=%s price=%.3f sl=%.3f tp=%.3f conf=%.0f cap=%.2f dyn=%.2f dyn_score=%.2f dyn_n=%s reasons=%s res=%s",
                 config.LOG_PREFIX,
                 units,
                 side,
@@ -804,6 +854,9 @@ async def scalp_m1_worker() -> None:
                 tp_price,
                 signal.get("confidence", 0),
                 cap,
+                dyn_mult,
+                dyn_score,
+                dyn_trades,
                 {**cap_reason, "tp_scale": round(tp_scale, 3)},
                 res if res else "none",
             )

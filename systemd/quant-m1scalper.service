@@ -19,6 +19,11 @@ Environment="M1SCALP_ENV_TICK_GAP_MOVE_PIPS=1.2"
 Environment="M1SCALP_COOLDOWN_SEC=45"
 Environment="M1SCALP_MAX_OPEN_TRADES=2"
 Environment="M1SCALP_BASE_UNITS=10000"
+Environment="M1SCALP_DYN_ALLOC_ENABLED=1"
+Environment="M1SCALP_DYN_ALLOC_LOSER_BLOCK=1"
+Environment="M1SCALP_DYN_ALLOC_MIN_TRADES=8"
+Environment="M1SCALP_DYN_ALLOC_LOSER_SCORE=0.30"
+Environment="M1SCALP_DYN_ALLOC_TTL_SEC=20"
 EnvironmentFile=-/etc/quantrabbit.env
 ExecStart=/home/tossaki/QuantRabbit/.venv/bin/python -m workers.scalp_m1scalper.worker
 Restart=always
