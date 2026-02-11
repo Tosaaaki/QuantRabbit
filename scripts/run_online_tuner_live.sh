@@ -6,12 +6,14 @@ PY_BIN="${PY_BIN:-$REPO_DIR/.venv/bin/python}"
 WINDOW_MIN="${TUNER_WINDOW_MINUTES:-15}"
 EXPORT_LIMIT="${TUNER_EXPORT_LIMIT:-4000}"
 
-# NOTE: These outputs are written by online tuning. Keep them outside tracked paths
-# to avoid dirty git worktrees on the VM (which can silently break deploy pulls).
+# NOTE: These outputs are written by online tuning.
+# Keep them outside tracked paths to avoid dirty git worktrees on the VM
+# (which can silently break deploy pulls when using git-based deployments).
+RUNTIME_DIR="${TUNING_RUNTIME_DIR:-logs/tuning}"
 PRESETS_PATH="${TUNING_PRESETS_PATH:-config/tuning_presets.yaml}"
-OVERRIDES_OUT="${TUNING_OVERRIDES_PATH:-config/tuning_overrides.yaml}"
-OVERLAY_OUT="${TUNING_OVERLAY_PATH:-config/tuning_overlay.yaml}"
-HISTORY_DIR="${TUNING_HISTORY_DIR:-config/tuning_history}"
+OVERRIDES_OUT="${TUNING_OVERRIDES_PATH:-$RUNTIME_DIR/tuning_overrides.yaml}"
+OVERLAY_OUT="${TUNING_OVERLAY_PATH:-$RUNTIME_DIR/tuning_overlay.yaml}"
+HISTORY_DIR="${TUNING_HISTORY_DIR:-$RUNTIME_DIR/history}"
 LOGS_CSV="${TUNER_LOGS_CSV:-tmp/exit_eval_live.csv}"
 
 cd "$REPO_DIR"
