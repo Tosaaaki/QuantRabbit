@@ -15,6 +15,7 @@ def _init_trades_db(db_path: Path) -> None:
               pocket TEXT,
               strategy_tag TEXT,
               strategy TEXT,
+              units REAL,
               close_time TEXT,
               close_reason TEXT,
               pl_pips REAL,
@@ -37,24 +38,28 @@ def _insert_trade(
     close_reason: str,
     pl_pips: float,
     close_time: str,
+    units: float = 100.0,
+    micro_regime: str = "",
+    macro_regime: str = "",
 ) -> None:
     con = sqlite3.connect(db_path)
     try:
         con.execute(
             """
-            INSERT INTO trades (pocket, strategy_tag, strategy, close_time, close_reason, pl_pips, realized_pl, micro_regime, macro_regime)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO trades (pocket, strategy_tag, strategy, units, close_time, close_reason, pl_pips, realized_pl, micro_regime, macro_regime)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 pocket,
                 strategy_tag,
                 strategy_tag,
+                float(units),
                 close_time,
                 close_reason,
                 float(pl_pips),
                 float(pl_pips) * 100.0,  # dummy
-                "",
-                "",
+                micro_regime,
+                macro_regime,
             ),
         )
         con.commit()
@@ -237,3 +242,131 @@ def test_perf_guard_prefix_does_not_fallback_to_global(monkeypatch, tmp_path: Pa
     dec = perf_guard.is_allowed("BadStrat", "scalp", env_prefix="M1SCALP")
     assert dec.allowed is False
     assert "failfast:" in dec.reason
+
+
+def test_perf_guard_setup_blocks_bad_direction_only(monkeypatch, tmp_path: Path) -> None:
+    db_path = tmp_path / "trades.db"
+    _init_trades_db(db_path)
+
+    now_dt = datetime.now(timezone.utc).replace(minute=0, second=0, microsecond=0)
+    now = now_dt.strftime("%Y-%m-%d %H:%M:%S")
+    current_hour = now_dt.hour
+    for _ in range(8):
+        _insert_trade(
+            db_path,
+            pocket="scalp",
+            strategy_tag="SideSplit",
+            close_reason="STOP_LOSS_ORDER",
+            pl_pips=-1.0,
+            close_time=now,
+            units=100.0,
+            micro_regime="trend",
+        )
+    for _ in range(8):
+        _insert_trade(
+            db_path,
+            pocket="scalp",
+            strategy_tag="SideSplit",
+            close_reason="TAKE_PROFIT_ORDER",
+            pl_pips=1.1,
+            close_time=now,
+            units=-100.0,
+            micro_regime="trend",
+        )
+
+    perf_guard = _reload_perf_guard(
+        monkeypatch,
+        db_path=db_path,
+        env={
+            "PERF_GUARD_ENABLED": "1",
+            "PERF_GUARD_MODE": "block",
+            "PERF_GUARD_LOOKBACK_DAYS": "3",
+            "PERF_GUARD_MIN_TRADES": "40",
+            "PERF_GUARD_PF_MIN": "1.0",
+            "PERF_GUARD_WIN_MIN": "0.50",
+            "PERF_GUARD_REGIME_FILTER": "0",
+            "PERF_GUARD_RELAX_TAGS": "",
+            "PERF_GUARD_FAILFAST_MIN_TRADES": "0",
+            "PERF_GUARD_SL_LOSS_RATE_MAX_SCALP": "0",
+            "PERF_GUARD_SETUP_ENABLED": "1",
+            "PERF_GUARD_SETUP_USE_HOUR": "1",
+            "PERF_GUARD_SETUP_USE_DIRECTION": "1",
+            "PERF_GUARD_SETUP_USE_REGIME": "0",
+            "PERF_GUARD_SETUP_MIN_TRADES": "8",
+            "PERF_GUARD_SETUP_PF_MIN": "1.0",
+            "PERF_GUARD_SETUP_WIN_MIN": "0.50",
+            "PERF_GUARD_SETUP_AVG_PIPS_MIN": "0.0",
+        },
+    )
+
+    dec_buy = perf_guard.is_allowed("SideSplit", "scalp", hour=current_hour, side="buy")
+    assert dec_buy.allowed is False
+    assert dec_buy.reason.startswith("setup_pf=")
+
+    dec_sell = perf_guard.is_allowed("SideSplit", "scalp", hour=current_hour, side="sell")
+    assert dec_sell.allowed is True
+    assert dec_sell.reason.startswith("warmup_n=") or dec_sell.reason.startswith("pf=")
+
+
+def test_perf_guard_setup_strategy_override_relaxes_threshold(monkeypatch, tmp_path: Path) -> None:
+    db_path = tmp_path / "trades.db"
+    _init_trades_db(db_path)
+
+    now_dt = datetime.now(timezone.utc).replace(minute=0, second=0, microsecond=0)
+    now = now_dt.strftime("%Y-%m-%d %H:%M:%S")
+    current_hour = now_dt.hour
+    # weak setup by default: 3 wins / 7 losses
+    for _ in range(7):
+        _insert_trade(
+            db_path,
+            pocket="scalp",
+            strategy_tag="Tag-A",
+            close_reason="STOP_LOSS_ORDER",
+            pl_pips=-1.0,
+            close_time=now,
+            units=100.0,
+            micro_regime="trend",
+        )
+    for _ in range(3):
+        _insert_trade(
+            db_path,
+            pocket="scalp",
+            strategy_tag="Tag-A",
+            close_reason="TAKE_PROFIT_ORDER",
+            pl_pips=0.6,
+            close_time=now,
+            units=100.0,
+            micro_regime="trend",
+        )
+
+    perf_guard = _reload_perf_guard(
+        monkeypatch,
+        db_path=db_path,
+        env={
+            "PERF_GUARD_ENABLED": "1",
+            "PERF_GUARD_MODE": "block",
+            "PERF_GUARD_LOOKBACK_DAYS": "3",
+            "PERF_GUARD_MIN_TRADES": "50",
+            "PERF_GUARD_PF_MIN": "1.0",
+            "PERF_GUARD_WIN_MIN": "0.50",
+            "PERF_GUARD_REGIME_FILTER": "0",
+            "PERF_GUARD_RELAX_TAGS": "",
+            "PERF_GUARD_FAILFAST_MIN_TRADES": "0",
+            "PERF_GUARD_SL_LOSS_RATE_MAX_SCALP": "0",
+            "PERF_GUARD_SETUP_ENABLED": "1",
+            "PERF_GUARD_SETUP_USE_HOUR": "1",
+            "PERF_GUARD_SETUP_USE_DIRECTION": "1",
+            "PERF_GUARD_SETUP_USE_REGIME": "0",
+            "PERF_GUARD_SETUP_MIN_TRADES": "10",
+            "PERF_GUARD_SETUP_PF_MIN": "1.00",
+            "PERF_GUARD_SETUP_WIN_MIN": "0.50",
+            "PERF_GUARD_SETUP_AVG_PIPS_MIN": "0.00",
+            # strategy-specific override for Tag-A (suffix TAG_A)
+            "PERF_GUARD_SETUP_PF_MIN_STRATEGY_TAG_A": "0.20",
+            "PERF_GUARD_SETUP_WIN_MIN_STRATEGY_TAG_A": "0.25",
+            "PERF_GUARD_SETUP_AVG_PIPS_MIN_STRATEGY_TAG_A": "-0.60",
+        },
+    )
+
+    dec = perf_guard.is_allowed("Tag-A", "scalp", hour=current_hour, side="buy")
+    assert dec.allowed is True

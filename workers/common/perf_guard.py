@@ -43,6 +43,15 @@ class PerfGuardCfg:
     regime_filter_enabled: bool
     regime_min_trades: int
 
+    setup_enabled: bool
+    setup_use_hour: bool
+    setup_use_direction: bool
+    setup_use_regime: bool
+    setup_min_trades: int
+    setup_pf_min_default: float
+    setup_win_min_default: float
+    setup_avg_pips_min_default: float
+
     failfast_min_trades: int
     failfast_pf: float
     failfast_win: float
@@ -141,6 +150,15 @@ def _get_cfg(env_prefix: Optional[str]) -> PerfGuardCfg:
     regime_filter_enabled = _strategy_env_bool("PERF_GUARD_REGIME_FILTER", True, env_prefix=env_prefix)
     regime_min_trades = max(5, _strategy_env_int("PERF_GUARD_REGIME_MIN_TRADES", 20, env_prefix=env_prefix))
 
+    setup_enabled = _strategy_env_bool("PERF_GUARD_SETUP_ENABLED", False, env_prefix=env_prefix)
+    setup_use_hour = _strategy_env_bool("PERF_GUARD_SETUP_USE_HOUR", True, env_prefix=env_prefix)
+    setup_use_direction = _strategy_env_bool("PERF_GUARD_SETUP_USE_DIRECTION", True, env_prefix=env_prefix)
+    setup_use_regime = _strategy_env_bool("PERF_GUARD_SETUP_USE_REGIME", True, env_prefix=env_prefix)
+    setup_min_trades = max(5, _strategy_env_int("PERF_GUARD_SETUP_MIN_TRADES", 10, env_prefix=env_prefix))
+    setup_pf_min_default = _strategy_env_float("PERF_GUARD_SETUP_PF_MIN", 1.02, env_prefix=env_prefix)
+    setup_win_min_default = _strategy_env_float("PERF_GUARD_SETUP_WIN_MIN", 0.53, env_prefix=env_prefix)
+    setup_avg_pips_min_default = _strategy_env_float("PERF_GUARD_SETUP_AVG_PIPS_MIN", 0.0, env_prefix=env_prefix)
+
     failfast_min_trades = max(0, _strategy_env_int("PERF_GUARD_FAILFAST_MIN_TRADES", 12, env_prefix=env_prefix))
     failfast_pf = max(0.0, _strategy_env_float("PERF_GUARD_FAILFAST_PF", 0.75, env_prefix=env_prefix))
     failfast_win = max(0.0, _strategy_env_float("PERF_GUARD_FAILFAST_WIN", 0.40, env_prefix=env_prefix))
@@ -180,6 +198,14 @@ def _get_cfg(env_prefix: Optional[str]) -> PerfGuardCfg:
         split_directional=split_directional,
         regime_filter_enabled=regime_filter_enabled,
         regime_min_trades=regime_min_trades,
+        setup_enabled=setup_enabled,
+        setup_use_hour=setup_use_hour,
+        setup_use_direction=setup_use_direction,
+        setup_use_regime=setup_use_regime,
+        setup_min_trades=setup_min_trades,
+        setup_pf_min_default=setup_pf_min_default,
+        setup_win_min_default=setup_win_min_default,
+        setup_avg_pips_min_default=setup_avg_pips_min_default,
         failfast_min_trades=failfast_min_trades,
         failfast_pf=failfast_pf,
         failfast_win=failfast_win,
@@ -206,7 +232,19 @@ def _get_cfg(env_prefix: Optional[str]) -> PerfGuardCfg:
 
 _DIRECTIONAL_TOKENS = {"bear", "bull", "long", "short"}
 
-_cache: dict[tuple[str, str, str, Optional[int], Optional[str]], tuple[float, bool, str, int]] = {}
+_cache: dict[
+    tuple[
+        str,
+        str,
+        str,
+        Optional[int],
+        Optional[str],
+        Optional[int],
+        Optional[str],
+        Optional[str],
+    ],
+    tuple[float, bool, str, int],
+] = {}
 _pocket_cache: dict[tuple[str, str], tuple[float, bool, str, int]] = {}
 _scale_cache: dict[
     tuple[str, str, str], tuple[float, float, str, int, float, float, float]
@@ -239,6 +277,68 @@ def _threshold(name: str, pocket: str, default: float, cfg: PerfGuardCfg) -> flo
         except ValueError:
             pass
     return default
+
+
+def _strategy_env_suffix(tag: str) -> str:
+    raw = str(tag or "").strip()
+    if not raw:
+        return ""
+    norm = re.sub(r"[^A-Za-z0-9]+", "_", raw).strip("_")
+    return norm.upper()
+
+
+def _strategy_threshold(
+    name: str,
+    pocket: str,
+    tag: str,
+    default: float,
+    cfg: PerfGuardCfg,
+) -> float:
+    pocket_key = (pocket or "").strip().upper()
+    seen: set[str] = set()
+    for variant in _tag_variants(tag, split_directional=False):
+        suffix = _strategy_env_suffix(variant)
+        if not suffix or suffix in seen:
+            continue
+        seen.add(suffix)
+        keys: list[str] = []
+        if pocket_key:
+            keys.append(f"{name}_STRATEGY_{suffix}_{pocket_key}")
+        keys.append(f"{name}_STRATEGY_{suffix}")
+        for key in keys:
+            raw = env_get(
+                key,
+                None,
+                prefix=cfg.env_prefix,
+                allow_global_fallback=False,
+            )
+            if raw is None:
+                continue
+            try:
+                return float(raw)
+            except ValueError:
+                continue
+    return _threshold(name, pocket, default, cfg)
+
+
+def _strategy_bool_override(name: str, tag: str, default: bool, cfg: PerfGuardCfg) -> bool:
+    seen: set[str] = set()
+    for variant in _tag_variants(tag, split_directional=False):
+        suffix = _strategy_env_suffix(variant)
+        if not suffix or suffix in seen:
+            continue
+        seen.add(suffix)
+        raw = env_get(
+            f"{name}_STRATEGY_{suffix}",
+            None,
+            prefix=cfg.env_prefix,
+            allow_global_fallback=False,
+        )
+        if raw is None:
+            continue
+        token = str(raw).strip().lower()
+        return token not in {"", "0", "false", "no", "off"}
+    return bool(default)
 
 
 def _sl_loss_rate_max(pocket: str, cfg: PerfGuardCfg) -> float:
@@ -309,6 +409,29 @@ def _pocket_regime_label(pocket: str) -> Optional[str]:
             return reg
         return current_regime("H1", event_mode=False)
     return current_regime("M1", event_mode=False)
+
+
+def _normalize_side(side: Optional[str]) -> Optional[str]:
+    token = str(side or "").strip().lower()
+    if token in {"buy", "long", "open_long"}:
+        return "buy"
+    if token in {"sell", "short", "open_short"}:
+        return "sell"
+    return None
+
+
+def _trades_columns(con: sqlite3.Connection) -> set[str]:
+    try:
+        rows = con.execute("PRAGMA table_info(trades)").fetchall()
+    except Exception:
+        return set()
+    cols: set[str] = set()
+    for row in rows:
+        try:
+            cols.add(str(row[1]).strip().lower())
+        except Exception:
+            continue
+    return cols
 
 
 def _query_perf_row(
@@ -407,6 +530,109 @@ def _query_perf_scale(tag: str, pocket: str, cfg: PerfGuardCfg) -> Tuple[float, 
     win_rate = win / n if n else 0.0
     avg_pips = sum_pips / n if n else 0.0
     return pf, win_rate, avg_pips, n
+
+
+def _query_setup_perf(
+    *,
+    tag: str,
+    pocket: str,
+    hour: Optional[int],
+    regime_label: Optional[str],
+    side: Optional[str],
+    cfg: PerfGuardCfg,
+) -> Tuple[bool, str, int]:
+    if not _DB.exists():
+        return True, "no_db", 0
+
+    try:
+        con = sqlite3.connect(_DB)
+        con.row_factory = sqlite3.Row
+    except Exception:
+        return True, "db_open_failed", 0
+
+    variants = _tag_variants(tag, split_directional=cfg.split_directional)
+    if not variants or variants == ("",):
+        try:
+            con.close()
+        except Exception:
+            pass
+        return True, "empty_tag", 0
+
+    placeholders = ",".join("?" for _ in variants)
+    tag_clause = f"LOWER(COALESCE(NULLIF(strategy_tag, ''), strategy)) IN ({placeholders})"
+    clauses = [tag_clause, "pocket = ?", "close_time >= datetime('now', ?)"]
+    params: list[object] = list(variants)
+    params.extend([pocket, f"-{cfg.lookback_days} day"])
+
+    if hour is not None:
+        clauses.append("strftime('%H', close_time) = ?")
+        params.append(f"{hour:02d}")
+
+    columns = _trades_columns(con)
+    if regime_label:
+        regime_col = "macro_regime" if pocket.lower() == "macro" else "micro_regime"
+        if regime_col in columns:
+            clauses.append(f"LOWER(COALESCE({regime_col}, '')) = ?")
+            params.append(regime_label.lower())
+
+    if side == "buy":
+        if "units" in columns:
+            clauses.append("units > 0")
+    elif side == "sell":
+        if "units" in columns:
+            clauses.append("units < 0")
+
+    where_sql = " AND ".join(clauses)
+    try:
+        row = con.execute(
+            f"""
+            SELECT
+              COUNT(*) AS n,
+              SUM(CASE WHEN pl_pips > 0 THEN pl_pips ELSE 0 END) AS profit,
+              SUM(CASE WHEN pl_pips < 0 THEN ABS(pl_pips) ELSE 0 END) AS loss,
+              SUM(CASE WHEN pl_pips > 0 THEN 1 ELSE 0 END) AS win,
+              SUM(pl_pips) AS sum_pips
+            FROM trades
+            WHERE {where_sql}
+            """,
+            params,
+        ).fetchone()
+    except Exception as exc:
+        LOG.debug("[PERF_GUARD] setup query failed tag=%s pocket=%s err=%s", tag, pocket, exc)
+        return True, "query_failed", 0
+    finally:
+        try:
+            con.close()
+        except Exception:
+            pass
+
+    if not row:
+        return True, "no_rows", 0
+
+    n = int(row["n"] or 0)
+    if n < cfg.setup_min_trades:
+        return True, f"warmup_n={n}", n
+
+    profit = float(row["profit"] or 0.0)
+    loss = float(row["loss"] or 0.0)
+    win = float(row["win"] or 0.0)
+    sum_pips = float(row["sum_pips"] or 0.0)
+    pf = profit / loss if loss > 0 else float("inf")
+    win_rate = win / n if n > 0 else 0.0
+    avg_pips = sum_pips / n if n > 0 else 0.0
+
+    pf_min = _strategy_threshold("PERF_GUARD_SETUP_PF_MIN", pocket, tag, cfg.setup_pf_min_default, cfg)
+    win_min = _strategy_threshold("PERF_GUARD_SETUP_WIN_MIN", pocket, tag, cfg.setup_win_min_default, cfg)
+    avg_pips_min = _strategy_threshold(
+        "PERF_GUARD_SETUP_AVG_PIPS_MIN",
+        pocket,
+        tag,
+        cfg.setup_avg_pips_min_default,
+        cfg,
+    )
+    if pf < pf_min or win_rate < win_min or avg_pips < avg_pips_min:
+        return False, f"setup_pf={pf:.2f} win={win_rate:.2f} avg={avg_pips:.2f} n={n}", n
+    return True, f"setup_pf={pf:.2f} win={win_rate:.2f} avg={avg_pips:.2f} n={n}", n
 
 
 def _query_perf(
@@ -559,17 +785,33 @@ def is_allowed(
     pocket: str,
     *,
     hour: Optional[int] = None,
+    side: Optional[str] = None,
     env_prefix: Optional[str] = None,
 ) -> PerfDecision:
     """
-    hour: optional UTC hour string (0-23) to apply hourly PF filter. When None, aggregate filter only.
+    hour: optional UTC hour (0-23) to apply hourly PF filter. When None, aggregate filter only.
+    side: optional entry side ("buy"/"sell"), used by setup-level win-pattern gate.
     """
     cfg = _get_cfg(env_prefix)
     if not cfg.enabled or cfg.mode in {"off", "disabled", "false", "no"}:
         return PerfDecision(True, "disabled", 0)
     relaxed = _is_relaxed(tag, cfg)
-    regime_label = _pocket_regime_label(pocket) if cfg.regime_filter_enabled else None
-    key = (_cfg_key(env_prefix), tag, pocket, hour if cfg.hourly_enabled else None, regime_label)
+    needs_regime = cfg.regime_filter_enabled or (cfg.setup_enabled and cfg.setup_use_regime)
+    live_regime = _pocket_regime_label(pocket) if needs_regime else None
+    regime_label = live_regime if cfg.regime_filter_enabled else None
+    setup_hour = hour if (cfg.setup_enabled and cfg.setup_use_hour) else None
+    setup_regime = live_regime if (cfg.setup_enabled and cfg.setup_use_regime) else None
+    setup_side = _normalize_side(side) if cfg.setup_use_direction else None
+    key = (
+        _cfg_key(env_prefix),
+        tag,
+        pocket,
+        hour if cfg.hourly_enabled else None,
+        regime_label,
+        setup_hour,
+        setup_regime,
+        setup_side,
+    )
     now = time.monotonic()
     cached = _cache.get(key)
     if cached and now - cached[0] <= cfg.ttl_sec:
@@ -589,6 +831,27 @@ def is_allowed(
                 reason_txt = f"relaxed:{reason_txt}"
             _cache[key] = (now, allowed, reason_txt, sample_hour)
             return PerfDecision(allowed, reason_txt, sample_hour)
+
+    setup_enabled = _strategy_bool_override("PERF_GUARD_SETUP_ENABLED", tag, cfg.setup_enabled, cfg)
+    if setup_enabled:
+        ok_setup, setup_reason, setup_sample = _query_setup_perf(
+            tag=tag,
+            pocket=pocket,
+            hour=setup_hour,
+            regime_label=setup_regime,
+            side=setup_side,
+            cfg=cfg,
+        )
+        if not ok_setup:
+            reason_txt = setup_reason
+            allowed = ok_setup if cfg.mode == "block" else True
+            if cfg.mode != "block":
+                reason_txt = f"warn:{reason_txt}"
+            elif relaxed:
+                allowed = True
+                reason_txt = f"relaxed:{reason_txt}"
+            _cache[key] = (now, allowed, reason_txt, setup_sample)
+            return PerfDecision(allowed, reason_txt, setup_sample)
 
     ok, reason, sample = _query_perf(tag, pocket, None, regime_label, cfg)
     allowed = ok if cfg.mode == "block" else True
