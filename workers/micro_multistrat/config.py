@@ -32,6 +32,15 @@ def _parse_hours(raw: str) -> set[int]:
     return hours
 
 
+def _parse_csv(raw: str) -> frozenset[str]:
+    values: set[str] = set()
+    for token in raw.split(","):
+        item = token.strip()
+        if item:
+            values.add(item)
+    return frozenset(values)
+
+
 def _bool(key: str, default: bool) -> bool:
     raw = os.getenv(key)
     if raw is None:
@@ -65,6 +74,15 @@ TREND_FLIP_GAP_PIPS = float(os.getenv("MICRO_MULTI_TREND_FLIP_GAP_PIPS", "0.6"))
 TREND_FLIP_ADX_MIN = float(os.getenv("MICRO_MULTI_TREND_FLIP_ADX_MIN", "20.0"))
 TREND_FLIP_TP_MULT = float(os.getenv("MICRO_MULTI_TREND_FLIP_TP_MULT", "1.12"))
 TREND_FLIP_SL_MULT = float(os.getenv("MICRO_MULTI_TREND_FLIP_SL_MULT", "0.95"))
+TREND_FLIP_STRATEGY_ALLOWLIST = _parse_csv(
+    os.getenv("MICRO_MULTI_TREND_FLIP_STRATEGY_ALLOWLIST", "")
+)
+TREND_FLIP_STRATEGY_BLOCKLIST = _parse_csv(
+    os.getenv(
+        "MICRO_MULTI_TREND_FLIP_STRATEGY_BLOCKLIST",
+        "MicroLevelReactor,MicroCompressionRevert",
+    )
+)
 
 PROJ_FLIP_ENABLED = _bool("MICRO_MULTI_PROJ_FLIP_ENABLED", True)
 PROJ_CONFLICT_ALLOW = _bool("MICRO_MULTI_PROJ_CONFLICT_ALLOW", True)
