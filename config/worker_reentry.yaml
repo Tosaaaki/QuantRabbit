@@ -28,6 +28,18 @@ strategies:
     return_wait_bias: avoid
     return_wait_reason: be_post_60_or_hold_skew
     block_jst_hours: []
+  MicroLevelReactor:
+    cooldown_win_sec: 10
+    cooldown_loss_sec: 24
+    same_dir_reentry_pips: 0.35
+    same_dir_mode: both
+    return_wait_bias: neutral
+    return_wait_reason: recovery_day
+    max_open_trades: 3
+    max_open_trades_hard: 6
+    max_open_adverse_pips: 8.0
+    max_open_avg_adverse_pips: 4.0
+    block_jst_hours: []
   Donchian5:
     cooldown_win_sec: 300
     cooldown_loss_sec: 670
