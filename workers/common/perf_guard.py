@@ -328,6 +328,71 @@ def _strategy_threshold(
     return _threshold(name, pocket, default, cfg)
 
 
+def _strategy_int_threshold(
+    name: str,
+    pocket: str,
+    tag: str,
+    default: int,
+    cfg: PerfGuardCfg,
+) -> int:
+    pocket_key = (pocket or "").strip().upper()
+    seen: set[str] = set()
+    for variant in _tag_variants(tag, split_directional=False):
+        suffix = _strategy_env_suffix(variant)
+        if not suffix or suffix in seen:
+            continue
+        seen.add(suffix)
+        keys: list[str] = []
+        if pocket_key:
+            keys.append(f"{name}_STRATEGY_{suffix}_{pocket_key}")
+        keys.append(f"{name}_STRATEGY_{suffix}")
+        for key in keys:
+            raw = env_get(
+                key,
+                None,
+                prefix=cfg.env_prefix,
+                allow_global_fallback=False,
+            )
+            if raw is None and cfg.env_prefix:
+                raw = env_get(
+                    key,
+                    None,
+                    prefix=None,
+                    allow_global_fallback=False,
+                )
+            if raw is None:
+                continue
+            try:
+                return int(float(raw))
+            except ValueError:
+                continue
+    pocket_key = (pocket or "").strip().upper()
+    if pocket_key:
+        raw = env_get(
+            f"{name}_{pocket_key}",
+            None,
+            prefix=cfg.env_prefix,
+            allow_global_fallback=False,
+        )
+        if raw is not None:
+            try:
+                return int(float(raw))
+            except ValueError:
+                pass
+    raw = env_get(
+        name,
+        None,
+        prefix=cfg.env_prefix,
+        allow_global_fallback=False,
+    )
+    if raw is not None:
+        try:
+            return int(float(raw))
+        except ValueError:
+            pass
+    return int(default)
+
+
 def _strategy_bool_override(name: str, tag: str, default: bool, cfg: PerfGuardCfg) -> bool:
     seen: set[str] = set()
     for variant in _tag_variants(tag, split_directional=False):
@@ -624,7 +689,17 @@ def _query_setup_perf(
         return True, "no_rows", 0
 
     n = int(row["n"] or 0)
-    if n < cfg.setup_min_trades:
+    setup_min_trades = max(
+        1,
+        _strategy_int_threshold(
+            "PERF_GUARD_SETUP_MIN_TRADES",
+            pocket,
+            tag,
+            cfg.setup_min_trades,
+            cfg,
+        ),
+    )
+    if n < setup_min_trades:
         return True, f"warmup_n={n}", n
 
     profit = float(row["profit"] or 0.0)
@@ -734,12 +809,23 @@ def _query_perf(
         if sl_rate >= sl_rate_max:
             return False, f"sl_loss_rate={sl_rate:.2f} pf={pf:.2f} n={n}", n
 
-    min_trades = cfg.hourly_min_trades if hour is not None else cfg.min_trades
+    min_trades_default = cfg.hourly_min_trades if hour is not None else cfg.min_trades
+    min_trades_key = "PERF_GUARD_HOURLY_MIN_TRADES" if hour is not None else "PERF_GUARD_MIN_TRADES"
+    min_trades = max(
+        1,
+        _strategy_int_threshold(
+            min_trades_key,
+            pocket,
+            tag,
+            min_trades_default,
+            cfg,
+        ),
+    )
     if n < min_trades:
         return True, f"warmup_n={n}", n
 
-    pf_min = _threshold("PERF_GUARD_PF_MIN", pocket, cfg.pf_min_default, cfg)
-    win_min = _threshold("PERF_GUARD_WIN_MIN", pocket, cfg.win_min_default, cfg)
+    pf_min = _strategy_threshold("PERF_GUARD_PF_MIN", pocket, tag, cfg.pf_min_default, cfg)
+    win_min = _strategy_threshold("PERF_GUARD_WIN_MIN", pocket, tag, cfg.win_min_default, cfg)
     if pf < pf_min or win_rate < win_min:
         return False, f"pf={pf:.2f} win={win_rate:.2f} n={n}", n
     return True, f"pf={pf:.2f} win={win_rate:.2f} n={n}", n

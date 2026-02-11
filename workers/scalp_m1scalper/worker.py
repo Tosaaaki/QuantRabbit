@@ -563,14 +563,15 @@ async def scalp_m1_worker() -> None:
                     last_block_log = now_mono
                 continue
 
-        perf_decision = perf_guard.is_allowed(M1Scalper.name, config.POCKET, env_prefix=config.ENV_PREFIX)
+        perf_tag = str(signal_tag or M1Scalper.name)
+        perf_decision = perf_guard.is_allowed(perf_tag, config.POCKET, env_prefix=config.ENV_PREFIX)
         if not perf_decision.allowed:
             now_mono = time.monotonic()
             if now_mono - last_block_log > 120.0:
                 LOG.info(
                     "%s perf_block tag=%s reason=%s",
                     config.LOG_PREFIX,
-                    M1Scalper.name,
+                    perf_tag,
                     perf_decision.reason,
                 )
                 last_block_log = now_mono
