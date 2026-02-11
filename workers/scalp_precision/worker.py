@@ -423,6 +423,9 @@ LRP_WICK_RATIO_MIN = _env_float("LRP_WICK_RATIO_MIN", 0.30)
 LRP_BODY_MAX_PIPS = _env_float("LRP_BODY_MAX_PIPS", 1.4)
 LRP_BODY_RATIO_MAX = _env_float("LRP_BODY_RATIO_MAX", 0.70)
 LRP_SIZE_MULT = _env_float("LRP_SIZE_MULT", 1.05)
+LRP_ALLOWED_REGIMES = {
+    s.strip().lower() for s in _env_csv("LRP_ALLOWED_REGIMES", "") if s.strip()
+}
 
 WICK_RANGE_MIN_PIPS = _env_float("WICK_REV_RANGE_MIN_PIPS", 2.0)
 WICK_BODY_MAX_PIPS = _env_float("WICK_REV_BODY_MAX_PIPS", 0.9)
@@ -1934,6 +1937,16 @@ def _signal_level_reject_plus(
     tag: str,
 ) -> Optional[Dict[str, object]]:
     """A stricter LevelReject with wick + tick confirmation (higher precision, fewer trades)."""
+    if LRP_ALLOWED_REGIMES:
+        regime = str(fac_m1.get("regime") or "").strip()
+        if not regime:
+            try:
+                regime = str(current_regime("M1", event_mode=False) or "").strip()
+            except Exception:
+                regime = ""
+        if regime and regime.lower() not in LRP_ALLOWED_REGIMES:
+            return None
+
     price = _latest_price(fac_m1)
     if price <= 0:
         return None

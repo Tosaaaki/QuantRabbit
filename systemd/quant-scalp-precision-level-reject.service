@@ -16,7 +16,7 @@ Environment=LEVEL_REJECT_SIZE_MULT=1.6
 Environment=LEVEL_REJECT_BAND_PIPS=0.7
 Environment=LEVEL_REJECT_ATR_MAX=3.6
 Environment=LEVEL_REJECT_SPREAD_P25=1.0
-Environment=LEVEL_REJECT_ALLOWED_REGIMES=range
+Environment=LEVEL_REJECT_ALLOWED_REGIMES=trend
 ExecStart=/home/tossaki/QuantRabbit/.venv/bin/python -m workers.scalp_precision.worker
 Restart=always
 RestartSec=5

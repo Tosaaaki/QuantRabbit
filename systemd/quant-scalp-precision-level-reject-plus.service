@@ -32,6 +32,7 @@ Environment=LRP_WICK_RATIO_MIN=0.30
 Environment=LRP_BODY_MAX_PIPS=1.4
 Environment=LRP_BODY_RATIO_MAX=0.70
 Environment=LRP_SIZE_MULT=1.05
+Environment=LRP_ALLOWED_REGIMES=trend
 
 # Safety: attach broker stopLossOnFill (scalp) so tail risk is capped even if the exit
 # worker is down or close requests get blocked/delayed.
