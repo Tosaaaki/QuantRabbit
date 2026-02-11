@@ -280,7 +280,7 @@ FastAPI 製の承認 UI を Cloud Run 上で公開し、チューニング結果
    ```
 
 4. **アクセス**  
-   デプロイ後に表示される `https://autotune-ui-xxxx.run.app` が承認ダッシュボードの URL です。テーブルの `status` を更新すると、VM が参照する `configs/scalp_active_params.json` を人手で戻す前にレビュー履歴を残せます。
+   デプロイ後に表示される `https://autotune-ui-xxxx.run.app` が承認ダッシュボードの URL です。テーブルの `status` を更新すると、VM が参照する `logs/tuning/scalp_active_params.json`（`SCALP_ACTIVE_PARAMS_PATH` で上書き可）へ反映され、レビュー履歴を残せます。
 
 BigQuery では `status` 列が `pending/approved/rejected` を保持し、UI からの承認・却下操作で更新されます。VM 上の FastAPI UI も同じテーブルを参照するため、ブラウザからの操作でどちらも同期します。
 
