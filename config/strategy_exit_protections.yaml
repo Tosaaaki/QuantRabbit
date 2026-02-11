@@ -733,16 +733,48 @@ strategies:
   scalp_ping_5s:
     neg_exit:
       enabled: true
-      strict_no_negative: true
-      allow_reasons: []
-      deny_reasons: []
+      strict_no_negative: false
+      allow_reasons:
+        - hard_stop
+        - tech_hard_stop
+        - max_adverse
+        - time_stop
+        - timeout
+        - drawdown
+        - max_drawdown
+        - health_exit
+        - margin_health
+        - free_margin_low
+        - margin_usage_high
+        - lock_floor
+        - trail_lock
+        - near_be
+      deny_reasons:
+        - take_profit
+        - take_profit_zone
 
   scalp_ping_5s_live:
     neg_exit:
       enabled: true
-      strict_no_negative: true
-      allow_reasons: []
-      deny_reasons: []
+      strict_no_negative: false
+      allow_reasons:
+        - hard_stop
+        - tech_hard_stop
+        - max_adverse
+        - time_stop
+        - timeout
+        - drawdown
+        - max_drawdown
+        - health_exit
+        - margin_health
+        - free_margin_low
+        - margin_usage_high
+        - lock_floor
+        - trail_lock
+        - near_be
+      deny_reasons:
+        - take_profit
+        - take_profit_zone
 
   fast_scalp:
     min_profit_ratio: 0.45
