@@ -13,6 +13,7 @@ from typing import Dict, Optional, Sequence, Set
 from analysis.range_guard import detect_range_mode
 from workers.common.exit_scaling import momentum_scale, scale_value
 from workers.common.exit_utils import close_trade, mark_pnl_pips
+from workers.common.rollout_gate import load_rollout_start_ts, trade_passes_rollout
 from execution.position_manager import PositionManager
 from indicators.factor_cache import all_factors
 from market_data import tick_window
@@ -420,12 +421,14 @@ async def _run_exit_loop(
 ) -> None:
     pos_manager = PositionManager()
     states: Dict[str, _TradeState] = {}
+    rollout_skip_log_ts: Dict[str, float] = {}
     rsi_fade_long = _float_env("M1SCALP_EXIT_RSI_FADE_LONG", 44.0)
     rsi_fade_short = _float_env("M1SCALP_EXIT_RSI_FADE_SHORT", 56.0)
     vwap_gap_pips = _float_env("M1SCALP_EXIT_VWAP_GAP_PIPS", 0.8)
     structure_adx = _float_env("M1SCALP_EXIT_STRUCTURE_ADX", 20.0)
     structure_gap_pips = _float_env("M1SCALP_EXIT_STRUCTURE_GAP_PIPS", 1.8)
     atr_spike_pips = _float_env("M1SCALP_EXIT_ATR_SPIKE_PIPS", 5.0)
+    rollout_start_ts = load_rollout_start_ts("M1SCALP_EXIT_POLICY_START_TS")
     allow_negative_exit = os.getenv("M1SCALP_EXIT_ALLOW_NEGATIVE", "1").strip().lower() not in {
         "",
         "0",
@@ -454,6 +457,31 @@ async def _run_exit_loop(
         ma20 = _safe_float(fac_m1.get("ma20"))
         bbw = _safe_float(fac_m1.get("bbw"))
         return rsi, adx, atr_pips, vwap_gap, (ma10, ma20) if ma10 is not None and ma20 is not None else None, bbw
+
+    def _maybe_log_rollout_skip(
+        *,
+        trade_id: str,
+        side: str,
+        pnl: float,
+        hold_sec: float,
+    ) -> None:
+        now_mono = time.monotonic()
+        last = float(rollout_skip_log_ts.get(trade_id) or 0.0)
+        if now_mono - last < 60.0:
+            return
+        rollout_skip_log_ts[trade_id] = now_mono
+        log_metric(
+            "m1scalp_rollout_skip",
+            float(pnl),
+            tags={"side": side, "reason": "negative_exit"},
+        )
+        LOG.info(
+            "[EXIT-%s] rollout skip trade=%s pnl=%.2fp hold=%.0fs",
+            pocket,
+            trade_id,
+            pnl,
+            hold_sec,
+        )
 
 
     async def _close(
@@ -516,6 +544,11 @@ async def _run_exit_loop(
 
         opened_at = _parse_time(trade.get("open_time"))
         hold_sec = (now - opened_at).total_seconds() if opened_at else 0.0
+        policy_active = trade_passes_rollout(
+            opened_at,
+            rollout_start_ts,
+            unknown_is_new=False,
+        )
 
         thesis = trade.get("entry_thesis") or {}
         if not isinstance(thesis, dict):
@@ -603,6 +636,15 @@ async def _run_exit_loop(
         ):
             await _close(trade_id, -units, "lock_floor", client_id, allow_negative=allow_negative)
             states.pop(trade_id, None)
+            return
+
+        if pnl < 0 and not policy_active:
+            _maybe_log_rollout_skip(
+                trade_id=trade_id,
+                side=side,
+                pnl=float(pnl),
+                hold_sec=hold_sec,
+            )
             return
 
         if pnl < 0:
@@ -735,13 +777,13 @@ async def _run_exit_loop(
                         states.pop(trade_id, None)
                         return
 
-        if max_adverse > 0 and pnl <= -max_adverse:
+        if policy_active and max_adverse > 0 and pnl <= -max_adverse:
             log_metric("m1scalp_max_adverse", pnl, tags={"side": side})
             await _close(trade_id, -units, "max_adverse", client_id, allow_negative=allow_negative)
             states.pop(trade_id, None)
             return
 
-        if max_hold > 0 and hold_sec >= max_hold and pnl <= 0:
+        if policy_active and max_hold > 0 and hold_sec >= max_hold and pnl <= 0:
             log_metric("m1scalp_max_hold", pnl, tags={"side": side})
             await _close(trade_id, -units, "max_hold", client_id, allow_negative=allow_negative)
             states.pop(trade_id, None)
@@ -765,6 +807,12 @@ async def _run_exit_loop(
             states.pop(trade_id, None)
             return
 
+    LOG.info(
+        "[EXIT-%s] start tags=%s policy_start_ts=%.3f",
+        pocket,
+        ",".join(sorted(tags)),
+        float(rollout_start_ts or 0.0),
+    )
     try:
         while True:
             await asyncio.sleep(loop_interval)
@@ -776,6 +824,9 @@ async def _run_exit_loop(
             for tid in list(states.keys()):
                 if tid not in active_ids:
                     states.pop(tid, None)
+            for tid in list(rollout_skip_log_ts.keys()):
+                if tid not in active_ids:
+                    rollout_skip_log_ts.pop(tid, None)
             if not trades:
                 continue
             now = _utc_now()
