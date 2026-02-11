@@ -521,6 +521,18 @@ class HedgeBalancerExitWorker:
                 positions = self._pos_manager.get_open_positions()
                 pocket_info = positions.get(POCKET) or {}
                 trades = _filter_trades(pocket_info.get("open_trades") or [], ALLOWED_TAGS)
+                if not trades and POCKET != "manual":
+                    manual_info = positions.get("manual") or {}
+                    trades = _filter_trades(
+                        manual_info.get("open_trades") or [],
+                        ALLOWED_TAGS,
+                    )
+                if not trades and POCKET != "unknown":
+                    unknown_info = positions.get("unknown") or {}
+                    trades = _filter_trades(
+                        unknown_info.get("open_trades") or [],
+                        ALLOWED_TAGS,
+                    )
                 active_ids = {str(tr.get("trade_id")) for tr in trades if tr.get("trade_id")}
                 for tid in list(self._states.keys()):
                     if tid not in active_ids:
