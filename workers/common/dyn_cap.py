@@ -26,6 +26,12 @@ def compute_cap(
     env_prefix: Optional[str] = None,
 ) -> CapResult:
     """Dynamic cap based on market/position state."""
+    pf_boost_min = env_float("DYN_CAP_PF_BOOST_MIN", 1.3, prefix=env_prefix)
+    pf_boost_mult = env_float("DYN_CAP_PF_BOOST_MULT", 1.15, prefix=env_prefix)
+    pf_cut_max = env_float("DYN_CAP_PF_CUT_MAX", 0.9, prefix=env_prefix)
+    pf_cut_mult = env_float("DYN_CAP_PF_CUT_MULT", 0.8, prefix=env_prefix)
+    range_cap = env_float("DYN_CAP_RANGE_CAP", 0.55, prefix=env_prefix)
+
     # Aggressive: start near the upper bound to target high utilization
     cap = cap_max * 0.9
     reasons: Dict[str, float] = {}
@@ -68,17 +74,18 @@ def compute_cap(
 
     # Performance (PF)
     if perf_pf is not None:
-        if perf_pf >= 1.3:
-            cap *= 1.15
+        if perf_pf >= pf_boost_min:
+            cap *= pf_boost_mult
             reasons["pf_boost"] = perf_pf
-        elif perf_pf <= 0.9:
-            cap *= 0.8
+        elif perf_pf <= pf_cut_max:
+            cap *= pf_cut_mult
             reasons["pf_cut"] = perf_pf
 
     # Range guard
     if range_active:
-        cap = min(cap, 0.55)
-        reasons["range_cap"] = 1.0
+        if range_cap > 0:
+            cap = min(cap, range_cap)
+            reasons["range_cap"] = round(range_cap, 3)
 
     # Position bias (same side exposure)
     if pos_bias > 0.5:
