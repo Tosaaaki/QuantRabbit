@@ -669,6 +669,16 @@ def _diversity_bonus(strategy_name: str, now_ts: float) -> float:
     return min(config.DIVERSITY_MAX_BONUS, bonus)
 
 
+def _strategy_cooldown_active(strategy_name: str, now_ts: float) -> bool:
+    cooldown = max(0.0, float(getattr(config, "STRATEGY_COOLDOWN_SEC", 0.0)))
+    if cooldown <= 0.0:
+        return False
+    last_ts = _STRATEGY_LAST_TS.get(strategy_name)
+    if last_ts is None:
+        return False
+    return (now_ts - last_ts) < cooldown
+
+
 async def micro_multi_worker() -> None:
     if not config.ENABLED:
         LOG.info("%s disabled (idle)", config.LOG_PREFIX)
@@ -764,6 +774,8 @@ async def micro_multi_worker() -> None:
         candidates: List[Tuple[float, int, Dict, str, Dict[str, object]]] = []
         for strat in _strategy_list():
             strategy_name = getattr(strat, "name", strat.__name__)
+            if _strategy_cooldown_active(strategy_name, now_ts):
+                continue
             if (
                 strategy_name == TrendMomentumMicro.name
                 and current_hour in config.TREND_BLOCK_HOURS_UTC

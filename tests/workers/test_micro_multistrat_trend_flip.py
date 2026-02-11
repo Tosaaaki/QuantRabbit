@@ -100,3 +100,20 @@ def test_trend_flip_still_applies_when_allowed(monkeypatch):
     }
     assert tp_mult == 1.12
     assert sl_mult == 0.95
+
+
+def test_strategy_cooldown_active_when_recent(monkeypatch):
+    monkeypatch.setattr(worker.config, "STRATEGY_COOLDOWN_SEC", 45.0)
+    worker._STRATEGY_LAST_TS.clear()
+    worker._STRATEGY_LAST_TS["MicroLevelReactor"] = 100.0
+
+    assert worker._strategy_cooldown_active("MicroLevelReactor", 120.0) is True
+    assert worker._strategy_cooldown_active("MicroLevelReactor", 146.0) is False
+
+
+def test_strategy_cooldown_disabled_by_default(monkeypatch):
+    monkeypatch.setattr(worker.config, "STRATEGY_COOLDOWN_SEC", 0.0)
+    worker._STRATEGY_LAST_TS.clear()
+    worker._STRATEGY_LAST_TS["MicroLevelReactor"] = 100.0
+
+    assert worker._strategy_cooldown_active("MicroLevelReactor", 110.0) is False

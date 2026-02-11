@@ -113,6 +113,8 @@ DIVERSITY_MAX_BONUS = float(os.getenv("MICRO_MULTI_DIVERSITY_MAX_BONUS", "12"))
 # Multi-signal dispatch (variety): send top-N signals per cycle with smaller sizing.
 MAX_SIGNALS_PER_CYCLE = int(os.getenv("MICRO_MULTI_MAX_SIGNALS_PER_CYCLE", "2"))
 MULTI_SIGNAL_MIN_SCALE = float(os.getenv("MICRO_MULTI_MULTI_SIGNAL_MIN_SCALE", "0.6"))
+# Per-strategy minimum interval between entries to avoid same-minute burst stacking.
+STRATEGY_COOLDOWN_SEC = float(os.getenv("MICRO_MULTI_STRATEGY_COOLDOWN_SEC", "0.0"))
 
 # Dynamic winner routing from config/dynamic_alloc.json
 DYN_ALLOC_ENABLED = os.getenv("MICRO_MULTI_DYN_ALLOC_ENABLED", "1").strip().lower() not in {
