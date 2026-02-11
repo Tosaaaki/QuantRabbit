@@ -7,6 +7,7 @@ LLM なしで動作するヒューリスティック判定。
 
 from __future__ import annotations
 
+import math
 import os
 from typing import Dict, Iterable, List, Optional
 
@@ -86,6 +87,9 @@ _DECIDER_PERF_HOURLY_MULT_MIN = _env_float("DECIDER_PERF_HOURLY_MULT_MIN", 0.8)
 _DECIDER_PERF_HOURLY_MULT_MAX = _env_float("DECIDER_PERF_HOURLY_MULT_MAX", 1.05)
 _DECIDER_PERF_TOTAL_MULT_MIN = _env_float("DECIDER_PERF_TOTAL_MULT_MIN", 0.7)
 _DECIDER_PERF_TOTAL_MULT_MAX = _env_float("DECIDER_PERF_TOTAL_MULT_MAX", 1.15)
+_DECIDER_FORECAST_ENABLED = _env_bool("DECIDER_FORECAST_ENABLED", True)
+_DECIDER_FORECAST_EDGE_MIN = _clamp(_env_float("DECIDER_FORECAST_EDGE_MIN", 0.08), 0.0, 0.8)
+_DECIDER_FORECAST_WEIGHT_MAX = _clamp(_env_float("DECIDER_FORECAST_WEIGHT_MAX", 0.16), 0.0, 0.35)
 
 
 def _atr_pips(factors: Optional[Dict]) -> float:
@@ -145,6 +149,71 @@ def _perf_multiplier(
     win_score = _score_linear(win_rate, win_bad, win_ref)
     combined = _clamp(0.6 * pf_score + 0.4 * win_score, 0.0, 1.0)
     return _clamp(mult_min + combined * (mult_max - mult_min), mult_min, mult_max)
+
+
+def _sigmoid(x: float) -> float:
+    x = _clamp(float(x), -30.0, 30.0)
+    return 1.0 / (1.0 + math.exp(-x))
+
+
+def _technical_forecast_bias(factors_m1: Dict, factors_h4: Dict) -> Dict[str, float]:
+    atr_pips = max(0.5, _atr_pips(factors_m1))
+    vol_5m = max(0.1, _safe_float(factors_m1.get("vol_5m"), 1.0))
+    micro_rsi = _safe_float(factors_m1.get("rsi"), 50.0)
+    micro_adx = max(0.0, _safe_float(factors_m1.get("adx")))
+    macro_adx = max(0.0, _safe_float(factors_h4.get("adx")))
+
+    ma10_m1 = _safe_float(factors_m1.get("ma10"))
+    ma20_m1 = _safe_float(factors_m1.get("ma20"))
+    ma10_h4 = _safe_float(factors_h4.get("ma10"))
+    ma20_h4 = _safe_float(factors_h4.get("ma20"))
+
+    m1_gap_pips = (ma10_m1 - ma20_m1) / 0.01 if ma10_m1 and ma20_m1 else 0.0
+    h4_gap_pips = (ma10_h4 - ma20_h4) / 0.01 if ma10_h4 and ma20_h4 else 0.0
+    m1_gap_norm = m1_gap_pips / max(1.0, atr_pips)
+    h4_gap_norm = h4_gap_pips / max(1.5, atr_pips * 2.2)
+
+    rsi_term = (micro_rsi - 50.0) / 16.0
+    adx_term = _clamp((micro_adx - 16.0) / 18.0, 0.0, 1.0)
+    macro_adx_term = _clamp((macro_adx - 18.0) / 16.0, 0.0, 1.0)
+    vol_term = _clamp((vol_5m - 0.9) / 0.7, -1.0, 1.0)
+
+    trend_score = (
+        1.10 * math.tanh(m1_gap_norm * 1.25)
+        + 0.88 * math.tanh(h4_gap_norm * 1.0)
+        + 0.42 * rsi_term
+        + 0.34 * adx_term
+        + 0.24 * macro_adx_term
+        + 0.18 * vol_term
+    )
+    mean_score = (
+        -0.72 * math.tanh(m1_gap_norm * 1.35)
+        - 0.44 * rsi_term
+        + 0.22 * _clamp(1.0 - vol_term, 0.0, 1.0)
+    )
+    trend_strength = _clamp(
+        0.2
+        + 0.45 * abs(math.tanh(m1_gap_norm * 1.4))
+        + 0.2 * adx_term
+        + 0.15 * macro_adx_term
+        + 0.1 * max(0.0, vol_term),
+        0.0,
+        1.0,
+    )
+    range_pressure = _clamp(1.0 - trend_strength, 0.0, 1.0)
+    combo = trend_score * (1.0 - 0.5 * range_pressure) + 0.55 * mean_score * range_pressure
+    p_up = _clamp(_sigmoid(combo * 1.15), 0.04, 0.96)
+    edge = abs(p_up - 0.5) * 2.0
+
+    return {
+        "p_up": round(p_up, 6),
+        "edge": round(edge, 6),
+        "trend_strength": round(trend_strength, 6),
+        "range_pressure": round(range_pressure, 6),
+        "m1_gap_pips": round(m1_gap_pips, 4),
+        "h4_gap_pips": round(h4_gap_pips, 4),
+        "direction": 1.0 if p_up >= 0.5 else -1.0,
+    }
 
 
 def heuristic_decision(
@@ -227,6 +296,32 @@ def heuristic_decision(
     elif scalp_pf > 1.15:
         weight_scalp = max(weight_scalp, 0.14)
 
+    forecast_bias: Dict[str, float] | None = None
+    if _DECIDER_FORECAST_ENABLED:
+        forecast_bias = _technical_forecast_bias(factors_m1, factors_h4)
+        edge = _safe_float(forecast_bias.get("edge"))
+        trend_strength = _safe_float(forecast_bias.get("trend_strength"))
+        range_pressure = _safe_float(forecast_bias.get("range_pressure"))
+
+        if edge >= _DECIDER_FORECAST_EDGE_MIN:
+            edge_strength = _clamp(
+                (edge - _DECIDER_FORECAST_EDGE_MIN) / max(1e-6, 1.0 - _DECIDER_FORECAST_EDGE_MIN),
+                0.0,
+                1.0,
+            )
+            macro_shift = _DECIDER_FORECAST_WEIGHT_MAX * edge_strength * (trend_strength - 0.5) * 2.0
+            weight_macro = _clamp(weight_macro + macro_shift, 0.0, 0.9)
+
+            if trend_strength >= 0.65 and focus_tag == "micro":
+                focus_tag = "hybrid"
+            elif range_pressure >= 0.72 and focus_tag == "macro":
+                focus_tag = "hybrid"
+
+            if edge <= 0.16 and range_pressure >= 0.6:
+                weight_scalp = min(weight_scalp, 0.12)
+            elif edge >= 0.28 and trend_strength >= 0.55 and atr_pips >= 4.0:
+                weight_scalp = max(weight_scalp, 0.12)
+
     # Performance-aware weight scaling (overall + hourly)
     if _DECIDER_PERF_ENABLED:
         macro_win = _pocket_metric(perf, "macro", "win_rate", 0.5)
@@ -299,6 +394,33 @@ def heuristic_decision(
     weight_scalp = max(0.0, min(0.3, round(weight_scalp, 2)))
 
     ranked: List[str] = []
+    if forecast_bias is not None:
+        edge = _safe_float(forecast_bias.get("edge"))
+        trend_strength = _safe_float(forecast_bias.get("trend_strength"))
+        range_pressure = _safe_float(forecast_bias.get("range_pressure"))
+        if edge >= _DECIDER_FORECAST_EDGE_MIN:
+            if trend_strength >= range_pressure:
+                _enqueue_unique(
+                    ranked,
+                    (
+                        "H1Momentum",
+                        "TrendMA",
+                        "TrendMomentumMicro",
+                        "MicroMomentumStack",
+                        "MomentumBurst",
+                    ),
+                )
+            else:
+                _enqueue_unique(
+                    ranked,
+                    (
+                        "BB_RSI",
+                        "BB_RSI_Fast",
+                        "MicroVWAPRevert",
+                        "MicroLevelReactor",
+                        "MicroPullbackEMA",
+                    ),
+                )
 
     if focus_tag == "event":
         _enqueue_unique(ranked, ("BB_RSI",))
@@ -357,6 +479,7 @@ def heuristic_decision(
         "weight_macro": weight_macro,
         "weight_scalp": weight_scalp,
         "ranked_strategies": ranked,
+        "forecast_bias": forecast_bias,
         "reason": "heuristic_fallback",
     }
 

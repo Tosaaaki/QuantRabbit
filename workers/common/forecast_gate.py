@@ -1,25 +1,26 @@
 """
 workers.common.forecast_gate
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Optional probabilistic forecast gate for entry sizing / blocking.
+Probabilistic forecast gate for entry sizing / blocking.
 
-This gate is deliberately conservative and opt-in:
-- It requires a trained joblib bundle (see scripts/train_forecast_bundle.py).
-- It reads candles from indicators.factor_cache (M5/H1/D1) and computes
-  the latest per-horizon probability.
-- It returns allow / scale-down / block decisions.
+The gate uses one of the following sources:
+- sklearn bundle prediction (`analysis/forecast_sklearn.py`)
+- deterministic technical forecast fallback computed from live OHLC
+- blend of both (default, when bundle is available)
 
-The intent is to provide a "human-like" filter without using LLMs, and to keep
-behavior unchanged unless explicitly enabled via env.
+This keeps trading deterministic (no LLM) and allows predictive decisions even
+when an offline model bundle is not mounted yet.
 """
 
 from __future__ import annotations
 
 import logging
+import math
 import os
 from dataclasses import dataclass
 from pathlib import Path
 import time
+from typing import Any
 from typing import Optional
 
 from utils.metrics_logger import log_metric
@@ -49,14 +50,34 @@ def _env_set(name: str) -> set[str]:
     return {item.strip().lower() for item in raw.split(",") if item.strip()}
 
 
-_ENABLED = _env_bool("FORECAST_GATE_ENABLED", False)
+_ENABLED = _env_bool("FORECAST_GATE_ENABLED", True)
 _BUNDLE_PATH = os.getenv(
     "FORECAST_BUNDLE_PATH",
     "config/forecast_models/USD_JPY_bundle.joblib",
 ).strip()
 _TTL_SEC = max(1.0, _env_float("FORECAST_GATE_TTL_SEC", 15.0))
+_SOURCE = os.getenv("FORECAST_GATE_SOURCE", "auto").strip().lower()  # auto|bundle|technical
+if _SOURCE not in {"auto", "bundle", "technical"}:
+    _SOURCE = "auto"
+_AUTO_BLEND_TECH = max(0.0, min(1.0, _env_float("FORECAST_GATE_AUTO_BLEND_TECH", 0.35)))
+_TECH_ENABLED = _env_bool("FORECAST_TECH_ENABLED", True)
+_TECH_SCORE_GAIN = max(0.1, _env_float("FORECAST_TECH_SCORE_GAIN", 1.0))
+_TECH_PROB_STRENGTH = max(0.0, min(1.0, _env_float("FORECAST_TECH_PROB_STRENGTH", 0.75)))
+_STYLE_GUARD_ENABLED = _env_bool("FORECAST_GATE_STYLE_GUARD_ENABLED", True)
+_STYLE_TREND_MIN_STRENGTH = max(
+    0.0, min(1.0, _env_float("FORECAST_GATE_STYLE_TREND_MIN_STRENGTH", 0.52))
+)
+_STYLE_RANGE_MIN_PRESSURE = max(
+    0.0, min(1.0, _env_float("FORECAST_GATE_STYLE_RANGE_MIN_PRESSURE", 0.52))
+)
 
 _EDGE_BLOCK = max(0.0, min(1.0, _env_float("FORECAST_GATE_EDGE_BLOCK", 0.38)))
+_EDGE_BLOCK_TREND = max(
+    0.0, min(1.0, _env_float("FORECAST_GATE_EDGE_BLOCK_TREND", max(_EDGE_BLOCK, 0.41)))
+)
+_EDGE_BLOCK_RANGE = max(
+    0.0, min(1.0, _env_float("FORECAST_GATE_EDGE_BLOCK_RANGE", max(0.2, _EDGE_BLOCK - 0.03)))
+)
 _EDGE_BAD = max(0.0, min(1.0, _env_float("FORECAST_GATE_EDGE_BAD", 0.45)))
 _EDGE_REF = max(0.0, min(1.0, _env_float("FORECAST_GATE_EDGE_REF", 0.55)))
 _SCALE_MIN = max(0.0, min(1.0, _env_float("FORECAST_GATE_SCALE_MIN", 0.5)))
@@ -84,6 +105,27 @@ class ForecastDecision:
     p_up: float
     expected_pips: Optional[float] = None
     feature_ts: Optional[str] = None
+    source: Optional[str] = None
+    style: Optional[str] = None
+    trend_strength: Optional[float] = None
+    range_pressure: Optional[float] = None
+
+
+_HORIZON_META_DEFAULT = {
+    "1h": {"timeframe": "M5", "step_bars": 12},
+    "8h": {"timeframe": "M5", "step_bars": 96},
+    "1d": {"timeframe": "H1", "step_bars": 24},
+    "1w": {"timeframe": "D1", "step_bars": 5},
+    "1m": {"timeframe": "D1", "step_bars": 21},
+}
+_TECH_HORIZON_CFG = {
+    # shorter horizons allow more mean-reversion influence
+    "1h": {"trend_w": 0.56, "mr_w": 0.44, "temp": 1.35},
+    "8h": {"trend_w": 0.68, "mr_w": 0.32, "temp": 1.25},
+    "1d": {"trend_w": 0.76, "mr_w": 0.24, "temp": 1.10},
+    "1w": {"trend_w": 0.82, "mr_w": 0.18, "temp": 1.00},
+    "1m": {"trend_w": 0.88, "mr_w": 0.12, "temp": 0.92},
+}
 
 
 _BUNDLE_CACHE = None
@@ -91,17 +133,154 @@ _BUNDLE_MTIME = 0.0
 _PRED_CACHE: dict | None = None
 _PRED_CACHE_TS = 0.0
 
+_TREND_STYLE_HINTS = (
+    "trend",
+    "momentum",
+    "break",
+    "burst",
+    "impulse",
+    "runner",
+    "spike",
+    "h1",
+)
+_RANGE_STYLE_HINTS = (
+    "range",
+    "revert",
+    "reversion",
+    "fader",
+    "mean",
+    "vwap",
+    "bb_rsi",
+    "bb-rsi",
+)
+_STYLE_BY_STRATEGY_BASE = {
+    # trend / breakout family
+    "trendma": "trend",
+    "h1momentum": "trend",
+    "trendmomentummicro": "trend",
+    "micromomentumstack": "trend",
+    "momentumburst": "trend",
+    "micropullbackema": "trend",
+    "microrangebreak": "trend",
+    "momentumpulse": "trend",
+    "volcompressionbreak": "trend",
+    # range / mean-revert family
+    "bbrsi": "range",
+    "bbrsifast": "range",
+    "microvwaprevert": "range",
+    "microlevelreactor": "range",
+    "microvwapbound": "range",
+    "rangefader": "range",
+}
+
+
+def _clamp(value: float, lo: float, hi: float) -> float:
+    return max(lo, min(hi, value))
+
+
+def _safe_float(value: Any, default: float = 0.0) -> float:
+    try:
+        return float(value)
+    except Exception:
+        return float(default)
+
+
+def _sigmoid(x: float) -> float:
+    x = _clamp(float(x), -40.0, 40.0)
+    return 1.0 / (1.0 + math.exp(-x))
+
+
+def _normalize_strategy_key(text: str) -> str:
+    return "".join(ch.lower() for ch in text if ch.isalnum())
+
+
+def _strategy_base(strategy_tag: Optional[str]) -> str:
+    if not strategy_tag:
+        return ""
+    raw = str(strategy_tag).strip()
+    if not raw:
+        return ""
+    return raw.split("-", 1)[0].strip()
+
+
+def _horizon_meta() -> dict[str, dict[str, object]]:
+    meta = dict(_HORIZON_META_DEFAULT)
+    try:
+        from analysis.forecast_sklearn import DEFAULT_HORIZONS
+
+        for spec in DEFAULT_HORIZONS:
+            name = str(getattr(spec, "name", "") or "").strip()
+            timeframe = str(getattr(spec, "timeframe", "") or "").strip()
+            step_bars = int(getattr(spec, "step_bars", 0) or 0)
+            if name and timeframe and step_bars > 0:
+                meta[name] = {"timeframe": timeframe, "step_bars": step_bars}
+    except Exception:
+        pass
+    return meta
+
+
+_HORIZON_META = _horizon_meta()
+
+
+def _strategy_style(strategy_tag: Optional[str]) -> Optional[str]:
+    if not strategy_tag:
+        return None
+    key = str(strategy_tag).strip().lower()
+    if not key:
+        return None
+    base = _normalize_strategy_key(_strategy_base(strategy_tag))
+    if base and base in _STYLE_BY_STRATEGY_BASE:
+        return _STYLE_BY_STRATEGY_BASE[base]
+    if any(h in key for h in _RANGE_STYLE_HINTS):
+        return "range"
+    if any(h in key for h in _TREND_STYLE_HINTS):
+        return "trend"
+    return None
+
+
+def _strategy_env_float(name: str, strategy_tag: Optional[str], default: float) -> float:
+    value = _env_float(name, default)
+    base = _strategy_base(strategy_tag)
+    if not base:
+        return value
+    suffix = _normalize_strategy_key(base).upper()
+    if not suffix:
+        return value
+    raw = os.getenv(f"{name}_STRATEGY_{suffix}")
+    if raw is None:
+        return value
+    try:
+        return float(raw)
+    except Exception:
+        return value
+
+
+def _strategy_env_bool(name: str, strategy_tag: Optional[str], default: bool) -> bool:
+    value = _env_bool(name, default)
+    base = _strategy_base(strategy_tag)
+    if not base:
+        return value
+    suffix = _normalize_strategy_key(base).upper()
+    if not suffix:
+        return value
+    raw = os.getenv(f"{name}_STRATEGY_{suffix}")
+    if raw is None:
+        return value
+    return raw.strip().lower() not in {"", "0", "false", "no", "off"}
+
 
 def _should_use(strategy_tag: Optional[str], pocket: Optional[str]) -> bool:
     if not _ENABLED:
         return False
-    if not strategy_tag or not pocket:
+    if not pocket:
         return False
     if pocket.strip().lower() == "manual":
         return False
     if _POCKET_ALLOWLIST and pocket.strip().lower() not in _POCKET_ALLOWLIST:
         return False
     if _STRATEGY_ALLOWLIST:
+        if not strategy_tag:
+            return False
         key = strategy_tag.strip().lower()
         base = key.split("-", 1)[0]
         if key not in _STRATEGY_ALLOWLIST and base not in _STRATEGY_ALLOWLIST:
@@ -172,30 +351,205 @@ def _scale_from_edge(edge: float) -> float:
     return float(_SCALE_MIN) + score * (1.0 - float(_SCALE_MIN))
 
 
-def _ensure_predictions(bundle) -> dict | None:  # noqa: ANN001 - sklearn bundle type
-    global _PRED_CACHE, _PRED_CACHE_TS
-    now = time.time()
-    if _PRED_CACHE is not None and now - _PRED_CACHE_TS < _TTL_SEC:
-        return _PRED_CACHE
-    try:
-        from indicators.factor_cache import get_candles_snapshot
-    except Exception:
-        return None
-    candles_by_tf = {
+def _fetch_candles_by_tf() -> dict[str, list[dict]]:
+    from indicators.factor_cache import get_candles_snapshot
+
+    return {
         "M5": get_candles_snapshot("M5", limit=1200, include_live=True),
         "H1": get_candles_snapshot("H1", limit=1000, include_live=True),
         "D1": get_candles_snapshot("D1", limit=500, include_live=True),
     }
+
+
+def _predict_bundle_latest(bundle, candles_by_tf: dict[str, list[dict]]) -> dict | None:  # noqa: ANN001
+    if bundle is None:
+        return None
     try:
         from analysis.forecast_sklearn import predict_latest
     except Exception:
         return None
     try:
-        preds = predict_latest(bundle, candles_by_tf)
+        out = predict_latest(bundle, candles_by_tf)
     except Exception as exc:
         LOG.debug("[FORECAST] predict_latest failed: %s", exc)
-        preds = None
-    if isinstance(preds, dict):
+        return None
+    if not isinstance(out, dict):
+        return None
+    for row in out.values():
+        if isinstance(row, dict):
+            row.setdefault("source", "bundle")
+    return out
+
+
+def _technical_prediction_for_horizon(
+    candles: list[dict],
+    *,
+    horizon: str,
+    step_bars: int,
+) -> dict | None:
+    if not candles:
+        return None
+    try:
+        from analysis.forecast_sklearn import compute_feature_frame
+    except Exception:
+        return None
+
+    try:
+        feats = compute_feature_frame(candles)
+    except Exception as exc:
+        LOG.debug("[FORECAST] technical feature build failed horizon=%s err=%s", horizon, exc)
+        return None
+    if feats.empty:
+        return None
+
+    last = feats.iloc[-1]
+    atr = max(0.45, abs(_safe_float(last.get("atr_pips_14"), 0.0)))
+    vol = max(0.2, abs(_safe_float(last.get("vol_pips_20"), 0.0)))
+    ret1 = _safe_float(last.get("ret_pips_1"), 0.0) / atr
+    ret3 = _safe_float(last.get("ret_pips_3"), 0.0) / atr
+    ret12 = _safe_float(last.get("ret_pips_12"), 0.0) / max(0.7, atr * 1.2)
+    ma_gap = _safe_float(last.get("ma_gap_pips_10_20"), 0.0) / atr
+    close_ma20 = _safe_float(last.get("close_ma20_pips"), 0.0) / max(0.6, atr)
+    close_ma50 = _safe_float(last.get("close_ma50_pips"), 0.0) / max(0.8, atr)
+    rsi = (_safe_float(last.get("rsi_14"), 50.0) - 50.0) / 16.0
+    range_pos = (_safe_float(last.get("range_pos"), 0.5) - 0.5) * 2.0
+
+    trend_score = (
+        0.82 * math.tanh(ret1 * 1.2)
+        + 1.02 * math.tanh(ret3 * 1.0)
+        + 0.68 * math.tanh(ret12 * 0.7)
+        + 0.74 * math.tanh(ma_gap * 1.1)
+        + 0.46 * math.tanh(close_ma20 * 1.0)
+        + 0.33 * math.tanh(close_ma50 * 0.9)
+        + 0.24 * math.tanh(rsi)
+    )
+    mean_revert_score = (
+        -0.68 * math.tanh(close_ma20 * 1.2)
+        - 0.58 * math.tanh(range_pos * 1.4)
+        - 0.42 * math.tanh(rsi * 1.1)
+    )
+
+    trend_strength = _clamp(
+        0.18
+        + 0.44 * abs(math.tanh(ma_gap * 1.4))
+        + 0.33 * abs(math.tanh(ret3 * 1.1))
+        + 0.18 * _clamp((vol / max(atr, 1e-6)) - 0.55, 0.0, 1.0),
+        0.0,
+        1.0,
+    )
+    range_pressure = _clamp(1.0 - trend_strength, 0.0, 1.0)
+
+    cfg = _TECH_HORIZON_CFG.get(horizon, _TECH_HORIZON_CFG["8h"])
+    combo = (
+        cfg["trend_w"] * trend_score * (1.0 - 0.55 * range_pressure)
+        + cfg["mr_w"] * mean_revert_score * range_pressure
+    )
+    raw_prob = _sigmoid(float(cfg["temp"]) * float(_TECH_SCORE_GAIN) * combo)
+
+    sample_count = len(feats.index)
+    sample_strength = _clamp((sample_count - 40.0) / 120.0, 0.25, 1.0)
+    damp = _TECH_PROB_STRENGTH * sample_strength
+    p_up = 0.5 + (raw_prob - 0.5) * damp
+    p_up = _clamp(p_up, 0.02, 0.98)
+
+    step_scale = math.sqrt(max(1.0, float(step_bars)) / 12.0)
+    expected_move = max(0.35, vol * step_scale)
+    expected_pips = (p_up - 0.5) * 2.0 * expected_move
+
+    feature_ts = None
+    try:
+        feature_ts = feats.index[-1].isoformat()
+    except Exception:
+        feature_ts = None
+
+    return {
+        "horizon": horizon,
+        "p_up": round(float(p_up), 6),
+        "expected_pips": round(float(expected_pips), 4),
+        "feature_ts": feature_ts,
+        "source": "technical",
+        "trend_strength": round(float(trend_strength), 6),
+        "range_pressure": round(float(range_pressure), 6),
+    }
+
+
+def _predict_technical_latest(candles_by_tf: dict[str, list[dict]]) -> dict[str, dict]:
+    preds: dict[str, dict] = {}
+    for horizon, meta in _HORIZON_META.items():
+        timeframe = str(meta.get("timeframe") or "").strip().upper()
+        step_bars = int(meta.get("step_bars") or 0)
+        if not timeframe or step_bars <= 0:
+            continue
+        candles = candles_by_tf.get(timeframe) or []
+        row = _technical_prediction_for_horizon(
+            candles,
+            horizon=horizon,
+            step_bars=step_bars,
+        )
+        if isinstance(row, dict):
+            preds[horizon] = row
+    return preds
+
+
+def _blend_prediction_rows(base_row: dict, tech_row: dict) -> dict:
+    alpha = _AUTO_BLEND_TECH
+    if alpha <= 0.0:
+        return base_row
+    p_base = _safe_float(base_row.get("p_up"), 0.5)
+    p_tech = _safe_float(tech_row.get("p_up"), p_base)
+    e_base = _safe_float(base_row.get("expected_pips"), 0.0)
+    e_tech = _safe_float(tech_row.get("expected_pips"), e_base)
+    return {
+        **base_row,
+        "p_up": round((1.0 - alpha) * p_base + alpha * p_tech, 6),
+        "expected_pips": round((1.0 - alpha) * e_base + alpha * e_tech, 4),
+        "feature_ts": base_row.get("feature_ts") or tech_row.get("feature_ts"),
+        "source": "blend",
+        "trend_strength": round(
+            (1.0 - alpha) * _safe_float(base_row.get("trend_strength"), _safe_float(tech_row.get("trend_strength"), 0.5))
+            + alpha * _safe_float(tech_row.get("trend_strength"), 0.5),
+            6,
+        ),
+        "range_pressure": round(
+            (1.0 - alpha) * _safe_float(base_row.get("range_pressure"), _safe_float(tech_row.get("range_pressure"), 0.5))
+            + alpha * _safe_float(tech_row.get("range_pressure"), 0.5),
+            6,
+        ),
+    }
+
+
+def _ensure_predictions(bundle) -> dict | None:  # noqa: ANN001 - sklearn bundle type
+    global _PRED_CACHE, _PRED_CACHE_TS
+    now = time.time()
+    if _PRED_CACHE is not None and now - _PRED_CACHE_TS < _TTL_SEC:
+        return _PRED_CACHE
+
+    try:
+        candles_by_tf = _fetch_candles_by_tf()
+    except Exception:
+        return None
+
+    preds: dict[str, dict] = {}
+    if _SOURCE in {"auto", "bundle"} and bundle is not None:
+        bpred = _predict_bundle_latest(bundle, candles_by_tf)
+        if isinstance(bpred, dict):
+            for key, row in bpred.items():
+                if isinstance(row, dict):
+                    preds[str(key)] = dict(row)
+
+    if _TECH_ENABLED and _SOURCE in {"auto", "technical"}:
+        tpred = _predict_technical_latest(candles_by_tf)
+        if _SOURCE == "technical":
+            preds = tpred
+        else:
+            for key, trow in tpred.items():
+                brow = preds.get(key)
+                if isinstance(brow, dict):
+                    preds[key] = _blend_prediction_rows(brow, trow)
+                else:
+                    preds[key] = trow
+
+    if preds:
         _PRED_CACHE = preds
         _PRED_CACHE_TS = now
         return preds
@@ -226,8 +580,6 @@ def decide(
         return None
 
     bundle = _load_bundle_cached()
-    if bundle is None:
-        return None
     preds = _ensure_predictions(bundle)
     if not isinstance(preds, dict):
         return None
@@ -241,11 +593,103 @@ def decide(
     except Exception:
         return None
     p_up = max(0.0, min(1.0, p_up))
+    source = row.get("source")
+    style = _strategy_style(strategy_tag)
+    trend_strength = _safe_float(row.get("trend_strength"), 0.5)
+    range_pressure = _safe_float(row.get("range_pressure"), 0.5)
+    style_guard_enabled = _strategy_env_bool(
+        "FORECAST_GATE_STYLE_GUARD_ENABLED", strategy_tag, _STYLE_GUARD_ENABLED
+    )
+    trend_min_strength = _clamp(
+        _strategy_env_float(
+            "FORECAST_GATE_STYLE_TREND_MIN_STRENGTH", strategy_tag, _STYLE_TREND_MIN_STRENGTH
+        ),
+        0.0,
+        1.0,
+    )
+    range_min_pressure = _clamp(
+        _strategy_env_float(
+            "FORECAST_GATE_STYLE_RANGE_MIN_PRESSURE", strategy_tag, _STYLE_RANGE_MIN_PRESSURE
+        ),
+        0.0,
+        1.0,
+    )
+    edge_block_trend = _clamp(
+        _strategy_env_float("FORECAST_GATE_EDGE_BLOCK_TREND", strategy_tag, _EDGE_BLOCK_TREND),
+        0.0,
+        1.0,
+    )
+    edge_block_range = _clamp(
+        _strategy_env_float("FORECAST_GATE_EDGE_BLOCK_RANGE", strategy_tag, _EDGE_BLOCK_RANGE),
+        0.0,
+        1.0,
+    )
     side_key = (side or "").strip().lower()
     edge = p_up if side_key == "buy" or units > 0 else 1.0 - p_up
     edge = max(0.0, min(1.0, float(edge)))
 
-    if edge < float(_EDGE_BLOCK):
+    if style_guard_enabled and style == "trend" and trend_strength < trend_min_strength:
+        log_metric(
+            "forecast_gate_block",
+            1.0,
+            tags={
+                "pocket": pocket,
+                "strategy": str(strategy_tag or "unknown"),
+                "horizon": horizon,
+                "reason": "style_mismatch_trend",
+                "source": str(source or "unknown"),
+                "style_threshold": f"{trend_min_strength:.3f}",
+            },
+        )
+        return ForecastDecision(
+            allowed=False,
+            scale=0.0,
+            reason="style_mismatch_trend",
+            horizon=horizon,
+            edge=edge,
+            p_up=p_up,
+            expected_pips=row.get("expected_pips"),
+            feature_ts=row.get("feature_ts"),
+            source=str(source) if source is not None else None,
+            style=style,
+            trend_strength=trend_strength,
+            range_pressure=range_pressure,
+        )
+    if style_guard_enabled and style == "range" and range_pressure < range_min_pressure:
+        log_metric(
+            "forecast_gate_block",
+            1.0,
+            tags={
+                "pocket": pocket,
+                "strategy": str(strategy_tag or "unknown"),
+                "horizon": horizon,
+                "reason": "style_mismatch_range",
+                "source": str(source or "unknown"),
+                "style_threshold": f"{range_min_pressure:.3f}",
+            },
+        )
+        return ForecastDecision(
+            allowed=False,
+            scale=0.0,
+            reason="style_mismatch_range",
+            horizon=horizon,
+            edge=edge,
+            p_up=p_up,
+            expected_pips=row.get("expected_pips"),
+            feature_ts=row.get("feature_ts"),
+            source=str(source) if source is not None else None,
+            style=style,
+            trend_strength=trend_strength,
+            range_pressure=range_pressure,
+        )
+
+    edge_block = float(_EDGE_BLOCK)
+    if style == "trend":
+        edge_block = max(edge_block, float(edge_block_trend))
+    elif style == "range":
+        edge_block = max(0.0, min(1.0, float(edge_block_range)))
+
+    if edge < edge_block:
         log_metric(
             "forecast_gate_block",
             1.0,
@@ -254,6 +698,8 @@ def decide(
                 "strategy": str(strategy_tag or "unknown"),
                 "horizon": horizon,
                 "reason": "edge_block",
+                "source": str(source or "unknown"),
+                "style": style or "n/a",
             },
         )
         return ForecastDecision(
@@ -265,6 +711,10 @@ def decide(
             p_up=p_up,
             expected_pips=row.get("expected_pips"),
             feature_ts=row.get("feature_ts"),
+            source=str(source) if source is not None else None,
+            style=style,
+            trend_strength=trend_strength,
+            range_pressure=range_pressure,
         )
 
     feature_ts = row.get("feature_ts")
@@ -285,6 +735,7 @@ def decide(
                         "strategy": str(strategy_tag or "unknown"),
                         "horizon": horizon,
                         "reason": "stale",
+                        "source": str(source or "unknown"),
                     },
                 )
                 return ForecastDecision(
@@ -296,6 +747,10 @@ def decide(
                     p_up=p_up,
                     expected_pips=row.get("expected_pips"),
                     feature_ts=str(feature_ts),
+                    source=str(source) if source is not None else None,
+                    style=style,
+                    trend_strength=trend_strength,
+                    range_pressure=range_pressure,
                 )
         except Exception:
             # If timestamp parsing fails, do not block; behave as no-op.
@@ -312,6 +767,8 @@ def decide(
             "strategy": str(strategy_tag or "unknown"),
             "horizon": horizon,
             "reason": "edge_scale",
+            "source": str(source or "unknown"),
+            "style": style or "n/a",
         },
     )
     return ForecastDecision(
@@ -323,6 +780,10 @@ def decide(
         p_up=p_up,
         expected_pips=row.get("expected_pips"),
         feature_ts=row.get("feature_ts"),
+        source=str(source) if source is not None else None,
+        style=style,
+        trend_strength=trend_strength,
+        range_pressure=range_pressure,
     )
 
 

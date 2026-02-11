@@ -4948,6 +4948,8 @@ async def logic_loop(
             local_reason = None
             if isinstance(local_decision, dict):
                 local_reason = local_decision.get("reason")
+            base_focus_tag = focus_tag
+            base_weight_macro = weight_macro
             weight_scalp = None
             try:
                 weight_macro = max(0.0, min(1.0, float(weight_macro)))
@@ -4956,9 +4958,44 @@ async def logic_loop(
             all_strats = list(STRATEGIES.keys())
             session_bucket = _session_bucket(now)
             ranked_strategies = list(all_strats)
+            if isinstance(local_decision, dict):
+                local_focus = local_decision.get("focus_tag")
+                if isinstance(local_focus, str) and local_focus in FOCUS_POCKETS:
+                    focus_tag = local_focus
+                local_weight_macro = local_decision.get("weight_macro")
+                if isinstance(local_weight_macro, (int, float)):
+                    weight_macro = max(0.0, min(1.0, float(local_weight_macro)))
+                local_weight_scalp = local_decision.get("weight_scalp")
+                if isinstance(local_weight_scalp, (int, float)):
+                    weight_scalp = max(0.0, min(0.5, float(local_weight_scalp)))
+                local_ranked = local_decision.get("ranked_strategies")
+                if isinstance(local_ranked, (list, tuple)):
+                    local_ranked_filtered = [
+                        str(name)
+                        for name in local_ranked
+                        if isinstance(name, str) and name in STRATEGIES
+                    ]
+                    if local_ranked_filtered:
+                        ranked_strategies = local_ranked_filtered
+            if ranked_strategies:
+                ranked_strategies.extend([s for s in all_strats if s not in ranked_strategies])
             strategy_allowlist = set(all_strats)  # フィルタしない
             if not ranked_strategies:
                 ranked_strategies = all_strats
+            if (
+                focus_tag != base_focus_tag
+                or abs(weight_macro - float(base_weight_macro or 0.0)) >= 0.01
+                or weight_scalp is not None
+            ):
+                logging.info(
+                    "[LOCAL_DECIDER] applied focus %s->%s macro %.2f->%.2f scalp=%s top=%s",
+                    base_focus_tag,
+                    focus_tag,
+                    float(base_weight_macro or 0.0),
+                    weight_macro,
+                    f"{weight_scalp:.2f}" if weight_scalp is not None else "n/a",
+                    ranked_strategies[:6],
+                )
             logging.info(
                 "[STRAT_EVAL_PRE] ranked_strategies(local)=%s focus=%s session=%s range=%s",
                 ranked_strategies[:8],
