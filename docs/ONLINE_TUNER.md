@@ -9,7 +9,7 @@
 2. プリセット確認: `config/tuning_presets.yaml`
 3. 一回実行:
 ```bash
-python3 scripts/run_online_tuner.py --logs-glob "tmp/exit_eval*.csv"   --presets config/tuning_presets.yaml   --overrides-out config/tuning_overrides.yaml   --minutes 15 --shadow
+python3 scripts/run_online_tuner.py --logs-glob "tmp/exit_eval*.csv"   --presets config/tuning_presets.yaml   --overrides-out logs/tuning/tuning_overrides.yaml   --history-dir logs/tuning/history   --minutes 15 --shadow
 ```
   - 実績ログが DB のみの場合は先にエクスポート:
 ```bash
@@ -17,8 +17,9 @@ PYTHONPATH=. python3 scripts/export_exit_eval.py --db logs/trades.db --out tmp/e
 ```
 4. 本番（定期実行）: `snippets/main_hook.pyfrag` を `main.py` の周期処理へ貼付
 
-- 生成物：`config/tuning_overrides.yaml`（本適用）、`config/tuning_history/tuning_*.yaml`（履歴）
-- 本適用は `scripts/apply_override.py` で `config/tuning_overlay.yaml` にマージし、
+- 生成物：`logs/tuning/tuning_overrides.yaml`（本適用）、`logs/tuning/history/tuning_*.yaml`（履歴）
+- 生成物の既定出力は `logs/tuning/` 配下（`TUNING_*_PATH` / `TUNING_RUNTIME_DIR` で上書き可）
+- 本適用は `scripts/apply_override.py` で `logs/tuning/tuning_overlay.yaml` にマージし、
   ランタイムの設定読み込みで **オーバーレイ**します。
 
 ## 何を動かすか（小幅）
