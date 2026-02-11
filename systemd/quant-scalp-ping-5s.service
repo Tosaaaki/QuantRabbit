@@ -1,0 +1,27 @@
+[Unit]
+Description=QuantRabbit Scalp Ping 5s Worker (entry-only)
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/tossaki/QuantRabbit
+Environment="PYTHONUNBUFFERED=1"
+# Base env (live defaults) + per-strategy override env (demo split).
+EnvironmentFile=-/etc/quantrabbit.env
+EnvironmentFile=-/etc/quantrabbit/scalp_ping_5s.env
+# Safety default: keep disabled until explicitly enabled via drop-in.
+Environment=SCALP_PING_5S_ENABLED=0
+Environment=SCALP_PING_5S_REQUIRE_PRACTICE=1
+Environment=SCALP_PING_5S_POCKET=scalp_fast
+Environment=SCALP_PING_5S_STRATEGY_TAG=scalp_ping_5s
+Environment=SCALP_PING_5S_LOOP_INTERVAL_SEC=0.2
+Environment=SCALP_PING_5S_MAX_SPREAD_PIPS=0.9
+Environment=SCALP_PING_5S_TP_BASE_PIPS=1.7
+Environment=SCALP_PING_5S_SL_BASE_PIPS=2.4
+ExecStart=/home/tossaki/QuantRabbit/.venv/bin/python -m workers.scalp_ping_5s.worker
+Restart=always
+RestartSec=5
+User=tossaki
+
+[Install]
+WantedBy=multi-user.target
