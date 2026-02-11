@@ -14,6 +14,7 @@ import os
 import pathlib
 import sqlite3
 import time
+import inspect
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Dict, Optional, Tuple
@@ -433,6 +434,7 @@ def _normalize_sl_tp_rr(
         return sl, tp
     if sl is None or tp is None:
         return sl, tp
+    strategy_tag, pocket = _infer_rr_context(strategy_tag, pocket)
     try:
         sl_dist = abs(float(price) - float(sl))
         tp_dist = abs(float(tp) - float(price))
@@ -478,6 +480,74 @@ def _normalize_sl_tp_rr(
         sl = price + sl_pips * PIP
         tp = price - tp_pips * PIP
     return sl, tp
+
+
+def _clean_text(value: object) -> Optional[str]:
+    text = str(value or "").strip()
+    return text or None
+
+
+def _clean_pocket(value: object) -> Optional[str]:
+    text = _clean_text(value)
+    return text.lower() if text else None
+
+
+def _infer_rr_context(
+    strategy_tag: Optional[str],
+    pocket: Optional[str],
+) -> Tuple[Optional[str], Optional[str]]:
+    tag = _clean_text(strategy_tag)
+    pock = _clean_pocket(pocket)
+    if tag and pock:
+        return tag, pock
+
+    frame = inspect.currentframe()
+    caller = frame.f_back if frame is not None else None
+    depth = 0
+    try:
+        while caller is not None and depth < 8 and (not tag or not pock):
+            loc = caller.f_locals
+            if not pock:
+                for key in ("pocket", "pocket_val", "focus_tag"):
+                    pock = _clean_pocket(loc.get(key))
+                    if pock:
+                        break
+                if not pock:
+                    cfg = loc.get("config")
+                    if cfg is not None:
+                        pock = _clean_pocket(getattr(cfg, "POCKET", None))
+
+            if not tag:
+                for key in ("strategy_tag", "signal_tag", "tag", "strategy"):
+                    tag = _clean_text(loc.get(key))
+                    if tag:
+                        break
+                if not tag:
+                    signal = loc.get("signal")
+                    if isinstance(signal, dict):
+                        tag = _clean_text(
+                            signal.get("strategy_tag")
+                            or signal.get("tag")
+                            or signal.get("strategy")
+                        )
+                if not tag:
+                    entry_thesis = loc.get("entry_thesis")
+                    if isinstance(entry_thesis, dict):
+                        tag = _clean_text(entry_thesis.get("strategy_tag"))
+                if not tag:
+                    module_name = str(caller.f_globals.get("__name__") or "")
+                    if module_name.startswith("workers.") and ".worker" in module_name:
+                        parts = module_name.split(".")
+                        if len(parts) >= 2:
+                            tag = _clean_text(parts[1])
+
+            caller = caller.f_back
+            depth += 1
+    finally:
+        # break frame reference cycles
+        del frame
+        del caller
+    return tag, pock
 
 
 def _perf_multiplier(tag: Optional[str], pocket: Optional[str]) -> tuple[float, dict[str, float]]:
