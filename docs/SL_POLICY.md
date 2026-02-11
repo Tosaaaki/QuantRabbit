@@ -36,10 +36,10 @@ SL（損切り）は「どこで決まるか」が複数レイヤに分かれて
 
 ```sql
 SELECT ts,pocket,status,
-       json_extract(request_payload,'$.oanda.order.stopLossOnFill.price') AS sl_on_fill,
-       json_extract(request_payload,'$.oanda.order.takeProfitOnFill.price') AS tp_on_fill
+       json_extract(request_json,'$.oanda.order.stopLossOnFill.price') AS sl_on_fill,
+       json_extract(request_json,'$.oanda.order.takeProfitOnFill.price') AS tp_on_fill
 FROM orders
-WHERE ts >= datetime('now','-2 hours')
+WHERE ts >= strftime('%Y-%m-%dT%H:%M:%S','now','-2 hours')
   AND status='submit_attempt'
   AND pocket IN ('micro','scalp','macro')
 ORDER BY ts DESC
