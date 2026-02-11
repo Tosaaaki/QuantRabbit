@@ -1,9 +1,9 @@
 [Unit]
-Description=Run quant-dynamic-alloc.service every 7 minutes
+Description=Run quant-dynamic-alloc.service every 2 minutes
 
 [Timer]
 OnBootSec=90s
-OnUnitActiveSec=7min
+OnUnitActiveSec=2min
 Unit=quant-dynamic-alloc.service
 
 [Install]

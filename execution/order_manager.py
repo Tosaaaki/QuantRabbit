@@ -5532,8 +5532,12 @@ async def market_order(
                         "entry_thesis": entry_thesis,
                         "forecast_reason": fc_decision.reason,
                         "forecast_horizon": fc_decision.horizon,
+                        "forecast_source": fc_decision.source,
+                        "forecast_style": fc_decision.style,
                         "forecast_edge": fc_decision.edge,
                         "forecast_p_up": fc_decision.p_up,
+                        "forecast_trend_strength": fc_decision.trend_strength,
+                        "forecast_range_pressure": fc_decision.range_pressure,
                         "forecast_expected_pips": fc_decision.expected_pips,
                         "forecast_feature_ts": fc_decision.feature_ts,
                     },
@@ -5546,6 +5550,8 @@ async def market_order(
                         "strategy": str(strategy_tag or "unknown"),
                         "reason": fc_decision.reason,
                         "horizon": fc_decision.horizon,
+                        "source": str(fc_decision.source or "unknown"),
+                        "style": str(fc_decision.style or "n/a"),
                     },
                 )
                 return None
@@ -5582,7 +5588,11 @@ async def market_order(
                             "entry_thesis": entry_thesis,
                             "forecast_reason": fc_decision.reason,
                             "forecast_horizon": fc_decision.horizon,
+                            "forecast_source": fc_decision.source,
+                            "forecast_style": fc_decision.style,
                             "forecast_edge": fc_decision.edge,
+                            "forecast_trend_strength": fc_decision.trend_strength,
+                            "forecast_range_pressure": fc_decision.range_pressure,
                             "forecast_scale": fc_decision.scale,
                             "scaled_units": scaled_units,
                             "min_units": min_allowed,
@@ -5596,6 +5606,8 @@ async def market_order(
                             "strategy": str(strategy_tag or "unknown"),
                             "reason": "scale_below_min",
                             "horizon": fc_decision.horizon,
+                            "source": str(fc_decision.source or "unknown"),
+                            "style": str(fc_decision.style or "n/a"),
                         },
                     )
                     return None
@@ -5610,6 +5622,8 @@ async def market_order(
                             "strategy": str(strategy_tag or "unknown"),
                             "reason": fc_decision.reason,
                             "horizon": fc_decision.horizon,
+                            "source": str(fc_decision.source or "unknown"),
+                            "style": str(fc_decision.style or "n/a"),
                             "scale": f"{fc_decision.scale:.2f}",
                         },
                     )

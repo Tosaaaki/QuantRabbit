@@ -3,6 +3,9 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import pathlib
+import sqlite3
+import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Optional, Sequence, Set
@@ -190,6 +193,11 @@ def _float_env(key: str, default: float) -> float:
         return default
 
 
+_TRADES_DB_PATH = pathlib.Path(os.getenv("TRADES_DB_PATH", "logs/trades.db"))
+_META_CACHE_TTL_SEC = max(2.0, _float_env("HEDGE_EXIT_META_CACHE_TTL_SEC", 20.0))
+_TRADE_META_CACHE: dict[str, tuple[float, dict[str, str]]] = {}
+
+
 def _parse_time(value: Optional[str]) -> Optional[datetime]:
     if not value:
         return None
@@ -197,6 +205,54 @@ def _parse_time(value: Optional[str]) -> Optional[datetime]:
         return datetime.fromisoformat(value.replace("Z", "+00:00")).astimezone(timezone.utc)
     except Exception:
         return None
+
+
+def _trade_meta_from_db(trade_id: str) -> dict[str, str]:
+    if not trade_id:
+        return {}
+    now = time.monotonic()
+    cached = _TRADE_META_CACHE.get(trade_id)
+    if cached and (now - cached[0]) <= _META_CACHE_TTL_SEC:
+        return dict(cached[1])
+    if not _TRADES_DB_PATH.exists():
+        return {}
+
+    row = None
+    con: Optional[sqlite3.Connection] = None
+    try:
+        con = sqlite3.connect(f"file:{_TRADES_DB_PATH}?mode=ro", uri=True, timeout=1.0)
+        con.row_factory = sqlite3.Row
+        row = con.execute(
+            """
+            SELECT
+              COALESCE(NULLIF(strategy_tag, ''), strategy) AS strategy_tag,
+              client_order_id
+            FROM trades
+            WHERE ticket_id = ? OR CAST(transaction_id AS TEXT) = ?
+            ORDER BY id DESC
+            LIMIT 1
+            """,
+            (trade_id, trade_id),
+        ).fetchone()
+    except Exception:
+        row = None
+    finally:
+        if con is not None:
+            try:
+                con.close()
+            except Exception:
+                pass
+
+    meta: dict[str, str] = {}
+    if row:
+        tag = row["strategy_tag"]
+        client_order_id = row["client_order_id"]
+        if tag:
+            meta["strategy_tag"] = str(tag)
+        if client_order_id:
+            meta["client_order_id"] = str(client_order_id)
+    _TRADE_META_CACHE[trade_id] = (now, dict(meta))
+    return meta
 
 
 def _latest_mid() -> Optional[float]:
@@ -217,6 +273,8 @@ def _filter_trades(trades: Sequence[dict], tags: Set[str]) -> list[dict]:
         return []
     filtered: list[dict] = []
     for tr in trades:
+        trade_id = str(tr.get("trade_id") or "")
+        db_meta = _trade_meta_from_db(trade_id)
         thesis = tr.get("entry_thesis") or {}
         tag = (
             thesis.get("strategy_tag")
@@ -225,12 +283,16 @@ def _filter_trades(trades: Sequence[dict], tags: Set[str]) -> list[dict]:
             or thesis.get("tag")
             or tr.get("strategy_tag")
             or tr.get("strategy")
+            or db_meta.get("strategy_tag")
         )
         if not tag:
             continue
         tag_str = str(tag)
         base_tag = tag_str.split("-", 1)[0]
         if tag_str in tags or base_tag in tags:
+            if db_meta.get("client_order_id") and not tr.get("client_order_id"):
+                tr = dict(tr)
+                tr["client_order_id"] = db_meta["client_order_id"]
             filtered.append(tr)
     return filtered
 
@@ -356,6 +418,8 @@ class HedgeBalancerExitWorker:
         if not client_id and isinstance(client_ext, dict):
             client_id = client_ext.get("id")
         if not client_id:
+            client_id = _trade_meta_from_db(trade_id).get("client_order_id")
+        if not client_id:
             LOG.warning("[exit-hedge-balancer] missing client_id trade=%s skip close", trade_id)
             return
         if await maybe_close_pro_stop(trade, now=now):
@@ -370,6 +434,8 @@ class HedgeBalancerExitWorker:
                 client_ext = trade.get("clientExtensions")
                 if isinstance(client_ext, dict):
                     candle_client_id = client_ext.get("id")
+            if not candle_client_id:
+                candle_client_id = _trade_meta_from_db(trade_id).get("client_order_id")
             if candle_client_id:
                 await self._close(trade_id, -units, candle_reason, pnl, candle_client_id)
                 if hasattr(self, "_states"):

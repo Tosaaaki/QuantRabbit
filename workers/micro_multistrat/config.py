@@ -95,3 +95,31 @@ DIVERSITY_MAX_BONUS = float(os.getenv("MICRO_MULTI_DIVERSITY_MAX_BONUS", "12"))
 # Multi-signal dispatch (variety): send top-N signals per cycle with smaller sizing.
 MAX_SIGNALS_PER_CYCLE = int(os.getenv("MICRO_MULTI_MAX_SIGNALS_PER_CYCLE", "2"))
 MULTI_SIGNAL_MIN_SCALE = float(os.getenv("MICRO_MULTI_MULTI_SIGNAL_MIN_SCALE", "0.6"))
+
+# Dynamic winner routing from config/dynamic_alloc.json
+DYN_ALLOC_ENABLED = os.getenv("MICRO_MULTI_DYN_ALLOC_ENABLED", "1").strip().lower() not in {
+    "",
+    "0",
+    "false",
+    "no",
+}
+DYN_ALLOC_PATH = os.getenv("MICRO_MULTI_DYN_ALLOC_PATH", "config/dynamic_alloc.json")
+DYN_ALLOC_TTL_SEC = float(os.getenv("MICRO_MULTI_DYN_ALLOC_TTL_SEC", "20"))
+DYN_ALLOC_MIN_TRADES = int(os.getenv("MICRO_MULTI_DYN_ALLOC_MIN_TRADES", "10"))
+DYN_ALLOC_WINNER_SCORE = float(os.getenv("MICRO_MULTI_DYN_ALLOC_WINNER_SCORE", "0.62"))
+DYN_ALLOC_LOSER_SCORE = float(os.getenv("MICRO_MULTI_DYN_ALLOC_LOSER_SCORE", "0.28"))
+DYN_ALLOC_WINNER_ONLY = os.getenv("MICRO_MULTI_DYN_ALLOC_WINNER_ONLY", "1").strip().lower() not in {
+    "",
+    "0",
+    "false",
+    "no",
+}
+DYN_ALLOC_LOSER_BLOCK = os.getenv("MICRO_MULTI_DYN_ALLOC_LOSER_BLOCK", "1").strip().lower() not in {
+    "",
+    "0",
+    "false",
+    "no",
+}
+DYN_ALLOC_SCORE_BONUS = float(os.getenv("MICRO_MULTI_DYN_ALLOC_SCORE_BONUS", "10.0"))
+DYN_ALLOC_MULT_MIN = float(os.getenv("MICRO_MULTI_DYN_ALLOC_MULT_MIN", "0.7"))
+DYN_ALLOC_MULT_MAX = float(os.getenv("MICRO_MULTI_DYN_ALLOC_MULT_MAX", "1.8"))
