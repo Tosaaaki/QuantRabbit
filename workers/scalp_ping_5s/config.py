@@ -83,7 +83,7 @@ SL_SPREAD_BUFFER_PIPS: float = max(
 
 SNAPSHOT_FALLBACK_ENABLED: bool = _bool_env("SCALP_PING_5S_SNAPSHOT_FALLBACK_ENABLED", True)
 SNAPSHOT_MIN_INTERVAL_SEC: float = max(
-    0.1, float(os.getenv("SCALP_PING_5S_SNAPSHOT_MIN_INTERVAL_SEC", "0.8"))
+    0.1, float(os.getenv("SCALP_PING_5S_SNAPSHOT_MIN_INTERVAL_SEC", "0.2"))
 )
 
 STOP_LOSS_DISABLED = stop_loss_disabled_for_pocket(POCKET)
