@@ -52,6 +52,11 @@ summaries/
 trades*.db
 config/env.local.toml
 
+# ML model artifacts
+*.joblib
+config/forecast_models/
+config/fast_scalp_models/
+
 # Ad-hoc local artifacts
 pipeline.log
 tick_sample.json

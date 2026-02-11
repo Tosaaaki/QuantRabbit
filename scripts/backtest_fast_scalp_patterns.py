@@ -18,17 +18,16 @@ LOGS_DIR = ROOT / "logs"
 
 
 def _load_dataset(limit: int, min_abs_pips: float) -> tuple[np.ndarray, np.ndarray]:
-    orders_db = sqlite3.connect(LOGS_DIR / "orders.db")
     trades_db = sqlite3.connect(LOGS_DIR / "trades.db")
-    orders_db.row_factory = sqlite3.Row
     trades_db.row_factory = sqlite3.Row
 
     rows = trades_db.execute(
         """
-        SELECT id, ticket_id, pl_pips
+        SELECT id, units, pl_pips, entry_thesis
         FROM trades
         WHERE pocket='scalp_fast'
         AND pl_pips IS NOT NULL
+        AND entry_thesis IS NOT NULL
         ORDER BY id DESC
         LIMIT ?
         """,
@@ -39,25 +38,12 @@ def _load_dataset(limit: int, min_abs_pips: float) -> tuple[np.ndarray, np.ndarr
     labels = []
 
     for row in rows:
-        ticket = row["ticket_id"]
+        units = int(row["units"] or 0)
         pl_pips = float(row["pl_pips"])
-        order_row = orders_db.execute(
-            """
-            SELECT side, request_json
-            FROM orders
-            WHERE ticket_id=? AND status='submit_attempt'
-            ORDER BY id DESC
-            LIMIT 1
-            """,
-            (ticket,),
-        ).fetchone()
-        if not order_row or order_row["request_json"] is None:
-            continue
         try:
-            payload = json.loads(order_row["request_json"])
+            thesis = json.loads(row["entry_thesis"])
         except json.JSONDecodeError:
             continue
-        thesis = (payload.get("meta") or {}).get("entry_thesis") or {}
         feat = thesis.get("pattern_features")
         if not feat:
             continue
@@ -65,11 +51,10 @@ def _load_dataset(limit: int, min_abs_pips: float) -> tuple[np.ndarray, np.ndarr
             vec = [float(x) for x in feat]
         except Exception:
             continue
-        vec.append(1.0 if order_row["side"] == "buy" else -1.0)
+        vec.append(1.0 if units > 0 else -1.0)
         features.append(vec)
         labels.append(1 if pl_pips >= min_abs_pips else 0)
 
-    orders_db.close()
     trades_db.close()
 
     if not features:

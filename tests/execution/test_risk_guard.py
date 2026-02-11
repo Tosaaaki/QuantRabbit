@@ -128,3 +128,39 @@ def test_perf_multiplier_rewards_good_pf(monkeypatch):
     )
     mult, _ = risk_guard._perf_multiplier("TrendMA", "macro")
     assert abs(mult - 2.0) < 1e-9
+
+
+def test_allowed_lot_allows_flatten_when_risk_overshoots(monkeypatch):
+    """
+    When margin usage is already above the cap, opposite-direction orders that *reduce net exposure*
+    should still be allowed up to the flatten amount (even if risk-based sizing would overshoot).
+    """
+    # Avoid dynamic multipliers / DB access in this unit test.
+    monkeypatch.setattr(risk_guard, "_risk_multiplier", lambda **_: (1.0, {}), raising=False)
+
+    # Keep safety scaling out of the way for deterministic assertions.
+    monkeypatch.setenv("MARGIN_SAFETY_FACTOR", "1.0")
+    monkeypatch.setattr(risk_guard, "MAX_MARGIN_USAGE", 0.85, raising=False)
+    monkeypatch.setattr(risk_guard, "MAX_MARGIN_USAGE_HARD", 0.90, raising=False)
+
+    equity = 200_000.0
+    margin_available = 5_000.0  # ~2.5% free
+    margin_used = 195_000.0
+    price = 154.0
+    margin_rate = 0.04
+
+    # Net long 30k units (~0.30 lot). Request a short that would reduce net exposure.
+    lot = risk_guard.allowed_lot(
+        equity,
+        sl_pips=3.0,  # tight -> risk sizing would overshoot beyond flatten
+        margin_available=margin_available,
+        margin_used=margin_used,
+        price=price,
+        margin_rate=margin_rate,
+        risk_pct_override=0.04,
+        pocket="micro",
+        side="short",
+        open_long_units=30_000.0,
+        open_short_units=0.0,
+    )
+    assert abs(lot - 0.300) < 1e-9

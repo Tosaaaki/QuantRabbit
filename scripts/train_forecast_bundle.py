@@ -8,6 +8,8 @@ Prefers replay candle logs produced by market_data.replay_logger:
   logs/replay/USD_JPY/USD_JPY_M5_YYYYMMDD.jsonl
   logs/replay/USD_JPY/USD_JPY_H1_YYYYMMDD.jsonl
   logs/replay/USD_JPY/USD_JPY_D1_YYYYMMDD.jsonl
+If the replay logs are missing/insufficient, backfill them from OANDA:
+  python scripts/backfill_replay_candles.py --instrument USD_JPY --timeframes M5,H1,D1
 
 Outputs
 -------
@@ -19,13 +21,15 @@ from __future__ import annotations
 import argparse
 import datetime as dt
 import json
+import sys
 from pathlib import Path
 from typing import Any, Dict, List, Mapping
 
-from analysis.forecast_sklearn import DEFAULT_HORIZONS, save_bundle, train_bundle
-
-
 ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from analysis.forecast_sklearn import DEFAULT_HORIZONS, save_bundle, train_bundle  # noqa: E402
 
 
 def _utc_today() -> dt.date:
@@ -172,4 +176,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

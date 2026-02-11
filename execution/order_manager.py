@@ -38,7 +38,7 @@ from utils.metrics_logger import log_metric
 from execution import strategy_guard, reentry_gate
 from execution.position_manager import PositionManager, agent_client_prefixes
 from execution.risk_guard import POCKET_MAX_RATIOS, MAX_LEVERAGE
-from workers.common import perf_guard, profit_guard, brain
+from workers.common import perf_guard, profit_guard, brain, forecast_gate
 from workers.common.quality_gate import current_regime
 from indicators.factor_cache import get_last_regime
 from utils import signal_bus
@@ -5484,6 +5484,133 @@ async def market_order(
                             "strategy": str(strategy_tag or "unknown"),
                             "reason": brain_decision.reason,
                             "scale": f"{brain_decision.scale:.2f}",
+                        },
+                    )
+
+    # Probabilistic forecast gate (scikit-learn, offline bundle)
+    if not reduce_only and pocket != "manual":
+        try:
+                fc_decision = forecast_gate.decide(
+                    strategy_tag=strategy_tag,
+                    pocket=pocket,
+                    side=side_label,
+                    units=units,
+                    entry_thesis=entry_thesis if isinstance(entry_thesis, dict) else None,
+                    meta={**(meta or {}), "instrument": instrument} if isinstance(meta, dict) else {"instrument": instrument},
+                )
+        except Exception as exc:
+            fc_decision = None
+            logging.debug("[FORECAST] decision failed: %s", exc)
+        if fc_decision is not None:
+            if not fc_decision.allowed:
+                note = f"forecast_block:{fc_decision.reason}"
+                _console_order_log(
+                    "OPEN_REJECT",
+                    pocket=pocket,
+                    strategy_tag=str(strategy_tag or "unknown"),
+                    side=side_label,
+                    units=units,
+                    sl_price=sl_price,
+                    tp_price=tp_price,
+                    client_order_id=client_order_id,
+                    note=note,
+                )
+                log_order(
+                    pocket=pocket,
+                    instrument=instrument,
+                    side=side_label,
+                    units=units,
+                    sl_price=sl_price,
+                    tp_price=tp_price,
+                    client_order_id=client_order_id,
+                    status="forecast_block",
+                    attempt=0,
+                    stage_index=stage_index,
+                    request_payload={
+                        "strategy_tag": strategy_tag,
+                        "meta": meta,
+                        "entry_thesis": entry_thesis,
+                        "forecast_reason": fc_decision.reason,
+                        "forecast_horizon": fc_decision.horizon,
+                        "forecast_edge": fc_decision.edge,
+                        "forecast_p_up": fc_decision.p_up,
+                        "forecast_expected_pips": fc_decision.expected_pips,
+                        "forecast_feature_ts": fc_decision.feature_ts,
+                    },
+                )
+                log_metric(
+                    "order_forecast_block",
+                    1.0,
+                    tags={
+                        "pocket": pocket,
+                        "strategy": str(strategy_tag or "unknown"),
+                        "reason": fc_decision.reason,
+                        "horizon": fc_decision.horizon,
+                    },
+                )
+                return None
+            if 0.0 < fc_decision.scale < 1.0:
+                scaled_units = int(round(abs(units) * fc_decision.scale))
+                min_allowed = min_units_for_pocket(pocket)
+                if scaled_units < min_allowed:
+                    note = f"forecast_scale_below_min:{fc_decision.reason}"
+                    _console_order_log(
+                        "OPEN_REJECT",
+                        pocket=pocket,
+                        strategy_tag=str(strategy_tag or "unknown"),
+                        side=side_label,
+                        units=units,
+                        sl_price=sl_price,
+                        tp_price=tp_price,
+                        client_order_id=client_order_id,
+                        note=note,
+                    )
+                    log_order(
+                        pocket=pocket,
+                        instrument=instrument,
+                        side=side_label,
+                        units=units,
+                        sl_price=sl_price,
+                        tp_price=tp_price,
+                        client_order_id=client_order_id,
+                        status="forecast_scale_below_min",
+                        attempt=0,
+                        stage_index=stage_index,
+                        request_payload={
+                            "strategy_tag": strategy_tag,
+                            "meta": meta,
+                            "entry_thesis": entry_thesis,
+                            "forecast_reason": fc_decision.reason,
+                            "forecast_horizon": fc_decision.horizon,
+                            "forecast_edge": fc_decision.edge,
+                            "forecast_scale": fc_decision.scale,
+                            "scaled_units": scaled_units,
+                            "min_units": min_allowed,
+                        },
+                    )
+                    log_metric(
+                        "order_forecast_block",
+                        1.0,
+                        tags={
+                            "pocket": pocket,
+                            "strategy": str(strategy_tag or "unknown"),
+                            "reason": "scale_below_min",
+                            "horizon": fc_decision.horizon,
+                        },
+                    )
+                    return None
+                if scaled_units > 0 and scaled_units != abs(units):
+                    sign = 1 if units > 0 else -1
+                    units = int(sign * scaled_units)
+                    log_metric(
+                        "order_forecast_scale",
+                        1.0,
+                        tags={
+                            "pocket": pocket,
+                            "strategy": str(strategy_tag or "unknown"),
+                            "reason": fc_decision.reason,
+                            "horizon": fc_decision.horizon,
+                            "scale": f"{fc_decision.scale:.2f}",
                         },
                     )
 

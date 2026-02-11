@@ -776,16 +776,19 @@ def allowed_lot(
             # provisional margin clamp
             lot_margin = (margin_budget_safe - used) / margin_per_lot
 
+            # 片側 flatten までの必要ロット（opposite sideでネット縮小できる最大）
+            # NOTE: open_* が未提供でも long_units/short_units はフェッチ済みで常に値が入る。
+            gap_units = 0.0
+            if side_norm == "long":
+                gap_units = max(0.0, float(short_units or 0.0) - float(long_units or 0.0))
+            elif side_norm == "short":
+                gap_units = max(0.0, float(long_units or 0.0) - float(short_units or 0.0))
+            gap_lot = gap_units / 100000.0 if gap_units > 0 else 0.0
+
             # If netting would reduce usage (opposite side), allow larger lot up to cap.
             proposed_units = lot * 100000.0
             net_used_after = _net_margin_after(abs(proposed_units))
-            # 片側 flatten までの必要ロットを最低限許容する
-            gap_units = 0.0
-            if side_norm == "long":
-                gap_units = max(0.0, float(open_short_units or 0.0) - float(open_long_units or 0.0))
-            elif side_norm == "short":
-                gap_units = max(0.0, float(open_long_units or 0.0) - float(open_short_units or 0.0))
-            gap_lot = gap_units / 100000.0 if gap_units > 0 else 0.0
+            net_used_after_gap = _net_margin_after(gap_units) if gap_units > 0 else None
             if net_used_after < used:
                 # nettingで使用率が下がる場合は cap を緩和し、flatten分を優先して通す
                 hedge_cap = max(margin_cap, 0.995)
@@ -799,7 +802,12 @@ def allowed_lot(
             # すでに cap 超なら新規はゼロ
             current_usage = used / equity if equity > 0 else 0.0
             if current_usage >= margin_cap * 0.995 and net_used_after >= used:
-                lot_margin = 0.0
+                # Risk-based sizing may overshoot past the flatten point, which would *increase* net usage.
+                # Even in that case, still allow the "flatten" lot when it would reduce net exposure.
+                if net_used_after_gap is not None and net_used_after_gap < used and gap_lot > 0:
+                    lot_margin = max(lot_margin, gap_lot)
+                else:
+                    lot_margin = 0.0
             lot = min(lot, lot_margin)
     # margin_rate が取れない場合でも、free_ratio から強制ガードを入れる
     if margin_cap is None and margin_available is not None and equity > 0:

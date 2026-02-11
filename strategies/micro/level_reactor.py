@@ -63,16 +63,22 @@ class MicroLevelReactor:
             return None
         rsi = cls._as_float(fac.get("rsi"), 50.0)
         atr_pips = cls._as_float(fac.get("atr_pips"), 2.0)
+        # Dynamic levels must be anchored to a slower-moving reference (not the current price),
+        # otherwise they would never be crossed.
+        anchor = cls._as_float(
+            fac.get("ma20") or fac.get("ema20") or fac.get("vwap") or price,
+            price,
+        )
 
         # Determine levels: prefer absolute env overrides, otherwise dynamic ATR-based.
         if cls.ABS_LEVEL_UP:
-            up = cls._as_float(cls.ABS_LEVEL_UP, price + atr_pips * cls.UP_ATR_MULT * PIP)
+            up = cls._as_float(cls.ABS_LEVEL_UP, anchor + atr_pips * cls.UP_ATR_MULT * PIP)
         else:
-            up = price + atr_pips * cls.UP_ATR_MULT * PIP
+            up = anchor + atr_pips * cls.UP_ATR_MULT * PIP
         if cls.ABS_LEVEL_DOWN:
-            down = cls._as_float(cls.ABS_LEVEL_DOWN, price - atr_pips * cls.DOWN_ATR_MULT * PIP)
+            down = cls._as_float(cls.ABS_LEVEL_DOWN, anchor - atr_pips * cls.DOWN_ATR_MULT * PIP)
         else:
-            down = price - atr_pips * cls.DOWN_ATR_MULT * PIP
+            down = anchor - atr_pips * cls.DOWN_ATR_MULT * PIP
 
         band = cls.BAND_PIPS * PIP
 

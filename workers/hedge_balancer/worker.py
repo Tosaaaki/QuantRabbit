@@ -130,6 +130,11 @@ def _has_foreign_trades(pos_manager: PositionManager) -> bool:
     if not positions:
         return False
     for pocket, info in positions.items():
+        pocket_key = str(pocket or "").lower()
+        # Manual trades are an explicit part of the account's exposure we must manage;
+        # they should not disable hedge balancing.
+        if pocket_key == "manual":
+            continue
         if not isinstance(info, dict):
             continue
         trades = info.get("open_trades")
