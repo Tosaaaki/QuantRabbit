@@ -16,8 +16,10 @@ class MicroCompressionRevert:
     _ATR_MAX = 5.5
     _TOUCH_PIPS = 0.7
     _SPAN_MIN_PIPS = 1.4
-    _RSI_LONG_MAX = 42.0
-    _RSI_SHORT_MIN = 58.0
+    _RSI_LONG_MAX = 40.0
+    _RSI_SHORT_MIN = 60.0
+    _TREND_GAP_BLOCK_PIPS = 1.8
+    _MID_GAP_BLOCK_PIPS = 3.2
 
     @staticmethod
     def _bb_levels(fac: Dict[str, object]) -> Optional[tuple[float, float, float, float, float]]:
@@ -71,6 +73,23 @@ class MicroCompressionRevert:
             side = "OPEN_LONG"
         if side is None:
             return None
+
+        ma_fast = to_float(fac.get("ma10")) or to_float(fac.get("ema10"))
+        ma_slow = to_float(fac.get("ma20")) or to_float(fac.get("ema20"))
+        trend_gap_pips = 0.0
+        if ma_fast is not None and ma_slow is not None:
+            trend_gap_pips = (ma_fast - ma_slow) / PIP
+        mid_gap_pips = (price - mid) / PIP
+        if side == "OPEN_SHORT":
+            if trend_gap_pips >= MicroCompressionRevert._TREND_GAP_BLOCK_PIPS:
+                return None
+            if mid_gap_pips >= MicroCompressionRevert._MID_GAP_BLOCK_PIPS:
+                return None
+        else:
+            if trend_gap_pips <= -MicroCompressionRevert._TREND_GAP_BLOCK_PIPS:
+                return None
+            if mid_gap_pips <= -MicroCompressionRevert._MID_GAP_BLOCK_PIPS:
+                return None
 
         sl_pips = max(1.0, min(2.2, atr * 0.70))
         tp_pips = max(1.2, min(2.6, atr * 0.90))

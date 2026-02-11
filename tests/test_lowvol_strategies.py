@@ -10,6 +10,7 @@ from strategies.micro_lowvol.momentum_pulse import MomentumPulse
 from strategies.micro_lowvol.vol_compression_break import VolCompressionBreak
 from strategies.micro_lowvol.bb_rsi_fast import BBRsiFast
 from strategies.micro_lowvol.micro_vwap_revert import MicroVWAPRevert
+from strategies.micro_lowvol.compression_revert import MicroCompressionRevert
 
 
 def _ts(offset_seconds: float = 0.0) -> str:
@@ -110,3 +111,39 @@ def test_micro_vwap_revert_flags_short_bias():
     assert signal is not None
     assert signal["action"] == "OPEN_SHORT"
     assert 1.1 <= signal["sl_pips"] <= 2.4
+
+
+def test_micro_compression_revert_short_signal_in_clean_range():
+    fac = {
+        "close": 150.035,
+        "bb_upper": 150.036,
+        "bb_mid": 150.028,
+        "bb_lower": 150.020,
+        "ma10": 150.029,
+        "ma20": 150.028,
+        "adx": 17.0,
+        "bbw": 0.18,
+        "atr_pips": 2.0,
+        "rsi": 62.0,
+    }
+    signal = MicroCompressionRevert.check(fac)
+    assert signal is not None
+    assert signal["action"] == "OPEN_SHORT"
+    assert signal["tag"].startswith("MicroCompressionRevert")
+
+
+def test_micro_compression_revert_blocks_counter_trend_short():
+    fac = {
+        "close": 150.036,
+        "bb_upper": 150.037,
+        "bb_mid": 150.028,
+        "bb_lower": 150.020,
+        "ma10": 150.050,
+        "ma20": 150.020,
+        "adx": 16.0,
+        "bbw": 0.16,
+        "atr_pips": 2.1,
+        "rsi": 63.0,
+    }
+    signal = MicroCompressionRevert.check(fac)
+    assert signal is None

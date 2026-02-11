@@ -490,6 +490,33 @@ async def scalp_m1_worker() -> None:
             or "sell-rally" in signal_tag_l
             or "reversion" in signal_tag_l
         )
+        if is_reversion and config.REVERSION_REQUIRE_STRONG_RANGE:
+            range_mode = str(range_ctx.mode or "").strip().lower()
+            range_mode_ok = (
+                not config.REVERSION_ALLOWED_RANGE_MODES
+                or range_mode in config.REVERSION_ALLOWED_RANGE_MODES
+            )
+            range_ready = bool(range_ctx.active) or range_score >= config.REVERSION_MIN_RANGE_SCORE
+            adx_val = 0.0
+            try:
+                adx_val = float(fac_m1.get("adx") or 0.0)
+            except Exception:
+                adx_val = 0.0
+            adx_ok = config.REVERSION_MAX_ADX <= 0.0 or adx_val <= config.REVERSION_MAX_ADX
+            if not (range_mode_ok and range_ready and adx_ok):
+                now_mono = time.monotonic()
+                if now_mono - last_block_log > 120.0:
+                    LOG.info(
+                        "%s reversion_range_block tag=%s mode=%s active=%s score=%.3f adx=%.2f",
+                        config.LOG_PREFIX,
+                        signal_tag,
+                        range_mode or "-",
+                        bool(range_ctx.active),
+                        range_score,
+                        adx_val,
+                    )
+                    last_block_log = now_mono
+                continue
         if is_reversion and not config.ALLOW_REVERSION:
             now_mono = time.monotonic()
             if now_mono - last_block_log > 120.0:

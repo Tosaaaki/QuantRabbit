@@ -139,3 +139,14 @@ DYN_ALLOC_MULT_MAX = float(os.getenv("M1SCALP_DYN_ALLOC_MULT_MAX", "1.8"))
 # Keep it disabled by default and allow explicit opt-in via env.
 ALLOW_REVERSION = _env_bool("M1SCALP_ALLOW_REVERSION", False)
 ALLOW_TREND = _env_bool("M1SCALP_ALLOW_TREND", True)
+
+# Reversion safety gate: even if ALLOW_REVERSION=1, require robust range context by default.
+REVERSION_REQUIRE_STRONG_RANGE = _env_bool("M1SCALP_REVERSION_REQUIRE_STRONG_RANGE", True)
+REVERSION_MIN_RANGE_SCORE = float(os.getenv("M1SCALP_REVERSION_MIN_RANGE_SCORE", "0.68"))
+REVERSION_MAX_ADX = float(os.getenv("M1SCALP_REVERSION_MAX_ADX", "20.0"))
+REVERSION_ALLOWED_RANGE_MODES = frozenset(
+    _parse_csv_lower(
+        os.getenv("M1SCALP_REVERSION_ALLOWED_RANGE_MODES")
+        or _load_env_file().get("M1SCALP_REVERSION_ALLOWED_RANGE_MODES", "range")
+    )
+)
