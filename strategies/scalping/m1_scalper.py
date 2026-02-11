@@ -784,8 +784,8 @@ class M1Scalper:
             if last_body is None or prev_body is None:
                 return True
             if side == "long":
-                return prev_body <= -0.5 and last_body >= 0.3
-            return prev_body >= 0.5 and last_body <= -0.3
+                return prev_body <= -0.35 and last_body >= 0.15
+            return prev_body >= 0.35 and last_body <= -0.15
 
         story_levels = fac.get("story_levels") or {}
         d1_levels = story_levels.get("d1", {})
@@ -820,8 +820,11 @@ class M1Scalper:
             base_conf = 55.0 + (min(quality, 2.0) * 20.0)
             base_conf -= proximity_bias * 15.0
             base_conf = max(40.0, min(96.0, base_conf))
-            tolerance_default = _nwave_float("tolerance_default", 0.24)
-            tolerance_tactical = _nwave_float("tolerance_tactical", tolerance_default + 0.08)
+            tolerance_default = max(_nwave_float("tolerance_default", 0.24), 0.42)
+            tolerance_tactical = max(
+                _nwave_float("tolerance_tactical", tolerance_default + 0.12),
+                tolerance_default + 0.12,
+            )
             tolerance_pips = tolerance_tactical if scalp_tactical else tolerance_default
             hard_sl_mult = _nwave_float("hard_sl_atr_mult", 1.8)
             hard_sl = max(invalid_pips, atr_pips * hard_sl_mult, hard_sl_floor)
@@ -843,7 +846,7 @@ class M1Scalper:
                     "entry_type": "limit",
                     "entry_price": entry_price,
                     "entry_tolerance_pips": tolerance_pips,
-                    "limit_expiry_seconds": 70 if scalp_tactical else 90,
+                    "limit_expiry_seconds": 120 if scalp_tactical else 150,
                     "sl_pips": round(hard_sl, 2),
                     "tp_pips": round(target_pips, 2),
                     "confidence": int(base_conf),
@@ -881,7 +884,7 @@ class M1Scalper:
                 "entry_type": "limit",
                 "entry_price": entry_price,
                 "entry_tolerance_pips": tolerance_pips,
-                "limit_expiry_seconds": 70 if scalp_tactical else 90,
+                "limit_expiry_seconds": 120 if scalp_tactical else 150,
                 "sl_pips": round(hard_sl, 2),
                 "tp_pips": round(target_pips, 2),
                 "confidence": int(base_conf),
