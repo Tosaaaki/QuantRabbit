@@ -18,6 +18,7 @@ from indicators.factor_cache import all_factors
 from market_data import tick_window
 from utils.metrics_logger import log_metric
 from workers.common.exit_utils import close_trade, mark_pnl_pips
+from workers.common.rollout_gate import load_rollout_start_ts, trade_passes_rollout
 from workers.common.reentry_decider import decide_reentry
 from workers.common.pro_stop import maybe_close_pro_stop
 
@@ -590,10 +591,12 @@ class RangeFaderExitWorker:
         self.tick_imb_max_adverse_from_sl_max = max(
             0.0, _float_env("TICK_IMB_EXIT_MAX_ADVERSE_FROM_SL_MAX_PIPS", 6.0)
         )
+        self.exit_policy_start_ts = load_rollout_start_ts("SCALP_PRECISION_EXIT_POLICY_START_TS")
 
         self._pos_manager = PositionManager()
         self._states: dict[str, _TradeState] = {}
         self._loss_cut_last_ts: dict[str, float] = {}
+        self._rollout_skip_log_ts: dict[str, float] = {}
 
     def _unrealized_pnl_pips(
         self,
@@ -666,6 +669,36 @@ class RangeFaderExitWorker:
             return True
         return self._trade_has_stop_loss(trade)
 
+    def _maybe_log_rollout_skip(
+        self,
+        *,
+        trade_id: str,
+        side: str,
+        pnl: float,
+        hold_sec: float,
+        reason: str,
+    ) -> None:
+        now_mono = time.monotonic()
+        last = float(self._rollout_skip_log_ts.get(trade_id) or 0.0)
+        if now_mono - last < 60.0:
+            return
+        self._rollout_skip_log_ts[trade_id] = now_mono
+        log_metric(
+            "scalp_precision_rollout_skip",
+            float(pnl),
+            tags={
+                "reason": reason,
+                "side": side,
+            },
+        )
+        LOG.info(
+            "[exit-rangefader] rollout skip trade=%s reason=%s pnl=%.2fp hold=%.0fs",
+            trade_id,
+            reason,
+            pnl,
+            hold_sec,
+        )
+
     async def _close(self, trade_id: str, units: int, reason: str, pnl: float, client_order_id: Optional[str], allow_negative: bool = False) -> None:
         if _BB_EXIT_ENABLED:
             allow_neg = bool(locals().get("allow_negative"))
@@ -709,6 +742,11 @@ class RangeFaderExitWorker:
             return
         opened_at = _parse_time(trade.get("open_time"))
         hold_sec = (now - opened_at).total_seconds() if opened_at else 0.0
+        policy_active = trade_passes_rollout(
+            opened_at,
+            self.exit_policy_start_ts,
+            unknown_is_new=False,
+        )
 
         thesis = trade.get("entry_thesis") or {}
         if isinstance(thesis, str):
@@ -895,7 +933,12 @@ class RangeFaderExitWorker:
         # For TickImbalance, enforce max-adverse loss cap before any other pro-stop logic.
         # This is critical when hard SL is disabled; otherwise a structure-based stop can realize
         # much larger losses than the intended entry SL.
-        if is_tick_imb and tick_imb_max_adverse_pips > 0.0 and pnl <= -tick_imb_max_adverse_pips:
+        if (
+            policy_active
+            and is_tick_imb
+            and tick_imb_max_adverse_pips > 0.0
+            and pnl <= -tick_imb_max_adverse_pips
+        ):
             await self._close(trade_id, -units, "max_adverse", pnl, client_id, allow_negative=True)
             self._states.pop(trade_id, None)
             return
@@ -970,15 +1013,33 @@ class RangeFaderExitWorker:
                         if be_ok:
                             state.be_moved = True
                         return
-            if tick_imb_max_adverse_pips > 0 and pnl <= -tick_imb_max_adverse_pips:
+            if (
+                policy_active
+                and tick_imb_max_adverse_pips > 0
+                and pnl <= -tick_imb_max_adverse_pips
+            ):
                 await self._close(trade_id, -units, "max_adverse", pnl, client_id, allow_negative=True)
                 self._states.pop(trade_id, None)
                 return
-            if tick_imb_max_hold_sec > 0 and hold_sec >= tick_imb_max_hold_sec and pnl <= 0:
+            if (
+                policy_active
+                and tick_imb_max_hold_sec > 0
+                and hold_sec >= tick_imb_max_hold_sec
+                and pnl <= 0
+            ):
                 await self._close(trade_id, -units, "time_stop", pnl, client_id, allow_negative=True)
                 self._states.pop(trade_id, None)
                 return
         if pnl <= 0:
+            if not policy_active:
+                self._maybe_log_rollout_skip(
+                    trade_id=trade_id,
+                    side=side,
+                    pnl=float(pnl),
+                    hold_sec=hold_sec,
+                    reason="negative_exit",
+                )
+                return
             fac_m1 = all_factors().get("M1") or {}
             rsi = _bb_float(fac_m1.get("rsi"))
             adx = _bb_float(fac_m1.get("adx"))
@@ -1195,11 +1256,12 @@ class RangeFaderExitWorker:
 
     async def run(self) -> None:
         LOG.info(
-            "[exit-rangefader] exit worker start interval=%.2fs idle=%.2fs tags=%s pocket=%s",
+            "[exit-rangefader] exit worker start interval=%.2fs idle=%.2fs tags=%s pocket=%s policy_start_ts=%.3f",
             self.loop_interval,
             self.idle_interval,
             ",".join(sorted(ALLOWED_TAGS)) if ALLOWED_TAGS else "none",
             POCKET,
+            float(self.exit_policy_start_ts or 0.0),
         )
         if not ALLOWED_TAGS:
             LOG.info("[exit-rangefader] no allowed tags configured; idle")
@@ -1223,6 +1285,9 @@ class RangeFaderExitWorker:
                 for tid in list(self._loss_cut_last_ts.keys()):
                     if tid not in active_ids:
                         self._loss_cut_last_ts.pop(tid, None)
+                for tid in list(self._rollout_skip_log_ts.keys()):
+                    if tid not in active_ids:
+                        self._rollout_skip_log_ts.pop(tid, None)
                 if not trades:
                     continue
 
