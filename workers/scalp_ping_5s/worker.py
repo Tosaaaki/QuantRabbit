@@ -27,6 +27,7 @@ from market_data.tick_fetcher import _parse_time
 from utils.market_hours import is_market_open
 from utils.oanda_account import get_account_snapshot
 from utils.secrets import get_secret
+from workers.common.exit_utils import close_trade
 from workers.common.rate_limiter import SlidingWindowRateLimiter
 from workers.common.size_utils import scale_base_units
 
@@ -178,6 +179,108 @@ def _safe_float(value: object, default: float = 0.0) -> float:
         return float(value)
     except Exception:
         return default
+
+
+def _parse_trade_open_time(raw: object) -> Optional[datetime.datetime]:
+    text = str(raw or "").strip()
+    if not text:
+        return None
+    try:
+        opened_at = datetime.datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except Exception:
+        return None
+    if opened_at.tzinfo is None:
+        opened_at = opened_at.replace(tzinfo=datetime.timezone.utc)
+    return opened_at.astimezone(datetime.timezone.utc)
+
+
+def _trade_strategy_tag(trade: dict) -> str:
+    raw = trade.get("strategy_tag")
+    if not raw:
+        thesis = trade.get("entry_thesis")
+        if isinstance(thesis, dict):
+            raw = thesis.get("strategy_tag") or thesis.get("strategy")
+    return str(raw or "").strip()
+
+
+def _trade_policy_generation(trade: dict) -> str:
+    thesis = trade.get("entry_thesis")
+    if not isinstance(thesis, dict):
+        return ""
+    return str(thesis.get("policy_generation") or "").strip()
+
+
+async def _enforce_new_entry_time_stop(
+    *,
+    pocket_info: dict,
+    now_utc: datetime.datetime,
+    logger: logging.Logger,
+) -> int:
+    max_hold_sec = float(config.FORCE_EXIT_MAX_HOLD_SEC)
+    if max_hold_sec <= 0.0 or not isinstance(pocket_info, dict):
+        return 0
+
+    open_trades = pocket_info.get("open_trades")
+    if not isinstance(open_trades, list):
+        return 0
+
+    target_tag = str(config.STRATEGY_TAG or "").strip().lower()
+    target_generation = str(config.FORCE_EXIT_POLICY_GENERATION or "").strip()
+    closed_count = 0
+
+    for trade in open_trades:
+        if closed_count >= config.FORCE_EXIT_MAX_ACTIONS:
+            break
+        if not isinstance(trade, dict):
+            continue
+        if target_tag:
+            trade_tag = _trade_strategy_tag(trade).lower()
+            if trade_tag != target_tag:
+                continue
+
+        generation = _trade_policy_generation(trade)
+        if config.FORCE_EXIT_REQUIRE_POLICY_GENERATION:
+            if not generation:
+                continue
+            if target_generation and generation != target_generation:
+                continue
+
+        opened_at = _parse_trade_open_time(trade.get("open_time") or trade.get("entry_time"))
+        if opened_at is None:
+            continue
+        hold_sec = (now_utc - opened_at).total_seconds()
+        if hold_sec < max_hold_sec:
+            continue
+
+        trade_id = str(trade.get("trade_id") or "").strip()
+        if not trade_id:
+            continue
+        units = int(_safe_float(trade.get("units"), 0.0))
+        if units == 0:
+            continue
+        client_id = str(trade.get("client_id") or trade.get("client_order_id") or "").strip() or None
+        closed = await close_trade(
+            trade_id,
+            units=-units,
+            client_order_id=client_id,
+            allow_negative=True,
+            exit_reason=config.FORCE_EXIT_REASON,
+            env_prefix=config.ENV_PREFIX,
+        )
+        if not closed:
+            continue
+        closed_count += 1
+        logger.info(
+            "%s force_exit reason=%s trade=%s hold=%.0fs units=%s generation=%s",
+            config.LOG_PREFIX,
+            config.FORCE_EXIT_REASON,
+            trade_id,
+            hold_sec,
+            units,
+            generation or "-",
+        )
+
+    return closed_count
 
 
 def _quotes_from_row(row: dict, fallback_mid: float = 0.0) -> tuple[float, float, float]:
@@ -535,11 +638,22 @@ async def scalp_ping_5s_worker() -> None:
     try:
         while True:
             await asyncio.sleep(config.LOOP_INTERVAL_SEC)
-            now_utc = datetime.datetime.utcnow()
+            now_utc = datetime.datetime.now(datetime.timezone.utc)
             if not is_market_open(now_utc):
                 continue
             if not can_trade(config.POCKET):
                 continue
+
+            positions = pos_manager.get_open_positions()
+            pocket_info = positions.get(config.POCKET) or {}
+            forced_closed = await _enforce_new_entry_time_stop(
+                pocket_info=pocket_info,
+                now_utc=now_utc,
+                logger=LOG,
+            )
+            if forced_closed > 0:
+                positions = pos_manager.get_open_positions()
+                pocket_info = positions.get(config.POCKET) or {}
 
             blocked, remain, spread_state, spread_reason = spread_monitor.is_blocked()
             spread_pips = _safe_float((spread_state or {}).get("spread_pips"), 0.0)
@@ -605,8 +719,6 @@ async def scalp_ping_5s_worker() -> None:
             if not rate_limiter.allow(now_mono):
                 continue
 
-            positions = pos_manager.get_open_positions()
-            pocket_info = positions.get(config.POCKET) or {}
             active_total, active_long, active_short = _strategy_trade_counts(
                 pocket_info,
                 config.STRATEGY_TAG,

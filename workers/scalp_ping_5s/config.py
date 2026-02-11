@@ -130,5 +130,25 @@ SNAPSHOT_MIN_INTERVAL_SEC: float = max(
     0.1, float(os.getenv("SCALP_PING_5S_SNAPSHOT_MIN_INTERVAL_SEC", "0.2"))
 )
 
+FORCE_EXIT_MAX_HOLD_SEC: float = max(
+    0.0, float(os.getenv("SCALP_PING_5S_FORCE_EXIT_MAX_HOLD_SEC", "0.0"))
+)
+FORCE_EXIT_MAX_ACTIONS: int = max(
+    1, int(float(os.getenv("SCALP_PING_5S_FORCE_EXIT_MAX_ACTIONS", "3")))
+)
+FORCE_EXIT_REASON: str = (
+    os.getenv("SCALP_PING_5S_FORCE_EXIT_REASON", "time_stop").strip() or "time_stop"
+)
+FORCE_EXIT_REQUIRE_POLICY_GENERATION: bool = _bool_env(
+    "SCALP_PING_5S_FORCE_EXIT_REQUIRE_POLICY_GENERATION",
+    True,
+)
+FORCE_EXIT_POLICY_GENERATION: str = (
+    os.getenv(
+        "SCALP_PING_5S_FORCE_EXIT_POLICY_GENERATION",
+        os.getenv("ORDER_ENTRY_POLICY_GENERATION", ""),
+    ).strip()
+)
+
 STOP_LOSS_DISABLED = stop_loss_disabled_for_pocket(POCKET)
 USE_SL: bool = False if STOP_LOSS_DISABLED else _bool_env("SCALP_PING_5S_USE_SL", True)

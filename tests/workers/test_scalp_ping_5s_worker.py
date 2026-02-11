@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import datetime
 import os
 
 import pytest
@@ -158,3 +159,87 @@ def test_compute_trap_state_blocks_when_unrealized_not_negative(monkeypatch) -> 
     assert state.combined_dd_pips >= 0.8
     assert state.unrealized_pl > 0.0
     assert state.active is False
+
+
+@pytest.mark.asyncio
+async def test_enforce_new_entry_time_stop_respects_policy_generation(monkeypatch) -> None:
+    from workers.scalp_ping_5s import worker
+
+    monkeypatch.setattr(worker.config, "STRATEGY_TAG", "scalp_ping_5s_live")
+    monkeypatch.setattr(worker.config, "FORCE_EXIT_MAX_HOLD_SEC", 900.0)
+    monkeypatch.setattr(worker.config, "FORCE_EXIT_MAX_ACTIONS", 3)
+    monkeypatch.setattr(worker.config, "FORCE_EXIT_REASON", "time_stop")
+    monkeypatch.setattr(worker.config, "FORCE_EXIT_REQUIRE_POLICY_GENERATION", True)
+    monkeypatch.setattr(worker.config, "FORCE_EXIT_POLICY_GENERATION", "2026-02-11-losscap-v1")
+
+    calls: list[tuple[str, int, str | None, bool, str | None, str | None]] = []
+
+    async def _fake_close_trade(
+        trade_id: str,
+        units: int | None = None,
+        client_order_id: str | None = None,
+        allow_negative: bool = False,
+        exit_reason: str | None = None,
+        env_prefix: str | None = None,
+    ) -> bool:
+        calls.append((trade_id, int(units or 0), client_order_id, allow_negative, exit_reason, env_prefix))
+        return True
+
+    monkeypatch.setattr(worker, "close_trade", _fake_close_trade)
+
+    now_utc = datetime.datetime(2026, 2, 11, 22, 0, 0, tzinfo=datetime.timezone.utc)
+    pocket_info = {
+        "open_trades": [
+            {
+                "trade_id": "old-no-generation",
+                "units": 900,
+                "open_time": "2026-02-11T20:00:00+00:00",
+                "strategy_tag": "scalp_ping_5s_live",
+                "entry_thesis": {"strategy_tag": "scalp_ping_5s_live"},
+            },
+            {
+                "trade_id": "new-matching",
+                "units": -1200,
+                "open_time": "2026-02-11T21:40:00+00:00",
+                "strategy_tag": "scalp_ping_5s_live",
+                "client_id": "qr-new",
+                "entry_thesis": {
+                    "strategy_tag": "scalp_ping_5s_live",
+                    "policy_generation": "2026-02-11-losscap-v1",
+                },
+            },
+            {
+                "trade_id": "new-mismatch",
+                "units": 1200,
+                "open_time": "2026-02-11T21:40:00+00:00",
+                "strategy_tag": "scalp_ping_5s_live",
+                "entry_thesis": {
+                    "strategy_tag": "scalp_ping_5s_live",
+                    "policy_generation": "old-generation",
+                },
+            },
+            {
+                "trade_id": "new-too-young",
+                "units": 1200,
+                "open_time": "2026-02-11T21:53:30+00:00",
+                "strategy_tag": "scalp_ping_5s_live",
+                "entry_thesis": {
+                    "strategy_tag": "scalp_ping_5s_live",
+                    "policy_generation": "2026-02-11-losscap-v1",
+                },
+            },
+        ]
+    }
+
+    closed = await worker._enforce_new_entry_time_stop(
+        pocket_info=pocket_info,
+        now_utc=now_utc,
+        logger=worker.LOG,
+    )
+    assert closed == 1
+    assert len(calls) == 1
+    assert calls[0][0] == "new-matching"
+    assert calls[0][1] == 1200
+    assert calls[0][2] == "qr-new"
+    assert calls[0][3] is True
+    assert calls[0][4] == "time_stop"
