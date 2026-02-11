@@ -133,3 +133,9 @@ DYN_ALLOC_LOSER_SCORE = float(os.getenv("M1SCALP_DYN_ALLOC_LOSER_SCORE", "0.30")
 DYN_ALLOC_LOSER_BLOCK = _env_bool("M1SCALP_DYN_ALLOC_LOSER_BLOCK", True)
 DYN_ALLOC_MULT_MIN = float(os.getenv("M1SCALP_DYN_ALLOC_MULT_MIN", "0.7"))
 DYN_ALLOC_MULT_MAX = float(os.getenv("M1SCALP_DYN_ALLOC_MULT_MAX", "1.8"))
+
+# Entry style gating
+# Reversion leg (buy-dip / sell-rally) was a recurring loss source in production.
+# Keep it disabled by default and allow explicit opt-in via env.
+ALLOW_REVERSION = _env_bool("M1SCALP_ALLOW_REVERSION", False)
+ALLOW_TREND = _env_bool("M1SCALP_ALLOW_TREND", True)
