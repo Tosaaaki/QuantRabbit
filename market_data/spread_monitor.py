@@ -14,6 +14,7 @@ from dataclasses import dataclass
 from typing import Deque, Optional, Tuple
 import os
 
+from market_data import tick_window
 from utils.secrets import get_secret
 
 _FALSEY = {"", "0", "false", "no"}
@@ -73,6 +74,20 @@ SPIKE_FORGIVE_PIPS = _load_float(
     "spread_guard_spike_forgive_pips", max(MAX_SPREAD_PIPS * 2.0, MAX_SPREAD_PIPS + 0.5)
 )
 SPIKE_FORGIVE_PCT = _load_float("spread_guard_spike_forgive_pct", 95.0, minimum=50.0)
+HOT_WINDOW_SECONDS = _load_float("spread_guard_hot_window_sec", 1.4, minimum=0.2)
+HOT_MIN_SAMPLES = _load_int("spread_guard_hot_min_samples", 2, minimum=1)
+HOT_TRIGGER_PIPS = _load_float(
+    "spread_guard_hot_trigger_pips",
+    max(MAX_SPREAD_PIPS, RELEASE_SPREAD_PIPS + 0.05),
+    minimum=0.1,
+)
+if HOT_TRIGGER_PIPS < MAX_SPREAD_PIPS:
+    HOT_TRIGGER_PIPS = MAX_SPREAD_PIPS
+HOT_COOLDOWN_SECONDS = _load_float(
+    "spread_guard_hot_cooldown_sec",
+    max(4.0, min(COOLDOWN_SECONDS, 8.0)),
+    minimum=1.0,
+)
 
 
 def _bool_from_sources(*keys: str, default: str = "0") -> bool:
@@ -99,6 +114,25 @@ DISABLE_SPREAD_GUARD = _bool_from_sources(
 )
 if DISABLE_SPREAD_GUARD:
     logging.warning("[SPREAD] Guard disabled via SPREAD_GUARD_DISABLE")
+HOT_TRIGGER_ENABLED = _bool_from_sources(
+    "SPREAD_GUARD_HOT_TRIGGER_ENABLED",
+    "SPREAD_GUARD_HOT_TRIGGER",
+    default="1",
+)
+TICK_CACHE_FALLBACK_ENABLED = _bool_from_sources(
+    "SPREAD_GUARD_TICK_CACHE_FALLBACK",
+    "SPREAD_GUARD_FALLBACK_TICK_CACHE",
+    default="1",
+)
+TICK_CACHE_FALLBACK_WINDOW_SEC = _load_float(
+    "spread_guard_fallback_window_sec",
+    max(WINDOW_SECONDS, 8.0),
+    minimum=1.0,
+)
+TICK_CACHE_FALLBACK_LIMIT = _load_int("spread_guard_fallback_limit", 240, minimum=20)
+TICK_CACHE_FALLBACK_REFRESH_SEC = _load_float(
+    "spread_guard_fallback_refresh_sec", 0.25, minimum=0.05
+)
 
 # 上限を設け過去履歴が無限に伸びるのを防ぐ
 _HISTORY_MAX_LEN = 180
@@ -116,10 +150,13 @@ class _Snapshot:
 _snapshot: Optional[_Snapshot] = None
 _history: Deque[Tuple[float, float]] = deque(maxlen=_HISTORY_MAX_LEN)
 _baseline_history: Deque[Tuple[float, float]] = deque(maxlen=4 * _HISTORY_MAX_LEN)
+_hot_history: Deque[Tuple[float, float]] = deque(maxlen=_HISTORY_MAX_LEN)
 _blocked_until: float = 0.0
 _blocked_reason: str = ""
 _last_logged_blocked: bool = False
 _stale_since: Optional[float] = None
+_fallback_state_cache: Optional[dict] = None
+_fallback_state_cached_at: float = 0.0
 
 
 def _percentile(values: list[float], pct: float) -> float:
@@ -138,11 +175,121 @@ def _percentile(values: list[float], pct: float) -> float:
     return sorted_vals[lower] * (1.0 - frac) + sorted_vals[upper] * frac
 
 
+def _state_from_tick_cache(now_monotonic: float) -> Optional[dict]:
+    global _fallback_state_cache, _fallback_state_cached_at
+    if not TICK_CACHE_FALLBACK_ENABLED:
+        return None
+    if (
+        _fallback_state_cache is not None
+        and now_monotonic - _fallback_state_cached_at < TICK_CACHE_FALLBACK_REFRESH_SEC
+    ):
+        return dict(_fallback_state_cache)
+
+    rows = tick_window.recent_ticks(
+        seconds=TICK_CACHE_FALLBACK_WINDOW_SEC, limit=TICK_CACHE_FALLBACK_LIMIT
+    )
+    if not rows:
+        _fallback_state_cache = None
+        _fallback_state_cached_at = now_monotonic
+        return None
+
+    spreads: list[float] = []
+    epochs: list[float] = []
+    bid_last = 0.0
+    ask_last = 0.0
+    for row in rows:
+        try:
+            bid = float(row.get("bid") or 0.0)
+            ask = float(row.get("ask") or 0.0)
+            epoch = float(row.get("epoch") or 0.0)
+        except Exception:
+            continue
+        if bid <= 0.0 or ask <= 0.0 or ask < bid:
+            continue
+        spread_pips = (ask - bid) / PIP_VALUE
+        spreads.append(spread_pips)
+        epochs.append(epoch)
+        bid_last = bid
+        ask_last = ask
+
+    if not spreads:
+        _fallback_state_cache = None
+        _fallback_state_cached_at = now_monotonic
+        return None
+
+    latest_epoch = epochs[-1] if epochs else 0.0
+    age_ms = (
+        int(max(0.0, (time.time() - latest_epoch) * 1000.0))
+        if latest_epoch > 0.0
+        else (MAX_AGE_MS + 1)
+    )
+    stale = age_ms > MAX_AGE_MS
+    stale_for = max(0.0, (age_ms - MAX_AGE_MS) / 1000.0) if stale else 0.0
+
+    max_spread = max(spreads)
+    min_spread = min(spreads)
+    avg_spread = sum(spreads) / len(spreads)
+    median_spread = _percentile(spreads, 50.0)
+    p25_spread = _percentile(spreads, 25.0)
+    p95_spread = _percentile(spreads, 95.0)
+    high_count = sum(1 for val in spreads if val >= MAX_SPREAD_PIPS)
+    hot_samples = 0
+    if epochs and latest_epoch > 0.0:
+        cutoff_epoch = latest_epoch - HOT_WINDOW_SECONDS
+        hot_samples = sum(
+            1 for epoch, spread in zip(epochs, spreads) if epoch >= cutoff_epoch and spread >= HOT_TRIGGER_PIPS
+        )
+
+    state = {
+        "source": "tick_cache",
+        "bid": bid_last,
+        "ask": ask_last,
+        "spread_pips": spreads[-1],
+        "avg_pips": avg_spread,
+        "max_pips": max_spread,
+        "min_pips": min_spread,
+        "median_pips": median_spread,
+        "p25_pips": p25_spread,
+        "p95_pips": p95_spread,
+        "samples": len(spreads),
+        "age_ms": age_ms,
+        "limit_pips": MAX_SPREAD_PIPS,
+        "release_pips": RELEASE_SPREAD_PIPS,
+        "max_age_ms": MAX_AGE_MS,
+        "stale": stale,
+        "stale_for_sec": round(stale_for, 3),
+        "stale_grace_sec": STALE_GRACE_SECONDS,
+        "high_samples": high_count,
+        "min_high_samples": MIN_HIGH_SAMPLES,
+        "window_seconds": WINDOW_SECONDS,
+        "baseline_window_seconds": BASELINE_WINDOW_SECONDS,
+        "baseline_ready": False,
+        "baseline_samples": 0,
+        "baseline_avg_pips": None,
+        "baseline_p50_pips": None,
+        "baseline_p25_pips": None,
+        "baseline_p95_pips": None,
+        "hot_window_seconds": HOT_WINDOW_SECONDS,
+        "hot_limit_pips": HOT_TRIGGER_PIPS,
+        "hot_min_samples": HOT_MIN_SAMPLES,
+        "hot_samples": hot_samples,
+    }
+    _fallback_state_cache = dict(state)
+    _fallback_state_cached_at = now_monotonic
+    return state
+
+
 def update_from_tick(tick) -> None:  # type: ignore[no-untyped-def]
     """
     Tick からスプレッド情報を更新する。tick は market_data.tick_fetcher.Tick 型想定。
     """
-    global _snapshot, _blocked_until, _blocked_reason, _last_logged_blocked, _stale_since
+    global _snapshot
+    global _blocked_until
+    global _blocked_reason
+    global _last_logged_blocked
+    global _stale_since
+    global _fallback_state_cache
+    global _fallback_state_cached_at
 
     try:
         bid = float(tick.bid)
@@ -172,6 +319,11 @@ def update_from_tick(tick) -> None:  # type: ignore[no-untyped-def]
     # 古い履歴を window 秒より前のものは削除
     while _history and now - _history[0][0] > WINDOW_SECONDS:
         _history.popleft()
+    _hot_history.append((now, spread_pips))
+    while _hot_history and now - _hot_history[0][0] > HOT_WINDOW_SECONDS:
+        _hot_history.popleft()
+    _fallback_state_cache = None
+    _fallback_state_cached_at = now
 
     # ガード無効モード: スナップショットだけ更新して即 return
     if DISABLE_SPREAD_GUARD:
@@ -199,13 +351,31 @@ def update_from_tick(tick) -> None:  # type: ignore[no-untyped-def]
     # ガード完全無効化（エントリー阻害しない）
     triggered = False
     reason = ""
+    cooldown_sec = COOLDOWN_SECONDS
+
+    hot_values = [val for _, val in _hot_history]
+    hot_count = sum(1 for val in hot_values if val >= HOT_TRIGGER_PIPS)
+    if (
+        HOT_TRIGGER_ENABLED
+        and hot_values
+        and len(hot_values) >= HOT_MIN_SAMPLES
+        and hot_count >= HOT_MIN_SAMPLES
+        and spread_pips >= HOT_TRIGGER_PIPS
+    ):
+        triggered = True
+        cooldown_sec = HOT_COOLDOWN_SECONDS
+        reason = (
+            f"hot_spread {spread_pips:.2f}p >= {HOT_TRIGGER_PIPS:.2f}p "
+            f"(hot_samples={hot_count}/{len(hot_values)})"
+        )
 
     # ベースラインが長時間広がっている場合のブロック
     baseline_values = [val for _, val in _baseline_history]
     baseline_ready = len(baseline_values) >= BASELINE_MIN_SAMPLES
     baseline_p50 = _percentile(baseline_values, 50.0) if baseline_ready else None
     if (
-        baseline_ready
+        not triggered
+        and baseline_ready
         and baseline_p50 is not None
         and baseline_p50 >= BASELINE_BLOCK_PIPS
     ):
@@ -241,7 +411,7 @@ def update_from_tick(tick) -> None:  # type: ignore[no-untyped-def]
         )
 
     if triggered and not DISABLE_SPREAD_GUARD:
-        _blocked_until = max(_blocked_until, now) + COOLDOWN_SECONDS
+        _blocked_until = max(_blocked_until, now) + cooldown_sec
         _blocked_reason = reason
     elif _blocked_until > now and len(values) >= RELEASE_SAMPLES:
         recent = [val for _, val in list(_history)[-RELEASE_SAMPLES:]]
@@ -280,10 +450,10 @@ def get_state() -> Optional[dict]:
     最新スプレッドと統計情報を返す。Tick が未取得の場合は None。
     """
     global _stale_since
-    if _snapshot is None:
-        return None
-
     now = time.monotonic()
+    if _snapshot is None:
+        return _state_from_tick_cache(now)
+
     age_ms = int(max(0.0, (now - _snapshot.monotonic_ts) * 1000))
 
     values = [val for _, val in _history] or [_snapshot.spread_pips]
@@ -313,8 +483,11 @@ def get_state() -> Optional[dict]:
     baseline_p50 = _percentile(baseline_values, 50.0) if baseline_ready else None
     baseline_p25 = _percentile(baseline_values, 25.0) if baseline_ready else None
     baseline_p95 = _percentile(baseline_values, 95.0) if baseline_ready else None
+    hot_values = [val for _, val in _hot_history]
+    hot_samples = sum(1 for val in hot_values if val >= HOT_TRIGGER_PIPS)
 
     return {
+        "source": "snapshot",
         "bid": _snapshot.bid,
         "ask": _snapshot.ask,
         "spread_pips": _snapshot.spread_pips,
@@ -342,6 +515,10 @@ def get_state() -> Optional[dict]:
         "baseline_p50_pips": baseline_p50,
         "baseline_p25_pips": baseline_p25,
         "baseline_p95_pips": baseline_p95,
+        "hot_window_seconds": HOT_WINDOW_SECONDS,
+        "hot_limit_pips": HOT_TRIGGER_PIPS,
+        "hot_min_samples": HOT_MIN_SAMPLES,
+        "hot_samples": hot_samples,
     }
 
 
@@ -350,7 +527,44 @@ def is_blocked() -> Tuple[bool, int, Optional[dict], str]:
     スプレッド拡大によるブロック状態を返す。
     戻り値: (blocked, remain_seconds, state, reason)
     """
+    global _blocked_until, _blocked_reason
+    state = get_state()
+    if DISABLE_SPREAD_GUARD:
+        return False, 0, state, ""
+
     now = time.monotonic()
     remain = int(max(0.0, _blocked_until - now))
-    state = get_state()
+    if remain <= 0 and state:
+        try:
+            spread_now = float(state.get("spread_pips") or 0.0)
+        except Exception:
+            spread_now = 0.0
+        try:
+            hot_samples = int(float(state.get("hot_samples") or 0.0))
+        except Exception:
+            hot_samples = 0
+        if (
+            HOT_TRIGGER_ENABLED
+            and spread_now >= HOT_TRIGGER_PIPS
+            and hot_samples >= HOT_MIN_SAMPLES
+        ):
+            _blocked_until = now + HOT_COOLDOWN_SECONDS
+            _blocked_reason = (
+                f"hot_spread_now {spread_now:.2f}p >= {HOT_TRIGGER_PIPS:.2f}p "
+                f"(hot_samples={hot_samples})"
+            )
+            remain = int(max(0.0, _blocked_until - now))
+        elif bool(state.get("stale")):
+            stale_for = float(state.get("stale_for_sec") or 0.0)
+            stale_grace = float(state.get("stale_grace_sec") or 0.0)
+            if stale_grace <= 0.0 or stale_for >= stale_grace:
+                _blocked_until = now + max(1.0, min(5.0, HOT_COOLDOWN_SECONDS))
+                _blocked_reason = (
+                    f"spread_stale age={state.get('age_ms')}ms "
+                    f"> max={state.get('max_age_ms')}ms"
+                )
+                remain = int(max(0.0, _blocked_until - now))
+        elif _blocked_reason:
+            _blocked_reason = ""
+
     return remain > 0, remain, state, _blocked_reason
