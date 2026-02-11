@@ -52,6 +52,24 @@ MAX_PER_DIRECTION: int = max(
 )
 NO_HEDGE_ENTRY: bool = _bool_env("SCALP_PING_5S_NO_HEDGE_ENTRY", True)
 
+TRAP_BYPASS_NO_HEDGE: bool = _bool_env("SCALP_PING_5S_TRAP_BYPASS_NO_HEDGE", True)
+TRAP_REQUIRE_NET_LOSS: bool = _bool_env("SCALP_PING_5S_TRAP_REQUIRE_NET_LOSS", True)
+TRAP_MIN_LONG_UNITS: int = max(
+    0, int(float(os.getenv("SCALP_PING_5S_TRAP_MIN_LONG_UNITS", "8000")))
+)
+TRAP_MIN_SHORT_UNITS: int = max(
+    0, int(float(os.getenv("SCALP_PING_5S_TRAP_MIN_SHORT_UNITS", "8000")))
+)
+TRAP_MAX_NET_RATIO: float = max(
+    0.0, min(1.0, float(os.getenv("SCALP_PING_5S_TRAP_MAX_NET_RATIO", "0.45")))
+)
+TRAP_MIN_COMBINED_DD_PIPS: float = max(
+    0.0, float(os.getenv("SCALP_PING_5S_TRAP_MIN_COMBINED_DD_PIPS", "0.8"))
+)
+TRAP_LOG_INTERVAL_SEC: float = max(
+    1.0, float(os.getenv("SCALP_PING_5S_TRAP_LOG_INTERVAL_SEC", "20.0"))
+)
+
 MIN_UNITS: int = max(100, int(float(os.getenv("SCALP_PING_5S_MIN_UNITS", "2000"))))
 MAX_UNITS: int = max(MIN_UNITS, int(float(os.getenv("SCALP_PING_5S_MAX_UNITS", "25000"))))
 BASE_ENTRY_UNITS: int = max(

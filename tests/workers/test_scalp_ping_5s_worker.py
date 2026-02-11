@@ -69,7 +69,11 @@ def test_build_tick_signal_rejects_low_imbalance(monkeypatch) -> None:
 def test_compute_targets_is_spread_aware() -> None:
     from workers.scalp_ping_5s import worker
 
-    tp_pips, sl_pips = worker._compute_targets(spread_pips=0.9, momentum_pips=2.4)
+    tp_pips, sl_pips = worker._compute_targets(
+        spread_pips=0.9,
+        momentum_pips=2.4,
+        tp_profile=worker.TpTimingProfile(),
+    )
     assert tp_pips >= min(
         worker.config.TP_MAX_PIPS,
         max(worker.config.TP_BASE_PIPS, 0.9 + worker.config.TP_NET_MIN_PIPS),
@@ -87,5 +91,70 @@ def test_compute_targets_uses_spread_plus_micro_edge(monkeypatch) -> None:
     monkeypatch.setattr(worker.config, "TP_MOMENTUM_BONUS_MAX", 0.0)
     monkeypatch.setattr(worker.config, "TP_MAX_PIPS", 1.0)
 
-    tp_pips, _ = worker._compute_targets(spread_pips=0.30, momentum_pips=0.1)
+    tp_pips, _ = worker._compute_targets(
+        spread_pips=0.30,
+        momentum_pips=0.1,
+        tp_profile=worker.TpTimingProfile(),
+    )
     assert tp_pips == pytest.approx(0.55, abs=1e-6)
+
+
+def test_compute_trap_state_active_when_hedged_and_underwater(monkeypatch) -> None:
+    from workers.scalp_ping_5s import worker
+
+    monkeypatch.setattr(worker.config, "TRAP_MIN_LONG_UNITS", 8000)
+    monkeypatch.setattr(worker.config, "TRAP_MIN_SHORT_UNITS", 8000)
+    monkeypatch.setattr(worker.config, "TRAP_MAX_NET_RATIO", 0.45)
+    monkeypatch.setattr(worker.config, "TRAP_MIN_COMBINED_DD_PIPS", 0.8)
+    monkeypatch.setattr(worker.config, "TRAP_REQUIRE_NET_LOSS", True)
+
+    positions = {
+        "scalp_fast": {
+            "long_units": 12000,
+            "short_units": 11000,
+            "long_avg_price": 150.05,
+            "short_avg_price": 149.95,
+            "unrealized_pl": -4200.0,
+        },
+        "manual": {
+            "long_units": 2000,
+            "short_units": 3000,
+            "long_avg_price": 150.04,
+            "short_avg_price": 149.96,
+            "unrealized_pl": -600.0,
+        },
+        "__net__": {"units": 0},
+    }
+
+    state = worker._compute_trap_state(positions, mid_price=150.00)
+    assert state.active is True
+    assert state.long_units == pytest.approx(14000.0)
+    assert state.short_units == pytest.approx(14000.0)
+    assert state.net_ratio <= 0.01
+    assert state.combined_dd_pips >= 0.8
+    assert state.unrealized_pl < 0.0
+
+
+def test_compute_trap_state_blocks_when_unrealized_not_negative(monkeypatch) -> None:
+    from workers.scalp_ping_5s import worker
+
+    monkeypatch.setattr(worker.config, "TRAP_MIN_LONG_UNITS", 8000)
+    monkeypatch.setattr(worker.config, "TRAP_MIN_SHORT_UNITS", 8000)
+    monkeypatch.setattr(worker.config, "TRAP_MAX_NET_RATIO", 0.45)
+    monkeypatch.setattr(worker.config, "TRAP_MIN_COMBINED_DD_PIPS", 0.8)
+    monkeypatch.setattr(worker.config, "TRAP_REQUIRE_NET_LOSS", True)
+
+    positions = {
+        "scalp_fast": {
+            "long_units": 9000,
+            "short_units": 9000,
+            "long_avg_price": 150.03,
+            "short_avg_price": 149.97,
+            "unrealized_pl": 120.0,
+        }
+    }
+
+    state = worker._compute_trap_state(positions, mid_price=150.00)
+    assert state.combined_dd_pips >= 0.8
+    assert state.unrealized_pl > 0.0
+    assert state.active is False

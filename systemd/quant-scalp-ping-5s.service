@@ -6,15 +6,16 @@ After=network.target
 Type=simple
 WorkingDirectory=/home/tossaki/QuantRabbit
 Environment="PYTHONUNBUFFERED=1"
-# Base env (live defaults) + per-strategy override env (demo split).
-EnvironmentFile=-/etc/quantrabbit.env
-EnvironmentFile=-/etc/quantrabbit/scalp_ping_5s.env
-# Safety default: keep disabled until explicitly enabled via drop-in.
-Environment=SCALP_PING_5S_ENABLED=0
-Environment=SCALP_PING_5S_REQUIRE_PRACTICE=1
+# Defaults (can be overridden by /etc/quantrabbit*.env below).
+Environment=SCALP_PING_5S_ENABLED=1
+Environment=SCALP_PING_5S_REQUIRE_PRACTICE=0
 Environment=SCALP_PING_5S_POCKET=scalp_fast
 Environment=SCALP_PING_5S_STRATEGY_TAG=scalp_ping_5s_live
+Environment=SCALP_PING_5S_NO_HEDGE_ENTRY=0
 Environment=SCALP_PING_5S_LOOP_INTERVAL_SEC=0.2
+Environment=SCALP_PING_5S_ENTRY_COOLDOWN_SEC=1.0
+Environment=SCALP_PING_5S_MAX_ACTIVE_TRADES=6
+Environment=SCALP_PING_5S_MAX_PER_DIRECTION=3
 Environment=SCALP_PING_5S_MAX_SPREAD_PIPS=0.85
 Environment=SPREAD_GUARD_DISABLE=1
 Environment=SCALP_PING_5S_PERF_GUARD_MODE=warn
@@ -30,6 +31,15 @@ Environment=SCALP_PING_5S_TP_TIME_MULT_MIN=0.55
 Environment=SCALP_PING_5S_TP_NET_MIN_FLOOR_PIPS=0.10
 Environment=SCALP_PING_5S_ENTRY_CHASE_MAX_PIPS=1.4
 Environment=SCALP_PING_5S_SL_BASE_PIPS=2.4
+Environment=SCALP_PING_5S_TRAP_BYPASS_NO_HEDGE=1
+Environment=SCALP_PING_5S_TRAP_REQUIRE_NET_LOSS=1
+Environment=SCALP_PING_5S_TRAP_MIN_LONG_UNITS=8000
+Environment=SCALP_PING_5S_TRAP_MIN_SHORT_UNITS=8000
+Environment=SCALP_PING_5S_TRAP_MAX_NET_RATIO=0.45
+Environment=SCALP_PING_5S_TRAP_MIN_COMBINED_DD_PIPS=0.8
+# Base env + per-strategy overrides.
+EnvironmentFile=-/etc/quantrabbit.env
+EnvironmentFile=-/etc/quantrabbit/scalp_ping_5s.env
 ExecStart=/home/tossaki/QuantRabbit/.venv/bin/python -m workers.scalp_ping_5s.worker
 Restart=always
 RestartSec=5
