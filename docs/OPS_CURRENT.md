@@ -1,4 +1,4 @@
-# Ops Current (2026-02-06 JST)
+# Ops Current (2026-02-11 JST)
 
 ## 1. 運用モード（2025-12 攻め設定）
 - マージン活用を 85–92% 目安に引き上げ。
@@ -34,4 +34,5 @@ quant-manual-swing.service
 quant-manual-swing-exit.service
 ```
 
-- 2026-02-06 JST: `quant-m1scalper*.service` は VM からアンインストール（ユニット削除）済み。
+- 2026-02-06 JST: `quant-m1scalper*.service` は一度 VM からアンインストール（ユニット削除）。
+- 2026-02-11 JST: `quant-m1scalper.service` は再導入され、`enabled/active` を確認。

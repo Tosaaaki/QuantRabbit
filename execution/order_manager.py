@@ -2507,8 +2507,15 @@ def _safe_json(payload: Optional[dict]) -> str:
     Coerces non-serializable objects to string to avoid dropping the payload.
     """
     def _coerce(obj: object):
-        if obj is None or isinstance(obj, (bool, int, float, str)):
+        if obj is None or isinstance(obj, (bool, int, str)):
             return obj
+        if isinstance(obj, float):
+            try:
+                v = float(obj)
+                # SQLite JSON1 expects strict JSON; avoid NaN/Infinity.
+                return v if math.isfinite(v) else None
+            except Exception:
+                return None
         if isinstance(obj, dict):
             return {str(k): _coerce(v) for k, v in obj.items()}
         if isinstance(obj, (list, tuple, set)):
@@ -2522,7 +2529,7 @@ def _safe_json(payload: Optional[dict]) -> str:
         return "{}"
     try:
         coerced = _coerce(payload)
-        return json.dumps(coerced, ensure_ascii=False)
+        return json.dumps(coerced, ensure_ascii=False, allow_nan=False)
     except Exception as exc:  # pragma: no cover - defensive
         logging.warning("[ORDER][LOG] failed to serialize payload: %s", exc)
         return "{}"
