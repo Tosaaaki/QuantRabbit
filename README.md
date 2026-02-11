@@ -180,8 +180,8 @@ Trade Loop Overview
 
 ## オンラインチューナ影運用
 - `scripts/run_online_tuner.py` が 5〜15 分間隔で低リスクなノブ（Exit 感度・入口ゲート・quiet_low_vol 配分）だけを微調整します。  
-- 既定は **シャドウモード**（`TUNER_ENABLE=true`, `TUNER_SHADOW_MODE=true`）で、`config/tuning_history/` に提案を記録するだけ。本番パラメータは変更されません。  
-- 本適用時は `TUNER_SHADOW_MODE=false` に切り替え、`scripts/apply_override.py` で `config/tuning_overlay.yaml` を生成して読み込ませます。  
+- 出力は既定で `logs/tuning/` 配下（`tuning_overrides.yaml`, `tuning_overlay.yaml`, `history/`）に書きます（deploy の `git pull` と競合させないため）。必要なら `TUNING_*_PATH` / `TUNING_RUNTIME_DIR` で上書きします。  
+- ランタイムの読込は `utils/tuning_loader.py` が `logs/tuning/` → 旧 `config/` → `config/tuning_presets.yaml` の順で解決します（`TUNING_*_PATH` を明示した場合はそのパスのみ）。  
 - 進行中の検証タスク・レビュー項目は `docs/autotune_taskboard.md` に集約しているので、運用状況の確認や ToDo 更新はここを参照してください。  
 - 詳細な導入手順・設計方針は `docs/ONLINE_TUNER.md` を参照。
 
