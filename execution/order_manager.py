@@ -3140,8 +3140,11 @@ def _neg_exit_decision(
     - Strategy allow_reasons are treated as explicit permissions, even when
       global EXIT_ALLOW_NEGATIVE_REASONS does not include the reason.
     - If no strategy allow_reasons are defined, global/worker gates are used.
+    - strict_no_negative=true blocks all negative closes for that strategy.
     """
     neg_policy = neg_policy if isinstance(neg_policy, dict) else {}
+    if _coerce_bool(neg_policy.get("strict_no_negative"), False):
+        return False, False
     policy_enabled = _coerce_bool(neg_policy.get("enabled"), True)
     allow_tokens = neg_policy.get("allow_reasons")
     deny_tokens = neg_policy.get("deny_reasons")
