@@ -29,6 +29,16 @@ def _pick_sl_pips(entry_thesis: object) -> Optional[float]:
     return None
 
 
+def _pick_tp_pips(entry_thesis: object) -> Optional[float]:
+    if not isinstance(entry_thesis, dict):
+        return None
+    for key in ("tp_pips", "target_pips", "take_profit_pips", "tp"):
+        val = _as_float(entry_thesis.get(key))
+        if val is not None and val > 0:
+            return float(val)
+    return None
+
+
 def _existing_sl_price(trade: dict) -> Optional[float]:
     raw = trade.get("stop_loss") or {}
     if isinstance(raw, dict):
@@ -65,6 +75,11 @@ async def _run(args: argparse.Namespace) -> int:
     min_pips = float(args.min_sl_pips) if args.min_sl_pips is not None else None
     max_pips = float(args.max_sl_pips) if args.max_sl_pips is not None else None
     fallback_pips = float(args.fallback_sl_pips) if args.fallback_sl_pips is not None else None
+    max_sl_to_tp_ratio = (
+        float(args.max_sl_to_tp_ratio) if args.max_sl_to_tp_ratio is not None else None
+    )
+    if max_sl_to_tp_ratio is not None and max_sl_to_tp_ratio <= 0.0:
+        max_sl_to_tp_ratio = None
 
     pm = PositionManager()
     try:
@@ -96,6 +111,7 @@ async def _run(args: argparse.Namespace) -> int:
     updated = 0
     skipped = 0
     missing = 0
+    ratio_capped = 0
 
     for pocket, tr in candidates:
         trade_id = str(tr.get("trade_id") or "")
@@ -107,6 +123,7 @@ async def _run(args: argparse.Namespace) -> int:
 
         thesis = tr.get("entry_thesis") or {}
         sl_pips = _pick_sl_pips(thesis)
+        tp_pips = _pick_tp_pips(thesis)
         if sl_pips is None:
             if fallback_pips is None or fallback_pips <= 0:
                 missing += 1
@@ -117,6 +134,14 @@ async def _run(args: argparse.Namespace) -> int:
             sl_pips = min_pips
         if max_pips is not None and sl_pips > max_pips:
             sl_pips = max_pips
+        if (
+            max_sl_to_tp_ratio is not None
+            and tp_pips is not None
+            and tp_pips > 0.0
+            and sl_pips > (tp_pips * max_sl_to_tp_ratio)
+        ):
+            sl_pips = tp_pips * max_sl_to_tp_ratio
+            ratio_capped += 1
 
         desired = _desired_sl_price(entry, units, sl_pips)
         if desired is None:
@@ -136,7 +161,8 @@ async def _run(args: argparse.Namespace) -> int:
         side = "long" if units > 0 else "short"
         msg = (
             f"trade={trade_id} pocket={pocket} side={side} entry={entry:.3f} "
-            f"sl_pips={sl_pips:.2f} existing_sl={existing if existing is not None else '-'} target_sl={target:.3f}"
+            f"sl_pips={sl_pips:.2f} tp_pips={tp_pips if tp_pips is not None else '-'} "
+            f"existing_sl={existing if existing is not None else '-'} target_sl={target:.3f}"
         )
         if not apply:
             print(f"[DRYRUN] {msg}")
@@ -151,7 +177,10 @@ async def _run(args: argparse.Namespace) -> int:
             skipped += 1
             logging.warning("[APPLY] failed %s", msg)
 
-    print(f"candidates={len(candidates)} updated={updated} skipped={skipped} missing_sl_pips={missing}")
+    print(
+        f"candidates={len(candidates)} updated={updated} skipped={skipped} "
+        f"missing_sl_pips={missing} ratio_capped={ratio_capped}"
+    )
     if not apply:
         print("Re-run with --apply to update trades.")
     return 0
@@ -191,6 +220,12 @@ def main() -> int:
         help="Fallback SL pips when thesis has no sl_pips/hard_stop_pips (optional).",
     )
     parser.add_argument(
+        "--max-sl-to-tp-ratio",
+        type=float,
+        default=None,
+        help="Cap SL pips to at most (tp_pips * ratio) when tp_pips exists (optional).",
+    )
+    parser.add_argument(
         "--apply",
         action="store_true",
         help="Actually send TradeCRCDO updates (default: dry-run).",
@@ -204,4 +239,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-
