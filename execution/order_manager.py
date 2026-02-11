@@ -5581,6 +5581,7 @@ async def market_order(
             str(strategy_tag),
             pocket,
             hour=current_hour,
+            side=side_label,
             env_prefix=env_prefix,
         )
         if not decision.allowed:
