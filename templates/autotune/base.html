@@ -66,6 +66,7 @@
       position: sticky;
       top: 0;
       z-index: 10;
+      flex: 0 0 auto;
       color: #f8fafc;
       background: linear-gradient(120deg, #0f172a 0%, #1e293b 55%, #0f766e 100%);
       padding: 1.4rem 2.2rem 1.2rem;
@@ -186,6 +187,8 @@
       flex: 1 1 auto;
       min-height: 0;
       width: 100%;
+      height: calc(100dvh - var(--qr-header-height, 0px));
+      max-height: calc(100dvh - var(--qr-header-height, 0px));
       overflow-y: auto;
       overscroll-behavior: contain;
       -webkit-overflow-scrolling: touch;
@@ -716,6 +719,44 @@
     {% block content %}{% endblock %}
   </main>
   <script>
+    window.qrInitLayout = (() => {
+      const state = {
+        resizeBound: false,
+        viewportBound: false,
+      };
+
+      const syncLayout = () => {
+        const main = document.getElementById("qr-main") || document.querySelector("main");
+        if (!main) return;
+        const header = document.querySelector("body > header");
+        const viewportHeight = window.visualViewport?.height || window.innerHeight || document.documentElement.clientHeight || 0;
+        const headerHeight = header ? header.getBoundingClientRect().height : 0;
+        const safeHeaderHeight = Math.max(0, Math.ceil(headerHeight));
+        const mainHeight = Math.max(120, Math.floor(viewportHeight - safeHeaderHeight));
+
+        document.documentElement.style.setProperty("--qr-header-height", `${safeHeaderHeight}px`);
+        main.style.height = `${mainHeight}px`;
+        main.style.maxHeight = `${mainHeight}px`;
+      };
+
+      const init = () => {
+        syncLayout();
+        if (!state.resizeBound) {
+          window.addEventListener("resize", syncLayout, { passive: true });
+          window.addEventListener("orientationchange", syncLayout);
+          state.resizeBound = true;
+        }
+        if (!state.viewportBound && window.visualViewport) {
+          window.visualViewport.addEventListener("resize", syncLayout, { passive: true });
+          state.viewportBound = true;
+        }
+      };
+
+      return init;
+    })();
+    window.qrInitLayout();
+  </script>
+  <script>
     window.qrInitTabs = (() => {
       const init = () => {
         const containers = document.querySelectorAll("[data-tabs]");
@@ -983,6 +1024,7 @@
         oldMain.replaceWith(newMain);
         if (!newMain.id) newMain.id = "qr-main";
         executeInlineScripts(newMain);
+        if (window.qrInitLayout) window.qrInitLayout();
         if (window.qrInitTabs) window.qrInitTabs();
         window.setTimeout(() => {
           if (window.qrInitAutoRefresh) window.qrInitAutoRefresh();
