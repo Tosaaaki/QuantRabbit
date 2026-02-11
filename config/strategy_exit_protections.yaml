@@ -729,6 +729,21 @@ strategies:
       loss_cut_hard_sl_mult: 1.25
       loss_cut_max_hold_sec: 900
       loss_cut_cooldown_sec: 4
+
+  scalp_ping_5s:
+    neg_exit:
+      enabled: true
+      strict_no_negative: true
+      allow_reasons: []
+      deny_reasons: []
+
+  scalp_ping_5s_live:
+    neg_exit:
+      enabled: true
+      strict_no_negative: true
+      allow_reasons: []
+      deny_reasons: []
+
   fast_scalp:
     min_profit_ratio: 0.45
     min_profit_ratio_min_tp_pips: 0.6

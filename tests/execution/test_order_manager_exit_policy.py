@@ -59,3 +59,21 @@ def test_neg_exit_policy_near_be_path_still_works() -> None:
     )
     assert near_be is True
     assert allowed is True
+
+
+def test_neg_exit_policy_strict_no_negative_blocks_all() -> None:
+    allowed, near_be = _neg_exit_decision(
+        exit_reason="hard_stop",
+        est_pips=-0.1,
+        emergency_allow=True,
+        reason_allow=True,
+        worker_allow=True,
+        neg_policy={
+            "enabled": True,
+            "strict_no_negative": True,
+            "allow_reasons": ["hard_stop"],
+            "deny_reasons": [],
+        },
+    )
+    assert near_be is False
+    assert allowed is False
