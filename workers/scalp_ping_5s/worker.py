@@ -107,6 +107,15 @@ def _latest_spread_from_ticks(rows: Sequence[dict]) -> float:
     return (ask - bid) / config.PIP_VALUE
 
 
+def _latest_tick_age_ms(rows: Sequence[dict]) -> float:
+    if not rows:
+        return float("inf")
+    latest_epoch = _safe_float(rows[-1].get("epoch"), 0.0)
+    if latest_epoch <= 0.0:
+        return float("inf")
+    return max(0.0, (time.time() - latest_epoch) * 1000.0)
+
+
 def _build_tick_signal(rows: Sequence[dict], spread_pips: float) -> Optional[TickSignal]:
     if len(rows) < config.MIN_TICKS:
         return None
@@ -352,6 +361,7 @@ async def scalp_ping_5s_worker() -> None:
     )
     last_entry_mono = 0.0
     last_snapshot_fetch = 0.0
+    last_stale_log_mono = 0.0
 
     try:
         while True:
@@ -379,18 +389,39 @@ async def scalp_ping_5s_worker() -> None:
                 seconds=config.WINDOW_SEC,
                 limit=int(config.WINDOW_SEC * 25) + 50,
             )
+            latest_tick_age_ms = _latest_tick_age_ms(ticks)
+            needs_snapshot = (len(ticks) < config.MIN_TICKS) or (
+                latest_tick_age_ms > config.MAX_TICK_AGE_MS
+            )
 
             if spread_pips <= 0.0:
                 spread_pips = _latest_spread_from_ticks(ticks)
 
-            if len(ticks) < config.MIN_TICKS:
+            if needs_snapshot and config.SNAPSHOT_FALLBACK_ENABLED:
                 now_mono = time.monotonic()
-                if (
-                    config.SNAPSHOT_FALLBACK_ENABLED
-                    and now_mono - last_snapshot_fetch >= config.SNAPSHOT_MIN_INTERVAL_SEC
-                ):
+                if now_mono - last_snapshot_fetch >= config.SNAPSHOT_MIN_INTERVAL_SEC:
                     if await _fetch_price_snapshot(LOG):
                         last_snapshot_fetch = now_mono
+                        ticks = tick_window.recent_ticks(
+                            seconds=config.WINDOW_SEC,
+                            limit=int(config.WINDOW_SEC * 25) + 50,
+                        )
+                        latest_tick_age_ms = _latest_tick_age_ms(ticks)
+                        if spread_pips <= 0.0:
+                            spread_pips = _latest_spread_from_ticks(ticks)
+
+            if len(ticks) < config.MIN_TICKS:
+                continue
+            if latest_tick_age_ms > config.MAX_TICK_AGE_MS:
+                now_mono = time.monotonic()
+                if now_mono - last_stale_log_mono >= 10.0:
+                    LOG.warning(
+                        "%s stale ticks age=%.0fms (> %.0fms) waiting for fresh data",
+                        config.LOG_PREFIX,
+                        latest_tick_age_ms,
+                        config.MAX_TICK_AGE_MS,
+                    )
+                    last_stale_log_mono = now_mono
                 continue
 
             signal = _build_tick_signal(ticks, spread_pips)
