@@ -161,7 +161,12 @@ class CandleAggregator:
                     prev = self._live_tasks.get(task_key)
                     if prev is not None and not prev.done():
                         continue
-                    task = asyncio.create_task(sub(dict(live_candle)))
+                    try:
+                        coro = sub(dict(live_candle))
+                    except Exception as exc:  # noqa: BLE001
+                        logging.debug("[candle] live subscriber schedule failed tf=%s err=%s", tf, exc)
+                        continue
+                    task = asyncio.create_task(coro)
                     task.add_done_callback(
                         lambda done, tf=tf: self._log_live_task_done(done, tf)
                     )
@@ -189,7 +194,10 @@ async def start_candle_stream(
         on_candle_live = None
     if on_candle_live is not None:
         for tf in timeframes:
-            agg.subscribe_live(tf, on_candle_live)
+            async def _live_handler(candle: Candle, tf: TimeFrame = tf) -> None:
+                await on_candle_live(tf, candle)
+
+            agg.subscribe_live(tf, _live_handler)
 
     last_orderbook_log_mono = 0.0
 
