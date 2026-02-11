@@ -3,6 +3,8 @@
 from __future__ import annotations
 from analysis.ma_projection import compute_adx_projection, compute_bbw_projection, compute_ma_projection, compute_rsi_projection
 from analysis.ma_projection import score_ma_for_side
+from analysis.mtf_heat import evaluate_mtf_heat
+from analysis.range_guard import detect_range_mode
 
 import asyncio
 import datetime
@@ -41,6 +43,9 @@ _BB_ENTRY_SCALP_REVERT_PIPS = env_float("BB_ENTRY_SCALP_REVERT_PIPS", 2.0, prefi
 _BB_ENTRY_SCALP_REVERT_RATIO = env_float("BB_ENTRY_SCALP_REVERT_RATIO", 0.20, prefix=_BB_ENV_PREFIX)
 _BB_ENTRY_SCALP_EXT_PIPS = env_float("BB_ENTRY_SCALP_EXT_PIPS", 2.4, prefix=_BB_ENV_PREFIX)
 _BB_ENTRY_SCALP_EXT_RATIO = env_float("BB_ENTRY_SCALP_EXT_RATIO", 0.30, prefix=_BB_ENV_PREFIX)
+_BB_ENTRY_RANGE_FORCE_REVERT = env_bool("BB_ENTRY_RANGE_FORCE_REVERT", True, prefix=_BB_ENV_PREFIX)
+_BB_ENTRY_RANGE_BREAK_PIPS = env_float("BB_ENTRY_RANGE_BREAK_PIPS", 1.2, prefix=_BB_ENV_PREFIX)
+_BB_ENTRY_RANGE_BREAK_RATIO = env_float("BB_ENTRY_RANGE_BREAK_RATIO", 0.12, prefix=_BB_ENV_PREFIX)
 _BB_PIP = 0.01
 
 
@@ -85,8 +90,18 @@ def _bb_entry_allowed(style, side, price, fac_m1, *, range_active=None):
     else:
         direction = "short"
     orig_style = style
-    if style == "scalp" and range_active:
-        style = "reversion"
+    if range_active and style != "reversion":
+        if _BB_ENTRY_RANGE_FORCE_REVERT:
+            break_threshold = max(0.0, _BB_ENTRY_RANGE_BREAK_PIPS, span_pips * max(0.0, _BB_ENTRY_RANGE_BREAK_RATIO))
+            break_px = break_threshold * _BB_PIP
+            breakout = (
+                (direction == "long" and price >= upper + break_px)
+                or (direction == "short" and price <= lower - break_px)
+            )
+            if not breakout:
+                style = "reversion"
+        elif style == "scalp":
+            style = "reversion"
     if style == "reversion":
         base_pips = _BB_ENTRY_SCALP_REVERT_PIPS if orig_style == "scalp" else _BB_ENTRY_REVERT_PIPS
         base_ratio = _BB_ENTRY_SCALP_REVERT_RATIO if orig_style == "scalp" else _BB_ENTRY_REVERT_RATIO
@@ -716,15 +731,56 @@ async def pullback_s5_worker() -> None:
                     base_units = config.MIN_UNITS
                 if base_units < orig_units:
                     confidence = max(1, confidence - config.TOUCH_CONF_PENALTY)
-            lot = abs(base_units) / (100000.0 * (confidence / 100.0))
             try:
                 factors = all_factors()
             except Exception:
                 factors = {}
             fac_m1 = factors.get("M1") or {}
             fac_h4 = factors.get("H4") or {}
-            if not _bb_entry_allowed(BB_STYLE, side, entry_price, fac_m1):
+            range_ctx = None
+            try:
+                range_ctx = detect_range_mode(fac_m1, fac_h4, env_tf="M1", macro_tf="H4")
+            except Exception:
+                range_ctx = None
+            range_active = bool(range_ctx.active) if range_ctx else False
+            if not _bb_entry_allowed(
+                BB_STYLE,
+                side,
+                entry_price,
+                fac_m1,
+                range_active=range_active,
+            ):
                 continue
+            heat_decision = evaluate_mtf_heat(
+                side,
+                factors,
+                price=entry_price,
+                env_prefix=config.ENV_PREFIX,
+                short_tf="M1",
+                mid_tf="M5",
+                long_tf="H1",
+                macro_tf="H4",
+                pivot_tfs=("H1", "H4"),
+            )
+            base_units = int(round(base_units * heat_decision.lot_mult))
+            if base_units < config.MIN_UNITS:
+                base_units = config.MIN_UNITS
+            tp_pips = max(
+                config.TP_ATR_MIN_PIPS,
+                min(config.TP_ATR_MAX_PIPS, tp_pips * heat_decision.tp_mult),
+            )
+            tp_price = round(
+                entry_price + tp_pips * config.PIP_VALUE
+                if side == "long"
+                else entry_price - tp_pips * config.PIP_VALUE,
+                3,
+            )
+            sl_price, tp_price = clamp_sl_tp(
+                price=entry_price,
+                sl=sl_price,
+                tp=tp_price,
+                is_buy=side == "long",
+            )
             div_bias = divergence_bias(
                 fac_m1,
                 "OPEN_LONG" if side == "long" else "OPEN_SHORT",
@@ -740,6 +796,8 @@ async def pullback_s5_worker() -> None:
                     floor=40.0,
                     ceil=95.0,
                 )
+            confidence = int(max(1, min(99, round(float(confidence) + heat_decision.confidence_delta))))
+            lot = abs(base_units) / (100000.0 * (max(1.0, confidence) / 100.0))
             div_meta = divergence_snapshot(fac_m1, max_age_bars=10)
             signal = {
                 "action": "OPEN_LONG" if side == "long" else "OPEN_SHORT",
@@ -753,6 +811,15 @@ async def pullback_s5_worker() -> None:
                     "tp_pips": round(tp_pips, 2),
                     "sl_pips": round(sl_base, 2),
                     "hard_stop_pips": round(sl_base, 2),
+                    "range_active": range_active,
+                    "range_mode": None if range_ctx is None else range_ctx.mode,
+                    "range_reason": None if range_ctx is None else range_ctx.reason,
+                    "range_score": None if range_ctx is None else round(float(range_ctx.score or 0.0), 3),
+                    "mtf_heat_score": round(heat_decision.score, 3),
+                    "mtf_heat_conf_delta": round(heat_decision.confidence_delta, 2),
+                    "mtf_heat_lot_mult": round(heat_decision.lot_mult, 3),
+                    "mtf_heat_tp_mult": round(heat_decision.tp_mult, 3),
+                    "mtf_heat": heat_decision.debug,
                 },
                 "tp_pips": round(tp_pips, 2),
                 "sl_pips": round(sl_base, 2),
@@ -784,6 +851,7 @@ async def pullback_s5_worker() -> None:
                     "touch_last_age_sec": None
                     if touch_last_age_sec is None
                     else round(touch_last_age_sec, 1),
+                    "mtf_heat_score": round(heat_decision.score, 3),
                 },
             }
             if div_meta:
@@ -857,7 +925,7 @@ async def pullback_s5_worker() -> None:
                 "n/a" if touch_last_age_sec is None else f"{touch_last_age_sec:.1f}"
             )
             LOG.info(
-                "%s publish plan side=%s units=%s tp=%.2f sl=%.2f z_fast=%.2f z_slow=%.2f touch=%s pullback=%s trend=%s age=%s",
+                "%s publish plan side=%s units=%s tp=%.2f sl=%.2f z_fast=%.2f z_slow=%.2f heat=%.2f touch=%s pullback=%s trend=%s age=%s",
                 config.LOG_PREFIX,
                 side,
                 base_units if side == "long" else -base_units,
@@ -865,6 +933,7 @@ async def pullback_s5_worker() -> None:
                 sl_base,
                 z_fast,
                 z_slow,
+                heat_decision.score,
                 touch_count,
                 touch_pullback,
                 touch_trend,

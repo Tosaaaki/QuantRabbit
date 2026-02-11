@@ -10,6 +10,7 @@ import time
 from typing import Dict, Optional, Tuple
 
 from analysis import perf_monitor
+from analysis.mtf_heat import evaluate_mtf_heat
 from analysis.range_guard import detect_range_mode
 from analysis.technique_engine import evaluate_entry_techniques
 from execution.order_manager import market_order
@@ -296,6 +297,17 @@ async def tech_fusion_worker() -> None:
             continue
 
         side, base_conf, side_detail = signal
+        heat_decision = evaluate_mtf_heat(
+            side,
+            factors,
+            price=price,
+            env_prefix=config.ENV_PREFIX,
+            short_tf="M1",
+            mid_tf="M5",
+            long_tf="H1",
+            macro_tf="H4",
+            pivot_tfs=("H1", "H4"),
+        )
         spread_pips = _float(fac_m1.get("spread_pips")) or 0.0
         atr_pips = _float(fac_m1.get("atr_pips")) or 0.0
         if atr_pips <= 0:
@@ -306,6 +318,9 @@ async def tech_fusion_worker() -> None:
         sl_pips, tp_pips = _targets(mode, atr_pips, spread_pips)
         if sl_pips <= 0 or tp_pips <= 0:
             continue
+        tp_floor = config.TP_MIN_RANGE if mode == "range" else config.TP_MIN_TREND
+        tp_ceiling = config.TP_MAX_RANGE if mode == "range" else config.TP_MAX_TREND
+        tp_pips = max(tp_floor, min(tp_ceiling, tp_pips * heat_decision.tp_mult))
 
         signal_tag = f"{config.STRATEGY_TAG}-{mode}"
         tech_decision = evaluate_entry_techniques(
@@ -326,6 +341,7 @@ async def tech_fusion_worker() -> None:
                 conf += tech_decision.score * config.TECH_CONF_BOOST
             else:
                 conf += tech_decision.score * config.TECH_CONF_PENALTY
+        conf += heat_decision.confidence_delta
         conf = max(config.CONFIDENCE_FLOOR, min(config.CONFIDENCE_CEIL, conf))
 
         div_bias = divergence_bias(
@@ -432,7 +448,7 @@ async def tech_fusion_worker() -> None:
             fac_h4=fac_h4,
         )
         units_risk = int(round(lot * 100000))
-        units = int(round(base_units * conf_scale))
+        units = int(round(base_units * conf_scale * heat_decision.lot_mult))
         units = min(units, units_risk)
         units = int(round(units * cap))
         if tech_decision.size_mult > 1.0:
@@ -469,6 +485,11 @@ async def tech_fusion_worker() -> None:
             else None,
             "tech_entry": tech_decision.debug,
             "tech_allow_candle": True,
+            "mtf_heat_score": round(heat_decision.score, 3),
+            "mtf_heat_conf_delta": round(heat_decision.confidence_delta, 2),
+            "mtf_heat_lot_mult": round(heat_decision.lot_mult, 3),
+            "mtf_heat_tp_mult": round(heat_decision.tp_mult, 3),
+            "mtf_heat": heat_decision.debug,
             "side_detail": side_detail,
         }
         if div_meta:
@@ -487,7 +508,7 @@ async def tech_fusion_worker() -> None:
             entry_thesis=entry_thesis,
         )
         LOG.info(
-            "%s sent units=%s side=%s price=%.3f sl=%.3f tp=%.3f conf=%.0f cap=%.2f mode=%s tech=%s res=%s",
+            "%s sent units=%s side=%s price=%.3f sl=%.3f tp=%.3f conf=%.0f cap=%.2f mode=%s heat=%.2f tech=%s res=%s",
             log_prefix,
             units,
             side,
@@ -497,6 +518,7 @@ async def tech_fusion_worker() -> None:
             conf,
             cap,
             mode,
+            heat_decision.score,
             tech_decision.reason or "ok",
             res or "none",
         )

@@ -3,6 +3,8 @@
 from __future__ import annotations
 from analysis.ma_projection import compute_adx_projection, compute_bbw_projection, compute_ma_projection, compute_rsi_projection
 from analysis.ma_projection import score_ma_for_side
+from analysis.mtf_heat import evaluate_mtf_heat
+from analysis.range_guard import detect_range_mode
 
 import asyncio
 import datetime
@@ -42,6 +44,9 @@ _BB_ENTRY_SCALP_REVERT_PIPS = env_float("BB_ENTRY_SCALP_REVERT_PIPS", 2.0, prefi
 _BB_ENTRY_SCALP_REVERT_RATIO = env_float("BB_ENTRY_SCALP_REVERT_RATIO", 0.20, prefix=_BB_ENV_PREFIX)
 _BB_ENTRY_SCALP_EXT_PIPS = env_float("BB_ENTRY_SCALP_EXT_PIPS", 2.4, prefix=_BB_ENV_PREFIX)
 _BB_ENTRY_SCALP_EXT_RATIO = env_float("BB_ENTRY_SCALP_EXT_RATIO", 0.30, prefix=_BB_ENV_PREFIX)
+_BB_ENTRY_RANGE_FORCE_REVERT = env_bool("BB_ENTRY_RANGE_FORCE_REVERT", True, prefix=_BB_ENV_PREFIX)
+_BB_ENTRY_RANGE_BREAK_PIPS = env_float("BB_ENTRY_RANGE_BREAK_PIPS", 1.2, prefix=_BB_ENV_PREFIX)
+_BB_ENTRY_RANGE_BREAK_RATIO = env_float("BB_ENTRY_RANGE_BREAK_RATIO", 0.12, prefix=_BB_ENV_PREFIX)
 _BB_PIP = 0.01
 
 
@@ -86,8 +91,18 @@ def _bb_entry_allowed(style, side, price, fac_m1, *, range_active=None):
     else:
         direction = "short"
     orig_style = style
-    if style == "scalp" and range_active:
-        style = "reversion"
+    if range_active and style != "reversion":
+        if _BB_ENTRY_RANGE_FORCE_REVERT:
+            break_threshold = max(0.0, _BB_ENTRY_RANGE_BREAK_PIPS, span_pips * max(0.0, _BB_ENTRY_RANGE_BREAK_RATIO))
+            break_px = break_threshold * _BB_PIP
+            breakout = (
+                (direction == "long" and price >= upper + break_px)
+                or (direction == "short" and price <= lower - break_px)
+            )
+            if not breakout:
+                style = "reversion"
+        elif style == "scalp":
+            style = "reversion"
     if style == "reversion":
         base_pips = _BB_ENTRY_SCALP_REVERT_PIPS if orig_style == "scalp" else _BB_ENTRY_REVERT_PIPS
         base_ratio = _BB_ENTRY_SCALP_REVERT_RATIO if orig_style == "scalp" else _BB_ENTRY_REVERT_RATIO
@@ -481,6 +496,17 @@ async def trend_h1_worker() -> None:
                 if not fac_h1:
                     _log_skip("missing_h1_factors", skip_state)
                     continue
+                range_ctx = None
+                try:
+                    range_ctx = detect_range_mode(
+                        fac_h1,
+                        fac_h4 or {},
+                        env_tf="H1",
+                        macro_tf="H4",
+                    )
+                except Exception:
+                    range_ctx = None
+                range_active = bool(range_ctx.active) if range_ctx else False
 
                 candles = fac_h1.get("candles")
                 if not isinstance(candles, list) or len(candles) < config.MIN_CANDLES:
@@ -656,8 +682,29 @@ async def trend_h1_worker() -> None:
 
                 price_hint = float(fac_signal.get("close") or 0.0)
                 entry_price = _latest_mid(price_hint)
-                if not _bb_entry_allowed(BB_STYLE, direction, entry_price, fac_h1):
+                if not _bb_entry_allowed(
+                    BB_STYLE,
+                    direction,
+                    entry_price,
+                    fac_h1,
+                    range_active=range_active,
+                ):
                     _log_skip("bb_entry_block", skip_state)
+                    continue
+                heat_decision = evaluate_mtf_heat(
+                    direction,
+                    factors,
+                    price=entry_price,
+                    env_prefix=config.ENV_PREFIX,
+                    short_tf="H1",
+                    mid_tf="H4",
+                    long_tf="H4",
+                    macro_tf="D1",
+                    pivot_tfs=("H1", "H4"),
+                )
+                confidence = int(max(0, min(99, round(confidence + heat_decision.confidence_delta))))
+                if confidence < config.MIN_CONFIDENCE:
+                    _log_skip(f"mtf_conf_low {confidence}", skip_state)
                     continue
 
                 strategy_tag = decision.get("tag") or "trend_h1"
@@ -694,8 +741,10 @@ async def trend_h1_worker() -> None:
                         tp_pips = min(38.0, tp_pips + 1.0)
                     elif vwap_gap <= 1.0:
                         tp_pips = max(5.0, tp_pips * 0.9)
+                tp_pips = max(5.0, min(40.0, tp_pips * heat_decision.tp_mult))
 
                 lot *= _confidence_scale(confidence)
+                lot *= heat_decision.lot_mult
                 lot = max(config.MIN_LOT, min(config.MAX_LOT, lot))
                 stage_ratio = config.STAGE_RATIOS[stage_idx]
                 lot *= max(0.01, stage_ratio)
@@ -728,6 +777,16 @@ async def trend_h1_worker() -> None:
                 }
                 if div_meta:
                     thesis["divergence"] = div_meta
+                if range_ctx:
+                    thesis["range_active"] = bool(range_ctx.active)
+                    thesis["range_mode"] = range_ctx.mode
+                    thesis["range_reason"] = range_ctx.reason
+                    thesis["range_score"] = round(float(range_ctx.score or 0.0), 3)
+                thesis["mtf_heat_score"] = round(heat_decision.score, 3)
+                thesis["mtf_heat_conf_delta"] = round(heat_decision.confidence_delta, 2)
+                thesis["mtf_heat_lot_mult"] = round(heat_decision.lot_mult, 3)
+                thesis["mtf_heat_tp_mult"] = round(heat_decision.tp_mult, 3)
+                thesis["mtf_heat"] = heat_decision.debug
                 entry_meta = decision.get("_meta") or {}
                 entry_meta["stage_index"] = stage_idx
 
@@ -742,7 +801,7 @@ async def trend_h1_worker() -> None:
                     units = int(round(abs(units) * proj_mult)) * sign
 
                 LOG.info(
-                    "%s signal=%s dir=%s conf=%d lot=%.4f units=%d sl=%.2fp tp=%.2fp price=%.3f atr=%.1fp",
+                    "%s signal=%s dir=%s conf=%d lot=%.4f units=%d sl=%.2fp tp=%.2fp price=%.3f atr=%.1fp heat=%.2f",
                     config.LOG_PREFIX,
                     decision.get("tag"),
                     direction,
@@ -753,6 +812,7 @@ async def trend_h1_worker() -> None:
                     tp_pips,
                     entry_price,
                     atr_pips,
+                    heat_decision.score,
                 )
 
                 candle_allow, candle_mult = _entry_candle_guard("long" if units > 0 else "short")

@@ -3,6 +3,8 @@
 from __future__ import annotations
 from analysis.ma_projection import compute_adx_projection, compute_bbw_projection, compute_ma_projection, compute_rsi_projection
 from analysis.ma_projection import score_ma_for_side
+from analysis.mtf_heat import evaluate_mtf_heat
+from analysis.range_guard import detect_range_mode
 
 import asyncio
 import datetime as dt
@@ -35,6 +37,9 @@ _BB_ENTRY_SCALP_REVERT_PIPS = env_float("BB_ENTRY_SCALP_REVERT_PIPS", 2.0, prefi
 _BB_ENTRY_SCALP_REVERT_RATIO = env_float("BB_ENTRY_SCALP_REVERT_RATIO", 0.20, prefix=_BB_ENV_PREFIX)
 _BB_ENTRY_SCALP_EXT_PIPS = env_float("BB_ENTRY_SCALP_EXT_PIPS", 2.4, prefix=_BB_ENV_PREFIX)
 _BB_ENTRY_SCALP_EXT_RATIO = env_float("BB_ENTRY_SCALP_EXT_RATIO", 0.30, prefix=_BB_ENV_PREFIX)
+_BB_ENTRY_RANGE_FORCE_REVERT = env_bool("BB_ENTRY_RANGE_FORCE_REVERT", True, prefix=_BB_ENV_PREFIX)
+_BB_ENTRY_RANGE_BREAK_PIPS = env_float("BB_ENTRY_RANGE_BREAK_PIPS", 1.2, prefix=_BB_ENV_PREFIX)
+_BB_ENTRY_RANGE_BREAK_RATIO = env_float("BB_ENTRY_RANGE_BREAK_RATIO", 0.12, prefix=_BB_ENV_PREFIX)
 _BB_PIP = 0.01
 
 
@@ -79,8 +84,18 @@ def _bb_entry_allowed(style, side, price, fac_m1, *, range_active=None):
     else:
         direction = "short"
     orig_style = style
-    if style == "scalp" and range_active:
-        style = "reversion"
+    if range_active and style != "reversion":
+        if _BB_ENTRY_RANGE_FORCE_REVERT:
+            break_threshold = max(0.0, _BB_ENTRY_RANGE_BREAK_PIPS, span_pips * max(0.0, _BB_ENTRY_RANGE_BREAK_RATIO))
+            break_px = break_threshold * _BB_PIP
+            breakout = (
+                (direction == "long" and price >= upper + break_px)
+                or (direction == "short" and price <= lower - break_px)
+            )
+            if not breakout:
+                style = "reversion"
+        elif style == "scalp":
+            style = "reversion"
     if style == "reversion":
         base_pips = _BB_ENTRY_SCALP_REVERT_PIPS if orig_style == "scalp" else _BB_ENTRY_REVERT_PIPS
         base_ratio = _BB_ENTRY_SCALP_REVERT_RATIO if orig_style == "scalp" else _BB_ENTRY_REVERT_RATIO
@@ -505,6 +520,17 @@ async def manual_swing_worker() -> None:
             fac_h4 = factors.get("H4")
             if not fac_h1 or not fac_h4:
                 continue
+            range_ctx = None
+            try:
+                range_ctx = detect_range_mode(
+                    fac_h1,
+                    fac_h4,
+                    env_tf="H1",
+                    macro_tf="H4",
+                )
+            except Exception:
+                range_ctx = None
+            range_active = bool(range_ctx.active) if range_ctx else False
             direction, features = _trend_bias(fac_h1, fac_h4)
             if direction is None:
                 continue
@@ -519,8 +545,25 @@ async def manual_swing_worker() -> None:
             atr_pips = float(fac_h1.get("atr_pips") or 0.0)
             if atr_pips < config.ATR_MIN_PIPS:
                 continue
-            if not _bb_entry_allowed(BB_STYLE, direction, price, fac_h1):
+            if not _bb_entry_allowed(
+                BB_STYLE,
+                direction,
+                price,
+                fac_h1,
+                range_active=range_active,
+            ):
                 continue
+            heat_decision = evaluate_mtf_heat(
+                direction,
+                factors,
+                price=price,
+                env_prefix=config.ENV_PREFIX,
+                short_tf="H1",
+                mid_tf="H4",
+                long_tf="H4",
+                macro_tf="D1",
+                pivot_tfs=("H1", "H4"),
+            )
 
             snapshot = get_account_snapshot(timeout=6.0)
             if (
@@ -689,6 +732,7 @@ async def manual_swing_worker() -> None:
                 continue
 
             stage_size = stage_units[current_stage_count]
+            stage_size = int(round(stage_size * heat_decision.lot_mult))
             if stage_size <= 0:
                 continue
 
@@ -712,6 +756,7 @@ async def manual_swing_worker() -> None:
 
             sl_pips = max(config.MIN_SL_PIPS, atr_pips * config.SL_ATR_MULT)
             tp_pips = max(config.MIN_TP_PIPS, atr_pips * config.TP_ATR_MULT)
+            tp_pips = max(config.MIN_TP_PIPS, tp_pips * heat_decision.tp_mult)
 
             # Determine units based on free margin usage
             margin_available = snapshot.margin_available
@@ -742,6 +787,15 @@ async def manual_swing_worker() -> None:
                 "ma_gap_h1": features["ma_gap_h1"],
                 "ma_gap_h4": features["ma_gap_h4"],
                 "adx": features["adx"],
+                "range_active": range_active,
+                "range_mode": None if range_ctx is None else range_ctx.mode,
+                "range_reason": None if range_ctx is None else range_ctx.reason,
+                "range_score": None if range_ctx is None else round(float(range_ctx.score or 0.0), 3),
+                "mtf_heat_score": round(heat_decision.score, 3),
+                "mtf_heat_conf_delta": round(heat_decision.confidence_delta, 2),
+                "mtf_heat_lot_mult": round(heat_decision.lot_mult, 3),
+                "mtf_heat_tp_mult": round(heat_decision.tp_mult, 3),
+                "mtf_heat": heat_decision.debug,
             }
             LOG.info(
                 "%s opening stage=%s units=%s dir=%s price=%.3f",
