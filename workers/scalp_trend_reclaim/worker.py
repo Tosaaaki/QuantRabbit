@@ -339,3 +339,12 @@ async def scalp_trend_reclaim_worker() -> None:
             cap_reason,
             res if res else "none",
         )
+
+
+if __name__ == "__main__":
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)s %(message)s",
+        force=True,
+    )
+    asyncio.run(scalp_trend_reclaim_worker())
