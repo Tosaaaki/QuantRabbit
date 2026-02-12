@@ -41,6 +41,8 @@
 - `docs/RANGE_MODE.md`: レンジモード強化とオンラインチューニング運用。
 - `docs/OPS_GCP_RUNBOOK.md`: GCP/VM 運用ランブック。
 - `docs/OPS_SKILLS.md`: 日次運用スキル運用。
+- `docs/KATA_SCALP_PING_5S.md`: 5秒スキャ（`scalp_ping_5s`）の型（Kata）設計・運用。
+- `docs/KATA_PROGRESS.md`: 型（Kata）の進捗ログ（VMスナップショット/展開計画）。
 
 ## 5. チーム / タスク運用ルール（要点）
 - 1 ファイル = 1 PR、Squash Merge、CI green。
