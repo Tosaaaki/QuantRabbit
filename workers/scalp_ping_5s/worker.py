@@ -154,6 +154,9 @@ class HorizonBias:
     composite_side: str
     composite_score: float
     agreement: int
+
+
+@dataclass(slots=True)
 class ExtremaGateDecision:
     allow_entry: bool
     reason: str
