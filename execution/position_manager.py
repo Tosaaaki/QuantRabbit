@@ -2306,22 +2306,30 @@ class PositionManager:
             tp_order = tr.get("takeProfitOrder") or {}
             if isinstance(tp_order, dict):
                 tp_price_raw = tp_order.get("price")
+                tp_order_id = tp_order.get("id")
                 try:
                     tp_price = float(tp_price_raw) if tp_price_raw is not None else None
                 except (TypeError, ValueError):
                     tp_price = None
                 if tp_price is not None and tp_price > 0:
-                    trade_entry["take_profit"] = {"price": tp_price}
+                    take_profit = {"price": tp_price}
+                    if tp_order_id:
+                        take_profit["order_id"] = str(tp_order_id)
+                    trade_entry["take_profit"] = take_profit
 
             sl_order = tr.get("stopLossOrder") or {}
             if isinstance(sl_order, dict):
                 sl_price_raw = sl_order.get("price")
+                sl_order_id = sl_order.get("id")
                 try:
                     sl_price = float(sl_price_raw) if sl_price_raw is not None else None
                 except (TypeError, ValueError):
                     sl_price = None
                 if sl_price is not None and sl_price > 0:
-                    trade_entry["stop_loss"] = {"price": sl_price}
+                    stop_loss = {"price": sl_price}
+                    if sl_order_id:
+                        stop_loss["order_id"] = str(sl_order_id)
+                    trade_entry["stop_loss"] = stop_loss
             # Fallback: decode clientExtensions.comment to recover entry meta for EXIT判定
             thesis_from_comment = None
             try:

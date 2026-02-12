@@ -1611,6 +1611,27 @@ _ENTRY_QUALITY_STRAT_CACHE: dict[
 ] = {}
 
 _LAST_PROTECTIONS: dict[str, dict[str, float | None]] = {}
+_LAST_ROLLOVER_SL_STRIP_TS: dict[str, float] = {}
+_JST = timezone(timedelta(hours=9))
+_ROLLOVER_SL_STRIP_ENABLED = _env_bool("ORDER_ROLLOVER_SL_STRIP_ENABLED", False)
+_ROLLOVER_SL_STRIP_JST_HOUR = max(
+    0, min(23, _env_int("ORDER_ROLLOVER_SL_STRIP_JST_HOUR", 7))
+)
+_ROLLOVER_SL_STRIP_WINDOW_MIN = max(
+    1, _env_int("ORDER_ROLLOVER_SL_STRIP_WINDOW_MIN", 90)
+)
+_ROLLOVER_SL_STRIP_REQUIRE_CARRYOVER = _env_bool(
+    "ORDER_ROLLOVER_SL_STRIP_REQUIRE_CARRYOVER", True
+)
+_ROLLOVER_SL_STRIP_INCLUDE_MANUAL = _env_bool(
+    "ORDER_ROLLOVER_SL_STRIP_INCLUDE_MANUAL", False
+)
+_ROLLOVER_SL_STRIP_COOLDOWN_SEC = max(
+    10.0, _env_float("ORDER_ROLLOVER_SL_STRIP_COOLDOWN_SEC", 120.0)
+)
+_ROLLOVER_SL_STRIP_MAX_ACTIONS = max(
+    1, _env_int("ORDER_ROLLOVER_SL_STRIP_MAX_ACTIONS", 6)
+)
 MACRO_BE_GRACE_SECONDS = 45
 _MARGIN_REJECT_UNTIL: dict[str, float] = {}
 _PROTECTION_MIN_BUFFER = max(0.0005, float(os.getenv("ORDER_PROTECTION_MIN_BUFFER", "0.003")))
@@ -3949,7 +3970,7 @@ def _extract_trade_id(response: dict) -> Optional[str]:
     return None
 
 
-async def cancel_order(
+def _cancel_order_sync(
     *,
     order_id: str,
     pocket: Optional[str] = None,
@@ -3979,6 +4000,21 @@ async def cancel_order(
     except Exception as exc:  # noqa: BLE001
         logging.warning("[ORDER] Cancel exception for %s: %s", order_id, exc)
     return False
+
+
+async def cancel_order(
+    *,
+    order_id: str,
+    pocket: Optional[str] = None,
+    client_order_id: Optional[str] = None,
+    reason: str = "user_cancel",
+) -> bool:
+    return _cancel_order_sync(
+        order_id=order_id,
+        pocket=pocket,
+        client_order_id=client_order_id,
+        reason=reason,
+    )
 
 
 def _parse_trade_open_time(value: Optional[str]) -> Optional[datetime]:
@@ -4012,6 +4048,103 @@ def _parse_trade_open_time(value: Optional[str]) -> Optional[datetime]:
             return dt.astimezone(timezone.utc)
         except ValueError:
             return None
+
+
+def _rollover_sl_strip_context(now_utc: Optional[datetime] = None) -> dict[str, Any]:
+    if not _ROLLOVER_SL_STRIP_ENABLED:
+        return {"active": False}
+    now_utc_val = now_utc or datetime.now(timezone.utc)
+    now_jst = now_utc_val.astimezone(_JST)
+    cutoff_jst = now_jst.replace(
+        hour=_ROLLOVER_SL_STRIP_JST_HOUR,
+        minute=0,
+        second=0,
+        microsecond=0,
+    )
+    end_jst = cutoff_jst + timedelta(minutes=float(_ROLLOVER_SL_STRIP_WINDOW_MIN))
+    active = cutoff_jst <= now_jst < end_jst
+    return {
+        "active": bool(active),
+        "now_utc": now_utc_val,
+        "now_jst": now_jst,
+        "cutoff_jst": cutoff_jst,
+    }
+
+
+def _trade_matches_rollover_sl_strip(
+    trade: dict,
+    pocket: str,
+    ctx: Optional[dict[str, Any]],
+) -> bool:
+    if not isinstance(ctx, dict) or not bool(ctx.get("active")):
+        return False
+    if not isinstance(trade, dict):
+        return False
+    if pocket == "__net__":
+        return False
+    client_id = str(trade.get("client_id") or "")
+    if not _ROLLOVER_SL_STRIP_INCLUDE_MANUAL and not client_id.startswith("qr-"):
+        return False
+    if not _ROLLOVER_SL_STRIP_REQUIRE_CARRYOVER:
+        return True
+    opened_at = _parse_trade_open_time(trade.get("open_time"))
+    if opened_at is None:
+        return False
+    cutoff_jst = ctx.get("cutoff_jst")
+    if not isinstance(cutoff_jst, datetime):
+        return False
+    return opened_at.astimezone(_JST) < cutoff_jst
+
+
+def _strip_rollover_stop_losses(open_positions: dict, ctx: Optional[dict[str, Any]]) -> int:
+    if not isinstance(open_positions, dict):
+        return 0
+    if not isinstance(ctx, dict) or not bool(ctx.get("active")):
+        return 0
+    now_ts = time.time()
+    actions = 0
+    for pocket, info in open_positions.items():
+        if pocket == "__net__":
+            continue
+        trades = info.get("open_trades") if isinstance(info, dict) else None
+        if not isinstance(trades, list):
+            continue
+        for tr in trades:
+            if actions >= _ROLLOVER_SL_STRIP_MAX_ACTIONS:
+                return actions
+            if not _trade_matches_rollover_sl_strip(tr, str(pocket), ctx):
+                continue
+            trade_id = str((tr or {}).get("trade_id") or "")
+            if not trade_id:
+                continue
+            last_ts = float(_LAST_ROLLOVER_SL_STRIP_TS.get(trade_id) or 0.0)
+            if (now_ts - last_ts) < _ROLLOVER_SL_STRIP_COOLDOWN_SEC:
+                continue
+            sl_info = tr.get("stop_loss") if isinstance(tr, dict) else None
+            if not isinstance(sl_info, dict):
+                continue
+            order_id = str(sl_info.get("order_id") or "").strip()
+            if not order_id:
+                continue
+            client_id = str(tr.get("client_id") or "")
+            ok = _cancel_order_sync(
+                order_id=order_id,
+                pocket=str(pocket),
+                client_order_id=client_id or None,
+                reason="rollover_sl_strip",
+            )
+            _LAST_ROLLOVER_SL_STRIP_TS[trade_id] = now_ts
+            if ok:
+                actions += 1
+                _LAST_PROTECTIONS.pop(trade_id, None)
+                logging.warning(
+                    "[PROTECT] rollover SL stripped trade=%s pocket=%s client=%s order=%s",
+                    trade_id,
+                    pocket,
+                    client_id or "-",
+                    order_id,
+                )
+    return actions
 
 
 def _coerce_entry_thesis(meta: Any) -> dict:
@@ -4882,11 +5015,16 @@ def update_dynamic_protections(
     fac_m1: dict,
     fac_h4: dict,
 ) -> None:
-    if not TRAILING_SL_ALLOWED:
-        return
     if not open_positions:
         return
-    _apply_dynamic_protections_v2(open_positions, fac_m1, fac_h4)
+    rollover_ctx = _rollover_sl_strip_context()
+    try:
+        _strip_rollover_stop_losses(open_positions, rollover_ctx)
+    except Exception as exc:  # noqa: BLE001
+        logging.warning("[PROTECT] rollover SL strip failed: %s", exc)
+    if not TRAILING_SL_ALLOWED:
+        return
+    _apply_dynamic_protections_v2(open_positions, fac_m1, fac_h4, rollover_ctx=rollover_ctx)
     return
     atr_m1 = fac_m1.get("atr_pips")
     if atr_m1 is None:
@@ -5009,6 +5147,8 @@ def _apply_dynamic_protections_v2(
     open_positions: dict,
     fac_m1: dict,
     fac_h4: dict,
+    *,
+    rollover_ctx: Optional[dict[str, Any]] = None,
 ) -> None:
     policy = policy_bus.latest()
     pockets_policy = policy.pockets if policy else {}
@@ -5263,6 +5403,8 @@ def _apply_dynamic_protections_v2(
             price = tr.get("price")
             side = tr.get("side")
             if not trade_id or price is None or not side:
+                continue
+            if _trade_matches_rollover_sl_strip(tr, str(pocket), rollover_ctx):
                 continue
 
             client_id = str(tr.get("client_id") or "")
