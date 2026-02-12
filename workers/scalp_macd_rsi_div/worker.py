@@ -208,6 +208,7 @@ async def scalp_macd_rsi_div_worker() -> None:
     last_block_log_mono = 0.0
     last_spread_log_mono = 0.0
     last_gate_log_mono = 0.0
+    last_margin_log_mono = 0.0
 
     try:
         while True:
@@ -358,6 +359,16 @@ async def scalp_macd_rsi_div_worker() -> None:
             margin_used = _safe_float(snap.margin_used, 0.0)
             margin_usage = margin_used / nav if nav > 0 else 0.0
             if free_ratio <= config.MIN_FREE_MARGIN_RATIO_HARD or margin_usage >= config.MARGIN_USAGE_HARD:
+                if now_mono - last_margin_log_mono > 60.0:
+                    LOG.info(
+                        "%s gate_block margin free_ratio=%.4f min=%.4f usage=%.4f max=%.4f",
+                        config.LOG_PREFIX,
+                        free_ratio,
+                        config.MIN_FREE_MARGIN_RATIO_HARD,
+                        margin_usage,
+                        config.MARGIN_USAGE_HARD,
+                    )
+                    last_margin_log_mono = now_mono
                 prev_rsi = rsi
                 continue
 
