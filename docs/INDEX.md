@@ -25,6 +25,7 @@
 - `docs/ONLINE_TUNER.md`: オンラインチューナの詳細
 - `docs/autotune_taskboard.md`: チューニング関連タスク
 - `docs/FORECAST.md`: オフライン予測（scikit-learn）と足履歴 backfill/学習手順
+- `docs/WFO_OVERFIT_REPORT.md`: WFO/PBO-lite/DSR 近似レポートの運用
 
 ## タスク / 変更管理
 - `docs/TASKS.md`: リポジトリ全体タスク台帳

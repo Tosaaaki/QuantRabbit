@@ -41,6 +41,8 @@ gcloud compute ssh fx-trader-vm --project=quantrabbit --zone=asia-northeast1-a -
 - Strategy Plugin は Backtest で再現性確認。
 - Shadow では本番 tick + 仮想アカウントで `OrderIntent` と `risk_guard` 拒否理由を比較。
 - 標準リプレイ手順は `docs/REPLAY_STANDARD.md` を参照。
+- WFO / 過学習診断は `scripts/run_wfo_overfit_report.sh` を利用し、
+  `logs/reports/wfo_overfit/latest.{json,md}` を監視する。
 
 ## 6. 観測指標と SLO
 - 観測指標: `decision_latency_ms`, `data_lag_ms`, `order_success_rate`, `reject_rate`, `pnl_day_pips`, `drawdown_pct`。

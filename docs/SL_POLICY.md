@@ -20,6 +20,8 @@ SL（損切り）は「どこで決まるか」が複数レイヤに分かれて
   ただし `ORDER_ALLOW_STOP_LOSS_WITH_EXIT_NO_NEGATIVE_CLOSE_{POCKET}=1` で pocket 単位で許可可能。
 - `ORDER_DISABLE_STOP_LOSS` はデフォルト true 扱い。  
   本番では `ORDER_ENABLE_STOP_LOSS_{POCKET}=1` を明示して有効化する。
+- `ORDER_ENTRY_HARD_STOP_PIPS*` を設定しても、entry SL が無効の pocket では
+  `stopLossOnFill` は付与されない（virtual SL としてのみ扱われる）。
 - `quant-hard-stop-backfill.service` は tighten-only（既存SLを広げない）。  
   ただし SL 無し建玉には fallback 値を付けるため、レンジ設定が過大だと実効RRを悪化させる。
 
