@@ -361,6 +361,20 @@ def _confidence_scale(conf: int) -> float:
     return 0.5 + span * 0.5
 
 
+def _resolve_strategy_tag(signal_tag: str, signal_side: str) -> str:
+    override = str(config.STRATEGY_TAG_OVERRIDE or "").strip()
+    if not override:
+        return signal_tag
+    if "{" not in override:
+        return override
+    try:
+        rendered = override.format(tag=signal_tag, side=signal_side)
+    except Exception:
+        return signal_tag
+    rendered = str(rendered or "").strip()
+    return rendered or signal_tag
+
+
 def _compute_cap(*args, **kwargs) -> Tuple[float, Dict[str, float]]:
     kwargs.setdefault("env_prefix", config.ENV_PREFIX)
     res = compute_cap(cap_min=config.CAP_MIN, cap_max=config.CAP_MAX, *args, **kwargs)
@@ -372,7 +386,14 @@ async def scalp_m1_worker() -> None:
     if not config.ENABLED:
         LOG.info("%s disabled", config.LOG_PREFIX)
         return
-    LOG.info("%s worker start (interval=%.1fs)", config.LOG_PREFIX, config.LOOP_INTERVAL_SEC)
+    LOG.info(
+        "%s worker start (interval=%.1fs side_filter=%s tag_filter=%s strategy_override=%s)",
+        config.LOG_PREFIX,
+        config.LOOP_INTERVAL_SEC,
+        config.SIDE_FILTER or "both",
+        ",".join(sorted(config.SIGNAL_TAG_CONTAINS)) if config.SIGNAL_TAG_CONTAINS else "-",
+        config.STRATEGY_TAG_OVERRIDE or "-",
+    )
     if config.AUTOTUNE_ENABLED:
         start_background_autotune()
         LOG.info(
@@ -470,6 +491,37 @@ async def scalp_m1_worker() -> None:
         signal = M1Scalper.check(fac_m1)
         if not signal:
             continue
+        signal_tag = str(signal.get("tag") or M1Scalper.name)
+        signal_tag_l = signal_tag.lower()
+        signal_action = str(signal.get("action") or "").upper()
+        if signal_action not in {"OPEN_LONG", "OPEN_SHORT"}:
+            continue
+        signal_side = "long" if signal_action == "OPEN_LONG" else "short"
+        if config.SIGNAL_TAG_CONTAINS and not any(
+            token in signal_tag_l for token in config.SIGNAL_TAG_CONTAINS
+        ):
+            now_mono = time.monotonic()
+            if now_mono - last_block_log > 120.0:
+                LOG.info(
+                    "%s tag_filter_block tag=%s allow=%s",
+                    config.LOG_PREFIX,
+                    signal_tag,
+                    sorted(config.SIGNAL_TAG_CONTAINS),
+                )
+                last_block_log = now_mono
+            continue
+        if config.SIDE_FILTER and signal_side != config.SIDE_FILTER:
+            now_mono = time.monotonic()
+            if now_mono - last_block_log > 120.0:
+                LOG.info(
+                    "%s side_filter_block side=%s allow=%s tag=%s",
+                    config.LOG_PREFIX,
+                    signal_side,
+                    config.SIDE_FILTER,
+                    signal_tag,
+                )
+                last_block_log = now_mono
+            continue
         conf_val = int(signal.get("confidence", 0) or 0)
         if conf_val < config.CONFIDENCE_FLOOR:
             now_mono = time.monotonic()
@@ -479,12 +531,10 @@ async def scalp_m1_worker() -> None:
                     config.LOG_PREFIX,
                     conf_val,
                     config.CONFIDENCE_FLOOR,
-                    signal.get("tag", M1Scalper.name),
+                    signal_tag,
                 )
                 last_conf_log = now_mono
             continue
-        signal_tag = signal.get("tag", M1Scalper.name)
-        signal_tag_l = str(signal_tag or "").lower()
         is_reversion = (
             "buy-dip" in signal_tag_l
             or "sell-rally" in signal_tag_l
@@ -684,7 +734,6 @@ async def scalp_m1_worker() -> None:
             current_bid = _bb_float(tick.get("bid"))
             current_ask = _bb_float(tick.get("ask"))
         price = _latest_mid(price)
-        signal_side = "long" if signal["action"] == "OPEN_LONG" else "short"
         side = signal_side
         sl_pips = float(signal.get("sl_pips") or 0.0)
         tp_pips = float(signal.get("tp_pips") or 0.0)
@@ -707,6 +756,18 @@ async def scalp_m1_worker() -> None:
                     proj_flip = True
                     proj_allow, proj_mult, proj_detail = opp_allow, opp_mult, opp_detail
         if not proj_allow:
+            continue
+        if config.SIDE_FILTER and side != config.SIDE_FILTER:
+            now_mono = time.monotonic()
+            if now_mono - last_block_log > 120.0:
+                LOG.info(
+                    "%s side_filter_postproj_block side=%s allow=%s tag=%s",
+                    config.LOG_PREFIX,
+                    side,
+                    config.SIDE_FILTER,
+                    signal_tag,
+                )
+                last_block_log = now_mono
             continue
         htf = _htf_trend_state(fac_h1)
         if htf and config.HTF_BLOCK_COUNTER:
@@ -742,6 +803,7 @@ async def scalp_m1_worker() -> None:
 
         conf_scale = _confidence_scale(int(signal.get("confidence", 50)))
         signal_tag = signal_tag or M1Scalper.name
+        strategy_tag = _resolve_strategy_tag(signal_tag, side)
         entry_kind = "market"
         entry_ref_price = price
         entry_signal_price = None
@@ -791,7 +853,7 @@ async def scalp_m1_worker() -> None:
             side=side,
             open_long_units=long_units,
             open_short_units=short_units,
-            strategy_tag=signal_tag,
+            strategy_tag=strategy_tag,
             fac_m1=fac_m1,
             fac_h4=fac_h4,
         )
@@ -826,9 +888,10 @@ async def scalp_m1_worker() -> None:
             tp=tp_price,
             is_buy=side == "long",
         )
-        client_id = _client_order_id(signal_tag)
+        client_id = _client_order_id(strategy_tag)
         entry_thesis = {
-            "strategy_tag": signal_tag,
+            "strategy_tag": strategy_tag,
+            "source_signal_tag": signal_tag,
             "env_prefix": config.ENV_PREFIX,
             "signal_side": signal_side,
             "exec_side": side,
@@ -917,7 +980,7 @@ async def scalp_m1_worker() -> None:
                 tp_price=tp_price,
                 pocket=config.POCKET,
                 client_order_id=client_id,
-                strategy_tag=signal.get("tag", M1Scalper.name),
+                strategy_tag=strategy_tag,
                 entry_thesis=entry_thesis,
             )
             LOG.info(
