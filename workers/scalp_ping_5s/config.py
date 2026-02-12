@@ -78,6 +78,81 @@ DIRECTION_BIAS_LOG_INTERVAL_SEC: float = max(
     float(os.getenv("SCALP_PING_5S_DIRECTION_BIAS_LOG_INTERVAL_SEC", "8.0")),
 )
 
+LOOKAHEAD_GATE_ENABLED: bool = _bool_env("SCALP_PING_5S_LOOKAHEAD_GATE_ENABLED", True)
+LOOKAHEAD_ALLOW_THIN_EDGE: bool = _bool_env("SCALP_PING_5S_LOOKAHEAD_ALLOW_THIN_EDGE", True)
+LOOKAHEAD_HORIZON_SEC: float = max(
+    0.5,
+    float(os.getenv("SCALP_PING_5S_LOOKAHEAD_HORIZON_SEC", "3.0")),
+)
+LOOKAHEAD_EDGE_MIN_PIPS: float = max(
+    0.0,
+    float(os.getenv("SCALP_PING_5S_LOOKAHEAD_EDGE_MIN_PIPS", "0.10")),
+)
+LOOKAHEAD_EDGE_REF_PIPS: float = max(
+    0.05,
+    float(os.getenv("SCALP_PING_5S_LOOKAHEAD_EDGE_REF_PIPS", "0.60")),
+)
+LOOKAHEAD_UNITS_MIN_MULT: float = max(
+    0.1,
+    min(1.0, float(os.getenv("SCALP_PING_5S_LOOKAHEAD_UNITS_MIN_MULT", "0.55"))),
+)
+LOOKAHEAD_UNITS_MAX_MULT: float = max(
+    1.0,
+    float(os.getenv("SCALP_PING_5S_LOOKAHEAD_UNITS_MAX_MULT", "1.25")),
+)
+LOOKAHEAD_MOMENTUM_DECAY: float = max(
+    0.0,
+    float(os.getenv("SCALP_PING_5S_LOOKAHEAD_MOMENTUM_DECAY", "0.60")),
+)
+LOOKAHEAD_MOMENTUM_WEIGHT: float = max(
+    0.0,
+    float(os.getenv("SCALP_PING_5S_LOOKAHEAD_MOMENTUM_WEIGHT", "0.72")),
+)
+LOOKAHEAD_FLOW_WEIGHT: float = max(
+    0.0,
+    float(os.getenv("SCALP_PING_5S_LOOKAHEAD_FLOW_WEIGHT", "0.30")),
+)
+LOOKAHEAD_RATE_WEIGHT: float = max(
+    0.0,
+    float(os.getenv("SCALP_PING_5S_LOOKAHEAD_RATE_WEIGHT", "0.22")),
+)
+LOOKAHEAD_BIAS_WEIGHT: float = max(
+    0.0,
+    float(os.getenv("SCALP_PING_5S_LOOKAHEAD_BIAS_WEIGHT", "0.32")),
+)
+LOOKAHEAD_TRIGGER_WEIGHT: float = max(
+    0.0,
+    float(os.getenv("SCALP_PING_5S_LOOKAHEAD_TRIGGER_WEIGHT", "0.25")),
+)
+LOOKAHEAD_COUNTER_PENALTY: float = max(
+    0.0,
+    float(os.getenv("SCALP_PING_5S_LOOKAHEAD_COUNTER_PENALTY", "0.80")),
+)
+LOOKAHEAD_SLIP_BASE_PIPS: float = max(
+    0.0,
+    float(os.getenv("SCALP_PING_5S_LOOKAHEAD_SLIP_BASE_PIPS", "0.05")),
+)
+LOOKAHEAD_SLIP_SPREAD_MULT: float = max(
+    0.0,
+    float(os.getenv("SCALP_PING_5S_LOOKAHEAD_SLIP_SPREAD_MULT", "0.28")),
+)
+LOOKAHEAD_SLIP_RANGE_MULT: float = max(
+    0.0,
+    float(os.getenv("SCALP_PING_5S_LOOKAHEAD_SLIP_RANGE_MULT", "0.14")),
+)
+LOOKAHEAD_LATENCY_PENALTY_PIPS: float = max(
+    0.0,
+    float(os.getenv("SCALP_PING_5S_LOOKAHEAD_LATENCY_PENALTY_PIPS", "0.03")),
+)
+LOOKAHEAD_SAFETY_MARGIN_PIPS: float = max(
+    0.0,
+    float(os.getenv("SCALP_PING_5S_LOOKAHEAD_SAFETY_MARGIN_PIPS", "0.02")),
+)
+LOOKAHEAD_LOG_INTERVAL_SEC: float = max(
+    1.0,
+    float(os.getenv("SCALP_PING_5S_LOOKAHEAD_LOG_INTERVAL_SEC", "8.0")),
+)
+
 ENTRY_COOLDOWN_SEC: float = max(0.1, float(os.getenv("SCALP_PING_5S_ENTRY_COOLDOWN_SEC", "2.0")))
 MIN_ORDER_SPACING_SEC: float = max(
     0.05, float(os.getenv("SCALP_PING_5S_MIN_ORDER_SPACING_SEC", "1.0"))

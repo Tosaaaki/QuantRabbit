@@ -28,6 +28,7 @@ from utils.secrets import get_secret
 from workers.common.exit_utils import close_trade as close_open_trade
 from workers.common.rate_limiter import SlidingWindowRateLimiter
 from workers.common.size_utils import scale_base_units
+from workers.common.tick_lookahead_edge import decide_tick_lookahead_edge
 
 from . import config
 
@@ -770,6 +771,7 @@ async def scalp_ping_5s_worker() -> None:
     last_stale_log_mono = 0.0
     last_trap_log_mono = 0.0
     last_bias_log_mono = 0.0
+    last_lookahead_log_mono = 0.0
     force_exit_states: dict[str, ForceExitState] = {}
     protected_trade_ids: set[str] = set()
     protected_seeded = False
@@ -923,6 +925,61 @@ async def scalp_ping_5s_worker() -> None:
                     )
                     last_bias_log_mono = now_mono
                 continue
+
+            lookahead_decision = None
+            lookahead_units_mult = 1.0
+            if config.LOOKAHEAD_GATE_ENABLED:
+                direction_score = None
+                if direction_bias is not None:
+                    direction_score = _safe_float(direction_bias.score, 0.0)
+                lookahead_decision = decide_tick_lookahead_edge(
+                    ticks=ticks,
+                    side=signal.side,
+                    spread_pips=signal.spread_pips,
+                    momentum_pips=signal.momentum_pips,
+                    trigger_pips=signal.trigger_pips,
+                    imbalance=signal.imbalance,
+                    tick_rate=signal.tick_rate,
+                    signal_span_sec=signal.span_sec,
+                    pip_value=config.PIP_VALUE,
+                    horizon_sec=config.LOOKAHEAD_HORIZON_SEC,
+                    edge_min_pips=config.LOOKAHEAD_EDGE_MIN_PIPS,
+                    edge_ref_pips=config.LOOKAHEAD_EDGE_REF_PIPS,
+                    units_min_mult=config.LOOKAHEAD_UNITS_MIN_MULT,
+                    units_max_mult=config.LOOKAHEAD_UNITS_MAX_MULT,
+                    slippage_base_pips=config.LOOKAHEAD_SLIP_BASE_PIPS,
+                    slippage_spread_mult=config.LOOKAHEAD_SLIP_SPREAD_MULT,
+                    slippage_range_mult=config.LOOKAHEAD_SLIP_RANGE_MULT,
+                    latency_penalty_pips=config.LOOKAHEAD_LATENCY_PENALTY_PIPS,
+                    safety_margin_pips=config.LOOKAHEAD_SAFETY_MARGIN_PIPS,
+                    momentum_decay=config.LOOKAHEAD_MOMENTUM_DECAY,
+                    momentum_weight=config.LOOKAHEAD_MOMENTUM_WEIGHT,
+                    flow_weight=config.LOOKAHEAD_FLOW_WEIGHT,
+                    rate_weight=config.LOOKAHEAD_RATE_WEIGHT,
+                    bias_weight=config.LOOKAHEAD_BIAS_WEIGHT,
+                    trigger_weight=config.LOOKAHEAD_TRIGGER_WEIGHT,
+                    counter_penalty=config.LOOKAHEAD_COUNTER_PENALTY,
+                    direction_bias_score=direction_score,
+                    allow_thin_edge=config.LOOKAHEAD_ALLOW_THIN_EDGE,
+                    fail_open=True,
+                )
+                if not lookahead_decision.allow_entry:
+                    if now_mono - last_lookahead_log_mono >= config.LOOKAHEAD_LOG_INTERVAL_SEC:
+                        LOG.info(
+                            "%s lookahead block side=%s reason=%s pred=%.3fp cost=%.3fp edge=%.3fp mom=%.3fp range=%.3fp",
+                            config.LOG_PREFIX,
+                            signal.side,
+                            lookahead_decision.reason,
+                            lookahead_decision.pred_move_pips,
+                            lookahead_decision.cost_pips,
+                            lookahead_decision.edge_pips,
+                            lookahead_decision.momentum_aligned_pips,
+                            lookahead_decision.range_pips,
+                        )
+                        last_lookahead_log_mono = now_mono
+                    continue
+                lookahead_units_mult = max(0.1, float(lookahead_decision.units_mult))
+
             if now_mono - last_entry_mono < config.ENTRY_COOLDOWN_SEC:
                 continue
             if not rate_limiter.allow(now_mono):
@@ -1002,7 +1059,9 @@ async def scalp_ping_5s_worker() -> None:
                     )
                 )
             )
-            units = int(round(base_units * conf_mult * strength_mult * bias_units_mult))
+            units = int(
+                round(base_units * conf_mult * strength_mult * bias_units_mult * lookahead_units_mult)
+            )
 
             lot = allowed_lot(
                 nav,
@@ -1068,6 +1127,8 @@ async def scalp_ping_5s_worker() -> None:
                 "trap_active": bool(trap_state.active),
                 "direction_bias_gate": bias_gate,
                 "direction_bias_units_mult": round(bias_units_mult, 3),
+                "lookahead_gate_enabled": bool(config.LOOKAHEAD_GATE_ENABLED),
+                "lookahead_units_mult": round(lookahead_units_mult, 3),
             }
             if direction_bias is not None:
                 entry_thesis.update(
@@ -1080,6 +1141,25 @@ async def scalp_ping_5s_worker() -> None:
                         "direction_bias_vol_norm": round(direction_bias.vol_norm, 3),
                         "direction_bias_tick_rate": round(direction_bias.tick_rate, 3),
                         "direction_bias_span_sec": round(direction_bias.span_sec, 3),
+                    }
+                )
+            if lookahead_decision is not None:
+                entry_thesis.update(
+                    {
+                        "lookahead_reason": lookahead_decision.reason,
+                        "lookahead_pred_move_pips": round(lookahead_decision.pred_move_pips, 4),
+                        "lookahead_cost_pips": round(lookahead_decision.cost_pips, 4),
+                        "lookahead_edge_pips": round(lookahead_decision.edge_pips, 4),
+                        "lookahead_slippage_est_pips": round(
+                            lookahead_decision.slippage_est_pips, 4
+                        ),
+                        "lookahead_range_pips": round(lookahead_decision.range_pips, 4),
+                        "lookahead_momentum_aligned_pips": round(
+                            lookahead_decision.momentum_aligned_pips, 4
+                        ),
+                        "lookahead_direction_bias_aligned": round(
+                            lookahead_decision.direction_bias_aligned, 4
+                        ),
                     }
                 )
             if config.FORCE_EXIT_POLICY_GENERATION:
@@ -1113,7 +1193,7 @@ async def scalp_ping_5s_worker() -> None:
             rate_limiter.record(now_mono)
 
             LOG.info(
-                "%s open side=%s units=%s conf=%d mom=%.2fp trig=%.2fp sp=%.2fp tp=%.2fp sl=%.2fp bias=%s score=%.2f mult=%.2f res=%s",
+                "%s open side=%s units=%s conf=%d mom=%.2fp trig=%.2fp sp=%.2fp tp=%.2fp sl=%.2fp bias=%s score=%.2f bmult=%.2f lmult=%.2f ledge=%.3fp res=%s",
                 config.LOG_PREFIX,
                 signal.side,
                 units,
@@ -1126,6 +1206,12 @@ async def scalp_ping_5s_worker() -> None:
                 direction_bias.side if direction_bias is not None else "none",
                 _safe_float(getattr(direction_bias, "score", 0.0), 0.0),
                 bias_units_mult,
+                lookahead_units_mult,
+                (
+                    _safe_float(getattr(lookahead_decision, "edge_pips", 0.0), 0.0)
+                    if lookahead_decision is not None
+                    else 0.0
+                ),
                 result or "none",
             )
 
