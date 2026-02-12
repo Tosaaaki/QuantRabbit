@@ -60,6 +60,10 @@ try:
 except Exception:
     derive_pattern_signature = None  # type: ignore
 
+# Pattern gate (pattern_book-driven). Opt-in per strategy to avoid global enforcement.
+_MICRO_RANGEBREAK_PATTERN_GATE_OPT_IN = env_bool("MICRO_RANGEBREAK_PATTERN_GATE_OPT_IN", True)
+_MICRO_RANGEBREAK_PATTERN_GATE_ALLOW_GENERIC = env_bool("MICRO_RANGEBREAK_PATTERN_GATE_ALLOW_GENERIC", True)
+
 
 def _bb_float(value):
     try:
@@ -1153,6 +1157,11 @@ async def micro_multi_worker() -> None:
                 "range_reason": range_ctx.reason,
                 "range_mode": range_ctx.mode,
             }
+            base_tag = str(signal_tag or "").split("-", 1)[0]
+            if base_tag == "MicroRangeBreak":
+                entry_thesis["pattern_gate_opt_in"] = bool(_MICRO_RANGEBREAK_PATTERN_GATE_OPT_IN)
+                if _MICRO_RANGEBREAK_PATTERN_GATE_ALLOW_GENERIC:
+                    entry_thesis["pattern_gate_allow_generic"] = True
             if config.DYN_ALLOC_ENABLED and bool(dyn_profile.get("found")):
                 entry_thesis["dynamic_alloc"] = {
                     "strategy_key": dyn_profile.get("strategy_key"),
