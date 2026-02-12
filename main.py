@@ -812,6 +812,7 @@ WORKER_SERVICES = {
     "scalp_multi": "quant-scalp-multi.service",
     "scalp_multi_exit": "quant-scalp-multi-exit.service",
     "scalp_ping_5s": "quant-scalp-ping-5s.service",
+    "scalp_macd_rsi_div": "quant-scalp-macd-rsi-div.service",
     # Micro
     "micro_multi": "quant-micro-multi.service",
     "micro_multi_exit": "quant-micro-multi-exit.service",
