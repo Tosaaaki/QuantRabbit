@@ -189,6 +189,73 @@ def test_compute_trap_state_blocks_when_unrealized_not_negative(monkeypatch) -> 
     assert state.active is False
 
 
+def test_allow_signal_when_max_active_prefers_rebalance_side(monkeypatch) -> None:
+    monkeypatch.setenv("oanda_token", "dummy")
+    monkeypatch.setenv("oanda_account_id", "dummy")
+    monkeypatch.setenv("oanda_practice", "true")
+    from workers.scalp_ping_5s import worker
+
+    monkeypatch.setattr(worker.config, "MAX_ACTIVE_TRADES", 10)
+    monkeypatch.setattr(worker.config, "ALLOW_OPPOSITE_WHEN_MAX_ACTIVE", True)
+
+    assert (
+        worker._allow_signal_when_max_active(
+            side="short",
+            active_total=10,
+            active_long=10,
+            active_short=0,
+        )
+        is True
+    )
+    assert (
+        worker._allow_signal_when_max_active(
+            side="long",
+            active_total=10,
+            active_long=10,
+            active_short=0,
+        )
+        is False
+    )
+    assert (
+        worker._allow_signal_when_max_active(
+            side="long",
+            active_total=10,
+            active_long=5,
+            active_short=5,
+        )
+        is False
+    )
+    assert (
+        worker._allow_signal_when_max_active(
+            side="long",
+            active_total=9,
+            active_long=9,
+            active_short=0,
+        )
+        is True
+    )
+
+
+def test_allow_signal_when_max_active_respects_disable_flag(monkeypatch) -> None:
+    monkeypatch.setenv("oanda_token", "dummy")
+    monkeypatch.setenv("oanda_account_id", "dummy")
+    monkeypatch.setenv("oanda_practice", "true")
+    from workers.scalp_ping_5s import worker
+
+    monkeypatch.setattr(worker.config, "MAX_ACTIVE_TRADES", 10)
+    monkeypatch.setattr(worker.config, "ALLOW_OPPOSITE_WHEN_MAX_ACTIVE", False)
+
+    assert (
+        worker._allow_signal_when_max_active(
+            side="short",
+            active_total=10,
+            active_long=10,
+            active_short=0,
+        )
+        is False
+    )
+
+
 @pytest.mark.asyncio
 async def test_enforce_new_entry_time_stop_respects_policy_generation(monkeypatch) -> None:
     from workers.scalp_ping_5s import worker

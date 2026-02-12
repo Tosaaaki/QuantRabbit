@@ -726,6 +726,24 @@ def _strategy_trade_counts(pocket_info: dict, strategy_tag: str) -> tuple[int, i
     return total, long_count, short_count
 
 
+def _allow_signal_when_max_active(
+    *,
+    side: str,
+    active_total: int,
+    active_long: int,
+    active_short: int,
+) -> bool:
+    if active_total < config.MAX_ACTIVE_TRADES:
+        return True
+    if not config.ALLOW_OPPOSITE_WHEN_MAX_ACTIVE:
+        return False
+    if side == "long":
+        return active_short > active_long
+    if side == "short":
+        return active_long > active_short
+    return False
+
+
 def _compute_trap_state(positions: dict, *, mid_price: float) -> TrapState:
     if not isinstance(positions, dict):
         return TrapState(False, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0)
@@ -893,6 +911,7 @@ async def scalp_ping_5s_worker() -> None:
     last_trap_log_mono = 0.0
     last_density_topup_log_mono = 0.0
     last_keepalive_log_mono = 0.0
+    last_max_active_bypass_log_mono = 0.0
 
     try:
         while True:
@@ -1027,8 +1046,27 @@ async def scalp_ping_5s_worker() -> None:
                 pocket_info,
                 config.STRATEGY_TAG,
             )
-            if active_total >= config.MAX_ACTIVE_TRADES:
+            if not _allow_signal_when_max_active(
+                side=signal.side,
+                active_total=active_total,
+                active_long=active_long,
+                active_short=active_short,
+            ):
                 continue
+            if (
+                active_total >= config.MAX_ACTIVE_TRADES
+                and now_mono - last_max_active_bypass_log_mono >= 5.0
+            ):
+                LOG.info(
+                    "%s max_active bypass side=%s total=%d long=%d short=%d cap=%d",
+                    config.LOG_PREFIX,
+                    signal.side,
+                    active_total,
+                    active_long,
+                    active_short,
+                    config.MAX_ACTIVE_TRADES,
+                )
+                last_max_active_bypass_log_mono = now_mono
             if signal.side == "long" and active_long >= config.MAX_PER_DIRECTION:
                 continue
             if signal.side == "short" and active_short >= config.MAX_PER_DIRECTION:

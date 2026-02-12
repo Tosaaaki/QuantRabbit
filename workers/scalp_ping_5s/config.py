@@ -50,6 +50,10 @@ MAX_ACTIVE_TRADES: int = max(
 MAX_PER_DIRECTION: int = max(
     1, int(float(os.getenv("SCALP_PING_5S_MAX_PER_DIRECTION", "1")))
 )
+ALLOW_OPPOSITE_WHEN_MAX_ACTIVE: bool = _bool_env(
+    "SCALP_PING_5S_ALLOW_OPPOSITE_WHEN_MAX_ACTIVE",
+    True,
+)
 NO_HEDGE_ENTRY: bool = _bool_env("SCALP_PING_5S_NO_HEDGE_ENTRY", True)
 
 TRAP_BYPASS_NO_HEDGE: bool = _bool_env("SCALP_PING_5S_TRAP_BYPASS_NO_HEDGE", True)
