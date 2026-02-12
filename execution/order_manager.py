@@ -38,7 +38,7 @@ from utils.metrics_logger import log_metric
 from execution import strategy_guard, reentry_gate
 from execution.position_manager import PositionManager, agent_client_prefixes
 from execution.risk_guard import POCKET_MAX_RATIOS, MAX_LEVERAGE
-from workers.common import perf_guard, profit_guard, brain, forecast_gate
+from workers.common import perf_guard, profit_guard, brain, forecast_gate, pattern_gate
 from workers.common.quality_gate import current_regime
 from indicators.factor_cache import get_last_regime
 from utils import signal_bus
@@ -6415,6 +6415,131 @@ async def market_order(
                         "style": str(fc_decision.style or "n/a"),
                     },
                 )
+
+    # Pattern gate (pattern_book-driven block/scale; strategy worker opt-in)
+    if not reduce_only and pocket != "manual":
+        try:
+            pattern_decision = pattern_gate.decide(
+                strategy_tag=strategy_tag,
+                pocket=pocket,
+                side=side_label,
+                units=units,
+                entry_thesis=entry_thesis if isinstance(entry_thesis, dict) else None,
+                meta=meta if isinstance(meta, dict) else None,
+            )
+        except Exception as exc:
+            pattern_decision = None
+            logging.debug("[PATTERN_GATE] decision failed: %s", exc)
+        if pattern_decision is not None:
+            if isinstance(entry_thesis, dict):
+                entry_thesis = dict(entry_thesis)
+                entry_thesis["pattern_gate"] = pattern_decision.to_payload()
+            if not pattern_decision.allowed:
+                note = f"pattern_block:{pattern_decision.reason}"
+                _console_order_log(
+                    "OPEN_REJECT",
+                    pocket=pocket,
+                    strategy_tag=str(strategy_tag or "unknown"),
+                    side=side_label,
+                    units=units,
+                    sl_price=sl_price,
+                    tp_price=tp_price,
+                    client_order_id=client_order_id,
+                    note=note,
+                )
+                log_order(
+                    pocket=pocket,
+                    instrument=instrument,
+                    side=side_label,
+                    units=units,
+                    sl_price=sl_price,
+                    tp_price=tp_price,
+                    client_order_id=client_order_id,
+                    status="pattern_block",
+                    attempt=0,
+                    stage_index=stage_index,
+                    request_payload={
+                        "strategy_tag": strategy_tag,
+                        "meta": meta,
+                        "entry_thesis": entry_thesis,
+                        "pattern_gate": pattern_decision.to_payload(),
+                    },
+                )
+                log_metric(
+                    "order_pattern_block",
+                    1.0,
+                    tags={
+                        "pocket": pocket,
+                        "strategy": str(strategy_tag or "unknown"),
+                        "reason": pattern_decision.reason,
+                        "quality": pattern_decision.quality,
+                        "source": pattern_decision.source,
+                    },
+                )
+                return None
+
+            if pattern_decision.scale != 1.0:
+                scaled_units = int(round(abs(units) * pattern_decision.scale))
+                min_allowed = min_units_for_pocket(pocket)
+                if scaled_units < min_allowed:
+                    note = f"pattern_scale_below_min:{pattern_decision.reason}"
+                    _console_order_log(
+                        "OPEN_REJECT",
+                        pocket=pocket,
+                        strategy_tag=str(strategy_tag or "unknown"),
+                        side=side_label,
+                        units=units,
+                        sl_price=sl_price,
+                        tp_price=tp_price,
+                        client_order_id=client_order_id,
+                        note=note,
+                    )
+                    log_order(
+                        pocket=pocket,
+                        instrument=instrument,
+                        side=side_label,
+                        units=units,
+                        sl_price=sl_price,
+                        tp_price=tp_price,
+                        client_order_id=client_order_id,
+                        status="pattern_scale_below_min",
+                        attempt=0,
+                        stage_index=stage_index,
+                        request_payload={
+                            "strategy_tag": strategy_tag,
+                            "meta": meta,
+                            "entry_thesis": entry_thesis,
+                            "pattern_gate": pattern_decision.to_payload(),
+                            "scaled_units": scaled_units,
+                            "min_units": min_allowed,
+                        },
+                    )
+                    log_metric(
+                        "order_pattern_block",
+                        1.0,
+                        tags={
+                            "pocket": pocket,
+                            "strategy": str(strategy_tag or "unknown"),
+                            "reason": "scale_below_min",
+                            "quality": pattern_decision.quality,
+                            "source": pattern_decision.source,
+                        },
+                    )
+                    return None
+                if scaled_units > 0 and scaled_units != abs(units):
+                    sign = 1 if units > 0 else -1
+                    units = int(sign * scaled_units)
+                    log_metric(
+                        "order_pattern_scale",
+                        float(pattern_decision.scale),
+                        tags={
+                            "pocket": pocket,
+                            "strategy": str(strategy_tag or "unknown"),
+                            "reason": pattern_decision.reason,
+                            "quality": pattern_decision.quality,
+                            "source": pattern_decision.source,
+                        },
+                    )
 
     exec_cfg = None
     if isinstance(entry_thesis, dict):

@@ -2866,6 +2866,7 @@ async def scalp_ping_5s_worker() -> None:
 
             entry_thesis = {
                 "strategy_tag": config.STRATEGY_TAG,
+                "pattern_gate_opt_in": bool(config.PATTERN_GATE_OPT_IN),
                 "env_prefix": config.ENV_PREFIX,
                 "signal_window_sec": config.SIGNAL_WINDOW_SEC,
                 "window_sec": config.WINDOW_SEC,
