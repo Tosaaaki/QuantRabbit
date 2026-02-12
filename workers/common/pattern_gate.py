@@ -10,6 +10,10 @@ This gate consumes the auto-updated pattern book outputs and applies:
 Default behavior is conservative:
 - no entry_thesis or generic pattern id => no-op
 - insufficient samples => no-op
+
+Generic pattern_id override:
+- Some strategies may intentionally want to gate on a coarse (generic) pattern_id (e.g. direction-only),
+  but this is disabled by default. To opt in, set `pattern_gate_allow_generic=true` in entry_thesis/meta.
 """
 
 from __future__ import annotations
@@ -218,6 +222,18 @@ def _entry_opt_in(entry_thesis: Optional[dict], meta: Optional[dict]) -> bool:
                 return True
     if isinstance(meta, dict):
         for key in ("pattern_gate_opt_in", "use_pattern_gate", "pattern_gate_enabled"):
+            if bool(meta.get(key)):
+                return True
+    return False
+
+
+def _allow_generic(entry_thesis: Optional[dict], meta: Optional[dict]) -> bool:
+    if isinstance(entry_thesis, dict):
+        for key in ("pattern_gate_allow_generic", "pattern_gate_generic_ok", "allow_generic_pattern_id"):
+            if bool(entry_thesis.get(key)):
+                return True
+    if isinstance(meta, dict):
+        for key in ("pattern_gate_allow_generic", "pattern_gate_generic_ok", "allow_generic_pattern_id"):
             if bool(meta.get(key)):
                 return True
     return False
@@ -437,7 +453,8 @@ def decide(
         pocket=str(pocket or ""),
         strategy_tag_fallback=strategy_fallback,
     )
-    if not pattern_id or _is_generic_pattern_id(pattern_id):
+    allow_generic = _allow_generic(entry_thesis, meta)
+    if not pattern_id or (_is_generic_pattern_id(pattern_id) and not allow_generic):
         return None
 
     rows, drift_map, source = _load_cache()
