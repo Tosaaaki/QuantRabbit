@@ -14,8 +14,11 @@ Environment=SCALP_PING_5S_STRATEGY_TAG=scalp_ping_5s_live
 Environment=SCALP_PING_5S_NO_HEDGE_ENTRY=0
 Environment=SCALP_PING_5S_LOOP_INTERVAL_SEC=0.2
 Environment=SCALP_PING_5S_ENTRY_COOLDOWN_SEC=1.0
-Environment=SCALP_PING_5S_MAX_ACTIVE_TRADES=40
-Environment=SCALP_PING_5S_MAX_PER_DIRECTION=24
+Environment=SCALP_PING_5S_MAX_ACTIVE_TRADES=28
+Environment=SCALP_PING_5S_MAX_PER_DIRECTION=16
+Environment=SCALP_PING_5S_MIN_FREE_MARGIN_RATIO=0.12
+Environment=SCALP_PING_5S_BASE_ENTRY_UNITS=1200
+Environment=SCALP_PING_5S_MAX_UNITS=3500
 Environment=SCALP_PING_5S_MAX_SPREAD_PIPS=0.85
 Environment=SPREAD_GUARD_DISABLE=1
 Environment=SCALP_PING_5S_PERF_GUARD_MODE=warn
@@ -41,8 +44,8 @@ Environment=SCALP_PING_5S_TRAP_MIN_COMBINED_DD_PIPS=0.8
 EnvironmentFile=-/etc/quantrabbit.env
 EnvironmentFile=-/etc/quantrabbit/scalp_ping_5s.env
 # Keep entry capacity stable even when /etc env contains legacy duplicate keys.
-Environment=SCALP_PING_5S_MAX_ACTIVE_TRADES=40
-Environment=SCALP_PING_5S_MAX_PER_DIRECTION=24
+Environment=SCALP_PING_5S_MAX_ACTIVE_TRADES=28
+Environment=SCALP_PING_5S_MAX_PER_DIRECTION=16
 ExecStart=/home/tossaki/QuantRabbit/.venv/bin/python -m workers.scalp_ping_5s.worker
 Restart=always
 RestartSec=5
