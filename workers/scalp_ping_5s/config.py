@@ -203,11 +203,28 @@ SNAPSHOT_KEEPALIVE_MIN_SPAN_RATIO: float = max(
 FORCE_EXIT_MAX_HOLD_SEC: float = max(
     0.0, float(os.getenv("SCALP_PING_5S_FORCE_EXIT_MAX_HOLD_SEC", "0.0"))
 )
+FORCE_EXIT_MAX_FLOATING_LOSS_PIPS: float = max(
+    0.0, float(os.getenv("SCALP_PING_5S_FORCE_EXIT_MAX_FLOATING_LOSS_PIPS", "0.0"))
+)
+FORCE_EXIT_RECOVERY_WINDOW_SEC: float = max(
+    0.0, float(os.getenv("SCALP_PING_5S_FORCE_EXIT_RECOVERY_WINDOW_SEC", "0.0"))
+)
+FORCE_EXIT_RECOVERABLE_LOSS_PIPS: float = max(
+    0.0, float(os.getenv("SCALP_PING_5S_FORCE_EXIT_RECOVERABLE_LOSS_PIPS", "0.0"))
+)
 FORCE_EXIT_MAX_ACTIONS: int = max(
     1, int(float(os.getenv("SCALP_PING_5S_FORCE_EXIT_MAX_ACTIONS", "3")))
 )
 FORCE_EXIT_REASON: str = (
     os.getenv("SCALP_PING_5S_FORCE_EXIT_REASON", "time_stop").strip() or "time_stop"
+)
+FORCE_EXIT_MAX_FLOATING_LOSS_REASON: str = (
+    os.getenv("SCALP_PING_5S_FORCE_EXIT_MAX_FLOATING_LOSS_REASON", "max_floating_loss").strip()
+    or "max_floating_loss"
+)
+FORCE_EXIT_RECOVERY_REASON: str = (
+    os.getenv("SCALP_PING_5S_FORCE_EXIT_RECOVERY_REASON", "no_recovery").strip()
+    or "no_recovery"
 )
 FORCE_EXIT_REQUIRE_POLICY_GENERATION: bool = _bool_env(
     "SCALP_PING_5S_FORCE_EXIT_REQUIRE_POLICY_GENERATION",

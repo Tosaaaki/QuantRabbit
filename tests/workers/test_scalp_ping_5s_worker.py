@@ -167,8 +167,13 @@ async def test_enforce_new_entry_time_stop_respects_policy_generation(monkeypatc
 
     monkeypatch.setattr(worker.config, "STRATEGY_TAG", "scalp_ping_5s_live")
     monkeypatch.setattr(worker.config, "FORCE_EXIT_MAX_HOLD_SEC", 900.0)
+    monkeypatch.setattr(worker.config, "FORCE_EXIT_MAX_FLOATING_LOSS_PIPS", 0.0)
+    monkeypatch.setattr(worker.config, "FORCE_EXIT_RECOVERY_WINDOW_SEC", 0.0)
+    monkeypatch.setattr(worker.config, "FORCE_EXIT_RECOVERABLE_LOSS_PIPS", 0.0)
     monkeypatch.setattr(worker.config, "FORCE_EXIT_MAX_ACTIONS", 3)
     monkeypatch.setattr(worker.config, "FORCE_EXIT_REASON", "time_stop")
+    monkeypatch.setattr(worker.config, "FORCE_EXIT_MAX_FLOATING_LOSS_REASON", "max_floating_loss")
+    monkeypatch.setattr(worker.config, "FORCE_EXIT_RECOVERY_REASON", "no_recovery")
     monkeypatch.setattr(worker.config, "FORCE_EXIT_REQUIRE_POLICY_GENERATION", True)
     monkeypatch.setattr(worker.config, "FORCE_EXIT_POLICY_GENERATION", "2026-02-11-losscap-v1")
 
@@ -243,6 +248,147 @@ async def test_enforce_new_entry_time_stop_respects_policy_generation(monkeypatc
     assert calls[0][2] == "qr-new"
     assert calls[0][3] is True
     assert calls[0][4] == "time_stop"
+
+
+@pytest.mark.asyncio
+async def test_enforce_new_entry_time_stop_closes_no_recovery_loss(monkeypatch) -> None:
+    from workers.scalp_ping_5s import worker
+
+    monkeypatch.setattr(worker.config, "STRATEGY_TAG", "scalp_ping_5s_live")
+    monkeypatch.setattr(worker.config, "FORCE_EXIT_MAX_HOLD_SEC", 900.0)
+    monkeypatch.setattr(worker.config, "FORCE_EXIT_MAX_FLOATING_LOSS_PIPS", 0.0)
+    monkeypatch.setattr(worker.config, "FORCE_EXIT_RECOVERY_WINDOW_SEC", 180.0)
+    monkeypatch.setattr(worker.config, "FORCE_EXIT_RECOVERABLE_LOSS_PIPS", 1.5)
+    monkeypatch.setattr(worker.config, "FORCE_EXIT_MAX_ACTIONS", 3)
+    monkeypatch.setattr(worker.config, "FORCE_EXIT_REASON", "time_stop")
+    monkeypatch.setattr(worker.config, "FORCE_EXIT_MAX_FLOATING_LOSS_REASON", "max_floating_loss")
+    monkeypatch.setattr(worker.config, "FORCE_EXIT_RECOVERY_REASON", "no_recovery")
+    monkeypatch.setattr(worker.config, "FORCE_EXIT_REQUIRE_POLICY_GENERATION", True)
+    monkeypatch.setattr(worker.config, "FORCE_EXIT_POLICY_GENERATION", "2026-02-12-hold600-v2")
+
+    calls: list[tuple[str, int, str | None, bool, str | None, str | None]] = []
+
+    async def _fake_close_trade(
+        trade_id: str,
+        units: int | None = None,
+        client_order_id: str | None = None,
+        allow_negative: bool = False,
+        exit_reason: str | None = None,
+        env_prefix: str | None = None,
+    ) -> bool:
+        calls.append((trade_id, int(units or 0), client_order_id, allow_negative, exit_reason, env_prefix))
+        return True
+
+    monkeypatch.setattr(worker, "close_trade", _fake_close_trade)
+
+    now_utc = datetime.datetime(2026, 2, 12, 1, 0, 0, tzinfo=datetime.timezone.utc)
+    pocket_info = {
+        "open_trades": [
+            {
+                "trade_id": "recover-timeout",
+                "units": 1200,
+                "open_time": "2026-02-12T00:55:00+00:00",
+                "strategy_tag": "scalp_ping_5s_live",
+                "client_id": "qr-rec-timeout",
+                "unrealized_pl_pips": -2.1,
+                "entry_thesis": {
+                    "strategy_tag": "scalp_ping_5s_live",
+                    "policy_generation": "2026-02-12-hold600-v2",
+                },
+            },
+            {
+                "trade_id": "still-recovering",
+                "units": 1200,
+                "open_time": "2026-02-12T00:58:40+00:00",
+                "strategy_tag": "scalp_ping_5s_live",
+                "unrealized_pl_pips": -4.0,
+                "entry_thesis": {
+                    "strategy_tag": "scalp_ping_5s_live",
+                    "policy_generation": "2026-02-12-hold600-v2",
+                },
+            },
+            {
+                "trade_id": "small-loss",
+                "units": 1200,
+                "open_time": "2026-02-12T00:55:00+00:00",
+                "strategy_tag": "scalp_ping_5s_live",
+                "unrealized_pl_pips": -0.9,
+                "entry_thesis": {
+                    "strategy_tag": "scalp_ping_5s_live",
+                    "policy_generation": "2026-02-12-hold600-v2",
+                },
+            },
+        ]
+    }
+
+    closed = await worker._enforce_new_entry_time_stop(
+        pocket_info=pocket_info,
+        now_utc=now_utc,
+        logger=worker.LOG,
+    )
+    assert closed == 1
+    assert len(calls) == 1
+    assert calls[0][0] == "recover-timeout"
+    assert calls[0][4] == "no_recovery"
+
+
+@pytest.mark.asyncio
+async def test_enforce_new_entry_time_stop_closes_max_floating_loss(monkeypatch) -> None:
+    from workers.scalp_ping_5s import worker
+
+    monkeypatch.setattr(worker.config, "STRATEGY_TAG", "scalp_ping_5s_live")
+    monkeypatch.setattr(worker.config, "FORCE_EXIT_MAX_HOLD_SEC", 900.0)
+    monkeypatch.setattr(worker.config, "FORCE_EXIT_MAX_FLOATING_LOSS_PIPS", 3.0)
+    monkeypatch.setattr(worker.config, "FORCE_EXIT_RECOVERY_WINDOW_SEC", 180.0)
+    monkeypatch.setattr(worker.config, "FORCE_EXIT_RECOVERABLE_LOSS_PIPS", 1.5)
+    monkeypatch.setattr(worker.config, "FORCE_EXIT_MAX_ACTIONS", 3)
+    monkeypatch.setattr(worker.config, "FORCE_EXIT_REASON", "time_stop")
+    monkeypatch.setattr(worker.config, "FORCE_EXIT_MAX_FLOATING_LOSS_REASON", "max_floating_loss")
+    monkeypatch.setattr(worker.config, "FORCE_EXIT_RECOVERY_REASON", "no_recovery")
+    monkeypatch.setattr(worker.config, "FORCE_EXIT_REQUIRE_POLICY_GENERATION", True)
+    monkeypatch.setattr(worker.config, "FORCE_EXIT_POLICY_GENERATION", "2026-02-12-hold600-v2")
+
+    calls: list[tuple[str, int, str | None, bool, str | None, str | None]] = []
+
+    async def _fake_close_trade(
+        trade_id: str,
+        units: int | None = None,
+        client_order_id: str | None = None,
+        allow_negative: bool = False,
+        exit_reason: str | None = None,
+        env_prefix: str | None = None,
+    ) -> bool:
+        calls.append((trade_id, int(units or 0), client_order_id, allow_negative, exit_reason, env_prefix))
+        return True
+
+    monkeypatch.setattr(worker, "close_trade", _fake_close_trade)
+
+    now_utc = datetime.datetime(2026, 2, 12, 1, 0, 0, tzinfo=datetime.timezone.utc)
+    pocket_info = {
+        "open_trades": [
+            {
+                "trade_id": "hard-loss",
+                "units": 1000,
+                "open_time": "2026-02-12T00:59:20+00:00",
+                "strategy_tag": "scalp_ping_5s_live",
+                "unrealized_pl_pips": -3.5,
+                "entry_thesis": {
+                    "strategy_tag": "scalp_ping_5s_live",
+                    "policy_generation": "2026-02-12-hold600-v2",
+                },
+            }
+        ]
+    }
+
+    closed = await worker._enforce_new_entry_time_stop(
+        pocket_info=pocket_info,
+        now_utc=now_utc,
+        logger=worker.LOG,
+    )
+    assert closed == 1
+    assert len(calls) == 1
+    assert calls[0][0] == "hard-loss"
+    assert calls[0][4] == "max_floating_loss"
 
 
 def test_tick_density_uses_window_cutoff() -> None:

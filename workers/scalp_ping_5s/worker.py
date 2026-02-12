@@ -10,6 +10,7 @@ import asyncio
 import datetime
 import hashlib
 import logging
+import math
 import pathlib
 import sqlite3
 import time
@@ -210,6 +211,20 @@ def _trade_policy_generation(trade: dict) -> str:
     return str(thesis.get("policy_generation") or "").strip()
 
 
+def _trade_unrealized_pips(trade: dict) -> float:
+    direct = _safe_float(trade.get("unrealized_pl_pips"), float("nan"))
+    if not math.isnan(direct):
+        return direct
+    unrealized_pl = _safe_float(trade.get("unrealized_pl"), float("nan"))
+    if math.isnan(unrealized_pl):
+        return 0.0
+    units = abs(int(_safe_float(trade.get("units"), 0.0)))
+    pip_value = units * config.PIP_VALUE
+    if pip_value <= 0.0:
+        return 0.0
+    return unrealized_pl / pip_value
+
+
 async def _enforce_new_entry_time_stop(
     *,
     pocket_info: dict,
@@ -217,7 +232,16 @@ async def _enforce_new_entry_time_stop(
     logger: logging.Logger,
 ) -> int:
     max_hold_sec = float(config.FORCE_EXIT_MAX_HOLD_SEC)
-    if max_hold_sec <= 0.0 or not isinstance(pocket_info, dict):
+    hard_loss_pips = float(config.FORCE_EXIT_MAX_FLOATING_LOSS_PIPS)
+    recovery_window_sec = float(config.FORCE_EXIT_RECOVERY_WINDOW_SEC)
+    recoverable_loss_pips = float(config.FORCE_EXIT_RECOVERABLE_LOSS_PIPS)
+    if (
+        max_hold_sec <= 0.0
+        and hard_loss_pips <= 0.0
+        and (recovery_window_sec <= 0.0 or recoverable_loss_pips <= 0.0)
+    ):
+        return 0
+    if not isinstance(pocket_info, dict):
         return 0
 
     open_trades = pocket_info.get("open_trades")
@@ -249,7 +273,25 @@ async def _enforce_new_entry_time_stop(
         if opened_at is None:
             continue
         hold_sec = (now_utc - opened_at).total_seconds()
-        if hold_sec < max_hold_sec:
+        unrealized_pips = _trade_unrealized_pips(trade)
+
+        exit_reason: Optional[str] = None
+        trigger_label: Optional[str] = None
+        if hard_loss_pips > 0.0 and unrealized_pips <= -hard_loss_pips:
+            exit_reason = config.FORCE_EXIT_MAX_FLOATING_LOSS_REASON
+            trigger_label = "max_floating_loss"
+        elif (
+            recovery_window_sec > 0.0
+            and recoverable_loss_pips > 0.0
+            and hold_sec >= recovery_window_sec
+            and unrealized_pips <= -recoverable_loss_pips
+        ):
+            exit_reason = config.FORCE_EXIT_RECOVERY_REASON
+            trigger_label = "recovery_timeout"
+        elif max_hold_sec > 0.0 and hold_sec >= max_hold_sec:
+            exit_reason = config.FORCE_EXIT_REASON
+            trigger_label = "time_stop"
+        if not exit_reason:
             continue
 
         trade_id = str(trade.get("trade_id") or "").strip()
@@ -264,18 +306,20 @@ async def _enforce_new_entry_time_stop(
             units=-units,
             client_order_id=client_id,
             allow_negative=True,
-            exit_reason=config.FORCE_EXIT_REASON,
+            exit_reason=exit_reason,
             env_prefix=config.ENV_PREFIX,
         )
         if not closed:
             continue
         closed_count += 1
         logger.info(
-            "%s force_exit reason=%s trade=%s hold=%.0fs units=%s generation=%s",
+            "%s force_exit reason=%s trigger=%s trade=%s hold=%.0fs pnl=%.2fp units=%s generation=%s",
             config.LOG_PREFIX,
-            config.FORCE_EXIT_REASON,
+            exit_reason,
+            trigger_label or "-",
             trade_id,
             hold_sec,
+            unrealized_pips,
             units,
             generation or "-",
         )
