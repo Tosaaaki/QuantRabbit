@@ -224,6 +224,43 @@ MTF_REGIME_LOG_INTERVAL_SEC: float = max(
     1.0,
     float(os.getenv("SCALP_PING_5S_MTF_REGIME_LOG_INTERVAL_SEC", "8.0")),
 )
+HORIZON_BIAS_ENABLED: bool = _bool_env("SCALP_PING_5S_HORIZON_BIAS_ENABLED", True)
+HORIZON_NEUTRAL_SCORE: float = max(
+    0.05,
+    min(0.8, float(os.getenv("SCALP_PING_5S_HORIZON_NEUTRAL_SCORE", "0.14"))),
+)
+HORIZON_ALIGN_SCORE_MIN: float = max(
+    HORIZON_NEUTRAL_SCORE,
+    min(0.95, float(os.getenv("SCALP_PING_5S_HORIZON_ALIGN_SCORE_MIN", "0.22"))),
+)
+HORIZON_BLOCK_SCORE: float = max(
+    HORIZON_ALIGN_SCORE_MIN,
+    min(0.99, float(os.getenv("SCALP_PING_5S_HORIZON_BLOCK_SCORE", "0.44"))),
+)
+HORIZON_OPPOSITE_UNITS_MULT: float = max(
+    0.0,
+    min(1.0, float(os.getenv("SCALP_PING_5S_HORIZON_OPPOSITE_UNITS_MULT", "0.40"))),
+)
+HORIZON_ALIGN_BOOST_MAX: float = max(
+    0.0,
+    min(1.0, float(os.getenv("SCALP_PING_5S_HORIZON_ALIGN_BOOST_MAX", "0.32"))),
+)
+HORIZON_LONG_WEIGHT: float = max(
+    0.0, float(os.getenv("SCALP_PING_5S_HORIZON_LONG_WEIGHT", "0.42"))
+)
+HORIZON_MID_WEIGHT: float = max(
+    0.0, float(os.getenv("SCALP_PING_5S_HORIZON_MID_WEIGHT", "0.30"))
+)
+HORIZON_SHORT_WEIGHT: float = max(
+    0.0, float(os.getenv("SCALP_PING_5S_HORIZON_SHORT_WEIGHT", "0.18"))
+)
+HORIZON_MICRO_WEIGHT: float = max(
+    0.0, float(os.getenv("SCALP_PING_5S_HORIZON_MICRO_WEIGHT", "0.10"))
+)
+HORIZON_LOG_INTERVAL_SEC: float = max(
+    1.0,
+    float(os.getenv("SCALP_PING_5S_HORIZON_LOG_INTERVAL_SEC", "8.0")),
+)
 
 ENTRY_COOLDOWN_SEC: float = max(0.1, float(os.getenv("SCALP_PING_5S_ENTRY_COOLDOWN_SEC", "2.0")))
 MIN_ORDER_SPACING_SEC: float = max(

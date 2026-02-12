@@ -139,6 +139,21 @@ class FibPullback:
 
 
 @dataclass(slots=True)
+class HorizonBias:
+    long_side: str
+    long_score: float
+    mid_side: str
+    mid_score: float
+    short_side: str
+    short_score: float
+    micro_side: str
+    micro_score: float
+    composite_side: str
+    composite_score: float
+    agreement: int
+
+
+@dataclass(slots=True)
 class TrapState:
     active: bool
     long_units: float
@@ -1239,6 +1254,139 @@ def _apply_mtf_regime(signal: TickSignal, regime: Optional[MtfRegime]) -> tuple[
     return adjusted, float(max(0.0, units_mult)), gate
 
 
+def _score_to_side(score: float, neutral: float) -> str:
+    if score >= neutral:
+        return "long"
+    if score <= -neutral:
+        return "short"
+    return "neutral"
+
+
+def _tf_score_or_none(factors: dict, timeframe: str) -> Optional[float]:
+    tf = factors.get(timeframe) if isinstance(factors, dict) else None
+    if not isinstance(tf, dict) or not tf:
+        return None
+    return float(_tf_trend_score(tf))
+
+
+def _micro_horizon_score(signal: TickSignal) -> float:
+    side_sign = 1.0 if signal.side == "long" else -1.0
+    strength = _clamp(abs(signal.momentum_pips) / max(0.01, signal.trigger_pips), 0.0, 2.0)
+    imbalance_push = _clamp((signal.imbalance - 0.5) * 1.8, 0.0, 0.9)
+    mode_factor = 0.75 if signal.mode == "revert" else 1.0
+    score = side_sign * mode_factor * _clamp(0.20 + (strength * 0.34) + imbalance_push, 0.0, 1.0)
+    return float(_clamp(score, -1.0, 1.0))
+
+
+def _build_horizon_bias(signal: TickSignal, factors: dict) -> Optional[HorizonBias]:
+    if not config.HORIZON_BIAS_ENABLED:
+        return None
+    if not isinstance(factors, dict):
+        return None
+
+    short_score = _tf_score_or_none(factors, "M1")
+    mid_score = _tf_score_or_none(factors, "M5")
+    h1_score = _tf_score_or_none(factors, "H1")
+    h4_score = _tf_score_or_none(factors, "H4")
+    d1_score = _tf_score_or_none(factors, "D1")
+    micro_score = _micro_horizon_score(signal)
+
+    long_parts: list[tuple[float, float]] = []
+    if h1_score is not None:
+        long_parts.append((h1_score, 0.15))
+    if h4_score is not None:
+        long_parts.append((h4_score, 0.55))
+    if d1_score is not None:
+        long_parts.append((d1_score, 0.30))
+    long_score: Optional[float] = None
+    if long_parts:
+        wsum = sum(w for _, w in long_parts)
+        if wsum > 0.0:
+            long_score = sum(v * w for v, w in long_parts) / wsum
+
+    weighted: list[tuple[float, float]] = []
+    if long_score is not None and config.HORIZON_LONG_WEIGHT > 0.0:
+        weighted.append((long_score, config.HORIZON_LONG_WEIGHT))
+    if mid_score is not None and config.HORIZON_MID_WEIGHT > 0.0:
+        weighted.append((mid_score, config.HORIZON_MID_WEIGHT))
+    if short_score is not None and config.HORIZON_SHORT_WEIGHT > 0.0:
+        weighted.append((short_score, config.HORIZON_SHORT_WEIGHT))
+    if config.HORIZON_MICRO_WEIGHT > 0.0:
+        weighted.append((micro_score, config.HORIZON_MICRO_WEIGHT))
+    if not weighted:
+        return None
+
+    wsum = sum(w for _, w in weighted)
+    if wsum <= 0.0:
+        return None
+    composite_score = sum(v * w for v, w in weighted) / wsum
+    neutral = config.HORIZON_NEUTRAL_SCORE
+    composite_side = _score_to_side(composite_score, neutral)
+
+    long_side = _score_to_side(long_score if long_score is not None else 0.0, neutral)
+    mid_side = _score_to_side(mid_score if mid_score is not None else 0.0, neutral)
+    short_side = _score_to_side(short_score if short_score is not None else 0.0, neutral)
+    micro_side = _score_to_side(micro_score, neutral)
+
+    agreement = 0
+    if composite_side in {"long", "short"}:
+        for side in (long_side, mid_side, short_side, micro_side):
+            if side == composite_side:
+                agreement += 1
+
+    return HorizonBias(
+        long_side=long_side,
+        long_score=float(long_score or 0.0),
+        mid_side=mid_side,
+        mid_score=float(mid_score or 0.0),
+        short_side=short_side,
+        short_score=float(short_score or 0.0),
+        micro_side=micro_side,
+        micro_score=float(micro_score),
+        composite_side=composite_side,
+        composite_score=float(composite_score),
+        agreement=int(agreement),
+    )
+
+
+def _apply_horizon_bias(
+    signal: TickSignal,
+    horizon: Optional[HorizonBias],
+) -> tuple[Optional[TickSignal], float, str]:
+    if horizon is None or not config.HORIZON_BIAS_ENABLED:
+        return signal, 1.0, "horizon_unavailable"
+    if horizon.composite_side == "neutral":
+        return signal, 1.0, "horizon_neutral"
+
+    score_abs = abs(horizon.composite_score)
+    if signal.side != horizon.composite_side:
+        if score_abs >= config.HORIZON_BLOCK_SCORE:
+            return None, 0.0, "horizon_block_counter"
+        scale = max(0.0, min(1.0, config.HORIZON_OPPOSITE_UNITS_MULT))
+        if horizon.agreement >= 3:
+            scale *= 0.9
+        return signal, float(scale), "horizon_counter_scaled"
+
+    if score_abs < config.HORIZON_ALIGN_SCORE_MIN:
+        return signal, 1.0, "horizon_align_weak"
+
+    ratio = _clamp(
+        (score_abs - config.HORIZON_ALIGN_SCORE_MIN)
+        / max(0.05, 1.0 - config.HORIZON_ALIGN_SCORE_MIN),
+        0.0,
+        1.0,
+    )
+    agree_boost = min(0.22, max(0, horizon.agreement - 1) * 0.04) * ratio
+    units_mult = 1.0 + (config.HORIZON_ALIGN_BOOST_MAX * ratio) + agree_boost
+    adjusted = _retarget_signal(
+        signal,
+        side=signal.side,
+        mode=f"{signal.mode}_hz",
+        confidence_add=int(round(5.0 * ratio + max(0, horizon.agreement - 1))),
+    )
+    return adjusted, float(max(0.0, units_mult)), "horizon_align"
+
+
 def _directional_bias_scale(rows: Sequence[dict], side: str) -> tuple[float, dict[str, float]]:
     if not config.SIDE_BIAS_ENABLED:
         return 1.0, {"enabled": 0.0}
@@ -1664,6 +1812,7 @@ async def scalp_ping_5s_worker() -> None:
     last_max_active_bypass_log_mono = 0.0
     last_bias_log_mono = 0.0
     last_regime_log_mono = 0.0
+    last_horizon_log_mono = 0.0
     protected_trade_ids: set[str] = set()
     protected_seeded = False
 
@@ -1795,7 +1944,11 @@ async def scalp_ping_5s_worker() -> None:
                 continue
 
             now_mono = time.monotonic()
-            regime = _build_mtf_regime()
+            try:
+                factors = all_factors()
+            except Exception:
+                factors = {}
+            regime = _build_mtf_regime(factors=factors if isinstance(factors, dict) else None)
             signal, regime_units_mult, regime_gate = _apply_mtf_regime(signal, regime)
             if signal is None or regime_units_mult <= 0.0:
                 if now_mono - last_regime_log_mono >= config.MTF_REGIME_LOG_INTERVAL_SEC:
@@ -1816,6 +1969,31 @@ async def scalp_ping_5s_worker() -> None:
                     else:
                         LOG.info("%s mtf block gate=%s regime=none", config.LOG_PREFIX, regime_gate)
                     last_regime_log_mono = now_mono
+                continue
+            horizon = _build_horizon_bias(signal, factors if isinstance(factors, dict) else {})
+            signal, horizon_units_mult, horizon_gate = _apply_horizon_bias(signal, horizon)
+            if signal is None or horizon_units_mult <= 0.0:
+                if now_mono - last_horizon_log_mono >= config.HORIZON_LOG_INTERVAL_SEC:
+                    if horizon is not None:
+                        LOG.info(
+                            "%s horizon block gate=%s composite=%s(%.2f) agree=%d L/M/S/U=%s(%.2f)/%s(%.2f)/%s(%.2f)/%s(%.2f)",
+                            config.LOG_PREFIX,
+                            horizon_gate,
+                            horizon.composite_side,
+                            horizon.composite_score,
+                            horizon.agreement,
+                            horizon.long_side,
+                            horizon.long_score,
+                            horizon.mid_side,
+                            horizon.mid_score,
+                            horizon.short_side,
+                            horizon.short_score,
+                            horizon.micro_side,
+                            horizon.micro_score,
+                        )
+                    else:
+                        LOG.info("%s horizon block gate=%s horizon=none", config.LOG_PREFIX, horizon_gate)
+                    last_horizon_log_mono = now_mono
                 continue
 
             last_snapshot_fetch, density_topup = await _maybe_topup_micro_density(
@@ -1952,6 +2130,7 @@ async def scalp_ping_5s_worker() -> None:
             )
             units = int(round(base_units * conf_mult * strength_mult * bias_units_mult))
             units = int(round(units * regime_units_mult))
+            units = int(round(units * horizon_units_mult))
 
             lot = allowed_lot(
                 nav,
@@ -2044,6 +2223,8 @@ async def scalp_ping_5s_worker() -> None:
                 "entry_mode": "market_ping_5s",
                 "mtf_regime_gate": regime_gate,
                 "mtf_regime_units_mult": round(float(regime_units_mult), 3),
+                "horizon_gate": horizon_gate,
+                "horizon_units_mult": round(float(horizon_units_mult), 3),
                 "trap_active": bool(trap_state.active),
                 "entry_ref": round(entry_price, 3),
                 "execution": {
@@ -2081,6 +2262,22 @@ async def scalp_ping_5s_worker() -> None:
                         "mtf_regime_atr_m5": round(regime.atr_m5, 3),
                     }
                 )
+            if horizon is not None:
+                entry_thesis.update(
+                    {
+                        "horizon_composite_side": horizon.composite_side,
+                        "horizon_composite_score": round(horizon.composite_score, 4),
+                        "horizon_agreement": int(horizon.agreement),
+                        "horizon_long_side": horizon.long_side,
+                        "horizon_long_score": round(horizon.long_score, 4),
+                        "horizon_mid_side": horizon.mid_side,
+                        "horizon_mid_score": round(horizon.mid_score, 4),
+                        "horizon_short_side": horizon.short_side,
+                        "horizon_short_score": round(horizon.short_score, 4),
+                        "horizon_micro_side": horizon.micro_side,
+                        "horizon_micro_score": round(horizon.micro_score, 4),
+                    }
+                )
             if config.FORCE_EXIT_POLICY_GENERATION:
                 entry_thesis["policy_generation"] = config.FORCE_EXIT_POLICY_GENERATION
             if trap_state.active:
@@ -2112,7 +2309,7 @@ async def scalp_ping_5s_worker() -> None:
             rate_limiter.record(now_mono)
 
             LOG.info(
-                "%s open mode=%s side=%s units=%s conf=%d mom=%.2fp trig=%.2fp sp=%.2fp tp=%.2fp sl=%.2fp mode_score=%.2f mom_score=%.2f rev_score=%.2f side_bias=%.2f drift=%.2fp mtf=%s/%.2f/%.2f mtf_mult=%.2f dir_bias=%s dir_score=%.2f dir_mult=%.2f tp_mult=%.2f tp_avg=%.0fs res=%s",
+                "%s open mode=%s side=%s units=%s conf=%d mom=%.2fp trig=%.2fp sp=%.2fp tp=%.2fp sl=%.2fp mode_score=%.2f mom_score=%.2f rev_score=%.2f side_bias=%.2f drift=%.2fp mtf=%s/%.2f/%.2f mtf_mult=%.2f hz=%s/%.2f/%.2f dir_bias=%s dir_score=%.2f dir_mult=%.2f tp_mult=%.2f tp_avg=%.0fs res=%s",
                 config.LOG_PREFIX,
                 signal.mode,
                 signal.side,
@@ -2132,6 +2329,9 @@ async def scalp_ping_5s_worker() -> None:
                 (_safe_float(regime.trend_score, 0.0) if regime is not None else 0.0),
                 (_safe_float(regime.heat_score, 0.0) if regime is not None else 0.0),
                 regime_units_mult,
+                (horizon.composite_side if horizon is not None else "none"),
+                (_safe_float(horizon.composite_score, 0.0) if horizon is not None else 0.0),
+                horizon_units_mult,
                 direction_bias.side if direction_bias is not None else "none",
                 _safe_float(getattr(direction_bias, "score", 0.0), 0.0),
                 bias_units_mult,
