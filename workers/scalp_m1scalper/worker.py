@@ -612,6 +612,24 @@ async def scalp_m1_worker() -> None:
 
         balance = float(snap.balance or snap.nav or 0.0)
         free_ratio = float(snap.free_margin_ratio or 0.0) if snap.free_margin_ratio is not None else 0.0
+        margin_usage_ratio = float(snap.margin_used or 0.0) / max(1.0, equity)
+        if (
+            free_ratio < config.MIN_FREE_MARGIN_RATIO_HARD
+            or margin_usage_ratio > config.MARGIN_USAGE_HARD
+        ):
+            now_mono = time.monotonic()
+            if now_mono - last_block_log > 30.0:
+                LOG.warning(
+                    "%s margin_hard_block tag=%s free_ratio=%.3f(min=%.3f) usage=%.3f(max=%.3f)",
+                    config.LOG_PREFIX,
+                    signal_tag,
+                    free_ratio,
+                    config.MIN_FREE_MARGIN_RATIO_HARD,
+                    margin_usage_ratio,
+                    config.MARGIN_USAGE_HARD,
+                )
+                last_block_log = now_mono
+            continue
         try:
             atr_pips = float(fac_m1.get("atr_pips") or 0.0)
         except Exception:
