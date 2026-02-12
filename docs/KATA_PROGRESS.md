@@ -33,10 +33,11 @@ scripts/vm.sh -p quantrabbit -z asia-northeast1-a -m fx-trader-vm -t exec -- \
 ```
 
 ### Pattern Gate opt-in 状況
-コード上の opt-in 実装:
-- `workers/scalp_ping_5s/worker.py` が `entry_thesis["pattern_gate_opt_in"]=...` を付与
-- 現時点ではこれ以外のワーカーは opt-in していない
-  - 追加予定: `workers/scalp_m1scalper/worker.py`（PR: `codex/patterngate-m1scalper-optin`）
+コード上の opt-in 実装（main）:
+- `scalp_ping_5s`: `workers/scalp_ping_5s/worker.py`
+- `scalp_m1scalper`: `workers/scalp_m1scalper/worker.py`
+- `TickImbalance`（scalp_precision）: `workers/scalp_precision/worker.py`（必要なら `pattern_gate_allow_generic` も付与）
+- `MicroRangeBreak`（micro_multi）: `workers/micro_multistrat/worker.py`（必要なら `pattern_gate_allow_generic` も付与）
 
 確認コマンド（リポジトリ）:
 ```bash
@@ -50,8 +51,9 @@ deep のサンプル厚みが大きい順（例）:
 - `scalp_ping_5s_live`: trades_sum=1576（patterns=79, ge30=14, ge90=4）
 
 補足:
-- Pattern Gate は “情報量ゼロの pattern_id（sg/mtf/hz/ex/rg/pt が全部 `na`）” を generic とみなし no-op する。
-- そのため `TickImbalance` のように型が `long/short` しか分岐していない戦略は、opt-in しても gate が効かない（分割軸の追加が必要）。
+- Pattern Gate は “情報量ゼロの pattern_id（sg/mtf/hz/ex/rg/pt が全部 `na`）” を generic とみなし **デフォルト no-op** にする。
+- ただし opt-in 戦略のみ `pattern_gate_allow_generic=true` を付けることで、generic pattern_id でも gate を評価できる（粗い型で block/scale したい戦略向け）。
+- `TickImbalance` は direction-only の deep サンプルが厚いため、`pattern_gate_allow_generic` を使う方針。
 
 確認コマンド（VM）:
 ```bash
@@ -107,11 +109,12 @@ PY"
 2. `avoid/weak` を「回避・縮小」する用途を優先して継続運用（ブーストは慎重）。
 3. `entry_range_bucket` の導入は “移行計画あり” で後段に回す（必要なら「旧 `pattern_id` 参照のフォールバック」など、ブロック消失を避ける手当を先に入れる）。
 
-### P1: 他戦略への kata 展開（サンプル厚い順）
-候補（deep の trades_sum が大きい順）:
-1. `M1Scalper`
-2. `TickImbalance`
-3. `scalp_ping_5s_live`（継続で厚くする）
+### P1: 他戦略への kata 展開（稼働中 + サンプル厚い順）
+候補（deep の trades_sum が大きい順、かつ稼働中ユニット優先）:
+1. `MicroRangeBreak`（micro_multi）
+2. `TickImbalance`（scalp_precision）
+3. `M1Scalper`
+4. `scalp_ping_5s_live`（継続で厚くする）
 
 各戦略でやること:
 - `entry_thesis` の設計（低カーディナリティで分割軸を決める）
@@ -126,10 +129,9 @@ PY"
 - `rg:na` の原因は「`section_axis` 欠損」ではなく「古いトレードの `entry_thesis` に `entry_ref` が入っていない」ケースがあることを確認（`trades.db` サンプル点検）。
 - 方針決定: `pattern_id` を急に変えず、まずは `avoid/weak` の回避・縮小に効かせる（P0）。
 
-追記（同日、VM再点検）:
-- VM `logs/trades.db` の直近クローズ順で `scalp_ping_5s_live` が継続して増加していることを確認（last_close: 2026-02-12T12:12:15Z）。
-- `M1Scalper` は total=3435 のうち informative=1168 / generic=2267（generic は gate が no-op）。
-  - 直近（2026-02-09 以降）は 7 trades 全て informative（generic 0）。
-- 次の展開先は `M1Scalper` を優先（dedicated worker + informative が十分にある）。
-  - opt-in PR: `codex/patterngate-m1scalper-optin`
-  - 詳細ドキュメント PR: `codex/kata-scalp-m1scalper-doc`
+追記（同日、main/VM ロールアウト）:
+- `scalp_m1scalper` opt-in + docs 追加: `docs/KATA_SCALP_M1SCALPER.md`（commit: `847d6463`） / `workers/scalp_m1scalper/worker.py`（commit: `39c611ae`） / env例（commit: `959628b8`）
+- generic pattern_id の opt-in ゲート許可: `workers/common/pattern_gate.py`（commit: `ab61d00f`）
+- `TickImbalance` opt-in（generic許可）: `workers/scalp_precision/worker.py`（commit: `948752cb`）
+- `MicroRangeBreak` opt-in（generic許可）+ docs 追加: `workers/micro_multistrat/worker.py`（commit: `61b0a19d`） / `docs/KATA_MICRO_RANGEBREAK.md`（commit: `43ac2f86`） / `AGENTS.md` 動線（commit: `3f605189`） / env例（commit: `710fcab1`）
+- VM状況（2026-02-12）: TickImbalance は `reentry_block` が強く Pattern Gate まで届いていない（`logs/orders.db`）。`scalp_ping_5s` は pattern_id が細かく分岐するため、deep に存在しない新pattern_idでは gate が no-op になる（`logs/patterns.db` 側に row が出るまで None）。
