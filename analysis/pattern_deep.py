@@ -206,7 +206,8 @@ def _compute_pattern_scores(
     aggregate = aggregate.sort_values(
         by=["robust_score", "shrink_avg_pips", "trades"],
         ascending=[False, False, False],
-    ).reset_index(drop=True)
+    )
+    aggregate = aggregate.drop_duplicates(subset=["pattern_id"], keep="first").reset_index(drop=True)
     aggregate["score_rank"] = np.arange(1, len(aggregate) + 1, dtype=int)
 
     by_pattern = {
