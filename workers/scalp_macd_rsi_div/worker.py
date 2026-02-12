@@ -207,6 +207,7 @@ async def scalp_macd_rsi_div_worker() -> None:
     short_arm_until = 0.0
     last_block_log_mono = 0.0
     last_spread_log_mono = 0.0
+    last_gate_log_mono = 0.0
 
     try:
         while True:
@@ -256,14 +257,40 @@ async def scalp_macd_rsi_div_worker() -> None:
             range_score = _safe_float(range_ctx.score, 0.0)
             range_active = bool(range_ctx.active)
             if config.REQUIRE_RANGE_ACTIVE and not range_active:
+                if now_mono - last_gate_log_mono > 60.0:
+                    LOG.info(
+                        "%s gate_block range_active_required range_active=%s score=%.3f min=%.3f",
+                        config.LOG_PREFIX,
+                        range_active,
+                        range_score,
+                        config.RANGE_MIN_SCORE,
+                    )
+                    last_gate_log_mono = now_mono
                 prev_rsi = rsi
                 continue
             if range_score < config.RANGE_MIN_SCORE:
+                if now_mono - last_gate_log_mono > 60.0:
+                    LOG.info(
+                        "%s gate_block range_score score=%.3f min=%.3f mode=%s",
+                        config.LOG_PREFIX,
+                        range_score,
+                        config.RANGE_MIN_SCORE,
+                        str(range_ctx.mode or "-"),
+                    )
+                    last_gate_log_mono = now_mono
                 prev_rsi = rsi
                 continue
 
             adx = _safe_float(fac_m1.get("adx"), 0.0)
             if adx > config.MAX_ADX:
+                if now_mono - last_gate_log_mono > 60.0:
+                    LOG.info(
+                        "%s gate_block adx adx=%.2f max=%.2f",
+                        config.LOG_PREFIX,
+                        adx,
+                        config.MAX_ADX,
+                    )
+                    last_gate_log_mono = now_mono
                 prev_rsi = rsi
                 continue
 
@@ -286,6 +313,20 @@ async def scalp_macd_rsi_div_worker() -> None:
                 div_age_bars=div_age_bars,
             )
             if not side:
+                if now_mono - last_gate_log_mono > 60.0:
+                    LOG.info(
+                        "%s gate_wait signal prev_rsi=%.2f rsi=%.2f long_armed=%s short_armed=%s div_kind=%s div_score=%.3f div_strength=%.3f div_age=%.1f",
+                        config.LOG_PREFIX,
+                        prev_rsi if prev_rsi is not None else -1.0,
+                        rsi,
+                        long_arm_until > now_mono,
+                        short_arm_until > now_mono,
+                        div_kind,
+                        div_score,
+                        div_strength,
+                        div_age_bars,
+                    )
+                    last_gate_log_mono = now_mono
                 prev_rsi = rsi
                 continue
 
