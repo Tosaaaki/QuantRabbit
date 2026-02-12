@@ -83,6 +83,10 @@ def _mask_value(value: str, *, head: int = 4, tail: int = 2) -> str:
 @dataclass(slots=True)
 class TickSignal:
     side: str
+    mode: str
+    mode_score: float
+    momentum_score: float
+    revert_score: float
     confidence: int
     momentum_pips: float
     trigger_pips: float
@@ -520,6 +524,22 @@ async def _maybe_topup_micro_density(
     }
 
 
+def _tail_flow_ratio(mids: Sequence[float], *, want_up: bool, lookback: int) -> float:
+    if len(mids) < 2:
+        return 0.0
+    start = max(1, len(mids) - max(2, int(lookback)))
+    up = 0
+    down = 0
+    for i in range(start, len(mids)):
+        diff = mids[i] - mids[i - 1]
+        if diff > 0.0:
+            up += 1
+        elif diff < 0.0:
+            down += 1
+    directional = max(1, up + down)
+    return (up / directional) if want_up else (down / directional)
+
+
 def _build_tick_signal(rows: Sequence[dict], spread_pips: float) -> Optional[TickSignal]:
     if len(rows) < config.MIN_TICKS:
         return None
@@ -581,35 +601,162 @@ def _build_tick_signal(rows: Sequence[dict], spread_pips: float) -> Optional[Tic
         spread_pips * config.MOMENTUM_SPREAD_MULT,
     )
 
-    side: Optional[str] = None
+    side_momentum: Optional[str] = None
+    momentum_score = 0.0
     if (
         momentum_pips >= trigger_pips
         and imbalance >= config.IMBALANCE_MIN
         and tick_rate >= config.MIN_TICK_RATE
     ):
-        side = "long"
+        side_momentum = "long"
     elif (
         momentum_pips <= -trigger_pips
         and imbalance >= config.IMBALANCE_MIN
         and tick_rate >= config.MIN_TICK_RATE
     ):
-        side = "short"
+        side_momentum = "short"
+
+    strength = abs(momentum_pips) / max(0.01, trigger_pips)
+    if side_momentum is not None:
+        momentum_score = (
+            strength
+            + max(0.0, (imbalance - 0.5) * 3.2)
+            + min(2.0, tick_rate / max(0.1, config.MIN_TICK_RATE)) * 0.35
+        )
+
+    side_revert: Optional[str] = None
+    revert_score = 0.0
+    revert_momentum_pips = 0.0
+    revert_trigger_pips = max(0.05, config.REVERT_BOUNCE_MIN_PIPS)
+    if config.REVERT_ENABLED:
+        revert_cutoff = latest_epoch - config.REVERT_WINDOW_SEC
+        revert_rows = [r for r in rows if _safe_float(r.get("epoch"), 0.0) >= revert_cutoff]
+        if len(revert_rows) >= config.REVERT_MIN_TICKS:
+            mids_revert: list[float] = []
+            epochs_revert: list[float] = []
+            fallback_revert_mid = 0.0
+            for row in revert_rows:
+                _, _, mid = _quotes_from_row(row, fallback_mid=fallback_revert_mid)
+                if mid <= 0.0:
+                    continue
+                epoch = _safe_float(row.get("epoch"), 0.0)
+                if epoch <= 0.0:
+                    continue
+                mids_revert.append(mid)
+                epochs_revert.append(epoch)
+                fallback_revert_mid = mid
+
+            if len(mids_revert) >= config.REVERT_MIN_TICKS:
+                span_revert_sec = max(0.001, epochs_revert[-1] - epochs_revert[0])
+                tick_rate_revert = max(0.0, (len(mids_revert) - 1) / span_revert_sec)
+                range_revert_pips = (max(mids_revert) - min(mids_revert)) / config.PIP_VALUE
+                if (
+                    range_revert_pips >= config.REVERT_RANGE_MIN_PIPS
+                    and tick_rate_revert >= config.REVERT_MIN_TICK_RATE
+                ):
+                    short_cutoff = latest_epoch - config.REVERT_SHORT_WINDOW_SEC
+                    mids_short = [
+                        mids_revert[idx]
+                        for idx, ep in enumerate(epochs_revert)
+                        if ep >= short_cutoff
+                    ]
+                    if len(mids_short) >= 2:
+                        long_leg_pips = (mids_revert[-1] - mids_revert[0]) / config.PIP_VALUE
+                        short_leg_pips = (mids_short[-1] - mids_short[0]) / config.PIP_VALUE
+                        down_flow_ratio = _tail_flow_ratio(
+                            mids_revert,
+                            want_up=False,
+                            lookback=config.REVERT_CONFIRM_TICKS,
+                        )
+                        up_flow_ratio = _tail_flow_ratio(
+                            mids_revert,
+                            want_up=True,
+                            lookback=config.REVERT_CONFIRM_TICKS,
+                        )
+
+                        short_ok = (
+                            long_leg_pips >= config.REVERT_SWEEP_MIN_PIPS
+                            and short_leg_pips <= -config.REVERT_BOUNCE_MIN_PIPS
+                            and down_flow_ratio >= config.REVERT_CONFIRM_RATIO_MIN
+                        )
+                        long_ok = (
+                            long_leg_pips <= -config.REVERT_SWEEP_MIN_PIPS
+                            and short_leg_pips >= config.REVERT_BOUNCE_MIN_PIPS
+                            and up_flow_ratio >= config.REVERT_CONFIRM_RATIO_MIN
+                        )
+
+                        short_score = 0.0
+                        long_score = 0.0
+                        if short_ok:
+                            short_score = (
+                                abs(long_leg_pips) / max(0.1, config.REVERT_SWEEP_MIN_PIPS)
+                                + abs(short_leg_pips) / max(0.05, config.REVERT_BOUNCE_MIN_PIPS)
+                                + (range_revert_pips / max(0.1, config.REVERT_RANGE_MIN_PIPS)) * 0.45
+                            )
+                        if long_ok:
+                            long_score = (
+                                abs(long_leg_pips) / max(0.1, config.REVERT_SWEEP_MIN_PIPS)
+                                + abs(short_leg_pips) / max(0.05, config.REVERT_BOUNCE_MIN_PIPS)
+                                + (range_revert_pips / max(0.1, config.REVERT_RANGE_MIN_PIPS)) * 0.45
+                            )
+
+                        if short_score > 0.0 or long_score > 0.0:
+                            if long_score >= short_score:
+                                side_revert = "long"
+                                revert_score = float(long_score)
+                            else:
+                                side_revert = "short"
+                                revert_score = float(short_score)
+                            revert_momentum_pips = short_leg_pips
+                            revert_trigger_pips = max(
+                                0.05,
+                                config.REVERT_BOUNCE_MIN_PIPS,
+                                spread_pips * 0.6,
+                            )
+
+    side: Optional[str] = None
+    mode = "momentum"
+    mode_score = momentum_score
+    selected_momentum_pips = momentum_pips
+    selected_trigger_pips = trigger_pips
+    if side_momentum and side_revert:
+        if revert_score >= momentum_score * config.MODE_SWITCH_REVERT_DOMINANCE:
+            side = side_revert
+            mode = "revert"
+            mode_score = revert_score
+            selected_momentum_pips = revert_momentum_pips
+            selected_trigger_pips = revert_trigger_pips
+        else:
+            side = side_momentum
+    elif side_momentum:
+        side = side_momentum
+    elif side_revert:
+        side = side_revert
+        mode = "revert"
+        mode_score = revert_score
+        selected_momentum_pips = revert_momentum_pips
+        selected_trigger_pips = revert_trigger_pips
 
     if side is None:
         return None
 
-    strength = abs(momentum_pips) / max(0.01, trigger_pips)
-    confidence = config.CONFIDENCE_FLOOR
-    confidence += int(min(22.0, strength * 8.0))
+    selected_strength = abs(selected_momentum_pips) / max(0.01, selected_trigger_pips)
+    confidence = config.CONFIDENCE_FLOOR + 2 if mode == "revert" else config.CONFIDENCE_FLOOR
+    confidence += int(min(22.0, selected_strength * 8.0))
     confidence += int(min(10.0, max(0.0, (imbalance - 0.5) * 25.0)))
     confidence += int(min(8.0, tick_rate))
+    confidence += int(min(6.0, mode_score * 1.2))
     confidence = max(config.CONFIDENCE_FLOOR, min(config.CONFIDENCE_CEIL, confidence))
 
     return TickSignal(
         side=side,
+        mode=mode,
+        mode_score=float(mode_score),
+        momentum_score=float(momentum_score),
+        revert_score=float(revert_score),
         confidence=int(confidence),
-        momentum_pips=momentum_pips,
-        trigger_pips=trigger_pips,
+        momentum_pips=float(selected_momentum_pips),
+        trigger_pips=float(selected_trigger_pips),
         imbalance=imbalance,
         tick_rate=tick_rate,
         span_sec=span_sec,
@@ -759,7 +906,12 @@ def _build_direction_bias(rows: Sequence[dict], spread_pips: float) -> Optional[
     )
 
 
-def _direction_units_multiplier(signal_side: str, bias: Optional[DirectionBias]) -> tuple[float, str]:
+def _direction_units_multiplier(
+    signal_side: str,
+    bias: Optional[DirectionBias],
+    *,
+    signal_mode: str = "momentum",
+) -> tuple[float, str]:
     if not config.DIRECTION_BIAS_ENABLED or bias is None:
         return 1.0, "disabled"
     if bias.side == "neutral":
@@ -767,6 +919,10 @@ def _direction_units_multiplier(signal_side: str, bias: Optional[DirectionBias])
 
     score_abs = abs(_safe_float(bias.score, 0.0))
     if signal_side != bias.side:
+        if signal_mode == "revert":
+            if score_abs >= config.REVERT_DIRECTION_HARD_BLOCK_SCORE:
+                return 0.0, "revert_opposite_block"
+            return config.REVERT_DIRECTION_OPPOSITE_UNITS_MULT, "revert_opposite_scale"
         if score_abs >= config.DIRECTION_BIAS_BLOCK_SCORE:
             return 0.0, "opposite_block"
         return config.DIRECTION_BIAS_OPPOSITE_UNITS_MULT, "opposite_scale"
@@ -777,6 +933,8 @@ def _direction_units_multiplier(signal_side: str, bias: Optional[DirectionBias])
     span = max(0.01, 1.0 - config.DIRECTION_BIAS_ALIGN_SCORE_MIN)
     ratio = _clamp((score_abs - config.DIRECTION_BIAS_ALIGN_SCORE_MIN) / span, 0.0, 1.0)
     boost = config.DIRECTION_BIAS_ALIGN_UNITS_BOOST_MAX * ratio
+    if signal_mode == "revert":
+        boost *= 0.35
     return 1.0 + boost, "align_boost"
 
 
@@ -1185,7 +1343,11 @@ async def scalp_ping_5s_worker() -> None:
                 last_density_topup_log_mono = now_mono
 
             direction_bias = _build_direction_bias(ticks, spread_pips=signal.spread_pips)
-            bias_units_mult, bias_gate = _direction_units_multiplier(signal.side, direction_bias)
+            bias_units_mult, bias_gate = _direction_units_multiplier(
+                signal.side,
+                direction_bias,
+                signal_mode=signal.mode,
+            )
             if bias_units_mult <= 0.0:
                 if now_mono - last_bias_log_mono >= config.DIRECTION_BIAS_LOG_INTERVAL_SEC:
                     score = _safe_float(getattr(direction_bias, "score", 0.0), 0.0)
@@ -1312,6 +1474,15 @@ async def scalp_ping_5s_worker() -> None:
             bias_scale, bias_meta = _directional_bias_scale(ticks, signal.side)
             if bias_scale <= 0.0:
                 continue
+            if signal.mode == "revert":
+                raw_side_bias = float(bias_scale)
+                weight = _clamp(config.REVERT_SIDE_BIAS_PENALTY_WEIGHT, 0.0, 1.0)
+                bias_scale = max(
+                    config.REVERT_SIDE_BIAS_FLOOR,
+                    1.0 - (1.0 - raw_side_bias) * weight,
+                )
+                bias_meta["raw_scale"] = raw_side_bias
+                bias_meta["mode_adjusted_scale"] = float(bias_scale)
             units = int(round(units * bias_scale))
             if units < config.MIN_UNITS:
                 continue
@@ -1359,6 +1530,10 @@ async def scalp_ping_5s_worker() -> None:
                 "confidence": int(signal.confidence),
                 "tp_pips": round(tp_pips, 3),
                 "sl_pips": round(sl_pips, 3),
+                "signal_mode": signal.mode,
+                "signal_mode_score": round(signal.mode_score, 3),
+                "signal_momentum_score": round(signal.momentum_score, 3),
+                "signal_revert_score": round(signal.revert_score, 3),
                 "tp_time_mult": round(tp_profile.multiplier, 3),
                 "tp_time_avg_sec": (
                     round(tp_profile.avg_tp_sec, 1) if tp_profile.avg_tp_sec > 0.0 else None
@@ -1369,6 +1544,7 @@ async def scalp_ping_5s_worker() -> None:
                 "side_bias_drift_pips": round(float(_safe_float(bias_meta.get("drift_pips"), 0.0)), 3),
                 "side_bias_aligned_pips": round(float(_safe_float(bias_meta.get("aligned_pips"), 0.0)), 3),
                 "side_bias_contra_pips": round(float(_safe_float(bias_meta.get("contra_pips"), 0.0)), 3),
+                "side_bias_mode_adjusted_scale": round(float(_safe_float(bias_meta.get("mode_adjusted_scale"), bias_scale)), 3),
                 "entry_mode": "market_ping_5s",
                 "trap_active": bool(trap_state.active),
                 "entry_ref": round(entry_price, 3),
@@ -1425,8 +1601,9 @@ async def scalp_ping_5s_worker() -> None:
             rate_limiter.record(now_mono)
 
             LOG.info(
-                "%s open side=%s units=%s conf=%d mom=%.2fp trig=%.2fp sp=%.2fp tp=%.2fp sl=%.2fp side_bias=%.2f drift=%.2fp dir_bias=%s dir_score=%.2f dir_mult=%.2f tp_mult=%.2f tp_avg=%.0fs res=%s",
+                "%s open mode=%s side=%s units=%s conf=%d mom=%.2fp trig=%.2fp sp=%.2fp tp=%.2fp sl=%.2fp mode_score=%.2f mom_score=%.2f rev_score=%.2f side_bias=%.2f drift=%.2fp dir_bias=%s dir_score=%.2f dir_mult=%.2f tp_mult=%.2f tp_avg=%.0fs res=%s",
                 config.LOG_PREFIX,
+                signal.mode,
                 signal.side,
                 units,
                 signal.confidence,
@@ -1435,6 +1612,9 @@ async def scalp_ping_5s_worker() -> None:
                 signal.spread_pips,
                 tp_pips,
                 sl_pips,
+                signal.mode_score,
+                signal.momentum_score,
+                signal.revert_score,
                 bias_scale,
                 _safe_float(bias_meta.get("drift_pips"), 0.0),
                 direction_bias.side if direction_bias is not None else "none",

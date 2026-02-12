@@ -78,6 +78,89 @@ DIRECTION_BIAS_LOG_INTERVAL_SEC: float = max(
     float(os.getenv("SCALP_PING_5S_DIRECTION_BIAS_LOG_INTERVAL_SEC", "8.0")),
 )
 
+REVERT_ENABLED: bool = _bool_env("SCALP_PING_5S_REVERT_ENABLED", True)
+REVERT_WINDOW_SEC: float = max(
+    SIGNAL_WINDOW_SEC,
+    float(os.getenv("SCALP_PING_5S_REVERT_WINDOW_SEC", "2.8")),
+)
+REVERT_SHORT_WINDOW_SEC: float = max(
+    0.2,
+    min(
+        REVERT_WINDOW_SEC,
+        float(os.getenv("SCALP_PING_5S_REVERT_SHORT_WINDOW_SEC", "0.8")),
+    ),
+)
+REVERT_MIN_TICKS: int = max(
+    MIN_SIGNAL_TICKS,
+    int(float(os.getenv("SCALP_PING_5S_REVERT_MIN_TICKS", "8"))),
+)
+REVERT_MIN_TICK_RATE: float = max(
+    0.5,
+    float(os.getenv("SCALP_PING_5S_REVERT_MIN_TICK_RATE", "4.0")),
+)
+REVERT_RANGE_MIN_PIPS: float = max(
+    0.1,
+    float(os.getenv("SCALP_PING_5S_REVERT_RANGE_MIN_PIPS", "0.9")),
+)
+REVERT_SWEEP_MIN_PIPS: float = max(
+    0.1,
+    float(os.getenv("SCALP_PING_5S_REVERT_SWEEP_MIN_PIPS", "0.55")),
+)
+REVERT_BOUNCE_MIN_PIPS: float = max(
+    0.05,
+    float(os.getenv("SCALP_PING_5S_REVERT_BOUNCE_MIN_PIPS", "0.20")),
+)
+REVERT_CONFIRM_TICKS: int = max(
+    2,
+    int(float(os.getenv("SCALP_PING_5S_REVERT_CONFIRM_TICKS", "6"))),
+)
+REVERT_CONFIRM_RATIO_MIN: float = max(
+    0.5,
+    min(0.95, float(os.getenv("SCALP_PING_5S_REVERT_CONFIRM_RATIO_MIN", "0.60"))),
+)
+MODE_SWITCH_REVERT_DOMINANCE: float = max(
+    0.8,
+    float(os.getenv("SCALP_PING_5S_MODE_SWITCH_REVERT_DOMINANCE", "1.08")),
+)
+REVERT_DIRECTION_HARD_BLOCK_SCORE: float = max(
+    DIRECTION_BIAS_BLOCK_SCORE,
+    min(
+        0.99,
+        float(
+            os.getenv(
+                "SCALP_PING_5S_REVERT_DIRECTION_HARD_BLOCK_SCORE",
+                "0.82",
+            )
+        ),
+    ),
+)
+REVERT_DIRECTION_OPPOSITE_UNITS_MULT: float = max(
+    DIRECTION_BIAS_OPPOSITE_UNITS_MULT,
+    min(
+        1.0,
+        float(
+            os.getenv(
+                "SCALP_PING_5S_REVERT_DIRECTION_OPPOSITE_UNITS_MULT",
+                "0.86",
+            )
+        ),
+    ),
+)
+REVERT_SIDE_BIAS_PENALTY_WEIGHT: float = max(
+    0.0,
+    min(
+        1.0,
+        float(os.getenv("SCALP_PING_5S_REVERT_SIDE_BIAS_PENALTY_WEIGHT", "0.45")),
+    ),
+)
+REVERT_SIDE_BIAS_FLOOR: float = max(
+    0.1,
+    min(
+        1.0,
+        float(os.getenv("SCALP_PING_5S_REVERT_SIDE_BIAS_FLOOR", "0.55")),
+    ),
+)
+
 ENTRY_COOLDOWN_SEC: float = max(0.1, float(os.getenv("SCALP_PING_5S_ENTRY_COOLDOWN_SEC", "2.0")))
 MIN_ORDER_SPACING_SEC: float = max(
     0.05, float(os.getenv("SCALP_PING_5S_MIN_ORDER_SPACING_SEC", "1.0"))
