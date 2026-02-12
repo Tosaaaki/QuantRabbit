@@ -111,6 +111,7 @@ strategies:
 - `--block-hour-window` で抽出対象の時間帯を JST で限定可能（例: `3-6` や `3,4,5`）
 - `--block-hours-scope`（default: global）で時間帯ブロックの粒度を切替
 - `--apply` で `config/worker_reentry.yaml` を自動更新
+- `--require-block-hours` を併用すると、`defaults.block_jst_hours` が空のままなら失敗させる
 
 ## 5. 直近の実装優先度
 1) entry_thesis フラグの正規化と保存  

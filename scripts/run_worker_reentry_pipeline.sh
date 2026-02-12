@@ -10,8 +10,9 @@ BLOCK_HOUR_TOP="${BLOCK_HOUR_TOP:-4}"
 BLOCK_HOUR_WINDOW="${BLOCK_HOUR_WINDOW:-}"
 BLOCK_HOURS_SCOPE="${BLOCK_HOURS_SCOPE:-global}"
 OUT_DIR="${OUT_DIR:-logs/reports/worker_return_wait}"
-PY="${PYTHON:-python}"
+PY="${PYTHON:-python3}"
 APPLY=0
+REQUIRE_BLOCK_HOURS=0
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -55,6 +56,10 @@ while [[ $# -gt 0 ]]; do
       APPLY=1
       shift 1
       ;;
+    --require-block-hours)
+      REQUIRE_BLOCK_HOURS=1
+      shift 1
+      ;;
     *)
       echo "Unknown arg: $1" >&2
       exit 1
@@ -81,4 +86,21 @@ if [[ "$APPLY" -eq 1 ]]; then
     --base config/worker_reentry.yaml \
     --over "$OUT_DIR/worker_reentry.yaml" \
     --out config/worker_reentry.yaml
+fi
+
+if [[ "$REQUIRE_BLOCK_HOURS" -eq 1 ]]; then
+  if ! awk '
+    /^defaults:/ {in_defaults=1; next}
+    /^strategies:/ {in_defaults=0}
+    in_defaults && /block_jst_hours:/ {
+      if ($0 ~ /\[[^]]*[0-9]/) ok=1
+    }
+    END {
+      if (ok) exit 0
+      exit 1
+    }
+  ' "$OUT_DIR/worker_reentry.yaml"; then
+    echo "[worker_reentry] block_jst_hours is empty in defaults; aborting (--require-block-hours)." >&2
+    exit 2
+  fi
 fi
