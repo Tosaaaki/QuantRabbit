@@ -36,6 +36,7 @@ scripts/vm.sh -p quantrabbit -z asia-northeast1-a -m fx-trader-vm -t exec -- \
 コード上の opt-in 実装:
 - `workers/scalp_ping_5s/worker.py` が `entry_thesis["pattern_gate_opt_in"]=...` を付与
 - 現時点ではこれ以外のワーカーは opt-in していない
+  - 追加予定: `workers/scalp_m1scalper/worker.py`（PR: `codex/patterngate-m1scalper-optin`）
 
 確認コマンド（リポジトリ）:
 ```bash
@@ -46,7 +47,11 @@ rg -n "pattern_gate_opt_in|use_pattern_gate|pattern_gate_enabled" workers
 deep のサンプル厚みが大きい順（例）:
 - `M1Scalper`: trades_sum=3435
 - `TickImbalance`: trades_sum=2430
-- `scalp_ping_5s_live`: trades_sum=1562（patterns=73, ge30=14, ge90=4）
+- `scalp_ping_5s_live`: trades_sum=1576（patterns=79, ge30=14, ge90=4）
+
+補足:
+- Pattern Gate は “情報量ゼロの pattern_id（sg/mtf/hz/ex/rg/pt が全部 `na`）” を generic とみなし no-op する。
+- そのため `TickImbalance` のように型が `long/short` しか分岐していない戦略は、opt-in しても gate が効かない（分割軸の追加が必要）。
 
 確認コマンド（VM）:
 ```bash
@@ -120,3 +125,11 @@ PY"
 - `rg:na` が 235 trades（約15%）あるが、deep 上は少数パターンに集中していることを確認。
 - `rg:na` の原因は「`section_axis` 欠損」ではなく「古いトレードの `entry_thesis` に `entry_ref` が入っていない」ケースがあることを確認（`trades.db` サンプル点検）。
 - 方針決定: `pattern_id` を急に変えず、まずは `avoid/weak` の回避・縮小に効かせる（P0）。
+
+追記（同日、VM再点検）:
+- VM `logs/trades.db` の直近クローズ順で `scalp_ping_5s_live` が継続して増加していることを確認（last_close: 2026-02-12T12:12:15Z）。
+- `M1Scalper` は total=3435 のうち informative=1168 / generic=2267（generic は gate が no-op）。
+  - 直近（2026-02-09 以降）は 7 trades 全て informative（generic 0）。
+- 次の展開先は `M1Scalper` を優先（dedicated worker + informative が十分にある）。
+  - opt-in PR: `codex/patterngate-m1scalper-optin`
+  - 詳細ドキュメント PR: `codex/kata-scalp-m1scalper-doc`
