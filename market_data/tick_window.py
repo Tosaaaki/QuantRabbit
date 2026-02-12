@@ -168,12 +168,15 @@ def _reload_cache_if_updated() -> None:
     mtime = float(stat.st_mtime)
     if mtime <= _cache_mtime:
         return
-    # Cache updated by another process – reload a slim view
+    # Cache updated by another process – reload a slim view.
+    # Keep fresher in-memory ticks when the file update is older.
     try:
         payload = json.loads(_CACHE_PATH.read_text(encoding="utf-8"))
         if not isinstance(payload, list):
+            _cache_mtime = mtime
             return
         rows: list[_TickRow] = []
+        file_latest_epoch = float("-inf")
         for entry in payload[-_CACHE_LIMIT:]:
             if not isinstance(entry, dict):
                 continue
@@ -185,11 +188,24 @@ def _reload_cache_if_updated() -> None:
             except (KeyError, TypeError, ValueError):
                 continue
             rows.append(_TickRow(epoch=epoch, bid=bid, ask=ask, mid=mid))
-        if rows:
-            _TICKS.clear()
+            if epoch > file_latest_epoch:
+                file_latest_epoch = epoch
+        if not rows:
+            _cache_mtime = mtime
+            return
+        if _TICKS:
+            mem_latest_epoch = _TICKS[-1].epoch
+            if file_latest_epoch <= mem_latest_epoch:
+                # File cache is older than local stream/snapshot fallback.
+                _cache_mtime = mtime
+                return
+            for row in sorted(rows, key=lambda item: item.epoch):
+                if row.epoch > mem_latest_epoch:
+                    _TICKS.append(row)
+        else:
             for row in rows[-_MAX_TICKS:]:
                 _TICKS.append(row)
-            _cache_mtime = mtime
+        _cache_mtime = mtime
     except Exception:
         # Ignore reload failures; next iteration will retry
         return
