@@ -23,6 +23,7 @@ import httpx
 from execution.order_manager import market_order
 from execution.position_manager import PositionManager
 from execution.risk_guard import allowed_lot, can_trade, clamp_sl_tp
+from indicators.factor_cache import all_factors
 from market_data import spread_monitor, tick_window
 from market_data.tick_fetcher import _parse_time
 from utils.market_hours import is_market_open
@@ -110,6 +111,18 @@ class DirectionBias:
     vol_norm: float
     tick_rate: float
     span_sec: float
+
+
+@dataclass(slots=True)
+class MtfRegime:
+    side: str
+    mode: str
+    trend_score: float
+    heat_score: float
+    adx_m1: float
+    adx_m5: float
+    atr_m1: float
+    atr_m5: float
 
 
 @dataclass(slots=True)
@@ -201,6 +214,97 @@ def _safe_float(value: object, default: float = 0.0) -> float:
 
 def _clamp(value: float, lo: float, hi: float) -> float:
     return max(lo, min(hi, value))
+
+
+def _norm01(value: float, low: float, high: float) -> float:
+    if high <= low:
+        return 0.0
+    return _clamp((value - low) / (high - low), 0.0, 1.0)
+
+
+def _tf_trend_score(fac: dict) -> float:
+    close = _safe_float(fac.get("close"), 0.0)
+    ema20 = _safe_float(fac.get("ema20"), 0.0)
+    atr_pips = max(0.1, _safe_float(fac.get("atr_pips"), 0.0))
+    rsi = _safe_float(fac.get("rsi"), 50.0)
+    macd_hist = _safe_float(fac.get("macd_hist"), 0.0)
+
+    gap_norm = 0.0
+    if close > 0.0 and ema20 > 0.0:
+        gap_pips = (close - ema20) / config.PIP_VALUE
+        gap_norm = _clamp(gap_pips / max(0.8, atr_pips * 0.65), -1.0, 1.0)
+
+    rsi_norm = _clamp((rsi - 50.0) / 20.0, -1.0, 1.0)
+    macd_pips = macd_hist / config.PIP_VALUE
+    macd_norm = _clamp(macd_pips / max(0.6, atr_pips * 0.15), -1.0, 1.0)
+    return (0.58 * gap_norm) + (0.27 * rsi_norm) + (0.15 * macd_norm)
+
+
+def _build_mtf_regime() -> Optional[MtfRegime]:
+    if not config.MTF_REGIME_ENABLED:
+        return None
+    try:
+        factors = all_factors()
+    except Exception:
+        return None
+    if not isinstance(factors, dict):
+        return None
+
+    fac_m1 = factors.get("M1") or {}
+    fac_m5 = factors.get("M5") or {}
+    fac_h1 = factors.get("H1") or {}
+    if not any(isinstance(f, dict) and f for f in (fac_m1, fac_m5, fac_h1)):
+        return None
+
+    score_h1 = _tf_trend_score(fac_h1 if isinstance(fac_h1, dict) else {})
+    score_m5 = _tf_trend_score(fac_m5 if isinstance(fac_m5, dict) else {})
+    score_m1 = _tf_trend_score(fac_m1 if isinstance(fac_m1, dict) else {})
+    trend_score = _clamp(
+        (0.55 * score_h1) + (0.30 * score_m5) + (0.15 * score_m1),
+        -1.0,
+        1.0,
+    )
+
+    adx_m1 = _safe_float((fac_m1 or {}).get("adx"), 0.0)
+    adx_m5 = _safe_float((fac_m5 or {}).get("adx"), 0.0)
+    atr_m1 = _safe_float((fac_m1 or {}).get("atr_pips"), 0.0)
+    atr_m5 = _safe_float((fac_m5 or {}).get("atr_pips"), 0.0)
+
+    adx_mix = (0.6 * adx_m1) + (0.4 * adx_m5)
+    adx_norm = _norm01(adx_mix, config.MTF_ADX_LOW, config.MTF_ADX_HIGH)
+    atr_norm_m1 = _norm01(atr_m1, config.MTF_ATR_M1_LOW_PIPS, config.MTF_ATR_M1_HIGH_PIPS)
+    atr_norm_m5 = _norm01(atr_m5, config.MTF_ATR_M5_LOW_PIPS, config.MTF_ATR_M5_HIGH_PIPS)
+    atr_norm = (0.55 * atr_norm_m1) + (0.45 * atr_norm_m5)
+    heat_score = _clamp((0.60 * adx_norm) + (0.40 * atr_norm), 0.0, 1.0)
+
+    trend_abs = abs(trend_score)
+    if trend_score >= config.MTF_TREND_NEUTRAL_SCORE:
+        side = "long"
+    elif trend_score <= -config.MTF_TREND_NEUTRAL_SCORE:
+        side = "short"
+    else:
+        side = "neutral"
+
+    if (
+        trend_abs >= config.MTF_TREND_STRONG_SCORE
+        and heat_score >= config.MTF_HEAT_CONTINUATION_MIN
+    ):
+        mode = "continuation"
+    elif heat_score <= config.MTF_HEAT_REVERSION_MAX:
+        mode = "reversion"
+    else:
+        mode = "balanced"
+
+    return MtfRegime(
+        side=side,
+        mode=mode,
+        trend_score=float(trend_score),
+        heat_score=float(heat_score),
+        adx_m1=float(adx_m1),
+        adx_m5=float(adx_m5),
+        atr_m1=float(atr_m1),
+        atr_m5=float(atr_m5),
+    )
 
 
 def _parse_trade_open_time(raw: object) -> Optional[datetime.datetime]:
@@ -768,6 +872,113 @@ def _build_tick_signal(rows: Sequence[dict], spread_pips: float) -> Optional[Tic
     )
 
 
+def _retarget_signal(signal: TickSignal, *, side: str, mode: Optional[str] = None, confidence_add: int = 0) -> TickSignal:
+    conf = int(
+        _clamp(
+            float(signal.confidence + confidence_add),
+            float(config.CONFIDENCE_FLOOR),
+            float(config.CONFIDENCE_CEIL),
+        )
+    )
+    return TickSignal(
+        side=side,
+        mode=mode or signal.mode,
+        mode_score=float(signal.mode_score),
+        momentum_score=float(signal.momentum_score),
+        revert_score=float(signal.revert_score),
+        confidence=conf,
+        momentum_pips=float(signal.momentum_pips),
+        trigger_pips=float(signal.trigger_pips),
+        imbalance=float(signal.imbalance),
+        tick_rate=float(signal.tick_rate),
+        span_sec=float(signal.span_sec),
+        tick_age_ms=float(signal.tick_age_ms),
+        spread_pips=float(signal.spread_pips),
+        bid=float(signal.bid),
+        ask=float(signal.ask),
+        mid=float(signal.mid),
+    )
+
+
+def _apply_mtf_regime(signal: TickSignal, regime: Optional[MtfRegime]) -> tuple[Optional[TickSignal], float, str]:
+    if regime is None:
+        return signal, 1.0, "regime_unavailable"
+
+    units_mult = 1.0
+    gate = "mtf_balanced"
+    adjusted = signal
+
+    if regime.mode == "continuation":
+        if regime.side != "neutral" and signal.side != regime.side:
+            if regime.heat_score >= config.MTF_CONTINUATION_BLOCK_HEAT:
+                return None, 0.0, "mtf_continuation_block_counter"
+            units_mult *= config.MTF_CONTINUATION_OPPOSITE_UNITS_MULT
+            gate = "mtf_continuation_counter_scaled"
+        else:
+            heat_ratio = _clamp(
+                (regime.heat_score - config.MTF_HEAT_CONTINUATION_MIN)
+                / max(0.05, 1.0 - config.MTF_HEAT_CONTINUATION_MIN),
+                0.0,
+                1.0,
+            )
+            trend_ratio = _clamp(
+                (abs(regime.trend_score) - config.MTF_TREND_STRONG_SCORE)
+                / max(0.05, 1.0 - config.MTF_TREND_STRONG_SCORE),
+                0.0,
+                1.0,
+            )
+            boost_ratio = max(heat_ratio, trend_ratio * 0.9)
+            units_mult *= 1.0 + config.MTF_CONTINUATION_ALIGN_BOOST_MAX * boost_ratio
+            adjusted = _retarget_signal(
+                adjusted,
+                side=adjusted.side,
+                mode=f"{adjusted.mode}_cont",
+                confidence_add=int(round(6.0 * boost_ratio)),
+            )
+            gate = "mtf_continuation_follow"
+    elif regime.mode == "reversion":
+        overshoot = abs(signal.momentum_pips) / max(0.01, signal.trigger_pips)
+        if (
+            overshoot >= config.MTF_REVERSION_TRIGGER_MULT
+            and signal.imbalance >= config.MTF_REVERSION_IMBALANCE_MIN
+        ):
+            if regime.side != "neutral" and signal.side != regime.side:
+                adjusted = _retarget_signal(
+                    adjusted,
+                    side=regime.side,
+                    mode=f"{adjusted.mode}_mtf_revert",
+                    confidence_add=3,
+                )
+                gate = "mtf_reversion_to_trend"
+            elif regime.side == "neutral":
+                flipped = "short" if signal.side == "long" else "long"
+                adjusted = _retarget_signal(
+                    adjusted,
+                    side=flipped,
+                    mode=f"{adjusted.mode}_mtf_fade",
+                    confidence_add=2,
+                )
+                gate = "mtf_reversion_fade"
+            else:
+                gate = "mtf_reversion_aligned"
+
+            cool_ratio = _clamp(
+                (config.MTF_HEAT_REVERSION_MAX - regime.heat_score)
+                / max(0.05, config.MTF_HEAT_REVERSION_MAX),
+                0.0,
+                1.0,
+            )
+            units_mult *= 1.0 + config.MTF_REVERSION_BOOST_MAX * cool_ratio
+        else:
+            gate = "mtf_reversion_no_setup"
+    else:
+        if regime.side != "neutral" and signal.side == regime.side:
+            units_mult *= 1.0 + min(0.25, abs(regime.trend_score) * 0.22)
+            gate = "mtf_balanced_align"
+
+    return adjusted, float(max(0.0, units_mult)), gate
+
+
 def _directional_bias_scale(rows: Sequence[dict], side: str) -> tuple[float, dict[str, float]]:
     if not config.SIDE_BIAS_ENABLED:
         return 1.0, {"enabled": 0.0}
@@ -1192,6 +1403,7 @@ async def scalp_ping_5s_worker() -> None:
     last_keepalive_log_mono = 0.0
     last_max_active_bypass_log_mono = 0.0
     last_bias_log_mono = 0.0
+    last_regime_log_mono = 0.0
     protected_trade_ids: set[str] = set()
     protected_seeded = False
 
@@ -1323,6 +1535,29 @@ async def scalp_ping_5s_worker() -> None:
                 continue
 
             now_mono = time.monotonic()
+            regime = _build_mtf_regime()
+            signal, regime_units_mult, regime_gate = _apply_mtf_regime(signal, regime)
+            if signal is None or regime_units_mult <= 0.0:
+                if now_mono - last_regime_log_mono >= config.MTF_REGIME_LOG_INTERVAL_SEC:
+                    if regime is not None:
+                        LOG.info(
+                            "%s mtf block gate=%s mode=%s side=%s trend=%.2f heat=%.2f adx(m1/m5)=%.1f/%.1f atr(m1/m5)=%.2f/%.2f",
+                            config.LOG_PREFIX,
+                            regime_gate,
+                            regime.mode,
+                            regime.side,
+                            regime.trend_score,
+                            regime.heat_score,
+                            regime.adx_m1,
+                            regime.adx_m5,
+                            regime.atr_m1,
+                            regime.atr_m5,
+                        )
+                    else:
+                        LOG.info("%s mtf block gate=%s regime=none", config.LOG_PREFIX, regime_gate)
+                    last_regime_log_mono = now_mono
+                continue
+
             last_snapshot_fetch, density_topup = await _maybe_topup_micro_density(
                 now_mono=now_mono,
                 last_snapshot_fetch=last_snapshot_fetch,
@@ -1456,6 +1691,7 @@ async def scalp_ping_5s_worker() -> None:
                 )
             )
             units = int(round(base_units * conf_mult * strength_mult * bias_units_mult))
+            units = int(round(units * regime_units_mult))
 
             lot = allowed_lot(
                 nav,
@@ -1546,6 +1782,8 @@ async def scalp_ping_5s_worker() -> None:
                 "side_bias_contra_pips": round(float(_safe_float(bias_meta.get("contra_pips"), 0.0)), 3),
                 "side_bias_mode_adjusted_scale": round(float(_safe_float(bias_meta.get("mode_adjusted_scale"), bias_scale)), 3),
                 "entry_mode": "market_ping_5s",
+                "mtf_regime_gate": regime_gate,
+                "mtf_regime_units_mult": round(float(regime_units_mult), 3),
                 "trap_active": bool(trap_state.active),
                 "entry_ref": round(entry_price, 3),
                 "execution": {
@@ -1568,6 +1806,19 @@ async def scalp_ping_5s_worker() -> None:
                         "direction_bias_vol_norm": round(direction_bias.vol_norm, 3),
                         "direction_bias_tick_rate": round(direction_bias.tick_rate, 3),
                         "direction_bias_span_sec": round(direction_bias.span_sec, 3),
+                    }
+                )
+            if regime is not None:
+                entry_thesis.update(
+                    {
+                        "mtf_regime_mode": regime.mode,
+                        "mtf_regime_side": regime.side,
+                        "mtf_regime_trend_score": round(regime.trend_score, 4),
+                        "mtf_regime_heat_score": round(regime.heat_score, 4),
+                        "mtf_regime_adx_m1": round(regime.adx_m1, 3),
+                        "mtf_regime_adx_m5": round(regime.adx_m5, 3),
+                        "mtf_regime_atr_m1": round(regime.atr_m1, 3),
+                        "mtf_regime_atr_m5": round(regime.atr_m5, 3),
                     }
                 )
             if config.FORCE_EXIT_POLICY_GENERATION:
@@ -1601,7 +1852,7 @@ async def scalp_ping_5s_worker() -> None:
             rate_limiter.record(now_mono)
 
             LOG.info(
-                "%s open mode=%s side=%s units=%s conf=%d mom=%.2fp trig=%.2fp sp=%.2fp tp=%.2fp sl=%.2fp mode_score=%.2f mom_score=%.2f rev_score=%.2f side_bias=%.2f drift=%.2fp dir_bias=%s dir_score=%.2f dir_mult=%.2f tp_mult=%.2f tp_avg=%.0fs res=%s",
+                "%s open mode=%s side=%s units=%s conf=%d mom=%.2fp trig=%.2fp sp=%.2fp tp=%.2fp sl=%.2fp mode_score=%.2f mom_score=%.2f rev_score=%.2f side_bias=%.2f drift=%.2fp mtf=%s/%.2f/%.2f mtf_mult=%.2f dir_bias=%s dir_score=%.2f dir_mult=%.2f tp_mult=%.2f tp_avg=%.0fs res=%s",
                 config.LOG_PREFIX,
                 signal.mode,
                 signal.side,
@@ -1617,6 +1868,10 @@ async def scalp_ping_5s_worker() -> None:
                 signal.revert_score,
                 bias_scale,
                 _safe_float(bias_meta.get("drift_pips"), 0.0),
+                (regime.mode if regime is not None else "none"),
+                (_safe_float(regime.trend_score, 0.0) if regime is not None else 0.0),
+                (_safe_float(regime.heat_score, 0.0) if regime is not None else 0.0),
+                regime_units_mult,
                 direction_bias.side if direction_bias is not None else "none",
                 _safe_float(getattr(direction_bias, "score", 0.0), 0.0),
                 bias_units_mult,

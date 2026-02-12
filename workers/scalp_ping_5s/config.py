@@ -161,6 +161,70 @@ REVERT_SIDE_BIAS_FLOOR: float = max(
     ),
 )
 
+MTF_REGIME_ENABLED: bool = _bool_env("SCALP_PING_5S_MTF_REGIME_ENABLED", True)
+MTF_TREND_NEUTRAL_SCORE: float = max(
+    0.05,
+    min(0.6, float(os.getenv("SCALP_PING_5S_MTF_TREND_NEUTRAL_SCORE", "0.14"))),
+)
+MTF_TREND_STRONG_SCORE: float = max(
+    MTF_TREND_NEUTRAL_SCORE,
+    min(0.95, float(os.getenv("SCALP_PING_5S_MTF_TREND_STRONG_SCORE", "0.28"))),
+)
+MTF_HEAT_CONTINUATION_MIN: float = max(
+    0.05,
+    min(0.98, float(os.getenv("SCALP_PING_5S_MTF_HEAT_CONTINUATION_MIN", "0.62"))),
+)
+MTF_HEAT_REVERSION_MAX: float = max(
+    0.0,
+    min(MTF_HEAT_CONTINUATION_MIN, float(os.getenv("SCALP_PING_5S_MTF_HEAT_REVERSION_MAX", "0.40"))),
+)
+MTF_ADX_LOW: float = max(1.0, float(os.getenv("SCALP_PING_5S_MTF_ADX_LOW", "16.0")))
+MTF_ADX_HIGH: float = max(
+    MTF_ADX_LOW + 0.1,
+    float(os.getenv("SCALP_PING_5S_MTF_ADX_HIGH", "34.0")),
+)
+MTF_ATR_M1_LOW_PIPS: float = max(
+    0.1, float(os.getenv("SCALP_PING_5S_MTF_ATR_M1_LOW_PIPS", "3.0"))
+)
+MTF_ATR_M1_HIGH_PIPS: float = max(
+    MTF_ATR_M1_LOW_PIPS + 0.1,
+    float(os.getenv("SCALP_PING_5S_MTF_ATR_M1_HIGH_PIPS", "9.0")),
+)
+MTF_ATR_M5_LOW_PIPS: float = max(
+    0.1, float(os.getenv("SCALP_PING_5S_MTF_ATR_M5_LOW_PIPS", "6.0"))
+)
+MTF_ATR_M5_HIGH_PIPS: float = max(
+    MTF_ATR_M5_LOW_PIPS + 0.1,
+    float(os.getenv("SCALP_PING_5S_MTF_ATR_M5_HIGH_PIPS", "18.0")),
+)
+MTF_CONTINUATION_ALIGN_BOOST_MAX: float = max(
+    0.0,
+    min(2.0, float(os.getenv("SCALP_PING_5S_MTF_CONTINUATION_ALIGN_BOOST_MAX", "0.80"))),
+)
+MTF_CONTINUATION_OPPOSITE_UNITS_MULT: float = max(
+    0.0,
+    min(1.0, float(os.getenv("SCALP_PING_5S_MTF_CONTINUATION_OPPOSITE_UNITS_MULT", "0.35"))),
+)
+MTF_CONTINUATION_BLOCK_HEAT: float = max(
+    MTF_HEAT_CONTINUATION_MIN,
+    min(0.99, float(os.getenv("SCALP_PING_5S_MTF_CONTINUATION_BLOCK_HEAT", "0.75"))),
+)
+MTF_REVERSION_TRIGGER_MULT: float = max(
+    1.0, float(os.getenv("SCALP_PING_5S_MTF_REVERSION_TRIGGER_MULT", "1.35"))
+)
+MTF_REVERSION_IMBALANCE_MIN: float = max(
+    0.5,
+    min(0.99, float(os.getenv("SCALP_PING_5S_MTF_REVERSION_IMBALANCE_MIN", "0.58"))),
+)
+MTF_REVERSION_BOOST_MAX: float = max(
+    0.0,
+    min(1.0, float(os.getenv("SCALP_PING_5S_MTF_REVERSION_BOOST_MAX", "0.35"))),
+)
+MTF_REGIME_LOG_INTERVAL_SEC: float = max(
+    1.0,
+    float(os.getenv("SCALP_PING_5S_MTF_REGIME_LOG_INTERVAL_SEC", "8.0")),
+)
+
 ENTRY_COOLDOWN_SEC: float = max(0.1, float(os.getenv("SCALP_PING_5S_ENTRY_COOLDOWN_SEC", "2.0")))
 MIN_ORDER_SPACING_SEC: float = max(
     0.05, float(os.getenv("SCALP_PING_5S_MIN_ORDER_SPACING_SEC", "1.0"))
