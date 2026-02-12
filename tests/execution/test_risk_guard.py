@@ -166,6 +166,82 @@ def test_allowed_lot_allows_flatten_when_risk_overshoots(monkeypatch):
     assert abs(lot - 0.300) < 1e-9
 
 
+def test_allowed_lot_treats_buy_sell_as_long_short_for_hedge_relief(monkeypatch):
+    monkeypatch.setattr(risk_guard, "_risk_multiplier", lambda **_: (1.0, {}), raising=False)
+    monkeypatch.setenv("MARGIN_SAFETY_FACTOR", "1.0")
+    monkeypatch.setenv("ALLOW_HEDGE_ON_LOW_MARGIN", "0")
+
+    equity = 200_000.0
+    margin_available = 1_000.0  # free ratio 0.5%
+    margin_used = 199_000.0
+    price = 150.0
+    margin_rate = 0.04
+
+    # sell (= short) should be recognized as net-reducing against existing long.
+    lot_sell = risk_guard.allowed_lot(
+        equity,
+        sl_pips=120.0,
+        margin_available=margin_available,
+        margin_used=margin_used,
+        price=price,
+        margin_rate=margin_rate,
+        risk_pct_override=0.04,
+        pocket="micro",
+        side="sell",
+        open_long_units=30_000.0,
+        open_short_units=0.0,
+    )
+    assert lot_sell > 0.0
+
+    # buy (= long) is same-side in this setup, so low-margin guard should block.
+    lot_buy = risk_guard.allowed_lot(
+        equity,
+        sl_pips=120.0,
+        margin_available=margin_available,
+        margin_used=margin_used,
+        price=price,
+        margin_rate=margin_rate,
+        risk_pct_override=0.04,
+        pocket="micro",
+        side="buy",
+        open_long_units=30_000.0,
+        open_short_units=0.0,
+    )
+    assert lot_buy == 0.0
+
+
+def test_allowed_lot_prefers_flatten_size_when_free_margin_is_tight(monkeypatch):
+    monkeypatch.setattr(risk_guard, "_risk_multiplier", lambda **_: (1.0, {}), raising=False)
+    monkeypatch.setenv("MARGIN_SAFETY_FACTOR", "1.0")
+    monkeypatch.setenv("FREE_MARGIN_SOFT_RATIO", "0.35")
+    monkeypatch.setenv("FREE_MARGIN_HARD_RATIO", "0.20")
+    monkeypatch.setattr(risk_guard, "MAX_MARGIN_USAGE", 0.99, raising=False)
+    monkeypatch.setattr(risk_guard, "MAX_MARGIN_USAGE_HARD", 0.995, raising=False)
+
+    equity = 200_000.0
+    margin_available = 30_000.0  # free ratio 15% (< hard threshold 20%)
+    margin_used = 170_000.0
+    price = 150.0
+    margin_rate = 0.04
+
+    # Opposite-side flatten amount is only 0.01 lot (1,000 units).
+    # Even if risk sizing allows more, low free margin should prioritize flatten lot.
+    lot = risk_guard.allowed_lot(
+        equity,
+        sl_pips=2.0,
+        margin_available=margin_available,
+        margin_used=margin_used,
+        price=price,
+        margin_rate=margin_rate,
+        risk_pct_override=0.04,
+        pocket="micro",
+        side="short",
+        open_long_units=1_000.0,
+        open_short_units=0.0,
+    )
+    assert abs(lot - 0.010) < 1e-9
+
+
 def test_clamp_sl_tp_applies_rr_floor(monkeypatch):
     monkeypatch.setattr(risk_guard, "_RR_NORMALIZE_ENABLED", True, raising=False)
     monkeypatch.setattr(risk_guard, "_RR_MIN_RATIO", 1.20, raising=False)

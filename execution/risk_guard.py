@@ -930,7 +930,13 @@ def allowed_lot(
         except Exception:
             pass
 
-    side_norm = (side or "").lower()
+    side_raw = (side or "").strip().lower()
+    if side_raw in {"long", "buy", "open_long"}:
+        side_norm = "long"
+    elif side_raw in {"short", "sell", "open_short"}:
+        side_norm = "short"
+    else:
+        side_norm = side_raw
     long_units = None if open_long_units is None else float(open_long_units)
     short_units = None if open_short_units is None else float(open_short_units)
     fetch_positions = os.getenv("ALLOWED_LOT_FETCH_POS", "1").strip().lower() not in {
@@ -953,6 +959,14 @@ def allowed_lot(
     else:
         long_units = float(long_units or 0.0)
         short_units = float(short_units or 0.0)
+
+    # 反対サイドでネットを縮小できる最大量（flatten まで）を先に計算しておく。
+    gap_units = 0.0
+    if side_norm == "long":
+        gap_units = max(0.0, short_units - long_units)
+    elif side_norm == "short":
+        gap_units = max(0.0, long_units - short_units)
+    gap_lot = gap_units / 100000.0 if gap_units > 0 else 0.0
 
     # free margin が枯渇していれば発注自体を止める
     min_free_margin_ratio = max(0.005, float(os.getenv("MIN_FREE_MARGIN_RATIO", "0.01") or 0.01))
@@ -1041,15 +1055,6 @@ def allowed_lot(
             # provisional margin clamp
             lot_margin = (margin_budget_safe - used) / margin_per_lot
 
-            # 片側 flatten までの必要ロット（opposite sideでネット縮小できる最大）
-            # NOTE: open_* が未提供でも long_units/short_units はフェッチ済みで常に値が入る。
-            gap_units = 0.0
-            if side_norm == "long":
-                gap_units = max(0.0, float(short_units or 0.0) - float(long_units or 0.0))
-            elif side_norm == "short":
-                gap_units = max(0.0, float(long_units or 0.0) - float(short_units or 0.0))
-            gap_lot = gap_units / 100000.0 if gap_units > 0 else 0.0
-
             # If netting would reduce usage (opposite side), allow larger lot up to cap.
             proposed_units = lot * 100000.0
             net_used_after = _net_margin_after(abs(proposed_units))
@@ -1116,6 +1121,19 @@ def allowed_lot(
         except Exception:
             soft, hard = 0.35, 0.2
         hard = max(0.0, min(hard, soft))
+        # 低マージン時は「flatten分（ネット縮小）」を優先し、overshoot を避ける。
+        if (
+            gap_lot > 0.0
+            and lot > gap_lot
+            and free_ratio <= soft
+            and used is not None
+        ):
+            projected_gap_used = _net_margin_after(gap_units)
+            if projected_gap_used < used:
+                lot = gap_lot
+                projected_used = projected_gap_used
+                free_ratio_after = max(0.0, (equity - projected_used) / equity)
+                netting_reduce = True
         # netting 減少なら「投下後」の free ratio を優先
         ratio_for_scale = free_ratio
         if free_ratio_after is not None and netting_reduce:
