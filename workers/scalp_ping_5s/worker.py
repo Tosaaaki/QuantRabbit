@@ -70,6 +70,7 @@ class TpTimingProfile:
 
 _TP_TIMING_CACHE: dict[tuple[str, str], tuple[float, TpTimingProfile]] = {}
 _TRADE_MFE_PIPS: dict[str, float] = {}
+_TRADE_FORCE_EXIT_DEFER_LOG_MONO: dict[str, float] = {}
 
 
 def _mask_value(value: str, *, head: int = 4, tail: int = 2) -> str:
@@ -123,6 +124,18 @@ class MtfRegime:
     adx_m5: float
     atr_m1: float
     atr_m5: float
+
+
+@dataclass(slots=True)
+class FibPullback:
+    timeframe: str
+    swing_high: float
+    swing_low: float
+    zone_low: float
+    zone_high: float
+    target_price: float
+    recover_pips: float
+    range_pips: float
 
 
 @dataclass(slots=True)
@@ -240,13 +253,14 @@ def _tf_trend_score(fac: dict) -> float:
     return (0.58 * gap_norm) + (0.27 * rsi_norm) + (0.15 * macd_norm)
 
 
-def _build_mtf_regime() -> Optional[MtfRegime]:
+def _build_mtf_regime(factors: Optional[dict] = None) -> Optional[MtfRegime]:
     if not config.MTF_REGIME_ENABLED:
         return None
-    try:
-        factors = all_factors()
-    except Exception:
-        return None
+    if factors is None:
+        try:
+            factors = all_factors()
+        except Exception:
+            return None
     if not isinstance(factors, dict):
         return None
 
@@ -307,6 +321,207 @@ def _build_mtf_regime() -> Optional[MtfRegime]:
     )
 
 
+def _trade_side_from_units(units: int) -> Optional[str]:
+    if units > 0:
+        return "long"
+    if units < 0:
+        return "short"
+    return None
+
+
+def _trade_entry_price(trade: dict) -> Optional[float]:
+    entry = _safe_float(
+        trade.get("price")
+        or trade.get("entry_price")
+        or trade.get("open_price"),
+        0.0,
+    )
+    return entry if entry > 0.0 else None
+
+
+def _trade_mark_price_from_unrealized(
+    *,
+    entry_price: float,
+    units: int,
+    unrealized_pips: float,
+) -> float:
+    if units > 0:
+        return entry_price + unrealized_pips * config.PIP_VALUE
+    return entry_price - unrealized_pips * config.PIP_VALUE
+
+
+def _extract_tf_candles(
+    factors: dict,
+    timeframe: str,
+    *,
+    limit: int,
+) -> list[dict]:
+    tf = factors.get(timeframe) if isinstance(factors, dict) else None
+    if not isinstance(tf, dict):
+        return []
+    candles = tf.get("candles")
+    if not isinstance(candles, list) or len(candles) < 5:
+        return []
+    cleaned: list[dict] = []
+    for row in candles[-max(5, int(limit)):]:
+        if not isinstance(row, dict):
+            continue
+        high = _safe_float(row.get("high"), 0.0)
+        low = _safe_float(row.get("low"), 0.0)
+        if high <= 0.0 or low <= 0.0 or high < low:
+            continue
+        cleaned.append(row)
+    return cleaned
+
+
+def _build_fib_pullback(
+    *,
+    side: str,
+    current_price: float,
+    factors: dict,
+) -> Optional[FibPullback]:
+    if side not in {"long", "short"} or current_price <= 0.0:
+        return None
+
+    candidates: list[FibPullback] = []
+    tf_cfg = (
+        ("M5", config.FORCE_EXIT_MTF_FIB_LOOKBACK_M5),
+        ("H1", config.FORCE_EXIT_MTF_FIB_LOOKBACK_H1),
+    )
+    for tf, lookback in tf_cfg:
+        rows = _extract_tf_candles(factors, tf, limit=lookback)
+        if len(rows) < 5:
+            continue
+        highs = [_safe_float(r.get("high"), 0.0) for r in rows]
+        lows = [_safe_float(r.get("low"), 0.0) for r in rows]
+        swing_high = max(highs) if highs else 0.0
+        swing_low = min(lows) if lows else 0.0
+        if swing_high <= 0.0 or swing_low <= 0.0 or swing_high <= swing_low:
+            continue
+        range_pips = (swing_high - swing_low) / config.PIP_VALUE
+        if range_pips < config.FORCE_EXIT_MTF_FIB_MIN_RANGE_PIPS:
+            continue
+
+        width = swing_high - swing_low
+        lower = _clamp(config.FORCE_EXIT_MTF_FIB_LOWER, 0.0, 1.0)
+        upper = _clamp(config.FORCE_EXIT_MTF_FIB_UPPER, lower, 1.0)
+        if side == "long":
+            zone_low = swing_low + width * lower
+            zone_high = swing_low + width * upper
+            target_price = zone_low if current_price <= zone_low else zone_high
+            recover_pips = (target_price - current_price) / config.PIP_VALUE
+        else:
+            zone_high = swing_high - width * lower
+            zone_low = swing_high - width * upper
+            target_price = zone_high if current_price >= zone_high else zone_low
+            recover_pips = (current_price - target_price) / config.PIP_VALUE
+        if recover_pips <= 0.0:
+            continue
+        candidates.append(
+            FibPullback(
+                timeframe=tf,
+                swing_high=float(swing_high),
+                swing_low=float(swing_low),
+                zone_low=float(min(zone_low, zone_high)),
+                zone_high=float(max(zone_low, zone_high)),
+                target_price=float(target_price),
+                recover_pips=float(recover_pips),
+                range_pips=float(range_pips),
+            )
+        )
+
+    if not candidates:
+        return None
+    return min(candidates, key=lambda x: x.recover_pips)
+
+
+def _is_adverse_momentum(
+    *,
+    side: str,
+    regime: Optional[MtfRegime],
+    factors: dict,
+) -> bool:
+    if side not in {"long", "short"}:
+        return False
+    if regime is not None and regime.side in {"long", "short"} and regime.side != side:
+        if regime.heat_score >= config.FORCE_EXIT_MTF_FIB_OPPOSITE_HEAT_BLOCK:
+            return True
+
+    fac_m1 = factors.get("M1") if isinstance(factors, dict) else {}
+    if not isinstance(fac_m1, dict):
+        return False
+    close = _safe_float(fac_m1.get("close"), 0.0)
+    ema20 = _safe_float(fac_m1.get("ema20"), 0.0)
+    rsi = _safe_float(fac_m1.get("rsi"), 50.0)
+    if close <= 0.0 or ema20 <= 0.0:
+        return False
+
+    ema_gap_pips = abs(close - ema20) / config.PIP_VALUE
+    if ema_gap_pips < config.FORCE_EXIT_MTF_FIB_OPPOSITE_EMA_GAP_PIPS:
+        return False
+
+    if side == "long":
+        return close < ema20 and rsi <= config.FORCE_EXIT_MTF_FIB_OPPOSITE_RSI
+    return close > ema20 and rsi >= (100.0 - config.FORCE_EXIT_MTF_FIB_OPPOSITE_RSI)
+
+
+def _should_defer_force_exit(
+    *,
+    trade: dict,
+    units: int,
+    hold_sec: float,
+    unrealized_pips: float,
+    exit_reason: str,
+) -> tuple[bool, str, Optional[FibPullback], Optional[MtfRegime]]:
+    if not config.FORCE_EXIT_MTF_FIB_HOLD_ENABLED:
+        return False, "disabled", None, None
+    if exit_reason not in {config.FORCE_EXIT_REASON, config.FORCE_EXIT_RECOVERY_REASON}:
+        return False, "reason_not_eligible", None, None
+    if unrealized_pips >= 0.0:
+        return False, "non_loss", None, None
+    if hold_sec > config.FORCE_EXIT_MTF_FIB_MAX_WAIT_SEC:
+        return False, "max_wait_elapsed", None, None
+    if abs(unrealized_pips) > config.FORCE_EXIT_MTF_FIB_MAX_HOLD_LOSS_PIPS:
+        return False, "loss_too_deep", None, None
+
+    side = _trade_side_from_units(units)
+    if side is None:
+        return False, "units_zero", None, None
+    entry_price = _trade_entry_price(trade)
+    if entry_price is None:
+        return False, "entry_missing", None, None
+    current_price = _trade_mark_price_from_unrealized(
+        entry_price=entry_price,
+        units=units,
+        unrealized_pips=unrealized_pips,
+    )
+    if current_price <= 0.0:
+        return False, "mark_missing", None, None
+
+    try:
+        factors = all_factors()
+    except Exception:
+        return False, "factors_unavailable", None, None
+    if not isinstance(factors, dict):
+        return False, "factors_invalid", None, None
+    regime = _build_mtf_regime(factors=factors)
+    if _is_adverse_momentum(side=side, regime=regime, factors=factors):
+        return False, "adverse_momentum", None, regime
+
+    fib = _build_fib_pullback(side=side, current_price=current_price, factors=factors)
+    if fib is None:
+        return False, "fib_unavailable", None, regime
+    if fib.recover_pips < config.FORCE_EXIT_MTF_FIB_MIN_RECOVER_PIPS:
+        return False, "recover_small", fib, regime
+    if fib.recover_pips > config.FORCE_EXIT_MTF_FIB_MAX_TARGET_PIPS:
+        return False, "target_too_far", fib, regime
+
+    projected_loss = abs(min(0.0, unrealized_pips + fib.recover_pips))
+    if projected_loss > config.FORCE_EXIT_MTF_FIB_PROJECTED_MAX_LOSS_PIPS:
+        return False, "projected_loss_large", fib, regime
+    return True, "fib_wait", fib, regime
+
+
 def _parse_trade_open_time(raw: object) -> Optional[datetime.datetime]:
     text = str(raw or "").strip()
     if not text:
@@ -357,7 +572,7 @@ async def _enforce_new_entry_time_stop(
     logger: logging.Logger,
     protected_trade_ids: Optional[set[str]] = None,
 ) -> int:
-    global _TRADE_MFE_PIPS
+    global _TRADE_MFE_PIPS, _TRADE_FORCE_EXIT_DEFER_LOG_MONO
 
     max_hold_sec = float(config.FORCE_EXIT_MAX_HOLD_SEC)
     hard_loss_pips = float(config.FORCE_EXIT_MAX_FLOATING_LOSS_PIPS)
@@ -390,6 +605,7 @@ async def _enforce_new_entry_time_stop(
     target_generation = str(config.FORCE_EXIT_POLICY_GENERATION or "").strip()
     closed_count = 0
     seen_trade_ids: set[str] = set()
+    now_mono = time.monotonic()
 
     for trade in open_trades:
         if closed_count >= config.FORCE_EXIT_MAX_ACTIONS:
@@ -456,6 +672,46 @@ async def _enforce_new_entry_time_stop(
             trigger_label = "time_stop"
         if not exit_reason:
             continue
+        defer, defer_reason, fib, regime = _should_defer_force_exit(
+            trade=trade,
+            units=units,
+            hold_sec=hold_sec,
+            unrealized_pips=unrealized_pips,
+            exit_reason=exit_reason,
+        )
+        if defer:
+            last_log = _safe_float(_TRADE_FORCE_EXIT_DEFER_LOG_MONO.get(trade_id), 0.0)
+            if now_mono - last_log >= config.FORCE_EXIT_MTF_FIB_LOG_INTERVAL_SEC:
+                logger.info(
+                    "%s force_exit defer trade=%s trigger=%s hold=%.0fs pnl=%.2fp fib=%.2fp tf=%s zone=%.3f-%.3f target=%.3f regime=%s/%s/%.2f/%.2f",
+                    config.LOG_PREFIX,
+                    trade_id,
+                    trigger_label or "-",
+                    hold_sec,
+                    unrealized_pips,
+                    (fib.recover_pips if fib is not None else 0.0),
+                    (fib.timeframe if fib is not None else "-"),
+                    (fib.zone_low if fib is not None else 0.0),
+                    (fib.zone_high if fib is not None else 0.0),
+                    (fib.target_price if fib is not None else 0.0),
+                    (regime.mode if regime is not None else "none"),
+                    (regime.side if regime is not None else "none"),
+                    (_safe_float(regime.trend_score, 0.0) if regime is not None else 0.0),
+                    (_safe_float(regime.heat_score, 0.0) if regime is not None else 0.0),
+                )
+                _TRADE_FORCE_EXIT_DEFER_LOG_MONO[trade_id] = now_mono
+            continue
+        if defer_reason == "adverse_momentum":
+            logger.info(
+                "%s force_exit execute reason=%s trigger=%s trade=%s hold=%.0fs pnl=%.2fp detail=%s",
+                config.LOG_PREFIX,
+                exit_reason,
+                trigger_label or "-",
+                trade_id,
+                hold_sec,
+                unrealized_pips,
+                defer_reason,
+            )
 
         client_id = str(trade.get("client_id") or trade.get("client_order_id") or "").strip() or None
         closed = await close_trade(
@@ -482,10 +738,14 @@ async def _enforce_new_entry_time_stop(
             generation or "-",
         )
         _TRADE_MFE_PIPS.pop(trade_id, None)
+        _TRADE_FORCE_EXIT_DEFER_LOG_MONO.pop(trade_id, None)
 
     stale_ids = [tid for tid in _TRADE_MFE_PIPS.keys() if tid not in seen_trade_ids]
     for tid in stale_ids:
         _TRADE_MFE_PIPS.pop(tid, None)
+    stale_defer_ids = [tid for tid in _TRADE_FORCE_EXIT_DEFER_LOG_MONO.keys() if tid not in seen_trade_ids]
+    for tid in stale_defer_ids:
+        _TRADE_FORCE_EXIT_DEFER_LOG_MONO.pop(tid, None)
 
     return closed_count
 

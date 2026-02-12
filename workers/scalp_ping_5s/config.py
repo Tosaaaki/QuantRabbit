@@ -474,6 +474,74 @@ FORCE_EXIT_SKIP_EXISTING_ON_START: bool = _bool_env(
     "SCALP_PING_5S_FORCE_EXIT_SKIP_EXISTING_ON_START",
     True,
 )
+FORCE_EXIT_MTF_FIB_HOLD_ENABLED: bool = _bool_env(
+    "SCALP_PING_5S_FORCE_EXIT_MTF_FIB_HOLD_ENABLED",
+    True,
+)
+FORCE_EXIT_MTF_FIB_LOOKBACK_M5: int = max(
+    12,
+    int(float(os.getenv("SCALP_PING_5S_FORCE_EXIT_MTF_FIB_LOOKBACK_M5", "72"))),
+)
+FORCE_EXIT_MTF_FIB_LOOKBACK_H1: int = max(
+    8,
+    int(float(os.getenv("SCALP_PING_5S_FORCE_EXIT_MTF_FIB_LOOKBACK_H1", "36"))),
+)
+FORCE_EXIT_MTF_FIB_LOWER: float = max(
+    0.0,
+    min(1.0, float(os.getenv("SCALP_PING_5S_FORCE_EXIT_MTF_FIB_LOWER", "0.382"))),
+)
+FORCE_EXIT_MTF_FIB_UPPER: float = max(
+    FORCE_EXIT_MTF_FIB_LOWER,
+    min(1.0, float(os.getenv("SCALP_PING_5S_FORCE_EXIT_MTF_FIB_UPPER", "0.618"))),
+)
+FORCE_EXIT_MTF_FIB_MIN_RANGE_PIPS: float = max(
+    0.5,
+    float(os.getenv("SCALP_PING_5S_FORCE_EXIT_MTF_FIB_MIN_RANGE_PIPS", "6.0")),
+)
+FORCE_EXIT_MTF_FIB_MAX_WAIT_SEC: float = max(
+    0.0,
+    float(os.getenv("SCALP_PING_5S_FORCE_EXIT_MTF_FIB_MAX_WAIT_SEC", "180.0")),
+)
+FORCE_EXIT_MTF_FIB_MAX_HOLD_LOSS_PIPS: float = max(
+    0.0,
+    float(os.getenv("SCALP_PING_5S_FORCE_EXIT_MTF_FIB_MAX_HOLD_LOSS_PIPS", "3.8")),
+)
+FORCE_EXIT_MTF_FIB_MIN_RECOVER_PIPS: float = max(
+    0.0,
+    float(os.getenv("SCALP_PING_5S_FORCE_EXIT_MTF_FIB_MIN_RECOVER_PIPS", "0.45")),
+)
+FORCE_EXIT_MTF_FIB_PROJECTED_MAX_LOSS_PIPS: float = max(
+    0.0,
+    float(
+        os.getenv(
+            "SCALP_PING_5S_FORCE_EXIT_MTF_FIB_PROJECTED_MAX_LOSS_PIPS",
+            "1.6",
+        )
+    ),
+)
+FORCE_EXIT_MTF_FIB_MAX_TARGET_PIPS: float = max(
+    FORCE_EXIT_MTF_FIB_MIN_RECOVER_PIPS,
+    float(os.getenv("SCALP_PING_5S_FORCE_EXIT_MTF_FIB_MAX_TARGET_PIPS", "2.6")),
+)
+FORCE_EXIT_MTF_FIB_OPPOSITE_HEAT_BLOCK: float = max(
+    0.0,
+    min(
+        1.0,
+        float(os.getenv("SCALP_PING_5S_FORCE_EXIT_MTF_FIB_OPPOSITE_HEAT_BLOCK", "0.72")),
+    ),
+)
+FORCE_EXIT_MTF_FIB_OPPOSITE_RSI: float = max(
+    1.0,
+    min(99.0, float(os.getenv("SCALP_PING_5S_FORCE_EXIT_MTF_FIB_OPPOSITE_RSI", "42.0"))),
+)
+FORCE_EXIT_MTF_FIB_OPPOSITE_EMA_GAP_PIPS: float = max(
+    0.0,
+    float(os.getenv("SCALP_PING_5S_FORCE_EXIT_MTF_FIB_OPPOSITE_EMA_GAP_PIPS", "0.35")),
+)
+FORCE_EXIT_MTF_FIB_LOG_INTERVAL_SEC: float = max(
+    1.0,
+    float(os.getenv("SCALP_PING_5S_FORCE_EXIT_MTF_FIB_LOG_INTERVAL_SEC", "10.0")),
+)
 
 STOP_LOSS_DISABLED = stop_loss_disabled_for_pocket(POCKET)
 USE_SL: bool = False if STOP_LOSS_DISABLED else _bool_env("SCALP_PING_5S_USE_SL", True)
