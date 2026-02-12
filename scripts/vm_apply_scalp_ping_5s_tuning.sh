@@ -63,61 +63,41 @@ run_vm() {
 }
 
 read -r -d '' REMOTE <<EOF || true
-sudo bash -lc '
-  set -euo pipefail
-  TS=\$(date -u +%Y%m%dT%H%M%SZ)
-  TARGET=/etc/quantrabbit/scalp_ping_5s.env
-  TMP=/tmp/qr_scalp_ping_5s_tuning.env
-  cat > "\$TMP" <<'"'"'EOC'"'"'
+set -euo pipefail
+TS=\$(date -u +%Y%m%dT%H%M%SZ)
+TARGET=/etc/quantrabbit/scalp_ping_5s.env
+TMP=\$(mktemp /tmp/qr_scalp_ping_5s_tuning.XXXXXX.env)
+cat > "\$TMP" <<'EOC'
 ${ENV_OVERRIDES_CONTENT}
 EOC
 
-  mkdir -p /etc/quantrabbit
-  touch "\$TARGET"
-  cp "\$TARGET" "\${TARGET}.bak.\$TS" || true
+sudo mkdir -p /etc/quantrabbit
+sudo touch "\$TARGET"
+sudo cp "\$TARGET" "\${TARGET}.bak.\$TS" || true
 
-  while IFS= read -r line; do
-    trimmed="\${line%%#*}"
-    trimmed="\$(echo "\$trimmed" | sed -e "s/^[[:space:]]*//" -e "s/[[:space:]]*$//")"
-    [[ -z "\$trimmed" ]] && continue
-    key="\${trimmed%%=*}"
-    if grep -q "^\${key}=" "\$TARGET"; then
-      sed -i "s|^\${key}=.*|\${trimmed}|g" "\$TARGET"
-    else
-      echo "\$trimmed" >> "\$TARGET"
-    fi
-  done < "\$TMP"
+while IFS= read -r line; do
+  trimmed="\${line%%#*}"
+  trimmed="\$(echo "\$trimmed" | sed -e "s/^[[:space:]]*//" -e "s/[[:space:]]*$//")"
+  [[ -z "\$trimmed" ]] && continue
+  key="\${trimmed%%=*}"
+  if sudo grep -q "^\${key}=" "\$TARGET"; then
+    sudo sed -i "s|^\${key}=.*|\${trimmed}|g" "\$TARGET"
+  else
+    echo "\$trimmed" | sudo tee -a "\$TARGET" >/dev/null
+  fi
+done < "\$TMP"
 
-  awk -F= '"'"'
-    /^[[:space:]]*#/ {next}
-    /^[[:space:]]*$/ {next}
-    index(\$0, "=") == 0 {next}
-    {
-      key=\$1
-      gsub(/^[[:space:]]+|[[:space:]]+$/, "", key)
-      keys[++n]=key
-      vals[key]=\$0
-    }
-    END {
-      for (i=1; i<=n; i++) {
-        k=keys[i]
-        if (!(k in printed)) {
-          print vals[k]
-          printed[k]=1
-        }
-      }
-    }
-  ' "\$TARGET" > "\${TARGET}.normalized"
-  mv "\${TARGET}.normalized" "\$TARGET"
+sudo awk -F= "!/^[[:space:]]*#/ && !/^[[:space:]]*$/ && index(\\\$0, \"=\") > 0 { key=\\\$1; gsub(/^[[:space:]]+|[[:space:]]+$/, \"\", key); keys[++n]=key; vals[key]=\\\$0 } END { for (i=1; i<=n; i++) { k=keys[i]; if (!(k in printed)) { print vals[k]; printed[k]=1 } } }" "\$TARGET" | sudo tee "\${TARGET}.normalized" >/dev/null
+sudo mv "\${TARGET}.normalized" "\$TARGET"
 
-  systemctl daemon-reload
-  systemctl restart quant-scalp-ping-5s.service
-  systemctl is-active quant-scalp-ping-5s.service
+sudo systemctl daemon-reload
+sudo systemctl restart quant-scalp-ping-5s.service
+sudo systemctl is-active quant-scalp-ping-5s.service
 
-  PID=\$(systemctl show -p MainPID --value quant-scalp-ping-5s.service)
-  echo "--- quant-scalp-ping-5s MainPID=\$PID ---"
-  tr "\\0" "\\n" < "/proc/\$PID/environ" | grep "^SCALP_PING_5S_" | sort || true
-'
+PID=\$(sudo systemctl show -p MainPID --value quant-scalp-ping-5s.service)
+echo "--- quant-scalp-ping-5s MainPID=\$PID ---"
+sudo tr "\\0" "\\n" < "/proc/\$PID/environ" | grep "^SCALP_PING_5S_" | sort || true
+rm -f "\$TMP"
 EOF
 
 echo "[INFO] Applying scalp_ping_5s tuning env to $INSTANCE ($PROJECT/$ZONE) ..."
