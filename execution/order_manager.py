@@ -8213,8 +8213,16 @@ async def market_order(
         client_order_id=client_order_id,
         note="reduce_only" if reduce_only else None,
     )
-    protection_fallback_applied = False
-    for attempt in range(2):
+    # Default behavior (2 attempts, 1 protection fallback) is kept unless overridden.
+    # This is primarily used to reduce "TAKE_PROFIT_ON_FILL_LOSS"/"LOSING_TAKE_PROFIT"
+    # opportunity loss on fast markets without changing sizing logic.
+    max_submit_attempts = max(2, int(os.getenv("ORDER_SUBMIT_MAX_ATTEMPTS", "2") or 2))
+    max_protection_fallbacks = max(
+        0, int(os.getenv("ORDER_PROTECTION_FALLBACK_MAX_RETRIES", "1") or 1)
+    )
+    protection_fallbacks = 0
+
+    for attempt in range(max_submit_attempts):
         payload = order_data.copy()
         payload["order"] = dict(order_data["order"], units=str(units_to_send))
         # Log attempt payload (include non-OANDA context for analytics)
@@ -8292,16 +8300,18 @@ async def market_order(
                 if reason_key == "INSUFFICIENT_MARGIN" and pocket:
                     _MARGIN_REJECT_UNTIL[pocket] = time.monotonic() + 120.0
                 if (
-                    attempt == 0
+                    attempt < max_submit_attempts - 1
                     and not reduce_only
-                    and not protection_fallback_applied
+                    and protection_fallbacks < max_protection_fallbacks
                     and reason_key in _PROTECTION_RETRY_REASONS
                     and (sl_price is not None or tp_price is not None)
                 ):
-                    fallback_gap_price = _protection_fallback_gap_price(
+                    base_gap_price = _protection_fallback_gap_price(
                         pocket,
                         strategy_tag=strategy_tag,
                     )
+                    # Widen the fallback gap each time to handle continued price movement.
+                    fallback_gap_price = float(base_gap_price) * (1.0 + float(protection_fallbacks))
                     retry_quote = _fetch_quote(instrument)
                     if retry_quote:
                         quote = retry_quote
@@ -8361,18 +8371,20 @@ async def market_order(
                         elif "takeProfitOnFill" in order_data["order"]:
                             order_data["order"].pop("takeProfitOnFill", None)
 
-                        protection_fallback_applied = True
+                        protection_fallbacks += 1
                         logging.warning(
-                            "[ORDER] protection fallback applied client=%s reason=%s basis=%.3f sl=%s tp=%s gap=%.4f",
+                            "[ORDER] protection fallback applied client=%s reason=%s basis=%.3f sl=%s tp=%s gap=%.4f (retry=%d/%d)",
                             client_order_id,
                             reason_key,
                             float(fallback_basis) if fallback_basis is not None else -1.0,
                             f"{fallback_sl:.3f}" if fallback_sl is not None else "-",
                             f"{fallback_tp:.3f}" if fallback_tp is not None else "-",
                             fallback_gap_price,
+                            protection_fallbacks,
+                            max_protection_fallbacks,
                         )
                         continue
-                if attempt == 0 and abs(units_to_send) >= 2000:
+                if attempt < max_submit_attempts - 1 and abs(units_to_send) >= 2000:
                     units_to_send = int(units_to_send * 0.5)
                     if units_to_send == 0:
                         break
