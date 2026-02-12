@@ -145,6 +145,13 @@ def _load_config() -> Dict[str, Any]:
 def _merge_config(defaults: Dict[str, Any], override: Dict[str, Any]) -> Dict[str, Any]:
     merged = dict(defaults)
     for key, value in override.items():
+        if key in {"allow_jst_hours", "block_jst_hours"} and isinstance(
+            value, (list, tuple, set)
+        ):
+            # Empty strategy-level hours mean "inherit defaults" to avoid
+            # unintentionally neutralizing global session filters.
+            if len(value) == 0:
+                continue
         merged[key] = value
     return merged
 

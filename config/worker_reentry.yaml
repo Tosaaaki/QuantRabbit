@@ -4,7 +4,9 @@ defaults:
   same_dir_reentry_pips: 1.8
   same_dir_mode: return
   allow_jst_hours: []
-  block_jst_hours: []
+  block_jst_hours:
+  - 7
+  - 8
   return_wait_bias: neutral
   max_open_trades: 0
   max_open_adverse_pips: 0.0
