@@ -1,5 +1,15 @@
 # Ops Current (2026-02-11 JST)
 
+## 0. 2026-02-12 JST 追加チューニング（稼働戦略のみ）
+- `TickImbalance` / `LevelReject` / `M1Scalper` だけを対象に EXIT の time-stop を短縮。
+  - `TickImbalance`: `range_max_hold_sec=600`, `loss_cut_max_hold_sec=600`
+  - `LevelReject`: `range_max_hold_sec=1200`, `loss_cut_max_hold_sec=1200`
+  - `M1Scalper`: `range_max_hold_sec=300`, `loss_cut_max_hold_sec=300`
+- `M1Scalper` は本番上書きでサイズを半減。
+  - `config/vm_env_overrides_aggressive.env`: `M1SCALP_BASE_UNITS=7500`, `M1SCALP_EXIT_MAX_HOLD_SEC=300`
+- `micro_multistrat` に戦略別サイズ倍率を追加。
+  - 新規 env: `MICRO_MULTI_STRATEGY_UNITS_MULT`（例: `TickImbalance:0.70,LevelReject:0.70`）
+
 ## 1. 運用モード（2025-12 攻め設定）
 - マージン活用を 85–92% 目安に引き上げ。
 - ロット上限を拡大（`RISK_MAX_LOT` 既定 10.0 lot）。

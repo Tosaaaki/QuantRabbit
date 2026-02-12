@@ -1075,6 +1075,11 @@ async def micro_multi_worker() -> None:
             dyn_mult = 1.0
             dyn_score = 0.0
             dyn_trades = 0
+            strategy_units_mult = 1.0
+            if base_tag:
+                strategy_units_mult = float(config.STRATEGY_UNITS_MULT.get(base_tag, 1.0) or 1.0)
+            if strategy_units_mult <= 0.0:
+                strategy_units_mult = 1.0
             if config.DYN_ALLOC_ENABLED and bool(dyn_profile.get("found")):
                 dyn_mult = float(dyn_profile.get("lot_multiplier", 1.0) or 1.0)
                 dyn_mult = max(config.DYN_ALLOC_MULT_MIN, min(config.DYN_ALLOC_MULT_MAX, dyn_mult))
@@ -1100,6 +1105,7 @@ async def micro_multi_worker() -> None:
             units = int(round(units * cap))
             units = int(round(units * multi_scale))
             units = int(round(units * dyn_mult))
+            units = int(round(units * strategy_units_mult))
             if units < config.MIN_UNITS:
                 continue
             if side == "short":
@@ -1142,6 +1148,8 @@ async def micro_multi_worker() -> None:
                     "trades": dyn_trades,
                     "lot_multiplier": round(dyn_mult, 3),
                 }
+            if abs(strategy_units_mult - 1.0) > 1e-9:
+                entry_thesis["strategy_units_mult"] = round(strategy_units_mult, 3)
             if div_meta:
                 entry_thesis["divergence"] = div_meta
             if trend_snapshot:
@@ -1286,7 +1294,7 @@ async def micro_multi_worker() -> None:
             )
             _STRATEGY_LAST_TS[strategy_name] = time.time()
             LOG.info(
-                "%s strat=%s sent units=%s side=%s price=%.3f sl=%.3f tp=%.3f conf=%.0f cap=%.2f multi=%.2f dyn=%.2f dyn_score=%.2f dyn_n=%s reasons=%s res=%s",
+                "%s strat=%s sent units=%s side=%s price=%.3f sl=%.3f tp=%.3f conf=%.0f cap=%.2f multi=%.2f dyn=%.2f s_mult=%.2f dyn_score=%.2f dyn_n=%s reasons=%s res=%s",
                 config.LOG_PREFIX,
                 strategy_name,
                 units,
@@ -1298,6 +1306,7 @@ async def micro_multi_worker() -> None:
                 cap,
                 multi_scale,
                 dyn_mult,
+                strategy_units_mult,
                 dyn_score,
                 dyn_trades,
                 {**cap_reason, "tp_scale": round(tp_scale, 3)},
