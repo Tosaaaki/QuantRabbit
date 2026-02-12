@@ -5,7 +5,6 @@ After=network-online.target
 [Service]
 Type=oneshot
 WorkingDirectory=/home/tossaki/QuantRabbit
-ExecStart=/usr/bin/env python3 scripts/pattern_book_worker.py --lookback-days 180 --batch-size 4000 --max-backfill-rows 500000 --min-samples-soft 30 --min-samples-block 120
+ExecStart=/home/tossaki/QuantRabbit/.venv/bin/python scripts/pattern_book_worker.py --lookback-days 180 --batch-size 4000 --max-backfill-rows 500000 --min-samples-soft 30 --min-samples-block 120
 User=tossaki
 Environment=PYTHONUNBUFFERED=1
-
