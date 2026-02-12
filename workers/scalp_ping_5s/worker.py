@@ -20,6 +20,7 @@ import httpx
 from execution.order_manager import market_order
 from execution.position_manager import PositionManager
 from execution.risk_guard import allowed_lot, can_trade, clamp_sl_tp
+from indicators.factor_cache import get_candles_snapshot
 from market_data import spread_monitor, tick_window
 from market_data.tick_fetcher import _parse_time
 from utils.market_hours import is_market_open
@@ -92,6 +93,16 @@ class DirectionBias:
     vol_norm: float
     tick_rate: float
     span_sec: float
+
+
+@dataclass(slots=True)
+class ExtremaGateDecision:
+    allow_entry: bool
+    reason: str
+    units_mult: float
+    m1_pos: Optional[float]
+    m5_pos: Optional[float]
+    h4_pos: Optional[float]
 
 
 @dataclass(slots=True)
@@ -364,6 +375,159 @@ def _direction_units_multiplier(signal_side: str, bias: Optional[DirectionBias])
     ratio = _clamp((score_abs - config.DIRECTION_BIAS_ALIGN_SCORE_MIN) / span, 0.0, 1.0)
     boost = config.DIRECTION_BIAS_ALIGN_UNITS_BOOST_MAX * ratio
     return 1.0 + boost, "align_boost"
+
+
+def _range_pos_from_candles(
+    *,
+    tf: str,
+    lookback: int,
+    min_span_pips: float,
+) -> Optional[float]:
+    candles = get_candles_snapshot(tf, limit=max(lookback, 2), include_live=True)
+    if len(candles) < max(lookback, 2):
+        return None
+    window = candles[-lookback:]
+    highs: list[float] = []
+    lows: list[float] = []
+    closes: list[float] = []
+    for row in window:
+        if not isinstance(row, dict):
+            continue
+        high = _safe_float(row.get("high"), 0.0)
+        low = _safe_float(row.get("low"), 0.0)
+        close = _safe_float(row.get("close"), 0.0)
+        if high <= 0.0 or low <= 0.0 or close <= 0.0 or high < low:
+            continue
+        highs.append(high)
+        lows.append(low)
+        closes.append(close)
+    if len(highs) < max(6, lookback // 2):
+        return None
+
+    highest = max(highs)
+    lowest = min(lows)
+    close_px = closes[-1]
+    span = highest - lowest
+    if span <= 0.0:
+        return None
+    span_pips = span / config.PIP_VALUE
+    if span_pips < min_span_pips:
+        return None
+
+    pos = (close_px - lowest) / span
+    return _clamp(pos, 0.0, 1.0)
+
+
+def _extrema_gate_decision(side: str) -> ExtremaGateDecision:
+    if not config.EXTREMA_GATE_ENABLED:
+        return ExtremaGateDecision(True, "disabled", 1.0, None, None, None)
+
+    m1_pos = _range_pos_from_candles(
+        tf="M1",
+        lookback=config.EXTREMA_M1_LOOKBACK,
+        min_span_pips=config.EXTREMA_M1_MIN_SPAN_PIPS,
+    )
+    m5_pos = _range_pos_from_candles(
+        tf="M5",
+        lookback=config.EXTREMA_M5_LOOKBACK,
+        min_span_pips=config.EXTREMA_M5_MIN_SPAN_PIPS,
+    )
+    h4_pos = _range_pos_from_candles(
+        tf="H4",
+        lookback=config.EXTREMA_H4_LOOKBACK,
+        min_span_pips=config.EXTREMA_H4_MIN_SPAN_PIPS,
+    )
+
+    missing: list[str] = []
+    if m1_pos is None:
+        missing.append("m1")
+    if m5_pos is None:
+        missing.append("m5")
+    if h4_pos is None:
+        missing.append("h4")
+
+    side_key = str(side or "").lower()
+    is_long = side_key in {"buy", "long", "open_long"}
+    is_short = side_key in {"sell", "short", "open_short"}
+    if not (is_long or is_short):
+        return ExtremaGateDecision(True, "unknown_side", 1.0, m1_pos, m5_pos, h4_pos)
+
+    if is_long:
+        m1_top = m1_pos is not None and m1_pos >= config.EXTREMA_LONG_TOP_BLOCK_POS
+        m5_top = m5_pos is not None and m5_pos >= config.EXTREMA_LONG_TOP_BLOCK_POS
+        if config.EXTREMA_REQUIRE_M1_M5_AGREE:
+            top_block = m1_top and m5_top
+        else:
+            top_block = m1_top or m5_top
+        if top_block:
+            return ExtremaGateDecision(
+                False,
+                "long_top_m1m5",
+                0.0,
+                m1_pos,
+                m5_pos,
+                h4_pos,
+            )
+        soft_hit = (
+            (m1_pos is not None and m1_pos >= config.EXTREMA_LONG_TOP_SOFT_POS)
+            or (m5_pos is not None and m5_pos >= config.EXTREMA_LONG_TOP_SOFT_POS)
+        )
+        if soft_hit and config.EXTREMA_SOFT_UNITS_MULT < 0.999:
+            return ExtremaGateDecision(
+                True,
+                "long_top_soft",
+                config.EXTREMA_SOFT_UNITS_MULT,
+                m1_pos,
+                m5_pos,
+                h4_pos,
+            )
+    else:
+        m1_bottom = m1_pos is not None and m1_pos <= config.EXTREMA_SHORT_BOTTOM_BLOCK_POS
+        m5_bottom = m5_pos is not None and m5_pos <= config.EXTREMA_SHORT_BOTTOM_BLOCK_POS
+        if config.EXTREMA_REQUIRE_M1_M5_AGREE:
+            bottom_block = m1_bottom and m5_bottom
+        else:
+            bottom_block = m1_bottom or m5_bottom
+        if bottom_block:
+            return ExtremaGateDecision(
+                False,
+                "short_bottom_m1m5",
+                0.0,
+                m1_pos,
+                m5_pos,
+                h4_pos,
+            )
+        if h4_pos is not None and h4_pos <= config.EXTREMA_SHORT_H4_LOW_BLOCK_POS:
+            return ExtremaGateDecision(
+                False,
+                "short_h4_low",
+                0.0,
+                m1_pos,
+                m5_pos,
+                h4_pos,
+            )
+        soft_hit = (
+            (m1_pos is not None and m1_pos <= config.EXTREMA_SHORT_BOTTOM_SOFT_POS)
+            or (m5_pos is not None and m5_pos <= config.EXTREMA_SHORT_BOTTOM_SOFT_POS)
+            or (h4_pos is not None and h4_pos <= config.EXTREMA_SHORT_H4_LOW_SOFT_POS)
+        )
+        if soft_hit and config.EXTREMA_SOFT_UNITS_MULT < 0.999:
+            return ExtremaGateDecision(
+                True,
+                "short_bottom_soft",
+                config.EXTREMA_SOFT_UNITS_MULT,
+                m1_pos,
+                m5_pos,
+                h4_pos,
+            )
+
+    if missing:
+        reason = "missing_" + "_".join(missing)
+        if config.EXTREMA_FAIL_OPEN:
+            return ExtremaGateDecision(True, reason, 1.0, m1_pos, m5_pos, h4_pos)
+        return ExtremaGateDecision(False, reason, 0.0, m1_pos, m5_pos, h4_pos)
+
+    return ExtremaGateDecision(True, "ok", 1.0, m1_pos, m5_pos, h4_pos)
 
 
 def _confidence_scale(conf: int) -> float:
@@ -772,6 +936,7 @@ async def scalp_ping_5s_worker() -> None:
     last_trap_log_mono = 0.0
     last_bias_log_mono = 0.0
     last_lookahead_log_mono = 0.0
+    last_extrema_log_mono = 0.0
     force_exit_states: dict[str, ForceExitState] = {}
     protected_trade_ids: set[str] = set()
     protected_seeded = False
@@ -980,6 +1145,46 @@ async def scalp_ping_5s_worker() -> None:
                     continue
                 lookahead_units_mult = max(0.1, float(lookahead_decision.units_mult))
 
+            extrema_decision = _extrema_gate_decision(signal.side)
+            extrema_units_mult = max(0.1, float(extrema_decision.units_mult))
+            m1_pos_log = (
+                -1.0 if extrema_decision.m1_pos is None else float(extrema_decision.m1_pos)
+            )
+            m5_pos_log = (
+                -1.0 if extrema_decision.m5_pos is None else float(extrema_decision.m5_pos)
+            )
+            h4_pos_log = (
+                -1.0 if extrema_decision.h4_pos is None else float(extrema_decision.h4_pos)
+            )
+            if not extrema_decision.allow_entry:
+                if now_mono - last_extrema_log_mono >= config.EXTREMA_LOG_INTERVAL_SEC:
+                    LOG.info(
+                        "%s extrema block side=%s reason=%s m1=%.2f m5=%.2f h4=%.2f",
+                        config.LOG_PREFIX,
+                        signal.side,
+                        extrema_decision.reason,
+                        m1_pos_log,
+                        m5_pos_log,
+                        h4_pos_log,
+                    )
+                    last_extrema_log_mono = now_mono
+                continue
+            if (
+                extrema_units_mult < 0.999
+                or str(extrema_decision.reason).startswith("missing_")
+            ) and now_mono - last_extrema_log_mono >= config.EXTREMA_LOG_INTERVAL_SEC:
+                LOG.info(
+                    "%s extrema pass side=%s reason=%s emult=%.2f m1=%.2f m5=%.2f h4=%.2f",
+                    config.LOG_PREFIX,
+                    signal.side,
+                    extrema_decision.reason,
+                    extrema_units_mult,
+                    m1_pos_log,
+                    m5_pos_log,
+                    h4_pos_log,
+                )
+                last_extrema_log_mono = now_mono
+
             if now_mono - last_entry_mono < config.ENTRY_COOLDOWN_SEC:
                 continue
             if not rate_limiter.allow(now_mono):
@@ -1060,7 +1265,14 @@ async def scalp_ping_5s_worker() -> None:
                 )
             )
             units = int(
-                round(base_units * conf_mult * strength_mult * bias_units_mult * lookahead_units_mult)
+                round(
+                    base_units
+                    * conf_mult
+                    * strength_mult
+                    * bias_units_mult
+                    * lookahead_units_mult
+                    * extrema_units_mult
+                )
             )
 
             lot = allowed_lot(
@@ -1129,7 +1341,16 @@ async def scalp_ping_5s_worker() -> None:
                 "direction_bias_units_mult": round(bias_units_mult, 3),
                 "lookahead_gate_enabled": bool(config.LOOKAHEAD_GATE_ENABLED),
                 "lookahead_units_mult": round(lookahead_units_mult, 3),
+                "extrema_gate_enabled": bool(config.EXTREMA_GATE_ENABLED),
+                "extrema_gate_reason": extrema_decision.reason,
+                "extrema_units_mult": round(extrema_units_mult, 3),
             }
+            if extrema_decision.m1_pos is not None:
+                entry_thesis["extrema_m1_pos"] = round(extrema_decision.m1_pos, 4)
+            if extrema_decision.m5_pos is not None:
+                entry_thesis["extrema_m5_pos"] = round(extrema_decision.m5_pos, 4)
+            if extrema_decision.h4_pos is not None:
+                entry_thesis["extrema_h4_pos"] = round(extrema_decision.h4_pos, 4)
             if direction_bias is not None:
                 entry_thesis.update(
                     {
@@ -1193,7 +1414,7 @@ async def scalp_ping_5s_worker() -> None:
             rate_limiter.record(now_mono)
 
             LOG.info(
-                "%s open side=%s units=%s conf=%d mom=%.2fp trig=%.2fp sp=%.2fp tp=%.2fp sl=%.2fp bias=%s score=%.2f bmult=%.2f lmult=%.2f ledge=%.3fp res=%s",
+                "%s open side=%s units=%s conf=%d mom=%.2fp trig=%.2fp sp=%.2fp tp=%.2fp sl=%.2fp bias=%s score=%.2f bmult=%.2f lmult=%.2f emult=%.2f ereason=%s ledge=%.3fp res=%s",
                 config.LOG_PREFIX,
                 signal.side,
                 units,
@@ -1207,6 +1428,8 @@ async def scalp_ping_5s_worker() -> None:
                 _safe_float(getattr(direction_bias, "score", 0.0), 0.0),
                 bias_units_mult,
                 lookahead_units_mult,
+                extrema_units_mult,
+                extrema_decision.reason,
                 (
                     _safe_float(getattr(lookahead_decision, "edge_pips", 0.0), 0.0)
                     if lookahead_decision is not None

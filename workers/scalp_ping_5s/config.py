@@ -153,6 +153,72 @@ LOOKAHEAD_LOG_INTERVAL_SEC: float = max(
     float(os.getenv("SCALP_PING_5S_LOOKAHEAD_LOG_INTERVAL_SEC", "8.0")),
 )
 
+EXTREMA_GATE_ENABLED: bool = _bool_env("SCALP_PING_5S_EXTREMA_GATE_ENABLED", True)
+EXTREMA_FAIL_OPEN: bool = _bool_env("SCALP_PING_5S_EXTREMA_FAIL_OPEN", True)
+EXTREMA_M1_LOOKBACK: int = max(
+    8, int(float(os.getenv("SCALP_PING_5S_EXTREMA_M1_LOOKBACK", "20")))
+)
+EXTREMA_M5_LOOKBACK: int = max(
+    8, int(float(os.getenv("SCALP_PING_5S_EXTREMA_M5_LOOKBACK", "20")))
+)
+EXTREMA_H4_LOOKBACK: int = max(
+    8, int(float(os.getenv("SCALP_PING_5S_EXTREMA_H4_LOOKBACK", "20")))
+)
+EXTREMA_M1_MIN_SPAN_PIPS: float = max(
+    0.05, float(os.getenv("SCALP_PING_5S_EXTREMA_M1_MIN_SPAN_PIPS", "0.6"))
+)
+EXTREMA_M5_MIN_SPAN_PIPS: float = max(
+    0.05, float(os.getenv("SCALP_PING_5S_EXTREMA_M5_MIN_SPAN_PIPS", "1.2"))
+)
+EXTREMA_H4_MIN_SPAN_PIPS: float = max(
+    0.1, float(os.getenv("SCALP_PING_5S_EXTREMA_H4_MIN_SPAN_PIPS", "6.0"))
+)
+EXTREMA_LONG_TOP_BLOCK_POS: float = max(
+    0.50,
+    min(0.99, float(os.getenv("SCALP_PING_5S_EXTREMA_LONG_TOP_BLOCK_POS", "0.86"))),
+)
+EXTREMA_LONG_TOP_SOFT_POS: float = max(
+    0.50,
+    min(
+        EXTREMA_LONG_TOP_BLOCK_POS,
+        float(os.getenv("SCALP_PING_5S_EXTREMA_LONG_TOP_SOFT_POS", "0.78")),
+    ),
+)
+EXTREMA_SHORT_BOTTOM_BLOCK_POS: float = max(
+    0.01,
+    min(0.50, float(os.getenv("SCALP_PING_5S_EXTREMA_SHORT_BOTTOM_BLOCK_POS", "0.14"))),
+)
+EXTREMA_SHORT_BOTTOM_SOFT_POS: float = min(
+    0.50,
+    max(
+        EXTREMA_SHORT_BOTTOM_BLOCK_POS,
+        float(os.getenv("SCALP_PING_5S_EXTREMA_SHORT_BOTTOM_SOFT_POS", "0.22")),
+    ),
+)
+EXTREMA_SHORT_H4_LOW_BLOCK_POS: float = max(
+    0.01,
+    min(0.50, float(os.getenv("SCALP_PING_5S_EXTREMA_SHORT_H4_LOW_BLOCK_POS", "0.20"))),
+)
+EXTREMA_SHORT_H4_LOW_SOFT_POS: float = min(
+    0.60,
+    max(
+        EXTREMA_SHORT_H4_LOW_BLOCK_POS,
+        float(os.getenv("SCALP_PING_5S_EXTREMA_SHORT_H4_LOW_SOFT_POS", "0.30")),
+    ),
+)
+EXTREMA_REQUIRE_M1_M5_AGREE: bool = _bool_env(
+    "SCALP_PING_5S_EXTREMA_REQUIRE_M1_M5_AGREE",
+    True,
+)
+EXTREMA_SOFT_UNITS_MULT: float = max(
+    0.10,
+    min(1.0, float(os.getenv("SCALP_PING_5S_EXTREMA_SOFT_UNITS_MULT", "0.68"))),
+)
+EXTREMA_LOG_INTERVAL_SEC: float = max(
+    1.0,
+    float(os.getenv("SCALP_PING_5S_EXTREMA_LOG_INTERVAL_SEC", "8.0")),
+)
+
 ENTRY_COOLDOWN_SEC: float = max(0.1, float(os.getenv("SCALP_PING_5S_ENTRY_COOLDOWN_SEC", "2.0")))
 MIN_ORDER_SPACING_SEC: float = max(
     0.05, float(os.getenv("SCALP_PING_5S_MIN_ORDER_SPACING_SEC", "1.0"))
