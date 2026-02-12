@@ -204,6 +204,7 @@ def test_allow_signal_when_max_active_prefers_rebalance_side(monkeypatch) -> Non
             active_total=10,
             active_long=10,
             active_short=0,
+            max_active_trades=10,
         )
         is True
     )
@@ -213,6 +214,7 @@ def test_allow_signal_when_max_active_prefers_rebalance_side(monkeypatch) -> Non
             active_total=10,
             active_long=10,
             active_short=0,
+            max_active_trades=10,
         )
         is False
     )
@@ -222,6 +224,7 @@ def test_allow_signal_when_max_active_prefers_rebalance_side(monkeypatch) -> Non
             active_total=10,
             active_long=5,
             active_short=5,
+            max_active_trades=10,
         )
         is False
     )
@@ -231,6 +234,7 @@ def test_allow_signal_when_max_active_prefers_rebalance_side(monkeypatch) -> Non
             active_total=9,
             active_long=9,
             active_short=0,
+            max_active_trades=10,
         )
         is True
     )
@@ -251,9 +255,57 @@ def test_allow_signal_when_max_active_respects_disable_flag(monkeypatch) -> None
             active_total=10,
             active_long=10,
             active_short=0,
+            max_active_trades=10,
         )
         is False
     )
+
+
+def test_resolve_active_caps_expands_when_margin_headroom_is_healthy(monkeypatch) -> None:
+    monkeypatch.setenv("oanda_token", "dummy")
+    monkeypatch.setenv("oanda_account_id", "dummy")
+    monkeypatch.setenv("oanda_practice", "true")
+    from workers.scalp_ping_5s import worker
+
+    monkeypatch.setattr(worker.config, "MAX_ACTIVE_TRADES", 20)
+    monkeypatch.setattr(worker.config, "MAX_PER_DIRECTION", 12)
+    monkeypatch.setattr(worker.config, "ACTIVE_CAP_MARGIN_BYPASS_ENABLED", True)
+    monkeypatch.setattr(worker.config, "ACTIVE_CAP_BYPASS_MIN_FREE_RATIO", 0.06)
+    monkeypatch.setattr(worker.config, "ACTIVE_CAP_BYPASS_MIN_MARGIN_AVAILABLE_JPY", 8000.0)
+    monkeypatch.setattr(worker.config, "ACTIVE_CAP_BYPASS_EXTRA_TOTAL", 12)
+    monkeypatch.setattr(worker.config, "ACTIVE_CAP_BYPASS_EXTRA_PER_DIRECTION", 8)
+
+    total_cap, side_cap, expanded = worker._resolve_active_caps(
+        free_ratio=0.074,
+        margin_available=11239.4,
+    )
+
+    assert expanded is True
+    assert total_cap == 32
+    assert side_cap == 20
+
+
+def test_resolve_active_caps_keeps_base_when_margin_headroom_is_low(monkeypatch) -> None:
+    monkeypatch.setenv("oanda_token", "dummy")
+    monkeypatch.setenv("oanda_account_id", "dummy")
+    monkeypatch.setenv("oanda_practice", "true")
+    from workers.scalp_ping_5s import worker
+
+    monkeypatch.setattr(worker.config, "MAX_ACTIVE_TRADES", 20)
+    monkeypatch.setattr(worker.config, "MAX_PER_DIRECTION", 12)
+    monkeypatch.setattr(worker.config, "ACTIVE_CAP_MARGIN_BYPASS_ENABLED", True)
+    monkeypatch.setattr(worker.config, "ACTIVE_CAP_BYPASS_MIN_FREE_RATIO", 0.06)
+    monkeypatch.setattr(worker.config, "ACTIVE_CAP_BYPASS_MIN_MARGIN_AVAILABLE_JPY", 8000.0)
+    monkeypatch.setattr(worker.config, "ACTIVE_CAP_BYPASS_EXTRA_TOTAL", 12)
+    monkeypatch.setattr(worker.config, "ACTIVE_CAP_BYPASS_EXTRA_PER_DIRECTION", 8)
+
+    total_cap, side_cap, expanded = worker._resolve_active_caps(
+        free_ratio=0.051,
+        margin_available=11239.4,
+    )
+    assert expanded is False
+    assert total_cap == 20
+    assert side_cap == 12
 
 
 @pytest.mark.asyncio

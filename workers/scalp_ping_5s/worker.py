@@ -1896,8 +1896,9 @@ def _allow_signal_when_max_active(
     active_total: int,
     active_long: int,
     active_short: int,
+    max_active_trades: int,
 ) -> bool:
-    if active_total < config.MAX_ACTIVE_TRADES:
+    if active_total < max_active_trades:
         return True
     if not config.ALLOW_OPPOSITE_WHEN_MAX_ACTIVE:
         return False
@@ -1906,6 +1907,24 @@ def _allow_signal_when_max_active(
     if side == "short":
         return active_long > active_short
     return False
+
+
+def _resolve_active_caps(
+    *,
+    free_ratio: float,
+    margin_available: float,
+) -> tuple[int, int, bool]:
+    total_cap = config.MAX_ACTIVE_TRADES
+    side_cap = config.MAX_PER_DIRECTION
+    if not config.ACTIVE_CAP_MARGIN_BYPASS_ENABLED:
+        return total_cap, side_cap, False
+    if free_ratio < config.ACTIVE_CAP_BYPASS_MIN_FREE_RATIO:
+        return total_cap, side_cap, False
+    if margin_available < config.ACTIVE_CAP_BYPASS_MIN_MARGIN_AVAILABLE_JPY:
+        return total_cap, side_cap, False
+    total_cap = max(total_cap, config.MAX_ACTIVE_TRADES + config.ACTIVE_CAP_BYPASS_EXTRA_TOTAL)
+    side_cap = max(side_cap, config.MAX_PER_DIRECTION + config.ACTIVE_CAP_BYPASS_EXTRA_PER_DIRECTION)
+    return total_cap, side_cap, True
 
 
 def _compute_trap_state(positions: dict, *, mid_price: float) -> TrapState:
@@ -2343,36 +2362,6 @@ async def scalp_ping_5s_worker() -> None:
             if not rate_limiter.allow(now_mono):
                 continue
 
-            active_total, active_long, active_short = _strategy_trade_counts(
-                pocket_info,
-                config.STRATEGY_TAG,
-            )
-            if not _allow_signal_when_max_active(
-                side=signal.side,
-                active_total=active_total,
-                active_long=active_long,
-                active_short=active_short,
-            ):
-                continue
-            if (
-                active_total >= config.MAX_ACTIVE_TRADES
-                and now_mono - last_max_active_bypass_log_mono >= 5.0
-            ):
-                LOG.info(
-                    "%s max_active bypass side=%s total=%d long=%d short=%d cap=%d",
-                    config.LOG_PREFIX,
-                    signal.side,
-                    active_total,
-                    active_long,
-                    active_short,
-                    config.MAX_ACTIVE_TRADES,
-                )
-                last_max_active_bypass_log_mono = now_mono
-            if signal.side == "long" and active_long >= config.MAX_PER_DIRECTION:
-                continue
-            if signal.side == "short" and active_short >= config.MAX_PER_DIRECTION:
-                continue
-
             trap_state = _compute_trap_state(positions, mid_price=signal.mid)
             if trap_state.active and now_mono - last_trap_log_mono >= config.TRAP_LOG_INTERVAL_SEC:
                 LOG.info(
@@ -2405,6 +2394,45 @@ async def scalp_ping_5s_worker() -> None:
             free_ratio = _safe_float(snap.free_margin_ratio, 0.0)
 
             if free_ratio > 0.0 and free_ratio < config.MIN_FREE_MARGIN_RATIO:
+                continue
+
+            active_total, active_long, active_short = _strategy_trade_counts(
+                pocket_info,
+                config.STRATEGY_TAG,
+            )
+            max_active_trades, max_per_direction, cap_expanded = _resolve_active_caps(
+                free_ratio=free_ratio,
+                margin_available=margin_available,
+            )
+            if not _allow_signal_when_max_active(
+                side=signal.side,
+                active_total=active_total,
+                active_long=active_long,
+                active_short=active_short,
+                max_active_trades=max_active_trades,
+            ):
+                continue
+            if (
+                active_total >= config.MAX_ACTIVE_TRADES
+                and now_mono - last_max_active_bypass_log_mono >= config.ACTIVE_CAP_BYPASS_LOG_INTERVAL_SEC
+            ):
+                LOG.info(
+                    "%s max_active bypass side=%s total=%d long=%d short=%d base_cap=%d eff_cap=%d expanded=%s free_ratio=%.3f margin_avail=%.0f",
+                    config.LOG_PREFIX,
+                    signal.side,
+                    active_total,
+                    active_long,
+                    active_short,
+                    config.MAX_ACTIVE_TRADES,
+                    max_active_trades,
+                    cap_expanded,
+                    free_ratio,
+                    margin_available,
+                )
+                last_max_active_bypass_log_mono = now_mono
+            if signal.side == "long" and active_long >= max_per_direction:
+                continue
+            if signal.side == "short" and active_short >= max_per_direction:
                 continue
 
             tp_profile = _load_tp_timing_profile(config.STRATEGY_TAG, config.POCKET)
