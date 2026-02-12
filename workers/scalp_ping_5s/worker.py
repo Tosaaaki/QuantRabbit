@@ -609,6 +609,28 @@ def _trade_unrealized_pips(trade: dict) -> float:
     return unrealized_pl / pip_value
 
 
+def _trade_entry_spread_pips(trade: dict) -> float:
+    thesis = trade.get("entry_thesis")
+    if not isinstance(thesis, dict):
+        return 0.0
+    return _safe_float(thesis.get("spread_pips"), 0.0)
+
+
+def _force_exit_hard_loss_trigger_pips(trade: dict, base_hard_loss_pips: float) -> float:
+    """Return effective hard-loss trigger pips for force-exit decisions.
+
+    `unrealized_pl_pips` includes spread costs; cutting exactly at `-base_hard_loss_pips`
+    often creates churn. Add entry spread (if available) plus a small buffer to avoid
+    "meaningless" market-close exits around the threshold.
+    """
+
+    if base_hard_loss_pips <= 0.0:
+        return 0.0
+    entry_spread_pips = max(0.0, _trade_entry_spread_pips(trade))
+    buffer_pips = max(0.0, float(getattr(config, "SL_SPREAD_BUFFER_PIPS", 0.0)))
+    return float(base_hard_loss_pips + entry_spread_pips + buffer_pips)
+
+
 def _trade_client_id(trade: dict) -> str:
     return str(trade.get("client_id") or trade.get("client_order_id") or "").strip()
 
@@ -895,6 +917,7 @@ async def _enforce_new_entry_time_stop(
 
     target_tag = str(config.STRATEGY_TAG or "").strip().lower()
     target_generation = str(config.FORCE_EXIT_POLICY_GENERATION or "").strip()
+    require_generation = bool(getattr(config, "FORCE_EXIT_REQUIRE_POLICY_GENERATION", False))
     closed_count = 0
     seen_trade_ids: set[str] = set()
     now_mono = time.monotonic()
@@ -909,6 +932,11 @@ async def _enforce_new_entry_time_stop(
             if trade_tag != target_tag:
                 continue
         generation = _trade_policy_generation(trade)
+        if require_generation:
+            if not target_generation:
+                continue
+            if generation != target_generation:
+                continue
 
         opened_at = _parse_trade_open_time(trade.get("open_time") or trade.get("entry_time"))
         if opened_at is None:
@@ -931,7 +959,8 @@ async def _enforce_new_entry_time_stop(
 
         exit_reason: Optional[str] = None
         trigger_label: Optional[str] = None
-        if hard_loss_pips > 0.0 and unrealized_pips <= -hard_loss_pips:
+        hard_loss_trigger_pips = _force_exit_hard_loss_trigger_pips(trade, hard_loss_pips)
+        if hard_loss_trigger_pips > 0.0 and unrealized_pips <= -hard_loss_trigger_pips:
             exit_reason = config.FORCE_EXIT_MAX_FLOATING_LOSS_REASON
             trigger_label = "max_floating_loss"
         elif (
@@ -1011,6 +1040,16 @@ async def _enforce_new_entry_time_stop(
         if not closed:
             continue
         closed_count += 1
+        if trigger_label == "max_floating_loss":
+            logger.info(
+                "%s force_exit threshold=%s base=%.2fp entry_sp=%.2fp buffer=%.2fp effective=%.2fp",
+                config.LOG_PREFIX,
+                trigger_label,
+                hard_loss_pips,
+                _trade_entry_spread_pips(trade),
+                float(getattr(config, "SL_SPREAD_BUFFER_PIPS", 0.0)),
+                hard_loss_trigger_pips,
+            )
         logger.info(
             "%s force_exit reason=%s trigger=%s trade=%s hold=%.0fs pnl=%.2fp mfe=%.2fp units=%s generation=%s",
             config.LOG_PREFIX,
@@ -2354,10 +2393,11 @@ async def scalp_ping_5s_worker() -> None:
                             )
                             hold_sec = (now_utc - opened_at).total_seconds() if opened_at is not None else 0.0
                             unrealized_pips = _trade_unrealized_pips(trade)
+                            hard_loss_trigger_pips = _force_exit_hard_loss_trigger_pips(trade, hard_loss_pips)
                             eligible = False
                             if max_hold_sec > 0.0 and hold_sec >= max_hold_sec:
                                 eligible = True
-                            elif hard_loss_pips > 0.0 and unrealized_pips <= -hard_loss_pips:
+                            elif hard_loss_trigger_pips > 0.0 and unrealized_pips <= -hard_loss_trigger_pips:
                                 eligible = True
                             elif (
                                 recovery_window_sec > 0.0
@@ -2410,10 +2450,11 @@ async def scalp_ping_5s_worker() -> None:
                         )
                         hold_sec = (now_utc - opened_at).total_seconds() if opened_at is not None else 0.0
                         unrealized_pips = _trade_unrealized_pips(trade)
+                        hard_loss_trigger_pips = _force_exit_hard_loss_trigger_pips(trade, hard_loss_pips)
                         eligible = False
                         if max_hold_sec > 0.0 and hold_sec >= max_hold_sec:
                             eligible = True
-                        elif hard_loss_pips > 0.0 and unrealized_pips <= -hard_loss_pips:
+                        elif hard_loss_trigger_pips > 0.0 and unrealized_pips <= -hard_loss_trigger_pips:
                             eligible = True
                         elif (
                             recovery_window_sec > 0.0
