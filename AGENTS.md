@@ -41,6 +41,9 @@
 - `docs/RANGE_MODE.md`: レンジモード強化とオンラインチューニング運用。
 - `docs/OPS_GCP_RUNBOOK.md`: GCP/VM 運用ランブック。
 - `docs/OPS_SKILLS.md`: 日次運用スキル運用。
+- `docs/KATA_SCALP_PING_5S.md`: 5秒スキャ（`scalp_ping_5s`）の型（Kata）設計・運用。
+- `docs/KATA_SCALP_M1SCALPER.md`: M1スキャ（`scalp_m1scalper`）の型（Kata）設計・運用。
+- `docs/KATA_PROGRESS.md`: 型（Kata）の進捗ログ（VMスナップショット/展開計画）。
 
 ## 5. チーム / タスク運用ルール（要点）
 - 1 ファイル = 1 PR、Squash Merge、CI green。
@@ -67,4 +70,5 @@
   - `suggested_multiplier` と `drift` でロットを縮小/拡大（下限未満は `pattern_scale_below_min`）。
 - 重要: デフォルトは戦略opt-in。`ORDER_PATTERN_GATE_GLOBAL_OPT_IN=0` を維持し、各戦略ワーカーの `entry_thesis` に `pattern_gate_opt_in=true` を明示したものだけ適用する。
 - 既定opt-in戦略: `scalp_ping_5s`（`SCALP_PING_5S_PATTERN_GATE_OPT_IN=1`）。
+  - 追加予定: `scalp_m1scalper`（`SCALP_M1SCALPER_PATTERN_GATE_OPT_IN=1`）。
 - 運用判断は必ずVM実データで行う。`patterns.db` / `pattern_book*.json` の時刻・件数・quality分布を確認してから閾値調整する。
