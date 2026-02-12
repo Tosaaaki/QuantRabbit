@@ -82,6 +82,18 @@ class TickSignal:
 
 
 @dataclass(slots=True)
+class DirectionBias:
+    side: str
+    score: float
+    momentum_pips: float
+    flow: float
+    range_pips: float
+    vol_norm: float
+    tick_rate: float
+    span_sec: float
+
+
+@dataclass(slots=True)
 class TrapState:
     active: bool
     long_units: float
@@ -115,6 +127,10 @@ def _safe_float(value: object, default: float = 0.0) -> float:
         return float(value)
     except Exception:
         return default
+
+
+def _clamp(value: float, lo: float, hi: float) -> float:
+    return max(lo, min(hi, value))
 
 
 def _quotes_from_row(row: dict, fallback_mid: float = 0.0) -> tuple[float, float, float]:
@@ -245,6 +261,108 @@ def _build_tick_signal(rows: Sequence[dict], spread_pips: float) -> Optional[Tic
         ask=ask,
         mid=mid,
     )
+
+
+def _build_direction_bias(rows: Sequence[dict], spread_pips: float) -> Optional[DirectionBias]:
+    if not config.DIRECTION_BIAS_ENABLED:
+        return None
+    if len(rows) < config.DIRECTION_BIAS_MIN_TICKS:
+        return None
+    latest_epoch = _safe_float(rows[-1].get("epoch"), 0.0)
+    if latest_epoch <= 0.0:
+        return None
+    window_cutoff = latest_epoch - config.DIRECTION_BIAS_WINDOW_SEC
+    bias_rows = [r for r in rows if _safe_float(r.get("epoch"), 0.0) >= window_cutoff]
+    if len(bias_rows) < config.DIRECTION_BIAS_MIN_TICKS:
+        return None
+
+    mids: list[float] = []
+    epochs: list[float] = []
+    fallback_mid = 0.0
+    for row in bias_rows:
+        _, _, mid = _quotes_from_row(row, fallback_mid=fallback_mid)
+        if mid <= 0.0:
+            continue
+        epoch = _safe_float(row.get("epoch"), 0.0)
+        if epoch <= 0.0:
+            continue
+        mids.append(mid)
+        epochs.append(epoch)
+        fallback_mid = mid
+    if len(mids) < config.DIRECTION_BIAS_MIN_TICKS:
+        return None
+
+    span_sec = max(0.001, epochs[-1] - epochs[0])
+    momentum_pips = (mids[-1] - mids[0]) / config.PIP_VALUE
+    range_pips = max(0.0, (max(mids) - min(mids)) / config.PIP_VALUE)
+    tick_rate = max(0.0, (len(mids) - 1) / span_sec)
+
+    up = 0
+    down = 0
+    for i in range(1, len(mids)):
+        diff = mids[i] - mids[i - 1]
+        if diff > 0.0:
+            up += 1
+        elif diff < 0.0:
+            down += 1
+    directional = max(1, up + down)
+    flow = (up - down) / directional
+
+    trigger_pips = max(
+        config.MOMENTUM_TRIGGER_PIPS,
+        max(spread_pips, 0.0) * config.MOMENTUM_SPREAD_MULT,
+    )
+    mom_norm = _clamp(momentum_pips / max(trigger_pips * 2.0, 0.2), -1.0, 1.0)
+    vol_span = max(
+        0.05,
+        config.DIRECTION_BIAS_VOL_HIGH_PIPS - config.DIRECTION_BIAS_VOL_LOW_PIPS,
+    )
+    vol_norm = _clamp(
+        (range_pips - config.DIRECTION_BIAS_VOL_LOW_PIPS) / vol_span,
+        0.0,
+        1.0,
+    )
+    raw_score = (0.68 * mom_norm) + (0.32 * flow)
+    score = _clamp(raw_score * (0.6 + (0.4 * vol_norm)), -1.0, 1.0)
+
+    if score >= config.DIRECTION_BIAS_NEUTRAL_SCORE:
+        side = "long"
+    elif score <= -config.DIRECTION_BIAS_NEUTRAL_SCORE:
+        side = "short"
+    else:
+        side = "neutral"
+
+    return DirectionBias(
+        side=side,
+        score=score,
+        momentum_pips=momentum_pips,
+        flow=flow,
+        range_pips=range_pips,
+        vol_norm=vol_norm,
+        tick_rate=tick_rate,
+        span_sec=span_sec,
+    )
+
+
+def _direction_units_multiplier(signal_side: str, bias: Optional[DirectionBias]) -> tuple[float, str]:
+    if not config.DIRECTION_BIAS_ENABLED or bias is None:
+        return 1.0, "disabled"
+    if bias.side == "neutral":
+        return 1.0, "neutral"
+
+    score_abs = abs(_safe_float(bias.score, 0.0))
+    if signal_side != bias.side:
+        if score_abs >= config.DIRECTION_BIAS_BLOCK_SCORE:
+            return 0.0, "opposite_block"
+        return config.DIRECTION_BIAS_OPPOSITE_UNITS_MULT, "opposite_scale"
+
+    if score_abs < config.DIRECTION_BIAS_ALIGN_SCORE_MIN:
+        return 1.0, "align_weak"
+
+    span = max(0.01, 1.0 - config.DIRECTION_BIAS_ALIGN_SCORE_MIN)
+    ratio = _clamp((score_abs - config.DIRECTION_BIAS_ALIGN_SCORE_MIN) / span, 0.0, 1.0)
+    boost = config.DIRECTION_BIAS_ALIGN_UNITS_BOOST_MAX * ratio
+    return 1.0 + boost, "align_boost"
 
 
 def _confidence_scale(conf: int) -> float:
@@ -651,6 +769,7 @@ async def scalp_ping_5s_worker() -> None:
     last_snapshot_fetch = 0.0
     last_stale_log_mono = 0.0
     last_trap_log_mono = 0.0
+    last_bias_log_mono = 0.0
     force_exit_states: dict[str, ForceExitState] = {}
     protected_trade_ids: set[str] = set()
     protected_seeded = False
@@ -787,6 +906,23 @@ async def scalp_ping_5s_worker() -> None:
                 continue
 
             now_mono = time.monotonic()
+            direction_bias = _build_direction_bias(ticks, spread_pips=signal.spread_pips)
+            bias_units_mult, bias_gate = _direction_units_multiplier(signal.side, direction_bias)
+            if bias_units_mult <= 0.0:
+                if now_mono - last_bias_log_mono >= config.DIRECTION_BIAS_LOG_INTERVAL_SEC:
+                    score = _safe_float(getattr(direction_bias, "score", 0.0), 0.0)
+                    LOG.info(
+                        "%s bias block signal=%s bias=%s score=%.2f mom=%.2fp rng=%.2fp flow=%.2f",
+                        config.LOG_PREFIX,
+                        signal.side,
+                        getattr(direction_bias, "side", "none"),
+                        score,
+                        _safe_float(getattr(direction_bias, "momentum_pips", 0.0), 0.0),
+                        _safe_float(getattr(direction_bias, "range_pips", 0.0), 0.0),
+                        _safe_float(getattr(direction_bias, "flow", 0.0), 0.0),
+                    )
+                    last_bias_log_mono = now_mono
+                continue
             if now_mono - last_entry_mono < config.ENTRY_COOLDOWN_SEC:
                 continue
             if not rate_limiter.allow(now_mono):
@@ -866,7 +1002,7 @@ async def scalp_ping_5s_worker() -> None:
                     )
                 )
             )
-            units = int(round(base_units * conf_mult * strength_mult))
+            units = int(round(base_units * conf_mult * strength_mult * bias_units_mult))
 
             lot = allowed_lot(
                 nav,
@@ -930,7 +1066,22 @@ async def scalp_ping_5s_worker() -> None:
                 "sl_pips": round(sl_pips, 3),
                 "entry_mode": "market_ping_5s",
                 "trap_active": bool(trap_state.active),
+                "direction_bias_gate": bias_gate,
+                "direction_bias_units_mult": round(bias_units_mult, 3),
             }
+            if direction_bias is not None:
+                entry_thesis.update(
+                    {
+                        "direction_bias_side": direction_bias.side,
+                        "direction_bias_score": round(direction_bias.score, 4),
+                        "direction_bias_momentum_pips": round(direction_bias.momentum_pips, 3),
+                        "direction_bias_flow": round(direction_bias.flow, 3),
+                        "direction_bias_range_pips": round(direction_bias.range_pips, 3),
+                        "direction_bias_vol_norm": round(direction_bias.vol_norm, 3),
+                        "direction_bias_tick_rate": round(direction_bias.tick_rate, 3),
+                        "direction_bias_span_sec": round(direction_bias.span_sec, 3),
+                    }
+                )
             if config.FORCE_EXIT_POLICY_GENERATION:
                 entry_thesis["policy_generation"] = config.FORCE_EXIT_POLICY_GENERATION
             if trap_state.active:
@@ -962,7 +1113,7 @@ async def scalp_ping_5s_worker() -> None:
             rate_limiter.record(now_mono)
 
             LOG.info(
-                "%s open side=%s units=%s conf=%d mom=%.2fp trig=%.2fp sp=%.2fp tp=%.2fp sl=%.2fp res=%s",
+                "%s open side=%s units=%s conf=%d mom=%.2fp trig=%.2fp sp=%.2fp tp=%.2fp sl=%.2fp bias=%s score=%.2f mult=%.2f res=%s",
                 config.LOG_PREFIX,
                 signal.side,
                 units,
@@ -972,6 +1123,9 @@ async def scalp_ping_5s_worker() -> None:
                 signal.spread_pips,
                 tp_pips,
                 sl_pips,
+                direction_bias.side if direction_bias is not None else "none",
+                _safe_float(getattr(direction_bias, "score", 0.0), 0.0),
+                bias_units_mult,
                 result or "none",
             )
 
