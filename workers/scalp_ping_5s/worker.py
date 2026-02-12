@@ -2803,6 +2803,11 @@ async def scalp_ping_5s_worker() -> None:
                 )
                 last_trap_log_mono = now_mono
 
+            # Use account-level long/short units for risk sizing so manual trades
+            # (and other pockets) are correctly reflected in hedge sizing.
+            account_long_units = _safe_float(getattr(trap_state, "long_units", 0.0), 0.0)
+            account_short_units = _safe_float(getattr(trap_state, "short_units", 0.0), 0.0)
+
             long_units = _safe_float(pocket_info.get("long_units"), 0.0)
             short_units = _safe_float(pocket_info.get("short_units"), 0.0)
             trap_hedge_bypass = trap_state.active and config.TRAP_BYPASS_NO_HEDGE
@@ -2823,8 +2828,8 @@ async def scalp_ping_5s_worker() -> None:
             if free_ratio > 0.0 and free_ratio < config.MIN_FREE_MARGIN_RATIO:
                 low_margin_hedge_relief = _allow_low_margin_hedge_relief(
                     side=signal.side,
-                    long_units=long_units,
-                    short_units=short_units,
+                    long_units=account_long_units,
+                    short_units=account_short_units,
                     free_ratio=free_ratio,
                     margin_available=margin_available,
                 )
@@ -2921,8 +2926,8 @@ async def scalp_ping_5s_worker() -> None:
                 price=signal.mid,
                 pocket=config.POCKET,
                 side=signal.side,
-                open_long_units=long_units,
-                open_short_units=short_units,
+                open_long_units=account_long_units,
+                open_short_units=account_short_units,
                 strategy_tag=config.STRATEGY_TAG,
             )
             units_risk = int(round(max(0.0, lot) * 100000))
