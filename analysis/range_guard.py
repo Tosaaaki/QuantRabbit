@@ -66,7 +66,9 @@ def detect_range_mode(
     env_tf: str = "M1",
     macro_tf: str = "H4",
     adx_threshold: float = 24.0,
-    bbw_threshold: float = 0.24,
+    # BBW is (upper-lower)/mid ratio. For USD/JPY M1 it's typically ~0.0002..0.0020.
+    # Expressed as ratio (e.g. 0.0025 == 0.25%).
+    bbw_threshold: float = 0.0025,
     atr_threshold: float = 7.0,
     bbw_pips_threshold: float = 0.0,
     vol_5m_threshold: float = 0.8,
