@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import datetime as dt
 import os
 
 import pytest
@@ -150,3 +151,103 @@ def test_compute_trap_state_blocks_when_unrealized_not_negative(monkeypatch) -> 
     assert state.combined_dd_pips >= 0.8
     assert state.unrealized_pl > 0.0
     assert state.active is False
+
+
+def test_collect_force_exit_decisions_keeps_existing_and_generation_gate(monkeypatch) -> None:
+    from workers.scalp_ping_5s import worker
+
+    monkeypatch.setattr(worker.config, "FORCE_EXIT_ACTIVE", True)
+    monkeypatch.setattr(worker.config, "FORCE_EXIT_MAX_ACTIONS", 4)
+    monkeypatch.setattr(worker.config, "FORCE_EXIT_REQUIRE_POLICY_GENERATION", True)
+    monkeypatch.setattr(worker.config, "FORCE_EXIT_POLICY_GENERATION", "g-new")
+    monkeypatch.setattr(worker.config, "FORCE_EXIT_MAX_FLOATING_LOSS_PIPS", 1.5)
+    monkeypatch.setattr(worker.config, "FORCE_EXIT_REASON_MAX_FLOATING_LOSS", "max_floating_loss")
+    monkeypatch.setattr(worker.config, "FORCE_EXIT_GIVEBACK_ENABLED", False)
+    monkeypatch.setattr(worker.config, "FORCE_EXIT_RECOVERY_WINDOW_SEC", 0.0)
+    monkeypatch.setattr(worker.config, "FORCE_EXIT_MAX_HOLD_SEC", 0.0)
+
+    now = dt.datetime(2026, 2, 12, 3, 0, tzinfo=dt.timezone.utc)
+    trades = [
+        {
+            "trade_id": "old-1",
+            "units": 1000,
+            "price": 150.20,
+            "open_time": "2026-02-12T02:40:00Z",
+            "client_order_id": "cid-old",
+            "entry_thesis": {"policy_generation": "g-new", "strategy_tag": "scalp_ping_5s_live"},
+        },
+        {
+            "trade_id": "wrong-gen",
+            "units": 1000,
+            "price": 150.20,
+            "open_time": "2026-02-12T02:45:00Z",
+            "client_order_id": "cid-wrong",
+            "entry_thesis": {"policy_generation": "g-old", "strategy_tag": "scalp_ping_5s_live"},
+        },
+        {
+            "trade_id": "new-1",
+            "units": 1000,
+            "price": 150.20,
+            "open_time": "2026-02-12T02:50:00Z",
+            "client_order_id": "cid-new",
+            "entry_thesis": {"policy_generation": "g-new", "strategy_tag": "scalp_ping_5s_live"},
+        },
+    ]
+
+    states: dict[str, worker.ForceExitState] = {}
+    decisions = worker._collect_force_exit_decisions(
+        trades=trades,
+        now_utc=now,
+        bid=150.00,
+        ask=150.01,
+        mid=150.005,
+        states=states,
+        protected_trade_ids={"old-1"},
+    )
+
+    assert len(decisions) == 1
+    assert decisions[0].trade_id == "new-1"
+    assert decisions[0].reason == "max_floating_loss"
+    assert decisions[0].allow_negative is True
+
+
+def test_collect_force_exit_decisions_time_stop_for_winner(monkeypatch) -> None:
+    from workers.scalp_ping_5s import worker
+
+    monkeypatch.setattr(worker.config, "FORCE_EXIT_ACTIVE", True)
+    monkeypatch.setattr(worker.config, "FORCE_EXIT_MAX_ACTIONS", 4)
+    monkeypatch.setattr(worker.config, "FORCE_EXIT_REQUIRE_POLICY_GENERATION", False)
+    monkeypatch.setattr(worker.config, "FORCE_EXIT_MAX_FLOATING_LOSS_PIPS", 0.0)
+    monkeypatch.setattr(worker.config, "FORCE_EXIT_GIVEBACK_ENABLED", False)
+    monkeypatch.setattr(worker.config, "FORCE_EXIT_RECOVERY_WINDOW_SEC", 0.0)
+    monkeypatch.setattr(worker.config, "FORCE_EXIT_MAX_HOLD_SEC", 60.0)
+    monkeypatch.setattr(worker.config, "FORCE_EXIT_REASON_TIME", "time_stop")
+
+    now = dt.datetime(2026, 2, 12, 3, 0, tzinfo=dt.timezone.utc)
+    trades = [
+        {
+            "trade_id": "winner",
+            "units": 1000,
+            "price": 150.00,
+            "open_time": "2026-02-12T02:00:00Z",
+            "client_order_id": "cid-win",
+            "entry_thesis": {"strategy_tag": "scalp_ping_5s_live"},
+        }
+    ]
+
+    states: dict[str, worker.ForceExitState] = {}
+    decisions = worker._collect_force_exit_decisions(
+        trades=trades,
+        now_utc=now,
+        bid=150.03,
+        ask=150.04,
+        mid=150.035,
+        states=states,
+        protected_trade_ids=set(),
+    )
+
+    assert len(decisions) == 1
+    assert decisions[0].trade_id == "winner"
+    assert decisions[0].reason == "time_stop"
+    assert decisions[0].allow_negative is False
+    assert decisions[0].pnl_pips > 0

@@ -25,6 +25,7 @@ from market_data.tick_fetcher import _parse_time
 from utils.market_hours import is_market_open
 from utils.oanda_account import get_account_snapshot
 from utils.secrets import get_secret
+from workers.common.exit_utils import close_trade as close_open_trade
 from workers.common.rate_limiter import SlidingWindowRateLimiter
 from workers.common.size_utils import scale_base_units
 
@@ -90,6 +91,23 @@ class TrapState:
     short_dd_pips: float
     combined_dd_pips: float
     unrealized_pl: float
+
+
+@dataclass(slots=True)
+class ForceExitState:
+    peak_pips: float = float("-inf")
+
+
+@dataclass(slots=True)
+class ForceExitDecision:
+    trade_id: str
+    close_units: int
+    client_order_id: str
+    reason: str
+    allow_negative: bool
+    pnl_pips: float
+    hold_sec: float
+    priority: int
 
 
 def _safe_float(value: object, default: float = 0.0) -> float:
@@ -257,15 +275,13 @@ def _compute_targets(*, spread_pips: float, momentum_pips: float) -> tuple[float
     return tp_pips, sl_pips
 
 
-def _strategy_trade_counts(pocket_info: dict, strategy_tag: str) -> tuple[int, int, int]:
+def _strategy_open_trades(pocket_info: dict, strategy_tag: str) -> list[dict]:
     open_trades = pocket_info.get("open_trades") if isinstance(pocket_info, dict) else None
     if not isinstance(open_trades, list):
-        return 0, 0, 0
+        return []
 
     tag_key = (strategy_tag or "").strip().lower()
-    total = 0
-    long_count = 0
-    short_count = 0
+    picked: list[dict] = []
 
     for tr in open_trades:
         if not isinstance(tr, dict):
@@ -277,6 +293,16 @@ def _strategy_trade_counts(pocket_info: dict, strategy_tag: str) -> tuple[int, i
                 raw_tag = thesis.get("strategy_tag") or thesis.get("strategy")
         if tag_key and str(raw_tag or "").strip().lower() != tag_key:
             continue
+        picked.append(tr)
+
+    return picked
+
+
+def _strategy_trade_counts(pocket_info: dict, strategy_tag: str) -> tuple[int, int, int]:
+    total = 0
+    long_count = 0
+    short_count = 0
+    for tr in _strategy_open_trades(pocket_info, strategy_tag):
         units = int(_safe_float(tr.get("units"), 0.0))
         if units == 0:
             continue
@@ -285,8 +311,190 @@ def _strategy_trade_counts(pocket_info: dict, strategy_tag: str) -> tuple[int, i
             long_count += 1
         else:
             short_count += 1
-
     return total, long_count, short_count
+
+
+def _trade_id(trade: dict) -> str:
+    for key in ("trade_id", "id", "ticket_id"):
+        value = trade.get(key)
+        if value is None:
+            continue
+        tid = str(value).strip()
+        if tid:
+            return tid
+    return ""
+
+
+def _trade_client_order_id(trade: dict) -> str:
+    client_id = str(trade.get("client_order_id") or "").strip()
+    if client_id:
+        return client_id
+    ext = trade.get("clientExtensions")
+    if isinstance(ext, dict):
+        client_id = str(ext.get("id") or "").strip()
+    return client_id
+
+
+def _trade_policy_generation(trade: dict) -> str:
+    thesis = trade.get("entry_thesis")
+    if not isinstance(thesis, dict):
+        return ""
+    value = thesis.get("policy_generation") or thesis.get("force_exit_policy_generation")
+    return str(value or "").strip()
+
+
+def _trade_open_time(trade: dict) -> Optional[datetime.datetime]:
+    raw = trade.get("open_time") or trade.get("entry_time")
+    if isinstance(raw, datetime.datetime):
+        if raw.tzinfo is None:
+            return raw.replace(tzinfo=datetime.timezone.utc)
+        return raw.astimezone(datetime.timezone.utc)
+    if not raw:
+        return None
+    try:
+        parsed = _parse_time(str(raw))
+        if parsed is not None and parsed.tzinfo is None:
+            return parsed.replace(tzinfo=datetime.timezone.utc)
+        return parsed
+    except Exception:
+        return None
+
+
+def _estimate_trade_pnl_pips(
+    *,
+    entry_price: float,
+    units: int,
+    bid: float,
+    ask: float,
+    mid: float,
+) -> Optional[float]:
+    if entry_price <= 0.0 or units == 0:
+        return None
+    if units > 0:
+        px = bid if bid > 0.0 else (mid if mid > 0.0 else 0.0)
+        if px <= 0.0:
+            return None
+        return (px - entry_price) / config.PIP_VALUE
+    px = ask if ask > 0.0 else (mid if mid > 0.0 else 0.0)
+    if px <= 0.0:
+        return None
+    return (entry_price - px) / config.PIP_VALUE
+
+
+def _pick_force_exit_reason(
+    *,
+    hold_sec: float,
+    pnl_pips: float,
+    peak_pips: float,
+) -> tuple[Optional[str], bool, int]:
+    if config.FORCE_EXIT_MAX_FLOATING_LOSS_PIPS > 0.0 and (
+        pnl_pips <= -config.FORCE_EXIT_MAX_FLOATING_LOSS_PIPS
+    ):
+        return config.FORCE_EXIT_REASON_MAX_FLOATING_LOSS, True, 0
+
+    if (
+        config.FORCE_EXIT_GIVEBACK_ENABLED
+        and hold_sec >= config.FORCE_EXIT_GIVEBACK_MIN_HOLD_SEC
+        and peak_pips >= config.FORCE_EXIT_GIVEBACK_ARM_PIPS
+        and (peak_pips - pnl_pips) >= config.FORCE_EXIT_GIVEBACK_BACKOFF_PIPS
+        and pnl_pips <= config.FORCE_EXIT_GIVEBACK_PROTECT_PIPS
+    ):
+        return config.FORCE_EXIT_REASON_GIVEBACK, pnl_pips <= 0.0, 1
+
+    if (
+        config.FORCE_EXIT_RECOVERY_WINDOW_SEC > 0.0
+        and hold_sec >= config.FORCE_EXIT_RECOVERY_WINDOW_SEC
+        and peak_pips < config.FORCE_EXIT_RECOVERABLE_LOSS_PIPS
+        and pnl_pips <= 0.0
+    ):
+        return config.FORCE_EXIT_REASON_RECOVERY, True, 2
+
+    if config.FORCE_EXIT_MAX_HOLD_SEC > 0.0 and hold_sec >= config.FORCE_EXIT_MAX_HOLD_SEC:
+        return config.FORCE_EXIT_REASON_TIME, pnl_pips <= 0.0, 3
+
+    return None, False, 99
+
+
+def _collect_force_exit_decisions(
+    *,
+    trades: Sequence[dict],
+    now_utc: datetime.datetime,
+    bid: float,
+    ask: float,
+    mid: float,
+    states: dict[str, ForceExitState],
+    protected_trade_ids: set[str],
+) -> list[ForceExitDecision]:
+    decisions: list[ForceExitDecision] = []
+    if not config.FORCE_EXIT_ACTIVE:
+        return decisions
+
+    expected_generation = config.FORCE_EXIT_POLICY_GENERATION
+    for trade in trades:
+        trade_id = _trade_id(trade)
+        if not trade_id or trade_id in protected_trade_ids:
+            continue
+
+        if config.FORCE_EXIT_REQUIRE_POLICY_GENERATION:
+            generation = _trade_policy_generation(trade)
+            if not expected_generation or generation != expected_generation:
+                continue
+
+        client_order_id = _trade_client_order_id(trade)
+        if not client_order_id:
+            continue
+
+        units = int(_safe_float(trade.get("units"), 0.0))
+        if units == 0:
+            continue
+        entry_price = _safe_float(trade.get("price"), 0.0)
+        if entry_price <= 0.0:
+            entry_price = _safe_float(trade.get("entry_price"), 0.0)
+        pnl_pips = _estimate_trade_pnl_pips(
+            entry_price=entry_price,
+            units=units,
+            bid=bid,
+            ask=ask,
+            mid=mid,
+        )
+        if pnl_pips is None:
+            continue
+
+        state = states.get(trade_id)
+        if state is None:
+            state = ForceExitState(peak_pips=pnl_pips)
+            states[trade_id] = state
+        elif pnl_pips > state.peak_pips:
+            state.peak_pips = pnl_pips
+
+        open_time = _trade_open_time(trade)
+        hold_sec = (
+            max(0.0, (now_utc - open_time).total_seconds()) if open_time is not None else 0.0
+        )
+        reason, allow_negative, priority = _pick_force_exit_reason(
+            hold_sec=hold_sec,
+            pnl_pips=pnl_pips,
+            peak_pips=state.peak_pips,
+        )
+        if not reason:
+            continue
+        decisions.append(
+            ForceExitDecision(
+                trade_id=trade_id,
+                close_units=-units,
+                client_order_id=client_order_id,
+                reason=reason,
+                allow_negative=allow_negative,
+                pnl_pips=pnl_pips,
+                hold_sec=hold_sec,
+                priority=priority,
+            )
+        )
+
+    decisions.sort(key=lambda x: (x.priority, x.pnl_pips))
+    if config.FORCE_EXIT_MAX_ACTIONS > 0:
+        decisions = decisions[: config.FORCE_EXIT_MAX_ACTIONS]
+    return decisions
 
 
 def _compute_trap_state(positions: dict, *, mid_price: float) -> TrapState:
@@ -443,6 +651,9 @@ async def scalp_ping_5s_worker() -> None:
     last_snapshot_fetch = 0.0
     last_stale_log_mono = 0.0
     last_trap_log_mono = 0.0
+    force_exit_states: dict[str, ForceExitState] = {}
+    protected_trade_ids: set[str] = set()
+    protected_seeded = False
 
     try:
         while True:
@@ -505,6 +716,70 @@ async def scalp_ping_5s_worker() -> None:
                     last_stale_log_mono = now_mono
                 continue
 
+            positions = pos_manager.get_open_positions()
+            pocket_info = positions.get(config.POCKET) or {}
+            strategy_trades = _strategy_open_trades(pocket_info, config.STRATEGY_TAG)
+
+            active_trade_ids = {_trade_id(tr) for tr in strategy_trades if _trade_id(tr)}
+            for tid in list(force_exit_states.keys()):
+                if tid not in active_trade_ids:
+                    force_exit_states.pop(tid, None)
+
+            if not protected_seeded:
+                protected_seeded = True
+                if config.FORCE_EXIT_SKIP_EXISTING_ON_START:
+                    protected_trade_ids = {
+                        _trade_id(tr)
+                        for tr in strategy_trades
+                        if _trade_id(tr)
+                    }
+                    if protected_trade_ids:
+                        LOG.info(
+                            "%s force_exit protect_existing=%d trade(s)",
+                            config.LOG_PREFIX,
+                            len(protected_trade_ids),
+                        )
+
+            if strategy_trades and config.FORCE_EXIT_ACTIVE:
+                bid, ask, mid = _quotes_from_row(ticks[-1], fallback_mid=0.0)
+                decisions = _collect_force_exit_decisions(
+                    trades=strategy_trades,
+                    now_utc=datetime.datetime.now(datetime.timezone.utc),
+                    bid=bid,
+                    ask=ask,
+                    mid=mid,
+                    states=force_exit_states,
+                    protected_trade_ids=protected_trade_ids,
+                )
+                for d in decisions:
+                    ok = await close_open_trade(
+                        d.trade_id,
+                        d.close_units,
+                        client_order_id=d.client_order_id,
+                        allow_negative=d.allow_negative,
+                        exit_reason=d.reason,
+                        env_prefix=config.ENV_PREFIX,
+                    )
+                    if ok:
+                        LOG.info(
+                            "%s force_exit close_ok trade=%s reason=%s pnl=%.2fp hold=%.0fs",
+                            config.LOG_PREFIX,
+                            d.trade_id,
+                            d.reason,
+                            d.pnl_pips,
+                            d.hold_sec,
+                        )
+                        force_exit_states.pop(d.trade_id, None)
+                    else:
+                        LOG.warning(
+                            "%s force_exit close_failed trade=%s reason=%s pnl=%.2fp hold=%.0fs",
+                            config.LOG_PREFIX,
+                            d.trade_id,
+                            d.reason,
+                            d.pnl_pips,
+                            d.hold_sec,
+                        )
+
             signal = _build_tick_signal(ticks, spread_pips)
             if signal is None:
                 continue
@@ -517,12 +792,18 @@ async def scalp_ping_5s_worker() -> None:
             if not rate_limiter.allow(now_mono):
                 continue
 
-            positions = pos_manager.get_open_positions()
-            pocket_info = positions.get(config.POCKET) or {}
-            active_total, active_long, active_short = _strategy_trade_counts(
-                pocket_info,
-                config.STRATEGY_TAG,
-            )
+            active_total = 0
+            active_long = 0
+            active_short = 0
+            for tr in strategy_trades:
+                units = int(_safe_float(tr.get("units"), 0.0))
+                if units == 0:
+                    continue
+                active_total += 1
+                if units > 0:
+                    active_long += 1
+                else:
+                    active_short += 1
             if active_total >= config.MAX_ACTIVE_TRADES:
                 continue
             if signal.side == "long" and active_long >= config.MAX_PER_DIRECTION:
@@ -650,6 +931,8 @@ async def scalp_ping_5s_worker() -> None:
                 "entry_mode": "market_ping_5s",
                 "trap_active": bool(trap_state.active),
             }
+            if config.FORCE_EXIT_POLICY_GENERATION:
+                entry_thesis["policy_generation"] = config.FORCE_EXIT_POLICY_GENERATION
             if trap_state.active:
                 entry_thesis.update(
                     {
