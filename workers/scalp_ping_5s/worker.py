@@ -908,13 +908,7 @@ async def _enforce_new_entry_time_stop(
             trade_tag = _trade_strategy_tag(trade).lower()
             if trade_tag != target_tag:
                 continue
-
         generation = _trade_policy_generation(trade)
-        if config.FORCE_EXIT_REQUIRE_POLICY_GENERATION:
-            if not generation:
-                continue
-            if target_generation and generation != target_generation:
-                continue
 
         opened_at = _parse_trade_open_time(trade.get("open_time") or trade.get("entry_time"))
         if opened_at is None:
@@ -2317,6 +2311,7 @@ async def scalp_ping_5s_worker() -> None:
     last_extrema_log_mono = 0.0
     protected_trade_ids: set[str] = set()
     protected_seeded = False
+    strategy_tag_key = str(config.STRATEGY_TAG or "").strip().lower()
 
     try:
         while True:
@@ -2332,25 +2327,106 @@ async def scalp_ping_5s_worker() -> None:
             if not protected_seeded:
                 protected_seeded = True
                 if config.FORCE_EXIT_SKIP_EXISTING_ON_START:
-                    target_tag = str(config.STRATEGY_TAG or "").strip().lower()
                     open_trades = pocket_info.get("open_trades") if isinstance(pocket_info, dict) else None
+                    protect_total = 0
+                    skipped_eligible = 0
                     if isinstance(open_trades, list):
+                        max_hold_sec = float(config.FORCE_EXIT_MAX_HOLD_SEC)
+                        hard_loss_pips = float(config.FORCE_EXIT_MAX_FLOATING_LOSS_PIPS)
+                        recovery_window_sec = float(config.FORCE_EXIT_RECOVERY_WINDOW_SEC)
+                        recoverable_loss_pips = float(config.FORCE_EXIT_RECOVERABLE_LOSS_PIPS)
+
                         for trade in open_trades:
                             if not isinstance(trade, dict):
                                 continue
-                            if target_tag:
+                            if strategy_tag_key:
                                 trade_tag = _trade_strategy_tag(trade).lower()
-                                if trade_tag != target_tag:
+                                if trade_tag != strategy_tag_key:
                                     continue
                             trade_id = str(trade.get("trade_id") or "").strip()
-                            if trade_id:
-                                protected_trade_ids.add(trade_id)
-                    if protected_trade_ids:
+                            if not trade_id:
+                                continue
+
+                            # Don't protect trades that are already eligible for a force-exit;
+                            # otherwise they can linger forever across restarts and block margin.
+                            opened_at = _parse_trade_open_time(
+                                trade.get("open_time") or trade.get("entry_time")
+                            )
+                            hold_sec = (now_utc - opened_at).total_seconds() if opened_at is not None else 0.0
+                            unrealized_pips = _trade_unrealized_pips(trade)
+                            eligible = False
+                            if max_hold_sec > 0.0 and hold_sec >= max_hold_sec:
+                                eligible = True
+                            elif hard_loss_pips > 0.0 and unrealized_pips <= -hard_loss_pips:
+                                eligible = True
+                            elif (
+                                recovery_window_sec > 0.0
+                                and recoverable_loss_pips > 0.0
+                                and hold_sec >= recovery_window_sec
+                                and unrealized_pips <= -recoverable_loss_pips
+                            ):
+                                eligible = True
+                            if eligible:
+                                skipped_eligible += 1
+                                continue
+
+                            protected_trade_ids.add(trade_id)
+                            protect_total += 1
+                    if protect_total > 0:
                         LOG.info(
                             "%s force_exit protect_existing=%d trade(s)",
                             config.LOG_PREFIX,
-                            len(protected_trade_ids),
+                            protect_total,
                         )
+                    if skipped_eligible > 0:
+                        LOG.info(
+                            "%s force_exit protect_existing skipped=%d eligible_trade(s)",
+                            config.LOG_PREFIX,
+                            skipped_eligible,
+                        )
+
+            # Expire protection once a trade becomes force-exit eligible.
+            if protected_trade_ids:
+                open_trades = pocket_info.get("open_trades") if isinstance(pocket_info, dict) else None
+                if isinstance(open_trades, list):
+                    max_hold_sec = float(config.FORCE_EXIT_MAX_HOLD_SEC)
+                    hard_loss_pips = float(config.FORCE_EXIT_MAX_FLOATING_LOSS_PIPS)
+                    recovery_window_sec = float(config.FORCE_EXIT_RECOVERY_WINDOW_SEC)
+                    recoverable_loss_pips = float(config.FORCE_EXIT_RECOVERABLE_LOSS_PIPS)
+                    protected_seen: set[str] = set()
+                    for trade in open_trades:
+                        if not isinstance(trade, dict):
+                            continue
+                        if strategy_tag_key:
+                            trade_tag = _trade_strategy_tag(trade).lower()
+                            if trade_tag != strategy_tag_key:
+                                continue
+                        trade_id = str(trade.get("trade_id") or "").strip()
+                        if not trade_id or trade_id not in protected_trade_ids:
+                            continue
+                        protected_seen.add(trade_id)
+                        opened_at = _parse_trade_open_time(
+                            trade.get("open_time") or trade.get("entry_time")
+                        )
+                        hold_sec = (now_utc - opened_at).total_seconds() if opened_at is not None else 0.0
+                        unrealized_pips = _trade_unrealized_pips(trade)
+                        eligible = False
+                        if max_hold_sec > 0.0 and hold_sec >= max_hold_sec:
+                            eligible = True
+                        elif hard_loss_pips > 0.0 and unrealized_pips <= -hard_loss_pips:
+                            eligible = True
+                        elif (
+                            recovery_window_sec > 0.0
+                            and recoverable_loss_pips > 0.0
+                            and hold_sec >= recovery_window_sec
+                            and unrealized_pips <= -recoverable_loss_pips
+                        ):
+                            eligible = True
+                        if eligible:
+                            protected_trade_ids.discard(trade_id)
+
+                    # Drop stale IDs that are no longer open.
+                    protected_trade_ids.intersection_update(protected_seen)
             forced_closed = await _enforce_new_entry_time_stop(
                 pocket_info=pocket_info,
                 now_utc=now_utc,
