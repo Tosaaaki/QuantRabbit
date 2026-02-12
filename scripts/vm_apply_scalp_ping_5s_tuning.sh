@@ -106,4 +106,7 @@ run_vm exec -- "$REMOTE"
 echo "[INFO] Recent scalp_ping_5s_live closes (last 30m) ..."
 run_vm exec -- "sqlite3 -readonly /home/tossaki/QuantRabbit/logs/trades.db \"SELECT close_reason, COUNT(*) FROM trades WHERE strategy_tag='scalp_ping_5s_live' AND close_time >= datetime('now','-30 minutes') GROUP BY close_reason ORDER BY 2 DESC;\""
 
+echo "[INFO] Recent scalp_fast perf blocks (last 30m) ..."
+run_vm exec -- "sqlite3 -readonly /home/tossaki/QuantRabbit/logs/orders.db \"SELECT status, COUNT(*) FROM orders WHERE pocket='scalp_fast' AND ts >= datetime('now','-30 minutes') AND status LIKE 'perf_block%' GROUP BY status ORDER BY 2 DESC;\""
+
 echo "[DONE]"
