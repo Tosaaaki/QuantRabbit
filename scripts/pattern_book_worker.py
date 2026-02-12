@@ -21,10 +21,12 @@ from analysis.pattern_book import (  # noqa: E402
     build_pattern_id,
     classify_pattern_action,
 )
+from analysis.pattern_deep import DeepPatternConfig, run_pattern_deep_analysis  # noqa: E402
 
 DEFAULT_TRADES_DB = BASE_DIR / "logs" / "trades.db"
 DEFAULT_PATTERNS_DB = BASE_DIR / "logs" / "patterns.db"
 DEFAULT_OUTPUT_JSON = BASE_DIR / "config" / "pattern_book.json"
+DEFAULT_DEEP_OUTPUT_JSON = BASE_DIR / "config" / "pattern_book_deep.json"
 
 
 def _safe_float(value: Any) -> float:
@@ -441,6 +443,7 @@ def _write_json(
     rows: list[dict[str, Any]],
     min_samples_soft: int,
     min_samples_block: int,
+    deep_summary: dict[str, Any] | None = None,
 ) -> None:
     action_counts: dict[str, int] = {}
     for row in rows:
@@ -465,6 +468,7 @@ def _write_json(
         "action_counts": action_counts,
         "top_edges": top_edges,
         "weak_edges": weak_edges,
+        "deep_analysis": deep_summary or {},
         "patterns": rows,
     }
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -479,6 +483,8 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
     trades_db_path = Path(args.trades_db).resolve()
     patterns_db_path = Path(args.patterns_db).resolve()
     patterns_db_path.parent.mkdir(parents=True, exist_ok=True)
+    deep_output_path = Path(args.deep_output_json).resolve()
+    deep_summary: dict[str, Any] = {}
 
     with sqlite3.connect(trades_db_path, timeout=30.0, isolation_level=None) as trades_con:
         trades_con.row_factory = sqlite3.Row
@@ -521,6 +527,25 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
                 )
                 stat_rows.append(parsed)
             _write_aggregates(patterns_con, rows=stat_rows, as_of=as_of)
+            deep_summary = run_pattern_deep_analysis(
+                patterns_con,
+                cutoff_iso=cutoff_iso,
+                as_of=as_of,
+                output_path=deep_output_path,
+                config=DeepPatternConfig(
+                    min_samples=max(1, args.deep_min_samples),
+                    prior_strength=max(1, args.deep_prior_strength),
+                    recent_days=max(1, args.deep_recent_days),
+                    baseline_days=max(1, args.deep_baseline_days),
+                    min_recent_samples=max(1, args.deep_min_recent_samples),
+                    min_prev_samples=max(1, args.deep_min_prev_samples),
+                    bootstrap_samples=max(80, args.deep_bootstrap_samples),
+                    cluster_min=max(2, args.deep_cluster_min),
+                    cluster_max=max(2, args.deep_cluster_max),
+                    cluster_min_samples=max(5, args.deep_cluster_min_samples),
+                    random_state=max(1, args.deep_random_state),
+                ),
+            )
             patterns_con.commit()
 
     _write_json(
@@ -531,12 +556,17 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         rows=stat_rows,
         min_samples_soft=max(1, args.min_samples_soft),
         min_samples_block=max(1, args.min_samples_block),
+        deep_summary=deep_summary,
     )
     return {
         "as_of": as_of,
         "processed_new_rows": processed_rows,
         "patterns_total": len(stat_rows),
+        "deep_patterns_scored": deep_summary.get("patterns_scored", 0),
+        "deep_drift_rows": deep_summary.get("drift_rows", 0),
+        "deep_cluster_count": deep_summary.get("cluster_count", 0),
         "output_json": str(Path(args.output_json).resolve()),
+        "deep_output_json": str(deep_output_path),
         "patterns_db": str(patterns_db_path),
     }
 
@@ -546,11 +576,23 @@ def main() -> None:
     parser.add_argument("--trades-db", type=Path, default=DEFAULT_TRADES_DB)
     parser.add_argument("--patterns-db", type=Path, default=DEFAULT_PATTERNS_DB)
     parser.add_argument("--output-json", type=Path, default=DEFAULT_OUTPUT_JSON)
+    parser.add_argument("--deep-output-json", type=Path, default=DEFAULT_DEEP_OUTPUT_JSON)
     parser.add_argument("--lookback-days", type=int, default=180)
     parser.add_argument("--batch-size", type=int, default=4000)
     parser.add_argument("--max-backfill-rows", type=int, default=500000)
     parser.add_argument("--min-samples-soft", type=int, default=30)
     parser.add_argument("--min-samples-block", type=int, default=120)
+    parser.add_argument("--deep-min-samples", type=int, default=30)
+    parser.add_argument("--deep-prior-strength", type=int, default=24)
+    parser.add_argument("--deep-recent-days", type=int, default=5)
+    parser.add_argument("--deep-baseline-days", type=int, default=30)
+    parser.add_argument("--deep-min-recent-samples", type=int, default=8)
+    parser.add_argument("--deep-min-prev-samples", type=int, default=20)
+    parser.add_argument("--deep-bootstrap-samples", type=int, default=240)
+    parser.add_argument("--deep-cluster-min", type=int, default=3)
+    parser.add_argument("--deep-cluster-max", type=int, default=8)
+    parser.add_argument("--deep-cluster-min-samples", type=int, default=20)
+    parser.add_argument("--deep-random-state", type=int, default=42)
     args = parser.parse_args()
 
     result = run(args)
