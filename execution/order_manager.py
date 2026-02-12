@@ -7408,10 +7408,17 @@ async def market_order(
     if entry_basis is None and entry_price_meta is not None:
         entry_basis = entry_price_meta
 
+    # Only attach/update broker stop-loss when the caller explicitly requested an SL
+    # price. Many strategies include `entry_thesis.sl_pips` for sizing/analytics even
+    # when SL is disabled (sl_price=None); do not synthesize an SL from the thesis in
+    # that case.
+    sl_requested = sl_price is not None
+
     # Market-adaptive SL: widen loss buffer when volatility/spread expands.
     # NOTE: This updates thesis_sl_pips (virtual SL) even when stopLossOnFill is disabled.
     if (
-        _DYNAMIC_SL_ENABLE
+        sl_requested
+        and _DYNAMIC_SL_ENABLE
         and (pocket or "").lower() in _DYNAMIC_SL_POCKETS
         and not reduce_only
     ):
@@ -7455,7 +7462,7 @@ async def market_order(
 
     # Recalculate SL/TP from thesis gaps using live quote to preserve intended RR
     if entry_basis is not None:
-        if thesis_sl_pips is not None:
+        if sl_requested and thesis_sl_pips is not None:
             if units > 0:
                 sl_price = round(entry_basis - thesis_sl_pips * 0.01, 3)
             else:
