@@ -308,6 +308,103 @@ def test_resolve_active_caps_keeps_base_when_margin_headroom_is_low(monkeypatch)
     assert side_cap == 12
 
 
+def test_apply_horizon_bias_allows_counter_revert_when_mode_aware(monkeypatch) -> None:
+    from workers.scalp_ping_5s import worker
+
+    monkeypatch.setattr(worker.config, "HORIZON_BIAS_ENABLED", True)
+    monkeypatch.setattr(worker.config, "HORIZON_MODE_AWARE", True)
+    monkeypatch.setattr(worker.config, "HORIZON_BLOCK_SCORE", 0.44)
+    monkeypatch.setattr(worker.config, "HORIZON_REVERT_HARD_BLOCK_SCORE", 0.90)
+    monkeypatch.setattr(worker.config, "HORIZON_OPPOSITE_UNITS_MULT", 0.40)
+    monkeypatch.setattr(worker.config, "HORIZON_REVERT_OPPOSITE_UNITS_MULT", 0.40)
+
+    sig = worker.TickSignal(
+        side="long",
+        mode="revert",
+        mode_score=1.0,
+        momentum_score=1.0,
+        revert_score=1.2,
+        confidence=10,
+        momentum_pips=0.5,
+        trigger_pips=0.2,
+        imbalance=0.6,
+        tick_rate=5.0,
+        span_sec=1.0,
+        tick_age_ms=50.0,
+        spread_pips=0.2,
+        bid=150.0,
+        ask=150.01,
+        mid=150.005,
+    )
+    hz = worker.HorizonBias(
+        long_side="short",
+        long_score=-0.7,
+        mid_side="short",
+        mid_score=-0.6,
+        short_side="short",
+        short_score=-0.5,
+        micro_side="neutral",
+        micro_score=0.0,
+        composite_side="short",
+        composite_score=-0.80,
+        agreement=3,
+    )
+
+    adjusted, units_mult, gate = worker._apply_horizon_bias(sig, hz)
+    assert adjusted is not None
+    assert adjusted.side == "long"
+    assert gate == "horizon_counter_scaled_revert"
+    assert units_mult == pytest.approx(0.36, abs=1e-9)
+
+
+def test_apply_horizon_bias_blocks_counter_momentum_even_when_mode_aware(monkeypatch) -> None:
+    from workers.scalp_ping_5s import worker
+
+    monkeypatch.setattr(worker.config, "HORIZON_BIAS_ENABLED", True)
+    monkeypatch.setattr(worker.config, "HORIZON_MODE_AWARE", True)
+    monkeypatch.setattr(worker.config, "HORIZON_BLOCK_SCORE", 0.44)
+    monkeypatch.setattr(worker.config, "HORIZON_REVERT_HARD_BLOCK_SCORE", 0.90)
+    monkeypatch.setattr(worker.config, "HORIZON_OPPOSITE_UNITS_MULT", 0.40)
+    monkeypatch.setattr(worker.config, "HORIZON_REVERT_OPPOSITE_UNITS_MULT", 0.40)
+
+    sig = worker.TickSignal(
+        side="long",
+        mode="momentum",
+        mode_score=1.0,
+        momentum_score=1.0,
+        revert_score=0.0,
+        confidence=10,
+        momentum_pips=0.5,
+        trigger_pips=0.2,
+        imbalance=0.6,
+        tick_rate=5.0,
+        span_sec=1.0,
+        tick_age_ms=50.0,
+        spread_pips=0.2,
+        bid=150.0,
+        ask=150.01,
+        mid=150.005,
+    )
+    hz = worker.HorizonBias(
+        long_side="short",
+        long_score=-0.7,
+        mid_side="short",
+        mid_score=-0.6,
+        short_side="short",
+        short_score=-0.5,
+        micro_side="neutral",
+        micro_score=0.0,
+        composite_side="short",
+        composite_score=-0.80,
+        agreement=3,
+    )
+
+    adjusted, units_mult, gate = worker._apply_horizon_bias(sig, hz)
+    assert adjusted is None
+    assert units_mult == 0.0
+    assert gate == "horizon_block_counter"
+
+
 @pytest.mark.asyncio
 async def test_enforce_new_entry_time_stop_respects_policy_generation(monkeypatch) -> None:
     from workers.scalp_ping_5s import worker

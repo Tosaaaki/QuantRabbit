@@ -329,6 +329,25 @@ HORIZON_OPPOSITE_UNITS_MULT: float = max(
     0.0,
     min(1.0, float(os.getenv("SCALP_PING_5S_HORIZON_OPPOSITE_UNITS_MULT", "0.40"))),
 )
+HORIZON_MODE_AWARE: bool = _bool_env("SCALP_PING_5S_HORIZON_MODE_AWARE", False)
+# Allow counter-trend *revert* scalps to coexist with strong higher-timeframe bias.
+# When enabled, revert-mode signals use a separate hard-block threshold and size scale.
+HORIZON_REVERT_HARD_BLOCK_SCORE: float = max(
+    HORIZON_BLOCK_SCORE,
+    min(0.99, float(os.getenv("SCALP_PING_5S_HORIZON_REVERT_HARD_BLOCK_SCORE", "0.90"))),
+)
+HORIZON_REVERT_OPPOSITE_UNITS_MULT: float = max(
+    0.0,
+    min(
+        1.0,
+        float(
+            os.getenv(
+                "SCALP_PING_5S_HORIZON_REVERT_OPPOSITE_UNITS_MULT",
+                str(HORIZON_OPPOSITE_UNITS_MULT),
+            )
+        ),
+    ),
+)
 HORIZON_ALIGN_BOOST_MAX: float = max(
     0.0,
     min(1.0, float(os.getenv("SCALP_PING_5S_HORIZON_ALIGN_BOOST_MAX", "0.32"))),

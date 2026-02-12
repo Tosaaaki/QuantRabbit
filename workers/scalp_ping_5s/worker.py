@@ -1670,12 +1670,25 @@ def _apply_horizon_bias(
 
     score_abs = abs(horizon.composite_score)
     if signal.side != horizon.composite_side:
-        if score_abs >= config.HORIZON_BLOCK_SCORE:
-            return None, 0.0, "horizon_block_counter"
-        scale = max(0.0, min(1.0, config.HORIZON_OPPOSITE_UNITS_MULT))
+        mode = str(signal.mode or "")
+        is_revert = "revert" in mode
+
+        hard_block = config.HORIZON_BLOCK_SCORE
+        scale = config.HORIZON_OPPOSITE_UNITS_MULT
+        gate = "horizon_counter_scaled"
+        block_gate = "horizon_block_counter"
+        if config.HORIZON_MODE_AWARE and is_revert:
+            hard_block = config.HORIZON_REVERT_HARD_BLOCK_SCORE
+            scale = config.HORIZON_REVERT_OPPOSITE_UNITS_MULT
+            gate = "horizon_counter_scaled_revert"
+            block_gate = "horizon_block_counter_revert"
+
+        if score_abs >= hard_block:
+            return None, 0.0, block_gate
+        scale = max(0.0, min(1.0, scale))
         if horizon.agreement >= 3:
             scale *= 0.9
-        return signal, float(scale), "horizon_counter_scaled"
+        return signal, float(scale), gate
 
     if score_abs < config.HORIZON_ALIGN_SCORE_MIN:
         return signal, 1.0, "horizon_align_weak"
