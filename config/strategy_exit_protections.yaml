@@ -741,11 +741,14 @@ strategies:
       strict_no_negative: true
       strict_allow_reasons:
         - profit_bank_release
+        - no_recovery
+        - time_stop
       allow_reasons:
         - profit_bank_release
         - hard_stop
         - tech_hard_stop
         - max_adverse
+        - no_recovery
         - time_stop
         - timeout
         - drawdown
@@ -772,11 +775,14 @@ strategies:
       strict_no_negative: true
       strict_allow_reasons:
         - profit_bank_release
+        - no_recovery
+        - time_stop
       allow_reasons:
         - profit_bank_release
         - hard_stop
         - tech_hard_stop
         - max_adverse
+        - no_recovery
         - time_stop
         - timeout
         - drawdown
