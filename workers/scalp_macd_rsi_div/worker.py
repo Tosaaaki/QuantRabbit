@@ -54,6 +54,20 @@ def _latest_mid(fallback: float) -> float:
     return fallback
 
 
+def _latest_spread_pips(fallback: float = 0.0) -> float:
+    ticks = tick_window.recent_ticks(seconds=8.0, limit=1)
+    if ticks:
+        tick = ticks[-1]
+        try:
+            bid = float(tick.get("bid") or 0.0)
+            ask = float(tick.get("ask") or 0.0)
+            if bid > 0.0 and ask > 0.0 and ask >= bid:
+                return (ask - bid) / config.PIP_VALUE
+        except Exception:
+            pass
+    return max(0.0, fallback)
+
+
 def _client_order_id(tag: str) -> str:
     ts_ms = int(time.time() * 1000)
     sanitized = "".join(ch.lower() for ch in tag if ch.isalnum())[:12] or "macdrsidiv"
@@ -207,14 +221,15 @@ async def scalp_macd_rsi_div_worker() -> None:
 
             blocked, remain, spread_state, spread_reason = spread_monitor.is_blocked()
             spread_pips = _safe_float((spread_state or {}).get("spread_pips"), 0.0)
-            spread_stale = bool((spread_state or {}).get("stale"))
-            if blocked or spread_stale or spread_pips > config.MAX_SPREAD_PIPS:
+            if spread_pips <= 0.0:
+                spread_pips = _latest_spread_pips(spread_pips)
+            if blocked or spread_pips > config.MAX_SPREAD_PIPS:
                 if now_mono - last_spread_log_mono > 60.0:
                     LOG.info(
                         "%s spread_block spread=%.2f stale=%s remain=%ss reason=%s",
                         config.LOG_PREFIX,
                         spread_pips,
-                        spread_stale,
+                        bool((spread_state or {}).get("stale")),
                         remain,
                         spread_reason or "guard",
                     )
