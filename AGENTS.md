@@ -21,6 +21,7 @@
 - 現行デフォルト: `WORKER_ONLY_MODE=true` / `MAIN_TRADING_ENABLED=0`。共通 `exit_manager` はスタブ化され、エントリー/EXIT は各戦略ワーカー＋専用 `exit_worker` が担当。
 - 発注経路はワーカーが直接 OANDA に送信するのが既定（`SIGNAL_GATE_ENABLED=0` / `ORDER_FORWARD_TO_SIGNAL_GATE=0`）。共通ゲートを使う場合のみ両フラグを 1 にする。
 - 共通エントリー/テックゲート（`entry_guard` / `entry_tech`）は廃止・使用禁止。
+- 型ゲート（Pattern Gate）は `workers/common/pattern_gate.py` を `execution/order_manager.py` preflight に適用する。**ただし全戦略一律強制はしない**（デフォルトは戦略ワーカーの opt-in）。
 - 運用方針は「全て動的トレード」。静的な固定パラメータに依存せず、戦略ごとのローカル判定とリスク制御で都度更新する。
 - **重要**: 本番稼働は VM。運用上の指摘・報告・判断は必ず VM（ログ/DB/プロセス）または OANDA API を確認して行い、ローカルの `logs/*.db` やスナップショット/コード差分だけで断定しない。
 - 変更は必ず `git commit` → `git push` → VM 反映（`scripts/vm.sh ... deploy -i -t` 推奨）で行う。未コミット状態やローカル差し替えでの運用は不可。
@@ -46,3 +47,24 @@
 - 秘匿情報は Git に置かない。
 - タスク台帳は `docs/TASKS.md` を正本とし、Open→進行→Archive の流れで更新。
 - オンラインチューニング ToDo は `docs/autotune_taskboard.md` に集約。
+
+## 6. 型（Pattern Book）運用ルール
+- 目的: トレード履歴から「勝てる型 / 避ける型」を継続学習し、エントリー時の `block/reduce/boost` 判断に使う。
+- 収集ジョブ: `scripts/pattern_book_worker.py`。systemd は `quant-pattern-book.service` + `quant-pattern-book.timer`（5分周期）。
+- 実行Python: `quant-pattern-book.service` は必ず `/home/tossaki/QuantRabbit/.venv/bin/python` を使う（system python禁止）。
+- 主な出力:
+  - DB: `/home/tossaki/QuantRabbit/logs/patterns.db`
+  - JSON: `/home/tossaki/QuantRabbit/config/pattern_book.json`
+  - deep JSON: `/home/tossaki/QuantRabbit/config/pattern_book_deep.json`
+- 主なテーブル:
+  - `pattern_trade_features`（トレード特徴）
+  - `pattern_stats` / `pattern_actions`（基本集計とアクション）
+  - `pattern_scores` / `pattern_drift` / `pattern_clusters`（深掘り分析）
+- 深掘り分析（`analysis/pattern_deep.py`）は `numpy/pandas/scipy/sklearn` を使い、統計検定・ドリフト・クラスタリングを更新する。
+- エントリー連携:
+  - `execution/order_manager.py` preflight で `workers/common/pattern_gate.py` を評価。
+  - `quality=avoid` かつ十分サンプルで `pattern_block`。
+  - `suggested_multiplier` と `drift` でロットを縮小/拡大（下限未満は `pattern_scale_below_min`）。
+- 重要: デフォルトは戦略opt-in。`ORDER_PATTERN_GATE_GLOBAL_OPT_IN=0` を維持し、各戦略ワーカーの `entry_thesis` に `pattern_gate_opt_in=true` を明示したものだけ適用する。
+- 既定opt-in戦略: `scalp_ping_5s`（`SCALP_PING_5S_PATTERN_GATE_OPT_IN=1`）。
+- 運用判断は必ずVM実データで行う。`patterns.db` / `pattern_book*.json` の時刻・件数・quality分布を確認してから閾値調整する。
