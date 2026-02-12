@@ -14,6 +14,16 @@ from .common import (
 from utils.tuning_loader import get_tuning_value
 
 
+def _tuned_float(keys: tuple[str, ...], default: float) -> float:
+    raw = get_tuning_value(keys)
+    if raw is None:
+        return float(default)
+    try:
+        return float(raw)
+    except (TypeError, ValueError):
+        return float(default)
+
+
 class MicroVWAPRevert:
     name = "MicroVWAPRevert"
     pocket = "micro"
@@ -52,7 +62,8 @@ class MicroVWAPRevert:
         deviation = price_delta_pips(close, vwap)
 
         drift = price_delta_pips(ema20, ma10)
-        body_bias = candle_body_pips(candles[-1]) if candles else 0.0
+        body_bias_raw = candle_body_pips(candles[-1]) if candles else 0.0
+        body_bias = float(body_bias_raw or 0.0)
 
         threshold = max(1.05, atr * 0.55)
         tuned_min = get_tuning_value(("strategies", "MicroVWAPRevert", "vwap_z_min"))
@@ -64,16 +75,60 @@ class MicroVWAPRevert:
         if abs(deviation) < threshold:
             return None
 
+        prev_close = to_float(candles[-2].get("close")) if len(candles) >= 2 else None
+        if prev_close is None:
+            return None
+        prev_deviation = price_delta_pips(prev_close, vwap)
+        retrace_min = max(
+            0.0,
+            _tuned_float(("strategies", "MicroVWAPRevert", "retrace_min_pips"), 0.18),
+        )
+        extension_mult = max(
+            1.0,
+            _tuned_float(("strategies", "MicroVWAPRevert", "extension_mult"), 1.08),
+        )
+        max_counter_drift = max(
+            0.4,
+            _tuned_float(("strategies", "MicroVWAPRevert", "max_counter_drift_pips"), 1.45),
+        )
+        confirm_body_min = max(
+            0.0,
+            _tuned_float(("strategies", "MicroVWAPRevert", "confirm_body_min_pips"), 0.08),
+        )
+
+        retrace_from_prev = 0.0
+        if deviation <= 0.0 and prev_deviation <= 0.0:
+            retrace_from_prev = deviation - prev_deviation
+        elif deviation >= 0.0 and prev_deviation >= 0.0:
+            retrace_from_prev = prev_deviation - deviation
+
         direction: Optional[str] = None
         if deviation <= -threshold:
+            if prev_deviation > -(threshold * extension_mult):
+                return None
+            if retrace_from_prev < retrace_min:
+                return None
+            if body_bias < confirm_body_min:
+                return None
+            if drift > max_counter_drift:
+                return None
             direction = "OPEN_LONG"
         elif deviation >= threshold:
+            if prev_deviation < threshold * extension_mult:
+                return None
+            if retrace_from_prev < retrace_min:
+                return None
+            if body_bias > -confirm_body_min:
+                return None
+            if drift < -max_counter_drift:
+                return None
             direction = "OPEN_SHORT"
         else:
             return None
 
         conf_base = 50.0
         conf_base += clamp(abs(deviation) - threshold, 0.0, 3.0) * 2.6
+        conf_base += clamp(retrace_from_prev, 0.0, 2.0) * 2.0
         conf_base += clamp(max(0.0, 1.3 - (vol_5m or 1.3)), 0.0, 1.1) * 4.5
         conf_base += clamp(max(0.0, 0.9 - abs(drift)), 0.0, 0.9) * 3.2
         conf_base -= clamp(max(0.0, abs(body_bias) - 0.8), 0.0, 2.0) * 2.4
@@ -96,5 +151,7 @@ class MicroVWAPRevert:
                 "atr": round(atr, 2),
                 "vol5m": round(vol_5m or 0.0, 2),
                 "drift": round(drift, 2),
+                "prev_deviation": round(prev_deviation, 2),
+                "retrace": round(retrace_from_prev, 2),
             },
         }

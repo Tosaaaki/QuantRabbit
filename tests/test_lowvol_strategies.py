@@ -92,13 +92,16 @@ def test_bb_rsi_fast_prefers_long_in_range():
 
 def test_micro_vwap_revert_flags_short_bias():
     typical_prices = [
-        {"timestamp": _ts(-70), "open": 150.010, "high": 150.015, "low": 150.008, "close": 150.012},
-        {"timestamp": _ts(-50), "open": 150.008, "high": 150.012, "low": 150.004, "close": 150.007},
-        {"timestamp": _ts(-30), "open": 150.007, "high": 150.010, "low": 150.003, "close": 150.006},
-        {"timestamp": _ts(-10), "open": 150.006, "high": 150.009, "low": 150.002, "close": 150.005},
+        {"timestamp": _ts(-70), "open": 149.999, "high": 150.002, "low": 149.997, "close": 150.000},
+        {"timestamp": _ts(-60), "open": 150.000, "high": 150.003, "low": 149.998, "close": 150.001},
+        {"timestamp": _ts(-50), "open": 150.001, "high": 150.004, "low": 149.999, "close": 150.002},
+        {"timestamp": _ts(-40), "open": 150.002, "high": 150.004, "low": 149.999, "close": 150.001},
+        {"timestamp": _ts(-30), "open": 150.001, "high": 150.003, "low": 149.998, "close": 150.000},
+        {"timestamp": _ts(-20), "open": 150.000, "high": 150.041, "low": 149.998, "close": 150.038},
+        {"timestamp": _ts(-10), "open": 150.039, "high": 150.040, "low": 150.032, "close": 150.034},
     ]
     fac = {
-        "close": 150.035,
+        "close": 150.034,
         "ema20": 150.010,
         "ma10": 150.011,
         "vol_5m": 0.85,
@@ -111,6 +114,31 @@ def test_micro_vwap_revert_flags_short_bias():
     assert signal is not None
     assert signal["action"] == "OPEN_SHORT"
     assert 1.1 <= signal["sl_pips"] <= 2.4
+
+
+def test_micro_vwap_revert_blocks_without_retrace_confirmation():
+    candles = [
+        {"timestamp": _ts(-70), "open": 149.999, "high": 150.002, "low": 149.997, "close": 150.000},
+        {"timestamp": _ts(-60), "open": 150.000, "high": 150.003, "low": 149.998, "close": 150.001},
+        {"timestamp": _ts(-50), "open": 150.001, "high": 150.004, "low": 149.999, "close": 150.002},
+        {"timestamp": _ts(-40), "open": 150.002, "high": 150.004, "low": 149.999, "close": 150.001},
+        {"timestamp": _ts(-30), "open": 150.001, "high": 150.003, "low": 149.998, "close": 150.000},
+        {"timestamp": _ts(-20), "open": 150.000, "high": 150.041, "low": 149.998, "close": 150.038},
+        # No retrace and still bullish body -> should be blocked.
+        {"timestamp": _ts(-10), "open": 150.037, "high": 150.043, "low": 150.036, "close": 150.041},
+    ]
+    fac = {
+        "close": 150.041,
+        "ema20": 150.010,
+        "ma10": 150.011,
+        "vol_5m": 0.85,
+        "bbw": 0.18,
+        "adx": 19.5,
+        "atr_pips": 2.0,
+        "candles": candles,
+    }
+    signal = MicroVWAPRevert.check(fac)
+    assert signal is None
 
 
 def test_micro_compression_revert_short_signal_in_clean_range():

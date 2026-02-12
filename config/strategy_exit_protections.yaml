@@ -384,12 +384,29 @@ strategies:
       loss_cut_cooldown_sec: 6
 
   MicroVWAPRevert:
+    min_profit_pips: 0.4
+    min_profit_ratio: 0.0
+    min_profit_ratio_min_tp_pips: 99.0
     be_profile: {trigger_pips: 1.6, lock_ratio: 0.55, min_lock_pips: 0.60, cooldown_sec: 35}
     tp_move: {trigger_pips: 1.3, buffer_pips: 0.9}
     pro_stop: {soft_atr_mult: 0.7, hard_atr_mult: 1.2}
     neg_exit:
       allow_reasons:
         - reversion_*
+        - max_adverse
+        - range_timeout
+        - time_stop
+        - timeout
+        - lock_floor
+        - trail_lock
+        - near_be
+        - drawdown
+        - max_drawdown
+        - margin_health
+        - free_margin_low
+        - margin_usage_high
+        - candle_*
+        - take_profit_zone
     exit_profile:
       loss_cut_enabled: true
       loss_cut_require_sl: false
@@ -555,8 +572,23 @@ strategies:
       loss_cut_cooldown_sec: 5
 
   WickReversalBlend:
-    min_profit_pips: 1.0
-    min_profit_ratio: 0.45
+    min_profit_pips: 0.6
+    min_profit_ratio: 0.0
+    min_profit_ratio_min_tp_pips: 99.0
+    neg_exit:
+      allow_reasons:
+        - max_adverse
+        - range_timeout
+        - time_stop
+        - timeout
+        - lock_floor
+        - trail_lock
+        - near_be
+        - drawdown
+        - max_drawdown
+        - margin_health
+        - free_margin_low
+        - margin_usage_high
     exit_profile:
       # Blend is a higher-quality wick fade with tick confirmation; still cap tail risk mechanically.
       loss_cut_enabled: true
