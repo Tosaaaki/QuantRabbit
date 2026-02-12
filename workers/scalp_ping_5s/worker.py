@@ -231,6 +231,7 @@ async def _enforce_new_entry_time_stop(
     pocket_info: dict,
     now_utc: datetime.datetime,
     logger: logging.Logger,
+    protected_trade_ids: Optional[set[str]] = None,
 ) -> int:
     global _TRADE_MFE_PIPS
 
@@ -288,6 +289,8 @@ async def _enforce_new_entry_time_stop(
             continue
         trade_id = str(trade.get("trade_id") or "").strip()
         if not trade_id:
+            continue
+        if protected_trade_ids and trade_id in protected_trade_ids:
             continue
         units = int(_safe_float(trade.get("units"), 0.0))
         if units == 0:
@@ -912,6 +915,8 @@ async def scalp_ping_5s_worker() -> None:
     last_density_topup_log_mono = 0.0
     last_keepalive_log_mono = 0.0
     last_max_active_bypass_log_mono = 0.0
+    protected_trade_ids: set[str] = set()
+    protected_seeded = False
 
     try:
         while True:
@@ -924,10 +929,33 @@ async def scalp_ping_5s_worker() -> None:
 
             positions = pos_manager.get_open_positions()
             pocket_info = positions.get(config.POCKET) or {}
+            if not protected_seeded:
+                protected_seeded = True
+                if config.FORCE_EXIT_SKIP_EXISTING_ON_START:
+                    target_tag = str(config.STRATEGY_TAG or "").strip().lower()
+                    open_trades = pocket_info.get("open_trades") if isinstance(pocket_info, dict) else None
+                    if isinstance(open_trades, list):
+                        for trade in open_trades:
+                            if not isinstance(trade, dict):
+                                continue
+                            if target_tag:
+                                trade_tag = _trade_strategy_tag(trade).lower()
+                                if trade_tag != target_tag:
+                                    continue
+                            trade_id = str(trade.get("trade_id") or "").strip()
+                            if trade_id:
+                                protected_trade_ids.add(trade_id)
+                    if protected_trade_ids:
+                        LOG.info(
+                            "%s force_exit protect_existing=%d trade(s)",
+                            config.LOG_PREFIX,
+                            len(protected_trade_ids),
+                        )
             forced_closed = await _enforce_new_entry_time_stop(
                 pocket_info=pocket_info,
                 now_utc=now_utc,
                 logger=LOG,
+                protected_trade_ids=protected_trade_ids,
             )
             if forced_closed > 0:
                 positions = pos_manager.get_open_positions()

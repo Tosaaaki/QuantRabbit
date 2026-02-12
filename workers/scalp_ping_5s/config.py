@@ -282,6 +282,10 @@ FORCE_EXIT_POLICY_GENERATION: str = (
         os.getenv("ORDER_ENTRY_POLICY_GENERATION", ""),
     ).strip()
 )
+FORCE_EXIT_SKIP_EXISTING_ON_START: bool = _bool_env(
+    "SCALP_PING_5S_FORCE_EXIT_SKIP_EXISTING_ON_START",
+    True,
+)
 
 STOP_LOSS_DISABLED = stop_loss_disabled_for_pocket(POCKET)
 USE_SL: bool = False if STOP_LOSS_DISABLED else _bool_env("SCALP_PING_5S_USE_SL", True)

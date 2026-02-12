@@ -346,6 +346,75 @@ async def test_enforce_new_entry_time_stop_respects_policy_generation(monkeypatc
 
 
 @pytest.mark.asyncio
+async def test_enforce_new_entry_time_stop_skips_protected_existing_trades(monkeypatch) -> None:
+    from workers.scalp_ping_5s import worker
+
+    monkeypatch.setattr(worker.config, "STRATEGY_TAG", "scalp_ping_5s_live")
+    monkeypatch.setattr(worker.config, "FORCE_EXIT_MAX_HOLD_SEC", 300.0)
+    monkeypatch.setattr(worker.config, "FORCE_EXIT_MAX_FLOATING_LOSS_PIPS", 0.0)
+    monkeypatch.setattr(worker.config, "FORCE_EXIT_RECOVERY_WINDOW_SEC", 0.0)
+    monkeypatch.setattr(worker.config, "FORCE_EXIT_RECOVERABLE_LOSS_PIPS", 0.0)
+    monkeypatch.setattr(worker.config, "FORCE_EXIT_MAX_ACTIONS", 3)
+    monkeypatch.setattr(worker.config, "FORCE_EXIT_REASON", "time_stop")
+    monkeypatch.setattr(worker.config, "FORCE_EXIT_REQUIRE_POLICY_GENERATION", True)
+    monkeypatch.setattr(worker.config, "FORCE_EXIT_POLICY_GENERATION", "2026-02-12-ping5-root-v1")
+
+    calls: list[tuple[str, int, str | None, bool, str | None, str | None]] = []
+
+    async def _fake_close_trade(
+        trade_id: str,
+        units: int | None = None,
+        client_order_id: str | None = None,
+        allow_negative: bool = False,
+        exit_reason: str | None = None,
+        env_prefix: str | None = None,
+    ) -> bool:
+        calls.append((trade_id, int(units or 0), client_order_id, allow_negative, exit_reason, env_prefix))
+        return True
+
+    monkeypatch.setattr(worker, "close_trade", _fake_close_trade)
+
+    now_utc = datetime.datetime(2026, 2, 12, 3, 0, 0, tzinfo=datetime.timezone.utc)
+    pocket_info = {
+        "open_trades": [
+            {
+                "trade_id": "old-protected",
+                "units": 1000,
+                "open_time": "2026-02-12T00:50:00+00:00",
+                "strategy_tag": "scalp_ping_5s_live",
+                "entry_thesis": {
+                    "strategy_tag": "scalp_ping_5s_live",
+                    "policy_generation": "2026-02-12-ping5-root-v1",
+                },
+            },
+            {
+                "trade_id": "new-eligible",
+                "units": 1000,
+                "open_time": "2026-02-12T02:40:00+00:00",
+                "strategy_tag": "scalp_ping_5s_live",
+                "client_id": "qr-new-eligible",
+                "entry_thesis": {
+                    "strategy_tag": "scalp_ping_5s_live",
+                    "policy_generation": "2026-02-12-ping5-root-v1",
+                },
+            },
+        ]
+    }
+
+    closed = await worker._enforce_new_entry_time_stop(
+        pocket_info=pocket_info,
+        now_utc=now_utc,
+        logger=worker.LOG,
+        protected_trade_ids={"old-protected"},
+    )
+    assert closed == 1
+    assert len(calls) == 1
+    assert calls[0][0] == "new-eligible"
+    assert calls[0][2] == "qr-new-eligible"
+    assert calls[0][4] == "time_stop"
+
+
+@pytest.mark.asyncio
 async def test_enforce_new_entry_time_stop_closes_no_recovery_loss(monkeypatch) -> None:
     from workers.scalp_ping_5s import worker
 
