@@ -29,6 +29,12 @@ class _Snapshot:
         self.margin_rate = margin_rate
 
 
+class _NavSnapshot:
+    def __init__(self, nav: float, balance: float):
+        self.nav = nav
+        self.balance = balance
+
+
 def test_preflight_allows_margin_reduction_on_hedge(monkeypatch):
     """Opposite-direction entry that shrinks net margin should be allowed even when free margin is low."""
     snap = _Snapshot(margin_available=50_000.0, margin_used=480_000.0, margin_rate=0.04)
@@ -287,6 +293,62 @@ def test_entry_loss_cap_jpy_uses_strategy_override(monkeypatch) -> None:
         entry_thesis=None,
     )
     assert cap == 150.0
+
+
+def test_entry_loss_cap_jpy_scales_with_nav_and_bounds(monkeypatch) -> None:
+    monkeypatch.setenv("ORDER_ENTRY_LOSS_CAP_JPY", "0")
+    monkeypatch.setenv("ORDER_ENTRY_LOSS_CAP_NAV_BPS", "9")
+    monkeypatch.setenv("ORDER_ENTRY_LOSS_CAP_NAV_MIN_JPY", "110")
+    monkeypatch.setenv("ORDER_ENTRY_LOSS_CAP_NAV_MAX_JPY", "190")
+
+    cap_small = _entry_loss_cap_jpy(
+        "scalp_fast",
+        strategy_tag="test_nav_cap",
+        nav_hint=100_000.0,
+    )
+    cap_mid = _entry_loss_cap_jpy(
+        "scalp_fast",
+        strategy_tag="test_nav_cap",
+        nav_hint=154_000.0,
+    )
+    cap_large = _entry_loss_cap_jpy(
+        "scalp_fast",
+        strategy_tag="test_nav_cap",
+        nav_hint=500_000.0,
+    )
+
+    assert cap_small == 110.0
+    assert round(cap_mid, 1) == 138.6
+    assert cap_large == 190.0
+
+
+def test_entry_loss_cap_jpy_prefers_static_strategy_value(monkeypatch) -> None:
+    monkeypatch.setenv("ORDER_ENTRY_LOSS_CAP_JPY_STRATEGY_TICKIMBALANCE", "150")
+    monkeypatch.setenv("ORDER_ENTRY_LOSS_CAP_NAV_BPS", "9")
+
+    cap = _entry_loss_cap_jpy(
+        "scalp",
+        strategy_tag="TickImbalance",
+        nav_hint=300_000.0,
+    )
+
+    assert cap == 150.0
+
+
+def test_entry_loss_cap_jpy_uses_snapshot_when_nav_hint_missing(monkeypatch) -> None:
+    monkeypatch.setenv("ORDER_ENTRY_LOSS_CAP_JPY", "0")
+    monkeypatch.setenv("ORDER_ENTRY_LOSS_CAP_NAV_BPS", "10")
+    monkeypatch.setenv("ORDER_ENTRY_LOSS_CAP_NAV_MIN_JPY", "0")
+    monkeypatch.setenv("ORDER_ENTRY_LOSS_CAP_NAV_MAX_JPY", "0")
+    monkeypatch.setattr(
+        order_manager,
+        "get_account_snapshot",
+        lambda cache_ttl_sec=1.0: _NavSnapshot(nav=200_000.0, balance=210_000.0),
+    )
+
+    cap = _entry_loss_cap_jpy("scalp_fast", strategy_tag="test_nav_cap")
+
+    assert cap == 200.0
 
 
 def test_order_spread_block_pips_prefers_strategy_override(monkeypatch) -> None:

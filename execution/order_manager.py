@@ -979,6 +979,16 @@ _ENTRY_LOSS_CAP_JPY_DEFAULT = max(0.0, _env_float("ORDER_ENTRY_LOSS_CAP_JPY", 0.
 _ENTRY_LOSS_CAP_BUFFER_PIPS_DEFAULT = max(
     0.0, _env_float("ORDER_ENTRY_LOSS_CAP_BUFFER_PIPS", 0.0)
 )
+_ENTRY_LOSS_CAP_NAV_BPS_DEFAULT = max(0.0, _env_float("ORDER_ENTRY_LOSS_CAP_NAV_BPS", 0.0))
+_ENTRY_LOSS_CAP_NAV_MIN_JPY_DEFAULT = max(
+    0.0, _env_float("ORDER_ENTRY_LOSS_CAP_NAV_MIN_JPY", 0.0)
+)
+_ENTRY_LOSS_CAP_NAV_MAX_JPY_DEFAULT = max(
+    0.0, _env_float("ORDER_ENTRY_LOSS_CAP_NAV_MAX_JPY", 0.0)
+)
+_ENTRY_LOSS_CAP_NAV_SNAPSHOT_TTL_SEC = max(
+    0.0, _env_float("ORDER_ENTRY_LOSS_CAP_NAV_SNAPSHOT_TTL_SEC", 1.0)
+)
 _ENTRY_POLICY_GENERATION = os.getenv("ORDER_ENTRY_POLICY_GENERATION", "").strip()
 _JPY_PER_PIP_PER_UNIT_USDJPY = 0.01
 
@@ -989,6 +999,19 @@ def _strategy_env_key(strategy_tag: Optional[str]) -> Optional[str]:
         return None
     key = re.sub(r"[^0-9A-Za-z]+", "_", raw).upper().strip("_")
     return key or None
+
+
+def _strategy_env_float(name: str, strategy_tag: Optional[str]) -> Optional[float]:
+    key = _strategy_env_key(strategy_tag)
+    if not key:
+        return None
+    raw = os.getenv(f"{name}_STRATEGY_{key}")
+    if raw is None:
+        return None
+    try:
+        return float(raw)
+    except Exception:
+        return None
 
 
 def _entry_hard_stop_pips(pocket: Optional[str], *, strategy_tag: Optional[str] = None) -> float:
@@ -1046,6 +1069,7 @@ def _entry_loss_cap_jpy(
     *,
     strategy_tag: Optional[str] = None,
     entry_thesis: Optional[dict] = None,
+    nav_hint: Optional[float] = None,
 ) -> float:
     """Return per-trade loss cap in JPY (0 = disabled)."""
 
@@ -1053,18 +1077,77 @@ def _entry_loss_cap_jpy(
         thesis_cap = _as_float(entry_thesis.get("loss_cap_jpy"))
         if thesis_cap is not None and thesis_cap > 0.0:
             return float(thesis_cap)
-    strategy_key = _strategy_env_key(strategy_tag)
-    if strategy_key:
-        raw = os.getenv(f"ORDER_ENTRY_LOSS_CAP_JPY_STRATEGY_{strategy_key}")
-        if raw is not None:
-            try:
-                return max(0.0, float(raw))
-            except Exception:
-                pass
-    return max(
+    strategy_static = _strategy_env_float("ORDER_ENTRY_LOSS_CAP_JPY", strategy_tag)
+    if strategy_static is not None:
+        return max(0.0, float(strategy_static))
+    static_cap = max(
         0.0,
         _pocket_env_float("ORDER_ENTRY_LOSS_CAP_JPY", pocket, _ENTRY_LOSS_CAP_JPY_DEFAULT),
     )
+    if static_cap > 0.0:
+        return static_cap
+
+    thesis_nav_bps = None
+    thesis_nav_min = None
+    thesis_nav_max = None
+    if isinstance(entry_thesis, dict):
+        thesis_nav_bps = _as_float(entry_thesis.get("loss_cap_nav_bps"))
+        thesis_nav_min = _as_float(entry_thesis.get("loss_cap_nav_min_jpy"))
+        thesis_nav_max = _as_float(entry_thesis.get("loss_cap_nav_max_jpy"))
+
+    nav_bps = thesis_nav_bps
+    if nav_bps is None:
+        nav_bps = _strategy_env_float("ORDER_ENTRY_LOSS_CAP_NAV_BPS", strategy_tag)
+    if nav_bps is None:
+        nav_bps = _pocket_env_float(
+            "ORDER_ENTRY_LOSS_CAP_NAV_BPS",
+            pocket,
+            _ENTRY_LOSS_CAP_NAV_BPS_DEFAULT,
+        )
+    nav_bps = max(0.0, float(nav_bps or 0.0))
+    if nav_bps <= 0.0:
+        return 0.0
+
+    nav_min = thesis_nav_min
+    if nav_min is None:
+        nav_min = _strategy_env_float("ORDER_ENTRY_LOSS_CAP_NAV_MIN_JPY", strategy_tag)
+    if nav_min is None:
+        nav_min = _pocket_env_float(
+            "ORDER_ENTRY_LOSS_CAP_NAV_MIN_JPY",
+            pocket,
+            _ENTRY_LOSS_CAP_NAV_MIN_JPY_DEFAULT,
+        )
+    nav_min = max(0.0, float(nav_min or 0.0))
+
+    nav_max = thesis_nav_max
+    if nav_max is None:
+        nav_max = _strategy_env_float("ORDER_ENTRY_LOSS_CAP_NAV_MAX_JPY", strategy_tag)
+    if nav_max is None:
+        nav_max = _pocket_env_float(
+            "ORDER_ENTRY_LOSS_CAP_NAV_MAX_JPY",
+            pocket,
+            _ENTRY_LOSS_CAP_NAV_MAX_JPY_DEFAULT,
+        )
+    nav_max = max(0.0, float(nav_max or 0.0))
+    if nav_max > 0.0 and nav_min > nav_max:
+        nav_max = nav_min
+
+    nav_value = _as_float(nav_hint)
+    if nav_value is None or nav_value <= 0.0:
+        try:
+            snap = get_account_snapshot(cache_ttl_sec=_ENTRY_LOSS_CAP_NAV_SNAPSHOT_TTL_SEC)
+            nav_value = float(snap.nav or snap.balance or 0.0)
+        except Exception:
+            nav_value = 0.0
+    if nav_value <= 0.0:
+        return 0.0
+
+    cap = float(nav_value) * (nav_bps / 10_000.0)
+    if nav_min > 0.0:
+        cap = max(cap, nav_min)
+    if nav_max > 0.0:
+        cap = min(cap, nav_max)
+    return max(0.0, cap)
 
 
 def _entry_loss_cap_buffer_pips(
@@ -2001,6 +2084,17 @@ def _entry_price_hint(entry_thesis: Optional[dict], meta: Optional[dict]) -> Opt
     if est is not None:
         return est
     return _latest_mid_price()
+
+
+def _entry_nav_hint(meta: Optional[dict], entry_thesis: Optional[dict]) -> Optional[float]:
+    for src in (meta, entry_thesis):
+        if not isinstance(src, dict):
+            continue
+        for key in ("nav", "account_nav", "equity", "ref_equity", "balance"):
+            value = _as_float(src.get(key))
+            if value is not None and value > 0.0:
+                return float(value)
+    return None
 
 
 def _pocket_env_float(name: str, pocket: Optional[str], default: float) -> float:
@@ -7552,6 +7646,7 @@ async def market_order(
             pocket,
             strategy_tag=strategy_tag,
             entry_thesis=entry_thesis if isinstance(entry_thesis, dict) else None,
+            nav_hint=_entry_nav_hint(meta, entry_thesis if isinstance(entry_thesis, dict) else None),
         )
         if loss_cap_jpy > 0.0:
             sl_pips_for_cap: float | None = None
@@ -8314,6 +8409,7 @@ async def limit_order(
             pocket,
             strategy_tag=strategy_tag,
             entry_thesis=entry_thesis if isinstance(entry_thesis, dict) else None,
+            nav_hint=_entry_nav_hint(meta, entry_thesis if isinstance(entry_thesis, dict) else None),
         )
         if loss_cap_jpy > 0.0:
             sl_pips_for_cap: float | None = None
