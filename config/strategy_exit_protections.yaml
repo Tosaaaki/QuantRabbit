@@ -738,7 +738,7 @@ strategies:
     tp_move: {enabled: true, trigger_pips: 0.75, buffer_pips: 0.25}
     neg_exit:
       enabled: true
-      strict_no_negative: false
+      strict_no_negative: true
       allow_reasons:
         - hard_stop
         - tech_hard_stop
@@ -766,7 +766,7 @@ strategies:
     tp_move: {enabled: true, trigger_pips: 0.75, buffer_pips: 0.25}
     neg_exit:
       enabled: true
-      strict_no_negative: false
+      strict_no_negative: true
       allow_reasons:
         - hard_stop
         - tech_hard_stop
