@@ -787,5 +787,73 @@ PROFIT_BANK_EXCLUDE_CLIENT_IDS: tuple[str, ...] = _csv_env(
     "SCALP_PING_5S_PROFIT_BANK_EXCLUDE_CLIENT_IDS"
 )
 
+FORCE_EXIT_ENABLED: bool = _bool_env("SCALP_PING_5S_FORCE_EXIT_ENABLED", True)
+FORCE_EXIT_MAX_ACTIONS: int = max(
+    0, int(float(os.getenv("SCALP_PING_5S_FORCE_EXIT_MAX_ACTIONS", "0")))
+)
+FORCE_EXIT_MAX_HOLD_SEC: float = max(
+    0.0, float(os.getenv("SCALP_PING_5S_FORCE_EXIT_MAX_HOLD_SEC", "0"))
+)
+FORCE_EXIT_REASON_TIME: str = (
+    os.getenv("SCALP_PING_5S_FORCE_EXIT_REASON", "time_stop").strip() or "time_stop"
+)
+FORCE_EXIT_MAX_FLOATING_LOSS_PIPS: float = max(
+    0.0, float(os.getenv("SCALP_PING_5S_FORCE_EXIT_MAX_FLOATING_LOSS_PIPS", "0"))
+)
+FORCE_EXIT_REASON_MAX_FLOATING_LOSS: str = (
+    os.getenv("SCALP_PING_5S_FORCE_EXIT_MAX_FLOATING_LOSS_REASON", "max_floating_loss").strip()
+    or "max_floating_loss"
+)
+FORCE_EXIT_RECOVERY_WINDOW_SEC: float = max(
+    0.0, float(os.getenv("SCALP_PING_5S_FORCE_EXIT_RECOVERY_WINDOW_SEC", "0"))
+)
+FORCE_EXIT_RECOVERABLE_LOSS_PIPS: float = float(
+    os.getenv("SCALP_PING_5S_FORCE_EXIT_RECOVERABLE_LOSS_PIPS", "0")
+)
+FORCE_EXIT_REASON_RECOVERY: str = (
+    os.getenv("SCALP_PING_5S_FORCE_EXIT_RECOVERY_REASON", "no_recovery").strip()
+    or "no_recovery"
+)
+FORCE_EXIT_GIVEBACK_ENABLED: bool = _bool_env("SCALP_PING_5S_FORCE_EXIT_GIVEBACK_ENABLED", False)
+FORCE_EXIT_GIVEBACK_ARM_PIPS: float = max(
+    0.0, float(os.getenv("SCALP_PING_5S_FORCE_EXIT_GIVEBACK_ARM_PIPS", "0"))
+)
+FORCE_EXIT_GIVEBACK_BACKOFF_PIPS: float = max(
+    0.0, float(os.getenv("SCALP_PING_5S_FORCE_EXIT_GIVEBACK_BACKOFF_PIPS", "0"))
+)
+FORCE_EXIT_GIVEBACK_MIN_HOLD_SEC: float = max(
+    0.0, float(os.getenv("SCALP_PING_5S_FORCE_EXIT_GIVEBACK_MIN_HOLD_SEC", "0"))
+)
+FORCE_EXIT_GIVEBACK_PROTECT_PIPS: float = float(
+    os.getenv("SCALP_PING_5S_FORCE_EXIT_GIVEBACK_PROTECT_PIPS", "0")
+)
+FORCE_EXIT_REASON_GIVEBACK: str = (
+    os.getenv("SCALP_PING_5S_FORCE_EXIT_GIVEBACK_REASON", "giveback_lock").strip()
+    or "giveback_lock"
+)
+FORCE_EXIT_REQUIRE_POLICY_GENERATION: bool = _bool_env(
+    "SCALP_PING_5S_FORCE_EXIT_REQUIRE_POLICY_GENERATION",
+    False,
+)
+FORCE_EXIT_POLICY_GENERATION: str = os.getenv(
+    "SCALP_PING_5S_FORCE_EXIT_POLICY_GENERATION",
+    "",
+).strip()
+# Keep current live positions untouched after worker restart; force-exit applies only to new trades.
+FORCE_EXIT_SKIP_EXISTING_ON_START: bool = _bool_env(
+    "SCALP_PING_5S_FORCE_EXIT_SKIP_EXISTING_ON_START",
+    True,
+)
+FORCE_EXIT_ACTIVE: bool = FORCE_EXIT_ENABLED and FORCE_EXIT_MAX_ACTIONS > 0 and (
+    FORCE_EXIT_MAX_HOLD_SEC > 0.0
+    or FORCE_EXIT_MAX_FLOATING_LOSS_PIPS > 0.0
+    or FORCE_EXIT_RECOVERY_WINDOW_SEC > 0.0
+    or (
+        FORCE_EXIT_GIVEBACK_ENABLED
+        and FORCE_EXIT_GIVEBACK_ARM_PIPS > 0.0
+        and FORCE_EXIT_GIVEBACK_BACKOFF_PIPS > 0.0
+    )
+)
+
 STOP_LOSS_DISABLED = stop_loss_disabled_for_pocket(POCKET)
 USE_SL: bool = False if STOP_LOSS_DISABLED else _bool_env("SCALP_PING_5S_USE_SL", True)
