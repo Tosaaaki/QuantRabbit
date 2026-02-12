@@ -331,6 +331,9 @@ TICK_IMB_REQUIRE_CONFIRM_SIGN = _env_bool("TICK_IMB_REQUIRE_CONFIRM_SIGN", True)
 TICK_IMB_REENTRY_LOOKBACK_SEC = _env_float("TICK_IMB_REENTRY_LOOKBACK_SEC", 0.0)
 TICK_IMB_REENTRY_MIN_PRICE_GAP_PIPS = _env_float("TICK_IMB_REENTRY_MIN_PRICE_GAP_PIPS", 0.0)
 TICK_IMB_REENTRY_REQUIRE_LAST_PROFIT = _env_bool("TICK_IMB_REENTRY_REQUIRE_LAST_PROFIT", True)
+# Pattern gate (pattern_book-driven). TickImbalance currently has strong direction-only edge/avoid signals.
+TICK_IMB_PATTERN_GATE_OPT_IN = _env_bool("TICK_IMB_PATTERN_GATE_OPT_IN", True)
+TICK_IMB_PATTERN_GATE_ALLOW_GENERIC = _env_bool("TICK_IMB_PATTERN_GATE_ALLOW_GENERIC", True)
 
 SPB_BBW_MAX = _env_float("SPB_BBW_MAX", 0.0016)
 SPB_ATR_MIN = _env_float("SPB_ATR_MIN", 0.7)
@@ -3171,7 +3174,7 @@ def _signal_session_edge(
 
 
 def _build_entry_thesis(signal: Dict[str, object], fac_m1: Dict[str, object], range_ctx) -> Dict[str, object]:
-    return {
+    thesis = {
         "strategy_tag": signal.get("tag"),
         "env_prefix": config.ENV_PREFIX,
         "confidence": signal.get("confidence", 0),
@@ -3199,6 +3202,12 @@ def _build_entry_thesis(signal: Dict[str, object], fac_m1: Dict[str, object], ra
         "air_regime_shift": signal.get("air_regime_shift"),
         "air_range_pref": signal.get("air_range_pref"),
     }
+    tag = str(signal.get("tag") or "").strip()
+    if tag in {"TickImbalance", "TickImbalanceRRPlus"}:
+        thesis["pattern_gate_opt_in"] = bool(TICK_IMB_PATTERN_GATE_OPT_IN)
+        if TICK_IMB_PATTERN_GATE_ALLOW_GENERIC:
+            thesis["pattern_gate_allow_generic"] = True
+    return thesis
 
 
 async def _place_order(
