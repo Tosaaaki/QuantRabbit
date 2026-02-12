@@ -1621,6 +1621,8 @@ _PROTECTION_RETRY_REASONS = {
     "STOP_LOSS_ON_FILL_INVALID",
     "STOP_LOSS_LOSS",
     "TAKE_PROFIT_ON_FILL_LOSS",
+    # Observed from OANDA as a take-profit protection reject when price moved past TP.
+    "LOSING_TAKE_PROFIT",
 }
 _PARTIAL_CLOSE_RETRY_CODES = {
     "CLOSE_TRADE_UNITS_EXCEED_TRADE_SIZE",
