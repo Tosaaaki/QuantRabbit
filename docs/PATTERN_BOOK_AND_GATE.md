@@ -124,6 +124,17 @@ systemd: `systemd/quant-pattern-book.service` + `systemd/quant-pattern-book.time
 
 `analysis/pattern_deep.py` は `numpy/pandas/scipy/sklearn` が必要です。VM の `quant-pattern-book.service` は venv Python を使う前提なので、依存が入っていないと deep が空になります。
 
+### 重要: pattern_id 仕様変更時の「再計算」
+
+`scripts/pattern_book_worker.py` は **増分取り込み** です。`pattern_trade_features.transaction_id` の最大値より大きい trade だけを取り込みます。
+
+そのため、次のような変更を入れると `patterns.db` 内に **旧pattern_idと新pattern_idが混在** します。
+
+- `analysis/pattern_book.py:build_pattern_id()` の変更
+- 戦略ワーカー側で `entry_thesis` に入れる key/value を変える（`rg:`/`pt:` を追加する等）
+
+「過去分も含めて同一ルールで再集計したい」場合は、VM上で `patterns.db` を作り直す運用が必要です（`trades.db` が元データ）。
+
 ## 5秒スキャ（scalp_ping_5s）の「型」設計
 
 ### いま実装されている opt-in
