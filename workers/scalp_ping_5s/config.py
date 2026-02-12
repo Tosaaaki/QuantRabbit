@@ -416,6 +416,64 @@ EXTREMA_LOG_INTERVAL_SEC: float = max(
     float(os.getenv("SCALP_PING_5S_EXTREMA_LOG_INTERVAL_SEC", "8.0")),
 )
 
+TECH_ROUTER_ENABLED: bool = _bool_env("SCALP_PING_5S_TECH_ROUTER_ENABLED", True)
+TECH_ROUTER_MTF_BLOCK_UNITS_MULT: float = max(
+    0.1,
+    min(1.0, float(os.getenv("SCALP_PING_5S_TECH_ROUTER_MTF_BLOCK_UNITS_MULT", "0.38"))),
+)
+TECH_ROUTER_HORIZON_BLOCK_UNITS_MULT: float = max(
+    0.1,
+    min(1.0, float(os.getenv("SCALP_PING_5S_TECH_ROUTER_HORIZON_BLOCK_UNITS_MULT", "0.42"))),
+)
+TECH_ROUTER_DIRECTION_BLOCK_UNITS_MULT: float = max(
+    0.1,
+    min(1.0, float(os.getenv("SCALP_PING_5S_TECH_ROUTER_DIRECTION_BLOCK_UNITS_MULT", "0.50"))),
+)
+TECH_ROUTER_LOOKAHEAD_BLOCK_UNITS_MULT: float = max(
+    0.1,
+    min(1.0, float(os.getenv("SCALP_PING_5S_TECH_ROUTER_LOOKAHEAD_BLOCK_UNITS_MULT", "0.52"))),
+)
+TECH_ROUTER_EXTREMA_BLOCK_UNITS_MULT: float = max(
+    0.1,
+    min(1.0, float(os.getenv("SCALP_PING_5S_TECH_ROUTER_EXTREMA_BLOCK_UNITS_MULT", "0.45"))),
+)
+TECH_ROUTER_COUNTER_TP_MULT: float = max(
+    0.3,
+    min(2.0, float(os.getenv("SCALP_PING_5S_TECH_ROUTER_COUNTER_TP_MULT", "0.86"))),
+)
+TECH_ROUTER_COUNTER_SL_MULT: float = max(
+    0.3,
+    min(2.0, float(os.getenv("SCALP_PING_5S_TECH_ROUTER_COUNTER_SL_MULT", "0.92"))),
+)
+TECH_ROUTER_COUNTER_HOLD_MULT: float = max(
+    0.2,
+    min(2.0, float(os.getenv("SCALP_PING_5S_TECH_ROUTER_COUNTER_HOLD_MULT", "0.68"))),
+)
+TECH_ROUTER_COUNTER_HARD_LOSS_MULT: float = max(
+    0.2,
+    min(2.0, float(os.getenv("SCALP_PING_5S_TECH_ROUTER_COUNTER_HARD_LOSS_MULT", "0.88"))),
+)
+TECH_ROUTER_EDGE_TP_BOOST_MAX: float = max(
+    0.0,
+    min(2.0, float(os.getenv("SCALP_PING_5S_TECH_ROUTER_EDGE_TP_BOOST_MAX", "0.18"))),
+)
+TECH_ROUTER_EDGE_HOLD_BOOST_MAX: float = max(
+    0.0,
+    min(2.0, float(os.getenv("SCALP_PING_5S_TECH_ROUTER_EDGE_HOLD_BOOST_MAX", "0.25"))),
+)
+TECH_ROUTER_EDGE_HARD_LOSS_BOOST_MAX: float = max(
+    0.0,
+    min(2.0, float(os.getenv("SCALP_PING_5S_TECH_ROUTER_EDGE_HARD_LOSS_BOOST_MAX", "0.15"))),
+)
+TECH_ROUTER_HOLD_MIN_SEC: float = max(
+    5.0,
+    float(os.getenv("SCALP_PING_5S_TECH_ROUTER_HOLD_MIN_SEC", "25.0")),
+)
+TECH_ROUTER_HOLD_MAX_MULT: float = max(
+    0.5,
+    min(3.0, float(os.getenv("SCALP_PING_5S_TECH_ROUTER_HOLD_MAX_MULT", "1.40"))),
+)
+
 ENTRY_COOLDOWN_SEC: float = max(0.1, float(os.getenv("SCALP_PING_5S_ENTRY_COOLDOWN_SEC", "2.0")))
 MIN_ORDER_SPACING_SEC: float = max(
     0.05, float(os.getenv("SCALP_PING_5S_MIN_ORDER_SPACING_SEC", "1.0"))

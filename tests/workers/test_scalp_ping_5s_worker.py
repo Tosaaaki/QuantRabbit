@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import datetime
 import os
+from types import SimpleNamespace
 
 import pytest
 
@@ -126,6 +127,89 @@ def test_directional_bias_scale_downsizes_contra_flow(monkeypatch) -> None:
     assert short_scale == pytest.approx(0.75, abs=1e-9)
     assert short_meta["drift_pips"] > 0.0
     assert long_scale == pytest.approx(1.0, abs=1e-9)
+
+
+def test_build_technical_trade_profile_routes_tighten(monkeypatch) -> None:
+    from workers.scalp_ping_5s import worker
+
+    monkeypatch.setattr(worker.config, "TECH_ROUTER_ENABLED", True)
+    monkeypatch.setattr(worker.config, "TECH_ROUTER_COUNTER_TP_MULT", 0.84)
+    monkeypatch.setattr(worker.config, "TECH_ROUTER_COUNTER_SL_MULT", 0.91)
+    monkeypatch.setattr(worker.config, "TECH_ROUTER_COUNTER_HOLD_MULT", 0.66)
+    monkeypatch.setattr(worker.config, "TECH_ROUTER_COUNTER_HARD_LOSS_MULT", 0.87)
+    monkeypatch.setattr(worker.config, "TECH_ROUTER_EDGE_TP_BOOST_MAX", 0.0)
+    monkeypatch.setattr(worker.config, "TECH_ROUTER_EDGE_HOLD_BOOST_MAX", 0.0)
+    monkeypatch.setattr(worker.config, "TECH_ROUTER_EDGE_HARD_LOSS_BOOST_MAX", 0.0)
+
+    profile = worker._build_technical_trade_profile(
+        route_reasons=["mtf", "horizon"],
+        lookahead_decision=SimpleNamespace(allow_entry=False, edge_pips=0.0),
+    )
+
+    assert profile.counter_pressure is True
+    assert profile.route_reasons == ("mtf", "horizon")
+    assert profile.tp_mult == pytest.approx(0.84, abs=1e-9)
+    assert profile.sl_mult == pytest.approx(0.91, abs=1e-9)
+    assert profile.hold_mult == pytest.approx(0.66, abs=1e-9)
+    assert profile.hard_loss_mult == pytest.approx(0.87, abs=1e-9)
+
+
+def test_build_technical_trade_profile_strong_edge_boosts(monkeypatch) -> None:
+    from workers.scalp_ping_5s import worker
+
+    monkeypatch.setattr(worker.config, "TECH_ROUTER_ENABLED", True)
+    monkeypatch.setattr(worker.config, "LOOKAHEAD_EDGE_REF_PIPS", 0.6)
+    monkeypatch.setattr(worker.config, "TECH_ROUTER_EDGE_TP_BOOST_MAX", 0.2)
+    monkeypatch.setattr(worker.config, "TECH_ROUTER_EDGE_HOLD_BOOST_MAX", 0.3)
+    monkeypatch.setattr(worker.config, "TECH_ROUTER_EDGE_HARD_LOSS_BOOST_MAX", 0.1)
+
+    profile = worker._build_technical_trade_profile(
+        route_reasons=[],
+        lookahead_decision=SimpleNamespace(allow_entry=True, edge_pips=1.3),
+    )
+
+    assert profile.counter_pressure is False
+    assert profile.route_reasons == ()
+    assert profile.tp_mult > 1.0
+    assert profile.hold_mult > 1.0
+    assert profile.hard_loss_mult > 1.0
+    assert profile.sl_mult == pytest.approx(1.0, abs=1e-9)
+
+
+def test_scaled_force_exit_thresholds_apply_profile(monkeypatch) -> None:
+    from workers.scalp_ping_5s import worker
+
+    monkeypatch.setattr(worker.config, "TECH_ROUTER_HOLD_MIN_SEC", 25.0)
+    monkeypatch.setattr(worker.config, "TECH_ROUTER_HOLD_MAX_MULT", 1.4)
+    profile = worker.TechnicalTradeProfile(
+        tp_mult=1.0,
+        sl_mult=1.0,
+        hold_mult=0.55,
+        hard_loss_mult=0.8,
+        counter_pressure=True,
+        route_reasons=("mtf",),
+    )
+
+    hold_sec, hard_loss = worker._scaled_force_exit_thresholds(
+        base_max_hold_sec=120.0,
+        base_hard_loss_pips=3.0,
+        profile=profile,
+    )
+    assert hold_sec == pytest.approx(66.0, abs=1e-9)
+    assert hard_loss == pytest.approx(2.4, abs=1e-9)
+
+
+def test_trade_force_exit_threshold_overrides_from_entry_thesis() -> None:
+    from workers.scalp_ping_5s import worker
+
+    trade = {
+        "entry_thesis": {
+            "force_exit_max_hold_sec": 45.0,
+            "force_exit_max_floating_loss_pips": 1.8,
+        }
+    }
+    assert worker._trade_force_exit_max_hold_sec(trade, 120.0) == pytest.approx(45.0, abs=1e-9)
+    assert worker._trade_force_exit_hard_loss_pips(trade, 3.0) == pytest.approx(1.8, abs=1e-9)
 
 
 def test_compute_trap_state_active_when_hedged_and_underwater(monkeypatch) -> None:
@@ -306,6 +390,72 @@ def test_resolve_active_caps_keeps_base_when_margin_headroom_is_low(monkeypatch)
     assert expanded is False
     assert total_cap == 20
     assert side_cap == 12
+
+
+def test_enforce_new_entry_time_stop_uses_entry_thesis_hold_override(monkeypatch) -> None:
+    from workers.scalp_ping_5s import worker
+
+    monkeypatch.setattr(worker.config, "STRATEGY_TAG", "scalp_ping_5s_live")
+    monkeypatch.setattr(worker.config, "FORCE_EXIT_MAX_HOLD_SEC", 900.0)
+    monkeypatch.setattr(worker.config, "FORCE_EXIT_MAX_FLOATING_LOSS_PIPS", 0.0)
+    monkeypatch.setattr(worker.config, "FORCE_EXIT_RECOVERY_WINDOW_SEC", 0.0)
+    monkeypatch.setattr(worker.config, "FORCE_EXIT_RECOVERABLE_LOSS_PIPS", 0.0)
+    monkeypatch.setattr(worker.config, "FORCE_EXIT_MAX_ACTIONS", 3)
+    monkeypatch.setattr(worker.config, "FORCE_EXIT_REASON", "time_stop")
+    monkeypatch.setattr(worker.config, "FORCE_EXIT_MAX_FLOATING_LOSS_REASON", "max_floating_loss")
+    monkeypatch.setattr(worker.config, "FORCE_EXIT_RECOVERY_REASON", "no_recovery")
+    monkeypatch.setattr(worker.config, "FORCE_EXIT_REQUIRE_POLICY_GENERATION", False)
+
+    calls: list[str] = []
+
+    async def _fake_close_trade(
+        trade_id: str,
+        units: int | None = None,
+        client_order_id: str | None = None,
+        allow_negative: bool = False,
+        exit_reason: str | None = None,
+        env_prefix: str | None = None,
+    ) -> bool:
+        calls.append(trade_id)
+        return True
+
+    monkeypatch.setattr(worker, "close_trade", _fake_close_trade)
+
+    now_utc = datetime.datetime(2026, 2, 12, 22, 0, 0, tzinfo=datetime.timezone.utc)
+    pocket_info = {
+        "open_trades": [
+            {
+                "trade_id": "override-hit",
+                "units": 1000,
+                "open_time": "2026-02-12T21:58:00+00:00",
+                "strategy_tag": "scalp_ping_5s_live",
+                "entry_thesis": {
+                    "strategy_tag": "scalp_ping_5s_live",
+                    "force_exit_max_hold_sec": 60.0,
+                },
+            },
+            {
+                "trade_id": "override-safe",
+                "units": 1000,
+                "open_time": "2026-02-12T21:59:30+00:00",
+                "strategy_tag": "scalp_ping_5s_live",
+                "entry_thesis": {
+                    "strategy_tag": "scalp_ping_5s_live",
+                    "force_exit_max_hold_sec": 180.0,
+                },
+            },
+        ]
+    }
+
+    closed = asyncio.run(
+        worker._enforce_new_entry_time_stop(
+            pocket_info=pocket_info,
+            now_utc=now_utc,
+            logger=worker.LOG,
+        )
+    )
+    assert closed == 1
+    assert calls == ["override-hit"]
 
 
 @pytest.mark.asyncio

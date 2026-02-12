@@ -168,6 +168,16 @@ class ExtremaGateDecision:
 
 
 @dataclass(slots=True)
+class TechnicalTradeProfile:
+    tp_mult: float
+    sl_mult: float
+    hold_mult: float
+    hard_loss_mult: float
+    counter_pressure: bool
+    route_reasons: tuple[str, ...]
+
+
+@dataclass(slots=True)
 class TrapState:
     active: bool
     long_units: float
@@ -609,11 +619,112 @@ def _trade_unrealized_pips(trade: dict) -> float:
     return unrealized_pl / pip_value
 
 
-def _trade_entry_spread_pips(trade: dict) -> float:
+def _trade_entry_thesis(trade: dict) -> dict:
     thesis = trade.get("entry_thesis")
-    if not isinstance(thesis, dict):
-        return 0.0
+    if isinstance(thesis, dict):
+        return thesis
+    return {}
+
+
+def _trade_entry_spread_pips(trade: dict) -> float:
+    thesis = _trade_entry_thesis(trade)
     return _safe_float(thesis.get("spread_pips"), 0.0)
+
+
+def _trade_force_exit_max_hold_sec(trade: dict, default_sec: float) -> float:
+    if default_sec <= 0.0:
+        return 0.0
+    thesis = _trade_entry_thesis(trade)
+    override_sec = _safe_float(thesis.get("force_exit_max_hold_sec"), 0.0)
+    if override_sec <= 0.0:
+        return default_sec
+    return override_sec
+
+
+def _trade_force_exit_hard_loss_pips(trade: dict, default_pips: float) -> float:
+    if default_pips <= 0.0:
+        return 0.0
+    thesis = _trade_entry_thesis(trade)
+    override_pips = _safe_float(thesis.get("force_exit_max_floating_loss_pips"), 0.0)
+    if override_pips <= 0.0:
+        return default_pips
+    return override_pips
+
+
+def _build_technical_trade_profile(
+    *,
+    route_reasons: Sequence[str],
+    lookahead_decision: Optional[object],
+) -> TechnicalTradeProfile:
+    if not config.TECH_ROUTER_ENABLED:
+        return TechnicalTradeProfile(
+            tp_mult=1.0,
+            sl_mult=1.0,
+            hold_mult=1.0,
+            hard_loss_mult=1.0,
+            counter_pressure=False,
+            route_reasons=(),
+        )
+
+    reasons: tuple[str, ...] = tuple(
+        str(token).strip() for token in route_reasons if str(token).strip()
+    )
+    counter_pressure = bool(reasons)
+
+    tp_mult = 1.0
+    sl_mult = 1.0
+    hold_mult = 1.0
+    hard_loss_mult = 1.0
+
+    if counter_pressure:
+        tp_mult *= config.TECH_ROUTER_COUNTER_TP_MULT
+        sl_mult *= config.TECH_ROUTER_COUNTER_SL_MULT
+        hold_mult *= config.TECH_ROUTER_COUNTER_HOLD_MULT
+        hard_loss_mult *= config.TECH_ROUTER_COUNTER_HARD_LOSS_MULT
+
+    edge_ratio = 0.0
+    if lookahead_decision is not None and bool(getattr(lookahead_decision, "allow_entry", False)):
+        edge_pips = _safe_float(getattr(lookahead_decision, "edge_pips", 0.0), 0.0)
+        edge_ref = max(0.05, float(config.LOOKAHEAD_EDGE_REF_PIPS))
+        if edge_pips > edge_ref:
+            edge_ratio = _clamp((edge_pips - edge_ref) / edge_ref, 0.0, 1.0)
+
+    if edge_ratio > 0.0:
+        tp_mult *= 1.0 + (config.TECH_ROUTER_EDGE_TP_BOOST_MAX * edge_ratio)
+        hold_mult *= 1.0 + (config.TECH_ROUTER_EDGE_HOLD_BOOST_MAX * edge_ratio)
+        hard_loss_mult *= 1.0 + (config.TECH_ROUTER_EDGE_HARD_LOSS_BOOST_MAX * edge_ratio)
+
+    return TechnicalTradeProfile(
+        tp_mult=float(_clamp(tp_mult, 0.2, 3.0)),
+        sl_mult=float(_clamp(sl_mult, 0.2, 3.0)),
+        hold_mult=float(_clamp(hold_mult, 0.2, 3.0)),
+        hard_loss_mult=float(_clamp(hard_loss_mult, 0.2, 3.0)),
+        counter_pressure=counter_pressure,
+        route_reasons=reasons,
+    )
+
+
+def _scaled_force_exit_thresholds(
+    *,
+    base_max_hold_sec: float,
+    base_hard_loss_pips: float,
+    profile: TechnicalTradeProfile,
+) -> tuple[float, float]:
+    hold_sec = 0.0
+    hard_loss_pips = 0.0
+    if base_max_hold_sec > 0.0:
+        hold_cap = max(
+            config.TECH_ROUTER_HOLD_MIN_SEC,
+            base_max_hold_sec * max(0.5, float(config.TECH_ROUTER_HOLD_MAX_MULT)),
+        )
+        hold_sec = _clamp(
+            base_max_hold_sec * max(0.2, profile.hold_mult),
+            config.TECH_ROUTER_HOLD_MIN_SEC,
+            hold_cap,
+        )
+    if base_hard_loss_pips > 0.0:
+        hard_loss_pips = max(0.1, base_hard_loss_pips * max(0.2, profile.hard_loss_mult))
+    return float(hold_sec), float(hard_loss_pips)
 
 
 def _force_exit_hard_loss_trigger_pips(trade: dict, base_hard_loss_pips: float) -> float:
@@ -951,6 +1062,8 @@ async def _enforce_new_entry_time_stop(
             continue
         hold_sec = (now_utc - opened_at).total_seconds()
         unrealized_pips = _trade_unrealized_pips(trade)
+        trade_max_hold_sec = _trade_force_exit_max_hold_sec(trade, max_hold_sec)
+        trade_hard_loss_pips = _trade_force_exit_hard_loss_pips(trade, hard_loss_pips)
         seen_trade_ids.add(trade_id)
 
         prev_mfe = _safe_float(_TRADE_MFE_PIPS.get(trade_id), unrealized_pips)
@@ -959,7 +1072,10 @@ async def _enforce_new_entry_time_stop(
 
         exit_reason: Optional[str] = None
         trigger_label: Optional[str] = None
-        hard_loss_trigger_pips = _force_exit_hard_loss_trigger_pips(trade, hard_loss_pips)
+        hard_loss_trigger_pips = _force_exit_hard_loss_trigger_pips(
+            trade,
+            trade_hard_loss_pips,
+        )
         if hard_loss_trigger_pips > 0.0 and unrealized_pips <= -hard_loss_trigger_pips:
             exit_reason = config.FORCE_EXIT_MAX_FLOATING_LOSS_REASON
             trigger_label = "max_floating_loss"
@@ -982,7 +1098,7 @@ async def _enforce_new_entry_time_stop(
         ):
             exit_reason = config.FORCE_EXIT_GIVEBACK_REASON
             trigger_label = "giveback_lock"
-        elif max_hold_sec > 0.0 and hold_sec >= max_hold_sec:
+        elif trade_max_hold_sec > 0.0 and hold_sec >= trade_max_hold_sec:
             exit_reason = config.FORCE_EXIT_REASON
             trigger_label = "time_stop"
         if not exit_reason:
@@ -1045,18 +1161,19 @@ async def _enforce_new_entry_time_stop(
                 "%s force_exit threshold=%s base=%.2fp entry_sp=%.2fp buffer=%.2fp effective=%.2fp",
                 config.LOG_PREFIX,
                 trigger_label,
-                hard_loss_pips,
+                trade_hard_loss_pips,
                 _trade_entry_spread_pips(trade),
                 float(getattr(config, "SL_SPREAD_BUFFER_PIPS", 0.0)),
                 hard_loss_trigger_pips,
             )
         logger.info(
-            "%s force_exit reason=%s trigger=%s trade=%s hold=%.0fs pnl=%.2fp mfe=%.2fp units=%s generation=%s",
+            "%s force_exit reason=%s trigger=%s trade=%s hold=%.0fs max_hold=%.0fs pnl=%.2fp mfe=%.2fp units=%s generation=%s",
             config.LOG_PREFIX,
             exit_reason,
             trigger_label or "-",
             trade_id,
             hold_sec,
+            trade_max_hold_sec,
             unrealized_pips,
             mfe_pips,
             units,
@@ -2393,9 +2510,14 @@ async def scalp_ping_5s_worker() -> None:
                             )
                             hold_sec = (now_utc - opened_at).total_seconds() if opened_at is not None else 0.0
                             unrealized_pips = _trade_unrealized_pips(trade)
-                            hard_loss_trigger_pips = _force_exit_hard_loss_trigger_pips(trade, hard_loss_pips)
+                            trade_max_hold_sec = _trade_force_exit_max_hold_sec(trade, max_hold_sec)
+                            trade_hard_loss_pips = _trade_force_exit_hard_loss_pips(trade, hard_loss_pips)
+                            hard_loss_trigger_pips = _force_exit_hard_loss_trigger_pips(
+                                trade,
+                                trade_hard_loss_pips,
+                            )
                             eligible = False
-                            if max_hold_sec > 0.0 and hold_sec >= max_hold_sec:
+                            if trade_max_hold_sec > 0.0 and hold_sec >= trade_max_hold_sec:
                                 eligible = True
                             elif hard_loss_trigger_pips > 0.0 and unrealized_pips <= -hard_loss_trigger_pips:
                                 eligible = True
@@ -2450,9 +2572,14 @@ async def scalp_ping_5s_worker() -> None:
                         )
                         hold_sec = (now_utc - opened_at).total_seconds() if opened_at is not None else 0.0
                         unrealized_pips = _trade_unrealized_pips(trade)
-                        hard_loss_trigger_pips = _force_exit_hard_loss_trigger_pips(trade, hard_loss_pips)
+                        trade_max_hold_sec = _trade_force_exit_max_hold_sec(trade, max_hold_sec)
+                        trade_hard_loss_pips = _trade_force_exit_hard_loss_pips(trade, hard_loss_pips)
+                        hard_loss_trigger_pips = _force_exit_hard_loss_trigger_pips(
+                            trade,
+                            trade_hard_loss_pips,
+                        )
                         eligible = False
-                        if max_hold_sec > 0.0 and hold_sec >= max_hold_sec:
+                        if trade_max_hold_sec > 0.0 and hold_sec >= trade_max_hold_sec:
                             eligible = True
                         elif hard_loss_trigger_pips > 0.0 and unrealized_pips <= -hard_loss_trigger_pips:
                             eligible = True
@@ -2602,14 +2729,21 @@ async def scalp_ping_5s_worker() -> None:
                 factors = all_factors()
             except Exception:
                 factors = {}
+            tech_route_reasons: list[str] = []
             regime = _build_mtf_regime(factors=factors if isinstance(factors, dict) else None)
-            signal, regime_units_mult, regime_gate = _apply_mtf_regime(signal, regime)
-            if signal is None or regime_units_mult <= 0.0:
+            regime_input_signal = signal
+            regime_signal, regime_units_mult, regime_gate = _apply_mtf_regime(signal, regime)
+            if regime_signal is None or regime_units_mult <= 0.0:
                 if now_mono - last_regime_log_mono >= config.MTF_REGIME_LOG_INTERVAL_SEC:
                     if regime is not None:
                         LOG.info(
-                            "%s mtf block gate=%s mode=%s side=%s trend=%.2f heat=%.2f adx(m1/m5)=%.1f/%.1f atr(m1/m5)=%.2f/%.2f",
+                            "%s mtf %s gate=%s mode=%s side=%s trend=%.2f heat=%.2f adx(m1/m5)=%.1f/%.1f atr(m1/m5)=%.2f/%.2f",
                             config.LOG_PREFIX,
+                            (
+                                "route"
+                                if config.TECH_ROUTER_ENABLED
+                                else "block"
+                            ),
                             regime_gate,
                             regime.mode,
                             regime.side,
@@ -2621,17 +2755,32 @@ async def scalp_ping_5s_worker() -> None:
                             regime.atr_m5,
                         )
                     else:
-                        LOG.info("%s mtf block gate=%s regime=none", config.LOG_PREFIX, regime_gate)
+                        LOG.info(
+                            "%s mtf %s gate=%s regime=none",
+                            config.LOG_PREFIX,
+                            ("route" if config.TECH_ROUTER_ENABLED else "block"),
+                            regime_gate,
+                        )
                     last_regime_log_mono = now_mono
-                continue
+                if config.TECH_ROUTER_ENABLED:
+                    signal = regime_input_signal
+                    regime_units_mult = max(0.1, float(config.TECH_ROUTER_MTF_BLOCK_UNITS_MULT))
+                    regime_gate = f"{regime_gate}_route"
+                    tech_route_reasons.append("mtf")
+                else:
+                    continue
+            else:
+                signal = regime_signal
             horizon = _build_horizon_bias(signal, factors if isinstance(factors, dict) else {})
-            signal, horizon_units_mult, horizon_gate = _apply_horizon_bias(signal, horizon)
-            if signal is None or horizon_units_mult <= 0.0:
+            horizon_input_signal = signal
+            horizon_signal, horizon_units_mult, horizon_gate = _apply_horizon_bias(signal, horizon)
+            if horizon_signal is None or horizon_units_mult <= 0.0:
                 if now_mono - last_horizon_log_mono >= config.HORIZON_LOG_INTERVAL_SEC:
                     if horizon is not None:
                         LOG.info(
-                            "%s horizon block gate=%s composite=%s(%.2f) agree=%d L/M/S/U=%s(%.2f)/%s(%.2f)/%s(%.2f)/%s(%.2f)",
+                            "%s horizon %s gate=%s composite=%s(%.2f) agree=%d L/M/S/U=%s(%.2f)/%s(%.2f)/%s(%.2f)/%s(%.2f)",
                             config.LOG_PREFIX,
+                            ("route" if config.TECH_ROUTER_ENABLED else "block"),
                             horizon_gate,
                             horizon.composite_side,
                             horizon.composite_score,
@@ -2646,9 +2795,22 @@ async def scalp_ping_5s_worker() -> None:
                             horizon.micro_score,
                         )
                     else:
-                        LOG.info("%s horizon block gate=%s horizon=none", config.LOG_PREFIX, horizon_gate)
+                        LOG.info(
+                            "%s horizon %s gate=%s horizon=none",
+                            config.LOG_PREFIX,
+                            ("route" if config.TECH_ROUTER_ENABLED else "block"),
+                            horizon_gate,
+                        )
                     last_horizon_log_mono = now_mono
-                continue
+                if config.TECH_ROUTER_ENABLED:
+                    signal = horizon_input_signal
+                    horizon_units_mult = max(0.1, float(config.TECH_ROUTER_HORIZON_BLOCK_UNITS_MULT))
+                    horizon_gate = f"{horizon_gate}_route"
+                    tech_route_reasons.append("horizon")
+                else:
+                    continue
+            else:
+                signal = horizon_signal
 
             last_snapshot_fetch, density_topup = await _maybe_topup_micro_density(
                 now_mono=now_mono,
@@ -2679,8 +2841,9 @@ async def scalp_ping_5s_worker() -> None:
                 if now_mono - last_bias_log_mono >= config.DIRECTION_BIAS_LOG_INTERVAL_SEC:
                     score = _safe_float(getattr(direction_bias, "score", 0.0), 0.0)
                     LOG.info(
-                        "%s bias block signal=%s bias=%s score=%.2f mom=%.2fp rng=%.2fp flow=%.2f",
+                        "%s bias %s signal=%s bias=%s score=%.2f mom=%.2fp rng=%.2fp flow=%.2f",
                         config.LOG_PREFIX,
+                        ("route" if config.TECH_ROUTER_ENABLED else "block"),
                         signal.side,
                         getattr(direction_bias, "side", "none"),
                         score,
@@ -2689,7 +2852,12 @@ async def scalp_ping_5s_worker() -> None:
                         _safe_float(getattr(direction_bias, "flow", 0.0), 0.0),
                     )
                     last_bias_log_mono = now_mono
-                continue
+                if config.TECH_ROUTER_ENABLED:
+                    bias_units_mult = max(0.1, float(config.TECH_ROUTER_DIRECTION_BLOCK_UNITS_MULT))
+                    bias_gate = f"{bias_gate}_route"
+                    tech_route_reasons.append("direction")
+                else:
+                    continue
 
             lookahead_decision = None
             lookahead_units_mult = 1.0
@@ -2731,8 +2899,9 @@ async def scalp_ping_5s_worker() -> None:
                 if not lookahead_decision.allow_entry:
                     if now_mono - last_lookahead_log_mono >= config.LOOKAHEAD_LOG_INTERVAL_SEC:
                         LOG.info(
-                            "%s lookahead block side=%s reason=%s pred=%.3fp cost=%.3fp edge=%.3fp mom=%.3fp range=%.3fp",
+                            "%s lookahead %s side=%s reason=%s pred=%.3fp cost=%.3fp edge=%.3fp mom=%.3fp range=%.3fp",
                             config.LOG_PREFIX,
+                            ("route" if config.TECH_ROUTER_ENABLED else "block"),
                             signal.side,
                             lookahead_decision.reason,
                             lookahead_decision.pred_move_pips,
@@ -2742,8 +2911,15 @@ async def scalp_ping_5s_worker() -> None:
                             lookahead_decision.range_pips,
                         )
                         last_lookahead_log_mono = now_mono
-                    continue
-                lookahead_units_mult = max(0.1, float(lookahead_decision.units_mult))
+                    if config.TECH_ROUTER_ENABLED:
+                        lookahead_units_mult = max(
+                            0.1, float(config.TECH_ROUTER_LOOKAHEAD_BLOCK_UNITS_MULT)
+                        )
+                        tech_route_reasons.append("lookahead")
+                    else:
+                        continue
+                else:
+                    lookahead_units_mult = max(0.1, float(lookahead_decision.units_mult))
             extrema_decision = _extrema_gate_decision(signal.side)
             extrema_units_mult = max(0.1, float(extrema_decision.units_mult))
             m1_pos_log = (
@@ -2758,8 +2934,9 @@ async def scalp_ping_5s_worker() -> None:
             if not extrema_decision.allow_entry:
                 if now_mono - last_extrema_log_mono >= config.EXTREMA_LOG_INTERVAL_SEC:
                     LOG.info(
-                        "%s extrema block side=%s reason=%s m1=%.2f m5=%.2f h4=%.2f",
+                        "%s extrema %s side=%s reason=%s m1=%.2f m5=%.2f h4=%.2f",
                         config.LOG_PREFIX,
+                        ("route" if config.TECH_ROUTER_ENABLED else "block"),
                         signal.side,
                         extrema_decision.reason,
                         m1_pos_log,
@@ -2767,7 +2944,19 @@ async def scalp_ping_5s_worker() -> None:
                         h4_pos_log,
                     )
                     last_extrema_log_mono = now_mono
-                continue
+                if config.TECH_ROUTER_ENABLED:
+                    extrema_units_mult = max(0.1, float(config.TECH_ROUTER_EXTREMA_BLOCK_UNITS_MULT))
+                    extrema_decision = ExtremaGateDecision(
+                        allow_entry=True,
+                        reason=f"{extrema_decision.reason}_route",
+                        units_mult=extrema_units_mult,
+                        m1_pos=extrema_decision.m1_pos,
+                        m5_pos=extrema_decision.m5_pos,
+                        h4_pos=extrema_decision.h4_pos,
+                    )
+                    tech_route_reasons.append("extrema")
+                else:
+                    continue
             if (
                 extrema_units_mult < 0.999
                 or str(extrema_decision.reason).startswith("missing_")
@@ -2896,6 +3085,23 @@ async def scalp_ping_5s_worker() -> None:
                 momentum_pips=signal.momentum_pips,
                 tp_profile=tp_profile,
             )
+            tech_profile = _build_technical_trade_profile(
+                route_reasons=tech_route_reasons,
+                lookahead_decision=lookahead_decision,
+            )
+            tp_pips *= max(0.2, tech_profile.tp_mult)
+            tp_floor = max(config.TP_BASE_PIPS, signal.spread_pips + config.TP_NET_MIN_FLOOR_PIPS)
+            tp_pips = _clamp(tp_pips, tp_floor, config.TP_MAX_PIPS)
+            sl_floor = max(
+                config.SL_MIN_PIPS,
+                signal.spread_pips * config.SL_SPREAD_MULT + config.SL_SPREAD_BUFFER_PIPS,
+            )
+            sl_pips = _clamp(sl_pips * max(0.2, tech_profile.sl_mult), sl_floor, config.SL_MAX_PIPS)
+            dynamic_max_hold_sec, dynamic_hard_loss_pips = _scaled_force_exit_thresholds(
+                base_max_hold_sec=float(config.FORCE_EXIT_MAX_HOLD_SEC),
+                base_hard_loss_pips=float(config.FORCE_EXIT_MAX_FLOATING_LOSS_PIPS),
+                profile=tech_profile,
+            )
             conf_mult = _confidence_scale(signal.confidence)
             strength_mult = max(
                 0.75,
@@ -2985,6 +3191,7 @@ async def scalp_ping_5s_worker() -> None:
                 strategy_tag=config.STRATEGY_TAG,
                 pocket=config.POCKET,
             )
+            order_policy = "market_tech_router" if tech_route_reasons else "market_guarded"
 
             entry_thesis = {
                 "strategy_tag": config.STRATEGY_TAG,
@@ -3024,7 +3231,7 @@ async def scalp_ping_5s_worker() -> None:
                 "trap_active": bool(trap_state.active),
                 "entry_ref": round(entry_price, 3),
                 "execution": {
-                    "order_policy": "market_guarded",
+                    "order_policy": order_policy,
                     "ideal_entry": round(entry_price, 3),
                     "chase_max": round(config.ENTRY_CHASE_MAX_PIPS * config.PIP_VALUE, 4),
                     "chase_max_pips": round(config.ENTRY_CHASE_MAX_PIPS, 3),
@@ -3036,7 +3243,18 @@ async def scalp_ping_5s_worker() -> None:
                 "extrema_gate_enabled": bool(config.EXTREMA_GATE_ENABLED),
                 "extrema_gate_reason": extrema_decision.reason,
                 "extrema_units_mult": round(extrema_units_mult, 3),
+                "tech_router_enabled": bool(config.TECH_ROUTER_ENABLED),
+                "tech_route_reasons": list(tech_route_reasons),
+                "tech_counter_pressure": bool(tech_profile.counter_pressure),
+                "tech_tp_mult": round(float(tech_profile.tp_mult), 3),
+                "tech_sl_mult": round(float(tech_profile.sl_mult), 3),
+                "tech_hold_mult": round(float(tech_profile.hold_mult), 3),
+                "tech_hard_loss_mult": round(float(tech_profile.hard_loss_mult), 3),
             }
+            if dynamic_max_hold_sec > 0.0:
+                entry_thesis["force_exit_max_hold_sec"] = round(dynamic_max_hold_sec, 1)
+            if dynamic_hard_loss_pips > 0.0:
+                entry_thesis["force_exit_max_floating_loss_pips"] = round(dynamic_hard_loss_pips, 3)
             if extrema_decision.m1_pos is not None:
                 entry_thesis["extrema_m1_pos"] = round(extrema_decision.m1_pos, 4)
             if extrema_decision.m5_pos is not None:
@@ -3138,7 +3356,7 @@ async def scalp_ping_5s_worker() -> None:
             rate_limiter.record(now_mono)
 
             LOG.info(
-                "%s open mode=%s side=%s units=%s conf=%d mom=%.2fp trig=%.2fp sp=%.2fp tp=%.2fp sl=%.2fp mode_score=%.2f mom_score=%.2f rev_score=%.2f side_bias=%.2f drift=%.2fp mtf=%s/%.2f/%.2f mtf_mult=%.2f hz=%s/%.2f/%.2f dir_bias=%s dir_score=%.2f dir_mult=%.2f look_mult=%.2f look_edge=%.3f tp_mult=%.2f tp_avg=%.0fs ext_mult=%.2f ext_reason=%s res=%s",
+                "%s open mode=%s side=%s units=%s conf=%d mom=%.2fp trig=%.2fp sp=%.2fp tp=%.2fp sl=%.2fp mode_score=%.2f mom_score=%.2f rev_score=%.2f side_bias=%.2f drift=%.2fp mtf=%s/%.2f/%.2f mtf_mult=%.2f hz=%s/%.2f/%.2f dir_bias=%s dir_score=%.2f dir_mult=%.2f look_mult=%.2f look_edge=%.3f tp_mult=%.2f tp_avg=%.0fs ext_mult=%.2f ext_reason=%s tech(tp/sl/hold/loss)=%.2f/%.2f/%.2f/%.2f route=%s hold_cap=%.0fs hard_loss=%.2fp res=%s",
                 config.LOG_PREFIX,
                 signal.mode,
                 signal.side,
@@ -3174,6 +3392,13 @@ async def scalp_ping_5s_worker() -> None:
                 tp_profile.avg_tp_sec,
                 extrema_units_mult,
                 extrema_decision.reason,
+                tech_profile.tp_mult,
+                tech_profile.sl_mult,
+                tech_profile.hold_mult,
+                tech_profile.hard_loss_mult,
+                ",".join(tech_route_reasons) if tech_route_reasons else "-",
+                dynamic_max_hold_sec,
+                dynamic_hard_loss_pips,
                 result or "none",
             )
 
