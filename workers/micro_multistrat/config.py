@@ -41,6 +41,26 @@ def _parse_csv(raw: str) -> frozenset[str]:
     return frozenset(values)
 
 
+def _parse_strategy_mults(raw: str) -> dict[str, float]:
+    values: dict[str, float] = {}
+    for token in raw.split(","):
+        item = token.strip()
+        if not item or ":" not in item:
+            continue
+        name, mult_raw = item.split(":", 1)
+        strategy = name.strip()
+        if not strategy:
+            continue
+        try:
+            mult = float(mult_raw.strip())
+        except ValueError:
+            continue
+        if mult <= 0.0:
+            continue
+        values[strategy] = mult
+    return values
+
+
 def _bool(key: str, default: bool) -> bool:
     raw = os.getenv(key)
     if raw is None:
@@ -121,6 +141,7 @@ MAX_SIGNALS_PER_CYCLE = int(os.getenv("MICRO_MULTI_MAX_SIGNALS_PER_CYCLE", "2"))
 MULTI_SIGNAL_MIN_SCALE = float(os.getenv("MICRO_MULTI_MULTI_SIGNAL_MIN_SCALE", "0.6"))
 # Per-strategy minimum interval between entries to avoid same-minute burst stacking.
 STRATEGY_COOLDOWN_SEC = float(os.getenv("MICRO_MULTI_STRATEGY_COOLDOWN_SEC", "0.0"))
+STRATEGY_UNITS_MULT = _parse_strategy_mults(os.getenv("MICRO_MULTI_STRATEGY_UNITS_MULT", ""))
 
 # Dynamic winner routing from config/dynamic_alloc.json
 DYN_ALLOC_ENABLED = os.getenv("MICRO_MULTI_DYN_ALLOC_ENABLED", "1").strip().lower() not in {
