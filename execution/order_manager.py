@@ -4458,11 +4458,22 @@ async def close_trade(
             pl = _current_trade_unrealized_pl(trade_id)
             profit_ok = pl is not None and pl > 0.0
         if not profit_ok:
-            if not hold_strict:
-                if emergency_allow is None:
-                    emergency_allow = _should_allow_negative_close(client_order_id)
-                if emergency_allow or _reason_force_allow(exit_reason):
-                    profit_ok = True
+            if emergency_allow is None:
+                emergency_allow = _should_allow_negative_close(client_order_id)
+            # "Hold until profit" must not trap a trade indefinitely. Even when strict,
+            # honor risk-style exits that are explicitly requested by the worker.
+            # Note: this is intentionally conservative; we only bypass for emergency/force
+            # reasons and a few hard safety exits used by fast scalps.
+            hold_bypass = bool(
+                emergency_allow
+                or _reason_force_allow(exit_reason)
+                or _reason_matches_tokens(
+                    exit_reason,
+                    ["time_stop", "no_recovery", "max_floating_loss"],
+                )
+            )
+            if hold_bypass:
+                profit_ok = True
             if not profit_ok:
                 log_metric(
                     "close_blocked_hold_profit",
