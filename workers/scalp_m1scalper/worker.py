@@ -49,6 +49,8 @@ _BB_ENTRY_SCALP_EXT_PIPS = env_float("BB_ENTRY_SCALP_EXT_PIPS", 2.4, prefix=_BB_
 _BB_ENTRY_SCALP_EXT_RATIO = env_float("BB_ENTRY_SCALP_EXT_RATIO", 0.30, prefix=_BB_ENV_PREFIX)
 _BB_PIP = 0.01
 
+_PATTERN_GATE_OPT_IN = env_bool("SCALP_M1SCALPER_PATTERN_GATE_OPT_IN", True)
+
 
 def _bb_float(value):
     try:
@@ -893,6 +895,7 @@ async def scalp_m1_worker() -> None:
             "strategy_tag": strategy_tag,
             "source_signal_tag": signal_tag,
             "env_prefix": config.ENV_PREFIX,
+            "pattern_gate_opt_in": bool(_PATTERN_GATE_OPT_IN),
             "signal_side": signal_side,
             "exec_side": side,
             "confidence": signal.get("confidence", 0),
