@@ -69,7 +69,9 @@ def detect_range_mode(
     # BBW is (upper-lower)/mid ratio. For USD/JPY M1 it's typically ~0.0002..0.0020.
     # Expressed as ratio (e.g. 0.0025 == 0.25%).
     bbw_threshold: float = 0.0025,
-    atr_threshold: float = 7.0,
+    # atr_pips is already converted to "pips" (USD/JPY: 0.01 == 1 pip).
+    # 7.0p is almost always true for M1 and makes range_mode stick ON; use a low-vol threshold.
+    atr_threshold: float = 3.0,
     bbw_pips_threshold: float = 0.0,
     vol_5m_threshold: float = 0.8,
     range_score_threshold: float = 0.66,
