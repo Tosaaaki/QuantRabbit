@@ -739,7 +739,10 @@ strategies:
     neg_exit:
       enabled: true
       strict_no_negative: true
+      strict_allow_reasons:
+        - profit_bank_release
       allow_reasons:
+        - profit_bank_release
         - hard_stop
         - tech_hard_stop
         - max_adverse
@@ -767,7 +770,10 @@ strategies:
     neg_exit:
       enabled: true
       strict_no_negative: true
+      strict_allow_reasons:
+        - profit_bank_release
       allow_reasons:
+        - profit_bank_release
         - hard_stop
         - tech_hard_stop
         - max_adverse

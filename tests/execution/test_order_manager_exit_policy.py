@@ -77,3 +77,22 @@ def test_neg_exit_policy_strict_no_negative_blocks_all() -> None:
     )
     assert near_be is False
     assert allowed is False
+
+
+def test_neg_exit_policy_strict_allows_explicit_override_reason() -> None:
+    allowed, near_be = _neg_exit_decision(
+        exit_reason="profit_bank_release",
+        est_pips=-3.4,
+        emergency_allow=False,
+        reason_allow=False,
+        worker_allow=False,
+        neg_policy={
+            "enabled": True,
+            "strict_no_negative": True,
+            "strict_allow_reasons": ["profit_bank_release"],
+            "allow_reasons": ["profit_bank_release"],
+            "deny_reasons": [],
+        },
+    )
+    assert near_be is False
+    assert allowed is True

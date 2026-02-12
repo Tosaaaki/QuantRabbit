@@ -3437,7 +3437,16 @@ def _neg_exit_decision(
     """
     neg_policy = neg_policy if isinstance(neg_policy, dict) else {}
     if _coerce_bool(neg_policy.get("strict_no_negative"), False):
-        return False, False
+        strict_allow_tokens = neg_policy.get("strict_allow_reasons")
+        strict_allow = False
+        if strict_allow_tokens is not None:
+            if isinstance(strict_allow_tokens, (list, tuple, set)):
+                strict_list = [str(token) for token in strict_allow_tokens]
+            else:
+                strict_list = [str(strict_allow_tokens)]
+            strict_allow = _reason_matches_tokens(exit_reason, strict_list)
+        if not strict_allow:
+            return False, False
     policy_enabled = _coerce_bool(neg_policy.get("enabled"), True)
     allow_tokens = neg_policy.get("allow_reasons")
     deny_tokens = neg_policy.get("deny_reasons")

@@ -16,6 +16,18 @@ def _bool_env(name: str, default: bool) -> bool:
     return raw.strip().lower() not in {"", "0", "false", "off", "no"}
 
 
+def _csv_env(name: str) -> tuple[str, ...]:
+    raw = str(os.getenv(name, "") or "").strip()
+    if not raw:
+        return ()
+    tokens: list[str] = []
+    for part in raw.replace("\n", ",").split(","):
+        token = str(part).strip()
+        if token:
+            tokens.append(token)
+    return tuple(dict.fromkeys(tokens))
+
+
 ENABLED: bool = _bool_env("SCALP_PING_5S_ENABLED", False)
 REQUIRE_PRACTICE: bool = _bool_env("SCALP_PING_5S_REQUIRE_PRACTICE", True)
 POCKET: str = os.getenv("SCALP_PING_5S_POCKET", "scalp_fast").strip() or "scalp_fast"
@@ -578,6 +590,78 @@ FORCE_EXIT_MTF_FIB_OPPOSITE_EMA_GAP_PIPS: float = max(
 FORCE_EXIT_MTF_FIB_LOG_INTERVAL_SEC: float = max(
     1.0,
     float(os.getenv("SCALP_PING_5S_FORCE_EXIT_MTF_FIB_LOG_INTERVAL_SEC", "10.0")),
+)
+
+PROFIT_BANK_ENABLED: bool = _bool_env(
+    "SCALP_PING_5S_PROFIT_BANK_ENABLED",
+    False,
+)
+PROFIT_BANK_START_TIME_UTC: str = (
+    os.getenv("SCALP_PING_5S_PROFIT_BANK_START_TIME_UTC", "").strip()
+)
+PROFIT_BANK_REASON: str = (
+    os.getenv("SCALP_PING_5S_PROFIT_BANK_REASON", "profit_bank_release").strip()
+    or "profit_bank_release"
+)
+PROFIT_BANK_MIN_GROSS_PROFIT_JPY: float = max(
+    0.0,
+    float(os.getenv("SCALP_PING_5S_PROFIT_BANK_MIN_GROSS_PROFIT_JPY", "200.0")),
+)
+PROFIT_BANK_MIN_NET_KEEP_JPY: float = max(
+    0.0,
+    float(os.getenv("SCALP_PING_5S_PROFIT_BANK_MIN_NET_KEEP_JPY", "120.0")),
+)
+PROFIT_BANK_SPEND_RATIO: float = max(
+    0.0,
+    min(1.0, float(os.getenv("SCALP_PING_5S_PROFIT_BANK_SPEND_RATIO", "0.35"))),
+)
+PROFIT_BANK_MIN_BUFFER_JPY: float = max(
+    0.0,
+    float(os.getenv("SCALP_PING_5S_PROFIT_BANK_MIN_BUFFER_JPY", "80.0")),
+)
+PROFIT_BANK_MIN_TARGET_LOSS_JPY: float = max(
+    0.0,
+    float(os.getenv("SCALP_PING_5S_PROFIT_BANK_MIN_TARGET_LOSS_JPY", "60.0")),
+)
+PROFIT_BANK_MAX_TARGET_LOSS_JPY: float = max(
+    PROFIT_BANK_MIN_TARGET_LOSS_JPY,
+    float(os.getenv("SCALP_PING_5S_PROFIT_BANK_MAX_TARGET_LOSS_JPY", "1500.0")),
+)
+PROFIT_BANK_TARGET_MIN_HOLD_SEC: float = max(
+    0.0,
+    float(os.getenv("SCALP_PING_5S_PROFIT_BANK_TARGET_MIN_HOLD_SEC", "120.0")),
+)
+PROFIT_BANK_TARGET_ORDER: str = (
+    os.getenv("SCALP_PING_5S_PROFIT_BANK_TARGET_ORDER", "largest_loss").strip().lower()
+    or "largest_loss"
+)
+if PROFIT_BANK_TARGET_ORDER not in {"largest_loss", "oldest"}:
+    PROFIT_BANK_TARGET_ORDER = "largest_loss"
+PROFIT_BANK_TARGET_REQUIRE_OPEN_BEFORE_START: bool = _bool_env(
+    "SCALP_PING_5S_PROFIT_BANK_TARGET_REQUIRE_OPEN_BEFORE_START",
+    False,
+)
+PROFIT_BANK_MAX_ACTIONS: int = max(
+    1,
+    int(float(os.getenv("SCALP_PING_5S_PROFIT_BANK_MAX_ACTIONS", "1"))),
+)
+PROFIT_BANK_COOLDOWN_SEC: float = max(
+    0.0,
+    float(os.getenv("SCALP_PING_5S_PROFIT_BANK_COOLDOWN_SEC", "15.0")),
+)
+PROFIT_BANK_STATS_TTL_SEC: float = max(
+    1.0,
+    float(os.getenv("SCALP_PING_5S_PROFIT_BANK_STATS_TTL_SEC", "6.0")),
+)
+PROFIT_BANK_LOG_INTERVAL_SEC: float = max(
+    1.0,
+    float(os.getenv("SCALP_PING_5S_PROFIT_BANK_LOG_INTERVAL_SEC", "12.0")),
+)
+PROFIT_BANK_EXCLUDE_TRADE_IDS: tuple[str, ...] = _csv_env(
+    "SCALP_PING_5S_PROFIT_BANK_EXCLUDE_TRADE_IDS"
+)
+PROFIT_BANK_EXCLUDE_CLIENT_IDS: tuple[str, ...] = _csv_env(
+    "SCALP_PING_5S_PROFIT_BANK_EXCLUDE_CLIENT_IDS"
 )
 
 STOP_LOSS_DISABLED = stop_loss_disabled_for_pocket(POCKET)

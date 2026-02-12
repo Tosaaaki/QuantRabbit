@@ -71,6 +71,9 @@ class TpTimingProfile:
 _TP_TIMING_CACHE: dict[tuple[str, str], tuple[float, TpTimingProfile]] = {}
 _TRADE_MFE_PIPS: dict[str, float] = {}
 _TRADE_FORCE_EXIT_DEFER_LOG_MONO: dict[str, float] = {}
+_PROFIT_BANK_STATS_CACHE: dict[tuple[str, str, str, str], tuple[float, tuple[float, float, float]]] = {}
+_PROFIT_BANK_START_CACHE: tuple[str, Optional[datetime.datetime]] = ("", None)
+_PROFIT_BANK_LAST_CLOSE_MONO: float = 0.0
 
 
 def _mask_value(value: str, *, head: int = 4, tail: int = 2) -> str:
@@ -163,6 +166,17 @@ class TrapState:
     short_dd_pips: float
     combined_dd_pips: float
     unrealized_pl: float
+
+
+@dataclass(slots=True)
+class ProfitBankCandidate:
+    trade_id: str
+    client_id: str
+    units: int
+    opened_at: datetime.datetime
+    hold_sec: float
+    unrealized_pl: float
+    loss_jpy: float
 
 
 def _load_tp_timing_profile(strategy_tag: str, pocket: str) -> TpTimingProfile:
@@ -537,7 +551,7 @@ def _should_defer_force_exit(
     return True, "fib_wait", fib, regime
 
 
-def _parse_trade_open_time(raw: object) -> Optional[datetime.datetime]:
+def _parse_iso_utc(raw: object) -> Optional[datetime.datetime]:
     text = str(raw or "").strip()
     if not text:
         return None
@@ -548,6 +562,10 @@ def _parse_trade_open_time(raw: object) -> Optional[datetime.datetime]:
     if opened_at.tzinfo is None:
         opened_at = opened_at.replace(tzinfo=datetime.timezone.utc)
     return opened_at.astimezone(datetime.timezone.utc)
+
+
+def _parse_trade_open_time(raw: object) -> Optional[datetime.datetime]:
+    return _parse_iso_utc(raw)
 
 
 def _trade_strategy_tag(trade: dict) -> str:
@@ -578,6 +596,254 @@ def _trade_unrealized_pips(trade: dict) -> float:
     if pip_value <= 0.0:
         return 0.0
     return unrealized_pl / pip_value
+
+
+def _trade_client_id(trade: dict) -> str:
+    return str(trade.get("client_id") or trade.get("client_order_id") or "").strip()
+
+
+def _profit_bank_start_time_utc() -> Optional[datetime.datetime]:
+    global _PROFIT_BANK_START_CACHE
+    raw = str(config.PROFIT_BANK_START_TIME_UTC or "").strip()
+    cached_raw, cached_ts = _PROFIT_BANK_START_CACHE
+    if cached_raw == raw:
+        return cached_ts
+    parsed = _parse_iso_utc(raw) if raw else None
+    _PROFIT_BANK_START_CACHE = (raw, parsed)
+    return parsed
+
+
+def _load_profit_bank_stats(
+    *,
+    strategy_tag: str,
+    pocket: str,
+    reason: str,
+    start_time_utc: Optional[datetime.datetime],
+) -> tuple[float, float, float]:
+    now_mono = time.monotonic()
+    start_key = start_time_utc.isoformat() if start_time_utc else "-"
+    cache_key = (
+        str(strategy_tag or "").strip().lower(),
+        str(pocket or "").strip().lower(),
+        str(reason or "").strip().lower(),
+        start_key,
+    )
+    cached = _PROFIT_BANK_STATS_CACHE.get(cache_key)
+    if cached and now_mono - cached[0] <= config.PROFIT_BANK_STATS_TTL_SEC:
+        return cached[1]
+
+    gross_profit = 0.0
+    spent_loss = 0.0
+    net_realized = 0.0
+    if _TRADES_DB.exists():
+        con: Optional[sqlite3.Connection] = None
+        try:
+            con = sqlite3.connect(_TRADES_DB)
+            row = con.execute(
+                """
+                SELECT
+                  COALESCE(SUM(CASE WHEN realized_pl > 0 THEN realized_pl ELSE 0 END), 0),
+                  COALESCE(SUM(CASE WHEN lower(coalesce(close_reason, '')) = ? AND realized_pl < 0 THEN -realized_pl ELSE 0 END), 0),
+                  COALESCE(SUM(realized_pl), 0)
+                FROM trades
+                WHERE close_time IS NOT NULL
+                  AND lower(coalesce(strategy_tag, '')) = ?
+                  AND lower(coalesce(pocket, '')) = ?
+                  AND (? = '' OR datetime(close_time) >= datetime(?))
+                """,
+                (
+                    cache_key[2],
+                    cache_key[0],
+                    cache_key[1],
+                    start_key if start_key != "-" else "",
+                    start_key if start_key != "-" else "",
+                ),
+            ).fetchone()
+            if row:
+                gross_profit = _safe_float(row[0], 0.0)
+                spent_loss = _safe_float(row[1], 0.0)
+                net_realized = _safe_float(row[2], 0.0)
+        except Exception:
+            pass
+        finally:
+            if con is not None:
+                try:
+                    con.close()
+                except Exception:
+                    pass
+
+    stats = (gross_profit, spent_loss, net_realized)
+    _PROFIT_BANK_STATS_CACHE[cache_key] = (now_mono, stats)
+    return stats
+
+
+def _profit_bank_available_budget_jpy(
+    *,
+    gross_profit_jpy: float,
+    spent_loss_jpy: float,
+    net_realized_jpy: float,
+) -> float:
+    if gross_profit_jpy < config.PROFIT_BANK_MIN_GROSS_PROFIT_JPY:
+        return 0.0
+    budget_cap = gross_profit_jpy * config.PROFIT_BANK_SPEND_RATIO
+    budget_left = budget_cap - spent_loss_jpy - config.PROFIT_BANK_MIN_BUFFER_JPY
+    net_left = net_realized_jpy - config.PROFIT_BANK_MIN_NET_KEEP_JPY
+    return max(0.0, min(budget_left, net_left))
+
+
+def _is_profit_bank_excluded_trade(
+    *,
+    trade_id: str,
+    client_id: str,
+    excluded_trade_ids: set[str],
+    excluded_client_ids: set[str],
+) -> bool:
+    if trade_id and trade_id in excluded_trade_ids:
+        return True
+    if client_id and client_id in excluded_client_ids:
+        return True
+    return False
+
+
+async def _apply_profit_bank_release(
+    *,
+    pocket_info: dict,
+    now_utc: datetime.datetime,
+    logger: logging.Logger,
+    protected_trade_ids: Optional[set[str]] = None,
+) -> int:
+    global _PROFIT_BANK_LAST_CLOSE_MONO
+
+    if not config.PROFIT_BANK_ENABLED:
+        return 0
+    if not isinstance(pocket_info, dict):
+        return 0
+    open_trades = pocket_info.get("open_trades")
+    if not isinstance(open_trades, list):
+        return 0
+    if config.PROFIT_BANK_MAX_ACTIONS <= 0:
+        return 0
+
+    now_mono = time.monotonic()
+    if (
+        config.PROFIT_BANK_COOLDOWN_SEC > 0.0
+        and now_mono - _PROFIT_BANK_LAST_CLOSE_MONO < config.PROFIT_BANK_COOLDOWN_SEC
+    ):
+        return 0
+
+    start_utc = _profit_bank_start_time_utc()
+    gross_profit, spent_loss, net_realized = _load_profit_bank_stats(
+        strategy_tag=config.STRATEGY_TAG,
+        pocket=config.POCKET,
+        reason=config.PROFIT_BANK_REASON,
+        start_time_utc=start_utc,
+    )
+    available_budget = _profit_bank_available_budget_jpy(
+        gross_profit_jpy=gross_profit,
+        spent_loss_jpy=spent_loss,
+        net_realized_jpy=net_realized,
+    )
+    if available_budget <= 0.0:
+        return 0
+
+    target_tag = str(config.STRATEGY_TAG or "").strip().lower()
+    excluded_trade_ids = {str(t).strip() for t in config.PROFIT_BANK_EXCLUDE_TRADE_IDS if str(t).strip()}
+    excluded_client_ids = {str(t).strip() for t in config.PROFIT_BANK_EXCLUDE_CLIENT_IDS if str(t).strip()}
+    candidates: list[ProfitBankCandidate] = []
+    for trade in open_trades:
+        if not isinstance(trade, dict):
+            continue
+        if target_tag:
+            trade_tag = _trade_strategy_tag(trade).lower()
+            if trade_tag != target_tag:
+                continue
+        trade_id = str(trade.get("trade_id") or "").strip()
+        if not trade_id:
+            continue
+        if protected_trade_ids and trade_id in protected_trade_ids:
+            continue
+        client_id = _trade_client_id(trade)
+        if _is_profit_bank_excluded_trade(
+            trade_id=trade_id,
+            client_id=client_id,
+            excluded_trade_ids=excluded_trade_ids,
+            excluded_client_ids=excluded_client_ids,
+        ):
+            continue
+        units = int(_safe_float(trade.get("units"), 0.0))
+        if units == 0:
+            continue
+        opened_at = _parse_trade_open_time(trade.get("open_time") or trade.get("entry_time"))
+        if opened_at is None:
+            continue
+        if (
+            config.PROFIT_BANK_TARGET_REQUIRE_OPEN_BEFORE_START
+            and start_utc is not None
+            and opened_at >= start_utc
+        ):
+            continue
+        hold_sec = (now_utc - opened_at).total_seconds()
+        if hold_sec < config.PROFIT_BANK_TARGET_MIN_HOLD_SEC:
+            continue
+        unrealized_pl = _safe_float(trade.get("unrealized_pl"), 0.0)
+        loss_jpy = abs(min(0.0, unrealized_pl))
+        if loss_jpy < config.PROFIT_BANK_MIN_TARGET_LOSS_JPY:
+            continue
+        if loss_jpy > config.PROFIT_BANK_MAX_TARGET_LOSS_JPY:
+            continue
+        candidates.append(
+            ProfitBankCandidate(
+                trade_id=trade_id,
+                client_id=client_id,
+                units=units,
+                opened_at=opened_at,
+                hold_sec=hold_sec,
+                unrealized_pl=unrealized_pl,
+                loss_jpy=loss_jpy,
+            )
+        )
+    if not candidates:
+        return 0
+
+    if config.PROFIT_BANK_TARGET_ORDER == "oldest":
+        candidates.sort(key=lambda row: (row.opened_at, -row.loss_jpy))
+    else:
+        candidates.sort(key=lambda row: (-row.loss_jpy, row.opened_at))
+
+    closed_count = 0
+    for candidate in candidates:
+        if closed_count >= config.PROFIT_BANK_MAX_ACTIONS:
+            break
+        if candidate.loss_jpy > available_budget:
+            continue
+        closed = await close_trade(
+            candidate.trade_id,
+            units=-candidate.units,
+            client_order_id=candidate.client_id or None,
+            allow_negative=True,
+            exit_reason=config.PROFIT_BANK_REASON,
+            env_prefix=config.ENV_PREFIX,
+        )
+        if not closed:
+            continue
+        closed_count += 1
+        available_budget = max(0.0, available_budget - candidate.loss_jpy)
+        _PROFIT_BANK_LAST_CLOSE_MONO = now_mono
+        logger.info(
+            "%s profit_bank close trade=%s loss_jpy=%.1f hold=%.0fs budget_left=%.1f gross=%.1f spent=%.1f net=%.1f reason=%s",
+            config.LOG_PREFIX,
+            candidate.trade_id,
+            candidate.loss_jpy,
+            candidate.hold_sec,
+            available_budget,
+            gross_profit,
+            spent_loss,
+            net_realized,
+            config.PROFIT_BANK_REASON,
+        )
+        # Force DB re-read on the next loop after a successful close.
+        _PROFIT_BANK_STATS_CACHE.clear()
+    return closed_count
 
 
 async def _enforce_new_entry_time_stop(
@@ -1813,6 +2079,7 @@ async def scalp_ping_5s_worker() -> None:
     last_bias_log_mono = 0.0
     last_regime_log_mono = 0.0
     last_horizon_log_mono = 0.0
+    last_profit_bank_log_mono = 0.0
     protected_trade_ids: set[str] = set()
     protected_seeded = False
 
@@ -1858,6 +2125,41 @@ async def scalp_ping_5s_worker() -> None:
             if forced_closed > 0:
                 positions = pos_manager.get_open_positions()
                 pocket_info = positions.get(config.POCKET) or {}
+            profit_bank_closed = await _apply_profit_bank_release(
+                pocket_info=pocket_info,
+                now_utc=now_utc,
+                logger=LOG,
+                protected_trade_ids=protected_trade_ids,
+            )
+            if profit_bank_closed > 0:
+                positions = pos_manager.get_open_positions()
+                pocket_info = positions.get(config.POCKET) or {}
+            elif (
+                config.PROFIT_BANK_ENABLED
+                and time.monotonic() - last_profit_bank_log_mono >= config.PROFIT_BANK_LOG_INTERVAL_SEC
+            ):
+                start_utc = _profit_bank_start_time_utc()
+                gross_profit, spent_loss, net_realized = _load_profit_bank_stats(
+                    strategy_tag=config.STRATEGY_TAG,
+                    pocket=config.POCKET,
+                    reason=config.PROFIT_BANK_REASON,
+                    start_time_utc=start_utc,
+                )
+                budget = _profit_bank_available_budget_jpy(
+                    gross_profit_jpy=gross_profit,
+                    spent_loss_jpy=spent_loss,
+                    net_realized_jpy=net_realized,
+                )
+                LOG.info(
+                    "%s profit_bank status budget=%.1f gross=%.1f spent=%.1f net=%.1f start=%s",
+                    config.LOG_PREFIX,
+                    budget,
+                    gross_profit,
+                    spent_loss,
+                    net_realized,
+                    start_utc.isoformat() if start_utc is not None else "-",
+                )
+                last_profit_bank_log_mono = time.monotonic()
 
             blocked, remain, spread_state, spread_reason = spread_monitor.is_blocked()
             spread_pips = _safe_float((spread_state or {}).get("spread_pips"), 0.0)

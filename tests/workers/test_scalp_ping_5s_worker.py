@@ -642,6 +642,164 @@ async def test_enforce_new_entry_time_stop_closes_giveback_lock(monkeypatch) -> 
     assert calls[0][4] == "giveback_lock"
 
 
+@pytest.mark.asyncio
+async def test_apply_profit_bank_release_respects_exclusions(monkeypatch) -> None:
+    from workers.scalp_ping_5s import worker
+
+    monkeypatch.setattr(worker.config, "PROFIT_BANK_ENABLED", True)
+    monkeypatch.setattr(worker.config, "PROFIT_BANK_MAX_ACTIONS", 1)
+    monkeypatch.setattr(worker.config, "PROFIT_BANK_COOLDOWN_SEC", 0.0)
+    monkeypatch.setattr(worker.config, "PROFIT_BANK_MIN_TARGET_LOSS_JPY", 100.0)
+    monkeypatch.setattr(worker.config, "PROFIT_BANK_MAX_TARGET_LOSS_JPY", 5000.0)
+    monkeypatch.setattr(worker.config, "PROFIT_BANK_TARGET_MIN_HOLD_SEC", 60.0)
+    monkeypatch.setattr(worker.config, "PROFIT_BANK_TARGET_ORDER", "largest_loss")
+    monkeypatch.setattr(worker.config, "PROFIT_BANK_TARGET_REQUIRE_OPEN_BEFORE_START", False)
+    monkeypatch.setattr(worker.config, "PROFIT_BANK_EXCLUDE_TRADE_IDS", ("skip-trade",))
+    monkeypatch.setattr(worker.config, "PROFIT_BANK_EXCLUDE_CLIENT_IDS", ("skip-client",))
+    monkeypatch.setattr(worker.config, "PROFIT_BANK_REASON", "profit_bank_release")
+    monkeypatch.setattr(worker.config, "STRATEGY_TAG", "scalp_ping_5s_live")
+    monkeypatch.setattr(worker.config, "POCKET", "scalp_fast")
+    monkeypatch.setattr(worker, "_PROFIT_BANK_LAST_CLOSE_MONO", 0.0)
+
+    monkeypatch.setattr(
+        worker,
+        "_load_profit_bank_stats",
+        lambda **_kwargs: (1200.0, 0.0, 1200.0),
+    )
+    monkeypatch.setattr(
+        worker,
+        "_profit_bank_available_budget_jpy",
+        lambda **_kwargs: 400.0,
+    )
+
+    calls: list[tuple[str, int, str | None, bool, str | None, str | None]] = []
+
+    async def _fake_close_trade(
+        trade_id: str,
+        units: int | None = None,
+        client_order_id: str | None = None,
+        allow_negative: bool = False,
+        exit_reason: str | None = None,
+        env_prefix: str | None = None,
+    ) -> bool:
+        calls.append((trade_id, int(units or 0), client_order_id, allow_negative, exit_reason, env_prefix))
+        return True
+
+    monkeypatch.setattr(worker, "close_trade", _fake_close_trade)
+
+    now_utc = datetime.datetime(2026, 2, 12, 6, 0, 0, tzinfo=datetime.timezone.utc)
+    pocket_info = {
+        "open_trades": [
+            {
+                "trade_id": "skip-trade",
+                "client_id": "qr-skip",
+                "units": 1200,
+                "open_time": "2026-02-12T05:40:00+00:00",
+                "strategy_tag": "scalp_ping_5s_live",
+                "unrealized_pl": -320.0,
+            },
+            {
+                "trade_id": "skip-client-trade",
+                "client_id": "skip-client",
+                "units": 1000,
+                "open_time": "2026-02-12T05:40:00+00:00",
+                "strategy_tag": "scalp_ping_5s_live",
+                "unrealized_pl": -220.0,
+            },
+            {
+                "trade_id": "eligible-trade",
+                "client_id": "qr-eligible",
+                "units": 900,
+                "open_time": "2026-02-12T05:40:00+00:00",
+                "strategy_tag": "scalp_ping_5s_live",
+                "unrealized_pl": -210.0,
+            },
+        ]
+    }
+
+    closed = await worker._apply_profit_bank_release(
+        pocket_info=pocket_info,
+        now_utc=now_utc,
+        logger=worker.LOG,
+        protected_trade_ids={"protected-trade"},
+    )
+    assert closed == 1
+    assert len(calls) == 1
+    assert calls[0][0] == "eligible-trade"
+    assert calls[0][1] == -900
+    assert calls[0][2] == "qr-eligible"
+    assert calls[0][3] is True
+    assert calls[0][4] == "profit_bank_release"
+
+
+@pytest.mark.asyncio
+async def test_apply_profit_bank_release_skips_when_budget_is_too_small(monkeypatch) -> None:
+    from workers.scalp_ping_5s import worker
+
+    monkeypatch.setattr(worker.config, "PROFIT_BANK_ENABLED", True)
+    monkeypatch.setattr(worker.config, "PROFIT_BANK_MAX_ACTIONS", 1)
+    monkeypatch.setattr(worker.config, "PROFIT_BANK_COOLDOWN_SEC", 0.0)
+    monkeypatch.setattr(worker.config, "PROFIT_BANK_MIN_TARGET_LOSS_JPY", 100.0)
+    monkeypatch.setattr(worker.config, "PROFIT_BANK_MAX_TARGET_LOSS_JPY", 5000.0)
+    monkeypatch.setattr(worker.config, "PROFIT_BANK_TARGET_MIN_HOLD_SEC", 60.0)
+    monkeypatch.setattr(worker.config, "PROFIT_BANK_TARGET_ORDER", "largest_loss")
+    monkeypatch.setattr(worker.config, "PROFIT_BANK_TARGET_REQUIRE_OPEN_BEFORE_START", False)
+    monkeypatch.setattr(worker.config, "PROFIT_BANK_EXCLUDE_TRADE_IDS", ())
+    monkeypatch.setattr(worker.config, "PROFIT_BANK_EXCLUDE_CLIENT_IDS", ())
+    monkeypatch.setattr(worker.config, "PROFIT_BANK_REASON", "profit_bank_release")
+    monkeypatch.setattr(worker.config, "STRATEGY_TAG", "scalp_ping_5s_live")
+    monkeypatch.setattr(worker.config, "POCKET", "scalp_fast")
+    monkeypatch.setattr(worker, "_PROFIT_BANK_LAST_CLOSE_MONO", 0.0)
+
+    monkeypatch.setattr(
+        worker,
+        "_load_profit_bank_stats",
+        lambda **_kwargs: (700.0, 0.0, 700.0),
+    )
+    monkeypatch.setattr(
+        worker,
+        "_profit_bank_available_budget_jpy",
+        lambda **_kwargs: 80.0,
+    )
+
+    calls: list[str] = []
+
+    async def _fake_close_trade(
+        trade_id: str,
+        units: int | None = None,
+        client_order_id: str | None = None,
+        allow_negative: bool = False,
+        exit_reason: str | None = None,
+        env_prefix: str | None = None,
+    ) -> bool:
+        calls.append(trade_id)
+        return True
+
+    monkeypatch.setattr(worker, "close_trade", _fake_close_trade)
+
+    now_utc = datetime.datetime(2026, 2, 12, 6, 5, 0, tzinfo=datetime.timezone.utc)
+    pocket_info = {
+        "open_trades": [
+            {
+                "trade_id": "loss-1",
+                "client_id": "qr-loss-1",
+                "units": 1100,
+                "open_time": "2026-02-12T05:40:00+00:00",
+                "strategy_tag": "scalp_ping_5s_live",
+                "unrealized_pl": -240.0,
+            }
+        ]
+    }
+
+    closed = await worker._apply_profit_bank_release(
+        pocket_info=pocket_info,
+        now_utc=now_utc,
+        logger=worker.LOG,
+    )
+    assert closed == 0
+    assert calls == []
+
+
 def test_tick_density_uses_window_cutoff() -> None:
     from workers.scalp_ping_5s import worker
 
