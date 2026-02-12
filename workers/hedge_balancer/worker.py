@@ -363,6 +363,7 @@ def _margin_usage(snapshot: AccountSnapshot) -> Tuple[Optional[float], Optional[
 def _plan_units(
     snapshot: AccountSnapshot,
     net_units: int,
+    max_side_units: float,
     price: float,
 ) -> Tuple[Optional[int], Optional[str], Optional[float]]:
     usage, total_margin = _margin_usage(snapshot)
@@ -376,12 +377,13 @@ def _plan_units(
         return None, None, usage
     target_usage = min(config.TARGET_MARGIN_USAGE, config.TRIGGER_MARGIN_USAGE)
     target_used = total_margin * target_usage
-    target_net_units = target_used / margin_per_unit
+    target_max_units = target_used / margin_per_unit
 
-    desired_reduction = abs(net_units) - target_net_units
+    charged_units = max(0.0, float(max_side_units or 0.0))
+    desired_reduction = charged_units - target_max_units
     if desired_reduction <= 0:
-        desired_reduction = abs(net_units) * 0.25
-    max_reduce = abs(net_units) * config.MAX_REDUCTION_FRACTION
+        desired_reduction = charged_units * 0.25
+    max_reduce = charged_units * config.MAX_REDUCTION_FRACTION
     capped = min(desired_reduction, max_reduce, config.MAX_HEDGE_UNITS)
     final_units = int(max(config.MIN_HEDGE_UNITS, capped))
     if final_units <= 0:
@@ -437,6 +439,7 @@ async def hedge_balancer_worker() -> None:
 
         net_units = int(round(long_units - short_units))
         abs_net = abs(net_units)
+        max_side_units = float(max(long_units, short_units))
         gross_units = int(round(long_units + short_units))
         factors = all_factors()
         fac_m1 = factors.get("M1") or {}
@@ -549,7 +552,7 @@ async def hedge_balancer_worker() -> None:
         if abs_net < config.MIN_NET_UNITS:
             continue
 
-        hedge_units, reason, usage = _plan_units(snapshot, net_units, price_hint)
+        hedge_units, reason, usage = _plan_units(snapshot, net_units, max_side_units, price_hint)
         if hedge_units is None or hedge_units <= 0:
             continue
 

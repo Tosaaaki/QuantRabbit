@@ -989,6 +989,7 @@ def allowed_lot(
     if sl_pips > 0:
         lot_risk = risk_amount / (sl_pips * 1000)  # USD/JPYの1lotは1000JPY/pip ≒ 1000
     lot = lot_risk
+    flatten_floor_lot = 0.0
 
     # 証拠金情報が欠損している場合は安全側（発注しない）
     if margin_available is None or price is None or not margin_rate:
@@ -997,9 +998,17 @@ def allowed_lot(
     margin_cap = None
     used: float | None = None
 
-    def _net_margin_after(add_units: float) -> float:
+    def _margin_used_after(add_units: float) -> float:
         """
-        追加後のネット証拠金使用額（netting を考慮）をざっくり推定する。
+        追加後の証拠金使用額をざっくり推定する。
+
+        NOTE:
+        - OANDA のヘッジ口座では marginUsed が「ネット(abs(long-short))」ではなく、
+          ほぼ `max(long_units, short_units) * price * margin_rate` に一致する。
+        - ここでの推定がズレると「反対側で net が減るから margin が減る」と誤判定して
+          サイズが過大になり、INSUFFICIENT_MARGIN や closeout リスクを上げる。
+
+        現状は USD/JPY 前提で、openPositions の long/short units を使用。
         price/margin_rate が無い場合は現在値を返す。
         """
         if price is None or not margin_rate:
@@ -1016,8 +1025,18 @@ def allowed_lot(
             long_u += add_units
         else:
             short_u += add_units
-        net_units = abs(long_u - short_u)
-        return net_units * price * margin_rate
+        unit_cost = price * margin_rate
+        # Estimate "other instruments" margin as a constant baseline so comparisons against
+        # account-level margin_used remain directionally correct even in multi-instrument accounts.
+        baseline_other = 0.0
+        try:
+            if used is not None and unit_cost > 0:
+                est_now = max(float(long_units or 0.0), float(short_units or 0.0)) * unit_cost
+                baseline_other = max(0.0, float(used) - est_now)
+        except Exception:
+            baseline_other = 0.0
+        charged_units = max(long_u, short_u)
+        return baseline_other + charged_units * unit_cost
 
     if margin_available is not None and price is not None and margin_rate:
         margin_per_lot = price * margin_rate * 100000
@@ -1052,28 +1071,36 @@ def allowed_lot(
 
             # If netting would reduce usage (opposite side), allow larger lot up to cap.
             proposed_units = lot * 100000.0
-            net_used_after = _net_margin_after(abs(proposed_units))
-            net_used_after_gap = _net_margin_after(gap_units) if gap_units > 0 else None
-            if net_used_after < used:
-                # nettingで使用率が下がる場合は cap を緩和し、flatten分を優先して通す
-                hedge_cap = max(margin_cap, 0.995)
-                hedge_budget_safe = equity * hedge_cap * 0.999
-                lot_margin = max(lot_margin, (hedge_budget_safe - net_used_after) / margin_per_lot)
+            used_after = _margin_used_after(abs(proposed_units))
+            used_after_gap = _margin_used_after(gap_units) if gap_units > 0 else None
+            eps = max(1.0, equity * 1e-6)
+            does_not_increase = used is not None and used_after <= float(used) + eps
+            gap_does_not_increase = (
+                used is not None
+                and used_after_gap is not None
+                and used_after_gap <= float(used) + eps
+            )
+            if does_not_increase:
+                # 追加が margin を増やさない（ヘッジ口座の「反対側追加」など）は flatten 分を優先して通す
                 lot_margin = max(lot_margin, gap_lot)
-                # margin_budget を超えていてもネット縮小なら最低ロットは通す
                 if lot_margin <= 0 and gap_lot > 0:
                     lot_margin = gap_lot
 
             # すでに cap 超なら新規はゼロ
             current_usage = used / equity if equity > 0 else 0.0
-            if current_usage >= margin_cap * 0.995 and net_used_after >= used:
-                # Risk-based sizing may overshoot past the flatten point, which would *increase* net usage.
-                # Even in that case, still allow the "flatten" lot when it would reduce net exposure.
-                if net_used_after_gap is not None and net_used_after_gap < used and gap_lot > 0:
+            if current_usage >= margin_cap * 0.995 and used_after > float(used) + eps:
+                # Risk-based sizing may overshoot past the flatten point, which would *increase* margin.
+                # Even in that case, still allow the "flatten" lot when it would not increase margin.
+                if gap_does_not_increase and gap_lot > 0:
                     lot_margin = max(lot_margin, gap_lot)
+                    # Keep a floor so later free-margin scaling does not prevent full flatten.
+                    # Only floor up to risk-based lot to avoid *increasing* size beyond intent.
+                    flatten_floor_lot = max(flatten_floor_lot, min(gap_lot, lot_risk))
                 else:
                     lot_margin = 0.0
             lot = min(lot, lot_margin)
+            if flatten_floor_lot > 0.0 and lot < flatten_floor_lot:
+                lot = flatten_floor_lot
     # margin_rate が取れない場合でも、free_ratio から強制ガードを入れる
     if margin_cap is None and margin_available is not None and equity > 0:
         hard_margin_cap = float(os.getenv("MAX_MARGIN_USAGE_HARD", "0.83") or 0.83)
@@ -1105,33 +1132,45 @@ def allowed_lot(
     # netting で使用証拠金が減る方向のポジションは、投下後の free_ratio を基準に緩和する
     if margin_available is not None and equity > 0:
         free_ratio = max(0.0, margin_available / equity)
-        projected_used = _net_margin_after(abs(lot * 100000.0))
+        projected_used = _margin_used_after(abs(lot * 100000.0))
         free_ratio_after = None
         if equity > 0 and projected_used is not None:
             free_ratio_after = max(0.0, (equity - projected_used) / equity)
-        netting_reduce = projected_used is not None and used is not None and projected_used < used
+        reduces_net = False
+        try:
+            if side_norm == "long" and long_units < short_units:
+                reduces_net = True
+            elif side_norm == "short" and short_units < long_units:
+                reduces_net = True
+        except Exception:
+            reduces_net = False
         try:
             soft = float(os.getenv("FREE_MARGIN_SOFT_RATIO", "0.35") or 0.35)
             hard = float(os.getenv("FREE_MARGIN_HARD_RATIO", "0.2") or 0.2)
         except Exception:
             soft, hard = 0.35, 0.2
         hard = max(0.0, min(hard, soft))
-        # netting 減少なら「投下後」の free ratio を優先
+        # ネット縮小（反対側の追加）は「投下後」の free ratio を優先
         ratio_for_scale = free_ratio
-        if free_ratio_after is not None and netting_reduce:
+        if free_ratio_after is not None and reduces_net:
             ratio_for_scale = max(free_ratio, free_ratio_after)
-        if ratio_for_scale <= hard and not netting_reduce:
+        if ratio_for_scale <= hard and not reduces_net:
             lot = 0.0
         elif ratio_for_scale < soft and lot > 0.0:
             scale = (ratio_for_scale - hard) / (soft - hard) if soft > hard else 0.0
             scale = max(0.0, min(1.0, scale))
             # netting 減少ならスケールを少し緩める
-            if netting_reduce and scale < 1.0:
+            if reduces_net and scale < 1.0:
                 scale = max(scale, 0.5)
             lot *= scale
         # netting 減少で lot が 0 まで絞られた場合、最小ロット(0.01)は確保する
-        if netting_reduce and lot <= 0.0:
+        if reduces_net and lot <= 0.0:
             lot = max(lot, 0.01)
+        # flatten floor: keep full net-reducing amount when it does not increase margin usage.
+        if flatten_floor_lot > 0.0:
+            flatten_floor_lot = min(flatten_floor_lot, MAX_LOT)
+            if lot < flatten_floor_lot:
+                lot = flatten_floor_lot
 
     return round(max(lot, 0.0), 3)
 

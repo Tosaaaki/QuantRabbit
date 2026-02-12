@@ -6602,11 +6602,18 @@ async def logic_loop():
                         margin_usage = m_used / total_margin
                 except Exception:
                     margin_usage = None
-            # 自前計算: abs(net_units) * mid_price * margin_rate / equity でネット証拠金率を推定
+            # 自前計算: max(long_units, short_units) * mid_price * margin_rate / equity で証拠金率を推定
+            # NOTE: OANDAヘッジ口座では marginUsed が abs(net) ではなく max(side) に一致する。
             try:
                 if margin_rate and account_equity > 0 and mid_price > 0:
-                    usage_est = abs(float(net_units)) * mid_price * margin_rate / account_equity
-                    margin_usage = usage_est
+                    charged_units = max(
+                        abs(float(net_units)),
+                        float(side_long_units),
+                        float(side_short_units),
+                    )
+                    usage_est = charged_units * mid_price * margin_rate / account_equity
+                    # Keep the higher estimate to avoid under-reporting margin usage.
+                    margin_usage = usage_est if margin_usage is None else max(margin_usage, usage_est)
             except Exception:
                 pass
             if margin_usage is not None:
