@@ -519,6 +519,30 @@ LOW_MARGIN_HEDGE_RELIEF_LOG_INTERVAL_SEC: float = max(
     float(os.getenv("SCALP_PING_5S_LOW_MARGIN_HEDGE_RELIEF_LOG_INTERVAL_SEC", "8.0")),
 )
 
+# Optional: when margin is tight, retarget (flip) momentum signals toward the hedge side
+# to reduce net exposure and restore free margin.
+LOW_MARGIN_HEDGE_RETARGET_ENABLED: bool = _bool_env(
+    "SCALP_PING_5S_LOW_MARGIN_HEDGE_RETARGET_ENABLED",
+    False,
+)
+LOW_MARGIN_HEDGE_RETARGET_MOMENTUM_ONLY: bool = _bool_env(
+    "SCALP_PING_5S_LOW_MARGIN_HEDGE_RETARGET_MOMENTUM_ONLY",
+    True,
+)
+LOW_MARGIN_HEDGE_RETARGET_UNITS_MULT: float = max(
+    0.05,
+    min(
+        1.0,
+        float(os.getenv("SCALP_PING_5S_LOW_MARGIN_HEDGE_RETARGET_UNITS_MULT", "0.45")),
+    ),
+)
+try:
+    LOW_MARGIN_HEDGE_RETARGET_CONF_ADD: int = int(
+        float(os.getenv("SCALP_PING_5S_LOW_MARGIN_HEDGE_RETARGET_CONF_ADD", "-4"))
+    )
+except Exception:
+    LOW_MARGIN_HEDGE_RETARGET_CONF_ADD = -4
+
 CONFIDENCE_FLOOR: int = max(0, int(float(os.getenv("SCALP_PING_5S_CONF_FLOOR", "58"))))
 CONFIDENCE_CEIL: int = max(
     CONFIDENCE_FLOOR + 1, int(float(os.getenv("SCALP_PING_5S_CONF_CEIL", "92")))

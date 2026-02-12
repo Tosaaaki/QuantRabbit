@@ -2480,6 +2480,46 @@ async def scalp_ping_5s_worker() -> None:
             if signal.spread_pips > config.MAX_SPREAD_PIPS:
                 continue
 
+            hedge_retarget_units_mult = 1.0
+            hedge_retarget_from: Optional[str] = None
+            if config.LOW_MARGIN_HEDGE_RETARGET_ENABLED and config.LOW_MARGIN_HEDGE_RELIEF_ENABLED:
+                # When margin is tight, prefer hedge-side entries that reduce net exposure.
+                # This runs early so side-specific gates (bias/lookahead/extrema) evaluate the final side.
+                try:
+                    snap = get_account_snapshot(cache_ttl_sec=1.0)
+                    free_ratio = _safe_float(snap.free_margin_ratio, 0.0)
+                    margin_available = max(_safe_float(snap.margin_available, 0.0), 0.0)
+                except Exception:
+                    snap = None
+                    free_ratio = 0.0
+                    margin_available = 0.0
+
+                if free_ratio > 0.0 and free_ratio < config.MIN_FREE_MARGIN_RATIO:
+                    if (not config.LOW_MARGIN_HEDGE_RETARGET_MOMENTUM_ONLY) or signal.mode == "momentum":
+                        pocket_long = _safe_float(pocket_info.get("long_units"), 0.0)
+                        pocket_short = _safe_float(pocket_info.get("short_units"), 0.0)
+                        desired_side: Optional[str] = None
+                        if pocket_long > pocket_short:
+                            desired_side = "short"
+                        elif pocket_short > pocket_long:
+                            desired_side = "long"
+                        if desired_side and desired_side != signal.side:
+                            if _allow_low_margin_hedge_relief(
+                                side=desired_side,
+                                long_units=pocket_long,
+                                short_units=pocket_short,
+                                free_ratio=free_ratio,
+                                margin_available=margin_available,
+                            ):
+                                hedge_retarget_from = signal.side
+                                signal = _retarget_signal(
+                                    signal,
+                                    side=desired_side,
+                                    mode=f"{signal.mode}_hedge",
+                                    confidence_add=config.LOW_MARGIN_HEDGE_RETARGET_CONF_ADD,
+                                )
+                                hedge_retarget_units_mult = float(config.LOW_MARGIN_HEDGE_RETARGET_UNITS_MULT)
+
             now_mono = time.monotonic()
             try:
                 factors = all_factors()
@@ -2553,10 +2593,14 @@ async def scalp_ping_5s_worker() -> None:
                 last_density_topup_log_mono = now_mono
 
             direction_bias = _build_direction_bias(ticks, spread_pips=signal.spread_pips)
+            bias_signal_mode = signal.mode
+            # Hedge retargets are effectively counter-trend fades; use the softer revert bias thresholds.
+            if hedge_retarget_from is not None:
+                bias_signal_mode = "revert"
             bias_units_mult, bias_gate = _direction_units_multiplier(
                 signal.side,
                 direction_bias,
-                signal_mode=signal.mode,
+                signal_mode=bias_signal_mode,
             )
             if bias_units_mult <= 0.0:
                 if now_mono - last_bias_log_mono >= config.DIRECTION_BIAS_LOG_INTERVAL_SEC:
@@ -2792,6 +2836,7 @@ async def scalp_ping_5s_worker() -> None:
                 )
             )
             units = int(round(base_units * conf_mult * strength_mult * bias_units_mult * lookahead_units_mult))
+            units = int(round(units * hedge_retarget_units_mult))
             units = int(round(units * regime_units_mult))
             units = int(round(units * horizon_units_mult))
             units = int(round(units * extrema_units_mult))
@@ -2813,7 +2858,7 @@ async def scalp_ping_5s_worker() -> None:
             bias_scale, bias_meta = _directional_bias_scale(ticks, signal.side)
             if bias_scale <= 0.0:
                 continue
-            if signal.mode == "revert":
+            if signal.mode == "revert" or hedge_retarget_from is not None:
                 raw_side_bias = float(bias_scale)
                 weight = _clamp(config.REVERT_SIDE_BIAS_PENALTY_WEIGHT, 0.0, 1.0)
                 bias_scale = max(
@@ -2883,6 +2928,8 @@ async def scalp_ping_5s_worker() -> None:
                 "signal_mode_score": round(signal.mode_score, 3),
                 "signal_momentum_score": round(signal.momentum_score, 3),
                 "signal_revert_score": round(signal.revert_score, 3),
+                "low_margin_hedge_retarget": bool(hedge_retarget_from is not None),
+                "low_margin_hedge_retarget_from": hedge_retarget_from,
                 "tp_time_mult": round(tp_profile.multiplier, 3),
                 "tp_time_avg_sec": (
                     round(tp_profile.avg_tp_sec, 1) if tp_profile.avg_tp_sec > 0.0 else None
