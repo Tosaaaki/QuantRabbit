@@ -69,13 +69,23 @@ def _parse_csv_lower(raw: str) -> set[str]:
             items.add(t)
     return items
 
+
+def _normalize_side(raw: str) -> str:
+    side = str(raw or "").strip().lower()
+    if side in {"buy", "long", "open_long"}:
+        return "long"
+    if side in {"sell", "short", "open_short"}:
+        return "short"
+    return ""
+
+
 POCKET = "scalp"
 LOOP_INTERVAL_SEC = float(os.getenv("M1SCALP_LOOP_INTERVAL_SEC", "6.0"))
 ENABLED = _env_bool("M1SCALP_ENABLED", True)
 LOG_PREFIX = "[M1Scalper]"
 
-CONFIDENCE_FLOOR = 50
-CONFIDENCE_CEIL = 90
+CONFIDENCE_FLOOR = int(os.getenv("M1SCALP_CONFIDENCE_FLOOR", "50"))
+CONFIDENCE_CEIL = int(os.getenv("M1SCALP_CONFIDENCE_CEIL", "90"))
 MIN_UNITS = int(os.getenv("M1SCALP_MIN_UNITS", "1000"))
 BASE_ENTRY_UNITS = int(os.getenv("M1SCALP_BASE_UNITS", "6000"))
 MAX_MARGIN_USAGE = float(os.getenv("M1SCALP_MAX_MARGIN_USAGE", "0.9"))
@@ -139,6 +149,24 @@ DYN_ALLOC_MULT_MAX = float(os.getenv("M1SCALP_DYN_ALLOC_MULT_MAX", "1.8"))
 # Keep it disabled by default and allow explicit opt-in via env.
 ALLOW_REVERSION = _env_bool("M1SCALP_ALLOW_REVERSION", False)
 ALLOW_TREND = _env_bool("M1SCALP_ALLOW_TREND", True)
+# Optional signal filter for derivative strategy workers.
+# e.g. M1SCALP_SIGNAL_TAG_CONTAINS=trend-long
+SIGNAL_TAG_CONTAINS = frozenset(
+    _parse_csv_lower(
+        os.getenv("M1SCALP_SIGNAL_TAG_CONTAINS")
+        or _load_env_file().get("M1SCALP_SIGNAL_TAG_CONTAINS", "")
+    )
+)
+# Optional side filter: long / short (empty = both).
+SIDE_FILTER = _normalize_side(
+    os.getenv("M1SCALP_SIDE_FILTER")
+    or _load_env_file().get("M1SCALP_SIDE_FILTER", "")
+)
+# Optional strategy tag override for downstream tracking.
+STRATEGY_TAG_OVERRIDE = (
+    os.getenv("M1SCALP_STRATEGY_TAG_OVERRIDE")
+    or _load_env_file().get("M1SCALP_STRATEGY_TAG_OVERRIDE", "")
+).strip()
 
 # Reversion safety gate: even if ALLOW_REVERSION=1, require robust range context by default.
 REVERSION_REQUIRE_STRONG_RANGE = _env_bool("M1SCALP_REVERSION_REQUIRE_STRONG_RANGE", True)
