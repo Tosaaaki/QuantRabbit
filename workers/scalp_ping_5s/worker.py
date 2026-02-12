@@ -68,6 +68,7 @@ class TpTimingProfile:
 
 
 _TP_TIMING_CACHE: dict[tuple[str, str], tuple[float, TpTimingProfile]] = {}
+_TRADE_MFE_PIPS: dict[str, float] = {}
 
 
 def _mask_value(value: str, *, head: int = 4, tail: int = 2) -> str:
@@ -231,14 +232,26 @@ async def _enforce_new_entry_time_stop(
     now_utc: datetime.datetime,
     logger: logging.Logger,
 ) -> int:
+    global _TRADE_MFE_PIPS
+
     max_hold_sec = float(config.FORCE_EXIT_MAX_HOLD_SEC)
     hard_loss_pips = float(config.FORCE_EXIT_MAX_FLOATING_LOSS_PIPS)
     recovery_window_sec = float(config.FORCE_EXIT_RECOVERY_WINDOW_SEC)
     recoverable_loss_pips = float(config.FORCE_EXIT_RECOVERABLE_LOSS_PIPS)
+    giveback_enabled = bool(config.FORCE_EXIT_GIVEBACK_ENABLED)
+    giveback_arm_pips = float(config.FORCE_EXIT_GIVEBACK_ARM_PIPS)
+    giveback_backoff_pips = float(config.FORCE_EXIT_GIVEBACK_BACKOFF_PIPS)
+    giveback_min_hold_sec = float(config.FORCE_EXIT_GIVEBACK_MIN_HOLD_SEC)
+    giveback_protect_pips = float(config.FORCE_EXIT_GIVEBACK_PROTECT_PIPS)
     if (
         max_hold_sec <= 0.0
         and hard_loss_pips <= 0.0
         and (recovery_window_sec <= 0.0 or recoverable_loss_pips <= 0.0)
+        and (
+            (not giveback_enabled)
+            or giveback_arm_pips <= 0.0
+            or giveback_backoff_pips <= 0.0
+        )
     ):
         return 0
     if not isinstance(pocket_info, dict):
@@ -251,6 +264,7 @@ async def _enforce_new_entry_time_stop(
     target_tag = str(config.STRATEGY_TAG or "").strip().lower()
     target_generation = str(config.FORCE_EXIT_POLICY_GENERATION or "").strip()
     closed_count = 0
+    seen_trade_ids: set[str] = set()
 
     for trade in open_trades:
         if closed_count >= config.FORCE_EXIT_MAX_ACTIONS:
@@ -272,8 +286,19 @@ async def _enforce_new_entry_time_stop(
         opened_at = _parse_trade_open_time(trade.get("open_time") or trade.get("entry_time"))
         if opened_at is None:
             continue
+        trade_id = str(trade.get("trade_id") or "").strip()
+        if not trade_id:
+            continue
+        units = int(_safe_float(trade.get("units"), 0.0))
+        if units == 0:
+            continue
         hold_sec = (now_utc - opened_at).total_seconds()
         unrealized_pips = _trade_unrealized_pips(trade)
+        seen_trade_ids.add(trade_id)
+
+        prev_mfe = _safe_float(_TRADE_MFE_PIPS.get(trade_id), unrealized_pips)
+        mfe_pips = max(float(prev_mfe), float(unrealized_pips))
+        _TRADE_MFE_PIPS[trade_id] = float(mfe_pips)
 
         exit_reason: Optional[str] = None
         trigger_label: Optional[str] = None
@@ -288,18 +313,23 @@ async def _enforce_new_entry_time_stop(
         ):
             exit_reason = config.FORCE_EXIT_RECOVERY_REASON
             trigger_label = "recovery_timeout"
+        elif (
+            giveback_enabled
+            and giveback_arm_pips > 0.0
+            and giveback_backoff_pips > 0.0
+            and hold_sec >= giveback_min_hold_sec
+            and mfe_pips >= giveback_arm_pips
+            and (mfe_pips - unrealized_pips) >= giveback_backoff_pips
+            and unrealized_pips <= giveback_protect_pips
+        ):
+            exit_reason = config.FORCE_EXIT_GIVEBACK_REASON
+            trigger_label = "giveback_lock"
         elif max_hold_sec > 0.0 and hold_sec >= max_hold_sec:
             exit_reason = config.FORCE_EXIT_REASON
             trigger_label = "time_stop"
         if not exit_reason:
             continue
 
-        trade_id = str(trade.get("trade_id") or "").strip()
-        if not trade_id:
-            continue
-        units = int(_safe_float(trade.get("units"), 0.0))
-        if units == 0:
-            continue
         client_id = str(trade.get("client_id") or trade.get("client_order_id") or "").strip() or None
         closed = await close_trade(
             trade_id,
@@ -313,16 +343,22 @@ async def _enforce_new_entry_time_stop(
             continue
         closed_count += 1
         logger.info(
-            "%s force_exit reason=%s trigger=%s trade=%s hold=%.0fs pnl=%.2fp units=%s generation=%s",
+            "%s force_exit reason=%s trigger=%s trade=%s hold=%.0fs pnl=%.2fp mfe=%.2fp units=%s generation=%s",
             config.LOG_PREFIX,
             exit_reason,
             trigger_label or "-",
             trade_id,
             hold_sec,
             unrealized_pips,
+            mfe_pips,
             units,
             generation or "-",
         )
+        _TRADE_MFE_PIPS.pop(trade_id, None)
+
+    stale_ids = [tid for tid in _TRADE_MFE_PIPS.keys() if tid not in seen_trade_ids]
+    for tid in stale_ids:
+        _TRADE_MFE_PIPS.pop(tid, None)
 
     return closed_count
 
@@ -564,6 +600,63 @@ def _build_tick_signal(rows: Sequence[dict], spread_pips: float) -> Optional[Tic
         ask=ask,
         mid=mid,
     )
+
+
+def _directional_bias_scale(rows: Sequence[dict], side: str) -> tuple[float, dict[str, float]]:
+    if not config.SIDE_BIAS_ENABLED:
+        return 1.0, {"enabled": 0.0}
+    if side not in {"long", "short"}:
+        return 1.0, {"enabled": 1.0}
+    if not rows:
+        return 1.0, {"enabled": 1.0}
+
+    latest_epoch = _safe_float(rows[-1].get("epoch"), 0.0)
+    if latest_epoch <= 0.0:
+        return 1.0, {"enabled": 1.0}
+    cutoff = latest_epoch - max(1.0, config.SIDE_BIAS_WINDOW_SEC)
+    sample = [r for r in rows if _safe_float(r.get("epoch"), 0.0) >= cutoff]
+    min_ticks = max(2, int(config.SIDE_BIAS_MIN_TICKS))
+    if len(sample) < min_ticks:
+        return 1.0, {"enabled": 1.0, "ticks": float(len(sample))}
+
+    mids: list[float] = []
+    fallback_mid = 0.0
+    for row in sample:
+        _, _, mid = _quotes_from_row(row, fallback_mid=fallback_mid)
+        if mid <= 0.0:
+            continue
+        mids.append(mid)
+        fallback_mid = mid
+    if len(mids) < 2:
+        return 1.0, {"enabled": 1.0, "ticks": float(len(mids))}
+
+    drift_pips = (mids[-1] - mids[0]) / config.PIP_VALUE
+    side_sign = 1.0 if side == "long" else -1.0
+    aligned_pips = drift_pips * side_sign
+    min_drift = max(0.0, config.SIDE_BIAS_MIN_DRIFT_PIPS)
+    contra_pips = max(0.0, -aligned_pips - min_drift)
+    if contra_pips <= 0.0:
+        return 1.0, {
+            "enabled": 1.0,
+            "drift_pips": float(drift_pips),
+            "aligned_pips": float(aligned_pips),
+            "contra_pips": 0.0,
+        }
+
+    gain = max(0.0, config.SIDE_BIAS_SCALE_GAIN)
+    floor = max(0.1, min(1.0, config.SIDE_BIAS_SCALE_FLOOR))
+    scale = max(floor, 1.0 - contra_pips * gain)
+    block_threshold = max(0.0, min(1.0, config.SIDE_BIAS_BLOCK_THRESHOLD))
+    if block_threshold > 0.0 and scale <= block_threshold:
+        scale = 0.0
+
+    return float(scale), {
+        "enabled": 1.0,
+        "drift_pips": float(drift_pips),
+        "aligned_pips": float(aligned_pips),
+        "contra_pips": float(contra_pips),
+        "scale": float(scale),
+    }
 
 
 def _confidence_scale(conf: int) -> float:
@@ -1003,6 +1096,10 @@ async def scalp_ping_5s_worker() -> None:
             )
             units_risk = int(round(max(0.0, lot) * 100000))
             units = min(units, units_risk, config.MAX_UNITS)
+            bias_scale, bias_meta = _directional_bias_scale(ticks, signal.side)
+            if bias_scale <= 0.0:
+                continue
+            units = int(round(units * bias_scale))
             if units < config.MIN_UNITS:
                 continue
             units = abs(units)
@@ -1055,6 +1152,10 @@ async def scalp_ping_5s_worker() -> None:
                 ),
                 "tp_time_target_sec": round(config.TP_TARGET_HOLD_SEC, 1),
                 "tp_time_sample": int(tp_profile.sample),
+                "side_bias_scale": round(float(bias_scale), 3),
+                "side_bias_drift_pips": round(float(_safe_float(bias_meta.get("drift_pips"), 0.0)), 3),
+                "side_bias_aligned_pips": round(float(_safe_float(bias_meta.get("aligned_pips"), 0.0)), 3),
+                "side_bias_contra_pips": round(float(_safe_float(bias_meta.get("contra_pips"), 0.0)), 3),
                 "entry_mode": "market_ping_5s",
                 "trap_active": bool(trap_state.active),
                 "entry_ref": round(entry_price, 3),
@@ -1094,7 +1195,7 @@ async def scalp_ping_5s_worker() -> None:
             rate_limiter.record(now_mono)
 
             LOG.info(
-                "%s open side=%s units=%s conf=%d mom=%.2fp trig=%.2fp sp=%.2fp tp=%.2fp sl=%.2fp tp_mult=%.2f tp_avg=%.0fs res=%s",
+                "%s open side=%s units=%s conf=%d mom=%.2fp trig=%.2fp sp=%.2fp tp=%.2fp sl=%.2fp bias=%.2f drift=%.2fp tp_mult=%.2f tp_avg=%.0fs res=%s",
                 config.LOG_PREFIX,
                 signal.side,
                 units,
@@ -1104,6 +1205,8 @@ async def scalp_ping_5s_worker() -> None:
                 signal.spread_pips,
                 tp_pips,
                 sl_pips,
+                bias_scale,
+                _safe_float(bias_meta.get("drift_pips"), 0.0),
                 tp_profile.multiplier,
                 tp_profile.avg_tp_sec,
                 result or "none",

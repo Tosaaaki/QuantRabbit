@@ -100,6 +100,33 @@ def test_compute_targets_uses_spread_plus_micro_edge(monkeypatch) -> None:
     assert tp_pips == pytest.approx(0.55, abs=1e-6)
 
 
+def test_directional_bias_scale_downsizes_contra_flow(monkeypatch) -> None:
+    from workers.scalp_ping_5s import worker
+
+    rows = [
+        _tick(100.0, 153.000, 153.002, 153.001),
+        _tick(101.0, 153.003, 153.005, 153.004),
+        _tick(102.0, 153.005, 153.007, 153.006),
+        _tick(103.0, 153.007, 153.009, 153.008),
+        _tick(104.0, 153.009, 153.011, 153.010),
+    ]
+
+    monkeypatch.setattr(worker.config, "SIDE_BIAS_ENABLED", True)
+    monkeypatch.setattr(worker.config, "SIDE_BIAS_WINDOW_SEC", 10.0)
+    monkeypatch.setattr(worker.config, "SIDE_BIAS_MIN_TICKS", 4)
+    monkeypatch.setattr(worker.config, "SIDE_BIAS_MIN_DRIFT_PIPS", 0.4)
+    monkeypatch.setattr(worker.config, "SIDE_BIAS_SCALE_GAIN", 0.5)
+    monkeypatch.setattr(worker.config, "SIDE_BIAS_SCALE_FLOOR", 0.3)
+    monkeypatch.setattr(worker.config, "SIDE_BIAS_BLOCK_THRESHOLD", 0.0)
+
+    short_scale, short_meta = worker._directional_bias_scale(rows, "short")
+    long_scale, _ = worker._directional_bias_scale(rows, "long")
+
+    assert short_scale == pytest.approx(0.75, abs=1e-9)
+    assert short_meta["drift_pips"] > 0.0
+    assert long_scale == pytest.approx(1.0, abs=1e-9)
+
+
 def test_compute_trap_state_active_when_hedged_and_underwater(monkeypatch) -> None:
     from workers.scalp_ping_5s import worker
 
@@ -389,6 +416,93 @@ async def test_enforce_new_entry_time_stop_closes_max_floating_loss(monkeypatch)
     assert len(calls) == 1
     assert calls[0][0] == "hard-loss"
     assert calls[0][4] == "max_floating_loss"
+
+
+@pytest.mark.asyncio
+async def test_enforce_new_entry_time_stop_closes_giveback_lock(monkeypatch) -> None:
+    from workers.scalp_ping_5s import worker
+
+    worker._TRADE_MFE_PIPS.clear()
+    monkeypatch.setattr(worker.config, "STRATEGY_TAG", "scalp_ping_5s_live")
+    monkeypatch.setattr(worker.config, "FORCE_EXIT_MAX_HOLD_SEC", 0.0)
+    monkeypatch.setattr(worker.config, "FORCE_EXIT_MAX_FLOATING_LOSS_PIPS", 0.0)
+    monkeypatch.setattr(worker.config, "FORCE_EXIT_RECOVERY_WINDOW_SEC", 0.0)
+    monkeypatch.setattr(worker.config, "FORCE_EXIT_RECOVERABLE_LOSS_PIPS", 0.0)
+    monkeypatch.setattr(worker.config, "FORCE_EXIT_GIVEBACK_ENABLED", True)
+    monkeypatch.setattr(worker.config, "FORCE_EXIT_GIVEBACK_ARM_PIPS", 1.5)
+    monkeypatch.setattr(worker.config, "FORCE_EXIT_GIVEBACK_BACKOFF_PIPS", 1.0)
+    monkeypatch.setattr(worker.config, "FORCE_EXIT_GIVEBACK_MIN_HOLD_SEC", 15.0)
+    monkeypatch.setattr(worker.config, "FORCE_EXIT_GIVEBACK_PROTECT_PIPS", -0.1)
+    monkeypatch.setattr(worker.config, "FORCE_EXIT_GIVEBACK_REASON", "giveback_lock")
+    monkeypatch.setattr(worker.config, "FORCE_EXIT_MAX_ACTIONS", 3)
+    monkeypatch.setattr(worker.config, "FORCE_EXIT_REQUIRE_POLICY_GENERATION", True)
+    monkeypatch.setattr(worker.config, "FORCE_EXIT_POLICY_GENERATION", "2026-02-12-giveback-v1")
+
+    calls: list[tuple[str, int, str | None, bool, str | None, str | None]] = []
+
+    async def _fake_close_trade(
+        trade_id: str,
+        units: int | None = None,
+        client_order_id: str | None = None,
+        allow_negative: bool = False,
+        exit_reason: str | None = None,
+        env_prefix: str | None = None,
+    ) -> bool:
+        calls.append((trade_id, int(units or 0), client_order_id, allow_negative, exit_reason, env_prefix))
+        return True
+
+    monkeypatch.setattr(worker, "close_trade", _fake_close_trade)
+
+    first_now = datetime.datetime(2026, 2, 12, 2, 0, 0, tzinfo=datetime.timezone.utc)
+    pocket_info_peak = {
+        "open_trades": [
+            {
+                "trade_id": "giveback-1",
+                "units": 1100,
+                "open_time": "2026-02-12T01:59:20+00:00",
+                "strategy_tag": "scalp_ping_5s_live",
+                "unrealized_pl_pips": 1.8,
+                "entry_thesis": {
+                    "strategy_tag": "scalp_ping_5s_live",
+                    "policy_generation": "2026-02-12-giveback-v1",
+                },
+            }
+        ]
+    }
+    closed_first = await worker._enforce_new_entry_time_stop(
+        pocket_info=pocket_info_peak,
+        now_utc=first_now,
+        logger=worker.LOG,
+    )
+    assert closed_first == 0
+    assert calls == []
+
+    second_now = datetime.datetime(2026, 2, 12, 2, 0, 20, tzinfo=datetime.timezone.utc)
+    pocket_info_reversal = {
+        "open_trades": [
+            {
+                "trade_id": "giveback-1",
+                "units": 1100,
+                "open_time": "2026-02-12T01:59:20+00:00",
+                "strategy_tag": "scalp_ping_5s_live",
+                "client_id": "qr-giveback-1",
+                "unrealized_pl_pips": -0.2,
+                "entry_thesis": {
+                    "strategy_tag": "scalp_ping_5s_live",
+                    "policy_generation": "2026-02-12-giveback-v1",
+                },
+            }
+        ]
+    }
+    closed_second = await worker._enforce_new_entry_time_stop(
+        pocket_info=pocket_info_reversal,
+        now_utc=second_now,
+        logger=worker.LOG,
+    )
+    assert closed_second == 1
+    assert len(calls) == 1
+    assert calls[0][0] == "giveback-1"
+    assert calls[0][4] == "giveback_lock"
 
 
 def test_tick_density_uses_window_cutoff() -> None:

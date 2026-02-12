@@ -84,6 +84,28 @@ CONFIDENCE_CEIL: int = max(
     CONFIDENCE_FLOOR + 1, int(float(os.getenv("SCALP_PING_5S_CONF_CEIL", "92")))
 )
 
+SIDE_BIAS_ENABLED: bool = _bool_env("SCALP_PING_5S_SIDE_BIAS_ENABLED", True)
+SIDE_BIAS_WINDOW_SEC: float = max(
+    SIGNAL_WINDOW_SEC,
+    float(os.getenv("SCALP_PING_5S_SIDE_BIAS_WINDOW_SEC", "18.0")),
+)
+SIDE_BIAS_MIN_TICKS: int = max(
+    2,
+    int(float(os.getenv("SCALP_PING_5S_SIDE_BIAS_MIN_TICKS", str(MIN_SIGNAL_TICKS)))),
+)
+SIDE_BIAS_MIN_DRIFT_PIPS: float = max(
+    0.0, float(os.getenv("SCALP_PING_5S_SIDE_BIAS_MIN_DRIFT_PIPS", "0.6"))
+)
+SIDE_BIAS_SCALE_GAIN: float = max(
+    0.0, float(os.getenv("SCALP_PING_5S_SIDE_BIAS_SCALE_GAIN", "0.35"))
+)
+SIDE_BIAS_SCALE_FLOOR: float = max(
+    0.1, min(1.0, float(os.getenv("SCALP_PING_5S_SIDE_BIAS_SCALE_FLOOR", "0.35")))
+)
+SIDE_BIAS_BLOCK_THRESHOLD: float = max(
+    0.0, min(1.0, float(os.getenv("SCALP_PING_5S_SIDE_BIAS_BLOCK_THRESHOLD", "0.0")))
+)
+
 TP_BASE_PIPS: float = max(0.2, float(os.getenv("SCALP_PING_5S_TP_BASE_PIPS", "0.2")))
 TP_NET_MIN_PIPS: float = max(0.1, float(os.getenv("SCALP_PING_5S_TP_NET_MIN_PIPS", "0.25")))
 TP_MAX_PIPS: float = max(TP_BASE_PIPS, float(os.getenv("SCALP_PING_5S_TP_MAX_PIPS", "1.0")))
@@ -225,6 +247,26 @@ FORCE_EXIT_MAX_FLOATING_LOSS_REASON: str = (
 FORCE_EXIT_RECOVERY_REASON: str = (
     os.getenv("SCALP_PING_5S_FORCE_EXIT_RECOVERY_REASON", "no_recovery").strip()
     or "no_recovery"
+)
+FORCE_EXIT_GIVEBACK_ENABLED: bool = _bool_env(
+    "SCALP_PING_5S_FORCE_EXIT_GIVEBACK_ENABLED",
+    False,
+)
+FORCE_EXIT_GIVEBACK_ARM_PIPS: float = max(
+    0.0, float(os.getenv("SCALP_PING_5S_FORCE_EXIT_GIVEBACK_ARM_PIPS", "0.0"))
+)
+FORCE_EXIT_GIVEBACK_BACKOFF_PIPS: float = max(
+    0.0, float(os.getenv("SCALP_PING_5S_FORCE_EXIT_GIVEBACK_BACKOFF_PIPS", "0.0"))
+)
+FORCE_EXIT_GIVEBACK_MIN_HOLD_SEC: float = max(
+    0.0, float(os.getenv("SCALP_PING_5S_FORCE_EXIT_GIVEBACK_MIN_HOLD_SEC", "0.0"))
+)
+FORCE_EXIT_GIVEBACK_PROTECT_PIPS: float = float(
+    os.getenv("SCALP_PING_5S_FORCE_EXIT_GIVEBACK_PROTECT_PIPS", "0.0")
+)
+FORCE_EXIT_GIVEBACK_REASON: str = (
+    os.getenv("SCALP_PING_5S_FORCE_EXIT_GIVEBACK_REASON", "giveback_lock").strip()
+    or "giveback_lock"
 )
 FORCE_EXIT_REQUIRE_POLICY_GENERATION: bool = _bool_env(
     "SCALP_PING_5S_FORCE_EXIT_REQUIRE_POLICY_GENERATION",

@@ -15,9 +15,12 @@ from execution.order_manager import (
     _entry_quality_gate,
     _entry_quality_microstructure_gate_decision,
     _entry_quality_regime_gate_decision,
+    _fallback_protections,
     _loss_cap_units_from_sl,
+    _min_rr_adjust_mode_for,
     _order_spread_block_pips,
     _preflight_units,
+    _protection_fallback_gap_price,
     _projected_usage_with_netting,
 )
 
@@ -372,3 +375,49 @@ def test_policy_generation_marker_applies_only_to_new_entries(monkeypatch) -> No
 
     reduced = _augment_entry_thesis_policy_generation(thesis, reduce_only=True)
     assert reduced == thesis
+
+
+def test_min_rr_adjust_mode_prefers_strategy_then_pocket(monkeypatch) -> None:
+    monkeypatch.setenv("ORDER_MIN_RR_ADJUST_MODE", "sl")
+    monkeypatch.setenv("ORDER_MIN_RR_ADJUST_MODE_SCALP_FAST", "both")
+    monkeypatch.setenv("ORDER_MIN_RR_ADJUST_MODE_STRATEGY_SCALP_PING_5S_LIVE", "tp")
+    monkeypatch.setattr(order_manager, "_MIN_RR_ADJUST_MODE", "sl")
+
+    mode = _min_rr_adjust_mode_for("scalp_fast", strategy_tag="scalp_ping_5s_live")
+    assert mode == "tp"
+
+    mode_pocket = _min_rr_adjust_mode_for("scalp_fast", strategy_tag="other")
+    assert mode_pocket == "both"
+
+    mode_global = _min_rr_adjust_mode_for("micro", strategy_tag="other")
+    assert mode_global == "sl"
+
+
+def test_protection_fallback_gap_price_prefers_strategy_then_pocket(monkeypatch) -> None:
+    monkeypatch.setattr(order_manager, "_PROTECTION_FALLBACK_PIPS", 0.12)
+    monkeypatch.setenv("ORDER_PROTECTION_FALLBACK_PIPS_SCALP_FAST", "0.02")
+    monkeypatch.setenv(
+        "ORDER_PROTECTION_FALLBACK_PIPS_STRATEGY_SCALP_PING_5S_LIVE",
+        "0.015",
+    )
+
+    assert _protection_fallback_gap_price("scalp_fast", strategy_tag="scalp_ping_5s_live") == 0.015
+    assert _protection_fallback_gap_price("scalp_fast", strategy_tag="unknown") == 0.02
+    assert _protection_fallback_gap_price("micro", strategy_tag="unknown") == 0.12
+
+
+def test_fallback_protections_widens_only_rejected_side() -> None:
+    baseline = 153.050
+    sl, tp = _fallback_protections(
+        baseline,
+        is_buy=True,
+        has_sl=True,
+        has_tp=True,
+        reason_key="STOP_LOSS_ON_FILL_LOSS",
+        sl_gap_pips=0.75,
+        tp_gap_pips=0.90,
+        fallback_gap_price=0.018,
+    )
+
+    assert sl == 153.032
+    assert tp == 153.059

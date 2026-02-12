@@ -1642,6 +1642,48 @@ _MIN_RR_BY_POCKET = {
     "manual": float(os.getenv("ORDER_MIN_RR_MANUAL", "1.0")),
 }
 _MIN_RR_ADJUST_MODE = os.getenv("ORDER_MIN_RR_ADJUST_MODE", "tp").strip().lower()
+_MIN_RR_ADJUST_MODES = {"tp", "sl", "sl_first", "both"}
+
+
+def _min_rr_adjust_mode_for(
+    pocket: Optional[str],
+    *,
+    strategy_tag: Optional[str] = None,
+) -> str:
+    strategy_key = _strategy_env_key(strategy_tag)
+    if strategy_key:
+        raw = os.getenv(f"ORDER_MIN_RR_ADJUST_MODE_STRATEGY_{strategy_key}")
+        if raw is not None:
+            mode = str(raw).strip().lower()
+            if mode in _MIN_RR_ADJUST_MODES:
+                return mode
+    pocket_key = str(pocket or "").strip().upper()
+    if pocket_key:
+        raw = os.getenv(f"ORDER_MIN_RR_ADJUST_MODE_{pocket_key}")
+        if raw is not None:
+            mode = str(raw).strip().lower()
+            if mode in _MIN_RR_ADJUST_MODES:
+                return mode
+    if _MIN_RR_ADJUST_MODE in _MIN_RR_ADJUST_MODES:
+        return _MIN_RR_ADJUST_MODE
+    return "tp"
+
+
+def _protection_fallback_gap_price(
+    pocket: Optional[str],
+    *,
+    strategy_tag: Optional[str] = None,
+) -> float:
+    strategy_override = _strategy_env_float("ORDER_PROTECTION_FALLBACK_PIPS", strategy_tag)
+    if strategy_override is not None:
+        return max(0.0005, float(strategy_override))
+    pocket_val = _pocket_env_float(
+        "ORDER_PROTECTION_FALLBACK_PIPS",
+        pocket,
+        _PROTECTION_FALLBACK_PIPS,
+    )
+    return max(0.0005, float(pocket_val))
+
 # Cap extreme TP distances (pips) to keep targets realistic.
 _TP_CAP_ENABLED = os.getenv("ORDER_TP_CAP_ENABLED", "1").strip().lower() not in {
     "",
@@ -3178,31 +3220,68 @@ def _fallback_protections(
     is_buy: bool,
     has_sl: bool,
     has_tp: bool,
+    reason_key: Optional[str],
     sl_gap_pips: Optional[float],
     tp_gap_pips: Optional[float],
+    fallback_gap_price: float,
 ) -> tuple[Optional[float], Optional[float]]:
-    """Return wider SL/TP values used after STOP_LOSS_ON_FILL rejects."""
+    """Return retry SL/TP values after protection rejects."""
 
     if baseline_price is None:
         return None, None
-    gap_sl = _PROTECTION_FALLBACK_PIPS
-    gap_tp = _PROTECTION_FALLBACK_PIPS
+    gap_fallback = max(0.0005, float(fallback_gap_price))
+    gap_sl = gap_fallback
+    gap_tp = gap_fallback
     try:
-        if sl_gap_pips is not None:
-            gap_sl = max(gap_sl, float(sl_gap_pips) * 0.01)
+        parsed_sl = float(sl_gap_pips) if sl_gap_pips is not None else None
     except (TypeError, ValueError):
-        pass
+        parsed_sl = None
     try:
-        if tp_gap_pips is not None:
-            gap_tp = max(gap_tp, float(tp_gap_pips) * 0.01)
+        parsed_tp = float(tp_gap_pips) if tp_gap_pips is not None else None
     except (TypeError, ValueError):
-        pass
+        parsed_tp = None
+    if parsed_sl is not None and parsed_sl > 0.0:
+        gap_sl = max(0.0005, parsed_sl * 0.01)
+    if parsed_tp is not None and parsed_tp > 0.0:
+        gap_tp = max(0.0005, parsed_tp * 0.01)
     if is_buy:
         sl_price = round(baseline_price - gap_sl, 3) if has_sl else None
         tp_price = round(baseline_price + gap_tp, 3) if has_tp else None
     else:
         sl_price = round(baseline_price + gap_sl, 3) if has_sl else None
         tp_price = round(baseline_price - gap_tp, 3) if has_tp else None
+
+    needs_sl = False
+    needs_tp = False
+    reason_upper = str(reason_key or "").upper()
+    if has_sl:
+        needs_sl = "STOP_LOSS" in reason_upper or not reason_upper
+    if has_tp:
+        needs_tp = "TAKE_PROFIT" in reason_upper or not reason_upper
+    if (has_sl or has_tp) and not (needs_sl or needs_tp):
+        needs_sl = bool(has_sl)
+        needs_tp = bool(has_tp)
+
+    sl_price, tp_price, _ = _normalize_protections(
+        baseline_price,
+        sl_price,
+        tp_price,
+        is_buy,
+    )
+    if has_sl and needs_sl and sl_price is not None:
+        distance = abs(float(baseline_price) - float(sl_price))
+        if distance + 1e-9 < gap_fallback:
+            sl_price = round(
+                float(baseline_price) - gap_fallback if is_buy else float(baseline_price) + gap_fallback,
+                3,
+            )
+    if has_tp and needs_tp and tp_price is not None:
+        distance = abs(float(tp_price) - float(baseline_price))
+        if distance + 1e-9 < gap_fallback:
+            tp_price = round(
+                float(baseline_price) + gap_fallback if is_buy else float(baseline_price) - gap_fallback,
+                3,
+            )
     return sl_price, tp_price
 
 
@@ -3211,12 +3290,14 @@ def _derive_fallback_basis(
     sl_price: Optional[float],
     tp_price: Optional[float],
     is_buy: bool,
+    *,
+    fallback_gap_price: float,
 ) -> Optional[float]:
     if estimated_price is not None:
         return estimated_price
     if sl_price is not None and tp_price is not None:
         return float((sl_price + tp_price) / 2.0)
-    gap = _PROTECTION_FALLBACK_PIPS
+    gap = max(0.0005, float(fallback_gap_price))
     if sl_price is not None:
         return float(sl_price + (gap if is_buy else -gap))
     if tp_price is not None:
@@ -7263,7 +7344,10 @@ async def market_order(
             tp_pips = abs(tp_price - entry_basis) / 0.01
             if sl_pips > 0.0 and tp_pips > 0.0 and tp_pips < sl_pips * min_rr:
                 max_sl_pips = tp_pips / min_rr if min_rr > 0 else 0.0
-                mode = _MIN_RR_ADJUST_MODE
+                mode = _min_rr_adjust_mode_for(
+                    pocket,
+                    strategy_tag=strategy_tag,
+                )
                 sl_adjusted = False
                 if mode in {"sl", "sl_first", "both"} and max_sl_pips > 0.0 and sl_pips > max_sl_pips:
                     if units > 0:
@@ -8067,19 +8151,49 @@ async def market_order(
                     and reason_key in _PROTECTION_RETRY_REASONS
                     and (sl_price is not None or tp_price is not None)
                 ):
+                    fallback_gap_price = _protection_fallback_gap_price(
+                        pocket,
+                        strategy_tag=strategy_tag,
+                    )
+                    retry_quote = _fetch_quote(instrument)
+                    if retry_quote:
+                        quote = retry_quote
+                    retry_basis: Optional[float] = None
+                    if retry_quote:
+                        retry_basis = (
+                            _as_float(retry_quote.get("ask"))
+                            if units_to_send > 0
+                            else _as_float(retry_quote.get("bid"))
+                        )
+                    if retry_basis is None:
+                        retry_basis = entry_basis if entry_basis is not None else estimated_entry
+                    sl_gap_retry_pips = thesis_sl_pips
+                    if sl_gap_retry_pips is None and retry_basis is not None and sl_price is not None:
+                        sl_gap_retry_pips = abs(float(retry_basis) - float(sl_price)) / 0.01
+                    elif sl_gap_retry_pips is None and estimated_entry is not None and sl_price is not None:
+                        sl_gap_retry_pips = abs(float(estimated_entry) - float(sl_price)) / 0.01
+                    tp_gap_retry_pips = thesis_tp_pips
+                    if tp_gap_retry_pips is None and retry_basis is not None and tp_price is not None:
+                        tp_gap_retry_pips = abs(float(tp_price) - float(retry_basis)) / 0.01
+                    elif tp_gap_retry_pips is None and estimated_entry is not None and tp_price is not None:
+                        tp_gap_retry_pips = abs(float(tp_price) - float(estimated_entry)) / 0.01
+
                     fallback_basis = _derive_fallback_basis(
-                        estimated_entry,
+                        retry_basis,
                         sl_price,
                         tp_price,
                         units_to_send > 0,
+                        fallback_gap_price=fallback_gap_price,
                     )
                     fallback_sl, fallback_tp = _fallback_protections(
                         fallback_basis,
                         is_buy=units_to_send > 0,
                         has_sl=sl_price is not None,
                         has_tp=tp_price is not None,
-                        sl_gap_pips=thesis_sl_pips,
-                        tp_gap_pips=thesis_tp_pips,
+                        reason_key=reason_key,
+                        sl_gap_pips=sl_gap_retry_pips,
+                        tp_gap_pips=tp_gap_retry_pips,
+                        fallback_gap_price=fallback_gap_price,
                     )
                     if sl_disabled:
                         fallback_sl = None
@@ -8102,9 +8216,13 @@ async def market_order(
 
                         protection_fallback_applied = True
                         logging.warning(
-                            "[ORDER] protection fallback applied client=%s reason=%s",
+                            "[ORDER] protection fallback applied client=%s reason=%s basis=%.3f sl=%s tp=%s gap=%.4f",
                             client_order_id,
                             reason_key,
+                            float(fallback_basis) if fallback_basis is not None else -1.0,
+                            f"{fallback_sl:.3f}" if fallback_sl is not None else "-",
+                            f"{fallback_tp:.3f}" if fallback_tp is not None else "-",
+                            fallback_gap_price,
                         )
                         continue
                 if attempt == 0 and abs(units_to_send) >= 2000:
