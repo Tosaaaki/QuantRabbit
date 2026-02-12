@@ -741,14 +741,31 @@ strategies:
       strict_no_negative: true
       strict_allow_reasons:
         - profit_bank_release
+        - hard_stop
+        - tech_hard_stop
+        - max_adverse
+        - max_floating_loss
         - no_recovery
+        - giveback_lock
         - time_stop
+        - timeout
+        - drawdown
+        - max_drawdown
+        - health_exit
+        - margin_health
+        - free_margin_low
+        - margin_usage_high
+        - lock_floor
+        - trail_lock
+        - near_be
       allow_reasons:
         - profit_bank_release
         - hard_stop
         - tech_hard_stop
         - max_adverse
+        - max_floating_loss
         - no_recovery
+        - giveback_lock
         - time_stop
         - timeout
         - drawdown
@@ -775,14 +792,31 @@ strategies:
       strict_no_negative: true
       strict_allow_reasons:
         - profit_bank_release
+        - hard_stop
+        - tech_hard_stop
+        - max_adverse
+        - max_floating_loss
         - no_recovery
+        - giveback_lock
         - time_stop
+        - timeout
+        - drawdown
+        - max_drawdown
+        - health_exit
+        - margin_health
+        - free_margin_low
+        - margin_usage_high
+        - lock_floor
+        - trail_lock
+        - near_be
       allow_reasons:
         - profit_bank_release
         - hard_stop
         - tech_hard_stop
         - max_adverse
+        - max_floating_loss
         - no_recovery
+        - giveback_lock
         - time_stop
         - timeout
         - drawdown
