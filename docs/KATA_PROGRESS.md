@@ -65,13 +65,40 @@ scripts/vm.sh -p quantrabbit -z asia-northeast1-a -m fx-trader-vm -t sql \
   -q "SELECT CASE WHEN pattern_id LIKE '%|rg:bot|%' THEN 'bot' WHEN pattern_id LIKE '%|rg:low|%' THEN 'low' WHEN pattern_id LIKE '%|rg:mid|%' THEN 'mid' WHEN pattern_id LIKE '%|rg:high|%' THEN 'high' WHEN pattern_id LIKE '%|rg:top|%' THEN 'top' ELSE 'na' END AS rg, COUNT(*) AS trades, ROUND(AVG(pl_pips),4) AS avg_pips, ROUND(AVG(CASE WHEN pl_pips>0 THEN 1.0 ELSE 0.0 END),3) AS win_rate FROM pattern_trade_features WHERE strategy_tag='scalp_ping_5s_live' GROUP BY rg ORDER BY trades DESC;"
 ```
 
+補足（原因の切り分け）:
+- `rg:na` のサンプルを `trades.db` で確認すると、`section_axis` は付いているが `entry_ref`（および `entry_price/ideal_entry/entry_mean`）が `entry_thesis` に入っていない古いトレードが混ざっている。
+- その場合 `analysis/pattern_book.py:_range_bucket()` は `entry_ref` を取れず `na` になる（`section_axis` 欠損が主因ではない）。
+- 現行の `workers/scalp_ping_5s/worker.py` は `entry_thesis["entry_ref"]` を入れているため、新規トレードは自然に改善する見込み。
+
+確認コマンド（VM、`rg:na` の entry_thesis を点検）:
+```bash
+scripts/vm.sh -p quantrabbit -z asia-northeast1-a -m fx-trader-vm -t exec -- "
+cd /home/tossaki/QuantRabbit && python3 - <<'PY'
+import json, sqlite3
+
+conp = sqlite3.connect('logs/patterns.db')
+conp.row_factory = sqlite3.Row
+txs = [r['transaction_id'] for r in conp.execute(
+  "SELECT transaction_id FROM pattern_trade_features WHERE strategy_tag='scalp_ping_5s_live' AND pattern_id LIKE '%|rg:na|%' ORDER BY close_time DESC LIMIT 20"
+).fetchall()]
+
+cont = sqlite3.connect('logs/trades.db')
+cont.row_factory = sqlite3.Row
+q = 'SELECT transaction_id, close_time, entry_thesis FROM trades WHERE transaction_id IN ({})'.format(','.join(['?']*len(txs)))
+for r in cont.execute(q, txs).fetchall():
+  th = json.loads(r['entry_thesis']) if r['entry_thesis'] else {}
+  axis = th.get('section_axis')
+  print(r['transaction_id'], r['close_time'], 'has_axis', isinstance(axis, dict), 'entry_ref', th.get('entry_ref'))
+PY"
+```
+
 ## 次のアクション（優先順）
 ### P0: `scalp_ping_5s` を「壊さず強くする」（おすすめ方針）
 - いま `rg:na` にも deep 上の `avoid` が存在し、Pattern Gate がブロックに使えている。
 - ここで `pattern_id` の構成を大きく変えると、既存の `avoid` ブロックが一時的に効かなくなるリスクがある。
 
 やること:
-1. `rg:na` が出る原因を VM 実データで切り分け（`section_axis` が付かない割合・タイミング）。
+1. `rg:na` が出る原因を VM 実データで切り分け（`entry_ref` 欠損 / `section_axis` 欠損 / データ不整合）。
 2. `avoid/weak` を「回避・縮小」する用途を優先して継続運用（ブーストは慎重）。
 3. `entry_range_bucket` の導入は “移行計画あり” で後段に回す（必要なら「旧 `pattern_id` 参照のフォールバック」など、ブロック消失を避ける手当を先に入れる）。
 
@@ -91,4 +118,5 @@ scripts/vm.sh -p quantrabbit -z asia-northeast1-a -m fx-trader-vm -t sql \
 - `docs/KATA_SCALP_PING_5S.md` が main に存在（commit: `7e111d7a`）。
 - VM `pattern_scores` で `scalp_ping_5s_live` は patterns=73 / trades_sum=1562 / ge30=14 / ge90=4 を確認。
 - `rg:na` が 235 trades（約15%）あるが、deep 上は少数パターンに集中していることを確認。
+- `rg:na` の原因は「`section_axis` 欠損」ではなく「古いトレードの `entry_thesis` に `entry_ref` が入っていない」ケースがあることを確認（`trades.db` サンプル点検）。
 - 方針決定: `pattern_id` を急に変えず、まずは `avoid/weak` の回避・縮小に効かせる（P0）。
