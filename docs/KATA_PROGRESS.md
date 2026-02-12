@@ -135,6 +135,7 @@ PY"
 - `TickImbalance` opt-in（generic許可）: `workers/scalp_precision/worker.py`（commit: `948752cb`）
 - `MicroRangeBreak` opt-in（generic許可）+ docs 追加: `workers/micro_multistrat/worker.py`（commit: `61b0a19d`） / `docs/KATA_MICRO_RANGEBREAK.md`（commit: `43ac2f86`） / `AGENTS.md` 動線（commit: `3f605189`） / env例（commit: `710fcab1`）
 - VM状況（2026-02-12）: TickImbalance は `reentry_block` が強く Pattern Gate まで届いていない（`logs/orders.db`）。`scalp_ping_5s` は pattern_id が細かく分岐するため、deep に存在しない新pattern_idでは gate が no-op になる（`logs/patterns.db` 側に row が出るまで None）。
-- VM 反映確認: `/home/tossaki/QuantRabbit` の `HEAD == origin/main == fd4a185c`。
+- VM 反映確認（2026-02-12T13:46Z 時点）: `/home/tossaki/QuantRabbit` の `HEAD == origin/main == fd4a185c`。
 - `quantrabbit.service` 再起動: 2026-02-12T13:46:06Z（`Application started!`: 2026-02-12T13:46:14Z）。
 - `quant-micro-multi.service` 再起動: 2026-02-12T13:48:06Z。
+- 追記（docs-only）: main はその後 `6c07f470` まで進んだ（サービス再起動は実施していない）。
