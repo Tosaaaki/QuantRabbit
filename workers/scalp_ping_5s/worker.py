@@ -825,10 +825,21 @@ async def _fetch_price_snapshot(logger: logging.Logger) -> bool:
     try:
         bid = float(bids[0]["price"])
         ask = float(asks[0]["price"])
-        ts = _parse_time(price.get("time", datetime.datetime.utcnow().isoformat() + "Z"))
+        quote_ts = _parse_time(price.get("time", datetime.datetime.utcnow().isoformat() + "Z"))
     except Exception as exc:
         logger.warning("%s snapshot parse failed: %s", config.LOG_PREFIX, exc)
         return False
+
+    fetched_at = datetime.datetime.now(datetime.timezone.utc)
+    if quote_ts.tzinfo is None:
+        quote_ts = quote_ts.replace(tzinfo=datetime.timezone.utc)
+    quote_ts_utc = quote_ts.astimezone(datetime.timezone.utc)
+    quote_age_ms = max(0.0, (fetched_at - quote_ts_utc).total_seconds() * 1000.0)
+    ts = quote_ts_utc
+    if quote_age_ms > max(0.0, float(config.MAX_TICK_AGE_MS)):
+        # Pricing API can return an unchanged quote timestamp during quiet periods.
+        # Treat fallback snapshots as fresh at fetch time to avoid stale-loop lockups.
+        ts = fetched_at
 
     tick = SimpleNamespace(bid=bid, ask=ask, time=ts)
     try:

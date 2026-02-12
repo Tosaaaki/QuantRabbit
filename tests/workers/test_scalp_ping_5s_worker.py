@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import datetime
 import os
 
@@ -667,3 +668,58 @@ async def test_maybe_topup_micro_density_skips_when_density_is_enough(monkeypatc
     assert snapshot_calls == []
     assert last_fetch == pytest.approx(0.0)
     assert stats is None
+
+
+def test_fetch_price_snapshot_normalizes_stale_quote_timestamp(monkeypatch) -> None:
+    from workers.scalp_ping_5s import worker
+
+    monkeypatch.setattr(worker, "_OANDA_TOKEN", "token")
+    monkeypatch.setattr(worker, "_OANDA_ACCOUNT", "account")
+    monkeypatch.setattr(worker.config, "MAX_TICK_AGE_MS", 2500.0)
+
+    stale_quote_ts = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(seconds=5)
+    monkeypatch.setattr(worker, "_parse_time", lambda _raw: stale_quote_ts)
+
+    class _DummyResponse:
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> dict:
+            return {
+                "prices": [
+                    {
+                        "bids": [{"price": "150.000"}],
+                        "asks": [{"price": "150.010"}],
+                        "time": "2026-02-12T02:00:00Z",
+                    }
+                ]
+            }
+
+    class _DummyClient:
+        def __init__(self, *args, **kwargs) -> None:
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb) -> None:
+            return None
+
+        async def get(self, *args, **kwargs):
+            return _DummyResponse()
+
+    monkeypatch.setattr(worker.httpx, "AsyncClient", _DummyClient)
+
+    captured: dict[str, object] = {}
+    monkeypatch.setattr(worker.spread_monitor, "update_from_tick", lambda tick: captured.setdefault("tick", tick))
+    monkeypatch.setattr(worker.tick_window, "record", lambda tick: captured.setdefault("recorded", tick))
+
+    ok = asyncio.run(worker._fetch_price_snapshot(worker.LOG))
+    assert ok is True
+    recorded = captured.get("recorded")
+    assert recorded is not None
+    recorded_time = getattr(recorded, "time")
+    if recorded_time.tzinfo is None:
+        recorded_time = recorded_time.replace(tzinfo=datetime.timezone.utc)
+    age_sec = (datetime.datetime.now(datetime.timezone.utc) - recorded_time).total_seconds()
+    assert age_sec < 1.5
