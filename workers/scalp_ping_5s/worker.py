@@ -2852,10 +2852,15 @@ async def _fetch_price_snapshot(logger: logging.Logger) -> bool:
                 exc,
             )
             return False
+        _SNAPSHOT_FETCH_FAILURES += 1
+        delay = _snapshot_retry_delay_seconds(_SNAPSHOT_FETCH_FAILURES)
+        _SNAPSHOT_FETCH_BACKOFF_UNTIL_MONO = now_mono + delay
         logger.warning(
-            "%s snapshot fetch failed (http %s): %s",
+            "%s snapshot fetch failed (http %s). retry in %.1fs (failures=%d): %s",
             config.LOG_PREFIX,
             status_code,
+            delay,
+            _SNAPSHOT_FETCH_FAILURES,
             exc,
         )
         return False
@@ -2895,6 +2900,15 @@ async def _fetch_price_snapshot(logger: logging.Logger) -> bool:
     bids = price.get("bids") or []
     asks = price.get("asks") or []
     if not bids or not asks:
+        _SNAPSHOT_FETCH_FAILURES += 1
+        delay = _snapshot_retry_delay_seconds(_SNAPSHOT_FETCH_FAILURES)
+        _SNAPSHOT_FETCH_BACKOFF_UNTIL_MONO = now_mono + delay
+        logger.warning(
+            "%s snapshot parse failed: missing bids/asks. retry in %.1fs (failures=%d)",
+            config.LOG_PREFIX,
+            delay,
+            _SNAPSHOT_FETCH_FAILURES,
+        )
         return False
 
     try:
