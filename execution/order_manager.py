@@ -1536,8 +1536,8 @@ def _disable_hard_stop_by_strategy(
     entry_thesis: Optional[dict],
 ) -> bool:
     if isinstance(entry_thesis, dict):
-        if _coerce_bool(entry_thesis.get("disable_entry_hard_stop"), False):
-            return True
+        if "disable_entry_hard_stop" in entry_thesis:
+            return _coerce_bool(entry_thesis.get("disable_entry_hard_stop"), False)
     base_tag = (strategy_tag or "").strip().lower()
     if not base_tag and isinstance(entry_thesis, dict):
         base_tag = str(
