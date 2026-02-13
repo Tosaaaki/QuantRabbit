@@ -1,4 +1,4 @@
-.PHONY: help vm-deploy vm-tail vm-logs vm-sql vm-exec gcp-bootstrap
+.PHONY: help vm-deploy vm-tail vm-logs vm-sql vm-exec gcp-bootstrap type-check type-fix vm-type-check vm-type-fix
 
 -include scripts/vm.env
 
@@ -27,10 +27,26 @@ help:
 	@echo "  vm-tail     Tail systemd logs (set VM_SERVICE)"
 	@echo "  vm-logs     Pull remote logs to ./remote_logs"
 	@echo "  vm-sql      Run SQL on remote trades.db"
+	@echo "  vm-type-check  Run type maintenance on VM (check mode)"
+	@echo "  vm-type-fix    Run type maintenance on VM (apply mode) and emit logs/type_maintenance_*.patch"
+	@echo "  type-check  Run type annotation autofix check and mypy verify"
+	@echo "  type-fix    Autofix missing annotations with Ruff and then verify"
 	@echo "  vm-exec     Run CMD='...' on VM"
 	@echo "  gcp-bootstrap  Enable project IAM/APIs/OS Login (set GCP_USER and BILLING)"
 	@echo ""
 	@echo "Tip: copy scripts/vm.env.example to scripts/vm.env and edit."
+
+type-check:
+	@python3 scripts/type_maintenance.py
+
+type-fix:
+	@python3 scripts/type_maintenance.py --apply
+
+vm-type-check:
+	@./scripts/vm.sh $(GCLOUD_FLAGS) exec -- "TYPE_MAINTENANCE_MODE=check TYPE_MAINTENANCE_REPO=$(REMOTE_DIR) $(REMOTE_DIR)/scripts/type_maintenance_vm.sh"
+
+vm-type-fix:
+	@./scripts/vm.sh $(GCLOUD_FLAGS) exec -- "TYPE_MAINTENANCE_MODE=apply TYPE_MAINTENANCE_REPO=$(REMOTE_DIR) $(REMOTE_DIR)/scripts/type_maintenance_vm.sh"
 
 vm-deploy:
 	@[ -n "$(PROJECT)" ] && [ -n "$(ZONE)" ] && [ -n "$(INSTANCE)" ] || { echo "Set PROJECT, ZONE, INSTANCE (scripts/vm.env)."; exit 1; }
