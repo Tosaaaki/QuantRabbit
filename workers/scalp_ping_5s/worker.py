@@ -572,6 +572,54 @@ def _should_defer_force_exit(
     return True, "fib_wait", fib, regime
 
 
+def _detect_momentum_stall_for_open_trade(
+    *,
+    trade_side: str,
+    hold_sec: float,
+    rows: Sequence[dict],
+) -> tuple[bool, float, float]:
+    if not config.FORCE_EXIT_MOMENTUM_STALL_ENABLED:
+        return False, 0.0, 0.0
+    if hold_sec < float(config.FORCE_EXIT_MOMENTUM_STALL_MIN_HOLD_SEC):
+        return False, 0.0, 0.0
+    if trade_side not in {"long", "short"}:
+        return False, 0.0, 0.0
+
+    if _latest_tick_age_ms(rows) > config.FORCE_EXIT_MOMENTUM_STALL_MAX_TICK_AGE_MS:
+        return False, 0.0, 0.0
+
+    mids: list[float] = []
+    for row in rows:
+        _, _, mid = _quotes_from_row(row)
+        if mid > 0.0:
+            mids.append(mid)
+    if len(mids) < config.FORCE_EXIT_MOMENTUM_STALL_MIN_TICKS:
+        return False, 0.0, 0.0
+
+    split = max(2, len(mids) // 2)
+    first_half = mids[:-split]
+    last_half = mids[-split:]
+    if len(first_half) < 2 or len(last_half) < 2:
+        return False, 0.0, 0.0
+
+    first_delta = (first_half[-1] - first_half[0]) / config.PIP_VALUE
+    last_delta = (last_half[-1] - last_half[0]) / config.PIP_VALUE
+    if trade_side == "long":
+        if (
+            first_delta >= config.FORCE_EXIT_MOMENTUM_STALL_MIN_EARLY_PIPS
+            and last_delta <= -config.FORCE_EXIT_MOMENTUM_STALL_MIN_LATE_PIPS
+        ):
+            return True, first_delta, last_delta
+        return False, first_delta, last_delta
+
+    if (
+        first_delta <= -config.FORCE_EXIT_MOMENTUM_STALL_MIN_EARLY_PIPS
+        and last_delta >= config.FORCE_EXIT_MOMENTUM_STALL_MIN_LATE_PIPS
+    ):
+        return True, first_delta, last_delta
+    return False, first_delta, last_delta
+
+
 def _parse_iso_utc(raw: object) -> Optional[datetime.datetime]:
     text = str(raw or "").strip()
     if not text:
@@ -1036,6 +1084,14 @@ async def _enforce_new_entry_time_stop(
     closed_count = 0
     seen_trade_ids: set[str] = set()
     now_mono = time.monotonic()
+    momentum_rows: Optional[list[dict]] = None
+    if config.FORCE_EXIT_MOMENTUM_STALL_ENABLED:
+        momentum_rows = list(
+            tick_window.recent_ticks(
+                seconds=max(0.4, float(config.FORCE_EXIT_MOMENTUM_STALL_WINDOW_SEC)),
+                limit=max(config.FORCE_EXIT_MOMENTUM_STALL_MIN_TICKS, 40),
+            )
+        )
 
     for trade in open_trades:
         if closed_count >= config.FORCE_EXIT_MAX_ACTIONS:
@@ -1068,6 +1124,9 @@ async def _enforce_new_entry_time_stop(
         unrealized_pips = _trade_unrealized_pips(trade)
         trade_max_hold_sec = _trade_force_exit_max_hold_sec(trade, max_hold_sec)
         trade_hard_loss_pips = _trade_force_exit_hard_loss_pips(trade, hard_loss_pips)
+        trade_side = _trade_side_from_units(units)
+        if trade_side is None:
+            continue
         seen_trade_ids.add(trade_id)
 
         prev_mfe = _safe_float(_TRADE_MFE_PIPS.get(trade_id), unrealized_pips)
@@ -1105,6 +1164,28 @@ async def _enforce_new_entry_time_stop(
         elif trade_max_hold_sec > 0.0 and hold_sec >= trade_max_hold_sec:
             exit_reason = config.FORCE_EXIT_REASON
             trigger_label = "time_stop"
+        elif momentum_rows is not None:
+            stalled, first_delta, last_delta = _detect_momentum_stall_for_open_trade(
+                trade_side=trade_side,
+                hold_sec=hold_sec,
+                rows=momentum_rows,
+            )
+            if stalled:
+                if unrealized_pips >= 0.0:
+                    exit_reason = config.FORCE_EXIT_MOMENTUM_STALL_TP_REASON
+                else:
+                    exit_reason = config.FORCE_EXIT_MOMENTUM_STALL_LOSS_REASON
+                trigger_label = "momentum_stall"
+                logger.info(
+                    "%s momentum_stall candidate trade=%s side=%s hold=%.0fs first_delta=%.3f last_delta=%.3f pnl=%.2fp",
+                    config.LOG_PREFIX,
+                    trade_id,
+                    trade_side,
+                    hold_sec,
+                    first_delta,
+                    last_delta,
+                    unrealized_pips,
+                )
         if not exit_reason:
             continue
         defer, defer_reason, fib, regime = _should_defer_force_exit(
