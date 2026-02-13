@@ -813,6 +813,9 @@ WORKER_SERVICES = {
     "scalp_multi_exit": "quant-scalp-multi-exit.service",
     "scalp_ping_5s": "quant-scalp-ping-5s.service",
     "scalp_macd_rsi_div": "quant-scalp-macd-rsi-div.service",
+    "scalp_m1scalper": "quant-m1scalper.service",
+    "scalp_m1scalper_trend_long": "quant-m1scalper-trend-long.service",
+    "scalp_m1scalper_exit": "quant-m1scalper-exit.service",
     # Micro
     "micro_multi": "quant-micro-multi.service",
     "micro_multi_exit": "quant-micro-multi-exit.service",
@@ -1848,6 +1851,12 @@ def _select_worker_targets(
     if session in {"london", "ny"} and mid_vol:
         bump("london_momentum", 0.7, f"session_{session}")
 
+    # 1分スキャル: 低レイテンシでの短期トレンドに追従するため、
+    # Trend寄りでATR/出来高が十分な環境と、レンジ崩れ直前の中間環境に合わせて有効化。
+    if trending and atr_m1 >= 1.0:
+        bump("scalp_m1scalper", 0.38, "trend_m1_scalper")
+    if (low_vol or soft_range) and atr_m1 >= 0.8:
+        bump("scalp_m1scalper", 0.22, "m1_scalper_range_steady")
     # Range/低ボラ
     if low_vol or range_like:
         bump("vol_squeeze", 0.45, "range_compression")
