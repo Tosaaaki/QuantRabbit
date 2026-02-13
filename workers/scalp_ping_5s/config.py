@@ -40,13 +40,83 @@ PATTERN_GATE_OPT_IN: bool = _bool_env("SCALP_PING_5S_PATTERN_GATE_OPT_IN", True)
 LOOP_INTERVAL_SEC: float = max(0.05, float(os.getenv("SCALP_PING_5S_LOOP_INTERVAL_SEC", "0.2")))
 WINDOW_SEC: float = max(2.0, float(os.getenv("SCALP_PING_5S_WINDOW_SEC", "5.0")))
 SIGNAL_WINDOW_SEC: float = max(0.4, float(os.getenv("SCALP_PING_5S_SIGNAL_WINDOW_SEC", "1.2")))
+INSTANT_VOL_WINDOW_SEC: float = max(
+    0.25,
+    float(os.getenv("SCALP_PING_5S_INSTANT_VOL_WINDOW_SEC", "0.55")),
+)
+INSTANT_VOL_BUCKET_WEIGHT: float = max(
+    0.0,
+    min(1.0, float(os.getenv("SCALP_PING_5S_INSTANT_VOL_BUCKET_WEIGHT", "0.55"))),
+)
+INSTANT_VOL_ADAPT_ENABLED: bool = _bool_env(
+    "SCALP_PING_5S_INSTANT_VOL_ADAPT_ENABLED",
+    True,
+)
+INSTANT_SPEED_ENABLED: bool = _bool_env(
+    "SCALP_PING_5S_INSTANT_SPEED_ENABLED",
+    True,
+)
+INSTANT_SPEED_VOL_LOW_PIPS: float = max(
+    0.05,
+    float(os.getenv("SCALP_PING_5S_INSTANT_SPEED_VOL_LOW_PIPS", "0.45")),
+)
+INSTANT_SPEED_VOL_HIGH_PIPS: float = max(
+    INSTANT_SPEED_VOL_LOW_PIPS + 0.1,
+    float(os.getenv("SCALP_PING_5S_INSTANT_SPEED_VOL_HIGH_PIPS", "1.35")),
+)
+INSTANT_SPEED_SCALE_MIN: float = max(
+    0.2,
+    min(1.0, float(os.getenv("SCALP_PING_5S_INSTANT_SPEED_SCALE_MIN", "0.55"))),
+)
+INSTANT_LOOKAHEAD_SCALE_MIN: float = max(
+    INSTANT_SPEED_SCALE_MIN,
+    min(1.0, float(os.getenv("SCALP_PING_5S_INSTANT_LOOKAHEAD_SCALE_MIN", "0.35"))),
+)
+INSTANT_COOLDOWN_SCALE_MIN: float = max(
+    INSTANT_SPEED_SCALE_MIN,
+    min(1.0, float(os.getenv("SCALP_PING_5S_INSTANT_COOLDOWN_SCALE_MIN", "0.35"))),
+)
 MIN_TICKS: int = max(4, int(float(os.getenv("SCALP_PING_5S_MIN_TICKS", "12"))))
 MIN_SIGNAL_TICKS: int = max(3, int(float(os.getenv("SCALP_PING_5S_MIN_SIGNAL_TICKS", "5"))))
+LONG_MIN_SIGNAL_TICKS: int = max(
+    3,
+    int(float(os.getenv("SCALP_PING_5S_LONG_MIN_SIGNAL_TICKS", str(MIN_SIGNAL_TICKS)))),
+)
+SHORT_MIN_SIGNAL_TICKS: int = max(
+    3,
+    int(float(os.getenv("SCALP_PING_5S_SHORT_MIN_SIGNAL_TICKS", str(MIN_SIGNAL_TICKS)))),
+)
 MIN_TICK_RATE: float = max(0.5, float(os.getenv("SCALP_PING_5S_MIN_TICK_RATE", "4.0")))
+LONG_MIN_TICK_RATE: float = max(
+    0.5,
+    float(os.getenv("SCALP_PING_5S_LONG_MIN_TICK_RATE", str(MIN_TICK_RATE))),
+)
+SHORT_MIN_TICK_RATE: float = max(
+    0.5,
+    float(os.getenv("SCALP_PING_5S_SHORT_MIN_TICK_RATE", str(MIN_TICK_RATE))),
+)
 MAX_TICK_AGE_MS: float = max(100.0, float(os.getenv("SCALP_PING_5S_MAX_TICK_AGE_MS", "800.0")))
 
 MAX_SPREAD_PIPS: float = max(0.1, float(os.getenv("SCALP_PING_5S_MAX_SPREAD_PIPS", "0.85")))
 MOMENTUM_TRIGGER_PIPS: float = max(0.1, float(os.getenv("SCALP_PING_5S_MOMENTUM_TRIGGER_PIPS", "0.8")))
+LONG_MOMENTUM_TRIGGER_PIPS: float = max(
+    0.1,
+    float(
+        os.getenv(
+            "SCALP_PING_5S_LONG_MOMENTUM_TRIGGER_PIPS",
+            str(MOMENTUM_TRIGGER_PIPS),
+        )
+    ),
+)
+SHORT_MOMENTUM_TRIGGER_PIPS: float = max(
+    0.1,
+    float(
+        os.getenv(
+            "SCALP_PING_5S_SHORT_MOMENTUM_TRIGGER_PIPS",
+            str(MOMENTUM_TRIGGER_PIPS),
+        )
+    ),
+)
 MOMENTUM_SPREAD_MULT: float = max(0.0, float(os.getenv("SCALP_PING_5S_MOMENTUM_SPREAD_MULT", "1.0")))
 ENTRY_BID_ASK_EDGE_PIPS: float = max(
     0.0,
@@ -825,6 +895,20 @@ TP_MAX_PIPS: float = max(TP_BASE_PIPS, float(os.getenv("SCALP_PING_5S_TP_MAX_PIP
 TP_MOMENTUM_BONUS_MAX: float = max(
     0.0, float(os.getenv("SCALP_PING_5S_TP_MOMENTUM_BONUS_MAX", "0.2"))
 )
+SHORT_TP_BASE_PIPS: float = max(
+    0.2, float(os.getenv("SCALP_PING_5S_SHORT_TP_BASE_PIPS", str(TP_BASE_PIPS)))
+)
+SHORT_TP_NET_MIN_PIPS: float = max(
+    0.1,
+    float(os.getenv("SCALP_PING_5S_SHORT_TP_NET_MIN_PIPS", str(TP_NET_MIN_PIPS))),
+)
+SHORT_TP_MAX_PIPS: float = max(
+    SHORT_TP_BASE_PIPS,
+    float(os.getenv("SCALP_PING_5S_SHORT_TP_MAX_PIPS", str(TP_MAX_PIPS))),
+)
+SHORT_TP_MOMENTUM_BONUS_MAX: float = max(
+    0.0, float(os.getenv("SCALP_PING_5S_SHORT_TP_MOMENTUM_BONUS_MAX", str(TP_MOMENTUM_BONUS_MAX)))
+)
 TP_TIME_ADAPT_ENABLED: bool = _bool_env("SCALP_PING_5S_TP_TIME_ADAPT_ENABLED", True)
 TP_TARGET_HOLD_SEC: float = max(
     5.0, float(os.getenv("SCALP_PING_5S_TP_TARGET_HOLD_SEC", "120.0"))
@@ -869,6 +953,10 @@ TP_VOL_MULT_HIGH_VOL_MAX: float = max(
     TP_VOL_MULT_HIGH_VOL_MIN,
     min(2.5, float(os.getenv("SCALP_PING_5S_TP_VOL_MULT_HIGH_VOL_MAX", "1.20"))),
 )
+TP_VOL_EXTEND_MAX_MULT: float = max(
+    1.0,
+    float(os.getenv("SCALP_PING_5S_TP_VOL_EXTEND_MAX_MULT", "1.35")),
+)
 TP_NET_MIN_FLOOR_PIPS: float = max(
     0.0, float(os.getenv("SCALP_PING_5S_TP_NET_MIN_FLOOR_PIPS", "0.10"))
 )
@@ -882,6 +970,23 @@ SL_MAX_PIPS: float = max(SL_MIN_PIPS, float(os.getenv("SCALP_PING_5S_SL_MAX_PIPS
 SL_SPREAD_MULT: float = max(0.0, float(os.getenv("SCALP_PING_5S_SL_SPREAD_MULT", "1.2")))
 SL_SPREAD_BUFFER_PIPS: float = max(
     0.0, float(os.getenv("SCALP_PING_5S_SL_SPREAD_BUFFER_PIPS", "0.30"))
+)
+SL_VOL_SHRINK_ENABLED: bool = _bool_env(
+    "SCALP_PING_5S_SL_VOL_SHRINK_ENABLED",
+    True,
+)
+SL_VOL_SHRINK_MIN_MULT: float = max(
+    0.2,
+    min(1.0, float(os.getenv("SCALP_PING_5S_SL_VOL_SHRINK_MIN_MULT", "0.70"))),
+)
+SHORT_SL_BASE_PIPS: float = max(
+    0.2, float(os.getenv("SCALP_PING_5S_SHORT_SL_BASE_PIPS", str(SL_BASE_PIPS)))
+)
+SHORT_SL_MIN_PIPS: float = max(
+    0.2, float(os.getenv("SCALP_PING_5S_SHORT_SL_MIN_PIPS", str(SL_MIN_PIPS)))
+)
+SHORT_SL_MAX_PIPS: float = max(
+    SHORT_SL_MIN_PIPS, float(os.getenv("SCALP_PING_5S_SHORT_SL_MAX_PIPS", str(SL_MAX_PIPS)))
 )
 
 SNAPSHOT_FALLBACK_ENABLED: bool = _bool_env("SCALP_PING_5S_SNAPSHOT_FALLBACK_ENABLED", True)
@@ -970,6 +1075,26 @@ FORCE_EXIT_RECOVERY_WINDOW_SEC: float = max(
 )
 FORCE_EXIT_RECOVERABLE_LOSS_PIPS: float = max(
     0.0, float(os.getenv("SCALP_PING_5S_FORCE_EXIT_RECOVERABLE_LOSS_PIPS", "0.0"))
+)
+FORCE_EXIT_VOL_ADAPT_ENABLED: bool = _bool_env(
+    "SCALP_PING_5S_FORCE_EXIT_VOL_ADAPT_ENABLED",
+    True,
+)
+FORCE_EXIT_VOL_HOLD_MIN_MULT: float = max(
+    0.2,
+    min(1.0, float(os.getenv("SCALP_PING_5S_FORCE_EXIT_VOL_HOLD_MIN_MULT", "0.55"))),
+)
+FORCE_EXIT_VOL_LOSS_MIN_MULT: float = max(
+    0.2,
+    min(1.0, float(os.getenv("SCALP_PING_5S_FORCE_EXIT_VOL_LOSS_MIN_MULT", "0.50"))),
+)
+FORCE_EXIT_VOL_HOLD_MAX_MULT: float = max(
+    FORCE_EXIT_VOL_HOLD_MIN_MULT,
+    min(1.0, float(os.getenv("SCALP_PING_5S_FORCE_EXIT_VOL_HOLD_MAX_MULT", "1.0"))),
+)
+FORCE_EXIT_VOL_LOSS_MAX_MULT: float = max(
+    FORCE_EXIT_VOL_LOSS_MIN_MULT,
+    min(1.0, float(os.getenv("SCALP_PING_5S_FORCE_EXIT_VOL_LOSS_MAX_MULT", "1.0"))),
 )
 FORCE_EXIT_BID_ASK_BUFFER_PIPS: float = max(
     0.0,
@@ -1230,6 +1355,24 @@ FORCE_EXIT_REASON_TIME: str = (
 )
 FORCE_EXIT_MAX_FLOATING_LOSS_PIPS: float = max(
     0.0, float(os.getenv("SCALP_PING_5S_FORCE_EXIT_MAX_FLOATING_LOSS_PIPS", "0"))
+)
+SHORT_FORCE_EXIT_MAX_HOLD_SEC: float = max(
+    0.0,
+    float(
+        os.getenv(
+            "SCALP_PING_5S_SHORT_FORCE_EXIT_MAX_HOLD_SEC",
+            str(FORCE_EXIT_MAX_HOLD_SEC),
+        )
+    ),
+)
+SHORT_FORCE_EXIT_MAX_FLOATING_LOSS_PIPS: float = max(
+    0.0,
+    float(
+        os.getenv(
+            "SCALP_PING_5S_SHORT_FORCE_EXIT_MAX_FLOATING_LOSS_PIPS",
+            str(FORCE_EXIT_MAX_FLOATING_LOSS_PIPS),
+        )
+    ),
 )
 FORCE_EXIT_REASON_MAX_FLOATING_LOSS: str = (
     os.getenv("SCALP_PING_5S_FORCE_EXIT_MAX_FLOATING_LOSS_REASON", "max_floating_loss").strip()

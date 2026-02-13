@@ -99,6 +99,8 @@ class TickSignal:
     imbalance: float
     tick_rate: float
     span_sec: float
+    range_pips: float = 0.0
+    instant_range_pips: float = 0.0
     tick_age_ms: float
     spread_pips: float
     bid: float
@@ -287,6 +289,17 @@ def _norm01(value: float, low: float, high: float) -> float:
     if high <= low:
         return 0.0
     return _clamp((value - low) / (high - low), 0.0, 1.0)
+
+
+def _instant_speed_scale(instant_range_pips: float) -> float:
+    if not config.INSTANT_SPEED_ENABLED:
+        return 1.0
+    speed_bucket = _norm01(
+        float(instant_range_pips),
+        config.INSTANT_SPEED_VOL_LOW_PIPS,
+        config.INSTANT_SPEED_VOL_HIGH_PIPS,
+    )
+    return _lerp(1.0, config.INSTANT_SPEED_SCALE_MIN, speed_bucket)
 
 
 def _regime_vol_bucket(
@@ -774,6 +787,7 @@ def _build_technical_trade_profile(
     *,
     route_reasons: Sequence[str],
     lookahead_decision: Optional[object],
+    vol_bucket: float,
 ) -> TechnicalTradeProfile:
     if not config.TECH_ROUTER_ENABLED:
         return TechnicalTradeProfile(
@@ -813,6 +827,20 @@ def _build_technical_trade_profile(
         hold_mult *= 1.0 + (config.TECH_ROUTER_EDGE_HOLD_BOOST_MAX * edge_ratio)
         hard_loss_mult *= 1.0 + (config.TECH_ROUTER_EDGE_HARD_LOSS_BOOST_MAX * edge_ratio)
 
+    hold_mult = max(0.2, float(hold_mult))
+    hard_loss_mult = max(0.2, float(hard_loss_mult))
+    vol_bucket = _clamp(vol_bucket, 0.0, 1.0)
+    hold_mult *= _lerp(
+        config.FORCE_EXIT_VOL_HOLD_MAX_MULT,
+        config.FORCE_EXIT_VOL_HOLD_MIN_MULT,
+        vol_bucket,
+    )
+    hard_loss_mult *= _lerp(
+        config.FORCE_EXIT_VOL_LOSS_MAX_MULT,
+        config.FORCE_EXIT_VOL_LOSS_MIN_MULT,
+        vol_bucket,
+    )
+
     return TechnicalTradeProfile(
         tp_mult=float(_clamp(tp_mult, 0.2, 3.0)),
         sl_mult=float(_clamp(sl_mult, 0.2, 3.0)),
@@ -828,7 +856,15 @@ def _scaled_force_exit_thresholds(
     base_max_hold_sec: float,
     base_hard_loss_pips: float,
     profile: TechnicalTradeProfile,
+    vol_bucket: float,
 ) -> tuple[float, float]:
+    hold_mult = max(0.2, float(profile.hold_mult))
+    loss_mult = max(0.2, float(profile.hard_loss_mult))
+    if config.FORCE_EXIT_VOL_ADAPT_ENABLED:
+        vol_bucket = _clamp(vol_bucket, 0.0, 1.0)
+        hold_mult *= 1.0 - (1.0 - config.FORCE_EXIT_VOL_HOLD_MIN_MULT) * vol_bucket
+        loss_mult *= 1.0 - (1.0 - config.FORCE_EXIT_VOL_LOSS_MIN_MULT) * vol_bucket
+
     hold_sec = 0.0
     hard_loss_pips = 0.0
     if base_max_hold_sec > 0.0:
@@ -837,13 +873,28 @@ def _scaled_force_exit_thresholds(
             base_max_hold_sec * max(0.5, float(config.TECH_ROUTER_HOLD_MAX_MULT)),
         )
         hold_sec = _clamp(
-            base_max_hold_sec * max(0.2, profile.hold_mult),
+            base_max_hold_sec * hold_mult,
             config.TECH_ROUTER_HOLD_MIN_SEC,
             hold_cap,
         )
     if base_hard_loss_pips > 0.0:
-        hard_loss_pips = max(0.1, base_hard_loss_pips * max(0.2, profile.hard_loss_mult))
+        hard_loss_pips = max(0.1, base_hard_loss_pips * loss_mult)
     return float(hold_sec), float(hard_loss_pips)
+
+
+def _force_exit_thresholds_for_side(side: str) -> tuple[float, float]:
+    if side != "short":
+        return float(config.FORCE_EXIT_MAX_HOLD_SEC), float(
+            config.FORCE_EXIT_MAX_FLOATING_LOSS_PIPS
+        )
+
+    max_hold_sec = float(config.SHORT_FORCE_EXIT_MAX_HOLD_SEC)
+    max_floating_loss_pips = float(config.SHORT_FORCE_EXIT_MAX_FLOATING_LOSS_PIPS)
+    if max_hold_sec <= 0.0:
+        max_hold_sec = float(config.FORCE_EXIT_MAX_HOLD_SEC)
+    if max_floating_loss_pips <= 0.0:
+        max_floating_loss_pips = float(config.FORCE_EXIT_MAX_FLOATING_LOSS_PIPS)
+    return max_hold_sec, max_floating_loss_pips
 
 
 def _force_exit_hard_loss_trigger_pips(trade: dict, base_hard_loss_pips: float) -> float:
@@ -1199,11 +1250,12 @@ async def _enforce_new_entry_time_stop(
             continue
         hold_sec = (now_utc - opened_at).total_seconds()
         unrealized_pips = _trade_unrealized_pips(trade)
-        trade_max_hold_sec = _trade_force_exit_max_hold_sec(trade, max_hold_sec)
-        trade_hard_loss_pips = _trade_force_exit_hard_loss_pips(trade, hard_loss_pips)
         trade_side = _trade_side_from_units(units)
         if trade_side is None:
             continue
+        max_hold_sec, hard_loss_pips = _force_exit_thresholds_for_side(trade_side)
+        trade_max_hold_sec = _trade_force_exit_max_hold_sec(trade, max_hold_sec)
+        trade_hard_loss_pips = _trade_force_exit_hard_loss_pips(trade, hard_loss_pips)
         seen_trade_ids.add(trade_id)
 
         prev_mfe = _safe_float(_TRADE_MFE_PIPS.get(trade_id), unrealized_pips)
@@ -1529,9 +1581,32 @@ def _build_tick_signal(rows: Sequence[dict], spread_pips: float) -> Optional[Tic
     if tick_age_ms > config.MAX_TICK_AGE_MS:
         return None
 
-    window_cutoff = latest_epoch - config.SIGNAL_WINDOW_SEC
+    instant_cutoff_for_scale = latest_epoch - config.INSTANT_VOL_WINDOW_SEC
+    instant_mids_for_scale: list[float] = []
+    for row in rows:
+        _, _, row_mid = _quotes_from_row(row, fallback_mid=0.0)
+        if row_mid <= 0.0:
+            continue
+        row_epoch = _safe_float(row.get("epoch"), 0.0)
+        if row_epoch <= 0.0 or row_epoch < instant_cutoff_for_scale:
+            continue
+        instant_mids_for_scale.append(row_mid)
+
+    instant_range_pips = 0.0
+    if len(instant_mids_for_scale) >= 2:
+        instant_range_pips = (
+            max(instant_mids_for_scale) - min(instant_mids_for_scale)
+        ) / config.PIP_VALUE
+    speed_scale = _instant_speed_scale(instant_range_pips)
+
+    signal_window_sec = max(0.3, config.SIGNAL_WINDOW_SEC * speed_scale)
+    short_min_signal_ticks = max(3, int(round(config.SHORT_MIN_SIGNAL_TICKS * speed_scale)))
+    long_min_signal_ticks = max(3, int(round(config.LONG_MIN_SIGNAL_TICKS * speed_scale)))
+    min_signal_ticks = max(3, min(short_min_signal_ticks, long_min_signal_ticks))
+
+    window_cutoff = latest_epoch - signal_window_sec
     signal_rows = [r for r in rows if _safe_float(r.get("epoch"), 0.0) >= window_cutoff]
-    if len(signal_rows) < config.MIN_SIGNAL_TICKS:
+    if len(signal_rows) < min_signal_ticks:
         return None
 
     mids: list[float] = []
@@ -1548,8 +1623,19 @@ def _build_tick_signal(rows: Sequence[dict], spread_pips: float) -> Optional[Tic
         epochs.append(epoch)
         fallback_mid = mid
 
-    if len(mids) < config.MIN_SIGNAL_TICKS:
+    if len(mids) < min_signal_ticks:
         return None
+
+    signal_range_pips = (max(mids) - min(mids)) / config.PIP_VALUE
+    if len(mids) >= 2:
+        instant_cutoff = latest_epoch - config.INSTANT_VOL_WINDOW_SEC
+        instant_mids = [
+            mids[i]
+            for i, ep in enumerate(epochs)
+            if ep >= instant_cutoff and i < len(mids)
+        ]
+        if len(instant_mids) >= 2:
+            instant_range_pips = (max(instant_mids) - min(instant_mids)) / config.PIP_VALUE
 
     span_sec = max(0.001, epochs[-1] - epochs[0])
     momentum_pips = (mids[-1] - mids[0]) / config.PIP_VALUE
@@ -1573,24 +1659,30 @@ def _build_tick_signal(rows: Sequence[dict], spread_pips: float) -> Optional[Tic
         else:
             spread_pips = 0.0
 
-    edge_guard_pips = max(
-        config.MOMENTUM_TRIGGER_PIPS,
+    long_edge_guard_pips = max(
+        config.LONG_MOMENTUM_TRIGGER_PIPS,
         spread_pips * config.MOMENTUM_SPREAD_MULT + config.ENTRY_BID_ASK_EDGE_PIPS,
     )
-    trigger_pips = edge_guard_pips
+    short_edge_guard_pips = max(
+        config.SHORT_MOMENTUM_TRIGGER_PIPS,
+        spread_pips * config.MOMENTUM_SPREAD_MULT + config.ENTRY_BID_ASK_EDGE_PIPS,
+    )
+    trigger_pips = max(long_edge_guard_pips, short_edge_guard_pips)
 
     side_momentum: Optional[str] = None
     momentum_score = 0.0
     if (
-        momentum_pips >= trigger_pips
+        len(mids) >= long_min_signal_ticks
+        and momentum_pips >= long_edge_guard_pips
         and imbalance >= config.IMBALANCE_MIN
-        and tick_rate >= config.MIN_TICK_RATE
+        and tick_rate >= config.LONG_MIN_TICK_RATE
     ):
         side_momentum = "long"
     elif (
-        momentum_pips <= -trigger_pips
+        len(mids) >= short_min_signal_ticks
+        and momentum_pips <= -short_edge_guard_pips
         and imbalance >= config.IMBALANCE_MIN
-        and tick_rate >= config.MIN_TICK_RATE
+        and tick_rate >= config.SHORT_MIN_TICK_RATE
     ):
         side_momentum = "short"
 
@@ -1607,9 +1699,19 @@ def _build_tick_signal(rows: Sequence[dict], spread_pips: float) -> Optional[Tic
     revert_momentum_pips = 0.0
     revert_trigger_pips = max(0.05, config.REVERT_BOUNCE_MIN_PIPS)
     if config.REVERT_ENABLED:
-        revert_cutoff = latest_epoch - config.REVERT_WINDOW_SEC
+        revert_window_sec = max(
+            0.35,
+            config.REVERT_WINDOW_SEC * speed_scale,
+        )
+        revert_short_window_sec = max(
+            0.15,
+            config.REVERT_SHORT_WINDOW_SEC * speed_scale,
+        )
+        revert_min_ticks = max(3, int(round(config.REVERT_MIN_TICKS * speed_scale)))
+        revert_confirm_ticks = max(2, int(round(config.REVERT_CONFIRM_TICKS * speed_scale)))
+        revert_cutoff = latest_epoch - revert_window_sec
         revert_rows = [r for r in rows if _safe_float(r.get("epoch"), 0.0) >= revert_cutoff]
-        if len(revert_rows) >= config.REVERT_MIN_TICKS:
+        if len(revert_rows) >= revert_min_ticks:
             mids_revert: list[float] = []
             epochs_revert: list[float] = []
             fallback_revert_mid = 0.0
@@ -1624,7 +1726,7 @@ def _build_tick_signal(rows: Sequence[dict], spread_pips: float) -> Optional[Tic
                 epochs_revert.append(epoch)
                 fallback_revert_mid = mid
 
-            if len(mids_revert) >= config.REVERT_MIN_TICKS:
+            if len(mids_revert) >= revert_min_ticks:
                 span_revert_sec = max(0.001, epochs_revert[-1] - epochs_revert[0])
                 tick_rate_revert = max(0.0, (len(mids_revert) - 1) / span_revert_sec)
                 range_revert_pips = (max(mids_revert) - min(mids_revert)) / config.PIP_VALUE
@@ -1632,7 +1734,7 @@ def _build_tick_signal(rows: Sequence[dict], spread_pips: float) -> Optional[Tic
                     range_revert_pips >= config.REVERT_RANGE_MIN_PIPS
                     and tick_rate_revert >= config.REVERT_MIN_TICK_RATE
                 ):
-                    short_cutoff = latest_epoch - config.REVERT_SHORT_WINDOW_SEC
+                    short_cutoff = latest_epoch - revert_short_window_sec
                     mids_short = [
                         mids_revert[idx]
                         for idx, ep in enumerate(epochs_revert)
@@ -1644,12 +1746,12 @@ def _build_tick_signal(rows: Sequence[dict], spread_pips: float) -> Optional[Tic
                         down_flow_ratio = _tail_flow_ratio(
                             mids_revert,
                             want_up=False,
-                            lookback=config.REVERT_CONFIRM_TICKS,
+                            lookback=revert_confirm_ticks,
                         )
                         up_flow_ratio = _tail_flow_ratio(
                             mids_revert,
                             want_up=True,
-                            lookback=config.REVERT_CONFIRM_TICKS,
+                            lookback=revert_confirm_ticks,
                         )
 
                         short_ok = (
@@ -1739,6 +1841,8 @@ def _build_tick_signal(rows: Sequence[dict], spread_pips: float) -> Optional[Tic
         imbalance=imbalance,
         tick_rate=tick_rate,
         span_sec=span_sec,
+        range_pips=float(signal_range_pips),
+        instant_range_pips=float(instant_range_pips),
         tick_age_ms=tick_age_ms,
         spread_pips=max(0.0, spread_pips),
         bid=bid,
@@ -1767,6 +1871,8 @@ def _retarget_signal(signal: TickSignal, *, side: str, mode: Optional[str] = Non
         imbalance=float(signal.imbalance),
         tick_rate=float(signal.tick_rate),
         span_sec=float(signal.span_sec),
+        range_pips=float(signal.range_pips),
+        instant_range_pips=float(signal.instant_range_pips),
         tick_age_ms=float(signal.tick_age_ms),
         spread_pips=float(signal.spread_pips),
         bid=float(signal.bid),
@@ -2405,18 +2511,51 @@ def _compute_targets(
     *,
     spread_pips: float,
     momentum_pips: float,
+    side: str,
     tp_profile: TpTimingProfile,
     regime: Optional[MtfRegime],
+    signal_range_pips: float,
+    signal_instant_range_pips: float = 0.0,
 ) -> tuple[float, float]:
+    is_short = str(side).strip().lower() == "short"
+    tp_base_cfg = config.SHORT_TP_BASE_PIPS if is_short else config.TP_BASE_PIPS
+    tp_net_min_cfg = config.SHORT_TP_NET_MIN_PIPS if is_short else config.TP_NET_MIN_PIPS
+    tp_max_cfg = config.SHORT_TP_MAX_PIPS if is_short else config.TP_MAX_PIPS
+    tp_bonus_cap_cfg = (
+        config.SHORT_TP_MOMENTUM_BONUS_MAX
+        if is_short
+        else config.TP_MOMENTUM_BONUS_MAX
+    )
+    sl_min_cfg = config.SHORT_SL_MIN_PIPS if is_short else config.SL_MIN_PIPS
+    sl_base_cfg = config.SHORT_SL_BASE_PIPS if is_short else config.SL_BASE_PIPS
+    sl_max_cfg = config.SHORT_SL_MAX_PIPS if is_short else config.SL_MAX_PIPS
+
     # Time-aware TP scaling for ping scalp:
     # if average TP holding time drifts too long, reduce TP net edge.
     tp_mult = max(config.TP_TIME_MULT_MIN, min(config.TP_TIME_MULT_MAX, tp_profile.multiplier))
     if config.TP_VOL_ADAPT_ENABLED:
-        vol_bucket = _regime_vol_bucket(
-            regime,
-            low_pips=config.TP_VOL_LOW_PIPS,
-            high_pips=config.TP_VOL_HIGH_PIPS,
+        vol_bucket = _norm01(
+            float(signal_range_pips),
+            config.TP_VOL_LOW_PIPS,
+            config.TP_VOL_HIGH_PIPS,
         )
+        if vol_bucket <= 0.0:
+            vol_bucket = _regime_vol_bucket(
+                regime,
+                low_pips=config.TP_VOL_LOW_PIPS,
+                high_pips=config.TP_VOL_HIGH_PIPS,
+            )
+        if config.INSTANT_VOL_ADAPT_ENABLED and signal_instant_range_pips > 0.0:
+            instant_vol_bucket = _norm01(
+                float(signal_instant_range_pips),
+                config.TP_VOL_LOW_PIPS,
+                config.TP_VOL_HIGH_PIPS,
+            )
+            vol_bucket = _lerp(
+                vol_bucket,
+                instant_vol_bucket,
+                config.INSTANT_VOL_BUCKET_WEIGHT,
+            )
         low_vol_target = (
             config.TP_VOL_MULT_LOW_VOL_MIN + config.TP_VOL_MULT_LOW_VOL_MAX
         ) * 0.5
@@ -2429,20 +2568,44 @@ def _compute_targets(
             config.TP_TIME_MULT_MIN,
             config.TP_TIME_MULT_MAX,
         )
-    tp_base = max(0.1, config.TP_BASE_PIPS * tp_mult)
-    tp_net_edge = max(config.TP_NET_MIN_FLOOR_PIPS, config.TP_NET_MIN_PIPS * tp_mult)
+        if config.TP_VOL_EXTEND_MAX_MULT > 1.0:
+            tp_mult *= _lerp(1.0, config.TP_VOL_EXTEND_MAX_MULT, vol_bucket)
+    tp_base = max(0.1, tp_base_cfg * tp_mult)
+    tp_net_edge = max(config.TP_NET_MIN_FLOOR_PIPS, tp_net_min_cfg * tp_mult)
     tp_floor = spread_pips + tp_net_edge
     tp_pips = max(tp_base, tp_floor)
     tp_bonus_raw = max(0.0, abs(momentum_pips) - tp_pips)
-    tp_bonus_cap = config.TP_MOMENTUM_BONUS_MAX * max(0.6, tp_mult)
+    tp_bonus_cap = tp_bonus_cap_cfg * max(0.6, tp_mult)
     tp_pips += min(tp_bonus_cap, tp_bonus_raw * 0.25)
-    tp_pips = min(config.TP_MAX_PIPS, tp_pips)
+    tp_pips = min(tp_max_cfg, tp_pips)
 
     sl_floor = spread_pips * config.SL_SPREAD_MULT + config.SL_SPREAD_BUFFER_PIPS
-    sl_pips = max(config.SL_MIN_PIPS, config.SL_BASE_PIPS, sl_floor)
+    sl_pips = max(sl_min_cfg, sl_base_cfg, sl_floor)
+    if config.SL_VOL_SHRINK_ENABLED:
+        sl_vol_bucket = _norm01(
+            float(signal_range_pips),
+            config.TP_VOL_LOW_PIPS,
+            config.TP_VOL_HIGH_PIPS,
+        )
+        if config.INSTANT_VOL_ADAPT_ENABLED and signal_instant_range_pips > 0.0:
+            instant_sl_vol_bucket = _norm01(
+                float(signal_instant_range_pips),
+                config.TP_VOL_LOW_PIPS,
+                config.TP_VOL_HIGH_PIPS,
+            )
+            sl_vol_bucket = _lerp(
+                sl_vol_bucket,
+                instant_sl_vol_bucket,
+                config.INSTANT_VOL_BUCKET_WEIGHT,
+            )
+        sl_pips *= _lerp(
+            1.0,
+            config.SL_VOL_SHRINK_MIN_MULT,
+            sl_vol_bucket,
+        )
     if abs(momentum_pips) > tp_pips * 1.4:
         sl_pips *= 1.08
-    sl_pips = max(config.SL_MIN_PIPS, min(config.SL_MAX_PIPS, sl_pips))
+    sl_pips = max(sl_min_cfg, min(sl_max_cfg, sl_pips))
 
     return tp_pips, sl_pips
 
@@ -2785,6 +2948,13 @@ async def scalp_ping_5s_worker() -> None:
                             )
                             hold_sec = (now_utc - opened_at).total_seconds() if opened_at is not None else 0.0
                             unrealized_pips = _trade_unrealized_pips(trade)
+                            units = int(_safe_float(trade.get("units"), 0.0))
+                            trade_side = _trade_side_from_units(units)
+                            if trade_side is None:
+                                continue
+                            max_hold_sec, hard_loss_pips = _force_exit_thresholds_for_side(
+                                trade_side
+                            )
                             trade_max_hold_sec = _trade_force_exit_max_hold_sec(trade, max_hold_sec)
                             trade_hard_loss_pips = _trade_force_exit_hard_loss_pips(trade, hard_loss_pips)
                             hard_loss_trigger_pips = _force_exit_hard_loss_trigger_pips(
@@ -2847,8 +3017,19 @@ async def scalp_ping_5s_worker() -> None:
                         )
                         hold_sec = (now_utc - opened_at).total_seconds() if opened_at is not None else 0.0
                         unrealized_pips = _trade_unrealized_pips(trade)
-                        trade_max_hold_sec = _trade_force_exit_max_hold_sec(trade, max_hold_sec)
-                        trade_hard_loss_pips = _trade_force_exit_hard_loss_pips(trade, hard_loss_pips)
+                        units = int(_safe_float(trade.get("units"), 0.0))
+                        trade_side = _trade_side_from_units(units)
+                        if trade_side is None:
+                            continue
+                        max_hold_sec, hard_loss_pips = _force_exit_thresholds_for_side(
+                            trade_side
+                        )
+                        trade_max_hold_sec = _trade_force_exit_max_hold_sec(
+                            trade, max_hold_sec
+                        )
+                        trade_hard_loss_pips = _trade_force_exit_hard_loss_pips(
+                            trade, hard_loss_pips
+                        )
                         hard_loss_trigger_pips = _force_exit_hard_loss_trigger_pips(
                             trade,
                             trade_hard_loss_pips,
@@ -3146,6 +3327,11 @@ async def scalp_ping_5s_worker() -> None:
 
             lookahead_decision = None
             lookahead_units_mult = 1.0
+            decision_speed_scale = _instant_speed_scale(signal.instant_range_pips)
+            lookahead_horizon_sec = max(
+                config.LOOKAHEAD_HORIZON_SEC * config.INSTANT_LOOKAHEAD_SCALE_MIN,
+                config.LOOKAHEAD_HORIZON_SEC * decision_speed_scale,
+            )
             if config.LOOKAHEAD_GATE_ENABLED:
                 direction_score = None
                 if direction_bias is not None:
@@ -3160,7 +3346,7 @@ async def scalp_ping_5s_worker() -> None:
                     tick_rate=signal.tick_rate,
                     signal_span_sec=signal.span_sec,
                     pip_value=config.PIP_VALUE,
-                    horizon_sec=config.LOOKAHEAD_HORIZON_SEC,
+                    horizon_sec=lookahead_horizon_sec,
                     edge_min_pips=config.LOOKAHEAD_EDGE_MIN_PIPS,
                     edge_ref_pips=config.LOOKAHEAD_EDGE_REF_PIPS,
                     units_min_mult=config.LOOKAHEAD_UNITS_MIN_MULT,
@@ -3257,7 +3443,11 @@ async def scalp_ping_5s_worker() -> None:
                     h4_pos_log,
                 )
                 last_extrema_log_mono = now_mono
-            if now_mono - last_entry_mono < config.ENTRY_COOLDOWN_SEC:
+            decision_cooldown_sec = max(
+                config.ENTRY_COOLDOWN_SEC * config.INSTANT_COOLDOWN_SCALE_MIN,
+                config.ENTRY_COOLDOWN_SEC * decision_speed_scale,
+            )
+            if now_mono - last_entry_mono < decision_cooldown_sec:
                 continue
             if not rate_limiter.allow(now_mono):
                 continue
@@ -3368,25 +3558,69 @@ async def scalp_ping_5s_worker() -> None:
             tp_pips, sl_pips = _compute_targets(
                 spread_pips=signal.spread_pips,
                 momentum_pips=signal.momentum_pips,
+                side=signal.side,
                 tp_profile=tp_profile,
                 regime=regime,
+                signal_range_pips=signal.range_pips,
+                signal_instant_range_pips=signal.instant_range_pips,
             )
+            signal_vol_bucket = _regime_vol_bucket(
+                regime,
+                low_pips=config.TP_VOL_LOW_PIPS,
+                high_pips=config.TP_VOL_HIGH_PIPS,
+            )
+            if signal.range_pips > 0.0:
+                signal_vol_bucket = _norm01(
+                    signal.range_pips,
+                    config.TP_VOL_LOW_PIPS,
+                    config.TP_VOL_HIGH_PIPS,
+                )
+            if config.INSTANT_VOL_ADAPT_ENABLED and signal.instant_range_pips > 0.0:
+                instant_vol_bucket = _norm01(
+                    signal.instant_range_pips,
+                    config.TP_VOL_LOW_PIPS,
+                    config.TP_VOL_HIGH_PIPS,
+                )
+                signal_vol_bucket = _lerp(
+                    signal_vol_bucket,
+                    instant_vol_bucket,
+                    config.INSTANT_VOL_BUCKET_WEIGHT,
+                )
             tech_profile = _build_technical_trade_profile(
                 route_reasons=tech_route_reasons,
                 lookahead_decision=lookahead_decision,
+                vol_bucket=signal_vol_bucket,
             )
             tp_pips *= max(0.2, tech_profile.tp_mult)
-            tp_floor = max(config.TP_BASE_PIPS, signal.spread_pips + config.TP_NET_MIN_FLOOR_PIPS)
-            tp_pips = _clamp(tp_pips, tp_floor, config.TP_MAX_PIPS)
+            tp_base_cfg = (
+                config.SHORT_TP_BASE_PIPS
+                if signal.side == "short"
+                else config.TP_BASE_PIPS
+            )
+            tp_max_cfg = (
+                config.SHORT_TP_MAX_PIPS if signal.side == "short" else config.TP_MAX_PIPS
+            )
+            tp_floor = max(tp_base_cfg, signal.spread_pips + config.TP_NET_MIN_FLOOR_PIPS)
+            tp_pips = _clamp(tp_pips, tp_floor, tp_max_cfg)
             sl_floor = max(
-                config.SL_MIN_PIPS,
+                config.SHORT_SL_MIN_PIPS
+                if signal.side == "short"
+                else config.SL_MIN_PIPS,
                 signal.spread_pips * config.SL_SPREAD_MULT + config.SL_SPREAD_BUFFER_PIPS,
             )
-            sl_pips = _clamp(sl_pips * max(0.2, tech_profile.sl_mult), sl_floor, config.SL_MAX_PIPS)
+            sl_max_cfg = (
+                config.SHORT_SL_MAX_PIPS if signal.side == "short" else config.SL_MAX_PIPS
+            )
+            sl_pips = _clamp(
+                sl_pips * max(0.2, tech_profile.sl_mult),
+                sl_floor,
+                sl_max_cfg,
+            )
             dynamic_max_hold_sec, dynamic_hard_loss_pips = _scaled_force_exit_thresholds(
-                base_max_hold_sec=float(config.FORCE_EXIT_MAX_HOLD_SEC),
-                base_hard_loss_pips=float(config.FORCE_EXIT_MAX_FLOATING_LOSS_PIPS),
+                base_max_hold_sec=_force_exit_thresholds_for_side(signal.side)[0],
+                base_hard_loss_pips=_force_exit_thresholds_for_side(signal.side)[1],
                 profile=tech_profile,
+                vol_bucket=signal_vol_bucket,
             )
             conf_mult = _confidence_scale(signal.confidence)
             strength_mult = max(
@@ -3501,14 +3735,17 @@ async def scalp_ping_5s_worker() -> None:
                 "signal_momentum_score": round(signal.momentum_score, 3),
                 "signal_revert_score": round(signal.revert_score, 3),
                 "tp_time_mult": round(tp_profile.multiplier, 3),
+                "signal_range_pips": round(float(signal.range_pips), 3),
+                "signal_instant_range_pips": round(float(signal.instant_range_pips), 3),
                 "tp_vol_bucket": round(
-                    _regime_vol_bucket(
-                        regime,
-                        low_pips=config.TP_VOL_LOW_PIPS,
-                        high_pips=config.TP_VOL_HIGH_PIPS,
+                    _clamp(
+                        signal_vol_bucket,
+                        0.0,
+                        1.0,
                     ),
                     3,
                 ),
+                "vol_bucket_source": "signal_range_then_regime",
                 "tp_time_avg_sec": (
                     round(tp_profile.avg_tp_sec, 1) if tp_profile.avg_tp_sec > 0.0 else None
                 ),
