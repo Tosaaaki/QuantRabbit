@@ -1527,6 +1527,8 @@ def _allow_stop_loss_on_fill(pocket: Optional[str]) -> bool:
             False,
         ):
             return True
+    if not stop_loss_disabled_for_pocket(pocket):
+        return True
     return False
 
 
