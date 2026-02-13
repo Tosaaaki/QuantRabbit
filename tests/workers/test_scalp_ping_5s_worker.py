@@ -43,6 +43,32 @@ def test_build_tick_signal_detects_long(monkeypatch) -> None:
     assert sig.confidence >= worker.config.CONFIDENCE_FLOOR
 
 
+def test_build_tick_signal_rejects_chasing_long(monkeypatch) -> None:
+    from workers.scalp_ping_5s import worker
+
+    monkeypatch.setattr(worker.time, "time", lambda: 202.0)
+    rows = [
+        _tick(200.0, 150.000, 150.002, 150.001),
+        _tick(200.2, 150.004, 150.006, 150.005),
+        _tick(200.4, 150.008, 150.010, 150.009),
+        _tick(200.6, 150.010, 150.012, 150.011),
+        _tick(200.8, 150.011, 150.013, 150.012),
+        _tick(201.0, 150.011, 150.013, 150.012),
+    ]
+
+    monkeypatch.setattr(worker.config, "MIN_TICKS", 6)
+    monkeypatch.setattr(worker.config, "MIN_SIGNAL_TICKS", 4)
+    monkeypatch.setattr(worker.config, "SIGNAL_WINDOW_SEC", 1.2)
+    monkeypatch.setattr(worker.config, "MAX_TICK_AGE_MS", 900.0)
+    monkeypatch.setattr(worker.config, "MOMENTUM_TRIGGER_PIPS", 0.8)
+    monkeypatch.setattr(worker.config, "MOMENTUM_SPREAD_MULT", 0.6)
+    monkeypatch.setattr(worker.config, "IMBALANCE_MIN", 0.58)
+    monkeypatch.setattr(worker.config, "MIN_TICK_RATE", 3.0)
+
+    sig = worker._build_tick_signal(rows, spread_pips=0.2)
+    assert sig is None
+
+
 def test_build_tick_signal_rejects_low_imbalance(monkeypatch) -> None:
     from workers.scalp_ping_5s import worker
 
@@ -67,6 +93,34 @@ def test_build_tick_signal_rejects_low_imbalance(monkeypatch) -> None:
 
     sig = worker._build_tick_signal(rows, spread_pips=0.2)
     assert sig is None
+
+
+def test_build_tick_signal_keeps_continuing_momentum(monkeypatch) -> None:
+    from workers.scalp_ping_5s import worker
+
+    monkeypatch.setattr(worker.time, "time", lambda: 203.0)
+    rows = [
+        _tick(202.0, 150.001, 150.003, 150.002),
+        _tick(202.2, 150.004, 150.006, 150.005),
+        _tick(202.4, 150.007, 150.009, 150.008),
+        _tick(202.6, 150.010, 150.012, 150.011),
+        _tick(202.8, 150.013, 150.015, 150.014),
+        _tick(203.0, 150.016, 150.018, 150.017),
+    ]
+
+    monkeypatch.setattr(worker.config, "MIN_TICKS", 6)
+    monkeypatch.setattr(worker.config, "MIN_SIGNAL_TICKS", 4)
+    monkeypatch.setattr(worker.config, "SIGNAL_WINDOW_SEC", 1.2)
+    monkeypatch.setattr(worker.config, "MAX_TICK_AGE_MS", 900.0)
+    monkeypatch.setattr(worker.config, "MOMENTUM_TRIGGER_PIPS", 0.8)
+    monkeypatch.setattr(worker.config, "MOMENTUM_SPREAD_MULT", 0.6)
+    monkeypatch.setattr(worker.config, "IMBALANCE_MIN", 0.58)
+    monkeypatch.setattr(worker.config, "MIN_TICK_RATE", 3.0)
+
+    sig = worker._build_tick_signal(rows, spread_pips=0.2)
+    assert sig is not None
+    assert sig.side == "long"
+    assert sig.momentum_pips > 0
 
 
 def test_compute_targets_is_spread_aware() -> None:

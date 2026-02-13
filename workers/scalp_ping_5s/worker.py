@@ -1585,6 +1585,39 @@ def _tail_flow_ratio(mids: Sequence[float], *, want_up: bool, lookback: int) -> 
     return (up / directional) if want_up else (down / directional)
 
 
+def _momentum_tail_continuation_ok(
+    mids: Sequence[float],
+    *,
+    side: str,
+    momentum_pips: float,
+) -> bool:
+    """Return False when momentum appears late-expired (likely chasing the tail).
+
+    A momentum setup is likely chasing if most of the move happened earlier in the
+    window and the latest tail segment contributes little directional progress.
+    """
+    if side not in {"long", "short"}:
+        return False
+    if len(mids) < 5:
+        return True
+
+    abs_momentum = abs(_safe_float(momentum_pips, 0.0))
+    if abs_momentum <= 0.0:
+        return False
+
+    tail_len = max(2, int(math.ceil(len(mids) * 0.38)))
+    tail_start = max(0, len(mids) - 1 - tail_len)
+    tail_delta_pips = (mids[-1] - mids[tail_start]) / config.PIP_VALUE
+    required_tail = max(
+        config.MOMENTUM_TRIGGER_PIPS * 0.35,
+        0.28 * abs_momentum,
+    )
+
+    if side == "long":
+        return tail_delta_pips >= required_tail
+    return tail_delta_pips <= -required_tail
+
+
 def _build_tick_signal(rows: Sequence[dict], spread_pips: float) -> Optional[TickSignal]:
     if len(rows) < config.MIN_TICKS:
         return None
@@ -1701,6 +1734,13 @@ def _build_tick_signal(rows: Sequence[dict], spread_pips: float) -> Optional[Tic
         and tick_rate >= config.SHORT_MIN_TICK_RATE
     ):
         side_momentum = "short"
+
+    if side_momentum is not None and not _momentum_tail_continuation_ok(
+        mids,
+        side=side_momentum,
+        momentum_pips=momentum_pips,
+    ):
+        side_momentum = None
 
     strength = abs(momentum_pips) / max(0.01, trigger_pips)
     if side_momentum is not None:
