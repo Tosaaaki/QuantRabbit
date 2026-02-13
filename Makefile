@@ -1,4 +1,4 @@
-.PHONY: help vm-deploy vm-tail vm-logs vm-sql vm-exec gcp-bootstrap type-check type-fix vm-type-check vm-type-fix
+.PHONY: help vm-deploy vm-tail vm-logs vm-sql vm-exec gcp-bootstrap type-check type-fix vm-type-check vm-type-fix vm-type-optimize
 
 -include scripts/vm.env
 
@@ -28,7 +28,8 @@ help:
 	@echo "  vm-logs     Pull remote logs to ./remote_logs"
 	@echo "  vm-sql      Run SQL on remote trades.db"
 	@echo "  vm-type-check  Run type maintenance on VM (check mode)"
-	@echo "  vm-type-fix    Run type maintenance on VM (apply mode) and emit logs/type_maintenance_*.patch"
+	@echo "  vm-type-fix        Run type maintenance on VM (optimize mode, alias of vm-type-optimize)"
+	@echo "  vm-type-optimize   Run type maintenance on VM in optimize mode"
 	@echo "  type-check  Run type annotation autofix check and mypy verify"
 	@echo "  type-fix    Autofix missing annotations with Ruff and then verify"
 	@echo "  vm-exec     Run CMD='...' on VM"
@@ -46,7 +47,10 @@ vm-type-check:
 	@./scripts/vm.sh $(GCLOUD_FLAGS) exec -- "TYPE_MAINTENANCE_MODE=check TYPE_MAINTENANCE_REPO=$(REMOTE_DIR) $(REMOTE_DIR)/scripts/type_maintenance_vm.sh"
 
 vm-type-fix:
-	@./scripts/vm.sh $(GCLOUD_FLAGS) exec -- "TYPE_MAINTENANCE_MODE=apply TYPE_MAINTENANCE_REPO=$(REMOTE_DIR) $(REMOTE_DIR)/scripts/type_maintenance_vm.sh"
+	@./scripts/vm.sh $(GCLOUD_FLAGS) exec -- "TYPE_MAINTENANCE_MODE=optimize TYPE_MAINTENANCE_REPO=$(REMOTE_DIR) $(REMOTE_DIR)/scripts/type_maintenance_vm.sh"
+
+vm-type-optimize:
+	@./scripts/vm.sh $(GCLOUD_FLAGS) exec -- "TYPE_MAINTENANCE_MODE=optimize TYPE_MAINTENANCE_REPO=$(REMOTE_DIR) $(REMOTE_DIR)/scripts/type_maintenance_vm.sh"
 
 vm-deploy:
 	@[ -n "$(PROJECT)" ] && [ -n "$(ZONE)" ] && [ -n "$(INSTANCE)" ] || { echo "Set PROJECT, ZONE, INSTANCE (scripts/vm.env)."; exit 1; }

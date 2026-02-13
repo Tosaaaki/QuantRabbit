@@ -52,7 +52,9 @@ make vm-type-check   # チェックのみ
 make vm-type-fix     # 自動補完（差分は logs/type_maintenance_*.patch と logs/type_audit_report.json に保存）
 ```
 
-### 5-3. 最適化をVMで日次でも有効化する場合
+### 5-3. 最適化を日次で自動実行
 
-`systemd/quant-type-maintenance.service` の `Environment=TYPE_MAINTENANCE_MODE=check` を `optimize` に変更して再起動します。  
-まずはまずは **check モードをデフォルト維持**し、必要時に `make vm-type-fix` で最適化してください。
+`systemd/quant-type-maintenance.service` は `Environment=TYPE_MAINTENANCE_MODE=optimize` で起動します。  
+`checks + optimize` を毎日 03:00 に実行し、最適化の差分は `logs/type_maintenance_*.patch` と `logs/type_audit_report.json` に保存します。
+
+必要な場合だけ `make vm-type-check` / `make vm-type-fix` を手動で実行して状態を確認できます。
