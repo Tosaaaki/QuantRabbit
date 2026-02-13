@@ -365,6 +365,53 @@ MTF_REVERSION_BOOST_MAX: float = max(
     0.0,
     min(1.0, float(os.getenv("SCALP_PING_5S_MTF_REVERSION_BOOST_MAX", "0.35"))),
 )
+MTF_TREND_EMA_VOL_INTERP_ENABLED: bool = _bool_env(
+    "SCALP_PING_5S_MTF_TREND_EMA_VOL_INTERP_ENABLED",
+    True,
+)
+MTF_TREND_EMA_VOL_LOW_PIPS: float = max(
+    0.1, float(os.getenv("SCALP_PING_5S_MTF_TREND_EMA_VOL_LOW_PIPS", "2.4"))
+)
+MTF_TREND_EMA_VOL_HIGH_PIPS: float = max(
+    MTF_TREND_EMA_VOL_LOW_PIPS + 0.1,
+    float(os.getenv("SCALP_PING_5S_MTF_TREND_EMA_VOL_HIGH_PIPS", "9.0")),
+)
+MTF_TREND_EMA_FAST_WEIGHT_LOW_VOL: float = max(
+    0.0,
+    min(
+        1.0,
+        float(
+            os.getenv(
+                "SCALP_PING_5S_MTF_TREND_EMA_FAST_WEIGHT_LOW_VOL",
+                "0.0",
+            )
+        ),
+    ),
+)
+MTF_TREND_EMA_FAST_WEIGHT_HIGH_VOL: float = max(
+    MTF_TREND_EMA_FAST_WEIGHT_LOW_VOL,
+    min(
+        1.0,
+        float(
+            os.getenv(
+                "SCALP_PING_5S_MTF_TREND_EMA_FAST_WEIGHT_HIGH_VOL",
+                str(MTF_TREND_EMA_FAST_WEIGHT_LOW_VOL),
+            )
+        ),
+    ),
+)
+MTF_TREND_GAP_SCALE_LOW_VOL: float = max(
+    0.1,
+    float(os.getenv("SCALP_PING_5S_MTF_TREND_GAP_SCALE_LOW_VOL", "0.65")),
+)
+MTF_TREND_GAP_SCALE_HIGH_VOL: float = max(
+    MTF_TREND_GAP_SCALE_LOW_VOL,
+    float(os.getenv("SCALP_PING_5S_MTF_TREND_GAP_SCALE_HIGH_VOL", "0.65")),
+)
+MTF_TREND_GAP_NORM_MIN_PIPS: float = max(
+    0.2,
+    float(os.getenv("SCALP_PING_5S_MTF_TREND_GAP_NORM_MIN_PIPS", "0.80")),
+)
 MTF_REGIME_LOG_INTERVAL_SEC: float = max(
     1.0,
     float(os.getenv("SCALP_PING_5S_MTF_REGIME_LOG_INTERVAL_SEC", "8.0")),
@@ -427,9 +474,63 @@ M1_TREND_ALIGN_SCORE_MIN: float = max(
         float(os.getenv("SCALP_PING_5S_M1_TREND_ALIGN_SCORE_MIN", "0.20")),
     ),
 )
+M1_TREND_VOL_INTERP_ENABLED: bool = _bool_env(
+    "SCALP_PING_5S_M1_TREND_VOL_INTERP_ENABLED",
+    True,
+)
+M1_TREND_VOL_LOW_PIPS: float = max(
+    0.1, float(os.getenv("SCALP_PING_5S_M1_TREND_VOL_LOW_PIPS", "3.0"))
+)
+M1_TREND_VOL_HIGH_PIPS: float = max(
+    M1_TREND_VOL_LOW_PIPS + 0.1,
+    float(os.getenv("SCALP_PING_5S_M1_TREND_VOL_HIGH_PIPS", "10.0")),
+)
+M1_TREND_ALIGN_SCORE_MIN_LOW_VOL: float = max(
+    0.05,
+    min(
+        0.95,
+        float(os.getenv("SCALP_PING_5S_M1_TREND_ALIGN_SCORE_MIN_LOW_VOL", str(M1_TREND_ALIGN_SCORE_MIN))),
+    ),
+)
+M1_TREND_ALIGN_SCORE_MIN_HIGH_VOL: float = max(
+    M1_TREND_ALIGN_SCORE_MIN_LOW_VOL,
+    min(
+        0.95,
+        float(
+            os.getenv(
+                "SCALP_PING_5S_M1_TREND_ALIGN_SCORE_MIN_HIGH_VOL",
+                str(M1_TREND_ALIGN_SCORE_MIN),
+            )
+        ),
+    ),
+)
 M1_TREND_OPPOSITE_SCORE: float = max(
     M1_TREND_ALIGN_SCORE_MIN,
     min(1.0, float(os.getenv("SCALP_PING_5S_M1_TREND_OPPOSITE_SCORE", "0.28"))),
+)
+M1_TREND_OPPOSITE_SCORE_LOW_VOL: float = max(
+    0.05,
+    min(
+        1.0,
+        float(
+            os.getenv(
+                "SCALP_PING_5S_M1_TREND_OPPOSITE_SCORE_LOW_VOL",
+                str(M1_TREND_OPPOSITE_SCORE),
+            )
+        ),
+    ),
+)
+M1_TREND_OPPOSITE_SCORE_HIGH_VOL: float = max(
+    M1_TREND_OPPOSITE_SCORE_LOW_VOL,
+    min(
+        1.0,
+        float(
+            os.getenv(
+                "SCALP_PING_5S_M1_TREND_OPPOSITE_SCORE_HIGH_VOL",
+                str(M1_TREND_OPPOSITE_SCORE),
+            )
+        ),
+    ),
 )
 M1_TREND_OPPOSITE_UNITS_MULT: float = max(
     0.0,
@@ -438,6 +539,30 @@ M1_TREND_OPPOSITE_UNITS_MULT: float = max(
 M1_TREND_ALIGN_BOOST_MAX: float = max(
     0.0,
     min(1.0, float(os.getenv("SCALP_PING_5S_M1_TREND_ALIGN_BOOST_MAX", "0.28"))),
+)
+M1_TREND_ALIGN_BOOST_MAX_LOW_VOL: float = max(
+    0.0,
+    min(
+        1.0,
+        float(
+            os.getenv(
+                "SCALP_PING_5S_M1_TREND_ALIGN_BOOST_MAX_LOW_VOL",
+                str(M1_TREND_ALIGN_BOOST_MAX),
+            )
+        ),
+    ),
+)
+M1_TREND_ALIGN_BOOST_MAX_HIGH_VOL: float = max(
+    M1_TREND_ALIGN_BOOST_MAX_LOW_VOL,
+    min(
+        1.0,
+        float(
+            os.getenv(
+                "SCALP_PING_5S_M1_TREND_ALIGN_BOOST_MAX_HIGH_VOL",
+                str(M1_TREND_ALIGN_BOOST_MAX),
+            )
+        ),
+    ),
 )
 
 EXTREMA_GATE_ENABLED: bool = _bool_env("SCALP_PING_5S_EXTREMA_GATE_ENABLED", True)
@@ -718,7 +843,31 @@ TP_TIME_MULT_MIN: float = max(
 )
 TP_TIME_MULT_MAX: float = max(
     TP_TIME_MULT_MIN,
-    min(1.2, float(os.getenv("SCALP_PING_5S_TP_TIME_MULT_MAX", "1.0"))),
+    min(1.6, float(os.getenv("SCALP_PING_5S_TP_TIME_MULT_MAX", "1.0"))),
+)
+TP_VOL_ADAPT_ENABLED: bool = _bool_env("SCALP_PING_5S_TP_VOL_ADAPT_ENABLED", True)
+TP_VOL_LOW_PIPS: float = max(
+    0.1, float(os.getenv("SCALP_PING_5S_TP_VOL_LOW_PIPS", "3.0"))
+)
+TP_VOL_HIGH_PIPS: float = max(
+    TP_VOL_LOW_PIPS + 0.1,
+    float(os.getenv("SCALP_PING_5S_TP_VOL_HIGH_PIPS", "10.0")),
+)
+TP_VOL_MULT_LOW_VOL_MIN: float = max(
+    0.1,
+    min(1.2, float(os.getenv("SCALP_PING_5S_TP_VOL_MULT_LOW_VOL_MIN", "0.90"))),
+)
+TP_VOL_MULT_LOW_VOL_MAX: float = max(
+    TP_VOL_MULT_LOW_VOL_MIN,
+    min(1.8, float(os.getenv("SCALP_PING_5S_TP_VOL_MULT_LOW_VOL_MAX", "1.00"))),
+)
+TP_VOL_MULT_HIGH_VOL_MIN: float = max(
+    0.1,
+    min(1.8, float(os.getenv("SCALP_PING_5S_TP_VOL_MULT_HIGH_VOL_MIN", "1.00"))),
+)
+TP_VOL_MULT_HIGH_VOL_MAX: float = max(
+    TP_VOL_MULT_HIGH_VOL_MIN,
+    min(2.5, float(os.getenv("SCALP_PING_5S_TP_VOL_MULT_HIGH_VOL_MAX", "1.20"))),
 )
 TP_NET_MIN_FLOOR_PIPS: float = max(
     0.0, float(os.getenv("SCALP_PING_5S_TP_NET_MIN_FLOOR_PIPS", "0.10"))

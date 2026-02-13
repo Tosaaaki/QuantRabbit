@@ -170,6 +170,14 @@ SIGNAL_TAG_CONTAINS = frozenset(
         or _load_env_file().get("M1SCALP_SIGNAL_TAG_CONTAINS", "")
     )
 )
+# USDJPY directional setup gating / sizing (strategy level, optional).
+USDJPY_SETUP_GATING = _env_bool("M1SCALP_USDJPY_SETUP_GATING", False)
+USDJPY_PULLBACK_BAND_PIPS = _env_float("M1SCALP_USDJPY_PULLBACK_BAND_PIPS", 2.6)
+USDJPY_BREAK_LOOKBACK_M1 = int(_env_float("M1SCALP_USDJPY_BREAK_LOOKBACK_M1", 18))
+USDJPY_BREAK_LOOKBACK_M5 = int(_env_float("M1SCALP_USDJPY_BREAK_LOOKBACK_M5", 12))
+USDJPY_BREAK_MARGIN_PIPS = _env_float("M1SCALP_USDJPY_BREAK_MARGIN_PIPS", 1.4)
+USDJPY_PULLBACK_SIZE_MULT = _env_float("M1SCALP_USDJPY_PULLBACK_SIZE_MULT", 0.98)
+USDJPY_BREAK_SIZE_MULT = _env_float("M1SCALP_USDJPY_BREAK_SIZE_MULT", 1.05)
 # Optional side filter: long / short (empty = both).
 SIDE_FILTER = _normalize_side(
     os.getenv("M1SCALP_SIDE_FILTER")

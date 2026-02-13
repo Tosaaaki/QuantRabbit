@@ -279,23 +279,80 @@ def _clamp(value: float, lo: float, hi: float) -> float:
     return max(lo, min(hi, value))
 
 
+def _lerp(a: float, b: float, weight: float) -> float:
+    return a + (b - a) * _clamp(weight, 0.0, 1.0)
+
+
 def _norm01(value: float, low: float, high: float) -> float:
     if high <= low:
         return 0.0
     return _clamp((value - low) / (high - low), 0.0, 1.0)
 
 
+def _regime_vol_bucket(
+    regime: Optional[MtfRegime],
+    *,
+    low_pips: float,
+    high_pips: float,
+) -> float:
+    if regime is None:
+        return 0.5
+    atr_m1 = _safe_float(regime.atr_m1, 0.0)
+    atr_m5 = _safe_float(regime.atr_m5, 0.0)
+    atr = max(0.0, max(atr_m1, atr_m5))
+    if atr <= 0.0:
+        return 0.5
+    return _norm01(atr, low_pips, high_pips)
+
+
+def _trend_vol_bucket(
+    atr_pips: float,
+    *,
+    low_pips: float,
+    high_pips: float,
+) -> float:
+    return _norm01(_safe_float(atr_pips, 0.0), low_pips, high_pips)
+
+
 def _tf_trend_score(fac: dict) -> float:
     close = _safe_float(fac.get("close"), 0.0)
-    ema20 = _safe_float(fac.get("ema20"), 0.0)
     atr_pips = max(0.1, _safe_float(fac.get("atr_pips"), 0.0))
+    ema_slow = _safe_float(fac.get("ema20"), _safe_float(fac.get("ma20"), 0.0))
+    ema_fast = _safe_float(fac.get("ema12"), ema_slow)
+    if ema_fast <= 0.0:
+        ema_fast = ema_slow
+    if not config.MTF_TREND_EMA_VOL_INTERP_ENABLED:
+        trend_ema = ema_slow
+        gap_scale = config.MTF_TREND_GAP_SCALE_LOW_VOL
+    else:
+        vol_bucket = _trend_vol_bucket(
+            atr_pips,
+            low_pips=config.MTF_TREND_EMA_VOL_LOW_PIPS,
+            high_pips=config.MTF_TREND_EMA_VOL_HIGH_PIPS,
+        )
+        fast_weight = _lerp(
+            config.MTF_TREND_EMA_FAST_WEIGHT_LOW_VOL,
+            config.MTF_TREND_EMA_FAST_WEIGHT_HIGH_VOL,
+            vol_bucket,
+        )
+        trend_ema = _lerp(ema_slow, ema_fast, fast_weight)
+        gap_scale = _lerp(
+            config.MTF_TREND_GAP_SCALE_LOW_VOL,
+            config.MTF_TREND_GAP_SCALE_HIGH_VOL,
+            vol_bucket,
+        )
+
     rsi = _safe_float(fac.get("rsi"), 50.0)
     macd_hist = _safe_float(fac.get("macd_hist"), 0.0)
 
     gap_norm = 0.0
-    if close > 0.0 and ema20 > 0.0:
-        gap_pips = (close - ema20) / config.PIP_VALUE
-        gap_norm = _clamp(gap_pips / max(0.8, atr_pips * 0.65), -1.0, 1.0)
+    if close > 0.0 and trend_ema > 0.0:
+        gap_pips = (close - trend_ema) / config.PIP_VALUE
+        gap_norm = _clamp(
+            gap_pips / max(config.MTF_TREND_GAP_NORM_MIN_PIPS, atr_pips * gap_scale),
+            -1.0,
+            1.0,
+        )
 
     rsi_norm = _clamp((rsi - 50.0) / 20.0, -1.0, 1.0)
     macd_pips = macd_hist / config.PIP_VALUE
@@ -1934,6 +1991,8 @@ def _apply_horizon_bias(
 def _m1_trend_units_multiplier(
     signal_side: str,
     m1_score: Optional[float],
+    *,
+    regime: Optional[MtfRegime] = None,
 ) -> tuple[float, str]:
     if not config.M1_TREND_SCALE_ENABLED:
         return 1.0, "disabled"
@@ -1943,27 +2002,63 @@ def _m1_trend_units_multiplier(
         return 1.0, "invalid_side"
 
     score_abs = abs(_safe_float(m1_score, 0.0))
+    vol_bucket = _regime_vol_bucket(
+        regime,
+        low_pips=config.M1_TREND_VOL_LOW_PIPS,
+        high_pips=config.M1_TREND_VOL_HIGH_PIPS,
+    ) if config.M1_TREND_VOL_INTERP_ENABLED else 0.5
+    align_score_min = (
+        _lerp(
+            config.M1_TREND_ALIGN_SCORE_MIN_LOW_VOL,
+            config.M1_TREND_ALIGN_SCORE_MIN_HIGH_VOL,
+            vol_bucket,
+        )
+        if config.M1_TREND_VOL_INTERP_ENABLED
+        else config.M1_TREND_ALIGN_SCORE_MIN
+    )
+    opposite_score = (
+        _lerp(
+            config.M1_TREND_OPPOSITE_SCORE_LOW_VOL,
+            config.M1_TREND_OPPOSITE_SCORE_HIGH_VOL,
+            vol_bucket,
+        )
+        if config.M1_TREND_VOL_INTERP_ENABLED
+        else config.M1_TREND_OPPOSITE_SCORE
+    )
+    align_boost_max = (
+        _lerp(
+            config.M1_TREND_ALIGN_BOOST_MAX_LOW_VOL,
+            config.M1_TREND_ALIGN_BOOST_MAX_HIGH_VOL,
+            vol_bucket,
+        )
+        if config.M1_TREND_VOL_INTERP_ENABLED
+        else config.M1_TREND_ALIGN_BOOST_MAX
+    )
+    align_score_min = _clamp(align_score_min, 0.05, 0.95)
+    opposite_score = _clamp(opposite_score, align_score_min, 1.0)
+    align_boost_max = _clamp(align_boost_max, 0.0, 1.0)
+
     if score_abs <= 0.0:
         return 1.0, "m1_zero"
 
     side_sign = 1.0 if signal_side == "long" else -1.0
     aligned = score_abs > 0.0 and (m1_score * side_sign) > 0.0
     if not aligned:
-        denom = max(0.05, float(config.M1_TREND_OPPOSITE_SCORE))
+        denom = max(0.05, float(opposite_score))
         penalty_ratio = _clamp(score_abs / denom, 0.0, 1.0)
         scale = 1.0 - (1.0 - config.M1_TREND_OPPOSITE_UNITS_MULT) * penalty_ratio
         return float(max(0.1, scale)), "m1_opposite"
 
-    if score_abs < config.M1_TREND_ALIGN_SCORE_MIN:
+    if score_abs < align_score_min:
         return 1.0, "m1_align_weak"
 
     ratio = _clamp(
-        (score_abs - config.M1_TREND_ALIGN_SCORE_MIN)
-        / max(0.05, 1.0 - config.M1_TREND_ALIGN_SCORE_MIN),
+        (score_abs - align_score_min)
+        / max(0.05, 1.0 - align_score_min),
         0.0,
         1.0,
     )
-    return 1.0 + (config.M1_TREND_ALIGN_BOOST_MAX * ratio), "m1_align_boost"
+    return 1.0 + (align_boost_max * ratio), "m1_align_boost"
 
 
 def _directional_bias_scale(rows: Sequence[dict], side: str) -> tuple[float, dict[str, float]]:
@@ -2307,11 +2402,33 @@ def _confidence_scale(conf: int) -> float:
 
 
 def _compute_targets(
-    *, spread_pips: float, momentum_pips: float, tp_profile: TpTimingProfile
+    *,
+    spread_pips: float,
+    momentum_pips: float,
+    tp_profile: TpTimingProfile,
+    regime: Optional[MtfRegime],
 ) -> tuple[float, float]:
     # Time-aware TP scaling for ping scalp:
     # if average TP holding time drifts too long, reduce TP net edge.
     tp_mult = max(config.TP_TIME_MULT_MIN, min(config.TP_TIME_MULT_MAX, tp_profile.multiplier))
+    if config.TP_VOL_ADAPT_ENABLED:
+        vol_bucket = _regime_vol_bucket(
+            regime,
+            low_pips=config.TP_VOL_LOW_PIPS,
+            high_pips=config.TP_VOL_HIGH_PIPS,
+        )
+        low_vol_target = (
+            config.TP_VOL_MULT_LOW_VOL_MIN + config.TP_VOL_MULT_LOW_VOL_MAX
+        ) * 0.5
+        high_vol_target = (
+            config.TP_VOL_MULT_HIGH_VOL_MIN + config.TP_VOL_MULT_HIGH_VOL_MAX
+        ) * 0.5
+        vol_mult = _lerp(low_vol_target, high_vol_target, vol_bucket)
+        tp_mult = _clamp(
+            tp_mult * vol_mult,
+            config.TP_TIME_MULT_MIN,
+            config.TP_TIME_MULT_MAX,
+        )
     tp_base = max(0.1, config.TP_BASE_PIPS * tp_mult)
     tp_net_edge = max(config.TP_NET_MIN_FLOOR_PIPS, config.TP_NET_MIN_PIPS * tp_mult)
     tp_floor = spread_pips + tp_net_edge
@@ -2977,6 +3094,7 @@ async def scalp_ping_5s_worker() -> None:
             m1_trend_units_mult, m1_trend_gate = _m1_trend_units_multiplier(
                 signal.side,
                 m1_score,
+                regime=regime,
             )
 
             last_snapshot_fetch, density_topup = await _maybe_topup_micro_density(
@@ -3251,6 +3369,7 @@ async def scalp_ping_5s_worker() -> None:
                 spread_pips=signal.spread_pips,
                 momentum_pips=signal.momentum_pips,
                 tp_profile=tp_profile,
+                regime=regime,
             )
             tech_profile = _build_technical_trade_profile(
                 route_reasons=tech_route_reasons,
@@ -3382,6 +3501,14 @@ async def scalp_ping_5s_worker() -> None:
                 "signal_momentum_score": round(signal.momentum_score, 3),
                 "signal_revert_score": round(signal.revert_score, 3),
                 "tp_time_mult": round(tp_profile.multiplier, 3),
+                "tp_vol_bucket": round(
+                    _regime_vol_bucket(
+                        regime,
+                        low_pips=config.TP_VOL_LOW_PIPS,
+                        high_pips=config.TP_VOL_HIGH_PIPS,
+                    ),
+                    3,
+                ),
                 "tp_time_avg_sec": (
                     round(tp_profile.avg_tp_sec, 1) if tp_profile.avg_tp_sec > 0.0 else None
                 ),
@@ -3398,6 +3525,14 @@ async def scalp_ping_5s_worker() -> None:
                 "horizon_gate": horizon_gate,
                 "horizon_units_mult": round(float(horizon_units_mult), 3),
                 "m1_trend_score": round(_safe_float(m1_score, 0.0), 3),
+                "m1_trend_vol_bucket": round(
+                    _regime_vol_bucket(
+                        regime,
+                        low_pips=config.M1_TREND_VOL_LOW_PIPS,
+                        high_pips=config.M1_TREND_VOL_HIGH_PIPS,
+                    ),
+                    3,
+                ),
                 "m1_trend_gate": m1_trend_gate,
                 "m1_trend_units_mult": round(float(m1_trend_units_mult), 3),
                 "trap_active": bool(trap_state.active),

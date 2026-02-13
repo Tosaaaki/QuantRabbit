@@ -111,11 +111,110 @@ def _bb_entry_allowed(style, side, price, fac_m1, *, range_active=None):
     else:
         if price > mid:
             return False
-        ext = max(0.0, lower - price) / _BB_PIP
+    ext = max(0.0, lower - price) / _BB_PIP
     max_ext = max(_BB_ENTRY_TREND_EXT_PIPS, span_pips * _BB_ENTRY_TREND_EXT_RATIO)
     if orig_style == "scalp":
         max_ext = max(_BB_ENTRY_SCALP_EXT_PIPS, span_pips * _BB_ENTRY_SCALP_EXT_RATIO)
     return ext <= max_ext
+
+
+def _candle_float(candle, *keys: str) -> Optional[float]:
+    if isinstance(candle, dict):
+        for key in keys:
+            if key not in candle:
+                continue
+            raw = candle.get(key)
+            try:
+                value = float(raw)
+            except (TypeError, ValueError):
+                continue
+            if value > 0.0:
+                return value
+        return None
+    if isinstance(candle, (list, tuple)) and len(candle) >= 4:
+        return _candle_float(
+            {"open": candle[0], "high": candle[1], "low": candle[2], "close": candle[3]},
+            *keys
+        )
+    return None
+
+
+def _recent_low(candles, lookback: int) -> Optional[float]:
+    if not candles or lookback <= 0:
+        return None
+    try:
+        n = max(2, int(lookback))
+    except (TypeError, ValueError):
+        n = 2
+    window = list(candles)[-n:] if len(candles) > n else list(candles)
+    if not window:
+        return None
+    lows: list[float] = []
+    for candle in window:
+        low = _candle_float(candle, "l", "low")
+        if low is None:
+            continue
+        lows.append(low)
+    if not lows:
+        return None
+    return min(lows)
+
+
+def _detect_usdjpy_setup_mode(side: str, price: float, fac_m1: dict) -> tuple[Optional[str], dict]:
+    if not config.USDJPY_SETUP_GATING:
+        return None, {}
+    if side != "short":
+        return None, {}
+    if price <= 0.0 or price <= 100.0:
+        return None, {}
+
+    levels = _bb_levels(fac_m1)
+    bb_mid = None
+    if levels:
+        _, mid, _, _, _ = levels
+        bb_mid = mid
+    else:
+        return None, {}
+    pullback_band = max(config.USDJPY_PULLBACK_BAND_PIPS, 0.0)
+    pullback_ok = abs(price - bb_mid) <= pullback_band * _BB_PIP
+
+    m1_lookback = max(2, int(config.USDJPY_BREAK_LOOKBACK_M1))
+    m5_lookback = max(2, int(config.USDJPY_BREAK_LOOKBACK_M5))
+    m1_candles = get_candles_snapshot("M1", limit=m1_lookback + 3)
+    m5_candles = get_candles_snapshot("M5", limit=m5_lookback + 3)
+    low_m1 = _recent_low(m1_candles, m1_lookback)
+    low_m5 = _recent_low(m5_candles, m5_lookback)
+    support_level = None
+    if low_m1 is not None and low_m5 is not None:
+        support_level = max(low_m1, low_m5)
+    elif low_m1 is not None:
+        support_level = low_m1
+    elif low_m5 is not None:
+        support_level = low_m5
+
+    if support_level is not None:
+        margin = config.USDJPY_BREAK_MARGIN_PIPS * _BB_PIP
+        if price <= (support_level - margin):
+            return (
+                "breakdown",
+                {
+                    "support_level": round(support_level, 3),
+                    "support_margin_pips": round(config.USDJPY_BREAK_MARGIN_PIPS, 3),
+                    "lookback_m1": m1_lookback,
+                    "lookback_m5": m5_lookback,
+                },
+            )
+    if pullback_ok:
+        return (
+            "pullback",
+            {
+                "bb_mid": round(bb_mid, 3),
+                "pullback_band_pips": round(pullback_band, 3),
+                "distance_to_mid_pips": round(abs(price - bb_mid) / _BB_PIP, 3),
+                "support_level": round(support_level, 3) if support_level is not None else None,
+            },
+        )
+    return None, {}
 
 BB_STYLE = "scalp"
 
@@ -789,6 +888,28 @@ async def scalp_m1_worker() -> None:
         if not _bb_entry_allowed(bb_style, side, price, fac_m1, range_active=range_ctx.active):
             continue
 
+        usdjpy_setup_mode: Optional[str] = None
+        usdjpy_setup_detail: dict = {}
+        usdjpy_setup_mult = 1.0
+        if config.USDJPY_SETUP_GATING and side == "short":
+            usdjpy_setup_mode, usdjpy_setup_detail = _detect_usdjpy_setup_mode(side, price, fac_m1)
+            if not usdjpy_setup_mode:
+                now_mono = time.monotonic()
+                if now_mono - last_block_log > 120.0:
+                    LOG.info(
+                        "%s usdjpy_setup_block side=%s tag=%s price=%.3f",
+                        config.LOG_PREFIX,
+                        side,
+                        signal_tag,
+                        price,
+                    )
+                    last_block_log = now_mono
+                continue
+            if usdjpy_setup_mode == "pullback":
+                usdjpy_setup_mult = config.USDJPY_PULLBACK_SIZE_MULT
+            elif usdjpy_setup_mode == "breakdown":
+                usdjpy_setup_mult = config.USDJPY_BREAK_SIZE_MULT
+
         tp_scale = 5.0 / max(1.0, tp_pips)
         tp_scale = max(0.45, min(1.15, tp_scale))
         base_units = int(
@@ -863,6 +984,7 @@ async def scalp_m1_worker() -> None:
         units = int(round(base_units * conf_scale))
         units = min(units, units_risk)
         units = int(round(units * cap))
+        setup_size_mult = usdjpy_setup_mult
         dyn_mult = 1.0
         dyn_score = 0.0
         dyn_trades = 0
@@ -871,7 +993,9 @@ async def scalp_m1_worker() -> None:
             dyn_mult = max(config.DYN_ALLOC_MULT_MIN, min(config.DYN_ALLOC_MULT_MAX, dyn_mult))
             dyn_score = float(dyn_profile.get("score", 0.0) or 0.0)
             dyn_trades = int(dyn_profile.get("trades", 0) or 0)
-        units = int(round(units * dyn_mult))
+        total_size_mult = dyn_mult * setup_size_mult
+        if total_size_mult != 1.0:
+            units = int(round(units * total_size_mult))
         if units < config.MIN_UNITS:
             continue
         if side == "short":
@@ -912,6 +1036,11 @@ async def scalp_m1_worker() -> None:
                 "trades": dyn_trades,
                 "lot_multiplier": round(dyn_mult, 3),
             }
+        if config.USDJPY_SETUP_GATING and usdjpy_setup_mode:
+            entry_thesis["usdjpy_setup_mode"] = usdjpy_setup_mode
+            if usdjpy_setup_detail:
+                entry_thesis["usdjpy_setup_detail"] = usdjpy_setup_detail
+            entry_thesis["setup_mult"] = round(setup_size_mult, 4)
         if derive_pattern_signature is not None and isinstance(entry_thesis, dict):
             pattern_tag, pattern_meta = derive_pattern_signature(
                 fac_m1, action="OPEN_LONG" if units > 0 else "OPEN_SHORT"
@@ -958,7 +1087,7 @@ async def scalp_m1_worker() -> None:
                 _PENDING_LIMIT_ORDER_ID = order_id
                 _PENDING_LIMIT_UNTIL_TS = time.time() + max(1.0, limit_ttl_sec)
             LOG.info(
-                "%s sent(limit) units=%s side=%s ref=%.3f mid=%.3f sl=%.3f tp=%s conf=%.0f cap=%.2f dyn=%.2f dyn_score=%.2f dyn_n=%s reasons=%s trade_id=%s order_id=%s",
+                "%s sent(limit) units=%s side=%s ref=%.3f mid=%.3f sl=%.3f tp=%s conf=%.0f cap=%.2f dyn=%.2f setup=%s setup_mult=%.2f dyn_score=%.2f dyn_n=%s reasons=%s trade_id=%s order_id=%s",
                 config.LOG_PREFIX,
                 units,
                 side,
@@ -969,6 +1098,8 @@ async def scalp_m1_worker() -> None:
                 signal.get("confidence", 0),
                 cap,
                 dyn_mult,
+                usdjpy_setup_mode or "none",
+                setup_size_mult,
                 dyn_score,
                 dyn_trades,
                 {**cap_reason, "tp_scale": round(tp_scale, 3)},
@@ -987,7 +1118,7 @@ async def scalp_m1_worker() -> None:
                 entry_thesis=entry_thesis,
             )
             LOG.info(
-                "%s sent units=%s side=%s price=%.3f sl=%.3f tp=%.3f conf=%.0f cap=%.2f dyn=%.2f dyn_score=%.2f dyn_n=%s reasons=%s res=%s",
+                "%s sent units=%s side=%s price=%.3f sl=%.3f tp=%.3f conf=%.0f cap=%.2f dyn=%.2f setup=%s setup_mult=%.2f dyn_score=%.2f dyn_n=%s reasons=%s res=%s",
                 config.LOG_PREFIX,
                 units,
                 side,
@@ -997,6 +1128,8 @@ async def scalp_m1_worker() -> None:
                 signal.get("confidence", 0),
                 cap,
                 dyn_mult,
+                usdjpy_setup_mode or "none",
+                setup_size_mult,
                 dyn_score,
                 dyn_trades,
                 {**cap_reason, "tp_scale": round(tp_scale, 3)},
