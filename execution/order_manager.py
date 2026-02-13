@@ -1537,9 +1537,6 @@ def _disable_hard_stop_by_strategy(
     pocket: Optional[str],
     entry_thesis: Optional[dict],
 ) -> bool:
-    if isinstance(entry_thesis, dict):
-        if "disable_entry_hard_stop" in entry_thesis:
-            return _coerce_bool(entry_thesis.get("disable_entry_hard_stop"), False)
     base_tag = (strategy_tag or "").strip().lower()
     if not base_tag and isinstance(entry_thesis, dict):
         base_tag = str(
@@ -1547,6 +1544,14 @@ def _disable_hard_stop_by_strategy(
         ).strip().lower()
     if not base_tag:
         base_tag = (_strategy_tag_from_thesis(entry_thesis) or "").strip().lower()
+
+    # 5s ping family should always be hard-stop-disabled by default.
+    if base_tag.startswith("scalp_ping_5"):
+        return True
+
+    if isinstance(entry_thesis, dict):
+        if "disable_entry_hard_stop" in entry_thesis:
+            return _coerce_bool(entry_thesis.get("disable_entry_hard_stop"), False)
     if base_tag in {
         "scalp_ping_5",
         "scalp_ping_5s",
