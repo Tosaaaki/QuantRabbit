@@ -1523,6 +1523,35 @@ def _allow_stop_loss_on_fill(pocket: Optional[str]) -> bool:
         ):
             return True
     return False
+
+
+def _disable_hard_stop_by_strategy(
+    strategy_tag: Optional[str],
+    pocket: Optional[str],
+    entry_thesis: Optional[dict],
+) -> bool:
+    if isinstance(entry_thesis, dict):
+        if _coerce_bool(entry_thesis.get("disable_entry_hard_stop"), False):
+            return True
+    base_tag = (strategy_tag or "").strip().lower()
+    if not base_tag and isinstance(entry_thesis, dict):
+        base_tag = str(
+            entry_thesis.get("strategy_tag") or entry_thesis.get("strategy") or ""
+        ).strip().lower()
+    if not base_tag:
+        base_tag = (_strategy_tag_from_thesis(entry_thesis) or "").strip().lower()
+    if base_tag in {
+        "scalp_ping_5",
+        "scalp_ping_5s",
+    }:
+        if (pocket or "").strip().lower() == "scalp_fast":
+            return True
+    return base_tag in _env_csv_set(
+        "ORDER_DISABLE_ENTRY_HARD_STOP_TAGS",
+        "scalp_ping_5,scalp_ping_5s",
+    )
+
+
 _PROFIT_GUARD_BYPASS_RANGE = os.getenv("PROFIT_GUARD_BYPASS_RANGE", "1").strip().lower() not in {
     "",
     "0",
@@ -5751,13 +5780,16 @@ async def market_order(
     returns order ticket id（決済のみの fill でも tradeID を返却）
     """
     sl_disabled = stop_loss_disabled_for_pocket(pocket)
-    thesis_disable_hard_stop = (
-        _coerce_bool(
-            (entry_thesis or {}).get("disable_entry_hard_stop"),
-            False,
-        )
-        if isinstance(entry_thesis, dict)
-        else False
+    if strategy_tag is not None:
+        strategy_tag = str(strategy_tag)
+        if not strategy_tag:
+            strategy_tag = None
+    else:
+        strategy_tag = _strategy_tag_from_client_id(client_order_id)
+    thesis_disable_hard_stop = _disable_hard_stop_by_strategy(
+        strategy_tag,
+        pocket,
+        entry_thesis if isinstance(entry_thesis, dict) else None,
     )
     if thesis_disable_hard_stop:
         sl_price = None
@@ -5796,12 +5828,6 @@ async def market_order(
             tags={"pocket": pocket, "strategy": strategy_tag or "unknown"},
         )
         return None
-    if strategy_tag is not None:
-        strategy_tag = str(strategy_tag)
-        if not strategy_tag:
-            strategy_tag = None
-    else:
-        strategy_tag = None
     virtual_sl_price: Optional[float] = None
     virtual_tp_price: Optional[float] = None
     side_label = "buy" if units > 0 else "sell"
@@ -8365,7 +8391,13 @@ async def market_order(
     if client_order_id:
         order_data["order"]["clientExtensions"]["id"] = client_order_id
         order_data["order"]["tradeClientExtensions"]["id"] = client_order_id
-    if (not sl_disabled) and (not reduce_only) and sl_price is not None and _allow_stop_loss_on_fill(pocket):
+    if (
+        not sl_disabled
+        and not reduce_only
+        and not thesis_disable_hard_stop
+        and sl_price is not None
+        and _allow_stop_loss_on_fill(pocket)
+    ):
         order_data["order"]["stopLossOnFill"] = {"price": f"{sl_price:.3f}"}
     if tp_price is not None:
         order_data["order"]["takeProfitOnFill"] = {"price": f"{tp_price:.3f}"}
@@ -8526,7 +8558,12 @@ async def market_order(
                     if sl_disabled:
                         fallback_sl = None
                     if fallback_sl is not None or fallback_tp is not None:
-                        if fallback_sl is not None and (not reduce_only) and _allow_stop_loss_on_fill(pocket):
+                        if (
+                            fallback_sl is not None
+                            and not thesis_disable_hard_stop
+                            and (not reduce_only)
+                            and _allow_stop_loss_on_fill(pocket)
+                        ):
                             order_data["order"]["stopLossOnFill"] = {
                                 "price": f"{fallback_sl:.3f}"
                             }
@@ -8805,13 +8842,10 @@ async def limit_order(
     strategy_tag = _strategy_tag_from_thesis(entry_thesis)
 
     sl_disabled = stop_loss_disabled_for_pocket(pocket)
-    thesis_disable_hard_stop = (
-        _coerce_bool(
-            (entry_thesis or {}).get("disable_entry_hard_stop"),
-            False,
-        )
-        if isinstance(entry_thesis, dict)
-        else False
+    thesis_disable_hard_stop = _disable_hard_stop_by_strategy(
+        strategy_tag,
+        pocket,
+        entry_thesis if isinstance(entry_thesis, dict) else None,
     )
     if thesis_disable_hard_stop:
         sl_price = None
@@ -8824,14 +8858,6 @@ async def limit_order(
     if _soft_tp_mode(entry_thesis):
         tp_price = None
 
-    thesis_disable_hard_stop = (
-        _coerce_bool(
-            (entry_thesis or {}).get("disable_entry_hard_stop"),
-            False,
-        )
-        if isinstance(entry_thesis, dict)
-        else False
-    )
     if not reduce_only and not sl_disabled and not thesis_disable_hard_stop and price > 0:
         hard_stop_pips = _entry_hard_stop_pips(pocket, strategy_tag=strategy_tag)
         if hard_stop_pips > 0.0:
@@ -9405,7 +9431,13 @@ async def limit_order(
     if client_order_id:
         payload["order"]["clientExtensions"]["id"] = client_order_id
         payload["order"]["tradeClientExtensions"]["id"] = client_order_id
-    if (not sl_disabled) and (not reduce_only) and sl_price is not None and _allow_stop_loss_on_fill(pocket):
+    if (
+        not sl_disabled
+        and not reduce_only
+        and not thesis_disable_hard_stop
+        and sl_price is not None
+        and _allow_stop_loss_on_fill(pocket)
+    ):
         payload["order"]["stopLossOnFill"] = {"price": f"{sl_price:.3f}"}
     if tp_price is not None:
         payload["order"]["takeProfitOnFill"] = {"price": f"{tp_price:.3f}"}
