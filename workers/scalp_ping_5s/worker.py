@@ -739,7 +739,11 @@ def _force_exit_hard_loss_trigger_pips(trade: dict, base_hard_loss_pips: float) 
         return 0.0
     entry_spread_pips = max(0.0, _trade_entry_spread_pips(trade))
     buffer_pips = max(0.0, float(getattr(config, "SL_SPREAD_BUFFER_PIPS", 0.0)))
-    return float(base_hard_loss_pips + entry_spread_pips + buffer_pips)
+    force_buffer_pips = max(
+        buffer_pips,
+        max(0.0, float(getattr(config, "FORCE_EXIT_BID_ASK_BUFFER_PIPS", 0.0))),
+    )
+    return float(base_hard_loss_pips + entry_spread_pips + force_buffer_pips)
 
 
 def _trade_client_id(trade: dict) -> str:
@@ -1402,10 +1406,11 @@ def _build_tick_signal(rows: Sequence[dict], spread_pips: float) -> Optional[Tic
         else:
             spread_pips = 0.0
 
-    trigger_pips = max(
+    edge_guard_pips = max(
         config.MOMENTUM_TRIGGER_PIPS,
-        spread_pips * config.MOMENTUM_SPREAD_MULT,
+        spread_pips * config.MOMENTUM_SPREAD_MULT + config.ENTRY_BID_ASK_EDGE_PIPS,
     )
+    trigger_pips = edge_guard_pips
 
     side_momentum: Optional[str] = None
     momentum_score = 0.0
@@ -1518,6 +1523,7 @@ def _build_tick_signal(rows: Sequence[dict], spread_pips: float) -> Optional[Tic
                                 0.05,
                                 config.REVERT_BOUNCE_MIN_PIPS,
                                 spread_pips * 0.6,
+                                spread_pips * config.MOMENTUM_SPREAD_MULT + config.ENTRY_BID_ASK_EDGE_PIPS,
                             )
 
     side: Optional[str] = None

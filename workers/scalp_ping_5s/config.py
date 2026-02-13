@@ -48,6 +48,15 @@ MAX_TICK_AGE_MS: float = max(100.0, float(os.getenv("SCALP_PING_5S_MAX_TICK_AGE_
 MAX_SPREAD_PIPS: float = max(0.1, float(os.getenv("SCALP_PING_5S_MAX_SPREAD_PIPS", "0.85")))
 MOMENTUM_TRIGGER_PIPS: float = max(0.1, float(os.getenv("SCALP_PING_5S_MOMENTUM_TRIGGER_PIPS", "0.8")))
 MOMENTUM_SPREAD_MULT: float = max(0.0, float(os.getenv("SCALP_PING_5S_MOMENTUM_SPREAD_MULT", "1.0")))
+ENTRY_BID_ASK_EDGE_PIPS: float = max(
+    0.0,
+    float(
+        os.getenv(
+            "SCALP_PING_5S_ENTRY_BID_ASK_EDGE_PIPS",
+            "0.12",
+        )
+    ),
+)
 IMBALANCE_MIN: float = max(0.5, min(0.95, float(os.getenv("SCALP_PING_5S_IMBALANCE_MIN", "0.60"))))
 
 DIRECTION_BIAS_ENABLED: bool = _bool_env("SCALP_PING_5S_DIRECTION_BIAS_ENABLED", True)
@@ -625,9 +634,9 @@ SIDE_BIAS_BLOCK_THRESHOLD: float = max(
     0.0, min(1.0, float(os.getenv("SCALP_PING_5S_SIDE_BIAS_BLOCK_THRESHOLD", "0.0")))
 )
 
-TP_BASE_PIPS: float = max(0.2, float(os.getenv("SCALP_PING_5S_TP_BASE_PIPS", "0.2")))
-TP_NET_MIN_PIPS: float = max(0.1, float(os.getenv("SCALP_PING_5S_TP_NET_MIN_PIPS", "0.25")))
-TP_MAX_PIPS: float = max(TP_BASE_PIPS, float(os.getenv("SCALP_PING_5S_TP_MAX_PIPS", "1.0")))
+TP_BASE_PIPS: float = max(0.2, float(os.getenv("SCALP_PING_5S_TP_BASE_PIPS", "0.30")))
+TP_NET_MIN_PIPS: float = max(0.1, float(os.getenv("SCALP_PING_5S_TP_NET_MIN_PIPS", "0.30")))
+TP_MAX_PIPS: float = max(TP_BASE_PIPS, float(os.getenv("SCALP_PING_5S_TP_MAX_PIPS", "0.80")))
 TP_MOMENTUM_BONUS_MAX: float = max(
     0.0, float(os.getenv("SCALP_PING_5S_TP_MOMENTUM_BONUS_MAX", "0.2"))
 )
@@ -658,12 +667,12 @@ ENTRY_CHASE_MAX_PIPS: float = max(
     0.1, float(os.getenv("SCALP_PING_5S_ENTRY_CHASE_MAX_PIPS", "1.4"))
 )
 
-SL_BASE_PIPS: float = max(0.2, float(os.getenv("SCALP_PING_5S_SL_BASE_PIPS", "2.4")))
-SL_MIN_PIPS: float = max(0.2, float(os.getenv("SCALP_PING_5S_SL_MIN_PIPS", "1.9")))
-SL_MAX_PIPS: float = max(SL_MIN_PIPS, float(os.getenv("SCALP_PING_5S_SL_MAX_PIPS", "6.0")))
-SL_SPREAD_MULT: float = max(0.0, float(os.getenv("SCALP_PING_5S_SL_SPREAD_MULT", "1.8")))
+SL_BASE_PIPS: float = max(0.2, float(os.getenv("SCALP_PING_5S_SL_BASE_PIPS", "1.40")))
+SL_MIN_PIPS: float = max(0.2, float(os.getenv("SCALP_PING_5S_SL_MIN_PIPS", "1.00")))
+SL_MAX_PIPS: float = max(SL_MIN_PIPS, float(os.getenv("SCALP_PING_5S_SL_MAX_PIPS", "4.20")))
+SL_SPREAD_MULT: float = max(0.0, float(os.getenv("SCALP_PING_5S_SL_SPREAD_MULT", "1.2")))
 SL_SPREAD_BUFFER_PIPS: float = max(
-    0.0, float(os.getenv("SCALP_PING_5S_SL_SPREAD_BUFFER_PIPS", "0.4"))
+    0.0, float(os.getenv("SCALP_PING_5S_SL_SPREAD_BUFFER_PIPS", "0.30"))
 )
 
 SNAPSHOT_FALLBACK_ENABLED: bool = _bool_env("SCALP_PING_5S_SNAPSHOT_FALLBACK_ENABLED", True)
@@ -742,16 +751,25 @@ SNAPSHOT_KEEPALIVE_MIN_SPAN_RATIO: float = max(
 )
 
 FORCE_EXIT_MAX_HOLD_SEC: float = max(
-    0.0, float(os.getenv("SCALP_PING_5S_FORCE_EXIT_MAX_HOLD_SEC", "0.0"))
+    0.0, float(os.getenv("SCALP_PING_5S_FORCE_EXIT_MAX_HOLD_SEC", "150"))
 )
 FORCE_EXIT_MAX_FLOATING_LOSS_PIPS: float = max(
-    0.0, float(os.getenv("SCALP_PING_5S_FORCE_EXIT_MAX_FLOATING_LOSS_PIPS", "0.0"))
+    0.0, float(os.getenv("SCALP_PING_5S_FORCE_EXIT_MAX_FLOATING_LOSS_PIPS", "3.5"))
 )
 FORCE_EXIT_RECOVERY_WINDOW_SEC: float = max(
     0.0, float(os.getenv("SCALP_PING_5S_FORCE_EXIT_RECOVERY_WINDOW_SEC", "0.0"))
 )
 FORCE_EXIT_RECOVERABLE_LOSS_PIPS: float = max(
     0.0, float(os.getenv("SCALP_PING_5S_FORCE_EXIT_RECOVERABLE_LOSS_PIPS", "0.0"))
+)
+FORCE_EXIT_BID_ASK_BUFFER_PIPS: float = max(
+    0.0,
+    float(
+        os.getenv(
+            "SCALP_PING_5S_FORCE_EXIT_BID_ASK_BUFFER_PIPS",
+            "0.06",
+        )
+    ),
 )
 FORCE_EXIT_MAX_ACTIONS: int = max(
     1, int(float(os.getenv("SCALP_PING_5S_FORCE_EXIT_MAX_ACTIONS", "3")))
