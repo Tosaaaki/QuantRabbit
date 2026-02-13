@@ -60,6 +60,9 @@ _PRICING_HOST = (
 _PRICING_URL = f"{_PRICING_HOST}/v3/accounts/{_OANDA_ACCOUNT}/pricing"
 _PRICING_HEADERS = {"Authorization": f"Bearer {_OANDA_TOKEN}"} if _OANDA_TOKEN else {}
 _TRADES_DB = pathlib.Path("logs/trades.db")
+_SNAPSHOT_FETCH_BACKOFF_UNTIL_MONO: float = 0.0
+_SNAPSHOT_FETCH_FAILURES: int = 0
+_SNAPSHOT_FETCH_BACKOFF_LOG_MONO: float = 0.0
 
 
 @dataclass(slots=True)
@@ -2800,22 +2803,92 @@ def _client_order_id(side: str) -> str:
     return f"qr-{ts_ms}-{config.STRATEGY_TAG[:12]}-{side[0]}{digest}"
 
 
+def _snapshot_retry_delay_seconds(failure_count: int) -> float:
+    if failure_count <= 0:
+        return 0.0
+    multiplier = max(1.1, float(config.SNAPSHOT_FETCH_RETRY_BACKOFF_MULTIPLIER))
+    delay = float(config.SNAPSHOT_FETCH_RETRY_BASE_SEC) * (multiplier ** (failure_count - 1))
+    return min(float(config.SNAPSHOT_FETCH_RETRY_MAX_SEC), delay)
+
+
+def _snapshot_is_transient_status(status_code: int) -> bool:
+    return status_code in {429, 500, 502, 503, 504}
+
+
 async def _fetch_price_snapshot(logger: logging.Logger) -> bool:
+    global _SNAPSHOT_FETCH_FAILURES, _SNAPSHOT_FETCH_BACKOFF_UNTIL_MONO, _SNAPSHOT_FETCH_BACKOFF_LOG_MONO
     if not _OANDA_TOKEN or not _OANDA_ACCOUNT:
+        return False
+
+    now_mono = time.monotonic()
+    if _SNAPSHOT_FETCH_BACKOFF_UNTIL_MONO > now_mono:
+        if now_mono - _SNAPSHOT_FETCH_BACKOFF_LOG_MONO >= 10.0:
+            _SNAPSHOT_FETCH_BACKOFF_LOG_MONO = now_mono
+            logger.warning(
+                "%s snapshot fetch waiting retry backoff: %.1fs remaining",
+                config.LOG_PREFIX,
+                max(0.0, _SNAPSHOT_FETCH_BACKOFF_UNTIL_MONO - now_mono),
+            )
         return False
 
     params = {"instruments": "USD_JPY"}
     try:
-        async with httpx.AsyncClient(timeout=3.0) as client:
+        async with httpx.AsyncClient(timeout=config.SNAPSHOT_FETCH_TIMEOUT_SEC) as client:
             resp = await client.get(_PRICING_URL, headers=_PRICING_HEADERS, params=params)
             resp.raise_for_status()
             payload = resp.json()
+    except httpx.HTTPStatusError as exc:  # noqa: BLE001
+        status_code = getattr(exc.response, "status_code", 0) if exc.response is not None else 0
+        if _snapshot_is_transient_status(int(status_code or 0)):
+            _SNAPSHOT_FETCH_FAILURES += 1
+            delay = _snapshot_retry_delay_seconds(_SNAPSHOT_FETCH_FAILURES)
+            _SNAPSHOT_FETCH_BACKOFF_UNTIL_MONO = now_mono + delay
+            logger.warning(
+                "%s snapshot fetch failed (http %s). retry in %.1fs (failures=%d): %s",
+                config.LOG_PREFIX,
+                status_code,
+                delay,
+                _SNAPSHOT_FETCH_FAILURES,
+                exc,
+            )
+            return False
+        logger.warning(
+            "%s snapshot fetch failed (http %s): %s",
+            config.LOG_PREFIX,
+            status_code,
+            exc,
+        )
+        return False
+    except (httpx.RequestError, ValueError, TypeError, OSError) as exc:  # noqa: BLE001
+        _SNAPSHOT_FETCH_FAILURES += 1
+        delay = _snapshot_retry_delay_seconds(_SNAPSHOT_FETCH_FAILURES)
+        _SNAPSHOT_FETCH_BACKOFF_UNTIL_MONO = now_mono + delay
+        logger.warning(
+            "%s snapshot fetch request failed. retry in %.1fs (failures=%d): %s",
+            config.LOG_PREFIX,
+            delay,
+            _SNAPSHOT_FETCH_FAILURES,
+            exc,
+        )
+        return False
     except Exception as exc:
         logger.warning("%s snapshot fetch failed: %s", config.LOG_PREFIX, exc)
+        _SNAPSHOT_FETCH_FAILURES += 1
+        delay = _snapshot_retry_delay_seconds(_SNAPSHOT_FETCH_FAILURES)
+        _SNAPSHOT_FETCH_BACKOFF_UNTIL_MONO = now_mono + delay
         return False
 
     prices = payload.get("prices") or []
     if not prices:
+        _SNAPSHOT_FETCH_FAILURES += 1
+        delay = _snapshot_retry_delay_seconds(_SNAPSHOT_FETCH_FAILURES)
+        _SNAPSHOT_FETCH_BACKOFF_UNTIL_MONO = now_mono + delay
+        logger.warning(
+            "%s snapshot parse failed: no prices in payload. retry in %.1fs (failures=%d)",
+            config.LOG_PREFIX,
+            delay,
+            _SNAPSHOT_FETCH_FAILURES,
+        )
         return False
 
     price = prices[0]
@@ -2830,6 +2903,15 @@ async def _fetch_price_snapshot(logger: logging.Logger) -> bool:
         quote_ts = _parse_time(price.get("time", datetime.datetime.utcnow().isoformat() + "Z"))
     except Exception as exc:
         logger.warning("%s snapshot parse failed: %s", config.LOG_PREFIX, exc)
+        _SNAPSHOT_FETCH_FAILURES += 1
+        delay = _snapshot_retry_delay_seconds(_SNAPSHOT_FETCH_FAILURES)
+        _SNAPSHOT_FETCH_BACKOFF_UNTIL_MONO = now_mono + delay
+        logger.warning(
+            "%s snapshot parse failed. retry in %.1fs (failures=%d)",
+            config.LOG_PREFIX,
+            delay,
+            _SNAPSHOT_FETCH_FAILURES,
+        )
         return False
 
     fetched_at = datetime.datetime.now(datetime.timezone.utc)
@@ -2849,8 +2931,20 @@ async def _fetch_price_snapshot(logger: logging.Logger) -> bool:
         tick_window.record(tick)
     except Exception as exc:
         logger.warning("%s snapshot cache update failed: %s", config.LOG_PREFIX, exc)
+        _SNAPSHOT_FETCH_FAILURES += 1
+        delay = _snapshot_retry_delay_seconds(_SNAPSHOT_FETCH_FAILURES)
+        _SNAPSHOT_FETCH_BACKOFF_UNTIL_MONO = now_mono + delay
+        logger.warning(
+            "%s snapshot cache update failed. retry in %.1fs (failures=%d)",
+            config.LOG_PREFIX,
+            delay,
+            _SNAPSHOT_FETCH_FAILURES,
+        )
         return False
 
+    _SNAPSHOT_FETCH_FAILURES = 0
+    _SNAPSHOT_FETCH_BACKOFF_UNTIL_MONO = 0.0
+    _SNAPSHOT_FETCH_BACKOFF_LOG_MONO = 0.0
     return True
 
 
