@@ -3259,6 +3259,7 @@ async def scalp_ping_5s_worker() -> None:
                 "confidence": int(signal.confidence),
                 "tp_pips": round(tp_pips, 3),
                 "sl_pips": round(sl_pips, 3),
+                "disable_entry_hard_stop": bool(config.DISABLE_ENTRY_HARD_STOP),
                 "signal_mode": signal.mode,
                 "signal_mode_score": round(signal.mode_score, 3),
                 "signal_momentum_score": round(signal.momentum_score, 3),

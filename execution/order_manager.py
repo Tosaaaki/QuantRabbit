@@ -5751,6 +5751,16 @@ async def market_order(
     returns order ticket id（決済のみの fill でも tradeID を返却）
     """
     sl_disabled = stop_loss_disabled_for_pocket(pocket)
+    thesis_disable_hard_stop = (
+        _coerce_bool(
+            (entry_thesis or {}).get("disable_entry_hard_stop"),
+            False,
+        )
+        if isinstance(entry_thesis, dict)
+        else False
+    )
+    if thesis_disable_hard_stop:
+        sl_price = None
     # client_order_id は必須。欠損したまま送れば OANDA 側で空白になり、追跡不能となる。
     if not client_order_id:
         _console_order_log(
@@ -7943,7 +7953,15 @@ async def market_order(
                 units,
             )
 
-    if not reduce_only and not sl_disabled and estimated_entry is not None:
+    thesis_disable_hard_stop = (
+        _coerce_bool(
+            (entry_thesis or {}).get("disable_entry_hard_stop"),
+            False,
+        )
+        if isinstance(entry_thesis, dict)
+        else False
+    )
+    if not reduce_only and not sl_disabled and not thesis_disable_hard_stop and estimated_entry is not None:
         hard_stop_pips = _entry_hard_stop_pips(pocket, strategy_tag=strategy_tag)
         if hard_stop_pips > 0.0:
             max_sl_pips = _entry_max_sl_pips(pocket, strategy_tag=strategy_tag)
@@ -8014,7 +8032,7 @@ async def market_order(
                 estimated_entry,
             )
 
-    if not reduce_only:
+    if not reduce_only and not thesis_disable_hard_stop:
         loss_cap_jpy = _entry_loss_cap_jpy(
             pocket,
             strategy_tag=strategy_tag,
@@ -8776,6 +8794,16 @@ async def limit_order(
     strategy_tag = _strategy_tag_from_thesis(entry_thesis)
 
     sl_disabled = stop_loss_disabled_for_pocket(pocket)
+    thesis_disable_hard_stop = (
+        _coerce_bool(
+            (entry_thesis or {}).get("disable_entry_hard_stop"),
+            False,
+        )
+        if isinstance(entry_thesis, dict)
+        else False
+    )
+    if thesis_disable_hard_stop:
+        sl_price = None
     if sl_disabled:
         sl_price = None
 
@@ -8785,7 +8813,15 @@ async def limit_order(
     if _soft_tp_mode(entry_thesis):
         tp_price = None
 
-    if not reduce_only and not sl_disabled and price > 0:
+    thesis_disable_hard_stop = (
+        _coerce_bool(
+            (entry_thesis or {}).get("disable_entry_hard_stop"),
+            False,
+        )
+        if isinstance(entry_thesis, dict)
+        else False
+    )
+    if not reduce_only and not sl_disabled and not thesis_disable_hard_stop and price > 0:
         hard_stop_pips = _entry_hard_stop_pips(pocket, strategy_tag=strategy_tag)
         if hard_stop_pips > 0.0:
             hard_sl_price = _sl_price_from_pips(price, units, hard_stop_pips)
@@ -8823,7 +8859,7 @@ async def limit_order(
             reduce_only=reduce_only,
         )
 
-    if not reduce_only:
+    if not reduce_only and not thesis_disable_hard_stop:
         loss_cap_jpy = _entry_loss_cap_jpy(
             pocket,
             strategy_tag=strategy_tag,
