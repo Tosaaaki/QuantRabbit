@@ -161,3 +161,55 @@ DB:
   - 変更するなら「なぜ」「何を」「どうバケット化するか」を必ず記録し、反映直後は `learn_only` が増える前提で運用する。
 - 本番反映は `main` 統合 -> `git push origin main` -> `scripts/vm.sh ... deploy -b main -i --restart quantrabbit.service -t` の手順を守る。
 
+## 10. 2026-02-13 追加実装（scalp_ping_5s）: 可変コアリスク化（BASE/SAFE 即時切替）
+
+### 10.1 方針
+- 固定値の長所・短所を固定しないため、`base/safe` を切り替える2系統の環境として管理する。
+- 運用中に「即時切替」対象にするキーは次を含む:
+  - 取引制御: `SCALP_PING_5S_USE_SL`, `ORDER_DISABLE_STOP_LOSS_SCALP_FAST`, `ORDER_ENABLE_STOP_LOSS_SCALP_FAST`
+  - 取りこぼし抑制: `SCALP_PING_5S_ENTRY_COOLDOWN_SEC`, `SCALP_PING_5S_MIN_ORDER_SPACING_SEC`, `SCALP_PING_5S_MAX_ORDERS_PER_MINUTE`, `SCALP_PING_5S_MAX_ACTIVE_TRADES`, `SCALP_PING_5S_MAX_PER_DIRECTION`
+- `SCALP_PING_5S` の実運用上の判断は「実績ベースの自動切替」で行う前提にし、短時間統計が悪化したら `SAFE`、改善したら `BASE` に戻す。
+
+### 10.2 反映ファイル
+- `scripts/vm_apply_scalp_ping_5s_rapid_mode.sh`
+- `ops/env/scalp_ping_5s_rapid_mode_base_20260213.env`
+- `ops/env/scalp_ping_5s_rapid_mode_safe_20260213.env`
+
+### 10.3 BASE / SAFE のパラメータ差分（要点）
+- BASE
+  - `SCALP_PING_5S_USE_SL=0`
+  - `ORDER_DISABLE_STOP_LOSS_SCALP_FAST=1`
+  - `ORDER_ENABLE_STOP_LOSS_SCALP_FAST=0`
+  - `SCALP_PING_5S_MAX_ORDERS_PER_MINUTE=96`
+  - `SCALP_PING_5S_MAX_ACTIVE_TRADES=40`
+  - `SCALP_PING_5S_MAX_PER_DIRECTION=24`
+  - `SCALP_PING_5S_ENTRY_COOLDOWN_SEC=0.18`
+  - `SCALP_PING_5S_MIN_ORDER_SPACING_SEC=0.10`
+- SAFE
+  - `SCALP_PING_5S_USE_SL=1`
+  - `ORDER_DISABLE_STOP_LOSS_SCALP_FAST=0`
+  - `ORDER_ENABLE_STOP_LOSS_SCALP_FAST=1`
+  - `SCALP_PING_5S_MAX_ORDERS_PER_MINUTE=60`
+  - `SCALP_PING_5S_MAX_ACTIVE_TRADES=24`
+  - `SCALP_PING_5S_MAX_PER_DIRECTION=12`
+  - `SCALP_PING_5S_ENTRY_COOLDOWN_SEC=0.22`
+  - `SCALP_PING_5S_MIN_ORDER_SPACING_SEC=0.12`
+
+### 10.4 `--mode auto` の切替ロジック（現行）
+- `scripts/vm_apply_scalp_ping_5s_rapid_mode.sh` の `--auto` 判定は、直近 15分（`--window-min` で変更可）の統計を参照。
+- 参照指標:
+  - `short_sl_rate` / `short_avg`
+  - `long_sl_rate` / `long_avg`
+  - `overall_sl_rate` / `overall_avg`
+  - `trade_count`（対象期間のクローズ数）
+- 判定方針:
+  - BASE中は短期SL率や平均pips悪化（短・長）で SAFE へ。
+  - SAFE中は短・長・全体の指標が戻り基準を満たした場合にストリークを積み、一定連続数（現在2）で BASE へ復帰。
+
+### 10.5 運用チェック（反映確認）
+- 適用コマンド:
+  - `bash scripts/vm_apply_scalp_ping_5s_rapid_mode.sh -p quantrabbit -z asia-northeast1-a -m fx-trader-vm -t --mode base|safe|auto [--window-min 15]`
+- VM反映確認:
+  - `/etc/quantrabbit/scalp_ping_5s.env` の `SCALP_PING_5S_RAPID_MODE`
+  - 上記コアキー（`SCALP_PING_5S_USE_SL` 等）が意図どおり入替わっていること
+- 重要: 既存ポジションの即時終了は本仕様には含めない（既存ポジ維持前提）。ただし SAFE/BASE 変更の副作用は新規エントリーの抑制・許可条件に反映される。

@@ -26,6 +26,8 @@ SL_RATE_SAFE=0.06
 SL_RATE_RETURN=0.04
 SHORT_AVG_SAFE=-3.0
 SHORT_AVG_RETURN=-1.8
+LONG_AVG_SAFE=-3.0
+LONG_AVG_RETURN=-1.8
 
 # Keep hysteresis: SAFE->BASE requires 2 consecutive good windows.
 BASE_STREAK_TARGET=2
@@ -106,33 +108,57 @@ normalize_mode() {
 
 if [[ "$AUTO" == "1" ]]; then
   echo "[INFO] auto mode enabled. window=${WINDOW_MIN}m"
-  QUERY="SELECT CAST(SUM(CASE WHEN units < 0 AND close_reason='STOP_LOSS_ORDER' THEN 1 ELSE 0 END) AS REAL) / MAX(CAST(SUM(CASE WHEN units < 0 THEN 1 ELSE 0 END) AS REAL), 0.0001) AS short_sl_rate, AVG(CASE WHEN units < 0 AND close_reason IS NOT NULL THEN pl_pips END) AS short_avg FROM trades WHERE strategy_tag='scalp_ping_5s_live' AND close_time >= datetime('now','-${WINDOW_MIN} minutes') AND close_time IS NOT NULL;"
-  SHORT_STATS="$(query_remote "$QUERY")"
-  SHORT_SL_RATE="$(echo "$SHORT_STATS" | awk -F'|' '{print $1}')"
-  SHORT_AVG="$(echo "$SHORT_STATS" | awk -F'|' '{print $2}')"
+  QUERY="SELECT \
+    CAST(SUM(CASE WHEN units < 0 AND close_reason='STOP_LOSS_ORDER' THEN 1 ELSE 0 END) AS REAL) / MAX(CAST(SUM(CASE WHEN units < 0 THEN 1 ELSE 0 END) AS REAL), 0.0001), \
+    AVG(CASE WHEN units < 0 AND close_reason IS NOT NULL THEN pl_pips END), \
+    CAST(SUM(CASE WHEN units > 0 AND close_reason='STOP_LOSS_ORDER' THEN 1 ELSE 0 END) AS REAL) / MAX(CAST(SUM(CASE WHEN units > 0 THEN 1 ELSE 0 END) AS REAL), 0.0001), \
+    AVG(CASE WHEN units > 0 AND close_reason IS NOT NULL THEN pl_pips END), \
+    CAST(SUM(CASE WHEN close_reason='STOP_LOSS_ORDER' THEN 1 ELSE 0 END) AS REAL) / MAX(CAST(SUM(CASE WHEN close_reason IS NOT NULL THEN 1 ELSE 0 END) AS REAL), 0.0001), \
+    AVG(CASE WHEN close_reason IS NOT NULL THEN pl_pips END), \
+    COUNT(1) \
+    FROM trades \
+    WHERE strategy_tag='scalp_ping_5s_live' \
+      AND close_time >= datetime('now','-${WINDOW_MIN} minutes') \
+      AND close_time IS NOT NULL;"
+  STATS="$(query_remote "$QUERY")"
+  SHORT_SL_RATE="$(echo "$STATS" | awk -F'|' '{print $1}')"
+  SHORT_AVG="$(echo "$STATS" | awk -F'|' '{print $2}')"
+  LONG_SL_RATE="$(echo "$STATS" | awk -F'|' '{print $3}')"
+  LONG_AVG="$(echo "$STATS" | awk -F'|' '{print $4}')"
+  OVERALL_SL_RATE="$(echo "$STATS" | awk -F'|' '{print $5}')"
+  OVERALL_AVG="$(echo "$STATS" | awk -F'|' '{print $6}')"
+  TRADE_COUNT="$(echo "$STATS" | awk -F'|' '{print $7}')"
   SHORT_SL_RATE="${SHORT_SL_RATE:-0}"
   SHORT_AVG="${SHORT_AVG:-0}"
+  LONG_SL_RATE="${LONG_SL_RATE:-0}"
+  LONG_AVG="${LONG_AVG:-0}"
+  OVERALL_SL_RATE="${OVERALL_SL_RATE:-0}"
+  OVERALL_AVG="${OVERALL_AVG:-0}"
+  TRADE_COUNT="${TRADE_COUNT:-0}"
 
-  if [[ "$SHORT_SL_RATE" == "0" && "$SHORT_AVG" == "0" ]]; then
+  if [[ "$TRADE_COUNT" == "0" ]]; then
     echo "[WARN] auto stats empty; fallback to base"
     TARGET_MODE="base"
+    STREAK=0
   else
     CURRENT_MODE="$(normalize_mode "$(get_current_mode || true)")"
     BASE_STREAK_FILE="/tmp/scalp_ping_5s_base_streak"
 
     if [[ "${CURRENT_MODE}" == "base" ]]; then
-      if awk -v sl="$SHORT_SL_RATE" -v avg="$SHORT_AVG" -v safe_sl="$SL_RATE_SAFE" -v safe_avg="$SHORT_AVG_SAFE" 'BEGIN { exit !((sl > safe_sl) || (avg < safe_avg)) }'; then
+      if awk -v sl="$SHORT_SL_RATE" -v avg="$SHORT_AVG" -v lsl="$LONG_SL_RATE" -v lavg="$LONG_AVG" -v safe_sl="$SL_RATE_SAFE" -v safe_avg="$SHORT_AVG_SAFE" -v safe_lavg="$LONG_AVG_SAFE" 'BEGIN { exit !((sl > safe_sl) || (avg < safe_avg) || (lsl > safe_sl) || (lavg < safe_lavg)) }'; then
         TARGET_MODE="safe"
       else
         TARGET_MODE="base"
       fi
+      STREAK=0
     else
       STREAK="$(cat "$BASE_STREAK_FILE" 2>/dev/null || echo 0)"
-      if awk -v sl="$SHORT_SL_RATE" -v avg="$SHORT_AVG" -v ret_sl="$SL_RATE_RETURN" -v ret_avg="$SHORT_AVG_RETURN" 'BEGIN { exit !((sl < ret_sl) && (avg > ret_avg)) }'; then
-        STREAK=$(awk -v s="$STREAK" 'BEGIN { print (s+1) }')
+      if awk -v sl="$SHORT_SL_RATE" -v avg="$SHORT_AVG" -v lsl="$LONG_SL_RATE" -v lavg="$LONG_AVG" -v ret_sl="$SL_RATE_RETURN" -v ret_avg="$SHORT_AVG_RETURN" -v ret_lavg="$LONG_AVG_RETURN" -v overall_sl="$OVERALL_SL_RATE" -v overall_avg="$OVERALL_AVG" 'BEGIN { exit !((sl < ret_sl) && (avg > ret_avg) && (lsl < ret_sl) && (lavg > ret_lavg) && (overall_sl < (ret_sl + 0.02)) && (overall_avg > (ret_avg - 0.5))) }'; then
+        STREAK="$(awk -v s="$STREAK" 'BEGIN { print (s+1) }')"
       else
         STREAK=0
       fi
+
       if [[ "$STREAK" -ge "$BASE_STREAK_TARGET" ]]; then
         TARGET_MODE="base"
       else
@@ -142,7 +168,7 @@ if [[ "$AUTO" == "1" ]]; then
     fi
   fi
 
-  echo "[INFO] short_sl_rate=${SHORT_SL_RATE} short_avg=${SHORT_AVG} -> target_mode=${TARGET_MODE}"
+  echo "[INFO] short_sl_rate=${SHORT_SL_RATE} short_avg=${SHORT_AVG} long_sl_rate=${LONG_SL_RATE} long_avg=${LONG_AVG} overall_sl_rate=${OVERALL_SL_RATE} overall_avg=${OVERALL_AVG} trade_count=${TRADE_COUNT} streak=${STREAK} -> target_mode=${TARGET_MODE}"
 else
   TARGET_MODE="$MODE"
 fi
