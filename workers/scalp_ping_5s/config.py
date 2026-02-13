@@ -84,6 +84,30 @@ DIRECTION_BIAS_OPPOSITE_UNITS_MULT: float = max(
     0.1,
     min(1.0, float(os.getenv("SCALP_PING_5S_DIRECTION_BIAS_OPPOSITE_UNITS_MULT", "0.72"))),
 )
+DIRECTION_BIAS_SHORT_OPPOSITE_UNITS_MULT: float = max(
+    0.05,
+    min(
+        1.0,
+        float(
+            os.getenv(
+                "SCALP_PING_5S_DIRECTION_BIAS_SHORT_OPPOSITE_UNITS_MULT",
+                str(DIRECTION_BIAS_OPPOSITE_UNITS_MULT),
+            )
+        )
+    )
+)
+DIRECTION_BIAS_LONG_OPPOSITE_UNITS_MULT: float = max(
+    0.05,
+    min(
+        1.0,
+        float(
+            os.getenv(
+                "SCALP_PING_5S_DIRECTION_BIAS_LONG_OPPOSITE_UNITS_MULT",
+                str(DIRECTION_BIAS_OPPOSITE_UNITS_MULT),
+            )
+        )
+    )
+)
 DIRECTION_BIAS_ALIGN_UNITS_BOOST_MAX: float = max(
     0.0,
     min(1.0, float(os.getenv("SCALP_PING_5S_DIRECTION_BIAS_ALIGN_UNITS_BOOST_MAX", "0.20"))),
@@ -243,6 +267,18 @@ REVERT_DIRECTION_OPPOSITE_UNITS_MULT: float = max(
         ),
     ),
 )
+REVERT_DIRECTION_OPPOSITE_BLOCK_MIN_MULT: float = max(
+    0.1,
+    min(
+        1.0,
+        float(
+            os.getenv(
+                "SCALP_PING_5S_REVERT_DIRECTION_OPPOSITE_BLOCK_MIN_MULT",
+                "0.45",
+            )
+        ),
+    ),
+)
 REVERT_SIDE_BIAS_PENALTY_WEIGHT: float = max(
     0.0,
     min(
@@ -302,6 +338,18 @@ MTF_CONTINUATION_OPPOSITE_UNITS_MULT: float = max(
     0.0,
     min(1.0, float(os.getenv("SCALP_PING_5S_MTF_CONTINUATION_OPPOSITE_UNITS_MULT", "0.35"))),
 )
+MTF_CONTINUATION_OPPOSITE_BLOCK_MIN_MULT: float = max(
+    0.05,
+    min(
+        1.0,
+        float(
+            os.getenv(
+                "SCALP_PING_5S_MTF_CONTINUATION_OPPOSITE_BLOCK_MIN_MULT",
+                "0.18",
+            )
+        ),
+    ),
+)
 MTF_CONTINUATION_BLOCK_HEAT: float = max(
     MTF_HEAT_CONTINUATION_MIN,
     min(0.99, float(os.getenv("SCALP_PING_5S_MTF_CONTINUATION_BLOCK_HEAT", "0.75"))),
@@ -337,6 +385,18 @@ HORIZON_BLOCK_SCORE: float = max(
 HORIZON_OPPOSITE_UNITS_MULT: float = max(
     0.0,
     min(1.0, float(os.getenv("SCALP_PING_5S_HORIZON_OPPOSITE_UNITS_MULT", "0.40"))),
+)
+HORIZON_OPPOSITE_BLOCK_MIN_MULT: float = max(
+    0.05,
+    min(
+        1.0,
+        float(
+            os.getenv(
+                "SCALP_PING_5S_HORIZON_OPPOSITE_BLOCK_MIN_MULT",
+                "0.15",
+            )
+        ),
+    ),
 )
 HORIZON_ALIGN_BOOST_MAX: float = max(
     0.0,
@@ -911,6 +971,18 @@ FORCE_EXIT_MOMENTUM_STALL_MIN_LATE_PIPS: float = max(
 FORCE_EXIT_MOMENTUM_STALL_MIN_HOLD_SEC: float = max(
     0.0,
     float(os.getenv("SCALP_PING_5S_FORCE_EXIT_MOMENTUM_STALL_MIN_HOLD_SEC", "1.0")),
+)
+FORCE_EXIT_MOMENTUM_STALL_FLAT_REMAIN_RATIO: float = max(
+    0.0,
+    min(
+        1.0,
+        float(
+            os.getenv(
+                "SCALP_PING_5S_FORCE_EXIT_MOMENTUM_STALL_FLAT_REMAIN_RATIO",
+                "0.42",
+            )
+        ),
+    ),
 )
 FORCE_EXIT_MOMENTUM_STALL_MAX_TICK_AGE_MS: float = max(
     150.0,

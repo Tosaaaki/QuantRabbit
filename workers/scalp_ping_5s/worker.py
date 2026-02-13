@@ -604,17 +604,31 @@ def _detect_momentum_stall_for_open_trade(
 
     first_delta = (first_half[-1] - first_half[0]) / config.PIP_VALUE
     last_delta = (last_half[-1] - last_half[0]) / config.PIP_VALUE
+    first_abs = abs(first_delta)
+    flat_cap = max(
+        config.FORCE_EXIT_MOMENTUM_STALL_MIN_LATE_PIPS,
+        first_abs * config.FORCE_EXIT_MOMENTUM_STALL_FLAT_REMAIN_RATIO,
+    )
+    if first_abs < config.FORCE_EXIT_MOMENTUM_STALL_MIN_EARLY_PIPS:
+        return False, first_delta, last_delta
+
     if trade_side == "long":
         if (
             first_delta >= config.FORCE_EXIT_MOMENTUM_STALL_MIN_EARLY_PIPS
-            and last_delta <= -config.FORCE_EXIT_MOMENTUM_STALL_MIN_LATE_PIPS
+            and (
+                last_delta <= -config.FORCE_EXIT_MOMENTUM_STALL_MIN_LATE_PIPS
+                or (0.0 <= last_delta <= flat_cap)
+            )
         ):
             return True, first_delta, last_delta
         return False, first_delta, last_delta
 
     if (
         first_delta <= -config.FORCE_EXIT_MOMENTUM_STALL_MIN_EARLY_PIPS
-        and last_delta >= config.FORCE_EXIT_MOMENTUM_STALL_MIN_LATE_PIPS
+        and (
+            last_delta >= config.FORCE_EXIT_MOMENTUM_STALL_MIN_LATE_PIPS
+            or ( -flat_cap <= last_delta <= 0.0 )
+        )
     ):
         return True, first_delta, last_delta
     return False, first_delta, last_delta
@@ -1051,6 +1065,12 @@ async def _enforce_new_entry_time_stop(
 ) -> int:
     global _TRADE_MFE_PIPS, _TRADE_FORCE_EXIT_DEFER_LOG_MONO
 
+    if not config.FORCE_EXIT_ENABLED:
+        return 0
+    if not config.FORCE_EXIT_ACTIVE:
+        return 0
+    if config.FORCE_EXIT_MAX_ACTIONS <= 0:
+        return 0
     max_hold_sec = float(config.FORCE_EXIT_MAX_HOLD_SEC)
     hard_loss_pips = float(config.FORCE_EXIT_MAX_FLOATING_LOSS_PIPS)
     recovery_window_sec = float(config.FORCE_EXIT_RECOVERY_WINDOW_SEC)
@@ -1171,21 +1191,30 @@ async def _enforce_new_entry_time_stop(
                 rows=momentum_rows,
             )
             if stalled:
-                if unrealized_pips >= 0.0:
-                    exit_reason = config.FORCE_EXIT_MOMENTUM_STALL_TP_REASON
-                else:
+                if unrealized_pips < 0.0:
                     exit_reason = config.FORCE_EXIT_MOMENTUM_STALL_LOSS_REASON
-                trigger_label = "momentum_stall"
-                logger.info(
-                    "%s momentum_stall candidate trade=%s side=%s hold=%.0fs first_delta=%.3f last_delta=%.3f pnl=%.2fp",
-                    config.LOG_PREFIX,
-                    trade_id,
-                    trade_side,
-                    hold_sec,
-                    first_delta,
-                    last_delta,
-                    unrealized_pips,
-                )
+                    trigger_label = "momentum_stall"
+                    logger.info(
+                        "%s momentum_stall candidate trade=%s side=%s hold=%.0fs first_delta=%.3f last_delta=%.3f pnl=%.2fp",
+                        config.LOG_PREFIX,
+                        trade_id,
+                        trade_side,
+                        hold_sec,
+                        first_delta,
+                        last_delta,
+                        unrealized_pips,
+                    )
+                else:
+                    logger.debug(
+                        "%s momentum_stall skip close on profit trade=%s side=%s hold=%.0fs pnl=%.2fp first_delta=%.3f last_delta=%.3f",
+                        config.LOG_PREFIX,
+                        trade_id,
+                        trade_side,
+                        hold_sec,
+                        unrealized_pips,
+                        first_delta,
+                        last_delta,
+                    )
         if not exit_reason:
             continue
         defer, defer_reason, fib, regime = _should_defer_force_exit(
@@ -1700,7 +1729,8 @@ def _apply_mtf_regime(signal: TickSignal, regime: Optional[MtfRegime]) -> tuple[
     if regime.mode == "continuation":
         if regime.side != "neutral" and signal.side != regime.side:
             if regime.heat_score >= config.MTF_CONTINUATION_BLOCK_HEAT:
-                return None, 0.0, "mtf_continuation_block_counter"
+                units_mult *= config.MTF_CONTINUATION_OPPOSITE_BLOCK_MIN_MULT
+                return adjusted, float(max(0.0, units_mult)), "mtf_continuation_block_counter"
             units_mult *= config.MTF_CONTINUATION_OPPOSITE_UNITS_MULT
             gate = "mtf_continuation_counter_scaled"
         else:
@@ -1875,7 +1905,7 @@ def _apply_horizon_bias(
     score_abs = abs(horizon.composite_score)
     if signal.side != horizon.composite_side:
         if score_abs >= config.HORIZON_BLOCK_SCORE:
-            return None, 0.0, "horizon_block_counter"
+            return signal, max(0.0, config.HORIZON_OPPOSITE_BLOCK_MIN_MULT), "horizon_block_counter"
         scale = max(0.0, min(1.0, config.HORIZON_OPPOSITE_UNITS_MULT))
         if horizon.agreement >= 3:
             scale *= 0.9
@@ -2086,14 +2116,20 @@ def _direction_units_multiplier(
         return 1.0, "neutral"
 
     score_abs = abs(_safe_float(bias.score, 0.0))
+    if signal_side == "short":
+        direction_opposite_mult = config.DIRECTION_BIAS_SHORT_OPPOSITE_UNITS_MULT
+    elif signal_side == "long":
+        direction_opposite_mult = config.DIRECTION_BIAS_LONG_OPPOSITE_UNITS_MULT
+    else:
+        direction_opposite_mult = config.DIRECTION_BIAS_OPPOSITE_UNITS_MULT
     if signal_side != bias.side:
         if signal_mode == "revert":
             if score_abs >= config.REVERT_DIRECTION_HARD_BLOCK_SCORE:
-                return 0.0, "revert_opposite_block"
-            return config.REVERT_DIRECTION_OPPOSITE_UNITS_MULT, "revert_opposite_scale"
+                return config.REVERT_DIRECTION_OPPOSITE_BLOCK_MIN_MULT, "revert_opposite_block"
+            return direction_opposite_mult, "revert_opposite_scale"
         if score_abs >= config.DIRECTION_BIAS_BLOCK_SCORE:
-            return 0.0, "opposite_block"
-        return config.DIRECTION_BIAS_OPPOSITE_UNITS_MULT, "opposite_scale"
+            return direction_opposite_mult, "opposite_block"
+        return direction_opposite_mult, "opposite_scale"
 
     if score_abs < config.DIRECTION_BIAS_ALIGN_SCORE_MIN:
         return 1.0, "align_weak"
