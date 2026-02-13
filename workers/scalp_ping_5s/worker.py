@@ -20,7 +20,10 @@ from typing import Optional, Sequence
 
 import httpx
 
-from execution.order_manager import market_order
+from execution.order_manager import (
+    get_last_order_status_by_client_id,
+    market_order,
+)
 from execution.position_manager import PositionManager
 from execution.risk_guard import allowed_lot, can_trade, clamp_sl_tp
 from indicators.factor_cache import all_factors, get_candles_snapshot
@@ -64,6 +67,7 @@ _SNAPSHOT_FETCH_BACKOFF_UNTIL_MONO: float = 0.0
 _SNAPSHOT_FETCH_FAILURES: int = 0
 _SNAPSHOT_FETCH_BACKOFF_LOG_MONO: float = 0.0
 _SNAPSHOT_AUTH_VALIDATED: Optional[bool] = None
+_ENTRY_SKIP_SUMMARY_INTERVAL_SEC: float = 30.0
 
 
 @dataclass(slots=True)
@@ -911,6 +915,10 @@ def _force_exit_hard_loss_trigger_pips(trade: dict, base_hard_loss_pips: float) 
 
     if base_hard_loss_pips <= 0.0:
         return 0.0
+    base_hard_loss_pips = max(
+        base_hard_loss_pips,
+        float(getattr(config, "FORCE_EXIT_FLOATING_LOSS_MIN_PIPS", 0.0)),
+    )
     entry_spread_pips = max(0.0, _trade_entry_spread_pips(trade))
     buffer_pips = max(0.0, float(getattr(config, "SL_SPREAD_BUFFER_PIPS", 0.0)))
     force_buffer_pips = max(
@@ -1272,7 +1280,11 @@ async def _enforce_new_entry_time_stop(
             trade,
             trade_hard_loss_pips,
         )
-        if hard_loss_trigger_pips > 0.0 and unrealized_pips <= -hard_loss_trigger_pips:
+        if (
+            hold_sec >= float(getattr(config, "FORCE_EXIT_FLOATING_LOSS_MIN_HOLD_SEC", 0.0))
+            and hard_loss_trigger_pips > 0.0
+            and unrealized_pips <= -hard_loss_trigger_pips
+        ):
             exit_reason = config.FORCE_EXIT_MAX_FLOATING_LOSS_REASON
             trigger_label = "max_floating_loss"
         elif (
@@ -2574,14 +2586,17 @@ def _compute_targets(
         )
         if config.TP_VOL_EXTEND_MAX_MULT > 1.0:
             tp_mult *= _lerp(1.0, config.TP_VOL_EXTEND_MAX_MULT, vol_bucket)
-    tp_base = max(0.1, tp_base_cfg * tp_mult)
-    tp_net_edge = max(config.TP_NET_MIN_FLOOR_PIPS, tp_net_min_cfg * tp_mult)
-    tp_floor = spread_pips + tp_net_edge
-    tp_pips = max(tp_base, tp_floor)
-    tp_bonus_raw = max(0.0, abs(momentum_pips) - tp_pips)
-    tp_bonus_cap = tp_bonus_cap_cfg * max(0.6, tp_mult)
-    tp_pips += min(tp_bonus_cap, tp_bonus_raw * 0.25)
-    tp_pips = min(tp_max_cfg, tp_pips)
+    if config.TP_ENABLED:
+        tp_base = max(0.1, tp_base_cfg * tp_mult)
+        tp_net_edge = max(config.TP_NET_MIN_FLOOR_PIPS, tp_net_min_cfg * tp_mult)
+        tp_floor = spread_pips + tp_net_edge
+        tp_pips = max(tp_base, tp_floor)
+        tp_bonus_raw = max(0.0, abs(momentum_pips) - tp_pips)
+        tp_bonus_cap = tp_bonus_cap_cfg * max(0.6, tp_mult)
+        tp_pips += min(tp_bonus_cap, tp_bonus_raw * 0.25)
+        tp_pips = min(tp_max_cfg, tp_pips)
+    else:
+        tp_pips = 0.0
 
     sl_floor = spread_pips * config.SL_SPREAD_MULT + config.SL_SPREAD_BUFFER_PIPS
     sl_pips = max(sl_min_cfg, sl_base_cfg, sl_floor)
@@ -2607,7 +2622,7 @@ def _compute_targets(
             config.SL_VOL_SHRINK_MIN_MULT,
             sl_vol_bucket,
         )
-    if abs(momentum_pips) > tp_pips * 1.4:
+    if config.TP_ENABLED and abs(momentum_pips) > tp_pips * 1.4:
         sl_pips *= 1.08
     sl_pips = max(sl_min_cfg, min(sl_max_cfg, sl_pips))
 
@@ -2708,13 +2723,13 @@ def _cap_low_margin_hedge_units(
     *,
     side: str,
     units: int,
-    long_units: float,
-    short_units: float,
+    account_long_units: float,
+    account_short_units: float,
 ) -> int:
     if side == "short":
-        imbalance_units = max(0.0, long_units - short_units)
+        imbalance_units = max(0.0, account_long_units - account_short_units)
     elif side == "long":
-        imbalance_units = max(0.0, short_units - long_units)
+        imbalance_units = max(0.0, account_short_units - account_long_units)
     else:
         imbalance_units = 0.0
 
@@ -3086,6 +3101,76 @@ async def scalp_ping_5s_worker() -> None:
     last_horizon_log_mono = 0.0
     last_profit_bank_log_mono = 0.0
     last_extrema_log_mono = 0.0
+    last_entry_skip_summary_mono = 0.0
+    entry_skip_reasons: dict[str, int] = {}
+    entry_skip_reasons_by_side: dict[str, dict[str, int]] = {}
+    _signal_side_hint: Optional[str] = None
+
+    def _note_entry_skip(
+        reason: str,
+        detail: Optional[str] = None,
+        side: Optional[str] = None,
+    ) -> None:
+        nonlocal last_entry_skip_summary_mono
+        nonlocal entry_skip_reasons
+        nonlocal entry_skip_reasons_by_side
+        nonlocal _signal_side_hint
+
+        entry_skip_reasons[reason] = entry_skip_reasons.get(reason, 0) + 1
+        side_key = str(side).strip().lower() if side is not None else _signal_side_hint
+        if side_key:
+            side_bucket = entry_skip_reasons_by_side.setdefault(side_key, {})
+            side_bucket[reason] = side_bucket.get(reason, 0) + 1
+
+        if side_key:
+            if detail:
+                detail = f"side={side_key} {detail}"
+            else:
+                detail = f"side={side_key}"
+
+        if detail:
+            LOG.debug("%s entry-skip %s %s", config.LOG_PREFIX, reason, detail)
+        now = time.monotonic()
+        if now - last_entry_skip_summary_mono >= _ENTRY_SKIP_SUMMARY_INTERVAL_SEC:
+            if entry_skip_reasons:
+                total = sum(entry_skip_reasons.values())
+                summary = ", ".join(
+                    f"{name}={count}"
+                    for name, count in sorted(
+                        entry_skip_reasons.items(),
+                        key=lambda item: item[1],
+                        reverse=True,
+                    )
+                )
+                LOG.info(
+                    "%s entry-skip summary total=%d %s",
+                    config.LOG_PREFIX,
+                    total,
+                    summary,
+                )
+            last_entry_skip_summary_mono = now
+            entry_skip_reasons = {}
+            for side, side_reasons in sorted(entry_skip_reasons_by_side.items()):
+                side_total = sum(side_reasons.values())
+                if side_total <= 0:
+                    continue
+                side_summary = ", ".join(
+                    f"{name}={count}"
+                    for name, count in sorted(
+                        side_reasons.items(),
+                        key=lambda item: item[1],
+                        reverse=True,
+                    )
+                )
+                LOG.info(
+                    "%s entry-skip summary side=%s total=%d %s",
+                    config.LOG_PREFIX,
+                    side,
+                    side_total,
+                    side_summary,
+                )
+            entry_skip_reasons_by_side = {}
+
     protected_trade_ids: set[str] = set()
     protected_seeded = False
     strategy_tag_key = str(config.STRATEGY_TAG or "").strip().lower()
@@ -3093,10 +3178,13 @@ async def scalp_ping_5s_worker() -> None:
     try:
         while True:
             await asyncio.sleep(config.LOOP_INTERVAL_SEC)
+            _signal_side_hint = None
             now_utc = datetime.datetime.now(datetime.timezone.utc)
             if not is_market_open(now_utc):
+                _note_entry_skip("market_closed")
                 continue
             if not can_trade(config.POCKET):
+                _note_entry_skip("pocket_disabled")
                 continue
 
             positions = pos_manager.get_open_positions()
@@ -3147,7 +3235,14 @@ async def scalp_ping_5s_worker() -> None:
                             eligible = False
                             if trade_max_hold_sec > 0.0 and hold_sec >= trade_max_hold_sec:
                                 eligible = True
-                            elif hard_loss_trigger_pips > 0.0 and unrealized_pips <= -hard_loss_trigger_pips:
+                            elif (
+                                hold_sec
+                                >= float(
+                                    getattr(config, "FORCE_EXIT_FLOATING_LOSS_MIN_HOLD_SEC", 0.0)
+                                )
+                                and hard_loss_trigger_pips > 0.0
+                                and unrealized_pips <= -hard_loss_trigger_pips
+                            ):
                                 eligible = True
                             elif (
                                 recovery_window_sec > 0.0
@@ -3220,7 +3315,14 @@ async def scalp_ping_5s_worker() -> None:
                         eligible = False
                         if trade_max_hold_sec > 0.0 and hold_sec >= trade_max_hold_sec:
                             eligible = True
-                        elif hard_loss_trigger_pips > 0.0 and unrealized_pips <= -hard_loss_trigger_pips:
+                        elif (
+                            hold_sec
+                            >= float(
+                                getattr(config, "FORCE_EXIT_FLOATING_LOSS_MIN_HOLD_SEC", 0.0)
+                            )
+                            and hard_loss_trigger_pips > 0.0
+                            and unrealized_pips <= -hard_loss_trigger_pips
+                        ):
                             eligible = True
                         elif (
                             recovery_window_sec > 0.0
@@ -3290,6 +3392,10 @@ async def scalp_ping_5s_worker() -> None:
                         spread_pips,
                         spread_reason or "guard",
                     )
+                _note_entry_skip(
+                    "spread_blocked",
+                    f"spread={spread_pips:.2f} max={config.MAX_SPREAD_PIPS:.2f} remain={remain}",
+                )
                 continue
 
             ticks = tick_window.recent_ticks(
@@ -3346,6 +3452,10 @@ async def scalp_ping_5s_worker() -> None:
                             spread_pips = _latest_spread_from_ticks(ticks)
 
             if len(ticks) < config.MIN_TICKS:
+                _note_entry_skip(
+                    "low_tick_count",
+                    f"len={len(ticks)} min={config.MIN_TICKS}",
+                )
                 if snapshot_degraded_mode and now_mono - last_snapshot_degrade_log_mono >= 10.0:
                     last_snapshot_degrade_log_mono = now_mono
                     LOG.warning(
@@ -3368,12 +3478,22 @@ async def scalp_ping_5s_worker() -> None:
                         snapshot_degraded_mode,
                     )
                     last_stale_log_mono = now_mono
+                _note_entry_skip(
+                    "stale_ticks",
+                    f"age_ms={latest_tick_age_ms:.0f} limit={snapshot_age_limit_ms:.0f}",
+                )
                 continue
 
             signal = _build_tick_signal(ticks, spread_pips)
             if signal is None:
+                _note_entry_skip("no_signal")
                 continue
+            _signal_side_hint = signal.side
             if signal.spread_pips > config.MAX_SPREAD_PIPS:
+                _note_entry_skip(
+                    "signal_spread_too_wide",
+                    f"spread={signal.spread_pips:.2f} max={config.MAX_SPREAD_PIPS:.2f}",
+                )
                 continue
 
             now_mono = time.monotonic()
@@ -3420,6 +3540,7 @@ async def scalp_ping_5s_worker() -> None:
                     regime_gate = f"{regime_gate}_route"
                     tech_route_reasons.append("mtf")
                 else:
+                    _note_entry_skip("mtf_block")
                     continue
             else:
                 signal = regime_signal
@@ -3460,6 +3581,7 @@ async def scalp_ping_5s_worker() -> None:
                     horizon_gate = f"{horizon_gate}_route"
                     tech_route_reasons.append("horizon")
                 else:
+                    _note_entry_skip("horizon_block")
                     continue
             else:
                 signal = horizon_signal
@@ -3519,6 +3641,10 @@ async def scalp_ping_5s_worker() -> None:
                     bias_gate = f"{bias_gate}_route"
                     tech_route_reasons.append("direction")
                 else:
+                    _note_entry_skip(
+                        "direction_bias_block",
+                        f"side={signal.side}",
+                    )
                     continue
 
             lookahead_decision = None
@@ -3584,6 +3710,10 @@ async def scalp_ping_5s_worker() -> None:
                         )
                         tech_route_reasons.append("lookahead")
                     else:
+                        _note_entry_skip(
+                            "lookahead_block",
+                            f"reason={lookahead_decision.reason}",
+                        )
                         continue
                 else:
                     lookahead_units_mult = max(0.1, float(lookahead_decision.units_mult))
@@ -3623,6 +3753,10 @@ async def scalp_ping_5s_worker() -> None:
                     )
                     tech_route_reasons.append("extrema")
                 else:
+                    _note_entry_skip(
+                        "extrema_block",
+                        f"reason={extrema_decision.reason}",
+                    )
                     continue
             if (
                 extrema_units_mult < 0.999
@@ -3644,8 +3778,13 @@ async def scalp_ping_5s_worker() -> None:
                 config.ENTRY_COOLDOWN_SEC * decision_speed_scale,
             )
             if now_mono - last_entry_mono < decision_cooldown_sec:
+                _note_entry_skip(
+                    "cooldown",
+                    f"elapsed={now_mono-last_entry_mono:.2f}s limit={decision_cooldown_sec:.2f}s",
+                )
                 continue
             if not rate_limiter.allow(now_mono):
+                _note_entry_skip("rate_limited")
                 continue
 
             trap_state = _compute_trap_state(positions, mid_price=signal.mid)
@@ -3673,8 +3812,16 @@ async def scalp_ping_5s_worker() -> None:
             trap_hedge_bypass = trap_state.active and config.TRAP_BYPASS_NO_HEDGE
             if config.NO_HEDGE_ENTRY and not trap_hedge_bypass:
                 if signal.side == "long" and short_units > 0.0:
+                    _note_entry_skip(
+                        "hedge_block",
+                        f"side=long short_units={short_units:.0f}",
+                    )
                     continue
                 if signal.side == "short" and long_units > 0.0:
+                    _note_entry_skip(
+                        "hedge_block",
+                        f"side=short long_units={long_units:.0f}",
+                    )
                     continue
 
             snap = get_account_snapshot(cache_ttl_sec=0.5)
@@ -3694,6 +3841,10 @@ async def scalp_ping_5s_worker() -> None:
                     margin_available=margin_available,
                 )
                 if not low_margin_hedge_relief:
+                    _note_entry_skip(
+                        "low_margin_block",
+                        f"free_ratio={free_ratio:.3f} threshold={config.MIN_FREE_MARGIN_RATIO:.3f}",
+                    )
                     continue
                 if (
                     now_mono - last_margin_guard_bypass_log_mono
@@ -3706,8 +3857,8 @@ async def scalp_ping_5s_worker() -> None:
                         free_ratio,
                         config.MIN_FREE_MARGIN_RATIO,
                         margin_available,
-                        long_units,
-                        short_units,
+                        account_long_units,
+                        account_short_units,
                     )
                     last_margin_guard_bypass_log_mono = now_mono
 
@@ -3726,6 +3877,10 @@ async def scalp_ping_5s_worker() -> None:
                 active_short=active_short,
                 max_active_trades=max_active_trades,
             ):
+                _note_entry_skip(
+                    "max_active_cap",
+                    f"total={active_total} long={active_long} short={active_short} cap={max_active_trades}",
+                )
                 continue
             if (
                 active_total >= config.MAX_ACTIVE_TRADES
@@ -3746,8 +3901,16 @@ async def scalp_ping_5s_worker() -> None:
                 )
                 last_max_active_bypass_log_mono = now_mono
             if signal.side == "long" and active_long >= max_per_direction:
+                _note_entry_skip(
+                    "direction_cap",
+                    f"side=long active={active_long} cap={max_per_direction}",
+                )
                 continue
             if signal.side == "short" and active_short >= max_per_direction:
+                _note_entry_skip(
+                    "direction_cap",
+                    f"side=short active={active_short} cap={max_per_direction}",
+                )
                 continue
 
             tp_profile = _load_tp_timing_profile(config.STRATEGY_TAG, config.POCKET)
@@ -3860,6 +4023,7 @@ async def scalp_ping_5s_worker() -> None:
             units = min(units, units_risk, config.MAX_UNITS)
             bias_scale, bias_meta = _directional_bias_scale(ticks, signal.side)
             if bias_scale <= 0.0:
+                _note_entry_skip("directional_bias_zero")
                 continue
             if signal.mode == "revert":
                 raw_side_bias = float(bias_scale)
@@ -3872,6 +4036,10 @@ async def scalp_ping_5s_worker() -> None:
                 bias_meta["mode_adjusted_scale"] = float(bias_scale)
             units = int(round(units * bias_scale))
             if units < config.MIN_UNITS:
+                _note_entry_skip(
+                    "units_below_min",
+                    f"units={units} min={config.MIN_UNITS}",
+                )
                 continue
             units = abs(units)
             if signal.side == "short":
@@ -3880,28 +4048,39 @@ async def scalp_ping_5s_worker() -> None:
                 units = _cap_low_margin_hedge_units(
                     side=signal.side,
                     units=units,
-                    long_units=long_units,
-                    short_units=short_units,
+                    account_long_units=account_long_units,
+                    account_short_units=account_short_units,
                 )
                 if units == 0:
+                    _note_entry_skip("low_margin_hedge_unit_zero")
                     continue
 
             entry_price = signal.ask if signal.side == "long" else signal.bid
             if entry_price <= 0.0:
                 entry_price = signal.mid
             if entry_price <= 0.0:
+                _note_entry_skip("invalid_entry_price")
                 continue
 
+            effective_tp_pips = 0.0 if not config.TP_ENABLED else tp_pips
             if signal.side == "long":
                 sl_price = (
                     entry_price - sl_pips * config.PIP_VALUE if config.USE_SL else None
                 )
-                tp_price = entry_price + tp_pips * config.PIP_VALUE
+                tp_price = (
+                    entry_price + effective_tp_pips * config.PIP_VALUE
+                    if effective_tp_pips > 0.0
+                    else None
+                )
             else:
                 sl_price = (
                     entry_price + sl_pips * config.PIP_VALUE if config.USE_SL else None
                 )
-                tp_price = entry_price - tp_pips * config.PIP_VALUE
+                tp_price = (
+                    entry_price - effective_tp_pips * config.PIP_VALUE
+                    if effective_tp_pips > 0.0
+                    else None
+                )
 
             sl_price, tp_price = clamp_sl_tp(
                 entry_price,
@@ -3926,7 +4105,7 @@ async def scalp_ping_5s_worker() -> None:
                 "tick_age_ms": round(signal.tick_age_ms, 1),
                 "spread_pips": round(signal.spread_pips, 3),
                 "confidence": int(signal.confidence),
-                "tp_pips": round(tp_pips, 3),
+                "tp_pips": round(effective_tp_pips, 3),
                 "sl_pips": round(sl_pips, 3),
                 "disable_entry_hard_stop": bool(config.DISABLE_ENTRY_HARD_STOP),
                 "signal_mode": signal.mode,
@@ -4099,6 +4278,43 @@ async def scalp_ping_5s_worker() -> None:
             )
             if result:
                 pos_manager.register_open_trade(str(result), config.POCKET, client_order_id)
+            else:
+                order_status = get_last_order_status_by_client_id(client_order_id)
+                status = (
+                    order_status.get("status")
+                    if isinstance(order_status, dict)
+                    else None
+                )
+                detail = "-"
+                if isinstance(order_status, dict):
+                    detail_parts: list[str] = []
+                    attempt = order_status.get("attempt")
+                    err_code = order_status.get("error_code")
+                    err_msg = order_status.get("error_message")
+                    ts = order_status.get("ts")
+                    if attempt is not None:
+                        detail_parts.append(f"attempt={attempt}")
+                    if err_code:
+                        detail_parts.append(f"err_code={err_code}")
+                    if err_msg:
+                        detail_parts.append(f"err={err_msg}")
+                    if ts:
+                        detail_parts.append(f"ts={ts}")
+                    if detail_parts:
+                        detail = ", ".join(detail_parts)
+                if status:
+                    reason = str(status)
+                else:
+                    reason = "order_manager_none"
+                LOG.warning(
+                    "%s market_order rejected side=%s reason=%s detail=%s cid=%s",
+                    config.LOG_PREFIX,
+                    signal.side,
+                    reason,
+                    detail,
+                )
+                _note_entry_skip(f"order_reject:{reason}", detail=detail, side=signal.side)
+
             last_entry_mono = now_mono
             rate_limiter.record(now_mono)
 

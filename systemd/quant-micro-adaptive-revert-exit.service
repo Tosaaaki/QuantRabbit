@@ -1,0 +1,19 @@
+[Unit]
+Description=QuantRabbit MicroAdaptiveRevert Exit Worker
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/tossaki/QuantRabbit
+EnvironmentFile=-/etc/quantrabbit.env
+Environment="PYTHONUNBUFFERED=1"
+Environment="HAR_EXIT_TAGS=MicroAdaptiveRevert"
+Environment="HAR_EXIT_LOOP_INTERVAL_SEC=1.0"
+Environment="HAR_EXIT_LOG_PREFIX=[MicroAdaptiveRevertExit]"
+ExecStart=/home/tossaki/QuantRabbit/.venv/bin/python -m workers.micro_adaptive_revert.exit_worker
+Restart=always
+RestartSec=5
+User=tossaki
+
+[Install]
+WantedBy=multi-user.target

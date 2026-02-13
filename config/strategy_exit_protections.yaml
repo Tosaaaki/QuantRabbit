@@ -762,7 +762,7 @@ strategies:
       loss_cut_max_hold_sec: 300
       loss_cut_cooldown_sec: 4
 
-  scalp_ping_5s:
+  scalp_ping_5s: &SCALP_PING_5S_EXIT_PROFILE
     # 5s ping scalp: lock small profits quickly to avoid giveback when flow stalls.
     start_delay_sec: 3
     max_delay_sec: 10
@@ -860,9 +860,11 @@ strategies:
         - lock_floor
         - trail_lock
         - near_be
-      deny_reasons:
+    deny_reasons:
         - take_profit
         - take_profit_zone
+
+  scalp_ping_5s_b: *SCALP_PING_5S_EXIT_PROFILE
 
   fast_scalp:
     min_profit_ratio: 0.45

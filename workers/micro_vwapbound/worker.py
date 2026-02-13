@@ -45,6 +45,7 @@ _BB_ENTRY_SCALP_REVERT_RATIO = env_float("BB_ENTRY_SCALP_REVERT_RATIO", 0.20, pr
 _BB_ENTRY_SCALP_EXT_PIPS = env_float("BB_ENTRY_SCALP_EXT_PIPS", 2.4, prefix=_BB_ENV_PREFIX)
 _BB_ENTRY_SCALP_EXT_RATIO = env_float("BB_ENTRY_SCALP_EXT_RATIO", 0.30, prefix=_BB_ENV_PREFIX)
 _BB_PIP = 0.01
+_MICRO_VWAPBOUND_PATTERN_GATE_OPT_IN = env_bool("MICRO_VWAPBOUND_PATTERN_GATE_OPT_IN", True)
 
 
 def _bb_float(value):
@@ -668,6 +669,9 @@ async def micro_vwapbound_worker() -> None:
             "range_reason": range_ctx.reason,
             "range_mode": range_ctx.mode,
         }
+        base_tag = str(signal_tag or "").split("-", 1)[0]
+        if base_tag == "MicroVWAPBound":
+            entry_thesis["pattern_gate_opt_in"] = bool(_MICRO_VWAPBOUND_PATTERN_GATE_OPT_IN)
         if div_meta:
             entry_thesis["divergence"] = div_meta
         if IS_TREND:

@@ -289,6 +289,8 @@ build_dynamic_overrides() {
   local profile_env="$1"
   local out_file="$2"
   local base_orders base_active base_dir base_cd base_spacing base_loop
+  local base_short_min_signal base_short_min_tick_rate base_short_momentum
+  local short_gate_scale short_min_signal_ticks short_min_tick_rate short_momentum_trigger
   local orders active dir cd spacing loop
   local inv_scale
 
@@ -298,8 +300,17 @@ build_dynamic_overrides() {
   base_cd="$(get_env_value "$profile_env" "SCALP_PING_5S_ENTRY_COOLDOWN_SEC" "0.20")"
   base_spacing="$(get_env_value "$profile_env" "SCALP_PING_5S_MIN_ORDER_SPACING_SEC" "0.10")"
   base_loop="$(get_env_value "$profile_env" "SCALP_PING_5S_LOOP_INTERVAL_SEC" "0.20")"
+  base_short_min_signal="$(get_env_value "$profile_env" "SCALP_PING_5S_SHORT_MIN_SIGNAL_TICKS" "4")"
+  base_short_min_tick_rate="$(get_env_value "$profile_env" "SCALP_PING_5S_SHORT_MIN_TICK_RATE" "4.0")"
+  base_short_momentum="$(get_env_value "$profile_env" "SCALP_PING_5S_SHORT_MOMENTUM_TRIGGER_PIPS" "0.80")"
 
   inv_scale="$(awk -v s="$DYNAMIC_SCALE" 'BEGIN { if (s <= 0) s = 1; printf "%.6f", 1.0/s }')"
+  short_gate_scale="$(awk -v s="$DYNAMIC_SCALE" 'BEGIN {
+    g = 1.0 - (s - 1.0) * 0.20
+    if (g < 0.82) g = 0.82
+    if (g > 1.08) g = 1.08
+    printf "%.6f", g
+  }')"
 
   orders="$(scale_int_value "$base_orders" "$DYNAMIC_SCALE" 30 260)"
   active="$(scale_int_value "$base_active" "$DYNAMIC_SCALE" 4 80)"
@@ -307,6 +318,9 @@ build_dynamic_overrides() {
   cd="$(scale_float_value "$base_cd" "$inv_scale" 0.05 0.80)"
   spacing="$(scale_float_value "$base_spacing" "$inv_scale" 0.05 0.80)"
   loop="$(scale_float_value "$base_loop" "$inv_scale" 0.06 0.40)"
+  short_min_signal_ticks="$(scale_int_value "$base_short_min_signal" "$short_gate_scale" 3 12)"
+  short_min_tick_rate="$(scale_float_value "$base_short_min_tick_rate" "$short_gate_scale" 2.2 6.0)"
+  short_momentum_trigger="$(scale_float_value "$base_short_momentum" "$short_gate_scale" 0.30 1.20)"
 
   cat > "$out_file" <<EOF
 SCALP_PING_5S_AUTO_MODE=auto
@@ -324,6 +338,9 @@ SCALP_PING_5S_MAX_PER_DIRECTION=${dir}
 SCALP_PING_5S_ENTRY_COOLDOWN_SEC=${cd}
 SCALP_PING_5S_MIN_ORDER_SPACING_SEC=${spacing}
 SCALP_PING_5S_LOOP_INTERVAL_SEC=${loop}
+SCALP_PING_5S_SHORT_MIN_SIGNAL_TICKS=${short_min_signal_ticks}
+SCALP_PING_5S_SHORT_MIN_TICK_RATE=${short_min_tick_rate}
+SCALP_PING_5S_SHORT_MOMENTUM_TRIGGER_PIPS=${short_momentum_trigger}
 EOF
 }
 

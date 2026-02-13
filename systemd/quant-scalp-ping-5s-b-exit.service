@@ -1,0 +1,20 @@
+[Unit]
+Description=QuantRabbit Scalp Ping 5S-B Exit Worker
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/tossaki/QuantRabbit
+EnvironmentFile=/etc/quantrabbit.env
+Environment=PYTHONUNBUFFERED=1
+Environment=SCALP_PING_5S_B_EXIT_TAGS=scalp_ping_5s_b_live
+Environment=SCALP_PING_5S_B_POCKET=scalp_fast
+Environment=SCALP_PING_5S_B_EXIT_LOG_PREFIX=[ScalpPing5S_B:Exit]
+Environment=SCALP_PING_5S_B_EXIT_PROFILE_ENABLED=1
+ExecStart=/home/tossaki/QuantRabbit/.venv/bin/python -m workers.scalp_ping_5s_b.exit_worker
+Restart=always
+RestartSec=5
+User=tossaki
+
+[Install]
+WantedBy=multi-user.target

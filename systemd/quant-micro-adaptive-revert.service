@@ -1,0 +1,17 @@
+[Unit]
+Description=QuantRabbit MicroAdaptiveRevert Worker
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/tossaki/QuantRabbit
+EnvironmentFile=-/etc/quantrabbit.env
+Environment="PYTHONUNBUFFERED=1"
+Environment="HAR_ENABLED=1"
+ExecStart=/home/tossaki/QuantRabbit/.venv/bin/python -m workers.micro_adaptive_revert.worker
+Restart=always
+RestartSec=5
+User=tossaki
+
+[Install]
+WantedBy=multi-user.target

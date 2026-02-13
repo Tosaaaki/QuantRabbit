@@ -3,6 +3,7 @@ set -euo pipefail
 
 REPO_DIR="${TYPE_MAINTENANCE_REPO:-/home/tossaki/QuantRabbit}"
 MODE="${TYPE_MAINTENANCE_MODE:-check}" # check | apply | fix | optimize
+ALLOW_FAILURE="${TYPE_MAINTENANCE_ALLOW_FAILURE:-1}" # 1: do not fail timer on type check failures
 PYTHON="${TYPE_MAINTENANCE_PYTHON:-$REPO_DIR/.venv/bin/python}"
 DEPS_FILE="$REPO_DIR/requirements-dev.txt"
 LOG_ROOT="$REPO_DIR/logs"
@@ -25,6 +26,10 @@ case "$MODE" in
     ;;
 esac
 
+if [[ "$MODE" == "optimize" ]]; then
+  ALLOW_FAILURE=1
+fi
+
 cd "$REPO_DIR"
 mkdir -p "$LOG_ROOT"
 
@@ -35,12 +40,22 @@ fi
 
 if [[ "$APPLY" -eq 1 ]]; then
   echo "[type-maintenance] mode=apply (add annotations automatically)"
+  set +e
   "$PYTHON" scripts/type_maintenance.py --apply
+  STATUS=$?
+  set -e
 else
   echo "[type-maintenance] mode=check"
+  set +e
   "$PYTHON" scripts/type_maintenance.py
+  STATUS=$?
+  set -e
 fi
-STATUS=$?
+
+if [[ "$STATUS" -ne 0 && "$MODE" == "optimize" && "$ALLOW_FAILURE" == "1" ]]; then
+  echo "[type-maintenance] optimize mode has issues; recorded in logs/type_audit_report.json. Non-zero status will be treated as non-fatal."
+  exit 0
+fi
 
 if [[ "$APPLY" -eq 1 ]]; then
   if ! git diff --quiet; then

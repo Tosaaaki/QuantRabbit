@@ -1,0 +1,26 @@
+[Unit]
+Description=QuantRabbit Scalp Ping 5s Worker (B) for experiment
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/tossaki/QuantRabbit
+Environment="PYTHONUNBUFFERED=1"
+# Defaults (override in /etc/quantrabbit/scalp_ping_5s_b.env).
+Environment=SCALP_PING_5S_B_ENABLED=0
+Environment=SCALP_PING_5S_B_REQUIRE_PRACTICE=0
+Environment=SCALP_PING_5S_B_POCKET=scalp_fast
+Environment=SCALP_PING_5S_B_STRATEGY_TAG=scalp_ping_5s_b_live
+Environment=SCALP_PING_5S_B_LOG_PREFIX=[SCALP_PING_5S_B]
+Environment=SCALP_PING_5S_B_MAX_ACTIVE_TRADES=20
+Environment=SCALP_PING_5S_B_MAX_PER_DIRECTION=12
+Environment=SCALP_PING_5S_B_TP_ENABLED=0
+EnvironmentFile=-/etc/quantrabbit.env
+EnvironmentFile=-/etc/quantrabbit/scalp_ping_5s_b.env
+ExecStart=/home/tossaki/QuantRabbit/.venv/bin/python -m workers.scalp_ping_5s_b.worker
+Restart=always
+RestartSec=5
+User=tossaki
+
+[Install]
+WantedBy=multi-user.target

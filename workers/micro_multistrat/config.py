@@ -170,3 +170,22 @@ DYN_ALLOC_LOSER_BLOCK = os.getenv("MICRO_MULTI_DYN_ALLOC_LOSER_BLOCK", "1").stri
 DYN_ALLOC_SCORE_BONUS = float(os.getenv("MICRO_MULTI_DYN_ALLOC_SCORE_BONUS", "10.0"))
 DYN_ALLOC_MULT_MIN = float(os.getenv("MICRO_MULTI_DYN_ALLOC_MULT_MIN", "0.7"))
 DYN_ALLOC_MULT_MAX = float(os.getenv("MICRO_MULTI_DYN_ALLOC_MULT_MAX", "1.8"))
+
+# Strategy history selector (trades.db) fallback scores.
+HIST_ENABLED = os.getenv("MICRO_MULTI_HIST_ENABLED", "1").strip().lower() not in {
+    "",
+    "0",
+    "false",
+    "no",
+    "off",
+}
+HIST_DB_PATH = os.getenv("MICRO_MULTI_HIST_DB_PATH", "logs/trades.db")
+HIST_TTL_SEC = float(os.getenv("MICRO_MULTI_HIST_TTL_SEC", "30"))
+HIST_LOOKBACK_DAYS = int(os.getenv("MICRO_MULTI_HIST_LOOKBACK_DAYS", "7"))
+HIST_MIN_TRADES = int(os.getenv("MICRO_MULTI_HIST_MIN_TRADES", "12"))
+HIST_REGIME_MIN_TRADES = int(os.getenv("MICRO_MULTI_HIST_REGIME_MIN_TRADES", "8"))
+HIST_PF_CAP = float(os.getenv("MICRO_MULTI_HIST_PF_CAP", "2.0"))
+HIST_SKIP_SCORE = float(os.getenv("MICRO_MULTI_HIST_SKIP_SCORE", "0.34"))
+HIST_CONF_WEIGHT = float(os.getenv("MICRO_MULTI_HIST_CONF_WEIGHT", "14.0"))
+HIST_LOT_MIN = float(os.getenv("MICRO_MULTI_HIST_LOT_MIN", "0.72"))
+HIST_LOT_MAX = float(os.getenv("MICRO_MULTI_HIST_LOT_MAX", "1.28"))

@@ -892,6 +892,7 @@ SIDE_BIAS_BLOCK_THRESHOLD: float = max(
 TP_BASE_PIPS: float = max(0.2, float(os.getenv("SCALP_PING_5S_TP_BASE_PIPS", "0.30")))
 TP_NET_MIN_PIPS: float = max(0.1, float(os.getenv("SCALP_PING_5S_TP_NET_MIN_PIPS", "0.30")))
 TP_MAX_PIPS: float = max(TP_BASE_PIPS, float(os.getenv("SCALP_PING_5S_TP_MAX_PIPS", "0.80")))
+TP_ENABLED: bool = _bool_env("SCALP_PING_5S_TP_ENABLED", True)
 TP_MOMENTUM_BONUS_MAX: float = max(
     0.0, float(os.getenv("SCALP_PING_5S_TP_MOMENTUM_BONUS_MAX", "0.2"))
 )
@@ -1092,11 +1093,36 @@ SNAPSHOT_KEEPALIVE_MIN_SPAN_RATIO: float = max(
     ),
 )
 
+FORCE_EXIT_ENABLED: bool = _bool_env("SCALP_PING_5S_FORCE_EXIT_ENABLED", True)
 FORCE_EXIT_MAX_HOLD_SEC: float = max(
     0.0, float(os.getenv("SCALP_PING_5S_FORCE_EXIT_MAX_HOLD_SEC", "150"))
 )
 FORCE_EXIT_MAX_FLOATING_LOSS_PIPS: float = max(
     0.0, float(os.getenv("SCALP_PING_5S_FORCE_EXIT_MAX_FLOATING_LOSS_PIPS", "3.5"))
+)
+FORCE_EXIT_FLOATING_LOSS_MIN_HOLD_SEC: float = max(
+    0.0, float(os.getenv("SCALP_PING_5S_FORCE_EXIT_FLOATING_LOSS_MIN_HOLD_SEC", "0.0"))
+)
+FORCE_EXIT_FLOATING_LOSS_MIN_PIPS: float = max(
+    0.0, float(os.getenv("SCALP_PING_5S_FORCE_EXIT_FLOATING_LOSS_MIN_PIPS", "0.0"))
+)
+SHORT_FORCE_EXIT_MAX_HOLD_SEC: float = max(
+    0.0,
+    float(
+        os.getenv(
+            "SCALP_PING_5S_SHORT_FORCE_EXIT_MAX_HOLD_SEC",
+            str(FORCE_EXIT_MAX_HOLD_SEC),
+        )
+    ),
+)
+SHORT_FORCE_EXIT_MAX_FLOATING_LOSS_PIPS: float = max(
+    0.0,
+    float(
+        os.getenv(
+            "SCALP_PING_5S_SHORT_FORCE_EXIT_MAX_FLOATING_LOSS_PIPS",
+            str(FORCE_EXIT_MAX_FLOATING_LOSS_PIPS),
+        )
+    ),
 )
 FORCE_EXIT_RECOVERY_WINDOW_SEC: float = max(
     0.0, float(os.getenv("SCALP_PING_5S_FORCE_EXIT_RECOVERY_WINDOW_SEC", "0.0"))
@@ -1134,7 +1160,7 @@ FORCE_EXIT_BID_ASK_BUFFER_PIPS: float = max(
     ),
 )
 FORCE_EXIT_MAX_ACTIONS: int = max(
-    1, int(float(os.getenv("SCALP_PING_5S_FORCE_EXIT_MAX_ACTIONS", "3")))
+    0, int(float(os.getenv("SCALP_PING_5S_FORCE_EXIT_MAX_ACTIONS", "0")))
 )
 FORCE_EXIT_REASON: str = (
     os.getenv("SCALP_PING_5S_FORCE_EXIT_REASON", "time_stop").strip() or "time_stop"
@@ -1371,81 +1397,12 @@ PROFIT_BANK_EXCLUDE_CLIENT_IDS: tuple[str, ...] = _csv_env(
     "SCALP_PING_5S_PROFIT_BANK_EXCLUDE_CLIENT_IDS"
 )
 
-FORCE_EXIT_ENABLED: bool = _bool_env("SCALP_PING_5S_FORCE_EXIT_ENABLED", True)
-FORCE_EXIT_MAX_ACTIONS: int = max(
-    0, int(float(os.getenv("SCALP_PING_5S_FORCE_EXIT_MAX_ACTIONS", "0")))
-)
-FORCE_EXIT_MAX_HOLD_SEC: float = max(
-    0.0, float(os.getenv("SCALP_PING_5S_FORCE_EXIT_MAX_HOLD_SEC", "0"))
-)
-FORCE_EXIT_REASON_TIME: str = (
-    os.getenv("SCALP_PING_5S_FORCE_EXIT_REASON", "time_stop").strip() or "time_stop"
-)
-FORCE_EXIT_MAX_FLOATING_LOSS_PIPS: float = max(
-    0.0, float(os.getenv("SCALP_PING_5S_FORCE_EXIT_MAX_FLOATING_LOSS_PIPS", "0"))
-)
-SHORT_FORCE_EXIT_MAX_HOLD_SEC: float = max(
-    0.0,
-    float(
-        os.getenv(
-            "SCALP_PING_5S_SHORT_FORCE_EXIT_MAX_HOLD_SEC",
-            str(FORCE_EXIT_MAX_HOLD_SEC),
-        )
-    ),
-)
-SHORT_FORCE_EXIT_MAX_FLOATING_LOSS_PIPS: float = max(
-    0.0,
-    float(
-        os.getenv(
-            "SCALP_PING_5S_SHORT_FORCE_EXIT_MAX_FLOATING_LOSS_PIPS",
-            str(FORCE_EXIT_MAX_FLOATING_LOSS_PIPS),
-        )
-    ),
-)
-FORCE_EXIT_REASON_MAX_FLOATING_LOSS: str = (
-    os.getenv("SCALP_PING_5S_FORCE_EXIT_MAX_FLOATING_LOSS_REASON", "max_floating_loss").strip()
-    or "max_floating_loss"
-)
-FORCE_EXIT_RECOVERY_WINDOW_SEC: float = max(
-    0.0, float(os.getenv("SCALP_PING_5S_FORCE_EXIT_RECOVERY_WINDOW_SEC", "0"))
-)
-FORCE_EXIT_RECOVERABLE_LOSS_PIPS: float = float(
-    os.getenv("SCALP_PING_5S_FORCE_EXIT_RECOVERABLE_LOSS_PIPS", "0")
-)
-FORCE_EXIT_REASON_RECOVERY: str = (
-    os.getenv("SCALP_PING_5S_FORCE_EXIT_RECOVERY_REASON", "no_recovery").strip()
-    or "no_recovery"
-)
-FORCE_EXIT_GIVEBACK_ENABLED: bool = _bool_env("SCALP_PING_5S_FORCE_EXIT_GIVEBACK_ENABLED", False)
-FORCE_EXIT_GIVEBACK_ARM_PIPS: float = max(
-    0.0, float(os.getenv("SCALP_PING_5S_FORCE_EXIT_GIVEBACK_ARM_PIPS", "0"))
-)
-FORCE_EXIT_GIVEBACK_BACKOFF_PIPS: float = max(
-    0.0, float(os.getenv("SCALP_PING_5S_FORCE_EXIT_GIVEBACK_BACKOFF_PIPS", "0"))
-)
-FORCE_EXIT_GIVEBACK_MIN_HOLD_SEC: float = max(
-    0.0, float(os.getenv("SCALP_PING_5S_FORCE_EXIT_GIVEBACK_MIN_HOLD_SEC", "0"))
-)
-FORCE_EXIT_GIVEBACK_PROTECT_PIPS: float = float(
-    os.getenv("SCALP_PING_5S_FORCE_EXIT_GIVEBACK_PROTECT_PIPS", "0")
-)
-FORCE_EXIT_REASON_GIVEBACK: str = (
-    os.getenv("SCALP_PING_5S_FORCE_EXIT_GIVEBACK_REASON", "giveback_lock").strip()
-    or "giveback_lock"
-)
-FORCE_EXIT_REQUIRE_POLICY_GENERATION: bool = _bool_env(
-    "SCALP_PING_5S_FORCE_EXIT_REQUIRE_POLICY_GENERATION",
-    False,
-)
-FORCE_EXIT_POLICY_GENERATION: str = os.getenv(
-    "SCALP_PING_5S_FORCE_EXIT_POLICY_GENERATION",
-    "",
-).strip()
-# Keep current live positions untouched after worker restart; force-exit applies only to new trades.
-FORCE_EXIT_SKIP_EXISTING_ON_START: bool = _bool_env(
-    "SCALP_PING_5S_FORCE_EXIT_SKIP_EXISTING_ON_START",
-    True,
-)
+# Backward-compatible names kept for older call sites.
+FORCE_EXIT_REASON_TIME: str = FORCE_EXIT_REASON
+FORCE_EXIT_REASON_MAX_FLOATING_LOSS: str = FORCE_EXIT_MAX_FLOATING_LOSS_REASON
+FORCE_EXIT_REASON_RECOVERY: str = FORCE_EXIT_RECOVERY_REASON
+FORCE_EXIT_REASON_GIVEBACK: str = FORCE_EXIT_GIVEBACK_REASON
+
 FORCE_EXIT_ACTIVE: bool = FORCE_EXIT_ENABLED and FORCE_EXIT_MAX_ACTIONS > 0 and (
     FORCE_EXIT_MAX_HOLD_SEC > 0.0
     or FORCE_EXIT_MAX_FLOATING_LOSS_PIPS > 0.0

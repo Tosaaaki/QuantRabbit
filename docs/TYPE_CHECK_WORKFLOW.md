@@ -56,5 +56,6 @@ make vm-type-fix     # 自動補完（差分は logs/type_maintenance_*.patch �
 
 `systemd/quant-type-maintenance.service` は `Environment=TYPE_MAINTENANCE_MODE=optimize` で起動します。  
 `checks + optimize` を毎日 03:00 に実行し、最適化の差分は `logs/type_maintenance_*.patch` と `logs/type_audit_report.json` に保存します。
+`TYPE_MAINTENANCE_ALLOW_FAILURE=1` を通じて、最適化中の型エラーは即時中断対象とせず、監査レポートとして継続記録されます。
 
 必要な場合だけ `make vm-type-check` / `make vm-type-fix` を手動で実行して状態を確認できます。

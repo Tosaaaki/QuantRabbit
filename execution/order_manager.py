@@ -955,12 +955,17 @@ def _range_active_for_entry() -> bool:
         return False
 # エントリーが詰まらないようデフォルトの最小ユニットを下げる。
 _DEFAULT_MIN_UNITS = _env_int("ORDER_MIN_UNITS_DEFAULT", 1_000)
+# Pattern gate で scale 適用後にポケット最小未満になった場合、最小値へフォールバックする。
+_PATTERN_GATE_SCALE_TO_MIN_UNITS = _env_bool(
+    "ORDER_PATTERN_GATE_SCALE_TO_MIN_UNITS", False
+)
 # Macro も環境変数で可変（デフォルト 2,000 units、最低でも DEFAULT_MIN を確保）
 _MACRO_MIN_UNITS_DEFAULT = max(_env_int("ORDER_MIN_UNITS_MACRO", 2_000), _DEFAULT_MIN_UNITS)
 _MIN_UNITS_BY_POCKET: dict[str, int] = {
     "micro": _env_int("ORDER_MIN_UNITS_MICRO", _DEFAULT_MIN_UNITS),
     "macro": _env_int("ORDER_MIN_UNITS_MACRO", _MACRO_MIN_UNITS_DEFAULT),
     # scalp 系も同じ下限を使う（環境変数で上書き可）
+    "scalp_fast": _env_int("ORDER_MIN_UNITS_SCALP_FAST", _DEFAULT_MIN_UNITS),
     "scalp": _env_int("ORDER_MIN_UNITS_SCALP", _DEFAULT_MIN_UNITS),
 }
 # Default MTF hints for workers without explicit entry_thesis TFs.
@@ -3241,6 +3246,72 @@ def _log_order(
         _maybe_checkpoint_orders_db(con)
     except Exception as exc:  # noqa: BLE001
         logging.warning("[ORDER][LOG] failed to persist orders log: %s", exc)
+
+
+def get_last_order_status_by_client_id(
+    client_order_id: Optional[str],
+) -> Optional[dict[str, object]]:
+    """
+    Fetch the latest orders.db entry for a client order id.
+    Returns a compact reason payload for upper-layer diagnostics.
+    """
+    if not client_order_id:
+        return None
+    try:
+        con = _orders_con()
+    except Exception:
+        return None
+    try:
+        row = con.execute(
+            """
+            SELECT
+              ts,
+              status,
+              attempt,
+              side,
+              units,
+              error_code,
+              error_message,
+              request_json,
+              response_json
+            FROM orders
+            WHERE client_order_id = ?
+            ORDER BY id DESC
+            LIMIT 1
+            """,
+            (str(client_order_id),),
+        ).fetchone()
+    except Exception:
+        return None
+    if not row:
+        return None
+    try:
+        ts, status, attempt, side, units, error_code, error_message, request_json, response_json = row
+        req = None
+        res = None
+        if request_json:
+            try:
+                req = json.loads(request_json)
+            except Exception:
+                req = None
+        if response_json:
+            try:
+                res = json.loads(response_json)
+            except Exception:
+                res = None
+        return {
+            "ts": ts,
+            "status": status,
+            "attempt": attempt,
+            "side": side,
+            "units": units,
+            "error_code": error_code,
+            "error_message": error_message,
+            "request": req,
+            "response": res,
+        }
+    except Exception:
+        return None
 
 
 def _console_order_log(
@@ -5832,7 +5903,7 @@ async def market_order(
 ) -> Optional[str]:
     """
     units : +10000 = buy 0.1 lot, ‑10000 = sell 0.1 lot
-    returns order ticket id（決済のみの fill でも tradeID を返却）
+    returns trade id（約定時のみ）。未約定（submitted）や失敗は None。
     """
     sl_disabled = stop_loss_disabled_for_pocket(pocket)
     if strategy_tag is not None:
@@ -6737,61 +6808,71 @@ async def market_order(
             if pattern_decision.scale != 1.0:
                 scaled_units = int(round(abs(units) * pattern_decision.scale))
                 min_allowed = min_units_for_pocket(pocket)
+                pattern_scale_floored = False
                 if scaled_units < min_allowed:
-                    note = f"pattern_scale_below_min:{pattern_decision.reason}"
-                    _console_order_log(
-                        "OPEN_REJECT",
-                        pocket=pocket,
-                        strategy_tag=str(strategy_tag or "unknown"),
-                        side=side_label,
-                        units=units,
-                        sl_price=sl_price,
-                        tp_price=tp_price,
-                        client_order_id=client_order_id,
-                        note=note,
-                    )
-                    log_order(
-                        pocket=pocket,
-                        instrument=instrument,
-                        side=side_label,
-                        units=units,
-                        sl_price=sl_price,
-                        tp_price=tp_price,
-                        client_order_id=client_order_id,
-                        status="pattern_scale_below_min",
-                        attempt=0,
-                        stage_index=stage_index,
-                        request_payload={
-                            "strategy_tag": strategy_tag,
-                            "meta": meta,
-                            "entry_thesis": entry_thesis,
-                            "pattern_gate": pattern_decision.to_payload(),
-                            "scaled_units": scaled_units,
-                            "min_units": min_allowed,
-                        },
-                    )
-                    log_metric(
-                        "order_pattern_block",
-                        1.0,
-                        tags={
-                            "pocket": pocket,
-                            "strategy": str(strategy_tag or "unknown"),
-                            "reason": "scale_below_min",
-                            "quality": pattern_decision.quality,
-                            "source": pattern_decision.source,
-                        },
-                    )
-                    return None
+                    if (
+                        _PATTERN_GATE_SCALE_TO_MIN_UNITS
+                        and min_allowed > 0
+                    ):
+                        scaled_units = min_allowed
+                        pattern_scale_floored = True
+                    else:
+                        note = f"pattern_scale_below_min:{pattern_decision.reason}"
+                        _console_order_log(
+                            "OPEN_REJECT",
+                            pocket=pocket,
+                            strategy_tag=str(strategy_tag or "unknown"),
+                            side=side_label,
+                            units=units,
+                            sl_price=sl_price,
+                            tp_price=tp_price,
+                            client_order_id=client_order_id,
+                            note=note,
+                        )
+                        log_order(
+                            pocket=pocket,
+                            instrument=instrument,
+                            side=side_label,
+                            units=units,
+                            sl_price=sl_price,
+                            tp_price=tp_price,
+                            client_order_id=client_order_id,
+                            status="pattern_scale_below_min",
+                            attempt=0,
+                            stage_index=stage_index,
+                            request_payload={
+                                "strategy_tag": strategy_tag,
+                                "meta": meta,
+                                "entry_thesis": entry_thesis,
+                                "pattern_gate": pattern_decision.to_payload(),
+                                "scaled_units": scaled_units,
+                                "min_units": min_allowed,
+                            },
+                        )
+                        log_metric(
+                            "order_pattern_block",
+                            1.0,
+                            tags={
+                                "pocket": pocket,
+                                "strategy": str(strategy_tag or "unknown"),
+                                "reason": "scale_below_min",
+                                "quality": pattern_decision.quality,
+                                "source": pattern_decision.source,
+                            },
+                        )
+                        return None
                 if scaled_units > 0 and scaled_units != abs(units):
                     sign = 1 if units > 0 else -1
                     units = int(sign * scaled_units)
                     log_metric(
                         "order_pattern_scale",
-                        float(pattern_decision.scale),
+                        float(abs(scaled_units) / abs(units)) if abs(units) > 0 else 1.0,
                         tags={
                             "pocket": pocket,
                             "strategy": str(strategy_tag or "unknown"),
-                            "reason": pattern_decision.reason,
+                            "reason": "floor_to_min"
+                            if pattern_scale_floored
+                            else pattern_decision.reason,
                             "quality": pattern_decision.quality,
                             "source": pattern_decision.source,
                         },

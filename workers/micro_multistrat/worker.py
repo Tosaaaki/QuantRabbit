@@ -8,6 +8,8 @@ import asyncio
 import datetime
 import hashlib
 import logging
+import pathlib
+import sqlite3
 import time
 from typing import Dict, List, Optional, Tuple
 
@@ -35,6 +37,7 @@ from utils.metrics_logger import log_metric
 from workers.common.dyn_cap import compute_cap
 from workers.common.dynamic_alloc import load_strategy_profile
 from workers.common import perf_guard
+from workers.common.quality_gate import current_regime
 from analysis import perf_monitor
 
 from workers.common.size_utils import scale_base_units
@@ -63,6 +66,7 @@ except Exception:
 # Pattern gate (pattern_book-driven). Opt-in per strategy to avoid global enforcement.
 _MICRO_RANGEBREAK_PATTERN_GATE_OPT_IN = env_bool("MICRO_RANGEBREAK_PATTERN_GATE_OPT_IN", True)
 _MICRO_RANGEBREAK_PATTERN_GATE_ALLOW_GENERIC = env_bool("MICRO_RANGEBREAK_PATTERN_GATE_ALLOW_GENERIC", True)
+_MICRO_VWAPBOUND_PATTERN_GATE_OPT_IN = env_bool("MICRO_VWAPBOUND_PATTERN_GATE_OPT_IN", True)
 
 
 def _bb_float(value):
@@ -311,6 +315,229 @@ _RANGE_STRATEGIES = {
     MicroVWAPRevert.name,
     MicroCompressionRevert.name,
 }
+
+_HISTORY_PROFILE_CACHE: Dict[Tuple[str, str, str], tuple[float, Dict[str, object]]] = {}
+def _clamp01(value: float) -> float:
+    return max(0.0, min(1.0, value))
+
+
+def _normalize_tag_key(raw: object) -> str:
+    if not raw:
+        return ""
+    key = str(raw).strip().lower()
+    if not key:
+        return ""
+    if "-" in key:
+        key = key.split("-", 1)[0].strip()
+    return key
+
+
+def _normalize_regime_label(raw: object) -> str:
+    if not raw:
+        return ""
+    return str(raw).strip().lower().replace("_", "").replace("-", "").replace(" ", "")
+
+
+def _history_profile_cache_key(
+    strategy_key: str,
+    pocket: str,
+    regime_label: str,
+) -> tuple[str, str, str]:
+    return (_normalize_tag_key(strategy_key), str(pocket).strip().lower(), regime_label)
+
+
+def _query_strategy_history(
+    *,
+    strategy_key: str,
+    pocket: str,
+    regime_label: Optional[str],
+) -> Dict[str, object]:
+    strategy_key = _normalize_tag_key(strategy_key)
+    if not strategy_key:
+        return dict(n=0, pf=1.0, win_rate=0.0, avg_pips=0.0)
+    db_path = pathlib.Path(config.HIST_DB_PATH)
+    if not db_path.exists():
+        return dict(n=0, pf=1.0, win_rate=0.0, avg_pips=0.0)
+
+    lookback = max(1, int(config.HIST_LOOKBACK_DAYS))
+    params: List[object] = [str(pocket).strip().lower(), f"-{lookback} day"]
+    conditions = [
+        "LOWER(pocket) = ?",
+        "close_time IS NOT NULL",
+        "datetime(close_time) >= datetime('now', ?)",
+    ]
+
+    pattern = f"{strategy_key}-%"
+    conditions.append(
+        "(LOWER(strategy) = ? OR LOWER(NULLIF(strategy_tag, '')) = ? OR LOWER(NULLIF(strategy_tag, '')) LIKE ?)"
+    )
+    params.extend([strategy_key, strategy_key, pattern])
+
+    if regime_label:
+        normalized_regime = _normalize_regime_label(regime_label)
+        if normalized_regime:
+            conditions.append(
+                "(LOWER(COALESCE(micro_regime, '')) = ? OR LOWER(COALESCE(macro_regime, '')) = ?)"
+            )
+            params.extend([normalized_regime, normalized_regime])
+
+    where = " AND ".join(conditions)
+    con: sqlite3.Connection | None = None
+    try:
+        con = sqlite3.connect(str(db_path))
+        con.row_factory = sqlite3.Row
+        row = con.execute(
+            f"""
+            SELECT
+              COUNT(*) AS n,
+              SUM(CASE WHEN pl_pips > 0 THEN pl_pips ELSE 0 END) AS profit,
+              SUM(CASE WHEN pl_pips < 0 THEN ABS(pl_pips) ELSE 0 END) AS loss,
+              SUM(CASE WHEN pl_pips > 0 THEN 1 ELSE 0 END) AS win,
+              SUM(pl_pips) AS sum_pips
+            FROM trades
+            WHERE {where}
+            """,
+            params,
+        ).fetchone()
+    except Exception:
+        return dict(n=0, pf=1.0, win_rate=0.0, avg_pips=0.0)
+    finally:
+        if con is not None:
+            try:
+                con.close()
+            except Exception:
+                pass
+    if not row:
+        return dict(n=0, pf=1.0, win_rate=0.0, avg_pips=0.0)
+
+    n = int(row["n"] or 0)
+    if n <= 0:
+        return dict(n=0, pf=1.0, win_rate=0.0, avg_pips=0.0)
+    profit = float(row["profit"] or 0.0)
+    loss = float(row["loss"] or 0.0)
+    win = float(row["win"] or 0.0)
+    sum_pips = float(row["sum_pips"] or 0.0)
+    pf = profit / loss if loss > 0 else float("inf")
+    win_rate = win / n
+    avg_pips = sum_pips / n
+    return dict(n=n, pf=pf, win_rate=win_rate, avg_pips=avg_pips)
+
+
+def _derive_history_score(row: Dict[str, object]) -> float:
+    n = int(row.get("n", 0) or 0)
+    pf = float(row.get("pf") or 1.0)
+    win_rate = float(row.get("win_rate") or 0.0)
+    avg_pips = float(row.get("avg_pips") or 0.0)
+
+    if n <= 0:
+        return 0.5
+
+    if pf == float("inf"):
+        pf_norm = 1.0
+    else:
+        pf_cap = max(1.001, float(config.HIST_PF_CAP))
+        pf_norm = (pf - 1.0) / (pf_cap - 1.0)
+        pf_norm = _clamp01(pf_norm)
+
+    win_norm = _clamp01(win_rate)
+    avg_norm = _clamp01((avg_pips + 4.0) / 8.0)
+    score = 0.40 * pf_norm + 0.45 * win_norm + 0.15 * avg_norm
+
+    if n < config.HIST_MIN_TRADES:
+        weight = n / max(1.0, float(config.HIST_MIN_TRADES))
+        score = 0.5 + (score - 0.5) * weight
+    return score
+
+
+def _history_profile(
+    strategy_key: str,
+    pocket: str,
+    regime_label: Optional[str],
+) -> Dict[str, object]:
+    if not config.HIST_ENABLED:
+        return {
+            "enabled": False,
+            "strategy_key": strategy_key,
+            "pocket": pocket,
+            "used_regime": bool(regime_label),
+            "n": 0,
+            "pf": 1.0,
+            "win_rate": 0.0,
+            "avg_pips": 0.0,
+            "score": 0.5,
+            "lot_multiplier": 1.0,
+            "skip": False,
+            "source": "disabled",
+        }
+
+    normalized_regime = _normalize_regime_label(regime_label)
+    cache_key = _history_profile_cache_key(strategy_key, pocket, normalized_regime)
+    now = time.time()
+    cached = _HISTORY_PROFILE_CACHE.get(cache_key)
+    if cached and (now - cached[0]) <= max(1.0, float(config.HIST_TTL_SEC)):
+        return dict(cached[1])
+
+    if not strategy_key:
+        profile = {
+            "enabled": True,
+            "strategy_key": strategy_key,
+            "pocket": pocket,
+            "used_regime": bool(normalized_regime),
+            "n": 0,
+            "pf": 1.0,
+            "win_rate": 0.0,
+            "avg_pips": 0.0,
+            "score": 0.5,
+            "lot_multiplier": 1.0,
+            "skip": False,
+            "source": "empty_strategy",
+        }
+        _HISTORY_PROFILE_CACHE[cache_key] = (now, dict(profile))
+        return profile
+
+    row = _query_strategy_history(
+        strategy_key=strategy_key,
+        pocket=pocket,
+        regime_label=normalized_regime,
+    )
+    used_regime = bool(normalized_regime)
+    source = "regime"
+    if normalized_regime and int(row.get("n", 0) or 0) < max(1, int(config.HIST_REGIME_MIN_TRADES)):
+        fallback = _query_strategy_history(
+            strategy_key=strategy_key,
+            pocket=pocket,
+            regime_label=None,
+        )
+        if int(fallback.get("n", 0) or 0) > 0:
+            row = fallback
+            used_regime = False
+            source = "global"
+    score = _derive_history_score(row)
+    n = int(row.get("n", 0) or 0)
+    pf = float(row.get("pf", 1.0))
+    win_rate = float(row.get("win_rate", 0.0))
+    avg_pips = float(row.get("avg_pips", 0.0))
+    score = _clamp01(score)
+    lot_mult = config.HIST_LOT_MIN + (config.HIST_LOT_MAX - config.HIST_LOT_MIN) * score
+    lot_mult = max(config.HIST_LOT_MIN, min(config.HIST_LOT_MAX, lot_mult))
+    skip = bool(n >= config.HIST_MIN_TRADES and score < config.HIST_SKIP_SCORE)
+
+    profile = {
+        "enabled": True,
+        "strategy_key": strategy_key,
+        "pocket": pocket,
+        "used_regime": used_regime,
+        "source": source,
+        "n": n,
+        "pf": pf if pf != float("inf") else float(config.HIST_PF_CAP),
+        "win_rate": win_rate,
+        "avg_pips": avg_pips,
+        "score": score,
+        "lot_multiplier": lot_mult,
+        "skip": skip,
+    }
+    _HISTORY_PROFILE_CACHE[cache_key] = (now, dict(profile))
+    return dict(profile)
 
 
 
@@ -799,6 +1026,9 @@ async def micro_multi_worker() -> None:
         fac_m1["range_score"] = range_score
         fac_m1["range_reason"] = range_ctx.reason
         fac_m1["range_mode"] = range_ctx.mode
+        regime_label = _normalize_regime_label(fac_m1.get("regime"))
+        if not regime_label:
+            regime_label = _normalize_regime_label(current_regime("M1", event_mode=False))
         perf = perf_monitor.snapshot()
         pf = None
         try:
@@ -806,7 +1036,7 @@ async def micro_multi_worker() -> None:
         except Exception:
             pf = None
 
-        candidates: List[Tuple[float, int, Dict, str, Dict[str, object]]] = []
+        candidates: List[Tuple[float, int, Dict, str, Dict[str, object], Dict[str, object]]] = []
         for strat in _strategy_list():
             strategy_name = getattr(strat, "name", strat.__name__)
             if _strategy_cooldown_active(strategy_name, now_ts):
@@ -878,6 +1108,28 @@ async def micro_multi_worker() -> None:
                         and dyn_score <= config.DYN_ALLOC_LOSER_SCORE
                     ):
                         continue
+            signal_tag = str(cand.get("tag", strategy_name))
+            base_tag = signal_tag.split("-", 1)[0].strip()
+            if not base_tag:
+                base_tag = strategy_name
+            hist_profile = _history_profile(
+                strategy_key=base_tag,
+                pocket=config.POCKET,
+                regime_label=regime_label,
+            )
+            if bool(hist_profile.get("skip")):
+                now_mono = time.monotonic()
+                if now_mono - last_perf_block_log > 120.0:
+                    LOG.info(
+                        "%s hist_block tag=%s strategy=%s n=%s score=%.3f reason=low_recent_score",
+                        config.LOG_PREFIX,
+                        signal_tag,
+                        strategy_name,
+                        int(hist_profile.get("n", 0)),
+                        float(hist_profile.get("score", 0.0)),
+                    )
+                    last_perf_block_log = now_mono
+                continue
             base_conf = int(cand.get("confidence", 0) or 0)
             bonus = _diversity_bonus(strategy_name, now_ts)
             score = base_conf + bonus
@@ -888,7 +1140,8 @@ async def micro_multi_worker() -> None:
                     score -= config.RANGE_TREND_PENALTY * range_score
             if config.DYN_ALLOC_ENABLED and bool(dyn_profile.get("found")):
                 score += config.DYN_ALLOC_SCORE_BONUS * float(dyn_profile.get("score", 0.0) or 0.0)
-            candidates.append((score, base_conf, cand, strategy_name, dyn_profile))
+            score += config.HIST_CONF_WEIGHT * float(hist_profile.get("score", 0.5))
+            candidates.append((score, base_conf, cand, strategy_name, dyn_profile, hist_profile))
         if not candidates:
             continue
         candidates.sort(key=lambda item: (item[0], item[1]), reverse=True)
@@ -951,7 +1204,7 @@ async def micro_multi_worker() -> None:
             long_units, short_units = get_position_summary("USD_JPY", timeout=3.0)
         except Exception:
             long_units, short_units = 0.0, 0.0
-        for _, _, signal, strategy_name, dyn_profile in selected:
+        for _, _, signal, strategy_name, dyn_profile, hist_profile in selected:
             side = "long" if signal["action"] == "OPEN_LONG" else "short"
             orig_side = side
             orig_action = signal.get("action")
@@ -1092,10 +1345,17 @@ async def micro_multi_worker() -> None:
             dyn_score = 0.0
             dyn_trades = 0
             strategy_units_mult = 1.0
+            hist_mult = 1.0
+            hist_score = float(hist_profile.get("score", 0.5) if isinstance(hist_profile, dict) else 0.5)
+            hist_n = int(hist_profile.get("n", 0) if isinstance(hist_profile, dict) else 0)
+            hist_source = str(hist_profile.get("source", "disabled") if isinstance(hist_profile, dict) else "disabled")
             if base_tag:
                 strategy_units_mult = float(config.STRATEGY_UNITS_MULT.get(base_tag, 1.0) or 1.0)
             if strategy_units_mult <= 0.0:
                 strategy_units_mult = 1.0
+            if isinstance(hist_profile, dict):
+                hist_mult = float(hist_profile.get("lot_multiplier", 1.0) or 1.0)
+                hist_mult = max(config.HIST_LOT_MIN, min(config.HIST_LOT_MAX, hist_mult))
             if config.DYN_ALLOC_ENABLED and bool(dyn_profile.get("found")):
                 dyn_mult = float(dyn_profile.get("lot_multiplier", 1.0) or 1.0)
                 dyn_mult = max(config.DYN_ALLOC_MULT_MIN, min(config.DYN_ALLOC_MULT_MAX, dyn_mult))
@@ -1120,6 +1380,7 @@ async def micro_multi_worker() -> None:
             units = min(units, units_risk)
             units = int(round(units * cap))
             units = int(round(units * multi_scale))
+            units = int(round(units * hist_mult))
             units = int(round(units * dyn_mult))
             units = int(round(units * strategy_units_mult))
             if units < config.MIN_UNITS:
@@ -1162,12 +1423,25 @@ async def micro_multi_worker() -> None:
                 entry_thesis["pattern_gate_opt_in"] = bool(_MICRO_RANGEBREAK_PATTERN_GATE_OPT_IN)
                 if _MICRO_RANGEBREAK_PATTERN_GATE_ALLOW_GENERIC:
                     entry_thesis["pattern_gate_allow_generic"] = True
+            elif base_tag == "MicroVWAPBound":
+                entry_thesis["pattern_gate_opt_in"] = bool(_MICRO_VWAPBOUND_PATTERN_GATE_OPT_IN)
             if config.DYN_ALLOC_ENABLED and bool(dyn_profile.get("found")):
                 entry_thesis["dynamic_alloc"] = {
                     "strategy_key": dyn_profile.get("strategy_key"),
                     "score": round(dyn_score, 3),
                     "trades": dyn_trades,
                     "lot_multiplier": round(dyn_mult, 3),
+                }
+            if isinstance(hist_profile, dict):
+                entry_thesis["history_perf"] = {
+                    "strategy_key": hist_profile.get("strategy_key", base_tag),
+                    "source": hist_profile.get("source", "disabled"),
+                    "n": int(hist_profile.get("n", 0) or 0),
+                    "score": round(float(hist_profile.get("score", 0.5) or 0.5), 3),
+                    "lot_multiplier": round(float(hist_profile.get("lot_multiplier", 1.0) or 1.0), 3),
+                    "pf": round(float(hist_profile.get("pf", 1.0) or 1.0), 3),
+                    "win_rate": round(float(hist_profile.get("win_rate", 0.0) or 0.0), 3),
+                    "avg_pips": round(float(hist_profile.get("avg_pips", 0.0) or 0.0), 3),
                 }
             if abs(strategy_units_mult - 1.0) > 1e-9:
                 entry_thesis["strategy_units_mult"] = round(strategy_units_mult, 3)
@@ -1315,7 +1589,7 @@ async def micro_multi_worker() -> None:
             )
             _STRATEGY_LAST_TS[strategy_name] = time.time()
             LOG.info(
-                "%s strat=%s sent units=%s side=%s price=%.3f sl=%.3f tp=%.3f conf=%.0f cap=%.2f multi=%.2f dyn=%.2f s_mult=%.2f dyn_score=%.2f dyn_n=%s reasons=%s res=%s",
+                "%s strat=%s sent units=%s side=%s price=%.3f sl=%.3f tp=%.3f conf=%.0f cap=%.2f multi=%.2f hist=%.3f(%s,n=%s) dyn=%.2f s_mult=%.2f dyn_score=%.2f dyn_n=%s reasons=%s res=%s",
                 config.LOG_PREFIX,
                 strategy_name,
                 units,
@@ -1326,6 +1600,9 @@ async def micro_multi_worker() -> None:
                 signal.get("confidence", 0),
                 cap,
                 multi_scale,
+                hist_mult,
+                hist_source,
+                hist_n,
                 dyn_mult,
                 strategy_units_mult,
                 dyn_score,

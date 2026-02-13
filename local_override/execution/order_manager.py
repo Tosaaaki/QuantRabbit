@@ -1,11 +1,18 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from typing import Optional, Tuple, List
+from typing import Optional, List
 
 
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def get_last_order_status_by_client_id(
+    client_order_id: Optional[str],
+) -> Optional[dict[str, object]]:
+    # local override mode: no persistent orders.db on this path.
+    return None
 
 
 async def market_order(
@@ -18,10 +25,9 @@ async def market_order(
     client_order_id: Optional[str] = None,
     reduce_only: bool = False,
     stage_index: Optional[int] = None,
-) -> Tuple[Optional[str], Optional[float]]:
+) -> Optional[str]:
     # offline stub: pretend order is filled at None (use close price upstream)
-    trade_id = f"sim-{_now_iso()}"
-    return trade_id, None
+    return f"sim-{_now_iso()}"
 
 
 async def close_trade(trade_id: str, units: int) -> bool:
