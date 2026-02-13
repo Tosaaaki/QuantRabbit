@@ -7990,14 +7990,6 @@ async def market_order(
                 units,
             )
 
-    thesis_disable_hard_stop = (
-        _coerce_bool(
-            (entry_thesis or {}).get("disable_entry_hard_stop"),
-            False,
-        )
-        if isinstance(entry_thesis, dict)
-        else False
-    )
     if not reduce_only and not sl_disabled and not thesis_disable_hard_stop and estimated_entry is not None:
         hard_stop_pips = _entry_hard_stop_pips(pocket, strategy_tag=strategy_tag)
         if hard_stop_pips > 0.0:
