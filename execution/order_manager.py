@@ -5841,6 +5841,16 @@ async def market_order(
                 thesis_sl_pips = float(value)
         except (TypeError, ValueError):
             thesis_sl_pips = None
+    if thesis_disable_hard_stop:
+        thesis_sl_pips = None
+        if isinstance(entry_thesis, dict):
+            entry_thesis = dict(entry_thesis)
+            entry_thesis.pop("sl_pips", None)
+            entry_thesis.pop("sl_before", None)
+            entry_thesis.pop("dynamic_sl_applied", None)
+            entry_thesis.pop("min_rr_adjusted", None)
+            entry_thesis.pop("sl_cap_applied", None)
+            entry_thesis.pop("forecast_execution", None)
     try:
         value = entry_thesis.get("tp_pips") or entry_thesis.get("target_tp_pips")
         if value is not None:
@@ -7576,7 +7586,8 @@ async def market_order(
     # Market-adaptive SL: widen loss buffer when volatility/spread expands.
     # NOTE: This updates thesis_sl_pips (virtual SL) even when stopLossOnFill is disabled.
     if (
-        _DYNAMIC_SL_ENABLE
+        not thesis_disable_hard_stop
+        and _DYNAMIC_SL_ENABLE
         and (pocket or "").lower() in _DYNAMIC_SL_POCKETS
         and not reduce_only
     ):
