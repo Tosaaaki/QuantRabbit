@@ -2815,6 +2815,26 @@ def _snapshot_is_transient_status(status_code: int) -> bool:
     return status_code in {429, 500, 502, 503, 504}
 
 
+def _snapshot_is_degraded_mode() -> bool:
+    return (
+        config.SNAPSHOT_FETCH_FAILURE_STALE_MODE_ENABLED
+        and _SNAPSHOT_FETCH_FAILURES >= config.SNAPSHOT_FETCH_FAILURE_STALE_THRESHOLD
+    )
+
+
+def _snapshot_stale_age_limit_ms() -> float:
+    base_age_ms = float(config.MAX_TICK_AGE_MS)
+    if not _snapshot_is_degraded_mode():
+        return base_age_ms
+    return max(base_age_ms, float(config.SNAPSHOT_FETCH_FAILURE_STALE_MAX_AGE_MS))
+
+
+def _snapshot_stale_units_scale() -> float:
+    if not _snapshot_is_degraded_mode():
+        return 1.0
+    return float(config.SNAPSHOT_FETCH_FAILURE_STALE_UNITS_SCALE)
+
+
 async def _fetch_price_snapshot(logger: logging.Logger) -> bool:
     global _SNAPSHOT_FETCH_FAILURES, _SNAPSHOT_FETCH_BACKOFF_UNTIL_MONO, _SNAPSHOT_FETCH_BACKOFF_LOG_MONO
     if not _OANDA_TOKEN or not _OANDA_ACCOUNT:
@@ -3000,6 +3020,7 @@ async def scalp_ping_5s_worker() -> None:
     last_entry_mono = 0.0
     last_snapshot_fetch = 0.0
     last_stale_log_mono = 0.0
+    last_snapshot_degrade_log_mono = 0.0
     last_trap_log_mono = 0.0
     last_density_topup_log_mono = 0.0
     last_keepalive_log_mono = 0.0
@@ -3248,8 +3269,10 @@ async def scalp_ping_5s_worker() -> None:
                     )
                     last_keepalive_log_mono = now_mono
 
+            snapshot_degraded_mode = _snapshot_is_degraded_mode()
+            snapshot_age_limit_ms = _snapshot_stale_age_limit_ms()
             needs_snapshot = (len(ticks) < config.MIN_TICKS) or (
-                latest_tick_age_ms > config.MAX_TICK_AGE_MS
+                latest_tick_age_ms > snapshot_age_limit_ms
             )
 
             if spread_pips <= 0.0:
@@ -3269,15 +3292,26 @@ async def scalp_ping_5s_worker() -> None:
                             spread_pips = _latest_spread_from_ticks(ticks)
 
             if len(ticks) < config.MIN_TICKS:
+                if snapshot_degraded_mode and now_mono - last_snapshot_degrade_log_mono >= 10.0:
+                    last_snapshot_degrade_log_mono = now_mono
+                    LOG.warning(
+                        "%s snapshot degraded: insufficient ticks len=%d < min_ticks=%d (failures=%d)",
+                        config.LOG_PREFIX,
+                        len(ticks),
+                        config.MIN_TICKS,
+                        _SNAPSHOT_FETCH_FAILURES,
+                    )
                 continue
-            if latest_tick_age_ms > config.MAX_TICK_AGE_MS:
+            if latest_tick_age_ms > snapshot_age_limit_ms:
                 now_mono = time.monotonic()
                 if now_mono - last_stale_log_mono >= 10.0:
                     LOG.warning(
-                        "%s stale ticks age=%.0fms (> %.0fms) waiting for fresh data",
+                        "%s stale ticks age=%.0fms (> %.0fms) waiting for fresh data (failures=%d degraded=%s)",
                         config.LOG_PREFIX,
                         latest_tick_age_ms,
-                        config.MAX_TICK_AGE_MS,
+                        snapshot_age_limit_ms,
+                        _SNAPSHOT_FETCH_FAILURES,
+                        snapshot_degraded_mode,
                     )
                     last_stale_log_mono = now_mono
                 continue
@@ -3752,6 +3786,9 @@ async def scalp_ping_5s_worker() -> None:
             units = int(round(units * horizon_units_mult))
             units = int(round(units * m1_trend_units_mult))
             units = int(round(units * extrema_units_mult))
+            snapshot_units_scale = _snapshot_stale_units_scale()
+            if snapshot_units_scale < 1.0:
+                units = int(round(units * snapshot_units_scale))
 
             lot = allowed_lot(
                 nav,
@@ -3853,6 +3890,10 @@ async def scalp_ping_5s_worker() -> None:
                     ),
                     3,
                 ),
+                "snapshot_degraded_mode": bool(snapshot_degraded_mode),
+                "snapshot_fetch_failures": int(_SNAPSHOT_FETCH_FAILURES),
+                "snapshot_age_limit_ms": round(snapshot_age_limit_ms, 1),
+                "snapshot_stale_units_scale": round(float(snapshot_units_scale), 3),
                 "vol_bucket_source": "signal_range_then_regime",
                 "tp_time_avg_sec": (
                     round(tp_profile.avg_tp_sec, 1) if tp_profile.avg_tp_sec > 0.0 else None
