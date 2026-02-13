@@ -1610,6 +1610,14 @@ _ENTRY_QUALITY_SPREAD_TP_MAX_RATIO = {
     "scalp": 0.28,
     "scalp_fast": 0.34,
 }
+_ENTRY_QUALITY_SPREAD_TP_SOFTEN_ENABLED = (
+    os.getenv("ORDER_ENTRY_QUALITY_SPREAD_TP_SOFTEN", "1").strip().lower()
+    not in {"", "0", "false", "no"}
+)
+_ENTRY_QUALITY_SPREAD_TP_SOFTEN_MIN_SCALE = max(
+    0.05,
+    _env_float("ORDER_ENTRY_QUALITY_SPREAD_TP_SOFTEN_MIN_SCALE", 0.30),
+)
 _ENTRY_QUALITY_ATR_BANDS = {
     "macro": (9.0, 24.0),
     "micro": (1.2, 4.0),
@@ -2596,6 +2604,53 @@ def _entry_quality_gate(
             "tf": str(snap.get("tf") or ""),
         }
     if spread_tp_ratio is not None and spread_tp_ratio > max_spread_tp_ratio and conf < bypass_conf:
+        spread_tp_soften_target_ratio = _pocket_env_float(
+            "ORDER_ENTRY_QUALITY_SPREAD_TP_SOFTEN_TARGET_RATIO",
+            pocket,
+            max_spread_tp_ratio,
+        )
+        spread_tp_soften_target_ratio = max(
+            1e-9, min(max_spread_tp_ratio, spread_tp_soften_target_ratio)
+        )
+        spread_tp_soften_min_scale = _pocket_env_float(
+            "ORDER_ENTRY_QUALITY_SPREAD_TP_SOFTEN_MIN_SCALE",
+            pocket,
+            _ENTRY_QUALITY_SPREAD_TP_SOFTEN_MIN_SCALE,
+        )
+        spread_tp_soften_min_scale = max(0.01, min(1.0, spread_tp_soften_min_scale))
+        soften_scale = min(
+            1.0,
+            max(0.0, spread_tp_soften_target_ratio / spread_tp_ratio),
+        )
+        if (
+            _ENTRY_QUALITY_SPREAD_TP_SOFTEN_ENABLED
+            and 0.0 < soften_scale < 1.0
+            and math.isfinite(soften_scale)
+            and soften_scale >= spread_tp_soften_min_scale
+        ):
+            return False, "entry_quality_spread_tp_softened", {
+                "enabled": 1.0,
+                "confidence": conf,
+                "required_conf": required,
+                "spread_pips": spread_pips,
+                "tp_pips": tp_pips,
+                "spread_tp_ratio": spread_tp_ratio,
+                "max_spread_tp_ratio": max_spread_tp_ratio,
+                "spread_tp_soften_target_ratio": spread_tp_soften_target_ratio,
+                "spread_tp_soften_min_scale": spread_tp_soften_min_scale,
+                "recommended_units_scale": soften_scale,
+                "bypass_conf": bypass_conf,
+                "atr_pips": atr_pips,
+                "vol_5m": vol_5m,
+                "strategy_tag": str(strategy_tag or ""),
+                "strategy_sample": strategy_sample,
+                "strategy_pf": strategy_pf,
+                "strategy_win_rate": strategy_win_rate,
+                "strategy_avg_pips": strategy_avg_pips,
+                "strategy_payoff": strategy_payoff,
+                "strategy_penalty": strategy_penalty,
+                "tf": str(snap.get("tf") or ""),
+            }
         return False, "entry_quality_spread_tp", {
             "enabled": 1.0,
             "confidence": conf,
@@ -7878,46 +7933,193 @@ async def market_order(
             tp_pips=tp_pips_live,
         )
         if not quality_ok:
-            reason = quality_reason or "entry_quality_block"
-            _console_order_log(
-                "OPEN_SKIP",
-                pocket=pocket,
-                strategy_tag=strategy_tag,
-                side=side_label,
-                units=units,
-                sl_price=sl_price,
-                tp_price=tp_price,
-                client_order_id=client_order_id,
-                note=reason,
-            )
-            log_order(
-                pocket=pocket,
-                instrument=instrument,
-                side=side_label,
-                units=units,
-                sl_price=sl_price,
-                tp_price=tp_price,
-                client_order_id=client_order_id,
-                status=reason,
-                attempt=0,
-                request_payload={
-                    "reason": reason,
-                    "quality": quality_meta,
-                    "confidence": conf_score,
-                    "entry_thesis": entry_thesis,
-                    "meta": meta,
-                },
-            )
-            log_metric(
-                "entry_quality_block",
-                1.0,
-                tags={
-                    "pocket": pocket or "unknown",
-                    "strategy": strategy_tag or "unknown",
-                    "reason": reason,
-                },
-            )
-            return None
+            if (
+                quality_reason == "entry_quality_spread_tp_softened"
+                and isinstance(quality_meta, dict)
+            ):
+                soften_scale = _as_float(quality_meta.get("recommended_units_scale"))
+                if soften_scale is not None and 0.0 < soften_scale < 1.0:
+                    scaled_units = int(round(abs(units) * soften_scale))
+                    min_allowed_units = min_units_for_pocket(pocket)
+                    if scaled_units <= 0:
+                        reason = "entry_quality_scale_below_min"
+                        _console_order_log(
+                            "OPEN_REJECT",
+                            pocket=pocket,
+                            strategy_tag=strategy_tag,
+                            side=side_label,
+                            units=units,
+                            sl_price=sl_price,
+                            tp_price=tp_price,
+                            client_order_id=client_order_id,
+                            note=reason,
+                        )
+                        log_order(
+                            pocket=pocket,
+                            instrument=instrument,
+                            side=side_label,
+                            units=units,
+                            sl_price=sl_price,
+                            tp_price=tp_price,
+                            client_order_id=client_order_id,
+                            status=reason,
+                            attempt=0,
+                            request_payload={
+                                "reason": reason,
+                                "quality": quality_meta,
+                                "confidence": conf_score,
+                                "entry_thesis": entry_thesis,
+                                "meta": meta,
+                                "scaled_units": scaled_units,
+                                "min_units": min_allowed_units,
+                            },
+                        )
+                        log_metric(
+                            "entry_quality_block",
+                            1.0,
+                            tags={
+                                "pocket": pocket or "unknown",
+                                "strategy": strategy_tag or "unknown",
+                                "reason": reason,
+                            },
+                        )
+                        return None
+                    if min_allowed_units > 0 and scaled_units < min_allowed_units:
+                        reason = "entry_quality_scale_below_min"
+                        _console_order_log(
+                            "OPEN_REJECT",
+                            pocket=pocket,
+                            strategy_tag=strategy_tag,
+                            side=side_label,
+                            units=units,
+                            sl_price=sl_price,
+                            tp_price=tp_price,
+                            client_order_id=client_order_id,
+                            note=reason,
+                        )
+                        log_order(
+                            pocket=pocket,
+                            instrument=instrument,
+                            side=side_label,
+                            units=units,
+                            sl_price=sl_price,
+                            tp_price=tp_price,
+                            client_order_id=client_order_id,
+                            status=reason,
+                            attempt=0,
+                            request_payload={
+                                "reason": reason,
+                                "quality": quality_meta,
+                                "confidence": conf_score,
+                                "entry_thesis": entry_thesis,
+                                "meta": meta,
+                                "scaled_units": scaled_units,
+                                "min_units": min_allowed_units,
+                            },
+                        )
+                        log_metric(
+                            "entry_quality_block",
+                            1.0,
+                            tags={
+                                "pocket": pocket or "unknown",
+                                "strategy": strategy_tag or "unknown",
+                                "reason": reason,
+                            },
+                        )
+                        return None
+
+                    if scaled_units > 0 and scaled_units != abs(units):
+                        previous_units = units
+                        units = scaled_units if units > 0 else -scaled_units
+                        if isinstance(entry_thesis, dict):
+                            entry_thesis = dict(entry_thesis)
+                            entry_thesis["entry_quality_soften_scale"] = round(
+                                soften_scale, 4
+                            )
+                        _console_order_log(
+                            "OPEN_SCALE",
+                            pocket=pocket,
+                            strategy_tag=strategy_tag,
+                            side=side_label,
+                            units=units,
+                            sl_price=sl_price,
+                            tp_price=tp_price,
+                            client_order_id=client_order_id,
+                            note=f"entry_quality_spread_tp_softened:{soften_scale:.2f}",
+                        )
+                        log_order(
+                            pocket=pocket,
+                            instrument=instrument,
+                            side=side_label,
+                            units=units,
+                            sl_price=sl_price,
+                            tp_price=tp_price,
+                            client_order_id=client_order_id,
+                            status="entry_quality_softened",
+                            attempt=0,
+                            request_payload={
+                                "reason": "entry_quality_spread_tp_softened",
+                                "quality": quality_meta,
+                                "confidence": conf_score,
+                                "previous_units": previous_units,
+                                "scaled_units": scaled_units,
+                                "entry_thesis": entry_thesis,
+                                "meta": meta,
+                            },
+                        )
+                        log_metric(
+                            "entry_quality_softened",
+                            float(soften_scale),
+                            tags={
+                                "pocket": pocket or "unknown",
+                                "strategy": strategy_tag or "unknown",
+                                "reason": "spread_tp_softened",
+                            },
+                        )
+                    quality_ok = True
+
+            if not quality_ok:
+                reason = quality_reason or "entry_quality_block"
+            if not quality_ok:
+                _console_order_log(
+                    "OPEN_SKIP",
+                    pocket=pocket,
+                    strategy_tag=strategy_tag,
+                    side=side_label,
+                    units=units,
+                    sl_price=sl_price,
+                    tp_price=tp_price,
+                    client_order_id=client_order_id,
+                    note=reason,
+                )
+                log_order(
+                    pocket=pocket,
+                    instrument=instrument,
+                    side=side_label,
+                    units=units,
+                    sl_price=sl_price,
+                    tp_price=tp_price,
+                    client_order_id=client_order_id,
+                    status=reason,
+                    attempt=0,
+                    request_payload={
+                        "reason": reason,
+                        "quality": quality_meta,
+                        "confidence": conf_score,
+                        "entry_thesis": entry_thesis,
+                        "meta": meta,
+                    },
+                )
+                log_metric(
+                    "entry_quality_block",
+                    1.0,
+                    tags={
+                        "pocket": pocket or "unknown",
+                        "strategy": strategy_tag or "unknown",
+                        "reason": reason,
+                    },
+                )
+                return None
 
     # Margin preflight (new entriesのみ)
     preflight_units = units
