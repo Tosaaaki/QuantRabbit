@@ -63,6 +63,7 @@ _TRADES_DB = pathlib.Path("logs/trades.db")
 _SNAPSHOT_FETCH_BACKOFF_UNTIL_MONO: float = 0.0
 _SNAPSHOT_FETCH_FAILURES: int = 0
 _SNAPSHOT_FETCH_BACKOFF_LOG_MONO: float = 0.0
+_SNAPSHOT_AUTH_VALIDATED: Optional[bool] = None
 
 
 @dataclass(slots=True)
@@ -2815,6 +2816,57 @@ def _snapshot_is_transient_status(status_code: int) -> bool:
     return status_code in {429, 500, 502, 503, 504}
 
 
+def _is_oanda_snapshot_auth_valid(logger: logging.Logger) -> bool:
+    global _SNAPSHOT_AUTH_VALIDATED
+    if _SNAPSHOT_AUTH_VALIDATED is not None:
+        return _SNAPSHOT_AUTH_VALIDATED
+
+    if not _OANDA_TOKEN or not _OANDA_ACCOUNT:
+        logger.error("%s oanda credentials missing (account=%s token=%s)", config.LOG_PREFIX, _mask_value(_OANDA_ACCOUNT), bool(_OANDA_TOKEN))
+        _SNAPSHOT_AUTH_VALIDATED = False
+        return False
+
+    validate_url = f"{_PRICING_HOST}/v3/accounts/{_OANDA_ACCOUNT}"
+    try:
+        with httpx.Client(timeout=config.SNAPSHOT_FETCH_TIMEOUT_SEC) as client:
+            resp = client.get(validate_url, headers=_PRICING_HEADERS)
+            status_code = int(resp.status_code)
+            if status_code == 200:
+                _SNAPSHOT_AUTH_VALIDATED = True
+                return True
+
+            body = ""
+            try:
+                body_obj = resp.json()
+                body = str(body_obj.get("errorMessage", ""))[:140]
+            except Exception:
+                body = resp.text[:140]
+            if status_code in {400, 401, 403}:
+                logger.error(
+                    "%s oanda auth precheck failed (account=%s, status=%s): %s",
+                    config.LOG_PREFIX,
+                    _mask_value(_OANDA_ACCOUNT),
+                    status_code,
+                    body,
+                )
+                _SNAPSHOT_AUTH_VALIDATED = False
+                return False
+
+            logger.warning(
+                "%s oanda auth precheck failed transiently (account=%s, status=%s): %s",
+                config.LOG_PREFIX,
+                _mask_value(_OANDA_ACCOUNT),
+                status_code,
+                body,
+            )
+            _SNAPSHOT_AUTH_VALIDATED = None
+            return False
+    except httpx.HTTPError as exc:
+        logger.warning("%s oanda auth precheck request failed: %s", config.LOG_PREFIX, exc)
+        _SNAPSHOT_AUTH_VALIDATED = None
+        return False
+
+
 def _snapshot_is_degraded_mode() -> bool:
     return (
         config.SNAPSHOT_FETCH_FAILURE_STALE_MODE_ENABLED
@@ -2838,6 +2890,8 @@ def _snapshot_stale_units_scale() -> float:
 async def _fetch_price_snapshot(logger: logging.Logger) -> bool:
     global _SNAPSHOT_FETCH_FAILURES, _SNAPSHOT_FETCH_BACKOFF_UNTIL_MONO, _SNAPSHOT_FETCH_BACKOFF_LOG_MONO
     if not _OANDA_TOKEN or not _OANDA_ACCOUNT:
+        return False
+    if not _is_oanda_snapshot_auth_valid(logger):
         return False
 
     now_mono = time.monotonic()
@@ -4103,5 +4157,9 @@ async def scalp_ping_5s_worker() -> None:
 
 
 if __name__ == "__main__":
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s [%(levelname)s] %(message)s",
+        force=True,
+    )
     asyncio.run(scalp_ping_5s_worker())
