@@ -100,12 +100,12 @@ class TickSignal:
     tick_rate: float
     span_sec: float
     tick_age_ms: float
-    range_pips: float = 0.0
-    instant_range_pips: float = 0.0
     spread_pips: float
     bid: float
     ask: float
     mid: float
+    range_pips: float = 0.0
+    instant_range_pips: float = 0.0
 
 
 @dataclass(slots=True)
