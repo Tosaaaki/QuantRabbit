@@ -1814,6 +1814,41 @@ def _apply_horizon_bias(
     return adjusted, float(max(0.0, units_mult)), "horizon_align"
 
 
+def _m1_trend_units_multiplier(
+    signal_side: str,
+    m1_score: Optional[float],
+) -> tuple[float, str]:
+    if not config.M1_TREND_SCALE_ENABLED:
+        return 1.0, "disabled"
+    if m1_score is None:
+        return 1.0, "m1_unavailable"
+    if signal_side not in {"long", "short"}:
+        return 1.0, "invalid_side"
+
+    score_abs = abs(_safe_float(m1_score, 0.0))
+    if score_abs <= 0.0:
+        return 1.0, "m1_zero"
+
+    side_sign = 1.0 if signal_side == "long" else -1.0
+    aligned = score_abs > 0.0 and (m1_score * side_sign) > 0.0
+    if not aligned:
+        denom = max(0.05, float(config.M1_TREND_OPPOSITE_SCORE))
+        penalty_ratio = _clamp(score_abs / denom, 0.0, 1.0)
+        scale = 1.0 - (1.0 - config.M1_TREND_OPPOSITE_UNITS_MULT) * penalty_ratio
+        return float(max(0.1, scale)), "m1_opposite"
+
+    if score_abs < config.M1_TREND_ALIGN_SCORE_MIN:
+        return 1.0, "m1_align_weak"
+
+    ratio = _clamp(
+        (score_abs - config.M1_TREND_ALIGN_SCORE_MIN)
+        / max(0.05, 1.0 - config.M1_TREND_ALIGN_SCORE_MIN),
+        0.0,
+        1.0,
+    )
+    return 1.0 + (config.M1_TREND_ALIGN_BOOST_MAX * ratio), "m1_align_boost"
+
+
 def _directional_bias_scale(rows: Sequence[dict], side: str) -> tuple[float, dict[str, float]]:
     if not config.SIDE_BIAS_ENABLED:
         return 1.0, {"enabled": 0.0}
@@ -2812,6 +2847,15 @@ async def scalp_ping_5s_worker() -> None:
             else:
                 signal = horizon_signal
 
+            m1_score = _tf_score_or_none(
+                factors if isinstance(factors, dict) else {},
+                "M1",
+            )
+            m1_trend_units_mult, m1_trend_gate = _m1_trend_units_multiplier(
+                signal.side,
+                m1_score,
+            )
+
             last_snapshot_fetch, density_topup = await _maybe_topup_micro_density(
                 now_mono=now_mono,
                 last_snapshot_fetch=last_snapshot_fetch,
@@ -3122,6 +3166,7 @@ async def scalp_ping_5s_worker() -> None:
             units = int(round(base_units * conf_mult * strength_mult * bias_units_mult * lookahead_units_mult))
             units = int(round(units * regime_units_mult))
             units = int(round(units * horizon_units_mult))
+            units = int(round(units * m1_trend_units_mult))
             units = int(round(units * extrema_units_mult))
 
             lot = allowed_lot(
@@ -3228,6 +3273,9 @@ async def scalp_ping_5s_worker() -> None:
                 "mtf_regime_units_mult": round(float(regime_units_mult), 3),
                 "horizon_gate": horizon_gate,
                 "horizon_units_mult": round(float(horizon_units_mult), 3),
+                "m1_trend_score": round(_safe_float(m1_score, 0.0), 3),
+                "m1_trend_gate": m1_trend_gate,
+                "m1_trend_units_mult": round(float(m1_trend_units_mult), 3),
                 "trap_active": bool(trap_state.active),
                 "entry_ref": round(entry_price, 3),
                 "execution": {

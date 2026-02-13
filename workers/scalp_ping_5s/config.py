@@ -350,6 +350,27 @@ HORIZON_LOG_INTERVAL_SEC: float = max(
     float(os.getenv("SCALP_PING_5S_HORIZON_LOG_INTERVAL_SEC", "8.0")),
 )
 
+M1_TREND_SCALE_ENABLED: bool = _bool_env("SCALP_PING_5S_M1_TREND_SCALE_ENABLED", True)
+M1_TREND_ALIGN_SCORE_MIN: float = max(
+    0.05,
+    min(
+        0.95,
+        float(os.getenv("SCALP_PING_5S_M1_TREND_ALIGN_SCORE_MIN", "0.20")),
+    ),
+)
+M1_TREND_OPPOSITE_SCORE: float = max(
+    M1_TREND_ALIGN_SCORE_MIN,
+    min(1.0, float(os.getenv("SCALP_PING_5S_M1_TREND_OPPOSITE_SCORE", "0.28"))),
+)
+M1_TREND_OPPOSITE_UNITS_MULT: float = max(
+    0.0,
+    min(1.0, float(os.getenv("SCALP_PING_5S_M1_TREND_OPPOSITE_UNITS_MULT", "0.72"))),
+)
+M1_TREND_ALIGN_BOOST_MAX: float = max(
+    0.0,
+    min(1.0, float(os.getenv("SCALP_PING_5S_M1_TREND_ALIGN_BOOST_MAX", "0.28"))),
+)
+
 EXTREMA_GATE_ENABLED: bool = _bool_env("SCALP_PING_5S_EXTREMA_GATE_ENABLED", True)
 EXTREMA_FAIL_OPEN: bool = _bool_env("SCALP_PING_5S_EXTREMA_FAIL_OPEN", True)
 EXTREMA_M1_LOOKBACK: int = max(
