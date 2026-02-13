@@ -1,0 +1,12 @@
+[Unit]
+Description=Run rapid mode auto-tuning for scalp_ping_5s every 5 minutes
+
+[Timer]
+OnBootSec=5min
+OnUnitActiveSec=5min
+AccuracySec=1min
+Persistent=true
+Unit=quant-scalp-ping-5s-autotune.service
+
+[Install]
+WantedBy=timers.target

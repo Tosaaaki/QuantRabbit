@@ -1,0 +1,19 @@
+[Unit]
+Description=QuantRabbit Scalp Ping 5s rapid mode auto-tuner
+After=network.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/home/tossaki/QuantRabbit
+ExecStart=/home/tossaki/QuantRabbit/scripts/vm_apply_scalp_ping_5s_auto.sh
+User=tossaki
+Environment=PYTHONUNBUFFERED=1
+Environment=SCALP_PING_5S_AUTO_PROJECT=quantrabbit
+Environment=SCALP_PING_5S_AUTO_ZONE=asia-northeast1-a
+Environment=SCALP_PING_5S_AUTO_INSTANCE=fx-trader-vm
+Environment=SCALP_PING_5S_AUTO_WINDOW_MIN=10
+Environment=SCALP_PING_5S_AUTO_LOCAL=1
+Environment=SCALP_PING_5S_AUTO_USE_IAP=1
+
+[Install]
+WantedBy=default.target
