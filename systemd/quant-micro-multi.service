@@ -7,7 +7,8 @@ Type=simple
 WorkingDirectory=/home/tossaki/QuantRabbit
 Environment="PYTHONUNBUFFERED=1"
 Environment="FORECAST_GATE_ENABLED=0"
-Environment="MICRO_STRATEGY_ALLOWLIST=MicroLevelReactor,MicroRangeBreak,MicroVWAPRevert,MomentumPulse"
+Environment="MICRO_STRATEGY_ALLOWLIST=MicroLevelReactor,MicroRangeBreak,MicroVWAPRevert,MicroVWAPBound,MomentumPulse"
+Environment="MICRO_VWAPBOUND_PATTERN_GATE_OPT_IN=1"
 Environment="MICRO_MULTI_LOOP_INTERVAL_SEC=6.0"
 Environment="MICRO_MULTI_BASE_UNITS=28000"
 Environment="MICRO_MULTI_MAX_MARGIN_USAGE=0.92"
