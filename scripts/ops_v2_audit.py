@@ -225,7 +225,7 @@ def main() -> int:
 
     runtime_env_expectations = {
         "WORKER_ONLY_MODE": "true",
-        "MAIN_TRADING_ENABLED": "0",
+        "MAIN_TRADING_ENABLED": "1",
         "SIGNAL_GATE_ENABLED": "0",
         "ORDER_FORWARD_TO_SIGNAL_GATE": "0",
         "ORDER_PATTERN_GATE_GLOBAL_OPT_IN": "0",

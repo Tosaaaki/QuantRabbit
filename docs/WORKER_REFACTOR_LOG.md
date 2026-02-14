@@ -265,4 +265,5 @@
   V2運用の「戦略ワーカー→order/position manager経路」実行を本番可で許可。
 - 併せて VM 運用環境の `ops/env/quant-v2-runtime.env` も同値で更新し、core 監査（`quant-v2-audit`）後に
   リアルタイム取引許可状態の整合を確認。
+- `ops_v2_audit` の実運用期待値を `MAIN_TRADING_ENABLED=1` に更新し、取引許可状態を監査基準へ反映。
 - このため `--all` 実行時の完了待機を回避しつつ、監査ジョブ（`quant-v2-audit`）の定期実行を維持。
