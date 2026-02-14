@@ -126,3 +126,11 @@
   - `quant-strategy-control` の可否フラグ（entry/exit/global）を参照するだけのフローに合わせる
   - 戦略横断の強制的な勝率採点/順位付けや「代替戦略選別」ロジックは追加しない方針を維持。
 - `WORKER_ROLE_MATRIX_V2.md` を今回内容に合わせて同一コミットで更新（責務・禁止ルール・実行図の注記）。
+
+### 2026-02-16（追記）ping-5s 配布整合性
+
+- `workers/scalp_ping_5s/worker.py` の `entry_thesis` 生成部に起きていた
+  `IndentationError: unexpected indent (line 4253)` を修正。
+- 同コミットで `entry_probability` と `entry_units_intent` を付与したロジックは維持しつつ、`entry_thesis` の
+  インデントを `WORKER_ROLE_MATRIX_V2.md` の責務定義に準拠する形へ整形。
+- `main` (`1b7f6c56`) を VM へ反映し、`quant-scalp-ping-5s.service` は `active (running)` を確認済み。
