@@ -24,6 +24,7 @@ from autotune.database import (
     set_settings,
     update_status,
 )
+from workers.common import strategy_control
 from utils.secrets import get_secret
 
 try:  # pragma: no cover - optional dependency
@@ -88,34 +89,79 @@ _lite_snapshot_lock = threading.Lock()
 _lite_snapshot_cache: dict[str, Any] | None = None
 _lite_snapshot_ts: float = 0.0
 
-app = FastAPI(title="QuantRabbit Console")
+app = FastAPI(title="QuantRabbit UI")
 templates = Jinja2Templates(directory=str(TEMPLATE_DIR))
 
 _WORKER_TAG_MAP = {
-    "H1Momentum": "macro_h1momentum",
-    "LondonMomentum": "london_momentum",
-    "trend_h1": "trend_h1",
-    "manual_swing": "manual_swing",
-    "OnePipMakerS1": "onepip_maker_s1",
-    "ImpulseRetrace": "scalp_impulseretrace",
-    "ImpulseRetraceScalp": "scalp_impulseretrace",
-    "RangeFader": "scalp_rangefader",
-    "PulseBreak": "scalp_pulsebreak",
-    "BB_RSI": "micro_bbrsi",
-    "BB_RSI_Fast": "micro_bbrsi",
-    "MicroLevelReactor": "micro_levelreactor",
-    "MicroMomentumBurst": "micro_momentumburst",
-    "MicroMomentumStack": "micro_momentumstack",
-    "MicroPullbackEMA": "micro_pullbackema",
-    "MicroRangeBreak": "micro_rangebreak",
-    "MicroVWAPBound": "micro_vwapbound",
-    "MicroVWAPRevert": "micro_vwapbound",
-    "TrendMomentumMicro": "micro_trendmomentum",
-    "MomentumBurst": "micro_momentumburst",
-    "MomentumPulse": "micro_momentumburst",
-    "VolCompressionBreak": "micro_multistrat",
-    "VolSpikeRider": "vol_spike_rider",
+    "H1Momentum": "macro",
+    "LondonMomentum": "macro",
+    "trend_h1": "macro",
+    "manual_swing": "macro",
+    "OnePipMakerS1": "scalp",
+    "ImpulseRetrace": "scalp",
+    "ImpulseRetraceScalp": "scalp",
+    "RangeFader": "scalp",
+    "PulseBreak": "scalp",
+    "BB_RSI": "micro",
+    "BB_RSI_Fast": "micro",
+    "MicroLevelReactor": "micro",
+    "MicroMomentumBurst": "micro",
+    "MicroMomentumStack": "micro",
+    "MicroPullbackEMA": "micro",
+    "MicroRangeBreak": "micro",
+    "MicroVWAPBound": "micro",
+    "MicroVWAPRevert": "micro",
+    "TrendMomentumMicro": "micro",
+    "MomentumBurst": "micro",
+    "MomentumPulse": "micro",
+    "VolCompressionBreak": "micro",
+    "VolSpikeRider": "scalp",
+    "fast_scalp": "scalp",
+    "pullback_s5": "scalp",
+    "pullback_runner_s5": "scalp",
+    "impulse_break_s5": "scalp",
+    "impulse_retest_s5": "scalp",
+    "impulse_momentum_s5": "scalp",
+    "vwap_magnet_s5": "scalp",
+    "TrendMA": "macro",
+    "MicroPullbackFib": "micro",
+    "ScalpReversalNWave": "scalp",
+    "RangeCompressionBreak": "micro",
+    "mm_lite": "scalp",
 }
+
+
+def _normalize_worker_tag(tag: Any) -> Optional[str]:
+    if not tag:
+        return None
+    tag_str = str(tag).strip()
+    if not tag_str:
+        return None
+
+    mapped = _WORKER_TAG_MAP.get(tag_str) or _WORKER_TAG_MAP.get(tag_str.lower())
+    if mapped:
+        return mapped
+
+    lower = tag_str.lower()
+    if "micro" in lower:
+        return "micro"
+    if (
+        lower.startswith("scalp")
+        or "_scalp" in lower
+        or "s5" in lower
+        and not lower.startswith("micro")
+        and "scalp" in lower
+    ):
+        return "scalp"
+    if lower in {
+        "pullback_runner_s5",
+        "impulse_break_s5",
+        "impulse_retest_s5",
+        "impulse_momentum_s5",
+        "vwap_magnet_s5",
+    }:
+        return "scalp"
+    return tag_str
 
 
 def _coerce_thesis(value: Any) -> Optional[dict]:
@@ -179,6 +225,50 @@ def _parse_json_object(raw: object) -> dict:
             return {}
         return parsed if isinstance(parsed, dict) else {}
     return {}
+
+
+def _coerce_int_bool(value: Optional[object]) -> Optional[bool]:
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return bool(int(value))
+    text = str(value).strip().lower()
+    if text in {"1", "true", "on", "yes", "enabled", "allow"}:
+        return True
+    if text in {"0", "false", "off", "no", "disabled", "deny"}:
+        return False
+    return None
+
+
+def _extract_strategy_slug_from_payload(payload: Any) -> Optional[str]:
+    if not isinstance(payload, dict):
+        return None
+
+    for key in ("strategy_tag", "strategy"):
+        raw = payload.get(key)
+        slug = strategy_control.normalize_strategy_slug(raw)
+        if slug:
+            return slug
+
+    entry_thesis = payload.get("entry_thesis")
+    if isinstance(entry_thesis, dict):
+        for key in ("strategy_tag", "strategy"):
+            raw = entry_thesis.get(key)
+            slug = strategy_control.normalize_strategy_slug(raw)
+            if slug:
+                return slug
+
+    meta = payload.get("meta")
+    if isinstance(meta, dict):
+        for key in ("strategy_tag", "strategy"):
+            raw = meta.get(key)
+            slug = strategy_control.normalize_strategy_slug(raw)
+            if slug:
+                return slug
+
+    return None
 
 
 def _normalize_order_side(side: object, units: object) -> Optional[str]:
@@ -311,7 +401,7 @@ def _infer_worker_name(item: dict) -> Optional[str]:
     if not tag_str:
         return None
 
-    return _WORKER_TAG_MAP.get(tag_str) or _WORKER_TAG_MAP.get(tag_str.lower()) or tag_str
+    return _normalize_worker_tag(tag_str) or tag_str
 
 
 def _build_summary(run: dict) -> str:
@@ -475,6 +565,16 @@ def _dashboard_defaults(error: Optional[str] = None) -> Dict[str, Any]:
             "log_errors": [],
             "signals_recent": [],
         },
+        "strategy_control": {
+            "global": {
+                "entry_enabled": True,
+                "exit_enabled": True,
+                "global_lock": False,
+            },
+            "strategies": [],
+            "error": None,
+            "discovered_count": 0,
+        },
         "health": {
             "hostname": None,
             "deploy_id": None,
@@ -528,6 +628,110 @@ def _dashboard_defaults(error: Optional[str] = None) -> Dict[str, Any]:
         "highlights_top": [],
         "highlights_recent": [],
     }
+
+
+def _load_strategy_candidates_from_trades() -> set[str]:
+    candidates: set[str] = set()
+    if TRADES_DB.exists():
+        con = sqlite3.connect(TRADES_DB, timeout=_DB_READ_TIMEOUT_SEC)
+        try:
+            con.row_factory = sqlite3.Row
+            cur = con.execute(
+                "SELECT strategy_tag, strategy FROM trades ORDER BY id DESC LIMIT ?",
+                (1500,),
+            )
+            for row in cur.fetchall():
+                for key in ("strategy_tag", "strategy"):
+                    slug = strategy_control.normalize_strategy_slug(row[key])
+                    if slug:
+                        candidates.add(slug)
+        finally:
+            con.close()
+
+    if SIGNALS_DB.exists():
+        con = sqlite3.connect(SIGNALS_DB, timeout=_DB_READ_TIMEOUT_SEC)
+        try:
+            cur = con.execute(
+                "SELECT payload FROM signals ORDER BY ts_ms DESC LIMIT ?",
+                (1800,),
+            )
+            for (payload_raw,) in cur.fetchall():
+                payload = _parse_json_object(payload_raw)
+                slug = _extract_strategy_slug_from_payload(payload)
+                if slug:
+                    candidates.add(strategy_control.normalize_strategy_slug(slug))
+        finally:
+            con.close()
+
+    if ORDERS_DB.exists():
+        con = sqlite3.connect(ORDERS_DB, timeout=_DB_READ_TIMEOUT_SEC)
+        try:
+            cur = con.execute(
+                "SELECT request_json FROM orders WHERE request_json IS NOT NULL ORDER BY ts DESC LIMIT ?",
+                (1800,),
+            )
+            for (raw,) in cur.fetchall():
+                payload = _parse_json_object(raw)
+                slug = _extract_strategy_slug_from_payload(payload)
+                if slug:
+                    candidates.add(strategy_control.normalize_strategy_slug(slug))
+        finally:
+            con.close()
+
+    return candidates
+
+
+def _load_strategy_control_state() -> dict[str, Any]:
+    state: dict[str, Any] = {
+        "global": {
+            "entry_enabled": True,
+            "exit_enabled": True,
+            "global_lock": False,
+        },
+        "strategies": [],
+        "error": None,
+        "discovered_count": 0,
+    }
+
+    g_entry, g_exit, g_lock = strategy_control.get_global_flags()
+    state["global"] = {
+        "entry_enabled": g_entry,
+        "exit_enabled": g_exit,
+        "global_lock": g_lock,
+    }
+
+    rows: dict[str, dict[str, Any]] = {}
+    for slug, entry_enabled, exit_enabled, global_lock in strategy_control.list_enabled_strategies():
+        rows[slug] = {
+            "slug": slug,
+            "entry_enabled": entry_enabled,
+            "exit_enabled": exit_enabled,
+            "global_lock": global_lock,
+            "configured": True,
+            "note": "",
+        }
+
+    discovered: set[str] = set()
+    try:
+        discovered = _load_strategy_candidates_from_trades()
+    except Exception as exc:  # pragma: no cover - defensive
+        state["error"] = str(exc)
+
+    state["discovered_count"] = len(discovered)
+    for slug in discovered:
+        if slug in rows:
+            continue
+        rows[slug] = {
+            "slug": slug,
+            "entry_enabled": True,
+            "exit_enabled": True,
+            "global_lock": False,
+            "configured": False,
+            "note": "",
+        }
+
+    state["strategies"] = [rows[key] for key in sorted(rows)]
+    return state
 
 
 def _safe_float(value: Any) -> float:
@@ -784,6 +988,79 @@ def _ops_remote_url() -> Optional[str]:
     return value.rstrip("/") if value else None
 
 
+def _require_ops_authorization(
+    token: Optional[str],
+    x_qr_token: Optional[str],
+    authorization: Optional[str],
+) -> None:
+    required = _ops_required_token()
+    if not required:
+        raise HTTPException(status_code=503, detail="ui_ops_token is not configured")
+    provided = token or x_qr_token or _extract_bearer(authorization)
+    if provided != required:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+
+def _handle_strategy_control_action(
+    target: str,
+    strategy: Optional[str],
+    entry_enabled: Optional[object],
+    exit_enabled: Optional[object],
+    lock_enabled: Optional[object],
+    note: Optional[str],
+    token: Optional[str],
+    x_qr_token: Optional[str],
+    authorization: Optional[str],
+) -> dict:
+    _require_ops_authorization(token, x_qr_token, authorization)
+    target_norm = (target or "").strip().lower()
+    entry = _coerce_int_bool(entry_enabled)
+    exit_value = _coerce_int_bool(exit_enabled)
+    lock = _coerce_int_bool(lock_enabled)
+
+    normalized_strategy = strategy_control.normalize_strategy_slug(strategy or "")
+    note_text = (note or "").strip()[:255]
+
+    if target_norm == "global":
+        if entry is None and exit_value is None and lock is None:
+            raise HTTPException(status_code=400, detail="entry_enabled または exit_enabled または global_lock を指定してください")
+        strategy_control.set_global_flags(
+            entry=entry,
+            exit=exit_value,
+            lock=lock,
+            note=note_text,
+        )
+        return {
+            "ok": True,
+            "scope": "global",
+            "entry_enabled": entry,
+            "exit_enabled": exit_value,
+            "global_lock": lock,
+        }
+    if target_norm != "strategy":
+        raise HTTPException(status_code=400, detail="Invalid target")
+    if not normalized_strategy:
+        raise HTTPException(status_code=400, detail="strategy is required")
+    if entry is None and exit_value is None and lock is None:
+        raise HTTPException(status_code=400, detail="entry_enabled または exit_enabled を指定してください")
+
+    strategy_control.set_strategy_flags(
+        normalized_strategy,
+        entry=entry,
+        exit=exit_value,
+        lock=lock,
+        note=note_text,
+    )
+    return {
+        "ok": True,
+        "scope": "strategy",
+        "strategy": normalized_strategy,
+        "entry_enabled": entry,
+        "exit_enabled": exit_value,
+        "global_lock": lock,
+    }
+
+
 def _discover_trade_units() -> list[str]:
     raw = _get_secret_optional("ui_trade_units") or os.getenv("UI_TRADE_UNITS")
     if raw:
@@ -881,18 +1158,14 @@ def _handle_ops_action(
     *,
     allow_proxy: bool,
 ) -> dict:
-    required = _ops_required_token()
-    if not required:
-        raise HTTPException(status_code=503, detail="ui_ops_token is not configured")
-    provided = token or x_qr_token or _extract_bearer(authorization)
-    if provided != required:
-        raise HTTPException(status_code=401, detail="Unauthorized")
+    _require_ops_authorization(token, x_qr_token, authorization)
     action = (action or "").strip().lower()
     if action not in {"stop", "start"}:
         raise HTTPException(status_code=400, detail="Invalid action")
     expected = "STOP" if action == "stop" else "START"
     if (confirm or "").strip().upper() != expected:
         raise HTTPException(status_code=400, detail=f"Confirm with {expected}")
+    provided = token or x_qr_token or _extract_bearer(authorization)
     if allow_proxy and _ops_remote_url():
         return _proxy_ops_action(action, confirm, provided)
     return _local_ops_action(action)
@@ -2026,6 +2299,12 @@ def _summarise_snapshot(snapshot: Dict[str, Any]) -> Dict[str, Any]:
     base["generated_label"] = _format_dt(gen_dt) or snapshot.get("generated_at")
     base["available"] = True
     base["error"] = None
+    try:
+        base["strategy_control"] = _load_strategy_control_state()
+    except Exception as exc:  # pragma: no cover - defensive
+        state = _dashboard_defaults()["strategy_control"]
+        state["error"] = str(exc)
+        base["strategy_control"] = state
     return base
 
 
@@ -2058,6 +2337,13 @@ def _load_dashboard_data() -> Dict[str, Any]:
         base["error"] = gcs_error
     else:
         base["error"] = "スナップショットを取得できませんでした"
+    if "strategy_control" not in base:
+        try:
+            base["strategy_control"] = _load_strategy_control_state()
+        except Exception as exc:  # pragma: no cover - defensive
+            state = _dashboard_defaults()["strategy_control"]
+            state["error"] = str(exc)
+            base["strategy_control"] = state
     return base
 
 
@@ -2113,6 +2399,8 @@ def dashboard(request: Request):
     dashboard_data = _load_dashboard_data()
     ops_notice = request.query_params.get("ops_notice")
     ops_error = request.query_params.get("ops_error")
+    strategy_control_notice = request.query_params.get("strategy_control_notice")
+    strategy_control_error = request.query_params.get("strategy_control_error")
     ops_enabled = _ops_required_token() is not None
     response = templates.TemplateResponse(
         "dashboard.html",
@@ -2122,6 +2410,8 @@ def dashboard(request: Request):
             "active_tab": "dashboard",
             "ops_notice": ops_notice,
             "ops_error": ops_error,
+            "strategy_control_notice": strategy_control_notice,
+            "strategy_control_error": strategy_control_error,
             "ops_enabled": ops_enabled,
         },
     )
@@ -2181,6 +2471,94 @@ def ops_control(
         return RedirectResponse(url=f"/dashboard?{query}", status_code=303)
     error = result.get("error") or "操作に失敗しました"
     query = urlencode({"tab": "ops", "ops_error": error})
+    return RedirectResponse(url=f"/dashboard?{query}", status_code=303)
+
+
+@app.post("/api/strategy-control")
+def api_strategy_control(
+    target: str = Form(...),
+    strategy: Optional[str] = Form(None),
+    entry_enabled: Optional[str] = Form(None),
+    exit_enabled: Optional[str] = Form(None),
+    global_lock: Optional[str] = Form(None),
+    note: Optional[str] = Form(""),
+    ops_token: Optional[str] = Form(None),
+    x_qr_token: Optional[str] = Header(default=None, alias="X-QR-Token"),
+    authorization: Optional[str] = Header(default=None),
+):
+    result = _handle_strategy_control_action(
+        target=target,
+        strategy=strategy,
+        entry_enabled=entry_enabled,
+        exit_enabled=exit_enabled,
+        lock_enabled=global_lock,
+        note=note,
+        token=ops_token,
+        x_qr_token=x_qr_token,
+        authorization=authorization,
+    )
+    return JSONResponse(result)
+
+
+@app.post("/ops/strategy-control")
+def ops_strategy_control(
+    request: Request,
+    target: str = Form(...),
+    strategy: Optional[str] = Form(None),
+    entry_enabled: Optional[str] = Form(None),
+    exit_enabled: Optional[str] = Form(None),
+    global_lock: Optional[str] = Form(None),
+    note: Optional[str] = Form(""),
+    ops_token: Optional[str] = Form(None),
+    x_qr_token: Optional[str] = Header(default=None, alias="X-QR-Token"),
+    authorization: Optional[str] = Header(default=None),
+):
+    accept = request.headers.get("accept", "")
+    try:
+        result = _handle_strategy_control_action(
+            target=target,
+            strategy=strategy,
+            entry_enabled=entry_enabled,
+            exit_enabled=exit_enabled,
+            lock_enabled=global_lock,
+            note=note,
+            token=ops_token,
+            x_qr_token=x_qr_token,
+            authorization=authorization,
+        )
+    except HTTPException as exc:
+        if "application/json" in accept:
+            raise
+        query = urlencode({"tab": "ops", "strategy_control_error": str(exc.detail)})
+        return RedirectResponse(url=f"/dashboard?{query}", status_code=303)
+
+    if "application/json" in accept:
+        return JSONResponse(result)
+
+    if result.get("ok"):
+        if result.get("scope") == "global":
+            target_label = "全体"
+        else:
+            target_label = str(result.get("strategy") or "")
+        parts = []
+        if result.get("entry_enabled") is not None:
+            parts.append(f"entry {'ON' if result.get('entry_enabled') else 'OFF'}")
+        if result.get("exit_enabled") is not None:
+            parts.append(f"exit {'ON' if result.get('exit_enabled') else 'OFF'}")
+        if result.get("global_lock") is not None:
+            parts.append(f"lock {'ON' if result.get('global_lock') else 'OFF'}")
+        if not parts:
+            parts.append("更新")
+        query = urlencode(
+            {
+                "tab": "ops",
+                "strategy_control_notice": f"{target_label}: {' / '.join(parts)}",
+            }
+        )
+        return RedirectResponse(url=f"/dashboard?{query}", status_code=303)
+
+    error = result.get("error") or "戦略制御の更新に失敗しました"
+    query = urlencode({"tab": "ops", "strategy_control_error": error})
     return RedirectResponse(url=f"/dashboard?{query}", status_code=303)
 
 

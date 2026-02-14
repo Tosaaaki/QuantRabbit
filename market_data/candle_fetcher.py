@@ -300,12 +300,12 @@ async def initialize_history(instrument: str) -> bool:
     """
     from indicators.factor_cache import on_candle
 
-    min_required = {"M1": 60, "H1": 60, "H4": 40, "D1": 120}
+    min_required = {"M1": 60, "M5": 60, "H1": 60, "H4": 40, "D1": 120}
     max_attempts = 6
     base_delay = 2.0
 
     seeded_all = True
-    for tf in ("M1", "H1", "H4", "D1"):
+    for tf in ("M1", "M5", "H1", "H4", "D1"):
         required = max(20, min_required.get(tf, 20))
         attempts = 0
         while True:

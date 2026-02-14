@@ -38,7 +38,14 @@ from utils.metrics_logger import log_metric
 from execution import strategy_guard, reentry_gate
 from execution.position_manager import PositionManager, agent_client_prefixes
 from execution.risk_guard import POCKET_MAX_RATIOS, MAX_LEVERAGE
-from workers.common import perf_guard, profit_guard, brain, forecast_gate, pattern_gate
+from workers.common import (
+    perf_guard,
+    profit_guard,
+    brain,
+    forecast_gate,
+    pattern_gate,
+    strategy_control,
+)
 from workers.common.quality_gate import current_regime
 from indicators.factor_cache import get_last_regime
 from utils import signal_bus
@@ -497,6 +504,30 @@ def _strategy_tag_from_client_id(client_order_id: Optional[str]) -> str:
     if len(parts) < 4:
         return ""
     return parts[3].strip()
+
+
+def _reject_entry_by_control(
+    strategy_tag: Optional[str],
+    *,
+    pocket: str,
+) -> bool:
+    if str(pocket).strip().lower() == "manual":
+        return False
+    if not strategy_tag:
+        return False
+    return not strategy_control.can_enter(strategy_tag, default=True)
+
+
+def _reject_exit_by_control(
+    strategy_tag: Optional[str],
+    *,
+    pocket: str,
+) -> bool:
+    if str(pocket).strip().lower() == "manual":
+        return False
+    if not strategy_tag:
+        return False
+    return not strategy_control.can_exit(strategy_tag, default=True)
 
 
 def _reason_matches_tokens(exit_reason: Optional[str], tokens: list[str]) -> bool:
@@ -4496,6 +4527,41 @@ async def close_trade(
     if not strategy_tag:
         strategy_tag = _strategy_tag_from_client_id(client_order_id)
 
+    if _reject_exit_by_control(strategy_tag, pocket=str(pocket or "")):
+        note = "strategy_control_exit_disabled"
+        _console_order_log(
+            "CLOSE_REJECT",
+            pocket=pocket,
+            strategy_tag=strategy_tag,
+            side=None,
+            units=units,
+            sl_price=None,
+            tp_price=None,
+            client_order_id=client_order_id,
+            ticket_id=str(trade_id),
+            note=note,
+        )
+        _log_order(
+            pocket=pocket,
+            instrument=(ctx or {}).get("instrument") if isinstance(ctx, dict) else None,
+            side=None,
+            units=units,
+            sl_price=None,
+            tp_price=None,
+            client_order_id=client_order_id,
+            status=note,
+            attempt=0,
+            ticket_id=str(trade_id),
+            executed_price=None,
+            request_payload={"trade_id": str(trade_id), "strategy_tag": strategy_tag},
+        )
+        log_metric(
+            "close_blocked_by_strategy_control",
+            1.0,
+            tags={"pocket": str(pocket or "unknown"), "strategy": str(strategy_tag or "unknown"), "action": "exit"},
+        )
+        return False
+
     emergency_allow: Optional[bool] = None
     entry_price = _as_float((ctx or {}).get("entry_price")) or 0.0
     units_ctx = int((ctx or {}).get("units") or 0)
@@ -6152,6 +6218,38 @@ async def market_order(
             "order_missing_strategy_tag",
             1.0,
             tags={"pocket": pocket, "strategy": "missing"},
+        )
+        return None
+
+    if _reject_entry_by_control(strategy_tag, pocket=pocket):
+        note = "strategy_control_entry_disabled"
+        _console_order_log(
+            "OPEN_REJECT",
+            pocket=pocket,
+            strategy_tag=strategy_tag,
+            side=side_label,
+            units=units,
+            sl_price=sl_price,
+            tp_price=tp_price,
+            client_order_id=client_order_id,
+            note=note,
+        )
+        log_order(
+            pocket=pocket,
+            instrument=instrument,
+            side=side_label,
+            units=units,
+            sl_price=sl_price,
+            tp_price=tp_price,
+            client_order_id=client_order_id,
+            status=note,
+            attempt=0,
+            request_payload={"strategy_tag": strategy_tag, "meta": meta, "entry_thesis": entry_thesis},
+        )
+        log_metric(
+            "order_blocked_by_strategy_control",
+            1.0,
+            tags={"pocket": pocket, "strategy": strategy_tag, "action": "entry"},
         )
         return None
 

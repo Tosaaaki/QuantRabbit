@@ -68,6 +68,7 @@ _SNAPSHOT_FETCH_FAILURES: int = 0
 _SNAPSHOT_FETCH_BACKOFF_LOG_MONO: float = 0.0
 _SNAPSHOT_AUTH_VALIDATED: Optional[bool] = None
 _ENTRY_SKIP_SUMMARY_INTERVAL_SEC: float = 30.0
+_JST_TIMEZONE = datetime.timezone(datetime.timedelta(hours=9))
 
 
 @dataclass(slots=True)
@@ -92,6 +93,15 @@ def _mask_value(value: str, *, head: int = 4, tail: int = 2) -> str:
     if len(text) <= head + tail:
         return "*" * len(text)
     return f"{text[:head]}***{text[-tail:]}"
+
+
+def _entry_blocked_hour_jst(now_utc: datetime.datetime) -> Optional[int]:
+    if not config.BLOCK_HOURS_JST:
+        return None
+    jst_hour = now_utc.astimezone(_JST_TIMEZONE).hour
+    if jst_hour in config.BLOCK_HOURS_JST:
+        return jst_hour
+    return None
 
 
 @dataclass(slots=True)
@@ -3438,6 +3448,14 @@ async def scalp_ping_5s_worker() -> None:
                 )
                 continue
 
+            blocked_jst_hour = _entry_blocked_hour_jst(now_utc)
+            if blocked_jst_hour is not None:
+                _note_entry_skip(
+                    "blocked_hour_jst",
+                    f"hour={blocked_jst_hour}",
+                )
+                continue
+
             ticks = tick_window.recent_ticks(
                 seconds=config.WINDOW_SEC,
                 limit=int(config.WINDOW_SEC * 25) + 50,
@@ -4021,6 +4039,11 @@ async def scalp_ping_5s_worker() -> None:
                 profile=tech_profile,
                 vol_bucket=signal_vol_bucket,
             )
+            risk_sl_pips = float(sl_pips if config.USE_SL else dynamic_hard_loss_pips)
+            if risk_sl_pips <= 0.0:
+                risk_sl_pips = float(
+                    config.SHORT_SL_MIN_PIPS if signal.side == "short" else config.SL_MIN_PIPS
+                )
             conf_mult = _confidence_scale(signal.confidence)
             strength_mult = max(
                 0.75,
@@ -4049,7 +4072,7 @@ async def scalp_ping_5s_worker() -> None:
 
             lot = allowed_lot(
                 nav,
-                sl_pips,
+                risk_sl_pips,
                 margin_available=margin_available,
                 margin_rate=margin_rate,
                 price=signal.mid,
@@ -4146,7 +4169,8 @@ async def scalp_ping_5s_worker() -> None:
                 "spread_pips": round(signal.spread_pips, 3),
                 "confidence": int(signal.confidence),
                 "tp_pips": round(effective_tp_pips, 3),
-                "sl_pips": round(sl_pips, 3),
+                "sl_pips": 0.0 if not config.USE_SL else round(sl_pips, 3),
+                "sl_risk_pips": round(risk_sl_pips, 3),
                 "disable_entry_hard_stop": bool(config.DISABLE_ENTRY_HARD_STOP),
                 "signal_mode": signal.mode,
                 "signal_mode_score": round(signal.mode_score, 3),

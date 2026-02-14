@@ -46,14 +46,53 @@
 - `docs/KATA_SCALP_M1SCALPER.md`: M1スキャ（`scalp_m1scalper`）の型（Kata）設計・運用。
 - `docs/KATA_MICRO_RANGEBREAK.md`: micro（`MicroRangeBreak`）の型（Kata）設計・運用。
 - `docs/KATA_PROGRESS.md`: 型（Kata）の進捗ログ（VMスナップショット/展開計画）。
+- `docs/WORKER_REFACTOR_LOG.md`: ワーカー再編（データ供給・制御・ENTRY/EXIT分離）の確定記録。
 
-## 5. チーム / タスク運用ルール（要点）
+## 5. ワーカー再編（最終仕様）
+
+### 方針（固定）
+- データ取得系は `quant-market-data-feed` に一本化。  
+  (`OANDA tick` → `tick_window` / `factor_cache` 更新)
+- 制御系は `quant-strategy-control` に一本化。  
+  (`entry/exit` 許可、`global_lock` の配信)
+戦略は「ENTRY/EXITを1:1」分離。`precision` 系サービス名は撤廃。
+- 補助的運用ワーカー群（`quant-hard-stop-backfill`, `quant-realtime-metrics`,  
+  `quant-hedge-balancer*`, `quant-trend-reclaim-long*`, `quant-margin-relief-exit`）を除外。
+
+#### 役割分担（固定）
+
+- データ面: `quant-market-data-feed`  
+  - OANDA から tick/candle を取得し、`tick_window` と `factor_cache` を更新
+- 制御面: `quant-strategy-control`  
+  - `global` フラグ（Entry/Exit/Lock）と各戦略フラグの配信
+- 戦略面: 各戦略は Entry ワーカー + Exit ワーカーを 1:1 で独立稼働  
+  - `quant-scalp-ping-5s` / `quant-scalp-ping-5s-exit`
+  - `quant-scalp-macd-rsi-div` / `quant-scalp-macd-rsi-div-exit`
+  - `quant-scalp-tick-imbalance` / `quant-scalp-tick-imbalance-exit`
+  - `quant-scalp-squeeze-pulse-break` / `quant-scalp-squeeze-pulse-break-exit`
+  - `quant-scalp-wick-reversal-blend` / `quant-scalp-wick-reversal-blend-exit`
+  - `quant-scalp-wick-reversal-pro` / `quant-scalp-wick-reversal-pro-exit`
+- UI/運用: `apps/autotune_ui.py` の「Ops」タブから `strategy_control` の
+  `entry/exit/lock` を戦略別に追加・更新可能
+
+```mermaid
+flowchart LR
+    A[OANDA API] --> B["quant-market-data-feed"]
+    B --> C["tick_window"]
+    B --> D["factor_cache"]
+    C --> E["strategy workers"]
+    D --> E
+    F["quant-strategy-control"] --> E
+    E --> G["orders"]
+```
+
+## 6. チーム / タスク運用ルール（要点）
 - 1 ファイル = 1 PR、Squash Merge、CI green。
 - 秘匿情報は Git に置かない。
 - タスク台帳は `docs/TASKS.md` を正本とし、Open→進行→Archive の流れで更新。
 - オンラインチューニング ToDo は `docs/autotune_taskboard.md` に集約。
 
-## 6. 型（Pattern Book）運用ルール
+## 7. 型（Pattern Book）運用ルール
 - 目的: トレード履歴から「勝てる型 / 避ける型」を継続学習し、エントリー時の `block/reduce/boost` 判断に使う。
 - 収集ジョブ: `scripts/pattern_book_worker.py`。systemd は `quant-pattern-book.service` + `quant-pattern-book.timer`（5分周期）。
 - 実行Python: `quant-pattern-book.service` は必ず `/home/tossaki/QuantRabbit/.venv/bin/python` を使う（system python禁止）。

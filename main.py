@@ -356,11 +356,6 @@ def apply_dynamic_alloc(signals: list[dict], alloc: Optional[dict]) -> tuple[lis
         adjusted.append(sig)
     return adjusted, pocket_caps, target_use
 
-from market_data.candle_fetcher import (
-    Candle,
-    start_candle_stream,
-    initialize_history,
-)
 from market_data import spread_monitor, tick_window
 from indicators.factor_cache import all_factors, get_candles_snapshot, on_candle
 from analysis.regime_classifier import classify
@@ -796,38 +791,33 @@ DECIDER_FACTOR_KEYS: Dict[str, tuple[str, ...]] = {
 }
 # systemd service mapping for worker/exit processes (names must match .service files)
 WORKER_SERVICES = {
+    # Core infra
+    "market_data_feed": "quant-market-data-feed.service",
+    "strategy_control": "quant-strategy-control.service",
     # Scalp / S5
-    "impulse_break_s5": "quant-impulse-break-s5.service",
-    "impulse_break_s5_exit": "quant-impulse-break-s5-exit.service",
-    "impulse_momentum_s5": "quant-impulse-momentum-s5.service",
-    "impulse_momentum_s5_exit": "quant-impulse-momentum-s5-exit.service",
     "impulse_retest_s5": "quant-impulse-retest-s5.service",
     "impulse_retest_s5_exit": "quant-impulse-retest-s5-exit.service",
-    "pullback_s5": "quant-pullback-s5.service",
-    "pullback_s5_exit": "quant-pullback-s5-exit.service",
-    "pullback_runner_s5": "quant-pullback-runner-s5.service",
-    "pullback_runner_s5_exit": "quant-pullback-runner-s5-exit.service",
-    "session_open": "quant-session-open.service",
-    "session_open_exit": "quant-session-open-exit.service",
-    "scalp_multi": "quant-scalp-multi.service",
-    "scalp_multi_exit": "quant-scalp-multi-exit.service",
     "scalp_ping_5s": "quant-scalp-ping-5s.service",
+    "scalp_ping_5s_exit": "quant-scalp-ping-5s-exit.service",
+    "scalp_ping_5s_b": "quant-scalp-ping-5s-b.service",
+    "scalp_ping_5s_b_exit": "quant-scalp-ping-5s-b-exit.service",
     "scalp_macd_rsi_div": "quant-scalp-macd-rsi-div.service",
+    "scalp_macd_rsi_div_exit": "quant-scalp-macd-rsi-div-exit.service",
+    "scalp_tick_imbalance": "quant-scalp-tick-imbalance.service",
+    "scalp_tick_imbalance_exit": "quant-scalp-tick-imbalance-exit.service",
+    "scalp_squeeze_pulse_break": "quant-scalp-squeeze-pulse-break.service",
+    "scalp_squeeze_pulse_break_exit": "quant-scalp-squeeze-pulse-break-exit.service",
+    "scalp_wick_reversal_blend": "quant-scalp-wick-reversal-blend.service",
+    "scalp_wick_reversal_blend_exit": "quant-scalp-wick-reversal-blend-exit.service",
+    "scalp_wick_reversal_pro": "quant-scalp-wick-reversal-pro.service",
+    "scalp_wick_reversal_pro_exit": "quant-scalp-wick-reversal-pro-exit.service",
     "scalp_m1scalper": "quant-m1scalper.service",
-    "scalp_m1scalper_trend_long": "quant-m1scalper-trend-long.service",
     "scalp_m1scalper_exit": "quant-m1scalper-exit.service",
     # Micro
     "micro_multi": "quant-micro-multi.service",
     "micro_multi_exit": "quant-micro-multi-exit.service",
-    # Macro
-    "macro_h1momentum": "quant-h1momentum.service",
-    "macro_h1momentum_exit": "quant-h1momentum-exit.service",
-    "macro_trend_h1": "quant-trend-h1.service",
-    "macro_trend_h1_exit": "quant-trend-h1-exit.service",
-    "macro_london_momentum": "quant-london-momentum.service",
-    "macro_london_momentum_exit": "quant-london-momentum-exit.service",
-    "macro_manual_swing": "quant-manual-swing.service",
-    "macro_manual_swing_exit": "quant-manual-swing-exit.service",
+    "micro_adaptive_revert": "quant-micro-adaptive-revert.service",
+    "micro_adaptive_revert_exit": "quant-micro-adaptive-revert-exit.service",
 }
 WORKER_ALL_SERVICES = set(WORKER_SERVICES.keys())
 WORKER_AUTOCONTROL_ENABLED = os.getenv("WORKER_AUTOCONTROL", "1").strip() not in {"", "0", "false", "no"}
@@ -1841,15 +1831,15 @@ def _select_worker_targets(
             reasons[name] = reason
 
     # Baseline set
-    bump("mm_lite", 0.3, "baseline_mm_lite")
+    bump("micro_multi", 0.3, "baseline_micro_multi")
 
     # Macro/trend
     if trending:
-        bump("trend_h1", 0.5, "trend_confirmed")
+        bump("scalp_ping_5s", 0.5, "trend_confirmed")
     if high_vol and trending:
-        bump("mtf_breakout", 0.8, "high_vol_trend")
+        bump("scalp_m1scalper", 0.8, "high_vol_trend")
     if session in {"london", "ny"} and mid_vol:
-        bump("london_momentum", 0.7, f"session_{session}")
+        bump("micro_adaptive_revert", 0.7, f"session_{session}")
 
     # 1分スキャル: 低レイテンシでの短期トレンドに追従するため、
     # Trend寄りでATR/出来高が十分な環境と、レンジ崩れ直前の中間環境に合わせて有効化。
@@ -1859,22 +1849,22 @@ def _select_worker_targets(
         bump("scalp_m1scalper", 0.22, "m1_scalper_range_steady")
     # Range/低ボラ
     if low_vol or range_like:
-        bump("vol_squeeze", 0.45, "range_compression")
-        bump("pullback_s5", 0.6, "range_s5")
-        bump("pullback_runner_s5", 0.55, "range_runner")
+        bump("impulse_retest_s5", 0.45, "range_compression")
+        bump("scalp_tick_imbalance", 0.6, "range_s5")
+        bump("scalp_wick_reversal_blend", 0.55, "range_runner")
     elif soft_range:
-        bump("pullback_s5", 0.65, "soft_range")
-        bump("vol_squeeze", 0.45, "soft_range")
+        bump("impulse_retest_s5", 0.65, "soft_range")
+        bump("scalp_tick_imbalance", 0.45, "soft_range")
 
     # Spike/impulse style entries
     if spike_like:
-        bump("impulse_break_s5", 0.45, "impulse_break")
-        bump("impulse_momentum_s5", 0.4, "impulse_momentum")
-        bump("impulse_retest_s5", 0.35, "impulse_retest")
+        bump("impulse_retest_s5", 0.45, "impulse_retest")
+        bump("scalp_squeeze_pulse_break", 0.4, "squeeze_pulse")
+        bump("scalp_wick_reversal_pro", 0.35, "wick_reversal_pro")
 
     # Session open bias
     if now.minute < 20:
-        bump("session_open", 0.3, f"session_{session}_open")
+        bump("scalp_ping_5s", 0.3, f"session_{session}_open")
 
     # Safety: avoid overloading tiny VM
     if WORKER_AUTOCONTROL_LIMIT <= 0:
@@ -1886,9 +1876,9 @@ def _select_worker_targets(
 
     # Diversity nudge: 低〜中ボラではレンジ系が一つも選ばれていない場合に補充する
     range_workers = {
-        "pullback_s5",
-        "vol_squeeze",
-        "pullback_runner_s5",
+        "impulse_retest_s5",
+        "scalp_tick_imbalance",
+        "scalp_wick_reversal_blend",
     }
     if (low_vol or range_like or soft_range) and not (selected & range_workers):
         candidates = [(name, scores[name]) for name in range_workers if name in scores]
@@ -1915,6 +1905,9 @@ def _select_worker_targets(
         ",".join(sorted(selected)),
         {k: reasons.get(k, "") for k in selected},
     )
+    if not selected:
+        # Fallback: no scoring entries means all keys are considered available.
+        selected = set(WORKER_SERVICES.keys())
     return selected
 
 
@@ -3362,32 +3355,11 @@ def _micro_chart_gate(
     }
 
 
-async def m1_candle_handler(cndl: Candle):
-    await on_candle("M1", cndl)
-
-
-async def h4_candle_handler(cndl: Candle):
-    await on_candle("H4", cndl)
-
-
-async def m5_candle_handler(cndl: Candle):
-    await on_candle("M5", cndl)
-
-
-async def h1_candle_handler(cndl: Candle):
-    await on_candle("H1", cndl)
-
-
-async def d1_candle_handler(cndl: Candle):
-    await on_candle("D1", cndl)
-
-
 async def worker_only_loop() -> None:
     """Minimal supervisor loop for worker-only runtime."""
     last_worker_plan: set[str] = set()
     last_market_closed: Optional[datetime.datetime] = None
     last_heartbeat_time = datetime.datetime.utcnow()
-    last_factor_refresh = 0.0
 
     while True:
         loop_start_mono = time.monotonic()
@@ -3404,30 +3376,6 @@ async def worker_only_loop() -> None:
             await asyncio.sleep(60)
             continue
         last_market_closed = None
-
-        if FACTOR_CACHE_REFRESH_ENABLED and FACTOR_CACHE_STALE_SEC > 0:
-            age_sec = _factor_age_seconds("M1")
-            now_mono = time.monotonic()
-            should_refresh = False
-            reason = ""
-            if age_sec is None:
-                should_refresh = True
-                reason = "missing"
-            elif age_sec > FACTOR_CACHE_STALE_SEC:
-                should_refresh = True
-                reason = f"stale age={age_sec:.1f}s"
-            if should_refresh and now_mono - last_factor_refresh > FACTOR_CACHE_REFRESH_MIN_INTERVAL_SEC:
-                logging.warning(
-                    "[FACTOR_CACHE] %s -> reseed history",
-                    reason or "stale",
-                )
-                try:
-                    seeded = await initialize_history("USD_JPY")
-                    if not seeded:
-                        logging.warning("[FACTOR_CACHE] reseed incomplete; continuing")
-                except Exception as exc:
-                    logging.warning("[FACTOR_CACHE] reseed failed: %s", exc)
-                last_factor_refresh = now_mono
 
         if WORKER_AUTOCONTROL_ENABLED:
             try:
@@ -9126,52 +9074,29 @@ async def logic_loop():
 
 
 async def main():
-    handlers = [
-        ("M1", m1_candle_handler),
-        ("M5", m5_candle_handler),
-        ("H1", h1_candle_handler),
-        ("H4", h4_candle_handler),
-        ("D1", d1_candle_handler),
-    ]
-    seeded = await initialize_history("USD_JPY")
-    if not seeded:
-        logging.warning("[HISTORY] Startup seeding incomplete, continuing with live feed.")
+    run_logic = (MAIN_TRADING_ENABLED or SIGNAL_GATE_ENABLED) and (
+        not WORKER_ONLY_MODE or SIGNAL_GATE_ENABLED
+    )
+    if not run_logic:
+        logging.info(
+            "[MAIN] logic_loop disabled main_trading_enabled=%s worker_only=%s signal_gate=%s",
+            MAIN_TRADING_ENABLED,
+            WORKER_ONLY_MODE,
+            SIGNAL_GATE_ENABLED,
+        )
+        while True:
+            await asyncio.sleep(60)
+        return
 
     while True:
         tasks = [
             asyncio.create_task(
                 supervised_runner(
-                    "candle_stream",
-                    start_candle_stream("USD_JPY", handlers),
+                    "logic_loop",
+                    logic_loop(),
                 )
-            ),
-            asyncio.create_task(
-                supervised_runner(
-                    "worker_only_loop",
-                    worker_only_loop(),
-                )
-            ),
+            )
         ]
-
-        run_logic = (MAIN_TRADING_ENABLED or SIGNAL_GATE_ENABLED) and (
-            not WORKER_ONLY_MODE or SIGNAL_GATE_ENABLED
-        )
-        if run_logic:
-            tasks.append(
-                asyncio.create_task(
-                    supervised_runner(
-                        "logic_loop",
-                        logic_loop(),
-                    )
-                )
-            )
-        else:
-            logging.info(
-                "[MAIN] logic_loop disabled main_trading_enabled=%s worker_only=%s signal_gate=%s",
-                MAIN_TRADING_ENABLED,
-                WORKER_ONLY_MODE,
-                SIGNAL_GATE_ENABLED,
-            )
         try:
             await asyncio.gather(*tasks)
             logging.error("[SUPERVISOR] Task group exited cleanly; restarting in 5s.")
@@ -9180,7 +9105,7 @@ async def main():
                 task.cancel()
             raise
         except Exception:
-            logging.exception("[SUPERVISOR] Worker-only task group crashed; restarting in 5s.")
+            logging.exception("[SUPERVISOR] logic_loop crashed; restarting in 5s.")
         finally:
             for task in tasks:
                 task.cancel()

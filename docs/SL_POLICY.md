@@ -13,7 +13,7 @@ SL（損切り）は「どこで決まるか」が複数レイヤに分かれて
 3. OANDA 送信時に `stopLossOnFill` を付与するか判定
    - `stop_loss_disabled_for_pocket()` と `_allow_stop_loss_on_fill()` の両方を満たす必要あり
 4. fill 後の保護更新（`on_fill_protection`）
-5. それでも SL が無い建玉は `quant-hard-stop-backfill.service` が後付け
+5. それでも SL が無い建玉は `order_manager.py` 側での保護更新処理が優先される
 
 ## 2. 重要な分岐（見落としやすい点）
 - `EXIT_NO_NEGATIVE_CLOSE=1` の場合、デフォルトでは broker SL は抑制される。  
@@ -22,8 +22,8 @@ SL（損切り）は「どこで決まるか」が複数レイヤに分かれて
   本番では `ORDER_ENABLE_STOP_LOSS_{POCKET}=1` を明示して有効化する。
 - `ORDER_ENTRY_HARD_STOP_PIPS*` を設定しても、entry SL が無効の pocket では
   `stopLossOnFill` は付与されない（virtual SL としてのみ扱われる）。
-- `quant-hard-stop-backfill.service` は tighten-only（既存SLを広げない）。  
-  ただし SL 無し建玉には fallback 値を付けるため、レンジ設定が過大だと実効RRを悪化させる。
+- `quant-hard-stop-backfill.service` は現在の運用構成から除外。  
+  SL 無し建玉の後付け処理はワーカー依存の緊急運用仕様ではなく、`order_manager.py` の通常フローを起点に再確認する。
 
 ## 3. 現行の推奨（精度優先 + 通常SL）
 - `ops/env/entry_precision_hardening.env` を適用
@@ -54,5 +54,5 @@ LIMIT 30;
   - `systemctl show -p Environment quantrabbit.service`
   - `orders.db` の `submit_attempt` payload に `stopLossOnFill` があるか
 - SL が広すぎる:
-  - `quant-hard-stop-backfill.service` の `--min/--max/--fallback`
-  - `scripts.attach_hard_stop_sl --max-sl-to-tp-ratio` の有無
+  - `orders.db` での実送信 `stopLossOnFill` 価格と `TP` の乖離
+  - `entry_precision_hardening` 前提の `ORDER_ENTRY_HARD_STOP_PIPS*` / `ORDER_DYNAMIC_SL_*` 設定

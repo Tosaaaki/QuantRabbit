@@ -7,6 +7,8 @@ Type=simple
 WorkingDirectory=/home/tossaki/QuantRabbit
 Environment="PYTHONUNBUFFERED=1"
 # Defaults (override in /etc/quantrabbit/scalp_ping_5s_b.env).
+EnvironmentFile=-/etc/quantrabbit.env
+EnvironmentFile=-/etc/quantrabbit/scalp_ping_5s.env
 Environment=SCALP_PING_5S_B_ENABLED=0
 Environment=SCALP_PING_5S_B_REQUIRE_PRACTICE=0
 Environment=SCALP_PING_5S_B_POCKET=scalp_fast
@@ -15,8 +17,9 @@ Environment=SCALP_PING_5S_B_LOG_PREFIX=[SCALP_PING_5S_B]
 Environment=SCALP_PING_5S_B_MAX_ACTIVE_TRADES=20
 Environment=SCALP_PING_5S_B_MAX_PER_DIRECTION=12
 Environment=SCALP_PING_5S_B_TP_ENABLED=0
-EnvironmentFile=-/etc/quantrabbit.env
 EnvironmentFile=-/etc/quantrabbit/scalp_ping_5s_b.env
+# Project-local overrides (repo copy for this clone's live tuning knobs).
+EnvironmentFile=/home/tossaki/QuantRabbit/ops/env/scalp_ping_5s_b.env
 ExecStart=/home/tossaki/QuantRabbit/.venv/bin/python -m workers.scalp_ping_5s_b.worker
 Restart=always
 RestartSec=5

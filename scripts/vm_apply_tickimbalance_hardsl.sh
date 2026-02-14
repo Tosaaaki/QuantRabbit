@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Apply TickImbalance (scalp_precision) entry hard SL + SL-gated loss-cut EXIT via systemd drop-ins.
+# Apply Scalp Tick Imbalance (entry) hard SL + SL-gated loss-cut EXIT via systemd drop-ins.
 #
 # This script runs remote commands via scripts/vm.sh (gcloud compute ssh / OS Login / IAP).
 #
@@ -46,8 +46,8 @@ done
 [[ -n "$PROJECT" && -n "$ZONE" && -n "$INSTANCE" ]] || die "-p/--project, -z/--zone, -m/--instance are required"
 [[ -x "$VM_SH" ]] || die "vm.sh not found or not executable: $VM_SH"
 
-ENTRY_SVC="quant-scalp-precision-tick-imbalance.service"
-EXIT_SVC="quant-scalp-precision-tick-imbalance-exit.service"
+ENTRY_SVC="quant-scalp-tick-imbalance.service"
+EXIT_SVC="quant-scalp-tick-imbalance-exit.service"
 
 run_vm() {
   local -a args=("$VM_SH" -p "$PROJECT" -z "$ZONE" -m "$INSTANCE")
@@ -69,8 +69,8 @@ read -r -d '' REMOTE <<'EOF' || true
 sudo bash -lc '
   set -euo pipefail
 
-  ENTRY_SVC="quant-scalp-precision-tick-imbalance.service"
-  EXIT_SVC="quant-scalp-precision-tick-imbalance-exit.service"
+  ENTRY_SVC="quant-scalp-tick-imbalance.service"
+  EXIT_SVC="quant-scalp-tick-imbalance-exit.service"
 
   mkdir -p "/etc/systemd/system/${ENTRY_SVC}.d"
   cat > "/etc/systemd/system/${ENTRY_SVC}.d/override.conf" <<EOC

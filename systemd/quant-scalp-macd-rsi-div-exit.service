@@ -1,0 +1,20 @@
+[Unit]
+Description=QuantRabbit Scalp MACD RSI Divergence Exit Worker
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/tossaki/QuantRabbit
+EnvironmentFile=-/etc/quantrabbit.env
+Environment=PYTHONUNBUFFERED=1
+Environment=MACDRSIDIV_EXIT_TAGS=scalp_macd_rsi_div_live
+Environment=MACDRSIDIV_POCKET=scalp
+Environment=MACDRSIDIV_EXIT_LOG_PREFIX=[MACDRSI_Exit]
+Environment=MACDRSIDIV_EXIT_PROFILE_ENABLED=1
+ExecStart=/home/tossaki/QuantRabbit/.venv/bin/python -m workers.scalp_macd_rsi_div.exit_worker
+Restart=always
+RestartSec=5
+User=tossaki
+
+[Install]
+WantedBy=multi-user.target

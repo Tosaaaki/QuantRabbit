@@ -58,35 +58,66 @@ _MANUAL_POCKET_NAME = os.getenv("POSITION_MANAGER_MANUAL_POCKET", "manual")
 _KNOWN_POCKETS = {"micro", "macro", "scalp", "scalp_fast"}
 _JST = timezone(timedelta(hours=9))
 _WORKER_TAG_MAP = {
-    "OnePipMakerS1": "onepip_maker_s1",
-    "ImpulseRetrace": "scalp_impulseretrace",
-    "ImpulseRetraceScalp": "scalp_impulseretrace",
-    "RangeFader": "scalp_rangefader",
-    "PulseBreak": "scalp_pulsebreak",
-    "MicroMA": "micro_ma",
-    "TrendMA": "macro_trendma",
-    "DonchianM1": "micro_donchian",
-    "H1Momentum": "macro_h1momentum",
-    "BB_RSI": "micro_bbrsi",
-    "BB_RSI_Fast": "micro_bbrsi",
-    "MicroLevelReactor": "micro_levelreactor",
-    "MicroMomentumBurst": "micro_momentumburst",
-    "MicroMomentumStack": "micro_momentumstack",
-    "MicroPullbackEMA": "micro_pullbackema",
-    "MicroRangeBreak": "micro_rangebreak",
-    "MicroVWAPBound": "micro_vwapbound",
-    "MicroVWAPRevert": "micro_vwapbound",
-    "TrendMomentumMicro": "micro_trendmomentum",
-    "MomentumBurst": "micro_momentumburst",
-    "MomentumPulse": "micro_momentumburst",
-    "VolCompressionBreak": "micro_multistrat",
-    "VolSpikeRider": "vol_spike_rider",
-    "TechFusion": "tech_fusion",
-    "MacroTechFusion": "macro_tech_fusion",
-    "MicroPullbackFib": "micro_pullback_fib",
-    "ScalpReversalNWave": "scalp_reversal_nwave",
-    "RangeCompressionBreak": "range_compression_break",
+    "OnePipMakerS1": "scalp",
+    "ImpulseRetrace": "scalp",
+    "ImpulseRetraceScalp": "scalp",
+    "RangeFader": "scalp",
+    "PulseBreak": "scalp",
+    "MicroMA": "micro",
+    "TrendMA": "macro",
+    "DonchianM1": "macro",
+    "H1Momentum": "macro",
+    "BB_RSI": "micro",
+    "BB_RSI_Fast": "micro",
+    "MicroLevelReactor": "micro",
+    "MicroMomentumBurst": "micro",
+    "MicroMomentumStack": "micro",
+    "MicroPullbackEMA": "micro",
+    "MicroRangeBreak": "micro",
+    "MicroVWAPBound": "micro",
+    "MicroVWAPRevert": "micro",
+    "TrendMomentumMicro": "micro",
+    "MomentumBurst": "micro",
+    "MomentumPulse": "micro",
+    "VolCompressionBreak": "micro",
+    "VolSpikeRider": "scalp",
+    "TechFusion": "macro",
+    "MacroTechFusion": "macro",
+    "MicroPullbackFib": "micro",
+    "ScalpReversalNWave": "scalp",
+    "RangeCompressionBreak": "micro",
+    "fast_scalp": "scalp",
+    "pullback_s5": "scalp",
+    "pullback_runner_s5": "scalp",
+    "impulse_break_s5": "scalp",
+    "impulse_retest_s5": "scalp",
+    "impulse_momentum_s5": "scalp",
+    "vwap_magnet_s5": "scalp",
+    "mm_lite": "scalp",
 }
+
+
+def _normalize_worker_tag(tag: object | str | None) -> str | None:
+    if tag is None:
+        return None
+    tag_str = str(tag).strip()
+    if not tag_str:
+        return None
+
+    mapped = _WORKER_TAG_MAP.get(tag_str) or _WORKER_TAG_MAP.get(tag_str.lower())
+    if mapped:
+        return mapped
+
+    lower = tag_str.lower()
+    if "micro" in lower:
+        return "micro"
+    if (
+        lower.startswith("scalp")
+        or "_scalp" in lower
+        or ("s5" in lower and "scalp" in lower)
+    ):
+        return "scalp"
+    return tag_str
 # SQLite locking周り
 # ロック頻発に備えてデフォルトを広めに取る
 _DB_BUSY_TIMEOUT_MS = int(os.getenv("POSITION_MANAGER_DB_BUSY_TIMEOUT_MS", "20000"))
@@ -877,11 +908,7 @@ def _build_chart_data(
                 if thesis_tag is not None:
                     strategy_label = str(thesis_tag).strip() or None
         if not worker and strategy_label:
-            worker = (
-                _WORKER_TAG_MAP.get(strategy_label)
-                or _WORKER_TAG_MAP.get(strategy_label.lower())
-                or strategy_label
-            )
+            worker = _normalize_worker_tag(strategy_label) or strategy_label
         entry_time = row["entry_time"]
         close_time = row["close_time"]
         entry_price = _coerce_float(row["entry_price"]) or _coerce_float(row["fill_price"])

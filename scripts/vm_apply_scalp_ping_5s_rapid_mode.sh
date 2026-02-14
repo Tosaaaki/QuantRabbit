@@ -185,19 +185,32 @@ get_current_mode() {
 collect_trade_metrics() {
   local query
   local stats
-  query="SELECT \
-    COALESCE(CAST(SUM(CASE WHEN units < 0 AND close_reason='STOP_LOSS_ORDER' THEN 1 ELSE 0 END) AS REAL) / MAX(CAST(SUM(CASE WHEN units < 0 THEN 1 ELSE 0 END) AS REAL), 0.0001), \
-    COALESCE(AVG(CASE WHEN units < 0 AND close_reason IS NOT NULL THEN pl_pips END), 0), \
-    COALESCE(CAST(SUM(CASE WHEN units > 0 AND close_reason='STOP_LOSS_ORDER' THEN 1 ELSE 0 END) AS REAL) / MAX(CAST(SUM(CASE WHEN units > 0 THEN 1 ELSE 0 END) AS REAL), 0.0001), \
-    COALESCE(AVG(CASE WHEN units > 0 AND close_reason IS NOT NULL THEN pl_pips END), 0), \
-    COALESCE(CAST(SUM(CASE WHEN close_reason='STOP_LOSS_ORDER' THEN 1 ELSE 0 END) AS REAL) / MAX(CAST(SUM(CASE WHEN close_reason IS NOT NULL THEN 1 ELSE 0 END) AS REAL), 0.0001), \
-    COALESCE(AVG(CASE WHEN close_reason IS NOT NULL THEN pl_pips END), 0), \
-    COUNT(1), \
-    (SELECT COUNT(1) FROM trades t2 WHERE t2.strategy_tag='scalp_ping_5s_live' AND t2.state='open') \
-    FROM trades \
-    WHERE strategy_tag='scalp_ping_5s_live' \
-      AND close_time >= datetime('now','-${WINDOW_MIN} minutes') \
-      AND close_time IS NOT NULL;"
+  query="WITH recent_closed AS (
+    SELECT
+      units,
+      close_reason,
+      pl_pips
+    FROM trades
+    WHERE strategy_tag='scalp_ping_5s_live'
+      AND close_time >= datetime('now','-${WINDOW_MIN} minutes')
+      AND close_time IS NOT NULL
+  ),
+  open_trades AS (
+    SELECT COUNT(1) AS cnt
+    FROM trades
+    WHERE strategy_tag='scalp_ping_5s_live'
+      AND state='open'
+  )
+  SELECT
+    COALESCE(SUM(CASE WHEN units < 0 AND close_reason='STOP_LOSS_ORDER' THEN 1.0 ELSE 0.0 END) / NULLIF(SUM(CASE WHEN units < 0 THEN 1.0 ELSE 0.0 END), 0), 0),
+    COALESCE(AVG(CASE WHEN units < 0 AND close_reason IS NOT NULL THEN pl_pips END), 0),
+    COALESCE(SUM(CASE WHEN units > 0 AND close_reason='STOP_LOSS_ORDER' THEN 1.0 ELSE 0.0 END) / NULLIF(SUM(CASE WHEN units > 0 THEN 1.0 ELSE 0.0 END), 0), 0),
+    COALESCE(AVG(CASE WHEN units > 0 AND close_reason IS NOT NULL THEN pl_pips END), 0),
+    COALESCE(SUM(CASE WHEN close_reason='STOP_LOSS_ORDER' THEN 1.0 ELSE 0.0 END) / NULLIF(SUM(CASE WHEN close_reason IS NOT NULL THEN 1.0 ELSE 0.0 END), 0), 0),
+    COALESCE(AVG(CASE WHEN close_reason IS NOT NULL THEN pl_pips END), 0),
+    COUNT(1),
+    COALESCE((SELECT cnt FROM open_trades), 0)
+  FROM recent_closed;"
 
   stats="$(query_db_or_default /home/tossaki/QuantRabbit/logs/trades.db "$query" "0|0|0|0|0|0|0|0")"
   IFS='|' read -r SHORT_SL_RATE SHORT_AVG LONG_SL_RATE LONG_AVG OVERALL_SL_RATE OVERALL_AVG TRADE_COUNT OPEN_TRADES <<< "$stats"

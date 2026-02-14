@@ -69,6 +69,42 @@
 
     <section class="tab-panel is-active" id="tab-summary" role="tabpanel" aria-labelledby="tab-summary-button" data-tab-panel="summary">
       <div class="card">
+        <h2>システム構成図</h2>
+        <div class="tagline">データ供給・制御配信・戦略実行の責務を分離した構成です。</div>
+        <pre class="mono-block mono-short" aria-label="system architecture">
+┌──────────────────────┐
+│      OANDA API       │
+└──────────┬───────────┘
+           ▼
+┌───────────────────────────────────┐
+│ quant-market-data-feed             │
+│ - tick/aggregated candle ingest     │
+│ - tick_window / factor_cache 更新  │
+└──────────────┬────────────────────┘
+               │
+               ▼
+       ┌────────────────┐
+       │ strategy data   │
+       └───────┬────────┘
+               │
+               ▼
+┌─────────────────────────────────────────────┐
+│ quant-strategy-control                     │
+│ - global / strategy flags                  │
+│ - can_enter / can_exit / lock checks        │
+└───────┬───────┬─────────┬───────┬─────────┘
+        │       │         │       │
+        ▼       ▼         ▼       ▼
+  quant-scalp-ping-5s      quant-scalp-macd-rsi-div
+  quant-scalp-ping-5s-exit  quant-scalp-macd-rsi-div-exit
+  quant-scalp-tick-imbalance  quant-scalp-tick-imbalance-exit
+  quant-scalp-squeeze-pulse-break ... etc
+        ...    ...       ...     ...
+        それぞれが ENTRY/EXIT 1対1
+        </pre>
+      </div>
+
+      <div class="card">
     <h2>運用サマリー</h2>
     {% if dashboard.available %}
       {% if dashboard.generated_label %}
@@ -720,9 +756,115 @@
       </div>
     </section>
 
-	    <section class="tab-panel" id="tab-ops" role="tabpanel" aria-labelledby="tab-ops-button" data-tab-panel="ops" data-filter-scope="ops">
-	      <div class="card">
-	        <h2>システムヘルス</h2>
+    <section class="tab-panel" id="tab-ops" role="tabpanel" aria-labelledby="tab-ops-button" data-tab-panel="ops" data-filter-scope="ops">
+      <div class="card">
+        <h2>戦略制御（ENTRY / EXIT）</h2>
+        <div class="tagline">戦略単位で Entry/Exit とロックを UI から即時更新します。</div>
+        {% if strategy_control_notice %}
+          <p class="tagline">{{ strategy_control_notice }}</p>
+        {% endif %}
+        {% if strategy_control_error %}
+          <p class="tagline warning">{{ strategy_control_error }}</p>
+        {% endif %}
+
+        {% if ops_enabled %}
+          <div class="section-title">全体制御</div>
+          <form method="post" action="/ops/strategy-control" class="form-block">
+            <input type="hidden" name="target" value="global">
+            <div class="split-equal">
+              <label class="field-label">
+                <input type="hidden" name="entry_enabled" value="0">
+                <input type="checkbox" name="entry_enabled" value="1" {% if dashboard.strategy_control.global.entry_enabled %}checked{% endif %}> Entry
+              </label>
+              <label class="field-label">
+                <input type="hidden" name="exit_enabled" value="0">
+                <input type="checkbox" name="exit_enabled" value="1" {% if dashboard.strategy_control.global.exit_enabled %}checked{% endif %}> Exit
+              </label>
+              <label class="field-label">
+                <input type="hidden" name="global_lock" value="0">
+                <input type="checkbox" name="global_lock" value="1" {% if dashboard.strategy_control.global.global_lock %}checked{% endif %}> GLOBAL_LOCK
+              </label>
+            </div>
+            <div class="field-grid" style="margin-top:0.6rem;">
+              <label class="field-label" for="ops-global-note">備考</label>
+              <input id="ops-global-note" class="input-compact" name="note" type="text" maxlength="255" placeholder="memo">
+            </div>
+            <div class="buttons" style="margin-top:0.75rem;">
+              <button type="submit" class="btn-ghost">更新</button>
+            </div>
+          </form>
+
+          <div class="section-title">戦略別制御</div>
+          <div class="split-equal">
+            <form method="post" action="/ops/strategy-control" class="form-block">
+              <div class="field-label">新規戦略追加 / 既存上書き</div>
+              <input type="hidden" name="target" value="strategy">
+              <div class="field-grid">
+                <label class="field-label" for="ops-strategy-slug">strategy</label>
+                <input id="ops-strategy-slug" class="input-compact" name="strategy" type="text" placeholder="例: scalp_ping_5s" required>
+                <label class="field-label">
+                  <input type="hidden" name="entry_enabled" value="0">
+                  <input type="checkbox" name="entry_enabled" value="1" checked> Entry
+                </label>
+                <label class="field-label">
+                  <input type="hidden" name="exit_enabled" value="0">
+                  <input type="checkbox" name="exit_enabled" value="1" checked> Exit
+                </label>
+                <label class="field-label">
+                  <input type="hidden" name="global_lock" value="0">
+                  <input type="checkbox" name="global_lock" value="1"> Lock
+                </label>
+                <label class="field-label" for="ops-strategy-note">備考</label>
+                <input id="ops-strategy-note" class="input-compact" name="note" type="text" maxlength="255" placeholder="memo">
+              </div>
+              <div class="buttons" style="margin-top:0.75rem;">
+                <button type="submit">追加 / 更新</button>
+              </div>
+            </form>
+          </div>
+
+          <div class="section-title">戦略一覧</div>
+          {% if dashboard.strategy_control.strategies %}
+            <div class="split-equal">
+              {% for row in dashboard.strategy_control.strategies %}
+                <form method="post" action="/ops/strategy-control" class="form-block">
+                  <input type="hidden" name="target" value="strategy">
+                  <input type="hidden" name="strategy" value="{{ row.slug }}">
+                  <div class="field-label">{{ row.slug }}{% if not row.configured %}（未登録）{% endif %}</div>
+                  <div class="split-equal">
+                    <label class="field-label">
+                      <input type="hidden" name="entry_enabled" value="0">
+                      <input type="checkbox" name="entry_enabled" value="1" {% if row.entry_enabled %}checked{% endif %}> Entry
+                    </label>
+                    <label class="field-label">
+                      <input type="hidden" name="exit_enabled" value="0">
+                      <input type="checkbox" name="exit_enabled" value="1" {% if row.exit_enabled %}checked{% endif %}> Exit
+                    </label>
+                    <label class="field-label">
+                      <input type="hidden" name="global_lock" value="0">
+                      <input type="checkbox" name="global_lock" value="1" {% if row.global_lock %}checked{% endif %}> Lock
+                    </label>
+                  </div>
+                  <div class="field-grid" style="margin-top:0.6rem;">
+                    <label class="field-label" for="ops-row-note-{{ loop.index }}">備考</label>
+                    <input id="ops-row-note-{{ loop.index }}" class="input-compact" name="note" type="text" maxlength="255" value="{{ row.note or '' }}">
+                  </div>
+                  <div class="buttons" style="margin-top:0.75rem;">
+                    <button type="submit">更新</button>
+                  </div>
+                </form>
+              {% endfor %}
+            </div>
+          {% else %}
+            <p class="tagline">登録済み戦略はありません（自動検出分が未登録）。まずは上の追加フォームを使って登録してください。</p>
+          {% endif %}
+        {% else %}
+          <p class="tagline warning">ui_ops_token が未設定のため戦略制御は行えません。</p>
+        {% endif %}
+      </div>
+
+      <div class="card">
+        <h2>システムヘルス</h2>
 	    <div class="tagline">データ遅延・判断遅延・ヘルスビートの最新状況をまとめています。</div>
 	    <div class="stats-grid">
 	      <div class="stat-card compact">

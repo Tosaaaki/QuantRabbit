@@ -1,0 +1,18 @@
+[Unit]
+Description=QuantRabbit Strategy Control Worker
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/tossaki/QuantRabbit
+EnvironmentFile=/etc/quantrabbit.env
+Environment=PYTHONUNBUFFERED=1
+Environment=STRATEGY_CONTROL_POLL_SEC=5
+Environment=STRATEGY_CONTROL_HEARTBEAT_SEC=60
+ExecStart=/home/tossaki/QuantRabbit/.venv/bin/python -m workers.strategy_control.worker
+Restart=always
+RestartSec=5
+User=tossaki
+
+[Install]
+WantedBy=multi-user.target

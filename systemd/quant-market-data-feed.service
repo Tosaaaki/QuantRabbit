@@ -1,0 +1,19 @@
+[Unit]
+Description=QuantRabbit Market Data Feed Worker
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/tossaki/QuantRabbit
+EnvironmentFile=/etc/quantrabbit.env
+Environment=PYTHONUNBUFFERED=1
+Environment=MARKET_DATA_FEED_ENABLED=1
+Environment=MARKET_DATA_FEED_INSTRUMENT=USD_JPY
+Environment=MARKET_DATA_FEED_TIMEFRAMES=M1,M5,H1,H4,D1
+ExecStart=/home/tossaki/QuantRabbit/.venv/bin/python -m workers.market_data_feed.worker
+Restart=always
+RestartSec=5
+User=tossaki
+
+[Install]
+WantedBy=multi-user.target
