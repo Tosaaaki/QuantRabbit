@@ -1757,6 +1757,15 @@ _ENTRY_QUALITY_GATE_ENABLED = _env_bool("ORDER_ENTRY_QUALITY_GATE_ENABLED", True
 _ORDER_MANAGER_BRAIN_GATE_ENABLED = _env_bool("ORDER_MANAGER_BRAIN_GATE_ENABLED", False)
 _ORDER_MANAGER_FORECAST_GATE_ENABLED = _env_bool("ORDER_MANAGER_FORECAST_GATE_ENABLED", False)
 _ORDER_MANAGER_PATTERN_GATE_ENABLED = _env_bool("ORDER_MANAGER_PATTERN_GATE_ENABLED", False)
+_ORDER_MANAGER_PRESERVE_STRATEGY_INTENT = _env_bool(
+    "ORDER_MANAGER_PRESERVE_STRATEGY_INTENT", True
+)
+_ORDER_MANAGER_PRESERVE_INTENT_PROBABILITY_MIN_SCALE = _env_float(
+    "ORDER_MANAGER_PRESERVE_INTENT_MIN_SCALE", 0.35
+)
+_ORDER_MANAGER_PRESERVE_INTENT_PROBABILITY_REJECT_UNDER = _env_float(
+    "ORDER_MANAGER_PRESERVE_INTENT_REJECT_UNDER", 0.0
+)
 _ENTRY_QUALITY_POCKETS = _env_csv_set(
     "ORDER_ENTRY_QUALITY_POCKETS",
     "micro,macro,scalp,scalp_fast",
@@ -2421,9 +2430,39 @@ def _entry_probability_value(
             return 0.0
         if prob <= 1.0:
             return min(1.0, max(0.0, prob))
-        if prob <= 100.0:
-            return min(1.0, max(0.0, prob / 100.0))
+    if prob <= 100.0:
+        return min(1.0, max(0.0, prob / 100.0))
     return None
+
+
+def _probability_scaled_units(
+    units: int,
+    *,
+    pocket: Optional[str],
+    entry_probability: Optional[float],
+) -> tuple[int, Optional[str]]:
+    """
+    Return size scaled by entry_probability.
+    Returns `(scaled_units, reject_reason)` where reject_reason is not None when
+    the order should be skipped under preserve-intent mode.
+    """
+    if units == 0:
+        return 0, None
+    if entry_probability is None:
+        return units, None
+    if entry_probability <= _ORDER_MANAGER_PRESERVE_INTENT_PROBABILITY_REJECT_UNDER:
+        return 0, "entry_probability_reject_threshold"
+    scale = max(
+        float(_ORDER_MANAGER_PRESERVE_INTENT_PROBABILITY_MIN_SCALE),
+        min(1.0, float(entry_probability)),
+    )
+    scaled_abs = int(round(abs(units) * scale))
+    if scaled_abs <= 0:
+        return 0, "entry_probability_scale_to_zero"
+    min_units = min_units_for_pocket(pocket)
+    if min_units > 0 and scaled_abs < min_units:
+        return 0, "entry_probability_below_min_units"
+    return (scaled_abs if units > 0 else -scaled_abs), None
 
 
 def _ensure_entry_intent_payload(
@@ -6222,6 +6261,104 @@ async def market_order(
         strategy_tag=strategy_tag,
         entry_thesis=entry_thesis,
     )
+    entry_probability = _entry_probability_value(confidence, entry_thesis)
+    preserve_strategy_intent = (
+        _ORDER_MANAGER_PRESERVE_STRATEGY_INTENT
+        and not reduce_only
+        and (pocket or "").lower() != "manual"
+    )
+    if preserve_strategy_intent:
+        scaled_units, probability_reason = _probability_scaled_units(
+            units,
+            pocket=pocket,
+            entry_probability=entry_probability,
+        )
+        if probability_reason is not None:
+            reason_note = probability_reason
+            _console_order_log(
+                "OPEN_SKIP",
+                pocket=pocket,
+                strategy_tag=strategy_tag or "unknown",
+                side="buy" if units > 0 else "sell",
+                units=units,
+                sl_price=sl_price,
+                tp_price=tp_price,
+                client_order_id=client_order_id or "",
+                note=f"entry_probability:{reason_note}",
+            )
+            _log_order(
+                pocket=pocket,
+                instrument=instrument,
+                side="buy" if units > 0 else "sell",
+                units=units,
+                sl_price=sl_price,
+                tp_price=tp_price,
+                client_order_id=client_order_id,
+                status="entry_probability_reject",
+                attempt=0,
+                request_payload={
+                    "entry_probability": entry_probability,
+                    "entry_thesis": entry_thesis,
+                    "meta": meta,
+                },
+            )
+            log_metric(
+                "order_probability_reject",
+                1.0,
+                tags={
+                    "pocket": pocket,
+                    "strategy": strategy_tag or "unknown",
+                    "reason": reason_note,
+                },
+            )
+            return None
+        if scaled_units != units:
+            _console_order_log(
+                "OPEN_SCALE",
+                pocket=pocket,
+                strategy_tag=strategy_tag or "unknown",
+                side="buy" if units > 0 else "sell",
+                units=scaled_units,
+                sl_price=sl_price,
+                tp_price=tp_price,
+                client_order_id=client_order_id,
+                note=f"probability_scale:{entry_probability:.3f}" if entry_probability is not None else "probability_scale",
+            )
+            _log_order(
+                pocket=pocket,
+                instrument=instrument,
+                side="buy" if units > 0 else "sell",
+                units=scaled_units,
+                sl_price=sl_price,
+                tp_price=tp_price,
+                client_order_id=client_order_id,
+                status="probability_scaled",
+                attempt=0,
+                request_payload={
+                    "entry_probability": entry_probability,
+                    "entry_thesis": entry_thesis,
+                    "meta": meta,
+                    "scaled_units": scaled_units,
+                    "raw_units": abs(units) if units else 0,
+                },
+            )
+            log_metric(
+                "order_probability_scale",
+                max(
+                    0.0,
+                    min(
+                        1.0,
+                        float(entry_probability)
+                        if entry_probability is not None
+                        else 1.0,
+                    ),
+                ),
+                tags={
+                    "pocket": pocket,
+                    "strategy": strategy_tag or "unknown",
+                },
+            )
+            units = scaled_units
     service_result = await _order_manager_service_request_async(
         "/order/market_order",
         {
@@ -6236,7 +6373,7 @@ async def market_order(
             "entry_thesis": entry_thesis,
             "meta": meta,
             "confidence": confidence,
-            "entry_probability": _entry_probability_value(confidence, entry_thesis),
+            "entry_probability": entry_probability,
             "stage_index": stage_index,
             "arbiter_final": arbiter_final,
         },
