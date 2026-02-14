@@ -22,10 +22,21 @@
 - **後付けの一律EXIT判定は作らない**。exit判断は各戦略ワーカー/専用 `exit_worker` のみが行う。`quant-strategy-control` は `entry/exit/global_lock` のガードのみで、全戦略に対する共通ロジックの事後的拒否/抑止を追加しない。
 - 各戦略は `entry_thesis` に「`entry_probability`」と「`entry_units_intent`」を必須で渡して、`order_manager` はここを受けるのみとする。`session_open` を含む `AddonLiveBroker` 経路でも、order 送出時にこの2値を確実に注入する。確率閾値・サイズ設計は戦略ローカルで行い、共通レイヤは強制的に戦略を選別しない（ガード・リスク系の拒否のみ）。
 - **黒板協調（意図調整）は `execution/strategy_entry.py` 経由で実装**する。  
-  - `market_order` / `limit_order` は、`/order/coordinate_entry_intent` を呼び、`instrument`/`pocket`/`strategy_tag`/`side`/`raw_units`/`entry_probability` を共有 DB（`entry_intent_board`）で照合して、同時衝突時に戦略意図を縮小または拒否する。  
+  - `market_order` / `limit_order` は、`/order/coordinate_entry_intent` を呼び、`instrument`/`pocket`/`strategy_tag`/`side`/`raw_units`/`entry_probability` を共有 DB（`entry_intent_board`）で照合して、同時衝突時に戦略意図を縮小する。  
   - `order_manager` は `order_manager` 側で黒板上書きをせず、ガード・リスク（margin/損失上限など）による最終拒否・縮小だけを行う。  
-  - `entry_probability` が極端に低い、あるいは逆方向意図が優勢な場合は拒否または縮小し、最終ユニットは `strategy_entry` で反映した上でのみ送出する。  
+  - `entry_probability` が極端に低い、または逆方向意図の圧力が高い場合は縮小し、最終ユニットは `strategy_entry` で反映した上でのみ送出する。  
   - `manual` や `strategy_tag` 解決不可、`min_units` 未満の縮小結果は `order_manager` 経路に流さず、協調拒否として扱う。
+  - **判定要件（固定）**
+    - 入力必須: `instrument`, `pocket`, `strategy_tag`, `side`, `raw_units`, `entry_probability`（省略時は `confidence` 補完可）。
+    - `pocket == manual` または `raw_units == 0` は協調対象外（値はそのまま通過）。
+    - `strategy_tag` 解決不可は即座に協調拒否。
+    - 2 秒ウィンドウ（`ORDER_INTENT_COORDINATION_WINDOW_SEC`, 既定 `2.0`）内の `entry_intent_board` を集計し、`entry_probability` と `units` の積で重み化した `score = abs(units) * probability` を算出。
+    - 自己の score = `own_score`、同方向合計 score = `same_score`、逆方向合計 score = `opposite_score`。  
+      - 逆方向 score が 0 なら原則受理。
+      - `dominance = opposite_score / max(own_score, 1.0)` を算出し、`scale = max(ORDER_INTENT_COORDINATION_MIN_SCALE, 1/(1+dominance))` を適用して `round(abs(units)*scale)` で縮小判断する。
+      - 縮小後が `min_units` 未満なら協調拒否（最終通過ユニットは 0）。
+      - `dominance` が閾値 `ORDER_INTENT_COORDINATION_REJECTION_DOMINANCE`（既定 `1.12`）を超えていても、方向意図自体は否定せず縮小のみとする。
+    - 記録は必須: `status` は `intent_accepted/intent_scaled/intent_rejected` とし、`reason` は `scale_to_zero/below_min_units_after_scale/coordination_load_error` 等を格納。
 - 発注経路はワーカーが直接 OANDA に送信するのが既定（`SIGNAL_GATE_ENABLED=0` / `ORDER_FORWARD_TO_SIGNAL_GATE=0`）。共通ゲートを使う場合のみ両フラグを 1 にする。
 - 共通エントリー/テックゲート（`entry_guard` / `entry_tech`）は廃止・使用禁止。
 - 型ゲート（Pattern Gate）は `workers/common/pattern_gate.py` を `execution/order_manager.py` preflight に適用する。**ただし全戦略一律強制はしない**（デフォルトは戦略ワーカーの opt-in）。

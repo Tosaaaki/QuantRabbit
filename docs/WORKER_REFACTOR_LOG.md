@@ -62,13 +62,25 @@
   `execution/order_manager.py` の `entry_intent_board` 判定と整合した運用へ固定。
 - 判定の固定要件を明文化:
   - `own_score = abs(raw_units) * normalized(entry_probability)`  
-  - `opposite_score / max(own_score,1.0) >= ORDER_INTENT_COORDINATION_REJECTION_DOMINANCE` で reject
-  - `scale = max(ORDER_INTENT_COORDINATION_MIN_SCALE, 1/(1+dominance))` で scale
+  - `dominance = opposite_score / max(own_score,1.0)` を算出し、
+    `scale = max(ORDER_INTENT_COORDINATION_MIN_SCALE, 1/(1+dominance))` で縮小
   - 最終 `abs(final_units) < min_units_for_pocket(pocket)` なら reject
-- 協調 `reason`（`opposite_domination/scale_to_zero/below_min_units_after_scale/coordination_load_error`）と
-  `status`（`intent_accepted/intent_scaled/intent_rejected`）を board に永続化し、
-  `final_units=0` は `order_manager` 経路に流さない運用をログ追跡対象化。
+- `reason` と `status` は `entry_intent_board` に永続化し、`final_units=0` は `order_manager` 経路に流さない運用をログ追跡対象化。
+  - `status`: `intent_accepted/intent_scaled/intent_rejected`
+  - `reason`: `scale_to_zero/below_min_units_after_scale/coordination_load_error` 等
+- `opposite_domination` は廃止し、逆方向優勢は「方向意図を否定しない」縮小基盤へ更新（閾値超過時も受理可能）。
 - `AGENTS.md` と `WORKER_ROLE_MATRIX_V2.md` を同一ブランチ変更で更新し、監査対象文言を同期済みにする運用へ反映。
+
+### 2026-02-19（追記）戦略ENTRYで技術判定コンテキストを付与
+
+- `execution/strategy_entry.py` の `market_order` / `limit_order` に、
+  `analysis.technique_engine.evaluate_entry_techniques` を使って
+  `N波`, `フィボ`, `ローソク` を含む入場技術スコア算出を追加。
+- エントリー価格は `entry_thesis` の価格情報優先、未提供時は直近ティックから補完し算出。
+- 算出結果は `entry_thesis["technical_context"]` に保存され、各戦略からの
+  エントリー意図として `ENTRY/EXIT` の判断（ロギング/追跡含む）に利用可能。
+- 機能スイッチは `ENTRY_TECH_CONTEXT_ENABLED`（未設定時 true）とし、必要時は
+  `execution/strategy_entry.py` の既定動作から外せるようにした。
 
 ## 削除（実装済み）
 

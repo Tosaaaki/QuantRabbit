@@ -8,8 +8,10 @@ duplicate cross-strategy overexposure.
 from __future__ import annotations
 
 import math
+import os
 from typing import Literal, Optional
 
+from analysis.technique_engine import evaluate_entry_techniques
 from execution.order_manager import cancel_order, close_trade, set_trade_protections
 from execution import order_manager
 
@@ -19,6 +21,16 @@ def get_last_order_status_by_client_id(
 ) -> Optional[dict[str, object]]:
     """Compatibility wrapper retained for existing strategy imports."""
     return order_manager.get_last_order_status_by_client_id(client_order_id)
+
+
+def _env_bool(name: str, default: bool) -> bool:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    return str(raw).strip().lower() in {"1", "true", "yes", "on"}
+
+
+_ENTRY_TECH_CONTEXT_ENABLED = _env_bool("ENTRY_TECH_CONTEXT_ENABLED", True)
 
 
 def _resolve_strategy_tag(
@@ -74,6 +86,117 @@ def _entry_probability_value(raw: Optional[float]) -> Optional[float]:
     return max(0.0, min(1.0, probability / 100.0))
 
 
+def _to_float(value: object) -> Optional[float]:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _resolve_entry_side(units: int) -> str:
+    return "long" if units >= 0 else "short"
+
+
+def _resolve_entry_price(
+    units: int,
+    entry_thesis: Optional[dict],
+    *,
+    limit_price: Optional[float] = None,
+) -> Optional[float]:
+    if limit_price is not None:
+        resolved = _to_float(limit_price)
+        if resolved is not None:
+            return resolved
+    if isinstance(entry_thesis, dict):
+        for key in ("entry_price", "price", "mid", "current_mid"):
+            value = _to_float(entry_thesis.get(key))
+            if value and value > 0:
+                return value
+        side = _resolve_entry_side(units)
+        for key in ("current_ask", "ask", "current_bid", "bid"):
+            if side == "long" and key in ("current_bid", "bid"):
+                continue
+            value = _to_float(entry_thesis.get(key))
+            if value is not None and value > 0:
+                return value
+        for key in ("current_bid", "bid", "current_ask", "ask"):
+            if side == "short" and key in ("current_ask", "ask"):
+                continue
+            value = _to_float(entry_thesis.get(key))
+            if value is not None and value > 0:
+                return value
+    try:
+        from market_data import tick_window
+    except Exception:
+        return None
+    try:
+        latest = tick_window.summarize(seconds=2.5)
+        if not latest:
+            return None
+        side = _resolve_entry_side(units)
+        if side == "long":
+            value = _to_float(latest.get("latest_ask"))
+            if value is not None and value > 0:
+                return value
+        value = _to_float(latest.get("latest_bid"))
+        if value is not None and value > 0:
+            return value
+        return _to_float(latest.get("latest_mid"))
+    except Exception:
+        return None
+
+
+def _inject_entry_technical_context(
+    *,
+    units: int,
+    pocket: str,
+    strategy_tag: Optional[str],
+    entry_thesis: Optional[dict],
+    entry_price: Optional[float],
+) -> Optional[dict]:
+    if not _ENTRY_TECH_CONTEXT_ENABLED:
+        return entry_thesis
+    if entry_price is None:
+        return entry_thesis
+    if not isinstance(entry_thesis, dict):
+        return entry_thesis
+    try:
+        decision = evaluate_entry_techniques(
+            entry_price=entry_price,
+            side=_resolve_entry_side(units),
+            pocket=pocket,
+            strategy_tag=strategy_tag,
+            entry_thesis=entry_thesis,
+        )
+        context = {
+            "enabled": True,
+            "entry_price": entry_price,
+            "side": _resolve_entry_side(units),
+            "result": {
+                "allowed": bool(decision.allowed),
+                "reason": decision.reason,
+                "score": decision.score,
+                "coverage": decision.coverage,
+                "size_mult": decision.size_mult,
+            },
+            "debug": decision.debug,
+        }
+    except Exception as exc:
+        context = {
+            "enabled": True,
+            "entry_price": entry_price,
+            "error": str(exc),
+        }
+    prev = entry_thesis.get("technical_context")
+    if isinstance(prev, dict):
+        merged = dict(prev)
+        merged.update(context)
+        entry_thesis["technical_context"] = merged
+    else:
+        entry_thesis["technical_context"] = context
+    return entry_thesis
+
+
 async def _coordinate_entry_units(
     *,
     instrument: str,
@@ -123,6 +246,15 @@ async def market_order(
     arbiter_final: bool = False,
 ) -> Optional[str]:
     resolved_strategy_tag = _resolve_strategy_tag(strategy_tag, client_order_id, entry_thesis)
+    if entry_thesis is None:
+        entry_thesis = {}
+    entry_thesis = _inject_entry_technical_context(
+        units=units,
+        pocket=pocket,
+        strategy_tag=resolved_strategy_tag,
+        entry_thesis=entry_thesis,
+        entry_price=_resolve_entry_price(units, entry_thesis),
+    )
     entry_probability = _resolve_entry_probability(entry_thesis, confidence)
     coordinated_units = await _coordinate_entry_units(
         instrument=instrument,
@@ -174,6 +306,15 @@ async def limit_order(
     meta: Optional[dict] = None,
 ) -> tuple[Optional[str], Optional[str]]:
     resolved_strategy_tag = _resolve_strategy_tag(strategy_tag, client_order_id, entry_thesis)
+    if entry_thesis is None:
+        entry_thesis = {}
+    entry_thesis = _inject_entry_technical_context(
+        units=units,
+        pocket=pocket,
+        strategy_tag=resolved_strategy_tag,
+        entry_thesis=entry_thesis,
+        entry_price=_resolve_entry_price(units, entry_thesis, limit_price=price),
+    )
     entry_probability = _resolve_entry_probability(entry_thesis, confidence)
     coordinated_units = await _coordinate_entry_units(
         instrument=instrument,

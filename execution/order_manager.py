@@ -2726,30 +2726,9 @@ def _coordinate_entry_intent(
         )
         return final_units, None, details
 
-    rejection_dominance = max(
-        _ORDER_INTENT_COORDINATION_REJECTION_DOMINANCE,
-        1.0,
-    )
     dominance = opposite_score / max(own_score, 1.0)
     details["opposite_ratio_to_own"] = round(dominance, 6)
-    details["dominance_threshold"] = rejection_dominance
-    if dominance >= rejection_dominance:
-        details["decision"] = "reject"
-        _entry_intent_board_record(
-            pocket=pocket,
-            instrument=instrument,
-            strategy_tag=strategy_tag,
-            side=side,
-            raw_units=raw_units,
-            final_units=0,
-            entry_probability=entry_probability,
-            client_order_id=client_order_id,
-            status="intent_rejected",
-            reason="opposite_domination",
-            request_payload=details,
-        )
-        return 0, "reject", details
-
+    details["dominance_threshold"] = max(_ORDER_INTENT_COORDINATION_REJECTION_DOMINANCE, 1.0)
     raw_scale = 1.0 / (1.0 + dominance)
     min_scale = _ORDER_INTENT_COORDINATION_MIN_SCALE
     scale = max(min_scale, raw_scale)
