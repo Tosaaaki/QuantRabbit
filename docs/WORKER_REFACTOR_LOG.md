@@ -28,6 +28,12 @@
 - `systemd/quant-scalp-tick-imbalance.service`
 - `systemd/quant-scalp-tick-imbalance-exit.service`
 - `systemd/quant-scalp-squeeze-pulse-break.service`
+
+### 2026-02-14（追記）market_order 入口の entry_thesis 補完を追加
+
+- `execution/order_manager.py` に `market_order()` 入口ガード `_ensure_entry_intent_payload()` を追加。
+- 戦略側 `entry_thesis` が欠けるケースに対し、`entry_units_intent` と `entry_probability` を実行時に補完。
+- 併せて `strategy_tag` が未入力時は `client_order_id` から補完して `entry_thesis` に反映するようにし、V2各戦略の `market_order` 呼び出し互換性を維持。
 - `systemd/quant-scalp-squeeze-pulse-break-exit.service`
 - `systemd/quant-scalp-wick-reversal-blend.service`
 - `systemd/quant-scalp-wick-reversal-blend-exit.service`

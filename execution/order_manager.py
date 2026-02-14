@@ -2420,6 +2420,39 @@ def _entry_probability_value(
     return None
 
 
+def _ensure_entry_intent_payload(
+    units: int,
+    confidence: Optional[float],
+    strategy_tag: Optional[str],
+    entry_thesis: Optional[dict],
+) -> Optional[dict]:
+    """Attach mandatory intent fields to entry_thesis for order-manager compatibility."""
+    if not isinstance(entry_thesis, dict):
+        if entry_thesis is None:
+            entry_thesis = {}
+        else:
+            return None
+
+    thesis = dict(entry_thesis)
+    if strategy_tag:
+        if isinstance(strategy_tag, str):
+            strategy_tag = strategy_tag.strip()
+            if strategy_tag and "strategy_tag" not in thesis:
+                thesis["strategy_tag"] = strategy_tag
+
+    if "entry_units_intent" not in thesis:
+        thesis["entry_units_intent"] = abs(int(units))
+
+    if "entry_probability" not in thesis:
+        prob = _entry_probability_value(confidence, thesis)
+        if prob is None and confidence is not None:
+            prob = _entry_probability_value(float(confidence), None)
+        if prob is not None:
+            thesis["entry_probability"] = prob
+
+    return thesis
+
+
 def _entry_market_snapshot(
     pocket: Optional[str],
     entry_thesis: Optional[dict],
@@ -6177,6 +6210,14 @@ async def market_order(
     units : +10000 = buy 0.1 lot, ‑10000 = sell 0.1 lot
     returns trade id（約定時のみ）。未約定（submitted）や失敗は None。
     """
+    if not strategy_tag:
+        strategy_tag = _strategy_tag_from_client_id(client_order_id)
+    entry_thesis = _ensure_entry_intent_payload(
+        units=units,
+        confidence=confidence,
+        strategy_tag=strategy_tag,
+        entry_thesis=entry_thesis,
+    )
     service_result = await _order_manager_service_request_async(
         "/order/market_order",
         {
