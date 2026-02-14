@@ -63,6 +63,19 @@ install_unit() {
   ENABLE_QUEUE+=("$(basename "$dest")")
 }
 
+enable_unit() {
+  local unit="$1"
+  if systemctl enable "$unit"; then
+    if systemctl start "$unit"; then
+      echo "Enabled and started: $unit"
+    else
+      echo "Enabled for boot (start deferred/failing now): $unit"
+    fi
+  else
+    echo "Failed to enable: $unit" >&2
+  fi
+}
+
 remove_legacy_qr_units() {
   local -a legacy_units=()
   local -a legacy_dirs=()
@@ -118,8 +131,7 @@ remove_legacy_qr_units
 systemctl daemon-reload
 
 for unit in "${ENABLE_QUEUE[@]}"; do
-  systemctl enable --now "$unit"
-  echo "Enabled and started: $unit"
+  enable_unit "$unit"
 done
 
 echo "Done. Enabled units:"

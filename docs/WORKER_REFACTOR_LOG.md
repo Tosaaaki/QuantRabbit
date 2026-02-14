@@ -84,3 +84,6 @@
 - `quant-order-manager.service` / `quant-position-manager.service` はサービス側で再有効化したが、`main` 上に
   `workers/order_manager` / `workers/position_manager` が未収録のため、現時点では起動が `ModuleNotFoundError` で継続リトライ。
 - 今回の状態は次のデプロイでワーカー実装を main に反映して解消する必要がある。
+- `scripts/install_trading_services.sh` を改善し、`enable --now` の起動失敗でスクリプト全体が止まらないように
+  `enable` と `start` を分離。これにより、起動時点で `enabled` 指定されたサービス群は有効化された状態を維持し、
+  VM再起動時の自動起動対象から漏れにくくする運用を確立。
