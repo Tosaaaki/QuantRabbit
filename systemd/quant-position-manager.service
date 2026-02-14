@@ -1,0 +1,20 @@
+[Unit]
+Description=QuantRabbit Position Manager Service
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/tossaki/QuantRabbit
+EnvironmentFile=/etc/quantrabbit.env
+Environment=PYTHONUNBUFFERED=1
+Environment=POSITION_MANAGER_SERVICE_PORT=8301
+Environment=POSITION_MANAGER_SERVICE_ENABLED=0
+Environment=ORDER_MANAGER_SERVICE_ENABLED=0
+Environment=POSITION_MANAGER_SERVICE_FALLBACK_LOCAL=1
+ExecStart=/home/tossaki/QuantRabbit/.venv/bin/python -m workers.position_manager.worker
+Restart=always
+RestartSec=5
+User=tossaki
+
+[Install]
+WantedBy=multi-user.target

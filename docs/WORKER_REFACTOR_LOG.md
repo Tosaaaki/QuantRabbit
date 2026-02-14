@@ -8,6 +8,13 @@
 - データ供給は `quant-market-data-feed`、制御配信は `quant-strategy-control` に分離。
 - 補助的運用ワーカーは本体管理マップから除外。
 
+## 補足（戦略判断責務の明確化）
+
+- **方針確定**: 各戦略ワーカーは「ENTRY/EXIT判定の脳」を保持し、ロジックの主判断は各ワーカー固有で行う。
+- `quant-strategy-control` は「最終実行可否」を左右する制御入力を配信するのみ（`entry_enabled` / `exit_enabled` / `global_lock` / メモ）。
+- したがって、`strategy-control` が戦略ロジックを代行しているわけではなく、**各戦略の意思決定を中断/再開するガードレイヤー**として機能する。
+- UI の戦略ON/OFFや緊急ロックはこのガードレイヤーを介して、並行中の戦略群へ即時反映する。
+
 ## 追加（実装済み）
 
 - `systemd/quant-market-data-feed.service`
@@ -30,6 +37,15 @@
 - `workers/strategy_control/worker.py`
 - `workers/scalp_ping_5s/exit_worker.py`
 - `workers/scalp_macd_rsi_div/exit_worker.py`
+- `systemd/quant-order-manager.service`
+- `systemd/quant-position-manager.service`
+- `workers/order_manager/__init__.py`
+- `workers/order_manager/worker.py`
+- `workers/position_manager/__init__.py`
+- `workers/position_manager/worker.py`
+- `execution/order_manager.py`（service-first 経路追加、`_ORDER_MANAGER_SERVICE_*` 利用）
+- `execution/position_manager.py`（service-first 経路追加、`_POSITION_MANAGER_SERVICE_*` 利用）
+- `config/env.example.toml`（order/position service URL/enable 設定追加）
 - `main.py`
   - `WORKER_SERVICES` に `market_data_feed` / `strategy_control` を追加。
   - `initialize_history("USD_JPY")` を `worker_only_loop` から撤去（初期シードを market-data-feed worker に移譲）。
@@ -53,3 +69,18 @@
 - `quant-scalp-precision-*` は削除済みで、置換された `quant-scalp-*` サービス群が戦略別で単独起動される。
 - `strategy_control` はフラグ配信の母体で、`execution/order_manager.py` の事前チェックで
   `strategy_control.can_enter/can_exit` を参照することで、ENTRY/EXIT 可否を実行時に即時反映。
+
+## V2 追加（完了: 2026-02-14）
+
+- `ops/systemd/quantrabbit.service` は monolithic エントリとして廃止対象へ昇格（本番起動から排除）。
+- 本設計では「データ / 制御 / 戦略 / 分析 / 注文 / ポジ管理」を別プロセス境界で扱う。
+- `execution/order_manager.py` / `execution/position_manager.py` は service-first ルートを持ち、
+  strategy worker は基本的に HTTP で各サービスを経由する運用へ。
+
+## 運用反映（2026-02-14 直近）
+
+- `fx-trader-vm` にて `main` 基点の全再インストールを実施し、`quant-market-data-feed` / `quant-strategy-control` を含む
+  V2サービス群を再有効化。`quantrabbit.service` は再起動済み。
+- `quant-order-manager.service` / `quant-position-manager.service` はサービス側で再有効化したが、`main` 上に
+  `workers/order_manager` / `workers/position_manager` が未収録のため、現時点では起動が `ModuleNotFoundError` で継続リトライ。
+- 今回の状態は次のデプロイでワーカー実装を main に反映して解消する必要がある。
