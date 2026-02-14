@@ -166,6 +166,42 @@ async def market_order(payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
     return _success(result)
 
 
+@app.post("/order/coordinate_entry_intent")
+async def coordinate_entry_intent(payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
+    body = _as_dict(payload)
+    instrument = str(body.get("instrument") or "").strip()
+    if not instrument:
+        return _failure("instrument is required")
+
+    pocket = str(body.get("pocket") or "").strip().lower()
+    if not pocket:
+        return _failure("pocket is required")
+
+    try:
+        result = await order_manager.coordinate_entry_intent(
+            instrument=instrument,
+            pocket=pocket,
+            strategy_tag=body.get("strategy_tag"),
+            side=_to_int(body.get("side"), 1),
+            raw_units=_to_int(body.get("raw_units"), 0),
+            entry_probability=body.get("entry_probability"),
+            client_order_id=body.get("client_order_id"),
+            min_units=_to_int(body.get("min_units"), 0),
+        )
+    except Exception as exc:
+        return _failure(str(exc))
+    if not isinstance(result, tuple) or len(result) != 3:
+        return _failure("invalid coordination result")
+    final_units, reason, details = result
+    return _success(
+        {
+            "final_units": final_units,
+            "reason": reason,
+            "details": details,
+        }
+    )
+
+
 @app.post("/order/limit_order")
 async def limit_order(payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
     body = _as_dict(payload)

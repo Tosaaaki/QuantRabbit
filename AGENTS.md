@@ -21,6 +21,11 @@
 - 現行デフォルト: `WORKER_ONLY_MODE=true` / `MAIN_TRADING_ENABLED=0`。共通 `exit_manager` はスタブ化され、エントリー/EXIT は各戦略ワーカー＋専用 `exit_worker` が担当。
 - **後付けの一律EXIT判定は作らない**。exit判断は各戦略ワーカー/専用 `exit_worker` のみが行う。`quant-strategy-control` は `entry/exit/global_lock` のガードのみで、全戦略に対する共通ロジックの事後的拒否/抑止を追加しない。
 - 各戦略は `entry_thesis` に「`entry_probability`」と「`entry_units_intent`」を必須で渡して、`order_manager` はここを受けるのみとする。`session_open` を含む `AddonLiveBroker` 経路でも、order 送出時にこの2値を確実に注入する。確率閾値・サイズ設計は戦略ローカルで行い、共通レイヤは強制的に戦略を選別しない（ガード・リスク系の拒否のみ）。
+- **黒板協調（意図調整）は `execution/strategy_entry.py` 経由で実装**する。  
+  - `market_order` / `limit_order` は、`/order/coordinate_entry_intent` を呼び、`instrument`/`pocket`/`strategy_tag`/`side`/`raw_units`/`entry_probability` を共有 DB（`entry_intent_board`）で照合して、同時衝突時に戦略意図を縮小または拒否する。  
+  - `order_manager` は `order_manager` 側で黒板上書きをせず、ガード・リスク（margin/損失上限など）による最終拒否・縮小だけを行う。  
+  - `entry_probability` が極端に低い、あるいは逆方向意図が優勢な場合は拒否または縮小し、最終ユニットは `strategy_entry` で反映した上でのみ送出する。  
+  - `manual` や `strategy_tag` 解決不可、`min_units` 未満の縮小結果は `order_manager` 経路に流さず、協調拒否として扱う。
 - 発注経路はワーカーが直接 OANDA に送信するのが既定（`SIGNAL_GATE_ENABLED=0` / `ORDER_FORWARD_TO_SIGNAL_GATE=0`）。共通ゲートを使う場合のみ両フラグを 1 にする。
 - 共通エントリー/テックゲート（`entry_guard` / `entry_tech`）は廃止・使用禁止。
 - 型ゲート（Pattern Gate）は `workers/common/pattern_gate.py` を `execution/order_manager.py` preflight に適用する。**ただし全戦略一律強制はしない**（デフォルトは戦略ワーカーの opt-in）。
@@ -64,6 +69,7 @@
 - 各戦略のENTRY判断は strategy ロジック側で完結。`entry_probability` / `entry_units_intent` を `entry_thesis` へ付与し、`order_manager` はその意図を参照して制約内で実行する。
 - **オーダー面**: `execution/order_manager.py` の処理は **新規ワーカー分離対象**。  
   `quant-order-manager` へ移設済み。戦略群は本ワーカーを介してのみ注文実行を実施する。
+  - 戦略の意図協調（黒板）は `execution/strategy_entry.py` の同一意図判定呼び出しにより、最終ロットは pre-order で決定してから `order_manager` へ渡す。
 - **ポジ面**: `execution/position_manager.py` も **新規ワーカー分離対象**。  
   `quant-position-manager` へ移設済み。戦略群は本ワーカーを介してのみ保有状態を参照する。
 - **分析・監視面**: `quant-pattern-book`, `quant-range-metrics`, `quant-dynamic-alloc`,

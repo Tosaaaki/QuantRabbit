@@ -1,15 +1,24 @@
 """Strategy-facing entry helpers.
 
-This module is intentionally passthrough-only: strategy code calls into this
-module and the intent is forwarded directly to execution.order_manager.
+Strategies submit orders through this module. Before dispatching, it coordinates
+entry intent via order_manager's blackboard to keep strategy-level intent and avoid
+duplicate cross-strategy overexposure.
 """
 
 from __future__ import annotations
 
+import math
 from typing import Literal, Optional
 
 from execution.order_manager import cancel_order, close_trade, set_trade_protections
 from execution import order_manager
+
+
+def get_last_order_status_by_client_id(
+    client_order_id: Optional[str],
+) -> Optional[dict[str, object]]:
+    """Compatibility wrapper retained for existing strategy imports."""
+    return order_manager.get_last_order_status_by_client_id(client_order_id)
 
 
 def _resolve_strategy_tag(
@@ -23,6 +32,78 @@ def _resolve_strategy_tag(
     if not resolved and isinstance(entry_thesis, dict):
         resolved = order_manager._strategy_tag_from_thesis(entry_thesis)
     return resolved
+
+
+def _resolve_entry_probability(
+    entry_thesis: Optional[dict],
+    confidence: Optional[float],
+) -> Optional[float]:
+    if not isinstance(entry_thesis, dict):
+        return _entry_probability_value(confidence) if confidence is not None else None
+    for key in ("entry_probability", "confidence"):
+        if key not in entry_thesis:
+            continue
+        raw = entry_thesis.get(key)
+        try:
+            probability = float(raw)
+        except (TypeError, ValueError):
+            continue
+        if math.isnan(probability) or math.isinf(probability):
+            continue
+        if probability <= 1.0:
+            return max(0.0, min(1.0, probability))
+        return max(0.0, min(1.0, probability / 100.0))
+    return (
+        _entry_probability_value(confidence)
+        if confidence is not None
+        else None
+    )
+
+
+def _entry_probability_value(raw: Optional[float]) -> Optional[float]:
+    if raw is None:
+        return None
+    try:
+        probability = float(raw)
+    except (TypeError, ValueError):
+        return None
+    if math.isnan(probability) or math.isinf(probability):
+        return None
+    if probability <= 1.0:
+        return max(0.0, min(1.0, probability))
+    return max(0.0, min(1.0, probability / 100.0))
+
+
+async def _coordinate_entry_units(
+    *,
+    instrument: str,
+    pocket: str,
+    strategy_tag: Optional[str],
+    units: int,
+    reduce_only: bool,
+    entry_probability: Optional[float],
+    client_order_id: Optional[str],
+) -> int:
+    if not units:
+        return units
+    if reduce_only:
+        return units
+    if not strategy_tag:
+        return units
+    min_units = order_manager.min_units_for_pocket(pocket)
+    final_units, reason, _ = await order_manager.coordinate_entry_intent(
+        instrument=instrument,
+        pocket=pocket,
+        strategy_tag=strategy_tag,
+        side=1 if units > 0 else -1,
+        raw_units=units,
+        entry_probability=entry_probability,
+        client_order_id=client_order_id,
+        min_units=min_units,
+    )
+    if not final_units and reason in {"reject", "scaled", "rejected", None}:
+        return 0
+    return int(final_units)
 
 
 async def market_order(
@@ -42,6 +123,20 @@ async def market_order(
     arbiter_final: bool = False,
 ) -> Optional[str]:
     resolved_strategy_tag = _resolve_strategy_tag(strategy_tag, client_order_id, entry_thesis)
+    entry_probability = _resolve_entry_probability(entry_thesis, confidence)
+    coordinated_units = await _coordinate_entry_units(
+        instrument=instrument,
+        pocket=pocket,
+        strategy_tag=resolved_strategy_tag,
+        units=units,
+        reduce_only=reduce_only,
+        entry_probability=entry_probability,
+        client_order_id=client_order_id,
+    )
+    if not coordinated_units:
+        return None
+    if coordinated_units != units:
+        units = coordinated_units
     return await order_manager.market_order(
         instrument=instrument,
         units=units,
@@ -79,6 +174,20 @@ async def limit_order(
     meta: Optional[dict] = None,
 ) -> tuple[Optional[str], Optional[str]]:
     resolved_strategy_tag = _resolve_strategy_tag(strategy_tag, client_order_id, entry_thesis)
+    entry_probability = _resolve_entry_probability(entry_thesis, confidence)
+    coordinated_units = await _coordinate_entry_units(
+        instrument=instrument,
+        pocket=pocket,
+        strategy_tag=resolved_strategy_tag,
+        units=units,
+        reduce_only=reduce_only,
+        entry_probability=entry_probability,
+        client_order_id=client_order_id,
+    )
+    if not coordinated_units:
+        return None, None
+    if coordinated_units != units:
+        units = coordinated_units
     return await order_manager.limit_order(
         instrument=instrument,
         units=units,

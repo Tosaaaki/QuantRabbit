@@ -59,8 +59,11 @@
 - `ORDER_MANAGER_PRESERVE_STRATEGY_INTENT=1`（既定）運用では、戦略側が意図した
   `entry_probability` / `entry_units_intent` / SL/TP設計を order_manager が新たに選別しない方針へ統一。  
   ただし、entry_probability による確率スケーリングやリスクガード（マージン、ロスキャップ等）での最終調整のみ許容。
-- 戦略横断の `entry_intent_board` / `intent_coordination` は停止方針。
-- `execution/strategy_entry.py` は `order_manager` への受け渡しを担う passthrough として扱い、意図の事前再設計を行わない。
+- `entry_probability` / `entry_units_intent` をもとに、`execution/strategy_entry.py` が
+  `execution/order_manager.py` の `/order/coordinate_entry_intent` を呼んで黒板協調を行った後に
+  注文を `order-manager` へ転送する。
+- `ORDER_MANAGER_PRESERVE_STRATEGY_INTENT=1` 方針は維持し、`order_manager` は
+  戦略意図を上書きしない前提で、ガード/リスク判定と必要最小限の縮小・拒否のみに留める。
 
 ### 5) ポジ管理面（分離済み）
 

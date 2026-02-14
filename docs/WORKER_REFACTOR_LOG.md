@@ -225,12 +225,16 @@
 - ただし、`entry_probability` による「許容上限超えでの縮小」や「超低確率での拒否」は risk 側許容範囲として維持。
 - リミット注文側も同様に `entry_probability` 注入・同条件ガードを追加し、`order_manager_service` 経路に同じ意図を引き継ぐように統一。
 
-### 2026-02-14（追記）戦略横断意図協調（entry_intent_board）を追加
-- `order_manager` は `entry_probability` に基づく縮小/拒否と margin/cap 等の共通リスクガードのみを行い、
-  戦略横断の意図協調（`entry_intent_board` / `intent_coordination`）は運用方針として停止。
-- `execution/strategy_entry.py` は戦略側の意図を保持しつつ `order_manager` への転送に徹する方針へ戻した。
-- 同時衝突回避に使っていた `workers/order_manager/worker.py` の `POST /order/coordinate_entry_intent` は廃止し、
-  意図協調ロジックの呼び出し経路を実装から排除。
+### 2026-02-14（追記）戦略横断意図協調（entry_intent_board）基盤整備
+- `execution/order_manager.py` に `entry_intent_board` / `intent_coordination` の基盤（スキーマ、DB、preflight、worker endpoint）を追加。
+- 当時の方針整理で `strategy_entry` 側連携は一旦抑止し、`order_manager` 側に上書き的な再設計を残さない構成を優先した。
+
+### 2026-02-18（追記）意図協調をstrategy_entry経由で復帰
+- `execution/strategy_entry.py` の `market_order` / `limit_order` で
+  `entry_probability` と `entry_units_intent` を維持したまま `strategy_tag` 解決し、
+  `/order/coordinate_entry_intent` を経由してから `order_manager` へ転送する形へ戻す。
+- `workers/order_manager/worker.py` の `POST /order/coordinate_entry_intent` を有効のまま維持し、
+  各戦略が自戦略意図を保持したまま黒板協調の結果を反映できる運用へ復元。
 
 ### 2026-02-17（追記）order/position worker の自己service呼び出しガード
 
