@@ -17,6 +17,9 @@ V2_DISALLOWED_UNITS=(
   "quant-trend-reclaim-long.service"
   "quant-trend-reclaim-long-exit.service"
 )
+NO_BLOCK_START_UNITS=(
+  "quant-strategy-optimizer.service"
+)
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -88,10 +91,25 @@ install_unit() {
 enable_unit() {
   local unit="$1"
   if systemctl enable "$unit"; then
-    if systemctl start "$unit"; then
-      echo "Enabled and started: $unit"
+    local no_block="0"
+    for skip in "${NO_BLOCK_START_UNITS[@]}"; do
+      if [[ "$unit" == "$skip" ]]; then
+        no_block="1"
+        break
+      fi
+    done
+    if [[ "$no_block" == "1" ]]; then
+      if systemctl start --no-block "$unit"; then
+        echo "Enabled and start requested (non-blocking): $unit"
+      else
+        echo "Enabled for boot (start request failed/deferred): $unit"
+      fi
     else
-      echo "Enabled for boot (start deferred/failing now): $unit"
+      if systemctl start "$unit"; then
+        echo "Enabled and started: $unit"
+      else
+        echo "Enabled for boot (start deferred/failing now): $unit"
+      fi
     fi
   else
     echo "Failed to enable: $unit" >&2

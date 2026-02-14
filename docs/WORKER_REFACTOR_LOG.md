@@ -250,3 +250,12 @@
 - `install_trading_services.sh --all` が V2監査で禁止とするレガシーサービスを誤って再有効化しないよう、除外対象を明示。
   - 除外: `quant-impulse-retest-s5*`, `quant-micro-adaptive-revert*`（`--all` ではインストールせず、明示 `--units` 指定時のみ許容）
 - `install_trading_services --all` 再実行時も V2監査の disallow ルールを壊しにくい状態に更新。
+
+### 2026-02-14（追記）install_trading_services.sh の起動待機ハング対策
+
+- `scripts/install_trading_services.sh --all` 実行時に、`quant-strategy-optimizer.service` の
+  oneshot長時間処理起動でスクリプト全体が待機し続ける現象を確認。
+- 対応として `scripts/install_trading_services.sh` の `enable_unit()` に
+  `NO_BLOCK_START_UNITS` を追加し、`quant-strategy-optimizer.service` を
+  `systemctl start --no-block` で起動要求するよう変更。
+- このため `--all` 実行時の完了待機を回避しつつ、監査ジョブ（`quant-v2-audit`）の定期実行を維持。

@@ -137,6 +137,14 @@
 - V2運用中の監査対象外扱いを維持するため、`--all` 実行では上記を明示的にスキップし、
   レガシーは必要時の `--units` 指定時にのみ再導入可能とする。
 
+### 2026-02-14（追記）install_trading_services の実行安定化
+
+- `scripts/install_trading_services.sh --all` 実行中に、`quant-strategy-optimizer.service` の
+  oneshot 長時間起動が原因で `systemctl start` がブロックし、後続ユニット有効化が停滞する問題を対策。
+- `NO_BLOCK_START_UNITS` を導入し、`quant-strategy-optimizer.service` は
+  `systemctl start --no-block` で起動要求する運用へ変更。
+- `--all` 実行の完了性を担保し、V2監査/運用サービスの再起動ループを維持する状態に更新。
+
 ## V2 反映図（最上位・並行）
 
 ```mermaid
