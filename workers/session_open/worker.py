@@ -290,6 +290,23 @@ def _projection_decision(side, pocket, mode_override=None):
         "scores": {k: round(v, 3) for k, v in scores.items()},
     }
     return allow, size_mult, detail
+
+
+def _projection_probability(size_mult: float, detail: Optional[dict]) -> float:
+    detail_score = None
+    if isinstance(detail, dict):
+        try:
+            detail_score = float(detail.get("score"))
+        except (TypeError, ValueError):
+            detail_score = None
+    base = 0.55 + 0.5 * (float(size_mult) - 1.0)
+    if detail_score is None:
+        score_delta = 0.0
+    else:
+        score_delta = max(-1.0, min(1.0, detail_score))
+    probability = base + 0.08 * score_delta
+    return max(0.18, min(0.98, probability))
+
 def _as_bars(bars: Any) -> List[Dict[str, float]]:
     out = []
     if not bars: return out
@@ -372,11 +389,13 @@ class SessionOpenWorker:
             proj_allow, proj_mult, proj_detail = _projection_decision(ti["side"], pocket)
             if not proj_allow:
                 continue
+            entry_probability = _projection_probability(proj_mult, proj_detail)
+            ti["projection_probability"] = round(float(entry_probability), 3)
             if proj_detail:
                 ti.setdefault("meta", {})["projection"] = proj_detail
             intents.append(ti)
             if self.place_orders and self.b is not None:
-                order = self._mk_order(sym, ti, proj_mult)
+                order = self._mk_order(sym, ti, proj_mult, entry_probability)
                 if self.exit_mgr:
                     order = self.exit_mgr.attach(order)
                 self.b.send(order)
@@ -444,16 +463,28 @@ class SessionOpenWorker:
 
         return None
 
-    def _mk_order(self, sym: str, intent: Dict[str, Any], size_mult: float = 1.0) -> Dict[str, Any]:
+    def _mk_order(
+        self,
+        sym: str,
+        intent: Dict[str, Any],
+        size_mult: float = 1.0,
+        entry_probability: Optional[float] = None,
+    ) -> Dict[str, Any]:
         side = "buy" if intent["side"] == "long" else "sell"
         px = float(intent.get("px") or self.d.last(sym))
         size = max(0.0, float(self.c.get("budget_bps", 25)) / 10000.0)
         if size_mult > 1.0:
             size *= size_mult
-        return {
+
+        order = {
             "symbol": sym, "side": side, "type": "market", "size": size,
-            "meta": {"worker_id": self.c.get("id", "session_open_breakout"), "intent": intent}
+            "meta": {"worker_id": self.c.get("id", "session_open_breakout"), "intent": intent},
         }
+        if size > 0:
+            order["entry_units_intent"] = max(1, int(round(float(size) * 100000)))
+        if isinstance(entry_probability, (int, float)):
+            order["entry_probability"] = max(0.0, min(1.0, float(entry_probability)))
+        return order
 
 
 async def _idle_loop() -> None:

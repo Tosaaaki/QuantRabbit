@@ -134,3 +134,14 @@
 - 同コミットで `entry_probability` と `entry_units_intent` を付与したロジックは維持しつつ、`entry_thesis` の
   インデントを `WORKER_ROLE_MATRIX_V2.md` の責務定義に準拠する形へ整形。
 - `main` (`1b7f6c56`) を VM へ反映し、`quant-scalp-ping-5s.service` は `active (running)` を確認済み。
+
+### 2026-02-16（追記）session_openの意図受け渡しをaddon_live経路へ統一
+
+- `workers/session_open/worker.py`
+  - `projection_probability` を `entry_probability` として `order` へ付与。
+  - `size_mult` 由来の意図ロットを `entry_units_intent` として `order` へ付与。
+- `workers/common/addon_live.py`
+  - `order` から `entry_probability` / `entry_units_intent` を抽出し、`entry_thesis` に確実に反映するように統一。
+  - `intent` 側の同名値もフォールバックで受ける運用に変更。
+- `AGENTS.md` と `WORKER_ROLE_MATRIX_V2.md` 側の責務文言は、
+  `AddonLive` 経路でも `session_open` を含む各戦略で意図値を `entry_thesis` へ保持する運用へ揃えた。

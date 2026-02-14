@@ -420,6 +420,17 @@ class AddonLiveBroker:
             "hard_stop_pips": round(sl_pips, 3),
             "worker_id": self.worker_id,
         }
+        order_probability = order.get("entry_probability")
+        if isinstance(order_probability, (int, float)):
+            entry_thesis["entry_probability"] = max(0.0, min(1.0, float(order_probability)))
+        elif isinstance(intent.get("entry_probability"), (int, float)):
+            entry_thesis["entry_probability"] = max(0.0, min(1.0, float(intent.get("entry_probability"))))
+
+        entry_units_intent = order.get("entry_units_intent")
+        if entry_units_intent is None:
+            entry_units_intent = intent.get("entry_units_intent")
+        if isinstance(entry_units_intent, (int, float)) and float(entry_units_intent) >= 0:
+            entry_thesis["entry_units_intent"] = max(0, int(round(float(entry_units_intent))))
         if atr_pips > 0:
             entry_thesis["atr_pips"] = round(atr_pips, 3)
         if intent:

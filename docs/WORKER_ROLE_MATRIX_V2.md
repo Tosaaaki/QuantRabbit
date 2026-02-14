@@ -42,8 +42,9 @@
 - `quant-session-open` + `quant-session-open-exit`（該当期間のみ）
 - 補助戦略の追加は、ENTRY/EXIT を追加してから有効化
 - 共通ルール:
-  - 各戦略ENTRYは `entry_thesis` に `entry_probability` と `entry_units_intent` を必須で付与する。
+- 各戦略ENTRYは `entry_thesis` に `entry_probability` と `entry_units_intent` を必須で付与する。
   - `entry_probability` は戦略ローカルの「どれだけ入るべきか」判断、`entry_units_intent` は戦略ローカルの希望ロットを表す。
+  - `AddonLiveBroker` 経路（`session_open` など）でも上記2値を `entry_thesis` に渡し、order manager はそれを前提にガード/リスク判定のみを行う。
   - `order_manager` は strategy 側意図の受け取りとガード/リスク検査のみで、戦略横断の採点・再選別は行わない。
 
 ※ `quant-micro-adaptive-revert*` と `quant-impulse-retest-s5*` は V2再整備で VM から停止対象へ移行済み（legacy）。
