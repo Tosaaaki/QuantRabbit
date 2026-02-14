@@ -218,6 +218,15 @@
   - 追加: `ops/env/quant-position-manager.env`
   - 追加: `ops/env/quant-order-manager.env`
   - 更新: `systemd/quant-position-manager.service`
+
+### 2026-02-17（追記）order_manager 入力確率の欠損耐性を強化
+
+- `execution/order_manager.py` の `market_order` 入口で、`entry_probability` の正規化候補を拡張。
+- `entry_probability` が `None` / 非数値 / `NaN` / `Inf` いずれでも
+  `entry_thesis["confidence"]` / `confidence` 引数（優先順）を用いて補完し、意図値を欠損に依存させない実装を追加。
+- `entry_probability` が不正値でも有効な `confidence` があれば上書き補完する挙動に変更し、`entry_units_intent` 同様に
+  実行経路の安定性を維持。
+- 本変更は品質低下を避けるため、ロジック上の選別を追加せず、既存のガード/リスク条件の枠内でのみ運用される。
   - 更新: `systemd/quant-order-manager.service`
 - 両ワーカー側にも明示ガードを入れ、`execution/*_manager.py` の service-first 経路を有効化しつつ、
   各ワーカー実体が self-call（自分自身のHTTP経路を再コール）しない安全策を追加。
