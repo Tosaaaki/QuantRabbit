@@ -258,4 +258,11 @@
 - 対応として `scripts/install_trading_services.sh` の `enable_unit()` に
   `NO_BLOCK_START_UNITS` を追加し、`quant-strategy-optimizer.service` を
   `systemctl start --no-block` で起動要求するよう変更。
+
+### 2026-02-14（追記）本番トレード制御フラグ有効化
+
+- `ops/env/quant-v2-runtime.env` の `MAIN_TRADING_ENABLED` を `0` から `1` に変更し、
+  V2運用の「戦略ワーカー→order/position manager経路」実行を本番可で許可。
+- 併せて VM 運用環境の `ops/env/quant-v2-runtime.env` も同値で更新し、core 監査（`quant-v2-audit`）後に
+  リアルタイム取引許可状態の整合を確認。
 - このため `--all` 実行時の完了待機を回避しつつ、監査ジョブ（`quant-v2-audit`）の定期実行を維持。
