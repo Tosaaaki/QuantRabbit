@@ -62,6 +62,33 @@ ORDERBOOK_DEBUG_LOG_INTERVAL_SEC = max(
     1.0,
     _env_float("ORDERBOOK_DEBUG_LOG_INTERVAL_SEC", 30.0),
 )
+_HISTORY_RANGE_LIMIT = 5000
+
+
+def _utc_ensure(dt: datetime.datetime) -> datetime.datetime:
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=datetime.timezone.utc)
+    return dt.astimezone(datetime.timezone.utc)
+
+
+def _timeframe_step(tf: TimeFrame) -> datetime.timedelta:
+    if tf == "M1":
+        return datetime.timedelta(minutes=1)
+    if tf == "M5":
+        return datetime.timedelta(minutes=5)
+    if tf == "H1":
+        return datetime.timedelta(hours=1)
+    if tf == "H4":
+        return datetime.timedelta(hours=4)
+    if tf == "D1":
+        return datetime.timedelta(days=1)
+    raise ValueError(f"Unsupported timeframe: {tf}")
+
+
+def _oanda_time_param(ts: datetime.datetime | None) -> str | None:
+    if ts is None:
+        return None
+    return _utc_ensure(ts).isoformat()
 
 
 class CandleAggregator:
@@ -255,7 +282,7 @@ async def start_candle_stream(
 
 
 async def fetch_historical_candles(
-    instrument: str, granularity: TimeFrame, count: int
+    instrument: str, granularity: TimeFrame, count: int | None = None, *, from_time: datetime.datetime | None = None, to_time: datetime.datetime | None = None
 ) -> List[Candle]:
     """OANDA REST から過去ローソク足を取得する（失敗時は空配列）。"""
     url = f"{REST_HOST}/v3/instruments/{instrument}/candles"
@@ -263,7 +290,13 @@ async def fetch_historical_candles(
     gran = granularity
     if granularity == "D1":
         gran = "D"
-    params = {"granularity": gran, "count": count, "price": "M"}
+    params = {"granularity": gran, "price": "M", "includeInComplete": "false"}
+    if count is not None:
+        params["count"] = count
+    if from_time is not None:
+        params["from"] = _oanda_time_param(from_time)
+    if to_time is not None:
+        params["to"] = _oanda_time_param(to_time)
     try:
         async with httpx.AsyncClient() as client:
             r = await client.get(url, headers=HEADERS, params=params, timeout=7)
@@ -293,6 +326,25 @@ async def fetch_historical_candles(
     return out
 
 
+def _get_last_cached_candle_time(tf: TimeFrame) -> datetime.datetime | None:
+    try:
+        from indicators.factor_cache import get_candles_snapshot
+    except Exception:
+        return None
+    snapshot = get_candles_snapshot(tf, limit=1, include_live=False)
+    if not snapshot:
+        return None
+    ts_raw = snapshot[-1].get("timestamp")
+    if isinstance(ts_raw, datetime.datetime):
+        return _utc_ensure(ts_raw)
+    if isinstance(ts_raw, str):
+        try:
+            return _utc_ensure(_parse_time(ts_raw))
+        except Exception:
+            return None
+    return None
+
+
 async def initialize_history(instrument: str) -> bool:
     """起動時に過去ローソクを取得し factor_cache を埋める。
 
@@ -307,15 +359,41 @@ async def initialize_history(instrument: str) -> bool:
     seeded_all = True
     for tf in ("M1", "M5", "H1", "H4", "D1"):
         required = max(20, min_required.get(tf, 20))
+        from indicators.factor_cache import get_candles_snapshot
         attempts = 0
+        last_cached = _get_last_cached_candle_time(tf)
+        cached_count = 0
+        try:
+            cached_count = len(get_candles_snapshot(tf, include_live=False))
+        except Exception:
+            cached_count = 0
         while True:
             attempts += 1
-            candles = await fetch_historical_candles(instrument, tf, required)
-            if len(candles) >= 20:
+            now_utc = datetime.datetime.now(datetime.timezone.utc)
+            from_ts = None
+            if last_cached is not None:
+                from_ts = _utc_ensure(last_cached) + _timeframe_step(tf)
+                if from_ts > now_utc:
+                    candles = []
+                else:
+                    candles = await fetch_historical_candles(
+                        instrument,
+                        tf,
+                        _HISTORY_RANGE_LIMIT,
+                        from_time=from_ts,
+                        to_time=now_utc,
+                    )
+            else:
+                candles = await fetch_historical_candles(instrument, tf, required)
+
+            if last_cached is not None:
+                candles = [c for c in candles if c["time"] > last_cached]
+
+            if cached_count + len(candles) >= 20:
                 for c in candles:
                     await on_candle(tf, c)
                 logging.info(
-                    "[HISTORY] Seeded %s %s timeframe with %d candles (attempt %d).",
+                    "[HISTORY] Seeded %s %s timeframe with %d new candles (attempt %d).",
                     instrument,
                     tf,
                     len(candles),
@@ -324,7 +402,7 @@ async def initialize_history(instrument: str) -> bool:
                 break
 
             logging.warning(
-                "[HISTORY] Insufficient %s %s candles (got %d, need >=20) attempt %d/%d.",
+                "[HISTORY] Insufficient %s %s candles (got %d, need >=20 from cached) attempt %d/%d.",
                 instrument,
                 tf,
                 len(candles),

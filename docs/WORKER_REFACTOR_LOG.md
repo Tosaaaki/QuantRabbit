@@ -196,3 +196,13 @@
 - 修正: `execution/position_manager.py` の `_position_manager_service_call()` を `path == "/position/open_positions"` 時に
   `GET` + query params (`include_unknown`) へ分岐するよう変更し、サービス経路の整合を復旧。
 - 変更反映後、`quant-order-manager` を再起動して該当 405 検知率の改善を確認する。
+
+### 2026-02-14（追記）market-data-feed の履歴取得を差分化
+
+- `market_data/candle_fetcher.py`
+  - `fetch_historical_candles()` が `count` 取得時と同時に `from` / `to` 範囲取得（RFC3339）も扱えるように拡張。
+  - `initialize_history()` を「既存キャッシュ終端から次バー境界まで」を起点にした差分再取得へ変更。
+    - 既存 `factor_cache` の最終足時刻を参照し、その `+TF幅` から `now` までを取得。
+    - 取得時に重複時刻を除外して append し、既存件数に加えて 20本条件を満たせば成功扱い。
+  - 運用中再シード時に固定リトライで同一履歴を上書きし続ける問題を低減。
+- `WORKER_ROLE_MATRIX_V2.md` のデータ面に、シード時の差分補完方針（前回キャッシュ終端ベース）を追記。
