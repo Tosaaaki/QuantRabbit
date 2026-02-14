@@ -103,6 +103,7 @@ DEPLOY_ID="$DEPLOY_ID"
 REPO_DIR="$REPO_DIR"
 BRANCH="$BRANCH"
 SERVICE="$SERVICE"
+RUNTIME_ENV_FILE="\$REPO_DIR/ops/env/quant-v2-runtime.env"
 INSTALL_DEPS="$INSTALL_DEPS"
 RUN_REPORT="$RUN_REPORT"
 BUNDLE_GCS="$BUNDLE_GCS"
@@ -112,10 +113,10 @@ STAMP_FILE="\$STAMP_DIR/deploy_id"
 
 echo "[startup] deploy_id=\$DEPLOY_ID branch=\$BRANCH repo=\$REPO_DIR service=\$SERVICE"
 MARKER_BUCKET=""
-if [[ -f /etc/quantrabbit.env ]]; then
-  MARKER_BUCKET="\$(grep -E '^(GCS_UI_BUCKET|ui_bucket_name)=' /etc/quantrabbit.env | tail -n 1 | cut -d= -f2-)"
+if [[ -f "\$RUNTIME_ENV_FILE" ]]; then
+  MARKER_BUCKET="\$(grep -E '^(GCS_UI_BUCKET|ui_bucket_name)=' \"\$RUNTIME_ENV_FILE\" | tail -n 1 | cut -d= -f2-)"
   if [[ -z "\$MARKER_BUCKET" ]]; then
-    MARKER_BUCKET="\$(grep -E '^GCS_BACKUP_BUCKET=' /etc/quantrabbit.env | tail -n 1 | cut -d= -f2-)"
+    MARKER_BUCKET="\$(grep -E '^GCS_BACKUP_BUCKET=' \"\$RUNTIME_ENV_FILE\" | tail -n 1 | cut -d= -f2-)"
   fi
 fi
 if [[ -n "\$MARKER_BUCKET" ]] && command -v python3 >/dev/null 2>&1; then
@@ -182,17 +183,17 @@ if [[ -n "${ENV_OVERRIDES_CONTENT}" ]]; then
   cat > /tmp/qr_env_overrides <<EOF_OVR
 ${ENV_OVERRIDES_CONTENT}
 EOF_OVR
-  touch /etc/quantrabbit.env
-  cp /etc/quantrabbit.env "/etc/quantrabbit.env.bak.\$DEPLOY_ID" || true
+  touch "\$RUNTIME_ENV_FILE"
+  cp "\$RUNTIME_ENV_FILE" "\$RUNTIME_ENV_FILE.bak.\$DEPLOY_ID" || true
   while IFS= read -r line; do
     trimmed="\${line%%#*}"
     trimmed="\$(echo "\$trimmed" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
     [[ -z "\$trimmed" ]] && continue
     key="\${trimmed%%=*}"
-    if grep -q "^\\\${key}=" /etc/quantrabbit.env; then
-      sed -i "s|^\\\${key}=.*|\\\${trimmed}|" /etc/quantrabbit.env
+    if grep -q "^\\\${key}=" "\$RUNTIME_ENV_FILE"; then
+      sed -i "s|^\\\${key}=.*|\\\${trimmed}|" "\$RUNTIME_ENV_FILE"
     else
-      echo "\$trimmed" >> /etc/quantrabbit.env
+      echo "\$trimmed" >> "\$RUNTIME_ENV_FILE"
     fi
   done < /tmp/qr_env_overrides
 fi

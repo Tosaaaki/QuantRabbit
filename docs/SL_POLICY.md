@@ -50,8 +50,8 @@ LIMIT 30;
 
 ## 5. 障害時の切り分け
 - SL が付かない:
-  - `/etc/quantrabbit.env` に pocket 別 `ORDER_ENABLE_STOP_LOSS_*` と `ORDER_ALLOW_STOP_LOSS_WITH_EXIT_NO_NEGATIVE_CLOSE_*` があるか
-  - `systemctl show -p Environment quantrabbit.service`
+  - `ops/env/quant-v2-runtime.env` に pocket 別 `ORDER_ENABLE_STOP_LOSS_*` と `ORDER_ALLOW_STOP_LOSS_WITH_EXIT_NO_NEGATIVE_CLOSE_*` があるか
+  - `systemctl show -p Environment quant-order-manager.service`
   - `orders.db` の `submit_attempt` payload に `stopLossOnFill` があるか
 - SL が広すぎる:
   - `orders.db` での実送信 `stopLossOnFill` 価格と `TP` の乖離

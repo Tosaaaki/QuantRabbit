@@ -146,9 +146,9 @@ flowchart LR
   ```bash
   gcloud compute ssh fx-trader-vm --project=quantrabbit --zone=asia-northeast1-a --tunnel-through-iap --command "systemctl list-unit-files --type=service | grep -E 'quant-market-data-feed|quant-order-manager|quant-position-manager|quant-strategy-control|quant-scalp-.*|quant-micro-.*'"
   ```
-  - `/etc/quantrabbit.env` の監査キー
+  - runtime env `ops/env/quant-v2-runtime.env` の監査キー
   ```bash
-  gcloud compute ssh fx-trader-vm --project=quantrabbit --zone=asia-northeast1-a --tunnel-through-iap --command "for k in WORKER_ONLY_MODE MAIN_TRADING_ENABLED SIGNAL_GATE_ENABLED ORDER_FORWARD_TO_SIGNAL_GATE EXIT_MANAGER_DISABLED ORDER_MANAGER_SERVICE_ENABLED ORDER_MANAGER_SERVICE_FALLBACK_LOCAL POSITION_MANAGER_SERVICE_ENABLED POSITION_MANAGER_SERVICE_FALLBACK_LOCAL ORDER_PATTERN_GATE_ENABLED ORDER_PATTERN_GATE_GLOBAL_OPT_IN BRAIN_ENABLED ORDER_MANAGER_BRAIN_GATE_ENABLED ORDER_MANAGER_FORECAST_GATE_ENABLED POLICY_HEURISTIC_PERF_BLOCK_ENABLED ENTRY_GUARD_ENABLED ENTRY_TECH_ENABLED; do v=$(grep -E \"^${k}=\\\"?\" /etc/quantrabbit.env | head -n 1); echo \"${k}=${v:-<MISSING>}\"; done"
+  gcloud compute ssh fx-trader-vm --project=quantrabbit --zone=asia-northeast1-a --tunnel-through-iap --command "for k in WORKER_ONLY_MODE MAIN_TRADING_ENABLED SIGNAL_GATE_ENABLED ORDER_FORWARD_TO_SIGNAL_GATE EXIT_MANAGER_DISABLED ORDER_MANAGER_SERVICE_ENABLED ORDER_MANAGER_SERVICE_FALLBACK_LOCAL POSITION_MANAGER_SERVICE_ENABLED POSITION_MANAGER_SERVICE_FALLBACK_LOCAL ORDER_PATTERN_GATE_ENABLED ORDER_PATTERN_GATE_GLOBAL_OPT_IN BRAIN_ENABLED ORDER_MANAGER_BRAIN_GATE_ENABLED ORDER_MANAGER_FORECAST_GATE_ENABLED POLICY_HEURISTIC_PERF_BLOCK_ENABLED ENTRY_GUARD_ENABLED ENTRY_TECH_ENABLED; do v=$(grep -E \"^${k}=\\\"?\" /home/tossaki/QuantRabbit/ops/env/quant-v2-runtime.env | head -n 1); echo \"${k}=${v:-<MISSING>}\"; done"
   ```
   - 主要 unit の env/起動引数（照合）
   ```bash

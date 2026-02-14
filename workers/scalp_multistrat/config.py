@@ -11,7 +11,10 @@ def _load_env_file() -> dict:
     if _ENV_CACHE is not None:
         return _ENV_CACHE
     data: dict = {}
-    path = os.getenv("QUANTRABBIT_ENV_FILE", "/etc/quantrabbit.env")
+    path = os.getenv(
+        "QUANTRABBIT_ENV_FILE",
+        "/home/tossaki/QuantRabbit/ops/env/quant-v2-runtime.env",
+    )
     try:
         with open(path, "r", encoding="utf-8") as fh:
             for raw in fh:

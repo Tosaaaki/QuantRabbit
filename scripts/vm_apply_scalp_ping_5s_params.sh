@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Apply ad-hoc SCALP_PING_5S_* environment overrides to /etc/quantrabbit/scalp_ping_5s.env
+# Apply ad-hoc SCALP_PING_5S_* environment overrides to /home/tossaki/QuantRabbit/ops/env/scalp_ping_5s.env
 # on the VM and restart quant-scalp-ping-5s.service.
 #
 # Usage:

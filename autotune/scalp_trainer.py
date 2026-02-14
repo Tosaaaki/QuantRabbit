@@ -19,7 +19,9 @@ CONFIG_PATH = Path(_CONFIG_OVERRIDE) if _CONFIG_OVERRIDE else (RUNTIME_DIR / "sc
 TRADES_DB_PATH = REPO_ROOT / "logs" / "trades.db"
 ORDERS_DB_PATH = REPO_ROOT / "logs" / "orders.db"
 STATE_PATH = REPO_ROOT / "logs" / "tuning" / "scalp_autotune_state.json"
-ENV_FALLBACK_PATH = Path(os.getenv("QUANTRABBIT_ENV_FILE", "/etc/quantrabbit.env"))
+ENV_FALLBACK_PATH = Path(
+    os.getenv("QUANTRABBIT_ENV_FILE", "/home/tossaki/QuantRabbit/ops/env/quant-v2-runtime.env")
+)
 
 _ENV_CACHE: dict | None = None
 

@@ -19,7 +19,7 @@ USE_IAP=""
 KEYFILE=""
 ACCOUNT=""
 ENV_FILE="ops/env/scalp_ping_5s_entry_quality_on.env"
-TARGET_ENV_FILE="/etc/quantrabbit/scalp_ping_5s.env"
+TARGET_ENV_FILE="/home/tossaki/QuantRabbit/ops/env/scalp_ping_5s.env"
 SERVICE_NAME="quant-scalp-ping-5s.service"
 DRY_RUN=""
 

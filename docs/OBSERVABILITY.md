@@ -11,7 +11,7 @@
 - 運用上の指摘・報告・判断は必ず VM（ログ/DB/プロセス）または OANDA API を確認して行う。
 
 ## 3. ログ永続化とバックアップ
-- GCS 自動退避: `GCS_BACKUP_BUCKET` を `/etc/quantrabbit.env` に設定し、`/etc/cron.hourly/qr-gcs-backup-core` で毎時アップロード。
+- GCS 自動退避: `GCS_BACKUP_BUCKET` を `ops/env/quant-v2-runtime.env` に設定し、`/etc/cron.hourly/qr-gcs-backup-core` で毎時アップロード。
 - 保存先: `gs://$GCS_BACKUP_BUCKET/qr-logs/<hostname>/core_*.tar`
 
 ### Storage から読むとき（VM 上）

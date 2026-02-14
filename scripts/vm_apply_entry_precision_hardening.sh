@@ -71,18 +71,18 @@ sudo bash -lc '
 ${ENV_OVERRIDES_CONTENT}
 EOC
 
-  touch /etc/quantrabbit.env
-  cp /etc/quantrabbit.env "/etc/quantrabbit.env.bak.\$TS" || true
+  touch /home/tossaki/QuantRabbit/ops/env/quant-v2-runtime.env
+  cp /home/tossaki/QuantRabbit/ops/env/quant-v2-runtime.env "/home/tossaki/QuantRabbit/ops/env/quant-v2-runtime.env.bak.\$TS" || true
 
   while IFS= read -r line; do
     trimmed="\${line%%#*}"
     trimmed="\$(echo "\$trimmed" | sed -e "s/^[[:space:]]*//" -e "s/[[:space:]]*$//")"
     [[ -z "\$trimmed" ]] && continue
     key="\${trimmed%%=*}"
-    if grep -q "^\${key}=" /etc/quantrabbit.env; then
-      sed -i "s|^\${key}=.*|\${trimmed}|" /etc/quantrabbit.env
+    if grep -q "^\${key}=" /home/tossaki/QuantRabbit/ops/env/quant-v2-runtime.env; then
+      sed -i "s|^\${key}=.*|\${trimmed}|" /home/tossaki/QuantRabbit/ops/env/quant-v2-runtime.env
     else
-      echo "\$trimmed" >> /etc/quantrabbit.env
+      echo "\$trimmed" >> /home/tossaki/QuantRabbit/ops/env/quant-v2-runtime.env
     fi
   done < "\$TMP"
 
@@ -97,7 +97,7 @@ EOC
   echo "[OK] Applied env overrides from $ENV_FILE"
   echo "[OK] Active quant services restarted: \${#active_quant[@]}"
   echo "--- effective env keys ---"
-  grep -E "^(ENTRY_FACTOR_MAX_AGE_SEC|ENTRY_FACTOR_STALE_ALLOW_POCKETS|ORDER_ENTRY_QUALITY_MICROSTRUCTURE_ENABLED|ORDER_ENTRY_QUALITY_MICROSTRUCTURE_WINDOW_SEC|ORDER_ENTRY_QUALITY_MICROSTRUCTURE_MAX_AGE_MS|ORDER_ENTRY_QUALITY_MICROSTRUCTURE_MIN_SPAN_RATIO|ORDER_ENTRY_QUALITY_MICROSTRUCTURE_MIN_TICK_DENSITY_MICRO|ORDER_ENABLE_STOP_LOSS_(MICRO|SCALP|MACRO)|ORDER_ALLOW_STOP_LOSS_WITH_EXIT_NO_NEGATIVE_CLOSE_(MICRO|SCALP|MACRO)|M1SCALP_HTF_BLOCK_COUNTER|M1SCALP_COOLDOWN_SEC|MICRO_MULTI_MAX_SIGNALS_PER_CYCLE|MICRO_MULTI_STRATEGY_COOLDOWN_SEC|MICRO_MULTI_MAX_FACTOR_AGE_SEC|MICRO_MULTI_LOOP_INTERVAL_SEC|MICRO_MULTI_TREND_FLIP_STRATEGY_BLOCKLIST)=" /etc/quantrabbit.env || true
+  grep -E "^(ENTRY_FACTOR_MAX_AGE_SEC|ENTRY_FACTOR_STALE_ALLOW_POCKETS|ORDER_ENTRY_QUALITY_MICROSTRUCTURE_ENABLED|ORDER_ENTRY_QUALITY_MICROSTRUCTURE_WINDOW_SEC|ORDER_ENTRY_QUALITY_MICROSTRUCTURE_MAX_AGE_MS|ORDER_ENTRY_QUALITY_MICROSTRUCTURE_MIN_SPAN_RATIO|ORDER_ENTRY_QUALITY_MICROSTRUCTURE_MIN_TICK_DENSITY_MICRO|ORDER_ENABLE_STOP_LOSS_(MICRO|SCALP|MACRO)|ORDER_ALLOW_STOP_LOSS_WITH_EXIT_NO_NEGATIVE_CLOSE_(MICRO|SCALP|MACRO)|M1SCALP_HTF_BLOCK_COUNTER|M1SCALP_COOLDOWN_SEC|MICRO_MULTI_MAX_SIGNALS_PER_CYCLE|MICRO_MULTI_STRATEGY_COOLDOWN_SEC|MICRO_MULTI_MAX_FACTOR_AGE_SEC|MICRO_MULTI_LOOP_INTERVAL_SEC|MICRO_MULTI_TREND_FLIP_STRATEGY_BLOCKLIST)=" /home/tossaki/QuantRabbit/ops/env/quant-v2-runtime.env || true
 '
 EOF
 

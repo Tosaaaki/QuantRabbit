@@ -11,6 +11,8 @@ fi
 
 QR_USER="${QR_USER:-tossaki}"
 QR_HOME="/home/${QR_USER}"
+RUNTIME_ENV_FILE="${QR_HOME}/QuantRabbit/ops/env/quant-v2-runtime.env"
+export RUNTIME_ENV_FILE
 
 if ! id -u "$QR_USER" >/dev/null 2>&1; then
   useradd -m -s /bin/bash "$QR_USER"
@@ -39,7 +41,7 @@ sudo -u "$QR_USER" -H bash -lc "
   pip install -r requirements.txt
 "
 
-# Write environment variables from Google Secret Manager into /etc/quantrabbit.env
+# Write environment variables from Google Secret Manager into the V2 runtime env file.
 python3 - <<'PY'
 import os
 from google.cloud import secretmanager
@@ -66,7 +68,8 @@ pairs = {
     "OANDA_PRACTICE": read_secret("oanda_practice"),
 }
 
-with open("/etc/quantrabbit.env", "w") as fh:
+os.makedirs(os.path.dirname(os.environ["RUNTIME_ENV_FILE"]), exist_ok=True)
+with open(os.environ["RUNTIME_ENV_FILE"], "w") as fh:
     for key, value in pairs.items():
         if value:
             fh.write(f"{key}={value}\n")
@@ -76,6 +79,22 @@ with open("/etc/quantrabbit.env", "w") as fh:
     fh.write("MAIN_TRADING_ENABLED=0\n")
     fh.write("SIGNAL_GATE_ENABLED=0\n")
     fh.write("ORDER_FORWARD_TO_SIGNAL_GATE=0\n")
+    fh.write("EXIT_MANAGER_DISABLED=1\n")
+    fh.write("ORDER_PATTERN_GATE_GLOBAL_OPT_IN=0\n")
+    fh.write("ORDER_MANAGER_SERVICE_ENABLED=1\n")
+    fh.write("ORDER_MANAGER_SERVICE_URL=http://127.0.0.1:8300\n")
+    fh.write("ORDER_MANAGER_SERVICE_TIMEOUT=5.0\n")
+    fh.write("ORDER_MANAGER_SERVICE_FALLBACK_LOCAL=0\n")
+    fh.write("POSITION_MANAGER_SERVICE_ENABLED=1\n")
+    fh.write("POSITION_MANAGER_SERVICE_URL=http://127.0.0.1:8301\n")
+    fh.write("POSITION_MANAGER_SERVICE_TIMEOUT=5.0\n")
+    fh.write("POSITION_MANAGER_SERVICE_FALLBACK_LOCAL=0\n")
+    fh.write("BRAIN_ENABLED=0\n")
+    fh.write("ORDER_MANAGER_BRAIN_GATE_ENABLED=0\n")
+    fh.write("ORDER_MANAGER_FORECAST_GATE_ENABLED=0\n")
+    fh.write("POLICY_HEURISTIC_PERF_BLOCK_ENABLED=0\n")
+    fh.write("ENTRY_GUARD_ENABLED=0\n")
+    fh.write("ENTRY_TECH_ENABLED=0\n")
     fh.write("TUNER_ENABLE=1\n")
     fh.write("TUNER_SHADOW_MODE=true\n")
     fh.write("TUNER_INTERVAL_SEC=600\n")
@@ -85,9 +104,9 @@ PY
 
 sudo -u "$QR_USER" -H bash -lc "
   cd \"$QR_HOME/QuantRabbit\"
-  if [ -f /etc/quantrabbit.env ]; then
+  if [ -f \"${RUNTIME_ENV_FILE}\" ]; then
     set -a
-    . /etc/quantrabbit.env
+    . \"${RUNTIME_ENV_FILE}\"
     set +a
   fi
   if [ -x .venv/bin/python ]; then

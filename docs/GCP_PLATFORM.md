@@ -20,12 +20,12 @@
 - OS Login 鍵: `scripts/gcloud_doctor.sh -S -G` で鍵生成/登録（TTL 30d）
 - ブートストラップ手段
   - Terraform: `infra/terraform/main.tf`（metadata startup script が repo clone + venv 構築。`analysis/gpt_decider.py` / `indicators/calc_core.py` を上書きするため事前確認）
-  - 単体VM: `startup_script.sh`（Secret Manager から `/etc/quantrabbit.env` を生成、OANDA 欠損時は `MOCK_TICK_STREAM=1` を付与して `quantrabbit.service` を起動）
+  - 単体VM: `startup_script.sh`（Secret Manager から `/home/tossaki/QuantRabbit/ops/env/quant-v2-runtime.env` を生成、OANDA 欠損時は `MOCK_TICK_STREAM=1` を付与して `quantrabbit.service` を起動）
   - 手動: `docs/VM_BOOTSTRAP.md` を参照
 - Cloud Logging 連携: `startup_script.sh` が Ops Agent 用の `config.yaml` を書き出す（エージェント導入済みの場合に有効）
 
 ## 2. VM サービス/環境ファイル
-- main systemd: `ops/systemd/quantrabbit.service`（`EnvironmentFile=/etc/quantrabbit.env`）
+- main systemd: `ops/systemd/quantrabbit.service`（`EnvironmentFile=/home/tossaki/QuantRabbit/ops/env/quant-v2-runtime.env`）
 - ワーカー/タイマー: `systemd/*.service` / `systemd/*.timer`（cleanup/autotune/level-map/各戦略）
 - まとめて導入: `scripts/install_trading_services.sh --all`
 - 個別導入: `scripts/install_trading_services.sh --units <unit>`
@@ -33,9 +33,9 @@
 - `systemd/quant-autotune.service` は `AUTOTUNE_BQ_TABLE`/`AUTOTUNE_BQ_SETTINGS_TABLE` が固定値のため環境ごとに上書き
 - `systemd/quant-autotune-ui.service` は 8088/TCP で待受け。外部公開する場合は FW/IAP 前提で設計
 - `systemd/*.service` / `ops/systemd/quantrabbit.service` は `User=tossaki` と `/home/tossaki/QuantRabbit` 前提のため、VM ユーザが異なる場合は編集する
-- `/etc/quantrabbit.env` と `config/env.toml` は内容を一致させる（systemd とアプリの参照元が異なる）
+- `ops/env/quant-v2-runtime.env` と `config/env.toml` は内容を一致させる（systemd とアプリの参照元が異なる）
 - `scripts/vm.sh` を使う場合は `scripts/vm.env` に PROJECT/ZONE/INSTANCE を固定
-- `startup_script.sh` は OANDA の最小キーと `TUNER_*` を `/etc/quantrabbit.env` に固定で書き込むため、GCS/BQ/リスク系は手動追記が必要
+- `startup_script.sh` は OANDA の最小キーと `TUNER_*` を `ops/env/quant-v2-runtime.env` に固定で書き込むため、GCS/BQ/リスク系は手動追記が必要
 
 ### VM 内ブートストラップ（最小）
 ```bash
@@ -57,7 +57,7 @@ sudo -u <user> -H bash -lc '
 - `gcp_project_id`, `gcp_location`, `GCS_BACKUP_BUCKET`, `ui_bucket_name`, `BQ_PROJECT/BQ_DATASET/BQ_TRADES_TABLE`, `oanda_account_id`, `oanda_token`, `oanda_practice`
 
 ## 3. 運用負荷ゼロ化（systemd mask）
-- 目的: 不要戦略ユニットの誤起動を完全に遮断する（`/etc/quantrabbit.env` の誤設定でも起動しない）。
+- 目的: 不要戦略ユニットの誤起動を完全に遮断する（`ops/env/quant-v2-runtime.env` の誤設定でも起動しない）。
 - 方針: 対象ユニットを `/dev/null` へ symlink して mask。バックアップは `/etc/systemd/system/qr_mask_backup_<UTC timestamp>/` に保存。
 - 解除: `sudo systemctl unmask <unit>` → `sudo systemctl daemon-reload`。
 
@@ -87,7 +87,7 @@ sudo systemctl daemon-reload
 - `gsutil` がない場合は GCS アップロードがスキップされる（バックアップ/エクスカーション）
 
 ## 5. BigQuery / Firestore / UI
-- BigQuery 環境変数（`/etc/quantrabbit.env` 側で指定）
+- BigQuery 環境変数（`ops/env/quant-v2-runtime.env` 側で指定）
   - 必須: `BQ_PROJECT`（未設定時は `GOOGLE_CLOUD_PROJECT`）, `BQ_DATASET`, `BQ_TRADES_TABLE`, `BQ_LOCATION`
   - 任意: `BQ_MAX_EXPORT`, `BQ_CANDLES_TABLE`, `BQ_REALTIME_METRICS_TABLE`, `BQ_RECOMMENDATION_TABLE`, `BQ_STRATEGY_MODEL`
 - BQ ML を使う場合は `CREATE MODEL` 権限が必要（`analytics/strategy_optimizer_job.py`）

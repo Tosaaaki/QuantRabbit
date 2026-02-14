@@ -145,3 +145,13 @@
   - `intent` 側の同名値もフォールバックで受ける運用に変更。
 - `AGENTS.md` と `WORKER_ROLE_MATRIX_V2.md` 側の責務文言は、
   `AddonLive` 経路でも `session_open` を含む各戦略で意図値を `entry_thesis` へ保持する運用へ揃えた。
+
+### 2026-02-16（追記）runtime env 参照の `ops/env/quant-v2-runtime.env` へ移行
+
+- `systemd/*.service` の `EnvironmentFile` を `ops/env/quant-v2-runtime.env` に統一。
+- `quant-v2-runtime.env` へ V2に必要なキーのみを収束（OANDA, V2ガード制御, order/position service, pattern/brain/forecast gate, tuner）。
+- scalp系調整系スクリプト（`vm_apply_scalp_ping_5s_*`）の環境適用先を
+  `ops/env/scalp_ping_5s.env` 系へ移行。
+- `startup_script.sh` と `scripts/deploy_via_metadata.sh`/`scripts/vm_apply_entry_precision_hardening.sh` で
+  legacy 環境ファイル依存を撤去し、`ops/env/quant-v2-runtime.env` をデフォルト注入先に変更。
+- 併せて AGENTS/VM/GCP/監査ドキュメントの監査対象コマンドを新環境ファイル参照へ更新。

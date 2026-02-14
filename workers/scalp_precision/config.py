@@ -37,7 +37,8 @@ MAX_SPREAD_PIPS = float(os.getenv("SCALP_PRECISION_MAX_SPREAD_PIPS", "1.2"))
 MAX_SIGNALS_PER_CYCLE = int(float(os.getenv("SCALP_PRECISION_MAX_SIGNALS_PER_CYCLE", "1")))
 
 MODE = os.getenv("SCALP_PRECISION_MODE", "spread_revert").strip().lower()
-# /etc/quantrabbit.env may define a global allowlist shared by multiple units. Prefer an explicit
+# /home/tossaki/QuantRabbit/ops/env/quant-v2-runtime.env may define a global allowlist shared by
+# multiple units. Prefer an explicit
 # per-unit override when present so a single-strategy unit can run a new mode without editing
 # the global env file.
 ALLOWLIST_RAW = os.getenv("SCALP_PRECISION_UNIT_ALLOWLIST", os.getenv("SCALP_PRECISION_ALLOWLIST", "")).strip()

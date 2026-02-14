@@ -73,13 +73,13 @@ run_vm() {
 read -r -d '' REMOTE <<EOF || true
 set -euo pipefail
 TS=\$(date -u +%Y%m%dT%H%M%SZ)
-TARGET=/etc/quantrabbit/scalp_ping_5s.env
+TARGET=/home/tossaki/QuantRabbit/ops/env/scalp_ping_5s.env
 TMP=\$(mktemp /tmp/qr_scalp_ping_5s_tuning.XXXXXX).env
 cat > "\$TMP" <<'EOC'
 ${ENV_OVERRIDES_CONTENT}
 EOC
 
-sudo mkdir -p /etc/quantrabbit
+sudo mkdir -p /home/tossaki/QuantRabbit/ops/env
 sudo touch "\$TARGET"
 sudo cp "\$TARGET" "\${TARGET}.bak.\$TS" || true
 
@@ -126,11 +126,11 @@ apply_local() {
   read -r -d '' cmd <<EOF || true
 set -euo pipefail
 TS=\$(date -u +%Y%m%dT%H%M%SZ)
-TARGET=/etc/quantrabbit/scalp_ping_5s.env
+TARGET=/home/tossaki/QuantRabbit/ops/env/scalp_ping_5s.env
 TMP=\$(mktemp /tmp/qr_scalp_ping_5s_tuning.XXXXXX).env
 cp "$tmp" "\$TMP"
 
-sudo mkdir -p /etc/quantrabbit
+sudo mkdir -p /home/tossaki/QuantRabbit/ops/env
 sudo touch "\$TARGET"
 sudo cp "\$TARGET" "\${TARGET}.bak.\$TS" || true
 

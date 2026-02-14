@@ -210,6 +210,6 @@ DB:
 - 適用コマンド:
   - `bash scripts/vm_apply_scalp_ping_5s_rapid_mode.sh -p quantrabbit -z asia-northeast1-a -m fx-trader-vm -t --mode base|safe|auto [--window-min 15]`
 - VM反映確認:
-  - `/etc/quantrabbit/scalp_ping_5s.env` の `SCALP_PING_5S_RAPID_MODE`
+  - `/home/tossaki/QuantRabbit/ops/env/scalp_ping_5s.env` の `SCALP_PING_5S_RAPID_MODE`
   - 上記コアキー（`SCALP_PING_5S_USE_SL` 等）が意図どおり入替わっていること
 - 重要: 既存ポジションの即時終了は本仕様には含めない（既存ポジ維持前提）。ただし SAFE/BASE 変更の副作用は新規エントリーの抑制・許可条件に反映される。

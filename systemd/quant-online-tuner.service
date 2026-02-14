@@ -5,7 +5,7 @@ After=network.target
 [Service]
 Type=oneshot
 WorkingDirectory=/home/tossaki/QuantRabbit
-EnvironmentFile=-/etc/quantrabbit.env
+EnvironmentFile=-/home/tossaki/QuantRabbit/ops/env/quant-v2-runtime.env
 Environment="PYTHONUNBUFFERED=1"
 ExecStart=/bin/bash /home/tossaki/QuantRabbit/scripts/run_online_tuner_live.sh
 User=tossaki

@@ -25,10 +25,10 @@
 運用で必要なら追加:
 - `gcp_project_id`, `ui_bucket_name`, `GCS_BACKUP_BUCKET`, `BQ_PROJECT`, `BQ_DATASET`, `BQ_TRADES_TABLE`
 
-`startup_script.sh` は `/etc/quantrabbit.env` を作成し、`scripts/refresh_env_from_gcp.py` で `config/env.toml` も同期します。
+`startup_script.sh` は `/home/tossaki/QuantRabbit/ops/env/quant-v2-runtime.env` を作成し、`scripts/refresh_env_from_gcp.py` で `config/env.toml` も同期します。
 
 ### B. Secret Manager を使わない場合
-`/etc/quantrabbit.env` に最低限を手で書く（または `deploy_via_metadata.sh -e` で注入）:
+`ops/env/quant-v2-runtime.env` に最低限を手で書く（または `deploy_via_metadata.sh -e` で注入）:
 
 ```bash
 OANDA_TOKEN=...
@@ -77,7 +77,7 @@ sudo systemctl status quantrabbit.service
 journalctl -u quantrabbit.service -n 200 --no-pager
 ```
 
-`/etc/quantrabbit.env` と `config/env.toml` が一致していることを確認。
+`ops/env/quant-v2-runtime.env` と `config/env.toml` が一致していることを確認。
 
 ## 5) デプロイ / 運用開始
 ```bash

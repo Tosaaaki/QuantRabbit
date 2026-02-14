@@ -45,8 +45,8 @@ Environment=SCALP_PING_5S_TRAP_MIN_SHORT_UNITS=8000
 Environment=SCALP_PING_5S_TRAP_MAX_NET_RATIO=0.45
 Environment=SCALP_PING_5S_TRAP_MIN_COMBINED_DD_PIPS=0.8
 # Base env + per-strategy overrides.
-EnvironmentFile=-/etc/quantrabbit.env
-EnvironmentFile=-/etc/quantrabbit/scalp_ping_5s.env
+EnvironmentFile=-/home/tossaki/QuantRabbit/ops/env/quant-v2-runtime.env
+EnvironmentFile=-/home/tossaki/QuantRabbit/ops/env/scalp_ping_5s.env
 # Keep entry capacity stable even when /etc env contains legacy duplicate keys.
 Environment=SCALP_PING_5S_MAX_ACTIVE_TRADES=40
 Environment=SCALP_PING_5S_MAX_PER_DIRECTION=24

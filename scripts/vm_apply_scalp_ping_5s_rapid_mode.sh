@@ -176,9 +176,9 @@ get_env_value() {
 
 get_current_mode() {
   if [[ -n "${LOCAL_MODE:-}" && "$LOCAL_MODE" == "1" ]]; then
-    grep -E '^SCALP_PING_5S_RAPID_MODE=' /etc/quantrabbit/scalp_ping_5s.env 2>/dev/null | sed -n '1p' | cut -d= -f2 || true
+    grep -E '^SCALP_PING_5S_RAPID_MODE=' /home/tossaki/QuantRabbit/ops/env/scalp_ping_5s.env 2>/dev/null | sed -n '1p' | cut -d= -f2 || true
   else
-    run_vm exec -- "grep -E '^SCALP_PING_5S_RAPID_MODE=' /etc/quantrabbit/scalp_ping_5s.env 2>/dev/null | sed -n '1p' | cut -d= -f2"
+    run_vm exec -- "grep -E '^SCALP_PING_5S_RAPID_MODE=' /home/tossaki/QuantRabbit/ops/env/scalp_ping_5s.env 2>/dev/null | sed -n '1p' | cut -d= -f2"
   fi
 }
 
