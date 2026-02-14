@@ -39,10 +39,10 @@
 - `quant-scalp-wick-reversal-pro` + `quant-scalp-wick-reversal-pro-exit`
 - `quant-m1scalper` + `quant-m1scalper-exit`
 - `quant-micro-multi` + `quant-micro-multi-exit`
-- `quant-micro-adaptive-revert` + `quant-micro-adaptive-revert-exit`
-- `quant-impulse-retest-s5` + `quant-impulse-retest-s5-exit`
 - `quant-session-open` + `quant-session-open-exit`（該当期間のみ）
 - 補助戦略の追加は、ENTRY/EXIT を追加してから有効化
+
+※ `quant-micro-adaptive-revert*` と `quant-impulse-retest-s5*` は V2再整備で VM から停止対象へ移行済み（legacy）。
 
 ### 4) オーダー面（分離済み）
 
@@ -66,7 +66,7 @@
 3. `quantrabbit.service` の本番起動を許可しないこと
 4. `main.py` を systemd 本番エントリとして扱わないこと
 
-## 現在の状態（2026-02-14 時点）
+## 現在の状態（2026-02-16 時点）
 
 - この図は V2 運用で構成が変わるたびに更新する（組織図更新の必須運用）。  
   `docs/WORKER_REFACTOR_LOG.md` と同一コミットで差分が並走すること。
@@ -81,6 +81,9 @@
   - `execution/order_manager.py`, `execution/position_manager.py` の service-first 経路化
   - API 契約（/order/*, /position/*）を基準化
   - 注記: 直近の運用レビューでは、データ記録系 DB と分析系成果物の更新は確認済み（VM側状態監査前提）。
+- 運用整備（2026-02-16）
+  - VM側で `quantrabbit.service` を除去し、レガシー戦略・補助ユニット（`quant-impulse-retest-s5*`, `quant-micro-adaptive-revert*`, `quant-trend-reclaim-long*`, `quant-margin-relief-exit*`, `quant-hard-stop-backfill*`, `quant-realtime-metrics*`, precision 系）を停止・無効化。
+  - `systemctl list-unit-files --state=enabled --all` で V2実行群（`market-data-feed`, `strategy-control`, 各ENTRY/EXIT, `order-manager`, `position-manager`）のみが実行系として起動対象であることを確認。
 
 ## 監査用更新プロトコル（毎回）
 

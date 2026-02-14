@@ -93,3 +93,17 @@
 - `docs/WORKER_ROLE_MATRIX_V2.md` の「現在の状態」「図」「運用制約」を、V2構成変更時に毎回更新する運用ルールを明文化。
 - WORKER関連の変更点は、`WORKER_REFACTOR_LOG` と `WORKER_ROLE_MATRIX_V2` を同一コミットで同期更新する運用を追加。
 - `main` 反映後の VM 監査時に、構成図と実サービス状態の齟齬がないかを確認する（監査ログの追記対象）。
+
+## 2026-02-16 VM再投入後整備（V2固定）
+
+- `fx-trader-vm` で再監査し、V2外のレガシー戦略・monolithic系ユニットを停止/無効化しました。対象:
+  - `quantrabbit.service`
+  - `quant-impulse-retest-s5*`
+  - `quant-hard-stop-backfill.service`
+  - `quant-margin-relief-exit*`
+  - `quant-trend-reclaim-long*`
+  - `quant-micro-adaptive-revert*`
+  - `quant-scalp-precision-*`（旧系）
+  - `quant-realtime-metrics.service/timer`（分析補助タイマーも除外）
+- VM上の V2実行群は `quant-market-data-feed` / `quant-strategy-control` / 各ENTRY-EXITペア + `quant-order-manager` / `quant-position-manager` のみ有効稼働を維持。
+- `systemctl list-unit-files --state=enabled --all` / `systemctl list-units --state=active` で再確認済み。
