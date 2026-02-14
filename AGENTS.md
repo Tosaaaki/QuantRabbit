@@ -19,16 +19,18 @@
 - Brainゲート: `workers/common/brain.py` を `execution/order_manager.py` の preflight に適用し、**許可/縮小/拒否**を返す（default: disabled）。
 - Brain 有効化は `BRAIN_ENABLED=1` と Vertex 認証（`VERTEX_PROJECT_ID` / `VERTEX_LOCATION` 等）が必須。
 - 現行デフォルト: `WORKER_ONLY_MODE=true` / `MAIN_TRADING_ENABLED=0`。共通 `exit_manager` はスタブ化され、エントリー/EXIT は各戦略ワーカー＋専用 `exit_worker` が担当。
+- **後付けの一律EXIT判定は作らない**。exit判断は各戦略ワーカー/専用 `exit_worker` のみが行う。`quant-strategy-control` は `entry/exit/global_lock` のガードのみで、全戦略に対する共通ロジックの事後的拒否/抑止を追加しない。
 - 発注経路はワーカーが直接 OANDA に送信するのが既定（`SIGNAL_GATE_ENABLED=0` / `ORDER_FORWARD_TO_SIGNAL_GATE=0`）。共通ゲートを使う場合のみ両フラグを 1 にする。
 - 共通エントリー/テックゲート（`entry_guard` / `entry_tech`）は廃止・使用禁止。
 - 型ゲート（Pattern Gate）は `workers/common/pattern_gate.py` を `execution/order_manager.py` preflight に適用する。**ただし全戦略一律強制はしない**（デフォルトは戦略ワーカーの opt-in）。
 - 運用方針は「全て動的トレード」。静的な固定パラメータに依存せず、戦略ごとのローカル判定とリスク制御で都度更新する。
 - **重要**: 本番稼働は VM。運用上の指摘・報告・判断は必ず VM（ログ/DB/プロセス）または OANDA API を確認して行い、ローカルの `logs/*.db` やスナップショット/コード差分だけで断定しない。
 - 変更は必ず `git commit` → `git push` → VM 反映（`scripts/vm.sh ... deploy -i -t` 推奨）で行う。未コミット状態やローカル差し替えでの運用は不可。
+- 変更点は必ず AGENTS と実装仕様側へ同時記録すること。少なくとも `docs/WORKER_REFACTOR_LOG.md` と関連仕様（`docs/WORKER_ROLE_MATRIX_V2.md`/`docs/ARCHITECTURE.md` 等）へ追記し、追跡可能な監査ログを残す。
 - 並行作業により「エージェントが触っていない未コミット差分」が作業ツリーに残っていることがある。その場合でも **自分が変更したファイルだけ** をステージして commit/push→VM反映すればよい（他の差分は混ぜない・勝手に戻さない）。
 - **本番ブランチ運用**: 本番 VM は原則 `main` のみを稼働ブランチにする。`codex/*` など作業ブランチを本番常駐させない。
-- **本番反映の固定手順**: `main` へ統合（merge/rebase）→ `git push origin main` → `scripts/vm.sh ... deploy -b main -i --restart quantrabbit.service -t` を必須化する（`pull` のみ禁止）。
-- **反映確認の必須チェック**: デプロイ後に VM で `git rev-parse HEAD` と `git rev-parse origin/main` の一致を確認し、さらに `journalctl -u quantrabbit.service` の最新 `Application started!` がデプロイ後であることを確認する。`git pull` 後に再起動が無い場合は「未反映」と見なす。
+- **本番反映の固定手順**: `main` へ統合（merge/rebase）→ `git push origin main` → `scripts/vm.sh ... deploy -b main -i --restart <target-unit> -t` を必須化する。`<target-unit>` は起動中の systemd ユニット（最低でもデータ/制御を含む `quant-market-data-feed.service` 等）を明示する（`pull` のみ禁止）。
+- **反映確認の必須チェック**: デプロイ後に VM で `git rev-parse HEAD` と `git rev-parse origin/main` の一致を確認し、対象ユニットの `journalctl -u <target-unit>` で直近 `Application started!` がデプロイ後であることを確認する。`git pull` 後に再起動が無い場合は「未反映」と見なす。
 - VM 削除禁止。再起動やブランチ切替で代替し、`gcloud compute instances delete` 等には触れない。
 
 ## 3. 時限情報（必ず最新を参照）
@@ -48,42 +50,49 @@
 - `docs/KATA_PROGRESS.md`: 型（Kata）の進捗ログ（VMスナップショット/展開計画）。
 - `docs/WORKER_REFACTOR_LOG.md`: ワーカー再編（データ供給・制御・ENTRY/EXIT分離）の確定記録。
 
-## 5. ワーカー再編（最終仕様）
+## 5. ワーカー再編（V2）—役割を完全分離
 
 ### 方針（固定）
-- データ取得系は `quant-market-data-feed` に一本化。  
-  (`OANDA tick` → `tick_window` / `factor_cache` 更新)
-- 制御系は `quant-strategy-control` に一本化。  
-  (`entry/exit` 許可、`global_lock` の配信)
-戦略は「ENTRY/EXITを1:1」分離。`precision` 系サービス名は撤廃。
-- 補助的運用ワーカー群（`quant-hard-stop-backfill`, `quant-realtime-metrics`,  
-  `quant-hedge-balancer*`, `quant-trend-reclaim-long*`, `quant-margin-relief-exit`）を除外。
+- 詳細は `docs/WORKER_ROLE_MATRIX_V2.md`（最上位フロー図・運用制約）を正規版として参照。
 
-#### 役割分担（固定）
+- **データ面**: OANDA から tick/足を受けるのは `quant-market-data-feed` のみ。`tick_window` と `factor_cache` を更新することを唯一の責務とする。
+- **制御面**: `quant-strategy-control` のみが `entry/exit/global_lock` を持つ。  
+  各戦略ワーカーは自分の `ENTRY/EXIT` の判定にこれを参照する。
+- **戦略面**: 各戦略は必ず `ENTRY ワーカー` と `EXIT ワーカー` を `1:1` で運用。  
+  `strategy module が複数戦略を内部に持つ` 形は不可。
+- **オーダー面**: `execution/order_manager.py` の処理は **新規ワーカー分離対象**。  
+  `quant-order-manager` へ移設済み。戦略群は本ワーカーを介してのみ注文実行を実施する。
+- **ポジ面**: `execution/position_manager.py` も **新規ワーカー分離対象**。  
+  `quant-position-manager` へ移設済み。戦略群は本ワーカーを介してのみ保有状態を参照する。
+- **分析・監視面**: `quant-pattern-book`, `quant-range-metrics`, `quant-dynamic-alloc`,
+  `quant-ops-policy` 等は「データ分析/状態分析」ロールに固定し、戦略実行ロジックへ混在させない。
 
-- データ面: `quant-market-data-feed`  
-  - OANDA から tick/candle を取得し、`tick_window` と `factor_cache` を更新
-- 制御面: `quant-strategy-control`  
-  - `global` フラグ（Entry/Exit/Lock）と各戦略フラグの配信
-- 戦略面: 各戦略は Entry ワーカー + Exit ワーカーを 1:1 で独立稼働  
-  - `quant-scalp-ping-5s` / `quant-scalp-ping-5s-exit`
-  - `quant-scalp-macd-rsi-div` / `quant-scalp-macd-rsi-div-exit`
-  - `quant-scalp-tick-imbalance` / `quant-scalp-tick-imbalance-exit`
-  - `quant-scalp-squeeze-pulse-break` / `quant-scalp-squeeze-pulse-break-exit`
-  - `quant-scalp-wick-reversal-blend` / `quant-scalp-wick-reversal-blend-exit`
-  - `quant-scalp-wick-reversal-pro` / `quant-scalp-wick-reversal-pro-exit`
-- UI/運用: `apps/autotune_ui.py` の「Ops」タブから `strategy_control` の
-  `entry/exit/lock` を戦略別に追加・更新可能
+### V2 で保有すべき固定サービス群（実行時）
+- `quant-market-data-feed`
+- `quant-strategy-control`
+- `quant-order-manager`
+- `quant-position-manager`
+- 戦略 ENTRY/EXIT 一対一サービス（scalp / micro / s5）
+- 補助: `quant-pattern-book`, `quant-range-metrics`, `quant-ops-policy`, `quant-dynamic-alloc`, `quant-policy-guard`
+
+### V2 移行目標（debt）
+- `quantrabbit.service`（monolithicエントリ）を廃止。`main.py` は開発・分析用途としてのみ扱い、本番起動用 unit から外す。
+- オーダー処理とポジ管理は `V2` で「別サービス化」済み。
 
 ```mermaid
 flowchart LR
-    A[OANDA API] --> B["quant-market-data-feed"]
-    B --> C["tick_window"]
-    B --> D["factor_cache"]
-    C --> E["strategy workers"]
-    D --> E
-    F["quant-strategy-control"] --> E
-    E --> G["orders"]
+  Tick[OANDA Tick/Candle] --> MF["quant-market-data-feed"]
+  MF --> TW["tick_window"]
+  MF --> FC["factor_cache"]
+  FC --> SW["strategy workers (ENTRY)"]
+  TW --> SW
+  SC["quant-strategy-control"] --> SW
+  SC --> EW["strategy workers (EXIT)"]
+  SW --> OM["quant-order-manager"]
+  OM --> OANDA[OANDA Order API]
+  PM["quant-position-manager"] --> EW
+  PM --> PMDB[(trades.db / positions)]
+  AF["analysis services"] --> SW
 ```
 
 ## 6. チーム / タスク運用ルール（要点）
