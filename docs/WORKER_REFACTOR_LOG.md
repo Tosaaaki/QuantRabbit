@@ -187,3 +187,12 @@
 - `quant-scalp-ping-5s` 系は既存の戦略上書きenv（`scalp_ping_5s.env`, `scalp_ping_5s_b.env`）を維持し、`ops/env/quant-scalp-ping-5s*.env` を基本設定用として分離。
 - `AGENTS.md` と `WORKER_ROLE_MATRIX_V2.md` を同一コミットで更新し、監査時に `EnvironmentFile` の二段構造
   (`quant-v2-runtime.env` + `quant-<service>.env`) をチェック対象化。
+
+### 2026-02-17（追記）position_manager 呼び出しのHTTPメソッド齟齬解消
+
+- VM監査で `quant-position-manager` 側の `POST /position/open_positions` が `405` となるログを確認。
+- 原因は `execution/position_manager.py` の `open_positions` 呼び出しが固定 `POST` だったため、ワーカー定義
+  (`workers/position_manager/worker.py`) が `GET /position/open_positions` を公開していることとの不一致。
+- 修正: `execution/position_manager.py` の `_position_manager_service_call()` を `path == "/position/open_positions"` 時に
+  `GET` + query params (`include_unknown`) へ分岐するよう変更し、サービス経路の整合を復旧。
+- 変更反映後、`quant-order-manager` を再起動して該当 405 検知率の改善を確認する。

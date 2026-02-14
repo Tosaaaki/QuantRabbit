@@ -258,12 +258,20 @@ def _extract_service_payload(path: str, payload: object) -> object:
 
 def _position_manager_service_call(path: str, payload: dict) -> object:
     url = _position_manager_service_url(path)
-    response = requests.post(
-        url,
-        json=_normalize_for_json(payload),
-        timeout=float(_POSITION_MANAGER_SERVICE_TIMEOUT),
-        headers={"Content-Type": "application/json"},
-    )
+    normalized_payload = _normalize_for_json(payload)
+    if path == "/position/open_positions":
+        response = requests.get(
+            url,
+            params=normalized_payload,
+            timeout=float(_POSITION_MANAGER_SERVICE_TIMEOUT),
+        )
+    else:
+        response = requests.post(
+            url,
+            json=normalized_payload,
+            timeout=float(_POSITION_MANAGER_SERVICE_TIMEOUT),
+            headers={"Content-Type": "application/json"},
+        )
     response.raise_for_status()
     body = response.json()
     if isinstance(body, dict):
