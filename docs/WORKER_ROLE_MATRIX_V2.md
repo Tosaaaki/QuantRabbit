@@ -50,7 +50,65 @@
   - 補足: `execution/order_manager.py` 側で `market_order()` / `limit_order()` 呼び出し時に当該2値の欠落補完を行うフェールセーフは実装済み。通常は戦略側での注入を優先し、欠損時のみ補完。
 - 各戦略ENTRYでは `entry_thesis["technical_context"]` を保持し、`N波` `フィボ` `ローソク` などの技術的判定を
   `analysis.technique_engine.evaluate_entry_techniques` 経由で算出して保持する。  
-  本要件は `execution/strategy_entry.py` に集約し、order-manager では結果を上書きしない。
+- 併せて、各戦略の意図保存に対応する技術断面（`entry_price` を含む場合は判定結果、同時に各TF指標）を
+  `entry_thesis["technical_context"]` に集約して保持する。  
+- 技術判定の扱いは `ENTRY_TECH_CONTEXT_GATE_MODE`（`off`/`soft`/`hard`）で統一。  
+  - `off`: 技術結果は記録のみ（現在既定）。  
+  - `soft`: 判定失敗時もエントリーは継続（fail-open）。  
+  - `hard`: 判定失敗時は `strategy_entry` でその戦略の送出を止める。  
+- 補足（技術要件契約）:
+  - 技術要件は `execution/strategy_entry.py` の契約辞書で戦略タグ単位に定義し、`entry_thesis` 未指定項目を自動補完する。
+  - `entry_thesis["technical_context_tfs"]` / `technical_context_fields` / `technical_context_ticks` / `technical_context_candle_counts` を各戦略別に規定。
+  - 全契約で `tech_policy` として以下を初期付与:
+    - `require_fib=True`
+    - `require_nwave=True`
+    - `require_candle=True`
+    - `tech_policy_locked=True`
+    （`tech_policy_locked=True` のため、`TECH_*` 環境変数の上書きは原則無効化され、要件が壊れない）
+  - N波/フィボ/ローソクは「必要要件」として扱う運用。
+- 現行マッピング（`_STRATEGY_TECH_CONTEXT_REQUIREMENTS`）:
+  - Scalp系
+    - `scalp_ping_5s`, `scalp_ping_5s_b`
+    - `scalp_m1scalper`
+    - `scalp_tick_imbalance`/`scalp_tick_imbalance_rrplus` 系
+    - `scalp_tick_wick_reversal`, `scalp_wick_reversal`, `scalp_wick_reversal_pro`, `scalp_wick_reversal_hf`, `scalp_tick_wick_reversal_hf`
+    - `scalp_level_reject`, `scalp_level_reject_plus`
+    - `scalp_squeeze_pulse_break`
+    - `scalp_macd_rsi_div`
+    - `ScalpReversalNWave`（`-reversal` suffix を受ける）
+    - `TrendReclaimLong`
+    - `VolSpikeRider`
+  - Micro系
+    - `micro_multistrat` と派生: `micro_rangebreak`, `micro_vwapbound`, `micro_vwaprevert`, `micro_momentumburst`,
+      `micro_momentumstack`, `micro_pullbackema`, `micro_levelreactor`, `micro_trendmomentum`,
+      `micro_trendretest`, `micro_compressionrevert`, `micro_momentumpulse`
+    - `micro_adaptive_revert`（レガシー想定）
+    - `MicroPullbackFib`（`-pullback` suffix を受ける）
+    - `RangeCompressionBreak`（`-break` suffix を受ける）
+  - Macro系
+    - `MacroTechFusion`（`-trend` suffix を受ける）
+    - `TechFusion`
+    - `MacroH1Momentum`
+    - `trend_h1`
+    - `LondonMomentum`
+    - `H1MomentumSwing`
+  - `session_open`
+  - 技術コンテキスト共通の取得項目
+    - `technical_context_ticks`: 原則 `["latest_bid", "latest_ask", "latest_mid", "spread_pips"]`
+      - 例外: `tick_imbalance` 系で `tick_rate` 追加
+    - `technical_context_candle_counts`: 戦略別に個別上限（例: Scalp系 `M1/H1/M5/H4` 系、Micro系 `M5/M1/H1` 系）
+- 仕様上の役割分離は維持:
+  - 評価ロジックは `strategy_entry.py` の `evaluate_entry_techniques` 呼び出し経路で保持しつつ、`entry_thesis` は各戦略ごとの意図/閾値を反映。
+  - 最終的な受け入れ/サイズ拡大縮小は `order_manager` 側で再選別しない（意図受け渡し + ガード/リスクのみ）。
+- 戦略側は `entry_thesis` により要求仕様（`technical_context_tfs` / `technical_context_fields` /
+  `technical_context_ticks` / `technical_context_candle_counts`）を明示できる。  
+- `strategy_entry` 側は `strategy_tag` を受け、該当戦略の契約要件を既定補完する。  
+  補完優先順位は `entry_thesis` 指定値 > 戦略契約既定値。
+- `ENTRY_TECH_CONTEXT_APPLY_SIZE_MULT=1` 時は、評価 `size_mult` を `units` と `entry_units_intent` に反映し、
+  戦略側でサイズ決定に連動可能。  
+- `ENTRY_TECH_DEFAULT_TFS` で初期取得TF順を切替え、必要なら
+  `entry_thesis["technical_context_tfs"]` / `entry_thesis["technical_context_fields"]` で戦略側制限を付与可能。  
+- order-manager では `technical_context` を上書きしない（保存専有）。
 
 ※ `quant-micro-adaptive-revert*` と `quant-impulse-retest-s5*` は V2再整備で VM から停止対象へ移行予定の legacy。  
   現行では `OPS_V2_ALLOWED_LEGACY_SERVICES` に明示登録することで監査を `critical` でなく `warn` 運用にできる（監査ログ上で明示追跡）。
@@ -68,13 +126,13 @@
   注文を `order-manager` へ転送する。
 - `ORDER_MANAGER_PRESERVE_STRATEGY_INTENT=1` 方針は維持し、`order_manager` は
   戦略意図を上書きしない前提で、ガード/リスク判定と必要最小限の縮小・拒否のみに留める。
-- `execution/strategy_entry.py` 経由の協調判定は以下を固定ルール化する。
-  - 判定対象は `ORDER_INTENT_COORDINATION_ENABLED=true` かつ `pocket != manual` のみ。
-  - 同一 `instrument` + `pocket` + `window`（既定 2 秒）内の未期限 board を集約し、`own_score=abs(raw_units)*prob` とする。
-  - `opposite_score` が 0 のときは協調受理、`opposite_score/own_score > 0` は `scale = max(ORDER_INTENT_COORDINATION_MIN_SCALE, 1/(1+opposite_score/max(own_score,1.0))` で縮小。
-  - `dominance` が閾値 `ORDER_INTENT_COORDINATION_REJECTION_DOMINANCE`（既定 1.12）を超えていても方向意図を否定せず、最小スケールでの縮小評価に留める。
-  - 縮小後 `abs(final_units) < min_units_for_pocket(pocket)` は拒否。
-  - `reason` は `order_manager` の `entry_intent_board` へ記録し、`strategy_entry` は 0 なら注文を出さない。
+- `execution/strategy_entry.py` 経由の協調判定は以下を固定ルール化する。  
+  - 判定対象は `ORDER_INTENT_COORDINATION_ENABLED=true` かつ `pocket != manual` のみ。  
+  - 同一 `instrument` + `pocket` + `window`（既定 2 秒）内の未期限 board を集約し、`own_score=abs(raw_units)*prob` とする。  
+  - `opposite_score` が 0 のときは協調受理。  
+  - `opposite_score > 0` のときも方向意図は原則維持し、`raw_units` をそのまま通す。`dominance` は監査記録用に保持する。  
+  - `abs(final_units) < min_units_for_pocket(pocket)` は拒否。  
+  - `reason` は `order_manager` の `entry_intent_board` へ記録し、`strategy_entry` は 0 なら注文を出さない。  
 
 ### 5) ポジ管理面（分離済み）
 

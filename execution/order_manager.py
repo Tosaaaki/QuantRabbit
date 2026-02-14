@@ -2605,7 +2605,7 @@ def _coordinate_entry_intent(
     Coordinate one intent with recent intents in the same instrument/pocket.
 
     Returns (final_units, reason, details).
-    reason is None when accepted, "reject" for hard reject, and "scaled" for soft scale.
+    reason is None when accepted, "reject" for hard reject.
     """
     if not _ORDER_INTENT_COORDINATION_ENABLED:
         return raw_units, None, {"coordination_enabled": 0.0}
@@ -2729,10 +2729,9 @@ def _coordinate_entry_intent(
     dominance = opposite_score / max(own_score, 1.0)
     details["opposite_ratio_to_own"] = round(dominance, 6)
     details["dominance_threshold"] = max(_ORDER_INTENT_COORDINATION_REJECTION_DOMINANCE, 1.0)
-    raw_scale = 1.0 / (1.0 + dominance)
-    min_scale = _ORDER_INTENT_COORDINATION_MIN_SCALE
-    scale = max(min_scale, raw_scale)
-    final_abs = int(round(abs(raw_units) * scale))
+    final_abs = abs(raw_units)
+    details["scale"] = 1.0
+    final_units = raw_units
     if final_abs <= 0:
         details["decision"] = "reject"
         _entry_intent_board_record(
@@ -2766,10 +2765,7 @@ def _coordinate_entry_intent(
             request_payload=details,
         )
         return 0, "reject", details
-
-    final_units = int(final_abs if raw_units > 0 else -final_abs)
-    details["decision"] = "scaled" if final_units != raw_units else "accepted"
-    details["scale"] = round(final_units / float(abs(raw_units)), 6) if raw_units != 0 else 1.0
+    details["decision"] = "accepted"
     _entry_intent_board_record(
         pocket=pocket,
         instrument=instrument,
@@ -2779,12 +2775,10 @@ def _coordinate_entry_intent(
         final_units=final_units,
         entry_probability=entry_probability,
         client_order_id=client_order_id,
-        status="intent_scaled" if final_units != raw_units else "intent_accepted",
+        status="intent_accepted",
         reason=details["decision"],
         request_payload=details,
     )
-    if final_units != raw_units:
-        return final_units, "scaled", details
     return final_units, None, details
 
 

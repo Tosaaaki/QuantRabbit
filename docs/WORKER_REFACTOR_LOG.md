@@ -62,13 +62,12 @@
   `execution/order_manager.py` の `entry_intent_board` 判定と整合した運用へ固定。
 - 判定の固定要件を明文化:
   - `own_score = abs(raw_units) * normalized(entry_probability)`  
-  - `dominance = opposite_score / max(own_score,1.0)` を算出し、
-    `scale = max(ORDER_INTENT_COORDINATION_MIN_SCALE, 1/(1+dominance))` で縮小
+  - `dominance = opposite_score / max(own_score,1.0)` を算出し監査記録するが、方向意図は `raw_units` を基本維持して通す
   - 最終 `abs(final_units) < min_units_for_pocket(pocket)` なら reject
 - `reason` と `status` は `entry_intent_board` に永続化し、`final_units=0` は `order_manager` 経路に流さない運用をログ追跡対象化。
   - `status`: `intent_accepted/intent_scaled/intent_rejected`
   - `reason`: `scale_to_zero/below_min_units_after_scale/coordination_load_error` 等
-- `opposite_domination` は廃止し、逆方向優勢は「方向意図を否定しない」縮小基盤へ更新（閾値超過時も受理可能）。
+- `opposite_domination` は廃止し、逆方向優勢でも方向意図を否定しない運用へ更新。
 - `AGENTS.md` と `WORKER_ROLE_MATRIX_V2.md` を同一ブランチ変更で更新し、監査対象文言を同期済みにする運用へ反映。
 
 ### 2026-02-19（追記）戦略ENTRYで技術判定コンテキストを付与
@@ -81,6 +80,78 @@
   エントリー意図として `ENTRY/EXIT` の判断（ロギング/追跡含む）に利用可能。
 - 機能スイッチは `ENTRY_TECH_CONTEXT_ENABLED`（未設定時 true）とし、必要時は
   `execution/strategy_entry.py` の既定動作から外せるようにした。
+
+### 2026-02-14（追記）戦略ENTRYに戦略別技術断面を常設
+
+- `execution/strategy_entry.py` の `_inject_entry_technical_context()` を拡張し、
+  `entry_thesis["technical_context"]` に `evaluate_entry_techniques`（N波/フィボ/ローソク）結果だけでなく、
+  `entry_price` の有無に関わらず `D1/H4/H1/M5/M1` の技術指標スナップショットを保存するようにした。
+- 主要保存項目には `ma10/ma20/ema12/ema20/ema24/rsi/atr/atr_pips/adx/bbw/macd/...` を含む
+  `indicators` が入り、`ENTRY_TECH_DEFAULT_TFS` で参照TFの優先順を上書き可能。
+- 戦略側が必要とする指標を限定したい場合、`technical_context_tfs` / `technical_context_fields` を
+  `entry_thesis` に付与して保存範囲を絞り込める仕様を同時に導入。
+- 既存の `ENTRY_TECH_CONTEXT_ENABLED` スイッチは維持し、無効時は `entry_thesis` への技術注入を抑制。
+
+### 2026-02-20（追記）戦略別の必要データ契約を明文化
+
+- `execution/strategy_entry.py` で、戦略が必要とする技術入力は `entry_thesis` を通じて受領する運用を明示。
+  - `technical_context_tfs`: 収集する指標TF順（例: `["H1", "M5", "M1"]`）
+  - `technical_context_fields`: `indicators` に保存するフィールド名（未指定は全件）
+  - `technical_context_ticks`: エントリー時に参照する最新ティック名（例: `latest_bid` / `latest_ask` / `spread_pips`）
+  - `technical_context_candle_counts`: `{"H1": 120, "M5": 80}` のような TF 別ローソク本数指定
+- `entry_thesis["technical_context"]` には、上記要求を反映した `indicators`（TF毎）と `ticks`、要求内容を保存し、技術判定結果（`result`）とセットで持つ。
+- `analysis/technique_engine.evaluate_entry_techniques` は `technical_context_tfs` / `technical_context_candle_counts` を解釈して、
+  TF 及びローソク取得本数を戦略側要求へ寄せる処理を追加（`common` 既定は維持）。
+- `ENTRY_TECH_CONTEXT_GATE_MODE` は `off/soft/hard` を明示し、`hard` 時は `technical_context.result.allowed=False` を最終拒否条件に反映する運用を確認。
+- 同時に `session_open` 経路（`addon_live -> strategy_entry`）向け契約も追加し、`technical_context_tfs`/`fields`/`ticks`/`candle_counts` と
+  N波/フィボ/ローソク必須ポリシーを明示。これにより `session_open` も技術要件契約の追従対象として管理される。
+
+### 2026-02-20（追記）派生タグの戦略別技術契約を明示
+
+- `execution/strategy_entry.py` の `strategy_tag` 解決を拡張し、サフィックス付き戦略名でも明示契約で解決できるようにした。
+- 新規に明示化した主な `strategy_tag`（規約化キー）:
+  - `tech_fusion`, `macro_tech_fusion`
+  - `MicroPullbackFib`, `RangeCompressionBreak`
+  - `ScalpReversalNWave`, `TrendReclaimLong`, `VolSpikeRider`
+  - `MacroTechFusion`, `MacroH1Momentum`, `trend_h1`, `LondonMomentum`, `H1MomentumSwing`
+- `entry_thesis` の受け渡し時に `technical_context_ticks` / `technical_context_tfs` / `technical_context_candle_counts` を
+  明示し、`tech_policy_locked` + `require_fib` / `require_nwave` / `require_candle` を `true` 前提に維持。
+- `SESSION_OPEN` を含む既存フローは維持しつつ、suffix 付き `scalp`/`macro`/`micro` タグでも
+  pocket 非依存で解決可能なフォールバックを追加。  
+  これにより N波/フィボ/ローソク要件の適用経路がより安定化した。
+
+### 2026-02-14（追記）戦略別技術契約の運用名寄せ
+
+- `execution/strategy_entry.py` に `_STRATEGY_TECH_CONTEXT_REQUIREMENTS` を追加し、戦略ごとの既定テック要件を明文化。
+- 自動注入されるキー:
+  - `technical_context_tfs`（取得TF順）
+  - `technical_context_fields`（保存指標）
+  - `technical_context_ticks`（参照tick）
+  - `technical_context_candle_counts`（TF別ローソク本数）
+- 戦略側 `entry_thesis` がこれらを未設定の場合、上位契約で補完される。  
+  補完後に `analysis.technique_engine.evaluate_entry_techniques` へ渡され、  
+  `technical_context["result"]` と合わせて `entry_thesis["technical_context"]` へ格納する運用を統一。
+- 対象は `SCALP_PING_5S`, `SCALP_PING_5S_B`, `SCALP_M1SCALPER`, `SCALP_MACD_RSI_DIV`,
+  `SCALP_TICK_IMBALANCE`, `SCALP_SQUEEZE_PULSE_BREAK`,
+  `SCALP_WICK_REVERSAL_BLEND`, `SCALP_WICK_REVERSAL_PRO`,
+  `MICRO_ADAPTIVE_REVERT`, `MICRO_MULTISTRAT`。
+
+### 2026-02-14（追記）戦略要件の絶対化（N波/フィボ/ローソク）
+
+- `execution/strategy_entry.py` の
+  `_STRATEGY_TECH_CONTEXT_REQUIREMENTS` を更新し、以下を標準化:
+  - `technical_context_ticks` の戦略別明示（`latest_bid/ask/mid/spread_pips` を前提に、`tick_imbalance` 系で `tick_rate` 追加）
+  - `technical_context_candle_counts` の戦略別明示（N本取得本数を戦略単位で定義）
+  - `tech_policy` を戦略契約に追加し、`require_fib` / `require_nwave` / `require_candle` を `true` 固定
+  - `tech_policy_locked` を追加し、`TECH_*` 環境上書きによる要件破壊を抑制
+- 対象戦略/サブタグを契約化:
+  - `scalp_ping_5s`, `scalp_m1scalper`, `scalp_macd_rsi_div`, `scalp_squeeze_pulse_break`
+  - `tick_imbalance`, `tick_imbalance_rrplus`
+  - `level_reject`, `level_reject_plus`
+  - `tick_wick_reversal`, `wick_reversal`, `wick_reversal_blend`, `wick_reversal_hf`, `wick_reversal_pro`
+  - `micro_multistrat` の代表として `micro_rangebreak`, `micro_vwapbound`, `micro_vwaprevert` 等の主要マイクロサブタグ
+- `analysis/technique_engine.py` に `tech_policy_locked` を反映し、ロック時は `TECH_` 系環境変数での上書きをスキップする挙動を追加。
+- 補足: `entry_thesis` が既に `tech_policy` を持つ場合も、`tech_policy_locked=True` を契約側で維持するためのマージ規則を追加。
 
 ## 削除（実装済み）
 

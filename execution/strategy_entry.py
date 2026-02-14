@@ -9,9 +9,10 @@ from __future__ import annotations
 
 import math
 import os
-from typing import Literal, Optional
+from typing import Iterable, Literal, Optional
 
 from analysis.technique_engine import evaluate_entry_techniques
+from indicators.factor_cache import all_factors
 from execution.order_manager import cancel_order, close_trade, set_trade_protections
 from execution import order_manager
 
@@ -31,6 +32,285 @@ def _env_bool(name: str, default: bool) -> bool:
 
 
 _ENTRY_TECH_CONTEXT_ENABLED = _env_bool("ENTRY_TECH_CONTEXT_ENABLED", True)
+_ENTRY_TECH_CONTEXT_GATE_MODE = os.getenv("ENTRY_TECH_CONTEXT_GATE_MODE", "off").strip().lower()
+_ENTRY_TECH_CONTEXT_APPLY_SIZE_MULT = _env_bool(
+    "ENTRY_TECH_CONTEXT_APPLY_SIZE_MULT", True
+)
+
+
+def _env_csv(name: str, default: str) -> list[str]:
+    raw = os.getenv(name)
+    if raw is None:
+        raw = default
+    out: list[str] = []
+    for token in raw.split(","):
+        token = token.strip()
+        if token:
+            out.append(token.upper())
+    return out
+
+
+_TECH_DEFAULT_TFS_BY_POCKET = {
+    "macro": ("D1", "H4", "H1", "M5", "M1"),
+    "micro": ("H4", "H1", "M5", "M1"),
+    "scalp": ("H1", "M5", "M1"),
+    "scalp_fast": ("H1", "M5", "M1"),
+    "manual": ("H4", "H1", "M5", "M1"),
+}
+_TECH_ALL_KNOWN_TFS = ("D1", "H4", "H1", "M5", "M1")
+_DEFAULT_ENTRY_TECH_TFS = _env_csv(
+    "ENTRY_TECH_DEFAULT_TFS",
+    ",".join(_TECH_ALL_KNOWN_TFS),
+)
+
+_TECH_POLICY_REQUIRE_ALL = {
+    "require_fib": True,
+    "require_nwave": True,
+    "require_candle": True,
+    "tech_policy_locked": True,
+}
+
+
+def _coerce_bool(value: object, default: Optional[bool] = None) -> Optional[bool]:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        if value in (0, 0.0):
+            return False
+        if value in (1, 1.0):
+            return True
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in {"1", "true", "yes", "on"}:
+            return True
+        if normalized in {"0", "false", "no", "off"}:
+            return False
+    return default
+
+_STRATEGY_TECH_CONTEXT_REQUIREMENTS: dict[str, dict[str, object]] = {
+    "SCALP_PING_5S": {
+        "technical_context_tfs": ["M1", "M5", "H1", "H4"],
+        "technical_context_fields": ["ma10", "ma20", "rsi", "atr", "atr_pips", "adx", "bbw", "macd", "ema12", "ema20", "ema24"],
+        "technical_context_ticks": ["latest_bid", "latest_ask", "latest_mid", "spread_pips"],
+        "technical_context_candle_counts": {"M1": 140, "M5": 90, "H1": 70, "H4": 40},
+        "tech_policy": dict(_TECH_POLICY_REQUIRE_ALL),
+    },
+    "SCALP_M1SCALPER": {
+        "technical_context_tfs": ["M1", "M5", "H1"],
+        "technical_context_fields": ["ma10", "ma20", "ema12", "ema20", "ema24", "rsi", "atr", "atr_pips", "adx", "bbw", "macd"],
+        "technical_context_ticks": ["latest_bid", "latest_ask", "latest_mid", "spread_pips"],
+        "technical_context_candle_counts": {"M1": 120, "M5": 80, "H1": 60},
+        "tech_policy": dict(_TECH_POLICY_REQUIRE_ALL),
+    },
+    "SCALP_MACD_RSI_DIV": {
+        "technical_context_tfs": ["M1", "M5", "H1", "H4"],
+        "technical_context_fields": ["ma10", "ma20", "ema12", "ema24", "rsi", "atr", "atr_pips", "adx", "bbw", "macd", "macd_hist"],
+        "technical_context_ticks": ["latest_bid", "latest_ask", "latest_mid", "spread_pips"],
+        "technical_context_candle_counts": {"M1": 160, "M5": 100, "H1": 70, "H4": 40},
+        "tech_policy": dict(_TECH_POLICY_REQUIRE_ALL),
+    },
+    "SCALP_TICK_IMBALANCE": {
+        "technical_context_tfs": ["M1", "M5", "H1"],
+        "technical_context_fields": ["ma10", "ma20", "ema12", "ema20", "rsi", "atr", "atr_pips", "adx", "bbw", "macd"],
+        "technical_context_ticks": ["latest_bid", "latest_ask", "latest_mid", "spread_pips", "tick_rate"],
+        "technical_context_candle_counts": {"M1": 160, "M5": 90, "H1": 50},
+        "tech_policy": dict(_TECH_POLICY_REQUIRE_ALL),
+    },
+    "SCALP_PING_5S_B": {
+        "technical_context_tfs": ["M1", "M5", "H1", "H4"],
+        "technical_context_fields": ["ma10", "ma20", "rsi", "atr", "atr_pips", "adx", "bbw", "macd", "ema12", "ema20", "ema24"],
+        "technical_context_ticks": ["latest_bid", "latest_ask", "latest_mid", "spread_pips"],
+        "technical_context_candle_counts": {"M1": 140, "M5": 90, "H1": 70, "H4": 40},
+        "tech_policy": dict(_TECH_POLICY_REQUIRE_ALL),
+    },
+    "SCALP_WICK_REVERSAL_BLEND": {
+        "technical_context_tfs": ["M1", "M5", "H1", "H4"],
+        "technical_context_fields": ["ma10", "ma20", "rsi", "atr", "atr_pips", "adx", "bbw", "macd", "ema12", "ema20", "ema24"],
+        "technical_context_ticks": ["latest_bid", "latest_ask", "latest_mid", "spread_pips"],
+        "technical_context_candle_counts": {"M1": 140, "M5": 90, "H1": 70, "H4": 40},
+        "tech_policy": dict(_TECH_POLICY_REQUIRE_ALL),
+    },
+    "SCALP_WICK_REVERSAL_PRO": {
+        "technical_context_tfs": ["M1", "M5", "H1", "H4"],
+        "technical_context_fields": ["ma10", "ma20", "rsi", "atr", "atr_pips", "adx", "bbw", "macd", "ema12", "ema20", "ema24"],
+        "technical_context_ticks": ["latest_bid", "latest_ask", "latest_mid", "spread_pips"],
+        "technical_context_candle_counts": {"M1": 140, "M5": 90, "H1": 70, "H4": 40},
+        "tech_policy": dict(_TECH_POLICY_REQUIRE_ALL),
+    },
+    "SCALP_SQUEEZE_PULSE_BREAK": {
+        "technical_context_tfs": ["M1", "M5", "H1", "H4"],
+        "technical_context_fields": ["ma10", "ma20", "rsi", "atr", "atr_pips", "adx", "bbw", "macd", "ema12", "ema20", "ema24"],
+        "technical_context_ticks": ["latest_bid", "latest_ask", "latest_mid", "spread_pips"],
+        "technical_context_candle_counts": {"M1": 140, "M5": 90, "H1": 70, "H4": 40},
+        "tech_policy": dict(_TECH_POLICY_REQUIRE_ALL),
+    },
+    "MICRO_ADAPTIVE_REVERT": {
+        "technical_context_tfs": ["M1", "M5", "H1"],
+        "technical_context_fields": ["ma10", "ma20", "ema12", "ema20", "rsi", "atr", "atr_pips", "adx", "bbw", "macd"],
+        "technical_context_ticks": ["latest_bid", "latest_ask", "latest_mid", "spread_pips"],
+        "technical_context_candle_counts": {"M5": 120, "M1": 80, "H1": 50},
+        "tech_policy": dict(_TECH_POLICY_REQUIRE_ALL),
+    },
+    "MICRO_MULTISTRAT": {
+        "technical_context_tfs": ["M5", "M1", "H1"],
+        "technical_context_fields": ["ma10", "ma20", "ema12", "ema20", "rsi", "atr", "atr_pips", "adx", "bbw", "macd", "volume"],
+        "technical_context_ticks": ["latest_bid", "latest_ask", "latest_mid", "spread_pips"],
+        "technical_context_candle_counts": {"M5": 120, "M1": 140, "H1": 60},
+        "tech_policy": dict(_TECH_POLICY_REQUIRE_ALL),
+    },
+    "SESSION_OPEN": {
+        "technical_context_tfs": ["M1", "M5", "H1"],
+        "technical_context_fields": ["ma10", "ma20", "ema12", "ema24", "atr", "atr_pips", "adx", "bbw", "rsi", "macd"],
+        "technical_context_ticks": ["latest_bid", "latest_ask", "latest_mid", "spread_pips"],
+        "technical_context_candle_counts": {"M1": 120, "M5": 90, "H1": 60},
+        "tech_policy": dict(_TECH_POLICY_REQUIRE_ALL),
+    },
+}
+
+_STRATEGY_TECH_CONTEXT_REQUIREMENTS.update(
+    {
+        "SCALP_TICK_IMBALANCE_RRPLUS": dict(_STRATEGY_TECH_CONTEXT_REQUIREMENTS["SCALP_TICK_IMBALANCE"]),
+        "SCALP_TICK_WICK_REVERSAL": dict(_STRATEGY_TECH_CONTEXT_REQUIREMENTS["SCALP_WICK_REVERSAL_BLEND"]),
+        "SCALP_WICK_REVERSAL": dict(_STRATEGY_TECH_CONTEXT_REQUIREMENTS["SCALP_WICK_REVERSAL_BLEND"]),
+        "SCALP_WICK_REVERSAL_HF": dict(_STRATEGY_TECH_CONTEXT_REQUIREMENTS["SCALP_WICK_REVERSAL_BLEND"]),
+        "SCALP_TICK_WICK_REVERSAL_HF": dict(_STRATEGY_TECH_CONTEXT_REQUIREMENTS["SCALP_WICK_REVERSAL_BLEND"]),
+        "SCALP_LEVEL_REJECT": dict(_STRATEGY_TECH_CONTEXT_REQUIREMENTS["SCALP_TICK_IMBALANCE"]),
+        "SCALP_LEVEL_REJECT_PLUS": dict(_STRATEGY_TECH_CONTEXT_REQUIREMENTS["SCALP_TICK_IMBALANCE"]),
+        "MICRO_RANGEBREAK": dict(_STRATEGY_TECH_CONTEXT_REQUIREMENTS["MICRO_MULTISTRAT"]),
+        "MICRO_VWAPBOUND": dict(_STRATEGY_TECH_CONTEXT_REQUIREMENTS["MICRO_MULTISTRAT"]),
+        "MICRO_VWAPREVERT": dict(_STRATEGY_TECH_CONTEXT_REQUIREMENTS["MICRO_MULTISTRAT"]),
+        "MICRO_MOMENTUMBURST": dict(_STRATEGY_TECH_CONTEXT_REQUIREMENTS["MICRO_MULTISTRAT"]),
+        "MICRO_MOMENTUMSTACK": dict(_STRATEGY_TECH_CONTEXT_REQUIREMENTS["MICRO_MULTISTRAT"]),
+        "MICRO_PULLBACKEMA": dict(_STRATEGY_TECH_CONTEXT_REQUIREMENTS["MICRO_MULTISTRAT"]),
+        "MICRO_LEVELREACTOR": dict(_STRATEGY_TECH_CONTEXT_REQUIREMENTS["MICRO_MULTISTRAT"]),
+        "MICRO_TRENDMOMENTUM": dict(_STRATEGY_TECH_CONTEXT_REQUIREMENTS["MICRO_MULTISTRAT"]),
+        "MICRO_TRENDRETEST": dict(_STRATEGY_TECH_CONTEXT_REQUIREMENTS["MICRO_MULTISTRAT"]),
+        "MICRO_COMPRESSIONREVERT": dict(_STRATEGY_TECH_CONTEXT_REQUIREMENTS["MICRO_MULTISTRAT"]),
+        "MICRO_MOMENTUMPULSE": dict(_STRATEGY_TECH_CONTEXT_REQUIREMENTS["MICRO_MULTISTRAT"]),
+        "TECH_FUSION": dict(_STRATEGY_TECH_CONTEXT_REQUIREMENTS["MICRO_MULTISTRAT"]),
+        "MACRO_TECH_FUSION": dict(_STRATEGY_TECH_CONTEXT_REQUIREMENTS["SCALP_MACD_RSI_DIV"]),
+        "RANGE_COMPRESSION_BREAK": dict(_STRATEGY_TECH_CONTEXT_REQUIREMENTS["MICRO_MULTISTRAT"]),
+        "MICRO_PULLBACK_FIB": dict(_STRATEGY_TECH_CONTEXT_REQUIREMENTS["MICRO_MULTISTRAT"]),
+        "SCALP_REVERSAL_NWAVE": dict(_STRATEGY_TECH_CONTEXT_REQUIREMENTS["SCALP_M1SCALPER"]),
+        "TREND_RECLAIM_LONG": dict(_STRATEGY_TECH_CONTEXT_REQUIREMENTS["SCALP_M1SCALPER"]),
+        "VOL_SPIKE_RIDER": dict(_STRATEGY_TECH_CONTEXT_REQUIREMENTS["SCALP_M1SCALPER"]),
+        "LONDON_MOMENTUM": dict(_STRATEGY_TECH_CONTEXT_REQUIREMENTS["SCALP_MACD_RSI_DIV"]),
+        "MACRO_H1MOMENTUM": dict(_STRATEGY_TECH_CONTEXT_REQUIREMENTS["SCALP_MACD_RSI_DIV"]),
+        "TREND_H1": dict(_STRATEGY_TECH_CONTEXT_REQUIREMENTS["SCALP_MACD_RSI_DIV"]),
+        "H1_MOMENTUMSWING": dict(_STRATEGY_TECH_CONTEXT_REQUIREMENTS["SCALP_MACD_RSI_DIV"]),
+    }
+)
+
+_NORMALIZED_STRATEGY_TECH_CONTEXT_REQUIREMENTS: dict[str, dict[str, object]] = {
+    _strategy_key(key): dict(value) for key, value in _STRATEGY_TECH_CONTEXT_REQUIREMENTS.items()
+}
+
+
+def _strategy_key(value: Optional[str]) -> str:
+    if not value:
+        return ""
+    return "".join(ch for ch in str(value).lower() if ch.isalnum())
+
+
+def _resolve_strategy_technical_context_contract(
+    strategy_tag: Optional[str],
+    pocket: str,
+) -> dict[str, object]:
+    key = _strategy_key(strategy_tag)
+    if not key:
+        return {}
+    if key in _NORMALIZED_STRATEGY_TECH_CONTEXT_REQUIREMENTS:
+        return dict(_NORMALIZED_STRATEGY_TECH_CONTEXT_REQUIREMENTS[key])
+    if "sessionopen" in key:
+        return dict(_STRATEGY_TECH_CONTEXT_REQUIREMENTS["SESSION_OPEN"])
+    if key.startswith("techfusion"):
+        return dict(_STRATEGY_TECH_CONTEXT_REQUIREMENTS["TECH_FUSION"])
+    if key.startswith("macrotechfusion"):
+        return dict(_STRATEGY_TECH_CONTEXT_REQUIREMENTS["MACRO_TECH_FUSION"])
+    if key.startswith("micropullbackfib"):
+        return dict(_STRATEGY_TECH_CONTEXT_REQUIREMENTS["MICRO_PULLBACK_FIB"])
+    if key.startswith("rangecompressionbreak"):
+        return dict(_STRATEGY_TECH_CONTEXT_REQUIREMENTS["RANGE_COMPRESSION_BREAK"])
+    if key.startswith("scalpreversalnwave"):
+        return dict(_STRATEGY_TECH_CONTEXT_REQUIREMENTS["SCALP_REVERSAL_NWAVE"])
+    if key.startswith("trendreclaim"):
+        return dict(_STRATEGY_TECH_CONTEXT_REQUIREMENTS["TREND_RECLAIM_LONG"])
+    if key.startswith("volspikerider"):
+        return dict(_STRATEGY_TECH_CONTEXT_REQUIREMENTS["VOL_SPIKE_RIDER"])
+    if key.startswith("macroh1momentum") or key.startswith("h1momentumswing") or key.startswith("trendh1"):
+        return dict(_STRATEGY_TECH_CONTEXT_REQUIREMENTS["MACRO_H1MOMENTUM"])
+    if key.startswith("londonmomentum"):
+        return dict(_STRATEGY_TECH_CONTEXT_REQUIREMENTS["LONDON_MOMENTUM"])
+    if "ping" in key and key.startswith("scalp"):
+        return dict(_STRATEGY_TECH_CONTEXT_REQUIREMENTS["SCALP_PING_5S"])
+    if ("m1" in key and key.startswith("scalp")) or key.startswith("scalpm1"):
+        return dict(_STRATEGY_TECH_CONTEXT_REQUIREMENTS["SCALP_M1SCALPER"])
+    if "macd" in key and key.startswith("scalp"):
+        return dict(_STRATEGY_TECH_CONTEXT_REQUIREMENTS["SCALP_MACD_RSI_DIV"])
+    if "tickimbalance" in key:
+        return dict(_STRATEGY_TECH_CONTEXT_REQUIREMENTS["SCALP_TICK_IMBALANCE"])
+    if "tickwick" in key:
+        return dict(_STRATEGY_TECH_CONTEXT_REQUIREMENTS["SCALP_TICK_WICK_REVERSAL"])
+    if "levelreject" in key:
+        return dict(_STRATEGY_TECH_CONTEXT_REQUIREMENTS["SCALP_LEVEL_REJECT"])
+    if "tick" in key or "imbalance" in key:
+        return dict(_STRATEGY_TECH_CONTEXT_REQUIREMENTS["SCALP_TICK_IMBALANCE"])
+    if "squeeze" in key and "pulse" in key:
+        return dict(_STRATEGY_TECH_CONTEXT_REQUIREMENTS["SCALP_SQUEEZE_PULSE_BREAK"])
+    if "wick" in key and "reversal" in key:
+        if "pro" in key:
+            return dict(_STRATEGY_TECH_CONTEXT_REQUIREMENTS["SCALP_WICK_REVERSAL_PRO"])
+        return dict(_STRATEGY_TECH_CONTEXT_REQUIREMENTS["SCALP_WICK_REVERSAL_BLEND"])
+    if "micro" in key and key.startswith("micro"):
+        return dict(_STRATEGY_TECH_CONTEXT_REQUIREMENTS["MICRO_MULTISTRAT"])
+    if "micro" in key:
+        return dict(_STRATEGY_TECH_CONTEXT_REQUIREMENTS["MICRO_MULTISTRAT"])
+    if pocket == "micro":
+        return dict(_STRATEGY_TECH_CONTEXT_REQUIREMENTS["MICRO_MULTISTRAT"])
+    if pocket == "scalp":
+        return dict(_STRATEGY_TECH_CONTEXT_REQUIREMENTS["SCALP_M1SCALPER"])
+    if pocket == "macro":
+        return dict(_STRATEGY_TECH_CONTEXT_REQUIREMENTS["SCALP_MACD_RSI_DIV"])
+    return {}
+
+
+def _attach_strategy_technical_context_requirements(
+    entry_thesis: Optional[dict],
+    strategy_tag: Optional[str],
+    pocket: str,
+) -> Optional[dict]:
+    if not isinstance(entry_thesis, dict):
+        return entry_thesis
+    if not isinstance(strategy_tag, str) and not pocket:
+        return entry_thesis
+    contract = _resolve_strategy_technical_context_contract(strategy_tag, pocket)
+    if not contract:
+        return entry_thesis
+    for key, raw_value in contract.items():
+        if key in entry_thesis:
+            if key == "tech_policy":
+                existing_policy = entry_thesis.get("tech_policy")
+                if isinstance(existing_policy, dict) and isinstance(raw_value, dict):
+                    merged_policy = dict(existing_policy)
+                    for policy_key, policy_value in raw_value.items():
+                        if policy_key in {"require_fib", "require_nwave", "require_candle"}:
+                            co = _coerce_bool(policy_value, default=False)
+                            if co is not None:
+                                merged_policy[policy_key] = co
+                        elif policy_key == "tech_policy_locked":
+                            if _coerce_bool(policy_value, default=False):
+                                merged_policy[policy_key] = True
+                        elif policy_key not in merged_policy:
+                            merged_policy[policy_key] = policy_value
+                    entry_thesis["tech_policy"] = merged_policy
+            continue
+        if isinstance(raw_value, dict):
+            entry_thesis[key] = dict(raw_value)
+        elif isinstance(raw_value, (list, tuple, set)):
+            entry_thesis[key] = list(raw_value)
+        else:
+            entry_thesis[key] = raw_value
+    return entry_thesis
 
 
 def _resolve_strategy_tag(
@@ -91,6 +371,353 @@ def _to_float(value: object) -> Optional[float]:
         return float(value)
     except (TypeError, ValueError):
         return None
+
+
+def _to_float_or_bool(value: object) -> object | None:
+    if isinstance(value, bool):
+        return value
+    try:
+        float_value = float(value)
+    except (TypeError, ValueError):
+        return None
+    if math.isnan(float_value) or math.isinf(float_value):
+        return None
+    return float_value
+
+
+def _normalize_tf_list(values: Iterable[object] | None) -> list[str]:
+    if values is None:
+        return []
+    out: list[str] = []
+    for value in values:
+        text = str(value).strip().upper()
+        if not text:
+            continue
+        if text not in out:
+            out.append(text)
+    return out
+
+
+def _to_tfs(entry_thesis: Optional[dict], requested: list[str], pocket: str) -> list[str]:
+    output: list[str] = []
+
+    if isinstance(entry_thesis, dict):
+        candidate = entry_thesis.get("technical_context_tfs")
+        if isinstance(candidate, str):
+            parsed = _normalize_tf_list(token.strip() for token in candidate.split(","))
+            if parsed:
+                return parsed
+        elif isinstance(candidate, (tuple, list)):
+            parsed = _normalize_tf_list(candidate)
+            if parsed:
+                return parsed
+        tech_tfs = entry_thesis.get("tech_tfs")
+        if isinstance(tech_tfs, dict):
+            for key in ("fib", "median", "nwave", "candle", "default"):
+                parsed = _normalize_tf_list(tech_tfs.get(key))
+                if parsed:
+                    output.extend(parsed)
+            if output:
+                return output
+
+    if requested:
+        output.extend(requested)
+    if not output:
+        output.extend(_TECH_DEFAULT_TFS_BY_POCKET.get(pocket, ()))
+    if not output:
+        output.extend(_DEFAULT_ENTRY_TECH_TFS or ("D1", "H4", "H1", "M5", "M1"))
+    if not output:
+        return []
+    deduped: list[str] = []
+    for tf in output:
+        if tf not in deduped:
+            deduped.append(tf)
+    return deduped
+
+
+def _to_fields(entry_thesis: Optional[dict]) -> list[str]:
+    if not isinstance(entry_thesis, dict):
+        return []
+    candidate = entry_thesis.get("technical_context_fields")
+    if isinstance(candidate, str):
+        return [token.strip() for token in candidate.split(",") if token.strip()]
+    if not isinstance(candidate, (tuple, list)):
+        return []
+    return [str(token).strip() for token in candidate if str(token).strip()]
+
+
+def _to_tick_requirements(entry_thesis: Optional[dict]) -> list[str]:
+    if not isinstance(entry_thesis, dict):
+        return ["latest_bid", "latest_ask", "latest_mid", "spread_pips"]
+    candidate = entry_thesis.get("technical_context_ticks")
+    if isinstance(candidate, str):
+        parsed = [token.strip() for token in candidate.split(",") if token.strip()]
+        if parsed:
+            return parsed
+    elif isinstance(candidate, (tuple, list)):
+        parsed = [str(token).strip() for token in candidate if str(token).strip()]
+        if parsed:
+            return parsed
+    return ["latest_bid", "latest_ask", "latest_mid", "spread_pips"]
+
+
+def _to_candle_counts(entry_thesis: Optional[dict]) -> dict[str, int]:
+    if not isinstance(entry_thesis, dict):
+        return {}
+    candidate = entry_thesis.get("technical_context_candle_counts")
+    if isinstance(candidate, str):
+        counts: dict[str, int] = {}
+        for item in candidate.split(","):
+            item = item.strip()
+            if not item or ":" not in item:
+                continue
+            tf, raw = item.split(":", 1)
+            tf = tf.strip().upper()
+            if not tf:
+                continue
+            try:
+                value = int(raw.strip())
+            except (TypeError, ValueError):
+                continue
+            if value > 0:
+                counts[tf] = value
+        return counts
+    if not isinstance(candidate, dict):
+        return {}
+    counts: dict[str, int] = {}
+    for tf_raw, raw in candidate.items():
+        tf = str(tf_raw).strip().upper()
+        if not tf:
+            continue
+        try:
+            value = int(raw)
+        except (TypeError, ValueError):
+            continue
+        if value > 0:
+            counts[tf] = value
+    return counts
+
+
+def _collect_strategy_tick_context(
+    *,
+    requested_fields: list[str],
+) -> dict[str, object]:
+    if not requested_fields:
+        return {}
+    try:
+        from market_data import tick_window
+    except Exception:
+        return {}
+    latest = {}
+    try:
+        latest = tick_window.summarize(seconds=4.0) or {}
+    except Exception:
+        return {}
+    out: dict[str, object] = {}
+    for key in requested_fields:
+        if key in latest:
+            value = _to_float_or_bool(latest.get(key))
+            if value is not None:
+                out[key] = value
+    return out
+
+
+def _normalize_gate_mode(raw: object, fallback: str) -> str:
+    if isinstance(raw, bool):
+        return "hard" if raw else "off"
+    text = str(raw).strip().lower() if raw is not None else ""
+    if text in {"hard", "strict", "required"}:
+        return "hard"
+    if text in {
+        "soft",
+        "warn",
+        "failopen",
+        "on",
+        "1",
+        "true",
+        "yes",
+    }:
+        return "soft"
+    if text in {"off", "disable", "disabled", "0", "false", "no"}:
+        return "off"
+    return fallback
+
+
+def _resolve_technical_gate_mode(
+    strategy_tag: Optional[str],
+    entry_thesis: Optional[dict],
+) -> str:
+    mode = _ENTRY_TECH_CONTEXT_GATE_MODE
+    if strategy_tag:
+        key = "".join(ch for ch in strategy_tag if ch.isalnum()).upper()
+        if key:
+            mode = _normalize_gate_mode(
+                os.getenv(f"ENTRY_TECH_CONTEXT_GATE_MODE_{key}"),
+                mode,
+            )
+    if isinstance(entry_thesis, dict):
+        for key in (
+            "technical_context_gate_mode",
+            "technical_gate_mode",
+            "tech_gate_mode",
+            "tech_context_gate_mode",
+            "technical_gate",
+        ):
+            if key in entry_thesis:
+                mode = _normalize_gate_mode(entry_thesis.get(key), mode)
+                break
+        if "tech_failopen" in entry_thesis:
+            mode = _normalize_gate_mode(
+                "soft" if entry_thesis.get("tech_failopen") else "hard",
+                mode,
+            )
+    return _normalize_gate_mode(mode, "off")
+
+
+def _resolve_technical_size_scaling_enabled(
+    entry_thesis: Optional[dict],
+    strategy_tag: Optional[str],
+) -> bool:
+    if isinstance(entry_thesis, dict):
+        for key in (
+            "technical_context_apply_size_mult",
+            "technical_size_scaling",
+            "tech_size_scaling",
+        ):
+            if key in entry_thesis:
+                val = entry_thesis.get(key)
+                if isinstance(val, bool):
+                    return val
+                if isinstance(val, (int, float)):
+                    return bool(val)
+                if isinstance(val, str):
+                    return val.strip().lower() in {"1", "true", "yes", "on"}
+    if strategy_tag:
+        key = "".join(ch for ch in strategy_tag if ch.isalnum()).upper()
+        if key:
+            return _env_bool(
+                f"ENTRY_TECH_CONTEXT_APPLY_SIZE_MULT_{key}",
+                _ENTRY_TECH_CONTEXT_APPLY_SIZE_MULT,
+            )
+    return _ENTRY_TECH_CONTEXT_APPLY_SIZE_MULT
+
+
+def _resolve_technical_context_result(
+    entry_thesis: Optional[dict],
+) -> Optional[dict[str, object]]:
+    if not isinstance(entry_thesis, dict):
+        return None
+    technical_context = entry_thesis.get("technical_context")
+    if not isinstance(technical_context, dict):
+        return None
+    result = technical_context.get("result")
+    if isinstance(result, dict):
+        return result
+    return None
+
+
+def _resolve_technical_size_multiplier(
+    technical_result: Optional[dict[str, object]],
+) -> Optional[float]:
+    if not isinstance(technical_result, dict):
+        return None
+    raw = technical_result.get("size_mult")
+    if raw is None:
+        return None
+    try:
+        mult = float(raw)
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(mult) or mult <= 0:
+        return None
+    return mult
+
+
+def _apply_technical_size_mult(
+    units: int,
+    *,
+    entry_thesis: Optional[dict],
+    strategy_tag: Optional[str],
+    technical_context_result: Optional[dict[str, object]] = None,
+) -> int:
+    if not units:
+        return units
+    if not _resolve_technical_size_scaling_enabled(entry_thesis, strategy_tag):
+        return units
+    result = (
+        technical_context_result
+        if technical_context_result is not None
+        else _resolve_technical_context_result(entry_thesis)
+    )
+    if not result:
+        return units
+    mult = _resolve_technical_size_multiplier(result)
+    if mult is None:
+        return units
+    if not math.isfinite(mult) or mult <= 0:
+        return 0
+    scaled_abs = int(round(abs(units) * mult))
+    if scaled_abs <= 0:
+        return 0
+    return -scaled_abs if units < 0 else scaled_abs
+
+
+def _collect_strategy_technical_context(
+    *,
+    strategy_tag: Optional[str],
+    requested_tfs: list[str],
+    requested_fields: list[str],
+    requested_candle_counts: dict[str, int],
+) -> dict[str, object]:
+    fields_set = set(
+        field for field in requested_fields if field not in {"", "candles"}
+    )
+    include_all_fields = not fields_set
+    snapshot: dict[str, object] = {}
+    factors = all_factors()
+    candle_requirements = dict(requested_candle_counts or {})
+    for tf in requested_tfs:
+        tf_data = factors.get(tf)
+        if not isinstance(tf_data, dict):
+            continue
+        payload: dict[str, object] = {}
+        for key, raw in tf_data.items():
+            if key in {"candles", "timestamp", "last_closed_timestamp", "live_updated_ts"}:
+                continue
+            if not include_all_fields and key not in fields_set:
+                continue
+            value = _to_float_or_bool(raw)
+            if value is None:
+                continue
+            payload[key] = value
+        candle_count = candle_requirements.get(tf, 0)
+        if candle_count > 0:
+            raw_candles = tf_data.get("candles")
+            if isinstance(raw_candles, list):
+                selected = raw_candles[-int(candle_count) :]
+                parsed_candles: list[dict[str, object]] = []
+                for raw in selected:
+                    if not isinstance(raw, dict):
+                        continue
+                    candle_payload = {}
+                    for key in ("timestamp", "time", "open", "high", "low", "close"):
+                        value = raw.get(key)
+                        if key in {"timestamp", "time"}:
+                            if isinstance(value, str) and value:
+                                candle_payload[key] = value
+                            continue
+                        value_float = _to_float(value)
+                        if value_float is None:
+                            continue
+                        candle_payload[key] = value_float
+                    if candle_payload:
+                        parsed_candles.append(candle_payload)
+                payload["candles"] = parsed_candles
+        if payload:
+            if strategy_tag:
+                payload["_strategy_tag"] = strategy_tag
+            snapshot[tf] = payload
+    return snapshot
 
 
 def _resolve_entry_side(units: int) -> str:
@@ -157,37 +784,92 @@ def _inject_entry_technical_context(
     if not _ENTRY_TECH_CONTEXT_ENABLED:
         return entry_thesis
     if entry_price is None:
-        return entry_thesis
+        if not isinstance(entry_thesis, dict):
+            return entry_thesis
     if not isinstance(entry_thesis, dict):
         return entry_thesis
+    entry_thesis = _attach_strategy_technical_context_requirements(
+        entry_thesis,
+        strategy_tag=strategy_tag,
+        pocket=pocket,
+    )
+    requested_tfs = _to_tfs(entry_thesis, list(_DEFAULT_ENTRY_TECH_TFS), pocket)
+    requested_fields = _to_fields(entry_thesis)
+    requested_ticks = _to_tick_requirements(entry_thesis)
+    requested_candle_counts = _to_candle_counts(entry_thesis)
+    requested_ticks = requested_ticks or ["latest_bid", "latest_ask", "latest_mid", "spread_pips"]
+    technical_snapshot = _collect_strategy_technical_context(
+        strategy_tag=strategy_tag,
+        requested_tfs=requested_tfs,
+        requested_fields=requested_fields,
+        requested_candle_counts=requested_candle_counts,
+    )
+    tick_snapshot = _collect_strategy_tick_context(
+        requested_fields=requested_ticks,
+    )
+    existing_context = entry_thesis.get("technical_context")
+    if isinstance(existing_context, dict):
+        existing_result = existing_context.get("result") if isinstance(existing_context.get("result"), dict) else None
+    else:
+        existing_context = {}
+        existing_result = None
+    context = {
+        "enabled": True,
+        "entry_price": entry_price,
+        "side": _resolve_entry_side(units),
+        "entry_side": _resolve_entry_side(units),
+        "requested_timeframes": requested_tfs,
+        "requested_fields": requested_fields or ["all"],
+        "requested_ticks": requested_ticks,
+        "requested_candle_counts": requested_candle_counts,
+        "indicators": technical_snapshot,
+        "ticks": tick_snapshot,
+        "requested": {
+            "timeframes": requested_tfs,
+            "fields": requested_fields or ["all"],
+            "ticks": requested_ticks,
+            "candle_counts": requested_candle_counts,
+        },
+    }
     try:
-        decision = evaluate_entry_techniques(
-            entry_price=entry_price,
-            side=_resolve_entry_side(units),
-            pocket=pocket,
-            strategy_tag=strategy_tag,
-            entry_thesis=entry_thesis,
-        )
-        context = {
-            "enabled": True,
-            "entry_price": entry_price,
-            "side": _resolve_entry_side(units),
-            "result": {
+        if isinstance(existing_result, dict):
+            context["result"] = existing_result
+            if isinstance(existing_context.get("debug"), dict):
+                context["debug"] = dict(existing_context.get("debug"))
+        elif entry_price is not None:
+            decision = evaluate_entry_techniques(
+                entry_price=entry_price,
+                side=_resolve_entry_side(units),
+                pocket=pocket,
+                strategy_tag=strategy_tag,
+                entry_thesis=entry_thesis,
+            )
+            context["result"] = {
                 "allowed": bool(decision.allowed),
                 "reason": decision.reason,
                 "score": decision.score,
                 "coverage": decision.coverage,
                 "size_mult": decision.size_mult,
-            },
-            "debug": decision.debug,
-        }
+            }
+            context["debug"] = decision.debug
+        else:
+            context["result"] = {
+                "allowed": True,
+                "reason": "entry_price_unresolved",
+                "score": 0.0,
+                "coverage": 0.0,
+                "size_mult": 1.0,
+            }
     except Exception as exc:
-        context = {
-            "enabled": True,
-            "entry_price": entry_price,
-            "error": str(exc),
+        context["debug"] = {"error": str(exc)}
+        context["result"] = {
+            "allowed": True,
+            "reason": "entry_technical_eval_failed",
+            "score": 0.0,
+            "coverage": 0.0,
+            "size_mult": 1.0,
         }
-    prev = entry_thesis.get("technical_context")
+    prev = existing_context
     if isinstance(prev, dict):
         merged = dict(prev)
         merged.update(context)
@@ -255,6 +937,22 @@ async def market_order(
         entry_thesis=entry_thesis,
         entry_price=_resolve_entry_price(units, entry_thesis),
     )
+    technical_gate_mode = _resolve_technical_gate_mode(resolved_strategy_tag, entry_thesis)
+    technical_result = _resolve_technical_context_result(entry_thesis)
+    if technical_gate_mode == "hard":
+        if not technical_result or not bool(technical_result.get("allowed", False)):
+            return None
+    technical_size_mult = _resolve_technical_size_multiplier(technical_result)
+    scaled_units = _apply_technical_size_mult(
+        units,
+        entry_thesis=entry_thesis,
+        strategy_tag=resolved_strategy_tag,
+        technical_context_result=technical_result,
+    )
+    if scaled_units != units:
+        units = scaled_units
+        if isinstance(entry_thesis, dict):
+            entry_thesis["technical_context_scaled_size_mult"] = technical_size_mult
     entry_probability = _resolve_entry_probability(entry_thesis, confidence)
     coordinated_units = await _coordinate_entry_units(
         instrument=instrument,
@@ -269,6 +967,8 @@ async def market_order(
         return None
     if coordinated_units != units:
         units = coordinated_units
+    if isinstance(entry_thesis, dict):
+        entry_thesis["entry_units_intent"] = abs(int(units))
     return await order_manager.market_order(
         instrument=instrument,
         units=units,
@@ -315,7 +1015,25 @@ async def limit_order(
         entry_thesis=entry_thesis,
         entry_price=_resolve_entry_price(units, entry_thesis, limit_price=price),
     )
+    technical_gate_mode = _resolve_technical_gate_mode(resolved_strategy_tag, entry_thesis)
+    technical_result = _resolve_technical_context_result(entry_thesis)
+    if technical_gate_mode == "hard":
+        if not technical_result or not bool(technical_result.get("allowed", False)):
+            return None, None
+    technical_size_mult = _resolve_technical_size_multiplier(technical_result)
+    scaled_units = _apply_technical_size_mult(
+        units,
+        entry_thesis=entry_thesis,
+        strategy_tag=resolved_strategy_tag,
+        technical_context_result=technical_result,
+    )
+    if scaled_units != units:
+        units = scaled_units
+        if isinstance(entry_thesis, dict):
+            entry_thesis["technical_context_scaled_size_mult"] = technical_size_mult
     entry_probability = _resolve_entry_probability(entry_thesis, confidence)
+    if isinstance(entry_thesis, dict):
+        entry_thesis["entry_units_intent"] = abs(int(units))
     coordinated_units = await _coordinate_entry_units(
         instrument=instrument,
         pocket=pocket,
