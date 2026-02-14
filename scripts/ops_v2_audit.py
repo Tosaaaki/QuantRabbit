@@ -200,13 +200,15 @@ def main() -> int:
     }
 
     for entry, exit_service in mandatory_pairs + optional_pairs:
+        entry_service_base = entry.replace(".service", "")
+        exit_service_base = exit_service.replace(".service", "")
         required_env_by_service[entry] = [
             str(runtime_env),
-            str(env_dir / f"quant-{entry.replace('.service', '')}.env"),
+            str(env_dir / f"{entry_service_base}.env"),
         ]
         required_env_by_service[exit_service] = [
             str(runtime_env),
-            str(env_dir / f"quant-{exit_service.replace('.service', '')}.env"),
+            str(env_dir / f"{exit_service_base}.env"),
         ]
 
     runtime_env_expectations = {
