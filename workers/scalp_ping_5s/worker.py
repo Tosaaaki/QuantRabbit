@@ -4153,17 +4153,17 @@ async def scalp_ping_5s_worker() -> None:
                 strategy_tag=config.STRATEGY_TAG,
                 pocket=config.POCKET,
             )
-        order_policy = "market_tech_router" if tech_route_reasons else "market_guarded"
+            order_policy = "market_tech_router" if tech_route_reasons else "market_guarded"
 
-        try:
-            _entry_probability_raw = float(signal.confidence)
-        except Exception:
-            _entry_probability_raw = 0.0
-        if _entry_probability_raw > 1.0:
-            _entry_probability_raw /= 100.0
-        entry_probability = max(0.0, min(1.0, _entry_probability_raw))
+            try:
+                _entry_probability_raw = float(signal.confidence)
+            except Exception:
+                _entry_probability_raw = 0.0
+            if _entry_probability_raw > 1.0:
+                _entry_probability_raw /= 100.0
+            entry_probability = max(0.0, min(1.0, _entry_probability_raw))
 
-        entry_thesis = {
+            entry_thesis = {
                 "strategy_tag": config.STRATEGY_TAG,
                 "pattern_gate_opt_in": bool(config.PATTERN_GATE_OPT_IN),
                 "env_prefix": config.ENV_PREFIX,
