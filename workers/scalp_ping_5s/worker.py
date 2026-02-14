@@ -4153,9 +4153,17 @@ async def scalp_ping_5s_worker() -> None:
                 strategy_tag=config.STRATEGY_TAG,
                 pocket=config.POCKET,
             )
-            order_policy = "market_tech_router" if tech_route_reasons else "market_guarded"
+        order_policy = "market_tech_router" if tech_route_reasons else "market_guarded"
 
-            entry_thesis = {
+        try:
+            _entry_probability_raw = float(signal.confidence)
+        except Exception:
+            _entry_probability_raw = 0.0
+        if _entry_probability_raw > 1.0:
+            _entry_probability_raw /= 100.0
+        entry_probability = max(0.0, min(1.0, _entry_probability_raw))
+
+        entry_thesis = {
                 "strategy_tag": config.STRATEGY_TAG,
                 "pattern_gate_opt_in": bool(config.PATTERN_GATE_OPT_IN),
                 "env_prefix": config.ENV_PREFIX,
@@ -4195,6 +4203,7 @@ async def scalp_ping_5s_worker() -> None:
                 "tp_time_avg_sec": (
                     round(tp_profile.avg_tp_sec, 1) if tp_profile.avg_tp_sec > 0.0 else None
                 ),
+                "entry_probability": round(entry_probability, 3),
                 "tp_time_target_sec": round(config.TP_TARGET_HOLD_SEC, 1),
                 "tp_time_sample": int(tp_profile.sample),
                 "side_bias_scale": round(float(bias_scale), 3),
@@ -4338,7 +4347,7 @@ async def scalp_ping_5s_worker() -> None:
                 client_order_id=client_order_id,
                 strategy_tag=config.STRATEGY_TAG,
                 confidence=int(signal.confidence),
-                entry_thesis=entry_thesis,
+                entry_thesis=dict(entry_thesis, entry_units_intent=abs(units)),
             )
             if result:
                 pos_manager.register_open_trade(str(result), config.POCKET, client_order_id)

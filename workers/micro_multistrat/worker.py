@@ -763,6 +763,35 @@ def _confidence_scale(conf: int) -> float:
     return 0.55 + span * 0.45
 
 
+def _to_confidence_0_100(confidence: object, default: float = 0.0) -> int:
+    try:
+        conf = float(confidence)
+    except (TypeError, ValueError):
+        conf = float(default)
+    if conf < 0.0:
+        conf = 0.0
+    if conf <= 1.0:
+        conf *= 100.0
+    if conf > 100.0:
+        conf = 100.0
+    return int(round(conf))
+
+
+def _to_probability(
+    value: object,
+    default_ratio: float = 0.0,
+) -> float:
+    try:
+        raw = float(value)
+    except (TypeError, ValueError):
+        return max(0.0, min(1.0, float(default_ratio)))
+    if raw < 0.0:
+        return 0.0
+    if raw > 1.0:
+        raw /= 100.0
+    return max(0.0, min(1.0, raw))
+
+
 def _compute_cap(*args, **kwargs) -> Tuple[float, Dict[str, float]]:
     kwargs.setdefault("env_prefix", config.ENV_PREFIX)
     res = compute_cap(cap_min=config.CAP_MIN, cap_max=config.CAP_MAX, *args, **kwargs)
@@ -860,7 +889,7 @@ def _build_mr_entry_thesis(
     thesis: Dict[str, object] = {
         "strategy_tag": strategy_tag,
         "profile": signal.get("profile"),
-        "confidence": signal.get("confidence", 0),
+        "confidence": _to_confidence_0_100(signal.get("confidence", 0)),
         "env_tf": "H1",
         "struct_tf": "M5",
         "range_method": "percentile",
@@ -1130,7 +1159,7 @@ async def micro_multi_worker() -> None:
                     )
                     last_perf_block_log = now_mono
                 continue
-            base_conf = int(cand.get("confidence", 0) or 0)
+            base_conf = _to_confidence_0_100(cand.get("confidence", 0))
             bonus = _diversity_bonus(strategy_name, now_ts)
             score = base_conf + bonus
             if range_bias:
@@ -1315,14 +1344,16 @@ async def micro_multi_worker() -> None:
                 max_age_bars=max_age,
             )
             if div_bias:
-                base_conf = int(signal.get("confidence", 0) or 0)
-                signal["confidence"] = apply_divergence_confidence(
-                    base_conf,
-                    div_bias,
-                    max_bonus=max_bonus,
-                    max_penalty=max_penalty,
-                    floor=floor,
-                    ceil=ceil,
+                base_conf = _to_confidence_0_100(signal.get("confidence", 0))
+                signal["confidence"] = _to_confidence_0_100(
+                    apply_divergence_confidence(
+                        base_conf,
+                        div_bias,
+                        max_bonus=max_bonus,
+                        max_penalty=max_penalty,
+                        floor=floor,
+                        ceil=ceil,
+                    )
                 )
             div_meta = divergence_snapshot(fac_m1, max_age_bars=max_age)
 
@@ -1340,7 +1371,7 @@ async def micro_multi_worker() -> None:
                 )
             )
 
-            conf_scale = _confidence_scale(int(signal.get("confidence", 50)))
+            conf_scale = _confidence_scale(_to_confidence_0_100(signal.get("confidence", 50)))
             dyn_mult = 1.0
             dyn_score = 0.0
             dyn_trades = 0
@@ -1402,6 +1433,7 @@ async def micro_multi_worker() -> None:
                 is_buy=side == "long",
             )
             client_id = _client_order_id(signal_tag)
+            signal_conf = _to_confidence_0_100(signal.get("confidence", 0))
             entry_thesis: Dict[str, object] = {
                 "strategy_tag": signal_tag,
                 "signal_action": orig_action,
@@ -1409,7 +1441,11 @@ async def micro_multi_worker() -> None:
                 "exec_action": signal_action,
                 "exec_side": side,
                 "profile": signal.get("profile"),
-                "confidence": signal.get("confidence", 0),
+                "confidence": signal_conf,
+                "entry_probability": round(
+                    _to_probability(signal.get("entry_probability"), signal_conf / 100.0),
+                    3,
+                ),
                 "tp_pips": tp_pips,
                 "sl_pips": sl_pips,
                 "hard_stop_pips": sl_pips,
@@ -1574,6 +1610,7 @@ async def micro_multi_worker() -> None:
             if candle_mult != 1.0:
                 sign = 1 if units > 0 else -1
                 units = int(round(abs(units) * candle_mult)) * sign
+            entry_thesis["entry_units_intent"] = abs(int(units))
 
             entry_thesis.setdefault("env_prefix", config.ENV_PREFIX)
             res = await market_order(
@@ -1584,7 +1621,7 @@ async def micro_multi_worker() -> None:
                 pocket=config.POCKET,
                 client_order_id=client_id,
                 strategy_tag=signal_tag,
-                confidence=int(signal.get("confidence", 0)),
+                confidence=signal_conf,
                 entry_thesis=entry_thesis,
             )
             _STRATEGY_LAST_TS[strategy_name] = time.time()
@@ -1597,7 +1634,7 @@ async def micro_multi_worker() -> None:
                 price,
                 sl_price,
                 tp_price,
-                signal.get("confidence", 0),
+                signal_conf,
                 cap,
                 multi_scale,
                 hist_mult,

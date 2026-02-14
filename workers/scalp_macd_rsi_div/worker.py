@@ -86,6 +86,16 @@ def _confidence_scale(confidence: int) -> float:
     return 0.55 + span * 0.45
 
 
+def _to_probability(value: object) -> float:
+    try:
+        val = float(value)
+    except (TypeError, ValueError):
+        return 0.0
+    if val > 1.0:
+        val = val / 100.0
+    return max(0.0, min(1.0, val))
+
+
 def _compute_cap(*, atr_pips: float, free_ratio: float, range_active: bool, perf_pf: Optional[float]) -> tuple[float, Dict[str, float]]:
     res = compute_cap(
         atr_pips=atr_pips,
@@ -469,6 +479,7 @@ async def scalp_macd_rsi_div_worker() -> None:
                 "env_prefix": config.ENV_PREFIX,
                 "pattern_gate_opt_in": bool(config.PATTERN_GATE_OPT_IN),
                 "confidence": confidence,
+                "entry_probability": _to_probability(confidence),
                 "sl_pips": round(sl_pips, 3),
                 "tp_pips": round(tp_pips, 3),
                 "hard_stop_pips": round(sl_pips, 3),
@@ -497,8 +508,8 @@ async def scalp_macd_rsi_div_worker() -> None:
                 pocket=config.POCKET,
                 client_order_id=_client_order_id(config.STRATEGY_TAG),
                 strategy_tag=config.STRATEGY_TAG,
-                entry_thesis=entry_thesis,
-            )
+                entry_thesis=dict(entry_thesis, entry_units_intent=abs(units)),
+                )
             last_entry_mono = now_mono
             if side == "long":
                 long_arm_until = 0.0

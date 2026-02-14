@@ -462,6 +462,35 @@ def _confidence_scale(conf: int) -> float:
     return 0.5 + span * 0.5
 
 
+def _to_confidence_0_100(confidence: object, default: float = 0.0) -> int:
+    try:
+        conf = float(confidence)
+    except (TypeError, ValueError):
+        conf = float(default)
+    if conf < 0.0:
+        conf = 0.0
+    if conf <= 1.0:
+        conf *= 100.0
+    if conf > 100.0:
+        conf = 100.0
+    return int(round(conf))
+
+
+def _to_probability(
+    value: object,
+    default_ratio: float = 0.0,
+) -> float:
+    try:
+        raw = float(value)
+    except (TypeError, ValueError):
+        return max(0.0, min(1.0, float(default_ratio)))
+    if raw < 0.0:
+        return 0.0
+    if raw > 1.0:
+        raw /= 100.0
+    return max(0.0, min(1.0, raw))
+
+
 def _resolve_strategy_tag(signal_tag: str, signal_side: str) -> str:
     override = str(config.STRATEGY_TAG_OVERRIDE or "").strip()
     if not override:
@@ -623,7 +652,7 @@ async def scalp_m1_worker() -> None:
                 )
                 last_block_log = now_mono
             continue
-        conf_val = int(signal.get("confidence", 0) or 0)
+        conf_val = _to_confidence_0_100(signal.get("confidence", 0))
         if conf_val < config.CONFIDENCE_FLOOR:
             now_mono = time.monotonic()
             if now_mono - last_conf_log > 120.0:
@@ -924,7 +953,7 @@ async def scalp_m1_worker() -> None:
             )
         )
 
-        conf_scale = _confidence_scale(int(signal.get("confidence", 50)))
+        conf_scale = _confidence_scale(conf_val)
         signal_tag = signal_tag or M1Scalper.name
         strategy_tag = _resolve_strategy_tag(signal_tag, side)
         entry_kind = "market"
@@ -1022,7 +1051,11 @@ async def scalp_m1_worker() -> None:
             "pattern_gate_opt_in": bool(_PATTERN_GATE_OPT_IN),
             "signal_side": signal_side,
             "exec_side": side,
-            "confidence": signal.get("confidence", 0),
+            "confidence": conf_val,
+            "entry_probability": round(
+                _to_probability(signal.get("entry_probability"), conf_val / 100.0),
+                3,
+            ),
             "sl_pips": round(sl_pips, 2),
             "tp_pips": round(tp_pips, 2),
             "hard_stop_pips": round(sl_pips, 2),
@@ -1064,6 +1097,7 @@ async def scalp_m1_worker() -> None:
         if candle_mult != 1.0:
             sign = 1 if units > 0 else -1
             units = int(round(abs(units) * candle_mult)) * sign
+        entry_thesis["entry_units_intent"] = abs(int(units))
         if entry_kind == "limit" and limit_ttl_sec is not None:
             entry_thesis["entry_type"] = "limit"
             entry_thesis["entry_price"] = round(float(entry_ref_price), 3)
@@ -1088,19 +1122,19 @@ async def scalp_m1_worker() -> None:
                 _PENDING_LIMIT_UNTIL_TS = time.time() + max(1.0, limit_ttl_sec)
             LOG.info(
                 "%s sent(limit) units=%s side=%s ref=%.3f mid=%.3f sl=%.3f tp=%s conf=%.0f cap=%.2f dyn=%.2f setup=%s setup_mult=%.2f dyn_score=%.2f dyn_n=%s reasons=%s trade_id=%s order_id=%s",
-                config.LOG_PREFIX,
-                units,
-                side,
-                entry_ref_price,
+                    config.LOG_PREFIX,
+                    units,
+                    side,
+                    entry_ref_price,
                 price,
                 sl_price,
-                f"{tp_price:.3f}" if tp_price is not None else "NA",
-                signal.get("confidence", 0),
-                cap,
-                dyn_mult,
-                usdjpy_setup_mode or "none",
-                setup_size_mult,
-                dyn_score,
+                    f"{tp_price:.3f}" if tp_price is not None else "NA",
+                    conf_val,
+                    cap,
+                    dyn_mult,
+                    usdjpy_setup_mode or "none",
+                    setup_size_mult,
+                    dyn_score,
                 dyn_trades,
                 {**cap_reason, "tp_scale": round(tp_scale, 3)},
                 trade_id or "none",
@@ -1115,6 +1149,7 @@ async def scalp_m1_worker() -> None:
                 pocket=config.POCKET,
                 client_order_id=client_id,
                 strategy_tag=strategy_tag,
+                confidence=conf_val,
                 entry_thesis=entry_thesis,
             )
             LOG.info(
@@ -1125,7 +1160,7 @@ async def scalp_m1_worker() -> None:
                 price,
                 sl_price,
                 tp_price,
-                signal.get("confidence", 0),
+                conf_val,
                 cap,
                 dyn_mult,
                 usdjpy_setup_mode or "none",

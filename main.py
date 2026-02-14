@@ -327,6 +327,49 @@ def _signal_diversity_bonus(strategy_key: str, now_ts: float) -> float:
     return min(SIGNAL_DIVERSITY_MAX_BONUS, bonus)
 
 
+def _as_probability_ratio(value: object) -> Optional[float]:
+    """Normalize a probability/confidence-like value into 0..1."""
+    try:
+        raw = float(value)
+    except (TypeError, ValueError):
+        return None
+    if raw < 0:
+        return None
+    if raw <= 1.0:
+        return min(1.0, raw)
+    if raw <= 100.0:
+        return min(1.0, raw / 100.0)
+    # Defensive fallback: treat very large positive values as capped at 1.0.
+    return 1.0
+
+
+def _signal_entry_probability(sig: dict) -> Optional[float]:
+    if not isinstance(sig, dict):
+        return None
+    thesis = sig.get("entry_thesis")
+    if isinstance(thesis, dict):
+        ratio = _as_probability_ratio(thesis.get("entry_probability"))
+        if ratio is not None:
+            return ratio
+    return _as_probability_ratio(sig.get("entry_probability"))
+
+
+def _signal_entry_score_0_100(sig: dict, default_score: float = 50.0) -> float:
+    ratio = _signal_entry_probability(sig)
+    if ratio is None:
+        ratio = _as_probability_ratio(sig.get("confidence"))
+    if ratio is None:
+        ratio = _as_probability_ratio(sig.get("conf"))
+    if ratio is None:
+        return default_score
+    score = ratio * 100.0
+    if score < 0.0:
+        return 0.0
+    if score > 100.0:
+        return 100.0
+    return score
+
+
 def apply_dynamic_alloc(signals: list[dict], alloc: Optional[dict]) -> tuple[list[dict], dict, float]:
     """Adjust confidence based on dynamic scores; return (signals, pocket_caps, target_use)."""
     if not alloc:
@@ -342,7 +385,7 @@ def apply_dynamic_alloc(signals: list[dict], alloc: Optional[dict]) -> tuple[lis
             score = float(info.get("score", 1.0) or 1.0)
         except Exception:
             score = 1.0
-        conf = int(sig.get("confidence", 0) or 0)
+        conf = int(_signal_entry_score_0_100(sig, default_score=float(sig.get("confidence", 0) or 0.0)))
         new_conf = conf
         if score < 0.15:
             new_conf = max(0, int(conf * 0.3))
@@ -3521,11 +3564,14 @@ async def logic_loop():
         )
         if not strategy:
             return None
-        try:
-            conf = int(raw.get("confidence", raw.get("conf", 50)) or 50)
-        except Exception:
-            conf = 50
-        conf = max(0, min(100, conf))
+        confidence = _signal_entry_score_0_100(raw, default_score=50.0)
+        conf = int(round(confidence))
+        entry_probability = _signal_entry_probability(raw)
+        entry_units_intent = raw.get("entry_units_intent")
+        if entry_units_intent is None:
+            entry_thesis = raw.get("entry_thesis")
+            if isinstance(entry_thesis, dict):
+                entry_units_intent = entry_thesis.get("entry_units_intent")
         entry_price = _safe_float(
             raw.get("entry_price")
             or raw.get("price")
@@ -3574,6 +3620,13 @@ async def logic_loop():
             "meta": raw.get("meta") or {},
             "source": raw.get("source") or "bus",
         }
+        if entry_probability is not None:
+            sig["entry_probability"] = round(entry_probability, 3)
+        if entry_units_intent is not None:
+            try:
+                sig["entry_units_intent"] = max(0, int(round(float(entry_units_intent))))
+            except (TypeError, ValueError):
+                pass
         profile = raw.get("profile") or raw.get("strategy_profile")
         if profile:
             sig["profile"] = profile

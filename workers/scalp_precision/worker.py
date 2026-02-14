@@ -54,6 +54,17 @@ from .common import (
 
 LOG = logging.getLogger(__name__)
 
+
+def _to_probability(value: object) -> float:
+    try:
+        val = float(value)
+    except (TypeError, ValueError):
+        return 0.0
+    if val > 1.0:
+        val = val / 100.0
+    return max(0.0, min(1.0, val))
+
+
 _MODE_TAG_MAP = {
     'spread_revert': 'SpreadRangeRevert',
     'rangefaderpro': 'RangeFaderPro',
@@ -3174,10 +3185,12 @@ def _signal_session_edge(
 
 
 def _build_entry_thesis(signal: Dict[str, object], fac_m1: Dict[str, object], range_ctx) -> Dict[str, object]:
+    signal_confidence = int(signal.get("confidence", 0) or 0)
     thesis = {
         "strategy_tag": signal.get("tag"),
         "env_prefix": config.ENV_PREFIX,
-        "confidence": signal.get("confidence", 0),
+        "confidence": signal_confidence,
+        "entry_probability": round(_to_probability(signal_confidence), 3),
         "reason": signal.get("reason"),
         "sl_pips": signal.get("sl_pips"),
         "tp_pips": signal.get("tp_pips"),
@@ -3351,6 +3364,7 @@ async def _place_order(
     entry_thesis = _build_entry_thesis(signal, fac_m1, range_ctx)
     if isinstance(entry_thesis, dict):
         entry_thesis.setdefault("env_prefix", config.ENV_PREFIX)
+        entry_thesis["entry_units_intent"] = abs(units)
     meta = {
         "cap": round(cap, 3),
         "conf_scale": round(conf_scale, 3),

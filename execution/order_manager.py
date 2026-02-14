@@ -1754,6 +1754,9 @@ _DYNAMIC_SL_POCKETS = {
 _DYNAMIC_SL_RATIO = float(os.getenv("ORDER_DYNAMIC_SL_RATIO", "1.2"))
 _DYNAMIC_SL_MAX_PIPS = float(os.getenv("ORDER_DYNAMIC_SL_MAX_PIPS", "8.0"))
 _ENTRY_QUALITY_GATE_ENABLED = _env_bool("ORDER_ENTRY_QUALITY_GATE_ENABLED", True)
+_ORDER_MANAGER_BRAIN_GATE_ENABLED = _env_bool("ORDER_MANAGER_BRAIN_GATE_ENABLED", False)
+_ORDER_MANAGER_FORECAST_GATE_ENABLED = _env_bool("ORDER_MANAGER_FORECAST_GATE_ENABLED", False)
+_ORDER_MANAGER_PATTERN_GATE_ENABLED = _env_bool("ORDER_MANAGER_PATTERN_GATE_ENABLED", False)
 _ENTRY_QUALITY_POCKETS = _env_csv_set(
     "ORDER_ENTRY_QUALITY_POCKETS",
     "micro,macro,scalp,scalp_fast",
@@ -2390,6 +2393,31 @@ def _entry_confidence_score(
     if conf is None:
         conf = default
     return max(0.0, min(100.0, float(conf)))
+
+
+def _entry_probability_value(
+    confidence: Optional[float],
+    entry_thesis: Optional[dict],
+) -> Optional[float]:
+    """Return normalized entry probability in [0.0, 1.0]."""
+    raw: object = confidence
+    if isinstance(entry_thesis, dict):
+        raw = entry_thesis.get("entry_probability", raw)
+        if raw is None:
+            raw = entry_thesis.get("confidence", confidence)
+    if raw is None:
+        return None
+    try:
+        prob = float(raw)
+    except Exception:
+        return None
+    if prob < 0:
+        return 0.0
+    if prob <= 1.0:
+        return min(1.0, max(0.0, prob))
+    if prob <= 100.0:
+        return min(1.0, max(0.0, prob / 100.0))
+    return None
 
 
 def _entry_market_snapshot(
@@ -6163,6 +6191,7 @@ async def market_order(
             "entry_thesis": entry_thesis,
             "meta": meta,
             "confidence": confidence,
+            "entry_probability": _entry_probability_value(confidence, entry_thesis),
             "stage_index": stage_index,
             "arbiter_final": arbiter_final,
         },
@@ -6683,7 +6712,7 @@ async def market_order(
                 return None
 
     # LLM brain gate (per-strategy human-like filter)
-    if not reduce_only and pocket != "manual":
+    if not reduce_only and pocket != "manual" and _ORDER_MANAGER_BRAIN_GATE_ENABLED:
         try:
             brain_decision = brain.decide(
                 strategy_tag=strategy_tag,
@@ -6805,7 +6834,7 @@ async def market_order(
                     )
 
     # Probabilistic forecast gate (scikit-learn, offline bundle)
-    if not reduce_only and pocket != "manual":
+    if not reduce_only and pocket != "manual" and _ORDER_MANAGER_FORECAST_GATE_ENABLED:
         try:
                 fc_decision = forecast_gate.decide(
                     strategy_tag=strategy_tag,
@@ -7043,7 +7072,7 @@ async def market_order(
                 )
 
     # Pattern gate (pattern_book-driven block/scale; strategy worker opt-in)
-    if not reduce_only and pocket != "manual":
+    if not reduce_only and pocket != "manual" and _ORDER_MANAGER_PATTERN_GATE_ENABLED:
         try:
             pattern_decision = pattern_gate.decide(
                 strategy_tag=strategy_tag,
@@ -7823,6 +7852,7 @@ async def market_order(
             "pocket": pocket,
             "action": "OPEN_LONG" if units > 0 else "OPEN_SHORT",
             "confidence": conf_val,
+            "entry_probability": _entry_probability_value(confidence, entry_thesis),
             "sl_pips": sl_pips_hint,
             "tp_pips": tp_pips_hint,
             "sl_price": sl_price,
@@ -8888,55 +8918,6 @@ async def market_order(
                 side_label,
             )
             preflight_units = adjusted
-
-    # Cap new-entry order size with dynamic boost for high-confidence profiles
-    if not reduce_only:
-        cap_multiplier = 1.0
-        try:
-            if confidence is None and isinstance(entry_thesis, dict):
-                confidence_val = entry_thesis.get("confidence")
-            else:
-                confidence_val = confidence
-            if confidence_val is not None:
-                c = float(confidence_val)
-                if c >= 90:
-                    cap_multiplier = 1.6
-                elif c >= 80:
-                    cap_multiplier = max(cap_multiplier, 1.3)
-        except Exception:
-            pass
-        try:
-            profile = None
-            if isinstance(entry_thesis, dict):
-                profile = entry_thesis.get("profile") or entry_thesis.get("pocket_profile")
-            if profile and str(profile).lower() in {"aggressive", "momentum"}:
-                cap_multiplier = max(cap_multiplier, 1.4)
-        except Exception:
-            pass
-        dynamic_cap = int(_MAX_ORDER_UNITS * cap_multiplier)
-        dynamic_cap = min(max(_MAX_ORDER_UNITS, dynamic_cap), _MAX_ORDER_UNITS_HARD)
-        abs_units = abs(int(preflight_units))
-        if abs_units > dynamic_cap:
-            capped = (1 if preflight_units > 0 else -1) * dynamic_cap
-            log_order(
-                pocket=pocket,
-                instrument=instrument,
-                side="buy" if preflight_units > 0 else "sell",
-                units=preflight_units,
-                sl_price=sl_price,
-                tp_price=tp_price,
-                client_order_id=client_order_id,
-                status="units_cap_applied",
-                attempt=0,
-                request_payload={
-                    "from_units": preflight_units,
-                    "to_units": capped,
-                    "cap_multiplier": cap_multiplier,
-                    "max_order_units": _MAX_ORDER_UNITS,
-                    "hard_cap": _MAX_ORDER_UNITS_HARD,
-                },
-            )
-            preflight_units = capped
 
     if isinstance(entry_thesis, dict):
         entry_thesis = _augment_entry_thesis_regime(entry_thesis, pocket)

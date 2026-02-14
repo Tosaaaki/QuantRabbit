@@ -107,3 +107,22 @@
   - `quant-realtime-metrics.service/timer`（分析補助タイマーも除外）
 - VM上の V2実行群は `quant-market-data-feed` / `quant-strategy-control` / 各ENTRY-EXITペア + `quant-order-manager` / `quant-position-manager` のみ有効稼働を維持。
 - `systemctl list-unit-files --state=enabled --all` / `systemctl list-units --state=active` で再確認済み。
+
+### 2026-02-16（追加）V2のENTRY/EXIT責務固定
+
+- 戦略実行の意思決定入力を統一:
+  - `scalp_ping_5s`
+  - `scalp_m1scalper`
+  - `micro_multistrat`
+  - `scalp_macd_rsi_div`
+  - `scalp_precision`（`scalp_squeeze_pulse_break` / `scalp_tick_imbalance` / `scalp_wick_reversal_*` のラッパー含む）
+- 各戦略の `entry_thesis` を拡張し、`entry_probability` と `entry_units_intent` を付与する実装を反映:
+  - `workers/scalp_ping_5s/worker.py`
+  - `workers/scalp_m1scalper/worker.py`
+  - `workers/micro_multistrat/worker.py`
+  - `workers/scalp_macd_rsi_div/worker.py`
+  - `workers/scalp_precision/worker.py`
+- `order_manager` 側の役割を「ガード＋リスク検査」に限定:
+  - `quant-strategy-control` の可否フラグ（entry/exit/global）を参照するだけのフローに合わせる
+  - 戦略横断の強制的な勝率採点/順位付けや「代替戦略選別」ロジックは追加しない方針を維持。
+- `WORKER_ROLE_MATRIX_V2.md` を今回内容に合わせて同一コミットで更新（責務・禁止ルール・実行図の注記）。

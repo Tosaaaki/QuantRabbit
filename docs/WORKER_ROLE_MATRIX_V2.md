@@ -41,6 +41,10 @@
 - `quant-micro-multi` + `quant-micro-multi-exit`
 - `quant-session-open` + `quant-session-open-exit`（該当期間のみ）
 - 補助戦略の追加は、ENTRY/EXIT を追加してから有効化
+- 共通ルール:
+  - 各戦略ENTRYは `entry_thesis` に `entry_probability` と `entry_units_intent` を必須で付与する。
+  - `entry_probability` は戦略ローカルの「どれだけ入るべきか」判断、`entry_units_intent` は戦略ローカルの希望ロットを表す。
+  - `order_manager` は strategy 側意図の受け取りとガード/リスク検査のみで、戦略横断の採点・再選別は行わない。
 
 ※ `quant-micro-adaptive-revert*` と `quant-impulse-retest-s5*` は V2再整備で VM から停止対象へ移行済み（legacy）。
 
@@ -48,6 +52,7 @@
 
 - `execution/order_manager.py` の注文経路は `quant-order-manager.service` 経由。
 - 目的: 戦略は「注文意図」だけを投げ、実API送信は order-manager が担当。
+- 受け渡しは `entry_probability` / `entry_units_intent` を前提にし、`order_manager` 側は意図を縮小・拒否（ガード）するのみ。
 
 ### 5) ポジ管理面（分離済み）
 
@@ -65,6 +70,7 @@
 2. market_data / control / strategy / order / position の責務混在を許可しないこと
 3. `quantrabbit.service` の本番起動を許可しないこと
 4. `main.py` を systemd 本番エントリとして扱わないこと
+5. order-manager / strategy-control が戦略の意思決定を上書きしないこと
 
 ## 現在の状態（2026-02-16 時点）
 
@@ -81,6 +87,9 @@
   - `execution/order_manager.py`, `execution/position_manager.py` の service-first 経路化
   - API 契約（/order/*, /position/*）を基準化
   - 注記: 直近の運用レビューでは、データ記録系 DB と分析系成果物の更新は確認済み（VM側状態監査前提）。
+- 運用整備（2026-02-16 追加）
+  - 戦略ENTRYの出力に `entry_probability` / `entry_units_intent` を必須化し、V2本体戦略から `order_manager` への意図受け渡しを統一。
+  - `WORKER_REFACTOR_LOG.md` の同時追記を行い、実装・図面の変更差分を同一コミットへ反映。
 - 運用整備（2026-02-16）
   - VM側で `quantrabbit.service` を除去し、レガシー戦略・補助ユニット（`quant-impulse-retest-s5*`, `quant-micro-adaptive-revert*`, `quant-trend-reclaim-long*`, `quant-margin-relief-exit*`, `quant-hard-stop-backfill*`, `quant-realtime-metrics*`, precision 系）を停止・無効化。
   - `systemctl list-unit-files --state=enabled --all` で V2実行群（`market-data-feed`, `strategy-control`, 各ENTRY/EXIT, `order-manager`, `position-manager`）のみが実行系として起動対象であることを確認。
@@ -113,7 +122,7 @@ flowchart LR
   TW --> SWX
   FC --> SWX
 
-  SCW --> OM["order intents"]
+  SCW --> OM["order intents<br>entry_probability / entry_units_intent"]
   SWX --> OM
   OM --> OWM["quant-order-manager<br>/workers/order_manager/worker.py"]
   OWM --> OEX["execution/order_manager.py"]
