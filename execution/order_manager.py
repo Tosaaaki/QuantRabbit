@@ -2400,23 +2400,29 @@ def _entry_probability_value(
     entry_thesis: Optional[dict],
 ) -> Optional[float]:
     """Return normalized entry probability in [0.0, 1.0]."""
-    raw: object = confidence
+    candidates: list[object] = []
     if isinstance(entry_thesis, dict):
-        raw = entry_thesis.get("entry_probability", raw)
+        if "entry_probability" in entry_thesis:
+            candidates.append(entry_thesis.get("entry_probability"))
+        if "confidence" in entry_thesis:
+            candidates.append(entry_thesis.get("confidence"))
+    candidates.append(confidence)
+
+    for raw in candidates:
         if raw is None:
-            raw = entry_thesis.get("confidence", confidence)
-    if raw is None:
-        return None
-    try:
-        prob = float(raw)
-    except Exception:
-        return None
-    if prob < 0:
-        return 0.0
-    if prob <= 1.0:
-        return min(1.0, max(0.0, prob))
-    if prob <= 100.0:
-        return min(1.0, max(0.0, prob / 100.0))
+            continue
+        try:
+            prob = float(raw)
+        except Exception:
+            continue
+        if math.isnan(prob) or math.isinf(prob):
+            continue
+        if prob < 0:
+            return 0.0
+        if prob <= 1.0:
+            return min(1.0, max(0.0, prob))
+        if prob <= 100.0:
+            return min(1.0, max(0.0, prob / 100.0))
     return None
 
 
@@ -2443,11 +2449,9 @@ def _ensure_entry_intent_payload(
     if "entry_units_intent" not in thesis:
         thesis["entry_units_intent"] = abs(int(units))
 
-    if "entry_probability" not in thesis:
-        prob = _entry_probability_value(confidence, thesis)
-        if prob is None and confidence is not None:
-            prob = _entry_probability_value(float(confidence), None)
-        if prob is not None:
+    prob = _entry_probability_value(confidence, thesis)
+    if prob is not None:
+        if thesis.get("entry_probability") != prob:
             thesis["entry_probability"] = prob
 
     return thesis
