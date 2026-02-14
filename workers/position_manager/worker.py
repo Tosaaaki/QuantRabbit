@@ -8,11 +8,15 @@ from __future__ import annotations
 
 from contextlib import asynccontextmanager
 import logging
+import os
 from datetime import datetime
 from typing import Any
 
 from fastapi import Body, FastAPI, Request
 import uvicorn
+
+os.environ["POSITION_MANAGER_SERVICE_ENABLED"] = "0"
+os.environ["POSITION_MANAGER_SERVICE_FALLBACK_LOCAL"] = "1"
 
 from execution import position_manager
 
