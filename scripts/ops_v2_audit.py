@@ -113,6 +113,15 @@ def _parse_env_file(path: Path) -> dict[str, str]:
     return result
 
 
+def _parse_csv_set(raw_value: str) -> set[str]:
+    items: set[str] = set()
+    for item in raw_value.split(","):
+        item = item.strip()
+        if item:
+            items.add(item)
+    return items
+
+
 def _journal_405_count(hours: int = 3) -> int:
     since = (datetime.now(timezone.utc) - timedelta(hours=hours)).strftime("%Y-%m-%d %H:%M:%S")
     method_not_allowed = re.compile(r"method not allowed", re.IGNORECASE)
@@ -245,6 +254,14 @@ def main() -> int:
         "quant-trend-reclaim-long.service",
         "quant-trend-reclaim-long-exit.service",
     ]
+
+    # 6) disallowed units allowlist (temporary holdover during legacy strategy retention).
+    allowed_legacy_services = _parse_csv_set(
+        os.environ.get(
+            "OPS_V2_ALLOWED_LEGACY_SERVICES",
+            _parse_env_file(runtime_env).get("OPS_V2_ALLOWED_LEGACY_SERVICES", ""),
+        )
+    )
 
     findings: list[Finding] = []
 
@@ -433,13 +450,25 @@ def main() -> int:
             continue
         active = _is_active(svc)
         if active:
-            _add_finding(
-                findings,
-                level="critical",
-                component="systemd",
-                message=f"Disallowed V2 legacy unit is active: {svc}",
-                details={"service": svc},
-            )
+            if svc in allowed_legacy_services:
+                _add_finding(
+                    findings,
+                    level="warn",
+                    component="systemd",
+                    message=f"Allowed legacy V2 unit is active: {svc}",
+                    details={
+                        "service": svc,
+                        "note": "Listed in OPS_V2_ALLOWED_LEGACY_SERVICES",
+                    },
+                )
+            else:
+                _add_finding(
+                    findings,
+                    level="critical",
+                    component="systemd",
+                    message=f"Disallowed V2 legacy unit is active: {svc}",
+                    details={"service": svc},
+                )
 
     # normalize and dump
     findings.sort(key=lambda item: (item.level, item.component, item.message))

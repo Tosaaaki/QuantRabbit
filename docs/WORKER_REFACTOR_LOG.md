@@ -56,6 +56,20 @@
   - `WORKER_SERVICES` に `market_data_feed` / `strategy_control` を追加。
   - `initialize_history("USD_JPY")` を `worker_only_loop` から撤去（初期シードを market-data-feed worker に移譲）。
 
+### 2026-02-18（追記）黒板協調判定要件を仕様化
+
+- `execution/strategy_entry.py` は `/order/coordinate_entry_intent` を経由して
+  `execution/order_manager.py` の `entry_intent_board` 判定と整合した運用へ固定。
+- 判定の固定要件を明文化:
+  - `own_score = abs(raw_units) * normalized(entry_probability)`  
+  - `opposite_score / max(own_score,1.0) >= ORDER_INTENT_COORDINATION_REJECTION_DOMINANCE` で reject
+  - `scale = max(ORDER_INTENT_COORDINATION_MIN_SCALE, 1/(1+dominance))` で scale
+  - 最終 `abs(final_units) < min_units_for_pocket(pocket)` なら reject
+- 協調 `reason`（`opposite_domination/scale_to_zero/below_min_units_after_scale/coordination_load_error`）と
+  `status`（`intent_accepted/intent_scaled/intent_rejected`）を board に永続化し、
+  `final_units=0` は `order_manager` 経路に流さない運用をログ追跡対象化。
+- `AGENTS.md` と `WORKER_ROLE_MATRIX_V2.md` を同一ブランチ変更で更新し、監査対象文言を同期済みにする運用へ反映。
+
 ## 削除（実装済み）
 
 - `systemd/quant-hard-stop-backfill.service`
@@ -290,6 +304,13 @@
 - `install_trading_services.sh --all` が V2監査で禁止とするレガシーサービスを誤って再有効化しないよう、除外対象を明示。
   - 除外: `quant-impulse-retest-s5*`, `quant-micro-adaptive-revert*`（`--all` ではインストールせず、明示 `--units` 指定時のみ許容）
 - `install_trading_services --all` 再実行時も V2監査の disallow ルールを壊しにくい状態に更新。
+
+### 2026-02-14（追記）legacy残存時の監査許容ルールを追加
+
+- `scripts/ops_v2_audit.py` に、`OPS_V2_ALLOWED_LEGACY_SERVICES` で legacy サービスを明示許可する設定を追加。
+- `ops/env/quant-v2-runtime.env` に `OPS_V2_ALLOWED_LEGACY_SERVICES=...` を設定し、
+  `quant-impulse-retest-s5*` と `quant-micro-adaptive-revert*` の active 判定を
+  `critical` ではなく `warn` へトレードオフし、当面の運用継続を担保。
 
 ### 2026-02-14（追記）install_trading_services.sh の起動待機ハング対策
 

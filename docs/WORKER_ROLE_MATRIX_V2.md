@@ -49,7 +49,8 @@
   - `order_manager` は strategy 側意図の受け取りとガード/リスク検査のみで、戦略横断の採点・再選別は行わない。
   - 補足: `execution/order_manager.py` 側で `market_order()` / `limit_order()` 呼び出し時に当該2値の欠落補完を行うフェールセーフは実装済み。通常は戦略側での注入を優先し、欠損時のみ補完。
 
-※ `quant-micro-adaptive-revert*` と `quant-impulse-retest-s5*` は V2再整備で VM から停止対象へ移行済み（legacy）。
+※ `quant-micro-adaptive-revert*` と `quant-impulse-retest-s5*` は V2再整備で VM から停止対象へ移行予定の legacy。  
+  現行では `OPS_V2_ALLOWED_LEGACY_SERVICES` に明示登録することで監査を `critical` でなく `warn` 運用にできる（監査ログ上で明示追跡）。
 
 ### 4) オーダー面（分離済み）
 
@@ -64,6 +65,13 @@
   注文を `order-manager` へ転送する。
 - `ORDER_MANAGER_PRESERVE_STRATEGY_INTENT=1` 方針は維持し、`order_manager` は
   戦略意図を上書きしない前提で、ガード/リスク判定と必要最小限の縮小・拒否のみに留める。
+- `execution/strategy_entry.py` 経由の協調判定は以下を固定ルール化する。
+  - 判定対象は `ORDER_INTENT_COORDINATION_ENABLED=true` かつ `pocket != manual` のみ。
+  - 同一 `instrument` + `pocket` + `window`（既定 2 秒）内の未期限 board を集約し、`own_score=abs(raw_units)*prob` とする。
+  - `opposite_score` が 0 のときは協調受理、`opposite_score/own_score >= ORDER_INTENT_COORDINATION_REJECTION_DOMINANCE`（既定 1.12）なら協調拒否。
+  - 拒否条件に該当しない場合は `scale = max(ORDER_INTENT_COORDINATION_MIN_SCALE, 1/(1+opposite_score/max(own_score,1.0))` で縮小。
+  - 縮小後 `abs(final_units) < min_units_for_pocket(pocket)` は拒否。
+  - `reason` は `order_manager` の `entry_intent_board` へ記録し、`strategy_entry` は 0 なら注文を出さない。
 
 ### 5) ポジ管理面（分離済み）
 
