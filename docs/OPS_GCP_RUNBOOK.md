@@ -74,6 +74,16 @@ scripts/collect_gcs_status.py --ui-bucket fx-ui-realtime --backup-bucket quantra
 - 取得例: `gcloud storage cat gs://<bucket>/<object>`
 - ローカル: `/home/tossaki/QuantRabbit/logs/health_snapshot.json` にも保存（バックアップ対象）。
 
+- 監査の自動化（V2運用監視）:
+```bash
+sudo bash scripts/install_trading_services.sh --repo /home/tossaki/QuantRabbit \
+  --units quant-v2-audit.service quant-v2-audit.timer
+sudo systemctl enable --now quant-v2-audit.timer
+```
+- 監査結果:
+  - `journalctl -u quant-v2-audit.service -n 200 --no-pager`
+  - `cat /home/tossaki/QuantRabbit/logs/ops_v2_audit_latest.json`
+
 ## 5. OS Login 権限不足・VM 運用ルール
 - OS Login 権限不足時は `roles/compute.osAdminLogin` を付与（検証: `sudo -n true && echo SUDO_OK`）。
 - 本番 VM `fx-trader-vm` は原則 `main` ブランチ稼働。

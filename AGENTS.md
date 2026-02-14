@@ -154,9 +154,17 @@ flowchart LR
   ```bash
   gcloud compute ssh fx-trader-vm --project=quantrabbit --zone=asia-northeast1-a --tunnel-through-iap --command "for u in quant-order-manager.service quant-position-manager.service quant-strategy-control.service quant-market-data-feed.service quant-scalp-ping-5s.service quant-scalp-ping-5s-exit.service quant-micro-multi.service quant-micro-multi-exit.service quant-scalp-macd-rsi-div.service quant-scalp-macd-rsi-div-exit.service; do if systemctl cat \"$u\" >/dev/null 2>&1; then echo \"---$u---\"; systemctl cat \"$u\" | sed -n '1,130p'; fi; done"
   ```
+  - `main` 側自動監査（service化）:
+  ```bash
+  sudo bash scripts/install_trading_services.sh --repo /home/tossaki/QuantRabbit --units quant-v2-audit.service quant-v2-audit.timer
+  sudo systemctl enable --now quant-v2-audit.timer
+  ```
+  - 監査報告:
+  - `logs/ops_v2_audit_latest.json`
+  - `journalctl -u quant-v2-audit.service -n 200 --no-pager`
   - 戦略workerの運用ルール（監査用）
-    - `systemctl cat` で `EnvironmentFile=-/home/tossaki/QuantRabbit/ops/env/quant-v2-runtime.env` と
-      `EnvironmentFile=-/home/tossaki/QuantRabbit/ops/env/quant-<worker>.env` の両方が存在することを確認する。
+  - `systemctl cat` で `EnvironmentFile=-/home/tossaki/QuantRabbit/ops/env/quant-v2-runtime.env` と
+    `EnvironmentFile=-/home/tossaki/QuantRabbit/ops/env/quant-<worker>.env` の両方が存在することを確認する。
     - 例: `quant-scalp-ping-5s*.service` は上記2つ＋戦略オーバーライドenv (`scalp_ping_5s*.env`) を持つ。
     - `quant-order-manager.service` / `quant-position-manager.service` は
       `ops/env/quant-order-manager.env` / `ops/env/quant-position-manager.env` を持つことを確認する。

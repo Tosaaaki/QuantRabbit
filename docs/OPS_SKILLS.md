@@ -3,6 +3,8 @@
 ## 1. スキル運用
 - 日次運用/調査/デプロイ/リプレイ/リスク監査は専用スキルを優先利用する。
 - スキル一覧: `qr-log-triage`, `qr-deploy-ops`, `qr-replay-backtest`, `qr-risk-guard-audit`
+- V2 監査（systemd）: `quant-v2-audit.service` + `quant-v2-audit.timer`
+  - `logs/ops_v2_audit_latest.json` を参照して、サービス停止/環境ずれ/405 検知を確認。
 - 明示的に使う場合は `$qr-log-triage` のようにスキル名を付けて依頼する（自動発火も許容）。
 - スキル定義は `~/.codex/skills/<skill>/SKILL.md` を参照する。
 

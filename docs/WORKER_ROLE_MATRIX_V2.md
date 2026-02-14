@@ -110,10 +110,23 @@
 ## 監査用更新プロトコル（毎回）
 
 - 変更を加えるたびに実行:
-  1. `docs/WORKER_REFACTOR_LOG.md` に変更内容を追記
-  2. `docs/WORKER_ROLE_MATRIX_V2.md` の「現在の状態」を同一コミットで更新
-  3. `docs/INDEX.md` が必要なら参照を同期
-  4. `main` 統合 → `git commit` → `git push` → VM 反映
+1. `docs/WORKER_REFACTOR_LOG.md` に変更内容を追記
+2. `docs/WORKER_ROLE_MATRIX_V2.md` の「現在の状態」を同一コミットで更新
+3. `docs/INDEX.md` が必要なら参照を同期
+4. `main` 統合 → `git commit` → `git push` → VM 反映
+
+### 自動監査（VM監査ユニット）
+
+- 追加サービス（導線監査の自動化）: `quant-v2-audit.service` + `quant-v2-audit.timer`
+- 実施内容:
+  - `quant-market-data-feed` / `quant-strategy-control` / `quant-order-manager` / `quant-position-manager` の実行状態
+  - strategy 主要ENTRY/EXITユニットの稼働監査
+  - V2 runtime env と service/env 分離状態の監査
+  - `position/open_positions` 周りの 405 / Method Not Allowed 監査
+  - `quant-v2-runtime.env` の主要制御キー値差分監査
+  - `quantrabbit.service` 等 legacy active 判定
+- 出力: `logs/ops_v2_audit_latest.json`
+- デフォルト実行: 10分間隔（`OnCalendar=*:00/10`）
 
 ## V2 反映図（最上位・並行）
 

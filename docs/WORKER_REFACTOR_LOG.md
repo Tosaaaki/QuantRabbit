@@ -227,3 +227,17 @@
     - 取得時に重複時刻を除外して append し、既存件数に加えて 20本条件を満たせば成功扱い。
   - 運用中再シード時に固定リトライで同一履歴を上書きし続ける問題を低減。
 - `WORKER_ROLE_MATRIX_V2.md` のデータ面に、シード時の差分補完方針（前回キャッシュ終端ベース）を追記。
+
+### 2026-02-18（追記）V2監査（VM自動実行）追加
+
+- `scripts/ops_v2_audit.py` を追加し、V2導線（データ/制御/ORDER/POSITION/戦略）監査を1回の実行で集約。
+- 追加: `scripts/ops_v2_audit.sh`（systemd起動ラッパ）
+- 追加: `systemd/quant-v2-audit.service` / `systemd/quant-v2-audit.timer`
+- 監査対象:
+  - `quant-market-data-feed`, `quant-strategy-control`, `quant-order-manager`, `quant-position-manager` の active
+  - 戦略ENTRY/EXITの主要ペア active 状態
+  - `EnvironmentFile` 構成（`quant-v2-runtime.env` + `quant-<service>.env`）
+  - `quant-v2-runtime.env` 制御キー値（主要フラグ）
+  - `position/open_positions` の `405` 監視（order/position worker 呼び出し相当）
+  - `quantrabbit.service` 等 legacy active の有無
+- `systemd install`/`timer` 導入は `install_trading_services.sh --units` 経由で統一し、運用側は `logs/ops_v2_audit_latest.json` を監査ログとして参照。
