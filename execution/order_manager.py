@@ -1766,6 +1766,19 @@ _ORDER_MANAGER_PRESERVE_INTENT_PROBABILITY_MIN_SCALE = _env_float(
 _ORDER_MANAGER_PRESERVE_INTENT_PROBABILITY_REJECT_UNDER = _env_float(
     "ORDER_MANAGER_PRESERVE_INTENT_REJECT_UNDER", 0.0
 )
+_ORDER_INTENT_COORDINATION_ENABLED = False
+_ORDER_INTENT_COORDINATION_WINDOW_SEC = max(
+    0.25,
+    float(os.getenv("ORDER_INTENT_COORDINATION_WINDOW_SEC", "2.0")),
+)
+_ORDER_INTENT_COORDINATION_REJECTION_DOMINANCE = max(
+    1.0,
+    float(os.getenv("ORDER_INTENT_COORDINATION_REJECTION_DOMINANCE", "1.12")),
+)
+_ORDER_INTENT_COORDINATION_MIN_SCALE = max(
+    0.0,
+    min(1.0, float(os.getenv("ORDER_INTENT_COORDINATION_MIN_SCALE", "0.2"))),
+)
 _ENTRY_QUALITY_POCKETS = _env_csv_set(
     "ORDER_ENTRY_QUALITY_POCKETS",
     "micro,macro,scalp,scalp_fast",
@@ -2261,11 +2274,41 @@ def _ensure_orders_schema() -> sqlite3.Connection:
     cols = {row[1] for row in con.execute("PRAGMA table_info(orders)")}
     if "stage_index" not in cols:
         con.execute("ALTER TABLE orders ADD COLUMN stage_index INTEGER")
+    con.execute(
+        """
+        CREATE TABLE IF NOT EXISTS entry_intent_board (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          ts TEXT,
+          pocket TEXT,
+          instrument TEXT,
+          strategy_tag TEXT,
+          side INTEGER,
+          raw_units INTEGER,
+          final_units INTEGER,
+          entry_probability REAL,
+          client_order_id TEXT,
+          status TEXT,
+          reason TEXT,
+          request_json TEXT,
+          ts_epoch REAL,
+          expires_at REAL
+        )
+        """
+    )
     # Useful indexes
     con.execute(
         "CREATE INDEX IF NOT EXISTS idx_orders_client ON orders(client_order_id)"
     )
     con.execute("CREATE INDEX IF NOT EXISTS idx_orders_ts ON orders(ts)")
+    con.execute(
+        "CREATE INDEX IF NOT EXISTS idx_entry_intent_board_scope ON entry_intent_board (pocket, instrument, side, expires_at)"
+    )
+    con.execute(
+        "CREATE INDEX IF NOT EXISTS idx_entry_intent_board_status_scope ON entry_intent_board (pocket, instrument, status, expires_at)"
+    )
+    con.execute(
+        "CREATE INDEX IF NOT EXISTS idx_entry_intent_board_client ON entry_intent_board (client_order_id, ts_epoch)"
+    )
     con.commit()
     return con
 
@@ -2463,6 +2506,365 @@ def _probability_scaled_units(
     if min_units > 0 and scaled_abs < min_units:
         return 0, "entry_probability_below_min_units"
     return (scaled_abs if units > 0 else -scaled_abs), None
+
+
+def _normalize_intent_probability(value: Optional[float]) -> float:
+    """Normalize intent probability to [0,1] weight."""
+    if value is None:
+        return 1.0
+    try:
+        prob = float(value)
+    except Exception:
+        return 1.0
+    if math.isnan(prob) or math.isinf(prob):
+        return 1.0
+    if prob <= 1.0:
+        return max(0.0, min(1.0, prob))
+    return max(0.0, min(1.0, prob / 100.0))
+
+
+def _entry_intent_board_purge(now_epoch: float | None = None) -> None:
+    """Purge expired entries from the intent board."""
+    if not _ORDER_INTENT_COORDINATION_ENABLED:
+        return
+    if now_epoch is None:
+        now_epoch = time.time()
+    try:
+        con = _orders_con()
+        con.execute(
+            "DELETE FROM entry_intent_board WHERE expires_at < ?",
+            (float(now_epoch),),
+        )
+        con.commit()
+    except Exception as exc:
+        logging.debug("[ORDER][INTENT] purge failed: %s", exc)
+
+
+def _entry_intent_board_record(
+    *,
+    pocket: str,
+    instrument: str,
+    strategy_tag: Optional[str],
+    side: int,
+    raw_units: int,
+    final_units: int,
+    entry_probability: Optional[float],
+    client_order_id: Optional[str],
+    status: str,
+    reason: Optional[str] = None,
+    request_payload: Optional[dict] = None,
+) -> None:
+    """Persist one intent record for downstream coordination."""
+    now_epoch = time.time()
+    ts = datetime.fromtimestamp(now_epoch, tz=timezone.utc).isoformat()
+    payload = request_payload if isinstance(request_payload, dict) else {}
+    try:
+        con = _orders_con()
+        con.execute(
+            """
+            INSERT INTO entry_intent_board (
+              ts, pocket, instrument, strategy_tag, side, raw_units, final_units,
+              entry_probability, client_order_id, status, reason, request_json,
+              ts_epoch, expires_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                ts,
+                pocket,
+                instrument,
+                strategy_tag,
+                int(side),
+                int(abs(raw_units)) if raw_units is not None else 0,
+                int(abs(final_units)) if final_units is not None else 0,
+                _normalize_intent_probability(entry_probability),
+                client_order_id,
+                status,
+                str(reason) if reason else None,
+                _safe_json(payload),
+                float(now_epoch),
+                float(now_epoch + _ORDER_INTENT_COORDINATION_WINDOW_SEC),
+            ),
+        )
+        con.commit()
+    except Exception as exc:
+        logging.debug("[ORDER][INTENT] record failed: %s", exc)
+
+
+def _coordinate_entry_intent(
+    *,
+    instrument: str,
+    pocket: str,
+    strategy_tag: Optional[str],
+    side: int,
+    raw_units: int,
+    entry_probability: Optional[float],
+    client_order_id: Optional[str],
+    min_units: int,
+) -> tuple[int, Optional[str], dict[str, float | str | int]]:
+    """
+    Coordinate one intent with recent intents in the same instrument/pocket.
+
+    Returns (final_units, reason, details).
+    reason is None when accepted, "reject" for hard reject, and "scaled" for soft scale.
+    """
+    if not _ORDER_INTENT_COORDINATION_ENABLED:
+        return raw_units, None, {"coordination_enabled": 0.0}
+    if not (pocket and pocket.lower() != "manual"):
+        return raw_units, None, {"coordination_enabled": 0.0}
+    if not instrument:
+        return raw_units, "reject", {"coordination_error": "missing_instrument"}
+    if not strategy_tag:
+        return raw_units, "reject", {"coordination_error": "missing_strategy_tag"}
+    if raw_units == 0:
+        return raw_units, None, {"coordination_enabled": 1.0}
+    try:
+        requested_side = 1 if raw_units > 0 else -1
+        if side != 0 and requested_side != side:
+            requested_side = 1 if side > 0 else -1
+        side = requested_side
+    except Exception:
+        side = 1 if raw_units > 0 else -1
+
+    now_epoch = time.time()
+    _entry_intent_board_purge(now_epoch=now_epoch)
+
+    try:
+        con = _orders_con()
+        if client_order_id:
+            con.execute(
+                """
+                DELETE FROM entry_intent_board
+                WHERE client_order_id = ?
+                  AND pocket = ?
+                  AND instrument = ?
+                """,
+                (str(client_order_id), pocket, instrument),
+            )
+        window_start = now_epoch - _ORDER_INTENT_COORDINATION_WINDOW_SEC
+        rows = con.execute(
+            """
+            SELECT side, final_units, entry_probability, strategy_tag
+            FROM entry_intent_board
+            WHERE pocket = ?
+              AND instrument = ?
+              AND status IN ('intent_accepted', 'intent_scaled')
+              AND ts_epoch >= ?
+              AND (client_order_id IS NULL OR client_order_id != ?)
+            """,
+            (
+                pocket,
+                instrument,
+                window_start,
+                str(client_order_id) if client_order_id else "",
+            ),
+        ).fetchall()
+    except Exception as exc:
+        logging.debug("[ORDER][INTENT] load failed: %s", exc)
+        _entry_intent_board_record(
+            pocket=pocket,
+            instrument=instrument,
+            strategy_tag=strategy_tag,
+            side=side,
+            raw_units=raw_units,
+            final_units=raw_units,
+            entry_probability=entry_probability,
+            client_order_id=client_order_id,
+            status="intent_accepted",
+            reason="coordination_load_error",
+            request_payload={"error": str(exc)},
+        )
+        return raw_units, None, {"coordination_enabled": 0.0, "coordination_error": str(exc)}
+
+    own_prob = _normalize_intent_probability(entry_probability)
+    own_units = abs(int(raw_units))
+    own_score = float(max(1, own_units)) * max(0.0, own_prob)
+
+    opposite_score = 0.0
+    same_score = 0.0
+    opposite_count = 0
+    same_count = 0
+    for row in rows:
+        try:
+            row_side = int(row[0])
+            raw = int(row[1] or 0)
+            row_prob = _normalize_intent_probability(_as_float(row[2]))
+        except Exception:
+            continue
+        if raw <= 0 or abs(row_side) not in (1, -1):
+            continue
+        row_score = float(raw) * max(0.0, row_prob)
+        if row_side == side:
+            same_score += row_score
+            same_count += 1
+        else:
+            opposite_score += row_score
+            opposite_count += 1
+
+    details = {
+        "coordination_enabled": 1.0,
+        "raw_units": own_units,
+        "entry_probability": own_prob,
+        "same_count": int(same_count),
+        "opposite_count": int(opposite_count),
+        "same_score": round(same_score, 6),
+        "opposite_score": round(opposite_score, 6),
+    }
+    if opposite_score <= 0.0:
+        final_units = raw_units
+        _entry_intent_board_record(
+            pocket=pocket,
+            instrument=instrument,
+            strategy_tag=strategy_tag,
+            side=side,
+            raw_units=raw_units,
+            final_units=final_units,
+            entry_probability=entry_probability,
+            client_order_id=client_order_id,
+            status="intent_accepted",
+            request_payload=details,
+        )
+        return final_units, None, details
+
+    rejection_dominance = max(
+        _ORDER_INTENT_COORDINATION_REJECTION_DOMINANCE,
+        1.0,
+    )
+    dominance = opposite_score / max(own_score, 1.0)
+    details["opposite_ratio_to_own"] = round(dominance, 6)
+    details["dominance_threshold"] = rejection_dominance
+    if dominance >= rejection_dominance:
+        details["decision"] = "reject"
+        _entry_intent_board_record(
+            pocket=pocket,
+            instrument=instrument,
+            strategy_tag=strategy_tag,
+            side=side,
+            raw_units=raw_units,
+            final_units=0,
+            entry_probability=entry_probability,
+            client_order_id=client_order_id,
+            status="intent_rejected",
+            reason="opposite_domination",
+            request_payload=details,
+        )
+        return 0, "reject", details
+
+    raw_scale = 1.0 / (1.0 + dominance)
+    min_scale = _ORDER_INTENT_COORDINATION_MIN_SCALE
+    scale = max(min_scale, raw_scale)
+    final_abs = int(round(abs(raw_units) * scale))
+    if final_abs <= 0:
+        details["decision"] = "reject"
+        _entry_intent_board_record(
+            pocket=pocket,
+            instrument=instrument,
+            strategy_tag=strategy_tag,
+            side=side,
+            raw_units=raw_units,
+            final_units=0,
+            entry_probability=entry_probability,
+            client_order_id=client_order_id,
+            status="intent_rejected",
+            reason="scale_to_zero",
+            request_payload=details,
+        )
+        return 0, "reject", details
+    if min_units > 0 and final_abs < min_units:
+        details["decision"] = "reject"
+        details["min_units"] = int(min_units)
+        _entry_intent_board_record(
+            pocket=pocket,
+            instrument=instrument,
+            strategy_tag=strategy_tag,
+            side=side,
+            raw_units=raw_units,
+            final_units=0,
+            entry_probability=entry_probability,
+            client_order_id=client_order_id,
+            status="intent_rejected",
+            reason="below_min_units_after_scale",
+            request_payload=details,
+        )
+        return 0, "reject", details
+
+    final_units = int(final_abs if raw_units > 0 else -final_abs)
+    details["decision"] = "scaled" if final_units != raw_units else "accepted"
+    details["scale"] = round(final_units / float(abs(raw_units)), 6) if raw_units != 0 else 1.0
+    _entry_intent_board_record(
+        pocket=pocket,
+        instrument=instrument,
+        strategy_tag=strategy_tag,
+        side=side,
+        raw_units=raw_units,
+        final_units=final_units,
+        entry_probability=entry_probability,
+        client_order_id=client_order_id,
+        status="intent_scaled" if final_units != raw_units else "intent_accepted",
+        reason=details["decision"],
+        request_payload=details,
+    )
+    if final_units != raw_units:
+        return final_units, "scaled", details
+    return final_units, None, details
+
+
+async def coordinate_entry_intent(
+    *,
+    instrument: str,
+    pocket: str,
+    strategy_tag: Optional[str],
+    side: int,
+    raw_units: int,
+    entry_probability: Optional[float],
+    client_order_id: Optional[str],
+    min_units: int,
+) -> tuple[int, Optional[str], dict[str, float | str | int]]:
+    """
+    Coordinate one strategy intent.
+
+    This public entry is used by strategy side before dispatching to market/limit
+    so that the strategy can inject intent context first and avoid duplicate
+    coordination on order-manager.
+    """
+    payload = {
+        "instrument": instrument,
+        "pocket": pocket,
+        "strategy_tag": strategy_tag,
+        "side": side,
+        "raw_units": raw_units,
+        "entry_probability": entry_probability,
+        "client_order_id": client_order_id,
+        "min_units": min_units,
+    }
+
+    service_result = await _order_manager_service_request_async(
+        "/order/coordinate_entry_intent",
+        payload,
+    )
+    if service_result is not None:
+        if isinstance(service_result, dict):
+            final_units = service_result.get("final_units")
+            reason = service_result.get("reason")
+            details = service_result.get("details")
+            if (
+                isinstance(final_units, int)
+                and isinstance(details, dict)
+            ):
+                return final_units, reason, details
+        raise RuntimeError(
+            f"invalid coordinate_entry_intent service payload: {service_result!r}"
+        )
+
+    return _coordinate_entry_intent(
+        instrument=instrument,
+        pocket=pocket,
+        strategy_tag=strategy_tag,
+        side=side,
+        raw_units=raw_units,
+        entry_probability=entry_probability,
+        client_order_id=client_order_id,
+        min_units=min_units,
+    )
 
 
 def _ensure_entry_intent_payload(
@@ -6262,6 +6664,8 @@ async def market_order(
         entry_thesis=entry_thesis,
     )
     entry_probability = _entry_probability_value(confidence, entry_thesis)
+    if not strategy_tag and isinstance(entry_thesis, dict):
+        strategy_tag = _strategy_tag_from_thesis(entry_thesis)
     preserve_strategy_intent = (
         _ORDER_MANAGER_PRESERVE_STRATEGY_INTENT
         and not reduce_only
@@ -6894,7 +7298,12 @@ async def market_order(
                 return None
 
     # LLM brain gate (per-strategy human-like filter)
-    if not reduce_only and pocket != "manual" and _ORDER_MANAGER_BRAIN_GATE_ENABLED:
+    if (
+        not reduce_only
+        and pocket != "manual"
+        and not preserve_strategy_intent
+        and _ORDER_MANAGER_BRAIN_GATE_ENABLED
+    ):
         try:
             brain_decision = brain.decide(
                 strategy_tag=strategy_tag,
@@ -7016,7 +7425,12 @@ async def market_order(
                     )
 
     # Probabilistic forecast gate (scikit-learn, offline bundle)
-    if not reduce_only and pocket != "manual" and _ORDER_MANAGER_FORECAST_GATE_ENABLED:
+    if (
+        not reduce_only
+        and pocket != "manual"
+        and not preserve_strategy_intent
+        and _ORDER_MANAGER_FORECAST_GATE_ENABLED
+    ):
         try:
                 fc_decision = forecast_gate.decide(
                     strategy_tag=strategy_tag,
@@ -7254,7 +7668,12 @@ async def market_order(
                 )
 
     # Pattern gate (pattern_book-driven block/scale; strategy worker opt-in)
-    if not reduce_only and pocket != "manual" and _ORDER_MANAGER_PATTERN_GATE_ENABLED:
+    if (
+        not reduce_only
+        and pocket != "manual"
+        and not preserve_strategy_intent
+        and _ORDER_MANAGER_PATTERN_GATE_ENABLED
+    ):
         try:
             pattern_decision = pattern_gate.decide(
                 strategy_tag=strategy_tag,
@@ -8116,7 +8535,11 @@ async def market_order(
 
     # Entry-quality gates (opt-in): these are deterministic and can be enabled per VM
     # via systemd Environment overrides.
-    if not reduce_only and (pocket or "").lower() != "manual":
+    if (
+        not reduce_only
+        and (pocket or "").lower() != "manual"
+        and not preserve_strategy_intent
+    ):
         allowed, reason, details = _entry_quality_regime_gate_decision(
             pocket=str(pocket or ""),
             strategy_tag=strategy_tag,
@@ -8167,6 +8590,7 @@ async def market_order(
         instrument == "USD_JPY"
         and not reduce_only
         and (pocket or "").lower() != "manual"
+        and not preserve_strategy_intent
     ):
         allowed, reason, details = _entry_quality_microstructure_gate_decision(
             pocket=str(pocket or ""),
@@ -8212,7 +8636,11 @@ async def market_order(
             return None
 
     quote = _fetch_quote(instrument)
-    if quote and quote.get("spread_pips") is not None:
+    if (
+        quote
+        and quote.get("spread_pips") is not None
+        and not preserve_strategy_intent
+    ):
         _trace("spread_check")
         spread_threshold = _order_spread_block_pips(
             pocket,
@@ -8262,6 +8690,7 @@ async def market_order(
         not thesis_disable_hard_stop
         and _DYNAMIC_SL_ENABLE
         and (pocket or "").lower() in _DYNAMIC_SL_POCKETS
+        and not preserve_strategy_intent
         and not reduce_only
     ):
         loss_guard_pips = None
@@ -8320,6 +8749,7 @@ async def market_order(
         and entry_basis is not None
         and sl_price is not None
         and tp_price is not None
+        and not preserve_strategy_intent
     ):
         min_rr = _min_rr_for(pocket)
         if min_rr > 0.0:
@@ -8401,7 +8831,12 @@ async def market_order(
                         min_rr,
                     )
 
-    if not reduce_only and entry_basis is not None and tp_price is not None:
+    if (
+        not reduce_only
+        and entry_basis is not None
+        and tp_price is not None
+        and not preserve_strategy_intent
+    ):
         tp_cap, tp_cap_meta = _tp_cap_for(pocket, entry_thesis)
         if tp_cap > 0.0:
             tp_pips = abs(tp_price - entry_basis) / 0.01
@@ -8464,7 +8899,12 @@ async def market_order(
                     },
                 )
 
-    if not reduce_only and entry_basis is not None and sl_price is not None:
+    if (
+        not reduce_only
+        and entry_basis is not None
+        and sl_price is not None
+        and not preserve_strategy_intent
+    ):
         max_sl_pips = _entry_max_sl_pips(pocket, strategy_tag=strategy_tag)
         if max_sl_pips > 0.0:
             sl_pips = abs(entry_basis - sl_price) / 0.01
@@ -8497,7 +8937,7 @@ async def market_order(
                     max_sl_pips,
                 )
 
-    if not reduce_only:
+    if not reduce_only and not preserve_strategy_intent:
         conf_score = _entry_confidence_score(confidence, entry_thesis)
         sl_pips_live: Optional[float] = None
         tp_pips_live: Optional[float] = None
@@ -8784,7 +9224,13 @@ async def market_order(
                 units,
             )
 
-    if not reduce_only and not sl_disabled and not thesis_disable_hard_stop and estimated_entry is not None:
+    if (
+        not reduce_only
+        and not sl_disabled
+        and not thesis_disable_hard_stop
+        and not preserve_strategy_intent
+        and estimated_entry is not None
+    ):
         hard_stop_pips = _entry_hard_stop_pips(pocket, strategy_tag=strategy_tag)
         if hard_stop_pips > 0.0:
             max_sl_pips = _entry_max_sl_pips(pocket, strategy_tag=strategy_tag)
@@ -8835,7 +9281,11 @@ async def market_order(
                             else None,
                         }
 
-    if not reduce_only and estimated_entry is not None:
+    if (
+        not reduce_only
+        and estimated_entry is not None
+        and not preserve_strategy_intent
+    ):
         norm_sl = None if sl_disabled else sl_price
         norm_tp = tp_price
         norm_sl, norm_tp, normalized = _normalize_protections(
@@ -8855,7 +9305,11 @@ async def market_order(
                 estimated_entry,
             )
 
-    if not reduce_only and not thesis_disable_hard_stop:
+    if (
+        not reduce_only
+        and not thesis_disable_hard_stop
+        and not preserve_strategy_intent
+    ):
         loss_cap_jpy = _entry_loss_cap_jpy(
             pocket,
             strategy_tag=strategy_tag,
@@ -9057,7 +9511,7 @@ async def market_order(
             return None
 
     # Directional exposure cap: scale down instead of rejecting
-    if not reduce_only:
+    if not reduce_only and not preserve_strategy_intent:
         _trace("dir_cap")
         adjusted = _apply_directional_cap(preflight_units, pocket, side_label, meta)
         if adjusted == 0:
@@ -9572,9 +10026,118 @@ async def limit_order(
     reduce_only: bool = False,
     ttl_ms: float = 800.0,
     entry_thesis: Optional[dict] = None,
+    confidence: Optional[int] = None,
     meta: Optional[dict] = None,
 ) -> tuple[Optional[str], Optional[str]]:
     """Place a passive limit order. Returns (trade_id, order_id)."""
+    strategy_tag = _strategy_tag_from_client_id(client_order_id)
+    if not strategy_tag:
+        strategy_tag = _strategy_tag_from_thesis(entry_thesis)
+    entry_thesis = _ensure_entry_intent_payload(
+        units=units,
+        confidence=confidence,
+        strategy_tag=strategy_tag,
+        entry_thesis=entry_thesis,
+    )
+    entry_probability = _entry_probability_value(confidence, entry_thesis)
+    preserve_strategy_intent = (
+        _ORDER_MANAGER_PRESERVE_STRATEGY_INTENT
+        and not reduce_only
+        and (pocket or "").lower() != "manual"
+    )
+    if preserve_strategy_intent:
+        scaled_units, probability_reason = _probability_scaled_units(
+            units,
+            pocket=pocket,
+            entry_probability=entry_probability,
+        )
+        if probability_reason is not None:
+            reason_note = probability_reason
+            _console_order_log(
+                "OPEN_SKIP",
+                pocket=pocket,
+                strategy_tag=strategy_tag or "unknown",
+                side="buy" if units > 0 else "sell",
+                units=units,
+                sl_price=sl_price,
+                tp_price=tp_price,
+                client_order_id=client_order_id,
+                note=f"entry_probability:{reason_note}",
+            )
+            _log_order(
+                pocket=pocket,
+                instrument=instrument,
+                side="buy" if units > 0 else "sell",
+                units=units,
+                sl_price=sl_price,
+                tp_price=tp_price,
+                client_order_id=client_order_id,
+                status="entry_probability_reject",
+                attempt=0,
+                request_payload={
+                    "entry_probability": entry_probability,
+                    "entry_thesis": entry_thesis,
+                    "meta": meta,
+                    "strategy_tag": strategy_tag,
+                },
+            )
+            log_metric(
+                "order_probability_reject",
+                1.0,
+                tags={
+                    "pocket": pocket,
+                    "strategy": strategy_tag or "unknown",
+                    "reason": reason_note,
+                },
+            )
+            return None, None
+        if scaled_units != units:
+            _console_order_log(
+                "OPEN_SCALE",
+                pocket=pocket,
+                strategy_tag=strategy_tag or "unknown",
+                side="buy" if units > 0 else "sell",
+                units=scaled_units,
+                sl_price=sl_price,
+                tp_price=tp_price,
+                client_order_id=client_order_id,
+                note=f"probability_scale:{entry_probability:.3f}" if entry_probability is not None else "probability_scale",
+            )
+            _log_order(
+                pocket=pocket,
+                instrument=instrument,
+                side="buy" if units > 0 else "sell",
+                units=scaled_units,
+                sl_price=sl_price,
+                tp_price=tp_price,
+                client_order_id=client_order_id,
+                status="probability_scaled",
+                attempt=0,
+                request_payload={
+                    "entry_probability": entry_probability,
+                    "entry_thesis": entry_thesis,
+                    "meta": meta,
+                    "scaled_units": scaled_units,
+                    "raw_units": abs(units) if units else 0,
+                },
+            )
+            log_metric(
+                "order_probability_scale",
+                max(
+                    0.0,
+                    min(
+                        1.0,
+                        float(entry_probability)
+                        if entry_probability is not None
+                        else 1.0,
+                    ),
+                ),
+                tags={
+                    "pocket": pocket,
+                    "strategy": strategy_tag or "unknown",
+                },
+            )
+            units = scaled_units
     service_result = await _order_manager_service_request_async(
         "/order/limit_order",
         {
@@ -9592,6 +10155,8 @@ async def limit_order(
             "ttl_ms": ttl_ms,
             "entry_thesis": entry_thesis,
             "meta": meta,
+            "confidence": confidence,
+            "entry_probability": entry_probability,
         },
     )
     if service_result is not None:
@@ -9603,8 +10168,6 @@ async def limit_order(
                 str(order_id) if order_id is not None else None,
             )
         return None, None
-
-    strategy_tag = _strategy_tag_from_thesis(entry_thesis)
 
     sl_disabled = stop_loss_disabled_for_pocket(pocket)
     thesis_disable_hard_stop = _disable_hard_stop_by_strategy(
@@ -9623,7 +10186,13 @@ async def limit_order(
     if _soft_tp_mode(entry_thesis):
         tp_price = None
 
-    if not reduce_only and not sl_disabled and not thesis_disable_hard_stop and price > 0:
+    if (
+        not reduce_only
+        and not sl_disabled
+        and not thesis_disable_hard_stop
+        and not preserve_strategy_intent
+        and price > 0
+    ):
         hard_stop_pips = _entry_hard_stop_pips(pocket, strategy_tag=strategy_tag)
         if hard_stop_pips > 0.0:
             hard_sl_price = _sl_price_from_pips(price, units, hard_stop_pips)
@@ -9661,7 +10230,11 @@ async def limit_order(
             reduce_only=reduce_only,
         )
 
-    if not reduce_only and not thesis_disable_hard_stop:
+    if (
+        not reduce_only
+        and not preserve_strategy_intent
+        and not thesis_disable_hard_stop
+    ):
         loss_cap_jpy = _entry_loss_cap_jpy(
             pocket,
             strategy_tag=strategy_tag,
@@ -10210,6 +10783,7 @@ async def limit_order(
     attempt_payload: dict = {"oanda": payload}
     if entry_thesis is not None:
         attempt_payload["entry_thesis"] = entry_thesis
+        attempt_payload["entry_probability"] = entry_probability
     if meta is not None:
         attempt_payload["meta"] = meta
 

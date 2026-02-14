@@ -11,7 +11,7 @@ import os
 import time
 
 from execution.order_ids import build_client_order_id
-from execution.order_manager import cancel_order, limit_order, market_order
+from execution.strategy_entry import cancel_order, limit_order, market_order
 from execution.risk_guard import allowed_lot, can_trade, clamp_sl_tp
 from indicators.factor_cache import all_factors, get_candles_snapshot
 from utils.market_hours import is_market_open

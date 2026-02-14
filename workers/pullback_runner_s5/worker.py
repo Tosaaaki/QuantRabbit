@@ -19,7 +19,7 @@ import math
 import time
 from typing import Dict, List, Optional, Sequence
 
-from execution.order_manager import market_order, set_trade_protections
+from execution.strategy_entry import market_order, set_trade_protections
 from workers.common.dyn_size import compute_units
 from execution.position_manager import PositionManager
 from market_data import spread_monitor, tick_window

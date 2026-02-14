@@ -12,7 +12,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Sequence
 
-from execution.order_manager import market_order, set_trade_protections
+from execution.strategy_entry import market_order, set_trade_protections
 from execution.position_manager import PositionManager
 from execution.risk_guard import loss_cooldown_status
 from indicators.factor_cache import all_factors, get_candles_snapshot

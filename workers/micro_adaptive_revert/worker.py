@@ -12,7 +12,7 @@ from typing import Dict, Optional, Tuple
 from analysis.range_guard import detect_range_mode
 from analysis import perf_monitor
 from indicators.factor_cache import all_factors
-from execution.order_manager import market_order
+from execution.strategy_entry import market_order
 from execution.risk_guard import allowed_lot, can_trade, clamp_sl_tp
 from market_data import tick_window
 from strategies.micro_lowvol.micro_adaptive_revert import MicroAdaptiveRevert

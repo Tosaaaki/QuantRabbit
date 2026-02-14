@@ -12,7 +12,7 @@ from typing import Dict, Optional, Sequence, Set
 from workers.common.exit_scaling import momentum_scale, scale_value
 from workers.common.exit_utils import close_trade, mark_pnl_pips
 from workers.common.reentry_decider import decide_reentry
-from execution.order_manager import set_trade_protections
+from execution.strategy_entry import set_trade_protections
 from execution.position_manager import PositionManager
 from execution.reversion_failure import evaluate_reversion_failure, evaluate_tp_zone
 from indicators.factor_cache import all_factors

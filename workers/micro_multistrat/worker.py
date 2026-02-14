@@ -16,7 +16,7 @@ from typing import Dict, List, Optional, Tuple
 from analysis.range_guard import detect_range_mode
 from analysis.range_model import compute_range_snapshot
 from indicators.factor_cache import all_factors, get_candles_snapshot, refresh_cache_from_disk
-from execution.order_manager import market_order
+from execution.strategy_entry import market_order
 from execution.risk_guard import allowed_lot, can_trade, clamp_sl_tp
 from market_data import tick_window
 from strategies.micro.momentum_burst import MomentumBurstMicro

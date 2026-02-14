@@ -5,7 +5,7 @@ import time
 from dataclasses import dataclass
 from typing import Optional, Tuple
 
-from execution.order_manager import close_trade as _close_trade
+from execution.strategy_entry import close_trade as _close_trade
 from indicators.factor_cache import all_factors
 from utils.env_utils import env_bool, env_float, env_get
 from utils.metrics_logger import log_metric

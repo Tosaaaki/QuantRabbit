@@ -12,7 +12,7 @@ import logging
 import time
 from typing import Dict, List, Optional, Sequence
 
-from execution.order_manager import market_order
+from execution.strategy_entry import market_order
 from execution.position_manager import PositionManager
 from execution.risk_guard import loss_cooldown_status
 from market_data import spread_monitor, tick_window

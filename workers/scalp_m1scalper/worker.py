@@ -19,7 +19,7 @@ from autotune.scalp_trainer import AUTO_INTERVAL_SEC, start_background_autotune
 from analysis.range_guard import detect_range_mode
 from indicators.factor_cache import all_factors, get_candles_snapshot
 from market_data import spread_monitor
-from execution.order_manager import limit_order, market_order
+from execution.strategy_entry import limit_order, market_order
 from execution.risk_guard import allowed_lot, can_trade, clamp_sl_tp
 from market_data import tick_window
 from strategies.scalping.m1_scalper import M1Scalper

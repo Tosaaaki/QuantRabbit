@@ -5,7 +5,7 @@ import os
 from datetime import datetime
 from typing import Optional
 
-from execution.order_manager import close_trade as _close_trade
+from execution.strategy_entry import close_trade as _close_trade
 from execution.pro_stop import plan_pro_stop_closes
 from indicators.factor_cache import all_factors
 from utils.metrics_logger import log_metric

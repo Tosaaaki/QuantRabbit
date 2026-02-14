@@ -20,7 +20,7 @@ from typing import Optional, Sequence
 
 import httpx
 
-from execution.order_manager import (
+from execution.strategy_entry import (
     get_last_order_status_by_client_id,
     market_order,
 )

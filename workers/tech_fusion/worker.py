@@ -13,7 +13,7 @@ from analysis import perf_monitor
 from analysis.mtf_heat import evaluate_mtf_heat
 from analysis.range_guard import detect_range_mode
 from analysis.technique_engine import evaluate_entry_techniques
-from execution.order_manager import market_order
+from execution.strategy_entry import market_order
 from execution.risk_guard import allowed_lot, can_trade, clamp_sl_tp
 from indicators.factor_cache import all_factors, refresh_cache_from_disk
 from market_data import tick_window

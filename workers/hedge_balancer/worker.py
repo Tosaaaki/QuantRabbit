@@ -19,7 +19,7 @@ from typing import Optional, Tuple
 
 from market_data import tick_window
 from execution.order_ids import build_client_order_id
-from execution.order_manager import market_order
+from execution.strategy_entry import market_order
 from execution.position_manager import PositionManager
 from utils.market_hours import is_market_open
 from utils.oanda_account import AccountSnapshot, get_account_snapshot, get_position_summary

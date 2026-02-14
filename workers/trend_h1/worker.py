@@ -15,7 +15,7 @@ import time
 from typing import Dict, Optional
 
 from indicators.factor_cache import all_factors, get_candles_snapshot
-from execution.order_manager import market_order
+from execution.strategy_entry import market_order
 from execution.position_manager import PositionManager
 from execution.risk_guard import (
     allowed_lot,

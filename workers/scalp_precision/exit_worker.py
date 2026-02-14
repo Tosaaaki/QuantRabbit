@@ -12,7 +12,7 @@ from datetime import datetime, timezone
 from typing import Any, Optional, Sequence, Set
 
 from analysis.range_guard import detect_range_mode
-from execution.order_manager import set_trade_protections
+from execution.strategy_entry import set_trade_protections
 from execution.position_manager import PositionManager
 from indicators.factor_cache import all_factors
 from market_data import tick_window

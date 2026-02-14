@@ -9,7 +9,7 @@ import datetime
 import logging
 from typing import Optional
 
-from execution.order_manager import market_order
+from execution.strategy_entry import market_order
 from execution.position_manager import PositionManager
 from execution.risk_guard import allowed_lot
 from execution.stage_tracker import StageTracker

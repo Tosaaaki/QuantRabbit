@@ -211,6 +211,27 @@
   `GET + params` へ固定振り分けする分岐を堅牢化。
 - 既存の GET 経路は維持しつつ、POST 混在時の `405 Method Not Allowed` を回避。
 
+### 2026-02-14（追記）order_manager の戦略意図保全（市場/リミット両方）
+
+- `execution/order_manager.py` の `market_order()` と `limit_order()` 入口で、`entry_probability` と `entry_units_intent` を
+  `entry_thesis` へ必須注入・補完する仕組みを統一し、`entry_probability` に応じたロット縮小／リジェクトのみを
+  `ORDER_MANAGER_PRESERVE_STRATEGY_INTENT=1` 時の実装として明確化。
+  - reduce_only/manual 除外時のみ `preserve` を有効化。
+- `ORDER_MANAGER_PRESERVE_STRATEGY_INTENT=1` かつ pocket/manual 以外では、戦略側意図が示すSL/TPやサイズ方針を
+  order_manager が一方的に再設計しないよう、以下は `not preserve` 条件へ追従:
+  - Brain / Forecast / Pattern gate
+  - entry-quality / microstructure gate
+  - spread block / dynamic SL / min-RR 調整 / TP&SLキャップ / hard stop / normalize / loss cap / direction cap
+- ただし、`entry_probability` による「許容上限超えでの縮小」や「超低確率での拒否」は risk 側許容範囲として維持。
+- リミット注文側も同様に `entry_probability` 注入・同条件ガードを追加し、`order_manager_service` 経路に同じ意図を引き継ぐように統一。
+
+### 2026-02-14（追記）戦略横断意図協調（entry_intent_board）を追加
+- `order_manager` は `entry_probability` に基づく縮小/拒否と margin/cap 等の共通リスクガードのみを行い、
+  戦略横断の意図協調（`entry_intent_board` / `intent_coordination`）は運用方針として停止。
+- `execution/strategy_entry.py` は戦略側の意図を保持しつつ `order_manager` への転送に徹する方針へ戻した。
+- 同時衝突回避に使っていた `workers/order_manager/worker.py` の `POST /order/coordinate_entry_intent` は廃止し、
+  意図協調ロジックの呼び出し経路を実装から排除。
+
 ### 2026-02-17（追記）order/position worker の自己service呼び出しガード
 
 - `quant-position-manager.service` と `quant-order-manager.service` の環境衝突（`quant-v2-runtime.env` が

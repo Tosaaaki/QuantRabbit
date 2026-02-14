@@ -17,7 +17,7 @@ from typing import Dict, List, Optional, Sequence
 
 from analysis import plan_bus
 from indicators.factor_cache import all_factors, get_candles_snapshot
-from execution.order_manager import market_order
+from execution.strategy_entry import market_order
 from execution.position_manager import PositionManager
 from execution.risk_guard import clamp_sl_tp
 from market_data import spread_monitor, tick_window

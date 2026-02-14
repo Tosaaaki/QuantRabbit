@@ -194,6 +194,7 @@ async def limit_order(payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
             reduce_only=_to_bool(body.get("reduce_only"), False),
             ttl_ms=_to_float(body.get("ttl_ms"), 800.0) or 800.0,
             entry_thesis=body.get("entry_thesis"),
+            confidence=_to_int(body.get("confidence"), 0) if body.get("confidence") is not None else None,
             meta=body.get("meta"),
         )
     except Exception as exc:

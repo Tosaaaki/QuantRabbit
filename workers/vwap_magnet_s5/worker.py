@@ -17,7 +17,7 @@ from analysis.range_model import compute_range_snapshot
 from execution.position_manager import PositionManager
 from execution.risk_guard import loss_cooldown_status
 from indicators.factor_cache import all_factors, get_candles_snapshot
-from execution.order_manager import market_order
+from execution.strategy_entry import market_order
 from execution.risk_guard import clamp_sl_tp
 from market_data import spread_monitor, tick_window
 from utils.market_hours import is_market_open

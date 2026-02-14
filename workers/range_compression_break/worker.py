@@ -12,7 +12,7 @@ from typing import Dict, Optional, Tuple
 from analysis.ma_projection import compute_donchian_projection
 from analysis.patterns import detect_latest_n_wave
 from analysis.technique_engine import evaluate_entry_techniques
-from execution.order_manager import market_order
+from execution.strategy_entry import market_order
 from execution.risk_guard import allowed_lot, can_trade, clamp_sl_tp
 from indicators.factor_cache import all_factors, get_candles_snapshot, refresh_cache_from_disk
 from market_data import tick_window

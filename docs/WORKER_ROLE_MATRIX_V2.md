@@ -47,15 +47,20 @@
   - `entry_probability` は戦略ローカルの「どれだけ入るべきか」判断、`entry_units_intent` は戦略ローカルの希望ロットを表す。
   - `AddonLiveBroker` 経路（`session_open` など）でも上記2値を `entry_thesis` に渡し、order manager はそれを前提にガード/リスク判定のみを行う。
   - `order_manager` は strategy 側意図の受け取りとガード/リスク検査のみで、戦略横断の採点・再選別は行わない。
-  - 補足: `execution/order_manager.py` 側で `market_order()` 呼び出し時に当該2値の欠落補完を行うフェールセーフは実装済み。通常は戦略側での注入を優先し、欠損時のみ補完。
+  - 補足: `execution/order_manager.py` 側で `market_order()` / `limit_order()` 呼び出し時に当該2値の欠落補完を行うフェールセーフは実装済み。通常は戦略側での注入を優先し、欠損時のみ補完。
 
 ※ `quant-micro-adaptive-revert*` と `quant-impulse-retest-s5*` は V2再整備で VM から停止対象へ移行済み（legacy）。
 
 ### 4) オーダー面（分離済み）
 
 - `execution/order_manager.py` の注文経路は `quant-order-manager.service` 経由。
-- 目的: 戦略は「注文意図」だけを投げ、実API送信は order-manager が担当。
+- 目的: 戦略は「注文意図」を投げ、実API送信は order-manager が担当。
 - 受け渡しは `entry_probability` / `entry_units_intent` を前提にし、`order_manager` 側は意図を縮小・拒否（ガード）するのみ。
+- `ORDER_MANAGER_PRESERVE_STRATEGY_INTENT=1`（既定）運用では、戦略側が意図した
+  `entry_probability` / `entry_units_intent` / SL/TP設計を order_manager が新たに選別しない方針へ統一。  
+  ただし、entry_probability による確率スケーリングやリスクガード（マージン、ロスキャップ等）での最終調整のみ許容。
+- 戦略横断の `entry_intent_board` / `intent_coordination` は停止方針。
+- `execution/strategy_entry.py` は `order_manager` への受け渡しを担う passthrough として扱い、意図の事前再設計を行わない。
 
 ### 5) ポジ管理面（分離済み）
 
