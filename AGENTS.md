@@ -154,6 +154,10 @@ flowchart LR
   ```bash
   gcloud compute ssh fx-trader-vm --project=quantrabbit --zone=asia-northeast1-a --tunnel-through-iap --command "for u in quant-order-manager.service quant-position-manager.service quant-strategy-control.service quant-market-data-feed.service quant-scalp-ping-5s.service quant-scalp-ping-5s-exit.service quant-micro-multi.service quant-micro-multi-exit.service quant-scalp-macd-rsi-div.service quant-scalp-macd-rsi-div-exit.service; do if systemctl cat \"$u\" >/dev/null 2>&1; then echo \"---$u---\"; systemctl cat \"$u\" | sed -n '1,130p'; fi; done"
   ```
+  - 戦略workerの運用ルール（監査用）
+    - `systemctl cat` で `EnvironmentFile=-/home/tossaki/QuantRabbit/ops/env/quant-v2-runtime.env` と
+      `EnvironmentFile=-/home/tossaki/QuantRabbit/ops/env/quant-<worker>.env` の両方が存在することを確認する。
+    - 例: `quant-scalp-ping-5s*.service` は上記2つ＋戦略オーバーライドenv (`scalp_ping_5s*.env`) を持つ。
 - 判定のゴール
   - 上位導線群が active/running し、`quantrabbit.service` が主導線になっていない。
   - 上記監査キーがフリーズ方針に一致し、service 側の `EnvironmentFile` が一本化されている。

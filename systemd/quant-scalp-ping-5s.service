@@ -3,53 +3,12 @@ Description=QuantRabbit Scalp Ping 5s Worker (entry-only)
 After=network.target
 
 [Service]
+EnvironmentFile=-/home/tossaki/QuantRabbit/ops/env/quant-v2-runtime.env
+EnvironmentFile=-/home/tossaki/QuantRabbit/ops/env/quant-scalp-ping-5s.env
 Type=simple
 WorkingDirectory=/home/tossaki/QuantRabbit
 Environment="PYTHONUNBUFFERED=1"
-# Defaults (can be overridden by /etc/quantrabbit*.env below).
-Environment=SCALP_PING_5S_ENABLED=1
-Environment=SCALP_PING_5S_REQUIRE_PRACTICE=0
-Environment=SCALP_PING_5S_POCKET=scalp_fast
-Environment=SCALP_PING_5S_STRATEGY_TAG=scalp_ping_5s_live
-Environment=SCALP_PING_5S_NO_HEDGE_ENTRY=0
-Environment=SCALP_PING_5S_LOOP_INTERVAL_SEC=0.2
-Environment=SCALP_PING_5S_ENTRY_COOLDOWN_SEC=1.0
-Environment=SCALP_PING_5S_MAX_ACTIVE_TRADES=40
-Environment=SCALP_PING_5S_MAX_PER_DIRECTION=24
-Environment=SCALP_PING_5S_MIN_FREE_MARGIN_RATIO=0.12
-Environment=SCALP_PING_5S_BASE_ENTRY_UNITS=1200
-Environment=SCALP_PING_5S_MAX_UNITS=3500
-Environment=SCALP_PING_5S_LOW_MARGIN_HEDGE_RELIEF_ENABLED=1
-Environment=SCALP_PING_5S_LOW_MARGIN_HEDGE_RELIEF_MIN_FREE_RATIO=0.015
-Environment=SCALP_PING_5S_LOW_MARGIN_HEDGE_RELIEF_MIN_MARGIN_AVAILABLE_JPY=1500
-Environment=SCALP_PING_5S_LOW_MARGIN_HEDGE_RELIEF_MAX_IMBALANCE_FRACTION=0.60
-Environment=SCALP_PING_5S_MAX_SPREAD_PIPS=0.85
-Environment=SPREAD_GUARD_DISABLE=1
-Environment=SCALP_PING_5S_PERF_GUARD_MODE=warn
-Environment=SCALP_PING_5S_TP_BASE_PIPS=0.2
-Environment=SCALP_PING_5S_TP_NET_MIN_PIPS=0.25
-Environment=SCALP_PING_5S_TP_MAX_PIPS=1.0
-Environment=SCALP_PING_5S_TP_MOMENTUM_BONUS_MAX=0.2
-Environment=SCALP_PING_5S_TP_TIME_ADAPT_ENABLED=1
-Environment=SCALP_PING_5S_TP_TARGET_HOLD_SEC=120
-Environment=SCALP_PING_5S_TP_HOLD_LOOKBACK_HOURS=24
-Environment=SCALP_PING_5S_TP_HOLD_MIN_TRADES=30
-Environment=SCALP_PING_5S_TP_TIME_MULT_MIN=0.55
-Environment=SCALP_PING_5S_TP_NET_MIN_FLOOR_PIPS=0.10
-Environment=SCALP_PING_5S_ENTRY_CHASE_MAX_PIPS=1.4
-Environment=SCALP_PING_5S_SL_BASE_PIPS=2.4
-Environment=SCALP_PING_5S_TRAP_BYPASS_NO_HEDGE=1
-Environment=SCALP_PING_5S_TRAP_REQUIRE_NET_LOSS=1
-Environment=SCALP_PING_5S_TRAP_MIN_LONG_UNITS=8000
-Environment=SCALP_PING_5S_TRAP_MIN_SHORT_UNITS=8000
-Environment=SCALP_PING_5S_TRAP_MAX_NET_RATIO=0.45
-Environment=SCALP_PING_5S_TRAP_MIN_COMBINED_DD_PIPS=0.8
-# Base env + per-strategy overrides.
-EnvironmentFile=-/home/tossaki/QuantRabbit/ops/env/quant-v2-runtime.env
 EnvironmentFile=-/home/tossaki/QuantRabbit/ops/env/scalp_ping_5s.env
-# Keep entry capacity stable even when /etc env contains legacy duplicate keys.
-Environment=SCALP_PING_5S_MAX_ACTIVE_TRADES=40
-Environment=SCALP_PING_5S_MAX_PER_DIRECTION=24
 ExecStart=/home/tossaki/QuantRabbit/.venv/bin/python -m workers.scalp_ping_5s.worker
 Restart=always
 RestartSec=5

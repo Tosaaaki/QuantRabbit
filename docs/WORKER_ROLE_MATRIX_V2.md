@@ -76,7 +76,8 @@
 ## 現在の状態（2026-02-16 時点）
 
 - runtime env は `ops/env/quant-v2-runtime.env` を唯一の本体参照先とし、`systemd/*.service` は同ファイルを読み込む。
-- strategy固有の追加設定は `ops/env/scalp_ping_5s.env` など、目的別envで上書きする。
+- strategy固有の追加設定は `ops/env/scalp_ping_5s.env` などの既存上書きenvに加え、各ENTRY/EXIT戦略の基本設定を
+  `ops/env/quant-<service>.env` へ集約する。
 
 - この図は V2 運用で構成が変わるたびに更新する（組織図更新の必須運用）。  
   `docs/WORKER_REFACTOR_LOG.md` と同一コミットで差分が並走すること。

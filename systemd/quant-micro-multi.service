@@ -3,24 +3,11 @@ Description=QuantRabbit Micro Multi-Strategy Worker
 After=network.target
 
 [Service]
+EnvironmentFile=-/home/tossaki/QuantRabbit/ops/env/quant-v2-runtime.env
+EnvironmentFile=-/home/tossaki/QuantRabbit/ops/env/quant-micro-multi.env
 Type=simple
 WorkingDirectory=/home/tossaki/QuantRabbit
 Environment="PYTHONUNBUFFERED=1"
-Environment="FORECAST_GATE_ENABLED=0"
-Environment="MICRO_STRATEGY_ALLOWLIST=MicroLevelReactor,MicroRangeBreak,MicroVWAPRevert,MicroVWAPBound,MomentumPulse"
-Environment="MICRO_VWAPBOUND_PATTERN_GATE_OPT_IN=1"
-Environment="MICRO_MULTI_LOOP_INTERVAL_SEC=6.0"
-Environment="MICRO_MULTI_BASE_UNITS=28000"
-Environment="MICRO_MULTI_MAX_MARGIN_USAGE=0.92"
-Environment="MICRO_MULTI_MAX_SIGNALS_PER_CYCLE=3"
-Environment="MICRO_MULTI_MULTI_SIGNAL_MIN_SCALE=0.70"
-Environment="MICRO_MULTI_DYN_ALLOC_ENABLED=1"
-Environment="MICRO_MULTI_DYN_ALLOC_WINNER_ONLY=1"
-Environment="MICRO_MULTI_DYN_ALLOC_LOSER_BLOCK=1"
-Environment="MICRO_MULTI_DYN_ALLOC_MIN_TRADES=10"
-Environment="MICRO_MULTI_DYN_ALLOC_WINNER_SCORE=0.62"
-Environment="MICRO_MULTI_DYN_ALLOC_LOSER_SCORE=0.28"
-Environment="MICRO_MULTI_DYN_ALLOC_TTL_SEC=20"
 ExecStart=/home/tossaki/QuantRabbit/.venv/bin/python -m workers.micro_multistrat.worker
 Restart=always
 RestartSec=5

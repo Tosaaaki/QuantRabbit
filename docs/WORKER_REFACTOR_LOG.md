@@ -155,3 +155,35 @@
 - `startup_script.sh` と `scripts/deploy_via_metadata.sh`/`scripts/vm_apply_entry_precision_hardening.sh` で
   legacy 環境ファイル依存を撤去し、`ops/env/quant-v2-runtime.env` をデフォルト注入先に変更。
 - 併せて AGENTS/VM/GCP/監査ドキュメントの監査対象コマンドを新環境ファイル参照へ更新。
+
+### 2026-02-16（追記）戦略ENTRY/EXIT workerのenv分離
+
+- V2戦略ENTRY/EXIT群（`scalp*`, `micro*`, `session_open`, `impulse_retest_s5`）の `systemd/*.service` から
+  戦略固有 `Environment=` を切り出し、各サービス対応の `ops/env/quant-<service>.env` を新設。
+  - 追加/更新対象 `systemd`:
+    - `quant-m1scalper*.service`
+    - `quant-micro-adaptive-revert*.service`
+    - `quant-micro-multi*.service`
+    - `quant-scalp-macd-rsi-div*.service`
+    - `quant-scalp-ping-5s*.service`
+    - `quant-scalp-squeeze-pulse-break*.service`
+    - `quant-scalp-tick-imbalance*.service`
+    - `quant-scalp-wick-reversal-blend*.service`
+    - `quant-scalp-wick-reversal-pro*.service`
+    - `quant-session-open*.service`
+    - `quant-impulse-retest-s5*.service`
+  - 追加/更新対象 `ops/env/*`:
+    - `ops/env/quant-m1scalper*.env`
+    - `ops/env/quant-micro-adaptive-revert*.env`
+    - `ops/env/quant-micro-multi*.env`
+    - `ops/env/quant-scalp-macd-rsi-div*.env`
+    - `ops/env/quant-scalp-ping-5s*.env`
+    - `ops/env/quant-scalp-squeeze-pulse-break*.env`
+    - `ops/env/quant-scalp-tick-imbalance*.env`
+    - `ops/env/quant-scalp-wick-reversal-blend*.env`
+    - `ops/env/quant-scalp-wick-reversal-pro*.env`
+    - `ops/env/quant-session-open*.env`
+    - `ops/env/quant-impulse-retest-s5*.env`
+- `quant-scalp-ping-5s` 系は既存の戦略上書きenv（`scalp_ping_5s.env`, `scalp_ping_5s_b.env`）を維持し、`ops/env/quant-scalp-ping-5s*.env` を基本設定用として分離。
+- `AGENTS.md` と `WORKER_ROLE_MATRIX_V2.md` を同一コミットで更新し、監査時に `EnvironmentFile` の二段構造
+  (`quant-v2-runtime.env` + `quant-<service>.env`) をチェック対象化。
