@@ -6,11 +6,9 @@ After=network.target
 Type=simple
 WorkingDirectory=/home/tossaki/QuantRabbit
 EnvironmentFile=/home/tossaki/QuantRabbit/ops/env/quant-v2-runtime.env
+EnvironmentFile=/home/tossaki/QuantRabbit/ops/env/quant-order-manager.env
 Environment=PYTHONUNBUFFERED=1
 Environment=ORDER_MANAGER_SERVICE_PORT=8300
-Environment=ORDER_MANAGER_SERVICE_ENABLED=0
-Environment=POSITION_MANAGER_SERVICE_ENABLED=0
-Environment=ORDER_MANAGER_SERVICE_FALLBACK_LOCAL=1
 ExecStart=/home/tossaki/QuantRabbit/.venv/bin/python -m workers.order_manager.worker
 Restart=always
 RestartSec=5

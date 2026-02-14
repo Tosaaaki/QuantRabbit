@@ -74,10 +74,13 @@
 4. `main.py` を systemd 本番エントリとして扱わないこと
 5. order-manager / strategy-control が戦略の意思決定を上書きしないこと
 
-## 現在の状態（2026-02-16 時点）
+## 現在の状態（2026-02-17 時点）
 
-- runtime env は `ops/env/quant-v2-runtime.env` を唯一の本体参照先とし、`systemd/*.service` は同ファイルを読み込む。
-- strategy固有の追加設定は `ops/env/scalp_ping_5s.env` などの既存上書きenvに加え、各ENTRY/EXIT戦略の基本設定を
+- runtime env は `ops/env/quant-v2-runtime.env` を基準参照とし、共通設定を持つ。  
+  `order_manager` / `position_manager` は各ワーカー固定実行のため、service-mode の制御は専用 env でオーバーライド:
+  - `ops/env/quant-order-manager.env`
+  - `ops/env/quant-position-manager.env`
+- strategy 固有の追加設定は `ops/env/scalp_ping_5s.env` などの既存上書き env に加え、各ENTRY/EXIT戦略の基本設定を
   `ops/env/quant-<service>.env` へ集約する。
 
 - この図は V2 運用で構成が変わるたびに更新する（組織図更新の必須運用）。  
@@ -99,6 +102,10 @@
 - 運用整備（2026-02-16）
   - VM側で `quantrabbit.service` を除去し、レガシー戦略・補助ユニット（`quant-impulse-retest-s5*`, `quant-micro-adaptive-revert*`, `quant-trend-reclaim-long*`, `quant-margin-relief-exit*`, `quant-hard-stop-backfill*`, `quant-realtime-metrics*`, precision 系）を停止・無効化。
   - `systemctl list-unit-files --state=enabled --all` で V2実行群（`market-data-feed`, `strategy-control`, 各ENTRY/EXIT, `order-manager`, `position-manager`）のみが実行系として起動対象であることを確認。
+- 運用整備（2026-02-17）
+  - `quant-order-manager.service` / `quant-position-manager.service` へ専用 env を追加し、共通 runtime env でサービス自体を
+    ON にしない形へ分離。  
+  - worker起動時に service-mode の誤自己参照を抑止するガードを追加。
 
 ## 監査用更新プロトコル（毎回）
 

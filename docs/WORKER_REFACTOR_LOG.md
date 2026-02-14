@@ -205,6 +205,19 @@
   `GET + params` へ固定振り分けする分岐を堅牢化。
 - 既存の GET 経路は維持しつつ、POST 混在時の `405 Method Not Allowed` を回避。
 
+### 2026-02-17（追記）order/position worker の自己service呼び出しガード
+
+- `quant-position-manager.service` と `quant-order-manager.service` の環境衝突（`quant-v2-runtime.env` が
+  `*_SERVICE_ENABLED=1` を上書きしていた）を受け、専用 env を新設してサービス責務を明確化。
+  - 追加: `ops/env/quant-position-manager.env`
+  - 追加: `ops/env/quant-order-manager.env`
+  - 更新: `systemd/quant-position-manager.service`
+  - 更新: `systemd/quant-order-manager.service`
+- 両ワーカー側にも明示ガードを入れ、`execution/*_manager.py` の service-first 経路を有効化しつつ、
+  各ワーカー実体が self-call（自分自身のHTTP経路を再コール）しない安全策を追加。
+- `main` 経由の再監査で `POSITION_MANAGER` 側の 127.0.0.1:8301 での read timeout 連鎖が解消することを確認済み（次アクションとして
+  デプロイ後の VM 監査結果を添付）。
+
 ### 2026-02-14（追記）market-data-feed の履歴取得を差分化
 
 - `market_data/candle_fetcher.py`

@@ -13,8 +13,15 @@ from typing import Any
 from fastapi import Body, FastAPI
 import uvicorn
 
+os.environ["ORDER_MANAGER_SERVICE_ENABLED"] = "0"
+os.environ["ORDER_MANAGER_SERVICE_FALLBACK_LOCAL"] = "1"
+
 from execution import order_manager
 
+# Force this worker to operate in pure local mode even if shared runtime env files
+# still contain service-mode values.
+order_manager._ORDER_MANAGER_SERVICE_ENABLED = False
+order_manager._ORDER_MANAGER_SERVICE_FALLBACK_LOCAL = True
 
 LOG = logging.getLogger(__name__)
 

@@ -20,6 +20,10 @@ os.environ["POSITION_MANAGER_SERVICE_FALLBACK_LOCAL"] = "1"
 
 from execution import position_manager
 
+# Force this worker to operate in pure local mode even if shared runtime env files
+# still contain service-mode values.
+position_manager._POSITION_MANAGER_SERVICE_ENABLED = False
+position_manager._POSITION_MANAGER_SERVICE_FALLBACK_LOCAL = True
 
 LOG = logging.getLogger(__name__)
 

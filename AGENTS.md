@@ -158,6 +158,8 @@ flowchart LR
     - `systemctl cat` で `EnvironmentFile=-/home/tossaki/QuantRabbit/ops/env/quant-v2-runtime.env` と
       `EnvironmentFile=-/home/tossaki/QuantRabbit/ops/env/quant-<worker>.env` の両方が存在することを確認する。
     - 例: `quant-scalp-ping-5s*.service` は上記2つ＋戦略オーバーライドenv (`scalp_ping_5s*.env`) を持つ。
+    - `quant-order-manager.service` / `quant-position-manager.service` は
+      `ops/env/quant-order-manager.env` / `ops/env/quant-position-manager.env` を持つことを確認する。
 - 判定のゴール
   - 上位導線群が active/running し、`quantrabbit.service` が主導線になっていない。
   - 上記監査キーがフリーズ方針に一致し、service 側の `EnvironmentFile` が一本化されている。
