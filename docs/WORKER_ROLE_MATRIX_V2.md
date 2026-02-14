@@ -68,6 +68,9 @@
 
 ## 現在の状態（2026-02-14 時点）
 
+- この図は V2 運用で構成が変わるたびに更新する（組織図更新の必須運用）。  
+  `docs/WORKER_REFACTOR_LOG.md` と同一コミットで差分が並走すること。
+
 - 実装済み（運用へ反映）
   - `quant-market-data-feed`
   - `quant-strategy-control`
@@ -77,8 +80,15 @@
   - `quant-order-manager.service` / `quant-position-manager.service` 追加
   - `execution/order_manager.py`, `execution/position_manager.py` の service-first 経路化
   - API 契約（/order/*, /position/*）を基準化
-  - 注記: 現在 VM 上では `quant-order-manager` / `quant-position-manager` 起動時に
-    `workers.order_manager` / `workers.position_manager` の import エラーで再起動ループを確認。
+  - 注記: 直近の運用レビューでは、データ記録系 DB と分析系成果物の更新は確認済み（VM側状態監査前提）。
+
+## 監査用更新プロトコル（毎回）
+
+- 変更を加えるたびに実行:
+  1. `docs/WORKER_REFACTOR_LOG.md` に変更内容を追記
+  2. `docs/WORKER_ROLE_MATRIX_V2.md` の「現在の状態」を同一コミットで更新
+  3. `docs/INDEX.md` が必要なら参照を同期
+  4. `main` 統合 → `git commit` → `git push` → VM 反映
 
 ## V2 反映図（最上位・並行）
 
