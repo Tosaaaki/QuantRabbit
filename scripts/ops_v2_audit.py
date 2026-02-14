@@ -115,6 +115,11 @@ def _parse_env_file(path: Path) -> dict[str, str]:
 
 def _journal_405_count(hours: int = 3) -> int:
     since = (datetime.now(timezone.utc) - timedelta(hours=hours)).strftime("%Y-%m-%d %H:%M:%S")
+    method_not_allowed = re.compile(r"method not allowed", re.IGNORECASE)
+    status_405 = re.compile(r"status\s*=\s*405\b", re.IGNORECASE)
+    request_405 = re.compile(
+        r'"[A-Z]+\s+/position/open_positions(?:\?[^"]*)?\s+HTTP/\d\.\d"\s+405\b'
+    )
     cmd = [
         "journalctl",
         "-u",
@@ -130,11 +135,18 @@ def _journal_405_count(hours: int = 3) -> int:
     rc, stdout, _ = _run(cmd, timeout=15.0)
     if rc != 0 or not stdout:
         return 0
-    pattern = re.compile(r"(method not allowed|405|status=405)", re.IGNORECASE)
     count = 0
     for line in stdout.splitlines():
         low = line.lower()
-        if pattern.search(low) and "/position/open_positions" in low:
+        if "/position/open_positions" not in low:
+            continue
+        if method_not_allowed.search(low):
+            count += 1
+            continue
+        if status_405.search(low):
+            count += 1
+            continue
+        if request_405.search(line):
             count += 1
     return count
 

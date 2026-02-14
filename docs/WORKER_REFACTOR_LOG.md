@@ -241,3 +241,12 @@
   - `position/open_positions` の `405` 監視（order/position worker 呼び出し相当）
   - `quantrabbit.service` 等 legacy active の有無
 - `systemd install`/`timer` 導入は `install_trading_services.sh --units` 経由で統一し、運用側は `logs/ops_v2_audit_latest.json` を監査ログとして参照。
+
+### 2026-02-17（追記）V2監査の誤検知を抑制するための修正
+
+- `quant-v2-audit.service` が誤検知していた `position/open_positions` の `405` 集計は、journal 行中の
+  タイムスタンプ文字列（`...:405`）が `405` 検知に拾われる副作用が原因だったため、`scripts/ops_v2_audit.py` を修正。
+  - メソッド不一致判定は `Method Not Allowed` と `... /position/open_positions ... 405` の実リクエスト行のみを対象化。
+- `install_trading_services.sh --all` が V2監査で禁止とするレガシーサービスを誤って再有効化しないよう、除外対象を明示。
+  - 除外: `quant-impulse-retest-s5*`, `quant-micro-adaptive-revert*`（`--all` ではインストールせず、明示 `--units` 指定時のみ許容）
+- `install_trading_services --all` 再実行時も V2監査の disallow ルールを壊しにくい状態に更新。

@@ -9,6 +9,14 @@ set -euo pipefail
 REPO_DIR="/home/tossaki/QuantRabbit"
 INSTALL_ALL=0
 EXPLICIT_UNITS=()
+V2_DISALLOWED_UNITS=(
+  "quant-impulse-retest-s5.service"
+  "quant-impulse-retest-s5-exit.service"
+  "quant-micro-adaptive-revert.service"
+  "quant-micro-adaptive-revert-exit.service"
+  "quant-trend-reclaim-long.service"
+  "quant-trend-reclaim-long-exit.service"
+)
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -54,9 +62,23 @@ MAIN_UNIT_DEST="$SYSTEMD_DEST/quantrabbit.service"
 install_unit() {
   local src="$1"
   local dest="$SYSTEMD_DEST/$(basename "$src")"
+  local base="$(basename "$src")"
+  local skip="0"
   if [[ ! -f "$src" ]]; then
     echo "Skip (not found): $src"
     return
+  fi
+  if [[ $INSTALL_ALL -eq 1 ]]; then
+    for svc in "${V2_DISALLOWED_UNITS[@]}"; do
+      if [[ "$base" == "$svc" ]]; then
+        skip="1"
+        break
+      fi
+    done
+    if [[ "$skip" == "1" ]]; then
+      echo "Skip disabled legacy unit (by V2 policy): $base"
+      return
+    fi
   fi
   install -m 0644 "$src" "$dest"
   echo "Installed: $dest"

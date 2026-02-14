@@ -123,10 +123,19 @@
   - strategy 主要ENTRY/EXITユニットの稼働監査
   - V2 runtime env と service/env 分離状態の監査
   - `position/open_positions` 周りの 405 / Method Not Allowed 監査
+    - 405 判定は `POST`/`GET` の該当リクエスト行または `Method Not Allowed` 文字列のみを対象化
+    - journal タイムスタンプ中の `:405` を誤判定しない
   - `quant-v2-runtime.env` の主要制御キー値差分監査
   - `quantrabbit.service` 等 legacy active 判定
 - 出力: `logs/ops_v2_audit_latest.json`
 - デフォルト実行: 10分間隔（`OnCalendar=*:00/10`）
+
+### 2026-02-17（追記）install/trade 監査連携
+
+- `scripts/install_trading_services.sh --all` の対象外にして V2外のレガシー戦略を勝手に再有効化しない運用を追加。
+  - 除外対象: `quant-impulse-retest-s5*`, `quant-micro-adaptive-revert*`
+- V2運用中の監査対象外扱いを維持するため、`--all` 実行では上記を明示的にスキップし、
+  レガシーは必要時の `--units` 指定時にのみ再導入可能とする。
 
 ## V2 反映図（最上位・並行）
 
