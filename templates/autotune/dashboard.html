@@ -16,6 +16,17 @@
         type="button"
         class="tab-button"
         role="tab"
+        id="tab-architecture-button"
+        aria-selected="false"
+        aria-controls="tab-architecture"
+        data-tab-button
+        data-tab-target="architecture"
+        tabindex="-1"
+      >システム図</button>
+      <button
+        type="button"
+        class="tab-button"
+        role="tab"
         id="tab-ops-button"
         aria-selected="false"
         aria-controls="tab-ops"
@@ -57,6 +68,12 @@
           {% if dashboard.snapshot.age_sec is not none %}
             <span class="status-pill {{ 'stale' if dashboard.snapshot.stale else 'ok' }}">経過 {{ dashboard.snapshot.age_sec }}s</span>
           {% endif %}
+          {% if dashboard.snapshot.metrics_available is not none and not dashboard.snapshot.metrics_available %}
+            <span class="status-pill warn">metrics missing</span>
+          {% endif %}
+          {% if dashboard.snapshot.fetch_error %}
+            <span class="status-pill warn">{{ dashboard.snapshot.fetch_error }}</span>
+          {% endif %}
           {% if not dashboard.available %}
             <span class="status-pill warn">snapshot unavailable</span>
           {% endif %}
@@ -67,7 +84,7 @@
       </div>
     </div>
 
-    <section class="tab-panel is-active" id="tab-summary" role="tabpanel" aria-labelledby="tab-summary-button" data-tab-panel="summary">
+    <section class="tab-panel" id="tab-architecture" role="tabpanel" aria-labelledby="tab-architecture-button" data-tab-panel="architecture">
       <div class="card">
         <h2>システム構成図</h2>
         <div class="tagline">データ供給・制御配信・戦略実行の責務を分離した構成です。</div>
@@ -103,18 +120,49 @@
         それぞれが ENTRY/EXIT 1対1
         </pre>
       </div>
+    </section>
 
+    <section class="tab-panel is-active" id="tab-summary" role="tabpanel" aria-labelledby="tab-summary-button" data-tab-panel="summary">
       <div class="card">
     <h2>運用サマリー</h2>
     {% if dashboard.available %}
       {% if dashboard.generated_label %}
         <p class="stat-sub">最終更新: {{ dashboard.generated_label }}</p>
       {% endif %}
+      {% if dashboard.snapshot.source or dashboard.snapshot.mode %}
+        <p class="tagline">データソース {{ dashboard.snapshot.source or 'unknown' }} / モード {{ dashboard.snapshot.mode or '-' }}</p>
+      {% endif %}
+      {% if dashboard.snapshot.fetch_error %}
+        <p class="stat-sub warning">{{ dashboard.snapshot.fetch_error }}</p>
+      {% endif %}
+      {% if not dashboard.snapshot.metrics_available %}
+        <p class="stat-sub warning">
+          metrics が空です。GCS/GCSパイプラインまたはローカルDBの更新状況を確認してください。
+        </p>
+      {% endif %}
     {% else %}
       <p class="stat-sub warning">
         リアルタイムスナップショットを取得できませんでした{% if dashboard.error %}: {{ dashboard.error }}{% endif %}。
         GCS の設定と `run_sync_pipeline.py` の動作を確認してください。
       </p>
+    {% endif %}
+    {% if dashboard.snapshot.fetch_attempts %}
+      <div class="section-subtitle">データ取得ログ</div>
+      <ul class="list-clean">
+        {% for row in dashboard.snapshot.fetch_attempts %}
+          <li>
+            <span>{{ row.source }}</span>
+            <span>
+              {% if row.status == "ok" %}
+                OK
+              {% else %}
+                SKIP
+              {% endif %}
+              {% if row.error %}: {{ row.error }}{% endif %}
+            </span>
+          </li>
+        {% endfor %}
+      </ul>
     {% endif %}
     <div class="stats-grid">
       {% set daily_class = 'stat-positive' if dashboard.performance.daily_pl_pips >= 0 else 'stat-negative' %}

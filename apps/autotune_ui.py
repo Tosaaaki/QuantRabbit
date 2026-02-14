@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import logging
+import importlib.util
 import os
 import socket
 import sqlite3
@@ -24,7 +26,6 @@ from autotune.database import (
     set_settings,
     update_status,
 )
-from workers.common import strategy_control
 from utils.secrets import get_secret
 
 try:  # pragma: no cover - optional dependency
@@ -32,7 +33,89 @@ try:  # pragma: no cover - optional dependency
 except Exception:  # pragma: no cover
     storage = None
 
+_LOGGER = logging.getLogger(__name__)
 REPO_ROOT = Path(__file__).resolve().parents[1]
+
+
+def _load_strategy_control():
+    module_path = REPO_ROOT / "workers" / "common" / "strategy_control.py"
+    if module_path.is_file():
+        try:
+            spec = importlib.util.spec_from_file_location(
+                "qr_autotune_strategy_control", module_path
+            )
+            if spec is None or spec.loader is None:
+                raise RuntimeError("failed to load strategy_control spec")
+            module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(module)
+            _LOGGER.info(
+                "strategy_control loaded via direct file import from %s", module_path
+            )
+            return module
+        except Exception as exc:  # pragma: no cover - environment dependent
+            _LOGGER.warning(
+                "direct file import for strategy_control failed, trying package import: %s",
+                exc,
+            )
+
+    # compatibility fallback for environments that expect package import path
+    try:
+        from workers.common import strategy_control as module  # type: ignore
+        return module
+    except Exception as exc:  # pragma: no cover - defensive for import-path drift
+        _LOGGER.warning(
+            "package import for strategy_control failed, fallback mode: %s",
+            exc,
+        )
+
+    class _FallbackStrategyControl:
+        @staticmethod
+        def normalize_strategy_slug(value: str) -> str:
+            text = (value or "").strip().lower()
+            if not text:
+                return ""
+            for suffix in ("_live", "-live"):
+                if text.endswith(suffix):
+                    text = text[: -len(suffix)]
+                    break
+            return text.strip()
+
+        @staticmethod
+        def get_global_flags():
+            return True, True, False
+
+        @staticmethod
+        def list_enabled_strategies():
+            return []
+
+        @staticmethod
+        def set_global_flags(
+            entry: Optional[bool] = None,
+            exit: Optional[bool] = None,
+            lock: Optional[bool] = None,
+            note: Optional[str] = None,
+        ) -> None:
+            _LOGGER.debug("strategy_control fallback: ignore set_global_flags")
+
+        @staticmethod
+        def set_strategy_flags(
+            strategy_slug: str,
+            *,
+            entry: Optional[bool] = None,
+            exit: Optional[bool] = None,
+            lock: Optional[bool] = None,
+            note: Optional[str] = None,
+        ) -> None:
+            _LOGGER.debug(
+                "strategy_control fallback: ignore set_strategy_flags for %s",
+                strategy_slug,
+            )
+
+    return _FallbackStrategyControl
+
+
+strategy_control = _load_strategy_control()
+
 TEMPLATE_DIR = REPO_ROOT / "templates" / "autotune"
 _SCALP_PARAMS_OVERRIDE = os.getenv("SCALP_ACTIVE_PARAMS_PATH")
 _SCALP_PARAMS_RUNTIME = REPO_ROOT / "logs" / "tuning" / "scalp_active_params.json"
@@ -484,6 +567,10 @@ def _dashboard_defaults(error: Optional[str] = None) -> Dict[str, Any]:
             "source": None,
             "age_sec": None,
             "stale": False,
+            "metrics_available": False,
+            "metric_count": 0,
+            "fetch_error": None,
+            "fetch_attempts": [],
         },
         "account": {
             "nav": None,
@@ -903,17 +990,129 @@ def _resolve_ui_state_object_path() -> str:
     return value or _DEFAULT_UI_STATE_OBJECT
 
 
+def _snapshot_metric_count(snapshot: Optional[dict]) -> int:
+    if not isinstance(snapshot, dict):
+        return 0
+    metrics_snapshot = snapshot.get("metrics")
+    if not isinstance(metrics_snapshot, dict):
+        metrics_snapshot = {}
+    metric_count = 0
+    for key in (
+        "daily",
+        "yesterday",
+        "daily_change",
+        "weekly",
+        "total",
+        "cashflow",
+        "ytd_summary",
+        "profit_tables",
+        "hourly_trades",
+        "chart_data",
+        "open_positions",
+        "pockets",
+        "health_snapshot",
+        "orders_last",
+        "orders_status_1h",
+        "orders_errors_recent",
+        "signals_recent",
+        "log_errors_recent",
+        "signal_summary",
+        "trades_summary",
+    ):
+        if key not in metrics_snapshot:
+            continue
+        value = metrics_snapshot[key]
+        if value is None:
+            continue
+        if isinstance(value, (list, dict, tuple, set)):
+            if not value:
+                continue
+        elif isinstance(value, str) and not value:
+            continue
+        metric_count += 1
+    for key in (
+        "account.nav",
+        "account.balance",
+        "account.margin_usage_ratio",
+        "account.free_margin_ratio",
+        "account.health_buffer",
+    ):
+        if metrics_snapshot.get(key) is not None:
+            metric_count += 1
+    return metric_count
+
+
 def _snapshot_sort_key(source: str, snapshot: dict) -> tuple[float, int]:
+    metric_count = _snapshot_metric_count(snapshot)
+    metric_score = 1 if metric_count else 0
     dt = _parse_dt(snapshot.get("generated_at"))
     ts = dt.timestamp() if dt else 0.0
     priority = {"local": 0, "gcs": 1, "remote": 2}.get(source, 0)
-    return (ts, priority)
+    return (metric_score, priority, ts)
 
 
 def _pick_latest_snapshot(candidates: list[tuple[str, dict]]) -> Optional[tuple[str, dict]]:
     if not candidates:
         return None
     return max(candidates, key=lambda item: _snapshot_sort_key(item[0], item[1]))
+
+
+def _collect_snapshot_candidates() -> tuple[list[tuple[str, dict]], list[dict[str, Any]]]:
+    candidates: list[tuple[str, dict]] = []
+    fetch_attempts: list[dict[str, Any]] = []
+
+    remote_snapshot, remote_lite_error = _fetch_remote_snapshot_with_status("ui_snapshot_lite_url")
+    fetch_attempts.append(
+        {
+            "source": "remote(ui_snapshot_lite_url)",
+            "status": "ok" if remote_snapshot else "skip",
+            "error": remote_lite_error,
+        }
+    )
+    if not remote_snapshot:
+        remote_snapshot, remote_error = _fetch_remote_snapshot_with_status("ui_snapshot_url")
+        fetch_attempts.append(
+            {
+                "source": "remote(ui_snapshot_url)",
+                "status": "ok" if remote_snapshot else "skip",
+                "error": remote_error,
+            }
+        )
+    if remote_snapshot:
+        candidates.append(("remote", remote_snapshot))
+
+    gcs_snapshot, gcs_error = _fetch_gcs_snapshot()
+    if gcs_snapshot:
+        candidates.append(("gcs", gcs_snapshot))
+    fetch_attempts.append(
+        {
+            "source": "gcs",
+            "status": "ok" if gcs_snapshot else "skip",
+            "error": gcs_error,
+        }
+    )
+
+    local_snapshot, local_error = _build_local_snapshot_with_status()
+    if local_snapshot:
+        candidates.append(("local", local_snapshot))
+    fetch_attempts.append(
+        {
+            "source": "local",
+            "status": "ok" if local_snapshot else "skip",
+            "error": local_error,
+        }
+    )
+    return candidates, fetch_attempts
+
+
+def _pick_snapshot_by_preference(candidates: list[tuple[str, dict]]) -> Optional[tuple[str, dict]]:
+    source_preference = ["remote", "gcs", "local"]
+    source_snapshot_map = {source: snapshot for source, snapshot in candidates}
+    for source in source_preference:
+        snapshot = source_snapshot_map.get(source)
+        if snapshot and _snapshot_metric_count(snapshot) > 0:
+            return source, snapshot
+    return _pick_latest_snapshot(candidates)
 
 
 def _fetch_gcs_snapshot() -> tuple[Optional[dict], Optional[str]]:
@@ -929,6 +1128,35 @@ def _fetch_gcs_snapshot() -> tuple[Optional[dict], Optional[str]]:
         raw = blob.download_as_text(timeout=5)
         return json.loads(raw), None
     except Exception as exc:  # pragma: no cover - network/credential issues
+        return None, str(exc)
+
+
+def _fetch_remote_snapshot_with_status(key: str) -> tuple[Optional[dict], Optional[str]]:
+    url = _get_secret_optional(key)
+    if not url:
+        return None, f"{key} が未設定です"
+    debug = os.getenv("UI_SNAPSHOT_DEBUG", "").lower() in {"1", "true", "yes"}
+    token = _get_secret_optional("ui_snapshot_token")
+    req = urllib.request.Request(url)
+    if token:
+        req.add_header("X-QR-Token", token)
+        req.add_header("Authorization", f"Bearer {token}")
+    start = time.monotonic()
+    try:
+        with urllib.request.urlopen(req, timeout=_REMOTE_SNAPSHOT_TIMEOUT_SEC) as resp:
+            raw = resp.read()
+        data = json.loads(raw)
+        if debug:
+            elapsed_ms = int((time.monotonic() - start) * 1000)
+            print(f"[ui_snapshot] remote_ok elapsed_ms={elapsed_ms}")
+        return data, None
+    except (urllib.error.URLError, json.JSONDecodeError, TimeoutError, socket.timeout) as exc:
+        if debug:
+            elapsed_ms = int((time.monotonic() - start) * 1000)
+            print(
+                "[ui_snapshot] remote_error elapsed_ms=%s error=%s detail=%s"
+                % (elapsed_ms, type(exc).__name__, exc)
+            )
         return None, str(exc)
 
 
@@ -967,6 +1195,17 @@ def _build_local_snapshot() -> Optional[dict]:
         return _cached_lite_snapshot()
     except Exception:
         return None
+
+
+def _build_local_snapshot_with_status() -> tuple[Optional[dict], Optional[str]]:
+    if not _LOCAL_FALLBACK_ENABLED:
+        return None, "UI_DASHBOARD_LOCAL_FALLBACK=0 で無効化されています"
+    try:
+        if _LOCAL_FALLBACK_MODE in {"live", "full"}:
+            return _cached_live_snapshot(), None
+        return _cached_lite_snapshot(), None
+    except Exception as exc:
+        return None, str(exc)
 
 
 def _fallback_dashboard_local() -> Optional[Dict[str, Any]]:
@@ -1696,7 +1935,11 @@ def _summarise_snapshot(snapshot: Dict[str, Any]) -> Dict[str, Any]:
     jst = timezone(timedelta(hours=9))
     now_jst = now.astimezone(jst)
 
-    metrics_snapshot = snapshot.get("metrics") or {}
+    metrics_snapshot = snapshot.get("metrics")
+    if isinstance(metrics_snapshot, dict):
+        metrics_snapshot = dict(metrics_snapshot)
+    else:
+        metrics_snapshot = {}
     account = base.get("account") or {}
     account_nav = _opt_float(metrics_snapshot.get("account.nav"))
     account_balance = _opt_float(metrics_snapshot.get("account.balance"))
@@ -2297,6 +2540,9 @@ def _summarise_snapshot(snapshot: Dict[str, Any]) -> Dict[str, Any]:
     }
     base["generated_at"] = snapshot.get("generated_at")
     base["generated_label"] = _format_dt(gen_dt) or snapshot.get("generated_at")
+    metric_count = _snapshot_metric_count(snapshot)
+    base["snapshot"]["metrics_available"] = bool(metric_count)
+    base["snapshot"]["metric_count"] = metric_count
     base["available"] = True
     base["error"] = None
     try:
@@ -2310,31 +2556,24 @@ def _summarise_snapshot(snapshot: Dict[str, Any]) -> Dict[str, Any]:
 
 def _load_dashboard_data() -> Dict[str, Any]:
     base = _dashboard_defaults()
-    candidates: list[tuple[str, dict]] = []
-
-    remote_snapshot = _fetch_remote_snapshot("ui_snapshot_lite_url")
-    if not remote_snapshot:
-        remote_snapshot = _fetch_remote_snapshot()
-    if remote_snapshot:
-        candidates.append(("remote", remote_snapshot))
-
-    gcs_snapshot, gcs_error = _fetch_gcs_snapshot()
-    if gcs_snapshot:
-        candidates.append(("gcs", gcs_snapshot))
-
-    local_snapshot = _build_local_snapshot()
-    if local_snapshot:
-        candidates.append(("local", local_snapshot))
-
-    picked = _pick_latest_snapshot(candidates)
+    candidates, fetch_attempts = _collect_snapshot_candidates()
+    picked = _pick_snapshot_by_preference(candidates)
     if picked:
         source, snapshot = picked
         base = _summarise_snapshot(snapshot)
         base.setdefault("snapshot", {})["source"] = source
+        base.setdefault("snapshot", {})["fetch_attempts"] = fetch_attempts
+        base.setdefault("snapshot", {})["fetch_error"] = None
+        if not base["snapshot"].get("metrics_available"):
+            base["snapshot"]["fetch_error"] = "snapshot.metrics が空です（取得元を確認してください）"
         return base
 
-    if gcs_error:
-        base["error"] = gcs_error
+    base["snapshot"]["fetch_attempts"] = fetch_attempts
+    base["snapshot"]["fetch_error"] = "スナップショットを取得できませんでした"
+    reasons = [item["error"] for item in fetch_attempts if item["error"]]
+    if reasons:
+        base["snapshot"]["fetch_error"] = " / ".join(reasons[:3])
+        base["error"] = reasons[0]
     else:
         base["error"] = "スナップショットを取得できませんでした"
     if "strategy_control" not in base:
@@ -2345,6 +2584,26 @@ def _load_dashboard_data() -> Dict[str, Any]:
             state["error"] = str(exc)
             base["strategy_control"] = state
     return base
+
+
+def _load_dashboard_snapshot_for_api() -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    candidates, fetch_attempts = _collect_snapshot_candidates()
+    picked = _pick_snapshot_by_preference(candidates)
+    if picked:
+        source, snapshot = picked
+        snapshot = dict(snapshot) if isinstance(snapshot, dict) else {}
+        snapshot["snapshot_source"] = source
+        return snapshot, fetch_attempts
+
+    fallback = {
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "metrics": {},
+        "snapshot_source": None,
+        "snapshot_mode": "unavailable",
+    }
+    if fetch_attempts:
+        fallback["fetch_attempts"] = fetch_attempts
+    return fallback, fetch_attempts
 
 
 def _extract_bearer(authorization: Optional[str]) -> Optional[str]:
@@ -2376,7 +2635,7 @@ def api_snapshot(
     provided = token or x_qr_token or _extract_bearer(authorization)
     if required and provided != required:
         raise HTTPException(status_code=401, detail="Unauthorized")
-    snapshot = _cached_live_snapshot()
+    snapshot, _ = _load_dashboard_snapshot_for_api()
     return JSONResponse(snapshot, headers={"Cache-Control": "no-store"})
 
 
