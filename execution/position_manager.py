@@ -19,6 +19,23 @@ from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 from utils.secrets import get_secret
 
+
+def _env_float(name: str, default: float) -> float:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    try:
+        return float(raw)
+    except (TypeError, ValueError):
+        return default
+
+
+def _env_bool(name: str, default: bool) -> bool:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() not in {"", "0", "false", "no"}
+
 # --- config ---
 # env / secret から OANDA 設定を取得
 TOKEN = get_secret("oanda_token")
@@ -185,6 +202,92 @@ _CASHFLOW_BACKFILL_MARKER = pathlib.Path(
 _CASHFLOW_BACKFILL_GLOB = os.getenv(
     "POSITION_MANAGER_CASHFLOW_BACKFILL_GLOB", "logs/oanda/transactions_*.jsonl"
 )
+_POSITION_MANAGER_SERVICE_ENABLED = _env_bool("POSITION_MANAGER_SERVICE_ENABLED", False)
+_POSITION_MANAGER_SERVICE_URL = os.getenv(
+    "POSITION_MANAGER_SERVICE_URL", "http://127.0.0.1:8301"
+)
+_POSITION_MANAGER_SERVICE_TIMEOUT = _env_float(
+    "POSITION_MANAGER_SERVICE_TIMEOUT", 5.0
+)
+_POSITION_MANAGER_SERVICE_FALLBACK_LOCAL = _env_bool(
+    "POSITION_MANAGER_SERVICE_FALLBACK_LOCAL", False
+)
+
+
+def _position_manager_service_enabled() -> bool:
+    return bool(
+        _POSITION_MANAGER_SERVICE_ENABLED
+        and _POSITION_MANAGER_SERVICE_URL
+        and not str(_POSITION_MANAGER_SERVICE_URL).lower().startswith("disabled")
+    )
+
+
+def _position_manager_service_url(path: str) -> str:
+    base = str(_POSITION_MANAGER_SERVICE_URL).rstrip("/")
+    return f"{base}/{path.lstrip('/')}"
+
+
+def _normalize_for_json(value: object) -> object:
+    if isinstance(value, dict):
+        return {str(k): _normalize_for_json(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple, set)):
+        return [_normalize_for_json(v) for v in value]
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    return str(value)
+
+
+def _extract_service_payload(path: str, payload: object) -> object:
+    if not isinstance(payload, dict):
+        return payload
+    if "ok" not in payload:
+        return payload.get("result", payload)
+    if not bool(payload.get("ok")):
+        msg = str(
+            payload.get("error")
+            or payload.get("detail")
+            or payload.get("message")
+            or payload.get("reason")
+            or "service returned ok=false"
+        )
+        raise RuntimeError(f"position_manager service error for {path}: {msg}")
+    if "result" in payload:
+        return payload["result"]
+    return payload
+
+
+def _position_manager_service_call(path: str, payload: dict) -> object:
+    url = _position_manager_service_url(path)
+    response = requests.post(
+        url,
+        json=_normalize_for_json(payload),
+        timeout=float(_POSITION_MANAGER_SERVICE_TIMEOUT),
+        headers={"Content-Type": "application/json"},
+    )
+    response.raise_for_status()
+    body = response.json()
+    if isinstance(body, dict):
+        return body
+    raise RuntimeError(
+        f"Unexpected position_manager service response type: {type(body).__name__}"
+    )
+
+
+def _position_manager_service_request(path: str, payload: dict) -> object | None:
+    if not _position_manager_service_enabled():
+        return None
+    try:
+        return _extract_service_payload(path, _position_manager_service_call(path, payload))
+    except Exception as exc:
+        logging.warning(
+            "[POSITION] position_manager service call failed path=%s payload=%s err=%s",
+            path,
+            payload,
+            exc,
+        )
+        if not _POSITION_MANAGER_SERVICE_FALLBACK_LOCAL:
+            raise
+        return None
 
 # Agent-generated client order ID prefixes (qr-...), used to classify pockets.
 agent_client_prefixes = tuple(
@@ -2146,8 +2249,27 @@ class PositionManager:
         }
         return saved_records
 
-    def sync_trades(self):
+    def sync_trades(self, max_fetch: int | None = None):
         """定期的に呼び出し、決済済みトレードを同期する"""
+        if max_fetch is None:
+            max_fetch = _MAX_FETCH
+        try:
+            max_fetch_int = int(max_fetch)
+        except (TypeError, ValueError):
+            max_fetch_int = _MAX_FETCH
+
+        service_result = _position_manager_service_request(
+            "/position/sync_trades", {"max_fetch": max_fetch_int}
+        )
+        if service_result is not None:
+            if isinstance(service_result, list):
+                if max_fetch_int > 0:
+                    return service_result[-max_fetch_int:]
+                return service_result
+            if isinstance(service_result, dict):
+                return list(service_result.values()) if service_result else []
+            return []
+
         sync_start = time.monotonic()
         transactions = self._fetch_closed_trades()
         fetch_meta = dict(self._last_sync_fetch_meta or {})
@@ -2166,6 +2288,8 @@ class PositionManager:
         breakdown["total_ms"] = total_ms
         breakdown.setdefault("transactions", len(transactions))
         self._last_sync_breakdown = breakdown
+        if max_fetch_int > 0:
+            return saved_records[-max_fetch_int:]
         return saved_records
 
     def _request_json(self, url: str, params: dict | None = None) -> dict:
@@ -2197,9 +2321,6 @@ class PositionManager:
                 pass
             self._http = _build_http_session()
 
-    def close(self):
-        self.con.close()
-
     def register_open_trade(self, trade_id: str, pocket: str, client_id: str | None = None):
         if trade_id and pocket:
             self._pocket_cache[str(trade_id)] = pocket
@@ -2208,6 +2329,15 @@ class PositionManager:
 
     def get_open_positions(self, include_unknown: bool = False) -> dict[str, dict]:
         """現在の保有ポジションを pocket 単位で集計して返す"""
+        service_result = _position_manager_service_request(
+            "/position/open_positions",
+            {"include_unknown": include_unknown},
+        )
+        if service_result is not None:
+            if isinstance(service_result, dict):
+                return service_result
+            return {}
+
         now_mono = time.monotonic()
         if self._last_positions and now_mono < self._next_open_fetch_after:
             age = max(0.0, now_mono - self._last_positions_ts)
@@ -2645,6 +2775,15 @@ class PositionManager:
 
     def get_performance_summary(self, now: datetime | None = None) -> dict:
         now = now or datetime.now(timezone.utc)
+        service_result = _position_manager_service_request(
+            "/position/performance_summary",
+            {"now": now.isoformat() if isinstance(now, datetime) else None},
+        )
+        if service_result is not None:
+            if isinstance(service_result, dict):
+                return service_result
+            return {}
+
         jst = timezone(timedelta(hours=9))
         now_jst = now.astimezone(jst)
         today_start = now_jst.replace(hour=0, minute=0, second=0, microsecond=0)
@@ -3107,6 +3246,14 @@ class PositionManager:
 
     def fetch_recent_trades(self, limit: int = 50) -> list[dict]:
         """UI 表示用に最新のトレードを取得"""
+        service_result = _position_manager_service_request(
+            "/position/fetch_recent_trades", {"limit": int(limit)}
+        )
+        if service_result is not None:
+            if isinstance(service_result, list):
+                return service_result
+            return []
+
         cursor = self.con.execute(
             """
             SELECT ticket_id, pocket, instrument, units, closed_units, entry_price, close_price,
@@ -3146,4 +3293,11 @@ class PositionManager:
                 "entry_thesis": row["entry_thesis"],
             }
             for row in rows
-        ]
+            ]
+
+    def close(self):
+        service_result = _position_manager_service_request("/position/close", {})
+        if service_result is not None:
+            return None
+
+        self.con.close()

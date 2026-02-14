@@ -100,6 +100,129 @@ def _env_bool(name: str, default: bool) -> bool:
     return raw.strip().lower() not in {"", "0", "false", "no"}
 
 
+# --- Service mode (quant-order-manager externalization) ---
+_ORDER_MANAGER_SERVICE_ENABLED = _env_bool("ORDER_MANAGER_SERVICE_ENABLED", False)
+_ORDER_MANAGER_SERVICE_URL = os.getenv("ORDER_MANAGER_SERVICE_URL", "")
+_ORDER_MANAGER_SERVICE_TIMEOUT = float(_env_float("ORDER_MANAGER_SERVICE_TIMEOUT", 5.0))
+_ORDER_MANAGER_SERVICE_FALLBACK_LOCAL = _env_bool(
+    "ORDER_MANAGER_SERVICE_FALLBACK_LOCAL", False
+)
+
+
+def _normalize_for_json(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {str(k): _normalize_for_json(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple, set)):
+        return [_normalize_for_json(v) for v in value]
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    return str(value)
+
+
+def _env_float_int(name: str, default: float | int) -> float | int:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    try:
+        return float(raw) if isinstance(default, float) else int(float(raw))
+    except (TypeError, ValueError):
+        return default
+
+
+def _order_manager_service_enabled() -> bool:
+    return bool(
+        _ORDER_MANAGER_SERVICE_ENABLED
+        and _ORDER_MANAGER_SERVICE_URL
+        and not _ORDER_MANAGER_SERVICE_URL.lower().startswith("disabled")
+    )
+
+
+def _order_manager_service_url(path: str) -> str:
+    base = _ORDER_MANAGER_SERVICE_URL.rstrip("/")
+    return f"{base}/{path.lstrip('/')}"
+
+
+def _order_manager_service_call(path: str, payload: dict) -> dict:
+    url = _order_manager_service_url(path)
+    normalized_payload = _normalize_for_json(payload)
+    response = requests.post(
+        url,
+        json=normalized_payload,
+        timeout=float(_ORDER_MANAGER_SERVICE_TIMEOUT),
+        headers={"Content-Type": "application/json"},
+    )
+    response.raise_for_status()
+    body = response.json()
+    if isinstance(body, dict):
+        return body
+    raise RuntimeError(f"Unexpected order_manager service response type: {type(body).__name__}")
+
+
+def _extract_service_payload(path: str, payload: Any) -> Any:
+    if not isinstance(payload, dict):
+        return payload
+    if "ok" not in payload:
+        return payload.get("result", payload)
+    if not bool(payload.get("ok")):
+        msg = str(
+            payload.get("error")
+            or payload.get("detail")
+            or payload.get("message")
+            or payload.get("reason")
+            or "service returned ok=false"
+        )
+        raise RuntimeError(f"order_manager service error for {path}: {msg}")
+    if "result" in payload:
+        return payload["result"]
+    return payload
+
+
+def _order_manager_service_request(
+    path: str,
+    payload: dict,
+) -> Any:
+    if not _order_manager_service_enabled():
+        return None
+    try:
+        return _extract_service_payload(path, _order_manager_service_call(path, payload))
+    except Exception as exc:
+        logging.warning(
+            "[ORDER] order_manager service call failed path=%s payload=%s err=%s",
+            path,
+            payload,
+            exc,
+        )
+        if not _ORDER_MANAGER_SERVICE_FALLBACK_LOCAL:
+            raise
+        return None
+
+
+async def _order_manager_service_request_async(
+    path: str,
+    payload: dict,
+) -> Any:
+    if not _order_manager_service_enabled():
+        return None
+    try:
+        return _extract_service_payload(
+            path, await asyncio.to_thread(_order_manager_service_call, path, payload)
+        )
+    except Exception as exc:
+        logging.warning(
+            "[ORDER] order_manager service call failed path=%s payload=%s err=%s",
+            path,
+            payload,
+            exc,
+        )
+        if not _ORDER_MANAGER_SERVICE_FALLBACK_LOCAL:
+            raise
+        return None
+
+
+async def _invoke_order_manager_service(path: str, payload: dict) -> dict:
+    return await asyncio.to_thread(_order_manager_service_call, path, payload)
+
+
 def _env_csv_set(name: str, default: str) -> set[str]:
     raw = os.getenv(name, default)
     return {item.strip().lower() for item in raw.split(",") if item.strip()}
@@ -4170,6 +4293,18 @@ def _cancel_order_sync(
     client_order_id: Optional[str] = None,
     reason: str = "user_cancel",
 ) -> bool:
+    service_result = _order_manager_service_request(
+        "/order/cancel_order",
+        {
+            "order_id": order_id,
+            "pocket": pocket,
+            "client_order_id": client_order_id,
+            "reason": reason,
+        },
+    )
+    if service_result is not None:
+        return bool(service_result)
+
     try:
         endpoint = OrderCancel(accountID=ACCOUNT, orderID=order_id)
         api.request(endpoint)
@@ -4202,6 +4337,18 @@ async def cancel_order(
     client_order_id: Optional[str] = None,
     reason: str = "user_cancel",
 ) -> bool:
+    service_result = await _order_manager_service_request_async(
+        "/order/cancel_order",
+        {
+            "order_id": order_id,
+            "pocket": pocket,
+            "client_order_id": client_order_id,
+            "reason": reason,
+        },
+    )
+    if service_result is not None:
+        return bool(service_result)
+
     return _cancel_order_sync(
         order_id=order_id,
         pocket=pocket,
@@ -4500,6 +4647,19 @@ async def close_trade(
     allow_negative: bool = False,
     exit_reason: Optional[str] = None,
 ) -> bool:
+    service_result = await _order_manager_service_request_async(
+        "/order/close_trade",
+        {
+            "trade_id": trade_id,
+            "units": units,
+            "client_order_id": client_order_id,
+            "allow_negative": allow_negative,
+            "exit_reason": exit_reason,
+        },
+    )
+    if service_result is not None:
+        return bool(service_result)
+
     data: Optional[dict[str, str]] = None
     exit_reason = str(exit_reason).strip() if exit_reason else None
     exit_context = _exit_context_snapshot(exit_reason)
@@ -5768,6 +5928,17 @@ async def set_trade_protections(
     """
     Legacy compatibility layer – update SL/TP for an open trade and report success.
     """
+    service_result = await _order_manager_service_request_async(
+        "/order/set_trade_protections",
+        {
+            "trade_id": trade_id,
+            "sl_price": sl_price,
+            "tp_price": tp_price,
+        },
+    )
+    if service_result is not None:
+        return bool(service_result)
+
     if not TRAILING_SL_ALLOWED and sl_price is not None:
         return False
     if not trade_id:
@@ -5978,6 +6149,29 @@ async def market_order(
     units : +10000 = buy 0.1 lot, ‑10000 = sell 0.1 lot
     returns trade id（約定時のみ）。未約定（submitted）や失敗は None。
     """
+    service_result = await _order_manager_service_request_async(
+        "/order/market_order",
+        {
+            "instrument": instrument,
+            "units": units,
+            "sl_price": sl_price,
+            "tp_price": tp_price,
+            "pocket": pocket,
+            "client_order_id": client_order_id,
+            "strategy_tag": strategy_tag,
+            "reduce_only": reduce_only,
+            "entry_thesis": entry_thesis,
+            "meta": meta,
+            "confidence": confidence,
+            "stage_index": stage_index,
+            "arbiter_final": arbiter_final,
+        },
+    )
+    if service_result is not None:
+        if service_result is None:
+            return None
+        return str(service_result) if service_result is not None else None
+
     sl_disabled = stop_loss_disabled_for_pocket(pocket)
     if strategy_tag is not None:
         strategy_tag = str(strategy_tag)
@@ -9218,6 +9412,34 @@ async def limit_order(
     meta: Optional[dict] = None,
 ) -> tuple[Optional[str], Optional[str]]:
     """Place a passive limit order. Returns (trade_id, order_id)."""
+    service_result = await _order_manager_service_request_async(
+        "/order/limit_order",
+        {
+            "instrument": instrument,
+            "units": units,
+            "price": price,
+            "sl_price": sl_price,
+            "tp_price": tp_price,
+            "pocket": pocket,
+            "current_bid": current_bid,
+            "current_ask": current_ask,
+            "require_passive": require_passive,
+            "client_order_id": client_order_id,
+            "reduce_only": reduce_only,
+            "ttl_ms": ttl_ms,
+            "entry_thesis": entry_thesis,
+            "meta": meta,
+        },
+    )
+    if service_result is not None:
+        if isinstance(service_result, dict):
+            trade_id = service_result.get("trade_id")
+            order_id = service_result.get("order_id")
+            return (
+                str(trade_id) if trade_id is not None else None,
+                str(order_id) if order_id is not None else None,
+            )
+        return None, None
 
     strategy_tag = _strategy_tag_from_thesis(entry_thesis)
 

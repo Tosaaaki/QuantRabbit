@@ -1,7 +1,8 @@
 # Architecture Overview
 
 ## 1. システム概要とフロー
-- データ → 判定 → 発注: Tick 取得 → Candle 確定 → Factors 算出 → Regime/Focus → Local Decider → Strategy Plugins → Risk Guard → Order Manager（Brainゲート任意） → ログ。
+- データ → 判定 → 発注: Tick 取得 → Candle 確定 → Factors 算出 → strategy control 制約 → Strategy Plugins（ENTRY/EXIT ワーカー別）→ Risk Guard → `quant-order-manager` → ログ。
+- V2 では monolithic 主制御（`main.py`起動）を本番から外し、`quantrabbit.service` は廃止対象。
 
 ## 2. コンポーネントと I/O
 
@@ -14,15 +15,16 @@
 | Strategy Plugin | `strategies/*` | Factors → `StrategyDecision` または None |
 | Brain Gate (optional) | `workers/common/brain.py` | order preflight → allow/reduce/block |
 | Exit (専用ワーカー) | `workers/*/exit_worker.py` | pocket 別 open positions → exit 指示（PnL>0 決済が原則） |
-| Signal Gate | `utils/signal_bus.py` / `main.py` | ワーカー enqueue → confidence 順に選抜・ロット配分 → OrderIntent |
+| Strategy Control | `workers/common/strategy_control.py` / `workers/strategy_control/worker.py` | 戦略 `entry/exit` 可否、`global_lock`、環境変数上書き |
 | Risk Guard | `execution/risk_guard.py` | lot/SL/TP/pocket → 可否・調整値 |
-| Order Manager | `execution/order_manager.py` | units/sl/tp/client_order_id/tag → OANDA ticket |
+| Order Manager | `execution/order_manager.py` + `quant-order-manager.service` | units/sl/tp/client_order_id/tag → OANDA ticket |
+| Position Manager | `execution/position_manager.py` + `quant-position-manager.service` | 決済/保有/実績の取得、`trades.db`/`orders.db` を参照 |
 | Logger | `logs/*.db` | 全コンポーネントが INSERT |
 
 ## 3. ライフサイクル
-- Startup: `env.toml` 読込 → Secrets 確認 → WebSocket 接続。
-- 60s タクト（main 有効時のみ）: 新ローソク → Factors 更新 → Regime/Focus → Local decision → Strategy loop（confidence スケーリング + ステージ判定）→ exit_worker → risk_guard → order_manager → `trades.db` / `metrics.db` ログ。
-- ワーカーは `SIGNAL_GATE_ENABLED=1` の場合に `signal_bus` へ enqueue し、main の関所が confidence 順に選択・lot配分して発注。
+- Startup: `env.toml` 読込 → Secrets 確認 → 各サービス起動。
+- 戦略ワーカー: 新ローソク → Factors 更新 → Regime/Focus → Local decision → `strategy_control` 参照 → risk_guard → order_manager → `trades.db` / `metrics.db` ログ。
+- `signal_bus` を使う場合は `SIGNAL_GATE_ENABLED=1` 時のみ、戦略ワーカー起点で `signal_bus` enqueue の運用を許可。
 - タクト要件: 正秒同期（±500ms）、締切 55s 超でサイクル破棄（バックログ禁止）、`monotonic()` で `decision_latency_ms` 計測。
 - Background: `utils/backup_to_gcs.sh` による nightly logs バックアップ + `/etc/cron.hourly/qr-gcs-backup-core` による GCS 退避（自動）。
 
