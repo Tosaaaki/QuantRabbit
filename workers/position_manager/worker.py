@@ -48,6 +48,23 @@ def _as_dict(payload: dict[str, Any] | None) -> dict[str, Any]:
     return {}
 
 
+def _to_bool(value: Any, default: bool = True) -> bool:
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        text = value.strip().lower()
+        if text in {"1", "true", "t", "yes", "on", "enabled"}:
+            return True
+        if text in {"0", "false", "f", "no", "off", "disabled"}:
+            return False
+    try:
+        return bool(int(float(value)))
+    except (TypeError, ValueError):
+        return default
+
+
 def _to_int(value: Any, default: int) -> int:
     if value is None:
         return default
@@ -104,6 +121,22 @@ def sync_trades(request: Request, payload: dict[str, Any] = Body(default={})) ->
 
 @app.get("/position/open_positions")
 def get_open_positions(request: Request, include_unknown: bool = True) -> dict[str, Any]:
+    try:
+        result = _manager(request).get_open_positions(include_unknown=include_unknown)
+    except Exception as exc:
+        return _failure(str(exc))
+    if not isinstance(result, dict):
+        return _failure("unexpected response type")
+    return _success(result)
+
+
+@app.post("/position/open_positions")
+def post_open_positions(
+    request: Request,
+    payload: dict[str, Any] = Body(default={}),
+) -> dict[str, Any]:
+    body = _as_dict(payload)
+    include_unknown = _to_bool(body.get("include_unknown"), default=True)
     try:
         result = _manager(request).get_open_positions(include_unknown=include_unknown)
     except Exception as exc:

@@ -197,6 +197,14 @@
   `GET` + query params (`include_unknown`) へ分岐するよう変更し、サービス経路の整合を復旧。
 - 変更反映後、`quant-order-manager` を再起動して該当 405 検知率の改善を確認する。
 
+### 2026-02-17（追記）open_positions 405 の下位互換対策
+
+- 運用側の呼び出しに POST が混在しているケースを想定し、`workers/position_manager/worker.py` に
+  `POST /position/open_positions` を追加受け口として実装。
+- `execution/position_manager.py` では `path` の末尾スラッシュを除去して正規化し、`/position/open_positions` 系を
+  `GET + params` へ固定振り分けする分岐を堅牢化。
+- 既存の GET 経路は維持しつつ、POST 混在時の `405 Method Not Allowed` を回避。
+
 ### 2026-02-14（追記）market-data-feed の履歴取得を差分化
 
 - `market_data/candle_fetcher.py`

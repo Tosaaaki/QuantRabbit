@@ -257,9 +257,12 @@ def _extract_service_payload(path: str, payload: object) -> object:
 
 
 def _position_manager_service_call(path: str, payload: dict) -> object:
-    url = _position_manager_service_url(path)
+    normalized_path = path.strip()
+    if normalized_path.endswith("/") and normalized_path != "/":
+        normalized_path = normalized_path.rstrip("/")
+    url = _position_manager_service_url(normalized_path)
     normalized_payload = _normalize_for_json(payload)
-    if path == "/position/open_positions":
+    if normalized_path == "/position/open_positions":
         response = requests.get(
             url,
             params=normalized_payload,
