@@ -196,15 +196,15 @@ _STRATEGY_TECH_CONTEXT_REQUIREMENTS.update(
     }
 )
 
-_NORMALIZED_STRATEGY_TECH_CONTEXT_REQUIREMENTS: dict[str, dict[str, object]] = {
-    _strategy_key(key): dict(value) for key, value in _STRATEGY_TECH_CONTEXT_REQUIREMENTS.items()
-}
-
-
 def _strategy_key(value: Optional[str]) -> str:
     if not value:
         return ""
     return "".join(ch for ch in str(value).lower() if ch.isalnum())
+
+
+_NORMALIZED_STRATEGY_TECH_CONTEXT_REQUIREMENTS: dict[str, dict[str, object]] = {
+    _strategy_key(key): dict(value) for key, value in _STRATEGY_TECH_CONTEXT_REQUIREMENTS.items()
+}
 
 
 def _resolve_strategy_technical_context_contract(
