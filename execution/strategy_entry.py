@@ -202,9 +202,15 @@ def _strategy_key(value: Optional[str]) -> str:
     return "".join(ch for ch in str(value).lower() if ch.isalnum())
 
 
-_NORMALIZED_STRATEGY_TECH_CONTEXT_REQUIREMENTS: dict[str, dict[str, object]] = {
-    _strategy_key(key): dict(value) for key, value in _STRATEGY_TECH_CONTEXT_REQUIREMENTS.items()
-}
+def _normalize_strategy_requirements(
+    requirements: dict[str, dict[str, object]]
+) -> dict[str, dict[str, object]]:
+    return {_strategy_key(key): dict(value) for key, value in requirements.items()}
+
+
+_NORMALIZED_STRATEGY_TECH_CONTEXT_REQUIREMENTS: dict[str, dict[str, object]] = (
+    _normalize_strategy_requirements(_STRATEGY_TECH_CONTEXT_REQUIREMENTS)
+)
 
 
 def _resolve_strategy_technical_context_contract(

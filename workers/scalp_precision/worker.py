@@ -3465,7 +3465,7 @@ async def _place_order(
         allow_candle=bool(entry_thesis_ctx.get("tech_allow_candle", False)),
     )
     if not tech_decision.allowed and not getattr(config, "TECH_FAILOPEN", True):
-        continue
+        return None
 
     entry_thesis_ctx["tech_score"] = round(tech_decision.score, 3) if tech_decision.score is not None else None
     entry_thesis_ctx["tech_coverage"] = (
@@ -3479,7 +3479,7 @@ async def _place_order(
     if isinstance(_tech_units_raw, (int, float)):
         _tech_units = int(round(abs(float(_tech_units_raw)) * tech_decision.size_mult))
         if _tech_units <= 0:
-            continue
+            return None
         units = _tech_units if _tech_side == "long" else -_tech_units
         entry_thesis_ctx["entry_units_intent"] = abs(int(units))
 

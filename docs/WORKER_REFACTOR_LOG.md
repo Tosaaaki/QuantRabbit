@@ -81,6 +81,13 @@
 - 機能スイッチは `ENTRY_TECH_CONTEXT_ENABLED`（未設定時 true）とし、必要時は
   `execution/strategy_entry.py` の既定動作から外せるようにした。
 
+### 2026-02-15（追記）strategy_entry の戦略キー正規化経路を関数化
+
+- `execution/strategy_entry.py` の `_NORMALIZED_STRATEGY_TECH_CONTEXT_REQUIREMENTS` を
+  集約生成する処理を `_normalize_strategy_requirements()` に集約し、`_strategy_key` 参照順序依存を
+  回避する形に変更。
+- これにより、`quant-strategy-entry` 起動時の `NameError` リスク（`_strategy_key` 未定義）を回避しやすくした。
+
 ### 2026-02-14（追記）戦略ENTRYに戦略別技術断面を常設
 
 - `execution/strategy_entry.py` の `_inject_entry_technical_context()` を拡張し、
@@ -548,3 +555,47 @@
   `require_fib/require_median/require_nwave/require_candle` を全戦略側で揃えた。
 - 同時に監査資料 `docs/strategy_entry_technical_context_audit_2026_02_15.md` の
   該当行（`hedge_balancer`, `manual_swing`）も同値に更新。
+
+### 2026-02-15（追記）tick imbalance ラッパーを独立戦略モード固定化
+
+- `workers/scalp_tick_imbalance/worker.py` を `scalp_precision_worker` 直接 import 依存から
+  起動時に `SCALP_PRECISION_*` を明示設定して mode 固定起動する構成へ更新。
+- `SCALP_PRECISION_MODE=tick_imbalance`、`ALLOWLIST`、`MODE_FILTER_ALLOWLIST`、`UNIT_ALLOWLIST`、
+  `LOG_PREFIX` を `__main__` 起動時に再設定し、`workers/scalp_precision/worker.py` の
+  `evaluate_entry_techniques` 入口を再利用しつつ、戦略名を `scalp_tick_imbalance` に固定。
+- 監査資料 `docs/strategy_entry_technical_context_audit_2026_02_15.md` の
+  `scalp_tick_imbalance` 行を `evaluate_entry_techniques`/`technical_context_*` 実装済み扱いに更新。
+
+### 2026-02-15（追記）V2実用起動候補（8戦略ペア）構成監査
+
+- 対象エントリー/EXITペア:
+  - `quant-scalp-ping-5s` / `quant-scalp-ping-5s-exit`
+  - `quant-micro-multi` / `quant-micro-multi-exit`
+  - `quant-scalp-macd-rsi-div` / `quant-scalp-macd-rsi-div-exit`
+  - `quant-scalp-tick-imbalance` / `quant-scalp-tick-imbalance-exit`
+  - `quant-scalp-squeeze-pulse-break` / `quant-scalp-squeeze-pulse-break-exit`
+  - `quant-scalp-wick-reversal-blend` / `quant-scalp-wick-reversal-blend-exit`
+  - `quant-scalp-wick-reversal-pro` / `quant-scalp-wick-reversal-pro-exit`
+  - `quant-m1scalper` / `quant-m1scalper-exit`
+- `/systemd/*.service` 上で 16本全てが `ExecStart` を `workers.<strategy>.worker` / `.exit_worker` に正しく固定し、
+  `EnvironmentFile` も `quant-v2-runtime.env` + 各戦略 env の2行で定義される構成を確認。
+- `quant-scalp-ping-5s.service` の追加 `EnvironmentFile` として
+  `ops/env/scalp_ping_5s.env` を明示的に用意し、参照行の未作成問題を解消。
+- `scalp_wick_reversal_blend` 側 env は `SCALP_PRECISION_ENABLED=1` に更新し、実運用起動前提を揃えた。
+
+### 2026-02-15（追記）WickReversalBlend 起動停止原因の除去
+
+- `workers/scalp_precision/worker.py` の `_place_order` 内で、
+  `not tech_decision.allowed` の分岐と `_tech_units <= 0` の分岐が
+  `continue` になっており、関数内制御として不正だったため
+  `SyntaxError: 'continue' not properly in loop` を発生させていた点を修正。
+- 2箇所を `return None` に変更し、`quant-scalp-wick-reversal-blend.service` の起動停止要因を解消する
+  形にした。
+
+### 2026-02-15（追記）wick/squeeze/tick wrapper の独立起動化
+
+- `workers/scalp_squeeze_pulse_break/worker.py` / `workers/scalp_wick_reversal_blend/worker.py` /
+  `workers/scalp_wick_reversal_pro/worker.py` を `SCALP_PRECISION_MODE` 固定起動形式へ揃え、
+  `SCALP_PRECISION_ENABLED/ALLOWLIST/UNIT_ALLOWLIST/LOG_PREFIX` を `__main__` で明示設定するように修正。
+- これにより、環境差し戻し時でもそれぞれの戦略名で `scalp_precision` のローカル評価を実行し、
+  V2実用8戦略（`scalp_tick_imbalance`含む）へ同一方針で意図固定を維持できる状態を整備。
