@@ -531,6 +531,8 @@
   `tp_distance_multiplier` / `sl_distance_multiplier` の根拠追跡性を強化。
 - 戦略追加・停止時の観測に対しても `systemd` 検知を優先し、停止戦略は
   `LAST_CLOSED` の古さ条件を満たさない限り `strategy_feedback` 出力対象外にして誤適用を回避。
+- 追加で、実行中 `quant-*.service` の `FragmentPath` を systemd から直接読み取り、リポジトリ上の
+  unit ファイルに未同期の戦略追加にも即座に追従するようにした。
 
 ### 2026-02-15（追記）analysis_feedback の最終受け渡しを明示化
 

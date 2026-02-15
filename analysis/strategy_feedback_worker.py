@@ -199,6 +199,60 @@ def _systemctl_running_services() -> set[str]:
     return services
 
 
+_SYSTEMD_STRATEGY_IGNORE: set[str] = {
+    "quant-strategy-control.service",
+    "quant-market-data-feed.service",
+    "quant-order-manager.service",
+    "quant-position-manager.service",
+    "quant-pattern-book.service",
+    "quant-range-metrics.service",
+    "quant-dynamic-alloc.service",
+    "quant-ops-policy.service",
+    "quant-policy-cycle.service",
+    "quant-policy-guard.service",
+    "quant-v2-audit.service",
+    "quant-strategy-optimizer.service",
+    "quant-entry-thesis-daily.service",
+    "quant-autotune.service",
+    "quant-boot-sync.service",
+    "quant-maintain-logs.service",
+    "quant-ui-snapshot.service",
+    "quant-excursion-report.service",
+    "quant-health-snapshot.service",
+    "quant-type-maintenance.service",
+    "quant-ssh-watchdog.service",
+    "quant-level-map.service",
+    "quant-bq-insights.service",
+    "quant-bq-sync.service",
+}
+
+
+def _systemctl_unit_body_from_host(name: str) -> str | None:
+    if not _systemctl_available():
+        return None
+    try:
+        cp = subprocess.run(
+            ["systemctl", "show", name, "-p", "FragmentPath", "--value", "--no-pager"],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=2.0,
+        )
+    except Exception:
+        return None
+
+    if cp.returncode != 0:
+        return None
+
+    path_text = cp.stdout.strip().splitlines()[0].strip() if cp.stdout else ""
+    if not path_text or path_text == "(null)":
+        return None
+    try:
+        return Path(path_text).read_text(encoding="utf-8")
+    except Exception:
+        return None
+
+
 def _read_service_units(systemd_dir: Path) -> list[tuple[str, str]]:
     units: list[tuple[str, str]] = []
     for path in sorted(systemd_dir.glob("quant-*.service")):
@@ -299,6 +353,102 @@ def _module_roles(module: str) -> tuple[bool, bool]:
     return lowered.endswith(".worker"), lowered.endswith(".exit_worker")
 
 
+def _parse_strategy_records_from_unit(
+    service_name: str,
+    body: str,
+    is_running: bool,
+) -> dict[str, StrategyRecord]:
+    if service_name in _SYSTEMD_STRATEGY_IGNORE:
+        return {}
+
+    env_paths: list[Path] = []
+    modules: list[str] = []
+    for line in body.splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        if not line.startswith("Environment"):
+            if line.startswith("ExecStart="):
+                modules.extend(_extract_modules_from_execstart(line.split("=", 1)[1]))
+            continue
+
+        if line.startswith("EnvironmentFile="):
+            raw = line.split("=", 1)[1].strip()
+            raw = raw.strip().strip('"').strip("'")
+            if raw.startswith("-"):
+                raw = raw[1:]
+            if raw:
+                env_paths.append(Path(raw))
+
+    worker_tags: set[str] = set()
+    strategy_env_params: dict[str, Any] = {}
+    if not env_paths:
+        return {}
+
+    for path in env_paths:
+        if path.name in {"quant-v2-runtime.env", "worker_autocontrol_off.env"}:
+            continue
+        env = _parse_env_file(path)
+        worker_tags.update(_extract_tag_candidates_from_env(env))
+
+        # mode-driven fallback (ex: tick_imbalance -> TickImbalance)
+        for key, value in env.items():
+            if not key.upper().endswith("_MODE"):
+                continue
+            if _looks_like_tag_value(value):
+                worker_tags.add(value)
+
+    fallback = False
+    saw_entry_module = False
+    saw_exit_module = False
+    for module in modules:
+        if not module.startswith("workers."):
+            continue
+        base = module.split(".")[-1]
+        if not worker_tags and base == "session_open":
+            worker_tags.add("session_open")
+            fallback = True
+        if not worker_tags and base == "scalp_precision":
+            worker_tags.add("scalp_precision")
+            fallback = True
+        is_entry_module, is_exit_module = _module_roles(module)
+        saw_entry_module = saw_entry_module or is_entry_module
+        saw_exit_module = saw_exit_module or is_exit_module
+
+    if not worker_tags:
+        return {}
+
+    strategy_prefixes = _derive_strategy_prefixes(service_name, modules, set(worker_tags))
+    for path in env_paths:
+        if path.name in {"quant-v2-runtime.env", "worker_autocontrol_off.env"}:
+            continue
+        env = _parse_env_file(path)
+        strategy_env_params.update(_extract_strategy_params(env, strategy_prefixes))
+
+    discovered: dict[str, StrategyRecord] = {}
+    for tag in worker_tags:
+        ckey = _norm_tag(tag)
+        if not ckey:
+            continue
+        rec = discovered.setdefault(
+            ckey,
+            StrategyRecord(canonical_tag=ckey),
+        )
+        rec.sources.add(f"systemd:{service_name}")
+        if strategy_env_params:
+            rec.strategy_params.update(strategy_env_params)
+        if saw_entry_module:
+            rec.entry_active = rec.entry_active or is_running
+        if saw_exit_module:
+            rec.exit_active = rec.exit_active or is_running
+        rec.active = rec.active or rec.entry_active or rec.exit_active
+        if fallback:
+            rec.sources.add("systemd_fallback")
+        rec.last_closed = None
+
+    return discovered
+
+
 def _prefix_variants_from_name(raw: str) -> set[str]:
     if not raw:
         return set()
@@ -360,125 +510,37 @@ def _extract_strategy_params(env: dict[str, str], prefixes: set[str]) -> dict[st
 
 def _discover_from_systemd(systemd_dir: Path, running_services: set[str], now: dt.datetime) -> dict[str, StrategyRecord]:
     discovered: dict[str, StrategyRecord] = {}
-    running = _systemctl_available()
 
-    ignore = {
-        "quant-strategy-control.service",
-        "quant-market-data-feed.service",
-        "quant-order-manager.service",
-        "quant-position-manager.service",
-        "quant-pattern-book.service",
-        "quant-range-metrics.service",
-        "quant-dynamic-alloc.service",
-        "quant-ops-policy.service",
-        "quant-policy-cycle.service",
-        "quant-policy-guard.service",
-        "quant-v2-audit.service",
-        "quant-strategy-optimizer.service",
-        "quant-entry-thesis-daily.service",
-        "quant-autotune.service",
-        "quant-boot-sync.service",
-        "quant-maintain-logs.service",
-        "quant-ui-snapshot.service",
-        "quant-excursion-report.service",
-        "quant-health-snapshot.service",
-        "quant-type-maintenance.service",
-        "quant-ssh-watchdog.service",
-        "quant-level-map.service",
-        "quant-bq-insights.service",
-        "quant-bq-sync.service",
-    }
+    def _merge(records: dict[str, StrategyRecord]) -> None:
+        for key, rec in records.items():
+            merged = discovered.setdefault(key, StrategyRecord(canonical_tag=key))
+            merged.sources.update(rec.sources)
+            merged.entry_active = merged.entry_active or rec.entry_active
+            merged.exit_active = merged.exit_active or rec.exit_active
+            merged.active = merged.active or rec.active
+            if rec.strategy_params:
+                merged.strategy_params.update(rec.strategy_params)
+
+    running = _systemctl_available()
+    local_unit_names: set[str] = set()
 
     for name, body in _read_service_units(systemd_dir):
-        if name in ignore:
+        local_unit_names.add(name)
+        if not name.startswith("quant-"):
             continue
-        is_running = True
-        if running:
-            is_running = name in running_services
+        is_running = name in running_services if running else True
+        _merge(_parse_strategy_records_from_unit(name, body, is_running))
 
-        env_paths: list[Path] = []
-        modules: list[str] = []
-        for line in body.splitlines():
-            line = line.strip()
-            if not line or line.startswith("#"):
+    if running:
+        for service_name in running_services:
+            if not service_name.startswith("quant-"):
                 continue
-            if not line.startswith("Environment"):
-                if line.startswith("ExecStart="):
-                    modules.extend(_extract_modules_from_execstart(line.split("=", 1)[1]))
+            if service_name in local_unit_names:
                 continue
-
-            if line.startswith("EnvironmentFile="):
-                raw = line.split("=", 1)[1].strip()
-                raw = raw.strip().strip('"').strip("'")
-                if raw.startswith("-"):
-                    raw = raw[1:]
-                if raw:
-                    env_paths.append(Path(raw))
-
-        worker_tags: set[str] = set()
-        strategy_env_params: dict[str, Any] = {}
-        if not env_paths:
-            continue
-
-        for path in env_paths:
-            if path.name in {"quant-v2-runtime.env", "worker_autocontrol_off.env"}:
+            body = _systemctl_unit_body_from_host(service_name)
+            if not body:
                 continue
-            env = _parse_env_file(path)
-            worker_tags.update(_extract_tag_candidates_from_env(env))
-
-            # mode-driven fallback (ex: tick_imbalance -> TickImbalance)
-            for key, value in env.items():
-                if not key.upper().endswith("_MODE"):
-                    continue
-                if _looks_like_tag_value(value):
-                    worker_tags.add(value)
-
-        fallback = False
-        saw_entry_module = False
-        saw_exit_module = False
-        for module in modules:
-            if not module.startswith("workers."):
-                continue
-            base = module.split(".")[-1]
-            if not worker_tags and base == "session_open":
-                worker_tags.add("session_open")
-                fallback = True
-            if not worker_tags and base == "scalp_precision":
-                worker_tags.add("scalp_precision")
-                fallback = True
-            is_entry_module, is_exit_module = _module_roles(module)
-            saw_entry_module = saw_entry_module or is_entry_module
-            saw_exit_module = saw_exit_module or is_exit_module
-
-        if not worker_tags:
-            continue
-
-        strategy_prefixes = _derive_strategy_prefixes(name, modules, set(worker_tags))
-        for path in env_paths:
-            if path.name in {"quant-v2-runtime.env", "worker_autocontrol_off.env"}:
-                continue
-            env = _parse_env_file(path)
-            strategy_env_params.update(_extract_strategy_params(env, strategy_prefixes))
-
-        for tag in worker_tags:
-            ckey = _norm_tag(tag)
-            if not ckey:
-                continue
-            rec = discovered.setdefault(
-                ckey,
-                StrategyRecord(canonical_tag=ckey),
-            )
-            rec.sources.add(f"systemd:{name}")
-            if strategy_env_params:
-                rec.strategy_params.update(strategy_env_params)
-            if saw_entry_module:
-                rec.entry_active = rec.entry_active or is_running
-            if saw_exit_module:
-                rec.exit_active = rec.exit_active or is_running
-            rec.active = rec.active or rec.entry_active or rec.exit_active
-            if fallback:
-                rec.sources.add("systemd_fallback")
-            rec.last_closed = None
+            _merge(_parse_strategy_records_from_unit(service_name, body, True))
 
     return discovered
 
