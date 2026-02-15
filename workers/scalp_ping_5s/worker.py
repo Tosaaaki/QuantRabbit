@@ -100,10 +100,33 @@ def _mask_value(value: str, *, head: int = 4, tail: int = 2) -> str:
 
 
 def _entry_blocked_hour_jst(now_utc: datetime.datetime) -> Optional[int]:
-    if not config.BLOCK_HOURS_JST:
+    block_hours_raw = getattr(config, "BLOCK_HOURS_JST", ())
+    block_hours: tuple[int, ...] = ()
+
+    try:
+        if isinstance(block_hours_raw, int):
+            block_hours = (block_hours_raw,)
+        elif isinstance(block_hours_raw, str):
+            block_hours = tuple(
+                int(item.strip())
+                for item in block_hours_raw.replace("\n", ",").split(",")
+                if item.strip()
+            )
+        else:
+            parsed: list[int] = []
+            for value in block_hours_raw:
+                try:
+                    parsed.append(int(str(value).strip()))
+                except (TypeError, ValueError):
+                    continue
+            block_hours = tuple(parsed)
+    except Exception:
+        block_hours = ()
+
+    if not block_hours:
         return None
     jst_hour = now_utc.astimezone(_JST_TIMEZONE).hour
-    if jst_hour in config.BLOCK_HOURS_JST:
+    if jst_hour in block_hours:
         return jst_hour
     return None
 
