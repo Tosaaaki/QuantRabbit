@@ -538,3 +538,11 @@
   `advice["configured_params"]` として明示的に出力し、ノイズ対策しない形で戦略固有パラメータを保持。
 - `execution/strategy_entry.py` で分析結果を `entry_thesis["analysis_feedback"]` に格納し、
   既存利用者互換として `analysis_advice` も併記して戦略別改善値の監査性を維持。
+
+### 2026-02-15（追記）戦略側 technical_context 要件の最終穴埋め
+
+- `workers/hedge_balancer/worker.py` と `workers/manual_swing/worker.py` の
+  `evaluate_entry_techniques` 呼び出し前に `tech_policy` を明示化し、
+  `require_fib/require_median/require_nwave/require_candle` を全戦略側で揃えた。
+- 同時に監査資料 `docs/strategy_entry_technical_context_audit_2026_02_15.md` の
+  該当行（`hedge_balancer`, `manual_swing`）も同値に更新。

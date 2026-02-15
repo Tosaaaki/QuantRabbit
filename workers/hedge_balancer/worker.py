@@ -352,6 +352,15 @@ def _evaluate_entry_techniques_local(
         "technical_context_candle_counts",
         {"M1": 120, "M5": 80, "H1": 60, "H4": 40},
     )
+    thesis_ctx.setdefault(
+        "tech_policy",
+        {
+            "require_fib": False,
+            "require_median": False,
+            "require_nwave": False,
+            "require_candle": False,
+        },
+    )
     thesis_ctx.setdefault("tech_allow_candle", True)
     thesis_ctx.setdefault("tech_policy_locked", False)
     thesis_ctx.setdefault("env_tf", "M1")

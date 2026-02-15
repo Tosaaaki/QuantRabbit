@@ -9,14 +9,14 @@
 
 | 戦略（worker） | market_order/limit_order | evaluate_entry_techniques | technical_context_tfs | technical_context_ticks | technical_context_candle_counts | require_fib | require_median | require_nwave | require_candle | size_scale | size_min | size_max | tech_policy_locked |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| hedge_balancer | 1 | 1 | 1 | 1 | 1 |  |  |  |  |  |  |  |  |
+| hedge_balancer | 1 | 1 | 1 | 1 | 1 | False | False | False | False |  |  |  |  |
 | impulse_break_s5 | 1 | 1 | 1 | 1 | 1 | False | False | False | False | 0.15 | 0.6 | 1.25 |  |
 | impulse_momentum_s5 | 1 | 1 | 1 | 1 | 1 | False | False | False | False | 0.15 | 0.6 | 1.25 |  |
 | impulse_retest_s5 | 1 | 1 | 1 | 1 | 1 | False | False | False | False | 0.15 | 0.6 | 1.25 |  |
 | london_momentum | 1 | 1 | 1 | 1 | 1 | False | False | False | False | 0.15 | 0.6 | 1.25 |  |
 | macro_h1momentum | 1 | 1 | 1 | 1 | 1 | False | False | False | False | 0.15 | 0.6 | 1.25 |  |
 | macro_tech_fusion | 1 | 1 | 1 | 1 | 1 | True | True | True | True | 0.2 | 0.7 | 1.25 |  |
-| manual_swing | 1 | 1 | 1 | 1 | 1 |  |  |  |  |  |  |  |  |
+| manual_swing | 1 | 1 | 1 | 1 | 1 | False | False | False | False |  |  |  |  |
 | market_data_feed | 0 | 0 | 0 | 0 | 0 |  |  |  |  |  |  |  |  |
 | micro_adaptive_revert | 1 | 1 | 1 | 1 | 1 | False | False | False | False | 0.15 | 0.6 | 1.25 |  |
 | micro_bbrsi | 1 | 1 | 1 | 1 | 1 | False | False | False | False | 0.15 | 0.6 | 1.25 |  |
