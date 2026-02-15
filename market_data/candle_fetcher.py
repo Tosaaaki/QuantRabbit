@@ -291,7 +291,7 @@ async def fetch_historical_candles(
     if granularity == "D1":
         gran = "D"
     params = {"granularity": gran, "price": "M", "includeInComplete": "false"}
-    if count is not None:
+    if count is not None and from_time is None and to_time is None:
         params["count"] = count
     if from_time is not None:
         params["from"] = _oanda_time_param(from_time)

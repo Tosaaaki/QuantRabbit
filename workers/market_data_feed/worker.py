@@ -65,7 +65,7 @@ def _active_timeframes() -> list[TimeFrame]:
     return tfs
 
 
-def _noop_handler(_: Candle) -> None:
+async def _noop_handler(_: Candle) -> None:
     return None
 
 
