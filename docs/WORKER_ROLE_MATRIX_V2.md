@@ -48,24 +48,15 @@
   - `AddonLiveBroker` 経路（`session_open` など）でも上記2値を `entry_thesis` に渡し、order manager はそれを前提にガード/リスク判定のみを行う。
   - `order_manager` は strategy 側意図の受け取りとガード/リスク検査のみで、戦略横断の採点・再選別は行わない。
   - 補足: `execution/order_manager.py` 側で `market_order()` / `limit_order()` 呼び出し時に当該2値の欠落補完を行うフェールセーフは実装済み。通常は戦略側での注入を優先し、欠損時のみ補完。
-- 各戦略ENTRYでは `entry_thesis["technical_context"]` を保持し、`N波` `フィボ` `ローソク` などの技術的判定を
-  `analysis.technique_engine.evaluate_entry_techniques` 経由で算出して保持する。  
-- 併せて、各戦略の意図保存に対応する技術断面（`entry_price` を含む場合は判定結果、同時に各TF指標）を
-  `entry_thesis["technical_context"]` に集約して保持する。  
-- 技術判定の扱いは `ENTRY_TECH_CONTEXT_GATE_MODE`（`off`/`soft`/`hard`）で統一。  
-  - `off`: 技術結果は記録のみ（現在既定）。  
-  - `soft`: 判定失敗時もエントリーは継続（fail-open）。  
-  - `hard`: 判定失敗時は `strategy_entry` でその戦略の送出を止める。  
+- 各戦略ENTRYでは `entry_thesis["technical_context"]` に技術入力断面（`indicators`/`ticks`/要求TF）を保持する。  
+- N波/フィボ/ローソクを含む技術判定は、各戦略ワーカー側のローカルロジックで実施する。  
+- `technical_context.result` は保存用の監査フィールド。戦略側が独自評価を入れる場合のみ埋める。  
 - 補足（技術要件契約）:
   - 技術要件は `execution/strategy_entry.py` の契約辞書で戦略タグ単位に定義し、`entry_thesis` 未指定項目を自動補完する。
   - `entry_thesis["technical_context_tfs"]` / `technical_context_fields` / `technical_context_ticks` / `technical_context_candle_counts` を各戦略別に規定。
-  - 全契約で `tech_policy` として以下を初期付与:
-    - `require_fib=True`
-    - `require_nwave=True`
-    - `require_candle=True`
-    - `tech_policy_locked=True`
-    （`tech_policy_locked=True` のため、`TECH_*` 環境変数の上書きは原則無効化され、要件が壊れない）
-  - N波/フィボ/ローソクは「必要要件」として扱う運用。
+  - 各戦略が必要なら `entry_thesis["tech_policy"]` で
+    `require_fib` / `require_nwave` / `require_candle` を明示する。
+  - `strategy_entry` 側は `technical_context` の保存補完のみで、上記要求を強制的に追加しない。
 - 現行マッピング（`_STRATEGY_TECH_CONTEXT_REQUIREMENTS`）:
   - Scalp系
     - `scalp_ping_5s`, `scalp_ping_5s_b`
@@ -98,14 +89,12 @@
       - 例外: `tick_imbalance` 系で `tick_rate` 追加
     - `technical_context_candle_counts`: 戦略別に個別上限（例: Scalp系 `M1/H1/M5/H4` 系、Micro系 `M5/M1/H1` 系）
 - 仕様上の役割分離は維持:
-  - 評価ロジックは `strategy_entry.py` の `evaluate_entry_techniques` 呼び出し経路で保持しつつ、`entry_thesis` は各戦略ごとの意図/閾値を反映。
+  - 共通 `strategy_entry.py` は指標入力契約の補完・保存を担い、評価ロジックの主体は各戦略ワーカーへ移す。
   - 最終的な受け入れ/サイズ拡大縮小は `order_manager` 側で再選別しない（意図受け渡し + ガード/リスクのみ）。
 - 戦略側は `entry_thesis` により要求仕様（`technical_context_tfs` / `technical_context_fields` /
   `technical_context_ticks` / `technical_context_candle_counts`）を明示できる。  
 - `strategy_entry` 側は `strategy_tag` を受け、該当戦略の契約要件を既定補完する。  
   補完優先順位は `entry_thesis` 指定値 > 戦略契約既定値。
-- `ENTRY_TECH_CONTEXT_APPLY_SIZE_MULT=1` 時は、評価 `size_mult` を `units` と `entry_units_intent` に反映し、
-  戦略側でサイズ決定に連動可能。  
 - `ENTRY_TECH_DEFAULT_TFS` で初期取得TF順を切替え、必要なら
   `entry_thesis["technical_context_tfs"]` / `entry_thesis["technical_context_fields"]` で戦略側制限を付与可能。  
 - order-manager では `technical_context` を上書きしない（保存専有）。
@@ -128,10 +117,10 @@
   戦略意図を上書きしない前提で、ガード/リスク判定と必要最小限の縮小・拒否のみに留める。
 - `execution/strategy_entry.py` 経由の協調判定は以下を固定ルール化する。  
   - 判定対象は `ORDER_INTENT_COORDINATION_ENABLED=true` かつ `pocket != manual` のみ。  
-  - 同一 `instrument` + `pocket` + `window`（既定 2 秒）内の未期限 board を集約し、`own_score=abs(raw_units)*prob` とする。  
+  - 同一 `strategy_tag` + `instrument` + `window`（既定 2 秒）内の未期限 board を集約し、`own_score=abs(raw_units)*prob` とする。  
   - `opposite_score` が 0 のときは協調受理。  
   - `opposite_score > 0` のときも方向意図は原則維持し、`raw_units` をそのまま通す。`dominance` は監査記録用に保持する。  
-  - `abs(final_units) < min_units_for_pocket(pocket)` は拒否。  
+  - `abs(final_units) < min_units_for_strategy(strategy_tag, pocket)` は拒否（優先解釈は戦略別設定）。  
   - `reason` は `order_manager` の `entry_intent_board` へ記録し、`strategy_entry` は 0 なら注文を出さない。  
 
 ### 5) ポジ管理面（分離済み）
@@ -141,7 +130,7 @@
 
 ### 6) 分析・監視面（データ管理）
 
-- `quant-pattern-book`, `quant-dynamic-alloc`, `quant-ops-policy`, `quant-policy-guard`, `quant-range-metrics` は分析/監視へ固定
+- `quant-pattern-book`, `quant-dynamic-alloc`, `quant-ops-policy`, `quant-policy-guard`, `quant-range-metrics`, `quant-strategy-feedback` は分析/監視へ固定
 - 分析系が戦略判断本体と混ざる構造を禁ずる
 
 ## 禁止ルール（V2）
@@ -184,6 +173,11 @@
   - `quant-order-manager.service` / `quant-position-manager.service` へ専用 env を追加し、共通 runtime env でサービス自体を
     ON にしない形へ分離。  
   - worker起動時に service-mode の誤自己参照を抑止するガードを追加。
+- 運用整備（2026-02-24）
+  - `analysis/strategy_feedback_worker.py` を追加し、`quant-strategy-feedback.service` / `quant-strategy-feedback.timer` で
+    `logs/trades.db` と strategy list を再解析して `logs/strategy_feedback.json` を更新する分析係ワーカーを導入。
+  - 戦略の追加・停止（systemd/service状態）に追従して指標を更新し、停止/追加時の事故条件を避ける `keep_inactive` 制約を明記。
+  - `ops/env/quant-strategy-feedback.env` に `STRATEGY_FEEDBACK_*` を追加し、lookback / min_trades / systemd_path を運用制御可能化。
 
 ## 監査用更新プロトコル（毎回）
 
@@ -254,7 +248,7 @@ flowchart LR
   OEX --> PM
   PM --> DB["logs/trades.db, logs/orders.db"]
 
-  ANAL["analysis/services<br>quant-pattern-book, quant-range-metrics, etc."] -->|feedback params / labels| SCW
+  ANAL["analysis/services<br>quant-pattern-book, quant-range-metrics, quant-strategy-feedback, etc."] -->|feedback params / labels| SCW
   ANAL -->|feedback params / labels| SWX
 
   UI["QuantRabbit UI<br>apps/autotune_ui.py"] --> SC

@@ -13,6 +13,7 @@
 | Regime & Focus | `analysis/regime_classifier.py` / `analysis/focus_decider.py` | Factors → macro/micro レジーム・`weight_macro` |
 | Local Decider | `analysis/local_decider.py` | focus + perf → ローカル判定 |
 | Strategy Plugin | `strategies/*` | Factors → `StrategyDecision` または None |
+| Strategy Feedback | `analysis/strategy_feedback.py` / `analysis/strategy_feedback_worker.py` | 取引実績 + 戦略検知から per-strategy の調整係数を `strategy_feedback.json` に出力 |
 | Brain Gate (optional) | `workers/common/brain.py` | order preflight → allow/reduce/block |
 | Exit (専用ワーカー) | `workers/*/exit_worker.py` | pocket 別 open positions → exit 指示（PnL>0 決済が原則） |
 | Strategy Control | `workers/common/strategy_control.py` / `workers/strategy_control/worker.py` | 戦略 `entry/exit` 可否、`global_lock`、環境変数上書き |
@@ -26,6 +27,8 @@
 - 戦略ワーカー: 新ローソク → Factors 更新 → Regime/Focus → Local decision → `strategy_control` 参照 → risk_guard → order_manager → `trades.db` / `metrics.db` ログ。
 - `signal_bus` を使う場合は `SIGNAL_GATE_ENABLED=1` 時のみ、戦略ワーカー起点で `signal_bus` enqueue の運用を許可。
 - タクト要件: 正秒同期（±500ms）、締切 55s 超でサイクル破棄（バックログ禁止）、`monotonic()` で `decision_latency_ms` 計測。
+- `quant-strategy-feedback.service`（`analysis/strategy_feedback_worker.py`）は一定間隔で
+  `trades.db` / 活動中戦略を再評価し、`strategy_feedback.json` を更新。
 - Background: `utils/backup_to_gcs.sh` による nightly logs バックアップ + `/etc/cron.hourly/qr-gcs-backup-core` による GCS 退避（自動）。
 
 ## 4. データスキーマと単位

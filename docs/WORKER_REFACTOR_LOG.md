@@ -63,8 +63,8 @@
 - 判定の固定要件を明文化:
   - `own_score = abs(raw_units) * normalized(entry_probability)`  
   - `dominance = opposite_score / max(own_score,1.0)` を算出し監査記録するが、方向意図は `raw_units` を基本維持して通す
-  - 最終 `abs(final_units) < min_units_for_pocket(pocket)` なら reject
-- `reason` と `status` は `entry_intent_board` に永続化し、`final_units=0` は `order_manager` 経路に流さない運用をログ追跡対象化。
+  - 最終 `abs(final_units) < min_units_for_strategy(strategy_tag, pocket)` なら reject
+  - `reason` と `status` は `entry_intent_board` に永続化し、`final_units=0` は `order_manager` 経路に流さない運用をログ追跡対象化。
   - `status`: `intent_accepted/intent_scaled/intent_rejected`
   - `reason`: `scale_to_zero/below_min_units_after_scale/coordination_load_error` 等
 - `opposite_domination` は廃止し、逆方向優勢でも方向意図を否定しない運用へ更新。
@@ -102,9 +102,76 @@
 - `entry_thesis["technical_context"]` には、上記要求を反映した `indicators`（TF毎）と `ticks`、要求内容を保存し、技術判定結果（`result`）とセットで持つ。
 - `analysis/technique_engine.evaluate_entry_techniques` は `technical_context_tfs` / `technical_context_candle_counts` を解釈して、
   TF 及びローソク取得本数を戦略側要求へ寄せる処理を追加（`common` 既定は維持）。
-- `ENTRY_TECH_CONTEXT_GATE_MODE` は `off/soft/hard` を明示し、`hard` 時は `technical_context.result.allowed=False` を最終拒否条件に反映する運用を確認。
-- 同時に `session_open` 経路（`addon_live -> strategy_entry`）向け契約も追加し、`technical_context_tfs`/`fields`/`ticks`/`candle_counts` と
-  N波/フィボ/ローソク必須ポリシーを明示。これにより `session_open` も技術要件契約の追従対象として管理される。
+  - `ENTRY_TECH_CONTEXT_GATE_MODE` は `off/soft/hard` を明示し、`hard` 時は `technical_context.result.allowed=False` を最終拒否条件に反映する運用を確認（当時の共通評価仕様）。
+  - 同時に `session_open` 経路（`addon_live -> strategy_entry`）向け契約も追加し、`technical_context_tfs`/`fields`/`ticks`/`candle_counts` を明示。
+  （当時の仕様では N波/フィボ/ローソク必須寄りだったため、現在は戦略側の `tech_policy` 明示に委譲）
+
+### 2026-02-21（追記）技術判定の共通計算を strategy_entry から分離
+
+- `execution/strategy_entry.py` で共通技術判定を実行するフローをデフォルト停止し、`ENTRY_TECH_CONTEXT_COMMON_EVAL=0`（既定）時は
+  `analysis.technique_engine.evaluate_entry_techniques` を呼ばないようにした。
+- `entry_thesis["technical_context"]` への保存は維持し、`indicators`（TF別）・`ticks`・要求パラメータは戦略のローカル計算入力として保全。
+- `technical_context["result"]` は共通側未評価時は `allowed=True` の監査用結果を持たせ、評価結果不在での注文拒否を発生させないようにする。
+- サイズ決定・方向決定は引き続き戦略側（各strategyワーカー）に委譲。`strategy_entry` 側では共通スコアに基づく拒否/縮小は行わない。
+- AGENTS/運用側の方針に合わせ、各戦略内で N波/フィボ/ローソク判定を含む必要なテクニカルを計算して `entry_thesis`/`technical_context` の形で整合させる前提へ一本化。
+
+### 2026-02-15（追記）共通評価設定キーを環境定義から整理
+
+- `config/env.example.toml` から `ENTRY_TECH_CONTEXT_GATE_MODE` / `ENTRY_TECH_CONTEXT_COMMON_EVAL` / `ENTRY_TECH_CONTEXT_APPLY_SIZE_MULT` を削除し、
+  `ENTRY_TECH_CONTEXT_ENABLED` のみ残して `technical_context` 注入（保存）を明文化。
+- `WORKER_ROLE_MATRIX_V2.md` の技術要件章を更新し、`strategy_entry` は各戦略のローカル判断を代替しない構成へ統一。
+- `strategy_entry` は `technical_context.result` を上書きしない（保存専有）運用を前提に文言を整合。
+
+### 2026-02-22（追記）N波/フィボ/ローソクの必須条件を共通契約から外す
+
+- 現行運用として、`strategy_entry` 側の共通注入は `technical_context` 取得範囲までに限定し、
+  `require_fib` / `require_nwave` / `require_candle` の既定強制を廃止。
+- `execution/strategy_entry.py` の契約辞書から `tech_policy` の既定付与を事実上無効化し、各戦略ワーカー側の
+  `evaluate_entry_techniques(..., tech_policy=...)` 呼び出しで戦略個別要件を持つ運用へ戻す。
+- これにより、戦略ごとの意図（許容するテクニカル条件）が壊れず維持される設計に再整合。
+
+### 2026-02-22（追記）tech_fusion を mode 別 tech_policy 明示へ収束
+
+- `workers/tech_fusion/worker.py` の `tech_policy` を `range` / `trend` モードで明示分岐化。
+- `range` モードは `require_nwave=True` を明示し、`trend` モードは `require_*` を `False` のまま
+  戦略ローカルで明示定義する形へ統一。
+- `technical_context_tfs/fields/ticks/candle_counts` は現行定義を保持しつつ、`evaluate_entry_techniques` への
+  要件注入を戦略側で完結する形へ更新。  
+  同時に監査観点の `tech_fusion` `require_*` 未最適化状態を解消。
+
+### 2026-02-24（追記）戦略別分析係ワーカーを追加
+
+- `analysis/strategy_feedback_worker.py` を新規追加し、`quant-strategy-feedback.service` / `quant-strategy-feedback.timer` で
+  定期実行する設計を追加。
+- ワーカーは以下を自動反映し、戦略追加・停止・再開へ追従する運用を実装:
+  - `systemd` からの戦略ワーカー検出（`quant-*.service`）
+  - `workers.common.strategy_control` の有効状態
+  - `logs/trades.db` の直近実績
+- 主要出力先は `logs/strategy_feedback.json`（既存 `analysis.strategy_feedback.current_advice` の入力と互換）へ更新。
+- 事故回避として、停止中戦略については最近のクローズ履歴なしなら出力抑止する `keep_inactive` 条件を導入。
+- `ops/env/quant-strategy-feedback.env` を追加し、`STRATEGY_FEEDBACK_*` の運用キー（lookback/min_trades/保存先/探索範囲）を明文化。
+- `docs/WORKER_REFACTOR_LOG.md` と `docs/WORKER_ROLE_MATRIX_V2.md` へ同時反映（監査トレースを維持）。
+
+### 2026-02-15（追記）戦略別 technical_context 要件監査を実施
+
+- `42` 戦略の監査対象（ユーザー指定）について、`evaluate_entry_techniques` と `technical_context_*` キーの実装有無を再集計。
+- 監査結果は `docs/strategy_entry_technical_context_audit_2026_02_15.md` に保存。
+- まとめ:
+  - `evaluate_entry_techniques` 未実装かつ `technical_context` 明示なしが多数（ユーザー指定42件の主要対象）
+  - `market_order` 非検出の wrapper/非entry系を除くと、実装未完了対象が 31 件
+  - `tech_policy` の `require_*` 監査対象 5戦略について、`require_*` 値の確認を同時実施済み（`tech_fusion` は `range`/`trend` で分岐定義、`range` は `False/F/F/F`、`trend` は `False/F/F/F`）
+- 次アクションとして、未実装戦略へ `technical_context_*` 要求明示とローカルテック評価の呼び出し導線を順次付与する運用を開始。
+
+### 2026-02-15（追記）technical_context の自動契約注入を明示要件時に限定
+
+- `execution/strategy_entry.py` に `ENTRY_TECH_CONTEXT_STRATEGY_REQUIREMENTS` を追加（既定 `false`）。
+- `strategy_entry` は、戦略タグ由来の自動補完ではなく、`technical_context_*` を戦略側で明示している場合のみ
+  `technical_context` の取得・注入を実施する方針へ変更（共通で全戦略へ前提を押し付けない）。
+- `technical_context_tfs` / `technical_context_fields` / `technical_context_ticks` / `technical_context_candle_counts` の
+  明示がない戦略は、既定値フォールバックでの自動注入を行わない。
+- `workers/tech_fusion/worker.py` について、`evaluate_entry_techniques` 呼び出しに
+  `tech_tfs` / `tech_policy`（`require_fib` / `require_nwave` / `require_candle` 含む）と
+  `technical_context_*` の要求定義を追加し、戦略ローカルでの評価前提を明示。
 
 ### 2026-02-20（追記）派生タグの戦略別技術契約を明示
 
@@ -115,7 +182,7 @@
   - `ScalpReversalNWave`, `TrendReclaimLong`, `VolSpikeRider`
   - `MacroTechFusion`, `MacroH1Momentum`, `trend_h1`, `LondonMomentum`, `H1MomentumSwing`
 - `entry_thesis` の受け渡し時に `technical_context_ticks` / `technical_context_tfs` / `technical_context_candle_counts` を
-  明示し、`tech_policy_locked` + `require_fib` / `require_nwave` / `require_candle` を `true` 前提に維持。
+  明示し、`tech_policy` による要件定義を戦略側で扱う方針へ移行する布石とした（当時は `true` 前提を記録していた）。
 - `SESSION_OPEN` を含む既存フローは維持しつつ、suffix 付き `scalp`/`macro`/`micro` タグでも
   pocket 非依存で解決可能なフォールバックを追加。  
   これにより N波/フィボ/ローソク要件の適用経路がより安定化した。
@@ -332,6 +399,12 @@
   `/order/coordinate_entry_intent` を経由してから `order_manager` へ転送する形へ戻す。
 - `workers/order_manager/worker.py` の `POST /order/coordinate_entry_intent` を有効のまま維持し、
   各戦略が自戦略意図を保持したまま黒板協調の結果を反映できる運用へ復元。
+
+### 2026-02-14（追記）黒板協調・最小ロット判定を strategy 固定化
+- `execution/order_manager.py` の `entry_intent_board` 集約キーを `strategy_tag` 前提へ更新。
+- `_coordinate_entry_intent` が `pocket` ではなく `strategy_tag + instrument` の組で照合するよう変更。
+- `min_units_for_strategy(strategy_tag, pocket)` を新設し、`strategy_tag` 指定時は `ORDER_MIN_UNITS_STRATEGY_<strategy>` を優先適用。
+- `execution/strategy_entry.py` の戦略側協調前チェックも `min_units_for_strategy` を利用するよう更新。
 
 ### 2026-02-17（追記）order/position worker の自己service呼び出しガード
 
