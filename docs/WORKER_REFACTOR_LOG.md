@@ -139,6 +139,18 @@
   要件注入を戦略側で完結する形へ更新。  
   同時に監査観点の `tech_fusion` `require_*` 未最適化状態を解消。
 
+### 2026-02-15（追記）戦略内テクニカル評価の統一ルートを拡張
+
+- `workers/hedge_balancer/worker.py` と `workers/manual_swing/worker.py` を
+  `evaluate_entry_techniques` のローカル呼び出し＋`technical_context_*` 明示へ統一し、ローカル判定後に
+  `entry_probability` / `entry_units_intent` を `entry_thesis` に反映する形へ拡張。
+- `workers/macro_tech_fusion/worker.py` / `workers/micro_pullback_fib/worker.py` /
+  `workers/range_compression_break/worker.py` / `workers/scalp_reversal_nwave/worker.py` について、
+  `tech_tfs` を維持しつつ `technical_context_tfs` / `technical_context_ticks` / `technical_context_candle_counts`
+  を明示化し、監査観点での入力要求の一貫性を揃えた。
+- `docs/strategy_entry_technical_context_audit_2026_02_15.md` を更新し、現時点の集計を `evaluate_entry_techniques` 実装 37、
+  `technical_context` 一式 37 に反映。
+
 ### 2026-02-24（追記）戦略別分析係ワーカーを追加
 
 - `analysis/strategy_feedback_worker.py` を新規追加し、`quant-strategy-feedback.service` / `quant-strategy-feedback.timer` で
@@ -171,6 +183,21 @@
   - `market_order` 非検出の wrapper/非entry系を除くと、実装未完了対象が 31 件
   - `tech_policy` の `require_*` 監査対象 5戦略について、`require_*` 値の確認を同時実施済み（`tech_fusion` は `range`/`trend` で分岐定義、`range` は `False/F/F/F`、`trend` は `False/F/F/F`）
 - 次アクションとして、未実装戦略へ `technical_context_*` 要求明示とローカルテック評価の呼び出し導線を順次付与する運用を開始。
+
+### 2026-02-15（追記）戦略側監査対象を戦略ワーカーに限定
+
+- `order_manager` は注文 API 経路のインフラ層であり、戦略ローカル判断の監査対象から除外。
+- `strategy` 側の条件（`workers/*/worker.py`）として再集計し、`market_order/limit_order` 直呼び 37 件が
+  `evaluate_entry_techniques` と `technical_context_tfs` / `technical_context_ticks` / `technical_context_candle_counts` を
+  すべて明示する状態を確認。
+- ここで未完了だった `hedge_balancer` / `manual_swing` / `macro_tech_fusion` / `micro_pullback_fib` /
+  `range_compression_break` / `scalp_reversal_nwave` を含む戦略群を最新定義に揃える対応を完了。
+
+- 追記サマリ（戦略側監査完了）:
+  - `workers/*/worker.py` 中の戦略ワーカー `market_order/limit_order` 直呼び: 37
+  - `evaluate_entry_techniques` 未呼び: 0
+  - `technical_context_tfs` / `technical_context_ticks` / `technical_context_candle_counts` 未明示: 0
+  - `order_manager` は監査外（インフラ/API 入口）
 
 ### 2026-02-15（追記）technical_context の自動契約注入を明示要件時に限定
 
@@ -494,3 +521,20 @@
   リアルタイム取引許可状態の整合を確認。
 - `ops_v2_audit` の実運用期待値を `MAIN_TRADING_ENABLED=1` に更新し、取引許可状態を監査基準へ反映。
 - このため `--all` 実行時の完了待機を回避しつつ、監査ジョブ（`quant-v2-audit`）の定期実行を維持。
+
+### 2026-02-24（追記）戦略分析係に戦略固有パラメータ参照を追加
+
+- `analysis/strategy_feedback_worker.py` を更新し、`systemd` 上の戦略サービス `EnvironmentFile` から
+  戦略ごとに一致する環境パラメータを抽出して `strategy_params` として保持するようにした。
+- 取得した `strategy_params` は `strategy_feedback` 生成時に各戦略の `strategy_params.configured_params` として
+  JSON 出力へ同梱し、`entry_probability_multiplier` / `entry_units_multiplier` /
+  `tp_distance_multiplier` / `sl_distance_multiplier` の根拠追跡性を強化。
+- 戦略追加・停止時の観測に対しても `systemd` 検知を優先し、停止戦略は
+  `LAST_CLOSED` の古さ条件を満たさない限り `strategy_feedback` 出力対象外にして誤適用を回避。
+
+### 2026-02-15（追記）analysis_feedback の最終受け渡しを明示化
+
+- `analysis/strategy_feedback.py` で `strategy_params` 内の `configured_params` を分離して
+  `advice["configured_params"]` として明示的に出力し、ノイズ対策しない形で戦略固有パラメータを保持。
+- `execution/strategy_entry.py` で分析結果を `entry_thesis["analysis_feedback"]` に格納し、
+  既存利用者互換として `analysis_advice` も併記して戦略別改善値の監査性を維持。

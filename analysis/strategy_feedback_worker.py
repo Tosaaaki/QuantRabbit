@@ -67,6 +67,44 @@ def _to_int(value: Any, default: int = 0) -> int:
         return default
 
 
+def _normalize_prefix(value: str) -> str:
+    return re.sub(r"_+", "_", re.sub(r"[^0-9a-zA-Z]+", "_", str(value or "").strip().upper())).strip("_")
+
+
+def _coerce_env_value(raw: Any) -> Any:
+    if raw is None:
+        return None
+    text = str(raw).strip()
+    if not text:
+        return ""
+    low = text.lower()
+    if low in {"true", "1", "on", "yes", "y"}:
+        return True
+    if low in {"false", "0", "off", "no", "n"}:
+        return False
+    try:
+        if "." in text:
+            return float(text)
+        return int(text)
+    except Exception:
+        try:
+            return float(text)
+        except Exception:
+            return text
+
+
+def _safe_param_value(value: Any) -> bool:
+    if isinstance(value, (int, float, bool)):
+        return True
+    if not isinstance(value, str):
+        return False
+    if any(ch in value for ch in "\n\r\t "):
+        return False
+    if len(value) > 64:
+        return False
+    return True
+
+
 def _norm_tag(value: Any) -> str:
     text = str(value or "").strip().lower()
     if not text:
@@ -84,6 +122,7 @@ class StrategyRecord:
     active: bool = False
     entry_active: bool = False
     exit_active: bool = False
+    strategy_params: dict[str, Any] = field(default_factory=dict)
     enabled: bool | None = None
     last_closed: str | None = None
 
@@ -260,6 +299,65 @@ def _module_roles(module: str) -> tuple[bool, bool]:
     return lowered.endswith(".worker"), lowered.endswith(".exit_worker")
 
 
+def _prefix_variants_from_name(raw: str) -> set[str]:
+    if not raw:
+        return set()
+    norm = _normalize_prefix(raw)
+    if not norm:
+        return set()
+    variants = {norm}
+    for suffix in ("_LIVE", "_LIVE_ONLY", "_SAFE", "_BASE", "_RAPID", "_TEST"):
+        if norm.endswith(suffix):
+            trimmed = norm[: -len(suffix)]
+            if trimmed:
+                variants.add(trimmed)
+    return {v for v in variants if v}
+
+
+def _derive_strategy_prefixes(
+    service_name: str,
+    modules: list[str],
+    tags: set[str],
+) -> set[str]:
+    prefixes: set[str] = set()
+    service = service_name.removeprefix("quant-").removesuffix(".service")
+    if service:
+        prefixes.add(_normalize_prefix(service))
+        if service.endswith("-exit"):
+            prefixes.add(_normalize_prefix(service.removesuffix("-exit")))
+    for module in modules:
+        parts = module.split(".")
+        if len(parts) >= 2 and parts[0] == "workers":
+            prefixes.add(_normalize_prefix(parts[1]))
+    for tag in tags:
+        prefixes.update(_prefix_variants_from_name(tag))
+    return {p for p in prefixes if p}
+
+
+def _extract_strategy_params(env: dict[str, str], prefixes: set[str]) -> dict[str, Any]:
+    if not env or not prefixes:
+        return {}
+    params: dict[str, Any] = {}
+    for key, raw in env.items():
+        if not isinstance(key, str):
+            continue
+        upper_key = _normalize_prefix(key)
+        if not upper_key:
+            continue
+        matched = False
+        for prefix in prefixes:
+            if upper_key == prefix or upper_key.startswith(prefix + "_"):
+                matched = True
+                break
+        if not matched:
+            continue
+        value = _coerce_env_value(raw)
+        if not _safe_param_value(value):
+            continue
+        params[upper_key] = value
+    return params
+
+
 def _discover_from_systemd(systemd_dir: Path, running_services: set[str], now: dt.datetime) -> dict[str, StrategyRecord]:
     discovered: dict[str, StrategyRecord] = {}
     running = _systemctl_available()
@@ -318,6 +416,7 @@ def _discover_from_systemd(systemd_dir: Path, running_services: set[str], now: d
                     env_paths.append(Path(raw))
 
         worker_tags: set[str] = set()
+        strategy_env_params: dict[str, Any] = {}
         if not env_paths:
             continue
 
@@ -354,6 +453,13 @@ def _discover_from_systemd(systemd_dir: Path, running_services: set[str], now: d
         if not worker_tags:
             continue
 
+        strategy_prefixes = _derive_strategy_prefixes(name, modules, set(worker_tags))
+        for path in env_paths:
+            if path.name in {"quant-v2-runtime.env", "worker_autocontrol_off.env"}:
+                continue
+            env = _parse_env_file(path)
+            strategy_env_params.update(_extract_strategy_params(env, strategy_prefixes))
+
         for tag in worker_tags:
             ckey = _norm_tag(tag)
             if not ckey:
@@ -363,6 +469,8 @@ def _discover_from_systemd(systemd_dir: Path, running_services: set[str], now: d
                 StrategyRecord(canonical_tag=ckey),
             )
             rec.sources.add(f"systemd:{name}")
+            if strategy_env_params:
+                rec.strategy_params.update(strategy_env_params)
             if saw_entry_module:
                 rec.entry_active = rec.entry_active or is_running
             if saw_exit_module:
@@ -471,7 +579,12 @@ def _clamp(value: float, min_value: float, max_value: float) -> float:
     return max(min_value, min(max_value, value))
 
 
-def _squad_recommendation(tag: str, stats: StrategyStats, min_trades: int) -> dict[str, Any]:
+def _squad_recommendation(
+    tag: str,
+    stats: StrategyStats,
+    min_trades: int,
+    strategy_params: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     if stats.trades < min_trades:
         return {}
 
@@ -537,6 +650,7 @@ def _squad_recommendation(tag: str, stats: StrategyStats, min_trades: int) -> di
             "profit_factor": None if pf == float("inf") else round(pf, 3),
             "trades": stats.trades,
             "avg_hold_sec": None if avg_hold is None else round(avg_hold, 1),
+            "configured_params": dict(strategy_params or {}),
         },
     }
     if abs(prob_multiplier - 1.0) >= 0.02:
@@ -568,6 +682,8 @@ def _build_payload(config: WorkerConfig) -> dict[str, Any]:
             merged[key].entry_active = merged[key].entry_active or rec.entry_active
             merged[key].exit_active = merged[key].exit_active or rec.exit_active
             merged[key].active = merged[key].active or rec.active
+            if rec.strategy_params:
+                merged[key].strategy_params.update(rec.strategy_params)
             if rec.enabled is not None:
                 merged[key].enabled = rec.enabled
 
@@ -618,7 +734,12 @@ def _build_payload(config: WorkerConfig) -> dict[str, Any]:
             # no active worker and recently stopped: skip until it starts again
             continue
 
-        advice = _squad_recommendation(tag, stats, config.min_trades)
+        advice = _squad_recommendation(
+            tag,
+            stats,
+            config.min_trades,
+            strategy_params=rec.strategy_params,
+        )
         if not advice:
             continue
 

@@ -11,7 +11,7 @@ import math
 import os
 from typing import Iterable, Literal, Optional
 
-from analysis.technique_engine import evaluate_entry_techniques
+from analysis import strategy_feedback
 from indicators.factor_cache import all_factors
 from execution.order_manager import cancel_order, close_trade, set_trade_protections
 from execution import order_manager
@@ -32,9 +32,9 @@ def _env_bool(name: str, default: bool) -> bool:
 
 
 _ENTRY_TECH_CONTEXT_ENABLED = _env_bool("ENTRY_TECH_CONTEXT_ENABLED", True)
-_ENTRY_TECH_CONTEXT_GATE_MODE = os.getenv("ENTRY_TECH_CONTEXT_GATE_MODE", "off").strip().lower()
-_ENTRY_TECH_CONTEXT_APPLY_SIZE_MULT = _env_bool(
-    "ENTRY_TECH_CONTEXT_APPLY_SIZE_MULT", True
+_ENTRY_TECH_CONTEXT_STRATEGY_REQUIREMENTS = _env_bool(
+    "ENTRY_TECH_CONTEXT_STRATEGY_REQUIREMENTS",
+    False,
 )
 
 
@@ -63,12 +63,7 @@ _DEFAULT_ENTRY_TECH_TFS = _env_csv(
     ",".join(_TECH_ALL_KNOWN_TFS),
 )
 
-_TECH_POLICY_REQUIRE_ALL = {
-    "require_fib": True,
-    "require_nwave": True,
-    "require_candle": True,
-    "tech_policy_locked": True,
-}
+_TECH_POLICY_REQUIRE_ALL = {}
 
 
 def _coerce_bool(value: object, default: Optional[bool] = None) -> Optional[bool]:
@@ -286,6 +281,11 @@ def _attach_strategy_technical_context_requirements(
     contract = _resolve_strategy_technical_context_contract(strategy_tag, pocket)
     if not contract:
         return entry_thesis
+    if (
+        not _ENTRY_TECH_CONTEXT_STRATEGY_REQUIREMENTS
+        and not _has_explicit_technical_context_requirements(entry_thesis)
+    ):
+        return entry_thesis
     for key, raw_value in contract.items():
         if key in entry_thesis:
             if key == "tech_policy":
@@ -304,6 +304,8 @@ def _attach_strategy_technical_context_requirements(
                             merged_policy[policy_key] = policy_value
                     entry_thesis["tech_policy"] = merged_policy
             continue
+        if key == "tech_policy" and isinstance(raw_value, dict) and not raw_value:
+            continue
         if isinstance(raw_value, dict):
             entry_thesis[key] = dict(raw_value)
         elif isinstance(raw_value, (list, tuple, set)):
@@ -311,6 +313,21 @@ def _attach_strategy_technical_context_requirements(
         else:
             entry_thesis[key] = raw_value
     return entry_thesis
+
+
+def _has_explicit_technical_context_requirements(entry_thesis: Optional[dict]) -> bool:
+    if not isinstance(entry_thesis, dict):
+        return False
+    for key in (
+        "technical_context",
+        "technical_context_tfs",
+        "technical_context_fields",
+        "technical_context_ticks",
+        "technical_context_candle_counts",
+    ):
+        if key in entry_thesis:
+            return True
+    return False
 
 
 def _resolve_strategy_tag(
@@ -368,9 +385,31 @@ def _entry_probability_value(raw: Optional[float]) -> Optional[float]:
 
 def _to_float(value: object) -> Optional[float]:
     try:
-        return float(value)
+        parsed = float(value)
     except (TypeError, ValueError):
         return None
+    if math.isnan(parsed) or math.isinf(parsed):
+        return None
+    return parsed
+
+
+def _scale_price_by_entry_distance(
+    *,
+    entry_price: Optional[float],
+    price: Optional[float],
+    multiplier: float,
+) -> Optional[float]:
+    if entry_price is None or price is None:
+        return price
+    anchor = _to_float(entry_price)
+    target = _to_float(price)
+    if anchor is None or target is None:
+        return price
+    distance = target - anchor
+    if distance == 0:
+        return price
+    scaled = anchor + (distance) * max(0.05, min(5.0, float(multiplier)))
+    return round(float(scaled), 3)
 
 
 def _to_float_or_bool(value: object) -> object | None:
@@ -522,146 +561,6 @@ def _collect_strategy_tick_context(
     return out
 
 
-def _normalize_gate_mode(raw: object, fallback: str) -> str:
-    if isinstance(raw, bool):
-        return "hard" if raw else "off"
-    text = str(raw).strip().lower() if raw is not None else ""
-    if text in {"hard", "strict", "required"}:
-        return "hard"
-    if text in {
-        "soft",
-        "warn",
-        "failopen",
-        "on",
-        "1",
-        "true",
-        "yes",
-    }:
-        return "soft"
-    if text in {"off", "disable", "disabled", "0", "false", "no"}:
-        return "off"
-    return fallback
-
-
-def _resolve_technical_gate_mode(
-    strategy_tag: Optional[str],
-    entry_thesis: Optional[dict],
-) -> str:
-    mode = _ENTRY_TECH_CONTEXT_GATE_MODE
-    if strategy_tag:
-        key = "".join(ch for ch in strategy_tag if ch.isalnum()).upper()
-        if key:
-            mode = _normalize_gate_mode(
-                os.getenv(f"ENTRY_TECH_CONTEXT_GATE_MODE_{key}"),
-                mode,
-            )
-    if isinstance(entry_thesis, dict):
-        for key in (
-            "technical_context_gate_mode",
-            "technical_gate_mode",
-            "tech_gate_mode",
-            "tech_context_gate_mode",
-            "technical_gate",
-        ):
-            if key in entry_thesis:
-                mode = _normalize_gate_mode(entry_thesis.get(key), mode)
-                break
-        if "tech_failopen" in entry_thesis:
-            mode = _normalize_gate_mode(
-                "soft" if entry_thesis.get("tech_failopen") else "hard",
-                mode,
-            )
-    return _normalize_gate_mode(mode, "off")
-
-
-def _resolve_technical_size_scaling_enabled(
-    entry_thesis: Optional[dict],
-    strategy_tag: Optional[str],
-) -> bool:
-    if isinstance(entry_thesis, dict):
-        for key in (
-            "technical_context_apply_size_mult",
-            "technical_size_scaling",
-            "tech_size_scaling",
-        ):
-            if key in entry_thesis:
-                val = entry_thesis.get(key)
-                if isinstance(val, bool):
-                    return val
-                if isinstance(val, (int, float)):
-                    return bool(val)
-                if isinstance(val, str):
-                    return val.strip().lower() in {"1", "true", "yes", "on"}
-    if strategy_tag:
-        key = "".join(ch for ch in strategy_tag if ch.isalnum()).upper()
-        if key:
-            return _env_bool(
-                f"ENTRY_TECH_CONTEXT_APPLY_SIZE_MULT_{key}",
-                _ENTRY_TECH_CONTEXT_APPLY_SIZE_MULT,
-            )
-    return _ENTRY_TECH_CONTEXT_APPLY_SIZE_MULT
-
-
-def _resolve_technical_context_result(
-    entry_thesis: Optional[dict],
-) -> Optional[dict[str, object]]:
-    if not isinstance(entry_thesis, dict):
-        return None
-    technical_context = entry_thesis.get("technical_context")
-    if not isinstance(technical_context, dict):
-        return None
-    result = technical_context.get("result")
-    if isinstance(result, dict):
-        return result
-    return None
-
-
-def _resolve_technical_size_multiplier(
-    technical_result: Optional[dict[str, object]],
-) -> Optional[float]:
-    if not isinstance(technical_result, dict):
-        return None
-    raw = technical_result.get("size_mult")
-    if raw is None:
-        return None
-    try:
-        mult = float(raw)
-    except (TypeError, ValueError):
-        return None
-    if not math.isfinite(mult) or mult <= 0:
-        return None
-    return mult
-
-
-def _apply_technical_size_mult(
-    units: int,
-    *,
-    entry_thesis: Optional[dict],
-    strategy_tag: Optional[str],
-    technical_context_result: Optional[dict[str, object]] = None,
-) -> int:
-    if not units:
-        return units
-    if not _resolve_technical_size_scaling_enabled(entry_thesis, strategy_tag):
-        return units
-    result = (
-        technical_context_result
-        if technical_context_result is not None
-        else _resolve_technical_context_result(entry_thesis)
-    )
-    if not result:
-        return units
-    mult = _resolve_technical_size_multiplier(result)
-    if mult is None:
-        return units
-    if not math.isfinite(mult) or mult <= 0:
-        return 0
-    scaled_abs = int(round(abs(units) * mult))
-    if scaled_abs <= 0:
-        return 0
-    return -scaled_abs if units < 0 else scaled_abs
-
-
 def _collect_strategy_technical_context(
     *,
     strategy_tag: Optional[str],
@@ -793,6 +692,11 @@ def _inject_entry_technical_context(
         strategy_tag=strategy_tag,
         pocket=pocket,
     )
+    if (
+        not _ENTRY_TECH_CONTEXT_STRATEGY_REQUIREMENTS
+        and not _has_explicit_technical_context_requirements(entry_thesis)
+    ):
+        return entry_thesis
     requested_tfs = _to_tfs(entry_thesis, list(_DEFAULT_ENTRY_TECH_TFS), pocket)
     requested_fields = _to_fields(entry_thesis)
     requested_ticks = _to_tick_requirements(entry_thesis)
@@ -836,29 +740,16 @@ def _inject_entry_technical_context(
             context["result"] = existing_result
             if isinstance(existing_context.get("debug"), dict):
                 context["debug"] = dict(existing_context.get("debug"))
-        elif entry_price is not None:
-            decision = evaluate_entry_techniques(
-                entry_price=entry_price,
-                side=_resolve_entry_side(units),
-                pocket=pocket,
-                strategy_tag=strategy_tag,
-                entry_thesis=entry_thesis,
-            )
-            context["result"] = {
-                "allowed": bool(decision.allowed),
-                "reason": decision.reason,
-                "score": decision.score,
-                "coverage": decision.coverage,
-                "size_mult": decision.size_mult,
-            }
-            context["debug"] = decision.debug
         else:
             context["result"] = {
                 "allowed": True,
-                "reason": "entry_price_unresolved",
+                "reason": "strategy_local_only",
                 "score": 0.0,
                 "coverage": 0.0,
                 "size_mult": 1.0,
+            }
+            context["debug"] = {
+                "strategy_local_only": True,
             }
     except Exception as exc:
         context["debug"] = {"error": str(exc)}
@@ -879,6 +770,131 @@ def _inject_entry_technical_context(
     return entry_thesis
 
 
+def _apply_strategy_feedback(
+    strategy_tag: Optional[str],
+    *,
+    pocket: str,
+    units: int,
+    entry_probability: Optional[float],
+    entry_price: Optional[float],
+    sl_price: Optional[float],
+    tp_price: Optional[float],
+    entry_thesis: Optional[dict],
+) -> tuple[int, Optional[float], Optional[float], Optional[float], dict[str, object]]:
+    try:
+        advice = strategy_feedback.current_advice(strategy_tag, pocket=pocket)
+    except Exception:
+        return units, entry_probability, sl_price, tp_price, {}
+    if not advice:
+        return units, entry_probability, sl_price, tp_price, {}
+    if not isinstance(entry_thesis, dict):
+        entry_thesis = None
+
+    orig_units = int(units)
+    adjusted_units = orig_units
+    adjusted_probability = entry_probability
+    adjusted_sl_price = sl_price
+    adjusted_tp_price = tp_price
+    applied: dict[str, object] = {}
+
+    units_multiplier = _to_float(advice.get("entry_units_multiplier", 1.0))
+    if units_multiplier is None:
+        units_multiplier = 1.0
+    units_multiplier = max(0.0, min(5.0, units_multiplier))
+    if units_multiplier != 1.0 and orig_units:
+        sign = 1 if orig_units >= 0 else -1
+        adjusted_units = sign * max(0, int(round(abs(orig_units) * units_multiplier)))
+        applied["entry_units_multiplier"] = round(units_multiplier, 6)
+        if adjusted_units != orig_units:
+            applied["entry_units"] = {
+                "before": orig_units,
+                "after": adjusted_units,
+            }
+
+    units_min_raw = advice.get("entry_units_min")
+    units_min = _to_float(units_min_raw)
+    if units_min is not None:
+        units_min = max(0.0, units_min)
+        if adjusted_units:
+            if abs(adjusted_units) < units_min:
+                sign = 1 if adjusted_units >= 0 else -1
+                adjusted_units = sign * int(round(units_min))
+                applied["entry_units_min"] = int(round(units_min))
+
+    units_max_raw = advice.get("entry_units_max")
+    units_max = _to_float(units_max_raw)
+    if units_max is not None:
+        units_max = max(0.0, units_max)
+        if adjusted_units and abs(adjusted_units) > units_max:
+            sign = 1 if adjusted_units >= 0 else -1
+            adjusted_units = sign * int(round(units_max))
+            applied["entry_units_max"] = int(round(units_max))
+
+    if adjusted_probability is not None:
+        probability_multiplier = _to_float(advice.get("entry_probability_multiplier", 1.0))
+        if probability_multiplier is None:
+            probability_multiplier = 1.0
+        probability_delta = _to_float(advice.get("entry_probability_delta", 0.0))
+        if probability_delta is None:
+            probability_delta = 0.0
+        if probability_multiplier != 1.0 or probability_delta != 0.0:
+            adjusted_probability = adjusted_probability * probability_multiplier + probability_delta
+            adjusted_probability = max(0.0, min(1.0, adjusted_probability))
+            if adjusted_probability != entry_probability:
+                applied["entry_probability"] = {
+                    "before": entry_probability,
+                    "after": adjusted_probability,
+                }
+
+    sl_multiplier = _to_float(advice.get("sl_distance_multiplier", 1.0))
+    if sl_multiplier is None:
+        sl_multiplier = 1.0
+    if sl_multiplier != 1.0:
+        candidate = _scale_price_by_entry_distance(
+            entry_price=entry_price,
+            price=adjusted_sl_price,
+            multiplier=sl_multiplier,
+        )
+        if candidate != adjusted_sl_price:
+            adjusted_sl_price = candidate
+            applied["sl_distance_multiplier"] = round(sl_multiplier, 6)
+
+    tp_multiplier = _to_float(advice.get("tp_distance_multiplier", 1.0))
+    if tp_multiplier is None:
+        tp_multiplier = 1.0
+    if tp_multiplier != 1.0:
+        candidate = _scale_price_by_entry_distance(
+            entry_price=entry_price,
+            price=adjusted_tp_price,
+            multiplier=tp_multiplier,
+        )
+        if candidate != adjusted_tp_price:
+            adjusted_tp_price = candidate
+            applied["tp_distance_multiplier"] = round(tp_multiplier, 6)
+
+    if adjusted_probability is not None and entry_thesis is not None:
+        entry_thesis["entry_probability"] = adjusted_probability
+    strategy_params = advice.get("strategy_params")
+    configured_params = advice.get("configured_params")
+    analysis_feedback: dict[str, object] = {
+        "source": advice.get("_meta", {}),
+        "applied": applied,
+    }
+    notes = advice.get("notes")
+    if notes is not None:
+        analysis_feedback["notes"] = notes
+    if isinstance(strategy_params, dict) and strategy_params:
+        analysis_feedback["strategy_params"] = strategy_params
+    if isinstance(configured_params, dict) and configured_params:
+        analysis_feedback["configured_params"] = configured_params
+    if (applied or analysis_feedback.get("strategy_params") or analysis_feedback.get("configured_params")) and entry_thesis is not None:
+        # Keep both the new key (analysis_feedback) and historical key
+        # (analysis_advice) for compatibility with any downstream consumers.
+        entry_thesis["analysis_feedback"] = analysis_feedback
+        entry_thesis["analysis_advice"] = analysis_feedback
+    return adjusted_units, adjusted_probability, adjusted_sl_price, adjusted_tp_price, applied
+
+
 async def _coordinate_entry_units(
     *,
     instrument: str,
@@ -895,7 +911,7 @@ async def _coordinate_entry_units(
         return units
     if not strategy_tag:
         return units
-    min_units = order_manager.min_units_for_pocket(pocket)
+    min_units = order_manager.min_units_for_strategy(strategy_tag, pocket=pocket)
     final_units, reason, _ = await order_manager.coordinate_entry_intent(
         instrument=instrument,
         pocket=pocket,
@@ -937,23 +953,18 @@ async def market_order(
         entry_thesis=entry_thesis,
         entry_price=_resolve_entry_price(units, entry_thesis),
     )
-    technical_gate_mode = _resolve_technical_gate_mode(resolved_strategy_tag, entry_thesis)
-    technical_result = _resolve_technical_context_result(entry_thesis)
-    if technical_gate_mode == "hard":
-        if not technical_result or not bool(technical_result.get("allowed", False)):
-            return None
-    technical_size_mult = _resolve_technical_size_multiplier(technical_result)
-    scaled_units = _apply_technical_size_mult(
-        units,
-        entry_thesis=entry_thesis,
-        strategy_tag=resolved_strategy_tag,
-        technical_context_result=technical_result,
-    )
-    if scaled_units != units:
-        units = scaled_units
-        if isinstance(entry_thesis, dict):
-            entry_thesis["technical_context_scaled_size_mult"] = technical_size_mult
     entry_probability = _resolve_entry_probability(entry_thesis, confidence)
+    entry_thesis = dict(entry_thesis) if isinstance(entry_thesis, dict) else None
+    units, entry_probability, sl_price, tp_price, _ = _apply_strategy_feedback(
+        resolved_strategy_tag,
+        pocket=pocket,
+        units=units,
+        entry_probability=entry_probability,
+        entry_price=_resolve_entry_price(units, entry_thesis),
+        sl_price=sl_price,
+        tp_price=tp_price,
+        entry_thesis=entry_thesis,
+    )
     coordinated_units = await _coordinate_entry_units(
         instrument=instrument,
         pocket=pocket,
@@ -1015,23 +1026,18 @@ async def limit_order(
         entry_thesis=entry_thesis,
         entry_price=_resolve_entry_price(units, entry_thesis, limit_price=price),
     )
-    technical_gate_mode = _resolve_technical_gate_mode(resolved_strategy_tag, entry_thesis)
-    technical_result = _resolve_technical_context_result(entry_thesis)
-    if technical_gate_mode == "hard":
-        if not technical_result or not bool(technical_result.get("allowed", False)):
-            return None, None
-    technical_size_mult = _resolve_technical_size_multiplier(technical_result)
-    scaled_units = _apply_technical_size_mult(
-        units,
-        entry_thesis=entry_thesis,
-        strategy_tag=resolved_strategy_tag,
-        technical_context_result=technical_result,
-    )
-    if scaled_units != units:
-        units = scaled_units
-        if isinstance(entry_thesis, dict):
-            entry_thesis["technical_context_scaled_size_mult"] = technical_size_mult
     entry_probability = _resolve_entry_probability(entry_thesis, confidence)
+    entry_thesis = dict(entry_thesis) if isinstance(entry_thesis, dict) else None
+    units, entry_probability, sl_price, tp_price, _ = _apply_strategy_feedback(
+        resolved_strategy_tag,
+        pocket=pocket,
+        units=units,
+        entry_probability=entry_probability,
+        entry_price=_resolve_entry_price(units, entry_thesis, limit_price=price),
+        sl_price=sl_price,
+        tp_price=tp_price,
+        entry_thesis=entry_thesis,
+    )
     if isinstance(entry_thesis, dict):
         entry_thesis["entry_units_intent"] = abs(int(units))
     coordinated_units = await _coordinate_entry_units(

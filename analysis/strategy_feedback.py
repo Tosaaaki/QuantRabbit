@@ -365,9 +365,18 @@ def current_advice(
     if notes is not None:
         advice["notes"] = str(notes)
     strategy_params = metadata.get("strategy_params")
-    if isinstance(strategy_params, dict) and strategy_params:
-        advice["strategy_params"] = dict(strategy_params)
-    has_strategy_params = isinstance(advice.get("strategy_params"), dict) and bool(advice["strategy_params"])
+    configured_params = {}
+    if isinstance(strategy_params, dict):
+        strategy_params_dict = dict(strategy_params)
+        nested_configured = strategy_params_dict.get("configured_params")
+        if isinstance(nested_configured, dict):
+            configured_params = nested_configured
+        advice["strategy_params"] = strategy_params_dict
+    has_strategy_params = (
+        isinstance(advice.get("strategy_params"), dict) and bool(advice["strategy_params"])
+    ) or (isinstance(configured_params, dict) and bool(configured_params))
+    if isinstance(configured_params, dict) and configured_params:
+        advice["configured_params"] = dict(configured_params)
     advice["_meta"] = {
         "strategy_tag": strategy_tag,
         "pocket": pocket,
