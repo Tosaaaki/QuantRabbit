@@ -177,6 +177,7 @@
   - `analysis/strategy_feedback_worker.py` を追加し、`quant-strategy-feedback.service` / `quant-strategy-feedback.timer` で
     `logs/trades.db` と strategy list を再解析して `logs/strategy_feedback.json` を更新する分析係ワーカーを導入。
   - 戦略の追加・停止（systemd/service状態）に追従して指標を更新し、停止/追加時の事故条件を避ける `keep_inactive` 制約を明記。
+  - エントリーワーカー稼働を優先判定に変更し、EXITワーカーのみ残存するケースでは `strategy_feedback` の更新適用を抑止。
   - `ops/env/quant-strategy-feedback.env` に `STRATEGY_FEEDBACK_*` を追加し、lookback / min_trades / systemd_path を運用制御可能化。
 
 ## 監査用更新プロトコル（毎回）

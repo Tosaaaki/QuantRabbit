@@ -82,6 +82,8 @@ class StrategyRecord:
     canonical_tag: str
     sources: set[str] = field(default_factory=set)
     active: bool = False
+    entry_active: bool = False
+    exit_active: bool = False
     enabled: bool | None = None
     last_closed: str | None = None
 
@@ -251,6 +253,13 @@ def _extract_modules_from_execstart(exec_line: str) -> list[str]:
     return modules
 
 
+def _module_roles(module: str) -> tuple[bool, bool]:
+    if not module:
+        return False, False
+    lowered = module.lower()
+    return lowered.endswith(".worker"), lowered.endswith(".exit_worker")
+
+
 def _discover_from_systemd(systemd_dir: Path, running_services: set[str], now: dt.datetime) -> dict[str, StrategyRecord]:
     discovered: dict[str, StrategyRecord] = {}
     running = _systemctl_available()
@@ -326,6 +335,8 @@ def _discover_from_systemd(systemd_dir: Path, running_services: set[str], now: d
                     worker_tags.add(value)
 
         fallback = False
+        saw_entry_module = False
+        saw_exit_module = False
         for module in modules:
             if not module.startswith("workers."):
                 continue
@@ -336,6 +347,9 @@ def _discover_from_systemd(systemd_dir: Path, running_services: set[str], now: d
             if not worker_tags and base == "scalp_precision":
                 worker_tags.add("scalp_precision")
                 fallback = True
+            is_entry_module, is_exit_module = _module_roles(module)
+            saw_entry_module = saw_entry_module or is_entry_module
+            saw_exit_module = saw_exit_module or is_exit_module
 
         if not worker_tags:
             continue
@@ -349,7 +363,11 @@ def _discover_from_systemd(systemd_dir: Path, running_services: set[str], now: d
                 StrategyRecord(canonical_tag=ckey),
             )
             rec.sources.add(f"systemd:{name}")
-            rec.active = rec.active or is_running
+            if saw_entry_module:
+                rec.entry_active = rec.entry_active or is_running
+            if saw_exit_module:
+                rec.exit_active = rec.exit_active or is_running
+            rec.active = rec.active or rec.entry_active or rec.exit_active
             if fallback:
                 rec.sources.add("systemd_fallback")
             rec.last_closed = None
@@ -586,7 +604,7 @@ def _build_payload(config: WorkerConfig) -> dict[str, Any]:
         if rec.enabled is False:
             continue
 
-        if not rec.active:
+        if not rec.entry_active:
             # strategy workers removed/stopped: keep silent to avoid applying stale knobs
             if cutoff is not None and rec.last_closed:
                 try:
