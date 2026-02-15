@@ -13,6 +13,7 @@ import math
 import time
 from typing import Dict, Iterable, List, Optional, Tuple
 
+from analysis.technique_engine import evaluate_entry_techniques
 from execution.strategy_entry import market_order
 from execution.position_manager import PositionManager
 from execution.risk_guard import can_trade, clamp_sl_tp, loss_cooldown_status
@@ -309,6 +310,60 @@ def _projection_decision(side, pocket, mode_override=None):
         "scores": {k: round(v, 3) for k, v in scores.items()},
     }
     return allow, size_mult, detail
+
+
+def _evaluate_entry_techniques_local(
+    *,
+    entry_price: float,
+    side: str,
+    pocket: str,
+    strategy_tag: str,
+    entry_thesis: Dict[str, object],
+) -> tuple:
+    thesis_ctx = dict(entry_thesis)
+    thesis_ctx.setdefault("technical_context_tfs", {
+        "fib": ["H4", "H1", "M5", "M1"],
+        "median": ["H4", "H1", "M5", "M1"],
+        "nwave": ["H1", "M1"],
+        "candle": ["M1", "M5"],
+    })
+    thesis_ctx.setdefault(
+        "technical_context_ticks",
+        ["latest_bid", "latest_ask", "latest_mid", "spread_pips"],
+    )
+    thesis_ctx.setdefault(
+        "technical_context_candle_counts",
+        {"M1": 120, "M5": 80, "H1": 60, "H4": 40},
+    )
+    thesis_ctx.setdefault("tech_allow_candle", True)
+    thesis_ctx.setdefault("tech_policy_locked", False)
+    thesis_ctx.setdefault("env_tf", "M1")
+    thesis_ctx.setdefault("struct_tf", "M5")
+    thesis_ctx.setdefault("entry_tf", "M1")
+
+    tech_decision = evaluate_entry_techniques(
+        entry_price=entry_price,
+        side=side,
+        pocket=pocket,
+        strategy_tag=strategy_tag,
+        entry_thesis=thesis_ctx,
+        allow_candle=bool(thesis_ctx.get("tech_allow_candle", False)),
+    )
+
+    thesis_ctx["tech_score"] = round(tech_decision.score, 3) if tech_decision.score is not None else None
+    if tech_decision.coverage is not None:
+        thesis_ctx["tech_coverage"] = round(float(tech_decision.coverage), 3)
+    thesis_ctx["tech_entry"] = tech_decision.debug
+    thesis_ctx["tech_reason"] = tech_decision.reason
+    thesis_ctx["tech_decision_allowed"] = bool(tech_decision.allowed)
+    if tech_decision.score is None:
+        thesis_ctx["entry_probability"] = 0.5
+    else:
+        thesis_ctx["entry_probability"] = max(0.0, min(1.0, 0.5 + (tech_decision.score / 2.0)))
+
+    return tech_decision, thesis_ctx
+
+
 def _client_order_id(suffix: str) -> str:
     ts_ms = int(time.time() * 1000)
     return f"qr-manual-{ts_ms}-{suffix}"
@@ -814,12 +869,22 @@ async def manual_swing_worker() -> None:
             if proj_mult > 1.0:
                 sign = 1 if units_to_send > 0 else -1
                 units_to_send = int(round(abs(units_to_send) * proj_mult)) * sign
+            tech_decision, entry_thesis = _evaluate_entry_techniques_local(
+                entry_price=price,
+                side=side,
+                pocket=config.POCKET,
+                strategy_tag=STRATEGY_TAG,
+                entry_thesis=entry_thesis,
+            )
+            if not tech_decision.allowed and not getattr(config, "TECH_FAILOPEN", True):
+                continue
             candle_allow, candle_mult = _entry_candle_guard("long" if units_to_send > 0 else "short")
             if not candle_allow:
                 continue
             if candle_mult != 1.0:
                 sign = 1 if units_to_send > 0 else -1
                 units_to_send = int(round(abs(units_to_send) * candle_mult)) * sign
+            entry_thesis["entry_units_intent"] = abs(int(units_to_send))
             await market_order(
                 "USD_JPY",
                 units_to_send,

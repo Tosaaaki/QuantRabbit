@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 from analysis.ma_projection import compute_adx_projection, compute_bbw_projection, compute_ma_projection, compute_rsi_projection
+from analysis.technique_engine import evaluate_entry_techniques
 from analysis.ma_projection import score_ma_for_side
 from analysis.mtf_heat import evaluate_mtf_heat
 from analysis.range_guard import detect_range_mode
@@ -905,6 +906,128 @@ async def pullback_s5_worker() -> None:
             if candle_mult != 1.0:
                 sign = 1 if units > 0 else -1
                 units = int(round(abs(units) * candle_mult)) * sign
+            entry_thesis_ctx = None
+            for _name in ("entry_thesis", "thesis"):
+                _candidate = locals().get(_name)
+                if isinstance(_candidate, dict):
+                    entry_thesis_ctx = _candidate
+                    break
+            if entry_thesis_ctx is None:
+                entry_thesis_ctx = {}
+
+            _tech_pocket = str(locals().get("pocket", config.POCKET))
+            _tech_side_raw = str(locals().get("side", locals().get("direction", "long"))).lower()
+            if _tech_side_raw in {"long", "short"}:
+                _tech_side = _tech_side_raw
+            else:
+                _tech_side = "long"
+            _tech_entry_price = locals().get("price")
+            if not isinstance(_tech_entry_price, (int, float)):
+                _tech_entry_price = locals().get("entry_price")
+            if not isinstance(_tech_entry_price, (int, float)):
+                _tech_entry_price = 0.0
+            try:
+                _tech_entry_price = float(_tech_entry_price)
+            except (TypeError, ValueError):
+                _tech_entry_price = 0.0
+
+            _tech_signal_tag = str(
+                locals().get("signal_tag")
+                or locals().get("strategy_tag")
+                or locals().get("STRATEGY_TAG")
+                or getattr(config, "STRATEGY_TAG", "")
+            )
+
+            entry_thesis_ctx.setdefault(
+                "tech_tfs",
+                {"fib": ["H1", "M5"], "median": ["H1", "M5"], "nwave": ["M1", "M5"], "candle": ["M1", "M5"]},
+            )
+            entry_thesis_ctx.setdefault("technical_context_tfs", ["M1", "M5", "H1", "H4"])
+            entry_thesis_ctx.setdefault(
+                "technical_context_fields",
+                [
+                    "ma10",
+                    "ma20",
+                    "rsi",
+                    "atr",
+                    "atr_pips",
+                    "adx",
+                    "macd",
+                    "macd_hist",
+                    "plus_di",
+                    "minus_di",
+                    "bbw",
+                    "kc_width",
+                    "vwap",
+                    "ema20",
+                    "ema24",
+                ],
+            )
+            entry_thesis_ctx.setdefault("technical_context_ticks", ["latest_bid", "latest_ask", "latest_mid", "spread_pips"])
+            entry_thesis_ctx.setdefault("technical_context_candle_counts", {"M1": 120, "M5": 80, "H1": 70, "H4": 60})
+            entry_thesis_ctx.setdefault("tech_allow_candle", True)
+            entry_thesis_ctx.setdefault(
+                "tech_policy",
+                {
+                    "mode": "balanced",
+                    "min_score": 0.0,
+                    "min_coverage": 0.0,
+                    "weight_fib": 0.25,
+                    "weight_median": 0.25,
+                    "weight_nwave": 0.25,
+                    "weight_candle": 0.25,
+                    "require_fib": False,
+                    "require_median": False,
+                    "require_nwave": False,
+                    "require_candle": False,
+                    "size_scale": 0.15,
+                    "size_min": 0.6,
+                    "size_max": 1.25,
+                },
+            )
+            entry_thesis_ctx.setdefault("tech_policy_locked", False)
+            entry_thesis_ctx.setdefault("env_tf", "M1")
+            entry_thesis_ctx.setdefault("struct_tf", "M1")
+            entry_thesis_ctx.setdefault("entry_tf", "M1")
+
+            tech_decision = evaluate_entry_techniques(
+                entry_price=_tech_entry_price,
+                side=_tech_side,
+                pocket=_tech_pocket,
+                strategy_tag=_tech_signal_tag,
+                entry_thesis=entry_thesis_ctx,
+                allow_candle=bool(entry_thesis_ctx.get("tech_allow_candle", False)),
+            )
+            if not tech_decision.allowed and not getattr(config, "TECH_FAILOPEN", True):
+                continue
+
+            entry_thesis_ctx["tech_score"] = round(tech_decision.score, 3) if tech_decision.score is not None else None
+            entry_thesis_ctx["tech_coverage"] = (
+                round(tech_decision.coverage, 3) if tech_decision.coverage is not None else None
+            )
+            entry_thesis_ctx["tech_entry"] = tech_decision.debug
+            entry_thesis_ctx["tech_reason"] = tech_decision.reason
+            entry_thesis_ctx["tech_decision_allowed"] = bool(tech_decision.allowed)
+
+            _tech_units_raw = locals().get("units")
+            if isinstance(_tech_units_raw, (int, float)):
+                _tech_units = int(round(abs(float(_tech_units_raw)) * tech_decision.size_mult))
+                if _tech_units <= 0:
+                    continue
+                units = _tech_units if _tech_side == "long" else -_tech_units
+                entry_thesis_ctx["entry_units_intent"] = abs(int(units))
+
+            _tech_conf = locals().get("conf")
+            if isinstance(_tech_conf, (int, float)):
+                _tech_conf = float(_tech_conf)
+                if tech_decision.score is not None:
+                    if tech_decision.score >= 0:
+                        _tech_conf += tech_decision.score * getattr(config, "TECH_CONF_BOOST", 0.0)
+                    else:
+                        _tech_conf += tech_decision.score * getattr(config, "TECH_CONF_PENALTY", 0.0)
+                conf = _tech_conf
+
+
             res = await market_order(
                 instrument="USD_JPY",
                 units=units,

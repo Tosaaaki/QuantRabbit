@@ -9,13 +9,14 @@ from __future__ import annotations
 from analysis.ma_projection import compute_adx_projection, compute_bbw_projection, compute_ma_projection, compute_rsi_projection
 from analysis.ma_projection import score_ma_for_side
 from analysis.range_guard import detect_range_mode
+from analysis.technique_engine import evaluate_entry_techniques
 from indicators.factor_cache import all_factors, get_candles_snapshot
 
 import asyncio
 import datetime
 import logging
 import time
-from typing import Optional, Tuple
+from typing import Dict, Optional, Tuple
 
 from market_data import tick_window
 from execution.order_ids import build_client_order_id
@@ -331,6 +332,53 @@ def _projection_decision(side, pocket, mode_override=None):
         "scores": {k: round(v, 3) for k, v in scores.items()},
     }
     return allow, size_mult, detail
+
+
+def _evaluate_entry_techniques_local(
+    *,
+    entry_price: float,
+    side: str,
+    pocket: str,
+    strategy_tag: str,
+    entry_thesis: Dict[str, object],
+) -> tuple:
+    thesis_ctx = dict(entry_thesis)
+    thesis_ctx.setdefault("technical_context_tfs", {"fib": ["M5", "M1"], "median": ["M5", "M1"], "nwave": ["M1", "M5"], "candle": ["M1", "M5"]})
+    thesis_ctx.setdefault(
+        "technical_context_ticks",
+        ["latest_bid", "latest_ask", "latest_mid", "spread_pips"],
+    )
+    thesis_ctx.setdefault(
+        "technical_context_candle_counts",
+        {"M1": 120, "M5": 80, "H1": 60, "H4": 40},
+    )
+    thesis_ctx.setdefault("tech_allow_candle", True)
+    thesis_ctx.setdefault("tech_policy_locked", False)
+    thesis_ctx.setdefault("env_tf", "M1")
+    thesis_ctx.setdefault("struct_tf", "M5")
+    thesis_ctx.setdefault("entry_tf", "M1")
+
+    tech_decision = evaluate_entry_techniques(
+        entry_price=entry_price,
+        side=side,
+        pocket=pocket,
+        strategy_tag=strategy_tag,
+        entry_thesis=thesis_ctx,
+        allow_candle=bool(thesis_ctx.get("tech_allow_candle", False)),
+    )
+
+    thesis_ctx["tech_score"] = round(tech_decision.score, 3) if tech_decision.score is not None else None
+    if tech_decision.coverage is not None:
+        thesis_ctx["tech_coverage"] = round(float(tech_decision.coverage), 3)
+    thesis_ctx["tech_entry"] = tech_decision.debug
+    thesis_ctx["tech_reason"] = tech_decision.reason
+    thesis_ctx["tech_decision_allowed"] = bool(tech_decision.allowed)
+    if tech_decision.score is None:
+        thesis_ctx["entry_probability"] = 0.5
+    else:
+        thesis_ctx["entry_probability"] = max(0.0, min(1.0, 0.5 + (tech_decision.score / 2.0)))
+
+    return tech_decision, thesis_ctx
 def _latest_mid(fallback: Optional[float] = None) -> Optional[float]:
     ticks = tick_window.recent_ticks(seconds=5.0, limit=5)
     if not ticks:
@@ -506,7 +554,6 @@ async def hedge_balancer_worker() -> None:
                             sign = 1 if units > 0 else -1
                             units = int(round(abs(units) * candle_mult)) * sign
                         if candle_allow:
-                            client_id = build_client_order_id("hedge", "HedgeLock")
                             entry_thesis = {
                                 "strategy_tag": "HedgeLock",
                                 "env_prefix": config.ENV_PREFIX,
@@ -518,6 +565,16 @@ async def hedge_balancer_worker() -> None:
                                 "score_gap": round(score_gap, 3),
                                 "direction": direction,
                             }
+                            tech_decision, entry_thesis = _evaluate_entry_techniques_local(
+                                entry_price=float(price_hint),
+                                side="long" if units > 0 else "short",
+                                pocket=config.POCKET,
+                                strategy_tag="HedgeLock",
+                                entry_thesis=entry_thesis,
+                            )
+                            if not tech_decision.allowed and not getattr(config, "TECH_FAILOPEN", True):
+                                continue
+                            client_id = build_client_order_id("hedge", "HedgeLock")
                             res = await market_order(
                                 instrument="USD_JPY",
                                 units=units,
@@ -580,6 +637,15 @@ async def hedge_balancer_worker() -> None:
             "target_usage": config.TARGET_MARGIN_USAGE,
             "reason": reason,
         }
+        tech_decision, entry_thesis = _evaluate_entry_techniques_local(
+            entry_price=float(price_hint),
+            side="long" if units > 0 else "short",
+            pocket=config.POCKET,
+            strategy_tag="HedgeBalancer",
+            entry_thesis=entry_thesis,
+        )
+        if not tech_decision.allowed and not getattr(config, "TECH_FAILOPEN", True):
+            continue
         candle_allow, candle_mult = _entry_candle_guard("long" if units > 0 else "short")
         if not candle_allow:
             continue

@@ -186,6 +186,24 @@ async def scalp_reversal_nwave_worker() -> None:
         signal_tag = f"{config.STRATEGY_TAG}-reversal"
         tech_thesis = {
             "tech_allow_candle": True,
+            "technical_context_tfs": {
+                "fib": ["M1"],
+                "median": ["M1"],
+                "nwave": ["M1"],
+                "candle": ["M1"],
+            },
+            "technical_context_ticks": [
+                "latest_bid",
+                "latest_ask",
+                "latest_mid",
+                "spread_pips",
+            ],
+            "technical_context_candle_counts": {
+                "M1": 120,
+                "M5": 80,
+                "H1": 60,
+                "H4": 40,
+            },
             "tech_tfs": {
                 "fib": ["M1"],
                 "median": ["M1"],
@@ -223,7 +241,7 @@ async def scalp_reversal_nwave_worker() -> None:
             entry_thesis=tech_thesis,
             allow_candle=True,
         )
-        if not tech_decision.allowed and not config.TECH_FAILOPEN:
+        if not tech_decision.allowed and not getattr(config, "TECH_FAILOPEN", True):
             continue
 
         conf = float(base_conf)
@@ -373,6 +391,9 @@ async def scalp_reversal_nwave_worker() -> None:
             "side_detail": side_detail,
             "tech_policy": tech_thesis.get("tech_policy"),
             "tech_tfs": tech_thesis.get("tech_tfs"),
+            "technical_context_tfs": tech_thesis.get("technical_context_tfs"),
+            "technical_context_ticks": tech_thesis.get("technical_context_ticks"),
+            "technical_context_candle_counts": tech_thesis.get("technical_context_candle_counts"),
         }
         if div_meta:
             entry_thesis["divergence"] = div_meta

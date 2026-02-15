@@ -201,6 +201,49 @@ def _targets(mode: str, atr_pips: float, spread_pips: float) -> Tuple[float, flo
     return round(sl, 2), round(tp, 2)
 
 
+def _tech_policy_for_mode(mode: str) -> Dict[str, object]:
+    if mode == "range":
+        return {
+            "mode": "reversal",
+            "min_score": 0.08,
+            "min_coverage": 0.45,
+            "weight_fib": 0.28,
+            "weight_median": 0.25,
+            "weight_nwave": 0.22,
+            "weight_candle": 0.25,
+            "require_fib": False,
+            "require_median": False,
+            "require_nwave": True,
+            "require_candle": False,
+            "size_scale": 0.18,
+            "size_min": 0.6,
+            "size_max": 1.2,
+            "nwave_min_quality": 0.16,
+            "nwave_min_leg_pips": 2.2,
+            "mid_distance_pips": 1.8,
+        }
+
+    return {
+        "mode": "trend",
+        "min_score": 0.08,
+        "min_coverage": 0.45,
+        "weight_fib": 0.28,
+        "weight_median": 0.25,
+        "weight_nwave": 0.22,
+        "weight_candle": 0.25,
+        "require_fib": False,
+        "require_median": False,
+        "require_nwave": False,
+        "require_candle": False,
+        "size_scale": 0.18,
+        "size_min": 0.6,
+        "size_max": 1.2,
+        "nwave_min_quality": 0.16,
+        "nwave_min_leg_pips": 2.2,
+        "mid_distance_pips": 1.8,
+    }
+
+
 def _client_order_id(tag: str, pocket: str) -> str:
     ts_ms = int(time.time() * 1000)
     sanitized = "".join(ch.lower() for ch in tag if ch.isalnum())[:8] or "tech"
@@ -323,12 +366,41 @@ async def tech_fusion_worker() -> None:
         tp_pips = max(tp_floor, min(tp_ceiling, tp_pips * heat_decision.tp_mult))
 
         signal_tag = f"{config.STRATEGY_TAG}-{mode}"
+        tech_thesis: Dict[str, object] = {
+            "tech_allow_candle": True,
+            "tech_tfs": {
+                "fib": ["M1", "M5", "H1"],
+                "median": ["M1", "M5", "H1"],
+                "nwave": ["M1", "M5"],
+                "candle": ["M1"],
+            },
+            "tech_policy": _tech_policy_for_mode(mode),
+            "technical_context_tfs": ["M1", "M5", "H1", "H4"],
+            "technical_context_fields": [
+                "ma10",
+                "ma20",
+                "rsi",
+                "atr",
+                "atr_pips",
+                "adx",
+                "bbw",
+                "macd",
+                "ema12",
+                "ema20",
+                "ema24",
+            ],
+            "technical_context_ticks": ["latest_bid", "latest_ask", "latest_mid", "spread_pips"],
+            "technical_context_candle_counts": {"M1": 120, "M5": 90, "H1": 70, "H4": 40},
+            "env_tf": "M1",
+            "struct_tf": "M5",
+            "entry_tf": "M1",
+        }
         tech_decision = evaluate_entry_techniques(
             entry_price=price,
             side=side,
             pocket=pocket,
             strategy_tag=signal_tag,
-            entry_thesis={"tech_allow_candle": True},
+            entry_thesis=tech_thesis,
             allow_candle=True,
         )
         if not tech_decision.allowed:
@@ -484,7 +556,13 @@ async def tech_fusion_worker() -> None:
             if tech_decision.coverage is not None
             else None,
             "tech_entry": tech_decision.debug,
-            "tech_allow_candle": True,
+            "technical_context_tfs": tech_thesis.get("technical_context_tfs"),
+            "technical_context_fields": tech_thesis.get("technical_context_fields"),
+            "technical_context_ticks": tech_thesis.get("technical_context_ticks"),
+            "technical_context_candle_counts": tech_thesis.get("technical_context_candle_counts"),
+            "tech_allow_candle": tech_thesis.get("tech_allow_candle"),
+            "tech_tfs": tech_thesis.get("tech_tfs"),
+            "tech_policy": tech_thesis.get("tech_policy"),
             "mtf_heat_score": round(heat_decision.score, 3),
             "mtf_heat_conf_delta": round(heat_decision.confidence_delta, 2),
             "mtf_heat_lot_mult": round(heat_decision.lot_mult, 3),

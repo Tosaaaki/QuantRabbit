@@ -742,6 +742,23 @@ def _env_bool(name: str) -> Optional[bool]:
     return raw.strip().lower() not in {"", "0", "false", "no"}
 
 
+def _coerce_bool(value: object, default: Optional[bool] = None) -> Optional[bool]:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        if value in (0, 0.0):
+            return False
+        if value in (1, 1.0):
+            return True
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in {"1", "true", "yes", "on"}:
+            return True
+        if normalized in {"0", "false", "no", "off"}:
+            return False
+    return default
+
+
 def _common_candle_enabled() -> bool:
     enabled = _env_bool("TECH_COMMON_CANDLE_ENABLED")
     return False if enabled is None else enabled
@@ -897,6 +914,58 @@ def _tag_hint_tfs(strategy_tag: Optional[str]) -> list[str]:
     return tfs
 
 
+def _resolve_thesis_lookbacks(entry_thesis: Optional[dict]) -> dict[str, int]:
+    if not isinstance(entry_thesis, dict):
+        return {}
+    candidate = entry_thesis.get("technical_context_candle_counts")
+    if isinstance(candidate, str):
+        counts: dict[str, int] = {}
+        for item in candidate.split(","):
+            item = item.strip()
+            if not item or ":" not in item:
+                continue
+            tf, raw = item.split(":", 1)
+            tf = str(tf).strip().upper()
+            if not tf:
+                continue
+            try:
+                value = int(raw)
+            except (TypeError, ValueError):
+                continue
+            if value > 0:
+                counts[tf] = value
+        return counts
+    if not isinstance(candidate, Mapping):
+        return {}
+    counts: dict[str, int] = {}
+    for tf_raw, raw in candidate.items():
+        tf = str(tf_raw).strip().upper()
+        if not tf:
+            continue
+        try:
+            value = int(raw)
+        except (TypeError, ValueError):
+            continue
+        if value > 0:
+            counts[tf] = value
+    return counts
+
+
+def _resolve_thesis_lookback(
+    tf: str,
+    *,
+    entry_thesis: Optional[dict],
+    fallback: int,
+) -> int:
+    lookbacks = _resolve_thesis_lookbacks(entry_thesis)
+    if not lookbacks:
+        return fallback
+    value = lookbacks.get(str(tf).strip().upper())
+    if not value or value <= 0:
+        return fallback
+    return value
+
+
 def _resolve_mtf_tfs(
     label: str,
     *,
@@ -913,6 +982,17 @@ def _resolve_mtf_tfs(
         return [getattr(policy, f"{label}_tf")]
 
     if isinstance(entry_thesis, dict):
+        context_tfs = entry_thesis.get("technical_context_tfs")
+        if context_tfs is not None:
+            if isinstance(context_tfs, Mapping):
+                candidate = context_tfs.get(label)
+                if candidate is None:
+                    candidate = context_tfs.get("all")
+                norm = _normalize_tf_list(candidate)
+            else:
+                norm = _normalize_tf_list(context_tfs)
+            if norm:
+                return norm
         if entry_thesis.get("tech_tf") or entry_thesis.get(f"tech_tf_{label}"):
             return [getattr(policy, f"{label}_tf")]
         tfs = None
@@ -1004,6 +1084,9 @@ def _resolve_policy(
     thesis_policy = thesis.get("tech_policy") if isinstance(thesis, dict) else None
     if isinstance(thesis_policy, dict):
         policy = _apply_override(policy, thesis_policy)
+        policy_locked = _coerce_bool(thesis_policy.get("tech_policy_locked"), default=False)
+    else:
+        policy_locked = False
 
     pocket_upper = pocket.upper()
     if strategy_tag:
@@ -1011,58 +1094,59 @@ def _resolve_policy(
     else:
         key = None
 
-    env_overrides = {}
-    for field in (
-        "mode",
-        "fib_tf",
-        "median_tf",
-        "nwave_tf",
-        "candle_tf",
-        "lookback",
-        "fib_trigger",
-        "fib_deep",
-        "mid_distance_pips",
-        "min_score",
-        "min_coverage",
-        "min_positive",
-        "weight_fib",
-        "weight_median",
-        "weight_nwave",
-        "weight_candle",
-        "size_scale",
-        "size_min",
-        "size_max",
-        "candle_min_conf",
-        "nwave_min_quality",
-        "nwave_min_leg_pips",
-        "exit_min_neg_pips",
-        "exit_max_neg_pips",
-        "exit_return_score",
-    ):
-        env_name = f"TECH_{field.upper()}"
-        specific = None
-        if key:
-            specific = _env_str(f"{env_name}_{key}")
-        if specific is None:
-            specific = _env_str(f"{env_name}_{pocket_upper}") or _env_str(env_name)
-        if specific is None:
-            continue
-        env_overrides[field] = specific
+    if not policy_locked:
+        env_overrides = {}
+        for field in (
+            "mode",
+            "fib_tf",
+            "median_tf",
+            "nwave_tf",
+            "candle_tf",
+            "lookback",
+            "fib_trigger",
+            "fib_deep",
+            "mid_distance_pips",
+            "min_score",
+            "min_coverage",
+            "min_positive",
+            "weight_fib",
+            "weight_median",
+            "weight_nwave",
+            "weight_candle",
+            "size_scale",
+            "size_min",
+            "size_max",
+            "candle_min_conf",
+            "nwave_min_quality",
+            "nwave_min_leg_pips",
+            "exit_min_neg_pips",
+            "exit_max_neg_pips",
+            "exit_return_score",
+        ):
+            env_name = f"TECH_{field.upper()}"
+            specific = None
+            if key:
+                specific = _env_str(f"{env_name}_{key}")
+            if specific is None:
+                specific = _env_str(f"{env_name}_{pocket_upper}") or _env_str(env_name)
+            if specific is None:
+                continue
+            env_overrides[field] = specific
 
-    for flag in ("require_fib", "require_median", "require_nwave", "require_candle"):
-        env_name = f"TECH_{flag.upper()}"
-        specific = None
-        if key:
-            specific = _env_bool(f"{env_name}_{key}")
-        if specific is None:
-            specific = _env_bool(f"{env_name}_{pocket_upper}")
-        if specific is None:
-            specific = _env_bool(env_name)
-        if specific is not None:
-            env_overrides[flag] = specific
+        for flag in ("require_fib", "require_median", "require_nwave", "require_candle"):
+            env_name = f"TECH_{flag.upper()}"
+            specific = None
+            if key:
+                specific = _env_bool(f"{env_name}_{key}")
+            if specific is None:
+                specific = _env_bool(f"{env_name}_{pocket_upper}")
+            if specific is None:
+                specific = _env_bool(env_name)
+            if specific is not None:
+                env_overrides[flag] = specific
 
-    if env_overrides:
-        policy = _apply_override(policy, env_overrides)
+        if env_overrides:
+            policy = _apply_override(policy, env_overrides)
 
     if isinstance(thesis, dict):
         for k in ("tech_tf", "tech_tf_fib", "tech_tf_median", "tech_tf_nwave", "tech_tf_candle"):
@@ -1120,7 +1204,16 @@ def evaluate_entry_techniques(
     )
     axis_override = _axis_from_thesis(entry_thesis or {}) if isinstance(entry_thesis, dict) else None
     for tf in fib_tfs:
-        axis = axis_override or _range_from_policy(policy, tf=tf, entry_thesis=entry_thesis)
+        axis = axis_override or _range_from_policy(
+            policy,
+            tf=tf,
+            entry_thesis=entry_thesis,
+            lookback_override=_resolve_thesis_lookback(
+                tf,
+                entry_thesis=entry_thesis,
+                fallback=_LOOKBACK_BY_TF.get(tf, policy.lookback),
+            ),
+        )
         if axis:
             score, detail = _score_fib(
                 entry_price=entry_price,
@@ -1144,7 +1237,16 @@ def evaluate_entry_techniques(
         entry_thesis=entry_thesis,
     )
     for tf in median_tfs:
-        axis = axis_override or _range_from_policy(policy, tf=tf, entry_thesis=entry_thesis)
+        axis = axis_override or _range_from_policy(
+            policy,
+            tf=tf,
+            entry_thesis=entry_thesis,
+            lookback_override=_resolve_thesis_lookback(
+                tf,
+                entry_thesis=entry_thesis,
+                fallback=_LOOKBACK_BY_TF.get(tf, policy.lookback),
+            ),
+        )
         if axis:
             dist_scale = _tf_length_scale(tf)
             score, detail = _score_median(
@@ -1169,7 +1271,11 @@ def evaluate_entry_techniques(
         entry_thesis=entry_thesis,
     )
     for tf in nwave_tfs:
-        lookback = _LOOKBACK_BY_TF.get(tf, policy.lookback)
+        lookback = _resolve_thesis_lookback(
+            tf,
+            entry_thesis=entry_thesis,
+            fallback=_LOOKBACK_BY_TF.get(tf, policy.lookback),
+        )
         nwave_candles = get_candles_snapshot(tf, limit=lookback)
         if nwave_candles:
             leg_scale = _tf_length_scale(tf)
@@ -1199,7 +1305,12 @@ def evaluate_entry_techniques(
             entry_thesis=entry_thesis,
         )
         for tf in candle_tfs:
-            candle_candles = get_candles_snapshot(tf, limit=4)
+            candle_limit = _resolve_thesis_lookback(
+                tf,
+                entry_thesis=entry_thesis,
+                fallback=4,
+            )
+            candle_candles = get_candles_snapshot(tf, limit=candle_limit)
             if candle_candles:
                 score, detail = _score_candle(
                     candles=candle_candles,
@@ -1432,6 +1543,7 @@ def _range_from_policy(
     tf: str,
     entry_thesis: Optional[dict],
     axis_override: Optional[RangeSnapshot] = None,
+    lookback_override: Optional[int] = None,
 ) -> Optional[RangeSnapshot]:
     if axis_override is not None:
         return axis_override
@@ -1439,7 +1551,12 @@ def _range_from_policy(
         axis = _axis_from_thesis(entry_thesis)
         if axis is not None:
             return axis
-    lookback = _LOOKBACK_BY_TF.get(tf, policy.lookback)
+    if lookback_override is not None:
+        lookback = int(lookback_override)
+    else:
+        lookback = _LOOKBACK_BY_TF.get(tf, policy.lookback)
+    if lookback <= 0:
+        lookback = max(1, _LOOKBACK_BY_TF.get(tf, policy.lookback))
     candles = get_candles_snapshot(tf, limit=lookback)
     if not candles:
         return None

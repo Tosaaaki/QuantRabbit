@@ -1173,6 +1173,19 @@ def _strategy_env_float(name: str, strategy_tag: Optional[str]) -> Optional[floa
         return None
 
 
+def _strategy_env_int(name: str, strategy_tag: Optional[str]) -> Optional[int]:
+    key = _strategy_env_key(strategy_tag)
+    if not key:
+        return None
+    raw = os.getenv(f"{name}_STRATEGY_{key}")
+    if raw is None:
+        return None
+    try:
+        return int(raw)
+    except Exception:
+        return None
+
+
 def _entry_hard_stop_pips(pocket: Optional[str], *, strategy_tag: Optional[str] = None) -> float:
     """Return the entry hard SL distance in pips (0 = disabled)."""
 
@@ -1408,6 +1421,19 @@ def min_units_for_pocket(pocket: Optional[str]) -> int:
     if not pocket:
         return _DEFAULT_MIN_UNITS
     return int(_MIN_UNITS_BY_POCKET.get(pocket, _DEFAULT_MIN_UNITS))
+
+
+
+def min_units_for_strategy(
+    strategy_tag: Optional[str],
+    pocket: Optional[str] = None,
+) -> int:
+    strategy_min_units = _strategy_env_int("ORDER_MIN_UNITS", strategy_tag)
+    if strategy_min_units is not None:
+        return strategy_min_units
+    return min_units_for_pocket(pocket)
+
+
 
 
 
@@ -2301,10 +2327,10 @@ def _ensure_orders_schema() -> sqlite3.Connection:
     )
     con.execute("CREATE INDEX IF NOT EXISTS idx_orders_ts ON orders(ts)")
     con.execute(
-        "CREATE INDEX IF NOT EXISTS idx_entry_intent_board_scope ON entry_intent_board (pocket, instrument, side, expires_at)"
+        "CREATE INDEX IF NOT EXISTS idx_entry_intent_board_scope ON entry_intent_board (strategy_tag, instrument, side, expires_at)"
     )
     con.execute(
-        "CREATE INDEX IF NOT EXISTS idx_entry_intent_board_status_scope ON entry_intent_board (pocket, instrument, status, expires_at)"
+        "CREATE INDEX IF NOT EXISTS idx_entry_intent_board_status_scope ON entry_intent_board (strategy_tag, instrument, status, expires_at)"
     )
     con.execute(
         "CREATE INDEX IF NOT EXISTS idx_entry_intent_board_client ON entry_intent_board (client_order_id, ts_epoch)"
@@ -2482,6 +2508,7 @@ def _probability_scaled_units(
     units: int,
     *,
     pocket: Optional[str],
+    strategy_tag: Optional[str],
     entry_probability: Optional[float],
 ) -> tuple[int, Optional[str]]:
     """
@@ -2502,7 +2529,7 @@ def _probability_scaled_units(
     scaled_abs = int(round(abs(units) * scale))
     if scaled_abs <= 0:
         return 0, "entry_probability_scale_to_zero"
-    min_units = min_units_for_pocket(pocket)
+    min_units = min_units_for_strategy(strategy_tag, pocket=pocket)
     if min_units > 0 and scaled_abs < min_units:
         return 0, "entry_probability_below_min_units"
     return (scaled_abs if units > 0 else -scaled_abs), None
@@ -2602,7 +2629,7 @@ def _coordinate_entry_intent(
     min_units: int,
 ) -> tuple[int, Optional[str], dict[str, float | str | int]]:
     """
-    Coordinate one intent with recent intents in the same instrument/pocket.
+    Coordinate one intent with recent intents in the same strategy+instrument scope.
 
     Returns (final_units, reason, details).
     reason is None when accepted, "reject" for hard reject.
@@ -2636,24 +2663,24 @@ def _coordinate_entry_intent(
                 """
                 DELETE FROM entry_intent_board
                 WHERE client_order_id = ?
-                  AND pocket = ?
                   AND instrument = ?
+                  AND strategy_tag = ?
                 """,
-                (str(client_order_id), pocket, instrument),
+                (str(client_order_id), instrument, str(strategy_tag)),
             )
         window_start = now_epoch - _ORDER_INTENT_COORDINATION_WINDOW_SEC
         rows = con.execute(
             """
             SELECT side, final_units, entry_probability, strategy_tag
             FROM entry_intent_board
-            WHERE pocket = ?
+            WHERE strategy_tag = ?
               AND instrument = ?
               AND status IN ('intent_accepted', 'intent_scaled')
               AND ts_epoch >= ?
               AND (client_order_id IS NULL OR client_order_id != ?)
             """,
             (
-                pocket,
+                str(strategy_tag),
                 instrument,
                 window_start,
                 str(client_order_id) if client_order_id else "",
@@ -6649,6 +6676,7 @@ async def market_order(
         scaled_units, probability_reason = _probability_scaled_units(
             units,
             pocket=pocket,
+            strategy_tag=strategy_tag,
             entry_probability=entry_probability,
         )
         if probability_reason is not None:
@@ -7338,7 +7366,7 @@ async def market_order(
                 return None
             if 0.0 < brain_decision.scale < 1.0:
                 scaled_units = int(round(abs(units) * brain_decision.scale))
-                min_allowed = min_units_for_pocket(pocket)
+                min_allowed = min_units_for_strategy(strategy_tag, pocket=pocket)
                 if scaled_units < min_allowed:
                     note = f"brain_scale_below_min:{brain_decision.reason}"
                     _console_order_log(
@@ -7473,7 +7501,7 @@ async def market_order(
                 return None
             if 0.0 < fc_decision.scale < 1.0:
                 scaled_units = int(round(abs(units) * fc_decision.scale))
-                min_allowed = min_units_for_pocket(pocket)
+                min_allowed = min_units_for_strategy(strategy_tag, pocket=pocket)
                 if scaled_units < min_allowed:
                     note = f"forecast_scale_below_min:{fc_decision.reason}"
                     _console_order_log(
@@ -7710,7 +7738,7 @@ async def market_order(
 
             if pattern_decision.scale != 1.0:
                 scaled_units = int(round(abs(units) * pattern_decision.scale))
-                min_allowed = min_units_for_pocket(pocket)
+                min_allowed = min_units_for_strategy(strategy_tag, pocket=pocket)
                 pattern_scale_floored = False
                 if scaled_units < min_allowed:
                     if (
@@ -8946,7 +8974,7 @@ async def market_order(
                 soften_scale = _as_float(quality_meta.get("recommended_units_scale"))
                 if soften_scale is not None and 0.0 < soften_scale < 1.0:
                     scaled_units = int(round(abs(units) * soften_scale))
-                    min_allowed_units = min_units_for_pocket(pocket)
+                    min_allowed_units = min_units_for_strategy(strategy_tag, pocket=pocket)
                     if scaled_units <= 0:
                         reason = "entry_quality_scale_below_min"
                         _console_order_log(
@@ -9130,7 +9158,7 @@ async def market_order(
     # Margin preflight (new entriesのみ)
     preflight_units = units
     original_units = units
-    min_allowed_units = min_units_for_pocket(pocket)
+    min_allowed_units = min_units_for_strategy(strategy_tag, pocket=pocket)
     requested_units = units
     clamped_to_minimum = False
     if (
@@ -10023,6 +10051,7 @@ async def limit_order(
         scaled_units, probability_reason = _probability_scaled_units(
             units,
             pocket=pocket,
+            strategy_tag=strategy_tag,
             entry_probability=entry_probability,
         )
         if probability_reason is not None:
@@ -10235,7 +10264,7 @@ async def limit_order(
                     loss_cap_jpy=loss_cap_jpy,
                     sl_pips=effective_sl_pips,
                 )
-                min_allowed_units = min_units_for_pocket(pocket)
+                min_allowed_units = min_units_for_strategy(strategy_tag, pocket=pocket)
                 if capped_abs_units <= 0 or (
                     min_allowed_units > 0 and capped_abs_units < min_allowed_units
                 ):
