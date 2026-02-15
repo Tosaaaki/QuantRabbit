@@ -563,7 +563,10 @@ def _build_payload(config: WorkerConfig) -> dict[str, Any]:
     merged: dict[str, StrategyRecord] = {}
     for src in (discovered_control, discovered_systemd):
         for key, rec in src.items():
-            merged.setdefault(key, StrategyRecord(canonical_tag=key)).sources.update(rec.sources)
+            merged.setdefault(key, StrategyRecord(canonical_tag=key))
+            merged[key].sources.update(rec.sources)
+            merged[key].entry_active = merged[key].entry_active or rec.entry_active
+            merged[key].exit_active = merged[key].exit_active or rec.exit_active
             merged[key].active = merged[key].active or rec.active
             if rec.enabled is not None:
                 merged[key].enabled = rec.enabled
