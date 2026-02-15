@@ -30,7 +30,7 @@ from execution.risk_guard import allowed_lot, can_trade, clamp_sl_tp
 from indicators.factor_cache import all_factors, get_candles_snapshot
 from market_data import spread_monitor, tick_window
 from market_data.tick_fetcher import _parse_time
-from utils.market_hours import is_market_open
+from utils.market_hours import is_market_open, seconds_until_open
 from utils.oanda_account import get_account_snapshot
 from utils.secrets import get_secret
 from workers.common.exit_utils import close_trade
@@ -69,6 +69,9 @@ _SNAPSHOT_FETCH_FAILURES: int = 0
 _SNAPSHOT_FETCH_BACKOFF_LOG_MONO: float = 0.0
 _SNAPSHOT_AUTH_VALIDATED: Optional[bool] = None
 _ENTRY_SKIP_SUMMARY_INTERVAL_SEC: float = 30.0
+_POSITION_MANAGER_OPEN_POSITIONS_TIMEOUT_SEC: float = 6.0
+_LOOP_HEARTBEAT_INTERVAL_SEC: float = 120.0
+_LOOP_EXCEPTION_RECOVERY_SLEEP_SEC: float = 0.5
 _JST_TIMEZONE = datetime.timezone(datetime.timedelta(hours=9))
 
 
@@ -2953,6 +2956,42 @@ def _snapshot_stale_units_scale() -> float:
     return float(config.SNAPSHOT_FETCH_FAILURE_STALE_UNITS_SCALE)
 
 
+async def _safe_get_open_positions(
+    pos_manager: PositionManager,
+    *,
+    logger: logging.Logger,
+    timeout_sec: float,
+) -> tuple[dict[str, dict], Optional[str]]:
+    start = time.monotonic()
+    try:
+        payload = await asyncio.wait_for(
+            asyncio.to_thread(pos_manager.get_open_positions),
+            timeout=timeout_sec,
+        )
+        if not isinstance(payload, dict):
+            logger.warning(
+                "%s position_manager open_positions returned non-dict payload=%s",
+                config.LOG_PREFIX,
+                type(payload).__name__,
+            )
+            return {}, "position_manager_invalid_payload"
+        return payload, None
+    except asyncio.TimeoutError:
+        logger.warning(
+            "%s position_manager open_positions timeout after %.2fs",
+            config.LOG_PREFIX,
+            time.monotonic() - start,
+        )
+        return {}, "position_manager_timeout"
+    except Exception:
+        logger.exception(
+            "%s position_manager open_positions failed after %.2fs",
+            config.LOG_PREFIX,
+            time.monotonic() - start,
+        )
+        return {}, "position_manager_error"
+
+
 async def _fetch_price_snapshot(logger: logging.Logger) -> bool:
     global _SNAPSHOT_FETCH_FAILURES, _SNAPSHOT_FETCH_BACKOFF_UNTIL_MONO, _SNAPSHOT_FETCH_BACKOFF_LOG_MONO
     if not _OANDA_TOKEN or not _OANDA_ACCOUNT:
@@ -3153,6 +3192,7 @@ async def scalp_ping_5s_worker() -> None:
     last_profit_bank_log_mono = 0.0
     last_extrema_log_mono = 0.0
     last_entry_skip_summary_mono = 0.0
+    last_loop_heartbeat_mono = 0.0
     entry_skip_reasons: dict[str, int] = {}
     entry_skip_reasons_by_side: dict[str, dict[str, int]] = {}
     _signal_side_hint: Optional[str] = None
@@ -3230,96 +3270,128 @@ async def scalp_ping_5s_worker() -> None:
         while True:
             await asyncio.sleep(config.LOOP_INTERVAL_SEC)
             _signal_side_hint = None
-            now_utc = datetime.datetime.now(datetime.timezone.utc)
-            if not is_market_open(now_utc):
-                _note_entry_skip("market_closed")
-                continue
-            if not can_trade(config.POCKET):
-                _note_entry_skip("pocket_disabled")
-                continue
+            loop_start_mono = time.monotonic()
+            if loop_start_mono - last_loop_heartbeat_mono >= _LOOP_HEARTBEAT_INTERVAL_SEC:
+                last_loop_heartbeat_mono = loop_start_mono
+                LOG.info(
+                    "%s loop_heartbeat interval=%ds pocket=%s tag=%s",
+                    config.LOG_PREFIX,
+                    int(_LOOP_HEARTBEAT_INTERVAL_SEC),
+                    config.POCKET,
+                    config.STRATEGY_TAG,
+                )
 
-            positions = pos_manager.get_open_positions()
-            pocket_info = positions.get(config.POCKET) or {}
-            if not protected_seeded:
-                protected_seeded = True
-                if config.FORCE_EXIT_SKIP_EXISTING_ON_START:
-                    open_trades = pocket_info.get("open_trades") if isinstance(pocket_info, dict) else None
-                    protect_total = 0
-                    skipped_eligible = 0
-                    if isinstance(open_trades, list):
-                        max_hold_sec = float(config.FORCE_EXIT_MAX_HOLD_SEC)
-                        hard_loss_pips = float(config.FORCE_EXIT_MAX_FLOATING_LOSS_PIPS)
-                        recovery_window_sec = float(config.FORCE_EXIT_RECOVERY_WINDOW_SEC)
-                        recoverable_loss_pips = float(config.FORCE_EXIT_RECOVERABLE_LOSS_PIPS)
+            try:
+                now_utc = datetime.datetime.now(datetime.timezone.utc)
+                if not is_market_open(now_utc):
+                    reopen_in_sec = seconds_until_open(now_utc)
+                    reopen_in_sec = max(0.0, float(reopen_in_sec))
+                    _note_entry_skip(
+                        "market_closed",
+                        detail=f"reopen_in={int(reopen_in_sec)}s",
+                    )
+                    continue
+                if not can_trade(config.POCKET):
+                    _note_entry_skip("pocket_disabled")
+                    continue
 
-                        for trade in open_trades:
-                            if not isinstance(trade, dict):
-                                continue
-                            if strategy_tag_key:
-                                trade_tag = _trade_strategy_tag(trade).lower()
-                                if trade_tag != strategy_tag_key:
+                positions, pos_err = await _safe_get_open_positions(
+                    pos_manager,
+                    logger=LOG,
+                    timeout_sec=_POSITION_MANAGER_OPEN_POSITIONS_TIMEOUT_SEC,
+                )
+                if pos_err is not None:
+                    _note_entry_skip(pos_err)
+
+                pocket_info = positions.get(config.POCKET) or {}
+
+                if not protected_seeded:
+                    protected_seeded = True
+                    if config.FORCE_EXIT_SKIP_EXISTING_ON_START:
+                        open_trades = pocket_info.get("open_trades") if isinstance(pocket_info, dict) else None
+                        protect_total = 0
+                        skipped_eligible = 0
+                        if isinstance(open_trades, list):
+                            max_hold_sec = float(config.FORCE_EXIT_MAX_HOLD_SEC)
+                            hard_loss_pips = float(config.FORCE_EXIT_MAX_FLOATING_LOSS_PIPS)
+                            recovery_window_sec = float(config.FORCE_EXIT_RECOVERY_WINDOW_SEC)
+                            recoverable_loss_pips = float(config.FORCE_EXIT_RECOVERABLE_LOSS_PIPS)
+
+                            for trade in open_trades:
+                                if not isinstance(trade, dict):
                                     continue
-                            trade_id = str(trade.get("trade_id") or "").strip()
-                            if not trade_id:
-                                continue
+                                if strategy_tag_key:
+                                    trade_tag = _trade_strategy_tag(trade).lower()
+                                    if trade_tag != strategy_tag_key:
+                                        continue
+                                trade_id = str(trade.get("trade_id") or "").strip()
+                                if not trade_id:
+                                    continue
 
-                            # Don't protect trades that are already eligible for a force-exit;
-                            # otherwise they can linger forever across restarts and block margin.
-                            opened_at = _parse_trade_open_time(
-                                trade.get("open_time") or trade.get("entry_time")
-                            )
-                            hold_sec = (now_utc - opened_at).total_seconds() if opened_at is not None else 0.0
-                            unrealized_pips = _trade_unrealized_pips(trade)
-                            units = int(_safe_float(trade.get("units"), 0.0))
-                            trade_side = _trade_side_from_units(units)
-                            if trade_side is None:
-                                continue
-                            max_hold_sec, hard_loss_pips = _force_exit_thresholds_for_side(
-                                trade_side
-                            )
-                            trade_max_hold_sec = _trade_force_exit_max_hold_sec(trade, max_hold_sec)
-                            trade_hard_loss_pips = _trade_force_exit_hard_loss_pips(trade, hard_loss_pips)
-                            hard_loss_trigger_pips = _force_exit_hard_loss_trigger_pips(
-                                trade,
-                                trade_hard_loss_pips,
-                            )
-                            eligible = False
-                            if trade_max_hold_sec > 0.0 and hold_sec >= trade_max_hold_sec:
-                                eligible = True
-                            elif (
-                                hold_sec
-                                >= float(
-                                    getattr(config, "FORCE_EXIT_FLOATING_LOSS_MIN_HOLD_SEC", 0.0)
+                                # Don't protect trades that are already eligible for a force-exit;
+                                # otherwise they can linger forever across restarts and block margin.
+                                opened_at = _parse_trade_open_time(
+                                    trade.get("open_time") or trade.get("entry_time")
                                 )
-                                and hard_loss_trigger_pips > 0.0
-                                and unrealized_pips <= -hard_loss_trigger_pips
-                            ):
-                                eligible = True
-                            elif (
-                                recovery_window_sec > 0.0
-                                and recoverable_loss_pips > 0.0
-                                and hold_sec >= recovery_window_sec
-                                and unrealized_pips <= -recoverable_loss_pips
-                            ):
-                                eligible = True
-                            if eligible:
-                                skipped_eligible += 1
-                                continue
+                                hold_sec = (now_utc - opened_at).total_seconds() if opened_at is not None else 0.0
+                                unrealized_pips = _trade_unrealized_pips(trade)
+                                units = int(_safe_float(trade.get("units"), 0.0))
+                                trade_side = _trade_side_from_units(units)
+                                if trade_side is None:
+                                    continue
+                                max_hold_sec, hard_loss_pips = _force_exit_thresholds_for_side(
+                                    trade_side
+                                )
+                                trade_max_hold_sec = _trade_force_exit_max_hold_sec(trade, max_hold_sec)
+                                trade_hard_loss_pips = _trade_force_exit_hard_loss_pips(trade, hard_loss_pips)
+                                hard_loss_trigger_pips = _force_exit_hard_loss_trigger_pips(
+                                    trade,
+                                    trade_hard_loss_pips,
+                                )
+                                eligible = False
+                                if trade_max_hold_sec > 0.0 and hold_sec >= trade_max_hold_sec:
+                                    eligible = True
+                                elif (
+                                    hold_sec
+                                    >= float(
+                                        getattr(config, "FORCE_EXIT_FLOATING_LOSS_MIN_HOLD_SEC", 0.0)
+                                    )
+                                    and hard_loss_trigger_pips > 0.0
+                                    and unrealized_pips <= -hard_loss_trigger_pips
+                                ):
+                                    eligible = True
+                                elif (
+                                    recovery_window_sec > 0.0
+                                    and recoverable_loss_pips > 0.0
+                                    and hold_sec >= recovery_window_sec
+                                    and unrealized_pips <= -recoverable_loss_pips
+                                ):
+                                    eligible = True
+                                if eligible:
+                                    skipped_eligible += 1
+                                    continue
 
-                            protected_trade_ids.add(trade_id)
-                            protect_total += 1
-                    if protect_total > 0:
-                        LOG.info(
-                            "%s force_exit protect_existing=%d trade(s)",
-                            config.LOG_PREFIX,
-                            protect_total,
-                        )
-                    if skipped_eligible > 0:
-                        LOG.info(
-                            "%s force_exit protect_existing skipped=%d eligible_trade(s)",
-                            config.LOG_PREFIX,
-                            skipped_eligible,
-                        )
+                                protected_trade_ids.add(trade_id)
+                                protect_total += 1
+                        if protect_total > 0:
+                            LOG.info(
+                                "%s force_exit protect_existing=%d trade(s)",
+                                config.LOG_PREFIX,
+                                protect_total,
+                            )
+                        if skipped_eligible > 0:
+                            LOG.info(
+                                "%s force_exit protect_existing skipped=%d eligible_trade(s)",
+                                config.LOG_PREFIX,
+                                skipped_eligible,
+                            )
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                LOG.exception("%s loop exception; recovering", config.LOG_PREFIX)
+                _note_entry_skip("loop_exception")
+                await asyncio.sleep(_LOOP_EXCEPTION_RECOVERY_SLEEP_SEC)
+                continue
 
             # Expire protection once a trade becomes force-exit eligible.
             if protected_trade_ids:
@@ -3394,7 +3466,13 @@ async def scalp_ping_5s_worker() -> None:
                 protected_trade_ids=protected_trade_ids,
             )
             if forced_closed > 0:
-                positions = pos_manager.get_open_positions()
+                positions, pos_err = await _safe_get_open_positions(
+                    pos_manager,
+                    logger=LOG,
+                    timeout_sec=_POSITION_MANAGER_OPEN_POSITIONS_TIMEOUT_SEC,
+                )
+                if pos_err is not None:
+                    _note_entry_skip(pos_err)
                 pocket_info = positions.get(config.POCKET) or {}
             profit_bank_closed = await _apply_profit_bank_release(
                 pocket_info=pocket_info,
@@ -3403,7 +3481,13 @@ async def scalp_ping_5s_worker() -> None:
                 protected_trade_ids=protected_trade_ids,
             )
             if profit_bank_closed > 0:
-                positions = pos_manager.get_open_positions()
+                positions, pos_err = await _safe_get_open_positions(
+                    pos_manager,
+                    logger=LOG,
+                    timeout_sec=_POSITION_MANAGER_OPEN_POSITIONS_TIMEOUT_SEC,
+                )
+                if pos_err is not None:
+                    _note_entry_skip(pos_err)
                 pocket_info = positions.get(config.POCKET) or {}
             elif (
                 config.PROFIT_BANK_ENABLED
