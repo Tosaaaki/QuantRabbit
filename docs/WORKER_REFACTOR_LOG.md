@@ -8,6 +8,21 @@
 - データ供給は `quant-market-data-feed`、制御配信は `quant-strategy-control` に分離。
 - 補助的運用ワーカーは本体管理マップから除外。
 
+### 2026-02-16（追記）`PositionManager.close()` の共有DB保護
+
+- `execution/position_manager.py` の `PositionManager.close()` に共有サービスモード保護を追加。
+- `POSITION_MANAGER_SERVICE_ENABLED=1` かつ `POSITION_MANAGER_SERVICE_FALLBACK_LOCAL=0` の運用では、クライアント側からの
+  `close()` 呼び出しをリモート `/position/close` に転送せず、共有 `trades.db` を意図せず閉じないガードを実装。
+- 直近 VM ログで観測される大量の `Cannot operate on a closed database` は、この close 過剰呼び出し由来の再発を抑止する対象。
+- `workers/position_manager/worker.py` は `PositionManager` をローカルモードで起動するため、サービス停止時の
+  正規クローズ経路は維持。
+
+### 2026-02-16（追記）`install_trading_services` でログ自動軽量化を標準化
+
+- `scripts/install_trading_services.sh` を更新し、`--all` / `--units` 指定に関わらず `quant-cleanup-qr-logs.service` と
+  `quant-cleanup-qr-logs.timer` が常設でインストールされるようにしました。
+- `systemd/cleanup-qr-logs.timer` は 1日2回（07:30/19:30）起動で、実運用ノードでもディスククリーンアップを自動化する前提へ統一。
+
 ## 補足（戦略判断責務の明確化）
 
 - **方針確定**: 各戦略ワーカーは「ENTRY/EXIT判定の脳」を保持し、ロジックの主判断は各ワーカー固有で行う。

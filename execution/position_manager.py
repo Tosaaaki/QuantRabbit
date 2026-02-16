@@ -300,6 +300,15 @@ def _position_manager_service_request(path: str, payload: dict) -> object | None
             raise
         return None
 
+
+def _is_closed_db_error(exc: Exception) -> bool:
+    message = str(exc).lower()
+    return (
+        "closed database" in message
+        or "connection is closed" in message
+        or "closed" in message and "database" in message
+    )
+
 # Agent-generated client order ID prefixes (qr-...), used to classify pockets.
 agent_client_prefixes = tuple(
     os.getenv("AGENT_CLIENT_PREFIXES", "qr-,qs-").split(",")
@@ -1176,6 +1185,37 @@ class PositionManager:
         self._last_sync_parse_meta: dict[str, float | int] = {}
         self._last_sync_breakdown: dict[str, float | int] = {}
 
+    def _reopen_trades_connection(self) -> None:
+        previous = getattr(self, "con", None)
+        if previous is not None:
+            try:
+                previous.close()
+            except Exception:
+                pass
+
+        self.con = _open_trades_db()
+        try:
+            with _file_lock(_DB_LOCK_PATH):
+                self._ensure_schema_with_retry()
+        except TimeoutError:
+            logging.warning(
+                "[PositionManager] schema lock timeout while reopening trades DB"
+            )
+
+    def _ensure_connection_open(self) -> None:
+        if self.con is None:
+            self._reopen_trades_connection()
+            return
+
+        try:
+            self.con.execute("SELECT 1")
+            return
+        except (sqlite3.ProgrammingError, sqlite3.OperationalError) as exc:
+            if not _is_closed_db_error(exc):
+                raise
+            logging.warning("[PositionManager] detected closed trades DB, reopening")
+            self._reopen_trades_connection()
+
     def get_last_sync_breakdown(self) -> dict[str, float | int]:
         return dict(self._last_sync_breakdown or {})
 
@@ -1222,6 +1262,7 @@ class PositionManager:
         return _normalize_pocket(pocket)
 
     def _ensure_schema_with_retry(self):
+        self._ensure_connection_open()
         for attempt in range(_DB_LOCK_RETRY):
             try:
                 self._ensure_schema()
@@ -1234,6 +1275,7 @@ class PositionManager:
         self._ensure_schema()
 
     def _ensure_schema(self):
+        self._ensure_connection_open()
         # trades テーブルが存在しない場合のベース定義
         self.con.execute(
             """
@@ -1610,6 +1652,7 @@ class PositionManager:
         return len(updates)
 
     def _get_last_transaction_id_with_retry(self) -> int:
+        self._ensure_connection_open()
         for attempt in range(_DB_LOCK_RETRY):
             try:
                 return self._get_last_transaction_id()
@@ -1621,6 +1664,7 @@ class PositionManager:
 
     def _get_last_transaction_id(self) -> int:
         """DBに記録済みの最新トランザクションIDを取得"""
+        self._ensure_connection_open()
         # 旧スキーマ互換のため、transaction_id 優先で取得する
         cursor = self.con.cursor()
         max_tx = 0
@@ -1643,6 +1687,7 @@ class PositionManager:
         return int(row[0]) if row and row[0] else 0
 
     def _has_ticket_unique_constraint(self) -> bool:
+        self._ensure_connection_open()
         try:
             indexes = list(self.con.execute("PRAGMA index_list(trades)"))
         except sqlite3.Error:
@@ -1662,6 +1707,7 @@ class PositionManager:
         return False
 
     def _migrate_remove_ticket_unique(self) -> None:
+        self._ensure_connection_open()
         try:
             self.con.execute("BEGIN")
             self.con.execute(
@@ -2262,6 +2308,7 @@ class PositionManager:
 
     def sync_trades(self, max_fetch: int | None = None):
         """定期的に呼び出し、決済済みトレードを同期する"""
+        self._ensure_connection_open()
         if max_fetch is None:
             max_fetch = _MAX_FETCH
         try:
@@ -2644,9 +2691,13 @@ class PositionManager:
         """Commit with retry to survive short lock bursts."""
         for attempt in range(_DB_LOCK_RETRY):
             try:
+                self._ensure_connection_open()
                 self.con.commit()
                 return
             except sqlite3.OperationalError as exc:
+                if _is_closed_db_error(exc):
+                    self._reopen_trades_connection()
+                    continue
                 if "locked" not in str(exc).lower() or attempt == _DB_LOCK_RETRY - 1:
                     raise
                 time.sleep(_DB_LOCK_RETRY_SLEEP * (attempt + 1))
@@ -2654,9 +2705,13 @@ class PositionManager:
     def _executemany_with_retry(self, sql: str, params) -> None:
         for attempt in range(_DB_LOCK_RETRY):
             try:
+                self._ensure_connection_open()
                 self.con.executemany(sql, params)
                 return
             except sqlite3.OperationalError as exc:
+                if _is_closed_db_error(exc):
+                    self._reopen_trades_connection()
+                    continue
                 if "locked" not in str(exc).lower() or attempt == _DB_LOCK_RETRY - 1:
                     raise
                 time.sleep(_DB_LOCK_RETRY_SLEEP * (attempt + 1))
@@ -2775,6 +2830,7 @@ class PositionManager:
         return result
 
     def _load_cashflows(self) -> list[dict]:
+        self._ensure_connection_open()
         try:
             cur = self.con.execute(
                 "SELECT transaction_id, time, amount, balance, type, funding_reason "
@@ -2785,6 +2841,7 @@ class PositionManager:
             return []
 
     def get_performance_summary(self, now: datetime | None = None) -> dict:
+        self._ensure_connection_open()
         now = now or datetime.now(timezone.utc)
         service_result = _position_manager_service_request(
             "/position/performance_summary",
@@ -3265,6 +3322,7 @@ class PositionManager:
                 return service_result
             return []
 
+        self._ensure_connection_open()
         cursor = self.con.execute(
             """
             SELECT ticket_id, pocket, instrument, units, closed_units, entry_price, close_price,
@@ -3307,8 +3365,18 @@ class PositionManager:
             ]
 
     def close(self):
+        if _POSITION_MANAGER_SERVICE_ENABLED and not _POSITION_MANAGER_SERVICE_FALLBACK_LOCAL:
+            logging.debug(
+                "[PositionManager] close() ignored while running in shared service mode to avoid "
+                "terminating singleton position_manager DB connection."
+            )
+            return None
         service_result = _position_manager_service_request("/position/close", {})
         if service_result is not None:
             return None
-
-        self.con.close()
+        if self.con is None:
+            return None
+        try:
+            self.con.close()
+        except sqlite3.ProgrammingError:
+            pass
