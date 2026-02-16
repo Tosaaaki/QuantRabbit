@@ -218,6 +218,14 @@
 - 追跡指標は `perf_block` / `entry_probability_reject` の内訳で次回検証し、必要であれば
   `SCALP_PING_5S_B_PERF_GUARD_*` の調整へ接続する。
 
+### 2026-02-24（追記）quant-scalp-ping-5s-b の env_prefix 混在排除
+
+- `workers/scalp_ping_5s_b/worker.py` を追加修正し、`SCALP_PING_5S_B_*` を
+  `SCALP_PING_5S_*` に写像する前に、実行時環境内の既存 `SCALP_PING_5S_*` を一度削除してから再注入するように変更。
+- B サービスは `scalp_ping_5s.env` と `scalp_ping_5s_b.env` を併読するため、A 側残存値で上書きされる混在リスクを除去。
+- 追加監査として、`env_prefix` 起因が疑われる `revert_not_enabled` / `momentum_tail_failed` が
+  再発しないかを `no_signal` ログで追跡する。
+
 ### 2026-02-16（追記）PositionManager 停止再開耐障害化
 
 - `execution/position_manager.py`:

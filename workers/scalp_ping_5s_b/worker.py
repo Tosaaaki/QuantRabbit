@@ -18,6 +18,13 @@ def _apply_alt_env(prefix: str, *, fallback_tag: str, fallback_log_prefix: str) 
     prefix = str(prefix).rstrip("_")
     source = f"{prefix}_"
 
+    # B is a clone of SCALP_PING_5S. Remove inherited SCALP_PING_5S_*
+    # variables once so explicit SCALP_PING_5S_B_* settings are not mixed with
+    # stale values from the shared A-layer env file.
+    for key in list(os.environ):
+        if str(key).startswith(f"{base_prefix}_"):
+            del os.environ[key]
+
     alt_items = list(os.environ.items())
     for key, value in alt_items:
         if not str(key).startswith(source):
