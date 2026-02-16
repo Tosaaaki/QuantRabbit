@@ -210,6 +210,7 @@ async def scalp_macd_rsi_div_worker() -> None:
             return
 
     LOG.info("%s worker start (interval=%.1fs)", config.LOG_PREFIX, config.LOOP_INTERVAL_SEC)
+    LOG.info("Application started!")
     pos_manager = PositionManager()
 
     last_entry_mono = 0.0

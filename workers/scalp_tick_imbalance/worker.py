@@ -3532,6 +3532,7 @@ async def scalp_tick_imbalance_worker() -> None:
             return
 
     LOG.info("%s worker start (interval=%.1fs mode=%s)", config.LOG_PREFIX, config.LOOP_INTERVAL_SEC, config.MODE)
+    LOG.info("Application started!")
     pos_manager = PositionManager()
     stage_tracker = StageTracker()
     last_entry_ts = 0.0

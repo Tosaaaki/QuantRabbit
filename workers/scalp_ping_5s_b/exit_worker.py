@@ -1370,6 +1370,7 @@ class RangeFaderExitWorker:
             POCKET,
             float(self.exit_policy_start_ts or 0.0),
         )
+        LOG.info("Application started!")
         if not ALLOWED_TAGS:
             LOG.info("[exit-rangefader] no allowed tags configured; idle")
             try:

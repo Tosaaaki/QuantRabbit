@@ -1694,34 +1694,43 @@ def _build_tick_signal(rows: Sequence[dict], spread_pips: float) -> tuple[Option
     min_signal_ticks = max(config.MIN_SIGNAL_TICKS, min(short_min_signal_ticks, long_min_signal_ticks))
 
     signal_window_sec = max(0.3, config.SIGNAL_WINDOW_SEC * speed_scale)
+    base_signal_window_sec = signal_window_sec
     signal_rows = [r for r in rows if _safe_float(r.get("epoch"), 0.0) >= latest_epoch - signal_window_sec]
     fallback_signal_rows: list[dict] = signal_rows
     fallback_window_sec: float = signal_window_sec
     fallback_sec = max(
         0.0, _safe_float(getattr(config, "SIGNAL_WINDOW_FALLBACK_SEC", 0.0), 0.0)
     )
-    if len(signal_rows) < min_signal_ticks and fallback_sec > 0.0:
-        fallback_window_sec = min(
-            config.WINDOW_SEC,
-            max(signal_window_sec, fallback_sec),
-        )
-        if fallback_window_sec > signal_window_sec:
-            fallback_cutoff = latest_epoch - fallback_window_sec
-            fallback_signal_rows = [
-                r
-                for r in rows
-                if _safe_float(r.get("epoch"), 0.0) >= fallback_cutoff
-            ]
-            if len(fallback_signal_rows) >= min_signal_ticks:
-                signal_window_sec = fallback_window_sec
-                signal_rows = fallback_signal_rows
+    fallback_windows = [signal_window_sec]
+    if fallback_sec > 0.0:
+        fallback_windows.append(min(config.WINDOW_SEC, max(signal_window_sec, fallback_sec)))
+    if config.WINDOW_SEC > signal_window_sec:
+        fallback_windows.append(config.WINDOW_SEC)
+
+    fallback_attempts: list[float] = []
+    for fallback_window_sec in sorted(set(fallback_windows)):
+        if fallback_window_sec <= signal_window_sec:
+            continue
+        fallback_attempts.append(_safe_float(fallback_window_sec, signal_window_sec))
+        fallback_cutoff = latest_epoch - fallback_window_sec
+        fallback_signal_rows = [
+            r for r in rows
+            if _safe_float(r.get("epoch"), 0.0) >= fallback_cutoff
+        ]
+        if len(fallback_signal_rows) >= min_signal_ticks:
+            signal_window_sec = fallback_window_sec
+            signal_rows = fallback_signal_rows
+            break
     if len(signal_rows) < min_signal_ticks:
+        fallback_used = "yes" if signal_window_sec > base_signal_window_sec else "no"
         return (
             None,
             f"insufficient_signal_rows:{len(signal_rows)}/{min_signal_ticks}"
             f" window={signal_window_sec:.2f}"
             f" fallback_window={fallback_window_sec:.2f}"
-            f" fallback_count={len(fallback_signal_rows)}/{min_signal_ticks}",
+            f" fallback_count={len(fallback_signal_rows)}/{min_signal_ticks}"
+            f" fallback_attempts={','.join(f'{w:.2f}' for w in fallback_attempts) if fallback_attempts else 'none'}"
+            f" fallback_used={fallback_used}",
         )
 
     mids: list[float] = []
@@ -3247,6 +3256,7 @@ async def scalp_ping_5s_worker() -> None:
         config.POCKET,
         config.STRATEGY_TAG,
     )
+    LOG.info("Application started!")
 
     pos_manager = PositionManager()
     rate_limiter = SlidingWindowRateLimiter(
@@ -4661,7 +4671,9 @@ async def scalp_ping_5s_worker() -> None:
                         _tech_conf += tech_decision.score * getattr(config, "TECH_CONF_BOOST", 0.0)
                     else:
                         _tech_conf += tech_decision.score * getattr(config, "TECH_CONF_PENALTY", 0.0)
-                conf = _tech_conf
+                    conf = _tech_conf
+
+            _meta = {"env_prefix": config.ENV_PREFIX, "ENV_PREFIX": config.ENV_PREFIX}
 
 
             result = await market_order(
@@ -4673,7 +4685,13 @@ async def scalp_ping_5s_worker() -> None:
                 client_order_id=client_order_id,
                 strategy_tag=config.STRATEGY_TAG,
                 confidence=int(signal.confidence),
-                entry_thesis=dict(entry_thesis, entry_units_intent=abs(units)),
+                entry_thesis=dict(
+                    entry_thesis,
+                    env_prefix=config.ENV_PREFIX,
+                    ENV_PREFIX=config.ENV_PREFIX,
+                    entry_units_intent=abs(units),
+                ),
+                meta=_meta,
             )
             if result:
                 pos_manager.register_open_trade(str(result), config.POCKET, client_order_id)

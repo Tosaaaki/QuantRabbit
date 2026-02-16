@@ -28,6 +28,12 @@
   ワーカー本体の起動責務は戦略別ランナー（entry/exit）として完結させた。
 - テスト `tests/test_spread_ok_tick_cache_fallback.py` の `scalp_precision.common` 参照を削除し、共有 `spread_ok` の依存を排除。
 
+### 2026-02-16（追記）起動監査ログの統一
+
+- 各戦略 `entry/exit` の起動直後に `Application started!` を明示ログ化。
+  対象は `scalp_tick_imbalance` / `scalp_squeeze_pulse_break` / `scalp_wick_reversal_blend` / `scalp_wick_reversal_pro` / `scalp_macd_rsi_div` / `scalp_ping_5s` / `scalp_ping_5s_b` の `entry`/`exit`。
+- VM 上の反映確認を、`journalctl` の `Application started!` 検索に統一し、起動実在性を監査しやすくした。
+
 ### 2026-02-16（追記）`PositionManager.close()` の共有DB保護
 
 - `execution/position_manager.py` の `PositionManager.close()` に共有サービスモード保護を追加。
