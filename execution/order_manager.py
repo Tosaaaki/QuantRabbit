@@ -1651,10 +1651,6 @@ _EXIT_ALLOW_NEGATIVE_BY_WORKER = os.getenv("EXIT_ALLOW_NEGATIVE_BY_WORKER", "1")
     "true",
     "yes",
 }
-_ORDER_ALLOW_SL_ON_FILL_WITH_EXIT_NO_NEGATIVE = _env_bool(
-    "ORDER_ALLOW_STOP_LOSS_WITH_EXIT_NO_NEGATIVE_CLOSE",
-    False,
-)
 _EXIT_ALLOW_NEGATIVE_REASONS = {
     token.strip().lower()
     for token in os.getenv(
@@ -1698,25 +1694,12 @@ _EXIT_EMERGENCY_ALLOW_NEGATIVE = os.getenv("EXIT_EMERGENCY_ALLOW_NEGATIVE", "1")
 def _allow_stop_loss_on_fill(pocket: Optional[str]) -> bool:
     """Return whether broker stopLossOnFill can be attached for entries.
 
-    By default, EXIT_NO_NEGATIVE_CLOSE=1 disables stopLossOnFill to preserve
-    profit-only exit behavior. This can be overridden globally or per-pocket
-    for hard-stop rollouts.
+    V1 behavior: only ORDER_FIXED_SL_MODE decides attachment:
+    - 1: always attach
+    - 0: never attach
+    - unset: default OFF
     """
-
-    if not _EXIT_NO_NEGATIVE_CLOSE:
-        return True
-    if _ORDER_ALLOW_SL_ON_FILL_WITH_EXIT_NO_NEGATIVE:
-        return True
-    if pocket:
-        pocket_key = str(pocket).strip().upper()
-        if pocket_key and _env_bool(
-            f"ORDER_ALLOW_STOP_LOSS_WITH_EXIT_NO_NEGATIVE_CLOSE_{pocket_key}",
-            False,
-        ):
-            return True
-    if not stop_loss_disabled_for_pocket(pocket):
-        return True
-    return False
+    return bool(fixed_sl_mode())
 
 
 def _disable_hard_stop_by_strategy(
@@ -1799,6 +1782,38 @@ _ORDER_MANAGER_PRESERVE_INTENT_PROBABILITY_MIN_SCALE = _env_float(
 _ORDER_MANAGER_PRESERVE_INTENT_PROBABILITY_REJECT_UNDER = _env_float(
     "ORDER_MANAGER_PRESERVE_INTENT_REJECT_UNDER", 0.0
 )
+
+
+def _order_manager_preserve_intent_min_scale(
+    strategy_tag: Optional[str],
+) -> float:
+    strategy_override = _strategy_env_float(
+        "ORDER_MANAGER_PRESERVE_INTENT_MIN_SCALE",
+        strategy_tag,
+    )
+    if strategy_override is not None:
+        return max(0.0, min(1.0, float(strategy_override)))
+    return max(
+        0.0,
+        min(1.0, float(_ORDER_MANAGER_PRESERVE_INTENT_PROBABILITY_MIN_SCALE)),
+    )
+
+
+def _order_manager_preserve_intent_reject_under(
+    strategy_tag: Optional[str],
+) -> float:
+    strategy_override = _strategy_env_float(
+        "ORDER_MANAGER_PRESERVE_INTENT_REJECT_UNDER",
+        strategy_tag,
+    )
+    if strategy_override is not None:
+        return max(0.0, min(1.0, float(strategy_override)))
+    return max(
+        0.0,
+        min(1.0, float(_ORDER_MANAGER_PRESERVE_INTENT_PROBABILITY_REJECT_UNDER)),
+    )
+
+
 _ORDER_INTENT_COORDINATION_ENABLED = _env_bool("ORDER_INTENT_COORDINATION_ENABLED", True)
 _ORDER_INTENT_COORDINATION_WINDOW_SEC = max(
     0.25,
@@ -2523,14 +2538,17 @@ def _probability_scaled_units(
     Returns `(scaled_units, reject_reason)` where reject_reason is not None when
     the order should be skipped under preserve-intent mode.
     """
+    strategy_min_scale = _order_manager_preserve_intent_min_scale(strategy_tag)
+    strategy_reject_under = _order_manager_preserve_intent_reject_under(strategy_tag)
+
     if units == 0:
         return 0, None
     if entry_probability is None:
         return units, None
-    if entry_probability <= _ORDER_MANAGER_PRESERVE_INTENT_PROBABILITY_REJECT_UNDER:
+    if entry_probability <= strategy_reject_under:
         return 0, "entry_probability_reject_threshold"
     scale = max(
-        float(_ORDER_MANAGER_PRESERVE_INTENT_PROBABILITY_MIN_SCALE),
+        float(strategy_min_scale),
         min(1.0, float(entry_probability)),
     )
     scaled_abs = int(round(abs(units) * scale))
