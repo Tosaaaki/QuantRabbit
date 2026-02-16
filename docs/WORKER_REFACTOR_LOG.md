@@ -245,6 +245,14 @@
   - これにより `entry-skip` 集計で `insufficient_signal_rows_fallback` /
     `insufficient_signal_rows_fallback_exhausted` の振り分けが崩れないようにした。
 
+### 2026-02-16（追記）5秒Bの `insufficient_signal_rows_fallback_exhausted` 抑制
+
+- `workers/scalp_ping_5s/worker.py`
+  - `SCALP_PING_5S_SIGNAL_WINDOW_FALLBACK_SEC` が明示されている場合、`fallback` での窓拡張を
+    `WINDOW_SEC` まで1回だけ行って再評価する追加ルートを導入。
+  - これにより `insufficient_signal_rows` が `fallback_exhausted` に偏るケースを、
+    同一運用ノイズを増やさずに取りこぼし低減できる領域へ寄せることを目的とした。
+
 ### 2026-02-24（追記）quant-scalp-ping-5s-b の env_prefix 混在排除
 
 - `workers/scalp_ping_5s_b/worker.py` を追加修正し、`SCALP_PING_5S_B_*` を

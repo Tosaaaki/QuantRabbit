@@ -1717,6 +1717,10 @@ def _build_tick_signal(rows: Sequence[dict], spread_pips: float) -> tuple[Option
     fallback_attempted = False
     if fallback_sec > 0.0:
         fallback_windows.append(min(config.WINDOW_SEC, max(signal_window_sec, fallback_sec)))
+    if fallback_sec > 0.0 and config.WINDOW_SEC > signal_window_sec:
+        # When explicit fallback is configured but still insufficient, do one final
+        # recovery sweep over the full strategy window before giving up.
+        fallback_windows.append(config.WINDOW_SEC)
 
     fallback_attempts: list[float] = []
     for fallback_window_sec in sorted(set(fallback_windows)):
