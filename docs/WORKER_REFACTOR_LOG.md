@@ -116,6 +116,17 @@
 - 目的: B版の `no_signal`（特に `insufficient_signal_rows`）を減らし、`scalp_ping_5s_b_live` の実入場頻度を
   主要な5秒戦略レベルまで引き上げる。
 
+### 2026-02-16（追記）5秒Bの再取り込み改善（`insufficient_signal_rows` / `revert_not_enabled` 対策）
+
+- `ops/env/scalp_ping_5s_b.env` に追加・更新:
+  - `SCALP_PING_5S_B_SIGNAL_WINDOW_SEC=0.55`
+  - `SCALP_PING_5S_B_MIN_TICK_RATE=0.70`
+  - `SCALP_PING_5S_B_SHORT_MIN_TICK_RATE=0.45`
+  - `SCALP_PING_5S_B_REVERT_MIN_TICK_RATE=1.2`
+- `revert_not_enabled` は実質的な `no_signal` 側ボトルネックだったため、
+  `revert` 判定閾値とシグナル窓を緩和し、同時に短側閾値もわずかに緩めることで
+  `revert_not_enabled` 集計を抑える方針に変更。
+
 ### 2026-02-16（追記）PositionManager 停止再開耐障害化
 
 - `execution/position_manager.py`:
