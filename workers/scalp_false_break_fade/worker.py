@@ -391,7 +391,7 @@ def _signal_false_break_fade(
         conf = 60 + int(min(12.0, sweep_pips * 3.0)) + int(min(10.0, rev_strength * 4.0))
         conf = int(max(45, min(92, conf)))
 
-        size_mult = max(0.6, min(1.4, FBF_SIZE_MULT * (1.0 + min(0.25, sweep_pips * 0.05)))
+        size_mult = max(0.6, min(1.4, FBF_SIZE_MULT * (1.0 + min(0.25, sweep_pips * 0.05))))
         _FALSE_BREAK_STATE.pop(tag, None)
         return {
             "action": "OPEN_LONG" if want_dir == "long" else "OPEN_SHORT",
