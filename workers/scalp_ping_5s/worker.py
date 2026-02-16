@@ -4515,7 +4515,9 @@ async def scalp_ping_5s_worker() -> None:
                 entry_thesis_ctx = {}
 
             _tech_pocket = str(locals().get("pocket", config.POCKET))
-            _tech_side_raw = str(locals().get("side", locals().get("direction", "long"))).lower()
+            _tech_side_raw = str(
+                locals().get("side", locals().get("direction", getattr(signal, "side", "long")))
+            ).lower()
             if _tech_side_raw in {"long", "short"}:
                 _tech_side = _tech_side_raw
             else:
