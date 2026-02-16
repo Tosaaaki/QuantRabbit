@@ -64,6 +64,16 @@
 - 本修正は 5秒戦略のみ対象。`SCALP_PING_5S` 系サービスの入場通過率回復を優先し、
   `entry_probability_reject` が減り `filled` が増えるかを次回監視で確認する。
 
+### 2026-02-16（追記）5秒B no_signal 可観測性の精緻化
+
+- `workers/scalp_ping_5s/worker.py`
+  - `entry-skip` ログの `no_signal` 集計を `no_signal:<detail_head>` まで分割してカウントし、
+    `insufficient_*` 系と `revert_*` 系の内訳を見える化。
+  - `revert_long/revert_short` を含む `no_signal` に対して方向推定を行い、サイド別内訳の精度を向上。
+- `ops/env/scalp_ping_5s_b.env`
+  - `SCALP_PING_5S_B_LOOKAHEAD_GATE_ENABLED=0` を明示し、5秒B起動時にも
+    lookaheadゲートが確実に `off` になる状態を固定。
+
 ### 2026-02-16（追記）PositionManager 停止再開耐障害化
 
 - `execution/position_manager.py`:

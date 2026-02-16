@@ -3242,6 +3242,30 @@ async def scalp_ping_5s_worker() -> None:
     entry_skip_reasons_by_side: dict[str, dict[str, int]] = {}
     _signal_side_hint: Optional[str] = None
 
+    def _normalize_no_signal_reason(
+        reason: str,
+        detail: Optional[str] = None,
+    ) -> Optional[str]:
+        if reason != "no_signal":
+            return None
+        if not isinstance(detail, str):
+            return None
+        token = detail.strip()
+        if not token:
+            return None
+        return token.split(":", 1)[0]
+
+    def _infer_signal_side_from_reason(
+        reason: str,
+        detail: Optional[str] = None,
+    ) -> Optional[str]:
+        source = f"{reason} {detail or ''}".lower()
+        if "revert_long" in source or "side=long" in source:
+            return "long"
+        if "revert_short" in source or "side=short" in source:
+            return "short"
+        return None
+
     def _note_entry_skip(
         reason: str,
         detail: Optional[str] = None,
@@ -3253,10 +3277,19 @@ async def scalp_ping_5s_worker() -> None:
         nonlocal _signal_side_hint
 
         entry_skip_reasons[reason] = entry_skip_reasons.get(reason, 0) + 1
+        detailed_reason = reason
+        no_signal_detail = _normalize_no_signal_reason(reason, detail)
+        if no_signal_detail:
+            detailed_reason = f"{reason}:{no_signal_detail}"
+            entry_skip_reasons[detailed_reason] = (
+                entry_skip_reasons.get(detailed_reason, 0) + 1
+            )
         side_key = str(side).strip().lower() if side is not None else _signal_side_hint
+        if side_key is None and reason == "no_signal":
+            side_key = _infer_signal_side_from_reason(reason, detail=detail)
         if side_key:
             side_bucket = entry_skip_reasons_by_side.setdefault(side_key, {})
-            side_bucket[reason] = side_bucket.get(reason, 0) + 1
+            side_bucket[detailed_reason] = side_bucket.get(detailed_reason, 0) + 1
 
         if side_key:
             if detail:
@@ -3674,7 +3707,11 @@ async def scalp_ping_5s_worker() -> None:
 
             signal, signal_reason = _build_tick_signal(ticks, spread_pips)
             if signal is None:
-                _note_entry_skip("no_signal", detail=signal_reason)
+                _note_entry_skip(
+                    "no_signal",
+                    detail=signal_reason,
+                    side=_infer_signal_side_from_reason("no_signal", detail=signal_reason),
+                )
                 continue
             _signal_side_hint = signal.side
             if signal.spread_pips > config.MAX_SPREAD_PIPS:
