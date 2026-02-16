@@ -43,6 +43,10 @@ PATTERN_GATE_OPT_IN: bool = _bool_env("SCALP_PING_5S_PATTERN_GATE_OPT_IN", True)
 LOOP_INTERVAL_SEC: float = max(0.05, float(os.getenv("SCALP_PING_5S_LOOP_INTERVAL_SEC", "0.2")))
 WINDOW_SEC: float = max(2.0, float(os.getenv("SCALP_PING_5S_WINDOW_SEC", "5.0")))
 SIGNAL_WINDOW_SEC: float = max(0.4, float(os.getenv("SCALP_PING_5S_SIGNAL_WINDOW_SEC", "1.2")))
+SIGNAL_WINDOW_FALLBACK_SEC: float = max(
+    0.0,
+    float(os.getenv("SCALP_PING_5S_SIGNAL_WINDOW_FALLBACK_SEC", "0.0")),
+)
 INSTANT_VOL_WINDOW_SEC: float = max(
     0.25,
     float(os.getenv("SCALP_PING_5S_INSTANT_VOL_WINDOW_SEC", "0.55")),

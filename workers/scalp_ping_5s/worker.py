@@ -1697,10 +1697,13 @@ def _build_tick_signal(rows: Sequence[dict], spread_pips: float) -> tuple[Option
     signal_rows = [r for r in rows if _safe_float(r.get("epoch"), 0.0) >= latest_epoch - signal_window_sec]
     fallback_signal_rows: list[dict] = signal_rows
     fallback_window_sec: float = signal_window_sec
-    if len(signal_rows) < min_signal_ticks and config.SIGNAL_WINDOW_FALLBACK_SEC > 0.0:
+    fallback_sec = max(
+        0.0, _safe_float(getattr(config, "SIGNAL_WINDOW_FALLBACK_SEC", 0.0), 0.0)
+    )
+    if len(signal_rows) < min_signal_ticks and fallback_sec > 0.0:
         fallback_window_sec = min(
             config.WINDOW_SEC,
-            max(signal_window_sec, config.SIGNAL_WINDOW_FALLBACK_SEC),
+            max(signal_window_sec, fallback_sec),
         )
         if fallback_window_sec > signal_window_sec:
             fallback_cutoff = latest_epoch - fallback_window_sec

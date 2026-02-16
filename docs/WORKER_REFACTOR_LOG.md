@@ -163,10 +163,20 @@
   - `SCALP_PING_5S_B_SIGNAL_WINDOW_FALLBACK_SEC=2.00` を追加。
 - `TickSignal` に `signal_window_sec` を付与し、実際に使ったシグナル窓を監査しやすくした。
 
+### 2026-02-24（追記）5秒B no_signal 監査の実装事故修正
+
+- `workers/scalp_ping_5s/config.py` に `SCALP_PING_5S_SIGNAL_WINDOW_FALLBACK_SEC` を
+  読み込む `SIGNAL_WINDOW_FALLBACK_SEC` 定数を追加し、VM起動時の
+  `AttributeError: module ... has no attribute 'SIGNAL_WINDOW_FALLBACK_SEC'` を解消。
+- `no_signal` のフォールバックは従来どおり `insufficient_signal_rows` 時のみ行い、データ不足以外の
+  退避導線は従来ロジックを維持して副作用増加を回避。
+
 ### 2026-02-16（追記）5秒Bの意図設定プレフィックスを明示化
 
 - `workers/scalp_ping_5s_b/worker.py` の環境コピー処理で
   `SCALP_PING_5S_ENV_PREFIX=SCALP_PING_5S_B` を明示的に上書きするよう追加。
+- `ops/env/scalp_ping_5s.env` / `config/env.example.toml` に `SCALP_PING_5S_ENV_PREFIX=SCALP_PING_5S` を明示し、
+  A/Bのプレフィックス判定を設定側で明確化。
 - `ops/env/scalp_ping_5s_b.env` へ
   `SCALP_PING_5S_B_ENV_PREFIX=SCALP_PING_5S_B` を追加。
 - B版の `PERF_GUARD` / `entry_thesis` 参照で、A/B混在時に B 固有キーを誤適用しないようにした。
