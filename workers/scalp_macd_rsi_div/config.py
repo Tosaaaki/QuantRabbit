@@ -4,12 +4,35 @@ import os
 
 ENV_PREFIX = "SCALP_PRECISION"
 
+def _sync_legacy_prefix(prefix: str) -> None:
+    legacy_prefix = f"{prefix}_"
+    canonical_prefix = f"{ENV_PREFIX}_"
+    if not legacy_prefix or not canonical_prefix:
+        return
+    for key, value in list(os.environ.items()):
+        key = str(key)
+        if not key.startswith(legacy_prefix):
+            continue
+        suffix = key[len(legacy_prefix) :]
+        if not suffix:
+            continue
+        canonical_key = f"{canonical_prefix}{suffix}"
+        if canonical_key not in os.environ:
+            os.environ[canonical_key] = str(value)
+
+
 def _env_bool(name: str, default: bool) -> bool:
     raw = os.getenv(name)
     if raw is None:
         return default
     return raw.strip().lower() not in {"", "0", "false", "no"}
 
+# Backward compatibility:
+#  - MACDRSIDIV_* is still used by historical unit files.
+#  - SCALP_MACD_RSI_DIV_B_* is used by the micro(B) wrapper.
+_sync_legacy_prefix("MACDRSIDIV")
+_sync_legacy_prefix("SCALP_MACD_RSI_DIV_B")
+_sync_legacy_prefix("SCALP_MACD_RSI_DIV")
 
 POCKET = "scalp"
 ENABLED = _env_bool("SCALP_PRECISION_ENABLED", False)
@@ -102,3 +125,40 @@ PREC_LOWVOL_VWAP_GAP_MIN = float(os.getenv("SCALP_PRECISION_PREC_LOWVOL_VWAP_GAP
 PREC_LOWVOL_VWAP_GAP_BLOCK = float(os.getenv("SCALP_PRECISION_PREC_LOWVOL_VWAP_GAP_BLOCK", "1.8"))
 PREC_LOWVOL_SPREAD_P25 = float(os.getenv("SCALP_PRECISION_PREC_LOWVOL_SPREAD_P25", "1.8"))
 PREC_LOWVOL_REV_MIN_STRENGTH = float(os.getenv("SCALP_PRECISION_PREC_LOWVOL_REV_MIN_STRENGTH", "0.28"))
+
+# macd_rsi_div specific knobs
+STRATEGY_TAG = os.getenv("SCALP_PRECISION_STRATEGY_TAG", "scalp_macd_rsi_div_live")
+PIP_VALUE = float(os.getenv("SCALP_PRECISION_PIP_VALUE", "0.01"))
+REQUIRE_RANGE_ACTIVE = _env_bool("SCALP_PRECISION_REQUIRE_RANGE_ACTIVE", False)
+RANGE_MIN_SCORE = float(os.getenv("SCALP_PRECISION_RANGE_MIN_SCORE", "0.10"))
+MAX_ADX = float(os.getenv("SCALP_PRECISION_MAX_ADX", "40"))
+RSI_ARM_TTL_SEC = float(os.getenv("SCALP_PRECISION_RSI_ARM_TTL_SEC", "75"))
+RSI_LONG_ARM = float(os.getenv("SCALP_PRECISION_RSI_LONG_ARM", "32"))
+RSI_SHORT_ARM = float(os.getenv("SCALP_PRECISION_RSI_SHORT_ARM", "68"))
+RSI_LONG_ENTRY = float(os.getenv("SCALP_PRECISION_RSI_LONG_ENTRY", "36"))
+RSI_SHORT_ENTRY = float(os.getenv("SCALP_PRECISION_RSI_SHORT_ENTRY", "64"))
+MIN_DIV_SCORE = float(os.getenv("SCALP_PRECISION_MIN_DIV_SCORE", "0.08"))
+MIN_DIV_STRENGTH = float(os.getenv("SCALP_PRECISION_MIN_DIV_STRENGTH", "0.12"))
+MAX_DIV_AGE_BARS = float(os.getenv("SCALP_PRECISION_MAX_DIV_AGE_BARS", "14"))
+ALLOW_HIDDEN_DIVERGENCE = _env_bool("SCALP_PRECISION_ALLOW_HIDDEN_DIVERGENCE", True)
+MIN_FREE_MARGIN_RATIO_HARD = float(os.getenv("SCALP_PRECISION_MIN_FREE_MARGIN_RATIO_HARD", "0.06"))
+MARGIN_USAGE_HARD = float(os.getenv("SCALP_PRECISION_MARGIN_USAGE_HARD", "0.93"))
+SL_ATR_MULT = float(os.getenv("SCALP_PRECISION_SL_ATR_MULT", "0.85"))
+TP_ATR_MULT = float(os.getenv("SCALP_PRECISION_TP_ATR_MULT", "1.10"))
+MAX_SL_PIPS = float(os.getenv("SCALP_PRECISION_MAX_SL_PIPS", "40"))
+MIN_SL_PIPS = float(os.getenv("SCALP_PRECISION_MIN_SL_PIPS", "1"))
+MAX_TP_PIPS = float(os.getenv("SCALP_PRECISION_MAX_TP_PIPS", "80"))
+MIN_TP_PIPS = float(os.getenv("SCALP_PRECISION_MIN_TP_PIPS", "2"))
+MIN_TP_RR = float(os.getenv("SCALP_PRECISION_MIN_TP_RR", "1.15"))
+PATTERN_GATE_OPT_IN = _env_bool("SCALP_PRECISION_PATTERN_GATE_OPT_IN", True)
+DYN_ALLOC_ENABLED = _env_bool("SCALP_PRECISION_DYN_ALLOC_ENABLED", False)
+DYN_ALLOC_PATH = os.getenv("SCALP_PRECISION_DYN_ALLOC_PATH", "config/dynamic_alloc.json")
+DYN_ALLOC_TTL_SEC = float(os.getenv("SCALP_PRECISION_DYN_ALLOC_TTL_SEC", "20"))
+DYN_ALLOC_MIN_TRADES = int(float(os.getenv("SCALP_PRECISION_DYN_ALLOC_MIN_TRADES", "8")))
+DYN_ALLOC_LOSER_SCORE = float(os.getenv("SCALP_PRECISION_DYN_ALLOC_LOSER_SCORE", "0.30"))
+DYN_ALLOC_LOSER_BLOCK = _env_bool("SCALP_PRECISION_DYN_ALLOC_LOSER_BLOCK", True)
+DYN_ALLOC_MULT_MIN = float(os.getenv("SCALP_PRECISION_DYN_ALLOC_MULT_MIN", "0.70"))
+DYN_ALLOC_MULT_MAX = float(os.getenv("SCALP_PRECISION_DYN_ALLOC_MULT_MAX", "1.60"))
+TECH_FAILOPEN = _env_bool("SCALP_PRECISION_TECH_FAILOPEN", True)
+TECH_CONF_BOOST = float(os.getenv("SCALP_PRECISION_TECH_CONF_BOOST", "16.0"))
+TECH_CONF_PENALTY = float(os.getenv("SCALP_PRECISION_TECH_CONF_PENALTY", "10.0"))

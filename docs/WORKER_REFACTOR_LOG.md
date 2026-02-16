@@ -758,6 +758,23 @@
 - `workers/order_manager/worker.py` の `POST /order/coordinate_entry_intent` を有効のまま維持し、
   各戦略が自戦略意図を保持したまま黒板協調の結果を反映できる運用へ復元。
 
+### 2026-02-17（追記）scalp_macd_rsi_div の env 互換・Micro版起点を追加
+- `workers/scalp_macd_rsi_div/config.py` に `MACDRSIDIV` / `SCALP_MACD_RSI_DIV_B` 系設定名の互換吸収を追加し、戦略が現行
+  `SCALP_PRECISION_*` で読み取れるよう統一。
+- `workers/scalp_macd_rsi_div_b/worker.py` を追加し、`SCALP_MACD_RSI_DIV_B_*` 設定を `SCALP_PRECISION_*` にマッピングして
+  既存エントリー基盤を再利用した micro 相当運用を追加。
+- `systemd/quant-scalp-macd-rsi-div-b.service` と
+  `ops/env/quant-scalp-macd-rsi-div-b.env` を追加し、`quant-scalp-macd-rsi-div-exit.env` の管理タグに
+  `scalp_macd_rsi_div_b_live` を追記して B版と共存可能な状態にした。
+
+### 2026-02-16（追記）scalp_macd_rsi_div B のEXIT独立ユニット化
+- `systemd/quant-scalp-macd-rsi-div-b-exit.service` を追加し、B版のエントリー/退出を1:1構成へ拡張。
+- `ops/env/quant-scalp-macd-rsi-div-b-exit.env` を追加し、`SCALP_PRECISION_EXIT_TAGS`/`MACDRSIDIV_EXIT_TAGS` を
+  `scalp_macd_rsi_div_b_live` のみで受ける専用Exit運用に変更。
+- `ops/env/quant-scalp-macd-rsi-div-exit.env` から B タグを外し、既存ExitにB案件が混在しない分離構成へ変更。
+- 監査側（`scripts/ops_v2_audit.py`）の `optional_pairs` に
+  `quant-scalp-macd-rsi-div-b[-exit]` を追加し、ペア稼働状態の監査対象に明記。
+
 ### 2026-02-14（追記）黒板協調・最小ロット判定を strategy 固定化
 - `execution/order_manager.py` の `entry_intent_board` 集約キーを `strategy_tag` 前提へ更新。
 - `_coordinate_entry_intent` が `pocket` ではなく `strategy_tag + instrument` の組で照合するよう変更。

@@ -34,6 +34,7 @@
 - 戦略の ENTRY / EXIT はセットで1:1運用
 - `quant-scalp-ping-5s` + `quant-scalp-ping-5s-exit`
 - `quant-scalp-macd-rsi-div` + `quant-scalp-macd-rsi-div-exit`
+- `quant-scalp-macd-rsi-div-b` + `quant-scalp-macd-rsi-div-b-exit`
 - `quant-scalp-tick-imbalance` + `quant-scalp-tick-imbalance-exit`
 - `quant-scalp-squeeze-pulse-break` + `quant-scalp-squeeze-pulse-break-exit`
 - `quant-scalp-wick-reversal-blend` + `quant-scalp-wick-reversal-blend-exit`
