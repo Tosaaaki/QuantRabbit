@@ -1744,7 +1744,11 @@ def _build_tick_signal(rows: Sequence[dict], spread_pips: float) -> tuple[Option
     fallback_attempted = False
     if fallback_sec > 0.0:
         fallback_windows.append(min(config.WINDOW_SEC, max(signal_window_sec, fallback_sec)))
-    if fallback_sec > 0.0 and config.WINDOW_SEC > signal_window_sec:
+    if (
+        fallback_sec > 0.0
+        and config.WINDOW_SEC > signal_window_sec
+        and config.SIGNAL_WINDOW_FALLBACK_ALLOW_FULL_WINDOW
+    ):
         # When explicit fallback is configured but still insufficient, do one final
         # recovery sweep over the full strategy window before giving up.
         fallback_windows.append(config.WINDOW_SEC)
@@ -2022,6 +2026,10 @@ def _build_tick_signal(rows: Sequence[dict], spread_pips: float) -> tuple[Option
             return None, "momentum_tail_failed_no_revert"
         if momentum_tail_rejected and side_revert is None:
             return None, "momentum_tail_failed"
+        if not config.REVERT_ENABLED:
+            return None, "revert_disabled"
+        if side_revert is None:
+            return None, "revert_not_found"
         return None, revert_reason
 
     selected_strength = abs(selected_momentum_pips) / max(0.01, selected_trigger_pips)

@@ -946,3 +946,22 @@
 
 - 2026-02-16: `scalp_m1scalper` エントリー抑制対策として `ops/env/quant-m1scalper.env` に `M1SCALP_ALLOW_REVERSION=1` を追加し、レンジ条件許可 (`M1SCALP_REVERSION_REQUIRE_STRONG_RANGE=1`, `M1SCALP_REVERSION_ALLOWED_RANGE_MODES=range`) と閾値を緩和 (`M1SCALP_REVERSION_MIN_RANGE_SCORE=0.72`, `M1SCALP_REVERSION_MAX_ADX=20`) へ変更。M1の`buy-dip / sell-rally` 系シグナル（リバーション）を通過しやすくし、エントリー減少の改善を試験的に実施。
 - 2026-02-16: `M1SCALP_REVERSION_ALLOWED_RANGE_MODES` を `range,mixed` に広げ、`M1SCALP_REVERSION_MIN_RANGE_SCORE` を `0.55`、`M1SCALP_REVERSION_MAX_ADX` を `30` に変更。`ALLOW_REVERSION=1` を維持しつつ、リバーション通過条件の厳しさを中立寄りに再調整。
+
+### 2026-02-24（追記）5秒B `no_signal` の根本分解とフォールバック制御を確定
+
+- `workers/scalp_ping_5s/worker.py`
+  - `no_signal` の内部理由を `revert_not_enabled` から分解し、`revert_disabled` と `revert_not_found` を明示化。
+  - `revert` 判定対象がない場合の判定を意図別に分離し、`no_signal` 集計を `data/Signal不足` と
+    `revertロジック未成立` で分けて監査可能にした。
+  - `SCALP_PING_5S_SIGNAL_WINDOW_FALLBACK_ALLOW_FULL_WINDOW` を導入し、fallback の
+    `WINDOW_SEC` までの最終全体再試行を明示オプトイン化。既存挙動（既定 true）を保ちつつ、
+    B 側では明示的に無効化できるよう固定。
+- `workers/scalp_ping_5s/config.py`
+  - `SCALP_PING_5S_SIGNAL_WINDOW_FALLBACK_ALLOW_FULL_WINDOW` を新設し、
+    no_signal の再試行拡張挙動を設定可能にした。
+- `ops/env/scalp_ping_5s_b.env`
+  - `SCALP_PING_5S_B_REVERT_ENABLED=1` を明示し、revert 判定未評価時の
+    `revert_not_enabled` を混線要因から切り離せるようにした。
+  - `SCALP_PING_5S_B_SIGNAL_WINDOW_FALLBACK_ALLOW_FULL_WINDOW=0` を追加して、
+    Bでの `no_signal:insufficient_signal_rows_fallback_exhausted` 発生条件を抑制。
+  - `SCALP_PING_5S_PATTERN_GATE_OPT_IN` の混在要因になっていた `SCALP_PING_5S` 系行を整理し、B版専用キーへ寄せた。
