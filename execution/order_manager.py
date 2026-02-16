@@ -1163,30 +1163,85 @@ def _strategy_env_key(strategy_tag: Optional[str]) -> Optional[str]:
     return key or None
 
 
-def _strategy_env_float(name: str, strategy_tag: Optional[str]) -> Optional[float]:
-    key = _strategy_env_key(strategy_tag)
+def _strategy_env_key_signature(strategy_key: str) -> str:
+    """Normalize a strategy-key token for fuzzy env-var matching."""
+    return re.sub(r"[^0-9A-Za-z]+", "", strategy_key).upper()
+
+
+def _strategy_env_key_candidates(
+    env_name: str,
+    strategy_tag: Optional[str],
+) -> tuple[str, ...]:
+    raw = str(strategy_tag or "").strip()
+    if not raw:
+        return tuple()
+    key = _strategy_env_key(raw)
     if not key:
-        return None
-    raw = os.getenv(f"{name}_STRATEGY_{key}")
-    if raw is None:
-        return None
-    try:
-        return float(raw)
-    except Exception:
-        return None
+        return tuple()
+
+    seen: set[str] = set()
+    candidates: list[str] = []
+
+    def _add(candidate: Optional[str]) -> None:
+        if not candidate or candidate in seen:
+            return
+        seen.add(candidate)
+        candidates.append(candidate)
+
+    _add(key)
+    base_key = _strategy_env_key(_base_strategy_tag(raw))
+    _add(base_key)
+
+    if len(key) >= 8:
+        prefix = f"{env_name}_STRATEGY_"
+        key_signature = _strategy_env_key_signature(key)
+        extended: list[str] = []
+        for env_key in os.environ.keys():
+            if not env_key.startswith(prefix):
+                continue
+            suffix = env_key[len(prefix) :].strip()
+            if not suffix:
+                continue
+            suffix_key = _strategy_env_key(suffix)
+            if not suffix_key:
+                continue
+            suffix_signature = _strategy_env_key_signature(suffix_key)
+            if not suffix_signature or not key_signature:
+                continue
+            if not (
+                suffix_signature.startswith(key_signature)
+                or key_signature.startswith(suffix_signature)
+            ):
+                continue
+            extended.append(suffix_key)
+        for suffix_key in sorted(extended, key=len, reverse=True):
+            _add(suffix_key)
+
+    return tuple(candidates)
+
+
+def _strategy_env_float(name: str, strategy_tag: Optional[str]) -> Optional[float]:
+    for key in _strategy_env_key_candidates(name, strategy_tag):
+        raw = os.getenv(f"{name}_STRATEGY_{key}")
+        if raw is None:
+            continue
+        try:
+            return float(raw)
+        except Exception:
+            continue
+    return None
 
 
 def _strategy_env_int(name: str, strategy_tag: Optional[str]) -> Optional[int]:
-    key = _strategy_env_key(strategy_tag)
-    if not key:
-        return None
-    raw = os.getenv(f"{name}_STRATEGY_{key}")
-    if raw is None:
-        return None
-    try:
-        return int(raw)
-    except Exception:
-        return None
+    for key in _strategy_env_key_candidates(name, strategy_tag):
+        raw = os.getenv(f"{name}_STRATEGY_{key}")
+        if raw is None:
+            continue
+        try:
+            return int(raw)
+        except Exception:
+            continue
+    return None
 
 
 def _entry_hard_stop_pips(pocket: Optional[str], *, strategy_tag: Optional[str] = None) -> float:
@@ -3443,16 +3498,18 @@ def _strategy_tag_from_client_id(client_order_id: Optional[str]) -> Optional[str
         return "fast_scalp"
     if cid.startswith("qr-pullback-s5-"):
         return "pullback_s5"
-    match = re.match(
-        r"^qr-(\d+)-(micro|macro|scalp|event|hybrid)-([A-Za-z0-9]+)(?:-[A-Za-z0-9]+)?$",
-        cid,
-    )
-    if match:
-        return match.group(3)
-    match = re.match(r"^qr-(micro|macro|scalp|event|hybrid)-(\d+)-([A-Za-z0-9]+)", cid)
-    if match:
-        return match.group(3)
-    return None
+    parts = cid.split("-")
+    if len(parts) < 3:
+        return None
+
+    # Newer IDs: qr-<ts>-<pocket>-<tag>-<digest>
+    if parts[1].isdigit() and len(parts) >= 4:
+        tag = "-".join(parts[3:-1]) or "-".join(parts[3:])
+        return tag or None
+
+    # Legacy / fallback IDs: qr-<focus>-<tag>-<digest>
+    tag = "-".join(parts[2:-1]) or "-".join(parts[2:])
+    return tag or None
 
 
 def _apply_default_entry_thesis_tfs(
