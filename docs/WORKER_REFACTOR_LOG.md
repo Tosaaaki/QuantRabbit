@@ -1003,3 +1003,18 @@
     `SCALP_PING_5S_B_REVERT_CONFIRM_RATIO_MIN=0.50` を低減し、revert判定の成立しやすさを上げる。
 - 目的は `no_signal:revert_not_found` 偏在を短期的に抑え、取り残し率を下げること。
 - この調整は 5秒B のみを対象としており、A側設定には影響しない。
+
+### 2026-02-16（追記）5秒B entry-skip（spread/min_units）対策を適用
+
+- `ops/env/scalp_ping_5s_b.env` に対し、`scalp_ping_5s_b_live` の取り逃し要因である
+  `spread_block` と `units_below_min` を同時に抑えるため、次を反映。
+  - `SCALP_PING_5S_B_MAX_SPREAD_PIPS=1.00`
+  - `ORDER_SPREAD_BLOCK_PIPS_STRATEGY_SCALP_PING_5S_B_LIVE=1.00`
+  - `ORDER_SPREAD_BLOCK_PIPS_STRATEGY_SCALP_PING_5S_B=1.00`
+  - `ORDER_MANAGER_PRESERVE_INTENT_MIN_SCALE_STRATEGY_SCALP_PING_5S_B_LIVE=0.65`
+  - `ORDER_MIN_UNITS_STRATEGY_SCALP_PING_5S_B_LIVE=300`
+  - `ORDER_MIN_UNITS_STRATEGY_SCALP_PING_5S_B=300`
+- 対象は 5秒Bのみ。A側（`scalp_ping_5s`）設定は変更なし。
+- 適用後、同一日の 3d/7d で
+  `spread_block`・`entry_probability_below_min_units` の比率が低下し、
+  `submit_attempt` が増えるかを次回監査で確認する。
