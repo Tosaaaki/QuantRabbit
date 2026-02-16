@@ -127,6 +127,13 @@ def _env_bool(name: str, default: bool) -> bool:
     return _to_bool(val, default)
 
 
+_NWAVE_ALIGN_ENABLED = _env_bool("M1SCALP_NWAVE_ALIGN_ENABLED", True)
+_NWAVE_ALIGN_PREV_BODY_LONG = abs(_env_float("M1SCALP_NWAVE_ALIGN_PREV_BODY_PIPS", 0.35))
+_NWAVE_ALIGN_LAST_BODY_LONG = abs(_env_float("M1SCALP_NWAVE_ALIGN_LAST_BODY_PIPS", 0.15))
+_NWAVE_ALIGN_PREV_BODY_SHORT = abs(_env_float("M1SCALP_NWAVE_ALIGN_PREV_BODY_SHORT_PIPS", 0.35))
+_NWAVE_ALIGN_LAST_BODY_SHORT = abs(_env_float("M1SCALP_NWAVE_ALIGN_LAST_BODY_SHORT_PIPS", 0.15))
+
+
 def _candle_body_pips(candle: Dict[str, float]) -> Optional[float]:
     open_px = _to_float(candle.get("open"))
     close_px = _to_float(candle.get("close"))
@@ -803,6 +810,8 @@ class M1Scalper:
             return _attach_kill(signal)
 
         def _alignment_ok(side: str) -> bool:
+            if not _NWAVE_ALIGN_ENABLED:
+                return True
             if len(candles) < 2:
                 return True
             last_body = _candle_body_pips(candles[-1])
@@ -810,8 +819,12 @@ class M1Scalper:
             if last_body is None or prev_body is None:
                 return True
             if side == "long":
-                return prev_body <= -0.35 and last_body >= 0.15
-            return prev_body >= 0.35 and last_body <= -0.15
+                if _NWAVE_ALIGN_PREV_BODY_LONG <= 0.0 or _NWAVE_ALIGN_LAST_BODY_LONG <= 0.0:
+                    return True
+                return prev_body <= -_NWAVE_ALIGN_PREV_BODY_LONG and last_body >= _NWAVE_ALIGN_LAST_BODY_LONG
+            if _NWAVE_ALIGN_PREV_BODY_SHORT <= 0.0 or _NWAVE_ALIGN_LAST_BODY_SHORT <= 0.0:
+                return True
+            return prev_body >= _NWAVE_ALIGN_PREV_BODY_SHORT and last_body <= -_NWAVE_ALIGN_LAST_BODY_SHORT
 
         story_levels = fac.get("story_levels") or {}
         d1_levels = story_levels.get("d1", {})
@@ -865,7 +878,18 @@ class M1Scalper:
                     )
                     return None
                 if not _alignment_ok("long"):
-                    _log("skip_nwave_long_alignment", price=round(close, 3))
+                    if len(candles) >= 2:
+                        _log(
+                            "skip_nwave_long_alignment",
+                            price=round(close, 3),
+                            prev_body=round(_candle_body_pips(candles[-2]) or 0.0, 3),
+                            last_body=round(_candle_body_pips(candles[-1]) or 0.0, 3),
+                            enabled=_NWAVE_ALIGN_ENABLED,
+                            prev_body_thr=_NWAVE_ALIGN_PREV_BODY_LONG,
+                            last_body_thr=_NWAVE_ALIGN_LAST_BODY_LONG,
+                        )
+                    else:
+                        _log("skip_nwave_long_alignment", price=round(close, 3))
                     return None
                 signal = {
                     "action": "OPEN_LONG",
@@ -903,7 +927,18 @@ class M1Scalper:
                 )
                 return None
             if not _alignment_ok("short"):
-                _log("skip_nwave_short_alignment", price=round(close, 3))
+                if len(candles) >= 2:
+                    _log(
+                        "skip_nwave_short_alignment",
+                        price=round(close, 3),
+                        prev_body=round(_candle_body_pips(candles[-2]) or 0.0, 3),
+                        last_body=round(_candle_body_pips(candles[-1]) or 0.0, 3),
+                        enabled=_NWAVE_ALIGN_ENABLED,
+                        prev_body_thr=_NWAVE_ALIGN_PREV_BODY_SHORT,
+                        last_body_thr=_NWAVE_ALIGN_LAST_BODY_SHORT,
+                    )
+                else:
+                    _log("skip_nwave_short_alignment", price=round(close, 3))
                 return None
             signal = {
                 "action": "OPEN_SHORT",

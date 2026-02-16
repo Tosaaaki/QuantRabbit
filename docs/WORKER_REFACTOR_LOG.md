@@ -628,3 +628,10 @@
   `SCALP_PRECISION_ENABLED/ALLOWLIST/UNIT_ALLOWLIST/LOG_PREFIX` を `__main__` で明示設定するように修正。
 - これにより、環境差し戻し時でもそれぞれの戦略名で `scalp_precision` のローカル評価を実行し、
   V2実用8戦略（`scalp_tick_imbalance`含む）へ同一方針で意図固定を維持できる状態を整備。
+
+### 2026-02-16（追記）M1 Scalp の N-Wave アライメント停止要因を可変化
+
+- `strategies/scalping/m1_scalper.py` に `M1SCALP_NWAVE_ALIGN_*` 環境変数を追加し、
+  N-Wave 連続検知時の `skip_nwave_*_alignment` を運用側で可変化。
+- `ops/env/quant-m1scalper.env` に `M1SCALP_NWAVE_ALIGN_ENABLED=0` を追加して
+  アライメントガードを一時無効化（必要に応じて再有効化可能）し、5秒以外の戦略通過率改善を優先。
