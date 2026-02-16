@@ -820,7 +820,7 @@ TRAP_LOG_INTERVAL_SEC: float = max(
     1.0, float(os.getenv("SCALP_PING_5S_TRAP_LOG_INTERVAL_SEC", "20.0"))
 )
 
-MIN_UNITS: int = max(100, int(float(os.getenv("SCALP_PING_5S_MIN_UNITS", "2000"))))
+MIN_UNITS: int = max(1, int(float(os.getenv("SCALP_PING_5S_MIN_UNITS", "2000"))))
 MAX_UNITS: int = max(MIN_UNITS, int(float(os.getenv("SCALP_PING_5S_MAX_UNITS", "25000"))))
 BASE_ENTRY_UNITS: int = max(
     MIN_UNITS, int(float(os.getenv("SCALP_PING_5S_BASE_ENTRY_UNITS", "10000")))

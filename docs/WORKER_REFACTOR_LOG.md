@@ -172,6 +172,13 @@
 - `ops/env/quant-strategy-feedback.env` を追加し、`STRATEGY_FEEDBACK_*` の運用キー（lookback/min_trades/保存先/探索範囲）を明文化。
 - `docs/WORKER_REFACTOR_LOG.md` と `docs/WORKER_ROLE_MATRIX_V2.md` へ同時反映（監査トレースを維持）。
 
+### 2026-02-16（追記）5秒スキャの最小ロット下限制御を運用値へ追従
+
+- `workers/scalp_ping_5s/config.py` の `MIN_UNITS` が `max(100, ...)` で固定されていたため、`SCALP_PING_5S_MIN_UNITS=50` が設定されても
+  実戦ロジックでは `units_below_min` が発生してエントリーを通過しづらい不整合があった。
+- `SCALP_PING_5S_MIN_UNITS` の下限固定を `max(1, ...)` に変更し、環境変数ベースで 50 以上での運用実験を可能にした。
+- 併せて、`ORDER_MIN_UNITS_SCALP_FAST=50` との整合を前提に、5秒スキャの再現監査で `units_below_min` の抑制を優先監視項目に加える運用を明示した。
+
 ### 2026-02-15（追記）35戦略の `evaluate_entry_techniques` 組み込みを構文修正
 
 - 42戦略監査の残作業として一括追加した新規 `evaluate_entry_techniques` 呼び出しで、

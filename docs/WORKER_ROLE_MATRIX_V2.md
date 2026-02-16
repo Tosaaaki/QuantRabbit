@@ -166,6 +166,8 @@
 - 運用整備（2026-02-16 追加）
   - 戦略ENTRYの出力に `entry_probability` / `entry_units_intent` を必須化し、V2本体戦略から `order_manager` への意図受け渡しを統一。
   - `WORKER_REFACTOR_LOG.md` の同時追記を行い、実装・図面の変更差分を同一コミットへ反映。
+- 5秒スキャでは `SCALP_PING_5S_MIN_UNITS` を `50` まで下げる運用を許容するため、`workers/scalp_ping_5s/config.py` の
+  ローカル最小ロット下限を固定100から可変化（`max(1, ...)`）して、`ORDER_MIN_UNITS_SCALP_FAST`（50）との整合を担保。
 - 運用整備（2026-02-16）
   - VM側で `quantrabbit.service` を除去し、レガシー戦略・補助ユニット（`quant-impulse-retest-s5*`, `quant-micro-adaptive-revert*`, `quant-trend-reclaim-long*`, `quant-margin-relief-exit*`, `quant-hard-stop-backfill*`, `quant-realtime-metrics*`, precision 系）を停止・無効化。
   - `systemctl list-unit-files --state=enabled --all` で V2実行群（`market-data-feed`, `strategy-control`, 各ENTRY/EXIT, `order-manager`, `position-manager`）のみが実行系として起動対象であることを確認。
