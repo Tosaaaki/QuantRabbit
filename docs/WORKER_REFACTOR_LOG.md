@@ -19,6 +19,14 @@
 - 対象は B版起動時の env 混在・取り残し（`no_signal` の母集団原因に直結する無効化）を避けるための
   根本対応として記録。
 
+### 2026-02-16（追記）env_prefix 共通化フェイルセーフ（entry→order_manager）
+
+- `execution/strategy_entry.py` の `env_prefix` 取りまとめを強化し、`entry_thesis` / `meta` / `strategy_tag` から
+  正規化 (`strip` + 大文字化) したうえで一貫して注入するよう変更。
+- `execution/order_manager.py` 側でも `env_prefix` を同様に正規化し、`strategy_tag` からのフォールバック推定を追加。
+  これにより、`SCALP_PING_5S_B` と `SCALP_PING_5S` が混在した場合の
+  ガード参照ずれを抑え、`no_signal` の母集団に寄与しうる「意図外の設定混線」を低減。
+
 ### 2026-02-16（追記）scalp_precision 実行委譲の完全停止（戦略別独立実行）
 
 - `workers/scalp_tick_imbalance`, `workers/scalp_squeeze_pulse_break`, `workers/scalp_wick_reversal_blend`, `workers/scalp_wick_reversal_pro` の `entry`/`exit` を `workers.scalp_precision` の子プロセス実行から切り離し、各パッケージ内のローカル `worker.py` / `exit_worker.py` を直接実行する構成へ変更。

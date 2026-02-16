@@ -258,8 +258,19 @@ def _coerce_env_prefix(value: object) -> Optional[str]:
         if value is None:
             return None
         value = str(value)
-    value = value.strip()
+    value = value.strip().upper()
     return value or None
+
+
+def _infer_env_prefix_from_strategy_tag(strategy_tag: Optional[str]) -> Optional[str]:
+    tag = str(strategy_tag or "").strip().upper()
+    if not tag:
+        return None
+    if tag.startswith("SCALP_PING_5S_B"):
+        return "SCALP_PING_5S_B"
+    if tag.startswith("SCALP_PING_5S"):
+        return "SCALP_PING_5S"
+    return None
 
 
 def _entry_execution_deadline_sec(pocket: Optional[str]) -> float:
@@ -7287,6 +7298,7 @@ async def market_order(
         entry_env_prefix = _coerce_env_prefix(
             entry_thesis.get("env_prefix") or entry_thesis.get("ENV_PREFIX")
         )
+    inferred_env_prefix = _infer_env_prefix_from_strategy_tag(strategy_tag)
     if entry_env_prefix and meta_env_prefix and entry_env_prefix != meta_env_prefix:
         logging.debug(
             "[ORDER] env_prefix mismatch pocket=%s strategy=%s meta=%s entry=%s",
@@ -7295,7 +7307,7 @@ async def market_order(
             meta_env_prefix,
             entry_env_prefix,
         )
-    env_prefix = entry_env_prefix or meta_env_prefix
+    env_prefix = entry_env_prefix or meta_env_prefix or inferred_env_prefix
 
     if pocket != "manual":
         try:

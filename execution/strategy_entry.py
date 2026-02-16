@@ -103,6 +103,26 @@ def _has_pattern_gate_optin(entry_thesis: Optional[dict], meta: Optional[dict]) 
     return False
 
 
+def _normalize_env_prefix(value: object) -> Optional[str]:
+    if value is None:
+        return None
+    value_text = str(value).strip()
+    if not value_text:
+        return None
+    return value_text.upper()
+
+
+def _infer_env_prefix_from_strategy_tag(strategy_tag: Optional[str]) -> Optional[str]:
+    tag = str(strategy_tag or "").strip().upper()
+    if not tag:
+        return None
+    if tag.startswith("SCALP_PING_5S_B"):
+        return "SCALP_PING_5S_B"
+    if tag.startswith("SCALP_PING_5S"):
+        return "SCALP_PING_5S"
+    return None
+
+
 def _normalize_pattern_gate_meta(
     entry_thesis: Optional[dict], meta: Optional[dict]
 ) -> Optional[dict]:
@@ -121,24 +141,24 @@ def _normalize_pattern_gate_meta(
 def _coalesce_env_prefix(
     entry_thesis: Optional[dict],
     meta: Optional[dict],
+    strategy_tag: Optional[str] = None,
 ) -> Optional[str]:
     for container in (entry_thesis, meta):
         if not isinstance(container, dict):
             continue
-        value = container.get("env_prefix") or container.get("ENV_PREFIX")
+        value = _normalize_env_prefix(container.get("env_prefix") or container.get("ENV_PREFIX"))
         if not value:
             continue
-        value_text = str(value).strip()
-        if value_text:
-            return value_text
-    return None
+        return value
+    return _infer_env_prefix_from_strategy_tag(strategy_tag)
 
 
 def _inject_env_prefix_context(
     entry_thesis: Optional[dict],
     meta: Optional[dict],
+    strategy_tag: Optional[str] = None,
 ) -> tuple[dict, dict]:
-    env_prefix = _coalesce_env_prefix(entry_thesis, meta)
+    env_prefix = _coalesce_env_prefix(entry_thesis, meta, strategy_tag)
     normalized_entry_thesis: dict = dict(entry_thesis) if isinstance(entry_thesis, dict) else {}
     normalized_meta: dict = dict(meta) if isinstance(meta, dict) else {}
     if env_prefix:
@@ -1071,7 +1091,9 @@ async def market_order(
         tp_price=tp_price,
         entry_thesis=entry_thesis,
     )
-    entry_thesis, meta = _inject_env_prefix_context(entry_thesis, meta)
+    entry_thesis, meta = _inject_env_prefix_context(
+        entry_thesis, meta, resolved_strategy_tag
+    )
     coordinated_units = await _coordinate_entry_units(
         instrument=instrument,
         pocket=pocket,
@@ -1147,7 +1169,9 @@ async def limit_order(
         tp_price=tp_price,
         entry_thesis=entry_thesis,
     )
-    entry_thesis, meta = _inject_env_prefix_context(entry_thesis, meta)
+    entry_thesis, meta = _inject_env_prefix_context(
+        entry_thesis, meta, resolved_strategy_tag
+    )
     if isinstance(entry_thesis, dict):
         entry_thesis["entry_units_intent"] = abs(int(units))
     coordinated_units = await _coordinate_entry_units(
