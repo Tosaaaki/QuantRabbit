@@ -1,4 +1,16 @@
 {
+  "M1Scalper": {
+    "fallback": {
+      "momentum_thresh": 0.0009,
+      "rsi_long_max": 50.0,
+      "rsi_short_min": 50.0,
+      "rsi_trend_long_max": 72.0,
+      "rsi_trend_short_min": 45.0,
+      "atr_floor": 0.4,
+      "vol5_min": 0.05,
+      "adx_min": 5.0
+    }
+  },
   "BB_RSI": {
     "atr_pips_max": 9.0,
     "bbw_max": 0.28,
