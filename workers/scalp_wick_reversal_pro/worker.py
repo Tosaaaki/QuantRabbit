@@ -3319,7 +3319,7 @@ async def _place_order(
         adx=_adx(fac_m1),
         signal_score=float(conf) / 100.0,
         pocket=config.POCKET,
-        strategy_tag=str(signal.get("tag") or "scalp_precision"),
+        strategy_tag=str(signal.get("tag") or "scalp_wick_reversal_pro"),
         env_prefix=config.ENV_PREFIX,
     )
     units = int(round(sizing.units * cap * size_mult))
@@ -3361,7 +3361,7 @@ async def _place_order(
         tp_price = round(price - tp_pips * PIP, 3) if tp_pips > 0 else None
 
     sl_price, tp_price = clamp_sl_tp(price=price, sl=sl_price, tp=tp_price, is_buy=side == "long")
-    client_id = _client_order_id(str(signal.get("tag") or "scalp_precision"))
+    client_id = _client_order_id(str(signal.get("tag") or "scalp_wick_reversal_pro"))
     entry_thesis = _build_entry_thesis(signal, fac_m1, range_ctx)
     if isinstance(entry_thesis, dict):
         entry_thesis.setdefault("env_prefix", config.ENV_PREFIX)
@@ -3501,7 +3501,7 @@ async def _place_order(
         tp_price=tp_price,
         pocket=config.POCKET,
         client_order_id=client_id,
-        strategy_tag=str(signal.get("tag") or "scalp_precision"),
+        strategy_tag=str(signal.get("tag") or "scalp_wick_reversal_pro"),
         entry_thesis=entry_thesis,
         meta=meta,
         confidence=conf,
@@ -3522,7 +3522,7 @@ async def _place_order(
     return order_id
 
 
-async def scalp_precision_worker() -> None:
+async def scalp_wick_reversal_pro_worker() -> None:
     if not config.ENABLED:
         LOG.info("%s disabled (idle)", config.LOG_PREFIX)
         try:
@@ -4019,7 +4019,7 @@ async def scalp_precision_worker() -> None:
 
 def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s", force=True)
-    asyncio.run(scalp_precision_worker())
+    asyncio.run(scalp_wick_reversal_pro_worker())
 
 
 if __name__ == "__main__":

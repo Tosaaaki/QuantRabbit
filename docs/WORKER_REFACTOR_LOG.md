@@ -14,6 +14,12 @@
 - `workers/scalp_macd_rsi_div` と `workers/scalp_ping_5s` / `workers/scalp_ping_5s_b` の `exit_worker.py` も `python -m workers.scalp_precision.exit_worker` 委譲を停止し、同一プロセス内で `exit` 判定を完結。
 - 戦略独立実行のため、上記5戦略に対応する `config.py` / `common.py`（該当戦略）をローカル配備し、戦略起動時の実行経路から `scalp_precision` 参照を外した。
 
+### 2026-02-16（追記）scalp_precision からの最終依存排除
+
+- `workers/scalp_tick_imbalance/`, `workers/scalp_squeeze_pulse_break/`, `workers/scalp_wick_reversal_blend/`, `workers/scalp_wick_reversal_pro/` の
+  `strategy_tag` fallback を `"scalp_precision"` から各戦略名へ変更し、`client_order_id`/`market_order` の strategy tag 注入でも戦略別値を使用。
+- `workers/scalp_macd_rsi_div/`, `workers/scalp_ping_5s/`, `workers/scalp_ping_5s_b/` の `exit_worker` も戦略別エントリ名へ変更し、同名 main 呼び出しに揃えた。
+
 ### 2026-02-16（追記）`scalp_precision` 依存 wrapper の切断（戦略別ワーカー単位）
 
 - `workers/scalp_tick_imbalance` / `scalp_squeeze_pulse_break` / `scalp_wick_reversal_*` / `scalp_macd_rsi_div` / `scalp_ping_5s_b` の

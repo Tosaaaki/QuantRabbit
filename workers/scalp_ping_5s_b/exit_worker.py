@@ -1420,7 +1420,7 @@ class RangeFaderExitWorker:
                 LOG.exception("[exit-rangefader] failed to close PositionManager")
 
 
-async def scalp_precision_exit_worker() -> None:
+async def scalp_ping_5s_b_exit_worker() -> None:
     worker = RangeFaderExitWorker()
     await worker.run()
 
@@ -1542,4 +1542,4 @@ def _exit_candle_reversal(side):
         return f"candle_{detail_type}" if detail_type else "candle_reversal"
     return None
 if __name__ == "__main__":
-    asyncio.run(scalp_precision_exit_worker())
+    asyncio.run(scalp_ping_5s_b_exit_worker())
