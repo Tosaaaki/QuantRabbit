@@ -900,3 +900,5 @@
 - `execution/strategy_entry` 側の `coordinate_entry_intent` で `env_prefix` が混在しにくい状態を保つための
   追加対策として、session_open 系の発注にも意図値（`entry_units_intent` / `entry_probability`）と同様に
   `env_prefix` の明示注入を追加。
+
+- 2026-02-16: `scalp_m1scalper` エントリー抑制対策として `ops/env/quant-m1scalper.env` に `M1SCALP_ALLOW_REVERSION=1` を追加し、レンジ条件許可 (`M1SCALP_REVERSION_REQUIRE_STRONG_RANGE=1`, `M1SCALP_REVERSION_ALLOWED_RANGE_MODES=range`) と閾値を緩和 (`M1SCALP_REVERSION_MIN_RANGE_SCORE=0.72`, `M1SCALP_REVERSION_MAX_ADX=20`) へ変更。M1の`buy-dip / sell-rally` 系シグナル（リバーション）を通過しやすくし、エントリー減少の改善を試験的に実施。
