@@ -258,10 +258,21 @@
 - `workers/scalp_ping_5s_b/worker.py` を追加修正し、`SCALP_PING_5S_B_*` を
   `SCALP_PING_5S_*` に写像する前に、実行時環境内の既存 `SCALP_PING_5S_*` を一度削除してから再注入するように変更。
 - B サービスは `scalp_ping_5s.env` と `scalp_ping_5s_b.env` を併読するため、A 側残存値で上書きされる混在リスクを除去。
+
+### 2026-02-24（追記）5秒B no_signal のデータ不足と env_prefix 混在を再監査前提で収束
+
+- `workers/scalp_ping_5s/worker.py` の `_build_tick_signal()` を更新し、
+  `insufficient_signal_rows` の判定で、取得した全 `rows` 数が `min_signal_ticks` 未満の場合は
+  `fallback` 再試行を行わず `fallback_used=no_data` として上流監査に出すよう変更。
+  これにより、データ不足と fallback 過程失敗（`fallback_attempted`）の原因混線を分離し、
+  `no_signal` 原因の切り分けを明確化。
+- `workers/scalp_ping_5s/worker.py` の no_signal 正規化を拡張し
+  `insufficient_signal_rows_no_data` を追加。
+- `execution/order_manager.py` の env_prefix 解決を調整し、`entry_thesis` / `meta` が
+  混在しても strategy 側が解釈可能な prefix があればそちらへ収束するようにして、
+  ゾーン混線時のリスクガード参照ずれを抑える構成に変更。
 - 追加監査として、`env_prefix` 起因が疑われる `revert_not_enabled` / `momentum_tail_failed` が
   再発しないかを `no_signal` ログで追跡する。
-- 同時に、`systemd/quant-scalp-ping-5s-b.service` から `scalp_ping_5s.env` の同読を外し、Bサービスを
-  `scalp_ping_5s_b.env` と本体ランタイム env のみで起動する構成へ寄せた。
 
 ### 2026-02-16（追記）PositionManager 停止再開耐障害化
 

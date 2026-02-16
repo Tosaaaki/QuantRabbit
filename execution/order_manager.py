@@ -273,6 +273,25 @@ def _infer_env_prefix_from_strategy_tag(strategy_tag: Optional[str]) -> Optional
     return None
 
 
+def _resolve_env_prefix_for_order(
+    entry_env_prefix: Optional[str],
+    meta_env_prefix: Optional[str],
+    strategy_tag: Optional[str],
+) -> Optional[str]:
+    candidates: list[str] = []
+    for prefix in (entry_env_prefix, meta_env_prefix):
+        if not prefix:
+            continue
+        if prefix not in candidates:
+            candidates.append(prefix)
+    inferred_env_prefix = _infer_env_prefix_from_strategy_tag(strategy_tag)
+    if inferred_env_prefix is not None:
+        return inferred_env_prefix
+    if candidates:
+        return candidates[0]
+    return None
+
+
 def _entry_execution_deadline_sec(pocket: Optional[str]) -> float:
     """Return entry preflight deadline seconds (0 = disabled).
 
@@ -7298,7 +7317,11 @@ async def market_order(
         entry_env_prefix = _coerce_env_prefix(
             entry_thesis.get("env_prefix") or entry_thesis.get("ENV_PREFIX")
         )
-    inferred_env_prefix = _infer_env_prefix_from_strategy_tag(strategy_tag)
+    env_prefix = _resolve_env_prefix_for_order(
+        entry_env_prefix,
+        meta_env_prefix,
+        strategy_tag,
+    )
     if entry_env_prefix and meta_env_prefix and entry_env_prefix != meta_env_prefix:
         logging.debug(
             "[ORDER] env_prefix mismatch pocket=%s strategy=%s meta=%s entry=%s",
@@ -7307,7 +7330,10 @@ async def market_order(
             meta_env_prefix,
             entry_env_prefix,
         )
-    env_prefix = entry_env_prefix or meta_env_prefix or inferred_env_prefix
+        logging.debug(
+            "[ORDER] env_prefix resolved env_prefix=%s",
+            env_prefix,
+        )
 
     if pocket != "manual":
         try:
