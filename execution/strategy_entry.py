@@ -143,6 +143,10 @@ def _coalesce_env_prefix(
     meta: Optional[dict],
     strategy_tag: Optional[str] = None,
 ) -> Optional[str]:
+    inferred_env_prefix = _infer_env_prefix_from_strategy_tag(strategy_tag)
+    if inferred_env_prefix is not None:
+        return inferred_env_prefix
+
     for container in (entry_thesis, meta):
         if not isinstance(container, dict):
             continue
@@ -150,7 +154,7 @@ def _coalesce_env_prefix(
         if not value:
             continue
         return value
-    return _infer_env_prefix_from_strategy_tag(strategy_tag)
+    return None
 
 
 def _inject_env_prefix_context(

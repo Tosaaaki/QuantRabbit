@@ -274,6 +274,14 @@
 - 追加監査として、`env_prefix` 起因が疑われる `revert_not_enabled` / `momentum_tail_failed` が
   再発しないかを `no_signal` ログで追跡する。
 
+### 2026-02-24（追記）strategy_entry で strategy_tag 連動 env_prefix 正規化を固定
+
+- `execution/strategy_entry.py` の `_coalesce_env_prefix()` を、`strategy_tag` から導出できる
+  `env_prefix` を最優先にする設計へ変更。
+- これにより `entry_thesis` / `meta` に混在した A/B の `env_prefix` が混ざっていても、
+  strategy 側の正しい識別子（例: `SCALP_PING_5S_B`）でガードの参照元が収束し、
+  `entry_thesis` への誤注入を抑えて取りこぼし原因を低減する方針とした。
+
 ### 2026-02-16（追記）PositionManager 停止再開耐障害化
 
 - `execution/position_manager.py`:
