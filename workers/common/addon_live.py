@@ -361,6 +361,17 @@ class AddonLiveBroker:
         intent = meta.get("intent")
         if not isinstance(intent, dict):
             intent = {}
+        env_prefix = None
+        for source in (order, intent, meta):
+            if not isinstance(source, dict):
+                continue
+            candidate = source.get("env_prefix") or source.get("ENV_PREFIX")
+            if candidate is None:
+                continue
+            candidate_text = str(candidate).strip()
+            if candidate_text:
+                env_prefix = candidate_text
+                break
 
         pocket = str(order.get("pocket") or self.pocket or "micro").lower()
         strategy_tag = str(
@@ -420,6 +431,9 @@ class AddonLiveBroker:
             "hard_stop_pips": round(sl_pips, 3),
             "worker_id": self.worker_id,
         }
+        if env_prefix:
+            entry_thesis["env_prefix"] = env_prefix
+            entry_thesis["ENV_PREFIX"] = env_prefix
         order_probability = order.get("entry_probability")
         if isinstance(order_probability, (int, float)):
             entry_thesis["entry_probability"] = max(0.0, min(1.0, float(order_probability)))
@@ -437,6 +451,9 @@ class AddonLiveBroker:
             entry_thesis["intent"] = intent
 
         meta_payload = {"worker_id": self.worker_id, "order": order}
+        if env_prefix:
+            meta_payload["env_prefix"] = env_prefix
+            meta_payload["ENV_PREFIX"] = env_prefix
 
         if order_type == "limit":
             current = self.datafeed.best_bid_ask(symbol)

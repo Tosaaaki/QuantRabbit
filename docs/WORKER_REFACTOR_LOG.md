@@ -854,3 +854,12 @@
 - `ops/env/quant-v2-runtime.env`
   - `ORDER_MANAGER_SERVICE_FALLBACK_LOCAL` と `POSITION_MANAGER_SERVICE_FALLBACK_LOCAL` を `1` に変更し、
     サービス面不具合時はローカルフォールバック経路へ短時間で移行する運用を追加。
+
+### 2026-02-16（追記）session_open（AddonLive）経路で `env_prefix` を固定注入
+
+- `workers/common/addon_live.py` の `AddonLiveBroker.send()` で、`order/intent/meta` から
+  `env_prefix`（または `ENV_PREFIX`）を受け取り、`entry_thesis` と `meta_payload` に
+  同一値を注入するよう変更。
+- `execution/strategy_entry` 側の `coordinate_entry_intent` で `env_prefix` が混在しにくい状態を保つための
+  追加対策として、session_open 系の発注にも意図値（`entry_units_intent` / `entry_probability`）と同様に
+  `env_prefix` の明示注入を追加。
