@@ -1208,6 +1208,8 @@ def _build_chart_data(
 
 class PositionManager:
     def __init__(self):
+        self._db_reopen_failures: int = 0
+        self._db_reopen_block_until: float = 0.0
         self.con = _open_trades_db()
         needs_bootstrap = not _DB.exists()
         try:
@@ -1241,8 +1243,6 @@ class PositionManager:
         self._last_sync_fetch_meta: dict[str, float | int] = {}
         self._last_sync_parse_meta: dict[str, float | int] = {}
         self._last_sync_breakdown: dict[str, float | int] = {}
-        self._db_reopen_failures: int = 0
-        self._db_reopen_block_until: float = 0.0
 
     def _reopen_trades_connection(self) -> None:
         now = time.monotonic()
