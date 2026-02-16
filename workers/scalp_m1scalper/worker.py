@@ -832,7 +832,27 @@ async def scalp_m1_worker() -> None:
             pos_bias=pos_bias,
         )
         if cap <= 0.0:
-            continue
+            if config.ENTRY_GUARD_BYPASS:
+                LOG.warning(
+                    "%s entry_guard_bypass reason=cap_zero signal=%s cap=%.3f floor=%.3f conf=%.0f",
+                    config.LOG_PREFIX,
+                    signal_tag,
+                    cap,
+                    config.CAP_MIN,
+                    conf_val,
+                )
+                cap = config.CAP_MIN
+            else:
+                LOG.info(
+                    "%s cap_block conf=%s tag=%s cap=%.3f free_ratio=%.3f pos_bias=%.3f",
+                    config.LOG_PREFIX,
+                    conf_val,
+                    signal_tag,
+                    cap,
+                    free_ratio,
+                    pos_bias,
+                )
+                continue
 
         now_mono = time.monotonic()
         if (
@@ -888,7 +908,15 @@ async def scalp_m1_worker() -> None:
                     proj_flip = True
                     proj_allow, proj_mult, proj_detail = opp_allow, opp_mult, opp_detail
         if not proj_allow:
-            continue
+            if config.ENTRY_GUARD_BYPASS:
+                LOG.warning(
+                    "%s entry_guard_bypass reason=projection_reject signal=%s side=%s",
+                    config.LOG_PREFIX,
+                    signal_tag,
+                    side,
+                )
+            else:
+                continue
         if config.SIDE_FILTER and side != config.SIDE_FILTER:
             now_mono = time.monotonic()
             if now_mono - last_block_log > 120.0:
@@ -917,7 +945,17 @@ async def scalp_m1_worker() -> None:
                 continue
         bb_style = "reversion" if is_reversion else BB_STYLE
         if not _bb_entry_allowed(bb_style, side, price, fac_m1, range_active=range_ctx.active):
-            continue
+            if config.ENTRY_GUARD_BYPASS:
+                LOG.warning(
+                    "%s entry_guard_bypass reason=bb_entry_reject signal=%s side=%s style=%s range_active=%s",
+                    config.LOG_PREFIX,
+                    signal_tag,
+                    side,
+                    bb_style,
+                    range_ctx.active,
+                )
+            else:
+                continue
 
         usdjpy_setup_mode: Optional[str] = None
         usdjpy_setup_detail: dict = {}
@@ -1028,7 +1066,19 @@ async def scalp_m1_worker() -> None:
         if total_size_mult != 1.0:
             units = int(round(units * total_size_mult))
         if units < config.MIN_UNITS:
-            continue
+            if config.ENTRY_GUARD_BYPASS:
+                LOG.warning(
+                    "%s entry_guard_bypass reason=min_units reject signal=%s side=%s units=%s min_units=%s",
+                    config.LOG_PREFIX,
+                    signal_tag,
+                    side,
+                    units,
+                    config.MIN_UNITS,
+                )
+                units = abs(int(config.MIN_UNITS))
+                units = units if side == "long" else -units
+            else:
+                continue
         if side == "short":
             units = -abs(units)
 
@@ -1095,7 +1145,15 @@ async def scalp_m1_worker() -> None:
 
         candle_allow, candle_mult = _entry_candle_guard("long" if units > 0 else "short")
         if not candle_allow:
-            continue
+            if config.ENTRY_GUARD_BYPASS:
+                LOG.warning(
+                    "%s entry_guard_bypass reason=candle_pattern_block signal=%s side=%s",
+                    config.LOG_PREFIX,
+                    signal_tag,
+                    side,
+                )
+            else:
+                continue
         if candle_mult != 1.0:
             sign = 1 if units > 0 else -1
             units = int(round(abs(units) * candle_mult)) * sign
@@ -1199,7 +1257,20 @@ async def scalp_m1_worker() -> None:
                 allow_candle=bool(entry_thesis_ctx.get("tech_allow_candle", False)),
             )
             if not tech_decision.allowed and not getattr(config, "TECH_FAILOPEN", True):
-                continue
+                if config.ENTRY_GUARD_BYPASS:
+                    _tech_score_txt = (
+                        f"{tech_decision.score:.3f}" if tech_decision.score is not None else "none"
+                    )
+                    LOG.warning(
+                        "%s entry_guard_bypass reason=tech_entry_block signal=%s side=%s score=%s reason=%s",
+                        config.LOG_PREFIX,
+                        signal_tag,
+                        _tech_side,
+                        _tech_score_txt,
+                        tech_decision.reason or "-",
+                    )
+                else:
+                    continue
 
             entry_thesis_ctx["tech_score"] = round(tech_decision.score, 3) if tech_decision.score is not None else None
             entry_thesis_ctx["tech_coverage"] = (
@@ -1359,7 +1430,20 @@ async def scalp_m1_worker() -> None:
                 allow_candle=bool(entry_thesis_ctx.get("tech_allow_candle", False)),
             )
             if not tech_decision.allowed and not getattr(config, "TECH_FAILOPEN", True):
-                continue
+                if config.ENTRY_GUARD_BYPASS:
+                    _tech_score_txt = (
+                        f"{tech_decision.score:.3f}" if tech_decision.score is not None else "none"
+                    )
+                    LOG.warning(
+                        "%s entry_guard_bypass reason=tech_entry_block signal=%s side=%s score=%s reason=%s",
+                        config.LOG_PREFIX,
+                        signal_tag,
+                        _tech_side,
+                        _tech_score_txt,
+                        tech_decision.reason or "-",
+                    )
+                else:
+                    continue
 
             entry_thesis_ctx["tech_score"] = round(tech_decision.score, 3) if tech_decision.score is not None else None
             entry_thesis_ctx["tech_coverage"] = (
