@@ -118,6 +118,37 @@ def _normalize_pattern_gate_meta(
     return injected
 
 
+def _coalesce_env_prefix(
+    entry_thesis: Optional[dict],
+    meta: Optional[dict],
+) -> Optional[str]:
+    for container in (entry_thesis, meta):
+        if not isinstance(container, dict):
+            continue
+        value = container.get("env_prefix") or container.get("ENV_PREFIX")
+        if not value:
+            continue
+        value_text = str(value).strip()
+        if value_text:
+            return value_text
+    return None
+
+
+def _inject_env_prefix_context(
+    entry_thesis: Optional[dict],
+    meta: Optional[dict],
+) -> tuple[dict, dict]:
+    env_prefix = _coalesce_env_prefix(entry_thesis, meta)
+    normalized_entry_thesis: dict = dict(entry_thesis) if isinstance(entry_thesis, dict) else {}
+    normalized_meta: dict = dict(meta) if isinstance(meta, dict) else {}
+    if env_prefix:
+        normalized_entry_thesis["env_prefix"] = env_prefix
+        normalized_entry_thesis["ENV_PREFIX"] = env_prefix
+        normalized_meta["env_prefix"] = env_prefix
+        normalized_meta["ENV_PREFIX"] = env_prefix
+    return normalized_entry_thesis, normalized_meta
+
+
 _STRATEGY_TECH_CONTEXT_REQUIREMENTS: dict[str, dict[str, object]] = {
     "SCALP_PING_5S": {
         "technical_context_tfs": ["M1", "M5", "H1", "H4"],
@@ -1040,6 +1071,7 @@ async def market_order(
         tp_price=tp_price,
         entry_thesis=entry_thesis,
     )
+    entry_thesis, meta = _inject_env_prefix_context(entry_thesis, meta)
     coordinated_units = await _coordinate_entry_units(
         instrument=instrument,
         pocket=pocket,
@@ -1115,6 +1147,7 @@ async def limit_order(
         tp_price=tp_price,
         entry_thesis=entry_thesis,
     )
+    entry_thesis, meta = _inject_env_prefix_context(entry_thesis, meta)
     if isinstance(entry_thesis, dict):
         entry_thesis["entry_units_intent"] = abs(int(units))
     coordinated_units = await _coordinate_entry_units(

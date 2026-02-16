@@ -3295,7 +3295,12 @@ async def scalp_ping_5s_worker() -> None:
         token = detail.strip()
         if not token:
             return None
-        return token.split(":", 1)[0]
+        base = token.split(":", 1)[0]
+        if base.startswith("insufficient_signal_rows"):
+            if "fallback_used=yes" in token:
+                return "insufficient_signal_rows_fallback"
+            return "insufficient_signal_rows"
+        return base
 
     def _infer_signal_side_from_reason(
         reason: str,

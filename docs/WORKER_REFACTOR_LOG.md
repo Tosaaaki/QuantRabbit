@@ -34,6 +34,11 @@
   対象は `scalp_tick_imbalance` / `scalp_squeeze_pulse_break` / `scalp_wick_reversal_blend` / `scalp_wick_reversal_pro` / `scalp_macd_rsi_div` / `scalp_ping_5s` / `scalp_ping_5s_b` の `entry`/`exit`。
 - VM 上の反映確認を、`journalctl` の `Application started!` 検索に統一し、起動実在性を監査しやすくした。
 
+### 2026-02-16（追記）strategy_entry の意図注入を完全化
+
+- `execution/strategy_entry.py` に `entry_thesis` / `meta` の `env_prefix` 双方向注入を追加し、`coordinate_entry_intent` まで `env_prefix` を確実反映。
+- `workers/scalp_ping_5s/worker.py` の `no_signal` 理由正規化を拡張し、`insufficient_signal_rows_fallback` を判別可能にして監査集計の粒度を固定化。
+
 ### 2026-02-16（追記）`PositionManager.close()` の共有DB保護
 
 - `execution/position_manager.py` の `PositionManager.close()` に共有サービスモード保護を追加。
