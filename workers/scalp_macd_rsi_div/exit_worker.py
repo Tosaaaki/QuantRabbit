@@ -6,9 +6,9 @@ runs the common precision exit flow as a separate process.
 
 from __future__ import annotations
 
-import asyncio
 import logging
 import os
+import subprocess
 import sys
 from pathlib import Path
 
@@ -50,13 +50,16 @@ _apply_prefix_map(_ENV_PREFIX)
 
 
 def _run_exit_worker() -> None:
-    if __package__ in (None, ""):
-        repo_root = Path(__file__).resolve().parents[2]
-        if str(repo_root) not in sys.path:
-            sys.path.insert(0, str(repo_root))
-    from workers.scalp_precision import exit_worker
-
-    asyncio.run(exit_worker.scalp_precision_exit_worker())
+    repo_root = Path(__file__).resolve().parents[2]
+    env = os.environ.copy()
+    existing_pythonpath = env.get("PYTHONPATH", "")
+    env["PYTHONPATH"] = str(repo_root) if not existing_pythonpath else f"{repo_root}{os.pathsep}{existing_pythonpath}"
+    subprocess.run(
+        [sys.executable, "-m", "workers.scalp_precision.exit_worker"],
+        check=True,
+        cwd=str(repo_root),
+        env=env,
+    )
 
 
 if __name__ == "__main__":

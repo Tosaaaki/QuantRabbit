@@ -8,6 +8,14 @@
 - データ供給は `quant-market-data-feed`、制御配信は `quant-strategy-control` に分離。
 - 補助的運用ワーカーは本体管理マップから除外。
 
+### 2026-02-16（追記）`scalp_precision` 依存 wrapper の切断（戦略別ワーカー単位）
+
+- `workers/scalp_tick_imbalance` / `scalp_squeeze_pulse_break` / `scalp_wick_reversal_*` / `scalp_macd_rsi_div` / `scalp_ping_5s_b` の
+  `entry` / `exit_worker` から `workers.scalp_precision` のインポート依存を除去し、各戦略ワーカー側を subprocess 起動に切替え。
+- 子プロセスは `python -m workers.scalp_precision.worker` または `python -m workers.scalp_precision.exit_worker` へ移譲し、
+  ワーカー本体の起動責務を切り出して「戦略別ランナー（entry/exit）」を明示化。
+- テスト `tests/test_spread_ok_tick_cache_fallback.py` の `scalp_precision.common` 参照を削除し、共有 `spread_ok` の依存を排除。
+
 ### 2026-02-16（追記）`PositionManager.close()` の共有DB保護
 
 - `execution/position_manager.py` の `PositionManager.close()` に共有サービスモード保護を追加。
@@ -138,6 +146,26 @@
 - `revert_not_enabled` は実質的な `no_signal` 側ボトルネックだったため、
   `revert` 判定閾値とシグナル窓を緩和し、同時に短側閾値もわずかに緩めることで
   `revert_not_enabled` 集計を抑える方針に変更。
+
+### 2026-02-16（追記）`no_signal` のフォールバックを窓不足向けに限定
+
+- `workers/scalp_ping_5s/worker.py`
+  - `insufficient_signal_rows` 時のみ、`SCALP_PING_5S_SIGNAL_WINDOW_FALLBACK_SEC` で指定した上限内で
+    追加窓を1回だけ再評価するように変更（不足時は `insufficient_signal_rows` の理由へ
+    `window/fallback` を記録）。
+- `ops/env/scalp_ping_5s_b.env`
+  - `SCALP_PING_5S_B_SIGNAL_WINDOW_FALLBACK_SEC=2.00` を追加。
+- `TickSignal` に `signal_window_sec` を付与し、実際に使ったシグナル窓を監査しやすくした。
+
+### 2026-02-16（追記）5秒Bの意図設定プレフィックスを明示化
+
+- `workers/scalp_ping_5s_b/worker.py` の環境コピー処理で
+  `SCALP_PING_5S_ENV_PREFIX=SCALP_PING_5S_B` を明示的に上書きするよう追加。
+- `ops/env/scalp_ping_5s_b.env` へ
+  `SCALP_PING_5S_B_ENV_PREFIX=SCALP_PING_5S_B` を追加。
+- B版の `PERF_GUARD` / `entry_thesis` 参照で、A/B混在時に B 固有キーを誤適用しないようにした。
+- 追跡指標は `perf_block` / `entry_probability_reject` の内訳で次回検証し、必要であれば
+  `SCALP_PING_5S_B_PERF_GUARD_*` の調整へ接続する。
 
 ### 2026-02-16（追記）PositionManager 停止再開耐障害化
 

@@ -6,9 +6,11 @@
 
 from __future__ import annotations
 
-import asyncio
 import logging
 import os
+import subprocess
+import sys
+from pathlib import Path
 
 
 def _apply_alt_env(prefix: str, *, fallback_tag: str, fallback_log_prefix: str) -> None:
@@ -23,6 +25,11 @@ def _apply_alt_env(prefix: str, *, fallback_tag: str, fallback_log_prefix: str) 
         mapped_key = f"{base_prefix}_{key[len(source):]}"
         os.environ[mapped_key] = str(value)
 
+    # Keep env-prefix identity aligned with B strategy so downstream guards use B
+    # namespace settings (e.g., SCALP_PING_5S_B_PERF_GUARD_* / B-specific
+    # tunables).
+    os.environ[f"{base_prefix}_ENV_PREFIX"] = prefix
+
     # Keep this clone disabled by default unless explicitly enabled.
     os.environ[f"{base_prefix}_ENABLED"] = os.getenv(
         f"{prefix}_ENABLED", "0"
@@ -35,14 +42,22 @@ def _apply_alt_env(prefix: str, *, fallback_tag: str, fallback_log_prefix: str) 
     )
 
 
-_apply_alt_env(
-    "SCALP_PING_5S_B",
-    fallback_tag="scalp_ping_5s_b",
-    fallback_log_prefix="[SCALP_PING_5S_B]",
-)
-
-# Import existing worker after env remap so config loads B-specific env.
-from workers.scalp_ping_5s.worker import scalp_ping_5s_worker as scalp_ping_5s_b_worker
+def _run_worker() -> None:
+    _apply_alt_env(
+        "SCALP_PING_5S_B",
+        fallback_tag="scalp_ping_5s_b",
+        fallback_log_prefix="[SCALP_PING_5S_B]",
+    )
+    repo_root = Path(__file__).resolve().parents[2]
+    env = os.environ.copy()
+    existing_pythonpath = env.get("PYTHONPATH", "")
+    env["PYTHONPATH"] = str(repo_root) if not existing_pythonpath else f"{repo_root}{os.pathsep}{existing_pythonpath}"
+    subprocess.run(
+        [sys.executable, "-m", "workers.scalp_ping_5s.worker"],
+        check=True,
+        cwd=str(repo_root),
+        env=env,
+    )
 
 
 def _configure_logging() -> None:
@@ -55,4 +70,4 @@ def _configure_logging() -> None:
 
 if __name__ == "__main__":
     _configure_logging()
-    asyncio.run(scalp_ping_5s_b_worker())
+    _run_worker()
