@@ -7,6 +7,7 @@ import random
 import datetime
 import time
 import logging
+import inspect
 from dataclasses import dataclass
 from typing import Callable, Awaitable, Optional, Tuple
 
@@ -207,7 +208,14 @@ async def _connect(instrument: str, callback: Callable[[Tick], Awaitable[None]])
                                 log_tick(tick)
                             except Exception as exc:  # noqa: BLE001
                                 print(f"[replay] failed to log tick: {exc}")
-                            await callback(tick)
+                            cb_ret = callback(tick)
+                            if inspect.isawaitable(cb_ret):
+                                await cb_ret
+                            elif cb_ret is not None:
+                                LOG.debug(
+                                    "tick_fetcher callback returned non-awaitable %s, invoking directly",
+                                    type(cb_ret),
+                                )
                     finally:
                         reset_task.cancel()
                         try:
