@@ -1702,15 +1702,15 @@ def _build_tick_signal(rows: Sequence[dict], spread_pips: float) -> tuple[Option
         0.0, _safe_float(getattr(config, "SIGNAL_WINDOW_FALLBACK_SEC", 0.0), 0.0)
     )
     fallback_windows = [signal_window_sec]
+    fallback_attempted = False
     if fallback_sec > 0.0:
         fallback_windows.append(min(config.WINDOW_SEC, max(signal_window_sec, fallback_sec)))
-    if config.WINDOW_SEC > signal_window_sec:
-        fallback_windows.append(config.WINDOW_SEC)
 
     fallback_attempts: list[float] = []
     for fallback_window_sec in sorted(set(fallback_windows)):
         if fallback_window_sec <= signal_window_sec:
             continue
+        fallback_attempted = True
         fallback_attempts.append(_safe_float(fallback_window_sec, signal_window_sec))
         fallback_cutoff = latest_epoch - fallback_window_sec
         fallback_signal_rows = [
@@ -1722,7 +1722,12 @@ def _build_tick_signal(rows: Sequence[dict], spread_pips: float) -> tuple[Option
             signal_rows = fallback_signal_rows
             break
     if len(signal_rows) < min_signal_ticks:
-        fallback_used = "yes" if signal_window_sec > base_signal_window_sec else "no"
+        if signal_window_sec > base_signal_window_sec:
+            fallback_used = "yes"
+        elif fallback_attempted:
+            fallback_used = "attempted"
+        else:
+            fallback_used = "no"
         return (
             None,
             f"insufficient_signal_rows:{len(signal_rows)}/{min_signal_ticks}"
@@ -3299,6 +3304,8 @@ async def scalp_ping_5s_worker() -> None:
         if base.startswith("insufficient_signal_rows"):
             if "fallback_used=yes" in token:
                 return "insufficient_signal_rows_fallback"
+            if "fallback_used=attempted" in token:
+                return "insufficient_signal_rows_fallback_exhausted"
             return "insufficient_signal_rows"
         if base.startswith("insufficient_mid_rows"):
             return "insufficient_mid_rows"

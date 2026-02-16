@@ -197,6 +197,13 @@
 - `no_signal` のフォールバックは従来どおり `insufficient_signal_rows` 時のみ行い、データ不足以外の
   退避導線は従来ロジックを維持して副作用増加を回避。
 
+### 2026-02-16（追記）fallback窓展開を「明示設定のみ」に固定
+
+- `workers/scalp_ping_5s/worker.py`
+  - `SCALP_PING_5S_SIGNAL_WINDOW_FALLBACK_SEC` が `0` の場合、`WINDOW_SEC` へ無条件で拡張しないよう制御を変更。
+  - fallback が実施されなかった/失敗した場合も `insufficient_signal_rows` 理由に
+    `fallback_used=attempted` を残して、監査時に「窓を広げたが不足継続」を判別できるようにした。
+
 ### 2026-02-16（追記）5秒Bの意図設定プレフィックスを明示化
 
 - `workers/scalp_ping_5s_b/worker.py` の環境コピー処理で
