@@ -1246,14 +1246,16 @@ class PositionManager:
 
     def _reopen_trades_connection(self) -> None:
         now = time.monotonic()
-        if now < self._db_reopen_block_until:
+        db_reopen_block_until = getattr(self, "_db_reopen_block_until", 0.0)
+        db_reopen_failures = getattr(self, "_db_reopen_failures", 0)
+        if now < db_reopen_block_until:
             raise sqlite3.OperationalError(
                 "trades DB reconnect temporarily blocked due to repeated failures"
             )
 
         backoff = min(
             _DB_REOPEN_MAX_INTERVAL_SEC,
-            _DB_REOPEN_MIN_INTERVAL_SEC * (2**self._db_reopen_failures),
+            _DB_REOPEN_MIN_INTERVAL_SEC * (2**db_reopen_failures),
         )
 
         for attempt in range(_DB_REOPEN_ATTEMPTS):
@@ -1273,7 +1275,8 @@ class PositionManager:
                 self._db_reopen_block_until = 0.0
                 return
             except Exception as exc:
-                self._db_reopen_failures += 1
+                db_reopen_failures += 1
+                self._db_reopen_failures = db_reopen_failures
                 self._db_reopen_block_until = time.monotonic() + backoff
                 if self.con is not None:
                     try:
@@ -1294,7 +1297,8 @@ class PositionManager:
                 backoff = min(backoff * 2, _DB_REOPEN_MAX_INTERVAL_SEC)
 
     def _ensure_connection_open(self) -> None:
-        if time.monotonic() < self._db_reopen_block_until:
+        db_reopen_block_until = getattr(self, "_db_reopen_block_until", 0.0)
+        if time.monotonic() < db_reopen_block_until:
             raise sqlite3.ProgrammingError(
                 "trades DB temporarily unavailable after repeated reconnect failures"
             )
