@@ -1701,7 +1701,19 @@ def _build_tick_signal(rows: Sequence[dict], spread_pips: float) -> tuple[Option
     fallback_sec = max(
         0.0, _safe_float(getattr(config, "SIGNAL_WINDOW_FALLBACK_SEC", 0.0), 0.0)
     )
+    fallback_rate_windows_sec = None
+    if config.MIN_TICK_RATE > 0 and min_signal_ticks > 1:
+        fallback_rate_windows_sec = max(
+            0.0,
+            min(
+                config.WINDOW_SEC,
+                (min_signal_ticks - 1) / config.MIN_TICK_RATE,
+            ),
+        )
+
     fallback_windows = [signal_window_sec]
+    if fallback_rate_windows_sec is not None and fallback_rate_windows_sec > signal_window_sec:
+        fallback_windows.append(fallback_rate_windows_sec)
     fallback_attempted = False
     if fallback_sec > 0.0:
         fallback_windows.append(min(config.WINDOW_SEC, max(signal_window_sec, fallback_sec)))
@@ -1728,14 +1740,25 @@ def _build_tick_signal(rows: Sequence[dict], spread_pips: float) -> tuple[Option
             fallback_used = "attempted"
         else:
             fallback_used = "no"
+        detail_parts = [
+            f"insufficient_signal_rows:{len(signal_rows)}/{min_signal_ticks}",
+            f"window={signal_window_sec:.2f}",
+            f"fallback_window={fallback_window_sec:.2f}",
+            f"fallback_count={len(fallback_signal_rows)}/{min_signal_ticks}",
+            (
+                f"fallback_attempts={','.join(f'{w:.2f}' for w in fallback_attempts)}"
+                if fallback_attempts
+                else "fallback_attempts=none"
+            ),
+            f"fallback_used={fallback_used}",
+        ]
+        if fallback_rate_windows_sec is not None:
+            detail_parts.append(
+                f"fallback_min_rate_window={fallback_rate_windows_sec:.2f}"
+            )
         return (
             None,
-            f"insufficient_signal_rows:{len(signal_rows)}/{min_signal_ticks}"
-            f" window={signal_window_sec:.2f}"
-            f" fallback_window={fallback_window_sec:.2f}"
-            f" fallback_count={len(fallback_signal_rows)}/{min_signal_ticks}"
-            f" fallback_attempts={','.join(f'{w:.2f}' for w in fallback_attempts) if fallback_attempts else 'none'}"
-            f" fallback_used={fallback_used}",
+            " ".join(detail_parts),
         )
 
     mids: list[float] = []

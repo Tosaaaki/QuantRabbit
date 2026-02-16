@@ -229,6 +229,14 @@
 - 追跡指標は `perf_block` / `entry_probability_reject` の内訳で次回検証し、必要であれば
   `SCALP_PING_5S_B_PERF_GUARD_*` の調整へ接続する。
 
+### 2026-02-16（追記）5秒B no_signal 原因粒度の崩れを最小修正
+
+- `workers/scalp_ping_5s/worker.py`
+  - `insufficient_signal_rows` の詳細文字列を `detail_parts` で組み立てる方式へ変更し、
+    `fallback_min_rate_window` 付与時に `fallback_used` が欠落していた組版バグを是正。
+  - これにより `entry-skip` 集計で `insufficient_signal_rows_fallback` /
+    `insufficient_signal_rows_fallback_exhausted` の振り分けが崩れないようにした。
+
 ### 2026-02-24（追記）quant-scalp-ping-5s-b の env_prefix 混在排除
 
 - `workers/scalp_ping_5s_b/worker.py` を追加修正し、`SCALP_PING_5S_B_*` を
@@ -902,3 +910,4 @@
   `env_prefix` の明示注入を追加。
 
 - 2026-02-16: `scalp_m1scalper` エントリー抑制対策として `ops/env/quant-m1scalper.env` に `M1SCALP_ALLOW_REVERSION=1` を追加し、レンジ条件許可 (`M1SCALP_REVERSION_REQUIRE_STRONG_RANGE=1`, `M1SCALP_REVERSION_ALLOWED_RANGE_MODES=range`) と閾値を緩和 (`M1SCALP_REVERSION_MIN_RANGE_SCORE=0.72`, `M1SCALP_REVERSION_MAX_ADX=20`) へ変更。M1の`buy-dip / sell-rally` 系シグナル（リバーション）を通過しやすくし、エントリー減少の改善を試験的に実施。
+- 2026-02-16: `M1SCALP_REVERSION_ALLOWED_RANGE_MODES` を `range,mixed` に広げ、`M1SCALP_REVERSION_MIN_RANGE_SCORE` を `0.55`、`M1SCALP_REVERSION_MAX_ADX` を `30` に変更。`ALLOW_REVERSION=1` を維持しつつ、リバーション通過条件の厳しさを中立寄りに再調整。
