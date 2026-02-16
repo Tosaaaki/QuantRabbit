@@ -3300,6 +3300,14 @@ async def scalp_ping_5s_worker() -> None:
             if "fallback_used=yes" in token:
                 return "insufficient_signal_rows_fallback"
             return "insufficient_signal_rows"
+        if base.startswith("insufficient_mid_rows"):
+            return "insufficient_mid_rows"
+        if base.startswith("insufficient_rows"):
+            return "insufficient_rows"
+        if base.startswith("invalid_latest_epoch"):
+            return "invalid_latest_epoch"
+        if base.startswith("stale_tick"):
+            return "stale_tick"
         return base
 
     def _infer_signal_side_from_reason(

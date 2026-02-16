@@ -253,6 +253,15 @@ def _coerce_bool(value: object, default: bool = False) -> bool:
     return default
 
 
+def _coerce_env_prefix(value: object) -> Optional[str]:
+    if not isinstance(value, str):
+        if value is None:
+            return None
+        value = str(value)
+    value = value.strip()
+    return value or None
+
+
 def _entry_execution_deadline_sec(pocket: Optional[str]) -> float:
     """Return entry preflight deadline seconds (0 = disabled).
 
@@ -7268,11 +7277,25 @@ async def market_order(
 
     # Perf guard (PF/win-rate gate). Support per-strategy overrides by passing env_prefix
     # via meta/entry_thesis so a multi-strategy worker can tune each strategy independently.
-    env_prefix = None
+    meta_env_prefix = None
+    entry_env_prefix = None
     if isinstance(meta, dict):
-        env_prefix = meta.get("env_prefix") or meta.get("ENV_PREFIX")
-    if env_prefix is None and isinstance(entry_thesis, dict):
-        env_prefix = entry_thesis.get("env_prefix") or entry_thesis.get("ENV_PREFIX")
+        meta_env_prefix = _coerce_env_prefix(
+            meta.get("env_prefix") or meta.get("ENV_PREFIX")
+        )
+    if isinstance(entry_thesis, dict):
+        entry_env_prefix = _coerce_env_prefix(
+            entry_thesis.get("env_prefix") or entry_thesis.get("ENV_PREFIX")
+        )
+    if entry_env_prefix and meta_env_prefix and entry_env_prefix != meta_env_prefix:
+        logging.debug(
+            "[ORDER] env_prefix mismatch pocket=%s strategy=%s meta=%s entry=%s",
+            pocket,
+            strategy_tag,
+            meta_env_prefix,
+            entry_env_prefix,
+        )
+    env_prefix = entry_env_prefix or meta_env_prefix
 
     if pocket != "manual":
         try:

@@ -18,7 +18,7 @@
 | Exit (専用ワーカー) | `workers/*/exit_worker.py` | pocket 別 open positions → exit 指示（PnL>0 決済が原則） |
 | Strategy Control | `workers/common/strategy_control.py` / `workers/strategy_control/worker.py` | 戦略 `entry/exit` 可否、`global_lock`、環境変数上書き |
 | Risk Guard | `execution/risk_guard.py` | lot/SL/TP/pocket → 可否・調整値 |
-| Order Manager | `execution/order_manager.py` + `quant-order-manager.service` | units/sl/tp/client_order_id/tag → OANDA ticket |
+| Order Manager | `execution/order_manager.py` + `quant-order-manager.service` | units/sl/tp/client_order_id/tag → OANDA ticket。`env_prefix` は `entry_thesis` 優先で解決し、`entry` の意図を優先反映 |
 | Position Manager | `execution/position_manager.py` + `quant-position-manager.service` | 決済/保有/実績の取得、`trades.db`/`orders.db` を参照 |
 | Logger | `logs/*.db` | 全コンポーネントが INSERT |
 

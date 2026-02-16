@@ -114,6 +114,15 @@
 - 本修正は 5秒戦略のみ対象。`SCALP_PING_5S` 系サービスの入場通過率回復を優先し、
   `entry_probability_reject` が減り `filled` が増えるかを次回監視で確認する。
 
+### 2026-02-16（追記）env_prefix 混在対策と no_signal 算出粒度の追加
+
+- `execution/order_manager.py` の `env_prefix` 解決を `entry_thesis` 優先へ固定し、
+  `meta` 側と値が混在した場合も戦略側の意図が上書きされないようにした。
+  - 混在時は `pocket` / `strategy` / `meta` / `entry` の値を debug ログへ出力し、原因追跡を可能化。
+- `workers/scalp_ping_5s/worker.py` の `no_signal` 原因集計で
+  `insufficient_mid_rows` / `insufficient_rows` / `invalid_latest_epoch` / `stale_tick`
+  を追加サブ分類化し、`insufficient_signal_rows` 系と同様に監査しやすくした。
+
 ### 2026-02-16（追記）M1スキャ (`scalp_m1scalper`) の最小ロットソフトガードを調整
 
 - `workers/scalp_m1scalper/worker.py` の `_resolve_min_units_guard` にて、
