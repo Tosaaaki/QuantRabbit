@@ -111,6 +111,83 @@ def _base_strategy_tag(tag: Optional[str]) -> str:
     return alias or base
 
 
+def _looks_strategy_tag(tag: Optional[str]) -> bool:
+    text = str(tag or "").strip()
+    if not text:
+        return False
+    lowered = text.lower()
+    if lowered in {"manual", "unknown", "none", "auto"}:
+        return False
+    if lowered.startswith("qr-"):
+        return False
+    if len(text) < 3:
+        return False
+    compact = "".join(ch for ch in text if ch.isalnum())
+    if compact.isdigit():
+        return False
+    return True
+
+
+def _strategy_tag_from_client_id(client_id: Optional[object]) -> Optional[str]:
+    raw = str(client_id or "").strip()
+    if not raw.lower().startswith("qr-"):
+        return None
+    parts = [p for p in raw.split("-") if p]
+    if len(parts) < 3:
+        return None
+
+    def _looks_side_token(v: str) -> bool:
+        if len(v) < 5:
+            return False
+        if v[0].upper() not in {"L", "S"}:
+            return False
+        return all(ch in "0123456789abcdefABCDEF" for ch in v[1:])
+
+    tag_tokens: list[str] = []
+    if len(parts) >= 3 and parts[1].isdigit():
+        tag_tokens = parts[2:]
+        if tag_tokens and _looks_side_token(tag_tokens[-1]):
+            tag_tokens = tag_tokens[:-1]
+    elif len(parts) >= 4 and parts[2].isdigit():
+        tag_tokens = parts[3:]
+        if tag_tokens and _looks_side_token(tag_tokens[-1]):
+            tag_tokens = tag_tokens[:-1]
+    elif len(parts) >= 4:
+        tag_tokens = [parts[1], parts[2], *parts[3:]]
+
+    candidate = "-".join(tag_tokens).strip("-")
+    if not _looks_strategy_tag(candidate):
+        return None
+    return _base_strategy_tag(candidate)
+
+
+def _strategy_tag_for_trade(trade: dict) -> str:
+    thesis = trade.get("entry_thesis") or {}
+    for key in (
+        "strategy_tag",
+        "strategy_tag_raw",
+        "strategy",
+        "tag",
+    ):
+        candidate = thesis.get(key)
+        if _looks_strategy_tag(candidate):
+            return _base_strategy_tag(str(candidate))
+
+    candidate = trade.get("strategy_tag") or trade.get("strategy")
+    if _looks_strategy_tag(candidate):
+        return _base_strategy_tag(str(candidate))
+
+    client_id = (
+        trade.get("client_id")
+        or trade.get("client_order_id")
+        or trade.get("clientExtensions", {}).get("id")
+    )
+    inferred = _strategy_tag_from_client_id(client_id)
+    if inferred:
+        return inferred
+    return ""
+
+
 def _load_strategy_protection_config() -> dict:
     if not _STRATEGY_PROTECTION_ENABLED:
         return {"defaults": {}, "strategies": {}}
@@ -442,15 +519,7 @@ def _filter_trades(trades: Sequence[dict], tags: Set[str]) -> list[dict]:
         return []
     filtered: list[dict] = []
     for tr in trades:
-        thesis = tr.get("entry_thesis") or {}
-        tag = (
-            thesis.get("strategy_tag")
-            or thesis.get("strategy_tag_raw")
-            or thesis.get("strategy")
-            or thesis.get("tag")
-            or tr.get("strategy_tag")
-            or tr.get("strategy")
-        )
+        tag = _strategy_tag_for_trade(tr)
         if not tag:
             continue
         tag_str = str(tag)
@@ -594,6 +663,15 @@ class RangeFaderExitWorker:
         self.exit_policy_start_ts = load_rollout_start_ts("SCALP_PRECISION_EXIT_POLICY_START_TS")
 
         self._pos_manager = PositionManager()
+        self._pos_manager_open_positions_timeout_sec = max(
+            1.0,
+            _float_env("SCALP_PRECISION_EXIT_OPEN_POSITIONS_TIMEOUT_SEC", 6.0),
+        )
+        self._pos_manager_open_positions_fail_interval_sec = max(
+            1.0,
+            _float_env("SCALP_PRECISION_EXIT_OPEN_POSITIONS_FAIL_LOG_INTERVAL_SEC", 15.0),
+        )
+        self._last_pos_manager_open_positions_err_mono = 0.0
         self._states: dict[str, _TradeState] = {}
         self._loss_cut_last_ts: dict[str, float] = {}
         self._rollout_skip_log_ts: dict[str, float] = {}
@@ -724,6 +802,35 @@ class RangeFaderExitWorker:
             LOG.info("[exit-rangefader] trade=%s units=%s reason=%s pnl=%.2fp", trade_id, units, reason, pnl)
         else:
             LOG.error("[exit-rangefader] close failed trade=%s units=%s reason=%s", trade_id, units, reason)
+
+    async def _safe_get_open_positions(self) -> tuple[dict[str, dict], Optional[str]]:
+        start = time.monotonic()
+        try:
+            payload = await asyncio.wait_for(
+                asyncio.to_thread(self._pos_manager.get_open_positions),
+                timeout=self._pos_manager_open_positions_timeout_sec,
+            )
+            if not isinstance(payload, dict):
+                return {}, "position_manager_invalid_payload"
+            return payload, None
+        except asyncio.TimeoutError:
+            now = time.monotonic()
+            if now - self._last_pos_manager_open_positions_err_mono >= self._pos_manager_open_positions_fail_interval_sec:
+                LOG.warning(
+                    "[exit-rangefader] position_manager.get_open_positions timeout after %.2fs",
+                    now - start,
+                )
+                self._last_pos_manager_open_positions_err_mono = now
+            return {}, "position_manager_timeout"
+        except Exception:
+            now = time.monotonic()
+            if now - self._last_pos_manager_open_positions_err_mono >= self._pos_manager_open_positions_fail_interval_sec:
+                LOG.exception(
+                    "[exit-rangefader] position_manager.get_open_positions failed after %.2fs",
+                    now - start,
+                )
+                self._last_pos_manager_open_positions_err_mono = now
+            return {}, "position_manager_error"
 
     async def _review_trade(self, trade: dict, now: datetime, mid: Optional[float], range_active: bool) -> None:
         trade_id = str(trade.get("trade_id"))
@@ -1274,7 +1381,12 @@ class RangeFaderExitWorker:
             had_trades = False
             while True:
                 await asyncio.sleep(self.loop_interval if had_trades else self.idle_interval)
-                positions = self._pos_manager.get_open_positions()
+                positions, pos_err = await self._safe_get_open_positions()
+                if pos_err is not None:
+                    _note = "position_manager_timeout" if pos_err == "position_manager_timeout" else pos_err
+                    LOG.info("[exit-rangefader] skip cycle due to pos_manager failure: %s", _note)
+                    had_trades = False
+                    continue
                 pocket_info = positions.get(POCKET) or {}
                 trades = _filter_trades(pocket_info.get("open_trades") or [], ALLOWED_TAGS)
                 had_trades = bool(trades)

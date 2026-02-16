@@ -168,6 +168,17 @@
   戦略タグ推定を強化し、`qr-<timestamp>` を strategy_tag と誤認する既知不具合を抑止。
 - 目的は 5 秒B 側の `open_trades` 管理漏れを潰し、取り残し残高の監視・追跡を確実化すること。
 
+### 2026-02-16（追記）scalp_precision と scalp_ping_5s の `position_manager` 失敗時ガード
+
+- `workers/scalp_precision/exit_worker.py`
+  - `PositionManager.get_open_positions()` を非同期タイムアウト付きの安全取得へ変更し、`position_manager_error` / `position_manager_timeout` 時は同サイクルをスキップ。
+  - `_filter_trades` は `entry_thesis` 欠損時に `client_id/client_order_id` ベースの戦略タグ推定を追加し、タグ欠落による戦略漏れを抑制。
+  - 取得失敗の連続警報を間引き。
+- `workers/scalp_ping_5s/worker.py`
+  - `_safe_get_open_positions()` 後、エラー時に `continue` で当該ループを明示保留に変更し、空 `pocket_info` での判定を防止。
+  - `forced_exit`/`profit_bank` 再取得でも同様にスキップへ統一。
+- 運用意図: フォールバックは「空データ埋め込み」ではなく、取引判断の実行抑止（Fail-safe）に限定。
+
 ## 追加（実装済み）
 
 - `systemd/quant-market-data-feed.service`

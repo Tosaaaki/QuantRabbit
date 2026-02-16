@@ -3387,6 +3387,7 @@ async def scalp_ping_5s_worker() -> None:
                 )
                 if pos_err is not None:
                     _note_entry_skip(pos_err)
+                    continue
 
                 pocket_info = positions.get(config.POCKET) or {}
 
@@ -3558,6 +3559,7 @@ async def scalp_ping_5s_worker() -> None:
                 )
                 if pos_err is not None:
                     _note_entry_skip(pos_err)
+                    continue
                 pocket_info = positions.get(config.POCKET) or {}
             profit_bank_closed = await _apply_profit_bank_release(
                 pocket_info=pocket_info,
@@ -3573,6 +3575,7 @@ async def scalp_ping_5s_worker() -> None:
                 )
                 if pos_err is not None:
                     _note_entry_skip(pos_err)
+                    continue
                 pocket_info = positions.get(config.POCKET) or {}
             elif (
                 config.PROFIT_BANK_ENABLED
