@@ -27,7 +27,6 @@ from oandapyV20.endpoints.trades import TradeCRCDO, TradeClose, TradeDetails
 
 from execution.order_ids import build_client_order_id
 from execution.stop_loss_policy import (
-    fixed_sl_mode,
     stop_loss_disabled_for_pocket,
     trailing_sl_allowed,
 )
@@ -1703,10 +1702,6 @@ def _allow_stop_loss_on_fill(pocket: Optional[str]) -> bool:
     profit-only exit behavior. This can be overridden globally or per-pocket
     for hard-stop rollouts.
     """
-
-    fixed_mode = fixed_sl_mode()
-    if fixed_mode is not None:
-        return fixed_mode
 
     if not _EXIT_NO_NEGATIVE_CLOSE:
         return True
