@@ -568,9 +568,10 @@ async def scalp_m1_worker() -> None:
             )
             continue
         blocked, remain, spread_state, spread_reason = spread_monitor.is_blocked()
+        spread_guard_disabled = bool(getattr(spread_monitor, "DISABLE_SPREAD_GUARD", False))
         spread_pips = float(spread_state.get("spread_pips") or 0.0) if spread_state else 0.0
         spread_stale = bool(spread_state.get("stale")) if spread_state else False
-        if blocked or spread_stale or spread_pips > config.MAX_SPREAD_PIPS:
+        if (blocked or spread_pips > config.MAX_SPREAD_PIPS or (spread_stale and not spread_guard_disabled)):
             now_mono = time.monotonic()
             if now_mono - last_spread_log > 60.0:
                 LOG.info(
@@ -1237,6 +1238,7 @@ async def scalp_m1_worker() -> None:
                 current_bid=float(current_bid) if current_bid is not None else None,
                 current_ask=float(current_ask) if current_ask is not None else None,
                 client_order_id=client_id,
+                strategy_tag=strategy_tag,
                 ttl_ms=max(1.0, limit_ttl_sec) * 1000.0,
                 entry_thesis=entry_thesis,
             )

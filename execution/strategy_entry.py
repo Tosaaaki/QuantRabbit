@@ -341,6 +341,10 @@ def _resolve_strategy_tag(
     client_order_id: Optional[str],
     entry_thesis: Optional[dict],
 ) -> Optional[str]:
+    if isinstance(entry_thesis, dict):
+        thesis_strategy_tag = order_manager._strategy_tag_from_thesis(entry_thesis)
+        if thesis_strategy_tag:
+            return thesis_strategy_tag
     resolved = strategy_tag
     if not resolved:
         resolved = order_manager._strategy_tag_from_client_id(client_order_id)
