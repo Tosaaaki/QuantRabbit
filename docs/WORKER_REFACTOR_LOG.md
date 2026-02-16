@@ -37,6 +37,19 @@
 - したがって、`strategy-control` が戦略ロジックを代行しているわけではなく、**各戦略の意思決定を中断/再開するガードレイヤー**として機能する。
 - UI の戦略ON/OFFや緊急ロックはこのガードレイヤーを介して、並行中の戦略群へ即時反映する。
 
+### 2026-02-16（追記）5秒スキャ（scalp_ping_5s）運用通過率の即時改善
+
+- `ops/env/scalp_ping_5s.env` を更新し、5秒戦略向け `entry_probability` スケーリング後の
+  最小ロット拒否を回避するため、戦略別最小ロットを引き下げた。
+  - `ORDER_MIN_UNITS_STRATEGY_SCALP_PING_5S=20`
+  - `ORDER_MIN_UNITS_STRATEGY_SCALP_PING_5S_LIVE=20`
+- 同ファイルで `SCALP_PING_5S_PERF_GUARD_*` を追加し、5秒戦略単体で `perf_guard` の実運用しきい値を事実上緩和。
+  - `PERF_GUARD_MIN_TRADES=99999` / `PF_MIN=0.0` / `WIN_MIN=0.0`
+  - `PERF_GUARD_FAILFAST_MIN_TRADES=99999` / `FAILFAST_PF=0.0` / `FAILFAST_WIN=0.0`
+- 変更対象は 5秒エントリー運用のみに限定（`SCALP_PING_5S_*` プレフィックス）。
+- 反映後、VM 上で `orders.db` の `strategy=scalp_ping_5s_live` の `entry_probability_reject` と `perf_block`
+  比率低下、`filled`/`submit_attempt` 増加を優先監視する。
+
 ## 追加（実装済み）
 
 - `systemd/quant-market-data-feed.service`

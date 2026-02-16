@@ -4,16 +4,27 @@ set -euo pipefail
 # Install and enable QuantRabbit systemd units so they survive VM reboots.
 # Usage:
 #   sudo bash scripts/install_trading_services.sh [--repo /home/tossaki/QuantRabbit] [--all] [--units "quant-impulse-break-s5.service quant-impulse-break-s5-exit.service"]
-# Defaults: only installs/enables the main gate `quantrabbit.service`.
+# Defaults: installs/enables the main gate `quantrabbit.service`
+# and the log-cleanup unit set.
 
 REPO_DIR="/home/tossaki/QuantRabbit"
 INSTALL_ALL=0
 EXPLICIT_UNITS=()
 V2_DISALLOWED_UNITS=(
+  "quant-micro-trendretest.service"
+  "quant-micro-trendretest-exit.service"
   "quant-impulse-retest-s5.service"
   "quant-impulse-retest-s5-exit.service"
   "quant-micro-adaptive-revert.service"
   "quant-micro-adaptive-revert-exit.service"
+  "quant-trend-reclaim-long.service"
+  "quant-trend-reclaim-long-exit.service"
+)
+KNOWN_BROKEN_UNITS=(
+  "quant-micro-trendretest.service"
+  "quant-micro-trendretest-exit.service"
+  "quant-impulse-retest-s5.service"
+  "quant-impulse-retest-s5-exit.service"
   "quant-trend-reclaim-long.service"
   "quant-trend-reclaim-long-exit.service"
 )
@@ -66,26 +77,36 @@ install_unit() {
   local src="$1"
   local dest="$SYSTEMD_DEST/$(basename "$src")"
   local base="$(basename "$src")"
-  local skip="0"
   if [[ ! -f "$src" ]]; then
     echo "Skip (not found): $src"
     return
   fi
-  if [[ $INSTALL_ALL -eq 1 ]]; then
-    for svc in "${V2_DISALLOWED_UNITS[@]}"; do
-      if [[ "$base" == "$svc" ]]; then
-        skip="1"
-        break
-      fi
-    done
-    if [[ "$skip" == "1" ]]; then
-      echo "Skip disabled legacy unit (by V2 policy): $base"
-      return
-    fi
+  if ! is_allowed_unit "$base" "$INSTALL_ALL"; then
+    echo "Skip disabled legacy/broken unit: $base"
+    return
   fi
   install -m 0644 "$src" "$dest"
   echo "Installed: $dest"
   ENABLE_QUEUE+=("$(basename "$dest")")
+}
+
+is_allowed_unit() {
+  local base="$1"
+  local install_all="$2"
+  if [[ "$install_all" == "1" ]]; then
+    local svc=""
+    for svc in "${V2_DISALLOWED_UNITS[@]}"; do
+      if [[ "$base" == "$svc" ]]; then
+        return 1
+      fi
+    done
+  fi
+  for svc in "${KNOWN_BROKEN_UNITS[@]}"; do
+    if [[ "$base" == "$svc" ]]; then
+      return 1
+    fi
+  done
+  return 0
 }
 
 enable_unit() {
@@ -140,10 +161,34 @@ remove_legacy_qr_units() {
   done
 }
 
+remove_known_broken_units() {
+  local -a removed=()
+  for unit in "${KNOWN_BROKEN_UNITS[@]}"; do
+    local unit_path="$SYSTEMD_DEST/$unit"
+    if [[ -e "$unit_path" ]]; then
+      systemctl disable --now "$unit" >/dev/null 2>&1 || true
+      rm -f "$unit_path"
+      removed+=("$unit")
+    fi
+    local -a filtered=()
+    for queued in "${ENABLE_QUEUE[@]}"; do
+      if [[ "$queued" != "$unit" ]]; then
+        filtered+=("$queued")
+      fi
+    done
+    ENABLE_QUEUE=("${filtered[@]}")
+  done
+  if (( ${#removed[@]} > 0 )); then
+    echo "Removed known broken/legacy units: ${removed[*]}"
+  fi
+}
+
 ENABLE_QUEUE=()
 
 # Always install the main gate service
 install_unit "$MAIN_UNIT_SRC"
+install_unit "systemd/cleanup-qr-logs.service"
+install_unit "systemd/cleanup-qr-logs.timer"
 
 if [[ $INSTALL_ALL -eq 1 ]]; then
   for unit in systemd/*.service systemd/*.timer; do
@@ -167,6 +212,7 @@ if [[ ${#EXPLICIT_UNITS[@]} -gt 0 ]]; then
 fi
 
 remove_legacy_qr_units
+remove_known_broken_units
 
 systemctl daemon-reload
 
