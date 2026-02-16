@@ -50,6 +50,29 @@
 - 反映後、VM 上で `orders.db` の `strategy=scalp_ping_5s_live` の `entry_probability_reject` と `perf_block`
   比率低下、`filled`/`submit_attempt` 増加を優先監視する。
 
+### 2026-02-16（追記）5秒スキャ no_signal 原因可視化の追加
+
+- `workers/scalp_ping_5s/worker.py` の `_build_tick_signal()` を
+  `reason` 付き返却に変更し、`entry-skip` の `no_signal` に
+  `insufficient_*`/`stale_tick`/`momentum_tail_failed` などの原因を
+  `detail` として残す監査を追加。
+- `ops/env/scalp_ping_5s.env` で 5秒戦略の入口閾値を追加緩和。
+  - `SCALP_PING_5S_SIGNAL_WINDOW_SEC=0.35`
+  - `SCALP_PING_5S_MOMENTUM_TRIGGER_PIPS=0.08`
+  - `SCALP_PING_5S_MOMENTUM_SPREAD_MULT=0.12`
+  - `SCALP_PING_5S_ENTRY_BID_ASK_EDGE_PIPS=0.0`
+- 本修正は 5秒戦略のみ対象。`SCALP_PING_5S` 系サービスの入場通過率回復を優先し、
+  `entry_probability_reject` が減り `filled` が増えるかを次回監視で確認する。
+
+### 2026-02-16（追記）PositionManager 停止再開耐障害化
+
+- `execution/position_manager.py`:
+  - `trades.db` 接続再確立時の再試行回数/待ち時間を追加し、連続再接続失敗時はインターバルで抑止するよう調整。
+  - `close()` で接続をクローズ後 `self.con = None` へセットし、閉じた接続の再利用を防止。
+  - closed DB 例外時の再接続制御を `_ensure_connection_open` / `_commit_with_retry` / `_executemany_with_retry` で統一。
+- `workers/position_manager/worker.py`:
+  - 起動時 `PositionManager` 初期化をリトライ化。失敗時は明示エラー付きで起動継続し、サービス再起動ループを回避。
+
 ## 追加（実装済み）
 
 - `systemd/quant-market-data-feed.service`

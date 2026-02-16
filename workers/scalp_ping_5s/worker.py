@@ -1655,17 +1655,20 @@ def _momentum_tail_continuation_ok(
     return tail_delta_pips <= -required_tail
 
 
-def _build_tick_signal(rows: Sequence[dict], spread_pips: float) -> Optional[TickSignal]:
+def _build_tick_signal(rows: Sequence[dict], spread_pips: float) -> tuple[Optional[TickSignal], str]:
     if len(rows) < config.MIN_TICKS:
-        return None
+        return None, f"insufficient_rows:{len(rows)}/{config.MIN_TICKS}"
 
     latest_epoch = _safe_float(rows[-1].get("epoch"), 0.0)
     if latest_epoch <= 0.0:
-        return None
+        return None, "invalid_latest_epoch"
 
     tick_age_ms = max(0.0, (time.time() - latest_epoch) * 1000.0)
     if tick_age_ms > config.MAX_TICK_AGE_MS:
-        return None
+        return (
+            None,
+            f"stale_tick:{int(tick_age_ms)}ms>{int(config.MAX_TICK_AGE_MS)}ms",
+        )
 
     instant_cutoff_for_scale = latest_epoch - config.INSTANT_VOL_WINDOW_SEC
     instant_mids_for_scale: list[float] = []
@@ -1693,7 +1696,10 @@ def _build_tick_signal(rows: Sequence[dict], spread_pips: float) -> Optional[Tic
     window_cutoff = latest_epoch - signal_window_sec
     signal_rows = [r for r in rows if _safe_float(r.get("epoch"), 0.0) >= window_cutoff]
     if len(signal_rows) < min_signal_ticks:
-        return None
+        return (
+            None,
+            f"insufficient_signal_rows:{len(signal_rows)}/{min_signal_ticks}",
+        )
 
     mids: list[float] = []
     epochs: list[float] = []
@@ -1710,7 +1716,10 @@ def _build_tick_signal(rows: Sequence[dict], spread_pips: float) -> Optional[Tic
         fallback_mid = mid
 
     if len(mids) < min_signal_ticks:
-        return None
+        return (
+            None,
+            f"insufficient_mid_rows:{len(mids)}/{min_signal_ticks}",
+        )
 
     signal_range_pips = (max(mids) - min(mids)) / config.PIP_VALUE
     if len(mids) >= 2:
@@ -1757,6 +1766,7 @@ def _build_tick_signal(rows: Sequence[dict], spread_pips: float) -> Optional[Tic
 
     side_momentum: Optional[str] = None
     momentum_score = 0.0
+    momentum_tail_rejected = False
     if (
         len(mids) >= long_min_signal_ticks
         and momentum_pips >= long_edge_guard_pips
@@ -1778,6 +1788,7 @@ def _build_tick_signal(rows: Sequence[dict], spread_pips: float) -> Optional[Tic
         momentum_pips=momentum_pips,
     ):
         side_momentum = None
+        momentum_tail_rejected = True
 
     strength = abs(momentum_pips) / max(0.01, trigger_pips)
     if side_momentum is not None:
@@ -1791,6 +1802,7 @@ def _build_tick_signal(rows: Sequence[dict], spread_pips: float) -> Optional[Tic
     revert_score = 0.0
     revert_momentum_pips = 0.0
     revert_trigger_pips = max(0.05, config.REVERT_BOUNCE_MIN_PIPS)
+    revert_reason = "revert_not_enabled"
     if config.REVERT_ENABLED:
         revert_window_sec = max(
             0.35,
@@ -1877,10 +1889,13 @@ def _build_tick_signal(rows: Sequence[dict], spread_pips: float) -> Optional[Tic
                             if long_score >= short_score:
                                 side_revert = "long"
                                 revert_score = float(long_score)
+                                revert_reason = "revert_long"
                             else:
                                 side_revert = "short"
                                 revert_score = float(short_score)
                             revert_momentum_pips = short_leg_pips
+                            if side_revert == "short":
+                                revert_reason = "revert_short"
                             revert_trigger_pips = max(
                                 0.05,
                                 config.REVERT_BOUNCE_MIN_PIPS,
@@ -1912,7 +1927,11 @@ def _build_tick_signal(rows: Sequence[dict], spread_pips: float) -> Optional[Tic
         selected_trigger_pips = revert_trigger_pips
 
     if side is None:
-        return None
+        if momentum_tail_rejected and not config.REVERT_ENABLED:
+            return None, "momentum_tail_failed_no_revert"
+        if momentum_tail_rejected and side_revert is None:
+            return None, "momentum_tail_failed"
+        return None, revert_reason
 
     selected_strength = abs(selected_momentum_pips) / max(0.01, selected_trigger_pips)
     confidence = config.CONFIDENCE_FLOOR + 2 if mode == "revert" else config.CONFIDENCE_FLOOR
@@ -1922,7 +1941,8 @@ def _build_tick_signal(rows: Sequence[dict], spread_pips: float) -> Optional[Tic
     confidence += int(min(6.0, mode_score * 1.2))
     confidence = max(config.CONFIDENCE_FLOOR, min(config.CONFIDENCE_CEIL, confidence))
 
-    return TickSignal(
+    return (
+        TickSignal(
         side=side,
         mode=mode,
         mode_score=float(mode_score),
@@ -1941,6 +1961,8 @@ def _build_tick_signal(rows: Sequence[dict], spread_pips: float) -> Optional[Tic
         bid=bid,
         ask=ask,
         mid=mid,
+        ),
+        "ok",
     )
 
 
@@ -3650,9 +3672,9 @@ async def scalp_ping_5s_worker() -> None:
                 )
                 continue
 
-            signal = _build_tick_signal(ticks, spread_pips)
+            signal, signal_reason = _build_tick_signal(ticks, spread_pips)
             if signal is None:
-                _note_entry_skip("no_signal")
+                _note_entry_skip("no_signal", detail=signal_reason)
                 continue
             _signal_side_hint = signal.side
             if signal.spread_pips > config.MAX_SPREAD_PIPS:
