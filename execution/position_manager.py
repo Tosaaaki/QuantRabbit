@@ -13,6 +13,7 @@ from bisect import bisect_left
 from contextlib import contextmanager
 from datetime import datetime, timezone, timedelta
 from typing import Dict, Tuple
+import threading
 
 import requests
 from requests.adapters import HTTPAdapter
@@ -214,8 +215,17 @@ _POSITION_MANAGER_SERVICE_URL = os.getenv(
     "POSITION_MANAGER_SERVICE_URL", "http://127.0.0.1:8301"
 )
 _POSITION_MANAGER_SERVICE_TIMEOUT = _env_float(
-    "POSITION_MANAGER_SERVICE_TIMEOUT", 5.0
+    "POSITION_MANAGER_SERVICE_TIMEOUT", max(_REQUEST_TIMEOUT + 1.0, 8.0)
 )
+if _POSITION_MANAGER_SERVICE_TIMEOUT < _REQUEST_TIMEOUT + 0.5:
+    logging.warning(
+        "[PositionManager] POSITION_MANAGER_SERVICE_TIMEOUT=%s is too low for POSITION_MANAGER_HTTP_TIMEOUT=%s; "
+        "using fallback %s",
+        _POSITION_MANAGER_SERVICE_TIMEOUT,
+        _REQUEST_TIMEOUT,
+        _REQUEST_TIMEOUT + 1.0,
+    )
+    _POSITION_MANAGER_SERVICE_TIMEOUT = _REQUEST_TIMEOUT + 1.0
 _POSITION_MANAGER_SERVICE_FALLBACK_LOCAL = _env_bool(
     "POSITION_MANAGER_SERVICE_FALLBACK_LOCAL", False
 )
@@ -1238,6 +1248,11 @@ class PositionManager:
         self._last_positions_ts: float = 0.0
         self._open_trade_failures: int = 0
         self._next_open_fetch_after: float = 0.0
+        self._open_positions_lock = threading.Lock()
+        self._sync_trades_lock = threading.Lock()
+        self._last_sync_cache: list[dict] = []
+        self._last_sync_cache_ts: float = 0.0
+        self._last_sync_cache_window_sec: float = 1.2
         self._last_positions_meta: dict | None = None
         self._entry_meta_cache: dict[str, dict] = {}
         self._last_sync_fetch_meta: dict[str, float | int] = {}
@@ -2428,27 +2443,44 @@ class PositionManager:
                 return list(service_result.values()) if service_result else []
             return []
 
-        sync_start = time.monotonic()
-        transactions = self._fetch_closed_trades()
-        fetch_meta = dict(self._last_sync_fetch_meta or {})
-        if not transactions:
-            total_ms = max(0.0, (time.monotonic() - sync_start) * 1000.0)
-            fetch_meta.setdefault("transactions", 0)
-            fetch_meta["total_ms"] = total_ms
-            self._last_sync_breakdown = fetch_meta
+        if not self._sync_trades_lock.acquire(blocking=False):
+            now = time.monotonic()
+            if self._last_sync_cache and (
+                now - self._last_sync_cache_ts
+            ) <= self._last_sync_cache_window_sec:
+                if max_fetch_int > 0:
+                    return self._last_sync_cache[-max_fetch_int:]
+                return list(self._last_sync_cache)
             return []
-        saved_records = self._parse_and_save_trades(transactions)
-        parse_meta = dict(self._last_sync_parse_meta or {})
-        total_ms = max(0.0, (time.monotonic() - sync_start) * 1000.0)
-        breakdown = {}
-        breakdown.update(fetch_meta)
-        breakdown.update(parse_meta)
-        breakdown["total_ms"] = total_ms
-        breakdown.setdefault("transactions", len(transactions))
-        self._last_sync_breakdown = breakdown
-        if max_fetch_int > 0:
-            return saved_records[-max_fetch_int:]
-        return saved_records
+
+        try:
+            sync_start = time.monotonic()
+            transactions = self._fetch_closed_trades()
+            fetch_meta = dict(self._last_sync_fetch_meta or {})
+            if not transactions:
+                total_ms = max(0.0, (time.monotonic() - sync_start) * 1000.0)
+                fetch_meta.setdefault("transactions", 0)
+                fetch_meta["total_ms"] = total_ms
+                self._last_sync_breakdown = fetch_meta
+                self._last_sync_cache_ts = time.monotonic()
+                self._last_sync_cache = []
+                return []
+            saved_records = self._parse_and_save_trades(transactions)
+            parse_meta = dict(self._last_sync_parse_meta or {})
+            total_ms = max(0.0, (time.monotonic() - sync_start) * 1000.0)
+            breakdown = {}
+            breakdown.update(fetch_meta)
+            breakdown.update(parse_meta)
+            breakdown["total_ms"] = total_ms
+            breakdown.setdefault("transactions", len(transactions))
+            self._last_sync_breakdown = breakdown
+            self._last_sync_cache = list(saved_records)
+            self._last_sync_cache_ts = time.monotonic()
+            if max_fetch_int > 0:
+                return saved_records[-max_fetch_int:]
+            return saved_records
+        finally:
+            self._sync_trades_lock.release()
 
     def _request_json(self, url: str, params: dict | None = None) -> dict:
         resp = self._http.get(
@@ -2497,31 +2529,7 @@ class PositionManager:
             return {}
 
         now_mono = time.monotonic()
-        if self._last_positions and now_mono < self._next_open_fetch_after:
-            age = max(0.0, now_mono - self._last_positions_ts)
-            stale = self._open_trade_failures > 0
-            return self._package_positions(
-                self._last_positions,
-                stale=stale,
-                age_sec=age,
-                extra_meta=self._last_positions_meta,
-            )
-
-        url = f"{REST_HOST}/v3/accounts/{ACCOUNT}/openTrades"
-        try:
-            payload = self._request_json(url) or {}
-            trades = payload.get("trades", [])
-            self._open_trade_failures = 0
-            self._next_open_fetch_after = now_mono + _OPEN_TRADES_CACHE_TTL
-        except requests.RequestException as e:
-            logging.warning("[PositionManager] Error fetching open trades: %s", e)
-            self._reset_http_if_needed(e)
-            self._open_trade_failures += 1
-            backoff = min(
-                _OPEN_TRADES_FAIL_BACKOFF_BASE * (2 ** (self._open_trade_failures - 1)),
-                _OPEN_TRADES_FAIL_BACKOFF_MAX,
-            )
-            self._next_open_fetch_after = now_mono + backoff
+        if not self._open_positions_lock.acquire(blocking=False):
             if self._last_positions:
                 age = max(0.0, now_mono - self._last_positions_ts)
                 return self._package_positions(
@@ -2532,260 +2540,305 @@ class PositionManager:
                 )
             return {}
 
-        pockets: dict[str, dict] = {}
-        net_units = 0
-        manual_trades = 0
-        manual_units = 0
-        manual_unrealized = 0.0
-        client_ids: set[str] = set()
-        for tr in trades:
-            client_ext = tr.get("clientExtensions", {}) or {}
-            client_id_raw = client_ext.get("id")
-            client_id = str(client_id_raw or "")
-            tag_raw = client_ext.get("tag") or ""
-            tag = str(tag_raw)
-            trade_id = tr.get("id") or tr.get("tradeID")
-            cached_pocket = self._pocket_cache.get(str(trade_id), "") if trade_id else ""
+        try:
+            if self._last_positions and now_mono < self._next_open_fetch_after:
+                age = max(0.0, now_mono - self._last_positions_ts)
+                stale = self._open_trade_failures > 0
+                return self._package_positions(
+                    self._last_positions,
+                    stale=stale,
+                    age_sec=age,
+                    extra_meta=self._last_positions_meta,
+                )
 
-            pocket: str
-            is_agent_client = client_id.startswith(agent_client_prefixes)
-            if is_agent_client:
-                if tag.startswith("pocket="):
-                    pocket = tag.split("=", 1)[1]
-                elif cached_pocket in agent_pockets:
-                    pocket = cached_pocket
-                else:
-                    pocket = "unknown"
-            else:
-                # Non-agent trades are always treated as manual, even if tags hint a pocket.
-                # This prevents manual orders from being managed/closed by bot workers.
-                trade_id = tr.get("id") or tr.get("tradeID")
-                pocket = self._pocket_cache.get(str(trade_id), _MANUAL_POCKET_NAME)
-                if pocket in agent_pockets:
-                    pocket = _MANUAL_POCKET_NAME
-            if pocket not in _KNOWN_POCKETS:
-                if not (include_unknown and pocket == "unknown"):
-                    pocket = _MANUAL_POCKET_NAME
-            units = int(tr.get("currentUnits", 0))
-            if units == 0:
-                continue
-            trade_id_raw = tr.get("id") or tr.get("tradeID")
-            trade_id = str(trade_id_raw)
-            price = float(tr.get("price", 0.0))
-            if client_id:
-                client_ids.add(client_id)
-            open_time_raw = tr.get("openTime")
-            open_time_iso: str | None = None
-            if open_time_raw:
-                try:
-                    opened_dt = _parse_timestamp(open_time_raw).astimezone(timezone.utc)
-                    open_time_iso = opened_dt.isoformat()
-                except Exception:
-                    open_time_iso = open_time_raw
-            info = pockets.setdefault(
-                pocket,
-                {
-                    "units": 0,
-                    "avg_price": 0.0,
-                    "trades": 0,
-                    "long_units": 0,
-                    "long_avg_price": 0.0,
-                    "short_units": 0,
-                    "short_avg_price": 0.0,
-                    "open_trades": [],
-                    "unrealized_pl": 0.0,
-                    "unrealized_pl_pips": 0.0,
-                },
-            )
-            if pocket == "manual":
-                info["manual"] = True
+            url = f"{REST_HOST}/v3/accounts/{ACCOUNT}/openTrades"
             try:
-                unrealized_pl = float(tr.get("unrealizedPL", 0.0) or 0.0)
-            except Exception:
-                unrealized_pl = 0.0
-            abs_units = abs(units)
-            pip_value = abs_units * 0.01
-            unrealized_pl_pips = unrealized_pl / pip_value if pip_value else 0.0
-            client_id = client_ext.get("id")
-            trade_entry = {
-                "trade_id": trade_id,
-                "units": units,
-                "price": price,
-                "client_id": client_id,
-                "client_order_id": client_id,
-                "side": "long" if units > 0 else "short",
-                "unrealized_pl": unrealized_pl,
-                "unrealized_pl_pips": unrealized_pl_pips,
-                "open_time": open_time_iso or open_time_raw,
-            }
-            tp_order = tr.get("takeProfitOrder") or {}
-            if isinstance(tp_order, dict):
-                tp_price_raw = tp_order.get("price")
-                tp_order_id = tp_order.get("id")
-                try:
-                    tp_price = float(tp_price_raw) if tp_price_raw is not None else None
-                except (TypeError, ValueError):
-                    tp_price = None
-                if tp_price is not None and tp_price > 0:
-                    take_profit = {"price": tp_price}
-                    if tp_order_id:
-                        take_profit["order_id"] = str(tp_order_id)
-                    trade_entry["take_profit"] = take_profit
-
-            sl_order = tr.get("stopLossOrder") or {}
-            if isinstance(sl_order, dict):
-                sl_price_raw = sl_order.get("price")
-                sl_order_id = sl_order.get("id")
-                try:
-                    sl_price = float(sl_price_raw) if sl_price_raw is not None else None
-                except (TypeError, ValueError):
-                    sl_price = None
-                if sl_price is not None and sl_price > 0:
-                    stop_loss = {"price": sl_price}
-                    if sl_order_id:
-                        stop_loss["order_id"] = str(sl_order_id)
-                    trade_entry["stop_loss"] = stop_loss
-            # Fallback: decode clientExtensions.comment to recover entry meta for EXIT判定
-            thesis_from_comment = None
-            try:
-                comment_raw = client_ext.get("comment")
-                if isinstance(comment_raw, str) and comment_raw.startswith("{") and len(comment_raw) <= 256:
-                    parsed = json.loads(comment_raw)
-                    if isinstance(parsed, dict):
-                        thesis_from_comment = parsed
-            except Exception:
-                thesis_from_comment = None
-            # Only resolve entry meta for bot-managed trades.
-            # Manual trades can be long-lived; resolving meta for them triggers repeated orders.db scans
-            # across many workers, which increases CPU load and data lag.
-            meta = self._resolve_entry_meta(trade_id) if is_agent_client else None
-            if meta:
-                thesis = meta.get("entry_thesis")
-                if isinstance(thesis, str):
-                    try:
-                        thesis = json.loads(thesis)
-                    except Exception:
-                        thesis = None
-                if isinstance(thesis, dict):
-                    trade_entry["entry_thesis"] = thesis
-                if meta.get("client_order_id"):
-                    trade_entry["client_order_id"] = meta.get("client_order_id")
-                strategy_tag = meta.get("strategy_tag")
-                if strategy_tag:
-                    trade_entry["strategy_tag"] = strategy_tag
-            if thesis_from_comment:
-                if not trade_entry.get("entry_thesis"):
-                    trade_entry["entry_thesis"] = thesis_from_comment
-                if not trade_entry.get("strategy_tag"):
-                    tag_val = thesis_from_comment.get("strategy_tag") or thesis_from_comment.get("tag")
-                    if tag_val:
-                        trade_entry["strategy_tag"] = tag_val
-            if not trade_entry.get("strategy_tag"):
-                inferred = self._infer_strategy_tag(trade_entry.get("entry_thesis"), client_id, pocket)
-                if inferred:
-                    trade_entry["strategy_tag"] = inferred
-            raw_tag = None
-            thesis_obj = trade_entry.get("entry_thesis")
-            if isinstance(thesis_obj, dict):
-                raw_tag = thesis_obj.get("strategy_tag") or thesis_obj.get("strategy")
-            if not raw_tag:
-                raw_tag = trade_entry.get("strategy_tag")
-            thesis_obj, norm_tag = _apply_strategy_tag_normalization(thesis_obj, raw_tag)
-            if thesis_obj is not None:
-                trade_entry["entry_thesis"] = thesis_obj
-            if norm_tag:
-                trade_entry["strategy_tag"] = norm_tag
-            # EXIT誤爆防止: エージェント管理ポケットかつ strategy_tag 不明なら除外
-            if pocket in agent_pockets and not trade_entry.get("strategy_tag"):
-                if include_unknown:
-                    trade_entry["strategy_tag"] = "unknown"
-                    trade_entry["missing_strategy_tag"] = True
-                else:
-                    logging.warning(
-                        "[PositionManager] skip open trade without strategy_tag pocket=%s trade_id=%s client_id=%s",
-                        pocket,
-                        trade_id,
-                        trade_entry.get("client_id"),
+                payload = self._request_json(url) or {}
+                trades = payload.get("trades", [])
+                self._open_trade_failures = 0
+                self._next_open_fetch_after = now_mono + _OPEN_TRADES_CACHE_TTL
+            except requests.RequestException as e:
+                logging.warning("[PositionManager] Error fetching open trades: %s", e)
+                self._reset_http_if_needed(e)
+                self._open_trade_failures += 1
+                backoff = min(
+                    _OPEN_TRADES_FAIL_BACKOFF_BASE * (2 ** (self._open_trade_failures - 1)),
+                    _OPEN_TRADES_FAIL_BACKOFF_MAX,
+                )
+                self._next_open_fetch_after = now_mono + backoff
+                if self._last_positions:
+                    age = max(0.0, now_mono - self._last_positions_ts)
+                    return self._package_positions(
+                        self._last_positions,
+                        stale=True,
+                        age_sec=age,
+                        extra_meta=self._last_positions_meta,
                     )
-                    continue
-            info["open_trades"].append(trade_entry)
-            prev_total_units = info["units"]
-            new_total_units = prev_total_units + units
-            if new_total_units != 0:
-                info["avg_price"] = (
-                    info["avg_price"] * prev_total_units + price * units
-                ) / new_total_units
-            else:
-                info["avg_price"] = price
-            info["units"] = new_total_units
-            info["trades"] += 1
+                return {}
 
-            if units > 0:
-                prev_units = info["long_units"]
-                new_units = prev_units + units
-                if new_units > 0:
-                    if prev_units == 0 or info["long_avg_price"] == 0.0:
-                        info["long_avg_price"] = price
+            pockets: dict[str, dict] = {}
+            net_units = 0
+            manual_trades = 0
+            manual_units = 0
+            manual_unrealized = 0.0
+            client_ids: set[str] = set()
+            for tr in trades:
+                client_ext = tr.get("clientExtensions", {}) or {}
+                client_id_raw = client_ext.get("id")
+                client_id = str(client_id_raw or "")
+                tag_raw = client_ext.get("tag") or ""
+                tag = str(tag_raw)
+                trade_id = tr.get("id") or tr.get("tradeID")
+                cached_pocket = self._pocket_cache.get(str(trade_id), "") if trade_id else ""
+
+                pocket: str
+                is_agent_client = client_id.startswith(agent_client_prefixes)
+                if is_agent_client:
+                    if tag.startswith("pocket="):
+                        pocket = tag.split("=", 1)[1]
+                    elif cached_pocket in agent_pockets:
+                        pocket = cached_pocket
                     else:
-                        info["long_avg_price"] = (
-                            info["long_avg_price"] * prev_units + price * units
-                        ) / new_units
-                info["long_units"] = new_units
-            elif units < 0:
+                        pocket = "unknown"
+                else:
+                    # Non-agent trades are always treated as manual, even if tags hint a pocket.
+                    # This prevents manual orders from being managed/closed by bot workers.
+                    trade_id = tr.get("id") or tr.get("tradeID")
+                    pocket = self._pocket_cache.get(str(trade_id), _MANUAL_POCKET_NAME)
+                    if pocket in agent_pockets:
+                        pocket = _MANUAL_POCKET_NAME
+                if pocket not in _KNOWN_POCKETS:
+                    if not (include_unknown and pocket == "unknown"):
+                        pocket = _MANUAL_POCKET_NAME
+                units = int(tr.get("currentUnits", 0))
+                if units == 0:
+                    continue
+                trade_id_raw = tr.get("id") or tr.get("tradeID")
+                trade_id = str(trade_id_raw)
+                price = float(tr.get("price", 0.0))
+                if client_id:
+                    client_ids.add(client_id)
+                open_time_raw = tr.get("openTime")
+                open_time_iso: str | None = None
+                if open_time_raw:
+                    try:
+                        opened_dt = _parse_timestamp(open_time_raw).astimezone(timezone.utc)
+                        open_time_iso = opened_dt.isoformat()
+                    except Exception:
+                        open_time_iso = open_time_raw
+                info = pockets.setdefault(
+                    pocket,
+                    {
+                        "units": 0,
+                        "avg_price": 0.0,
+                        "trades": 0,
+                        "long_units": 0,
+                        "long_avg_price": 0.0,
+                        "short_units": 0,
+                        "short_avg_price": 0.0,
+                        "open_trades": [],
+                        "unrealized_pl": 0.0,
+                        "unrealized_pl_pips": 0.0,
+                    },
+                )
+                if pocket == "manual":
+                    info["manual"] = True
+                try:
+                    unrealized_pl = float(tr.get("unrealizedPL", 0.0) or 0.0)
+                except Exception:
+                    unrealized_pl = 0.0
                 abs_units = abs(units)
-                prev_units = info["short_units"]
-                new_units = prev_units + abs_units
-                if new_units > 0:
-                    if prev_units == 0 or info["short_avg_price"] == 0.0:
-                        info["short_avg_price"] = price
+                pip_value = abs_units * 0.01
+                unrealized_pl_pips = unrealized_pl / pip_value if pip_value else 0.0
+                client_id = client_ext.get("id")
+                trade_entry = {
+                    "trade_id": trade_id,
+                    "units": units,
+                    "price": price,
+                    "client_id": client_id,
+                    "client_order_id": client_id,
+                    "side": "long" if units > 0 else "short",
+                    "unrealized_pl": unrealized_pl,
+                    "unrealized_pl_pips": unrealized_pl_pips,
+                    "open_time": open_time_iso or open_time_raw,
+                }
+                tp_order = tr.get("takeProfitOrder") or {}
+                if isinstance(tp_order, dict):
+                    tp_price_raw = tp_order.get("price")
+                    tp_order_id = tp_order.get("id")
+                    try:
+                        tp_price = float(tp_price_raw) if tp_price_raw is not None else None
+                    except (TypeError, ValueError):
+                        tp_price = None
+                    if tp_price is not None and tp_price > 0:
+                        take_profit = {"price": tp_price}
+                        if tp_order_id:
+                            take_profit["order_id"] = str(tp_order_id)
+                        trade_entry["take_profit"] = take_profit
+
+                sl_order = tr.get("stopLossOrder") or {}
+                if isinstance(sl_order, dict):
+                    sl_price_raw = sl_order.get("price")
+                    sl_order_id = sl_order.get("id")
+                    try:
+                        sl_price = float(sl_price_raw) if sl_price_raw is not None else None
+                    except (TypeError, ValueError):
+                        sl_price = None
+                    if sl_price is not None and sl_price > 0:
+                        stop_loss = {"price": sl_price}
+                        if sl_order_id:
+                            stop_loss["order_id"] = str(sl_order_id)
+                        trade_entry["stop_loss"] = stop_loss
+                # Fallback: decode clientExtensions.comment to recover entry meta for EXIT判定
+                thesis_from_comment = None
+                try:
+                    comment_raw = client_ext.get("comment")
+                    if (
+                        isinstance(comment_raw, str)
+                        and comment_raw.startswith("{")
+                        and len(comment_raw) <= 256
+                    ):
+                        parsed = json.loads(comment_raw)
+                        if isinstance(parsed, dict):
+                            thesis_from_comment = parsed
+                except Exception:
+                    thesis_from_comment = None
+                # Only resolve entry meta for bot-managed trades.
+                # Manual trades can be long-lived; resolving meta for them triggers repeated orders.db scans
+                # across many workers, which increases CPU load and data lag.
+                meta = self._resolve_entry_meta(trade_id) if is_agent_client else None
+                if meta:
+                    thesis = meta.get("entry_thesis")
+                    if isinstance(thesis, str):
+                        try:
+                            thesis = json.loads(thesis)
+                        except Exception:
+                            thesis = None
+                    if isinstance(thesis, dict):
+                        trade_entry["entry_thesis"] = thesis
+                    if meta.get("client_order_id"):
+                        trade_entry["client_order_id"] = meta.get("client_order_id")
+                    strategy_tag = meta.get("strategy_tag")
+                    if strategy_tag:
+                        trade_entry["strategy_tag"] = strategy_tag
+                if thesis_from_comment:
+                    if not trade_entry.get("entry_thesis"):
+                        trade_entry["entry_thesis"] = thesis_from_comment
+                    if not trade_entry.get("strategy_tag"):
+                        tag_val = thesis_from_comment.get("strategy_tag") or thesis_from_comment.get(
+                            "tag"
+                        )
+                        if tag_val:
+                            trade_entry["strategy_tag"] = tag_val
+                if not trade_entry.get("strategy_tag"):
+                    inferred = self._infer_strategy_tag(trade_entry.get("entry_thesis"), client_id, pocket)
+                    if inferred:
+                        trade_entry["strategy_tag"] = inferred
+                raw_tag = None
+                thesis_obj = trade_entry.get("entry_thesis")
+                if isinstance(thesis_obj, dict):
+                    raw_tag = thesis_obj.get("strategy_tag") or thesis_obj.get("strategy")
+                if not raw_tag:
+                    raw_tag = trade_entry.get("strategy_tag")
+                thesis_obj, norm_tag = _apply_strategy_tag_normalization(thesis_obj, raw_tag)
+                if thesis_obj is not None:
+                    trade_entry["entry_thesis"] = thesis_obj
+                if norm_tag:
+                    trade_entry["strategy_tag"] = norm_tag
+                # EXIT誤爆防止: エージェント管理ポケットかつ strategy_tag 不明なら除外
+                if pocket in agent_pockets and not trade_entry.get("strategy_tag"):
+                    if include_unknown:
+                        trade_entry["strategy_tag"] = "unknown"
+                        trade_entry["missing_strategy_tag"] = True
                     else:
-                        info["short_avg_price"] = (
-                            info["short_avg_price"] * prev_units + price * abs_units
-                        ) / new_units
-                info["short_units"] = new_units
+                        logging.warning(
+                            "[PositionManager] skip open trade without strategy_tag pocket=%s trade_id=%s client_id=%s",
+                            pocket,
+                            trade_id,
+                            trade_entry.get("client_id"),
+                        )
+                        continue
+                info["open_trades"].append(trade_entry)
+                prev_total_units = info["units"]
+                new_total_units = prev_total_units + units
+                if new_total_units != 0:
+                    info["avg_price"] = (
+                        info["avg_price"] * prev_total_units + price * units
+                    ) / new_total_units
+                else:
+                    info["avg_price"] = price
+                info["units"] = new_total_units
+                info["trades"] += 1
 
-            info["unrealized_pl"] = info.get("unrealized_pl", 0.0) + unrealized_pl
-            info["unrealized_pl_pips"] = info.get("unrealized_pl_pips", 0.0) + unrealized_pl_pips
-            net_units += units
-            if pocket == _MANUAL_POCKET_NAME:
-                manual_trades += 1
-                manual_units += units
-                manual_unrealized += unrealized_pl
+                if units > 0:
+                    prev_units = info["long_units"]
+                    new_units = prev_units + units
+                    if new_units > 0:
+                        if prev_units == 0 or info["long_avg_price"] == 0.0:
+                            info["long_avg_price"] = price
+                        else:
+                            info["long_avg_price"] = (
+                                info["long_avg_price"] * prev_units + price * units
+                            ) / new_units
+                    info["long_units"] = new_units
+                elif units < 0:
+                    abs_units = abs(units)
+                    prev_units = info["short_units"]
+                    new_units = prev_units + abs_units
+                    if new_units > 0:
+                        if prev_units == 0 or info["short_avg_price"] == 0.0:
+                            info["short_avg_price"] = price
+                        else:
+                            info["short_avg_price"] = (
+                                info["short_avg_price"] * prev_units + price * abs_units
+                            ) / new_units
+                    info["short_units"] = new_units
 
-        if client_ids:
-            entry_map = self._load_entry_thesis(client_ids)
-            for pocket_info in pockets.values():
-                trades_list = pocket_info.get("open_trades") if isinstance(pocket_info, dict) else None
-                if not trades_list:
-                    continue
-                for trade in trades_list:
-                    cid = trade.get("client_id")
-                    if cid and cid in entry_map:
-                        thesis_obj = entry_map[cid]
-                        raw_tag = None
-                        if isinstance(thesis_obj, dict):
-                            raw_tag = thesis_obj.get("strategy_tag_raw") or thesis_obj.get("strategy_tag")
-                            if not raw_tag:
-                                raw_tag = thesis_obj.get("strategy")
-                        thesis_obj, norm_tag = _apply_strategy_tag_normalization(thesis_obj, raw_tag)
-                        if thesis_obj is not None:
-                            trade["entry_thesis"] = thesis_obj
-                        if norm_tag:
-                            trade["strategy_tag"] = norm_tag
+                info["unrealized_pl"] = info.get("unrealized_pl", 0.0) + unrealized_pl
+                info["unrealized_pl_pips"] = info.get("unrealized_pl_pips", 0.0) + unrealized_pl_pips
+                net_units += units
+                if pocket == _MANUAL_POCKET_NAME:
+                    manual_trades += 1
+                    manual_units += units
+                    manual_unrealized += unrealized_pl
 
-        pockets["__net__"] = {"units": net_units}
-        self._last_positions = copy.deepcopy(pockets)
-        self._last_positions_ts = now_mono
+            if client_ids:
+                entry_map = self._load_entry_thesis(client_ids)
+                for pocket_info in pockets.values():
+                    trades_list = pocket_info.get("open_trades") if isinstance(pocket_info, dict) else None
+                    if not trades_list:
+                        continue
+                    for trade in trades_list:
+                        cid = trade.get("client_id")
+                        if cid and cid in entry_map:
+                            thesis_obj = entry_map[cid]
+                            raw_tag = None
+                            if isinstance(thesis_obj, dict):
+                                raw_tag = thesis_obj.get("strategy_tag_raw") or thesis_obj.get("strategy_tag")
+                                if not raw_tag:
+                                    raw_tag = thesis_obj.get("strategy")
+                            thesis_obj, norm_tag = _apply_strategy_tag_normalization(thesis_obj, raw_tag)
+                            if thesis_obj is not None:
+                                trade["entry_thesis"] = thesis_obj
+                            if norm_tag:
+                                trade["strategy_tag"] = norm_tag
 
-        extra_meta = {}
-        if manual_trades:
-            extra_meta = {
-                "manual_trades": manual_trades,
-                "manual_units": manual_units,
-                "manual_unrealized_pl": manual_unrealized,
-            }
-        self._last_positions_meta = dict(extra_meta)
-        return self._package_positions(pockets, stale=False, age_sec=0.0, extra_meta=extra_meta)
+            pockets["__net__"] = {"units": net_units}
+            self._last_positions = copy.deepcopy(pockets)
+            self._last_positions_ts = now_mono
+
+            extra_meta = {}
+            if manual_trades:
+                extra_meta = {
+                    "manual_trades": manual_trades,
+                    "manual_units": manual_units,
+                    "manual_unrealized_pl": manual_unrealized,
+                }
+            self._last_positions_meta = dict(extra_meta)
+            return self._package_positions(pockets, stale=False, age_sec=0.0, extra_meta=extra_meta)
+        finally:
+            self._open_positions_lock.release()
+
 
     def _commit_with_retry(self) -> None:
         """Commit with retry to survive short lock bursts."""

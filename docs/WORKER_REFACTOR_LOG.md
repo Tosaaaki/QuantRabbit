@@ -125,6 +125,17 @@
 - `workers/position_manager/worker.py`:
   - 起動時 `PositionManager` 初期化をリトライ化。失敗時は明示エラー付きで起動継続し、サービス再起動ループを回避。
 
+### 2026-02-16（追記）PositionManager service 呼び出しタイムアウトの整合化
+
+- `execution/position_manager.py` は `POSITION_MANAGER_HTTP_TIMEOUT` と
+  `POSITION_MANAGER_SERVICE_TIMEOUT` のギャップを起動時に検査し、サービス側タイムアウトが短すぎる構成を
+  自動補正するロジックを前提として、運用環境設定の同期を追加。
+- `ops/env/quant-v2-runtime.env` を次の値へ更新:
+  - `POSITION_MANAGER_SERVICE_TIMEOUT=9.0`
+  - `POSITION_MANAGER_HTTP_TIMEOUT=8.0`
+- 目的: service経路で `sync_trades/get_open_positions` のタイムアウト再試行を抑制し、
+  直近データ取得の安定性を上げる。
+
 ## 追加（実装済み）
 
 - `systemd/quant-market-data-feed.service`
