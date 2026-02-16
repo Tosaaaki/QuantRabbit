@@ -74,6 +74,23 @@
   - `SCALP_PING_5S_B_LOOKAHEAD_GATE_ENABLED=0` を明示し、5秒B起動時にも
     lookaheadゲートが確実に `off` になる状態を固定。
 
+### 2026-02-16（追記）5秒B閾値を5秒A運用帯へ寄せて通過率を改善
+
+- `ops/env/scalp_ping_5s_b.env` を、`scalp_ping_5s`（A）側で稼働している
+  エントリー通過優先値に寄せる形で緩和。
+  - `SCALP_PING_5S_B_MIN_TICKS=4`
+  - `SCALP_PING_5S_B_MIN_SIGNAL_TICKS=3`
+  - `SCALP_PING_5S_B_SHORT_MIN_TICKS=3`
+  - `SCALP_PING_5S_B_SHORT_MIN_TICK_RATE=0.50`
+  - `SCALP_PING_5S_B_MIN_TICK_RATE=0.50`
+  - `SCALP_PING_5S_B_SIGNAL_WINDOW_SEC=0.35`
+  - `SCALP_PING_5S_B_MOMENTUM_TRIGGER_PIPS=0.08`
+  - `SCALP_PING_5S_B_SHORT_MOMENTUM_TRIGGER_PIPS=0.08`
+  - `SCALP_PING_5S_B_MOMENTUM_SPREAD_MULT=0.12`
+  - `SCALP_PING_5S_B_ENTRY_BID_ASK_EDGE_PIPS=0.0`
+- 目的: B版の `no_signal`（特に `insufficient_signal_rows`）を減らし、`scalp_ping_5s_b_live` の実入場頻度を
+  主要な5秒戦略レベルまで引き上げる。
+
 ### 2026-02-16（追記）PositionManager 停止再開耐障害化
 
 - `execution/position_manager.py`:
