@@ -17,6 +17,18 @@
 - `workers/position_manager/worker.py` は `PositionManager` をローカルモードで起動するため、サービス停止時の
   正規クローズ経路は維持。
 
+### 2026-02-16（追記）`entry_probability` の高確率側サイズ増強を全戦略共通化
+
+- `execution/order_manager.py` の `order_manager` 共通プリフライトで `entry_probability` スケーリングを拡張し、
+  `ORDER_MANAGER_PRESERVE_INTENT_BOOST_PROBABILITY` 以上の高確率時のみ、サイズを `>1` へ拡張可能に変更。
+- 同時に、`ORDER_MANAGER_PRESERVE_INTENT_MAX_SCALE` を追加して上振れ上限を制御可能化。
+- 低確率側（`<= reject_under`）の拒否/縮小は既存ルールを維持し、縮小判断の主軸は従来どおり `ORDER_MANAGER_PRESERVE_INTENT_MIN_SCALE`
+  / `ORDER_MANAGER_PRESERVE_INTENT_REJECT_UNDER` に寄せたまま。
+- 追加運用キー（例値）:
+  - `ORDER_MANAGER_PRESERVE_INTENT_BOOST_PROBABILITY=0.80`
+  - `ORDER_MANAGER_PRESERVE_INTENT_MAX_SCALE=1.25`
+- 変更は `order_manager` 経由の全戦略に共通適用され、戦略側ロジック選別は現行どおり保持。
+
 ### 2026-02-16（追記）`install_trading_services` でログ自動軽量化を標準化
 
 - `scripts/install_trading_services.sh` を更新し、`--all` / `--units` 指定に関わらず `quant-cleanup-qr-logs.service` と
@@ -146,6 +158,15 @@
   - `POSITION_MANAGER_HTTP_TIMEOUT=8.0`
 - 目的: service経路で `sync_trades/get_open_positions` のタイムアウト再試行を抑制し、
   直近データ取得の安定性を上げる。
+
+### 2026-02-16（追記）5秒Bの `client_order_id` と strategy_tag 復元を固定
+
+- `workers/scalp_ping_5s/worker.py` の `_client_order_id()` は `config.STRATEGY_TAG` を 24 文字まで保持し、
+  `qr-<ts>-<strategy>-<side><digest>` を生成するよう変更。これにより `scalp_ping_5s` と
+  `scalp_ping_5s_b` の識別崩れ（先頭 12 文字トランケート）を解消。
+- `execution/position_manager.py` の `_infer_strategy_tag()` は `qr-<ts>-<strategy>-...` 系の
+  戦略タグ推定を強化し、`qr-<timestamp>` を strategy_tag と誤認する既知不具合を抑止。
+- 目的は 5 秒B 側の `open_trades` 管理漏れを潰し、取り残し残高の監視・追跡を確実化すること。
 
 ## 追加（実装済み）
 

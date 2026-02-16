@@ -1347,25 +1347,81 @@ class PositionManager:
                 return _normalize_strategy_tag(tag)
         if not client_id:
             return None
-        cid = str(client_id)
+        cid = str(client_id).strip()
         try:
             import re
+
+            pocket_tokens = {"micro", "macro", "scalp", "scalp_fast", "event", "hybrid", "mar"}
+            suffix_token_re = re.compile(r"^[sb]?[a-f0-9]{6,16}$")
+
             # Known prefixes
             if cid.startswith("qr-fast-"):
                 return _normalize_strategy_tag("fast_scalp")
             if cid.startswith("qr-pullback-s5-"):
                 return _normalize_strategy_tag("pullback_s5")
-            # qr-<ts>-<pocket>-<tag...>
-            m = re.match(r"^qr-\d+-(micro|macro|scalp|event|hybrid)-(.+)$", cid)
-            if m:
-                return _normalize_strategy_tag(m.group(2))
+
+            if cid.startswith("qr-"):
+                body = cid[3:]
+                if body and body[0].isdigit():
+                    tokens = body.split("-")
+                    tokens = tokens[1:]  # remove ts
+                    if not tokens:
+                        return None
+                    if suffix_token_re.match(tokens[-1]):
+                        tokens = tokens[:-1]
+                    if not tokens:
+                        return None
+                    # qr-<ts>-<pocket>-...  (old convention)
+                    if tokens[0] in pocket_tokens:
+                        tokens = tokens[1:]
+                        if not tokens:
+                            return None
+                        # qr-<ts>-<pocket>-<ts>-<tag> (legacy form)
+                        if tokens[0].isdigit():
+                            tokens = tokens[1:]
+                        if not tokens:
+                            return None
+                    inferred = "-".join(tokens)
+                    if inferred:
+                        return _normalize_strategy_tag(inferred)
+
+            if cid.startswith("qs-"):
+                body = cid[3:]
+                if body and body[0].isdigit():
+                    tokens = body.split("-")
+                    tokens = tokens[1:]  # remove ts
+                    if not tokens:
+                        return None
+                    if suffix_token_re.match(tokens[-1]):
+                        tokens = tokens[:-1]
+                    if not tokens:
+                        return None
+                    if tokens[0] in pocket_tokens:
+                        tokens = tokens[1:]
+                        if not tokens:
+                            return None
+                        if tokens[0].isdigit():
+                            tokens = tokens[1:]
+                        if not tokens:
+                            return None
+                    inferred = "-".join(tokens)
+                    if inferred:
+                        return _normalize_strategy_tag(inferred)
+
             # qr-<pocket>-<ts>-<tag...>
-            m2 = re.match(r"^qr-(micro|macro|scalp|event|hybrid)-\d+-([^-]+)", cid)
-            if m2:
-                return _normalize_strategy_tag(m2.group(2))
+            if cid.startswith("qr-") and cid.count("-") >= 4:
+                m2 = re.match(r"^qr-(micro|macro|scalp|scalp_fast|event|hybrid|mar)-\d+-([^-]+)", cid)
+                if m2:
+                    return _normalize_strategy_tag(m2.group(2))
+
+            # qr-<ts>-<pocket>-<tag...>
+            if cid.startswith("qr-") and cid.count("-") >= 3:
+                m = re.match(r"^qr-\d+-(micro|macro|scalp|scalp_fast|event|hybrid|mar)-(.+)$", cid)
+                if m:
+                    return _normalize_strategy_tag(m.group(2))
             # fallback: qr-<word>-<rest>
-            m3 = re.match(r"^qr-([a-zA-Z0-9_]+)-(.*)$", cid)
-            if m3 and m3.group(1) not in {"micro", "macro", "scalp", "event", "hybrid"}:
+            m3 = re.match(r"^qr-([a-zA-Z0-9_]+)-(.+)$", cid)
+            if m3 and m3.group(1) not in {"micro", "macro", "scalp", "scalp_fast", "event", "hybrid", "mar", "lm"}:
                 return _normalize_strategy_tag(m3.group(1))
         except Exception:
             return None

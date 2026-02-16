@@ -2914,8 +2914,15 @@ def _compute_trap_state(positions: dict, *, mid_price: float) -> TrapState:
 
 def _client_order_id(side: str) -> str:
     ts_ms = int(time.time() * 1000)
-    digest = hashlib.sha1(f"{config.STRATEGY_TAG}-{side}-{ts_ms}".encode("utf-8")).hexdigest()[:8]
-    return f"qr-{ts_ms}-{config.STRATEGY_TAG[:12]}-{side[0]}{digest}"
+    tag = str(config.STRATEGY_TAG or "scalp_ping_5s").strip() or "scalp_ping_5s"
+    sanitized_tag = "".join(
+        ch.lower() for ch in tag if (ch.isalnum() or ch in {"-", "_"})
+    )
+    sanitized_tag = sanitized_tag[:24] or "scalp_ping_5s"
+    digest = hashlib.sha1(
+        f"{sanitized_tag}-{side}-{ts_ms}".encode("utf-8")
+    ).hexdigest()[:8]
+    return f"qr-{ts_ms}-{sanitized_tag}-{side[0]}{digest}"
 
 
 def _snapshot_retry_delay_seconds(failure_count: int) -> float:
