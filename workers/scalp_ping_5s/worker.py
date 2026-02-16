@@ -4615,6 +4615,7 @@ async def scalp_ping_5s_worker() -> None:
                     signal.side,
                     reason,
                     detail,
+                    client_order_id,
                 )
                 _note_entry_skip(f"order_reject:{reason}", detail=detail, side=signal.side)
 
