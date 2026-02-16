@@ -1692,15 +1692,6 @@ def _build_tick_signal(rows: Sequence[dict], spread_pips: float) -> tuple[Option
     short_min_signal_ticks = max(config.MIN_SIGNAL_TICKS, int(round(config.SHORT_MIN_SIGNAL_TICKS * speed_scale)))
     long_min_signal_ticks = max(config.MIN_SIGNAL_TICKS, int(round(config.LONG_MIN_SIGNAL_TICKS * speed_scale)))
     min_signal_ticks = max(config.MIN_SIGNAL_TICKS, min(short_min_signal_ticks, long_min_signal_ticks))
-
-    signal_window_sec = max(0.3, config.SIGNAL_WINDOW_SEC * speed_scale)
-    base_signal_window_sec = signal_window_sec
-    signal_rows = [r for r in rows if _safe_float(r.get("epoch"), 0.0) >= latest_epoch - signal_window_sec]
-    fallback_signal_rows: list[dict] = signal_rows
-    fallback_window_sec: float = signal_window_sec
-    fallback_sec = max(
-        0.0, _safe_float(getattr(config, "SIGNAL_WINDOW_FALLBACK_SEC", 0.0), 0.0)
-    )
     fallback_rate_windows_sec = None
     if config.MIN_TICK_RATE > 0 and min_signal_ticks > 1:
         fallback_rate_windows_sec = max(
@@ -1710,6 +1701,42 @@ def _build_tick_signal(rows: Sequence[dict], spread_pips: float) -> tuple[Option
                 (min_signal_ticks - 1) / config.MIN_TICK_RATE,
             ),
         )
+    fallback_sec = max(
+        0.0, _safe_float(getattr(config, "SIGNAL_WINDOW_FALLBACK_SEC", 0.0), 0.0)
+    )
+
+    if len(rows) < min_signal_ticks:
+        row_min_epoch = latest_epoch
+        for row in rows:
+            row_epoch = _safe_float(row.get("epoch"), latest_epoch)
+            if row_epoch > 0 and row_epoch < row_min_epoch:
+                row_min_epoch = row_epoch
+        rows_span_sec = max(0.0, latest_epoch - row_min_epoch)
+        detail_parts = [
+            f"insufficient_signal_rows:{len(rows)}/{min_signal_ticks}",
+            f"window={max(0.3, config.SIGNAL_WINDOW_SEC * speed_scale):.2f}",
+            f"fallback_window={max(0.3, config.SIGNAL_WINDOW_SEC * speed_scale):.2f}",
+            f"fallback_count={len(rows)}/{min_signal_ticks}",
+            "fallback_attempts=none",
+            "fallback_used=no_data",
+            f"rows_span={rows_span_sec:.2f}",
+        ]
+        if fallback_rate_windows_sec is not None:
+            detail_parts.append(
+                f"fallback_min_rate_window={fallback_rate_windows_sec:.2f}"
+            )
+        if fallback_sec > 0.0:
+            detail_parts.append(f"fallback_sec={fallback_sec:.2f}")
+        return (
+            None,
+            " ".join(detail_parts),
+        )
+
+    signal_window_sec = max(0.3, config.SIGNAL_WINDOW_SEC * speed_scale)
+    base_signal_window_sec = signal_window_sec
+    signal_rows = [r for r in rows if _safe_float(r.get("epoch"), 0.0) >= latest_epoch - signal_window_sec]
+    fallback_signal_rows: list[dict] = signal_rows
+    fallback_window_sec: float = signal_window_sec
 
     fallback_windows = [signal_window_sec]
     if fallback_rate_windows_sec is not None and fallback_rate_windows_sec > signal_window_sec:
@@ -3333,6 +3360,8 @@ async def scalp_ping_5s_worker() -> None:
                 return "insufficient_signal_rows_fallback"
             if "fallback_used=attempted" in token:
                 return "insufficient_signal_rows_fallback_exhausted"
+            if "fallback_used=no_data" in token:
+                return "insufficient_signal_rows_no_data"
             return "insufficient_signal_rows"
         if base.startswith("insufficient_mid_rows"):
             return "insufficient_mid_rows"
