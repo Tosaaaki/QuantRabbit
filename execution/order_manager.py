@@ -6883,6 +6883,7 @@ async def market_order(
                     "entry_probability": entry_probability,
                     "entry_thesis": entry_thesis,
                     "meta": meta,
+                    "entry_probability_reject_reason": reason_note,
                 },
             )
             log_metric(
@@ -10280,6 +10281,7 @@ async def limit_order(
                     "entry_probability": entry_probability,
                     "entry_thesis": entry_thesis,
                     "meta": meta,
+                    "entry_probability_reject_reason": reason_note,
                     "strategy_tag": strategy_tag,
                 },
             )

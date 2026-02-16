@@ -1897,7 +1897,7 @@ def _build_tick_signal(rows: Sequence[dict], spread_pips: float) -> tuple[Option
     revert_score = 0.0
     revert_momentum_pips = 0.0
     revert_trigger_pips = max(0.05, config.REVERT_BOUNCE_MIN_PIPS)
-    revert_reason = "revert_not_enabled"
+    revert_reason = "revert_not_found"
     if config.REVERT_ENABLED:
         revert_window_sec = max(
             0.35,
@@ -3379,6 +3379,16 @@ async def scalp_ping_5s_worker() -> None:
             return "invalid_latest_epoch"
         if base.startswith("stale_tick"):
             return "stale_tick"
+        if base.startswith("revert_not_enabled"):
+            return "revert_disabled"
+        if base.startswith("revert_disabled"):
+            return "revert_disabled"
+        if base.startswith("revert_not_found"):
+            return "revert_not_found"
+        if base.startswith("momentum_tail_failed_no_revert"):
+            return "momentum_tail_failed_no_revert"
+        if base.startswith("momentum_tail_failed"):
+            return "momentum_tail_failed"
         return base
 
     def _infer_signal_side_from_reason(

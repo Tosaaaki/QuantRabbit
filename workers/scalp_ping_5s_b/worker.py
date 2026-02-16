@@ -52,6 +52,37 @@ def _apply_alt_env(prefix: str, *, fallback_tag: str, fallback_log_prefix: str) 
         f"{prefix}_LOG_PREFIX", fallback_log_prefix
     )
 
+    # Guardrails for mixed-prefix risk: explicitly surface effective runtime knobs
+    # used by entry logic so missing/shifted B-side toggles are visible in startup
+    # logs before any order path is evaluated.
+    base_enabled = os.getenv(f"{base_prefix}_ENABLED", "0")
+    mapped_revert_enabled = os.getenv(f"{base_prefix}_REVERT_ENABLED", "1")
+    base_env_prefix = os.getenv(f"{base_prefix}_ENV_PREFIX", "")
+    base_strategy = os.getenv(f"{base_prefix}_STRATEGY_TAG", fallback_tag)
+    base_log_prefix = os.getenv(f"{base_prefix}_LOG_PREFIX", fallback_log_prefix)
+    logger = logging.getLogger(__name__)
+    logger.info(
+        "[SCALP5S_B] env mapped: source=%s mapped_prefix=%s enabled=%s revert_enabled=%s env_prefix=%s strategy=%s log_prefix=%s",
+        prefix,
+        base_prefix,
+        base_enabled,
+        mapped_revert_enabled,
+        base_env_prefix,
+        base_strategy,
+        base_log_prefix,
+    )
+    if str(base_env_prefix).strip().upper() != prefix:
+        logger.warning(
+            "[SCALP5S_B] SCALP_PING_5S_ENV_PREFIX=%s but expected=%s",
+            base_env_prefix or "(unset)",
+            prefix,
+        )
+    if str(mapped_revert_enabled).strip().lower() in {"0", "false", "no", "off"}:
+        logger.warning(
+            "[SCALP5S_B] SCALP_PING_5S_REVERT_ENABLED is OFF. "
+            "This causes no_signal:revert_disabled-like drops unless intentionally disabled."
+        )
+
 
 def _run_worker() -> None:
     _apply_alt_env(

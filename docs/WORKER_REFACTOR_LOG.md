@@ -966,6 +966,16 @@
     Bでの `no_signal:insufficient_signal_rows_fallback_exhausted` 発生条件を抑制。
   - `SCALP_PING_5S_PATTERN_GATE_OPT_IN` の混在要因になっていた `SCALP_PING_5S` 系行を整理し、B版専用キーへ寄せた。
 
+### 2026-02-16（追記）5秒B env-prefix 監査ログを追加
+
+- `workers/scalp_ping_5s_b/worker.py`
+  - B ラッパー起動時に、`SCALP_PING_5S_B -> SCALP_PING_5S` の変換後実効値を明示ログ化。
+  - `SCALP_PING_5S_REVERT_ENABLED` を起動時に監査ログへ反映し、B運用時の意図しない `revert_disabled` 連発を
+    起点で検知しやすくした。
+- `workers/scalp_ping_5s/worker.py`
+  - `no_signal` の detail 正規化で `revert_not_enabled`（旧名）を
+    `revert_disabled` として一括吸収し、監査時に混線カテゴリを抑制。
+
 ### 2026-02-16（追記）5秒B `revert_not_found` 優勢時の取り残し抑制（実験値）
 
 - `ops/env/scalp_ping_5s_b.env`
