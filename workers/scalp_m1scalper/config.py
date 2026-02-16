@@ -104,7 +104,7 @@ BASE_ENTRY_UNITS = int(os.getenv("M1SCALP_BASE_UNITS", "6000"))
 MAX_MARGIN_USAGE = float(os.getenv("M1SCALP_MAX_MARGIN_USAGE", "0.9"))
 # Emergency brake: hard-stop new M1Scalper entries when margin health is poor.
 MIN_FREE_MARGIN_RATIO_HARD = _env_float("M1SCALP_MIN_FREE_MARGIN_RATIO_HARD", 0.08)
-MARGIN_USAGE_HARD = _env_float("M1SCALP_MARGIN_USAGE_HARD", 0.88)
+MARGIN_USAGE_HARD = _env_float("M1SCALP_MARGIN_USAGE_HARD", 0.93)
 MAX_SPREAD_PIPS = float(os.getenv("M1SCALP_MAX_SPREAD_PIPS", "1.4"))
 AUTOTUNE_ENABLED = _env_bool("SCALP_AUTOTUNE_ENABLED", False)
 
