@@ -225,6 +225,8 @@
 - B サービスは `scalp_ping_5s.env` と `scalp_ping_5s_b.env` を併読するため、A 側残存値で上書きされる混在リスクを除去。
 - 追加監査として、`env_prefix` 起因が疑われる `revert_not_enabled` / `momentum_tail_failed` が
   再発しないかを `no_signal` ログで追跡する。
+- 同時に、`systemd/quant-scalp-ping-5s-b.service` から `scalp_ping_5s.env` の同読を外し、Bサービスを
+  `scalp_ping_5s_b.env` と本体ランタイム env のみで起動する構成へ寄せた。
 
 ### 2026-02-16（追記）PositionManager 停止再開耐障害化
 

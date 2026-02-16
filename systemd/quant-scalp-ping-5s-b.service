@@ -8,8 +8,6 @@ EnvironmentFile=-/home/tossaki/QuantRabbit/ops/env/quant-scalp-ping-5s-b.env
 Type=simple
 WorkingDirectory=/home/tossaki/QuantRabbit
 Environment="PYTHONUNBUFFERED=1"
-# Defaults (override in /home/tossaki/QuantRabbit/ops/env/scalp_ping_5s.env).
-EnvironmentFile=-/home/tossaki/QuantRabbit/ops/env/scalp_ping_5s.env
 # Project-local overrides (repo copy for this clone's live tuning knobs).
 EnvironmentFile=/home/tossaki/QuantRabbit/ops/env/scalp_ping_5s_b.env
 ExecStart=/home/tossaki/QuantRabbit/.venv/bin/python -m workers.scalp_ping_5s_b.worker
