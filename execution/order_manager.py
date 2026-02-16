@@ -26,7 +26,11 @@ from oandapyV20.endpoints.orders import OrderCancel, OrderCreate
 from oandapyV20.endpoints.trades import TradeCRCDO, TradeClose, TradeDetails
 
 from execution.order_ids import build_client_order_id
-from execution.stop_loss_policy import stop_loss_disabled_for_pocket, trailing_sl_allowed
+from execution.stop_loss_policy import (
+    fixed_sl_mode,
+    stop_loss_disabled_for_pocket,
+    trailing_sl_allowed,
+)
 from execution.section_axis import attach_section_axis
 
 from analysis import policy_bus
@@ -1431,6 +1435,10 @@ def min_units_for_strategy(
     strategy_min_units = _strategy_env_int("ORDER_MIN_UNITS", strategy_tag)
     if strategy_min_units is not None:
         return strategy_min_units
+    base_tag = _base_strategy_tag(strategy_tag)
+    strategy_min_units = _strategy_env_int("ORDER_MIN_UNITS", base_tag)
+    if strategy_min_units is not None:
+        return strategy_min_units
     return min_units_for_pocket(pocket)
 
 
@@ -1695,6 +1703,10 @@ def _allow_stop_loss_on_fill(pocket: Optional[str]) -> bool:
     profit-only exit behavior. This can be overridden globally or per-pocket
     for hard-stop rollouts.
     """
+
+    fixed_mode = fixed_sl_mode()
+    if fixed_mode is not None:
+        return fixed_mode
 
     if not _EXIT_NO_NEGATIVE_CLOSE:
         return True
