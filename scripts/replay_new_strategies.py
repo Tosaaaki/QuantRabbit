@@ -8,7 +8,7 @@ from collections import defaultdict, deque
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Dict, Iterable, List, Optional
+from typing import Any, Dict, Iterable, List, Optional
 
 import pandas as pd
 
@@ -21,9 +21,183 @@ from indicators.calc_core import IndicatorEngine
 from market_data import tick_window
 from strategies.micro_lowvol.compression_revert import MicroCompressionRevert
 from strategies.micro.trend_retest import MicroTrendRetest
-from workers.scalp_precision import worker as scalp_precision
 
 PIP = 0.01
+
+LSR_LOOKBACK = 20
+LSR_SWEEP_PIPS = 0.45
+LSR_RECLAIM_PIPS = 0.10
+LSR_BODY_MAX_PIPS = 1.4
+LSR_RANGE_MIN_PIPS = 1.2
+LSR_WICK_RATIO_MIN = 0.5
+LSR_ADX_MAX = 30.0
+LSR_BBW_MAX = 0.0018
+LSR_RANGE_SCORE_MIN = 0.35
+LSR_REQUIRE_TICK_REVERSAL = True
+LSR_SIZE_MULT = 1.0
+LSR_ALLOWED_REGIMES: set[str] = set()
+LSR_SWEEP_ADX_BUFFER = 0.15
+
+
+def _to_float(value: Any, default: float = 0.0) -> float:
+    try:
+        return float(value)
+    except Exception:
+        return default
+
+
+def _atr_pips(fac_m1: Dict[str, object]) -> float:
+    if fac_m1.get("atr") is not None:
+        return abs(_to_float(fac_m1.get("atr")))
+    if fac_m1.get("atr_pips") is not None:
+        return abs(_to_float(fac_m1.get("atr_pips")))
+    candles = fac_m1.get("candles")
+    if not isinstance(candles, list) or len(candles) < 4:
+        return 1.8
+    values: List[float] = []
+    for idx in range(1, len(candles)):
+        c0 = candles[idx - 1]
+        c1 = candles[idx]
+        h = _to_float(c1.get("high", c1.get("h")))
+        l = _to_float(c1.get("low", c1.get("l")))
+        c_prev = _to_float(c0.get("close", c0.get("c")))
+        values.append((max(h, c_prev) - min(l, c_prev)) / PIP)
+    return sum(values) / len(values) if values else 1.8
+
+
+def _adx(fac_m1: Dict[str, object]) -> float:
+    if fac_m1.get("adx") is not None:
+        return abs(_to_float(fac_m1.get("adx")))
+    if fac_m1.get("trend_strength") is not None:
+        return abs(_to_float(fac_m1.get("trend_strength")))
+    return 0.0
+
+
+def _bbw(fac_m1: Dict[str, object]) -> float:
+    if fac_m1.get("bbw") is not None:
+        return abs(_to_float(fac_m1.get("bbw")))
+    candles = fac_m1.get("candles")
+    if not isinstance(candles, list) or not candles:
+        return 0.0
+    closes = [ _to_float(c.get("close", c.get("c")) for c in candles if isinstance(c, dict) ]
+    if len(closes) < 2:
+        return 0.0
+    hi = max(closes)
+    lo = min(closes)
+    if hi <= 0:
+        return 0.0
+    return (hi - lo) / hi
+
+
+def _current_regime_score(range_ctx: object) -> float:
+    try:
+        return float(getattr(range_ctx, "score", 0.0) or 0.0)
+    except Exception:
+        return 0.0
+
+
+def _signal_liquidity_sweep(
+    fac_m1: Dict[str, object],
+    range_ctx: object | None = None,
+    *,
+    tag: str,
+) -> Optional[Dict[str, object]]:
+    if LSR_ALLOWED_REGIMES:
+        regime = str(fac_m1.get("regime") or "").strip().lower()
+        if regime and regime not in LSR_ALLOWED_REGIMES:
+            return None
+
+    if _adx(fac_m1) > LSR_ADX_MAX:
+        return None
+    if _bbw(fac_m1) > LSR_BBW_MAX:
+        return None
+    if LSR_RANGE_SCORE_MIN > 0.0 and _current_regime_score(range_ctx) < LSR_RANGE_SCORE_MIN:
+        return None
+
+    candles = fac_m1.get("candles")
+    if not isinstance(candles, list) or len(candles) < LSR_LOOKBACK + 2:
+        return None
+
+    last = candles[-1]
+    prev = candles[-2]
+    o = _to_float(last.get("open", last.get("o")))
+    h = _to_float(last.get("high", last.get("h")))
+    l = _to_float(last.get("low", last.get("l")))
+    c = _to_float(last.get("close", last.get("c")))
+    if h <= 0 or l <= 0:
+        return None
+
+    rng_pips = (h - l) / PIP
+    if rng_pips < LSR_RANGE_MIN_PIPS:
+        return None
+    body_pips = abs(c - o) / PIP
+    if body_pips > LSR_BODY_MAX_PIPS:
+        return None
+    upper_wick = (h - max(o, c)) / PIP
+    lower_wick = (min(o, c) - l) / PIP
+    wick_ratio = max(upper_wick, lower_wick) / max(rng_pips, 0.01)
+    if wick_ratio < LSR_WICK_RATIO_MIN:
+        return None
+
+    history = candles[-(LSR_LOOKBACK + 1):-1]
+    highs: List[float] = []
+    lows: List[float] = []
+    for candle in history:
+        if not isinstance(candle, dict):
+            continue
+        hi_v = _to_float(candle.get("high", candle.get("h")))
+        lo_v = _to_float(candle.get("low", candle.get("l")))
+        if hi_v > 0 and lo_v > 0:
+            highs.append(hi_v)
+            lows.append(lo_v)
+    if not highs or not lows:
+        return None
+
+    level_high = max(highs)
+    level_low = min(lows)
+    side: Optional[str] = None
+    sweep_dist = 0.0
+    if h >= level_high + LSR_SWEEP_PIPS * PIP and c < level_high - LSR_RECLAIM_PIPS * PIP:
+        side = "short"
+        sweep_dist = (h - level_high) / PIP
+        if upper_wick < max(LSR_SWEEP_PIPS, 0.4):
+            return None
+    elif l <= level_low - LSR_SWEEP_PIPS * PIP and c > level_low + LSR_RECLAIM_PIPS * PIP:
+        side = "long"
+        sweep_dist = (level_low - l) / PIP
+        if lower_wick < max(LSR_SWEEP_PIPS, 0.4):
+            return None
+    else:
+        return None
+
+    prev_close = _to_float(prev.get("close", prev.get("c")))
+    rev_ok = True
+    rev_dir = "long" if c >= prev_close else "short"
+    rev_strength = 1.0
+    if LSR_REQUIRE_TICK_REVERSAL and (not rev_ok or rev_dir != side):
+        hard_sweep_ok = sweep_dist >= (LSR_SWEEP_PIPS * 2.0) and wick_ratio >= (LSR_WICK_RATIO_MIN + 0.15)
+        if not hard_sweep_ok:
+            return None
+        rev_strength = 1.0
+        rev_dir = side
+
+    atr = _atr_pips(fac_m1)
+    sl = max(1.4, min(2.6, atr * 0.8))
+    tp = max(1.8, min(3.2, atr * 1.15))
+    conf = 58 + int(min(14.0, sweep_dist * 3.0 + wick_ratio * 8.0))
+    if rev_ok:
+        conf += int(min(6.0, max(0.0, rev_strength) * 6.0))
+    conf = max(45, min(92, conf))
+
+    return {
+        "action": "OPEN_LONG" if side == "long" else "OPEN_SHORT",
+        "sl_pips": round(sl, 2),
+        "tp_pips": round(tp, 2),
+        "confidence": conf,
+        "tag": tag,
+        "reason": "liquidity_sweep",
+        "size_mult": round(LSR_SIZE_MULT, 3),
+    }
 
 
 @dataclass
@@ -216,7 +390,7 @@ def main() -> None:
             continue
         range_ctx = detect_range_mode(fac, fac, env_tf="M1", macro_tf="H4")
 
-        lsr = scalp_precision._signal_liquidity_sweep(fac, range_ctx, tag="LiquiditySweep")
+        lsr = _signal_liquidity_sweep(fac, range_ctx, tag="LiquiditySweep")
         if lsr:
             signals.append(
                 {

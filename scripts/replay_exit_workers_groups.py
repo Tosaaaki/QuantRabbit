@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """Replay with exit_worker using entry schedules derived from replay_workers.
 
-This matches the exit_worker-based replay pattern used for scalp_precision,
+This matches the exit_worker-based replay pattern used for the replay scalp workers,
 while reusing each worker's replay entry logic to generate entry events.
 """
 from __future__ import annotations

@@ -5,7 +5,10 @@ import os
 from execution.stop_loss_policy import stop_loss_disabled_for_pocket
 
 
-ENV_PREFIX = "SCALP_PING_5S"
+ENV_PREFIX = (
+    os.getenv("SCALP_PING_5S_ENV_PREFIX", "SCALP_PING_5S").strip()
+    or "SCALP_PING_5S"
+)
 PIP_VALUE = 0.01
 
 

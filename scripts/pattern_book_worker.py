@@ -297,7 +297,7 @@ def _aggregate(
           MIN(direction) AS direction,
           COUNT(*) AS trades,
           SUM(CASE WHEN pl_pips > 0 THEN 1 ELSE 0 END) AS wins,
-          SUM(CASE WHEN pl_pips <= 0 THEN 1 ELSE 0 END) AS losses,
+          SUM(CASE WHEN pl_pips < 0 THEN 1 ELSE 0 END) AS losses,
           SUM(pl_pips) AS total_pips,
           AVG(pl_pips) AS avg_pips,
           SUM(CASE WHEN pl_pips > 0 THEN pl_pips ELSE 0 END) AS gross_profit,

@@ -151,6 +151,7 @@ class TickSignal:
     mid: float
     range_pips: float = 0.0
     instant_range_pips: float = 0.0
+    signal_window_sec: float = 0.0
 
 
 @dataclass(slots=True)
@@ -1688,17 +1689,36 @@ def _build_tick_signal(rows: Sequence[dict], spread_pips: float) -> tuple[Option
         ) / config.PIP_VALUE
     speed_scale = _instant_speed_scale(instant_range_pips)
 
-    signal_window_sec = max(0.3, config.SIGNAL_WINDOW_SEC * speed_scale)
-    short_min_signal_ticks = max(3, int(round(config.SHORT_MIN_SIGNAL_TICKS * speed_scale)))
-    long_min_signal_ticks = max(3, int(round(config.LONG_MIN_SIGNAL_TICKS * speed_scale)))
-    min_signal_ticks = max(3, min(short_min_signal_ticks, long_min_signal_ticks))
+    short_min_signal_ticks = max(config.MIN_SIGNAL_TICKS, int(round(config.SHORT_MIN_SIGNAL_TICKS * speed_scale)))
+    long_min_signal_ticks = max(config.MIN_SIGNAL_TICKS, int(round(config.LONG_MIN_SIGNAL_TICKS * speed_scale)))
+    min_signal_ticks = max(config.MIN_SIGNAL_TICKS, min(short_min_signal_ticks, long_min_signal_ticks))
 
-    window_cutoff = latest_epoch - signal_window_sec
-    signal_rows = [r for r in rows if _safe_float(r.get("epoch"), 0.0) >= window_cutoff]
+    signal_window_sec = max(0.3, config.SIGNAL_WINDOW_SEC * speed_scale)
+    signal_rows = [r for r in rows if _safe_float(r.get("epoch"), 0.0) >= latest_epoch - signal_window_sec]
+    fallback_signal_rows: list[dict] = signal_rows
+    fallback_window_sec: float = signal_window_sec
+    if len(signal_rows) < min_signal_ticks and config.SIGNAL_WINDOW_FALLBACK_SEC > 0.0:
+        fallback_window_sec = min(
+            config.WINDOW_SEC,
+            max(signal_window_sec, config.SIGNAL_WINDOW_FALLBACK_SEC),
+        )
+        if fallback_window_sec > signal_window_sec:
+            fallback_cutoff = latest_epoch - fallback_window_sec
+            fallback_signal_rows = [
+                r
+                for r in rows
+                if _safe_float(r.get("epoch"), 0.0) >= fallback_cutoff
+            ]
+            if len(fallback_signal_rows) >= min_signal_ticks:
+                signal_window_sec = fallback_window_sec
+                signal_rows = fallback_signal_rows
     if len(signal_rows) < min_signal_ticks:
         return (
             None,
-            f"insufficient_signal_rows:{len(signal_rows)}/{min_signal_ticks}",
+            f"insufficient_signal_rows:{len(signal_rows)}/{min_signal_ticks}"
+            f" window={signal_window_sec:.2f}"
+            f" fallback_window={fallback_window_sec:.2f}"
+            f" fallback_count={len(fallback_signal_rows)}/{min_signal_ticks}",
         )
 
     mids: list[float] = []
@@ -1956,6 +1976,7 @@ def _build_tick_signal(rows: Sequence[dict], spread_pips: float) -> tuple[Option
         span_sec=span_sec,
         range_pips=float(signal_range_pips),
         instant_range_pips=float(instant_range_pips),
+        signal_window_sec=float(signal_window_sec),
         tick_age_ms=tick_age_ms,
         spread_pips=max(0.0, spread_pips),
         bid=bid,
@@ -1993,7 +2014,8 @@ def _retarget_signal(signal: TickSignal, *, side: str, mode: Optional[str] = Non
         bid=float(signal.bid),
         ask=float(signal.ask),
         mid=float(signal.mid),
-    )
+        signal_window_sec=float(signal.signal_window_sec),
+        )
 
 
 def _apply_mtf_regime(signal: TickSignal, regime: Optional[MtfRegime]) -> tuple[Optional[TickSignal], float, str]:
@@ -4344,7 +4366,7 @@ async def scalp_ping_5s_worker() -> None:
                 "strategy_tag": config.STRATEGY_TAG,
                 "pattern_gate_opt_in": bool(config.PATTERN_GATE_OPT_IN),
                 "env_prefix": config.ENV_PREFIX,
-                "signal_window_sec": config.SIGNAL_WINDOW_SEC,
+                "signal_window_sec": round(signal.signal_window_sec, 3),
                 "window_sec": config.WINDOW_SEC,
                 "momentum_pips": round(signal.momentum_pips, 3),
                 "trigger_pips": round(signal.trigger_pips, 3),

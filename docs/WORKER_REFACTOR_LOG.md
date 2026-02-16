@@ -170,6 +170,8 @@
 - `ops/env/scalp_ping_5s_b.env` へ
   `SCALP_PING_5S_B_ENV_PREFIX=SCALP_PING_5S_B` を追加。
 - B版の `PERF_GUARD` / `entry_thesis` 参照で、A/B混在時に B 固有キーを誤適用しないようにした。
+- `workers/scalp_ping_5s/config.py` で `ENV_PREFIX` を `SCALP_PING_5S_ENV_PREFIX` 参照に切替し、
+  B版 `SCALP_PING_5S_B_ENV_PREFIX` 経由で `SCALP_PING_5S_ENV_PREFIX=SCALP_PING_5S_B` が有効化されるよう明示化。
 - 追跡指標は `perf_block` / `entry_probability_reject` の内訳で次回検証し、必要であれば
   `SCALP_PING_5S_B_PERF_GUARD_*` の調整へ接続する。
 

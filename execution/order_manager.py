@@ -1837,6 +1837,12 @@ _ORDER_MANAGER_PRESERVE_INTENT_PROBABILITY_MIN_SCALE = _env_float(
 _ORDER_MANAGER_PRESERVE_INTENT_PROBABILITY_REJECT_UNDER = _env_float(
     "ORDER_MANAGER_PRESERVE_INTENT_REJECT_UNDER", 0.0
 )
+_ORDER_MANAGER_PRESERVE_INTENT_MAX_SCALE = _env_float(
+    "ORDER_MANAGER_PRESERVE_INTENT_MAX_SCALE", 1.25
+)
+_ORDER_MANAGER_PRESERVE_INTENT_BOOST_PROBABILITY = _env_float(
+    "ORDER_MANAGER_PRESERVE_INTENT_BOOST_PROBABILITY", 0.80
+)
 
 
 def _order_manager_preserve_intent_min_scale(
@@ -1851,6 +1857,33 @@ def _order_manager_preserve_intent_min_scale(
     return max(
         0.0,
         min(1.0, float(_ORDER_MANAGER_PRESERVE_INTENT_PROBABILITY_MIN_SCALE)),
+    )
+
+
+def _order_manager_preserve_intent_max_scale(
+    strategy_tag: Optional[str],
+) -> float:
+    strategy_override = _strategy_env_float(
+        "ORDER_MANAGER_PRESERVE_INTENT_MAX_SCALE",
+        strategy_tag,
+    )
+    if strategy_override is not None:
+        return max(1.0, min(5.0, float(strategy_override)))
+    return max(1.0, float(_ORDER_MANAGER_PRESERVE_INTENT_MAX_SCALE))
+
+
+def _order_manager_preserve_intent_boost_probability(
+    strategy_tag: Optional[str],
+) -> float:
+    strategy_override = _strategy_env_float(
+        "ORDER_MANAGER_PRESERVE_INTENT_BOOST_PROBABILITY",
+        strategy_tag,
+    )
+    if strategy_override is not None:
+        return max(0.0, min(1.0, float(strategy_override)))
+    return max(
+        0.0,
+        min(1.0, float(_ORDER_MANAGER_PRESERVE_INTENT_BOOST_PROBABILITY)),
     )
 
 
@@ -2594,7 +2627,16 @@ def _probability_scaled_units(
     the order should be skipped under preserve-intent mode.
     """
     strategy_min_scale = _order_manager_preserve_intent_min_scale(strategy_tag)
+    strategy_max_scale = _order_manager_preserve_intent_max_scale(strategy_tag)
+    strategy_boost_probability = _order_manager_preserve_intent_boost_probability(
+        strategy_tag
+    )
     strategy_reject_under = _order_manager_preserve_intent_reject_under(strategy_tag)
+    if strategy_boost_probability <= strategy_reject_under:
+        strategy_boost_probability = min(
+            1.0,
+            strategy_reject_under + 0.0001,
+        )
 
     if units == 0:
         return 0, None
@@ -2602,10 +2644,24 @@ def _probability_scaled_units(
         return units, None
     if entry_probability <= strategy_reject_under:
         return 0, "entry_probability_reject_threshold"
-    scale = max(
-        float(strategy_min_scale),
-        min(1.0, float(entry_probability)),
-    )
+
+    probability = max(0.0, min(1.0, float(entry_probability)))
+    if probability <= strategy_boost_probability:
+        scale = max(float(strategy_min_scale), probability)
+    elif strategy_max_scale <= 1.0:
+        scale = 1.0
+    else:
+        boost_span = 1.0 - strategy_boost_probability
+        if boost_span <= 0.0:
+            scale = 1.0
+        else:
+            scale = 1.0 + (
+                (probability - strategy_boost_probability) / boost_span
+            ) * (strategy_max_scale - 1.0)
+
+    if scale <= 0:
+        return 0, "entry_probability_scale_to_zero"
+    scale = max(0.0, min(strategy_max_scale, scale))
     scaled_abs = int(round(abs(units) * scale))
     if scaled_abs <= 0:
         return 0, "entry_probability_scale_to_zero"

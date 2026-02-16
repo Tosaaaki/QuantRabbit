@@ -5,7 +5,8 @@ Tick replay with exit_worker logic for core workers.
 
 Targets:
   - fast_scalp (exit_worker)
-  - scalp_precision (exit_worker)
+  - scalp_false_break_fade (exit_worker)
+  - scalp_level_reject (exit_worker)
   - micro BB_RSI (exit_worker)
   - macro TrendMA (exit_worker)
 """
@@ -20,7 +21,7 @@ import os
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Dict, Iterable, List, Optional, Tuple, Any
+from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 import sys
 
@@ -32,24 +33,136 @@ from indicators import factor_cache
 from market_data import tick_window, spread_monitor
 from analysis.range_guard import detect_range_mode
 from workers.common.air_state import evaluate_air, adjust_signal
-from workers.scalp_precision import config as sp_config
-import workers.scalp_precision.worker as sp_worker
+from workers.scalp_false_break_fade import exit_worker as sp_false_break_exit
+from workers.scalp_false_break_fade import worker as sp_false_break_worker
+from workers.scalp_level_reject import exit_worker as sp_level_reject_exit
+from workers.scalp_level_reject import worker as sp_level_reject_worker
 from utils.market_hours import is_market_open
 import utils.oanda_account as oanda_account
 import execution.order_manager as order_manager
-from execution.risk_guard import clamp_sl_tp, allowed_lot
+from execution.risk_guard import clamp_sl_tp, allowed_lot, can_trade
 from signals.pocket_allocator import alloc, DEFAULT_SCALP_SHARE
 from analysis.focus_decider import decide_focus
 from analysis.local_decider import heuristic_decision
 from analysis.regime_classifier import classify
 import main as main_mod
 
-import workers.scalp_precision.exit_worker as sp_exit
 import workers.micro_bbrsi.exit_worker as bbrsi_exit
 
 
 PIP = 0.01
 PIP_VALUE = PIP
+
+
+def _env_float(name: str, default: float) -> float:
+    try:
+        return float(os.getenv(name, str(default)))
+    except Exception:
+        return default
+
+
+def _env_int(name: str, default: int) -> int:
+    try:
+        return int(float(os.getenv(name, str(default))))
+    except Exception:
+        return default
+
+
+def _env_bool(name: str, default: bool) -> bool:
+    text = os.getenv(name)
+    if text is None:
+        return default
+    return text.strip().lower() not in {"", "0", "false", "no", "off"}
+
+
+def _env_set(name: str, default: str = "") -> set[str]:
+    return {
+        item.strip().lower()
+        for item in (os.getenv(name, default) or "").split(",")
+        if item.strip()
+    }
+
+
+@dataclass(frozen=True)
+class ReplayScalpConfig:
+    MODE: str
+    GUARD_BYPASS_MODES: set[str]
+    ALLOWLIST_RAW: str
+    LOOP_INTERVAL_SEC: float
+    POCKET: str
+    MAX_OPEN_TRADES: int
+    MAX_OPEN_TRADES_GLOBAL: int
+    OPEN_TRADES_SCOPE: str
+    COOLDOWN_SEC: float
+    MIN_ENTRY_CONF: int
+    MIN_UNITS: int
+
+
+def _build_replay_scalp_config() -> ReplayScalpConfig:
+    env = os.environ
+    return ReplayScalpConfig(
+        MODE=env.get("SCALP_REPLAY_MODE", "spread_revert").strip().lower(),
+        GUARD_BYPASS_MODES=_env_set(
+            "SCALP_REPLAY_GUARD_BYPASS_MODES",
+            "",
+        ),
+        ALLOWLIST_RAW=os.getenv(
+            "SCALP_REPLAY_UNIT_ALLOWLIST",
+            env.get("SCALP_REPLAY_ALLOWLIST", ""),
+        ),
+        LOOP_INTERVAL_SEC=_env_float("SCALP_REPLAY_LOOP_INTERVAL_SEC", "4.0"),
+        POCKET=env.get("SCALP_REPLAY_POCKET", "scalp").strip() or "scalp",
+        MAX_OPEN_TRADES=_env_int("SCALP_REPLAY_MAX_OPEN_TRADES", "2"),
+        MAX_OPEN_TRADES_GLOBAL=_env_int(
+            "SCALP_REPLAY_MAX_OPEN_TRADES_GLOBAL",
+            "0",
+        ),
+        OPEN_TRADES_SCOPE=(
+            env.get("SCALP_REPLAY_OPEN_TRADES_SCOPE", "tag").strip().lower() or "tag"
+        ),
+        COOLDOWN_SEC=_env_float("SCALP_REPLAY_COOLDOWN_SEC", "45.0"),
+        MIN_ENTRY_CONF=_env_int("SCALP_REPLAY_MIN_ENTRY_CONF", "32"),
+        MIN_UNITS=_env_int("SCALP_REPLAY_MIN_UNITS", "1000"),
+    )
+
+
+_SP_CFG = _build_replay_scalp_config()
+
+
+def _unsupported_signal(*_args: object, **_kwargs: object) -> None:
+    return None
+
+
+def _signal_map():
+    return {
+        "SpreadRangeRevert": _unsupported_signal,
+        "RangeFaderPro": _unsupported_signal,
+        "DroughtRevert": _unsupported_signal,
+        "PrecisionLowVol": _unsupported_signal,
+        "VwapRevertS": _unsupported_signal,
+        "StochBollBounce": _unsupported_signal,
+        "DivergenceRevert": _unsupported_signal,
+        "CompressionRetest": _unsupported_signal,
+        "HTFPullbackS": _unsupported_signal,
+        "MacdTrendRide": _unsupported_signal,
+        "EmaSlopePull": _unsupported_signal,
+        "TickImbalance": _unsupported_signal,
+        "TickImbalanceRRPlus": _unsupported_signal,
+        "LevelReject": lambda fac_m1, fac_m5, fac_h1, range_ctx, now: sp_level_reject_worker._signal_level_reject(
+            fac_m1,
+            range_ctx=range_ctx,
+            tag="LevelReject",
+        ),
+        "TickWickReversal": _unsupported_signal,
+        "SessionEdge": _unsupported_signal,
+        "SqueezePulseBreak": _unsupported_signal,
+        "FalseBreakFade": lambda fac_m1, fac_m5, fac_h1, range_ctx, now: sp_false_break_worker._signal_false_break_fade(
+            fac_m1,
+            range_ctx,
+            tag="FalseBreakFade",
+        ),
+        "WickReversal": _unsupported_signal,
+    }
 
 
 def parse_iso8601(value: str) -> datetime:
@@ -223,74 +336,6 @@ def _reset_replay_state(sim_clock: SimClock) -> None:
         factor_cache._LAST_RESTORE_MTIME = float("inf")  # type: ignore[attr-defined]
     except Exception:
         pass
-
-    try:
-        sp_worker._RETEST_STATE.clear()  # type: ignore[attr-defined]
-        sp_worker.time.monotonic = lambda: sim_clock.now  # type: ignore[assignment]
-    except Exception:
-        pass
-
-
-def _signal_map():
-    return {
-        "SpreadRangeRevert": lambda fac_m1, fac_m5, fac_h1, range_ctx, now: sp_worker._signal_spread_revert(  # type: ignore[attr-defined]
-            fac_m1, range_ctx, tag="SpreadRangeRevert"
-        ),
-        "RangeFaderPro": lambda fac_m1, fac_m5, fac_h1, range_ctx, now: sp_worker._signal_spread_revert(  # type: ignore[attr-defined]
-            fac_m1, range_ctx, tag="RangeFaderPro"
-        ),
-        "DroughtRevert": lambda fac_m1, fac_m5, fac_h1, range_ctx, now: sp_worker._signal_drought_revert(  # type: ignore[attr-defined]
-            fac_m1, range_ctx, tag="DroughtRevert"
-        ),
-        "PrecisionLowVol": lambda fac_m1, fac_m5, fac_h1, range_ctx, now: sp_worker._signal_precision_lowvol(  # type: ignore[attr-defined]
-            fac_m1, range_ctx, tag="PrecisionLowVol"
-        ),
-        "VwapRevertS": lambda fac_m1, fac_m5, fac_h1, range_ctx, now: sp_worker._signal_vwap_revert(  # type: ignore[attr-defined]
-            fac_m1, range_ctx, tag="VwapRevertS"
-        ),
-        "StochBollBounce": lambda fac_m1, fac_m5, fac_h1, range_ctx, now: sp_worker._signal_stoch_bounce(  # type: ignore[attr-defined]
-            fac_m1, range_ctx, tag="StochBollBounce"
-        ),
-        "DivergenceRevert": lambda fac_m1, fac_m5, fac_h1, range_ctx, now: sp_worker._signal_divergence_revert(  # type: ignore[attr-defined]
-            fac_m1, range_ctx, tag="DivergenceRevert"
-        ),
-        "CompressionRetest": lambda fac_m1, fac_m5, fac_h1, range_ctx, now: sp_worker._signal_compression_retest(  # type: ignore[attr-defined]
-            fac_m1, tag="CompressionRetest"
-        ),
-        "HTFPullbackS": lambda fac_m1, fac_m5, fac_h1, range_ctx, now: sp_worker._signal_htf_pullback(  # type: ignore[attr-defined]
-            fac_m1, fac_h1, fac_m5, tag="HTFPullbackS"
-        ),
-        "MacdTrendRide": lambda fac_m1, fac_m5, fac_h1, range_ctx, now: sp_worker._signal_macd_trend(  # type: ignore[attr-defined]
-            fac_m1, fac_m5, tag="MacdTrendRide"
-        ),
-        "EmaSlopePull": lambda fac_m1, fac_m5, fac_h1, range_ctx, now: sp_worker._signal_ema_slope_pull(  # type: ignore[attr-defined]
-            fac_m1, fac_m5, tag="EmaSlopePull"
-        ),
-        "TickImbalance": lambda fac_m1, fac_m5, fac_h1, range_ctx, now: sp_worker._signal_tick_imbalance(  # type: ignore[attr-defined]
-            fac_m1, range_ctx, tag="TickImbalance"
-        ),
-        "TickImbalanceRRPlus": lambda fac_m1, fac_m5, fac_h1, range_ctx, now: sp_worker._signal_tick_imbalance_rrplus(  # type: ignore[attr-defined]
-            fac_m1, range_ctx, tag="TickImbalanceRRPlus"
-        ),
-        "LevelReject": lambda fac_m1, fac_m5, fac_h1, range_ctx, now: sp_worker._signal_level_reject(  # type: ignore[attr-defined]
-            fac_m1, tag="LevelReject"
-        ),
-        "WickReversal": lambda fac_m1, fac_m5, fac_h1, range_ctx, now: sp_worker._signal_wick_reversal(  # type: ignore[attr-defined]
-            fac_m1, tag="WickReversal"
-        ),
-        "TickWickReversal": lambda fac_m1, fac_m5, fac_h1, range_ctx, now: sp_worker._signal_tick_wick_reversal(  # type: ignore[attr-defined]
-            fac_m1, range_ctx, tag="TickWickReversal"
-        ),
-        "SessionEdge": lambda fac_m1, fac_m5, fac_h1, range_ctx, now: sp_worker._signal_session_edge(  # type: ignore[attr-defined]
-            fac_m1, range_ctx, tag="SessionEdge", now_utc=now
-        ),
-        "SqueezePulseBreak": lambda fac_m1, fac_m5, fac_h1, range_ctx, now: sp_worker._signal_squeeze_pulse_break(  # type: ignore[attr-defined]
-            fac_m1, range_ctx, tag="SqueezePulseBreak"
-        ),
-        "FalseBreakFade": lambda fac_m1, fac_m5, fac_h1, range_ctx, now: sp_worker._signal_false_break_fade(  # type: ignore[attr-defined]
-            fac_m1, range_ctx, tag="FalseBreakFade"
-        ),
-    }
 
 
 _TAG_TO_MODE = {
@@ -935,7 +980,7 @@ def _patch_live_deps(broker: SimBroker, account: SimAccount) -> None:
             strategy_tag
             or thesis.get("strategy_tag")
             or thesis.get("strategy")
-            or "scalp_precision"
+            or "scalp_replay"
         )
         trade = broker.open_trade(
             pocket=pocket,
@@ -947,7 +992,7 @@ def _patch_live_deps(broker: SimBroker, account: SimAccount) -> None:
             sl_pips=sl_pips,
             timeout_sec=None,
             units=abs(units),
-            source="scalp_precision",
+            source="scalp_replay",
             entry_thesis=thesis if thesis else None,
             meta=meta if isinstance(meta, dict) else None,
         )
@@ -955,10 +1000,7 @@ def _patch_live_deps(broker: SimBroker, account: SimAccount) -> None:
 
     oanda_account.get_account_snapshot = _snapshot_stub
     oanda_account.get_position_summary = _pos_summary_stub
-    sp_worker.get_account_snapshot = _snapshot_stub
-    sp_worker.get_position_summary = _pos_summary_stub
     order_manager.market_order = _market_order_stub
-    sp_worker.market_order = _market_order_stub
     try:
         import workers.common.dyn_size as dyn_size
 
@@ -1078,7 +1120,7 @@ class FastScalpEntryEngine:
         self._active_trade_id = trade["trade_id"]
 
 
-class ScalpPrecisionEntryEngine:
+class ScalpReplayEntryEngine:
     def __init__(
         self,
         broker: SimBroker,
@@ -1089,10 +1131,11 @@ class ScalpPrecisionEntryEngine:
         self._broker = broker
         self._live_entry = bool(live_entry)
         self._loop = loop
-        self._bypass_common_guard = (sp_config.MODE or "").strip().lower() in sp_config.GUARD_BYPASS_MODES
-        raw_allow = os.getenv("SCALP_PRECISION_ALLOWLIST", sp_config.ALLOWLIST_RAW)
+        self._config = _SP_CFG
+        self._bypass_common_guard = (self._config.MODE or "").strip().lower() in self._config.GUARD_BYPASS_MODES
+        raw_allow = os.getenv("SCALP_REPLAY_ALLOWLIST", self._config.ALLOWLIST_RAW)
         allowlist = {s.strip().lower() for s in (raw_allow or "").split(",") if s.strip()}
-        mode = (sp_config.MODE or "").strip().lower()
+        mode = (self._config.MODE or "").strip().lower()
         if mode and not allowlist:
             allowlist.add(mode)
         modes = _signal_map()
@@ -1112,13 +1155,13 @@ class ScalpPrecisionEntryEngine:
 
     def on_tick(self, tick: TickRow) -> None:
         if self._last_eval_epoch is not None:
-            if tick.epoch - self._last_eval_epoch < sp_config.LOOP_INTERVAL_SEC:
+            if tick.epoch - self._last_eval_epoch < self._config.LOOP_INTERVAL_SEC:
                 return
         self._last_eval_epoch = tick.epoch
         if self._live_entry:
             if not is_market_open(tick.ts):
                 return
-            if not sp_worker.can_trade(sp_config.POCKET):
+            if not can_trade(self._config.POCKET):
                 return
         factors = factor_cache.all_factors()
         fac_m1 = factors.get("M1") or {}
@@ -1126,21 +1169,21 @@ class ScalpPrecisionEntryEngine:
         fac_h1 = factors.get("H1") or {}
         fac_h4 = factors.get("H4") or {}
         range_ctx = detect_range_mode(fac_m1, fac_h4)
-        air = evaluate_air(fac_m1, fac_h4, range_ctx=range_ctx, tag="scalp_precision")
+        air = evaluate_air(fac_m1, fac_h4, range_ctx=range_ctx, tag="scalp_replay")
         if self._live_entry and air.enabled and not air.allow_entry and not self._bypass_common_guard:
             return
         if self._live_entry and not self._bypass_common_guard:
             blocked, _, _, _ = spread_monitor.is_blocked()
             if blocked:
                 return
-            if sp_config.MAX_OPEN_TRADES > 0 or sp_config.MAX_OPEN_TRADES_GLOBAL > 0:
-                positions = self._broker.get_open_positions().get(sp_config.POCKET) or {}
+            if self._config.MAX_OPEN_TRADES > 0 or self._config.MAX_OPEN_TRADES_GLOBAL > 0:
+                positions = self._broker.get_open_positions().get(self._config.POCKET) or {}
                 open_trades_all = positions.get("open_trades") or []
-                if sp_config.MAX_OPEN_TRADES_GLOBAL > 0 and len(open_trades_all) >= sp_config.MAX_OPEN_TRADES_GLOBAL:
+                if self._config.MAX_OPEN_TRADES_GLOBAL > 0 and len(open_trades_all) >= self._config.MAX_OPEN_TRADES_GLOBAL:
                     return
                 open_trades = open_trades_all
-                if sp_config.OPEN_TRADES_SCOPE == "tag":
-                    mode_name = (sp_config.MODE or "").strip().lower()
+                if self._config.OPEN_TRADES_SCOPE == "tag":
+                    mode_name = (self._config.MODE or "").strip().lower()
                     tag_filter = None
                     for tag, mode in _TAG_TO_MODE.items():
                         if mode == mode_name:
@@ -1150,13 +1193,13 @@ class ScalpPrecisionEntryEngine:
                         open_trades = [
                             tr for tr in open_trades_all if str(tr.get("strategy_tag") or "").lower() == tag_filter
                         ]
-                if sp_config.MAX_OPEN_TRADES > 0 and len(open_trades) >= sp_config.MAX_OPEN_TRADES:
+                if self._config.MAX_OPEN_TRADES > 0 and len(open_trades) >= self._config.MAX_OPEN_TRADES:
                     return
 
         for mode, fn in self._modes.items():
-            if sp_config.COOLDOWN_SEC > 0.0:
+            if self._config.COOLDOWN_SEC > 0.0:
                 last_entry = float(self._state[mode]["last_entry"])
-                if tick.epoch - last_entry < sp_config.COOLDOWN_SEC:
+                if tick.epoch - last_entry < self._config.COOLDOWN_SEC:
                     continue
             signal = fn(fac_m1, fac_m5, fac_h1, range_ctx, tick.ts)
             if not signal:
@@ -1165,7 +1208,7 @@ class ScalpPrecisionEntryEngine:
             if not signal:
                 continue
             conf = int(signal.get("confidence", 0) or 0)
-            if sp_config.MIN_ENTRY_CONF > 0 and conf < sp_config.MIN_ENTRY_CONF:
+            if self._config.MIN_ENTRY_CONF > 0 and conf < self._config.MIN_ENTRY_CONF:
                 continue
             action = signal.get("action")
             if action not in {"OPEN_LONG", "OPEN_SHORT"}:
@@ -1178,8 +1221,34 @@ class ScalpPrecisionEntryEngine:
             if self._live_entry:
                 if self._loop is None:
                     continue
+                conf = int(signal.get("confidence") or 0)
+                units = 10000
+                if direction == "short":
+                    units = -10000
+                sl_price = entry_price - sl_pips * PIP if direction == "long" else entry_price + sl_pips * PIP
+                tp_price = (
+                    entry_price + tp_pips * PIP
+                    if direction == "long" and tp_pips > 0
+                    else entry_price - tp_pips * PIP
+                    if direction == "short" and tp_pips > 0
+                    else None
+                )
                 order_id = self._loop.run_until_complete(
-                    sp_worker._place_order(signal, fac_m1=fac_m1, fac_h4=fac_h4, range_ctx=range_ctx, now=tick.ts)
+                    order_manager.market_order(
+                        instrument="USD_JPY",
+                        units=units,
+                        sl_price=sl_price,
+                        tp_price=tp_price,
+                        pocket=self._config.POCKET,
+                        strategy_tag=mode,
+                        entry_thesis={
+                            "entry_probability": min(1.0, max(0.0, conf / 100.0)),
+                            "entry_units_intent": abs(units),
+                            **signal,
+                        },
+                        confidence=conf,
+                        meta={"source": "replay_exit_workers"},
+                    )
                 )
                 if order_id:
                     self._state[mode]["last_entry"] = tick.epoch
@@ -1193,7 +1262,7 @@ class ScalpPrecisionEntryEngine:
                 tp_price = entry_price - tp_pips * PIP if tp_pips > 0 else entry_price - 2.0 * PIP
             sl_price, tp_price = clamp_sl_tp(entry_price, sl_price, tp_price, direction == "long")
             self._broker.open_trade(
-                pocket="scalp",
+                pocket=self._config.POCKET,
                 strategy_tag=mode,
                 direction=direction,
                 entry_price=entry_price,
@@ -1202,7 +1271,7 @@ class ScalpPrecisionEntryEngine:
                 sl_pips=sl_pips,
                 timeout_sec=float(signal.get("timeout_sec") or 0.0) or None,
                 units=10000,
-                source="scalp_precision",
+                source="scalp_replay",
             )
             self._state[mode]["last_entry"] = tick.epoch
 
@@ -1367,7 +1436,7 @@ class ExitRunner:
             for tr in trades:
                 await self.worker._review_trade(tr, now, mid, rsi, range_active)
             return
-        if self.name == "scalp_precision":
+        if self.name in {"scalp_level_reject", "scalp_false_break_fade"}:
             mid, range_active = self.worker._context()
             if mid is None:
                 return
@@ -1418,12 +1487,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--sp-only",
         action="store_true",
-        help="Replay scalp_precision only (skip fast_scalp entry/exit).",
+        help="Replay scalp replay workers only (skip fast_scalp entry/exit).",
     )
     parser.add_argument(
         "--sp-live-entry",
         action="store_true",
-        help="Use live scalp_precision entry path (market_order + risk/size guards).",
+        help="Use live scalp replay entry path (market_order + risk/size guards).",
     )
     parser.add_argument("--disable-macro", action="store_true", help="Disable macro entries/exit.")
     parser.add_argument("--no-main-strategies", action="store_true", help="Disable main strategy entries.")
@@ -1498,9 +1567,9 @@ def main() -> None:
     else:
         if fast_entry is not None:
             broker.on_close = fast_entry.on_closed
-    sp_entry: Optional[ScalpPrecisionEntryEngine] = None
+    sp_entry: Optional[ScalpReplayEntryEngine] = None
     if not args.fast_only:
-        sp_entry = ScalpPrecisionEntryEngine(
+        sp_entry = ScalpReplayEntryEngine(
             broker,
             live_entry=args.sp_live_entry,
             loop=loop if args.sp_live_entry else None,
@@ -1516,7 +1585,8 @@ def main() -> None:
     if fast_exit is not None:
         _patch_exit_module(fast_exit, broker)
     if not args.fast_only:
-        _patch_exit_module(sp_exit, broker)
+        _patch_exit_module(sp_level_reject_exit, broker)
+        _patch_exit_module(sp_false_break_exit, broker)
         _patch_exit_module(bbrsi_exit, broker)
         if trendma_exit is not None:
             _patch_exit_module(trendma_exit, broker)
@@ -1524,11 +1594,23 @@ def main() -> None:
     fast_runner = None
     if not args.sp_only and fast_exit is not None:
         fast_runner = ExitRunner("fast_scalp", fast_exit, fast_exit.FastScalpExitWorker(), broker)
-    sp_runner = None
+    sp_level_reject_runner = None
+    sp_false_break_runner = None
     bbrsi_runner = None
     trend_runner = None
     if not args.fast_only:
-        sp_runner = ExitRunner("scalp_precision", sp_exit, sp_exit.RangeFaderExitWorker(), broker)
+        sp_level_reject_runner = ExitRunner(
+            "scalp_level_reject",
+            sp_level_reject_exit,
+            sp_level_reject_exit.RangeFaderExitWorker(),
+            broker,
+        )
+        sp_false_break_runner = ExitRunner(
+            "scalp_false_break_fade",
+            sp_false_break_exit,
+            sp_false_break_exit.RangeFaderExitWorker(),
+            broker,
+        )
         bbrsi_runner = ExitRunner("micro_bbrsi", bbrsi_exit, bbrsi_exit.MicroBBRsiExitWorker(), broker)
         if not args.disable_macro and trendma_exit is not None:
             trend_runner = ExitRunner("macro_trendma", trendma_exit, trendma_exit.TrendMAExitWorker(), broker)
@@ -1586,8 +1668,10 @@ def main() -> None:
         if not args.no_exit_worker:
             if fast_runner is not None:
                 loop.run_until_complete(fast_runner.step(now_dt))
-            if sp_runner is not None:
-                loop.run_until_complete(sp_runner.step(now_dt))
+            if sp_level_reject_runner is not None:
+                loop.run_until_complete(sp_level_reject_runner.step(now_dt))
+            if sp_false_break_runner is not None:
+                loop.run_until_complete(sp_false_break_runner.step(now_dt))
             if bbrsi_runner is not None:
                 loop.run_until_complete(bbrsi_runner.step(now_dt))
             if trend_runner is not None:
@@ -1635,9 +1719,9 @@ def main() -> None:
             "slip_atr_coef": args.slip_atr_coef,
             "slip_latency_coef": args.slip_latency_coef,
             "latency_ms": args.latency_ms,
-            "scalp_precision_min_entry_conf": sp_config.MIN_ENTRY_CONF,
-            "scalp_precision_allowlist": os.getenv("SCALP_PRECISION_ALLOWLIST", sp_config.ALLOWLIST_RAW),
-            "scalp_precision_live_entry": bool(args.sp_live_entry),
+            "scalp_entry_min_entry_conf": _SP_CFG.MIN_ENTRY_CONF,
+            "scalp_entry_allowlist": os.getenv("SCALP_REPLAY_ALLOWLIST", _SP_CFG.ALLOWLIST_RAW),
+            "scalp_entry_live_entry": bool(args.sp_live_entry),
             "bbrsi_min_entry_conf": os.getenv("BBRSI_MIN_ENTRY_CONF"),
             "exclude_end_of_replay": args.exclude_end_of_replay,
         },
