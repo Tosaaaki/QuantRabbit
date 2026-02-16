@@ -220,6 +220,20 @@
       overflow-x: auto;
       margin-top: 0.6rem;
     }
+    .table-wrap-scroll {
+      display: block;
+      max-height: min(56vh, 520px);
+      overflow-y: scroll;
+      overflow-x: auto;
+      overscroll-behavior: contain;
+      scrollbar-gutter: stable;
+    }
+    .table-wrap-scroll thead th {
+      position: sticky;
+      top: 0;
+      z-index: 1;
+      background: var(--card-muted);
+    }
     .badge {
       display: inline-flex;
       align-items: center;

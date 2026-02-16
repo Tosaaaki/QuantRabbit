@@ -75,9 +75,7 @@ sudo bash -lc '
   mkdir -p "/etc/systemd/system/${ENTRY_SVC}.d"
   cat > "/etc/systemd/system/${ENTRY_SVC}.d/override.conf" <<EOC
 [Service]
-Environment="ORDER_DISABLE_STOP_LOSS_SCALP=false"
-Environment="ORDER_ALLOW_STOP_LOSS_WITH_EXIT_NO_NEGATIVE_CLOSE_SCALP=true"
-Environment="ORDER_ENTRY_HARD_STOP_PIPS_STRATEGY_TICKIMBALANCE=25"
+Environment="ORDER_FIXED_SL_MODE=1"
 EOC
 
   mkdir -p "/etc/systemd/system/${EXIT_SVC}.d"

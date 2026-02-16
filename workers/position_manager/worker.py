@@ -9,6 +9,7 @@ from __future__ import annotations
 from contextlib import asynccontextmanager
 import logging
 import os
+import time
 from datetime import datetime
 from typing import Any
 
@@ -30,8 +31,37 @@ LOG = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def _lifespan(app: FastAPI):
-    pm = position_manager.PositionManager()
+    pm = None
+    init_error: Exception | None = None
+    for attempt in range(3):
+        try:
+            pm = position_manager.PositionManager()
+            init_error = None
+            break
+        except Exception as exc:
+            init_error = exc
+            if attempt < 2:
+                sleep_seconds = 2 ** attempt
+                LOG.warning(
+                    "[POSITION_MANAGER_WORKER] init attempt failed (attempt=%s): %s",
+                    attempt + 1,
+                    exc,
+                )
+                time.sleep(sleep_seconds)
+            else:
+                LOG.exception(
+                    "[POSITION_MANAGER_WORKER] init failed after retries: %s",
+                    exc,
+                )
+
+    if pm is None:
+        # Keep service process alive; callers get explicit failure and can retry.
+        LOG.error(
+            "[POSITION_MANAGER_WORKER] position_manager unavailable: %s",
+            init_error,
+        )
     app.state.position_manager = pm
+    app.state.position_manager_init_error = str(init_error) if init_error else None
     try:
         yield
     finally:
@@ -112,7 +142,10 @@ def _failure(message: str) -> dict[str, Any]:
 def _manager(request: Request) -> position_manager.PositionManager:
     manager = getattr(request.app.state, "position_manager", None)
     if manager is None:
-        raise RuntimeError("position manager not initialized")
+        init_error = getattr(request.app.state, "position_manager_init_error", None)
+        raise RuntimeError(
+            f"position manager not initialized: {init_error or 'unknown'}"
+        )
     return manager
 
 

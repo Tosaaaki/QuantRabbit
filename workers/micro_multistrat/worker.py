@@ -982,6 +982,7 @@ async def micro_multi_worker() -> None:
     global _LAST_FRESH_M1_TS
     last_trend_block_log = 0.0
     last_stale_log = 0.0
+    last_stale_scale_log = 0.0
     last_perf_block_log = 0.0
     last_mlr_block_log = 0.0
 
@@ -994,6 +995,7 @@ async def micro_multi_worker() -> None:
             continue
         current_hour = now.hour
         now_ts = time.time()
+        stale_scale = 1.0
 
         # 最新キャッシュに更新（他プロセスが書いた factor_cache.json を取り込む）
         try:
@@ -1035,6 +1037,23 @@ async def micro_multi_worker() -> None:
                 tags={"reason": "factor_stale_warn", "tf": "M1"},
                 ts=now,
             )
+            hard_age = max(config.MAX_FACTOR_AGE_SEC, config.FRESH_TICKS_STALE_SCALE_HARD_SEC)
+            if hard_age > config.MAX_FACTOR_AGE_SEC:
+                stale_ratio = max(0.0, (age_m1 - config.MAX_FACTOR_AGE_SEC) / (hard_age - config.MAX_FACTOR_AGE_SEC))
+                stale_scale = max(
+                    config.FRESH_TICKS_STALE_SCALE_MIN,
+                    1.0 - stale_ratio * (1.0 - config.FRESH_TICKS_STALE_SCALE_MIN),
+                )
+            if stale_scale < 1.0:
+                if now_ts - last_stale_scale_log > 30.0:
+                    LOG.info(
+                        "%s factor stale scale=%.3f age=%.1fs hard_age=%.1fs",
+                        config.LOG_PREFIX,
+                        stale_scale,
+                        age_m1,
+                        hard_age,
+                    )
+                    last_stale_scale_log = now_ts
             if now_ts - last_stale_log > 30.0:
                 LOG.warning(
                     "%s stale factors age=%.1fs limit=%.1fs (proceeding anyway)",
@@ -1412,6 +1431,7 @@ async def micro_multi_worker() -> None:
             units = min(units, units_risk)
             units = int(round(units * cap))
             units = int(round(units * multi_scale))
+            units = int(round(units * stale_scale))
             units = int(round(units * hist_mult))
             units = int(round(units * dyn_mult))
             units = int(round(units * strategy_units_mult))

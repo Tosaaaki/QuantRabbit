@@ -175,6 +175,16 @@ def _percentile(values: list[float], pct: float) -> float:
     return sorted_vals[lower] * (1.0 - frac) + sorted_vals[upper] * frac
 
 
+def _normalize_for_disabled_spread_guard(state: Optional[dict]) -> Optional[dict]:
+    """SPREAD_GUARD_DISABLE が有効な場合は stale 情報を無効化する。"""
+    if not DISABLE_SPREAD_GUARD or not state:
+        return state
+    state = dict(state)
+    state["stale"] = False
+    state["stale_for_sec"] = 0.0
+    return state
+
+
 def _state_from_tick_cache(now_monotonic: float) -> Optional[dict]:
     global _fallback_state_cache, _fallback_state_cached_at
     if not TICK_CACHE_FALLBACK_ENABLED:
@@ -452,7 +462,7 @@ def get_state() -> Optional[dict]:
     global _stale_since
     now = time.monotonic()
     if _snapshot is None:
-        return _state_from_tick_cache(now)
+        return _normalize_for_disabled_spread_guard(_state_from_tick_cache(now))
 
     age_ms = int(max(0.0, (now - _snapshot.monotonic_ts) * 1000))
 
@@ -486,7 +496,7 @@ def get_state() -> Optional[dict]:
     hot_values = [val for _, val in _hot_history]
     hot_samples = sum(1 for val in hot_values if val >= HOT_TRIGGER_PIPS)
 
-    return {
+    state = {
         "source": "snapshot",
         "bid": _snapshot.bid,
         "ask": _snapshot.ask,
@@ -520,6 +530,7 @@ def get_state() -> Optional[dict]:
         "hot_min_samples": HOT_MIN_SAMPLES,
         "hot_samples": hot_samples,
     }
+    return _normalize_for_disabled_spread_guard(state)
 
 
 def is_blocked() -> Tuple[bool, int, Optional[dict], str]:

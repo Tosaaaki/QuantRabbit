@@ -1,7 +1,8 @@
 [Unit]
-Description=Daily QuantRabbit log cleanup (04:30 JST)
+Description=Twice-daily QuantRabbit log cleanup (roughly UTC 07:30/19:30)
 
 [Timer]
+OnCalendar=*-*-* 07:30:00
 OnCalendar=*-*-* 19:30:00
 RandomizedDelaySec=300
 Persistent=true

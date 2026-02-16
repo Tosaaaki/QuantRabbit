@@ -1674,7 +1674,8 @@ def _build_hourly_fallback(trades: list[dict]) -> dict:
         pocket = (item.get("pocket") or "").lower()
         if pocket == "manual":
             continue
-        close_dt = _parse_dt(item.get("close_time") or item.get("updated_at"))
+        # 1時間ごとの損益は確定クローズのみを集計する
+        close_dt = _parse_dt(item.get("close_time"))
         if not close_dt:
             continue
         close_jst = close_dt.astimezone(jst)

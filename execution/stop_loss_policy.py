@@ -1,8 +1,10 @@
 """Centralized stop-loss policy flags.
 
-Defaults:
-- Entry stop-loss is disabled (matches prior ORDER_DISABLE_STOP_LOSS default).
-- Trailing/BE updates are allowed unless explicitly turned off.
+In v1 mode, stop-loss attach behavior is controlled only by
+`ORDER_FIXED_SL_MODE`:
+- `1` : always attach stopLossOnFill
+- `0` : never attach stopLossOnFill
+- unset: treat as OFF for safety
 """
 
 from __future__ import annotations
@@ -25,47 +27,28 @@ def _env_flag_optional(name: str) -> bool | None:
         return None
     return raw.strip().lower() not in _FALSEY
 
-
-# Keep legacy env names; default to disabled to preserve existing behavior.
-STOP_LOSS_DISABLED: bool = _env_flag("ORDER_DISABLE_STOP_LOSS", True) or _env_flag(
-    "DISABLE_STOP_LOSS", True
-)
 # Trailing/BE SL updates can be toggled separately; default allow.
 TRAILING_SL_ALLOWED: bool = _env_flag("ALLOW_TRAILING_STOP_LOSS", True)
+_FIXED_SL_MODE: bool | None = _env_flag_optional("ORDER_FIXED_SL_MODE")
+
+
+def _resolved_fixed_mode() -> bool:
+    if _FIXED_SL_MODE is None:
+        return False
+    return _FIXED_SL_MODE
 
 
 def stop_loss_disabled() -> bool:
-    return STOP_LOSS_DISABLED
+    return not _resolved_fixed_mode()
 
 
 def entry_sl_enabled() -> bool:
-    return not STOP_LOSS_DISABLED
+    return _resolved_fixed_mode()
 
 
 def entry_sl_enabled_for_pocket(pocket: str | None) -> bool:
     """Return whether stopLossOnFill should be attached for the given pocket."""
-
-    base_enabled = not STOP_LOSS_DISABLED
-    if not pocket:
-        return base_enabled
-    pocket_key = str(pocket).strip().upper()
-    if not pocket_key:
-        return base_enabled
-
-    # Explicit per-pocket overrides (allows gradual rollout while global stays disabled)
-    disable_override = _env_flag_optional(f"ORDER_DISABLE_STOP_LOSS_{pocket_key}")
-    if disable_override is None:
-        disable_override = _env_flag_optional(f"DISABLE_STOP_LOSS_{pocket_key}")
-    if disable_override is not None:
-        return not disable_override
-
-    enable_override = _env_flag_optional(f"ORDER_ENABLE_STOP_LOSS_{pocket_key}")
-    if enable_override is None:
-        enable_override = _env_flag_optional(f"ENABLE_STOP_LOSS_{pocket_key}")
-    if enable_override is not None:
-        return enable_override
-
-    return base_enabled
+    return _resolved_fixed_mode()
 
 
 def stop_loss_disabled_for_pocket(pocket: str | None) -> bool:
@@ -74,3 +57,13 @@ def stop_loss_disabled_for_pocket(pocket: str | None) -> bool:
 
 def trailing_sl_allowed() -> bool:
     return TRAILING_SL_ALLOWED
+
+
+def fixed_sl_mode() -> bool | None:
+    """Return fixed-mode global override.
+
+    - True: always attach broker SL.
+    - False: never attach broker SL.
+    - None: defaults to False for backward-compat behavior in legacy deploy scripts.
+    """
+    return _FIXED_SL_MODE

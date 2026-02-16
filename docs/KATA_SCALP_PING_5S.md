@@ -166,7 +166,7 @@ DB:
 ### 10.1 方針
 - 固定値の長所・短所を固定しないため、`base/safe` を切り替える2系統の環境として管理する。
 - 運用中に「即時切替」対象にするキーは次を含む:
-  - 取引制御: `SCALP_PING_5S_USE_SL`, `ORDER_DISABLE_STOP_LOSS_SCALP_FAST`, `ORDER_ENABLE_STOP_LOSS_SCALP_FAST`
+  - 取引制御: `ORDER_FIXED_SL_MODE`
   - 取りこぼし抑制: `SCALP_PING_5S_ENTRY_COOLDOWN_SEC`, `SCALP_PING_5S_MIN_ORDER_SPACING_SEC`, `SCALP_PING_5S_MAX_ORDERS_PER_MINUTE`, `SCALP_PING_5S_MAX_ACTIVE_TRADES`, `SCALP_PING_5S_MAX_PER_DIRECTION`
 - `SCALP_PING_5S` の実運用上の判断は「実績ベースの自動切替」で行う前提にし、短時間統計が悪化したら `SAFE`、改善したら `BASE` に戻す。
 
@@ -177,18 +177,14 @@ DB:
 
 ### 10.3 BASE / SAFE のパラメータ差分（要点）
 - BASE
-  - `SCALP_PING_5S_USE_SL=0`
-  - `ORDER_DISABLE_STOP_LOSS_SCALP_FAST=1`
-  - `ORDER_ENABLE_STOP_LOSS_SCALP_FAST=0`
+  - `ORDER_FIXED_SL_MODE=0`
   - `SCALP_PING_5S_MAX_ORDERS_PER_MINUTE=96`
   - `SCALP_PING_5S_MAX_ACTIVE_TRADES=40`
   - `SCALP_PING_5S_MAX_PER_DIRECTION=24`
   - `SCALP_PING_5S_ENTRY_COOLDOWN_SEC=0.18`
   - `SCALP_PING_5S_MIN_ORDER_SPACING_SEC=0.10`
 - SAFE
-  - `SCALP_PING_5S_USE_SL=1`
-  - `ORDER_DISABLE_STOP_LOSS_SCALP_FAST=0`
-  - `ORDER_ENABLE_STOP_LOSS_SCALP_FAST=1`
+  - `ORDER_FIXED_SL_MODE=0`
   - `SCALP_PING_5S_MAX_ORDERS_PER_MINUTE=60`
   - `SCALP_PING_5S_MAX_ACTIVE_TRADES=24`
   - `SCALP_PING_5S_MAX_PER_DIRECTION=12`
@@ -211,5 +207,5 @@ DB:
   - `bash scripts/vm_apply_scalp_ping_5s_rapid_mode.sh -p quantrabbit -z asia-northeast1-a -m fx-trader-vm -t --mode base|safe|auto [--window-min 15]`
 - VM反映確認:
   - `/home/tossaki/QuantRabbit/ops/env/scalp_ping_5s.env` の `SCALP_PING_5S_RAPID_MODE`
-  - 上記コアキー（`SCALP_PING_5S_USE_SL` 等）が意図どおり入替わっていること
+  - 上記コアキー（`ORDER_FIXED_SL_MODE`）が意図どおり入替わっていること
 - 重要: 既存ポジションの即時終了は本仕様には含めない（既存ポジ維持前提）。ただし SAFE/BASE 変更の副作用は新規エントリーの抑制・許可条件に反映される。

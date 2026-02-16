@@ -714,7 +714,7 @@
         <div class="tagline">最新15件を表示します。詳細は履歴タブで確認できます。</div>
         {% set summary_trades = dashboard.recent_trades[:15] %}
         {% if summary_trades %}
-          <div class="table-wrap">
+          <div class="table-wrap table-wrap-scroll">
             <table>
               <thead>
                 <tr>
@@ -1340,7 +1340,7 @@
         <h2>最近のトレード</h2>
     <div class="tagline">更新順で最新{{ dashboard.recent_trades_limit }}件を表示します。状態/決済理由も併記します。</div>
     {% if dashboard.recent_trades %}
-      <div class="table-wrap">
+      <div class="table-wrap table-wrap-scroll">
         <table>
           <thead>
             <tr>

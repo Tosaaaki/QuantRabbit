@@ -30,6 +30,13 @@
 - `ops/env/quant-micro-multi.env` に `MICRO_MULTI_ENABLED=1` を追加し、`quant-micro-multi` の ENTRY 側を起動状態に寄せる。
 - `ops/env/quant-m1scalper.env` の `M1SCALP_ALLOWED_REGIMES` を `trend` 固定から `trend,range,mixed` に変更し、市況レジーム偏在時の過度な阻害を回避。
 
+### 2026-02-22（追記）M1Scalper 戦略ラベルの復元ルールを明文化
+
+- `execution/position_manager.py` の戦略タグ正規化に、`client_order_id` の
+  `m1scalpe*` 系文字列を `M1Scalper-M1` に復元するエントリを追加し、`strategy` / `strategy_tag` の表示整合を向上。
+- 同ファイルに `M1Scalper` 系の戦略名を戦略-ポケット推定 (`_STRATEGY_POCKET_MAP`) へ追加。
+- `scripts/backfill_strategy_tags.py` の `client_id` 由来補完に、`qr-<ts>-scalp-m1scalpe*` 系を `M1Scalper-M1` として扱うロジックを追加。
+
 ## 補足（戦略判断責務の明確化）
 
 - **方針確定**: 各戦略ワーカーは「ENTRY/EXIT判定の脳」を保持し、ロジックの主判断は各ワーカー固有で行う。
@@ -63,6 +70,24 @@
   - `SCALP_PING_5S_ENTRY_BID_ASK_EDGE_PIPS=0.0`
 - 本修正は 5秒戦略のみ対象。`SCALP_PING_5S` 系サービスの入場通過率回復を優先し、
   `entry_probability_reject` が減り `filled` が増えるかを次回監視で確認する。
+
+### 2026-02-16（追記）M1スキャ (`scalp_m1scalper`) の最小ロットソフトガードを調整
+
+- `workers/scalp_m1scalper/worker.py` の `_resolve_min_units_guard` にて、
+  `min_units_soft_raise` 時に `config.MIN_UNITS` へサイズを引き上げる処理を廃止し、
+  ソフト判定後も `abs_units` を維持して通過させるよう変更。
+- `ops/env/quant-m1scalper.env` に `M1SCALP_MIN_UNITS_SOFT_FAIL_RATIO=0.05` を追加し、
+  M1スキャの小型シグナル（例: `-57`）でも過度な拒否になりにくい状態へ寄せた。
+
+### 2026-02-16（追記）M1スキャ戦略の実行実態観測結果に基づく最小ロット再調整
+
+- `OPS` 実行環境（`quant-v2-runtime.env`）で `ORDER_MIN_UNITS_STRATEGY_M1SCALPER_M1=700` を
+  `ORDER_MIN_UNITS_STRATEGY_M1SCALPER_M1=300` に更新し、同時に `quant-m1scalper.env` に
+  `M1SCALP_MIN_UNITS=350` と `M1SCALP_MIN_UNITS_SOFT_FAIL_RATIO=0.62` を明示。
+- 本日ログ上の `OPEN_SKIP` で、`entry_probability_below_min_units` が実質的な主因（約90%超）であったため、
+  `ORDER_MIN_UNITS` と worker 側 min_units threshold を引き下げ、最低サイズ起因の取り逃しを抑える方向へ変更。
+- 適用後は同日再集計で `OPEN_SKIP` 内訳（`entry_probability_below_min_units`）の件数が低下するかを
+  監視対象に設定。
 
 ### 2026-02-16（追記）5秒B no_signal 可観測性の精緻化
 
@@ -698,3 +723,17 @@
   N-Wave 連続検知時の `skip_nwave_*_alignment` を運用側で可変化。
 - `ops/env/quant-m1scalper.env` に `M1SCALP_NWAVE_ALIGN_ENABLED=0` を追加して
   アライメントガードを一時無効化（必要に応じて再有効化可能）し、5秒以外の戦略通過率改善を優先。
+
+### 2026-02-16（追記）micro_multi の因子劣化時軽量化 + PositionManager サービス耐障害化
+
+- `workers/micro_multistrat/worker.py`
+  - M1 因子 `age_m1` が `MAX_FACTOR_AGE_SEC` を超過した場合、`FRESH_TICKS_STALE_SCALE_MIN` と
+    `FRESH_TICKS_STALE_SCALE_HARD_SEC` を使って `stale_scale` を算出し、`units` に適用して
+    スケールアウト時に過大エントリーを抑える「自動軽量化」を追加。
+  - `workers/micro_multistrat/config.py` に上記2変数を追加し、運用時の調整余地を確保。
+- `execution/position_manager.py`
+  - サービス障害時の再試行を指数バックオフ（`POSITION_MANAGER_SERVICE_FAIL_BACKOFF_*`）で抑止し、
+    短時間の連打エラーを軽減。
+- `ops/env/quant-v2-runtime.env`
+  - `ORDER_MANAGER_SERVICE_FALLBACK_LOCAL` と `POSITION_MANAGER_SERVICE_FALLBACK_LOCAL` を `1` に変更し、
+    サービス面不具合時はローカルフォールバック経路へ短時間で移行する運用を追加。

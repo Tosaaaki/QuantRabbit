@@ -1,5 +1,5 @@
 {
-  "as_of": "2026-02-13T12:47:37+00:00",
+  "as_of": "2026-02-16T04:07:39+00:00",
   "rows_total": 11691,
   "patterns_scored": 1669,
   "drift_rows": 0,
@@ -31,8 +31,8 @@
       "robust_score": 4.0,
       "suggested_multiplier": 1.337409653,
       "quality": "robust",
-      "boot_ci_low": 1.2175581395,
-      "boot_ci_high": 1.8740697674
+      "boot_ci_low": 1.1988372093,
+      "boot_ci_high": 1.8622093023
     },
     {
       "pattern_id": "st:m1scalper_trend_long|pk:scalp|sd:long|sg:na|mtf:na|hz:na|ex:na|rg:na|pt:na",
@@ -48,8 +48,8 @@
       "robust_score": 4.0,
       "suggested_multiplier": 1.337409653,
       "quality": "robust",
-      "boot_ci_low": 3.9755421687,
-      "boot_ci_high": 5.4030120482
+      "boot_ci_low": 3.9279518072,
+      "boot_ci_high": 5.3910843373
     },
     {
       "pattern_id": "st:rangefader|pk:scalp|sd:long|sg:na|mtf:na|hz:na|ex:na|rg:na|pt:na",
@@ -65,8 +65,8 @@
       "robust_score": 4.0,
       "suggested_multiplier": 1.337409653,
       "quality": "robust",
-      "boot_ci_low": 0.3581481481,
-      "boot_ci_high": 1.0437962963
+      "boot_ci_low": 0.2961111111,
+      "boot_ci_high": 1.0381481481
     },
     {
       "pattern_id": "st:trendma|pk:macro|sd:long|sg:na|mtf:na|hz:na|ex:na|rg:na|pt:na",
@@ -82,8 +82,8 @@
       "robust_score": 4.0,
       "suggested_multiplier": 1.337409653,
       "quality": "robust",
-      "boot_ci_low": 4.1363095238,
-      "boot_ci_high": 6.0569047619
+      "boot_ci_low": 4.1142857143,
+      "boot_ci_high": 6.0496428571
     },
     {
       "pattern_id": "st:m1scalper|pk:scalp|sd:long|sg:na|mtf:na|hz:na|ex:na|rg:low|pt:na",
@@ -99,8 +99,8 @@
       "robust_score": 4.0,
       "suggested_multiplier": 1.337409653,
       "quality": "robust",
-      "boot_ci_low": 3.0101851852,
-      "boot_ci_high": 3.8355555556
+      "boot_ci_low": 3.0455555556,
+      "boot_ci_high": 3.7398148148
     },
     {
       "pattern_id": "st:trendma|pk:macro|sd:long|sg:na|mtf:na|hz:na|ex:na|rg:low|pt:na",
@@ -116,8 +116,8 @@
       "robust_score": 4.0,
       "suggested_multiplier": 1.337409653,
       "quality": "robust",
-      "boot_ci_low": 5.4709433962,
-      "boot_ci_high": 7.3513207547
+      "boot_ci_low": 5.3426415094,
+      "boot_ci_high": 7.2143396226
     },
     {
       "pattern_id": "st:m1scalper|pk:scalp|sd:short|sg:na|mtf:na|hz:na|ex:na|rg:mid|pt:na",
@@ -167,8 +167,8 @@
       "robust_score": 3.7857427427,
       "suggested_multiplier": 1.3344680495,
       "quality": "robust",
-      "boot_ci_low": 4.738028169,
-      "boot_ci_high": 6.9745070423
+      "boot_ci_low": 4.6742253521,
+      "boot_ci_high": 6.7353521127
     },
     {
       "pattern_id": "st:levelreject|pk:scalp|sd:short|sg:na|mtf:na|hz:na|ex:na|rg:na|pt:na",
@@ -184,8 +184,8 @@
       "robust_score": 3.4182898478,
       "suggested_multiplier": 1.327789892,
       "quality": "robust",
-      "boot_ci_low": 0.2753365385,
-      "boot_ci_high": 0.8130769231
+      "boot_ci_low": 0.2828365385,
+      "boot_ci_high": 0.8552403846
     },
     {
       "pattern_id": "st:microcompressionrevert_long|pk:micro|sd:long|sg:na|mtf:na|hz:na|ex:na|rg:na|pt:c_maru_dn_w_balanced_tr_4a1b0741",
@@ -286,8 +286,8 @@
       "robust_score": 2.9033297694,
       "suggested_multiplier": 1.3136075558,
       "quality": "robust",
-      "boot_ci_low": 2.743,
-      "boot_ci_high": 3.84
+      "boot_ci_low": 2.693,
+      "boot_ci_high": 3.8573333333
     },
     {
       "pattern_id": "st:microvwaprevert|pk:micro|sd:long|sg:na|mtf:na|hz:na|ex:na|rg:na|pt:na",
@@ -422,8 +422,8 @@
       "robust_score": 2.2317716377,
       "suggested_multiplier": 1.282146588,
       "quality": "robust",
-      "boot_ci_low": 0.3008247423,
-      "boot_ci_high": 1.6165979381
+      "boot_ci_low": 0.2363917526,
+      "boot_ci_high": 1.5763917526
     },
     {
       "pattern_id": "st:volcompressionbreak_long|pk:micro|sd:long|sg:na|mtf:na|hz:na|ex:na|rg:na|pt:na",

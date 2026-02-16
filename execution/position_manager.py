@@ -71,6 +71,13 @@ _OPEN_TRADES_FAIL_BACKOFF_BASE = float(
 _OPEN_TRADES_FAIL_BACKOFF_MAX = float(
     os.getenv("POSITION_MANAGER_OPEN_TRADES_BACKOFF_MAX", "60.0")
 )
+_DB_REOPEN_MIN_INTERVAL_SEC = float(
+    os.getenv("POSITION_MANAGER_DB_REOPEN_MIN_INTERVAL_SEC", "1.0")
+)
+_DB_REOPEN_MAX_INTERVAL_SEC = float(
+    os.getenv("POSITION_MANAGER_DB_REOPEN_MAX_INTERVAL_SEC", "30.0")
+)
+_DB_REOPEN_ATTEMPTS = int(os.getenv("POSITION_MANAGER_DB_REOPEN_ATTEMPTS", "4"))
 _MANUAL_POCKET_NAME = os.getenv("POSITION_MANAGER_MANUAL_POCKET", "manual")
 _KNOWN_POCKETS = {"micro", "macro", "scalp", "scalp_fast"}
 _JST = timezone(timedelta(hours=9))
@@ -212,6 +219,17 @@ _POSITION_MANAGER_SERVICE_TIMEOUT = _env_float(
 _POSITION_MANAGER_SERVICE_FALLBACK_LOCAL = _env_bool(
     "POSITION_MANAGER_SERVICE_FALLBACK_LOCAL", False
 )
+_POSITION_MANAGER_SERVICE_FAIL_BACKOFF_SEC = max(
+    0.5, _env_float("POSITION_MANAGER_SERVICE_FAIL_BACKOFF_SEC", 6.0)
+)
+_POSITION_MANAGER_SERVICE_FAIL_BACKOFF_MAX_SEC = max(
+    _POSITION_MANAGER_SERVICE_FAIL_BACKOFF_SEC,
+    _env_float("POSITION_MANAGER_SERVICE_FAIL_BACKOFF_MAX_SEC", 45.0),
+)
+_POSITION_MANAGER_SERVICE_NEXT_RETRY = 0.0
+_POSITION_MANAGER_SERVICE_ERROR_COUNT = 0
+_POSITION_MANAGER_SERVICE_LAST_ERROR = None
+_POSITION_MANAGER_SERVICE_LAST_SUPPRESS_LOG_TS = 0.0
 
 
 def _position_manager_service_enabled() -> bool:
@@ -287,9 +305,41 @@ def _position_manager_service_call(path: str, payload: dict) -> object:
 def _position_manager_service_request(path: str, payload: dict) -> object | None:
     if not _position_manager_service_enabled():
         return None
+    global _POSITION_MANAGER_SERVICE_NEXT_RETRY
+    global _POSITION_MANAGER_SERVICE_ERROR_COUNT
+    global _POSITION_MANAGER_SERVICE_LAST_ERROR
+    global _POSITION_MANAGER_SERVICE_LAST_SUPPRESS_LOG_TS
+    now_ts = time.monotonic()
+    if now_ts < _POSITION_MANAGER_SERVICE_NEXT_RETRY:
+        if _POSITION_MANAGER_SERVICE_FALLBACK_LOCAL:
+            if now_ts - _POSITION_MANAGER_SERVICE_LAST_SUPPRESS_LOG_TS > 30.0:
+                remain = max(0.0, _POSITION_MANAGER_SERVICE_NEXT_RETRY - now_ts)
+                logging.debug(
+                    "[POSITION] position_manager service retry cool-down remain=%.2fs errors=%d",
+                    remain,
+                    _POSITION_MANAGER_SERVICE_ERROR_COUNT,
+                )
+                _POSITION_MANAGER_SERVICE_LAST_SUPPRESS_LOG_TS = now_ts
+            return None
+        raise RuntimeError(
+            "position_manager service temporarily unavailable"
+            f" (retry in {max(0.0, _POSITION_MANAGER_SERVICE_NEXT_RETRY - now_ts):.1f}s)"
+        )
     try:
-        return _extract_service_payload(path, _position_manager_service_call(path, payload))
+        result = _extract_service_payload(path, _position_manager_service_call(path, payload))
+        _POSITION_MANAGER_SERVICE_ERROR_COUNT = 0
+        _POSITION_MANAGER_SERVICE_NEXT_RETRY = 0.0
+        _POSITION_MANAGER_SERVICE_LAST_ERROR = None
+        return result
     except Exception as exc:
+        _POSITION_MANAGER_SERVICE_ERROR_COUNT += 1
+        backoff = min(
+            _POSITION_MANAGER_SERVICE_FAIL_BACKOFF_SEC
+            * (2 ** (_POSITION_MANAGER_SERVICE_ERROR_COUNT - 1)),
+            _POSITION_MANAGER_SERVICE_FAIL_BACKOFF_MAX_SEC,
+        )
+        _POSITION_MANAGER_SERVICE_NEXT_RETRY = now_ts + backoff
+        _POSITION_MANAGER_SERVICE_LAST_ERROR = str(exc)
         logging.warning(
             "[POSITION] position_manager service call failed path=%s payload=%s err=%s",
             path,
@@ -359,6 +409,8 @@ _CANONICAL_STRATEGY_TAGS = {
     "MicroPullbackFib",
     "ScalpReversalNWave",
     "RangeCompressionBreak",
+    "M1Scalper",
+    "M1Scalper-M1",
 }
 _CANONICAL_TAGS_LOWER = {tag.lower(): tag for tag in _CANONICAL_STRATEGY_TAGS}
 _TAG_ALIAS_PREFIXES = {
@@ -377,6 +429,9 @@ _TAG_ALIAS_PREFIXES = {
     "micropullbackfib": "MicroPullbackFib",
     "scalpreversalnwave": "ScalpReversalNWave",
     "rangecompressionbreak": "RangeCompressionBreak",
+    "m1scalpe": "M1Scalper-M1",
+    "m1scalper": "M1Scalper-M1",
+    "m1scalp": "M1Scalper-M1",
 }
 
 _STRATEGY_POCKET_MAP = {
@@ -418,6 +473,8 @@ _STRATEGY_POCKET_MAP = {
     "MicroPullbackFib": "micro",
     "ScalpReversalNWave": "scalp",
     "RangeCompressionBreak": "micro",
+    "M1Scalper": "scalp",
+    "M1Scalper-M1": "scalp",
 }
 
 
@@ -1184,25 +1241,64 @@ class PositionManager:
         self._last_sync_fetch_meta: dict[str, float | int] = {}
         self._last_sync_parse_meta: dict[str, float | int] = {}
         self._last_sync_breakdown: dict[str, float | int] = {}
+        self._db_reopen_failures: int = 0
+        self._db_reopen_block_until: float = 0.0
 
     def _reopen_trades_connection(self) -> None:
-        previous = getattr(self, "con", None)
-        if previous is not None:
-            try:
-                previous.close()
-            except Exception:
-                pass
-
-        self.con = _open_trades_db()
-        try:
-            with _file_lock(_DB_LOCK_PATH):
-                self._ensure_schema_with_retry()
-        except TimeoutError:
-            logging.warning(
-                "[PositionManager] schema lock timeout while reopening trades DB"
+        now = time.monotonic()
+        if now < self._db_reopen_block_until:
+            raise sqlite3.OperationalError(
+                "trades DB reconnect temporarily blocked due to repeated failures"
             )
 
+        backoff = min(
+            _DB_REOPEN_MAX_INTERVAL_SEC,
+            _DB_REOPEN_MIN_INTERVAL_SEC * (2**self._db_reopen_failures),
+        )
+
+        for attempt in range(_DB_REOPEN_ATTEMPTS):
+            previous = getattr(self, "con", None)
+            if previous is not None:
+                try:
+                    previous.close()
+                except Exception:
+                    pass
+            self.con = None
+
+            try:
+                self.con = _open_trades_db()
+                with _file_lock(_DB_LOCK_PATH):
+                    self._ensure_schema_with_retry()
+                self._db_reopen_failures = 0
+                self._db_reopen_block_until = 0.0
+                return
+            except Exception as exc:
+                self._db_reopen_failures += 1
+                self._db_reopen_block_until = time.monotonic() + backoff
+                if self.con is not None:
+                    try:
+                        self.con.close()
+                    except Exception:
+                        pass
+                    self.con = None
+
+                if attempt >= _DB_REOPEN_ATTEMPTS - 1:
+                    raise
+
+                logging.warning(
+                    "[PositionManager] failed to reopen trades DB (attempt=%s): %s",
+                    attempt + 1,
+                    exc,
+                )
+                time.sleep(backoff)
+                backoff = min(backoff * 2, _DB_REOPEN_MAX_INTERVAL_SEC)
+
     def _ensure_connection_open(self) -> None:
+        if time.monotonic() < self._db_reopen_block_until:
+            raise sqlite3.ProgrammingError(
+                "trades DB temporarily unavailable after repeated reconnect failures"
+            )
+
         if self.con is None:
             self._reopen_trades_connection()
             return
@@ -2694,7 +2790,7 @@ class PositionManager:
                 self._ensure_connection_open()
                 self.con.commit()
                 return
-            except sqlite3.OperationalError as exc:
+            except (sqlite3.OperationalError, sqlite3.ProgrammingError) as exc:
                 if _is_closed_db_error(exc):
                     self._reopen_trades_connection()
                     continue
@@ -2708,7 +2804,7 @@ class PositionManager:
                 self._ensure_connection_open()
                 self.con.executemany(sql, params)
                 return
-            except sqlite3.OperationalError as exc:
+            except (sqlite3.OperationalError, sqlite3.ProgrammingError) as exc:
                 if _is_closed_db_error(exc):
                     self._reopen_trades_connection()
                     continue
@@ -3380,3 +3476,4 @@ class PositionManager:
             self.con.close()
         except sqlite3.ProgrammingError:
             pass
+        self.con = None

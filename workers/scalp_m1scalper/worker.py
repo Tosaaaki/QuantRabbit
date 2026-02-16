@@ -79,14 +79,40 @@ def _bb_levels(fac):
     return upper, mid if mid is not None else (upper + lower) / 2.0, lower, span, span / _BB_PIP
 
 
-def _bb_entry_allowed(style, side, price, fac_m1, *, range_active=None):
+def _soft_scale_exceed_limit(value, good_limit, soft_limit, min_scale, max_scale):
+    """Higher values are worse. Return 1.0 at good_limit, 0 at soft_limit."""
+    if value <= good_limit:
+        return 1.0
+    if soft_limit <= good_limit:
+        return 0.0
+    if value >= soft_limit:
+        return 0.0
+    ratio = (soft_limit - value) / (soft_limit - good_limit)
+    scale = min_scale + (max_scale - min_scale) * ratio
+    return max(min_scale, min(max_scale, scale))
+
+
+def _soft_scale_deficit_limit(value, good_limit, soft_limit, min_scale, max_scale):
+    """Lower values are worse. Return 1.0 at good_limit, 0 at soft_limit."""
+    if value >= good_limit:
+        return 1.0
+    if soft_limit >= good_limit:
+        return 0.0
+    if value <= soft_limit:
+        return 0.0
+    ratio = (value - soft_limit) / (good_limit - soft_limit)
+    scale = min_scale + (max_scale - min_scale) * ratio
+    return max(min_scale, min(max_scale, scale))
+
+
+def _bb_entry_allowed(style, side, price, fac_m1, *, range_active=None, conf_val=None):
     if not _BB_ENTRY_ENABLED:
-        return True
+        return True, 1.0, {}
     if price is None or price <= 0:
-        return True
+        return True, 1.0, {}
     levels = _bb_levels(fac_m1)
     if not levels:
-        return True
+        return True, 1.0, {}
     upper, mid, lower, span, span_pips = levels
     side_key = str(side or "").lower()
     if side_key in {"buy", "long", "open_long"}:
@@ -99,24 +125,160 @@ def _bb_entry_allowed(style, side, price, fac_m1, *, range_active=None):
     if style == "reversion":
         base_pips = _BB_ENTRY_SCALP_REVERT_PIPS if orig_style == "scalp" else _BB_ENTRY_REVERT_PIPS
         base_ratio = _BB_ENTRY_SCALP_REVERT_RATIO if orig_style == "scalp" else _BB_ENTRY_REVERT_RATIO
-        threshold = max(base_pips, span_pips * base_ratio)
+        block_limit = max(base_pips, span_pips * base_ratio)
         if direction == "long":
-            dist = (price - lower) / _BB_PIP
+            distance_pips = (price - lower) / _BB_PIP
         else:
-            dist = (upper - price) / _BB_PIP
-        return dist <= threshold
-    if direction == "long":
-        if price < mid:
-            return False
-        ext = max(0.0, price - upper) / _BB_PIP
+            distance_pips = (upper - price) / _BB_PIP
     else:
-        if price > mid:
-            return False
-    ext = max(0.0, lower - price) / _BB_PIP
-    max_ext = max(_BB_ENTRY_TREND_EXT_PIPS, span_pips * _BB_ENTRY_TREND_EXT_RATIO)
-    if orig_style == "scalp":
-        max_ext = max(_BB_ENTRY_SCALP_EXT_PIPS, span_pips * _BB_ENTRY_SCALP_EXT_RATIO)
-    return ext <= max_ext
+        if direction == "long":
+            if price < mid:
+                mid_distance_pips = (mid - price) / _BB_PIP
+                mid_tolerance = max(0.0, float(config.BB_MID_TOLERANCE_PIPS))
+                if (
+                    conf_val is not None
+                    and conf_val >= config.BB_ENTRY_MIN_CONF_FOR_SOFT_FAIL
+                    and mid_distance_pips <= mid_tolerance
+                ):
+                    mid_soft_scale = _soft_scale_exceed_limit(
+                        mid_distance_pips,
+                        good_limit=0.0,
+                        soft_limit=mid_tolerance,
+                        min_scale=config.BB_ENTRY_SOFT_FAIL_MIN_SCALE,
+                        max_scale=config.BB_ENTRY_SOFT_FAIL_MAX_SCALE,
+                    )
+                    if mid_soft_scale > 0.0:
+                        return True, mid_soft_scale, {
+                            "style": style,
+                            "orig_style": orig_style,
+                            "direction": direction,
+                            "range_active": bool(range_active),
+                            "block_limit_pips": 0.0,
+                            "distance_pips": round(mid_distance_pips, 3),
+                            "result": "mid_tolerance_soft_pass",
+                            "reject_reason": "price_inside_mid_soft",
+                            "soft_fail": True,
+                            "soft_scale": round(mid_soft_scale, 3),
+                            "soft_limit_pips": round(mid_tolerance, 4),
+                        }
+                    return False, 0.0, {
+                        "style": style,
+                        "orig_style": orig_style,
+                        "direction": direction,
+                        "range_active": bool(range_active),
+                        "block_limit_pips": 0.0,
+                        "distance_pips": round(mid_distance_pips, 3),
+                        "result": "hard_reject",
+                        "reject_reason": "price_inside_mid_too_deep",
+                        "soft_fail": False,
+                    }
+                return False, 0.0, {
+                    "style": style,
+                    "orig_style": orig_style,
+                    "direction": direction,
+                    "range_active": bool(range_active),
+                    "block_limit_pips": 0.0,
+                    "distance_pips": 0.0,
+                    "result": "hard_reject",
+                    "reject_reason": "price_inside_mid_wrong_side",
+                }
+            distance_pips = max(0.0, price - upper) / _BB_PIP
+        else:
+            if price > mid:
+                mid_distance_pips = (price - mid) / _BB_PIP
+                mid_tolerance = max(0.0, float(config.BB_MID_TOLERANCE_PIPS))
+                if (
+                    conf_val is not None
+                    and conf_val >= config.BB_ENTRY_MIN_CONF_FOR_SOFT_FAIL
+                    and mid_distance_pips <= mid_tolerance
+                ):
+                    mid_soft_scale = _soft_scale_exceed_limit(
+                        mid_distance_pips,
+                        good_limit=0.0,
+                        soft_limit=mid_tolerance,
+                        min_scale=config.BB_ENTRY_SOFT_FAIL_MIN_SCALE,
+                        max_scale=config.BB_ENTRY_SOFT_FAIL_MAX_SCALE,
+                    )
+                    if mid_soft_scale > 0.0:
+                        return True, mid_soft_scale, {
+                            "style": style,
+                            "orig_style": orig_style,
+                            "direction": direction,
+                            "range_active": bool(range_active),
+                            "block_limit_pips": 0.0,
+                            "distance_pips": round(mid_distance_pips, 3),
+                            "result": "mid_tolerance_soft_pass",
+                            "reject_reason": "price_inside_mid_soft",
+                            "soft_fail": True,
+                            "soft_scale": round(mid_soft_scale, 3),
+                            "soft_limit_pips": round(mid_tolerance, 4),
+                        }
+                    return False, 0.0, {
+                        "style": style,
+                        "orig_style": orig_style,
+                        "direction": direction,
+                        "range_active": bool(range_active),
+                        "block_limit_pips": 0.0,
+                        "distance_pips": round(mid_distance_pips, 3),
+                        "result": "hard_reject",
+                        "reject_reason": "price_inside_mid_too_deep",
+                        "soft_fail": False,
+                    }
+                return False, 0.0, {
+                    "style": style,
+                    "orig_style": orig_style,
+                    "direction": direction,
+                    "range_active": bool(range_active),
+                    "block_limit_pips": 0.0,
+                    "distance_pips": 0.0,
+                    "result": "hard_reject",
+                    "reject_reason": "price_inside_mid_wrong_side",
+                }
+            distance_pips = max(0.0, lower - price) / _BB_PIP
+        block_limit = max(
+            _BB_ENTRY_SCALP_EXT_PIPS if orig_style == "scalp" else _BB_ENTRY_TREND_EXT_PIPS,
+            span_pips * (
+                _BB_ENTRY_SCALP_EXT_RATIO if orig_style == "scalp" else _BB_ENTRY_TREND_EXT_RATIO
+            ),
+        )
+    detail = {
+        "style": style,
+        "orig_style": orig_style,
+        "direction": direction,
+        "range_active": bool(range_active),
+        "block_limit_pips": round(block_limit, 4),
+        "distance_pips": round(distance_pips, 3),
+        "soft_fail": False,
+    }
+    if distance_pips <= block_limit:
+        detail["result"] = "pass"
+        return True, 1.0, detail
+
+    if not config.BB_ENTRY_SOFT_FAIL_ENABLED:
+        detail["result"] = "hard_reject"
+        detail["reject_reason"] = "outside_bb_extension"
+        return False, 0.0, detail
+    if conf_val is None or conf_val < config.BB_ENTRY_MIN_CONF_FOR_SOFT_FAIL:
+        detail["result"] = "soft_reject"
+        detail["reject_reason"] = "low_confidence"
+        return False, 0.0, detail
+    soft_limit = block_limit * (1.0 + max(0.0, config.BB_ENTRY_SOFT_FAIL_RATIO))
+    soft_scale = _soft_scale_exceed_limit(
+        distance_pips,
+        good_limit=block_limit,
+        soft_limit=soft_limit,
+        min_scale=config.BB_ENTRY_SOFT_FAIL_MIN_SCALE,
+        max_scale=config.BB_ENTRY_SOFT_FAIL_MAX_SCALE,
+    )
+    if soft_scale <= 0.0:
+        detail["result"] = "soft_reject"
+        detail["reject_reason"] = "outside_bb_extension"
+        return False, 0.0, detail
+    detail["result"] = "soft_pass"
+    detail["soft_fail"] = True
+    detail["soft_limit_pips"] = round(soft_limit, 4)
+    detail["soft_scale"] = round(soft_scale, 3)
+    return True, soft_scale, detail
 
 
 def _candle_float(candle, *keys: str) -> Optional[float]:
@@ -344,8 +506,9 @@ def _projection_decision(side, pocket, mode_override=None):
             "short_target": 48.0,
             "overheat_bars": 3.0,
             "weights": {"ma": 0.45, "rsi": 0.25, "adx": 0.30},
-            "block_score": -0.6,
-            "size_scale": 0.18,
+            "block_score": -0.52,
+            "size_scale": 0.16,
+            "metric_coverage_min": 0.80,
         }
     elif mode == "pullback":
         params = {
@@ -356,8 +519,9 @@ def _projection_decision(side, pocket, mode_override=None):
             "short_target": 50.0,
             "overheat_bars": 3.0,
             "weights": {"ma": 0.40, "rsi": 0.40, "adx": 0.20},
-            "block_score": -0.55,
-            "size_scale": 0.15,
+            "block_score": -0.48,
+            "size_scale": 0.14,
+            "metric_coverage_min": 0.80,
         }
     elif mode == "scalp":
         params = {
@@ -368,8 +532,9 @@ def _projection_decision(side, pocket, mode_override=None):
             "short_target": 48.0,
             "overheat_bars": 2.0,
             "weights": {"ma": 0.50, "rsi": 0.30, "adx": 0.20},
-            "block_score": -0.6,
+            "block_score": -0.48,
             "size_scale": 0.12,
+            "metric_coverage_min": 0.80,
         }
     else:
         params = {
@@ -380,8 +545,9 @@ def _projection_decision(side, pocket, mode_override=None):
             "short_target": 55.0,
             "overheat_bars": 3.0,
             "weights": {"bbw": 0.40, "rsi": 0.35, "adx": 0.25},
-            "block_score": -0.5,
+            "block_score": -0.42,
             "size_scale": 0.15,
+            "metric_coverage_min": 0.75,
         }
 
     ma = compute_ma_projection({"candles": candles}, timeframe_minutes=minutes)
@@ -411,6 +577,33 @@ def _projection_decision(side, pocket, mode_override=None):
         weight = params["weights"].get(key, 0.0)
         weight_sum += weight
         score_sum += weight * score
+
+    if not scores:
+        return False, 1.0, {
+            "mode": mode,
+            "tf": tf,
+            "score": None,
+            "size_mult": 1.0,
+            "block_score": round(params["block_score"], 3),
+            "coverage": 0.0,
+            "scores": {},
+            "reject_reason": "projection_no_scores",
+        }
+
+    total_weight = sum(params["weights"].values())
+    metric_coverage = weight_sum / total_weight if total_weight > 0 else 0.0
+    if metric_coverage < params.get("metric_coverage_min", 1.0):
+        return False, 1.0, {
+            "mode": mode,
+            "tf": tf,
+            "score": None,
+            "size_mult": 1.0,
+            "block_score": round(params["block_score"], 3),
+            "coverage": round(metric_coverage, 3),
+            "scores": {k: round(v, 3) for k, v in scores.items()},
+            "reject_reason": "projection_metric_coverage_low",
+        }
+
     score = score_sum / weight_sum if weight_sum > 0 else 0.0
 
     allow = score > params["block_score"]
@@ -422,9 +615,74 @@ def _projection_decision(side, pocket, mode_override=None):
         "tf": tf,
         "score": round(score, 3),
         "size_mult": round(size_mult, 3),
+        "block_score": round(params["block_score"], 3),
         "scores": {k: round(v, 3) for k, v in scores.items()},
+        "coverage": round(metric_coverage, 3),
     }
     return allow, size_mult, detail
+
+
+def _projection_soft_fail_detail(score, allow, detail):
+    if allow:
+        return True, 1.0, dict(detail, soft_fail=False, soft_scale=1.0, soft_reason=None)
+    if not config.PROJ_SOFT_FAIL_ENABLED:
+        return False, 0.0, dict(detail, soft_fail=True, soft_scale=0.0, soft_reason="soft_fail_disabled")
+    if score is None:
+        return False, 0.0, dict(detail, soft_fail=True, soft_scale=0.0, soft_reason="no_projection_score")
+    hard_score = float(detail.get("block_score", -0.6))
+    soft_score = float(config.PROJ_SOFT_FAIL_SCORE)
+    if score < soft_score:
+        return False, 0.0, dict(
+            detail,
+            soft_fail=True,
+            soft_scale=0.0,
+            soft_reason="projection_soft_score_too_low",
+            projection_soft_score=score,
+        )
+    soft_scale = _soft_scale_deficit_limit(
+        score,
+        good_limit=hard_score,
+        soft_limit=soft_score,
+        min_scale=config.PROJ_SOFT_FAIL_MIN_SCALE,
+        max_scale=config.PROJ_SOFT_FAIL_MAX_SCALE,
+    )
+    if soft_scale <= 0.0:
+        return False, 0.0, dict(
+            detail,
+            soft_fail=True,
+            soft_scale=0.0,
+            soft_reason="projection_soft_scale_zero",
+            projection_soft_score=score,
+        )
+    return True, soft_scale, dict(
+        detail,
+        soft_fail=True,
+        soft_scale=round(soft_scale, 3),
+        soft_reason="projection_soft_pass",
+        projection_soft_score=round(score, 3),
+    )
+
+
+def _resolve_min_units_guard(units, signal_tag, side):
+    abs_units = abs(int(units))
+    sign = 1 if units >= 0 else -1
+    if abs_units >= config.MIN_UNITS:
+        return True, int(units), "ok"
+
+    min_threshold = int(round(float(config.MIN_UNITS) * max(0.0, config.MIN_UNITS_SOFT_FAIL_RATIO)))
+    if config.ENTRY_GUARD_BYPASS:
+        return True, sign * max(1, int(config.MIN_UNITS)), "min_units_bypass"
+
+    if not config.MIN_UNITS_SOFT_FAIL_ENABLED:
+        return False, int(units), "min_units_reject"
+
+    if abs_units >= max(0, min_threshold):
+        return (
+            True,
+            sign * max(1, int(abs_units)),
+            "min_units_soft_raise",
+        )
+    return False, int(units), "min_units_reject"
 def _latest_mid(fallback: float) -> float:
     ticks = tick_window.recent_ticks(seconds=6.0, limit=1)
     if ticks:
@@ -447,9 +705,9 @@ def _latest_mid(fallback: float) -> float:
 
 def _client_order_id(tag: str) -> str:
     ts_ms = int(time.time() * 1000)
-    sanitized = "".join(ch.lower() for ch in tag if ch.isalnum())[:8] or "m1scalp"
+    sanitized = "".join(ch.lower() for ch in tag if ch.isalnum())[:14] or "m1scalp"
     digest = hashlib.sha1(f"{ts_ms}-{tag}".encode("utf-8")).hexdigest()[:9]
-    return f"qr-{ts_ms}-scalp-{sanitized}{digest}"
+    return f"qr-{ts_ms}-scalp-{sanitized}-{digest}"
 
 
 def _confidence_scale(conf: int) -> float:
@@ -892,6 +1150,7 @@ async def scalp_m1_worker() -> None:
         if price <= 0.0 or sl_pips <= 0.0:
             continue
         proj_flip = False
+        entry_size_scale = 1.0
         proj_allow, proj_mult, proj_detail = _projection_decision(side, config.POCKET)
         if config.PROJ_FLIP_ENABLED and proj_detail:
             opp_side = "short" if side == "long" else "long"
@@ -908,6 +1167,24 @@ async def scalp_m1_worker() -> None:
                     proj_flip = True
                     proj_allow, proj_mult, proj_detail = opp_allow, opp_mult, opp_detail
         if not proj_allow:
+            proj_allow, proj_soft_scale, proj_detail = _projection_soft_fail_detail(
+                float(proj_detail.get("score", 0.0)) if isinstance(proj_detail, dict) else None,
+                proj_allow,
+                proj_detail,
+            )
+            if proj_soft_scale <= 0.0:
+                proj_detail = dict(proj_detail, projection_soft_scale=0.0, soft_fail=True)
+            else:
+                proj_detail = dict(
+                    proj_detail,
+                    projection_soft_scale=round(proj_soft_scale, 3),
+                    soft_fail=True,
+                )
+            proj_mult = proj_mult * proj_soft_scale if proj_allow else proj_mult
+        else:
+            proj_detail = dict(proj_detail, projection_soft_scale=1.0, soft_fail=False)
+        entry_size_scale *= proj_mult
+        if not proj_allow:
             if config.ENTRY_GUARD_BYPASS:
                 LOG.warning(
                     "%s entry_guard_bypass reason=projection_reject signal=%s side=%s",
@@ -915,6 +1192,7 @@ async def scalp_m1_worker() -> None:
                     signal_tag,
                     side,
                 )
+                proj_allow = True
             else:
                 continue
         if config.SIDE_FILTER and side != config.SIDE_FILTER:
@@ -944,7 +1222,16 @@ async def scalp_m1_worker() -> None:
                 )
                 continue
         bb_style = "reversion" if is_reversion else BB_STYLE
-        if not _bb_entry_allowed(bb_style, side, price, fac_m1, range_active=range_ctx.active):
+        bb_allow, bb_size_scale, bb_detail = _bb_entry_allowed(
+            bb_style,
+            side,
+            price,
+            fac_m1,
+            range_active=range_ctx.active,
+            conf_val=conf_val,
+        )
+        entry_size_scale *= bb_size_scale
+        if not bb_allow:
             if config.ENTRY_GUARD_BYPASS:
                 LOG.warning(
                     "%s entry_guard_bypass reason=bb_entry_reject signal=%s side=%s style=%s range_active=%s",
@@ -954,8 +1241,15 @@ async def scalp_m1_worker() -> None:
                     bb_style,
                     range_ctx.active,
                 )
+                bb_detail = dict(bb_detail, bypass=True)
             else:
                 continue
+
+        if not isinstance(bb_detail, dict):
+            bb_detail = {}
+        if proj_detail:
+            proj_detail.setdefault("entry_size_scale", round(entry_size_scale, 3))
+            proj_detail["bb_detail"] = bb_detail
 
         usdjpy_setup_mode: Optional[str] = None
         usdjpy_setup_detail: dict = {}
@@ -1065,20 +1359,7 @@ async def scalp_m1_worker() -> None:
         total_size_mult = dyn_mult * setup_size_mult
         if total_size_mult != 1.0:
             units = int(round(units * total_size_mult))
-        if units < config.MIN_UNITS:
-            if config.ENTRY_GUARD_BYPASS:
-                LOG.warning(
-                    "%s entry_guard_bypass reason=min_units reject signal=%s side=%s units=%s min_units=%s",
-                    config.LOG_PREFIX,
-                    signal_tag,
-                    side,
-                    units,
-                    config.MIN_UNITS,
-                )
-                units = abs(int(config.MIN_UNITS))
-                units = units if side == "long" else -units
-            else:
-                continue
+        units = int(round(units * entry_size_scale))
         if side == "short":
             units = -abs(units)
 
@@ -1139,11 +1420,9 @@ async def scalp_m1_worker() -> None:
             entry_thesis["projection_flip"] = True
         if proj_detail:
             entry_thesis["projection"] = proj_detail
-        if proj_mult > 1.0:
-            sign = 1 if units > 0 else -1
-            units = int(round(abs(units) * proj_mult)) * sign
-
-        candle_allow, candle_mult = _entry_candle_guard("long" if units > 0 else "short")
+        candle_allow, candle_mult, candle_detail = _entry_candle_guard(
+            "long" if units > 0 else "short"
+        )
         if not candle_allow:
             if config.ENTRY_GUARD_BYPASS:
                 LOG.warning(
@@ -1152,12 +1431,54 @@ async def scalp_m1_worker() -> None:
                     signal_tag,
                     side,
                 )
+                candle_mult = 1.0
+                if isinstance(candle_detail, dict):
+                    candle_detail = dict(candle_detail, bypass=True)
             else:
                 continue
         if candle_mult != 1.0:
             sign = 1 if units > 0 else -1
             units = int(round(abs(units) * candle_mult)) * sign
+        if isinstance(candle_detail, dict):
+            candle_detail["scale"] = round(candle_mult, 3)
+            candle_detail["soft_fail"] = candle_detail.get("soft_fail", False)
+        entry_thesis["candle_guard"] = dict(candle_detail or {}, allow=candle_allow)
+        min_units_ok, units, min_units_reason = _resolve_min_units_guard(units, signal_tag, side)
+        if not min_units_ok:
+            now_mono = time.monotonic()
+            if now_mono - last_block_log > 120.0:
+                LOG.info(
+                    "%s min_units_reject reason=%s signal=%s side=%s units=%s min_units=%s",
+                    config.LOG_PREFIX,
+                    min_units_reason,
+                    signal_tag,
+                    side,
+                    units,
+                    config.MIN_UNITS,
+                )
+                last_block_log = now_mono
+            continue
+        if min_units_reason == "min_units_soft_raise":
+            LOG.info(
+                "%s min_units_soft_raise signal=%s side=%s units=%s min_units=%s",
+                config.LOG_PREFIX,
+                signal_tag,
+                side,
+                units,
+                config.MIN_UNITS,
+            )
+        elif min_units_reason == "min_units_bypass":
+            LOG.warning(
+                "%s entry_guard_bypass reason=min_units reject signal=%s side=%s units=%s min_units=%s",
+                config.LOG_PREFIX,
+                signal_tag,
+                side,
+                units,
+                config.MIN_UNITS,
+            )
+            min_units_reason = "min_units_pass_bypass"
         entry_thesis["entry_units_intent"] = abs(int(units))
+        entry_thesis["min_units_reason"] = min_units_reason
         if entry_kind == "limit" and limit_ttl_sec is not None:
             entry_thesis["entry_type"] = "limit"
             entry_thesis["entry_price"] = round(float(entry_ref_price), 3)
@@ -1228,8 +1549,8 @@ async def scalp_m1_worker() -> None:
                 "tech_policy",
                 {
                     "mode": "balanced",
-                    "min_score": 0.0,
-                    "min_coverage": 0.0,
+                    "min_score": 0.12,
+                    "min_coverage": 0.62,
                     "weight_fib": 0.25,
                     "weight_median": 0.25,
                     "weight_nwave": 0.25,
@@ -1238,8 +1559,8 @@ async def scalp_m1_worker() -> None:
                     "require_median": False,
                     "require_nwave": False,
                     "require_candle": False,
-                    "size_scale": 0.15,
-                    "size_min": 0.6,
+                    "size_scale": 0.20,
+                    "size_min": 0.55,
                     "size_max": 1.25,
                 },
             )
@@ -1256,8 +1577,23 @@ async def scalp_m1_worker() -> None:
                 entry_thesis=entry_thesis_ctx,
                 allow_candle=bool(entry_thesis_ctx.get("tech_allow_candle", False)),
             )
+            tech_soft_scale = 1.0
+            tech_gate_reason = "allowed" if tech_decision.allowed else "hard_fail"
             if not tech_decision.allowed and not getattr(config, "TECH_FAILOPEN", True):
-                if config.ENTRY_GUARD_BYPASS:
+                if getattr(config, "TECH_SOFT_FAIL_ENABLED", True) and tech_decision.score is not None:
+                    tech_gate_reason = "soft_fail"
+                    tech_soft_scale = _soft_scale_deficit_limit(
+                        tech_decision.score,
+                        good_limit=0.0,
+                        soft_limit=config.TECH_SOFT_FAIL_SCORE,
+                        min_scale=config.TECH_SOFT_FAIL_MIN_SCALE,
+                        max_scale=config.TECH_SOFT_FAIL_MAX_SCALE,
+                    )
+                    if tech_soft_scale <= 0.0 and not config.ENTRY_GUARD_BYPASS:
+                        continue
+                elif config.ENTRY_GUARD_BYPASS:
+                    tech_gate_reason = "bypass"
+                    tech_soft_scale = 1.0
                     _tech_score_txt = (
                         f"{tech_decision.score:.3f}" if tech_decision.score is not None else "none"
                     )
@@ -1271,7 +1607,6 @@ async def scalp_m1_worker() -> None:
                     )
                 else:
                     continue
-
             entry_thesis_ctx["tech_score"] = round(tech_decision.score, 3) if tech_decision.score is not None else None
             entry_thesis_ctx["tech_coverage"] = (
                 round(tech_decision.coverage, 3) if tech_decision.coverage is not None else None
@@ -1279,24 +1614,28 @@ async def scalp_m1_worker() -> None:
             entry_thesis_ctx["tech_entry"] = tech_decision.debug
             entry_thesis_ctx["tech_reason"] = tech_decision.reason
             entry_thesis_ctx["tech_decision_allowed"] = bool(tech_decision.allowed)
+            entry_thesis_ctx["tech_soft_scale"] = round(tech_soft_scale, 3)
+            entry_thesis_ctx["tech_gate_reason"] = tech_gate_reason
 
             _tech_units_raw = locals().get("units")
             if isinstance(_tech_units_raw, (int, float)):
-                _tech_units = int(round(abs(float(_tech_units_raw)) * tech_decision.size_mult))
+                _tech_units = int(
+                    round(
+                        abs(float(_tech_units_raw))
+                        * tech_decision.size_mult
+                        * tech_soft_scale
+                    )
+                )
                 if _tech_units <= 0:
                     continue
                 units = _tech_units if _tech_side == "long" else -_tech_units
                 entry_thesis_ctx["entry_units_intent"] = abs(int(units))
 
-            _tech_conf = locals().get("conf")
-            if isinstance(_tech_conf, (int, float)):
-                _tech_conf = float(_tech_conf)
-                if tech_decision.score is not None:
-                    if tech_decision.score >= 0:
-                        _tech_conf += tech_decision.score * getattr(config, "TECH_CONF_BOOST", 0.0)
-                    else:
-                        _tech_conf += tech_decision.score * getattr(config, "TECH_CONF_PENALTY", 0.0)
-                conf = _tech_conf
+            if tech_decision.score is not None:
+                if tech_decision.score >= 0:
+                    conf_val += tech_decision.score * getattr(config, "TECH_CONF_BOOST", 0.0)
+                else:
+                    conf_val += tech_decision.score * getattr(config, "TECH_CONF_PENALTY", 0.0)
 
 
             trade_id, order_id = await limit_order(
@@ -1401,8 +1740,8 @@ async def scalp_m1_worker() -> None:
                 "tech_policy",
                 {
                     "mode": "balanced",
-                    "min_score": 0.0,
-                    "min_coverage": 0.0,
+                    "min_score": 0.12,
+                    "min_coverage": 0.62,
                     "weight_fib": 0.25,
                     "weight_median": 0.25,
                     "weight_nwave": 0.25,
@@ -1411,8 +1750,8 @@ async def scalp_m1_worker() -> None:
                     "require_median": False,
                     "require_nwave": False,
                     "require_candle": False,
-                    "size_scale": 0.15,
-                    "size_min": 0.6,
+                    "size_scale": 0.20,
+                    "size_min": 0.55,
                     "size_max": 1.25,
                 },
             )
@@ -1429,8 +1768,23 @@ async def scalp_m1_worker() -> None:
                 entry_thesis=entry_thesis_ctx,
                 allow_candle=bool(entry_thesis_ctx.get("tech_allow_candle", False)),
             )
+            tech_soft_scale = 1.0
+            tech_gate_reason = "allowed" if tech_decision.allowed else "hard_fail"
             if not tech_decision.allowed and not getattr(config, "TECH_FAILOPEN", True):
-                if config.ENTRY_GUARD_BYPASS:
+                if getattr(config, "TECH_SOFT_FAIL_ENABLED", True) and tech_decision.score is not None:
+                    tech_gate_reason = "soft_fail"
+                    tech_soft_scale = _soft_scale_deficit_limit(
+                        tech_decision.score,
+                        good_limit=0.0,
+                        soft_limit=config.TECH_SOFT_FAIL_SCORE,
+                        min_scale=config.TECH_SOFT_FAIL_MIN_SCALE,
+                        max_scale=config.TECH_SOFT_FAIL_MAX_SCALE,
+                    )
+                    if tech_soft_scale <= 0.0 and not config.ENTRY_GUARD_BYPASS:
+                        continue
+                elif config.ENTRY_GUARD_BYPASS:
+                    tech_gate_reason = "bypass"
+                    tech_soft_scale = 1.0
                     _tech_score_txt = (
                         f"{tech_decision.score:.3f}" if tech_decision.score is not None else "none"
                     )
@@ -1452,24 +1806,28 @@ async def scalp_m1_worker() -> None:
             entry_thesis_ctx["tech_entry"] = tech_decision.debug
             entry_thesis_ctx["tech_reason"] = tech_decision.reason
             entry_thesis_ctx["tech_decision_allowed"] = bool(tech_decision.allowed)
+            entry_thesis_ctx["tech_soft_scale"] = round(tech_soft_scale, 3)
+            entry_thesis_ctx["tech_gate_reason"] = tech_gate_reason
 
             _tech_units_raw = locals().get("units")
             if isinstance(_tech_units_raw, (int, float)):
-                _tech_units = int(round(abs(float(_tech_units_raw)) * tech_decision.size_mult))
+                _tech_units = int(
+                    round(
+                        abs(float(_tech_units_raw))
+                        * tech_decision.size_mult
+                        * tech_soft_scale
+                    )
+                )
                 if _tech_units <= 0:
                     continue
                 units = _tech_units if _tech_side == "long" else -_tech_units
                 entry_thesis_ctx["entry_units_intent"] = abs(int(units))
 
-            _tech_conf = locals().get("conf")
-            if isinstance(_tech_conf, (int, float)):
-                _tech_conf = float(_tech_conf)
-                if tech_decision.score is not None:
-                    if tech_decision.score >= 0:
-                        _tech_conf += tech_decision.score * getattr(config, "TECH_CONF_BOOST", 0.0)
-                    else:
-                        _tech_conf += tech_decision.score * getattr(config, "TECH_CONF_PENALTY", 0.0)
-                conf = _tech_conf
+            if tech_decision.score is not None:
+                if tech_decision.score >= 0:
+                    conf_val += tech_decision.score * getattr(config, "TECH_CONF_BOOST", 0.0)
+                else:
+                    conf_val += tech_decision.score * getattr(config, "TECH_CONF_PENALTY", 0.0)
 
 
             res = await market_order(
@@ -1506,11 +1864,6 @@ async def scalp_m1_worker() -> None:
 
 
 _CANDLE_PIP = 0.01
-_CANDLE_MIN_CONF = 0.35
-_CANDLE_ENTRY_BLOCK = -0.7
-_CANDLE_ENTRY_SCALE = 0.2
-_CANDLE_ENTRY_MIN = 0.8
-_CANDLE_ENTRY_MAX = 1.2
 _CANDLE_WORKER_NAME = (__file__.replace("\\", "/").split("/")[-2] if "/" in __file__ else "").lower()
 
 
@@ -1616,15 +1969,91 @@ def _entry_candle_guard(side):
     tf = _candle_tf_for_worker()
     candles = get_candles_snapshot(tf, limit=4)
     if not candles:
-        return True, 1.0
-    score, _detail = _score_candle(candles=candles, side=side, min_conf=_CANDLE_MIN_CONF)
+        return True, 1.0, {
+            "result": "pass_no_data",
+            "soft_fail": False,
+            "soft_scale": 1.0,
+            "tf": tf,
+            "side": side,
+            "score": None,
+        }
+    score, _detail = _score_candle(candles=candles, side=side, min_conf=config.CANDLE_MIN_CONF)
     if score is None:
-        return True, 1.0
-    if score <= _CANDLE_ENTRY_BLOCK:
-        return False, 0.0
-    mult = 1.0 + score * _CANDLE_ENTRY_SCALE
-    mult = max(_CANDLE_ENTRY_MIN, min(_CANDLE_ENTRY_MAX, mult))
-    return True, mult
+        detail = dict(_detail or {}, tf=tf, side=side)
+        detail["result"] = "soft_pass_no_pattern"
+        if not config.CANDLE_SOFT_FAIL_ENABLED:
+            detail["soft_fail"] = False
+            detail["soft_scale"] = 0.0
+            detail["reject_reason"] = "candle_no_pattern"
+            return False, 0.0, dict(detail, score=detail.get("confidence"))
+        detail["soft_fail"] = True
+        soft_scale = max(
+            config.CANDLE_SOFT_FAIL_MIN_SCALE,
+            min(config.CANDLE_SOFT_FAIL_MAX_SCALE, 0.5 * config.CANDLE_SOFT_FAIL_MIN_SCALE + 0.5 * config.CANDLE_SOFT_FAIL_MAX_SCALE),
+        )
+        detail["soft_scale"] = round(soft_scale, 3)
+        if soft_scale <= 0.0:
+            detail["result"] = "soft_reject_no_pattern"
+            detail["reject_reason"] = "candle_no_pattern"
+            return False, 0.0, dict(detail, score=detail.get("confidence"))
+        detail["reject_reason"] = "candle_no_pattern_soft"
+        return True, soft_scale, dict(
+            detail,
+            score=detail.get("confidence"),
+        )
+    if score <= config.CANDLE_ENTRY_BLOCK:
+        if not config.CANDLE_SOFT_FAIL_ENABLED:
+            return False, 0.0, {
+                "result": "hard_reject",
+                "reject_reason": "candle_score_below_block",
+                "soft_fail": False,
+                "soft_scale": 0.0,
+                "score": round(score, 3),
+                "tf": tf,
+                "side": side,
+                "block_score": round(config.CANDLE_ENTRY_BLOCK, 3),
+            }
+        soft_limit = min(config.CANDLE_ENTRY_BLOCK, float(config.CANDLE_SOFT_FAIL_SCORE))
+        soft_scale = _soft_scale_deficit_limit(
+            score,
+            good_limit=config.CANDLE_ENTRY_BLOCK,
+            soft_limit=soft_limit,
+            min_scale=config.CANDLE_SOFT_FAIL_MIN_SCALE,
+            max_scale=config.CANDLE_SOFT_FAIL_MAX_SCALE,
+        )
+        if soft_scale <= 0.0:
+            return False, 0.0, {
+                "result": "soft_reject",
+                "reject_reason": "candle_score_below_soft_limit",
+                "soft_fail": True,
+                "soft_scale": 0.0,
+                "soft_limit": round(soft_limit, 3),
+                "score": round(score, 3),
+                "tf": tf,
+                "side": side,
+            }
+        return True, soft_scale, {
+            "result": "soft_pass",
+            "soft_fail": True,
+            "soft_scale": round(soft_scale, 3),
+            "soft_reason": "candle_soft_pass",
+            "soft_limit": round(soft_limit, 3),
+            "score": round(score, 3),
+            "tf": tf,
+            "side": side,
+            **(_detail or {}),
+        }
+    mult = 1.0 + score * config.CANDLE_ENTRY_SCALE
+    mult = max(config.CANDLE_ENTRY_MIN, min(config.CANDLE_ENTRY_MAX, mult))
+    detail = dict(_detail or {})
+    detail["tf"] = tf
+    detail["side"] = side
+    detail["score"] = round(score, 3)
+    detail["result"] = "pass"
+    detail["soft_fail"] = False
+    detail["scale"] = round(mult, 3)
+    detail["soft_scale"] = 1.0
+    return True, mult, detail
 
 if __name__ == "__main__":  # pragma: no cover
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s", force=True)

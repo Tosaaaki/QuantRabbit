@@ -15,6 +15,7 @@ from analysis import strategy_feedback
 from indicators.factor_cache import all_factors
 from execution.order_manager import cancel_order, close_trade, set_trade_protections
 from execution import order_manager
+from workers.common import pattern_gate
 
 
 def get_last_order_status_by_client_id(
@@ -36,6 +37,16 @@ _ENTRY_TECH_CONTEXT_STRATEGY_REQUIREMENTS = _env_bool(
     "ENTRY_TECH_CONTEXT_STRATEGY_REQUIREMENTS",
     False,
 )
+_STRATEGY_PATTERN_GATE_ENABLED = _env_bool("STRATEGY_PATTERN_GATE_ENABLED", True)
+_STRATEGY_PATTERN_GATE_AUTO_OPT_IN = _env_bool(
+    "STRATEGY_PATTERN_GATE_AUTO_OPT_IN",
+    False,
+)
+_ORDER_PATTERN_GATE_SCALE_TO_MIN_UNITS = _env_bool(
+    "ORDER_PATTERN_GATE_SCALE_TO_MIN_UNITS",
+    False,
+)
+_PATTERN_GATE_META_KEYS = ("pattern_gate_opt_in", "use_pattern_gate", "pattern_gate_enabled")
 
 
 def _env_csv(name: str, default: str) -> list[str]:
@@ -81,6 +92,31 @@ def _coerce_bool(value: object, default: Optional[bool] = None) -> Optional[bool
         if normalized in {"0", "false", "no", "off"}:
             return False
     return default
+
+
+def _has_pattern_gate_optin(entry_thesis: Optional[dict], meta: Optional[dict]) -> bool:
+    for container in (entry_thesis, meta):
+        if not isinstance(container, dict):
+            continue
+        if any(key in container for key in _PATTERN_GATE_META_KEYS):
+            return True
+    return False
+
+
+def _normalize_pattern_gate_meta(
+    entry_thesis: Optional[dict], meta: Optional[dict]
+) -> Optional[dict]:
+    if _has_pattern_gate_optin(entry_thesis, meta):
+        return meta if isinstance(meta, dict) else None
+    if not _STRATEGY_PATTERN_GATE_AUTO_OPT_IN:
+        return meta if isinstance(meta, dict) else None
+    if isinstance(meta, dict):
+        injected = dict(meta)
+    else:
+        injected = {}
+    injected["pattern_gate_opt_in"] = True
+    return injected
+
 
 _STRATEGY_TECH_CONTEXT_REQUIREMENTS: dict[str, dict[str, object]] = {
     "SCALP_PING_5S": {
@@ -914,6 +950,8 @@ async def _coordinate_entry_units(
     reduce_only: bool,
     entry_probability: Optional[float],
     client_order_id: Optional[str],
+    entry_thesis: Optional[dict] = None,
+    meta: Optional[dict] = None,
 ) -> int:
     if not units:
         return units
@@ -922,6 +960,33 @@ async def _coordinate_entry_units(
     if not strategy_tag:
         return units
     min_units = order_manager.min_units_for_strategy(strategy_tag, pocket=pocket)
+    if _STRATEGY_PATTERN_GATE_ENABLED and not reduce_only and pocket != "manual":
+        if isinstance(entry_thesis, dict):
+            gate_meta = _normalize_pattern_gate_meta(entry_thesis, meta)
+            try:
+                pattern_decision = pattern_gate.decide(
+                    strategy_tag=strategy_tag,
+                    pocket=pocket,
+                    side=1 if units > 0 else -1,
+                    units=units,
+                    entry_thesis=entry_thesis,
+                    meta=gate_meta,
+                )
+            except Exception:
+                pattern_decision = None
+            if pattern_decision is not None:
+                entry_thesis["pattern_gate"] = pattern_decision.to_payload()
+                if not pattern_decision.allowed:
+                    return 0
+                if pattern_decision.scale != 1.0:
+                    scaled_units = int(round(abs(units) * pattern_decision.scale))
+                    if scaled_units < min_units:
+                        if _ORDER_PATTERN_GATE_SCALE_TO_MIN_UNITS and min_units > 0:
+                            scaled_units = min_units
+                        else:
+                            return 0
+                    if scaled_units > 0:
+                        units = int((1 if units > 0 else -1) * scaled_units)
     final_units, reason, _ = await order_manager.coordinate_entry_intent(
         instrument=instrument,
         pocket=pocket,
@@ -983,6 +1048,8 @@ async def market_order(
         reduce_only=reduce_only,
         entry_probability=entry_probability,
         client_order_id=client_order_id,
+        entry_thesis=entry_thesis,
+        meta=meta,
     )
     if not coordinated_units:
         return None
@@ -1058,6 +1125,8 @@ async def limit_order(
         reduce_only=reduce_only,
         entry_probability=entry_probability,
         client_order_id=client_order_id,
+        entry_thesis=entry_thesis,
+        meta=meta,
     )
     if not coordinated_units:
         return None, None

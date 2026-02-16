@@ -36,6 +36,15 @@ def _classify_from_client_id(client_id: str | None) -> str | None:
     for pref, tag in mapping:
         if cid.startswith(pref):
             return tag
+    if "-scalp-" in cid:
+        try:
+            stem = cid.split("-scalp-", 1)[1]
+            if stem.startswith("m1scalpe") or stem.startswith("m1scalper"):
+                return "M1Scalper-M1"
+            if stem.startswith("m1scalp"):
+                return "M1Scalper-M1"
+        except Exception:
+            pass
     if "TrendMA" in cid:
         return "main.TrendMA"
     if "Donchian" in cid:
