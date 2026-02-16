@@ -23,6 +23,13 @@
   `quant-cleanup-qr-logs.timer` が常設でインストールされるようにしました。
 - `systemd/cleanup-qr-logs.timer` は 1日2回（07:30/19:30）起動で、実運用ノードでもディスククリーンアップを自動化する前提へ統一。
 
+### 2026-02-16（追記）非5秒エントリー再開のための実行条件調整
+
+- `market_data/tick_fetcher.py` の `callback` 発火経路を `_dispatch_tick_callback` に一本化し、`tick_fetcher reconnect` 側の
+  `NoneType can't be used in 'await' expression` ループ再接続原因の対処を反映。
+- `ops/env/quant-micro-multi.env` に `MICRO_MULTI_ENABLED=1` を追加し、`quant-micro-multi` の ENTRY 側を起動状態に寄せる。
+- `ops/env/quant-m1scalper.env` の `M1SCALP_ALLOWED_REGIMES` を `trend` 固定から `trend,range,mixed` に変更し、市況レジーム偏在時の過度な阻害を回避。
+
 ## 補足（戦略判断責務の明確化）
 
 - **方針確定**: 各戦略ワーカーは「ENTRY/EXIT判定の脳」を保持し、ロジックの主判断は各ワーカー固有で行う。

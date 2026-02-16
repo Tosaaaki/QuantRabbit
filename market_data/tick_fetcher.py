@@ -86,6 +86,32 @@ def _log_stream_reset_done(task: asyncio.Task) -> None:
         LOG.debug("tick_fetcher reset waiter ended with error: %s", exc)
 
 
+async def _dispatch_tick_callback(
+    callback: Callable[[Tick], Awaitable[None]],
+    tick: Tick,
+) -> None:
+    """Invoke a callback safely whether it returns coroutine/future or sync None."""
+    try:
+        cb_ret = callback(tick)
+    except Exception as exc:  # noqa: BLE001
+        LOG.warning("tick_fetcher callback invocation failed: %s", exc)
+        return
+    if inspect.isawaitable(cb_ret):
+        try:
+            await cb_ret
+        except TypeError as exc:
+            if "can't be used in 'await' expression" in str(exc):
+                LOG.warning("tick_fetcher callback await protocol error: %s", cb_ret)
+                return
+            raise
+        return
+    if cb_ret is not None:
+        LOG.debug(
+            "tick_fetcher callback returned non-awaitable %s, ignored",
+            type(cb_ret),
+        )
+
+
 @dataclass
 class Tick:
     instrument: str
@@ -208,14 +234,7 @@ async def _connect(instrument: str, callback: Callable[[Tick], Awaitable[None]])
                                 log_tick(tick)
                             except Exception as exc:  # noqa: BLE001
                                 print(f"[replay] failed to log tick: {exc}")
-                            cb_ret = callback(tick)
-                            if inspect.isawaitable(cb_ret):
-                                await cb_ret
-                            elif cb_ret is not None:
-                                LOG.debug(
-                                    "tick_fetcher callback returned non-awaitable %s, invoking directly",
-                                    type(cb_ret),
-                                )
+                            await _dispatch_tick_callback(callback, tick)
                     finally:
                         reset_task.cancel()
                         try:
@@ -250,7 +269,7 @@ async def _mock_stream(instrument: str, callback: Callable[[Tick], Awaitable[Non
             log_tick(tick)
         except Exception as exc:  # noqa: BLE001
             print(f"[replay] failed to log tick: {exc}")
-        await callback(tick)
+        await _dispatch_tick_callback(callback, tick)
         await asyncio.sleep(1)
 
 
