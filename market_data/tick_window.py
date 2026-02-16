@@ -12,6 +12,7 @@ from collections import deque
 import os
 import json
 import threading
+import tempfile
 from pathlib import Path
 from dataclasses import dataclass
 from typing import Deque, Dict, Iterable, List, Tuple
@@ -98,8 +99,18 @@ def _write_cache_payload(payload: list[dict[str, float]]) -> None:
     global _last_persist_error_ts, _cache_mtime
     try:
         _CACHE_PATH.parent.mkdir(parents=True, exist_ok=True)
-        tmp_path = _CACHE_PATH.with_suffix(".tmp")
-        tmp_path.write_text(json.dumps(payload, separators=(",", ":")), encoding="utf-8")
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            encoding="utf-8",
+            dir=_CACHE_PATH.parent,
+            prefix=_CACHE_PATH.name + ".",
+            suffix=".tmp",
+            delete=False,
+        ) as tmp:
+            tmp.write(json.dumps(payload, separators=(",", ":")))
+            tmp.flush()
+            os.fsync(tmp.fileno())
+            tmp_path = Path(tmp.name)
         tmp_path.replace(_CACHE_PATH)
         try:
             _cache_mtime = float(_CACHE_PATH.stat().st_mtime)
@@ -107,6 +118,11 @@ def _write_cache_payload(payload: list[dict[str, float]]) -> None:
             pass
         _LOGGER.debug("[TICK_CACHE] persisted=%d path=%s", len(payload), _CACHE_PATH)
     except Exception as exc:
+        if "tmp_path" in locals() and isinstance(tmp_path, Path):
+            try:
+                tmp_path.unlink(missing_ok=True)
+            except Exception:
+                pass
         if time.time() - _last_persist_error_ts >= 30.0:
             _LOGGER.warning("[TICK_CACHE] persist failed: %s", exc)
             _last_persist_error_ts = time.time()
