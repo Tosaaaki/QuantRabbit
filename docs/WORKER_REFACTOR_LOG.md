@@ -8,12 +8,18 @@
 - データ供給は `quant-market-data-feed`、制御配信は `quant-strategy-control` に分離。
 - 補助的運用ワーカーは本体管理マップから除外。
 
+### 2026-02-16（追記）scalp_precision 実行委譲の完全停止（戦略別独立実行）
+
+- `workers/scalp_tick_imbalance`, `workers/scalp_squeeze_pulse_break`, `workers/scalp_wick_reversal_blend`, `workers/scalp_wick_reversal_pro` の `entry`/`exit` を `workers.scalp_precision` の子プロセス実行から切り離し、各パッケージ内のローカル `worker.py` / `exit_worker.py` を直接実行する構成へ変更。
+- `workers/scalp_macd_rsi_div` と `workers/scalp_ping_5s` / `workers/scalp_ping_5s_b` の `exit_worker.py` も `python -m workers.scalp_precision.exit_worker` 委譲を停止し、同一プロセス内で `exit` 判定を完結。
+- 戦略独立実行のため、上記5戦略に対応する `config.py` / `common.py`（該当戦略）をローカル配備し、戦略起動時の実行経路から `scalp_precision` 参照を外した。
+
 ### 2026-02-16（追記）`scalp_precision` 依存 wrapper の切断（戦略別ワーカー単位）
 
 - `workers/scalp_tick_imbalance` / `scalp_squeeze_pulse_break` / `scalp_wick_reversal_*` / `scalp_macd_rsi_div` / `scalp_ping_5s_b` の
   `entry` / `exit_worker` から `workers.scalp_precision` のインポート依存を除去し、各戦略ワーカー側を subprocess 起動に切替え。
-- 子プロセスは `python -m workers.scalp_precision.worker` または `python -m workers.scalp_precision.exit_worker` へ移譲し、
-  ワーカー本体の起動責務を切り出して「戦略別ランナー（entry/exit）」を明示化。
+- `python -m workers.<strategy>.worker` / `python -m workers.<strategy>.exit_worker` を直接起動し、
+  ワーカー本体の起動責務は戦略別ランナー（entry/exit）として完結させた。
 - テスト `tests/test_spread_ok_tick_cache_fallback.py` の `scalp_precision.common` 参照を削除し、共有 `spread_ok` の依存を排除。
 
 ### 2026-02-16（追記）`PositionManager.close()` の共有DB保護

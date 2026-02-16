@@ -140,6 +140,7 @@
 3. `quantrabbit.service` の本番起動を許可しないこと
 4. `main.py` を systemd 本番エントリとして扱わないこと
 5. order-manager / strategy-control が戦略の意思決定を上書きしないこと
+6. entry/exit の戦略ワーカーは `scalp_precision` の共通実行器を経由しないこと（完全に戦略ロゴ独立実行）
 
 ## 現在の状態（2026-02-17 時点）
 
