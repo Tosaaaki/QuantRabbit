@@ -18,14 +18,20 @@ def _apply_alt_env(prefix: str, *, fallback_tag: str, fallback_log_prefix: str) 
     prefix = str(prefix).rstrip("_")
     source = f"{prefix}_"
 
-    # B is a clone of SCALP_PING_5S. Remove inherited SCALP_PING_5S_*
-    # variables once so explicit SCALP_PING_5S_B_* settings are not mixed with
-    # stale values from the shared A-layer env file.
+    # B is a clone of SCALP_PING_5S. Keep only the B-prefixed overrides and
+    # remove non-B SCALP_PING_5S_* variables so stale A-layer values are not mixed.
+    # Keep B variables intact during cleanup so they can be copied down below.
     for key in list(os.environ):
-        if str(key).startswith(f"{base_prefix}_"):
+        if (
+            str(key).startswith(f"{base_prefix}_")
+            and not str(key).startswith(source)
+        ):
             del os.environ[key]
 
+    # Capture all variables after cleanup before mutating so we don't lose B keys
+    # needed for the source->base prefix projection.
     alt_items = list(os.environ.items())
+
     for key, value in alt_items:
         if not str(key).startswith(source):
             continue
@@ -38,9 +44,7 @@ def _apply_alt_env(prefix: str, *, fallback_tag: str, fallback_log_prefix: str) 
     os.environ[f"{base_prefix}_ENV_PREFIX"] = prefix
 
     # Keep this clone disabled by default unless explicitly enabled.
-    os.environ[f"{base_prefix}_ENABLED"] = os.getenv(
-        f"{prefix}_ENABLED", "0"
-    )
+    os.environ[f"{base_prefix}_ENABLED"] = str(os.getenv(f"{prefix}_ENABLED", "0"))
     os.environ[f"{base_prefix}_STRATEGY_TAG"] = os.getenv(
         f"{prefix}_STRATEGY_TAG", fallback_tag
     )

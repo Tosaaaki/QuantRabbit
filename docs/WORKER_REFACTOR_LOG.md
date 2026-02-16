@@ -8,6 +8,17 @@
 - データ供給は `quant-market-data-feed`、制御配信は `quant-strategy-control` に分離。
 - 補助的運用ワーカーは本体管理マップから除外。
 
+### 2026-02-16（追記）scalp_ping_5s_b ラッパー env_prefix 混在回避を根本修正
+
+- `workers/scalp_ping_5s_b/worker.py` の `_apply_alt_env()` を修正し、`SCALP_PING_5S_*` の掃除時に
+  `SCALP_PING_5S_B_*` を残してから base-prefix へ再投入する順序へ変更。
+- これにより、`SCALP_PING_5S_B_ENABLED` や `SCALP_PING_5S_B_*` の必須値が誤って削除され、
+  子プロセス `workers.scalp_ping_5s.worker` が意図せず `SCALP_PING_5S_ENABLED=0` になる問題を解消。
+- `SCALP_PING_5S_B` 側の設定を `SCALP_PING_5S_*` へ正規射影し、`ENV_PREFIX` を `SCALP_PING_5S_B` へ固定した
+  上で `enabled/strategy_tag/log_prefix` も一貫注入する経路を明文化。
+- 対象は B版起動時の env 混在・取り残し（`no_signal` の母集団原因に直結する無効化）を避けるための
+  根本対応として記録。
+
 ### 2026-02-16（追記）scalp_precision 実行委譲の完全停止（戦略別独立実行）
 
 - `workers/scalp_tick_imbalance`, `workers/scalp_squeeze_pulse_break`, `workers/scalp_wick_reversal_blend`, `workers/scalp_wick_reversal_pro` の `entry`/`exit` を `workers.scalp_precision` の子プロセス実行から切り離し、各パッケージ内のローカル `worker.py` / `exit_worker.py` を直接実行する構成へ変更。
