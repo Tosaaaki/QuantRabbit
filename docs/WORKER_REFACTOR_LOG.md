@@ -965,3 +965,14 @@
   - `SCALP_PING_5S_B_SIGNAL_WINDOW_FALLBACK_ALLOW_FULL_WINDOW=0` を追加して、
     Bでの `no_signal:insufficient_signal_rows_fallback_exhausted` 発生条件を抑制。
   - `SCALP_PING_5S_PATTERN_GATE_OPT_IN` の混在要因になっていた `SCALP_PING_5S` 系行を整理し、B版専用キーへ寄せた。
+
+### 2026-02-16（追記）5秒B `revert_not_found` 優勢時の取り残し抑制（実験値）
+
+- `ops/env/scalp_ping_5s_b.env`
+  - `SCALP_PING_5S_B_REVERT_WINDOW_SEC=1.60` / `SCALP_PING_5S_B_REVERT_SHORT_WINDOW_SEC=0.55` に引き上げ、
+    5秒Bでのリバーション検知窓を拡大。
+  - `SCALP_PING_5S_B_REVERT_MIN_TICK_RATE=0.90` / `SCALP_PING_5S_B_REVERT_RANGE_MIN_PIPS=0.45` /
+    `SCALP_PING_5S_B_REVERT_SWEEP_MIN_PIPS=0.35` / `SCALP_PING_5S_B_REVERT_BOUNCE_MIN_PIPS=0.10` /
+    `SCALP_PING_5S_B_REVERT_CONFIRM_RATIO_MIN=0.50` を低減し、revert判定の成立しやすさを上げる。
+- 目的は `no_signal:revert_not_found` 偏在を短期的に抑え、取り残し率を下げること。
+- この調整は 5秒B のみを対象としており、A側設定には影響しない。
