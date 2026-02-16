@@ -1,11 +1,12 @@
-"""Scalp Wick Reversal Pro entry worker wrapper."""
+"""Scalp Wick Reversal Pro dedicated ENTRY worker."""
 
 from __future__ import annotations
 
 import asyncio
 import logging
 import os
-import importlib
+import sys
+from pathlib import Path
 
 _STRATEGY_MODE = "wick_reversal_pro"
 
@@ -21,11 +22,13 @@ def _configure_strategy_env() -> None:
 
 def _run_worker() -> None:
     _configure_strategy_env()
-    from workers.scalp_precision import worker as precision_worker
+    if __package__ in (None, ""):
+        repo_root = Path(__file__).resolve().parents[2]
+        if str(repo_root) not in sys.path:
+            sys.path.insert(0, str(repo_root))
+    from workers.scalp_precision import worker
 
-    importlib.reload(precision_worker.config)
-    importlib.reload(precision_worker)
-    asyncio.run(precision_worker.scalp_precision_worker())
+    asyncio.run(worker.scalp_precision_worker())
 
 
 def _configure_logging() -> None:

@@ -1,7 +1,7 @@
 """Scalp Ping 5s dedicated EXIT worker.
 
-Wraps `workers.scalp_precision.exit_worker` and maps SCALP_PING_5S_* settings
-to the shared precision exit environment names.
+Maps SCALP_PING_5S_* settings to precision-exit settings and runs the
+scalp_precision exit flow in-process after prefix mapping.
 """
 
 from __future__ import annotations
@@ -9,6 +9,8 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import sys
+from pathlib import Path
 
 
 def _apply_prefix_map(prefix: str) -> None:
@@ -21,7 +23,6 @@ def _apply_prefix_map(prefix: str) -> None:
             continue
         os.environ[f"{target}{key[len(source):]}"] = str(value)
 
-    # Keep compatibility with common precision keys used by older env layouts.
     os.environ.setdefault(
         "SCALP_PRECISION_EXIT_TAGS",
         os.getenv(f"{prefix}_EXIT_TAGS", os.getenv(f"{prefix}_STRATEGY_TAG", "scalp_ping_5s_live")),
@@ -42,12 +43,19 @@ def _configure_logging() -> None:
     )
 
 
-_ENV_PREFIX = "SCALP_PING_5S"
-_apply_prefix_map(_ENV_PREFIX)
+def _run_exit_worker() -> None:
+    _ENV_PREFIX = "SCALP_PING_5S"
+    _apply_prefix_map(_ENV_PREFIX)
 
-from workers.scalp_precision.exit_worker import scalp_precision_exit_worker
+    if __package__ in (None, ""):
+        repo_root = Path(__file__).resolve().parents[2]
+        if str(repo_root) not in sys.path:
+            sys.path.insert(0, str(repo_root))
+    from workers.scalp_precision import exit_worker
+
+    asyncio.run(exit_worker.scalp_precision_exit_worker())
 
 
 if __name__ == "__main__":
     _configure_logging()
-    asyncio.run(scalp_precision_exit_worker())
+    _run_exit_worker()

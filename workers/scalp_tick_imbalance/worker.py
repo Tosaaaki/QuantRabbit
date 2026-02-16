@@ -1,12 +1,12 @@
-"""Scalp Tick Imbalance entry worker wrapper."""
+"""Scalp Tick Imbalance dedicated ENTRY worker."""
 
 from __future__ import annotations
 
 import asyncio
 import logging
 import os
-import importlib
-
+import sys
+from pathlib import Path
 
 _STRATEGY_MODE = "tick_imbalance"
 
@@ -22,12 +22,13 @@ def _configure_tick_imbalance_env() -> None:
 
 def _run_tick_imbalance_strategy() -> None:
     _configure_tick_imbalance_env()
+    if __package__ in (None, ""):
+        repo_root = Path(__file__).resolve().parents[2]
+        if str(repo_root) not in sys.path:
+            sys.path.insert(0, str(repo_root))
+    from workers.scalp_precision import worker
 
-    from workers.scalp_precision import worker as precision_worker
-
-    importlib.reload(precision_worker.config)
-    importlib.reload(precision_worker)
-    asyncio.run(precision_worker.scalp_precision_worker())
+    asyncio.run(worker.scalp_precision_worker())
 
 
 def _configure_logging() -> None:
