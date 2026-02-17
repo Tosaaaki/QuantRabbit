@@ -30,6 +30,17 @@
 - 運用判断: `FORECAST_TECH_FEATURE_EXPANSION_GAIN=0.0` を維持し、
   分位レンジ（上下帯）は予測監査と `forecast_context` 伝播に先行適用する。
 
+### 2026-02-17（追記）「時間帯=TF」前提で戦略別主TF＋補助TF整合を追加
+
+- `execution/strategy_entry.py` の戦略契約に `forecast_support_horizons` を追加し、
+  各戦略が主TF（`forecast_profile`）に加えて補助TFを `entry_thesis` に注入する構成へ変更。
+- `workers/common/forecast_gate.py` に TF整合ロジック（`FORECAST_GATE_TF_CONFLUENCE_*`）を追加。
+  - 主TF edge と補助TF edge の整合を `tf_confluence_score` として算出。
+  - 同方向なら edge 微増、逆方向なら edge 減衰（最終ブロック/スケール判定は既存ロジック）。
+- 連携先（`workers/forecast/worker.py`, `execution/order_manager.py`, `execution/strategy_entry.py`）へ
+  `tf_confluence_score/count/horizons` を伝播し、監査ログへ残せるようにした。
+- 目的: 「戦略ごとに適したTFで予測しつつ、上位/下位TFの整合で誤判定を抑える」運用へ統一。
+
 ### 2026-02-17（追記）MicroRangeBreak を micro_multistrat から独立ワーカー化
 
 - `workers/micro_rangebreak` を新設し、`python -m workers.micro_rangebreak.worker` と

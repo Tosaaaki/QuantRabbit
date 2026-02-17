@@ -305,3 +305,46 @@ def test_decide_projection_penalty_blocks_borderline_edge(monkeypatch) -> None:
     assert decision is not None
     assert decision.allowed is False
     assert decision.reason == "edge_block"
+
+
+def test_decide_tf_confluence_penalty_blocks_misaligned_higher_tf(monkeypatch) -> None:
+    monkeypatch.setattr(forecast_gate, "_TF_CONFLUENCE_ENABLED", True)
+    monkeypatch.setattr(forecast_gate, "_TF_CONFLUENCE_BONUS", 0.0)
+    monkeypatch.setattr(forecast_gate, "_TF_CONFLUENCE_PENALTY", 0.2)
+    monkeypatch.setattr(forecast_gate, "_TF_CONFLUENCE_MIN_CONFIRM", 1)
+    monkeypatch.setattr(forecast_gate, "_load_bundle_cached", lambda: None)
+    monkeypatch.setattr(
+        forecast_gate,
+        "_ensure_predictions",
+        lambda bundle: {
+            "1d": {
+                "p_up": 0.44,
+                "expected_pips": -0.2,
+                "source": "technical",
+                "trend_strength": 0.82,
+                "range_pressure": 0.18,
+            },
+            "8h": {
+                "p_up": 0.18,
+                "expected_pips": -2.8,
+                "source": "technical",
+                "trend_strength": 0.88,
+                "range_pressure": 0.12,
+            },
+        },
+    )
+    decision = forecast_gate.decide(
+        strategy_tag="TrendMA",
+        pocket="macro",
+        side="buy",
+        units=18_000,
+        entry_thesis={"forecast_support_horizons": ["8h"]},
+        meta={"instrument": "USD_JPY"},
+    )
+    assert decision is not None
+    assert decision.allowed is False
+    assert decision.reason == "edge_block"
+    assert decision.tf_confluence_count == 1
+    assert decision.tf_confluence_score is not None
+    assert float(decision.tf_confluence_score) < 0.0
+    assert decision.tf_confluence_horizons == "8h"

@@ -109,6 +109,9 @@ python3 scripts/vm_forecast_snapshot.py \
 - `range_low_pips` / `range_high_pips`: 分位レンジの上下帯（pip）
 - `range_low_price` / `range_high_price`: 分位レンジの上下帯（price）
 - `range_sigma_pips`: 帯幅の内部推定分散（pip）
+- `tf_confluence_score`: 補助TF整合スコア（-1.0〜+1.0）
+- `tf_confluence_count`: 実際に参照できた補助TF本数
+- `tf_confluence_horizons`: 参照した補助TF（例: `5m,10m`）
 - `tp_pips_hint`: TP 方向ヒント（pips）
 - `sl_pips_cap`: SL 上限ヒント（pips）
 - `rr_floor`: TP/SL の下限 R:R 値
@@ -142,3 +145,11 @@ python3 scripts/eval_forecast_before_after.py \
 
 運用上はまず `scalp_fast` なら `1m`、`scalp` なら `5m` / `10m` を短期軸として見る前提にして、`8h` / `1d` を中期〜長期補完として確認します。  
 `1h` と `8h` が同方向で `trend_strength` が高いほど「現在の順張り解釈」が強くなります。`range_pressure` 優勢で中立寄りの場合は「レンジ中の天井/底付近」に寄るケースが増えます。
+
+## 戦略ごとのTF運用（2026-02-17更新）
+- 各戦略は `execution/strategy_entry.py` の契約で `forecast_profile`（主TF）を持ち、`forecast_support_horizons`（補助TF）を併せて注入します。
+- `forecast_gate` は主TF予測に加えて補助TFとの整合を評価し、同方向なら `edge` を微補正、逆方向なら `edge` を減衰します（`FORECAST_GATE_TF_CONFLUENCE_*`）。
+- 例:
+  - `SCALP_PING_5S*`: 主TF `1m` + 補助TF `5m,10m`
+  - `SCALP_M1SCALPER`: 主TF `5m` + 補助TF `1m,10m`
+  - `SCALP_MACD_RSI_DIV` / `MICRO_*`: 主TF `10m` + 補助TF `5m,1h`

@@ -102,6 +102,19 @@ _EDGE_PROJECTION_PENALTY = max(
     0.0,
     min(0.4, _env_float("FORECAST_GATE_PROJECTION_EDGE_PENALTY", 0.12)),
 )
+_TF_CONFLUENCE_ENABLED = _env_bool("FORECAST_GATE_TF_CONFLUENCE_ENABLED", True)
+_TF_CONFLUENCE_BONUS = max(
+    0.0,
+    min(0.25, _env_float("FORECAST_GATE_TF_CONFLUENCE_BONUS", 0.04)),
+)
+_TF_CONFLUENCE_PENALTY = max(
+    0.0,
+    min(0.35, _env_float("FORECAST_GATE_TF_CONFLUENCE_PENALTY", 0.12)),
+)
+_TF_CONFLUENCE_MIN_CONFIRM = max(
+    1,
+    min(3, int(_env_float("FORECAST_GATE_TF_CONFLUENCE_MIN_CONFIRM", 1))),
+)
 _VOL_REGIME_LOW = max(0.0, min(1.0, _env_float("FORECAST_GATE_VOL_REGIME_LOW", 0.32)))
 _VOL_REGIME_HIGH = max(0.0, min(1.0, _env_float("FORECAST_GATE_VOL_REGIME_HIGH", 0.62)))
 _VOL_REGIME_EXTREME = max(0.0, min(1.0, _env_float("FORECAST_GATE_VOL_REGIME_EXTREME", 0.82)))
@@ -138,6 +151,15 @@ _RANGE_NORMAL = NormalDist()
 _TECH_PREFERRED_HORIZONS = _env_set("FORECAST_GATE_TECH_PREFERRED_HORIZONS")
 if not _TECH_PREFERRED_HORIZONS:
     _TECH_PREFERRED_HORIZONS = {"1m", "5m", "10m"}
+_TF_CONFLUENCE_DEFAULT = {
+    "1m": ("5m", "10m"),
+    "5m": ("1m", "10m"),
+    "10m": ("5m", "1h"),
+    "1h": ("10m", "8h"),
+    "8h": ("1h", "1d"),
+    "1d": ("8h", "1w"),
+    "1w": ("1d",),
+}
 
 
 @dataclass(frozen=True)
@@ -172,6 +194,9 @@ class ForecastDecision:
     regime_score: Optional[float] = None
     leading_indicator: Optional[str] = None
     leading_indicator_strength: Optional[float] = None
+    tf_confluence_score: Optional[float] = None
+    tf_confluence_count: Optional[int] = None
+    tf_confluence_horizons: Optional[str] = None
 
 
 def _future_flow_plan(
@@ -654,6 +679,47 @@ def _infer_horizon_from_profile(
     return fallback.get(timeframe)
 
 
+def _parse_horizon_list(value: Any) -> list[str]:
+    out: list[str] = []
+    if value is None:
+        return out
+    tokens: list[Any]
+    if isinstance(value, (list, tuple, set)):
+        tokens = list(value)
+    else:
+        tokens = str(value).replace("|", ",").split(",")
+    for token in tokens:
+        text = str(token or "").strip().lower()
+        if not text:
+            continue
+        if text not in out:
+            out.append(text)
+    return out
+
+
+def _resolve_tf_confluence_horizons(
+    *,
+    horizon: str,
+    entry_thesis: Optional[dict],
+    meta: Optional[dict],
+) -> list[str]:
+    containers: tuple[Optional[dict], ...] = (entry_thesis, meta)
+    for container in containers:
+        if not isinstance(container, dict):
+            continue
+        for key in (
+            "forecast_support_horizons",
+            "forecast_confirm_horizons",
+            "support_horizons",
+            "confirm_horizons",
+        ):
+            parsed = _parse_horizon_list(container.get(key))
+            if parsed:
+                return [h for h in parsed if h != horizon]
+    fallback = list(_TF_CONFLUENCE_DEFAULT.get(str(horizon).strip().lower(), ()))
+    return [h for h in fallback if h != horizon]
+
+
 def _strategy_base(strategy_tag: Optional[str]) -> str:
     if not strategy_tag:
         return ""
@@ -880,6 +946,54 @@ def _scale_from_edge(edge: float) -> float:
         return 1.0
     score = (e - lo) / (hi - lo)
     return float(_SCALE_MIN) + score * (1.0 - float(_SCALE_MIN))
+
+
+def _apply_tf_confluence(
+    *,
+    edge: float,
+    side_key: str,
+    units: int,
+    horizon: str,
+    preds: dict[str, dict],
+    entry_thesis: Optional[dict],
+    meta: Optional[dict],
+) -> tuple[float, Optional[float], int, str]:
+    if not _TF_CONFLUENCE_ENABLED:
+        return edge, None, 0, ""
+    horizons = _resolve_tf_confluence_horizons(
+        horizon=horizon,
+        entry_thesis=entry_thesis,
+        meta=meta,
+    )
+    if not horizons:
+        return edge, None, 0, ""
+
+    is_buy = side_key == "buy" or units > 0
+    confirm_edges: list[float] = []
+    used_horizons: list[str] = []
+    for h in horizons:
+        row = preds.get(h)
+        if not isinstance(row, dict):
+            continue
+        p_up = _safe_optional_float(row.get("p_up"))
+        if p_up is None:
+            continue
+        confirm_edges.append(_clamp(p_up if is_buy else (1.0 - p_up), 0.0, 1.0))
+        used_horizons.append(str(h))
+
+    confirm_count = len(confirm_edges)
+    if confirm_count <= 0:
+        return edge, None, 0, ""
+
+    mean_edge = sum(confirm_edges) / float(confirm_count)
+    confluence_score = _clamp((mean_edge - 0.5) / 0.5, -1.0, 1.0)
+    adjusted = float(edge)
+    if confirm_count >= _TF_CONFLUENCE_MIN_CONFIRM:
+        if confluence_score >= 0.0:
+            adjusted = _clamp(adjusted + _TF_CONFLUENCE_BONUS * confluence_score, 0.0, 1.0)
+        else:
+            adjusted = _clamp(adjusted - _TF_CONFLUENCE_PENALTY * abs(confluence_score), 0.0, 1.0)
+    return adjusted, confluence_score, confirm_count, ",".join(used_horizons)
 
 
 def _fetch_candles_by_tf() -> dict[str, list[dict]]:
@@ -1733,6 +1847,20 @@ def decide(
                 0.0,
                 1.0,
             )
+    (
+        edge,
+        tf_confluence_score,
+        tf_confluence_count,
+        tf_confluence_horizons,
+    ) = _apply_tf_confluence(
+        edge=edge,
+        side_key=side_key,
+        units=units,
+        horizon=horizon,
+        preds=preds,
+        entry_thesis=entry_thesis if isinstance(entry_thesis, dict) else None,
+        meta=meta if isinstance(meta, dict) else None,
+    )
     future_flow = _future_flow_plan(
         p_up=p_up,
         trend_strength=trend_strength,
@@ -1778,6 +1906,13 @@ def decide(
             range_sigma_pips=_safe_optional_float(row.get("range_sigma_pips")),
             range_low_price=_safe_optional_float(row.get("range_low_price")),
             range_high_price=_safe_optional_float(row.get("range_high_price")),
+            tf_confluence_score=(
+                round(float(tf_confluence_score), 6)
+                if tf_confluence_score is not None
+                else None
+            ),
+            tf_confluence_count=int(tf_confluence_count),
+            tf_confluence_horizons=tf_confluence_horizons or None,
             tp_pips_hint=_safe_abs_float(row.get("tp_pips_hint"), _safe_abs_float(row.get("expected_pips"))),
             sl_pips_cap=_safe_abs_float(row.get("sl_pips_cap")),
             rr_floor=_safe_optional_float(row.get("rr_floor")),
@@ -1817,6 +1952,13 @@ def decide(
             range_sigma_pips=_safe_optional_float(row.get("range_sigma_pips")),
             range_low_price=_safe_optional_float(row.get("range_low_price")),
             range_high_price=_safe_optional_float(row.get("range_high_price")),
+            tf_confluence_score=(
+                round(float(tf_confluence_score), 6)
+                if tf_confluence_score is not None
+                else None
+            ),
+            tf_confluence_count=int(tf_confluence_count),
+            tf_confluence_horizons=tf_confluence_horizons or None,
             tp_pips_hint=_safe_abs_float(row.get("tp_pips_hint"), _safe_abs_float(row.get("expected_pips"))),
             sl_pips_cap=_safe_abs_float(row.get("sl_pips_cap")),
             rr_floor=_safe_optional_float(row.get("rr_floor")),
@@ -1863,6 +2005,13 @@ def decide(
             range_sigma_pips=_safe_optional_float(row.get("range_sigma_pips")),
             range_low_price=_safe_optional_float(row.get("range_low_price")),
             range_high_price=_safe_optional_float(row.get("range_high_price")),
+            tf_confluence_score=(
+                round(float(tf_confluence_score), 6)
+                if tf_confluence_score is not None
+                else None
+            ),
+            tf_confluence_count=int(tf_confluence_count),
+            tf_confluence_horizons=tf_confluence_horizons or None,
             tp_pips_hint=_safe_abs_float(row.get("tp_pips_hint"), _safe_abs_float(row.get("expected_pips"))),
             sl_pips_cap=_safe_abs_float(row.get("sl_pips_cap")),
             rr_floor=_safe_optional_float(row.get("rr_floor")),
@@ -1911,6 +2060,13 @@ def decide(
                     range_sigma_pips=_safe_optional_float(row.get("range_sigma_pips")),
                     range_low_price=_safe_optional_float(row.get("range_low_price")),
                     range_high_price=_safe_optional_float(row.get("range_high_price")),
+                    tf_confluence_score=(
+                        round(float(tf_confluence_score), 6)
+                        if tf_confluence_score is not None
+                        else None
+                    ),
+                    tf_confluence_count=int(tf_confluence_count),
+                    tf_confluence_horizons=tf_confluence_horizons or None,
                     tp_pips_hint=_safe_abs_float(row.get("tp_pips_hint"), _safe_abs_float(row.get("expected_pips"))),
                     sl_pips_cap=_safe_abs_float(row.get("sl_pips_cap")),
                     rr_floor=_safe_optional_float(row.get("rr_floor")),
@@ -1956,6 +2112,13 @@ def decide(
         range_sigma_pips=_safe_optional_float(row.get("range_sigma_pips")),
         range_low_price=_safe_optional_float(row.get("range_low_price")),
         range_high_price=_safe_optional_float(row.get("range_high_price")),
+        tf_confluence_score=(
+            round(float(tf_confluence_score), 6)
+            if tf_confluence_score is not None
+            else None
+        ),
+        tf_confluence_count=int(tf_confluence_count),
+        tf_confluence_horizons=tf_confluence_horizons or None,
         tp_pips_hint=_safe_abs_float(row.get("tp_pips_hint"), _safe_abs_float(row.get("expected_pips"))),
         sl_pips_cap=_safe_abs_float(row.get("sl_pips_cap")),
         rr_floor=_safe_optional_float(row.get("rr_floor")),

@@ -318,6 +318,13 @@ def _forecast_service_decision_from_payload(
             else None
         ),
         leading_indicator_strength=_as_float(payload.get("leading_indicator_strength"), None),
+        tf_confluence_score=_as_float(payload.get("tf_confluence_score"), None),
+        tf_confluence_count=_as_int(payload.get("tf_confluence_count"), None),
+        tf_confluence_horizons=(
+            str(payload.get("tf_confluence_horizons"))
+            if payload.get("tf_confluence_horizons") is not None
+            else None
+        ),
     )
 
 
@@ -389,6 +396,15 @@ def _as_float(value: object, default: float | None = None) -> float | None:
         return default
     try:
         return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _as_int(value: object, default: int | None = None) -> int | None:
+    if value is None:
+        return default
+    try:
+        return int(float(value))
     except (TypeError, ValueError):
         return default
 
@@ -7992,6 +8008,9 @@ async def market_order(
                         "forecast_regime_score": fc_decision.regime_score,
                         "forecast_leading_indicator": fc_decision.leading_indicator,
                         "forecast_leading_indicator_strength": fc_decision.leading_indicator_strength,
+                        "forecast_tf_confluence_score": fc_decision.tf_confluence_score,
+                        "forecast_tf_confluence_count": fc_decision.tf_confluence_count,
+                        "forecast_tf_confluence_horizons": fc_decision.tf_confluence_horizons,
                         "forecast_expected_pips": fc_decision.expected_pips,
                         "forecast_range_low_pips": fc_decision.range_low_pips,
                         "forecast_range_high_pips": fc_decision.range_high_pips,
@@ -8060,6 +8079,9 @@ async def market_order(
                             "forecast_regime_score": fc_decision.regime_score,
                             "forecast_leading_indicator": fc_decision.leading_indicator,
                             "forecast_leading_indicator_strength": fc_decision.leading_indicator_strength,
+                            "forecast_tf_confluence_score": fc_decision.tf_confluence_score,
+                            "forecast_tf_confluence_count": fc_decision.tf_confluence_count,
+                            "forecast_tf_confluence_horizons": fc_decision.tf_confluence_horizons,
                             "forecast_range_low_pips": fc_decision.range_low_pips,
                             "forecast_range_high_pips": fc_decision.range_high_pips,
                             "forecast_range_sigma_pips": fc_decision.range_sigma_pips,
@@ -8193,6 +8215,17 @@ async def market_order(
                         "regime_score": fc_decision.regime_score,
                         "leading_indicator": fc_decision.leading_indicator,
                         "leading_indicator_strength": fc_decision.leading_indicator_strength,
+                        "tf_confluence_score": (
+                            round(float(fc_decision.tf_confluence_score), 6)
+                            if fc_decision.tf_confluence_score is not None
+                            else None
+                        ),
+                        "tf_confluence_count": (
+                            int(fc_decision.tf_confluence_count)
+                            if fc_decision.tf_confluence_count is not None
+                            else None
+                        ),
+                        "tf_confluence_horizons": fc_decision.tf_confluence_horizons,
                         "feature_ts": fc_decision.feature_ts,
                         "edge_strength": round(edge_strength, 6),
                     }
@@ -8261,6 +8294,17 @@ async def market_order(
                     "range_high_price": round(float(fc_decision.range_high_price), 5)
                     if fc_decision.range_high_price is not None
                     else None,
+                    "tf_confluence_score": (
+                        round(float(fc_decision.tf_confluence_score), 6)
+                        if fc_decision.tf_confluence_score is not None
+                        else None
+                    ),
+                    "tf_confluence_count": (
+                        int(fc_decision.tf_confluence_count)
+                        if fc_decision.tf_confluence_count is not None
+                        else None
+                    ),
+                    "tf_confluence_horizons": fc_decision.tf_confluence_horizons,
                 }
 
             if base_tp_hint != thesis_tp_pips or base_sl_hint != thesis_sl_pips:

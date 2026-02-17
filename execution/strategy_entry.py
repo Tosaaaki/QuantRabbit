@@ -7,6 +7,7 @@ duplicate cross-strategy overexposure.
 
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
 import math
 import os
 from typing import Any, Iterable, Literal, Optional
@@ -79,6 +80,14 @@ _DEFAULT_ENTRY_TECH_TFS = _env_csv(
 )
 
 _TECH_POLICY_REQUIRE_ALL = {}
+_FORECAST_SUPPORT_DEFAULT_BY_HORIZON: dict[str, tuple[str, ...]] = {
+    "1m": ("5m", "10m"),
+    "5m": ("1m", "10m"),
+    "10m": ("5m", "1h"),
+    "1h": ("10m", "8h"),
+    "8h": ("1h", "1d"),
+    "1d": ("8h", "1w"),
+}
 
 
 def _coerce_bool(value: object, default: Optional[bool] = None) -> Optional[bool]:
@@ -185,6 +194,7 @@ _STRATEGY_TECH_CONTEXT_REQUIREMENTS: dict[str, dict[str, object]] = {
         "technical_context_candle_counts": {"M1": 140, "M5": 90, "H1": 70, "H4": 40},
         "forecast_horizon": "1m",
         "forecast_profile": {"timeframe": "M1", "step_bars": 1},
+        "forecast_support_horizons": ["5m", "10m"],
         "forecast_technical_only": True,
         "tech_policy": dict(_TECH_POLICY_REQUIRE_ALL),
     },
@@ -195,6 +205,7 @@ _STRATEGY_TECH_CONTEXT_REQUIREMENTS: dict[str, dict[str, object]] = {
         "technical_context_candle_counts": {"M1": 120, "M5": 80, "H1": 60},
         "forecast_horizon": "5m",
         "forecast_profile": {"timeframe": "M1", "step_bars": 5},
+        "forecast_support_horizons": ["1m", "10m"],
         "forecast_technical_only": True,
         "tech_policy": dict(_TECH_POLICY_REQUIRE_ALL),
     },
@@ -205,6 +216,7 @@ _STRATEGY_TECH_CONTEXT_REQUIREMENTS: dict[str, dict[str, object]] = {
         "technical_context_candle_counts": {"M1": 160, "M5": 100, "H1": 70, "H4": 40},
         "forecast_horizon": "10m",
         "forecast_profile": {"timeframe": "M5", "step_bars": 2},
+        "forecast_support_horizons": ["5m", "1h"],
         "forecast_technical_only": True,
         "tech_policy": dict(_TECH_POLICY_REQUIRE_ALL),
     },
@@ -215,6 +227,7 @@ _STRATEGY_TECH_CONTEXT_REQUIREMENTS: dict[str, dict[str, object]] = {
         "technical_context_candle_counts": {"M1": 160, "M5": 90, "H1": 50},
         "forecast_horizon": "5m",
         "forecast_profile": {"timeframe": "M1", "step_bars": 5},
+        "forecast_support_horizons": ["1m", "10m"],
         "forecast_technical_only": True,
         "tech_policy": dict(_TECH_POLICY_REQUIRE_ALL),
     },
@@ -225,6 +238,7 @@ _STRATEGY_TECH_CONTEXT_REQUIREMENTS: dict[str, dict[str, object]] = {
         "technical_context_candle_counts": {"M1": 140, "M5": 90, "H1": 70, "H4": 40},
         "forecast_horizon": "1m",
         "forecast_profile": {"timeframe": "M1", "step_bars": 1},
+        "forecast_support_horizons": ["5m", "10m"],
         "forecast_technical_only": True,
         "tech_policy": dict(_TECH_POLICY_REQUIRE_ALL),
     },
@@ -235,6 +249,7 @@ _STRATEGY_TECH_CONTEXT_REQUIREMENTS: dict[str, dict[str, object]] = {
         "technical_context_candle_counts": {"M1": 140, "M5": 90, "H1": 70, "H4": 40},
         "forecast_horizon": "10m",
         "forecast_profile": {"timeframe": "M5", "step_bars": 2},
+        "forecast_support_horizons": ["5m", "1h"],
         "forecast_technical_only": True,
         "tech_policy": dict(_TECH_POLICY_REQUIRE_ALL),
     },
@@ -245,6 +260,7 @@ _STRATEGY_TECH_CONTEXT_REQUIREMENTS: dict[str, dict[str, object]] = {
         "technical_context_candle_counts": {"M1": 140, "M5": 90, "H1": 70, "H4": 40},
         "forecast_horizon": "10m",
         "forecast_profile": {"timeframe": "M5", "step_bars": 2},
+        "forecast_support_horizons": ["5m", "1h"],
         "forecast_technical_only": True,
         "tech_policy": dict(_TECH_POLICY_REQUIRE_ALL),
     },
@@ -255,6 +271,7 @@ _STRATEGY_TECH_CONTEXT_REQUIREMENTS: dict[str, dict[str, object]] = {
         "technical_context_candle_counts": {"M1": 140, "M5": 90, "H1": 70, "H4": 40},
         "forecast_horizon": "10m",
         "forecast_profile": {"timeframe": "M5", "step_bars": 2},
+        "forecast_support_horizons": ["5m", "1h"],
         "forecast_technical_only": True,
         "tech_policy": dict(_TECH_POLICY_REQUIRE_ALL),
     },
@@ -265,6 +282,7 @@ _STRATEGY_TECH_CONTEXT_REQUIREMENTS: dict[str, dict[str, object]] = {
         "technical_context_candle_counts": {"M5": 120, "M1": 80, "H1": 50},
         "forecast_horizon": "10m",
         "forecast_profile": {"timeframe": "M5", "step_bars": 2},
+        "forecast_support_horizons": ["5m", "1h"],
         "forecast_technical_only": True,
         "tech_policy": dict(_TECH_POLICY_REQUIRE_ALL),
     },
@@ -275,6 +293,7 @@ _STRATEGY_TECH_CONTEXT_REQUIREMENTS: dict[str, dict[str, object]] = {
         "technical_context_candle_counts": {"M5": 120, "M1": 140, "H1": 60},
         "forecast_horizon": "10m",
         "forecast_profile": {"timeframe": "M5", "step_bars": 2},
+        "forecast_support_horizons": ["5m", "1h"],
         "forecast_technical_only": True,
         "tech_policy": dict(_TECH_POLICY_REQUIRE_ALL),
     },
@@ -285,6 +304,7 @@ _STRATEGY_TECH_CONTEXT_REQUIREMENTS: dict[str, dict[str, object]] = {
         "technical_context_candle_counts": {"M1": 120, "M5": 90, "H1": 60},
         "forecast_horizon": "10m",
         "forecast_profile": {"timeframe": "M5", "step_bars": 2},
+        "forecast_support_horizons": ["5m", "1h"],
         "forecast_technical_only": True,
         "tech_policy": dict(_TECH_POLICY_REQUIRE_ALL),
     },
@@ -573,6 +593,25 @@ def _parse_horizon_minutes(value: object) -> Optional[int]:
     return None
 
 
+def _normalize_horizon_list(value: object) -> list[str]:
+    if value is None:
+        return []
+    if isinstance(value, (list, tuple, set)):
+        tokens = list(value)
+    else:
+        tokens = str(value).replace("|", ",").split(",")
+    out: list[str] = []
+    for token in tokens:
+        text = str(token or "").strip().lower()
+        if not text:
+            continue
+        if _parse_horizon_minutes(text) is None:
+            continue
+        if text not in out:
+            out.append(text)
+    return out
+
+
 def _normalize_forecast_horizon_profile(profile_raw: object) -> dict[str, object]:
     if not isinstance(profile_raw, dict):
         return {}
@@ -587,6 +626,16 @@ def _normalize_forecast_horizon_profile(profile_raw: object) -> dict[str, object
         step_bars = _to_positive_int(profile_raw.get("forecast_step_bars"))
     if step_bars is not None:
         out["step_bars"] = int(step_bars)
+    for key in (
+        "support_horizons",
+        "confirm_horizons",
+        "forecast_support_horizons",
+        "forecast_confirm_horizons",
+    ):
+        horizons = _normalize_horizon_list(profile_raw.get(key))
+        if horizons:
+            out["support_horizons"] = horizons
+            break
     for key in ("blend", "blend_with_bundle", "technical_only"):
         if key in profile_raw:
             out[key] = bool(profile_raw.get(key))
@@ -600,6 +649,7 @@ def _build_entry_forecast_profile(
     *,
     strategy_tag: Optional[str] = None,
     pocket: str = "",
+    meta: Optional[dict] = None,
 ) -> Optional[dict[str, object]]:
     if not isinstance(entry_thesis, dict):
         entry_thesis = {}
@@ -631,6 +681,13 @@ def _build_entry_forecast_profile(
             profile["blend_with_bundle"] = bool(contract.get("blend_with_bundle"))
         if "technical_only" in contract:
             profile["technical_only"] = bool(contract.get("technical_only"))
+        support_horizons = _normalize_horizon_list(
+            contract.get("forecast_support_horizons")
+            or contract.get("forecast_confirm_horizons")
+            or contract.get("support_horizons")
+        )
+        if support_horizons:
+            profile["support_horizons"] = support_horizons
 
     direct_profile = _normalize_forecast_horizon_profile(entry_thesis.get("forecast_profile"))
     if direct_profile:
@@ -645,6 +702,21 @@ def _build_entry_forecast_profile(
         profile["blend_with_bundle"] = bool(entry_thesis.get("forecast_blend_with_bundle"))
     if "forecast_technical_only" in entry_thesis:
         profile["technical_only"] = bool(entry_thesis.get("forecast_technical_only"))
+    explicit_support_horizons = _normalize_horizon_list(
+        entry_thesis.get("forecast_support_horizons")
+        or entry_thesis.get("forecast_confirm_horizons")
+        or entry_thesis.get("support_horizons")
+    )
+    if explicit_support_horizons:
+        profile["support_horizons"] = explicit_support_horizons
+    elif isinstance(meta, dict):
+        meta_support_horizons = _normalize_horizon_list(
+            meta.get("forecast_support_horizons")
+            or meta.get("forecast_confirm_horizons")
+            or meta.get("support_horizons")
+        )
+        if meta_support_horizons:
+            profile["support_horizons"] = meta_support_horizons
 
     horizon = (
         entry_thesis.get("forecast_horizon")
@@ -709,6 +781,21 @@ def _build_entry_forecast_profile(
         else:
             profile["step_bars"] = 12
     profile["horizon"] = horizon_text
+    support_horizons = _normalize_horizon_list(profile.get("support_horizons"))
+    if not support_horizons:
+        support_horizons = [
+            candidate
+            for candidate in _FORECAST_SUPPORT_DEFAULT_BY_HORIZON.get(horizon_text, ())
+            if candidate != horizon_text
+        ]
+    else:
+        support_horizons = [
+            candidate for candidate in support_horizons if candidate != horizon_text
+        ]
+    if support_horizons:
+        profile["support_horizons"] = support_horizons
+    elif "support_horizons" in profile:
+        profile.pop("support_horizons", None)
     if profile.get("blend_with_bundle") in {"", None}:
         profile.pop("blend_with_bundle", None)
     if profile.get("technical_only") in {"", None}:
@@ -1037,6 +1124,17 @@ def _format_forecast_context(decision: Any) -> dict[str, object]:
             str(decision.leading_indicator) if decision.leading_indicator is not None else None
         ),
         "leading_indicator_strength": _to_float(decision.leading_indicator_strength),
+        "tf_confluence_score": _to_float(decision.tf_confluence_score),
+        "tf_confluence_count": (
+            int(decision.tf_confluence_count)
+            if decision.tf_confluence_count is not None
+            else None
+        ),
+        "tf_confluence_horizons": (
+            str(decision.tf_confluence_horizons)
+            if decision.tf_confluence_horizons is not None
+            else None
+        ),
         "source": str(decision.source) if decision.source is not None else None,
         "style": str(decision.style) if decision.style is not None else None,
         "feature_ts": str(decision.feature_ts) if decision.feature_ts is not None else None,
@@ -1080,6 +1178,7 @@ def _inject_entry_forecast_context(
         entry_thesis,
         strategy_tag=strategy_tag,
         pocket=pocket,
+        meta=meta if isinstance(meta, dict) else None,
     )
     if isinstance(forecast_profile, dict) and forecast_profile:
         entry_thesis["forecast_profile"] = forecast_profile
@@ -1097,6 +1196,10 @@ def _inject_entry_forecast_context(
             entry_thesis["forecast_technical_only"] = bool(
                 forecast_profile.get("technical_only")
             )
+        if "support_horizons" in forecast_profile:
+            support = _normalize_horizon_list(forecast_profile.get("support_horizons"))
+            if support:
+                entry_thesis["forecast_support_horizons"] = support
     forecast_meta: dict[str, object] = {"instrument": instrument}
     if isinstance(meta, dict):
         forecast_meta.update(meta)

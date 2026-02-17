@@ -82,6 +82,9 @@ def _serialize_decision(decision: forecast_gate.ForecastDecision) -> dict[str, A
         "regime_score": decision.regime_score,
         "leading_indicator": decision.leading_indicator,
         "leading_indicator_strength": decision.leading_indicator_strength,
+        "tf_confluence_score": decision.tf_confluence_score,
+        "tf_confluence_count": decision.tf_confluence_count,
+        "tf_confluence_horizons": decision.tf_confluence_horizons,
     }
 
 
