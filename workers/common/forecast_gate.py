@@ -92,6 +92,22 @@ _TECH_BREAKOUT_ADAPTIVE_LOOKBACK = max(
     _TECH_BREAKOUT_ADAPTIVE_MIN_SAMPLES,
     int(_env_float("FORECAST_TECH_BREAKOUT_ADAPTIVE_LOOKBACK", 360)),
 )
+_TECH_SESSION_BIAS_ENABLED = _env_bool(
+    "FORECAST_TECH_SESSION_BIAS_ENABLED",
+    True,
+)
+_TECH_SESSION_BIAS_WEIGHT = max(
+    0.0,
+    min(0.6, _env_float("FORECAST_TECH_SESSION_BIAS_WEIGHT", 0.12)),
+)
+_TECH_SESSION_BIAS_MIN_SAMPLES = max(
+    8,
+    int(_env_float("FORECAST_TECH_SESSION_BIAS_MIN_SAMPLES", 24)),
+)
+_TECH_SESSION_BIAS_LOOKBACK = max(
+    _TECH_SESSION_BIAS_MIN_SAMPLES,
+    int(_env_float("FORECAST_TECH_SESSION_BIAS_LOOKBACK", 720)),
+)
 _STYLE_GUARD_ENABLED = _env_bool("FORECAST_GATE_STYLE_GUARD_ENABLED", True)
 _STYLE_TREND_MIN_STRENGTH = max(
     0.0, min(1.0, _env_float("FORECAST_GATE_STYLE_TREND_MIN_STRENGTH", 0.52))
@@ -569,6 +585,69 @@ def _estimate_directional_skill(
     skill = _clamp((hit_rate - 0.5) * 2.0, -1.0, 1.0)
     confidence = _clamp(count / max(float(min_samples * 2), 1.0), 0.0, 1.0)
     return float(skill * confidence), float(hit_rate), count
+
+
+def _extract_jst_hour(value: Any) -> Optional[int]:
+    ts: Optional[datetime]
+    if isinstance(value, datetime):
+        ts = value
+    else:
+        text = str(value or "").strip()
+        if not text:
+            return None
+        try:
+            ts = datetime.fromisoformat(text.replace("Z", "+00:00"))
+        except Exception:
+            return None
+    if ts.tzinfo is None:
+        ts = ts.replace(tzinfo=timezone.utc)
+    else:
+        ts = ts.astimezone(timezone.utc)
+    return int((ts.hour + 9) % 24)
+
+
+def _estimate_session_hour_bias(
+    *,
+    timestamp_values: list[Any],
+    target_values: list[float],
+    current_timestamp: Any = None,
+    min_samples: int,
+    lookback: int,
+) -> tuple[float, float, int, Optional[int]]:
+    if min_samples <= 0:
+        min_samples = 1
+    usable: list[tuple[int, float]] = []
+    for ts_value, target in zip(timestamp_values, target_values):
+        hour = _extract_jst_hour(ts_value)
+        move = _safe_optional_float(target)
+        if hour is None or move is None:
+            continue
+        if not math.isfinite(move) or abs(move) < 1e-12:
+            continue
+        usable.append((int(hour), float(move)))
+    if lookback > 0 and len(usable) > lookback:
+        usable = usable[-lookback:]
+    if not usable:
+        return 0.0, 0.0, 0, None
+
+    current_hour = _extract_jst_hour(current_timestamp)
+    if current_hour is None:
+        current_hour = usable[-1][0]
+
+    hour_moves = [move for hour, move in usable if hour == current_hour]
+    sample_count = len(hour_moves)
+    if sample_count <= 0:
+        return 0.0, 0.0, 0, current_hour
+    mean_move = sum(hour_moves) / float(sample_count)
+    if sample_count < int(min_samples):
+        return 0.0, float(mean_move), sample_count, current_hour
+
+    abs_all = sorted(abs(move) for _, move in usable)
+    median_abs = abs_all[len(abs_all) // 2] if abs_all else 0.0
+    scale = max(0.35, float(median_abs))
+    raw_bias = _clamp(mean_move / scale, -1.0, 1.0)
+    confidence = _clamp(sample_count / max(float(min_samples * 3), 1.0), 0.0, 1.0)
+    return float(raw_bias * confidence), float(mean_move), sample_count, current_hour
 
 
 def _sigmoid(x: float) -> float:
@@ -1581,6 +1660,11 @@ def _technical_prediction_for_horizon(
     breakout_up = _safe_float(last.get("breakout_up_pips_20"), 0.0) / max(0.70, atr)
     breakout_down = _safe_float(last.get("breakout_down_pips_20"), 0.0) / max(0.70, atr)
     breakout_bias = breakout_up - breakout_down
+    future_values = _future_pips_from_candles_tail(
+        candles=candles,
+        aligned_length=len(feats.index),
+        step_bars=step_bars,
+    )
     breakout_skill = 0.0
     breakout_hit_rate = 0.5
     breakout_samples = 0
@@ -1591,11 +1675,6 @@ def _technical_prediction_for_horizon(
             signal_values = [float(v) for v in signal_series.tolist()]
         except Exception:
             signal_values = []
-        future_values = _future_pips_from_candles_tail(
-            candles=candles,
-            aligned_length=len(signal_values),
-            step_bars=step_bars,
-        )
         breakout_skill, breakout_hit_rate, breakout_samples = _estimate_directional_skill(
             signal_values=signal_values,
             target_values=future_values,
@@ -1603,6 +1682,22 @@ def _technical_prediction_for_horizon(
             lookback=_TECH_BREAKOUT_ADAPTIVE_LOOKBACK,
         )
     breakout_adaptive = math.tanh(breakout_bias * 0.9) * breakout_skill
+    session_bias = 0.0
+    session_mean_pips = 0.0
+    session_samples = 0
+    session_hour_jst: Optional[int] = None
+    if _TECH_SESSION_BIAS_ENABLED:
+        try:
+            timestamp_values = list(feats.index)
+        except Exception:
+            timestamp_values = []
+        session_bias, session_mean_pips, session_samples, session_hour_jst = _estimate_session_hour_bias(
+            timestamp_values=timestamp_values,
+            target_values=future_values,
+            current_timestamp=(timestamp_values[-1] if timestamp_values else None),
+            min_samples=_TECH_SESSION_BIAS_MIN_SAMPLES,
+            lookback=_TECH_SESSION_BIAS_LOOKBACK,
+        )
     donchian_width = max(0.25, abs(_safe_float(last.get("donchian_width_pips_20"), 0.0)))
     range_compression = _safe_float(last.get("range_compression_20"), 0.0)
     trend_pullback = _safe_float(last.get("trend_pullback_norm_20"), 0.0)
@@ -1688,11 +1783,17 @@ def _technical_prediction_for_horizon(
     )
 
     cfg = _TECH_HORIZON_CFG.get(horizon, _TECH_HORIZON_CFG["8h"])
+    session_bias_weight = (
+        0.0
+        if str(horizon).strip().lower() == "1m"
+        else float(_TECH_SESSION_BIAS_WEIGHT)
+    )
     combo = (
         cfg["trend_w"] * trend_score * (1.0 - 0.55 * range_pressure)
         + cfg["mr_w"] * mean_revert_score * range_pressure
         + _TECH_PROJECTION_WEIGHT * projection_score
         + _TECH_BREAKOUT_ADAPTIVE_WEIGHT * breakout_adaptive
+        + session_bias_weight * session_bias
     )
     raw_prob = _sigmoid(float(cfg["temp"]) * float(_TECH_SCORE_GAIN) * combo)
 
@@ -1739,6 +1840,11 @@ def _technical_prediction_for_horizon(
             "breakout_skill_20": round(float(breakout_skill), 6),
             "breakout_hit_rate_20": round(float(breakout_hit_rate), 6),
             "breakout_samples_20": int(breakout_samples),
+            "session_bias_jst": round(float(session_bias), 6),
+            "session_bias_weight": round(float(session_bias_weight), 6),
+            "session_mean_pips_jst": round(float(session_mean_pips), 6),
+            "session_samples_jst": int(session_samples),
+            "session_hour_jst": int(session_hour_jst) if session_hour_jst is not None else None,
             "squeeze_score_20": round(float(squeeze_score), 6),
             "timeframe": timeframe,
             "step_bars": int(step_bars) if step_bars else 0,

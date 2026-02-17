@@ -406,3 +406,43 @@ def test_estimate_directional_skill_negative() -> None:
     assert samples == 120
     assert hit_rate == 0.0
     assert skill < -0.9
+
+
+def test_estimate_session_hour_bias_positive() -> None:
+    idx = pd.date_range("2026-01-01", periods=240, freq="1h", tz="UTC")
+    targets: list[float] = []
+    for ts in idx:
+        hour_jst = (int(ts.hour) + 9) % 24
+        targets.append(1.2 if hour_jst == 10 else -0.1)
+    current_ts = next(ts for ts in reversed(idx) if ((int(ts.hour) + 9) % 24) == 10)
+    bias, mean_move, samples, hour_jst = forecast_gate._estimate_session_hour_bias(
+        timestamp_values=list(idx),
+        target_values=targets,
+        current_timestamp=current_ts,
+        min_samples=8,
+        lookback=240,
+    )
+    assert hour_jst == 10
+    assert samples >= 8
+    assert mean_move > 0.0
+    assert bias > 0.0
+
+
+def test_estimate_session_hour_bias_negative() -> None:
+    idx = pd.date_range("2026-01-01", periods=240, freq="1h", tz="UTC")
+    targets: list[float] = []
+    for ts in idx:
+        hour_jst = (int(ts.hour) + 9) % 24
+        targets.append(-1.1 if hour_jst == 3 else 0.12)
+    current_ts = next(ts for ts in reversed(idx) if ((int(ts.hour) + 9) % 24) == 3)
+    bias, mean_move, samples, hour_jst = forecast_gate._estimate_session_hour_bias(
+        timestamp_values=list(idx),
+        target_values=targets,
+        current_timestamp=current_ts,
+        min_samples=8,
+        lookback=240,
+    )
+    assert hour_jst == 3
+    assert samples >= 8
+    assert mean_move < 0.0
+    assert bias < 0.0

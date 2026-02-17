@@ -46,6 +46,9 @@ DEFAULT_FEATURE_EXPANSION_GAIN = 0.35
 DEFAULT_BREAKOUT_ADAPTIVE_WEIGHT = 0.22
 DEFAULT_BREAKOUT_ADAPTIVE_MIN_SAMPLES = 80
 DEFAULT_BREAKOUT_ADAPTIVE_LOOKBACK = 360
+DEFAULT_SESSION_BIAS_WEIGHT = 0.12
+DEFAULT_SESSION_BIAS_MIN_SAMPLES = 24
+DEFAULT_SESSION_BIAS_LOOKBACK = 720
 RANGE_BAND_LOWER_Q = 0.20
 RANGE_BAND_UPPER_Q = 0.80
 RANGE_SIGMA_FLOOR_PIPS = 0.35
@@ -142,6 +145,59 @@ def _estimate_directional_skill(
     skill = _clamp((hit_rate - 0.5) * 2.0, -1.0, 1.0)
     confidence = _clamp(count / max(float(min_samples * 2), 1.0), 0.0, 1.0)
     return float(skill * confidence), float(hit_rate), int(count)
+
+
+def _extract_jst_hour(value: Any) -> Optional[int]:
+    ts = pd.to_datetime(value, utc=True, errors="coerce")
+    if pd.isna(ts):
+        return None
+    try:
+        return int(ts.tz_convert("Asia/Tokyo").hour)
+    except Exception:
+        return int((int(ts.hour) + 9) % 24)
+
+
+def _estimate_session_hour_bias(
+    *,
+    timestamp_values: list[Any],
+    target_values: list[float],
+    current_timestamp: Any = None,
+    min_samples: int,
+    lookback: int,
+) -> tuple[float, float, int, Optional[int]]:
+    min_samples = max(1, int(min_samples))
+    usable: list[tuple[int, float]] = []
+    for ts_value, target in zip(timestamp_values, target_values):
+        hour = _extract_jst_hour(ts_value)
+        move = _safe_float(target, math.nan)
+        if hour is None or not math.isfinite(move):
+            continue
+        if abs(move) < 1e-12:
+            continue
+        usable.append((int(hour), float(move)))
+    if lookback > 0 and len(usable) > lookback:
+        usable = usable[-lookback:]
+    if not usable:
+        return 0.0, 0.0, 0, None
+
+    current_hour = _extract_jst_hour(current_timestamp)
+    if current_hour is None:
+        current_hour = usable[-1][0]
+
+    hour_moves = [move for hour, move in usable if hour == current_hour]
+    sample_count = len(hour_moves)
+    if sample_count <= 0:
+        return 0.0, 0.0, 0, current_hour
+    mean_move = sum(hour_moves) / float(sample_count)
+    if sample_count < min_samples:
+        return 0.0, float(mean_move), sample_count, current_hour
+
+    abs_all = sorted(abs(move) for _, move in usable)
+    median_abs = abs_all[len(abs_all) // 2] if abs_all else 0.0
+    scale = max(0.35, float(median_abs))
+    raw_bias = _clamp(mean_move / scale, -1.0, 1.0)
+    confidence = _clamp(sample_count / max(float(min_samples * 3), 1.0), 0.0, 1.0)
+    return float(raw_bias * confidence), float(mean_move), sample_count, current_hour
 
 
 def _normalized_breakout_bias(row: pd.Series) -> float:
@@ -366,6 +422,8 @@ def _prediction_after(
     feature_expansion_gain: float,
     breakout_skill: float = 0.0,
     breakout_adaptive_weight: float = 0.0,
+    session_bias: float = 0.0,
+    session_bias_weight: float = 0.0,
     projection_score: float = 0.0,
     projection_confidence: float = 0.0,
 ) -> StepPrediction:
@@ -464,11 +522,17 @@ def _prediction_after(
 
     horizon = _horizon_from_step(step)
     cfg = TECH_HORIZON_CFG.get(horizon, TECH_HORIZON_CFG["8h"])
+    session_weight = (
+        0.0
+        if str(horizon).strip().lower() == "1m"
+        else _clamp(float(session_bias_weight), 0.0, 1.0)
+    )
     combo = (
         cfg["trend_w"] * trend_score * (1.0 - 0.55 * range_pressure)
         + cfg["mr_w"] * mean_revert_score * range_pressure
         + TECH_PROJECTION_WEIGHT * projection_score
         + _clamp(float(breakout_adaptive_weight), 0.0, 1.0) * breakout_adaptive
+        + session_weight * _clamp(float(session_bias), -1.0, 1.0)
     )
     raw_prob = _sigmoid(float(cfg["temp"]) * TECH_SCORE_GAIN * combo)
 
@@ -502,6 +566,9 @@ def _evaluate_step(
     breakout_adaptive_weight: float,
     breakout_adaptive_min_samples: int,
     breakout_adaptive_lookback: int,
+    session_bias_weight: float,
+    session_bias_min_samples: int,
+    session_bias_lookback: int,
 ) -> EvalRow:
     merged = feats_df.join(candles_df[["close"]], how="inner")
     merged["future_pips"] = (merged["close"].shift(-step) - merged["close"]) / PIP
@@ -543,6 +610,7 @@ def _evaluate_step(
     breakout_filtered_count = 0
     breakout_signal_hist: list[float] = []
     realized_hist: list[float] = []
+    timestamp_hist: list[Any] = []
 
     for i, (_, row) in enumerate(merged.iterrows(), start=1):
         realized = float(row["future_pips"])
@@ -563,6 +631,20 @@ def _evaluate_step(
                 min_samples=breakout_adaptive_min_samples,
                 lookback=0,
             )
+        session_bias = 0.0
+        if session_bias_weight > 0.0:
+            ts_hist = timestamp_hist
+            target_hist = realized_hist
+            if session_bias_lookback > 0 and len(timestamp_hist) > session_bias_lookback:
+                ts_hist = timestamp_hist[-session_bias_lookback:]
+                target_hist = realized_hist[-session_bias_lookback:]
+            session_bias, _, _, _ = _estimate_session_hour_bias(
+                timestamp_values=ts_hist,
+                target_values=target_hist,
+                current_timestamp=row.name,
+                min_samples=session_bias_min_samples,
+                lookback=0,
+            )
         pred_after = _prediction_after(
             row,
             step=step,
@@ -570,6 +652,8 @@ def _evaluate_step(
             feature_expansion_gain=feature_expansion_gain,
             breakout_skill=breakout_skill,
             breakout_adaptive_weight=breakout_adaptive_weight,
+            session_bias=session_bias,
+            session_bias_weight=session_bias_weight,
         )
         expected_before = pred_before.expected_pips
         expected_after = pred_after.expected_pips
@@ -594,6 +678,7 @@ def _evaluate_step(
             breakout_filtered_hits.append(1 if breakout_bias * realized > 0.0 else 0)
         breakout_signal_hist.append(_normalized_breakout_bias(row))
         realized_hist.append(realized)
+        timestamp_hist.append(row.name)
 
     n = len(hit_before)
     if n <= 0:
@@ -700,6 +785,24 @@ def main() -> int:
         default=DEFAULT_BREAKOUT_ADAPTIVE_LOOKBACK,
         help="Lookback window for breakout adaptive skill estimation.",
     )
+    ap.add_argument(
+        "--session-bias-weight",
+        type=float,
+        default=DEFAULT_SESSION_BIAS_WEIGHT,
+        help="Weight for JST hour-of-day directional bias term in after formula.",
+    )
+    ap.add_argument(
+        "--session-bias-min-samples",
+        type=int,
+        default=DEFAULT_SESSION_BIAS_MIN_SAMPLES,
+        help="Minimum per-hour samples required for JST session bias activation.",
+    )
+    ap.add_argument(
+        "--session-bias-lookback",
+        type=int,
+        default=DEFAULT_SESSION_BIAS_LOOKBACK,
+        help="Lookback window for JST session bias estimation.",
+    )
     ap.add_argument("--json-out", default="", help="Optional output JSON path.")
     args = ap.parse_args()
 
@@ -743,6 +846,12 @@ def main() -> int:
         breakout_adaptive_min_samples,
         int(args.breakout_adaptive_lookback),
     )
+    session_bias_weight = _clamp(float(args.session_bias_weight), 0.0, 1.0)
+    session_bias_min_samples = max(1, int(args.session_bias_min_samples))
+    session_bias_lookback = max(
+        session_bias_min_samples,
+        int(args.session_bias_lookback),
+    )
 
     rows = [
         _evaluate_step(
@@ -754,6 +863,9 @@ def main() -> int:
             breakout_adaptive_weight=breakout_adaptive_weight,
             breakout_adaptive_min_samples=breakout_adaptive_min_samples,
             breakout_adaptive_lookback=breakout_adaptive_lookback,
+            session_bias_weight=session_bias_weight,
+            session_bias_min_samples=session_bias_min_samples,
+            session_bias_lookback=session_bias_lookback,
         )
         for step in steps
     ]
@@ -770,7 +882,10 @@ def main() -> int:
         f"feature_expansion_gain={feature_expansion_gain:.4f} "
         f"breakout_adaptive_weight={breakout_adaptive_weight:.4f} "
         f"breakout_adaptive_min_samples={breakout_adaptive_min_samples} "
-        f"breakout_adaptive_lookback={breakout_adaptive_lookback}"
+        f"breakout_adaptive_lookback={breakout_adaptive_lookback} "
+        f"session_bias_weight={session_bias_weight:.4f} "
+        f"session_bias_min_samples={session_bias_min_samples} "
+        f"session_bias_lookback={session_bias_lookback}"
     )
     print(
         "step horizon n "
@@ -799,6 +914,9 @@ def main() -> int:
                 "breakout_adaptive_weight": breakout_adaptive_weight,
                 "breakout_adaptive_min_samples": breakout_adaptive_min_samples,
                 "breakout_adaptive_lookback": breakout_adaptive_lookback,
+                "session_bias_weight": session_bias_weight,
+                "session_bias_min_samples": session_bias_min_samples,
+                "session_bias_lookback": session_bias_lookback,
             },
             "rows": [asdict(r) for r in rows],
         }
