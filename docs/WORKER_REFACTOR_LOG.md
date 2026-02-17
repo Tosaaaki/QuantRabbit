@@ -8,6 +8,20 @@
 - データ供給は `quant-market-data-feed`、制御配信は `quant-strategy-control` に分離。
 - 補助的運用ワーカーは本体管理マップから除外。
 
+### 2026-02-17（追記）trend_h1 を下落追尾用に短期化
+
+- `workers/trend_h1/config.py` に `TREND_H1_FORCE_DIRECTION` を追加し、戦略起動側で `short` のみを許可できる制御を導入。
+- `workers/trend_h1/worker.py` の `entry_thesis` へ `entry_probability` と `entry_units_intent` を明示注入し、`strategy_entry` の意図連携が
+  `coordinate_entry_intent` 側に確実に渡る構成へ揃えた。
+- `ops/env/quant-trend-h1.env` を追加し、`TREND_H1_FORCE_DIRECTION=short`・`TREND_H1_ALLOWED_DIRECTIONS=Short` をデフォルトとした。
+- `systemd/quant-trend-h1.service` / `systemd/quant-trend-h1-exit.service` を追加して、`trend_h1` の ENTRY/EXIT を分離起動できる状態へ。
+
+### 2026-02-17（追記）micro_multistrat の時刻取得フォールバック修正
+
+- `workers/micro_multistrat/worker.py` の `_ts_ms_from_tick` が `tick_window` の時刻キー `epoch` を解釈していなかったため、`_build_m1_from_ticks` が `None` を返しやすく、`quant-micro-multi` 側で `factor_stale_warn` が継続する状態を修正。
+- `_ts_ms_from_tick` の優先順位を `ts_ms -> timestamp -> epoch` に拡張し、`tick_window` のエポック形式データでもM1再構築候補が生成されるよう調整。
+- これにより `micro_multi_skip` の主因を減らし、`range_mode` 判定とレンジ/順張りシグナル抽出の起点更新機会を戻すことを目的とした。
+
 ### 2026-02-17（追記）`scalp_ping_5s` / `scalp_ping_5s_b` の低証拠金旧キー整理
 
 - `execution/risk_guard.py` の `allowed_lot` から
@@ -25,6 +39,20 @@
 - 対象追記: `ops/env/quant-scalp-ping-5s.env`, `ops/env/scalp_ping_5s_b.env`,
   `ops/env/scalp_ping_5s_tuning_20260212.env`, `ops/env/scalp_ping_5s_entry_profit_boost_20260213.env`,
   `ops/env/scalp_ping_5s_max_20260212.env`, `config/vm_env_overrides_aggressive.env`。
+
+### 2026-02-17（追記）未使用戦略のレガシー化（誤作動封じ）
+
+- `workers/` から稼働外戦略 43 件を削除して、VM実行導線に残る戦略を
+  `scalp_false_break_fade / scalp_level_reject / scalp_macd_rsi_div / scalp_macd_rsi_div_b / scalp_ping_5s* / scalp_rangefader / scalp_squeeze_pulse_break / scalp_tick_imbalance / scalp_wick_reversal_blend / scalp_wick_reversal_pro / m1scalper / micro_multistrat / session_open` に絞り込んだ。
+- systemd/env の旧戦略起動点を整理。
+  - `systemd/quant-impulse-retest-s5*.service`
+  - `systemd/quant-micro-adaptive-revert*.service`
+  - `systemd/quant-trend-h1*.service`（該当分）
+  - `ops/env/quant-impulse-retest-s5*.env`
+  - `ops/env/quant-micro-adaptive-revert*.env`
+  - `ops/env/quant-trend-h1.env`
+- `scalp_rangefader` について、`entry_probability` を明示的に `entry_thesis` へ注入。
+- `session_open` の `order` へ `entry_probability` を `meta.entry_probability` としても明示し、`AddonLiveBroker` 経路でも `order_manager` 側での意図解釈を明確化。
 
 ### 2026-02-17（追記）M1Scalper に提案戦略 1/3（`breakout_retest`, `vshape_rebound`）を実装
 
@@ -1060,3 +1088,6 @@
 - 適用後、同一日の 3d/7d で
   `spread_block`・`entry_probability_below_min_units` の比率が低下し、
   `submit_attempt` が増えるかを次回監査で確認する。
+
+- `$(date +
+- `2026-02-17`: 旧戦略残骸の最終除去を追加。`quant-m1scalper*` 系 (`systemd`/`ops/env` / VM `/etc/systemd/system` / VMリポジトリ `systemd` ディレクトリ) を一括廃止し、VM上の `systemctl list-unit-files` からも一致除去。`quant-impulse-retest-s5*` と `quant-micro-adaptive-revert*` 系も同時に除去・非起動化。

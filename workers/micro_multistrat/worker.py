@@ -156,6 +156,8 @@ def _mid_from_tick(tick: Dict) -> Optional[float]:
 def _ts_ms_from_tick(tick: Dict) -> Optional[int]:
     ts_ms = tick.get("ts_ms") or tick.get("timestamp")
     if ts_ms is None:
+        ts_ms = tick.get("epoch")
+    if ts_ms is None:
         return None
     try:
         ts_val = int(float(ts_ms))

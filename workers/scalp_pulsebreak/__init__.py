@@ -1,1 +1,0 @@
-"""PulseBreak scalp worker package."""

@@ -1,1 +1,0 @@
-"""Tech Fusion worker package."""
