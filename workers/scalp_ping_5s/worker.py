@@ -2867,6 +2867,116 @@ def _extrema_gate_decision(
     return ExtremaGateDecision(True, "ok", 1.0, m1_pos, m5_pos, h4_pos)
 
 
+def _extrema_reversal_route(
+    signal: TickSignal,
+    extrema_decision: ExtremaGateDecision,
+    *,
+    regime: Optional[MtfRegime],
+    horizon: Optional[HorizonBias],
+    factors: Optional[dict],
+) -> tuple[Optional[TickSignal], float, str, float]:
+    if not config.EXTREMA_REVERSAL_ENABLED:
+        return None, 1.0, "", 0.0
+
+    side_key = str(signal.side or "").strip().lower()
+    if side_key not in {"long", "short"}:
+        return None, 1.0, "", 0.0
+    reverse_side = "short" if side_key == "long" else "long"
+
+    reason = str(extrema_decision.reason or "").strip().lower()
+    if not any(token in reason for token in ("top", "bottom", "h4_low")):
+        return None, 1.0, "", 0.0
+
+    score = 0.0
+    m1_pos = extrema_decision.m1_pos
+    m5_pos = extrema_decision.m5_pos
+    h4_pos = extrema_decision.h4_pos
+    if side_key == "short":
+        if m1_pos is not None and m1_pos <= config.EXTREMA_SHORT_BOTTOM_SOFT_POS:
+            score += 0.70
+        if m1_pos is not None and m1_pos <= config.EXTREMA_SHORT_BOTTOM_BLOCK_POS:
+            score += 0.55
+        if m5_pos is not None and m5_pos <= config.EXTREMA_SHORT_BOTTOM_SOFT_POS:
+            score += 0.70
+        if m5_pos is not None and m5_pos <= config.EXTREMA_SHORT_BOTTOM_BLOCK_POS:
+            score += 0.55
+        if h4_pos is not None and h4_pos <= config.EXTREMA_SHORT_H4_LOW_SOFT_POS:
+            score += 0.45
+        if h4_pos is not None and h4_pos <= config.EXTREMA_SHORT_H4_LOW_BLOCK_POS:
+            score += 0.35
+    else:
+        if m1_pos is not None and m1_pos >= config.EXTREMA_LONG_TOP_SOFT_POS:
+            score += 0.70
+        if m1_pos is not None and m1_pos >= config.EXTREMA_LONG_TOP_BLOCK_POS:
+            score += 0.55
+        if m5_pos is not None and m5_pos >= config.EXTREMA_LONG_TOP_SOFT_POS:
+            score += 0.70
+        if m5_pos is not None and m5_pos >= config.EXTREMA_LONG_TOP_BLOCK_POS:
+            score += 0.55
+
+    if regime is not None:
+        regime_side = str(getattr(regime, "side", "")).strip().lower()
+        regime_mode = str(getattr(regime, "mode", "")).strip().lower()
+        regime_heat = _safe_float(getattr(regime, "heat_score", 0.0), 0.0)
+        if regime_side == reverse_side:
+            score += 0.80 if regime_mode == "continuation" else 0.60
+        elif (
+            regime_side == side_key
+            and regime_mode == "continuation"
+            and regime_heat >= config.EXTREMA_REVERSAL_CONTINUATION_HEAT_MAX
+        ):
+            score -= 0.85
+        elif regime_mode != "continuation" and regime_heat <= config.EXTREMA_REVERSAL_CONTINUATION_HEAT_MAX:
+            score += 0.25
+
+    if horizon is not None:
+        horizon_side = str(getattr(horizon, "composite_side", "")).strip().lower()
+        horizon_score = abs(_safe_float(getattr(horizon, "composite_score", 0.0), 0.0))
+        horizon_agree = int(_safe_float(getattr(horizon, "agreement", 0.0), 0.0))
+        if (
+            horizon_side == reverse_side
+            and horizon_score >= config.EXTREMA_REVERSAL_HORIZON_SCORE_MIN
+        ):
+            score += 0.80
+            if horizon_agree >= config.EXTREMA_REVERSAL_HORIZON_AGREE_MIN:
+                score += 0.35
+        elif horizon_side == side_key and horizon_score >= config.HORIZON_BLOCK_SCORE:
+            score -= 0.60
+
+    tf_m1 = factors.get("M1") if isinstance(factors, dict) else {}
+    if isinstance(tf_m1, dict):
+        close = _safe_float(tf_m1.get("close"), 0.0)
+        ema20 = _safe_float(tf_m1.get("ema20"), _safe_float(tf_m1.get("ma20"), 0.0))
+        rsi = _safe_float(tf_m1.get("rsi"), 50.0)
+        if close > 0.0 and ema20 > 0.0:
+            ema_gap_pips = abs(close - ema20) / config.PIP_VALUE
+            if ema_gap_pips >= config.EXTREMA_REVERSAL_EMA_GAP_MIN_PIPS:
+                if reverse_side == "long" and close > ema20 and rsi >= config.EXTREMA_REVERSAL_RSI_CONFIRM:
+                    score += 1.10
+                elif (
+                    reverse_side == "short"
+                    and close < ema20
+                    and rsi <= (100.0 - config.EXTREMA_REVERSAL_RSI_CONFIRM)
+                ):
+                    score += 1.10
+
+    if score < config.EXTREMA_REVERSAL_MIN_SCORE:
+        return None, 1.0, "", float(score)
+
+    reversed_signal = _retarget_signal(
+        signal,
+        side=reverse_side,
+        mode=f"{signal.mode}_extrev",
+        confidence_add=int(config.EXTREMA_REVERSAL_CONFIDENCE_ADD),
+    )
+    return (
+        reversed_signal,
+        max(0.1, float(config.EXTREMA_REVERSAL_UNITS_MULT)),
+        f"{extrema_decision.reason}_reverse",
+        float(score),
+    )
+
+
 def _confidence_scale(conf: int) -> float:
     lo = config.CONFIDENCE_FLOOR
     hi = config.CONFIDENCE_CEIL
@@ -4231,6 +4341,42 @@ async def scalp_ping_5s_worker() -> None:
             h4_pos_log = (
                 -1.0 if extrema_decision.h4_pos is None else float(extrema_decision.h4_pos)
             )
+            extrema_reversal_applied = False
+            extrema_reversal_score = 0.0
+            reversed_signal, reversal_units_mult, reversal_reason, reversal_score = _extrema_reversal_route(
+                signal,
+                extrema_decision,
+                regime=regime,
+                horizon=horizon,
+                factors=factors if isinstance(factors, dict) else None,
+            )
+            if reversed_signal is not None:
+                signal = reversed_signal
+                extrema_reversal_applied = True
+                extrema_reversal_score = float(reversal_score)
+                extrema_units_mult = max(extrema_units_mult, float(reversal_units_mult))
+                extrema_decision = ExtremaGateDecision(
+                    allow_entry=True,
+                    reason=str(reversal_reason),
+                    units_mult=float(extrema_units_mult),
+                    m1_pos=extrema_decision.m1_pos,
+                    m5_pos=extrema_decision.m5_pos,
+                    h4_pos=extrema_decision.h4_pos,
+                )
+                tech_route_reasons.append("extrema_reverse")
+                if now_mono - last_extrema_log_mono >= config.EXTREMA_LOG_INTERVAL_SEC:
+                    LOG.info(
+                        "%s extrema reverse side=%s reason=%s score=%.2f emult=%.2f m1=%.2f m5=%.2f h4=%.2f",
+                        config.LOG_PREFIX,
+                        signal.side,
+                        extrema_decision.reason,
+                        extrema_reversal_score,
+                        extrema_units_mult,
+                        m1_pos_log,
+                        m5_pos_log,
+                        h4_pos_log,
+                    )
+                    last_extrema_log_mono = now_mono
             if not extrema_decision.allow_entry:
                 if now_mono - last_extrema_log_mono >= config.EXTREMA_LOG_INTERVAL_SEC:
                     LOG.info(
@@ -4647,6 +4793,8 @@ async def scalp_ping_5s_worker() -> None:
                 "extrema_gate_enabled": bool(config.EXTREMA_GATE_ENABLED),
                 "extrema_gate_reason": extrema_decision.reason,
                 "extrema_units_mult": round(extrema_units_mult, 3),
+                "extrema_reversal_enabled": bool(config.EXTREMA_REVERSAL_ENABLED),
+                "extrema_reversal_applied": bool(extrema_reversal_applied),
                 "tech_router_enabled": bool(config.TECH_ROUTER_ENABLED),
                 "tech_route_reasons": list(tech_route_reasons),
                 "tech_counter_pressure": bool(tech_profile.counter_pressure),
@@ -4665,6 +4813,8 @@ async def scalp_ping_5s_worker() -> None:
                 entry_thesis["extrema_m5_pos"] = round(extrema_decision.m5_pos, 4)
             if extrema_decision.h4_pos is not None:
                 entry_thesis["extrema_h4_pos"] = round(extrema_decision.h4_pos, 4)
+            if extrema_reversal_applied:
+                entry_thesis["extrema_reversal_score"] = round(extrema_reversal_score, 3)
             if direction_bias is not None:
                 entry_thesis.update(
                     {

@@ -765,6 +765,55 @@ EXTREMA_LOG_INTERVAL_SEC: float = max(
     1.0,
     float(os.getenv("SCALP_PING_5S_EXTREMA_LOG_INTERVAL_SEC", "8.0")),
 )
+EXTREMA_REVERSAL_ENABLED: bool = _bool_env(
+    "SCALP_PING_5S_EXTREMA_REVERSAL_ENABLED",
+    True if ENV_PREFIX == "SCALP_PING_5S_B" else False,
+)
+EXTREMA_REVERSAL_MIN_SCORE: float = max(
+    0.1,
+    float(
+        os.getenv(
+            "SCALP_PING_5S_EXTREMA_REVERSAL_MIN_SCORE",
+            "1.45" if ENV_PREFIX == "SCALP_PING_5S_B" else "1.80",
+        )
+    ),
+)
+EXTREMA_REVERSAL_UNITS_MULT: float = max(
+    0.1,
+    min(
+        2.0,
+        float(
+            os.getenv(
+                "SCALP_PING_5S_EXTREMA_REVERSAL_UNITS_MULT",
+                "1.00" if ENV_PREFIX == "SCALP_PING_5S_B" else "0.95",
+            )
+        ),
+    ),
+)
+EXTREMA_REVERSAL_CONFIDENCE_ADD: int = max(
+    0,
+    int(float(os.getenv("SCALP_PING_5S_EXTREMA_REVERSAL_CONFIDENCE_ADD", "4"))),
+)
+EXTREMA_REVERSAL_RSI_CONFIRM: float = max(
+    1.0,
+    min(99.0, float(os.getenv("SCALP_PING_5S_EXTREMA_REVERSAL_RSI_CONFIRM", "52.0"))),
+)
+EXTREMA_REVERSAL_EMA_GAP_MIN_PIPS: float = max(
+    0.0,
+    float(os.getenv("SCALP_PING_5S_EXTREMA_REVERSAL_EMA_GAP_MIN_PIPS", "0.10")),
+)
+EXTREMA_REVERSAL_CONTINUATION_HEAT_MAX: float = max(
+    0.0,
+    min(1.0, float(os.getenv("SCALP_PING_5S_EXTREMA_REVERSAL_CONTINUATION_HEAT_MAX", "0.74"))),
+)
+EXTREMA_REVERSAL_HORIZON_SCORE_MIN: float = max(
+    0.0,
+    min(1.0, float(os.getenv("SCALP_PING_5S_EXTREMA_REVERSAL_HORIZON_SCORE_MIN", "0.24"))),
+)
+EXTREMA_REVERSAL_HORIZON_AGREE_MIN: int = max(
+    1,
+    int(float(os.getenv("SCALP_PING_5S_EXTREMA_REVERSAL_HORIZON_AGREE_MIN", "3"))),
+)
 
 TECH_ROUTER_ENABLED: bool = _bool_env("SCALP_PING_5S_TECH_ROUTER_ENABLED", True)
 TECH_ROUTER_MTF_BLOCK_UNITS_MULT: float = max(

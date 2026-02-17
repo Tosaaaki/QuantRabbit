@@ -40,6 +40,14 @@
     - `SCALP_PING_5S_FLOW_REVERT_CONFIRM_RATIO_MIN=0.50`
     - `SCALP_PING_5S_FLOW_DROP_FLOW_MIN_PIPS=0.15`
     - `SCALP_PING_5S_FLOW_DROP_FLOW_MIN_TICKS=3`
+- 2026-02-17 UTC 追加: 極値反転ルーティング（件数維持 + 方向補正）
+  - `workers/scalp_ping_5s` に `EXTREMA_REVERSAL_*` を追加。
+  - `SCALP_PING_5S_B` は既定で `EXTREMA_REVERSAL_ENABLED=1`。
+  - `short_bottom_*` / `long_top_*` で反転根拠が揃う場合、
+    block ではなく side 反転 (`*_extrev`) で注文継続。
+  - `entry_thesis` 監査項目:
+    - `extrema_reversal_applied`
+    - `extrema_reversal_score`
 
 ## 1. 2026-02-12 JST 追加チューニング（稼働戦略のみ）
 - `TickImbalance` / `LevelReject` / `M1Scalper` だけを対象に EXIT の time-stop を短縮。

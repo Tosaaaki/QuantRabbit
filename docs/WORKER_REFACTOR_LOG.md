@@ -1533,12 +1533,36 @@
 
 - 背景:
   - `ops: tune scalp ping 5s b/flow entry thresholds` 反映後、
-    `SCALP_PING_5S_B_EXTREMA_REQUIRE_M1_M5_AGREE_SHORT` はenv未設定となり、
-    short 側は共通設定（`SCALP_PING_5S_B_EXTREMA_REQUIRE_M1_M5_AGREE=0`）へフォールバックしていた。
+    `SCALP_PING_5S_B_EXTREMA_REQUIRE_M1_M5_AGREE_SHORT` が未設定だと
+    short 側は共通設定（`SCALP_PING_5S_B_EXTREMA_REQUIRE_M1_M5_AGREE=0`）へ
+    フォールバックしていた。
 - 修正:
   - `workers/scalp_ping_5s/config.py`
     - `SCALP_PING_5S_EXTREMA_REQUIRE_M1_M5_AGREE_SHORT` の既定値を
       `ENV_PREFIX == "SCALP_PING_5S_B"` のとき `true` に変更。
     - env 明示がある場合は従来どおり env 値を優先。
 - 意図:
-  - B運用で short の `short_bottom_m1m5` を M1+M5 合意時のみ block し、下落継続の再エントリー取り逃しを抑える。
+  - B運用で short の `short_bottom_m1m5` を M1+M5 合意時のみ block し、
+    下落継続の再エントリー取り逃しを抑える。
+
+### 2026-02-17（追記）5秒スキャの極値反転ルーティング（件数維持型）
+
+- 背景:
+  - 直近の live で `short_bottom_soft` が連続し、底付近で short の積み上がりが発生。
+  - 要件は「エントリー件数は落とさず、底/天井の方向精度を上げる」。
+- 実装:
+  - `workers/scalp_ping_5s/config.py`
+    - `EXTREMA_REVERSAL_ENABLED` ほか `EXTREMA_REVERSAL_*` を追加。
+    - `ENV_PREFIX=SCALP_PING_5S_B` では既定で反転ルーティングを有効化。
+  - `workers/scalp_ping_5s/worker.py`
+    - `_extrema_reversal_route()` を追加。
+    - `short_bottom_*` / `long_top_*` / `short_h4_low` で、M1/M5/H4位置と
+      M1の `RSI/EMA`、`MTF heat`、`horizon` を合算評価し、
+      閾値到達時は block せず opposite side へ反転 (`*_extrev`)。
+    - `entry_thesis` に以下を追加して監査可能化:
+      - `extrema_reversal_enabled`
+      - `extrema_reversal_applied`
+      - `extrema_reversal_score`
+- 目的:
+  - 極値局面での同方向積み上げを抑えつつ、注文本数は維持する。
+  - `orders.db` から反転適用率と成績を継続監視できる状態にする。

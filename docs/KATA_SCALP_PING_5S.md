@@ -179,3 +179,23 @@ DB:
 - 意図:
   - `short_bottom_m1m5` の M1 単独 block を抑え、下落継続時のショート再エントリーを回復する。
   - `units_below_min` での空振りを減らし、`entry_intent` が order_manager へ到達する率を引き上げる。
+
+## 12. 2026-02-17 更新（極値反転ルーティング追加）
+
+- 目的:
+  - エントリー件数を落とさずに、底/天井付近の同方向積み上げを減らす。
+  - `extrema` が強く出た時に block ではなく反転 side へルーティングして、方向精度を上げる。
+- 実装:
+  - `workers/scalp_ping_5s/config.py`
+    - `EXTREMA_REVERSAL_*` を追加。
+    - B版（`ENV_PREFIX=SCALP_PING_5S_B`）は `EXTREMA_REVERSAL_ENABLED` を既定ON。
+  - `workers/scalp_ping_5s/worker.py`
+    - `_extrema_reversal_route()` を追加。
+    - `short_bottom_*` / `long_top_*`（+ `short_h4_low`）で、
+      M1/M5/H4の位置、M1の `RSI/EMA`、`MTF heat`、`horizon` を点数化し、
+      閾値到達時は `signal.side` を反転して継続。
+    - `entry_thesis` に `extrema_reversal_applied`, `extrema_reversal_score` を追加し、
+      実運用の追跡を可能化。
+- 運用意図:
+  - 「極値で止める」よりも「極値で方向転換する」設計へ寄せることで、
+    発注本数を維持しつつ bottom/top 近傍の逆行エントリーを抑える。
