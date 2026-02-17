@@ -1482,3 +1482,17 @@
 - 目的:
   - `revert_not_found` と `low_tick_count` による機会損失を下げ、
     `scalp_fast` pocket での現況追従エントリー頻度を回復する。
+
+### 2026-02-17（追記）scalp_ping_5s_b の short extrema 合意を既定ON化
+
+- 背景:
+  - `ops: tune scalp ping 5s b/flow entry thresholds` 反映後、
+    `SCALP_PING_5S_B_EXTREMA_REQUIRE_M1_M5_AGREE_SHORT` はenv未設定となり、
+    short 側は共通設定（`SCALP_PING_5S_B_EXTREMA_REQUIRE_M1_M5_AGREE=0`）へフォールバックしていた。
+- 修正:
+  - `workers/scalp_ping_5s/config.py`
+    - `SCALP_PING_5S_EXTREMA_REQUIRE_M1_M5_AGREE_SHORT` の既定値を
+      `ENV_PREFIX == "SCALP_PING_5S_B"` のとき `true` に変更。
+    - env 明示がある場合は従来どおり env 値を優先。
+- 意図:
+  - B運用で short の `short_bottom_m1m5` を M1+M5 合意時のみ block し、下落継続の再エントリー取り逃しを抑える。

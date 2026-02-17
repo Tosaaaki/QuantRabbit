@@ -172,9 +172,10 @@ DB:
 - `workers/scalp_ping_5s` の extrema 合意判定を side別に分離。
   - `SCALP_PING_5S_EXTREMA_REQUIRE_M1_M5_AGREE_LONG`
   - `SCALP_PING_5S_EXTREMA_REQUIRE_M1_M5_AGREE_SHORT`
+- B版（`ENV_PREFIX=SCALP_PING_5S_B`）では short 側の既定を
+  `SCALP_PING_5S_EXTREMA_REQUIRE_M1_M5_AGREE_SHORT=true` に設定。
 - B運用env（`ops/env/scalp_ping_5s_b.env`）は以下を追加。
   - `SCALP_PING_5S_B_MIN_UNITS=300`
-  - `SCALP_PING_5S_B_EXTREMA_REQUIRE_M1_M5_AGREE_SHORT=1`
 - 意図:
   - `short_bottom_m1m5` の M1 単独 block を抑え、下落継続時のショート再エントリーを回復する。
   - `units_below_min` での空振りを減らし、`entry_intent` が order_manager へ到達する率を引き上げる。
