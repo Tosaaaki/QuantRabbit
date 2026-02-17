@@ -45,6 +45,7 @@ TECH_PROB_STRENGTH = 0.75
 TECH_PROJECTION_WEIGHT = 0.38
 DEFAULT_FEATURE_EXPANSION_GAIN = 0.35
 DEFAULT_BREAKOUT_ADAPTIVE_WEIGHT = 0.22
+DEFAULT_BREAKOUT_ADAPTIVE_WEIGHT_MAP = "1m=0.22,5m=0.22,10m=0.22"
 DEFAULT_BREAKOUT_ADAPTIVE_MIN_SAMPLES = 80
 DEFAULT_BREAKOUT_ADAPTIVE_LOOKBACK = 360
 DEFAULT_SESSION_BIAS_WEIGHT = 0.12
@@ -594,6 +595,7 @@ def _evaluate_step(
     min_abs_breakout_bias: float,
     feature_expansion_gain: float,
     breakout_adaptive_weight: float,
+    breakout_adaptive_weight_map: dict[str, float],
     breakout_adaptive_min_samples: int,
     breakout_adaptive_lookback: int,
     session_bias_weight: float,
@@ -629,6 +631,11 @@ def _evaluate_step(
     merged = merged.dropna(subset=required)
 
     horizon_name = _horizon_from_step(step)
+    breakout_adaptive_weight_eff = _clamp(
+        float(breakout_adaptive_weight_map.get(horizon_name, breakout_adaptive_weight)),
+        0.0,
+        1.0,
+    )
     session_bias_weight_eff = _clamp(
         float(session_bias_weight_map.get(horizon_name, session_bias_weight)),
         0.0,
@@ -661,7 +668,7 @@ def _evaluate_step(
 
         pred_before = _prediction_before(row, step=step, sample_count=i)
         breakout_skill = 0.0
-        if breakout_adaptive_weight > 0.0:
+        if breakout_adaptive_weight_eff > 0.0:
             signal_hist = breakout_signal_hist
             target_hist = realized_hist
             if breakout_adaptive_lookback > 0 and len(breakout_signal_hist) > breakout_adaptive_lookback:
@@ -697,7 +704,7 @@ def _evaluate_step(
             sample_count=i,
             feature_expansion_gain=feature_expansion_gain,
             breakout_skill=breakout_skill,
-            breakout_adaptive_weight=breakout_adaptive_weight,
+            breakout_adaptive_weight=breakout_adaptive_weight_eff,
             session_bias=session_bias,
             session_bias_weight=session_bias_weight_eff,
         )
@@ -837,6 +844,11 @@ def main() -> int:
         help="Weight for adaptive breakout_bias directional term in after formula.",
     )
     ap.add_argument(
+        "--breakout-adaptive-weight-map",
+        default=DEFAULT_BREAKOUT_ADAPTIVE_WEIGHT_MAP,
+        help="Comma-separated horizon weights, e.g. '1m=0.16,5m=0.22,10m=0.30'.",
+    )
+    ap.add_argument(
         "--breakout-adaptive-min-samples",
         type=int,
         default=DEFAULT_BREAKOUT_ADAPTIVE_MIN_SAMPLES,
@@ -909,6 +921,7 @@ def main() -> int:
 
     feature_expansion_gain = _clamp(float(args.feature_expansion_gain), 0.0, 1.0)
     breakout_adaptive_weight = _clamp(float(args.breakout_adaptive_weight), 0.0, 1.0)
+    breakout_adaptive_weight_map = _parse_horizon_weight_map(args.breakout_adaptive_weight_map)
     breakout_adaptive_min_samples = max(1, int(args.breakout_adaptive_min_samples))
     breakout_adaptive_lookback = max(
         breakout_adaptive_min_samples,
@@ -930,6 +943,7 @@ def main() -> int:
             min_abs_breakout_bias=float(args.min_abs_breakout_bias),
             feature_expansion_gain=feature_expansion_gain,
             breakout_adaptive_weight=breakout_adaptive_weight,
+            breakout_adaptive_weight_map=breakout_adaptive_weight_map,
             breakout_adaptive_min_samples=breakout_adaptive_min_samples,
             breakout_adaptive_lookback=breakout_adaptive_lookback,
             session_bias_weight=session_bias_weight,
@@ -951,6 +965,7 @@ def main() -> int:
         f"min_abs_breakout_bias={float(args.min_abs_breakout_bias):.4f} "
         f"feature_expansion_gain={feature_expansion_gain:.4f} "
         f"breakout_adaptive_weight={breakout_adaptive_weight:.4f} "
+        f"breakout_adaptive_weight_map={json.dumps(breakout_adaptive_weight_map, ensure_ascii=False)} "
         f"breakout_adaptive_min_samples={breakout_adaptive_min_samples} "
         f"breakout_adaptive_lookback={breakout_adaptive_lookback} "
         f"session_bias_weight={session_bias_weight:.4f} "
@@ -983,6 +998,7 @@ def main() -> int:
                 "feature_expansion_gain": feature_expansion_gain,
                 "min_abs_breakout_bias": float(args.min_abs_breakout_bias),
                 "breakout_adaptive_weight": breakout_adaptive_weight,
+                "breakout_adaptive_weight_map": breakout_adaptive_weight_map,
                 "breakout_adaptive_min_samples": breakout_adaptive_min_samples,
                 "breakout_adaptive_lookback": breakout_adaptive_lookback,
                 "session_bias_weight": session_bias_weight,

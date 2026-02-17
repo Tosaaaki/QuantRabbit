@@ -107,6 +107,11 @@ _TECH_BREAKOUT_ADAPTIVE_WEIGHT = max(
     0.0,
     min(0.8, _env_float("FORECAST_TECH_BREAKOUT_ADAPTIVE_WEIGHT", 0.22)),
 )
+_TECH_BREAKOUT_ADAPTIVE_WEIGHT_MAP = _parse_horizon_weight_map(
+    os.getenv("FORECAST_TECH_BREAKOUT_ADAPTIVE_WEIGHT_MAP", "1m=0.22,5m=0.22,10m=0.22"),
+    lo=0.0,
+    hi=0.8,
+)
 _TECH_BREAKOUT_ADAPTIVE_MIN_SAMPLES = max(
     16,
     int(_env_float("FORECAST_TECH_BREAKOUT_ADAPTIVE_MIN_SAMPLES", 80)),
@@ -687,6 +692,15 @@ def _session_bias_weight_for_horizon(horizon: str) -> float:
     if key == "1m":
         return 0.0
     return float(_TECH_SESSION_BIAS_WEIGHT)
+
+
+def _breakout_adaptive_weight_for_horizon(horizon: str) -> float:
+    key = str(horizon or "").strip().lower()
+    if not key:
+        return float(_TECH_BREAKOUT_ADAPTIVE_WEIGHT)
+    if key in _TECH_BREAKOUT_ADAPTIVE_WEIGHT_MAP:
+        return float(_TECH_BREAKOUT_ADAPTIVE_WEIGHT_MAP[key])
+    return float(_TECH_BREAKOUT_ADAPTIVE_WEIGHT)
 
 
 def _sigmoid(x: float) -> float:
@@ -1822,12 +1836,13 @@ def _technical_prediction_for_horizon(
     )
 
     cfg = _TECH_HORIZON_CFG.get(horizon, _TECH_HORIZON_CFG["8h"])
+    breakout_weight = _breakout_adaptive_weight_for_horizon(horizon)
     session_bias_weight = _session_bias_weight_for_horizon(horizon)
     combo = (
         cfg["trend_w"] * trend_score * (1.0 - 0.55 * range_pressure)
         + cfg["mr_w"] * mean_revert_score * range_pressure
         + _TECH_PROJECTION_WEIGHT * projection_score
-        + _TECH_BREAKOUT_ADAPTIVE_WEIGHT * breakout_adaptive
+        + breakout_weight * breakout_adaptive
         + session_bias_weight * session_bias
     )
     raw_prob = _sigmoid(float(cfg["temp"]) * float(_TECH_SCORE_GAIN) * combo)
@@ -1875,6 +1890,7 @@ def _technical_prediction_for_horizon(
             "breakout_skill_20": round(float(breakout_skill), 6),
             "breakout_hit_rate_20": round(float(breakout_hit_rate), 6),
             "breakout_samples_20": int(breakout_samples),
+            "breakout_adaptive_weight": round(float(breakout_weight), 6),
             "session_bias_jst": round(float(session_bias), 6),
             "session_bias_weight": round(float(session_bias_weight), 6),
             "session_mean_pips_jst": round(float(session_mean_pips), 6),
