@@ -1,4 +1,4 @@
-# 型（Kata）設計: `MicroRangeBreak`（micro_multi）
+# 型（Kata）設計: `MicroRangeBreak`（専用ワーカー）
 
 このドキュメントは、`workers/micro_multistrat` 内の `MicroRangeBreak` の「型（Kata）」を **再現可能に作る**ための設計書です。
 型は、過去トレードから抽出したパターンを DB/JSON に継続学習し、次のエントリーで `block / scale`（拒否/縮小/増強）に接続します。
@@ -9,13 +9,14 @@
 - 互換性を壊す変更（`pattern_id` の分割軸変更）は、移行計画込みで扱う。
 
 ## 1. 稼働形態（VM）
-`MicroRangeBreak` は単独 unit ではなく、micro の複合ワーカー内で稼働します。
+`MicroRangeBreak` は `micro_multistrat` のロジックを再利用する **専用ワーカー** として運用します。
 
 systemd（VM）:
-- `quant-micro-multi.service`（`ExecStart: -m workers.micro_multistrat.worker`）
+- `quant-micro-rangebreak.service`（`ExecStart: -m workers.micro_rangebreak.worker`）
+- `quant-micro-rangebreak-exit.service`（`ExecStart: -m workers.micro_rangebreak.exit_worker`）
 
 allowlist（VM）例:
-- `MICRO_STRATEGY_ALLOWLIST=MicroLevelReactor,MicroRangeBreak,MicroVWAPRevert,MomentumPulse`
+- `MICRO_STRATEGY_ALLOWLIST=MicroRangeBreak`
 
 ## 2. 何を「型」と呼ぶか（pattern_id）
 型の最小単位は `pattern_id`（文字列）です。トレードは必ずどれか 1 つの `pattern_id` に割り当てられます。
@@ -74,7 +75,7 @@ opt-in 仕様（`MicroRangeBreak` のみ）:
 - `pt:na` などで generic になりうる場合に備え、必要なら `entry_thesis["pattern_gate_allow_generic"]=true` を付与（env: `MICRO_RANGEBREAK_PATTERN_GATE_ALLOW_GENERIC`, default: true）
 
 重要:
-- opt-in は `MicroRangeBreak` のみに付与し、micro_multi 内の他戦略へは波及させない（共通一律適用を避ける）。
+- opt-in は `MicroRangeBreak` のみに付与し、`micro_multistrat` の他戦略へは波及させない（共通一律適用を避ける）。
 
 ## 6. 運用チェック（VM）
 Gate が発注に反映されているか（orders.db）:
@@ -99,4 +100,3 @@ scripts/vm.sh -p quantrabbit -z asia-northeast1-a -m fx-trader-vm -t sql \
 - `learn_only` が長期化する場合は、`pt:` の粒度を落として「型の分裂」を抑える（例: `rsi/vol/atr` を外してローソク+方向だけにする、など）。
 - `sg:` を 3-6 程度の低カーディナリティで導入し、局面別（勢い/押し目）に最低限分ける。
 - 互換性を壊す変更（`pattern_id` 分割軸の追加/変更）は `docs/KATA_PROGRESS.md` に移行計画と learn_only 増加期間を記録する。
-

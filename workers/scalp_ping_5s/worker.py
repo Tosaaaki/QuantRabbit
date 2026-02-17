@@ -2651,7 +2651,73 @@ def _range_pos_from_candles(
     return _clamp(pos, 0.0, 1.0)
 
 
-def _extrema_gate_decision(side: str) -> ExtremaGateDecision:
+def _extrema_tech_filter(
+    *,
+    side: str,
+    reason: str,
+    factors: Optional[dict],
+    regime: Optional[MtfRegime],
+) -> tuple[float, str]:
+    if not config.EXTREMA_TECH_FILTER_ENABLED:
+        return 1.0, str(reason)
+    if not isinstance(regime, MtfRegime):
+        return 1.0, str(reason)
+    if not config.EXTREMA_TECH_FILTER_ALLOW_BLOCK_TO_SOFT:
+        return 1.0, str(reason)
+    if side not in {"long", "short"}:
+        return 1.0, str(reason)
+
+    reason_norm = str(reason).strip().lower()
+    if reason_norm not in {"long_top_m1m5", "short_bottom_m1m5"}:
+        return 1.0, str(reason)
+
+    adx_mix = 0.5 * (
+        _safe_float(getattr(regime, "adx_m1", 0.0))
+        + _safe_float(getattr(regime, "adx_m5", 0.0))
+    )
+    if adx_mix >= config.EXTREMA_TECH_FILTER_ADX_WEAK_MAX:
+        return 1.0, str(reason)
+
+    tf_m1 = {}
+    if isinstance(factors, dict):
+        tf_m1_candidate = factors.get("M1")
+        if isinstance(tf_m1_candidate, dict):
+            tf_m1 = tf_m1_candidate
+
+    if not tf_m1:
+        return 1.0, str(reason)
+
+    close = _safe_float(tf_m1.get("close"), 0.0)
+    rsi = _safe_float(tf_m1.get("rsi"), 50.0)
+    ema20 = _safe_float(tf_m1.get("ema20"), _safe_float(tf_m1.get("ma20"), 0.0))
+    if close <= 0.0 or ema20 <= 0.0:
+        return 1.0, str(reason)
+
+    ema_gap_pips = abs(close - ema20) / config.PIP_VALUE
+    if ema_gap_pips < config.EXTREMA_TECH_FILTER_REQ_EMA_GAP_PIPS:
+        return 1.0, str(reason)
+
+    if side == "long":
+        if rsi <= config.EXTREMA_TECH_FILTER_LONG_TOP_RSI_MAX and close < ema20:
+            return (
+                config.EXTREMA_TECH_FILTER_BLOCK_SOFT_MULT,
+                "long_top_m1m5_tech_soft",
+            )
+    else:
+        if rsi >= config.EXTREMA_TECH_FILTER_SHORT_BOTTOM_RSI_MIN and close > ema20:
+            return (
+                config.EXTREMA_TECH_FILTER_BLOCK_SOFT_MULT,
+                "short_bottom_m1m5_tech_soft",
+            )
+
+    return 1.0, str(reason)
+
+
+def _extrema_gate_decision(
+    side: str,
+    factors: Optional[dict] = None,
+    regime: Optional[MtfRegime] = None,
+) -> ExtremaGateDecision:
     if not config.EXTREMA_GATE_ENABLED:
         return ExtremaGateDecision(True, "disabled", 1.0, None, None, None)
 
@@ -2693,6 +2759,25 @@ def _extrema_gate_decision(side: str) -> ExtremaGateDecision:
         else:
             top_block = m1_top or m5_top
         if top_block:
+            filter_mult, filter_reason = _extrema_tech_filter(
+                side="long",
+                reason="long_top_m1m5",
+                factors=factors,
+                regime=regime,
+            )
+            if filter_mult < 1.0:
+                return ExtremaGateDecision(
+                    True,
+                    filter_reason,
+                    _clamp(
+                        float(config.EXTREMA_SOFT_UNITS_MULT) * filter_mult,
+                        0.05,
+                        1.0,
+                    ),
+                    m1_pos,
+                    m5_pos,
+                    h4_pos,
+                )
             return ExtremaGateDecision(
                 False,
                 "long_top_m1m5",
@@ -2722,6 +2807,25 @@ def _extrema_gate_decision(side: str) -> ExtremaGateDecision:
         else:
             bottom_block = m1_bottom or m5_bottom
         if bottom_block:
+            filter_mult, filter_reason = _extrema_tech_filter(
+                side="short",
+                reason="short_bottom_m1m5",
+                factors=factors,
+                regime=regime,
+            )
+            if filter_mult < 1.0:
+                return ExtremaGateDecision(
+                    True,
+                    filter_reason,
+                    _clamp(
+                        float(config.EXTREMA_SOFT_UNITS_MULT) * filter_mult,
+                        0.05,
+                        1.0,
+                    ),
+                    m1_pos,
+                    m5_pos,
+                    h4_pos,
+                )
             return ExtremaGateDecision(
                 False,
                 "short_bottom_m1m5",
@@ -4112,7 +4216,11 @@ async def scalp_ping_5s_worker() -> None:
                         continue
                 else:
                     lookahead_units_mult = max(0.1, float(lookahead_decision.units_mult))
-            extrema_decision = _extrema_gate_decision(signal.side)
+            extrema_decision = _extrema_gate_decision(
+                signal.side,
+                factors=factors if isinstance(factors, dict) else None,
+                regime=regime,
+            )
             extrema_units_mult = max(0.1, float(extrema_decision.units_mult))
             m1_pos_log = (
                 -1.0 if extrema_decision.m1_pos is None else float(extrema_decision.m1_pos)

@@ -52,6 +52,9 @@ python scripts/train_forecast_bundle.py --instrument USD_JPY --out config/foreca
 - `FORECAST_BUNDLE_PATH=config/forecast_models/USD_JPY_bundle.joblib`
 - `FORECAST_GATE_SOURCE=auto|bundle|technical`
 - `FORECAST_TECH_ENABLED=1`
+- `FORECAST_GATE_HORIZON_SCALP_FAST=1m`（scalp_fast 向け）
+- `FORECAST_GATE_HORIZON_SCALP=5m`（scalp 向け）
+- `FORECAST_GATE_TECH_PREFERRED_HORIZONS=1m,5m,10m`（`auto` 時に短期3軸をテック優先で利用）
 - `FORECAST_GATE_STYLE_GUARD_ENABLED=1`
 - `FORECAST_GATE_STYLE_TREND_MIN_STRENGTH=0.52`
 - `FORECAST_GATE_STYLE_RANGE_MIN_PRESSURE=0.52`
@@ -60,3 +63,29 @@ python scripts/train_forecast_bundle.py --instrument USD_JPY --out config/foreca
   - `FORECAST_GATE_EDGE_BLOCK_TREND_STRATEGY_TRENDMA=...`
   - `FORECAST_GATE_STYLE_RANGE_MIN_PRESSURE_STRATEGY_BBRSI=...`
   - `FORECAST_GATE_EDGE_BLOCK_RANGE_STRATEGY_BBRSI=...`
+
+## VMで最新予測を直接確認
+
+実行中VM上で `forecast_gate` の最新推定を直接確認するには、次を実行します（環境ファイルを読み込んで、`PRED_GATE` に準拠した値で表示します）。
+
+```bash
+python3 scripts/vm_forecast_snapshot.py \
+  --env-file /home/tossaki/QuantRabbit/ops/env/quant-v2-runtime.env
+```
+
+出力例:
+ - `p_up` が 0.55 超: 上振れ寄り
+ - `p_up` が 0.45 未満: 下振れ寄り
+ - `trend_strength` と `range_pressure` が分裂し `天井警戒` / `底警戒` が付いた場合は、逆方向の追随が弱めと解釈して慎重判定
+
+`order_manager` が通過判定を通過した注文は、`entry_thesis["forecast"]` に `future_flow` を残します。
+`future_flow` は `horizon:style:state:strength` 形式の文字列で、実運用の可視化（ログ・監査）で「今後の流れ」を素早く拾えます。
+例: `5m:trend:上昇トレンド継続:強い`
+
+JSONで回収する場合:
+```bash
+python3 scripts/vm_forecast_snapshot.py --json
+```
+
+運用上はまず `scalp_fast` なら `1m`、`scalp` なら `5m` / `10m` を短期軸として見る前提にして、`8h` / `1d` を中期〜長期補完として確認します。  
+`1h` と `8h` が同方向で `trend_strength` が高いほど「現在の順張り解釈」が強くなります。`range_pressure` 優勢で中立寄りの場合は「レンジ中の天井/底付近」に寄るケースが増えます。

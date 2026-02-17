@@ -3077,7 +3077,8 @@ def _coordinate_entry_intent(
     entry_probability: Optional[float],
     client_order_id: Optional[str],
     min_units: int,
-) -> tuple[int, Optional[str], dict[str, float | str | int]]:
+    forecast_context: Optional[dict[str, object]] = None,
+) -> tuple[int, Optional[str], dict[str, float | str | int | object]]:
     """
     Coordinate one intent with recent intents in the same strategy+instrument scope.
 
@@ -3179,6 +3180,11 @@ def _coordinate_entry_intent(
             opposite_count += 1
 
     final_abs = abs(raw_units)
+    forecast_context = (
+        dict(forecast_context)
+        if isinstance(forecast_context, dict)
+        else None
+    )
     details = {
         "coordination_enabled": 1.0,
         "raw_units": own_units,
@@ -3189,6 +3195,8 @@ def _coordinate_entry_intent(
         "opposite_score": round(opposite_score, 6),
         "scale": 1.0,
     }
+    if forecast_context:
+        details["forecast_context"] = forecast_context
     if final_abs <= 0:
         details["decision"] = "reject"
         _entry_intent_board_record(
@@ -3272,7 +3280,8 @@ async def coordinate_entry_intent(
     entry_probability: Optional[float],
     client_order_id: Optional[str],
     min_units: int,
-) -> tuple[int, Optional[str], dict[str, float | str | int]]:
+    forecast_context: Optional[dict[str, object]] = None,
+) -> tuple[int, Optional[str], dict[str, float | str | int | object]]:
     """
     Coordinate one strategy intent.
 
@@ -3289,6 +3298,7 @@ async def coordinate_entry_intent(
         "entry_probability": entry_probability,
         "client_order_id": client_order_id,
         "min_units": min_units,
+        "forecast_context": forecast_context,
     }
 
     service_result = await _order_manager_service_request_async(
@@ -3318,6 +3328,7 @@ async def coordinate_entry_intent(
         entry_probability=entry_probability,
         client_order_id=client_order_id,
         min_units=min_units,
+        forecast_context=forecast_context,
     )
 
 

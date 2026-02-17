@@ -187,6 +187,7 @@ async def coordinate_entry_intent(payload: dict[str, Any] = Body(...)) -> dict[s
             entry_probability=body.get("entry_probability"),
             client_order_id=body.get("client_order_id"),
             min_units=_to_int(body.get("min_units"), 0),
+            forecast_context=body.get("forecast_context"),
         )
     except Exception as exc:
         return _failure(str(exc))

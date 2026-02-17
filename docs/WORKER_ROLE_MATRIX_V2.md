@@ -40,7 +40,17 @@
 - `quant-scalp-wick-reversal-blend` + `quant-scalp-wick-reversal-blend-exit`
 - `quant-scalp-wick-reversal-pro` + `quant-scalp-wick-reversal-pro-exit`
 - `quant-m1scalper` + `quant-m1scalper-exit`
-- `quant-micro-multi` + `quant-micro-multi-exit`
+- `quant-micro-rangebreak` + `quant-micro-rangebreak-exit`
+- `quant-micro-levelreactor` + `quant-micro-levelreactor-exit`
+- `quant-micro-vwapbound` + `quant-micro-vwapbound-exit`
+- `quant-micro-vwaprevert` + `quant-micro-vwaprevert-exit`
+- `quant-micro-momentumburst` + `quant-micro-momentumburst-exit`
+- `quant-micro-momentumstack` + `quant-micro-momentumstack-exit`
+- `quant-micro-pullbackema` + `quant-micro-pullbackema-exit`
+- `quant-micro-trendmomentum` + `quant-micro-trendmomentum-exit`
+- `quant-micro-trendretest` + `quant-micro-trendretest-exit`
+- `quant-micro-compressionrevert` + `quant-micro-compressionrevert-exit`
+- `quant-micro-momentumpulse` + `quant-micro-momentumpulse-exit`
 - `quant-session-open` + `quant-session-open-exit`（該当期間のみ）
 - 補助戦略の追加は、ENTRY/EXIT を追加してから有効化
 - 共通ルール:
@@ -71,9 +81,18 @@
     - `TrendReclaimLong`
     - `VolSpikeRider`
   - Micro系
-    - `micro_multistrat` と派生: `micro_rangebreak`, `micro_vwapbound`, `micro_vwaprevert`, `micro_momentumburst`,
-      `micro_momentumstack`, `micro_pullbackema`, `micro_levelreactor`, `micro_trendmomentum`,
-      `micro_trendretest`, `micro_compressionrevert`, `micro_momentumpulse`
+    - `MicroRangeBreak`（`workers/micro_rangebreak` 経由）
+    - `MicroRangeBreak`（`workers/micro_rangebreak` 経由）
+    - `MicroLevelReactor`（`workers/micro_levelreactor`）
+    - `MicroVWAPBound`（`workers/micro_vwapbound`）
+    - `MicroVWAPRevert`（`workers/micro_vwaprevert`）
+    - `MomentumBurstMicro`（`workers/micro_momentumburst`）
+    - `MicroMomentumStack`（`workers/micro_momentumstack`）
+    - `MicroPullbackEMA`（`workers/micro_pullbackema`）
+    - `TrendMomentumMicro`（`workers/micro_trendmomentum`）
+    - `MicroTrendRetest`（`workers/micro_trendretest`）
+    - `MicroCompressionRevert`（`workers/micro_compressionrevert`）
+    - `MomentumPulse`（`workers/micro_momentumpulse`）
     - `micro_adaptive_revert`（レガシー想定）
     - `MicroPullbackFib`（`-pullback` suffix を受ける）
     - `RangeCompressionBreak`（`-break` suffix を受ける）
@@ -103,7 +122,17 @@
 ※ `quant-micro-adaptive-revert*` と `quant-impulse-retest-s5*` は V2再整備で VM から停止対象へ移行予定の legacy。  
   現行では `OPS_V2_ALLOWED_LEGACY_SERVICES` に明示登録することで監査を `critical` でなく `warn` 運用にできる（監査ログ上で明示追跡）。
 
-### 4) オーダー面（分離済み）
+### 4) 予測面（独立）
+
+- `quant-forecast.service` + `workers/forecast/worker.py` + `workers/common/forecast_gate.py`
+- 目的: `order_manager` の forecast gate は `forecast_decide` API を経由して `allow/reduce/block` を取得。
+- `FORECAST_SERVICE_ENABLED=1` と `FORECAST_SERVICE_URL` が有効な場合、`forecast_gate` 決定をワーカー越しで取得して
+  `order_manager` に反映。
+- `order_manager` 側ではサービス障害時のみローカル fallback を許容し、判定仕様を維持。
+- `forecast` 系は `order_manager` の判定処理から切り離し、`execution` 側の責務分離として
+  専用 service を通した決定供給を行う。
+
+### 5) オーダー面（分離済み）
 
 - `execution/order_manager.py` の注文経路は `quant-order-manager.service` 経由。
 - 目的: 戦略は「注文意図」を投げ、実API送信は order-manager が担当。
@@ -126,12 +155,12 @@
   - `abs(final_units) < min_units_for_strategy(strategy_tag, pocket)` は拒否（優先解釈は戦略別設定）。  
   - `reason` は `order_manager` の `entry_intent_board` へ記録し、`strategy_entry` は 0 なら注文を出さない。  
 
-### 5) ポジ管理面（分離済み）
+### 6) ポジ管理面（分離済み）
 
 - `execution/position_manager.py` は `quant-position-manager.service` 経由。
 - 目的: 保有集計・sync/trades の集約責任を独立し、各戦略が状態管理を持たない。
 
-### 6) 分析・監視面（データ管理）
+### 7) 分析・監視面（データ管理）
 
 - `quant-pattern-book`, `quant-dynamic-alloc`, `quant-ops-policy`, `quant-policy-guard`, `quant-range-metrics`, `quant-strategy-feedback` は分析/監視へ固定
 - 分析系が戦略判断本体と混ざる構造を禁ずる
@@ -163,10 +192,12 @@
   - `quant-scalp-*`/`quant-micro-*` の ENTRY+EXIT 1:1化
   - 補助的冗長ワーカー群の縮小
 - 実装済み（2026-02-14 時点）
-  - `quant-order-manager.service` / `quant-position-manager.service` 追加
-  - `execution/order_manager.py`, `execution/position_manager.py` の service-first 経路化
-  - API 契約（/order/*, /position/*）を基準化
-  - 注記: 直近の運用レビューでは、データ記録系 DB と分析系成果物の更新は確認済み（VM側状態監査前提）。
+- `quant-order-manager.service` / `quant-position-manager.service` 追加
+- `execution/order_manager.py`, `execution/position_manager.py` の service-first 経路化
+- API 契約（/order/*, /position/*）を基準化
+- 注記: 直近の運用レビューでは、データ記録系 DB と分析系成果物の更新は確認済み（VM側状態監査前提）。
+- 予測判定専用 `quant-forecast.service` を追加し、`ORDER_MANAGER_FORECAST_GATE_ENABLED=1` で
+  `order_manager` からサービス経由で `forecast_decide` を取得する導線を実装。
 - 運用整備（2026-02-16 追加）
   - 戦略ENTRYの出力に `entry_probability` / `entry_units_intent` を必須化し、V2本体戦略から `order_manager` への意図受け渡しを統一。
   - `WORKER_REFACTOR_LOG.md` の同時追記を行い、実装・図面の変更差分を同一コミットへ反映。
@@ -179,9 +210,8 @@
   - `quant-order-manager.service` / `quant-position-manager.service` へ専用 env を追加し、共通 runtime env でサービス自体を
     ON にしない形へ分離。  
   - worker起動時に service-mode の誤自己参照を抑止するガードを追加。
-  - `micro_multistrat` の range_only フィルタを更新し、`MICRO_MULTI_RANGE_ONLY_TREND_ALLOWLIST` に登録された戦略は
-    レンジモードでも候補検討対象から除外しない設計へ変更。  
-    併せて range_score 減点係数を許可戦略では軽減し、レンジ環境下でも順張りの通過率を改善。
+- `micro_multistrat` は共通Runnerとしての運用を打ち切り、レンジ時の順張り/押し目判定運用は各独立 micro ワーカー側へ移行したため、同種の範囲制御は
+  各専用ワーカーの設定で管理している。
 - 運用整備（2026-02-24）
   - `analysis/strategy_feedback_worker.py` を追加し、`quant-strategy-feedback.service` / `quant-strategy-feedback.timer` で
     `logs/trades.db` と strategy list を再解析して `logs/strategy_feedback.json` を更新する分析係ワーカーを導入。
@@ -251,6 +281,7 @@ flowchart LR
   SWX --> OM
   OM --> OWM["quant-order-manager<br>/workers/order_manager/worker.py"]
   OWM --> OEX["execution/order_manager.py"]
+  OEX -->|forecast_decide| FSG["quant-forecast<br>/workers/forecast/worker.py"]
   OEX --> OANDA_ORDER["OANDA Order API"]
 
   PM["quant-position-manager<br>/workers/position_manager/worker.py"] -->|sync/positions| SWX

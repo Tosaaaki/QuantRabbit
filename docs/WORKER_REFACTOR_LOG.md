@@ -8,12 +8,64 @@
 - データ供給は `quant-market-data-feed`、制御配信は `quant-strategy-control` に分離。
 - 補助的運用ワーカーは本体管理マップから除外。
 
+### 2026-02-17（追記）MicroRangeBreak を micro_multistrat から独立ワーカー化
+
+- `workers/micro_rangebreak` を新設し、`python -m workers.micro_rangebreak.worker` と
+  `python -m workers.micro_rangebreak.exit_worker` を実行する
+  `quant-micro-rangebreak.service` / `quant-micro-rangebreak-exit.service` を追加。
+- `workers/micro_rangebreak/worker.py` で起動時に `MICRO_STRATEGY_ALLOWLIST=MicroRangeBreak`,
+  `MICRO_MULTI_LOG_PREFIX=[MicroRangeBreak]` を上書き（既定）注入。
+- `workers/micro_rangebreak/exit_worker.py` で起動時に `MICRO_MULTI_EXIT_ENABLED=1`,
+  `MICRO_MULTI_EXIT_TAG_ALLOWLIST=MicroRangeBreak`,
+  `MICRO_MULTI_LOG_PREFIX=[MicroRangeBreak]` を上書き（既定）注入。
+- `ops/env/quant-micro-rangebreak.env` / `ops/env/quant-micro-rangebreak-exit.env` を追加。
+- `ops/env/quant-micro-multi.env` から `MICRO_STRATEGY_ALLOWLIST` の `MicroRangeBreak` を除外し、
+  複数 unit からの重複実行を防止。
+
+### 2026-02-17（追記）micro_multistrat 配下の主要 micro 戦略を個別ワーカー化
+
+- `MicroLevelReactor` / `MicroVWAPBound` / `MicroVWAPRevert` / `MomentumBurstMicro` / `MicroMomentumStack` /
+  `MicroPullbackEMA` / `TrendMomentumMicro` / `MicroTrendRetest` / `MicroCompressionRevert` / `MomentumPulse`
+  をそれぞれ独立ワーカー化。
+- 各戦略で `workers/micro_<slug>/worker.py` / `workers/micro_<slug>/exit_worker.py` を追加し、
+  起動時に `MICRO_STRATEGY_ALLOWLIST` / `MICRO_MULTI_LOG_PREFIX`、`MICRO_MULTI_EXIT_TAG_ALLOWLIST` を
+  戦略名単位で上書きするように統一。
+- 対応する systemd unit/env を追加:
+  - `quant-micro-levelreactor` / `quant-micro-vwapbound` / `quant-micro-vwaprevert` /
+    `quant-micro-momentumburst` / `quant-micro-momentumstack` / `quant-micro-pullbackema` /
+    `quant-micro-trendmomentum` / `quant-micro-trendretest` / `quant-micro-compressionrevert` /
+    `quant-micro-momentumpulse`（各 `-exit` 含む）
+- `quant-micro-multi.service` は `MICRO_MULTI_ENABLED=0` に切替えて共通走行を停止し、
+  共通依存の二重判定を抑止。`micro_multistrat` の実運用は legacy 保留に変更。
+
+### 2026-02-17（追加）エントリー意図に予測メタを同梱
+
+- `execution/strategy_entry.py` で `forecast_gate.decide(...)` を戦略側補助判定として実行し、  
+  `entry_thesis["forecast"]` に `future_flow`/`trend_strength`/`range_pressure` 等を保存。
+- `market_order` / `limit_order` から `order_manager.coordinate_entry_intent(...)` へ
+  `forecast_context` を付与し、`order_manager/board` の `details` にも保持。
+- `execution/order_manager.py` と `workers/order_manager/worker.py` の経路を拡張し、`entry_intent_board` の監査情報を
+  `forecast_context` 対応に更新。
+
 ### 2026-02-18（追記）scalp_fast で短期予測をデフォルト化
 
 - `workers/common/forecast_gate.py` の `FORECAST_GATE_HORIZON_SCALP_FAST` デフォルトを `1h` から `1m` に変更。
 - `forecast_gate` の技術予測で `M1` キャンドルを取得するようにし、`1m` の短期予測を実データで計算できる経路を追加。
 - `1m` の Horizon メタを `timeframe=M1`、`step_bars=12` に変更し、`scalp_fast` の「短期」想定に合わせた予測可視性を向上。
 - 運用確認用ドキュメント（`docs/FORECAST.md`）を更新し、`scalp_fast` の標準確認軸として `1m` を明記。
+- `auto` 運用でも `1m` は技術予測優先で使うようにする
+  (`FORECAST_GATE_TECH_PREFERRED_HORIZONS`) を追加し、既存バンドルの `1m` が長期仕様のままでも短期解釈が崩れにくいよう保護。
+
+### 2026-02-17（追加）予測ワーカーの分離導線
+
+- `workers/forecast/` 配下に `worker.py` を追加し、`/forecast/decide` と `/forecast/predictions` を公開する
+  `quant-forecast.service` を導入。`workers/common/forecast_gate.py` の local 決定を service 化。
+- `systemd/quant-forecast.service` と `ops/env/quant-forecast.env` を追加し、`FORECAST_SERVICE_*` で
+  `execution/order_manager.py` からの連携先を明示。
+- `execution/order_manager.py` に `_forecast_decide_with_service` を追加し、
+  `ORDER_MANAGER_FORECAST_GATE_ENABLED=1` かつサービス応答可のときは service 経由で判断。
+- サービス不通時の `FORECAST_SERVICE_FALLBACK_LOCAL=1` を既定化して、停止時も local 判定で運用継続しつつ
+  forecast 判定ログを標準化できるように整備。
 
 ### 2026-02-17（追記）trend_h1 を下落追尾用に短期化
 

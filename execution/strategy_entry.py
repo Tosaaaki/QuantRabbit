@@ -9,13 +9,13 @@ from __future__ import annotations
 
 import math
 import os
-from typing import Iterable, Literal, Optional
+from typing import Any, Iterable, Literal, Optional
 
 from analysis import strategy_feedback
 from indicators.factor_cache import all_factors
 from execution.order_manager import cancel_order, close_trade, set_trade_protections
 from execution import order_manager
-from workers.common import pattern_gate
+from workers.common import forecast_gate, pattern_gate
 
 
 def get_last_order_status_by_client_id(
@@ -45,6 +45,10 @@ _STRATEGY_PATTERN_GATE_AUTO_OPT_IN = _env_bool(
 _ORDER_PATTERN_GATE_SCALE_TO_MIN_UNITS = _env_bool(
     "ORDER_PATTERN_GATE_SCALE_TO_MIN_UNITS",
     False,
+)
+_STRATEGY_FORECAST_CONTEXT_ENABLED = _env_bool(
+    "STRATEGY_FORECAST_CONTEXT_ENABLED",
+    True,
 )
 _PATTERN_GATE_META_KEYS = ("pattern_gate_opt_in", "use_pattern_gate", "pattern_gate_enabled")
 
@@ -773,6 +777,104 @@ def _resolve_entry_price(
         return None
 
 
+def _format_forecast_context(decision: Any) -> dict[str, object]:
+    if not decision:
+        return {
+            "forecast_source": "strategy_entry",
+            "horizon": None,
+            "reason": "not_applicable",
+        }
+    return {
+        "forecast_source": "strategy_entry",
+        "horizon": str(decision.horizon) if decision.horizon is not None else None,
+        "allowed": bool(getattr(decision, "allowed", True)),
+        "scale": _to_float(decision.scale),
+        "reason": str(decision.reason or ""),
+        "edge": _to_float(decision.edge),
+        "p_up": _to_float(decision.p_up),
+        "expected_pips": _to_float(decision.expected_pips),
+        "trend_strength": _to_float(decision.trend_strength),
+        "range_pressure": _to_float(decision.range_pressure),
+        "future_flow": str(decision.future_flow) if decision.future_flow is not None else None,
+        "volatility_state": str(decision.volatility_state)
+        if decision.volatility_state is not None
+        else None,
+        "trend_state": str(decision.trend_state) if decision.trend_state is not None else None,
+        "range_state": str(decision.range_state) if decision.range_state is not None else None,
+        "volatility_rank": _to_float(decision.volatility_rank),
+        "regime_score": _to_float(decision.regime_score),
+        "leading_indicator": (
+            str(decision.leading_indicator) if decision.leading_indicator is not None else None
+        ),
+        "leading_indicator_strength": _to_float(decision.leading_indicator_strength),
+        "source": str(decision.source) if decision.source is not None else None,
+        "style": str(decision.style) if decision.style is not None else None,
+        "feature_ts": str(decision.feature_ts) if decision.feature_ts is not None else None,
+    }
+
+
+def _inject_entry_forecast_context(
+    *,
+    instrument: str,
+    strategy_tag: Optional[str],
+    pocket: str,
+    units: int,
+    entry_thesis: Optional[dict],
+    meta: Optional[dict],
+) -> tuple[Optional[dict], Optional[dict[str, object]]]:
+    if not _STRATEGY_FORECAST_CONTEXT_ENABLED:
+        return entry_thesis, None
+    if not isinstance(entry_thesis, dict):
+        entry_thesis = {}
+    if not strategy_tag:
+        return (
+            entry_thesis,
+            {
+                "forecast_source": "strategy_entry",
+                "enabled": False,
+                "reason": "missing_strategy_tag",
+            },
+        )
+    if not units:
+        return (
+            entry_thesis,
+            {
+                "forecast_source": "strategy_entry",
+                "enabled": True,
+                "horizon": None,
+                "reason": "zero_units",
+            },
+        )
+    side = "buy" if units > 0 else "sell"
+    forecast_meta: dict[str, object] = {"instrument": instrument}
+    if isinstance(meta, dict):
+        forecast_meta.update(meta)
+    try:
+        decision = forecast_gate.decide(
+            strategy_tag=strategy_tag,
+            pocket=pocket,
+            side=side,
+            units=units,
+            entry_thesis=entry_thesis,
+            meta=forecast_meta,
+        )
+        forecast_context = _format_forecast_context(decision)
+    except Exception as exc:
+        forecast_context = {
+            "forecast_source": "strategy_entry",
+            "enabled": True,
+            "horizon": None,
+            "reason": "error",
+            "error": str(exc),
+        }
+    current_forecast = entry_thesis.get("forecast")
+    merged = dict(current_forecast) if isinstance(current_forecast, dict) else {}
+    merged.update(forecast_context)
+    if merged:
+        entry_thesis["forecast"] = merged
+    return entry_thesis, forecast_context
+
+
 def _inject_entry_technical_context(
     *,
     units: int,
@@ -1007,12 +1109,15 @@ async def _coordinate_entry_units(
     client_order_id: Optional[str],
     entry_thesis: Optional[dict] = None,
     meta: Optional[dict] = None,
+    forecast_context: Optional[dict[str, object]] = None,
 ) -> int:
     if not units:
         return units
     if reduce_only:
         return units
     if not strategy_tag:
+        if (pocket or "").lower() != "manual":
+            return 0
         return units
     min_units = order_manager.min_units_for_strategy(strategy_tag, pocket=pocket)
     if _STRATEGY_PATTERN_GATE_ENABLED and not reduce_only and pocket != "manual":
@@ -1051,6 +1156,7 @@ async def _coordinate_entry_units(
         entry_probability=entry_probability,
         client_order_id=client_order_id,
         min_units=min_units,
+        forecast_context=forecast_context,
     )
     if not final_units and reason in {"reject", "scaled", "rejected", None}:
         return 0
@@ -1085,6 +1191,14 @@ async def market_order(
     )
     entry_probability = _resolve_entry_probability(entry_thesis, confidence)
     entry_thesis = dict(entry_thesis) if isinstance(entry_thesis, dict) else None
+    entry_thesis, forecast_context = _inject_entry_forecast_context(
+        instrument=instrument,
+        strategy_tag=resolved_strategy_tag,
+        pocket=pocket,
+        units=units,
+        entry_thesis=entry_thesis,
+        meta=meta,
+    )
     units, entry_probability, sl_price, tp_price, _ = _apply_strategy_feedback(
         resolved_strategy_tag,
         pocket=pocket,
@@ -1108,6 +1222,7 @@ async def market_order(
         client_order_id=client_order_id,
         entry_thesis=entry_thesis,
         meta=meta,
+        forecast_context=forecast_context,
     )
     if not coordinated_units:
         return None
@@ -1163,6 +1278,14 @@ async def limit_order(
     )
     entry_probability = _resolve_entry_probability(entry_thesis, confidence)
     entry_thesis = dict(entry_thesis) if isinstance(entry_thesis, dict) else None
+    entry_thesis, forecast_context = _inject_entry_forecast_context(
+        instrument=instrument,
+        strategy_tag=resolved_strategy_tag,
+        pocket=pocket,
+        units=units,
+        entry_thesis=entry_thesis,
+        meta=meta,
+    )
     units, entry_probability, sl_price, tp_price, _ = _apply_strategy_feedback(
         resolved_strategy_tag,
         pocket=pocket,
@@ -1188,6 +1311,7 @@ async def limit_order(
         client_order_id=client_order_id,
         entry_thesis=entry_thesis,
         meta=meta,
+        forecast_context=forecast_context,
     )
     if not coordinated_units:
         return None, None
