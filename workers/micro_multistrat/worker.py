@@ -983,7 +983,7 @@ async def micro_multi_worker() -> None:
         except asyncio.CancelledError:
             return
     LOG.info("%s worker start (interval=%.1fs)", config.LOG_PREFIX, config.LOOP_INTERVAL_SEC)
-    global _LAST_FRESH_M1_TS
+    global _LAST_FRESH_M1_TS, _LOCAL_FRESH_M1
     last_trend_block_log = 0.0
     last_stale_log = 0.0
     last_stale_scale_log = 0.0
