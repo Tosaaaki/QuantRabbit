@@ -106,6 +106,29 @@
 - 追加確認（`max-bars=6000`）でも `10m=0.30` は hit/MAE とも改善を維持。
 - 運用デフォルトを `1m=0.0,5m=0.22,10m=0.30` へ更新。
 
+### 2026-02-17（追記）breakout adaptive 重みを TF別に再調整（1m分離）
+
+- 目的:
+  - `breakout_bias_20` 適応項の過剰反応を 1m で抑えつつ、5m/10m の改善を維持する。
+- 同一固定データで比較:
+  - 入力固定: `/tmp/candles_eval_full_20260217_1549_wrapped.json`
+  - 期間: `bars=8050`（`2026-01-06T07:30:00+00:00`〜`2026-02-17T15:47:00+00:00`）
+  - そのほか: `feature_expansion_gain=0.0`, `session_bias_weight_map=1m=0.0,5m=0.22,10m=0.30`
+  - 比較:
+    - 旧既定 `1m=0.22,5m=0.22,10m=0.22`
+      - `1m`: hit `0.4975`, MAE `1.4743`
+      - `5m`: hit `0.4919`, MAE `3.4080`
+      - `10m`: hit `0.4929`, MAE `5.1150`
+    - 新既定候補 `1m=0.16,5m=0.22,10m=0.30`
+      - `1m`: hit `0.4979`, MAE `1.4743`（hit 改善、MAE 同等）
+      - `5m`: hit `0.4919`, MAE `3.4080`（同等）
+      - `10m`: hit `0.4928`, MAE `5.1146`（hit 同等域、MAE 改善）
+- 反映:
+  - `workers/common/forecast_gate.py` の既定
+    `FORECAST_TECH_BREAKOUT_ADAPTIVE_WEIGHT_MAP` を
+    `1m=0.16,5m=0.22,10m=0.30` に更新。
+  - `scripts/eval_forecast_before_after.py` の既定 map も同値へ更新。
+
 ### 2026-02-17（追記）「時間帯=TF」前提で戦略別主TF＋補助TF整合を追加
 
 - `execution/strategy_entry.py` の戦略契約に `forecast_support_horizons` を追加し、
