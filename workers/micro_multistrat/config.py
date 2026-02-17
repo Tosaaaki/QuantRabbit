@@ -70,7 +70,7 @@ def _bool(key: str, default: bool) -> bool:
 POCKET = "micro"
 LOOP_INTERVAL_SEC = float(os.getenv("MICRO_MULTI_LOOP_INTERVAL_SEC", "8.0"))
 ENABLED = os.getenv("MICRO_MULTI_ENABLED", "0").strip().lower() not in {"", "0", "false", "no"}
-LOG_PREFIX = "[MicroMulti]"
+LOG_PREFIX = os.getenv("MICRO_MULTI_LOG_PREFIX", "[MicroMulti]")
 
 CONFIDENCE_FLOOR = 35
 CONFIDENCE_CEIL = 90

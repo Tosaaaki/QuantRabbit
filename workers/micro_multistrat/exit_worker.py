@@ -175,20 +175,23 @@ BB_STYLE_DEFAULT = "trend"
 
 LOG = logging.getLogger(__name__)
 
-ALLOWED_TAGS: Set[str] = {
-    "MomentumBurst",
-    "MicroMomentumStack",
-    "MicroPullbackEMA",
-    "MicroLevelReactor",
-    "MicroRangeBreak",
-    "MicroVWAPBound",
-    "MicroVWAPRevert",
-    "MicroCompressionRevert",
-    "MicroTrendRetest",
-    "TrendMomentumMicro",
-    "VolCompressionBreak",
-    "MomentumPulse",
-}
+_DEFAULT_EXIT_TAG_ALLOWLIST = (
+    "MomentumBurst,MicroMomentumStack,MicroPullbackEMA,MicroLevelReactor,"
+    "MicroRangeBreak,MicroVWAPBound,MicroVWAPRevert,MicroCompressionRevert,"
+    "MicroTrendRetest,TrendMomentumMicro,VolCompressionBreak,MomentumPulse"
+)
+
+
+def _parse_tag_allowlist(raw: Optional[str]) -> Set[str]:
+    if not raw:
+        raw = _DEFAULT_EXIT_TAG_ALLOWLIST
+    tags = {s.strip() for s in str(raw).split(",") if s.strip()}
+    if not tags:
+        tags = {s.strip() for s in _DEFAULT_EXIT_TAG_ALLOWLIST.split(",") if s.strip()}
+    return tags
+
+
+ALLOWED_TAGS: Set[str] = _parse_tag_allowlist(os.getenv("MICRO_MULTI_EXIT_TAG_ALLOWLIST", ""))
 REVERSAL_TAG_PREFIXES: Set[str] = {"MicroVWAPBound", "MicroVWAPRevert", "MicroCompressionRevert"}
 REVERSAL_PROFILES: Set[str] = {
     "bb_range_reversion",
