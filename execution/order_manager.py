@@ -283,6 +283,11 @@ def _forecast_service_decision_from_payload(
         edge=_as_float(payload.get("edge"), 0.0),
         p_up=_as_float(payload.get("p_up"), 0.0),
         expected_pips=_as_float(payload.get("expected_pips"), None),
+        anchor_price=_as_float(payload.get("anchor_price"), None),
+        target_price=_as_float(payload.get("target_price"), None),
+        tp_pips_hint=_as_float(payload.get("tp_pips_hint"), None),
+        sl_pips_cap=_as_float(payload.get("sl_pips_cap"), None),
+        rr_floor=_as_float(payload.get("rr_floor"), None),
         feature_ts=payload.get("feature_ts") if payload.get("feature_ts") is not None else None,
         source=str(payload.get("source")) if payload.get("source") is not None else None,
         style=str(payload.get("style")) if payload.get("style") is not None else None,
@@ -8100,6 +8105,36 @@ async def market_order(
                         "style": fc_decision.style,
                         "edge": round(float(fc_decision.edge), 6),
                         "p_up": round(float(fc_decision.p_up), 6),
+                        "expected_pips": (
+                            round(float(fc_decision.expected_pips), 4)
+                            if fc_decision.expected_pips is not None
+                            else None
+                        ),
+                        "anchor_price": (
+                            round(float(fc_decision.anchor_price), 5)
+                            if fc_decision.anchor_price is not None
+                            else None
+                        ),
+                        "target_price": (
+                            round(float(fc_decision.target_price), 5)
+                            if fc_decision.target_price is not None
+                            else None
+                        ),
+                        "tp_pips_hint": (
+                            round(float(fc_decision.tp_pips_hint), 4)
+                            if fc_decision.tp_pips_hint is not None
+                            else None
+                        ),
+                        "sl_pips_cap": (
+                            round(float(fc_decision.sl_pips_cap), 4)
+                            if fc_decision.sl_pips_cap is not None
+                            else None
+                        ),
+                        "rr_floor": (
+                            round(float(fc_decision.rr_floor), 4)
+                            if fc_decision.rr_floor is not None
+                            else None
+                        ),
                         "trend_strength": (
                             round(float(fc_decision.trend_strength), 6)
                             if fc_decision.trend_strength is not None
@@ -8118,11 +8153,6 @@ async def market_order(
                         "regime_score": fc_decision.regime_score,
                         "leading_indicator": fc_decision.leading_indicator,
                         "leading_indicator_strength": fc_decision.leading_indicator_strength,
-                        "expected_pips": (
-                            round(float(fc_decision.expected_pips), 4)
-                            if fc_decision.expected_pips is not None
-                            else None
-                        ),
                         "feature_ts": fc_decision.feature_ts,
                         "edge_strength": round(edge_strength, 6),
                     }
@@ -8170,6 +8200,12 @@ async def market_order(
                     "sl_cap": round(float(sl_cap), 4) if sl_cap is not None else None,
                     "rr_floor": round(float(rr_floor), 4) if rr_floor is not None else None,
                     "edge_strength": round(edge_strength, 6),
+                    "anchor_price": round(float(fc_decision.anchor_price), 5)
+                    if fc_decision.anchor_price is not None
+                    else None,
+                    "target_price": round(float(fc_decision.target_price), 5)
+                    if fc_decision.target_price is not None
+                    else None,
                 }
 
             if base_tp_hint != thesis_tp_pips or base_sl_hint != thesis_sl_pips:

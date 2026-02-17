@@ -129,6 +129,8 @@
 - `FORECAST_SERVICE_ENABLED=1` と `FORECAST_SERVICE_URL` が有効な場合、`forecast_gate` 決定をワーカー越しで取得して
   `order_manager` に反映。
 - `order_manager` 側ではサービス障害時のみローカル fallback を許容し、判定仕様を維持。
+- 予測決定は `expected_pips` に加えて `anchor_price` / `target_price` / `tp_pips_hint` / `sl_pips_cap` / `rr_floor`
+  を `forecast_context` として各経路へ伝播し、`order_manager` と `entry_intent_board` の監査へ反映する。
 - `forecast` 系は `order_manager` の判定処理から切り離し、`execution` 側の責務分離として
   専用 service を通した決定供給を行う。
 

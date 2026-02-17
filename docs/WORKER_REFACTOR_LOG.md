@@ -22,6 +22,13 @@
 - `ops/env/quant-micro-multi.env` から `MICRO_STRATEGY_ALLOWLIST` の `MicroRangeBreak` を除外し、
   複数 unit からの重複実行を防止。
 
+### 2026-02-17（追記）予測の価格到達メタを一元化しVMで可視化
+
+- `workers/common/forecast_gate.py` の `ForecastDecision` に `anchor_price` / `target_price` / `tp_pips_hint` / `sl_pips_cap` / `rr_floor` を追加し、ロジック決定と同時に保存するよう統一。
+- `workers/forecast/worker.py` の `/forecast/decide` 応答、`execution/strategy_entry.py` の `_format_forecast_context()`、`execution/order_manager.py` の `forecast_meta` / `entry_thesis["forecast_execution"]` に同値を連携。
+- `scripts/vm_forecast_snapshot.py` では `--horizon` で 5m/10m を明示すると、履歴不足時でも `insufficient_history` 行を pending で出し、`need >= X candles` / `remediation` を表示するよう補強。
+- `execution/order_manager.py` の forecast メタ監査キーに `expected_pips` / `anchor_price` / `target_price` / `tp_pips_hint` / `sl_pips_cap` / `rr_floor` を追記し、監査 DB に TP/SL まで残るようにした。
+
 ### 2026-02-17（追記）micro_multistrat 配下の主要 micro 戦略を個別ワーカー化
 
 - `MicroLevelReactor` / `MicroVWAPBound` / `MicroVWAPRevert` / `MomentumBurstMicro` / `MicroMomentumStack` /

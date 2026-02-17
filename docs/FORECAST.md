@@ -73,14 +73,34 @@ python3 scripts/vm_forecast_snapshot.py \
   --env-file /home/tossaki/QuantRabbit/ops/env/quant-v2-runtime.env
 ```
 
+短期予測を短絡的に確認する際は、必要 horizon を明示できます。  
+`5m/10m` が未生成でも pending 行（原因 + 取得推奨）が表示されます。
+
+```bash
+python3 scripts/vm_forecast_snapshot.py \
+  --env-file /home/tossaki/QuantRabbit/ops/env/quant-v2-runtime.env \
+  --horizon 5m \
+  --horizon 10m
+```
+
 出力例:
  - `p_up` が 0.55 超: 上振れ寄り
  - `p_up` が 0.45 未満: 下振れ寄り
  - `trend_strength` と `range_pressure` が分裂し `天井警戒` / `底警戒` が付いた場合は、逆方向の追随が弱めと解釈して慎重判定
 
+`order_manager` は予測判定に以下を渡すよう統一されています。
+- `expected_pips`: 期待進行（pip）
+- `anchor_price`: 直近クローズ基準価格
+- `target_price`: 到達想定価格（`anchor_price + expected_pips * pip`）
+- `tp_pips_hint`: TP 方向ヒント（pips）
+- `sl_pips_cap`: SL 上限ヒント（pips）
+- `rr_floor`: TP/SL の下限 R:R 値
+
 `order_manager` が通過判定を通過した注文は、`entry_thesis["forecast"]` に `future_flow` を残します。
 `future_flow` は `horizon:style:state:strength` 形式の文字列で、実運用の可視化（ログ・監査）で「今後の流れ」を素早く拾えます。
 例: `5m:trend:上昇トレンド継続:強い`
+
+`entry_thesis["forecast"]` は監査経路として `entry_intent_board` の `details.forecast_context` へも反映され、同一決定の意図と合わせてトレードログに残せます。
 
 JSONで回収する場合:
 ```bash

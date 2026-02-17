@@ -124,6 +124,11 @@ class ForecastDecision:
     edge: float
     p_up: float
     expected_pips: Optional[float] = None
+    anchor_price: Optional[float] = None
+    target_price: Optional[float] = None
+    tp_pips_hint: Optional[float] = None
+    sl_pips_cap: Optional[float] = None
+    rr_floor: Optional[float] = None
     feature_ts: Optional[str] = None
     source: Optional[str] = None
     style: Optional[str] = None
@@ -353,6 +358,26 @@ def _safe_float(value: Any, default: float = 0.0) -> float:
         return float(value)
     except Exception:
         return float(default)
+
+
+def _safe_optional_float(value: Any, default: Optional[float] = None) -> Optional[float]:
+    try:
+        value_float = float(value)
+    except Exception:
+        return default
+    if not math.isfinite(value_float):
+        return default
+    return value_float
+
+
+def _safe_abs_float(value: Any, default: Optional[float] = None) -> Optional[float]:
+    try:
+        value_float = float(value)
+    except Exception:
+        return default
+    if not math.isfinite(value_float):
+        return default
+    return abs(value_float)
 
 
 def _sigmoid(x: float) -> float:
@@ -1243,6 +1268,11 @@ def decide(
             edge=edge,
             p_up=p_up,
             expected_pips=row.get("expected_pips"),
+            anchor_price=row.get("anchor_price"),
+            target_price=row.get("target_price"),
+            tp_pips_hint=_safe_abs_float(row.get("tp_pips_hint"), _safe_abs_float(row.get("expected_pips"))),
+            sl_pips_cap=_safe_abs_float(row.get("sl_pips_cap")),
+            rr_floor=_safe_optional_float(row.get("rr_floor")),
             feature_ts=row.get("feature_ts"),
             source=str(source) if source is not None else None,
             style=style,
@@ -1272,6 +1302,11 @@ def decide(
             edge=edge,
             p_up=p_up,
             expected_pips=row.get("expected_pips"),
+            anchor_price=row.get("anchor_price"),
+            target_price=row.get("target_price"),
+            tp_pips_hint=_safe_abs_float(row.get("tp_pips_hint"), _safe_abs_float(row.get("expected_pips"))),
+            sl_pips_cap=_safe_abs_float(row.get("sl_pips_cap")),
+            rr_floor=_safe_optional_float(row.get("rr_floor")),
             feature_ts=row.get("feature_ts"),
             source=str(source) if source is not None else None,
             style=style,
@@ -1308,6 +1343,11 @@ def decide(
             edge=edge,
             p_up=p_up,
             expected_pips=row.get("expected_pips"),
+            anchor_price=row.get("anchor_price"),
+            target_price=row.get("target_price"),
+            tp_pips_hint=_safe_abs_float(row.get("tp_pips_hint"), _safe_abs_float(row.get("expected_pips"))),
+            sl_pips_cap=_safe_abs_float(row.get("sl_pips_cap")),
+            rr_floor=_safe_optional_float(row.get("rr_floor")),
             feature_ts=row.get("feature_ts"),
             source=str(source) if source is not None else None,
             style=style,
@@ -1346,6 +1386,11 @@ def decide(
                     edge=edge,
                     p_up=p_up,
                     expected_pips=row.get("expected_pips"),
+                    anchor_price=row.get("anchor_price"),
+                    target_price=row.get("target_price"),
+                    tp_pips_hint=_safe_abs_float(row.get("tp_pips_hint"), _safe_abs_float(row.get("expected_pips"))),
+                    sl_pips_cap=_safe_abs_float(row.get("sl_pips_cap")),
+                    rr_floor=_safe_optional_float(row.get("rr_floor")),
                     feature_ts=str(feature_ts),
                     source=str(source) if source is not None else None,
                     style=style,
@@ -1381,6 +1426,11 @@ def decide(
         edge=edge,
         p_up=p_up,
         expected_pips=row.get("expected_pips"),
+        anchor_price=row.get("anchor_price"),
+        target_price=row.get("target_price"),
+        tp_pips_hint=_safe_abs_float(row.get("tp_pips_hint"), _safe_abs_float(row.get("expected_pips"))),
+        sl_pips_cap=_safe_abs_float(row.get("sl_pips_cap")),
+        rr_floor=_safe_optional_float(row.get("rr_floor")),
         feature_ts=row.get("feature_ts"),
         source=str(source) if source is not None else None,
         style=style,
@@ -1388,7 +1438,7 @@ def decide(
         range_pressure=range_pressure,
         future_flow=future_flow,
         **regime_profile,
-        )
+    )
 
 
 __all__ = [
