@@ -107,10 +107,12 @@
 
 - `execution/order_manager.py` の注文経路は `quant-order-manager.service` 経由。
 - 目的: 戦略は「注文意図」を投げ、実API送信は order-manager が担当。
-- 受け渡しは `entry_probability` / `entry_units_intent` を前提にし、`order_manager` 側は意図を縮小・拒否（ガード）するのみ。
+- 受け渡しは `entry_probability` / `entry_units_intent` を前提にし、`order_manager` 側は意図の再選別をせず、ガード・リスク検査のみ実施。
 - `ORDER_MANAGER_PRESERVE_STRATEGY_INTENT=1`（既定）運用では、戦略側が意図した
-  `entry_probability` / `entry_units_intent` / SL/TP設計を order_manager が新たに選別しない方針へ統一。  
-  ただし、entry_probability による確率スケーリングやリスクガード（マージン、ロスキャップ等）での最終調整のみ許容。
+  `entry_probability` / `entry_units_intent` / SL/TP 設計を、`order_manager` 側で上書きしない方針へ統一。  
+  例外として、`ORDER_MANAGER_PRESERVE_INTENT_UNIT_ADJUST_ENABLED=1`（strategy 固有キー
+  `ORDER_MANAGER_PRESERVE_INTENT_UNIT_ADJUST_ENABLED_STRATEGY_<TAG>`）を明示した場合のみ、
+  `entry_probability` によるサイズ調整・リジェクトを有効化する。
 - `entry_probability` / `entry_units_intent` をもとに、`execution/strategy_entry.py` が
   `execution/order_manager.py` の `/order/coordinate_entry_intent` を呼んで黒板協調を行った後に
   注文を `order-manager` へ転送する。

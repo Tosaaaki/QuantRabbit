@@ -8,6 +8,18 @@
 - データ供給は `quant-market-data-feed`、制御配信は `quant-strategy-control` に分離。
 - 補助的運用ワーカーは本体管理マップから除外。
 
+### 2026-02-17（追記）order_manager の意図改変を既定停止
+
+- `execution/order_manager.py` の `market_order` / `limit_order` における
+  `entry_probability` 起因のサイズ縮小・拒否（`entry_probability_reject` / `probability_scaled`）は
+  既定で実行しないよう整理。
+- 新規フラグ `ORDER_MANAGER_PRESERVE_INTENT_UNIT_ADJUST_ENABLED`（既定 `0`）を追加し、必要時のみ
+  `ORDER_MANAGER_PRESERVE_INTENT_UNIT_ADJUST_ENABLED_STRATEGY_<TAG>` で戦略別有効化を行える運用へ変更。
+- ワーカー側が決めた `entry_units_intent` / `entry_probability` を order_manager が
+  追加で潰さない方向へ収束。`order_manager` のガード/リスク責務と
+  `strategy_entry` 側のローカル意図決定の分離を明確化。
+- 同時に `docs/WORKER_ROLE_MATRIX_V2.md` のオーダー面記述を更新。
+
 ### 2026-02-16（追記）scalp_ping_5s_b ラッパー env_prefix 混在回避を根本修正
 
 - `workers/scalp_ping_5s_b/worker.py` の `_apply_alt_env()` を修正し、`SCALP_PING_5S_*` の掃除時に

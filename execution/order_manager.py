@@ -240,6 +240,22 @@ def _as_float(value: object, default: float | None = None) -> float | None:
         return default
 
 
+def _percentile(values: list[float], pct: float) -> float:
+    if not values:
+        return 0.0
+    pct = max(0.0, min(pct, 100.0))
+    if len(values) == 1:
+        return values[0]
+    sorted_vals = sorted(values)
+    if pct == 100.0:
+        return sorted_vals[-1]
+    rank = pct / 100.0 * (len(sorted_vals) - 1)
+    lower = int(rank)
+    upper = min(lower + 1, len(sorted_vals) - 1)
+    frac = rank - lower
+    return sorted_vals[lower] * (1.0 - frac) + sorted_vals[upper] * frac
+
+
 def _coerce_bool(value: object, default: bool = False) -> bool:
     if value is None:
         return default
@@ -1490,6 +1506,84 @@ def _order_spread_block_pips(
     return max(0.0, float(_ORDER_SPREAD_BLOCK_PIPS))
 
 
+def _is_isolated_spread_spike(
+    *,
+    spread_pips: float,
+    threshold_pips: float,
+) -> tuple[bool, dict[str, float | int | bool | str | None]]:
+    if not _ORDER_SPREAD_SPIKE_TOLERANCE_ENABLED:
+        return False, {"enabled": False}
+    if spread_pips <= 0.0 or threshold_pips <= 0.0 or tick_window is None:
+        return False, {"enabled": True, "reason": "invalid_input"}
+    if (
+        _ORDER_SPREAD_SPIKE_HARD_MAX_PIPS > 0.0
+        and spread_pips > _ORDER_SPREAD_SPIKE_HARD_MAX_PIPS
+    ):
+        return False, {
+            "enabled": True,
+            "reason": "hard_max_exceeded",
+            "hard_max_pips": _ORDER_SPREAD_SPIKE_HARD_MAX_PIPS,
+            "spread_pips": spread_pips,
+        }
+
+    try:
+        rows = tick_window.recent_ticks(
+            seconds=_ORDER_SPREAD_SPIKE_WINDOW_SEC, limit=_ORDER_SPREAD_SPIKE_MIN_TICKS * 6
+        )
+    except Exception as exc:
+        return False, {"enabled": True, "reason": "tick_window_error", "error": str(exc)}
+
+    spreads: list[float] = []
+    now_sec = time.time()
+    for row in rows:
+        epoch = _as_float(row.get("epoch"))
+        if (
+            _ORDER_SPREAD_SPIKE_TICK_MAX_AGE_SEC > 0.0
+            and epoch is not None
+            and now_sec - epoch > _ORDER_SPREAD_SPIKE_TICK_MAX_AGE_SEC
+        ):
+            continue
+        bid = _as_float(row.get("bid"))
+        ask = _as_float(row.get("ask"))
+        if bid is None or ask is None:
+            continue
+        spread = max(0.0, ask - bid) / 0.01
+        spreads.append(spread)
+
+    if len(spreads) < _ORDER_SPREAD_SPIKE_MIN_TICKS:
+        return False, {
+            "enabled": True,
+            "reason": "insufficient_ticks",
+            "sample_count": len(spreads),
+        }
+
+    window_median = _percentile(spreads, 50.0)
+    if _ORDER_SPREAD_SPIKE_MEDIAN_PIPS > 0.0:
+        median_cap = _ORDER_SPREAD_SPIKE_MEDIAN_PIPS
+    else:
+        median_cap = threshold_pips * _ORDER_SPREAD_SPIKE_MEDIAN_RATIO
+
+    high_count = sum(1 for val in spreads if val >= threshold_pips)
+    if high_count <= _ORDER_SPREAD_SPIKE_ALLOW_MAX_COUNT and window_median <= median_cap:
+        return True, {
+            "enabled": True,
+            "reason": "isolated",
+            "sample_count": len(spreads),
+            "high_count": high_count,
+            "window_median": window_median,
+            "median_cap": median_cap,
+        }
+
+    return False, {
+        "enabled": True,
+        "reason": "sustained_wide",
+        "sample_count": len(spreads),
+        "high_count": high_count,
+        "window_median": window_median,
+        "median_cap": median_cap,
+    }
+
+
 def _augment_entry_thesis_policy_generation(
     entry_thesis: Optional[dict],
     *,
@@ -2053,6 +2147,28 @@ _PARTIAL_CLOSE_RETRY_CODES = {
     "POSITION_TO_REDUCE_TOO_SMALL",
 }
 _ORDER_SPREAD_BLOCK_PIPS = float(os.getenv("ORDER_SPREAD_BLOCK_PIPS", "1.6"))
+_ORDER_SPREAD_SPIKE_TOLERANCE_ENABLED = _env_bool(
+    "ORDER_SPREAD_SPIKE_TOLERANCE_ENABLED", True
+)
+_ORDER_SPREAD_SPIKE_WINDOW_SEC = max(
+    0.5, _env_float("ORDER_SPREAD_SPIKE_WINDOW_SEC", 1.5)
+)
+_ORDER_SPREAD_SPIKE_MIN_TICKS = max(2, _env_int("ORDER_SPREAD_SPIKE_MIN_TICKS", 3))
+_ORDER_SPREAD_SPIKE_ALLOW_MAX_COUNT = max(
+    1, _env_int("ORDER_SPREAD_SPIKE_ALLOW_MAX_COUNT", 2)
+)
+_ORDER_SPREAD_SPIKE_MEDIAN_PIPS = max(
+    0.0, _env_float("ORDER_SPREAD_SPIKE_MEDIAN_PIPS", 0.0)
+)
+_ORDER_SPREAD_SPIKE_MEDIAN_RATIO = max(
+    0.4, min(3.0, _env_float("ORDER_SPREAD_SPIKE_MEDIAN_RATIO", 1.25))
+)
+_ORDER_SPREAD_SPIKE_HARD_MAX_PIPS = max(
+    0.0, _env_float("ORDER_SPREAD_SPIKE_HARD_MAX_PIPS", 0.0)
+)
+_ORDER_SPREAD_SPIKE_TICK_MAX_AGE_SEC = max(
+    0.0, _env_float("ORDER_SPREAD_SPIKE_TICK_MAX_AGE_SEC", 5.0)
+)
 # Minimum reward/risk ratio for new entries.
 _MIN_RR_ENABLED = os.getenv("ORDER_MIN_RR_ENABLED", "1").strip().lower() not in {
     "",
@@ -8792,7 +8908,6 @@ async def market_order(
         instrument == "USD_JPY"
         and not reduce_only
         and (pocket or "").lower() != "manual"
-        and not preserve_strategy_intent
     ):
         allowed, reason, details = _entry_quality_microstructure_gate_decision(
             pocket=str(pocket or ""),
@@ -8850,31 +8965,58 @@ async def market_order(
             entry_thesis=entry_thesis if isinstance(entry_thesis, dict) else None,
         )
         if spread_threshold > 0.0 and quote["spread_pips"] >= spread_threshold and not reduce_only:
-            note = f"spread_block:{quote['spread_pips']:.2f}p"
-            _console_order_log(
-                "OPEN_SKIP",
-                pocket=pocket,
-                strategy_tag=strategy_tag,
-                side=side_label,
-                units=units,
-                sl_price=sl_price,
-                tp_price=tp_price,
-                client_order_id=client_order_id,
-                note=note,
+            spread_pips = float(quote["spread_pips"])
+            is_spike_tolerated, spike_info = _is_isolated_spread_spike(
+                spread_pips=spread_pips,
+                threshold_pips=spread_threshold,
             )
-            log_order(
-                pocket=pocket,
-                instrument=instrument,
-                side="buy" if units > 0 else "sell",
-                units=units,
-                sl_price=sl_price,
-                tp_price=tp_price,
-                client_order_id=client_order_id,
-                status="spread_block",
-                attempt=0,
-                request_payload={"quote": quote, "threshold": spread_threshold},
+            if not is_spike_tolerated:
+                note = f"spread_block:{spread_pips:.2f}p"
+                _console_order_log(
+                    "OPEN_SKIP",
+                    pocket=pocket,
+                    strategy_tag=strategy_tag,
+                    side=side_label,
+                    units=units,
+                    sl_price=sl_price,
+                    tp_price=tp_price,
+                    client_order_id=client_order_id,
+                    note=note,
+                )
+                log_order(
+                    pocket=pocket,
+                    instrument=instrument,
+                    side="buy" if units > 0 else "sell",
+                    units=units,
+                    sl_price=sl_price,
+                    tp_price=tp_price,
+                    client_order_id=client_order_id,
+                    status="spread_block",
+                    attempt=0,
+                    request_payload={"quote": quote, "threshold": spread_threshold, "spread_spike": spike_info},
+                )
+                log_metric(
+                    "entry_spread_block",
+                    1.0,
+                    tags={
+                        "pocket": pocket or "unknown",
+                        "strategy": strategy_tag or "unknown",
+                        "reason": str((spike_info or {}).get("reason") or "spread_block"),
+                        "decision": "blocked",
+                    },
+                )
+                return None
+            log_metric(
+                "entry_spread_spike_tolerated",
+                1.0,
+                tags={
+                    "pocket": pocket or "unknown",
+                    "strategy": strategy_tag or "unknown",
+                    "spread_pips": f"{spread_pips:.2f}",
+                    "spread_threshold": f"{spread_threshold:.2f}",
+                },
             )
-            return None
+            _trace("spread_spike_tolerated")
 
     estimated_entry = _estimate_entry_price(
         units=units, sl_price=sl_price, tp_price=tp_price, meta=meta
