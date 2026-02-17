@@ -1225,3 +1225,12 @@
   - `micro_multi_worker` の `_LOCAL_FRESH_M1` / `_LAST_FRESH_M1_TS` 参照を `globals()` 経由で扱い、参照スコープ崩れ（`UnboundLocalError`）を回避。
   - 併せて `local_fresh_m1` / `last_fresh_m1_ts` をループ内で更新し、tick 再構成時の状態整合を維持。
 - 変更意図: 再起動直後からの起動監査可視化と稼働阻害エラー再発防止を優先し、`Application started!` 検知運用を成立させること。
+
+### 2026-02-17（追記）5秒スキャを B 専用に切替（無印ENTRY停止）
+
+- 目的: `scalp_ping_5s_live`（無印）と `scalp_ping_5s_b_live`（B）の実運用差分を固定し、5秒スキャのENTRY経路をBへ一本化。
+- 反映:
+  - `ops/env/scalp_ping_5s.env`: `SCALP_PING_5S_ENABLED=0` を先頭で明示。
+  - `ops/env/quant-scalp-ping-5s.env`: `SCALP_PING_5S_ENABLED=0` に変更。
+  - `ops/env/quant-scalp-ping-5s-b.env`: `SCALP_PING_5S_B_ENABLED=1` に変更。
+- 意図: systemdの `EnvironmentFile` 多重読み込み時でも、無印は常時idle、Bは常時有効の状態を維持する。

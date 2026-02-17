@@ -1,6 +1,14 @@
 # Ops Current (2026-02-11 JST)
 
-## 0. 2026-02-12 JST 追加チューニング（稼働戦略のみ）
+## 0. 2026-02-17 UTC 5秒スキャをB専用へ固定
+- 無印5秒スキャ（`scalp_ping_5s_live`）は `SCALP_PING_5S_ENABLED=0` を明示し、ENTRYを停止。
+- B版（`scalp_ping_5s_b_live`）は `SCALP_PING_5S_B_ENABLED=1` を明示し、5秒スキャの唯一のENTRY系として運用。
+- 対象env:
+  - `ops/env/scalp_ping_5s.env`
+  - `ops/env/quant-scalp-ping-5s.env`
+  - `ops/env/quant-scalp-ping-5s-b.env`
+
+## 1. 2026-02-12 JST 追加チューニング（稼働戦略のみ）
 - `TickImbalance` / `LevelReject` / `M1Scalper` だけを対象に EXIT の time-stop を短縮。
   - `TickImbalance`: `range_max_hold_sec=600`, `loss_cut_max_hold_sec=600`
   - `LevelReject`: `range_max_hold_sec=1200`, `loss_cut_max_hold_sec=1200`
@@ -10,7 +18,7 @@
 - `micro_multistrat` に戦略別サイズ倍率を追加。
   - 新規 env: `MICRO_MULTI_STRATEGY_UNITS_MULT`（例: `TickImbalance:0.70,LevelReject:0.70`）
 
-## 1. 運用モード（2025-12 攻め設定）
+## 2. 運用モード（2025-12 攻め設定）
 - マージン活用を 85–92% 目安に引き上げ。
 - ロット上限を拡大（`RISK_MAX_LOT` 既定 10.0 lot）。
 - 手動ポジションを含めた総エクスポージャでガード。
@@ -18,7 +26,7 @@
 - 必要に応じて `PERF_GUARD_GLOBAL_ENABLED=0` で解除。
 - 2026-02-09 以降、`env_prefix` を渡す worker の設定解決は「`<PREFIX>_UNIT_*` → `<PREFIX>_*` のみ」。グローバル `*` へのフォールバックは無効。
 
-## 2. 2026-02-06 JST 時点の `fx-trader-vm` mask 済みユニット
+## 3. 2026-02-06 JST 時点の `fx-trader-vm` mask 済みユニット
 ```
 quant-scalp-impulseretrace.service
 quant-scalp-impulseretrace-exit.service
