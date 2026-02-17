@@ -301,6 +301,7 @@ MR_RANGE_HI_PCT = 95.0
 MR_RANGE_LO_PCT = 5.0
 _STRATEGY_LAST_TS: Dict[str, float] = {}
 _LAST_FRESH_M1_TS = 0.0
+_LOCAL_FRESH_M1: Dict[str, float] | None = None
 _TREND_STRATEGIES = {
     MomentumBurstMicro.name,
     MicroMomentumStack.name,
@@ -1006,7 +1007,7 @@ async def micro_multi_worker() -> None:
         except Exception:
             pass
         factors = all_factors()
-        fac_m1 = factors.get("M1") or {}
+        fac_m1 = factors.get("M1") or _LOCAL_FRESH_M1 or {}
         fac_h4 = factors.get("H4") or {}
         fac_h1 = factors.get("H1") or {}
         fac_m5 = factors.get("M5") or {}
@@ -1027,44 +1028,50 @@ async def micro_multi_worker() -> None:
                     fac_m1 = fresh
                     age_m1 = _factor_age_seconds(fac_m1)
                     _LAST_FRESH_M1_TS = now_ts
+                    _LOCAL_FRESH_M1 = fac_m1
                     log_metric(
                         "micro_multi_refresh_m1",
                         float(age_m1),
                         tags={"source": "ticks", "candles": len(fresh.get("candles") or [])},
                         ts=now,
                     )
-            # 入口を止める代わりにログだけ残して評価を継続（データ欠損で固まらないようにする）
-            log_metric(
-                "micro_multi_skip",
-                float(age_m1),
-                tags={"reason": "factor_stale_warn", "tf": "M1"},
-                ts=now,
-            )
-            hard_age = max(config.MAX_FACTOR_AGE_SEC, config.FRESH_TICKS_STALE_SCALE_HARD_SEC)
-            if hard_age > config.MAX_FACTOR_AGE_SEC:
-                stale_ratio = max(0.0, (age_m1 - config.MAX_FACTOR_AGE_SEC) / (hard_age - config.MAX_FACTOR_AGE_SEC))
-                stale_scale = max(
-                    config.FRESH_TICKS_STALE_SCALE_MIN,
-                    1.0 - stale_ratio * (1.0 - config.FRESH_TICKS_STALE_SCALE_MIN),
+            if age_m1 > config.MAX_FACTOR_AGE_SEC:
+                # 入口を止める代わりにログだけ残して評価を継続（データ欠損で固まらないようにする）
+                log_metric(
+                    "micro_multi_skip",
+                    float(age_m1),
+                    tags={"reason": "factor_stale_warn", "tf": "M1"},
+                    ts=now,
                 )
-            if stale_scale < 1.0:
-                if now_ts - last_stale_scale_log > 30.0:
-                    LOG.info(
-                        "%s factor stale scale=%.3f age=%.1fs hard_age=%.1fs",
-                        config.LOG_PREFIX,
-                        stale_scale,
-                        age_m1,
-                        hard_age,
+            else:
+                # tick 再構成で復旧できた場合、明示的にはアラートを抑制する。
+                _LOCAL_FRESH_M1 = fac_m1
+            if age_m1 > config.MAX_FACTOR_AGE_SEC:
+                hard_age = max(config.MAX_FACTOR_AGE_SEC, config.FRESH_TICKS_STALE_SCALE_HARD_SEC)
+                if hard_age > config.MAX_FACTOR_AGE_SEC:
+                    stale_ratio = max(0.0, (age_m1 - config.MAX_FACTOR_AGE_SEC) / (hard_age - config.MAX_FACTOR_AGE_SEC))
+                    stale_scale = max(
+                        config.FRESH_TICKS_STALE_SCALE_MIN,
+                        1.0 - stale_ratio * (1.0 - config.FRESH_TICKS_STALE_SCALE_MIN),
                     )
-                    last_stale_scale_log = now_ts
-            if now_ts - last_stale_log > 30.0:
-                LOG.warning(
-                    "%s stale factors age=%.1fs limit=%.1fs (proceeding anyway)",
-                    config.LOG_PREFIX,
-                    age_m1,
-                    config.MAX_FACTOR_AGE_SEC,
-                )
-                last_stale_log = now_ts
+                if stale_scale < 1.0:
+                    if now_ts - last_stale_scale_log > 30.0:
+                        LOG.info(
+                            "%s factor stale scale=%.3f age=%.1fs hard_age=%.1fs",
+                            config.LOG_PREFIX,
+                            stale_scale,
+                            age_m1,
+                            hard_age,
+                        )
+                        last_stale_scale_log = now_ts
+                if now_ts - last_stale_log > 30.0:
+                    LOG.warning(
+                        "%s stale factors age=%.1fs limit=%.1fs (proceeding anyway)",
+                        config.LOG_PREFIX,
+                        age_m1,
+                        config.MAX_FACTOR_AGE_SEC,
+                    )
+                    last_stale_log = now_ts
         range_ctx = detect_range_mode(fac_m1, fac_h4)
         range_score = 0.0
         try:

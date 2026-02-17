@@ -1109,3 +1109,14 @@
 - 変更意図: `on_candle_live` は同プロセスの即時計算には有効だが、別プロセスの戦略ワーカーからは
   `refresh_cache_from_disk()` 経由で読み出すため、確定足更新の永続化がないと
   `factor_stale` が継続して発生し続けるため。
+
+### 2026-02-17（追記）quant-micro-multi の factor_stale 警告耐性を最適化
+
+- `workers/micro_multistrat/worker.py`
+  - M1 factors を `all_factors()` 取得後に `MAX_FACTOR_AGE_SEC` を超える場合、まず tick から再構築した値を
+    `refresh_cache_from_disk()` 直後の評価ループで短時間保持し、次ループでも再利用可能にした。
+  - `micro_multi_skip` 警告は「tick 再構成で復旧可能なケース」では抑制し、まだ stale な場合のみ
+    `stale_scale` 適用と警告を継続。
+  - `age` が一時的に跳ねた直後の連続ノイズを抑えつつ、`proceeding anyway` の安全挙動は維持。
+- 追加意図: この調整は、`quant-micro-multi` の入口停止が誘発されやすい局面での
+  `entry_thesis` 通過率を維持しつつ、保全的な規模縮小/警告は維持すること。
