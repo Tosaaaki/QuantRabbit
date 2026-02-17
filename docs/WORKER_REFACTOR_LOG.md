@@ -46,6 +46,12 @@
   同時に V2 ランタイムの `quant-v2-runtime.env` で
   `ORDER_PATTERN_GATE_GLOBAL_OPT_IN=0` を維持し、global 強制を抑制する方針へ合わせた。
 
+- 2026-02-17（運用チューニング2）`MICRO_RANGEBREAK_BREAKOUT_MIN_RANGE_SCORE` を
+  `0.44` から `0.42` へ追加下げし、レンジブレイク `signal_mode=trend` の受理条件を
+  さらに1本運用で拡張。  
+  同時に `workers/micro_multistrat/worker.py` の起動ログを明示化し、`Application started!` を
+  出力して `journalctl` 監査の可観測性を確保した（`quant-micro-multi.service` 配下）。
+
 ### 2026-02-17（追記）`scalp_ping_5s` / `scalp_ping_5s_b` の低証拠金旧キー整理
 
 - `execution/risk_guard.py` の `allowed_lot` から
