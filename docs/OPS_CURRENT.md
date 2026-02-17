@@ -48,6 +48,31 @@
   - `entry_thesis` 監査項目:
     - `extrema_reversal_applied`
     - `extrema_reversal_score`
+- 2026-02-18 UTC 追加: margin closeout 再発抑止の緊急設定（`scalp_fast`）
+  - `quant-v2-runtime.env`
+    - `EXIT_NO_NEGATIVE_CLOSE=0`
+    - `MAX_MARGIN_USAGE=0.88`
+    - `MAX_MARGIN_USAGE_HARD=0.91`
+    - `ORDER_MANAGER_PRESERVE_INTENT_MAX_SCALE=1.0`
+    - `RISK_MULT_MAX=1.15`
+    - `RISK_PERF_MAX_MULT=1.10`
+    - `POSITION_MANAGER_SERVICE_OPEN_POSITIONS_TIMEOUT=3.5`
+    - `POSITION_MANAGER_SERVICE_OPEN_POSITIONS_CACHE_TTL_SEC=0.50`
+    - `POSITION_MANAGER_SERVICE_OPEN_POSITIONS_STALE_MAX_AGE_SEC=3.0`
+  - `scalp_ping_5s_b.env`
+    - `MAX_ACTIVE_TRADES=8`
+    - `MAX_PER_DIRECTION=4`
+    - `MAX_ORDERS_PER_MINUTE=6`
+    - `BASE_ENTRY_UNITS=700`
+    - `MAX_UNITS=1800`
+    - `NO_HEDGE_ENTRY=1`
+  - `scalp_ping_5s_flow.env`
+    - `MAX_ACTIVE_TRADES=4`
+    - `MAX_PER_DIRECTION=2`
+    - `MAX_ORDERS_PER_MINUTE=4`
+    - `BASE_ENTRY_UNITS=700`
+    - `MAX_UNITS=1600`
+    - `NO_HEDGE_ENTRY=1`
 
 ## 1. 2026-02-12 JST 追加チューニング（稼働戦略のみ）
 - `TickImbalance` / `LevelReject` / `M1Scalper` だけを対象に EXIT の time-stop を短縮。
