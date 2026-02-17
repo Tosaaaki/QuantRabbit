@@ -249,6 +249,9 @@
   - 追記（2026-02-17 08:46 UTC 反映）:
     - `scalp_ping_5s_b` は `short_bottom_m1m5` 連発抑止のため short extrema 閾値を緩和し、`MIN_UNITS` を 150 へ引き下げ。
     - `scalp_ping_5s_flow` は `revert_not_found` 優勢に対し `REVERT_*` と `SIGNAL_WINDOW_FALLBACK_ALLOW_FULL_WINDOW` を緩和。
+  - 追記（2026-02-17 08:51 UTC 反映）:
+    - `scalp_ping_5s_flow` は `orders.db` 上でエントリー 0 件が継続したため、
+      `LOOKAHEAD_GATE_ENABLED=0` と `REVERT_*`（window/range/sweep/bounce）および `DROP_FLOW_*` 閾値を追加緩和。
 
 ## 監査用更新プロトコル（毎回）
 
