@@ -1298,6 +1298,8 @@
   - `profile.timeframe` が `M5/H1` 等でも、`horizon in {1m,5m,10m}` の場合は
     `step_bars * timeframe_minutes` で `M1` へ正規化する処理を追加。
   - 正規化時は `profile_normalization`（例: `M5x2->M1x10`）を予測行へ残し監査可能化。
+  - `factor_cache` の `M1` が stale（既定 150秒超）な場合は
+    `logs/oanda/candles_M1_latest.json` から最新 M1 を読み、短期予測の入力へ自動フォールバック。
 - 目的:
   - 短期予測で `M5` 足更新遅延の影響を避ける。
   - 戦略ごとの `forecast_profile` が `M5x2` を指定していても、短期では最新 `M1` 系列で計算できるようにする。

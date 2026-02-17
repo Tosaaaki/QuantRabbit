@@ -141,6 +141,8 @@
 - 短期 horizon（`1m`/`5m`/`10m`）は `forecast_gate` 内で `M1` 基準に正規化して計算する。
   戦略が `M5x2` のような指定を渡した場合も、短期は `M1` へ換算（例: `M5x2 -> M1x10`）し、
   足更新遅延による stale/欠損の影響を最小化する。
+- さらに `factor_cache` の `M1` が stale のときは `logs/oanda/candles_M1_latest.json` を短期予測入力の
+  フォールバックとして使い、短期出力の欠落を避ける。
 - `forecast` 系は `order_manager` の判定処理から切り離し、`execution` 側の責務分離として
   専用 service を通した決定供給を行う。
 

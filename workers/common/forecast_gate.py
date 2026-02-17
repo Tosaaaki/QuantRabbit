@@ -14,10 +14,13 @@ when an offline model bundle is not mounted yet.
 
 from __future__ import annotations
 
+import json
 import logging
 import math
 import os
 from dataclasses import dataclass
+from datetime import datetime
+from datetime import timezone
 from pathlib import Path
 import time
 from typing import Any
@@ -100,6 +103,10 @@ _VOL_REGIME_EXTREME = max(0.0, min(1.0, _env_float("FORECAST_GATE_VOL_REGIME_EXT
 
 _REQUIRE_FRESH = _env_bool("FORECAST_GATE_REQUIRE_FRESH", False)
 _MAX_AGE_SEC = max(1.0, _env_float("FORECAST_GATE_MAX_AGE_SEC", 120.0))
+_M1_STALE_SEC = max(30.0, _env_float("FORECAST_GATE_M1_STALE_SEC", 150.0))
+_M1_FALLBACK_PATH = Path(
+    os.getenv("FORECAST_GATE_M1_FALLBACK_PATH", "logs/oanda/candles_M1_latest.json")
+).expanduser()
 
 _STRATEGY_ALLOWLIST = _env_set("FORECAST_GATE_STRATEGY_ALLOWLIST")
 _POCKET_ALLOWLIST = _env_set("FORECAST_GATE_POCKET_ALLOWLIST")
@@ -744,12 +751,72 @@ def _scale_from_edge(edge: float) -> float:
 def _fetch_candles_by_tf() -> dict[str, list[dict]]:
     from indicators.factor_cache import get_candles_snapshot
 
-    return {
+    candles_by_tf = {
         "M1": get_candles_snapshot("M1", limit=400, include_live=True),
         "M5": get_candles_snapshot("M5", limit=1200, include_live=True),
         "H1": get_candles_snapshot("H1", limit=1000, include_live=True),
         "D1": get_candles_snapshot("D1", limit=500, include_live=True),
     }
+    m1 = candles_by_tf.get("M1") or []
+    if _M1_STALE_SEC > 0.0:
+        age = _candles_age_sec(m1)
+        if age is None or age > _M1_STALE_SEC:
+            fallback = _load_candle_rows(_M1_FALLBACK_PATH, limit=400)
+            if fallback:
+                candles_by_tf["M1"] = fallback
+    return candles_by_tf
+
+
+def _parse_candle_ts(value: Any) -> Optional[datetime]:
+    text = str(value or "").strip()
+    if not text:
+        return None
+    if text.endswith("Z"):
+        text = f"{text[:-1]}+00:00"
+    try:
+        ts = datetime.fromisoformat(text)
+    except Exception:
+        return None
+    if ts.tzinfo is None:
+        return ts.replace(tzinfo=timezone.utc)
+    return ts
+
+
+def _candles_last_ts(candles: list[dict]) -> Optional[datetime]:
+    for candle in reversed(candles or []):
+        if not isinstance(candle, dict):
+            continue
+        ts = _parse_candle_ts(candle.get("time") or candle.get("timestamp"))
+        if ts is not None:
+            return ts
+    return None
+
+
+def _candles_age_sec(candles: list[dict]) -> Optional[float]:
+    ts = _candles_last_ts(candles)
+    if ts is None:
+        return None
+    return max(0.0, (datetime.now(timezone.utc) - ts).total_seconds())
+
+
+def _load_candle_rows(path: Path, *, limit: int) -> list[dict]:
+    if not path.exists():
+        return []
+    try:
+        with path.open("r", encoding="utf-8") as f:
+            payload = json.load(f)
+    except Exception:
+        return []
+    rows = payload.get("candles") if isinstance(payload, dict) else None
+    if not isinstance(rows, list):
+        return []
+    out: list[dict] = []
+    for row in rows:
+        if isinstance(row, dict):
+            out.append(dict(row))
+    if limit > 0:
+        out = out[-limit:]
+    return out
 
 
 def _predict_bundle_latest(bundle, candles_by_tf: dict[str, list[dict]]) -> dict | None:  # noqa: ANN001
