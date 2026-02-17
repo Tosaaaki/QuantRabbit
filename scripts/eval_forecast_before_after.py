@@ -552,11 +552,16 @@ def _evaluate_step(
         pred_before = _prediction_before(row, step=step, sample_count=i)
         breakout_skill = 0.0
         if breakout_adaptive_weight > 0.0:
+            signal_hist = breakout_signal_hist
+            target_hist = realized_hist
+            if breakout_adaptive_lookback > 0 and len(breakout_signal_hist) > breakout_adaptive_lookback:
+                signal_hist = breakout_signal_hist[-breakout_adaptive_lookback:]
+                target_hist = realized_hist[-breakout_adaptive_lookback:]
             breakout_skill, _, _ = _estimate_directional_skill(
-                signal_values=breakout_signal_hist,
-                target_values=realized_hist,
+                signal_values=signal_hist,
+                target_values=target_hist,
                 min_samples=breakout_adaptive_min_samples,
-                lookback=breakout_adaptive_lookback,
+                lookback=0,
             )
         pred_after = _prediction_after(
             row,
