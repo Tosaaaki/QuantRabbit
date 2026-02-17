@@ -8236,7 +8236,7 @@ async def market_order(
                 soft_cap = min(float(os.getenv("MAX_MARGIN_USAGE", "0.92") or 0.92), 0.99)
                 hard_cap = min(float(os.getenv("MAX_MARGIN_USAGE_HARD", "0.96") or 0.96), 0.995)
                 cap = min(hard_cap, max(soft_cap, 0.0))
-                side_cap_enabled = str(os.getenv("MARGIN_SIDE_CAP_ENABLED", "0")).strip().lower() not in {
+                side_cap_enabled = str(os.getenv("MARGIN_SIDE_CAP_ENABLED", "1")).strip().lower() not in {
                     "",
                     "0",
                     "false",
@@ -10775,7 +10775,7 @@ async def limit_order(
                 soft_cap = min(float(os.getenv("MAX_MARGIN_USAGE", "0.92") or 0.92), 0.99)
                 hard_cap = min(float(os.getenv("MAX_MARGIN_USAGE_HARD", "0.96") or 0.96), 0.995)
                 cap = min(hard_cap, max(soft_cap, 0.0))
-                side_cap_enabled = str(os.getenv("MARGIN_SIDE_CAP_ENABLED", "0")).strip().lower() not in {
+                side_cap_enabled = str(os.getenv("MARGIN_SIDE_CAP_ENABLED", "1")).strip().lower() not in {
                     "",
                     "0",
                     "false",

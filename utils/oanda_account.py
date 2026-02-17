@@ -27,6 +27,91 @@ class AccountSnapshot:
     positions: Optional[dict[str, Any]] = None
 
 
+_SIDE_MARGIN_RATIO_ENABLED = (
+    os.getenv("SIDE_SEPARATE_FREE_MARGIN_RATIO", "1").strip().lower()
+    not in {"", "0", "false", "off"}
+)
+
+
+def _side_usage_ratio(
+    units: float,
+    price: float,
+    nav: float,
+    margin_rate: float,
+) -> Optional[float]:
+    if units <= 0.0 or nav <= 0.0 or margin_rate <= 0.0 or price <= 0.0:
+        return 0.0 if units <= 0.0 else None
+    used = units * price * margin_rate
+    if used <= 0.0:
+        return 0.0
+    return max(0.0, min(1.0, used / nav))
+
+
+def _side_free_margin_ratio(snapshot: "AccountSnapshot") -> Optional[float]:
+    """
+    Estimate side-separate free margin ratio.
+
+    Strategy entry guards that currently use the global
+    free margin ratio can use this value to keep long/short side capacity
+    independent when deciding whether to allow new entries.
+    """
+    if not _SIDE_MARGIN_RATIO_ENABLED:
+        return None
+    if snapshot is None:
+        return None
+    try:
+        nav = float(snapshot.nav)
+        margin_rate = float(snapshot.margin_rate)
+        margin_used = float(snapshot.margin_used)
+    except Exception:
+        return None
+    if nav <= 0.0 or margin_rate <= 0.0:
+        return None
+
+    try:
+        long_units, short_units = get_position_summary()
+        long_units = max(0.0, float(long_units or 0.0))
+        short_units = max(0.0, float(short_units or 0.0))
+    except Exception:
+        return None
+
+    net_units = long_units - short_units
+    long_price_hint = None
+    short_price_hint = None
+    if margin_used > 0.0 and abs(net_units) > 0.0:
+        inferred_price = margin_used / (abs(net_units) * margin_rate)
+        if long_units > 0.0 and short_units <= 0.0:
+            long_price_hint = inferred_price
+        elif short_units > 0.0 and long_units <= 0.0:
+            short_price_hint = inferred_price
+
+    long_usage = _side_usage_ratio(long_units, long_price_hint or 0.0, nav, margin_rate)
+    short_usage = _side_usage_ratio(short_units, short_price_hint or 0.0, nav, margin_rate)
+
+    if long_units > 0.0 and long_usage is None:
+        return None
+    if short_units > 0.0 and short_usage is None:
+        return None
+
+    long_free_ratio = 1.0 - (long_usage or 0.0)
+    short_free_ratio = 1.0 - (short_usage or 0.0)
+    return max(0.0, min(1.0, max(long_free_ratio, short_free_ratio)))
+
+
+def _apply_side_free_margin_ratio(snapshot: Optional[AccountSnapshot]) -> Optional[AccountSnapshot]:
+    """Attach side-separate free-margin ratio when available."""
+    if snapshot is None or not _SIDE_MARGIN_RATIO_ENABLED:
+        return snapshot
+    side_free_ratio = _side_free_margin_ratio(snapshot)
+    if side_free_ratio is None or side_free_ratio == snapshot.free_margin_ratio:
+        return snapshot
+    try:
+        return dataclasses.replace(snapshot, free_margin_ratio=side_free_ratio)
+    except Exception:
+        snapshot.free_margin_ratio = side_free_ratio
+        return snapshot
+
+
 _BASE_DIR = Path(__file__).resolve().parents[1]
 _LOG_DIR = (_BASE_DIR / "logs").resolve()
 
@@ -212,15 +297,18 @@ def get_account_snapshot(timeout: float = 7.0, *, cache_ttl_sec: float | None = 
         and _LAST_SNAPSHOT_ENV == env_name
         and (now - _LAST_SNAPSHOT_TS) <= ttl
     ):
-        return _LAST_SNAPSHOT
+        snapshot = _apply_side_free_margin_ratio(_LAST_SNAPSHOT)
+        _LAST_SNAPSHOT = snapshot
+        return snapshot
 
     cache_path, lock_path = _account_cache_paths(env_name)
     disk_snapshot, disk_ts = _load_account_disk(cache_path)
     if ttl > 0 and disk_snapshot is not None and disk_ts is not None and (now - disk_ts) <= ttl:
-        _LAST_SNAPSHOT = disk_snapshot
+        snapshot = _apply_side_free_margin_ratio(disk_snapshot)
+        _LAST_SNAPSHOT = snapshot
         _LAST_SNAPSHOT_TS = disk_ts
         _LAST_SNAPSHOT_ENV = env_name
-        return disk_snapshot
+        return snapshot
 
     lock_acquired = False
     if _SHARED_CACHE_ENABLED and ttl > 0:
@@ -233,24 +321,31 @@ def get_account_snapshot(timeout: float = 7.0, *, cache_ttl_sec: float | None = 
             now = time.time()
             disk_snapshot, disk_ts = _load_account_disk(cache_path)
             if disk_snapshot is not None and disk_ts is not None and (now - disk_ts) <= allow_stale:
-                return disk_snapshot
+                snapshot = _apply_side_free_margin_ratio(disk_snapshot)
+                _LAST_SNAPSHOT = snapshot
+                _LAST_SNAPSHOT_TS = disk_ts
+                _LAST_SNAPSHOT_ENV = env_name
+                return snapshot
             if (
                 _LAST_SNAPSHOT is not None
                 and _LAST_SNAPSHOT_TS is not None
                 and _LAST_SNAPSHOT_ENV == env_name
                 and (now - _LAST_SNAPSHOT_TS) <= allow_stale
             ):
-                return _LAST_SNAPSHOT
+                snapshot = _apply_side_free_margin_ratio(_LAST_SNAPSHOT)
+                _LAST_SNAPSHOT = snapshot
+                return snapshot
 
         # Re-check disk cache after acquiring the lock (another process may have refreshed earlier).
         if lock_acquired and _SHARED_CACHE_ENABLED and ttl > 0:
             now = time.time()
             disk_snapshot, disk_ts = _load_account_disk(cache_path, force=True)
             if disk_snapshot is not None and disk_ts is not None and (now - disk_ts) <= ttl:
-                _LAST_SNAPSHOT = disk_snapshot
+                snapshot = _apply_side_free_margin_ratio(disk_snapshot)
+                _LAST_SNAPSHOT = snapshot
                 _LAST_SNAPSHOT_TS = disk_ts
                 _LAST_SNAPSHOT_ENV = env_name
-                return disk_snapshot
+                return snapshot
 
         resp = requests.get(
             f"{base}/v3/accounts/{account}/summary",
@@ -278,8 +373,13 @@ def get_account_snapshot(timeout: float = 7.0, *, cache_ttl_sec: float | None = 
             # Prefer a recent "healthy" snapshot over a broken one.
             disk_snapshot, _ = _load_account_disk(cache_path, force=True)
             if disk_snapshot is not None and (disk_snapshot.margin_rate or 0) > 0:
-                return disk_snapshot
+                snapshot = _apply_side_free_margin_ratio(disk_snapshot)
+                _LAST_SNAPSHOT = snapshot
+                _LAST_SNAPSHOT_TS = time.time()
+                _LAST_SNAPSHOT_ENV = env_name
+                return snapshot
             if _LAST_SNAPSHOT is not None and (_LAST_SNAPSHOT.margin_rate or 0) > 0 and _LAST_SNAPSHOT_ENV == env_name:
+                _LAST_SNAPSHOT = _apply_side_free_margin_ratio(_LAST_SNAPSHOT)
                 return _LAST_SNAPSHOT
             raise RuntimeError("margin_rate_missing")
 
@@ -307,6 +407,8 @@ def get_account_snapshot(timeout: float = 7.0, *, cache_ttl_sec: float | None = 
             free_margin_ratio=free_ratio,
             health_buffer=health_buffer,
         )
+        snapshot = _apply_side_free_margin_ratio(snapshot) or snapshot
+        free_ratio = snapshot.free_margin_ratio
 
         # record a small set of health metrics for downstream hazard tuning
         try:
@@ -339,7 +441,7 @@ def get_account_snapshot(timeout: float = 7.0, *, cache_ttl_sec: float | None = 
                     "margin_used": margin_used,
                     "margin_rate": margin_rate,
                     "unrealized_pl": unrealized,
-                    "free_margin_ratio": free_ratio,
+                    "free_margin_ratio": snapshot.free_margin_ratio,
                     "health_buffer": health_buffer,
                 },
             }
@@ -356,14 +458,20 @@ def get_account_snapshot(timeout: float = 7.0, *, cache_ttl_sec: float | None = 
         allow_stale = max(ttl, _ALLOW_STALE_SEC)
         disk_snapshot, disk_ts = _load_account_disk(cache_path, force=True)
         if disk_snapshot is not None and disk_ts is not None and (now - disk_ts) <= allow_stale:
-            return disk_snapshot
+            snapshot = _apply_side_free_margin_ratio(disk_snapshot)
+            _LAST_SNAPSHOT = snapshot
+            _LAST_SNAPSHOT_TS = disk_ts
+            _LAST_SNAPSHOT_ENV = env_name
+            return snapshot
         if (
             _LAST_SNAPSHOT is not None
             and _LAST_SNAPSHOT_TS is not None
             and _LAST_SNAPSHOT_ENV == env_name
             and (now - _LAST_SNAPSHOT_TS) <= allow_stale
         ):
-            return _LAST_SNAPSHOT
+            snapshot = _apply_side_free_margin_ratio(_LAST_SNAPSHOT)
+            _LAST_SNAPSHOT = snapshot
+            return snapshot
         raise
     finally:
         if lock_acquired:
@@ -498,4 +606,3 @@ def get_position_summary(
         except Exception:
             pass
     return 0.0, 0.0
-
