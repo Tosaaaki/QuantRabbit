@@ -1653,38 +1653,52 @@ def _technical_prediction_for_horizon(
             candles=candles,
         )
 
-    try:
-        last = feats.iloc[-1]
-        required_keys = (
-            "atr_pips_14",
-            "vol_pips_20",
-            "ret_pips_1",
-            "ret_pips_3",
-            "ret_pips_12",
-            "ma_gap_pips_10_20",
-            "close_ma20_pips",
-            "close_ma50_pips",
-            "rsi_14",
-            "range_pos",
-            "trend_slope_pips_20",
-            "trend_slope_pips_50",
-            "trend_accel_pips",
-            "sr_balance_20",
-            "breakout_up_pips_20",
-            "breakout_down_pips_20",
-            "donchian_width_pips_20",
-            "range_compression_20",
-            "trend_pullback_norm_20",
+    required_keys = (
+        "atr_pips_14",
+        "vol_pips_20",
+        "ret_pips_1",
+        "ret_pips_3",
+        "ret_pips_12",
+        "ma_gap_pips_10_20",
+        "close_ma20_pips",
+        "close_ma50_pips",
+        "rsi_14",
+        "range_pos",
+        "trend_slope_pips_20",
+        "trend_slope_pips_50",
+        "trend_accel_pips",
+        "sr_balance_20",
+        "breakout_up_pips_20",
+        "breakout_down_pips_20",
+        "donchian_width_pips_20",
+        "range_compression_20",
+        "trend_pullback_norm_20",
+    )
+    last = None
+    last_pos: Optional[int] = None
+    last_validation_error: Optional[str] = None
+    for idx in range(len(feats.index) - 1, -1, -1):
+        candidate = feats.iloc[idx]
+        try:
+            for key in required_keys:
+                fv = candidate.get(key)
+                if fv is None:
+                    raise ValueError(f"missing_feature_{key}")
+                fv_f = float(fv)
+                if not math.isfinite(fv_f):
+                    raise ValueError(f"nonfinite_feature_{key}:{fv_f}")
+        except Exception as exc:
+            last_validation_error = str(exc)
+            continue
+        last = candidate
+        last_pos = idx
+        break
+    if last is None:
+        LOG.debug(
+            "[FORECAST] technical feature row invalid horizon=%s err=%s",
+            horizon,
+            last_validation_error,
         )
-        for key in required_keys:
-            fv = last.get(key)
-            if fv is None:
-                raise ValueError(f"missing_feature_{key}")
-            fv_f = float(fv)
-            if not math.isfinite(fv_f):
-                raise ValueError(f"nonfinite_feature_{key}:{fv_f}")
-    except Exception as exc:
-        LOG.debug("[FORECAST] technical feature row invalid horizon=%s err=%s", horizon, exc)
         return _technical_missing_row(
             horizon=horizon,
             timeframe=timeframe,
@@ -1692,7 +1706,7 @@ def _technical_prediction_for_horizon(
             available_candles=available,
             required_candles=required,
             reason="feature_row_incomplete",
-            detail=str(exc),
+            detail=last_validation_error or "no_valid_feature_row",
             candles=candles,
         )
 
@@ -1747,7 +1761,11 @@ def _technical_prediction_for_horizon(
         session_bias, session_mean_pips, session_samples, session_hour_jst = _estimate_session_hour_bias(
             timestamp_values=timestamp_values,
             target_values=future_values,
-            current_timestamp=(timestamp_values[-1] if timestamp_values else None),
+            current_timestamp=(
+                timestamp_values[last_pos]
+                if (timestamp_values and last_pos is not None and last_pos < len(timestamp_values))
+                else (timestamp_values[-1] if timestamp_values else None)
+            ),
             min_samples=_TECH_SESSION_BIAS_MIN_SAMPLES,
             lookback=_TECH_SESSION_BIAS_LOOKBACK,
         )
@@ -1863,7 +1881,10 @@ def _technical_prediction_for_horizon(
 
     feature_ts = None
     try:
-        feature_ts = feats.index[-1].isoformat()
+        if last_pos is not None:
+            feature_ts = feats.index[last_pos].isoformat()
+        else:
+            feature_ts = feats.index[-1].isoformat()
     except Exception:
         feature_ts = None
 

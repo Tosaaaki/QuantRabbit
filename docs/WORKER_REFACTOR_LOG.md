@@ -129,6 +129,22 @@
     `1m=0.16,5m=0.22,10m=0.30` に更新。
   - `scripts/eval_forecast_before_after.py` の既定 map も同値へ更新。
 
+### 2026-02-17（追記）live未確定バーでの `feature_row_incomplete` 誤発生を抑止
+
+- 事象:
+  - `vm_forecast_snapshot.py --horizon 1m,5m,10m` で `have=400` なのに
+    `nonfinite_feature_atr_pips_14:nan` が出て短期予測が pending になるケースを確認。
+  - 原因は live バー（未確定）由来の非有限特徴量が「最終行」に入ると、
+    直近1行のみ検査していた technical 予測が即座に `feature_row_incomplete` を返す設計だったこと。
+- 対応:
+  - `workers/common/forecast_gate.py`
+    - `_technical_prediction_for_horizon()` で最終行固定をやめ、末尾から逆順に
+      required feature がすべて有限な行を探索して採用するよう変更。
+    - `session_bias` の `current_timestamp` と `feature_ts` も採用行に合わせて整合化。
+  - `tests/workers/test_forecast_gate.py`
+    - `test_technical_prediction_uses_latest_finite_feature_row` を追加し、
+      最新行が `nan` でも直近有限行で `status=ready` になることを検証。
+
 ### 2026-02-17（追記）「時間帯=TF」前提で戦略別主TF＋補助TF整合を追加
 
 - `execution/strategy_entry.py` の戦略契約に `forecast_support_horizons` を追加し、

@@ -97,6 +97,50 @@ def test_technical_prediction_exposes_trendline_and_sr_context() -> None:
     assert float(down_row["range_sigma_pips"]) > 0.0
 
 
+def test_technical_prediction_uses_latest_finite_feature_row(monkeypatch) -> None:
+    from analysis import forecast_sklearn
+
+    candles = _synthetic_candles(n=120, freq="1min", drift=0.0005)
+    idx = pd.date_range("2026-01-02", periods=2, freq="1min", tz="UTC")
+    valid_row = {
+        "atr_pips_14": 1.2,
+        "vol_pips_20": 1.0,
+        "ret_pips_1": 0.4,
+        "ret_pips_3": 0.8,
+        "ret_pips_12": 1.6,
+        "ma_gap_pips_10_20": 0.6,
+        "close_ma20_pips": 0.3,
+        "close_ma50_pips": 0.2,
+        "rsi_14": 55.0,
+        "range_pos": 0.55,
+        "trend_slope_pips_20": 0.2,
+        "trend_slope_pips_50": 0.1,
+        "trend_accel_pips": 0.05,
+        "sr_balance_20": 0.1,
+        "breakout_up_pips_20": 0.4,
+        "breakout_down_pips_20": 0.2,
+        "donchian_width_pips_20": 2.0,
+        "range_compression_20": 0.3,
+        "trend_pullback_norm_20": 0.1,
+    }
+    invalid_latest = dict(valid_row)
+    invalid_latest["atr_pips_14"] = float("nan")
+    frame = pd.DataFrame([valid_row, invalid_latest], index=idx)
+
+    monkeypatch.setattr(forecast_sklearn, "compute_feature_frame", lambda _: frame)
+
+    row = forecast_gate._technical_prediction_for_horizon(
+        candles,
+        horizon="1m",
+        step_bars=1,
+        timeframe="M1",
+    )
+    assert isinstance(row, dict)
+    assert row.get("status") == "ready"
+    assert bool(row.get("forecast_ready")) is True
+    assert row.get("feature_ts") == idx[0].isoformat()
+
+
 def test_decide_includes_range_band_fields(monkeypatch) -> None:
     monkeypatch.setattr(forecast_gate, "_load_bundle_cached", lambda: None)
     monkeypatch.setattr(
