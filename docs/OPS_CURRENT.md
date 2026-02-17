@@ -1,12 +1,11 @@
 # Ops Current (2026-02-11 JST)
 
 ## 0. 2026-02-17 UTC 5秒スキャをB専用へ固定
-- 無印5秒スキャ（`scalp_ping_5s_live`）は `SCALP_PING_5S_ENABLED=0` を明示し、ENTRYを停止。
-- B版（`scalp_ping_5s_b_live`）は `SCALP_PING_5S_B_ENABLED=1` を明示し、5秒スキャの唯一のENTRY系として運用。
-- 対象env:
-  - `ops/env/scalp_ping_5s.env`
-  - `ops/env/quant-scalp-ping-5s.env`
-  - `ops/env/quant-scalp-ping-5s-b.env`
+- 無印5秒スキャ（`scalp_ping_5s_live`）の運用導線を削除。
+  - 削除: `quant-scalp-ping-5s.service`, `quant-scalp-ping-5s-exit.service`
+  - 削除: `ops/env/quant-scalp-ping-5s.env`, `ops/env/quant-scalp-ping-5s-exit.env`, `ops/env/scalp_ping_5s.env`
+- 5秒スキャは B版（`scalp_ping_5s_b_live`）のみ稼働。
+  - 使用env: `ops/env/quant-scalp-ping-5s-b.env`, `ops/env/quant-scalp-ping-5s-b-exit.env`, `ops/env/scalp_ping_5s_b.env`
 
 ## 1. 2026-02-12 JST 追加チューニング（稼働戦略のみ）
 - `TickImbalance` / `LevelReject` / `M1Scalper` だけを対象に EXIT の time-stop を短縮。

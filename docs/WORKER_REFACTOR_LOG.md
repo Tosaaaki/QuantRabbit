@@ -1235,6 +1235,18 @@
   - `ops/env/quant-scalp-ping-5s-b.env`: `SCALP_PING_5S_B_ENABLED=1` に変更。
 - 意図: systemdの `EnvironmentFile` 多重読み込み時でも、無印は常時idle、Bは常時有効の状態を維持する。
 
+### 2026-02-17（追記）5秒スキャ無印の運用導線を削除（B専用化完了）
+
+- 目的: `scalp_ping_5s_live`（無印）の再起動・再有効化経路を消し、5秒スキャを `scalp_ping_5s_b_live` に一本化。
+- 削除:
+  - systemd: `quant-scalp-ping-5s.service`, `quant-scalp-ping-5s-exit.service`
+  - autotune unit: `quant-scalp-ping-5s-autotune.service`, `quant-scalp-ping-5s-autotune.timer`
+  - env: `ops/env/quant-scalp-ping-5s.env`, `ops/env/quant-scalp-ping-5s-exit.env`, `ops/env/scalp_ping_5s.env`
+- 監査更新:
+  - `scripts/ops_v2_audit.py` の mandatory pair を `quant-scalp-ping-5s-b*` へ切替。
+- 仕様更新:
+  - `AGENTS.md`, `docs/WORKER_ROLE_MATRIX_V2.md`, `docs/OPS_CURRENT.md` を B専用前提へ更新。
+
 ### 2026-02-17（追記）戦略ローカル予測で TP/ロット補正を標準化
 
 - `analysis/technique_engine.py`

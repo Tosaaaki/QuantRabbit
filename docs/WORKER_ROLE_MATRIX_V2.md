@@ -32,7 +32,7 @@
 ### 3) 戦略実行面（完全1:1）
 
 - 戦略の ENTRY / EXIT はセットで1:1運用
-- `quant-scalp-ping-5s` + `quant-scalp-ping-5s-exit`
+- `quant-scalp-ping-5s-b` + `quant-scalp-ping-5s-b-exit`
 - `quant-scalp-macd-rsi-div` + `quant-scalp-macd-rsi-div-exit`
 - `quant-scalp-macd-rsi-div-b` + `quant-scalp-macd-rsi-div-b-exit`
 - `quant-scalp-tick-imbalance` + `quant-scalp-tick-imbalance-exit`
@@ -73,7 +73,7 @@
   - `strategy_entry` 側は `technical_context` の保存補完のみで、上記要求を強制的に追加しない。
 - 現行マッピング（`_STRATEGY_TECH_CONTEXT_REQUIREMENTS`）:
   - Scalp系
-    - `scalp_ping_5s`, `scalp_ping_5s_b`
+    - `scalp_ping_5s_b`
     - `scalp_m1scalper`
     - `scalp_tick_imbalance`/`scalp_tick_imbalance_rrplus` 系
     - `scalp_tick_wick_reversal`, `scalp_wick_reversal`, `scalp_wick_reversal_pro`, `scalp_wick_reversal_hf`, `scalp_tick_wick_reversal_hf`
@@ -187,7 +187,7 @@
   `order_manager` / `position_manager` は各ワーカー固定実行のため、service-mode の制御は専用 env でオーバーライド:
   - `ops/env/quant-order-manager.env`
   - `ops/env/quant-position-manager.env`
-- strategy 固有の追加設定は `ops/env/scalp_ping_5s.env` などの既存上書き env に加え、各ENTRY/EXIT戦略の基本設定を
+- strategy 固有の追加設定は `ops/env/scalp_ping_5s_b.env` などの既存上書き env に加え、各ENTRY/EXIT戦略の基本設定を
   `ops/env/quant-<service>.env` へ集約する。
 
 - この図は V2 運用で構成が変わるたびに更新する（組織図更新の必須運用）。  
@@ -208,7 +208,7 @@
 - 運用整備（2026-02-16 追加）
   - 戦略ENTRYの出力に `entry_probability` / `entry_units_intent` を必須化し、V2本体戦略から `order_manager` への意図受け渡しを統一。
   - `WORKER_REFACTOR_LOG.md` の同時追記を行い、実装・図面の変更差分を同一コミットへ反映。
-- 5秒スキャでは `SCALP_PING_5S_MIN_UNITS` を `50` まで下げる運用を許容するため、`workers/scalp_ping_5s/config.py` の
+- 5秒スキャBでは `SCALP_PING_5S_B_MIN_UNITS` を `50` まで下げる運用を許容するため、`workers/scalp_ping_5s/config.py` の
   ローカル最小ロット下限を固定100から可変化（`max(1, ...)`）して、`ORDER_MIN_UNITS_SCALP_FAST`（50）との整合を担保。
 - 運用整備（2026-02-16）
   - VM側で `quantrabbit.service` を除去し、レガシー戦略・補助ユニット（`quant-impulse-retest-s5*`, `quant-micro-adaptive-revert*`, `quant-trend-reclaim-long*`, `quant-margin-relief-exit*`, `quant-hard-stop-backfill*`, `quant-realtime-metrics*`, precision 系）を停止・無効化。

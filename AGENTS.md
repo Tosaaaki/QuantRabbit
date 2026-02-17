@@ -60,7 +60,7 @@
 - `docs/RANGE_MODE.md`: レンジモード強化とオンラインチューニング運用。
 - `docs/OPS_GCP_RUNBOOK.md`: GCP/VM 運用ランブック。
 - `docs/OPS_SKILLS.md`: 日次運用スキル運用。
-- `docs/KATA_SCALP_PING_5S.md`: 5秒スキャ（`scalp_ping_5s`）の型（Kata）設計・運用。
+- `docs/KATA_SCALP_PING_5S.md`: 5秒スキャB（`scalp_ping_5s_b`）の型（Kata）設計・運用。
 - `docs/KATA_SCALP_M1SCALPER.md`: M1スキャ（`scalp_m1scalper`）の型（Kata）設計・運用。
 - `docs/KATA_MICRO_RANGEBREAK.md`: micro（`MicroRangeBreak`）の型（Kata）設計・運用。
 - `docs/KATA_PROGRESS.md`: 型（Kata）の進捗ログ（VMスナップショット/展開計画）。
@@ -138,7 +138,7 @@ flowchart LR
   - `suggested_multiplier` と `drift` でロットを縮小/拡大（下限未満は `pattern_scale_below_min`）。
 - 重要: デフォルトは戦略opt-in。`ORDER_PATTERN_GATE_GLOBAL_OPT_IN=0` を維持し、各戦略ワーカーの `entry_thesis` に `pattern_gate_opt_in=true` を明示したものだけ適用する。
 - opt-in 戦略（main 実装済み）:
-- `scalp_ping_5s`: `SCALP_PING_5S_PATTERN_GATE_OPT_IN=1`
+- `scalp_ping_5s_b`: `SCALP_PING_5S_B_PATTERN_GATE_OPT_IN=1`
 - `scalp_m1scalper`: `SCALP_M1SCALPER_PATTERN_GATE_OPT_IN=1`
 - `TickImbalance`（`workers/scalp_precision`）: `TICK_IMB_PATTERN_GATE_OPT_IN=1`（+必要なら `TICK_IMB_PATTERN_GATE_ALLOW_GENERIC=1`）
 - `MicroRangeBreak`（`workers/micro_multistrat`）: `MICRO_RANGEBREAK_PATTERN_GATE_OPT_IN=1`（+必要なら `MICRO_RANGEBREAK_PATTERN_GATE_ALLOW_GENERIC=1`）
@@ -168,7 +168,7 @@ flowchart LR
   ```
   - 主要 unit の env/起動引数（照合）
   ```bash
-  gcloud compute ssh fx-trader-vm --project=quantrabbit --zone=asia-northeast1-a --tunnel-through-iap --command "for u in quant-order-manager.service quant-position-manager.service quant-strategy-control.service quant-market-data-feed.service quant-scalp-ping-5s.service quant-scalp-ping-5s-exit.service quant-micro-multi.service quant-micro-multi-exit.service quant-scalp-macd-rsi-div.service quant-scalp-macd-rsi-div-exit.service; do if systemctl cat \"$u\" >/dev/null 2>&1; then echo \"---$u---\"; systemctl cat \"$u\" | sed -n '1,130p'; fi; done"
+  gcloud compute ssh fx-trader-vm --project=quantrabbit --zone=asia-northeast1-a --tunnel-through-iap --command "for u in quant-order-manager.service quant-position-manager.service quant-strategy-control.service quant-market-data-feed.service quant-scalp-ping-5s-b.service quant-scalp-ping-5s-b-exit.service quant-micro-multi.service quant-micro-multi-exit.service quant-scalp-macd-rsi-div.service quant-scalp-macd-rsi-div-exit.service; do if systemctl cat \"$u\" >/dev/null 2>&1; then echo \"---$u---\"; systemctl cat \"$u\" | sed -n '1,130p'; fi; done"
   ```
   - `main` 側自動監査（service化）:
   ```bash
@@ -181,7 +181,7 @@ flowchart LR
   - 戦略workerの運用ルール（監査用）
   - `systemctl cat` で `EnvironmentFile=-/home/tossaki/QuantRabbit/ops/env/quant-v2-runtime.env` と
     `EnvironmentFile=-/home/tossaki/QuantRabbit/ops/env/quant-<worker>.env` の両方が存在することを確認する。
-    - 例: `quant-scalp-ping-5s*.service` は上記2つ＋戦略オーバーライドenv (`scalp_ping_5s*.env`) を持つ。
+    - 例: `quant-scalp-ping-5s-b*.service` は上記2つ＋戦略オーバーライドenv (`scalp_ping_5s_b.env`) を持つ。
     - `quant-order-manager.service` / `quant-position-manager.service` は
       `ops/env/quant-order-manager.env` / `ops/env/quant-position-manager.env` を持つことを確認する。
 - 判定のゴール

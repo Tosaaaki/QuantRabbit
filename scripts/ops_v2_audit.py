@@ -199,7 +199,7 @@ def main() -> int:
     ]
 
     mandatory_pairs = [
-        ("quant-scalp-ping-5s.service", "quant-scalp-ping-5s-exit.service"),
+        ("quant-scalp-ping-5s-b.service", "quant-scalp-ping-5s-b-exit.service"),
         ("quant-micro-rangebreak.service", "quant-micro-rangebreak-exit.service"),
         ("quant-micro-levelreactor.service", "quant-micro-levelreactor-exit.service"),
         ("quant-micro-vwapbound.service", "quant-micro-vwapbound-exit.service"),
@@ -220,7 +220,6 @@ def main() -> int:
     ]
 
     optional_pairs = [
-        ("quant-scalp-ping-5s-b.service", "quant-scalp-ping-5s-b-exit.service"),
         ("quant-scalp-macd-rsi-div-b.service", "quant-scalp-macd-rsi-div-b-exit.service"),
         ("quant-scalp-rangefader.service", "quant-scalp-rangefader-exit.service"),
     ]
