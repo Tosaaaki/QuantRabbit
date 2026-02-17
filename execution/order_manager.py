@@ -8956,6 +8956,7 @@ async def market_order(
     if (
         quote
         and quote.get("spread_pips") is not None
+        and not preserve_strategy_intent
     ):
         _trace("spread_check")
         spread_threshold = _order_spread_block_pips(

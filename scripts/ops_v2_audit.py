@@ -212,6 +212,7 @@ def main() -> int:
     optional_pairs = [
         ("quant-scalp-ping-5s-b.service", "quant-scalp-ping-5s-b-exit.service"),
         ("quant-scalp-macd-rsi-div-b.service", "quant-scalp-macd-rsi-div-b-exit.service"),
+        ("quant-scalp-rangefader.service", "quant-scalp-rangefader-exit.service"),
     ]
 
     required_env_by_service: dict[str, list[str]] = {
