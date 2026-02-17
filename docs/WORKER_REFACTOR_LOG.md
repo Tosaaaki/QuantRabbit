@@ -1100,3 +1100,12 @@
 
 - `$(date +
 - `2026-02-17`: 旧戦略残骸の最終除去を追加。`quant-m1scalper*` 系 (`systemd`/`ops/env` / VM `/etc/systemd/system` / VMリポジトリ `systemd` ディレクトリ) を一括廃止し、VM上の `systemctl list-unit-files` からも一致除去。`quant-impulse-retest-s5*` と `quant-micro-adaptive-revert*` 系も同時に除去・非起動化。
+
+### 2026-02-17（追記）factor_cache の確定足更新を market_data_feed で再接続
+
+- `workers/market_data_feed/worker.py`
+  - `start_candle_stream` へ渡すハンドラに `indicators.factor_cache.on_candle` を追加。
+  - これにより `M1` の終了足が `logs/factor_cache.json` へ永続反映される経路を復元。
+- 変更意図: `on_candle_live` は同プロセスの即時計算には有効だが、別プロセスの戦略ワーカーからは
+  `refresh_cache_from_disk()` 経由で読み出すため、確定足更新の永続化がないと
+  `factor_stale` が継続して発生し続けるため。

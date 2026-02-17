@@ -233,7 +233,7 @@
 flowchart LR
   OANDA["OANDA API"] --> MD["quant-market-data-feed<br>/workers/market_data_feed/worker.py"]
   MD --> TW["market_data.tick_window.record"]
-  MD --> FC["indicators.factor_cache.on_candle_live"]
+  MD --> FC["indicators.factor_cache.on_candle / on_candle_live"]
 
   subgraph "戦略サイド（並行）"
     SCW[ "strategy ENTRY workers<br>/workers/*/worker.py" ]

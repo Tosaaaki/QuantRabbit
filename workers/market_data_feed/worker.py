@@ -70,7 +70,14 @@ async def _noop_handler(_: Candle) -> None:
 
 
 def _build_handlers(timeframes: Sequence[TimeFrame]) -> List[Tuple[TimeFrame, Callable[[Candle], Any]]]:
-    return [(tf, _noop_handler) for tf in timeframes]
+    try:
+        from indicators.factor_cache import on_candle as factor_on_candle
+    except Exception:
+        LOG.warning(
+            "[MARKET_DATA_FEED] factor_cache.on_candle import failed; factor_cache will only receive live updates in this process"
+        )
+        factor_on_candle = None
+    return [(tf, factor_on_candle or _noop_handler) for tf in timeframes]
 
 
 async def market_data_feed_worker() -> None:
