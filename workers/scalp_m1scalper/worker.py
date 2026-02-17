@@ -182,7 +182,10 @@ def _bb_entry_allowed(style, side, price, fac_m1, *, range_active=None, conf_val
                     "result": "hard_reject",
                     "reject_reason": "price_inside_mid_wrong_side",
                 }
-            distance_pips = max(0.0, price - upper) / _BB_PIP
+            # トレンドロングは下限（底）寄りのみ許可。上辺方向への追随は不可。
+            distance_pips = (price - lower) / _BB_PIP
+            if distance_pips < 0.0:
+                distance_pips = 0.0
         else:
             if price > mid:
                 mid_distance_pips = (price - mid) / _BB_PIP
@@ -234,7 +237,10 @@ def _bb_entry_allowed(style, side, price, fac_m1, *, range_active=None, conf_val
                     "result": "hard_reject",
                     "reject_reason": "price_inside_mid_wrong_side",
                 }
-            distance_pips = max(0.0, lower - price) / _BB_PIP
+            # トレンドショートは上限（天井）寄りのみ許可。下方向への追随は不可。
+            distance_pips = (upper - price) / _BB_PIP
+            if distance_pips < 0.0:
+                distance_pips = 0.0
         block_limit = max(
             _BB_ENTRY_SCALP_EXT_PIPS if orig_style == "scalp" else _BB_ENTRY_TREND_EXT_PIPS,
             span_pips * (
