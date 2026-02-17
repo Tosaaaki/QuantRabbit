@@ -7,6 +7,10 @@ This script compares:
 
 It also reports directional consistency of `breakout_bias_20` against realized future
 move direction for each horizon step.
+
+In addition, this script compares quantile-range quality:
+- band coverage (realized move inside forecast upper/lower band)
+- average band width (narrower is better if coverage is preserved)
 """
 
 from __future__ import annotations
@@ -18,6 +22,7 @@ import math
 from dataclasses import asdict
 from dataclasses import dataclass
 from pathlib import Path
+from statistics import NormalDist
 import sys
 from typing import Any
 from typing import Optional
@@ -35,6 +40,10 @@ TECH_SCORE_GAIN = 1.0
 TECH_PROB_STRENGTH = 0.75
 TECH_PROJECTION_WEIGHT = 0.38
 DEFAULT_FEATURE_EXPANSION_GAIN = 0.35
+RANGE_BAND_LOWER_Q = 0.20
+RANGE_BAND_UPPER_Q = 0.80
+RANGE_SIGMA_FLOOR_PIPS = 0.35
+RANGE_NORMAL = NormalDist()
 
 TECH_HORIZON_CFG = {
     "1m": {"trend_w": 0.9, "mr_w": 0.1, "temp": 0.9},
@@ -61,6 +70,20 @@ class EvalRow:
     breakout_hit: float
     breakout_hit_filtered: float
     breakout_filtered_coverage: float
+    range_coverage_before: float
+    range_coverage_after: float
+    range_coverage_delta: float
+    range_width_before: float
+    range_width_after: float
+    range_width_delta: float
+
+
+@dataclass(frozen=True)
+class StepPrediction:
+    p_up: float
+    expected_pips: float
+    range_low_pips: float
+    range_high_pips: float
 
 
 @dataclass(frozen=True)
@@ -84,6 +107,31 @@ def _safe_float(value: Any, default: float = 0.0) -> float:
 def _sigmoid(x: float) -> float:
     x = _clamp(float(x), -40.0, 40.0)
     return 1.0 / (1.0 + math.exp(-x))
+
+
+def _normal_quantile_z(quantile: float) -> float:
+    q = _clamp(float(quantile), 0.01, 0.99)
+    try:
+        return float(RANGE_NORMAL.inv_cdf(q))
+    except Exception:
+        return 0.0
+
+
+def _build_range_band(
+    *,
+    expected_pips: float,
+    expected_move: float,
+    projection_confidence: float,
+) -> tuple[float, float]:
+    sigma = max(
+        RANGE_SIGMA_FLOOR_PIPS,
+        float(expected_move) * (0.62 + 0.38 * (1.0 - _clamp(float(projection_confidence), 0.0, 1.0))),
+    )
+    low = float(expected_pips) + _normal_quantile_z(RANGE_BAND_LOWER_Q) * sigma
+    high = float(expected_pips) + _normal_quantile_z(RANGE_BAND_UPPER_Q) * sigma
+    if low > high:
+        low, high = high, low
+    return float(low), float(high)
 
 
 def _parse_ts(value: Any) -> Optional[pd.Timestamp]:
@@ -194,7 +242,7 @@ def _prediction_before(
     sample_count: int,
     projection_score: float = 0.0,
     projection_confidence: float = 0.0,
-) -> tuple[float, float]:
+) -> StepPrediction:
     atr = max(0.45, abs(_safe_float(row.get("atr_pips_14"), 0.0)))
     vol = max(0.2, abs(_safe_float(row.get("vol_pips_20"), 0.0)))
     ret1 = _safe_float(row.get("ret_pips_1"), 0.0) / atr
@@ -255,7 +303,17 @@ def _prediction_before(
     step_scale = math.sqrt(max(1.0, float(step)) / 12.0)
     expected_move = max(0.35, vol * step_scale * (0.92 + 0.25 * projection_confidence))
     expected_pips = (p_up - 0.5) * 2.0 * expected_move
-    return p_up, expected_pips
+    range_low_pips, range_high_pips = _build_range_band(
+        expected_pips=expected_pips,
+        expected_move=expected_move,
+        projection_confidence=projection_confidence,
+    )
+    return StepPrediction(
+        p_up=float(p_up),
+        expected_pips=float(expected_pips),
+        range_low_pips=float(range_low_pips),
+        range_high_pips=float(range_high_pips),
+    )
 
 
 def _prediction_after(
@@ -266,7 +324,7 @@ def _prediction_after(
     feature_expansion_gain: float,
     projection_score: float = 0.0,
     projection_confidence: float = 0.0,
-) -> tuple[float, float]:
+) -> StepPrediction:
     atr = max(0.45, abs(_safe_float(row.get("atr_pips_14"), 0.0)))
     vol = max(0.2, abs(_safe_float(row.get("vol_pips_20"), 0.0)))
     ret1 = _safe_float(row.get("ret_pips_1"), 0.0) / atr
@@ -375,7 +433,17 @@ def _prediction_after(
     step_scale = math.sqrt(max(1.0, float(step)) / 12.0)
     expected_move = max(0.35, vol * step_scale * (0.92 + 0.25 * projection_confidence))
     expected_pips = (p_up - 0.5) * 2.0 * expected_move
-    return p_up, expected_pips
+    range_low_pips, range_high_pips = _build_range_band(
+        expected_pips=expected_pips,
+        expected_move=expected_move,
+        projection_confidence=projection_confidence,
+    )
+    return StepPrediction(
+        p_up=float(p_up),
+        expected_pips=float(expected_pips),
+        range_low_pips=float(range_low_pips),
+        range_high_pips=float(range_high_pips),
+    )
 
 
 def _evaluate_step(
@@ -417,6 +485,10 @@ def _evaluate_step(
     hit_after: list[int] = []
     mae_before: list[float] = []
     mae_after: list[float] = []
+    range_coverage_before: list[int] = []
+    range_coverage_after: list[int] = []
+    range_width_before: list[float] = []
+    range_width_after: list[float] = []
     breakout_hits: list[int] = []
     breakout_filtered_hits: list[int] = []
     breakout_filtered_count = 0
@@ -426,18 +498,28 @@ def _evaluate_step(
         if abs(realized) < 1e-12:
             continue
 
-        _, expected_before = _prediction_before(row, step=step, sample_count=i)
-        _, expected_after = _prediction_after(
+        pred_before = _prediction_before(row, step=step, sample_count=i)
+        pred_after = _prediction_after(
             row,
             step=step,
             sample_count=i,
             feature_expansion_gain=feature_expansion_gain,
         )
+        expected_before = pred_before.expected_pips
+        expected_after = pred_after.expected_pips
 
         hit_before.append(1 if expected_before * realized > 0.0 else 0)
         hit_after.append(1 if expected_after * realized > 0.0 else 0)
         mae_before.append(abs(expected_before - realized))
         mae_after.append(abs(expected_after - realized))
+        range_coverage_before.append(
+            1 if pred_before.range_low_pips <= realized <= pred_before.range_high_pips else 0
+        )
+        range_coverage_after.append(
+            1 if pred_after.range_low_pips <= realized <= pred_after.range_high_pips else 0
+        )
+        range_width_before.append(pred_before.range_high_pips - pred_before.range_low_pips)
+        range_width_after.append(pred_after.range_high_pips - pred_after.range_low_pips)
 
         breakout_bias = float(row["breakout_up_pips_20"] - row["breakout_down_pips_20"])
         breakout_hits.append(1 if breakout_bias * realized > 0.0 else 0)
@@ -460,6 +542,12 @@ def _evaluate_step(
             breakout_hit=0.0,
             breakout_hit_filtered=0.0,
             breakout_filtered_coverage=0.0,
+            range_coverage_before=0.0,
+            range_coverage_after=0.0,
+            range_coverage_delta=0.0,
+            range_width_before=0.0,
+            range_width_after=0.0,
+            range_width_delta=0.0,
         )
 
     hit_b = sum(hit_before) / float(n)
@@ -473,6 +561,10 @@ def _evaluate_step(
         else 0.0
     )
     coverage = breakout_filtered_count / float(n)
+    range_cov_before = sum(range_coverage_before) / float(len(range_coverage_before))
+    range_cov_after = sum(range_coverage_after) / float(len(range_coverage_after))
+    range_width_b = sum(range_width_before) / float(len(range_width_before))
+    range_width_a = sum(range_width_after) / float(len(range_width_after))
 
     return EvalRow(
         step=step,
@@ -487,6 +579,12 @@ def _evaluate_step(
         breakout_hit=breakout_hit,
         breakout_hit_filtered=breakout_hit_filtered,
         breakout_filtered_coverage=coverage,
+        range_coverage_before=range_cov_before,
+        range_coverage_after=range_cov_after,
+        range_coverage_delta=range_cov_after - range_cov_before,
+        range_width_before=range_width_b,
+        range_width_after=range_width_a,
+        range_width_delta=range_width_a - range_width_b,
     )
 
 
@@ -580,14 +678,18 @@ def main() -> int:
         "step horizon n "
         "hit_before hit_after hit_delta "
         "mae_before mae_after mae_delta "
-        "breakout_hit breakout_hit_filtered breakout_filtered_coverage"
+        "breakout_hit breakout_hit_filtered breakout_filtered_coverage "
+        "range_cov_before range_cov_after range_cov_delta "
+        "range_width_before range_width_after range_width_delta"
     )
     for row in rows:
         print(
             f"{row.step:>4} {row.horizon:>7} {row.n:>5} "
             f"{row.hit_before:>10.4f} {row.hit_after:>9.4f} {row.hit_delta:>9.4f} "
             f"{row.mae_before:>10.4f} {row.mae_after:>9.4f} {row.mae_delta:>9.4f} "
-            f"{row.breakout_hit:>11.4f} {row.breakout_hit_filtered:>20.4f} {row.breakout_filtered_coverage:>26.4f}"
+            f"{row.breakout_hit:>11.4f} {row.breakout_hit_filtered:>20.4f} {row.breakout_filtered_coverage:>26.4f} "
+            f"{row.range_coverage_before:>16.4f} {row.range_coverage_after:>15.4f} {row.range_coverage_delta:>14.4f} "
+            f"{row.range_width_before:>18.4f} {row.range_width_after:>17.4f} {row.range_width_delta:>16.4f}"
         )
 
     if args.json_out:

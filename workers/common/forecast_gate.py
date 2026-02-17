@@ -22,6 +22,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from datetime import timezone
 from pathlib import Path
+from statistics import NormalDist
 import time
 from typing import Any
 from typing import Optional
@@ -121,6 +122,19 @@ _HORIZON_SCALP = os.getenv("FORECAST_GATE_HORIZON_SCALP", "5m").strip()
 _HORIZON_MICRO = os.getenv("FORECAST_GATE_HORIZON_MICRO", "8h").strip()
 _HORIZON_MACRO = os.getenv("FORECAST_GATE_HORIZON_MACRO", "1d").strip()
 _PIP_SIZE = max(1e-8, _env_float("FORECAST_GATE_PIP_SIZE", 0.01))
+_RANGE_LOWER_Q = max(
+    0.01,
+    min(0.49, _env_float("FORECAST_RANGE_BAND_LOWER_Q", 0.20)),
+)
+_RANGE_UPPER_Q = max(
+    0.51,
+    min(0.99, _env_float("FORECAST_RANGE_BAND_UPPER_Q", 0.80)),
+)
+if _RANGE_UPPER_Q <= _RANGE_LOWER_Q:
+    _RANGE_LOWER_Q = 0.20
+    _RANGE_UPPER_Q = 0.80
+_RANGE_SIGMA_FLOOR_PIPS = max(0.05, _env_float("FORECAST_RANGE_SIGMA_FLOOR_PIPS", 0.35))
+_RANGE_NORMAL = NormalDist()
 _TECH_PREFERRED_HORIZONS = _env_set("FORECAST_GATE_TECH_PREFERRED_HORIZONS")
 if not _TECH_PREFERRED_HORIZONS:
     _TECH_PREFERRED_HORIZONS = {"1m", "5m", "10m"}
@@ -137,6 +151,11 @@ class ForecastDecision:
     expected_pips: Optional[float] = None
     anchor_price: Optional[float] = None
     target_price: Optional[float] = None
+    range_low_pips: Optional[float] = None
+    range_high_pips: Optional[float] = None
+    range_sigma_pips: Optional[float] = None
+    range_low_price: Optional[float] = None
+    range_high_price: Optional[float] = None
     tp_pips_hint: Optional[float] = None
     sl_pips_cap: Optional[float] = None
     rr_floor: Optional[float] = None
@@ -394,6 +413,116 @@ def _safe_abs_float(value: Any, default: Optional[float] = None) -> Optional[flo
 def _sigmoid(x: float) -> float:
     x = _clamp(float(x), -40.0, 40.0)
     return 1.0 / (1.0 + math.exp(-x))
+
+
+def _normal_quantile_z(quantile: float) -> float:
+    q = _clamp(float(quantile), 0.01, 0.99)
+    try:
+        return float(_RANGE_NORMAL.inv_cdf(q))
+    except Exception:
+        return 0.0
+
+
+def _estimate_range_sigma_pips(
+    row: dict[str, Any],
+    *,
+    fallback: Optional[float] = None,
+) -> float:
+    candidates: tuple[Any, ...] = (
+        row.get("range_sigma_pips"),
+        row.get("dispersion_pips"),
+        fallback,
+    )
+    for candidate in candidates:
+        sigma = _safe_optional_float(candidate)
+        if sigma is not None and sigma > 0.0:
+            return max(_RANGE_SIGMA_FLOOR_PIPS, float(sigma))
+
+    expected = abs(_safe_float(row.get("expected_pips"), 0.0))
+    step_bars = max(1.0, _safe_float(row.get("step_bars"), 12.0))
+    min_move = max(0.2, _safe_float(row.get("min_move_pips"), 0.6))
+    projection_conf = _clamp(_safe_float(row.get("projection_confidence"), 0.0), 0.0, 1.0)
+    sigma = (
+        0.42 * max(0.25, expected)
+        + 0.35 * min_move
+        + 0.18 * math.sqrt(step_bars)
+        + 0.22 * (1.0 - projection_conf)
+    )
+    if not math.isfinite(sigma):
+        sigma = _RANGE_SIGMA_FLOOR_PIPS
+    return max(_RANGE_SIGMA_FLOOR_PIPS, float(sigma))
+
+
+def _attach_range_band(
+    row: dict[str, Any],
+    *,
+    fallback_sigma: Optional[float] = None,
+) -> dict[str, Any]:
+    if not isinstance(row, dict):
+        return row
+
+    expected_pips = _safe_optional_float(row.get("expected_pips"))
+    if expected_pips is None:
+        row.setdefault("range_low_pips", None)
+        row.setdefault("range_high_pips", None)
+        row.setdefault("range_sigma_pips", None)
+        row.setdefault("range_low_price", None)
+        row.setdefault("range_high_price", None)
+        return row
+
+    current_low = _safe_optional_float(row.get("range_low_pips"))
+    current_high = _safe_optional_float(row.get("range_high_pips"))
+    if current_low is not None and current_high is not None and current_low < current_high:
+        row["range_low_pips"] = round(float(current_low), 4)
+        row["range_high_pips"] = round(float(current_high), 4)
+        sigma_existing = _safe_optional_float(row.get("range_sigma_pips"))
+        if sigma_existing is None or sigma_existing <= 0.0:
+            span = max(1e-6, _normal_quantile_z(_RANGE_UPPER_Q) - _normal_quantile_z(_RANGE_LOWER_Q))
+            sigma_existing = max(_RANGE_SIGMA_FLOOR_PIPS, (current_high - current_low) / span)
+        row["range_sigma_pips"] = round(float(max(_RANGE_SIGMA_FLOOR_PIPS, sigma_existing)), 4)
+        row.setdefault("q10_pips", round(expected_pips + _normal_quantile_z(0.10) * row["range_sigma_pips"], 4))
+        row.setdefault("q50_pips", round(expected_pips, 4))
+        row.setdefault("q90_pips", round(expected_pips + _normal_quantile_z(0.90) * row["range_sigma_pips"], 4))
+        return row
+
+    sigma = _estimate_range_sigma_pips(row, fallback=fallback_sigma)
+    lower_z = _normal_quantile_z(_RANGE_LOWER_Q)
+    upper_z = _normal_quantile_z(_RANGE_UPPER_Q)
+    low = expected_pips + lower_z * sigma
+    high = expected_pips + upper_z * sigma
+    if low > high:
+        low, high = high, low
+
+    row["range_low_pips"] = round(float(low), 4)
+    row["range_high_pips"] = round(float(high), 4)
+    row["range_sigma_pips"] = round(float(sigma), 4)
+
+    # Optional broader quantiles for VM-side monitoring.
+    row.setdefault("q10_pips", round(expected_pips + _normal_quantile_z(0.10) * sigma, 4))
+    row.setdefault("q50_pips", round(expected_pips, 4))
+    row.setdefault("q90_pips", round(expected_pips + _normal_quantile_z(0.90) * sigma, 4))
+    return row
+
+
+def _attach_range_prices(row: dict[str, Any]) -> dict[str, Any]:
+    if not isinstance(row, dict):
+        return row
+    anchor = _safe_optional_float(row.get("anchor_price"))
+    low = _safe_optional_float(row.get("range_low_pips"))
+    high = _safe_optional_float(row.get("range_high_pips"))
+    if anchor is None or low is None or high is None:
+        existing_low = _safe_optional_float(row.get("range_low_price"))
+        existing_high = _safe_optional_float(row.get("range_high_price"))
+        if existing_low is not None and existing_high is not None:
+            row["range_low_price"] = round(float(existing_low), 5)
+            row["range_high_price"] = round(float(existing_high), 5)
+            return row
+        row["range_low_price"] = None
+        row["range_high_price"] = None
+        return row
+    row["range_low_price"] = round(anchor + low * float(_PIP_SIZE), 5)
+    row["range_high_price"] = round(anchor + high * float(_PIP_SIZE), 5)
+    return row
 
 
 def _normalize_strategy_key(text: str) -> str:
@@ -673,6 +802,7 @@ def _latest_close(candles: list[dict]) -> float | None:
 def _attach_price_target(row: dict[str, Any], candles: list[dict]) -> dict[str, Any]:
     if not isinstance(row, dict):
         return row
+    _attach_range_band(row)
     anchor = _latest_close(candles)
     if isinstance(anchor, float) and math.isfinite(anchor):
         row["anchor_price"] = round(anchor, 5)
@@ -684,7 +814,7 @@ def _attach_price_target(row: dict[str, Any], candles: list[dict]) -> dict[str, 
     else:
         row["anchor_price"] = None
         row["target_price"] = None
-    return row
+    return _attach_range_prices(row)
 
 
 def _attach_regime_profile(
@@ -1285,6 +1415,10 @@ def _technical_prediction_for_horizon(
     step_scale = math.sqrt(max(1.0, float(step_bars)) / 12.0)
     expected_move = max(0.35, vol * step_scale * (0.92 + 0.25 * projection_confidence))
     expected_pips = (p_up - 0.5) * 2.0 * expected_move
+    range_sigma_pips = max(
+        _RANGE_SIGMA_FLOOR_PIPS,
+        expected_move * (0.62 + 0.38 * (1.0 - projection_confidence)),
+    )
 
     feature_ts = None
     try:
@@ -1297,6 +1431,7 @@ def _technical_prediction_for_horizon(
             "horizon": horizon,
             "p_up": round(float(p_up), 6),
             "expected_pips": round(float(expected_pips), 4),
+            "range_sigma_pips": round(float(range_sigma_pips), 4),
             "feature_ts": feature_ts,
             "source": "technical",
             "status": "ready",
@@ -1384,10 +1519,14 @@ def _blend_prediction_rows(base_row: dict, tech_row: dict) -> dict:
     alpha = _AUTO_BLEND_TECH
     if alpha <= 0.0:
         return base_row
+    _attach_range_band(base_row)
+    _attach_range_band(tech_row)
     p_base = _safe_float(base_row.get("p_up"), 0.5)
     p_tech = _safe_float(tech_row.get("p_up"), p_base)
     e_base = _safe_float(base_row.get("expected_pips"), 0.0)
     e_tech = _safe_float(tech_row.get("expected_pips"), e_base)
+    sigma_base = _estimate_range_sigma_pips(base_row)
+    sigma_tech = _estimate_range_sigma_pips(tech_row, fallback=sigma_base)
     proj_base = _safe_float(
         base_row.get("projection_score"),
         _safe_float(tech_row.get("projection_score"), 0.0),
@@ -1399,6 +1538,7 @@ def _blend_prediction_rows(base_row: dict, tech_row: dict) -> dict:
     )
     proj_conf_tech = _safe_float(tech_row.get("projection_confidence"), proj_conf_base)
     blended_expected_pips = round((1.0 - alpha) * e_base + alpha * e_tech, 4)
+    blended_sigma = (1.0 - alpha) * sigma_base + alpha * sigma_tech
     anchor_price = base_row.get("anchor_price")
     if anchor_price is None:
         anchor_price = tech_row.get("anchor_price")
@@ -1412,6 +1552,7 @@ def _blend_prediction_rows(base_row: dict, tech_row: dict) -> dict:
         "expected_pips": blended_expected_pips,
         "anchor_price": anchor_price if anchor_price is not None else None,
         "target_price": blended_target_price,
+        "range_sigma_pips": round(float(blended_sigma), 4),
         "feature_ts": base_row.get("feature_ts") or tech_row.get("feature_ts"),
         "source": "blend",
         "projection_score": round((1.0 - alpha) * proj_base + alpha * proj_tech, 6),
@@ -1432,6 +1573,8 @@ def _blend_prediction_rows(base_row: dict, tech_row: dict) -> dict:
             6,
         ),
     }
+    _attach_range_band(row, fallback_sigma=blended_sigma)
+    _attach_range_prices(row)
     return _attach_regime_profile(
         row,
         edge=_safe_float(row.get("p_up"), 0.5),
@@ -1537,6 +1680,8 @@ def decide(
         row = technical_row
     if not isinstance(row, dict):
         return None
+    _attach_range_band(row)
+    _attach_range_prices(row)
 
     try:
         p_up = float(row.get("p_up"))
@@ -1628,6 +1773,11 @@ def decide(
             expected_pips=row.get("expected_pips"),
             anchor_price=row.get("anchor_price"),
             target_price=row.get("target_price"),
+            range_low_pips=_safe_optional_float(row.get("range_low_pips")),
+            range_high_pips=_safe_optional_float(row.get("range_high_pips")),
+            range_sigma_pips=_safe_optional_float(row.get("range_sigma_pips")),
+            range_low_price=_safe_optional_float(row.get("range_low_price")),
+            range_high_price=_safe_optional_float(row.get("range_high_price")),
             tp_pips_hint=_safe_abs_float(row.get("tp_pips_hint"), _safe_abs_float(row.get("expected_pips"))),
             sl_pips_cap=_safe_abs_float(row.get("sl_pips_cap")),
             rr_floor=_safe_optional_float(row.get("rr_floor")),
@@ -1662,6 +1812,11 @@ def decide(
             expected_pips=row.get("expected_pips"),
             anchor_price=row.get("anchor_price"),
             target_price=row.get("target_price"),
+            range_low_pips=_safe_optional_float(row.get("range_low_pips")),
+            range_high_pips=_safe_optional_float(row.get("range_high_pips")),
+            range_sigma_pips=_safe_optional_float(row.get("range_sigma_pips")),
+            range_low_price=_safe_optional_float(row.get("range_low_price")),
+            range_high_price=_safe_optional_float(row.get("range_high_price")),
             tp_pips_hint=_safe_abs_float(row.get("tp_pips_hint"), _safe_abs_float(row.get("expected_pips"))),
             sl_pips_cap=_safe_abs_float(row.get("sl_pips_cap")),
             rr_floor=_safe_optional_float(row.get("rr_floor")),
@@ -1703,6 +1858,11 @@ def decide(
             expected_pips=row.get("expected_pips"),
             anchor_price=row.get("anchor_price"),
             target_price=row.get("target_price"),
+            range_low_pips=_safe_optional_float(row.get("range_low_pips")),
+            range_high_pips=_safe_optional_float(row.get("range_high_pips")),
+            range_sigma_pips=_safe_optional_float(row.get("range_sigma_pips")),
+            range_low_price=_safe_optional_float(row.get("range_low_price")),
+            range_high_price=_safe_optional_float(row.get("range_high_price")),
             tp_pips_hint=_safe_abs_float(row.get("tp_pips_hint"), _safe_abs_float(row.get("expected_pips"))),
             sl_pips_cap=_safe_abs_float(row.get("sl_pips_cap")),
             rr_floor=_safe_optional_float(row.get("rr_floor")),
@@ -1746,6 +1906,11 @@ def decide(
                     expected_pips=row.get("expected_pips"),
                     anchor_price=row.get("anchor_price"),
                     target_price=row.get("target_price"),
+                    range_low_pips=_safe_optional_float(row.get("range_low_pips")),
+                    range_high_pips=_safe_optional_float(row.get("range_high_pips")),
+                    range_sigma_pips=_safe_optional_float(row.get("range_sigma_pips")),
+                    range_low_price=_safe_optional_float(row.get("range_low_price")),
+                    range_high_price=_safe_optional_float(row.get("range_high_price")),
                     tp_pips_hint=_safe_abs_float(row.get("tp_pips_hint"), _safe_abs_float(row.get("expected_pips"))),
                     sl_pips_cap=_safe_abs_float(row.get("sl_pips_cap")),
                     rr_floor=_safe_optional_float(row.get("rr_floor")),
@@ -1786,6 +1951,11 @@ def decide(
         expected_pips=row.get("expected_pips"),
         anchor_price=row.get("anchor_price"),
         target_price=row.get("target_price"),
+        range_low_pips=_safe_optional_float(row.get("range_low_pips")),
+        range_high_pips=_safe_optional_float(row.get("range_high_pips")),
+        range_sigma_pips=_safe_optional_float(row.get("range_sigma_pips")),
+        range_low_price=_safe_optional_float(row.get("range_low_price")),
+        range_high_price=_safe_optional_float(row.get("range_high_price")),
         tp_pips_hint=_safe_abs_float(row.get("tp_pips_hint"), _safe_abs_float(row.get("expected_pips"))),
         sl_pips_cap=_safe_abs_float(row.get("sl_pips_cap")),
         rr_floor=_safe_optional_float(row.get("rr_floor")),

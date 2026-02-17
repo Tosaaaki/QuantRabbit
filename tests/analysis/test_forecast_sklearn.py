@@ -9,6 +9,8 @@ from analysis.forecast_sklearn import (
     HorizonSpec,
     build_direction_dataset,
     compute_feature_frame,
+    predict_latest,
+    train_bundle,
     train_forecast_model,
 )
 
@@ -113,3 +115,29 @@ def test_train_forecast_model_smoke() -> None:
     assert model.horizon.name == "test"
     assert 0.0 <= metrics["brier"] <= 1.0
     assert metrics["logloss"] >= 0.0
+
+
+def test_predict_latest_includes_quantile_range_band() -> None:
+    candles = _synthetic_candles(n=760, freq="5min")
+    horizon = HorizonSpec("1h_test", timeframe="M5", step_bars=12, min_move_pips=1.0)
+    bundle, _ = train_bundle(
+        "USD_JPY",
+        {"M5": candles},
+        horizons=(horizon,),
+    )
+    rows = predict_latest(bundle, {"M5": candles})
+    row = rows["1h_test"]
+
+    for key in (
+        "q10_pips",
+        "q50_pips",
+        "q90_pips",
+        "range_low_pips",
+        "range_high_pips",
+        "range_sigma_pips",
+        "dispersion_pips",
+    ):
+        assert key in row
+
+    assert float(row["range_low_pips"]) < float(row["range_high_pips"])
+    assert float(row["range_sigma_pips"]) > 0.0

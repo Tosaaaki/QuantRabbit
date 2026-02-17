@@ -20,6 +20,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 import math
 from pathlib import Path
+from statistics import NormalDist
 from typing import Mapping, Optional, Sequence
 
 import numpy as np
@@ -33,6 +34,9 @@ from sklearn.preprocessing import StandardScaler
 
 
 PIP_USDJPY = 0.01
+_NORMAL_DIST = NormalDist()
+_RANGE_LOW_Q = 0.20
+_RANGE_HIGH_Q = 0.80
 
 
 @dataclass(frozen=True, slots=True)
@@ -96,6 +100,54 @@ class ForecastBundle:
 
 def utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+
+def _estimate_dispersion_pips(model: ForecastModel) -> float:
+    spread = abs(float(model.mean_up_pips) - float(model.mean_down_pips))
+    step_term = 0.22 * math.sqrt(max(1.0, float(model.horizon.step_bars)))
+    move_term = max(0.20, 0.75 * float(model.horizon.min_move_pips))
+    sigma = 0.42 * spread + move_term + step_term
+    if not math.isfinite(sigma):
+        return 0.50
+    return max(0.25, float(sigma))
+
+
+def _quantile_from_normal(*, mean_pips: float, sigma_pips: float, quantile: float) -> float:
+    q = min(0.99, max(0.01, float(quantile)))
+    sigma = max(1e-4, abs(float(sigma_pips)))
+    try:
+        z = _NORMAL_DIST.inv_cdf(q)
+    except Exception:
+        z = 0.0
+    value = float(mean_pips) + float(z) * sigma
+    if not math.isfinite(value):
+        return float(mean_pips)
+    return value
+
+
+def _build_range_band(*, expected_pips: float, sigma_pips: float) -> dict[str, float]:
+    low = _quantile_from_normal(mean_pips=expected_pips, sigma_pips=sigma_pips, quantile=_RANGE_LOW_Q)
+    high = _quantile_from_normal(
+        mean_pips=expected_pips,
+        sigma_pips=sigma_pips,
+        quantile=_RANGE_HIGH_Q,
+    )
+    if low > high:
+        low, high = high, low
+    return {
+        "q10_pips": round(
+            _quantile_from_normal(mean_pips=expected_pips, sigma_pips=sigma_pips, quantile=0.10),
+            4,
+        ),
+        "q50_pips": round(float(expected_pips), 4),
+        "q90_pips": round(
+            _quantile_from_normal(mean_pips=expected_pips, sigma_pips=sigma_pips, quantile=0.90),
+            4,
+        ),
+        "range_low_pips": round(float(low), 4),
+        "range_high_pips": round(float(high), 4),
+        "range_sigma_pips": round(max(0.0, float(sigma_pips)), 4),
+    }
 
 
 def _to_frame(candles: Sequence[Mapping[str, object]]) -> pd.DataFrame:
@@ -481,6 +533,9 @@ def predict_latest(
             raise ValueError(f"insufficient_feature_history:{model.horizon.timeframe}")
         x_last = feats[model.feature_names].to_numpy(dtype=float)[-1:, :]
         p_up = float(model.predict_proba(x_last)[0, 1])
+        expected_pips = float(model.expected_pips(p_up))
+        dispersion_pips = _estimate_dispersion_pips(model)
+        range_band = _build_range_band(expected_pips=expected_pips, sigma_pips=dispersion_pips)
         out[name] = {
             "instrument": bundle.instrument,
             "horizon": name,
@@ -488,13 +543,15 @@ def predict_latest(
             "step_bars": int(model.horizon.step_bars),
             "min_move_pips": float(model.horizon.min_move_pips),
             "p_up": round(p_up, 6),
-            "expected_pips": round(model.expected_pips(p_up), 4),
+            "expected_pips": round(expected_pips, 4),
+            "dispersion_pips": round(dispersion_pips, 4),
             "trained_until": model.trained_until,
             "as_of": as_of or utc_now_iso(),
             "feature_ts": feats.index[-1].to_pydatetime().isoformat(),
             "n_train": model.n_train,
             "n_calib": model.n_calib,
             "n_test": model.n_test,
+            **range_band,
         }
     return out
 

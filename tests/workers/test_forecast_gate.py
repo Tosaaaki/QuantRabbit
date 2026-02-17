@@ -78,6 +78,11 @@ def test_technical_prediction_exposes_trendline_and_sr_context() -> None:
         "sr_balance_20",
         "breakout_bias_20",
         "squeeze_score_20",
+        "range_low_pips",
+        "range_high_pips",
+        "range_sigma_pips",
+        "range_low_price",
+        "range_high_price",
     ):
         assert key in up_row
         assert key in down_row
@@ -86,6 +91,48 @@ def test_technical_prediction_exposes_trendline_and_sr_context() -> None:
     assert float(up_row["breakout_bias_20"]) > float(down_row["breakout_bias_20"])
     assert 0.0 <= float(up_row["squeeze_score_20"]) <= 1.0
     assert 0.0 <= float(down_row["squeeze_score_20"]) <= 1.0
+    assert float(up_row["range_low_pips"]) < float(up_row["range_high_pips"])
+    assert float(down_row["range_low_pips"]) < float(down_row["range_high_pips"])
+    assert float(up_row["range_sigma_pips"]) > 0.0
+    assert float(down_row["range_sigma_pips"]) > 0.0
+
+
+def test_decide_includes_range_band_fields(monkeypatch) -> None:
+    monkeypatch.setattr(forecast_gate, "_load_bundle_cached", lambda: None)
+    monkeypatch.setattr(
+        forecast_gate,
+        "_ensure_predictions",
+        lambda bundle: {
+            "1d": {
+                "p_up": 0.38,
+                "expected_pips": -2.4,
+                "source": "technical",
+                "trend_strength": 0.62,
+                "range_pressure": 0.38,
+                "range_low_pips": -4.8,
+                "range_high_pips": -0.6,
+                "range_sigma_pips": 1.2,
+                "range_low_price": 149.82,
+                "range_high_price": 149.86,
+            }
+        },
+    )
+
+    decision = forecast_gate.decide(
+        strategy_tag="TrendMA",
+        pocket="macro",
+        side="buy",
+        units=20_000,
+        meta={"instrument": "USD_JPY"},
+    )
+    assert decision is not None
+    assert decision.allowed is False
+    assert decision.reason == "edge_block"
+    assert decision.range_low_pips == -4.8
+    assert decision.range_high_pips == -0.6
+    assert decision.range_sigma_pips == 1.2
+    assert decision.range_low_price == 149.82
+    assert decision.range_high_price == 149.86
 
 
 def test_decide_blocks_opposite_side_when_only_technical_source_available(monkeypatch) -> None:

@@ -8,6 +8,20 @@
 - データ供給は `quant-market-data-feed`、制御配信は `quant-strategy-control` に分離。
 - 補助的運用ワーカーは本体管理マップから除外。
 
+### 2026-02-17（追記）forecast に分位レンジ予測（上下帯）を追加
+
+- `analysis/forecast_sklearn.py` の最新予測出力に
+  `q10_pips/q50_pips/q90_pips` と `range_low/high_pips`（+ `range_sigma_pips`）を追加。
+- `workers/common/forecast_gate.py` で technical/bundle/blend すべてに対して
+  分位レンジを正規化し、`range_low/high_price` を `anchor_price` 基準で算出するよう統一。
+- `ForecastDecision` / `workers/forecast/worker.py` / `execution/order_manager.py` /
+  `execution/strategy_entry.py` の forecast メタ連携に上下帯キーを追加し、
+  `entry_thesis["forecast"]` / `forecast_execution` / order監査 payload へ伝播。
+- `scripts/vm_forecast_snapshot.py` に `range_pips` / `range_price` 表示を追加。
+- `scripts/eval_forecast_before_after.py` に before/after 比較指標として
+  `range_cov_before/after/delta`（帯内包含率）と
+  `range_width_before/after/delta`（平均帯幅）を追加。
+
 ### 2026-02-17（追記）MicroRangeBreak を micro_multistrat から独立ワーカー化
 
 - `workers/micro_rangebreak` を新設し、`python -m workers.micro_rangebreak.worker` と

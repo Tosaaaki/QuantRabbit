@@ -16,7 +16,7 @@
 | Strategy Feedback | `analysis/strategy_feedback.py` / `analysis/strategy_feedback_worker.py` | 取引実績 + 戦略検知から per-strategy の調整係数を `strategy_feedback.json` に出力 |
 | Brain Gate (optional) | `workers/common/brain.py` | order preflight → allow/reduce/block |
 | Exit (専用ワーカー) | `workers/*/exit_worker.py` | pocket 別 open positions → exit 指示（PnL>0 決済が原則） |
-| Forecast Service | `workers/forecast/worker.py` / `workers/common/forecast_gate.py` / `quant-forecast.service` | `strategy_tag/pocket/side/units` を入力として予測判定（allow/reduce/block）を返却。回帰系に加えてトレンドライン傾き（20/50）とサポレジ/ブレイク圧力（`sr_balance` / `breakout_bias` / `squeeze`）を予測因子へ統合し、`expected_pips` + `anchor/target/tp/sl/rr` を `order_manager`/`entry_intent_board` へ連携 |
+| Forecast Service | `workers/forecast/worker.py` / `workers/common/forecast_gate.py` / `quant-forecast.service` | `strategy_tag/pocket/side/units` を入力として予測判定（allow/reduce/block）を返却。回帰系に加えてトレンドライン傾き（20/50）とサポレジ/ブレイク圧力（`sr_balance` / `breakout_bias` / `squeeze`）を予測因子へ統合し、`expected_pips` + `anchor/target` + 分位レンジ上下帯（`range_low/high_pips`, `range_low/high_price`）+ `tp/sl/rr` を `order_manager`/`entry_intent_board` へ連携 |
 | Strategy Control | `workers/common/strategy_control.py` / `workers/strategy_control/worker.py` | 戦略 `entry/exit` 可否、`global_lock`、環境変数上書き |
 | Risk Guard | `execution/risk_guard.py` | lot/SL/TP/pocket → 可否・調整値 |
 | Order Manager | `execution/order_manager.py` + `quant-order-manager.service` | units/sl/tp/client_order_id/tag → OANDA ticket。`env_prefix` は `entry_thesis` 優先で解決し、`entry` の意図を優先反映 |

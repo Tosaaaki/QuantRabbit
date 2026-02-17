@@ -145,6 +145,9 @@ def _latest_close(candles: list[dict[str, Any]]) -> float | None:
 def _format_line(horizon: str, row: dict[str, Any]) -> str:
     p_up = float(row.get("p_up", 0.5) or 0.5)
     expected = row.get("expected_pips")
+    range_low = row.get("range_low_pips")
+    range_high = row.get("range_high_pips")
+    range_sigma = row.get("range_sigma_pips")
     source = row.get("source") or "n/a"
     trend = row.get("trend_strength")
     rng = row.get("range_pressure")
@@ -180,14 +183,23 @@ def _format_line(horizon: str, row: dict[str, Any]) -> str:
     state = _classify_state(row)
     anchor = row.get("anchor_price")
     target = row.get("target_price")
+    range_low_price = row.get("range_low_price")
+    range_high_price = row.get("range_high_price")
     target_text = ""
     if anchor is not None and target is not None:
         target_text = f" anchor_price={anchor} target_price={target}"
+    range_text = ""
+    if range_low is not None and range_high is not None:
+        range_text = f" range_pips=[{range_low},{range_high}]"
+        if range_sigma is not None:
+            range_text += f" sigma={range_sigma}"
+    if range_low_price is not None and range_high_price is not None:
+        range_text += f" range_price=[{range_low_price},{range_high_price}]"
 
     return (
         f"[{horizon:>3}] {state}\n"
         f"  p_up={p_up:.4f} edge={edge:+.2f}% expected_pips={expected} "
-        f"source={source} tf={tf} step_bars={step} status={status}{target_text}\n"
+        f"source={source} tf={tf} step_bars={step} status={status}{target_text}{range_text}\n"
         f"  trend_strength={trend} range_pressure={rng} as_of={ts}{note}\n"
         f"  regime: vol_state={vol_state or '-'} trend_state={trend_state or '-'} "
         f"range_state={range_state or '-'} leading={leading or '-'} "
@@ -234,6 +246,11 @@ def _build_pending_row(
         "forecast_ready": False,
         "p_up": None,
         "expected_pips": None,
+        "range_low_pips": None,
+        "range_high_pips": None,
+        "range_sigma_pips": None,
+        "range_low_price": None,
+        "range_high_price": None,
         "feature_ts": None,
         "trend_strength": 0.5,
         "range_pressure": 0.5,

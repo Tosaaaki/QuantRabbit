@@ -285,6 +285,11 @@ def _forecast_service_decision_from_payload(
         expected_pips=_as_float(payload.get("expected_pips"), None),
         anchor_price=_as_float(payload.get("anchor_price"), None),
         target_price=_as_float(payload.get("target_price"), None),
+        range_low_pips=_as_float(payload.get("range_low_pips"), None),
+        range_high_pips=_as_float(payload.get("range_high_pips"), None),
+        range_sigma_pips=_as_float(payload.get("range_sigma_pips"), None),
+        range_low_price=_as_float(payload.get("range_low_price"), None),
+        range_high_price=_as_float(payload.get("range_high_price"), None),
         tp_pips_hint=_as_float(payload.get("tp_pips_hint"), None),
         sl_pips_cap=_as_float(payload.get("sl_pips_cap"), None),
         rr_floor=_as_float(payload.get("rr_floor"), None),
@@ -7988,6 +7993,11 @@ async def market_order(
                         "forecast_leading_indicator": fc_decision.leading_indicator,
                         "forecast_leading_indicator_strength": fc_decision.leading_indicator_strength,
                         "forecast_expected_pips": fc_decision.expected_pips,
+                        "forecast_range_low_pips": fc_decision.range_low_pips,
+                        "forecast_range_high_pips": fc_decision.range_high_pips,
+                        "forecast_range_sigma_pips": fc_decision.range_sigma_pips,
+                        "forecast_range_low_price": fc_decision.range_low_price,
+                        "forecast_range_high_price": fc_decision.range_high_price,
                         "forecast_feature_ts": fc_decision.feature_ts,
                     },
                 )
@@ -8050,6 +8060,11 @@ async def market_order(
                             "forecast_regime_score": fc_decision.regime_score,
                             "forecast_leading_indicator": fc_decision.leading_indicator,
                             "forecast_leading_indicator_strength": fc_decision.leading_indicator_strength,
+                            "forecast_range_low_pips": fc_decision.range_low_pips,
+                            "forecast_range_high_pips": fc_decision.range_high_pips,
+                            "forecast_range_sigma_pips": fc_decision.range_sigma_pips,
+                            "forecast_range_low_price": fc_decision.range_low_price,
+                            "forecast_range_high_price": fc_decision.range_high_price,
                             "forecast_scale": fc_decision.scale,
                             "scaled_units": scaled_units,
                             "min_units": min_allowed,
@@ -8118,6 +8133,31 @@ async def market_order(
                         "target_price": (
                             round(float(fc_decision.target_price), 5)
                             if fc_decision.target_price is not None
+                            else None
+                        ),
+                        "range_low_pips": (
+                            round(float(fc_decision.range_low_pips), 4)
+                            if fc_decision.range_low_pips is not None
+                            else None
+                        ),
+                        "range_high_pips": (
+                            round(float(fc_decision.range_high_pips), 4)
+                            if fc_decision.range_high_pips is not None
+                            else None
+                        ),
+                        "range_sigma_pips": (
+                            round(float(fc_decision.range_sigma_pips), 4)
+                            if fc_decision.range_sigma_pips is not None
+                            else None
+                        ),
+                        "range_low_price": (
+                            round(float(fc_decision.range_low_price), 5)
+                            if fc_decision.range_low_price is not None
+                            else None
+                        ),
+                        "range_high_price": (
+                            round(float(fc_decision.range_high_price), 5)
+                            if fc_decision.range_high_price is not None
                             else None
                         ),
                         "tp_pips_hint": (
@@ -8205,6 +8245,21 @@ async def market_order(
                     else None,
                     "target_price": round(float(fc_decision.target_price), 5)
                     if fc_decision.target_price is not None
+                    else None,
+                    "range_low_pips": round(float(fc_decision.range_low_pips), 4)
+                    if fc_decision.range_low_pips is not None
+                    else None,
+                    "range_high_pips": round(float(fc_decision.range_high_pips), 4)
+                    if fc_decision.range_high_pips is not None
+                    else None,
+                    "range_sigma_pips": round(float(fc_decision.range_sigma_pips), 4)
+                    if fc_decision.range_sigma_pips is not None
+                    else None,
+                    "range_low_price": round(float(fc_decision.range_low_price), 5)
+                    if fc_decision.range_low_price is not None
+                    else None,
+                    "range_high_price": round(float(fc_decision.range_high_price), 5)
+                    if fc_decision.range_high_price is not None
                     else None,
                 }
 
