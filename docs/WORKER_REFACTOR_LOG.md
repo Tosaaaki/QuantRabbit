@@ -21,6 +21,14 @@
 - `scripts/eval_forecast_before_after.py` に before/after 比較指標として
   `range_cov_before/after/delta`（帯内包含率）と
   `range_width_before/after/delta`（平均帯幅）を追加。
+- VM実測（`bars=8050`, `2026-01-06T07:30:00+00:00`〜`2026-02-17T08:32:00+00:00`）:
+  - `feature_expansion_gain=0.35`
+    - `1m`: hit `0.4926 -> 0.4902`, MAE `1.4846 -> 1.4957`, range_cov `0.2126 -> 0.2087`
+    - `5m`: hit `0.4858 -> 0.4830`, MAE `3.4696 -> 3.4939`, range_cov `0.1852 -> 0.1831`
+    - `10m`: hit `0.4779 -> 0.4769`, MAE `5.1711 -> 5.2053`, range_cov `0.1834 -> 0.1849`
+  - `feature_expansion_gain=0.0` では before/after 全指標が一致（回帰なし）。
+- 運用判断: `FORECAST_TECH_FEATURE_EXPANSION_GAIN=0.0` を維持し、
+  分位レンジ（上下帯）は予測監査と `forecast_context` 伝播に先行適用する。
 
 ### 2026-02-17（追記）MicroRangeBreak を micro_multistrat から独立ワーカー化
 
