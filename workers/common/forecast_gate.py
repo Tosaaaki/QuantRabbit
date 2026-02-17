@@ -363,9 +363,9 @@ _HORIZON_META_DEFAULT = {
 _TF_MINUTES = {"M1": 1.0, "M5": 5.0, "H1": 60.0, "H4": 240.0, "D1": 1440.0}
 _TECH_HORIZON_CFG = {
     # shorter horizons allow more mean-reversion influence
-    "1m": {"trend_w": 0.9, "mr_w": 0.1, "temp": 0.9},
-    "5m": {"trend_w": 0.86, "mr_w": 0.14, "temp": 1.0},
-    "10m": {"trend_w": 0.84, "mr_w": 0.16, "temp": 1.04},
+    "1m": {"trend_w": 0.70, "mr_w": 0.30, "temp": 0.9},
+    "5m": {"trend_w": 0.40, "mr_w": 0.60, "temp": 1.0},
+    "10m": {"trend_w": 0.40, "mr_w": 0.60, "temp": 1.04},
     "1h": {"trend_w": 0.56, "mr_w": 0.44, "temp": 1.35},
     "8h": {"trend_w": 0.68, "mr_w": 0.32, "temp": 1.25},
     "1d": {"trend_w": 0.76, "mr_w": 0.24, "temp": 1.10},

@@ -52,9 +52,9 @@ RANGE_SIGMA_FLOOR_PIPS = 0.35
 RANGE_NORMAL = NormalDist()
 
 TECH_HORIZON_CFG = {
-    "1m": {"trend_w": 0.9, "mr_w": 0.1, "temp": 0.9},
-    "5m": {"trend_w": 0.86, "mr_w": 0.14, "temp": 1.0},
-    "10m": {"trend_w": 0.84, "mr_w": 0.16, "temp": 1.04},
+    "1m": {"trend_w": 0.70, "mr_w": 0.30, "temp": 0.9},
+    "5m": {"trend_w": 0.40, "mr_w": 0.60, "temp": 1.0},
+    "10m": {"trend_w": 0.40, "mr_w": 0.60, "temp": 1.04},
     "1h": {"trend_w": 0.56, "mr_w": 0.44, "temp": 1.35},
     "8h": {"trend_w": 0.68, "mr_w": 0.32, "temp": 1.25},
     "1d": {"trend_w": 0.76, "mr_w": 0.24, "temp": 1.10},
