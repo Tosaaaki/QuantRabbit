@@ -9,7 +9,7 @@ import os
 os.environ["MICRO_STRATEGY_ALLOWLIST"] = "MicroCompressionRevert"
 os.environ["MICRO_MULTI_LOG_PREFIX"] = "[MicroCompressionRevert]"
 
-from workers.micro_multistrat import worker as _base_worker
+from workers.micro_runtime import worker as _base_worker
 
 LOG = logging.getLogger(__name__)
 

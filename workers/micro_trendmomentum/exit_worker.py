@@ -10,7 +10,7 @@ os.environ["MICRO_MULTI_EXIT_ENABLED"] = "1"
 os.environ["MICRO_MULTI_LOG_PREFIX"] = "[TrendMomentumMicro]"
 os.environ["MICRO_MULTI_EXIT_TAG_ALLOWLIST"] = "TrendMomentumMicro"
 
-from workers.micro_multistrat.exit_worker import micro_multistrat_exit_worker
+from workers.micro_runtime.exit_worker import micro_multistrat_exit_worker
 
 LOG = logging.getLogger(__name__)
 

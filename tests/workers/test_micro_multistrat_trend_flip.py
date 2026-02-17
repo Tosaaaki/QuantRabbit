@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from workers.micro_multistrat import worker
+from workers.micro_runtime import worker
 
 
 def _patch_trend_snapshot(monkeypatch, direction: str = "short", adx: float = 30.0) -> None:
