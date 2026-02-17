@@ -19,6 +19,7 @@ skill from past samples only (no lookahead within each step evaluation loop).
 from __future__ import annotations
 
 import argparse
+from collections import deque
 import glob
 import json
 import math
@@ -148,13 +149,18 @@ def _estimate_directional_skill(
 
 
 def _extract_jst_hour(value: Any) -> Optional[int]:
-    ts = pd.to_datetime(value, utc=True, errors="coerce")
-    if pd.isna(ts):
+    ts: Optional[pd.Timestamp]
+    if isinstance(value, pd.Timestamp):
+        ts = value
+    else:
+        ts = pd.to_datetime(value, utc=True, errors="coerce")
+    if ts is None or pd.isna(ts):
         return None
-    try:
-        return int(ts.tz_convert("Asia/Tokyo").hour)
-    except Exception:
-        return int((int(ts.hour) + 9) % 24)
+    if ts.tzinfo is None:
+        ts = ts.tz_localize("UTC")
+    else:
+        ts = ts.tz_convert("UTC")
+    return int((int(ts.hour) + 9) % 24)
 
 
 def _estimate_session_hour_bias(
@@ -610,7 +616,11 @@ def _evaluate_step(
     breakout_filtered_count = 0
     breakout_signal_hist: list[float] = []
     realized_hist: list[float] = []
-    timestamp_hist: list[Any] = []
+    session_window: deque[tuple[int, float]] = deque()
+    session_hour_sum = [0.0] * 24
+    session_hour_count = [0] * 24
+    session_abs_sum = 0.0
+    session_total_count = 0
 
     for i, (_, row) in enumerate(merged.iterrows(), start=1):
         realized = float(row["future_pips"])
@@ -633,18 +643,22 @@ def _evaluate_step(
             )
         session_bias = 0.0
         if session_bias_weight > 0.0:
-            ts_hist = timestamp_hist
-            target_hist = realized_hist
-            if session_bias_lookback > 0 and len(timestamp_hist) > session_bias_lookback:
-                ts_hist = timestamp_hist[-session_bias_lookback:]
-                target_hist = realized_hist[-session_bias_lookback:]
-            session_bias, _, _, _ = _estimate_session_hour_bias(
-                timestamp_values=ts_hist,
-                target_values=target_hist,
-                current_timestamp=row.name,
-                min_samples=session_bias_min_samples,
-                lookback=0,
-            )
+            current_hour = _extract_jst_hour(row.name)
+            if current_hour is not None:
+                hour_count = session_hour_count[current_hour]
+                if hour_count >= session_bias_min_samples:
+                    mean_move = session_hour_sum[current_hour] / float(hour_count)
+                    scale = max(
+                        0.35,
+                        session_abs_sum / float(max(session_total_count, 1)),
+                    )
+                    raw = _clamp(mean_move / scale, -1.0, 1.0)
+                    confidence = _clamp(
+                        hour_count / max(float(session_bias_min_samples * 3), 1.0),
+                        0.0,
+                        1.0,
+                    )
+                    session_bias = float(raw * confidence)
         pred_after = _prediction_after(
             row,
             step=step,
@@ -678,7 +692,24 @@ def _evaluate_step(
             breakout_filtered_hits.append(1 if breakout_bias * realized > 0.0 else 0)
         breakout_signal_hist.append(_normalized_breakout_bias(row))
         realized_hist.append(realized)
-        timestamp_hist.append(row.name)
+        if session_bias_weight > 0.0:
+            hist_hour = _extract_jst_hour(row.name)
+            if hist_hour is not None:
+                session_window.append((hist_hour, realized))
+                session_hour_sum[hist_hour] += realized
+                session_hour_count[hist_hour] += 1
+                session_abs_sum += abs(realized)
+                session_total_count += 1
+                if session_bias_lookback > 0:
+                    while len(session_window) > session_bias_lookback:
+                        old_hour, old_move = session_window.popleft()
+                        session_hour_sum[old_hour] -= old_move
+                        session_hour_count[old_hour] = max(
+                            0,
+                            session_hour_count[old_hour] - 1,
+                        )
+                        session_abs_sum = max(0.0, session_abs_sum - abs(old_move))
+                        session_total_count = max(0, session_total_count - 1)
 
     n = len(hit_before)
     if n <= 0:
