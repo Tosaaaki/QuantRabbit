@@ -54,6 +54,29 @@ def _env_set(name: str) -> set[str]:
     return {item.strip().lower() for item in raw.split(",") if item.strip()}
 
 
+def _parse_horizon_weight_map(raw: str, *, lo: float, hi: float) -> dict[str, float]:
+    out: dict[str, float] = {}
+    text = str(raw or "").strip()
+    if not text:
+        return out
+    for token in text.split(","):
+        part = str(token).strip()
+        if not part or "=" not in part:
+            continue
+        key_raw, value_raw = part.split("=", 1)
+        horizon = str(key_raw).strip().lower()
+        if not horizon:
+            continue
+        try:
+            value = float(value_raw)
+        except Exception:
+            continue
+        if not math.isfinite(value):
+            continue
+        out[horizon] = max(lo, min(hi, value))
+    return out
+
+
 _ENABLED = _env_bool("FORECAST_GATE_ENABLED", True)
 _BUNDLE_PATH = os.getenv(
     "FORECAST_BUNDLE_PATH",
@@ -99,6 +122,11 @@ _TECH_SESSION_BIAS_ENABLED = _env_bool(
 _TECH_SESSION_BIAS_WEIGHT = max(
     0.0,
     min(0.6, _env_float("FORECAST_TECH_SESSION_BIAS_WEIGHT", 0.12)),
+)
+_TECH_SESSION_BIAS_WEIGHT_MAP = _parse_horizon_weight_map(
+    os.getenv("FORECAST_TECH_SESSION_BIAS_WEIGHT_MAP", "1m=0.0"),
+    lo=0.0,
+    hi=0.6,
 )
 _TECH_SESSION_BIAS_MIN_SAMPLES = max(
     8,
@@ -648,6 +676,17 @@ def _estimate_session_hour_bias(
     raw_bias = _clamp(mean_move / scale, -1.0, 1.0)
     confidence = _clamp(sample_count / max(float(min_samples * 3), 1.0), 0.0, 1.0)
     return float(raw_bias * confidence), float(mean_move), sample_count, current_hour
+
+
+def _session_bias_weight_for_horizon(horizon: str) -> float:
+    key = str(horizon or "").strip().lower()
+    if not key:
+        return float(_TECH_SESSION_BIAS_WEIGHT)
+    if key in _TECH_SESSION_BIAS_WEIGHT_MAP:
+        return float(_TECH_SESSION_BIAS_WEIGHT_MAP[key])
+    if key == "1m":
+        return 0.0
+    return float(_TECH_SESSION_BIAS_WEIGHT)
 
 
 def _sigmoid(x: float) -> float:
@@ -1783,11 +1822,7 @@ def _technical_prediction_for_horizon(
     )
 
     cfg = _TECH_HORIZON_CFG.get(horizon, _TECH_HORIZON_CFG["8h"])
-    session_bias_weight = (
-        0.0
-        if str(horizon).strip().lower() == "1m"
-        else float(_TECH_SESSION_BIAS_WEIGHT)
-    )
+    session_bias_weight = _session_bias_weight_for_horizon(horizon)
     combo = (
         cfg["trend_w"] * trend_score * (1.0 - 0.55 * range_pressure)
         + cfg["mr_w"] * mean_revert_score * range_pressure

@@ -48,6 +48,7 @@ DEFAULT_BREAKOUT_ADAPTIVE_WEIGHT = 0.22
 DEFAULT_BREAKOUT_ADAPTIVE_MIN_SAMPLES = 80
 DEFAULT_BREAKOUT_ADAPTIVE_LOOKBACK = 360
 DEFAULT_SESSION_BIAS_WEIGHT = 0.12
+DEFAULT_SESSION_BIAS_WEIGHT_MAP = "1m=0.0"
 DEFAULT_SESSION_BIAS_MIN_SAMPLES = 24
 DEFAULT_SESSION_BIAS_LOOKBACK = 720
 RANGE_BAND_LOWER_Q = 0.20
@@ -204,6 +205,29 @@ def _estimate_session_hour_bias(
     raw_bias = _clamp(mean_move / scale, -1.0, 1.0)
     confidence = _clamp(sample_count / max(float(min_samples * 3), 1.0), 0.0, 1.0)
     return float(raw_bias * confidence), float(mean_move), sample_count, current_hour
+
+
+def _parse_horizon_weight_map(raw: Any) -> dict[str, float]:
+    out: dict[str, float] = {}
+    text = str(raw or "").strip()
+    if not text:
+        return out
+    for token in text.split(","):
+        part = str(token).strip()
+        if not part or "=" not in part:
+            continue
+        key_raw, value_raw = part.split("=", 1)
+        key = str(key_raw).strip().lower()
+        if not key:
+            continue
+        try:
+            value = float(value_raw)
+        except Exception:
+            continue
+        if not math.isfinite(value):
+            continue
+        out[key] = _clamp(value, 0.0, 1.0)
+    return out
 
 
 def _normalized_breakout_bias(row: pd.Series) -> float:
@@ -573,6 +597,7 @@ def _evaluate_step(
     breakout_adaptive_min_samples: int,
     breakout_adaptive_lookback: int,
     session_bias_weight: float,
+    session_bias_weight_map: dict[str, float],
     session_bias_min_samples: int,
     session_bias_lookback: int,
 ) -> EvalRow:
@@ -602,6 +627,13 @@ def _evaluate_step(
         "trend_pullback_norm_20",
     ]
     merged = merged.dropna(subset=required)
+
+    horizon_name = _horizon_from_step(step)
+    session_bias_weight_eff = _clamp(
+        float(session_bias_weight_map.get(horizon_name, session_bias_weight)),
+        0.0,
+        1.0,
+    )
 
     hit_before: list[int] = []
     hit_after: list[int] = []
@@ -642,7 +674,7 @@ def _evaluate_step(
                 lookback=0,
             )
         session_bias = 0.0
-        if session_bias_weight > 0.0:
+        if session_bias_weight_eff > 0.0:
             current_hour = _extract_jst_hour(row.name)
             if current_hour is not None:
                 hour_count = session_hour_count[current_hour]
@@ -667,7 +699,7 @@ def _evaluate_step(
             breakout_skill=breakout_skill,
             breakout_adaptive_weight=breakout_adaptive_weight,
             session_bias=session_bias,
-            session_bias_weight=session_bias_weight,
+            session_bias_weight=session_bias_weight_eff,
         )
         expected_before = pred_before.expected_pips
         expected_after = pred_after.expected_pips
@@ -692,7 +724,7 @@ def _evaluate_step(
             breakout_filtered_hits.append(1 if breakout_bias * realized > 0.0 else 0)
         breakout_signal_hist.append(_normalized_breakout_bias(row))
         realized_hist.append(realized)
-        if session_bias_weight > 0.0:
+        if session_bias_weight_eff > 0.0:
             hist_hour = _extract_jst_hour(row.name)
             if hist_hour is not None:
                 session_window.append((hist_hour, realized))
@@ -752,7 +784,7 @@ def _evaluate_step(
 
     return EvalRow(
         step=step,
-        horizon=_horizon_from_step(step),
+        horizon=horizon_name,
         n=n,
         hit_before=hit_b,
         hit_after=hit_a,
@@ -823,6 +855,11 @@ def main() -> int:
         help="Weight for JST hour-of-day directional bias term in after formula.",
     )
     ap.add_argument(
+        "--session-bias-weight-map",
+        default=DEFAULT_SESSION_BIAS_WEIGHT_MAP,
+        help="Comma-separated horizon weights, e.g. '1m=0.0,5m=0.14,10m=0.30'.",
+    )
+    ap.add_argument(
         "--session-bias-min-samples",
         type=int,
         default=DEFAULT_SESSION_BIAS_MIN_SAMPLES,
@@ -878,6 +915,7 @@ def main() -> int:
         int(args.breakout_adaptive_lookback),
     )
     session_bias_weight = _clamp(float(args.session_bias_weight), 0.0, 1.0)
+    session_bias_weight_map = _parse_horizon_weight_map(args.session_bias_weight_map)
     session_bias_min_samples = max(1, int(args.session_bias_min_samples))
     session_bias_lookback = max(
         session_bias_min_samples,
@@ -895,6 +933,7 @@ def main() -> int:
             breakout_adaptive_min_samples=breakout_adaptive_min_samples,
             breakout_adaptive_lookback=breakout_adaptive_lookback,
             session_bias_weight=session_bias_weight,
+            session_bias_weight_map=session_bias_weight_map,
             session_bias_min_samples=session_bias_min_samples,
             session_bias_lookback=session_bias_lookback,
         )
@@ -915,6 +954,7 @@ def main() -> int:
         f"breakout_adaptive_min_samples={breakout_adaptive_min_samples} "
         f"breakout_adaptive_lookback={breakout_adaptive_lookback} "
         f"session_bias_weight={session_bias_weight:.4f} "
+        f"session_bias_weight_map={json.dumps(session_bias_weight_map, ensure_ascii=False)} "
         f"session_bias_min_samples={session_bias_min_samples} "
         f"session_bias_lookback={session_bias_lookback}"
     )
@@ -946,6 +986,7 @@ def main() -> int:
                 "breakout_adaptive_min_samples": breakout_adaptive_min_samples,
                 "breakout_adaptive_lookback": breakout_adaptive_lookback,
                 "session_bias_weight": session_bias_weight,
+                "session_bias_weight_map": session_bias_weight_map,
                 "session_bias_min_samples": session_bias_min_samples,
                 "session_bias_lookback": session_bias_lookback,
             },
