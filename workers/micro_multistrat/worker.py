@@ -1344,8 +1344,12 @@ async def micro_multi_worker() -> None:
             if not proj_allow:
                 continue
 
-            bb_style = "trend"
+            signal_mode = str(signal.get("signal_mode") or "").strip().lower()
             if trend_flip_meta or proj_flip_meta:
+                bb_style = "trend"
+            elif signal_mode == "reversion":
+                bb_style = "reversion"
+            elif signal_mode == "trend":
                 bb_style = "trend"
             elif strategy_name in _RANGE_STRATEGIES or _is_mr_signal(signal_tag):
                 bb_style = "reversion"
@@ -1483,6 +1487,7 @@ async def micro_multi_worker() -> None:
                 "signal_side": orig_side,
                 "exec_action": signal_action,
                 "exec_side": side,
+                "signal_mode": signal_mode,
                 "profile": signal.get("profile"),
                 "confidence": signal_conf,
                 "entry_probability": round(

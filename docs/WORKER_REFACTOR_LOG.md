@@ -31,6 +31,15 @@
   を追加して、レンジ寄り時間でも順張り再エントリー機会を確保した。
 - `RANGE_TREND_PENALTY` を基準にしつつ、 allowlist 戦略のみ減点係数を `35%` に減衰させ、過度な抑制を回避した。
 
+### 2026-02-17（追記）MicroRangeBreak のレンジ内逆張り＋ブレイク順張りの分離
+
+- `strategies/micro/range_break.py` に、レンジ内逆張り（既存）に加え、レンジブレイク発生時の順張りシグナルを追加。
+- 追加シグナルは `signal` に `signal_mode: trend` / `signal_mode: reversion` を付与し、レンジ内は `reversion`、ブレイク外逸脱は `trend` として識別できるようにした。
+- `workers/micro_multistrat/worker.py` の BB 方向判定を `signal_mode` 連動へ変更し、`MicroRangeBreak` のブレイク順張りを
+  `strategy` 名だけで判断して拒否しない構成へ変更。
+- `workers/micro_multistrat/worker.py` の `entry_thesis` に `signal_mode` を明示注入し、後段ガード/監査で意図の追跡性を確保。
+- `ops/env/quant-micro-multi.env` にブレイク判定の閾値を追加入力できるキーを追加（`MICRO_RANGEBREAK_BREAKOUT_*` 系）。
+
 ### 2026-02-17（追記）`scalp_ping_5s` / `scalp_ping_5s_b` の低証拠金旧キー整理
 
 - `execution/risk_guard.py` の `allowed_lot` から
