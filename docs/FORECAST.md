@@ -149,6 +149,13 @@ python3 scripts/eval_forecast_before_after.py \
 `after` 側は `breakout_bias_20` の符号を固定解釈せず、過去サンプルだけで推定した方向スキル
 （`--breakout-adaptive-*`）で強弱/反転するため、レジーム変化時の逆噴射を抑える設計です。
 
+加えて 2026-02-17 以降は JST 時間帯バイアス（`--session-bias-*`）を導入し、
+同じ時間帯の先行方向ドリフトを after 式へ反映できます。
+- 既定は `session_bias_weight=0.12`
+- `1m` は過学習回避のため適用重みを 0.0 に固定し、`5m/10m` 以上で適用します。
+- 同一期間VM評価（`bars=8050`）では `session_bias_weight=0.12` が
+  `5m/10m` で hit と MAE の双方を小幅改善しました（`1m` は同等）。
+
 2026-02-17 時点では、短期TFの `TECH_HORIZON_CFG` を次に調整しています（`forecast_gate`/評価ジョブで同値）。
 - `1m`: `trend_w=0.70`, `mr_w=0.30`
 - `5m`: `trend_w=0.40`, `mr_w=0.60`

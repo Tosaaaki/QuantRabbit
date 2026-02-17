@@ -54,6 +54,41 @@
   - VM: `HEAD == origin/main` を確認し、`quant-market-data-feed` / `quant-order-manager` /
     `quant-forecast` を再起動。
 
+### 2026-02-17（追記）JST時間帯バイアス（session bias）を短期TFへ追加
+
+- `workers/common/forecast_gate.py`
+  - 直近履歴から「同じJST hour の先行方向バイアス」を推定する
+    `session_bias` を追加（`FORECAST_TECH_SESSION_BIAS_*`）。
+  - `combo` へ `session_bias_weight * session_bias` を注入。
+  - `1m` はノイズ増を避けるため `session_bias_weight=0.0` 固定、
+    `5m/10m` 以上でのみ重み適用（既定 `0.12`）。
+  - 監査メタに `session_bias_jst/session_bias_weight/session_mean_pips_jst/
+    session_samples_jst/session_hour_jst` を追加。
+- `scripts/eval_forecast_before_after.py`
+  - `--session-bias-weight` / `--session-bias-min-samples` /
+    `--session-bias-lookback` を追加。
+  - 評価ループは lookahead なし（過去履歴のみ）で session bias を算出。
+  - 追加後に重くなったため、集計を O(1) 更新（hour別 sum/count + sliding window）へ最適化。
+- テスト:
+  - `tests/workers/test_forecast_gate.py`
+    - `test_estimate_session_hour_bias_positive`
+    - `test_estimate_session_hour_bias_negative`
+- VM同一条件比較（`bars=8050`, `--steps 1,5,10`, `feature_expansion_gain=0.0`,
+  `breakout_adaptive_weight=0.22`, `session_bias_min_samples=24`,
+  `session_bias_lookback=720`）:
+  - `session_bias_weight=0.12`
+    - `1m`: hit `0.4961`, MAE `1.4677`
+    - `5m`: hit `0.4899`, MAE `3.3845`
+    - `10m`: hit `0.4870`, MAE `5.0654`
+  - `session_bias_weight=0.00`
+    - `1m`: hit `0.4961`, MAE `1.4677`
+    - `5m`: hit `0.4892`, MAE `3.3854`
+    - `10m`: hit `0.4851`, MAE `5.0684`
+  - 差分（0.12 - 0.00）:
+    - `1m`: hit `+0.0000`, MAE `+0.0000`（実質同等）
+    - `5m`: hit `+0.0007`, MAE `-0.0009`
+    - `10m`: hit `+0.0019`, MAE `-0.0030`
+
 ### 2026-02-17（追記）「時間帯=TF」前提で戦略別主TF＋補助TF整合を追加
 
 - `execution/strategy_entry.py` の戦略契約に `forecast_support_horizons` を追加し、
