@@ -20,6 +20,8 @@
   - `tick_window` 更新
   - M1/M5/H1/H4/D1 集約
   - `factor_cache` 更新
+  - `factor_cache` 連携は `on_candle(timeframe, candle)` 契約を維持し、購読側に渡すハンドラは
+    timeframe を束縛した `Callable[[Candle], ...]` で実行する（`on_candle(candle)` 形式を禁止）
   - 起動時と定期再起動時のシードは、既存キャッシュ終端（最後の確定足）から「境界を1本進めた時点→now」へレンジ補完する。
 
 ### 2) 制御面（単独）

@@ -22,6 +22,19 @@
 - `ops/env/quant-micro-multi.env` から `MICRO_STRATEGY_ALLOWLIST` の `MicroRangeBreak` を除外し、
   複数 unit からの重複実行を防止。
 
+### 2026-02-17（追記）market_data_feed の `on_candle` 契約不整合を修正
+
+- 事象: VM の `quant-market-data-feed.service` で
+  `tick_fetcher reconnect: on_candle() missing 1 required positional argument: 'candle'`
+  が連続発生し、再接続ループと factor 更新遅延を誘発。
+- 原因: `workers/market_data_feed/worker.py` の `_build_handlers()` が
+  `factor_cache.on_candle(tf, candle)` ではなく `on_candle(candle)` 形式で購読に渡していた。
+- 対応: timeframe を closure で束縛したハンドラ `_bind_factor_handler()` を追加し、
+  `start_candle_stream` へ渡す `Callable[[Candle], ...]` 契約を維持しながら
+  `factor_cache.on_candle(tf, candle)` を正しく呼ぶよう修正。
+- テスト: `tests/workers/test_market_data_feed_worker.py` を追加し、
+  timeframe 受け渡しと sync コールバック許容を検証。
+
 ### 2026-02-17（追記）予測の価格到達メタを一元化しVMで可視化
 
 - `workers/common/forecast_gate.py` の `ForecastDecision` に `anchor_price` / `target_price` / `tp_pips_hint` / `sl_pips_cap` / `rr_floor` を追加し、ロジック決定と同時に保存するよう統一。

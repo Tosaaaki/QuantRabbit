@@ -9,6 +9,7 @@ Responsibility:
 from __future__ import annotations
 
 import asyncio
+import inspect
 import logging
 import os
 import time
@@ -69,6 +70,21 @@ async def _noop_handler(_: Candle) -> None:
     return None
 
 
+def _bind_factor_handler(
+    tf: TimeFrame,
+    factor_on_candle: Callable[[TimeFrame, Candle], Any] | None,
+) -> Callable[[Candle], Any]:
+    if factor_on_candle is None:
+        return _noop_handler
+
+    async def _handler(candle: Candle) -> None:
+        result = factor_on_candle(tf, candle)
+        if inspect.isawaitable(result):
+            await result
+
+    return _handler
+
+
 def _build_handlers(timeframes: Sequence[TimeFrame]) -> List[Tuple[TimeFrame, Callable[[Candle], Any]]]:
     try:
         from indicators.factor_cache import on_candle as factor_on_candle
@@ -77,7 +93,7 @@ def _build_handlers(timeframes: Sequence[TimeFrame]) -> List[Tuple[TimeFrame, Ca
             "[MARKET_DATA_FEED] factor_cache.on_candle import failed; factor_cache will only receive live updates in this process"
         )
         factor_on_candle = None
-    return [(tf, factor_on_candle or _noop_handler) for tf in timeframes]
+    return [(tf, _bind_factor_handler(tf, factor_on_candle)) for tf in timeframes]
 
 
 async def market_data_feed_worker() -> None:
