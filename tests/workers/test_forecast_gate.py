@@ -378,3 +378,31 @@ def test_horizon_for_unknown_strategy_uses_pocket_default() -> None:
         meta=None,
     )
     assert horizon == forecast_gate._HORIZON_MICRO
+
+
+def test_estimate_directional_skill_positive() -> None:
+    signal = [1.0] * 200
+    target = [1.0] * 200
+    skill, hit_rate, samples = forecast_gate._estimate_directional_skill(
+        signal_values=signal,
+        target_values=target,
+        min_samples=40,
+        lookback=120,
+    )
+    assert samples == 120
+    assert hit_rate == 1.0
+    assert skill > 0.9
+
+
+def test_estimate_directional_skill_negative() -> None:
+    signal = [1.0] * 200
+    target = [-1.0] * 200
+    skill, hit_rate, samples = forecast_gate._estimate_directional_skill(
+        signal_values=signal,
+        target_values=target,
+        min_samples=40,
+        lookback=120,
+    )
+    assert samples == 120
+    assert hit_rate == 0.0
+    assert skill < -0.9

@@ -76,6 +76,22 @@ _TECH_FEATURE_EXPANSION_GAIN = max(
     0.0,
     min(1.0, _env_float("FORECAST_TECH_FEATURE_EXPANSION_GAIN", 0.0)),
 )
+_TECH_BREAKOUT_ADAPTIVE_ENABLED = _env_bool(
+    "FORECAST_TECH_BREAKOUT_ADAPTIVE_ENABLED",
+    True,
+)
+_TECH_BREAKOUT_ADAPTIVE_WEIGHT = max(
+    0.0,
+    min(0.8, _env_float("FORECAST_TECH_BREAKOUT_ADAPTIVE_WEIGHT", 0.22)),
+)
+_TECH_BREAKOUT_ADAPTIVE_MIN_SAMPLES = max(
+    16,
+    int(_env_float("FORECAST_TECH_BREAKOUT_ADAPTIVE_MIN_SAMPLES", 80)),
+)
+_TECH_BREAKOUT_ADAPTIVE_LOOKBACK = max(
+    _TECH_BREAKOUT_ADAPTIVE_MIN_SAMPLES,
+    int(_env_float("FORECAST_TECH_BREAKOUT_ADAPTIVE_LOOKBACK", 360)),
+)
 _STYLE_GUARD_ENABLED = _env_bool("FORECAST_GATE_STYLE_GUARD_ENABLED", True)
 _STYLE_TREND_MIN_STRENGTH = max(
     0.0, min(1.0, _env_float("FORECAST_GATE_STYLE_TREND_MIN_STRENGTH", 0.52))
@@ -477,6 +493,82 @@ def _safe_abs_float(value: Any, default: Optional[float] = None) -> Optional[flo
     if not math.isfinite(value_float):
         return default
     return abs(value_float)
+
+
+def _extract_candle_close(candle: Any) -> Optional[float]:
+    if not isinstance(candle, dict):
+        return None
+    for key in ("close", "c", "mid", "price", "last", "close_price"):
+        raw = candle.get(key)
+        if isinstance(raw, dict):
+            raw = raw.get("c")
+        value = _safe_optional_float(raw)
+        if value is not None:
+            return value
+    return None
+
+
+def _future_pips_from_candles_tail(
+    *,
+    candles: list[dict],
+    aligned_length: int,
+    step_bars: int,
+) -> list[float]:
+    if aligned_length <= 0 or step_bars <= 0:
+        return []
+    closes: list[float] = []
+    for candle in candles or []:
+        close = _extract_candle_close(candle)
+        if close is None:
+            continue
+        closes.append(float(close))
+    if len(closes) < aligned_length:
+        return []
+    aligned = closes[-aligned_length:]
+    out: list[float] = []
+    denom = float(_PIP_SIZE)
+    for idx, current in enumerate(aligned):
+        future_idx = idx + int(step_bars)
+        if future_idx >= len(aligned):
+            out.append(float("nan"))
+            continue
+        out.append((float(aligned[future_idx]) - float(current)) / denom)
+    return out
+
+
+def _estimate_directional_skill(
+    *,
+    signal_values: list[float],
+    target_values: list[float],
+    min_samples: int,
+    lookback: int,
+) -> tuple[float, float, int]:
+    if min_samples <= 0:
+        min_samples = 1
+    usable: list[tuple[float, float]] = []
+    for signal, target in zip(signal_values, target_values):
+        s = _safe_optional_float(signal)
+        t = _safe_optional_float(target)
+        if s is None or t is None:
+            continue
+        if not math.isfinite(s) or not math.isfinite(t):
+            continue
+        if abs(t) < 1e-12 or abs(s) < 1e-12:
+            continue
+        usable.append((float(s), float(t)))
+    if lookback > 0 and len(usable) > lookback:
+        usable = usable[-lookback:]
+    count = len(usable)
+    if count < int(min_samples):
+        return 0.0, 0.5, count
+    hits = 0
+    for signal, target in usable:
+        if signal * target > 0.0:
+            hits += 1
+    hit_rate = hits / float(count)
+    skill = _clamp((hit_rate - 0.5) * 2.0, -1.0, 1.0)
+    confidence = _clamp(count / max(float(min_samples * 2), 1.0), 0.0, 1.0)
+    return float(skill * confidence), float(hit_rate), count
 
 
 def _sigmoid(x: float) -> float:
@@ -1489,6 +1581,28 @@ def _technical_prediction_for_horizon(
     breakout_up = _safe_float(last.get("breakout_up_pips_20"), 0.0) / max(0.70, atr)
     breakout_down = _safe_float(last.get("breakout_down_pips_20"), 0.0) / max(0.70, atr)
     breakout_bias = breakout_up - breakout_down
+    breakout_skill = 0.0
+    breakout_hit_rate = 0.5
+    breakout_samples = 0
+    if _TECH_BREAKOUT_ADAPTIVE_ENABLED:
+        signal_values: list[float] = []
+        try:
+            signal_series = feats["breakout_up_pips_20"] - feats["breakout_down_pips_20"]
+            signal_values = [float(v) for v in signal_series.tolist()]
+        except Exception:
+            signal_values = []
+        future_values = _future_pips_from_candles_tail(
+            candles=candles,
+            aligned_length=len(signal_values),
+            step_bars=step_bars,
+        )
+        breakout_skill, breakout_hit_rate, breakout_samples = _estimate_directional_skill(
+            signal_values=signal_values,
+            target_values=future_values,
+            min_samples=_TECH_BREAKOUT_ADAPTIVE_MIN_SAMPLES,
+            lookback=_TECH_BREAKOUT_ADAPTIVE_LOOKBACK,
+        )
+    breakout_adaptive = math.tanh(breakout_bias * 0.9) * breakout_skill
     donchian_width = max(0.25, abs(_safe_float(last.get("donchian_width_pips_20"), 0.0)))
     range_compression = _safe_float(last.get("range_compression_20"), 0.0)
     trend_pullback = _safe_float(last.get("trend_pullback_norm_20"), 0.0)
@@ -1578,6 +1692,7 @@ def _technical_prediction_for_horizon(
         cfg["trend_w"] * trend_score * (1.0 - 0.55 * range_pressure)
         + cfg["mr_w"] * mean_revert_score * range_pressure
         + _TECH_PROJECTION_WEIGHT * projection_score
+        + _TECH_BREAKOUT_ADAPTIVE_WEIGHT * breakout_adaptive
     )
     raw_prob = _sigmoid(float(cfg["temp"]) * float(_TECH_SCORE_GAIN) * combo)
 
@@ -1621,6 +1736,9 @@ def _technical_prediction_for_horizon(
             "trend_accel_pips": round(float(_safe_float(last.get("trend_accel_pips"), 0.0)), 6),
             "sr_balance_20": round(float(sr_balance), 6),
             "breakout_bias_20": round(float(breakout_bias), 6),
+            "breakout_skill_20": round(float(breakout_skill), 6),
+            "breakout_hit_rate_20": round(float(breakout_hit_rate), 6),
+            "breakout_samples_20": int(breakout_samples),
             "squeeze_score_20": round(float(squeeze_score), 6),
             "timeframe": timeframe,
             "step_bars": int(step_bars) if step_bars else 0,

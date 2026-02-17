@@ -11,6 +11,9 @@ move direction for each horizon step.
 In addition, this script compares quantile-range quality:
 - band coverage (realized move inside forecast upper/lower band)
 - average band width (narrower is better if coverage is preserved)
+
+`after` formula includes adaptive breakout-bias weighting that learns directional
+skill from past samples only (no lookahead within each step evaluation loop).
 """
 
 from __future__ import annotations
@@ -40,6 +43,9 @@ TECH_SCORE_GAIN = 1.0
 TECH_PROB_STRENGTH = 0.75
 TECH_PROJECTION_WEIGHT = 0.38
 DEFAULT_FEATURE_EXPANSION_GAIN = 0.35
+DEFAULT_BREAKOUT_ADAPTIVE_WEIGHT = 0.22
+DEFAULT_BREAKOUT_ADAPTIVE_MIN_SAMPLES = 80
+DEFAULT_BREAKOUT_ADAPTIVE_LOOKBACK = 360
 RANGE_BAND_LOWER_Q = 0.20
 RANGE_BAND_UPPER_Q = 0.80
 RANGE_SIGMA_FLOOR_PIPS = 0.35
@@ -107,6 +113,42 @@ def _safe_float(value: Any, default: float = 0.0) -> float:
 def _sigmoid(x: float) -> float:
     x = _clamp(float(x), -40.0, 40.0)
     return 1.0 / (1.0 + math.exp(-x))
+
+
+def _estimate_directional_skill(
+    *,
+    signal_values: list[float],
+    target_values: list[float],
+    min_samples: int,
+    lookback: int,
+) -> tuple[float, float, int]:
+    min_samples = max(1, int(min_samples))
+    usable: list[tuple[float, float]] = []
+    for signal, target in zip(signal_values, target_values):
+        s = _safe_float(signal, math.nan)
+        t = _safe_float(target, math.nan)
+        if not math.isfinite(s) or not math.isfinite(t):
+            continue
+        if abs(s) < 1e-12 or abs(t) < 1e-12:
+            continue
+        usable.append((float(s), float(t)))
+    if lookback > 0 and len(usable) > lookback:
+        usable = usable[-lookback:]
+    count = len(usable)
+    if count < min_samples:
+        return 0.0, 0.5, count
+    hits = sum(1 for signal, target in usable if signal * target > 0.0)
+    hit_rate = hits / float(count)
+    skill = _clamp((hit_rate - 0.5) * 2.0, -1.0, 1.0)
+    confidence = _clamp(count / max(float(min_samples * 2), 1.0), 0.0, 1.0)
+    return float(skill * confidence), float(hit_rate), int(count)
+
+
+def _normalized_breakout_bias(row: pd.Series) -> float:
+    atr = max(0.45, abs(_safe_float(row.get("atr_pips_14"), 0.0)))
+    breakout_up = _safe_float(row.get("breakout_up_pips_20"), 0.0) / max(0.70, atr)
+    breakout_down = _safe_float(row.get("breakout_down_pips_20"), 0.0) / max(0.70, atr)
+    return float(breakout_up - breakout_down)
 
 
 def _normal_quantile_z(quantile: float) -> float:
@@ -322,6 +364,8 @@ def _prediction_after(
     step: int,
     sample_count: int,
     feature_expansion_gain: float,
+    breakout_skill: float = 0.0,
+    breakout_adaptive_weight: float = 0.0,
     projection_score: float = 0.0,
     projection_confidence: float = 0.0,
 ) -> StepPrediction:
@@ -343,6 +387,7 @@ def _prediction_after(
     breakout_up = _safe_float(row.get("breakout_up_pips_20"), 0.0) / max(0.70, atr)
     breakout_down = _safe_float(row.get("breakout_down_pips_20"), 0.0) / max(0.70, atr)
     breakout_bias = breakout_up - breakout_down
+    breakout_adaptive = math.tanh(breakout_bias * 0.9) * _clamp(float(breakout_skill), -1.0, 1.0)
     donchian_width = max(0.25, abs(_safe_float(row.get("donchian_width_pips_20"), 0.0)))
     range_compression = _safe_float(row.get("range_compression_20"), 0.0)
     trend_pullback = _safe_float(row.get("trend_pullback_norm_20"), 0.0)
@@ -423,6 +468,7 @@ def _prediction_after(
         cfg["trend_w"] * trend_score * (1.0 - 0.55 * range_pressure)
         + cfg["mr_w"] * mean_revert_score * range_pressure
         + TECH_PROJECTION_WEIGHT * projection_score
+        + _clamp(float(breakout_adaptive_weight), 0.0, 1.0) * breakout_adaptive
     )
     raw_prob = _sigmoid(float(cfg["temp"]) * TECH_SCORE_GAIN * combo)
 
@@ -453,6 +499,9 @@ def _evaluate_step(
     step: int,
     min_abs_breakout_bias: float,
     feature_expansion_gain: float,
+    breakout_adaptive_weight: float,
+    breakout_adaptive_min_samples: int,
+    breakout_adaptive_lookback: int,
 ) -> EvalRow:
     merged = feats_df.join(candles_df[["close"]], how="inner")
     merged["future_pips"] = (merged["close"].shift(-step) - merged["close"]) / PIP
@@ -492,6 +541,8 @@ def _evaluate_step(
     breakout_hits: list[int] = []
     breakout_filtered_hits: list[int] = []
     breakout_filtered_count = 0
+    breakout_signal_hist: list[float] = []
+    realized_hist: list[float] = []
 
     for i, (_, row) in enumerate(merged.iterrows(), start=1):
         realized = float(row["future_pips"])
@@ -499,11 +550,21 @@ def _evaluate_step(
             continue
 
         pred_before = _prediction_before(row, step=step, sample_count=i)
+        breakout_skill = 0.0
+        if breakout_adaptive_weight > 0.0:
+            breakout_skill, _, _ = _estimate_directional_skill(
+                signal_values=breakout_signal_hist,
+                target_values=realized_hist,
+                min_samples=breakout_adaptive_min_samples,
+                lookback=breakout_adaptive_lookback,
+            )
         pred_after = _prediction_after(
             row,
             step=step,
             sample_count=i,
             feature_expansion_gain=feature_expansion_gain,
+            breakout_skill=breakout_skill,
+            breakout_adaptive_weight=breakout_adaptive_weight,
         )
         expected_before = pred_before.expected_pips
         expected_after = pred_after.expected_pips
@@ -526,6 +587,8 @@ def _evaluate_step(
         if abs(breakout_bias) >= float(min_abs_breakout_bias):
             breakout_filtered_count += 1
             breakout_filtered_hits.append(1 if breakout_bias * realized > 0.0 else 0)
+        breakout_signal_hist.append(_normalized_breakout_bias(row))
+        realized_hist.append(realized)
 
     n = len(hit_before)
     if n <= 0:
@@ -614,6 +677,24 @@ def main() -> int:
         default=DEFAULT_FEATURE_EXPANSION_GAIN,
         help="Gain for added trendline/support-resistance terms in after formula.",
     )
+    ap.add_argument(
+        "--breakout-adaptive-weight",
+        type=float,
+        default=DEFAULT_BREAKOUT_ADAPTIVE_WEIGHT,
+        help="Weight for adaptive breakout_bias directional term in after formula.",
+    )
+    ap.add_argument(
+        "--breakout-adaptive-min-samples",
+        type=int,
+        default=DEFAULT_BREAKOUT_ADAPTIVE_MIN_SAMPLES,
+        help="Minimum historical samples required to activate breakout adaptive skill.",
+    )
+    ap.add_argument(
+        "--breakout-adaptive-lookback",
+        type=int,
+        default=DEFAULT_BREAKOUT_ADAPTIVE_LOOKBACK,
+        help="Lookback window for breakout adaptive skill estimation.",
+    )
     ap.add_argument("--json-out", default="", help="Optional output JSON path.")
     args = ap.parse_args()
 
@@ -651,6 +732,12 @@ def main() -> int:
         return 1
 
     feature_expansion_gain = _clamp(float(args.feature_expansion_gain), 0.0, 1.0)
+    breakout_adaptive_weight = _clamp(float(args.breakout_adaptive_weight), 0.0, 1.0)
+    breakout_adaptive_min_samples = max(1, int(args.breakout_adaptive_min_samples))
+    breakout_adaptive_lookback = max(
+        breakout_adaptive_min_samples,
+        int(args.breakout_adaptive_lookback),
+    )
 
     rows = [
         _evaluate_step(
@@ -659,6 +746,9 @@ def main() -> int:
             step=step,
             min_abs_breakout_bias=float(args.min_abs_breakout_bias),
             feature_expansion_gain=feature_expansion_gain,
+            breakout_adaptive_weight=breakout_adaptive_weight,
+            breakout_adaptive_min_samples=breakout_adaptive_min_samples,
+            breakout_adaptive_lookback=breakout_adaptive_lookback,
         )
         for step in steps
     ]
@@ -672,7 +762,10 @@ def main() -> int:
     print(
         f"bars={summary.bars} from={summary.from_ts} to={summary.to_ts} "
         f"min_abs_breakout_bias={float(args.min_abs_breakout_bias):.4f} "
-        f"feature_expansion_gain={feature_expansion_gain:.4f}"
+        f"feature_expansion_gain={feature_expansion_gain:.4f} "
+        f"breakout_adaptive_weight={breakout_adaptive_weight:.4f} "
+        f"breakout_adaptive_min_samples={breakout_adaptive_min_samples} "
+        f"breakout_adaptive_lookback={breakout_adaptive_lookback}"
     )
     print(
         "step horizon n "
@@ -695,6 +788,13 @@ def main() -> int:
     if args.json_out:
         payload = {
             "summary": asdict(summary),
+            "config": {
+                "feature_expansion_gain": feature_expansion_gain,
+                "min_abs_breakout_bias": float(args.min_abs_breakout_bias),
+                "breakout_adaptive_weight": breakout_adaptive_weight,
+                "breakout_adaptive_min_samples": breakout_adaptive_min_samples,
+                "breakout_adaptive_lookback": breakout_adaptive_lookback,
+            },
             "rows": [asdict(r) for r in rows],
         }
         out = Path(args.json_out)

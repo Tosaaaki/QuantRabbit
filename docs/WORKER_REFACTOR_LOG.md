@@ -62,6 +62,31 @@
     - `test_horizon_for_strategy_tag_prefers_scalp_ping_1m`
     - `test_horizon_for_unknown_strategy_uses_pocket_default`
 
+### 2026-02-17（追記）`breakout_bias_20` を直近スキルで適応重み化
+
+- 背景:
+  - VM同期間評価で `breakout_bias_20` 一致率が `~0.47-0.49` と低く、
+    固定符号で使うとレジーム変化時に逆方向へ効く場面が確認された。
+- 修正:
+  - `workers/common/forecast_gate.py`
+    - 直近履歴から `breakout_bias_20` の方向一致スキルを推定
+      （`FORECAST_TECH_BREAKOUT_ADAPTIVE_*`）。
+    - スキルを `[-1, +1]` で扱い、`combo` へ
+      `FORECAST_TECH_BREAKOUT_ADAPTIVE_WEIGHT * tanh(breakout_bias) * skill`
+      として注入（負スキル時は実質反転）。
+    - 監査メタへ `breakout_skill_20` / `breakout_hit_rate_20` /
+      `breakout_samples_20` を追加。
+  - `scripts/eval_forecast_before_after.py`
+    - `--breakout-adaptive-weight` /
+      `--breakout-adaptive-min-samples` /
+      `--breakout-adaptive-lookback` を追加。
+    - 評価ループ内で「過去サンプルのみ」を使ってスキルを更新し、
+      lookahead なしで after 式を比較可能化。
+- テスト追加:
+  - `tests/workers/test_forecast_gate.py`
+    - `test_estimate_directional_skill_positive`
+    - `test_estimate_directional_skill_negative`
+
 ### 2026-02-17（追記）MicroRangeBreak を micro_multistrat から独立ワーカー化
 
 - `workers/micro_rangebreak` を新設し、`python -m workers.micro_rangebreak.worker` と

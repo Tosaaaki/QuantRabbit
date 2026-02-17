@@ -112,6 +112,9 @@ python3 scripts/vm_forecast_snapshot.py \
 - `tf_confluence_score`: 補助TF整合スコア（-1.0〜+1.0）
 - `tf_confluence_count`: 実際に参照できた補助TF本数
 - `tf_confluence_horizons`: 参照した補助TF（例: `5m,10m`）
+- `breakout_skill_20`: `breakout_bias_20` の直近方向一致スキル（-1.0〜+1.0）
+- `breakout_hit_rate_20`: 直近サンプルでの `breakout_bias_20` 一致率
+- `breakout_samples_20`: スキル推定に使った直近サンプル数
 - `tp_pips_hint`: TP 方向ヒント（pips）
 - `sl_pips_cap`: SL 上限ヒント（pips）
 - `rr_floor`: TP/SL の下限 R:R 値
@@ -142,6 +145,9 @@ python3 scripts/eval_forecast_before_after.py \
 
 加えて `range_cov_before/after`（帯内包含率）と `range_width_before/after`（平均帯幅）を出力するため、
 方向一致率だけでなく「予測帯が実値をどれだけ覆えているか」も before/after で比較できます。
+
+`after` 側は `breakout_bias_20` の符号を固定解釈せず、過去サンプルだけで推定した方向スキル
+（`--breakout-adaptive-*`）で強弱/反転するため、レジーム変化時の逆噴射を抑える設計です。
 
 運用上はまず `scalp_fast` なら `1m`、`scalp` なら `5m` / `10m` を短期軸として見る前提にして、`8h` / `1d` を中期〜長期補完として確認します。  
 `1h` と `8h` が同方向で `trend_strength` が高いほど「現在の順張り解釈」が強くなります。`range_pressure` 優勢で中立寄りの場合は「レンジ中の天井/底付近」に寄るケースが増えます。
