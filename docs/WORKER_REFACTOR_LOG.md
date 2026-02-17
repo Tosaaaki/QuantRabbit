@@ -41,6 +41,27 @@
   `tf_confluence_score/count/horizons` を伝播し、監査ログへ残せるようにした。
 - 目的: 「戦略ごとに適したTFで予測しつつ、上位/下位TFの整合で誤判定を抑える」運用へ統一。
 
+### 2026-02-17（追記）`entry_thesis` 欠損経路でも戦略タグ基準で主TFを補完
+
+- VM実測確認（`logs/trades.db`, 直近7日）で `entry_thesis.forecast_horizon` が
+  `27 / 2231` 件しか埋まっていないことを確認。
+- 欠損時は従来 `pocket` 既定（`micro=8h`, `scalp=5m`）にフォールバックしていたため、
+  `MicroVWAPRevert` / `MicroRangeBreak` / `MicroLevelReactor` などで
+  意図TF（`10m`）と乖離していた。
+- `workers/common/forecast_gate.py` の `_horizon_for()` を拡張し、
+  `entry_thesis/meta` に主TFが無い場合は `strategy_tag` から主TFを推定するよう修正。
+  - 例: `Micro*` / `MomentumBurst` -> `10m`,
+    `scalp_ping_5s*` -> `1m`,
+    `scalp_macd_rsi_div*` / `WickReversal*` -> `10m`,
+    `M1Scalper*` / `TickImbalance*` -> `5m`
+- 既存の `FORECAST_GATE_HORIZON*` 強制設定と `entry_thesis/meta` 明示値は優先維持
+  （補完は最終フォールバックのみ）。
+- テスト追加:
+  - `tests/workers/test_forecast_gate.py`
+    - `test_horizon_for_strategy_tag_prefers_micro_10m`
+    - `test_horizon_for_strategy_tag_prefers_scalp_ping_1m`
+    - `test_horizon_for_unknown_strategy_uses_pocket_default`
+
 ### 2026-02-17（追記）MicroRangeBreak を micro_multistrat から独立ワーカー化
 
 - `workers/micro_rangebreak` を新設し、`python -m workers.micro_rangebreak.worker` と

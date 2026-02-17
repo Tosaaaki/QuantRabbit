@@ -149,6 +149,7 @@ python3 scripts/eval_forecast_before_after.py \
 ## 戦略ごとのTF運用（2026-02-17更新）
 - 各戦略は `execution/strategy_entry.py` の契約で `forecast_profile`（主TF）を持ち、`forecast_support_horizons`（補助TF）を併せて注入します。
 - `forecast_gate` は主TF予測に加えて補助TFとの整合を評価し、同方向なら `edge` を微補正、逆方向なら `edge` を減衰します（`FORECAST_GATE_TF_CONFLUENCE_*`）。
+- `entry_thesis` の `forecast_horizon/forecast_profile` が欠ける経路でも、`forecast_gate` 側で `strategy_tag` から主TFを補完します（例: `Micro*` は `10m`、`scalp_ping_5s*` は `1m`、`scalp_macd_rsi_div*` は `10m`）。
 - 例:
   - `SCALP_PING_5S*`: 主TF `1m` + 補助TF `5m,10m`
   - `SCALP_M1SCALPER`: 主TF `5m` + 補助TF `1m,10m`

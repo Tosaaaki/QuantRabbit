@@ -402,6 +402,50 @@ _STYLE_BY_STRATEGY_BASE = {
     "microvwapbound": "range",
     "rangefader": "range",
 }
+_HORIZON_BY_STRATEGY_BASE = {
+    "trendma": "1d",
+    "scalpping5s": "1m",
+    "scalpping5sb": "1m",
+    "scalpm1scalper": "5m",
+    "scalptickimbalance": "5m",
+    "scalptickimbalancerrplus": "5m",
+    "scalplevelreject": "5m",
+    "scalplevelrejectplus": "5m",
+    "scalpmacdrsidiv": "10m",
+    "scalpwickreversalblend": "10m",
+    "scalpwickreversalpro": "10m",
+    "scalpsqueezepulsebreak": "10m",
+    "techfusion": "10m",
+    "macrotechfusion": "10m",
+    "sessionopen": "10m",
+    "londonmomentum": "10m",
+    "macroh1momentum": "10m",
+    "h1momentumswing": "10m",
+    "trendh1": "10m",
+    "micromultistrat": "10m",
+    "microadaptiverevert": "10m",
+}
+_HORIZON_HINTS = (
+    ("scalpping5sb", "1m"),
+    ("scalpping5s", "1m"),
+    ("m1scalper", "5m"),
+    ("tickimbalance", "5m"),
+    ("levelreject", "5m"),
+    ("reversalnwave", "5m"),
+    ("trendreclaim", "5m"),
+    ("volspikerider", "5m"),
+    ("micro", "10m"),
+    ("momentumburst", "10m"),
+    ("techfusion", "10m"),
+    ("sessionopen", "10m"),
+    ("macdrsidiv", "10m"),
+    ("wickreversal", "10m"),
+    ("squeezepulse", "10m"),
+    ("h1momentum", "10m"),
+    ("londonmomentum", "10m"),
+    ("trendh1", "10m"),
+    ("trendma", "1d"),
+)
 
 
 def _clamp(value: float, lo: float, hi: float) -> float:
@@ -729,6 +773,19 @@ def _strategy_base(strategy_tag: Optional[str]) -> str:
     return raw.split("-", 1)[0].strip()
 
 
+def _strategy_horizon(strategy_tag: Optional[str]) -> Optional[str]:
+    key = _normalize_strategy_key(_strategy_base(strategy_tag))
+    if not key:
+        return None
+    horizon = _HORIZON_BY_STRATEGY_BASE.get(key)
+    if horizon:
+        return str(horizon).strip().lower()
+    for token, hinted in _HORIZON_HINTS:
+        if token in key:
+            return str(hinted).strip().lower()
+    return None
+
+
 def _horizon_meta() -> dict[str, dict[str, object]]:
     meta = dict(_HORIZON_META_DEFAULT)
     try:
@@ -817,6 +874,7 @@ def _should_use(strategy_tag: Optional[str], pocket: Optional[str]) -> bool:
 
 def _horizon_for(
     pocket: str,
+    strategy_tag: Optional[str],
     entry_thesis: Optional[dict],
     meta: Optional[dict] = None,
 ) -> str | None:
@@ -836,6 +894,9 @@ def _horizon_for(
             return str(hinted).strip()
     if _HORIZON_FORCE:
         return _HORIZON_FORCE
+    by_strategy = _strategy_horizon(strategy_tag)
+    if by_strategy:
+        return by_strategy
     p = (pocket or "").strip().lower()
     if p == "scalp_fast":
         return _HORIZON_SCALP_FAST
@@ -1756,7 +1817,12 @@ def decide(
         return None
 
     profile = _resolve_forecast_profile(entry_thesis, meta)
-    horizon = _horizon_for(pocket, entry_thesis, meta)
+    horizon = _horizon_for(
+        pocket,
+        strategy_tag,
+        entry_thesis,
+        meta,
+    )
     if not horizon:
         return None
 

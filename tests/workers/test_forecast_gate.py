@@ -348,3 +348,33 @@ def test_decide_tf_confluence_penalty_blocks_misaligned_higher_tf(monkeypatch) -
     assert decision.tf_confluence_score is not None
     assert float(decision.tf_confluence_score) < 0.0
     assert decision.tf_confluence_horizons == "8h"
+
+
+def test_horizon_for_strategy_tag_prefers_micro_10m() -> None:
+    horizon = forecast_gate._horizon_for(
+        "micro",
+        "MicroRangeBreak",
+        entry_thesis=None,
+        meta=None,
+    )
+    assert horizon == "10m"
+
+
+def test_horizon_for_strategy_tag_prefers_scalp_ping_1m() -> None:
+    horizon = forecast_gate._horizon_for(
+        "scalp_fast",
+        "scalp_ping_5s_live",
+        entry_thesis=None,
+        meta=None,
+    )
+    assert horizon == "1m"
+
+
+def test_horizon_for_unknown_strategy_uses_pocket_default() -> None:
+    horizon = forecast_gate._horizon_for(
+        "micro",
+        "BB_RSI",
+        entry_thesis=None,
+        meta=None,
+    )
+    assert horizon == forecast_gate._HORIZON_MICRO
