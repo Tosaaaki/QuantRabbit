@@ -122,6 +122,9 @@ RANGE_ONLY_SCORE = float(os.getenv("MICRO_MULTI_RANGE_ONLY_SCORE", "0.45"))
 RANGE_BIAS_SCORE = float(os.getenv("MICRO_MULTI_RANGE_BIAS_SCORE", "0.30"))
 RANGE_STRATEGY_BONUS = float(os.getenv("MICRO_MULTI_RANGE_STRATEGY_BONUS", "12"))
 RANGE_TREND_PENALTY = float(os.getenv("MICRO_MULTI_RANGE_TREND_PENALTY", "10"))
+RANGE_ONLY_TREND_ALLOWLIST = _parse_csv(
+    os.getenv("MICRO_MULTI_RANGE_ONLY_TREND_ALLOWLIST", "")
+)
 
 # MicroLevelReactor safety gate: require stronger range context to avoid trend-side stop cascades.
 MLR_STRICT_RANGE_GATE = _bool("MICRO_MULTI_MLR_STRICT_RANGE_GATE", True)

@@ -179,6 +179,9 @@
   - `quant-order-manager.service` / `quant-position-manager.service` へ専用 env を追加し、共通 runtime env でサービス自体を
     ON にしない形へ分離。  
   - worker起動時に service-mode の誤自己参照を抑止するガードを追加。
+  - `micro_multistrat` の range_only フィルタを更新し、`MICRO_MULTI_RANGE_ONLY_TREND_ALLOWLIST` に登録された戦略は
+    レンジモードでも候補検討対象から除外しない設計へ変更。  
+    併せて range_score 減点係数を許可戦略では軽減し、レンジ環境下でも順張りの通過率を改善。
 - 運用整備（2026-02-24）
   - `analysis/strategy_feedback_worker.py` を追加し、`quant-strategy-feedback.service` / `quant-strategy-feedback.timer` で
     `logs/trades.db` と strategy list を再解析して `logs/strategy_feedback.json` を更新する分析係ワーカーを導入。

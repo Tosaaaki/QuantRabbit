@@ -318,6 +318,7 @@ _RANGE_STRATEGIES = {
     MicroVWAPRevert.name,
     MicroCompressionRevert.name,
 }
+_RANGE_TREND_ALLOWLIST = {name for name in config.RANGE_ONLY_TREND_ALLOWLIST}
 
 _HISTORY_PROFILE_CACHE: Dict[Tuple[str, str, str], tuple[float, Dict[str, object]]] = {}
 def _clamp01(value: float) -> float:
@@ -1107,7 +1108,11 @@ async def micro_multi_worker() -> None:
                     )
                     last_trend_block_log = now_mono
                 continue
-            if range_only and strategy_name not in _RANGE_STRATEGIES:
+            if (
+                range_only
+                and strategy_name not in _RANGE_STRATEGIES
+                and strategy_name not in _RANGE_TREND_ALLOWLIST
+            ):
                 continue
             if strategy_name == MicroLevelReactor.name:
                 mlr_ok, mlr_diag = _mlr_strict_range_ok(
@@ -1187,6 +1192,8 @@ async def micro_multi_worker() -> None:
             if range_bias:
                 if strategy_name in _RANGE_STRATEGIES:
                     score += config.RANGE_STRATEGY_BONUS * range_score
+                elif strategy_name in _RANGE_TREND_ALLOWLIST:
+                    score -= config.RANGE_TREND_PENALTY * range_score * 0.35
                 else:
                     score -= config.RANGE_TREND_PENALTY * range_score
             if config.DYN_ALLOC_ENABLED and bool(dyn_profile.get("found")):

@@ -22,6 +22,15 @@
 - `_ts_ms_from_tick` の優先順位を `ts_ms -> timestamp -> epoch` に拡張し、`tick_window` のエポック形式データでもM1再構築候補が生成されるよう調整。
 - これにより `micro_multi_skip` の主因を減らし、`range_mode` 判定とレンジ/順張りシグナル抽出の起点更新機会を戻すことを目的とした。
 
+### 2026-02-17（追記）micro_multistrat のレンジ時の順張り候補再開
+
+- `workers/micro_multistrat/worker.py` のレンジ判定ロジックを修正し、`range_only` 時も許可リスト掲載の戦略はスキップしないよう変更した。
+- `workers/micro_multistrat/config.py` に `RANGE_ONLY_TREND_ALLOWLIST` を追加し、戦略名を環境変数 `MICRO_MULTI_RANGE_ONLY_TREND_ALLOWLIST` で運用可能にした。
+- `ops/env/quant-micro-multi.env` に
+  `MICRO_MULTI_RANGE_ONLY_TREND_ALLOWLIST=TrendMomentumMicro,MicroMomentumStack,MicroPullbackEMA,MicroTrendRetest`
+  を追加して、レンジ寄り時間でも順張り再エントリー機会を確保した。
+- `RANGE_TREND_PENALTY` を基準にしつつ、 allowlist 戦略のみ減点係数を `35%` に減衰させ、過度な抑制を回避した。
+
 ### 2026-02-17（追記）`scalp_ping_5s` / `scalp_ping_5s_b` の低証拠金旧キー整理
 
 - `execution/risk_guard.py` の `allowed_lot` から
