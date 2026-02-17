@@ -222,6 +222,149 @@ async def _order_manager_service_request_async(
         return None
 
 
+def _forecast_service_enabled() -> bool:
+    return bool(
+        _FORECAST_SERVICE_ENABLED
+        and _FORECAST_SERVICE_URL
+        and not _FORECAST_SERVICE_URL.lower().startswith("disabled")
+    )
+
+
+def _forecast_service_url(path: str) -> str:
+    base = _FORECAST_SERVICE_URL.rstrip("/")
+    return f"{base}/{path.lstrip('/')}"
+
+
+def _forecast_service_request(path: str, payload: dict) -> Any:
+    if not _forecast_service_enabled():
+        return None
+    try:
+        normalized_payload = _normalize_for_json(payload)
+        response = requests.post(
+            _forecast_service_url(path),
+            json=normalized_payload,
+            timeout=float(_FORECAST_SERVICE_TIMEOUT),
+            headers={"Content-Type": "application/json"},
+        )
+        response.raise_for_status()
+        body = response.json()
+        if not isinstance(body, dict):
+            raise RuntimeError(f"forecast service returned non-dict body: {type(body).__name__}")
+        if "ok" not in body:
+            return body.get("result", body)
+        if not bool(body.get("ok")):
+            message = str(
+                body.get("error")
+                or body.get("detail")
+                or body.get("message")
+                or body.get("reason")
+                or "forecast service returned ok=false"
+            )
+            raise RuntimeError(f"forecast service error for {path}: {message}")
+        if "result" in body:
+            return body["result"]
+        return body
+    except Exception as exc:
+        raise RuntimeError(f"forecast service request failed path={path} err={exc}") from exc
+
+
+def _forecast_service_decision_from_payload(
+    payload: Any,
+) -> forecast_gate.ForecastDecision | None:
+    if not isinstance(payload, dict):
+        return None
+    if "allowed" not in payload:
+        return None
+    return forecast_gate.ForecastDecision(
+        allowed=bool(payload.get("allowed")),
+        scale=_as_float(payload.get("scale"), 0.0),
+        reason=str(payload.get("reason", "")),
+        horizon=str(payload.get("horizon") or ""),
+        edge=_as_float(payload.get("edge"), 0.0),
+        p_up=_as_float(payload.get("p_up"), 0.0),
+        expected_pips=_as_float(payload.get("expected_pips"), None),
+        feature_ts=payload.get("feature_ts") if payload.get("feature_ts") is not None else None,
+        source=str(payload.get("source")) if payload.get("source") is not None else None,
+        style=str(payload.get("style")) if payload.get("style") is not None else None,
+        trend_strength=_as_float(payload.get("trend_strength"), None),
+        range_pressure=_as_float(payload.get("range_pressure"), None),
+        future_flow=payload.get("future_flow"),
+        volatility_state=(
+            str(payload.get("volatility_state"))
+            if payload.get("volatility_state") is not None
+            else None
+        ),
+        trend_state=(
+            str(payload.get("trend_state")) if payload.get("trend_state") is not None else None
+        ),
+        range_state=(
+            str(payload.get("range_state")) if payload.get("range_state") is not None else None
+        ),
+        volatility_rank=_as_float(payload.get("volatility_rank"), None),
+        regime_score=_as_float(payload.get("regime_score"), None),
+        leading_indicator=(
+            str(payload.get("leading_indicator"))
+            if payload.get("leading_indicator") is not None
+            else None
+        ),
+        leading_indicator_strength=_as_float(payload.get("leading_indicator_strength"), None),
+    )
+
+
+def _forecast_decide_with_service(
+    *,
+    strategy_tag: Optional[str],
+    pocket: str,
+    side: str,
+    units: int,
+    entry_thesis: Optional[dict],
+    meta: Optional[dict],
+) -> forecast_gate.ForecastDecision | None:
+    if _forecast_service_enabled():
+        try:
+            result = _forecast_service_request(
+                "/forecast/decide",
+                {
+                    "strategy_tag": strategy_tag,
+                    "pocket": pocket,
+                    "side": side,
+                    "units": units,
+                    "entry_thesis": entry_thesis,
+                    "meta": meta,
+                },
+            )
+        except Exception as exc:
+            logging.warning(
+                "[FORECAST] service call failed path=%s err=%s",
+                "/forecast/decide",
+                exc,
+            )
+            if not _FORECAST_SERVICE_FALLBACK_LOCAL:
+                raise
+            return forecast_gate.decide(
+                strategy_tag=strategy_tag,
+                pocket=pocket,
+                side=side,
+                units=units,
+                entry_thesis=entry_thesis,
+                meta=meta,
+            )
+        if result is None:
+            return None
+        decision = _forecast_service_decision_from_payload(result)
+        if decision is not None:
+            return decision
+        raise RuntimeError("forecast service returned invalid decision payload")
+    return forecast_gate.decide(
+        strategy_tag=strategy_tag,
+        pocket=pocket,
+        side=side,
+        units=units,
+        entry_thesis=entry_thesis,
+        meta=meta,
+    )
+
+
 async def _invoke_order_manager_service(path: str, payload: dict) -> dict:
     return await asyncio.to_thread(_order_manager_service_call, path, payload)
 
@@ -1960,6 +2103,10 @@ _DYNAMIC_SL_MAX_PIPS = float(os.getenv("ORDER_DYNAMIC_SL_MAX_PIPS", "8.0"))
 _ENTRY_QUALITY_GATE_ENABLED = _env_bool("ORDER_ENTRY_QUALITY_GATE_ENABLED", True)
 _ORDER_MANAGER_BRAIN_GATE_ENABLED = _env_bool("ORDER_MANAGER_BRAIN_GATE_ENABLED", False)
 _ORDER_MANAGER_FORECAST_GATE_ENABLED = _env_bool("ORDER_MANAGER_FORECAST_GATE_ENABLED", False)
+_FORECAST_SERVICE_ENABLED = _env_bool("FORECAST_SERVICE_ENABLED", False)
+_FORECAST_SERVICE_URL = os.getenv("FORECAST_SERVICE_URL", "http://127.0.0.1:8302").strip()
+_FORECAST_SERVICE_TIMEOUT = max(0.5, float(_env_float("FORECAST_SERVICE_TIMEOUT", 5.0)))
+_FORECAST_SERVICE_FALLBACK_LOCAL = _env_bool("FORECAST_SERVICE_FALLBACK_LOCAL", True)
 _ORDER_MANAGER_PATTERN_GATE_ENABLED = _env_bool("ORDER_MANAGER_PATTERN_GATE_ENABLED", False)
 _ORDER_MANAGER_PRESERVE_STRATEGY_INTENT = _env_bool(
     "ORDER_MANAGER_PRESERVE_STRATEGY_INTENT", True
@@ -2033,6 +2180,18 @@ def _order_manager_preserve_intent_reject_under(
         0.0,
         min(1.0, float(_ORDER_MANAGER_PRESERVE_INTENT_PROBABILITY_REJECT_UNDER)),
     )
+
+
+def _order_manager_coordination_rejection_dominance(
+    strategy_tag: Optional[str],
+) -> float:
+    strategy_override = _strategy_env_float(
+        "ORDER_INTENT_COORDINATION_REJECTION_DOMINANCE",
+        strategy_tag,
+    )
+    if strategy_override is not None:
+        return max(1.0, float(strategy_override))
+    return _ORDER_INTENT_COORDINATION_REJECTION_DOMINANCE
 
 
 _ORDER_INTENT_COORDINATION_ENABLED = _env_bool("ORDER_INTENT_COORDINATION_ENABLED", True)
@@ -3019,6 +3178,7 @@ def _coordinate_entry_intent(
             opposite_score += row_score
             opposite_count += 1
 
+    final_abs = abs(raw_units)
     details = {
         "coordination_enabled": 1.0,
         "raw_units": own_units,
@@ -3027,29 +3187,8 @@ def _coordinate_entry_intent(
         "opposite_count": int(opposite_count),
         "same_score": round(same_score, 6),
         "opposite_score": round(opposite_score, 6),
+        "scale": 1.0,
     }
-    if opposite_score <= 0.0:
-        final_units = raw_units
-        _entry_intent_board_record(
-            pocket=pocket,
-            instrument=instrument,
-            strategy_tag=strategy_tag,
-            side=side,
-            raw_units=raw_units,
-            final_units=final_units,
-            entry_probability=entry_probability,
-            client_order_id=client_order_id,
-            status="intent_accepted",
-            request_payload=details,
-        )
-        return final_units, None, details
-
-    dominance = opposite_score / max(own_score, 1.0)
-    details["opposite_ratio_to_own"] = round(dominance, 6)
-    details["dominance_threshold"] = max(_ORDER_INTENT_COORDINATION_REJECTION_DOMINANCE, 1.0)
-    final_abs = abs(raw_units)
-    details["scale"] = 1.0
-    final_units = raw_units
     if final_abs <= 0:
         details["decision"] = "reject"
         _entry_intent_board_record(
@@ -3083,6 +3222,29 @@ def _coordinate_entry_intent(
             request_payload=details,
         )
         return 0, "reject", details
+    final_units = raw_units
+    if opposite_score <= 0.0:
+        final_units = raw_units
+        details["decision"] = "accepted"
+        _entry_intent_board_record(
+            pocket=pocket,
+            instrument=instrument,
+            strategy_tag=strategy_tag,
+            side=side,
+            raw_units=raw_units,
+            final_units=final_units,
+            entry_probability=entry_probability,
+            client_order_id=client_order_id,
+            status="intent_accepted",
+            request_payload=details,
+        )
+        return final_units, None, details
+    dominance = opposite_score / max(own_score, 1.0)
+    details["opposite_ratio_to_own"] = round(dominance, 6)
+    details["dominance_threshold"] = max(
+        _order_manager_coordination_rejection_dominance(strategy_tag),
+        1.0,
+    )
     details["decision"] = "accepted"
     _entry_intent_board_record(
         pocket=pocket,
@@ -7750,14 +7912,17 @@ async def market_order(
         and _ORDER_MANAGER_FORECAST_GATE_ENABLED
     ):
         try:
-                fc_decision = forecast_gate.decide(
-                    strategy_tag=strategy_tag,
-                    pocket=pocket,
-                    side=side_label,
-                    units=units,
-                    entry_thesis=entry_thesis if isinstance(entry_thesis, dict) else None,
-                    meta={**(meta or {}), "instrument": instrument} if isinstance(meta, dict) else {"instrument": instrument},
-                )
+            forecast_meta: dict[str, Any] = {"instrument": instrument}
+            if isinstance(meta, dict):
+                forecast_meta.update(meta)
+            fc_decision = _forecast_decide_with_service(
+                strategy_tag=strategy_tag,
+                pocket=pocket,
+                side=side_label,
+                units=units,
+                entry_thesis=entry_thesis if isinstance(entry_thesis, dict) else None,
+                meta=forecast_meta,
+            )
         except Exception as exc:
             fc_decision = None
             logging.debug("[FORECAST] decision failed: %s", exc)
@@ -7798,6 +7963,14 @@ async def market_order(
                         "forecast_p_up": fc_decision.p_up,
                         "forecast_trend_strength": fc_decision.trend_strength,
                         "forecast_range_pressure": fc_decision.range_pressure,
+                        "forecast_future_flow": fc_decision.future_flow,
+                        "forecast_volatility_state": fc_decision.volatility_state,
+                        "forecast_trend_state": fc_decision.trend_state,
+                        "forecast_range_state": fc_decision.range_state,
+                        "forecast_volatility_rank": fc_decision.volatility_rank,
+                        "forecast_regime_score": fc_decision.regime_score,
+                        "forecast_leading_indicator": fc_decision.leading_indicator,
+                        "forecast_leading_indicator_strength": fc_decision.leading_indicator_strength,
                         "forecast_expected_pips": fc_decision.expected_pips,
                         "forecast_feature_ts": fc_decision.feature_ts,
                     },
@@ -7853,6 +8026,14 @@ async def market_order(
                             "forecast_edge": fc_decision.edge,
                             "forecast_trend_strength": fc_decision.trend_strength,
                             "forecast_range_pressure": fc_decision.range_pressure,
+                            "forecast_future_flow": fc_decision.future_flow,
+                            "forecast_volatility_state": fc_decision.volatility_state,
+                            "forecast_trend_state": fc_decision.trend_state,
+                            "forecast_range_state": fc_decision.range_state,
+                            "forecast_volatility_rank": fc_decision.volatility_rank,
+                            "forecast_regime_score": fc_decision.regime_score,
+                            "forecast_leading_indicator": fc_decision.leading_indicator,
+                            "forecast_leading_indicator_strength": fc_decision.leading_indicator_strength,
                             "forecast_scale": fc_decision.scale,
                             "scaled_units": scaled_units,
                             "min_units": min_allowed,
@@ -7918,6 +8099,14 @@ async def market_order(
                             if fc_decision.range_pressure is not None
                             else None
                         ),
+                        "future_flow": fc_decision.future_flow,
+                        "volatility_state": fc_decision.volatility_state,
+                        "trend_state": fc_decision.trend_state,
+                        "range_state": fc_decision.range_state,
+                        "volatility_rank": fc_decision.volatility_rank,
+                        "regime_score": fc_decision.regime_score,
+                        "leading_indicator": fc_decision.leading_indicator,
+                        "leading_indicator_strength": fc_decision.leading_indicator_strength,
                         "expected_pips": (
                             round(float(fc_decision.expected_pips), 4)
                             if fc_decision.expected_pips is not None

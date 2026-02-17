@@ -94,6 +94,9 @@ _EDGE_PROJECTION_PENALTY = max(
     0.0,
     min(0.4, _env_float("FORECAST_GATE_PROJECTION_EDGE_PENALTY", 0.12)),
 )
+_VOL_REGIME_LOW = max(0.0, min(1.0, _env_float("FORECAST_GATE_VOL_REGIME_LOW", 0.32)))
+_VOL_REGIME_HIGH = max(0.0, min(1.0, _env_float("FORECAST_GATE_VOL_REGIME_HIGH", 0.62)))
+_VOL_REGIME_EXTREME = max(0.0, min(1.0, _env_float("FORECAST_GATE_VOL_REGIME_EXTREME", 0.82)))
 
 _REQUIRE_FRESH = _env_bool("FORECAST_GATE_REQUIRE_FRESH", False)
 _MAX_AGE_SEC = max(1.0, _env_float("FORECAST_GATE_MAX_AGE_SEC", 120.0))
@@ -102,10 +105,14 @@ _STRATEGY_ALLOWLIST = _env_set("FORECAST_GATE_STRATEGY_ALLOWLIST")
 _POCKET_ALLOWLIST = _env_set("FORECAST_GATE_POCKET_ALLOWLIST")
 
 _HORIZON_FORCE = os.getenv("FORECAST_GATE_HORIZON", "").strip()
-_HORIZON_SCALP_FAST = os.getenv("FORECAST_GATE_HORIZON_SCALP_FAST", "1h").strip()
-_HORIZON_SCALP = os.getenv("FORECAST_GATE_HORIZON_SCALP", "1h").strip()
+_HORIZON_SCALP_FAST = os.getenv("FORECAST_GATE_HORIZON_SCALP_FAST", "1m").strip()
+_HORIZON_SCALP = os.getenv("FORECAST_GATE_HORIZON_SCALP", "5m").strip()
 _HORIZON_MICRO = os.getenv("FORECAST_GATE_HORIZON_MICRO", "8h").strip()
 _HORIZON_MACRO = os.getenv("FORECAST_GATE_HORIZON_MACRO", "1d").strip()
+_PIP_SIZE = max(1e-8, _env_float("FORECAST_GATE_PIP_SIZE", 0.01))
+_TECH_PREFERRED_HORIZONS = _env_set("FORECAST_GATE_TECH_PREFERRED_HORIZONS")
+if not _TECH_PREFERRED_HORIZONS:
+    _TECH_PREFERRED_HORIZONS = {"1m", "5m", "10m"}
 
 
 @dataclass(frozen=True)
@@ -122,6 +129,150 @@ class ForecastDecision:
     style: Optional[str] = None
     trend_strength: Optional[float] = None
     range_pressure: Optional[float] = None
+    future_flow: Optional[str] = None
+    volatility_state: Optional[str] = None
+    trend_state: Optional[str] = None
+    range_state: Optional[str] = None
+    volatility_rank: Optional[float] = None
+    regime_score: Optional[float] = None
+    leading_indicator: Optional[str] = None
+    leading_indicator_strength: Optional[float] = None
+
+
+def _future_flow_plan(
+    *,
+    p_up: float,
+    trend_strength: float,
+    range_pressure: float,
+    edge: float,
+    side: str,
+    style: Optional[str],
+    horizon: str,
+) -> str:
+    p = _clamp(float(p_up), 0.0, 1.0)
+    t = _clamp(float(trend_strength), 0.0, 1.0)
+    r = _clamp(float(range_pressure), 0.0, 1.0)
+    e = _clamp(float(edge), 0.0, 1.0)
+    s = str(side or "").strip().lower()
+    is_buy = s == "buy"
+    flow_mode = "trend" if style == "trend" else "range" if style == "range" else "mixed"
+    if t >= 0.62:
+        core = "上昇トレンド継続" if is_buy else "下落トレンド継続"
+    elif r >= 0.7:
+        if is_buy and p > 0.5:
+            core = "上値圧力強め（天井警戒）"
+        elif (not is_buy) and p < 0.5:
+            core = "下値圧力強め（底警戒）"
+        else:
+            core = "レンジ継続"
+    elif 0.45 < p < 0.55:
+        core = "レンジ寄り（方向未確定）"
+    else:
+        core = "上振れ寄り" if p >= 0.55 else "下振れ寄り"
+    strength = "強い" if e >= 0.62 else "中程度" if e >= 0.52 else "弱い"
+    return f"{horizon}:{flow_mode}:{core}:{strength}"
+
+
+def _regime_profile_from_row(
+    row: dict[str, Any],
+    *,
+    p_up: float,
+    edge: float,
+    trend_strength: float,
+    range_pressure: float,
+) -> dict[str, Any]:
+    p = _clamp(float(p_up), 0.0, 1.0)
+    edge_norm = _clamp(float(edge), 0.0, 1.0)
+    trend_strength = _clamp(float(trend_strength), 0.0, 1.0)
+    range_pressure = _clamp(float(range_pressure), 0.0, 1.0)
+    proj = _safe_float(row.get("projection_score"), (p - 0.5) * 2.0)
+    proj_conf = _clamp(_safe_float(row.get("projection_confidence"), 0.0), 0.0, 1.0)
+    expected_pips = _safe_float(row.get("expected_pips"), 0.0)
+    min_move = _safe_float(row.get("min_move_pips"), 0.0)
+    step_bars = _safe_float(row.get("step_bars"), 12.0)
+    if min_move > 0.0:
+        vol_base = abs(expected_pips) / max(0.45, min_move * 1.55)
+    else:
+        vol_base = abs(expected_pips) / max(0.35, 0.26 * math.sqrt(max(1.0, step_bars)))
+    volatility_rank = _clamp(
+        0.55 * _clamp(vol_base, 0.0, 1.0)
+        + 0.28 * proj_conf
+        + 0.17 * _clamp(abs(proj), 0.0, 1.0),
+        0.0,
+        1.0,
+    )
+
+    if volatility_rank >= _VOL_REGIME_EXTREME:
+        volatility_state = "very_high"
+    elif volatility_rank >= _VOL_REGIME_HIGH:
+        volatility_state = "high"
+    elif volatility_rank <= _VOL_REGIME_LOW / 2.0:
+        volatility_state = "very_low"
+    elif volatility_rank <= _VOL_REGIME_LOW:
+        volatility_state = "low"
+    else:
+        volatility_state = "normal"
+
+    momentum = _clamp(edge_norm * 2.0 - 1.0, -1.0, 1.0)
+    if abs(proj) > 0.04:
+        if proj < 0:
+            momentum = _clamp((0.35 * proj + 0.65 * momentum), -1.0, 1.0)
+        else:
+            momentum = _clamp((0.35 * proj + 0.65 * momentum), -1.0, 1.0)
+
+    if abs(momentum) < 0.12 or trend_strength < 0.30:
+        trend_state = "flat"
+    else:
+        direction = "up" if momentum >= 0.0 else "down"
+        if trend_strength >= 0.72:
+            trend_state = f"strong_{direction}"
+        elif trend_strength >= 0.58:
+            trend_state = f"{direction}"
+        else:
+            trend_state = f"weak_{direction}"
+
+    if range_pressure >= 0.75 and trend_strength <= 0.38:
+        range_state = "squeeze"
+    elif range_pressure >= 0.65 and trend_strength <= 0.54:
+        range_state = "range_hold"
+    elif range_pressure <= 0.34 and trend_strength >= 0.62:
+        range_state = "breakout_ready"
+    elif range_pressure <= 0.40 and abs(momentum) >= 0.24:
+        range_state = "trend_extension"
+    else:
+        range_state = "mixed"
+
+    if proj_conf >= 0.60 and abs(proj) >= 0.25:
+        leading_indicator = "projection"
+    elif range_state == "squeeze" and abs(proj) <= 0.12:
+        leading_indicator = "squeeze_watch"
+    elif trend_state.startswith("strong"):
+        leading_indicator = "strong_momentum"
+    elif range_state in {"range_hold", "mixed"} and p <= 0.45:
+        leading_indicator = "reversion_tilt_down"
+    elif range_state in {"range_hold", "mixed"} and p >= 0.55:
+        leading_indicator = "reversion_tilt_up"
+    else:
+        leading_indicator = "neutral"
+
+    leading_indicator_strength = _clamp(
+        0.45 * proj_conf + 0.35 * _clamp(abs(proj), 0.0, 1.0) + 0.20 * abs(momentum),
+        0.0,
+        1.0,
+    )
+
+    trend_term = (2.0 * trend_strength - 1.0) * (1.0 if momentum >= 0.0 else -1.0)
+    regime_score = _clamp(0.66 * momentum + 0.34 * trend_term, -1.0, 1.0)
+
+    return {
+        "volatility_state": volatility_state,
+        "trend_state": trend_state,
+        "range_state": range_state,
+        "volatility_rank": round(float(volatility_rank), 6),
+        "regime_score": round(float(regime_score), 6),
+        "leading_indicator": leading_indicator,
+        "leading_indicator_strength": round(float(leading_indicator_strength), 6),
+    }
 
 
 _HORIZON_META_DEFAULT = {
@@ -129,17 +280,22 @@ _HORIZON_META_DEFAULT = {
     "8h": {"timeframe": "M5", "step_bars": 96},
     "1d": {"timeframe": "H1", "step_bars": 24},
     "1w": {"timeframe": "D1", "step_bars": 5},
-    "1m": {"timeframe": "D1", "step_bars": 21},
+    "1m": {"timeframe": "M1", "step_bars": 12},
+    "5m": {"timeframe": "M5", "step_bars": 6},
+    "10m": {"timeframe": "M5", "step_bars": 12},
 }
 _TF_MINUTES = {"M1": 1.0, "M5": 5.0, "H1": 60.0, "H4": 240.0, "D1": 1440.0}
 _TECH_HORIZON_CFG = {
     # shorter horizons allow more mean-reversion influence
+    "1m": {"trend_w": 0.9, "mr_w": 0.1, "temp": 0.9},
+    "5m": {"trend_w": 0.86, "mr_w": 0.14, "temp": 1.0},
+    "10m": {"trend_w": 0.84, "mr_w": 0.16, "temp": 1.04},
     "1h": {"trend_w": 0.56, "mr_w": 0.44, "temp": 1.35},
     "8h": {"trend_w": 0.68, "mr_w": 0.32, "temp": 1.25},
     "1d": {"trend_w": 0.76, "mr_w": 0.24, "temp": 1.10},
     "1w": {"trend_w": 0.82, "mr_w": 0.18, "temp": 1.00},
-    "1m": {"trend_w": 0.88, "mr_w": 0.12, "temp": 0.92},
 }
+_TECH_MIN_FEATURE_ROWS = max(24, int(_env_float("FORECAST_GATE_TECH_MIN_FEATURE_ROWS", 50)))
 
 
 _BUNDLE_CACHE = None
@@ -227,7 +383,8 @@ def _horizon_meta() -> dict[str, dict[str, object]]:
             timeframe = str(getattr(spec, "timeframe", "") or "").strip()
             step_bars = int(getattr(spec, "step_bars", 0) or 0)
             if name and timeframe and step_bars > 0:
-                meta[name] = {"timeframe": timeframe, "step_bars": step_bars}
+                if name not in meta:
+                    meta[name] = {"timeframe": timeframe, "step_bars": step_bars}
     except Exception:
         pass
     return meta
@@ -321,6 +478,61 @@ def _horizon_for(pocket: str, entry_thesis: Optional[dict]) -> str | None:
     return None
 
 
+def _latest_close(candles: list[dict]) -> float | None:
+    for candle in reversed(candles):
+        if not isinstance(candle, dict):
+            continue
+        for key in ("close", "mid", "price", "last", "close_price"):
+            value = candle.get(key)
+            if value is None:
+                continue
+            try:
+                price = float(value)
+                if math.isfinite(price):
+                    return price
+            except Exception:
+                continue
+    return None
+
+
+def _attach_price_target(row: dict[str, Any], candles: list[dict]) -> dict[str, Any]:
+    if not isinstance(row, dict):
+        return row
+    anchor = _latest_close(candles)
+    if isinstance(anchor, float) and math.isfinite(anchor):
+        row["anchor_price"] = round(anchor, 5)
+        expected = row.get("expected_pips")
+        if isinstance(expected, (int, float)) and math.isfinite(float(expected)):
+            row["target_price"] = round(anchor + float(expected) * float(_PIP_SIZE), 5)
+        else:
+            row["target_price"] = None
+    else:
+        row["anchor_price"] = None
+        row["target_price"] = None
+    return row
+
+
+def _attach_regime_profile(
+    row: dict[str, Any],
+    *,
+    edge: float | None = None,
+) -> dict[str, Any]:
+    if not isinstance(row, dict):
+        return row
+    p_up = _safe_float(row.get("p_up"), 0.5)
+    trend_strength = _safe_float(row.get("trend_strength"), 0.5)
+    range_pressure = _safe_float(row.get("range_pressure"), 0.5)
+    row_profile = _regime_profile_from_row(
+        row,
+        p_up=p_up,
+        edge=0.5 if edge is None else edge,
+        trend_strength=trend_strength,
+        range_pressure=range_pressure,
+    )
+    row.update(row_profile)
+    return row
+
+
 def _load_bundle_cached():
     global _BUNDLE_CACHE, _BUNDLE_MTIME, _PRED_CACHE, _PRED_CACHE_TS
     if not _BUNDLE_PATH:
@@ -369,6 +581,7 @@ def _fetch_candles_by_tf() -> dict[str, list[dict]]:
     from indicators.factor_cache import get_candles_snapshot
 
     return {
+        "M1": get_candles_snapshot("M1", limit=400, include_live=True),
         "M5": get_candles_snapshot("M5", limit=1200, include_live=True),
         "H1": get_candles_snapshot("H1", limit=1000, include_live=True),
         "D1": get_candles_snapshot("D1", limit=500, include_live=True),
@@ -392,6 +605,9 @@ def _predict_bundle_latest(bundle, candles_by_tf: dict[str, list[dict]]) -> dict
     for row in out.values():
         if isinstance(row, dict):
             row.setdefault("source", "bundle")
+            tf = str(row.get("timeframe") or "").strip().upper()
+            _attach_price_target(row, candles_by_tf.get(tf, []))
+            _attach_regime_profile(row)
     return out
 
 
@@ -534,6 +750,44 @@ def _projection_bias_from_candles(
     }
 
 
+def _technical_missing_row(
+    *,
+    horizon: str,
+    timeframe: str,
+    step_bars: int,
+    available_candles: int,
+    required_candles: int,
+    reason: str,
+    detail: str | None = None,
+    candles: list[dict] | None = None,
+) -> dict[str, Any]:
+    row = _attach_price_target(
+        {
+            "horizon": horizon,
+            "source": "technical",
+            "status": "insufficient_history",
+            "forecast_ready": False,
+            "p_up": None,
+            "expected_pips": None,
+            "feature_ts": None,
+            "trend_strength": 0.5,
+            "range_pressure": 0.5,
+            "projection_score": 0.0,
+            "projection_confidence": 0.0,
+            "projection_components": {},
+            "timeframe": timeframe,
+            "step_bars": int(step_bars) if step_bars else 0,
+            "available_candles": int(available_candles) if available_candles else 0,
+            "required_candles": int(required_candles),
+            "reason": reason,
+            "detail": detail,
+            "remediation": f"need >= {required_candles} candles on {timeframe}; run backfill for recent {timeframe} candles",
+        },
+        candles or [],
+    )
+    return _attach_regime_profile(row)
+
+
 def _technical_prediction_for_horizon(
     candles: list[dict],
     *,
@@ -541,22 +795,114 @@ def _technical_prediction_for_horizon(
     step_bars: int,
     timeframe: str = "M5",
 ) -> dict | None:
-    if not candles:
-        return None
+    available = len(candles)
+    required = max(_TECH_MIN_FEATURE_ROWS, int(step_bars) * 3, 24)
+    if available == 0:
+        LOG.info(
+            "[FORECAST] technical prediction skipped (empty history): horizon=%s timeframe=%s required=%s",
+            horizon,
+            timeframe,
+            required,
+        )
+        return _technical_missing_row(
+            horizon=horizon,
+            timeframe=timeframe,
+            step_bars=step_bars,
+            available_candles=0,
+            required_candles=required,
+            reason="empty_history",
+            candles=candles,
+        )
+    if available < required:
+        LOG.info(
+            "[FORECAST] technical prediction skipped (history too short): horizon=%s timeframe=%s available=%s required=%s",
+            horizon,
+            timeframe,
+            available,
+            required,
+        )
+        return _technical_missing_row(
+            horizon=horizon,
+            timeframe=timeframe,
+            step_bars=step_bars,
+            available_candles=available,
+            required_candles=required,
+            reason="short_history",
+            candles=candles,
+        )
+
     try:
         from analysis.forecast_sklearn import compute_feature_frame
     except Exception:
-        return None
+        return _technical_missing_row(
+            horizon=horizon,
+            timeframe=timeframe,
+            step_bars=step_bars,
+            available_candles=available,
+            required_candles=required,
+            reason="feature_builder_unavailable",
+            candles=candles,
+        )
 
     try:
         feats = compute_feature_frame(candles)
     except Exception as exc:
         LOG.debug("[FORECAST] technical feature build failed horizon=%s err=%s", horizon, exc)
-        return None
+        return _technical_missing_row(
+            horizon=horizon,
+            timeframe=timeframe,
+            step_bars=step_bars,
+            available_candles=available,
+            required_candles=required,
+            reason="feature_build_failed",
+            detail=str(exc),
+            candles=candles,
+        )
     if feats.empty:
-        return None
+        return _technical_missing_row(
+            horizon=horizon,
+            timeframe=timeframe,
+            step_bars=step_bars,
+            available_candles=available,
+            required_candles=required,
+            reason="feature_frame_empty",
+            candles=candles,
+        )
 
-    last = feats.iloc[-1]
+    try:
+        last = feats.iloc[-1]
+        required_keys = (
+            "atr_pips_14",
+            "vol_pips_20",
+            "ret_pips_1",
+            "ret_pips_3",
+            "ret_pips_12",
+            "ma_gap_pips_10_20",
+            "close_ma20_pips",
+            "close_ma50_pips",
+            "rsi_14",
+            "range_pos",
+        )
+        for key in required_keys:
+            fv = last.get(key)
+            if fv is None:
+                raise ValueError(f"missing_feature_{key}")
+            fv_f = float(fv)
+            if not math.isfinite(fv_f):
+                raise ValueError(f"nonfinite_feature_{key}:{fv_f}")
+    except Exception as exc:
+        LOG.debug("[FORECAST] technical feature row invalid horizon=%s err=%s", horizon, exc)
+        return _technical_missing_row(
+            horizon=horizon,
+            timeframe=timeframe,
+            step_bars=step_bars,
+            available_candles=available,
+            required_candles=required,
+            reason="feature_row_incomplete",
+            detail=str(exc),
+            candles=candles,
+        )
+
     atr = max(0.45, abs(_safe_float(last.get("atr_pips_14"), 0.0)))
     vol = max(0.2, abs(_safe_float(last.get("vol_pips_20"), 0.0)))
     ret1 = _safe_float(last.get("ret_pips_1"), 0.0) / atr
@@ -635,18 +981,28 @@ def _technical_prediction_for_horizon(
     except Exception:
         feature_ts = None
 
-    return {
-        "horizon": horizon,
-        "p_up": round(float(p_up), 6),
-        "expected_pips": round(float(expected_pips), 4),
-        "feature_ts": feature_ts,
-        "source": "technical",
-        "trend_strength": round(float(trend_strength), 6),
-        "range_pressure": round(float(range_pressure), 6),
-        "projection_score": round(float(projection_score), 6),
-        "projection_confidence": round(float(projection_confidence), 6),
-        "projection_components": proj.get("components"),
-    }
+    row = _attach_price_target(
+        {
+            "horizon": horizon,
+            "p_up": round(float(p_up), 6),
+            "expected_pips": round(float(expected_pips), 4),
+            "feature_ts": feature_ts,
+            "source": "technical",
+            "status": "ready",
+            "forecast_ready": True,
+            "trend_strength": round(float(trend_strength), 6),
+            "range_pressure": round(float(range_pressure), 6),
+            "projection_score": round(float(projection_score), 6),
+            "projection_confidence": round(float(projection_confidence), 6),
+            "projection_components": proj.get("components"),
+            "timeframe": timeframe,
+            "step_bars": int(step_bars) if step_bars else 0,
+            "available_candles": available,
+            "required_candles": required,
+        },
+        candles,
+    )
+    return _attach_regime_profile(row, edge=p_up)
 
 
 def _predict_technical_latest(candles_by_tf: dict[str, list[dict]]) -> dict[str, dict]:
@@ -686,10 +1042,20 @@ def _blend_prediction_rows(base_row: dict, tech_row: dict) -> dict:
         _safe_float(tech_row.get("projection_confidence"), 0.0),
     )
     proj_conf_tech = _safe_float(tech_row.get("projection_confidence"), proj_conf_base)
-    return {
+    blended_expected_pips = round((1.0 - alpha) * e_base + alpha * e_tech, 4)
+    anchor_price = base_row.get("anchor_price")
+    if anchor_price is None:
+        anchor_price = tech_row.get("anchor_price")
+    if isinstance(anchor_price, (int, float)) and math.isfinite(float(anchor_price)):
+        blended_target_price = round(float(anchor_price) + float(blended_expected_pips) * float(_PIP_SIZE), 5)
+    else:
+        blended_target_price = None
+    row = {
         **base_row,
         "p_up": round((1.0 - alpha) * p_base + alpha * p_tech, 6),
-        "expected_pips": round((1.0 - alpha) * e_base + alpha * e_tech, 4),
+        "expected_pips": blended_expected_pips,
+        "anchor_price": anchor_price if anchor_price is not None else None,
+        "target_price": blended_target_price,
         "feature_ts": base_row.get("feature_ts") or tech_row.get("feature_ts"),
         "source": "blend",
         "projection_score": round((1.0 - alpha) * proj_base + alpha * proj_tech, 6),
@@ -710,6 +1076,10 @@ def _blend_prediction_rows(base_row: dict, tech_row: dict) -> dict:
             6,
         ),
     }
+    return _attach_regime_profile(
+        row,
+        edge=_safe_float(row.get("p_up"), 0.5),
+    )
 
 
 def _ensure_predictions(bundle) -> dict | None:  # noqa: ANN001 - sklearn bundle type
@@ -737,6 +1107,9 @@ def _ensure_predictions(bundle) -> dict | None:  # noqa: ANN001 - sklearn bundle
             preds = tpred
         else:
             for key, trow in tpred.items():
+                if key in _TECH_PREFERRED_HORIZONS:
+                    preds[key] = trow
+                    continue
                 brow = preds.get(key)
                 if isinstance(brow, dict):
                     preds[key] = _blend_prediction_rows(brow, trow)
@@ -832,6 +1205,22 @@ def decide(
                 0.0,
                 1.0,
             )
+    future_flow = _future_flow_plan(
+        p_up=p_up,
+        trend_strength=trend_strength,
+        range_pressure=range_pressure,
+        edge=edge,
+        side=side_key if side_key else ("buy" if units > 0 else "sell"),
+        style=style,
+        horizon=horizon,
+    )
+    regime_profile = _regime_profile_from_row(
+        row,
+        p_up=p_up,
+        edge=edge,
+        trend_strength=trend_strength,
+        range_pressure=range_pressure,
+    )
 
     if style_guard_enabled and style == "trend" and trend_strength < trend_min_strength:
         log_metric(
@@ -859,6 +1248,8 @@ def decide(
             style=style,
             trend_strength=trend_strength,
             range_pressure=range_pressure,
+            future_flow=future_flow,
+            **regime_profile,
         )
     if style_guard_enabled and style == "range" and range_pressure < range_min_pressure:
         log_metric(
@@ -886,6 +1277,8 @@ def decide(
             style=style,
             trend_strength=trend_strength,
             range_pressure=range_pressure,
+            future_flow=future_flow,
+            **regime_profile,
         )
 
     edge_block = float(_EDGE_BLOCK)
@@ -920,6 +1313,8 @@ def decide(
             style=style,
             trend_strength=trend_strength,
             range_pressure=range_pressure,
+            future_flow=future_flow,
+            **regime_profile,
         )
 
     feature_ts = row.get("feature_ts")
@@ -956,6 +1351,8 @@ def decide(
                     style=style,
                     trend_strength=trend_strength,
                     range_pressure=range_pressure,
+                    future_flow=future_flow,
+                    **regime_profile,
                 )
         except Exception:
             # If timestamp parsing fails, do not block; behave as no-op.
@@ -989,7 +1386,9 @@ def decide(
         style=style,
         trend_strength=trend_strength,
         range_pressure=range_pressure,
-    )
+        future_flow=future_flow,
+        **regime_profile,
+        )
 
 
 __all__ = [
