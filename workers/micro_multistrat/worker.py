@@ -1007,7 +1007,13 @@ async def micro_multi_worker() -> None:
         except Exception:
             pass
         factors = all_factors()
-        fac_m1 = factors.get("M1") or _LOCAL_FRESH_M1 or {}
+        fac_m1_disk = factors.get("M1") or {}
+        fac_m1 = fac_m1_disk
+        if _LOCAL_FRESH_M1 is not None:
+            age_disk = _factor_age_seconds(fac_m1_disk)
+            age_local = _factor_age_seconds(_LOCAL_FRESH_M1)
+            if not fac_m1_disk or age_local < age_disk:
+                fac_m1 = _LOCAL_FRESH_M1
         fac_h4 = factors.get("H4") or {}
         fac_h1 = factors.get("H1") or {}
         fac_m5 = factors.get("M5") or {}
