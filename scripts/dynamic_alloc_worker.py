@@ -2,7 +2,7 @@
 """
 Compute simple strategy scores from recent trades and emit config/dynamic_alloc.json.
 
-Intended to run periodically (cron/systemd timer) to feed main.py with score-driven
+Intended to run periodically (cron/systemd timer) to feed score-driven allocation context
 confidence trims and pocket caps.
 """
 from __future__ import annotations

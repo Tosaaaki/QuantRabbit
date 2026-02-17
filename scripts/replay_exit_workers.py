@@ -45,7 +45,58 @@ from signals.pocket_allocator import alloc, DEFAULT_SCALP_SHARE
 from analysis.focus_decider import decide_focus
 from analysis.local_decider import heuristic_decision
 from analysis.regime_classifier import classify
-import main as main_mod
+from strategies.mean_reversion.bb_rsi import BBRsi
+from strategies.micro.level_reactor import MicroLevelReactor
+from strategies.micro.momentum_burst import MomentumBurstMicro
+from strategies.micro.momentum_stack import MicroMomentumStack
+from strategies.micro.pullback_ema import MicroPullbackEMA
+from strategies.micro.range_break import MicroRangeBreak
+from strategies.micro.trend_momentum import TrendMomentumMicro
+from strategies.micro.vwap_bound_revert import MicroVWAPBound
+from strategies.micro_lowvol.momentum_pulse import MomentumPulse
+from strategies.micro_lowvol.vol_compression_break import VolCompressionBreak
+from strategies.micro_lowvol.micro_vwap_revert import MicroVWAPRevert
+from strategies.micro_lowvol.bb_rsi_fast import BBRsiFast
+from strategies.scalping.impulse_retrace import ImpulseRetraceScalp
+from strategies.scalping.pulse_break import PulseBreak
+from strategies.scalping.range_fader import RangeFader
+from strategies.trend.ma_cross import MovingAverageCross
+
+REPLAY_STRATEGIES: dict[str, object] = {
+    cls.name: cls
+    for cls in [
+        MovingAverageCross,
+        BBRsi,
+        BBRsiFast,
+        RangeFader,
+        PulseBreak,
+        ImpulseRetraceScalp,
+        MomentumBurstMicro,
+        MicroMomentumStack,
+        MicroPullbackEMA,
+        MicroLevelReactor,
+        MicroRangeBreak,
+        MicroVWAPBound,
+        TrendMomentumMicro,
+        MicroVWAPRevert,
+        VolCompressionBreak,
+        MomentumPulse,
+    ]
+}
+
+ALLOWED_RANGE_STRATEGIES = {
+    "BB_RSI",
+    "BB_RSI_Fast",
+    "RangeFader",
+    "MicroRangeBreak",
+    "MicroVWAPRevert",
+    "MicroVWAPBound",
+    "MomentumPulse",
+    "VolCompressionBreak",
+    "MicroPullbackEMA",
+    "MicroLevelReactor",
+    "MicroMomentumStack",
+}
 
 import workers.micro_bbrsi.exit_worker as bbrsi_exit
 
@@ -1330,10 +1381,10 @@ class StrategyEntryEngine:
 
         signals: List[dict] = []
         for name in ranked:
-            cls = main_mod.STRATEGIES.get(name)
+            cls = REPLAY_STRATEGIES.get(name)
             if not cls:
                 continue
-            if range_ctx.active and cls.name not in main_mod.ALLOWED_RANGE_STRATEGIES:
+            if range_ctx.active and cls.name not in ALLOWED_RANGE_STRATEGIES:
                 continue
             raw = cls.check(fac_m1)
             if not raw:

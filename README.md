@@ -61,7 +61,7 @@ scripts/tail_vm_logs.sh -c "sudo journalctl -u quantrabbit.service -f"
 Make を使わない場合は `scripts/vm.sh -p <PROJECT> -z <ZONE> -m <INSTANCE> deploy -b main -i --restart quantrabbit.service -t` を直接呼び出す。`-t` は IAP トンネル、`-k` は OS Login 用 SSH 鍵、必要に応じて `-A` で gcloud アカウントを指定する。
 
 .
-├── main.py                  # 60 秒取引ループ（入口）
+├── execution/               # strategy entry/exit dispatchと制御
 ├── Dockerfile               # VM / Cloud Run 共通
 ├── requirements.txt         # ライブラリ pin
 │
@@ -140,7 +140,7 @@ Make を使わない場合は `scripts/vm.sh -p <PROJECT> -z <ZONE> -m <INSTANCE
 - `logs/*.db` のスキーマや運用メモは `docs/OBSERVABILITY.md` を参照
 
 # 3. run (practice account, small lot)
-python main.py
+# main.py は廃止済み。最小検証は該当する strategy worker を systemd/service で起動する。
 
 # pool.yaml example
 ```yaml
@@ -221,7 +221,7 @@ python scripts/run_sync_pipeline.py \
    `scripts/generate_level_map.py` が BQ のローソクテーブル（例: `candles_m1`）を集計し、価格バケットごとの反転/到達傾向マップを JSON として出力します。`scripts/upload_candles_to_bq.py` でローカルのローソクログを BQ にロードしておくと利用可能です。
 
 7. **Level map / 戦略スコアのVM適用（オプトイン）**  
-   - level_map.json（GCS）: `LEVEL_MAP_ENABLE=true` で `main.py` が TTL キャッシュ読み込みし、エントリーの thesis に近傍バケット情報を添付（挙動はデフォルトOFF）。  
+   - level_map.json（GCS）: `LEVEL_MAP_ENABLE=true` で range/entry 補助の TTL キャッシュを読み込み、エントリー thesis に近傍バケット情報を添付（挙動はデフォルトOFF）。  
    - strategy_scores (Firestore): `FIRESTORE_STRATEGY_ENABLE=true` でロット係数/SLTP推奨を読み込めます（挙動はデフォルトOFF、SLTPは `FIRESTORE_STRATEGY_APPLY_SLTP` で制御）。
 
 8. **systemd への登録例**

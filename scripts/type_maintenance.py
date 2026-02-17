@@ -31,7 +31,6 @@ TARGET_PATHS = [
     "analytics",
     "workers",
     "tests",
-    "main.py",
 ]
 ANN_RULES = "ANN001,ANN201,ANN202,ANN204,ANN205,ANN206,ANN401"
 

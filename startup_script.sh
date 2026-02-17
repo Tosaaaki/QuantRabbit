@@ -142,18 +142,6 @@ CFG
 
 install -m 0644 ops/systemd/quantrabbit.service /etc/systemd/system/quantrabbit.service
 
-if [[ "$QR_USER" != "tossaki" ]]; then
-  install -d /etc/systemd/system/quantrabbit.service.d
-  cat >/etc/systemd/system/quantrabbit.service.d/override.conf <<EOF
-[Service]
-User=${QR_USER}
-WorkingDirectory=${QR_HOME}/QuantRabbit
-Environment=HOME=${QR_HOME}
-ExecStart=
-ExecStart=${QR_HOME}/QuantRabbit/.venv/bin/python ${QR_HOME}/QuantRabbit/main.py
-EOF
-fi
-
 systemctl daemon-reload
 systemctl enable --now quantrabbit.service
 

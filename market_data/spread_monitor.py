@@ -69,6 +69,8 @@ BASELINE_BLOCK_SECONDS = _load_float(
     "spread_guard_baseline_block_sec", 45.0, minimum=5.0
 )
 STALE_GRACE_SECONDS = _load_float("spread_guard_stale_grace_sec", 12.0, minimum=0.0)
+# 直近スプレッドがこの値未満なら、たとえ古くなっていても原則 stale ブロックしない。
+STALE_BLOCK_MIN_PIPS = _load_float("spread_guard_stale_block_min_pips", 0.0, minimum=0.0)
 # 瞬間スパイクを無視する上限（max がここ以下で pX が閾値未満ならガードしない）
 SPIKE_FORGIVE_PIPS = _load_float(
     "spread_guard_spike_forgive_pips", max(MAX_SPREAD_PIPS * 2.0, MAX_SPREAD_PIPS + 0.5)
@@ -269,6 +271,7 @@ def _state_from_tick_cache(now_monotonic: float) -> Optional[dict]:
         "stale": stale,
         "stale_for_sec": round(stale_for, 3),
         "stale_grace_sec": STALE_GRACE_SECONDS,
+        "stale_block_min_pips": STALE_BLOCK_MIN_PIPS,
         "high_samples": high_count,
         "min_high_samples": MIN_HIGH_SAMPLES,
         "window_seconds": WINDOW_SECONDS,
@@ -515,6 +518,7 @@ def get_state() -> Optional[dict]:
         "stale": stale,
         "stale_for_sec": round(stale_for, 3),
         "stale_grace_sec": STALE_GRACE_SECONDS,
+        "stale_block_min_pips": STALE_BLOCK_MIN_PIPS,
         "high_samples": high_count,
         "min_high_samples": MIN_HIGH_SAMPLES,
         "window_seconds": WINDOW_SECONDS,
@@ -568,7 +572,12 @@ def is_blocked() -> Tuple[bool, int, Optional[dict], str]:
         elif bool(state.get("stale")):
             stale_for = float(state.get("stale_for_sec") or 0.0)
             stale_grace = float(state.get("stale_grace_sec") or 0.0)
-            if stale_grace <= 0.0 or stale_for >= stale_grace:
+            stale_block_min = float(state.get("stale_block_min_pips") or 0.0)
+            stale_spread = float(state.get("spread_pips") or 0.0)
+            should_block_stale = stale_grace <= 0.0 or stale_for >= stale_grace
+            if should_block_stale and (
+                stale_block_min <= 0.0 or stale_spread >= stale_block_min
+            ):
                 _blocked_until = now + max(1.0, min(5.0, HOT_COOLDOWN_SECONDS))
                 _blocked_reason = (
                     f"spread_stale age={state.get('age_ms')}ms "
