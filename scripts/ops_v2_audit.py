@@ -200,7 +200,17 @@ def main() -> int:
 
     mandatory_pairs = [
         ("quant-scalp-ping-5s.service", "quant-scalp-ping-5s-exit.service"),
-        ("quant-micro-multi.service", "quant-micro-multi-exit.service"),
+        ("quant-micro-rangebreak.service", "quant-micro-rangebreak-exit.service"),
+        ("quant-micro-levelreactor.service", "quant-micro-levelreactor-exit.service"),
+        ("quant-micro-vwapbound.service", "quant-micro-vwapbound-exit.service"),
+        ("quant-micro-vwaprevert.service", "quant-micro-vwaprevert-exit.service"),
+        ("quant-micro-momentumburst.service", "quant-micro-momentumburst-exit.service"),
+        ("quant-micro-momentumstack.service", "quant-micro-momentumstack-exit.service"),
+        ("quant-micro-pullbackema.service", "quant-micro-pullbackema-exit.service"),
+        ("quant-micro-trendmomentum.service", "quant-micro-trendmomentum-exit.service"),
+        ("quant-micro-trendretest.service", "quant-micro-trendretest-exit.service"),
+        ("quant-micro-compressionrevert.service", "quant-micro-compressionrevert-exit.service"),
+        ("quant-micro-momentumpulse.service", "quant-micro-momentumpulse-exit.service"),
         ("quant-scalp-macd-rsi-div.service", "quant-scalp-macd-rsi-div-exit.service"),
         ("quant-scalp-tick-imbalance.service", "quant-scalp-tick-imbalance-exit.service"),
         ("quant-scalp-squeeze-pulse-break.service", "quant-scalp-squeeze-pulse-break-exit.service"),

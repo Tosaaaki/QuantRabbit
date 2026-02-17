@@ -11,8 +11,6 @@ REPO_DIR="/home/tossaki/QuantRabbit"
 INSTALL_ALL=0
 EXPLICIT_UNITS=()
 V2_DISALLOWED_UNITS=(
-  "quant-micro-trendretest.service"
-  "quant-micro-trendretest-exit.service"
   "quant-impulse-retest-s5.service"
   "quant-impulse-retest-s5-exit.service"
   "quant-micro-adaptive-revert.service"
@@ -21,8 +19,6 @@ V2_DISALLOWED_UNITS=(
   "quant-trend-reclaim-long-exit.service"
 )
 KNOWN_BROKEN_UNITS=(
-  "quant-micro-trendretest.service"
-  "quant-micro-trendretest-exit.service"
   "quant-impulse-retest-s5.service"
   "quant-impulse-retest-s5-exit.service"
   "quant-trend-reclaim-long.service"
