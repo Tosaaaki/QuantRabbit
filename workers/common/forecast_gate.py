@@ -124,7 +124,7 @@ _TECH_SESSION_BIAS_WEIGHT = max(
     min(0.6, _env_float("FORECAST_TECH_SESSION_BIAS_WEIGHT", 0.12)),
 )
 _TECH_SESSION_BIAS_WEIGHT_MAP = _parse_horizon_weight_map(
-    os.getenv("FORECAST_TECH_SESSION_BIAS_WEIGHT_MAP", "1m=0.0"),
+    os.getenv("FORECAST_TECH_SESSION_BIAS_WEIGHT_MAP", "1m=0.0,5m=0.22,10m=0.30"),
     lo=0.0,
     hi=0.6,
 )

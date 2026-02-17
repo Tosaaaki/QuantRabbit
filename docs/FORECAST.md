@@ -152,7 +152,9 @@ python3 scripts/eval_forecast_before_after.py \
 加えて 2026-02-17 以降は JST 時間帯バイアス（`--session-bias-*`）を導入し、
 同じ時間帯の先行方向ドリフトを after 式へ反映できます。
 - 既定は `session_bias_weight=0.12`
-- `1m` は過学習回避のため適用重みを 0.0 に固定し、`5m/10m` 以上で適用します。
+- TF別重みは `session_bias_weight_map`（例: `1m=0.0,5m=0.22,10m=0.30`）で上書きできます。
+  現在の既定は `1m=0.0,5m=0.22,10m=0.30` です。
+- `1m` は過学習回避のため適用重みを 0.0 に固定しています。
 - 同一期間VM評価（`bars=8050`）では `session_bias_weight=0.12` が
   `5m/10m` で hit と MAE の双方を小幅改善しました（`1m` は同等）。
 

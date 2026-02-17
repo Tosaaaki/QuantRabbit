@@ -89,6 +89,23 @@
     - `5m`: hit `+0.0007`, MAE `-0.0009`
     - `10m`: hit `+0.0019`, MAE `-0.0030`
 
+### 2026-02-17（追記）session bias を TF別重みへ拡張（5m/10m分離）
+
+- `workers/common/forecast_gate.py`
+  - `FORECAST_TECH_SESSION_BIAS_WEIGHT_MAP` を追加（例: `1m=0.0,5m=0.22,10m=0.30`）。
+  - 既定を上記 map に更新し、`1m` は 0 固定、`5m` と `10m` を別重みで運用可能化。
+- `scripts/eval_forecast_before_after.py`
+  - `--session-bias-weight-map` を追加して、同じ重みmapで before/after 比較可能化。
+- VM比較（`bars=8050`, `feature_expansion_gain=0.0`, `breakout_adaptive_weight=0.22`）:
+  - map `1m=0.0,5m=0.22,10m=0.22`
+    - `5m`: hit `0.4911`, MAE `3.3849`
+    - `10m`: hit `0.4893`, MAE `5.0646`
+  - map `1m=0.0,5m=0.22,10m=0.30`
+    - `5m`: hit `0.4911`, MAE `3.3849`（同等）
+    - `10m`: hit `0.4912`, MAE `5.0630`（改善）
+- 追加確認（`max-bars=6000`）でも `10m=0.30` は hit/MAE とも改善を維持。
+- 運用デフォルトを `1m=0.0,5m=0.22,10m=0.30` へ更新。
+
 ### 2026-02-17（追記）「時間帯=TF」前提で戦略別主TF＋補助TF整合を追加
 
 - `execution/strategy_entry.py` の戦略契約に `forecast_support_horizons` を追加し、
