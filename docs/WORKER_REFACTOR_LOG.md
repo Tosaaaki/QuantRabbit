@@ -8,6 +8,13 @@
 - データ供給は `quant-market-data-feed`、制御配信は `quant-strategy-control` に分離。
 - 補助的運用ワーカーは本体管理マップから除外。
 
+### 2026-02-18（追記）scalp_fast で短期予測をデフォルト化
+
+- `workers/common/forecast_gate.py` の `FORECAST_GATE_HORIZON_SCALP_FAST` デフォルトを `1h` から `1m` に変更。
+- `forecast_gate` の技術予測で `M1` キャンドルを取得するようにし、`1m` の短期予測を実データで計算できる経路を追加。
+- `1m` の Horizon メタを `timeframe=M1`、`step_bars=12` に変更し、`scalp_fast` の「短期」想定に合わせた予測可視性を向上。
+- 運用確認用ドキュメント（`docs/FORECAST.md`）を更新し、`scalp_fast` の標準確認軸として `1m` を明記。
+
 ### 2026-02-17（追記）trend_h1 を下落追尾用に短期化
 
 - `workers/trend_h1/config.py` に `TREND_H1_FORCE_DIRECTION` を追加し、戦略起動側で `short` のみを許可できる制御を導入。
@@ -1141,3 +1148,11 @@
   - `age` が一時的に跳ねた直後の連続ノイズを抑えつつ、`proceeding anyway` の安全挙動は維持。
 - 追加意図: この調整は、`quant-micro-multi` の入口停止が誘発されやすい局面での
   `entry_thesis` 通過率を維持しつつ、保全的な規模縮小/警告は維持すること。
+
+### 2026-02-17（追記）quant-micro-multi 起動ログの安定可視化と `_LOCAL_FRESH_M1` 参照保護
+
+- `workers/micro_multistrat/worker.py`
+  - `Application started!` を起動イベントとして `warning` で出すよう変更。
+  - `micro_multi_worker` の `_LOCAL_FRESH_M1` / `_LAST_FRESH_M1_TS` 参照を `globals()` 経由で扱い、参照スコープ崩れ（`UnboundLocalError`）を回避。
+  - 併せて `local_fresh_m1` / `last_fresh_m1_ts` をループ内で更新し、tick 再構成時の状態整合を維持。
+- 変更意図: 再起動直後からの起動監査可視化と稼働阻害エラー再発防止を優先し、`Application started!` 検知運用を成立させること。

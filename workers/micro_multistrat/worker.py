@@ -983,8 +983,10 @@ async def micro_multi_worker() -> None:
         except asyncio.CancelledError:
             return
     LOG.info("%s worker start (interval=%.1fs)", config.LOG_PREFIX, config.LOOP_INTERVAL_SEC)
-    LOG.info("Application started! %s", config.LOG_PREFIX)
-    global _LAST_FRESH_M1_TS, _LOCAL_FRESH_M1
+    LOG.warning("Application started! %s", config.LOG_PREFIX)
+    state = globals()
+    last_fresh_m1_ts = float(state.get("_LAST_FRESH_M1_TS", 0.0))
+    local_fresh_m1 = state.get("_LOCAL_FRESH_M1")
     last_trend_block_log = 0.0
     last_stale_log = 0.0
     last_stale_scale_log = 0.0
@@ -1010,18 +1012,18 @@ async def micro_multi_worker() -> None:
         factors = all_factors()
         fac_m1_disk = factors.get("M1") or {}
         fac_m1 = fac_m1_disk
-        if _LOCAL_FRESH_M1 is not None:
+        if local_fresh_m1 is not None:
             age_disk = _factor_age_seconds(fac_m1_disk)
-            age_local = _factor_age_seconds(_LOCAL_FRESH_M1)
+            age_local = _factor_age_seconds(local_fresh_m1)
             if not fac_m1_disk or age_local < age_disk:
-                fac_m1 = _LOCAL_FRESH_M1
+                fac_m1 = local_fresh_m1
         fac_h4 = factors.get("H4") or {}
         fac_h1 = factors.get("H1") or {}
         fac_m5 = factors.get("M5") or {}
         age_m1 = _factor_age_seconds(fac_m1)
         if age_m1 > config.MAX_FACTOR_AGE_SEC:
             # Refresh M1 factors from recent ticks instead of blocking entries.
-            if config.FRESH_TICKS_ON_STALE and now_ts - _LAST_FRESH_M1_TS >= config.FRESH_TICKS_REFRESH_SEC:
+            if config.FRESH_TICKS_ON_STALE and now_ts - last_fresh_m1_ts >= config.FRESH_TICKS_REFRESH_SEC:
                 try:
                     tick_limit = max(1000, int(config.FRESH_TICKS_LOOKBACK_SEC * 5))
                     ticks = tick_window.recent_ticks(
@@ -1034,8 +1036,10 @@ async def micro_multi_worker() -> None:
                 if fresh:
                     fac_m1 = fresh
                     age_m1 = _factor_age_seconds(fac_m1)
-                    _LAST_FRESH_M1_TS = now_ts
-                    _LOCAL_FRESH_M1 = fac_m1
+                    state["_LAST_FRESH_M1_TS"] = now_ts
+                    state["_LOCAL_FRESH_M1"] = fac_m1
+                    last_fresh_m1_ts = now_ts
+                    local_fresh_m1 = fac_m1
                     log_metric(
                         "micro_multi_refresh_m1",
                         float(age_m1),
@@ -1052,7 +1056,8 @@ async def micro_multi_worker() -> None:
                 )
             else:
                 # tick 再構成で復旧できた場合、明示的にはアラートを抑制する。
-                _LOCAL_FRESH_M1 = fac_m1
+                local_fresh_m1 = fac_m1
+                state["_LOCAL_FRESH_M1"] = fac_m1
             if age_m1 > config.MAX_FACTOR_AGE_SEC:
                 hard_age = max(config.MAX_FACTOR_AGE_SEC, config.FRESH_TICKS_STALE_SCALE_HARD_SEC)
                 if hard_age > config.MAX_FACTOR_AGE_SEC:
