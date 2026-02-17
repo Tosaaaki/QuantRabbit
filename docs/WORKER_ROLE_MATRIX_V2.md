@@ -252,6 +252,8 @@
   - 追記（2026-02-17 08:51 UTC 反映）:
     - `scalp_ping_5s_flow` は `orders.db` 上でエントリー 0 件が継続したため、
       `LOOKAHEAD_GATE_ENABLED=0` と `REVERT_*`（window/range/sweep/bounce）および `DROP_FLOW_*` 閾値を追加緩和。
+    - `no_signal:revert_not_found` が継続したため、config下限に合わせて `MIN_*`/`SHORT_MIN_*`/`IMBALANCE_MIN` を明示し、
+      `MOMENTUM_TRIGGER_PIPS` を 0.10 へ引き下げて momentum 側シグナルの成立条件を緩和。
 
 ## 監査用更新プロトコル（毎回）
 
