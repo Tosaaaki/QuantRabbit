@@ -40,6 +40,12 @@
 - `workers/micro_multistrat/worker.py` の `entry_thesis` に `signal_mode` を明示注入し、後段ガード/監査で意図の追跡性を確保。
 - `ops/env/quant-micro-multi.env` にブレイク判定の閾値を追加入力できるキーを追加（`MICRO_RANGEBREAK_BREAKOUT_*` 系）。
 
+- 2026-02-17（運用チューニング）`MICRO_RANGEBREAK_BREAKOUT_MIN_RANGE_SCORE` を
+  `0.46` から `0.44` に下げ、レンジブレイク順張りの `signal_mode=trend` 受け条件を
+  1本運用でやや拡張。  
+  同時に V2 ランタイムの `quant-v2-runtime.env` で
+  `ORDER_PATTERN_GATE_GLOBAL_OPT_IN=0` を維持し、global 強制を抑制する方針へ合わせた。
+
 ### 2026-02-17（追記）`scalp_ping_5s` / `scalp_ping_5s_b` の低証拠金旧キー整理
 
 - `execution/risk_guard.py` の `allowed_lot` から
