@@ -1399,3 +1399,28 @@
     - step=5: hit `0.4855` / MAE `3.4571`
     - step=10: hit `0.4783` / MAE `5.1374`
   - `breakout_bias_20` の方向一致率（同期間）は step=1/5/10 で `0.4869 / 0.4788 / 0.4716`（filtered は `0.4873 / 0.4808 / 0.4726`）。
+
+### 2026-02-17（追記）position-manager タイムアウト再発の抑止（open_positions 経路）
+
+- 背景:
+  - `quant-scalp-ping-5s-b` / `quant-scalp-ping-5s-flow` で
+    `position_manager open_positions timeout after 6.0s` が断続再発。
+  - 同時に `execution/position_manager.py` の service 呼び出しで
+    `read timeout=9.0` が積み上がり、to_thread 待ち切り（6秒）との不整合で遅延が増幅していた。
+- 修正:
+  - `execution/position_manager.py`
+    - `POSITION_MANAGER_SERVICE_OPEN_POSITIONS_TIMEOUT`（既定 4.5s）を追加し、
+      `/position/open_positions` は共通 timeout より短く fail-fast するよう分離。
+    - service 呼び出しを `requests.Session` + pool（keep-alive）へ変更し、
+      高頻度呼び出し時の接続張り直しコストを削減。
+    - `/position/open_positions` のクライアント側短TTLキャッシュ
+      （`POSITION_MANAGER_SERVICE_OPEN_POSITIONS_CACHE_TTL_SEC`, 既定 0.35s）を追加。
+    - service 失敗時は短時間の stale キャッシュ
+      （`POSITION_MANAGER_SERVICE_OPEN_POSITIONS_STALE_MAX_AGE_SEC`, 既定 2.0s）を返せるようにし、
+      一時的な遅延バーストでの entry 停止を抑止。
+  - `workers/position_manager/worker.py`
+    - Uvicorn の access log をデフォルト OFF（`POSITION_MANAGER_ACCESS_LOG=0` 相当）に変更。
+    - 高頻度 `open_positions` アクセス時のログI/Oボトルネックを低減。
+- 期待効果:
+  - `open_positions` 呼び出しの tail latency（6-9秒帯）と worker 側 `position_manager_timeout` の頻度を低下。
+  - position-manager service の過負荷時でも、短期キャッシュ経由で戦略ループ継続性を維持。

@@ -230,6 +230,15 @@ if _POSITION_MANAGER_SERVICE_TIMEOUT < _REQUEST_TIMEOUT + 0.5:
         _REQUEST_TIMEOUT + 1.0,
     )
     _POSITION_MANAGER_SERVICE_TIMEOUT = _REQUEST_TIMEOUT + 1.0
+_POSITION_MANAGER_SERVICE_OPEN_POSITIONS_TIMEOUT = max(
+    0.2,
+    _env_float(
+        "POSITION_MANAGER_SERVICE_OPEN_POSITIONS_TIMEOUT",
+        min(_POSITION_MANAGER_SERVICE_TIMEOUT, 4.5),
+    ),
+)
+if _POSITION_MANAGER_SERVICE_OPEN_POSITIONS_TIMEOUT > _POSITION_MANAGER_SERVICE_TIMEOUT:
+    _POSITION_MANAGER_SERVICE_OPEN_POSITIONS_TIMEOUT = _POSITION_MANAGER_SERVICE_TIMEOUT
 _POSITION_MANAGER_SERVICE_FALLBACK_LOCAL = _env_bool(
     "POSITION_MANAGER_SERVICE_FALLBACK_LOCAL", False
 )
@@ -244,6 +253,26 @@ _POSITION_MANAGER_SERVICE_NEXT_RETRY = 0.0
 _POSITION_MANAGER_SERVICE_ERROR_COUNT = 0
 _POSITION_MANAGER_SERVICE_LAST_ERROR = None
 _POSITION_MANAGER_SERVICE_LAST_SUPPRESS_LOG_TS = 0.0
+_POSITION_MANAGER_SERVICE_POOL_CONNECTIONS = max(
+    8,
+    int(os.getenv("POSITION_MANAGER_SERVICE_POOL_CONNECTIONS", "64")),
+)
+_POSITION_MANAGER_SERVICE_POOL_MAXSIZE = max(
+    _POSITION_MANAGER_SERVICE_POOL_CONNECTIONS,
+    int(os.getenv("POSITION_MANAGER_SERVICE_POOL_MAXSIZE", "256")),
+)
+_POSITION_MANAGER_SERVICE_OPEN_POSITIONS_CACHE_TTL_SEC = max(
+    0.0,
+    _env_float("POSITION_MANAGER_SERVICE_OPEN_POSITIONS_CACHE_TTL_SEC", 0.35),
+)
+_POSITION_MANAGER_SERVICE_OPEN_POSITIONS_STALE_MAX_AGE_SEC = max(
+    _POSITION_MANAGER_SERVICE_OPEN_POSITIONS_CACHE_TTL_SEC,
+    _env_float("POSITION_MANAGER_SERVICE_OPEN_POSITIONS_STALE_MAX_AGE_SEC", 2.0),
+)
+_POSITION_MANAGER_SERVICE_SESSION: requests.Session | None = None
+_POSITION_MANAGER_SERVICE_SESSION_LOCK = threading.Lock()
+_POSITION_MANAGER_SERVICE_OPEN_POSITIONS_CACHE: dict[bool, tuple[float, object]] = {}
+_POSITION_MANAGER_SERVICE_OPEN_POSITIONS_CACHE_LOCK = threading.Lock()
 
 
 def _position_manager_service_enabled() -> bool:
@@ -257,6 +286,84 @@ def _position_manager_service_enabled() -> bool:
 def _position_manager_service_url(path: str) -> str:
     base = str(_POSITION_MANAGER_SERVICE_URL).rstrip("/")
     return f"{base}/{path.lstrip('/')}"
+
+
+def _normalize_service_path(path: str) -> str:
+    normalized_path = path.strip()
+    if normalized_path.endswith("/") and normalized_path != "/":
+        normalized_path = normalized_path.rstrip("/")
+    return normalized_path
+
+
+def _as_bool(value: object, default: bool = False) -> bool:
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    text = str(value).strip().lower()
+    if text in {"1", "true", "yes", "on", "enabled"}:
+        return True
+    if text in {"0", "false", "no", "off", "disabled"}:
+        return False
+    return default
+
+
+def _position_manager_service_session() -> requests.Session:
+    global _POSITION_MANAGER_SERVICE_SESSION
+    session = _POSITION_MANAGER_SERVICE_SESSION
+    if session is not None:
+        return session
+    with _POSITION_MANAGER_SERVICE_SESSION_LOCK:
+        session = _POSITION_MANAGER_SERVICE_SESSION
+        if session is not None:
+            return session
+        session = requests.Session()
+        adapter = HTTPAdapter(
+            pool_connections=_POSITION_MANAGER_SERVICE_POOL_CONNECTIONS,
+            pool_maxsize=_POSITION_MANAGER_SERVICE_POOL_MAXSIZE,
+            max_retries=0,
+        )
+        session.mount("http://", adapter)
+        session.mount("https://", adapter)
+        _POSITION_MANAGER_SERVICE_SESSION = session
+    return session
+
+
+def _open_positions_cache_key(payload: dict) -> bool:
+    return _as_bool(payload.get("include_unknown"), default=False)
+
+
+def _get_cached_open_positions(
+    payload: dict,
+    *,
+    max_age_sec: float,
+) -> object | None:
+    if max_age_sec <= 0.0:
+        return None
+    key = _open_positions_cache_key(payload)
+    now = time.monotonic()
+    with _POSITION_MANAGER_SERVICE_OPEN_POSITIONS_CACHE_LOCK:
+        cached = _POSITION_MANAGER_SERVICE_OPEN_POSITIONS_CACHE.get(key)
+        if cached is None:
+            return None
+        ts, value = cached
+        age = now - ts
+        if age > max_age_sec:
+            if max_age_sec <= _POSITION_MANAGER_SERVICE_OPEN_POSITIONS_CACHE_TTL_SEC:
+                _POSITION_MANAGER_SERVICE_OPEN_POSITIONS_CACHE.pop(key, None)
+            return None
+    return copy.deepcopy(value)
+
+
+def _set_cached_open_positions(payload: dict, value: object) -> None:
+    if _POSITION_MANAGER_SERVICE_OPEN_POSITIONS_CACHE_TTL_SEC <= 0.0:
+        return
+    key = _open_positions_cache_key(payload)
+    with _POSITION_MANAGER_SERVICE_OPEN_POSITIONS_CACHE_LOCK:
+        _POSITION_MANAGER_SERVICE_OPEN_POSITIONS_CACHE[key] = (
+            time.monotonic(),
+            copy.deepcopy(value),
+        )
 
 
 def _normalize_for_json(value: object) -> object:
@@ -289,19 +396,18 @@ def _extract_service_payload(path: str, payload: object) -> object:
 
 
 def _position_manager_service_call(path: str, payload: dict) -> object:
-    normalized_path = path.strip()
-    if normalized_path.endswith("/") and normalized_path != "/":
-        normalized_path = normalized_path.rstrip("/")
+    normalized_path = _normalize_service_path(path)
     url = _position_manager_service_url(normalized_path)
     normalized_payload = _normalize_for_json(payload)
+    session = _position_manager_service_session()
     if normalized_path == "/position/open_positions":
-        response = requests.get(
+        response = session.get(
             url,
             params=normalized_payload,
-            timeout=float(_POSITION_MANAGER_SERVICE_TIMEOUT),
+            timeout=float(_POSITION_MANAGER_SERVICE_OPEN_POSITIONS_TIMEOUT),
         )
     else:
-        response = requests.post(
+        response = session.post(
             url,
             json=normalized_payload,
             timeout=float(_POSITION_MANAGER_SERVICE_TIMEOUT),
@@ -319,12 +425,27 @@ def _position_manager_service_call(path: str, payload: dict) -> object:
 def _position_manager_service_request(path: str, payload: dict) -> object | None:
     if not _position_manager_service_enabled():
         return None
+    normalized_path = _normalize_service_path(path)
+    if normalized_path == "/position/open_positions":
+        cached = _get_cached_open_positions(
+            payload,
+            max_age_sec=_POSITION_MANAGER_SERVICE_OPEN_POSITIONS_CACHE_TTL_SEC,
+        )
+        if cached is not None:
+            return cached
     global _POSITION_MANAGER_SERVICE_NEXT_RETRY
     global _POSITION_MANAGER_SERVICE_ERROR_COUNT
     global _POSITION_MANAGER_SERVICE_LAST_ERROR
     global _POSITION_MANAGER_SERVICE_LAST_SUPPRESS_LOG_TS
     now_ts = time.monotonic()
     if now_ts < _POSITION_MANAGER_SERVICE_NEXT_RETRY:
+        if normalized_path == "/position/open_positions":
+            stale_cached = _get_cached_open_positions(
+                payload,
+                max_age_sec=_POSITION_MANAGER_SERVICE_OPEN_POSITIONS_STALE_MAX_AGE_SEC,
+            )
+            if stale_cached is not None:
+                return stale_cached
         if _POSITION_MANAGER_SERVICE_FALLBACK_LOCAL:
             if now_ts - _POSITION_MANAGER_SERVICE_LAST_SUPPRESS_LOG_TS > 30.0:
                 remain = max(0.0, _POSITION_MANAGER_SERVICE_NEXT_RETRY - now_ts)
@@ -344,6 +465,8 @@ def _position_manager_service_request(path: str, payload: dict) -> object | None
         _POSITION_MANAGER_SERVICE_ERROR_COUNT = 0
         _POSITION_MANAGER_SERVICE_NEXT_RETRY = 0.0
         _POSITION_MANAGER_SERVICE_LAST_ERROR = None
+        if normalized_path == "/position/open_positions":
+            _set_cached_open_positions(payload, result)
         return result
     except Exception as exc:
         _POSITION_MANAGER_SERVICE_ERROR_COUNT += 1
@@ -360,6 +483,13 @@ def _position_manager_service_request(path: str, payload: dict) -> object | None
             payload,
             exc,
         )
+        if normalized_path == "/position/open_positions":
+            stale_cached = _get_cached_open_positions(
+                payload,
+                max_age_sec=_POSITION_MANAGER_SERVICE_OPEN_POSITIONS_STALE_MAX_AGE_SEC,
+            )
+            if stale_cached is not None:
+                return stale_cached
         if not _POSITION_MANAGER_SERVICE_FALLBACK_LOCAL:
             raise
         return None

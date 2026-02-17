@@ -241,6 +241,13 @@ def _configure_logging() -> None:
     )
 
 
+def _env_bool(name: str, default: bool) -> bool:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    return str(raw).strip().lower() in {"1", "true", "yes", "on", "enabled"}
+
+
 if __name__ == "__main__":
     _configure_logging()
     uvicorn.run(
@@ -248,4 +255,5 @@ if __name__ == "__main__":
         host="0.0.0.0",
         port=8301,
         log_config=None,
+        access_log=_env_bool("POSITION_MANAGER_ACCESS_LOG", False),
     )
