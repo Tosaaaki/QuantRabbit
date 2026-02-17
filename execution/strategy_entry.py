@@ -183,6 +183,7 @@ _STRATEGY_TECH_CONTEXT_REQUIREMENTS: dict[str, dict[str, object]] = {
         "technical_context_fields": ["ma10", "ma20", "rsi", "atr", "atr_pips", "adx", "bbw", "macd", "ema12", "ema20", "ema24"],
         "technical_context_ticks": ["latest_bid", "latest_ask", "latest_mid", "spread_pips"],
         "technical_context_candle_counts": {"M1": 140, "M5": 90, "H1": 70, "H4": 40},
+        "forecast_horizon": "1m",
         "tech_policy": dict(_TECH_POLICY_REQUIRE_ALL),
     },
     "SCALP_M1SCALPER": {
@@ -190,6 +191,7 @@ _STRATEGY_TECH_CONTEXT_REQUIREMENTS: dict[str, dict[str, object]] = {
         "technical_context_fields": ["ma10", "ma20", "ema12", "ema20", "ema24", "rsi", "atr", "atr_pips", "adx", "bbw", "macd"],
         "technical_context_ticks": ["latest_bid", "latest_ask", "latest_mid", "spread_pips"],
         "technical_context_candle_counts": {"M1": 120, "M5": 80, "H1": 60},
+        "forecast_horizon": "5m",
         "tech_policy": dict(_TECH_POLICY_REQUIRE_ALL),
     },
     "SCALP_MACD_RSI_DIV": {
@@ -197,6 +199,7 @@ _STRATEGY_TECH_CONTEXT_REQUIREMENTS: dict[str, dict[str, object]] = {
         "technical_context_fields": ["ma10", "ma20", "ema12", "ema24", "rsi", "atr", "atr_pips", "adx", "bbw", "macd", "macd_hist"],
         "technical_context_ticks": ["latest_bid", "latest_ask", "latest_mid", "spread_pips"],
         "technical_context_candle_counts": {"M1": 160, "M5": 100, "H1": 70, "H4": 40},
+        "forecast_horizon": "10m",
         "tech_policy": dict(_TECH_POLICY_REQUIRE_ALL),
     },
     "SCALP_TICK_IMBALANCE": {
@@ -204,6 +207,7 @@ _STRATEGY_TECH_CONTEXT_REQUIREMENTS: dict[str, dict[str, object]] = {
         "technical_context_fields": ["ma10", "ma20", "ema12", "ema20", "rsi", "atr", "atr_pips", "adx", "bbw", "macd"],
         "technical_context_ticks": ["latest_bid", "latest_ask", "latest_mid", "spread_pips", "tick_rate"],
         "technical_context_candle_counts": {"M1": 160, "M5": 90, "H1": 50},
+        "forecast_horizon": "5m",
         "tech_policy": dict(_TECH_POLICY_REQUIRE_ALL),
     },
     "SCALP_PING_5S_B": {
@@ -211,6 +215,7 @@ _STRATEGY_TECH_CONTEXT_REQUIREMENTS: dict[str, dict[str, object]] = {
         "technical_context_fields": ["ma10", "ma20", "rsi", "atr", "atr_pips", "adx", "bbw", "macd", "ema12", "ema20", "ema24"],
         "technical_context_ticks": ["latest_bid", "latest_ask", "latest_mid", "spread_pips"],
         "technical_context_candle_counts": {"M1": 140, "M5": 90, "H1": 70, "H4": 40},
+        "forecast_horizon": "1m",
         "tech_policy": dict(_TECH_POLICY_REQUIRE_ALL),
     },
     "SCALP_WICK_REVERSAL_BLEND": {
@@ -218,6 +223,7 @@ _STRATEGY_TECH_CONTEXT_REQUIREMENTS: dict[str, dict[str, object]] = {
         "technical_context_fields": ["ma10", "ma20", "rsi", "atr", "atr_pips", "adx", "bbw", "macd", "ema12", "ema20", "ema24"],
         "technical_context_ticks": ["latest_bid", "latest_ask", "latest_mid", "spread_pips"],
         "technical_context_candle_counts": {"M1": 140, "M5": 90, "H1": 70, "H4": 40},
+        "forecast_horizon": "10m",
         "tech_policy": dict(_TECH_POLICY_REQUIRE_ALL),
     },
     "SCALP_WICK_REVERSAL_PRO": {
@@ -225,6 +231,7 @@ _STRATEGY_TECH_CONTEXT_REQUIREMENTS: dict[str, dict[str, object]] = {
         "technical_context_fields": ["ma10", "ma20", "rsi", "atr", "atr_pips", "adx", "bbw", "macd", "ema12", "ema20", "ema24"],
         "technical_context_ticks": ["latest_bid", "latest_ask", "latest_mid", "spread_pips"],
         "technical_context_candle_counts": {"M1": 140, "M5": 90, "H1": 70, "H4": 40},
+        "forecast_horizon": "10m",
         "tech_policy": dict(_TECH_POLICY_REQUIRE_ALL),
     },
     "SCALP_SQUEEZE_PULSE_BREAK": {
@@ -232,6 +239,7 @@ _STRATEGY_TECH_CONTEXT_REQUIREMENTS: dict[str, dict[str, object]] = {
         "technical_context_fields": ["ma10", "ma20", "rsi", "atr", "atr_pips", "adx", "bbw", "macd", "ema12", "ema20", "ema24"],
         "technical_context_ticks": ["latest_bid", "latest_ask", "latest_mid", "spread_pips"],
         "technical_context_candle_counts": {"M1": 140, "M5": 90, "H1": 70, "H4": 40},
+        "forecast_horizon": "10m",
         "tech_policy": dict(_TECH_POLICY_REQUIRE_ALL),
     },
     "MICRO_ADAPTIVE_REVERT": {
@@ -239,6 +247,7 @@ _STRATEGY_TECH_CONTEXT_REQUIREMENTS: dict[str, dict[str, object]] = {
         "technical_context_fields": ["ma10", "ma20", "ema12", "ema20", "rsi", "atr", "atr_pips", "adx", "bbw", "macd"],
         "technical_context_ticks": ["latest_bid", "latest_ask", "latest_mid", "spread_pips"],
         "technical_context_candle_counts": {"M5": 120, "M1": 80, "H1": 50},
+        "forecast_horizon": "10m",
         "tech_policy": dict(_TECH_POLICY_REQUIRE_ALL),
     },
     "MICRO_MULTISTRAT": {
@@ -246,6 +255,7 @@ _STRATEGY_TECH_CONTEXT_REQUIREMENTS: dict[str, dict[str, object]] = {
         "technical_context_fields": ["ma10", "ma20", "ema12", "ema20", "rsi", "atr", "atr_pips", "adx", "bbw", "macd", "volume"],
         "technical_context_ticks": ["latest_bid", "latest_ask", "latest_mid", "spread_pips"],
         "technical_context_candle_counts": {"M5": 120, "M1": 140, "H1": 60},
+        "forecast_horizon": "10m",
         "tech_policy": dict(_TECH_POLICY_REQUIRE_ALL),
     },
     "SESSION_OPEN": {
@@ -253,6 +263,7 @@ _STRATEGY_TECH_CONTEXT_REQUIREMENTS: dict[str, dict[str, object]] = {
         "technical_context_fields": ["ma10", "ma20", "ema12", "ema24", "atr", "atr_pips", "adx", "bbw", "rsi", "macd"],
         "technical_context_ticks": ["latest_bid", "latest_ask", "latest_mid", "spread_pips"],
         "technical_context_candle_counts": {"M1": 120, "M5": 90, "H1": 60},
+        "forecast_horizon": "10m",
         "tech_policy": dict(_TECH_POLICY_REQUIRE_ALL),
     },
 }
@@ -496,6 +507,193 @@ def _to_float(value: object) -> Optional[float]:
     if math.isnan(parsed) or math.isinf(parsed):
         return None
     return parsed
+
+
+def _to_positive_int(value: object) -> Optional[int]:
+    if value is None:
+        return None
+    try:
+        parsed = int(float(value))
+    except (TypeError, ValueError):
+        return None
+    if parsed <= 0:
+        return None
+    return parsed
+
+
+def _normalize_timeframe(value: object) -> Optional[str]:
+    candidate = str(value or "").strip().upper() if value is not None else ""
+    if candidate in {"M1", "M5", "H1", "H4", "D1"}:
+        return candidate
+    return None
+
+
+def _parse_horizon_minutes(value: object) -> Optional[int]:
+    text = str(value or "").strip().lower()
+    if not text:
+        return None
+    unit = text[-1:]
+    raw = text[:-1]
+    try:
+        n = int(raw)
+    except Exception:
+        return None
+    if n <= 0:
+        return None
+    if unit == "m":
+        return n
+    if unit == "h":
+        return n * 60
+    if unit == "d":
+        return n * 24 * 60
+    if unit == "w":
+        return n * 7 * 24 * 60
+    return None
+
+
+def _normalize_forecast_horizon_profile(profile_raw: object) -> dict[str, object]:
+    if not isinstance(profile_raw, dict):
+        return {}
+    out: dict[str, object] = {}
+    timeframe = _normalize_timeframe(profile_raw.get("timeframe"))
+    if timeframe is None:
+        timeframe = _normalize_timeframe(profile_raw.get("forecast_timeframe"))
+    if timeframe is not None:
+        out["timeframe"] = timeframe
+    step_bars = _to_positive_int(profile_raw.get("step_bars"))
+    if step_bars is None:
+        step_bars = _to_positive_int(profile_raw.get("forecast_step_bars"))
+    if step_bars is not None:
+        out["step_bars"] = int(step_bars)
+    for key in ("blend", "blend_with_bundle", "technical_only"):
+        if key in profile_raw:
+            out[key] = bool(profile_raw.get(key))
+    if out:
+        return out
+    return {}
+
+
+def _build_entry_forecast_profile(
+    entry_thesis: Optional[dict],
+    *,
+    strategy_tag: Optional[str] = None,
+    pocket: str = "",
+) -> Optional[dict[str, object]]:
+    if not isinstance(entry_thesis, dict):
+        entry_thesis = {}
+
+    contract = _resolve_strategy_technical_context_contract(
+        strategy_tag=strategy_tag,
+        pocket=pocket,
+    )
+    contract_profile = _normalize_forecast_horizon_profile(
+        contract.get("forecast_profile") if isinstance(contract, dict) else None
+    )
+    profile = dict(contract_profile or {})
+    if isinstance(contract, dict):
+        if "forecast_timeframe" in contract:
+            tf = _normalize_timeframe(contract.get("forecast_timeframe"))
+            if tf is not None:
+                profile["timeframe"] = tf
+        if "forecast_step_bars" in contract:
+            step = _to_positive_int(contract.get("forecast_step_bars"))
+            if step is not None:
+                profile["step_bars"] = int(step)
+        if "forecast_horizon" in contract and str(contract.get("forecast_horizon")).strip():
+            profile["horizon"] = str(contract.get("forecast_horizon")).strip().lower()
+        if "forecast_blend_with_bundle" in contract:
+            profile["blend_with_bundle"] = bool(contract.get("forecast_blend_with_bundle"))
+        if "forecast_technical_only" in contract:
+            profile["technical_only"] = bool(contract.get("forecast_technical_only"))
+        if "blend_with_bundle" in contract:
+            profile["blend_with_bundle"] = bool(contract.get("blend_with_bundle"))
+        if "technical_only" in contract:
+            profile["technical_only"] = bool(contract.get("technical_only"))
+
+    direct_profile = _normalize_forecast_horizon_profile(entry_thesis.get("forecast_profile"))
+    if direct_profile:
+        profile.update(direct_profile)
+    explicit_timeframe = _normalize_timeframe(entry_thesis.get("forecast_timeframe"))
+    explicit_step = _to_positive_int(entry_thesis.get("forecast_step_bars"))
+    if explicit_timeframe is not None:
+        profile["timeframe"] = explicit_timeframe
+    if explicit_step is not None:
+        profile["step_bars"] = int(explicit_step)
+    if "forecast_blend_with_bundle" in entry_thesis:
+        profile["blend_with_bundle"] = bool(entry_thesis.get("forecast_blend_with_bundle"))
+    if "forecast_technical_only" in entry_thesis:
+        profile["technical_only"] = bool(entry_thesis.get("forecast_technical_only"))
+
+    horizon = (
+        entry_thesis.get("forecast_horizon")
+        or entry_thesis.get("horizon")
+        or profile.get("horizon")
+    )
+    if not horizon:
+        try:
+            horizon = forecast_gate._infer_horizon_from_profile(profile)  # noqa: SLF001
+        except Exception:
+            horizon = None
+    if not horizon:
+        return None
+
+    horizon_text = str(horizon).strip().lower()
+    horizon_minutes = _parse_horizon_minutes(horizon_text)
+    default_meta = {}
+    try:
+        default_meta = dict(forecast_gate._HORIZON_META)
+    except Exception:
+        default_meta = {}
+    default_meta = default_meta.get(horizon_text) if isinstance(default_meta, dict) else None
+    if isinstance(default_meta, dict):
+        tf = _normalize_timeframe(default_meta.get("timeframe"))
+        if tf is not None:
+            profile["timeframe"] = tf
+        step_bars = _to_positive_int(default_meta.get("step_bars"))
+        if step_bars is not None:
+            profile["step_bars"] = int(step_bars)
+
+    counts = contract.get("technical_context_candle_counts")
+    if not isinstance(counts, dict):
+        counts = entry_thesis.get("technical_context_candle_counts")
+    if isinstance(counts, dict):
+        requested_tf = profile.get("timeframe")
+        if requested_tf is None:
+            requested_tf = _normalize_timeframe(next(iter(counts.keys()), ""))
+        if requested_tf is not None:
+            count = _to_positive_int(counts.get(requested_tf))
+            if count is not None:
+                # Use contract-defined candle depth as a directional hint for forecast profile.
+                # Keep it in a practical range for technical fallback latency.
+                profile["timeframe"] = str(requested_tf)
+                profile["step_bars"] = min(24, max(6, max(1, int(round(count / 12)))))
+
+    if profile.get("timeframe") is None and profile.get("step_bars") is None:
+        if horizon_minutes is not None:
+            if horizon_minutes <= 1:
+                profile["timeframe"] = "M1"
+            elif horizon_minutes <= 10:
+                profile["timeframe"] = "M5"
+            else:
+                profile["timeframe"] = "H1"
+
+    if profile.get("step_bars") is None and horizon_minutes is not None:
+        if horizon_minutes <= 1:
+            profile["step_bars"] = 12
+        elif horizon_minutes <= 10:
+            profile["step_bars"] = 6
+        elif horizon_minutes <= 180:
+            profile["step_bars"] = 9
+        else:
+            profile["step_bars"] = 12
+    profile["horizon"] = horizon_text
+    if profile.get("blend_with_bundle") in {"", None}:
+        profile.pop("blend_with_bundle", None)
+    if profile.get("technical_only") in {"", None}:
+        profile.pop("technical_only", None)
+    if not profile:
+        return None
+    return profile
 
 
 def _scale_price_by_entry_distance(
@@ -851,6 +1049,27 @@ def _inject_entry_forecast_context(
             },
         )
     side = "buy" if units > 0 else "sell"
+    forecast_profile = _build_entry_forecast_profile(
+        entry_thesis,
+        strategy_tag=strategy_tag,
+        pocket=pocket,
+    )
+    if isinstance(forecast_profile, dict) and forecast_profile:
+        entry_thesis["forecast_profile"] = forecast_profile
+        if "horizon" in forecast_profile and isinstance(forecast_profile.get("horizon"), str):
+            entry_thesis["forecast_horizon"] = str(forecast_profile.get("horizon"))
+        if "timeframe" in forecast_profile:
+            entry_thesis["forecast_timeframe"] = forecast_profile.get("timeframe")
+        if "step_bars" in forecast_profile:
+            entry_thesis["forecast_step_bars"] = forecast_profile.get("step_bars")
+        if "blend_with_bundle" in forecast_profile:
+            entry_thesis["forecast_blend_with_bundle"] = bool(
+                forecast_profile.get("blend_with_bundle")
+            )
+        if "technical_only" in forecast_profile:
+            entry_thesis["forecast_technical_only"] = bool(
+                forecast_profile.get("technical_only")
+            )
     forecast_meta: dict[str, object] = {"instrument": instrument}
     if isinstance(meta, dict):
         forecast_meta.update(meta)

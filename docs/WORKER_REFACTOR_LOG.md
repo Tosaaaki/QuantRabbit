@@ -63,6 +63,16 @@
 - `auto` 運用でも `1m` は技術予測優先で使うようにする
   (`FORECAST_GATE_TECH_PREFERRED_HORIZONS`) を追加し、既存バンドルの `1m` が長期仕様のままでも短期解釈が崩れにくいよう保護。
 
+### 2026-02-18（追記）戦略別 forecast プロファイルを `strategy_entry` 経由で適用
+
+- `execution/strategy_entry.py` で `strategy_tag`/pocket 契約を参照し、`forecast_profile` / `forecast_timeframe` / `forecast_step_bars` /
+  `forecast_blend_with_bundle` / `forecast_technical_only` を戦略側で注入する形へ強化。
+- `workers/common/forecast_gate.py` の `decide()` が `forecast_profile` を解決して、`technical_only` や `blend_with_bundle` に応じて
+  技術予測行を参照・合成する経路を追加。`forecast_timeframe`/`step_bars` から horizon を推定し、履歴不足時の
+  欠損観測時にも `NO_MATCHING_HORIZONS` が起きにくいよう補助行生成を改善。
+- `scripts/vm_forecast_snapshot.py` の `--horizon` 解析を拡張（`--horizon 5m,10m` 対応）し、要求 horizon ごとに
+  `insufficient_history`（必要本数/復旧手順つき）行を作りやすくした。
+
 ### 2026-02-17（追加）予測ワーカーの分離導線
 
 - `workers/forecast/` 配下に `worker.py` を追加し、`/forecast/decide` と `/forecast/predictions` を公開する

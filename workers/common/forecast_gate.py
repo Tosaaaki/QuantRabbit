@@ -389,6 +389,131 @@ def _normalize_strategy_key(text: str) -> str:
     return "".join(ch.lower() for ch in text if ch.isalnum())
 
 
+def _to_positive_int(value: Any) -> Optional[int]:
+    try:
+        parsed = int(value)
+    except Exception:
+        return None
+    if parsed <= 0:
+        return None
+    return parsed
+
+
+def _normalize_forecast_timeframe(value: Any) -> Optional[str]:
+    candidate = str(value or "").strip().upper()
+    if candidate in _TF_MINUTES:
+        return candidate
+    return None
+
+
+def _normalize_forecast_horizon_profile(profile_raw: Any) -> dict[str, Any]:
+    if not isinstance(profile_raw, dict):
+        return {}
+    out: dict[str, Any] = {}
+    timeframe = _normalize_forecast_timeframe(
+        profile_raw.get("timeframe") or profile_raw.get("forecast_timeframe")
+    )
+    if timeframe:
+        out["timeframe"] = timeframe
+    step_bars = _to_positive_int(
+        profile_raw.get("step_bars")
+        if profile_raw.get("step_bars") is not None
+        else profile_raw.get("forecast_step_bars")
+    )
+    if step_bars is not None:
+        out["step_bars"] = step_bars
+    for key in ("blend_with_bundle", "technical_only", "blend"):
+        if key in profile_raw:
+            if key == "blend":
+                out["blend_with_bundle"] = bool(profile_raw.get(key))
+            else:
+                out[key] = bool(profile_raw.get(key))
+    if "horizon" in profile_raw:
+        value = str(profile_raw.get("horizon")).strip().lower()
+        if value:
+            out["horizon"] = value
+    if out:
+        return out
+    return {}
+
+
+def _resolve_forecast_profile(
+    entry_thesis: Optional[dict],
+    meta: Optional[dict],
+) -> dict[str, Any]:
+    source: list[dict[str, Any]] = []
+    if isinstance(meta, dict):
+        source.append(dict(meta))
+    if isinstance(entry_thesis, dict):
+        source.append(dict(entry_thesis))
+
+    profile: dict[str, Any] = {}
+    for container in source:
+        normalized = _normalize_forecast_horizon_profile(container.get("forecast_profile"))
+        if normalized:
+            profile.update(normalized)
+
+        for key in ("forecast_timeframe", "timeframe"):
+            if key in container:
+                tf = _normalize_forecast_timeframe(container.get(key))
+                if tf:
+                    profile["timeframe"] = tf
+
+        if "forecast_step_bars" in container:
+            step = _to_positive_int(container.get("forecast_step_bars"))
+            if step is not None:
+                profile["step_bars"] = step
+
+        for key in ("horizon", "forecast_horizon"):
+            if key in container:
+                value = str(container.get(key)).strip().lower()
+                if value:
+                    profile["horizon"] = value
+
+        for key in ("blend_with_bundle", "technical_only", "forecast_blend_with_bundle", "forecast_technical_only"):
+            if key in container:
+                normalized_key = "technical_only" if key == "forecast_technical_only" else "blend_with_bundle" if key == "forecast_blend_with_bundle" else key
+                profile[normalized_key] = bool(container.get(key))
+
+    return profile
+
+
+def _infer_horizon_from_profile(
+    profile: dict[str, Any],
+) -> Optional[str]:
+    horizon = profile.get("horizon")
+    if isinstance(horizon, str):
+        hint = str(horizon).strip().lower()
+        if hint:
+            return hint
+    timeframe = _normalize_forecast_timeframe(profile.get("timeframe"))
+    step_bars = _to_positive_int(profile.get("step_bars"))
+    if not timeframe:
+        return None
+    candidates: list[tuple[int, str]] = []
+    try:
+        meta = dict(_HORIZON_META)
+    except Exception:
+        meta = {}
+    for candidate_horizon, cfg in meta.items():
+        if not isinstance(cfg, dict):
+            continue
+        candidate_tf = _normalize_forecast_timeframe(cfg.get("timeframe"))
+        if candidate_tf != timeframe:
+            continue
+        candidate_step = _to_positive_int(cfg.get("step_bars"))
+        if not candidate_step:
+            continue
+        distance = 0 if step_bars is None else abs(candidate_step - step_bars)
+        candidates.append((distance, str(candidate_horizon)))
+    if candidates:
+        candidates.sort(key=lambda item: item[0])
+        return candidates[0][1]
+
+    fallback = {"M1": "1m", "M5": "5m", "H1": "1h", "H4": "4h", "D1": "1d"}
+    return fallback.get(timeframe)
+
+
 def _strategy_base(strategy_tag: Optional[str]) -> str:
     if not strategy_tag:
         return ""
@@ -484,9 +609,23 @@ def _should_use(strategy_tag: Optional[str], pocket: Optional[str]) -> bool:
     return True
 
 
-def _horizon_for(pocket: str, entry_thesis: Optional[dict]) -> str | None:
+def _horizon_for(
+    pocket: str,
+    entry_thesis: Optional[dict],
+    meta: Optional[dict] = None,
+) -> str | None:
+    if not pocket:
+        return None
+    profile = _resolve_forecast_profile(entry_thesis, meta)
+    inferred_horizon = _infer_horizon_from_profile(profile)
+    if inferred_horizon:
+        return inferred_horizon
     if isinstance(entry_thesis, dict):
         hinted = entry_thesis.get("forecast_horizon") or entry_thesis.get("horizon")
+        if hinted:
+            return str(hinted).strip()
+    if isinstance(meta, dict):
+        hinted = meta.get("forecast_horizon") or meta.get("horizon")
         if hinted:
             return str(hinted).strip()
     if _HORIZON_FORCE:
@@ -1049,6 +1188,36 @@ def _predict_technical_latest(candles_by_tf: dict[str, list[dict]]) -> dict[str,
     return preds
 
 
+def _technical_row_for_forecast_profile(
+    *,
+    horizon: str,
+    profile: dict[str, Any],
+) -> dict[str, Any] | None:
+    timeframe = _normalize_forecast_timeframe(profile.get("timeframe"))
+    step_bars = _to_positive_int(profile.get("step_bars"))
+    if (not timeframe or not step_bars) and isinstance(horizon, str):
+        horizon_key = str(horizon).strip().lower()
+        horizon_spec = _HORIZON_META.get(horizon_key)
+        if isinstance(horizon_spec, dict):
+            if not timeframe:
+                timeframe = _normalize_forecast_timeframe(horizon_spec.get("timeframe"))
+            if not step_bars:
+                step_bars = _to_positive_int(horizon_spec.get("step_bars"))
+    if not timeframe or not step_bars:
+        return None
+    try:
+        candles_by_tf = _fetch_candles_by_tf()
+    except Exception:
+        return None
+    candles = candles_by_tf.get(timeframe) or []
+    return _technical_prediction_for_horizon(
+        candles,
+        horizon=horizon,
+        step_bars=step_bars,
+        timeframe=timeframe,
+    )
+
+
 def _blend_prediction_rows(base_row: dict, tech_row: dict) -> dict:
     alpha = _AUTO_BLEND_TECH
     if alpha <= 0.0:
@@ -1167,7 +1336,8 @@ def decide(
     if instrument and str(instrument).strip().upper() != "USD_JPY":
         return None
 
-    horizon = _horizon_for(pocket, entry_thesis)
+    profile = _resolve_forecast_profile(entry_thesis, meta)
+    horizon = _horizon_for(pocket, entry_thesis, meta)
     if not horizon:
         return None
 
@@ -1177,6 +1347,32 @@ def decide(
         return None
 
     row = preds.get(horizon)
+    technical_row = None
+    technical_only = bool(profile.get("technical_only"))
+    blend_with_bundle = None
+    if "blend_with_bundle" in profile:
+        blend_with_bundle = bool(profile.get("blend_with_bundle"))
+    elif "blend" in profile:
+        blend_with_bundle = bool(profile.get("blend"))
+    if isinstance(horizon, str) and isinstance(profile, dict):
+        try:
+            technical_row = _technical_row_for_forecast_profile(
+                horizon=horizon,
+                profile=profile,
+            )
+        except Exception:
+            technical_row = None
+
+    if technical_row is not None and technical_only:
+        row = technical_row
+    elif (
+        technical_row is not None
+        and blend_with_bundle is True
+        and isinstance(row, dict)
+    ):
+        row = _blend_prediction_rows(row, technical_row)
+    elif row is None and technical_row is not None:
+        row = technical_row
     if not isinstance(row, dict):
         return None
 

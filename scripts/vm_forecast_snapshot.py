@@ -110,6 +110,23 @@ def _horizon_sort_key(horizon: str) -> tuple[int, int, str]:
     return (order, value, h)
 
 
+def _normalize_horizon_filter(values: list[str] | None) -> list[str] | None:
+    if not values:
+        return None
+    normalized: list[str] = []
+    for raw in values:
+        text = str(raw or "").strip().lower()
+        if not text:
+            continue
+        for part in re.split(r"[,\s]+", text):
+            part = part.strip()
+            if part:
+                normalized.append(part)
+    if not normalized:
+        return None
+    return normalized
+
+
 def _latest_close(candles: list[dict[str, Any]]) -> float | None:
     for candle in reversed(candles):
         if not isinstance(candle, dict):
@@ -341,14 +358,17 @@ def main() -> int:
     bundle = forecast_gate._load_bundle_cached()  # noqa: SLF001
     preds = forecast_gate._ensure_predictions(bundle)  # noqa: SLF001
 
-    horizon_filter = {str(h).strip().lower() for h in args.horizon} if args.horizon else None
+    horizon_filter = _normalize_horizon_filter(args.horizon)
+    horizon_filter_set = (
+        {str(h).strip().lower() for h in horizon_filter} if horizon_filter else None
+    )
     selected: list[tuple[str, dict[str, Any]]] = []
 
     if isinstance(preds, dict):
         for horizon, row in sorted(preds.items(), key=lambda item: _horizon_sort_key(item[0])):
             if not isinstance(row, dict):
                 continue
-            if horizon_filter and str(horizon).strip().lower() not in horizon_filter:
+            if horizon_filter_set and str(horizon).strip().lower() not in horizon_filter_set:
                 continue
             selected.append((str(horizon).strip().lower(), dict(row)))
     elif not horizon_filter:
@@ -358,7 +378,7 @@ def main() -> int:
     if horizon_filter:
         selected_map = {str(h): r for h, r in selected}
         present = {str(h): True for h, _ in selected}
-        for horizon in sorted(horizon_filter, key=_horizon_sort_key):
+        for horizon in sorted(set(horizon_filter), key=_horizon_sort_key):
             if horizon in present:
                 continue
             fallback = _build_pending_row(forecast_gate, horizon)
